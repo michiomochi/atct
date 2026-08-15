@@ -22,6 +22,7 @@
 - Lock acquisition times out after **5 seconds**. Daemon readiness times out after **10 seconds**. Both are fixed constants; neither is configurable in v1.
 - Version comparison is exact string equality, not semantic version ordering.
 - Platform support is macOS and Linux. **Windows is out of scope** because the transport is a Unix domain socket.
+- **Never build a Unix socket path from `t.TempDir()`.** macOS caps `sun_path` at 104 bytes and `t.TempDir()` embeds the test function's name, so a long test name produces `bind: invalid argument`. Measured: a `t.TempDir()` socket path for a 46-character test name is 120 bytes; the same path from `os.MkdirTemp("", "atct")` is 73. Every test that listens on a socket uses the `socketDir` helper from Task 1. This is not fixable by setting `TMPDIR` in the test command — that leaves the test environment-dependent.
 - Do not modify `internal/store`, `internal/domain`, `internal/httpapi`, `internal/rpc`, `internal/mcpshim`, or `web/`. This plan adds lifecycle management around them.
 - **Do not run `git push`, create a GitHub Release, create a Homebrew tap, or register a marketplace entry.** Those are separate authorized actions outside this plan.
 
@@ -70,7 +71,7 @@ import (
 )
 
 func TestRegistryRoundTrip(t *testing.T) {
-	dir := t.TempDir()
+	dir := socketDir(t)
 	want := Registry{
 		PID:        4242,
 		HTTPAddr:   "127.0.0.1:8787",
@@ -98,7 +99,7 @@ func TestReadRegistryReportsMissingFile(t *testing.T) {
 }
 
 func TestRemoveRegistryIsIdempotent(t *testing.T) {
-	dir := t.TempDir()
+	dir := socketDir(t)
 	if err := RemoveRegistry(dir); err != nil {
 		t.Fatalf("RemoveRegistry on absent file: %v", err)
 	}
@@ -126,8 +127,23 @@ func TestProcessAliveRejectsUnusedPID(t *testing.T) {
 	}
 }
 
+// socketDir returns a temporary directory short enough to hold a Unix domain
+// socket path. macOS caps sun_path at 104 bytes and t.TempDir() embeds the
+// test function's name, which overflows that limit for the longer names in
+// this package. Every test in internal/daemonctl that listens on a socket must
+// use this instead of t.TempDir().
+func socketDir(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "atct")
+	if err != nil {
+		t.Fatalf("MkdirTemp: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return dir
+}
+
 func TestSocketAnswersDistinguishesListeningFromAbsent(t *testing.T) {
-	dir := t.TempDir()
+	dir := socketDir(t)
 	sock := filepath.Join(dir, "atct.sock")
 
 	if SocketAnswers(sock) {
@@ -296,7 +312,7 @@ import (
 )
 
 func TestAcquireLockExcludesSecondHolder(t *testing.T) {
-	dir := t.TempDir()
+	dir := socketDir(t)
 
 	first, err := AcquireLock(dir, time.Second)
 	if err != nil {
@@ -322,7 +338,7 @@ func TestAcquireLockExcludesSecondHolder(t *testing.T) {
 }
 
 func TestAcquireLockSerializesConcurrentHolders(t *testing.T) {
-	dir := t.TempDir()
+	dir := socketDir(t)
 
 	var mu sync.Mutex
 	var concurrent, maxConcurrent int
@@ -362,7 +378,7 @@ func TestAcquireLockSerializesConcurrentHolders(t *testing.T) {
 }
 
 func TestReleaseIsIdempotent(t *testing.T) {
-	dir := t.TempDir()
+	dir := socketDir(t)
 	l, err := AcquireLock(dir, time.Second)
 	if err != nil {
 		t.Fatalf("AcquireLock: %v", err)
@@ -575,7 +591,7 @@ func stopDaemon(t *testing.T, reg Registry) {
 }
 
 func TestEnsureStartsDaemonWhenAbsent(t *testing.T) {
-	dir := t.TempDir()
+	dir := socketDir(t)
 	cfg := stubConfig(t, dir)
 
 	reg, err := Ensure(cfg)
@@ -593,7 +609,7 @@ func TestEnsureStartsDaemonWhenAbsent(t *testing.T) {
 }
 
 func TestEnsureReusesHealthyDaemon(t *testing.T) {
-	dir := t.TempDir()
+	dir := socketDir(t)
 	cfg := stubConfig(t, dir)
 
 	first, err := Ensure(cfg)
@@ -612,7 +628,7 @@ func TestEnsureReusesHealthyDaemon(t *testing.T) {
 }
 
 func TestEnsureRepairsStaleRegistry(t *testing.T) {
-	dir := t.TempDir()
+	dir := socketDir(t)
 	cfg := stubConfig(t, dir)
 
 	stale := Registry{
@@ -639,7 +655,7 @@ func TestEnsureRepairsStaleRegistry(t *testing.T) {
 }
 
 func TestConcurrentEnsureStartsExactlyOneDaemon(t *testing.T) {
-	dir := t.TempDir()
+	dir := socketDir(t)
 	cfg := stubConfig(t, dir)
 
 	var wg sync.WaitGroup
@@ -673,7 +689,7 @@ func TestConcurrentEnsureStartsExactlyOneDaemon(t *testing.T) {
 }
 
 func TestEnsureReportsVersionMismatchWithoutRestarting(t *testing.T) {
-	dir := t.TempDir()
+	dir := socketDir(t)
 	cfg := stubConfig(t, dir)
 
 	reg, err := Ensure(cfg)
@@ -693,7 +709,7 @@ func TestEnsureReportsVersionMismatchWithoutRestarting(t *testing.T) {
 }
 
 func TestEnsureReportsAlivePIDWithSilentSocket(t *testing.T) {
-	dir := t.TempDir()
+	dir := socketDir(t)
 	cfg := stubConfig(t, dir)
 	cfg.Executable = filepath.Join(dir, "does-not-exist")
 
@@ -878,7 +894,7 @@ import (
 )
 
 func TestStopTerminatesRunningDaemon(t *testing.T) {
-	dir := t.TempDir()
+	dir := socketDir(t)
 	cfg := stubConfig(t, dir)
 
 	reg, err := Ensure(cfg)
@@ -905,7 +921,7 @@ func TestStopTerminatesRunningDaemon(t *testing.T) {
 }
 
 func TestStopWithNoDaemonIsNotAnError(t *testing.T) {
-	dir := t.TempDir()
+	dir := socketDir(t)
 	cfg := stubConfig(t, dir)
 
 	stopped, err := Stop(cfg)
@@ -918,7 +934,7 @@ func TestStopWithNoDaemonIsNotAnError(t *testing.T) {
 }
 
 func TestStopIsIdempotent(t *testing.T) {
-	dir := t.TempDir()
+	dir := socketDir(t)
 	cfg := stubConfig(t, dir)
 
 	if _, err := Ensure(cfg); err != nil {
@@ -1218,7 +1234,7 @@ import (
 )
 
 func TestResolveAtctPathPrefersSiblingBinary(t *testing.T) {
-	dir := t.TempDir()
+	dir := socketDir(t)
 	sibling := filepath.Join(dir, "atct")
 	if err := os.WriteFile(sibling, []byte("#!/bin/sh\n"), 0o755); err != nil {
 		t.Fatalf("write sibling: %v", err)
