@@ -1,7 +1,7 @@
 // Package daemonctl manages the lifetime of the single per-user atct daemon.
 //
 // ATCT deliberately runs one daemon per user rather than one per working
-// directory, because the inbox spans every namespace. That choice means a
+// directory, because the inbox spans every project. That choice means a
 // fixed socket path, which in turn means concurrent starts must be
 // serialized; see lock.go.
 package daemonctl

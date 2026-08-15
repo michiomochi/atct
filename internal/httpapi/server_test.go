@@ -20,13 +20,13 @@ import (
 )
 
 type fixture struct {
-	ctx       context.Context
-	store     *store.Store
-	namespace domain.Namespace
-	goal      domain.Goal
-	tasks     []domain.Task
-	open      domain.Decision
-	answered  domain.Decision
+	ctx      context.Context
+	store    *store.Store
+	project  domain.Project
+	goal     domain.Goal
+	tasks    []domain.Task
+	open     domain.Decision
+	answered domain.Decision
 }
 
 func newFixture(t *testing.T) *fixture {
@@ -83,7 +83,7 @@ func newBareFixture(t *testing.T) *fixture {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	ns, err := db.CreateNamespace(ctx, "fixture", t.TempDir())
+	ns, err := db.CreateProject(ctx, "fixture", t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +91,7 @@ func newBareFixture(t *testing.T) *fixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &fixture{ctx: ctx, store: db, namespace: ns, goal: goal}
+	return &fixture{ctx: ctx, store: db, project: ns, goal: goal}
 }
 
 func newTestServer(t *testing.T, db *store.Store) *httptest.Server {
@@ -279,7 +279,7 @@ func TestHTTPApproveAndRejectCompletionEndpoints(t *testing.T) {
 	defer srv.Close()
 	client := srv.Client()
 
-	approveGoal, err := f.store.CreateGoal(f.ctx, f.namespace.ID, "Approve me", "")
+	approveGoal, err := f.store.CreateGoal(f.ctx, f.project.ID, "Approve me", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -299,7 +299,7 @@ func TestHTTPApproveAndRejectCompletionEndpoints(t *testing.T) {
 		t.Fatalf("approved goal = %+v", approvedGoal)
 	}
 
-	rejectGoal, err := f.store.CreateGoal(f.ctx, f.namespace.ID, "Reject me", "")
+	rejectGoal, err := f.store.CreateGoal(f.ctx, f.project.ID, "Reject me", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -394,7 +394,7 @@ func TestSSEPublishesAllDecisionTransitionsWithExactPayloads(t *testing.T) {
 	f := newBareFixture(t)
 	goals := make([]domain.Goal, 0, 3)
 	for _, title := range []string{"Approve later", "Reject later"} {
-		goal, err := f.store.CreateGoal(f.ctx, f.namespace.ID, title, "")
+		goal, err := f.store.CreateGoal(f.ctx, f.project.ID, title, "")
 		if err != nil {
 			t.Fatal(err)
 		}

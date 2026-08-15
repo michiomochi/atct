@@ -8,7 +8,7 @@ type Option struct {
 	Consequence string `json:"consequence"`
 }
 
-type Namespace struct {
+type Project struct {
 	ID        string    `json:"id"`
 	Name      string    `json:"name"`
 	RootPath  string    `json:"root_path"`
@@ -17,7 +17,7 @@ type Namespace struct {
 
 type Goal struct {
 	ID            string     `json:"id"`
-	NamespaceID   string     `json:"namespace_id"`
+	ProjectID     string     `json:"project_id"`
 	Title         string     `json:"title"`
 	Description   string     `json:"description"`
 	Status        GoalStatus `json:"status"`

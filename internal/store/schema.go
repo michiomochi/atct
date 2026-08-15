@@ -1,7 +1,7 @@
 package store
 
 const schemaSQL = `
-CREATE TABLE IF NOT EXISTS namespaces (
+CREATE TABLE IF NOT EXISTS projects (
   id         TEXT PRIMARY KEY,
   name       TEXT NOT NULL UNIQUE,
   root_path  TEXT NOT NULL UNIQUE,
@@ -10,7 +10,7 @@ CREATE TABLE IF NOT EXISTS namespaces (
 
 CREATE TABLE IF NOT EXISTS goals (
   id             TEXT PRIMARY KEY,
-  namespace_id   TEXT NOT NULL REFERENCES namespaces(id),
+  project_id     TEXT NOT NULL REFERENCES projects(id),
   title          TEXT NOT NULL,
   description    TEXT NOT NULL DEFAULT '',
   status         TEXT NOT NULL,

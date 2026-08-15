@@ -9,7 +9,7 @@ import (
 )
 
 type GoalListIn struct {
-	Cwd string `json:"cwd" jsonschema:"agent working directory; used to derive the namespace automatically"`
+	Cwd string `json:"cwd" jsonschema:"agent working directory; used to derive the project automatically"`
 }
 
 type TaskDeclareIn struct {

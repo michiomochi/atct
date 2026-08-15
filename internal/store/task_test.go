@@ -8,9 +8,9 @@ import (
 func newTestGoal(t *testing.T, s *Store) string {
 	t.Helper()
 	ctx := context.Background()
-	ns, err := s.CreateNamespace(ctx, "atct", "/repos/atct")
+	ns, err := s.CreateProject(ctx, "atct", "/repos/atct")
 	if err != nil {
-		t.Fatalf("CreateNamespace: %v", err)
+		t.Fatalf("CreateProject: %v", err)
 	}
 	g, err := s.CreateGoal(ctx, ns.ID, "goal", "")
 	if err != nil {

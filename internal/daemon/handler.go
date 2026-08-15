@@ -16,7 +16,7 @@ var ErrTaskAlreadyClaimed = errors.New("task already claimed")
 
 func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage, error) {
 	switch req.Method {
-	case "namespace.create":
+	case "project.create":
 		var p struct {
 			Name     string `json:"name"`
 			RootPath string `json:"root_path"`
@@ -24,7 +24,7 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, err
 		}
-		ns, err := d.store.CreateNamespace(ctx, p.Name, p.RootPath)
+		ns, err := d.store.CreateProject(ctx, p.Name, p.RootPath)
 		return marshal(ns, err)
 
 	case "goal.list":
@@ -35,7 +35,7 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, err
 		}
-		ns, err := d.store.ResolveNamespace(ctx, p.Cwd)
+		ns, err := d.store.ResolveProject(ctx, p.Cwd)
 		if err != nil {
 			return nil, err
 		}
@@ -55,7 +55,7 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 			return nil, err
 		}
 		return marshal(map[string]any{
-			"namespace":          ns,
+			"project":            ns,
 			"goals":              goals,
 			"answered_decisions": mine,
 			"orphaned_decisions": orphaned,

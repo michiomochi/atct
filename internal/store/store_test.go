@@ -20,7 +20,7 @@ func TestOpenCreatesSchemaAndEnablesWAL(t *testing.T) {
 		t.Fatalf("journal_mode = %q, want %q", mode, "wal")
 	}
 
-	for _, table := range []string{"namespaces", "goals", "tasks", "decisions"} {
+	for _, table := range []string{"projects", "goals", "tasks", "decisions"} {
 		var name string
 		err := s.DB().QueryRow(
 			"SELECT name FROM sqlite_master WHERE type='table' AND name=?", table,

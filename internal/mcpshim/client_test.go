@@ -35,8 +35,8 @@ func TestClientCallReachesDaemon(t *testing.T) {
 	}
 
 	client := NewClient(sock)
-	var ns domain.Namespace
-	err = client.Call(ctx, "namespace.create",
+	var ns domain.Project
+	err = client.Call(ctx, "project.create",
 		map[string]string{"name": "atct", "root_path": "/repos/atct"}, &ns)
 	if err != nil {
 		t.Fatalf("Call: %v", err)

@@ -13,11 +13,11 @@ import (
 
 var ErrGoalNotFound = errors.New("goal not found")
 
-func (s *Store) CreateGoal(ctx context.Context, namespaceID, title, description string) (domain.Goal, error) {
+func (s *Store) CreateGoal(ctx context.Context, projectID, title, description string) (domain.Goal, error) {
 	now := time.Now().UTC()
 	g := domain.Goal{
 		ID:          uuid.NewString(),
-		NamespaceID: namespaceID,
+		ProjectID:   projectID,
 		Title:       title,
 		Description: description,
 		Status:      domain.GoalActive,
@@ -25,9 +25,9 @@ func (s *Store) CreateGoal(ctx context.Context, namespaceID, title, description 
 		UpdatedAt:   now,
 	}
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO goals (id, namespace_id, title, description, status, result_summary, created_at, updated_at)
+		`INSERT INTO goals (id, project_id, title, description, status, result_summary, created_at, updated_at)
 		 VALUES (?, ?, ?, ?, ?, '', ?, ?)`,
-		g.ID, g.NamespaceID, g.Title, g.Description, string(g.Status),
+		g.ID, g.ProjectID, g.Title, g.Description, string(g.Status),
 		now.Format(time.RFC3339), now.Format(time.RFC3339))
 	if err != nil {
 		return domain.Goal{}, fmt.Errorf("insert goal: %w", err)
@@ -38,7 +38,7 @@ func (s *Store) CreateGoal(ctx context.Context, namespaceID, title, description 
 func scanGoal(sc interface{ Scan(...any) error }) (domain.Goal, error) {
 	var g domain.Goal
 	var status, createdAt, updatedAt string
-	if err := sc.Scan(&g.ID, &g.NamespaceID, &g.Title, &g.Description,
+	if err := sc.Scan(&g.ID, &g.ProjectID, &g.Title, &g.Description,
 		&status, &g.ResultSummary, &createdAt, &updatedAt); err != nil {
 		return domain.Goal{}, err
 	}
@@ -53,7 +53,7 @@ func scanGoal(sc interface{ Scan(...any) error }) (domain.Goal, error) {
 	return g, nil
 }
 
-const goalColumns = `id, namespace_id, title, description, status, result_summary, created_at, updated_at`
+const goalColumns = `id, project_id, title, description, status, result_summary, created_at, updated_at`
 
 func (s *Store) GetGoal(ctx context.Context, id string) (domain.Goal, error) {
 	row := s.db.QueryRowContext(ctx, `SELECT `+goalColumns+` FROM goals WHERE id = ?`, id)
@@ -64,9 +64,9 @@ func (s *Store) GetGoal(ctx context.Context, id string) (domain.Goal, error) {
 	return g, err
 }
 
-func (s *Store) ListGoals(ctx context.Context, namespaceID string) ([]domain.Goal, error) {
+func (s *Store) ListGoals(ctx context.Context, projectID string) ([]domain.Goal, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT `+goalColumns+` FROM goals WHERE namespace_id = ? ORDER BY created_at`, namespaceID)
+		`SELECT `+goalColumns+` FROM goals WHERE project_id = ? ORDER BY created_at`, projectID)
 	if err != nil {
 		return nil, fmt.Errorf("query goals: %w", err)
 	}

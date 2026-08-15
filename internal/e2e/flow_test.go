@@ -18,9 +18,9 @@ func TestFullGoalLifecycle(t *testing.T) {
 	}
 	defer s.Close()
 
-	ns, err := s.CreateNamespace(ctx, "atct", "/repos/atct")
+	ns, err := s.CreateProject(ctx, "atct", "/repos/atct")
 	if err != nil {
-		t.Fatalf("CreateNamespace: %v", err)
+		t.Fatalf("CreateProject: %v", err)
 	}
 	g, err := s.CreateGoal(ctx, ns.ID, "Build an MCP server", "eight tools")
 	if err != nil {
@@ -88,7 +88,7 @@ func TestAnswerSurvivesSessionChange(t *testing.T) {
 	if err != nil {
 		t.Fatalf("store.Open: %v", err)
 	}
-	ns, _ := s.CreateNamespace(ctx, "atct", "/repos/atct")
+	ns, _ := s.CreateProject(ctx, "atct", "/repos/atct")
 	g, _ := s.CreateGoal(ctx, ns.ID, "goal", "")
 	d, err := s.AskDecision(ctx, store.AskInput{
 		GoalID: g.ID, Kind: domain.KindDecision, Question: "What should we do?", RunID: "run-1",

@@ -8,7 +8,7 @@ export interface Option {
 
 export interface Goal {
   id: string;
-  namespace_id: string;
+  project_id: string;
   title: string;
   description: string;
   status: string;

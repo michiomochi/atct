@@ -42,7 +42,7 @@ func TestDaemonRoundTrip(t *testing.T) {
 	defer conn.Close()
 
 	params, _ := json.Marshal(map[string]string{"name": "atct", "root_path": "/repos/atct"})
-	req, _ := json.Marshal(rpc.Request{Method: "namespace.create", Params: params})
+	req, _ := json.Marshal(rpc.Request{Method: "project.create", Params: params})
 	if _, err := conn.Write(append(req, '\n')); err != nil {
 		t.Fatalf("write: %v", err)
 	}

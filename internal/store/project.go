@@ -14,48 +14,48 @@ import (
 	"github.com/michiomochi/atct/internal/domain"
 )
 
-var ErrNamespaceNotFound = errors.New("namespace not found for cwd")
+var ErrProjectNotFound = errors.New("project not found for cwd")
 
-func (s *Store) CreateNamespace(ctx context.Context, name, rootPath string) (domain.Namespace, error) {
-	rootPath = normalizeNamespacePath(rootPath)
-	ns := domain.Namespace{
+func (s *Store) CreateProject(ctx context.Context, name, rootPath string) (domain.Project, error) {
+	rootPath = normalizeProjectPath(rootPath)
+	ns := domain.Project{
 		ID:        uuid.NewString(),
 		Name:      name,
 		RootPath:  rootPath,
 		CreatedAt: time.Now().UTC(),
 	}
 	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO namespaces (id, name, root_path, created_at) VALUES (?, ?, ?, ?)
+		INSERT INTO projects (id, name, root_path, created_at) VALUES (?, ?, ?, ?)
 	`, ns.ID, ns.Name, ns.RootPath, ns.CreatedAt.Format(time.RFC3339))
 	if err != nil {
-		return domain.Namespace{}, fmt.Errorf("insert namespace: %w", err)
+		return domain.Project{}, fmt.Errorf("insert project: %w", err)
 	}
 	return ns, nil
 }
 
-// ResolveNamespace maps a worktree to its main repository before selecting the
+// ResolveProject maps a worktree to its main repository before selecting the
 // longest matching root_path. This prevents a worktree from becoming a second
-// namespace for the same repository.
-func (s *Store) ResolveNamespace(ctx context.Context, cwd string) (domain.Namespace, error) {
+// project for the same repository.
+func (s *Store) ResolveProject(ctx context.Context, cwd string) (domain.Project, error) {
 	cwd = normalizeWorktreePath(ctx, cwd, "git")
-	cwd = normalizeNamespacePath(cwd)
+	cwd = normalizeProjectPath(cwd)
 	row := s.db.QueryRowContext(ctx, `
-		SELECT id, name, root_path, created_at FROM namespaces
+		SELECT id, name, root_path, created_at FROM projects
 		WHERE ? = root_path OR ? LIKE root_path || '/%'
 		ORDER BY LENGTH(root_path) DESC LIMIT 1
 	`, cwd, cwd)
 
-	var ns domain.Namespace
+	var ns domain.Project
 	var createdAt string
 	if err := row.Scan(&ns.ID, &ns.Name, &ns.RootPath, &createdAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return domain.Namespace{}, fmt.Errorf("%w: %s", ErrNamespaceNotFound, cwd)
+			return domain.Project{}, fmt.Errorf("%w: %s", ErrProjectNotFound, cwd)
 		}
-		return domain.Namespace{}, fmt.Errorf("scan namespace: %w", err)
+		return domain.Project{}, fmt.Errorf("scan project: %w", err)
 	}
 	t, err := time.Parse(time.RFC3339, createdAt)
 	if err != nil {
-		return domain.Namespace{}, fmt.Errorf("parse created_at: %w", err)
+		return domain.Project{}, fmt.Errorf("parse created_at: %w", err)
 	}
 	ns.CreatedAt = t
 	return ns, nil
@@ -106,8 +106,8 @@ func normalizeWorktreePath(ctx context.Context, cwd, gitCommand string) string {
 	if err != nil {
 		return cwd
 	}
-	gitDir = normalizeNamespacePath(gitDir)
-	commonDir = normalizeNamespacePath(commonDir)
+	gitDir = normalizeProjectPath(gitDir)
+	commonDir = normalizeProjectPath(commonDir)
 	if filepath.Clean(gitDir) == filepath.Clean(commonDir) {
 		return cwd
 	}
@@ -117,7 +117,7 @@ func normalizeWorktreePath(ctx context.Context, cwd, gitCommand string) string {
 	return filepath.Dir(commonDir)
 }
 
-func normalizeNamespacePath(path string) string {
+func normalizeProjectPath(path string) string {
 	path = strings.TrimRight(path, "/")
 	if resolved, err := filepath.EvalSymlinks(path); err == nil {
 		path = resolved

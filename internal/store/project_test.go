@@ -18,35 +18,35 @@ func newTestStore(t *testing.T) *Store {
 	return s
 }
 
-func TestResolveNamespacePrefersLongestMatch(t *testing.T) {
+func TestResolveProjectPrefersLongestMatch(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 
-	if _, err := s.CreateNamespace(ctx, "outer", "/repos"); err != nil {
-		t.Fatalf("CreateNamespace outer: %v", err)
+	if _, err := s.CreateProject(ctx, "outer", "/repos"); err != nil {
+		t.Fatalf("CreateProject outer: %v", err)
 	}
-	if _, err := s.CreateNamespace(ctx, "inner", "/repos/atct"); err != nil {
-		t.Fatalf("CreateNamespace inner: %v", err)
+	if _, err := s.CreateProject(ctx, "inner", "/repos/atct"); err != nil {
+		t.Fatalf("CreateProject inner: %v", err)
 	}
 
-	got, err := s.ResolveNamespace(ctx, "/repos/atct/internal/store")
+	got, err := s.ResolveProject(ctx, "/repos/atct/internal/store")
 	if err != nil {
-		t.Fatalf("ResolveNamespace: %v", err)
+		t.Fatalf("ResolveProject: %v", err)
 	}
 	if got.Name != "inner" {
 		t.Fatalf("got %q, want %q", got.Name, "inner")
 	}
 }
 
-func TestResolveNamespaceErrorsWhenNoMatch(t *testing.T) {
+func TestResolveProjectErrorsWhenNoMatch(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	if _, err := s.ResolveNamespace(ctx, "/somewhere/else"); err == nil {
-		t.Fatal("expected error when no namespace matches, got nil")
+	if _, err := s.ResolveProject(ctx, "/somewhere/else"); err == nil {
+		t.Fatal("expected error when no project matches, got nil")
 	}
 }
 
-func TestResolveNamespaceNormalRepositorySubdirectory(t *testing.T) {
+func TestResolveProjectNormalRepositorySubdirectory(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git is unavailable")
 	}
@@ -59,19 +59,19 @@ func TestResolveNamespaceNormalRepositorySubdirectory(t *testing.T) {
 	runTestGit(t, repo, "init", "-q")
 
 	s := newTestStore(t)
-	if _, err := s.CreateNamespace(ctx, "repo", repo); err != nil {
-		t.Fatalf("CreateNamespace: %v", err)
+	if _, err := s.CreateProject(ctx, "repo", repo); err != nil {
+		t.Fatalf("CreateProject: %v", err)
 	}
-	got, err := s.ResolveNamespace(ctx, filepath.Join(repo, "internal", "store"))
+	got, err := s.ResolveProject(ctx, filepath.Join(repo, "internal", "store"))
 	if err != nil {
-		t.Fatalf("ResolveNamespace: %v", err)
+		t.Fatalf("ResolveProject: %v", err)
 	}
 	if got.Name != "repo" {
 		t.Fatalf("got %q, want %q", got.Name, "repo")
 	}
 }
 
-func TestResolveNamespaceSeparatesNamespacesInsideRepository(t *testing.T) {
+func TestResolveProjectSeparatesProjectsInsideRepository(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git is unavailable")
 	}
@@ -89,30 +89,30 @@ func TestResolveNamespaceSeparatesNamespacesInsideRepository(t *testing.T) {
 	runTestGit(t, repo, "init", "-q")
 
 	s := newTestStore(t)
-	if _, err := s.CreateNamespace(ctx, "alpha", alpha); err != nil {
-		t.Fatalf("CreateNamespace alpha: %v", err)
+	if _, err := s.CreateProject(ctx, "alpha", alpha); err != nil {
+		t.Fatalf("CreateProject alpha: %v", err)
 	}
-	if _, err := s.CreateNamespace(ctx, "beta", beta); err != nil {
-		t.Fatalf("CreateNamespace beta: %v", err)
+	if _, err := s.CreateProject(ctx, "beta", beta); err != nil {
+		t.Fatalf("CreateProject beta: %v", err)
 	}
 
-	gotAlpha, err := s.ResolveNamespace(ctx, filepath.Join(alpha, "src"))
+	gotAlpha, err := s.ResolveProject(ctx, filepath.Join(alpha, "src"))
 	if err != nil {
-		t.Fatalf("ResolveNamespace alpha: %v", err)
+		t.Fatalf("ResolveProject alpha: %v", err)
 	}
 	if gotAlpha.Name != "alpha" {
 		t.Fatalf("alpha got %q, want %q", gotAlpha.Name, "alpha")
 	}
-	gotBeta, err := s.ResolveNamespace(ctx, filepath.Join(beta, "src"))
+	gotBeta, err := s.ResolveProject(ctx, filepath.Join(beta, "src"))
 	if err != nil {
-		t.Fatalf("ResolveNamespace beta: %v", err)
+		t.Fatalf("ResolveProject beta: %v", err)
 	}
 	if gotBeta.Name != "beta" {
 		t.Fatalf("beta got %q, want %q", gotBeta.Name, "beta")
 	}
 }
 
-func TestResolveNamespaceMatchesSymlinkedCWD(t *testing.T) {
+func TestResolveProjectMatchesSymlinkedCWD(t *testing.T) {
 	ctx := context.Background()
 	realRoot := filepath.Join(t.TempDir(), "real")
 	symlinkRoot := filepath.Join(t.TempDir(), "symlink")
@@ -124,12 +124,12 @@ func TestResolveNamespaceMatchesSymlinkedCWD(t *testing.T) {
 	}
 
 	s := newTestStore(t)
-	if _, err := s.CreateNamespace(ctx, "real", realRoot); err != nil {
-		t.Fatalf("CreateNamespace: %v", err)
+	if _, err := s.CreateProject(ctx, "real", realRoot); err != nil {
+		t.Fatalf("CreateProject: %v", err)
 	}
-	got, err := s.ResolveNamespace(ctx, symlinkRoot)
+	got, err := s.ResolveProject(ctx, symlinkRoot)
 	if err != nil {
-		t.Fatalf("ResolveNamespace: %v", err)
+		t.Fatalf("ResolveProject: %v", err)
 	}
 	if got.Name != "real" {
 		t.Fatalf("got %q, want %q", got.Name, "real")
@@ -144,7 +144,7 @@ func runTestGit(t *testing.T, dir string, args ...string) {
 	}
 }
 
-func TestResolveNamespaceMapsWorktreeToMainRepository(t *testing.T) {
+func TestResolveProjectMapsWorktreeToMainRepository(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git is unavailable")
 	}
@@ -176,12 +176,12 @@ func TestResolveNamespaceMapsWorktreeToMainRepository(t *testing.T) {
 	}
 
 	s := newTestStore(t)
-	if _, err := s.CreateNamespace(ctx, "main", mainRepo); err != nil {
-		t.Fatalf("CreateNamespace: %v", err)
+	if _, err := s.CreateProject(ctx, "main", mainRepo); err != nil {
+		t.Fatalf("CreateProject: %v", err)
 	}
-	got, err := s.ResolveNamespace(ctx, nested)
+	got, err := s.ResolveProject(ctx, nested)
 	if err != nil {
-		t.Fatalf("ResolveNamespace: %v", err)
+		t.Fatalf("ResolveProject: %v", err)
 	}
 	if got.Name != "main" {
 		t.Fatalf("got %q, want %q", got.Name, "main")

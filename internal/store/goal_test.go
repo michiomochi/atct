@@ -10,9 +10,9 @@ import (
 func TestCreateGoalStartsActive(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	ns, err := s.CreateNamespace(ctx, "atct", "/repos/atct")
+	ns, err := s.CreateProject(ctx, "atct", "/repos/atct")
 	if err != nil {
-		t.Fatalf("CreateNamespace: %v", err)
+		t.Fatalf("CreateProject: %v", err)
 	}
 
 	g, err := s.CreateGoal(ctx, ns.ID, "Build an MCP server", "Implement seven tools")
