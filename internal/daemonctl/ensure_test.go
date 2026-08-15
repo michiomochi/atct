@@ -4,8 +4,10 @@ import (
 	"errors"
 	"net"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"testing"
@@ -225,5 +227,24 @@ func TestEnsureReportsAlivePIDWithSilentSocket(t *testing.T) {
 	}
 	if !ProcessAlive(os.Getpid()) {
 		t.Fatal("the test process was signalled")
+	}
+}
+
+func TestEnsureReportsMissingExecutableWithInstallGuidance(t *testing.T) {
+	dir := socketDir(t)
+	t.Setenv("PATH", dir)
+	cfg := Config{
+		Dir:        dir,
+		Version:    "v-test",
+		Executable: "atct-test-missing-executable",
+		ListenAddr: "127.0.0.1:8787",
+	}
+
+	_, err := Ensure(cfg)
+	if !errors.Is(err, exec.ErrNotFound) {
+		t.Fatalf("err = %v, want exec.ErrNotFound", err)
+	}
+	if !strings.Contains(err.Error(), "go install") {
+		t.Fatalf("err = %v, want go install guidance", err)
 	}
 }

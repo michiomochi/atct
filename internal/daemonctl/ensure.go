@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"syscall"
 	"time"
 )
@@ -94,6 +95,15 @@ func start(cfg Config) (Registry, error) {
 	// outlives the shim or shell that started it.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	if err := cmd.Start(); err != nil {
+		if errors.Is(err, exec.ErrNotFound) {
+			searchedDir := filepath.Dir(os.Args[0])
+			if executable, executableErr := os.Executable(); executableErr == nil {
+				searchedDir = filepath.Dir(executable)
+			}
+			return Registry{}, fmt.Errorf(
+				"start daemon: %q was not found; searched for it in %s (beside atct-mcp) and in PATH. Put atct next to atct-mcp, or install it with `brew install atct` or `go install github.com/michiomochi/atct/cmd/atct@latest`: %w",
+				cfg.Executable, searchedDir, err)
+		}
 		return Registry{}, fmt.Errorf("start daemon: %w", err)
 	}
 	// The daemon is detached; release the caller's handle on it so no zombie
