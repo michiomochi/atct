@@ -1,0 +1,14 @@
+---
+import Shell from "../../layouts/Shell.astro";
+import { GoalDetail } from "../../components/GoalDetail";
+
+export function getStaticPaths() {
+  return [{ params: { id: "_" } }];
+}
+
+const id = Astro.params.id ?? "_";
+---
+
+<Shell title="Goal 詳細">
+  <GoalDetail id={id} client:load />
+</Shell>

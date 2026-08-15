@@ -1,0 +1,49 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    font-family: theme("fontFamily.sans");
+    color: theme("colors.ink.950");
+    background: theme("colors.paper");
+    font-synthesis: none;
+    text-rendering: optimizeLegibility;
+  }
+
+  body {
+    min-width: 20rem;
+    margin: 0;
+    background: theme("colors.paper");
+  }
+
+  a {
+    color: inherit;
+  }
+
+  button,
+  input,
+  textarea {
+    font: inherit;
+  }
+}
+
+@layer components {
+  .table-scroll {
+    max-width: 100%;
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+  }
+
+  .text-clamp-2 {
+    display: -webkit-box;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+  }
+
+  .focus-ring:focus-visible {
+    outline: 2px solid theme("colors.accent.600");
+    outline-offset: 2px;
+  }
+}

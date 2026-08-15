@@ -1,0 +1,37 @@
+---
+import "../styles/global.css";
+
+interface Props {
+  title: string;
+  description?: string;
+}
+
+const { title, description = "ATCT のタスクと判断を確認します。" } = Astro.props;
+---
+
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width" />
+    <meta name="description" content={description} />
+    <title>{title} | ATCT</title>
+  </head>
+  <body>
+    <header class="border-b border-line bg-surface">
+      <div class="mx-auto flex max-w-7xl items-center justify-between gap-6 px-5 py-4 lg:px-8">
+        <a class="focus-ring font-display text-base font-semibold tracking-tight text-ink-950" href="/">
+          ATCT
+        </a>
+        <nav aria-label="メインナビゲーション">
+          <a class="focus-ring text-sm font-medium text-ink-700 underline decoration-transparent underline-offset-4 transition hover:text-ink-950 hover:decoration-ink-300" href="/">
+            受信箱
+          </a>
+        </nav>
+      </div>
+    </header>
+    <main class="mx-auto w-full max-w-7xl px-5 py-8 lg:px-8 lg:py-10">
+      <slot />
+    </main>
+  </body>
+</html>
