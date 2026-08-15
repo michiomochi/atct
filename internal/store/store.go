@@ -8,7 +8,8 @@ import (
 )
 
 type Store struct {
-	db *sql.DB
+	db     *sql.DB
+	notify *notifier
 }
 
 func Open(path string) (*Store, error) {
@@ -35,7 +36,7 @@ func Open(path string) (*Store, error) {
 		return nil, fmt.Errorf("create schema: %w", err)
 	}
 
-	return &Store{db: db}, nil
+	return &Store{db: db, notify: newNotifier()}, nil
 }
 
 func (s *Store) DB() *sql.DB { return s.db }

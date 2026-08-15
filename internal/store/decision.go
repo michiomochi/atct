@@ -65,6 +65,8 @@ func (s *Store) AskDecision(ctx context.Context, in AskInput) (domain.Decision, 
 	if err != nil {
 		return domain.Decision{}, fmt.Errorf("insert decision: %w", err)
 	}
+	s.notify.publish(d.ID)
+	s.notify.publishAll()
 	return d, nil
 }
 
@@ -161,6 +163,8 @@ func (s *Store) AnswerDecision(ctx context.Context, in AnswerInput) (domain.Deci
 	if n == 0 {
 		return domain.Decision{}, fmt.Errorf("%w: %s", ErrDecisionNotOpen, in.DecisionID)
 	}
+	s.notify.publish(in.DecisionID)
+	s.notify.publishAll()
 	return s.GetDecision(ctx, in.DecisionID)
 }
 
@@ -178,6 +182,8 @@ func (s *Store) WithdrawDecision(ctx context.Context, decisionID, reason string)
 	if n == 0 {
 		return fmt.Errorf("%w: %s", ErrDecisionNotOpen, decisionID)
 	}
+	s.notify.publish(decisionID)
+	s.notify.publishAll()
 	return nil
 }
 
@@ -230,6 +236,12 @@ func (s *Store) PollDecisions(ctx context.Context, runID string, decisionID stri
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("commit: %w", err)
+	}
+	for _, d := range out {
+		s.notify.publish(d.ID)
+	}
+	if len(out) > 0 {
+		s.notify.publishAll()
 	}
 	return out, nil
 }

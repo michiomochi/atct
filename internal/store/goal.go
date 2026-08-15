@@ -148,6 +148,8 @@ func (s *Store) ApproveCompletion(ctx context.Context, decisionID, answeredBy st
 	if err := tx.Commit(); err != nil {
 		return domain.Goal{}, fmt.Errorf("commit: %w", err)
 	}
+	s.notify.publish(decisionID)
+	s.notify.publishAll()
 	return s.GetGoal(ctx, goalID)
 }
 
