@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -18,9 +19,49 @@ import (
 
 const defaultListenAddr = "127.0.0.1:8787"
 
+type cliConfig struct {
+	listenAddr string
+}
+
+var errInvalidArgs = errors.New("invalid command line")
+
+func printUsage() {
+	fmt.Fprintln(os.Stderr, "Usage: atct daemon [options]")
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Options:")
+	fmt.Fprintln(os.Stderr, "  -listen address")
+}
+
+func parseArgs(args []string) (cliConfig, error) {
+	if len(args) < 1 {
+		printUsage()
+		return cliConfig{}, errInvalidArgs
+	}
+	if args[0] != "daemon" {
+		fmt.Fprintf(os.Stderr, "unknown subcommand %q\n", args[0])
+		printUsage()
+		return cliConfig{}, errInvalidArgs
+	}
+
+	flags := flag.NewFlagSet("daemon", flag.ExitOnError)
+	flags.SetOutput(os.Stderr)
+	flags.Usage = printUsage
+	listenAddr := flags.String("listen", defaultListenAddr, "HTTP listen address")
+	flags.Parse(args[1:])
+	if len(flags.Args()) > 0 {
+		fmt.Fprintf(os.Stderr, "unexpected argument %q\n", flags.Args()[0])
+		printUsage()
+		return cliConfig{}, errInvalidArgs
+	}
+
+	return cliConfig{listenAddr: *listenAddr}, nil
+}
+
 func main() {
-	listenAddr := flag.String("listen", defaultListenAddr, "HTTP listen address")
-	flag.Parse()
+	config, err := parseArgs(os.Args[1:])
+	if err != nil {
+		os.Exit(2)
+	}
 
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -42,7 +83,7 @@ func main() {
 
 	sock := filepath.Join(dir, "atct.sock")
 	d := daemon.New(s)
-	httpServer := &http.Server{Addr: *listenAddr, Handler: d.HTTPHandler()}
+	httpServer := &http.Server{Addr: config.listenAddr, Handler: d.HTTPHandler()}
 
 	rpcErr := make(chan error, 1)
 	go func() {
@@ -66,7 +107,7 @@ func main() {
 		_ = httpServer.Shutdown(shutdownCtx)
 	}()
 
-	log.Printf("atct daemon listening on unix socket %s and HTTP %s", sock, *listenAddr)
+	log.Printf("atct daemon listening on unix socket %s and HTTP %s", sock, config.listenAddr)
 	select {
 	case err := <-rpcErr:
 		if err != nil {

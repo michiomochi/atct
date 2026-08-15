@@ -1,0 +1,48 @@
+package main
+
+import "testing"
+
+func TestParseArgs(t *testing.T) {
+	tests := []struct {
+		name       string
+		args       []string
+		wantListen string
+		wantErr    bool
+	}{
+		{
+			name:       "daemon parses listen flag after subcommand",
+			args:       []string{"daemon", "-listen", "127.0.0.1:18787"},
+			wantListen: "127.0.0.1:18787",
+		},
+		{
+			name:       "daemon uses loopback default",
+			args:       []string{"daemon"},
+			wantListen: defaultListenAddr,
+		},
+		{
+			name:    "missing subcommand is rejected",
+			args:    []string{},
+			wantErr: true,
+		},
+		{
+			name:    "unknown subcommand is rejected",
+			args:    []string{"serve"},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := parseArgs(tt.args)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("parseArgs(%q) error = %v, wantErr %v", tt.args, err, tt.wantErr)
+			}
+			if tt.wantErr {
+				return
+			}
+			if got.listenAddr != tt.wantListen {
+				t.Fatalf("parseArgs(%q) listenAddr = %q, want %q", tt.args, got.listenAddr, tt.wantListen)
+			}
+		})
+	}
+}
