@@ -1520,7 +1520,20 @@ install it system-wide as part of this task.**
 
 - [ ] **Step 4: Ignore the build output**
 
-Add `dist/` to `.gitignore`.
+Add `/dist/` to `.gitignore` — **anchored with a leading slash**.
+
+An unanchored `dist/` matches a directory named `dist` at any depth, which
+silently swallows `web/dist/`. That directory is committed on purpose so
+contributors with only the Go toolchain can build, and Astro regenerates
+hash-named assets on every build, so the loss would appear as a broken UI
+rather than as a git error.
+
+Verify the anchor:
+
+```bash
+git check-ignore -v web/dist/_astro/probe.js   # must print nothing
+git check-ignore -v dist/atct                  # must match /dist/
+```
 
 - [ ] **Step 5: Commit**
 

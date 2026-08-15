@@ -12,4 +12,6 @@ doc/research/
 # Frontend
 node_modules/
 .astro/
-dist/
+# GoReleaser output. Anchored to the repository root so it does not swallow
+# web/dist/, which is committed on purpose.
+/dist/
