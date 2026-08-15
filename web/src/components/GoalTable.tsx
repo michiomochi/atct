@@ -7,17 +7,17 @@ interface Props {
 }
 
 export function GoalTable({ goals }: Props) {
-  if (goals.length === 0) return <EmptyState>進行中の Goal はありません。</EmptyState>;
+  if (goals.length === 0) return <EmptyState>No active goals are in progress. Resume work on a goal to see it here.</EmptyState>;
 
   return (
     <div className="table-scroll">
       <table className="min-w-[42rem] w-full border-collapse text-left text-sm">
-        <caption className="sr-only">進行中の Goal 一覧</caption>
+        <caption className="sr-only">Active goal list</caption>
         <thead className="border-b-2 border-ink-300 text-xs uppercase tracking-wide text-ink-700">
           <tr>
             <th className="px-3 py-3 font-semibold" scope="col">Goal</th>
-            <th className="w-36 px-3 py-3 font-semibold" scope="col">状態</th>
-            <th className="w-48 px-3 py-3 font-semibold" scope="col">更新日時</th>
+            <th className="w-36 px-3 py-3 font-semibold" scope="col">Status</th>
+            <th className="w-48 px-3 py-3 font-semibold" scope="col">Updated at</th>
           </tr>
         </thead>
         <tbody>

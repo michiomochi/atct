@@ -40,11 +40,11 @@ export function validateAnswer(input: AnswerInput): AnswerErrors {
   const hasText = input.answer_text.trim().length > 0;
 
   if (input.answered_by.trim().length === 0) {
-    errors.answered_by = "回答者を入力してください。";
+    errors.answered_by = "Enter the person answering this decision.";
   }
 
   if (!hasLabel && !hasText) {
-    const message = "ラベルまたは回答文を入力してください。";
+    const message = "Enter a label or answer text.";
     errors.answer_label = message;
     errors.answer_text = message;
   }
@@ -57,10 +57,10 @@ export function encodePathSegment(value: string): string {
 }
 
 export function formatDate(value: string | undefined): string {
-  if (!value) return "—";
+  if (!value) return "-";
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "—";
-  return new Intl.DateTimeFormat("ja-JP", {
+  if (Number.isNaN(date.getTime())) return "-";
+  return new Intl.DateTimeFormat("en-US", {
     dateStyle: "medium",
     timeStyle: "short",
   }).format(date);
@@ -68,18 +68,18 @@ export function formatDate(value: string | undefined): string {
 
 export function statusLabel(status: string): string {
   const labels: Record<string, string> = {
-    todo: "未着手",
-    doing: "進行中",
-    done: "完了",
-    blocked: "停止中",
-    open: "判断待ち",
-    answered: "回答済み",
-    applied: "適用済み",
-    approved: "承認済み",
-    rejected: "却下済み",
-    withdrawn: "取り下げ",
-    active: "進行中",
-    completed: "完了",
+    todo: "Not started",
+    doing: "In progress",
+    done: "Completed",
+    blocked: "Blocked",
+    open: "Awaiting answer",
+    answered: "Answered",
+    applied: "Applied",
+    approved: "Approved",
+    rejected: "Rejected",
+    withdrawn: "Withdrawn",
+    active: "In progress",
+    completed: "Completed",
   };
   return labels[status] ?? status;
 }

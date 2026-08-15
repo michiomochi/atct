@@ -6,11 +6,11 @@ interface Props {
   description?: string;
 }
 
-const { title, description = "ATCT のタスクと判断を確認します。" } = Astro.props;
+const { title, description = "Review ATCT tasks and decisions." } = Astro.props;
 ---
 
 <!doctype html>
-<html lang="ja">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width" />
@@ -23,9 +23,9 @@ const { title, description = "ATCT のタスクと判断を確認します。" }
         <a class="focus-ring font-display text-base font-semibold tracking-tight text-ink-950" href="/">
           ATCT
         </a>
-        <nav aria-label="メインナビゲーション">
+        <nav aria-label="Main navigation">
           <a class="focus-ring text-sm font-medium text-ink-700 underline decoration-transparent underline-offset-4 transition hover:text-ink-950 hover:decoration-ink-300" href="/">
-            受信箱
+            Inbox
           </a>
         </nav>
       </div>

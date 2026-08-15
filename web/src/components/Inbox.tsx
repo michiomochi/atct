@@ -12,7 +12,7 @@ type LoadState =
   | { kind: "error"; message: string };
 
 function errorMessage(reason: unknown): string {
-  return reason instanceof Error ? reason.message : "受信箱の取得に失敗しました。";
+  return reason instanceof Error ? reason.message : "Could not load the inbox.";
 }
 
 export function Inbox() {
@@ -39,32 +39,32 @@ export function Inbox() {
     <main className="space-y-10">
       <div className="border-b border-line pb-6">
         <p className="font-mono text-xs uppercase tracking-[0.18em] text-accent-700">Inbox</p>
-        <h1 className="mt-2 font-display text-3xl font-semibold tracking-tight text-ink-950">受信箱</h1>
+        <h1 className="mt-2 font-display text-3xl font-semibold tracking-tight text-ink-950">Inbox</h1>
         <p className="mt-3 max-w-2xl text-sm leading-6 text-ink-700">
-          判断、適用待ちの回答、注意が必要な Task、進行中の Goal を確認できます。
+          Review decisions awaiting answers, answered decisions that are not yet applied, tasks needing attention, and active goals.
         </p>
       </div>
 
-      <Section title="判断待ち" count={data?.open_decisions.length}>
-        {state.kind === "loading" && <AreaLoading label="判断待ちを読み込み中" />}
+      <Section title="Decisions awaiting an answer" count={data?.open_decisions.length}>
+        {state.kind === "loading" && <AreaLoading label="Decisions awaiting an answer" />}
         {state.kind === "error" && <ErrorState message={state.message} onRetry={retry} />}
-        {data && <DecisionTable decisions={data.open_decisions} emptyText="判断待ちはありません。" />}
+        {data && <DecisionTable decisions={data.open_decisions} emptyText="No decisions are waiting for an answer. Answer a decision to move it forward." />}
       </Section>
 
-      <Section title="回答済み・未適用" count={data?.unapplied_decisions.length}>
-        {state.kind === "loading" && <AreaLoading label="回答済み・未適用を読み込み中" />}
+      <Section title="Answered decisions not yet applied" count={data?.unapplied_decisions.length}>
+        {state.kind === "loading" && <AreaLoading label="Answered decisions not yet applied" />}
         {state.kind === "error" && <ErrorState message={state.message} onRetry={retry} />}
-        {data && <DecisionTable decisions={data.unapplied_decisions} emptyText="回答済み・未適用はありません。" />}
+        {data && <DecisionTable decisions={data.unapplied_decisions} emptyText="No answered decisions are waiting to be applied. Apply an answer when it is ready." />}
       </Section>
 
-      <Section title="注意が必要な Task" count={data?.attention_tasks.length}>
-        {state.kind === "loading" && <AreaLoading label="注意が必要な Task を読み込み中" />}
+      <Section title="Tasks needing attention" count={data?.attention_tasks.length}>
+        {state.kind === "loading" && <AreaLoading label="Tasks needing attention" />}
         {state.kind === "error" && <ErrorState message={state.message} onRetry={retry} />}
         {data && <AttentionTaskTable tasks={data.attention_tasks} />}
       </Section>
 
-      <Section title="進行中の Goal" count={data?.active_goals.length}>
-        {state.kind === "loading" && <AreaLoading label="進行中の Goal を読み込み中" />}
+      <Section title="Active goals" count={data?.active_goals.length}>
+        {state.kind === "loading" && <AreaLoading label="Active goals" />}
         {state.kind === "error" && <ErrorState message={state.message} onRetry={retry} />}
         {data && <GoalTable goals={data.active_goals} />}
       </Section>

@@ -60,7 +60,7 @@ export function DecisionAnswerForm({ decision, onUpdated }: Props) {
       if (error instanceof ApiError && error.status === 409) {
         setConflict(true);
       } else {
-        setSubmitError(error instanceof Error ? error.message : "回答の送信に失敗しました。");
+        setSubmitError(error instanceof Error ? error.message : "Could not submit the answer.");
       }
     } finally {
       setSubmitting(false);
@@ -70,13 +70,13 @@ export function DecisionAnswerForm({ decision, onUpdated }: Props) {
   if (conflict) {
     return (
       <div className="mt-3 border border-notice-800 bg-notice-100 px-3 py-3 text-sm text-notice-800" role="alert">
-        <p>この判断は別のタブまたはエージェントですでに回答されています。</p>
+        <p>This decision has already been answered in another tab or by another agent.</p>
         <Button
           type="button"
           className="focus-ring mt-3 border border-notice-800 bg-surface px-3 py-2 text-sm font-medium text-notice-800 hover:bg-notice-100"
           onClick={onUpdated}
         >
-          最新を再取得
+          Fetch the latest decision
         </Button>
       </div>
     );
@@ -87,7 +87,7 @@ export function DecisionAnswerForm({ decision, onUpdated }: Props) {
       <p className="mb-3 whitespace-pre-wrap break-words text-sm leading-6 text-ink-800">{decision.question}</p>
       {options.length > 0 ? (
         <label className="mb-3 block text-sm text-ink-800" htmlFor={labelId}>
-          ラベル <span className="text-ink-500">（任意）</span>
+          Label <span className="text-ink-500">(optional)</span>
           <select
             className="focus-ring mt-1 block w-full border border-line bg-surface px-3 py-2 text-sm text-ink-950"
             id={labelId}
@@ -96,7 +96,7 @@ export function DecisionAnswerForm({ decision, onUpdated }: Props) {
             aria-invalid={Boolean(errors.answer_label)}
             aria-describedby={errors.answer_label ? `${labelId}-error` : undefined}
           >
-            <option value="">ラベルを選択しない</option>
+            <option value="">No label selected</option>
             {options.map((option) => (
               <option key={option.label} value={option.label}>{option.label}</option>
             ))}
@@ -105,7 +105,7 @@ export function DecisionAnswerForm({ decision, onUpdated }: Props) {
         </label>
       ) : (
         <label className="mb-3 block text-sm text-ink-800" htmlFor={labelId}>
-          ラベル <span className="text-ink-500">（任意）</span>
+          Label <span className="text-ink-500">(optional)</span>
           <input
             className="focus-ring mt-1 block w-full border border-line bg-surface px-3 py-2 text-sm text-ink-950"
             id={labelId}
@@ -118,7 +118,7 @@ export function DecisionAnswerForm({ decision, onUpdated }: Props) {
         </label>
       )}
       <label className="mb-3 block text-sm text-ink-800" htmlFor={textId}>
-        回答文 <span className="text-ink-500">（任意）</span>
+        Answer text <span className="text-ink-500">(optional)</span>
         <textarea
           className="focus-ring mt-1 block min-h-24 w-full resize-y border border-line bg-surface px-3 py-2 text-sm leading-6 text-ink-950"
           id={textId}
@@ -130,7 +130,7 @@ export function DecisionAnswerForm({ decision, onUpdated }: Props) {
         {errors.answer_text && <span className="mt-1 block text-xs text-danger-700" id={`${textId}-error`}>{errors.answer_text}</span>}
       </label>
       <label className="mb-3 block text-sm text-ink-800" htmlFor={answeredById}>
-        回答者 <span className="text-danger-700">（必須）</span>
+        Answered by <span className="text-danger-700">(required)</span>
         <input
           className="focus-ring mt-1 block w-full border border-line bg-surface px-3 py-2 text-sm text-ink-950"
           id={answeredById}
@@ -148,7 +148,7 @@ export function DecisionAnswerForm({ decision, onUpdated }: Props) {
         disabled={submitting}
         className="focus-ring border border-accent-700 bg-accent-700 px-3 py-2 text-sm font-medium text-white transition hover:bg-accent-600 disabled:cursor-wait disabled:opacity-60"
       >
-        {submitting ? "送信中…" : "回答する"}
+        {submitting ? "Submitting..." : "Submit answer"}
       </Button>
     </form>
   );

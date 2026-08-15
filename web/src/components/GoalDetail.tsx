@@ -14,7 +14,7 @@ type LoadState =
   | { kind: "error"; message: string };
 
 function errorMessage(reason: unknown): string {
-  return reason instanceof Error ? reason.message : "Goal の取得に失敗しました。";
+  return reason instanceof Error ? reason.message : "Could not load the goal.";
 }
 
 export function GoalDetail({ id }: Props) {
@@ -41,31 +41,31 @@ export function GoalDetail({ id }: Props) {
     <main className="space-y-10">
       <div className="border-b border-line pb-6">
         <a className="focus-ring text-sm font-medium text-accent-700 hover:text-accent-900" href="/">
-          受信箱に戻る
+          Back to inbox
         </a>
-        <p className="mt-6 font-mono text-xs uppercase tracking-[0.18em] text-accent-700">Goal detail</p>
+        <p className="mt-6 font-mono text-xs uppercase tracking-[0.18em] text-accent-700">Goal details</p>
         <h1 className="mt-2 font-display text-3xl font-semibold tracking-tight text-ink-950">
-          {data?.goal.title ?? "Goal 詳細"}
+          {data?.goal.title ?? "Goal details"}
         </h1>
         {data?.goal.description && <p className="mt-3 max-w-3xl whitespace-pre-wrap text-sm leading-6 text-ink-700">{data.goal.description}</p>}
-        {data?.goal.status && <p className="mt-3 text-sm text-ink-500">状態: {data.goal.status}</p>}
+        {data?.goal.status && <p className="mt-3 text-sm text-ink-500">Status: {data.goal.status}</p>}
       </div>
 
       <div className="grid gap-10 xl:grid-cols-3">
         <Section title="Now" count={data?.now.length}>
-          {state.kind === "loading" && <AreaLoading label="Now を読み込み中" />}
+          {state.kind === "loading" && <AreaLoading label="Now" />}
           {state.kind === "error" && <ErrorState message={state.message} onRetry={retry} />}
           {data && <TaskTable tasks={data.now} mode="now" onRefresh={load} />}
         </Section>
 
         <Section title="Needs decision" count={data?.needs_decision.length}>
-          {state.kind === "loading" && <AreaLoading label="Needs decision を読み込み中" />}
+          {state.kind === "loading" && <AreaLoading label="Needs decision" />}
           {state.kind === "error" && <ErrorState message={state.message} onRetry={retry} />}
           {data && <TaskTable tasks={data.needs_decision} mode="needs_decision" onRefresh={load} />}
         </Section>
 
         <Section title="Next" count={data?.next.length}>
-          {state.kind === "loading" && <AreaLoading label="Next を読み込み中" />}
+          {state.kind === "loading" && <AreaLoading label="Next" />}
           {state.kind === "error" && <ErrorState message={state.message} onRetry={retry} />}
           {data && <TaskTable tasks={data.next} mode="next" onRefresh={load} />}
         </Section>

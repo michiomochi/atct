@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   DECISION_EVENT_NAMES,
+  formatDate,
   formatHeldFor,
   isDecisionEventName,
+  statusLabel,
   validateAnswer,
 } from "./ui";
 
@@ -23,20 +25,43 @@ describe("formatHeldFor", () => {
 describe("validateAnswer", () => {
   it("requires answered_by", () => {
     expect(validateAnswer({ answer_label: "approve", answer_text: "", answered_by: "" })).toEqual({
-      answered_by: "回答者を入力してください。",
+      answered_by: "Enter the person answering this decision.",
     });
   });
 
   it("requires at least one of label and text", () => {
     expect(validateAnswer({ answer_label: "  ", answer_text: "", answered_by: "michio" })).toEqual({
-      answer_label: "ラベルまたは回答文を入力してください。",
-      answer_text: "ラベルまたは回答文を入力してください。",
+      answer_label: "Enter a label or answer text.",
+      answer_text: "Enter a label or answer text.",
     });
   });
 
   it("accepts a label or answer text", () => {
     expect(validateAnswer({ answer_label: "approve", answer_text: "", answered_by: "michio" })).toEqual({});
-    expect(validateAnswer({ answer_label: "", answer_text: "理由", answered_by: "michio" })).toEqual({});
+    expect(validateAnswer({ answer_label: "", answer_text: "Reason", answered_by: "michio" })).toEqual({});
+  });
+});
+
+describe("English UI labels", () => {
+  it("formats dates with the English locale", () => {
+    expect(formatDate("2026-08-15T00:00:00Z")).toContain("Aug");
+  });
+
+  it.each([
+    ["todo", "Not started"],
+    ["doing", "In progress"],
+    ["done", "Completed"],
+    ["blocked", "Blocked"],
+    ["open", "Awaiting answer"],
+    ["answered", "Answered"],
+    ["applied", "Applied"],
+    ["approved", "Approved"],
+    ["rejected", "Rejected"],
+    ["withdrawn", "Withdrawn"],
+    ["active", "In progress"],
+    ["completed", "Completed"],
+  ])("labels %s as %s", (status, expected) => {
+    expect(statusLabel(status)).toBe(expected);
   });
 });
 

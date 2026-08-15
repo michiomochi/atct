@@ -9,6 +9,6 @@ export function getStaticPaths() {
 const id = Astro.params.id ?? "_";
 ---
 
-<Shell title="Goal 詳細">
+<Shell title="Goal details">
   <GoalDetail id={id} client:load />
 </Shell>
