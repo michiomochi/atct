@@ -17,10 +17,7 @@ import (
 var ErrNamespaceNotFound = errors.New("namespace not found for cwd")
 
 func (s *Store) CreateNamespace(ctx context.Context, name, rootPath string) (domain.Namespace, error) {
-	rootPath = strings.TrimRight(rootPath, "/")
-	if resolved, err := filepath.EvalSymlinks(rootPath); err == nil {
-		rootPath = resolved
-	}
+	rootPath = normalizeNamespacePath(rootPath)
 	ns := domain.Namespace{
 		ID:        uuid.NewString(),
 		Name:      name,
@@ -41,7 +38,7 @@ func (s *Store) CreateNamespace(ctx context.Context, name, rootPath string) (dom
 // namespace for the same repository.
 func (s *Store) ResolveNamespace(ctx context.Context, cwd string) (domain.Namespace, error) {
 	cwd = normalizeWorktreePath(ctx, cwd, "git")
-	cwd = strings.TrimRight(cwd, "/")
+	cwd = normalizeNamespacePath(cwd)
 	row := s.db.QueryRowContext(ctx, `
 		SELECT id, name, root_path, created_at FROM namespaces
 		WHERE ? = root_path OR ? LIKE root_path || '/%'
@@ -84,12 +81,46 @@ func normalizeWorktreePath(ctx context.Context, cwd, gitCommand string) string {
 	if commonDir == "" {
 		return cwd
 	}
+
+	gitDirCmd := exec.CommandContext(ctx, gitCommand, "-C", cwd, "rev-parse", "--git-dir")
+	gitDirOutput, err := gitDirCmd.Output()
+	if err != nil {
+		return cwd
+	}
+	gitDir := strings.TrimSpace(string(gitDirOutput))
+	if gitDir == "" {
+		return cwd
+	}
+
+	if !filepath.IsAbs(gitDir) {
+		gitDir = filepath.Join(cwd, gitDir)
+	}
 	if !filepath.IsAbs(commonDir) {
-		commonDir = filepath.Join(repoRoot, commonDir)
+		commonDir = filepath.Join(cwd, commonDir)
+	}
+	gitDir, err = filepath.Abs(gitDir)
+	if err != nil {
+		return cwd
 	}
 	commonDir, err = filepath.Abs(commonDir)
-	if err != nil || filepath.Base(commonDir) != ".git" {
+	if err != nil {
+		return cwd
+	}
+	gitDir = normalizeNamespacePath(gitDir)
+	commonDir = normalizeNamespacePath(commonDir)
+	if filepath.Clean(gitDir) == filepath.Clean(commonDir) {
+		return cwd
+	}
+	if filepath.Base(commonDir) != ".git" {
 		return cwd
 	}
 	return filepath.Dir(commonDir)
+}
+
+func normalizeNamespacePath(path string) string {
+	path = strings.TrimRight(path, "/")
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		path = resolved
+	}
+	return path
 }

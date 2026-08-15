@@ -46,6 +46,104 @@ func TestResolveNamespaceErrorsWhenNoMatch(t *testing.T) {
 	}
 }
 
+func TestResolveNamespaceNormalRepositorySubdirectory(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is unavailable")
+	}
+
+	ctx := context.Background()
+	repo := filepath.Join(t.TempDir(), "repo")
+	if err := os.MkdirAll(filepath.Join(repo, "internal", "store"), 0o755); err != nil {
+		t.Fatalf("MkdirAll repository subdirectory: %v", err)
+	}
+	runTestGit(t, repo, "init", "-q")
+
+	s := newTestStore(t)
+	if _, err := s.CreateNamespace(ctx, "repo", repo); err != nil {
+		t.Fatalf("CreateNamespace: %v", err)
+	}
+	got, err := s.ResolveNamespace(ctx, filepath.Join(repo, "internal", "store"))
+	if err != nil {
+		t.Fatalf("ResolveNamespace: %v", err)
+	}
+	if got.Name != "repo" {
+		t.Fatalf("got %q, want %q", got.Name, "repo")
+	}
+}
+
+func TestResolveNamespaceSeparatesNamespacesInsideRepository(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is unavailable")
+	}
+
+	ctx := context.Background()
+	repo := filepath.Join(t.TempDir(), "repo")
+	alpha := filepath.Join(repo, "alpha")
+	beta := filepath.Join(repo, "beta")
+	if err := os.MkdirAll(filepath.Join(alpha, "src"), 0o755); err != nil {
+		t.Fatalf("MkdirAll alpha: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(beta, "src"), 0o755); err != nil {
+		t.Fatalf("MkdirAll beta: %v", err)
+	}
+	runTestGit(t, repo, "init", "-q")
+
+	s := newTestStore(t)
+	if _, err := s.CreateNamespace(ctx, "alpha", alpha); err != nil {
+		t.Fatalf("CreateNamespace alpha: %v", err)
+	}
+	if _, err := s.CreateNamespace(ctx, "beta", beta); err != nil {
+		t.Fatalf("CreateNamespace beta: %v", err)
+	}
+
+	gotAlpha, err := s.ResolveNamespace(ctx, filepath.Join(alpha, "src"))
+	if err != nil {
+		t.Fatalf("ResolveNamespace alpha: %v", err)
+	}
+	if gotAlpha.Name != "alpha" {
+		t.Fatalf("alpha got %q, want %q", gotAlpha.Name, "alpha")
+	}
+	gotBeta, err := s.ResolveNamespace(ctx, filepath.Join(beta, "src"))
+	if err != nil {
+		t.Fatalf("ResolveNamespace beta: %v", err)
+	}
+	if gotBeta.Name != "beta" {
+		t.Fatalf("beta got %q, want %q", gotBeta.Name, "beta")
+	}
+}
+
+func TestResolveNamespaceMatchesSymlinkedCWD(t *testing.T) {
+	ctx := context.Background()
+	realRoot := filepath.Join(t.TempDir(), "real")
+	symlinkRoot := filepath.Join(t.TempDir(), "symlink")
+	if err := os.MkdirAll(realRoot, 0o755); err != nil {
+		t.Fatalf("MkdirAll real root: %v", err)
+	}
+	if err := os.Symlink(realRoot, symlinkRoot); err != nil {
+		t.Fatalf("Symlink: %v", err)
+	}
+
+	s := newTestStore(t)
+	if _, err := s.CreateNamespace(ctx, "real", realRoot); err != nil {
+		t.Fatalf("CreateNamespace: %v", err)
+	}
+	got, err := s.ResolveNamespace(ctx, symlinkRoot)
+	if err != nil {
+		t.Fatalf("ResolveNamespace: %v", err)
+	}
+	if got.Name != "real" {
+		t.Fatalf("got %q, want %q", got.Name, "real")
+	}
+}
+
+func runTestGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, output)
+	}
+}
+
 func TestResolveNamespaceMapsWorktreeToMainRepository(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git is unavailable")
