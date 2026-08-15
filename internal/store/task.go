@@ -2,6 +2,8 @@ package store
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
@@ -9,7 +11,9 @@ import (
 	"github.com/michiomochi/atct/internal/domain"
 )
 
-const taskColumns = `id, goal_id, title, status, agent, sort_order, declare_key, created_at, updated_at`
+const taskColumns = `id, goal_id, title, status, agent, sort_order, declare_key, claimed_by, claimed_at, created_at, updated_at`
+
+var ErrTaskAlreadyClaimed = errors.New("task already claimed")
 
 // DeclareTasks derives declare_key from the idempotency key and task position.
 // The unique (goal_id, declare_key) constraint absorbs duplicate declarations.
@@ -25,10 +29,10 @@ func (s *Store) DeclareTasks(ctx context.Context, goalID, agent, idempotencyKey 
 	for i, title := range titles {
 		declareKey := fmt.Sprintf("%s#%d", idempotencyKey, i)
 		_, err := tx.ExecContext(ctx,
-			`INSERT INTO tasks (id, goal_id, title, status, agent, sort_order, declare_key, created_at, updated_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+			`INSERT INTO tasks (id, goal_id, title, status, agent, sort_order, declare_key, claimed_by, claimed_at, created_at, updated_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			 ON CONFLICT(goal_id, declare_key) DO NOTHING`,
-			uuid.NewString(), goalID, title, string(domain.TaskTodo), agent, i, declareKey, now, now)
+			uuid.NewString(), goalID, title, string(domain.TaskTodo), agent, i, declareKey, "", nil, now, now)
 		if err != nil {
 			return nil, fmt.Errorf("insert task %d: %w", i, err)
 		}
@@ -51,11 +55,19 @@ func (s *Store) ListTasks(ctx context.Context, goalID string) ([]domain.Task, er
 	for rows.Next() {
 		var tk domain.Task
 		var status, createdAt, updatedAt string
+		var claimedAt sql.NullString
 		if err := rows.Scan(&tk.ID, &tk.GoalID, &tk.Title, &status, &tk.Agent,
-			&tk.Order, &tk.DeclareKey, &createdAt, &updatedAt); err != nil {
+			&tk.Order, &tk.DeclareKey, &tk.ClaimedBy, &claimedAt, &createdAt, &updatedAt); err != nil {
 			return nil, fmt.Errorf("scan task: %w", err)
 		}
 		tk.Status = domain.TaskStatus(status)
+		if claimedAt.Valid {
+			t, err := time.Parse(time.RFC3339, claimedAt.String)
+			if err != nil {
+				return nil, fmt.Errorf("parse claimed_at: %w", err)
+			}
+			tk.ClaimedAt = &t
+		}
 		if tk.CreatedAt, err = time.Parse(time.RFC3339, createdAt); err != nil {
 			return nil, fmt.Errorf("parse created_at: %w", err)
 		}
@@ -89,9 +101,15 @@ func (s *Store) UpdateTask(ctx context.Context, taskID string, status domain.Tas
 		}
 	}
 
+	updateSQL := `UPDATE tasks SET status = ?, updated_at = ?`
+	args := []any{string(status), time.Now().UTC().Format(time.RFC3339)}
+	if status == domain.TaskTodo || status == domain.TaskDone || status == domain.TaskDropped {
+		updateSQL += `, claimed_by = '', claimed_at = NULL`
+	}
+	updateSQL += ` WHERE id = ?`
+	args = append(args, taskID)
 	res, err := tx.ExecContext(ctx,
-		`UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?`,
-		string(status), time.Now().UTC().Format(time.RFC3339), taskID)
+		updateSQL, args...)
 	if err != nil {
 		return domain.Task{}, fmt.Errorf("update task: %w", err)
 	}
@@ -108,6 +126,83 @@ func (s *Store) UpdateTask(ctx context.Context, taskID string, status domain.Tas
 
 	var goalID string
 	if err := s.db.QueryRowContext(ctx, `SELECT goal_id FROM tasks WHERE id = ?`, taskID).Scan(&goalID); err != nil {
+		return domain.Task{}, fmt.Errorf("lookup goal_id: %w", err)
+	}
+	tasks, err := s.ListTasks(ctx, goalID)
+	if err != nil {
+		return domain.Task{}, err
+	}
+	for _, tk := range tasks {
+		if tk.ID == taskID {
+			return tk, nil
+		}
+	}
+	return domain.Task{}, fmt.Errorf("task not found after update: %s", taskID)
+}
+
+// ClaimTask atomically assigns a task to one run.
+func (s *Store) ClaimTask(ctx context.Context, taskID, runID string) (domain.Task, error) {
+	now := time.Now().UTC().Format(time.RFC3339)
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE tasks
+		 SET claimed_by = ?, claimed_at = ?, updated_at = ?
+		 WHERE id = ? AND claimed_by = ''`,
+		runID, now, now, taskID)
+	if err != nil {
+		return domain.Task{}, fmt.Errorf("claim task: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return domain.Task{}, fmt.Errorf("claim rows affected: %w", err)
+	}
+	if n == 0 {
+		var claimedBy string
+		err := s.db.QueryRowContext(ctx, `SELECT claimed_by FROM tasks WHERE id = ?`, taskID).Scan(&claimedBy)
+		if errors.Is(err, sql.ErrNoRows) {
+			return domain.Task{}, fmt.Errorf("task not found: %s", taskID)
+		}
+		if err != nil {
+			return domain.Task{}, fmt.Errorf("lookup task claim: %w", err)
+		}
+		if claimedBy != "" {
+			return domain.Task{}, fmt.Errorf("%w: %s", ErrTaskAlreadyClaimed, taskID)
+		}
+		return domain.Task{}, fmt.Errorf("claim task affected no rows: %s", taskID)
+	}
+	return s.loadTask(ctx, taskID)
+}
+
+// ReleaseTask clears a task claim for the human stale-claim release path.
+func (s *Store) ReleaseTask(ctx context.Context, taskID string) (domain.Task, error) {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE tasks SET claimed_by = '', claimed_at = NULL, updated_at = ? WHERE id = ?`,
+		time.Now().UTC().Format(time.RFC3339), taskID)
+	if err != nil {
+		return domain.Task{}, fmt.Errorf("release task: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return domain.Task{}, fmt.Errorf("release rows affected: %w", err)
+	}
+	if n == 0 {
+		var id string
+		err := s.db.QueryRowContext(ctx, `SELECT id FROM tasks WHERE id = ?`, taskID).Scan(&id)
+		if errors.Is(err, sql.ErrNoRows) {
+			return domain.Task{}, fmt.Errorf("task not found: %s", taskID)
+		}
+		if err != nil {
+			return domain.Task{}, fmt.Errorf("lookup task: %w", err)
+		}
+	}
+	return s.loadTask(ctx, taskID)
+}
+
+func (s *Store) loadTask(ctx context.Context, taskID string) (domain.Task, error) {
+	var goalID string
+	if err := s.db.QueryRowContext(ctx, `SELECT goal_id FROM tasks WHERE id = ?`, taskID).Scan(&goalID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return domain.Task{}, fmt.Errorf("task not found: %s", taskID)
+		}
 		return domain.Task{}, fmt.Errorf("lookup goal_id: %w", err)
 	}
 	tasks, err := s.ListTasks(ctx, goalID)
