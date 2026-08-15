@@ -40,7 +40,7 @@ worse than no PID file.
 
 **Reject: per-working-directory daemons.** Crit can shard by directory because a review is scoped to
 one checkout. ATCT cannot. The inbox is defined in the core design as "unanswered decisions across
-every namespace", and the success criterion is that a human watching only the inbox never misses a
+every project", and the success criterion is that a human watching only the inbox never misses a
 decision. Sharding the daemon shards the inbox and breaks that criterion. **ATCT runs exactly one
 daemon per user.**
 

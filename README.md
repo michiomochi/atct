@@ -89,7 +89,7 @@ agents stays your business.
 
 | | |
 |---|---|
-| **Namespace** | A project. Derived from the working directory, so agents never have to name it |
+| **Project** | A project. Derived from the working directory, so agents never have to name it |
 | **Goal** | What you want. You write it; agents do not invent goals |
 | **Task** | A unit of work toward the goal. Agents declare and claim these |
 | **Decision** | A question an agent cannot settle alone, with options it wrote itself |
