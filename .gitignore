@@ -2,9 +2,10 @@
 # and is deliberately not published. The spec under doc/specs/ cites only what it needs.
 doc/research/
 
-# Build artifacts
-/looper
-/looper-mcp
+# Build artifacts. Anchored to the repository root so they do not match
+# cmd/atct/ or the atct entries under web/.
+/atct
+/atct-mcp
 *.db
 *.db-wal
 *.db-shm
