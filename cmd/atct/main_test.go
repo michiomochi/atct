@@ -46,3 +46,33 @@ func TestParseArgs(t *testing.T) {
 		})
 	}
 }
+
+func TestParseArgsAcceptsEnsure(t *testing.T) {
+	cfg, err := parseArgs([]string{"ensure"})
+	if err != nil {
+		t.Fatalf("parseArgs: %v", err)
+	}
+	if cfg.subcommand != "ensure" {
+		t.Fatalf("subcommand = %q, want %q", cfg.subcommand, "ensure")
+	}
+}
+
+func TestParseArgsAcceptsStop(t *testing.T) {
+	cfg, err := parseArgs([]string{"stop"})
+	if err != nil {
+		t.Fatalf("parseArgs: %v", err)
+	}
+	if cfg.subcommand != "stop" {
+		t.Fatalf("subcommand = %q, want %q", cfg.subcommand, "stop")
+	}
+}
+
+func TestParseArgsAcceptsListenOnEnsure(t *testing.T) {
+	cfg, err := parseArgs([]string{"ensure", "-listen", "127.0.0.1:19999"})
+	if err != nil {
+		t.Fatalf("parseArgs: %v", err)
+	}
+	if cfg.listenAddr != "127.0.0.1:19999" {
+		t.Fatalf("listenAddr = %q, want %q", cfg.listenAddr, "127.0.0.1:19999")
+	}
+}

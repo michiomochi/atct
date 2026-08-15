@@ -14,22 +14,31 @@ import (
 	"time"
 
 	"github.com/michiomochi/atct/internal/daemon"
+	"github.com/michiomochi/atct/internal/daemonctl"
 	"github.com/michiomochi/atct/internal/store"
 )
 
 const defaultListenAddr = "127.0.0.1:8787"
 
 type cliConfig struct {
+	subcommand string
 	listenAddr string
 }
 
 var errInvalidArgs = errors.New("invalid command line")
 
+var validSubcommands = map[string]bool{"daemon": true, "ensure": true, "stop": true}
+
 func printUsage() {
-	fmt.Fprintln(os.Stderr, "Usage: atct daemon [options]")
+	fmt.Fprintln(os.Stderr, "Usage: atct <command> [options]")
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Commands:")
+	fmt.Fprintln(os.Stderr, "  daemon    Run the ATCT daemon in the foreground")
+	fmt.Fprintln(os.Stderr, "  ensure    Start the daemon if it is not already running")
+	fmt.Fprintln(os.Stderr, "  stop      Stop the running daemon")
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Options:")
-	fmt.Fprintln(os.Stderr, "  -listen address")
+	fmt.Fprintln(os.Stderr, "  -listen string   HTTP listen address (default \"127.0.0.1:8787\")")
 }
 
 func parseArgs(args []string) (cliConfig, error) {
@@ -37,13 +46,14 @@ func parseArgs(args []string) (cliConfig, error) {
 		printUsage()
 		return cliConfig{}, errInvalidArgs
 	}
-	if args[0] != "daemon" {
-		fmt.Fprintf(os.Stderr, "unknown subcommand %q\n", args[0])
+	sub := args[0]
+	if !validSubcommands[sub] {
+		fmt.Fprintf(os.Stderr, "unknown subcommand %q\n", sub)
 		printUsage()
 		return cliConfig{}, errInvalidArgs
 	}
 
-	flags := flag.NewFlagSet("daemon", flag.ExitOnError)
+	flags := flag.NewFlagSet(sub, flag.ExitOnError)
 	flags.SetOutput(os.Stderr)
 	flags.Usage = printUsage
 	listenAddr := flags.String("listen", defaultListenAddr, "HTTP listen address")
@@ -54,8 +64,11 @@ func parseArgs(args []string) (cliConfig, error) {
 		return cliConfig{}, errInvalidArgs
 	}
 
-	return cliConfig{listenAddr: *listenAddr}, nil
+	return cliConfig{subcommand: sub, listenAddr: *listenAddr}, nil
 }
+
+// version is overridden at build time with -ldflags "-X main.version=...".
+var version = "dev"
 
 func main() {
 	config, err := parseArgs(os.Args[1:])
@@ -70,6 +83,33 @@ func main() {
 	dir := filepath.Join(home, ".atct")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		log.Fatalf("mkdir %s: %v", dir, err)
+	}
+
+	exePath, err := os.Executable()
+	if err != nil {
+		log.Fatalf("resolve executable: %v", err)
+	}
+	switch config.subcommand {
+	case "ensure":
+		reg, err := daemonctl.Ensure(daemonctl.Config{
+			Dir: dir, Version: version, Executable: exePath, ListenAddr: config.listenAddr,
+		})
+		if err != nil {
+			log.Fatalf("ensure: %v", err)
+		}
+		fmt.Fprintf(os.Stderr, "atct daemon ready: pid %d, http %s\n", reg.PID, reg.HTTPAddr)
+		return
+	case "stop":
+		stopped, err := daemonctl.Stop(daemonctl.Config{Dir: dir, Version: version})
+		if err != nil {
+			log.Fatalf("stop: %v", err)
+		}
+		if stopped {
+			fmt.Fprintln(os.Stderr, "atct daemon stopped")
+		} else {
+			fmt.Fprintln(os.Stderr, "no atct daemon was running")
+		}
+		return
 	}
 
 	s, err := store.Open(filepath.Join(dir, "atct.db"))
@@ -105,7 +145,19 @@ func main() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = httpServer.Shutdown(shutdownCtx)
+		_ = daemonctl.RemoveRegistry(dir)
+		_ = os.Remove(sock)
 	}()
+
+	if err := daemonctl.WriteRegistry(dir, daemonctl.Registry{
+		PID:        os.Getpid(),
+		HTTPAddr:   config.listenAddr,
+		SocketPath: sock,
+		Version:    version,
+		StartedAt:  time.Now().UTC().Format(time.RFC3339),
+	}); err != nil {
+		log.Fatalf("write registry: %v", err)
+	}
 
 	log.Printf("atct daemon listening on unix socket %s and HTTP %s", sock, config.listenAddr)
 	select {
