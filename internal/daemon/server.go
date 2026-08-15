@@ -5,11 +5,17 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"net"
+	"net/http"
 	"os"
+	"path"
+	"strings"
 
+	"github.com/michiomochi/atct/internal/httpapi"
 	"github.com/michiomochi/atct/internal/rpc"
 	"github.com/michiomochi/atct/internal/store"
+	atctweb "github.com/michiomochi/atct/web"
 )
 
 type Daemon struct {
@@ -17,6 +23,50 @@ type Daemon struct {
 }
 
 func New(s *store.Store) *Daemon { return &Daemon{store: s} }
+
+// HTTPHandler returns the daemon's HTTP handler, including the API and the
+// embedded Web UI. API routes are registered before the UI fallback so an API
+// typo cannot be answered with the index document.
+func (d *Daemon) HTTPHandler() http.Handler {
+	api := httpapi.New(d.store).Handler()
+	dist, err := fs.Sub(atctweb.Dist, "dist")
+	if err != nil {
+		panic(fmt.Sprintf("web assets: %v", err))
+	}
+	static := http.FileServer(http.FS(dist))
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api" || strings.HasPrefix(r.URL.Path, "/api/") {
+			api.ServeHTTP(w, r)
+			return
+		}
+
+		serveEmbeddedWeb(w, r, dist, static)
+	})
+}
+
+func serveEmbeddedWeb(w http.ResponseWriter, r *http.Request, dist fs.FS, static http.Handler) {
+	name := strings.TrimPrefix(path.Clean(r.URL.Path), "/")
+	if name != "" && name != "." && fs.ValidPath(name) && embeddedFileExists(dist, name) {
+		static.ServeHTTP(w, r)
+		return
+	}
+
+	indexRequest := r.Clone(r.Context())
+	indexRequest.URL.Path = "/"
+	static.ServeHTTP(w, indexRequest)
+}
+
+func embeddedFileExists(dist fs.FS, name string) bool {
+	file, err := dist.Open(name)
+	if err != nil {
+		return false
+	}
+	defer file.Close()
+
+	info, err := file.Stat()
+	return err == nil && !info.IsDir()
+}
 
 func (d *Daemon) Serve(ctx context.Context, socketPath string) error {
 	os.Remove(socketPath)
