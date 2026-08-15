@@ -82,3 +82,83 @@ func (s *Store) ListGoals(ctx context.Context, namespaceID string) ([]domain.Goa
 	}
 	return out, rows.Err()
 }
+
+// CompleteGoal creates a kind=completion Decision.
+// A Goal cannot close while a child Decision is open (invariant 4).
+func (s *Store) CompleteGoal(ctx context.Context, goalID, resultSummary, runID string) (domain.Decision, error) {
+	var open int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM decisions WHERE goal_id = ? AND status = 'open'`, goalID).Scan(&open)
+	if err != nil {
+		return domain.Decision{}, fmt.Errorf("count open decisions: %w", err)
+	}
+	if open > 0 {
+		return domain.Decision{}, fmt.Errorf("%w: %s", ErrGoalHasOpenDecision, goalID)
+	}
+
+	if _, err := s.db.ExecContext(ctx,
+		`UPDATE goals SET result_summary = ?, updated_at = ? WHERE id = ?`,
+		resultSummary, time.Now().UTC().Format(time.RFC3339), goalID); err != nil {
+		return domain.Decision{}, fmt.Errorf("set result_summary: %w", err)
+	}
+
+	return s.AskDecision(ctx, AskInput{
+		GoalID:   goalID,
+		Kind:     domain.KindCompletion,
+		Question: "Approve this goal as complete?",
+		Options: []domain.Option{
+			{Label: "approve", Description: "Approve as complete", Consequence: "The goal becomes done"},
+			{Label: "reject", Description: "Send back", Consequence: "The goal remains active and the agent continues"},
+		},
+		RunID: runID,
+	})
+}
+
+// ApproveCompletion marks the Goal done and the Decision applied atomically.
+// No agent follow-up needs to be applied, so there is no reason to wait for receipt (invariant 3).
+func (s *Store) ApproveCompletion(ctx context.Context, decisionID, answeredBy string) (domain.Goal, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return domain.Goal{}, fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	var goalID string
+	err = tx.QueryRowContext(ctx,
+		`SELECT goal_id FROM decisions WHERE id = ? AND kind = 'completion' AND status = 'open'`,
+		decisionID).Scan(&goalID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.Goal{}, fmt.Errorf("%w: %s", ErrDecisionNotOpen, decisionID)
+	}
+	if err != nil {
+		return domain.Goal{}, fmt.Errorf("lookup completion decision: %w", err)
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE decisions SET status = 'applied', answer_label = 'approve',
+			 answered_by = ?, answered_at = ?, applied_at = ? WHERE id = ?`,
+		answeredBy, now, now, decisionID); err != nil {
+		return domain.Goal{}, fmt.Errorf("apply completion decision: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE goals SET status = 'done', updated_at = ? WHERE id = ?`, now, goalID); err != nil {
+		return domain.Goal{}, fmt.Errorf("close goal: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return domain.Goal{}, fmt.Errorf("commit: %w", err)
+	}
+	return s.GetGoal(ctx, goalID)
+}
+
+// RejectCompletion leaves the Goal active and the Decision answered.
+// It becomes applied when the agent receives the rejection reason.
+func (s *Store) RejectCompletion(ctx context.Context, decisionID, reason, answeredBy string) error {
+	_, err := s.AnswerDecision(ctx, AnswerInput{
+		DecisionID:  decisionID,
+		AnswerLabel: "reject",
+		AnswerText:  reason,
+		AnsweredBy:  answeredBy,
+	})
+	return err
+}
