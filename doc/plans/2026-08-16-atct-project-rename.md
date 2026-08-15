@@ -280,7 +280,15 @@ round-trip test in that file:
 // the new tests from repeating the dial-retry loop.
 func newDaemonConn(t *testing.T) net.Conn {
 	t.Helper()
-	dir := t.TempDir()
+	// Not t.TempDir(): it embeds the test function's name and macOS caps a
+	// Unix socket path at 104 bytes, so a long test name fails with
+	// "bind: invalid argument".
+	dir, err := os.MkdirTemp("", "atct")
+	if err != nil {
+		t.Fatalf("MkdirTemp: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+
 	s, err := store.Open(filepath.Join(dir, "atct.db"))
 	if err != nil {
 		t.Fatalf("store.Open: %v", err)
