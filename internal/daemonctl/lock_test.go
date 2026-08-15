@@ -8,7 +8,7 @@ import (
 )
 
 func TestAcquireLockExcludesSecondHolder(t *testing.T) {
-	dir := t.TempDir()
+	dir := socketDir(t)
 
 	first, err := AcquireLock(dir, time.Second)
 	if err != nil {
@@ -34,7 +34,7 @@ func TestAcquireLockExcludesSecondHolder(t *testing.T) {
 }
 
 func TestAcquireLockSerializesConcurrentHolders(t *testing.T) {
-	dir := t.TempDir()
+	dir := socketDir(t)
 
 	var mu sync.Mutex
 	var concurrent, maxConcurrent int
@@ -74,7 +74,7 @@ func TestAcquireLockSerializesConcurrentHolders(t *testing.T) {
 }
 
 func TestReleaseIsIdempotent(t *testing.T) {
-	dir := t.TempDir()
+	dir := socketDir(t)
 	l, err := AcquireLock(dir, time.Second)
 	if err != nil {
 		t.Fatalf("AcquireLock: %v", err)

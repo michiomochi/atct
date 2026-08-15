@@ -8,8 +8,23 @@ import (
 	"testing"
 )
 
+// socketDir returns a temporary directory short enough to hold a Unix domain
+// socket path. macOS caps sun_path at 104 bytes and t.TempDir() embeds the
+// test function's name, which overflows that limit for the longer names in
+// this package. Every test in internal/daemonctl that listens on a socket must
+// use this instead of t.TempDir().
+func socketDir(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "atct")
+	if err != nil {
+		t.Fatalf("MkdirTemp: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return dir
+}
+
 func TestRegistryRoundTrip(t *testing.T) {
-	dir := t.TempDir()
+	dir := socketDir(t)
 	want := Registry{
 		PID:        4242,
 		HTTPAddr:   "127.0.0.1:8787",
@@ -37,7 +52,7 @@ func TestReadRegistryReportsMissingFile(t *testing.T) {
 }
 
 func TestRemoveRegistryIsIdempotent(t *testing.T) {
-	dir := t.TempDir()
+	dir := socketDir(t)
 	if err := RemoveRegistry(dir); err != nil {
 		t.Fatalf("RemoveRegistry on absent file: %v", err)
 	}
@@ -66,7 +81,7 @@ func TestProcessAliveRejectsUnusedPID(t *testing.T) {
 }
 
 func TestSocketAnswersDistinguishesListeningFromAbsent(t *testing.T) {
-	dir := t.TempDir()
+	dir := socketDir(t)
 	sock := filepath.Join(dir, "atct.sock")
 
 	if SocketAnswers(sock) {
