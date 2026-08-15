@@ -194,3 +194,76 @@ func TestNormalizeWorktreePathFallsBackWhenGitIsUnavailable(t *testing.T) {
 		t.Fatalf("got %q, want the original path", got)
 	}
 }
+
+func TestListProjectsReturnsAllInCreationOrder(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+
+	if _, err := s.CreateProject(ctx, "first", "/repos/first"); err != nil {
+		t.Fatalf("CreateProject first: %v", err)
+	}
+	if _, err := s.CreateProject(ctx, "second", "/repos/second"); err != nil {
+		t.Fatalf("CreateProject second: %v", err)
+	}
+
+	got, err := s.ListProjects(ctx)
+	if err != nil {
+		t.Fatalf("ListProjects: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("ListProjects returned %d projects, want 2", len(got))
+	}
+	if got[0].Name != "first" || got[1].Name != "second" {
+		t.Fatalf("unexpected order: %q then %q", got[0].Name, got[1].Name)
+	}
+}
+
+func TestListProjectsIsEmptyWhenNoneExist(t *testing.T) {
+	got, err := newTestStore(t).ListProjects(context.Background())
+	if err != nil {
+		t.Fatalf("ListProjects: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("ListProjects returned %d projects, want 0", len(got))
+	}
+}
+
+func TestNormalizeRootMapsWorktreeToMainRepository(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is unavailable")
+	}
+	ctx := context.Background()
+
+	mainRepo := filepath.Join(t.TempDir(), "main")
+	worktree := filepath.Join(t.TempDir(), "worktree")
+	if err := os.MkdirAll(mainRepo, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	runGit := func(dir string, args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	runGit(mainRepo, "init", "-q")
+	if err := os.WriteFile(filepath.Join(mainRepo, "README"), []byte("x\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	runGit(mainRepo, "add", "README")
+	runGit(mainRepo, "-c", "user.name=T", "-c", "user.email=t@example.com", "commit", "-qm", "init")
+	runGit(mainRepo, "worktree", "add", "-q", worktree, "HEAD")
+
+	got := NormalizeRoot(ctx, worktree)
+	want, err := filepath.EvalSymlinks(mainRepo)
+	if err != nil {
+		t.Fatalf("EvalSymlinks: %v", err)
+	}
+	gotResolved, err := filepath.EvalSymlinks(got)
+	if err != nil {
+		t.Fatalf("EvalSymlinks(got): %v", err)
+	}
+	if gotResolved != want {
+		t.Fatalf("NormalizeRoot = %q, want %q", gotResolved, want)
+	}
+}

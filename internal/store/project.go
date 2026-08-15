@@ -33,6 +33,38 @@ func (s *Store) CreateProject(ctx context.Context, name, rootPath string) (domai
 	return ns, nil
 }
 
+// NormalizeRoot exposes the shared project-root normalization used when
+// resolving the current working directory.
+func NormalizeRoot(ctx context.Context, path string) string {
+	return normalizeWorktreePath(ctx, path, "git")
+}
+
+func (s *Store) ListProjects(ctx context.Context) ([]domain.Project, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, name, root_path, created_at FROM projects ORDER BY created_at
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("query projects: %w", err)
+	}
+	defer rows.Close()
+
+	out := []domain.Project{}
+	for rows.Next() {
+		var p domain.Project
+		var createdAt string
+		if err := rows.Scan(&p.ID, &p.Name, &p.RootPath, &createdAt); err != nil {
+			return nil, fmt.Errorf("scan project: %w", err)
+		}
+		t, err := time.Parse(time.RFC3339, createdAt)
+		if err != nil {
+			return nil, fmt.Errorf("parse created_at: %w", err)
+		}
+		p.CreatedAt = t
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
 // ResolveProject maps a worktree to its main repository before selecting the
 // longest matching root_path. This prevents a worktree from becoming a second
 // project for the same repository.
