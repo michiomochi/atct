@@ -588,10 +588,28 @@ exactly as `ensure` does.
 `project add`:
 
 1. Resolve the working directory with `os.Getwd()`.
-2. Call `project.create` over the socket with that path and the name. When the
-   name is empty, the daemon side already has the normalized path — derive the
-   name from `filepath.Base` of the **normalized** path by asking for it in the
-   response rather than guessing locally.
+2. Call `project.create` over the socket with that path and the name, and read
+   the created project out of the response.
+
+**The empty-name case is resolved on the daemon side, not here.** This requires
+a small change to `internal/daemon/handler.go` that Task 3 should have included:
+
+```go
+rootPath := store.NormalizeRoot(ctx, p.RootPath)
+name := p.Name
+if name == "" {
+    name = filepath.Base(rootPath)
+}
+```
+
+The CLI must not derive the name from `os.Getwd()` itself. Inside a worktree the
+working directory is the worktree's path, so `filepath.Base` there yields the
+worktree's name — `atct-feature-x` instead of `atct`. Only the daemon holds the
+normalized path, and the whole point of normalizing is that a worktree belongs
+to its main repository. Deriving the name from the un-normalized path would keep
+the path correct and make the name wrong.
+
+Add `"path/filepath"` to the handler's imports if it is not already there.
 3. On success print `registered project "<name>" at <path>` to **stderr**.
 4. **When the project already exists, print `already registered as "<name>"` to
    stderr and exit 0.** Running `atct project add` twice is something a user
