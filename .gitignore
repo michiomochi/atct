@@ -12,3 +12,4 @@ doc/research/
 # Frontend
 node_modules/
 .astro/
+dist/
