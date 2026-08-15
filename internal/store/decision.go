@@ -132,3 +132,51 @@ func (s *Store) ListOpenDecisions(ctx context.Context, goalID string) ([]domain.
 	}
 	return out, rows.Err()
 }
+
+type AnswerInput struct {
+	DecisionID  string
+	AnswerLabel string
+	AnswerText  string
+	AnsweredBy  string
+}
+
+// AnswerDecision performs a conditional transition from open.
+// WHERE status = 'open' ensures only one concurrent answer succeeds.
+// The application must enforce this at the database boundary because humans can answer twice in separate tabs.
+func (s *Store) AnswerDecision(ctx context.Context, in AnswerInput) (domain.Decision, error) {
+	now := time.Now().UTC().Format(time.RFC3339)
+
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE decisions
+		 SET status = 'answered', answer_label = ?, answer_text = ?, answered_by = ?, answered_at = ?
+		 WHERE id = ? AND status = 'open'`,
+		in.AnswerLabel, in.AnswerText, in.AnsweredBy, now, in.DecisionID)
+	if err != nil {
+		return domain.Decision{}, fmt.Errorf("update decision: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return domain.Decision{}, fmt.Errorf("rows affected: %w", err)
+	}
+	if n == 0 {
+		return domain.Decision{}, fmt.Errorf("%w: %s", ErrDecisionNotOpen, in.DecisionID)
+	}
+	return s.GetDecision(ctx, in.DecisionID)
+}
+
+func (s *Store) WithdrawDecision(ctx context.Context, decisionID, reason string) error {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE decisions SET status = 'withdrawn', answer_text = ? WHERE id = ? AND status = 'open'`,
+		reason, decisionID)
+	if err != nil {
+		return fmt.Errorf("withdraw decision: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("rows affected: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("%w: %s", ErrDecisionNotOpen, decisionID)
+	}
+	return nil
+}

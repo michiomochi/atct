@@ -102,6 +102,31 @@ func TestUpdateTaskReleasesClaimWhenTodo(t *testing.T) {
 	}
 }
 
+func TestUpdateTaskKeepsClaimWhenDoing(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	goalID := newTestGoal(t, s)
+	tasks, err := s.DeclareTasks(ctx, goalID, "codex", "doing-keep-key", []string{"Keep working"})
+	if err != nil {
+		t.Fatalf("DeclareTasks: %v", err)
+	}
+	claimed, err := s.ClaimTask(ctx, tasks[0].ID, "run-1")
+	if err != nil {
+		t.Fatalf("ClaimTask: %v", err)
+	}
+
+	updated, err := s.UpdateTask(ctx, tasks[0].ID, domain.TaskDoing)
+	if err != nil {
+		t.Fatalf("UpdateTask doing: %v", err)
+	}
+	if updated.ClaimedBy != claimed.ClaimedBy {
+		t.Fatalf("claimed_by changed on doing: %q -> %q", claimed.ClaimedBy, updated.ClaimedBy)
+	}
+	if updated.ClaimedAt == nil {
+		t.Fatalf("claimed_at cleared on doing: %+v", updated)
+	}
+}
+
 func TestReleaseTaskClearsClaim(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
