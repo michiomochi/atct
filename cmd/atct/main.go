@@ -10,24 +10,36 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/michiomochi/atct/internal/daemon"
 	"github.com/michiomochi/atct/internal/daemonctl"
+	"github.com/michiomochi/atct/internal/domain"
+	"github.com/michiomochi/atct/internal/mcpshim"
 	"github.com/michiomochi/atct/internal/store"
 )
 
 const defaultListenAddr = "127.0.0.1:8787"
 
 type cliConfig struct {
-	subcommand string
-	listenAddr string
+	subcommand    string
+	listenAddr    string
+	projectAction string
+	projectName   string
 }
 
 var errInvalidArgs = errors.New("invalid command line")
 
-var validSubcommands = map[string]bool{"daemon": true, "ensure": true, "stop": true}
+var validSubcommands = map[string]bool{
+	"daemon":  true,
+	"ensure":  true,
+	"stop":    true,
+	"project": true,
+}
+
+var validProjectActions = map[string]bool{"add": true, "list": true}
 
 func printUsage() {
 	fmt.Fprintln(os.Stderr, "Usage: atct <command> [options]")
@@ -36,6 +48,8 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "  daemon    Run the ATCT daemon in the foreground")
 	fmt.Fprintln(os.Stderr, "  ensure    Start the daemon if it is not already running")
 	fmt.Fprintln(os.Stderr, "  stop      Stop the running daemon")
+	fmt.Fprintln(os.Stderr, "  project add [name]   Register the current project")
+	fmt.Fprintln(os.Stderr, "  project list         List registered projects")
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Options:")
 	fmt.Fprintln(os.Stderr, "  -listen string   HTTP listen address (default \"127.0.0.1:8787\")")
@@ -53,18 +67,41 @@ func parseArgs(args []string) (cliConfig, error) {
 		return cliConfig{}, errInvalidArgs
 	}
 
+	rest := args[1:]
+	cfg := cliConfig{subcommand: sub}
+	if sub == "project" {
+		if len(rest) < 1 {
+			fmt.Fprintln(os.Stderr, "project requires an action: add or list")
+			printUsage()
+			return cliConfig{}, errInvalidArgs
+		}
+		action := rest[0]
+		if !validProjectActions[action] {
+			fmt.Fprintf(os.Stderr, "unknown project action %q\n", action)
+			printUsage()
+			return cliConfig{}, errInvalidArgs
+		}
+		cfg.projectAction = action
+		rest = rest[1:]
+		if action == "add" && len(rest) > 0 && !strings.HasPrefix(rest[0], "-") {
+			cfg.projectName = rest[0]
+			rest = rest[1:]
+		}
+	}
+
 	flags := flag.NewFlagSet(sub, flag.ExitOnError)
 	flags.SetOutput(os.Stderr)
 	flags.Usage = printUsage
 	listenAddr := flags.String("listen", defaultListenAddr, "HTTP listen address")
-	flags.Parse(args[1:])
+	flags.Parse(rest)
 	if len(flags.Args()) > 0 {
 		fmt.Fprintf(os.Stderr, "unexpected argument %q\n", flags.Args()[0])
 		printUsage()
 		return cliConfig{}, errInvalidArgs
 	}
 
-	return cliConfig{subcommand: sub, listenAddr: *listenAddr}, nil
+	cfg.listenAddr = *listenAddr
+	return cfg, nil
 }
 
 // version is overridden at build time with -ldflags "-X main.version=...".
@@ -108,6 +145,11 @@ func main() {
 			fmt.Fprintln(os.Stderr, "atct daemon stopped")
 		} else {
 			fmt.Fprintln(os.Stderr, "no atct daemon was running")
+		}
+		return
+	case "project":
+		if err := runProject(config, dir, exePath); err != nil {
+			log.Fatalf("project %s: %v", config.projectAction, err)
 		}
 		return
 	}
@@ -170,4 +212,89 @@ func main() {
 			log.Fatalf("http serve: %v", err)
 		}
 	}
+}
+
+func runProject(config cliConfig, dir, exePath string) error {
+	reg, err := daemonctl.Ensure(daemonctl.Config{
+		Dir:        dir,
+		Version:    version,
+		Executable: exePath,
+		ListenAddr: config.listenAddr,
+	})
+	if err != nil {
+		return err
+	}
+
+	client := mcpshim.NewClient(reg.SocketPath)
+	ctx := context.Background()
+	switch config.projectAction {
+	case "add":
+		return addProject(ctx, client, config.projectName)
+	case "list":
+		return listProjects(ctx, client)
+	default:
+		return fmt.Errorf("unsupported project action %q", config.projectAction)
+	}
+}
+
+func addProject(ctx context.Context, client *mcpshim.Client, name string) error {
+	rootPath, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("resolve current directory: %w", err)
+	}
+
+	var project domain.Project
+	err = client.Call(ctx, "project.create", map[string]string{
+		"name":      name,
+		"root_path": rootPath,
+	}, &project)
+	if err == nil {
+		fmt.Fprintf(os.Stderr, "registered project %q at %s\n", project.Name, project.RootPath)
+		return nil
+	}
+	if !strings.Contains(err.Error(), "UNIQUE constraint failed: projects.") {
+		return err
+	}
+
+	existing, lookupErr := findExistingProject(ctx, client, name, rootPath)
+	if lookupErr != nil {
+		return fmt.Errorf("project is already registered, but its name could not be determined: %w", lookupErr)
+	}
+	fmt.Fprintf(os.Stderr, "already registered as %q\n", existing.Name)
+	return nil
+}
+
+func findExistingProject(ctx context.Context, client *mcpshim.Client, name, rootPath string) (domain.Project, error) {
+	var projects []domain.Project
+	if err := client.Call(ctx, "project.list", map[string]string{}, &projects); err != nil {
+		return domain.Project{}, err
+	}
+	cleanRoot := filepath.Clean(rootPath)
+	if resolved, err := filepath.EvalSymlinks(rootPath); err == nil {
+		cleanRoot = filepath.Clean(resolved)
+	}
+	for _, project := range projects {
+		if name != "" && project.Name == name {
+			return project, nil
+		}
+		projectRoot := filepath.Clean(project.RootPath)
+		if resolved, err := filepath.EvalSymlinks(project.RootPath); err == nil {
+			projectRoot = filepath.Clean(resolved)
+		}
+		if projectRoot == cleanRoot {
+			return project, nil
+		}
+	}
+	return domain.Project{}, fmt.Errorf("no matching project for %s", rootPath)
+}
+
+func listProjects(ctx context.Context, client *mcpshim.Client) error {
+	var projects []domain.Project
+	if err := client.Call(ctx, "project.list", map[string]string{}, &projects); err != nil {
+		return err
+	}
+	for _, project := range projects {
+		fmt.Fprintf(os.Stdout, "%s\t%s\n", project.Name, project.RootPath)
+	}
+	return nil
 }

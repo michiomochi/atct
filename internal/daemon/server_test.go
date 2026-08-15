@@ -158,3 +158,23 @@ func TestDaemonListsProjectsWhenNoneExist(t *testing.T) {
 		t.Fatalf("got %d projects, want 0", len(projects))
 	}
 }
+
+func TestDaemonDerivesProjectNameFromNormalizedRoot(t *testing.T) {
+	resp := call(t, newDaemonConn(t), "project.create", map[string]string{
+		"root_path": "/repos/atct",
+	})
+	if resp.Error != "" {
+		t.Fatalf("project.create: %s", resp.Error)
+	}
+
+	var project domain.Project
+	if err := json.Unmarshal(resp.Result, &project); err != nil {
+		t.Fatalf("unmarshal project: %v", err)
+	}
+	if project.Name != "atct" {
+		t.Fatalf("name = %q, want %q", project.Name, "atct")
+	}
+	if project.RootPath != "/repos/atct" {
+		t.Fatalf("root_path = %q, want %q", project.RootPath, "/repos/atct")
+	}
+}

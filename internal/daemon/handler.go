@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"time"
 
 	"github.com/michiomochi/atct/internal/domain"
@@ -25,7 +26,11 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 			return nil, err
 		}
 		rootPath := store.NormalizeRoot(ctx, p.RootPath)
-		ns, err := d.store.CreateProject(ctx, p.Name, rootPath)
+		name := p.Name
+		if name == "" {
+			name = filepath.Base(rootPath)
+		}
+		ns, err := d.store.CreateProject(ctx, name, rootPath)
 		return marshal(ns, err)
 
 	case "project.list":

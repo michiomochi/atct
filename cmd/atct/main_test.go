@@ -76,3 +76,54 @@ func TestParseArgsAcceptsListenOnEnsure(t *testing.T) {
 		t.Fatalf("listenAddr = %q, want %q", cfg.listenAddr, "127.0.0.1:19999")
 	}
 }
+
+func TestParseArgsAcceptsProjectAdd(t *testing.T) {
+	cfg, err := parseArgs([]string{"project", "add", "myproj"})
+	if err != nil {
+		t.Fatalf("parseArgs: %v", err)
+	}
+	if cfg.subcommand != "project" {
+		t.Fatalf("subcommand = %q, want %q", cfg.subcommand, "project")
+	}
+	if cfg.projectAction != "add" {
+		t.Fatalf("projectAction = %q, want %q", cfg.projectAction, "add")
+	}
+	if cfg.projectName != "myproj" {
+		t.Fatalf("projectName = %q, want %q", cfg.projectName, "myproj")
+	}
+}
+
+func TestParseArgsAcceptsProjectAddWithoutName(t *testing.T) {
+	cfg, err := parseArgs([]string{"project", "add"})
+	if err != nil {
+		t.Fatalf("parseArgs: %v", err)
+	}
+	if cfg.projectName != "" {
+		t.Fatalf("projectName = %q, want empty", cfg.projectName)
+	}
+}
+
+func TestParseArgsAcceptsProjectList(t *testing.T) {
+	cfg, err := parseArgs([]string{"project", "list"})
+	if err != nil {
+		t.Fatalf("parseArgs: %v", err)
+	}
+	if cfg.subcommand != "project" {
+		t.Fatalf("subcommand = %q, want %q", cfg.subcommand, "project")
+	}
+	if cfg.projectAction != "list" {
+		t.Fatalf("projectAction = %q, want %q", cfg.projectAction, "list")
+	}
+}
+
+func TestParseArgsRejectsUnknownProjectAction(t *testing.T) {
+	if _, err := parseArgs([]string{"project", "remove"}); err == nil {
+		t.Fatal("parseArgs(project remove) returned nil error")
+	}
+}
+
+func TestParseArgsRejectsProjectWithoutAction(t *testing.T) {
+	if _, err := parseArgs([]string{"project"}); err == nil {
+		t.Fatal("parseArgs(project) returned nil error")
+	}
+}
