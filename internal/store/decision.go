@@ -180,3 +180,77 @@ func (s *Store) WithdrawDecision(ctx context.Context, decisionID, reason string)
 	}
 	return nil
 }
+
+// PollDecisions returns answered Decisions and transitions them to applied in one transaction.
+// "Human answered" and "agent received" are distinct facts.
+// A decision becomes applied when returned; if the process dies before return, it remains answered and the next poll can recover it.
+func (s *Store) PollDecisions(ctx context.Context, runID string, decisionID string) ([]domain.Decision, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	query := `SELECT ` + decisionColumns + ` FROM decisions WHERE status = 'answered' AND run_id = ?`
+	args := []any{runID}
+	if decisionID != "" {
+		query += ` AND id = ?`
+		args = append(args, decisionID)
+	}
+	query += ` ORDER BY answered_at`
+
+	rows, err := tx.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query answered decisions: %w", err)
+	}
+	var out []domain.Decision
+	for rows.Next() {
+		d, err := scanDecision(rows)
+		if err != nil {
+			rows.Close()
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	now := time.Now().UTC()
+	for i := range out {
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE decisions SET status = 'applied', applied_at = ? WHERE id = ? AND status = 'answered'`,
+			now.Format(time.RFC3339), out[i].ID); err != nil {
+			return nil, fmt.Errorf("mark applied: %w", err)
+		}
+		out[i].Status = domain.DecisionApplied
+		applied := now
+		out[i].AppliedAt = &applied
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit: %w", err)
+	}
+	return out, nil
+}
+
+// ListUnappliedDecisions returns answered Decisions not yet received by an agent.
+// This is the only place to detect an answer stranded after a dead session.
+func (s *Store) ListUnappliedDecisions(ctx context.Context) ([]domain.Decision, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT `+decisionColumns+` FROM decisions WHERE status = 'answered' ORDER BY answered_at`)
+	if err != nil {
+		return nil, fmt.Errorf("query unapplied decisions: %w", err)
+	}
+	defer rows.Close()
+
+	var out []domain.Decision
+	for rows.Next() {
+		d, err := scanDecision(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
