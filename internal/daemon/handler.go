@@ -24,8 +24,13 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, err
 		}
-		ns, err := d.store.CreateProject(ctx, p.Name, p.RootPath)
+		rootPath := store.NormalizeRoot(ctx, p.RootPath)
+		ns, err := d.store.CreateProject(ctx, p.Name, rootPath)
 		return marshal(ns, err)
+
+	case "project.list":
+		projects, err := d.store.ListProjects(ctx)
+		return marshal(projects, err)
 
 	case "goal.list":
 		var p struct {
