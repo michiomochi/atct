@@ -1,0 +1,490 @@
+package httpapi
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
+	"time"
+
+	"github.com/michiomochi/atct/internal/domain"
+	"github.com/michiomochi/atct/internal/store"
+)
+
+type Server struct {
+	store *store.Store
+}
+
+func New(s *store.Store) *Server {
+	return &Server{store: s}
+}
+
+func (s *Server) Handler() http.Handler {
+	return s
+}
+
+type TaskView struct {
+	domain.Task
+	HeldForSeconds int64             `json:"held_for_seconds"`
+	OpenDecisions  []domain.Decision `json:"open_decisions"`
+}
+
+type inboxResponse struct {
+	OpenDecisions      []domain.Decision `json:"open_decisions"`
+	UnappliedDecisions []domain.Decision `json:"unapplied_decisions"`
+	ActiveGoals        []domain.Goal     `json:"active_goals"`
+	AttentionTasks     []TaskView        `json:"attention_tasks"`
+}
+
+type goalResponse struct {
+	Goal          domain.Goal `json:"goal"`
+	Now           []TaskView  `json:"now"`
+	NeedsDecision []TaskView  `json:"needs_decision"`
+	Next          []TaskView  `json:"next"`
+}
+
+type answerRequest struct {
+	AnswerLabel string `json:"answer_label"`
+	AnswerText  string `json:"answer_text"`
+	AnsweredBy  string `json:"answered_by"`
+}
+
+type approvalRequest struct {
+	AnsweredBy string `json:"answered_by"`
+}
+
+type rejectionRequest struct {
+	Reason     string `json:"reason"`
+	AnsweredBy string `json:"answered_by"`
+}
+
+func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/"), "/")
+	if len(parts) == 2 && parts[0] == "api" && parts[1] == "inbox" {
+		if r.Method != http.MethodGet {
+			writeError(w, http.StatusBadRequest, "method is not allowed for this endpoint")
+			return
+		}
+		s.handleInbox(w, r)
+		return
+	}
+	if len(parts) == 2 && parts[0] == "api" && parts[1] == "events" {
+		if r.Method != http.MethodGet {
+			writeError(w, http.StatusBadRequest, "method is not allowed for this endpoint")
+			return
+		}
+		s.handleEvents(w, r)
+		return
+	}
+
+	if len(parts) == 3 && parts[0] == "api" && parts[1] == "goals" {
+		if parts[2] == "" {
+			writeError(w, http.StatusBadRequest, "goal id is missing")
+			return
+		}
+		if r.Method != http.MethodGet {
+			writeError(w, http.StatusBadRequest, "method is not allowed for this endpoint")
+			return
+		}
+		s.handleGoal(w, r, parts[2])
+		return
+	}
+	if len(parts) == 4 && parts[0] == "api" && parts[1] == "tasks" && parts[3] == "release" {
+		if parts[2] == "" {
+			writeError(w, http.StatusBadRequest, "task id is missing")
+			return
+		}
+		if r.Method != http.MethodPost {
+			writeError(w, http.StatusBadRequest, "method is not allowed for this endpoint")
+			return
+		}
+		s.handleRelease(w, r, parts[2])
+		return
+	}
+	if len(parts) == 4 && parts[0] == "api" && parts[1] == "decisions" {
+		if parts[2] == "" || parts[3] == "" {
+			writeError(w, http.StatusBadRequest, "decision path is malformed")
+			return
+		}
+		if r.Method != http.MethodPost {
+			writeError(w, http.StatusBadRequest, "method is not allowed for this endpoint")
+			return
+		}
+		s.handleDecision(w, r, parts[2], parts[3])
+		return
+	}
+
+	if malformedAPIPath(r.URL.Path) {
+		writeError(w, http.StatusBadRequest, "api path is malformed")
+		return
+	}
+	if strings.HasPrefix(r.URL.Path, "/api/") {
+		writeError(w, http.StatusNotFound, "endpoint not found")
+		return
+	}
+	writeError(w, http.StatusNotFound, "endpoint not found")
+}
+
+func malformedAPIPath(path string) bool {
+	for _, prefix := range []string{"/api/inbox", "/api/events", "/api/goals", "/api/tasks", "/api/decisions"} {
+		if path == prefix || strings.HasPrefix(path, prefix+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Server) handleInbox(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	goals, err := s.store.ListAllGoals(ctx)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	openDecisions, err := s.store.ListAllOpenDecisions(ctx)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	unapplied, err := s.store.ListUnappliedDecisions(ctx)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+
+	openByTask := indexDecisions(openDecisions)
+	activeGoals := make([]domain.Goal, 0)
+	attentionTasks := make([]TaskView, 0)
+	for _, goal := range goals {
+		if goal.Status == domain.GoalActive {
+			activeGoals = append(activeGoals, goal)
+		}
+		tasks, err := s.store.ListTasks(ctx, goal.ID)
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		for _, task := range tasks {
+			decisions := openByTask[task.ID]
+			if len(decisions) == 0 || !isProjectableTask(task.Status) {
+				continue
+			}
+			attentionTasks = append(attentionTasks, newTaskView(task, decisions))
+		}
+	}
+
+	writeJSON(w, http.StatusOK, inboxResponse{
+		OpenDecisions:      nonNilDecisions(openDecisions),
+		UnappliedDecisions: nonNilDecisions(unapplied),
+		ActiveGoals:        nonNilGoals(activeGoals),
+		AttentionTasks:     nonNilTaskViews(attentionTasks),
+	})
+}
+
+func (s *Server) handleGoal(w http.ResponseWriter, r *http.Request, goalID string) {
+	ctx := r.Context()
+	goal, err := s.store.GetGoal(ctx, goalID)
+	if errors.Is(err, store.ErrGoalNotFound) {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	tasks, err := s.store.ListTasks(ctx, goalID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	openDecisions, err := s.store.ListOpenDecisions(ctx, goalID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	openByTask := indexDecisions(openDecisions)
+
+	response := goalResponse{
+		Goal:          goal,
+		Now:           make([]TaskView, 0),
+		NeedsDecision: make([]TaskView, 0),
+		Next:          make([]TaskView, 0),
+	}
+	for _, task := range tasks {
+		decisions := openByTask[task.ID]
+		view := newTaskView(task, decisions)
+		switch {
+		case len(decisions) > 0 && isProjectableTask(task.Status):
+			response.NeedsDecision = append(response.NeedsDecision, view)
+		case task.Status == domain.TaskStatus("doing"):
+			response.Now = append(response.Now, view)
+		case task.Status == domain.TaskStatus("todo"):
+			response.Next = append(response.Next, view)
+		}
+	}
+
+	writeJSON(w, http.StatusOK, response)
+}
+
+func (s *Server) handleRelease(w http.ResponseWriter, r *http.Request, taskID string) {
+	task, err := s.store.ReleaseTask(r.Context(), taskID)
+	if err != nil {
+		if strings.Contains(err.Error(), "task not found") {
+			writeError(w, http.StatusNotFound, err.Error())
+			return
+		}
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, task)
+}
+
+func (s *Server) handleDecision(w http.ResponseWriter, r *http.Request, decisionID, action string) {
+	switch action {
+	case "answer":
+		s.handleAnswer(w, r, decisionID)
+	case "approve":
+		s.handleApprove(w, r, decisionID)
+	case "reject":
+		s.handleReject(w, r, decisionID)
+	default:
+		writeError(w, http.StatusNotFound, "endpoint not found")
+	}
+}
+
+func (s *Server) handleAnswer(w http.ResponseWriter, r *http.Request, decisionID string) {
+	var request answerRequest
+	if err := decodeJSONBody(r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if strings.TrimSpace(request.AnsweredBy) == "" ||
+		(strings.TrimSpace(request.AnswerLabel) == "" && strings.TrimSpace(request.AnswerText) == "") {
+		writeError(w, http.StatusBadRequest, "answered_by and an answer label or text are required")
+		return
+	}
+	if !s.ensureOpenDecision(w, r.Context(), decisionID) {
+		return
+	}
+	decision, err := s.store.AnswerDecision(r.Context(), store.AnswerInput{
+		DecisionID:  decisionID,
+		AnswerLabel: request.AnswerLabel,
+		AnswerText:  request.AnswerText,
+		AnsweredBy:  request.AnsweredBy,
+	})
+	if errors.Is(err, store.ErrDecisionNotOpen) {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, decision)
+}
+
+func (s *Server) handleApprove(w http.ResponseWriter, r *http.Request, decisionID string) {
+	var request approvalRequest
+	if err := decodeJSONBody(r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if strings.TrimSpace(request.AnsweredBy) == "" {
+		writeError(w, http.StatusBadRequest, "answered_by is required")
+		return
+	}
+	decision, ok := s.getOpenCompletion(w, r.Context(), decisionID)
+	if !ok {
+		return
+	}
+	goal, err := s.store.ApproveCompletion(r.Context(), decision.ID, request.AnsweredBy)
+	if errors.Is(err, store.ErrDecisionNotOpen) {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, goal)
+}
+
+func (s *Server) handleReject(w http.ResponseWriter, r *http.Request, decisionID string) {
+	var request rejectionRequest
+	if err := decodeJSONBody(r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if strings.TrimSpace(request.AnsweredBy) == "" {
+		writeError(w, http.StatusBadRequest, "answered_by is required")
+		return
+	}
+	if _, ok := s.getOpenCompletion(w, r.Context(), decisionID); !ok {
+		return
+	}
+	err := s.store.RejectCompletion(r.Context(), decisionID, request.Reason, request.AnsweredBy)
+	if errors.Is(err, store.ErrDecisionNotOpen) {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	decision, err := s.store.GetDecision(r.Context(), decisionID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, decision)
+}
+
+func (s *Server) ensureOpenDecision(w http.ResponseWriter, ctx context.Context, decisionID string) bool {
+	decision, err := s.store.GetDecision(ctx, decisionID)
+	if errors.Is(err, store.ErrDecisionNotFound) {
+		writeError(w, http.StatusNotFound, err.Error())
+		return false
+	}
+	if err != nil {
+		writeStoreError(w, err)
+		return false
+	}
+	if decision.Status != domain.DecisionOpen {
+		writeError(w, http.StatusConflict, store.ErrDecisionNotOpen.Error())
+		return false
+	}
+	return true
+}
+
+func (s *Server) getOpenCompletion(w http.ResponseWriter, ctx context.Context, decisionID string) (domain.Decision, bool) {
+	decision, err := s.store.GetDecision(ctx, decisionID)
+	if errors.Is(err, store.ErrDecisionNotFound) {
+		writeError(w, http.StatusNotFound, err.Error())
+		return domain.Decision{}, false
+	}
+	if err != nil {
+		writeStoreError(w, err)
+		return domain.Decision{}, false
+	}
+	if decision.Status != domain.DecisionOpen || decision.Kind != domain.KindCompletion {
+		writeError(w, http.StatusConflict, store.ErrDecisionNotOpen.Error())
+		return domain.Decision{}, false
+	}
+	return decision, true
+}
+
+func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "streaming is not supported")
+		return
+	}
+	ch, cancel := s.store.SubscribeDecisionEvents()
+	defer cancel()
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.WriteHeader(http.StatusOK)
+	flusher.Flush()
+
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case event := <-ch:
+			data, err := json.Marshal(event.Decision)
+			if err != nil {
+				return
+			}
+			if _, err := fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event.Name, data); err != nil {
+				return
+			}
+			flusher.Flush()
+		}
+	}
+}
+
+func decodeJSONBody(r *http.Request, dst any) error {
+	if r.Body == nil {
+		return io.EOF
+	}
+	decoder := json.NewDecoder(r.Body)
+	if err := decoder.Decode(dst); err != nil {
+		return err
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return errors.New("multiple JSON values")
+		}
+		return err
+	}
+	return nil
+}
+
+func indexDecisions(decisions []domain.Decision) map[string][]domain.Decision {
+	byTask := make(map[string][]domain.Decision)
+	for _, decision := range decisions {
+		if decision.TaskID == "" {
+			continue
+		}
+		byTask[decision.TaskID] = append(byTask[decision.TaskID], decision)
+	}
+	return byTask
+}
+
+func newTaskView(task domain.Task, decisions []domain.Decision) TaskView {
+	if decisions == nil {
+		decisions = make([]domain.Decision, 0)
+	}
+	held := int64(0)
+	if task.ClaimedBy != "" && task.ClaimedAt != nil {
+		if elapsed := time.Since(*task.ClaimedAt); elapsed > 0 {
+			held = int64(elapsed / time.Second)
+		}
+	}
+	return TaskView{Task: task, HeldForSeconds: held, OpenDecisions: decisions}
+}
+
+func isProjectableTask(status domain.TaskStatus) bool {
+	return status == domain.TaskStatus("doing") || status == domain.TaskStatus("todo")
+}
+
+func nonNilDecisions(value []domain.Decision) []domain.Decision {
+	if value == nil {
+		return make([]domain.Decision, 0)
+	}
+	return value
+}
+
+func nonNilGoals(value []domain.Goal) []domain.Goal {
+	if value == nil {
+		return make([]domain.Goal, 0)
+	}
+	return value
+}
+
+func nonNilTaskViews(value []TaskView) []TaskView {
+	if value == nil {
+		return make([]TaskView, 0)
+	}
+	return value
+}
+
+func writeJSON(w http.ResponseWriter, status int, value any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(value)
+}
+
+func writeError(w http.ResponseWriter, status int, message string) {
+	writeJSON(w, status, map[string]string{"error": message})
+}
+
+func writeStoreError(w http.ResponseWriter, err error) {
+	writeError(w, http.StatusInternalServerError, err.Error())
+}

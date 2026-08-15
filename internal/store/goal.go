@@ -83,6 +83,25 @@ func (s *Store) ListGoals(ctx context.Context, namespaceID string) ([]domain.Goa
 	return out, rows.Err()
 }
 
+func (s *Store) ListAllGoals(ctx context.Context) ([]domain.Goal, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT `+goalColumns+` FROM goals ORDER BY created_at`)
+	if err != nil {
+		return nil, fmt.Errorf("query all goals: %w", err)
+	}
+	defer rows.Close()
+
+	var out []domain.Goal
+	for rows.Next() {
+		g, err := scanGoal(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, g)
+	}
+	return out, rows.Err()
+}
+
 // CompleteGoal creates a kind=completion Decision.
 // A Goal cannot close while a child Decision is open (invariant 4).
 func (s *Store) CompleteGoal(ctx context.Context, goalID, resultSummary, runID string) (domain.Decision, error) {
@@ -148,19 +167,24 @@ func (s *Store) ApproveCompletion(ctx context.Context, decisionID, answeredBy st
 	if err := tx.Commit(); err != nil {
 		return domain.Goal{}, fmt.Errorf("commit: %w", err)
 	}
+	d, err := s.GetDecision(ctx, decisionID)
+	if err != nil {
+		return domain.Goal{}, err
+	}
 	s.notify.publish(decisionID)
 	s.notify.publishAll()
+	s.notify.publishEvent(DecisionEvent{Name: "decision.approved", Decision: d})
 	return s.GetGoal(ctx, goalID)
 }
 
 // RejectCompletion leaves the Goal active and the Decision answered.
 // It becomes applied when the agent receives the rejection reason.
 func (s *Store) RejectCompletion(ctx context.Context, decisionID, reason, answeredBy string) error {
-	_, err := s.AnswerDecision(ctx, AnswerInput{
+	_, err := s.answerDecision(ctx, AnswerInput{
 		DecisionID:  decisionID,
 		AnswerLabel: "reject",
 		AnswerText:  reason,
 		AnsweredBy:  answeredBy,
-	})
+	}, "decision.rejected")
 	return err
 }

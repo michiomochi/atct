@@ -67,6 +67,7 @@ func (s *Store) AskDecision(ctx context.Context, in AskInput) (domain.Decision, 
 	}
 	s.notify.publish(d.ID)
 	s.notify.publishAll()
+	s.notify.publishEvent(DecisionEvent{Name: "decision.created", Decision: d})
 	return d, nil
 }
 
@@ -135,6 +136,25 @@ func (s *Store) ListOpenDecisions(ctx context.Context, goalID string) ([]domain.
 	return out, rows.Err()
 }
 
+func (s *Store) ListAllOpenDecisions(ctx context.Context) ([]domain.Decision, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT `+decisionColumns+` FROM decisions WHERE status = 'open' ORDER BY created_at`)
+	if err != nil {
+		return nil, fmt.Errorf("query all open decisions: %w", err)
+	}
+	defer rows.Close()
+
+	var out []domain.Decision
+	for rows.Next() {
+		d, err := scanDecision(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
 type AnswerInput struct {
 	DecisionID  string
 	AnswerLabel string
@@ -146,6 +166,10 @@ type AnswerInput struct {
 // WHERE status = 'open' ensures only one concurrent answer succeeds.
 // The application must enforce this at the database boundary because humans can answer twice in separate tabs.
 func (s *Store) AnswerDecision(ctx context.Context, in AnswerInput) (domain.Decision, error) {
+	return s.answerDecision(ctx, in, "decision.answered")
+}
+
+func (s *Store) answerDecision(ctx context.Context, in AnswerInput, eventName string) (domain.Decision, error) {
 	now := time.Now().UTC().Format(time.RFC3339)
 
 	res, err := s.db.ExecContext(ctx,
@@ -163,9 +187,14 @@ func (s *Store) AnswerDecision(ctx context.Context, in AnswerInput) (domain.Deci
 	if n == 0 {
 		return domain.Decision{}, fmt.Errorf("%w: %s", ErrDecisionNotOpen, in.DecisionID)
 	}
+	d, err := s.GetDecision(ctx, in.DecisionID)
+	if err != nil {
+		return domain.Decision{}, err
+	}
 	s.notify.publish(in.DecisionID)
 	s.notify.publishAll()
-	return s.GetDecision(ctx, in.DecisionID)
+	s.notify.publishEvent(DecisionEvent{Name: eventName, Decision: d})
+	return d, nil
 }
 
 func (s *Store) WithdrawDecision(ctx context.Context, decisionID, reason string) error {
@@ -182,8 +211,13 @@ func (s *Store) WithdrawDecision(ctx context.Context, decisionID, reason string)
 	if n == 0 {
 		return fmt.Errorf("%w: %s", ErrDecisionNotOpen, decisionID)
 	}
+	d, err := s.GetDecision(ctx, decisionID)
+	if err != nil {
+		return err
+	}
 	s.notify.publish(decisionID)
 	s.notify.publishAll()
+	s.notify.publishEvent(DecisionEvent{Name: "decision.withdrawn", Decision: d})
 	return nil
 }
 
@@ -239,6 +273,7 @@ func (s *Store) PollDecisions(ctx context.Context, runID string, decisionID stri
 	}
 	for _, d := range out {
 		s.notify.publish(d.ID)
+		s.notify.publishEvent(DecisionEvent{Name: "decision.applied", Decision: d})
 	}
 	if len(out) > 0 {
 		s.notify.publishAll()

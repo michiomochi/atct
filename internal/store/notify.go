@@ -12,12 +12,21 @@ type notifier struct {
 	mu        sync.Mutex
 	subs      map[string][]chan struct{}
 	broadcast map[chan struct{}]struct{}
+	events    map[chan DecisionEvent]struct{}
+}
+
+// DecisionEvent describes a committed Decision transition for broadcast
+// consumers such as the human-facing SSE endpoint.
+type DecisionEvent struct {
+	Name     string
+	Decision domain.Decision
 }
 
 func newNotifier() *notifier {
 	return &notifier{
 		subs:      make(map[string][]chan struct{}),
 		broadcast: make(map[chan struct{}]struct{}),
+		events:    make(map[chan DecisionEvent]struct{}),
 	}
 }
 
@@ -76,6 +85,37 @@ func (n *notifier) publishAll() {
 		default:
 		}
 	}
+}
+
+func (n *notifier) subscribeEvents() (<-chan DecisionEvent, func()) {
+	ch := make(chan DecisionEvent, 16)
+	n.mu.Lock()
+	n.events[ch] = struct{}{}
+	n.mu.Unlock()
+
+	return ch, func() {
+		n.mu.Lock()
+		delete(n.events, ch)
+		n.mu.Unlock()
+	}
+}
+
+func (n *notifier) publishEvent(event DecisionEvent) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	for ch := range n.events {
+		select {
+		case ch <- event:
+		default:
+		}
+	}
+}
+
+// SubscribeDecisionEvents subscribes to committed Decision transitions.
+// Events are delivered on a buffered channel and slow subscribers may miss
+// events; publishing never blocks the store or other subscribers.
+func (s *Store) SubscribeDecisionEvents() (<-chan DecisionEvent, func()) {
+	return s.notify.subscribeEvents()
 }
 
 // WaitForAnswer waits for an answer and returns ok=false when timeout parks it.
