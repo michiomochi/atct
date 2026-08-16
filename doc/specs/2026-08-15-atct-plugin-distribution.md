@@ -65,9 +65,11 @@ Out of scope for v1:
   ordering or process ownership, and the shim-level start does not depend on either.
 - Windows. The transport is a Unix domain socket. Supporting Windows requires a named-pipe
   abstraction, which is a larger change than this design.
-- A `SessionStart` hook. The shim starts the daemon, so a hook would only shave the first call's
-  latency while adding a harness-specific dependency. It can be added later without changing
-  anything here.
+- ~~A `SessionStart` hook.~~ **Reversed on 2026-08-17.** The original reasoning treated a hook
+  purely as a way to pre-start the daemon, which the shim already does. That missed the actual
+  use: **a hook is how an agent learns to use ATCT at all.** Registering eight tools does not
+  make an agent reach for them, and a skill file only fires when its description happens to
+  match. Installing the plugin has to be enough. See section 6a.
 - Slash commands.
 - An OS service (`launchd` / `systemd`). It would be the most robust option but requires an
   installer, which conflicts with "install once and it works".
@@ -174,6 +176,32 @@ that a task cannot be completed while a decision on it is open. Without it the t
 unused.
 
 The plugin carries no hooks in v1.
+
+## 6a. Making the agent actually use ATCT
+
+Tools alone do not change behaviour. An agent with eight registered tools and no instruction
+uses none of them. The skill file helps only when its `description` happens to match what the
+agent is already thinking about, which is exactly the wrong condition: ATCT matters most when
+the agent has *not* thought to ask a human.
+
+The plugin therefore ships a `SessionStart` hook.
+
+```
+hooks/hooks.json     SessionStart, matching startup|clear|compact
+hooks/session-start  the script that decides whether to speak
+```
+
+**The hook is conditional.** It resolves the working directory against the registered projects
+and stays silent when there is no match. Repositories that were never registered with
+`atct project add` behave exactly as they did before the plugin was installed.
+
+This condition is the design. Injecting instructions into every session would make unrelated
+work pay for a goal-and-task ceremony it did not ask for, and an agent told to track
+everything tracks nothing usefully. **Registration is the opt-in.**
+
+**The hook does not start the daemon.** The shim already calls `Ensure`, and blocking session
+startup on a daemon launch trades a visible delay for nothing.
+
 
 ## 7. Release
 
