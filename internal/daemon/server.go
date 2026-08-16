@@ -54,6 +54,10 @@ func serveEmbeddedWeb(w http.ResponseWriter, r *http.Request, dist fs.FS, static
 
 	indexRequest := r.Clone(r.Context())
 	indexRequest.URL.Path = "/"
+	indexRequest.URL.RawPath = ""
+	if strings.HasPrefix(r.URL.Path, "/goals/") {
+		indexRequest.URL.Path = "/goals/_/"
+	}
 	static.ServeHTTP(w, indexRequest)
 }
 

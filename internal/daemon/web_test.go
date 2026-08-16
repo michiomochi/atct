@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/michiomochi/atct/internal/store"
+	atctweb "github.com/michiomochi/atct/web"
 )
 
 func TestHTTPHandlerServesEmbeddedIndex(t *testing.T) {
@@ -90,16 +92,35 @@ func TestHTTPHandlerKeepsSSEOpenUntilDisconnect(t *testing.T) {
 func TestHTTPHandlerFallsBackToEmbeddedIndexForHistoryRoute(t *testing.T) {
 	d := newWebTestDaemon(t)
 
+	wantRoot, err := fs.ReadFile(atctweb.Dist, "dist/index.html")
+	if err != nil {
+		t.Fatalf("read root index: %v", err)
+	}
+	wantGoal, err := fs.ReadFile(atctweb.Dist, "dist/goals/_/index.html")
+	if err != nil {
+		t.Fatalf("read goal history template: %v", err)
+	}
+
 	root := httptest.NewRecorder()
 	d.HTTPHandler().ServeHTTP(root, httptest.NewRequest(http.MethodGet, "/", nil))
+	if root.Code != http.StatusOK {
+		t.Fatalf("root status = %d, want %d", root.Code, http.StatusOK)
+	}
+	if root.Body.String() != string(wantRoot) {
+		t.Fatal("root route did not return the embedded index")
+	}
+
 	history := httptest.NewRecorder()
 	d.HTTPHandler().ServeHTTP(history, httptest.NewRequest(http.MethodGet, "/goals/example", nil))
 
 	if history.Code != http.StatusOK {
 		t.Fatalf("history status = %d, want %d", history.Code, http.StatusOK)
 	}
-	if history.Body.String() != root.Body.String() {
-		t.Fatal("history route did not return the embedded index")
+	if history.Body.String() != string(wantGoal) {
+		t.Fatal("history route did not return goals/_/index.html")
+	}
+	if history.Body.String() == root.Body.String() {
+		t.Fatal("history route returned the root index")
 	}
 }
 

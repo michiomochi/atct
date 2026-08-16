@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { fetchGoal, subscribeToDecisionEvents, type GoalResponse } from "../lib/api";
+import { resolveGoalID } from "../lib/ui";
 import { AreaLoading, ErrorState } from "./StateMessage";
 import { Section } from "./Section";
 import { TaskTable } from "./TaskTable";
@@ -19,15 +20,17 @@ function errorMessage(reason: unknown): string {
 
 export function GoalDetail({ id }: Props) {
   const [state, setState] = useState<LoadState>({ kind: "loading" });
+  const pathname = id === "_" && typeof window !== "undefined" ? window.location.pathname : "";
+  const resolvedID = resolveGoalID(id, pathname);
 
   const load = useCallback(async () => {
     setState({ kind: "loading" });
     try {
-      setState({ kind: "ready", data: await fetchGoal(id) });
+      setState({ kind: "ready", data: await fetchGoal(resolvedID) });
     } catch (reason) {
       setState({ kind: "error", message: errorMessage(reason) });
     }
-  }, [id]);
+  }, [resolvedID]);
 
   useEffect(() => {
     void load();

@@ -7,6 +7,7 @@ import {
   formatDate,
   formatHeldFor,
   isDecisionEventName,
+  resolveGoalID,
   statusLabel,
   validateAnswer,
 } from "./ui";
@@ -83,6 +84,17 @@ describe("decision SSE events", () => {
   it("ignores unrelated event names", () => {
     expect(isDecisionEventName("decision.applied")).toBe(true);
     expect(isDecisionEventName("task.claimed")).toBe(false);
+  });
+});
+
+describe("goal history IDs", () => {
+  it.each([
+    ["_", "/goals/abc123", "abc123"],
+    ["_", "/goals/abc123/", "abc123"],
+    ["_", "/goals/a%2Fb", "a/b"],
+    ["known", "/goals/other", "known"],
+  ])("resolves %s at %s to %s", (id, pathname, expected) => {
+    expect(resolveGoalID(id, pathname)).toBe(expected);
   });
 });
 

@@ -56,6 +56,17 @@ export function encodePathSegment(value: string): string {
   return encodeURIComponent(value);
 }
 
+export function resolveGoalID(id: string, pathname: string): string {
+  if (id !== "_") return id;
+
+  const segment = pathname.slice("/goals/".length).split("/", 1)[0] ?? "";
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return segment;
+  }
+}
+
 export function formatDate(value: string | undefined): string {
   if (!value) return "-";
   const date = new Date(value);
