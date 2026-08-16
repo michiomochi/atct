@@ -8,6 +8,11 @@ describe("resource parity", () => {
     expect(Object.keys(ja).sort()).toEqual(Object.keys(en).sort());
   });
 
+  it("uses the same language names in both resources", () => {
+    expect(en["locale.en"]).toBe(ja["locale.en"]);
+    expect(en["locale.ja"]).toBe(ja["locale.ja"]);
+  });
+
   it("has no empty strings", () => {
     for (const [key, value] of Object.entries({ ...en, ...ja })) {
       expect(value, `empty value for ${key}`).not.toBe("");

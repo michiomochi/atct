@@ -3,7 +3,7 @@ export const en = {
   "nav.inbox": "Inbox",
   "locale.label": "Language",
   "locale.en": "English",
-  "locale.ja": "Japanese",
+  "locale.ja": "日本語",
 
   "inbox.eyebrow": "INBOX",
   "inbox.title": "Inbox",
