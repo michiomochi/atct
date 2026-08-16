@@ -77,7 +77,8 @@ function DecisionCell({ decision, onRefresh }: { decision: Decision; onRefresh: 
 }
 
 export function TaskTable({ tasks, mode, onRefresh }: Props) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const locale = i18n.language.startsWith("ja") ? "ja" : "en";
   if (tasks.length === 0) {
     const message = mode === "needs_decision" ? t("task.empty.needsDecision") : t("task.empty.column");
     return <EmptyState>{message}</EmptyState>;
@@ -111,7 +112,7 @@ export function TaskTable({ tasks, mode, onRefresh }: Props) {
                   {decision ? <DecisionCell decision={decision} onRefresh={onRefresh} /> : <span className="text-ink-500">{t("task.decision.noDetails")}</span>}
                 </Table.Cell>
               )}
-              <Table.Cell className="px-3 py-4 text-ink-700">{statusLabel(task.status)}</Table.Cell>
+              <Table.Cell className="px-3 py-4 text-ink-700">{statusLabel(locale, task.status)}</Table.Cell>
               <Table.Cell className="px-3 py-4"><ClaimCell task={task} /></Table.Cell>
               <Table.Cell className="px-3 py-4"><TaskRelease task={task} onRefresh={onRefresh} /></Table.Cell>
             </Table.Row>

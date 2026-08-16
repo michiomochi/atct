@@ -14,18 +14,26 @@ export function LocaleSwitch() {
   }
 
   return (
-    <div className="flex items-center gap-2" aria-label={t("locale.label")}>
-      {locales.map((locale) => (
-        <Button
-          key={locale}
-          type="button"
-          aria-pressed={active === locale}
-          className="focus-ring px-2 py-1 text-sm font-medium text-ink-700 hover:text-ink-950"
-          onClick={() => select(locale)}
-        >
-          {t(`locale.${locale}`)}
-        </Button>
-      ))}
+    <div className="flex items-center gap-4">
+      <a
+        className="focus-ring text-sm font-medium text-ink-700 underline decoration-transparent underline-offset-4 transition hover:text-ink-950 hover:decoration-ink-300"
+        href="/"
+      >
+        {t("nav.inbox")}
+      </a>
+      <div className="flex items-center gap-2" aria-label={t("locale.label")}>
+        {locales.map((locale) => (
+          <Button
+            key={locale}
+            type="button"
+            aria-pressed={active === locale}
+            className="focus-ring px-2 py-1 text-sm font-medium text-ink-700 hover:text-ink-950"
+            onClick={() => select(locale)}
+          >
+            {t(`locale.${locale}`)}
+          </Button>
+        ))}
+      </div>
     </div>
   );
 }

@@ -45,7 +45,7 @@ export function AttentionTaskTable({ tasks }: Props) {
                   {task.goal_id}
                 </a>
               </Table.Cell>
-              <Table.Cell className="px-3 py-4 text-ink-700">{statusLabel(task.status)}</Table.Cell>
+              <Table.Cell className="px-3 py-4 text-ink-700">{statusLabel(locale, task.status)}</Table.Cell>
               <Table.Cell className="px-3 py-4 text-ink-700">{task.claimed_by || t("task.claim.noHolder")}</Table.Cell>
               <Table.Cell className="px-3 py-4 text-ink-700">{task.claimed_by ? formatDuration(locale, task.held_for_seconds) : "-"}</Table.Cell>
             </Table.Row>

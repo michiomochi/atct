@@ -5,6 +5,7 @@ import goalCreateFormSource from "../components/GoalCreateForm.tsx?raw";
 import goalDetailSource from "../components/GoalDetail.tsx?raw";
 import goalTableSource from "../components/GoalTable.tsx?raw";
 import inboxSource from "../components/Inbox.tsx?raw";
+import localeSwitchSource from "../components/LocaleSwitch.tsx?raw";
 import needsDecisionSource from "../components/NeedsDecisionList.tsx?raw";
 import sectionSource from "../components/Section.tsx?raw";
 import stateMessageSource from "../components/StateMessage.tsx?raw";
@@ -13,6 +14,7 @@ import attentionTaskSource from "../components/AttentionTaskTable.tsx?raw";
 import { formatDateTime, formatDuration, type Locale } from "../i18n";
 import {
   DECISION_EVENT_NAMES,
+  decisionKindLabel,
   findOpenCompletion,
   isDecisionEventName,
   resolveGoalID,
@@ -60,7 +62,7 @@ describe("validateAnswer", () => {
   });
 });
 
-describe("English UI labels", () => {
+describe("localized UI labels", () => {
   it("formats dates for both supported locales", () => {
     const iso = "2026-08-15T00:00:00Z";
     expect(formatDateTime("en", iso)).toContain("Aug");
@@ -73,20 +75,41 @@ describe("English UI labels", () => {
   });
 
   it.each([
-    ["todo", "Not started"],
-    ["doing", "In progress"],
-    ["done", "Completed"],
-    ["blocked", "Blocked"],
-    ["open", "Awaiting answer"],
-    ["answered", "Answered"],
-    ["applied", "Applied"],
-    ["approved", "Approved"],
-    ["rejected", "Rejected"],
-    ["withdrawn", "Withdrawn"],
-    ["active", "In progress"],
-    ["completed", "Completed"],
-  ])("labels %s as %s", (status, expected) => {
-    expect(statusLabel(status)).toBe(expected);
+    ["en", "todo", "Not started"],
+    ["en", "doing", "In progress"],
+    ["en", "done", "Completed"],
+    ["en", "blocked", "Blocked"],
+    ["en", "open", "Awaiting answer"],
+    ["en", "answered", "Answered"],
+    ["en", "applied", "Applied"],
+    ["en", "approved", "Approved"],
+    ["en", "rejected", "Rejected"],
+    ["en", "withdrawn", "Withdrawn"],
+    ["en", "active", "In progress"],
+    ["en", "completed", "Completed"],
+    ["ja", "todo", "\u672a\u7740\u624b"],
+    ["ja", "doing", "\u9032\u884c\u4e2d"],
+    ["ja", "done", "\u5b8c\u4e86"],
+    ["ja", "blocked", "\u30d6\u30ed\u30c3\u30af"],
+    ["ja", "open", "\u56de\u7b54\u5f85\u3061"],
+    ["ja", "answered", "\u56de\u7b54\u6e08\u307f"],
+    ["ja", "applied", "\u9069\u7528\u6e08\u307f"],
+    ["ja", "approved", "\u627f\u8a8d\u6e08\u307f"],
+    ["ja", "rejected", "\u5374\u4e0b\u6e08\u307f"],
+    ["ja", "withdrawn", "\u53d6\u308a\u4e0b\u3052\u6e08\u307f"],
+    ["ja", "active", "\u9032\u884c\u4e2d"],
+    ["ja", "completed", "\u5b8c\u4e86"],
+  ])("labels %s/%s as %s", (locale, status, expected) => {
+    expect(statusLabel(locale as Locale, status)).toBe(expected);
+  });
+
+  it.each([
+    ["en", "decision", "Decision"],
+    ["en", "completion", "Completion"],
+    ["ja", "decision", "\u5224\u65ad"],
+    ["ja", "completion", "\u5b8c\u4e86"],
+  ])("labels %s kind %s as %s", (locale, kind, expected) => {
+    expect(decisionKindLabel(locale as Locale, kind)).toBe(expected);
   });
 });
 
@@ -198,6 +221,12 @@ describe("goal detail answer flows", () => {
     expect(taskTableSource).toContain('t("task.claim.release")');
     expect(taskTableSource).toContain('t("duration.none")');
     expect(decisionFormSource).toContain('t("form.answer.submit")');
+  });
+
+  it("localizes the Decision kind and header Inbox link", () => {
+    expect(decisionTableSource).toContain("decisionKindLabel");
+    expect(localeSwitchSource).toContain('t("nav.inbox")');
+    expect(localeSwitchSource).toContain('href="/"');
   });
 
   it("keeps goal creation in Active goals with all required states", () => {

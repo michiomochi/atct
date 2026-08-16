@@ -68,6 +68,9 @@ function DecisionDetails({ decision, onRefresh }: { decision: Decision; onRefres
 }
 
 export function NeedsDecisionList({ tasks, onRefresh }: Props) {
+  const { i18n } = useTranslation();
+  const locale = i18n.language.startsWith("ja") ? "ja" : "en";
+
   if (tasks.length === 0) {
     return <EmptyState>No tasks are waiting for a decision. Tasks appear here when they need an answer.</EmptyState>;
   }
@@ -88,7 +91,7 @@ export function NeedsDecisionList({ tasks, onRefresh }: Props) {
           <div className="mt-4 grid min-w-0 gap-4 sm:grid-cols-3">
             <div>
               <p className="text-xs font-semibold uppercase tracking-wide text-ink-700">Status</p>
-              <p className="mt-1 text-sm text-ink-700">{statusLabel(task.status)}</p>
+              <p className="mt-1 text-sm text-ink-700">{statusLabel(locale, task.status)}</p>
             </div>
             <div>
               <p className="text-xs font-semibold uppercase tracking-wide text-ink-700">Claim</p>

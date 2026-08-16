@@ -1,3 +1,7 @@
+import type { Locale } from "../i18n";
+import { en, type TranslationKey } from "../i18n/en";
+import { ja } from "../i18n/ja";
+
 export const DECISION_EVENT_NAMES = [
   "decision.created",
   "decision.answered",
@@ -77,20 +81,36 @@ export function resolveGoalID(id: string, pathname: string): string {
   }
 }
 
-export function statusLabel(status: string): string {
-  const labels: Record<string, string> = {
-    todo: "Not started",
-    doing: "In progress",
-    done: "Completed",
-    blocked: "Blocked",
-    open: "Awaiting answer",
-    answered: "Answered",
-    applied: "Applied",
-    approved: "Approved",
-    rejected: "Rejected",
-    withdrawn: "Withdrawn",
-    active: "In progress",
-    completed: "Completed",
-  };
-  return labels[status] ?? status;
+const statusKeys: Record<string, TranslationKey> = {
+  todo: "status.task.todo",
+  doing: "status.task.doing",
+  done: "status.task.done",
+  blocked: "status.task.blocked",
+  active: "status.task.active",
+  completed: "status.task.completed",
+  open: "status.decision.open",
+  answered: "status.decision.answered",
+  applied: "status.decision.applied",
+  approved: "status.decision.approved",
+  rejected: "status.decision.rejected",
+  withdrawn: "status.decision.withdrawn",
+};
+
+const decisionKindKeys: Record<string, TranslationKey> = {
+  decision: "decision.kind.decision",
+  completion: "decision.kind.completion",
+};
+
+function localized(key: TranslationKey, locale: Locale): string {
+  return (locale === "ja" ? ja : en)[key];
+}
+
+export function statusLabel(locale: Locale, status: string): string {
+  const key = statusKeys[status];
+  return key ? localized(key, locale) : status;
+}
+
+export function decisionKindLabel(locale: Locale, kind: string): string {
+  const key = decisionKindKeys[kind];
+  return key ? localized(key, locale) : kind;
 }

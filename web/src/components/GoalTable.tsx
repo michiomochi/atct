@@ -41,7 +41,7 @@ export function GoalTable({ goals }: Props) {
                 </a>
                 <p className="mt-1 font-mono text-xs text-ink-500">{goal.id}</p>
               </Table.Cell>
-              <Table.Cell className="px-3 py-4 text-ink-700">{statusLabel(goal.status)}</Table.Cell>
+              <Table.Cell className="px-3 py-4 text-ink-700">{statusLabel(locale, goal.status)}</Table.Cell>
               <Table.Cell className="px-3 py-4 text-ink-700">{formatDateTime(locale, goal.updated_at)}</Table.Cell>
             </Table.Row>
           ))}

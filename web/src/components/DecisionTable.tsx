@@ -1,6 +1,6 @@
 import type { Decision } from "../lib/api";
 import { formatDateTime } from "../i18n";
-import { encodePathSegment, statusLabel } from "../lib/ui";
+import { decisionKindLabel, encodePathSegment, statusLabel } from "../lib/ui";
 import { Table } from "@cloudflare/kumo/components/table";
 import { useTranslation } from "react-i18next";
 import { EmptyState } from "./StateMessage";
@@ -41,9 +41,9 @@ export function DecisionTable({ decisions, emptyText }: Props) {
                   <p className="text-clamp-2 max-w-[34rem] font-medium text-ink-950" title={decision.question}>
                     {decision.question}
                   </p>
-                  <p className="mt-1 font-mono text-xs text-ink-500">{decision.kind}</p>
+                  <p className="mt-1 font-mono text-xs text-ink-500">{decisionKindLabel(locale, decision.kind)}</p>
                 </Table.Cell>
-                <Table.Cell className="px-3 py-4 text-ink-700">{statusLabel(decision.status)}</Table.Cell>
+                <Table.Cell className="px-3 py-4 text-ink-700">{statusLabel(locale, decision.status)}</Table.Cell>
                 <Table.Cell className="px-3 py-4 text-ink-700">
                   {answer ? <p className="text-clamp-2" title={answer}>{answer}</p> : "-"}
                 </Table.Cell>
