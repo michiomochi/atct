@@ -51,7 +51,17 @@ type GoalCompleteIn struct {
 }
 
 type Raw struct {
-	Data json.RawMessage `json:"data"`
+	Data any `json:"data"`
+}
+
+func rawOutputSchema() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"data": map[string]any{},
+		},
+		"required": []string{"data"},
+	}
 }
 
 func call(ctx context.Context, c *Client, method string, params any) (*mcp.CallToolResult, Raw, error) {
@@ -66,15 +76,17 @@ func call(ctx context.Context, c *Client, method string, params any) (*mcp.CallT
 // Human operations (answer, approve, reject, and stale-claim release) belong to the Web UI and are not exposed through MCP.
 func Register(server *mcp.Server, c *Client, runID string) {
 	mcp.AddTool(server, &mcp.Tool{
-		Name:        "atct_goal_list",
-		Description: "Get active Goals and unapplied answers relevant to the current run. Call at startup and resume.",
+		Name:         "atct_goal_list",
+		Description:  "Get active Goals and unapplied answers relevant to the current run. Call at startup and resume.",
+		OutputSchema: rawOutputSchema(),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in GoalListIn) (*mcp.CallToolResult, Raw, error) {
 		return call(ctx, c, "goal.list", map[string]any{"cwd": in.Cwd, "run_id": runID})
 	})
 
 	mcp.AddTool(server, &mcp.Tool{
-		Name:        "atct_task_declare",
-		Description: "Declare tasks decomposed from a Goal. Retrying the same idempotency_key does not create duplicates.",
+		Name:         "atct_task_declare",
+		Description:  "Declare tasks decomposed from a Goal. Retrying the same idempotency_key does not create duplicates.",
+		OutputSchema: rawOutputSchema(),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in TaskDeclareIn) (*mcp.CallToolResult, Raw, error) {
 		return call(ctx, c, "task.declare", map[string]any{
 			"goal_id": in.GoalID, "titles": in.Titles,
@@ -83,8 +95,9 @@ func Register(server *mcp.Server, c *Client, runID string) {
 	})
 
 	mcp.AddTool(server, &mcp.Tool{
-		Name:        "atct_task_claim",
-		Description: "Claim a task for this run. Only one concurrent run can claim a task.",
+		Name:         "atct_task_claim",
+		Description:  "Claim a task for this run. Only one concurrent run can claim a task.",
+		OutputSchema: rawOutputSchema(),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in TaskClaimIn) (*mcp.CallToolResult, Raw, error) {
 		return call(ctx, c, "task.claim", map[string]any{
 			"task_id": in.TaskID, "run_id": runID,
@@ -92,8 +105,9 @@ func Register(server *mcp.Server, c *Client, runID string) {
 	})
 
 	mcp.AddTool(server, &mcp.Tool{
-		Name:        "atct_task_update",
-		Description: "Change a task status. Setting todo, done, or dropped releases the claim; a task with an open Decision cannot become done.",
+		Name:         "atct_task_update",
+		Description:  "Change a task status. Setting todo, done, or dropped releases the claim; a task with an open Decision cannot become done.",
+		OutputSchema: rawOutputSchema(),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in TaskUpdateIn) (*mcp.CallToolResult, Raw, error) {
 		return call(ctx, c, "task.update", map[string]any{"task_id": in.TaskID, "status": in.Status})
 	})
@@ -102,6 +116,7 @@ func Register(server *mcp.Server, c *Client, runID string) {
 		Name: "atct_decision_ask",
 		Description: "Ask the human for a decision. An answer received within wait_ms is returned." +
 			"If parked is returned, continue with another task that does not depend on this decision.",
+		OutputSchema: rawOutputSchema(),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in DecisionAskIn) (*mcp.CallToolResult, Raw, error) {
 		params := map[string]any{
 			"goal_id": in.GoalID, "task_id": in.TaskID, "question": in.Question,
@@ -114,8 +129,9 @@ func Register(server *mcp.Server, c *Client, runID string) {
 	})
 
 	mcp.AddTool(server, &mcp.Tool{
-		Name:        "atct_decision_poll",
-		Description: "Fetch the answer to a declared decision. Fetching transitions it to applied.",
+		Name:         "atct_decision_poll",
+		Description:  "Fetch the answer to a declared decision. Fetching transitions it to applied.",
+		OutputSchema: rawOutputSchema(),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in DecisionPollIn) (*mcp.CallToolResult, Raw, error) {
 		return call(ctx, c, "decision.poll", map[string]any{
 			"run_id": runID, "decision_id": in.DecisionID,
@@ -126,6 +142,7 @@ func Register(server *mcp.Server, c *Client, runID string) {
 		Name: "atct_decision_withdraw",
 		Description: "Withdraw a decision that is no longer needed. Always call this after resolving it independently." +
 			"Otherwise stale questions remain in the human inbox.",
+		OutputSchema: rawOutputSchema(),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in DecisionWithdrawIn) (*mcp.CallToolResult, Raw, error) {
 		return call(ctx, c, "decision.withdraw", map[string]any{
 			"decision_id": in.DecisionID, "reason": in.Reason,
@@ -133,8 +150,9 @@ func Register(server *mcp.Server, c *Client, runID string) {
 	})
 
 	mcp.AddTool(server, &mcp.Tool{
-		Name:        "atct_goal_complete",
-		Description: "Report goal completion and request human approval. Fails while an open Decision remains.",
+		Name:         "atct_goal_complete",
+		Description:  "Report goal completion and request human approval. Fails while an open Decision remains.",
+		OutputSchema: rawOutputSchema(),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in GoalCompleteIn) (*mcp.CallToolResult, Raw, error) {
 		return call(ctx, c, "goal.complete", map[string]any{
 			"goal_id": in.GoalID, "result_summary": in.ResultSummary, "run_id": runID,
