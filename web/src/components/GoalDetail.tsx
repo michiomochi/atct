@@ -1,7 +1,6 @@
 import { Button } from "@cloudflare/kumo/components/button";
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
-import { readStoredLocale, resolveLocale } from "../i18n";
 import {
   ApiError,
   approveCompletion,
@@ -176,12 +175,6 @@ export function GoalDetail({ id }: Props) {
   const { t, i18n } = useTranslation();
   const pathname = id === "_" && typeof window !== "undefined" ? window.location.pathname : "";
   const resolvedID = resolveGoalID(id, pathname);
-
-  useEffect(() => {
-    const nav = typeof navigator === "undefined" ? null : navigator.language;
-    const next = resolveLocale(readStoredLocale(), nav);
-    if (i18n.language !== next) void i18n.changeLanguage(next);
-  }, [i18n]);
 
   const load = useCallback(async () => {
     setState({ kind: "loading" });

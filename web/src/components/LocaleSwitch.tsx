@@ -1,12 +1,39 @@
 import { Button } from "@cloudflare/kumo/components/button";
+import { useEffect } from "react";
 import { useTranslation } from "react-i18next";
-import { storeLocale, type Locale } from "../i18n";
+import { readStoredLocale, resolveLocale, storeLocale, type Locale } from "../i18n";
 
 const locales: Locale[] = ["en", "ja"];
 
 export function LocaleSwitch() {
   const { i18n, t } = useTranslation();
   const active = i18n.language === "ja" ? "ja" : "en";
+
+  useEffect(() => {
+    let timer: number | undefined;
+    const apply = () => {
+      const nav = typeof navigator === "undefined" ? null : navigator.language;
+      const next = resolveLocale(readStoredLocale(), nav);
+      if (i18n.language !== next) void i18n.changeLanguage(next);
+    };
+
+    if (document.readyState === "complete") {
+      timer = window.setTimeout(apply, 0);
+    } else {
+      const onLoad = () => {
+        timer = window.setTimeout(apply, 0);
+      };
+      window.addEventListener("load", onLoad, { once: true });
+      return () => {
+        window.removeEventListener("load", onLoad);
+        if (timer !== undefined) window.clearTimeout(timer);
+      };
+    }
+
+    return () => {
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  }, [i18n]);
 
   function select(next: Locale) {
     storeLocale(next);

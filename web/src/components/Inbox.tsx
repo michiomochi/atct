@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { readStoredLocale, resolveLocale } from "../i18n";
 import { fetchInbox, subscribeToDecisionEvents, type InboxResponse } from "../lib/api";
 import { AttentionTaskTable } from "./AttentionTaskTable";
 import { DecisionTable } from "./DecisionTable";
@@ -20,13 +19,7 @@ function errorMessage(reason: unknown, fallback: string): string {
 
 export function Inbox() {
   const [state, setState] = useState<LoadState>({ kind: "loading" });
-  const { t, i18n } = useTranslation();
-
-  useEffect(() => {
-    const nav = typeof navigator === "undefined" ? null : navigator.language;
-    const next = resolveLocale(readStoredLocale(), nav);
-    if (i18n.language !== next) void i18n.changeLanguage(next);
-  }, [i18n]);
+  const { t } = useTranslation();
 
   const load = useCallback(async () => {
     setState({ kind: "loading" });

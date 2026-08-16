@@ -229,6 +229,17 @@ describe("goal detail answer flows", () => {
     expect(localeSwitchSource).toContain('href="/"');
   });
 
+  it("applies the stored locale after the client islands hydrate", () => {
+    expect(localeSwitchSource).toContain("readStoredLocale");
+    expect(localeSwitchSource).toContain("resolveLocale");
+    expect(localeSwitchSource).toContain("document.readyState");
+    expect(localeSwitchSource).toContain("setTimeout");
+    expect(inboxSource).not.toContain("readStoredLocale");
+    expect(inboxSource).not.toContain("changeLanguage");
+    expect(goalDetailSource).not.toContain("readStoredLocale");
+    expect(goalDetailSource).not.toContain("changeLanguage");
+  });
+
   it("keeps goal creation in Active goals with all required states", () => {
     expect(goalCreateFormSource).toContain("fetchProjects");
     expect(goalCreateFormSource).toContain("createGoal");
