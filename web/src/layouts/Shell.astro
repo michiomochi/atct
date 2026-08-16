@@ -1,5 +1,6 @@
 ---
 import "../styles/global.css";
+import { LocaleSwitch } from "../components/LocaleSwitch";
 
 interface Props {
   title: string;
@@ -27,6 +28,7 @@ const { title, description = "Review ATCT tasks and decisions." } = Astro.props;
           <a class="focus-ring text-sm font-medium text-ink-700 underline decoration-transparent underline-offset-4 transition hover:text-ink-950 hover:decoration-ink-300" href="/">
             Inbox
           </a>
+          <LocaleSwitch client:load />
         </nav>
       </div>
     </header>
