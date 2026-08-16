@@ -1,6 +1,14 @@
 package main
 
-import "testing"
+import (
+	"net"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/michiomochi/atct/internal/daemonctl"
+)
 
 func TestParseArgs(t *testing.T) {
 	tests := []struct {
@@ -157,5 +165,95 @@ func TestParseArgsRejectsUnknownProjectAction(t *testing.T) {
 func TestParseArgsRejectsProjectWithoutAction(t *testing.T) {
 	if _, err := parseArgs([]string{"project"}); err == nil {
 		t.Fatal("parseArgs(project) returned nil error")
+	}
+}
+
+func TestPrepareDaemonStartRejectsHealthyDaemon(t *testing.T) {
+	dir := shortDaemonTestDir(t)
+	socketPath := filepath.Join(dir, "atct.sock")
+	listener, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatalf("listen unix socket: %v", err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+	go acceptDaemonTestConnections(listener)
+
+	if err := daemonctl.WriteRegistry(dir, daemonctl.Registry{
+		PID:        os.Getpid(),
+		HTTPAddr:   "127.0.0.1:8787",
+		SocketPath: socketPath,
+		Version:    version,
+	}); err != nil {
+		t.Fatalf("write registry: %v", err)
+	}
+
+	err = prepareDaemonStart(dir)
+	if err == nil {
+		t.Fatal("prepareDaemonStart returned nil for a healthy daemon")
+	}
+	for _, want := range []string{"pid", "127.0.0.1:8787", "atct stop"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error %q does not contain %q", err, want)
+		}
+	}
+	reg, err := daemonctl.ReadRegistry(dir)
+	if err != nil {
+		t.Fatalf("read registry after healthy rejection: %v", err)
+	}
+	if reg.PID != os.Getpid() {
+		t.Fatalf("registry PID after healthy rejection = %d, want %d", reg.PID, os.Getpid())
+	}
+}
+
+func TestPrepareDaemonStartAllowsDeadPID(t *testing.T) {
+	dir := shortDaemonTestDir(t)
+	socketPath := filepath.Join(dir, "atct.sock")
+	if err := os.WriteFile(socketPath, []byte("stale socket"), 0o600); err != nil {
+		t.Fatalf("write stale socket: %v", err)
+	}
+	if err := daemonctl.WriteRegistry(dir, daemonctl.Registry{
+		PID:        -1,
+		HTTPAddr:   "127.0.0.1:8787",
+		SocketPath: socketPath,
+		Version:    version,
+	}); err != nil {
+		t.Fatalf("write registry: %v", err)
+	}
+
+	if err := prepareDaemonStart(dir); err != nil {
+		t.Fatalf("prepareDaemonStart: %v", err)
+	}
+	if _, err := os.Stat(daemonctl.RegistryPath(dir)); !os.IsNotExist(err) {
+		t.Fatalf("registry after stale cleanup: err = %v, want not exist", err)
+	}
+	if _, err := os.Stat(socketPath); !os.IsNotExist(err) {
+		t.Fatalf("socket after stale cleanup: err = %v, want not exist", err)
+	}
+}
+
+func TestPrepareDaemonStartAllowsMissingRegistry(t *testing.T) {
+	dir := shortDaemonTestDir(t)
+	if err := prepareDaemonStart(dir); err != nil {
+		t.Fatalf("prepareDaemonStart: %v", err)
+	}
+}
+
+func shortDaemonTestDir(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "atct")
+	if err != nil {
+		t.Fatalf("mkdir temp dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return dir
+}
+
+func acceptDaemonTestConnections(listener net.Listener) {
+	for {
+		conn, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		_ = conn.Close()
 	}
 }

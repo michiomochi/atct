@@ -145,6 +145,24 @@ func parseArgs(args []string) (cliConfig, error) {
 // version is overridden at build time with -ldflags "-X main.version=...".
 var version = "dev"
 
+func prepareDaemonStart(dir string) error {
+	reg, err := daemonctl.ReadRegistry(dir)
+	if err == nil {
+		if reg.Healthy() {
+			return fmt.Errorf(
+				"daemon is already running: pid %d, http %s; run `atct stop` first",
+				reg.PID, reg.HTTPAddr)
+		}
+	} else if !errors.Is(err, daemonctl.ErrNoRegistry) {
+		return err
+	}
+
+	if err := os.Remove(daemonctl.SocketPath(dir)); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove stale socket: %w", err)
+	}
+	return daemonctl.RemoveRegistry(dir)
+}
+
 func main() {
 	config, err := parseArgs(os.Args[1:])
 	if err != nil {
@@ -195,6 +213,9 @@ func main() {
 			log.Fatalf("goal %s: %v", config.goalAction, err)
 		}
 		return
+	}
+	if err := prepareDaemonStart(dir); err != nil {
+		log.Fatalf("daemon: %v", err)
 	}
 
 	s, err := store.Open(filepath.Join(dir, "atct.db"))
