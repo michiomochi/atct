@@ -231,11 +231,14 @@ func (s *Store) PollDecisions(ctx context.Context, runID string, decisionID stri
 	}
 	defer tx.Rollback()
 
-	query := `SELECT ` + decisionColumns + ` FROM decisions WHERE status = 'answered' AND run_id = ?`
-	args := []any{runID}
-	if decisionID != "" {
-		query += ` AND id = ?`
-		args = append(args, decisionID)
+	var query string
+	var args []any
+	if decisionID == "" {
+		query = `SELECT ` + decisionColumns + ` FROM decisions WHERE status = 'answered' AND run_id = ?`
+		args = []any{runID}
+	} else {
+		query = `SELECT ` + decisionColumns + ` FROM decisions WHERE status = 'answered' AND id = ?`
+		args = []any{decisionID}
 	}
 	query += ` ORDER BY answered_at`
 

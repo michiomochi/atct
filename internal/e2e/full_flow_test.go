@@ -589,6 +589,57 @@ func TestSSEPublishesAnsweredDecision(t *testing.T) {
 	}
 }
 
+func TestSessionCanAdoptAnsweredDecision(t *testing.T) {
+	stack := newE2EStack(t)
+	createProject(t, stack)
+	goal := createGoal(t, stack)
+	tasks := declareTasks(t, stack, goal.ID, []string{"Adopt the answered decision"})
+	decision := askParked(t, stack, goal.ID, tasks[0].ID, "run-a")
+
+	status, raw := httpJSON(t, stack, http.MethodPost, "/api/decisions/"+decision.DecisionID+"/answer", map[string]string{
+		"answer_label": "continue",
+		"answer_text":  "Continue in the new session",
+		"answered_by":  "human",
+	})
+	if status != http.StatusOK {
+		t.Fatalf("POST answer status = %d, body %s", status, raw)
+	}
+	var answered domain.Decision
+	decodeJSON(t, raw, &answered)
+	if answered.ID != decision.DecisionID || answered.Status != domain.DecisionAnswered {
+		t.Fatalf("answer response = %+v", answered)
+	}
+
+	var listed e2eGoalList
+	callDaemon(t, stack, "goal.list", map[string]any{
+		"cwd": e2eRoot, "run_id": "run-b",
+	}, &listed)
+	if !containsDecision(listed.OrphanedDecisions, decision.DecisionID) {
+		t.Fatalf("orphaned_decisions does not contain answered decision: %+v", listed.OrphanedDecisions)
+	}
+
+	var applied []domain.Decision
+	callDaemon(t, stack, "decision.poll", map[string]any{
+		"run_id": "run-b", "decision_id": decision.DecisionID,
+	}, &applied)
+	if len(applied) != 1 || applied[0].ID != decision.DecisionID || applied[0].Status != domain.DecisionApplied {
+		t.Fatalf("decision.poll returned %+v", applied)
+	}
+	if applied[0].RunID != "run-a" {
+		t.Fatalf("adopted decision run_id = %q, want run-a", applied[0].RunID)
+	}
+
+	status, raw = httpJSON(t, stack, http.MethodGet, "/api/inbox", nil)
+	if status != http.StatusOK {
+		t.Fatalf("GET /api/inbox status = %d, body %s", status, raw)
+	}
+	var inbox e2eInbox
+	decodeJSON(t, raw, &inbox)
+	if len(inbox.UnappliedDecisions) != 0 {
+		t.Fatalf("unapplied_decisions = %+v, want empty after adoption", inbox.UnappliedDecisions)
+	}
+}
+
 func containsGoal(goals []domain.Goal, id string) bool {
 	for _, goal := range goals {
 		if goal.ID == id {
