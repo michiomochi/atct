@@ -1,14 +1,18 @@
 import { describe, expect, it } from "vitest";
 import decisionFormSource from "../components/DecisionAnswerForm.tsx?raw";
+import goalDetailSource from "../components/GoalDetail.tsx?raw";
+import needsDecisionSource from "../components/NeedsDecisionList.tsx?raw";
 import stateMessageSource from "../components/StateMessage.tsx?raw";
 import taskTableSource from "../components/TaskTable.tsx?raw";
 import {
   DECISION_EVENT_NAMES,
   formatDate,
   formatHeldFor,
+  findOpenCompletion,
   isDecisionEventName,
   resolveGoalID,
   statusLabel,
+  validateCompletion,
   validateAnswer,
 } from "./ui";
 
@@ -115,5 +119,43 @@ describe("Kumo buttons", () => {
     expect(stateMessageSource).toContain("disabled:cursor-wait disabled:opacity-60");
     expect(taskTableSource).toContain("disabled={releasing}");
     expect(taskTableSource).toContain("if (!task.claimed_by)");
+  });
+});
+
+describe("goal detail answer flows", () => {
+  it("finds only an open completion decision", () => {
+    const completion = { id: "completion-1", kind: "completion", status: "open" };
+    expect(findOpenCompletion([
+      { id: "answered-1", kind: "completion", status: "answered" },
+      completion,
+      { id: "ordinary-1", kind: "decision", status: "open" },
+    ])).toBe(completion);
+    expect(findOpenCompletion([{ id: "done-1", kind: "completion", status: "applied" }])).toBeUndefined();
+  });
+
+  it("requires a human name before approving or rejecting completion", () => {
+    expect(validateCompletion({ answered_by: "  " })).toEqual({
+      answered_by: "Enter the person approving or rejecting this completion.",
+    });
+    expect(validateCompletion({ answered_by: "michio" })).toEqual({});
+  });
+
+  it("keeps decision answers vertical while Now and Next stay tabular", () => {
+    expect(goalDetailSource).toContain("NeedsDecisionList");
+    expect(goalDetailSource).not.toContain("<TaskTable tasks={data.needs_decision}");
+    expect(needsDecisionSource).toContain('data-testid="needs-decision-list"');
+    expect(needsDecisionSource).not.toContain("<Table");
+    expect(needsDecisionSource).not.toContain("table-scroll");
+    expect(needsDecisionSource).not.toContain("bg-surface p-4");
+    expect(goalDetailSource).toContain('<TaskTable tasks={data.goal.now} mode="now"');
+    expect(goalDetailSource).toContain('<TaskTable tasks={data.goal.next} mode="next"');
+  });
+
+  it("exposes the completion approval API in Goal detail", () => {
+    expect(goalDetailSource).toContain("fetchInbox");
+    expect(goalDetailSource).toContain("approveCompletion");
+    expect(goalDetailSource).toContain("rejectCompletion");
+    expect(goalDetailSource).toContain("Completion awaiting approval");
+    expect(goalDetailSource).toContain("result_summary");
   });
 });

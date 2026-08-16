@@ -52,6 +52,29 @@ export function validateAnswer(input: AnswerInput): AnswerErrors {
   return errors;
 }
 
+export interface CompletionLike {
+  kind: string;
+  status: string;
+}
+
+export function findOpenCompletion<T extends CompletionLike>(decisions: T[]): T | undefined {
+  return decisions.find((decision) => decision.kind === "completion" && decision.status === "open");
+}
+
+export interface CompletionInput {
+  answered_by: string;
+}
+
+export type CompletionErrors = Partial<Record<keyof CompletionInput, string>>;
+
+export function validateCompletion(input: CompletionInput): CompletionErrors {
+  if (input.answered_by.trim().length === 0) {
+    return { answered_by: "Enter the person approving or rejecting this completion." };
+  }
+
+  return {};
+}
+
 export function encodePathSegment(value: string): string {
   return encodeURIComponent(value);
 }
