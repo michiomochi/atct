@@ -14,13 +14,13 @@ type LoadState =
   | { kind: "ready"; data: InboxResponse }
   | { kind: "error"; message: string };
 
-function errorMessage(reason: unknown): string {
-  return reason instanceof Error ? reason.message : "Could not load the inbox.";
+function errorMessage(reason: unknown, fallback: string): string {
+  return reason instanceof Error ? reason.message : fallback;
 }
 
 export function Inbox() {
   const [state, setState] = useState<LoadState>({ kind: "loading" });
-  const { i18n } = useTranslation();
+  const { t, i18n } = useTranslation();
 
   useEffect(() => {
     const nav = typeof navigator === "undefined" ? null : navigator.language;
@@ -33,9 +33,9 @@ export function Inbox() {
     try {
       setState({ kind: "ready", data: await fetchInbox() });
     } catch (reason) {
-      setState({ kind: "error", message: errorMessage(reason) });
+      setState({ kind: "error", message: errorMessage(reason, t("inbox.error.load")) });
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     void load();
@@ -48,33 +48,33 @@ export function Inbox() {
   return (
     <main className="space-y-10">
       <div className="border-b border-line pb-6">
-        <p className="font-mono text-xs uppercase tracking-[0.18em] text-accent-700">Inbox</p>
-        <h1 className="mt-2 font-display text-3xl font-semibold tracking-tight text-ink-950">Inbox</h1>
+        <p className="font-mono text-xs uppercase tracking-[0.18em] text-accent-700">{t("inbox.eyebrow")}</p>
+        <h1 className="mt-2 font-display text-3xl font-semibold tracking-tight text-ink-950">{t("inbox.title")}</h1>
         <p className="mt-3 max-w-2xl text-sm leading-6 text-ink-700">
-          Review decisions awaiting answers, answered decisions that are not yet applied, tasks needing attention, and active goals.
+          {t("inbox.description")}
         </p>
       </div>
 
-      <Section title="Decisions awaiting an answer" count={data?.open_decisions.length}>
-        {state.kind === "loading" && <AreaLoading label="Decisions awaiting an answer" />}
+      <Section id="open-decisions" title={t("inbox.openDecisions.title")} count={data?.open_decisions.length}>
+        {state.kind === "loading" && <AreaLoading label={t("inbox.openDecisions.title")} />}
         {state.kind === "error" && <ErrorState message={state.message} onRetry={retry} />}
-        {data && <DecisionTable decisions={data.open_decisions} emptyText="No decisions are waiting for an answer. Answer a decision to move it forward." />}
+        {data && <DecisionTable decisions={data.open_decisions} emptyText={t("inbox.openDecisions.empty")} />}
       </Section>
 
-      <Section title="Answered decisions not yet applied" count={data?.unapplied_decisions.length}>
-        {state.kind === "loading" && <AreaLoading label="Answered decisions not yet applied" />}
+      <Section id="unapplied-decisions" title={t("inbox.unapplied.title")} count={data?.unapplied_decisions.length}>
+        {state.kind === "loading" && <AreaLoading label={t("inbox.unapplied.title")} />}
         {state.kind === "error" && <ErrorState message={state.message} onRetry={retry} />}
-        {data && <DecisionTable decisions={data.unapplied_decisions} emptyText="No answered decisions are waiting to be applied. Apply an answer when it is ready." />}
+        {data && <DecisionTable decisions={data.unapplied_decisions} emptyText={t("inbox.unapplied.empty")} />}
       </Section>
 
-      <Section title="Tasks needing attention" count={data?.attention_tasks.length}>
-        {state.kind === "loading" && <AreaLoading label="Tasks needing attention" />}
+      <Section id="attention-tasks" title={t("inbox.attention.title")} count={data?.attention_tasks.length}>
+        {state.kind === "loading" && <AreaLoading label={t("inbox.attention.title")} />}
         {state.kind === "error" && <ErrorState message={state.message} onRetry={retry} />}
         {data && <AttentionTaskTable tasks={data.attention_tasks} />}
       </Section>
 
-      <Section title="Active goals" count={data?.active_goals.length}>
-        {state.kind === "loading" && <AreaLoading label="Active goals" />}
+      <Section id="active-goals" title={t("inbox.activeGoals.title")} count={data?.active_goals.length}>
+        {state.kind === "loading" && <AreaLoading label={t("inbox.activeGoals.title")} />}
         {state.kind === "error" && <ErrorState message={state.message} onRetry={retry} />}
         {data && <GoalTable goals={data.active_goals} />}
         {data && <GoalCreateForm onCreated={load} />}

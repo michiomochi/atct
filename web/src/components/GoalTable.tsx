@@ -1,6 +1,7 @@
 import type { Goal } from "../lib/api";
 import { encodePathSegment, formatDate, statusLabel } from "../lib/ui";
 import { Table } from "@cloudflare/kumo/components/table";
+import { useTranslation } from "react-i18next";
 import { EmptyState } from "./StateMessage";
 
 interface Props {
@@ -10,17 +11,19 @@ interface Props {
 const columnScope = { scope: "col" } as const;
 
 export function GoalTable({ goals }: Props) {
-  if (goals.length === 0) return <EmptyState>No active goals are in progress. Resume work on a goal to see it here.</EmptyState>;
+  const { t } = useTranslation();
+
+  if (goals.length === 0) return <EmptyState>{t("inbox.activeGoals.empty")}</EmptyState>;
 
   return (
     <div className="table-scroll">
       <Table className="min-w-[42rem] w-full border-collapse text-left text-sm">
-        <caption className="sr-only">Active goal list</caption>
+        <caption className="sr-only">{t("goal.caption.activeList")}</caption>
         <Table.Header className="border-b-2 border-ink-300 text-xs uppercase tracking-wide text-ink-700">
           <Table.Row>
-            <Table.Head {...columnScope} className="px-3 py-3 font-semibold">Goal</Table.Head>
-            <Table.Head {...columnScope} className="w-36 px-3 py-3 font-semibold">Status</Table.Head>
-            <Table.Head {...columnScope} className="w-48 px-3 py-3 font-semibold">Updated at</Table.Head>
+            <Table.Head {...columnScope} className="px-3 py-3 font-semibold">{t("goal.column.goal")}</Table.Head>
+            <Table.Head {...columnScope} className="w-36 px-3 py-3 font-semibold">{t("goal.column.status")}</Table.Head>
+            <Table.Head {...columnScope} className="w-48 px-3 py-3 font-semibold">{t("goal.column.updatedAt")}</Table.Head>
           </Table.Row>
         </Table.Header>
         <Table.Body>

@@ -1,6 +1,7 @@
 import type { TaskView } from "../lib/api";
 import { encodePathSegment, formatHeldFor, statusLabel } from "../lib/ui";
 import { Table } from "@cloudflare/kumo/components/table";
+import { useTranslation } from "react-i18next";
 import { EmptyState } from "./StateMessage";
 
 interface Props {
@@ -10,19 +11,21 @@ interface Props {
 const columnScope = { scope: "col" } as const;
 
 export function AttentionTaskTable({ tasks }: Props) {
-  if (tasks.length === 0) return <EmptyState>No tasks are related to an outstanding decision. They will appear here when a decision needs attention.</EmptyState>;
+  const { t } = useTranslation();
+
+  if (tasks.length === 0) return <EmptyState>{t("inbox.attention.empty")}</EmptyState>;
 
   return (
     <div className="table-scroll">
       <Table className="min-w-[58rem] w-full border-collapse text-left text-sm">
-        <caption className="sr-only">Tasks needing attention</caption>
+        <caption className="sr-only">{t("task.caption.attention")}</caption>
         <Table.Header className="border-b-2 border-ink-300 text-xs uppercase tracking-wide text-ink-700">
           <Table.Row>
-            <Table.Head {...columnScope} className="px-3 py-3 font-semibold">Task</Table.Head>
-            <Table.Head {...columnScope} className="w-40 px-3 py-3 font-semibold">Goal</Table.Head>
-            <Table.Head {...columnScope} className="w-32 px-3 py-3 font-semibold">Status</Table.Head>
-            <Table.Head {...columnScope} className="w-44 px-3 py-3 font-semibold">Claimed by</Table.Head>
-            <Table.Head {...columnScope} className="w-32 px-3 py-3 font-semibold">Claim duration</Table.Head>
+            <Table.Head {...columnScope} className="px-3 py-3 font-semibold">{t("task.column.task")}</Table.Head>
+            <Table.Head {...columnScope} className="w-40 px-3 py-3 font-semibold">{t("task.column.goal")}</Table.Head>
+            <Table.Head {...columnScope} className="w-32 px-3 py-3 font-semibold">{t("task.column.status")}</Table.Head>
+            <Table.Head {...columnScope} className="w-44 px-3 py-3 font-semibold">{t("task.column.claimedBy")}</Table.Head>
+            <Table.Head {...columnScope} className="w-32 px-3 py-3 font-semibold">{t("task.column.claimDuration")}</Table.Head>
           </Table.Row>
         </Table.Header>
         <Table.Body>
@@ -41,7 +44,7 @@ export function AttentionTaskTable({ tasks }: Props) {
                 </a>
               </Table.Cell>
               <Table.Cell className="px-3 py-4 text-ink-700">{statusLabel(task.status)}</Table.Cell>
-              <Table.Cell className="px-3 py-4 text-ink-700">{task.claimed_by || "Unclaimed"}</Table.Cell>
+              <Table.Cell className="px-3 py-4 text-ink-700">{task.claimed_by || t("task.claim.noHolder")}</Table.Cell>
               <Table.Cell className="px-3 py-4 text-ink-700">{task.claimed_by ? formatHeldFor(task.held_for_seconds) : "-"}</Table.Cell>
             </Table.Row>
           ))}

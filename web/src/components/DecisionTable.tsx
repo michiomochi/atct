@@ -1,6 +1,7 @@
 import type { Decision } from "../lib/api";
 import { encodePathSegment, formatDate, statusLabel } from "../lib/ui";
 import { Table } from "@cloudflare/kumo/components/table";
+import { useTranslation } from "react-i18next";
 import { EmptyState } from "./StateMessage";
 
 interface Props {
@@ -11,20 +12,22 @@ interface Props {
 const columnScope = { scope: "col" } as const;
 
 export function DecisionTable({ decisions, emptyText }: Props) {
+  const { t } = useTranslation();
+
   if (decisions.length === 0) return <EmptyState>{emptyText}</EmptyState>;
 
   return (
     <div className="table-scroll">
       <Table className="min-w-[58rem] w-full border-collapse text-left text-sm">
-        <caption className="sr-only">Decision list</caption>
+        <caption className="sr-only">{t("decision.caption.list")}</caption>
         <Table.Header className="border-b-2 border-ink-300 text-xs uppercase tracking-wide text-ink-700">
           <Table.Row>
-            <Table.Head {...columnScope} className="px-3 py-3 font-semibold">Question</Table.Head>
-            <Table.Head {...columnScope} className="w-36 px-3 py-3 font-semibold">Status</Table.Head>
-            <Table.Head {...columnScope} className="w-52 px-3 py-3 font-semibold">Answer</Table.Head>
-            <Table.Head {...columnScope} className="w-40 px-3 py-3 font-semibold">Answered by</Table.Head>
-            <Table.Head {...columnScope} className="w-48 px-3 py-3 font-semibold">Goal</Table.Head>
-            <Table.Head {...columnScope} className="w-44 px-3 py-3 font-semibold">Created at</Table.Head>
+            <Table.Head {...columnScope} className="px-3 py-3 font-semibold">{t("decision.column.question")}</Table.Head>
+            <Table.Head {...columnScope} className="w-36 px-3 py-3 font-semibold">{t("decision.column.status")}</Table.Head>
+            <Table.Head {...columnScope} className="w-52 px-3 py-3 font-semibold">{t("decision.column.answer")}</Table.Head>
+            <Table.Head {...columnScope} className="w-40 px-3 py-3 font-semibold">{t("decision.column.answeredBy")}</Table.Head>
+            <Table.Head {...columnScope} className="w-48 px-3 py-3 font-semibold">{t("decision.column.goal")}</Table.Head>
+            <Table.Head {...columnScope} className="w-44 px-3 py-3 font-semibold">{t("decision.column.createdAt")}</Table.Head>
           </Table.Row>
         </Table.Header>
         <Table.Body>

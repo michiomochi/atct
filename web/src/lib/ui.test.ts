@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import decisionFormSource from "../components/DecisionAnswerForm.tsx?raw";
 import goalCreateFormSource from "../components/GoalCreateForm.tsx?raw";
 import goalDetailSource from "../components/GoalDetail.tsx?raw";
+import inboxSource from "../components/Inbox.tsx?raw";
 import needsDecisionSource from "../components/NeedsDecisionList.tsx?raw";
+import sectionSource from "../components/Section.tsx?raw";
 import stateMessageSource from "../components/StateMessage.tsx?raw";
 import taskTableSource from "../components/TaskTable.tsx?raw";
 import {
@@ -163,12 +165,22 @@ describe("goal detail answer flows", () => {
   it("keeps goal creation in Active goals with all required states", () => {
     expect(goalCreateFormSource).toContain("fetchProjects");
     expect(goalCreateFormSource).toContain("createGoal");
-    expect(goalCreateFormSource).toContain("atct project add");
-    expect(goalCreateFormSource).toContain("Select a project");
+    expect(goalCreateFormSource).toContain('t("form.goal.noProject")');
+    expect(goalCreateFormSource).toContain('t("form.goal.project.placeholder")');
     expect(goalCreateFormSource).toContain('name="title"');
     expect(goalCreateFormSource).toContain('name="description"');
     expect(goalCreateFormSource).toContain("status === 409");
-    expect(goalCreateFormSource).toContain("Creating...");
+    expect(goalCreateFormSource).toContain('t("form.goal.action.creating")');
     expect(goalCreateFormSource).toContain("role=\"alert\"");
+  });
+
+  it("uses translated inbox framing with stable section anchors", () => {
+    expect(inboxSource).toContain("useTranslation");
+    expect(inboxSource).toContain('id="open-decisions"');
+    expect(inboxSource).toContain('id="unapplied-decisions"');
+    expect(inboxSource).toContain('id="attention-tasks"');
+    expect(inboxSource).toContain('id="active-goals"');
+    expect(sectionSource).toContain("id: string");
+    expect(sectionSource).toContain("aria-labelledby={`${id}-heading`}");
   });
 });

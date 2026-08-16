@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { Button } from "@cloudflare/kumo/components/button";
+import { useTranslation } from "react-i18next";
 import { ApiError, createGoal, fetchProjects, type Project } from "../lib/api";
 import { AreaLoading, ErrorState } from "./StateMessage";
 
@@ -10,6 +11,7 @@ interface GoalCreateFormProps {
 const DATA_OVERLOAD_LIMIT = 100;
 
 export function GoalCreateForm({ onCreated }: GoalCreateFormProps) {
+  const { t } = useTranslation();
   const [projects, setProjects] = useState<Project[]>([]);
   const [projectsLoading, setProjectsLoading] = useState(true);
   const [projectsError, setProjectsError] = useState<Error | null>(null);
@@ -31,11 +33,11 @@ export function GoalCreateForm({ onCreated }: GoalCreateFormProps) {
         nextProjects.some((project) => project.id === current) ? current : "",
       );
     } catch (reason) {
-      setProjectsError(reason instanceof Error ? reason : new Error("Unable to load projects."));
+      setProjectsError(reason instanceof Error ? reason : new Error(t("form.goal.error.load")));
     } finally {
       setProjectsLoading(false);
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     void loadProjects();
@@ -46,7 +48,7 @@ export function GoalCreateForm({ onCreated }: GoalCreateFormProps) {
     setValidationError("");
     setSubmitError(null);
     if (!projectID || !title.trim()) {
-      setValidationError("Select a project and enter a title.");
+      setValidationError(t("form.goal.error.required"));
       return;
     }
 
@@ -58,14 +60,14 @@ export function GoalCreateForm({ onCreated }: GoalCreateFormProps) {
       setOpen(false);
       onCreated();
     } catch (reason) {
-      setSubmitError(reason instanceof Error ? reason : new Error("Unable to create goal."));
+      setSubmitError(reason instanceof Error ? reason : new Error(t("form.goal.error.create")));
     } finally {
       setSubmitting(false);
     }
   };
 
   if (projectsLoading) {
-    return <AreaLoading label="Projects" />;
+    return <AreaLoading label={t("form.goal.project.label")} />;
   }
 
   if (projectsError) {
@@ -75,7 +77,7 @@ export function GoalCreateForm({ onCreated }: GoalCreateFormProps) {
   if (projects.length === 0) {
     return (
       <p className="mt-4 border-t border-line pt-4 text-sm text-muted">
-        リポジトリで <code>atct project add</code> を実行して、最初のプロジェクトを登録してください。
+        {t("form.goal.noProject")}
       </p>
     );
   }
@@ -91,7 +93,7 @@ export function GoalCreateForm({ onCreated }: GoalCreateFormProps) {
         aria-controls="goal-create-form"
         onClick={() => setOpen((current) => !current)}
       >
-        {open ? "Cancel" : "New goal"}
+        {open ? t("form.goal.cancel") : t("form.goal.action.new")}
       </Button>
 
       {open && (
@@ -103,12 +105,12 @@ export function GoalCreateForm({ onCreated }: GoalCreateFormProps) {
         >
           {dataOverloaded && (
             <p className="text-sm text-muted" role="status">
-              Showing all {projects.length} registered projects. Use the selector to choose one.
+              {t("form.goal.overload.description", { count: projects.length })}
             </p>
           )}
           <div>
             <label className="mb-1 block text-sm font-medium text-ink" htmlFor="goal-project">
-              Project
+              {t("form.goal.project.label")}
             </label>
             <select
               id="goal-project"
@@ -122,7 +124,7 @@ export function GoalCreateForm({ onCreated }: GoalCreateFormProps) {
               required
             >
               <option value="" disabled>
-                Select a project
+                {t("form.goal.project.placeholder")}
               </option>
               {projects.map((project) => (
                 <option key={project.id} value={project.id}>
@@ -134,7 +136,7 @@ export function GoalCreateForm({ onCreated }: GoalCreateFormProps) {
 
           <div>
             <label className="mb-1 block text-sm font-medium text-ink" htmlFor="goal-title">
-              Title
+              {t("form.goal.title.label")}
             </label>
             <input
               id="goal-title"
@@ -151,7 +153,7 @@ export function GoalCreateForm({ onCreated }: GoalCreateFormProps) {
 
           <div>
             <label className="mb-1 block text-sm font-medium text-ink" htmlFor="goal-description">
-              Description
+              {t("form.goal.description.label")}
             </label>
             <textarea
               id="goal-description"
@@ -170,7 +172,7 @@ export function GoalCreateForm({ onCreated }: GoalCreateFormProps) {
           )}
           {submitError && submitError instanceof ApiError && submitError.status === 409 ? (
             <ErrorState
-              message="The project changed while this goal was being created. Reload projects and try again."
+              message={t("form.goal.error.conflict")}
               onRetry={() => {
                 setSubmitError(null);
                 void loadProjects();
@@ -185,7 +187,7 @@ export function GoalCreateForm({ onCreated }: GoalCreateFormProps) {
             className="focus-ring bg-accent-700 px-3 py-2 text-sm text-white hover:bg-accent-800 disabled:cursor-wait disabled:opacity-60"
             disabled={submitting}
           >
-            {submitting ? "Creating..." : "Create goal"}
+            {submitting ? t("form.goal.action.creating") : t("form.goal.submit")}
           </Button>
         </form>
       )}

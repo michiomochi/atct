@@ -218,19 +218,19 @@ export function GoalDetail({ id }: Props) {
       {data?.completion && <CompletionApproval goal={data.goal.goal} decision={data.completion} onUpdated={load} />}
 
       <div className="grid gap-10 xl:grid-cols-3">
-        <Section title="Now" count={data?.goal.now.length}>
+        <Section id="now" title="Now" count={data?.goal.now.length}>
           {state.kind === "loading" && <AreaLoading label="Now" />}
           {state.kind === "error" && <ErrorState message={state.message} onRetry={retry} />}
           {data && <TaskTable tasks={data.goal.now} mode="now" onRefresh={load} />}
         </Section>
 
-        <Section title="Needs decision" count={data?.goal.needs_decision.length}>
+        <Section id="needs-decision" title="Needs decision" count={data?.goal.needs_decision.length}>
           {state.kind === "loading" && <AreaLoading label="Needs decision" />}
           {state.kind === "error" && <ErrorState message={state.message} onRetry={retry} />}
           {data && <NeedsDecisionList tasks={data.goal.needs_decision} onRefresh={load} />}
         </Section>
 
-        <Section title="Next" count={data?.goal.next.length}>
+        <Section id="next" title="Next" count={data?.goal.next.length}>
           {state.kind === "loading" && <AreaLoading label="Next" />}
           {state.kind === "error" && <ErrorState message={state.message} onRetry={retry} />}
           {data && <TaskTable tasks={data.goal.next} mode="next" onRefresh={load} />}
