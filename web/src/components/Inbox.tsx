@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { fetchInbox, subscribeToDecisionEvents, type InboxResponse } from "../lib/api";
 import { AttentionTaskTable } from "./AttentionTaskTable";
 import { DecisionTable } from "./DecisionTable";
+import { GoalCreateForm } from "./GoalCreateForm";
 import { GoalTable } from "./GoalTable";
 import { AreaLoading, ErrorState } from "./StateMessage";
 import { Section } from "./Section";
@@ -67,6 +68,7 @@ export function Inbox() {
         {state.kind === "loading" && <AreaLoading label="Active goals" />}
         {state.kind === "error" && <ErrorState message={state.message} onRetry={retry} />}
         {data && <GoalTable goals={data.active_goals} />}
+        {data && <GoalCreateForm onCreated={load} />}
       </Section>
     </main>
   );

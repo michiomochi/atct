@@ -544,3 +544,52 @@ func TestTaskViewJSONIncludesDomainFieldsAndDerivedFields(t *testing.T) {
 		}
 	}
 }
+
+func TestHTTPProjectsAndGoalCreationEndpoints(t *testing.T) {
+	f := newBareFixture(t)
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+	client := srv.Client()
+
+	status, headers, body := doRequest(t, client, http.MethodGet, srv.URL+"/api/projects", nil)
+	if status != http.StatusOK {
+		t.Fatalf("projects status = %d; body=%s", status, body)
+	}
+	if contentType := headers.Get("Content-Type"); !strings.HasPrefix(contentType, "application/json") {
+		t.Fatalf("projects content type = %q", contentType)
+	}
+	var projects []domain.Project
+	if err := json.Unmarshal(body, &projects); err != nil {
+		t.Fatalf("decode projects: %v; body=%s", err, body)
+	}
+	if len(projects) != 1 || projects[0].ID != f.project.ID {
+		t.Fatalf("projects = %+v", projects)
+	}
+
+	status, _, body = doRequest(t, client, http.MethodPost, srv.URL+"/api/goals", mustJSON(t, map[string]string{
+		"project_id": f.project.ID,
+		"title":      "Created in inbox",
+		"description": "Created through the human UI endpoint",
+	}))
+	if status != http.StatusOK {
+		t.Fatalf("create goal status = %d; body=%s", status, body)
+	}
+	var created domain.Goal
+	if err := json.Unmarshal(body, &created); err != nil {
+		t.Fatalf("decode created goal: %v; body=%s", err, body)
+	}
+	if created.ProjectID != f.project.ID || created.Title != "Created in inbox" || created.Description != "Created through the human UI endpoint" {
+		t.Fatalf("created goal = %+v", created)
+	}
+
+	status, headers, body = doRequest(t, client, http.MethodPost, srv.URL+"/api/goals", mustJSON(t, map[string]string{
+		"project_id": f.project.ID,
+	}))
+	assertErrorObject(t, status, headers, body, http.StatusBadRequest)
+
+	status, headers, body = doRequest(t, client, http.MethodPost, srv.URL+"/api/goals", mustJSON(t, map[string]string{
+		"project_id": "missing-project",
+		"title":      "Unknown project",
+	}))
+	assertErrorObject(t, status, headers, body, http.StatusNotFound)
+}

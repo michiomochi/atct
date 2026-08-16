@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import decisionFormSource from "../components/DecisionAnswerForm.tsx?raw";
+import goalCreateFormSource from "../components/GoalCreateForm.tsx?raw";
 import goalDetailSource from "../components/GoalDetail.tsx?raw";
 import needsDecisionSource from "../components/NeedsDecisionList.tsx?raw";
 import stateMessageSource from "../components/StateMessage.tsx?raw";
@@ -157,5 +158,17 @@ describe("goal detail answer flows", () => {
     expect(goalDetailSource).toContain("rejectCompletion");
     expect(goalDetailSource).toContain("Completion awaiting approval");
     expect(goalDetailSource).toContain("result_summary");
+  });
+
+  it("keeps goal creation in Active goals with all required states", () => {
+    expect(goalCreateFormSource).toContain("fetchProjects");
+    expect(goalCreateFormSource).toContain("createGoal");
+    expect(goalCreateFormSource).toContain("atct project add");
+    expect(goalCreateFormSource).toContain("Select a project");
+    expect(goalCreateFormSource).toContain('name="title"');
+    expect(goalCreateFormSource).toContain('name="description"');
+    expect(goalCreateFormSource).toContain("status === 409");
+    expect(goalCreateFormSource).toContain("Creating...");
+    expect(goalCreateFormSource).toContain("role=\"alert\"");
   });
 });

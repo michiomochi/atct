@@ -61,6 +61,12 @@ type rejectionRequest struct {
 	AnsweredBy string `json:"answered_by"`
 }
 
+type createGoalRequest struct {
+	ProjectID   string `json:"project_id"`
+	Title       string `json:"title"`
+	Description string `json:"description"`
+}
+
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/"), "/")
 	if len(parts) == 2 && parts[0] == "api" && parts[1] == "inbox" {
@@ -77,6 +83,22 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.handleEvents(w, r)
+		return
+	}
+	if len(parts) == 2 && parts[0] == "api" && parts[1] == "projects" {
+		if r.Method != http.MethodGet {
+			writeError(w, http.StatusBadRequest, "method is not allowed for this endpoint")
+			return
+		}
+		s.handleProjects(w, r)
+		return
+	}
+	if len(parts) == 2 && parts[0] == "api" && parts[1] == "goals" {
+		if r.Method != http.MethodPost {
+			writeError(w, http.StatusBadRequest, "method is not allowed for this endpoint")
+			return
+		}
+		s.handleCreateGoal(w, r)
 		return
 	}
 
@@ -129,12 +151,65 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func malformedAPIPath(path string) bool {
-	for _, prefix := range []string{"/api/inbox", "/api/events", "/api/goals", "/api/tasks", "/api/decisions"} {
+	for _, prefix := range []string{"/api/inbox", "/api/events", "/api/projects", "/api/goals", "/api/tasks", "/api/decisions"} {
 		if path == prefix || strings.HasPrefix(path, prefix+"/") {
 			return true
 		}
 	}
 	return false
+}
+
+func (s *Server) handleProjects(w http.ResponseWriter, r *http.Request) {
+	projects, err := s.store.ListProjects(r.Context())
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	if projects == nil {
+		projects = []domain.Project{}
+	}
+	writeJSON(w, http.StatusOK, projects)
+}
+
+func (s *Server) handleCreateGoal(w http.ResponseWriter, r *http.Request) {
+	var request createGoalRequest
+	if err := decodeJSONBody(r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	request.ProjectID = strings.TrimSpace(request.ProjectID)
+	if request.ProjectID == "" {
+		writeError(w, http.StatusBadRequest, "project_id is required")
+		return
+	}
+	if strings.TrimSpace(request.Title) == "" {
+		writeError(w, http.StatusBadRequest, "title is required")
+		return
+	}
+
+	projects, err := s.store.ListProjects(r.Context())
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	knownProject := false
+	for _, project := range projects {
+		if project.ID == request.ProjectID {
+			knownProject = true
+			break
+		}
+	}
+	if !knownProject {
+		writeError(w, http.StatusNotFound, "project not found")
+		return
+	}
+
+	goal, err := s.store.CreateGoal(r.Context(), request.ProjectID, request.Title, request.Description)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, goal)
 }
 
 func (s *Server) handleInbox(w http.ResponseWriter, r *http.Request) {

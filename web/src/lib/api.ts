@@ -17,6 +17,19 @@ export interface Goal {
   updated_at: string;
 }
 
+export interface Project {
+  id: string;
+  name: string;
+  root_path: string;
+  created_at: string;
+}
+
+export interface CreateGoalPayload {
+  project_id: string;
+  title: string;
+  description: string;
+}
+
 export interface Task {
   id: string;
   goal_id: string;
@@ -134,6 +147,19 @@ export function normalizeGoal(value: unknown): GoalResponse {
 
 export async function fetchInbox(): Promise<InboxResponse> {
   return normalizeInbox(await requestJson<unknown>("/api/inbox"));
+}
+
+export async function fetchProjects(): Promise<Project[]> {
+  const value = await requestJson<unknown>("/api/projects");
+  return Array.isArray(value) ? (value as Project[]) : [];
+}
+
+export async function createGoal(payload: CreateGoalPayload): Promise<Goal> {
+  return requestJson<Goal>("/api/goals", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
 }
 
 export async function fetchGoal(id: string): Promise<GoalResponse> {
