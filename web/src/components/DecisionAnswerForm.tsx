@@ -1,4 +1,4 @@
-import { Button } from "@base-ui/react/button";
+import { Button } from "@cloudflare/kumo/components/button";
 import { useEffect, useState, type FormEvent } from "react";
 import type { Decision } from "../lib/api";
 import { answerDecision, ApiError } from "../lib/api";

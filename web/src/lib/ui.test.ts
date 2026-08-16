@@ -1,4 +1,7 @@
 import { describe, expect, it } from "vitest";
+import decisionFormSource from "../components/DecisionAnswerForm.tsx?raw";
+import stateMessageSource from "../components/StateMessage.tsx?raw";
+import taskTableSource from "../components/TaskTable.tsx?raw";
 import {
   DECISION_EVENT_NAMES,
   formatDate,
@@ -80,5 +83,25 @@ describe("decision SSE events", () => {
   it("ignores unrelated event names", () => {
     expect(isDecisionEventName("decision.applied")).toBe(true);
     expect(isDecisionEventName("task.claimed")).toBe(false);
+  });
+});
+
+describe("Kumo buttons", () => {
+  it("keeps button semantics and the shared focus ring", () => {
+    const componentSources = [decisionFormSource, stateMessageSource, taskTableSource];
+
+    for (const source of componentSources) {
+      expect(source).toContain('from "@cloudflare/kumo/components/button"');
+      expect(source).not.toContain("@base-ui/react");
+      expect(source).toContain("focus-ring");
+      expect(source).toContain('type="button"');
+      expect(source).toContain("onClick=");
+    }
+
+    expect(decisionFormSource).toContain('type="submit"');
+    expect(decisionFormSource).toContain("disabled={submitting}");
+    expect(stateMessageSource).toContain("disabled:cursor-wait disabled:opacity-60");
+    expect(taskTableSource).toContain("disabled={releasing}");
+    expect(taskTableSource).toContain("if (!task.claimed_by)");
   });
 });

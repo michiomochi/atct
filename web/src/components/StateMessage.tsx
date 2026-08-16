@@ -1,4 +1,4 @@
-import { Button } from "@base-ui/react/button";
+import { Button } from "@cloudflare/kumo/components/button";
 import type { ReactNode } from "react";
 
 interface MessageProps {
