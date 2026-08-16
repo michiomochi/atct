@@ -262,6 +262,7 @@ atct_task_update(task_id, status)
 atct_decision_ask(goal_id, task_id?, question, options[], wait_ms?)
   → parks a decision for the human
   → returns the answer if one arrives within wait_ms (default 30000), otherwise returns parked
+  → omitting wait_ms waits 30000; passing 0 returns parked immediately without waiting
 
 atct_decision_poll(decision_id?)
   → fetches answered decisions and moves them to applied
