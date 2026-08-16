@@ -1,4 +1,5 @@
 import { Button } from "@base-ui/react/button";
+import { Table } from "@cloudflare/kumo/components/table";
 import { useState } from "react";
 import type { Decision, TaskView } from "../lib/api";
 import { ApiError, releaseTask } from "../lib/api";
@@ -11,6 +12,8 @@ interface Props {
   mode: "now" | "needs_decision" | "next";
   onRefresh: () => void;
 }
+
+const columnScope = { scope: "col" } as const;
 
 function TaskRelease({ task, onRefresh }: { task: TaskView; onRefresh: () => void }) {
   const [releasing, setReleasing] = useState(false);
@@ -82,33 +85,33 @@ export function TaskTable({ tasks, mode, onRefresh }: Props) {
 
   return (
     <div className="table-scroll">
-      <table className={needsDecision ? "min-w-[70rem] w-full border-collapse text-left text-sm" : "min-w-[52rem] w-full border-collapse text-left text-sm"}>
+      <Table className={needsDecision ? "min-w-[70rem] w-full border-collapse text-left text-sm" : "min-w-[52rem] w-full border-collapse text-left text-sm"}>
         <caption className="sr-only">{needsDecision ? "Tasks awaiting decisions and answers" : "Task list"}</caption>
-        <thead className="border-b-2 border-ink-300 text-xs uppercase tracking-wide text-ink-700">
-          <tr>
-            <th className="w-64 px-3 py-3 font-semibold" scope="col">Task</th>
-            {needsDecision && <th className="min-w-[34rem] px-3 py-3 font-semibold" scope="col">Decision</th>}
-            <th className="w-40 px-3 py-3 font-semibold" scope="col">Status</th>
-            <th className="w-40 px-3 py-3 font-semibold" scope="col">Claim</th>
-            <th className="w-36 px-3 py-3 font-semibold" scope="col">Action</th>
-          </tr>
-        </thead>
-        <tbody>
+        <Table.Header className="border-b-2 border-ink-300 text-xs uppercase tracking-wide text-ink-700">
+          <Table.Row>
+            <Table.Head {...columnScope} className="w-64 px-3 py-3 font-semibold">Task</Table.Head>
+            {needsDecision && <Table.Head {...columnScope} className="min-w-[34rem] px-3 py-3 font-semibold">Decision</Table.Head>}
+            <Table.Head {...columnScope} className="w-40 px-3 py-3 font-semibold">Status</Table.Head>
+            <Table.Head {...columnScope} className="w-40 px-3 py-3 font-semibold">Claim</Table.Head>
+            <Table.Head {...columnScope} className="w-36 px-3 py-3 font-semibold">Action</Table.Head>
+          </Table.Row>
+        </Table.Header>
+        <Table.Body>
           {rows.map(({ task, decision }) => (
-            <tr className="border-b border-line align-top last:border-b-0" key={`${task.id}-${decision?.id ?? "task"}`}>
-              <td className="px-3 py-4"><TaskTitle task={task} /></td>
+            <Table.Row className="border-b border-line align-top last:border-b-0" key={`${task.id}-${decision?.id ?? "task"}`}>
+              <Table.Cell className="px-3 py-4"><TaskTitle task={task} /></Table.Cell>
               {needsDecision && (
-                <td className="px-3 py-4">
+                <Table.Cell className="px-3 py-4">
                   {decision ? <DecisionCell decision={decision} onRefresh={onRefresh} /> : <span className="text-ink-500">No decision details</span>}
-                </td>
+                </Table.Cell>
               )}
-              <td className="px-3 py-4 text-ink-700">{statusLabel(task.status)}</td>
-              <td className="px-3 py-4"><ClaimCell task={task} /></td>
-              <td className="px-3 py-4"><TaskRelease task={task} onRefresh={onRefresh} /></td>
-            </tr>
+              <Table.Cell className="px-3 py-4 text-ink-700">{statusLabel(task.status)}</Table.Cell>
+              <Table.Cell className="px-3 py-4"><ClaimCell task={task} /></Table.Cell>
+              <Table.Cell className="px-3 py-4"><TaskRelease task={task} onRefresh={onRefresh} /></Table.Cell>
+            </Table.Row>
           ))}
-        </tbody>
-      </table>
+        </Table.Body>
+      </Table>
     </div>
   );
 }
