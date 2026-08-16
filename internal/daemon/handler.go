@@ -146,7 +146,7 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 			Question string          `json:"question"`
 			Options  []domain.Option `json:"options"`
 			RunID    string          `json:"run_id"`
-			WaitMs   int             `json:"wait_ms"`
+			WaitMs   *int            `json:"wait_ms"`
 		}
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, err
@@ -158,10 +158,14 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		if err != nil {
 			return nil, err
 		}
-		if p.WaitMs <= 0 {
-			p.WaitMs = 30000
+		waitMs := 30000
+		if p.WaitMs != nil {
+			waitMs = *p.WaitMs
 		}
-		answered, ok, err := d.store.WaitForAnswer(ctx, dec.ID, time.Duration(p.WaitMs)*time.Millisecond)
+		if waitMs <= 0 {
+			return marshal(map[string]any{"parked": true, "decision_id": dec.ID}, nil)
+		}
+		answered, ok, err := d.store.WaitForAnswer(ctx, dec.ID, time.Duration(waitMs)*time.Millisecond)
 		if err != nil {
 			return nil, err
 		}

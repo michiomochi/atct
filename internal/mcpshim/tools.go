@@ -33,7 +33,7 @@ type DecisionAskIn struct {
 	TaskID   string          `json:"task_id,omitempty"`
 	Question string          `json:"question" jsonschema:"describe the decision required from the human"`
 	Options  []domain.Option `json:"options" jsonschema:"options; explain the consequence of each choice; may be empty"`
-	WaitMs   int             `json:"wait_ms,omitempty" jsonschema:"milliseconds to wait for an answer; defaults to 30000; returns parked after timeout"`
+	WaitMs   *int            `json:"wait_ms,omitempty" jsonschema:"milliseconds to wait for an answer; defaults to 30000; returns parked after timeout"`
 }
 
 type DecisionPollIn struct {
@@ -103,10 +103,14 @@ func Register(server *mcp.Server, c *Client, runID string) {
 		Description: "Ask the human for a decision. An answer received within wait_ms is returned." +
 			"If parked is returned, continue with another task that does not depend on this decision.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in DecisionAskIn) (*mcp.CallToolResult, Raw, error) {
-		return call(ctx, c, "decision.ask", map[string]any{
+		params := map[string]any{
 			"goal_id": in.GoalID, "task_id": in.TaskID, "question": in.Question,
-			"options": in.Options, "wait_ms": in.WaitMs, "run_id": runID,
-		})
+			"options": in.Options, "run_id": runID,
+		}
+		if in.WaitMs != nil {
+			params["wait_ms"] = *in.WaitMs
+		}
+		return call(ctx, c, "decision.ask", params)
 	})
 
 	mcp.AddTool(server, &mcp.Tool{

@@ -215,3 +215,118 @@ func TestDaemonCreatesGoalForResolvedProject(t *testing.T) {
 		t.Fatalf("description = %q, want %q", goal.Description, "Coordinate the release work")
 	}
 }
+
+func TestDecisionAskDistinguishesOmittedWaitFromExplicitZero(t *testing.T) {
+	zeroConn := newDaemonConn(t)
+	zeroGoalID, zeroTaskID := createDecisionFixture(t, zeroConn)
+	if err := zeroConn.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatalf("set zero read deadline: %v", err)
+	}
+	started := time.Now()
+	zeroResp := call(t, zeroConn, "decision.ask", map[string]any{
+		"goal_id":  zeroGoalID,
+		"task_id":  zeroTaskID,
+		"question": "Should the run continue?",
+		"run_id":   "run-zero",
+		"wait_ms":  0,
+	})
+	if elapsed := time.Since(started); elapsed >= time.Second {
+		t.Fatalf("explicit wait_ms=0 took %s; want an immediate parked response", elapsed)
+	}
+	if zeroResp.Error != "" {
+		t.Fatalf("decision.ask with wait_ms=0: %s", zeroResp.Error)
+	}
+	var zeroResult struct {
+		Parked     bool   `json:"parked"`
+		DecisionID string `json:"decision_id"`
+	}
+	if err := json.Unmarshal(zeroResp.Result, &zeroResult); err != nil {
+		t.Fatalf("unmarshal zero result: %v", err)
+	}
+	if !zeroResult.Parked || zeroResult.DecisionID == "" {
+		t.Fatalf("explicit wait_ms=0 result = %+v, want parked decision", zeroResult)
+	}
+
+	omittedConn := newDaemonConn(t)
+	omittedGoalID, omittedTaskID := createDecisionFixture(t, omittedConn)
+	params, err := json.Marshal(map[string]any{
+		"goal_id":  omittedGoalID,
+		"task_id":  omittedTaskID,
+		"question": "Should the run continue?",
+		"run_id":   "run-omitted",
+	})
+	if err != nil {
+		t.Fatalf("marshal omitted params: %v", err)
+	}
+	req, err := json.Marshal(rpc.Request{Method: "decision.ask", Params: params})
+	if err != nil {
+		t.Fatalf("marshal omitted request: %v", err)
+	}
+	if _, err := omittedConn.Write(append(req, '\n')); err != nil {
+		t.Fatalf("write omitted request: %v", err)
+	}
+
+	responses := make(chan rpc.Response, 1)
+	readErrors := make(chan error, 1)
+	go func() {
+		line, err := bufio.NewReader(omittedConn).ReadBytes('\n')
+		if err != nil {
+			readErrors <- err
+			return
+		}
+		var resp rpc.Response
+		if err := json.Unmarshal(line, &resp); err != nil {
+			readErrors <- err
+			return
+		}
+		responses <- resp
+	}()
+
+	select {
+	case resp := <-responses:
+		t.Fatalf("omitted wait_ms returned immediately: %+v", resp)
+	case err := <-readErrors:
+		t.Fatalf("reading omitted wait_ms response before timeout: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	omittedConn.Close()
+}
+
+func createDecisionFixture(t *testing.T, conn net.Conn) (string, string) {
+	t.Helper()
+	projectResp := call(t, conn, "project.create", map[string]string{
+		"name":      "atct",
+		"root_path": "/repos/atct",
+	})
+	if projectResp.Error != "" {
+		t.Fatalf("project.create: %s", projectResp.Error)
+	}
+	goalResp := call(t, conn, "goal.create", map[string]string{
+		"cwd":   "/repos/atct",
+		"title": "Wait semantics",
+	})
+	if goalResp.Error != "" {
+		t.Fatalf("goal.create: %s", goalResp.Error)
+	}
+	var goal domain.Goal
+	if err := json.Unmarshal(goalResp.Result, &goal); err != nil {
+		t.Fatalf("unmarshal goal: %v", err)
+	}
+	taskResp := call(t, conn, "task.declare", map[string]any{
+		"goal_id":         goal.ID,
+		"agent":           "test-agent",
+		"idempotency_key": "wait-semantics",
+		"titles":          []string{"Wait for a decision"},
+	})
+	if taskResp.Error != "" {
+		t.Fatalf("task.declare: %s", taskResp.Error)
+	}
+	var tasks []domain.Task
+	if err := json.Unmarshal(taskResp.Result, &tasks); err != nil {
+		t.Fatalf("unmarshal tasks: %v", err)
+	}
+	if len(tasks) != 1 {
+		t.Fatalf("task.declare returned %d tasks, want 1", len(tasks))
+	}
+	return goal.ID, tasks[0].ID
+}
