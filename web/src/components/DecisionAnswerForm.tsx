@@ -1,5 +1,6 @@
 import { Button } from "@cloudflare/kumo/components/button";
 import { useEffect, useState, type FormEvent } from "react";
+import { useTranslation } from "react-i18next";
 import type { Decision } from "../lib/api";
 import { answerDecision, ApiError } from "../lib/api";
 import { validateAnswer, type AnswerErrors } from "../lib/ui";
@@ -12,6 +13,7 @@ interface Props {
 const ANSWERED_BY_KEY = "atct.answered_by";
 
 export function DecisionAnswerForm({ decision, onUpdated }: Props) {
+  const { t } = useTranslation();
   const [answerLabel, setAnswerLabel] = useState("");
   const [answerText, setAnswerText] = useState("");
   const [answeredBy, setAnsweredBy] = useState("");
@@ -60,7 +62,7 @@ export function DecisionAnswerForm({ decision, onUpdated }: Props) {
       if (error instanceof ApiError && error.status === 409) {
         setConflict(true);
       } else {
-        setSubmitError(error instanceof Error ? error.message : "Could not submit the answer.");
+        setSubmitError(error instanceof Error ? error.message : t("form.answer.error.submit"));
       }
     } finally {
       setSubmitting(false);
@@ -70,13 +72,13 @@ export function DecisionAnswerForm({ decision, onUpdated }: Props) {
   if (conflict) {
     return (
       <div className="mt-3 border border-notice-800 bg-notice-100 px-3 py-3 text-sm text-notice-800" role="alert">
-        <p>This decision has already been answered in another tab or by another agent.</p>
+        <p>{t("form.answer.conflict")}</p>
         <Button
           type="button"
           className="focus-ring mt-3 border border-notice-800 bg-surface px-3 py-2 text-sm font-medium text-notice-800 hover:bg-notice-100"
           onClick={onUpdated}
         >
-          Fetch the latest decision
+          {t("form.answer.fetchLatest")}
         </Button>
       </div>
     );
@@ -87,7 +89,7 @@ export function DecisionAnswerForm({ decision, onUpdated }: Props) {
       <p className="mb-3 whitespace-pre-wrap break-words text-sm leading-6 text-ink-800">{decision.question}</p>
       {options.length > 0 ? (
         <label className="mb-3 block text-sm text-ink-800" htmlFor={labelId}>
-          Label <span className="text-ink-500">(optional)</span>
+          {t("form.answer.label")} <span className="text-ink-500">{t("form.optional")}</span>
           <select
             className="focus-ring mt-1 block w-full border border-line bg-surface px-3 py-2 text-sm text-ink-950"
             id={labelId}
@@ -96,16 +98,16 @@ export function DecisionAnswerForm({ decision, onUpdated }: Props) {
             aria-invalid={Boolean(errors.answer_label)}
             aria-describedby={errors.answer_label ? `${labelId}-error` : undefined}
           >
-            <option value="">No label selected</option>
+            <option value="">{t("form.answer.noLabel")}</option>
             {options.map((option) => (
               <option key={option.label} value={option.label}>{option.label}</option>
             ))}
           </select>
-          {errors.answer_label && <span className="mt-1 block text-xs text-danger-700" id={`${labelId}-error`}>{errors.answer_label}</span>}
+          {errors.answer_label && <span className="mt-1 block text-xs text-danger-700" id={`${labelId}-error`}>{t("form.answer.error.labelOrText")}</span>}
         </label>
       ) : (
         <label className="mb-3 block text-sm text-ink-800" htmlFor={labelId}>
-          Label <span className="text-ink-500">(optional)</span>
+          {t("form.answer.label")} <span className="text-ink-500">{t("form.optional")}</span>
           <input
             className="focus-ring mt-1 block w-full border border-line bg-surface px-3 py-2 text-sm text-ink-950"
             id={labelId}
@@ -114,11 +116,11 @@ export function DecisionAnswerForm({ decision, onUpdated }: Props) {
             aria-invalid={Boolean(errors.answer_label)}
             aria-describedby={errors.answer_label ? `${labelId}-error` : undefined}
           />
-          {errors.answer_label && <span className="mt-1 block text-xs text-danger-700" id={`${labelId}-error`}>{errors.answer_label}</span>}
+          {errors.answer_label && <span className="mt-1 block text-xs text-danger-700" id={`${labelId}-error`}>{t("form.answer.error.labelOrText")}</span>}
         </label>
       )}
       <label className="mb-3 block text-sm text-ink-800" htmlFor={textId}>
-        Answer text <span className="text-ink-500">(optional)</span>
+        {t("form.answer.text")} <span className="text-ink-500">{t("form.optional")}</span>
         <textarea
           className="focus-ring mt-1 block min-h-24 w-full resize-y border border-line bg-surface px-3 py-2 text-sm leading-6 text-ink-950"
           id={textId}
@@ -127,10 +129,10 @@ export function DecisionAnswerForm({ decision, onUpdated }: Props) {
           aria-invalid={Boolean(errors.answer_text)}
           aria-describedby={errors.answer_text ? `${textId}-error` : undefined}
         />
-        {errors.answer_text && <span className="mt-1 block text-xs text-danger-700" id={`${textId}-error`}>{errors.answer_text}</span>}
+        {errors.answer_text && <span className="mt-1 block text-xs text-danger-700" id={`${textId}-error`}>{t("form.answer.error.labelOrText")}</span>}
       </label>
       <label className="mb-3 block text-sm text-ink-800" htmlFor={answeredById}>
-        Answered by <span className="text-danger-700">(required)</span>
+        {t("form.answer.answeredBy")} <span className="text-danger-700">{t("form.required")}</span>
         <input
           className="focus-ring mt-1 block w-full border border-line bg-surface px-3 py-2 text-sm text-ink-950"
           id={answeredById}
@@ -140,7 +142,7 @@ export function DecisionAnswerForm({ decision, onUpdated }: Props) {
           aria-describedby={errors.answered_by ? `${answeredById}-error` : undefined}
           required
         />
-        {errors.answered_by && <span className="mt-1 block text-xs text-danger-700" id={`${answeredById}-error`}>{errors.answered_by}</span>}
+        {errors.answered_by && <span className="mt-1 block text-xs text-danger-700" id={`${answeredById}-error`}>{t("form.answer.error.answeredBy")}</span>}
       </label>
       {submitError && <p className="mb-3 text-sm text-danger-700" role="alert">{submitError}</p>}
       <Button
@@ -148,7 +150,7 @@ export function DecisionAnswerForm({ decision, onUpdated }: Props) {
         disabled={submitting}
         className="focus-ring border border-accent-700 bg-accent-700 px-3 py-2 text-sm font-medium text-white transition hover:bg-accent-600 disabled:cursor-wait disabled:opacity-60"
       >
-        {submitting ? "Submitting..." : "Submit answer"}
+        {submitting ? t("form.answer.submitting") : t("form.answer.submit")}
       </Button>
     </form>
   );

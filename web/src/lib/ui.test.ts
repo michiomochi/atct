@@ -158,8 +158,16 @@ describe("goal detail answer flows", () => {
     expect(goalDetailSource).toContain("fetchInbox");
     expect(goalDetailSource).toContain("approveCompletion");
     expect(goalDetailSource).toContain("rejectCompletion");
-    expect(goalDetailSource).toContain("Completion awaiting approval");
+    expect(goalDetailSource).toContain('t("goal.completion.title")');
     expect(goalDetailSource).toContain("result_summary");
+  });
+
+  it("keys the remaining Goal detail framing strings", () => {
+    expect(goalDetailSource).toContain("useTranslation");
+    expect(goalDetailSource).toContain('t("goal.column.now")');
+    expect(taskTableSource).toContain('t("task.claim.release")');
+    expect(taskTableSource).toContain('t("duration.none")');
+    expect(decisionFormSource).toContain('t("form.answer.submit")');
   });
 
   it("keeps goal creation in Active goals with all required states", () => {

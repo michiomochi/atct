@@ -42,11 +42,12 @@ type CompletionAction = "approve" | "reject";
 
 const ANSWERED_BY_KEY = "atct.answered_by";
 
-function errorMessage(reason: unknown): string {
-  return reason instanceof Error ? reason.message : "Could not load the goal.";
+function errorMessage(reason: unknown, fallback: string): string {
+  return reason instanceof Error ? reason.message : fallback;
 }
 
 function CompletionApproval({ goal, decision, onUpdated }: { goal: Goal; decision: Decision; onUpdated: () => void }) {
+  const { t } = useTranslation();
   const [answeredBy, setAnsweredBy] = useState("");
   const [reason, setReason] = useState("");
   const [errors, setErrors] = useState<CompletionErrors>({});
@@ -87,7 +88,7 @@ function CompletionApproval({ goal, decision, onUpdated }: { goal: Goal; decisio
       if (error instanceof ApiError && error.status === 409) {
         setConflict(true);
       } else {
-        setSubmitError(error instanceof Error ? error.message : "Could not update the completion decision.");
+        setSubmitError(error instanceof Error ? error.message : t("goal.completion.error.update"));
       }
     } finally {
       setSubmitting(false);
@@ -104,15 +105,15 @@ function CompletionApproval({ goal, decision, onUpdated }: { goal: Goal; decisio
   if (conflict) {
     return (
       <section className="border-t border-line pt-5" data-testid="completion-approval" aria-labelledby="completion-approval-heading">
-        <h2 id="completion-approval-heading" className="font-display text-lg font-semibold tracking-tight text-ink-950">Completion awaiting approval</h2>
+        <h2 id="completion-approval-heading" className="font-display text-lg font-semibold tracking-tight text-ink-950">{t("goal.completion.title")}</h2>
         <div className="mt-4 border border-notice-800 bg-notice-100 px-4 py-4 text-sm text-notice-800" role="alert">
-          <p>This completion has already been reviewed in another tab or by another person.</p>
+          <p>{t("goal.completion.conflict")}</p>
           <Button
             type="button"
             className="focus-ring mt-3 border border-notice-800 bg-surface px-3 py-2 text-sm font-medium text-notice-800 hover:bg-notice-100"
             onClick={onUpdated}
           >
-            Fetch the latest decision
+            {t("goal.completion.fetchLatest")}
           </Button>
         </div>
       </section>
@@ -121,11 +122,11 @@ function CompletionApproval({ goal, decision, onUpdated }: { goal: Goal; decisio
 
   return (
     <section className="border-t border-line pt-5" data-testid="completion-approval" aria-labelledby="completion-approval-heading">
-      <h2 id="completion-approval-heading" className="font-display text-lg font-semibold tracking-tight text-ink-950">Completion awaiting approval</h2>
-      <p className="mt-3 whitespace-pre-wrap break-words text-sm leading-6 text-ink-800">{goal.result_summary || "The agent did not provide a result summary."}</p>
+      <h2 id="completion-approval-heading" className="font-display text-lg font-semibold tracking-tight text-ink-950">{t("goal.completion.title")}</h2>
+      <p className="mt-3 whitespace-pre-wrap break-words text-sm leading-6 text-ink-800">{goal.result_summary || t("goal.completion.noSummary")}</p>
       <form className="mt-4 max-w-3xl border-l-2 border-accent-600 pl-4" onSubmit={handleSubmit} noValidate>
         <label className="mb-3 block text-sm text-ink-800" htmlFor={answeredByID}>
-          Reviewed by <span className="text-danger-700">(required)</span>
+          {t("goal.completion.reviewedBy")} <span className="text-danger-700">{t("form.required")}</span>
           <input
             className="focus-ring mt-1 block w-full border border-line bg-surface px-3 py-2 text-sm text-ink-950"
             id={answeredByID}
@@ -135,10 +136,10 @@ function CompletionApproval({ goal, decision, onUpdated }: { goal: Goal; decisio
             aria-describedby={errors.answered_by ? `${answeredByID}-error` : undefined}
             required
           />
-          {errors.answered_by && <span className="mt-1 block text-xs text-danger-700" id={`${answeredByID}-error`}>{errors.answered_by}</span>}
+          {errors.answered_by && <span className="mt-1 block text-xs text-danger-700" id={`${answeredByID}-error`}>{t("goal.completion.missingBy")}</span>}
         </label>
         <label className="mb-3 block text-sm text-ink-800" htmlFor={reasonID}>
-          Rejection reason <span className="text-ink-500">(optional)</span>
+          {t("goal.completion.reason")} <span className="text-ink-500">{t("form.optional")}</span>
           <textarea
             className="focus-ring mt-1 block min-h-24 w-full resize-y border border-line bg-surface px-3 py-2 text-sm leading-6 text-ink-950"
             id={reasonID}
@@ -154,7 +155,7 @@ function CompletionApproval({ goal, decision, onUpdated }: { goal: Goal; decisio
             disabled={submitting}
             className="focus-ring border border-accent-700 bg-accent-700 px-3 py-2 text-sm font-medium text-white transition hover:bg-accent-600 disabled:cursor-wait disabled:opacity-60"
           >
-            {submitting ? "Submitting..." : "Approve"}
+            {submitting ? t("goal.completion.submitting") : t("goal.completion.approve")}
           </Button>
           <Button
             type="submit"
@@ -162,7 +163,7 @@ function CompletionApproval({ goal, decision, onUpdated }: { goal: Goal; decisio
             disabled={submitting}
             className="focus-ring border border-danger-700 bg-surface px-3 py-2 text-sm font-medium text-danger-700 transition hover:bg-danger-100 disabled:cursor-wait disabled:opacity-60"
           >
-            Reject
+            {t("goal.completion.reject")}
           </Button>
         </div>
       </form>
@@ -172,7 +173,7 @@ function CompletionApproval({ goal, decision, onUpdated }: { goal: Goal; decisio
 
 export function GoalDetail({ id }: Props) {
   const [state, setState] = useState<LoadState>({ kind: "loading" });
-  const { i18n } = useTranslation();
+  const { t, i18n } = useTranslation();
   const pathname = id === "_" && typeof window !== "undefined" ? window.location.pathname : "";
   const resolvedID = resolveGoalID(id, pathname);
 
@@ -189,9 +190,9 @@ export function GoalDetail({ id }: Props) {
       const completion = findOpenCompletion(inbox.open_decisions.filter((decision) => decision.goal_id === goal.goal.id));
       setState({ kind: "ready", data: { goal, completion } });
     } catch (reason) {
-      setState({ kind: "error", message: errorMessage(reason) });
+      setState({ kind: "error", message: errorMessage(reason, t("goal.error.load")) });
     }
-  }, [resolvedID]);
+  }, [resolvedID, t]);
 
   useEffect(() => {
     void load();
@@ -205,33 +206,33 @@ export function GoalDetail({ id }: Props) {
     <main className="space-y-10">
       <div className="border-b border-line pb-6">
         <a className="focus-ring text-sm font-medium text-accent-700 hover:text-accent-900" href="/">
-          Back to inbox
+          {t("goal.backToInbox")}
         </a>
-        <p className="mt-6 font-mono text-xs uppercase tracking-[0.18em] text-accent-700">Goal details</p>
+        <p className="mt-6 font-mono text-xs uppercase tracking-[0.18em] text-accent-700">{t("goal.title")}</p>
         <h1 className="mt-2 font-display text-3xl font-semibold tracking-tight text-ink-950">
-          {data?.goal.goal.title ?? "Goal details"}
+          {data?.goal.goal.title ?? t("goal.title")}
         </h1>
         {data?.goal.goal.description && <p className="mt-3 max-w-3xl whitespace-pre-wrap text-sm leading-6 text-ink-700">{data.goal.goal.description}</p>}
-        {data?.goal.goal.status && <p className="mt-3 text-sm text-ink-500">Status: {data.goal.goal.status}</p>}
+        {data?.goal.goal.status && <p className="mt-3 text-sm text-ink-500">{t("goal.status", { status: data.goal.goal.status })}</p>}
       </div>
 
       {data?.completion && <CompletionApproval goal={data.goal.goal} decision={data.completion} onUpdated={load} />}
 
       <div className="grid gap-10 xl:grid-cols-3">
-        <Section id="now" title="Now" count={data?.goal.now.length}>
-          {state.kind === "loading" && <AreaLoading label="Now" />}
+        <Section id="now" title={t("goal.column.now")} count={data?.goal.now.length}>
+          {state.kind === "loading" && <AreaLoading label={t("goal.column.now")} />}
           {state.kind === "error" && <ErrorState message={state.message} onRetry={retry} />}
           {data && <TaskTable tasks={data.goal.now} mode="now" onRefresh={load} />}
         </Section>
 
-        <Section id="needs-decision" title="Needs decision" count={data?.goal.needs_decision.length}>
-          {state.kind === "loading" && <AreaLoading label="Needs decision" />}
+        <Section id="needs-decision" title={t("goal.column.needsDecision")} count={data?.goal.needs_decision.length}>
+          {state.kind === "loading" && <AreaLoading label={t("goal.column.needsDecision")} />}
           {state.kind === "error" && <ErrorState message={state.message} onRetry={retry} />}
           {data && <NeedsDecisionList tasks={data.goal.needs_decision} onRefresh={load} />}
         </Section>
 
-        <Section id="next" title="Next" count={data?.goal.next.length}>
-          {state.kind === "loading" && <AreaLoading label="Next" />}
+        <Section id="next" title={t("goal.column.next")} count={data?.goal.next.length}>
+          {state.kind === "loading" && <AreaLoading label={t("goal.column.next")} />}
           {state.kind === "error" && <ErrorState message={state.message} onRetry={retry} />}
           {data && <TaskTable tasks={data.goal.next} mode="next" onRefresh={load} />}
         </Section>

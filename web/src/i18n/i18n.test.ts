@@ -78,8 +78,8 @@ describe("formatDuration", () => {
   it("uses translated units", () => {
     expect(formatDuration("en", 42)).toBe("42s");
     expect(formatDuration("en", 8115)).toBe("2h 15m");
-    expect(formatDuration("ja", 42)).toBe("42秒");
-    expect(formatDuration("ja", 8115)).toBe("2時間15分");
+    expect(formatDuration("ja", 42)).toBe("42\u79d2");
+    expect(formatDuration("ja", 8115)).toBe("2\u6642\u959315\u5206");
   });
 
   it("renders zero as a dash", () => {
