@@ -178,3 +178,40 @@ func TestDaemonDerivesProjectNameFromNormalizedRoot(t *testing.T) {
 		t.Fatalf("root_path = %q, want %q", project.RootPath, "/repos/atct")
 	}
 }
+
+func TestDaemonCreatesGoalForResolvedProject(t *testing.T) {
+	conn := newDaemonConn(t)
+	projectResp := call(t, conn, "project.create", map[string]string{
+		"name":      "atct",
+		"root_path": "/repos/atct",
+	})
+	if projectResp.Error != "" {
+		t.Fatalf("project.create: %s", projectResp.Error)
+	}
+	var project domain.Project
+	if err := json.Unmarshal(projectResp.Result, &project); err != nil {
+		t.Fatalf("unmarshal project: %v", err)
+	}
+
+	goalResp := call(t, conn, "goal.create", map[string]string{
+		"cwd":         "/repos/atct",
+		"title":       "Build the next release",
+		"description": "Coordinate the release work",
+	})
+	if goalResp.Error != "" {
+		t.Fatalf("goal.create: %s", goalResp.Error)
+	}
+	var goal domain.Goal
+	if err := json.Unmarshal(goalResp.Result, &goal); err != nil {
+		t.Fatalf("unmarshal goal: %v", err)
+	}
+	if goal.ProjectID != project.ID {
+		t.Fatalf("project_id = %q, want %q", goal.ProjectID, project.ID)
+	}
+	if goal.Title != "Build the next release" {
+		t.Fatalf("title = %q, want %q", goal.Title, "Build the next release")
+	}
+	if goal.Description != "Coordinate the release work" {
+		t.Fatalf("description = %q, want %q", goal.Description, "Coordinate the release work")
+	}
+}

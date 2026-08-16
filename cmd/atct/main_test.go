@@ -116,6 +116,38 @@ func TestParseArgsAcceptsProjectList(t *testing.T) {
 	}
 }
 
+func TestParseArgsAcceptsGoalAdd(t *testing.T) {
+	cfg, err := parseArgs([]string{"goal", "add", "Build the next release", "-d", "Coordinate the release work"})
+	if err != nil {
+		t.Fatalf("parseArgs: %v", err)
+	}
+	if cfg.subcommand != "goal" {
+		t.Fatalf("subcommand = %q, want %q", cfg.subcommand, "goal")
+	}
+	if cfg.goalAction != "add" {
+		t.Fatalf("goalAction = %q, want %q", cfg.goalAction, "add")
+	}
+	if cfg.goalTitle != "Build the next release" {
+		t.Fatalf("goalTitle = %q, want %q", cfg.goalTitle, "Build the next release")
+	}
+	if cfg.goalDescription != "Coordinate the release work" {
+		t.Fatalf("goalDescription = %q, want %q", cfg.goalDescription, "Coordinate the release work")
+	}
+}
+
+func TestParseArgsAcceptsGoalList(t *testing.T) {
+	cfg, err := parseArgs([]string{"goal", "list"})
+	if err != nil {
+		t.Fatalf("parseArgs: %v", err)
+	}
+	if cfg.subcommand != "goal" {
+		t.Fatalf("subcommand = %q, want %q", cfg.subcommand, "goal")
+	}
+	if cfg.goalAction != "list" {
+		t.Fatalf("goalAction = %q, want %q", cfg.goalAction, "list")
+	}
+}
+
 func TestParseArgsRejectsUnknownProjectAction(t *testing.T) {
 	if _, err := parseArgs([]string{"project", "remove"}); err == nil {
 		t.Fatal("parseArgs(project remove) returned nil error")

@@ -24,10 +24,13 @@ import (
 const defaultListenAddr = "127.0.0.1:8787"
 
 type cliConfig struct {
-	subcommand    string
-	listenAddr    string
-	projectAction string
-	projectName   string
+	subcommand      string
+	listenAddr      string
+	projectAction   string
+	projectName     string
+	goalAction      string
+	goalTitle       string
+	goalDescription string
 }
 
 var errInvalidArgs = errors.New("invalid command line")
@@ -37,9 +40,11 @@ var validSubcommands = map[string]bool{
 	"ensure":  true,
 	"stop":    true,
 	"project": true,
+	"goal":    true,
 }
 
 var validProjectActions = map[string]bool{"add": true, "list": true}
+var validGoalActions = map[string]bool{"add": true, "list": true}
 
 func printUsage() {
 	fmt.Fprintln(os.Stderr, "Usage: atct <command> [options]")
@@ -50,6 +55,8 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "  stop      Stop the running daemon")
 	fmt.Fprintln(os.Stderr, "  project add [name]   Register the current project")
 	fmt.Fprintln(os.Stderr, "  project list         List registered projects")
+	fmt.Fprintln(os.Stderr, "  goal add <title>     Create a goal for the current project")
+	fmt.Fprintln(os.Stderr, "  goal list            List goals for the current project")
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Options:")
 	fmt.Fprintln(os.Stderr, "  -listen string   HTTP listen address (default \"127.0.0.1:8787\")")
@@ -88,11 +95,39 @@ func parseArgs(args []string) (cliConfig, error) {
 			rest = rest[1:]
 		}
 	}
+	if sub == "goal" {
+		if len(rest) < 1 {
+			fmt.Fprintln(os.Stderr, "goal requires an action: add or list")
+			printUsage()
+			return cliConfig{}, errInvalidArgs
+		}
+		action := rest[0]
+		if !validGoalActions[action] {
+			fmt.Fprintf(os.Stderr, "unknown goal action %q\n", action)
+			printUsage()
+			return cliConfig{}, errInvalidArgs
+		}
+		cfg.goalAction = action
+		rest = rest[1:]
+		if action == "add" {
+			if len(rest) < 1 || strings.HasPrefix(rest[0], "-") {
+				fmt.Fprintln(os.Stderr, "goal add requires a title")
+				printUsage()
+				return cliConfig{}, errInvalidArgs
+			}
+			cfg.goalTitle = rest[0]
+			rest = rest[1:]
+		}
+	}
 
 	flags := flag.NewFlagSet(sub, flag.ExitOnError)
 	flags.SetOutput(os.Stderr)
 	flags.Usage = printUsage
 	listenAddr := flags.String("listen", defaultListenAddr, "HTTP listen address")
+	var description *string
+	if sub == "goal" && cfg.goalAction == "add" {
+		description = flags.String("d", "", "goal description")
+	}
 	flags.Parse(rest)
 	if len(flags.Args()) > 0 {
 		fmt.Fprintf(os.Stderr, "unexpected argument %q\n", flags.Args()[0])
@@ -101,6 +136,9 @@ func parseArgs(args []string) (cliConfig, error) {
 	}
 
 	cfg.listenAddr = *listenAddr
+	if description != nil {
+		cfg.goalDescription = *description
+	}
 	return cfg, nil
 }
 
@@ -150,6 +188,11 @@ func main() {
 	case "project":
 		if err := runProject(config, dir, exePath); err != nil {
 			log.Fatalf("project %s: %v", config.projectAction, err)
+		}
+		return
+	case "goal":
+		if err := runGoal(config, dir, exePath); err != nil {
+			log.Fatalf("goal %s: %v", config.goalAction, err)
 		}
 		return
 	}
@@ -295,6 +338,65 @@ func listProjects(ctx context.Context, client *mcpshim.Client) error {
 	}
 	for _, project := range projects {
 		fmt.Fprintf(os.Stdout, "%s\t%s\n", project.Name, project.RootPath)
+	}
+	return nil
+}
+
+func runGoal(config cliConfig, dir, exePath string) error {
+	reg, err := daemonctl.Ensure(daemonctl.Config{
+		Dir: dir, Version: version, Executable: exePath, ListenAddr: config.listenAddr,
+	})
+	if err != nil {
+		return err
+	}
+
+	client := mcpshim.NewClient(reg.SocketPath)
+	ctx := context.Background()
+	switch config.goalAction {
+	case "add":
+		return addGoal(ctx, client, config.goalTitle, config.goalDescription)
+	case "list":
+		return listGoals(ctx, client)
+	default:
+		return fmt.Errorf("unsupported goal action %q", config.goalAction)
+	}
+}
+
+func addGoal(ctx context.Context, client *mcpshim.Client, title, description string) error {
+	rootPath, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("resolve current directory: %w", err)
+	}
+
+	var goal domain.Goal
+	if err := client.Call(ctx, "goal.create", map[string]string{
+		"cwd":         rootPath,
+		"title":       title,
+		"description": description,
+	}, &goal); err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "created goal %q\n", goal.Title)
+	return nil
+}
+
+func listGoals(ctx context.Context, client *mcpshim.Client) error {
+	rootPath, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("resolve current directory: %w", err)
+	}
+
+	var result struct {
+		Goals []domain.Goal `json:"goals"`
+	}
+	if err := client.Call(ctx, "goal.list", map[string]string{
+		"cwd":    rootPath,
+		"run_id": "",
+	}, &result); err != nil {
+		return err
+	}
+	for _, goal := range result.Goals {
+		fmt.Fprintf(os.Stdout, "%s\t%s\n", goal.Title, goal.Status)
 	}
 	return nil
 }
