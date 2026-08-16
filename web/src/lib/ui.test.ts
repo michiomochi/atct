@@ -1,16 +1,18 @@
 import { describe, expect, it } from "vitest";
 import decisionFormSource from "../components/DecisionAnswerForm.tsx?raw";
+import decisionTableSource from "../components/DecisionTable.tsx?raw";
 import goalCreateFormSource from "../components/GoalCreateForm.tsx?raw";
 import goalDetailSource from "../components/GoalDetail.tsx?raw";
+import goalTableSource from "../components/GoalTable.tsx?raw";
 import inboxSource from "../components/Inbox.tsx?raw";
 import needsDecisionSource from "../components/NeedsDecisionList.tsx?raw";
 import sectionSource from "../components/Section.tsx?raw";
 import stateMessageSource from "../components/StateMessage.tsx?raw";
 import taskTableSource from "../components/TaskTable.tsx?raw";
+import attentionTaskSource from "../components/AttentionTaskTable.tsx?raw";
+import { formatDateTime, formatDuration, type Locale } from "../i18n";
 import {
   DECISION_EVENT_NAMES,
-  formatDate,
-  formatHeldFor,
   findOpenCompletion,
   isDecisionEventName,
   resolveGoalID,
@@ -19,17 +21,22 @@ import {
   validateAnswer,
 } from "./ui";
 
-describe("formatHeldFor", () => {
+describe("formatDuration", () => {
   it.each([
-    [0, "0s"],
-    [45, "45s"],
-    [60, "1m"],
-    [135, "2m 15s"],
-    [3600, "1h"],
-    [8115, "2h 15m"],
-    [90061, "1d 1h"],
-  ])("formats %i seconds as %s", (seconds, expected) => {
-    expect(formatHeldFor(seconds)).toBe(expected);
+    [0, "en", "-"],
+    [45, "en", "45s"],
+    [60, "en", "1m"],
+    [135, "en", "2m"],
+    [3600, "en", "1h 0m"],
+    [8115, "en", "2h 15m"],
+    [90061, "en", "25h 1m"],
+    [42, "ja", "42\u79d2"],
+    [135, "ja", "2\u5206"],
+    [3600, "ja", "1\u6642\u95930\u5206"],
+    [8115, "ja", "2\u6642\u959315\u5206"],
+    [90061, "ja", "25\u6642\u95931\u5206"],
+  ] as [number, Locale, string][]) ("formats %i seconds in %s as %s", (seconds, locale, expected) => {
+    expect(formatDuration(locale, seconds)).toBe(expected);
   });
 });
 
@@ -54,8 +61,15 @@ describe("validateAnswer", () => {
 });
 
 describe("English UI labels", () => {
-  it("formats dates with the English locale", () => {
-    expect(formatDate("2026-08-15T00:00:00Z")).toContain("Aug");
+  it("formats dates for both supported locales", () => {
+    const iso = "2026-08-15T00:00:00Z";
+    expect(formatDateTime("en", iso)).toContain("Aug");
+    expect(formatDateTime("ja", iso)).toContain("2026");
+    expect(formatDateTime("en", iso)).not.toBe(formatDateTime("ja", iso));
+  });
+
+  it("returns invalid dates unchanged", () => {
+    expect(formatDateTime("en", "not-a-date")).toBe("not-a-date");
   });
 
   it.each([
@@ -73,6 +87,22 @@ describe("English UI labels", () => {
     ["completed", "Completed"],
   ])("labels %s as %s", (status, expected) => {
     expect(statusLabel(status)).toBe(expected);
+  });
+});
+
+describe("localized date and duration renderers", () => {
+  it("routes timestamps and claims through the shared locale formatters", () => {
+    const dateSources = [goalTableSource, decisionTableSource];
+    const durationSources = [taskTableSource, attentionTaskSource, needsDecisionSource];
+
+    for (const source of dateSources) {
+      expect(source).toContain("formatDateTime");
+      expect(source).not.toContain("formatDate(");
+    }
+    for (const source of durationSources) {
+      expect(source).toContain("formatDuration");
+      expect(source).not.toContain("formatHeldFor(");
+    }
   });
 });
 

@@ -13,19 +13,6 @@ export function isDecisionEventName(value: string): value is DecisionEventName {
   return (DECISION_EVENT_NAMES as readonly string[]).includes(value);
 }
 
-export function formatHeldFor(totalSeconds: number): string {
-  const seconds = Math.max(0, Math.floor(Number.isFinite(totalSeconds) ? totalSeconds : 0));
-  const days = Math.floor(seconds / 86_400);
-  const hours = Math.floor((seconds % 86_400) / 3_600);
-  const minutes = Math.floor((seconds % 3_600) / 60);
-  const remainingSeconds = seconds % 60;
-
-  if (days > 0) return hours > 0 ? `${days}d ${hours}h` : `${days}d`;
-  if (hours > 0) return minutes > 0 ? `${hours}h ${minutes}m` : `${hours}h`;
-  if (minutes > 0) return remainingSeconds > 0 ? `${minutes}m ${remainingSeconds}s` : `${minutes}m`;
-  return `${remainingSeconds}s`;
-}
-
 export interface AnswerInput {
   answer_label: string;
   answer_text: string;
@@ -88,16 +75,6 @@ export function resolveGoalID(id: string, pathname: string): string {
   } catch {
     return segment;
   }
-}
-
-export function formatDate(value: string | undefined): string {
-  if (!value) return "-";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "-";
-  return new Intl.DateTimeFormat("en-US", {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(date);
 }
 
 export function statusLabel(status: string): string {

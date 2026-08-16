@@ -4,7 +4,8 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { Decision, TaskView } from "../lib/api";
 import { ApiError, releaseTask } from "../lib/api";
-import { formatHeldFor, statusLabel } from "../lib/ui";
+import { formatDuration } from "../i18n";
+import { statusLabel } from "../lib/ui";
 import { DecisionAnswerForm } from "./DecisionAnswerForm";
 import { EmptyState } from "./StateMessage";
 
@@ -52,11 +53,12 @@ function TaskRelease({ task, onRefresh }: { task: TaskView; onRefresh: () => voi
 }
 
 function ClaimCell({ task }: { task: TaskView }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const locale = i18n.language.startsWith("ja") ? "ja" : "en";
   return (
     <div className="space-y-1 text-ink-700">
       <p>{task.claimed_by || t("task.claim.noHolder")}</p>
-      <p className="text-xs text-ink-500">{task.claimed_by ? formatHeldFor(task.held_for_seconds) : t("task.claim.unclaimed")}</p>
+      <p className="text-xs text-ink-500">{task.claimed_by ? formatDuration(locale, task.held_for_seconds) : t("task.claim.unclaimed")}</p>
     </div>
   );
 }

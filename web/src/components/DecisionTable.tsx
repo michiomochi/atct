@@ -1,5 +1,6 @@
 import type { Decision } from "../lib/api";
-import { encodePathSegment, formatDate, statusLabel } from "../lib/ui";
+import { formatDateTime } from "../i18n";
+import { encodePathSegment, statusLabel } from "../lib/ui";
 import { Table } from "@cloudflare/kumo/components/table";
 import { useTranslation } from "react-i18next";
 import { EmptyState } from "./StateMessage";
@@ -12,7 +13,8 @@ interface Props {
 const columnScope = { scope: "col" } as const;
 
 export function DecisionTable({ decisions, emptyText }: Props) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const locale = i18n.language.startsWith("ja") ? "ja" : "en";
 
   if (decisions.length === 0) return <EmptyState>{emptyText}</EmptyState>;
 
@@ -54,7 +56,7 @@ export function DecisionTable({ decisions, emptyText }: Props) {
                     {decision.goal_id}
                   </a>
                 </Table.Cell>
-                <Table.Cell className="px-3 py-4 text-ink-700">{formatDate(decision.created_at)}</Table.Cell>
+                <Table.Cell className="px-3 py-4 text-ink-700">{formatDateTime(locale, decision.created_at)}</Table.Cell>
               </Table.Row>
             );
           })}

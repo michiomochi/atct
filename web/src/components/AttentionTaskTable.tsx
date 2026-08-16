@@ -1,5 +1,6 @@
 import type { TaskView } from "../lib/api";
-import { encodePathSegment, formatHeldFor, statusLabel } from "../lib/ui";
+import { formatDuration } from "../i18n";
+import { encodePathSegment, statusLabel } from "../lib/ui";
 import { Table } from "@cloudflare/kumo/components/table";
 import { useTranslation } from "react-i18next";
 import { EmptyState } from "./StateMessage";
@@ -11,7 +12,8 @@ interface Props {
 const columnScope = { scope: "col" } as const;
 
 export function AttentionTaskTable({ tasks }: Props) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const locale = i18n.language.startsWith("ja") ? "ja" : "en";
 
   if (tasks.length === 0) return <EmptyState>{t("inbox.attention.empty")}</EmptyState>;
 
@@ -45,7 +47,7 @@ export function AttentionTaskTable({ tasks }: Props) {
               </Table.Cell>
               <Table.Cell className="px-3 py-4 text-ink-700">{statusLabel(task.status)}</Table.Cell>
               <Table.Cell className="px-3 py-4 text-ink-700">{task.claimed_by || t("task.claim.noHolder")}</Table.Cell>
-              <Table.Cell className="px-3 py-4 text-ink-700">{task.claimed_by ? formatHeldFor(task.held_for_seconds) : "-"}</Table.Cell>
+              <Table.Cell className="px-3 py-4 text-ink-700">{task.claimed_by ? formatDuration(locale, task.held_for_seconds) : "-"}</Table.Cell>
             </Table.Row>
           ))}
         </Table.Body>
