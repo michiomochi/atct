@@ -78,7 +78,7 @@ SCRIPT
 make_archives() {
   local fixture_dir="$1"
   local checksum_value="$2"
-  local atct_archive="$fixture_dir/atct_0.6.0_darwin_arm64.tar.gz"
+  local atct_archive="$fixture_dir/atct_0.7.0_darwin_arm64.tar.gz"
 
   mkdir -p "$fixture_dir/payload"
   cat >"$fixture_dir/payload/atct" <<'SCRIPT'
@@ -117,8 +117,8 @@ test_static_contract() {
   assert_file_contains 'set -euo pipefail' "$REPO_ROOT/plugin/bin/atct-mcp"
   assert_file_contains '"command": "${CLAUDE_PLUGIN_ROOT}/bin/atct-mcp"' "$REPO_ROOT/plugin/.mcp.json"
   assert_file_contains '"source": "./plugin"' "$REPO_ROOT/.claude-plugin/marketplace.json"
-  assert_file_contains '"version": "0.6.0"' "$REPO_ROOT/plugin/.claude-plugin/plugin.json"
-  assert_file_contains 'VERSION="0.6.0"' "$REPO_ROOT/plugin/bin/_resolve"
+  assert_file_contains '"version": "0.7.0"' "$REPO_ROOT/plugin/.claude-plugin/plugin.json"
+  assert_file_contains 'VERSION="0.7.0"' "$REPO_ROOT/plugin/bin/_resolve"
   assert_file_contains 'RELEASE_BASE="https://github.com/michiomochi/atct/releases/download/v${VERSION}"' "$REPO_ROOT/plugin/bin/_resolve"
   assert_file_contains 'ARCHIVE_NAME="atct_${VERSION}_${OS}_${ARCH}.tar.gz"' "$REPO_ROOT/plugin/bin/_resolve"
   [[ ! -e "$REPO_ROOT/.mcp.json" ]] || fail 'repository root must not contain .mcp.json'
@@ -146,9 +146,9 @@ test_download_cache_and_mcp_stdout() {
 
   first_out="$(HOME="$home" PATH="$fake_bin:$PATH" FIXTURES_DIR="$fixtures" CURL_LOG="$curl_log" FAKE_OS=Darwin FAKE_ARCH=arm64 "$REPO_ROOT/plugin/bin/atct" project list)"
   assert_eq 'fake atct <project> <list>' "$first_out" 'first wrapper execution'
-  assert_file_contains 'https://github.com/michiomochi/atct/releases/download/v0.6.0/atct_0.6.0_darwin_arm64.tar.gz' "$curl_log"
-  assert_file_contains 'https://github.com/michiomochi/atct/releases/download/v0.6.0/checksums.txt' "$curl_log"
-  [[ -x "$home/.atct/bin/atct-0.6.0" ]] || fail 'versioned atct cache is missing'
+  assert_file_contains 'https://github.com/michiomochi/atct/releases/download/v0.7.0/atct_0.7.0_darwin_arm64.tar.gz' "$curl_log"
+  assert_file_contains 'https://github.com/michiomochi/atct/releases/download/v0.7.0/checksums.txt' "$curl_log"
+  [[ -x "$home/.atct/bin/atct-0.7.0" ]] || fail 'versioned atct cache is missing'
   for candidate in "$home/.atct/bin"/.download.*; do
     [[ ! -e "$candidate" ]] || fail "download directory remained after success: $candidate"
   done
@@ -157,7 +157,7 @@ test_download_cache_and_mcp_stdout() {
   assert_empty_file "$mcp_stdout"
   assert_file_contains 'fake mcp' "$mcp_stderr"
   assert_eq "$REPO_ROOT/plugin/bin/atct" "$(<"$atct_wrapper_log")" 'MCP wrapper must select the matching atct wrapper'
-  [[ -x "$home/.atct/bin/atct-mcp-0.6.0" ]] || fail 'versioned atct-mcp cache is missing'
+  [[ -x "$home/.atct/bin/atct-mcp-0.7.0" ]] || fail 'versioned atct-mcp cache is missing'
 
   mkdir -p "$home/.atct/bin/.download.stale"
   printf 'stale\n' >"$home/.atct/bin/.download.stale/file"
@@ -191,11 +191,11 @@ test_cleanup_failure_is_best_effort() {
   local output
 
   mkdir -p "$home/.atct/bin" "$fake_bin"
-  cat >"$home/.atct/bin/atct-0.6.0" <<'SCRIPT'
+  cat >"$home/.atct/bin/atct-0.7.0" <<'SCRIPT'
 #!/usr/bin/env bash
 printf 'cached after cleanup failure\n'
 SCRIPT
-  chmod +x "$home/.atct/bin/atct-0.6.0"
+  chmod +x "$home/.atct/bin/atct-0.7.0"
 
   mkdir -p "$stale_dir"
   printf 'stale\n' >"$stale_dir/file"
@@ -233,7 +233,7 @@ test_checksum_failure() {
   fi
   assert_empty_file "$stdout"
   assert_file_contains 'Checksum verification failed' "$stderr"
-  [[ ! -e "$home/.atct/bin/atct-0.6.0" ]] || fail 'checksum mismatch left an executable cache'
+  [[ ! -e "$home/.atct/bin/atct-0.7.0" ]] || fail 'checksum mismatch left an executable cache'
   for candidate in "$home/.atct/bin"/.download.*; do
     [[ ! -e "$candidate" ]] || fail "download directory remained after failure: $candidate"
   done
@@ -396,6 +396,65 @@ test_session_start_is_silent_without_atct_wrapper() {
   assert_eq '' "$output" 'missing atct wrapper must keep the hook silent'
 }
 
+test_stop_hook_active_is_silent() {
+  local fixture="$TEMP_ROOT/stop-hook-active"
+  local hook="$fixture/plugin/hooks/stop"
+  local adjacent="$fixture/plugin/bin/atct"
+  local marker="$fixture/marker"
+  local output
+
+  mkdir -p "$(dirname "$hook")" "$(dirname "$adjacent")"
+  cp "$REPO_ROOT/plugin/hooks/stop" "$hook"
+  cat >"$adjacent" <<'SCRIPT'
+#!/bin/bash
+printf 'called\n' >"$MARKER"
+SCRIPT
+  chmod +x "$adjacent"
+
+  if ! output="$(MARKER="$marker" PATH="" /bin/bash "$hook" <<< '{"stop_hook_active":true}' 2>&1)"; then
+    fail 'stop hook failed while stop_hook_active was true'
+  fi
+  assert_eq '' "$output" 'stop_hook_active must keep the hook silent'
+  [[ ! -e "$marker" ]] || fail 'stop_hook_active must prevent wrapper execution'
+}
+
+test_stop_hook_is_silent_without_adjacent_wrapper() {
+  local fixture="$TEMP_ROOT/stop-hook-no-wrapper"
+  local hook="$fixture/plugin/hooks/stop"
+  local output
+
+  mkdir -p "$(dirname "$hook")"
+  cp "$REPO_ROOT/plugin/hooks/stop" "$hook"
+
+  if ! output="$(PATH="" /bin/bash "$hook" <<< '{}' 2>&1)"; then
+    fail 'stop hook failed without an adjacent atct wrapper'
+  fi
+  assert_eq '' "$output" 'missing atct wrapper must keep the hook silent'
+}
+
+test_stop_hook_is_silent_when_pending_is_empty() {
+  local fixture="$TEMP_ROOT/stop-hook-empty"
+  local hook="$fixture/plugin/hooks/stop"
+  local adjacent="$fixture/plugin/bin/atct"
+  local args_log="$fixture/args.log"
+  local output
+
+  mkdir -p "$(dirname "$hook")" "$(dirname "$adjacent")"
+  cp "$REPO_ROOT/plugin/hooks/stop" "$hook"
+  cat >"$adjacent" <<'SCRIPT'
+#!/bin/bash
+printf '%s\n' "$*" >"$ATCT_ARGS_LOG"
+exit 1
+SCRIPT
+  chmod +x "$adjacent"
+
+  if ! output="$(ATCT_ARGS_LOG="$args_log" PATH="" /bin/bash "$hook" <<< '{}' 2>&1)"; then
+    fail 'stop hook failed when atct pending reported no answers'
+  fi
+  assert_eq '' "$output" 'empty pending output must keep the hook silent'
+  assert_file_contains 'pending' "$args_log"
+}
+
 test_static_contract
 test_download_cache_and_mcp_stdout
 test_cleanup_failure_is_best_effort
@@ -407,4 +466,7 @@ test_session_start_preserves_context_and_silence
 test_session_start_mentions_active_goal_permission
 test_session_start_mentions_undo_boundary
 test_session_start_is_silent_without_atct_wrapper
+test_stop_hook_active_is_silent
+test_stop_hook_is_silent_without_adjacent_wrapper
+test_stop_hook_is_silent_when_pending_is_empty
 printf 'PASS wrapper tests\n'

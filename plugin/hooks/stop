@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+
+INPUT="$(/bin/cat)"
+STOP_HOOK_ACTIVE_RE='"stop_hook_active"[[:space:]]*:[[:space:]]*true'
+if [[ "$INPUT" =~ $STOP_HOOK_ACTIVE_RE ]]; then
+  exit 0
+fi
+
+HOOK_DIR="${BASH_SOURCE[0]%/*}"
+if [[ "$HOOK_DIR" == "${BASH_SOURCE[0]}" ]]; then
+  HOOK_DIR='.'
+fi
+ATCT_BIN="$HOOK_DIR/../bin/atct"
+[[ -x "$ATCT_BIN" ]] || exit 0
+
+PENDING_OUTPUT="$($ATCT_BIN pending 2>/dev/null)" || exit 0
+[[ -n "$PENDING_OUTPUT" ]] || exit 0
+
+json_escape() {
+  local value="$1"
+  value="${value//\\/\\\\}"
+  value="${value//\"/\\\"}"
+  value="${value//$'\n'/\\n}"
+  value="${value//$'\r'/\\r}"
+  value="${value//$'\t'/\\t}"
+  printf '%s' "$value"
+}
+
+REASON=$'A human answered a decision you parked. Call `atct_decision_poll` with each decision_id below, then continue the work that was waiting on it.\n\n'"$PENDING_OUTPUT"$'\n'
+printf '{"decision":"block","reason":"%s"}\n' "$(json_escape "$REASON")"
