@@ -8,7 +8,7 @@ stops before the runway and waits, without anyone taking the controls.
 
 ATCT is that tower for coding agents. You set a goal. Agents break it into tasks and work through
 them. When an agent reaches something it should not decide alone, it parks the question for you and
-keeps going where it can. You answer from one inbox. The agent picks the answer up and continues.
+keeps going where it can. You answer from one dashboard. The agent picks the answer up and continues.
 When the goal is met, it comes back to you for sign-off.
 
 ---
@@ -54,16 +54,17 @@ shell; it does not change what the plugin runs.
 ```bash
 cd /path/to/your/repo
 atct project add                 # put this repository under ATCT
-atct goal add "Ship the thing"   # or create it from the web inbox
+atct goal add "Ship the thing"   # or create it from the dashboard
 ```
 
-Open <http://127.0.0.1:8787/> for the inbox. The daemon starts on its own the first time
+Open <http://127.0.0.1:8787/> for the dashboard. The daemon starts on its own the first time
 anything needs it.
 
-From then on, opening Claude Code in a registered repository is enough: a session hook tells
-the agent that this repository is managed through ATCT, and the eight MCP tools are already
-connected. **Repositories you never registered are untouched** — the hook stays silent, so
-unrelated work does not pay for a ceremony it did not ask for.
+From then on, opening Claude Code in a registered repository is enough. A session hook hands
+the agent the active goals — their titles, their `goal_id`, the tasks under them, and any
+answer waiting to be picked up — so it knows what it is working on before you type anything.
+**Repositories you never registered are untouched**: the hook stays silent, so unrelated work
+does not pay for a ceremony it did not ask for.
 
 Two commands cover day-to-day use:
 
@@ -73,7 +74,30 @@ Two commands cover day-to-day use:
 | `atct goal add "…"` | Create a goal for the current repository |
 
 `atct project list`, `atct goal list`, `atct ensure`, and `atct stop` round out the CLI. The
-web inbox handles everything a human answers.
+dashboard handles everything a human answers.
+
+## Setting a goal is the approval
+
+An active goal is permission to work. The agent breaks it into tasks and starts — it does not
+come back for sign-off on the plan, and it does not stop between tasks. Your attention goes to
+the decisions it parks and to the final approval, not to granting permission at every step.
+
+It stops before anything that cannot be undone: rewriting history, discarding uncommitted work,
+deleting files, or publishing off the machine. The test is whether **you can get the previous
+state back** — a commit is undoable, a force push over work that exists nowhere else is not.
+
+Say `/atct:start` to hand a session that responsibility explicitly. Whoever runs it owns what
+ATCT says about this repository: every claim, every completed task, every parked decision.
+
+## Your answer reaches a session that already moved on
+
+Agents stop when a turn ends. Polling does not help — polling is a tool call, so it ends with
+the turn. That is the gap where an answer normally goes unread: you reply, and nobody is
+listening any more.
+
+ATCT closes it from the outside. When a session is about to finish and an answer is waiting,
+a stop hook hands it back with the `decision_id` to pick up, and the work you were blocking
+continues. You do not have to time your reply to when an agent happens to be looking.
 
 ---
 
@@ -123,7 +147,7 @@ You having answered and the agent having received that answer are different fact
 between them, the decision stays at `answered` and is visible as such, instead of looking handled
 while the work quietly stops.
 
-**One inbox.** Every unanswered decision across every project lands in the same list, including
+**One dashboard.** Every unanswered decision across every project lands in the same list, including
 "this goal looks complete, approve it?". Watching that one list is enough to never miss one.
 
 **Agents keep working.** A parked decision blocks one task, not the goal. The agent moves to
@@ -138,7 +162,7 @@ flowchart LR
   CU[Cursor / any MCP client] --> SHIM
   SHIM[atct-mcp<br/>stdio shim] -->|unix socket| D[atct daemon]
   D --> DB[(SQLite)]
-  D -->|HTTP + SSE| UI[Web UI<br/>inbox / goals]
+  D -->|HTTP + SSE| UI[Web UI<br/>dashboard / goals]
   H((You)) --> UI
 ```
 
@@ -167,7 +191,7 @@ hold the same one.
 
 ## The screens
 
-- **Inbox** — every unanswered decision, across every project. The one screen that matters.
+- **Dashboard** — every unanswered decision, across every project. The one screen that matters.
 - **Goal detail** — three columns: what is running now, what needs a decision, what is queued next.
 - **Decision** — the question, the options and their consequences, and a free-text field for
   answers that are not on the list.
