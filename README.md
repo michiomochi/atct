@@ -13,6 +13,54 @@ When the goal is met, it comes back to you for sign-off.
 
 ---
 
+## Install
+
+ATCT ships two binaries and a Claude Code plugin. The binaries do the work; the plugin
+tells your agent to use them.
+
+```bash
+# 1. Binaries
+brew install --cask michiomochi/tap/atct
+# or, with a Go toolchain:
+#   go install github.com/michiomochi/atct/cmd/atct@latest
+#   go install github.com/michiomochi/atct/cmd/atct-mcp@latest
+
+# 2. Claude Code plugin
+claude plugin marketplace add michiomochi/atct
+claude plugin install atct@atct
+```
+
+macOS and Linux, on amd64 and arm64. Windows is not supported: the daemon talks over a Unix
+domain socket.
+
+## Getting started
+
+```bash
+cd /path/to/your/repo
+atct project add                 # put this repository under ATCT
+atct goal add "Ship the thing"   # or create it from the web inbox
+```
+
+Open <http://127.0.0.1:8787/> for the inbox. The daemon starts on its own the first time
+anything needs it.
+
+From then on, opening Claude Code in a registered repository is enough: a session hook tells
+the agent that this repository is managed through ATCT, and the eight MCP tools are already
+connected. **Repositories you never registered are untouched** — the hook stays silent, so
+unrelated work does not pay for a ceremony it did not ask for.
+
+Two commands cover day-to-day use:
+
+| Command | What it does |
+|---|---|
+| `atct project add` | Register a repository. Run once per repository |
+| `atct goal add "…"` | Create a goal for the current repository |
+
+`atct project list`, `atct goal list`, `atct ensure`, and `atct stop` round out the CLI. The
+web inbox handles everything a human answers.
+
+---
+
 ## The problem
 
 Running several coding agents at once is now normal. Keeping track of them is not.
