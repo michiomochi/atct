@@ -1,0 +1,176 @@
+package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/michiomochi/atct/internal/domain"
+	"github.com/michiomochi/atct/internal/store"
+)
+
+type contextGoal struct {
+	Goal  domain.Goal
+	Tasks []domain.Task
+}
+
+// contextText reads the local store directly. The context command is used by
+// SessionStart, so it must not start, stop, or upgrade a daemon just to print
+// the state that is already persisted in the database.
+func contextText(dir, cwd string) (string, error) {
+	dbPath := filepath.Join(dir, "atct.db")
+	if _, err := os.Stat(dbPath); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return "", nil
+		}
+		return "", fmt.Errorf("stat store: %w", err)
+	}
+
+	s, err := store.Open(dbPath)
+	if err != nil {
+		return "", fmt.Errorf("open store: %w", err)
+	}
+	defer s.Close()
+
+	ctx := context.Background()
+	project, err := s.ResolveProject(ctx, cwd)
+	if errors.Is(err, store.ErrProjectNotFound) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("resolve project: %w", err)
+	}
+
+	goals, err := s.ListGoals(ctx, project.ID)
+	if err != nil {
+		return "", fmt.Errorf("list goals: %w", err)
+	}
+	active := make([]contextGoal, 0, len(goals))
+	activeIDs := make(map[string]bool)
+	for _, goal := range goals {
+		if goal.Status != domain.GoalActive {
+			continue
+		}
+		tasks, err := s.ListTasks(ctx, goal.ID)
+		if err != nil {
+			return "", fmt.Errorf("list tasks for goal %s: %w", goal.ID, err)
+		}
+		active = append(active, contextGoal{Goal: goal, Tasks: tasks})
+		activeIDs[goal.ID] = true
+	}
+	if len(active) == 0 {
+		return "", nil
+	}
+
+	decisions, err := s.ListUnappliedDecisions(ctx)
+	if err != nil {
+		return "", fmt.Errorf("list unapplied decisions: %w", err)
+	}
+	filteredDecisions := make([]domain.Decision, 0, len(decisions))
+	for _, decision := range decisions {
+		if activeIDs[decision.GoalID] && decision.Status == domain.DecisionAnswered && decision.AppliedAt == nil {
+			filteredDecisions = append(filteredDecisions, decision)
+		}
+	}
+
+	return renderContext(active, filteredDecisions), nil
+}
+
+func runContext(dir string) error {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("resolve current directory: %w", err)
+	}
+	output, err := contextText(dir, cwd)
+	if err != nil {
+		return err
+	}
+	if output != "" {
+		_, err = fmt.Fprint(os.Stdout, output)
+	}
+	return err
+}
+
+func renderContext(goals []contextGoal, decisions []domain.Decision) string {
+	active := make([]contextGoal, 0, len(goals))
+	activeIDs := make(map[string]bool)
+	for _, goal := range goals {
+		if goal.Goal.Status != domain.GoalActive {
+			continue
+		}
+		active = append(active, goal)
+		activeIDs[goal.Goal.ID] = true
+	}
+	if len(active) == 0 {
+		return ""
+	}
+
+	var b strings.Builder
+	b.WriteString("ATCT context\n")
+	declareTasks := false
+	claimTasks := false
+	for _, item := range active {
+		fmt.Fprintf(&b, "Goal: %s\n", oneLine(item.Goal.Title))
+		fmt.Fprintf(&b, "Description: %s\n", oneLine(item.Goal.Description))
+		fmt.Fprintf(&b, "goal_id: %s\n", oneLine(item.Goal.ID))
+		b.WriteString("Tasks:\n")
+		listed := 0
+		for _, task := range item.Tasks {
+			if task.Status != domain.TaskTodo && task.Status != domain.TaskDoing {
+				continue
+			}
+			fmt.Fprintf(&b, "- [%s] %s (task_id: %s)\n", task.Status, oneLine(task.Title), oneLine(task.ID))
+			listed++
+			if task.Status == domain.TaskTodo {
+				claimTasks = true
+			}
+		}
+		switch {
+		case len(item.Tasks) == 0:
+			b.WriteString("- no tasks declared\n")
+			declareTasks = true
+		case listed == 0:
+			b.WriteString("- no todo or doing tasks\n")
+		}
+	}
+
+	filteredDecisions := make([]domain.Decision, 0, len(decisions))
+	for _, decision := range decisions {
+		if !activeIDs[decision.GoalID] || decision.Status != domain.DecisionAnswered || decision.AppliedAt != nil {
+			continue
+		}
+		filteredDecisions = append(filteredDecisions, decision)
+	}
+	if len(filteredDecisions) > 0 {
+		b.WriteString("Unapplied decisions:\n")
+		for _, decision := range filteredDecisions {
+			fmt.Fprintf(&b, "- %s (decision_id: %s)\n", oneLine(decision.Question), oneLine(decision.ID))
+			answer := strings.TrimSpace(strings.Join([]string{decision.AnswerLabel, decision.AnswerText}, " - "))
+			if answer != "-" && answer != "" {
+				fmt.Fprintf(&b, "  answer: %s\n", oneLine(answer))
+			}
+		}
+	}
+
+	nextTools := make([]string, 0, 3)
+	if declareTasks {
+		nextTools = append(nextTools, "atct_task_declare")
+	}
+	if claimTasks {
+		nextTools = append(nextTools, "atct_task_claim")
+	}
+	if len(filteredDecisions) > 0 {
+		nextTools = append(nextTools, "atct_decision_poll")
+	}
+	if len(nextTools) > 0 {
+		fmt.Fprintf(&b, "Next tools: %s\n", strings.Join(nextTools, ", "))
+	}
+	return b.String()
+}
+
+func oneLine(value string) string {
+	return strings.Join(strings.Fields(value), " ")
+}

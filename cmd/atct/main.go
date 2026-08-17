@@ -48,6 +48,7 @@ var validSubcommands = map[string]bool{
 	"stop":    true,
 	"project": true,
 	"goal":    true,
+	"context": true,
 }
 
 var validProjectActions = map[string]bool{"add": true, "list": true}
@@ -64,6 +65,7 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "  project list         List registered projects")
 	fmt.Fprintln(os.Stderr, "  goal add <title>     Create a goal for the current project")
 	fmt.Fprintln(os.Stderr, "  goal list            List goals for the current project")
+	fmt.Fprintln(os.Stderr, "  context              Print the current goal context for an AI session")
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Options:")
 	fmt.Fprintln(os.Stderr, "  -listen string   HTTP listen address (default \"127.0.0.1:8787\")")
@@ -227,6 +229,11 @@ func main() {
 	case "goal":
 		if err := runGoal(config, dir, exePath); err != nil {
 			log.Fatalf("goal %s: %v", config.goalAction, err)
+		}
+		return
+	case "context":
+		if err := runContext(dir); err != nil {
+			log.Fatalf("context: %v", err)
 		}
 		return
 	}
