@@ -190,6 +190,76 @@ func TestClaimTaskConflictErrorNamesTaskAndFile(t *testing.T) {
 	}
 }
 
+func TestClaimTaskConflictErrorReturnsClaimableCandidates(t *testing.T) {
+	s := newTestStore(t)
+	goalID := newTestGoal(t, s)
+	ownerID := declareOneTaskWithFiles(t, s, goalID, "candidate-owner", "owner task", []string{"internal/store/task.go"})
+	blockedID := declareOneTaskWithFiles(t, s, goalID, "candidate-blocked", "blocked alternative", []string{"internal/store/task.go"})
+	alternativeID := declareOneTaskWithFiles(t, s, goalID, "candidate-safe", "safe alternative", []string{"internal/store/schema.go"})
+	targetID := declareOneTaskWithFiles(t, s, goalID, "candidate-target", "target task", []string{"internal/store/task.go"})
+
+	if _, err := s.ClaimTask(context.Background(), ownerID, "run-owner"); err != nil {
+		t.Fatalf("owner ClaimTask: %v", err)
+	}
+	_, err := s.ClaimTask(context.Background(), targetID, "run-target")
+	if !errors.Is(err, ErrTaskFileConflict) {
+		t.Fatalf("ClaimTask error = %v, want ErrTaskFileConflict", err)
+	}
+	for _, want := range []string{alternativeID, "safe alternative", "alternatives"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("ClaimTask error %q does not contain %q", err, want)
+		}
+	}
+	if strings.Contains(err.Error(), blockedID) {
+		t.Fatalf("ClaimTask error %q includes a conflicting alternative %s", err, blockedID)
+	}
+}
+
+func TestClaimTaskConflictCandidatesAreClaimable(t *testing.T) {
+	s := newTestStore(t)
+	goalID := newTestGoal(t, s)
+	ownerID := declareOneTaskWithFiles(t, s, goalID, "claimable-owner", "owner task", []string{"internal/store/task.go"})
+	targetID := declareOneTaskWithFiles(t, s, goalID, "claimable-target", "target task", []string{"internal/store/task.go"})
+	fileAlternativeID := declareOneTaskWithFiles(t, s, goalID, "claimable-file", "file alternative", []string{"internal/store/schema.go"})
+	emptyAlternativeID := declareOneTaskWithFiles(t, s, goalID, "claimable-empty", "empty alternative", nil)
+
+	if _, err := s.ClaimTask(context.Background(), ownerID, "run-owner"); err != nil {
+		t.Fatalf("owner ClaimTask: %v", err)
+	}
+	_, err := s.ClaimTask(context.Background(), targetID, "run-target")
+	if !errors.Is(err, ErrTaskFileConflict) {
+		t.Fatalf("ClaimTask error = %v, want ErrTaskFileConflict", err)
+	}
+	for _, want := range []string{fileAlternativeID, "file alternative", emptyAlternativeID, "empty alternative"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("ClaimTask error %q does not contain candidate %q", err, want)
+		}
+	}
+	for _, taskID := range []string{fileAlternativeID, emptyAlternativeID} {
+		if _, err := s.ClaimTask(context.Background(), taskID, "run-target"); err != nil {
+			t.Fatalf("candidate %s ClaimTask: %v", taskID, err)
+		}
+	}
+}
+
+func TestClaimTaskConflictErrorReportsNoCandidates(t *testing.T) {
+	s := newTestStore(t)
+	goalID := newTestGoal(t, s)
+	ownerID := declareOneTaskWithFiles(t, s, goalID, "no-candidate-owner", "owner task", []string{"internal/store/task.go"})
+	targetID := declareOneTaskWithFiles(t, s, goalID, "no-candidate-target", "target task", []string{"internal/store/task.go"})
+
+	if _, err := s.ClaimTask(context.Background(), ownerID, "run-owner"); err != nil {
+		t.Fatalf("owner ClaimTask: %v", err)
+	}
+	_, err := s.ClaimTask(context.Background(), targetID, "run-target")
+	if !errors.Is(err, ErrTaskFileConflict) {
+		t.Fatalf("ClaimTask error = %v, want ErrTaskFileConflict", err)
+	}
+	if !strings.Contains(err.Error(), "alternatives: []") {
+		t.Fatalf("ClaimTask error %q does not report that no alternatives are available", err)
+	}
+}
+
 func TestOpenMigratesTasksFilesColumnWithoutLosingData(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "atct.db")
 	oldDB, err := sql.Open("sqlite", dbPath)

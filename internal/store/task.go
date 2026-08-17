@@ -17,6 +17,53 @@ const taskColumns = `id, goal_id, title, status, agent, files, sort_order, decla
 var ErrTaskAlreadyClaimed = errors.New("task already claimed")
 var ErrTaskFileConflict = errors.New("task file conflict")
 
+const maxTaskFileConflictCandidates = 8
+
+// TaskConflictCandidate identifies a task that can be claimed instead of the
+// task that hit a file conflict.
+type TaskConflictCandidate struct {
+	TaskID string `json:"task_id"`
+	Title  string `json:"title"`
+}
+
+// TaskFileConflictError keeps the conflict details and actionable alternatives
+// while preserving errors.Is(err, ErrTaskFileConflict) for existing callers.
+type TaskFileConflictError struct {
+	TaskID                string
+	Title                 string
+	ConflictTaskID        string
+	ConflictTaskTitle     string
+	File                  string
+	Candidates            []TaskConflictCandidate
+	OmittedCandidateCount int
+}
+
+func (e *TaskFileConflictError) Error() string {
+	candidates := []byte("[]")
+	if len(e.Candidates) > 0 {
+		encoded, err := json.Marshal(e.Candidates)
+		if err == nil {
+			candidates = encoded
+		}
+	}
+	message := fmt.Sprintf(
+		"%s: task %q (%s) conflicts with task %q (%s) on file %q; alternatives: %s",
+		ErrTaskFileConflict,
+		e.TaskID,
+		e.Title,
+		e.ConflictTaskID,
+		e.ConflictTaskTitle,
+		e.File,
+		candidates,
+	)
+	if e.OmittedCandidateCount > 0 {
+		message += fmt.Sprintf("; omitted_candidates: %d", e.OmittedCandidateCount)
+	}
+	return message
+}
+
+func (e *TaskFileConflictError) Unwrap() error { return ErrTaskFileConflict }
+
 // DeclareTasks derives declare_key from the idempotency key and task position.
 // The unique (goal_id, declare_key) constraint absorbs duplicate declarations.
 // Agents retry and repeat declarations after context compaction, so this prevents task multiplication.
@@ -198,11 +245,11 @@ func (s *Store) ClaimTask(ctx context.Context, taskID, runID string) (domain.Tas
 	}
 	defer tx.Rollback()
 
-	var title, status, claimedBy string
+	var goalID, title, status, claimedBy string
 	var filesJSON sql.NullString
 	if err := tx.QueryRowContext(ctx,
-		`SELECT title, status, claimed_by, files FROM tasks WHERE id = ?`, taskID,
-	).Scan(&title, &status, &claimedBy, &filesJSON); err != nil {
+		`SELECT goal_id, title, status, claimed_by, files FROM tasks WHERE id = ?`, taskID,
+	).Scan(&goalID, &title, &status, &claimedBy, &filesJSON); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return domain.Task{}, fmt.Errorf("task not found: %s", taskID)
 		}
@@ -217,7 +264,7 @@ func (s *Store) ClaimTask(ctx context.Context, taskID, runID string) (domain.Tas
 		return domain.Task{}, fmt.Errorf("parse task files: %w", err)
 	}
 	if len(files) > 0 {
-		if err := rejectTaskFileConflict(ctx, tx, taskID, title, files, runID); err != nil {
+		if err := rejectTaskFileConflict(ctx, tx, goalID, taskID, title, files, runID); err != nil {
 			return domain.Task{}, err
 		}
 	}
@@ -255,7 +302,13 @@ func (s *Store) ClaimTask(ctx context.Context, taskID, runID string) (domain.Tas
 	return s.loadTask(ctx, taskID)
 }
 
-func rejectTaskFileConflict(ctx context.Context, tx *sql.Tx, taskID, title string, files []string, runID string) error {
+type taskClaimConflictInfo struct {
+	ID    string
+	Title string
+	Files []string
+}
+
+func rejectTaskFileConflict(ctx context.Context, tx *sql.Tx, goalID, taskID, title string, files []string, runID string) error {
 	rows, err := tx.QueryContext(ctx,
 		`SELECT id, title, status, claimed_by, files
 		 FROM tasks
@@ -268,26 +321,100 @@ func rejectTaskFileConflict(ctx context.Context, tx *sql.Tx, taskID, title strin
 	if err != nil {
 		return fmt.Errorf("query claimed tasks: %w", err)
 	}
-	defer rows.Close()
 
+	var claimedTasks []taskClaimConflictInfo
 	for rows.Next() {
 		var otherID, otherTitle, otherStatus, otherClaimedBy string
 		var otherFilesJSON sql.NullString
 		if err := rows.Scan(&otherID, &otherTitle, &otherStatus, &otherClaimedBy, &otherFilesJSON); err != nil {
+			rows.Close()
 			return fmt.Errorf("scan claimed task: %w", err)
 		}
 		otherFiles, err := unmarshalTaskFiles(otherFilesJSON)
 		if err != nil {
+			rows.Close()
 			return fmt.Errorf("parse claimed task files: %w", err)
 		}
-		if file, ok := firstOverlappingFile(files, otherFiles); ok {
-			return fmt.Errorf("%w: task %q (%s) conflicts with task %q (%s) on file %q", ErrTaskFileConflict, taskID, title, otherID, otherTitle, file)
-		}
+		claimedTasks = append(claimedTasks, taskClaimConflictInfo{
+			ID: otherID, Title: otherTitle, Files: otherFiles,
+		})
 	}
 	if err := rows.Err(); err != nil {
+		rows.Close()
 		return fmt.Errorf("iterate claimed tasks: %w", err)
 	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("close claimed tasks: %w", err)
+	}
+
+	for _, other := range claimedTasks {
+		if file, ok := firstOverlappingFile(files, other.Files); ok {
+			candidates, omitted, err := taskFileConflictCandidates(ctx, tx, goalID, taskID, claimedTasks)
+			if err != nil {
+				return err
+			}
+			return &TaskFileConflictError{
+				TaskID:                taskID,
+				Title:                 title,
+				ConflictTaskID:        other.ID,
+				ConflictTaskTitle:     other.Title,
+				File:                  file,
+				Candidates:            candidates,
+				OmittedCandidateCount: omitted,
+			}
+		}
+	}
 	return nil
+}
+
+func taskFileConflictCandidates(ctx context.Context, tx *sql.Tx, goalID, taskID string, claimedTasks []taskClaimConflictInfo) ([]TaskConflictCandidate, int, error) {
+	rows, err := tx.QueryContext(ctx,
+		`SELECT id, title, status, claimed_by, files
+		 FROM tasks
+		 WHERE goal_id = ?
+		   AND id <> ?
+		 ORDER BY sort_order, id`, goalID, taskID)
+	if err != nil {
+		return nil, 0, fmt.Errorf("query task alternatives: %w", err)
+	}
+	defer rows.Close()
+
+	candidates := make([]TaskConflictCandidate, 0, maxTaskFileConflictCandidates)
+	var omitted int
+	for rows.Next() {
+		var candidate taskClaimConflictInfo
+		var status, claimedBy string
+		var filesJSON sql.NullString
+		if err := rows.Scan(&candidate.ID, &candidate.Title, &status, &claimedBy, &filesJSON); err != nil {
+			return nil, 0, fmt.Errorf("scan task alternative: %w", err)
+		}
+		if claimedBy != "" || status == string(domain.TaskDone) || status == string(domain.TaskDropped) {
+			continue
+		}
+		candidate.Files, err = unmarshalTaskFiles(filesJSON)
+		if err != nil {
+			return nil, 0, fmt.Errorf("parse task alternative files: %w", err)
+		}
+		blocked := false
+		for _, claimed := range claimedTasks {
+			if _, ok := firstOverlappingFile(candidate.Files, claimed.Files); ok {
+				blocked = true
+				break
+			}
+		}
+		if blocked {
+			continue
+		}
+		if len(candidates) >= maxTaskFileConflictCandidates {
+			omitted++
+			continue
+		}
+		candidates = append(candidates, TaskConflictCandidate{TaskID: candidate.ID, Title: candidate.Title})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("iterate task alternatives: %w", err)
+	}
+	return candidates, omitted, nil
 }
 
 func firstOverlappingFile(files, otherFiles []string) (string, bool) {
