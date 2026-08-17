@@ -44,7 +44,7 @@ func TestPendingCommandReturnsDecisionIDAndQuestion(t *testing.T) {
 		t.Fatalf("AskDecision: %v", err)
 	}
 	if _, err := s.AnswerDecision(ctx, store.AnswerInput{
-		DecisionID: decision.ID, AnswerText: "stable", AnsweredBy: "human",
+		DecisionID: decision.ID, AnswerText: "stable",
 	}); err != nil {
 		t.Fatalf("AnswerDecision: %v", err)
 	}
@@ -92,7 +92,7 @@ func TestPendingCommandFiltersDecisionsFromOtherProject(t *testing.T) {
 		t.Fatalf("AskDecision: %v", err)
 	}
 	if _, err := s.AnswerDecision(ctx, store.AnswerInput{
-		DecisionID: decision.ID, AnswerText: "ignore", AnsweredBy: "human",
+		DecisionID: decision.ID, AnswerText: "ignore",
 	}); err != nil {
 		t.Fatalf("AnswerDecision: %v", err)
 	}

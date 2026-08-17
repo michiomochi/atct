@@ -308,7 +308,6 @@ func (f contextCheckFixture) addUnappliedAnswer(t *testing.T) {
 	if _, err := f.db.AnswerDecision(context.Background(), store.AnswerInput{
 		DecisionID: decision.ID,
 		AnswerText: "the path",
-		AnsweredBy: "human",
 	}); err != nil {
 		t.Fatalf("AnswerDecision: %v", err)
 	}
@@ -568,7 +567,6 @@ func (f projectSelectionFixture) addPendingDecision(t *testing.T, goalID, questi
 	if _, err := f.db.AnswerDecision(context.Background(), store.AnswerInput{
 		DecisionID: decision.ID,
 		AnswerText: "answer",
-		AnsweredBy: "human",
 	}); err != nil {
 		t.Fatalf("AnswerDecision: %v", err)
 	}
