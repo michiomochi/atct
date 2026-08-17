@@ -34,6 +34,11 @@ was the approval.
 Carry each task through to a commit. The human's attention is for decisions and
 for the final approval, not for granting permission at every step.
 
+Finishing a task is not a checkpoint. Claim the next one and keep going. When a
+goal has no unclaimed tasks left, move to another active goal instead of
+reporting back. Announcing what you will do next and then stopping to be told to
+do it wastes the turn that ends the sentence.
+
 Stop before anything that cannot be undone:
 
 - rewriting history: force push, `rebase`, `reset`, `amend`
