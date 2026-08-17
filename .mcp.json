@@ -1,7 +1,7 @@
 {
   "mcpServers": {
     "atct": {
-      "command": "atct-mcp",
+      "command": "${CLAUDE_PLUGIN_ROOT}/bin/atct-mcp",
       "args": []
     }
   }
