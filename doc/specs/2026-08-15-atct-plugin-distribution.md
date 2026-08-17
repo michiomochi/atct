@@ -203,6 +203,41 @@ everything tracks nothing usefully. **Registration is the opt-in.**
 startup on a daemon launch trades a visible delay for nothing.
 
 
+## 6b. Installing without a package manager
+
+Requiring `brew` or `go install` before the plugin is useful puts a developer-only step in
+front of every user. Crit has the same shape — its hook calls a bare `crit`, and its README
+tells you to install the binary separately — so there is no prior art to copy here.
+
+**The plugin ships wrapper scripts instead of binaries.** `bin/atct` and `bin/atct-mcp` are
+shell scripts that resolve a real binary under `~/.atct/bin/`, downloading it from the
+GitHub release on first use, then `exec` into it. Installing the plugin is the whole setup.
+
+Two facts were measured before choosing this (2026-08-17, headless spike with dummy
+executables):
+
+| Question | Result |
+|---|---|
+| Does a plugin's `bin/` land on `PATH` for the Bash tool? | **Yes.** A probe script ran and reported its path inside the installed plugin |
+| Does an MCP server declared with a bare command name find it? | **No.** `ENOENT: Executable not found in $PATH` |
+| Does `${CLAUDE_PLUGIN_ROOT}/bin/...` start it? | **Yes.** The probe was executed and wrote its log |
+
+So `.mcp.json` must reference the wrapper by `${CLAUDE_PLUGIN_ROOT}`, while `atct` on the
+command line works through `PATH`. **The two entry points resolve differently and both have
+to be covered.**
+
+Constraints on the wrapper:
+
+- **Verify the download against `checksums.txt`** from the same release. The script fetches
+  something and then executes it; skipping verification would make a compromised or truncated
+  download run as the user.
+- **Pin the version.** The wrapper knows which release it belongs to, so a plugin update and a
+  binary update stay in step, and a half-updated install cannot happen.
+- **Fail loudly and usefully.** No network, no `curl`, an unsupported platform — each says what
+  happened and what to do, on stderr, without corrupting the MCP stdio stream.
+- Homebrew and `go install` remain supported for people who prefer them.
+
+
 ## 7. Release
 
 GoReleaser builds `atct` and `atct-mcp` for darwin/arm64, darwin/amd64, linux/arm64, and
