@@ -28,7 +28,11 @@ var errNoContextWork = errors.New("no context work")
 // SessionStart, so it must not start, stop, or upgrade a daemon just to print
 // the state that is already persisted in the database.
 func contextText(dir, cwd string) (string, error) {
-	snapshot, err := loadContextSnapshot(dir, cwd)
+	return contextTextForProject(dir, cwd, "", false)
+}
+
+func contextTextForProject(dir, cwd, projectName string, projectSpecified bool) (string, error) {
+	snapshot, err := loadContextSnapshotForProject(dir, cwd, projectName, projectSpecified)
 	if err != nil {
 		return "", err
 	}
@@ -39,9 +43,16 @@ func contextText(dir, cwd string) (string, error) {
 }
 
 func loadContextSnapshot(dir, cwd string) (contextSnapshot, error) {
+	return loadContextSnapshotForProject(dir, cwd, "", false)
+}
+
+func loadContextSnapshotForProject(dir, cwd, projectName string, projectSpecified bool) (contextSnapshot, error) {
 	dbPath := filepath.Join(dir, "atct.db")
 	if _, err := os.Stat(dbPath); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
+			if projectSpecified {
+				return contextSnapshot{}, fmt.Errorf("project %q not found", projectName)
+			}
 			return contextSnapshot{}, nil
 		}
 		return contextSnapshot{}, fmt.Errorf("stat store: %w", err)
@@ -54,7 +65,7 @@ func loadContextSnapshot(dir, cwd string) (contextSnapshot, error) {
 	defer s.Close()
 
 	ctx := context.Background()
-	project, err := s.ResolveProject(ctx, cwd)
+	project, err := resolveProjectSelection(ctx, s, cwd, projectName, projectSpecified)
 	if errors.Is(err, store.ErrProjectNotFound) {
 		return contextSnapshot{}, nil
 	}
@@ -98,7 +109,11 @@ func loadContextSnapshot(dir, cwd string) (contextSnapshot, error) {
 }
 
 func contextCommand(dir, cwd string) (string, int, error) {
-	snapshot, err := loadContextSnapshot(dir, cwd)
+	return contextCommandForProject(dir, cwd, "", false)
+}
+
+func contextCommandForProject(dir, cwd, projectName string, projectSpecified bool) (string, int, error) {
+	snapshot, err := loadContextSnapshotForProject(dir, cwd, projectName, projectSpecified)
 	if err != nil {
 		return "", 0, err
 	}
@@ -111,6 +126,23 @@ func contextCommand(dir, cwd string) (string, int, error) {
 		return output, 0, nil
 	}
 	return output, 1, nil
+}
+
+func resolveProjectSelection(ctx context.Context, s *store.Store, cwd, projectName string, projectSpecified bool) (domain.Project, error) {
+	if !projectSpecified {
+		return s.ResolveProject(ctx, cwd)
+	}
+
+	projects, err := s.ListProjects(ctx)
+	if err != nil {
+		return domain.Project{}, fmt.Errorf("list projects: %w", err)
+	}
+	for _, project := range projects {
+		if project.Name == projectName {
+			return project, nil
+		}
+	}
+	return domain.Project{}, fmt.Errorf("project %q not found", projectName)
 }
 
 func contextNeedsWakeup(snapshot contextSnapshot) bool {
@@ -133,11 +165,15 @@ func contextNeedsWakeup(snapshot contextSnapshot) bool {
 }
 
 func runContext(dir string) error {
+	return runContextForProject(dir, "", false)
+}
+
+func runContextForProject(dir, projectName string, projectSpecified bool) error {
 	cwd, err := os.Getwd()
 	if err != nil {
 		return fmt.Errorf("resolve current directory: %w", err)
 	}
-	output, err := contextText(dir, cwd)
+	output, err := contextTextForProject(dir, cwd, projectName, projectSpecified)
 	if err != nil {
 		return err
 	}
@@ -148,11 +184,15 @@ func runContext(dir string) error {
 }
 
 func runContextCheck(dir string) error {
+	return runContextCheckForProject(dir, "", false)
+}
+
+func runContextCheckForProject(dir, projectName string, projectSpecified bool) error {
 	cwd, err := os.Getwd()
 	if err != nil {
 		return fmt.Errorf("resolve current directory: %w", err)
 	}
-	_, exitCode, err := contextCommand(dir, cwd)
+	_, exitCode, err := contextCommandForProject(dir, cwd, projectName, projectSpecified)
 	if err != nil {
 		return err
 	}

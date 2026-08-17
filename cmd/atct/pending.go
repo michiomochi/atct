@@ -15,7 +15,11 @@ import (
 var errNoPendingDecisions = errors.New("no unapplied decisions")
 
 func pendingCommand(dir, cwd string) (string, int, error) {
-	output, err := pendingText(dir, cwd)
+	return pendingCommandForProject(dir, cwd, "", false)
+}
+
+func pendingCommandForProject(dir, cwd, projectName string, projectSpecified bool) (string, int, error) {
+	output, err := pendingTextForProject(dir, cwd, projectName, projectSpecified)
 	if err != nil {
 		return "", 0, err
 	}
@@ -26,9 +30,16 @@ func pendingCommand(dir, cwd string) (string, int, error) {
 }
 
 func pendingText(dir, cwd string) (string, error) {
+	return pendingTextForProject(dir, cwd, "", false)
+}
+
+func pendingTextForProject(dir, cwd, projectName string, projectSpecified bool) (string, error) {
 	dbPath := filepath.Join(dir, "atct.db")
 	if _, err := os.Stat(dbPath); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
+			if projectSpecified {
+				return "", fmt.Errorf("project %q not found", projectName)
+			}
 			return "", nil
 		}
 		return "", fmt.Errorf("stat store: %w", err)
@@ -41,7 +52,7 @@ func pendingText(dir, cwd string) (string, error) {
 	defer s.Close()
 
 	ctx := context.Background()
-	project, err := s.ResolveProject(ctx, cwd)
+	project, err := resolveProjectSelection(ctx, s, cwd, projectName, projectSpecified)
 	if errors.Is(err, store.ErrProjectNotFound) {
 		return "", nil
 	}
@@ -77,12 +88,16 @@ func pendingText(dir, cwd string) (string, error) {
 }
 
 func runPending(dir string) error {
+	return runPendingForProject(dir, "", false)
+}
+
+func runPendingForProject(dir, projectName string, projectSpecified bool) error {
 	cwd, err := os.Getwd()
 	if err != nil {
 		return fmt.Errorf("resolve current directory: %w", err)
 	}
 
-	output, exitCode, err := pendingCommand(dir, cwd)
+	output, exitCode, err := pendingCommandForProject(dir, cwd, projectName, projectSpecified)
 	if err != nil {
 		return err
 	}

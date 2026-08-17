@@ -28,8 +28,14 @@ found it before the agent did.
 
 Run this until nothing is left, not until the next natural pause.
 
-1. **Look.** Call `atct_goal_list` with the current directory. It returns the
-   active goals, the tasks under them, and any answers waiting for you.
+1. **Look.** Call `atct_goal_list` with the current directory as `cwd`. This
+   selects the project for this session. If a human assigns a different
+   project, pass that project's `root_path` as `cwd` instead. The MCP tool
+   definition is unchanged; do not add a CLI-style project argument. Once
+   selected, keep the project fixed for the entire session. Working on another
+   project's goals can conflict with the run assigned to that project. It
+   returns the active goals, the tasks under them, and any answers waiting for
+   you.
 
 2. **Collect what you were told.** For every decision in `orphaned_decisions` or
    `answered_decisions`, call `atct_decision_poll` with its `decision_id` before

@@ -30,15 +30,16 @@ const (
 )
 
 type cliConfig struct {
-	subcommand      string
-	listenAddr      string
-	listenExplicit  bool
-	contextCheck    bool
-	projectAction   string
-	projectName     string
-	goalAction      string
-	goalTitle       string
-	goalDescription string
+	subcommand       string
+	listenAddr       string
+	listenExplicit   bool
+	contextCheck     bool
+	projectSpecified bool
+	projectAction    string
+	projectName      string
+	goalAction       string
+	goalTitle        string
+	goalDescription  string
 }
 
 var errInvalidArgs = errors.New("invalid command line")
@@ -72,6 +73,7 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Options:")
 	fmt.Fprintln(os.Stderr, "  -listen string   HTTP listen address (default \"127.0.0.1:8787\")")
+	fmt.Fprintln(os.Stderr, "  -project string  Select a registered project by name (context, pending)")
 }
 
 func parseArgs(args []string) (cliConfig, error) {
@@ -140,6 +142,9 @@ func parseArgs(args []string) (cliConfig, error) {
 	if sub == "context" {
 		flags.BoolVar(&contextCheck, "check", false, "exit successfully when context work exists")
 	}
+	if sub == "context" || sub == "pending" {
+		flags.StringVar(&cfg.projectName, "project", "", "select a registered project by name")
+	}
 	var description *string
 	if sub == "goal" && cfg.goalAction == "add" {
 		description = flags.String("d", "", "goal description")
@@ -155,6 +160,9 @@ func parseArgs(args []string) (cliConfig, error) {
 	flags.Visit(func(f *flag.Flag) {
 		if f.Name == "listen" {
 			cfg.listenExplicit = true
+		}
+		if f.Name == "project" {
+			cfg.projectSpecified = true
 		}
 	})
 	if description != nil {
@@ -241,7 +249,7 @@ func main() {
 		return
 	case "context":
 		if config.contextCheck {
-			if err := runContextCheck(dir); err != nil {
+			if err := runContextCheckForProject(dir, config.projectName, config.projectSpecified); err != nil {
 				if errors.Is(err, errNoContextWork) {
 					os.Exit(1)
 				}
@@ -249,12 +257,12 @@ func main() {
 			}
 			return
 		}
-		if err := runContext(dir); err != nil {
+		if err := runContextForProject(dir, config.projectName, config.projectSpecified); err != nil {
 			log.Fatalf("context: %v", err)
 		}
 		return
 	case "pending":
-		if err := runPending(dir); err != nil {
+		if err := runPendingForProject(dir, config.projectName, config.projectSpecified); err != nil {
 			if errors.Is(err, errNoPendingDecisions) {
 				os.Exit(1)
 			}

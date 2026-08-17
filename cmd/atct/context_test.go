@@ -499,6 +499,190 @@ func TestContextCheckReturnsOneForUnregisteredProject(t *testing.T) {
 	}
 }
 
+type projectSelectionFixture struct {
+	dir      string
+	cwdA     string
+	cwdB     string
+	db       *store.Store
+	projectA domain.Project
+	projectB domain.Project
+	goalA    domain.Goal
+	goalB    domain.Goal
+}
+
+func newProjectSelectionFixture(t *testing.T) projectSelectionFixture {
+	t.Helper()
+
+	dir := t.TempDir()
+	cwdA := t.TempDir()
+	cwdB := t.TempDir()
+	db, err := store.Open(filepath.Join(dir, "atct.db"))
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = db.Close()
+	})
+
+	projectA, err := db.CreateProject(context.Background(), "project-a", cwdA)
+	if err != nil {
+		t.Fatalf("CreateProject(project-a): %v", err)
+	}
+	projectB, err := db.CreateProject(context.Background(), "project-b", cwdB)
+	if err != nil {
+		t.Fatalf("CreateProject(project-b): %v", err)
+	}
+	goalA, err := db.CreateGoal(context.Background(), projectA.ID, "Goal A", "project A goal")
+	if err != nil {
+		t.Fatalf("CreateGoal(project-a): %v", err)
+	}
+	goalB, err := db.CreateGoal(context.Background(), projectB.ID, "Goal B", "project B goal")
+	if err != nil {
+		t.Fatalf("CreateGoal(project-b): %v", err)
+	}
+
+	return projectSelectionFixture{
+		dir:      dir,
+		cwdA:     cwdA,
+		cwdB:     cwdB,
+		db:       db,
+		projectA: projectA,
+		projectB: projectB,
+		goalA:    goalA,
+		goalB:    goalB,
+	}
+}
+
+func (f projectSelectionFixture) addPendingDecision(t *testing.T, goalID, question, runID string) {
+	t.Helper()
+
+	decision, err := f.db.AskDecision(context.Background(), store.AskInput{
+		GoalID:   goalID,
+		Kind:     domain.KindDecision,
+		Question: question,
+		RunID:    runID,
+	})
+	if err != nil {
+		t.Fatalf("AskDecision: %v", err)
+	}
+	if _, err := f.db.AnswerDecision(context.Background(), store.AnswerInput{
+		DecisionID: decision.ID,
+		AnswerText: "answer",
+		AnsweredBy: "human",
+	}); err != nil {
+		t.Fatalf("AnswerDecision: %v", err)
+	}
+}
+
+func TestContextProjectFlagSelectsNamedProject(t *testing.T) {
+	fixture := newProjectSelectionFixture(t)
+
+	cfg, err := parseArgs([]string{"context", "--project", "project-b"})
+	if err != nil {
+		t.Fatalf("parseArgs: %v", err)
+	}
+	if cfg.projectName != "project-b" || !cfg.projectSpecified {
+		t.Fatalf("project selection = (%q, %t), want (project-b, true)", cfg.projectName, cfg.projectSpecified)
+	}
+
+	got, err := contextTextForProject(fixture.dir, fixture.cwdA, cfg.projectName, cfg.projectSpecified)
+	if err != nil {
+		t.Fatalf("contextTextForProject: %v", err)
+	}
+	if !strings.Contains(got, "Goal: Goal B") || strings.Contains(got, "Goal: Goal A") {
+		t.Fatalf("context output = %q, want only project-b goal", got)
+	}
+}
+
+func TestContextWithoutProjectUsesCWD(t *testing.T) {
+	fixture := newProjectSelectionFixture(t)
+
+	got, err := contextTextForProject(fixture.dir, fixture.cwdA, "", false)
+	if err != nil {
+		t.Fatalf("contextTextForProject: %v", err)
+	}
+	if !strings.Contains(got, "Goal: Goal A") || strings.Contains(got, "Goal: Goal B") {
+		t.Fatalf("context output = %q, want only cwd project goal", got)
+	}
+}
+
+func TestContextProjectFlagRejectsUnknownProject(t *testing.T) {
+	fixture := newProjectSelectionFixture(t)
+
+	_, err := contextTextForProject(fixture.dir, fixture.cwdA, "missing", true)
+	if err == nil {
+		t.Fatal("contextTextForProject succeeded for an unknown project")
+	}
+	if !strings.Contains(err.Error(), `project "missing" not found`) {
+		t.Fatalf("error = %v, want unknown project error", err)
+	}
+}
+
+func TestPendingProjectFlagSelectsNamedProject(t *testing.T) {
+	fixture := newProjectSelectionFixture(t)
+	fixture.addPendingDecision(t, fixture.goalA.ID, "Decision A", "run-a")
+	fixture.addPendingDecision(t, fixture.goalB.ID, "Decision B", "run-b")
+
+	cfg, err := parseArgs([]string{"pending", "--project", "project-b"})
+	if err != nil {
+		t.Fatalf("parseArgs: %v", err)
+	}
+	if cfg.projectName != "project-b" || !cfg.projectSpecified {
+		t.Fatalf("project selection = (%q, %t), want (project-b, true)", cfg.projectName, cfg.projectSpecified)
+	}
+
+	got, err := pendingTextForProject(fixture.dir, fixture.cwdA, cfg.projectName, cfg.projectSpecified)
+	if err != nil {
+		t.Fatalf("pendingTextForProject: %v", err)
+	}
+	if !strings.Contains(got, "Decision B") || strings.Contains(got, "Decision A") {
+		t.Fatalf("pending output = %q, want only project-b decision", got)
+	}
+}
+
+func TestPendingDefaultAndUnknownProject(t *testing.T) {
+	fixture := newProjectSelectionFixture(t)
+	fixture.addPendingDecision(t, fixture.goalA.ID, "Decision A", "run-a")
+	fixture.addPendingDecision(t, fixture.goalB.ID, "Decision B", "run-b")
+
+	got, err := pendingTextForProject(fixture.dir, fixture.cwdA, "", false)
+	if err != nil {
+		t.Fatalf("pendingTextForProject: %v", err)
+	}
+	if !strings.Contains(got, "Decision A") || strings.Contains(got, "Decision B") {
+		t.Fatalf("pending output = %q, want only cwd project decision", got)
+	}
+
+	if _, err := pendingTextForProject(fixture.dir, fixture.cwdA, "missing", true); err == nil {
+		t.Fatal("pendingTextForProject succeeded for an unknown project")
+	} else if !strings.Contains(err.Error(), `project "missing" not found`) {
+		t.Fatalf("error = %v, want unknown project error", err)
+	}
+}
+
+func TestContextCheckProjectFlagSelectsOnlyRequestedProject(t *testing.T) {
+	fixture := newProjectSelectionFixture(t)
+
+	cfg, err := parseArgs([]string{"context", "--check", "--project", "project-b"})
+	if err != nil {
+		t.Fatalf("parseArgs: %v", err)
+	}
+	if !cfg.contextCheck || cfg.projectName != "project-b" || !cfg.projectSpecified {
+		t.Fatalf("config = %+v, want --check and project-b", cfg)
+	}
+
+	got, exitCode, err := contextCommandForProject(fixture.dir, fixture.cwdA, cfg.projectName, cfg.projectSpecified)
+	if err != nil {
+		t.Fatalf("contextCommandForProject: %v", err)
+	}
+	if exitCode != 0 {
+		t.Fatalf("exit code = %d, want 0 for an active goal with work", exitCode)
+	}
+	if !strings.Contains(got, "Goal: Goal B") || strings.Contains(got, "Goal: Goal A") {
+		t.Fatalf("context output = %q, want only project-b goal", got)
+	}
+}
+
 func ptrTime(t time.Time) *time.Time {
 	return &t
 }
