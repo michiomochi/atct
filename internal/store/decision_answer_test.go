@@ -28,7 +28,7 @@ func TestAnswerDecisionOnlyOnce(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			_, errs[i] = s.AnswerDecision(ctx, AnswerInput{
-				DecisionID: d.ID, AnswerText: "A", AnsweredBy: "human",
+				DecisionID: d.ID, AnswerText: "A",
 			})
 		}(i)
 	}

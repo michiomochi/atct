@@ -33,7 +33,7 @@ type AskInput struct {
 
 const decisionColumns = `id, goal_id, COALESCE(task_id, ''), kind, question, options, status,
 	default_option, default_after_ms, default_applied_at,
-	answer_label, answer_text, answered_by, answered_at, applied_at, run_id, created_at`
+	answer_label, answer_text, answered_at, applied_at, run_id, created_at`
 
 func (s *Store) AskDecision(ctx context.Context, in AskInput) (domain.Decision, error) {
 	if err := validateDecisionDefault(in.Options, in.DefaultOption, in.DefaultAfterMs); err != nil {
@@ -114,7 +114,7 @@ func scanDecision(sc interface{ Scan(...any) error }) (domain.Decision, error) {
 
 	if err := sc.Scan(&d.ID, &d.GoalID, &d.TaskID, &kind, &d.Question, &rawOptions, &status,
 		&d.DefaultOption, &defaultAfterMs, &defaultAppliedAt,
-		&d.AnswerLabel, &d.AnswerText, &d.AnsweredBy, &answeredAt, &appliedAt,
+		&d.AnswerLabel, &d.AnswerText, &answeredAt, &appliedAt,
 		&d.RunID, &createdAt); err != nil {
 		return domain.Decision{}, err
 	}
@@ -207,7 +207,6 @@ type AnswerInput struct {
 	DecisionID  string
 	AnswerLabel string
 	AnswerText  string
-	AnsweredBy  string
 }
 
 // AnswerDecision performs a conditional transition from open.
@@ -222,9 +221,9 @@ func (s *Store) answerDecision(ctx context.Context, in AnswerInput, eventName st
 
 	res, err := s.db.ExecContext(ctx,
 		`UPDATE decisions
-		 SET status = 'answered', answer_label = ?, answer_text = ?, answered_by = ?, answered_at = ?
+		 SET status = 'answered', answer_label = ?, answer_text = ?, answered_at = ?
 		 WHERE id = ? AND status = 'open'`,
-		in.AnswerLabel, in.AnswerText, in.AnsweredBy, now, in.DecisionID)
+		in.AnswerLabel, in.AnswerText, now, in.DecisionID)
 	if err != nil {
 		return domain.Decision{}, fmt.Errorf("update decision: %w", err)
 	}

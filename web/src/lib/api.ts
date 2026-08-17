@@ -57,7 +57,6 @@ export interface Decision {
   settled_by_default?: boolean;
   answer_label?: string;
   answer_text?: string;
-  answered_by?: string;
   answered_at?: string;
   applied_at?: string;
   run_id: string;
@@ -86,7 +85,6 @@ export interface GoalResponse {
 export interface AnswerPayload {
   answer_label: string;
   answer_text: string;
-  answered_by: string;
 }
 
 export class ApiError extends Error {
@@ -177,19 +175,19 @@ export async function answerDecision(id: string, payload: AnswerPayload): Promis
   });
 }
 
-export async function approveCompletion(id: string, answeredBy: string): Promise<Goal> {
+export async function approveCompletion(id: string): Promise<Goal> {
   return requestJson<Goal>(`/api/decisions/${encodeURIComponent(id)}/approve`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ answered_by: answeredBy }),
+    body: JSON.stringify({}),
   });
 }
 
-export async function rejectCompletion(id: string, answeredBy: string, reason: string): Promise<Decision> {
+export async function rejectCompletion(id: string, reason: string): Promise<Decision> {
   return requestJson<Decision>(`/api/decisions/${encodeURIComponent(id)}/reject`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ answered_by: answeredBy, reason }),
+    body: JSON.stringify({ reason }),
   });
 }
 

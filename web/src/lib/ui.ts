@@ -20,7 +20,6 @@ export function isDecisionEventName(value: string): value is DecisionEventName {
 export interface AnswerInput {
   answer_label: string;
   answer_text: string;
-  answered_by: string;
 }
 
 export type AnswerErrors = Partial<Record<keyof AnswerInput, string>>;
@@ -46,16 +45,6 @@ export interface CompletionLike {
 
 export function findOpenCompletion<T extends CompletionLike>(decisions: T[]): T | undefined {
   return decisions.find((decision) => decision.kind === "completion" && decision.status === "open");
-}
-
-export interface CompletionInput {
-  answered_by: string;
-}
-
-export type CompletionErrors = Partial<Record<keyof CompletionInput, string>>;
-
-export function validateCompletion(_input: CompletionInput): CompletionErrors {
-  return {};
 }
 
 export function encodePathSegment(value: string): string {

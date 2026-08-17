@@ -72,7 +72,6 @@ func newFixture(t *testing.T) *fixture {
 	f.answered, err = f.store.AnswerDecision(f.ctx, store.AnswerInput{
 		DecisionID: f.answered.ID,
 		AnswerText: "later",
-		AnsweredBy: "fixture-human",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -278,7 +277,7 @@ func TestHTTPDecisionAndReleaseEndpointsValidateAndTransition(t *testing.T) {
 	defer srv.Close()
 	client := srv.Client()
 
-	status, headers, body := doRequest(t, client, http.MethodPost, srv.URL+"/api/decisions/"+f.open.ID+"/answer", mustJSON(t, map[string]string{"answered_by": ""}))
+	status, headers, body := doRequest(t, client, http.MethodPost, srv.URL+"/api/decisions/"+f.open.ID+"/answer", mustJSON(t, map[string]string{}))
 	assertErrorObject(t, status, headers, body, http.StatusBadRequest)
 	var invalidAnswer map[string]string
 	if err := json.Unmarshal(body, &invalidAnswer); err != nil {
@@ -288,10 +287,10 @@ func TestHTTPDecisionAndReleaseEndpointsValidateAndTransition(t *testing.T) {
 		t.Fatalf("unexpected invalid answer error = %q", invalidAnswer["error"])
 	}
 
-	status, headers, body = doRequest(t, client, http.MethodPost, srv.URL+"/api/decisions/missing/answer", mustJSON(t, map[string]string{"answered_by": "human", "answer_text": "yes"}))
+	status, headers, body = doRequest(t, client, http.MethodPost, srv.URL+"/api/decisions/missing/answer", mustJSON(t, map[string]string{"answer_text": "yes"}))
 	assertErrorObject(t, status, headers, body, http.StatusNotFound)
 
-	status, headers, body = doRequest(t, client, http.MethodPost, srv.URL+"/api/decisions/"+f.open.ID+"/answer", mustJSON(t, map[string]string{"answered_by": "", "answer_text": "yes"}))
+	status, headers, body = doRequest(t, client, http.MethodPost, srv.URL+"/api/decisions/"+f.open.ID+"/answer", mustJSON(t, map[string]string{"answer_text": "yes"}))
 	if status != http.StatusOK {
 		t.Fatalf("answer status = %d; body=%s", status, body)
 	}
@@ -302,7 +301,7 @@ func TestHTTPDecisionAndReleaseEndpointsValidateAndTransition(t *testing.T) {
 	if answered.Status != domain.DecisionStatus("answered") || answered.AnswerText != "yes" {
 		t.Fatalf("answered decision = %+v", answered)
 	}
-	status, headers, body = doRequest(t, client, http.MethodPost, srv.URL+"/api/decisions/"+f.open.ID+"/answer", mustJSON(t, map[string]string{"answered_by": "human", "answer_text": "again"}))
+	status, headers, body = doRequest(t, client, http.MethodPost, srv.URL+"/api/decisions/"+f.open.ID+"/answer", mustJSON(t, map[string]string{"answer_text": "again"}))
 	assertErrorObject(t, status, headers, body, http.StatusConflict)
 
 	status, _, body = doRequest(t, client, http.MethodPost, srv.URL+"/api/tasks/"+f.tasks[0].ID+"/release", nil)
@@ -337,7 +336,7 @@ func TestHTTPApproveAndRejectCompletionEndpoints(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	status, headers, body := doRequest(t, client, http.MethodPost, srv.URL+"/api/decisions/"+approveDecision.ID+"/approve", mustJSON(t, map[string]string{"answered_by": ""}))
+	status, headers, body := doRequest(t, client, http.MethodPost, srv.URL+"/api/decisions/"+approveDecision.ID+"/approve", mustJSON(t, map[string]string{}))
 	if status != http.StatusOK {
 		t.Fatalf("approve status = %d; body=%s", status, body)
 	}
@@ -357,7 +356,7 @@ func TestHTTPApproveAndRejectCompletionEndpoints(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	status, _, body = doRequest(t, client, http.MethodPost, srv.URL+"/api/decisions/"+rejectDecision.ID+"/reject", mustJSON(t, map[string]string{"answered_by": "human", "reason": "needs work"}))
+	status, _, body = doRequest(t, client, http.MethodPost, srv.URL+"/api/decisions/"+rejectDecision.ID+"/reject", mustJSON(t, map[string]string{"reason": "needs work"}))
 	if status != http.StatusOK {
 		t.Fatalf("reject status = %d; body=%s", status, body)
 	}
@@ -365,10 +364,10 @@ func TestHTTPApproveAndRejectCompletionEndpoints(t *testing.T) {
 	if err := json.Unmarshal(body, &rejected); err != nil {
 		t.Fatal(err)
 	}
-	if rejected.ID != rejectDecision.ID || rejected.Status != domain.DecisionStatus("answered") || rejected.AnsweredBy != "human" {
+	if rejected.ID != rejectDecision.ID || rejected.Status != domain.DecisionStatus("answered") {
 		t.Fatalf("rejected decision = %+v", rejected)
 	}
-	status, headers, body = doRequest(t, client, http.MethodPost, srv.URL+"/api/decisions/"+rejectDecision.ID+"/reject", mustJSON(t, map[string]string{"answered_by": "human"}))
+	status, headers, body = doRequest(t, client, http.MethodPost, srv.URL+"/api/decisions/"+rejectDecision.ID+"/reject", mustJSON(t, map[string]string{}))
 	assertErrorObject(t, status, headers, body, http.StatusConflict)
 }
 
@@ -493,7 +492,7 @@ func TestSSEPublishesAllDecisionTransitionsWithExactPayloads(t *testing.T) {
 	}
 	assertSSEDecision(t, reader, "decision.created", created)
 
-	answered, err := f.store.AnswerDecision(f.ctx, store.AnswerInput{DecisionID: created.ID, AnswerLabel: "yes", AnsweredBy: "human"})
+	answered, err := f.store.AnswerDecision(f.ctx, store.AnswerInput{DecisionID: created.ID, AnswerLabel: "yes"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -532,7 +531,7 @@ func TestSSEPublishesAllDecisionTransitionsWithExactPayloads(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertSSEDecision(t, reader, "decision.created", approveDecision)
-	if _, err := f.store.ApproveCompletion(f.ctx, approveDecision.ID, "human"); err != nil {
+	if _, err := f.store.ApproveCompletion(f.ctx, approveDecision.ID); err != nil {
 		t.Fatal(err)
 	}
 	approveDecision, err = f.store.GetDecision(f.ctx, approveDecision.ID)
@@ -546,7 +545,7 @@ func TestSSEPublishesAllDecisionTransitionsWithExactPayloads(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertSSEDecision(t, reader, "decision.created", rejectDecision)
-	if err := f.store.RejectCompletion(f.ctx, rejectDecision.ID, "needs work", "human"); err != nil {
+	if err := f.store.RejectCompletion(f.ctx, rejectDecision.ID, "needs work"); err != nil {
 		t.Fatal(err)
 	}
 	rejectDecision, err = f.store.GetDecision(f.ctx, rejectDecision.ID)
@@ -564,7 +563,7 @@ func TestHTTPUnknownGoalAndDecisionReturnJSONNotFound(t *testing.T) {
 
 	status, headers, body := doRequest(t, client, http.MethodGet, srv.URL+"/api/goals/missing", nil)
 	assertErrorObject(t, status, headers, body, http.StatusNotFound)
-	status, headers, body = doRequest(t, client, http.MethodPost, srv.URL+"/api/decisions/missing/approve", mustJSON(t, map[string]string{"answered_by": "human"}))
+	status, headers, body = doRequest(t, client, http.MethodPost, srv.URL+"/api/decisions/missing/approve", mustJSON(t, map[string]string{}))
 	assertErrorObject(t, status, headers, body, http.StatusNotFound)
 }
 
@@ -617,8 +616,8 @@ func TestHTTPProjectsAndGoalCreationEndpoints(t *testing.T) {
 	}
 
 	status, _, body = doRequest(t, client, http.MethodPost, srv.URL+"/api/goals", mustJSON(t, map[string]string{
-		"project_id": f.project.ID,
-		"title":      "Created in inbox",
+		"project_id":  f.project.ID,
+		"title":       "Created in inbox",
 		"description": "Created through the human UI endpoint",
 	}))
 	if status != http.StatusOK {

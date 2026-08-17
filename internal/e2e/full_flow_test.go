@@ -357,7 +357,6 @@ func TestFullFlowThroughDaemonAndHTTP(t *testing.T) {
 	status, raw = httpJSON(t, stack, http.MethodPost, "/api/decisions/"+parked.DecisionID+"/answer", map[string]string{
 		"answer_label": "continue",
 		"answer_text":  "Continue after reviewing the question",
-		"answered_by":  "human",
 	})
 	if status != http.StatusOK {
 		t.Fatalf("POST answer status = %d, body %s", status, raw)
@@ -409,9 +408,7 @@ func TestFullFlowThroughDaemonAndHTTP(t *testing.T) {
 	response, reader, cancelSSE := openSSE(t, stack)
 	defer response.Body.Close()
 	defer cancelSSE()
-	status, raw = httpJSON(t, stack, http.MethodPost, "/api/decisions/"+completion.ID+"/approve", map[string]string{
-		"answered_by": "human",
-	})
+	status, raw = httpJSON(t, stack, http.MethodPost, "/api/decisions/"+completion.ID+"/approve", map[string]string{})
 	if status != http.StatusOK {
 		t.Fatalf("POST approve status = %d, body %s", status, raw)
 	}
@@ -491,7 +488,6 @@ func TestAnsweredDecisionAppearsUnappliedInInbox(t *testing.T) {
 	status, raw := httpJSON(t, stack, http.MethodPost, "/api/decisions/"+decision.DecisionID+"/answer", map[string]string{
 		"answer_label": "continue",
 		"answer_text":  "The answer is ready for the agent",
-		"answered_by":  "human",
 	})
 	if status != http.StatusOK {
 		t.Fatalf("POST answer status = %d, body %s", status, raw)
@@ -570,7 +566,6 @@ func TestSSEPublishesAnsweredDecision(t *testing.T) {
 	status, raw := httpJSON(t, stack, http.MethodPost, "/api/decisions/"+decision.DecisionID+"/answer", map[string]string{
 		"answer_label": "continue",
 		"answer_text":  "SSE should carry this answer",
-		"answered_by":  "human",
 	})
 	if status != http.StatusOK {
 		t.Fatalf("POST answer status = %d, body %s", status, raw)
@@ -599,7 +594,6 @@ func TestSessionCanAdoptAnsweredDecision(t *testing.T) {
 	status, raw := httpJSON(t, stack, http.MethodPost, "/api/decisions/"+decision.DecisionID+"/answer", map[string]string{
 		"answer_label": "continue",
 		"answer_text":  "Continue in the new session",
-		"answered_by":  "human",
 	})
 	if status != http.StatusOK {
 		t.Fatalf("POST answer status = %d, body %s", status, raw)

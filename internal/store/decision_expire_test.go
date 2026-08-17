@@ -65,7 +65,6 @@ func TestApplyExpiredDefaultsSkipsAnsweredDecision(t *testing.T) {
 	if _, err := s.AnswerDecision(ctx, AnswerInput{
 		DecisionID:  d.ID,
 		AnswerLabel: "B",
-		AnsweredBy:  "human",
 	}); err != nil {
 		t.Fatalf("AnswerDecision: %v", err)
 	}

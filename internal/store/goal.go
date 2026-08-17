@@ -135,7 +135,7 @@ func (s *Store) CompleteGoal(ctx context.Context, goalID, resultSummary, runID s
 
 // ApproveCompletion marks the Goal done and the Decision applied atomically.
 // No agent follow-up needs to be applied, so there is no reason to wait for receipt (invariant 3).
-func (s *Store) ApproveCompletion(ctx context.Context, decisionID, answeredBy string) (domain.Goal, error) {
+func (s *Store) ApproveCompletion(ctx context.Context, decisionID string) (domain.Goal, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return domain.Goal{}, fmt.Errorf("begin tx: %w", err)
@@ -156,8 +156,8 @@ func (s *Store) ApproveCompletion(ctx context.Context, decisionID, answeredBy st
 	now := time.Now().UTC().Format(time.RFC3339)
 	if _, err := tx.ExecContext(ctx,
 		`UPDATE decisions SET status = 'applied', answer_label = 'approve',
-			 answered_by = ?, answered_at = ?, applied_at = ? WHERE id = ?`,
-		answeredBy, now, now, decisionID); err != nil {
+				 answered_at = ?, applied_at = ? WHERE id = ?`,
+		now, now, decisionID); err != nil {
 		return domain.Goal{}, fmt.Errorf("apply completion decision: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx,
@@ -179,12 +179,11 @@ func (s *Store) ApproveCompletion(ctx context.Context, decisionID, answeredBy st
 
 // RejectCompletion leaves the Goal active and the Decision answered.
 // It becomes applied when the agent receives the rejection reason.
-func (s *Store) RejectCompletion(ctx context.Context, decisionID, reason, answeredBy string) error {
+func (s *Store) RejectCompletion(ctx context.Context, decisionID, reason string) error {
 	_, err := s.answerDecision(ctx, AnswerInput{
 		DecisionID:  decisionID,
 		AnswerLabel: "reject",
 		AnswerText:  reason,
-		AnsweredBy:  answeredBy,
 	}, "decision.rejected")
 	return err
 }

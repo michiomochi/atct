@@ -22,7 +22,7 @@ func TestWaitForAnswerReturnsWhenAnswered(t *testing.T) {
 
 	answerErr := make(chan error, 1)
 	go func() {
-		_, err := s.AnswerDecision(ctx, AnswerInput{DecisionID: d.ID, AnswerLabel: "A", AnsweredBy: "human"})
+		_, err := s.AnswerDecision(ctx, AnswerInput{DecisionID: d.ID, AnswerLabel: "A"})
 		answerErr <- err
 	}()
 

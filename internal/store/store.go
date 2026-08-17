@@ -12,7 +12,7 @@ type Store struct {
 	notify *notifier
 }
 
-const schemaVersion = 2
+const schemaVersion = 3
 
 func Open(path string) (*Store, error) {
 	db, err := sql.Open("sqlite", path)
@@ -87,6 +87,15 @@ func migrateSchema(db *sql.DB) error {
 		}
 		if _, err := tx.Exec(`ALTER TABLE decisions ADD COLUMN ` + column.name + ` ` + column.definition); err != nil {
 			return fmt.Errorf("add decisions.%s: %w", column.name, err)
+		}
+	}
+	answeredByColumn, err := hasColumn(tx, "decisions", "answered_by")
+	if err != nil {
+		return fmt.Errorf("inspect decisions.answered_by: %w", err)
+	}
+	if answeredByColumn {
+		if _, err := tx.Exec(`ALTER TABLE decisions DROP COLUMN answered_by`); err != nil {
+			return fmt.Errorf("drop decisions.answered_by: %w", err)
 		}
 	}
 	if _, err := tx.Exec(fmt.Sprintf("PRAGMA user_version = %d", schemaVersion)); err != nil {

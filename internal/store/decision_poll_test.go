@@ -19,7 +19,7 @@ func TestPollMarksApplied(t *testing.T) {
 		t.Fatalf("AskDecision: %v", err)
 	}
 	if _, err := s.AnswerDecision(ctx, AnswerInput{
-		DecisionID: d.ID, AnswerText: "A", AnsweredBy: "human",
+		DecisionID: d.ID, AnswerText: "A",
 	}); err != nil {
 		t.Fatalf("AnswerDecision: %v", err)
 	}
@@ -115,7 +115,7 @@ func answeredDecisionForRun(t *testing.T, s *Store, goalID, runID string) domain
 		t.Fatalf("AskDecision: %v", err)
 	}
 	if _, err := s.AnswerDecision(ctx, AnswerInput{
-		DecisionID: d.ID, AnswerText: "A", AnsweredBy: "human",
+		DecisionID: d.ID, AnswerText: "A",
 	}); err != nil {
 		t.Fatalf("AnswerDecision: %v", err)
 	}

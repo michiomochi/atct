@@ -57,9 +57,9 @@ function CompletionApproval({ goal, decision, onUpdated }: { goal: Goal; decisio
     setSubmitting(true);
     try {
       if (action === "approve") {
-        await approveCompletion(decision.id, "");
+        await approveCompletion(decision.id);
       } else {
-        await rejectCompletion(decision.id, "", reason.trim());
+        await rejectCompletion(decision.id, reason.trim());
       }
       onUpdated();
     } catch (error) {

@@ -38,7 +38,7 @@ func TestApproveCompletionClosesGoalImmediately(t *testing.T) {
 		t.Fatalf("kind = %q, want %q", d.Kind, domain.KindCompletion)
 	}
 
-	g, err := s.ApproveCompletion(ctx, d.ID, "human")
+	g, err := s.ApproveCompletion(ctx, d.ID)
 	if err != nil {
 		t.Fatalf("ApproveCompletion: %v", err)
 	}
@@ -68,7 +68,7 @@ func TestRejectCompletionKeepsGoalActiveAndAwaitsAgent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CompleteGoal: %v", err)
 	}
-	if err := s.RejectCompletion(ctx, d.ID, "Insufficient tests", "human"); err != nil {
+	if err := s.RejectCompletion(ctx, d.ID, "Insufficient tests"); err != nil {
 		t.Fatalf("RejectCompletion: %v", err)
 	}
 

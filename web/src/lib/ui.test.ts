@@ -20,7 +20,6 @@ import {
   isDecisionEventName,
   resolveGoalID,
   statusLabel,
-  validateCompletion,
   validateAnswer,
 } from "./ui";
 
@@ -44,20 +43,16 @@ describe("formatDuration", () => {
 });
 
 describe("validateAnswer", () => {
-  it("allows an empty answered_by", () => {
-    expect(validateAnswer({ answer_label: "approve", answer_text: "", answered_by: "" })).toEqual({});
-  });
-
   it("requires at least one of label and text", () => {
-    expect(validateAnswer({ answer_label: "  ", answer_text: "", answered_by: "" })).toEqual({
+    expect(validateAnswer({ answer_label: "  ", answer_text: "" })).toEqual({
       answer_label: "Enter a label or answer text.",
       answer_text: "Enter a label or answer text.",
     });
   });
 
   it("accepts a label or answer text", () => {
-    expect(validateAnswer({ answer_label: "approve", answer_text: "", answered_by: "" })).toEqual({});
-    expect(validateAnswer({ answer_label: "", answer_text: "Reason", answered_by: "" })).toEqual({});
+    expect(validateAnswer({ answer_label: "approve", answer_text: "" })).toEqual({});
+    expect(validateAnswer({ answer_label: "", answer_text: "Reason" })).toEqual({});
   });
 });
 
@@ -192,11 +187,6 @@ describe("goal detail answer flows", () => {
       { id: "ordinary-1", kind: "decision", status: "open" },
     ])).toBe(completion);
     expect(findOpenCompletion([{ id: "done-1", kind: "completion", status: "applied" }])).toBeUndefined();
-  });
-
-  it("allows completion review without a human name", () => {
-    expect(validateCompletion({ answered_by: "  " })).toEqual({});
-    expect(validateCompletion({ answered_by: "michio" })).toEqual({});
   });
 
   it("keeps decision answers vertical while Now and Next stay tabular", () => {

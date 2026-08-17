@@ -60,16 +60,10 @@ type goalResponse struct {
 type answerRequest struct {
 	AnswerLabel string `json:"answer_label"`
 	AnswerText  string `json:"answer_text"`
-	AnsweredBy  string `json:"answered_by"`
-}
-
-type approvalRequest struct {
-	AnsweredBy string `json:"answered_by"`
 }
 
 type rejectionRequest struct {
-	Reason     string `json:"reason"`
-	AnsweredBy string `json:"answered_by"`
+	Reason string `json:"reason"`
 }
 
 type createGoalRequest struct {
@@ -402,7 +396,6 @@ func (s *Server) handleAnswer(w http.ResponseWriter, r *http.Request, decisionID
 		DecisionID:  decisionID,
 		AnswerLabel: request.AnswerLabel,
 		AnswerText:  request.AnswerText,
-		AnsweredBy:  request.AnsweredBy,
 	})
 	if errors.Is(err, store.ErrDecisionNotOpen) {
 		writeError(w, http.StatusConflict, err.Error())
@@ -416,7 +409,7 @@ func (s *Server) handleAnswer(w http.ResponseWriter, r *http.Request, decisionID
 }
 
 func (s *Server) handleApprove(w http.ResponseWriter, r *http.Request, decisionID string) {
-	var request approvalRequest
+	var request struct{}
 	if err := decodeJSONBody(r, &request); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
 		return
@@ -425,7 +418,7 @@ func (s *Server) handleApprove(w http.ResponseWriter, r *http.Request, decisionI
 	if !ok {
 		return
 	}
-	goal, err := s.store.ApproveCompletion(r.Context(), decision.ID, request.AnsweredBy)
+	goal, err := s.store.ApproveCompletion(r.Context(), decision.ID)
 	if errors.Is(err, store.ErrDecisionNotOpen) {
 		writeError(w, http.StatusConflict, err.Error())
 		return
@@ -446,7 +439,7 @@ func (s *Server) handleReject(w http.ResponseWriter, r *http.Request, decisionID
 	if _, ok := s.getOpenCompletion(w, r.Context(), decisionID); !ok {
 		return
 	}
-	err := s.store.RejectCompletion(r.Context(), decisionID, request.Reason, request.AnsweredBy)
+	err := s.store.RejectCompletion(r.Context(), decisionID, request.Reason)
 	if errors.Is(err, store.ErrDecisionNotOpen) {
 		writeError(w, http.StatusConflict, err.Error())
 		return

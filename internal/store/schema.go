@@ -50,7 +50,6 @@ CREATE TABLE IF NOT EXISTS decisions (
   default_applied_at TEXT,
   answer_label TEXT NOT NULL DEFAULT '',
   answer_text  TEXT NOT NULL DEFAULT '',
-  answered_by  TEXT NOT NULL DEFAULT '',
   answered_at  TEXT,
   applied_at   TEXT,
   run_id       TEXT NOT NULL DEFAULT '',

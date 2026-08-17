@@ -54,7 +54,6 @@ type Decision struct {
 	DefaultAppliedAt *time.Time     `json:"default_applied_at,omitempty"`
 	AnswerLabel      string         `json:"answer_label,omitempty"`
 	AnswerText       string         `json:"answer_text,omitempty"`
-	AnsweredBy       string         `json:"answered_by,omitempty"`
 	AnsweredAt       *time.Time     `json:"answered_at,omitempty"`
 	AppliedAt        *time.Time     `json:"applied_at,omitempty"`
 	RunID            string         `json:"run_id"`

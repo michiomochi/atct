@@ -48,7 +48,7 @@ func TestFullGoalLifecycle(t *testing.T) {
 	}
 
 	if _, err := s.AnswerDecision(ctx, store.AnswerInput{
-		DecisionID: d.ID, AnswerLabel: "sqlite", AnsweredBy: "human",
+		DecisionID: d.ID, AnswerLabel: "sqlite",
 	}); err != nil {
 		t.Fatalf("AnswerDecision: %v", err)
 	}
@@ -70,7 +70,7 @@ func TestFullGoalLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CompleteGoal: %v", err)
 	}
-	done, err := s.ApproveCompletion(ctx, comp.ID, "human")
+	done, err := s.ApproveCompletion(ctx, comp.ID)
 	if err != nil {
 		t.Fatalf("ApproveCompletion: %v", err)
 	}
@@ -97,7 +97,7 @@ func TestAnswerSurvivesSessionChange(t *testing.T) {
 		t.Fatalf("AskDecision: %v", err)
 	}
 	if _, err := s.AnswerDecision(ctx, store.AnswerInput{
-		DecisionID: d.ID, AnswerLabel: "A", AnsweredBy: "human",
+		DecisionID: d.ID, AnswerLabel: "A",
 	}); err != nil {
 		t.Fatalf("AnswerDecision: %v", err)
 	}

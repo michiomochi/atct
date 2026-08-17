@@ -31,7 +31,6 @@ export function DecisionAnswerForm({ decision, onUpdated }: Props) {
     const nextErrors = validateAnswer({
       answer_label: answerLabel,
       answer_text: answerText,
-      answered_by: "",
     });
     setErrors(nextErrors);
     if (Object.keys(nextErrors).length > 0) return;
@@ -41,7 +40,6 @@ export function DecisionAnswerForm({ decision, onUpdated }: Props) {
       await answerDecision(decision.id, {
         answer_label: answerLabel.trim(),
         answer_text: answerText.trim(),
-        answered_by: "",
       });
       onUpdated();
     } catch (error) {
