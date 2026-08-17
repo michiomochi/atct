@@ -24,6 +24,18 @@ working on it anyway.
 Release a task by setting it back to `todo` with `atct_task_update`. There is
 no separate release tool.
 
+## Close a task the moment it is finished
+
+Call `atct_task_update` with `done` as soon as the work lands, before you claim
+anything else. Claiming is only half of the pair; a task nobody closed still
+reads as unstarted.
+
+This matters most when the run that did the work is not the run that holds the
+claim — an orchestrator delegating to another agent, for example. The delegate
+finishes, the orchestrator moves on, and nothing writes the result back. **Then
+the dashboard says the work has not begun, and the human plans around that.**
+If you delegated, close the task when the delegate reports, not later.
+
 ## Keep going
 
 An active goal is permission to work, not a request for a plan. When
