@@ -73,6 +73,26 @@ when none arrives, so asking does not force you to stall.
 Do not ask about things you can determine yourself. An inbox full of trivia
 stops being read.
 
+## Say what happens if nobody answers
+
+`default_option` names the option to take when the deadline in `default_after_ms`
+passes with no reply. The human's answer always wins if it arrives first; the
+default only fires on silence. Use it so that being away from the keyboard does
+not stop the work.
+
+**A default belongs on the option that keeps going**, not on the cautious one.
+Reading silence as "stop" gives you back the stall you were trying to avoid.
+
+**Only put a default on an option that can be undone.** Nothing checks this —
+ATCT cannot tell "proceed with A" from "drop the production database" — so it
+rests on you applying the same test as above: can the human get the previous
+state back? If the answer is no, leave the decision open and wait, however long
+that takes.
+
+Set the deadline to how long this particular question can reasonably wait.
+**Do not put thirty minutes on everything.** A deadline shorter than the human's
+actual response time takes the decision away from them while appearing to ask.
+
 ## Apply what you were told
 
 Answers reach you through `atct_decision_poll`. Polling marks the decision
