@@ -41,6 +41,9 @@ homebrew_casks:
     homepage: "https://github.com/michiomochi/atct"
     description: "The air traffic control tower for your coding agents"
     license: "AGPL-3.0"
+    # Both binaries ship in one archive. Without this the cask installs only
+    # `atct`, and `atct-mcp` — the MCP entry point — never lands on PATH.
+    binaries: [atct, atct-mcp]
     # Helps `brew audit` when the homepage and the download host differ.
     url:
       verified: github.com/michiomochi/atct
