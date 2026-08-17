@@ -18,6 +18,12 @@ const defaultListenAddr = "127.0.0.1:8787"
 var version = "dev"
 
 func resolveAtctPath(self string) string {
+	if configured := os.Getenv("ATCT_ATCT_BIN"); configured != "" {
+		if info, err := os.Stat(configured); err == nil && info.Mode().IsRegular() && info.Mode().Perm()&0o111 != 0 {
+			return configured
+		}
+	}
+
 	candidate := filepath.Join(filepath.Dir(self), "atct")
 	if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
 		return candidate

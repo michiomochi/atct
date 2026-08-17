@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION="0.4.0"
+VERSION="0.4.1"
 RELEASE_BASE="https://github.com/michiomochi/atct/releases/download/v${VERSION}"
 
 fail() {
@@ -20,6 +20,8 @@ case "$BINARY_NAME" in
   atct|atct-mcp) ;;
   *) fail "internal wrapper error: unsupported binary <$BINARY_NAME>. Install with brew or go install." ;;
 esac
+
+ATCT_WRAPPER="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/atct"
 
 HOME_DIR="${HOME:-}"
 [[ -n "$HOME_DIR" ]] || fail 'HOME is not set, so the downloaded binary cannot be cached. Set HOME and retry, or install with brew or go install.'
@@ -44,6 +46,7 @@ trap 'exit 143' TERM
 find "$CACHE_DIR" -maxdepth 1 -type d -name '.download.*' -mmin +60 -exec rm -rf -- {} + 2>/dev/null || true
 
 if [[ -x "$CACHED_BINARY" ]]; then
+  export ATCT_ATCT_BIN="$ATCT_WRAPPER"
   exec "$CACHED_BINARY" "$@"
 fi
 
@@ -134,4 +137,5 @@ if ! mv "$TEMP_DIR/$BINARY_NAME" "$CACHED_BINARY"; then
 fi
 
 cleanup
+export ATCT_ATCT_BIN="$ATCT_WRAPPER"
 exec "$CACHED_BINARY" "$@"
