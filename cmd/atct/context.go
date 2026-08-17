@@ -94,7 +94,7 @@ func runContext(dir string) error {
 	return err
 }
 
-func renderContext(goals []contextGoal, decisions []domain.Decision) string {
+func renderContextLegacy(goals []contextGoal, decisions []domain.Decision) string {
 	active := make([]contextGoal, 0, len(goals))
 	activeIDs := make(map[string]bool)
 	for _, goal := range goals {
@@ -160,6 +160,121 @@ func renderContext(goals []contextGoal, decisions []domain.Decision) string {
 		nextTools = append(nextTools, "atct_task_declare")
 	}
 	if claimTasks {
+		nextTools = append(nextTools, "atct_task_claim")
+	}
+	if len(filteredDecisions) > 0 {
+		nextTools = append(nextTools, "atct_decision_poll")
+	}
+	if len(nextTools) > 0 {
+		fmt.Fprintf(&b, "Next tools: %s\n", strings.Join(nextTools, ", "))
+	}
+	return b.String()
+}
+
+func renderContext(goals []contextGoal, decisions []domain.Decision) string {
+	const (
+		maxGoals = 3
+		maxTasks = 5
+	)
+
+	active := make([]contextGoal, 0, len(goals))
+	activeIDs := make(map[string]struct{}, len(goals))
+	for _, item := range goals {
+		if item.Goal.Status != domain.GoalActive {
+			continue
+		}
+		active = append(active, item)
+		activeIDs[item.Goal.ID] = struct{}{}
+	}
+	if len(active) == 0 {
+		return ""
+	}
+
+	actionableTasks := func(tasks []domain.Task) []domain.Task {
+		actionable := make([]domain.Task, 0, len(tasks))
+		for _, task := range tasks {
+			if task.Status == domain.TaskTodo || task.Status == domain.TaskDoing {
+				actionable = append(actionable, task)
+			}
+		}
+		return actionable
+	}
+
+	hasTodo := false
+	hasNoTasks := false
+	for _, item := range active {
+		if len(item.Tasks) == 0 {
+			hasNoTasks = true
+		}
+		for _, task := range item.Tasks {
+			if task.Status == domain.TaskTodo {
+				hasTodo = true
+			}
+		}
+	}
+
+	var b strings.Builder
+	b.WriteString("ATCT context\n")
+	displayed := active
+	if len(displayed) > maxGoals {
+		displayed = displayed[:maxGoals]
+	}
+	for _, item := range displayed {
+		fmt.Fprintf(&b, "Goal: %s\n", oneLine(item.Goal.Title))
+		if description := oneLine(item.Goal.Description); description != "" {
+			fmt.Fprintf(&b, "Description: %s\n", description)
+		}
+		fmt.Fprintf(&b, "goal_id: %s\n", item.Goal.ID)
+		b.WriteString("Tasks:\n")
+
+		actionable := actionableTasks(item.Tasks)
+		listed := len(actionable)
+		if listed > maxTasks {
+			listed = maxTasks
+		}
+		for _, task := range actionable[:listed] {
+			status := string(task.Status)
+			if strings.TrimSpace(task.ClaimedBy) != "" {
+				status = "claimed"
+			}
+			fmt.Fprintf(&b, "- [%s] %s (task_id: %s)\n", status, oneLine(task.Title), task.ID)
+		}
+		if len(item.Tasks) == 0 {
+			b.WriteString("- no tasks declared\n")
+		} else if len(actionable) == 0 {
+			b.WriteString("- no todo or doing tasks\n")
+		}
+		if len(actionable) > maxTasks {
+			fmt.Fprintf(&b, "- ... and %d more tasks\n", len(actionable)-maxTasks)
+		}
+	}
+	if omitted := len(active) - len(displayed); omitted > 0 {
+		fmt.Fprintf(&b, "... and %d more goals\n", omitted)
+	}
+
+	filteredDecisions := make([]domain.Decision, 0, len(decisions))
+	for _, decision := range decisions {
+		if decision.Status != domain.DecisionAnswered || decision.AppliedAt != nil {
+			continue
+		}
+		if _, ok := activeIDs[decision.GoalID]; !ok {
+			continue
+		}
+		filteredDecisions = append(filteredDecisions, decision)
+	}
+	if len(filteredDecisions) > 0 {
+		b.WriteString("Unapplied decisions:\n")
+		for _, decision := range filteredDecisions {
+			fmt.Fprintf(&b, "- %s (decision_id: %s)\n", oneLine(decision.Question), decision.ID)
+			fmt.Fprintf(&b, "  answer: %s - %s\n", oneLine(decision.AnswerLabel), oneLine(decision.AnswerText))
+		}
+	}
+
+	nextTools := make([]string, 0, 3)
+	if hasNoTasks {
+		nextTools = append(nextTools, "atct_task_declare")
+	}
+	if hasTodo {
 		nextTools = append(nextTools, "atct_task_claim")
 	}
 	if len(filteredDecisions) > 0 {

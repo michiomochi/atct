@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -138,6 +139,117 @@ func TestContextIsSilentForUnregisteredProject(t *testing.T) {
 	}
 	if got != "" {
 		t.Fatalf("contextText = %q, want empty output", got)
+	}
+}
+
+func TestRenderContextDistinguishesClaimedTasks(t *testing.T) {
+	got := renderContext([]contextGoal{{
+		Goal: domain.Goal{ID: "goal-claim", Title: "Claimed goal", Status: domain.GoalActive},
+		Tasks: []domain.Task{
+			{ID: "task-free", Title: "Unclaimed", Status: domain.TaskTodo},
+			{ID: "task-claimed", Title: "Claimed", Status: domain.TaskTodo, ClaimedBy: "commander"},
+		},
+	}}, nil)
+
+	if !strings.Contains(got, "- [todo] Unclaimed (task_id: task-free)") {
+		t.Fatalf("unclaimed task missing from context:\n%s", got)
+	}
+	if !strings.Contains(got, "- [claimed] Claimed (task_id: task-claimed)") {
+		t.Fatalf("claimed task marker missing from context:\n%s", got)
+	}
+}
+
+func TestRenderContextLimitsGoalsAndReportsOmissions(t *testing.T) {
+	goals := make([]contextGoal, 0, 4)
+	for i := 1; i <= 4; i++ {
+		goals = append(goals, contextGoal{Goal: domain.Goal{
+			ID:          fmt.Sprintf("goal-%d", i),
+			Title:       fmt.Sprintf("Goal %d", i),
+			Description: "visible",
+			Status:      domain.GoalActive,
+		}})
+	}
+
+	got := renderContext(goals, nil)
+	for i := 1; i <= 3; i++ {
+		if !strings.Contains(got, fmt.Sprintf("Goal: Goal %d", i)) {
+			t.Errorf("goal %d missing from context:\n%s", i, got)
+		}
+	}
+	if strings.Contains(got, "Goal: Goal 4") {
+		t.Fatalf("fourth goal should be omitted from context:\n%s", got)
+	}
+	if !strings.Contains(got, "... and 1 more goals") {
+		t.Fatalf("goal omission count missing from context:\n%s", got)
+	}
+}
+
+func TestRenderContextLimitsTasksAndReportsOmissions(t *testing.T) {
+	tasks := make([]domain.Task, 0, 6)
+	for i := 1; i <= 6; i++ {
+		tasks = append(tasks, domain.Task{
+			ID:     fmt.Sprintf("task-%d", i),
+			Title:  fmt.Sprintf("Task %d", i),
+			Status: domain.TaskTodo,
+		})
+	}
+
+	got := renderContext([]contextGoal{{
+		Goal:  domain.Goal{ID: "goal-tasks", Title: "Task goal", Status: domain.GoalActive},
+		Tasks: tasks,
+	}}, nil)
+	for i := 1; i <= 5; i++ {
+		if !strings.Contains(got, fmt.Sprintf("Task %d", i)) {
+			t.Errorf("task %d missing from context:\n%s", i, got)
+		}
+	}
+	if strings.Contains(got, "Task 6") {
+		t.Fatalf("sixth task should be omitted from context:\n%s", got)
+	}
+	if !strings.Contains(got, "... and 1 more tasks") {
+		t.Fatalf("task omission count missing from context:\n%s", got)
+	}
+}
+
+func TestRenderContextOmitsEmptyDescription(t *testing.T) {
+	got := renderContext([]contextGoal{{
+		Goal: domain.Goal{ID: "goal-empty-description", Title: "No description", Status: domain.GoalActive},
+	}}, nil)
+
+	if strings.Contains(got, "Description:") {
+		t.Fatalf("empty description should omit its line:\n%s", got)
+	}
+}
+
+func TestRenderContextKeepsAllDecisionsOutsideCaps(t *testing.T) {
+	goals := make([]contextGoal, 0, 4)
+	for i := 1; i <= 4; i++ {
+		goals = append(goals, contextGoal{Goal: domain.Goal{
+			ID:     fmt.Sprintf("goal-%d", i),
+			Title:  fmt.Sprintf("Goal %d", i),
+			Status: domain.GoalActive,
+		}})
+	}
+	decisions := make([]domain.Decision, 0, 6)
+	for i := 1; i <= 6; i++ {
+		decisions = append(decisions, domain.Decision{
+			ID:          fmt.Sprintf("decision-%d", i),
+			GoalID:      "goal-4",
+			Question:    fmt.Sprintf("Question %d", i),
+			AnswerLabel: "Yes",
+			AnswerText:  fmt.Sprintf("Answer %d", i),
+			Status:      domain.DecisionAnswered,
+		})
+	}
+
+	got := renderContext(goals, decisions)
+	if !strings.Contains(got, "... and 1 more goals") {
+		t.Fatalf("goal omission count missing from context:\n%s", got)
+	}
+	for i := 1; i <= 6; i++ {
+		if !strings.Contains(got, fmt.Sprintf("decision-%d", i)) {
+			t.Errorf("decision %d missing from context:\n%s", i, got)
+		}
 	}
 }
 
