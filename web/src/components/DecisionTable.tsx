@@ -27,7 +27,6 @@ export function DecisionTable({ decisions, emptyText }: Props) {
             <Table.Head {...columnScope} className="px-3 py-3 font-semibold">{t("decision.column.question")}</Table.Head>
             <Table.Head {...columnScope} className="w-36 px-3 py-3 font-semibold">{t("decision.column.status")}</Table.Head>
             <Table.Head {...columnScope} className="w-52 px-3 py-3 font-semibold">{t("decision.column.answer")}</Table.Head>
-            <Table.Head {...columnScope} className="w-40 px-3 py-3 font-semibold">{t("decision.column.answeredBy")}</Table.Head>
             <Table.Head {...columnScope} className="w-48 px-3 py-3 font-semibold">{t("decision.column.goal")}</Table.Head>
             <Table.Head {...columnScope} className="w-44 px-3 py-3 font-semibold">{t("decision.column.createdAt")}</Table.Head>
           </Table.Row>
@@ -47,7 +46,6 @@ export function DecisionTable({ decisions, emptyText }: Props) {
                 <Table.Cell className="px-3 py-4 text-ink-700">
                   {answer ? <p className="text-clamp-2" title={answer}>{answer}</p> : "-"}
                 </Table.Cell>
-                <Table.Cell className="px-3 py-4 text-ink-700">{decision.answered_by || "-"}</Table.Cell>
                 <Table.Cell className="px-3 py-4">
                   <a
                     className="focus-ring font-medium text-accent-700 underline decoration-accent-100 underline-offset-4 hover:decoration-accent-700"

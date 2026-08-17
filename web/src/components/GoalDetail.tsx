@@ -15,8 +15,6 @@ import {
 import {
   findOpenCompletion,
   resolveGoalID,
-  validateCompletion,
-  type CompletionErrors,
 } from "../lib/ui";
 import { NeedsDecisionList } from "./NeedsDecisionList";
 import { AreaLoading, ErrorState } from "./StateMessage";
@@ -39,48 +37,29 @@ interface GoalDetailData {
 
 type CompletionAction = "approve" | "reject";
 
-const ANSWERED_BY_KEY = "atct.answered_by";
-
 function errorMessage(reason: unknown, fallback: string): string {
   return reason instanceof Error ? reason.message : fallback;
 }
 
 function CompletionApproval({ goal, decision, onUpdated }: { goal: Goal; decision: Decision; onUpdated: () => void }) {
   const { t } = useTranslation();
-  const [answeredBy, setAnsweredBy] = useState("");
   const [reason, setReason] = useState("");
-  const [errors, setErrors] = useState<CompletionErrors>({});
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [conflict, setConflict] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
-  useEffect(() => {
-    const saved = window.localStorage.getItem(ANSWERED_BY_KEY);
-    if (saved) setAnsweredBy(saved);
-  }, []);
-
-  const answeredByID = `completion-answered-by-${decision.id}`;
   const reasonID = `completion-reason-${decision.id}`;
-
-  function updateAnsweredBy(value: string) {
-    setAnsweredBy(value);
-    window.localStorage.setItem(ANSWERED_BY_KEY, value);
-  }
 
   async function submit(action: CompletionAction) {
     setSubmitError(null);
     setConflict(false);
 
-    const nextErrors = validateCompletion({ answered_by: answeredBy });
-    setErrors(nextErrors);
-    if (Object.keys(nextErrors).length > 0) return;
-
     setSubmitting(true);
     try {
       if (action === "approve") {
-        await approveCompletion(decision.id, answeredBy.trim());
+        await approveCompletion(decision.id, "");
       } else {
-        await rejectCompletion(decision.id, answeredBy.trim(), reason.trim());
+        await rejectCompletion(decision.id, "", reason.trim());
       }
       onUpdated();
     } catch (error) {
@@ -124,19 +103,6 @@ function CompletionApproval({ goal, decision, onUpdated }: { goal: Goal; decisio
       <h2 id="completion-approval-heading" className="font-display text-lg font-semibold tracking-tight text-ink-950">{t("goal.completion.title")}</h2>
       <p className="mt-3 whitespace-pre-wrap break-words text-sm leading-6 text-ink-800">{goal.result_summary || t("goal.completion.noSummary")}</p>
       <form className="mt-4 max-w-3xl border-l-2 border-accent-600 pl-4" onSubmit={handleSubmit} noValidate>
-        <label className="mb-3 block text-sm text-ink-800" htmlFor={answeredByID}>
-          {t("goal.completion.reviewedBy")} <span className="text-danger-700">{t("form.required")}</span>
-          <input
-            className="focus-ring mt-1 block w-full border border-line bg-surface px-3 py-2 text-sm text-ink-950"
-            id={answeredByID}
-            value={answeredBy}
-            onChange={(event) => updateAnsweredBy(event.target.value)}
-            aria-invalid={Boolean(errors.answered_by)}
-            aria-describedby={errors.answered_by ? `${answeredByID}-error` : undefined}
-            required
-          />
-          {errors.answered_by && <span className="mt-1 block text-xs text-danger-700" id={`${answeredByID}-error`}>{t("goal.completion.missingBy")}</span>}
-        </label>
         <label className="mb-3 block text-sm text-ink-800" htmlFor={reasonID}>
           {t("goal.completion.reason")} <span className="text-ink-500">{t("form.optional")}</span>
           <textarea

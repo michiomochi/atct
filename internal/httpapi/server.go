@@ -336,9 +336,8 @@ func (s *Server) handleAnswer(w http.ResponseWriter, r *http.Request, decisionID
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
-	if strings.TrimSpace(request.AnsweredBy) == "" ||
-		(strings.TrimSpace(request.AnswerLabel) == "" && strings.TrimSpace(request.AnswerText) == "") {
-		writeError(w, http.StatusBadRequest, "answered_by and an answer label or text are required")
+	if strings.TrimSpace(request.AnswerLabel) == "" && strings.TrimSpace(request.AnswerText) == "" {
+		writeError(w, http.StatusBadRequest, "an answer label or text is required")
 		return
 	}
 	if !s.ensureOpenDecision(w, r.Context(), decisionID) {
@@ -367,10 +366,6 @@ func (s *Server) handleApprove(w http.ResponseWriter, r *http.Request, decisionI
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
-	if strings.TrimSpace(request.AnsweredBy) == "" {
-		writeError(w, http.StatusBadRequest, "answered_by is required")
-		return
-	}
 	decision, ok := s.getOpenCompletion(w, r.Context(), decisionID)
 	if !ok {
 		return
@@ -391,10 +386,6 @@ func (s *Server) handleReject(w http.ResponseWriter, r *http.Request, decisionID
 	var request rejectionRequest
 	if err := decodeJSONBody(r, &request); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
-		return
-	}
-	if strings.TrimSpace(request.AnsweredBy) == "" {
-		writeError(w, http.StatusBadRequest, "answered_by is required")
 		return
 	}
 	if _, ok := s.getOpenCompletion(w, r.Context(), decisionID); !ok {

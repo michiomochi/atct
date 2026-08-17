@@ -235,13 +235,20 @@ func TestHTTPDecisionAndReleaseEndpointsValidateAndTransition(t *testing.T) {
 	defer srv.Close()
 	client := srv.Client()
 
-	status, headers, body := doRequest(t, client, http.MethodPost, srv.URL+"/api/decisions/"+f.open.ID+"/answer", mustJSON(t, map[string]string{"answered_by": "human"}))
+	status, headers, body := doRequest(t, client, http.MethodPost, srv.URL+"/api/decisions/"+f.open.ID+"/answer", mustJSON(t, map[string]string{"answered_by": ""}))
 	assertErrorObject(t, status, headers, body, http.StatusBadRequest)
+	var invalidAnswer map[string]string
+	if err := json.Unmarshal(body, &invalidAnswer); err != nil {
+		t.Fatalf("decode invalid answer response: %v", err)
+	}
+	if invalidAnswer["error"] != "an answer label or text is required" {
+		t.Fatalf("unexpected invalid answer error = %q", invalidAnswer["error"])
+	}
 
 	status, headers, body = doRequest(t, client, http.MethodPost, srv.URL+"/api/decisions/missing/answer", mustJSON(t, map[string]string{"answered_by": "human", "answer_text": "yes"}))
 	assertErrorObject(t, status, headers, body, http.StatusNotFound)
 
-	status, headers, body = doRequest(t, client, http.MethodPost, srv.URL+"/api/decisions/"+f.open.ID+"/answer", mustJSON(t, map[string]string{"answered_by": "human", "answer_text": "yes"}))
+	status, headers, body = doRequest(t, client, http.MethodPost, srv.URL+"/api/decisions/"+f.open.ID+"/answer", mustJSON(t, map[string]string{"answered_by": "", "answer_text": "yes"}))
 	if status != http.StatusOK {
 		t.Fatalf("answer status = %d; body=%s", status, body)
 	}
@@ -287,7 +294,7 @@ func TestHTTPApproveAndRejectCompletionEndpoints(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	status, headers, body := doRequest(t, client, http.MethodPost, srv.URL+"/api/decisions/"+approveDecision.ID+"/approve", mustJSON(t, map[string]string{"answered_by": "human"}))
+	status, headers, body := doRequest(t, client, http.MethodPost, srv.URL+"/api/decisions/"+approveDecision.ID+"/approve", mustJSON(t, map[string]string{"answered_by": ""}))
 	if status != http.StatusOK {
 		t.Fatalf("approve status = %d; body=%s", status, body)
 	}

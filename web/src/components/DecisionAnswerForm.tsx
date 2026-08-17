@@ -1,5 +1,5 @@
 import { Button } from "@cloudflare/kumo/components/button";
-import { useEffect, useState, type FormEvent } from "react";
+import { useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
 import type { Decision } from "../lib/api";
 import { answerDecision, ApiError } from "../lib/api";
@@ -10,32 +10,18 @@ interface Props {
   onUpdated: () => void;
 }
 
-const ANSWERED_BY_KEY = "atct.answered_by";
-
 export function DecisionAnswerForm({ decision, onUpdated }: Props) {
   const { t } = useTranslation();
   const [answerLabel, setAnswerLabel] = useState("");
   const [answerText, setAnswerText] = useState("");
-  const [answeredBy, setAnsweredBy] = useState("");
   const [errors, setErrors] = useState<AnswerErrors>({});
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [conflict, setConflict] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
-  useEffect(() => {
-    const saved = window.localStorage.getItem(ANSWERED_BY_KEY);
-    if (saved) setAnsweredBy(saved);
-  }, []);
-
   const labelId = `answer-label-${decision.id}`;
   const textId = `answer-text-${decision.id}`;
-  const answeredById = `answered-by-${decision.id}`;
   const options = decision.options ?? [];
-
-  function updateAnsweredBy(value: string) {
-    setAnsweredBy(value);
-    window.localStorage.setItem(ANSWERED_BY_KEY, value);
-  }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -45,7 +31,7 @@ export function DecisionAnswerForm({ decision, onUpdated }: Props) {
     const nextErrors = validateAnswer({
       answer_label: answerLabel,
       answer_text: answerText,
-      answered_by: answeredBy,
+      answered_by: "",
     });
     setErrors(nextErrors);
     if (Object.keys(nextErrors).length > 0) return;
@@ -55,7 +41,7 @@ export function DecisionAnswerForm({ decision, onUpdated }: Props) {
       await answerDecision(decision.id, {
         answer_label: answerLabel.trim(),
         answer_text: answerText.trim(),
-        answered_by: answeredBy.trim(),
+        answered_by: "",
       });
       onUpdated();
     } catch (error) {
@@ -130,19 +116,6 @@ export function DecisionAnswerForm({ decision, onUpdated }: Props) {
           aria-describedby={errors.answer_text ? `${textId}-error` : undefined}
         />
         {errors.answer_text && <span className="mt-1 block text-xs text-danger-700" id={`${textId}-error`}>{t("form.answer.error.labelOrText")}</span>}
-      </label>
-      <label className="mb-3 block text-sm text-ink-800" htmlFor={answeredById}>
-        {t("form.answer.answeredBy")} <span className="text-danger-700">{t("form.required")}</span>
-        <input
-          className="focus-ring mt-1 block w-full border border-line bg-surface px-3 py-2 text-sm text-ink-950"
-          id={answeredById}
-          value={answeredBy}
-          onChange={(event) => updateAnsweredBy(event.target.value)}
-          aria-invalid={Boolean(errors.answered_by)}
-          aria-describedby={errors.answered_by ? `${answeredById}-error` : undefined}
-          required
-        />
-        {errors.answered_by && <span className="mt-1 block text-xs text-danger-700" id={`${answeredById}-error`}>{t("form.answer.error.answeredBy")}</span>}
       </label>
       {submitError && <p className="mb-3 text-sm text-danger-700" role="alert">{submitError}</p>}
       <Button

@@ -30,10 +30,6 @@ export function validateAnswer(input: AnswerInput): AnswerErrors {
   const hasLabel = input.answer_label.trim().length > 0;
   const hasText = input.answer_text.trim().length > 0;
 
-  if (input.answered_by.trim().length === 0) {
-    errors.answered_by = "Enter the person answering this decision.";
-  }
-
   if (!hasLabel && !hasText) {
     const message = "Enter a label or answer text.";
     errors.answer_label = message;
@@ -58,11 +54,7 @@ export interface CompletionInput {
 
 export type CompletionErrors = Partial<Record<keyof CompletionInput, string>>;
 
-export function validateCompletion(input: CompletionInput): CompletionErrors {
-  if (input.answered_by.trim().length === 0) {
-    return { answered_by: "Enter the person approving or rejecting this completion." };
-  }
-
+export function validateCompletion(_input: CompletionInput): CompletionErrors {
   return {};
 }
 

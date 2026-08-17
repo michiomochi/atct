@@ -43,22 +43,20 @@ describe("formatDuration", () => {
 });
 
 describe("validateAnswer", () => {
-  it("requires answered_by", () => {
-    expect(validateAnswer({ answer_label: "approve", answer_text: "", answered_by: "" })).toEqual({
-      answered_by: "Enter the person answering this decision.",
-    });
+  it("allows an empty answered_by", () => {
+    expect(validateAnswer({ answer_label: "approve", answer_text: "", answered_by: "" })).toEqual({});
   });
 
   it("requires at least one of label and text", () => {
-    expect(validateAnswer({ answer_label: "  ", answer_text: "", answered_by: "michio" })).toEqual({
+    expect(validateAnswer({ answer_label: "  ", answer_text: "", answered_by: "" })).toEqual({
       answer_label: "Enter a label or answer text.",
       answer_text: "Enter a label or answer text.",
     });
   });
 
   it("accepts a label or answer text", () => {
-    expect(validateAnswer({ answer_label: "approve", answer_text: "", answered_by: "michio" })).toEqual({});
-    expect(validateAnswer({ answer_label: "", answer_text: "Reason", answered_by: "michio" })).toEqual({});
+    expect(validateAnswer({ answer_label: "approve", answer_text: "", answered_by: "" })).toEqual({});
+    expect(validateAnswer({ answer_label: "", answer_text: "Reason", answered_by: "" })).toEqual({});
   });
 });
 
@@ -189,10 +187,8 @@ describe("goal detail answer flows", () => {
     expect(findOpenCompletion([{ id: "done-1", kind: "completion", status: "applied" }])).toBeUndefined();
   });
 
-  it("requires a human name before approving or rejecting completion", () => {
-    expect(validateCompletion({ answered_by: "  " })).toEqual({
-      answered_by: "Enter the person approving or rejecting this completion.",
-    });
+  it("allows completion review without a human name", () => {
+    expect(validateCompletion({ answered_by: "  " })).toEqual({});
     expect(validateCompletion({ answered_by: "michio" })).toEqual({});
   });
 
