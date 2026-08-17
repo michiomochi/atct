@@ -156,9 +156,13 @@ test_download_cache_and_mcp_stdout() {
 
   mkdir -p "$home/.atct/bin/.download.stale"
   printf 'stale\n' >"$home/.atct/bin/.download.stale/file"
+  touch -t 200001010000 "$home/.atct/bin/.download.stale"
+  mkdir -p "$home/.atct/bin/.download.active"
+  printf 'active\n' >"$home/.atct/bin/.download.active/file"
   printf 'database\n' >"$home/.atct/atct.db"
   first_out="$(HOME="$home" PATH="$fake_bin:$PATH" FIXTURES_DIR="$fixtures" CURL_LOG="$curl_log" CURL_FAIL=1 FAKE_OS=Darwin FAKE_ARCH=arm64 "$REPO_ROOT/plugin/bin/atct" project list)"
   assert_eq 'fake atct <project> <list>' "$first_out" 'cached execution after stale cleanup'
+  [[ -e "$home/.atct/bin/.download.active/file" ]] || fail 'just-created download directory was removed'
   [[ ! -e "$home/.atct/bin/.download.stale" ]] || fail 'stale download directory was not removed'
   assert_file_contains 'database' "$home/.atct/atct.db"
 
@@ -172,6 +176,38 @@ test_download_cache_and_mcp_stdout() {
   assert_empty_file "$mcp_stdout"
   assert_file_contains 'fake mcp' "$mcp_stderr"
   assert_eq 4 "$(wc -l <"$curl_log" | tr -d ' ')" 'first executions should download archive and checksums once per binary'
+}
+
+test_cleanup_failure_is_best_effort() {
+  local home="$TEMP_ROOT/cleanup-failure-home"
+  local fake_bin="$TEMP_ROOT/cleanup-failure-fake-bin"
+  local rm_log="$TEMP_ROOT/cleanup-failure-rm.log"
+  local stale_dir="$home/.atct/bin/.download.unremovable"
+  local output
+
+  mkdir -p "$home/.atct/bin" "$fake_bin"
+  cat >"$home/.atct/bin/atct-0.4.0" <<'SCRIPT'
+#!/usr/bin/env bash
+printf 'cached after cleanup failure\n'
+SCRIPT
+  chmod +x "$home/.atct/bin/atct-0.4.0"
+
+  mkdir -p "$stale_dir"
+  printf 'stale\n' >"$stale_dir/file"
+  touch -t 200001010000 "$stale_dir"
+
+  cat >"$fake_bin/rm" <<'SCRIPT'
+#!/usr/bin/env bash
+printf 'rm invoked\n' >>"$RM_LOG"
+exit 1
+SCRIPT
+  chmod +x "$fake_bin/rm"
+
+  if ! output="$(HOME="$home" PATH="$fake_bin:$PATH" RM_LOG="$rm_log" "$REPO_ROOT/plugin/bin/atct" project list)"; then
+    fail 'cleanup failure prevented cached execution'
+  fi
+  assert_eq 'cached after cleanup failure' "$output" 'cached execution after cleanup failure'
+  assert_file_contains 'rm invoked' "$rm_log"
 }
 
 test_checksum_failure() {
@@ -245,6 +281,7 @@ test_unsupported_platform_fails() {
 
 test_static_contract
 test_download_cache_and_mcp_stdout
+test_cleanup_failure_is_best_effort
 test_checksum_failure
 test_missing_checksum_tool_fails
 test_unsupported_platform_fails

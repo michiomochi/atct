@@ -41,12 +41,7 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-for stale_dir in "$CACHE_DIR"/.download.*; do
-  [[ -d "$stale_dir" ]] || continue
-  if ! rm -rf -- "$stale_dir"; then
-    fail "Could not remove the stale download directory <$stale_dir>. Check permissions and retry, or install with brew or go install."
-  fi
-done
+find "$CACHE_DIR" -maxdepth 1 -type d -name '.download.*' -mmin +60 -exec rm -rf -- {} + 2>/dev/null || true
 
 if [[ -x "$CACHED_BINARY" ]]; then
   exec "$CACHED_BINARY" "$@"
