@@ -1,33 +1,34 @@
 export const en = {
   "app.name": "ATCT",
-  "nav.inbox": "Inbox",
+  "nav.dashboard": "Dashboard",
   "locale.label": "Language",
   "locale.en": "English",
   "locale.ja": "日本語",
 
-  "inbox.eyebrow": "INBOX",
-  "inbox.title": "Inbox",
-  "inbox.description":
-    "Review decisions awaiting answers, answered decisions that are not yet applied, tasks needing attention, and active goals.",
-  "inbox.openDecisions.title": "Decisions awaiting an answer",
-  "inbox.openDecisions.empty":
+  "dashboard.eyebrow": "DASHBOARD",
+  "dashboard.title": "Dashboard",
+  "dashboard.description":
+    "Review decisions awaiting answers, answered decisions that are not yet applied, tasks blocked on you, and active goals.",
+  "dashboard.openDecisions.title": "Decisions awaiting an answer",
+  "dashboard.openDecisions.empty":
     "No decisions are waiting for an answer. Answer a decision to move it forward.",
-  "inbox.unapplied.title": "Answered decisions not yet applied",
-  "inbox.unapplied.empty":
+  "dashboard.unapplied.title": "Answered decisions not yet applied",
+  "dashboard.unapplied.empty":
     "No answered decisions are waiting to be applied. Apply an answer when it is ready.",
-  "inbox.attention.title": "Tasks needing attention",
-  "inbox.attention.empty":
-    "No tasks are related to an outstanding decision. They will appear here when a decision needs attention.",
-  "inbox.activeGoals.title": "Active goals",
-  "inbox.activeGoals.empty":
+  "dashboard.attention.title": "Tasks blocked on you",
+  "dashboard.attention.empty":
+    "No tasks are blocked on you. They will appear here when a decision needs your answer.",
+  "dashboard.activeGoals.title": "Active goals",
+  "dashboard.activeGoals.empty":
     "No active goals are in progress. Resume work on a goal to see it here.",
 
-  "inbox.error.load": "Could not load the inbox.",
+  "dashboard.error.load": "Could not load the dashboard.",
 
   "decision.caption.list": "Decision list",
   "decision.column.question": "Question",
   "decision.column.status": "Status",
   "decision.column.answer": "Answer",
+  "decision.column.project": "Project",
   "decision.column.goal": "Goal",
   "decision.column.createdAt": "Created at",
   "status.task.todo": "Not started",
@@ -47,10 +48,12 @@ export const en = {
 
   "goal.caption.activeList": "Active goal list",
   "goal.column.goal": "Goal",
+  "goal.column.project": "Project",
   "goal.column.status": "Status",
   "goal.column.updatedAt": "Updated at",
   "goal.title": "Goal details",
-  "goal.backToInbox": "Back to inbox",
+  "goal.backToDashboard": "Back to dashboard",
+  "goal.project": "Project",
   "goal.status": "Status: {{status}}",
   "goal.column.now": "Now",
   "goal.column.needsDecision": "Needs decision",
@@ -66,7 +69,7 @@ export const en = {
   "goal.completion.error.update": "Could not update the completion decision.",
   "goal.error.load": "Could not load the goal.",
 
-  "task.caption.attention": "Tasks needing attention",
+  "task.caption.attention": "Tasks blocked on you",
   "task.column.task": "Task",
   "task.column.goal": "Goal",
   "task.column.status": "Status",

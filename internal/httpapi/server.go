@@ -32,18 +32,28 @@ type TaskView struct {
 	OpenDecisions  []domain.Decision `json:"open_decisions"`
 }
 
+type goalView struct {
+	domain.Goal
+	ProjectName string `json:"project_name"`
+}
+
+type decisionView struct {
+	domain.Decision
+	ProjectName string `json:"project_name"`
+}
+
 type inboxResponse struct {
-	OpenDecisions      []domain.Decision `json:"open_decisions"`
-	UnappliedDecisions []domain.Decision `json:"unapplied_decisions"`
-	ActiveGoals        []domain.Goal     `json:"active_goals"`
-	AttentionTasks     []TaskView        `json:"attention_tasks"`
+	OpenDecisions      []decisionView `json:"open_decisions"`
+	UnappliedDecisions []decisionView `json:"unapplied_decisions"`
+	ActiveGoals        []goalView     `json:"active_goals"`
+	AttentionTasks     []TaskView     `json:"attention_tasks"`
 }
 
 type goalResponse struct {
-	Goal          domain.Goal `json:"goal"`
-	Now           []TaskView  `json:"now"`
-	NeedsDecision []TaskView  `json:"needs_decision"`
-	Next          []TaskView  `json:"next"`
+	Goal          goalView   `json:"goal"`
+	Now           []TaskView `json:"now"`
+	NeedsDecision []TaskView `json:"needs_decision"`
+	Next          []TaskView `json:"next"`
 }
 
 type answerRequest struct {
@@ -229,13 +239,43 @@ func (s *Server) handleInbox(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
+	projects, err := s.store.ListProjects(ctx)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	projectNames := make(map[string]string, len(projects))
+	for _, project := range projects {
+		projectNames[project.ID] = project.Name
+	}
+	goalProjectNames := make(map[string]string, len(goals))
+	for _, goal := range goals {
+		goalProjectNames[goal.ID] = projectNames[goal.ProjectID]
+	}
 
 	openByTask := indexDecisions(openDecisions)
-	activeGoals := make([]domain.Goal, 0)
+	openDecisionViews := make([]decisionView, 0, len(openDecisions))
+	for _, decision := range openDecisions {
+		openDecisionViews = append(openDecisionViews, decisionView{
+			Decision:    decision,
+			ProjectName: goalProjectNames[decision.GoalID],
+		})
+	}
+	unappliedDecisionViews := make([]decisionView, 0, len(unapplied))
+	for _, decision := range unapplied {
+		unappliedDecisionViews = append(unappliedDecisionViews, decisionView{
+			Decision:    decision,
+			ProjectName: goalProjectNames[decision.GoalID],
+		})
+	}
+	activeGoals := make([]goalView, 0)
 	attentionTasks := make([]TaskView, 0)
 	for _, goal := range goals {
 		if goal.Status == domain.GoalActive {
-			activeGoals = append(activeGoals, goal)
+			activeGoals = append(activeGoals, goalView{
+				Goal:        goal,
+				ProjectName: projectNames[goal.ProjectID],
+			})
 		}
 		tasks, err := s.store.ListTasks(ctx, goal.ID)
 		if err != nil {
@@ -252,9 +292,9 @@ func (s *Server) handleInbox(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, inboxResponse{
-		OpenDecisions:      nonNilDecisions(openDecisions),
-		UnappliedDecisions: nonNilDecisions(unapplied),
-		ActiveGoals:        nonNilGoals(activeGoals),
+		OpenDecisions:      openDecisionViews,
+		UnappliedDecisions: unappliedDecisionViews,
+		ActiveGoals:        activeGoals,
 		AttentionTasks:     nonNilTaskViews(attentionTasks),
 	})
 }
@@ -270,6 +310,18 @@ func (s *Server) handleGoal(w http.ResponseWriter, r *http.Request, goalID strin
 		writeStoreError(w, err)
 		return
 	}
+	projects, err := s.store.ListProjects(ctx)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	projectName := ""
+	for _, project := range projects {
+		if project.ID == goal.ProjectID {
+			projectName = project.Name
+			break
+		}
+	}
 	tasks, err := s.store.ListTasks(ctx, goalID)
 	if err != nil {
 		writeStoreError(w, err)
@@ -283,7 +335,7 @@ func (s *Server) handleGoal(w http.ResponseWriter, r *http.Request, goalID strin
 	openByTask := indexDecisions(openDecisions)
 
 	response := goalResponse{
-		Goal:          goal,
+		Goal:          goalView{Goal: goal, ProjectName: projectName},
 		Now:           make([]TaskView, 0),
 		NeedsDecision: make([]TaskView, 0),
 		Next:          make([]TaskView, 0),

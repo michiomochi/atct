@@ -9,6 +9,7 @@ export interface Option {
 export interface Goal {
   id: string;
   project_id: string;
+  project_name?: string;
   title: string;
   description: string;
   status: string;
@@ -47,6 +48,7 @@ export interface Task {
 export interface Decision {
   id: string;
   goal_id: string;
+  project_name?: string;
   task_id?: string;
   kind: string;
   question: string;

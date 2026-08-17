@@ -15,7 +15,7 @@ export function AttentionTaskTable({ tasks }: Props) {
   const { t, i18n } = useTranslation();
   const locale = i18n.language.startsWith("ja") ? "ja" : "en";
 
-  if (tasks.length === 0) return <EmptyState>{t("inbox.attention.empty")}</EmptyState>;
+  if (tasks.length === 0) return <EmptyState>{t("dashboard.attention.empty")}</EmptyState>;
 
   return (
     <div className="table-scroll">

@@ -52,9 +52,9 @@ describe("translation", () => {
   it("returns the string for the active language", async () => {
     const { default: i18n } = await import("./index");
     await i18n.changeLanguage("en");
-    expect(t("inbox.title")).toBe(en["inbox.title"]);
+    expect(t("dashboard.title")).toBe(en["dashboard.title"]);
     await i18n.changeLanguage("ja");
-    expect(t("inbox.title")).toBe(ja["inbox.title"]);
+    expect(t("dashboard.title")).toBe(ja["dashboard.title"]);
     await i18n.changeLanguage("en");
   });
 

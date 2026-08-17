@@ -13,7 +13,7 @@ i18n.use(initReactI18next).init({
   lng: "en",
   fallbackLng: "en",
   // Keys are dotted flat strings, and UI copy contains ":". Without these two,
-  // i18next reads "inbox.title" as nesting and "Status: open" as a namespace.
+  // i18next reads "dashboard.title" as nesting and "Status: open" as a namespace.
   keySeparator: false,
   nsSeparator: false,
   // React escapes its own output; leaving this on double-escapes apostrophes.

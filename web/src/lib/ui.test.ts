@@ -4,7 +4,7 @@ import decisionTableSource from "../components/DecisionTable.tsx?raw";
 import goalCreateFormSource from "../components/GoalCreateForm.tsx?raw";
 import goalDetailSource from "../components/GoalDetail.tsx?raw";
 import goalTableSource from "../components/GoalTable.tsx?raw";
-import inboxSource from "../components/Inbox.tsx?raw";
+import dashboardSource from "../components/Dashboard.tsx?raw";
 import localeSwitchSource from "../components/LocaleSwitch.tsx?raw";
 import needsDecisionSource from "../components/NeedsDecisionList.tsx?raw";
 import sectionSource from "../components/Section.tsx?raw";
@@ -219,9 +219,9 @@ describe("goal detail answer flows", () => {
     expect(decisionFormSource).toContain('t("form.answer.submit")');
   });
 
-  it("localizes the Decision kind and header Inbox link", () => {
+  it("localizes the Decision kind and header Dashboard link", () => {
     expect(decisionTableSource).toContain("decisionKindLabel");
-    expect(localeSwitchSource).toContain('t("nav.inbox")');
+    expect(localeSwitchSource).toContain('t("nav.dashboard")');
     expect(localeSwitchSource).toContain('href="/"');
   });
 
@@ -230,8 +230,8 @@ describe("goal detail answer flows", () => {
     expect(localeSwitchSource).toContain("resolveLocale");
     expect(localeSwitchSource).toContain("document.readyState");
     expect(localeSwitchSource).toContain("setTimeout");
-    expect(inboxSource).not.toContain("readStoredLocale");
-    expect(inboxSource).not.toContain("changeLanguage");
+    expect(dashboardSource).not.toContain("readStoredLocale");
+    expect(dashboardSource).not.toContain("changeLanguage");
     expect(goalDetailSource).not.toContain("readStoredLocale");
     expect(goalDetailSource).not.toContain("changeLanguage");
   });
@@ -248,12 +248,12 @@ describe("goal detail answer flows", () => {
     expect(goalCreateFormSource).toContain("role=\"alert\"");
   });
 
-  it("uses translated inbox framing with stable section anchors", () => {
-    expect(inboxSource).toContain("useTranslation");
-    expect(inboxSource).toContain('id="open-decisions"');
-    expect(inboxSource).toContain('id="unapplied-decisions"');
-    expect(inboxSource).toContain('id="attention-tasks"');
-    expect(inboxSource).toContain('id="active-goals"');
+  it("uses translated dashboard framing with stable section anchors", () => {
+    expect(dashboardSource).toContain("useTranslation");
+    expect(dashboardSource).toContain('id="open-decisions"');
+    expect(dashboardSource).toContain('id="unapplied-decisions"');
+    expect(dashboardSource).toContain('id="attention-tasks"');
+    expect(dashboardSource).toContain('id="active-goals"');
     expect(sectionSource).toContain("id: string");
     expect(sectionSource).toContain("aria-labelledby={`${id}-heading`}");
   });

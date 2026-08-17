@@ -2,33 +2,34 @@ import type { TranslationKey } from "./en";
 
 export const ja: Record<TranslationKey, string> = {
   "app.name": "ATCT",
-  "nav.inbox": "受信箱",
+  "nav.dashboard": "ダッシュボード",
   "locale.label": "言語",
   "locale.en": "English",
   "locale.ja": "日本語",
 
-  "inbox.eyebrow": "受信箱",
-  "inbox.title": "受信箱",
-  "inbox.description":
-    "回答待ちの判断、回答済みでまだ適用されていない判断、対応が必要なタスク、進行中のゴールを確認します。",
-  "inbox.openDecisions.title": "回答待ちの判断",
-  "inbox.openDecisions.empty": "回答待ちの判断はありません。判断に答えると先へ進みます。",
-  "inbox.unapplied.title": "回答済み・未適用の判断",
-  "inbox.unapplied.empty":
+  "dashboard.eyebrow": "ダッシュボード",
+  "dashboard.title": "ダッシュボード",
+  "dashboard.description":
+    "回答待ちの判断、回答済みでまだ適用されていない判断、回答待ちで止まっているタスク、進行中のゴールを確認します。",
+  "dashboard.openDecisions.title": "回答待ちの判断",
+  "dashboard.openDecisions.empty": "回答待ちの判断はありません。判断に答えると先へ進みます。",
+  "dashboard.unapplied.title": "回答済み・未適用の判断",
+  "dashboard.unapplied.empty":
     "適用待ちの回答はありません。エージェントが受け取ると適用されます。",
-  "inbox.attention.title": "対応が必要なタスク",
-  "inbox.attention.empty":
-    "未解決の判断に関係するタスクはありません。判断が必要になるとここに表示されます。",
-  "inbox.activeGoals.title": "進行中のゴール",
-  "inbox.activeGoals.empty":
+  "dashboard.attention.title": "回答待ちで止まっているタスク",
+  "dashboard.attention.empty":
+    "回答待ちで止まっているタスクはありません。回答が必要になるとここに表示されます。",
+  "dashboard.activeGoals.title": "進行中のゴール",
+  "dashboard.activeGoals.empty":
     "進行中のゴールはありません。ゴールを再開するとここに表示されます。",
 
-  "inbox.error.load": "受信箱を読み込めませんでした。",
+  "dashboard.error.load": "ダッシュボードを読み込めませんでした。",
 
   "decision.caption.list": "判断一覧",
   "decision.column.question": "質問",
   "decision.column.status": "状態",
   "decision.column.answer": "回答",
+  "decision.column.project": "プロジェクト",
   "decision.column.goal": "ゴール",
   "decision.column.createdAt": "作成日時",
   "status.task.todo": "未着手",
@@ -48,10 +49,12 @@ export const ja: Record<TranslationKey, string> = {
 
   "goal.caption.activeList": "進行中のゴール一覧",
   "goal.column.goal": "ゴール",
+  "goal.column.project": "プロジェクト",
   "goal.column.status": "状態",
   "goal.column.updatedAt": "更新日時",
   "goal.title": "ゴール詳細",
-  "goal.backToInbox": "受信箱に戻る",
+  "goal.backToDashboard": "ダッシュボードに戻る",
+  "goal.project": "プロジェクト",
   "goal.status": "状態: {{status}}",
   "goal.column.now": "現在",
   "goal.column.needsDecision": "判断待ち",
@@ -67,7 +70,7 @@ export const ja: Record<TranslationKey, string> = {
   "goal.completion.error.update": "完了の判断を更新できませんでした。",
   "goal.error.load": "ゴールを読み込めませんでした。",
 
-  "task.caption.attention": "対応が必要なタスク一覧",
+  "task.caption.attention": "回答待ちで止まっているタスク一覧",
   "task.column.task": "タスク",
   "task.column.goal": "ゴール",
   "task.column.status": "状態",

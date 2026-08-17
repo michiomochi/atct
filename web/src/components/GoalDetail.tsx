@@ -145,8 +145,8 @@ export function GoalDetail({ id }: Props) {
   const load = useCallback(async () => {
     setState({ kind: "loading" });
     try {
-      const [goal, inbox] = await Promise.all([fetchGoal(resolvedID), fetchInbox()]);
-      const completion = findOpenCompletion(inbox.open_decisions.filter((decision) => decision.goal_id === goal.goal.id));
+      const [goal, dashboardData] = await Promise.all([fetchGoal(resolvedID), fetchInbox()]);
+      const completion = findOpenCompletion(dashboardData.open_decisions.filter((decision) => decision.goal_id === goal.goal.id));
       setState({ kind: "ready", data: { goal, completion } });
     } catch (reason) {
       setState({ kind: "error", message: errorMessage(reason, t("goal.error.load")) });
@@ -165,12 +165,13 @@ export function GoalDetail({ id }: Props) {
     <main className="space-y-10">
       <div className="border-b border-line pb-6">
         <a className="focus-ring text-sm font-medium text-accent-700 hover:text-accent-900" href="/">
-          {t("goal.backToInbox")}
+          {t("goal.backToDashboard")}
         </a>
         <p className="mt-6 font-mono text-xs uppercase tracking-[0.18em] text-accent-700">{t("goal.title")}</p>
         <h1 className="mt-2 font-display text-3xl font-semibold tracking-tight text-ink-950">
           {data?.goal.goal.title ?? t("goal.title")}
         </h1>
+        {data && <p className="mt-3 text-sm text-ink-700">{t("goal.project")}: {data.goal.goal.project_name || "-"}</p>}
         {data?.goal.goal.description && <p className="mt-3 max-w-3xl whitespace-pre-wrap text-sm leading-6 text-ink-700">{data.goal.goal.description}</p>}
         {data?.goal.goal.status && <p className="mt-3 text-sm text-ink-500">{t("goal.status", { status: data.goal.goal.status })}</p>}
       </div>
