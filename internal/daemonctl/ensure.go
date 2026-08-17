@@ -24,10 +24,11 @@ var (
 )
 
 type Config struct {
-	Dir        string // the ~/.atct directory
-	Version    string // this build's version, compared verbatim
-	Executable string // the atct binary to start
-	ListenAddr string // HTTP listen address passed to the daemon
+	Dir            string // the ~/.atct directory
+	Version        string // this build's version, compared verbatim
+	Executable     string // the atct binary to start
+	ListenAddr     string // HTTP listen address passed to the daemon
+	ListenExplicit bool   // whether the caller explicitly supplied the address
 }
 
 // Ensure returns a healthy daemon, starting one only if none exists.
@@ -88,7 +89,11 @@ func start(cfg Config) (Registry, error) {
 	}
 	defer log.Close()
 
-	cmd := exec.Command(cfg.Executable, "daemon", "-listen", cfg.ListenAddr)
+	args := []string{"daemon"}
+	if cfg.ListenExplicit {
+		args = append(args, "-listen", cfg.ListenAddr)
+	}
+	cmd := exec.Command(cfg.Executable, args...)
 	cmd.Stdout = log
 	cmd.Stderr = log
 	// Setsid detaches the daemon from the caller's process group so it

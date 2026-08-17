@@ -6,10 +6,12 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -21,11 +23,16 @@ import (
 	"github.com/michiomochi/atct/internal/store"
 )
 
-const defaultListenAddr = "127.0.0.1:8787"
+const (
+	defaultListenAddr = "127.0.0.1:8787"
+	defaultListenPort = 8787
+	lastListenPort    = 8796
+)
 
 type cliConfig struct {
 	subcommand      string
 	listenAddr      string
+	listenExplicit  bool
 	projectAction   string
 	projectName     string
 	goalAction      string
@@ -136,6 +143,11 @@ func parseArgs(args []string) (cliConfig, error) {
 	}
 
 	cfg.listenAddr = *listenAddr
+	flags.Visit(func(f *flag.Flag) {
+		if f.Name == "listen" {
+			cfg.listenExplicit = true
+		}
+	})
 	if description != nil {
 		cfg.goalDescription = *description
 	}
@@ -185,7 +197,11 @@ func main() {
 	switch config.subcommand {
 	case "ensure":
 		reg, err := daemonctl.Ensure(daemonctl.Config{
-			Dir: dir, Version: version, Executable: exePath, ListenAddr: config.listenAddr,
+			Dir:            dir,
+			Version:        version,
+			Executable:     exePath,
+			ListenAddr:     config.listenAddr,
+			ListenExplicit: config.listenExplicit,
 		})
 		if err != nil {
 			log.Fatalf("ensure: %v", err)
@@ -214,13 +230,20 @@ func main() {
 		}
 		return
 	}
+	if err := runDaemon(config, dir); err != nil {
+		log.Printf("daemon: %v", err)
+		os.Exit(1)
+	}
+}
+
+func runDaemon(config cliConfig, dir string) error {
 	if err := prepareDaemonStart(dir); err != nil {
-		log.Fatalf("daemon: %v", err)
+		return err
 	}
 
 	s, err := store.Open(filepath.Join(dir, "atct.db"))
 	if err != nil {
-		log.Fatalf("open store: %v", err)
+		return fmt.Errorf("open store: %w", err)
 	}
 	defer s.Close()
 
@@ -229,7 +252,25 @@ func main() {
 
 	sock := filepath.Join(dir, "atct.sock")
 	d := daemon.New(s)
-	httpServer := &http.Server{Addr: config.listenAddr, Handler: d.HTTPHandler()}
+	httpListener, err := listenHTTP(config.listenAddr, config.listenExplicit)
+	if err != nil {
+		return err
+	}
+	httpServer := &http.Server{
+		Addr:    httpListener.Addr().String(),
+		Handler: d.HTTPHandler(),
+	}
+	defer func() {
+		stop()
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := httpServer.Shutdown(shutdownCtx); err != nil {
+			_ = httpServer.Close()
+		}
+		_ = httpListener.Close()
+		_ = daemonctl.RemoveRegistry(dir)
+		_ = os.Remove(sock)
+	}()
 
 	rpcErr := make(chan error, 1)
 	go func() {
@@ -238,7 +279,7 @@ func main() {
 
 	httpErr := make(chan error, 1)
 	go func() {
-		err := httpServer.ListenAndServe()
+		err := httpServer.Serve(httpListener)
 		if errors.Is(err, http.ErrServerClosed) {
 			httpErr <- nil
 			return
@@ -246,44 +287,66 @@ func main() {
 		httpErr <- err
 	}()
 
-	go func() {
-		<-ctx.Done()
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = httpServer.Shutdown(shutdownCtx)
-		_ = daemonctl.RemoveRegistry(dir)
-		_ = os.Remove(sock)
-	}()
-
-	if err := daemonctl.WriteRegistry(dir, daemonctl.Registry{
-		PID:        os.Getpid(),
-		HTTPAddr:   config.listenAddr,
-		SocketPath: sock,
-		Version:    version,
-		StartedAt:  time.Now().UTC().Format(time.RFC3339),
-	}); err != nil {
-		log.Fatalf("write registry: %v", err)
+	if err := daemonctl.WriteRegistry(dir, daemonRegistry(httpListener, sock, version)); err != nil {
+		return fmt.Errorf("write registry: %w", err)
 	}
 
-	log.Printf("atct daemon listening on unix socket %s and HTTP %s", sock, config.listenAddr)
+	log.Printf("atct daemon listening on unix socket %s and HTTP %s", sock, httpListener.Addr())
 	select {
 	case err := <-rpcErr:
 		if err != nil {
-			log.Fatalf("serve: %v", err)
+			return fmt.Errorf("serve: %w", err)
 		}
 	case err := <-httpErr:
 		if err != nil {
-			log.Fatalf("http serve: %v", err)
+			return fmt.Errorf("http serve: %w", err)
 		}
+	}
+	return nil
+}
+
+func listenHTTP(addr string, explicit bool) (net.Listener, error) {
+	if explicit || addr != defaultListenAddr {
+		listener, err := net.Listen("tcp", addr)
+		if err != nil {
+			return nil, fmt.Errorf("listen HTTP on %s: %w", addr, err)
+		}
+		return listener, nil
+	}
+
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, fmt.Errorf("parse default HTTP listen address %s: %w", addr, err)
+	}
+	var lastErr error
+	for port := defaultListenPort; port <= lastListenPort; port++ {
+		candidate := net.JoinHostPort(host, strconv.Itoa(port))
+		listener, err := net.Listen("tcp", candidate)
+		if err == nil {
+			return listener, nil
+		}
+		lastErr = err
+	}
+	return nil, fmt.Errorf("listen HTTP on %s: tried ports %d-%d: %w", host, defaultListenPort, lastListenPort, lastErr)
+}
+
+func daemonRegistry(listener net.Listener, socketPath, daemonVersion string) daemonctl.Registry {
+	return daemonctl.Registry{
+		PID:        os.Getpid(),
+		HTTPAddr:   listener.Addr().String(),
+		SocketPath: socketPath,
+		Version:    daemonVersion,
+		StartedAt:  time.Now().UTC().Format(time.RFC3339),
 	}
 }
 
 func runProject(config cliConfig, dir, exePath string) error {
 	reg, err := daemonctl.Ensure(daemonctl.Config{
-		Dir:        dir,
-		Version:    version,
-		Executable: exePath,
-		ListenAddr: config.listenAddr,
+		Dir:            dir,
+		Version:        version,
+		Executable:     exePath,
+		ListenAddr:     config.listenAddr,
+		ListenExplicit: config.listenExplicit,
 	})
 	if err != nil {
 		return err
@@ -365,7 +428,11 @@ func listProjects(ctx context.Context, client *mcpshim.Client) error {
 
 func runGoal(config cliConfig, dir, exePath string) error {
 	reg, err := daemonctl.Ensure(daemonctl.Config{
-		Dir: dir, Version: version, Executable: exePath, ListenAddr: config.listenAddr,
+		Dir:            dir,
+		Version:        version,
+		Executable:     exePath,
+		ListenAddr:     config.listenAddr,
+		ListenExplicit: config.listenExplicit,
 	})
 	if err != nil {
 		return err

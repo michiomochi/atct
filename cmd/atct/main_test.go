@@ -1,10 +1,13 @@
 package main
 
 import (
+	"errors"
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/michiomochi/atct/internal/daemonctl"
@@ -12,15 +15,17 @@ import (
 
 func TestParseArgs(t *testing.T) {
 	tests := []struct {
-		name       string
-		args       []string
-		wantListen string
-		wantErr    bool
+		name         string
+		args         []string
+		wantListen   string
+		wantExplicit bool
+		wantErr      bool
 	}{
 		{
-			name:       "daemon parses listen flag after subcommand",
-			args:       []string{"daemon", "-listen", "127.0.0.1:18787"},
-			wantListen: "127.0.0.1:18787",
+			name:         "daemon parses listen flag after subcommand",
+			args:         []string{"daemon", "-listen", "127.0.0.1:18787"},
+			wantListen:   "127.0.0.1:18787",
+			wantExplicit: true,
 		},
 		{
 			name:       "daemon uses loopback default",
@@ -51,8 +56,92 @@ func TestParseArgs(t *testing.T) {
 			if got.listenAddr != tt.wantListen {
 				t.Fatalf("parseArgs(%q) listenAddr = %q, want %q", tt.args, got.listenAddr, tt.wantListen)
 			}
+			if got.listenExplicit != tt.wantExplicit {
+				t.Fatalf("parseArgs(%q) listenExplicit = %v, want %v", tt.args, got.listenExplicit, tt.wantExplicit)
+			}
 		})
 	}
+}
+
+func TestListenHTTPFallsBackToNextDefaultPort(t *testing.T) {
+	listenTestTCP(t, defaultListenAddr)
+
+	listener, err := listenHTTP(defaultListenAddr, false)
+	if err != nil {
+		t.Fatalf("listenHTTP() error = %v", err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+
+	if got, want := listener.Addr().String(), "127.0.0.1:8788"; got != want {
+		t.Fatalf("listenHTTP() address = %q, want %q", got, want)
+	}
+}
+
+func TestListenHTTPExplicitAddressDoesNotFallBack(t *testing.T) {
+	blocker := listenTestTCP(t, "127.0.0.1:0")
+
+	listener, err := listenHTTP(blocker.Addr().String(), true)
+	if err == nil {
+		_ = listener.Close()
+		t.Fatal("listenHTTP() error = nil, want bind failure for explicit address")
+	}
+	if !strings.Contains(err.Error(), blocker.Addr().String()) {
+		t.Fatalf("listenHTTP() error = %q, want blocked address", err)
+	}
+}
+
+func TestDaemonRegistryRecordsActualHTTPBindAddress(t *testing.T) {
+	listener := listenTestTCP(t, "127.0.0.1:0")
+	dir := shortDaemonTestDir(t)
+	socketPath := filepath.Join(dir, "atct.sock")
+
+	want := listener.Addr().String()
+	registry := daemonRegistry(listener, socketPath, "0.5.0")
+	if registry.HTTPAddr != want {
+		t.Fatalf("daemonRegistry() HTTPAddr = %q, want %q", registry.HTTPAddr, want)
+	}
+	if err := daemonctl.WriteRegistry(dir, registry); err != nil {
+		t.Fatalf("WriteRegistry() error = %v", err)
+	}
+	got, err := daemonctl.ReadRegistry(dir)
+	if err != nil {
+		t.Fatalf("ReadRegistry() error = %v", err)
+	}
+	if got.HTTPAddr != want {
+		t.Fatalf("registry HTTPAddr = %q, want %q", got.HTTPAddr, want)
+	}
+}
+
+func TestListenHTTPReportsDefaultPortRangeWhenAllPortsAreBusy(t *testing.T) {
+	for port := 8787; port <= 8796; port++ {
+		listenTestTCP(t, "127.0.0.1:"+strconv.Itoa(port))
+	}
+
+	listener, err := listenHTTP(defaultListenAddr, false)
+	if err == nil {
+		_ = listener.Close()
+		t.Fatal("listenHTTP() error = nil, want all-candidates bind failure")
+	}
+	for _, want := range []string{"8787", "8796"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("listenHTTP() error = %q, want attempted range to include %s", err, want)
+		}
+	}
+}
+
+func listenTestTCP(t *testing.T, addr string) net.Listener {
+	t.Helper()
+
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		if addr == defaultListenAddr && errors.Is(err, syscall.EADDRINUSE) {
+			t.Logf("using the existing listener on %s as the occupied default port", addr)
+			return nil
+		}
+		t.Fatalf("net.Listen(%q) error = %v", addr, err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+	return listener
 }
 
 func TestParseArgsAcceptsEnsure(t *testing.T) {
@@ -82,6 +171,9 @@ func TestParseArgsAcceptsListenOnEnsure(t *testing.T) {
 	}
 	if cfg.listenAddr != "127.0.0.1:19999" {
 		t.Fatalf("listenAddr = %q, want %q", cfg.listenAddr, "127.0.0.1:19999")
+	}
+	if !cfg.listenExplicit {
+		t.Fatal("listenExplicit = false, want true")
 	}
 }
 
