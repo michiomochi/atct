@@ -99,6 +99,30 @@ ATCT closes it from the outside. When a session is about to finish and an answer
 a stop hook hands it back with the `decision_id` to pick up, and the work you were blocking
 continues. You do not have to time your reply to when an agent happens to be looking.
 
+## Starting work while you sleep
+
+The stop hook only reaches a session that is still open. To pick work up from nothing —
+after you answered overnight, or after you added a goal and closed the laptop — ask ATCT
+whether there is anything to do:
+
+```bash
+atct context --check    # exit 0: there is work. exit 1: nothing to do
+```
+
+It prints nothing, so it composes with anything that runs on a schedule:
+
+```bash
+# every 15 minutes, start a session only when there is something to start it for
+*/15 * * * * cd /path/to/repo && atct context --check && claude -p "/atct:start"
+```
+
+Work means an unapplied answer, an unclaimed task, or an active goal nobody has broken down
+yet. **A task someone is already working on does not count** — waking a second session for it
+gets the same work done twice.
+
+For harnesses without a stop hook, such as Codex, this is the whole mechanism rather than a
+supplement to one.
+
 ---
 
 ## The problem
