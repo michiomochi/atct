@@ -455,6 +455,71 @@ SCRIPT
   assert_file_contains 'pending' "$args_log"
 }
 
+test_stop_hook_blocks_when_pending_exists() {
+  local fixture="$TEMP_ROOT/stop-hook-pending"
+  local hook="$fixture/plugin/hooks/stop"
+  local adjacent="$fixture/plugin/bin/atct"
+  local pending_output='- Review mode? (decision_id: d-1)'
+  local output
+
+  mkdir -p "$(dirname "$hook")" "$(dirname "$adjacent")"
+  cp "$REPO_ROOT/plugin/hooks/stop" "$hook"
+  cat >"$adjacent" <<'SCRIPT'
+#!/bin/bash
+if [[ "${1:-}" == pending ]]; then
+  printf '%s' "$PENDING_OUTPUT"
+fi
+SCRIPT
+  chmod +x "$adjacent"
+
+  if ! output="$(PENDING_OUTPUT="$pending_output" PATH="" /bin/bash "$hook" <<< '{}' 2>&1)"; then
+    fail 'stop hook failed when atct pending reported an answer'
+  fi
+  [[ "$output" == *'"decision":"block"'* ]] || fail 'pending answer must block the stop hook'
+  [[ "$output" == *'"reason":'* ]] || fail 'pending answer must include a reason'
+  [[ "$output" == *"$pending_output"* ]] || fail 'reason must include pending output'
+}
+
+test_stop_hook_escapes_pending_json_characters() {
+  local fixture="$TEMP_ROOT/stop-hook-json-escape"
+  local hook="$fixture/plugin/hooks/stop"
+  local adjacent="$fixture/plugin/bin/atct"
+  local output_file="$fixture/output.json"
+  local pending_output
+  local expected_reason
+
+  pending_output=$'answer "quoted"\npath \\ root\tcolumn'
+  expected_reason=$'A human answered a decision you parked. Call \x60atct_decision_poll\x60 with each decision_id below, then continue the work that was waiting on it.\n\n'"$pending_output"$'\n'
+
+  mkdir -p "$(dirname "$hook")" "$(dirname "$adjacent")"
+  cp "$REPO_ROOT/plugin/hooks/stop" "$hook"
+  cat >"$adjacent" <<'SCRIPT'
+#!/bin/bash
+if [[ "${1:-}" == pending ]]; then
+  printf '%s' "$PENDING_OUTPUT"
+fi
+SCRIPT
+  chmod +x "$adjacent"
+
+  if ! PENDING_OUTPUT="$pending_output" PATH="" /bin/bash "$hook" <<< '{}' >"$output_file" 2>&1; then
+    fail 'stop hook failed while escaping pending output'
+  fi
+  if ! JSON_OUTPUT_FILE="$output_file" EXPECTED_REASON="$expected_reason" python3 -c '
+import json
+import os
+
+with open(os.environ["JSON_OUTPUT_FILE"], encoding="utf-8") as stream:
+    payload = json.load(stream)
+
+if payload.get("decision") != "block":
+    raise SystemExit("decision was not block")
+if payload.get("reason") != os.environ["EXPECTED_REASON"]:
+    raise SystemExit("reason did not round-trip exactly")
+'; then
+    fail 'stop hook output was not valid JSON or reason was altered'
+  fi
+}
+
 test_static_contract
 test_download_cache_and_mcp_stdout
 test_cleanup_failure_is_best_effort
@@ -469,4 +534,6 @@ test_session_start_is_silent_without_atct_wrapper
 test_stop_hook_active_is_silent
 test_stop_hook_is_silent_without_adjacent_wrapper
 test_stop_hook_is_silent_when_pending_is_empty
+test_stop_hook_blocks_when_pending_exists
+test_stop_hook_escapes_pending_json_characters
 printf 'PASS wrapper tests\n'
