@@ -183,6 +183,46 @@ test_download_cache_and_mcp_stdout() {
   assert_eq 4 "$(wc -l <"$curl_log" | tr -d ' ')" 'first executions should download archive and checksums once per binary'
 }
 
+test_context_check_preserves_exit_code() {
+  local fixtures="$TEMP_ROOT/context-check-fixtures"
+  local fake_bin="$TEMP_ROOT/context-check-fake-bin"
+  local home="$TEMP_ROOT/context-check-home"
+  local curl_log="$TEMP_ROOT/context-check-curl.log"
+  local stdout="$TEMP_ROOT/context-check.stdout"
+  local stderr="$TEMP_ROOT/context-check.stderr"
+  local archive="$fixtures/atct_0.7.0_darwin_arm64.tar.gz"
+  local checksum
+  local status=0
+
+  mkdir -p "$fixtures/payload" "$home"
+  cat >"$fixtures/payload/atct" <<'SCRIPT'
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "${1:-}" == context && "${2:-}" == --check ]]; then
+  exit 1
+fi
+exit 0
+SCRIPT
+  cat >"$fixtures/payload/atct-mcp" <<'SCRIPT'
+#!/usr/bin/env bash
+exit 0
+SCRIPT
+  chmod +x "$fixtures/payload/atct" "$fixtures/payload/atct-mcp"
+  tar -czf "$archive" -C "$fixtures/payload" atct atct-mcp
+  checksum="$(shasum -a 256 "$archive" | awk '{print $1}')"
+  printf '%s  %s\n' "$checksum" "${archive##*/}" >"$fixtures/checksums.txt"
+  : >"$curl_log"
+  write_fake_tools "$fake_bin"
+
+  HOME="$home" PATH="$fake_bin:$PATH" FIXTURES_DIR="$fixtures" CURL_LOG="$curl_log" FAKE_OS=Darwin FAKE_ARCH=arm64 \
+    "$REPO_ROOT/plugin/bin/atct" context --check >"$stdout" 2>"$stderr" || status=$?
+
+  assert_eq 1 "$status" 'context --check exit status must pass through the shell wrapper'
+  assert_empty_file "$stdout"
+  assert_empty_file "$stderr"
+}
+
 test_cleanup_failure_is_best_effort() {
   local home="$TEMP_ROOT/cleanup-failure-home"
   local fake_bin="$TEMP_ROOT/cleanup-failure-fake-bin"
@@ -522,6 +562,7 @@ if payload.get("reason") != os.environ["EXPECTED_REASON"]:
 
 test_static_contract
 test_download_cache_and_mcp_stdout
+test_context_check_preserves_exit_code
 test_cleanup_failure_is_best_effort
 test_checksum_failure
 test_missing_checksum_tool_fails
