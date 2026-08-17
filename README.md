@@ -15,23 +15,39 @@ When the goal is met, it comes back to you for sign-off.
 
 ## Install
 
-ATCT ships two binaries and a Claude Code plugin. The binaries do the work; the plugin
-tells your agent to use them.
-
 ```bash
-# 1. Binaries
-brew install --cask michiomochi/tap/atct
-# or, with a Go toolchain:
-#   go install github.com/michiomochi/atct/cmd/atct@latest
-#   go install github.com/michiomochi/atct/cmd/atct-mcp@latest
-
-# 2. Claude Code plugin
 claude plugin marketplace add michiomochi/atct
 claude plugin install atct@atct
 ```
 
+That is the whole install. **No Homebrew, no Go toolchain, no `PATH` to edit.** The plugin
+ships wrappers that fetch the two binaries the first time something needs them, verify them
+against the release checksums, and cache them under `~/.atct/bin/`.
+
+Restart Claude Code once — or run `/reload-plugins` — so the new MCP server is picked up.
+
 macOS and Linux, on amd64 and arm64. Windows is not supported: the daemon talks over a Unix
 domain socket.
+
+<details>
+<summary>Installing the binaries yourself</summary>
+
+The wrappers exist so you don't have to. If you would rather manage the binaries — to pin a
+version, to install offline, or to use `atct` from a shell outside any plugin:
+
+```bash
+brew install --cask michiomochi/tap/atct
+# or, with a Go toolchain:
+#   go install github.com/michiomochi/atct/cmd/atct@latest
+#   go install github.com/michiomochi/atct/cmd/atct-mcp@latest
+```
+
+Note that the wrappers do not consult `PATH`. They always run the binary matching the
+plugin's own version, so an agent never talks to a daemon built from a different release than
+the tool definitions it was given. Installing the binaries yourself gives you `atct` in any
+shell; it does not change what the plugin runs.
+
+</details>
 
 ## Getting started
 
@@ -126,9 +142,10 @@ flowchart LR
   H((You)) --> UI
 ```
 
-Agents reach ATCT over MCP, so there are no harness-specific hooks to install — anything that speaks
-MCP works, with one line of configuration. Everything runs on your machine: a single binary, a
-SQLite file, and a browser tab. No account, no server, no data leaving the host.
+Agents reach ATCT over MCP, so anything that speaks MCP works — the Claude Code plugin is a
+convenience, not the interface. For other harnesses, point them at `atct-mcp` and you have the same
+eight tools. Everything runs on your machine: two binaries, a SQLite file, and a browser tab. No
+account, no server, no data leaving the host.
 
 ATCT does not start, stop, or supervise agents. It holds the tasks and the decisions. How you run
 agents stays your business.
