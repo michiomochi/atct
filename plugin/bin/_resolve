@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION="0.3.0"
+VERSION="0.4.0"
 RELEASE_BASE="https://github.com/michiomochi/atct/releases/download/v${VERSION}"
 
 fail() {
@@ -26,6 +26,27 @@ HOME_DIR="${HOME:-}"
 
 CACHE_DIR="$HOME_DIR/.atct/bin"
 CACHED_BINARY="$CACHE_DIR/${BINARY_NAME}-${VERSION}"
+
+if ! mkdir -p "$CACHE_DIR"; then
+  fail "Could not create the cache directory <$CACHE_DIR>. Check its permissions, or install with brew or go install."
+fi
+
+TEMP_DIR=''
+cleanup() {
+  if [[ -n "$TEMP_DIR" && -e "$TEMP_DIR" ]]; then
+    rm -rf -- "$TEMP_DIR"
+  fi
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+for stale_dir in "$CACHE_DIR"/.download.*; do
+  [[ -d "$stale_dir" ]] || continue
+  if ! rm -rf -- "$stale_dir"; then
+    fail "Could not remove the stale download directory <$stale_dir>. Check permissions and retry, or install with brew or go install."
+  fi
+done
 
 if [[ -x "$CACHED_BINARY" ]]; then
   exec "$CACHED_BINARY" "$@"
@@ -64,18 +85,6 @@ fi
 ARCHIVE_NAME="atct_${VERSION}_${OS}_${ARCH}.tar.gz"
 ARCHIVE_URL="${RELEASE_BASE}/${ARCHIVE_NAME}"
 CHECKSUMS_URL="${RELEASE_BASE}/checksums.txt"
-
-if ! mkdir -p "$CACHE_DIR"; then
-  fail "Could not create the cache directory <$CACHE_DIR>. Check its permissions, or install ATCT with brew install --cask michiomochi/tap/atct or go install."
-fi
-
-TEMP_DIR=''
-cleanup() {
-  if [[ -n "$TEMP_DIR" ]]; then
-    rm -rf "$TEMP_DIR"
-  fi
-}
-trap cleanup EXIT
 
 if ! TEMP_DIR="$(mktemp -d "$CACHE_DIR/.download.XXXXXX")"; then
   fail "Could not create a temporary download directory in <$CACHE_DIR>. Check its permissions, or install ATCT with brew install --cask michiomochi/tap/atct or go install."
@@ -129,4 +138,5 @@ if ! mv "$TEMP_DIR/$BINARY_NAME" "$CACHED_BINARY"; then
   fail "Could not cache <$BINARY_NAME> in <$CACHE_DIR>. Check permissions and retry, or install ATCT with brew install --cask michiomochi/tap/atct or go install."
 fi
 
+cleanup
 exec "$CACHED_BINARY" "$@"
