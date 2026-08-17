@@ -13,25 +13,32 @@ import (
 )
 
 var (
-	ErrDecisionNotFound    = errors.New("decision not found")
-	ErrDecisionNotOpen     = errors.New("decision is not open")
-	ErrTaskHasOpenDecision = errors.New("task has an open decision")
-	ErrGoalHasOpenDecision = errors.New("goal has an open decision")
+	ErrDecisionNotFound       = errors.New("decision not found")
+	ErrDecisionNotOpen        = errors.New("decision is not open")
+	ErrInvalidDecisionDefault = errors.New("invalid decision default")
+	ErrTaskHasOpenDecision    = errors.New("task has an open decision")
+	ErrGoalHasOpenDecision    = errors.New("goal has an open decision")
 )
 
 type AskInput struct {
-	GoalID   string
-	TaskID   string
-	Kind     domain.DecisionKind
-	Question string
-	Options  []domain.Option
-	RunID    string
+	GoalID         string
+	TaskID         string
+	Kind           domain.DecisionKind
+	Question       string
+	Options        []domain.Option
+	DefaultOption  string
+	DefaultAfterMs *int64
+	RunID          string
 }
 
 const decisionColumns = `id, goal_id, COALESCE(task_id, ''), kind, question, options, status,
+	default_option, default_after_ms, default_applied_at,
 	answer_label, answer_text, answered_by, answered_at, applied_at, run_id, created_at`
 
 func (s *Store) AskDecision(ctx context.Context, in AskInput) (domain.Decision, error) {
+	if err := validateDecisionDefault(in.Options, in.DefaultOption, in.DefaultAfterMs); err != nil {
+		return domain.Decision{}, err
+	}
 	if in.Options == nil {
 		in.Options = []domain.Option{}
 	}
@@ -41,15 +48,20 @@ func (s *Store) AskDecision(ctx context.Context, in AskInput) (domain.Decision, 
 	}
 
 	d := domain.Decision{
-		ID:        uuid.NewString(),
-		GoalID:    in.GoalID,
-		TaskID:    in.TaskID,
-		Kind:      in.Kind,
-		Question:  in.Question,
-		Options:   in.Options,
-		Status:    domain.DecisionOpen,
-		RunID:     in.RunID,
-		CreatedAt: time.Now().UTC(),
+		ID:            uuid.NewString(),
+		GoalID:        in.GoalID,
+		TaskID:        in.TaskID,
+		Kind:          in.Kind,
+		Question:      in.Question,
+		Options:       in.Options,
+		DefaultOption: in.DefaultOption,
+		Status:        domain.DecisionOpen,
+		RunID:         in.RunID,
+		CreatedAt:     time.Now().UTC(),
+	}
+	if in.DefaultAfterMs != nil {
+		after := *in.DefaultAfterMs
+		d.DefaultAfterMs = &after
 	}
 
 	var taskID any
@@ -57,11 +69,16 @@ func (s *Store) AskDecision(ctx context.Context, in AskInput) (domain.Decision, 
 		taskID = in.TaskID
 	}
 
+	var defaultAfterMs any
+	if in.DefaultAfterMs != nil {
+		defaultAfterMs = *in.DefaultAfterMs
+	}
 	_, err = s.db.ExecContext(ctx,
-		`INSERT INTO decisions (id, goal_id, task_id, kind, question, options, status, run_id, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO decisions (id, goal_id, task_id, kind, question, options, status,
+		 default_option, default_after_ms, run_id, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		d.ID, d.GoalID, taskID, string(d.Kind), d.Question, string(raw),
-		string(d.Status), d.RunID, d.CreatedAt.Format(time.RFC3339))
+		string(d.Status), d.DefaultOption, defaultAfterMs, d.RunID, d.CreatedAt.Format(time.RFC3339))
 	if err != nil {
 		return domain.Decision{}, fmt.Errorf("insert decision: %w", err)
 	}
@@ -71,18 +88,42 @@ func (s *Store) AskDecision(ctx context.Context, in AskInput) (domain.Decision, 
 	return d, nil
 }
 
+func validateDecisionDefault(options []domain.Option, defaultOption string, defaultAfterMs *int64) error {
+	if defaultOption == "" && defaultAfterMs == nil {
+		return nil
+	}
+	if defaultOption == "" {
+		return fmt.Errorf("%w: default_option is required", ErrInvalidDecisionDefault)
+	}
+	if defaultAfterMs != nil && *defaultAfterMs < 0 {
+		return fmt.Errorf("%w: default_after_ms must not be negative", ErrInvalidDecisionDefault)
+	}
+	for _, option := range options {
+		if option.Label == defaultOption {
+			return nil
+		}
+	}
+	return fmt.Errorf("%w: default_option %q is not one of the option labels", ErrInvalidDecisionDefault, defaultOption)
+}
+
 func scanDecision(sc interface{ Scan(...any) error }) (domain.Decision, error) {
 	var d domain.Decision
 	var kind, status, rawOptions, createdAt string
-	var answeredAt, appliedAt sql.NullString
+	var defaultAfterMs sql.NullInt64
+	var defaultAppliedAt, answeredAt, appliedAt sql.NullString
 
 	if err := sc.Scan(&d.ID, &d.GoalID, &d.TaskID, &kind, &d.Question, &rawOptions, &status,
+		&d.DefaultOption, &defaultAfterMs, &defaultAppliedAt,
 		&d.AnswerLabel, &d.AnswerText, &d.AnsweredBy, &answeredAt, &appliedAt,
 		&d.RunID, &createdAt); err != nil {
 		return domain.Decision{}, err
 	}
 	d.Kind = domain.DecisionKind(kind)
 	d.Status = domain.DecisionStatus(status)
+	if defaultAfterMs.Valid {
+		after := defaultAfterMs.Int64
+		d.DefaultAfterMs = &after
+	}
 	if err := json.Unmarshal([]byte(rawOptions), &d.Options); err != nil {
 		return domain.Decision{}, fmt.Errorf("unmarshal options: %w", err)
 	}
@@ -103,6 +144,13 @@ func scanDecision(sc interface{ Scan(...any) error }) (domain.Decision, error) {
 			return domain.Decision{}, fmt.Errorf("parse applied_at: %w", err)
 		}
 		d.AppliedAt = &t
+	}
+	if defaultAppliedAt.Valid {
+		t, err := time.Parse(time.RFC3339, defaultAppliedAt.String)
+		if err != nil {
+			return domain.Decision{}, fmt.Errorf("parse default_applied_at: %w", err)
+		}
+		d.DefaultAppliedAt = &t
 	}
 	return d, nil
 }
@@ -195,6 +243,84 @@ func (s *Store) answerDecision(ctx context.Context, in AnswerInput, eventName st
 	s.notify.publishAll()
 	s.notify.publishEvent(DecisionEvent{Name: eventName, Decision: d})
 	return d, nil
+}
+
+// ApplyExpiredDefaults settles open decisions whose default timeout has elapsed.
+// The selection and conditional update happen in one transaction so a human answer
+// that wins the open-to-answered transition cannot be overwritten by a default.
+func (s *Store) ApplyExpiredDefaults(ctx context.Context, now time.Time) (int, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	rows, err := tx.QueryContext(ctx,
+		`SELECT `+decisionColumns+` FROM decisions
+		 WHERE status = 'open' AND default_after_ms IS NOT NULL AND default_option != ''
+		 ORDER BY created_at`)
+	if err != nil {
+		return 0, fmt.Errorf("query expired decisions: %w", err)
+	}
+
+	var candidates []domain.Decision
+	for rows.Next() {
+		d, err := scanDecision(rows)
+		if err != nil {
+			rows.Close()
+			return 0, err
+		}
+		if d.DefaultAfterMs != nil && !now.Before(d.CreatedAt.Add(time.Duration(*d.DefaultAfterMs)*time.Millisecond)) {
+			candidates = append(candidates, d)
+		}
+	}
+	if err := rows.Close(); err != nil {
+		return 0, fmt.Errorf("close expired decisions: %w", err)
+	}
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+
+	settledAt := now.UTC()
+	settledAtText := settledAt.Format(time.RFC3339)
+	var settledDecisions []domain.Decision
+	for i := range candidates {
+		result, err := tx.ExecContext(ctx,
+			`UPDATE decisions
+			 SET status = 'answered', answer_label = ?, answered_at = ?, default_applied_at = ?
+			 WHERE id = ? AND status = 'open'`,
+			candidates[i].DefaultOption, settledAtText, settledAtText, candidates[i].ID)
+		if err != nil {
+			return 0, fmt.Errorf("apply default: %w", err)
+		}
+		updated, err := result.RowsAffected()
+		if err != nil {
+			return 0, fmt.Errorf("default rows affected: %w", err)
+		}
+		if updated == 0 {
+			continue
+		}
+		candidates[i].Status = domain.DecisionAnswered
+		candidates[i].AnswerLabel = candidates[i].DefaultOption
+		answeredAt := settledAt
+		candidates[i].AnsweredAt = &answeredAt
+		defaultAppliedAt := settledAt
+		candidates[i].DefaultAppliedAt = &defaultAppliedAt
+		settledDecisions = append(settledDecisions, candidates[i])
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("commit: %w", err)
+	}
+
+	for _, d := range settledDecisions {
+		s.notify.publish(d.ID)
+		s.notify.publishEvent(DecisionEvent{Name: "decision.answered", Decision: d})
+	}
+	if len(settledDecisions) > 0 {
+		s.notify.publishAll()
+	}
+	return len(settledDecisions), nil
 }
 
 func (s *Store) WithdrawDecision(ctx context.Context, decisionID, reason string) error {

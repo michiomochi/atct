@@ -39,7 +39,8 @@ type goalView struct {
 
 type decisionView struct {
 	domain.Decision
-	ProjectName string `json:"project_name"`
+	ProjectName      string `json:"project_name"`
+	SettledByDefault bool   `json:"settled_by_default"`
 }
 
 type inboxResponse struct {
@@ -257,15 +258,17 @@ func (s *Server) handleInbox(w http.ResponseWriter, r *http.Request) {
 	openDecisionViews := make([]decisionView, 0, len(openDecisions))
 	for _, decision := range openDecisions {
 		openDecisionViews = append(openDecisionViews, decisionView{
-			Decision:    decision,
-			ProjectName: goalProjectNames[decision.GoalID],
+			Decision:         decision,
+			ProjectName:      goalProjectNames[decision.GoalID],
+			SettledByDefault: decision.DefaultAppliedAt != nil,
 		})
 	}
 	unappliedDecisionViews := make([]decisionView, 0, len(unapplied))
 	for _, decision := range unapplied {
 		unappliedDecisionViews = append(unappliedDecisionViews, decisionView{
-			Decision:    decision,
-			ProjectName: goalProjectNames[decision.GoalID],
+			Decision:         decision,
+			ProjectName:      goalProjectNames[decision.GoalID],
+			SettledByDefault: decision.DefaultAppliedAt != nil,
 		})
 	}
 	activeGoals := make([]goalView, 0)

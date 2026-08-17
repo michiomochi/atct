@@ -11,6 +11,7 @@ import (
 	"os"
 	"path"
 	"strings"
+	"time"
 
 	"github.com/michiomochi/atct/internal/httpapi"
 	"github.com/michiomochi/atct/internal/rpc"
@@ -79,6 +80,26 @@ func (d *Daemon) Serve(ctx context.Context, socketPath string) error {
 		return fmt.Errorf("listen %s: %w", socketPath, err)
 	}
 	defer ln.Close()
+
+	tickerCtx, stopTicker := context.WithCancel(ctx)
+	tickerDone := make(chan struct{})
+	go func() {
+		defer close(tickerDone)
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-tickerCtx.Done():
+				return
+			case now := <-ticker.C:
+				_, _ = d.store.ApplyExpiredDefaults(tickerCtx, now)
+			}
+		}
+	}()
+	defer func() {
+		stopTicker()
+		<-tickerDone
+	}()
 
 	go func() {
 		<-ctx.Done()

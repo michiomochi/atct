@@ -1,6 +1,6 @@
 import type { Decision } from "../lib/api";
 import { formatDateTime } from "../i18n";
-import { decisionKindLabel, encodePathSegment, statusLabel } from "../lib/ui";
+import { decisionKindLabel, decisionSettlementLabel, encodePathSegment, statusLabel } from "../lib/ui";
 import { Table } from "@cloudflare/kumo/components/table";
 import { useTranslation } from "react-i18next";
 import { EmptyState } from "./StateMessage";
@@ -35,6 +35,7 @@ export function DecisionTable({ decisions, emptyText }: Props) {
         <Table.Body>
           {decisions.map((decision) => {
             const answer = [decision.answer_label, decision.answer_text].filter(Boolean).join(" - ");
+            const settlement = decisionSettlementLabel(locale, decision.settled_by_default === true);
             return (
               <Table.Row className="border-b border-line align-top last:border-b-0" key={decision.id}>
                 <Table.Cell className="px-3 py-4">
@@ -43,7 +44,10 @@ export function DecisionTable({ decisions, emptyText }: Props) {
                   </p>
                   <p className="mt-1 font-mono text-xs text-ink-500">{decisionKindLabel(locale, decision.kind)}</p>
                 </Table.Cell>
-                <Table.Cell className="px-3 py-4 text-ink-700">{statusLabel(locale, decision.status)}</Table.Cell>
+                <Table.Cell className="px-3 py-4 text-ink-700">
+                  <p>{statusLabel(locale, decision.status)}</p>
+                  {settlement && <p className="mt-1 text-xs text-ink-500">{settlement}</p>}
+                </Table.Cell>
                 <Table.Cell className="px-3 py-4 text-ink-700">
                   {answer ? <p className="text-clamp-2" title={answer}>{answer}</p> : "-"}
                 </Table.Cell>

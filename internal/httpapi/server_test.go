@@ -29,6 +29,11 @@ type fixture struct {
 	answered domain.Decision
 }
 
+type decisionViewResponse struct {
+	domain.Decision
+	SettledByDefault bool `json:"settled_by_default"`
+}
+
 func newFixture(t *testing.T) *fixture {
 	t.Helper()
 	f := newBareFixture(t)
@@ -92,6 +97,44 @@ func newBareFixture(t *testing.T) *fixture {
 		t.Fatal(err)
 	}
 	return &fixture{ctx: ctx, store: db, project: ns, goal: goal}
+}
+
+func TestHTTPInboxMarksDefaultSettledDecision(t *testing.T) {
+	f := newBareFixture(t)
+	afterMs := int64(1)
+	decision, err := f.store.AskDecision(f.ctx, store.AskInput{
+		GoalID:         f.goal.ID,
+		Kind:           domain.DecisionKind("question"),
+		Question:       "Which option should be used?",
+		Options:        []domain.Option{{Label: "A"}, {Label: "B"}},
+		DefaultOption:  "A",
+		DefaultAfterMs: &afterMs,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.store.ApplyExpiredDefaults(f.ctx, decision.CreatedAt.Add(time.Millisecond)); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+	status, _, body := doRequest(t, srv.Client(), http.MethodGet, srv.URL+"/api/inbox", nil)
+	if status != http.StatusOK {
+		t.Fatalf("inbox status = %d; body=%s", status, body)
+	}
+	var response struct {
+		UnappliedDecisions []decisionViewResponse `json:"unapplied_decisions"`
+	}
+	if err := json.Unmarshal(body, &response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.UnappliedDecisions) != 1 || response.UnappliedDecisions[0].ID != decision.ID {
+		t.Fatalf("unapplied decisions = %+v", response.UnappliedDecisions)
+	}
+	if !response.UnappliedDecisions[0].SettledByDefault {
+		t.Fatalf("settled_by_default = false; response=%s", body)
+	}
 }
 
 func newTestServer(t *testing.T, db *store.Store) *httptest.Server {

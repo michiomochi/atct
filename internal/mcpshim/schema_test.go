@@ -8,7 +8,10 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
+	"github.com/michiomochi/atct/internal/daemon"
+	"github.com/michiomochi/atct/internal/store"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -145,4 +148,156 @@ func startSchemaTestDaemon(t *testing.T) string {
 		os.RemoveAll(dir)
 	})
 	return socketPath
+}
+
+func TestDecisionAskRejectsDefaultNotInOptions(t *testing.T) {
+	result, callErr, s, goalID := callDecisionAsk(t, map[string]any{
+		"options": []map[string]any{
+			{"label": "A", "description": "", "consequence": ""},
+			{"label": "B", "description": "", "consequence": ""},
+		},
+		"default_option": "C",
+		"wait_ms":        0,
+	})
+	if callErr == nil && (result == nil || !result.IsError) {
+		t.Fatalf("decision.ask with invalid default succeeded: result=%+v", result)
+	}
+	open, err := s.ListOpenDecisions(context.Background(), goalID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(open) != 0 {
+		t.Fatalf("invalid default created %d decisions, want none", len(open))
+	}
+}
+
+func TestDecisionAskAcceptsDefaultMatchingOption(t *testing.T) {
+	result, callErr, s, goalID := callDecisionAsk(t, map[string]any{
+		"options": []map[string]any{
+			{"label": "A", "description": "", "consequence": ""},
+			{"label": "B", "description": "", "consequence": ""},
+		},
+		"default_option":   "A",
+		"default_after_ms": 0,
+		"wait_ms":          0,
+	})
+	if callErr != nil {
+		t.Fatalf("decision.ask with valid default: %v", callErr)
+	}
+	if result == nil || result.IsError {
+		t.Fatalf("decision.ask with valid default returned error result: %+v", result)
+	}
+	open, err := s.ListOpenDecisions(context.Background(), goalID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(open) != 1 {
+		t.Fatalf("valid default created %d decisions, want 1", len(open))
+	}
+	if open[0].DefaultOption != "A" {
+		t.Fatalf("DefaultOption = %q, want A", open[0].DefaultOption)
+	}
+	if open[0].DefaultAfterMs == nil || *open[0].DefaultAfterMs != 0 {
+		t.Fatalf("DefaultAfterMs = %v, want pointer to 0", open[0].DefaultAfterMs)
+	}
+}
+
+func TestDecisionAskWithoutDefaultStillWorks(t *testing.T) {
+	result, callErr, s, goalID := callDecisionAsk(t, map[string]any{
+		"options": []map[string]any{
+			{"label": "A", "description": "", "consequence": ""},
+			{"label": "B", "description": "", "consequence": ""},
+		},
+		"wait_ms": 0,
+	})
+	if callErr != nil {
+		t.Fatalf("decision.ask without default: %v", callErr)
+	}
+	if result == nil || result.IsError {
+		t.Fatalf("decision.ask without default returned error result: %+v", result)
+	}
+	open, err := s.ListOpenDecisions(context.Background(), goalID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(open) != 1 {
+		t.Fatalf("decision without default created %d decisions, want 1", len(open))
+	}
+	if open[0].DefaultOption != "" || open[0].DefaultAfterMs != nil {
+		t.Fatalf("decision without default has default fields: %+v", open[0])
+	}
+}
+
+func callDecisionAsk(t *testing.T, args map[string]any) (*mcp.CallToolResult, error, *store.Store, string) {
+	t.Helper()
+	dir := t.TempDir()
+	s, err := store.Open(filepath.Join(dir, "atct.db"))
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	project, err := s.CreateProject(context.Background(), "atct", "/repos/atct")
+	if err != nil {
+		s.Close()
+		t.Fatalf("CreateProject: %v", err)
+	}
+	goal, err := s.CreateGoal(context.Background(), project.ID, "decision defaults", "")
+	if err != nil {
+		s.Close()
+		t.Fatalf("CreateGoal: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	socketDir, err := os.MkdirTemp("/tmp", "atct")
+	if err != nil {
+		s.Close()
+		t.Fatalf("MkdirTemp socket: %v", err)
+	}
+	socketPath := filepath.Join(socketDir, "daemon.sock")
+	go daemon.New(s).Serve(ctx, socketPath)
+	var probe net.Conn
+	for i := 0; i < 50; i++ {
+		probe, err = net.Dial("unix", socketPath)
+		if err == nil {
+			probe.Close()
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if err != nil {
+		cancel()
+		s.Close()
+		t.Fatalf("dial daemon: %v", err)
+	}
+
+	server := mcp.NewServer(&mcp.Implementation{Name: "atct-test", Version: "test"}, nil)
+	Register(server, NewClient(socketPath), "run-test")
+	clientTransport, serverTransport := mcp.NewInMemoryTransports()
+	serverSession, err := server.Connect(ctx, serverTransport, nil)
+	if err != nil {
+		cancel()
+		s.Close()
+		t.Fatalf("server.Connect: %v", err)
+	}
+	client := mcp.NewClient(&mcp.Implementation{Name: "schema-test", Version: "test"}, nil)
+	clientSession, err := client.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		serverSession.Close()
+		cancel()
+		s.Close()
+		t.Fatalf("client.Connect: %v", err)
+	}
+	t.Cleanup(func() {
+		clientSession.Close()
+		serverSession.Close()
+		cancel()
+		s.Close()
+		os.RemoveAll(socketDir)
+	})
+
+	args["goal_id"] = goal.ID
+	args["question"] = "Should we continue?"
+	got, callErr := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name: "atct_decision_ask", Arguments: args,
+	})
+	return got, callErr, s, goal.ID
 }

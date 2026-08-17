@@ -106,3 +106,7 @@ export function decisionKindLabel(locale: Locale, kind: string): string {
   const key = decisionKindKeys[kind];
   return key ? localized(key, locale) : kind;
 }
+
+export function decisionSettlementLabel(locale: Locale, settledByDefault: boolean): string | undefined {
+  return settledByDefault ? localized("decision.settledByDefault", locale) : undefined;
+}

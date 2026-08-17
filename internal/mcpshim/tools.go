@@ -30,11 +30,13 @@ type TaskUpdateIn struct {
 }
 
 type DecisionAskIn struct {
-	GoalID   string          `json:"goal_id"`
-	TaskID   string          `json:"task_id,omitempty"`
-	Question string          `json:"question" jsonschema:"describe the decision required from the human"`
-	Options  []domain.Option `json:"options" jsonschema:"options; explain the consequence of each choice; may be empty"`
-	WaitMs   *int            `json:"wait_ms,omitempty" jsonschema:"milliseconds to wait for an answer; defaults to 30000; returns parked after timeout"`
+	GoalID         string          `json:"goal_id"`
+	TaskID         string          `json:"task_id,omitempty"`
+	Question       string          `json:"question" jsonschema:"describe the decision required from the human"`
+	Options        []domain.Option `json:"options" jsonschema:"options; explain the consequence of each choice; may be empty"`
+	DefaultOption  string          `json:"default_option,omitempty" jsonschema:"option label to apply after the timeout; must match one of the option labels"`
+	DefaultAfterMs *int64          `json:"default_after_ms,omitempty" jsonschema:"milliseconds after which the default option is applied; 0 applies immediately"`
+	WaitMs         *int            `json:"wait_ms,omitempty" jsonschema:"milliseconds to wait for an answer; defaults to 30000; returns parked after timeout"`
 }
 
 type DecisionPollIn struct {
@@ -126,6 +128,12 @@ func Register(server *mcp.Server, c *Client, runID string) {
 		params := map[string]any{
 			"goal_id": in.GoalID, "task_id": in.TaskID, "question": in.Question,
 			"options": in.Options, "run_id": runID,
+		}
+		if in.DefaultOption != "" {
+			params["default_option"] = in.DefaultOption
+		}
+		if in.DefaultAfterMs != nil {
+			params["default_after_ms"] = *in.DefaultAfterMs
 		}
 		if in.WaitMs != nil {
 			params["wait_ms"] = *in.WaitMs

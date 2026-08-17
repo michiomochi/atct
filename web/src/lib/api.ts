@@ -54,6 +54,7 @@ export interface Decision {
   question: string;
   options: Option[];
   status: string;
+  settled_by_default?: boolean;
   answer_label?: string;
   answer_text?: string;
   answered_by?: string;

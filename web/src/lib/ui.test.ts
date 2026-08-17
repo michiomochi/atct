@@ -15,6 +15,7 @@ import { formatDateTime, formatDuration, type Locale } from "../i18n";
 import {
   DECISION_EVENT_NAMES,
   decisionKindLabel,
+  decisionSettlementLabel,
   findOpenCompletion,
   isDecisionEventName,
   resolveGoalID,
@@ -108,6 +109,12 @@ describe("localized UI labels", () => {
     ["ja", "completion", "\u5b8c\u4e86"],
   ])("labels %s kind %s as %s", (locale, kind, expected) => {
     expect(decisionKindLabel(locale as Locale, kind)).toBe(expected);
+  });
+
+  it("labels decisions settled by the default after a timeout", () => {
+    expect(decisionSettlementLabel("en", true)).toBe("Settled by default after timeout");
+    expect(decisionSettlementLabel("ja", true)).toBe("期限切れのため既定値で確定");
+    expect(decisionSettlementLabel("en", false)).toBeUndefined();
   });
 });
 

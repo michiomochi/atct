@@ -31,6 +31,7 @@ export const en = {
   "decision.column.project": "Project",
   "decision.column.goal": "Goal",
   "decision.column.createdAt": "Created at",
+  "decision.settledByDefault": "Settled by default after timeout",
   "status.task.todo": "Not started",
   "status.task.doing": "In progress",
   "status.task.done": "Completed",

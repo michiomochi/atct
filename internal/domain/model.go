@@ -42,18 +42,21 @@ type Task struct {
 }
 
 type Decision struct {
-	ID          string         `json:"id"`
-	GoalID      string         `json:"goal_id"`
-	TaskID      string         `json:"task_id,omitempty"`
-	Kind        DecisionKind   `json:"kind"`
-	Question    string         `json:"question"`
-	Options     []Option       `json:"options"`
-	Status      DecisionStatus `json:"status"`
-	AnswerLabel string         `json:"answer_label,omitempty"`
-	AnswerText  string         `json:"answer_text,omitempty"`
-	AnsweredBy  string         `json:"answered_by,omitempty"`
-	AnsweredAt  *time.Time     `json:"answered_at,omitempty"`
-	AppliedAt   *time.Time     `json:"applied_at,omitempty"`
-	RunID       string         `json:"run_id"`
-	CreatedAt   time.Time      `json:"created_at"`
+	ID               string         `json:"id"`
+	GoalID           string         `json:"goal_id"`
+	TaskID           string         `json:"task_id,omitempty"`
+	Kind             DecisionKind   `json:"kind"`
+	Question         string         `json:"question"`
+	Options          []Option       `json:"options"`
+	Status           DecisionStatus `json:"status"`
+	DefaultOption    string         `json:"default_option,omitempty"`
+	DefaultAfterMs   *int64         `json:"default_after_ms,omitempty"`
+	DefaultAppliedAt *time.Time     `json:"default_applied_at,omitempty"`
+	AnswerLabel      string         `json:"answer_label,omitempty"`
+	AnswerText       string         `json:"answer_text,omitempty"`
+	AnsweredBy       string         `json:"answered_by,omitempty"`
+	AnsweredAt       *time.Time     `json:"answered_at,omitempty"`
+	AppliedAt        *time.Time     `json:"applied_at,omitempty"`
+	RunID            string         `json:"run_id"`
+	CreatedAt        time.Time      `json:"created_at"`
 }

@@ -142,19 +142,22 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 
 	case "decision.ask":
 		var p struct {
-			GoalID   string          `json:"goal_id"`
-			TaskID   string          `json:"task_id"`
-			Question string          `json:"question"`
-			Options  []domain.Option `json:"options"`
-			RunID    string          `json:"run_id"`
-			WaitMs   *int            `json:"wait_ms"`
+			GoalID         string          `json:"goal_id"`
+			TaskID         string          `json:"task_id"`
+			Question       string          `json:"question"`
+			Options        []domain.Option `json:"options"`
+			DefaultOption  string          `json:"default_option"`
+			DefaultAfterMs *int64          `json:"default_after_ms"`
+			RunID          string          `json:"run_id"`
+			WaitMs         *int            `json:"wait_ms"`
 		}
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, err
 		}
 		dec, err := d.store.AskDecision(ctx, store.AskInput{
 			GoalID: p.GoalID, TaskID: p.TaskID, Kind: domain.KindDecision,
-			Question: p.Question, Options: p.Options, RunID: p.RunID,
+			Question: p.Question, Options: p.Options, DefaultOption: p.DefaultOption,
+			DefaultAfterMs: p.DefaultAfterMs, RunID: p.RunID,
 		})
 		if err != nil {
 			return nil, err
