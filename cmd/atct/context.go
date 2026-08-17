@@ -17,36 +17,54 @@ type contextGoal struct {
 	Tasks []domain.Task
 }
 
+type contextSnapshot struct {
+	goals     []contextGoal
+	decisions []domain.Decision
+}
+
+var errNoContextWork = errors.New("no context work")
+
 // contextText reads the local store directly. The context command is used by
 // SessionStart, so it must not start, stop, or upgrade a daemon just to print
 // the state that is already persisted in the database.
 func contextText(dir, cwd string) (string, error) {
+	snapshot, err := loadContextSnapshot(dir, cwd)
+	if err != nil {
+		return "", err
+	}
+	if len(snapshot.goals) == 0 {
+		return "", nil
+	}
+	return renderContext(snapshot.goals, snapshot.decisions), nil
+}
+
+func loadContextSnapshot(dir, cwd string) (contextSnapshot, error) {
 	dbPath := filepath.Join(dir, "atct.db")
 	if _, err := os.Stat(dbPath); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return "", nil
+			return contextSnapshot{}, nil
 		}
-		return "", fmt.Errorf("stat store: %w", err)
+		return contextSnapshot{}, fmt.Errorf("stat store: %w", err)
 	}
 
 	s, err := store.Open(dbPath)
 	if err != nil {
-		return "", fmt.Errorf("open store: %w", err)
+		return contextSnapshot{}, fmt.Errorf("open store: %w", err)
 	}
 	defer s.Close()
 
 	ctx := context.Background()
 	project, err := s.ResolveProject(ctx, cwd)
 	if errors.Is(err, store.ErrProjectNotFound) {
-		return "", nil
+		return contextSnapshot{}, nil
 	}
 	if err != nil {
-		return "", fmt.Errorf("resolve project: %w", err)
+		return contextSnapshot{}, fmt.Errorf("resolve project: %w", err)
 	}
 
 	goals, err := s.ListGoals(ctx, project.ID)
 	if err != nil {
-		return "", fmt.Errorf("list goals: %w", err)
+		return contextSnapshot{}, fmt.Errorf("list goals: %w", err)
 	}
 	active := make([]contextGoal, 0, len(goals))
 	activeIDs := make(map[string]bool)
@@ -56,18 +74,18 @@ func contextText(dir, cwd string) (string, error) {
 		}
 		tasks, err := s.ListTasks(ctx, goal.ID)
 		if err != nil {
-			return "", fmt.Errorf("list tasks for goal %s: %w", goal.ID, err)
+			return contextSnapshot{}, fmt.Errorf("list tasks for goal %s: %w", goal.ID, err)
 		}
 		active = append(active, contextGoal{Goal: goal, Tasks: tasks})
 		activeIDs[goal.ID] = true
 	}
 	if len(active) == 0 {
-		return "", nil
+		return contextSnapshot{}, nil
 	}
 
 	decisions, err := s.ListUnappliedDecisions(ctx)
 	if err != nil {
-		return "", fmt.Errorf("list unapplied decisions: %w", err)
+		return contextSnapshot{}, fmt.Errorf("list unapplied decisions: %w", err)
 	}
 	filteredDecisions := make([]domain.Decision, 0, len(decisions))
 	for _, decision := range decisions {
@@ -76,7 +94,42 @@ func contextText(dir, cwd string) (string, error) {
 		}
 	}
 
-	return renderContext(active, filteredDecisions), nil
+	return contextSnapshot{goals: active, decisions: filteredDecisions}, nil
+}
+
+func contextCommand(dir, cwd string) (string, int, error) {
+	snapshot, err := loadContextSnapshot(dir, cwd)
+	if err != nil {
+		return "", 0, err
+	}
+	if len(snapshot.goals) == 0 {
+		return "", 1, nil
+	}
+
+	output := renderContext(snapshot.goals, snapshot.decisions)
+	if contextNeedsWakeup(snapshot) {
+		return output, 0, nil
+	}
+	return output, 1, nil
+}
+
+func contextNeedsWakeup(snapshot contextSnapshot) bool {
+	for _, decision := range snapshot.decisions {
+		if decision.Status == domain.DecisionAnswered && decision.AppliedAt == nil {
+			return true
+		}
+	}
+	for _, item := range snapshot.goals {
+		if len(item.Tasks) == 0 {
+			return true
+		}
+		for _, task := range item.Tasks {
+			if task.Status == domain.TaskTodo && strings.TrimSpace(task.ClaimedBy) == "" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func runContext(dir string) error {
@@ -92,6 +145,21 @@ func runContext(dir string) error {
 		_, err = fmt.Fprint(os.Stdout, output)
 	}
 	return err
+}
+
+func runContextCheck(dir string) error {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("resolve current directory: %w", err)
+	}
+	_, exitCode, err := contextCommand(dir, cwd)
+	if err != nil {
+		return err
+	}
+	if exitCode != 0 {
+		return errNoContextWork
+	}
+	return nil
 }
 
 func renderContextLegacy(goals []contextGoal, decisions []domain.Decision) string {

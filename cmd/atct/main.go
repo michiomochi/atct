@@ -33,6 +33,7 @@ type cliConfig struct {
 	subcommand      string
 	listenAddr      string
 	listenExplicit  bool
+	contextCheck    bool
 	projectAction   string
 	projectName     string
 	goalAction      string
@@ -135,6 +136,10 @@ func parseArgs(args []string) (cliConfig, error) {
 	flags.SetOutput(os.Stderr)
 	flags.Usage = printUsage
 	listenAddr := flags.String("listen", defaultListenAddr, "HTTP listen address")
+	contextCheck := false
+	if sub == "context" {
+		flags.BoolVar(&contextCheck, "check", false, "exit successfully when context work exists")
+	}
 	var description *string
 	if sub == "goal" && cfg.goalAction == "add" {
 		description = flags.String("d", "", "goal description")
@@ -155,6 +160,7 @@ func parseArgs(args []string) (cliConfig, error) {
 	if description != nil {
 		cfg.goalDescription = *description
 	}
+	cfg.contextCheck = contextCheck
 	return cfg, nil
 }
 
@@ -234,6 +240,15 @@ func main() {
 		}
 		return
 	case "context":
+		if config.contextCheck {
+			if err := runContextCheck(dir); err != nil {
+				if errors.Is(err, errNoContextWork) {
+					os.Exit(1)
+				}
+				log.Fatalf("context: %v", err)
+			}
+			return
+		}
 		if err := runContext(dir); err != nil {
 			log.Fatalf("context: %v", err)
 		}

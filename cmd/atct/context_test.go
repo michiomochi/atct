@@ -1,7 +1,10 @@
 package main
 
 import (
+	"context"
 	"fmt"
+	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -250,6 +253,249 @@ func TestRenderContextKeepsAllDecisionsOutsideCaps(t *testing.T) {
 		if !strings.Contains(got, fmt.Sprintf("decision-%d", i)) {
 			t.Errorf("decision %d missing from context:\n%s", i, got)
 		}
+	}
+}
+
+type contextCheckFixture struct {
+	dir  string
+	cwd  string
+	db   *store.Store
+	goal domain.Goal
+}
+
+func newContextCheckFixture(t *testing.T) contextCheckFixture {
+	t.Helper()
+
+	dir := t.TempDir()
+	cwd := t.TempDir()
+	db, err := store.Open(filepath.Join(dir, "atct.db"))
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = db.Close()
+	})
+
+	project, err := db.CreateProject(context.Background(), "context-check", cwd)
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	goal, err := db.CreateGoal(context.Background(), project.ID, "Wake up", "check for work")
+	if err != nil {
+		t.Fatalf("CreateGoal: %v", err)
+	}
+
+	return contextCheckFixture{
+		dir:  dir,
+		cwd:  cwd,
+		db:   db,
+		goal: goal,
+	}
+}
+
+func (f contextCheckFixture) addUnappliedAnswer(t *testing.T) {
+	t.Helper()
+
+	decision, err := f.db.AskDecision(context.Background(), store.AskInput{
+		GoalID:   f.goal.ID,
+		Kind:     domain.KindDecision,
+		Question: "Which path should be taken?",
+		RunID:    "run-context-check",
+	})
+	if err != nil {
+		t.Fatalf("AskDecision: %v", err)
+	}
+	if _, err := f.db.AnswerDecision(context.Background(), store.AnswerInput{
+		DecisionID: decision.ID,
+		AnswerText: "the path",
+		AnsweredBy: "human",
+	}); err != nil {
+		t.Fatalf("AnswerDecision: %v", err)
+	}
+}
+
+func (f contextCheckFixture) addTask(t *testing.T, title string) domain.Task {
+	t.Helper()
+
+	tasks, err := f.db.DeclareTasks(context.Background(), f.goal.ID, "agent", "declare-"+title, []string{title})
+	if err != nil {
+		t.Fatalf("DeclareTasks: %v", err)
+	}
+	return tasks[0]
+}
+
+func (f contextCheckFixture) runInCWD(t *testing.T, fn func() error) error {
+	t.Helper()
+
+	oldCWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd: %v", err)
+	}
+	if err := os.Chdir(f.cwd); err != nil {
+		t.Fatalf("Chdir(%q): %v", f.cwd, err)
+	}
+	defer func() {
+		if err := os.Chdir(oldCWD); err != nil {
+			t.Errorf("restore cwd %q: %v", oldCWD, err)
+		}
+	}()
+	return fn()
+}
+
+func captureContextCheckStdout(t *testing.T, fn func() error) (string, error) {
+	t.Helper()
+
+	oldStdout := os.Stdout
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	os.Stdout = writer
+	defer func() {
+		os.Stdout = oldStdout
+		_ = reader.Close()
+	}()
+
+	callErr := fn()
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close stdout writer: %v", err)
+	}
+	output, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatalf("read stdout: %v", err)
+	}
+	return string(output), callErr
+}
+
+func TestContextCheckReturnsZeroForUnappliedAnswer(t *testing.T) {
+	fixture := newContextCheckFixture(t)
+	fixture.addUnappliedAnswer(t)
+
+	output, exitCode, err := contextCommand(fixture.dir, fixture.cwd)
+	if err != nil {
+		t.Fatalf("contextCommand: %v", err)
+	}
+	if exitCode != 0 {
+		t.Fatalf("exit code = %d, want 0", exitCode)
+	}
+	if output == "" {
+		t.Fatal("contextCommand output is empty for unapplied answer")
+	}
+}
+
+func TestContextCheckReturnsZeroForUnclaimedTask(t *testing.T) {
+	fixture := newContextCheckFixture(t)
+	fixture.addTask(t, "unclaimed")
+
+	_, exitCode, err := contextCommand(fixture.dir, fixture.cwd)
+	if err != nil {
+		t.Fatalf("contextCommand: %v", err)
+	}
+	if exitCode != 0 {
+		t.Fatalf("exit code = %d, want 0", exitCode)
+	}
+}
+
+func TestContextCheckReturnsZeroForUndeclaredActiveGoal(t *testing.T) {
+	fixture := newContextCheckFixture(t)
+
+	_, exitCode, err := contextCommand(fixture.dir, fixture.cwd)
+	if err != nil {
+		t.Fatalf("contextCommand: %v", err)
+	}
+	if exitCode != 0 {
+		t.Fatalf("exit code = %d, want 0", exitCode)
+	}
+}
+
+func TestContextCheckIgnoresDoingTasks(t *testing.T) {
+	fixture := newContextCheckFixture(t)
+	task := fixture.addTask(t, "already doing")
+	if _, err := fixture.db.UpdateTask(context.Background(), task.ID, domain.TaskDoing); err != nil {
+		t.Fatalf("UpdateTask: %v", err)
+	}
+
+	_, exitCode, err := contextCommand(fixture.dir, fixture.cwd)
+	if err != nil {
+		t.Fatalf("contextCommand: %v", err)
+	}
+	if exitCode != 1 {
+		t.Fatalf("exit code = %d, want 1", exitCode)
+	}
+}
+
+func TestContextCheckReturnsOneWhenNothingNeedsDoing(t *testing.T) {
+	fixture := newContextCheckFixture(t)
+	task := fixture.addTask(t, "finished")
+	if _, err := fixture.db.UpdateTask(context.Background(), task.ID, domain.TaskDone); err != nil {
+		t.Fatalf("UpdateTask: %v", err)
+	}
+
+	_, exitCode, err := contextCommand(fixture.dir, fixture.cwd)
+	if err != nil {
+		t.Fatalf("contextCommand: %v", err)
+	}
+	if exitCode != 1 {
+		t.Fatalf("exit code = %d, want 1", exitCode)
+	}
+}
+
+func TestContextCheckIsSilent(t *testing.T) {
+	cfg, err := parseArgs([]string{"context", "--check"})
+	if err != nil {
+		t.Fatalf("parseArgs: %v", err)
+	}
+	if !cfg.contextCheck {
+		t.Fatal("contextCheck = false, want true")
+	}
+
+	fixture := newContextCheckFixture(t)
+	fixture.addTask(t, "unclaimed")
+	output, err := captureContextCheckStdout(t, func() error {
+		return fixture.runInCWD(t, func() error {
+			return runContextCheck(fixture.dir)
+		})
+	})
+	if err != nil {
+		t.Fatalf("runContextCheck: %v", err)
+	}
+	if output != "" {
+		t.Fatalf("stdout = %q, want empty", output)
+	}
+}
+
+func TestContextWithoutCheckKeepsOutput(t *testing.T) {
+	fixture := newContextCheckFixture(t)
+	fixture.addTask(t, "unclaimed")
+	output, err := captureContextCheckStdout(t, func() error {
+		return fixture.runInCWD(t, func() error {
+			return runContext(fixture.dir)
+		})
+	})
+	if err != nil {
+		t.Fatalf("runContext: %v", err)
+	}
+	if !strings.Contains(output, "ATCT context") || !strings.Contains(output, "unclaimed") {
+		t.Fatalf("stdout = %q, want legacy context output", output)
+	}
+}
+
+func TestContextCheckReturnsOneForUnregisteredProject(t *testing.T) {
+	dir := t.TempDir()
+	db, err := store.Open(filepath.Join(dir, "atct.db"))
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = db.Close()
+	})
+
+	_, exitCode, err := contextCommand(dir, t.TempDir())
+	if err != nil {
+		t.Fatalf("contextCommand: %v", err)
+	}
+	if exitCode != 1 {
+		t.Fatalf("exit code = %d, want 1", exitCode)
 	}
 }
 
