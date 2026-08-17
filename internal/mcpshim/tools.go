@@ -13,10 +13,11 @@ type GoalListIn struct {
 }
 
 type TaskDeclareIn struct {
-	GoalID         string   `json:"goal_id"`
-	Titles         []string `json:"titles" jsonschema:"task titles decomposed from the goal, in execution order"`
-	IdempotencyKey string   `json:"idempotency_key" jsonschema:"key that prevents duplicate tasks when the same declaration is retried"`
-	Agent          string   `json:"agent"`
+	GoalID         string     `json:"goal_id"`
+	Titles         []string   `json:"titles" jsonschema:"task titles decomposed from the goal, in execution order"`
+	Files          [][]string `json:"files,omitempty" jsonschema:"files touched by each title, in the same order; paths are relative to the project root"`
+	IdempotencyKey string     `json:"idempotency_key" jsonschema:"key that prevents duplicate tasks when the same declaration is retried"`
+	Agent          string     `json:"agent"`
 }
 
 type TaskClaimIn struct {
@@ -88,10 +89,14 @@ func Register(server *mcp.Server, c *Client, runID string) {
 		Description:  "Declare tasks decomposed from a Goal. Retrying the same idempotency_key does not create duplicates.",
 		OutputSchema: rawOutputSchema(),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in TaskDeclareIn) (*mcp.CallToolResult, Raw, error) {
-		return call(ctx, c, "task.declare", map[string]any{
+		params := map[string]any{
 			"goal_id": in.GoalID, "titles": in.Titles,
 			"idempotency_key": in.IdempotencyKey, "agent": in.Agent,
-		})
+		}
+		if in.Files != nil {
+			params["files"] = in.Files
+		}
+		return call(ctx, c, "task.declare", params)
 	})
 
 	mcp.AddTool(server, &mcp.Tool{

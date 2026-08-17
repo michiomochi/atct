@@ -89,15 +89,16 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 
 	case "task.declare":
 		var p struct {
-			GoalID         string   `json:"goal_id"`
-			Agent          string   `json:"agent"`
-			IdempotencyKey string   `json:"idempotency_key"`
-			Titles         []string `json:"titles"`
+			GoalID         string     `json:"goal_id"`
+			Agent          string     `json:"agent"`
+			IdempotencyKey string     `json:"idempotency_key"`
+			Titles         []string   `json:"titles"`
+			Files          [][]string `json:"files"`
 		}
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, err
 		}
-		tasks, err := d.store.DeclareTasks(ctx, p.GoalID, p.Agent, p.IdempotencyKey, p.Titles)
+		tasks, err := d.store.DeclareTasks(ctx, p.GoalID, p.Agent, p.IdempotencyKey, p.Titles, p.Files)
 		return marshal(tasks, err)
 
 	case "task.update":

@@ -32,6 +32,7 @@ type Task struct {
 	Title      string     `json:"title"`
 	Status     TaskStatus `json:"status"`
 	Agent      string     `json:"agent"`
+	Files      []string   `json:"files"`
 	Order      int        `json:"order"`
 	DeclareKey string     `json:"declare_key"`
 	ClaimedBy  string     `json:"claimed_by"`
