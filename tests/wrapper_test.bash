@@ -313,7 +313,7 @@ SCRIPT
   fi
 }
 
-test_session_start_preserves_boilerplate_and_silence() {
+test_session_start_preserves_context_and_silence() {
   local fixture="$TEMP_ROOT/session-start-output"
   local hook="$fixture/plugin/hooks/session-start"
   local adjacent="$fixture/plugin/bin/atct"
@@ -333,7 +333,8 @@ SCRIPT
 
   output="$(FAKE_CONTEXT='hook context' PATH="/usr/bin:/bin" bash "$hook")"
   [[ "$output" == hook\ context* ]] || fail 'context was not printed before the boilerplate'
-  [[ "$output" == *'This repository is registered with ATCT and is managed through ATCT.'* ]] || fail 'existing boilerplate was removed'
+  [[ "$output" == *'An active goal is permission to work.'* ]] || fail 'active-goal permission guidance was removed'
+  [[ "$output" == *'Stop only before what cannot be undone:'* ]] || fail 'irreversible-change guidance was removed'
   [[ "$output" == *'See the `atct` skill for details.'* ]] || fail 'existing boilerplate was changed'
 
   output="$(PATH="/usr/bin:/bin" bash "$hook")"
@@ -343,6 +344,58 @@ SCRIPT
   assert_eq '' "$output" 'missing atct must keep the hook silent'
 }
 
+test_session_start_mentions_active_goal_permission() {
+  local fixture="$TEMP_ROOT/session-start-active-goal"
+  local hook="$fixture/plugin/hooks/session-start"
+  local adjacent="$fixture/plugin/bin/atct"
+  local output
+
+  mkdir -p "$(dirname "$hook")" "$(dirname "$adjacent")"
+  cp "$REPO_ROOT/plugin/hooks/session-start" "$hook"
+  cat >"$adjacent" <<'SCRIPT'
+#!/bin/bash
+if [[ "${1:-}" == context ]]; then
+  printf 'goal context\n'
+fi
+SCRIPT
+  chmod +x "$adjacent"
+
+  output="$(PATH="" /bin/bash "$hook")"
+  [[ "$output" == *'An active goal is permission to work.'* ]] || fail 'hook omitted active-goal permission guidance'
+}
+
+test_session_start_mentions_undo_boundary() {
+  local fixture="$TEMP_ROOT/session-start-undo-boundary"
+  local hook="$fixture/plugin/hooks/session-start"
+  local adjacent="$fixture/plugin/bin/atct"
+  local output
+
+  mkdir -p "$(dirname "$hook")" "$(dirname "$adjacent")"
+  cp "$REPO_ROOT/plugin/hooks/session-start" "$hook"
+  cat >"$adjacent" <<'SCRIPT'
+#!/bin/bash
+if [[ "${1:-}" == context ]]; then
+  printf 'goal context\n'
+fi
+SCRIPT
+  chmod +x "$adjacent"
+
+  output="$(PATH="" /bin/bash "$hook")"
+  [[ "$output" == *'cannot be undone'* ]] || fail 'hook omitted cannot-be-undone boundary'
+}
+
+test_session_start_is_silent_without_atct_wrapper() {
+  local fixture="$TEMP_ROOT/session-start-no-wrapper"
+  local hook="$fixture/plugin/hooks/session-start"
+  local output
+
+  mkdir -p "$(dirname "$hook")"
+  cp "$REPO_ROOT/plugin/hooks/session-start" "$hook"
+
+  output="$(PATH="" /bin/bash "$hook" 2>&1)" || fail 'hook failed without an atct wrapper'
+  assert_eq '' "$output" 'missing atct wrapper must keep the hook silent'
+}
+
 test_static_contract
 test_download_cache_and_mcp_stdout
 test_cleanup_failure_is_best_effort
@@ -350,5 +403,8 @@ test_checksum_failure
 test_missing_checksum_tool_fails
 test_unsupported_platform_fails
 test_session_start_uses_adjacent_context_wrapper
-test_session_start_preserves_boilerplate_and_silence
+test_session_start_preserves_context_and_silence
+test_session_start_mentions_active_goal_permission
+test_session_start_mentions_undo_boundary
+test_session_start_is_silent_without_atct_wrapper
 printf 'PASS wrapper tests\n'

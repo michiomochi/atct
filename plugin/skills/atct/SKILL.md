@@ -24,6 +24,28 @@ working on it anyway.
 Release a task by setting it back to `todo` with `atct_task_update`. There is
 no separate release tool.
 
+## Keep going
+
+An active goal is permission to work, not a request for a plan. When
+`atct_goal_list` or the session context shows one, declare the tasks and start.
+Do not wait for the human to approve the plan first: they set the goal, and that
+was the approval.
+
+Carry each task through to a commit. The human's attention is for decisions and
+for the final approval, not for granting permission at every step.
+
+Stop before anything that cannot be undone:
+
+- rewriting history: force push, `rebase`, `reset`, `amend`
+- discarding uncommitted work: `restore`, `checkout`, `stash`
+- deleting files or directories
+- publishing off the machine: deploying, sending data to an external service
+
+For those, use `atct_decision_ask` and park.
+
+The test is whether the human can get the previous state back. A commit is
+undoable. A force push over work that exists nowhere else is not.
+
 ## Ask instead of guessing
 
 Call `atct_decision_ask` when a choice would change the shape of the work and

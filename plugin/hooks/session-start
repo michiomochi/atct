@@ -13,10 +13,11 @@ CONTEXT_OUTPUT="$($ATCT_BIN context 2>/dev/null)" || exit 0
 printf '%s\n' "$CONTEXT_OUTPUT"
 
 /bin/cat <<'EOF'
-This repository is registered with ATCT and is managed through ATCT.
-Before starting work, declare your planned tasks with `atct_task_declare`, then claim one with `atct_task_claim`.
-When a decision would change the shape of the work, do not guess: use `atct_decision_ask` with `wait_ms=0` to park.
-Previous-session answers appear in `atct_goal_list` as `orphaned_decisions`; pass each `decision_id` to `atct_decision_poll` to continue.
-When finished, call `atct_goal_complete` to request human approval.
+This repository is registered with ATCT.
+An active goal is permission to work. Declare tasks with `atct_task_declare`, claim one with `atct_task_claim`, and carry it through to a commit without waiting for approval to begin.
+Stop only before what cannot be undone: rewriting history, discarding uncommitted work, deleting files, or publishing off this machine. Ask about those with `atct_decision_ask`.
+When a choice would change the shape of the work, do not guess: `atct_decision_ask` with `wait_ms=0` parks it so you can keep going on something else.
+Answers from an earlier session arrive as `orphaned_decisions`; pass each `decision_id` to `atct_decision_poll`.
+When the goal is met, call `atct_goal_complete` to request approval.
 See the `atct` skill for details.
 EOF
