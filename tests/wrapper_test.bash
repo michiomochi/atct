@@ -75,10 +75,16 @@ SCRIPT
   chmod +x "$fake_bin/uname"
 }
 
+wrapper_version() {
+  sed -n 's/^VERSION="\([0-9][0-9.]*\)"/\1/p' "$REPO_ROOT/plugin/bin/_resolve" | head -1
+}
+
 make_archives() {
   local fixture_dir="$1"
   local checksum_value="$2"
-  local atct_archive="$fixture_dir/atct_0.7.0_darwin_arm64.tar.gz"
+  local version
+  version="$(wrapper_version)"
+  local atct_archive="$fixture_dir/atct_${version}_darwin_arm64.tar.gz"
 
   mkdir -p "$fixture_dir/payload"
   cat >"$fixture_dir/payload/atct" <<'SCRIPT'
@@ -117,8 +123,14 @@ test_static_contract() {
   assert_file_contains 'set -euo pipefail' "$REPO_ROOT/plugin/bin/atct-mcp"
   assert_file_contains '"command": "${CLAUDE_PLUGIN_ROOT}/bin/atct-mcp"' "$REPO_ROOT/plugin/.mcp.json"
   assert_file_contains '"source": "./plugin"' "$REPO_ROOT/.claude-plugin/marketplace.json"
-  assert_file_contains '"version": "0.7.0"' "$REPO_ROOT/plugin/.claude-plugin/plugin.json"
-  assert_file_contains 'VERSION="0.7.0"' "$REPO_ROOT/plugin/bin/_resolve"
+  # Pin the two version declarations to each other rather than to a literal, so a
+  # release does not silently leave this test asserting the previous version.
+  local plugin_version resolve_version
+  plugin_version="$(sed -n 's/.*"version": "\([0-9][0-9.]*\)".*/\1/p' "$REPO_ROOT/plugin/.claude-plugin/plugin.json" | head -1)"
+  resolve_version="$(sed -n 's/^VERSION="\([0-9][0-9.]*\)"/\1/p' "$REPO_ROOT/plugin/bin/_resolve" | head -1)"
+  [[ -n "$plugin_version" ]] || fail 'plugin.json has no version'
+  [[ -n "$resolve_version" ]] || fail '_resolve has no VERSION'
+  assert_eq "$plugin_version" "$resolve_version" 'plugin.json and _resolve must declare the same version'
   assert_file_contains 'RELEASE_BASE="https://github.com/michiomochi/atct/releases/download/v${VERSION}"' "$REPO_ROOT/plugin/bin/_resolve"
   assert_file_contains 'ARCHIVE_NAME="atct_${VERSION}_${OS}_${ARCH}.tar.gz"' "$REPO_ROOT/plugin/bin/_resolve"
   [[ ! -e "$REPO_ROOT/.mcp.json" ]] || fail 'repository root must not contain .mcp.json'
@@ -146,9 +158,11 @@ test_download_cache_and_mcp_stdout() {
 
   first_out="$(HOME="$home" PATH="$fake_bin:$PATH" FIXTURES_DIR="$fixtures" CURL_LOG="$curl_log" FAKE_OS=Darwin FAKE_ARCH=arm64 "$REPO_ROOT/plugin/bin/atct" project list)"
   assert_eq 'fake atct <project> <list>' "$first_out" 'first wrapper execution'
-  assert_file_contains 'https://github.com/michiomochi/atct/releases/download/v0.7.0/atct_0.7.0_darwin_arm64.tar.gz' "$curl_log"
-  assert_file_contains 'https://github.com/michiomochi/atct/releases/download/v0.7.0/checksums.txt' "$curl_log"
-  [[ -x "$home/.atct/bin/atct-0.7.0" ]] || fail 'versioned atct cache is missing'
+  local version
+  version="$(wrapper_version)"
+  assert_file_contains "https://github.com/michiomochi/atct/releases/download/v${version}/atct_${version}_darwin_arm64.tar.gz" "$curl_log"
+  assert_file_contains "https://github.com/michiomochi/atct/releases/download/v${version}/checksums.txt" "$curl_log"
+  [[ -x "$home/.atct/bin/atct-${version}" ]] || fail 'versioned atct cache is missing'
   for candidate in "$home/.atct/bin"/.download.*; do
     [[ ! -e "$candidate" ]] || fail "download directory remained after success: $candidate"
   done
@@ -157,7 +171,7 @@ test_download_cache_and_mcp_stdout() {
   assert_empty_file "$mcp_stdout"
   assert_file_contains 'fake mcp' "$mcp_stderr"
   assert_eq "$REPO_ROOT/plugin/bin/atct" "$(<"$atct_wrapper_log")" 'MCP wrapper must select the matching atct wrapper'
-  [[ -x "$home/.atct/bin/atct-mcp-0.7.0" ]] || fail 'versioned atct-mcp cache is missing'
+  [[ -x "$home/.atct/bin/atct-mcp-$(wrapper_version)" ]] || fail 'versioned atct-mcp cache is missing'
 
   mkdir -p "$home/.atct/bin/.download.stale"
   printf 'stale\n' >"$home/.atct/bin/.download.stale/file"
@@ -190,7 +204,7 @@ test_context_check_preserves_exit_code() {
   local curl_log="$TEMP_ROOT/context-check-curl.log"
   local stdout="$TEMP_ROOT/context-check.stdout"
   local stderr="$TEMP_ROOT/context-check.stderr"
-  local archive="$fixtures/atct_0.7.0_darwin_arm64.tar.gz"
+  local archive="$fixtures/atct_$(wrapper_version)_darwin_arm64.tar.gz"
   local checksum
   local status=0
 
@@ -231,11 +245,11 @@ test_cleanup_failure_is_best_effort() {
   local output
 
   mkdir -p "$home/.atct/bin" "$fake_bin"
-  cat >"$home/.atct/bin/atct-0.7.0" <<'SCRIPT'
+  cat >"$home/.atct/bin/atct-$(wrapper_version)" <<'SCRIPT'
 #!/usr/bin/env bash
 printf 'cached after cleanup failure\n'
 SCRIPT
-  chmod +x "$home/.atct/bin/atct-0.7.0"
+  chmod +x "$home/.atct/bin/atct-$(wrapper_version)"
 
   mkdir -p "$stale_dir"
   printf 'stale\n' >"$stale_dir/file"
@@ -273,7 +287,7 @@ test_checksum_failure() {
   fi
   assert_empty_file "$stdout"
   assert_file_contains 'Checksum verification failed' "$stderr"
-  [[ ! -e "$home/.atct/bin/atct-0.7.0" ]] || fail 'checksum mismatch left an executable cache'
+  [[ ! -e "$home/.atct/bin/atct-$(wrapper_version)" ]] || fail 'checksum mismatch left an executable cache'
   for candidate in "$home/.atct/bin"/.download.*; do
     [[ ! -e "$candidate" ]] || fail "download directory remained after failure: $candidate"
   done
