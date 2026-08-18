@@ -107,6 +107,11 @@ Skip the parts that do not change the decision: file paths, function names,
 which commit introduced it. If the reader would decide the same way without a
 sentence, cut it.
 
+**This holds for anyone waiting on you, not just the dashboard.** When something
+is blocked on your answer — a person, another agent — reply with the answer
+first. Your account of how you got it wrong belongs after, or nowhere. Burying a
+one-word decision inside a retrospective makes them ask again.
+
 ## Report completion the same way
 
 `result_summary` is not a changelog. **Lead with what the human can now do that
