@@ -139,7 +139,13 @@ func notificationTestArgs(name string) map[string]any {
 
 func startNotificationTestDaemon(t *testing.T, result string) string {
 	t.Helper()
-	dir := t.TempDir()
+	// t.TempDir() embeds the test name, which pushes the socket path past the
+	// 104-byte limit macOS enforces on Unix sockets.
+	dir, err := os.MkdirTemp("", "atct")
+	if err != nil {
+		t.Fatalf("MkdirTemp: %v", err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
 	socketPath := filepath.Join(dir, "daemon.sock")
 	listener, err := net.Listen("unix", socketPath)
 	if err != nil {
