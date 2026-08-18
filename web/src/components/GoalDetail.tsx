@@ -5,7 +5,6 @@ import {
   ApiError,
   approveCompletion,
   fetchGoal,
-  fetchInbox,
   rejectCompletion,
   subscribeToDecisionEvents,
   type Decision,
@@ -18,6 +17,7 @@ import {
 } from "../lib/ui";
 import { NeedsDecisionList } from "./NeedsDecisionList";
 import { DecisionHistoryTable } from "./DecisionHistoryTable";
+import { UnattachedDecisionList } from "./UnattachedDecisionList";
 import { AreaLoading, ErrorState } from "./StateMessage";
 import { Section } from "./Section";
 import { TaskTable } from "./TaskTable";
@@ -34,6 +34,7 @@ type LoadState =
 interface GoalDetailData {
   goal: GoalResponse;
   completion?: Decision;
+  unattachedDecisions: Decision[];
 }
 
 type CompletionAction = "approve" | "reject";
@@ -146,9 +147,10 @@ export function GoalDetail({ id }: Props) {
   const load = useCallback(async () => {
     setState({ kind: "loading" });
     try {
-      const [goal, dashboardData] = await Promise.all([fetchGoal(resolvedID), fetchInbox()]);
-      const completion = findOpenCompletion(dashboardData.open_decisions.filter((decision) => decision.goal_id === goal.goal.id));
-      setState({ kind: "ready", data: { goal, completion } });
+      const goal = await fetchGoal(resolvedID);
+      const completion = findOpenCompletion(goal.unattached_decisions);
+      const unattachedDecisions = goal.unattached_decisions.filter((decision) => decision.id !== completion?.id);
+      setState({ kind: "ready", data: { goal, completion, unattachedDecisions } });
     } catch (reason) {
       setState({ kind: "error", message: errorMessage(reason, t("goal.error.load")) });
     }
@@ -178,6 +180,8 @@ export function GoalDetail({ id }: Props) {
       </div>
 
       {data?.completion && <CompletionApproval goal={data.goal.goal} decision={data.completion} onUpdated={load} />}
+
+      {data && <UnattachedDecisionList decisions={data.unattachedDecisions} onRefresh={load} />}
 
       <div className="grid gap-10 xl:grid-cols-3">
         <Section id="now" title={t("goal.column.now")} count={data?.goal.now.length}>

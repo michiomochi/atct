@@ -59,6 +59,7 @@ export const en = {
   "goal.column.now": "Now",
   "goal.column.needsDecision": "Needs decision",
   "goal.column.next": "Next",
+  "goal.unattached.title": "Decisions for this goal",
   "goal.history.title": "Decision history",
   "goal.history.caption": "Applied decision history",
   "goal.history.column.question": "Question",

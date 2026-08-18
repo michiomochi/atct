@@ -88,6 +88,7 @@ export interface GoalResponse {
   goal: Goal;
   now: TaskView[];
   needs_decision: TaskView[];
+  unattached_decisions: Decision[];
   next: TaskView[];
   decision_history: DecisionHistoryEntry[];
   decision_history_omitted: number;
@@ -154,6 +155,7 @@ export function normalizeGoal(value: unknown): GoalResponse {
     goal: source.goal as Goal,
     now: arrayOrEmpty<TaskView>(source.now),
     needs_decision: arrayOrEmpty<TaskView>(source.needs_decision),
+    unattached_decisions: arrayOrEmpty<Decision>(source.unattached_decisions),
     next: arrayOrEmpty<TaskView>(source.next),
     decision_history: arrayOrEmpty<DecisionHistoryEntry>(source.decision_history),
     decision_history_omitted: typeof omitted === "number" && Number.isFinite(omitted) && omitted > 0 ? Math.floor(omitted) : 0,

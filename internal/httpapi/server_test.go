@@ -34,6 +34,12 @@ type decisionViewResponse struct {
 	SettledByDefault bool `json:"settled_by_default"`
 }
 
+type goalDetailResponse struct {
+	Goal                domain.Goal        `json:"goal"`
+	NeedsDecision       []httpapi.TaskView `json:"needs_decision"`
+	UnattachedDecisions []domain.Decision  `json:"unattached_decisions"`
+}
+
 func newFixture(t *testing.T) *fixture {
 	t.Helper()
 	f := newBareFixture(t)
@@ -269,6 +275,91 @@ func TestInboxAndGoalDetailUseExclusiveTaskColumns(t *testing.T) {
 	if detail.NeedsDecision[0].HeldForSeconds < 0 {
 		t.Fatalf("goal held_for_seconds = %d", detail.NeedsDecision[0].HeldForSeconds)
 	}
+}
+
+func TestHTTPGoalDetailIncludesTasklessOpenDecision(t *testing.T) {
+	f := newBareFixture(t)
+	decision, err := f.store.AskDecision(f.ctx, store.AskInput{
+		GoalID:   f.goal.ID,
+		Kind:     domain.DecisionKind("question"),
+		Question: "Which direction should we take?",
+		RunID:    "taskless-run",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	detail := fetchGoalDetail(t, f)
+	if len(detail.UnattachedDecisions) != 1 || detail.UnattachedDecisions[0].ID != decision.ID {
+		t.Fatalf("unattached_decisions = %+v", detail.UnattachedDecisions)
+	}
+}
+
+func TestHTTPGoalDetailDoesNotDuplicateTaskDecision(t *testing.T) {
+	f := newFixture(t)
+	taskless, err := f.store.AskDecision(f.ctx, store.AskInput{
+		GoalID:   f.goal.ID,
+		Kind:     domain.DecisionKind("question"),
+		Question: "A decision without a task",
+		RunID:    "taskless-run",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	detail := fetchGoalDetail(t, f)
+	if len(detail.NeedsDecision) != 1 || len(detail.NeedsDecision[0].OpenDecisions) != 1 || detail.NeedsDecision[0].OpenDecisions[0].ID != f.open.ID {
+		t.Fatalf("needs_decision = %+v", detail.NeedsDecision)
+	}
+	if len(detail.UnattachedDecisions) != 1 || detail.UnattachedDecisions[0].ID != taskless.ID {
+		t.Fatalf("unattached_decisions = %+v", detail.UnattachedDecisions)
+	}
+	if detail.UnattachedDecisions[0].ID == f.open.ID {
+		t.Fatalf("task-bound decision was duplicated: %+v", detail.UnattachedDecisions)
+	}
+}
+
+func TestHTTPGoalDetailIncludesCompletionDecision(t *testing.T) {
+	f := newBareFixture(t)
+	decision, err := f.store.CompleteGoal(f.ctx, f.goal.ID, "The work is ready", "completion-run")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	detail := fetchGoalDetail(t, f)
+	if len(detail.UnattachedDecisions) != 1 {
+		t.Fatalf("unattached_decisions = %+v", detail.UnattachedDecisions)
+	}
+	got := detail.UnattachedDecisions[0]
+	if got.ID != decision.ID || got.Kind != domain.DecisionKind("completion") || got.TaskID != "" {
+		t.Fatalf("completion decision = %+v", got)
+	}
+}
+
+func TestHTTPGoalDetailHasNoUnattachedDecisionsWhenEmpty(t *testing.T) {
+	f := newBareFixture(t)
+	detail := fetchGoalDetail(t, f)
+	if detail.UnattachedDecisions == nil {
+		t.Fatalf("unattached_decisions is null")
+	}
+	if len(detail.UnattachedDecisions) != 0 {
+		t.Fatalf("unattached_decisions = %+v", detail.UnattachedDecisions)
+	}
+}
+
+func fetchGoalDetail(t *testing.T, f *fixture) goalDetailResponse {
+	t.Helper()
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+	status, _, body := doRequest(t, srv.Client(), http.MethodGet, srv.URL+"/api/goals/"+f.goal.ID, nil)
+	if status != http.StatusOK {
+		t.Fatalf("goal status = %d; body=%s", status, body)
+	}
+	var detail goalDetailResponse
+	if err := json.Unmarshal(body, &detail); err != nil {
+		t.Fatalf("decode goal detail: %v; body=%s", err, body)
+	}
+	return detail
 }
 
 func TestHTTPDecisionAndReleaseEndpointsValidateAndTransition(t *testing.T) {

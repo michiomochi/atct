@@ -54,6 +54,7 @@ type goalResponse struct {
 	Goal                   goalView              `json:"goal"`
 	Now                    []TaskView            `json:"now"`
 	NeedsDecision          []TaskView            `json:"needs_decision"`
+	UnattachedDecisions    []domain.Decision     `json:"unattached_decisions"`
 	Next                   []TaskView            `json:"next"`
 	DecisionHistory        []decisionHistoryView `json:"decision_history"`
 	DecisionHistoryOmitted int                   `json:"decision_history_omitted"`
@@ -357,11 +358,18 @@ func (s *Server) handleGoal(w http.ResponseWriter, r *http.Request, goalID strin
 		})
 	}
 	openByTask := indexDecisions(openDecisions)
+	unattachedDecisions := make([]domain.Decision, 0)
+	for _, decision := range openDecisions {
+		if decision.TaskID == "" {
+			unattachedDecisions = append(unattachedDecisions, decision)
+		}
+	}
 
 	response := goalResponse{
 		Goal:                   goalView{Goal: goal, ProjectName: projectName},
 		Now:                    make([]TaskView, 0),
 		NeedsDecision:          make([]TaskView, 0),
+		UnattachedDecisions:    unattachedDecisions,
 		Next:                   make([]TaskView, 0),
 		DecisionHistory:        decisionHistory,
 		DecisionHistoryOmitted: decisionHistoryOmitted,

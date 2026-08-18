@@ -201,7 +201,8 @@ describe("goal detail answer flows", () => {
   });
 
   it("exposes the completion approval API in Goal detail", () => {
-    expect(goalDetailSource).toContain("fetchInbox");
+    expect(goalDetailSource).toContain("fetchGoal");
+    expect(goalDetailSource).toContain("unattached_decisions");
     expect(goalDetailSource).toContain("approveCompletion");
     expect(goalDetailSource).toContain("rejectCompletion");
     expect(goalDetailSource).toContain('t("goal.completion.title")');

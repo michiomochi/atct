@@ -60,6 +60,7 @@ export const ja: Record<TranslationKey, string> = {
   "goal.column.now": "現在",
   "goal.column.needsDecision": "判断待ち",
   "goal.column.next": "次",
+  "goal.unattached.title": "このゴールの判断",
   "goal.history.title": "決定履歴",
   "goal.history.caption": "適用済み決定履歴",
   "goal.history.column.question": "質問",
