@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/michiomochi/atct/internal/domain"
+	"github.com/michiomochi/atct/internal/store/sqlcgen"
 )
 
 var (
@@ -30,10 +31,6 @@ type AskInput struct {
 	DefaultAfterMs *int64
 	RunID          string
 }
-
-const decisionColumns = `id, goal_id, COALESCE(task_id, ''), kind, question, options, status,
-	default_option, default_after_ms, default_applied_at,
-	answer_label, answer_text, answered_at, applied_at, run_id, created_at`
 
 func (s *Store) AskDecision(ctx context.Context, in AskInput) (domain.Decision, error) {
 	if err := validateDecisionDefault(in.Options, in.DefaultOption, in.DefaultAfterMs); err != nil {
@@ -64,22 +61,23 @@ func (s *Store) AskDecision(ctx context.Context, in AskInput) (domain.Decision, 
 		d.DefaultAfterMs = &after
 	}
 
-	var taskID any
-	if in.TaskID != "" {
-		taskID = in.TaskID
+	q := decisionQueries(s)
+	params := sqlcgen.CreateDecisionParams{
+		ID:            d.ID,
+		GoalID:        d.GoalID,
+		TaskID:        sql.NullString{String: in.TaskID, Valid: in.TaskID != ""},
+		Kind:          string(d.Kind),
+		Question:      d.Question,
+		Options:       string(raw),
+		Status:        string(d.Status),
+		DefaultOption: d.DefaultOption,
+		RunID:         d.RunID,
+		CreatedAt:     d.CreatedAt.Format(time.RFC3339),
 	}
-
-	var defaultAfterMs any
 	if in.DefaultAfterMs != nil {
-		defaultAfterMs = *in.DefaultAfterMs
+		params.DefaultAfterMs = sql.NullInt64{Int64: *in.DefaultAfterMs, Valid: true}
 	}
-	_, err = s.db.ExecContext(ctx,
-		`INSERT INTO decisions (id, goal_id, task_id, kind, question, options, status,
-		 default_option, default_after_ms, run_id, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		d.ID, d.GoalID, taskID, string(d.Kind), d.Question, string(raw),
-		string(d.Status), d.DefaultOption, defaultAfterMs, d.RunID, d.CreatedAt.Format(time.RFC3339))
-	if err != nil {
+	if err = q.CreateDecision(ctx, params); err != nil {
 		return domain.Decision{}, fmt.Errorf("insert decision: %w", err)
 	}
 	s.notify.publish(d.ID)
@@ -106,47 +104,66 @@ func validateDecisionDefault(options []domain.Option, defaultOption string, defa
 	return fmt.Errorf("%w: default_option %q is not one of the option labels", ErrInvalidDecisionDefault, defaultOption)
 }
 
-func scanDecision(sc interface{ Scan(...any) error }) (domain.Decision, error) {
-	var d domain.Decision
-	var kind, status, rawOptions, createdAt string
-	var defaultAfterMs sql.NullInt64
-	var defaultAppliedAt, answeredAt, appliedAt sql.NullString
+type decisionRow struct {
+	ID               string
+	GoalID           string
+	TaskID           string
+	Kind             string
+	Question         string
+	Options          string
+	Status           string
+	DefaultOption    string
+	DefaultAfterMs   sql.NullInt64
+	DefaultAppliedAt sql.NullString
+	AnswerLabel      string
+	AnswerText       string
+	AnsweredAt       sql.NullString
+	AppliedAt        sql.NullString
+	RunID            string
+	CreatedAt        string
+}
 
-	if err := sc.Scan(&d.ID, &d.GoalID, &d.TaskID, &kind, &d.Question, &rawOptions, &status,
-		&d.DefaultOption, &defaultAfterMs, &defaultAppliedAt,
-		&d.AnswerLabel, &d.AnswerText, &answeredAt, &appliedAt,
-		&d.RunID, &createdAt); err != nil {
-		return domain.Decision{}, err
+func decisionFromRow(row decisionRow) (domain.Decision, error) {
+	d := domain.Decision{
+		ID:            row.ID,
+		GoalID:        row.GoalID,
+		TaskID:        row.TaskID,
+		Kind:          domain.DecisionKind(row.Kind),
+		Question:      row.Question,
+		Status:        domain.DecisionStatus(row.Status),
+		DefaultOption: row.DefaultOption,
+		AnswerLabel:   row.AnswerLabel,
+		AnswerText:    row.AnswerText,
+		RunID:         row.RunID,
+		CreatedAt:     time.Time{},
 	}
-	d.Kind = domain.DecisionKind(kind)
-	d.Status = domain.DecisionStatus(status)
-	if defaultAfterMs.Valid {
-		after := defaultAfterMs.Int64
+	if row.DefaultAfterMs.Valid {
+		after := row.DefaultAfterMs.Int64
 		d.DefaultAfterMs = &after
 	}
-	if err := json.Unmarshal([]byte(rawOptions), &d.Options); err != nil {
+	if err := json.Unmarshal([]byte(row.Options), &d.Options); err != nil {
 		return domain.Decision{}, fmt.Errorf("unmarshal options: %w", err)
 	}
 	var err error
-	if d.CreatedAt, err = time.Parse(time.RFC3339, createdAt); err != nil {
+	if d.CreatedAt, err = time.Parse(time.RFC3339, row.CreatedAt); err != nil {
 		return domain.Decision{}, fmt.Errorf("parse created_at: %w", err)
 	}
-	if answeredAt.Valid {
-		t, err := time.Parse(time.RFC3339, answeredAt.String)
+	if row.AnsweredAt.Valid {
+		t, err := time.Parse(time.RFC3339, row.AnsweredAt.String)
 		if err != nil {
 			return domain.Decision{}, fmt.Errorf("parse answered_at: %w", err)
 		}
 		d.AnsweredAt = &t
 	}
-	if appliedAt.Valid {
-		t, err := time.Parse(time.RFC3339, appliedAt.String)
+	if row.AppliedAt.Valid {
+		t, err := time.Parse(time.RFC3339, row.AppliedAt.String)
 		if err != nil {
 			return domain.Decision{}, fmt.Errorf("parse applied_at: %w", err)
 		}
 		d.AppliedAt = &t
 	}
-	if defaultAppliedAt.Valid {
-		t, err := time.Parse(time.RFC3339, defaultAppliedAt.String)
+	if row.DefaultAppliedAt.Valid {
+		t, err := time.Parse(time.RFC3339, row.DefaultAppliedAt.String)
 		if err != nil {
 			return domain.Decision{}, fmt.Errorf("parse default_applied_at: %w", err)
 		}
@@ -155,52 +172,102 @@ func scanDecision(sc interface{ Scan(...any) error }) (domain.Decision, error) {
 	return d, nil
 }
 
+func convertDecisionRows[T any](rows []T, convert func(T) decisionRow) ([]domain.Decision, error) {
+	var out []domain.Decision
+	for _, row := range rows {
+		d, err := decisionFromRow(convert(row))
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, nil
+}
+
+func decisionQueries(s *Store) *sqlcgen.Queries {
+	return sqlcgen.New(s.db)
+}
+
 func (s *Store) GetDecision(ctx context.Context, id string) (domain.Decision, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT `+decisionColumns+` FROM decisions WHERE id = ?`, id)
-	d, err := scanDecision(row)
+	row, err := decisionQueries(s).GetDecision(ctx, id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.Decision{}, fmt.Errorf("%w: %s", ErrDecisionNotFound, id)
 	}
-	return d, err
+	if err != nil {
+		return domain.Decision{}, err
+	}
+	return decisionFromRow(decisionRow{
+		ID:               row.ID,
+		GoalID:           row.GoalID,
+		TaskID:           row.TaskID,
+		Kind:             row.Kind,
+		Question:         row.Question,
+		Options:          row.Options,
+		Status:           row.Status,
+		DefaultOption:    row.DefaultOption,
+		DefaultAfterMs:   row.DefaultAfterMs,
+		DefaultAppliedAt: row.DefaultAppliedAt,
+		AnswerLabel:      row.AnswerLabel,
+		AnswerText:       row.AnswerText,
+		AnsweredAt:       row.AnsweredAt,
+		AppliedAt:        row.AppliedAt,
+		RunID:            row.RunID,
+		CreatedAt:        row.CreatedAt,
+	})
 }
 
 func (s *Store) ListOpenDecisions(ctx context.Context, goalID string) ([]domain.Decision, error) {
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT `+decisionColumns+` FROM decisions WHERE goal_id = ? AND status = 'open' ORDER BY created_at`,
-		goalID)
+	rows, err := decisionQueries(s).ListOpenDecisions(ctx, goalID)
 	if err != nil {
 		return nil, fmt.Errorf("query open decisions: %w", err)
 	}
-	defer rows.Close()
-
-	var out []domain.Decision
-	for rows.Next() {
-		d, err := scanDecision(rows)
-		if err != nil {
-			return nil, err
+	return convertDecisionRows(rows, func(row sqlcgen.ListOpenDecisionsRow) decisionRow {
+		return decisionRow{
+			ID:               row.ID,
+			GoalID:           row.GoalID,
+			TaskID:           row.TaskID,
+			Kind:             row.Kind,
+			Question:         row.Question,
+			Options:          row.Options,
+			Status:           row.Status,
+			DefaultOption:    row.DefaultOption,
+			DefaultAfterMs:   row.DefaultAfterMs,
+			DefaultAppliedAt: row.DefaultAppliedAt,
+			AnswerLabel:      row.AnswerLabel,
+			AnswerText:       row.AnswerText,
+			AnsweredAt:       row.AnsweredAt,
+			AppliedAt:        row.AppliedAt,
+			RunID:            row.RunID,
+			CreatedAt:        row.CreatedAt,
 		}
-		out = append(out, d)
-	}
-	return out, rows.Err()
+	})
 }
 
 func (s *Store) ListAllOpenDecisions(ctx context.Context) ([]domain.Decision, error) {
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT `+decisionColumns+` FROM decisions WHERE status = 'open' ORDER BY created_at`)
+	rows, err := decisionQueries(s).ListAllOpenDecisions(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("query all open decisions: %w", err)
 	}
-	defer rows.Close()
-
-	var out []domain.Decision
-	for rows.Next() {
-		d, err := scanDecision(rows)
-		if err != nil {
-			return nil, err
+	return convertDecisionRows(rows, func(row sqlcgen.ListAllOpenDecisionsRow) decisionRow {
+		return decisionRow{
+			ID:               row.ID,
+			GoalID:           row.GoalID,
+			TaskID:           row.TaskID,
+			Kind:             row.Kind,
+			Question:         row.Question,
+			Options:          row.Options,
+			Status:           row.Status,
+			DefaultOption:    row.DefaultOption,
+			DefaultAfterMs:   row.DefaultAfterMs,
+			DefaultAppliedAt: row.DefaultAppliedAt,
+			AnswerLabel:      row.AnswerLabel,
+			AnswerText:       row.AnswerText,
+			AnsweredAt:       row.AnsweredAt,
+			AppliedAt:        row.AppliedAt,
+			RunID:            row.RunID,
+			CreatedAt:        row.CreatedAt,
 		}
-		out = append(out, d)
-	}
-	return out, rows.Err()
+	})
 }
 
 type AnswerInput struct {
@@ -219,11 +286,12 @@ func (s *Store) AnswerDecision(ctx context.Context, in AnswerInput) (domain.Deci
 func (s *Store) answerDecision(ctx context.Context, in AnswerInput, eventName string) (domain.Decision, error) {
 	now := time.Now().UTC().Format(time.RFC3339)
 
-	res, err := s.db.ExecContext(ctx,
-		`UPDATE decisions
-		 SET status = 'answered', answer_label = ?, answer_text = ?, answered_at = ?
-		 WHERE id = ? AND status = 'open'`,
-		in.AnswerLabel, in.AnswerText, now, in.DecisionID)
+	res, err := decisionQueries(s).AnswerDecision(ctx, sqlcgen.AnswerDecisionParams{
+		AnswerLabel: in.AnswerLabel,
+		AnswerText:  in.AnswerText,
+		AnsweredAt:  sql.NullString{String: now, Valid: true},
+		ID:          in.DecisionID,
+	})
 	if err != nil {
 		return domain.Decision{}, fmt.Errorf("update decision: %w", err)
 	}
@@ -254,41 +322,53 @@ func (s *Store) ApplyExpiredDefaults(ctx context.Context, now time.Time) (int, e
 	}
 	defer tx.Rollback()
 
-	rows, err := tx.QueryContext(ctx,
-		`SELECT `+decisionColumns+` FROM decisions
-		 WHERE status = 'open' AND default_after_ms IS NOT NULL AND default_option != ''
-		 ORDER BY created_at`)
+	q := decisionQueries(s).WithTx(tx)
+	rows, err := q.ListExpiredDecisions(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("query expired decisions: %w", err)
 	}
 
-	var candidates []domain.Decision
-	for rows.Next() {
-		d, err := scanDecision(rows)
-		if err != nil {
-			rows.Close()
-			return 0, err
+	allCandidates, err := convertDecisionRows(rows, func(row sqlcgen.ListExpiredDecisionsRow) decisionRow {
+		return decisionRow{
+			ID:               row.ID,
+			GoalID:           row.GoalID,
+			TaskID:           row.TaskID,
+			Kind:             row.Kind,
+			Question:         row.Question,
+			Options:          row.Options,
+			Status:           row.Status,
+			DefaultOption:    row.DefaultOption,
+			DefaultAfterMs:   row.DefaultAfterMs,
+			DefaultAppliedAt: row.DefaultAppliedAt,
+			AnswerLabel:      row.AnswerLabel,
+			AnswerText:       row.AnswerText,
+			AnsweredAt:       row.AnsweredAt,
+			AppliedAt:        row.AppliedAt,
+			RunID:            row.RunID,
+			CreatedAt:        row.CreatedAt,
 		}
+	})
+	if err != nil {
+		return 0, err
+	}
+
+	var candidates []domain.Decision
+	for _, d := range allCandidates {
 		if d.DefaultAfterMs != nil && !now.Before(d.CreatedAt.Add(time.Duration(*d.DefaultAfterMs)*time.Millisecond)) {
 			candidates = append(candidates, d)
 		}
-	}
-	if err := rows.Close(); err != nil {
-		return 0, fmt.Errorf("close expired decisions: %w", err)
-	}
-	if err := rows.Err(); err != nil {
-		return 0, err
 	}
 
 	settledAt := now.UTC()
 	settledAtText := settledAt.Format(time.RFC3339)
 	var settledDecisions []domain.Decision
 	for i := range candidates {
-		result, err := tx.ExecContext(ctx,
-			`UPDATE decisions
-			 SET status = 'answered', answer_label = ?, answered_at = ?, default_applied_at = ?
-			 WHERE id = ? AND status = 'open'`,
-			candidates[i].DefaultOption, settledAtText, settledAtText, candidates[i].ID)
+		result, err := q.ApplyDecisionDefault(ctx, sqlcgen.ApplyDecisionDefaultParams{
+			AnswerLabel:      candidates[i].DefaultOption,
+			AnsweredAt:       sql.NullString{String: settledAtText, Valid: true},
+			DefaultAppliedAt: sql.NullString{String: settledAtText, Valid: true},
+			ID:               candidates[i].ID,
+		})
 		if err != nil {
 			return 0, fmt.Errorf("apply default: %w", err)
 		}
@@ -323,9 +403,10 @@ func (s *Store) ApplyExpiredDefaults(ctx context.Context, now time.Time) (int, e
 }
 
 func (s *Store) WithdrawDecision(ctx context.Context, decisionID, reason string) error {
-	res, err := s.db.ExecContext(ctx,
-		`UPDATE decisions SET status = 'withdrawn', answer_text = ? WHERE id = ? AND status = 'open'`,
-		reason, decisionID)
+	res, err := decisionQueries(s).WithdrawDecision(ctx, sqlcgen.WithdrawDecisionParams{
+		AnswerText: reason,
+		ID:         decisionID,
+	})
 	if err != nil {
 		return fmt.Errorf("withdraw decision: %w", err)
 	}
@@ -356,40 +437,70 @@ func (s *Store) PollDecisions(ctx context.Context, runID string, decisionID stri
 	}
 	defer tx.Rollback()
 
-	var query string
-	var args []any
-	if decisionID == "" {
-		query = `SELECT ` + decisionColumns + ` FROM decisions WHERE status = 'answered' AND run_id = ?`
-		args = []any{runID}
-	} else {
-		query = `SELECT ` + decisionColumns + ` FROM decisions WHERE status = 'answered' AND id = ?`
-		args = []any{decisionID}
-	}
-	query += ` ORDER BY answered_at`
-
-	rows, err := tx.QueryContext(ctx, query, args...)
-	if err != nil {
-		return nil, fmt.Errorf("query answered decisions: %w", err)
-	}
+	q := decisionQueries(s).WithTx(tx)
 	var out []domain.Decision
-	for rows.Next() {
-		d, err := scanDecision(rows)
-		if err != nil {
-			rows.Close()
-			return nil, err
+	var conversionErr error
+	if decisionID == "" {
+		rows, queryErr := q.ListAnsweredDecisionsForRun(ctx, runID)
+		if queryErr != nil {
+			return nil, fmt.Errorf("query answered decisions: %w", queryErr)
 		}
-		out = append(out, d)
+		out, conversionErr = convertDecisionRows(rows, func(row sqlcgen.ListAnsweredDecisionsForRunRow) decisionRow {
+			return decisionRow{
+				ID:               row.ID,
+				GoalID:           row.GoalID,
+				TaskID:           row.TaskID,
+				Kind:             row.Kind,
+				Question:         row.Question,
+				Options:          row.Options,
+				Status:           row.Status,
+				DefaultOption:    row.DefaultOption,
+				DefaultAfterMs:   row.DefaultAfterMs,
+				DefaultAppliedAt: row.DefaultAppliedAt,
+				AnswerLabel:      row.AnswerLabel,
+				AnswerText:       row.AnswerText,
+				AnsweredAt:       row.AnsweredAt,
+				AppliedAt:        row.AppliedAt,
+				RunID:            row.RunID,
+				CreatedAt:        row.CreatedAt,
+			}
+		})
+	} else {
+		rows, queryErr := q.ListAnsweredDecisionForID(ctx, decisionID)
+		if queryErr != nil {
+			return nil, fmt.Errorf("query answered decisions: %w", queryErr)
+		}
+		out, conversionErr = convertDecisionRows(rows, func(row sqlcgen.ListAnsweredDecisionForIDRow) decisionRow {
+			return decisionRow{
+				ID:               row.ID,
+				GoalID:           row.GoalID,
+				TaskID:           row.TaskID,
+				Kind:             row.Kind,
+				Question:         row.Question,
+				Options:          row.Options,
+				Status:           row.Status,
+				DefaultOption:    row.DefaultOption,
+				DefaultAfterMs:   row.DefaultAfterMs,
+				DefaultAppliedAt: row.DefaultAppliedAt,
+				AnswerLabel:      row.AnswerLabel,
+				AnswerText:       row.AnswerText,
+				AnsweredAt:       row.AnsweredAt,
+				AppliedAt:        row.AppliedAt,
+				RunID:            row.RunID,
+				CreatedAt:        row.CreatedAt,
+			}
+		})
 	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return nil, err
+	if conversionErr != nil {
+		return nil, conversionErr
 	}
 
 	now := time.Now().UTC()
 	for i := range out {
-		if _, err := tx.ExecContext(ctx,
-			`UPDATE decisions SET status = 'applied', applied_at = ? WHERE id = ? AND status = 'answered'`,
-			now.Format(time.RFC3339), out[i].ID); err != nil {
+		if err := q.MarkDecisionApplied(ctx, sqlcgen.MarkDecisionAppliedParams{
+			AppliedAt: sql.NullString{String: now.Format(time.RFC3339), Valid: true},
+			ID:        out[i].ID,
+		}); err != nil {
 			return nil, fmt.Errorf("mark applied: %w", err)
 		}
 		out[i].Status = domain.DecisionApplied
@@ -412,81 +523,104 @@ func (s *Store) PollDecisions(ctx context.Context, runID string, decisionID stri
 // ListUnappliedDecisions returns answered Decisions not yet received by an agent.
 // This is the only place to detect an answer stranded after a dead session.
 func (s *Store) ListUnappliedDecisions(ctx context.Context) ([]domain.Decision, error) {
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT `+decisionColumns+` FROM decisions WHERE status = 'answered' ORDER BY answered_at`)
+	rows, err := decisionQueries(s).ListUnappliedDecisions(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("query unapplied decisions: %w", err)
 	}
-	defer rows.Close()
-
-	var out []domain.Decision
-	for rows.Next() {
-		d, err := scanDecision(rows)
-		if err != nil {
-			return nil, err
+	return convertDecisionRows(rows, func(row sqlcgen.ListUnappliedDecisionsRow) decisionRow {
+		return decisionRow{
+			ID:               row.ID,
+			GoalID:           row.GoalID,
+			TaskID:           row.TaskID,
+			Kind:             row.Kind,
+			Question:         row.Question,
+			Options:          row.Options,
+			Status:           row.Status,
+			DefaultOption:    row.DefaultOption,
+			DefaultAfterMs:   row.DefaultAfterMs,
+			DefaultAppliedAt: row.DefaultAppliedAt,
+			AnswerLabel:      row.AnswerLabel,
+			AnswerText:       row.AnswerText,
+			AnsweredAt:       row.AnsweredAt,
+			AppliedAt:        row.AppliedAt,
+			RunID:            row.RunID,
+			CreatedAt:        row.CreatedAt,
 		}
-		out = append(out, d)
-	}
-	return out, rows.Err()
+	})
 }
 
 // ListUnappliedDecisionsForProject returns answered Decisions not yet received by an agent
 // for Goals belonging to the given project.
 func (s *Store) ListUnappliedDecisionsForProject(ctx context.Context, projectID string) ([]domain.Decision, error) {
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT `+decisionColumns+` FROM decisions
-		 WHERE status = 'answered'
-		   AND goal_id IN (SELECT id FROM goals WHERE project_id = ?)
-		 ORDER BY answered_at`, projectID)
+	rows, err := decisionQueries(s).ListUnappliedDecisionsForProject(ctx, projectID)
 	if err != nil {
 		return nil, fmt.Errorf("query project unapplied decisions: %w", err)
 	}
-	defer rows.Close()
-
-	var out []domain.Decision
-	for rows.Next() {
-		d, err := scanDecision(rows)
-		if err != nil {
-			return nil, err
+	return convertDecisionRows(rows, func(row sqlcgen.ListUnappliedDecisionsForProjectRow) decisionRow {
+		return decisionRow{
+			ID:               row.ID,
+			GoalID:           row.GoalID,
+			TaskID:           row.TaskID,
+			Kind:             row.Kind,
+			Question:         row.Question,
+			Options:          row.Options,
+			Status:           row.Status,
+			DefaultOption:    row.DefaultOption,
+			DefaultAfterMs:   row.DefaultAfterMs,
+			DefaultAppliedAt: row.DefaultAppliedAt,
+			AnswerLabel:      row.AnswerLabel,
+			AnswerText:       row.AnswerText,
+			AnsweredAt:       row.AnsweredAt,
+			AppliedAt:        row.AppliedAt,
+			RunID:            row.RunID,
+			CreatedAt:        row.CreatedAt,
 		}
-		out = append(out, d)
-	}
-	return out, rows.Err()
+	})
 }
 
 // ListAppliedDecisions returns the most recent applied Decisions for a goal
 // and the exact number omitted by the history limit.
 func (s *Store) ListAppliedDecisions(ctx context.Context, goalID string) ([]domain.Decision, int, error) {
-	var total int
-	if err := s.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM decisions WHERE goal_id = ? AND status = 'applied'`, goalID).Scan(&total); err != nil {
+	totalCount, err := decisionQueries(s).CountAppliedDecisions(ctx, goalID)
+	if err != nil {
 		return nil, 0, fmt.Errorf("count applied decisions: %w", err)
 	}
+	total := int(totalCount)
 
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT `+decisionColumns+` FROM decisions
-		 WHERE goal_id = ? AND status = 'applied'
-		 ORDER BY answered_at DESC, applied_at DESC, id DESC
-		 LIMIT 20`, goalID)
+	rows, err := decisionQueries(s).ListAppliedDecisions(ctx, goalID)
 	if err != nil {
 		return nil, 0, fmt.Errorf("query applied decisions: %w", err)
 	}
-	defer rows.Close()
 
 	limit := total
 	if limit > 20 {
 		limit = 20
 	}
-	out := make([]domain.Decision, 0, limit)
-	for rows.Next() {
-		d, err := scanDecision(rows)
-		if err != nil {
-			return nil, 0, err
+	out, err := convertDecisionRows(rows, func(row sqlcgen.ListAppliedDecisionsRow) decisionRow {
+		return decisionRow{
+			ID:               row.ID,
+			GoalID:           row.GoalID,
+			TaskID:           row.TaskID,
+			Kind:             row.Kind,
+			Question:         row.Question,
+			Options:          row.Options,
+			Status:           row.Status,
+			DefaultOption:    row.DefaultOption,
+			DefaultAfterMs:   row.DefaultAfterMs,
+			DefaultAppliedAt: row.DefaultAppliedAt,
+			AnswerLabel:      row.AnswerLabel,
+			AnswerText:       row.AnswerText,
+			AnsweredAt:       row.AnsweredAt,
+			AppliedAt:        row.AppliedAt,
+			RunID:            row.RunID,
+			CreatedAt:        row.CreatedAt,
 		}
-		out = append(out, d)
-	}
-	if err := rows.Err(); err != nil {
+	})
+	if err != nil {
 		return nil, 0, err
+	}
+	if out == nil {
+		out = make([]domain.Decision, 0, limit)
 	}
 
 	omitted := total - len(out)
