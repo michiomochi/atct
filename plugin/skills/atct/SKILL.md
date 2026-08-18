@@ -85,6 +85,45 @@ is not a decision to make; it is work you have not finished. Find out what the
 real alternatives are, what each one costs, and put them in the call. If you
 cannot yet name two concrete options, you are not ready to ask — go find out.
 
+## Write so the answer takes ten seconds
+
+**Open with the choice, not the history.** The human is deciding, not reviewing
+your investigation. Put what you need decided in the first sentence, then the
+options, then — only if it changes the answer — how you got here.
+
+A question that opens "I implemented X but it turns out Y because Z was created
+by W and never reaches V…" makes the reader assemble the decision themselves.
+The one that opens "Which of these three should I use for X?" does not.
+
+**Say which one you would pick and why, in one line.** `default_option` already
+carries that, but name it in the text too. "I would take the first: it keeps
+the plugin-only install working."
+
+**Options carry consequences, not descriptions.** "Use approach A" tells the
+reader nothing. "Use approach A — users install nothing extra, but we keep
+maintaining the apply path ourselves" lets them choose.
+
+Skip the parts that do not change the decision: file paths, function names,
+which commit introduced it. If the reader would decide the same way without a
+sentence, cut it.
+
+## Report completion the same way
+
+`result_summary` is not a changelog. **Lead with what the human can now do that
+they could not before**, and what to look at to confirm it. Then the surprises —
+things that turned out differently than expected, and anything you would want to
+know if you were approving this.
+
+**A summary nobody finishes reading cannot be approved.** If it runs past a
+screen, you are recounting the work instead of reporting the outcome.
+
+## Name goals after the symptom, not the mechanism
+
+"Attach unattached decisions to the goal detail response" describes the fix.
+**"Decisions waiting on you do not show up on the goal page" describes what the
+human saw.** They set the goal from the symptom; they will look for it by the
+same words.
+
 ## Say what happens if nobody answers
 
 `default_option` names the option to take when the deadline in `default_after_ms`
