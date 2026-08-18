@@ -280,14 +280,26 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 
 	case "goal.complete":
 		var p struct {
-			GoalID        string `json:"goal_id"`
-			ResultSummary string `json:"result_summary"`
-			RunID         string `json:"run_id"`
+			GoalID      string `json:"goal_id"`
+			WorkDone    string `json:"work_done"`
+			NowPossible string `json:"now_possible"`
+			HowToVerify string `json:"how_to_verify"`
+			Surprises   string `json:"surprises"`
+			NeedsReview string `json:"needs_review"`
+			NextSteps   string `json:"next_steps"`
+			RunID       string `json:"run_id"`
 		}
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, err
 		}
-		dec, err := d.store.CompleteGoal(ctx, p.GoalID, p.ResultSummary, p.RunID)
+		dec, err := d.store.CompleteGoalWithReport(ctx, p.GoalID, domain.CompletionReport{
+			WorkDone:    p.WorkDone,
+			NowPossible: p.NowPossible,
+			HowToVerify: p.HowToVerify,
+			Surprises:   p.Surprises,
+			NeedsReview: p.NeedsReview,
+			NextSteps:   p.NextSteps,
+		}, p.RunID)
 		return marshal(dec, err)
 	}
 	return nil, fmt.Errorf("unknown method: %s", req.Method)

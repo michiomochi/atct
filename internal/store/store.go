@@ -16,7 +16,7 @@ type Store struct {
 	notify *notifier
 }
 
-const schemaVersion = 5
+const schemaVersion = 6
 
 const runRetention = 30 * 24 * time.Hour
 
@@ -51,13 +51,28 @@ func Open(path string) (*Store, error) {
 	return &Store{db: db, notify: newNotifier()}, nil
 }
 
-func migrateSchema(db *sql.DB) error {
+func migrateSchema(db *sql.DB) (err error) {
 	var version int
 	if err := db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
 		return fmt.Errorf("read schema version: %w", err)
 	}
 	if version >= schemaVersion {
 		return nil
+	}
+
+	var foreignKeys int
+	if err := db.QueryRow(`PRAGMA foreign_keys`).Scan(&foreignKeys); err != nil {
+		return fmt.Errorf("read foreign_keys pragma: %w", err)
+	}
+	if foreignKeys != 0 {
+		if _, err := db.Exec(`PRAGMA foreign_keys=OFF`); err != nil {
+			return fmt.Errorf("disable foreign_keys for migration: %w", err)
+		}
+		defer func() {
+			if _, restoreErr := db.Exec(fmt.Sprintf(`PRAGMA foreign_keys=%d`, foreignKeys)); restoreErr != nil && err == nil {
+				err = fmt.Errorf("restore foreign_keys pragma: %w", restoreErr)
+			}
+		}()
 	}
 
 	tx, err := db.Begin()
@@ -121,6 +136,11 @@ func migrateSchema(db *sql.DB) error {
 			return fmt.Errorf("rebuild decisions table: %w", err)
 		}
 	}
+	if version < 6 {
+		if err := migrateGoalsTableV6(tx); err != nil {
+			return fmt.Errorf("migrate goals table: %w", err)
+		}
+	}
 	if _, err := tx.Exec(`
 CREATE TABLE IF NOT EXISTS runs (
   id            TEXT PRIMARY KEY,
@@ -141,6 +161,123 @@ CREATE INDEX IF NOT EXISTS idx_runs_project_registered_at
 		return fmt.Errorf("commit migration: %w", err)
 	}
 	return nil
+}
+
+func migrateGoalsTableV6(tx *sql.Tx) error {
+	resultSummaryColumn, err := hasColumn(tx, "goals", "result_summary")
+	if err != nil {
+		return fmt.Errorf("inspect goals.result_summary: %w", err)
+	}
+	completionExpressions := make(map[string]string, 5)
+	for _, column := range []string{
+		"now_possible", "how_to_verify", "surprises", "needs_review", "next_steps",
+	} {
+		expression, err := completionValueExpr(tx, column)
+		if err != nil {
+			return fmt.Errorf("inspect goals.%s: %w", column, err)
+		}
+		completionExpressions[column] = expression
+	}
+
+	indexes, err := goalIndexes(tx)
+	if err != nil {
+		return fmt.Errorf("read goals indexes: %w", err)
+	}
+
+	if _, err := tx.Exec(fmt.Sprintf(`
+CREATE TABLE goals_new (
+  id           TEXT PRIMARY KEY,
+  project_id   TEXT NOT NULL REFERENCES projects(id),
+  title        TEXT NOT NULL,
+  description  TEXT NOT NULL DEFAULT '',
+  status       TEXT NOT NULL,
+  work_done    TEXT NOT NULL DEFAULT '',
+  now_possible TEXT NOT NULL DEFAULT '',
+  how_to_verify TEXT NOT NULL DEFAULT '',
+  surprises    TEXT NOT NULL DEFAULT '',
+  needs_review TEXT NOT NULL DEFAULT '',
+  next_steps   TEXT NOT NULL DEFAULT '',
+  created_at   TEXT NOT NULL,
+  updated_at   TEXT NOT NULL,
+  %s
+)`, completionReportCheckSQL())); err != nil {
+		return fmt.Errorf("create goals_new: %w", err)
+	}
+
+	workDoneExpr := `'なし'`
+	if resultSummaryColumn {
+		workDoneExpr = completionValueExprForColumn("result_summary")
+	} else {
+		workDoneExpr, err = completionValueExpr(tx, "work_done")
+		if err != nil {
+			return fmt.Errorf("inspect goals.work_done: %w", err)
+		}
+	}
+	if _, err := tx.Exec(fmt.Sprintf(`
+INSERT INTO goals_new (
+  id, project_id, title, description, status,
+  work_done, now_possible, how_to_verify, surprises, needs_review, next_steps,
+  created_at, updated_at
+)
+SELECT id, project_id, title, description, status,
+  %s, %s, %s, %s, %s, %s,
+  created_at, updated_at
+FROM goals`, workDoneExpr,
+		completionExpressions["now_possible"],
+		completionExpressions["how_to_verify"],
+		completionExpressions["surprises"],
+		completionExpressions["needs_review"],
+		completionExpressions["next_steps"])); err != nil {
+		return fmt.Errorf("copy goals: %w", err)
+	}
+	if _, err := tx.Exec(`DROP TABLE goals`); err != nil {
+		return fmt.Errorf("drop old goals table: %w", err)
+	}
+	if _, err := tx.Exec(`ALTER TABLE goals_new RENAME TO goals`); err != nil {
+		return fmt.Errorf("rename goals_new: %w", err)
+	}
+	for _, indexSQL := range indexes {
+		if _, err := tx.Exec(indexSQL); err != nil {
+			return fmt.Errorf("recreate goals index: %w", err)
+		}
+	}
+	return nil
+}
+
+func completionValueExpr(tx *sql.Tx, column string) (string, error) {
+	present, err := hasColumn(tx, "goals", column)
+	if err != nil {
+		return "", err
+	}
+	if !present {
+		return `'なし'`, nil
+	}
+	return completionValueExprForColumn(column), nil
+}
+
+func completionValueExprForColumn(column string) string {
+	return fmt.Sprintf("CASE WHEN length(trim(%s)) > 0 THEN %s ELSE 'なし' END", column, column)
+}
+
+func goalIndexes(tx *sql.Tx) ([]string, error) {
+	rows, err := tx.Query(`
+		SELECT sql FROM sqlite_master
+		WHERE type = 'index' AND tbl_name = 'goals' AND sql IS NOT NULL
+		ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var indexes []string
+	for rows.Next() {
+		var indexSQL string
+		if err := rows.Scan(&indexSQL); err != nil {
+			return nil, err
+		}
+		indexes = append(indexes, indexSQL)
+	}
+	return indexes, rows.Err()
 }
 
 func requireRunID(runID string) (string, error) {

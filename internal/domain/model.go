@@ -15,15 +15,33 @@ type Project struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+type CompletionReport struct {
+	WorkDone    string `json:"work_done"`
+	NowPossible string `json:"now_possible"`
+	HowToVerify string `json:"how_to_verify"`
+	Surprises   string `json:"surprises"`
+	NeedsReview string `json:"needs_review"`
+	NextSteps   string `json:"next_steps"`
+}
+
 type Goal struct {
-	ID            string     `json:"id"`
-	ProjectID     string     `json:"project_id"`
-	Title         string     `json:"title"`
-	Description   string     `json:"description"`
-	Status        GoalStatus `json:"status"`
-	ResultSummary string     `json:"result_summary"`
-	CreatedAt     time.Time  `json:"created_at"`
-	UpdatedAt     time.Time  `json:"updated_at"`
+	ID          string     `json:"id"`
+	ProjectID   string     `json:"project_id"`
+	Title       string     `json:"title"`
+	Description string     `json:"description"`
+	Status      GoalStatus `json:"status"`
+	WorkDone    string     `json:"work_done"`
+	NowPossible string     `json:"now_possible"`
+	HowToVerify string     `json:"how_to_verify"`
+	Surprises   string     `json:"surprises"`
+	NeedsReview string     `json:"needs_review"`
+	NextSteps   string     `json:"next_steps"`
+
+	// ResultSummary is kept as a Go-level compatibility alias for callers that
+	// still compile against the pre-v6 model. It is not part of the API or schema.
+	ResultSummary string    `json:"-"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
 }
 
 type Task struct {

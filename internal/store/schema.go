@@ -1,6 +1,25 @@
 package store
 
-const schemaSQL = `
+import "fmt"
+
+const completionReportMaxLength = 2000
+
+const completionReportCheckFormat = `CHECK (
+  status <> 'done' OR (
+    length(trim(work_done)) > 0 AND length(work_done) <= %[1]d AND
+    length(trim(now_possible)) > 0 AND length(now_possible) <= %[1]d AND
+    length(trim(how_to_verify)) > 0 AND length(how_to_verify) <= %[1]d AND
+    length(trim(surprises)) > 0 AND length(surprises) <= %[1]d AND
+    length(trim(needs_review)) > 0 AND length(needs_review) <= %[1]d AND
+    length(trim(next_steps)) > 0 AND length(next_steps) <= %[1]d
+  )
+)`
+
+func completionReportCheckSQL() string {
+	return fmt.Sprintf(completionReportCheckFormat, completionReportMaxLength)
+}
+
+var schemaSQL = fmt.Sprintf(`
 CREATE TABLE IF NOT EXISTS projects (
   id         TEXT PRIMARY KEY,
   name       TEXT NOT NULL UNIQUE,
@@ -23,9 +42,15 @@ CREATE TABLE IF NOT EXISTS goals (
   title          TEXT NOT NULL,
   description    TEXT NOT NULL DEFAULT '',
   status         TEXT NOT NULL,
-  result_summary TEXT NOT NULL DEFAULT '',
+  work_done      TEXT NOT NULL DEFAULT '',
+  now_possible   TEXT NOT NULL DEFAULT '',
+  how_to_verify  TEXT NOT NULL DEFAULT '',
+  surprises      TEXT NOT NULL DEFAULT '',
+  needs_review   TEXT NOT NULL DEFAULT '',
+  next_steps     TEXT NOT NULL DEFAULT '',
   created_at     TEXT NOT NULL,
-  updated_at     TEXT NOT NULL
+  updated_at     TEXT NOT NULL,
+  %s
 );
 
 CREATE TABLE IF NOT EXISTS tasks (
@@ -68,4 +93,4 @@ CREATE TABLE IF NOT EXISTS decisions (
 
 CREATE INDEX IF NOT EXISTS idx_decisions_open
   ON decisions(status, goal_id);
-`
+`, completionReportCheckSQL())

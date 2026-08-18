@@ -5,7 +5,9 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/michiomochi/atct/internal/domain"
@@ -25,8 +27,11 @@ func (s *Store) CreateGoal(ctx context.Context, projectID, title, description st
 		UpdatedAt:   now,
 	}
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO goals (id, project_id, title, description, status, result_summary, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, '', ?, ?)`,
+		`INSERT INTO goals (
+			id, project_id, title, description, status,
+			work_done, now_possible, how_to_verify, surprises, needs_review, next_steps,
+			created_at, updated_at
+		) VALUES (?, ?, ?, ?, ?, '', '', '', '', '', '', ?, ?)`,
 		g.ID, g.ProjectID, g.Title, g.Description, string(g.Status),
 		now.Format(time.RFC3339), now.Format(time.RFC3339))
 	if err != nil {
@@ -39,10 +44,12 @@ func scanGoal(sc interface{ Scan(...any) error }) (domain.Goal, error) {
 	var g domain.Goal
 	var status, createdAt, updatedAt string
 	if err := sc.Scan(&g.ID, &g.ProjectID, &g.Title, &g.Description,
-		&status, &g.ResultSummary, &createdAt, &updatedAt); err != nil {
+		&status, &g.WorkDone, &g.NowPossible, &g.HowToVerify, &g.Surprises,
+		&g.NeedsReview, &g.NextSteps, &createdAt, &updatedAt); err != nil {
 		return domain.Goal{}, err
 	}
 	g.Status = domain.GoalStatus(status)
+	g.ResultSummary = g.WorkDone
 	var err error
 	if g.CreatedAt, err = time.Parse(time.RFC3339, createdAt); err != nil {
 		return domain.Goal{}, fmt.Errorf("parse created_at: %w", err)
@@ -53,7 +60,7 @@ func scanGoal(sc interface{ Scan(...any) error }) (domain.Goal, error) {
 	return g, nil
 }
 
-const goalColumns = `id, project_id, title, description, status, result_summary, created_at, updated_at`
+const goalColumns = `id, project_id, title, description, status, work_done, now_possible, how_to_verify, surprises, needs_review, next_steps, created_at, updated_at`
 
 func (s *Store) GetGoal(ctx context.Context, id string) (domain.Goal, error) {
 	row := s.db.QueryRowContext(ctx, `SELECT `+goalColumns+` FROM goals WHERE id = ?`, id)
@@ -102,9 +109,65 @@ func (s *Store) ListAllGoals(ctx context.Context) ([]domain.Goal, error) {
 	return out, rows.Err()
 }
 
-// CompleteGoal creates a kind=completion Decision.
-// A Goal cannot close while a child Decision is open (invariant 4).
+type completionReportField struct {
+	name  string
+	value string
+}
+
+func completionReportFields(report domain.CompletionReport) []completionReportField {
+	return []completionReportField{
+		{name: "work_done", value: report.WorkDone},
+		{name: "now_possible", value: report.NowPossible},
+		{name: "how_to_verify", value: report.HowToVerify},
+		{name: "surprises", value: report.Surprises},
+		{name: "needs_review", value: report.NeedsReview},
+		{name: "next_steps", value: report.NextSteps},
+	}
+}
+
+func validateCompletionReport(report domain.CompletionReport) error {
+	fields := completionReportFields(report)
+	var empty []string
+	for _, field := range fields {
+		if strings.TrimSpace(field.value) == "" {
+			empty = append(empty, field.name)
+		}
+	}
+	if len(empty) > 0 {
+		return fmt.Errorf("completion report fields are empty: %s", strings.Join(empty, ", "))
+	}
+	for _, field := range fields {
+		if utf8.RuneCountInString(field.value) > completionReportMaxLength {
+			return fmt.Errorf("completion report field %s exceeds %d characters", field.name, completionReportMaxLength)
+		}
+	}
+	return nil
+}
+
+// CompleteGoal keeps the pre-v6 Go call shape source-compatible for packages
+// that have not adopted the structured report yet. The MCP API uses
+// CompleteGoalWithReport and does not expose this compatibility path.
 func (s *Store) CompleteGoal(ctx context.Context, goalID, resultSummary, runID string) (domain.Decision, error) {
+	if strings.TrimSpace(resultSummary) == "" {
+		resultSummary = "なし"
+	}
+	return s.CompleteGoalWithReport(ctx, goalID, domain.CompletionReport{
+		WorkDone:    resultSummary,
+		NowPossible: "なし",
+		HowToVerify: "なし",
+		Surprises:   "なし",
+		NeedsReview: "なし",
+		NextSteps:   "なし",
+	}, runID)
+}
+
+// CompleteGoalWithReport creates a kind=completion Decision.
+// A Goal cannot close while a child Decision is open (invariant 4).
+func (s *Store) CompleteGoalWithReport(ctx context.Context, goalID string, report domain.CompletionReport, runID string) (domain.Decision, error) {
+	if err := validateCompletionReport(report); err != nil {
+		return domain.Decision{}, err
+	}
+
 	var open int
 	err := s.db.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM decisions WHERE goal_id = ? AND status = 'open'`, goalID).Scan(&open)
@@ -116,9 +179,14 @@ func (s *Store) CompleteGoal(ctx context.Context, goalID, resultSummary, runID s
 	}
 
 	if _, err := s.db.ExecContext(ctx,
-		`UPDATE goals SET result_summary = ?, updated_at = ? WHERE id = ?`,
-		resultSummary, time.Now().UTC().Format(time.RFC3339), goalID); err != nil {
-		return domain.Decision{}, fmt.Errorf("set result_summary: %w", err)
+		`UPDATE goals SET
+			work_done = ?, now_possible = ?, how_to_verify = ?,
+			surprises = ?, needs_review = ?, next_steps = ?, updated_at = ?
+		WHERE id = ?`,
+		report.WorkDone, report.NowPossible, report.HowToVerify,
+		report.Surprises, report.NeedsReview, report.NextSteps,
+		time.Now().UTC().Format(time.RFC3339), goalID); err != nil {
+		return domain.Decision{}, fmt.Errorf("set completion report: %w", err)
 	}
 
 	return s.AskDecision(ctx, AskInput{

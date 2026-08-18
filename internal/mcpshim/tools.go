@@ -49,8 +49,17 @@ type DecisionWithdrawIn struct {
 }
 
 type GoalCompleteIn struct {
-	GoalID        string `json:"goal_id"`
-	ResultSummary string `json:"result_summary" jsonschema:"completion report for the human"`
+	GoalID      string `json:"goal_id"`
+	WorkDone    string `json:"work_done" jsonschema:"what was completed; write なし when there is nothing to report"`
+	NowPossible string `json:"now_possible" jsonschema:"what is possible now; write なし when there is nothing to report"`
+	HowToVerify string `json:"how_to_verify" jsonschema:"how to verify the result; write なし when there is nothing to report"`
+	Surprises   string `json:"surprises" jsonschema:"what differed from expectations; write なし when there is nothing to report"`
+	NeedsReview string `json:"needs_review" jsonschema:"what still needs confirmation; write なし when there is nothing to report"`
+	NextSteps   string `json:"next_steps" jsonschema:"what should happen next; write なし when there is nothing to report"`
+
+	// ResultSummary keeps old Go callers compiling without exposing the removed
+	// result_summary MCP argument.
+	ResultSummary string `json:"-"`
 }
 
 type Raw struct {
@@ -220,7 +229,10 @@ func Register(server *mcp.Server, c *Client, runID string) {
 		OutputSchema: rawOutputSchema(),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in GoalCompleteIn) (*mcp.CallToolResult, Raw, error) {
 		return call(ctx, c, "goal.complete", map[string]any{
-			"goal_id": in.GoalID, "result_summary": in.ResultSummary, "run_id": runID,
+			"goal_id": in.GoalID, "work_done": in.WorkDone,
+			"now_possible": in.NowPossible, "how_to_verify": in.HowToVerify,
+			"surprises": in.Surprises, "needs_review": in.NeedsReview,
+			"next_steps": in.NextSteps, "run_id": runID,
 		})
 	})
 }
