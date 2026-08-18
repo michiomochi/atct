@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -174,6 +175,28 @@ func (s *Store) ListTasks(ctx context.Context, goalID string) ([]domain.Task, er
 		out = append(out, tk)
 	}
 	return out, rows.Err()
+}
+
+// ListOpenTasksClaimedBy returns tasks that still need closing and belong to
+// the supplied run. A blank run ID cannot identify a caller's own claims.
+func (s *Store) ListOpenTasksClaimedBy(ctx context.Context, goalID, runID string) ([]domain.Task, error) {
+	runID = strings.TrimSpace(runID)
+	if runID == "" {
+		return []domain.Task{}, nil
+	}
+
+	tasks, err := s.ListTasks(ctx, goalID)
+	if err != nil {
+		return nil, err
+	}
+	open := make([]domain.Task, 0)
+	for _, task := range tasks {
+		if task.Status == domain.TaskDone || strings.TrimSpace(task.ClaimedBy) != runID {
+			continue
+		}
+		open = append(open, task)
+	}
+	return open, nil
 }
 
 // UpdateTask treats the transition to done as a guarded operation.

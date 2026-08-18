@@ -280,10 +280,15 @@ func renderContextLegacy(goals []contextGoal, decisions []domain.Decision) strin
 }
 
 func renderContext(goals []contextGoal, decisions []domain.Decision) string {
+	return renderContextForRun(goals, decisions, currentRunID())
+}
+
+func renderContextForRun(goals []contextGoal, decisions []domain.Decision, runID string) string {
 	const (
 		maxGoals = 3
 		maxTasks = 5
 	)
+	runID = strings.TrimSpace(runID)
 
 	active := make([]contextGoal, 0, len(goals))
 	activeIDs := make(map[string]struct{}, len(goals))
@@ -344,6 +349,9 @@ func renderContext(goals []contextGoal, decisions []domain.Decision) string {
 			status := string(task.Status)
 			if strings.TrimSpace(task.ClaimedBy) != "" {
 				status = "claimed"
+				if runID != "" && strings.TrimSpace(task.ClaimedBy) == runID && task.Status != domain.TaskDone {
+					status = "claimed by this run"
+				}
 			}
 			fmt.Fprintf(&b, "- [%s] %s (task_id: %s)\n", status, oneLine(task.Title), task.ID)
 		}

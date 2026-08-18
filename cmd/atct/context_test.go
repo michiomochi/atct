@@ -146,19 +146,25 @@ func TestContextIsSilentForUnregisteredProject(t *testing.T) {
 }
 
 func TestRenderContextDistinguishesClaimedTasks(t *testing.T) {
+	t.Setenv(atctRunIDEnv, "run-self")
+
 	got := renderContext([]contextGoal{{
 		Goal: domain.Goal{ID: "goal-claim", Title: "Claimed goal", Status: domain.GoalActive},
 		Tasks: []domain.Task{
 			{ID: "task-free", Title: "Unclaimed", Status: domain.TaskTodo},
-			{ID: "task-claimed", Title: "Claimed", Status: domain.TaskTodo, ClaimedBy: "commander"},
+			{ID: "task-self", Title: "Self claim", Status: domain.TaskDoing, ClaimedBy: "run-self"},
+			{ID: "task-other", Title: "Other claim", Status: domain.TaskDoing, ClaimedBy: "run-other"},
 		},
 	}}, nil)
 
 	if !strings.Contains(got, "- [todo] Unclaimed (task_id: task-free)") {
 		t.Fatalf("unclaimed task missing from context:\n%s", got)
 	}
-	if !strings.Contains(got, "- [claimed] Claimed (task_id: task-claimed)") {
-		t.Fatalf("claimed task marker missing from context:\n%s", got)
+	if !strings.Contains(got, "- [claimed by this run] Self claim (task_id: task-self)") {
+		t.Fatalf("current-run claim marker missing from context:\n%s", got)
+	}
+	if !strings.Contains(got, "- [claimed] Other claim (task_id: task-other)") {
+		t.Fatalf("other-run claim marker missing from context:\n%s", got)
 	}
 }
 

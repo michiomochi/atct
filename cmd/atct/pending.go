@@ -14,6 +14,15 @@ import (
 
 var errNoPendingDecisions = errors.New("no unapplied decisions")
 
+const (
+	atctRunIDEnv          = "ATCT_RUN_ID"
+	unfinishedClaimMarker = "Unfinished claimed tasks:"
+)
+
+func currentRunID() string {
+	return strings.TrimSpace(os.Getenv(atctRunIDEnv))
+}
+
 func pendingCommand(dir, cwd string) (string, int, error) {
 	return pendingCommandForProject(dir, cwd, "", false)
 }
@@ -74,6 +83,20 @@ func pendingTextForProject(dir, cwd, projectName string, projectSpecified bool) 
 		return "", fmt.Errorf("list unapplied decisions: %w", err)
 	}
 
+	unfinishedTasks := make([]domain.Task, 0)
+	if runID := currentRunID(); runID != "" {
+		for _, goal := range goals {
+			if goal.Status != domain.GoalActive {
+				continue
+			}
+			tasks, err := s.ListOpenTasksClaimedBy(ctx, goal.ID, runID)
+			if err != nil {
+				return "", fmt.Errorf("list claimed tasks for goal %s: %w", goal.ID, err)
+			}
+			unfinishedTasks = append(unfinishedTasks, tasks...)
+		}
+	}
+
 	var output strings.Builder
 	for _, decision := range decisions {
 		if decision.Status != domain.DecisionAnswered || decision.AppliedAt != nil {
@@ -83,6 +106,16 @@ func pendingTextForProject(dir, cwd, projectName string, projectSpecified bool) 
 			continue
 		}
 		fmt.Fprintf(&output, "- %s (decision_id: %s)\n", oneLine(decision.Question), decision.ID)
+	}
+	if len(unfinishedTasks) > 0 {
+		if output.Len() > 0 {
+			output.WriteByte('\n')
+		}
+		output.WriteString(unfinishedClaimMarker)
+		output.WriteByte('\n')
+		for _, task := range unfinishedTasks {
+			fmt.Fprintf(&output, "- %s (task_id: %s)\n", oneLine(task.Title), task.ID)
+		}
 	}
 	return output.String(), nil
 }

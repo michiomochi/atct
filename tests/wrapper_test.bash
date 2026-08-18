@@ -495,6 +495,80 @@ SCRIPT
   assert_file_contains 'pending' "$args_log"
 }
 
+test_stop_hook_is_silent_when_no_claim_or_pending_exists() {
+  local fixture="$TEMP_ROOT/stop-hook-no-work"
+  local hook="$fixture/plugin/hooks/stop"
+  local adjacent="$fixture/plugin/bin/atct"
+  local output
+
+  mkdir -p "$(dirname "$hook")" "$(dirname "$adjacent")"
+  cp "$REPO_ROOT/plugin/hooks/stop" "$hook"
+  cat >"$adjacent" <<'SCRIPT'
+#!/bin/bash
+if [[ "${1:-}" == pending ]]; then
+  exit 0
+fi
+exit 99
+SCRIPT
+  chmod +x "$adjacent"
+
+  if ! output="$(PATH="" /bin/bash "$hook" <<< '{}' 2>&1)"; then
+    fail 'stop hook failed when there was no pending work'
+  fi
+  assert_eq '' "$output" 'no claim or pending answer must keep the hook silent'
+}
+
+test_stop_hook_blocks_when_unfinished_claim_exists() {
+  local fixture="$TEMP_ROOT/stop-hook-claim"
+  local hook="$fixture/plugin/hooks/stop"
+  local adjacent="$fixture/plugin/bin/atct"
+  local claim_output=$'Unfinished claimed tasks:\n- unfinished implementation (task_id: t-1)'
+  local output
+
+  mkdir -p "$(dirname "$hook")" "$(dirname "$adjacent")"
+  cp "$REPO_ROOT/plugin/hooks/stop" "$hook"
+  cat >"$adjacent" <<'SCRIPT'
+#!/bin/bash
+if [[ "${1:-}" == pending ]]; then
+  printf '%s' "$CLAIM_OUTPUT"
+fi
+SCRIPT
+  chmod +x "$adjacent"
+
+  if ! output="$(CLAIM_OUTPUT="$claim_output" PATH="" /bin/bash "$hook" <<< '{}' 2>&1)"; then
+    fail 'stop hook failed when an unfinished claim existed'
+  fi
+  [[ "$output" == *'"decision":"block"'* ]] || fail 'unfinished claim must block the stop hook'
+  [[ "$output" == *'If you forgot to close it, close it; if you are still working on it, continue.'* ]] || fail 'claim reason must offer close-or-continue guidance'
+  [[ "$output" == *'unfinished implementation'* ]] || fail 'claim reason must include the unfinished task'
+}
+
+test_stop_hook_reason_includes_claim_and_pending_answer() {
+  local fixture="$TEMP_ROOT/stop-hook-both"
+  local hook="$fixture/plugin/hooks/stop"
+  local adjacent="$fixture/plugin/bin/atct"
+  local pending_output=$'- Review mode? (decision_id: d-1)\nUnfinished claimed tasks:\n- unfinished implementation (task_id: t-1)'
+  local output
+
+  mkdir -p "$(dirname "$hook")" "$(dirname "$adjacent")"
+  cp "$REPO_ROOT/plugin/hooks/stop" "$hook"
+  cat >"$adjacent" <<'SCRIPT'
+#!/bin/bash
+if [[ "${1:-}" == pending ]]; then
+  printf '%s' "$PENDING_OUTPUT"
+fi
+SCRIPT
+  chmod +x "$adjacent"
+
+  if ! output="$(PENDING_OUTPUT="$pending_output" PATH="" /bin/bash "$hook" <<< '{}' 2>&1)"; then
+    fail 'stop hook failed when pending work and an unfinished claim coexisted'
+  fi
+  [[ "$output" == *'"decision":"block"'* ]] || fail 'both pending conditions must block the stop hook'
+  [[ "$output" == *'A human answered a decision you parked.'* ]] || fail 'reason omitted the pending-decision guidance'
+  [[ "$output" == *'If you forgot to close it, close it; if you are still working on it, continue.'* ]] || fail 'reason omitted the unfinished-claim guidance'
+  [[ "$output" == *'Review mode?'* && "$output" == *'unfinished implementation'* ]] || fail 'reason omitted one of the two pending conditions'
+}
+
 test_stop_hook_blocks_when_pending_exists() {
   local fixture="$TEMP_ROOT/stop-hook-pending"
   local hook="$fixture/plugin/hooks/stop"
@@ -575,6 +649,9 @@ test_session_start_is_silent_without_atct_wrapper
 test_stop_hook_active_is_silent
 test_stop_hook_is_silent_without_adjacent_wrapper
 test_stop_hook_is_silent_when_pending_is_empty
+test_stop_hook_is_silent_when_no_claim_or_pending_exists
+test_stop_hook_blocks_when_unfinished_claim_exists
 test_stop_hook_blocks_when_pending_exists
+test_stop_hook_reason_includes_claim_and_pending_answer
 test_stop_hook_escapes_pending_json_characters
 printf 'PASS wrapper tests\n'
