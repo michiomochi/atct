@@ -39,10 +39,6 @@ func Open(path string) (*Store, error) {
 		}
 	}
 
-	if _, err := db.Exec(schemaSQL); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("create schema: %w", err)
-	}
 	if err := migrateSchema(db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrate schema: %w", err)
@@ -56,8 +52,23 @@ func migrateSchema(db *sql.DB) (err error) {
 	if err := db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
 		return fmt.Errorf("read schema version: %w", err)
 	}
-	if version >= schemaVersion {
-		return nil
+	if version > schemaVersion {
+		return fmt.Errorf("database schema version %d is newer than supported version %d", version, schemaVersion)
+	}
+	if version < 0 {
+		return fmt.Errorf("database has invalid schema version %d", version)
+	}
+	if version == schemaVersion {
+		return applyEmbeddedMigrations(db)
+	}
+	if version == 0 {
+		hasTargetTables, err := hasAnyTargetSchemaTableDB(db)
+		if err != nil {
+			return err
+		}
+		if !hasTargetTables {
+			return applyEmbeddedMigrations(db)
+		}
 	}
 
 	var foreignKeys int
@@ -80,6 +91,14 @@ func migrateSchema(db *sql.DB) (err error) {
 		return fmt.Errorf("begin migration: %w", err)
 	}
 	defer tx.Rollback()
+
+	legacyMigrations, err := loadEmbeddedMigrations()
+	if err != nil {
+		return fmt.Errorf("load legacy schema bootstrap: %w", err)
+	}
+	if _, err := tx.Exec(legacyMigrations[0].sql); err != nil {
+		return fmt.Errorf("bootstrap legacy schema: %w", err)
+	}
 
 	if version < 4 {
 		var invalidDecisionCount int
@@ -160,7 +179,7 @@ CREATE INDEX IF NOT EXISTS idx_runs_project_registered_at
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit migration: %w", err)
 	}
-	return nil
+	return applyEmbeddedMigrations(db)
 }
 
 func migrateGoalsTableV6(tx *sql.Tx) error {
