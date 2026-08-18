@@ -23,7 +23,7 @@ describe("resource parity", () => {
     expect(en["decision.recommended"]).toBe("AI recommendation");
     expect(ja["decision.recommended"]).toBe("AI の推奨");
     expect(en["decision.autoSettlesIn"]).toBe("Auto-settles in {{duration}}");
-    expect(ja["decision.autoSettlesIn"]).toBe("{{duration}} 後に自動確定");
+    expect(ja["decision.autoSettlesIn"]).toBe("{{duration}}後に自動確定");
   });
 
   it("keeps dotted keys flat rather than nested", () => {
