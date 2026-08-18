@@ -43,7 +43,49 @@ function errorMessage(reason: unknown, fallback: string): string {
   return reason instanceof Error ? reason.message : fallback;
 }
 
-function CompletionApproval({ goal, decision, onUpdated }: { goal: Goal; decision: Decision; onUpdated: () => void }) {
+const completionReportFields = [
+  { key: "work_done", label: "goal.completion.report.workDone" },
+  { key: "now_possible", label: "goal.completion.report.nowPossible" },
+  { key: "how_to_verify", label: "goal.completion.report.howToVerify" },
+  { key: "surprises", label: "goal.completion.report.surprises" },
+  { key: "needs_review", label: "goal.completion.report.needsReview" },
+  { key: "next_steps", label: "goal.completion.report.nextSteps" },
+] as const;
+
+function CompletionReport({ goal }: { goal: Goal }) {
+  const { t } = useTranslation();
+  const structuredReport = {
+    work_done: goal.work_done,
+    now_possible: goal.now_possible,
+    how_to_verify: goal.how_to_verify,
+    surprises: goal.surprises,
+    needs_review: goal.needs_review,
+    next_steps: goal.next_steps,
+  };
+  const allFieldsEmpty = Object.values(structuredReport).every((value) => value.trim() === "");
+  const report = allFieldsEmpty && goal.result_summary.trim() !== ""
+    ? { ...structuredReport, work_done: goal.result_summary }
+    : structuredReport;
+
+  return (
+    <section className="min-w-0 border-t border-line pt-5" data-testid="completion-report" aria-labelledby="completion-report-heading">
+      <h2 id="completion-report-heading" className="font-display text-lg font-semibold tracking-tight text-ink-950">{t("goal.completion.report.title")}</h2>
+      <div className="mt-4 grid min-w-0 gap-6 sm:grid-cols-2">
+        {completionReportFields.map(({ key, label }) => {
+          const value = report[key].trim() ? report[key] : t("goal.completion.report.empty");
+          return (
+            <section key={key} className="min-w-0 border-t border-line pt-3">
+              <h3 className="font-display text-base font-semibold text-ink-950">{t(label)}</h3>
+              <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-6 text-ink-800">{value}</p>
+            </section>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function CompletionApproval({ decision, onUpdated }: { decision: Decision; onUpdated: () => void }) {
   const { t } = useTranslation();
   const [reason, setReason] = useState("");
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -84,7 +126,7 @@ function CompletionApproval({ goal, decision, onUpdated }: { goal: Goal; decisio
 
   if (conflict) {
     return (
-      <section className="border-t border-line pt-5" data-testid="completion-approval" aria-labelledby="completion-approval-heading">
+      <section className="min-w-0 border-t border-line pt-5" data-testid="completion-approval" aria-labelledby="completion-approval-heading">
         <h2 id="completion-approval-heading" className="font-display text-lg font-semibold tracking-tight text-ink-950">{t("goal.completion.title")}</h2>
         <div className="mt-4 border border-notice-800 bg-notice-100 px-4 py-4 text-sm text-notice-800" role="alert">
           <p>{t("goal.completion.conflict")}</p>
@@ -101,10 +143,9 @@ function CompletionApproval({ goal, decision, onUpdated }: { goal: Goal; decisio
   }
 
   return (
-    <section className="border-t border-line pt-5" data-testid="completion-approval" aria-labelledby="completion-approval-heading">
+    <section className="min-w-0 border-t border-line pt-5" data-testid="completion-approval" aria-labelledby="completion-approval-heading">
       <h2 id="completion-approval-heading" className="font-display text-lg font-semibold tracking-tight text-ink-950">{t("goal.completion.title")}</h2>
-      <p className="mt-3 whitespace-pre-wrap break-words text-sm leading-6 text-ink-800">{goal.result_summary || t("goal.completion.noSummary")}</p>
-      <form className="mt-4 max-w-3xl border-l-2 border-accent-600 pl-4" onSubmit={handleSubmit} noValidate>
+      <form className="mt-4 min-w-0 max-w-3xl border-l-2 border-accent-600 pl-4" onSubmit={handleSubmit} noValidate>
         <label className="mb-3 block text-sm text-ink-800" htmlFor={reasonID}>
           {t("goal.completion.reason")} <span className="text-ink-500">{t("form.optional")}</span>
           <textarea
@@ -165,7 +206,7 @@ export function GoalDetail({ id }: Props) {
   const retry = () => void load();
 
   return (
-    <main className="space-y-10">
+    <main className="min-w-0 max-w-full space-y-10 overflow-x-hidden">
       <div className="border-b border-line pb-6">
         <a className="focus-ring text-sm font-medium text-accent-700 hover:text-accent-900" href="/">
           {t("goal.backToDashboard")}
@@ -179,11 +220,13 @@ export function GoalDetail({ id }: Props) {
         {data?.goal.goal.status && <p className="mt-3 text-sm text-ink-500">{t("goal.status", { status: data.goal.goal.status })}</p>}
       </div>
 
-      {data?.completion && <CompletionApproval goal={data.goal.goal} decision={data.completion} onUpdated={load} />}
+      {data && <CompletionReport goal={data.goal.goal} />}
+
+      {data?.completion && <CompletionApproval decision={data.completion} onUpdated={load} />}
 
       {data && <UnattachedDecisionList decisions={data.unattachedDecisions} onRefresh={load} />}
 
-      <div className="grid gap-10 xl:grid-cols-3">
+      <div className="grid min-w-0 gap-10 xl:grid-cols-3">
         <Section id="now" title={t("goal.column.now")} count={data?.goal.now.length}>
           {state.kind === "loading" && <AreaLoading label={t("goal.column.now")} />}
           {state.kind === "error" && <ErrorState message={state.message} onRetry={retry} />}

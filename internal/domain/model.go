@@ -37,9 +37,9 @@ type Goal struct {
 	NeedsReview string     `json:"needs_review"`
 	NextSteps   string     `json:"next_steps"`
 
-	// ResultSummary is kept as a Go-level compatibility alias for callers that
-	// still compile against the pre-v6 model. It is not part of the API or schema.
-	ResultSummary string    `json:"-"`
+	// ResultSummary preserves the legacy completion report field for API clients
+	// that still use the pre-structured report format.
+	ResultSummary string    `json:"result_summary"`
 	CreatedAt     time.Time `json:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at"`
 }

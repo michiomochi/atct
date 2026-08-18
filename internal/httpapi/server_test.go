@@ -427,6 +427,47 @@ func TestHTTPGoalDetailIncludesCompletionDecision(t *testing.T) {
 	}
 }
 
+func TestHTTPGoalDetailIncludesCompletionReportFields(t *testing.T) {
+	f := newBareFixture(t)
+	if _, err := f.store.CompleteGoalWithReport(f.ctx, f.goal.ID, domain.CompletionReport{
+		WorkDone:    "The work is ready",
+		NowPossible: "The goal can be approved",
+		HowToVerify: "Review the completion report",
+		Surprises:   "なし",
+		NeedsReview: "なし",
+		NextSteps:   "なし",
+	}, "completion-run"); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+	status, _, body := doRequest(t, srv.Client(), http.MethodGet, srv.URL+"/api/goals/"+f.goal.ID, nil)
+	if status != http.StatusOK {
+		t.Fatalf("goal status = %d; body=%s", status, body)
+	}
+
+	var payload struct {
+		Goal map[string]json.RawMessage `json:"goal"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatalf("decode goal detail: %v; body=%s", err, body)
+	}
+	for _, field := range []string{
+		"result_summary",
+		"work_done",
+		"now_possible",
+		"how_to_verify",
+		"surprises",
+		"needs_review",
+		"next_steps",
+	} {
+		if _, ok := payload.Goal[field]; !ok {
+			t.Errorf("goal JSON missing %q", field)
+		}
+	}
+}
+
 func TestHTTPGoalDetailHasNoUnattachedDecisionsWhenEmpty(t *testing.T) {
 	f := newBareFixture(t)
 	detail := fetchGoalDetail(t, f)

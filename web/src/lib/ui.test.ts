@@ -201,6 +201,34 @@ describe("Kumo buttons", () => {
 });
 
 describe("goal detail answer flows", () => {
+  it("renders all completion report fields and supports legacy summaries", () => {
+    for (const field of [
+      "work_done",
+      "now_possible",
+      "how_to_verify",
+      "surprises",
+      "needs_review",
+      "next_steps",
+    ]) {
+      expect(goalDetailSource).toContain(`goal.${field}`);
+    }
+
+    for (const key of [
+      "goal.completion.report.workDone",
+      "goal.completion.report.nowPossible",
+      "goal.completion.report.howToVerify",
+      "goal.completion.report.surprises",
+      "goal.completion.report.needsReview",
+      "goal.completion.report.nextSteps",
+    ]) {
+      expect(goalDetailSource).toContain(key);
+    }
+
+    expect(goalDetailSource).toContain("result_summary");
+    expect(goalDetailSource).toContain("min-w-0");
+    expect(goalDetailSource).toContain("break-words");
+  });
+
   it("finds only an open completion decision", () => {
     const completion = { id: "completion-1", kind: "completion", status: "open" };
     expect(findOpenCompletion([

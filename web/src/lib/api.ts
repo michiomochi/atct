@@ -14,6 +14,12 @@ export interface Goal {
   description: string;
   status: string;
   result_summary: string;
+  work_done: string;
+  now_possible: string;
+  how_to_verify: string;
+  surprises: string;
+  needs_review: string;
+  next_steps: string;
   created_at: string;
   updated_at: string;
 }

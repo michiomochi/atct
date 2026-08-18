@@ -4,6 +4,21 @@ import { ja } from "./ja";
 import { formatDateTime, formatDuration, resolveLocale, t } from "./index";
 
 describe("resource parity", () => {
+  it("uses the required Japanese completion report headings", () => {
+    const headings = {
+      "goal.completion.report.workDone": "完了した作業内容",
+      "goal.completion.report.nowPossible": "できるようになったこと",
+      "goal.completion.report.howToVerify": "確かめ方",
+      "goal.completion.report.surprises": "想定と違ったこと",
+      "goal.completion.report.needsReview": "確認が必要なこと",
+      "goal.completion.report.nextSteps": "次にやること",
+    } as const;
+
+    for (const [key, expected] of Object.entries(headings)) {
+      expect((ja as Record<string, string>)[key]).toBe(expected);
+    }
+  });
+
   it("has the same keys in both languages", () => {
     expect(Object.keys(ja).sort()).toEqual(Object.keys(en).sort());
   });
