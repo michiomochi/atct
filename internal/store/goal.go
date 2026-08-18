@@ -29,9 +29,10 @@ func (s *Store) CreateGoal(ctx context.Context, projectID, title, description st
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO goals (
 			id, project_id, title, description, status,
+			result_summary,
 			work_done, now_possible, how_to_verify, surprises, needs_review, next_steps,
 			created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, '', '', '', '', '', '', ?, ?)`,
+		) VALUES (?, ?, ?, ?, ?, '', '', '', '', '', '', '', ?, ?)`,
 		g.ID, g.ProjectID, g.Title, g.Description, string(g.Status),
 		now.Format(time.RFC3339), now.Format(time.RFC3339))
 	if err != nil {
@@ -42,14 +43,14 @@ func (s *Store) CreateGoal(ctx context.Context, projectID, title, description st
 
 func scanGoal(sc interface{ Scan(...any) error }) (domain.Goal, error) {
 	var g domain.Goal
-	var status, createdAt, updatedAt string
+	var status, resultSummary, createdAt, updatedAt string
 	if err := sc.Scan(&g.ID, &g.ProjectID, &g.Title, &g.Description,
-		&status, &g.WorkDone, &g.NowPossible, &g.HowToVerify, &g.Surprises,
+		&status, &resultSummary, &g.WorkDone, &g.NowPossible, &g.HowToVerify, &g.Surprises,
 		&g.NeedsReview, &g.NextSteps, &createdAt, &updatedAt); err != nil {
 		return domain.Goal{}, err
 	}
 	g.Status = domain.GoalStatus(status)
-	g.ResultSummary = g.WorkDone
+	g.ResultSummary = resultSummary
 	var err error
 	if g.CreatedAt, err = time.Parse(time.RFC3339, createdAt); err != nil {
 		return domain.Goal{}, fmt.Errorf("parse created_at: %w", err)
@@ -60,7 +61,7 @@ func scanGoal(sc interface{ Scan(...any) error }) (domain.Goal, error) {
 	return g, nil
 }
 
-const goalColumns = `id, project_id, title, description, status, work_done, now_possible, how_to_verify, surprises, needs_review, next_steps, created_at, updated_at`
+const goalColumns = `id, project_id, title, description, status, result_summary, work_done, now_possible, how_to_verify, surprises, needs_review, next_steps, created_at, updated_at`
 
 func (s *Store) GetGoal(ctx context.Context, id string) (domain.Goal, error) {
 	row := s.db.QueryRowContext(ctx, `SELECT `+goalColumns+` FROM goals WHERE id = ?`, id)
@@ -180,10 +181,11 @@ func (s *Store) CompleteGoalWithReport(ctx context.Context, goalID string, repor
 
 	if _, err := s.db.ExecContext(ctx,
 		`UPDATE goals SET
+			result_summary = ?,
 			work_done = ?, now_possible = ?, how_to_verify = ?,
 			surprises = ?, needs_review = ?, next_steps = ?, updated_at = ?
 		WHERE id = ?`,
-		report.WorkDone, report.NowPossible, report.HowToVerify,
+		report.WorkDone, report.WorkDone, report.NowPossible, report.HowToVerify,
 		report.Surprises, report.NeedsReview, report.NextSteps,
 		time.Now().UTC().Format(time.RFC3339), goalID); err != nil {
 		return domain.Decision{}, fmt.Errorf("set completion report: %w", err)

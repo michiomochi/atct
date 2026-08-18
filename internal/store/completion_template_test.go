@@ -59,31 +59,49 @@ func completionTemplateReportValues(report domain.CompletionReport) []any {
 	}
 }
 
+type completionTemplateLegacyGoal struct {
+	status        string
+	resultSummary string
+}
+
+type completionTemplateMigratedGoal struct {
+	status        string
+	resultSummary string
+	workDone      string
+	nowPossible   string
+	howToVerify   string
+	surprises     string
+	needsReview   string
+	nextSteps     string
+}
+
 func completionTemplateMeasureRealCopy(t *testing.T, dbPath string) {
 	t.Helper()
 	legacy, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		t.Fatalf("open VACUUM INTO copy: %v", err)
 	}
-	rows, err := legacy.Query(`SELECT id, result_summary FROM goals ORDER BY id`)
+	rows, err := legacy.Query(`SELECT id, status, result_summary FROM goals ORDER BY id`)
 	if err != nil {
 		legacy.Close()
 		t.Fatalf("read copied v5 reports: %v", err)
 	}
-	want := make(map[string]string)
+	want := make(map[string]completionTemplateLegacyGoal)
 	reported := 0
+	doneReported := 0
 	for rows.Next() {
-		var id, summary string
-		if err := rows.Scan(&id, &summary); err != nil {
+		var id, status, summary string
+		if err := rows.Scan(&id, &status, &summary); err != nil {
 			rows.Close()
 			legacy.Close()
 			t.Fatalf("scan copied v5 report: %v", err)
 		}
+		want[id] = completionTemplateLegacyGoal{status: status, resultSummary: summary}
 		if strings.TrimSpace(summary) != "" {
 			reported++
-			want[id] = summary
-		} else {
-			want[id] = "なし"
+			if status == "done" {
+				doneReported++
+			}
 		}
 	}
 	if err := rows.Err(); err != nil {
@@ -107,18 +125,23 @@ func completionTemplateMeasureRealCopy(t *testing.T, dbPath string) {
 		t.Fatalf("migrate VACUUM INTO copy: %v", err)
 	}
 	defer s.Close()
-	rows, err = s.DB().Query(`SELECT id, work_done FROM goals ORDER BY id`)
+	rows, err = s.DB().Query(`
+SELECT id, status, result_summary, work_done, now_possible, how_to_verify,
+       surprises, needs_review, next_steps
+FROM goals ORDER BY id`)
 	if err != nil {
 		t.Fatalf("read migrated copied reports: %v", err)
 	}
-	got := make(map[string]string)
+	got := make(map[string]completionTemplateMigratedGoal)
 	for rows.Next() {
-		var id, workDone string
-		if err := rows.Scan(&id, &workDone); err != nil {
+		var id string
+		var goal completionTemplateMigratedGoal
+		if err := rows.Scan(&id, &goal.status, &goal.resultSummary, &goal.workDone,
+			&goal.nowPossible, &goal.howToVerify, &goal.surprises, &goal.needsReview, &goal.nextSteps); err != nil {
 			rows.Close()
 			t.Fatalf("scan migrated copied report: %v", err)
 		}
-		got[id] = workDone
+		got[id] = goal
 	}
 	if err := rows.Err(); err != nil {
 		rows.Close()
@@ -130,12 +153,37 @@ func completionTemplateMeasureRealCopy(t *testing.T, dbPath string) {
 	if len(got) != len(want) {
 		t.Fatalf("migrated goal count = %d, want %d", len(got), len(want))
 	}
-	for id, wantWorkDone := range want {
-		if got[id] != wantWorkDone {
-			t.Fatalf("goal %s work_done = %q, want %q", id, got[id], wantWorkDone)
+	for id, wantGoal := range want {
+		gotGoal, ok := got[id]
+		if !ok {
+			t.Fatalf("migrated goal %s is missing", id)
+		}
+		if gotGoal.resultSummary != wantGoal.resultSummary {
+			t.Fatalf("goal %s result_summary = %q, want %q", id, gotGoal.resultSummary, wantGoal.resultSummary)
+		}
+		switch wantGoal.status {
+		case "active":
+			if gotGoal.workDone != "" || gotGoal.nowPossible != "" || gotGoal.howToVerify != "" ||
+				gotGoal.surprises != "" || gotGoal.needsReview != "" || gotGoal.nextSteps != "" {
+				t.Fatalf("active goal %s has a migrated completion report: %+v", id, gotGoal)
+			}
+		case "done":
+			wantWorkDone := "なし"
+			if strings.TrimSpace(wantGoal.resultSummary) != "" {
+				wantWorkDone = wantGoal.resultSummary
+			}
+			if gotGoal.workDone != wantWorkDone {
+				t.Fatalf("done goal %s work_done = %q, want %q", id, gotGoal.workDone, wantWorkDone)
+			}
+			if gotGoal.nowPossible != "なし" || gotGoal.howToVerify != "なし" || gotGoal.surprises != "なし" ||
+				gotGoal.needsReview != "なし" || gotGoal.nextSteps != "なし" {
+				t.Fatalf("done goal %s placeholders = %+v", id, gotGoal)
+			}
+		default:
+			t.Fatalf("goal %s has unexpected status %q", id, wantGoal.status)
 		}
 	}
-	t.Logf("VACUUM INTO copy preserved %d existing completion reports in work_done", reported)
+	t.Logf("VACUUM INTO copy preserved %d existing reports (%d done in work_done, active reports retained in result_summary)", reported, doneReported)
 }
 
 func TestCompletionTemplateAllFieldsCanBecomeDone(t *testing.T) {
@@ -239,7 +287,9 @@ CREATE TABLE goals (
 INSERT INTO projects (id, name, root_path, created_at)
 VALUES ('project-v5', 'v5 project', '/tmp/completion-template-v5', '2026-08-18T00:00:00Z');
 INSERT INTO goals (id, project_id, title, description, status, result_summary, created_at, updated_at)
-VALUES ('goal-v5', 'project-v5', 'old goal', '', 'done', 'legacy completion report', '2026-08-18T00:00:00Z', '2026-08-18T00:00:00Z');
+VALUES
+  ('goal-v5-done', 'project-v5', 'old done goal', '', 'done', 'legacy completion report', '2026-08-18T00:00:00Z', '2026-08-18T00:00:00Z'),
+  ('goal-v5-active', 'project-v5', 'old active goal', '', 'active', 'legacy active note', '2026-08-18T00:00:00Z', '2026-08-18T00:00:00Z');
 PRAGMA user_version = 5`)
 	if err != nil {
 		legacy.Close()
@@ -262,7 +312,7 @@ PRAGMA user_version = 5`)
 	if version != 6 {
 		t.Fatalf("schema version = %d, want 6", version)
 	}
-	goal, err := s.GetGoal(context.Background(), "goal-v5")
+	goal, err := s.GetGoal(context.Background(), "goal-v5-done")
 	if err != nil {
 		t.Fatalf("read migrated goal: %v", err)
 	}
@@ -273,9 +323,19 @@ PRAGMA user_version = 5`)
 		goal.NeedsReview != "なし" || goal.NextSteps != "なし" {
 		t.Fatalf("migrated placeholders = %+v", goal)
 	}
-	var oldColumn string
-	if err := s.DB().QueryRow(`SELECT name FROM pragma_table_info('goals') WHERE name = 'result_summary'`).Scan(&oldColumn); err == nil {
-		t.Fatalf("result_summary column remains after migration")
+	if goal.ResultSummary != "legacy completion report" {
+		t.Fatalf("migrated result_summary = %q, want legacy report", goal.ResultSummary)
+	}
+	active, err := s.GetGoal(context.Background(), "goal-v5-active")
+	if err != nil {
+		t.Fatalf("read migrated active goal: %v", err)
+	}
+	if active.WorkDone != "" || active.NowPossible != "" || active.HowToVerify != "" ||
+		active.Surprises != "" || active.NeedsReview != "" || active.NextSteps != "" {
+		t.Fatalf("migrated active goal has a completion report: %+v", active)
+	}
+	if active.ResultSummary != "legacy active note" {
+		t.Fatalf("migrated active result_summary = %q, want legacy active note", active.ResultSummary)
 	}
 	if realCopy := os.Getenv("ATCT_COMPLETION_REAL_DB_COPY"); realCopy != "" {
 		completionTemplateMeasureRealCopy(t, realCopy)

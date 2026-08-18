@@ -191,6 +191,7 @@ CREATE TABLE goals_new (
   title        TEXT NOT NULL,
   description  TEXT NOT NULL DEFAULT '',
   status       TEXT NOT NULL,
+  result_summary TEXT NOT NULL DEFAULT '',
   work_done    TEXT NOT NULL DEFAULT '',
   now_possible TEXT NOT NULL DEFAULT '',
   how_to_verify TEXT NOT NULL DEFAULT '',
@@ -204,7 +205,11 @@ CREATE TABLE goals_new (
 		return fmt.Errorf("create goals_new: %w", err)
 	}
 
-	workDoneExpr := `'なし'`
+	resultSummaryExpr := `''`
+	if resultSummaryColumn {
+		resultSummaryExpr = `result_summary`
+	}
+	workDoneExpr := completionPlaceholderExpr
 	if resultSummaryColumn {
 		workDoneExpr = completionValueExprForColumn("result_summary")
 	} else {
@@ -216,13 +221,14 @@ CREATE TABLE goals_new (
 	if _, err := tx.Exec(fmt.Sprintf(`
 INSERT INTO goals_new (
   id, project_id, title, description, status,
+  result_summary,
   work_done, now_possible, how_to_verify, surprises, needs_review, next_steps,
   created_at, updated_at
 )
 SELECT id, project_id, title, description, status,
-  %s, %s, %s, %s, %s, %s,
+  %s, %s, %s, %s, %s, %s, %s,
   created_at, updated_at
-FROM goals`, workDoneExpr,
+FROM goals`, resultSummaryExpr, workDoneExpr,
 		completionExpressions["now_possible"],
 		completionExpressions["how_to_verify"],
 		completionExpressions["surprises"],
@@ -244,19 +250,21 @@ FROM goals`, workDoneExpr,
 	return nil
 }
 
+const completionPlaceholderExpr = `CASE WHEN status = 'done' THEN 'なし' ELSE '' END`
+
 func completionValueExpr(tx *sql.Tx, column string) (string, error) {
 	present, err := hasColumn(tx, "goals", column)
 	if err != nil {
 		return "", err
 	}
 	if !present {
-		return `'なし'`, nil
+		return completionPlaceholderExpr, nil
 	}
 	return completionValueExprForColumn(column), nil
 }
 
 func completionValueExprForColumn(column string) string {
-	return fmt.Sprintf("CASE WHEN length(trim(%s)) > 0 THEN %s ELSE 'なし' END", column, column)
+	return fmt.Sprintf("CASE WHEN status = 'done' AND length(trim(%s)) > 0 THEN %s WHEN status = 'done' THEN 'なし' ELSE '' END", column, column)
 }
 
 func goalIndexes(tx *sql.Tx) ([]string, error) {

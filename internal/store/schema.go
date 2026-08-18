@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS goals (
   title          TEXT NOT NULL,
   description    TEXT NOT NULL DEFAULT '',
   status         TEXT NOT NULL,
+  result_summary TEXT NOT NULL DEFAULT '',
   work_done      TEXT NOT NULL DEFAULT '',
   now_possible   TEXT NOT NULL DEFAULT '',
   how_to_verify  TEXT NOT NULL DEFAULT '',
