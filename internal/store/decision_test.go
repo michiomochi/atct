@@ -12,9 +12,11 @@ func TestAskDecisionStartsOpen(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	goalID := newTestGoal(t, s)
+	taskID := newTestDecisionTask(t, s, goalID, "starts-open")
 
 	d, err := s.AskDecision(ctx, AskInput{
 		GoalID:   goalID,
+		TaskID:   taskID,
 		Kind:     domain.KindDecision,
 		Question: "Should retries use exponential backoff?",
 		Options: []domain.Option{

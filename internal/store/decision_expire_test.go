@@ -12,8 +12,11 @@ func newExpiringDecision(t *testing.T, s *Store, afterMs int64) domain.Decision 
 	t.Helper()
 
 	defaultAfterMs := afterMs
+	goalID := newTestGoal(t, s)
+	taskID := newTestDecisionTask(t, s, goalID, "expiring")
 	d, err := s.AskDecision(context.Background(), AskInput{
-		GoalID:         newTestGoal(t, s),
+		GoalID:         goalID,
+		TaskID:         taskID,
 		Kind:           domain.KindDecision,
 		Question:       "Choose an option",
 		Options:        []domain.Option{{Label: "A"}, {Label: "B"}},
@@ -95,8 +98,11 @@ func TestApplyExpiredDefaultsSkipsAnsweredDecision(t *testing.T) {
 func TestApplyExpiredDefaultsIgnoresDecisionWithoutDefault(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
+	goalID := newTestGoal(t, s)
+	taskID := newTestDecisionTask(t, s, goalID, "without-default")
 	d, err := s.AskDecision(ctx, AskInput{
-		GoalID:   newTestGoal(t, s),
+		GoalID:   goalID,
+		TaskID:   taskID,
 		Kind:     domain.KindDecision,
 		Question: "Choose an option",
 		Options:  []domain.Option{{Label: "A"}, {Label: "B"}},

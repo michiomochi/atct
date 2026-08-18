@@ -12,9 +12,10 @@ func TestWaitForAnswerReturnsWhenAnswered(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	goalID := newTestGoal(t, s)
+	taskID := newTestDecisionTask(t, s, goalID, "notify-answer")
 
 	d, err := s.AskDecision(ctx, AskInput{
-		GoalID: goalID, Kind: domain.KindDecision, Question: "What should we do?", RunID: "run-1",
+		GoalID: goalID, TaskID: taskID, Kind: domain.KindDecision, Question: "What should we do?", RunID: "run-1",
 	})
 	if err != nil {
 		t.Fatalf("AskDecision: %v", err)
@@ -45,9 +46,10 @@ func TestWaitForAnswerParksOnTimeout(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	goalID := newTestGoal(t, s)
+	taskID := newTestDecisionTask(t, s, goalID, "notify-timeout")
 
 	d, err := s.AskDecision(ctx, AskInput{
-		GoalID: goalID, Kind: domain.KindDecision, Question: "What should we do?", RunID: "run-1",
+		GoalID: goalID, TaskID: taskID, Kind: domain.KindDecision, Question: "What should we do?", RunID: "run-1",
 	})
 	if err != nil {
 		t.Fatalf("AskDecision: %v", err)

@@ -12,9 +12,10 @@ func TestCompleteGoalRejectedWhenOpenDecisionExists(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	goalID := newTestGoal(t, s)
+	taskID := newTestDecisionTask(t, s, goalID, "complete-open")
 
 	if _, err := s.AskDecision(ctx, AskInput{
-		GoalID: goalID, Kind: domain.KindDecision, Question: "Unresolved", RunID: "run-1",
+		GoalID: goalID, TaskID: taskID, Kind: domain.KindDecision, Question: "Unresolved", RunID: "run-1",
 	}); err != nil {
 		t.Fatalf("AskDecision: %v", err)
 	}

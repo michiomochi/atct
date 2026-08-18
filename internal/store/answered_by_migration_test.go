@@ -17,6 +17,22 @@ func TestOpenMigratesAnsweredByFromVersionsZeroAndOne(t *testing.T) {
 				t.Fatal(err)
 			}
 			_, err = db.Exec(fmt.Sprintf(`
+CREATE TABLE projects (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE,
+  root_path TEXT NOT NULL UNIQUE,
+  created_at TEXT NOT NULL
+);
+CREATE TABLE goals (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES projects(id),
+  title TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL,
+  result_summary TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
 CREATE TABLE tasks (
   id TEXT PRIMARY KEY,
   goal_id TEXT NOT NULL,
@@ -47,13 +63,19 @@ CREATE TABLE decisions (
   created_at TEXT NOT NULL
 );
 PRAGMA user_version = %d;
+INSERT INTO projects (id, name, root_path, created_at)
+VALUES ('project-one', 'project one', '/project-one', '2026-08-18T00:00:00Z');
+INSERT INTO goals (id, project_id, title, status, created_at, updated_at)
+VALUES ('goal-one', 'project-one', 'goal one', 'active', '2026-08-18T00:00:00Z', '2026-08-18T00:00:00Z');
+INSERT INTO tasks (id, goal_id, title, status, declare_key, created_at, updated_at)
+VALUES ('task-one', 'goal-one', 'task one', 'todo', 'task-one', '2026-08-18T00:00:00Z', '2026-08-18T00:00:00Z');
 INSERT INTO decisions (
-  id, goal_id, kind, question, options, status, answer_label, answer_text,
+  id, goal_id, task_id, kind, question, options, status, answer_label, answer_text,
   answered_by, answered_at, applied_at, run_id, created_at
 ) VALUES
-  ('decision-one', 'goal-one', 'decision', 'Choose one', '[{"label":"A"}]', 'answered', 'A', 'first answer',
+  ('decision-one', 'goal-one', 'task-one', 'decision', 'Choose one', '[{"label":"A"}]', 'answered', 'A', 'first answer',
    'first human', '2026-08-18T00:01:00Z', NULL, 'run-one', '2026-08-18T00:00:00Z'),
-  ('decision-two', 'goal-two', 'completion', 'Approve?', '[]', 'applied', 'approve', '',
+  ('decision-two', 'goal-one', NULL, 'completion', 'Approve?', '[]', 'applied', 'approve', '',
    'second human', '2026-08-18T00:02:00Z', '2026-08-18T00:03:00Z', 'run-two', '2026-08-18T00:00:01Z');
 `, version))
 			if err != nil {
@@ -74,8 +96,8 @@ INSERT INTO decisions (
 			if err := s.DB().QueryRow("PRAGMA user_version").Scan(&gotVersion); err != nil {
 				t.Fatal(err)
 			}
-			if gotVersion != 3 {
-				t.Fatalf("user_version = %d, want 3", gotVersion)
+			if gotVersion != 4 {
+				t.Fatalf("user_version = %d, want 4", gotVersion)
 			}
 			if hasDecisionsColumn(t, s.DB(), "answered_by") {
 				t.Fatal("decisions.answered_by still exists after migration")

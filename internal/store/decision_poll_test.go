@@ -11,9 +11,10 @@ func TestPollMarksApplied(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	goalID := newTestGoal(t, s)
+	taskID := newTestDecisionTask(t, s, goalID, "poll-marks-applied")
 
 	d, err := s.AskDecision(ctx, AskInput{
-		GoalID: goalID, Kind: domain.KindDecision, Question: "What should we do?", RunID: "run-1",
+		GoalID: goalID, TaskID: taskID, Kind: domain.KindDecision, Question: "What should we do?", RunID: "run-1",
 	})
 	if err != nil {
 		t.Fatalf("AskDecision: %v", err)
@@ -108,8 +109,9 @@ func TestPollAdoptionPreservesOriginalRunID(t *testing.T) {
 func answeredDecisionForRun(t *testing.T, s *Store, goalID, runID string) domain.Decision {
 	t.Helper()
 	ctx := context.Background()
+	taskID := newTestDecisionTask(t, s, goalID, runID)
 	d, err := s.AskDecision(ctx, AskInput{
-		GoalID: goalID, Kind: domain.KindDecision, Question: "What should we do?", RunID: runID,
+		GoalID: goalID, TaskID: taskID, Kind: domain.KindDecision, Question: "What should we do?", RunID: runID,
 	})
 	if err != nil {
 		t.Fatalf("AskDecision: %v", err)

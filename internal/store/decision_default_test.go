@@ -13,10 +13,12 @@ func TestDecisionRoundTripsDefaultFields(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	goalID := newTestGoal(t, s)
+	taskID := newTestDecisionTask(t, s, goalID, "default-fields")
 	after := int64(1800000)
 
 	saved, err := s.AskDecision(ctx, AskInput{
 		GoalID:         goalID,
+		TaskID:         taskID,
 		Kind:           domain.DecisionKind("decision"),
 		Question:       "A か B か",
 		Options:        []domain.Option{{Label: "A"}, {Label: "B"}},
@@ -49,6 +51,35 @@ func TestOpenMigratesDecisionDefaultColumns(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err = db.Exec(`
+CREATE TABLE projects (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE,
+  root_path TEXT NOT NULL UNIQUE,
+  created_at TEXT NOT NULL
+);
+CREATE TABLE goals (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES projects(id),
+  title TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL,
+  result_summary TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE TABLE tasks (
+  id TEXT PRIMARY KEY,
+  goal_id TEXT NOT NULL,
+  title TEXT NOT NULL,
+  status TEXT NOT NULL,
+  agent TEXT NOT NULL DEFAULT '',
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  declare_key TEXT NOT NULL,
+  claimed_by TEXT NOT NULL DEFAULT '',
+  claimed_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
 CREATE TABLE decisions (
   id TEXT PRIMARY KEY,
   goal_id TEXT NOT NULL,
@@ -66,8 +97,14 @@ CREATE TABLE decisions (
   created_at TEXT NOT NULL
 );
 PRAGMA user_version = 1;
-INSERT INTO decisions (id, goal_id, kind, question, options, status, created_at)
-VALUES ('old-decision', 'old-goal', 'decision', 'old question', '[]', 'open', '2026-08-18T00:00:00Z');
+INSERT INTO projects (id, name, root_path, created_at)
+VALUES ('old-project', 'old project', '/old-project', '2026-08-18T00:00:00Z');
+INSERT INTO goals (id, project_id, title, status, created_at, updated_at)
+VALUES ('old-goal', 'old-project', 'old goal', 'active', '2026-08-18T00:00:00Z', '2026-08-18T00:00:00Z');
+INSERT INTO tasks (id, goal_id, title, status, declare_key, created_at, updated_at)
+VALUES ('old-task', 'old-goal', 'old task', 'todo', 'old-task', '2026-08-18T00:00:00Z', '2026-08-18T00:00:00Z');
+INSERT INTO decisions (id, goal_id, task_id, kind, question, options, status, created_at)
+VALUES ('old-decision', 'old-goal', 'old-task', 'decision', 'old question', '[]', 'open', '2026-08-18T00:00:00Z');
 `)
 	if err != nil {
 		db.Close()

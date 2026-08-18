@@ -53,7 +53,8 @@ CREATE TABLE IF NOT EXISTS decisions (
   answered_at  TEXT,
   applied_at   TEXT,
   run_id       TEXT NOT NULL DEFAULT '',
-  created_at   TEXT NOT NULL
+  created_at   TEXT NOT NULL,
+  CHECK (kind <> 'decision' OR status NOT IN ('open', 'answered') OR (task_id IS NOT NULL AND task_id <> ''))
 );
 
 CREATE INDEX IF NOT EXISTS idx_decisions_open

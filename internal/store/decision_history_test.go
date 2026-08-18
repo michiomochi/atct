@@ -15,14 +15,16 @@ func TestListAppliedDecisionsReturnsOnlyAppliedDecisionsForGoal(t *testing.T) {
 	goalID := newTestGoal(t, s)
 
 	applied := createAppliedHistoryDecision(t, s, goalID, "applied", time.Time{})
+	openTaskID := newTestDecisionTask(t, s, goalID, "history-open")
 	open, err := s.AskDecision(ctx, AskInput{
-		GoalID: goalID, Kind: domain.KindDecision, Question: "open", RunID: "open-run",
+		GoalID: goalID, TaskID: openTaskID, Kind: domain.KindDecision, Question: "open", RunID: "open-run",
 	})
 	if err != nil {
 		t.Fatalf("AskDecision open: %v", err)
 	}
+	answeredTaskID := newTestDecisionTask(t, s, goalID, "history-answered")
 	answered, err := s.AskDecision(ctx, AskInput{
-		GoalID: goalID, Kind: domain.KindDecision, Question: "answered", RunID: "answered-run",
+		GoalID: goalID, TaskID: answeredTaskID, Kind: domain.KindDecision, Question: "answered", RunID: "answered-run",
 	})
 	if err != nil {
 		t.Fatalf("AskDecision answered: %v", err)
@@ -123,8 +125,9 @@ func createAppliedHistoryDecision(t *testing.T, s *Store, goalID, question strin
 	t.Helper()
 	ctx := context.Background()
 	runID := fmt.Sprintf("history-run-%s", question)
+	taskID := newTestDecisionTask(t, s, goalID, runID)
 	d, err := s.AskDecision(ctx, AskInput{
-		GoalID: goalID, Kind: domain.KindDecision, Question: question, RunID: runID,
+		GoalID: goalID, TaskID: taskID, Kind: domain.KindDecision, Question: question, RunID: runID,
 	})
 	if err != nil {
 		t.Fatalf("AskDecision %q: %v", question, err)
