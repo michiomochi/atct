@@ -33,6 +33,8 @@ export const ja: Record<TranslationKey, string> = {
   "decision.column.goal": "ゴール",
   "decision.column.createdAt": "作成日時",
   "decision.settledByDefault": "期限切れのため既定値で確定",
+  "decision.recommended": "AI の推奨",
+  "decision.autoSettlesIn": "{{duration}} 後に自動確定",
   "status.task.todo": "未着手",
   "status.task.doing": "進行中",
   "status.task.done": "完了",

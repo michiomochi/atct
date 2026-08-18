@@ -19,6 +19,13 @@ describe("resource parity", () => {
     }
   });
 
+  it("translates recommendation and automatic settlement messages", () => {
+    expect(en["decision.recommended"]).toBe("AI recommendation");
+    expect(ja["decision.recommended"]).toBe("AI の推奨");
+    expect(en["decision.autoSettlesIn"]).toBe("Auto-settles in {{duration}}");
+    expect(ja["decision.autoSettlesIn"]).toBe("{{duration}} 後に自動確定");
+  });
+
   it("keeps dotted keys flat rather than nested", () => {
     for (const key of Object.keys(en)) {
       expect(typeof en[key as keyof typeof en]).toBe("string");

@@ -3,7 +3,8 @@ import { useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
 import type { Decision } from "../lib/api";
 import { answerDecision, ApiError } from "../lib/api";
-import { validateAnswer, type AnswerErrors } from "../lib/ui";
+import { formatDuration } from "../i18n";
+import { decisionAutoSettlementSeconds, decisionRecommendationLabel, validateAnswer, type AnswerErrors } from "../lib/ui";
 
 interface Props {
   decision: Decision;
@@ -11,7 +12,8 @@ interface Props {
 }
 
 export function DecisionAnswerForm({ decision, onUpdated }: Props) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const locale = i18n.language.startsWith("ja") ? "ja" : "en";
   const [answerLabel, setAnswerLabel] = useState("");
   const [answerText, setAnswerText] = useState("");
   const [errors, setErrors] = useState<AnswerErrors>({});
@@ -22,6 +24,10 @@ export function DecisionAnswerForm({ decision, onUpdated }: Props) {
   const labelId = `answer-label-${decision.id}`;
   const textId = `answer-text-${decision.id}`;
   const options = decision.options ?? [];
+  const autoSettlementSeconds = decisionAutoSettlementSeconds(decision.default_after_ms);
+  const autoSettlementDuration = autoSettlementSeconds === undefined
+    ? undefined
+    : formatDuration(locale, autoSettlementSeconds);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -71,6 +77,11 @@ export function DecisionAnswerForm({ decision, onUpdated }: Props) {
   return (
     <form className="mt-3 border-l-2 border-accent-600 pl-3" onSubmit={handleSubmit} noValidate>
       <p className="mb-3 whitespace-pre-wrap break-words text-sm leading-6 text-ink-800">{decision.question}</p>
+      {autoSettlementDuration && (
+        <p className="mb-3 text-xs text-ink-600">
+          {t("decision.autoSettlesIn", { duration: autoSettlementDuration })}
+        </p>
+      )}
       {options.length > 0 ? (
         <label className="mb-3 block text-sm text-ink-800" htmlFor={labelId}>
           {t("form.answer.label")} <span className="text-ink-500">{t("form.optional")}</span>
@@ -83,9 +94,14 @@ export function DecisionAnswerForm({ decision, onUpdated }: Props) {
             aria-describedby={errors.answer_label ? `${labelId}-error` : undefined}
           >
             <option value="">{t("form.answer.noLabel")}</option>
-            {options.map((option) => (
-              <option key={option.label} value={option.label}>{option.label}</option>
-            ))}
+            {options.map((option) => {
+              const recommendation = decisionRecommendationLabel(locale, decision.default_option, option.label);
+              return (
+                <option key={option.label} value={option.label}>
+                  {option.label}{recommendation ? ` — ${recommendation}` : ""}
+                </option>
+              );
+            })}
           </select>
           {errors.answer_label && <span className="mt-1 block text-xs text-danger-700" id={`${labelId}-error`}>{t("form.answer.error.labelOrText")}</span>}
         </label>

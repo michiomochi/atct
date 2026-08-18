@@ -99,3 +99,17 @@ export function decisionKindLabel(locale: Locale, kind: string): string {
 export function decisionSettlementLabel(locale: Locale, settledByDefault: boolean): string | undefined {
   return settledByDefault ? localized("decision.settledByDefault", locale) : undefined;
 }
+
+export function decisionRecommendationLabel(
+  locale: Locale,
+  defaultOption: string | undefined,
+  optionLabel?: string,
+): string | undefined {
+  if (!defaultOption || (optionLabel !== undefined && optionLabel !== defaultOption)) return undefined;
+  return localized("decision.recommended", locale);
+}
+
+export function decisionAutoSettlementSeconds(defaultAfterMs: number | undefined): number | undefined {
+  if (typeof defaultAfterMs !== "number" || !Number.isFinite(defaultAfterMs) || defaultAfterMs <= 0) return undefined;
+  return Math.max(1, Math.ceil(defaultAfterMs / 1000));
+}

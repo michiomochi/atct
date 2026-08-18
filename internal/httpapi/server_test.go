@@ -31,7 +31,9 @@ type fixture struct {
 
 type decisionViewResponse struct {
 	domain.Decision
-	SettledByDefault bool `json:"settled_by_default"`
+	SettledByDefault bool   `json:"settled_by_default"`
+	DefaultOption    string `json:"default_option"`
+	DefaultAfterMs   *int64 `json:"default_after_ms"`
 }
 
 type goalDetailResponse struct {
@@ -139,6 +141,88 @@ func TestHTTPInboxMarksDefaultSettledDecision(t *testing.T) {
 	}
 	if !response.UnappliedDecisions[0].SettledByDefault {
 		t.Fatalf("settled_by_default = false; response=%s", body)
+	}
+}
+
+func TestHTTPInboxIncludesDefaultDecisionFieldsBeforeAnswer(t *testing.T) {
+	f := newBareFixture(t)
+	afterMs := int64(30 * 60 * 1000)
+	decision, err := f.store.AskDecision(f.ctx, store.AskInput{
+		GoalID:         f.goal.ID,
+		Kind:           domain.DecisionKind("question"),
+		Question:       "Which plan should be used?",
+		Options:        []domain.Option{{Label: "A"}, {Label: "B"}},
+		DefaultOption:  "A",
+		DefaultAfterMs: &afterMs,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+	status, _, body := doRequest(t, srv.Client(), http.MethodGet, srv.URL+"/api/inbox", nil)
+	if status != http.StatusOK {
+		t.Fatalf("inbox status = %d; body=%s", status, body)
+	}
+	var response struct {
+		OpenDecisions []decisionViewResponse `json:"open_decisions"`
+	}
+	if err := json.Unmarshal(body, &response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.OpenDecisions) != 1 || response.OpenDecisions[0].ID != decision.ID {
+		t.Fatalf("open decisions = %+v", response.OpenDecisions)
+	}
+	got := response.OpenDecisions[0]
+	if got.DefaultOption != "A" {
+		t.Fatalf("default_option = %q, want A", got.DefaultOption)
+	}
+	if got.DefaultAfterMs == nil || *got.DefaultAfterMs != afterMs {
+		t.Fatalf("default_after_ms = %v, want %d", got.DefaultAfterMs, afterMs)
+	}
+}
+
+func TestHTTPInboxIncludesEmptyDefaultOption(t *testing.T) {
+	f := newBareFixture(t)
+	if _, err := f.store.AskDecision(f.ctx, store.AskInput{
+		GoalID:   f.goal.ID,
+		Kind:     domain.DecisionKind("question"),
+		Question: "Should this irreversible action proceed?",
+		Options:  []domain.Option{{Label: "Proceed"}, {Label: "Cancel"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+	status, _, body := doRequest(t, srv.Client(), http.MethodGet, srv.URL+"/api/inbox", nil)
+	if status != http.StatusOK {
+		t.Fatalf("inbox status = %d; body=%s", status, body)
+	}
+	var response struct {
+		OpenDecisions []json.RawMessage `json:"open_decisions"`
+	}
+	if err := json.Unmarshal(body, &response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.OpenDecisions) != 1 {
+		t.Fatalf("open decisions = %d, want 1", len(response.OpenDecisions))
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(response.OpenDecisions[0], &fields); err != nil {
+		t.Fatal(err)
+	}
+	raw, ok := fields["default_option"]
+	if !ok {
+		t.Fatal("default_option is missing")
+	}
+	var got string
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got != "" {
+		t.Fatalf("default_option = %q, want empty", got)
 	}
 }
 

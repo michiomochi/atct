@@ -14,7 +14,9 @@ import attentionTaskSource from "../components/AttentionTaskTable.tsx?raw";
 import { formatDateTime, formatDuration, type Locale } from "../i18n";
 import {
   DECISION_EVENT_NAMES,
+  decisionAutoSettlementSeconds,
   decisionKindLabel,
+  decisionRecommendationLabel,
   decisionSettlementLabel,
   findOpenCompletion,
   isDecisionEventName,
@@ -110,6 +112,26 @@ describe("localized UI labels", () => {
     expect(decisionSettlementLabel("en", true)).toBe("Settled by default after timeout");
     expect(decisionSettlementLabel("ja", true)).toBe("期限切れのため既定値で確定");
     expect(decisionSettlementLabel("en", false)).toBeUndefined();
+  });
+
+  it("marks the option matching the AI recommendation", () => {
+    expect(decisionRecommendationLabel("en", "A", "A")).toBe("AI recommendation");
+    expect(decisionFormSource).toContain("decisionRecommendationLabel");
+  });
+
+  it("does not mark an option when there is no recommendation", () => {
+    expect(decisionRecommendationLabel("en", "", "A")).toBeUndefined();
+    expect(decisionRecommendationLabel("en", "A", "B")).toBeUndefined();
+  });
+
+  it("formats an automatic settlement deadline in human-readable units", () => {
+    const seconds = decisionAutoSettlementSeconds(1_800_000);
+    expect(seconds).toBe(1_800);
+    expect(formatDuration("en", seconds ?? 0)).toBe("30m");
+    expect(formatDuration("ja", seconds ?? 0)).toBe("30分");
+    expect(decisionAutoSettlementSeconds(undefined)).toBeUndefined();
+    expect(decisionFormSource).toContain("decision.autoSettlesIn");
+    expect(decisionTableSource).toContain("decisionAutoSettlementSeconds");
   });
 });
 

@@ -40,6 +40,8 @@ type goalView struct {
 type decisionView struct {
 	domain.Decision
 	ProjectName      string `json:"project_name"`
+	DefaultOption    string `json:"default_option"`
+	DefaultAfterMs   *int64 `json:"default_after_ms,omitempty"`
 	SettledByDefault bool   `json:"settled_by_default"`
 }
 
@@ -266,6 +268,8 @@ func (s *Server) handleInbox(w http.ResponseWriter, r *http.Request) {
 		openDecisionViews = append(openDecisionViews, decisionView{
 			Decision:         decision,
 			ProjectName:      goalProjectNames[decision.GoalID],
+			DefaultOption:    decision.DefaultOption,
+			DefaultAfterMs:   decision.DefaultAfterMs,
 			SettledByDefault: decision.DefaultAppliedAt != nil,
 		})
 	}
@@ -274,6 +278,8 @@ func (s *Server) handleInbox(w http.ResponseWriter, r *http.Request) {
 		unappliedDecisionViews = append(unappliedDecisionViews, decisionView{
 			Decision:         decision,
 			ProjectName:      goalProjectNames[decision.GoalID],
+			DefaultOption:    decision.DefaultOption,
+			DefaultAfterMs:   decision.DefaultAfterMs,
 			SettledByDefault: decision.DefaultAppliedAt != nil,
 		})
 	}

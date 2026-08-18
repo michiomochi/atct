@@ -1,6 +1,13 @@
 import type { Decision } from "../lib/api";
-import { formatDateTime } from "../i18n";
-import { decisionKindLabel, decisionSettlementLabel, encodePathSegment, statusLabel } from "../lib/ui";
+import { formatDateTime, formatDuration } from "../i18n";
+import {
+  decisionAutoSettlementSeconds,
+  decisionKindLabel,
+  decisionRecommendationLabel,
+  decisionSettlementLabel,
+  encodePathSegment,
+  statusLabel,
+} from "../lib/ui";
 import { Table } from "@cloudflare/kumo/components/table";
 import { useTranslation } from "react-i18next";
 import { EmptyState } from "./StateMessage";
@@ -36,6 +43,12 @@ export function DecisionTable({ decisions, emptyText }: Props) {
           {decisions.map((decision) => {
             const answer = [decision.answer_label, decision.answer_text].filter(Boolean).join(" - ");
             const settlement = decisionSettlementLabel(locale, decision.settled_by_default === true);
+            const unanswered = decision.status === "open";
+            const recommendation = unanswered ? decisionRecommendationLabel(locale, decision.default_option) : undefined;
+            const autoSettlementSeconds = unanswered ? decisionAutoSettlementSeconds(decision.default_after_ms) : undefined;
+            const autoSettlement = autoSettlementSeconds === undefined
+              ? undefined
+              : t("decision.autoSettlesIn", { duration: formatDuration(locale, autoSettlementSeconds) });
             return (
               <Table.Row className="border-b border-line align-top last:border-b-0" key={decision.id}>
                 <Table.Cell className="px-3 py-4">
@@ -47,6 +60,8 @@ export function DecisionTable({ decisions, emptyText }: Props) {
                 <Table.Cell className="px-3 py-4 text-ink-700">
                   <p>{statusLabel(locale, decision.status)}</p>
                   {settlement && <p className="mt-1 text-xs text-ink-500">{settlement}</p>}
+                  {recommendation && <p className="mt-1 text-xs font-medium text-accent-700">{recommendation}: {decision.default_option}</p>}
+                  {autoSettlement && <p className="mt-1 text-xs text-ink-500">{autoSettlement}</p>}
                 </Table.Cell>
                 <Table.Cell className="px-3 py-4 text-ink-700">
                   {answer ? <p className="text-clamp-2" title={answer}>{answer}</p> : "-"}

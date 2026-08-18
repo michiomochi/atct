@@ -32,6 +32,8 @@ export const en = {
   "decision.column.goal": "Goal",
   "decision.column.createdAt": "Created at",
   "decision.settledByDefault": "Settled by default after timeout",
+  "decision.recommended": "AI recommendation",
+  "decision.autoSettlesIn": "Auto-settles in {{duration}}",
   "status.task.todo": "Not started",
   "status.task.doing": "In progress",
   "status.task.done": "Completed",
