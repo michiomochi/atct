@@ -4,9 +4,71 @@ import (
 	"context"
 	"database/sql"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
+
+func TestProjectIDForRun(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	project, err := s.CreateProject(ctx, "atct", "/repos/atct")
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	if err := s.RegisterRun(ctx, "run-project"); err != nil {
+		t.Fatalf("RegisterRun: %v", err)
+	}
+	if err := s.AssociateRunWithProject(ctx, "run-project", project.ID); err != nil {
+		t.Fatalf("AssociateRunWithProject: %v", err)
+	}
+
+	got, err := s.ProjectIDForRun(ctx, "run-project")
+	if err != nil {
+		t.Fatalf("ProjectIDForRun: %v", err)
+	}
+	if got != project.ID {
+		t.Fatalf("ProjectIDForRun = %q, want %q", got, project.ID)
+	}
+
+	if err := s.RegisterRun(ctx, "run-unassociated"); err != nil {
+		t.Fatalf("RegisterRun(unassociated): %v", err)
+	}
+	if _, err := s.ProjectIDForRun(ctx, "run-unassociated"); err == nil || !strings.Contains(err.Error(), "not associated") {
+		t.Fatalf("ProjectIDForRun(unassociated) error = %v, want not associated error", err)
+	}
+	if _, err := s.ProjectIDForRun(ctx, "run-missing"); err == nil || !strings.Contains(err.Error(), "not registered") {
+		t.Fatalf("ProjectIDForRun(missing) error = %v, want not registered error", err)
+	}
+}
+
+func TestProjectIDForTask(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	project, err := s.CreateProject(ctx, "atct", "/repos/atct")
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	goal, err := s.CreateGoal(ctx, project.ID, "goal", "description")
+	if err != nil {
+		t.Fatalf("CreateGoal: %v", err)
+	}
+	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "declare-key", []string{"task"}, nil)
+	if err != nil {
+		t.Fatalf("DeclareTasks: %v", err)
+	}
+
+	got, err := s.ProjectIDForTask(ctx, tasks[0].ID)
+	if err != nil {
+		t.Fatalf("ProjectIDForTask: %v", err)
+	}
+	if got != project.ID {
+		t.Fatalf("ProjectIDForTask = %q, want %q", got, project.ID)
+	}
+	if _, err := s.ProjectIDForTask(ctx, "task-missing"); err == nil || !strings.Contains(err.Error(), "not found") {
+		t.Fatalf("ProjectIDForTask(missing) error = %v, want not found error", err)
+	}
+}
 
 func TestRunCleanupRemovesOldRecordsWithoutRemovingProjects(t *testing.T) {
 	s := newTestStore(t)

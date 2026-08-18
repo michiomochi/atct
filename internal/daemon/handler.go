@@ -91,6 +91,44 @@ func (d *Daemon) listClaimableTasks(ctx context.Context, projectID, excludedTask
 	return claimable, nil
 }
 
+func (d *Daemon) ensureRunProject(ctx context.Context, runID, targetProjectID string) error {
+	if strings.TrimSpace(runID) == "" {
+		return nil
+	}
+	assignedProjectID, err := d.store.ProjectIDForRun(ctx, runID)
+	if err != nil {
+		if errors.Is(err, store.ErrRunNotRegistered) {
+			if err := d.store.RegisterRun(ctx, runID); err != nil {
+				return err
+			}
+			return d.store.AssociateRunWithProject(ctx, runID, targetProjectID)
+		}
+		if errors.Is(err, store.ErrRunNotAssociated) {
+			return d.store.AssociateRunWithProject(ctx, runID, targetProjectID)
+		}
+		return err
+	}
+	if assignedProjectID == targetProjectID {
+		return nil
+	}
+
+	projects, err := d.store.ListProjects(ctx)
+	if err != nil {
+		return err
+	}
+	assignedProjectName := assignedProjectID
+	targetProjectName := targetProjectID
+	for _, project := range projects {
+		switch project.ID {
+		case assignedProjectID:
+			assignedProjectName = project.Name
+		case targetProjectID:
+			targetProjectName = project.Name
+		}
+	}
+	return fmt.Errorf("run project scope violation: assigned project %q, target project %q", assignedProjectName, targetProjectName)
+}
+
 func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage, error) {
 	switch req.Method {
 	case "run.register":
@@ -199,9 +237,17 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 			IdempotencyKey          string     `json:"idempotency_key"`
 			Titles                  []string   `json:"titles"`
 			Files                   [][]string `json:"files"`
+			RunID                   string     `json:"run_id"`
 			IncludeUnappliedAnswers bool       `json:"include_unapplied_answers"`
 		}
 		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		goal, err := d.store.GetGoal(ctx, p.GoalID)
+		if err != nil {
+			return nil, err
+		}
+		if err := d.ensureRunProject(ctx, p.RunID, goal.ProjectID); err != nil {
 			return nil, err
 		}
 		tasks, err := d.store.DeclareTasks(ctx, p.GoalID, p.Agent, p.IdempotencyKey, p.Titles, p.Files)
@@ -215,9 +261,17 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		var p struct {
 			TaskID                  string `json:"task_id"`
 			Status                  string `json:"status"`
+			RunID                   string `json:"run_id"`
 			IncludeUnappliedAnswers bool   `json:"include_unapplied_answers"`
 		}
 		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		targetProjectID, err := d.store.ProjectIDForTask(ctx, p.TaskID)
+		if err != nil {
+			return nil, err
+		}
+		if err := d.ensureRunProject(ctx, p.RunID, targetProjectID); err != nil {
 			return nil, err
 		}
 		st, err := domain.ParseTaskStatus(p.Status)
@@ -238,6 +292,13 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 			IncludeUnappliedAnswers bool   `json:"include_unapplied_answers"`
 		}
 		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		targetProjectID, err := d.store.ProjectIDForTask(ctx, p.TaskID)
+		if err != nil {
+			return nil, err
+		}
+		if err := d.ensureRunProject(ctx, p.RunID, targetProjectID); err != nil {
 			return nil, err
 		}
 		tk, err := d.store.ClaimTask(ctx, p.TaskID, p.RunID)
@@ -284,6 +345,22 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		}
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, err
+		}
+		goal, err := d.store.GetGoal(ctx, p.GoalID)
+		if err != nil {
+			return nil, err
+		}
+		if err := d.ensureRunProject(ctx, p.RunID, goal.ProjectID); err != nil {
+			return nil, err
+		}
+		if p.TaskID != "" {
+			targetProjectID, err := d.store.ProjectIDForTask(ctx, p.TaskID)
+			if err != nil {
+				return nil, err
+			}
+			if err := d.ensureRunProject(ctx, p.RunID, targetProjectID); err != nil {
+				return nil, err
+			}
 		}
 		dec, err := d.store.AskDecision(ctx, store.AskInput{
 			GoalID: p.GoalID, TaskID: p.TaskID, Kind: domain.KindDecision,
@@ -420,6 +497,13 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 			IncludeUnappliedAnswers bool   `json:"include_unapplied_answers"`
 		}
 		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		goal, err := d.store.GetGoal(ctx, p.GoalID)
+		if err != nil {
+			return nil, err
+		}
+		if err := d.ensureRunProject(ctx, p.RunID, goal.ProjectID); err != nil {
 			return nil, err
 		}
 		dec, err := d.store.CompleteGoalWithReport(ctx, p.GoalID, domain.CompletionReport{

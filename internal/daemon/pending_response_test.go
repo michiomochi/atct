@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/michiomochi/atct/internal/domain"
@@ -36,6 +37,9 @@ func TestTaskClaimNotificationDoesNotApplyDecision(t *testing.T) {
 	}
 	if err := s.RegisterRun(ctx, "claim-run"); err != nil {
 		t.Fatalf("RegisterRun: %v", err)
+	}
+	if err := s.AssociateRunWithProject(ctx, "claim-run", project.ID); err != nil {
+		t.Fatalf("AssociateRunWithProject: %v", err)
 	}
 
 	params, err := json.Marshal(map[string]any{
@@ -184,6 +188,12 @@ func TestDecisionAskParkedIncludesClaimableTasks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Marshal params: %v", err)
 	}
+	if err := s.RegisterRun(ctx, "park-run"); err != nil {
+		t.Fatalf("RegisterRun(park-run): %v", err)
+	}
+	if err := s.AssociateRunWithProject(ctx, "park-run", project.ID); err != nil {
+		t.Fatalf("AssociateRunWithProject(park-run): %v", err)
+	}
 	raw, err := New(s).dispatch(ctx, rpc.Request{Method: "decision.ask", Params: params})
 	if err != nil {
 		t.Fatalf("decision.ask: %v", err)
@@ -205,6 +215,289 @@ func TestDecisionAskParkedIncludesClaimableTasks(t *testing.T) {
 		if task.ID == parked[0].ID || task.ID == candidates[1].ID || task.Title == "free-4" {
 			t.Fatalf("claimable_tasks contains excluded task: %#v", task)
 		}
+	}
+}
+
+func TestProjectScopedWritesRejectOtherProject(t *testing.T) {
+	f := newProjectScopeFixture(t)
+	cases := []struct {
+		name   string
+		method string
+		params map[string]any
+	}{
+		{
+			name:   "task.claim",
+			method: "task.claim",
+			params: map[string]any{"task_id": f.targetTask.ID, "run_id": f.runID},
+		},
+		{
+			name:   "task.update",
+			method: "task.update",
+			params: map[string]any{"task_id": f.targetTask.ID, "status": "done", "run_id": f.runID},
+		},
+		{
+			name:   "task.declare",
+			method: "task.declare",
+			params: map[string]any{
+				"goal_id": f.targetGoal.ID, "agent": "agent", "idempotency_key": "cross-project",
+				"titles": []string{"must be rejected"}, "run_id": f.runID,
+			},
+		},
+		{
+			name:   "decision.ask",
+			method: "decision.ask",
+			params: map[string]any{
+				"goal_id": f.targetGoal.ID, "task_id": f.targetTask.ID, "question": "must be rejected",
+				"options": []domain.Option{{Label: "yes"}}, "run_id": f.runID, "wait_ms": 0,
+			},
+		},
+		{
+			name:   "goal.complete",
+			method: "goal.complete",
+			params: map[string]any{
+				"goal_id": f.targetGoal.ID, "work_done": "done", "now_possible": "now",
+				"how_to_verify": "verify", "surprises": "none", "needs_review": "none",
+				"next_steps": "none", "run_id": f.runID,
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			params, err := json.Marshal(tc.params)
+			if err != nil {
+				t.Fatalf("Marshal params: %v", err)
+			}
+			if _, err := f.daemon.dispatch(f.ctx, rpc.Request{Method: tc.method, Params: params}); err == nil {
+				t.Fatal("dispatch succeeded, want cross-project error")
+			} else {
+				if !strings.Contains(err.Error(), f.assigned.Name) {
+					t.Fatalf("error = %q, want assigned project %q", err, f.assigned.Name)
+				}
+				if !strings.Contains(err.Error(), f.target.Name) {
+					t.Fatalf("error = %q, want target project %q", err, f.target.Name)
+				}
+			}
+		})
+	}
+
+	tasks, err := f.store.ListTasks(f.ctx, f.targetGoal.ID)
+	if err != nil {
+		t.Fatalf("ListTasks: %v", err)
+	}
+	if len(tasks) != 1 || tasks[0].Status != domain.TaskTodo {
+		t.Fatalf("target tasks after rejected writes = %#v, want one todo task", tasks)
+	}
+	goal, err := f.store.GetGoal(f.ctx, f.targetGoal.ID)
+	if err != nil {
+		t.Fatalf("GetGoal: %v", err)
+	}
+	if goal.Status != "active" {
+		t.Fatalf("target goal status after rejected writes = %q, want active", goal.Status)
+	}
+}
+
+func TestTaskWritesWithoutRunIDSkipProjectGuard(t *testing.T) {
+	f := newProjectScopeFixture(t)
+
+	params, err := json.Marshal(map[string]any{
+		"goal_id": f.assignedGoal.ID, "agent": "agent", "idempotency_key": "without-run-id",
+		"titles": []string{"no run id"},
+	})
+	if err != nil {
+		t.Fatalf("Marshal task.declare params: %v", err)
+	}
+	raw, err := f.daemon.dispatch(f.ctx, rpc.Request{Method: "task.declare", Params: params})
+	if err != nil {
+		t.Fatalf("task.declare: %v", err)
+	}
+	var declared []domain.Task
+	if err := json.Unmarshal(raw, &declared); err != nil {
+		t.Fatalf("unmarshal task.declare response %s: %v", raw, err)
+	}
+	if len(declared) != 1 {
+		t.Fatalf("declared tasks = %#v, want one task", declared)
+	}
+
+	params, err = json.Marshal(map[string]any{
+		"task_id": declared[0].ID, "status": string(domain.TaskDone),
+	})
+	if err != nil {
+		t.Fatalf("Marshal task.update params: %v", err)
+	}
+	raw, err = f.daemon.dispatch(f.ctx, rpc.Request{Method: "task.update", Params: params})
+	if err != nil {
+		t.Fatalf("task.update: %v", err)
+	}
+	var updated domain.Task
+	if err := json.Unmarshal(raw, &updated); err != nil {
+		t.Fatalf("unmarshal task.update response %s: %v", raw, err)
+	}
+	if updated.Status != domain.TaskDone {
+		t.Fatalf("updated task = %#v, want done", updated)
+	}
+}
+
+func TestTaskClaimAssignsUnassociatedRunToTargetProject(t *testing.T) {
+	f := newProjectScopeFixture(t)
+	runID := "first-write-run"
+	if err := f.store.RegisterRun(f.ctx, runID); err != nil {
+		t.Fatalf("RegisterRun: %v", err)
+	}
+
+	params, err := json.Marshal(map[string]any{
+		"task_id": f.targetTask.ID,
+		"run_id":  runID,
+	})
+	if err != nil {
+		t.Fatalf("Marshal task.claim params: %v", err)
+	}
+	if _, err := f.daemon.dispatch(f.ctx, rpc.Request{Method: "task.claim", Params: params}); err != nil {
+		t.Fatalf("task.claim: %v", err)
+	}
+
+	projectID, err := f.store.ProjectIDForRun(f.ctx, runID)
+	if err != nil {
+		t.Fatalf("ProjectIDForRun: %v", err)
+	}
+	if projectID != f.target.ID {
+		t.Fatalf("run project_id = %q, want target project %q", projectID, f.target.ID)
+	}
+}
+
+func TestProjectScopedWritesAllowAssignedProjectAndGoalListReadsOtherProject(t *testing.T) {
+	f := newProjectScopeFixture(t)
+
+	params, err := json.Marshal(map[string]any{
+		"goal_id": f.assignedGoal.ID, "agent": "agent", "idempotency_key": "assigned-project",
+		"titles": []string{"assigned declaration"}, "run_id": f.runID,
+	})
+	if err != nil {
+		t.Fatalf("Marshal task.declare params: %v", err)
+	}
+	raw, err := f.daemon.dispatch(f.ctx, rpc.Request{Method: "task.declare", Params: params})
+	if err != nil {
+		t.Fatalf("task.declare: %v", err)
+	}
+	var declared []domain.Task
+	if err := json.Unmarshal(raw, &declared); err != nil {
+		t.Fatalf("unmarshal task.declare response %s: %v", raw, err)
+	}
+	if len(declared) != 1 {
+		t.Fatalf("declared tasks = %#v, want one task", declared)
+	}
+
+	params, err = json.Marshal(map[string]any{"task_id": declared[0].ID, "run_id": f.runID})
+	if err != nil {
+		t.Fatalf("Marshal task.claim params: %v", err)
+	}
+	if _, err := f.daemon.dispatch(f.ctx, rpc.Request{Method: "task.claim", Params: params}); err != nil {
+		t.Fatalf("task.claim: %v", err)
+	}
+	params, err = json.Marshal(map[string]any{"task_id": declared[0].ID, "status": "done", "run_id": f.runID})
+	if err != nil {
+		t.Fatalf("Marshal task.update params: %v", err)
+	}
+	if _, err := f.daemon.dispatch(f.ctx, rpc.Request{Method: "task.update", Params: params}); err != nil {
+		t.Fatalf("task.update: %v", err)
+	}
+
+	params, err = json.Marshal(map[string]any{
+		"goal_id": f.assignedGoal.ID, "task_id": declared[0].ID, "question": "assigned question",
+		"options": []domain.Option{{Label: "yes"}}, "run_id": f.runID, "wait_ms": 0,
+	})
+	if err != nil {
+		t.Fatalf("Marshal decision.ask params: %v", err)
+	}
+	if _, err := f.daemon.dispatch(f.ctx, rpc.Request{Method: "decision.ask", Params: params}); err != nil {
+		t.Fatalf("decision.ask: %v", err)
+	}
+
+	params, err = json.Marshal(map[string]any{
+		"goal_id": f.completeGoal.ID, "work_done": "done", "now_possible": "now",
+		"how_to_verify": "verify", "surprises": "none", "needs_review": "none",
+		"next_steps": "none", "run_id": f.runID,
+	})
+	if err != nil {
+		t.Fatalf("Marshal goal.complete params: %v", err)
+	}
+	if _, err := f.daemon.dispatch(f.ctx, rpc.Request{Method: "goal.complete", Params: params}); err != nil {
+		t.Fatalf("goal.complete: %v", err)
+	}
+
+	if err := f.store.RegisterRun(f.ctx, "read-run"); err != nil {
+		t.Fatalf("RegisterRun(read-run): %v", err)
+	}
+	params, err = json.Marshal(map[string]any{"cwd": f.target.RootPath, "run_id": "read-run"})
+	if err != nil {
+		t.Fatalf("Marshal goal.list params: %v", err)
+	}
+	raw, err = f.daemon.dispatch(f.ctx, rpc.Request{Method: "goal.list", Params: params})
+	if err != nil {
+		t.Fatalf("goal.list: %v", err)
+	}
+	var listed struct {
+		Project domain.Project `json:"project"`
+	}
+	if err := json.Unmarshal(raw, &listed); err != nil {
+		t.Fatalf("unmarshal goal.list response %s: %v", raw, err)
+	}
+	if listed.Project.ID != f.target.ID {
+		t.Fatalf("goal.list project = %#v, want %q", listed.Project, f.target.ID)
+	}
+}
+
+type projectScopeFixture struct {
+	ctx          context.Context
+	store        *store.Store
+	daemon       *Daemon
+	assigned     domain.Project
+	target       domain.Project
+	runID        string
+	assignedGoal domain.Goal
+	targetGoal   domain.Goal
+	completeGoal domain.Goal
+	targetTask   domain.Task
+}
+
+func newProjectScopeFixture(t *testing.T) projectScopeFixture {
+	t.Helper()
+	ctx := context.Background()
+	s := openPendingResponseTestStore(t)
+	assigned, err := s.CreateProject(ctx, "assigned-project", t.TempDir())
+	if err != nil {
+		t.Fatalf("CreateProject(assigned): %v", err)
+	}
+	target, err := s.CreateProject(ctx, "target-project", t.TempDir())
+	if err != nil {
+		t.Fatalf("CreateProject(target): %v", err)
+	}
+	assignedGoal, err := s.CreateGoal(ctx, assigned.ID, "assigned-goal", "description")
+	if err != nil {
+		t.Fatalf("CreateGoal(assigned): %v", err)
+	}
+	targetGoal, err := s.CreateGoal(ctx, target.ID, "target-goal", "description")
+	if err != nil {
+		t.Fatalf("CreateGoal(target): %v", err)
+	}
+	completeGoal, err := s.CreateGoal(ctx, assigned.ID, "complete-goal", "description")
+	if err != nil {
+		t.Fatalf("CreateGoal(complete): %v", err)
+	}
+	targetTasks, err := s.DeclareTasks(ctx, targetGoal.ID, "agent", "target-initial", []string{"target task"}, nil)
+	if err != nil {
+		t.Fatalf("DeclareTasks(target): %v", err)
+	}
+	if err := s.RegisterRun(ctx, "assigned-run"); err != nil {
+		t.Fatalf("RegisterRun: %v", err)
+	}
+	if err := s.AssociateRunWithProject(ctx, "assigned-run", assigned.ID); err != nil {
+		t.Fatalf("AssociateRunWithProject: %v", err)
+	}
+	return projectScopeFixture{
+		ctx: ctx, store: s, daemon: New(s), assigned: assigned, target: target,
+		runID: "assigned-run", assignedGoal: assignedGoal, targetGoal: targetGoal,
+		completeGoal: completeGoal, targetTask: targetTasks[0],
 	}
 }
 

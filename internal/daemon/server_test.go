@@ -317,6 +317,7 @@ func createDecisionFixture(t *testing.T, conn net.Conn) (string, string) {
 		"agent":           "test-agent",
 		"idempotency_key": "wait-semantics",
 		"titles":          []string{"Wait for a decision"},
+		"run_id":          "fixture-run",
 	})
 	if taskResp.Error != "" {
 		t.Fatalf("task.declare: %s", taskResp.Error)

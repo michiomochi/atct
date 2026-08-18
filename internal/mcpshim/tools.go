@@ -162,6 +162,7 @@ func Register(server *mcp.Server, c *Client, runID string) {
 		params := map[string]any{
 			"goal_id": in.GoalID, "titles": in.Titles,
 			"idempotency_key": in.IdempotencyKey, "agent": in.Agent,
+			"run_id":                    runID,
 			"include_unapplied_answers": true,
 		}
 		if in.Files != nil {
@@ -186,7 +187,8 @@ func Register(server *mcp.Server, c *Client, runID string) {
 		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in TaskUpdateIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
 		return callWithUnappliedDecisions(ctx, c, "task.update", map[string]any{
-			"task_id": in.TaskID, "status": in.Status, "include_unapplied_answers": true,
+			"task_id": in.TaskID, "status": in.Status, "run_id": runID,
+			"include_unapplied_answers": true,
 		})
 	})
 
