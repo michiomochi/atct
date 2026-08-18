@@ -1,5 +1,6 @@
 import type { DecisionHistoryEntry } from "../lib/api";
 import { formatDateTime } from "../i18n";
+import { decisionSettlementLabel } from "../lib/ui";
 import { Table } from "@cloudflare/kumo/components/table";
 import { useTranslation } from "react-i18next";
 
@@ -36,10 +37,14 @@ export function DecisionHistoryTable({ decisions, omittedCount }: Props) {
           <Table.Body>
             {decisions.map((decision) => {
               const answer = [decision.answer_label, decision.answer_text].filter(Boolean).join(" - ");
+              const settlement = decisionSettlementLabel(locale, decision.settled_by_default === true);
               return (
                 <Table.Row className="border-b border-line align-top last:border-b-0" key={decision.decision_id}>
                   <Table.Cell className="max-w-[28rem] break-words px-3 py-4 font-medium text-ink-950">{decision.question}</Table.Cell>
-                  <Table.Cell className="max-w-64 break-words px-3 py-4 text-ink-700">{answer || "-"}</Table.Cell>
+                  <Table.Cell className="max-w-64 break-words px-3 py-4 text-ink-700">
+                    <p>{answer || "-"}</p>
+                    {settlement && <p className="mt-1 text-xs text-ink-500">{settlement}</p>}
+                  </Table.Cell>
                   <Table.Cell className="whitespace-nowrap px-3 py-4 text-ink-700">{decision.answered_at ? formatDateTime(locale, decision.answered_at) : "-"}</Table.Cell>
                   <Table.Cell className="whitespace-nowrap px-3 py-4 text-ink-700">{decision.applied_at ? formatDateTime(locale, decision.applied_at) : "-"}</Table.Cell>
                 </Table.Row>

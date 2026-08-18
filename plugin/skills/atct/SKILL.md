@@ -127,6 +127,10 @@ the point, because it separates "there was nothing" from "I did not look."
 | `needs_review` | What you want them to look at closely |
 | `next_steps` | What you left for later, and why |
 
+The approver reads `how_to_verify` and `needs_review` first: these fields say
+what to check and what still needs confirmation. Keep `work_done` concise so it
+does not bury them.
+
 **`work_done` is the only field about you.** The other five are about them —
 what they gained, what to check, what to worry about, what is still open. A
 report where all six read like a changelog has answered one question six times.

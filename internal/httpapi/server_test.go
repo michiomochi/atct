@@ -144,6 +144,108 @@ func TestHTTPInboxMarksDefaultSettledDecision(t *testing.T) {
 	}
 }
 
+func TestHTTPGoalDetailDecisionHistoryRecordsSettlementSource(t *testing.T) {
+	f := newBareFixture(t)
+	afterMs := int64(1)
+	defaultDecision, err := f.store.AskDecision(f.ctx, store.AskInput{
+		GoalID:         f.goal.ID,
+		Kind:           domain.DecisionKind("question"),
+		Question:       "Which default should be applied?",
+		Options:        []domain.Option{{Label: "A"}, {Label: "B"}},
+		DefaultOption:  "A",
+		DefaultAfterMs: &afterMs,
+		RunID:          "default-run",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.store.ApplyExpiredDefaults(f.ctx, defaultDecision.CreatedAt.Add(time.Millisecond)); err != nil {
+		t.Fatal(err)
+	}
+	if applied, err := f.store.PollDecisions(f.ctx, "default-run", defaultDecision.ID); err != nil {
+		t.Fatal(err)
+	} else if len(applied) != 1 {
+		t.Fatalf("default applied decisions = %+v", applied)
+	}
+
+	humanDecision, err := f.store.AskDecision(f.ctx, store.AskInput{
+		GoalID:   f.goal.ID,
+		Kind:     domain.DecisionKind("question"),
+		Question: "Which option should a person choose?",
+		Options:  []domain.Option{{Label: "A"}, {Label: "B"}},
+		RunID:    "human-run",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.store.AnswerDecision(f.ctx, store.AnswerInput{
+		DecisionID:  humanDecision.ID,
+		AnswerLabel: "B",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if applied, err := f.store.PollDecisions(f.ctx, "human-run", humanDecision.ID); err != nil {
+		t.Fatal(err)
+	} else if len(applied) != 1 {
+		t.Fatalf("human applied decisions = %+v", applied)
+	}
+
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+	status, _, body := doRequest(t, srv.Client(), http.MethodGet, srv.URL+"/api/goals/"+f.goal.ID, nil)
+	if status != http.StatusOK {
+		t.Fatalf("goal status = %d; body=%s", status, body)
+	}
+	var response struct {
+		DecisionHistory []struct {
+			DecisionID       string     `json:"decision_id"`
+			SettledByDefault bool       `json:"settled_by_default"`
+			DefaultAppliedAt *time.Time `json:"default_applied_at"`
+		} `json:"decision_history"`
+	}
+	if err := json.Unmarshal(body, &response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.DecisionHistory) != 2 {
+		t.Fatalf("decision_history = %+v; body=%s", response.DecisionHistory, body)
+	}
+	var defaultHistory, humanHistory struct {
+		SettledByDefault bool
+		DefaultAppliedAt *time.Time
+	}
+	var defaultFound, humanFound bool
+	for _, entry := range response.DecisionHistory {
+		switch entry.DecisionID {
+		case defaultDecision.ID:
+			defaultFound = true
+			defaultHistory.SettledByDefault = entry.SettledByDefault
+			defaultHistory.DefaultAppliedAt = entry.DefaultAppliedAt
+		case humanDecision.ID:
+			humanFound = true
+			humanHistory.SettledByDefault = entry.SettledByDefault
+			humanHistory.DefaultAppliedAt = entry.DefaultAppliedAt
+		}
+	}
+	if !defaultFound {
+		t.Fatal("default decision history entry is missing")
+	}
+	if !humanFound {
+		t.Fatal("human decision history entry is missing")
+	}
+	if !defaultHistory.SettledByDefault {
+		t.Fatal("default decision history settled_by_default = false")
+	}
+	if defaultHistory.DefaultAppliedAt == nil {
+		t.Fatal("default decision history default_applied_at = null")
+	}
+	if humanHistory.SettledByDefault {
+		t.Fatal("human decision history settled_by_default = true")
+	}
+	if humanHistory.DefaultAppliedAt != nil {
+		t.Fatalf("human decision history default_applied_at = %v, want null", humanHistory.DefaultAppliedAt)
+	}
+}
+
 func TestHTTPInboxIncludesDefaultDecisionFieldsBeforeAnswer(t *testing.T) {
 	f := newBareFixture(t)
 	afterMs := int64(30 * 60 * 1000)

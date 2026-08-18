@@ -81,6 +81,8 @@ export interface DecisionHistoryEntry {
   question: string;
   answer_label: string;
   answer_text: string;
+  settled_by_default: boolean;
+  default_applied_at?: string;
   answered_at: string;
   applied_at: string;
 }

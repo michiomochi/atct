@@ -63,12 +63,14 @@ type goalResponse struct {
 }
 
 type decisionHistoryView struct {
-	DecisionID  string     `json:"decision_id"`
-	Question    string     `json:"question"`
-	AnswerLabel string     `json:"answer_label"`
-	AnswerText  string     `json:"answer_text"`
-	AnsweredAt  *time.Time `json:"answered_at"`
-	AppliedAt   *time.Time `json:"applied_at"`
+	DecisionID       string     `json:"decision_id"`
+	Question         string     `json:"question"`
+	AnswerLabel      string     `json:"answer_label"`
+	AnswerText       string     `json:"answer_text"`
+	SettledByDefault bool       `json:"settled_by_default"`
+	DefaultAppliedAt *time.Time `json:"default_applied_at"`
+	AnsweredAt       *time.Time `json:"answered_at"`
+	AppliedAt        *time.Time `json:"applied_at"`
 }
 
 type answerRequest struct {
@@ -355,12 +357,14 @@ func (s *Server) handleGoal(w http.ResponseWriter, r *http.Request, goalID strin
 	decisionHistory := make([]decisionHistoryView, 0, len(appliedDecisions))
 	for _, decision := range appliedDecisions {
 		decisionHistory = append(decisionHistory, decisionHistoryView{
-			DecisionID:  decision.ID,
-			Question:    decision.Question,
-			AnswerLabel: decision.AnswerLabel,
-			AnswerText:  decision.AnswerText,
-			AnsweredAt:  decision.AnsweredAt,
-			AppliedAt:   decision.AppliedAt,
+			DecisionID:       decision.ID,
+			Question:         decision.Question,
+			AnswerLabel:      decision.AnswerLabel,
+			AnswerText:       decision.AnswerText,
+			SettledByDefault: decision.DefaultAppliedAt != nil,
+			DefaultAppliedAt: decision.DefaultAppliedAt,
+			AnsweredAt:       decision.AnsweredAt,
+			AppliedAt:        decision.AppliedAt,
 		})
 	}
 	openByTask := indexDecisions(openDecisions)
