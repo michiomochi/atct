@@ -302,8 +302,14 @@ func newContextCheckFixture(t *testing.T) contextCheckFixture {
 func (f contextCheckFixture) addUnappliedAnswer(t *testing.T) {
 	t.Helper()
 
+	// An active decision has to name the task it is holding up.
+	tasks, err := f.db.DeclareTasks(context.Background(), f.goal.ID, "agent", "blocked-batch", []string{"blocked task"})
+	if err != nil {
+		t.Fatalf("DeclareTasks: %v", err)
+	}
 	decision, err := f.db.AskDecision(context.Background(), store.AskInput{
 		GoalID:   f.goal.ID,
+		TaskID:   tasks[0].ID,
 		Kind:     domain.KindDecision,
 		Question: "Which path should be taken?",
 		RunID:    "run-context-check",
@@ -561,8 +567,14 @@ func newProjectSelectionFixture(t *testing.T) projectSelectionFixture {
 func (f projectSelectionFixture) addPendingDecision(t *testing.T, goalID, question, runID string) {
 	t.Helper()
 
+	// An active decision has to name the task it is holding up.
+	tasks, err := f.db.DeclareTasks(context.Background(), goalID, "agent", "blocked-"+runID, []string{"blocked task"})
+	if err != nil {
+		t.Fatalf("DeclareTasks: %v", err)
+	}
 	decision, err := f.db.AskDecision(context.Background(), store.AskInput{
 		GoalID:   goalID,
+		TaskID:   tasks[0].ID,
 		Kind:     domain.KindDecision,
 		Question: question,
 		RunID:    runID,

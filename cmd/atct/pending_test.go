@@ -37,8 +37,13 @@ func TestPendingCommandReturnsDecisionIDAndQuestion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
+	// An active decision has to name the task it is holding up.
+	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "blocked-1", []string{"blocked task"})
+	if err != nil {
+		t.Fatalf("DeclareTasks: %v", err)
+	}
 	decision, err := s.AskDecision(ctx, store.AskInput{
-		GoalID: goal.ID, Kind: domain.KindDecision, Question: "Which release channel should we use?", RunID: "run-1",
+		GoalID: goal.ID, TaskID: tasks[0].ID, Kind: domain.KindDecision, Question: "Which release channel should we use?", RunID: "run-1",
 	})
 	if err != nil {
 		t.Fatalf("AskDecision: %v", err)
@@ -85,8 +90,13 @@ func TestPendingCommandFiltersDecisionsFromOtherProject(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
+	// An active decision has to name the task it is holding up.
+	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "blocked-other", []string{"blocked task"})
+	if err != nil {
+		t.Fatalf("DeclareTasks: %v", err)
+	}
 	decision, err := s.AskDecision(ctx, store.AskInput{
-		GoalID: goal.ID, Kind: domain.KindDecision, Question: "Question from another project", RunID: "run-other",
+		GoalID: goal.ID, TaskID: tasks[0].ID, Kind: domain.KindDecision, Question: "Question from another project", RunID: "run-other",
 	})
 	if err != nil {
 		t.Fatalf("AskDecision: %v", err)

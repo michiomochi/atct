@@ -90,8 +90,14 @@ func TestAnswerSurvivesSessionChange(t *testing.T) {
 	}
 	ns, _ := s.CreateProject(ctx, "atct", "/repos/atct")
 	g, _ := s.CreateGoal(ctx, ns.ID, "goal", "")
+	// An active decision has to name the task it is holding up.
+	tasks, err := s.DeclareTasks(ctx, g.ID, "agent", "batch-1", []string{"do the thing"})
+	if err != nil {
+		t.Fatalf("DeclareTasks: %v", err)
+	}
 	d, err := s.AskDecision(ctx, store.AskInput{
-		GoalID: g.ID, Kind: domain.KindDecision, Question: "What should we do?", RunID: "run-1",
+		GoalID: g.ID, TaskID: tasks[0].ID, Kind: domain.KindDecision,
+		Question: "What should we do?", RunID: "run-1",
 	})
 	if err != nil {
 		t.Fatalf("AskDecision: %v", err)

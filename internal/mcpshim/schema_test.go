@@ -245,6 +245,12 @@ func callDecisionAsk(t *testing.T, args map[string]any) (*mcp.CallToolResult, er
 		s.Close()
 		t.Fatalf("CreateGoal: %v", err)
 	}
+	// An active decision has to name the task it is holding up.
+	tasks, err := s.DeclareTasks(context.Background(), goal.ID, "agent", "batch-1", []string{"blocked task"})
+	if err != nil {
+		s.Close()
+		t.Fatalf("DeclareTasks: %v", err)
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	socketDir, err := os.MkdirTemp("/tmp", "atct")
@@ -295,6 +301,9 @@ func callDecisionAsk(t *testing.T, args map[string]any) (*mcp.CallToolResult, er
 	})
 
 	args["goal_id"] = goal.ID
+	if _, ok := args["task_id"]; !ok {
+		args["task_id"] = tasks[0].ID
+	}
 	args["question"] = "Should we continue?"
 	got, callErr := clientSession.CallTool(ctx, &mcp.CallToolParams{
 		Name: "atct_decision_ask", Arguments: args,
