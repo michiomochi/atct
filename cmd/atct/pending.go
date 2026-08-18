@@ -15,8 +15,12 @@ import (
 var errNoPendingDecisions = errors.New("no unapplied decisions")
 
 const (
-	atctRunIDEnv          = "ATCT_RUN_ID"
-	unfinishedClaimMarker = "Unfinished claimed tasks:"
+	atctRunIDEnv                = "ATCT_RUN_ID"
+	unfinishedClaimMarker       = "Unfinished claimed tasks:"
+	undeclaredGoalMarker        = "Undeclared active goals:"
+	pendingDecisionReason       = "A human answered a decision you parked. Call `atct_decision_poll` with each decision_id below, then continue the work that was waiting on it."
+	pendingClaimReason          = "A task claimed by this run is still open. If you forgot to close it, close it; if you are still working on it, continue."
+	pendingUndeclaredGoalReason = "An active goal has no tasks declared. Call `atct_task_declare` for each goal below, then continue the work."
 )
 
 func currentRunID() string {
@@ -77,6 +81,19 @@ func pendingTextForProject(dir, cwd, projectName string, projectSpecified bool) 
 	for _, goal := range goals {
 		projectGoalIDs[goal.ID] = struct{}{}
 	}
+	undeclaredGoals := make([]domain.Goal, 0)
+	for _, goal := range goals {
+		if goal.Status != domain.GoalActive {
+			continue
+		}
+		tasks, err := s.ListTasks(ctx, goal.ID)
+		if err != nil {
+			return "", fmt.Errorf("list tasks for goal %s: %w", goal.ID, err)
+		}
+		if len(tasks) == 0 {
+			undeclaredGoals = append(undeclaredGoals, goal)
+		}
+	}
 
 	decisions, err := s.ListUnappliedDecisions(ctx)
 	if err != nil {
@@ -105,6 +122,7 @@ func pendingTextForProject(dir, cwd, projectName string, projectSpecified bool) 
 	}
 
 	var output strings.Builder
+	decisionReasonWritten := false
 	for _, decision := range decisions {
 		if decision.Status != domain.DecisionAnswered || decision.AppliedAt != nil {
 			continue
@@ -112,16 +130,35 @@ func pendingTextForProject(dir, cwd, projectName string, projectSpecified bool) 
 		if _, ok := projectGoalIDs[decision.GoalID]; !ok {
 			continue
 		}
+		if !decisionReasonWritten {
+			output.WriteString(pendingDecisionReason)
+			output.WriteString("\n\n")
+			decisionReasonWritten = true
+		}
 		fmt.Fprintf(&output, "- %s (decision_id: %s)\n", oneLine(decision.Question), decision.ID)
 	}
 	if len(unfinishedTasks) > 0 {
 		if output.Len() > 0 {
-			output.WriteByte('\n')
+			output.WriteString("\n\n")
 		}
+		output.WriteString(pendingClaimReason)
+		output.WriteString("\n\n")
 		output.WriteString(unfinishedClaimMarker)
 		output.WriteByte('\n')
 		for _, task := range unfinishedTasks {
 			fmt.Fprintf(&output, "- %s (task_id: %s)\n", oneLine(task.Title), task.ID)
+		}
+	}
+	if len(undeclaredGoals) > 0 {
+		if output.Len() > 0 {
+			output.WriteString("\n\n")
+		}
+		output.WriteString(pendingUndeclaredGoalReason)
+		output.WriteString("\n\n")
+		output.WriteString(undeclaredGoalMarker)
+		output.WriteByte('\n')
+		for _, goal := range undeclaredGoals {
+			fmt.Fprintf(&output, "- %s (goal_id: %s)\n", oneLine(goal.Title), goal.ID)
 		}
 	}
 	return output.String(), nil

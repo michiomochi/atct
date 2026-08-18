@@ -16,9 +16,6 @@ ATCT_BIN="$HOOK_DIR/../bin/atct"
 PENDING_OUTPUT="$($ATCT_BIN pending 2>/dev/null)" || exit 0
 [[ -n "$PENDING_OUTPUT" ]] || exit 0
 
-CLAIM_MARKER='Unfinished claimed tasks:'
-CLAIM_REASON=$'A task claimed by this run is still open. If you forgot to close it, close it; if you are still working on it, continue.'
-
 json_escape() {
   local value="$1"
   value="${value//\\/\\\\}"
@@ -29,13 +26,4 @@ json_escape() {
   printf '%s' "$value"
 }
 
-if [[ "$PENDING_OUTPUT" == *"$CLAIM_MARKER"* ]]; then
-  if [[ "$PENDING_OUTPUT" == "$CLAIM_MARKER"* ]]; then
-    REASON="$CLAIM_REASON"$'\n\n'"$PENDING_OUTPUT"$'\n'
-  else
-    REASON=$'A human answered a decision you parked. Call `atct_decision_poll` with each decision_id below, then continue the work that was waiting on it.\n\n'"$PENDING_OUTPUT"$'\n\n'"$CLAIM_REASON"$'\n'
-  fi
-else
-  REASON=$'A human answered a decision you parked. Call `atct_decision_poll` with each decision_id below, then continue the work that was waiting on it.\n\n'"$PENDING_OUTPUT"$'\n'
-fi
-printf '{"decision":"block","reason":"%s"}\n' "$(json_escape "$REASON")"
+printf '{"decision":"block","reason":"%s"}\n' "$(json_escape "$PENDING_OUTPUT")"

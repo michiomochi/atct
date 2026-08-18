@@ -522,7 +522,7 @@ test_stop_hook_blocks_when_unfinished_claim_exists() {
   local fixture="$TEMP_ROOT/stop-hook-claim"
   local hook="$fixture/plugin/hooks/stop"
   local adjacent="$fixture/plugin/bin/atct"
-  local claim_output=$'Unfinished claimed tasks:\n- unfinished implementation (task_id: t-1)'
+  local claim_output=$'A task claimed by this run is still open. If you forgot to close it, close it; if you are still working on it, continue.\n\nUnfinished claimed tasks:\n- unfinished implementation (task_id: t-1)'
   local output
 
   mkdir -p "$(dirname "$hook")" "$(dirname "$adjacent")"
@@ -543,11 +543,11 @@ SCRIPT
   [[ "$output" == *'unfinished implementation'* ]] || fail 'claim reason must include the unfinished task'
 }
 
-test_stop_hook_reason_includes_claim_and_pending_answer() {
+test_stop_hook_reason_passes_all_pending_reasons() {
   local fixture="$TEMP_ROOT/stop-hook-both"
   local hook="$fixture/plugin/hooks/stop"
   local adjacent="$fixture/plugin/bin/atct"
-  local pending_output=$'- Review mode? (decision_id: d-1)\nUnfinished claimed tasks:\n- unfinished implementation (task_id: t-1)'
+  local pending_output=$'A human answered a decision you parked. Call `atct_decision_poll` with each decision_id below, then continue the work that was waiting on it.\n\n- Review mode? (decision_id: d-1)\n\nA task claimed by this run is still open. If you forgot to close it, close it; if you are still working on it, continue.\n\nUnfinished claimed tasks:\n- unfinished implementation (task_id: t-1)\n\nAn active goal has no tasks declared. Call `atct_task_declare` for each goal below, then continue the work.\n\nUndeclared active goals:\n- Break this goal into tasks (goal_id: g-1)'
   local output
 
   mkdir -p "$(dirname "$hook")" "$(dirname "$adjacent")"
@@ -566,14 +566,15 @@ SCRIPT
   [[ "$output" == *'"decision":"block"'* ]] || fail 'both pending conditions must block the stop hook'
   [[ "$output" == *'A human answered a decision you parked.'* ]] || fail 'reason omitted the pending-decision guidance'
   [[ "$output" == *'If you forgot to close it, close it; if you are still working on it, continue.'* ]] || fail 'reason omitted the unfinished-claim guidance'
-  [[ "$output" == *'Review mode?'* && "$output" == *'unfinished implementation'* ]] || fail 'reason omitted one of the two pending conditions'
+  [[ "$output" == *'Review mode?'* && "$output" == *'unfinished implementation'* && "$output" == *'Break this goal into tasks'* ]] || fail 'reason omitted one of the three pending conditions'
 }
 
 test_stop_hook_blocks_when_pending_exists() {
   local fixture="$TEMP_ROOT/stop-hook-pending"
   local hook="$fixture/plugin/hooks/stop"
   local adjacent="$fixture/plugin/bin/atct"
-  local pending_output='- Review mode? (decision_id: d-1)'
+  local output_file="$fixture/output.json"
+  local pending_output=$'A human answered a decision you parked. Call `atct_decision_poll` with each decision_id below, then continue the work that was waiting on it.\n\n- Review mode? (decision_id: d-1)'
   local output
 
   mkdir -p "$(dirname "$hook")" "$(dirname "$adjacent")"
@@ -591,7 +592,21 @@ SCRIPT
   fi
   [[ "$output" == *'"decision":"block"'* ]] || fail 'pending answer must block the stop hook'
   [[ "$output" == *'"reason":'* ]] || fail 'pending answer must include a reason'
-  [[ "$output" == *"$pending_output"* ]] || fail 'reason must include pending output'
+  printf '%s' "$output" >"$output_file"
+  if ! JSON_OUTPUT_FILE="$output_file" EXPECTED_REASON="$pending_output" python3 -c '
+import json
+import os
+
+with open(os.environ["JSON_OUTPUT_FILE"], encoding="utf-8") as stream:
+    payload = json.load(stream)
+
+if payload.get("decision") != "block":
+    raise SystemExit("decision was not block")
+if payload.get("reason") != os.environ["EXPECTED_REASON"]:
+    raise SystemExit("reason did not pass through exactly")
+'; then
+    fail 'reason must include pending output exactly'
+  fi
 }
 
 test_stop_hook_escapes_pending_json_characters() {
@@ -603,7 +618,7 @@ test_stop_hook_escapes_pending_json_characters() {
   local expected_reason
 
   pending_output=$'answer "quoted"\npath \\ root\tcolumn'
-  expected_reason=$'A human answered a decision you parked. Call \x60atct_decision_poll\x60 with each decision_id below, then continue the work that was waiting on it.\n\n'"$pending_output"$'\n'
+  expected_reason="$pending_output"
 
   mkdir -p "$(dirname "$hook")" "$(dirname "$adjacent")"
   cp "$REPO_ROOT/plugin/hooks/stop" "$hook"
@@ -652,6 +667,6 @@ test_stop_hook_is_silent_when_pending_is_empty
 test_stop_hook_is_silent_when_no_claim_or_pending_exists
 test_stop_hook_blocks_when_unfinished_claim_exists
 test_stop_hook_blocks_when_pending_exists
-test_stop_hook_reason_includes_claim_and_pending_answer
+test_stop_hook_reason_passes_all_pending_reasons
 test_stop_hook_escapes_pending_json_characters
 printf 'PASS wrapper tests\n'

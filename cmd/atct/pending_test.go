@@ -25,6 +25,147 @@ func TestPendingCommandReturnsExitOneWithoutAnswers(t *testing.T) {
 	}
 }
 
+func TestPendingCommandReportsActiveGoalWithoutTasks(t *testing.T) {
+	dir, projectRoot := newPendingFixture(t)
+	s := openPendingStore(t, dir)
+	ctx := context.Background()
+	project, err := s.ResolveProject(ctx, projectRoot)
+	if err != nil {
+		t.Fatalf("ResolveProject: %v", err)
+	}
+	goal, err := s.CreateGoal(ctx, project.ID, "Break this goal into tasks", "")
+	if err != nil {
+		t.Fatalf("CreateGoal: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("Store.Close: %v", err)
+	}
+
+	output, exitCode, err := pendingCommand(dir, projectRoot)
+	if err != nil {
+		t.Fatalf("pendingCommand: %v", err)
+	}
+	if exitCode != 0 {
+		t.Fatalf("pendingCommand exit code = %d, want 0", exitCode)
+	}
+	for _, want := range []string{
+		"An active goal has no tasks declared.",
+		"Undeclared active goals:",
+		goal.Title,
+		"goal_id: " + goal.ID,
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("pendingCommand output does not contain %q: %q", want, output)
+		}
+	}
+}
+
+func TestPendingCommandStopsReportingGoalAfterTaskDeclaration(t *testing.T) {
+	dir, projectRoot := newPendingFixture(t)
+	s := openPendingStore(t, dir)
+	ctx := context.Background()
+	project, err := s.ResolveProject(ctx, projectRoot)
+	if err != nil {
+		t.Fatalf("ResolveProject: %v", err)
+	}
+	goal, err := s.CreateGoal(ctx, project.ID, "Declare work for this goal", "")
+	if err != nil {
+		t.Fatalf("CreateGoal: %v", err)
+	}
+	if _, err := s.DeclareTasks(ctx, goal.ID, "agent", "declare-goal", []string{"first task"}); err != nil {
+		t.Fatalf("DeclareTasks: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("Store.Close: %v", err)
+	}
+
+	output, exitCode, err := pendingCommand(dir, projectRoot)
+	if err != nil {
+		t.Fatalf("pendingCommand: %v", err)
+	}
+	if output != "" {
+		t.Fatalf("pendingCommand output = %q, want empty", output)
+	}
+	if exitCode != 1 {
+		t.Fatalf("pendingCommand exit code = %d, want 1", exitCode)
+	}
+}
+
+func TestPendingCommandIncludesAllPendingReasons(t *testing.T) {
+	dir, projectRoot := newPendingFixture(t)
+	s := openPendingStore(t, dir)
+	ctx := context.Background()
+	project, err := s.ResolveProject(ctx, projectRoot)
+	if err != nil {
+		t.Fatalf("ResolveProject: %v", err)
+	}
+	undeclaredGoal, err := s.CreateGoal(ctx, project.ID, "Declare the missing goal work", "")
+	if err != nil {
+		t.Fatalf("CreateGoal undeclared: %v", err)
+	}
+	claimedGoal, err := s.CreateGoal(ctx, project.ID, "Continue the claimed goal work", "")
+	if err != nil {
+		t.Fatalf("CreateGoal claimed: %v", err)
+	}
+	claimedTasks, err := s.DeclareTasks(ctx, claimedGoal.ID, "agent", "run-all", []string{"unfinished claimed work"})
+	if err != nil {
+		t.Fatalf("DeclareTasks claimed: %v", err)
+	}
+	if err := s.RegisterRun(ctx, "run-all"); err != nil {
+		t.Fatalf("RegisterRun: %v", err)
+	}
+	if err := s.AssociateRunWithProject(ctx, "run-all", project.ID); err != nil {
+		t.Fatalf("AssociateRunWithProject: %v", err)
+	}
+	if _, err := s.ClaimTask(ctx, claimedTasks[0].ID, "run-all"); err != nil {
+		t.Fatalf("ClaimTask: %v", err)
+	}
+	decisionGoal, err := s.CreateGoal(ctx, project.ID, "Wait for the answered decision", "")
+	if err != nil {
+		t.Fatalf("CreateGoal decision: %v", err)
+	}
+	decisionTasks, err := s.DeclareTasks(ctx, decisionGoal.ID, "agent", "run-decision", []string{"blocked decision work"})
+	if err != nil {
+		t.Fatalf("DeclareTasks decision: %v", err)
+	}
+	decision, err := s.AskDecision(ctx, store.AskInput{
+		GoalID: decisionGoal.ID, TaskID: decisionTasks[0].ID, Kind: domain.KindDecision,
+		Question: "Which pending reason should remain?", RunID: "run-decision",
+	})
+	if err != nil {
+		t.Fatalf("AskDecision: %v", err)
+	}
+	if _, err := s.AnswerDecision(ctx, store.AnswerInput{DecisionID: decision.ID, AnswerText: "all of them"}); err != nil {
+		t.Fatalf("AnswerDecision: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("Store.Close: %v", err)
+	}
+	t.Setenv(atctRunIDEnv, "run-all")
+
+	output, exitCode, err := pendingCommand(dir, projectRoot)
+	if err != nil {
+		t.Fatalf("pendingCommand: %v", err)
+	}
+	if exitCode != 0 {
+		t.Fatalf("pendingCommand exit code = %d, want 0", exitCode)
+	}
+	for _, want := range []string{
+		"A human answered a decision you parked.",
+		"A task claimed by this run is still open.",
+		"An active goal has no tasks declared.",
+		decision.ID,
+		"unfinished claimed work",
+		claimedTasks[0].ID,
+		undeclaredGoal.Title,
+		undeclaredGoal.ID,
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("pendingCommand output does not contain %q: %q", want, output)
+		}
+	}
+}
+
 func TestPendingCommandReturnsDecisionIDAndQuestion(t *testing.T) {
 	dir, projectRoot := newPendingFixture(t)
 	s := openPendingStore(t, dir)
