@@ -68,6 +68,15 @@ export interface TaskView extends Task {
   open_decisions: Decision[];
 }
 
+export interface DecisionHistoryEntry {
+  decision_id: string;
+  question: string;
+  answer_label: string;
+  answer_text: string;
+  answered_at: string;
+  applied_at: string;
+}
+
 export interface InboxResponse {
   open_decisions: Decision[];
   unapplied_decisions: Decision[];
@@ -80,6 +89,8 @@ export interface GoalResponse {
   now: TaskView[];
   needs_decision: TaskView[];
   next: TaskView[];
+  decision_history: DecisionHistoryEntry[];
+  decision_history_omitted: number;
 }
 
 export interface AnswerPayload {
@@ -138,11 +149,14 @@ export function normalizeInbox(value: unknown): InboxResponse {
 
 export function normalizeGoal(value: unknown): GoalResponse {
   const source = isRecord(value) ? value : {};
+  const omitted = source.decision_history_omitted;
   return {
     goal: source.goal as Goal,
     now: arrayOrEmpty<TaskView>(source.now),
     needs_decision: arrayOrEmpty<TaskView>(source.needs_decision),
     next: arrayOrEmpty<TaskView>(source.next),
+    decision_history: arrayOrEmpty<DecisionHistoryEntry>(source.decision_history),
+    decision_history_omitted: typeof omitted === "number" && Number.isFinite(omitted) && omitted > 0 ? Math.floor(omitted) : 0,
   };
 }
 

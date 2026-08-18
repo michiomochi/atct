@@ -429,3 +429,45 @@ func (s *Store) ListUnappliedDecisions(ctx context.Context) ([]domain.Decision, 
 	}
 	return out, rows.Err()
 }
+
+// ListAppliedDecisions returns the most recent applied Decisions for a goal
+// and the exact number omitted by the history limit.
+func (s *Store) ListAppliedDecisions(ctx context.Context, goalID string) ([]domain.Decision, int, error) {
+	var total int
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM decisions WHERE goal_id = ? AND status = 'applied'`, goalID).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count applied decisions: %w", err)
+	}
+
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT `+decisionColumns+` FROM decisions
+		 WHERE goal_id = ? AND status = 'applied'
+		 ORDER BY answered_at DESC, applied_at DESC, id DESC
+		 LIMIT 20`, goalID)
+	if err != nil {
+		return nil, 0, fmt.Errorf("query applied decisions: %w", err)
+	}
+	defer rows.Close()
+
+	limit := total
+	if limit > 20 {
+		limit = 20
+	}
+	out := make([]domain.Decision, 0, limit)
+	for rows.Next() {
+		d, err := scanDecision(rows)
+		if err != nil {
+			return nil, 0, err
+		}
+		out = append(out, d)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+
+	omitted := total - len(out)
+	if omitted < 0 {
+		omitted = 0
+	}
+	return out, omitted, nil
+}

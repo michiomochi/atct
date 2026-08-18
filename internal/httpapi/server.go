@@ -51,10 +51,21 @@ type inboxResponse struct {
 }
 
 type goalResponse struct {
-	Goal          goalView   `json:"goal"`
-	Now           []TaskView `json:"now"`
-	NeedsDecision []TaskView `json:"needs_decision"`
-	Next          []TaskView `json:"next"`
+	Goal                   goalView              `json:"goal"`
+	Now                    []TaskView            `json:"now"`
+	NeedsDecision          []TaskView            `json:"needs_decision"`
+	Next                   []TaskView            `json:"next"`
+	DecisionHistory        []decisionHistoryView `json:"decision_history"`
+	DecisionHistoryOmitted int                   `json:"decision_history_omitted"`
+}
+
+type decisionHistoryView struct {
+	DecisionID  string     `json:"decision_id"`
+	Question    string     `json:"question"`
+	AnswerLabel string     `json:"answer_label"`
+	AnswerText  string     `json:"answer_text"`
+	AnsweredAt  *time.Time `json:"answered_at"`
+	AppliedAt   *time.Time `json:"applied_at"`
 }
 
 type answerRequest struct {
@@ -329,13 +340,31 @@ func (s *Server) handleGoal(w http.ResponseWriter, r *http.Request, goalID strin
 		writeStoreError(w, err)
 		return
 	}
+	appliedDecisions, decisionHistoryOmitted, err := s.store.ListAppliedDecisions(ctx, goalID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	decisionHistory := make([]decisionHistoryView, 0, len(appliedDecisions))
+	for _, decision := range appliedDecisions {
+		decisionHistory = append(decisionHistory, decisionHistoryView{
+			DecisionID:  decision.ID,
+			Question:    decision.Question,
+			AnswerLabel: decision.AnswerLabel,
+			AnswerText:  decision.AnswerText,
+			AnsweredAt:  decision.AnsweredAt,
+			AppliedAt:   decision.AppliedAt,
+		})
+	}
 	openByTask := indexDecisions(openDecisions)
 
 	response := goalResponse{
-		Goal:          goalView{Goal: goal, ProjectName: projectName},
-		Now:           make([]TaskView, 0),
-		NeedsDecision: make([]TaskView, 0),
-		Next:          make([]TaskView, 0),
+		Goal:                   goalView{Goal: goal, ProjectName: projectName},
+		Now:                    make([]TaskView, 0),
+		NeedsDecision:          make([]TaskView, 0),
+		Next:                   make([]TaskView, 0),
+		DecisionHistory:        decisionHistory,
+		DecisionHistoryOmitted: decisionHistoryOmitted,
 	}
 	for _, task := range tasks {
 		decisions := openByTask[task.ID]

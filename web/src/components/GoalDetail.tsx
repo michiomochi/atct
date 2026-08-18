@@ -17,6 +17,7 @@ import {
   resolveGoalID,
 } from "../lib/ui";
 import { NeedsDecisionList } from "./NeedsDecisionList";
+import { DecisionHistoryTable } from "./DecisionHistoryTable";
 import { AreaLoading, ErrorState } from "./StateMessage";
 import { Section } from "./Section";
 import { TaskTable } from "./TaskTable";
@@ -197,6 +198,13 @@ export function GoalDetail({ id }: Props) {
           {data && <TaskTable tasks={data.goal.next} mode="next" onRefresh={load} />}
         </Section>
       </div>
+
+      {data && data.goal.decision_history.length > 0 && (
+        <DecisionHistoryTable
+          decisions={data.goal.decision_history}
+          omittedCount={data.goal.decision_history_omitted}
+        />
+      )}
     </main>
   );
 }
