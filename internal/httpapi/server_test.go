@@ -405,7 +405,14 @@ func TestHTTPGoalDetailDoesNotDuplicateTaskDecision(t *testing.T) {
 
 func TestHTTPGoalDetailIncludesCompletionDecision(t *testing.T) {
 	f := newBareFixture(t)
-	decision, err := f.store.CompleteGoal(f.ctx, f.goal.ID, "The work is ready", "completion-run")
+	decision, err := f.store.CompleteGoalWithReport(f.ctx, f.goal.ID, domain.CompletionReport{
+		WorkDone:    "The work is ready",
+		NowPossible: "The goal can be approved",
+		HowToVerify: "Review the completion report",
+		Surprises:   "なし",
+		NeedsReview: "なし",
+		NextSteps:   "なし",
+	}, "completion-run")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -507,7 +514,14 @@ func TestHTTPApproveAndRejectCompletionEndpoints(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	approveDecision, err := f.store.CompleteGoal(f.ctx, approveGoal.ID, "finished", "approve-run")
+	approveDecision, err := f.store.CompleteGoalWithReport(f.ctx, approveGoal.ID, domain.CompletionReport{
+		WorkDone:    "finished",
+		NowPossible: "The goal is ready for approval",
+		HowToVerify: "Inspect the approved goal",
+		Surprises:   "なし",
+		NeedsReview: "なし",
+		NextSteps:   "なし",
+	}, "approve-run")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -527,7 +541,14 @@ func TestHTTPApproveAndRejectCompletionEndpoints(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rejectDecision, err := f.store.CompleteGoal(f.ctx, rejectGoal.ID, "try again", "reject-run")
+	rejectDecision, err := f.store.CompleteGoalWithReport(f.ctx, rejectGoal.ID, domain.CompletionReport{
+		WorkDone:    "try again",
+		NowPossible: "Rework can continue",
+		HowToVerify: "Review the rejection reason",
+		Surprises:   "なし",
+		NeedsReview: "needs work",
+		NextSteps:   "Revise the goal",
+	}, "reject-run")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -701,7 +722,14 @@ func TestSSEPublishesAllDecisionTransitionsWithExactPayloads(t *testing.T) {
 	}
 	assertSSEDecision(t, reader, "decision.withdrawn", withdrawn)
 
-	approveDecision, err := f.store.CompleteGoal(f.ctx, goals[0].ID, "done", "approve-run")
+	approveDecision, err := f.store.CompleteGoalWithReport(f.ctx, goals[0].ID, domain.CompletionReport{
+		WorkDone:    "done",
+		NowPossible: "The goal is approved",
+		HowToVerify: "Check the approval event",
+		Surprises:   "なし",
+		NeedsReview: "なし",
+		NextSteps:   "なし",
+	}, "approve-run")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -715,7 +743,14 @@ func TestSSEPublishesAllDecisionTransitionsWithExactPayloads(t *testing.T) {
 	}
 	assertSSEDecision(t, reader, "decision.approved", approveDecision)
 
-	rejectDecision, err := f.store.CompleteGoal(f.ctx, goals[1].ID, "not yet", "reject-run")
+	rejectDecision, err := f.store.CompleteGoalWithReport(f.ctx, goals[1].ID, domain.CompletionReport{
+		WorkDone:    "not yet",
+		NowPossible: "Rework can continue",
+		HowToVerify: "Check the rejection event",
+		Surprises:   "なし",
+		NeedsReview: "needs work",
+		NextSteps:   "Revise and retry",
+	}, "reject-run")
 	if err != nil {
 		t.Fatal(err)
 	}

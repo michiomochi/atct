@@ -66,7 +66,14 @@ func TestFullGoalLifecycle(t *testing.T) {
 		}
 	}
 
-	comp, err := s.CompleteGoal(ctx, g.ID, "All tasks complete. SQLite was selected.", "run-1")
+	comp, err := s.CompleteGoalWithReport(ctx, g.ID, domain.CompletionReport{
+		WorkDone:    "All tasks complete. SQLite was selected.",
+		NowPossible: "The goal can be approved.",
+		HowToVerify: "Inspect the completed task statuses.",
+		Surprises:   "なし",
+		NeedsReview: "なし",
+		NextSteps:   "なし",
+	}, "run-1")
 	if err != nil {
 		t.Fatalf("CompleteGoal: %v", err)
 	}

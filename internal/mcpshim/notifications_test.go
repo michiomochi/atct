@@ -131,7 +131,11 @@ func notificationTestArgs(name string) map[string]any {
 	case "atct_decision_withdraw":
 		return map[string]any{"decision_id": "decision-1", "reason": "reason"}
 	case "atct_goal_complete":
-		return map[string]any{"goal_id": "goal-1", "result_summary": "done"}
+		return map[string]any{
+			"goal_id": "goal-1", "work_done": "done", "now_possible": "ready",
+			"how_to_verify": "check the goal", "surprises": "なし",
+			"needs_review": "なし", "next_steps": "なし",
+		}
 	default:
 		return nil
 	}

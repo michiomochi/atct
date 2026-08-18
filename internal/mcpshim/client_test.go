@@ -3,6 +3,7 @@ package mcpshim
 import (
 	"context"
 	"net"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -13,7 +14,11 @@ import (
 )
 
 func TestClientCallReachesDaemon(t *testing.T) {
-	dir := t.TempDir()
+	dir, err := os.MkdirTemp("", "atct")
+	if err != nil {
+		t.Fatalf("MkdirTemp: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 	s, err := store.Open(filepath.Join(dir, "atct.db"))
 	if err != nil {
 		t.Fatalf("store.Open: %v", err)

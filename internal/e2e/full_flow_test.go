@@ -390,7 +390,11 @@ func TestFullFlowThroughDaemonAndHTTP(t *testing.T) {
 
 	var completion domain.Decision
 	callDaemon(t, stack, "goal.complete", map[string]any{
-		"goal_id": goal.ID, "result_summary": "The flow completed", "run_id": runID,
+		"goal_id": goal.ID, "work_done": "The flow completed",
+		"now_possible":  "The goal can be approved",
+		"how_to_verify": "Check the completion response",
+		"surprises":     "なし", "needs_review": "なし", "next_steps": "なし",
+		"run_id": runID,
 	}, &completion)
 	if completion.Kind != domain.KindCompletion || completion.Status != domain.DecisionOpen {
 		t.Fatalf("goal.complete returned %+v", completion)
