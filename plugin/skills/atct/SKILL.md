@@ -86,8 +86,18 @@ Reading silence as "stop" gives you back the stall you were trying to avoid.
 **Only put a default on an option that can be undone.** Nothing checks this —
 ATCT cannot tell "proceed with A" from "drop the production database" — so it
 rests on you applying the same test as above: can the human get the previous
-state back? If the answer is no, leave the decision open and wait, however long
-that takes.
+state back?
+
+If the answer is no, **send the question with no default at all** and wait for
+their approval, however long that takes. A deadline on an irreversible choice is
+not a safeguard with a timer on it; it is the thing happening anyway, with a
+delay. Waiting is the point.
+
+**Waiting is not idling.** Park the question with `wait_ms=0` and go do the
+tasks that do not depend on it. The human comes back to a decision that is still
+theirs to make and to work that moved forward in the meantime. If every
+remaining task depends on this one answer, say so and stop — that is a real
+block, and it is worth their knowing about.
 
 Set the deadline to how long this particular question can reasonably wait.
 **Do not put thirty minutes on everything.** A deadline shorter than the human's
