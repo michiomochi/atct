@@ -246,6 +246,89 @@ func TestHTTPGoalDetailDecisionHistoryRecordsSettlementSource(t *testing.T) {
 	}
 }
 
+func TestHTTPDecisionRevisionPreservesSettledDecision(t *testing.T) {
+	f := newBareFixture(t)
+	afterMs := int64(1)
+	original, err := f.store.AskDecision(f.ctx, store.AskInput{
+		GoalID:         f.goal.ID,
+		Kind:           domain.DecisionKind("question"),
+		Question:       "Which deployment plan should be used?",
+		Options:        []domain.Option{{Label: "A"}, {Label: "B"}},
+		DefaultOption:  "A",
+		DefaultAfterMs: &afterMs,
+		RunID:          "revision-original-run",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.store.ApplyExpiredDefaults(f.ctx, original.CreatedAt.Add(time.Millisecond)); err != nil {
+		t.Fatal(err)
+	}
+	if applied, err := f.store.PollDecisions(f.ctx, "revision-original-run", original.ID); err != nil {
+		t.Fatal(err)
+	} else if len(applied) != 1 {
+		t.Fatalf("applied decisions = %+v", applied)
+	}
+
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+	status, headers, body := doRequest(t, srv.Client(), http.MethodPost, srv.URL+"/api/decisions/"+original.ID+"/answer", mustJSON(t, map[string]string{
+		"answer_label": "B",
+	}))
+	assertErrorObject(t, status, headers, body, http.StatusConflict)
+
+	status, headers, body = doRequest(t, srv.Client(), http.MethodPost, srv.URL+"/api/decisions/"+original.ID+"/revise", mustJSON(t, struct {
+		Options []domain.Option `json:"options"`
+	}{
+		Options: []domain.Option{{Label: "C"}, {Label: "D"}},
+	}))
+	if status != http.StatusCreated {
+		t.Fatalf("revision status = %d; body=%s", status, body)
+	}
+	if !strings.HasPrefix(headers.Get("Content-Type"), "application/json") {
+		t.Fatalf("revision content type = %q", headers.Get("Content-Type"))
+	}
+	var revised domain.Decision
+	if err := json.Unmarshal(body, &revised); err != nil {
+		t.Fatal(err)
+	}
+	if revised.ID == "" || revised.ID == original.ID {
+		t.Fatalf("revised decision id = %q; original = %q", revised.ID, original.ID)
+	}
+	if !strings.Contains(revised.Question, original.Question) {
+		t.Fatalf("revised question = %q; missing original question", revised.Question)
+	}
+	if !strings.Contains(revised.Question, "A") {
+		t.Fatalf("revised question = %q; missing selected option", revised.Question)
+	}
+	if len(revised.Options) != 2 || revised.Options[0].Label != "C" || revised.Options[1].Label != "D" {
+		t.Fatalf("revised options = %+v", revised.Options)
+	}
+
+	status, _, body = doRequest(t, srv.Client(), http.MethodGet, srv.URL+"/api/goals/"+f.goal.ID, nil)
+	if status != http.StatusOK {
+		t.Fatalf("goal status = %d; body=%s", status, body)
+	}
+	var response struct {
+		DecisionHistory []struct {
+			DecisionID string     `json:"decision_id"`
+			AppliedAt  *time.Time `json:"applied_at"`
+		} `json:"decision_history"`
+	}
+	if err := json.Unmarshal(body, &response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.DecisionHistory) != 1 {
+		t.Fatalf("decision_history = %+v; body=%s", response.DecisionHistory, body)
+	}
+	if response.DecisionHistory[0].DecisionID != original.ID {
+		t.Fatalf("decision_history id = %q; want original %q", response.DecisionHistory[0].DecisionID, original.ID)
+	}
+	if response.DecisionHistory[0].AppliedAt == nil {
+		t.Fatal("original decision is no longer applied")
+	}
+}
+
 func TestHTTPInboxIncludesDefaultDecisionFieldsBeforeAnswer(t *testing.T) {
 	f := newBareFixture(t)
 	afterMs := int64(30 * 60 * 1000)

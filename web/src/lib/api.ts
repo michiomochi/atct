@@ -109,6 +109,10 @@ export interface AnswerPayload {
   answer_text: string;
 }
 
+export interface ReviseDecisionPayload {
+  options: Option[];
+}
+
 export class ApiError extends Error {
   readonly status: number;
 
@@ -195,6 +199,14 @@ export async function fetchGoal(id: string): Promise<GoalResponse> {
 
 export async function answerDecision(id: string, payload: AnswerPayload): Promise<Decision> {
   return requestJson<Decision>(`/api/decisions/${encodeURIComponent(id)}/answer`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function reviseDecision(id: string, payload: ReviseDecisionPayload): Promise<Decision> {
+  return requestJson<Decision>(`/api/decisions/${encodeURIComponent(id)}/revise`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),

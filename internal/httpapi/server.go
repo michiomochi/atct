@@ -78,6 +78,10 @@ type answerRequest struct {
 	AnswerText  string `json:"answer_text"`
 }
 
+type reviseDecisionRequest struct {
+	Options []domain.Option `json:"options"`
+}
+
 type rejectionRequest struct {
 	Reason string `json:"reason"`
 }
@@ -417,6 +421,8 @@ func (s *Server) handleDecision(w http.ResponseWriter, r *http.Request, decision
 	switch action {
 	case "answer":
 		s.handleAnswer(w, r, decisionID)
+	case "revise":
+		s.handleRevise(w, r, decisionID)
 	case "approve":
 		s.handleApprove(w, r, decisionID)
 	case "reject":
@@ -453,6 +459,64 @@ func (s *Server) handleAnswer(w http.ResponseWriter, r *http.Request, decisionID
 		return
 	}
 	writeJSON(w, http.StatusOK, decision)
+}
+
+func (s *Server) handleRevise(w http.ResponseWriter, r *http.Request, decisionID string) {
+	var request reviseDecisionRequest
+	if err := decodeJSONBody(r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if len(request.Options) == 0 {
+		writeError(w, http.StatusBadRequest, "at least one option is required")
+		return
+	}
+
+	original, err := s.store.GetDecision(r.Context(), decisionID)
+	if errors.Is(err, store.ErrDecisionNotFound) {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	if original.DefaultAppliedAt == nil && original.AnsweredAt == nil {
+		writeError(w, http.StatusConflict, "decision is not settled")
+		return
+	}
+
+	revised, err := s.store.AskDecision(r.Context(), store.AskInput{
+		GoalID:   original.GoalID,
+		TaskID:   original.TaskID,
+		Kind:     original.Kind,
+		Question: revisionQuestion(original),
+		Options:  request.Options,
+		RunID:    original.RunID,
+	})
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, revised)
+}
+
+func revisionQuestion(original domain.Decision) string {
+	selected := strings.TrimSpace(original.AnswerLabel)
+	if selected == "" {
+		selected = strings.TrimSpace(original.DefaultOption)
+	}
+	if answerText := strings.TrimSpace(original.AnswerText); answerText != "" {
+		if selected == "" {
+			selected = answerText
+		} else {
+			selected += " - " + answerText
+		}
+	}
+	if selected == "" {
+		selected = "(no option recorded)"
+	}
+	return fmt.Sprintf("Reconsider the decision %q. The selected option was %q.", original.Question, selected)
 }
 
 func (s *Server) handleApprove(w http.ResponseWriter, r *http.Request, decisionID string) {

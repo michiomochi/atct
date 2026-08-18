@@ -1,4 +1,5 @@
-import type { DecisionHistoryEntry } from "../lib/api";
+import { useState } from "react";
+import { reviseDecision, type DecisionHistoryEntry, type Option } from "../lib/api";
 import { formatDateTime } from "../i18n";
 import { decisionSettlementLabel } from "../lib/ui";
 import { Table } from "@cloudflare/kumo/components/table";
@@ -14,6 +15,39 @@ const columnScope = { scope: "col" } as const;
 export function DecisionHistoryTable({ decisions, omittedCount }: Props) {
   const { t, i18n } = useTranslation();
   const locale = i18n.language.startsWith("ja") ? "ja" : "en";
+  const [revisingDecisionID, setRevisingDecisionID] = useState<string | null>(null);
+  const [revisionOptions, setRevisionOptions] = useState("");
+  const [revisionSubmitting, setRevisionSubmitting] = useState(false);
+  const [revisionMessage, setRevisionMessage] = useState<{ decisionID: string; text: string; error: boolean } | null>(null);
+  const changeAssumptionLabel = t("goal.history.changeAssumption", "Change assumption");
+
+  const submitRevision = async (decisionID: string) => {
+    const options = revisionOptions
+      .split(/[\n,]/)
+      .map((label): Option => ({ label: label.trim(), description: "", consequence: "" }))
+      .filter((option) => option.label !== "");
+    if (options.length === 0) {
+      setRevisionMessage({ decisionID, text: "Enter at least one new option.", error: true });
+      return;
+    }
+
+    setRevisionSubmitting(true);
+    setRevisionMessage(null);
+    try {
+      await reviseDecision(decisionID, { options });
+      setRevisionMessage({ decisionID, text: "New decision created.", error: false });
+      setRevisingDecisionID(null);
+      setRevisionOptions("");
+    } catch (error) {
+      setRevisionMessage({
+        decisionID,
+        text: error instanceof Error ? error.message : "Could not create a new decision.",
+        error: true,
+      });
+    } finally {
+      setRevisionSubmitting(false);
+    }
+  };
 
   return (
     <section className="border-t border-line pt-5" data-testid="decision-history" aria-labelledby="decision-history-heading">
@@ -32,6 +66,7 @@ export function DecisionHistoryTable({ decisions, omittedCount }: Props) {
               <Table.Head {...columnScope} className="w-64 px-3 py-3 font-semibold">{t("goal.history.column.answer")}</Table.Head>
               <Table.Head {...columnScope} className="w-48 px-3 py-3 font-semibold">{t("goal.history.column.answeredAt")}</Table.Head>
               <Table.Head {...columnScope} className="w-48 px-3 py-3 font-semibold">{t("goal.history.column.appliedAt")}</Table.Head>
+              <Table.Head {...columnScope} className="w-72 px-3 py-3 font-semibold">{changeAssumptionLabel}</Table.Head>
             </Table.Row>
           </Table.Header>
           <Table.Body>
@@ -47,6 +82,67 @@ export function DecisionHistoryTable({ decisions, omittedCount }: Props) {
                   </Table.Cell>
                   <Table.Cell className="whitespace-nowrap px-3 py-4 text-ink-700">{decision.answered_at ? formatDateTime(locale, decision.answered_at) : "-"}</Table.Cell>
                   <Table.Cell className="whitespace-nowrap px-3 py-4 text-ink-700">{decision.applied_at ? formatDateTime(locale, decision.applied_at) : "-"}</Table.Cell>
+                  <Table.Cell className="px-3 py-4 text-ink-700">
+                    {revisingDecisionID === decision.decision_id ? (
+                      <form
+                        className="space-y-2"
+                        onSubmit={(event) => {
+                          event.preventDefault();
+                          void submitRevision(decision.decision_id);
+                        }}
+                      >
+                        <label className="sr-only" htmlFor={`revision-options-${decision.decision_id}`}>
+                          {changeAssumptionLabel}
+                        </label>
+                        <input
+                          id={`revision-options-${decision.decision_id}`}
+                          className="w-full rounded border border-line px-2 py-1 text-sm"
+                          value={revisionOptions}
+                          onChange={(event) => setRevisionOptions(event.target.value)}
+                          placeholder="New options, separated by commas"
+                          disabled={revisionSubmitting}
+                        />
+                        <div className="flex gap-2">
+                          <button
+                            className="rounded bg-ink-950 px-2 py-1 text-xs font-semibold text-white disabled:opacity-50"
+                            type="submit"
+                            disabled={revisionSubmitting}
+                          >
+                            {revisionSubmitting ? "Creating…" : "Create decision"}
+                          </button>
+                          <button
+                            className="rounded border border-line px-2 py-1 text-xs font-semibold text-ink-700"
+                            type="button"
+                            onClick={() => {
+                              setRevisingDecisionID(null);
+                              setRevisionOptions("");
+                              setRevisionMessage(null);
+                            }}
+                            disabled={revisionSubmitting}
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </form>
+                    ) : (
+                      <button
+                        className="rounded border border-line px-2 py-1 text-xs font-semibold text-ink-700 hover:border-ink-500"
+                        type="button"
+                        onClick={() => {
+                          setRevisingDecisionID(decision.decision_id);
+                          setRevisionOptions("");
+                          setRevisionMessage(null);
+                        }}
+                      >
+                        {changeAssumptionLabel}
+                      </button>
+                    )}
+                    {revisionMessage?.decisionID === decision.decision_id && (
+                      <p className={`mt-2 text-xs ${revisionMessage.error ? "text-red-700" : "text-ink-600"}`} role="status">
+                        {revisionMessage.text}
+                      </p>
+                    )}
+                  </Table.Cell>
                 </Table.Row>
               );
             })}
