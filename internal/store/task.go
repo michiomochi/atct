@@ -11,9 +11,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/michiomochi/atct/internal/domain"
+	"github.com/michiomochi/atct/internal/store/sqlcgen"
 )
-
-const taskColumns = `id, goal_id, title, status, agent, files, sort_order, declare_key, claimed_by, claimed_at, created_at, updated_at`
 
 var ErrTaskAlreadyClaimed = errors.New("task already claimed")
 var ErrTaskFileConflict = errors.New("task file conflict")
@@ -89,17 +88,27 @@ func (s *Store) DeclareTasks(ctx context.Context, goalID, agent, idempotencyKey 
 	defer tx.Rollback()
 
 	now := time.Now().UTC().Format(time.RFC3339)
+	q := sqlcgen.New(tx)
 	for i, title := range titles {
 		declareKey := fmt.Sprintf("%s#%d", idempotencyKey, i)
 		filesJSON, err := marshalTaskFiles(filesByTask[i])
 		if err != nil {
 			return nil, fmt.Errorf("encode task %d files: %w", i, err)
 		}
-		_, err = tx.ExecContext(ctx,
-			`INSERT INTO tasks (id, goal_id, title, status, agent, files, sort_order, declare_key, claimed_by, claimed_at, created_at, updated_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-			 ON CONFLICT(goal_id, declare_key) DO NOTHING`,
-			uuid.NewString(), goalID, title, string(domain.TaskTodo), agent, filesJSON, i, declareKey, "", nil, now, now)
+		err = q.CreateTask(ctx, sqlcgen.CreateTaskParams{
+			ID:         uuid.NewString(),
+			GoalID:     goalID,
+			Title:      title,
+			Status:     string(domain.TaskTodo),
+			Agent:      agent,
+			Files:      filesJSON,
+			SortOrder:  int64(i),
+			DeclareKey: declareKey,
+			ClaimedBy:  "",
+			ClaimedAt:  sql.NullString{},
+			CreatedAt:  now,
+			UpdatedAt:  now,
+		})
 		if err != nil {
 			return nil, fmt.Errorf("insert task %d: %w", i, err)
 		}
@@ -121,12 +130,12 @@ func marshalTaskFiles(files []string) (string, error) {
 	return string(b), nil
 }
 
-func unmarshalTaskFiles(filesJSON sql.NullString) ([]string, error) {
-	if !filesJSON.Valid || filesJSON.String == "" {
+func unmarshalTaskFiles(filesJSON string) ([]string, error) {
+	if filesJSON == "" {
 		return []string{}, nil
 	}
 	var files []string
-	if err := json.Unmarshal([]byte(filesJSON.String), &files); err != nil {
+	if err := json.Unmarshal([]byte(filesJSON), &files); err != nil {
 		return nil, err
 	}
 	if files == nil {
@@ -136,45 +145,56 @@ func unmarshalTaskFiles(filesJSON sql.NullString) ([]string, error) {
 }
 
 func (s *Store) ListTasks(ctx context.Context, goalID string) ([]domain.Task, error) {
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT `+taskColumns+` FROM tasks WHERE goal_id = ? ORDER BY sort_order`, goalID)
+	rows, err := taskQueries(s).ListTasks(ctx, goalID)
 	if err != nil {
 		return nil, fmt.Errorf("query tasks: %w", err)
 	}
-	defer rows.Close()
 
 	var out []domain.Task
-	for rows.Next() {
-		var tk domain.Task
-		var status, createdAt, updatedAt string
-		var claimedAt sql.NullString
-		var filesJSON sql.NullString
-		if err := rows.Scan(&tk.ID, &tk.GoalID, &tk.Title, &status, &tk.Agent,
-			&filesJSON, &tk.Order, &tk.DeclareKey, &tk.ClaimedBy, &claimedAt, &createdAt, &updatedAt); err != nil {
-			return nil, fmt.Errorf("scan task: %w", err)
-		}
-		tk.Status = domain.TaskStatus(status)
-		files, err := unmarshalTaskFiles(filesJSON)
+	for _, row := range rows {
+		tk, err := taskFromRow(row)
 		if err != nil {
-			return nil, fmt.Errorf("parse files: %w", err)
-		}
-		tk.Files = files
-		if claimedAt.Valid {
-			t, err := time.Parse(time.RFC3339, claimedAt.String)
-			if err != nil {
-				return nil, fmt.Errorf("parse claimed_at: %w", err)
-			}
-			tk.ClaimedAt = &t
-		}
-		if tk.CreatedAt, err = time.Parse(time.RFC3339, createdAt); err != nil {
-			return nil, fmt.Errorf("parse created_at: %w", err)
-		}
-		if tk.UpdatedAt, err = time.Parse(time.RFC3339, updatedAt); err != nil {
-			return nil, fmt.Errorf("parse updated_at: %w", err)
+			return nil, err
 		}
 		out = append(out, tk)
 	}
-	return out, rows.Err()
+	return out, nil
+}
+
+func taskFromRow(row sqlcgen.Task) (domain.Task, error) {
+	tk := domain.Task{
+		ID:         row.ID,
+		GoalID:     row.GoalID,
+		Title:      row.Title,
+		Status:     domain.TaskStatus(row.Status),
+		Agent:      row.Agent,
+		Order:      int(row.SortOrder),
+		DeclareKey: row.DeclareKey,
+		ClaimedBy:  row.ClaimedBy,
+	}
+	files, err := unmarshalTaskFiles(row.Files)
+	if err != nil {
+		return domain.Task{}, fmt.Errorf("parse files: %w", err)
+	}
+	tk.Files = files
+	if row.ClaimedAt.Valid {
+		t, err := time.Parse(time.RFC3339, row.ClaimedAt.String)
+		if err != nil {
+			return domain.Task{}, fmt.Errorf("parse claimed_at: %w", err)
+		}
+		tk.ClaimedAt = &t
+	}
+	if tk.CreatedAt, err = time.Parse(time.RFC3339, row.CreatedAt); err != nil {
+		return domain.Task{}, fmt.Errorf("parse created_at: %w", err)
+	}
+	if tk.UpdatedAt, err = time.Parse(time.RFC3339, row.UpdatedAt); err != nil {
+		return domain.Task{}, fmt.Errorf("parse updated_at: %w", err)
+	}
+	return tk, nil
+}
+
+func taskQueries(s *Store) *sqlcgen.Queries {
+	return sqlcgen.New(s.db)
 }
 
 // ListOpenTasksClaimedBy returns tasks that still need closing and belong to
@@ -209,10 +229,9 @@ func (s *Store) UpdateTask(ctx context.Context, taskID string, status domain.Tas
 	}
 	defer tx.Rollback()
 
+	q := sqlcgen.New(tx)
 	if status == domain.TaskDone {
-		var open int
-		err := tx.QueryRowContext(ctx,
-			`SELECT COUNT(*) FROM decisions WHERE task_id = ? AND status = 'open'`, taskID).Scan(&open)
+		open, err := q.CountOpenDecisionsForTask(ctx, sql.NullString{String: taskID, Valid: true})
 		if err != nil {
 			return domain.Task{}, fmt.Errorf("count open decisions: %w", err)
 		}
@@ -221,15 +240,21 @@ func (s *Store) UpdateTask(ctx context.Context, taskID string, status domain.Tas
 		}
 	}
 
-	updateSQL := `UPDATE tasks SET status = ?, updated_at = ?`
-	args := []any{string(status), time.Now().UTC().Format(time.RFC3339)}
+	now := time.Now().UTC().Format(time.RFC3339)
+	var res sql.Result
 	if status == domain.TaskTodo || status == domain.TaskDone || status == domain.TaskDropped {
-		updateSQL += `, claimed_by = '', claimed_at = NULL`
+		res, err = q.UpdateTaskStatusAndReleaseClaim(ctx, sqlcgen.UpdateTaskStatusAndReleaseClaimParams{
+			Status:    string(status),
+			UpdatedAt: now,
+			ID:        taskID,
+		})
+	} else {
+		res, err = q.UpdateTaskStatus(ctx, sqlcgen.UpdateTaskStatusParams{
+			Status:    string(status),
+			UpdatedAt: now,
+			ID:        taskID,
+		})
 	}
-	updateSQL += ` WHERE id = ?`
-	args = append(args, taskID)
-	res, err := tx.ExecContext(ctx,
-		updateSQL, args...)
 	if err != nil {
 		return domain.Task{}, fmt.Errorf("update task: %w", err)
 	}
@@ -244,8 +269,8 @@ func (s *Store) UpdateTask(ctx context.Context, taskID string, status domain.Tas
 		return domain.Task{}, fmt.Errorf("commit: %w", err)
 	}
 
-	var goalID string
-	if err := s.db.QueryRowContext(ctx, `SELECT goal_id FROM tasks WHERE id = ?`, taskID).Scan(&goalID); err != nil {
+	goalID, err := taskQueries(s).GetTaskGoalID(ctx, taskID)
+	if err != nil {
 		return domain.Task{}, fmt.Errorf("lookup goal_id: %w", err)
 	}
 	tasks, err := s.ListTasks(ctx, goalID)
@@ -268,36 +293,35 @@ func (s *Store) ClaimTask(ctx context.Context, taskID, runID string) (domain.Tas
 	}
 	defer tx.Rollback()
 
-	var goalID, title, status, claimedBy string
-	var filesJSON sql.NullString
-	if err := tx.QueryRowContext(ctx,
-		`SELECT goal_id, title, status, claimed_by, files FROM tasks WHERE id = ?`, taskID,
-	).Scan(&goalID, &title, &status, &claimedBy, &filesJSON); err != nil {
+	q := sqlcgen.New(tx)
+	task, err := q.GetTaskForClaim(ctx, taskID)
+	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return domain.Task{}, fmt.Errorf("task not found: %s", taskID)
 		}
 		return domain.Task{}, fmt.Errorf("lookup task claim: %w", err)
 	}
-	if claimedBy != "" {
+	if task.ClaimedBy != "" {
 		return domain.Task{}, fmt.Errorf("%w: %s", ErrTaskAlreadyClaimed, taskID)
 	}
 
-	files, err := unmarshalTaskFiles(filesJSON)
+	files, err := unmarshalTaskFiles(task.Files)
 	if err != nil {
 		return domain.Task{}, fmt.Errorf("parse task files: %w", err)
 	}
 	if len(files) > 0 {
-		if err := rejectTaskFileConflict(ctx, tx, goalID, taskID, title, files, runID); err != nil {
+		if err := rejectTaskFileConflict(ctx, q, task.GoalID, taskID, task.Title, files, runID); err != nil {
 			return domain.Task{}, err
 		}
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339)
-	res, err := tx.ExecContext(ctx,
-		`UPDATE tasks
-		 SET claimed_by = ?, claimed_at = ?, updated_at = ?
-		 WHERE id = ? AND claimed_by = ''`,
-		runID, now, now, taskID)
+	res, err := q.ClaimTask(ctx, sqlcgen.ClaimTaskParams{
+		ClaimedBy: runID,
+		ClaimedAt: sql.NullString{String: now, Valid: true},
+		UpdatedAt: now,
+		ID:        taskID,
+	})
 	if err != nil {
 		return domain.Task{}, fmt.Errorf("claim task: %w", err)
 	}
@@ -306,8 +330,7 @@ func (s *Store) ClaimTask(ctx context.Context, taskID, runID string) (domain.Tas
 		return domain.Task{}, fmt.Errorf("claim rows affected: %w", err)
 	}
 	if n == 0 {
-		var currentClaim string
-		err := tx.QueryRowContext(ctx, `SELECT claimed_by FROM tasks WHERE id = ?`, taskID).Scan(&currentClaim)
+		currentClaim, err := q.GetTaskClaimedBy(ctx, taskID)
 		if errors.Is(err, sql.ErrNoRows) {
 			return domain.Task{}, fmt.Errorf("task not found: %s", taskID)
 		}
@@ -331,48 +354,31 @@ type taskClaimConflictInfo struct {
 	Files []string
 }
 
-func rejectTaskFileConflict(ctx context.Context, tx *sql.Tx, goalID, taskID, title string, files []string, runID string) error {
-	rows, err := tx.QueryContext(ctx,
-		`SELECT id, title, status, claimed_by, files
-		 FROM tasks
-		 WHERE id <> ?
-		   AND claimed_by <> ''
-		   AND claimed_by <> ?
-		   AND status NOT IN (?, ?)
-		 ORDER BY sort_order, id`,
-		taskID, runID, string(domain.TaskDone), string(domain.TaskDropped))
+func rejectTaskFileConflict(ctx context.Context, q *sqlcgen.Queries, goalID, taskID, title string, files []string, runID string) error {
+	rows, err := q.ListClaimedTasksForConflict(ctx, sqlcgen.ListClaimedTasksForConflictParams{
+		ID:        taskID,
+		ClaimedBy: runID,
+		Status:    string(domain.TaskDone),
+		Status_2:  string(domain.TaskDropped),
+	})
 	if err != nil {
 		return fmt.Errorf("query claimed tasks: %w", err)
 	}
 
 	var claimedTasks []taskClaimConflictInfo
-	for rows.Next() {
-		var otherID, otherTitle, otherStatus, otherClaimedBy string
-		var otherFilesJSON sql.NullString
-		if err := rows.Scan(&otherID, &otherTitle, &otherStatus, &otherClaimedBy, &otherFilesJSON); err != nil {
-			rows.Close()
-			return fmt.Errorf("scan claimed task: %w", err)
-		}
-		otherFiles, err := unmarshalTaskFiles(otherFilesJSON)
+	for _, row := range rows {
+		otherFiles, err := unmarshalTaskFiles(row.Files)
 		if err != nil {
-			rows.Close()
 			return fmt.Errorf("parse claimed task files: %w", err)
 		}
 		claimedTasks = append(claimedTasks, taskClaimConflictInfo{
-			ID: otherID, Title: otherTitle, Files: otherFiles,
+			ID: row.ID, Title: row.Title, Files: otherFiles,
 		})
-	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return fmt.Errorf("iterate claimed tasks: %w", err)
-	}
-	if err := rows.Close(); err != nil {
-		return fmt.Errorf("close claimed tasks: %w", err)
 	}
 
 	for _, other := range claimedTasks {
 		if file, ok := firstOverlappingFile(files, other.Files); ok {
-			candidates, omitted, err := taskFileConflictCandidates(ctx, tx, goalID, taskID, claimedTasks)
+			candidates, omitted, err := taskFileConflictCandidates(ctx, q, goalID, taskID, claimedTasks)
 			if err != nil {
 				return err
 			}
@@ -390,34 +396,26 @@ func rejectTaskFileConflict(ctx context.Context, tx *sql.Tx, goalID, taskID, tit
 	return nil
 }
 
-func taskFileConflictCandidates(ctx context.Context, tx *sql.Tx, goalID, taskID string, claimedTasks []taskClaimConflictInfo) ([]TaskConflictCandidate, int, error) {
-	rows, err := tx.QueryContext(ctx,
-		`SELECT id, title, status, claimed_by, files
-		 FROM tasks
-		 WHERE goal_id = ?
-		   AND id <> ?
-		 ORDER BY sort_order, id`, goalID, taskID)
+func taskFileConflictCandidates(ctx context.Context, q *sqlcgen.Queries, goalID, taskID string, claimedTasks []taskClaimConflictInfo) ([]TaskConflictCandidate, int, error) {
+	rows, err := q.ListTaskAlternatives(ctx, sqlcgen.ListTaskAlternativesParams{
+		GoalID: goalID,
+		ID:     taskID,
+	})
 	if err != nil {
 		return nil, 0, fmt.Errorf("query task alternatives: %w", err)
 	}
-	defer rows.Close()
 
 	candidates := make([]TaskConflictCandidate, 0, maxTaskFileConflictCandidates)
 	var omitted int
-	for rows.Next() {
-		var candidate taskClaimConflictInfo
-		var status, claimedBy string
-		var filesJSON sql.NullString
-		if err := rows.Scan(&candidate.ID, &candidate.Title, &status, &claimedBy, &filesJSON); err != nil {
-			return nil, 0, fmt.Errorf("scan task alternative: %w", err)
-		}
-		if claimedBy != "" || status == string(domain.TaskDone) || status == string(domain.TaskDropped) {
+	for _, row := range rows {
+		if row.ClaimedBy != "" || row.Status == string(domain.TaskDone) || row.Status == string(domain.TaskDropped) {
 			continue
 		}
-		candidate.Files, err = unmarshalTaskFiles(filesJSON)
+		files, err := unmarshalTaskFiles(row.Files)
 		if err != nil {
 			return nil, 0, fmt.Errorf("parse task alternative files: %w", err)
 		}
+		candidate := taskClaimConflictInfo{ID: row.ID, Title: row.Title, Files: files}
 		blocked := false
 		for _, claimed := range claimedTasks {
 			if _, ok := firstOverlappingFile(candidate.Files, claimed.Files); ok {
@@ -433,9 +431,6 @@ func taskFileConflictCandidates(ctx context.Context, tx *sql.Tx, goalID, taskID 
 			continue
 		}
 		candidates = append(candidates, TaskConflictCandidate{TaskID: candidate.ID, Title: candidate.Title})
-	}
-	if err := rows.Err(); err != nil {
-		return nil, 0, fmt.Errorf("iterate task alternatives: %w", err)
 	}
 	return candidates, omitted, nil
 }
@@ -455,9 +450,10 @@ func firstOverlappingFile(files, otherFiles []string) (string, bool) {
 
 // ReleaseTask clears a task claim for the human stale-claim release path.
 func (s *Store) ReleaseTask(ctx context.Context, taskID string) (domain.Task, error) {
-	res, err := s.db.ExecContext(ctx,
-		`UPDATE tasks SET claimed_by = '', claimed_at = NULL, updated_at = ? WHERE id = ?`,
-		time.Now().UTC().Format(time.RFC3339), taskID)
+	res, err := taskQueries(s).ReleaseTask(ctx, sqlcgen.ReleaseTaskParams{
+		UpdatedAt: time.Now().UTC().Format(time.RFC3339),
+		ID:        taskID,
+	})
 	if err != nil {
 		return domain.Task{}, fmt.Errorf("release task: %w", err)
 	}
@@ -466,8 +462,7 @@ func (s *Store) ReleaseTask(ctx context.Context, taskID string) (domain.Task, er
 		return domain.Task{}, fmt.Errorf("release rows affected: %w", err)
 	}
 	if n == 0 {
-		var id string
-		err := s.db.QueryRowContext(ctx, `SELECT id FROM tasks WHERE id = ?`, taskID).Scan(&id)
+		_, err := taskQueries(s).TaskExists(ctx, taskID)
 		if errors.Is(err, sql.ErrNoRows) {
 			return domain.Task{}, fmt.Errorf("task not found: %s", taskID)
 		}
@@ -480,7 +475,8 @@ func (s *Store) ReleaseTask(ctx context.Context, taskID string) (domain.Task, er
 
 func (s *Store) loadTask(ctx context.Context, taskID string) (domain.Task, error) {
 	var goalID string
-	if err := s.db.QueryRowContext(ctx, `SELECT goal_id FROM tasks WHERE id = ?`, taskID).Scan(&goalID); err != nil {
+	goalID, err := taskQueries(s).GetTaskGoalID(ctx, taskID)
+	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return domain.Task{}, fmt.Errorf("task not found: %s", taskID)
 		}

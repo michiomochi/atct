@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/michiomochi/atct/internal/domain"
+	"github.com/michiomochi/atct/internal/store/sqlcgen"
 )
 
 var ErrProjectNotFound = errors.New("project not found for cwd")
@@ -24,9 +25,12 @@ func (s *Store) CreateProject(ctx context.Context, name, rootPath string) (domai
 		RootPath:  rootPath,
 		CreatedAt: time.Now().UTC(),
 	}
-	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO projects (id, name, root_path, created_at) VALUES (?, ?, ?, ?)
-	`, ns.ID, ns.Name, ns.RootPath, ns.CreatedAt.Format(time.RFC3339))
+	err := sqlcgen.New(s.db).CreateProject(ctx, sqlcgen.CreateProjectParams{
+		ID:        ns.ID,
+		Name:      ns.Name,
+		RootPath:  ns.RootPath,
+		CreatedAt: ns.CreatedAt.Format(time.RFC3339),
+	})
 	if err != nil {
 		return domain.Project{}, fmt.Errorf("insert project: %w", err)
 	}
@@ -40,29 +44,20 @@ func NormalizeRoot(ctx context.Context, path string) string {
 }
 
 func (s *Store) ListProjects(ctx context.Context) ([]domain.Project, error) {
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, name, root_path, created_at FROM projects ORDER BY created_at
-	`)
+	rows, err := sqlcgen.New(s.db).ListProjects(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("query projects: %w", err)
 	}
-	defer rows.Close()
 
 	out := []domain.Project{}
-	for rows.Next() {
-		var p domain.Project
-		var createdAt string
-		if err := rows.Scan(&p.ID, &p.Name, &p.RootPath, &createdAt); err != nil {
-			return nil, fmt.Errorf("scan project: %w", err)
-		}
-		t, err := time.Parse(time.RFC3339, createdAt)
+	for _, row := range rows {
+		p, err := projectFromRow(row)
 		if err != nil {
-			return nil, fmt.Errorf("parse created_at: %w", err)
+			return nil, err
 		}
-		p.CreatedAt = t
 		out = append(out, p)
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // ResolveProject maps a worktree to its main repository before selecting the
@@ -71,26 +66,30 @@ func (s *Store) ListProjects(ctx context.Context) ([]domain.Project, error) {
 func (s *Store) ResolveProject(ctx context.Context, cwd string) (domain.Project, error) {
 	cwd = normalizeWorktreePath(ctx, cwd, "git")
 	cwd = normalizeProjectPath(cwd)
-	row := s.db.QueryRowContext(ctx, `
-		SELECT id, name, root_path, created_at FROM projects
-		WHERE ? = root_path OR ? LIKE root_path || '/%'
-		ORDER BY LENGTH(root_path) DESC LIMIT 1
-	`, cwd, cwd)
-
-	var ns domain.Project
-	var createdAt string
-	if err := row.Scan(&ns.ID, &ns.Name, &ns.RootPath, &createdAt); err != nil {
+	row, err := sqlcgen.New(s.db).ResolveProject(ctx, sqlcgen.ResolveProjectParams{
+		RootPath:   cwd,
+		RootPath_2: cwd,
+	})
+	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return domain.Project{}, fmt.Errorf("%w: %s", ErrProjectNotFound, cwd)
 		}
 		return domain.Project{}, fmt.Errorf("scan project: %w", err)
 	}
-	t, err := time.Parse(time.RFC3339, createdAt)
+	return projectFromRow(row)
+}
+
+func projectFromRow(row sqlcgen.Project) (domain.Project, error) {
+	t, err := time.Parse(time.RFC3339, row.CreatedAt)
 	if err != nil {
 		return domain.Project{}, fmt.Errorf("parse created_at: %w", err)
 	}
-	ns.CreatedAt = t
-	return ns, nil
+	return domain.Project{
+		ID:        row.ID,
+		Name:      row.Name,
+		RootPath:  row.RootPath,
+		CreatedAt: t,
+	}, nil
 }
 
 func normalizeWorktreePath(ctx context.Context, cwd, gitCommand string) string {

@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/michiomochi/atct/internal/domain"
+	"github.com/michiomochi/atct/internal/store/sqlcgen"
 )
 
 var ErrGoalNotFound = errors.New("goal not found")
@@ -26,88 +27,90 @@ func (s *Store) CreateGoal(ctx context.Context, projectID, title, description st
 		CreatedAt:   now,
 		UpdatedAt:   now,
 	}
-	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO goals (
-			id, project_id, title, description, status,
-			result_summary,
-			work_done, now_possible, how_to_verify, surprises, needs_review, next_steps,
-			created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, '', '', '', '', '', '', '', ?, ?)`,
-		g.ID, g.ProjectID, g.Title, g.Description, string(g.Status),
-		now.Format(time.RFC3339), now.Format(time.RFC3339))
+	q := sqlcgen.New(s.db)
+	err := q.CreateGoal(ctx, sqlcgen.CreateGoalParams{
+		ID:          g.ID,
+		ProjectID:   g.ProjectID,
+		Title:       g.Title,
+		Description: g.Description,
+		Status:      string(g.Status),
+		CreatedAt:   now.Format(time.RFC3339),
+		UpdatedAt:   now.Format(time.RFC3339),
+	})
 	if err != nil {
 		return domain.Goal{}, fmt.Errorf("insert goal: %w", err)
 	}
 	return g, nil
 }
 
-func scanGoal(sc interface{ Scan(...any) error }) (domain.Goal, error) {
-	var g domain.Goal
-	var status, resultSummary, createdAt, updatedAt string
-	if err := sc.Scan(&g.ID, &g.ProjectID, &g.Title, &g.Description,
-		&status, &resultSummary, &g.WorkDone, &g.NowPossible, &g.HowToVerify, &g.Surprises,
-		&g.NeedsReview, &g.NextSteps, &createdAt, &updatedAt); err != nil {
-		return domain.Goal{}, err
+func goalFromRow(row sqlcgen.Goal) (domain.Goal, error) {
+	g := domain.Goal{
+		ID:            row.ID,
+		ProjectID:     row.ProjectID,
+		Title:         row.Title,
+		Description:   row.Description,
+		Status:        domain.GoalStatus(row.Status),
+		ResultSummary: row.ResultSummary,
+		WorkDone:      row.WorkDone,
+		NowPossible:   row.NowPossible,
+		HowToVerify:   row.HowToVerify,
+		Surprises:     row.Surprises,
+		NeedsReview:   row.NeedsReview,
+		NextSteps:     row.NextSteps,
 	}
-	g.Status = domain.GoalStatus(status)
-	g.ResultSummary = resultSummary
 	var err error
-	if g.CreatedAt, err = time.Parse(time.RFC3339, createdAt); err != nil {
+	if g.CreatedAt, err = time.Parse(time.RFC3339, row.CreatedAt); err != nil {
 		return domain.Goal{}, fmt.Errorf("parse created_at: %w", err)
 	}
-	if g.UpdatedAt, err = time.Parse(time.RFC3339, updatedAt); err != nil {
+	if g.UpdatedAt, err = time.Parse(time.RFC3339, row.UpdatedAt); err != nil {
 		return domain.Goal{}, fmt.Errorf("parse updated_at: %w", err)
 	}
 	return g, nil
 }
 
-const goalColumns = `id, project_id, title, description, status, result_summary, work_done, now_possible, how_to_verify, surprises, needs_review, next_steps, created_at, updated_at`
-
 func (s *Store) GetGoal(ctx context.Context, id string) (domain.Goal, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT `+goalColumns+` FROM goals WHERE id = ?`, id)
-	g, err := scanGoal(row)
+	row, err := sqlcgen.New(s.db).GetGoal(ctx, id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.Goal{}, fmt.Errorf("%w: %s", ErrGoalNotFound, id)
 	}
-	return g, err
+	if err != nil {
+		return domain.Goal{}, err
+	}
+	return goalFromRow(row)
 }
 
 func (s *Store) ListGoals(ctx context.Context, projectID string) ([]domain.Goal, error) {
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT `+goalColumns+` FROM goals WHERE project_id = ? ORDER BY created_at`, projectID)
+	rows, err := sqlcgen.New(s.db).ListGoals(ctx, projectID)
 	if err != nil {
 		return nil, fmt.Errorf("query goals: %w", err)
 	}
-	defer rows.Close()
 
 	var out []domain.Goal
-	for rows.Next() {
-		g, err := scanGoal(rows)
+	for _, row := range rows {
+		g, err := goalFromRow(row)
 		if err != nil {
 			return nil, err
 		}
 		out = append(out, g)
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 func (s *Store) ListAllGoals(ctx context.Context) ([]domain.Goal, error) {
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT `+goalColumns+` FROM goals ORDER BY created_at`)
+	rows, err := sqlcgen.New(s.db).ListAllGoals(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("query all goals: %w", err)
 	}
-	defer rows.Close()
 
 	var out []domain.Goal
-	for rows.Next() {
-		g, err := scanGoal(rows)
+	for _, row := range rows {
+		g, err := goalFromRow(row)
 		if err != nil {
 			return nil, err
 		}
 		out = append(out, g)
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 type completionReportField struct {
@@ -169,9 +172,8 @@ func (s *Store) CompleteGoalWithReport(ctx context.Context, goalID string, repor
 		return domain.Decision{}, err
 	}
 
-	var open int
-	err := s.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM decisions WHERE goal_id = ? AND status = 'open'`, goalID).Scan(&open)
+	q := sqlcgen.New(s.db)
+	open, err := q.CountOpenDecisionsForGoal(ctx, goalID)
 	if err != nil {
 		return domain.Decision{}, fmt.Errorf("count open decisions: %w", err)
 	}
@@ -179,15 +181,17 @@ func (s *Store) CompleteGoalWithReport(ctx context.Context, goalID string, repor
 		return domain.Decision{}, fmt.Errorf("%w: %s", ErrGoalHasOpenDecision, goalID)
 	}
 
-	if _, err := s.db.ExecContext(ctx,
-		`UPDATE goals SET
-			result_summary = ?,
-			work_done = ?, now_possible = ?, how_to_verify = ?,
-			surprises = ?, needs_review = ?, next_steps = ?, updated_at = ?
-		WHERE id = ?`,
-		report.WorkDone, report.WorkDone, report.NowPossible, report.HowToVerify,
-		report.Surprises, report.NeedsReview, report.NextSteps,
-		time.Now().UTC().Format(time.RFC3339), goalID); err != nil {
+	if _, err := q.UpdateGoalCompletionReport(ctx, sqlcgen.UpdateGoalCompletionReportParams{
+		ResultSummary: report.WorkDone,
+		WorkDone:      report.WorkDone,
+		NowPossible:   report.NowPossible,
+		HowToVerify:   report.HowToVerify,
+		Surprises:     report.Surprises,
+		NeedsReview:   report.NeedsReview,
+		NextSteps:     report.NextSteps,
+		UpdatedAt:     time.Now().UTC().Format(time.RFC3339),
+		ID:            goalID,
+	}); err != nil {
 		return domain.Decision{}, fmt.Errorf("set completion report: %w", err)
 	}
 
@@ -212,10 +216,8 @@ func (s *Store) ApproveCompletion(ctx context.Context, decisionID string) (domai
 	}
 	defer tx.Rollback()
 
-	var goalID string
-	err = tx.QueryRowContext(ctx,
-		`SELECT goal_id FROM decisions WHERE id = ? AND kind = 'completion' AND status = 'open'`,
-		decisionID).Scan(&goalID)
+	q := sqlcgen.New(tx)
+	goalID, err := q.GetCompletionDecisionGoalID(ctx, decisionID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.Goal{}, fmt.Errorf("%w: %s", ErrDecisionNotOpen, decisionID)
 	}
@@ -224,14 +226,14 @@ func (s *Store) ApproveCompletion(ctx context.Context, decisionID string) (domai
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339)
-	if _, err := tx.ExecContext(ctx,
-		`UPDATE decisions SET status = 'applied', answer_label = 'approve',
-				 answered_at = ?, applied_at = ? WHERE id = ?`,
-		now, now, decisionID); err != nil {
+	if _, err := q.ApplyCompletionDecision(ctx, sqlcgen.ApplyCompletionDecisionParams{
+		AnsweredAt: sql.NullString{String: now, Valid: true},
+		AppliedAt:  sql.NullString{String: now, Valid: true},
+		ID:         decisionID,
+	}); err != nil {
 		return domain.Goal{}, fmt.Errorf("apply completion decision: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx,
-		`UPDATE goals SET status = 'done', updated_at = ? WHERE id = ?`, now, goalID); err != nil {
+	if _, err := q.MarkGoalDone(ctx, sqlcgen.MarkGoalDoneParams{UpdatedAt: now, ID: goalID}); err != nil {
 		return domain.Goal{}, fmt.Errorf("close goal: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
