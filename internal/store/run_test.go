@@ -145,8 +145,10 @@ PRAGMA user_version = 4;
 	if err := s.DB().QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
 		t.Fatalf("read migrated schema version: %v", err)
 	}
-	if version != 5 {
-		t.Fatalf("schema version = %d, want 5", version)
+	// Compare against the constant so a new migration does not silently leave
+	// this test asserting the previous version.
+	if version != schemaVersion {
+		t.Fatalf("schema version = %d, want %d", version, schemaVersion)
 	}
 	var runTable string
 	if err := s.DB().QueryRow(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'runs'`).Scan(&runTable); err != nil {
