@@ -51,6 +51,44 @@ func TestTaskClaimResponseIncludesUnappliedDecisions(t *testing.T) {
 	}
 }
 
+func TestAdditionalToolResponsesIncludeUnappliedDecisions(t *testing.T) {
+	for _, name := range []string{
+		"atct_task_declare",
+		"atct_task_update",
+		"atct_decision_ask",
+		"atct_decision_poll",
+		"atct_decision_withdraw",
+		"atct_goal_complete",
+	} {
+		result := callNotificationTestTool(t, name, notificationTestArgs(name),
+			`{"data":{"ok":true},"unapplied_decisions":[{"decision_id":"decision-3","question":"Which option should be used?"}]}`)
+
+		var notices []struct {
+			DecisionID string `json:"decision_id"`
+			Question   string `json:"question"`
+		}
+		if err := json.Unmarshal(result["unapplied_decisions"], &notices); err != nil {
+			t.Fatalf("%s: unmarshal unapplied_decisions: %v", name, err)
+		}
+		if len(notices) != 1 || notices[0].DecisionID != "decision-3" || notices[0].Question != "Which option should be used?" {
+			t.Fatalf("%s: unapplied_decisions = %s, want decision-3 with question", name, result["unapplied_decisions"])
+		}
+		if got := string(result["data"]); got != `{"ok":true}` {
+			t.Fatalf("%s: data = %s, want existing payload unchanged", name, got)
+		}
+	}
+}
+
+func TestParkedResponsePreservesClaimableTasks(t *testing.T) {
+	result := callNotificationTestTool(t, "atct_decision_ask",
+		map[string]any{"goal_id": "goal-1", "question": "question", "options": []any{}, "wait_ms": 0},
+		`{"data":{"parked":true,"decision_id":"decision-4"},"unapplied_decisions":[],"claimable_tasks":[{"id":"task-2","title":"next task"}]}`)
+
+	if got := string(result["claimable_tasks"]); got != `[{"id":"task-2","title":"next task"}]` {
+		t.Fatalf("claimable_tasks = %s, want parked task candidates", got)
+	}
+}
+
 func TestResponsesOmitUnappliedDecisionsWhenEmpty(t *testing.T) {
 	result := callNotificationTestTool(t, "atct_goal_list", map[string]any{"cwd": "/tmp"},
 		`{"data":{"goals":[]},"unapplied_decisions":[]}`)

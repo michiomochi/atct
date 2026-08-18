@@ -113,14 +113,115 @@ func TestGoalListNotificationIsProjectScoped(t *testing.T) {
 	}
 }
 
+func TestDecisionPollNotificationExcludesPolledDecision(t *testing.T) {
+	ctx := context.Background()
+	s := openPendingResponseTestStore(t)
+	project := createPendingResponseProject(t, s, t.TempDir(), "project")
+	goal, err := s.CreateGoal(ctx, project.ID, "goal", "description")
+	if err != nil {
+		t.Fatalf("CreateGoal: %v", err)
+	}
+	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "declare-1", []string{"poll target", "other task"}, nil)
+	if err != nil {
+		t.Fatalf("DeclareTasks: %v", err)
+	}
+	polled := answerPendingResponseDecision(t, s, goal.ID, tasks[0].ID, "polled decision")
+	other := answerPendingResponseDecision(t, s, goal.ID, tasks[1].ID, "other decision")
+	if err := s.RegisterRun(ctx, "poll-run"); err != nil {
+		t.Fatalf("RegisterRun: %v", err)
+	}
+
+	params, err := json.Marshal(map[string]any{
+		"run_id": "poll-run", "decision_id": polled.ID, "include_unapplied_answers": true,
+	})
+	if err != nil {
+		t.Fatalf("Marshal params: %v", err)
+	}
+	raw, err := New(s).dispatch(ctx, rpc.Request{Method: "decision.poll", Params: params})
+	if err != nil {
+		t.Fatalf("decision.poll: %v", err)
+	}
+	var response pendingResponseEnvelope
+	if err := json.Unmarshal(raw, &response); err != nil {
+		t.Fatalf("unmarshal decision.poll response %s: %v", raw, err)
+	}
+	if len(response.UnappliedDecisions) != 1 || response.UnappliedDecisions[0].DecisionID != other.ID {
+		t.Fatalf("unapplied_decisions = %#v, want only %s (excluded %s)", response.UnappliedDecisions, other.ID, polled.ID)
+	}
+}
+
+func TestDecisionAskParkedIncludesClaimableTasks(t *testing.T) {
+	ctx := context.Background()
+	s := openPendingResponseTestStore(t)
+	project := createPendingResponseProject(t, s, t.TempDir(), "project")
+	parkGoal, err := s.CreateGoal(ctx, project.ID, "parked-goal", "description")
+	if err != nil {
+		t.Fatalf("CreateGoal(parked): %v", err)
+	}
+	parked, err := s.DeclareTasks(ctx, parkGoal.ID, "agent", "declare-parked", []string{"parked task"}, nil)
+	if err != nil {
+		t.Fatalf("DeclareTasks(parked): %v", err)
+	}
+	otherGoal, err := s.CreateGoal(ctx, project.ID, "other-goal", "description")
+	if err != nil {
+		t.Fatalf("CreateGoal(other): %v", err)
+	}
+	candidates, err := s.DeclareTasks(ctx, otherGoal.ID, "agent", "declare-candidates", []string{
+		"free-1", "claimed", "free-2", "free-3", "free-4",
+	}, nil)
+	if err != nil {
+		t.Fatalf("DeclareTasks(candidates): %v", err)
+	}
+	if _, err := s.ClaimTask(ctx, candidates[1].ID, "other-run"); err != nil {
+		t.Fatalf("ClaimTask: %v", err)
+	}
+
+	params, err := json.Marshal(map[string]any{
+		"goal_id": parkGoal.ID, "task_id": parked[0].ID, "question": "Which implementation should be used?",
+		"options": []domain.Option{{Label: "A"}}, "run_id": "park-run", "wait_ms": 0,
+		"include_unapplied_answers": true,
+	})
+	if err != nil {
+		t.Fatalf("Marshal params: %v", err)
+	}
+	raw, err := New(s).dispatch(ctx, rpc.Request{Method: "decision.ask", Params: params})
+	if err != nil {
+		t.Fatalf("decision.ask: %v", err)
+	}
+	var response pendingResponseEnvelope
+	if err := json.Unmarshal(raw, &response); err != nil {
+		t.Fatalf("unmarshal decision.ask response %s: %v", raw, err)
+	}
+	if len(response.ClaimableTasks) != 3 {
+		t.Fatalf("claimable_tasks = %#v, want three tasks", response.ClaimableTasks)
+	}
+	wantTitles := []string{"free-1", "free-2", "free-3"}
+	for i, want := range wantTitles {
+		if response.ClaimableTasks[i].Title != want {
+			t.Fatalf("claimable_tasks[%d] = %#v, want title %q", i, response.ClaimableTasks[i], want)
+		}
+	}
+	for _, task := range response.ClaimableTasks {
+		if task.ID == parked[0].ID || task.ID == candidates[1].ID || task.Title == "free-4" {
+			t.Fatalf("claimable_tasks contains excluded task: %#v", task)
+		}
+	}
+}
+
 type pendingResponseEnvelope struct {
 	Data               json.RawMessage               `json:"data"`
 	UnappliedDecisions []pendingDecisionNotification `json:"unapplied_decisions"`
+	ClaimableTasks     []pendingClaimableTask        `json:"claimable_tasks"`
 }
 
 type pendingDecisionNotification struct {
 	DecisionID string `json:"decision_id"`
 	Question   string `json:"question"`
+}
+
+type pendingClaimableTask struct {
+	ID    string `json:"id"`
+	Title string `json:"title"`
 }
 
 func openPendingResponseTestStore(t *testing.T) *store.Store {

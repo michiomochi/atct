@@ -74,6 +74,7 @@ type UnappliedDecisionNotice struct {
 type RawWithUnappliedDecisions struct {
 	Data               any                       `json:"data"`
 	UnappliedDecisions []UnappliedDecisionNotice `json:"unapplied_decisions,omitempty"`
+	ClaimableTasks     json.RawMessage           `json:"claimable_tasks,omitempty"`
 }
 
 func rawOutputSchema() map[string]any {
@@ -102,6 +103,10 @@ func rawOutputSchemaWithUnappliedDecisions() map[string]any {
 					"required": []string{"decision_id", "question"},
 				},
 			},
+			"claimable_tasks": map[string]any{
+				"type":  "array",
+				"items": map[string]any{},
+			},
 		},
 		"required": []string{"data"},
 	}
@@ -124,11 +129,13 @@ func callWithUnappliedDecisions(ctx context.Context, c *Client, method string, p
 	var envelope struct {
 		Data               json.RawMessage           `json:"data"`
 		UnappliedDecisions []UnappliedDecisionNotice `json:"unapplied_decisions"`
+		ClaimableTasks     json.RawMessage           `json:"claimable_tasks"`
 	}
 	if err := json.Unmarshal(out, &envelope); err == nil && envelope.Data != nil {
 		return nil, RawWithUnappliedDecisions{
 			Data:               envelope.Data,
 			UnappliedDecisions: envelope.UnappliedDecisions,
+			ClaimableTasks:     envelope.ClaimableTasks,
 		}, nil
 	}
 	return nil, RawWithUnappliedDecisions{Data: out}, nil
@@ -150,16 +157,17 @@ func Register(server *mcp.Server, c *Client, runID string) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:         "atct_task_declare",
 		Description:  "Declare tasks decomposed from a Goal. Retrying the same idempotency_key does not create duplicates.",
-		OutputSchema: rawOutputSchema(),
-	}, func(ctx context.Context, req *mcp.CallToolRequest, in TaskDeclareIn) (*mcp.CallToolResult, Raw, error) {
+		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in TaskDeclareIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
 		params := map[string]any{
 			"goal_id": in.GoalID, "titles": in.Titles,
 			"idempotency_key": in.IdempotencyKey, "agent": in.Agent,
+			"include_unapplied_answers": true,
 		}
 		if in.Files != nil {
 			params["files"] = in.Files
 		}
-		return call(ctx, c, "task.declare", params)
+		return callWithUnappliedDecisions(ctx, c, "task.declare", params)
 	})
 
 	mcp.AddTool(server, &mcp.Tool{
@@ -175,20 +183,22 @@ func Register(server *mcp.Server, c *Client, runID string) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:         "atct_task_update",
 		Description:  "Change a task status. Setting todo, done, or dropped releases the claim; a task with an open Decision cannot become done.",
-		OutputSchema: rawOutputSchema(),
-	}, func(ctx context.Context, req *mcp.CallToolRequest, in TaskUpdateIn) (*mcp.CallToolResult, Raw, error) {
-		return call(ctx, c, "task.update", map[string]any{"task_id": in.TaskID, "status": in.Status})
+		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in TaskUpdateIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
+		return callWithUnappliedDecisions(ctx, c, "task.update", map[string]any{
+			"task_id": in.TaskID, "status": in.Status, "include_unapplied_answers": true,
+		})
 	})
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "atct_decision_ask",
 		Description: "Ask the human for a decision. An answer received within wait_ms is returned." +
 			"If parked is returned, continue with another task that does not depend on this decision.",
-		OutputSchema: rawOutputSchema(),
-	}, func(ctx context.Context, req *mcp.CallToolRequest, in DecisionAskIn) (*mcp.CallToolResult, Raw, error) {
+		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in DecisionAskIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
 		params := map[string]any{
 			"goal_id": in.GoalID, "task_id": in.TaskID, "question": in.Question,
-			"options": in.Options, "run_id": runID,
+			"options": in.Options, "run_id": runID, "include_unapplied_answers": true,
 		}
 		if in.DefaultOption != "" {
 			params["default_option"] = in.DefaultOption
@@ -199,16 +209,16 @@ func Register(server *mcp.Server, c *Client, runID string) {
 		if in.WaitMs != nil {
 			params["wait_ms"] = *in.WaitMs
 		}
-		return call(ctx, c, "decision.ask", params)
+		return callWithUnappliedDecisions(ctx, c, "decision.ask", params)
 	})
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:         "atct_decision_poll",
 		Description:  "Fetch the answer to a declared decision. Fetching transitions it to applied.",
-		OutputSchema: rawOutputSchema(),
-	}, func(ctx context.Context, req *mcp.CallToolRequest, in DecisionPollIn) (*mcp.CallToolResult, Raw, error) {
-		return call(ctx, c, "decision.poll", map[string]any{
-			"run_id": runID, "decision_id": in.DecisionID,
+		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in DecisionPollIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
+		return callWithUnappliedDecisions(ctx, c, "decision.poll", map[string]any{
+			"run_id": runID, "decision_id": in.DecisionID, "include_unapplied_answers": true,
 		})
 	})
 
@@ -216,23 +226,23 @@ func Register(server *mcp.Server, c *Client, runID string) {
 		Name: "atct_decision_withdraw",
 		Description: "Withdraw a decision that is no longer needed. Always call this after resolving it independently." +
 			"Otherwise stale questions remain in the human inbox.",
-		OutputSchema: rawOutputSchema(),
-	}, func(ctx context.Context, req *mcp.CallToolRequest, in DecisionWithdrawIn) (*mcp.CallToolResult, Raw, error) {
-		return call(ctx, c, "decision.withdraw", map[string]any{
-			"decision_id": in.DecisionID, "reason": in.Reason,
+		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in DecisionWithdrawIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
+		return callWithUnappliedDecisions(ctx, c, "decision.withdraw", map[string]any{
+			"decision_id": in.DecisionID, "reason": in.Reason, "include_unapplied_answers": true,
 		})
 	})
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:         "atct_goal_complete",
 		Description:  "Report goal completion and request human approval. Fails while an open Decision remains.",
-		OutputSchema: rawOutputSchema(),
-	}, func(ctx context.Context, req *mcp.CallToolRequest, in GoalCompleteIn) (*mcp.CallToolResult, Raw, error) {
-		return call(ctx, c, "goal.complete", map[string]any{
+		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in GoalCompleteIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
+		return callWithUnappliedDecisions(ctx, c, "goal.complete", map[string]any{
 			"goal_id": in.GoalID, "work_done": in.WorkDone,
 			"now_possible": in.NowPossible, "how_to_verify": in.HowToVerify,
 			"surprises": in.Surprises, "needs_review": in.NeedsReview,
-			"next_steps": in.NextSteps, "run_id": runID,
+			"next_steps": in.NextSteps, "run_id": runID, "include_unapplied_answers": true,
 		})
 	})
 }
