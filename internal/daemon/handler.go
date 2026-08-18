@@ -16,6 +16,30 @@ import (
 
 var ErrTaskAlreadyClaimed = errors.New("task already claimed")
 
+type responseWithUnappliedDecisions struct {
+	Data               any                             `json:"data"`
+	UnappliedDecisions []unappliedDecisionNotification `json:"unapplied_decisions,omitempty"`
+}
+
+type unappliedDecisionNotification struct {
+	DecisionID string `json:"decision_id"`
+	Question   string `json:"question"`
+}
+
+func unappliedDecisionNotifications(decisions []domain.Decision) []unappliedDecisionNotification {
+	if len(decisions) == 0 {
+		return nil
+	}
+	notices := make([]unappliedDecisionNotification, 0, len(decisions))
+	for _, decision := range decisions {
+		notices = append(notices, unappliedDecisionNotification{
+			DecisionID: decision.ID,
+			Question:   decision.Question,
+		})
+	}
+	return notices
+}
+
 func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage, error) {
 	switch req.Method {
 	case "run.register":
@@ -52,8 +76,9 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 
 	case "goal.list":
 		var p struct {
-			Cwd   string `json:"cwd"`
-			RunID string `json:"run_id"`
+			Cwd                     string `json:"cwd"`
+			RunID                   string `json:"run_id"`
+			IncludeUnappliedAnswers bool   `json:"include_unapplied_answers"`
 		}
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, err
@@ -82,11 +107,22 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		if err != nil {
 			return nil, err
 		}
-		return marshal(map[string]any{
+		data := map[string]any{
 			"project":            ns,
 			"goals":              goals,
 			"answered_decisions": mine,
 			"orphaned_decisions": orphaned,
+		}
+		if !p.IncludeUnappliedAnswers {
+			return marshal(data, nil)
+		}
+		unapplied, err := d.store.ListUnappliedDecisionsForProject(ctx, ns.ID)
+		if err != nil {
+			return nil, err
+		}
+		return marshal(responseWithUnappliedDecisions{
+			Data:               data,
+			UnappliedDecisions: unappliedDecisionNotifications(unapplied),
 		}, nil)
 
 	case "goal.create":
@@ -136,8 +172,9 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 
 	case "task.claim":
 		var p struct {
-			TaskID string `json:"task_id"`
-			RunID  string `json:"run_id"`
+			TaskID                  string `json:"task_id"`
+			RunID                   string `json:"run_id"`
+			IncludeUnappliedAnswers bool   `json:"include_unapplied_answers"`
 		}
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, err
@@ -146,7 +183,21 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		if errors.Is(err, store.ErrTaskAlreadyClaimed) {
 			return nil, ErrTaskAlreadyClaimed
 		}
-		return marshal(tk, err)
+		if err != nil || !p.IncludeUnappliedAnswers {
+			return marshal(tk, err)
+		}
+		goal, err := d.store.GetGoal(ctx, tk.GoalID)
+		if err != nil {
+			return nil, err
+		}
+		unapplied, err := d.store.ListUnappliedDecisionsForProject(ctx, goal.ProjectID)
+		if err != nil {
+			return nil, err
+		}
+		return marshal(responseWithUnappliedDecisions{
+			Data:               tk,
+			UnappliedDecisions: unappliedDecisionNotifications(unapplied),
+		}, nil)
 
 	case "task.release":
 		var p struct {

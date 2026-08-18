@@ -78,6 +78,11 @@ func TestRegisterPublishesEightToolsWithFlexibleOutputSchema(t *testing.T) {
 		default:
 			t.Fatalf("%s data schema = %T, want unconstrained schema", tool.Name, properties["data"])
 		}
+		_, hasUnapplied := properties["unapplied_decisions"]
+		wantUnapplied := tool.Name == "atct_goal_list" || tool.Name == "atct_task_claim"
+		if hasUnapplied != wantUnapplied {
+			t.Errorf("%s unapplied_decisions property present = %v, want %v", tool.Name, hasUnapplied, wantUnapplied)
+		}
 	}
 	for name := range wantNames {
 		if !seen[name] {

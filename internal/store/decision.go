@@ -430,6 +430,30 @@ func (s *Store) ListUnappliedDecisions(ctx context.Context) ([]domain.Decision, 
 	return out, rows.Err()
 }
 
+// ListUnappliedDecisionsForProject returns answered Decisions not yet received by an agent
+// for Goals belonging to the given project.
+func (s *Store) ListUnappliedDecisionsForProject(ctx context.Context, projectID string) ([]domain.Decision, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT `+decisionColumns+` FROM decisions
+		 WHERE status = 'answered'
+		   AND goal_id IN (SELECT id FROM goals WHERE project_id = ?)
+		 ORDER BY answered_at`, projectID)
+	if err != nil {
+		return nil, fmt.Errorf("query project unapplied decisions: %w", err)
+	}
+	defer rows.Close()
+
+	var out []domain.Decision
+	for rows.Next() {
+		d, err := scanDecision(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
 // ListAppliedDecisions returns the most recent applied Decisions for a goal
 // and the exact number omitted by the history limit.
 func (s *Store) ListAppliedDecisions(ctx context.Context, goalID string) ([]domain.Decision, int, error) {

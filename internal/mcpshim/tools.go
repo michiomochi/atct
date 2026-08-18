@@ -57,11 +57,42 @@ type Raw struct {
 	Data any `json:"data"`
 }
 
+type UnappliedDecisionNotice struct {
+	DecisionID string `json:"decision_id"`
+	Question   string `json:"question"`
+}
+
+type RawWithUnappliedDecisions struct {
+	Data               any                       `json:"data"`
+	UnappliedDecisions []UnappliedDecisionNotice `json:"unapplied_decisions,omitempty"`
+}
+
 func rawOutputSchema() map[string]any {
 	return map[string]any{
 		"type": "object",
 		"properties": map[string]any{
 			"data": map[string]any{},
+		},
+		"required": []string{"data"},
+	}
+}
+
+func rawOutputSchemaWithUnappliedDecisions() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"data": map[string]any{},
+			"unapplied_decisions": map[string]any{
+				"type": "array",
+				"items": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"decision_id": map[string]any{"type": "string"},
+						"question":    map[string]any{"type": "string"},
+					},
+					"required": []string{"decision_id", "question"},
+				},
+			},
 		},
 		"required": []string{"data"},
 	}
@@ -75,15 +106,36 @@ func call(ctx context.Context, c *Client, method string, params any) (*mcp.CallT
 	return nil, Raw{Data: out}, nil
 }
 
+func callWithUnappliedDecisions(ctx context.Context, c *Client, method string, params any) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
+	var out json.RawMessage
+	if err := c.Call(ctx, method, params, &out); err != nil {
+		return nil, RawWithUnappliedDecisions{}, err
+	}
+
+	var envelope struct {
+		Data               json.RawMessage           `json:"data"`
+		UnappliedDecisions []UnappliedDecisionNotice `json:"unapplied_decisions"`
+	}
+	if err := json.Unmarshal(out, &envelope); err == nil && envelope.Data != nil {
+		return nil, RawWithUnappliedDecisions{
+			Data:               envelope.Data,
+			UnappliedDecisions: envelope.UnappliedDecisions,
+		}, nil
+	}
+	return nil, RawWithUnappliedDecisions{Data: out}, nil
+}
+
 // Register adds eight agent-facing tools to the MCP server.
 // Human operations (answer, approve, reject, and stale-claim release) belong to the Web UI and are not exposed through MCP.
 func Register(server *mcp.Server, c *Client, runID string) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:         "atct_goal_list",
 		Description:  "Get active Goals and unapplied answers relevant to the current run. Call at startup and resume.",
-		OutputSchema: rawOutputSchema(),
-	}, func(ctx context.Context, req *mcp.CallToolRequest, in GoalListIn) (*mcp.CallToolResult, Raw, error) {
-		return call(ctx, c, "goal.list", map[string]any{"cwd": in.Cwd, "run_id": runID})
+		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in GoalListIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
+		return callWithUnappliedDecisions(ctx, c, "goal.list", map[string]any{
+			"cwd": in.Cwd, "run_id": runID, "include_unapplied_answers": true,
+		})
 	})
 
 	mcp.AddTool(server, &mcp.Tool{
@@ -104,10 +156,10 @@ func Register(server *mcp.Server, c *Client, runID string) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:         "atct_task_claim",
 		Description:  "Claim a task for this run. Only one concurrent run can claim a task.",
-		OutputSchema: rawOutputSchema(),
-	}, func(ctx context.Context, req *mcp.CallToolRequest, in TaskClaimIn) (*mcp.CallToolResult, Raw, error) {
-		return call(ctx, c, "task.claim", map[string]any{
-			"task_id": in.TaskID, "run_id": runID,
+		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in TaskClaimIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
+		return callWithUnappliedDecisions(ctx, c, "task.claim", map[string]any{
+			"task_id": in.TaskID, "run_id": runID, "include_unapplied_answers": true,
 		})
 	})
 
