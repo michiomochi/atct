@@ -73,12 +73,27 @@ when none arrives, so asking does not force you to stall.
 Do not ask about things you can determine yourself. An inbox full of trivia
 stops being read.
 
+## Ask here, not in conversation
+
+`atct_decision_ask` is the only place a question belongs. Saying "let me know how
+you want to proceed" in the conversation and then waiting is not asking — it is
+stopping. That sentence never reaches the dashboard, leaves no record, carries no
+default, and holds every other task hostage until someone happens to reply.
+
+**Bringing the options is part of the question.** "This needs a decision about X"
+is not a decision to make; it is work you have not finished. Find out what the
+real alternatives are, what each one costs, and put them in the call. If you
+cannot yet name two concrete options, you are not ready to ask — go find out.
+
 ## Say what happens if nobody answers
 
 `default_option` names the option to take when the deadline in `default_after_ms`
 passes with no reply. The human's answer always wins if it arrives first; the
-default only fires on silence. Use it so that being away from the keyboard does
-not stop the work.
+default only fires on silence.
+
+**Set one on every question you can.** A question without a default stops the
+work until someone replies, which is the stall this tool exists to remove. The
+exception is narrow and comes below: a choice the human could not undo.
 
 **A default belongs on the option that keeps going**, not on the cautious one.
 Reading silence as "stop" gives you back the stall you were trying to avoid.

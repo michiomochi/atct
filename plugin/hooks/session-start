@@ -19,6 +19,7 @@ Finishing a task is not a checkpoint: claim the next one and keep going, moving 
 Stop only before what cannot be undone: rewriting history, discarding uncommitted work, deleting files, or publishing off this machine. Ask about those with `atct_decision_ask`.
 When a choice would change the shape of the work, do not guess: `atct_decision_ask` with `wait_ms=0` parks it so you can keep going on something else.
 An irreversible choice gets no `default_option`: park it, work on what does not depend on it, and let the human decide in their own time.
+Never ask in conversation. "Tell me how you want to proceed" reaches no dashboard, carries no default, and stops everything until someone replies.
 Answers from an earlier session arrive as `orphaned_decisions`; pass each `decision_id` to `atct_decision_poll`.
 When the goal is met, call `atct_goal_complete` to request approval.
 See the `atct` skill for details.
