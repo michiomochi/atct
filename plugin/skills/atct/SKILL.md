@@ -112,15 +112,31 @@ is blocked on your answer — a person, another agent — reply with the answer
 first. Your account of how you got it wrong belongs after, or nowhere. Burying a
 one-word decision inside a retrospective makes them ask again.
 
-## Report completion the same way
+## Report completion in six parts
 
-`result_summary` is not a changelog. **Lead with what the human can now do that
-they could not before**, and what to look at to confirm it. Then the surprises —
-things that turned out differently than expected, and anything you would want to
-know if you were approving this.
+`atct_goal_complete` takes six fields, and the database rejects a completion
+with any of them empty. **Where nothing applies, say so** — writing "none" is
+the point, because it separates "there was nothing" from "I did not look."
 
-**A summary nobody finishes reading cannot be approved.** If it runs past a
-screen, you are recounting the work instead of reporting the outcome.
+| Field | What goes in it |
+|---|---|
+| `work_done` | What you changed |
+| `now_possible` | What the human can do that they could not before |
+| `how_to_verify` | What to look at to confirm it |
+| `surprises` | What turned out differently than expected |
+| `needs_review` | What you want them to look at closely |
+| `next_steps` | What you left for later, and why |
+
+**`work_done` is the only field about you.** The other five are about them —
+what they gained, what to check, what to worry about, what is still open. A
+report where all six read like a changelog has answered one question six times.
+
+**`surprises` is where a report earns its keep.** It is the field a writer most
+wants to skip and a reviewer most needs. If your change touched the human's data
+in a way they did not ask for, that belongs here, not buried in `work_done`.
+
+Each field has a length limit. **A report nobody finishes reading cannot be
+approved**, and six short fields beat one long one.
 
 ## Name goals after the symptom, not the mechanism
 
