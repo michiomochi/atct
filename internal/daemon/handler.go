@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/michiomochi/atct/internal/domain"
@@ -17,6 +18,18 @@ var ErrTaskAlreadyClaimed = errors.New("task already claimed")
 
 func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage, error) {
 	switch req.Method {
+	case "run.register":
+		var p struct {
+			RunID string `json:"run_id"`
+		}
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		if err := d.store.RegisterRun(ctx, p.RunID); err != nil {
+			return nil, err
+		}
+		return marshal(map[string]any{"ok": true}, nil)
+
 	case "project.create":
 		var p struct {
 			Name     string `json:"name"`
@@ -48,6 +61,11 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		ns, err := d.store.ResolveProject(ctx, p.Cwd)
 		if err != nil {
 			return nil, err
+		}
+		if strings.TrimSpace(p.RunID) != "" {
+			if err := d.store.AssociateRunWithProject(ctx, p.RunID, ns.ID); err != nil {
+				return nil, err
+			}
 		}
 		goals, err := d.store.ListGoals(ctx, ns.ID)
 		if err != nil {

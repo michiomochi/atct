@@ -84,7 +84,14 @@ func pendingTextForProject(dir, cwd, projectName string, projectSpecified bool) 
 	}
 
 	unfinishedTasks := make([]domain.Task, 0)
-	if runID := currentRunID(); runID != "" {
+	runID := currentRunID()
+	if runID == "" {
+		runID, err = s.LatestRunID(ctx, project.ID)
+		if err != nil {
+			return "", fmt.Errorf("find latest run: %w", err)
+		}
+	}
+	if runID != "" {
 		for _, goal := range goals {
 			if goal.Status != domain.GoalActive {
 				continue

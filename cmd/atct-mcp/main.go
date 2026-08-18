@@ -53,9 +53,13 @@ func main() {
 
 	// run_id is unique per process start and records which execution owns a parked decision.
 	runID := uuid.NewString()
+	client := mcpshim.NewClient(sock)
+	if err := client.Call(context.Background(), "run.register", map[string]string{"run_id": runID}, nil); err != nil {
+		log.Fatalf("register run: %v", err)
+	}
 
 	server := mcp.NewServer(&mcp.Implementation{Name: "atct", Version: version}, nil)
-	mcpshim.Register(server, mcpshim.NewClient(sock), runID)
+	mcpshim.Register(server, client, runID)
 
 	if err := server.Run(context.Background(), &mcp.StdioTransport{}); err != nil {
 		log.Fatal(err)

@@ -1,8 +1,12 @@
 package store
 
 import (
+	"context"
 	"database/sql"
+	"errors"
 	"fmt"
+	"strings"
+	"time"
 
 	_ "modernc.org/sqlite"
 )
@@ -12,7 +16,9 @@ type Store struct {
 	notify *notifier
 }
 
-const schemaVersion = 4
+const schemaVersion = 5
+
+const runRetention = 30 * 24 * time.Hour
 
 func Open(path string) (*Store, error) {
 	db, err := sql.Open("sqlite", path)
@@ -60,58 +66,73 @@ func migrateSchema(db *sql.DB) error {
 	}
 	defer tx.Rollback()
 
-	var invalidDecisionCount int
-	if err := tx.QueryRow(`
+	if version < 4 {
+		var invalidDecisionCount int
+		if err := tx.QueryRow(`
 		SELECT COUNT(*) FROM decisions
 		WHERE kind = 'decision'
 		  AND status IN ('open', 'answered')
 		  AND (task_id IS NULL OR task_id = '')`).Scan(&invalidDecisionCount); err != nil {
-		return fmt.Errorf("validate decision task links: %w", err)
-	}
-	if invalidDecisionCount > 0 {
-		return fmt.Errorf("cannot migrate decisions: found %d open/answered decision row(s) with a missing task_id; assign each decision to a task or withdraw it, then retry", invalidDecisionCount)
-	}
+			return fmt.Errorf("validate decision task links: %w", err)
+		}
+		if invalidDecisionCount > 0 {
+			return fmt.Errorf("cannot migrate decisions: found %d open/answered decision row(s) with a missing task_id; assign each decision to a task or withdraw it, then retry", invalidDecisionCount)
+		}
 
-	filesColumn, err := hasColumn(tx, "tasks", "files")
-	if err != nil {
-		return fmt.Errorf("inspect tasks columns: %w", err)
-	}
-	if !filesColumn {
-		if _, err := tx.Exec(`ALTER TABLE tasks ADD COLUMN files TEXT NOT NULL DEFAULT '[]'`); err != nil {
-			return fmt.Errorf("add tasks.files: %w", err)
-		}
-	}
-	decisionColumns := []struct {
-		name       string
-		definition string
-	}{
-		{name: "default_option", definition: `TEXT NOT NULL DEFAULT ''`},
-		{name: "default_after_ms", definition: `INTEGER`},
-		{name: "default_applied_at", definition: `TEXT`},
-	}
-	for _, column := range decisionColumns {
-		present, err := hasColumn(tx, "decisions", column.name)
+		filesColumn, err := hasColumn(tx, "tasks", "files")
 		if err != nil {
-			return fmt.Errorf("inspect decisions columns: %w", err)
+			return fmt.Errorf("inspect tasks columns: %w", err)
 		}
-		if present {
-			continue
+		if !filesColumn {
+			if _, err := tx.Exec(`ALTER TABLE tasks ADD COLUMN files TEXT NOT NULL DEFAULT '[]'`); err != nil {
+				return fmt.Errorf("add tasks.files: %w", err)
+			}
 		}
-		if _, err := tx.Exec(`ALTER TABLE decisions ADD COLUMN ` + column.name + ` ` + column.definition); err != nil {
-			return fmt.Errorf("add decisions.%s: %w", column.name, err)
+		decisionColumns := []struct {
+			name       string
+			definition string
+		}{
+			{name: "default_option", definition: `TEXT NOT NULL DEFAULT ''`},
+			{name: "default_after_ms", definition: `INTEGER`},
+			{name: "default_applied_at", definition: `TEXT`},
+		}
+		for _, column := range decisionColumns {
+			present, err := hasColumn(tx, "decisions", column.name)
+			if err != nil {
+				return fmt.Errorf("inspect decisions columns: %w", err)
+			}
+			if present {
+				continue
+			}
+			if _, err := tx.Exec(`ALTER TABLE decisions ADD COLUMN ` + column.name + ` ` + column.definition); err != nil {
+				return fmt.Errorf("add decisions.%s: %w", column.name, err)
+			}
+		}
+		answeredByColumn, err := hasColumn(tx, "decisions", "answered_by")
+		if err != nil {
+			return fmt.Errorf("inspect decisions.answered_by: %w", err)
+		}
+		if answeredByColumn {
+			if _, err := tx.Exec(`ALTER TABLE decisions DROP COLUMN answered_by`); err != nil {
+				return fmt.Errorf("drop decisions.answered_by: %w", err)
+			}
+		}
+		if err := rebuildDecisionsTable(tx); err != nil {
+			return fmt.Errorf("rebuild decisions table: %w", err)
 		}
 	}
-	answeredByColumn, err := hasColumn(tx, "decisions", "answered_by")
-	if err != nil {
-		return fmt.Errorf("inspect decisions.answered_by: %w", err)
+	if _, err := tx.Exec(`
+CREATE TABLE IF NOT EXISTS runs (
+  id            TEXT PRIMARY KEY,
+  project_id    TEXT REFERENCES projects(id),
+  registered_at TEXT NOT NULL
+)`); err != nil {
+		return fmt.Errorf("create runs table: %w", err)
 	}
-	if answeredByColumn {
-		if _, err := tx.Exec(`ALTER TABLE decisions DROP COLUMN answered_by`); err != nil {
-			return fmt.Errorf("drop decisions.answered_by: %w", err)
-		}
-	}
-	if err := rebuildDecisionsTable(tx); err != nil {
-		return fmt.Errorf("rebuild decisions table: %w", err)
+	if _, err := tx.Exec(`
+CREATE INDEX IF NOT EXISTS idx_runs_project_registered_at
+  ON runs(project_id, registered_at DESC)`); err != nil {
+		return fmt.Errorf("create runs index: %w", err)
 	}
 	if _, err := tx.Exec(fmt.Sprintf("PRAGMA user_version = %d", schemaVersion)); err != nil {
 		return fmt.Errorf("write schema version: %w", err)
@@ -120,6 +141,122 @@ func migrateSchema(db *sql.DB) error {
 		return fmt.Errorf("commit migration: %w", err)
 	}
 	return nil
+}
+
+func requireRunID(runID string) (string, error) {
+	runID = strings.TrimSpace(runID)
+	if runID == "" {
+		return "", fmt.Errorf("run_id is required")
+	}
+	return runID, nil
+}
+
+func (s *Store) RegisterRun(ctx context.Context, runID string) error {
+	runID, err := requireRunID(runID)
+	if err != nil {
+		return err
+	}
+
+	now := time.Now().UTC()
+	registeredAt := now.Format(time.RFC3339Nano)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin run registration: %w", err)
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx, `
+		INSERT OR IGNORE INTO runs (id, project_id, registered_at)
+		VALUES (?, NULL, ?)`, runID, registeredAt); err != nil {
+		return fmt.Errorf("register run: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		DELETE FROM runs
+		WHERE registered_at < ?`, now.Add(-runRetention).Format(time.RFC3339Nano)); err != nil {
+		return fmt.Errorf("clean up old runs: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit run registration: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) AssociateRunWithProject(ctx context.Context, runID, projectID string) error {
+	runID, err := requireRunID(runID)
+	if err != nil {
+		return err
+	}
+	projectID = strings.TrimSpace(projectID)
+	if projectID == "" {
+		return fmt.Errorf("project_id is required")
+	}
+
+	now := time.Now().UTC()
+	registeredAt := now.Format(time.RFC3339Nano)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin run association: %w", err)
+	}
+	defer tx.Rollback()
+
+	result, err := tx.ExecContext(ctx, `
+		UPDATE runs SET project_id = ?
+		WHERE id = ?`, projectID, runID)
+	if err != nil {
+		return fmt.Errorf("associate run with project: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("inspect run association: %w", err)
+	}
+	if affected == 0 {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO runs (id, project_id, registered_at)
+			VALUES (?, ?, ?)`, runID, projectID, registeredAt); err != nil {
+			return fmt.Errorf("insert associated run: %w", err)
+		}
+	}
+
+	var currentRegisteredAt string
+	if err := tx.QueryRowContext(ctx, `
+		SELECT registered_at FROM runs WHERE id = ?`, runID).Scan(&currentRegisteredAt); err != nil {
+		return fmt.Errorf("read associated run: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		DELETE FROM runs
+		WHERE id <> ? AND registered_at < ?`, runID, now.Add(-runRetention).Format(time.RFC3339Nano)); err != nil {
+		return fmt.Errorf("clean up old runs: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		DELETE FROM runs
+		WHERE project_id = ? AND id <> ? AND registered_at < ?`, projectID, runID, currentRegisteredAt); err != nil {
+		return fmt.Errorf("clean up old project runs: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit run association: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) LatestRunID(ctx context.Context, projectID string) (string, error) {
+	projectID = strings.TrimSpace(projectID)
+	if projectID == "" {
+		return "", fmt.Errorf("project_id is required")
+	}
+
+	var runID string
+	err := s.db.QueryRowContext(ctx, `
+		SELECT id FROM runs
+		WHERE project_id = ?
+		ORDER BY registered_at DESC, id DESC
+		LIMIT 1`, projectID).Scan(&runID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("find latest run: %w", err)
+	}
+	return runID, nil
 }
 
 const decisionsMigrationColumns = `

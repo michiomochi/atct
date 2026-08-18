@@ -96,8 +96,8 @@ INSERT INTO decisions (
 			if err := s.DB().QueryRow("PRAGMA user_version").Scan(&gotVersion); err != nil {
 				t.Fatal(err)
 			}
-			if gotVersion != 4 {
-				t.Fatalf("user_version = %d, want 4", gotVersion)
+			if gotVersion != 5 {
+				t.Fatalf("user_version = %d, want 5", gotVersion)
 			}
 			if hasDecisionsColumn(t, s.DB(), "answered_by") {
 				t.Fatal("decisions.answered_by still exists after migration")

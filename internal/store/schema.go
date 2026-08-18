@@ -8,6 +8,15 @@ CREATE TABLE IF NOT EXISTS projects (
   created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS runs (
+  id            TEXT PRIMARY KEY,
+  project_id    TEXT REFERENCES projects(id),
+  registered_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_runs_project_registered_at
+  ON runs(project_id, registered_at DESC);
+
 CREATE TABLE IF NOT EXISTS goals (
   id             TEXT PRIMARY KEY,
   project_id     TEXT NOT NULL REFERENCES projects(id),

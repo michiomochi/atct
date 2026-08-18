@@ -146,6 +146,141 @@ func TestPendingCommandReturnsExitOneForUnregisteredCWD(t *testing.T) {
 	}
 }
 
+func TestPendingCommandUsesLatestProjectRunWithoutEnv(t *testing.T) {
+	dir, projectRoot := newPendingFixture(t)
+	s := openPendingStore(t, dir)
+	ctx := context.Background()
+	project, err := s.ResolveProject(ctx, projectRoot)
+	if err != nil {
+		t.Fatalf("ResolveProject: %v", err)
+	}
+	goal, err := s.CreateGoal(ctx, project.ID, "Resume the claimed work", "")
+	if err != nil {
+		t.Fatalf("CreateGoal: %v", err)
+	}
+	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "latest-run", []string{"unfinished task"})
+	if err != nil {
+		t.Fatalf("DeclareTasks: %v", err)
+	}
+	if err := s.RegisterRun(ctx, "run-latest"); err != nil {
+		t.Fatalf("RegisterRun: %v", err)
+	}
+	if err := s.AssociateRunWithProject(ctx, "run-latest", project.ID); err != nil {
+		t.Fatalf("AssociateRunWithProject: %v", err)
+	}
+	if _, err := s.ClaimTask(ctx, tasks[0].ID, "run-latest"); err != nil {
+		t.Fatalf("ClaimTask: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("Store.Close: %v", err)
+	}
+	t.Setenv(atctRunIDEnv, "")
+
+	output, exitCode, err := pendingCommand(dir, projectRoot)
+	if err != nil {
+		t.Fatalf("pendingCommand: %v", err)
+	}
+	if exitCode != 0 {
+		t.Fatalf("pendingCommand exit code = %d, want 0", exitCode)
+	}
+	if !strings.Contains(output, unfinishedClaimMarker) || !strings.Contains(output, "unfinished task") {
+		t.Fatalf("pendingCommand did not report the latest project's unfinished claim: %q", output)
+	}
+}
+
+func TestPendingCommandPrefersExplicitRunIDOverLatestProjectRun(t *testing.T) {
+	dir, projectRoot := newPendingFixture(t)
+	s := openPendingStore(t, dir)
+	ctx := context.Background()
+	project, err := s.ResolveProject(ctx, projectRoot)
+	if err != nil {
+		t.Fatalf("ResolveProject: %v", err)
+	}
+	goal, err := s.CreateGoal(ctx, project.ID, "Use the selected run", "")
+	if err != nil {
+		t.Fatalf("CreateGoal: %v", err)
+	}
+	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "run-selection", []string{"latest task", "explicit task"})
+	if err != nil {
+		t.Fatalf("DeclareTasks: %v", err)
+	}
+	if err := s.RegisterRun(ctx, "run-latest"); err != nil {
+		t.Fatalf("RegisterRun latest: %v", err)
+	}
+	if err := s.AssociateRunWithProject(ctx, "run-latest", project.ID); err != nil {
+		t.Fatalf("AssociateRunWithProject latest: %v", err)
+	}
+	if _, err := s.ClaimTask(ctx, tasks[0].ID, "run-latest"); err != nil {
+		t.Fatalf("ClaimTask latest: %v", err)
+	}
+	if err := s.RegisterRun(ctx, "run-explicit"); err != nil {
+		t.Fatalf("RegisterRun explicit: %v", err)
+	}
+	if _, err := s.ClaimTask(ctx, tasks[1].ID, "run-explicit"); err != nil {
+		t.Fatalf("ClaimTask explicit: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("Store.Close: %v", err)
+	}
+	t.Setenv(atctRunIDEnv, "run-explicit")
+
+	output, exitCode, err := pendingCommand(dir, projectRoot)
+	if err != nil {
+		t.Fatalf("pendingCommand: %v", err)
+	}
+	if exitCode != 0 {
+		t.Fatalf("pendingCommand exit code = %d, want 0", exitCode)
+	}
+	if !strings.Contains(output, "explicit task") {
+		t.Fatalf("pendingCommand did not report the explicitly selected run: %q", output)
+	}
+	if strings.Contains(output, "latest task") {
+		t.Fatalf("pendingCommand reported the latest run despite ATCT_RUN_ID override: %q", output)
+	}
+}
+
+func TestPendingCommandDoesNotReportAnotherRunsClaim(t *testing.T) {
+	dir, projectRoot := newPendingFixture(t)
+	s := openPendingStore(t, dir)
+	ctx := context.Background()
+	project, err := s.ResolveProject(ctx, projectRoot)
+	if err != nil {
+		t.Fatalf("ResolveProject: %v", err)
+	}
+	goal, err := s.CreateGoal(ctx, project.ID, "Do not steal another run's work", "")
+	if err != nil {
+		t.Fatalf("CreateGoal: %v", err)
+	}
+	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "other-run", []string{"other run task"})
+	if err != nil {
+		t.Fatalf("DeclareTasks: %v", err)
+	}
+	if err := s.RegisterRun(ctx, "run-latest"); err != nil {
+		t.Fatalf("RegisterRun: %v", err)
+	}
+	if err := s.AssociateRunWithProject(ctx, "run-latest", project.ID); err != nil {
+		t.Fatalf("AssociateRunWithProject: %v", err)
+	}
+	if _, err := s.ClaimTask(ctx, tasks[0].ID, "run-other"); err != nil {
+		t.Fatalf("ClaimTask: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("Store.Close: %v", err)
+	}
+	t.Setenv(atctRunIDEnv, "")
+
+	output, exitCode, err := pendingCommand(dir, projectRoot)
+	if err != nil {
+		t.Fatalf("pendingCommand: %v", err)
+	}
+	if output != "" {
+		t.Fatalf("pendingCommand reported another run's claim: %q", output)
+	}
+	if exitCode != 1 {
+		t.Fatalf("pendingCommand exit code = %d, want 1", exitCode)
+	}
+}
+
 func newPendingFixture(t *testing.T) (string, string) {
 	t.Helper()
 	dir := t.TempDir()
