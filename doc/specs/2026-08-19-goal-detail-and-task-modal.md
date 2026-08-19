@@ -62,7 +62,7 @@
 
 | 使うもの | 中身 |
 |---|---|
-| `goal.tasks` | そのゴールのタスク（`order` 昇順） |
+| `goal.tasks` | そのゴールのタスク（`order` 昇順）。**下の訂正を読むこと** |
 | `needs_decision` | open な決定を持つタスク（`open_decisions` 付き） |
 | `decision_history` | 適用済みの決定（`task_id`・`answered_at`・`applied_at` を持つ） |
 | `unattached_decisions` | タスクに紐づかない open な決定 |
@@ -93,3 +93,30 @@
 - 1280px で崩れないこと
 
 実 HOME（`~/.atct`）の daemon は止めない。
+
+## 訂正（2026-08-20）
+
+**上の表の `goal.tasks` は、書いた時点では `/api/goals/{id}` に存在しなかった。**
+`goalView` は `Tasks` フィールドを持つが（`server.go:41`）、詳細エンドポイントは代入しておらず
+（`server.go:416`）、Go が nil スライスを `null` として返していた。`goal.tasks` が埋まるのは
+`/api/inbox` の側だけである。
+
+結果、`GoalDetail.tsx` が `data.goal.goal.tasks.length` で
+`TypeError: Cannot read properties of null` を投げ、**ゴール詳細ページがヘッダ以外
+何も描画されなくなった**（v0.21.0）。
+
+私はこの表を、`/api/inbox` のレスポンスを見た記憶から書いた。詳細エンドポイントの
+実レスポンスを一度も叩いていない。**依頼書と spec に書く「既にある」は、
+その形を実際に取得して確かめてから書く。**
+
+すり抜けた仕組みも 2 つあった。どちらも直した。
+
+- 詳細エンドポイントのレスポンスに `tasks` が入っているかを検査する Go テストが無かった。
+  `null` と `[]` は `len()` では区別できないので、**生の JSON が `null` でないことを
+  明示的に検査する**形で足した
+- `web/src/lib/api.ts` が `tasks: TaskView[]` と宣言していて null を許さない型だったのに、
+  サーバは null を返していた。しかも**型検査がどこでも走っていなかった**
+  （`build` は `astro build` のみ、CI 設定は存在しない）。`astro check` を `build` の前に入れた
+
+サーバは空でも `[]` を返し、クライアントは `?? []` で耐える。**プラグインの更新と
+稼働 daemon のバージョンはずれうる**（今回まさにずれた）ので、片方だけでは足りない。
