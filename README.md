@@ -73,13 +73,10 @@ Two commands cover day-to-day use:
 | `atct project add` | Register a repository. Run once per repository |
 | `atct goal add "…"` | Create a goal for the current repository |
 
-`atct project list`, `atct goal list`, `atct ensure`, and `atct stop` round out the CLI. The
+`atct project list`, `atct goal list`, `atct daemon start`, and `atct daemon stop` round out the CLI. The
 dashboard handles everything a human answers.
 
-The CLI command `atct stop` stops the ATCT daemon. The `atct:stop` skill is
-different: it stops only the Claude Code Monitor running `atct watch`; it does
-not stop the daemon. Use `atct:stop` for Monitor cleanup and `atct stop` when
-you intend to stop the daemon.
+Use `atct daemon start` to start the ATCT daemon and `atct daemon stop` to stop it.
 
 ## Setting a goal is the approval
 

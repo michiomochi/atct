@@ -31,6 +31,7 @@ const (
 
 type cliConfig struct {
 	subcommand       string
+	daemonAction     string
 	listenAddr       string
 	listenExplicit   bool
 	contextCheck     bool
@@ -55,6 +56,7 @@ var validSubcommands = map[string]bool{
 	"watch":   true,
 }
 
+var validDaemonActions = map[string]bool{"start": true, "stop": true}
 var validProjectActions = map[string]bool{"add": true, "list": true}
 var validGoalActions = map[string]bool{"add": true, "list": true}
 
@@ -62,9 +64,8 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "Usage: atct <command> [options]")
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Commands:")
-	fmt.Fprintln(os.Stderr, "  daemon    Run the ATCT daemon in the foreground")
-	fmt.Fprintln(os.Stderr, "  ensure    Start the daemon if it is not already running")
-	fmt.Fprintln(os.Stderr, "  stop      Stop the running daemon")
+	fmt.Fprintln(os.Stderr, "  daemon start          Start the daemon if it is not already running")
+	fmt.Fprintln(os.Stderr, "  daemon stop           Stop the running daemon")
 	fmt.Fprintln(os.Stderr, "  project add [name]   Register the current project")
 	fmt.Fprintln(os.Stderr, "  project list         List registered projects")
 	fmt.Fprintln(os.Stderr, "  goal add <title>     Create a goal for the current project")
@@ -89,9 +90,28 @@ func parseArgs(args []string) (cliConfig, error) {
 		printUsage()
 		return cliConfig{}, errInvalidArgs
 	}
+	if sub == "ensure" {
+		fmt.Fprintln(os.Stderr, "atct ensure is deprecated; use `atct daemon start`")
+		return cliConfig{}, errInvalidArgs
+	}
+	if sub == "stop" {
+		fmt.Fprintln(os.Stderr, "atct stop is deprecated; use `atct daemon stop`")
+		return cliConfig{}, errInvalidArgs
+	}
 
 	rest := args[1:]
 	cfg := cliConfig{subcommand: sub}
+	if sub == "daemon" && len(rest) > 0 && !strings.HasPrefix(rest[0], "-") {
+		action := rest[0]
+		if !validDaemonActions[action] {
+			fmt.Fprintf(os.Stderr, "unknown daemon action %q\n", action)
+			fmt.Fprintln(os.Stderr, "daemon requires an action: start or stop")
+			printUsage()
+			return cliConfig{}, errInvalidArgs
+		}
+		cfg.daemonAction = action
+		rest = rest[1:]
+	}
 	if sub == "project" {
 		if len(rest) < 1 {
 			fmt.Fprintln(os.Stderr, "project requires an action: add or list")
@@ -182,7 +202,7 @@ func prepareDaemonStart(dir string) error {
 	if err == nil {
 		if reg.Healthy() {
 			return fmt.Errorf(
-				"daemon is already running: pid %d, http %s; run `atct stop` first",
+				"daemon is already running: pid %d, http %s; run `atct daemon stop` first",
 				reg.PID, reg.HTTPAddr)
 		}
 	} else if !errors.Is(err, daemonctl.ErrNoRegistry) {
@@ -215,28 +235,35 @@ func main() {
 		log.Fatalf("resolve executable: %v", err)
 	}
 	switch config.subcommand {
-	case "ensure":
-		reg, err := daemonctl.Ensure(daemonctl.Config{
-			Dir:            dir,
-			Version:        version,
-			Executable:     exePath,
-			ListenAddr:     config.listenAddr,
-			ListenExplicit: config.listenExplicit,
-		})
-		if err != nil {
-			log.Fatalf("ensure: %v", err)
-		}
-		fmt.Fprintf(os.Stderr, "atct daemon ready: pid %d, http %s\n", reg.PID, reg.HTTPAddr)
-		return
-	case "stop":
-		stopped, err := daemonctl.StopWithWatchWarning(daemonctl.Config{Dir: dir, Version: version}, os.Stderr)
-		if err != nil {
-			log.Fatalf("stop: %v", err)
-		}
-		if stopped {
-			fmt.Fprintln(os.Stderr, "atct daemon stopped")
-		} else {
-			fmt.Fprintln(os.Stderr, "no atct daemon was running")
+	case "daemon":
+		switch config.daemonAction {
+		case "start":
+			reg, err := daemonctl.Ensure(daemonctl.Config{
+				Dir:            dir,
+				Version:        version,
+				Executable:     exePath,
+				ListenAddr:     config.listenAddr,
+				ListenExplicit: config.listenExplicit,
+			})
+			if err != nil {
+				log.Fatalf("daemon start: %v", err)
+			}
+			fmt.Fprintf(os.Stderr, "atct daemon ready: pid %d, http %s\n", reg.PID, reg.HTTPAddr)
+		case "stop":
+			stopped, err := daemonctl.StopWithWatchWarning(daemonctl.Config{Dir: dir, Version: version}, os.Stderr)
+			if err != nil {
+				log.Fatalf("daemon stop: %v", err)
+			}
+			if stopped {
+				fmt.Fprintln(os.Stderr, "atct daemon stopped")
+			} else {
+				fmt.Fprintln(os.Stderr, "no atct daemon was running")
+			}
+		default:
+			if err := runDaemon(config, dir); err != nil {
+				log.Printf("daemon: %v", err)
+				os.Exit(1)
+			}
 		}
 		return
 	case "project":
@@ -276,10 +303,6 @@ func main() {
 			log.Fatalf("watch: %v", err)
 		}
 		return
-	}
-	if err := runDaemon(config, dir); err != nil {
-		log.Printf("daemon: %v", err)
-		os.Exit(1)
 	}
 }
 

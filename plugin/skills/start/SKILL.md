@@ -23,10 +23,13 @@ task and keep that task's id for this session.
 - This step applies only in Claude Code. Codex has no Monitor, so a Codex reader
   must skip it and must not try to call or attach Monitor. The MCP response
   attachment remains the shared foundation for both harnesses.
-- The paired `atct:stop` skill stops this Monitor only. It does not stop the
-  daemon; the CLI command `atct stop` stops the daemon.
 
-Only after this step, continue with the goal loop below.
+## Ensure the daemon is running
+
+After attaching the Monitor, run `atct daemon start` before entering the goal
+loop. It reuses a healthy daemon and starts one when needed.
+
+Only after these steps, continue with the goal loop below.
 
 ## Running this makes you the commander
 

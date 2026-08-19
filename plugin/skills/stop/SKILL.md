@@ -13,8 +13,7 @@ This skill stops the answer-delivery Monitor paired with `atct:start`.
    or substitute another task id.
 3. If the task id is available, call `TaskStop` with that task id.
 
-`atct:stop` stops only the Claude Code Monitor. It does not stop the ATCT
-daemon. To stop the daemon, use the CLI command `atct stop`.
+To stop the daemon, use `atct daemon stop`.
 
 `Monitor` and `TaskStop` are Claude Code features and are not available in
 Codex. A Codex reader must not try to invoke them. The MCP response attachment

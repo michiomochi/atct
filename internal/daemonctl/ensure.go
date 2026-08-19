@@ -53,14 +53,14 @@ func Ensure(cfg Config) (Registry, error) {
 		if reg.Healthy() {
 			if reg.Version != cfg.Version {
 				return Registry{}, fmt.Errorf(
-					"%w: running %q, this build is %q; run `atct stop` first",
+					"%w: running %q, this build is %q; run `atct daemon stop` first",
 					ErrVersionMismatch, reg.Version, cfg.Version)
 			}
 			return reg, nil
 		}
 		if ProcessAlive(reg.PID) {
 			return Registry{}, fmt.Errorf(
-				"%w: pid %d holds no socket at %s; run `atct stop` or terminate it",
+				"%w: pid %d holds no socket at %s; run `atct daemon stop` or terminate it",
 				ErrUnresponsive, reg.PID, reg.SocketPath)
 		}
 	case errors.Is(err, ErrNoRegistry):

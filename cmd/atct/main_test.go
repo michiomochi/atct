@@ -2,13 +2,17 @@ package main
 
 import (
 	"errors"
+	"io"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/michiomochi/atct/internal/daemonctl"
 )
@@ -144,37 +148,239 @@ func listenTestTCP(t *testing.T, addr string) net.Listener {
 	return listener
 }
 
-func TestParseArgsAcceptsEnsure(t *testing.T) {
-	cfg, err := parseArgs([]string{"ensure"})
-	if err != nil {
-		t.Fatalf("parseArgs: %v", err)
-	}
-	if cfg.subcommand != "ensure" {
-		t.Fatalf("subcommand = %q, want %q", cfg.subcommand, "ensure")
+func TestParseArgsRejectsDeprecatedCommands(t *testing.T) {
+	for _, tt := range []struct {
+		command     string
+		replacement string
+	}{
+		{command: "ensure", replacement: "daemon start"},
+		{command: "stop", replacement: "daemon stop"},
+	} {
+		t.Run(tt.command, func(t *testing.T) {
+			var cfg cliConfig
+			var err error
+			output := captureStderr(t, func() {
+				cfg, err = parseArgs([]string{tt.command})
+			})
+			if err == nil {
+				t.Fatalf("parseArgs(%q) returned nil error with config %#v", tt.command, cfg)
+			}
+			if !strings.Contains(output, "deprecated") {
+				t.Fatalf("parseArgs(%q) output = %q, want deprecated error", tt.command, output)
+			}
+			if !strings.Contains(output, "atct "+tt.replacement) {
+				t.Fatalf("parseArgs(%q) output = %q, want replacement command %q", tt.command, output, tt.replacement)
+			}
+		})
 	}
 }
 
-func TestParseArgsAcceptsStop(t *testing.T) {
-	cfg, err := parseArgs([]string{"stop"})
-	if err != nil {
-		t.Fatalf("parseArgs: %v", err)
-	}
-	if cfg.subcommand != "stop" {
-		t.Fatalf("subcommand = %q, want %q", cfg.subcommand, "stop")
+func TestParseArgsAcceptsDaemonActions(t *testing.T) {
+	for _, action := range []string{"start", "stop"} {
+		t.Run(action, func(t *testing.T) {
+			cfg, err := parseArgs([]string{"daemon", action})
+			if err != nil {
+				t.Fatalf("parseArgs: %v", err)
+			}
+			if cfg.subcommand != "daemon" {
+				t.Fatalf("subcommand = %q, want %q", cfg.subcommand, "daemon")
+			}
+			if cfg.daemonAction != action {
+				t.Fatalf("daemonAction = %q, want %q", cfg.daemonAction, action)
+			}
+		})
 	}
 }
 
-func TestParseArgsAcceptsListenOnEnsure(t *testing.T) {
-	cfg, err := parseArgs([]string{"ensure", "-listen", "127.0.0.1:19999"})
+func TestParseArgsRejectsUnknownDaemonAction(t *testing.T) {
+	output := captureStderr(t, func() {
+		if _, err := parseArgs([]string{"daemon", "restart"}); err == nil {
+			t.Fatal("parseArgs(daemon restart) returned nil error")
+		}
+	})
+	if !strings.Contains(output, "unknown daemon action") {
+		t.Fatalf("output = %q, want unknown daemon action", output)
+	}
+	if !strings.Contains(output, "start or stop") {
+		t.Fatalf("output = %q, want available daemon actions", output)
+	}
+}
+
+func TestUsageListsPublicDaemonActionsNotForegroundEntry(t *testing.T) {
+	output := captureStderr(t, func() {
+		if _, err := parseArgs(nil); err == nil {
+			t.Fatal("parseArgs(nil) returned nil error")
+		}
+	})
+	for _, want := range []string{"daemon start", "daemon stop"} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("usage = %q, want %q", output, want)
+		}
+	}
+	if strings.Contains(output, "daemon    Run the ATCT daemon in the foreground") {
+		t.Fatalf("usage = %q, must omit foreground daemon entry", output)
+	}
+}
+
+func TestDaemonCommandLifecycle(t *testing.T) {
+	binary := buildAtctTestBinary(t)
+	home, err := os.MkdirTemp("/tmp", "atct-daemon-test-")
 	if err != nil {
-		t.Fatalf("parseArgs: %v", err)
+		t.Fatalf("create daemon test HOME: %v", err)
 	}
-	if cfg.listenAddr != "127.0.0.1:19999" {
-		t.Fatalf("listenAddr = %q, want %q", cfg.listenAddr, "127.0.0.1:19999")
+	t.Cleanup(func() { _ = os.RemoveAll(home) })
+	dir := filepath.Join(home, ".atct")
+	listenAddr := daemonTestListenAddr(t)
+	t.Cleanup(func() {
+		_, _ = daemonctl.StopWithWatchWarning(daemonctl.Config{Dir: dir, Version: version}, io.Discard)
+	})
+
+	output, err := runAtctCommand(binary, home, "daemon", "start", "-listen", listenAddr)
+	if err != nil {
+		t.Fatalf("atct daemon start: %v\noutput:\n%s", err, output)
 	}
-	if !cfg.listenExplicit {
-		t.Fatal("listenExplicit = false, want true")
+	if !strings.Contains(string(output), "atct daemon ready") {
+		t.Fatalf("atct daemon start output = %q, want ready message", output)
 	}
+	started := waitForHealthyRegistry(t, dir)
+	if started.PID == os.Getpid() {
+		t.Fatalf("daemon PID = %d, command unexpectedly ran in the test process", started.PID)
+	}
+
+	output, err = runAtctCommand(binary, home, "daemon", "stop")
+	if err != nil {
+		t.Fatalf("atct daemon stop: %v\noutput:\n%s", err, output)
+	}
+	if !strings.Contains(string(output), "atct daemon stopped") {
+		t.Fatalf("atct daemon stop output = %q, want stopped message", output)
+	}
+	waitForRegistryRemoval(t, dir)
+
+	foreground := exec.Command(binary, "daemon", "-listen", listenAddr)
+	foreground.Env = testEnvWithHome(home)
+	foreground.Stdout = io.Discard
+	foreground.Stderr = io.Discard
+	if err := foreground.Start(); err != nil {
+		t.Fatalf("start bare atct daemon: %v", err)
+	}
+	foregroundDone := false
+	t.Cleanup(func() {
+		if foregroundDone {
+			return
+		}
+		_ = foreground.Process.Signal(syscall.SIGTERM)
+		_ = foreground.Wait()
+	})
+	waitForHealthyRegistry(t, dir)
+	if err := foreground.Process.Signal(syscall.SIGTERM); err != nil {
+		t.Fatalf("stop bare atct daemon: %v", err)
+	}
+	if err := foreground.Wait(); err != nil {
+		t.Fatalf("wait for bare atct daemon: %v", err)
+	}
+	foregroundDone = true
+	waitForRegistryRemoval(t, dir)
+}
+
+func daemonTestListenAddr(t *testing.T) string {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("reserve daemon test address: %v", err)
+	}
+	addr := listener.Addr().String()
+	if err := listener.Close(); err != nil {
+		t.Fatalf("release daemon test address: %v", err)
+	}
+	return addr
+}
+
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("create stderr pipe: %v", err)
+	}
+	previous := os.Stderr
+	os.Stderr = w
+	defer func() {
+		os.Stderr = previous
+		_ = r.Close()
+		_ = w.Close()
+	}()
+
+	fn()
+	if err := w.Close(); err != nil {
+		t.Fatalf("close stderr pipe: %v", err)
+	}
+	output, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("read stderr pipe: %v", err)
+	}
+	return string(output)
+}
+
+func buildAtctTestBinary(t *testing.T) string {
+	t.Helper()
+	_, source, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller failed")
+	}
+	binary := filepath.Join(t.TempDir(), "atct")
+	build := exec.Command("go", "build", "-o", binary, ".")
+	build.Dir = filepath.Dir(source)
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build atct test binary: %v\noutput:\n%s", err, output)
+	}
+	return binary
+}
+
+func runAtctCommand(binary, home string, args ...string) ([]byte, error) {
+	cmd := exec.Command(binary, args...)
+	cmd.Env = testEnvWithHome(home)
+	return cmd.CombinedOutput()
+}
+
+func testEnvWithHome(home string) []string {
+	env := os.Environ()
+	for i, entry := range env {
+		if strings.HasPrefix(entry, "HOME=") {
+			env[i] = "HOME=" + home
+			return env
+		}
+	}
+	return append(env, "HOME="+home)
+}
+
+func waitForHealthyRegistry(t *testing.T, dir string) daemonctl.Registry {
+	t.Helper()
+	deadline := time.Now().Add(daemonctl.StartTimeout)
+	var lastErr error
+	for time.Now().Before(deadline) {
+		reg, err := daemonctl.ReadRegistry(dir)
+		if err == nil && reg.Healthy() {
+			return reg
+		}
+		lastErr = err
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("daemon did not become healthy: %v", lastErr)
+	return daemonctl.Registry{}
+}
+
+func waitForRegistryRemoval(t *testing.T, dir string) {
+	t.Helper()
+	deadline := time.Now().Add(daemonctl.StartTimeout)
+	var lastErr error
+	for time.Now().Before(deadline) {
+		_, err := daemonctl.ReadRegistry(dir)
+		if errors.Is(err, daemonctl.ErrNoRegistry) {
+			return
+		}
+		lastErr = err
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("daemon registry was not removed: %v", lastErr)
 }
 
 func TestParseArgsAcceptsProjectAdd(t *testing.T) {
@@ -283,7 +489,7 @@ func TestPrepareDaemonStartRejectsHealthyDaemon(t *testing.T) {
 	if err == nil {
 		t.Fatal("prepareDaemonStart returned nil for a healthy daemon")
 	}
-	for _, want := range []string{"pid", "127.0.0.1:8787", "atct stop"} {
+	for _, want := range []string{"pid", "127.0.0.1:8787", "atct daemon stop"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("error %q does not contain %q", err, want)
 		}
