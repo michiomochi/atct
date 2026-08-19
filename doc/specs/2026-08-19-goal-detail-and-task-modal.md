@@ -64,7 +64,7 @@
 |---|---|
 | `goal.tasks` | そのゴールのタスク（`order` 昇順）。**下の訂正を読むこと** |
 | `needs_decision` | open な決定を持つタスク（`open_decisions` 付き） |
-| `decision_history` | 適用済みの決定（`task_id`・`answered_at`・`applied_at` を持つ） |
+| `decision_history` | 適用済みの決定（`answered_at`・`applied_at` を持つ）。**`task_id` は返っていなかった。下の訂正を読むこと** |
 | `unattached_decisions` | タスクに紐づかない open な決定 |
 
 **API の追加は不要。** モーダルは `task_id` で絞るだけでよい。
@@ -120,3 +120,28 @@
 
 サーバは空でも `[]` を返し、クライアントは `?? []` で耐える。**プラグインの更新と
 稼働 daemon のバージョンはずれうる**（今回まさにずれた）ので、片方だけでは足りない。
+
+### 訂正その 2: `decision_history` に `task_id` が無かった
+
+**同じ表のもう 1 行も誤っていた。**`decision_history` が `task_id` を持つと書いたが、
+`decisionHistoryView`（`server.go:71-80`）にそのフィールドが無く、API は `task_id` を
+返していなかった。DB は持っている（`decisions.task_id`）。
+
+結果、`TaskDetailModal` の `filterDecisionsByTask(decisionHistory, task.id)` が常に空を返し、
+**回答履歴の節が一度も描画されなかった。**`DecisionHistoryTable` はモーダルの 1 箇所でしか
+使われていないので、回答履歴はアプリのどこにも出ていなかった。その表の中にある
+**「回答変更」ボタンも UI から到達できなかった**（`revise` の API は実装済みで動く）。
+
+この誤りは 3 つの検査をすべて通り抜けた。理由を残す。
+
+- **型検査**: `api.ts` が `task_id?: string` と**任意**で宣言していたので、
+  TypeScript は「無い」ことを許した。任意にする理由が無いのに任意にしてあった
+- **純関数のテスト**: `filterDecisionsByTask` のテストは、`task_id` を持つフィクスチャを
+  私が自分で作って渡している。**自分で作った入力でしか検査していないテストは、
+  実際に流れてくる形とのずれを見つけられない**
+- **手作業の確認**: 回答履歴を持つタスクが手元のデータに 1 件も無かったので、
+  画面を開いても空であることに気づけなかった
+
+**Go 側の形と TS 側の消費を直接突き合わせる検査が 1 つも無い。** executor から
+「Go の変換を通す描画テスト」という案が出ている。今回は採らなかったが、
+今日 2 回起きたこの種のずれを捕まえられる唯一の方法である。
