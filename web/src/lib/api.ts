@@ -74,6 +74,8 @@ export interface Decision {
 export interface TaskView extends Task {
   held_for_seconds: number;
   open_decisions: Decision[];
+  project_id: string;
+  project_name?: string;
 }
 
 export interface DecisionHistoryEntry {

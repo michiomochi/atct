@@ -30,6 +30,8 @@ type TaskView struct {
 	domain.Task
 	HeldForSeconds int64             `json:"held_for_seconds"`
 	OpenDecisions  []domain.Decision `json:"open_decisions"`
+	ProjectID      string            `json:"project_id"`
+	ProjectName    string            `json:"project_name"`
 }
 
 type goalView struct {
@@ -313,7 +315,10 @@ func (s *Server) handleInbox(w http.ResponseWriter, r *http.Request) {
 			if len(decisions) == 0 || !isProjectableTask(task.Status) {
 				continue
 			}
-			attentionTasks = append(attentionTasks, newTaskView(task, decisions))
+			taskView := newTaskView(task, decisions)
+			taskView.ProjectID = goal.ProjectID
+			taskView.ProjectName = projectNames[goal.ProjectID]
+			attentionTasks = append(attentionTasks, taskView)
 		}
 	}
 

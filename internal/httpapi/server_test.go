@@ -30,6 +30,79 @@ type fixture struct {
 	answered domain.Decision
 }
 
+func TestInboxAttentionTasksIncludeProjectIdentityPerTask(t *testing.T) {
+	f := newFixture(t)
+	otherProject, err := f.store.CreateProject(f.ctx, "other", t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherGoal, err := f.store.CreateGoal(f.ctx, otherProject.ID, "Other project goal", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherTasks, err := f.store.DeclareTasks(f.ctx, otherGoal.ID, "other-agent", "other-declare", []string{"needs"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.store.ClaimTask(f.ctx, otherTasks[0].ID, "other-run"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.store.AskDecision(f.ctx, store.AskInput{
+		GoalID:   otherGoal.ID,
+		TaskID:   otherTasks[0].ID,
+		Kind:     f.open.Kind,
+		Question: "Other project question",
+		Options:  f.open.Options,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+	status, _, body := doRequest(t, srv.Client(), http.MethodGet, srv.URL+"/api/inbox", nil)
+	if status != http.StatusOK {
+		t.Fatalf("inbox status = %d; body=%s", status, body)
+	}
+	var inbox struct {
+		AttentionTasks []struct {
+			ID          string `json:"id"`
+			ProjectID   string `json:"project_id"`
+			ProjectName string `json:"project_name"`
+		} `json:"attention_tasks"`
+	}
+	if err := json.Unmarshal(body, &inbox); err != nil {
+		t.Fatal(err)
+	}
+	if len(inbox.AttentionTasks) != 2 {
+		t.Fatalf("attention tasks = %+v", inbox.AttentionTasks)
+	}
+	got := make(map[string]struct {
+		projectID   string
+		projectName string
+	})
+	for _, task := range inbox.AttentionTasks {
+		got[task.ID] = struct {
+			projectID   string
+			projectName string
+		}{projectID: task.ProjectID, projectName: task.ProjectName}
+	}
+	want := map[string]struct {
+		projectID   string
+		projectName string
+	}{
+		f.tasks[0].ID:    {projectID: f.project.ID, projectName: "fixture"},
+		otherTasks[0].ID: {projectID: otherProject.ID, projectName: "other"},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("attention task identities = %+v", got)
+	}
+	for taskID, wantIdentity := range want {
+		if gotIdentity, ok := got[taskID]; !ok || gotIdentity != wantIdentity {
+			t.Fatalf("attention task %s identity = %+v, want %+v", taskID, gotIdentity, wantIdentity)
+		}
+	}
+}
+
 type decisionViewResponse struct {
 	domain.Decision
 	ProjectID        string `json:"project_id"`

@@ -19,11 +19,12 @@ export function AttentionTaskTable({ tasks }: Props) {
 
   return (
     <div className="table-scroll">
-      <Table className="min-w-[58rem] w-full border-collapse text-left text-sm">
+      <Table className="min-w-[64rem] w-full border-collapse text-left text-sm">
         <caption className="sr-only">{t("task.caption.attention")}</caption>
         <Table.Header className="border-b-2 border-ink-300 text-xs uppercase tracking-wide text-ink-700">
           <Table.Row>
             <Table.Head {...columnScope} className="px-3 py-3 font-semibold">{t("task.column.task")}</Table.Head>
+            <Table.Head {...columnScope} className="w-40 px-3 py-3 font-semibold">{t("goal.column.project")}</Table.Head>
             <Table.Head {...columnScope} className="w-40 px-3 py-3 font-semibold">{t("task.column.goal")}</Table.Head>
             <Table.Head {...columnScope} className="w-32 px-3 py-3 font-semibold">{t("task.column.status")}</Table.Head>
             <Table.Head {...columnScope} className="w-44 px-3 py-3 font-semibold">{t("task.column.claimedBy")}</Table.Head>
@@ -37,6 +38,7 @@ export function AttentionTaskTable({ tasks }: Props) {
                 <p className="text-clamp-2 max-w-[34rem] font-medium text-ink-950" title={task.title}>{task.title}</p>
                 <p className="mt-1 font-mono text-xs text-ink-500">{task.id}</p>
               </Table.Cell>
+              <Table.Cell className="px-3 py-4 text-ink-700">{task.project_name || "-"}</Table.Cell>
               <Table.Cell className="px-3 py-4">
                 <a
                   className="focus-ring font-medium text-accent-700 underline decoration-accent-100 underline-offset-4 hover:decoration-accent-700"
