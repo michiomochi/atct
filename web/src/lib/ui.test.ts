@@ -38,6 +38,7 @@ function fixtureGoal(id: string, projectName: string): Goal {
     title: id,
     description: "",
     status: "active",
+    awaiting_decision: false,
     result_summary: "",
     work_done: "",
     now_possible: "",
@@ -47,6 +48,7 @@ function fixtureGoal(id: string, projectName: string): Goal {
     next_steps: "",
     created_at: "",
     updated_at: "",
+    tasks: [],
   };
 }
 
@@ -315,7 +317,8 @@ describe("goal detail answer flows", () => {
   it("renders one ordered task list and moves decisions into task details", () => {
     expect(goalDetailSource).not.toContain("NeedsDecisionList");
     expect(goalDetailSource).not.toContain("xl:grid-cols-3");
-    expect(goalDetailSource).toContain("tasks={data.goal.goal.tasks}");
+    expect(goalDetailSource).toContain("const tasks = data?.goal.goal.tasks ?? [];");
+    expect(goalDetailSource).toContain("tasks={tasks}");
     expect(goalDetailSource).toContain('mode="goal"');
     expect(goalDetailSource).toContain("decisionHistory={data.goal.decision_history}");
     expect(taskTableSource).toContain('mode: "now" | "needs_decision" | "next" | "goal"');

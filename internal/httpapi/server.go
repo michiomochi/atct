@@ -412,6 +412,7 @@ func (s *Server) handleGoal(w http.ResponseWriter, r *http.Request, goalID strin
 		}
 	}
 
+	allTaskViews := make([]TaskView, 0, len(tasks))
 	response := goalResponse{
 		Goal:                   goalView{Goal: goal, ProjectName: projectName},
 		Now:                    make([]TaskView, 0),
@@ -424,6 +425,7 @@ func (s *Server) handleGoal(w http.ResponseWriter, r *http.Request, goalID strin
 	for _, task := range tasks {
 		decisions := openByTask[task.ID]
 		view := newTaskView(task, decisions)
+		allTaskViews = append(allTaskViews, view)
 		switch {
 		case len(decisions) > 0 && isProjectableTask(task.Status):
 			response.NeedsDecision = append(response.NeedsDecision, view)
@@ -433,6 +435,7 @@ func (s *Server) handleGoal(w http.ResponseWriter, r *http.Request, goalID strin
 			response.Next = append(response.Next, view)
 		}
 	}
+	response.Goal.Tasks = nonNilTaskViews(allTaskViews)
 
 	writeJSON(w, http.StatusOK, response)
 }

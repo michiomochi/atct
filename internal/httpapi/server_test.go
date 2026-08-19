@@ -776,6 +776,74 @@ func TestInboxAndGoalDetailUseExclusiveTaskColumns(t *testing.T) {
 	}
 }
 
+func TestHTTPGoalDetailIncludesAllTasksWithoutCrossGoalMixing(t *testing.T) {
+	f := newBareFixture(t)
+	targetTasks, err := f.store.DeclareTasks(f.ctx, f.goal.ID, "target-agent", "target-declare", []string{"first task", "second task"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherGoal, err := f.store.CreateGoal(f.ctx, f.project.ID, "Other goal", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherTasks, err := f.store.DeclareTasks(f.ctx, otherGoal.ID, "other-agent", "other-declare", []string{"other task"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	emptyGoal, err := f.store.CreateGoal(f.ctx, f.project.ID, "Empty goal", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+	status, _, body := doRequest(t, srv.Client(), http.MethodGet, srv.URL+"/api/goals/"+f.goal.ID, nil)
+	if status != http.StatusOK {
+		t.Fatalf("goal status = %d; body=%s", status, body)
+	}
+	var payload struct {
+		Goal map[string]json.RawMessage `json:"goal"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatalf("decode goal detail: %v; body=%s", err, body)
+	}
+	tasksRaw, ok := payload.Goal["tasks"]
+	if !ok || bytes.Equal(bytes.TrimSpace(tasksRaw), []byte("null")) {
+		t.Fatalf("goal.tasks is missing or null: %s", body)
+	}
+	var gotTasks []httpapi.TaskView
+	if err := json.Unmarshal(tasksRaw, &gotTasks); err != nil {
+		t.Fatalf("decode goal.tasks: %v; tasks=%s", err, tasksRaw)
+	}
+	if len(gotTasks) != len(targetTasks) {
+		t.Fatalf("goal.tasks = %+v, want %d tasks", gotTasks, len(targetTasks))
+	}
+	for i, wantTask := range targetTasks {
+		gotTask := gotTasks[i]
+		if gotTask.ID == otherTasks[0].ID || gotTask.GoalID != f.goal.ID {
+			t.Fatalf("goal.tasks[%d] crosses goal boundary: %+v", i, gotTask)
+		}
+		if gotTask.ID != wantTask.ID || gotTask.Order != wantTask.Order {
+			t.Fatalf("goal.tasks[%d] = %+v, want id=%s order=%d", i, gotTask, wantTask.ID, wantTask.Order)
+		}
+	}
+
+	status, _, body = doRequest(t, srv.Client(), http.MethodGet, srv.URL+"/api/goals/"+emptyGoal.ID, nil)
+	if status != http.StatusOK {
+		t.Fatalf("empty goal status = %d; body=%s", status, body)
+	}
+	var emptyPayload struct {
+		Goal map[string]json.RawMessage `json:"goal"`
+	}
+	if err := json.Unmarshal(body, &emptyPayload); err != nil {
+		t.Fatalf("decode empty goal detail: %v; body=%s", err, body)
+	}
+	emptyTasks, ok := emptyPayload.Goal["tasks"]
+	if !ok || !bytes.Equal(bytes.TrimSpace(emptyTasks), []byte("[]")) {
+		t.Fatalf("empty goal.tasks = %s, want []", emptyTasks)
+	}
+}
+
 func TestHTTPGoalDetailIncludesTasklessOpenDecision(t *testing.T) {
 	f := newBareFixture(t)
 	decision, err := f.store.AskDecision(f.ctx, store.AskInput{

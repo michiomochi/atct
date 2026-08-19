@@ -204,6 +204,7 @@ export function GoalDetail({ id }: Props) {
   const data = state.kind === "ready" ? state.data : undefined;
   const retry = () => void load();
   const locale = i18n.language.startsWith("ja") ? "ja" : "en";
+  const tasks = data?.goal.goal.tasks ?? [];
 
   return (
     <main className="min-w-0 max-w-full space-y-10 overflow-x-hidden">
@@ -211,7 +212,6 @@ export function GoalDetail({ id }: Props) {
         <a className="focus-ring text-sm font-medium text-accent-700 hover:text-accent-900" href="/">
           {t("goal.backToDashboard")}
         </a>
-        <p className="mt-6 font-mono text-xs uppercase tracking-[0.18em] text-accent-700">{t("goal.title")}</p>
         <h1 className="mt-2 font-display text-3xl font-semibold tracking-tight text-ink-950">
           {data?.goal.goal.title ?? t("goal.title")}
         </h1>
@@ -241,14 +241,14 @@ export function GoalDetail({ id }: Props) {
       <section className="min-w-0 border-t border-line pt-5" data-testid="task-list" aria-labelledby="task-list-heading">
         <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-2">
           <h2 id="task-list-heading" className="font-display text-lg font-semibold tracking-tight text-ink-950">{t("goal.tasks.title")}</h2>
-          {data && <p className="text-sm text-ink-600">{data.goal.goal.tasks.length}</p>}
+          {data && <p className="text-sm text-ink-600">{tasks.length}</p>}
         </div>
         <div className="mt-4 min-w-0">
           {state.kind === "loading" && <AreaLoading label={t("goal.tasks.title")} />}
           {state.kind === "error" && <ErrorState message={state.message} onRetry={retry} />}
           {data && (
             <TaskTable
-              tasks={data.goal.goal.tasks}
+              tasks={tasks}
               mode="goal"
               onRefresh={load}
               openDecisions={data.goal.needs_decision.flatMap((task) => task.open_decisions ?? [])}
