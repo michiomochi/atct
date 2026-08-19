@@ -29,6 +29,8 @@
 | クエリ | `internal/store/queries/{decision,task,goal,project}.sql` |
 | 生成コード | `internal/store/sqlcgen`（パッケージ名 `sqlcgen`） |
 
+生成するときは `go tool sqlc generate` を実行する。
+
 `schema.sql` を sqlc のスキーマ入力にするのが要点である。定義が 2 箇所になると、
 sqlc が古いスキーマでコード生成しても誰も気づかない。
 
@@ -60,7 +62,7 @@ DDL であり、sqlc が扱うのは DML である。
 - 領域ごとに `go test -count=1 ./internal/store/...` が通ること
 - 全領域を移した後、実 DB の `VACUUM INTO` コピーに対して daemon を起動し、
   ゴール・タスク・決定の件数が移行前と一致すること
-- 生成コードを消して `sqlc generate` を再実行しても差分が出ないこと（sqlc がある環境のみ）
+- 生成コードを消して `go tool sqlc generate` を再実行しても差分が出ないこと
 
 実 HOME（`~/.atct`）では検証しない。一時 HOME と専用ポートを使う。
 
