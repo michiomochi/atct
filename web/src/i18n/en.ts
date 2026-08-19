@@ -43,6 +43,7 @@ export const en = {
   "status.task.blocked": "Blocked",
   "status.task.active": "In progress",
   "status.task.completed": "Completed",
+  "status.awaitingDecision": "Waiting on you",
   "status.decision.open": "Awaiting answer",
   "status.decision.answered": "Answered",
   "status.decision.applied": "Applied",

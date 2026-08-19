@@ -186,6 +186,13 @@ func TestHTTPInboxIncludesTasksPerActiveGoalInOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, err := f.store.AskDecision(f.ctx, store.AskInput{
+		GoalID:   f.goal.ID,
+		Kind:     domain.DecisionKind("question"),
+		Question: "Which first-goal path should we take?",
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	srv := newTestServer(t, f.store)
 	defer srv.Close()
@@ -195,8 +202,9 @@ func TestHTTPInboxIncludesTasksPerActiveGoalInOrder(t *testing.T) {
 	}
 	var response struct {
 		ActiveGoals []struct {
-			ID    string `json:"id"`
-			Tasks []struct {
+			ID               string `json:"id"`
+			AwaitingDecision bool   `json:"awaiting_decision"`
+			Tasks            []struct {
 				ID     string `json:"id"`
 				GoalID string `json:"goal_id"`
 				Order  int    `json:"order"`
@@ -212,6 +220,7 @@ func TestHTTPInboxIncludesTasksPerActiveGoalInOrder(t *testing.T) {
 		GoalID string `json:"goal_id"`
 		Order  int    `json:"order"`
 	}, len(response.ActiveGoals))
+	awaiting := make(map[string]bool, len(response.ActiveGoals))
 	for _, goal := range response.ActiveGoals {
 		tasks := make([]struct {
 			ID     string `json:"id"`
@@ -222,6 +231,13 @@ func TestHTTPInboxIncludesTasksPerActiveGoalInOrder(t *testing.T) {
 			tasks[i] = task
 		}
 		goals[goal.ID] = tasks
+		awaiting[goal.ID] = goal.AwaitingDecision
+	}
+	if got, ok := awaiting[f.goal.ID]; !ok || !got {
+		t.Fatalf("first goal awaiting_decision = %v (present=%v), want true", got, ok)
+	}
+	if got, ok := awaiting[secondGoal.ID]; !ok || got {
+		t.Fatalf("second goal awaiting_decision = %v (present=%v), want false", got, ok)
 	}
 
 	firstGot, ok := goals[f.goal.ID]

@@ -36,8 +36,9 @@ type TaskView struct {
 
 type goalView struct {
 	domain.Goal
-	ProjectName string     `json:"project_name"`
-	Tasks       []TaskView `json:"tasks"`
+	AwaitingDecision bool       `json:"awaiting_decision"`
+	ProjectName      string     `json:"project_name"`
+	Tasks            []TaskView `json:"tasks"`
 }
 
 type decisionView struct {
@@ -278,6 +279,10 @@ func (s *Server) handleInbox(w http.ResponseWriter, r *http.Request) {
 	}
 
 	openByTask := indexDecisions(openDecisions)
+	openByGoal := make(map[string]bool, len(openDecisions))
+	for _, decision := range openDecisions {
+		openByGoal[decision.GoalID] = true
+	}
 	openDecisionViews := make([]decisionView, 0, len(openDecisions))
 	for _, decision := range openDecisions {
 		openDecisionViews = append(openDecisionViews, decisionView{
@@ -322,9 +327,10 @@ func (s *Server) handleInbox(w http.ResponseWriter, r *http.Request) {
 				taskViews = append(taskViews, newTaskView(task, openByTask[task.ID]))
 			}
 			activeGoals = append(activeGoals, goalView{
-				Goal:        goal,
-				ProjectName: projectNames[goal.ProjectID],
-				Tasks:       taskViews,
+				Goal:             goal,
+				AwaitingDecision: openByGoal[goal.ID],
+				ProjectName:      projectNames[goal.ProjectID],
+				Tasks:            taskViews,
 			})
 		}
 		for _, task := range tasks {

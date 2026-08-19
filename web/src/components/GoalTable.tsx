@@ -34,12 +34,13 @@ export function GoalTable({ goals, showProject = true }: Props) {
         <Table.Body>
           {goals.map((goal) => {
             const tasks = goal.tasks ?? [];
+            const goalStatus = goal.awaiting_decision ? t("status.awaitingDecision") : statusLabel(locale, goal.status);
             return (
               <Fragment key={goal.id}>
                 <Table.Row className="border-b border-line align-top last:border-b-0">
                   <Table.Cell className="px-3 py-4">
                     <a
-                      className="focus-ring text-clamp-2 font-medium text-accent-700 underline decoration-accent-100 underline-offset-4 hover:decoration-accent-700"
+                      className="focus-ring text-clamp-2 w-fit font-medium text-accent-700 underline decoration-accent-100 underline-offset-4 hover:decoration-accent-700"
                       href={`/goals/${encodePathSegment(goal.id)}`}
                       title={goal.title}
                     >
@@ -47,7 +48,7 @@ export function GoalTable({ goals, showProject = true }: Props) {
                     </a>
                   </Table.Cell>
                   {showProject && <Table.Cell className="px-3 py-4 text-ink-700">{goal.project_name || "-"}</Table.Cell>}
-                  <Table.Cell className="px-3 py-4 text-ink-700">{statusLabel(locale, goal.status)}</Table.Cell>
+                  <Table.Cell className="px-3 py-4 text-ink-700">{goalStatus}</Table.Cell>
                   <Table.Cell className="px-3 py-4 text-ink-700">{formatDateTime(locale, goal.updated_at)}</Table.Cell>
                 </Table.Row>
                 {tasks.map((task, index) => (
@@ -61,7 +62,11 @@ export function GoalTable({ goals, showProject = true }: Props) {
                       </div>
                     </Table.Cell>
                     {showProject && <Table.Cell className="px-3 py-3" />}
-                    <Table.Cell className="px-3 py-3 text-ink-700">{statusLabel(locale, task.status)}</Table.Cell>
+                    <Table.Cell className="px-3 py-3 text-ink-700">
+                      {task.open_decisions.length > 0 && !["done", "completed", "withdrawn"].includes(task.status)
+                        ? t("status.awaitingDecision")
+                        : statusLabel(locale, task.status)}
+                    </Table.Cell>
                     <Table.Cell className="px-3 py-3 text-ink-700">{formatDateTime(locale, task.updated_at)}</Table.Cell>
                   </Table.Row>
                 ))}

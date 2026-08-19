@@ -13,6 +13,7 @@ export interface Goal {
   title: string;
   description: string;
   status: string;
+  awaiting_decision: boolean;
   result_summary: string;
   work_done: string;
   now_possible: string;
@@ -22,7 +23,7 @@ export interface Goal {
   next_steps: string;
   created_at: string;
   updated_at: string;
-  tasks: Task[];
+  tasks: TaskView[];
 }
 
 export interface Project {

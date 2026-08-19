@@ -49,7 +49,7 @@ export function DecisionTable({ decisions, emptyText }: Props) {
               <Table.Row className="border-b border-line align-top last:border-b-0" key={decision.id}>
                 <Table.Cell className="px-3 py-4">
                   <a
-                    className="focus-ring text-clamp-2 max-w-[34rem] font-medium text-accent-700 underline decoration-accent-100 underline-offset-4 hover:decoration-accent-700"
+                    className="focus-ring text-clamp-2 w-fit max-w-[34rem] font-medium text-accent-700 underline decoration-accent-100 underline-offset-4 hover:decoration-accent-700"
                     href={`/goals/${encodePathSegment(decision.goal_id)}`}
                     title={decision.question}
                   >

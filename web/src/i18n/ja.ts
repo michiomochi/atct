@@ -44,6 +44,7 @@ export const ja: Record<TranslationKey, string> = {
   "status.task.blocked": "ブロック",
   "status.task.active": "進行中",
   "status.task.completed": "完了",
+  "status.awaitingDecision": "判断待ち",
   "status.decision.open": "回答待ち",
   "status.decision.answered": "回答済み",
   "status.decision.applied": "適用済み",
