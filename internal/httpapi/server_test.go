@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -31,6 +32,7 @@ type fixture struct {
 
 type decisionViewResponse struct {
 	domain.Decision
+	ProjectID        string `json:"project_id"`
 	SettledByDefault bool   `json:"settled_by_default"`
 	DefaultOption    string `json:"default_option"`
 	DefaultAfterMs   *int64 `json:"default_after_ms"`
@@ -138,6 +140,9 @@ func TestHTTPInboxMarksDefaultSettledDecision(t *testing.T) {
 	}
 	if len(response.UnappliedDecisions) != 1 || response.UnappliedDecisions[0].ID != decision.ID {
 		t.Fatalf("unapplied decisions = %+v", response.UnappliedDecisions)
+	}
+	if response.UnappliedDecisions[0].ProjectID != f.goal.ProjectID {
+		t.Fatalf("project_id = %q, want %q", response.UnappliedDecisions[0].ProjectID, f.goal.ProjectID)
 	}
 	if !response.UnappliedDecisions[0].SettledByDefault {
 		t.Fatalf("settled_by_default = false; response=%s", body)
@@ -859,6 +864,132 @@ func assertSSEDecision(t *testing.T, reader *bufio.Reader, wantEvent string, wan
 	if frame.data != wantJSON {
 		t.Fatalf("SSE data = %s, want exact %s", frame.data, wantJSON)
 	}
+}
+
+func openSSEStream(t *testing.T, ctx context.Context, client *http.Client, endpoint string) (*http.Response, *bufio.Reader) {
+	t.Helper()
+	response := make(chan struct {
+		resp *http.Response
+		err  error
+	}, 1)
+	go func() {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+		if err != nil {
+			response <- struct {
+				resp *http.Response
+				err  error
+			}{err: err}
+			return
+		}
+		resp, err := client.Do(req)
+		response <- struct {
+			resp *http.Response
+			err  error
+		}{resp: resp, err: err}
+	}()
+	var stream *http.Response
+	select {
+	case result := <-response:
+		if result.err != nil {
+			t.Fatal(result.err)
+		}
+		stream = result.resp
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out opening SSE stream")
+	}
+	if stream.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(stream.Body)
+		t.Fatalf("SSE status = %d; body=%s", stream.StatusCode, body)
+	}
+	return stream, bufio.NewReader(stream.Body)
+}
+
+func eventsURL(baseURL, projectID string) string {
+	query := url.Values{}
+	query.Set("project_id", projectID)
+	return baseURL + "/api/events?" + query.Encode()
+}
+
+func TestSSEFiltersDecisionEventsByProjectID(t *testing.T) {
+	f := newBareFixture(t)
+	otherProject, err := f.store.CreateProject(f.ctx, "other", t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	currentGoal, err := f.store.CreateGoal(f.ctx, f.project.ID, "Current project", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherGoal, err := f.store.CreateGoal(f.ctx, otherProject.ID, "Other project", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+	streamCtx, cancel := context.WithCancel(f.ctx)
+	defer cancel()
+	stream, reader := openSSEStream(t, streamCtx, srv.Client(), eventsURL(srv.URL, f.project.ID))
+	defer stream.Body.Close()
+
+	otherDecision, err := f.store.AskDecision(f.ctx, store.AskInput{
+		GoalID:   otherGoal.ID,
+		Kind:     domain.DecisionKind("question"),
+		Question: "Other project event",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	currentDecision, err := f.store.AskDecision(f.ctx, store.AskInput{
+		GoalID:   currentGoal.ID,
+		Kind:     domain.DecisionKind("question"),
+		Question: "Current project event",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertSSEDecision(t, reader, "decision.created", currentDecision)
+	_ = otherDecision
+}
+
+func TestSSEWithoutProjectIDPublishesEventsFromAllProjects(t *testing.T) {
+	f := newBareFixture(t)
+	otherProject, err := f.store.CreateProject(f.ctx, "other", t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	currentGoal, err := f.store.CreateGoal(f.ctx, f.project.ID, "Current project", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherGoal, err := f.store.CreateGoal(f.ctx, otherProject.ID, "Other project", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+	streamCtx, cancel := context.WithCancel(f.ctx)
+	defer cancel()
+	stream, reader := openSSEStream(t, streamCtx, srv.Client(), srv.URL+"/api/events")
+	defer stream.Body.Close()
+
+	currentDecision, err := f.store.AskDecision(f.ctx, store.AskInput{
+		GoalID:   currentGoal.ID,
+		Kind:     domain.DecisionKind("question"),
+		Question: "Current project event",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherDecision, err := f.store.AskDecision(f.ctx, store.AskInput{
+		GoalID:   otherGoal.ID,
+		Kind:     domain.DecisionKind("question"),
+		Question: "Other project event",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertSSEDecision(t, reader, "decision.created", currentDecision)
+	assertSSEDecision(t, reader, "decision.created", otherDecision)
 }
 
 func TestSSEPublishesAllDecisionTransitionsWithExactPayloads(t *testing.T) {

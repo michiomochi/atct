@@ -39,6 +39,7 @@ type goalView struct {
 
 type decisionView struct {
 	domain.Decision
+	ProjectID        string `json:"project_id"`
 	ProjectName      string `json:"project_name"`
 	DefaultOption    string `json:"default_option"`
 	DefaultAfterMs   *int64 `json:"default_after_ms,omitempty"`
@@ -263,8 +264,10 @@ func (s *Server) handleInbox(w http.ResponseWriter, r *http.Request) {
 	for _, project := range projects {
 		projectNames[project.ID] = project.Name
 	}
+	goalProjectIDs := make(map[string]string, len(goals))
 	goalProjectNames := make(map[string]string, len(goals))
 	for _, goal := range goals {
+		goalProjectIDs[goal.ID] = goal.ProjectID
 		goalProjectNames[goal.ID] = projectNames[goal.ProjectID]
 	}
 
@@ -273,6 +276,7 @@ func (s *Server) handleInbox(w http.ResponseWriter, r *http.Request) {
 	for _, decision := range openDecisions {
 		openDecisionViews = append(openDecisionViews, decisionView{
 			Decision:         decision,
+			ProjectID:        goalProjectIDs[decision.GoalID],
 			ProjectName:      goalProjectNames[decision.GoalID],
 			DefaultOption:    decision.DefaultOption,
 			DefaultAfterMs:   decision.DefaultAfterMs,
@@ -283,6 +287,7 @@ func (s *Server) handleInbox(w http.ResponseWriter, r *http.Request) {
 	for _, decision := range unapplied {
 		unappliedDecisionViews = append(unappliedDecisionViews, decisionView{
 			Decision:         decision,
+			ProjectID:        goalProjectIDs[decision.GoalID],
 			ProjectName:      goalProjectNames[decision.GoalID],
 			DefaultOption:    decision.DefaultOption,
 			DefaultAfterMs:   decision.DefaultAfterMs,
@@ -607,6 +612,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "streaming is not supported")
 		return
 	}
+	projectID := r.URL.Query().Get("project_id")
 	ch, cancel := s.store.SubscribeDecisionEvents()
 	defer cancel()
 
@@ -621,6 +627,12 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		case <-r.Context().Done():
 			return
 		case event := <-ch:
+			if projectID != "" {
+				goal, err := s.store.GetGoal(r.Context(), event.Decision.GoalID)
+				if err != nil || goal.ProjectID != projectID {
+					continue
+				}
+			}
 			data, err := json.Marshal(event.Decision)
 			if err != nil {
 				return

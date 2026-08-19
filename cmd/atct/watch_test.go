@@ -2,11 +2,14 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -106,6 +109,7 @@ func TestWatchEmitsHumanDecisionEventsOnly(t *testing.T) {
 			_, _ = io.WriteString(w, "event: decision.withdrawn\ndata: {\"id\":\"withdrawn\"}\n\n")
 			_, _ = io.WriteString(w, "event: decision.answered\ndata: {\"id\":\"human\",\"default_applied_at\":null}\n\n")
 			_, _ = io.WriteString(w, "event: decision.answered\ndata: {\"id\":\"default\",\"default_applied_at\":\"2026-08-19T00:00:00Z\"}\n\n")
+			_, _ = io.WriteString(w, "event: decision.rejected\ndata: {\"id\":\"rejected\"}\n\n")
 			_, _ = io.WriteString(w, "event: decision.approved\ndata: {\"id\":\"approved\"}\n\n")
 			if f, ok := w.(http.Flusher); ok {
 				f.Flush()
@@ -125,6 +129,7 @@ func TestWatchEmitsHumanDecisionEventsOnly(t *testing.T) {
 	got := output.String()
 	want := "atct decision answered (decision_id: human)\n" +
 		"atct decision default applied (decision_id: default)\n" +
+		"atct decision rejected (decision_id: rejected)\n" +
 		"atct decision approved (decision_id: approved)\n"
 	if got != want {
 		t.Fatalf("watch output = %q, want %q", got, want)
@@ -133,6 +138,85 @@ func TestWatchEmitsHumanDecisionEventsOnly(t *testing.T) {
 		if strings.Contains(got, "decision_id: "+id) {
 			t.Errorf("watch output contains suppressed decision %q: %q", id, got)
 		}
+	}
+}
+
+func runWatchWithProjects(t *testing.T, cwd string, projects []watchProject) (url.Values, int) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var output cancelOnOutput
+	output.cancel = cancel
+	output.needles = []string{"atct decision answered (decision_id: project-query)"}
+	queries := make(chan url.Values, 1)
+	var mu sync.Mutex
+	projectCalls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/projects":
+			mu.Lock()
+			projectCalls++
+			mu.Unlock()
+			w.Header().Set("Content-Type", "application/json")
+			if err := json.NewEncoder(w).Encode(projects); err != nil {
+				t.Errorf("encode projects: %v", err)
+			}
+		case "/api/inbox":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"unapplied_decisions":[]}`)
+		case "/api/events":
+			queries <- r.URL.Query()
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			_, _ = io.WriteString(w, "event: decision.answered\ndata: {\"id\":\"project-query\"}\n\n")
+			if f, ok := w.(http.Flusher); ok {
+				f.Flush()
+			}
+			<-r.Context().Done()
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	if err := watchWithURLsAndProject(ctx, []string{server.URL}, &output, server.Client(), time.Millisecond, cwd); err != nil {
+		t.Fatalf("watchWithURLsAndProject() error = %v", err)
+	}
+	query := <-queries
+	mu.Lock()
+	defer mu.Unlock()
+	return query, projectCalls
+}
+
+func TestWatchPassesMatchingProjectIDToEvents(t *testing.T) {
+	cwd := t.TempDir()
+	query, projectCalls := runWatchWithProjects(t, cwd, []watchProject{{ID: "project-1", RootPath: cwd}})
+	if got := query.Get("project_id"); got != "project-1" {
+		t.Fatalf("events project_id = %q, want %q", got, "project-1")
+	}
+	if got := query.Get("cwd"); got != "" {
+		t.Fatalf("events unexpectedly received cwd = %q", got)
+	}
+	if projectCalls != 1 {
+		t.Fatalf("GET /api/projects calls = %d, want 1", projectCalls)
+	}
+}
+
+func TestWatchMatchesProjectFromSubdirectory(t *testing.T) {
+	root := t.TempDir()
+	cwd := filepath.Join(root, "nested", "work")
+	query, _ := runWatchWithProjects(t, cwd, []watchProject{{ID: "project-1", RootPath: root}})
+	if got := query.Get("project_id"); got != "project-1" {
+		t.Fatalf("events project_id = %q, want %q", got, "project-1")
+	}
+}
+
+func TestWatchOmitsProjectIDWhenCWDDoesNotMatch(t *testing.T) {
+	cwd := t.TempDir()
+	query, _ := runWatchWithProjects(t, cwd, []watchProject{{ID: "other", RootPath: t.TempDir()}})
+	if _, ok := query["project_id"]; ok {
+		t.Fatalf("events unexpectedly received project_id = %q", query.Get("project_id"))
 	}
 }
 
@@ -190,6 +274,46 @@ func TestWatchReadsSnapshotAfterDisconnect(t *testing.T) {
 	mu.Unlock()
 	if gotInboxCalls < 2 || gotEventCalls < 2 {
 		t.Fatalf("requests after disconnect = inbox %d, events %d, want both at least 2", gotInboxCalls, gotEventCalls)
+	}
+}
+
+func TestWatchFiltersOtherProjectFromSnapshot(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var output cancelOnOutput
+	output.cancel = cancel
+	output.needles = []string{"atct decision answered (decision_id: unscoped)"}
+
+	root := t.TempDir()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/projects":
+			w.Header().Set("Content-Type", "application/json")
+			if err := json.NewEncoder(w).Encode([]watchProject{{ID: "project-1", RootPath: root}}); err != nil {
+				t.Errorf("encode projects: %v", err)
+			}
+		case "/api/inbox":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"unapplied_decisions":[{"id":"other","project_id":"other-project","default_applied_at":null},{"id":"assigned","project_id":"project-1","default_applied_at":null},{"id":"unscoped","project_id":"","default_applied_at":null}]}`)
+		case "/api/events":
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			<-r.Context().Done()
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	if err := watchWithURLsAndProject(ctx, []string{server.URL}, &output, server.Client(), time.Millisecond, root); err != nil {
+		t.Fatalf("watchWithURLsAndProject() error = %v", err)
+	}
+
+	want := "atct decision answered (decision_id: assigned)\n" +
+		"atct decision answered (decision_id: unscoped)\n"
+	if got := output.String(); got != want {
+		t.Fatalf("watch output = %q, want %q", got, want)
 	}
 }
 
