@@ -106,9 +106,67 @@ func TestInboxAttentionTasksIncludeProjectIdentityPerTask(t *testing.T) {
 type decisionViewResponse struct {
 	domain.Decision
 	ProjectID        string `json:"project_id"`
+	GoalTitle        string `json:"goal_title"`
 	SettledByDefault bool   `json:"settled_by_default"`
 	DefaultOption    string `json:"default_option"`
 	DefaultAfterMs   *int64 `json:"default_after_ms"`
+}
+
+func TestHTTPInboxIncludesGoalTitlePerDecision(t *testing.T) {
+	f := newBareFixture(t)
+	first, err := f.store.AskDecision(f.ctx, store.AskInput{
+		GoalID:   f.goal.ID,
+		Kind:     domain.DecisionKind("question"),
+		Question: "First goal question",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherProject, err := f.store.CreateProject(f.ctx, "other", t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherGoal, err := f.store.CreateGoal(f.ctx, otherProject.ID, "Other goal", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := f.store.AskDecision(f.ctx, store.AskInput{
+		GoalID:   otherGoal.ID,
+		Kind:     domain.DecisionKind("question"),
+		Question: "Second goal question",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+	status, _, body := doRequest(t, srv.Client(), http.MethodGet, srv.URL+"/api/inbox", nil)
+	if status != http.StatusOK {
+		t.Fatalf("inbox status = %d; body=%s", status, body)
+	}
+	var response struct {
+		OpenDecisions []decisionViewResponse `json:"open_decisions"`
+	}
+	if err := json.Unmarshal(body, &response); err != nil {
+		t.Fatal(err)
+	}
+	got := make(map[string]string, len(response.OpenDecisions))
+	for _, decision := range response.OpenDecisions {
+		got[decision.ID] = decision.GoalTitle
+	}
+	want := map[string]string{
+		first.ID:  f.goal.Title,
+		second.ID: otherGoal.Title,
+	}
+	if len(got) != len(want) {
+		t.Fatalf("open decision goal titles = %+v, want %+v", got, want)
+	}
+	for decisionID, wantTitle := range want {
+		if gotTitle := got[decisionID]; gotTitle != wantTitle {
+			t.Fatalf("decision %s goal title = %q, want %q", decisionID, gotTitle, wantTitle)
+		}
+	}
 }
 
 type goalDetailResponse struct {

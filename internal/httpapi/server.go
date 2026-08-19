@@ -43,6 +43,7 @@ type decisionView struct {
 	domain.Decision
 	ProjectID        string `json:"project_id"`
 	ProjectName      string `json:"project_name"`
+	GoalTitle        string `json:"goal_title"`
 	DefaultOption    string `json:"default_option"`
 	DefaultAfterMs   *int64 `json:"default_after_ms,omitempty"`
 	SettledByDefault bool   `json:"settled_by_default"`
@@ -268,9 +269,11 @@ func (s *Server) handleInbox(w http.ResponseWriter, r *http.Request) {
 	}
 	goalProjectIDs := make(map[string]string, len(goals))
 	goalProjectNames := make(map[string]string, len(goals))
+	goalTitles := make(map[string]string, len(goals))
 	for _, goal := range goals {
 		goalProjectIDs[goal.ID] = goal.ProjectID
 		goalProjectNames[goal.ID] = projectNames[goal.ProjectID]
+		goalTitles[goal.ID] = goal.Title
 	}
 
 	openByTask := indexDecisions(openDecisions)
@@ -280,6 +283,7 @@ func (s *Server) handleInbox(w http.ResponseWriter, r *http.Request) {
 			Decision:         decision,
 			ProjectID:        goalProjectIDs[decision.GoalID],
 			ProjectName:      goalProjectNames[decision.GoalID],
+			GoalTitle:        goalTitles[decision.GoalID],
 			DefaultOption:    decision.DefaultOption,
 			DefaultAfterMs:   decision.DefaultAfterMs,
 			SettledByDefault: decision.DefaultAppliedAt != nil,
@@ -291,6 +295,7 @@ func (s *Server) handleInbox(w http.ResponseWriter, r *http.Request) {
 			Decision:         decision,
 			ProjectID:        goalProjectIDs[decision.GoalID],
 			ProjectName:      goalProjectNames[decision.GoalID],
+			GoalTitle:        goalTitles[decision.GoalID],
 			DefaultOption:    decision.DefaultOption,
 			DefaultAfterMs:   decision.DefaultAfterMs,
 			SettledByDefault: decision.DefaultAppliedAt != nil,

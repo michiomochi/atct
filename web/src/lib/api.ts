@@ -54,6 +54,7 @@ export interface Task {
 export interface Decision {
   id: string;
   goal_id: string;
+  goal_title: string;
   project_name?: string;
   task_id?: string;
   kind: string;

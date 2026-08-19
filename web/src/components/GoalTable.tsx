@@ -41,7 +41,6 @@ export function GoalTable({ goals, showProject = true }: Props) {
                 >
                   {goal.title}
                 </a>
-                <p className="mt-1 font-mono text-xs text-ink-500">{goal.id}</p>
               </Table.Cell>
               {showProject && <Table.Cell className="px-3 py-4 text-ink-700">{goal.project_name || "-"}</Table.Cell>}
               <Table.Cell className="px-3 py-4 text-ink-700">{statusLabel(locale, goal.status)}</Table.Cell>
