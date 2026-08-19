@@ -22,16 +22,26 @@
 | `/atct:stop` | スキル | エージェント側の停止。watch を止める。**daemon には触らない** |
 | `atct daemon start` | CLI | daemon を起動する（現 `atct ensure`） |
 | `atct daemon stop` | CLI | daemon を停止する（現 `atct stop`） |
-| `atct daemon run` | CLI | daemon を前面で実行する（現 `atct daemon`） |
 
 これで「止める」対象が名前から読める。**README とスキルに書いた「違いの説明」は削除する。**
+
+人間が覚えるのはこの 4 つだけにする。
+
+### 前面実行は内部専用の入口として残す
+
+`atct daemon`（引数なし）は前面実行のままにするが、**使い方の一覧に出さない。**
+
+理由は実装である。`Ensure` は自分自身を `exec.Command(executable, "daemon")` として
+`setsid` で起動する。**前面実行の入口は `atct daemon start` の実装が依存している経路**で、
+消せない。ログは `cmd.Stdout` でファイルに向いているので、人間が前面で動かす理由も無い。
+
+これにより改名の影響は `ensure` と `stop` の 2 つに縮み、`Ensure` の内部呼び出しは
+書き換えずに済む。
 
 ### 廃止するもの
 
 - `atct ensure` → `atct daemon start`
 - `atct stop` → `atct daemon stop`
-- 引数なしの `atct daemon` → `daemon requires an action: start, stop, or run`
-  （`project` と `goal` が既にこの作法である）
 
 **廃止したコマンドは黙って旧挙動を続けない。** エラーを返し、新しい名前を案内する。
 新体系では `atct stop` が「エージェント側の停止」を意味するので、それが daemon を
@@ -51,10 +61,11 @@ hook が無傷なので、既存プラグインを壊さずに移行できる。
 
 ## 検証
 
-- `atct daemon start` / `stop` / `run` がそれぞれ従来の `ensure` / `stop` / `daemon` と
-  同じ結果になること
-- `atct daemon` が使い方を出して終了コード 2 で終わること
+- `atct daemon start` / `stop` が従来の `ensure` / `stop` と同じ結果になること
+- **`atct daemon start` が実際に daemon を起こせること**（内部の前面実行の入口を
+  壊していないことの確認。ここが壊れると起動そのものが死ぬ）
 - `atct stop` と `atct ensure` がエラーになり、**新しい名前を案内すること**
+- 使い方の表示に前面実行の入口が出ないこと
 - `tests/wrapper_test.bash` が通ること（ラッパー経由の終了コードが固定されている）
 
 実 HOME（`~/.atct`）では検証しない。一時ディレクトリを使う。
