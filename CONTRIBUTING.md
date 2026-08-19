@@ -81,8 +81,17 @@ Requirements:
 - Go 1.26 or later
 - Node 22.12 or later and pnpm, **only if you are changing the web UI**
 
-Prebuilt frontend assets are committed, so contributors working only on Go can build without a Node
-toolchain.
+Frontend assets are generated during the build and are not committed. On a fresh checkout, generate
+them once before building the Go binary locally:
+
+```sh
+cd web
+pnpm install
+pnpm build      # writes web/dist/, which is embedded into the binary
+```
+
+If you skip this step, the binary embeds only the `.gitkeep` sentinel and the web UI is blank.
+GoReleaser runs the equivalent frozen-lockfile install and frontend build automatically.
 
 ```sh
 go build ./...
@@ -90,11 +99,10 @@ go test ./... -race
 go vet ./...
 ```
 
-For the web UI:
+After changing the web UI, rebuild the generated assets:
 
 ```sh
 cd web
-pnpm install
 pnpm build      # writes web/dist/, which is embedded into the binary
 ```
 

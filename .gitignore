@@ -13,11 +13,15 @@ doc/research/
 # Frontend
 node_modules/
 .astro/
+# The frontend build output is generated at release time, but the directory has
+# to survive: go:embed rejects a missing or empty one. See web/embed.go.
+web/dist/*
+!web/dist/.gitkeep
 # pnpm writes its content-addressable store here when the repository root is
 # used as the store directory.
 .pnpm-store/
 # GoReleaser output. Anchored to the repository root so it does not swallow
-# web/dist/, which is committed on purpose.
+# web/dist/.
 /dist/
 
 # macOS

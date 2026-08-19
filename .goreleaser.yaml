@@ -1,5 +1,10 @@
 version: 2
 
+before:
+  hooks:
+    - sh -c "cd web && pnpm install --frozen-lockfile"
+    - sh -c "cd web && pnpm build"
+
 builds:
   - id: atct
     main: ./cmd/atct

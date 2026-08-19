@@ -7,5 +7,7 @@ export default defineConfig({
   integrations: [react()],
   vite: {
     plugins: [tailwindcss()],
+    // Keep the sentinel file that lets go:embed compile on a fresh checkout.
+    build: { emptyOutDir: false },
   },
 });
