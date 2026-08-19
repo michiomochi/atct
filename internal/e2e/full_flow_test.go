@@ -148,12 +148,17 @@ func callDaemon(t *testing.T, s *e2eStack, method string, params any, out any) {
 
 func createProject(t *testing.T, s *e2eStack) domain.Project {
 	t.Helper()
+	return createProjectAt(t, s, "atct", e2eRoot)
+}
+
+func createProjectAt(t *testing.T, s *e2eStack, name, rootPath string) domain.Project {
+	t.Helper()
 	var project domain.Project
 	callDaemon(t, s, "project.create", map[string]any{
-		"name":      "atct",
-		"root_path": e2eRoot,
+		"name":      name,
+		"root_path": rootPath,
 	}, &project)
-	if project.ID == "" || project.RootPath != e2eRoot {
+	if project.ID == "" || project.RootPath != rootPath {
 		t.Fatalf("project.create returned %+v", project)
 	}
 	return project
@@ -161,9 +166,14 @@ func createProject(t *testing.T, s *e2eStack) domain.Project {
 
 func createGoal(t *testing.T, s *e2eStack) domain.Goal {
 	t.Helper()
+	return createGoalAt(t, s, e2eRoot)
+}
+
+func createGoalAt(t *testing.T, s *e2eStack, cwd string) domain.Goal {
+	t.Helper()
 	var goal domain.Goal
 	callDaemon(t, s, "goal.create", map[string]any{
-		"cwd":         e2eRoot,
+		"cwd":         cwd,
 		"title":       "Complete the end-to-end flow",
 		"description": "Verify the daemon and human-facing routes together",
 	}, &goal)
@@ -635,6 +645,53 @@ func TestSessionCanAdoptAnsweredDecision(t *testing.T) {
 	decodeJSON(t, raw, &inbox)
 	if len(inbox.UnappliedDecisions) != 0 {
 		t.Fatalf("unapplied_decisions = %+v, want empty after adoption", inbox.UnappliedDecisions)
+	}
+}
+
+func TestGoalListScopesDecisionsToProject(t *testing.T) {
+	stack := newE2EStack(t)
+	project := createProject(t, stack)
+	otherProject := createProjectAt(t, stack, "other", "/workspace/other")
+	goal := createGoal(t, stack)
+	otherGoal := createGoalAt(t, stack, otherProject.RootPath)
+	if goal.ProjectID != project.ID || otherGoal.ProjectID != otherProject.ID {
+		t.Fatalf("goal project IDs = %q and %q, want %q and %q", goal.ProjectID, otherGoal.ProjectID, project.ID, otherProject.ID)
+	}
+	tasks := declareTasks(t, stack, goal.ID, []string{"Adopt the answered decision"})
+	otherTasks := declareTasks(t, stack, otherGoal.ID, []string{"Keep the other project isolated"})
+	decision := askParked(t, stack, goal.ID, tasks[0].ID, "scope-run-a")
+	otherDecision := askParked(t, stack, otherGoal.ID, otherTasks[0].ID, "scope-run-b")
+
+	for _, decisionID := range []string{decision.DecisionID, otherDecision.DecisionID} {
+		status, raw := httpJSON(t, stack, http.MethodPost, "/api/decisions/"+decisionID+"/answer", map[string]string{
+			"answer_label": "continue",
+			"answer_text":  "Keep the decision scoped to its project",
+		})
+		if status != http.StatusOK {
+			t.Fatalf("POST answer status = %d, body %s", status, raw)
+		}
+	}
+
+	var orphaned e2eGoalList
+	callDaemon(t, stack, "goal.list", map[string]any{
+		"cwd": e2eRoot, "run_id": "scope-run-new",
+	}, &orphaned)
+	if !containsDecision(orphaned.OrphanedDecisions, decision.DecisionID) {
+		t.Fatalf("orphaned_decisions does not contain own decision: %+v", orphaned.OrphanedDecisions)
+	}
+	if containsDecision(orphaned.OrphanedDecisions, otherDecision.DecisionID) {
+		t.Fatalf("orphaned_decisions contains other project's decision %s: %+v", otherDecision.DecisionID, orphaned.OrphanedDecisions)
+	}
+
+	var answered e2eGoalList
+	callDaemon(t, stack, "goal.list", map[string]any{
+		"cwd": e2eRoot, "run_id": "scope-run-a",
+	}, &answered)
+	if !containsDecision(answered.AnsweredDecisions, decision.DecisionID) {
+		t.Fatalf("answered_decisions does not contain own decision: %+v", answered.AnsweredDecisions)
+	}
+	if containsDecision(answered.AnsweredDecisions, otherDecision.DecisionID) {
+		t.Fatalf("answered_decisions contains other project's decision %s: %+v", otherDecision.DecisionID, answered.AnsweredDecisions)
 	}
 }
 

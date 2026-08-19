@@ -192,7 +192,7 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		if err != nil {
 			return nil, err
 		}
-		orphaned, err := d.store.ListUnappliedDecisions(ctx)
+		orphaned, err := d.store.ListUnappliedDecisionsForProject(ctx, ns.ID)
 		if err != nil {
 			return nil, err
 		}
