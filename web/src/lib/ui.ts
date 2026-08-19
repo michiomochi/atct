@@ -105,6 +105,7 @@ const statusKeys: Record<string, TranslationKey> = {
   doing: "status.task.doing",
   done: "status.task.done",
   blocked: "status.task.blocked",
+  dropped: "status.task.dropped",
   active: "status.task.active",
   completed: "status.task.completed",
   open: "status.decision.open",

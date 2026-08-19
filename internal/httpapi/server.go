@@ -70,6 +70,7 @@ type goalResponse struct {
 
 type decisionHistoryView struct {
 	DecisionID       string     `json:"decision_id"`
+	TaskID           string     `json:"task_id"`
 	Question         string     `json:"question"`
 	AnswerLabel      string     `json:"answer_label"`
 	AnswerText       string     `json:"answer_text"`
@@ -395,6 +396,7 @@ func (s *Server) handleGoal(w http.ResponseWriter, r *http.Request, goalID strin
 	for _, decision := range appliedDecisions {
 		decisionHistory = append(decisionHistory, decisionHistoryView{
 			DecisionID:       decision.ID,
+			TaskID:           decision.TaskID,
 			Question:         decision.Question,
 			AnswerLabel:      decision.AnswerLabel,
 			AnswerText:       decision.AnswerText,

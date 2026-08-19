@@ -844,6 +844,141 @@ func TestHTTPGoalDetailIncludesAllTasksWithoutCrossGoalMixing(t *testing.T) {
 	}
 }
 
+func TestHTTPGoalDetailDecisionHistoryIncludesTaskIDs(t *testing.T) {
+	f := newBareFixture(t)
+	tasks, err := f.store.DeclareTasks(f.ctx, f.goal.ID, "history-agent", "history-declare", []string{"first task", "second task"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	decisionsByTask := make(map[string]domain.Decision, len(tasks))
+	for i, task := range tasks {
+		decision, err := f.store.AskDecision(f.ctx, store.AskInput{
+			GoalID:   f.goal.ID,
+			TaskID:   task.ID,
+			Kind:     domain.DecisionKind("question"),
+			Question: fmt.Sprintf("Question for task %d", i),
+			RunID:    fmt.Sprintf("history-run-%d", i),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.store.AnswerDecision(f.ctx, store.AnswerInput{
+			DecisionID:  decision.ID,
+			AnswerLabel: fmt.Sprintf("answer-%d", i),
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if applied, err := f.store.PollDecisions(f.ctx, decision.RunID, decision.ID); err != nil {
+			t.Fatal(err)
+		} else if len(applied) != 1 {
+			t.Fatalf("applied decisions for task %s = %+v", task.ID, applied)
+		}
+		decisionsByTask[task.ID] = decision
+	}
+
+	taskless, err := f.store.AskDecision(f.ctx, store.AskInput{
+		GoalID:   f.goal.ID,
+		Kind:     domain.DecisionKind("question"),
+		Question: "Question without a task",
+		RunID:    "history-taskless-run",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.store.AnswerDecision(f.ctx, store.AnswerInput{
+		DecisionID: taskless.ID,
+		AnswerText: "taskless answer",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if applied, err := f.store.PollDecisions(f.ctx, taskless.RunID, taskless.ID); err != nil {
+		t.Fatal(err)
+	} else if len(applied) != 1 {
+		t.Fatalf("taskless applied decisions = %+v", applied)
+	}
+
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+	status, _, body := doRequest(t, srv.Client(), http.MethodGet, srv.URL+"/api/goals/"+f.goal.ID, nil)
+	if status != http.StatusOK {
+		t.Fatalf("goal status = %d; body=%s", status, body)
+	}
+
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatalf("decode goal detail: %v; body=%s", err, body)
+	}
+	historyRaw, ok := payload["decision_history"]
+	if !ok || bytes.Equal(bytes.TrimSpace(historyRaw), []byte("null")) {
+		t.Fatalf("decision_history is missing or null: %s", body)
+	}
+	var history []json.RawMessage
+	if err := json.Unmarshal(historyRaw, &history); err != nil {
+		t.Fatalf("decode decision_history: %v; history=%s", err, historyRaw)
+	}
+
+	entriesByDecision := make(map[string]map[string]json.RawMessage, len(history))
+	for _, raw := range history {
+		var entry map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &entry); err != nil {
+			t.Fatalf("decode history entry: %v; entry=%s", err, raw)
+		}
+		decisionIDRaw, ok := entry["decision_id"]
+		if !ok {
+			t.Fatalf("history entry has no decision_id: %s", raw)
+		}
+		var decisionID string
+		if err := json.Unmarshal(decisionIDRaw, &decisionID); err != nil {
+			t.Fatalf("decode history decision_id: %v; entry=%s", err, raw)
+		}
+		entriesByDecision[decisionID] = entry
+	}
+
+	for taskID, decision := range decisionsByTask {
+		entry, ok := entriesByDecision[decision.ID]
+		if !ok {
+			t.Fatalf("decision %s missing from history", decision.ID)
+		}
+		taskIDRaw, ok := entry["task_id"]
+		if !ok || bytes.Equal(bytes.TrimSpace(taskIDRaw), []byte("null")) {
+			t.Fatalf("history entry task_id is missing or null: %v", entry)
+		}
+		var gotTaskID string
+		if err := json.Unmarshal(taskIDRaw, &gotTaskID); err != nil {
+			t.Fatalf("decode history task_id: %v; entry=%s", err, entry)
+		}
+		if gotTaskID != taskID {
+			t.Fatalf("history task_id = %q, want %q; entry=%v", gotTaskID, taskID, entry)
+		}
+	}
+
+	tasklessEntry, ok := entriesByDecision[taskless.ID]
+	if !ok {
+		t.Fatalf("taskless decision %s missing from history", taskless.ID)
+	}
+	tasklessTaskID, ok := tasklessEntry["task_id"]
+	if !ok || bytes.Equal(bytes.TrimSpace(tasklessTaskID), []byte("null")) {
+		t.Fatalf("taskless history task_id is missing or null: %v", tasklessEntry)
+	}
+	var gotTasklessTaskID string
+	if err := json.Unmarshal(tasklessTaskID, &gotTasklessTaskID); err != nil {
+		t.Fatalf("decode taskless history task_id: %v; entry=%s", err, tasklessEntry)
+	}
+	if gotTasklessTaskID != "" {
+		t.Fatalf("taskless history task_id = %q, want empty string", gotTasklessTaskID)
+	}
+
+	firstHistory := entriesByDecision[decisionsByTask[tasks[0].ID].ID]
+	var firstTaskID string
+	if err := json.Unmarshal(firstHistory["task_id"], &firstTaskID); err != nil {
+		t.Fatal(err)
+	}
+	if firstTaskID == tasks[1].ID {
+		t.Fatalf("first task history points to second task: %q", firstTaskID)
+	}
+}
+
 func TestHTTPGoalDetailIncludesTasklessOpenDecision(t *testing.T) {
 	f := newBareFixture(t)
 	decision, err := f.store.AskDecision(f.ctx, store.AskInput{

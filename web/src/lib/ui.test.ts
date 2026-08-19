@@ -174,6 +174,11 @@ describe("localized UI labels", () => {
     expect(statusLabel(locale as Locale, status)).toBe(expected);
   });
 
+  it("translates dropped task statuses", () => {
+    expect(statusLabel("ja", "dropped")).toBe("取り下げ");
+    expect(statusLabel("ja", "dropped")).not.toBe("dropped");
+  });
+
   it.each([
     ["en", "decision", "Decision"],
     ["en", "completion", "Completion"],
