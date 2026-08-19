@@ -40,12 +40,9 @@ export function Dashboard() {
   const retry = () => void load();
 
   return (
-    <main className="space-y-10">
-      <div className="pb-6">
+    <main className="space-y-6">
+      <div>
         <h1 className="font-display text-3xl font-semibold tracking-tight text-ink-950">{t("dashboard.title")}</h1>
-        <p className="mt-3 max-w-2xl text-sm leading-6 text-ink-700">
-          {t("dashboard.description")}
-        </p>
       </div>
 
       <div className="space-y-10">
