@@ -148,28 +148,22 @@ func listenTestTCP(t *testing.T, addr string) net.Listener {
 	return listener
 }
 
-func TestParseArgsRejectsDeprecatedCommands(t *testing.T) {
-	for _, tt := range []struct {
-		command     string
-		replacement string
-	}{
-		{command: "ensure", replacement: "daemon start"},
-		{command: "stop", replacement: "daemon stop"},
-	} {
-		t.Run(tt.command, func(t *testing.T) {
+func TestParseArgsRejectsRemovedCommandsAsUnknown(t *testing.T) {
+	for _, command := range []string{"ensure", "stop"} {
+		t.Run(command, func(t *testing.T) {
 			var cfg cliConfig
 			var err error
 			output := captureStderr(t, func() {
-				cfg, err = parseArgs([]string{tt.command})
+				cfg, err = parseArgs([]string{command})
 			})
 			if err == nil {
-				t.Fatalf("parseArgs(%q) returned nil error with config %#v", tt.command, cfg)
+				t.Fatalf("parseArgs(%q) returned nil error with config %#v", command, cfg)
 			}
-			if !strings.Contains(output, "deprecated") {
-				t.Fatalf("parseArgs(%q) output = %q, want deprecated error", tt.command, output)
+			if !strings.Contains(output, `unknown subcommand "`+command+`"`) {
+				t.Fatalf("parseArgs(%q) output = %q, want unknown subcommand error", command, output)
 			}
-			if !strings.Contains(output, "atct "+tt.replacement) {
-				t.Fatalf("parseArgs(%q) output = %q, want replacement command %q", tt.command, output, tt.replacement)
+			if strings.Contains(output, "deprecated") {
+				t.Fatalf("parseArgs(%q) output = %q, must not mention deprecation", command, output)
 			}
 		})
 	}

@@ -47,8 +47,6 @@ var errInvalidArgs = errors.New("invalid command line")
 
 var validSubcommands = map[string]bool{
 	"daemon":  true,
-	"ensure":  true,
-	"stop":    true,
 	"project": true,
 	"goal":    true,
 	"context": true,
@@ -90,15 +88,6 @@ func parseArgs(args []string) (cliConfig, error) {
 		printUsage()
 		return cliConfig{}, errInvalidArgs
 	}
-	if sub == "ensure" {
-		fmt.Fprintln(os.Stderr, "atct ensure is deprecated; use `atct daemon start`")
-		return cliConfig{}, errInvalidArgs
-	}
-	if sub == "stop" {
-		fmt.Fprintln(os.Stderr, "atct stop is deprecated; use `atct daemon stop`")
-		return cliConfig{}, errInvalidArgs
-	}
-
 	rest := args[1:]
 	cfg := cliConfig{subcommand: sub}
 	if sub == "daemon" && len(rest) > 0 && !strings.HasPrefix(rest[0], "-") {

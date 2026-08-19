@@ -77,7 +77,7 @@ func StopWithWatchWarning(cfg Config, stderr io.Writer) (bool, error) {
 }
 
 // Stop terminates the recorded daemon and clears its files. Finding no daemon
-// is a normal outcome, not an error: `atct stop` twice in a row is something a
+// is a normal outcome, not an error: `atct daemon stop` twice in a row is something a
 // user does, and the second call should say so plainly.
 func Stop(cfg Config) (bool, error) {
 	lock, err := AcquireLock(cfg.Dir, LockTimeout)
