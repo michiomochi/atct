@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/michiomochi/atct/internal/domain"
 	"github.com/michiomochi/atct/internal/store"
@@ -210,6 +211,107 @@ func TestPendingCommandReturnsDecisionIDAndQuestion(t *testing.T) {
 	}
 	if !strings.Contains(output, "Which release channel should we use?") {
 		t.Fatalf("pendingCommand output does not contain question: %q", output)
+	}
+}
+
+func TestPendingCommandDoesNotCallDefaultAnswerHuman(t *testing.T) {
+	dir, projectRoot := newPendingFixture(t)
+	s := openPendingStore(t, dir)
+	ctx := context.Background()
+	project, err := s.ResolveProject(ctx, projectRoot)
+	if err != nil {
+		t.Fatalf("ResolveProject: %v", err)
+	}
+	goal, err := s.CreateGoal(ctx, project.ID, "Wait for defaults", "")
+	if err != nil {
+		t.Fatalf("CreateGoal: %v", err)
+	}
+	addPendingTestDecision(t, s, ctx, goal.ID, "default-one", "Which default should be used first?", true)
+	addPendingTestDecision(t, s, ctx, goal.ID, "default-two", "Which default should be used second?", true)
+	if err := s.Close(); err != nil {
+		t.Fatalf("Store.Close: %v", err)
+	}
+
+	output, exitCode, err := pendingCommand(dir, projectRoot)
+	if err != nil {
+		t.Fatalf("pendingCommand: %v", err)
+	}
+	if exitCode != 0 {
+		t.Fatalf("pendingCommand exit code = %d, want 0", exitCode)
+	}
+	if strings.Contains(output, "A human answered") {
+		t.Fatalf("default-applied decisions were reported as human-answered: %q", output)
+	}
+	if !strings.Contains(output, "No one answered a decision you parked, so its default was applied.") {
+		t.Fatalf("pendingCommand did not report default application: %q", output)
+	}
+}
+
+func TestPendingCommandKeepsHumanAnswerReason(t *testing.T) {
+	dir, projectRoot := newPendingFixture(t)
+	s := openPendingStore(t, dir)
+	ctx := context.Background()
+	project, err := s.ResolveProject(ctx, projectRoot)
+	if err != nil {
+		t.Fatalf("ResolveProject: %v", err)
+	}
+	goal, err := s.CreateGoal(ctx, project.ID, "Wait for human answers", "")
+	if err != nil {
+		t.Fatalf("CreateGoal: %v", err)
+	}
+	addPendingTestDecision(t, s, ctx, goal.ID, "human-one", "Which human answer should be used first?", false)
+	addPendingTestDecision(t, s, ctx, goal.ID, "human-two", "Which human answer should be used second?", false)
+	if err := s.Close(); err != nil {
+		t.Fatalf("Store.Close: %v", err)
+	}
+
+	output, exitCode, err := pendingCommand(dir, projectRoot)
+	if err != nil {
+		t.Fatalf("pendingCommand: %v", err)
+	}
+	if exitCode != 0 {
+		t.Fatalf("pendingCommand exit code = %d, want 0", exitCode)
+	}
+	if !strings.Contains(output, pendingDecisionReason) {
+		t.Fatalf("pendingCommand did not report a human answer: %q", output)
+	}
+	if strings.Contains(output, "No one answered a decision you parked") {
+		t.Fatalf("human-answered decisions were reported as default-applied: %q", output)
+	}
+}
+
+func TestPendingCommandListsHumanReasonBeforeDefaultReason(t *testing.T) {
+	dir, projectRoot := newPendingFixture(t)
+	s := openPendingStore(t, dir)
+	ctx := context.Background()
+	project, err := s.ResolveProject(ctx, projectRoot)
+	if err != nil {
+		t.Fatalf("ResolveProject: %v", err)
+	}
+	goal, err := s.CreateGoal(ctx, project.ID, "Wait for either answer", "")
+	if err != nil {
+		t.Fatalf("CreateGoal: %v", err)
+	}
+	addPendingTestDecision(t, s, ctx, goal.ID, "mixed-human", "Which human answer is pending?", false)
+	addPendingTestDecision(t, s, ctx, goal.ID, "mixed-default", "Which default answer is pending?", true)
+	if err := s.Close(); err != nil {
+		t.Fatalf("Store.Close: %v", err)
+	}
+
+	output, exitCode, err := pendingCommand(dir, projectRoot)
+	if err != nil {
+		t.Fatalf("pendingCommand: %v", err)
+	}
+	if exitCode != 0 {
+		t.Fatalf("pendingCommand exit code = %d, want 0", exitCode)
+	}
+	humanIndex := strings.Index(output, pendingDecisionReason)
+	defaultIndex := strings.Index(output, "No one answered a decision you parked, so its default was applied.")
+	if humanIndex < 0 || defaultIndex < 0 {
+		t.Fatalf("pendingCommand did not include both decision reasons: %q", output)
+	}
+	if humanIndex > defaultIndex {
+		t.Fatalf("pendingCommand listed default reason before human reason: %q", output)
 	}
 }
 
@@ -443,4 +545,44 @@ func openPendingStore(t *testing.T, dir string) *store.Store {
 		t.Fatalf("store.Open: %v", err)
 	}
 	return s
+}
+
+func addPendingTestDecision(t *testing.T, s *store.Store, ctx context.Context, goalID, taskKey, question string, applyDefault bool) domain.Decision {
+	t.Helper()
+	tasks, err := s.DeclareTasks(ctx, goalID, "agent", taskKey, []string{"blocked task"})
+	if err != nil {
+		t.Fatalf("DeclareTasks: %v", err)
+	}
+	input := store.AskInput{
+		GoalID: goalID, TaskID: tasks[0].ID, Kind: domain.KindDecision,
+		Question: question, RunID: "run-" + taskKey,
+	}
+	if applyDefault {
+		zero := int64(0)
+		input.Options = []domain.Option{{Label: "default"}}
+		input.DefaultOption = "default"
+		input.DefaultAfterMs = &zero
+	}
+	decision, err := s.AskDecision(ctx, input)
+	if err != nil {
+		t.Fatalf("AskDecision: %v", err)
+	}
+	if applyDefault {
+		if _, err := s.ApplyExpiredDefaults(ctx, time.Now().Add(time.Second)); err != nil {
+			t.Fatalf("ApplyExpiredDefaults: %v", err)
+		}
+		decision, err = s.GetDecision(ctx, decision.ID)
+		if err != nil {
+			t.Fatalf("GetDecision: %v", err)
+		}
+		return decision
+	}
+	if _, err := s.AnswerDecision(ctx, store.AnswerInput{DecisionID: decision.ID, AnswerText: "human answer"}); err != nil {
+		t.Fatalf("AnswerDecision: %v", err)
+	}
+	decision, err = s.GetDecision(ctx, decision.ID)
+	if err != nil {
+		t.Fatalf("GetDecision: %v", err)
+	}
+	return decision
 }

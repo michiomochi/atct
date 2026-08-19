@@ -15,12 +15,13 @@ import (
 var errNoPendingDecisions = errors.New("no unapplied decisions")
 
 const (
-	atctRunIDEnv                = "ATCT_RUN_ID"
-	unfinishedClaimMarker       = "Unfinished claimed tasks:"
-	undeclaredGoalMarker        = "Undeclared active goals:"
-	pendingDecisionReason       = "A human answered a decision you parked. Call `atct_decision_poll` with each decision_id below, then continue the work that was waiting on it."
-	pendingClaimReason          = "A task claimed by this run is still open. If you forgot to close it, close it; if you are still working on it, continue."
-	pendingUndeclaredGoalReason = "An active goal has no tasks declared. Call `atct_task_declare` for each goal below, then continue the work."
+	atctRunIDEnv                 = "ATCT_RUN_ID"
+	unfinishedClaimMarker        = "Unfinished claimed tasks:"
+	undeclaredGoalMarker         = "Undeclared active goals:"
+	pendingDecisionReason        = "A human answered a decision you parked. Call `atct_decision_poll` with each decision_id below, then continue the work that was waiting on it."
+	pendingDefaultDecisionReason = "No one answered a decision you parked, so its default was applied. Call `atct_decision_poll` with each decision_id below, then continue the work that was waiting on it."
+	pendingClaimReason           = "A task claimed by this run is still open. If you forgot to close it, close it; if you are still working on it, continue."
+	pendingUndeclaredGoalReason  = "An active goal has no tasks declared. Call `atct_task_declare` for each goal below, then continue the work."
 )
 
 func currentRunID() string {
@@ -122,7 +123,8 @@ func pendingTextForProject(dir, cwd, projectName string, projectSpecified bool) 
 	}
 
 	var output strings.Builder
-	decisionReasonWritten := false
+	humanAnsweredDecisions := make([]domain.Decision, 0)
+	defaultAppliedDecisions := make([]domain.Decision, 0)
 	for _, decision := range decisions {
 		if decision.Status != domain.DecisionAnswered || decision.AppliedAt != nil {
 			continue
@@ -130,13 +132,27 @@ func pendingTextForProject(dir, cwd, projectName string, projectSpecified bool) 
 		if _, ok := projectGoalIDs[decision.GoalID]; !ok {
 			continue
 		}
-		if !decisionReasonWritten {
-			output.WriteString(pendingDecisionReason)
-			output.WriteString("\n\n")
-			decisionReasonWritten = true
+		if decision.DefaultAppliedAt != nil {
+			defaultAppliedDecisions = append(defaultAppliedDecisions, decision)
+			continue
 		}
-		fmt.Fprintf(&output, "- %s (decision_id: %s)\n", oneLine(decision.Question), decision.ID)
+		humanAnsweredDecisions = append(humanAnsweredDecisions, decision)
 	}
+	writeDecisionSection := func(reason string, section []domain.Decision) {
+		if len(section) == 0 {
+			return
+		}
+		if output.Len() > 0 {
+			output.WriteString("\n\n")
+		}
+		output.WriteString(reason)
+		output.WriteString("\n\n")
+		for _, decision := range section {
+			fmt.Fprintf(&output, "- %s (decision_id: %s)\n", oneLine(decision.Question), decision.ID)
+		}
+	}
+	writeDecisionSection(pendingDecisionReason, humanAnsweredDecisions)
+	writeDecisionSection(pendingDefaultDecisionReason, defaultAppliedDecisions)
 	if len(unfinishedTasks) > 0 {
 		if output.Len() > 0 {
 			output.WriteString("\n\n")

@@ -24,6 +24,15 @@ type contextSnapshot struct {
 
 var errNoContextWork = errors.New("no context work")
 
+const defaultAppliedDecisionMarker = " (default applied because no one answered)"
+
+func decisionAnswerMarker(decision domain.Decision) string {
+	if decision.DefaultAppliedAt != nil {
+		return defaultAppliedDecisionMarker
+	}
+	return ""
+}
+
 // contextText reads the local store directly. The context command is used by
 // SessionStart, so it must not start, stop, or upgrade a daemon just to print
 // the state that is already persisted in the database.
@@ -258,7 +267,7 @@ func renderContextLegacy(goals []contextGoal, decisions []domain.Decision) strin
 			fmt.Fprintf(&b, "- %s (decision_id: %s)\n", oneLine(decision.Question), oneLine(decision.ID))
 			answer := strings.TrimSpace(strings.Join([]string{decision.AnswerLabel, decision.AnswerText}, " - "))
 			if answer != "-" && answer != "" {
-				fmt.Fprintf(&b, "  answer: %s\n", oneLine(answer))
+				fmt.Fprintf(&b, "  answer: %s%s\n", oneLine(answer), decisionAnswerMarker(decision))
 			}
 		}
 	}
@@ -382,7 +391,7 @@ func renderContextForRun(goals []contextGoal, decisions []domain.Decision, runID
 		b.WriteString("Unapplied decisions:\n")
 		for _, decision := range filteredDecisions {
 			fmt.Fprintf(&b, "- %s (decision_id: %s)\n", oneLine(decision.Question), decision.ID)
-			fmt.Fprintf(&b, "  answer: %s - %s\n", oneLine(decision.AnswerLabel), oneLine(decision.AnswerText))
+			fmt.Fprintf(&b, "  answer: %s - %s%s\n", oneLine(decision.AnswerLabel), oneLine(decision.AnswerText), decisionAnswerMarker(decision))
 		}
 	}
 

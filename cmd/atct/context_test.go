@@ -126,6 +126,40 @@ func TestRenderContextIncludesUnappliedDecisionsAndPollTool(t *testing.T) {
 	}
 }
 
+func TestRenderContextMarksDefaultAppliedAnswers(t *testing.T) {
+	decisions := []domain.Decision{
+		{
+			ID: "decision-human", GoalID: "goal-123", Question: "Which human answer?",
+			AnswerLabel: "human", AnswerText: "human answer", Status: domain.DecisionAnswered,
+			AnsweredAt: ptrTime(time.Unix(1, 0)),
+		},
+		{
+			ID: "decision-default", GoalID: "goal-123", Question: "Which default answer?",
+			AnswerLabel: "default", AnswerText: "default answer", Status: domain.DecisionAnswered,
+			AnsweredAt: ptrTime(time.Unix(2, 0)), DefaultAppliedAt: ptrTime(time.Unix(3, 0)),
+		},
+	}
+	goals := []contextGoal{{
+		Goal: domain.Goal{ID: "goal-123", Title: "Ship context", Status: domain.GoalActive},
+	}}
+	for name, got := range map[string]string{
+		"current": renderContext(goals, decisions),
+		"legacy":  renderContextLegacy(goals, decisions),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if !strings.Contains(got, "answer: human - human answer") {
+				t.Fatalf("context omitted human answer: %q", got)
+			}
+			if strings.Contains(got, "answer: human - human answer (default applied because no one answered)") {
+				t.Fatalf("context marked human answer as default-applied: %q", got)
+			}
+			if !strings.Contains(got, "answer: default - default answer (default applied because no one answered)") {
+				t.Fatalf("context omitted default-applied marker: %q", got)
+			}
+		})
+	}
+}
+
 func TestContextIsSilentForUnregisteredProject(t *testing.T) {
 	dir := t.TempDir()
 	db, err := store.Open(filepath.Join(dir, "atct.db"))
