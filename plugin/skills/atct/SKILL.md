@@ -149,38 +149,25 @@ approved**, and six short fields beat one long one.
 human saw.** They set the goal from the symptom; they will look for it by the
 same words.
 
-## Say what happens if nobody answers
+## Act on reversible choices, ask about irreversible ones
 
-`default_option` names the option to take when the deadline in `default_after_ms`
-passes with no reply. The human's answer always wins if it arrives first; the
-default only fires on silence.
+Classify the decision before asking:
 
-**Set one on every question you can.** A question without a default stops the
-work until someone replies, which is the stall this tool exists to remove. The
-exception is narrow and comes below: a choice the human could not undo.
+- For a reversible choice, execute the recommendation first, then record it with
+  `atct_decision_ask` using `wait_ms=0` and `default_after_ms=0`. Do not stop to
+  wait for an answer. If the human chooses differently, create a new decision
+  to correct it; never overturn a settled decision.
+- For an irreversible choice, ask before acting: omit `default_option` and
+  `default_after_ms`, and wait for the human's approval. Use `wait_ms=0` to park
+  it while doing unrelated work.
 
-**A default belongs on the option that keeps going**, not on the cautious one.
-Reading silence as "stop" gives you back the stall you were trying to avoid.
+The test is whether the human can get the previous state back. A commit is
+undoable. A force push over work that exists nowhere else is not.
 
-**Only put a default on an option that can be undone.** Nothing checks this —
-ATCT cannot tell "proceed with A" from "drop the production database" — so it
-rests on you applying the same test as above: can the human get the previous
-state back?
-
-If the answer is no, **send the question with no default at all** and wait for
-their approval, however long that takes. A deadline on an irreversible choice is
-not a safeguard with a timer on it; it is the thing happening anyway, with a
-delay. Waiting is the point.
-
-**Waiting is not idling.** Park the question with `wait_ms=0` and go do the
-tasks that do not depend on it. The human comes back to a decision that is still
-theirs to make and to work that moved forward in the meantime. If every
-remaining task depends on this one answer, say so and stop — that is a real
-block, and it is worth their knowing about.
-
-Set the deadline to how long this particular question can reasonably wait.
-**Do not put thirty minutes on everything.** A deadline shorter than the human's
-actual response time takes the decision away from them while appearing to ask.
+**A deadline on an irreversible choice is not a safeguard with a timer on it; it
+is the thing happening anyway, with a delay.** That is why those get no default
+at all. And if every remaining task depends on that one answer, say so and stop —
+that is a real block, and it is worth the human knowing about.
 
 ## Apply what you were told
 
