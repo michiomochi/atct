@@ -19,7 +19,7 @@ export function DecisionHistoryTable({ decisions, omittedCount }: Props) {
   const [revisionOptions, setRevisionOptions] = useState("");
   const [revisionSubmitting, setRevisionSubmitting] = useState(false);
   const [revisionMessage, setRevisionMessage] = useState<{ decisionID: string; text: string; error: boolean } | null>(null);
-  const changeAssumptionLabel = t("goal.history.changeAssumption", "Change assumption");
+  const changeAssumptionLabel = t("goal.history.changeAssumption");
 
   const submitRevision = async (decisionID: string) => {
     const options = revisionOptions
@@ -27,7 +27,7 @@ export function DecisionHistoryTable({ decisions, omittedCount }: Props) {
       .map((label): Option => ({ label: label.trim(), description: "", consequence: "" }))
       .filter((option) => option.label !== "");
     if (options.length === 0) {
-      setRevisionMessage({ decisionID, text: "Enter at least one new option.", error: true });
+      setRevisionMessage({ decisionID, text: t("goal.history.revision.invalid"), error: true });
       return;
     }
 
@@ -35,13 +35,13 @@ export function DecisionHistoryTable({ decisions, omittedCount }: Props) {
     setRevisionMessage(null);
     try {
       await reviseDecision(decisionID, { options });
-      setRevisionMessage({ decisionID, text: "New decision created.", error: false });
+      setRevisionMessage({ decisionID, text: t("goal.history.revision.created"), error: false });
       setRevisingDecisionID(null);
       setRevisionOptions("");
     } catch (error) {
       setRevisionMessage({
         decisionID,
-        text: error instanceof Error ? error.message : "Could not create a new decision.",
+        text: error instanceof Error ? error.message : t("goal.history.revision.error"),
         error: true,
       });
     } finally {
@@ -99,7 +99,7 @@ export function DecisionHistoryTable({ decisions, omittedCount }: Props) {
                           className="w-full rounded border border-line px-2 py-1 text-sm"
                           value={revisionOptions}
                           onChange={(event) => setRevisionOptions(event.target.value)}
-                          placeholder="New options, separated by commas"
+                          placeholder={t("goal.history.revision.placeholder")}
                           disabled={revisionSubmitting}
                         />
                         <div className="flex gap-2">
@@ -108,7 +108,7 @@ export function DecisionHistoryTable({ decisions, omittedCount }: Props) {
                             type="submit"
                             disabled={revisionSubmitting}
                           >
-                            {revisionSubmitting ? "Creating…" : "Create decision"}
+                            {revisionSubmitting ? t("goal.history.revision.creating") : t("goal.history.revision.create")}
                           </button>
                           <button
                             className="rounded border border-line px-2 py-1 text-xs font-semibold text-ink-700"
@@ -120,7 +120,7 @@ export function DecisionHistoryTable({ decisions, omittedCount }: Props) {
                             }}
                             disabled={revisionSubmitting}
                           >
-                            Cancel
+                            {t("goal.history.revision.cancel")}
                           </button>
                         </div>
                       </form>

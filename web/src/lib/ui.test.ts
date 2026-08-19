@@ -10,6 +10,7 @@ import needsDecisionSource from "../components/NeedsDecisionList.tsx?raw";
 import sectionSource from "../components/Section.tsx?raw";
 import stateMessageSource from "../components/StateMessage.tsx?raw";
 import taskTableSource from "../components/TaskTable.tsx?raw";
+import taskDetailModalSource from "../components/TaskDetailModal.tsx?raw";
 import attentionTaskSource from "../components/AttentionTaskTable.tsx?raw";
 import { formatDateTime, formatDuration, type Locale } from "../i18n";
 import type { Goal } from "./api";
@@ -19,7 +20,9 @@ import {
   decisionKindLabel,
   decisionRecommendationLabel,
   decisionSettlementLabel,
+  filterDecisionsByTask,
   findOpenCompletion,
+  hasCompletionReport,
   isDecisionEventName,
   resolveGoalID,
   statusLabel,
@@ -57,6 +60,41 @@ describe("groupGoalsByProject", () => {
       ["Alpha", [alphaGoal]],
       ["Zeta", [zetaGoal, zetaFollowUp]],
     ]);
+  });
+});
+
+describe("goal detail helpers", () => {
+  it("reports whether any of the six completion fields is filled", () => {
+    const emptyReport = {
+      work_done: "",
+      now_possible: "  ",
+      how_to_verify: "",
+      surprises: "",
+      needs_review: "",
+      next_steps: "",
+    };
+
+    expect(hasCompletionReport(emptyReport)).toBe(false);
+    expect(hasCompletionReport({ ...emptyReport, needs_review: "Check the migration" })).toBe(true);
+  });
+
+  it("keeps only decisions belonging to the requested task", () => {
+    const taskOneDecision = { id: "decision-1", task_id: "task-1" };
+    const taskTwoDecision = { id: "decision-2", task_id: "task-2" };
+
+    expect(filterDecisionsByTask([taskOneDecision, taskTwoDecision], "task-1")).toEqual([taskOneDecision]);
+    expect(filterDecisionsByTask([taskOneDecision, taskTwoDecision], "task-2")).toEqual([taskTwoDecision]);
+    expect(filterDecisionsByTask([taskOneDecision, taskTwoDecision], "task-3")).toEqual([]);
+  });
+
+  it("does not include other-task or unattached decisions", () => {
+    const taskOneDecision = { id: "decision-1", task_id: "task-1" };
+    const taskTwoDecision = { id: "decision-2", task_id: "task-2" };
+    const unattachedDecision = { id: "decision-unattached", task_id: "" };
+    const decisions = [taskOneDecision, taskTwoDecision, unattachedDecision];
+
+    expect(filterDecisionsByTask(decisions, "task-1")).toEqual([taskOneDecision]);
+    expect(filterDecisionsByTask(decisions, "")).toEqual([]);
   });
 });
 
@@ -274,15 +312,23 @@ describe("goal detail answer flows", () => {
     expect(findOpenCompletion([{ id: "done-1", kind: "completion", status: "applied" }])).toBeUndefined();
   });
 
-  it("keeps decision answers vertical while Now and Next stay tabular", () => {
-    expect(goalDetailSource).toContain("NeedsDecisionList");
-    expect(goalDetailSource).not.toContain("<TaskTable tasks={data.needs_decision}");
+  it("renders one ordered task list and moves decisions into task details", () => {
+    expect(goalDetailSource).not.toContain("NeedsDecisionList");
+    expect(goalDetailSource).not.toContain("xl:grid-cols-3");
+    expect(goalDetailSource).toContain("tasks={data.goal.goal.tasks}");
+    expect(goalDetailSource).toContain('mode="goal"');
+    expect(goalDetailSource).toContain("decisionHistory={data.goal.decision_history}");
+    expect(taskTableSource).toContain('mode: "now" | "needs_decision" | "next" | "goal"');
+    expect(taskTableSource).toContain("left.order - right.order");
+    expect(taskDetailModalSource).toContain("DialogRoot");
+    expect(taskDetailModalSource).toContain("DialogTrigger");
+    expect(taskDetailModalSource).toContain("DialogClose");
+    expect(taskDetailModalSource).toContain("filterDecisionsByTask");
+    expect(taskDetailModalSource).toContain("taskOpenDecisions.length > 0");
     expect(needsDecisionSource).toContain('data-testid="needs-decision-list"');
     expect(needsDecisionSource).not.toContain("<Table");
     expect(needsDecisionSource).not.toContain("table-scroll");
     expect(needsDecisionSource).not.toContain("bg-surface p-4");
-    expect(goalDetailSource).toContain('<TaskTable tasks={data.goal.now} mode="now"');
-    expect(goalDetailSource).toContain('<TaskTable tasks={data.goal.next} mode="next"');
   });
 
   it("exposes the completion approval API in Goal detail", () => {
@@ -296,7 +342,9 @@ describe("goal detail answer flows", () => {
 
   it("keys the remaining Goal detail framing strings", () => {
     expect(goalDetailSource).toContain("useTranslation");
-    expect(goalDetailSource).toContain('t("goal.column.now")');
+    expect(goalDetailSource).toContain('t("goal.tasks.title")');
+    expect(goalDetailSource).toContain('t("goal.column.status")');
+    expect(goalDetailSource).toContain('t("goal.column.updatedAt")');
     expect(taskTableSource).toContain('t("task.claim.release")');
     expect(taskTableSource).toContain('t("duration.none")');
     expect(decisionFormSource).toContain('t("form.answer.submit")');

@@ -83,6 +83,7 @@ export interface TaskView extends Task {
 
 export interface DecisionHistoryEntry {
   decision_id: string;
+  task_id?: string;
   question: string;
   answer_label: string;
   answer_text: string;

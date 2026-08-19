@@ -2,17 +2,20 @@ import { Button } from "@cloudflare/kumo/components/button";
 import { Table } from "@cloudflare/kumo/components/table";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import type { Decision, TaskView } from "../lib/api";
+import type { Decision, DecisionHistoryEntry, TaskView } from "../lib/api";
 import { ApiError, releaseTask } from "../lib/api";
-import { formatDuration } from "../i18n";
+import { formatDateTime, formatDuration } from "../i18n";
 import { statusLabel } from "../lib/ui";
 import { DecisionAnswerForm } from "./DecisionAnswerForm";
 import { EmptyState } from "./StateMessage";
+import { TaskDetailModal } from "./TaskDetailModal";
 
 interface Props {
   tasks: TaskView[];
-  mode: "now" | "needs_decision" | "next";
+  mode: "now" | "needs_decision" | "next" | "goal";
   onRefresh: () => void;
+  openDecisions?: Decision[];
+  decisionHistory?: DecisionHistoryEntry[];
 }
 
 const columnScope = { scope: "col" } as const;
@@ -72,16 +75,79 @@ function TaskTitle({ task }: { task: TaskView }) {
   );
 }
 
+function GoalTaskTitle({
+  task,
+  openDecisions,
+  decisionHistory,
+  onRefresh,
+}: {
+  task: TaskView;
+  openDecisions: Decision[];
+  decisionHistory: DecisionHistoryEntry[];
+  onRefresh: () => void;
+}) {
+  return (
+    <TaskDetailModal
+      task={task}
+      openDecisions={openDecisions}
+      decisionHistory={decisionHistory}
+      onUpdated={onRefresh}
+    >
+      <span className="text-clamp-2 block max-w-[32rem] break-words font-medium text-ink-950" title={task.title}>
+        {task.title}
+      </span>
+    </TaskDetailModal>
+  );
+}
+
 function DecisionCell({ decision, onRefresh }: { decision: Decision; onRefresh: () => void }) {
   return <DecisionAnswerForm decision={decision} onUpdated={onRefresh} />;
 }
 
-export function TaskTable({ tasks, mode, onRefresh }: Props) {
+export function TaskTable({ tasks, mode, onRefresh, openDecisions = [], decisionHistory = [] }: Props) {
   const { t, i18n } = useTranslation();
   const locale = i18n.language.startsWith("ja") ? "ja" : "en";
   if (tasks.length === 0) {
-    const message = mode === "needs_decision" ? t("task.empty.needsDecision") : t("task.empty.column");
+    const message = mode === "goal"
+      ? t("task.empty.goal")
+      : mode === "needs_decision"
+        ? t("task.empty.needsDecision")
+        : t("task.empty.column");
     return <EmptyState>{message}</EmptyState>;
+  }
+
+  if (mode === "goal") {
+    const orderedTasks = [...tasks].sort((left, right) => left.order - right.order);
+    return (
+      <div className="table-scroll">
+        <Table className="min-w-[52rem] w-full border-collapse text-left text-sm">
+          <caption className="sr-only">{t("task.caption.list")}</caption>
+          <Table.Header className="border-b-2 border-ink-300 text-xs uppercase tracking-wide text-ink-700">
+            <Table.Row>
+              <Table.Head {...columnScope} className="px-3 py-3 font-semibold">{t("task.column.task")}</Table.Head>
+              <Table.Head {...columnScope} className="w-40 px-3 py-3 font-semibold">{t("task.column.status")}</Table.Head>
+              <Table.Head {...columnScope} className="w-48 px-3 py-3 font-semibold">{t("task.column.updatedAt")}</Table.Head>
+            </Table.Row>
+          </Table.Header>
+          <Table.Body>
+            {orderedTasks.map((task) => (
+              <Table.Row className="border-b border-line align-top last:border-b-0" key={task.id}>
+                <Table.Cell className="min-w-0 px-3 py-4">
+                  <GoalTaskTitle
+                    task={task}
+                    openDecisions={openDecisions}
+                    decisionHistory={decisionHistory}
+                    onRefresh={onRefresh}
+                  />
+                </Table.Cell>
+                <Table.Cell className="px-3 py-4 text-ink-700">{statusLabel(locale, task.status)}</Table.Cell>
+                <Table.Cell className="whitespace-nowrap px-3 py-4 text-ink-700">{formatDateTime(locale, task.updated_at)}</Table.Cell>
+              </Table.Row>
+            ))}
+          </Table.Body>
+        </Table>
+      </div>
+    );
   }
 
   const needsDecision = mode === "needs_decision";

@@ -11,15 +11,15 @@ import {
   type Goal,
   type GoalResponse,
 } from "../lib/api";
+import { formatDateTime } from "../i18n";
 import {
   findOpenCompletion,
+  hasCompletionReport,
   resolveGoalID,
+  statusLabel,
+  type CompletionReportFields,
 } from "../lib/ui";
-import { NeedsDecisionList } from "./NeedsDecisionList";
-import { DecisionHistoryTable } from "./DecisionHistoryTable";
-import { UnattachedDecisionList } from "./UnattachedDecisionList";
 import { AreaLoading, ErrorState } from "./StateMessage";
-import { Section } from "./Section";
 import { TaskTable } from "./TaskTable";
 
 interface Props {
@@ -34,7 +34,6 @@ type LoadState =
 interface GoalDetailData {
   goal: GoalResponse;
   completion?: Decision;
-  unattachedDecisions: Decision[];
 }
 
 type CompletionAction = "approve" | "reject";
@@ -54,7 +53,7 @@ const completionReportFields = [
 
 function CompletionReport({ goal }: { goal: Goal }) {
   const { t } = useTranslation();
-  const structuredReport = {
+  const structuredReport: CompletionReportFields = {
     work_done: goal.work_done,
     now_possible: goal.now_possible,
     how_to_verify: goal.how_to_verify,
@@ -62,10 +61,11 @@ function CompletionReport({ goal }: { goal: Goal }) {
     needs_review: goal.needs_review,
     next_steps: goal.next_steps,
   };
-  const allFieldsEmpty = Object.values(structuredReport).every((value) => value.trim() === "");
-  const report = allFieldsEmpty && goal.result_summary.trim() !== ""
+  const report = !hasCompletionReport(structuredReport) && goal.result_summary.trim() !== ""
     ? { ...structuredReport, work_done: goal.result_summary }
     : structuredReport;
+
+  if (!hasCompletionReport(report)) return null;
 
   return (
     <section className="min-w-0 border-t border-line pt-5" data-testid="completion-report" aria-labelledby="completion-report-heading">
@@ -190,8 +190,7 @@ export function GoalDetail({ id }: Props) {
     try {
       const goal = await fetchGoal(resolvedID);
       const completion = findOpenCompletion(goal.unattached_decisions);
-      const unattachedDecisions = goal.unattached_decisions.filter((decision) => decision.id !== completion?.id);
-      setState({ kind: "ready", data: { goal, completion, unattachedDecisions } });
+      setState({ kind: "ready", data: { goal, completion } });
     } catch (reason) {
       setState({ kind: "error", message: errorMessage(reason, t("goal.error.load")) });
     }
@@ -204,6 +203,7 @@ export function GoalDetail({ id }: Props) {
 
   const data = state.kind === "ready" ? state.data : undefined;
   const retry = () => void load();
+  const locale = i18n.language.startsWith("ja") ? "ja" : "en";
 
   return (
     <main className="min-w-0 max-w-full space-y-10 overflow-x-hidden">
@@ -215,43 +215,48 @@ export function GoalDetail({ id }: Props) {
         <h1 className="mt-2 font-display text-3xl font-semibold tracking-tight text-ink-950">
           {data?.goal.goal.title ?? t("goal.title")}
         </h1>
-        {data && <p className="mt-3 text-sm text-ink-700">{t("goal.project")}: {data.goal.goal.project_name || "-"}</p>}
         {data?.goal.goal.description && <p className="mt-3 max-w-3xl whitespace-pre-wrap text-sm leading-6 text-ink-700">{data.goal.goal.description}</p>}
-        {data?.goal.goal.status && <p className="mt-3 text-sm text-ink-500">{t("goal.status", { status: data.goal.goal.status })}</p>}
+        {data && (
+          <dl className="mt-5 grid min-w-0 gap-x-6 gap-y-3 border-t border-line pt-4 sm:grid-cols-3">
+            <div className="min-w-0">
+              <dt className="text-xs font-semibold uppercase tracking-wide text-ink-600">{t("goal.project")}</dt>
+              <dd className="mt-1 break-words text-sm text-ink-950">{data.goal.goal.project_name || "-"}</dd>
+            </div>
+            <div className="min-w-0">
+              <dt className="text-xs font-semibold uppercase tracking-wide text-ink-600">{t("goal.column.status")}</dt>
+              <dd className="mt-1 break-words text-sm text-ink-950">{statusLabel(locale, data.goal.goal.status)}</dd>
+            </div>
+            <div className="min-w-0">
+              <dt className="text-xs font-semibold uppercase tracking-wide text-ink-600">{t("goal.column.updatedAt")}</dt>
+              <dd className="mt-1 break-words text-sm text-ink-950">{formatDateTime(locale, data.goal.goal.updated_at)}</dd>
+            </div>
+          </dl>
+        )}
       </div>
 
       {data && <CompletionReport goal={data.goal.goal} />}
 
       {data?.completion && <CompletionApproval decision={data.completion} onUpdated={load} />}
 
-      {data && <UnattachedDecisionList decisions={data.unattachedDecisions} onRefresh={load} />}
-
-      <div className="grid min-w-0 gap-10 xl:grid-cols-3">
-        <Section id="now" title={t("goal.column.now")} count={data?.goal.now.length}>
-          {state.kind === "loading" && <AreaLoading label={t("goal.column.now")} />}
+      <section className="min-w-0 border-t border-line pt-5" data-testid="task-list" aria-labelledby="task-list-heading">
+        <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-2">
+          <h2 id="task-list-heading" className="font-display text-lg font-semibold tracking-tight text-ink-950">{t("goal.tasks.title")}</h2>
+          {data && <p className="text-sm text-ink-600">{data.goal.goal.tasks.length}</p>}
+        </div>
+        <div className="mt-4 min-w-0">
+          {state.kind === "loading" && <AreaLoading label={t("goal.tasks.title")} />}
           {state.kind === "error" && <ErrorState message={state.message} onRetry={retry} />}
-          {data && <TaskTable tasks={data.goal.now} mode="now" onRefresh={load} />}
-        </Section>
-
-        <Section id="needs-decision" title={t("goal.column.needsDecision")} count={data?.goal.needs_decision.length}>
-          {state.kind === "loading" && <AreaLoading label={t("goal.column.needsDecision")} />}
-          {state.kind === "error" && <ErrorState message={state.message} onRetry={retry} />}
-          {data && <NeedsDecisionList tasks={data.goal.needs_decision} onRefresh={load} />}
-        </Section>
-
-        <Section id="next" title={t("goal.column.next")} count={data?.goal.next.length}>
-          {state.kind === "loading" && <AreaLoading label={t("goal.column.next")} />}
-          {state.kind === "error" && <ErrorState message={state.message} onRetry={retry} />}
-          {data && <TaskTable tasks={data.goal.next} mode="next" onRefresh={load} />}
-        </Section>
-      </div>
-
-      {data && data.goal.decision_history.length > 0 && (
-        <DecisionHistoryTable
-          decisions={data.goal.decision_history}
-          omittedCount={data.goal.decision_history_omitted}
-        />
-      )}
+          {data && (
+            <TaskTable
+              tasks={data.goal.goal.tasks}
+              mode="goal"
+              onRefresh={load}
+              openDecisions={data.goal.needs_decision.flatMap((task) => task.open_decisions ?? [])}
+              decisionHistory={data.goal.decision_history}
+            />
+          )}
+        </div>
+      </section>
     </main>
   );
 }

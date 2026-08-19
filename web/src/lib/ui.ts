@@ -44,6 +44,24 @@ export interface CompletionLike {
   status: string;
 }
 
+export interface CompletionReportFields {
+  work_done: string;
+  now_possible: string;
+  how_to_verify: string;
+  surprises: string;
+  needs_review: string;
+  next_steps: string;
+}
+
+export function hasCompletionReport(report: CompletionReportFields): boolean {
+  return Object.values(report).some((value) => value.trim().length > 0);
+}
+
+export function filterDecisionsByTask<T extends { task_id?: string }>(decisions: T[], taskID: string): T[] {
+  if (!taskID) return [];
+  return decisions.filter((decision) => decision.task_id === taskID);
+}
+
 export function findOpenCompletion<T extends CompletionLike>(decisions: T[]): T | undefined {
   return decisions.find((decision) => decision.kind === "completion" && decision.status === "open");
 }
