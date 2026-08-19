@@ -334,8 +334,6 @@ describe("goal detail answer flows", () => {
   it("uses translated dashboard framing with stable section anchors", () => {
     expect(dashboardSource).toContain("useTranslation");
     expect(dashboardSource).toContain('id="open-decisions"');
-    expect(dashboardSource).toContain('id="unapplied-decisions"');
-    expect(dashboardSource).toContain('id="attention-tasks"');
     expect(dashboardSource).toContain('id="active-goals"');
     expect(dashboardSource).toContain('t("dashboard.projects.empty")');
     expect(sectionSource).toContain("id: string");

@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { fetchInbox, subscribeToDecisionEvents, type InboxResponse } from "../lib/api";
-import { AttentionTaskTable } from "./AttentionTaskTable";
 import { DecisionTable } from "./DecisionTable";
 import { GoalCreateForm } from "./GoalCreateForm";
 import { GoalTable } from "./GoalTable";
@@ -42,9 +41,8 @@ export function Dashboard() {
 
   return (
     <main className="space-y-10">
-      <div className="border-b border-line pb-6">
-        <p className="font-mono text-xs uppercase tracking-[0.18em] text-accent-700">{t("dashboard.eyebrow")}</p>
-        <h1 className="mt-2 font-display text-3xl font-semibold tracking-tight text-ink-950">{t("dashboard.title")}</h1>
+      <div className="pb-6">
+        <h1 className="font-display text-3xl font-semibold tracking-tight text-ink-950">{t("dashboard.title")}</h1>
         <p className="mt-3 max-w-2xl text-sm leading-6 text-ink-700">
           {t("dashboard.description")}
         </p>
@@ -57,17 +55,6 @@ export function Dashboard() {
           {data && <DecisionTable decisions={data.open_decisions} emptyText={t("dashboard.openDecisions.empty")} />}
         </Section>
 
-        <Section id="unapplied-decisions" title={t("dashboard.unapplied.title")} count={data?.unapplied_decisions.length}>
-          {state.kind === "loading" && <AreaLoading label={t("dashboard.unapplied.title")} />}
-          {state.kind === "error" && <ErrorState message={state.message} onRetry={retry} />}
-          {data && <DecisionTable decisions={data.unapplied_decisions} emptyText={t("dashboard.unapplied.empty")} />}
-        </Section>
-
-        <Section id="attention-tasks" title={t("dashboard.attention.title")} count={data?.attention_tasks.length}>
-          {state.kind === "loading" && <AreaLoading label={t("dashboard.attention.title")} />}
-          {state.kind === "error" && <ErrorState message={state.message} onRetry={retry} />}
-          {data && <AttentionTaskTable tasks={data.attention_tasks} />}
-        </Section>
       </div>
 
       <Section id="active-goals" title={t("dashboard.projects.title")} count={projectGroups?.length}>
