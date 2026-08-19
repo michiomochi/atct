@@ -8,12 +8,25 @@ description: Start working through the ATCT goals for this repository without st
 This skill turns an ATCT-managed repository into work. It is the entry point the
 human reaches for when they want progress rather than a plan.
 
-## Claude Code Monitor
+## First step: attach the Claude Code Monitor
 
-At the beginning of a Claude Code session, attach `atct watch` in the Claude
-Code Monitor so human decision answers wake the session immediately. Monitor is
-a Claude Code feature and is not available in Codex. The MCP response
-attachment remains the shared foundation for all harnesses.
+Before entering the goal loop, attach `atct watch` to a Claude Code Monitor
+task and keep that task's id for this session.
+
+- If this session already has an `atct watch` Monitor, keep it; do not attach a
+  second one. Two Monitors emit the same answer twice.
+- Always set `persistent: true` when creating the Monitor. Without it, the
+  default `timeout_ms` of `300000ms` (5 minutes) stops monitoring silently, with
+  no notification that it stopped.
+- Set `description` to `ATCT answer watch` so each notification identifies what
+  the Monitor is watching.
+- This step applies only in Claude Code. Codex has no Monitor, so a Codex reader
+  must skip it and must not try to call or attach Monitor. The MCP response
+  attachment remains the shared foundation for both harnesses.
+- The paired `atct:stop` skill stops this Monitor only. It does not stop the
+  daemon; the CLI command `atct stop` stops the daemon.
+
+Only after this step, continue with the goal loop below.
 
 ## Running this makes you the commander
 

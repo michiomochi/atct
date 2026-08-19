@@ -76,6 +76,11 @@ Two commands cover day-to-day use:
 `atct project list`, `atct goal list`, `atct ensure`, and `atct stop` round out the CLI. The
 dashboard handles everything a human answers.
 
+The CLI command `atct stop` stops the ATCT daemon. The `atct:stop` skill is
+different: it stops only the Claude Code Monitor running `atct watch`; it does
+not stop the daemon. Use `atct:stop` for Monitor cleanup and `atct stop` when
+you intend to stop the daemon.
+
 ## Setting a goal is the approval
 
 An active goal is permission to work. The agent breaks it into tasks and starts — it does not
