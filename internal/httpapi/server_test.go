@@ -169,6 +169,84 @@ func TestHTTPInboxIncludesGoalTitlePerDecision(t *testing.T) {
 	}
 }
 
+func TestHTTPInboxIncludesTasksPerActiveGoalInOrder(t *testing.T) {
+	f := newBareFixture(t)
+	firstTasks, err := f.store.DeclareTasks(f.ctx, f.goal.ID, "first-agent", "first-declare", []string{"first task", "second task"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.store.UpdateTask(f.ctx, firstTasks[1].ID, domain.TaskDoing); err != nil {
+		t.Fatal(err)
+	}
+	secondGoal, err := f.store.CreateGoal(f.ctx, f.project.ID, "Second goal", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondTasks, err := f.store.DeclareTasks(f.ctx, secondGoal.ID, "second-agent", "second-declare", []string{"other task"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+	status, _, body := doRequest(t, srv.Client(), http.MethodGet, srv.URL+"/api/inbox", nil)
+	if status != http.StatusOK {
+		t.Fatalf("inbox status = %d; body=%s", status, body)
+	}
+	var response struct {
+		ActiveGoals []struct {
+			ID    string `json:"id"`
+			Tasks []struct {
+				ID     string `json:"id"`
+				GoalID string `json:"goal_id"`
+				Order  int    `json:"order"`
+			} `json:"tasks"`
+		} `json:"active_goals"`
+	}
+	if err := json.Unmarshal(body, &response); err != nil {
+		t.Fatal(err)
+	}
+
+	goals := make(map[string][]struct {
+		ID     string `json:"id"`
+		GoalID string `json:"goal_id"`
+		Order  int    `json:"order"`
+	}, len(response.ActiveGoals))
+	for _, goal := range response.ActiveGoals {
+		tasks := make([]struct {
+			ID     string `json:"id"`
+			GoalID string `json:"goal_id"`
+			Order  int    `json:"order"`
+		}, len(goal.Tasks))
+		for i, task := range goal.Tasks {
+			tasks[i] = task
+		}
+		goals[goal.ID] = tasks
+	}
+
+	firstGot, ok := goals[f.goal.ID]
+	if !ok {
+		t.Fatalf("active goal %s missing from response: %+v", f.goal.ID, response.ActiveGoals)
+	}
+	if len(firstGot) != len(firstTasks) {
+		t.Fatalf("first goal tasks = %+v, want %d tasks", firstGot, len(firstTasks))
+	}
+	for i, wantTask := range firstTasks {
+		gotTask := firstGot[i]
+		if gotTask.ID != wantTask.ID || gotTask.GoalID != f.goal.ID || gotTask.Order != i {
+			t.Fatalf("first goal task %d = %+v, want id=%s goal_id=%s order=%d", i, gotTask, wantTask.ID, f.goal.ID, i)
+		}
+	}
+
+	secondGot, ok := goals[secondGoal.ID]
+	if !ok {
+		t.Fatalf("active goal %s missing from response: %+v", secondGoal.ID, response.ActiveGoals)
+	}
+	if len(secondGot) != len(secondTasks) || secondGot[0].ID != secondTasks[0].ID || secondGot[0].GoalID != secondGoal.ID {
+		t.Fatalf("second goal tasks = %+v, want task %s owned by %s", secondGot, secondTasks[0].ID, secondGoal.ID)
+	}
+}
+
 type goalDetailResponse struct {
 	Goal                domain.Goal        `json:"goal"`
 	NeedsDecision       []httpapi.TaskView `json:"needs_decision"`

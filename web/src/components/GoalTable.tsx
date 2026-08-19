@@ -2,6 +2,7 @@ import type { Goal } from "../lib/api";
 import { formatDateTime } from "../i18n";
 import { encodePathSegment, statusLabel } from "../lib/ui";
 import { Table } from "@cloudflare/kumo/components/table";
+import { Fragment } from "react";
 import { useTranslation } from "react-i18next";
 import { EmptyState } from "./StateMessage";
 
@@ -31,22 +32,42 @@ export function GoalTable({ goals, showProject = true }: Props) {
           </Table.Row>
         </Table.Header>
         <Table.Body>
-          {goals.map((goal) => (
-            <Table.Row className="border-b border-line align-top last:border-b-0" key={goal.id}>
-              <Table.Cell className="px-3 py-4">
-                <a
-                  className="focus-ring text-clamp-2 font-medium text-accent-700 underline decoration-accent-100 underline-offset-4 hover:decoration-accent-700"
-                  href={`/goals/${encodePathSegment(goal.id)}`}
-                  title={goal.title}
-                >
-                  {goal.title}
-                </a>
-              </Table.Cell>
-              {showProject && <Table.Cell className="px-3 py-4 text-ink-700">{goal.project_name || "-"}</Table.Cell>}
-              <Table.Cell className="px-3 py-4 text-ink-700">{statusLabel(locale, goal.status)}</Table.Cell>
-              <Table.Cell className="px-3 py-4 text-ink-700">{formatDateTime(locale, goal.updated_at)}</Table.Cell>
-            </Table.Row>
-          ))}
+          {goals.map((goal) => {
+            const tasks = goal.tasks ?? [];
+            return (
+              <Fragment key={goal.id}>
+                <Table.Row className="border-b border-line align-top last:border-b-0">
+                  <Table.Cell className="px-3 py-4">
+                    <a
+                      className="focus-ring text-clamp-2 font-medium text-accent-700 underline decoration-accent-100 underline-offset-4 hover:decoration-accent-700"
+                      href={`/goals/${encodePathSegment(goal.id)}`}
+                      title={goal.title}
+                    >
+                      {goal.title}
+                    </a>
+                  </Table.Cell>
+                  {showProject && <Table.Cell className="px-3 py-4 text-ink-700">{goal.project_name || "-"}</Table.Cell>}
+                  <Table.Cell className="px-3 py-4 text-ink-700">{statusLabel(locale, goal.status)}</Table.Cell>
+                  <Table.Cell className="px-3 py-4 text-ink-700">{formatDateTime(locale, goal.updated_at)}</Table.Cell>
+                </Table.Row>
+                {tasks.map((task, index) => (
+                  <Table.Row className="border-b border-line align-top last:border-b-0" key={task.id}>
+                    <Table.Cell className="px-3 py-3 text-ink-700">
+                      <div className="flex items-start pl-6">
+                        <span aria-hidden="true" className="mr-2 shrink-0 text-ink-500">
+                          {index === tasks.length - 1 ? "└─" : "├─"}
+                        </span>
+                        <span className="text-clamp-2">{task.title}</span>
+                      </div>
+                    </Table.Cell>
+                    {showProject && <Table.Cell className="px-3 py-3" />}
+                    <Table.Cell className="px-3 py-3 text-ink-700">{statusLabel(locale, task.status)}</Table.Cell>
+                    <Table.Cell className="px-3 py-3 text-ink-700">{formatDateTime(locale, task.updated_at)}</Table.Cell>
+                  </Table.Row>
+                ))}
+              </Fragment>
+            );
+          })}
         </Table.Body>
       </Table>
     </div>

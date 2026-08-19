@@ -36,7 +36,8 @@ type TaskView struct {
 
 type goalView struct {
 	domain.Goal
-	ProjectName string `json:"project_name"`
+	ProjectName string     `json:"project_name"`
+	Tasks       []TaskView `json:"tasks"`
 }
 
 type decisionView struct {
@@ -304,16 +305,27 @@ func (s *Server) handleInbox(w http.ResponseWriter, r *http.Request) {
 	activeGoals := make([]goalView, 0)
 	attentionTasks := make([]TaskView, 0)
 	for _, goal := range goals {
-		if goal.Status == domain.GoalActive {
-			activeGoals = append(activeGoals, goalView{
-				Goal:        goal,
-				ProjectName: projectNames[goal.ProjectID],
-			})
-		}
 		tasks, err := s.store.ListTasks(ctx, goal.ID)
 		if err != nil {
 			writeStoreError(w, err)
 			return
+		}
+		if goal.Status == domain.GoalActive {
+			goalTasks := append([]domain.Task(nil), tasks...)
+			for i := 1; i < len(goalTasks); i++ {
+				for j := i; j > 0 && goalTasks[j].Order < goalTasks[j-1].Order; j-- {
+					goalTasks[j], goalTasks[j-1] = goalTasks[j-1], goalTasks[j]
+				}
+			}
+			taskViews := make([]TaskView, 0, len(goalTasks))
+			for _, task := range goalTasks {
+				taskViews = append(taskViews, newTaskView(task, openByTask[task.ID]))
+			}
+			activeGoals = append(activeGoals, goalView{
+				Goal:        goal,
+				ProjectName: projectNames[goal.ProjectID],
+				Tasks:       taskViews,
+			})
 		}
 		for _, task := range tasks {
 			decisions := openByTask[task.ID]

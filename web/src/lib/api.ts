@@ -22,6 +22,7 @@ export interface Goal {
   next_steps: string;
   created_at: string;
   updated_at: string;
+  tasks: Task[];
 }
 
 export interface Project {
