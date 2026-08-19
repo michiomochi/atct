@@ -12,6 +12,7 @@ import stateMessageSource from "../components/StateMessage.tsx?raw";
 import taskTableSource from "../components/TaskTable.tsx?raw";
 import attentionTaskSource from "../components/AttentionTaskTable.tsx?raw";
 import { formatDateTime, formatDuration, type Locale } from "../i18n";
+import type { Goal } from "./api";
 import {
   DECISION_EVENT_NAMES,
   decisionAutoSettlementSeconds,
@@ -23,7 +24,41 @@ import {
   resolveGoalID,
   statusLabel,
   validateAnswer,
+  groupGoalsByProject,
 } from "./ui";
+
+function fixtureGoal(id: string, projectName: string): Goal {
+  return {
+    id,
+    project_id: projectName.toLowerCase(),
+    project_name: projectName,
+    title: id,
+    description: "",
+    status: "active",
+    result_summary: "",
+    work_done: "",
+    now_possible: "",
+    how_to_verify: "",
+    surprises: "",
+    needs_review: "",
+    next_steps: "",
+    created_at: "",
+    updated_at: "",
+  };
+}
+
+describe("groupGoalsByProject", () => {
+  it("sorts project names and keeps each project's goals together", () => {
+    const alphaGoal = fixtureGoal("alpha-1", "Alpha");
+    const zetaGoal = fixtureGoal("zeta-1", "Zeta");
+    const zetaFollowUp = fixtureGoal("zeta-2", "Zeta");
+
+    expect(groupGoalsByProject([zetaGoal, alphaGoal, zetaFollowUp])).toEqual([
+      ["Alpha", [alphaGoal]],
+      ["Zeta", [zetaGoal, zetaFollowUp]],
+    ]);
+  });
+});
 
 describe("formatDuration", () => {
   it.each([
@@ -302,6 +337,7 @@ describe("goal detail answer flows", () => {
     expect(dashboardSource).toContain('id="unapplied-decisions"');
     expect(dashboardSource).toContain('id="attention-tasks"');
     expect(dashboardSource).toContain('id="active-goals"');
+    expect(dashboardSource).toContain('t("dashboard.projects.empty")');
     expect(sectionSource).toContain("id: string");
     expect(sectionSource).toContain("aria-labelledby={`${id}-heading`}");
   });

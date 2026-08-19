@@ -11,6 +11,7 @@ export const ja: Record<TranslationKey, string> = {
   "dashboard.title": "ダッシュボード",
   "dashboard.description":
     "回答待ちの判断、回答済みでまだ適用されていない判断、回答待ちで止まっているタスク、進行中のゴールを確認します。",
+  "dashboard.waiting.title": "回答待ち",
   "dashboard.openDecisions.title": "回答待ちの判断",
   "dashboard.openDecisions.empty": "回答待ちの判断はありません。判断に答えると先へ進みます。",
   "dashboard.unapplied.title": "回答済み・未適用の判断",
@@ -19,6 +20,8 @@ export const ja: Record<TranslationKey, string> = {
   "dashboard.attention.title": "回答待ちで止まっているタスク",
   "dashboard.attention.empty":
     "回答待ちで止まっているタスクはありません。回答が必要になるとここに表示されます。",
+  "dashboard.projects.title": "プロジェクト",
+  "dashboard.projects.empty": "進行中のゴールがあるプロジェクトはありません。下のフォームからゴールを作成できます。",
   "dashboard.activeGoals.title": "進行中のゴール",
   "dashboard.activeGoals.empty":
     "進行中のゴールはありません。ゴールを再開するとここに表示されます。",

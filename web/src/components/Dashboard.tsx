@@ -5,8 +5,9 @@ import { AttentionTaskTable } from "./AttentionTaskTable";
 import { DecisionTable } from "./DecisionTable";
 import { GoalCreateForm } from "./GoalCreateForm";
 import { GoalTable } from "./GoalTable";
-import { AreaLoading, ErrorState } from "./StateMessage";
+import { AreaLoading, EmptyState, ErrorState } from "./StateMessage";
 import { Section } from "./Section";
+import { groupGoalsByProject } from "../lib/ui";
 
 type LoadState =
   | { kind: "loading" }
@@ -36,6 +37,7 @@ export function Dashboard() {
   }, [load]);
 
   const data = state.kind === "ready" ? state.data : undefined;
+  const projectGroups = data ? groupGoalsByProject(data.active_goals) : undefined;
   const retry = () => void load();
 
   return (
@@ -48,28 +50,40 @@ export function Dashboard() {
         </p>
       </div>
 
-      <Section id="open-decisions" title={t("dashboard.openDecisions.title")} count={data?.open_decisions.length}>
-        {state.kind === "loading" && <AreaLoading label={t("dashboard.openDecisions.title")} />}
-        {state.kind === "error" && <ErrorState message={state.message} onRetry={retry} />}
-        {data && <DecisionTable decisions={data.open_decisions} emptyText={t("dashboard.openDecisions.empty")} />}
-      </Section>
+      <div className="space-y-10">
+        <Section id="open-decisions" title={t("dashboard.waiting.title")} count={data?.open_decisions.length}>
+          {state.kind === "loading" && <AreaLoading label={t("dashboard.waiting.title")} />}
+          {state.kind === "error" && <ErrorState message={state.message} onRetry={retry} />}
+          {data && <DecisionTable decisions={data.open_decisions} emptyText={t("dashboard.openDecisions.empty")} />}
+        </Section>
 
-      <Section id="unapplied-decisions" title={t("dashboard.unapplied.title")} count={data?.unapplied_decisions.length}>
-        {state.kind === "loading" && <AreaLoading label={t("dashboard.unapplied.title")} />}
-        {state.kind === "error" && <ErrorState message={state.message} onRetry={retry} />}
-        {data && <DecisionTable decisions={data.unapplied_decisions} emptyText={t("dashboard.unapplied.empty")} />}
-      </Section>
+        <Section id="unapplied-decisions" title={t("dashboard.unapplied.title")} count={data?.unapplied_decisions.length}>
+          {state.kind === "loading" && <AreaLoading label={t("dashboard.unapplied.title")} />}
+          {state.kind === "error" && <ErrorState message={state.message} onRetry={retry} />}
+          {data && <DecisionTable decisions={data.unapplied_decisions} emptyText={t("dashboard.unapplied.empty")} />}
+        </Section>
 
-      <Section id="attention-tasks" title={t("dashboard.attention.title")} count={data?.attention_tasks.length}>
-        {state.kind === "loading" && <AreaLoading label={t("dashboard.attention.title")} />}
-        {state.kind === "error" && <ErrorState message={state.message} onRetry={retry} />}
-        {data && <AttentionTaskTable tasks={data.attention_tasks} />}
-      </Section>
+        <Section id="attention-tasks" title={t("dashboard.attention.title")} count={data?.attention_tasks.length}>
+          {state.kind === "loading" && <AreaLoading label={t("dashboard.attention.title")} />}
+          {state.kind === "error" && <ErrorState message={state.message} onRetry={retry} />}
+          {data && <AttentionTaskTable tasks={data.attention_tasks} />}
+        </Section>
+      </div>
 
-      <Section id="active-goals" title={t("dashboard.activeGoals.title")} count={data?.active_goals.length}>
-        {state.kind === "loading" && <AreaLoading label={t("dashboard.activeGoals.title")} />}
+      <Section id="active-goals" title={t("dashboard.projects.title")} count={projectGroups?.length}>
+        {state.kind === "loading" && <AreaLoading label={t("dashboard.projects.title")} />}
         {state.kind === "error" && <ErrorState message={state.message} onRetry={retry} />}
-        {data && <GoalTable goals={data.active_goals} />}
+        {data && projectGroups && projectGroups.length === 0 && <EmptyState>{t("dashboard.projects.empty")}</EmptyState>}
+        {data && projectGroups && projectGroups.length > 0 && (
+          <div className="space-y-8">
+            {projectGroups.map(([projectName, goals]) => (
+              <div className="space-y-3" key={projectName}>
+                <h3 className="font-display text-base font-semibold tracking-tight text-ink-950">{projectName}</h3>
+                <GoalTable goals={goals} showProject={false} />
+              </div>
+            ))}
+          </div>
+        )}
         {data && <GoalCreateForm onCreated={load} />}
       </Section>
     </main>

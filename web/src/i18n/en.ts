@@ -9,6 +9,7 @@ export const en = {
   "dashboard.title": "Dashboard",
   "dashboard.description":
     "Review decisions awaiting answers, answered decisions that are not yet applied, tasks blocked on you, and active goals.",
+  "dashboard.waiting.title": "Waiting for answers",
   "dashboard.openDecisions.title": "Decisions awaiting an answer",
   "dashboard.openDecisions.empty":
     "No decisions are waiting for an answer. Answer a decision to move it forward.",
@@ -18,6 +19,8 @@ export const en = {
   "dashboard.attention.title": "Tasks blocked on you",
   "dashboard.attention.empty":
     "No tasks are blocked on you. They will appear here when a decision needs your answer.",
+  "dashboard.projects.title": "Projects",
+  "dashboard.projects.empty": "No projects have active goals. Create a goal below to add one.",
   "dashboard.activeGoals.title": "Active goals",
   "dashboard.activeGoals.empty":
     "No active goals are in progress. Resume work on a goal to see it here.",

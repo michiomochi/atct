@@ -1,6 +1,7 @@
 import type { Locale } from "../i18n";
 import { en, type TranslationKey } from "../i18n/en";
 import { ja } from "../i18n/ja";
+import type { Goal } from "./api";
 
 export const DECISION_EVENT_NAMES = [
   "decision.created",
@@ -49,6 +50,25 @@ export function findOpenCompletion<T extends CompletionLike>(decisions: T[]): T 
 
 export function encodePathSegment(value: string): string {
   return encodeURIComponent(value);
+}
+
+export function groupGoalsByProject(goals: Goal[]): Array<[string, Goal[]]> {
+  const groups = new Map<string, Goal[]>();
+
+  for (const goal of goals) {
+    const projectName = goal.project_name || "-";
+    const projectGoals = groups.get(projectName);
+    if (projectGoals) {
+      projectGoals.push(goal);
+    } else {
+      groups.set(projectName, [goal]);
+    }
+  }
+
+  return Array.from(groups.entries()).sort(([left], [right]) => {
+    if (left === right) return 0;
+    return left < right ? -1 : 1;
+  });
 }
 
 export function resolveGoalID(id: string, pathname: string): string {

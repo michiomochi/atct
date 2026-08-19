@@ -7,11 +7,12 @@ import { EmptyState } from "./StateMessage";
 
 interface Props {
   goals: Goal[];
+  showProject?: boolean;
 }
 
 const columnScope = { scope: "col" } as const;
 
-export function GoalTable({ goals }: Props) {
+export function GoalTable({ goals, showProject = true }: Props) {
   const { t, i18n } = useTranslation();
   const locale = i18n.language.startsWith("ja") ? "ja" : "en";
 
@@ -24,7 +25,7 @@ export function GoalTable({ goals }: Props) {
         <Table.Header className="border-b-2 border-ink-300 text-xs uppercase tracking-wide text-ink-700">
           <Table.Row>
             <Table.Head {...columnScope} className="px-3 py-3 font-semibold">{t("goal.column.goal")}</Table.Head>
-            <Table.Head {...columnScope} className="w-40 px-3 py-3 font-semibold">{t("goal.column.project")}</Table.Head>
+            {showProject && <Table.Head {...columnScope} className="w-40 px-3 py-3 font-semibold">{t("goal.column.project")}</Table.Head>}
             <Table.Head {...columnScope} className="w-36 px-3 py-3 font-semibold">{t("goal.column.status")}</Table.Head>
             <Table.Head {...columnScope} className="w-48 px-3 py-3 font-semibold">{t("goal.column.updatedAt")}</Table.Head>
           </Table.Row>
@@ -42,7 +43,7 @@ export function GoalTable({ goals }: Props) {
                 </a>
                 <p className="mt-1 font-mono text-xs text-ink-500">{goal.id}</p>
               </Table.Cell>
-              <Table.Cell className="px-3 py-4 text-ink-700">{goal.project_name || "-"}</Table.Cell>
+              {showProject && <Table.Cell className="px-3 py-4 text-ink-700">{goal.project_name || "-"}</Table.Cell>}
               <Table.Cell className="px-3 py-4 text-ink-700">{statusLabel(locale, goal.status)}</Table.Cell>
               <Table.Cell className="px-3 py-4 text-ink-700">{formatDateTime(locale, goal.updated_at)}</Table.Cell>
             </Table.Row>
