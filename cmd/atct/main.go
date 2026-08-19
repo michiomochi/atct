@@ -52,6 +52,7 @@ var validSubcommands = map[string]bool{
 	"goal":    true,
 	"context": true,
 	"pending": true,
+	"watch":   true,
 }
 
 var validProjectActions = map[string]bool{"add": true, "list": true}
@@ -70,6 +71,7 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "  goal list            List goals for the current project")
 	fmt.Fprintln(os.Stderr, "  context              Print the current goal context for an AI session")
 	fmt.Fprintln(os.Stderr, "  pending              Print unanswered human decisions for the current project")
+	fmt.Fprintln(os.Stderr, "  watch                Stream human decision events for a Monitor")
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Options:")
 	fmt.Fprintln(os.Stderr, "  -listen string   HTTP listen address (default \"127.0.0.1:8787\")")
@@ -267,6 +269,11 @@ func main() {
 				os.Exit(1)
 			}
 			log.Fatalf("pending: %v", err)
+		}
+		return
+	case "watch":
+		if err := runWatch(dir); err != nil {
+			log.Fatalf("watch: %v", err)
 		}
 		return
 	}

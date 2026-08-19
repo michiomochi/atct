@@ -8,6 +8,13 @@ description: Start working through the ATCT goals for this repository without st
 This skill turns an ATCT-managed repository into work. It is the entry point the
 human reaches for when they want progress rather than a plan.
 
+## Claude Code Monitor
+
+At the beginning of a Claude Code session, attach `atct watch` in the Claude
+Code Monitor so human decision answers wake the session immediately. Monitor is
+a Claude Code feature and is not available in Codex. The MCP response
+attachment remains the shared foundation for all harnesses.
+
 ## Running this makes you the commander
 
 Invoking this skill is not only a request to begin. It assigns you a role: **for
