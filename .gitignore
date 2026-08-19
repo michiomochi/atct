@@ -19,3 +19,6 @@ node_modules/
 # GoReleaser output. Anchored to the repository root so it does not swallow
 # web/dist/, which is committed on purpose.
 /dist/
+
+# macOS
+.DS_Store
