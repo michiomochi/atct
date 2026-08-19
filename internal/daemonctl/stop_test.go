@@ -1,9 +1,54 @@
 package daemonctl
 
 import (
+	"bytes"
 	"os"
+	"strings"
 	"testing"
 )
+
+func TestStopWarnsForActiveWatchAndStillStopsDaemon(t *testing.T) {
+	dir := socketDir(t)
+	cfg := stubConfig(t, dir)
+
+	if _, err := Ensure(cfg); err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+	cleanup, err := RegisterWatch(dir)
+	if err != nil {
+		t.Fatalf("RegisterWatch: %v", err)
+	}
+	defer cleanup()
+
+	var stderr bytes.Buffer
+	stopped, err := StopWithWatchWarning(cfg, &stderr)
+	if err != nil {
+		t.Fatalf("StopWithWatchWarning: %v", err)
+	}
+	if !stopped {
+		t.Fatal("StopWithWatchWarning reported no daemon, want stopped = true")
+	}
+	if !strings.Contains(stderr.String(), watchActiveWarning) {
+		t.Fatalf("stop warning = %q, want %q", stderr.String(), watchActiveWarning)
+	}
+}
+
+func TestStopDoesNotWarnWithoutActiveWatch(t *testing.T) {
+	dir := socketDir(t)
+	cfg := stubConfig(t, dir)
+
+	var stderr bytes.Buffer
+	stopped, err := StopWithWatchWarning(cfg, &stderr)
+	if err != nil {
+		t.Fatalf("StopWithWatchWarning with no daemon: %v", err)
+	}
+	if stopped {
+		t.Fatal("StopWithWatchWarning reported a daemon was stopped, want false")
+	}
+	if got := stderr.String(); got != "" {
+		t.Fatalf("stop warning without watch = %q, want empty", got)
+	}
+}
 
 func TestStopTerminatesRunningDaemon(t *testing.T) {
 	dir := socketDir(t)

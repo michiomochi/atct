@@ -20,8 +20,10 @@ import (
 )
 
 const (
-	watchReconnectInterval = 5 * time.Second
-	watchSnapshotTimeout   = 5 * time.Second
+	watchReconnectInterval  = 5 * time.Second
+	watchSnapshotTimeout    = 5 * time.Second
+	watchEnsureMaxFailures  = 5
+	watchEnsureLimitMessage = "atct watch: daemon ensure failed 5 consecutive times; continuing connection retries"
 )
 
 type watchDecision struct {
@@ -42,15 +44,38 @@ type watchDeliveryKey struct {
 }
 
 type watchSnapshotFunc func(context.Context) (string, []watchDecision, error)
+type watchEnsureFunc func() error
 
 func runWatch(dir string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	cleanup, err := daemonctl.RegisterWatch(dir)
+	if err != nil {
+		return fmt.Errorf("register watch: %w", err)
+	}
+	defer cleanup()
+
 	client := &http.Client{}
-	return watchLoop(ctx, os.Stdout, client, watchReconnectInterval, func(ctx context.Context) (string, []watchDecision, error) {
+	return watchLoopWithEnsure(ctx, os.Stdout, client, watchReconnectInterval, func(ctx context.Context) (string, []watchDecision, error) {
 		return fetchWatchSnapshot(ctx, client, watchBaseURLs(dir))
+	}, func() error {
+		return ensureWatchDaemon(dir)
 	})
+}
+
+func ensureWatchDaemon(dir string) error {
+	executable, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("resolve executable: %w", err)
+	}
+	_, err = daemonctl.Ensure(daemonctl.Config{
+		Dir:        dir,
+		Version:    version,
+		Executable: executable,
+		ListenAddr: defaultListenAddr,
+	})
+	return err
 }
 
 func watchWithURLs(ctx context.Context, urls []string, out io.Writer, client *http.Client, retryInterval time.Duration) error {
@@ -63,21 +88,57 @@ func watchWithURLs(ctx context.Context, urls []string, out io.Writer, client *ht
 }
 
 func watchLoop(ctx context.Context, out io.Writer, client *http.Client, retryInterval time.Duration, snapshot watchSnapshotFunc) error {
+	return watchLoopWithEnsure(ctx, out, client, retryInterval, snapshot, nil)
+}
+
+func watchLoopWithEnsure(ctx context.Context, out io.Writer, client *http.Client, retryInterval time.Duration, snapshot watchSnapshotFunc, ensure watchEnsureFunc) error {
 	if retryInterval <= 0 {
 		retryInterval = watchReconnectInterval
 	}
 	delivered := make(map[watchDeliveryKey]struct{})
+	ensureFailures := 0
+	ensureDisabled := false
+	recoverDaemon := func() error {
+		if ensure == nil || ensureDisabled || ctx.Err() != nil {
+			return nil
+		}
+		if err := ensure(); err != nil {
+			ensureFailures++
+			if _, writeErr := fmt.Fprintln(out, err); writeErr != nil {
+				return writeErr
+			}
+			if ensureFailures >= watchEnsureMaxFailures {
+				ensureDisabled = true
+				if _, writeErr := fmt.Fprintln(out, watchEnsureLimitMessage); writeErr != nil {
+					return writeErr
+				}
+			}
+			return nil
+		}
+		ensureFailures = 0
+		ensureDisabled = false
+		return nil
+	}
+	resetEnsureFailures := func() {
+		ensureFailures = 0
+		ensureDisabled = false
+	}
+
 	for {
 		baseURL, decisions, err := snapshot(ctx)
 		if err != nil {
 			if ctx.Err() != nil {
 				return nil
 			}
+			if err := recoverDaemon(); err != nil {
+				return err
+			}
 			if err := waitForWatchReconnect(ctx, out, retryInterval); err != nil {
 				return err
 			}
 			continue
 		}
+		resetEnsureFailures()
 
 		for _, decision := range decisions {
 			if err := emitWatchDecision(out, "decision.answered", decision, delivered); err != nil {
@@ -86,6 +147,9 @@ func watchLoop(ctx context.Context, out io.Writer, client *http.Client, retryInt
 		}
 
 		if err := consumeWatchEvents(ctx, client, baseURL, out, delivered); err != nil && ctx.Err() == nil {
+			if err := recoverDaemon(); err != nil {
+				return err
+			}
 			if err := waitForWatchReconnect(ctx, out, retryInterval); err != nil {
 				return err
 			}

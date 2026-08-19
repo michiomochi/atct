@@ -229,7 +229,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "atct daemon ready: pid %d, http %s\n", reg.PID, reg.HTTPAddr)
 		return
 	case "stop":
-		stopped, err := daemonctl.Stop(daemonctl.Config{Dir: dir, Version: version})
+		stopped, err := daemonctl.StopWithWatchWarning(daemonctl.Config{Dir: dir, Version: version}, os.Stderr)
 		if err != nil {
 			log.Fatalf("stop: %v", err)
 		}

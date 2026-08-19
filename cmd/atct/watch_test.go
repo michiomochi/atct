@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,6 +12,78 @@ import (
 	"testing"
 	"time"
 )
+
+func TestWatchEnsuresDaemonAfterConnectionFailure(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var output cancelOnOutput
+	output.cancel = cancel
+	output.needles = []string{"atct decision answered (decision_id: revived)"}
+
+	ensured := false
+	ensureCalls := 0
+	snapshotCalls := 0
+	snapshot := func(context.Context) (string, []watchDecision, error) {
+		snapshotCalls++
+		if !ensured {
+			return "", nil, errors.New("daemon unavailable")
+		}
+		return "http://unused", []watchDecision{{ID: "revived"}}, nil
+	}
+	ensure := func() error {
+		ensureCalls++
+		ensured = true
+		return nil
+	}
+
+	err := watchLoopWithEnsure(ctx, &output, &http.Client{}, time.Millisecond, snapshot, ensure)
+	if err != nil {
+		t.Fatalf("watchLoopWithEnsure() error = %v", err)
+	}
+	if ensureCalls != 1 {
+		t.Fatalf("Ensure calls = %d, want 1", ensureCalls)
+	}
+	if snapshotCalls < 2 {
+		t.Fatalf("snapshot calls = %d, want a retry after Ensure", snapshotCalls)
+	}
+	if got := output.String(); !strings.Contains(got, "atct decision answered (decision_id: revived)\n") {
+		t.Fatalf("watch output = %q, want revived notification", got)
+	}
+}
+
+func TestWatchStopsEnsuringAfterFiveFailures(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var output cancelOnOutput
+	output.cancel = cancel
+	output.needles = []string{watchEnsureLimitMessage}
+
+	ensureCalls := 0
+	snapshot := func(context.Context) (string, []watchDecision, error) {
+		return "", nil, errors.New("daemon unavailable")
+	}
+	ensure := func() error {
+		ensureCalls++
+		return errors.New("database unavailable")
+	}
+
+	err := watchLoopWithEnsure(ctx, &output, &http.Client{}, time.Millisecond, snapshot, ensure)
+	if err != nil {
+		t.Fatalf("watchLoopWithEnsure() error = %v", err)
+	}
+	if ensureCalls != watchEnsureMaxFailures {
+		t.Fatalf("Ensure calls = %d, want %d", ensureCalls, watchEnsureMaxFailures)
+	}
+	got := output.String()
+	if !strings.Contains(got, "database unavailable") {
+		t.Fatalf("watch output = %q, want Ensure error", got)
+	}
+	if strings.Count(got, watchEnsureLimitMessage) != 1 {
+		t.Fatalf("watch output = %q, want one Ensure limit message", got)
+	}
+}
 
 func TestWatchEmitsHumanDecisionEventsOnly(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
