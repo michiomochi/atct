@@ -34,10 +34,16 @@
 2026-08-18 に同じことをやっている（完了報告の 6 項目を足したとき、未完了ゴール 15 件に
 「なし」を書き込んだ）。
 
-### DB では強制しない。宣言の経路で拒否する
+### DB は「空でないこと」を強制しない。宣言の経路で拒否する
 
-`description` 列は **NOT NULL にしない**。既存 241 行を書き換えずに済み、
-古いバイナリでもそのまま読める（`atlas` の baseline を v6 据え置きにしたときと同じ理屈）。
+**訂正（同日）: 当初ここに「`description` 列は NOT NULL にしない」と書いたのは誤り。**
+`NOT NULL` と「空を禁止する」を混同していた。`NOT NULL DEFAULT ''` は空文字列を許すので、
+この節の目的（DB に内容を強制させない）と矛盾しない。
+
+列は `TEXT NOT NULL DEFAULT ''` にする。既存のスキーマが同じ形を採っている
+（`agent TEXT NOT NULL DEFAULT ''`、`files TEXT NOT NULL DEFAULT '[]'`、
+`claimed_by TEXT NOT NULL DEFAULT ''`）。既定値があるので既存 241 行は書き換わらず、
+古いバイナリの INSERT も通り、Go 側に NULL の分岐が増えない。
 
 空の拒否は `atct_task_declare` の経路で行う。**これは DB の制約より弱い。**
 完了報告のときは `status='done'` という自然な切り分けがあったので CHECK を掛けられたが、
