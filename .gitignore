@@ -24,5 +24,9 @@ web/dist/*
 # web/dist/.
 /dist/
 
+# Playwright MCP writes snapshots and console logs beside the working directory
+# unless --output-dir is set. Ignored so a browser check cannot dirty a commit.
+.playwright-mcp/
+
 # macOS
 .DS_Store
