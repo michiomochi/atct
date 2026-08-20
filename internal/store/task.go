@@ -14,6 +14,7 @@ import (
 	"github.com/michiomochi/atct/internal/store/sqlcgen"
 )
 
+var ErrTaskNotFound = errors.New("task not found")
 var ErrTaskAlreadyClaimed = errors.New("task already claimed")
 var ErrTaskFileConflict = errors.New("task file conflict")
 
@@ -175,6 +176,17 @@ func (s *Store) ListTasks(ctx context.Context, goalID string) ([]domain.Task, er
 	return out, nil
 }
 
+func (s *Store) GetTaskGoalID(ctx context.Context, taskID string) (string, error) {
+	goalID, err := taskQueries(s).GetTaskGoalID(ctx, taskID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", fmt.Errorf("%w: %s", ErrTaskNotFound, taskID)
+	}
+	if err != nil {
+		return "", fmt.Errorf("lookup goal_id: %w", err)
+	}
+	return goalID, nil
+}
+
 func taskFromRow(row sqlcgen.Task) (domain.Task, error) {
 	tk := domain.Task{
 		ID:          row.ID,
@@ -237,7 +249,17 @@ func (s *Store) ListOpenTasksClaimedBy(ctx context.Context, goalID, agentSession
 // UpdateTask treats the transition to done as a guarded operation.
 // Allowing a task with an open Decision to become done would break the
 // invariant that human-waiting tasks are derived from Decisions.
-func (s *Store) UpdateTask(ctx context.Context, taskID string, status domain.TaskStatus) (domain.Task, error) {
+func (s *Store) UpdateTask(ctx context.Context, taskID string, status domain.TaskStatus, agentSessionID string) (domain.Task, error) {
+	agentSessionID = strings.TrimSpace(agentSessionID)
+	var releaseClaim string
+	var err error
+	if status == domain.TaskTodo || status == domain.TaskDone || status == domain.TaskDropped {
+		releaseClaim, err = s.authorizeTaskStatusRelease(ctx, taskID, status, agentSessionID)
+		if err != nil {
+			return domain.Task{}, err
+		}
+	}
+
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return domain.Task{}, fmt.Errorf("begin tx: %w", err)
@@ -262,6 +284,7 @@ func (s *Store) UpdateTask(ctx context.Context, taskID string, status domain.Tas
 			Status:    string(status),
 			UpdatedAt: now,
 			ID:        taskID,
+			ClaimedBy: releaseClaim,
 		})
 	} else {
 		res, err = q.UpdateTaskStatus(ctx, sqlcgen.UpdateTaskStatusParams{
@@ -278,7 +301,12 @@ func (s *Store) UpdateTask(ctx context.Context, taskID string, status domain.Tas
 		return domain.Task{}, fmt.Errorf("rows affected: %w", err)
 	}
 	if n == 0 {
-		return domain.Task{}, fmt.Errorf("task not found: %s", taskID)
+		if _, lookupErr := q.TaskExists(ctx, taskID); errors.Is(lookupErr, sql.ErrNoRows) {
+			return domain.Task{}, fmt.Errorf("%w: %s", ErrTaskNotFound, taskID)
+		} else if lookupErr != nil {
+			return domain.Task{}, fmt.Errorf("check task after update: %w", lookupErr)
+		}
+		return domain.Task{}, fmt.Errorf("task claim changed while updating %s; retry the update", taskID)
 	}
 	if err := tx.Commit(); err != nil {
 		return domain.Task{}, fmt.Errorf("commit: %w", err)
@@ -297,7 +325,51 @@ func (s *Store) UpdateTask(ctx context.Context, taskID string, status domain.Tas
 			return tk, nil
 		}
 	}
-	return domain.Task{}, fmt.Errorf("task not found after update: %s", taskID)
+	return domain.Task{}, fmt.Errorf("%w after update: %s", ErrTaskNotFound, taskID)
+}
+
+func (s *Store) authorizeTaskStatusRelease(ctx context.Context, taskID string, status domain.TaskStatus, agentSessionID string) (string, error) {
+	task, err := taskQueries(s).GetTaskForClaim(ctx, taskID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", fmt.Errorf("%w: %s", ErrTaskNotFound, taskID)
+	}
+	if err != nil {
+		return "", fmt.Errorf("lookup task claim: %w", err)
+	}
+
+	claimedBy := strings.TrimSpace(task.ClaimedBy)
+	if claimedBy == "" || claimedBy == agentSessionID {
+		return claimedBy, nil
+	}
+
+	if status == domain.TaskDone || status == domain.TaskDropped {
+		return "", fmt.Errorf("task %q is claimed by another agent session; only the claim holder can set it to %s; if that session is no longer running, return it to todo with atct_task_update, then claim it before retrying", taskID, status)
+	}
+
+	projectID, err := s.ProjectIDForTask(ctx, taskID)
+	if err != nil {
+		return "", fmt.Errorf("find project for task claim: %w", err)
+	}
+	running, stale, err := ClaimLiveness(ctx, s, projectID)
+	if err != nil {
+		return "", fmt.Errorf("check task claim liveness: %w", err)
+	}
+	if taskClaimMatches(running, taskID, claimedBy) {
+		return "", fmt.Errorf("task %q is claimed by another agent session that is still running; wait for it to finish or stop, then return it to todo with atct_task_update and claim it", taskID)
+	}
+	if taskClaimMatches(stale, taskID, claimedBy) {
+		return claimedBy, nil
+	}
+	return "", fmt.Errorf("task %q is claimed by another agent session, but its claim changed while checking whether it is running; retry the update after confirming the claim is stale", taskID)
+}
+
+func taskClaimMatches(tasks []domain.Task, taskID, claimedBy string) bool {
+	for _, task := range tasks {
+		if task.ID == taskID && strings.TrimSpace(task.ClaimedBy) == claimedBy {
+			return true
+		}
+	}
+	return false
 }
 
 // ClaimTask atomically assigns a task to one agent session.
@@ -312,7 +384,7 @@ func (s *Store) ClaimTask(ctx context.Context, taskID, agentSessionID string) (d
 	task, err := q.GetTaskForClaim(ctx, taskID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return domain.Task{}, fmt.Errorf("task not found: %s", taskID)
+			return domain.Task{}, fmt.Errorf("%w: %s", ErrTaskNotFound, taskID)
 		}
 		return domain.Task{}, fmt.Errorf("lookup task claim: %w", err)
 	}
@@ -347,7 +419,7 @@ func (s *Store) ClaimTask(ctx context.Context, taskID, agentSessionID string) (d
 	if n == 0 {
 		currentClaim, err := q.GetTaskClaimedBy(ctx, taskID)
 		if errors.Is(err, sql.ErrNoRows) {
-			return domain.Task{}, fmt.Errorf("task not found: %s", taskID)
+			return domain.Task{}, fmt.Errorf("%w: %s", ErrTaskNotFound, taskID)
 		}
 		if err != nil {
 			return domain.Task{}, fmt.Errorf("lookup task claim: %w", err)
@@ -479,7 +551,7 @@ func (s *Store) ReleaseTask(ctx context.Context, taskID string) (domain.Task, er
 	if n == 0 {
 		_, err := taskQueries(s).TaskExists(ctx, taskID)
 		if errors.Is(err, sql.ErrNoRows) {
-			return domain.Task{}, fmt.Errorf("task not found: %s", taskID)
+			return domain.Task{}, fmt.Errorf("%w: %s", ErrTaskNotFound, taskID)
 		}
 		if err != nil {
 			return domain.Task{}, fmt.Errorf("lookup task: %w", err)
@@ -493,7 +565,7 @@ func (s *Store) loadTask(ctx context.Context, taskID string) (domain.Task, error
 	goalID, err := taskQueries(s).GetTaskGoalID(ctx, taskID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return domain.Task{}, fmt.Errorf("task not found: %s", taskID)
+			return domain.Task{}, fmt.Errorf("%w: %s", ErrTaskNotFound, taskID)
 		}
 		return domain.Task{}, fmt.Errorf("lookup goal_id: %w", err)
 	}
@@ -506,5 +578,5 @@ func (s *Store) loadTask(ctx context.Context, taskID string) (domain.Task, error
 			return tk, nil
 		}
 	}
-	return domain.Task{}, fmt.Errorf("task not found after update: %s", taskID)
+	return domain.Task{}, fmt.Errorf("%w after update: %s", ErrTaskNotFound, taskID)
 }

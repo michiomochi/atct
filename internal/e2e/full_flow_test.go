@@ -393,7 +393,7 @@ func TestFullFlowThroughDaemonAndHTTP(t *testing.T) {
 	for _, task := range tasks {
 		var updated domain.Task
 		callDaemon(t, stack, "task.update", map[string]any{
-			"task_id": task.ID, "status": string(domain.TaskDone),
+			"task_id": task.ID, "status": string(domain.TaskDone), "agent_session_id": agentSessionID,
 		}, &updated)
 		if updated.Status != domain.TaskDone {
 			t.Fatalf("task.update returned %+v", updated)

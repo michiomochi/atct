@@ -73,7 +73,7 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "  context              Print the current goal context for an AI session")
 	fmt.Fprintln(os.Stderr, "  pending              Print unanswered human decisions for the current project")
 	fmt.Fprintln(os.Stderr, "  watch                Stream human decision events for a Monitor")
-	fmt.Fprintln(os.Stderr, "  claim-check <ids...> Exit 0 only if every task is claimed by a running session")
+	fmt.Fprintln(os.Stderr, "  claim-check <ids...>|any  Exit 0 only if the tasks are claimed by a running session")
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Options:")
 	fmt.Fprintln(os.Stderr, "  -listen string   HTTP listen address (default \"127.0.0.1:8787\")")

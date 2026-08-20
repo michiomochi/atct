@@ -280,7 +280,7 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		if err != nil {
 			return nil, err
 		}
-		tk, err := d.store.UpdateTask(ctx, p.TaskID, st)
+		tk, err := d.store.UpdateTask(ctx, p.TaskID, st, p.AgentSessionID)
 		if err != nil || !p.IncludeUnappliedAnswers {
 			return marshal(tk, err)
 		}

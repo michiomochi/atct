@@ -456,7 +456,7 @@ func TestContextCheckReturnsZeroForUndeclaredActiveGoal(t *testing.T) {
 func TestContextCheckIgnoresDoingTasks(t *testing.T) {
 	fixture := newContextCheckFixture(t)
 	task := fixture.addTask(t, "already doing")
-	if _, err := fixture.db.UpdateTask(context.Background(), task.ID, domain.TaskDoing); err != nil {
+	if _, err := fixture.db.UpdateTask(context.Background(), task.ID, domain.TaskDoing, ""); err != nil {
 		t.Fatalf("UpdateTask: %v", err)
 	}
 
@@ -472,7 +472,7 @@ func TestContextCheckIgnoresDoingTasks(t *testing.T) {
 func TestContextCheckReturnsOneWhenNothingNeedsDoing(t *testing.T) {
 	fixture := newContextCheckFixture(t)
 	task := fixture.addTask(t, "finished")
-	if _, err := fixture.db.UpdateTask(context.Background(), task.ID, domain.TaskDone); err != nil {
+	if _, err := fixture.db.UpdateTask(context.Background(), task.ID, domain.TaskDone, ""); err != nil {
 		t.Fatalf("UpdateTask: %v", err)
 	}
 

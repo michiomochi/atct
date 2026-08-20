@@ -81,7 +81,7 @@ func TestWakeupTrackerPublishesAfterGracePeriodAndResets(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListTasks: %v", err)
 	}
-	if _, err := s.UpdateTask(ctx, tasks[0].ID, domain.TaskDone); err != nil {
+	if _, err := s.UpdateTask(ctx, tasks[0].ID, domain.TaskDone, ""); err != nil {
 		t.Fatalf("UpdateTask: %v", err)
 	}
 	if events, err := tracker.evaluate(ctx, s, start.Add(16*time.Minute)); err != nil {

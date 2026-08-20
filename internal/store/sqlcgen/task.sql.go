@@ -363,15 +363,21 @@ func (q *Queries) UpdateTaskStatus(ctx context.Context, arg UpdateTaskStatusPara
 const updateTaskStatusAndReleaseClaim = `-- name: UpdateTaskStatusAndReleaseClaim :execresult
 UPDATE tasks
 SET status = ?, claimed_by = '', claimed_at = NULL, updated_at = ?
-WHERE id = ?
+WHERE id = ? AND (claimed_by = '' OR claimed_by = ?)
 `
 
 type UpdateTaskStatusAndReleaseClaimParams struct {
 	Status    string
 	UpdatedAt string
 	ID        string
+	ClaimedBy string
 }
 
 func (q *Queries) UpdateTaskStatusAndReleaseClaim(ctx context.Context, arg UpdateTaskStatusAndReleaseClaimParams) (sql.Result, error) {
-	return q.db.ExecContext(ctx, updateTaskStatusAndReleaseClaim, arg.Status, arg.UpdatedAt, arg.ID)
+	return q.db.ExecContext(ctx, updateTaskStatusAndReleaseClaim,
+		arg.Status,
+		arg.UpdatedAt,
+		arg.ID,
+		arg.ClaimedBy,
+	)
 }

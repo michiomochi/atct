@@ -69,7 +69,7 @@ func TestUpdateTaskReleasesClaimWhenTerminal(t *testing.T) {
 		t.Fatalf("ClaimTask: %v", err)
 	}
 
-	updated, err := s.UpdateTask(ctx, tasks[0].ID, domain.TaskDone)
+	updated, err := s.UpdateTask(ctx, tasks[0].ID, domain.TaskDone, "run-1")
 	if err != nil {
 		t.Fatalf("UpdateTask: %v", err)
 	}
@@ -86,14 +86,14 @@ func TestUpdateTaskReleasesClaimWhenTodo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DeclareTasks: %v", err)
 	}
-	if _, err := s.UpdateTask(ctx, tasks[0].ID, domain.TaskDoing); err != nil {
+	if _, err := s.UpdateTask(ctx, tasks[0].ID, domain.TaskDoing, "run-1"); err != nil {
 		t.Fatalf("UpdateTask doing: %v", err)
 	}
 	if _, err := s.ClaimTask(ctx, tasks[0].ID, "run-1"); err != nil {
 		t.Fatalf("ClaimTask: %v", err)
 	}
 
-	updated, err := s.UpdateTask(ctx, tasks[0].ID, domain.TaskTodo)
+	updated, err := s.UpdateTask(ctx, tasks[0].ID, domain.TaskTodo, "run-1")
 	if err != nil {
 		t.Fatalf("UpdateTask todo: %v", err)
 	}
@@ -115,7 +115,7 @@ func TestUpdateTaskKeepsClaimWhenDoing(t *testing.T) {
 		t.Fatalf("ClaimTask: %v", err)
 	}
 
-	updated, err := s.UpdateTask(ctx, tasks[0].ID, domain.TaskDoing)
+	updated, err := s.UpdateTask(ctx, tasks[0].ID, domain.TaskDoing, "run-1")
 	if err != nil {
 		t.Fatalf("UpdateTask doing: %v", err)
 	}

@@ -52,12 +52,12 @@ func TestUpdateTaskRejectsDoneWhileDecisionOpen(t *testing.T) {
 		t.Fatalf("AskDecision: %v", err)
 	}
 
-	_, err = s.UpdateTask(ctx, tasks[0].ID, domain.TaskDone)
+	_, err = s.UpdateTask(ctx, tasks[0].ID, domain.TaskDone, "")
 	if !errors.Is(err, ErrTaskHasOpenDecision) {
 		t.Fatalf("err = %v, want ErrTaskHasOpenDecision", err)
 	}
 
-	if _, err := s.UpdateTask(ctx, tasks[0].ID, domain.TaskDoing); err != nil {
+	if _, err := s.UpdateTask(ctx, tasks[0].ID, domain.TaskDoing, ""); err != nil {
 		t.Fatalf("UpdateTask to doing should succeed: %v", err)
 	}
 }

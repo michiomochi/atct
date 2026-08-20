@@ -16,13 +16,27 @@ import (
 // Claiming itself stays in MCP: a claim belongs to an agent session, and a CLI
 // process would hold one only for the moment it takes to exit. So this reads,
 // and the caller is expected to have claimed through the tools first.
-func claimCheckCommand(dir string, taskIDs []string) (int, error) {
+func claimCheckCommand(dir string, args []string) (int, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
 		return 2, fmt.Errorf("getwd: %w", err)
 	}
-	if len(taskIDs) == 0 {
-		return 2, fmt.Errorf("claim-check needs at least one task_id")
+
+	// "any" asks a different question: is anything at all being worked on in this
+	// project? The delegation hook needs that, because it sees a request file and
+	// not the task ids inside it. It is a bare word rather than a flag because the
+	// flag parser owns everything starting with a dash.
+	anyClaim := false
+	taskIDs := make([]string, 0, len(args))
+	for _, arg := range args {
+		if arg == "any" {
+			anyClaim = true
+			continue
+		}
+		taskIDs = append(taskIDs, arg)
+	}
+	if !anyClaim && len(taskIDs) == 0 {
+		return 2, fmt.Errorf(`claim-check needs at least one task_id, or the word "any"`)
 	}
 
 	dbPath := filepath.Join(dir, "atct.db")
@@ -48,6 +62,14 @@ func claimCheckCommand(dir string, taskIDs []string) (int, error) {
 	live := make(map[string]struct{}, len(running))
 	for _, task := range running {
 		live[task.ID] = struct{}{}
+	}
+
+	if anyClaim {
+		if len(running) == 0 {
+			fmt.Fprintln(os.Stderr, "no task in this project is claimed by a running agent session")
+			return 1, nil
+		}
+		return 0, nil
 	}
 
 	missing := make([]string, 0, len(taskIDs))

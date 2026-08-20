@@ -31,7 +31,7 @@ func TestFullGoalLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DeclareTasks: %v", err)
 	}
-	if _, err := s.UpdateTask(ctx, tasks[0].ID, domain.TaskDoing); err != nil {
+	if _, err := s.UpdateTask(ctx, tasks[0].ID, domain.TaskDoing, ""); err != nil {
 		t.Fatalf("UpdateTask doing: %v", err)
 	}
 
@@ -61,7 +61,7 @@ func TestFullGoalLifecycle(t *testing.T) {
 	}
 
 	for _, tk := range tasks {
-		if _, err := s.UpdateTask(ctx, tk.ID, domain.TaskDone); err != nil {
+		if _, err := s.UpdateTask(ctx, tk.ID, domain.TaskDone, ""); err != nil {
 			t.Fatalf("UpdateTask done (%s): %v", tk.Title, err)
 		}
 	}

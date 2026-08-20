@@ -4,11 +4,14 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/michiomochi/atct/internal/domain"
 )
 
 func newTestGoal(t *testing.T, s *Store) string {
@@ -579,5 +582,156 @@ func TestOpenMigratesTasksFilesColumnWithoutLosingData(t *testing.T) {
 	}
 	if storedFiles != "[]" {
 		t.Fatalf("migrated files value = %q, want []", storedFiles)
+	}
+}
+
+type taskStatusClaimFixture struct {
+	store     *Store
+	ctx       context.Context
+	taskID    string
+	projectID string
+	holderID  string
+	otherID   string
+}
+
+func newTaskStatusClaimFixture(t *testing.T, holderPID, otherPID int) taskStatusClaimFixture {
+	t.Helper()
+	ctx := context.Background()
+	s := newTestStore(t)
+	project, err := s.CreateProject(ctx, "atct-status-claims", filepath.Join(t.TempDir(), "atct-status-claims"))
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	goal, err := s.CreateGoal(ctx, project.ID, "status claim guard", "")
+	if err != nil {
+		t.Fatalf("CreateGoal: %v", err)
+	}
+	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "status-claim-guard", []string{"Guard the status update"}, []string{"Ensure status updates respect the task claim owner and liveness."})
+	if err != nil {
+		t.Fatalf("DeclareTasks: %v", err)
+	}
+	const holderID = "status-holder"
+	const otherID = "status-other"
+	for _, session := range []struct {
+		id  string
+		pid int
+	}{
+		{id: holderID, pid: holderPID},
+		{id: otherID, pid: otherPID},
+	} {
+		if err := s.RegisterAgentSession(ctx, session.id, session.pid); err != nil {
+			t.Fatalf("RegisterAgentSession(%s): %v", session.id, err)
+		}
+	}
+	if err := s.AssociateAgentSessionWithProject(ctx, holderID, project.ID); err != nil {
+		t.Fatalf("AssociateAgentSessionWithProject(%s): %v", holderID, err)
+	}
+	if _, err := s.ClaimTask(ctx, tasks[0].ID, holderID); err != nil {
+		t.Fatalf("ClaimTask: %v", err)
+	}
+	return taskStatusClaimFixture{
+		store:     s,
+		ctx:       ctx,
+		taskID:    tasks[0].ID,
+		projectID: project.ID,
+		holderID:  holderID,
+		otherID:   otherID,
+	}
+}
+
+func TestUpdateTaskRejectsDoneForOtherClaimHolder(t *testing.T) {
+	fixture := newTaskStatusClaimFixture(t, os.Getpid(), os.Getpid())
+
+	_, err := fixture.store.UpdateTask(fixture.ctx, fixture.taskID, domain.TaskDone, fixture.otherID)
+	if err == nil {
+		t.Fatal("UpdateTask(done) succeeded for a non-holder")
+	}
+	for _, want := range []string{"claimed by another agent session", "only the claim holder", "todo"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("UpdateTask(done) error %q does not contain %q", err, want)
+		}
+	}
+}
+
+func TestUpdateTaskRejectsDroppedForOtherClaimHolder(t *testing.T) {
+	fixture := newTaskStatusClaimFixture(t, os.Getpid(), os.Getpid())
+
+	_, err := fixture.store.UpdateTask(fixture.ctx, fixture.taskID, domain.TaskDropped, fixture.otherID)
+	if err == nil {
+		t.Fatal("UpdateTask(dropped) succeeded for a non-holder")
+	}
+	for _, want := range []string{"claimed by another agent session", "only the claim holder", "todo"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("UpdateTask(dropped) error %q does not contain %q", err, want)
+		}
+	}
+}
+
+func TestUpdateTaskRejectsTodoForRunningOtherClaim(t *testing.T) {
+	fixture := newTaskStatusClaimFixture(t, os.Getpid(), os.Getpid())
+
+	_, err := fixture.store.UpdateTask(fixture.ctx, fixture.taskID, domain.TaskTodo, fixture.otherID)
+	if err == nil {
+		t.Fatal("UpdateTask(todo) succeeded while another claim was running")
+	}
+	for _, want := range []string{"still running", "todo"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("UpdateTask(todo) error %q does not contain %q", err, want)
+		}
+	}
+}
+
+func TestUpdateTaskAllowsTodoForStaleOtherClaim(t *testing.T) {
+	fixture := newTaskStatusClaimFixture(t, 999999, os.Getpid())
+
+	updated, err := fixture.store.UpdateTask(fixture.ctx, fixture.taskID, domain.TaskTodo, fixture.otherID)
+	if err != nil {
+		t.Fatalf("UpdateTask(todo): %v", err)
+	}
+	if updated.Status != domain.TaskTodo || updated.ClaimedBy != "" || updated.ClaimedAt != nil {
+		t.Fatalf("stale claim was not released with todo status: %+v", updated)
+	}
+}
+
+func TestUpdateTaskAllowsDoneForClaimHolder(t *testing.T) {
+	fixture := newTaskStatusClaimFixture(t, os.Getpid(), os.Getpid())
+
+	updated, err := fixture.store.UpdateTask(fixture.ctx, fixture.taskID, domain.TaskDone, fixture.holderID)
+	if err != nil {
+		t.Fatalf("UpdateTask(done): %v", err)
+	}
+	if updated.Status != domain.TaskDone || updated.ClaimedBy != "" || updated.ClaimedAt != nil {
+		t.Fatalf("holder completion did not release its claim: %+v", updated)
+	}
+}
+
+func TestUpdateTaskAllowsStatusChangeForUnclaimedTask(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	project, err := s.CreateProject(ctx, "atct-unclaimed-status", filepath.Join(t.TempDir(), "atct-unclaimed-status"))
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	goal, err := s.CreateGoal(ctx, project.ID, "unclaimed status guard", "")
+	if err != nil {
+		t.Fatalf("CreateGoal: %v", err)
+	}
+	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "unclaimed-status", []string{"Update an unclaimed task"}, []string{"Allow a session without a claim to update an unclaimed task."})
+	if err != nil {
+		t.Fatalf("DeclareTasks: %v", err)
+	}
+	if err := s.RegisterAgentSession(ctx, "unclaimed-other", os.Getpid()); err != nil {
+		t.Fatalf("RegisterAgentSession: %v", err)
+	}
+	if err := s.AssociateAgentSessionWithProject(ctx, "unclaimed-other", project.ID); err != nil {
+		t.Fatalf("AssociateAgentSessionWithProject: %v", err)
+	}
+
+	updated, err := s.UpdateTask(ctx, tasks[0].ID, domain.TaskDone, "unclaimed-other")
+	if err != nil {
+		t.Fatalf("UpdateTask(done): %v", err)
+	}
+	if updated.Status != domain.TaskDone || updated.ClaimedBy != "" {
+		t.Fatalf("unclaimed task was not updated: %+v", updated)
 	}
 }

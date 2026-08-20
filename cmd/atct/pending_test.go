@@ -96,7 +96,7 @@ func TestPendingCommandReportsGoalAfterTaskDeclarationUntilTaskDone(t *testing.T
 	}
 
 	s = openPendingStore(t, dir)
-	if _, err := s.UpdateTask(ctx, tasks[0].ID, domain.TaskDone); err != nil {
+	if _, err := s.UpdateTask(ctx, tasks[0].ID, domain.TaskDone, ""); err != nil {
 		t.Fatalf("UpdateTask: %v", err)
 	}
 	if err := s.Close(); err != nil {

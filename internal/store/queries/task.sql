@@ -32,7 +32,7 @@ WHERE id = ?;
 -- name: UpdateTaskStatusAndReleaseClaim :execresult
 UPDATE tasks
 SET status = ?, claimed_by = '', claimed_at = NULL, updated_at = ?
-WHERE id = ?;
+WHERE id = ? AND (claimed_by = '' OR claimed_by = ?);
 
 -- name: GetTaskGoalID :one
 SELECT goal_id
