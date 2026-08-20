@@ -131,9 +131,9 @@ export function TaskTable({ tasks, mode, onRefresh, openDecisions = [], decision
             </Table.Row>
           </Table.Header>
           <Table.Body>
-            {orderedTasks.map((task) => (
+            {orderedTasks.map((task, index) => (
               <Table.Row className="border-b border-line align-top last:border-b-0" key={task.id}>
-                <Table.Cell className="w-16 px-3 py-4 text-ink-700">{task.order + 1}</Table.Cell>
+                <Table.Cell className="w-16 px-3 py-4 text-ink-700">{index + 1}</Table.Cell>
                 <Table.Cell className="min-w-0 px-3 py-4">
                   <GoalTaskTitle
                     task={task}

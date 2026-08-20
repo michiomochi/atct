@@ -123,9 +123,9 @@ describe("GoalDetail", () => {
     vi.mocked(fetchGoal).mockResolvedValueOnce(
       goalResponse({
         tasks: [
-          taskView("task-two", "Third task", 2),
-          taskView("task-zero", "First task", 0),
-          taskView("task-one", "Second task", 1),
+          taskView("task-two", "Third task", 5),
+          taskView("task-zero", "First task", 3),
+          taskView("task-one", "Second task", 4),
         ],
       }),
     );
@@ -144,5 +144,28 @@ describe("GoalDetail", () => {
       "Third task",
     ]);
     expect(taskRows.map((row) => within(row).getAllByRole("cell")[0].textContent)).not.toContain("0");
+  });
+
+  it("renders one-based positions when task orders are duplicated", async () => {
+    vi.mocked(fetchGoal).mockResolvedValueOnce(
+      goalResponse({
+        tasks: [
+          taskView("task-third", "Third task", 0),
+          taskView("task-first", "First task", 0),
+          taskView("task-second", "Second task", 0),
+        ],
+      }),
+    );
+
+    render(<GoalDetail id="goal-1" />);
+
+    await waitFor(() => expect(screen.getByText("First task")).not.toBeNull());
+    const taskRows = screen.getAllByRole("row").filter((row) =>
+      ["First task", "Second task", "Third task"].some((title) => row.textContent?.includes(title)),
+    );
+    const orderLabels = taskRows.map((row) => within(row).getAllByRole("cell")[0].textContent);
+
+    expect(orderLabels).toEqual(["1", "2", "3"]);
+    expect(orderLabels).not.toEqual(["1", "1", "1"]);
   });
 });
