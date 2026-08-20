@@ -3,7 +3,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { fetchInbox, subscribeToDecisionEvents, type InboxResponse } from "../lib/api";
 import { DecisionTable } from "./DecisionTable";
-import { GoalCreateForm } from "./GoalCreateForm";
 import { GoalTable } from "./GoalTable";
 import { AreaLoading, EmptyState, ErrorState } from "./StateMessage";
 import { Section } from "./Section";
@@ -42,14 +41,25 @@ export function Dashboard() {
     void load();
   }, [load]);
 
-  const handleGoalCreateDirtyChange = useCallback((dirty: boolean) => {
-    goalCreateDirtyRef.current = dirty;
+  const handleGoalCreateDirtyChange = useCallback((event: Event) => {
+    goalCreateDirtyRef.current = (event as CustomEvent<boolean>).detail === true;
   }, []);
+
+  const handleGoalCreated = useCallback(() => {
+    void load();
+  }, [load]);
 
   useEffect(() => {
     void load();
-    return subscribeToDecisionEvents(handleDecisionEvent);
-  }, [handleDecisionEvent, load]);
+    window.addEventListener("atct:form-dirty", handleGoalCreateDirtyChange);
+    window.addEventListener("atct:goal-created", handleGoalCreated);
+    const unsubscribe = subscribeToDecisionEvents(handleDecisionEvent);
+    return () => {
+      window.removeEventListener("atct:form-dirty", handleGoalCreateDirtyChange);
+      window.removeEventListener("atct:goal-created", handleGoalCreated);
+      unsubscribe();
+    };
+  }, [handleDecisionEvent, handleGoalCreateDirtyChange, handleGoalCreated, load]);
 
   const data = state.kind === "ready" ? state.data : undefined;
   const projectGroups = data ? groupGoalsByProject(data.active_goals) : undefined;
@@ -97,7 +107,6 @@ export function Dashboard() {
             ))}
           </div>
         )}
-        {data && <GoalCreateForm onCreated={load} onDirtyChange={handleGoalCreateDirtyChange} />}
       </Section>
     </main>
   );

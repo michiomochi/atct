@@ -1,8 +1,8 @@
 import { within } from "@testing-library/dom";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { Decision, Goal, GoalResponse, InboxResponse, Project, TaskView } from "../lib/api";
-import { fetchGoal, fetchInbox, fetchProjects, subscribeToDecisionEvents } from "../lib/api";
+import type { Decision, Goal, GoalResponse, InboxResponse, TaskView } from "../lib/api";
+import { fetchGoal, fetchInbox, subscribeToDecisionEvents } from "../lib/api";
 import { Dashboard } from "./Dashboard";
 import { GoalDetail } from "./GoalDetail";
 
@@ -18,7 +18,6 @@ const apiMock = vi.hoisted(() => ({
   createGoal: vi.fn(),
   fetchGoal: vi.fn(),
   fetchInbox: vi.fn(),
-  fetchProjects: vi.fn(),
   rejectCompletion: vi.fn(),
   reviseDecision: vi.fn(),
   subscribeToDecisionEvents: vi.fn(() => () => undefined),
@@ -119,15 +118,6 @@ function emptyInbox(): InboxResponse {
   };
 }
 
-function fixtureProject(): Project {
-  return {
-    id: "project-1",
-    name: "Fixture project",
-    root_path: "/tmp/fixture",
-    created_at: "2026-08-20T00:00:00Z",
-  };
-}
-
 describe("GoalDetail", () => {
   it("defers GoalDetail reload while completion reason is dirty and reloads after explicit refresh", async () => {
     let decisionEvent: Parameters<typeof subscribeToDecisionEvents>[0] | undefined;
@@ -166,26 +156,29 @@ describe("GoalDetail", () => {
       return () => undefined;
     });
     vi.mocked(fetchInbox).mockResolvedValue(emptyInbox());
-    vi.mocked(fetchProjects).mockResolvedValue([fixtureProject()]);
 
     render(<Dashboard />);
 
-    await waitFor(() => expect(screen.getByRole("button", { name: "form.goal.action.new" })).not.toBeNull());
-    fireEvent.click(screen.getByRole("button", { name: "form.goal.action.new" }));
-    const title = screen.getByLabelText("form.goal.title.label");
-    fireEvent.change(title, { target: { value: "typed title" } });
-    act(() => decisionEvent?.("decision.created"));
+    await waitFor(() => {
+      expect(fetchInbox).toHaveBeenCalledTimes(1);
+      expect(decisionEvent).toBeDefined();
+    });
 
-    expect((title as HTMLInputElement).value).toBe("typed title");
+    act(() => {
+      window.dispatchEvent(new CustomEvent<boolean>("atct:form-dirty", { detail: true }));
+      decisionEvent?.("decision.created");
+    });
+
     expect(fetchInbox).toHaveBeenCalledTimes(1);
     expect(screen.getByText("state.updateAvailable")).not.toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "state.fetchLatest" }));
     await waitFor(() => expect(fetchInbox).toHaveBeenCalledTimes(2));
 
-    await waitFor(() => expect(screen.getByRole("button", { name: "form.goal.action.new" })).not.toBeNull());
-    fireEvent.click(screen.getByRole("button", { name: "form.goal.action.new" }));
-    act(() => decisionEvent?.("decision.created"));
+    act(() => {
+      window.dispatchEvent(new CustomEvent<boolean>("atct:form-dirty", { detail: false }));
+      decisionEvent?.("decision.created");
+    });
     await waitFor(() => expect(fetchInbox).toHaveBeenCalledTimes(3));
     expect(screen.queryByText("state.updateAvailable")).toBeNull();
   });

@@ -1,17 +1,25 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { Button } from "@cloudflare/kumo/components/button";
+import { Dialog } from "@cloudflare/kumo/components/dialog";
 import { useTranslation } from "react-i18next";
 import { ApiError, createGoal, fetchProjects, type Project } from "../lib/api";
 import { AreaLoading, ErrorState } from "./StateMessage";
 
-interface GoalCreateFormProps {
-  onCreated: () => void;
-  onDirtyChange: (dirty: boolean) => void;
-}
-
 const DATA_OVERLOAD_LIMIT = 100;
 
-export function GoalCreateForm({ onCreated, onDirtyChange }: GoalCreateFormProps) {
+function dispatchFormDirty(dirty: boolean) {
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent<boolean>("atct:form-dirty", { detail: dirty }));
+  }
+}
+
+function dispatchGoalCreated() {
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent("atct:goal-created"));
+  }
+}
+
+export function GoalCreateForm() {
   const { t } = useTranslation();
   const [projects, setProjects] = useState<Project[]>([]);
   const [projectsLoading, setProjectsLoading] = useState(true);
@@ -46,10 +54,22 @@ export function GoalCreateForm({ onCreated, onDirtyChange }: GoalCreateFormProps
 
   useEffect(() => {
     const dirty = [projectID, title, description].some((value) => value.trim() !== "");
-    onDirtyChange(dirty);
-  }, [description, onDirtyChange, projectID, title]);
+    dispatchFormDirty(open && dirty);
+  }, [description, open, projectID, title]);
 
-  useEffect(() => () => onDirtyChange(false), [onDirtyChange]);
+  useEffect(() => () => dispatchFormDirty(false), []);
+
+  const closeDialog = () => {
+    setOpen(false);
+    dispatchFormDirty(false);
+  };
+
+  const handleDialogOpenChange = (nextOpen: boolean) => {
+    setOpen(nextOpen);
+    if (!nextOpen) {
+      dispatchFormDirty(false);
+    }
+  };
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -65,8 +85,8 @@ export function GoalCreateForm({ onCreated, onDirtyChange }: GoalCreateFormProps
       await createGoal({ project_id: projectID, title, description });
       setTitle("");
       setDescription("");
-      setOpen(false);
-      onCreated();
+      closeDialog();
+      dispatchGoalCreated();
     } catch (reason) {
       setSubmitError(reason instanceof Error ? reason : new Error(t("form.goal.error.create")));
     } finally {
@@ -93,24 +113,23 @@ export function GoalCreateForm({ onCreated, onDirtyChange }: GoalCreateFormProps
   const dataOverloaded = projects.length > DATA_OVERLOAD_LIMIT;
 
   return (
-    <div className="mt-4 border-t border-line pt-4">
-      <Button
-        type="button"
-        className="focus-ring border border-line bg-surface px-3 py-2 text-sm text-ink hover:bg-surface-raised"
-        aria-expanded={open}
-        aria-controls="goal-create-form"
-        onClick={() => setOpen((current) => !current)}
-      >
-        {open ? t("form.goal.cancel") : t("form.goal.action.new")}
-      </Button>
-
-      {open && (
-        <form
-          id="goal-create-form"
-          className="mt-4 max-w-2xl space-y-4"
-          onSubmit={handleSubmit}
-          aria-busy={submitting}
-        >
+    <Dialog.Root open={open} onOpenChange={handleDialogOpenChange}>
+      <Dialog.Trigger
+        render={(triggerProps) => (
+          <Button
+            {...triggerProps}
+            type="button"
+            className="focus-ring border border-line bg-surface px-3 py-2 text-sm text-ink hover:bg-surface-raised"
+          >
+            {t("form.goal.action.new")}
+          </Button>
+        )}
+      />
+      <Dialog className="p-6">
+        <Dialog.Title className="mb-4 font-display text-xl font-semibold text-ink-950">
+          {t("form.goal.action.new")}
+        </Dialog.Title>
+        <form className="space-y-4" onSubmit={handleSubmit} aria-busy={submitting}>
           {dataOverloaded && (
             <p className="text-sm text-muted" role="status">
               {t("form.goal.overload.description", { count: projects.length })}
@@ -190,15 +209,28 @@ export function GoalCreateForm({ onCreated, onDirtyChange }: GoalCreateFormProps
             <ErrorState message={submitError.message} onRetry={() => setSubmitError(null)} />
           ) : null}
 
-          <Button
-            type="submit"
-            className="focus-ring bg-accent-700 px-3 py-2 text-sm text-white hover:bg-accent-800 disabled:cursor-wait disabled:opacity-60"
-            disabled={submitting}
-          >
-            {submitting ? t("form.goal.action.creating") : t("form.goal.submit")}
-          </Button>
+          <div className="flex gap-3">
+            <Button
+              type="submit"
+              className="focus-ring bg-accent-700 px-3 py-2 text-sm text-white hover:bg-accent-800 disabled:cursor-wait disabled:opacity-60"
+              disabled={submitting}
+            >
+              {submitting ? t("form.goal.action.creating") : t("form.goal.submit")}
+            </Button>
+            <Dialog.Close
+              render={(closeProps) => (
+                <Button
+                  {...closeProps}
+                  type="button"
+                  className="focus-ring border border-line bg-surface px-3 py-2 text-sm text-ink hover:bg-surface-raised"
+                >
+                  {t("form.goal.cancel")}
+                </Button>
+              )}
+            />
+          </div>
         </form>
-      )}
-    </div>
+      </Dialog>
+    </Dialog.Root>
   );
 }
