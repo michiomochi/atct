@@ -107,11 +107,13 @@ func TestPendingCommandReportsGoalAfterTaskDeclarationUntilTaskDone(t *testing.T
 	if err != nil {
 		t.Fatalf("pendingCommand after UpdateTask: %v", err)
 	}
-	if output != "" {
-		t.Fatalf("pendingCommand output after UpdateTask = %q, want empty", output)
+	for _, want := range []string{pendingCompletedGoalReason, goal.Title, goal.ID} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("pendingCommand output after UpdateTask does not contain %q: %q", want, output)
+		}
 	}
-	if exitCode != 1 {
-		t.Fatalf("pendingCommand exit code after UpdateTask = %d, want 1", exitCode)
+	if exitCode != 0 {
+		t.Fatalf("pendingCommand exit code after UpdateTask = %d, want 0", exitCode)
 	}
 }
 
@@ -677,6 +679,297 @@ func TestPendingCommandDoesNotReportRunningAnotherAgentSessionsClaim(t *testing.
 	}
 	if exitCode != 1 {
 		t.Fatalf("pendingCommand exit code = %d, want 1", exitCode)
+	}
+}
+
+func TestPendingCommandReportsActiveGoalAfterAllTasksDone(t *testing.T) {
+	dir, projectRoot := newPendingFixture(t)
+	s := openPendingStore(t, dir)
+	ctx := context.Background()
+	project, err := s.ResolveProject(ctx, projectRoot)
+	if err != nil {
+		t.Fatalf("ResolveProject: %v", err)
+	}
+	goal, err := s.CreateGoal(ctx, project.ID, "Report completed work", "")
+	if err != nil {
+		t.Fatalf("CreateGoal: %v", err)
+	}
+	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "completed-work", []string{"finished task"}, []string{"Report the finished work."})
+	if err != nil {
+		t.Fatalf("DeclareTasks: %v", err)
+	}
+	if _, err := s.UpdateTask(ctx, tasks[0].ID, domain.TaskDone, ""); err != nil {
+		t.Fatalf("UpdateTask: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("Store.Close: %v", err)
+	}
+
+	output, exitCode, err := pendingCommand(dir, projectRoot)
+	if err != nil {
+		t.Fatalf("pendingCommand: %v", err)
+	}
+	if exitCode != 0 {
+		t.Fatalf("pendingCommand exit code = %d, want 0", exitCode)
+	}
+	for _, want := range []string{
+		"All tasks are done but the active goal has no completion report.",
+		"Call `atct_goal_complete`",
+		goal.Title,
+		goal.ID,
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("pendingCommand output does not contain %q: %q", want, output)
+		}
+	}
+}
+
+func TestPendingCommandDoesNotReportGoalWithCompletionReport(t *testing.T) {
+	dir, projectRoot := newPendingFixture(t)
+	s := openPendingStore(t, dir)
+	ctx := context.Background()
+	project, err := s.ResolveProject(ctx, projectRoot)
+	if err != nil {
+		t.Fatalf("ResolveProject: %v", err)
+	}
+	goal, err := s.CreateGoal(ctx, project.ID, "Already reported completed work", "")
+	if err != nil {
+		t.Fatalf("CreateGoal: %v", err)
+	}
+	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "reported-completion", []string{"reported task"}, []string{"Report the completed task."})
+	if err != nil {
+		t.Fatalf("DeclareTasks: %v", err)
+	}
+	if _, err := s.UpdateTask(ctx, tasks[0].ID, domain.TaskDone, ""); err != nil {
+		t.Fatalf("UpdateTask: %v", err)
+	}
+	if _, err := s.AskDecision(ctx, store.AskInput{
+		GoalID: goal.ID, Kind: "completion", Question: "Approve this goal as complete?",
+	}); err != nil {
+		t.Fatalf("AskDecision: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("Store.Close: %v", err)
+	}
+
+	output, exitCode, err := pendingCommand(dir, projectRoot)
+	if err != nil {
+		t.Fatalf("pendingCommand: %v", err)
+	}
+	if strings.Contains(output, pendingCompletedGoalReason) {
+		t.Fatalf("pendingCommand reported a goal with a completion report: %q", output)
+	}
+	if strings.Contains(output, goal.Title) {
+		t.Fatalf("pendingCommand reported the completed goal: %q", output)
+	}
+	if output != "" {
+		t.Fatalf("pendingCommand output = %q, want empty", output)
+	}
+	if exitCode != 1 {
+		t.Fatalf("pendingCommand exit code = %d, want 1", exitCode)
+	}
+}
+
+func TestPendingCommandUsesSeparateReasonForAllDroppedGoal(t *testing.T) {
+	dir, projectRoot := newPendingFixture(t)
+	s := openPendingStore(t, dir)
+	ctx := context.Background()
+	project, err := s.ResolveProject(ctx, projectRoot)
+	if err != nil {
+		t.Fatalf("ResolveProject: %v", err)
+	}
+	goal, err := s.CreateGoal(ctx, project.ID, "Close withdrawn work", "")
+	if err != nil {
+		t.Fatalf("CreateGoal: %v", err)
+	}
+	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "withdrawn-work", []string{"withdrawn task"}, []string{"Close the withdrawn work."})
+	if err != nil {
+		t.Fatalf("DeclareTasks: %v", err)
+	}
+	if _, err := s.UpdateTask(ctx, tasks[0].ID, domain.TaskDropped, ""); err != nil {
+		t.Fatalf("UpdateTask: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("Store.Close: %v", err)
+	}
+
+	output, exitCode, err := pendingCommand(dir, projectRoot)
+	if err != nil {
+		t.Fatalf("pendingCommand: %v", err)
+	}
+	if exitCode != 0 {
+		t.Fatalf("pendingCommand exit code = %d, want 0", exitCode)
+	}
+	if !strings.Contains(output, "All tasks in an active goal were dropped.") {
+		t.Fatalf("pendingCommand output does not report the dropped goal: %q", output)
+	}
+	if strings.Contains(output, "All tasks are done but the active goal has no completion report.") {
+		t.Fatalf("pendingCommand reported the dropped goal as completed: %q", output)
+	}
+	for _, want := range []string{goal.Title, goal.ID, "atct_goal_complete", "atct_task_declare"} {
+		if !strings.Contains(strings.ToLower(output), strings.ToLower(want)) {
+			t.Fatalf("pendingCommand output does not contain %q: %q", want, output)
+		}
+	}
+}
+
+func TestPendingCommandReportsDoingTaskWithoutClaimUntilReturnedToTodo(t *testing.T) {
+	dir, projectRoot := newPendingFixture(t)
+	s := openPendingStore(t, dir)
+	ctx := context.Background()
+	project, err := s.ResolveProject(ctx, projectRoot)
+	if err != nil {
+		t.Fatalf("ResolveProject: %v", err)
+	}
+	goal, err := s.CreateGoal(ctx, project.ID, "Recover an unclaimed task", "")
+	if err != nil {
+		t.Fatalf("CreateGoal: %v", err)
+	}
+	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "unclaimed-doing", []string{"unclaimed doing task"}, []string{"Return the task to todo."})
+	if err != nil {
+		t.Fatalf("DeclareTasks: %v", err)
+	}
+	if _, err := s.UpdateTask(ctx, tasks[0].ID, domain.TaskDoing, ""); err != nil {
+		t.Fatalf("UpdateTask to doing: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("Store.Close: %v", err)
+	}
+
+	output, exitCode, err := pendingCommand(dir, projectRoot)
+	if err != nil {
+		t.Fatalf("pendingCommand: %v", err)
+	}
+	if exitCode != 0 {
+		t.Fatalf("pendingCommand exit code = %d, want 0", exitCode)
+	}
+	if !strings.Contains(output, "A task is doing without a claim.") {
+		t.Fatalf("pendingCommand output does not report the unclaimed doing task: %q", output)
+	}
+	if !strings.Contains(output, tasks[0].ID) {
+		t.Fatalf("pendingCommand output does not include task ID %q: %q", tasks[0].ID, output)
+	}
+
+	s = openPendingStore(t, dir)
+	if _, err := s.UpdateTask(ctx, tasks[0].ID, domain.TaskTodo, ""); err != nil {
+		t.Fatalf("UpdateTask to todo: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("Store.Close after UpdateTask: %v", err)
+	}
+
+	output, exitCode, err = pendingCommand(dir, projectRoot)
+	if err != nil {
+		t.Fatalf("pendingCommand after UpdateTask: %v", err)
+	}
+	if strings.Contains(output, "A task is doing without a claim.") {
+		t.Fatalf("pendingCommand kept the unclaimed doing reason after returning to todo: %q", output)
+	}
+}
+
+func TestPendingCommandFiltersNewConditionsFromOtherProject(t *testing.T) {
+	dir := t.TempDir()
+	projectRoot := filepath.Join(t.TempDir(), "current-project")
+	otherRoot := filepath.Join(t.TempDir(), "other-project")
+	s := openPendingStore(t, dir)
+	ctx := context.Background()
+	current, err := s.CreateProject(ctx, "current", projectRoot)
+	if err != nil {
+		t.Fatalf("CreateProject current: %v", err)
+	}
+	other, err := s.CreateProject(ctx, "other", otherRoot)
+	if err != nil {
+		t.Fatalf("CreateProject other: %v", err)
+	}
+
+	doneGoal, err := s.CreateGoal(ctx, other.ID, "Other completed goal", "")
+	if err != nil {
+		t.Fatalf("CreateGoal done: %v", err)
+	}
+	doneTasks, err := s.DeclareTasks(ctx, doneGoal.ID, "agent", "other-done", []string{"other done task"}, []string{"Complete the other task."})
+	if err != nil {
+		t.Fatalf("DeclareTasks done: %v", err)
+	}
+	if _, err := s.UpdateTask(ctx, doneTasks[0].ID, domain.TaskDone, ""); err != nil {
+		t.Fatalf("UpdateTask done: %v", err)
+	}
+
+	droppedGoal, err := s.CreateGoal(ctx, other.ID, "Other withdrawn goal", "")
+	if err != nil {
+		t.Fatalf("CreateGoal dropped: %v", err)
+	}
+	droppedTasks, err := s.DeclareTasks(ctx, droppedGoal.ID, "agent", "other-dropped", []string{"other dropped task"}, []string{"Withdraw the other task."})
+	if err != nil {
+		t.Fatalf("DeclareTasks dropped: %v", err)
+	}
+	if _, err := s.UpdateTask(ctx, droppedTasks[0].ID, domain.TaskDropped, ""); err != nil {
+		t.Fatalf("UpdateTask dropped: %v", err)
+	}
+
+	doingGoal, err := s.CreateGoal(ctx, other.ID, "Other unclaimed goal", "")
+	if err != nil {
+		t.Fatalf("CreateGoal doing: %v", err)
+	}
+	doingTasks, err := s.DeclareTasks(ctx, doingGoal.ID, "agent", "other-doing", []string{"other doing task"}, []string{"Return the other task to todo."})
+	if err != nil {
+		t.Fatalf("DeclareTasks doing: %v", err)
+	}
+	if _, err := s.UpdateTask(ctx, doingTasks[0].ID, domain.TaskDoing, ""); err != nil {
+		t.Fatalf("UpdateTask doing: %v", err)
+	}
+	if current.ID == "" {
+		t.Fatal("current project has no ID")
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("Store.Close: %v", err)
+	}
+
+	output, exitCode, err := pendingCommand(dir, projectRoot)
+	if err != nil {
+		t.Fatalf("pendingCommand: %v", err)
+	}
+	if output != "" {
+		t.Fatalf("pendingCommand reported reasons from another project: %q", output)
+	}
+	if exitCode != 1 {
+		t.Fatalf("pendingCommand exit code = %d, want 1", exitCode)
+	}
+}
+
+func TestReleaseTaskReturnsDoingTaskToTodo(t *testing.T) {
+	dir, projectRoot := newPendingFixture(t)
+	s := openPendingStore(t, dir)
+	ctx := context.Background()
+	project, err := s.ResolveProject(ctx, projectRoot)
+	if err != nil {
+		t.Fatalf("ResolveProject: %v", err)
+	}
+	goal, err := s.CreateGoal(ctx, project.ID, "Release stale work", "")
+	if err != nil {
+		t.Fatalf("CreateGoal: %v", err)
+	}
+	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "release-stale", []string{"stale task"}, []string{"Release the stale task."})
+	if err != nil {
+		t.Fatalf("DeclareTasks: %v", err)
+	}
+	if _, err := s.ClaimTask(ctx, tasks[0].ID, "stale-run"); err != nil {
+		t.Fatalf("ClaimTask: %v", err)
+	}
+	if _, err := s.UpdateTask(ctx, tasks[0].ID, domain.TaskDoing, "stale-run"); err != nil {
+		t.Fatalf("UpdateTask: %v", err)
+	}
+	released, err := s.ReleaseTask(ctx, tasks[0].ID)
+	if err != nil {
+		t.Fatalf("ReleaseTask: %v", err)
+	}
+	if released.Status != domain.TaskTodo {
+		t.Fatalf("released task status = %s, want %s", released.Status, domain.TaskTodo)
+	}
+	if released.ClaimedBy != "" {
+		t.Fatalf("released task claimed_by = %q, want empty", released.ClaimedBy)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("Store.Close: %v", err)
 	}
 }
 

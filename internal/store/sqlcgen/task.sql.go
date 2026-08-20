@@ -318,7 +318,7 @@ func (q *Queries) MaxTaskSortOrder(ctx context.Context, goalID string) (int64, e
 
 const releaseTask = `-- name: ReleaseTask :execresult
 UPDATE tasks
-SET claimed_by = '', claimed_at = NULL, updated_at = ?
+SET status = 'todo', claimed_by = '', claimed_at = NULL, updated_at = ?
 WHERE id = ?
 `
 

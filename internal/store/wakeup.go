@@ -42,10 +42,13 @@ type KeepaliveEvent struct {
 // WakeupState is the detector result used by pending output and the daemon.
 // Tasks contains the actionable task list for pending's human-readable view.
 type WakeupState struct {
-	ActiveGoalCount    int
-	UnstartedTaskCount int
-	WaitingAnswerCount int
-	Tasks              []domain.Task
+	ActiveGoalCount     int
+	UnstartedTaskCount  int
+	WaitingAnswerCount  int
+	Tasks               []domain.Task
+	CompletedGoals      []domain.Goal
+	DroppedGoals        []domain.Goal
+	UnclaimedDoingTasks []domain.Task
 }
 
 // DetectWakeup implements condition 5: an active goal has at least one todo
@@ -74,9 +77,40 @@ func (s *Store) DetectWakeup(ctx context.Context, projectID string) (WakeupState
 		if goal.Status != domain.GoalActive {
 			continue
 		}
+		tasks, err := s.ListTasks(ctx, goal.ID)
+		if err != nil {
+			return WakeupState{}, err
+		}
 		openDecisions, err := s.ListOpenDecisions(ctx, goal.ID)
 		if err != nil {
 			return WakeupState{}, err
+		}
+		hasCompletionReport := false
+		for _, decision := range openDecisions {
+			if decision.Kind == "completion" {
+				hasCompletionReport = true
+				break
+			}
+		}
+		if len(tasks) > 0 {
+			allDone := true
+			allDropped := true
+			for _, task := range tasks {
+				if task.Status != domain.TaskDone {
+					allDone = false
+				}
+				if task.Status != domain.TaskDropped {
+					allDropped = false
+				}
+				if task.Status == domain.TaskDoing && task.ClaimedBy == "" {
+					state.UnclaimedDoingTasks = append(state.UnclaimedDoingTasks, task)
+				}
+			}
+			if allDone && !hasCompletionReport {
+				state.CompletedGoals = append(state.CompletedGoals, goal)
+			} else if allDropped && !hasCompletionReport {
+				state.DroppedGoals = append(state.DroppedGoals, goal)
+			}
 		}
 		if len(openDecisions) > 0 {
 			state.WaitingAnswerCount += len(openDecisions)
@@ -84,10 +118,6 @@ func (s *Store) DetectWakeup(ctx context.Context, projectID string) (WakeupState
 		}
 		if _, ok := runningByGoal[goal.ID]; ok {
 			continue
-		}
-		tasks, err := s.ListTasks(ctx, goal.ID)
-		if err != nil {
-			return WakeupState{}, err
 		}
 		var unstarted []domain.Task
 		for _, task := range tasks {
@@ -104,6 +134,15 @@ func (s *Store) DetectWakeup(ctx context.Context, projectID string) (WakeupState
 	}
 	if state.Tasks == nil {
 		state.Tasks = []domain.Task{}
+	}
+	if state.CompletedGoals == nil {
+		state.CompletedGoals = []domain.Goal{}
+	}
+	if state.DroppedGoals == nil {
+		state.DroppedGoals = []domain.Goal{}
+	}
+	if state.UnclaimedDoingTasks == nil {
+		state.UnclaimedDoingTasks = []domain.Task{}
 	}
 	return state, nil
 }

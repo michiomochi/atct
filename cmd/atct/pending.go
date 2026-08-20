@@ -25,6 +25,12 @@ const (
 	pendingStaleClaimReason      = "A task claimed by another agent session is no longer running. You can take it over by returning it to todo with `atct_task_update`, then claim it."
 	pendingUndeclaredGoalReason  = "An active goal has no tasks declared. Call `atct_task_declare` for each goal below, then continue the work."
 	pendingWakeupReason          = "An active goal has unstarted tasks and no running claim. Call `atct_task_claim` for a task below, then continue the work."
+	pendingCompletedGoalReason   = "All tasks are done but the active goal has no completion report. Call `atct_goal_complete` for each goal below, then continue the work."
+	pendingDroppedGoalReason     = "All tasks in an active goal were dropped. Call `atct_goal_complete` to report that the work was withdrawn; call `atct_task_declare` to declare tasks again if it should be resumed."
+	pendingUnclaimedDoingReason  = "A task is doing without a claim. Return it to todo with `atct_task_update`, then continue the work."
+	completedGoalMarker          = "Goals with all tasks done:"
+	droppedGoalMarker            = "Goals with all tasks dropped:"
+	unclaimedDoingMarker         = "Doing tasks without a claim:"
 )
 
 func currentAgentSessionID() string {
@@ -226,6 +232,42 @@ func pendingTextForProject(dir, cwd, projectName string, projectSpecified bool) 
 		output.WriteString("Unstarted tasks:")
 		output.WriteByte('\n')
 		for _, task := range wakeupState.Tasks {
+			fmt.Fprintf(&output, "- %s (task_id: %s)\n", oneLine(task.Title), task.ID)
+		}
+	}
+	if len(wakeupState.CompletedGoals) > 0 {
+		if output.Len() > 0 {
+			output.WriteString("\n\n")
+		}
+		output.WriteString(pendingCompletedGoalReason)
+		output.WriteString("\n\n")
+		output.WriteString(completedGoalMarker)
+		output.WriteByte('\n')
+		for _, goal := range wakeupState.CompletedGoals {
+			fmt.Fprintf(&output, "- %s (goal_id: %s)\n", oneLine(goal.Title), goal.ID)
+		}
+	}
+	if len(wakeupState.DroppedGoals) > 0 {
+		if output.Len() > 0 {
+			output.WriteString("\n\n")
+		}
+		output.WriteString(pendingDroppedGoalReason)
+		output.WriteString("\n\n")
+		output.WriteString(droppedGoalMarker)
+		output.WriteByte('\n')
+		for _, goal := range wakeupState.DroppedGoals {
+			fmt.Fprintf(&output, "- %s (goal_id: %s)\n", oneLine(goal.Title), goal.ID)
+		}
+	}
+	if len(wakeupState.UnclaimedDoingTasks) > 0 {
+		if output.Len() > 0 {
+			output.WriteString("\n\n")
+		}
+		output.WriteString(pendingUnclaimedDoingReason)
+		output.WriteString("\n\n")
+		output.WriteString(unclaimedDoingMarker)
+		output.WriteByte('\n')
+		for _, task := range wakeupState.UnclaimedDoingTasks {
 			fmt.Fprintf(&output, "- %s (task_id: %s)\n", oneLine(task.Title), task.ID)
 		}
 	}

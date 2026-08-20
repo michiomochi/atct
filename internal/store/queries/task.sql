@@ -72,7 +72,7 @@ ORDER BY sort_order, id;
 
 -- name: ReleaseTask :execresult
 UPDATE tasks
-SET claimed_by = '', claimed_at = NULL, updated_at = ?
+SET status = 'todo', claimed_by = '', claimed_at = NULL, updated_at = ?
 WHERE id = ?;
 
 -- name: TaskExists :one
