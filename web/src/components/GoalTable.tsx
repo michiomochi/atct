@@ -58,7 +58,14 @@ export function GoalTable({ goals, showProject = true }: Props) {
                         <span aria-hidden="true" className="mr-2 shrink-0 text-ink-500">
                           {index === tasks.length - 1 ? "└─" : "├─"}
                         </span>
-                        <span className="text-clamp-2">{task.title}</span>
+                        <a
+                          className="focus-ring inline-block w-fit max-w-full text-left"
+                          href={`/tasks/${encodePathSegment(task.id)}`}
+                        >
+                          <span className="text-clamp-2 block max-w-[32rem] break-words font-medium text-ink-950" title={task.title}>
+                            {task.title}
+                          </span>
+                        </a>
                       </div>
                     </Table.Cell>
                     {showProject && <Table.Cell className="px-3 py-3" />}

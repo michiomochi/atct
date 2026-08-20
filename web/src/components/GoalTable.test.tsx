@@ -83,4 +83,17 @@ describe("GoalTable", () => {
     expect(taskCells).toEqual(["├─First task", "├─Second task", "└─Third task"]);
     expect(taskCells.join(" ")).not.toMatch(/[0-9]/);
   });
+
+  it("links task titles to their task detail pages without expanding to the row width", () => {
+    render(
+      <GoalTable
+        goals={[goal([taskView("task-detail", "Linked task", 0)])]}
+      />,
+    );
+
+    const taskLink = screen.getByRole("link", { name: "Linked task" });
+
+    expect(taskLink.getAttribute("href")).toBe("/tasks/task-detail");
+    expect(taskLink.className).toContain("w-fit");
+  });
 });
