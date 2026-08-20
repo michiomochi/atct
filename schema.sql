@@ -45,6 +45,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   id         TEXT PRIMARY KEY,
   goal_id    TEXT NOT NULL REFERENCES goals(id),
   title      TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
   status     TEXT NOT NULL,
   agent      TEXT NOT NULL DEFAULT '',
   files      TEXT NOT NULL DEFAULT '[]',

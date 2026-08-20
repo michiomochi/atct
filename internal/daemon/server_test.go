@@ -317,6 +317,7 @@ func createDecisionFixture(t *testing.T, conn net.Conn) (string, string) {
 		"agent":           "test-agent",
 		"idempotency_key": "wait-semantics",
 		"titles":          []string{"Wait for a decision"},
+		"descriptions":    []string{"Complete the task after the decision is answered."},
 		"run_id":          "fixture-run",
 	})
 	if taskResp.Error != "" {

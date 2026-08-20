@@ -73,7 +73,7 @@ func TestPendingCommandStopsReportingGoalAfterTaskDeclaration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
-	if _, err := s.DeclareTasks(ctx, goal.ID, "agent", "declare-goal", []string{"first task"}); err != nil {
+	if _, err := s.DeclareTasks(ctx, goal.ID, "agent", "declare-goal", []string{"first task"}, []string{"Complete the first task declared for the goal."}); err != nil {
 		t.Fatalf("DeclareTasks: %v", err)
 	}
 	if err := s.Close(); err != nil {
@@ -108,7 +108,7 @@ func TestPendingCommandIncludesAllPendingReasons(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGoal claimed: %v", err)
 	}
-	claimedTasks, err := s.DeclareTasks(ctx, claimedGoal.ID, "agent", "run-all", []string{"unfinished claimed work"})
+	claimedTasks, err := s.DeclareTasks(ctx, claimedGoal.ID, "agent", "run-all", []string{"unfinished claimed work"}, []string{"Complete the claimed work before selecting another goal."})
 	if err != nil {
 		t.Fatalf("DeclareTasks claimed: %v", err)
 	}
@@ -125,7 +125,7 @@ func TestPendingCommandIncludesAllPendingReasons(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGoal decision: %v", err)
 	}
-	decisionTasks, err := s.DeclareTasks(ctx, decisionGoal.ID, "agent", "run-decision", []string{"blocked decision work"})
+	decisionTasks, err := s.DeclareTasks(ctx, decisionGoal.ID, "agent", "run-decision", []string{"blocked decision work"}, []string{"Complete the blocked work after its decision is answered."})
 	if err != nil {
 		t.Fatalf("DeclareTasks decision: %v", err)
 	}
@@ -180,7 +180,7 @@ func TestPendingCommandReturnsDecisionIDAndQuestion(t *testing.T) {
 		t.Fatalf("CreateGoal: %v", err)
 	}
 	// An active decision has to name the task it is holding up.
-	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "blocked-1", []string{"blocked task"})
+	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "blocked-1", []string{"blocked task"}, []string{"Complete the blocked task after the human chooses a release channel."})
 	if err != nil {
 		t.Fatalf("DeclareTasks: %v", err)
 	}
@@ -334,7 +334,7 @@ func TestPendingCommandFiltersDecisionsFromOtherProject(t *testing.T) {
 		t.Fatalf("CreateGoal: %v", err)
 	}
 	// An active decision has to name the task it is holding up.
-	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "blocked-other", []string{"blocked task"})
+	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "blocked-other", []string{"blocked task"}, []string{"Complete the blocked task in the other project."})
 	if err != nil {
 		t.Fatalf("DeclareTasks: %v", err)
 	}
@@ -401,7 +401,7 @@ func TestPendingCommandUsesLatestProjectRunWithoutEnv(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
-	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "latest-run", []string{"unfinished task"})
+	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "latest-run", []string{"unfinished task"}, []string{"Complete the unfinished task when the latest run resumes."})
 	if err != nil {
 		t.Fatalf("DeclareTasks: %v", err)
 	}
@@ -443,7 +443,7 @@ func TestPendingCommandPrefersExplicitRunIDOverLatestProjectRun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
-	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "run-selection", []string{"latest task", "explicit task"})
+	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "run-selection", []string{"latest task", "explicit task"}, []string{"Complete the latest task selected for the run.", "Complete the explicitly selected task after it."})
 	if err != nil {
 		t.Fatalf("DeclareTasks: %v", err)
 	}
@@ -494,7 +494,7 @@ func TestPendingCommandDoesNotReportAnotherRunsClaim(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
-	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "other-run", []string{"other run task"})
+	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "other-run", []string{"other run task"}, []string{"Complete the task owned by the other run without stealing it."})
 	if err != nil {
 		t.Fatalf("DeclareTasks: %v", err)
 	}
@@ -549,7 +549,7 @@ func openPendingStore(t *testing.T, dir string) *store.Store {
 
 func addPendingTestDecision(t *testing.T, s *store.Store, ctx context.Context, goalID, taskKey, question string, applyDefault bool) domain.Decision {
 	t.Helper()
-	tasks, err := s.DeclareTasks(ctx, goalID, "agent", taskKey, []string{"blocked task"})
+	tasks, err := s.DeclareTasks(ctx, goalID, "agent", taskKey, []string{"blocked task"}, []string{"Complete the blocked task after its decision is settled."})
 	if err != nil {
 		t.Fatalf("DeclareTasks: %v", err)
 	}

@@ -67,7 +67,16 @@ func (e *TaskFileConflictError) Unwrap() error { return ErrTaskFileConflict }
 // DeclareTasks derives declare_key from the idempotency key and task position.
 // The unique (goal_id, declare_key) constraint absorbs duplicate declarations.
 // Agents retry and repeat declarations after context compaction, so this prevents task multiplication.
-func (s *Store) DeclareTasks(ctx context.Context, goalID, agent, idempotencyKey string, titles []string, declaredFiles ...[][]string) ([]domain.Task, error) {
+func (s *Store) DeclareTasks(ctx context.Context, goalID, agent, idempotencyKey string, titles []string, descriptions []string, declaredFiles ...[][]string) ([]domain.Task, error) {
+	if len(descriptions) != len(titles) {
+		return nil, fmt.Errorf("declare tasks: descriptions count %d does not match titles count %d", len(descriptions), len(titles))
+	}
+	for i, description := range descriptions {
+		if strings.TrimSpace(description) == "" {
+			return nil, fmt.Errorf("declare tasks: description %d is empty", i)
+		}
+	}
+
 	filesByTask := make([][]string, len(titles))
 	if len(declaredFiles) > 1 {
 		return nil, fmt.Errorf("declare tasks: expected at most one files list, got %d", len(declaredFiles))
@@ -96,18 +105,19 @@ func (s *Store) DeclareTasks(ctx context.Context, goalID, agent, idempotencyKey 
 			return nil, fmt.Errorf("encode task %d files: %w", i, err)
 		}
 		err = q.CreateTask(ctx, sqlcgen.CreateTaskParams{
-			ID:         uuid.NewString(),
-			GoalID:     goalID,
-			Title:      title,
-			Status:     string(domain.TaskTodo),
-			Agent:      agent,
-			Files:      filesJSON,
-			SortOrder:  int64(i),
-			DeclareKey: declareKey,
-			ClaimedBy:  "",
-			ClaimedAt:  sql.NullString{},
-			CreatedAt:  now,
-			UpdatedAt:  now,
+			ID:          uuid.NewString(),
+			GoalID:      goalID,
+			Title:       title,
+			Description: descriptions[i],
+			Status:      string(domain.TaskTodo),
+			Agent:       agent,
+			Files:       filesJSON,
+			SortOrder:   int64(i),
+			DeclareKey:  declareKey,
+			ClaimedBy:   "",
+			ClaimedAt:   sql.NullString{},
+			CreatedAt:   now,
+			UpdatedAt:   now,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("insert task %d: %w", i, err)
@@ -163,14 +173,15 @@ func (s *Store) ListTasks(ctx context.Context, goalID string) ([]domain.Task, er
 
 func taskFromRow(row sqlcgen.Task) (domain.Task, error) {
 	tk := domain.Task{
-		ID:         row.ID,
-		GoalID:     row.GoalID,
-		Title:      row.Title,
-		Status:     domain.TaskStatus(row.Status),
-		Agent:      row.Agent,
-		Order:      int(row.SortOrder),
-		DeclareKey: row.DeclareKey,
-		ClaimedBy:  row.ClaimedBy,
+		ID:          row.ID,
+		GoalID:      row.GoalID,
+		Title:       row.Title,
+		Description: row.Description,
+		Status:      domain.TaskStatus(row.Status),
+		Agent:       row.Agent,
+		Order:       int(row.SortOrder),
+		DeclareKey:  row.DeclareKey,
+		ClaimedBy:   row.ClaimedBy,
 	}
 	files, err := unmarshalTaskFiles(row.Files)
 	if err != nil {

@@ -25,14 +25,106 @@ func newTestGoal(t *testing.T, s *Store) string {
 	return g.ID
 }
 
+func TestDeclareTasksRejectsEmptyDescription(t *testing.T) {
+	s := newTestStore(t)
+	goalID := newTestGoal(t, s)
+
+	_, err := s.DeclareTasks(context.Background(), goalID, "codex", "empty-description", []string{"Implement the task"}, []string{""})
+	if err == nil || !strings.HasPrefix(err.Error(), "declare tasks:") {
+		t.Fatalf("DeclareTasks error = %v, want declare tasks error for empty description", err)
+	}
+}
+
+func TestDeclareTasksRejectsWhitespaceOnlyDescription(t *testing.T) {
+	s := newTestStore(t)
+	goalID := newTestGoal(t, s)
+
+	_, err := s.DeclareTasks(context.Background(), goalID, "codex", "whitespace-description", []string{"Implement the task"}, []string{" \t\n"})
+	if err == nil || !strings.HasPrefix(err.Error(), "declare tasks:") {
+		t.Fatalf("DeclareTasks error = %v, want declare tasks error for whitespace-only description", err)
+	}
+}
+
+func TestDeclareTasksRejectsDescriptionTitleLengthMismatch(t *testing.T) {
+	s := newTestStore(t)
+	goalID := newTestGoal(t, s)
+
+	_, err := s.DeclareTasks(context.Background(), goalID, "codex", "description-length", []string{"Design the change", "Implement the change"}, []string{"Describe the schema change"})
+	if err == nil || !strings.HasPrefix(err.Error(), "declare tasks:") {
+		t.Fatalf("DeclareTasks error = %v, want declare tasks error for mismatched descriptions", err)
+	}
+}
+
+func TestDeclareTasksKeepsOriginalDescriptionOnRedeclare(t *testing.T) {
+	s := newTestStore(t)
+	goalID := newTestGoal(t, s)
+	titles := []string{"Add the task column", "Validate task declarations"}
+	original := []string{
+		"Persist the task explanation alongside its title.",
+		"Reject declarations that do not explain completion and assumptions.",
+	}
+	changed := []string{
+		"This replacement explanation must not overwrite the stored value.",
+		"A second declaration keeps the first explanation for each task.",
+	}
+
+	first, err := s.DeclareTasks(context.Background(), goalID, "codex", "description-idempotency", titles, original)
+	if err != nil {
+		t.Fatalf("first DeclareTasks: %v", err)
+	}
+	second, err := s.DeclareTasks(context.Background(), goalID, "codex", "description-idempotency", titles, changed)
+	if err != nil {
+		t.Fatalf("second DeclareTasks: %v", err)
+	}
+	if len(first) != len(original) || len(second) != len(original) {
+		t.Fatalf("DeclareTasks returned %d and %d tasks, want %d", len(first), len(second), len(original))
+	}
+	for i, want := range original {
+		if second[i].Description != want {
+			t.Fatalf("re-declared task %d description = %q, want original %q", i, second[i].Description, want)
+		}
+	}
+}
+
+func TestDeclareTasksPersistsDescriptions(t *testing.T) {
+	s := newTestStore(t)
+	goalID := newTestGoal(t, s)
+	titles := []string{"Add the migration", "Read descriptions from the store"}
+	want := []string{
+		"Add a non-null default so existing task rows remain valid.",
+		"Return each stored explanation when tasks are listed.",
+	}
+
+	if _, err := s.DeclareTasks(context.Background(), goalID, "codex", "description-persistence", titles, want); err != nil {
+		t.Fatalf("DeclareTasks: %v", err)
+	}
+	tasks, err := s.ListTasks(context.Background(), goalID)
+	if err != nil {
+		t.Fatalf("ListTasks: %v", err)
+	}
+	if len(tasks) != len(want) {
+		t.Fatalf("ListTasks returned %d tasks, want %d", len(tasks), len(want))
+	}
+	for i, description := range want {
+		if tasks[i].Description != description {
+			t.Fatalf("task %d description = %q, want %q", i, tasks[i].Description, description)
+		}
+	}
+}
+
 func TestDeclareTasksIsIdempotent(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	goalID := newTestGoal(t, s)
 
 	titles := []string{"Design", "Implement", "Test"}
+	descriptions := []string{
+		"Define the implementation boundaries and data flow.",
+		"Implement the requested change in the Go store.",
+		"Verify the behavior with focused and full tests.",
+	}
 
-	first, err := s.DeclareTasks(ctx, goalID, "codex", "key-1", titles)
+	first, err := s.DeclareTasks(ctx, goalID, "codex", "key-1", titles, descriptions)
 	if err != nil {
 		t.Fatalf("first DeclareTasks: %v", err)
 	}
@@ -40,7 +132,7 @@ func TestDeclareTasksIsIdempotent(t *testing.T) {
 		t.Fatalf("first returned %d tasks, want 3", len(first))
 	}
 
-	second, err := s.DeclareTasks(ctx, goalID, "codex", "key-1", titles)
+	second, err := s.DeclareTasks(ctx, goalID, "codex", "key-1", titles, descriptions)
 	if err != nil {
 		t.Fatalf("second DeclareTasks: %v", err)
 	}
@@ -62,7 +154,8 @@ func TestDeclareTasksIsIdempotent(t *testing.T) {
 
 func declareOneTaskWithFiles(t *testing.T, s *Store, goalID, key, title string, files []string) string {
 	t.Helper()
-	tasks, err := s.DeclareTasks(context.Background(), goalID, "codex", key, []string{title}, [][]string{files})
+	description := "Complete the task titled " + title + " and verify its declared files."
+	tasks, err := s.DeclareTasks(context.Background(), goalID, "codex", key, []string{title}, []string{description}, [][]string{files})
 	if err != nil {
 		t.Fatalf("DeclareTasks: %v", err)
 	}

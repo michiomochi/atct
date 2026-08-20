@@ -40,7 +40,7 @@ func TestInboxAttentionTasksIncludeProjectIdentityPerTask(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	otherTasks, err := f.store.DeclareTasks(f.ctx, otherGoal.ID, "other-agent", "other-declare", []string{"needs"})
+	otherTasks, err := f.store.DeclareTasks(f.ctx, otherGoal.ID, "other-agent", "other-declare", []string{"needs"}, []string{"Complete the other project's work before answering its decision."})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,7 +171,7 @@ func TestHTTPInboxIncludesGoalTitlePerDecision(t *testing.T) {
 
 func TestHTTPInboxIncludesTasksPerActiveGoalInOrder(t *testing.T) {
 	f := newBareFixture(t)
-	firstTasks, err := f.store.DeclareTasks(f.ctx, f.goal.ID, "first-agent", "first-declare", []string{"first task", "second task"})
+	firstTasks, err := f.store.DeclareTasks(f.ctx, f.goal.ID, "first-agent", "first-declare", []string{"first task", "second task"}, []string{"Finish the first task in order.", "Finish the second task after the first task."})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -182,7 +182,7 @@ func TestHTTPInboxIncludesTasksPerActiveGoalInOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	secondTasks, err := f.store.DeclareTasks(f.ctx, secondGoal.ID, "second-agent", "second-declare", []string{"other task"})
+	secondTasks, err := f.store.DeclareTasks(f.ctx, secondGoal.ID, "second-agent", "second-declare", []string{"other task"}, []string{"Finish the task belonging to the second goal."})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -274,7 +274,7 @@ func newFixture(t *testing.T) *fixture {
 	f := newBareFixture(t)
 
 	var err error
-	f.tasks, err = f.store.DeclareTasks(f.ctx, f.goal.ID, "fixture-agent", "fixture-declare", []string{"needs", "now", "next"})
+	f.tasks, err = f.store.DeclareTasks(f.ctx, f.goal.ID, "fixture-agent", "fixture-declare", []string{"needs", "now", "next"}, []string{"Resolve the prerequisite work.", "Continue the current implementation work.", "Complete the remaining follow-up work."})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -778,7 +778,7 @@ func TestInboxAndGoalDetailUseExclusiveTaskColumns(t *testing.T) {
 
 func TestHTTPGoalDetailIncludesAllTasksWithoutCrossGoalMixing(t *testing.T) {
 	f := newBareFixture(t)
-	targetTasks, err := f.store.DeclareTasks(f.ctx, f.goal.ID, "target-agent", "target-declare", []string{"first task", "second task"})
+	targetTasks, err := f.store.DeclareTasks(f.ctx, f.goal.ID, "target-agent", "target-declare", []string{"first task", "second task"}, []string{"Complete the first target task.", "Complete the second target task."})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -786,7 +786,7 @@ func TestHTTPGoalDetailIncludesAllTasksWithoutCrossGoalMixing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	otherTasks, err := f.store.DeclareTasks(f.ctx, otherGoal.ID, "other-agent", "other-declare", []string{"other task"})
+	otherTasks, err := f.store.DeclareTasks(f.ctx, otherGoal.ID, "other-agent", "other-declare", []string{"other task"}, []string{"Complete the task from the other goal."})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -846,7 +846,7 @@ func TestHTTPGoalDetailIncludesAllTasksWithoutCrossGoalMixing(t *testing.T) {
 
 func TestHTTPGoalDetailDecisionHistoryIncludesTaskIDs(t *testing.T) {
 	f := newBareFixture(t)
-	tasks, err := f.store.DeclareTasks(f.ctx, f.goal.ID, "history-agent", "history-declare", []string{"first task", "second task"})
+	tasks, err := f.store.DeclareTasks(f.ctx, f.goal.ID, "history-agent", "history-declare", []string{"first task", "second task"}, []string{"Complete the first task before recording its decision.", "Complete the second task before recording its decision."})
 	if err != nil {
 		t.Fatal(err)
 	}

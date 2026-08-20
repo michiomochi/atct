@@ -15,6 +15,7 @@ type GoalListIn struct {
 type TaskDeclareIn struct {
 	GoalID         string     `json:"goal_id"`
 	Titles         []string   `json:"titles" jsonschema:"task titles decomposed from the goal, in execution order"`
+	Descriptions   []string   `json:"descriptions" jsonschema:"task descriptions explaining the completion criteria and assumptions for each title, in execution order"`
 	Files          [][]string `json:"files,omitempty" jsonschema:"files touched by each title, in the same order; paths are relative to the project root"`
 	IdempotencyKey string     `json:"idempotency_key" jsonschema:"key that prevents duplicate tasks when the same declaration is retried"`
 	Agent          string     `json:"agent"`
@@ -160,7 +161,7 @@ func Register(server *mcp.Server, c *Client, runID string) {
 		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in TaskDeclareIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
 		params := map[string]any{
-			"goal_id": in.GoalID, "titles": in.Titles,
+			"goal_id": in.GoalID, "titles": in.Titles, "descriptions": in.Descriptions,
 			"idempotency_key": in.IdempotencyKey, "agent": in.Agent,
 			"run_id":                    runID,
 			"include_unapplied_answers": true,

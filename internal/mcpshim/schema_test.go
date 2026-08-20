@@ -96,7 +96,9 @@ func TestRegisterPublishesEightToolsWithFlexibleOutputSchema(t *testing.T) {
 	}{
 		{name: "atct_goal_list", args: map[string]any{"cwd": "/tmp"}},
 		{name: "atct_task_declare", args: map[string]any{
-			"goal_id": "goal-1", "titles": []string{"task"}, "idempotency_key": "key-1", "agent": "agent-1",
+			"goal_id": "goal-1", "titles": []string{"task"},
+			"descriptions":    []string{"Complete the declared task and verify its result."},
+			"idempotency_key": "key-1", "agent": "agent-1",
 		}},
 		{name: "atct_task_claim", args: map[string]any{"task_id": "task-1"}},
 		{name: "atct_task_update", args: map[string]any{"task_id": "task-1", "status": "doing"}},
@@ -255,7 +257,7 @@ func callDecisionAsk(t *testing.T, args map[string]any) (*mcp.CallToolResult, er
 		t.Fatalf("CreateGoal: %v", err)
 	}
 	// An active decision has to name the task it is holding up.
-	tasks, err := s.DeclareTasks(context.Background(), goal.ID, "agent", "batch-1", []string{"blocked task"})
+	tasks, err := s.DeclareTasks(context.Background(), goal.ID, "agent", "batch-1", []string{"blocked task"}, []string{"Complete the blocked task after the decision is resolved."})
 	if err != nil {
 		s.Close()
 		t.Fatalf("DeclareTasks: %v", err)

@@ -46,7 +46,7 @@ func TestOpenMigratesAppliedDecisionWithoutTaskID(t *testing.T) {
 func TestDecisionConstraintAllowsTaskID(t *testing.T) {
 	s := newTestStore(t)
 	goalID := newTestGoal(t, s)
-	tasks, err := s.DeclareTasks(context.Background(), goalID, "agent", "constraint-task", []string{"task"})
+	tasks, err := s.DeclareTasks(context.Background(), goalID, "agent", "constraint-task", []string{"task"}, []string{"Create the task needed to verify the decision task constraint."})
 	if err != nil {
 		t.Fatalf("DeclareTasks: %v", err)
 	}
@@ -179,7 +179,7 @@ func TestOpenDecisionMigrationIncrementsUserVersion(t *testing.T) {
 func newTestDecisionTask(t *testing.T, s *Store, goalID, declareKey string) string {
 	t.Helper()
 
-	tasks, err := s.DeclareTasks(context.Background(), goalID, "test-agent", declareKey, []string{"decision task"})
+	tasks, err := s.DeclareTasks(context.Background(), goalID, "test-agent", declareKey, []string{"decision task"}, []string{"Create the decision task that the migration test will reference."})
 	if err != nil {
 		t.Fatalf("DeclareTasks: %v", err)
 	}

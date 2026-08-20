@@ -53,7 +53,7 @@ func TestProjectIDForTask(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
-	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "declare-key", []string{"task"}, nil)
+	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "declare-key", []string{"task"}, []string{"Complete the declared task and make its result observable to the run."}, nil)
 	if err != nil {
 		t.Fatalf("DeclareTasks: %v", err)
 	}

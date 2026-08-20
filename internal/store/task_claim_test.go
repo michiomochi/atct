@@ -14,7 +14,7 @@ func TestClaimTaskAllowsExactlyOneConcurrentWinner(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	goalID := newTestGoal(t, s)
-	tasks, err := s.DeclareTasks(ctx, goalID, "codex", "claim-key", []string{"Implement the task"})
+	tasks, err := s.DeclareTasks(ctx, goalID, "codex", "claim-key", []string{"Implement the task"}, []string{"Implement the task and confirm exactly one run can claim it."})
 	if err != nil {
 		t.Fatalf("DeclareTasks: %v", err)
 	}
@@ -61,7 +61,7 @@ func TestUpdateTaskReleasesClaimWhenTerminal(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	goalID := newTestGoal(t, s)
-	tasks, err := s.DeclareTasks(ctx, goalID, "codex", "release-key", []string{"Finish the task"})
+	tasks, err := s.DeclareTasks(ctx, goalID, "codex", "release-key", []string{"Finish the task"}, []string{"Finish the task and ensure terminal status releases its claim."})
 	if err != nil {
 		t.Fatalf("DeclareTasks: %v", err)
 	}
@@ -82,7 +82,7 @@ func TestUpdateTaskReleasesClaimWhenTodo(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	goalID := newTestGoal(t, s)
-	tasks, err := s.DeclareTasks(ctx, goalID, "codex", "todo-release-key", []string{"Resume the task later"})
+	tasks, err := s.DeclareTasks(ctx, goalID, "codex", "todo-release-key", []string{"Resume the task later"}, []string{"Resume the task later and verify todo status releases its claim."})
 	if err != nil {
 		t.Fatalf("DeclareTasks: %v", err)
 	}
@@ -106,7 +106,7 @@ func TestUpdateTaskKeepsClaimWhenDoing(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	goalID := newTestGoal(t, s)
-	tasks, err := s.DeclareTasks(ctx, goalID, "codex", "doing-keep-key", []string{"Keep working"})
+	tasks, err := s.DeclareTasks(ctx, goalID, "codex", "doing-keep-key", []string{"Keep working"}, []string{"Keep working on the task while preserving its active claim."})
 	if err != nil {
 		t.Fatalf("DeclareTasks: %v", err)
 	}
@@ -131,7 +131,7 @@ func TestReleaseTaskClearsClaim(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	goalID := newTestGoal(t, s)
-	tasks, err := s.DeclareTasks(ctx, goalID, "codex", "human-release-key", []string{"Release a stale claim"})
+	tasks, err := s.DeclareTasks(ctx, goalID, "codex", "human-release-key", []string{"Release a stale claim"}, []string{"Release the stale claim so another run can continue the task."})
 	if err != nil {
 		t.Fatalf("DeclareTasks: %v", err)
 	}

@@ -236,6 +236,7 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 			Agent                   string     `json:"agent"`
 			IdempotencyKey          string     `json:"idempotency_key"`
 			Titles                  []string   `json:"titles"`
+			Descriptions            []string   `json:"descriptions"`
 			Files                   [][]string `json:"files"`
 			RunID                   string     `json:"run_id"`
 			IncludeUnappliedAnswers bool       `json:"include_unapplied_answers"`
@@ -250,7 +251,7 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		if err := d.ensureRunProject(ctx, p.RunID, goal.ProjectID); err != nil {
 			return nil, err
 		}
-		tasks, err := d.store.DeclareTasks(ctx, p.GoalID, p.Agent, p.IdempotencyKey, p.Titles, p.Files)
+		tasks, err := d.store.DeclareTasks(ctx, p.GoalID, p.Agent, p.IdempotencyKey, p.Titles, p.Descriptions, p.Files)
 		if err != nil || !p.IncludeUnappliedAnswers {
 			return marshal(tasks, err)
 		}

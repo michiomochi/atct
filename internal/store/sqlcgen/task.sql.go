@@ -47,26 +47,27 @@ func (q *Queries) CountOpenDecisionsForTask(ctx context.Context, taskID sql.Null
 
 const createTask = `-- name: CreateTask :exec
 INSERT INTO tasks (
-  id, goal_id, title, status, agent, files, sort_order, declare_key,
+  id, goal_id, title, description, status, agent, files, sort_order, declare_key,
   claimed_by, claimed_at, created_at, updated_at
 )
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(goal_id, declare_key) DO NOTHING
 `
 
 type CreateTaskParams struct {
-	ID         string
-	GoalID     string
-	Title      string
-	Status     string
-	Agent      string
-	Files      string
-	SortOrder  int64
-	DeclareKey string
-	ClaimedBy  string
-	ClaimedAt  sql.NullString
-	CreatedAt  string
-	UpdatedAt  string
+	ID          string
+	GoalID      string
+	Title       string
+	Description string
+	Status      string
+	Agent       string
+	Files       string
+	SortOrder   int64
+	DeclareKey  string
+	ClaimedBy   string
+	ClaimedAt   sql.NullString
+	CreatedAt   string
+	UpdatedAt   string
 }
 
 func (q *Queries) CreateTask(ctx context.Context, arg CreateTaskParams) error {
@@ -74,6 +75,7 @@ func (q *Queries) CreateTask(ctx context.Context, arg CreateTaskParams) error {
 		arg.ID,
 		arg.GoalID,
 		arg.Title,
+		arg.Description,
 		arg.Status,
 		arg.Agent,
 		arg.Files,
@@ -101,17 +103,18 @@ func (q *Queries) GetTaskClaimedBy(ctx context.Context, id string) (string, erro
 }
 
 const getTaskForClaim = `-- name: GetTaskForClaim :one
-SELECT goal_id, title, status, claimed_by, files
+SELECT goal_id, title, description, status, claimed_by, files
 FROM tasks
 WHERE id = ?
 `
 
 type GetTaskForClaimRow struct {
-	GoalID    string
-	Title     string
-	Status    string
-	ClaimedBy string
-	Files     string
+	GoalID      string
+	Title       string
+	Description string
+	Status      string
+	ClaimedBy   string
+	Files       string
 }
 
 func (q *Queries) GetTaskForClaim(ctx context.Context, id string) (GetTaskForClaimRow, error) {
@@ -120,6 +123,7 @@ func (q *Queries) GetTaskForClaim(ctx context.Context, id string) (GetTaskForCla
 	err := row.Scan(
 		&i.GoalID,
 		&i.Title,
+		&i.Description,
 		&i.Status,
 		&i.ClaimedBy,
 		&i.Files,
@@ -141,7 +145,7 @@ func (q *Queries) GetTaskGoalID(ctx context.Context, id string) (string, error) 
 }
 
 const listClaimedTasksForConflict = `-- name: ListClaimedTasksForConflict :many
-SELECT id, title, status, claimed_by, files
+SELECT id, title, description, status, claimed_by, files
 FROM tasks
 WHERE id <> ?
   AND claimed_by <> ''
@@ -158,11 +162,12 @@ type ListClaimedTasksForConflictParams struct {
 }
 
 type ListClaimedTasksForConflictRow struct {
-	ID        string
-	Title     string
-	Status    string
-	ClaimedBy string
-	Files     string
+	ID          string
+	Title       string
+	Description string
+	Status      string
+	ClaimedBy   string
+	Files       string
 }
 
 func (q *Queries) ListClaimedTasksForConflict(ctx context.Context, arg ListClaimedTasksForConflictParams) ([]ListClaimedTasksForConflictRow, error) {
@@ -182,6 +187,7 @@ func (q *Queries) ListClaimedTasksForConflict(ctx context.Context, arg ListClaim
 		if err := rows.Scan(
 			&i.ID,
 			&i.Title,
+			&i.Description,
 			&i.Status,
 			&i.ClaimedBy,
 			&i.Files,
@@ -200,7 +206,7 @@ func (q *Queries) ListClaimedTasksForConflict(ctx context.Context, arg ListClaim
 }
 
 const listTaskAlternatives = `-- name: ListTaskAlternatives :many
-SELECT id, title, status, claimed_by, files
+SELECT id, title, description, status, claimed_by, files
 FROM tasks
 WHERE goal_id = ?
   AND id <> ?
@@ -213,11 +219,12 @@ type ListTaskAlternativesParams struct {
 }
 
 type ListTaskAlternativesRow struct {
-	ID        string
-	Title     string
-	Status    string
-	ClaimedBy string
-	Files     string
+	ID          string
+	Title       string
+	Description string
+	Status      string
+	ClaimedBy   string
+	Files       string
 }
 
 func (q *Queries) ListTaskAlternatives(ctx context.Context, arg ListTaskAlternativesParams) ([]ListTaskAlternativesRow, error) {
@@ -232,6 +239,7 @@ func (q *Queries) ListTaskAlternatives(ctx context.Context, arg ListTaskAlternat
 		if err := rows.Scan(
 			&i.ID,
 			&i.Title,
+			&i.Description,
 			&i.Status,
 			&i.ClaimedBy,
 			&i.Files,
@@ -251,7 +259,7 @@ func (q *Queries) ListTaskAlternatives(ctx context.Context, arg ListTaskAlternat
 
 const listTasks = `-- name: ListTasks :many
 SELECT
-  id, goal_id, title, status, agent, files, sort_order, declare_key,
+  id, goal_id, title, description, status, agent, files, sort_order, declare_key,
   claimed_by, claimed_at, created_at, updated_at
 FROM tasks
 WHERE goal_id = ?
@@ -271,6 +279,7 @@ func (q *Queries) ListTasks(ctx context.Context, goalID string) ([]Task, error) 
 			&i.ID,
 			&i.GoalID,
 			&i.Title,
+			&i.Description,
 			&i.Status,
 			&i.Agent,
 			&i.Files,

@@ -159,7 +159,11 @@ func callNotificationTestTool(t *testing.T, name string, args map[string]any, da
 func notificationTestArgs(name string) map[string]any {
 	switch name {
 	case "atct_task_declare":
-		return map[string]any{"goal_id": "goal-1", "titles": []string{"task"}, "idempotency_key": "key-1", "agent": "agent-1"}
+		return map[string]any{
+			"goal_id": "goal-1", "titles": []string{"task"},
+			"descriptions":    []string{"Complete the declared task and verify its result."},
+			"idempotency_key": "key-1", "agent": "agent-1",
+		}
 	case "atct_task_update":
 		return map[string]any{"task_id": "task-1", "status": "doing"}
 	case "atct_decision_ask":

@@ -1,14 +1,14 @@
 -- name: CreateTask :exec
 INSERT INTO tasks (
-  id, goal_id, title, status, agent, files, sort_order, declare_key,
+  id, goal_id, title, description, status, agent, files, sort_order, declare_key,
   claimed_by, claimed_at, created_at, updated_at
 )
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(goal_id, declare_key) DO NOTHING;
 
 -- name: ListTasks :many
 SELECT
-  id, goal_id, title, status, agent, files, sort_order, declare_key,
+  id, goal_id, title, description, status, agent, files, sort_order, declare_key,
   claimed_by, claimed_at, created_at, updated_at
 FROM tasks
 WHERE goal_id = ?
@@ -35,12 +35,12 @@ FROM tasks
 WHERE id = ?;
 
 -- name: GetTaskForClaim :one
-SELECT goal_id, title, status, claimed_by, files
+SELECT goal_id, title, description, status, claimed_by, files
 FROM tasks
 WHERE id = ?;
 
 -- name: ListClaimedTasksForConflict :many
-SELECT id, title, status, claimed_by, files
+SELECT id, title, description, status, claimed_by, files
 FROM tasks
 WHERE id <> ?
   AND claimed_by <> ''
@@ -59,7 +59,7 @@ FROM tasks
 WHERE id = ?;
 
 -- name: ListTaskAlternatives :many
-SELECT id, title, status, claimed_by, files
+SELECT id, title, description, status, claimed_by, files
 FROM tasks
 WHERE goal_id = ?
   AND id <> ?

@@ -20,7 +20,7 @@ func TestTaskClaimNotificationDoesNotApplyDecision(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
-	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "declare-1", []string{"task"}, nil)
+	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "declare-1", []string{"task"}, []string{"Complete the task before applying its pending decision."}, nil)
 	if err != nil {
 		t.Fatalf("DeclareTasks: %v", err)
 	}
@@ -84,11 +84,11 @@ func TestGoalListNotificationIsProjectScoped(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGoal(other): %v", err)
 	}
-	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "declare-project", []string{"project task"}, nil)
+	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "declare-project", []string{"project task"}, []string{"Complete the project task before returning its pending response."}, nil)
 	if err != nil {
 		t.Fatalf("DeclareTasks(project): %v", err)
 	}
-	otherTasks, err := s.DeclareTasks(ctx, otherGoal.ID, "agent", "declare-other", []string{"other task"}, nil)
+	otherTasks, err := s.DeclareTasks(ctx, otherGoal.ID, "agent", "declare-other", []string{"other task"}, []string{"Complete the task in the other project without mixing responses."}, nil)
 	if err != nil {
 		t.Fatalf("DeclareTasks(other): %v", err)
 	}
@@ -125,7 +125,7 @@ func TestDecisionPollNotificationExcludesPolledDecision(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
-	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "declare-1", []string{"poll target", "other task"}, nil)
+	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "declare-1", []string{"poll target", "other task"}, []string{"Complete the task whose decision is being polled.", "Complete the other task independently."}, nil)
 	if err != nil {
 		t.Fatalf("DeclareTasks: %v", err)
 	}
@@ -162,7 +162,7 @@ func TestDecisionAskParkedIncludesClaimableTasks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGoal(parked): %v", err)
 	}
-	parked, err := s.DeclareTasks(ctx, parkGoal.ID, "agent", "declare-parked", []string{"parked task"}, nil)
+	parked, err := s.DeclareTasks(ctx, parkGoal.ID, "agent", "declare-parked", []string{"parked task"}, []string{"Complete the parked task after the human response arrives."}, nil)
 	if err != nil {
 		t.Fatalf("DeclareTasks(parked): %v", err)
 	}
@@ -172,6 +172,12 @@ func TestDecisionAskParkedIncludesClaimableTasks(t *testing.T) {
 	}
 	candidates, err := s.DeclareTasks(ctx, otherGoal.ID, "agent", "declare-candidates", []string{
 		"free-1", "claimed", "free-2", "free-3", "free-4",
+	}, []string{
+		"Complete the first free candidate task.",
+		"Complete the candidate task that another run may claim.",
+		"Complete the second free candidate task.",
+		"Complete the third free candidate task.",
+		"Complete the fourth free candidate task.",
 	}, nil)
 	if err != nil {
 		t.Fatalf("DeclareTasks(candidates): %v", err)
@@ -240,7 +246,7 @@ func TestProjectScopedWritesRejectOtherProject(t *testing.T) {
 			method: "task.declare",
 			params: map[string]any{
 				"goal_id": f.targetGoal.ID, "agent": "agent", "idempotency_key": "cross-project",
-				"titles": []string{"must be rejected"}, "run_id": f.runID,
+				"titles": []string{"must be rejected"}, "descriptions": []string{"Complete the task only in the assigned project."}, "run_id": f.runID,
 			},
 		},
 		{
@@ -302,7 +308,7 @@ func TestTaskWritesWithoutRunIDSkipProjectGuard(t *testing.T) {
 
 	params, err := json.Marshal(map[string]any{
 		"goal_id": f.assignedGoal.ID, "agent": "agent", "idempotency_key": "without-run-id",
-		"titles": []string{"no run id"},
+		"titles": []string{"no run id"}, "descriptions": []string{"Complete the task without requiring a run identifier."},
 	})
 	if err != nil {
 		t.Fatalf("Marshal task.declare params: %v", err)
@@ -370,7 +376,7 @@ func TestProjectScopedWritesAllowAssignedProjectAndGoalListReadsOtherProject(t *
 
 	params, err := json.Marshal(map[string]any{
 		"goal_id": f.assignedGoal.ID, "agent": "agent", "idempotency_key": "assigned-project",
-		"titles": []string{"assigned declaration"}, "run_id": f.runID,
+		"titles": []string{"assigned declaration"}, "descriptions": []string{"Complete the declaration in the assigned project."}, "run_id": f.runID,
 	})
 	if err != nil {
 		t.Fatalf("Marshal task.declare params: %v", err)
@@ -484,7 +490,7 @@ func newProjectScopeFixture(t *testing.T) projectScopeFixture {
 	if err != nil {
 		t.Fatalf("CreateGoal(complete): %v", err)
 	}
-	targetTasks, err := s.DeclareTasks(ctx, targetGoal.ID, "agent", "target-initial", []string{"target task"}, nil)
+	targetTasks, err := s.DeclareTasks(ctx, targetGoal.ID, "agent", "target-initial", []string{"target task"}, []string{"Complete the target task after selecting its project."}, nil)
 	if err != nil {
 		t.Fatalf("DeclareTasks(target): %v", err)
 	}
