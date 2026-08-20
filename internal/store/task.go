@@ -388,6 +388,9 @@ func (s *Store) ClaimTask(ctx context.Context, taskID, agentSessionID string) (d
 		}
 		return domain.Task{}, fmt.Errorf("lookup task claim: %w", err)
 	}
+	if task.GoalStatus != string(domain.GoalActive) {
+		return domain.Task{}, fmt.Errorf("%w: goal %q is not approved; obtain human approval before claiming its tasks (承認されていないため、先に人間の承認を得てください)", ErrGoalNotActive, task.GoalID)
+	}
 	if task.ClaimedBy != "" {
 		return domain.Task{}, fmt.Errorf("%w: %s", ErrTaskAlreadyClaimed, taskID)
 	}

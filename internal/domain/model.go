@@ -30,6 +30,7 @@ type Goal struct {
 	Title       string     `json:"title"`
 	Description string     `json:"description"`
 	Status      GoalStatus `json:"status"`
+	Creator     string     `json:"creator"`
 	WorkDone    string     `json:"work_done"`
 	NowPossible string     `json:"now_possible"`
 	HowToVerify string     `json:"how_to_verify"`

@@ -5,9 +5,10 @@ import "fmt"
 type GoalStatus string
 
 const (
-	GoalActive  GoalStatus = "active"
-	GoalDone    GoalStatus = "done"
-	GoalDropped GoalStatus = "dropped"
+	GoalProposed GoalStatus = "proposed"
+	GoalActive   GoalStatus = "active"
+	GoalDone     GoalStatus = "done"
+	GoalDropped  GoalStatus = "dropped"
 )
 
 type TaskStatus string
@@ -31,8 +32,9 @@ const (
 type DecisionKind string
 
 const (
-	KindDecision   DecisionKind = "decision"
-	KindCompletion DecisionKind = "completion"
+	KindDecision     DecisionKind = "decision"
+	KindCompletion   DecisionKind = "completion"
+	KindGoalApproval DecisionKind = "goal_approval"
 )
 
 func ParseTaskStatus(s string) (TaskStatus, error) {

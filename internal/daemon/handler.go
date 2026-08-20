@@ -220,6 +220,7 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 			Cwd         string `json:"cwd"`
 			Title       string `json:"title"`
 			Description string `json:"description"`
+			Creator     string `json:"creator"`
 		}
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, err
@@ -228,7 +229,7 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		if err != nil {
 			return nil, fmt.Errorf("project is not registered; run `atct project add` first: %w", err)
 		}
-		goal, err := d.store.CreateGoal(ctx, project.ID, p.Title, p.Description)
+		goal, err := d.store.CreateGoal(ctx, project.ID, p.Title, p.Description, p.Creator)
 		return marshal(goal, err)
 
 	case "task.declare":

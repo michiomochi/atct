@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS goals (
   title          TEXT NOT NULL,
   description    TEXT NOT NULL DEFAULT '',
   status         TEXT NOT NULL,
+  creator        TEXT NOT NULL DEFAULT 'human',
   result_summary TEXT NOT NULL DEFAULT '',
   work_done      TEXT NOT NULL DEFAULT '',
   now_possible   TEXT NOT NULL DEFAULT '',

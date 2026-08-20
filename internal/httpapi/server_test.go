@@ -2039,6 +2039,7 @@ func TestHTTPProjectsAndGoalCreationEndpoints(t *testing.T) {
 		"project_id":  f.project.ID,
 		"title":       "Created in inbox",
 		"description": "Created through the human UI endpoint",
+		"creator":     "human",
 	}))
 	if status != http.StatusOK {
 		t.Fatalf("create goal status = %d; body=%s", status, body)
@@ -2047,8 +2048,31 @@ func TestHTTPProjectsAndGoalCreationEndpoints(t *testing.T) {
 	if err := json.Unmarshal(body, &created); err != nil {
 		t.Fatalf("decode created goal: %v; body=%s", err, body)
 	}
-	if created.ProjectID != f.project.ID || created.Title != "Created in inbox" || created.Description != "Created through the human UI endpoint" {
+	if created.ProjectID != f.project.ID || created.Title != "Created in inbox" || created.Description != "Created through the human UI endpoint" || created.Creator != "human" || created.Status != domain.GoalActive {
 		t.Fatalf("created goal = %+v", created)
+	}
+
+	status, _, body = doRequest(t, client, http.MethodPost, srv.URL+"/api/goals", mustJSON(t, map[string]string{
+		"project_id":  f.project.ID,
+		"title":       "Created by an agent",
+		"description": "Needs human approval",
+	}))
+	if status != http.StatusOK {
+		t.Fatalf("agent goal status = %d; body=%s", status, body)
+	}
+	var proposed domain.Goal
+	if err := json.Unmarshal(body, &proposed); err != nil {
+		t.Fatalf("decode agent goal: %v; body=%s", err, body)
+	}
+	if proposed.Creator != "agent" || proposed.Status != domain.GoalProposed {
+		t.Fatalf("agent goal = %+v, want agent/proposed", proposed)
+	}
+	decisions, err := f.store.ListOpenDecisions(f.ctx, proposed.ID)
+	if err != nil {
+		t.Fatalf("ListOpenDecisions: %v", err)
+	}
+	if len(decisions) != 1 || decisions[0].DefaultOption != "" || decisions[0].DefaultAfterMs != nil {
+		t.Fatalf("agent goal decisions = %+v, want one decision without a default", decisions)
 	}
 
 	status, headers, body = doRequest(t, client, http.MethodPost, srv.URL+"/api/goals", mustJSON(t, map[string]string{
@@ -2061,4 +2085,78 @@ func TestHTTPProjectsAndGoalCreationEndpoints(t *testing.T) {
 		"title":      "Unknown project",
 	}))
 	assertErrorObject(t, status, headers, body, http.StatusNotFound)
+}
+
+func TestHTTPGoalApprovalEndpointsTransitionProposedGoal(t *testing.T) {
+	f := newBareFixture(t)
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+	client := srv.Client()
+
+	status, _, body := doRequest(t, client, http.MethodPost, srv.URL+"/api/goals", mustJSON(t, map[string]string{
+		"project_id": f.project.ID,
+		"title":      "Approve through HTTP",
+		"creator":    "agent",
+	}))
+	if status != http.StatusOK {
+		t.Fatalf("create proposed goal status = %d; body=%s", status, body)
+	}
+	var proposed domain.Goal
+	if err := json.Unmarshal(body, &proposed); err != nil {
+		t.Fatalf("decode proposed goal: %v", err)
+	}
+	decisions, err := f.store.ListOpenDecisions(f.ctx, proposed.ID)
+	if err != nil {
+		t.Fatalf("ListOpenDecisions: %v", err)
+	}
+	if len(decisions) != 1 {
+		t.Fatalf("open decisions = %+v", decisions)
+	}
+
+	status, _, body = doRequest(t, client, http.MethodPost, srv.URL+"/api/decisions/"+decisions[0].ID+"/approve", mustJSON(t, map[string]string{}))
+	if status != http.StatusOK {
+		t.Fatalf("approve goal status = %d; body=%s", status, body)
+	}
+	var approved domain.Goal
+	if err := json.Unmarshal(body, &approved); err != nil {
+		t.Fatalf("decode approved goal: %v", err)
+	}
+	if approved.ID != proposed.ID || approved.Status != domain.GoalActive {
+		t.Fatalf("approved goal = %+v, want active", approved)
+	}
+
+	status, _, body = doRequest(t, client, http.MethodPost, srv.URL+"/api/goals", mustJSON(t, map[string]string{
+		"project_id": f.project.ID,
+		"title":      "Reject through HTTP",
+		"creator":    "agent",
+	}))
+	if status != http.StatusOK {
+		t.Fatalf("create reject goal status = %d; body=%s", status, body)
+	}
+	var toReject domain.Goal
+	if err := json.Unmarshal(body, &toReject); err != nil {
+		t.Fatalf("decode reject goal: %v", err)
+	}
+	decisions, err = f.store.ListOpenDecisions(f.ctx, toReject.ID)
+	if err != nil {
+		t.Fatalf("ListOpenDecisions reject: %v", err)
+	}
+	status, _, body = doRequest(t, client, http.MethodPost, srv.URL+"/api/decisions/"+decisions[0].ID+"/reject", mustJSON(t, map[string]string{"reason": "scope is not approved"}))
+	if status != http.StatusOK {
+		t.Fatalf("reject goal status = %d; body=%s", status, body)
+	}
+	var rejected domain.Decision
+	if err := json.Unmarshal(body, &rejected); err != nil {
+		t.Fatalf("decode rejected decision: %v", err)
+	}
+	if rejected.Status != domain.DecisionStatus("answered") || rejected.AnswerLabel != "reject" || !strings.Contains(rejected.AnswerText, "scope is not approved") {
+		t.Fatalf("rejected decision = %+v", rejected)
+	}
+	dropped, err := f.store.GetGoal(f.ctx, toReject.ID)
+	if err != nil {
+		t.Fatalf("GetGoal dropped: %v", err)
+	}
+	if dropped.Status != domain.GoalDropped {
+		t.Fatalf("dropped goal status = %q, want %q", dropped.Status, domain.GoalDropped)
+	}
 }

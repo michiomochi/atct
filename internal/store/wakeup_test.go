@@ -86,6 +86,30 @@ func TestDetectWakeupExcludesGoalWaitingForOpenDecision(t *testing.T) {
 	}
 }
 
+func TestDetectWakeupExcludesProposedGoal(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	project, err := s.CreateProject(ctx, "atct", "/repos/atct")
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	goal, err := s.CreateGoal(ctx, project.ID, "Await approval before wakeup", "", "agent")
+	if err != nil {
+		t.Fatalf("CreateGoal: %v", err)
+	}
+	if _, err := s.DeclareTasks(ctx, goal.ID, "agent", "wakeup-proposed", []string{"Proposed task"}, []string{"Wait for approval before wakeup."}); err != nil {
+		t.Fatalf("DeclareTasks: %v", err)
+	}
+
+	state, err := s.DetectWakeup(ctx, project.ID)
+	if err != nil {
+		t.Fatalf("DetectWakeup: %v", err)
+	}
+	if state.ActiveGoalCount != 0 || state.UnstartedTaskCount != 0 || len(state.Tasks) != 0 {
+		t.Fatalf("wakeup state = %+v, want proposed goal excluded", state)
+	}
+}
+
 func TestDetectWakeupExcludesGoalWithRunningClaim(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)

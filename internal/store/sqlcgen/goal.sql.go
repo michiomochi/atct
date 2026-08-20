@@ -26,6 +26,22 @@ func (q *Queries) ApplyCompletionDecision(ctx context.Context, arg ApplyCompleti
 	return q.db.ExecContext(ctx, applyCompletionDecision, arg.AnsweredAt, arg.AppliedAt, arg.ID)
 }
 
+const applyGoalApprovalDecision = `-- name: ApplyGoalApprovalDecision :execresult
+UPDATE decisions SET status = 'applied', answer_label = 'approve',
+  answered_at = ?, applied_at = ?
+WHERE id = ? AND kind = 'goal_approval' AND status = 'open'
+`
+
+type ApplyGoalApprovalDecisionParams struct {
+	AnsweredAt sql.NullString
+	AppliedAt  sql.NullString
+	ID         string
+}
+
+func (q *Queries) ApplyGoalApprovalDecision(ctx context.Context, arg ApplyGoalApprovalDecisionParams) (sql.Result, error) {
+	return q.db.ExecContext(ctx, applyGoalApprovalDecision, arg.AnsweredAt, arg.AppliedAt, arg.ID)
+}
+
 const countOpenDecisionsForGoal = `-- name: CountOpenDecisionsForGoal :one
 SELECT COUNT(*)
 FROM decisions
@@ -41,12 +57,12 @@ func (q *Queries) CountOpenDecisionsForGoal(ctx context.Context, goalID string) 
 
 const createGoal = `-- name: CreateGoal :exec
 INSERT INTO goals (
-  id, project_id, title, description, status,
+  id, project_id, title, description, status, creator,
   result_summary,
   work_done, now_possible, how_to_verify, surprises, needs_review, next_steps,
   created_at, updated_at
 )
-VALUES (?, ?, ?, ?, ?, '', '', '', '', '', '', '', ?, ?)
+VALUES (?, ?, ?, ?, ?, ?, '', '', '', '', '', '', '', ?, ?)
 `
 
 type CreateGoalParams struct {
@@ -55,6 +71,7 @@ type CreateGoalParams struct {
 	Title       string
 	Description string
 	Status      string
+	Creator     string
 	CreatedAt   string
 	UpdatedAt   string
 }
@@ -66,6 +83,7 @@ func (q *Queries) CreateGoal(ctx context.Context, arg CreateGoalParams) error {
 		arg.Title,
 		arg.Description,
 		arg.Status,
+		arg.Creator,
 		arg.CreatedAt,
 		arg.UpdatedAt,
 	)
@@ -87,7 +105,7 @@ func (q *Queries) GetCompletionDecisionGoalID(ctx context.Context, id string) (s
 
 const getGoal = `-- name: GetGoal :one
 SELECT
-  id, project_id, title, description, status, result_summary,
+  id, project_id, title, description, status, creator, result_summary,
   work_done, now_possible, how_to_verify, surprises, needs_review, next_steps,
   created_at, updated_at
 FROM goals
@@ -103,6 +121,7 @@ func (q *Queries) GetGoal(ctx context.Context, id string) (Goal, error) {
 		&i.Title,
 		&i.Description,
 		&i.Status,
+		&i.Creator,
 		&i.ResultSummary,
 		&i.WorkDone,
 		&i.NowPossible,
@@ -116,9 +135,22 @@ func (q *Queries) GetGoal(ctx context.Context, id string) (Goal, error) {
 	return i, err
 }
 
+const getGoalApprovalDecisionGoalID = `-- name: GetGoalApprovalDecisionGoalID :one
+SELECT goal_id
+FROM decisions
+WHERE id = ? AND kind = 'goal_approval' AND status = 'open'
+`
+
+func (q *Queries) GetGoalApprovalDecisionGoalID(ctx context.Context, id string) (string, error) {
+	row := q.db.QueryRowContext(ctx, getGoalApprovalDecisionGoalID, id)
+	var goal_id string
+	err := row.Scan(&goal_id)
+	return goal_id, err
+}
+
 const listAllGoals = `-- name: ListAllGoals :many
 SELECT
-  id, project_id, title, description, status, result_summary,
+  id, project_id, title, description, status, creator, result_summary,
   work_done, now_possible, how_to_verify, surprises, needs_review, next_steps,
   created_at, updated_at
 FROM goals
@@ -140,6 +172,7 @@ func (q *Queries) ListAllGoals(ctx context.Context) ([]Goal, error) {
 			&i.Title,
 			&i.Description,
 			&i.Status,
+			&i.Creator,
 			&i.ResultSummary,
 			&i.WorkDone,
 			&i.NowPossible,
@@ -165,7 +198,7 @@ func (q *Queries) ListAllGoals(ctx context.Context) ([]Goal, error) {
 
 const listGoals = `-- name: ListGoals :many
 SELECT
-  id, project_id, title, description, status, result_summary,
+  id, project_id, title, description, status, creator, result_summary,
   work_done, now_possible, how_to_verify, surprises, needs_review, next_steps,
   created_at, updated_at
 FROM goals
@@ -188,6 +221,7 @@ func (q *Queries) ListGoals(ctx context.Context, projectID string) ([]Goal, erro
 			&i.Title,
 			&i.Description,
 			&i.Status,
+			&i.Creator,
 			&i.ResultSummary,
 			&i.WorkDone,
 			&i.NowPossible,
@@ -211,6 +245,20 @@ func (q *Queries) ListGoals(ctx context.Context, projectID string) ([]Goal, erro
 	return items, nil
 }
 
+const markGoalActive = `-- name: MarkGoalActive :execresult
+UPDATE goals SET status = 'active', updated_at = ?
+WHERE id = ? AND status = 'proposed'
+`
+
+type MarkGoalActiveParams struct {
+	UpdatedAt string
+	ID        string
+}
+
+func (q *Queries) MarkGoalActive(ctx context.Context, arg MarkGoalActiveParams) (sql.Result, error) {
+	return q.db.ExecContext(ctx, markGoalActive, arg.UpdatedAt, arg.ID)
+}
+
 const markGoalDone = `-- name: MarkGoalDone :execresult
 UPDATE goals SET status = 'done', updated_at = ?
 WHERE id = ?
@@ -223,6 +271,36 @@ type MarkGoalDoneParams struct {
 
 func (q *Queries) MarkGoalDone(ctx context.Context, arg MarkGoalDoneParams) (sql.Result, error) {
 	return q.db.ExecContext(ctx, markGoalDone, arg.UpdatedAt, arg.ID)
+}
+
+const markGoalDropped = `-- name: MarkGoalDropped :execresult
+UPDATE goals SET status = 'dropped', updated_at = ?
+WHERE id = ? AND status = 'proposed'
+`
+
+type MarkGoalDroppedParams struct {
+	UpdatedAt string
+	ID        string
+}
+
+func (q *Queries) MarkGoalDropped(ctx context.Context, arg MarkGoalDroppedParams) (sql.Result, error) {
+	return q.db.ExecContext(ctx, markGoalDropped, arg.UpdatedAt, arg.ID)
+}
+
+const rejectGoalApprovalDecision = `-- name: RejectGoalApprovalDecision :execresult
+UPDATE decisions SET status = 'answered', answer_label = 'reject',
+  answer_text = ?, answered_at = ?
+WHERE id = ? AND kind = 'goal_approval' AND status = 'open'
+`
+
+type RejectGoalApprovalDecisionParams struct {
+	AnswerText string
+	AnsweredAt sql.NullString
+	ID         string
+}
+
+func (q *Queries) RejectGoalApprovalDecision(ctx context.Context, arg RejectGoalApprovalDecisionParams) (sql.Result, error) {
+	return q.db.ExecContext(ctx, rejectGoalApprovalDecision, arg.AnswerText, arg.AnsweredAt, arg.ID)
 }
 
 const updateGoalCompletionReport = `-- name: UpdateGoalCompletionReport :execresult

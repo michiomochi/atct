@@ -148,10 +148,15 @@ PRAGMA user_version = 6;
 	if err := db.QueryRow(`SELECT COUNT(*) FROM schema_migrations`).Scan(&indexCount); err != nil {
 		t.Fatalf("count schema migrations: %v", err)
 	}
-	if indexCount != 4 {
-		t.Fatalf("schema migration count = %d, want 4", indexCount)
+	migrations, err := loadEmbeddedMigrations()
+	if err != nil {
+		t.Fatalf("load embedded migrations: %v", err)
+	}
+	if indexCount != len(migrations) {
+		t.Fatalf("schema migration count = %d, want %d", indexCount, len(migrations))
 	}
 	assertMigrationRecorded(t, db, "0004_agent_sessions.sql")
+	assertMigrationRecorded(t, db, "0005_goal_creator.sql")
 }
 
 func TestExistingV6DatabaseRecordsBaselineWithoutExecutingIt(t *testing.T) {

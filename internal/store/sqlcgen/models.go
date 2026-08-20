@@ -41,6 +41,7 @@ type Goal struct {
 	Title         string
 	Description   string
 	Status        string
+	Creator       string
 	ResultSummary string
 	WorkDone      string
 	NowPossible   string

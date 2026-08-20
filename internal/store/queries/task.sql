@@ -40,9 +40,11 @@ FROM tasks
 WHERE id = ?;
 
 -- name: GetTaskForClaim :one
-SELECT goal_id, title, description, status, claimed_by, files
-FROM tasks
-WHERE id = ?;
+SELECT t.goal_id, t.title, t.description, t.status, t.claimed_by, t.files,
+       g.status AS goal_status
+FROM tasks AS t
+JOIN goals AS g ON g.id = t.goal_id
+WHERE t.id = ?;
 
 -- name: ListClaimedTasksForConflict :many
 SELECT id, title, description, status, claimed_by, files

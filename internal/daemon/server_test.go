@@ -214,6 +214,9 @@ func TestDaemonCreatesGoalForResolvedProject(t *testing.T) {
 	if goal.Description != "Coordinate the release work" {
 		t.Fatalf("description = %q, want %q", goal.Description, "Coordinate the release work")
 	}
+	if goal.Creator != "agent" || goal.Status != domain.GoalProposed {
+		t.Fatalf("goal creator/status = %q/%q, want agent/proposed", goal.Creator, goal.Status)
+	}
 }
 
 func TestDecisionAskDistinguishesOmittedWaitFromExplicitZero(t *testing.T) {

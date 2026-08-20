@@ -111,6 +111,7 @@ type createGoalRequest struct {
 	ProjectID   string `json:"project_id"`
 	Title       string `json:"title"`
 	Description string `json:"description"`
+	Creator     string `json:"creator"`
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -262,7 +263,7 @@ func (s *Server) handleCreateGoal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	goal, err := s.store.CreateGoal(r.Context(), request.ProjectID, request.Title, request.Description)
+	goal, err := s.store.CreateGoal(r.Context(), request.ProjectID, request.Title, request.Description, request.Creator)
 	if err != nil {
 		writeStoreError(w, err)
 		return
@@ -678,11 +679,23 @@ func (s *Server) handleApprove(w http.ResponseWriter, r *http.Request, decisionI
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
-	decision, ok := s.getOpenCompletion(w, r.Context(), decisionID)
+	decision, ok := s.getOpenDecision(w, r.Context(), decisionID)
 	if !ok {
 		return
 	}
-	goal, err := s.store.ApproveCompletion(r.Context(), decision.ID)
+	var (
+		goal domain.Goal
+		err  error
+	)
+	switch decision.Kind {
+	case domain.KindCompletion:
+		goal, err = s.store.ApproveCompletion(r.Context(), decision.ID)
+	case domain.KindGoalApproval:
+		goal, err = s.store.ApproveGoal(r.Context(), decision.ID)
+	default:
+		writeError(w, http.StatusConflict, store.ErrDecisionNotOpen.Error())
+		return
+	}
 	if errors.Is(err, store.ErrDecisionNotOpen) {
 		writeError(w, http.StatusConflict, err.Error())
 		return
@@ -700,10 +713,20 @@ func (s *Server) handleReject(w http.ResponseWriter, r *http.Request, decisionID
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
-	if _, ok := s.getOpenCompletion(w, r.Context(), decisionID); !ok {
+	decision, ok := s.getOpenDecision(w, r.Context(), decisionID)
+	if !ok {
 		return
 	}
-	err := s.store.RejectCompletion(r.Context(), decisionID, request.Reason)
+	var err error
+	switch decision.Kind {
+	case domain.KindCompletion:
+		err = s.store.RejectCompletion(r.Context(), decisionID, request.Reason)
+	case domain.KindGoalApproval:
+		err = s.store.RejectGoal(r.Context(), decisionID, request.Reason)
+	default:
+		writeError(w, http.StatusConflict, store.ErrDecisionNotOpen.Error())
+		return
+	}
 	if errors.Is(err, store.ErrDecisionNotOpen) {
 		writeError(w, http.StatusConflict, err.Error())
 		return
@@ -712,7 +735,7 @@ func (s *Server) handleReject(w http.ResponseWriter, r *http.Request, decisionID
 		writeStoreError(w, err)
 		return
 	}
-	decision, err := s.store.GetDecision(r.Context(), decisionID)
+	decision, err = s.store.GetDecision(r.Context(), decisionID)
 	if err != nil {
 		writeStoreError(w, err)
 		return
@@ -737,7 +760,7 @@ func (s *Server) ensureOpenDecision(w http.ResponseWriter, ctx context.Context, 
 	return true
 }
 
-func (s *Server) getOpenCompletion(w http.ResponseWriter, ctx context.Context, decisionID string) (domain.Decision, bool) {
+func (s *Server) getOpenDecision(w http.ResponseWriter, ctx context.Context, decisionID string) (domain.Decision, bool) {
 	decision, err := s.store.GetDecision(ctx, decisionID)
 	if errors.Is(err, store.ErrDecisionNotFound) {
 		writeError(w, http.StatusNotFound, err.Error())
@@ -747,7 +770,7 @@ func (s *Server) getOpenCompletion(w http.ResponseWriter, ctx context.Context, d
 		writeStoreError(w, err)
 		return domain.Decision{}, false
 	}
-	if decision.Status != domain.DecisionOpen || decision.Kind != domain.KindCompletion {
+	if decision.Status != domain.DecisionOpen || (decision.Kind != domain.KindCompletion && decision.Kind != domain.KindGoalApproval) {
 		writeError(w, http.StatusConflict, store.ErrDecisionNotOpen.Error())
 		return domain.Decision{}, false
 	}

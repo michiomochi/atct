@@ -14,16 +14,29 @@ import (
 	"github.com/michiomochi/atct/internal/store/sqlcgen"
 )
 
-var ErrGoalNotFound = errors.New("goal not found")
+var (
+	ErrGoalNotFound    = errors.New("goal not found")
+	ErrGoalNotProposed = errors.New("goal is not proposed")
+	ErrGoalNotActive   = errors.New("goal is not active")
+)
 
-func (s *Store) CreateGoal(ctx context.Context, projectID, title, description string) (domain.Goal, error) {
+// CreateGoal keeps the no-creator call shape source-compatible for direct
+// store users. API boundaries pass a creator explicitly; an omitted or
+// unknown creator there is treated as an agent-created goal.
+func (s *Store) CreateGoal(ctx context.Context, projectID, title, description string, creatorInput ...string) (domain.Goal, error) {
 	now := time.Now().UTC()
+	creator := normalizeGoalCreator(creatorInput)
+	status := domain.GoalActive
+	if creator == "agent" {
+		status = domain.GoalProposed
+	}
 	g := domain.Goal{
 		ID:          uuid.NewString(),
 		ProjectID:   projectID,
 		Title:       title,
 		Description: description,
-		Status:      domain.GoalActive,
+		Status:      status,
+		Creator:     creator,
 		CreatedAt:   now,
 		UpdatedAt:   now,
 	}
@@ -34,13 +47,37 @@ func (s *Store) CreateGoal(ctx context.Context, projectID, title, description st
 		Title:       g.Title,
 		Description: g.Description,
 		Status:      string(g.Status),
+		Creator:     g.Creator,
 		CreatedAt:   now.Format(time.RFC3339),
 		UpdatedAt:   now.Format(time.RFC3339),
 	})
 	if err != nil {
 		return domain.Goal{}, fmt.Errorf("insert goal: %w", err)
 	}
+	if creator == "agent" {
+		if _, err := s.AskDecision(ctx, AskInput{
+			GoalID:   g.ID,
+			Kind:     domain.KindGoalApproval,
+			Question: "Approve this goal?",
+			Options: []domain.Option{
+				{Label: "approve", Description: "Approve this goal", Consequence: "The goal becomes active"},
+				{Label: "reject", Description: "Reject this goal", Consequence: "The goal is dropped"},
+			},
+		}); err != nil {
+			return domain.Goal{}, fmt.Errorf("ask goal approval: %w", err)
+		}
+	}
 	return g, nil
+}
+
+func normalizeGoalCreator(input []string) string {
+	if len(input) == 0 {
+		return "human"
+	}
+	if strings.TrimSpace(input[0]) == "human" {
+		return "human"
+	}
+	return "agent"
 }
 
 func goalFromRow(row sqlcgen.Goal) (domain.Goal, error) {
@@ -50,6 +87,7 @@ func goalFromRow(row sqlcgen.Goal) (domain.Goal, error) {
 		Title:         row.Title,
 		Description:   row.Description,
 		Status:        domain.GoalStatus(row.Status),
+		Creator:       row.Creator,
 		ResultSummary: row.ResultSummary,
 		WorkDone:      row.WorkDone,
 		NowPossible:   row.NowPossible,
@@ -258,4 +296,114 @@ func (s *Store) RejectCompletion(ctx context.Context, decisionID, reason string)
 		AnswerText:  reason,
 	}, "decision.rejected")
 	return err
+}
+
+// ApproveGoal activates a proposed Goal and applies its approval decision atomically.
+func (s *Store) ApproveGoal(ctx context.Context, decisionID string) (domain.Goal, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return domain.Goal{}, fmt.Errorf("begin goal approval tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	q := sqlcgen.New(tx)
+	goalID, err := q.GetGoalApprovalDecisionGoalID(ctx, decisionID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.Goal{}, fmt.Errorf("%w: %s", ErrDecisionNotOpen, decisionID)
+	}
+	if err != nil {
+		return domain.Goal{}, fmt.Errorf("lookup goal approval decision: %w", err)
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	result, err := q.ApplyGoalApprovalDecision(ctx, sqlcgen.ApplyGoalApprovalDecisionParams{
+		AnsweredAt: sql.NullString{String: now, Valid: true},
+		AppliedAt:  sql.NullString{String: now, Valid: true},
+		ID:         decisionID,
+	})
+	if err != nil {
+		return domain.Goal{}, fmt.Errorf("apply goal approval decision: %w", err)
+	}
+	if rows, err := result.RowsAffected(); err != nil {
+		return domain.Goal{}, fmt.Errorf("goal approval decision rows affected: %w", err)
+	} else if rows != 1 {
+		return domain.Goal{}, fmt.Errorf("%w: %s", ErrDecisionNotOpen, decisionID)
+	}
+
+	result, err = q.MarkGoalActive(ctx, sqlcgen.MarkGoalActiveParams{UpdatedAt: now, ID: goalID})
+	if err != nil {
+		return domain.Goal{}, fmt.Errorf("activate goal: %w", err)
+	}
+	if rows, err := result.RowsAffected(); err != nil {
+		return domain.Goal{}, fmt.Errorf("activate goal rows affected: %w", err)
+	} else if rows != 1 {
+		return domain.Goal{}, fmt.Errorf("%w: %s", ErrGoalNotProposed, goalID)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return domain.Goal{}, fmt.Errorf("commit goal approval: %w", err)
+	}
+	d, err := s.GetDecision(ctx, decisionID)
+	if err != nil {
+		return domain.Goal{}, err
+	}
+	s.notify.publish(decisionID)
+	s.notify.publishAll()
+	s.notify.publishEvent(Event{Name: "decision.approved", Data: d})
+	return s.GetGoal(ctx, goalID)
+}
+
+// RejectGoal drops a proposed Goal and records the human's reason atomically.
+func (s *Store) RejectGoal(ctx context.Context, decisionID, reason string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin goal rejection tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	q := sqlcgen.New(tx)
+	goalID, err := q.GetGoalApprovalDecisionGoalID(ctx, decisionID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("%w: %s", ErrDecisionNotOpen, decisionID)
+	}
+	if err != nil {
+		return fmt.Errorf("lookup goal approval decision: %w", err)
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	result, err := q.RejectGoalApprovalDecision(ctx, sqlcgen.RejectGoalApprovalDecisionParams{
+		AnswerText: reason,
+		AnsweredAt: sql.NullString{String: now, Valid: true},
+		ID:         decisionID,
+	})
+	if err != nil {
+		return fmt.Errorf("reject goal approval decision: %w", err)
+	}
+	if rows, err := result.RowsAffected(); err != nil {
+		return fmt.Errorf("goal rejection decision rows affected: %w", err)
+	} else if rows != 1 {
+		return fmt.Errorf("%w: %s", ErrDecisionNotOpen, decisionID)
+	}
+
+	result, err = q.MarkGoalDropped(ctx, sqlcgen.MarkGoalDroppedParams{UpdatedAt: now, ID: goalID})
+	if err != nil {
+		return fmt.Errorf("drop goal: %w", err)
+	}
+	if rows, err := result.RowsAffected(); err != nil {
+		return fmt.Errorf("drop goal rows affected: %w", err)
+	} else if rows != 1 {
+		return fmt.Errorf("%w: %s", ErrGoalNotProposed, goalID)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit goal rejection: %w", err)
+	}
+	d, err := s.GetDecision(ctx, decisionID)
+	if err != nil {
+		return err
+	}
+	s.notify.publish(decisionID)
+	s.notify.publishAll()
+	s.notify.publishEvent(Event{Name: "decision.rejected", Data: d})
+	return nil
 }

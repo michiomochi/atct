@@ -1,0 +1,1 @@
+ALTER TABLE goals ADD COLUMN creator TEXT NOT NULL DEFAULT 'human';
