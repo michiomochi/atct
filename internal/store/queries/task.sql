@@ -12,7 +12,12 @@ SELECT
   claimed_by, claimed_at, created_at, updated_at
 FROM tasks
 WHERE goal_id = ?
-ORDER BY sort_order;
+ORDER BY sort_order, id;
+
+-- name: MaxTaskSortOrder :one
+SELECT CAST(COALESCE(MAX(sort_order), -1) AS INTEGER) AS sort_order
+FROM tasks
+WHERE goal_id = ?;
 
 -- name: CountOpenDecisionsForTask :one
 SELECT COUNT(*)

@@ -98,6 +98,10 @@ func (s *Store) DeclareTasks(ctx context.Context, goalID, agent, idempotencyKey 
 
 	now := time.Now().UTC().Format(time.RFC3339)
 	q := sqlcgen.New(tx)
+	maxSortOrder, err := q.MaxTaskSortOrder(ctx, goalID)
+	if err != nil {
+		return nil, fmt.Errorf("get max task sort order: %w", err)
+	}
 	for i, title := range titles {
 		declareKey := fmt.Sprintf("%s#%d", idempotencyKey, i)
 		filesJSON, err := marshalTaskFiles(filesByTask[i])
@@ -112,7 +116,7 @@ func (s *Store) DeclareTasks(ctx context.Context, goalID, agent, idempotencyKey 
 			Status:      string(domain.TaskTodo),
 			Agent:       agent,
 			Files:       filesJSON,
-			SortOrder:   int64(i),
+			SortOrder:   maxSortOrder + 1 + int64(i),
 			DeclareKey:  declareKey,
 			ClaimedBy:   "",
 			ClaimedAt:   sql.NullString{},

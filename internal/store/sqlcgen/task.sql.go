@@ -263,7 +263,7 @@ SELECT
   claimed_by, claimed_at, created_at, updated_at
 FROM tasks
 WHERE goal_id = ?
-ORDER BY sort_order
+ORDER BY sort_order, id
 `
 
 func (q *Queries) ListTasks(ctx context.Context, goalID string) ([]Task, error) {
@@ -301,6 +301,19 @@ func (q *Queries) ListTasks(ctx context.Context, goalID string) ([]Task, error) 
 		return nil, err
 	}
 	return items, nil
+}
+
+const maxTaskSortOrder = `-- name: MaxTaskSortOrder :one
+SELECT CAST(COALESCE(MAX(sort_order), -1) AS INTEGER) AS sort_order
+FROM tasks
+WHERE goal_id = ?
+`
+
+func (q *Queries) MaxTaskSortOrder(ctx context.Context, goalID string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, maxTaskSortOrder, goalID)
+	var sort_order int64
+	err := row.Scan(&sort_order)
+	return sort_order, err
 }
 
 const releaseTask = `-- name: ReleaseTask :execresult

@@ -25,6 +25,181 @@ func newTestGoal(t *testing.T, s *Store) string {
 	return g.ID
 }
 
+func newOrderTestGoals(t *testing.T, s *Store) (string, string) {
+	t.Helper()
+	ctx := context.Background()
+	ns, err := s.CreateProject(ctx, "atct-order", "/repos/atct-order")
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	first, err := s.CreateGoal(ctx, ns.ID, "first order goal", "")
+	if err != nil {
+		t.Fatalf("CreateGoal first: %v", err)
+	}
+	second, err := s.CreateGoal(ctx, ns.ID, "second order goal", "")
+	if err != nil {
+		t.Fatalf("CreateGoal second: %v", err)
+	}
+	return first.ID, second.ID
+}
+
+func declareOrderTestBatches(t *testing.T, s *Store, goalID string) {
+	t.Helper()
+	ctx := context.Background()
+	firstTitles := []string{"Collect the requirements", "Implement the store change", "Verify the behavior"}
+	firstDescriptions := []string{
+		"Record the ordering requirements and affected store queries.",
+		"Assign each new task the next available order within the goal.",
+		"Exercise repeated declarations and check the persisted order values.",
+	}
+	secondTitles := []string{"Document the result", "Run the full verification"}
+	secondDescriptions := []string{
+		"Summarize the final ordering behavior for the implementation handoff.",
+		"Run the build, tests, and wrapper checks before reporting completion.",
+	}
+	if _, err := s.DeclareTasks(ctx, goalID, "codex", "order-batch-1", firstTitles, firstDescriptions); err != nil {
+		t.Fatalf("first DeclareTasks: %v", err)
+	}
+	if _, err := s.DeclareTasks(ctx, goalID, "codex", "order-batch-2", secondTitles, secondDescriptions); err != nil {
+		t.Fatalf("second DeclareTasks: %v", err)
+	}
+}
+
+func TestDeclareTasksContinuesSortOrderAcrossBatches(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	goalID, otherGoalID := newOrderTestGoals(t, s)
+	declareOrderTestBatches(t, s, goalID)
+
+	otherTitles := []string{"Start the independent goal"}
+	otherDescriptions := []string{"Begin the other goal at its own first task order."}
+	if _, err := s.DeclareTasks(ctx, otherGoalID, "codex", "other-goal", otherTitles, otherDescriptions); err != nil {
+		t.Fatalf("other goal DeclareTasks: %v", err)
+	}
+
+	tasks, err := s.ListTasks(ctx, goalID)
+	if err != nil {
+		t.Fatalf("ListTasks: %v", err)
+	}
+	got := make([]int, len(tasks))
+	for i, task := range tasks {
+		got[i] = task.Order
+	}
+	if want := []int{0, 1, 2, 3, 4}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("task orders = %v, want %v", got, want)
+	}
+}
+
+func TestDeclareTasksDoesNotDuplicateSortOrderWithinGoal(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	goalID, _ := newOrderTestGoals(t, s)
+	declareOrderTestBatches(t, s, goalID)
+
+	tasks, err := s.ListTasks(ctx, goalID)
+	if err != nil {
+		t.Fatalf("ListTasks: %v", err)
+	}
+	orders := make(map[int]struct{}, len(tasks))
+	for _, task := range tasks {
+		orders[task.Order] = struct{}{}
+	}
+	if len(orders) != len(tasks) {
+		t.Fatalf("task order values contain duplicates: %v", tasks)
+	}
+}
+
+func TestDeclareTasksDoesNotResetSortOrderOnRedeclare(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	goalID, _ := newOrderTestGoals(t, s)
+	declareOrderTestBatches(t, s, goalID)
+
+	before, err := s.ListTasks(ctx, goalID)
+	if err != nil {
+		t.Fatalf("ListTasks before re-declare: %v", err)
+	}
+	changedTitles := []string{"Replacement documentation", "Replacement verification"}
+	changedDescriptions := []string{
+		"This changed input must not replace the original stored documentation task.",
+		"This changed input must not replace the original stored verification task.",
+	}
+	if _, err := s.DeclareTasks(ctx, goalID, "codex", "order-batch-2", changedTitles, changedDescriptions); err != nil {
+		t.Fatalf("re-declare: %v", err)
+	}
+	after, err := s.ListTasks(ctx, goalID)
+	if err != nil {
+		t.Fatalf("ListTasks after re-declare: %v", err)
+	}
+	if len(after) != len(before) {
+		t.Fatalf("task count after re-declare = %d, want %d", len(after), len(before))
+	}
+	for i := range before {
+		if after[i].ID != before[i].ID || after[i].Order != before[i].Order {
+			t.Fatalf("task %d changed on re-declare: before=%+v after=%+v", i, before[i], after[i])
+		}
+	}
+}
+
+func TestDeclareTasksKeepsSortOrderIndependentAcrossGoals(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	goalID, otherGoalID := newOrderTestGoals(t, s)
+	declareOrderTestBatches(t, s, goalID)
+
+	titles := []string{"Independent first task", "Independent second task"}
+	descriptions := []string{
+		"Create the first task in the independent goal.",
+		"Create the second task in the independent goal.",
+	}
+	if _, err := s.DeclareTasks(ctx, otherGoalID, "codex", "independent-goal", titles, descriptions); err != nil {
+		t.Fatalf("independent goal DeclareTasks: %v", err)
+	}
+	otherTasks, err := s.ListTasks(ctx, otherGoalID)
+	if err != nil {
+		t.Fatalf("ListTasks independent goal: %v", err)
+	}
+	if got, want := []int{otherTasks[0].Order, otherTasks[1].Order}, []int{0, 1}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("independent goal task orders = %v, want %v", got, want)
+	}
+}
+
+func TestListTasksUsesSortOrderAndIDAsTieBreakers(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	goalID := newTestGoal(t, s)
+	insertTask := func(id, title, declareKey string, sortOrder int, createdAt string) {
+		t.Helper()
+		_, err := s.DB().ExecContext(ctx, `
+INSERT INTO tasks (
+  id, goal_id, title, description, status, agent, files, sort_order, declare_key,
+  claimed_by, claimed_at, created_at, updated_at
+)
+VALUES (?, ?, ?, ?, 'todo', '', '[]', ?, ?, '', NULL, ?, ?)`,
+			id, goalID, title, "Verify the stable sort-order ordering for this fixture.", sortOrder, declareKey, createdAt, createdAt)
+		if err != nil {
+			t.Fatalf("insert task %s: %v", id, err)
+		}
+	}
+	insertTask("task-sort-three", "sort three", "sort-three", 3, "2026-08-20T00:00:01Z")
+	insertTask("task-sort-zero", "sort zero", "sort-zero", 0, "2026-08-20T00:00:04Z")
+	insertTask("task-sort-two", "sort two", "sort-two", 2, "2026-08-20T00:00:03Z")
+	insertTask("task-sort-one", "sort one", "sort-one", 1, "2026-08-20T00:00:02Z")
+
+	tasks, err := s.ListTasks(ctx, goalID)
+	if err != nil {
+		t.Fatalf("ListTasks: %v", err)
+	}
+	got := make([]string, len(tasks))
+	for i, task := range tasks {
+		got[i] = task.ID
+	}
+	want := []string{"task-sort-zero", "task-sort-one", "task-sort-two", "task-sort-three"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("task IDs = %v, want %v", got, want)
+	}
+}
+
 func TestDeclareTasksRejectsEmptyDescription(t *testing.T) {
 	s := newTestStore(t)
 	goalID := newTestGoal(t, s)

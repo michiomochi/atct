@@ -60,6 +60,9 @@ CREATE TABLE IF NOT EXISTS tasks (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_declare_key
   ON tasks(goal_id, declare_key);
 
+CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_goal_sort_order
+  ON tasks(goal_id, sort_order);
+
 CREATE TABLE IF NOT EXISTS decisions (
   id           TEXT PRIMARY KEY,
   goal_id      TEXT NOT NULL REFERENCES goals(id),
