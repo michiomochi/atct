@@ -4,8 +4,6 @@ set -euo pipefail
 REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 TEMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/atct-wrapper-test.XXXXXX")"
 trap 'rm -rf -- "$TEMP_ROOT"' EXIT
-# Hook fixtures must not inherit a developer's cached versioned binaries.
-export HOME="$TEMP_ROOT/hook-home"
 
 fail() {
   printf 'FAIL: %s\n' "$*" >&2
@@ -467,7 +465,7 @@ printf 'called\n' >"$MARKER"
 SCRIPT
   chmod +x "$adjacent"
 
-  if ! output="$(MARKER="$marker" PATH="" /bin/bash "$hook" <<< '{"stop_hook_active":true}' 2>&1)"; then
+  if ! output="$(MARKER="$marker" HOME="$fixture" PATH="" /bin/bash "$hook" <<< '{"stop_hook_active":true}' 2>&1)"; then
     fail 'stop hook failed while stop_hook_active was true'
   fi
   assert_eq '' "$output" 'stop_hook_active must keep the hook silent'
@@ -482,7 +480,7 @@ test_stop_hook_is_silent_without_adjacent_wrapper() {
   mkdir -p "$(dirname "$hook")"
   cp "$REPO_ROOT/plugin/hooks/stop" "$hook"
 
-  if ! output="$(PATH="" /bin/bash "$hook" <<< '{}' 2>&1)"; then
+  if ! output="$(HOME="$fixture" PATH="" /bin/bash "$hook" <<< '{}' 2>&1)"; then
     fail 'stop hook failed without an adjacent atct wrapper'
   fi
   assert_eq '' "$output" 'missing atct wrapper must keep the hook silent'
@@ -504,7 +502,7 @@ exit 1
 SCRIPT
   chmod +x "$adjacent"
 
-  if ! output="$(ATCT_ARGS_LOG="$args_log" PATH="" /bin/bash "$hook" <<< '{}' 2>&1)"; then
+  if ! output="$(ATCT_ARGS_LOG="$args_log" HOME="$fixture" PATH="" /bin/bash "$hook" <<< '{}' 2>&1)"; then
     fail 'stop hook failed when atct pending reported no answers'
   fi
   assert_eq '' "$output" 'empty pending output must keep the hook silent'
@@ -528,7 +526,7 @@ exit 99
 SCRIPT
   chmod +x "$adjacent"
 
-  if ! output="$(PATH="" /bin/bash "$hook" <<< '{}' 2>&1)"; then
+  if ! output="$(HOME="$fixture" PATH="" /bin/bash "$hook" <<< '{}' 2>&1)"; then
     fail 'stop hook failed when there was no pending work'
   fi
   assert_eq '' "$output" 'no claim or pending answer must keep the hook silent'
@@ -551,7 +549,7 @@ fi
 SCRIPT
   chmod +x "$adjacent"
 
-  if ! output="$(CLAIM_OUTPUT="$claim_output" PATH="" /bin/bash "$hook" <<< '{}' 2>&1)"; then
+  if ! output="$(CLAIM_OUTPUT="$claim_output" HOME="$fixture" PATH="" /bin/bash "$hook" <<< '{}' 2>&1)"; then
     fail 'stop hook failed when an unfinished claim existed'
   fi
   [[ "$output" == *'"decision":"block"'* ]] || fail 'unfinished claim must block the stop hook'
@@ -576,7 +574,7 @@ fi
 SCRIPT
   chmod +x "$adjacent"
 
-  if ! output="$(PENDING_OUTPUT="$pending_output" PATH="" /bin/bash "$hook" <<< '{}' 2>&1)"; then
+  if ! output="$(PENDING_OUTPUT="$pending_output" HOME="$fixture" PATH="" /bin/bash "$hook" <<< '{}' 2>&1)"; then
     fail 'stop hook failed when pending work and an unfinished claim coexisted'
   fi
   [[ "$output" == *'"decision":"block"'* ]] || fail 'both pending conditions must block the stop hook'
@@ -603,7 +601,7 @@ fi
 SCRIPT
   chmod +x "$adjacent"
 
-  if ! output="$(PENDING_OUTPUT="$pending_output" PATH="" /bin/bash "$hook" <<< '{}' 2>&1)"; then
+  if ! output="$(PENDING_OUTPUT="$pending_output" HOME="$fixture" PATH="" /bin/bash "$hook" <<< '{}' 2>&1)"; then
     fail 'stop hook failed when atct pending reported an answer'
   fi
   [[ "$output" == *'"decision":"block"'* ]] || fail 'pending answer must block the stop hook'
@@ -646,7 +644,7 @@ fi
 SCRIPT
   chmod +x "$adjacent"
 
-  if ! PENDING_OUTPUT="$pending_output" PATH="" /bin/bash "$hook" <<< '{}' >"$output_file" 2>&1; then
+  if ! PENDING_OUTPUT="$pending_output" HOME="$fixture" PATH="" /bin/bash "$hook" <<< '{}' >"$output_file" 2>&1; then
     fail 'stop hook failed while escaping pending output'
   fi
   if ! JSON_OUTPUT_FILE="$output_file" EXPECTED_REASON="$expected_reason" python3 -c '
