@@ -9,6 +9,7 @@ import {
   type DecisionHistoryEntry,
   type TaskDetailResponse,
 } from "../lib/api";
+import { resolveGoalID } from "../lib/ui";
 import { AreaLoading, ErrorState } from "./StateMessage";
 import { DecisionAnswerForm } from "./DecisionAnswerForm";
 import { DecisionHistoryTable } from "./DecisionHistoryTable";
@@ -40,6 +41,8 @@ function taskDecisionsFor(taskID: string, decisions: Decision[]): Decision[] {
 
 export function TaskDetailPage({ id }: Props) {
   const { t, i18n } = useTranslation();
+  const pathname = id === "_" && typeof window !== "undefined" ? window.location.pathname : "";
+  const resolvedID = resolveGoalID(id, pathname, "/tasks/");
   const [state, setState] = useState<LoadState>({ kind: "loading" });
   const [updatePending, setUpdatePending] = useState(false);
   const dirtyDecisionIDs = useRef(new Set<string>());
@@ -50,11 +53,11 @@ export function TaskDetailPage({ id }: Props) {
     setUpdatePending(false);
     setState({ kind: "loading" });
     try {
-      setState({ kind: "ready", data: await fetchTask(id) });
+      setState({ kind: "ready", data: await fetchTask(resolvedID) });
     } catch (reason) {
       setState({ kind: "error", message: errorMessage(reason, t("goal.error.load")) });
     }
-  }, [id, t]);
+  }, [resolvedID, t]);
 
   const handleDecisionEvent = useCallback(() => {
     if (dirtyDecisionIDs.current.size > 0) {

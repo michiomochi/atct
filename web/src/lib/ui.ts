@@ -93,10 +93,10 @@ export function sortTasksByOrder(tasks: TaskView[]): TaskView[] {
   return [...tasks].sort((left, right) => left.order - right.order);
 }
 
-export function resolveGoalID(id: string, pathname: string): string {
+export function resolveGoalID(id: string, pathname: string, prefix = "/goals/"): string {
   if (id !== "_") return id;
 
-  const segment = pathname.slice("/goals/".length).split("/", 1)[0] ?? "";
+  const segment = pathname.slice(prefix.length).split("/", 1)[0] ?? "";
   try {
     return decodeURIComponent(segment);
   } catch {

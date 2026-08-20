@@ -195,7 +195,7 @@ export function GoalDetail({ id }: Props) {
   const completionReasonRef = useRef("");
   const { t, i18n } = useTranslation();
   const pathname = id === "_" && typeof window !== "undefined" ? window.location.pathname : "";
-  const resolvedID = resolveGoalID(id, pathname);
+  const resolvedID = resolveGoalID(id, pathname, "/goals/");
 
   const handleCompletionReasonChange = useCallback((reason: string) => {
     completionReasonRef.current = reason;

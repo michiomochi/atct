@@ -365,6 +365,10 @@ describe("goal history IDs", () => {
   ])("resolves %s at %s to %s", (id, pathname, expected) => {
     expect(resolveGoalID(id, pathname)).toBe(expected);
   });
+
+  it("resolves a sentinel using a supplied URL prefix", () => {
+    expect(resolveGoalID("_", "/tasks/task123", "/tasks/")).toBe("task123");
+  });
 });
 
 describe("Kumo buttons", () => {

@@ -31,6 +31,7 @@ vi.mock("../lib/api", () => ({
 
 afterEach(() => {
   cleanup();
+  window.history.replaceState({}, "", "/");
   vi.clearAllMocks();
 });
 
@@ -100,6 +101,28 @@ async function renderTask(response: TaskDetailResponse) {
 }
 
 describe("TaskDetailPage", () => {
+  it("uses the task ID from the URL when Astro passes the sentinel ID", async () => {
+    const taskData = task("task-from-url", "Task from URL");
+    window.history.replaceState({}, "", `/tasks/${encodeURIComponent(taskData.id)}`);
+    vi.mocked(fetchTask).mockResolvedValue(detailResponse(taskData));
+
+    render(<TaskDetailPage id="_" />);
+    await screen.findByRole("heading", { name: taskData.title });
+
+    expect(fetchTask).toHaveBeenCalledWith(taskData.id);
+  });
+
+  it("keeps a real task ID instead of using the URL", async () => {
+    const taskData = task("task-from-props", "Task from props");
+    window.history.replaceState({}, "", "/tasks/task-from-url");
+    vi.mocked(fetchTask).mockResolvedValue(detailResponse(taskData));
+
+    render(<TaskDetailPage id={taskData.id} />);
+    await screen.findByRole("heading", { name: taskData.title });
+
+    expect(fetchTask).toHaveBeenCalledWith(taskData.id);
+  });
+
   it("shows decision history only for the task that has history", async () => {
     const taskWithHistory = task("task-with-history", "Task with history");
     const taskWithoutHistory = task("task-without-history", "Task without history");
