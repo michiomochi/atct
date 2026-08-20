@@ -141,6 +141,139 @@ func TestWatchEmitsHumanDecisionEventsOnly(t *testing.T) {
 	}
 }
 
+func TestWatchEmitsWakeupEvents(t *testing.T) {
+	var output strings.Builder
+	delivered := make(map[watchDeliveryKey]struct{})
+	wakeupDelivered := make(map[watchWakeupDeliveryKey]struct{})
+
+	for _, id := range []string{"wakeup-1", "wakeup-2"} {
+		if err := emitWatchDecision(&output, "wakeup", watchDecision{WakeupID: id}, delivered, wakeupDelivered); err != nil {
+			t.Fatalf("emitWatchDecision(%s): %v", id, err)
+		}
+	}
+
+	want := "atct wakeup: active_goals=0 unstarted_tasks=0 waiting_answers=0\n" +
+		"atct wakeup: active_goals=0 unstarted_tasks=0 waiting_answers=0\n"
+	if got := output.String(); got != want {
+		t.Fatalf("wakeup output = %q, want %q", got, want)
+	}
+}
+
+func TestWatchEmitsWakeupAgainAfterStateReturns(t *testing.T) {
+	var output strings.Builder
+	delivered := make(map[watchDeliveryKey]struct{})
+	wakeupDelivered := make(map[watchWakeupDeliveryKey]struct{})
+
+	for _, wakeupID := range []string{"wakeup-before", "wakeup-after"} {
+		if err := emitWatchDecision(&output, "wakeup", watchDecision{WakeupID: wakeupID}, delivered, wakeupDelivered); err != nil {
+			t.Fatalf("emitWatchDecision(%s): %v", wakeupID, err)
+		}
+	}
+
+	want := "atct wakeup: active_goals=0 unstarted_tasks=0 waiting_answers=0\n" +
+		"atct wakeup: active_goals=0 unstarted_tasks=0 waiting_answers=0\n"
+	if got := output.String(); got != want {
+		t.Fatalf("wakeup output = %q, want %q", got, want)
+	}
+}
+
+func TestWatchDoesNotFormatKeepaliveAsVisibleLine(t *testing.T) {
+	line, ok := formatWatchDecision("keepalive", watchDecision{})
+	if ok || line != "" {
+		t.Fatalf("keepalive format = (%q, %v), want (empty, false)", line, ok)
+	}
+}
+
+func TestWatchKeepsQuietWhileKeepalivesArriveAndReportsAfterTheyStop(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	const timeout = 40 * time.Millisecond
+	missing := formatWatchKeepaliveMissing(timeout)
+	var output cancelOnOutput
+	output.cancel = cancel
+	output.needles = []string{missing}
+	reader, writer := io.Pipe()
+	defer writer.Close()
+	client := &http.Client{Transport: watchRoundTripper(func(*http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Status:     "200 OK",
+			Header:     make(http.Header),
+			Body:       reader,
+		}, nil
+	})}
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- consumeWatchEventsWithTimeout(ctx, client, "http://watch.test", "", &output, timeout, make(map[watchDeliveryKey]struct{}), make(map[watchWakeupDeliveryKey]struct{}))
+	}()
+
+	for i := 0; i < 5; i++ {
+		time.Sleep(10 * time.Millisecond)
+		if _, err := io.WriteString(writer, "event: keepalive\ndata: {}\n\n"); err != nil {
+			t.Fatalf("write keepalive %d: %v", i, err)
+		}
+		if got := output.String(); got != "" {
+			t.Fatalf("watch output while keepalive %d was arriving = %q, want empty", i, got)
+		}
+	}
+
+	select {
+	case err := <-errCh:
+		if err != nil && !errors.Is(err, context.Canceled) {
+			t.Fatalf("consumeWatchEventsWithTimeout() error after keepalives stopped = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for keepalive-missing notification")
+	}
+	if got := output.String(); got != missing+"\n" {
+		t.Fatalf("watch output after keepalives stopped = %q, want one missing line %q", got, missing+"\n")
+	}
+}
+
+func TestWatchReportsOneKeepaliveMissingLine(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	const timeout = 10 * time.Millisecond
+	missing := formatWatchKeepaliveMissing(timeout)
+	var output cancelOnOutput
+	output.cancel = cancel
+	output.needles = []string{missing}
+	reader, writer := io.Pipe()
+	defer writer.Close()
+	client := &http.Client{Transport: watchRoundTripper(func(*http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Status:     "200 OK",
+			Header:     make(http.Header),
+			Body:       reader,
+		}, nil
+	})}
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- consumeWatchEventsWithTimeout(ctx, client, "http://watch.test", "", &output, timeout, make(map[watchDeliveryKey]struct{}), make(map[watchWakeupDeliveryKey]struct{}))
+	}()
+
+	select {
+	case err := <-errCh:
+		if err != nil && !errors.Is(err, context.Canceled) {
+			t.Fatalf("consumeWatchEventsWithTimeout() error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for keepalive-missing notification")
+	}
+	if got := output.String(); got != missing+"\n" {
+		t.Fatalf("watch output = %q, want one missing line %q", got, missing+"\n")
+	}
+}
+
+type watchRoundTripper func(*http.Request) (*http.Response, error)
+
+func (f watchRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
 func runWatchWithProjects(t *testing.T, cwd string, projects []watchProject) (url.Values, int) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())

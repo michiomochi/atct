@@ -646,7 +646,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	projectID := r.URL.Query().Get("project_id")
-	ch, cancel := s.store.SubscribeDecisionEvents()
+	ch, cancel := s.store.SubscribeEvents()
 	defer cancel()
 
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -661,12 +661,12 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 			return
 		case event := <-ch:
 			if projectID != "" {
-				goal, err := s.store.GetGoal(r.Context(), event.Decision.GoalID)
-				if err != nil || goal.ProjectID != projectID {
+				eventProjectID, err := s.eventProjectID(r.Context(), event)
+				if err != nil || (eventProjectID != "" && eventProjectID != projectID) {
 					continue
 				}
 			}
-			data, err := json.Marshal(event.Decision)
+			data, err := json.Marshal(event.Data)
 			if err != nil {
 				return
 			}
@@ -675,6 +675,42 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 			}
 			flusher.Flush()
 		}
+	}
+}
+
+func (s *Server) eventProjectID(ctx context.Context, event store.DecisionEvent) (string, error) {
+	switch data := event.Data.(type) {
+	case domain.Decision:
+		goal, err := s.store.GetGoal(ctx, data.GoalID)
+		if err != nil {
+			return "", err
+		}
+		return goal.ProjectID, nil
+	case *domain.Decision:
+		if data == nil {
+			return "", nil
+		}
+		goal, err := s.store.GetGoal(ctx, data.GoalID)
+		if err != nil {
+			return "", err
+		}
+		return goal.ProjectID, nil
+	case store.WakeupEvent:
+		return data.ProjectID, nil
+	case *store.WakeupEvent:
+		if data == nil {
+			return "", nil
+		}
+		return data.ProjectID, nil
+	case store.WakeupDiscrepancyEvent:
+		return data.ProjectID, nil
+	case *store.WakeupDiscrepancyEvent:
+		if data == nil {
+			return "", nil
+		}
+		return data.ProjectID, nil
+	default:
+		return "", nil
 	}
 }
 

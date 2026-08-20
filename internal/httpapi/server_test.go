@@ -1379,6 +1379,57 @@ func TestSSEFiltersDecisionEventsByProjectID(t *testing.T) {
 	_ = otherDecision
 }
 
+func TestSSEPublishesGenericWakeupAndKeepaliveEvents(t *testing.T) {
+	f := newBareFixture(t)
+	otherProject, err := f.store.CreateProject(f.ctx, "other", t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+	streamCtx, cancel := context.WithCancel(f.ctx)
+	defer cancel()
+	stream, reader := openSSEStream(t, streamCtx, srv.Client(), eventsURL(srv.URL, f.project.ID))
+	defer stream.Body.Close()
+
+	other := store.WakeupEvent{
+		WakeupID:           "other-wakeup",
+		ProjectID:          otherProject.ID,
+		ActiveGoalCount:    2,
+		UnstartedTaskCount: 3,
+		WaitingAnswerCount: 1,
+	}
+	current := store.WakeupEvent{
+		WakeupID:           "current-wakeup",
+		ProjectID:          f.project.ID,
+		ActiveGoalCount:    1,
+		UnstartedTaskCount: 2,
+		WaitingAnswerCount: 0,
+	}
+	f.store.PublishEvent(store.DecisionEvent{Name: store.EventWakeup, Data: other})
+	f.store.PublishEvent(store.DecisionEvent{Name: store.EventWakeup, Data: current})
+
+	frame := readSSEFrame(t, reader)
+	if frame.event != store.EventWakeup {
+		t.Fatalf("wakeup SSE event = %q, want %q; lines=%v", frame.event, store.EventWakeup, frame.lines)
+	}
+	wantWakeupJSON := string(mustJSON(t, current))
+	if frame.data != wantWakeupJSON {
+		t.Fatalf("wakeup SSE data = %s, want exact %s", frame.data, wantWakeupJSON)
+	}
+
+	keepalive := store.KeepaliveEvent{At: time.Date(2026, 8, 20, 15, 0, 0, 0, time.UTC)}
+	f.store.PublishEvent(store.DecisionEvent{Name: store.EventKeepalive, Data: keepalive})
+	frame = readSSEFrame(t, reader)
+	if frame.event != store.EventKeepalive {
+		t.Fatalf("keepalive SSE event = %q, want %q; lines=%v", frame.event, store.EventKeepalive, frame.lines)
+	}
+	wantKeepaliveJSON := string(mustJSON(t, keepalive))
+	if frame.data != wantKeepaliveJSON {
+		t.Fatalf("keepalive SSE data = %s, want exact %s", frame.data, wantKeepaliveJSON)
+	}
+}
+
 func TestSSEWithoutProjectIDPublishesEventsFromAllProjects(t *testing.T) {
 	f := newBareFixture(t)
 	otherProject, err := f.store.CreateProject(f.ctx, "other", t.TempDir())

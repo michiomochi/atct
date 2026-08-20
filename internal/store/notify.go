@@ -15,12 +15,18 @@ type notifier struct {
 	events    map[chan DecisionEvent]struct{}
 }
 
-// DecisionEvent describes a committed Decision transition for broadcast
-// consumers such as the human-facing SSE endpoint.
+// DecisionEvent describes a committed store transition for broadcast
+// consumers such as the human-facing SSE endpoint. Data is deliberately
+// open-ended so the same event bus can carry decisions, wakeups, and daemon
+// keepalives.
 type DecisionEvent struct {
-	Name     string
-	Decision domain.Decision
+	Name string
+	Data any
 }
+
+// Event is the generic name for a DecisionEvent. The alias keeps the event
+// bus readable at call sites that publish non-decision events.
+type Event = DecisionEvent
 
 func newNotifier() *notifier {
 	return &notifier{
@@ -111,11 +117,22 @@ func (n *notifier) publishEvent(event DecisionEvent) {
 	}
 }
 
-// SubscribeDecisionEvents subscribes to committed Decision transitions.
-// Events are delivered on a buffered channel and slow subscribers may miss
-// events; publishing never blocks the store or other subscribers.
-func (s *Store) SubscribeDecisionEvents() (<-chan DecisionEvent, func()) {
+// SubscribeEvents subscribes to committed store events. Events are delivered
+// on a buffered channel and slow subscribers may miss events; publishing
+// never blocks the store or other subscribers.
+func (s *Store) SubscribeEvents() (<-chan DecisionEvent, func()) {
 	return s.notify.subscribeEvents()
+}
+
+// SubscribeDecisionEvents preserves the old API name while the event stream
+// now carries more than Decision transitions.
+func (s *Store) SubscribeDecisionEvents() (<-chan DecisionEvent, func()) {
+	return s.SubscribeEvents()
+}
+
+// PublishEvent broadcasts a committed daemon event to stream consumers.
+func (s *Store) PublishEvent(event DecisionEvent) {
+	s.notify.publishEvent(event)
 }
 
 // WaitForAnswer waits for an answer and returns ok=false when timeout parks it.

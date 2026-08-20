@@ -82,7 +82,7 @@ func (s *Store) AskDecision(ctx context.Context, in AskInput) (domain.Decision, 
 	}
 	s.notify.publish(d.ID)
 	s.notify.publishAll()
-	s.notify.publishEvent(DecisionEvent{Name: "decision.created", Decision: d})
+	s.notify.publishEvent(Event{Name: "decision.created", Data: d})
 	return d, nil
 }
 
@@ -308,7 +308,7 @@ func (s *Store) answerDecision(ctx context.Context, in AnswerInput, eventName st
 	}
 	s.notify.publish(in.DecisionID)
 	s.notify.publishAll()
-	s.notify.publishEvent(DecisionEvent{Name: eventName, Decision: d})
+	s.notify.publishEvent(Event{Name: eventName, Data: d})
 	return d, nil
 }
 
@@ -394,7 +394,7 @@ func (s *Store) ApplyExpiredDefaults(ctx context.Context, now time.Time) (int, e
 
 	for _, d := range settledDecisions {
 		s.notify.publish(d.ID)
-		s.notify.publishEvent(DecisionEvent{Name: "decision.answered", Decision: d})
+		s.notify.publishEvent(Event{Name: "decision.answered", Data: d})
 	}
 	if len(settledDecisions) > 0 {
 		s.notify.publishAll()
@@ -423,7 +423,7 @@ func (s *Store) WithdrawDecision(ctx context.Context, decisionID, reason string)
 	}
 	s.notify.publish(decisionID)
 	s.notify.publishAll()
-	s.notify.publishEvent(DecisionEvent{Name: "decision.withdrawn", Decision: d})
+	s.notify.publishEvent(Event{Name: "decision.withdrawn", Data: d})
 	return nil
 }
 
@@ -512,7 +512,7 @@ func (s *Store) PollDecisions(ctx context.Context, agentSessionID string, decisi
 	}
 	for _, d := range out {
 		s.notify.publish(d.ID)
-		s.notify.publishEvent(DecisionEvent{Name: "decision.applied", Decision: d})
+		s.notify.publishEvent(Event{Name: "decision.applied", Data: d})
 	}
 	if len(out) > 0 {
 		s.notify.publishAll()

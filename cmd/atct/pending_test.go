@@ -62,7 +62,7 @@ func TestPendingCommandReportsActiveGoalWithoutTasks(t *testing.T) {
 	}
 }
 
-func TestPendingCommandStopsReportingGoalAfterTaskDeclaration(t *testing.T) {
+func TestPendingCommandReportsGoalAfterTaskDeclarationUntilTaskDone(t *testing.T) {
 	dir, projectRoot := newPendingFixture(t)
 	s := openPendingStore(t, dir)
 	ctx := context.Background()
@@ -74,7 +74,8 @@ func TestPendingCommandStopsReportingGoalAfterTaskDeclaration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
-	if _, err := s.DeclareTasks(ctx, goal.ID, "agent", "declare-goal", []string{"first task"}, []string{"Complete the first task declared for the goal."}); err != nil {
+	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "declare-goal", []string{"first task"}, []string{"Complete the first task declared for the goal."})
+	if err != nil {
 		t.Fatalf("DeclareTasks: %v", err)
 	}
 	if err := s.Close(); err != nil {
@@ -85,8 +86,67 @@ func TestPendingCommandStopsReportingGoalAfterTaskDeclaration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("pendingCommand: %v", err)
 	}
+	if exitCode != 0 {
+		t.Fatalf("pendingCommand exit code = %d, want 0", exitCode)
+	}
+	for _, want := range []string{pendingWakeupReason, "Unstarted tasks:", "first task", tasks[0].ID} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("pendingCommand output does not contain %q: %q", want, output)
+		}
+	}
+
+	s = openPendingStore(t, dir)
+	if _, err := s.UpdateTask(ctx, tasks[0].ID, domain.TaskDone); err != nil {
+		t.Fatalf("UpdateTask: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("Store.Close after UpdateTask: %v", err)
+	}
+
+	output, exitCode, err = pendingCommand(dir, projectRoot)
+	if err != nil {
+		t.Fatalf("pendingCommand after UpdateTask: %v", err)
+	}
 	if output != "" {
-		t.Fatalf("pendingCommand output = %q, want empty", output)
+		t.Fatalf("pendingCommand output after UpdateTask = %q, want empty", output)
+	}
+	if exitCode != 1 {
+		t.Fatalf("pendingCommand exit code after UpdateTask = %d, want 1", exitCode)
+	}
+}
+
+func TestPendingCommandExcludesGoalWaitingForHumanAnswerFromWakeup(t *testing.T) {
+	dir, projectRoot := newPendingFixture(t)
+	s := openPendingStore(t, dir)
+	ctx := context.Background()
+	project, err := s.ResolveProject(ctx, projectRoot)
+	if err != nil {
+		t.Fatalf("ResolveProject: %v", err)
+	}
+	goal, err := s.CreateGoal(ctx, project.ID, "Wait for a human answer", "")
+	if err != nil {
+		t.Fatalf("CreateGoal: %v", err)
+	}
+	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "waiting-answer", []string{"blocked task"}, []string{"Continue after the human answers."})
+	if err != nil {
+		t.Fatalf("DeclareTasks: %v", err)
+	}
+	if _, err := s.AskDecision(ctx, store.AskInput{
+		GoalID: goal.ID, TaskID: tasks[0].ID,
+		Kind: domain.KindDecision, Question: "Which path should the agent take?",
+	}); err != nil {
+		t.Fatalf("AskDecision: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("Store.Close: %v", err)
+	}
+
+	output, exitCode, err := pendingCommand(dir, projectRoot)
+	if err != nil {
+		t.Fatalf("pendingCommand: %v", err)
+	}
+	if output != "" {
+		t.Fatalf("pendingCommand output = %q, want empty while waiting for a human answer", output)
 	}
 	if exitCode != 1 {
 		t.Fatalf("pendingCommand exit code = %d, want 1", exitCode)

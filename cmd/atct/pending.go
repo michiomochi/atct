@@ -24,6 +24,7 @@ const (
 	pendingClaimReason           = "A task claimed by this agent session is still open. If you forgot to close it, close it; if you are still working on it, continue."
 	pendingStaleClaimReason      = "A task claimed by another agent session is no longer running. You can take it over by returning it to todo with `atct_task_update`, then claim it."
 	pendingUndeclaredGoalReason  = "An active goal has no tasks declared. Call `atct_task_declare` for each goal below, then continue the work."
+	pendingWakeupReason          = "An active goal has unstarted tasks and no running claim. Call `atct_task_claim` for a task below, then continue the work."
 )
 
 func currentAgentSessionID() string {
@@ -210,6 +211,22 @@ func pendingTextForProject(dir, cwd, projectName string, projectSpecified bool) 
 		output.WriteByte('\n')
 		for _, goal := range undeclaredGoals {
 			fmt.Fprintf(&output, "- %s (goal_id: %s)\n", oneLine(goal.Title), goal.ID)
+		}
+	}
+	wakeupState, err := s.DetectWakeup(ctx, project.ID)
+	if err != nil {
+		return "", fmt.Errorf("detect wakeup: %w", err)
+	}
+	if len(wakeupState.Tasks) > 0 {
+		if output.Len() > 0 {
+			output.WriteString("\n\n")
+		}
+		output.WriteString(pendingWakeupReason)
+		output.WriteString("\n\n")
+		output.WriteString("Unstarted tasks:")
+		output.WriteByte('\n')
+		for _, task := range wakeupState.Tasks {
+			fmt.Fprintf(&output, "- %s (task_id: %s)\n", oneLine(task.Title), task.ID)
 		}
 	}
 	return output.String(), nil

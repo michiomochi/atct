@@ -24,16 +24,23 @@ import (
 const (
 	watchReconnectInterval  = 5 * time.Second
 	watchSnapshotTimeout    = 5 * time.Second
+	watchKeepaliveTimeout   = 90 * time.Second
 	watchEnsureMaxFailures  = 5
 	watchEnsureLimitMessage = "atct watch: daemon ensure failed 5 consecutive times; continuing connection retries"
 )
 
 type watchDecision struct {
-	ID               string  `json:"id"`
-	DecisionID       string  `json:"decision_id"`
-	ProjectID        string  `json:"project_id"`
-	DefaultAppliedAt *string `json:"default_applied_at"`
-	SettledByDefault bool    `json:"settled_by_default"`
+	ID                         string  `json:"id"`
+	DecisionID                 string  `json:"decision_id"`
+	ProjectID                  string  `json:"project_id"`
+	DefaultAppliedAt           *string `json:"default_applied_at"`
+	SettledByDefault           bool    `json:"settled_by_default"`
+	WakeupID                   string  `json:"wakeup_id"`
+	ActiveGoalCount            int     `json:"active_goal_count"`
+	UnstartedTaskCount         int     `json:"unstarted_task_count"`
+	WaitingAnswerCount         int     `json:"waiting_answer_count"`
+	DetectorUnstartedTaskCount int     `json:"detector_unstarted_task_count"`
+	CountedUnstartedTaskCount  int     `json:"counted_unstarted_task_count"`
 }
 
 type watchInbox struct {
@@ -49,6 +56,11 @@ type watchDeliveryKey struct {
 	eventName      string
 	decisionID     string
 	defaultApplied bool
+}
+
+type watchWakeupDeliveryKey struct {
+	eventName string
+	wakeupID  string
 }
 
 type watchSnapshotFunc func(context.Context) (string, []watchDecision, error)
@@ -119,6 +131,7 @@ func watchLoopWithEnsureAndProjectID(ctx context.Context, out io.Writer, client 
 		retryInterval = watchReconnectInterval
 	}
 	delivered := make(map[watchDeliveryKey]struct{})
+	wakeupDelivered := make(map[watchWakeupDeliveryKey]struct{})
 	ensureFailures := 0
 	ensureDisabled := false
 	recoverDaemon := func() error {
@@ -171,12 +184,12 @@ func watchLoopWithEnsureAndProjectID(ctx context.Context, out io.Writer, client 
 			if filterProjectID != "" && decision.ProjectID != "" && decision.ProjectID != filterProjectID {
 				continue
 			}
-			if err := emitWatchDecision(out, "decision.answered", decision, delivered); err != nil {
+			if err := emitWatchDecision(out, "decision.answered", decision, delivered, wakeupDelivered); err != nil {
 				return err
 			}
 		}
 
-		if err := consumeWatchEvents(ctx, client, baseURL, filterProjectID, out, delivered); err != nil && ctx.Err() == nil {
+		if err := consumeWatchEventsWithTimeout(ctx, client, baseURL, filterProjectID, out, watchKeepaliveTimeout, delivered, wakeupDelivered); err != nil && ctx.Err() == nil {
 			if err := recoverDaemon(); err != nil {
 				return err
 			}
@@ -312,6 +325,15 @@ func watchPathWithin(root, path string) bool {
 }
 
 func consumeWatchEvents(ctx context.Context, client *http.Client, baseURL, projectID string, out io.Writer, delivered map[watchDeliveryKey]struct{}) error {
+	return consumeWatchEventsWithTimeout(ctx, client, baseURL, projectID, out, watchKeepaliveTimeout, delivered, make(map[watchWakeupDeliveryKey]struct{}))
+}
+
+type watchSSEFrame struct {
+	name string
+	data string
+}
+
+func consumeWatchEventsWithTimeout(ctx context.Context, client *http.Client, baseURL, projectID string, out io.Writer, keepaliveTimeout time.Duration, delivered map[watchDeliveryKey]struct{}, wakeupDelivered map[watchWakeupDeliveryKey]struct{}) error {
 	eventsURL, err := watchEventsURL(baseURL, projectID)
 	if err != nil {
 		return err
@@ -330,56 +352,123 @@ func consumeWatchEvents(ctx context.Context, client *http.Client, baseURL, proje
 		return fmt.Errorf("GET %s: HTTP %s", eventsURL, resp.Status)
 	}
 
-	scanner := bufio.NewScanner(resp.Body)
-	scanner.Buffer(make([]byte, 4096), 1024*1024)
-	var eventName string
-	var data strings.Builder
-	dispatch := func() error {
-		if eventName == "" || data.Len() == 0 {
+	frames, readDone := readWatchSSEFrames(ctx, resp.Body)
+	if keepaliveTimeout <= 0 {
+		keepaliveTimeout = watchKeepaliveTimeout
+	}
+	timer := time.NewTimer(keepaliveTimeout)
+	defer timer.Stop()
+	timerC := (<-chan time.Time)(timer.C)
+	missingReported := false
+	resetKeepalive := func() {
+		if !timer.Stop() {
+			select {
+			case <-timer.C:
+			default:
+			}
+		}
+		timer.Reset(keepaliveTimeout)
+		timerC = timer.C
+		missingReported = false
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-timerC:
+			if !missingReported {
+				if _, err := fmt.Fprintln(out, formatWatchKeepaliveMissing(keepaliveTimeout)); err != nil {
+					return err
+				}
+				missingReported = true
+			}
+			timerC = nil
+		case frame, ok := <-frames:
+			if !ok {
+				if err := <-readDone; err != nil {
+					return err
+				}
+				return io.EOF
+			}
+			if frame.name == "keepalive" {
+				resetKeepalive()
+				continue
+			}
+			var decision watchDecision
+			if err := json.Unmarshal([]byte(frame.data), &decision); err != nil {
+				return fmt.Errorf("decode SSE event %s: %w", frame.name, err)
+			}
+			if projectID != "" && decision.ProjectID != "" && decision.ProjectID != projectID {
+				continue
+			}
+			if err := emitWatchDecision(out, frame.name, decision, delivered, wakeupDelivered); err != nil {
+				return err
+			}
+		}
+	}
+}
+
+func readWatchSSEFrames(ctx context.Context, body io.Reader) (<-chan watchSSEFrame, <-chan error) {
+	frames := make(chan watchSSEFrame, 16)
+	done := make(chan error, 1)
+	go func() {
+		defer close(frames)
+		scanner := bufio.NewScanner(body)
+		scanner.Buffer(make([]byte, 4096), 1024*1024)
+		var eventName string
+		var data strings.Builder
+		dispatch := func() error {
+			if eventName == "" || data.Len() == 0 {
+				eventName = ""
+				data.Reset()
+				return nil
+			}
+			frame := watchSSEFrame{name: eventName, data: data.String()}
+			select {
+			case frames <- frame:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
 			eventName = ""
 			data.Reset()
 			return nil
 		}
-		var decision watchDecision
-		if err := json.Unmarshal([]byte(data.String()), &decision); err != nil {
-			return fmt.Errorf("decode SSE event %s: %w", eventName, err)
-		}
-		if err := emitWatchDecision(out, eventName, decision, delivered); err != nil {
-			return err
-		}
-		eventName = ""
-		data.Reset()
-		return nil
-	}
 
-	for scanner.Scan() {
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-		line := scanner.Text()
-		switch {
-		case line == "":
-			if err := dispatch(); err != nil {
-				return err
+		for scanner.Scan() {
+			if ctx.Err() != nil {
+				done <- ctx.Err()
+				return
 			}
-		case strings.HasPrefix(line, "event:"):
-			eventName = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
-		case strings.HasPrefix(line, "data:"):
-			value := strings.TrimPrefix(line, "data:")
-			if strings.HasPrefix(value, " ") {
-				value = value[1:]
+			line := scanner.Text()
+			switch {
+			case line == "":
+				if err := dispatch(); err != nil {
+					done <- err
+					return
+				}
+			case strings.HasPrefix(line, "event:"):
+				eventName = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
+			case strings.HasPrefix(line, "data:"):
+				value := strings.TrimPrefix(line, "data:")
+				if strings.HasPrefix(value, " ") {
+					value = value[1:]
+				}
+				data.WriteString(value)
+				data.WriteByte('\n')
 			}
-			data.WriteString(value)
-			data.WriteByte('\n')
 		}
-	}
-	if err := scanner.Err(); err != nil {
-		return err
-	}
-	if err := dispatch(); err != nil {
-		return err
-	}
-	return io.EOF
+		if err := scanner.Err(); err != nil {
+			done <- err
+			return
+		}
+		if err := dispatch(); err != nil {
+			done <- err
+			return
+		}
+		done <- nil
+	}()
+	return frames, done
 }
 
 func watchEventsURL(baseURL, projectID string) (string, error) {
@@ -397,9 +486,24 @@ func watchEventsURL(baseURL, projectID string) (string, error) {
 	return parsed.String(), nil
 }
 
-func emitWatchDecision(out io.Writer, eventName string, decision watchDecision, delivered map[watchDeliveryKey]struct{}) error {
+func emitWatchDecision(out io.Writer, eventName string, decision watchDecision, delivered map[watchDeliveryKey]struct{}, wakeupDelivered map[watchWakeupDeliveryKey]struct{}) error {
 	line, ok := formatWatchDecision(eventName, decision)
 	if !ok {
+		return nil
+	}
+	if eventName == "wakeup" || eventName == "wakeup.discrepancy" {
+		id := decision.wakeupID()
+		if id == "" {
+			return fmt.Errorf("SSE event %s has no wakeup_id", eventName)
+		}
+		key := watchWakeupDeliveryKey{eventName: eventName, wakeupID: id}
+		if _, ok := wakeupDelivered[key]; ok {
+			return nil
+		}
+		if _, err := fmt.Fprintln(out, line); err != nil {
+			return err
+		}
+		wakeupDelivered[key] = struct{}{}
 		return nil
 	}
 	id := decision.decisionID()
@@ -432,6 +536,10 @@ func formatWatchDecision(eventName string, decision watchDecision) (string, bool
 		return fmt.Sprintf("atct decision approved (decision_id: %s)", decision.decisionID()), true
 	case "decision.rejected":
 		return fmt.Sprintf("atct decision rejected (decision_id: %s)", decision.decisionID()), true
+	case "wakeup":
+		return fmt.Sprintf("atct wakeup: active_goals=%d unstarted_tasks=%d waiting_answers=%d", decision.ActiveGoalCount, decision.UnstartedTaskCount, decision.WaitingAnswerCount), true
+	case "wakeup.discrepancy":
+		return fmt.Sprintf("atct wakeup discrepancy: detector_unstarted_tasks=%d counted_unstarted_tasks=%d", decision.DetectorUnstartedTaskCount, decision.CountedUnstartedTaskCount), true
 	default:
 		return "", false
 	}
@@ -442,6 +550,20 @@ func (d watchDecision) decisionID() string {
 		return d.ID
 	}
 	return d.DecisionID
+}
+
+func (d watchDecision) wakeupID() string {
+	if d.WakeupID != "" {
+		return d.WakeupID
+	}
+	return d.ID
+}
+
+func formatWatchKeepaliveMissing(timeout time.Duration) string {
+	if timeout == watchKeepaliveTimeout {
+		return "atct watch: daemon keepalive missing for 90s"
+	}
+	return fmt.Sprintf("atct watch: daemon keepalive missing for %s", timeout)
 }
 
 func (d watchDecision) defaultApplied() bool {

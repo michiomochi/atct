@@ -245,7 +245,7 @@ func (s *Store) ApproveCompletion(ctx context.Context, decisionID string) (domai
 	}
 	s.notify.publish(decisionID)
 	s.notify.publishAll()
-	s.notify.publishEvent(DecisionEvent{Name: "decision.approved", Decision: d})
+	s.notify.publishEvent(Event{Name: "decision.approved", Data: d})
 	return s.GetGoal(ctx, goalID)
 }
 

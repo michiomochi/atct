@@ -21,9 +21,17 @@ import (
 
 type Daemon struct {
 	store *store.Store
+	clock func() time.Time
 }
 
-func New(s *store.Store) *Daemon { return &Daemon{store: s} }
+func New(s *store.Store) *Daemon { return newDaemonWithClock(s, time.Now) }
+
+func newDaemonWithClock(s *store.Store, clock func() time.Time) *Daemon {
+	if clock == nil {
+		clock = time.Now
+	}
+	return &Daemon{store: s, clock: clock}
+}
 
 // HTTPHandler returns the daemon's HTTP handler, including the API and the
 // embedded Web UI. API routes are registered before the UI fallback so an API
@@ -83,6 +91,7 @@ func (d *Daemon) Serve(ctx context.Context, socketPath string) error {
 
 	tickerCtx, stopTicker := context.WithCancel(ctx)
 	tickerDone := make(chan struct{})
+	tracker := newWakeupTracker()
 	go func() {
 		defer close(tickerDone)
 		ticker := time.NewTicker(30 * time.Second)
@@ -91,8 +100,8 @@ func (d *Daemon) Serve(ctx context.Context, socketPath string) error {
 			select {
 			case <-tickerCtx.Done():
 				return
-			case now := <-ticker.C:
-				_, _ = d.store.ApplyExpiredDefaults(tickerCtx, now)
+			case <-ticker.C:
+				d.runMaintenance(tickerCtx, tracker, d.clock())
 			}
 		}
 	}()
