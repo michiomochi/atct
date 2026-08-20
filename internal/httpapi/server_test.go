@@ -175,7 +175,7 @@ func TestHTTPInboxIncludesTasksPerActiveGoalInOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.store.UpdateTask(f.ctx, firstTasks[1].ID, domain.TaskDoing); err != nil {
+	if _, err := f.store.UpdateTask(f.ctx, firstTasks[1].ID, domain.TaskDoing, ""); err != nil {
 		t.Fatal(err)
 	}
 	secondGoal, err := f.store.CreateGoal(f.ctx, f.project.ID, "Second goal", "")
@@ -281,7 +281,7 @@ func newFixture(t *testing.T) *fixture {
 	if _, err := f.store.ClaimTask(f.ctx, f.tasks[0].ID, "fixture-run"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.store.UpdateTask(f.ctx, f.tasks[1].ID, domain.TaskDoing); err != nil {
+	if _, err := f.store.UpdateTask(f.ctx, f.tasks[1].ID, domain.TaskDoing, ""); err != nil {
 		t.Fatal(err)
 	}
 	f.open, err = f.store.AskDecision(f.ctx, store.AskInput{
@@ -977,6 +977,138 @@ func TestHTTPGoalDetailDecisionHistoryIncludesTaskIDs(t *testing.T) {
 	if firstTaskID == tasks[1].ID {
 		t.Fatalf("first task history points to second task: %q", firstTaskID)
 	}
+}
+
+func TestHTTPTaskDetailReturnsTaskAndDecisionData(t *testing.T) {
+	f := newBareFixture(t)
+	tasks, err := f.store.DeclareTasks(
+		f.ctx,
+		f.goal.ID,
+		"fixture-agent",
+		"task-detail-declare",
+		[]string{"Target task", "Other task"},
+		[]string{"The task shown on the detail page.", "A different task in the same goal."},
+		[][]string{{"src/target.go"}, {"src/other.go"}},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	targetApplied, err := f.store.AskDecision(f.ctx, store.AskInput{
+		GoalID:         f.goal.ID,
+		TaskID:         tasks[0].ID,
+		Kind:           domain.DecisionKind("question"),
+		Question:       "Which target path should be used?",
+		AgentSessionID: "target-run",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.store.AnswerDecision(f.ctx, store.AnswerInput{
+		DecisionID:  targetApplied.ID,
+		AnswerLabel: "Use target path",
+		AnswerText:  "The target path is the one to use.",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.store.PollDecisions(f.ctx, "target-run", targetApplied.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	otherApplied, err := f.store.AskDecision(f.ctx, store.AskInput{
+		GoalID:         f.goal.ID,
+		TaskID:         tasks[1].ID,
+		Kind:           domain.DecisionKind("question"),
+		Question:       "Which other path should be used?",
+		AgentSessionID: "other-run",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.store.AnswerDecision(f.ctx, store.AnswerInput{
+		DecisionID:  otherApplied.ID,
+		AnswerLabel: "Use other path",
+		AnswerText:  "The other path is not part of the target task.",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.store.PollDecisions(f.ctx, "other-run", otherApplied.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	targetOpen, err := f.store.AskDecision(f.ctx, store.AskInput{
+		GoalID:         f.goal.ID,
+		TaskID:         tasks[0].ID,
+		Kind:           domain.DecisionKind("question"),
+		Question:       "Which target option is still open?",
+		AgentSessionID: "target-run",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+	status, headers, body := doRequest(t, srv.Client(), http.MethodGet, srv.URL+"/api/tasks/"+tasks[0].ID, nil)
+	if status != http.StatusOK {
+		t.Fatalf("task detail status = %d; body=%s", status, body)
+	}
+	if !strings.HasPrefix(headers.Get("Content-Type"), "application/json") {
+		t.Fatalf("task detail content type = %q", headers.Get("Content-Type"))
+	}
+	t.Logf("task detail JSON: %s", strings.TrimSpace(string(body)))
+
+	var response struct {
+		Task domain.Task `json:"task"`
+		Goal struct {
+			ID          string `json:"id"`
+			Title       string `json:"title"`
+			ProjectName string `json:"project_name"`
+		} `json:"goal"`
+		OpenDecisions   []domain.Decision `json:"open_decisions"`
+		DecisionHistory []struct {
+			DecisionID  string `json:"decision_id"`
+			TaskID      string `json:"task_id"`
+			Question    string `json:"question"`
+			AnswerLabel string `json:"answer_label"`
+			AnswerText  string `json:"answer_text"`
+		} `json:"decision_history"`
+		DecisionHistoryOmitted int `json:"decision_history_omitted"`
+	}
+	if err := json.Unmarshal(body, &response); err != nil {
+		t.Fatalf("decode task detail: %v; body=%s", err, body)
+	}
+	if response.Task.ID != tasks[0].ID || response.Task.GoalID != f.goal.ID || response.Task.Title != tasks[0].Title || response.Task.Description != tasks[0].Description || len(response.Task.Files) != 1 || response.Task.Files[0] != "src/target.go" {
+		t.Fatalf("task = %+v, want target task %+v", response.Task, tasks[0])
+	}
+	if response.Goal.ID != f.goal.ID || response.Goal.Title != f.goal.Title || response.Goal.ProjectName != "fixture" {
+		t.Fatalf("goal = %+v, want id=%s title=%q project_name=%q", response.Goal, f.goal.ID, f.goal.Title, "fixture")
+	}
+	if len(response.OpenDecisions) != 1 || response.OpenDecisions[0].ID != targetOpen.ID || response.OpenDecisions[0].TaskID != tasks[0].ID {
+		t.Fatalf("open_decisions = %+v, want only target decision %s", response.OpenDecisions, targetOpen.ID)
+	}
+	if len(response.DecisionHistory) != 1 {
+		t.Fatalf("decision_history = %+v, want only target history", response.DecisionHistory)
+	}
+	history := response.DecisionHistory[0]
+	if history.DecisionID != targetApplied.ID || history.TaskID != tasks[0].ID || history.Question != targetApplied.Question || history.AnswerLabel != "Use target path" || history.AnswerText != "The target path is the one to use." {
+		t.Fatalf("decision_history[0] = %+v, want target decision %s", history, targetApplied.ID)
+	}
+	if history.DecisionID == otherApplied.ID || history.TaskID == tasks[1].ID {
+		t.Fatalf("other task history leaked into response: %+v", history)
+	}
+	if response.DecisionHistoryOmitted != 0 {
+		t.Fatalf("decision_history_omitted = %d, want 0", response.DecisionHistoryOmitted)
+	}
+}
+
+func TestHTTPTaskDetailReturnsNotFoundForUnknownTask(t *testing.T) {
+	f := newBareFixture(t)
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+
+	status, headers, body := doRequest(t, srv.Client(), http.MethodGet, srv.URL+"/api/tasks/missing-task", nil)
+	assertErrorObject(t, status, headers, body, http.StatusNotFound)
 }
 
 func TestHTTPGoalDetailIncludesTasklessOpenDecision(t *testing.T) {

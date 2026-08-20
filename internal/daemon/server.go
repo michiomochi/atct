@@ -64,10 +64,31 @@ func serveEmbeddedWeb(w http.ResponseWriter, r *http.Request, dist fs.FS, static
 	indexRequest := r.Clone(r.Context())
 	indexRequest.URL.Path = "/"
 	indexRequest.URL.RawPath = ""
-	if strings.HasPrefix(r.URL.Path, "/goals/") {
-		indexRequest.URL.Path = "/goals/_/"
+	if dynamicIndexPath := embeddedDynamicIndexPath(dist, r.URL.Path); dynamicIndexPath != "" {
+		indexRequest.URL.Path = dynamicIndexPath
 	}
 	static.ServeHTTP(w, indexRequest)
+}
+
+func embeddedDynamicIndexPath(dist fs.FS, requestPath string) string {
+	cleanPath := path.Clean(requestPath)
+	if cleanPath == "." || cleanPath == "/" {
+		return ""
+	}
+
+	segment := strings.TrimPrefix(cleanPath, "/")
+	if slash := strings.IndexByte(segment, '/'); slash >= 0 {
+		segment = segment[:slash]
+	}
+	if segment == "" {
+		return ""
+	}
+
+	indexPath := path.Join(segment, "_", "index.html")
+	if !fs.ValidPath(indexPath) || !embeddedFileExists(dist, indexPath) {
+		return ""
+	}
+	return "/" + segment + "/_/"
 }
 
 func embeddedFileExists(dist fs.FS, name string) bool {

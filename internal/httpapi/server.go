@@ -68,6 +68,20 @@ type goalResponse struct {
 	DecisionHistoryOmitted int                   `json:"decision_history_omitted"`
 }
 
+type taskGoalView struct {
+	ID          string `json:"id"`
+	Title       string `json:"title"`
+	ProjectName string `json:"project_name"`
+}
+
+type taskDetailResponse struct {
+	Task                   domain.Task           `json:"task"`
+	Goal                   taskGoalView          `json:"goal"`
+	OpenDecisions          []domain.Decision     `json:"open_decisions"`
+	DecisionHistory        []decisionHistoryView `json:"decision_history"`
+	DecisionHistoryOmitted int                   `json:"decision_history_omitted"`
+}
+
 type decisionHistoryView struct {
 	DecisionID       string     `json:"decision_id"`
 	TaskID           string     `json:"task_id"`
@@ -144,6 +158,18 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.handleGoal(w, r, parts[2])
+		return
+	}
+	if len(parts) == 3 && parts[0] == "api" && parts[1] == "tasks" {
+		if parts[2] == "" {
+			writeError(w, http.StatusBadRequest, "task id is missing")
+			return
+		}
+		if r.Method != http.MethodGet {
+			writeError(w, http.StatusBadRequest, "method is not allowed for this endpoint")
+			return
+		}
+		s.handleTask(w, r, parts[2])
 		return
 	}
 	if len(parts) == 4 && parts[0] == "api" && parts[1] == "tasks" && parts[3] == "release" {
@@ -394,17 +420,7 @@ func (s *Server) handleGoal(w http.ResponseWriter, r *http.Request, goalID strin
 	}
 	decisionHistory := make([]decisionHistoryView, 0, len(appliedDecisions))
 	for _, decision := range appliedDecisions {
-		decisionHistory = append(decisionHistory, decisionHistoryView{
-			DecisionID:       decision.ID,
-			TaskID:           decision.TaskID,
-			Question:         decision.Question,
-			AnswerLabel:      decision.AnswerLabel,
-			AnswerText:       decision.AnswerText,
-			SettledByDefault: decision.DefaultAppliedAt != nil,
-			DefaultAppliedAt: decision.DefaultAppliedAt,
-			AnsweredAt:       decision.AnsweredAt,
-			AppliedAt:        decision.AppliedAt,
-		})
+		decisionHistory = append(decisionHistory, newDecisionHistoryView(decision))
 	}
 	openByTask := indexDecisions(openDecisions)
 	unattachedDecisions := make([]domain.Decision, 0)
@@ -442,10 +458,97 @@ func (s *Server) handleGoal(w http.ResponseWriter, r *http.Request, goalID strin
 	writeJSON(w, http.StatusOK, response)
 }
 
+func (s *Server) handleTask(w http.ResponseWriter, r *http.Request, taskID string) {
+	ctx := r.Context()
+	goalID, err := s.store.GetTaskGoalID(ctx, taskID)
+	if err != nil {
+		if errors.Is(err, store.ErrTaskNotFound) {
+			writeError(w, http.StatusNotFound, err.Error())
+			return
+		}
+		writeStoreError(w, err)
+		return
+	}
+
+	var task domain.Task
+	goal, err := s.store.GetGoal(ctx, goalID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	tasks, err := s.store.ListTasks(ctx, goalID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	found := false
+	for _, candidateTask := range tasks {
+		if candidateTask.ID != taskID {
+			continue
+		}
+		task = candidateTask
+		found = true
+		break
+	}
+	if !found {
+		writeError(w, http.StatusNotFound, store.ErrTaskNotFound.Error())
+		return
+	}
+
+	projects, err := s.store.ListProjects(ctx)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	projectName := ""
+	for _, project := range projects {
+		if project.ID == goal.ProjectID {
+			projectName = project.Name
+			break
+		}
+	}
+
+	openDecisions, err := s.store.ListOpenDecisions(ctx, goal.ID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	taskOpenDecisions := make([]domain.Decision, 0)
+	for _, decision := range openDecisions {
+		if decision.TaskID == task.ID {
+			taskOpenDecisions = append(taskOpenDecisions, decision)
+		}
+	}
+
+	appliedDecisions, decisionHistoryOmitted, err := s.store.ListAppliedDecisions(ctx, goal.ID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	decisionHistory := make([]decisionHistoryView, 0)
+	for _, decision := range appliedDecisions {
+		if decision.TaskID == task.ID {
+			decisionHistory = append(decisionHistory, newDecisionHistoryView(decision))
+		}
+	}
+
+	writeJSON(w, http.StatusOK, taskDetailResponse{
+		Task: task,
+		Goal: taskGoalView{
+			ID:          goal.ID,
+			Title:       goal.Title,
+			ProjectName: projectName,
+		},
+		OpenDecisions:          taskOpenDecisions,
+		DecisionHistory:        decisionHistory,
+		DecisionHistoryOmitted: decisionHistoryOmitted,
+	})
+}
+
 func (s *Server) handleRelease(w http.ResponseWriter, r *http.Request, taskID string) {
 	task, err := s.store.ReleaseTask(r.Context(), taskID)
 	if err != nil {
-		if strings.Contains(err.Error(), "task not found") {
+		if errors.Is(err, store.ErrTaskNotFound) {
 			writeError(w, http.StatusNotFound, err.Error())
 			return
 		}
@@ -453,6 +556,20 @@ func (s *Server) handleRelease(w http.ResponseWriter, r *http.Request, taskID st
 		return
 	}
 	writeJSON(w, http.StatusOK, task)
+}
+
+func newDecisionHistoryView(decision domain.Decision) decisionHistoryView {
+	return decisionHistoryView{
+		DecisionID:       decision.ID,
+		TaskID:           decision.TaskID,
+		Question:         decision.Question,
+		AnswerLabel:      decision.AnswerLabel,
+		AnswerText:       decision.AnswerText,
+		SettledByDefault: decision.DefaultAppliedAt != nil,
+		DefaultAppliedAt: decision.DefaultAppliedAt,
+		AnsweredAt:       decision.AnsweredAt,
+		AppliedAt:        decision.AppliedAt,
+	}
 }
 
 func (s *Server) handleDecision(w http.ResponseWriter, r *http.Request, decisionID, action string) {

@@ -89,7 +89,7 @@ func TestHTTPHandlerKeepsSSEOpenUntilDisconnect(t *testing.T) {
 	}
 }
 
-func TestHTTPHandlerFallsBackToEmbeddedIndexForHistoryRoute(t *testing.T) {
+func TestHTTPHandlerRoutesEmbeddedDynamicPagesAndFallsBackToRoot(t *testing.T) {
 	d := newWebTestDaemon(t)
 
 	wantRoot, err := fs.ReadFile(atctweb.Dist, "dist/index.html")
@@ -100,27 +100,33 @@ func TestHTTPHandlerFallsBackToEmbeddedIndexForHistoryRoute(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read goal history template: %v", err)
 	}
-
-	root := httptest.NewRecorder()
-	d.HTTPHandler().ServeHTTP(root, httptest.NewRequest(http.MethodGet, "/", nil))
-	if root.Code != http.StatusOK {
-		t.Fatalf("root status = %d, want %d", root.Code, http.StatusOK)
-	}
-	if root.Body.String() != string(wantRoot) {
-		t.Fatal("root route did not return the embedded index")
+	wantTask, err := fs.ReadFile(atctweb.Dist, "dist/tasks/_/index.html")
+	if err != nil {
+		t.Fatalf("read task history template: %v", err)
 	}
 
-	history := httptest.NewRecorder()
-	d.HTTPHandler().ServeHTTP(history, httptest.NewRequest(http.MethodGet, "/goals/example", nil))
+	tests := []struct {
+		name string
+		path string
+		want []byte
+	}{
+		{name: "root", path: "/", want: wantRoot},
+		{name: "goal detail", path: "/goals/example", want: wantGoal},
+		{name: "task detail", path: "/tasks/example", want: wantTask},
+		{name: "unknown path", path: "/nonexistent/xxx", want: wantRoot},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			response := httptest.NewRecorder()
+			d.HTTPHandler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, tt.path, nil))
 
-	if history.Code != http.StatusOK {
-		t.Fatalf("history status = %d, want %d", history.Code, http.StatusOK)
-	}
-	if history.Body.String() != string(wantGoal) {
-		t.Fatal("history route did not return goals/_/index.html")
-	}
-	if history.Body.String() == root.Body.String() {
-		t.Fatal("history route returned the root index")
+			if response.Code != http.StatusOK {
+				t.Fatalf("status = %d, want %d", response.Code, http.StatusOK)
+			}
+			if response.Body.String() != string(tt.want) {
+				t.Fatalf("route %s returned unexpected embedded page", tt.path)
+			}
+		})
 	}
 }
 
