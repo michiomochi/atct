@@ -24,6 +24,7 @@ function taskView(id: string, title: string, order: number): TaskView {
     id,
     goal_id: "goal-1",
     title,
+    description: "",
     status: "todo",
     agent: "fixture-agent",
     order,

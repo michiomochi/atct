@@ -43,6 +43,7 @@ export interface Task {
   id: string;
   goal_id: string;
   title: string;
+  description: string;
   status: string;
   agent: string;
   order: number;

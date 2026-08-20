@@ -32,6 +32,8 @@ export function TaskDetailModal({ task, openDecisions, decisionHistory, onUpdate
   const taskOpenDecisions = filterDecisionsByTask(openDecisions, task.id);
   const taskHistory = filterDecisionsByTask(decisionHistory, task.id);
   const noValue = t("task.detail.none");
+  const description = task.description ?? "";
+  const hasDescription = description.trim().length > 0;
 
   return (
     <DialogRoot>
@@ -50,10 +52,16 @@ export function TaskDetailModal({ task, openDecisions, decisionHistory, onUpdate
         <DialogTitle className="font-display text-2xl font-semibold tracking-tight text-ink-950">
           {task.title}
         </DialogTitle>
-        <DialogDescription className="mt-2 text-sm leading-6 text-ink-700">
-          {t("task.detail.description")}
-        </DialogDescription>
+        {hasDescription && (
+          <DialogDescription className="mt-2 text-sm leading-6 text-ink-700">
+            <span className="block font-semibold">{t("task.detail.description")}</span>
+            <span className="mt-1 block whitespace-pre-wrap break-words">{description}</span>
+          </DialogDescription>
+        )}
 
+        <h3 className="mt-6 font-display text-lg font-semibold tracking-tight text-ink-950">
+          {t("task.detail.attributes")}
+        </h3>
         <dl className="mt-6 grid min-w-0 gap-x-6 gap-y-4 border-t border-line pt-5 sm:grid-cols-2">
           <div className="min-w-0">
             <dt className="text-xs font-semibold uppercase tracking-wide text-ink-600">{t("task.detail.files")}</dt>

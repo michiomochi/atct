@@ -15,6 +15,15 @@ Call `atct_task_declare` with the tasks you intend to do, before doing them.
 Pass a stable `idempotency_key` for the batch. Re-declaring the same batch does
 not create duplicates, so it is safe after a retry or a context compaction.
 
+The title says what to do. The description says the conditions for judging it
+done and the assumptions that must hold. Paraphrasing the title in the
+description is equivalent to not writing a description.
+
+On 2026-08-20, a task to verify whether a decision is rolled back to open on
+approval failure was withdrawn because its assumption was wrong. If that
+assumption had been written in the description, a human could have corrected
+it when the task was declared.
+
 ## Claim before you start
 
 Call `atct_task_claim` before working on a task. Exactly one run wins a claim.

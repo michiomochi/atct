@@ -27,11 +27,12 @@ afterEach(() => {
   cleanup();
 });
 
-function taskView(id: string, title: string): TaskView {
+function taskView(id: string, title: string, description = ""): TaskView {
   return {
     id,
     goal_id: "goal-1",
     title,
+    description,
     status: "todo",
     agent: "fixture-agent",
     order: 0,
@@ -135,5 +136,33 @@ describe("TaskDetailModal", () => {
     expect(
       within(dialog).getByRole("button", { name: "goal.history.changeAssumption" }),
     ).not.toBeNull();
+  });
+
+  it("shows descriptions only when present and always shows task attributes", () => {
+    const taskWithDescription = taskView(
+      "task-with-description",
+      "Task with description",
+      "Describe the work and its prerequisites.",
+    );
+    const taskWithoutDescription = taskView("task-without-description", "Task without description", "");
+
+    const describedDialog = renderAndOpen(taskWithDescription, [], []);
+    expect(within(describedDialog).getByText("task.detail.description")).not.toBeNull();
+    expect(within(describedDialog).getByText("Describe the work and its prerequisites.")).not.toBeNull();
+    expect(within(describedDialog).getByText("task.detail.attributes")).not.toBeNull();
+
+    cleanup();
+
+    const emptyDialog = renderAndOpen(taskWithoutDescription, [], []);
+    expect(within(emptyDialog).queryByText("task.detail.description")).toBeNull();
+    expect(within(emptyDialog).getByText("task.detail.attributes")).not.toBeNull();
+  });
+
+  it("omits the description section for whitespace-only descriptions", () => {
+    const task = taskView("task-whitespace-description", "Task with whitespace description", " \n\t ");
+    const dialog = renderAndOpen(task, [], []);
+
+    expect(within(dialog).queryByText("task.detail.description")).toBeNull();
+    expect(within(dialog).getByText("task.detail.attributes")).not.toBeNull();
   });
 });

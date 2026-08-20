@@ -59,6 +59,7 @@ function fixtureTask(id: string, order: number): TaskView {
     id,
     goal_id: "goal-1",
     title: id,
+    description: "",
     status: "todo",
     agent: "fixture-agent",
     order,
