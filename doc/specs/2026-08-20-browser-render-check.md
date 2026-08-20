@@ -47,6 +47,52 @@ Chromium はキャッシュ（`~/Library/Caches/ms-playwright/chromium-1234`）�
 実測: パスが 100 バイトを超えると daemon が `bind: invalid argument` で落ちる
 （macOS の unix ソケットの 104 バイト制限）。
 
+## スクリプトは残さない（2026-08-20 の訂正）
+
+**当初 `script/render-check.sh` を作らせたが、やめた。**
+
+理由は 3 つある。
+
+- **書式は既に `playwright` スキルにある。** 最小の実行例と「必ず集める 3 つ」
+  （console と pageerror / requestfailed / response の Content-Type）が書いてある。
+  **私はそれを読まずに 146 行のシェルを書かせた**
+- **テストに組み込まない決定なので、走らせるかは人間の記憶に依存する。**
+  忘れれば死んだファイルになる。同じ日に参照 0 のコンポーネント 3 つを削除している
+- **効いたのは「描画したこと」でスクリプトではない。** 数コマンドで測って不具合を
+  見つけた。**恒久的な守りはテストである**（下の sentinel の否定側）
+
+残す知識はここに書く。
+
+| 知識 | 内容 |
+|---|---|
+| playwright の入手 | **依存に足さない。** グローバルに入っている（`npm root -g`）。`NODE_PATH="$(npm root -g)" node <script>` で解決する |
+| MCP | **使わない。** `npx -y @playwright/mcp@latest` は既定が実物の Google Chrome かつ headed で、初期化が 180 秒でタイムアウトする（スキルに実測として記録済み。同日また踏んだ） |
+| 使うブラウザ | playwright 同梱の Chromium。キャッシュにあり、起動は 1 秒（実測 151.0.7922.34） |
+| 一時 HOME | **短いパスにする**（`/private/tmp/atct-vh` など）。100 バイトを超えると daemon が `bind: invalid argument` で落ちる（macOS の unix ソケット 104 バイト制限） |
+
+## 最初の描画で見つかった不具合
+
+**この手段を作った最初の実行で、タスク詳細ページが空だと分かった。**
+
+```
+/tasks/<本物の ID>  ->  h1 が空、表 0 行
+画面の文字: ATCT Dashboard English 日本語 task not found: _ Retry
+404: /api/tasks/_
+console: React error #418（hydration の不一致）
+```
+
+`web/src/pages/tasks/[id].astro` は `getStaticPaths` で `id: "_"` を返すので、
+**ビルド時の props は常に `_`** である。ゴール詳細は `resolveGoalID`
+（`web/src/lib/ui.ts:96`）で URL から復元しているが、**タスクページには同じ仕組みが
+無かった。**
+
+すり抜けた理由を残す。**`TaskDetailPage.test.tsx` は `id="task-1"` を直接渡している。**
+自分で作った props でしか検査していないので、ビルドが埋め込む値とのずれを
+原理的に見つけられない。今日 3 回目の同じ形である（`goal.tasks` が null、
+`decision_history.task_id` が無い、これ）。
+
+**恒久的な守りは sentinel の否定側テストであり、手で走らせるスクリプトではない。**
+
 ## 検証
 
 - タスク詳細ページを幅 1280px で描画し、**回答履歴の行数**とページの縦の高さが取れること
