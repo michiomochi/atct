@@ -5,7 +5,7 @@ import { useTranslation } from "react-i18next";
 import type { Decision, DecisionHistoryEntry, TaskView } from "../lib/api";
 import { ApiError, releaseTask } from "../lib/api";
 import { formatDateTime, formatDuration } from "../i18n";
-import { statusLabel } from "../lib/ui";
+import { sortTasksByOrder, statusLabel } from "../lib/ui";
 import { DecisionAnswerForm } from "./DecisionAnswerForm";
 import { EmptyState } from "./StateMessage";
 import { TaskDetailModal } from "./TaskDetailModal";
@@ -117,13 +117,14 @@ export function TaskTable({ tasks, mode, onRefresh, openDecisions = [], decision
   }
 
   if (mode === "goal") {
-    const orderedTasks = [...tasks].sort((left, right) => left.order - right.order);
+    const orderedTasks = sortTasksByOrder(tasks);
     return (
       <div className="table-scroll">
         <Table className="min-w-[52rem] w-full border-collapse text-left text-sm">
           <caption className="sr-only">{t("task.caption.list")}</caption>
           <Table.Header className="border-b-2 border-ink-300 text-xs uppercase tracking-wide text-ink-700">
             <Table.Row>
+              <Table.Head {...columnScope} className="w-16 px-3 py-3 font-semibold">{t("task.column.order")}</Table.Head>
               <Table.Head {...columnScope} className="px-3 py-3 font-semibold">{t("task.column.task")}</Table.Head>
               <Table.Head {...columnScope} className="w-40 px-3 py-3 font-semibold">{t("task.column.status")}</Table.Head>
               <Table.Head {...columnScope} className="w-48 px-3 py-3 font-semibold">{t("task.column.updatedAt")}</Table.Head>
@@ -132,6 +133,7 @@ export function TaskTable({ tasks, mode, onRefresh, openDecisions = [], decision
           <Table.Body>
             {orderedTasks.map((task) => (
               <Table.Row className="border-b border-line align-top last:border-b-0" key={task.id}>
+                <Table.Cell className="w-16 px-3 py-4 text-ink-700">{task.order + 1}</Table.Cell>
                 <Table.Cell className="min-w-0 px-3 py-4">
                   <GoalTaskTitle
                     task={task}

@@ -1,6 +1,6 @@
 import type { Goal } from "../lib/api";
 import { formatDateTime } from "../i18n";
-import { encodePathSegment, statusLabel } from "../lib/ui";
+import { encodePathSegment, sortTasksByOrder, statusLabel } from "../lib/ui";
 import { Table } from "@cloudflare/kumo/components/table";
 import { Fragment } from "react";
 import { useTranslation } from "react-i18next";
@@ -33,7 +33,7 @@ export function GoalTable({ goals, showProject = true }: Props) {
         </Table.Header>
         <Table.Body>
           {goals.map((goal) => {
-            const tasks = goal.tasks ?? [];
+            const tasks = sortTasksByOrder(goal.tasks ?? []);
             const goalStatus = goal.awaiting_decision ? t("status.awaitingDecision") : statusLabel(locale, goal.status);
             return (
               <Fragment key={goal.id}>

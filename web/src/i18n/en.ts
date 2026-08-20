@@ -103,6 +103,7 @@ export const en = {
   "goal.error.load": "Could not load the goal.",
 
   "task.caption.attention": "Tasks blocked on you",
+  "task.column.order": "Order",
   "task.column.task": "Task",
   "task.column.goal": "Goal",
   "task.column.status": "Status",

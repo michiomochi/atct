@@ -1,6 +1,7 @@
+import { within } from "@testing-library/dom";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { Goal, GoalResponse } from "../lib/api";
+import type { Goal, GoalResponse, TaskView } from "../lib/api";
 import { fetchGoal } from "../lib/api";
 import { GoalDetail } from "./GoalDetail";
 
@@ -71,6 +72,25 @@ function goalResponse(overrides: Partial<Goal> = {}): GoalResponse {
   };
 }
 
+function taskView(id: string, title: string, order: number): TaskView {
+  return {
+    id,
+    goal_id: "goal-1",
+    title,
+    status: "todo",
+    agent: "fixture-agent",
+    order,
+    declare_key: "fixture-declare",
+    claimed_by: "fixture-run",
+    created_at: "",
+    updated_at: "",
+    held_for_seconds: 0,
+    open_decisions: [],
+    project_id: "project-1",
+    project_name: "Fixture project",
+  };
+}
+
 describe("GoalDetail", () => {
   it("renders a goal with null tasks without throwing", async () => {
     vi.mocked(fetchGoal).mockResolvedValueOnce(
@@ -96,5 +116,32 @@ describe("GoalDetail", () => {
     render(<GoalDetail id="goal-1" />);
 
     await waitFor(() => expect(screen.getByTestId("completion-report")).not.toBeNull());
+  });
+
+  it("renders goal tasks in ascending order with one-based order labels", async () => {
+    vi.mocked(fetchGoal).mockResolvedValueOnce(
+      goalResponse({
+        tasks: [
+          taskView("task-two", "Third task", 2),
+          taskView("task-zero", "First task", 0),
+          taskView("task-one", "Second task", 1),
+        ],
+      }),
+    );
+
+    render(<GoalDetail id="goal-1" />);
+
+    await waitFor(() => expect(screen.getByText("First task")).not.toBeNull());
+    const taskRows = screen.getAllByRole("row").filter((row) =>
+      ["First task", "Second task", "Third task"].some((title) => row.textContent?.includes(title)),
+    );
+
+    expect(taskRows.map((row) => within(row).getAllByRole("cell")[0].textContent)).toEqual(["1", "2", "3"]);
+    expect(taskRows.map((row) => within(row).getAllByRole("cell")[1].textContent)).toEqual([
+      "First task",
+      "Second task",
+      "Third task",
+    ]);
+    expect(taskRows.map((row) => within(row).getAllByRole("cell")[0].textContent)).not.toContain("0");
   });
 });

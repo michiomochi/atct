@@ -104,6 +104,7 @@ export const ja: Record<TranslationKey, string> = {
   "goal.error.load": "ゴールを読み込めませんでした。",
 
   "task.caption.attention": "回答待ちで止まっているタスク一覧",
+  "task.column.order": "順序",
   "task.column.task": "タスク",
   "task.column.goal": "ゴール",
   "task.column.status": "状態",

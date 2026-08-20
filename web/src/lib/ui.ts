@@ -1,7 +1,7 @@
 import type { Locale } from "../i18n";
 import { en, type TranslationKey } from "../i18n/en";
 import { ja } from "../i18n/ja";
-import type { Goal } from "./api";
+import type { Goal, TaskView } from "./api";
 
 export const DECISION_EVENT_NAMES = [
   "decision.created",
@@ -87,6 +87,10 @@ export function groupGoalsByProject(goals: Goal[]): Array<[string, Goal[]]> {
     if (left === right) return 0;
     return left < right ? -1 : 1;
   });
+}
+
+export function sortTasksByOrder(tasks: TaskView[]): TaskView[] {
+  return [...tasks].sort((left, right) => left.order - right.order);
 }
 
 export function resolveGoalID(id: string, pathname: string): string {

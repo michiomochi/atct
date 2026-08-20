@@ -13,7 +13,8 @@ import taskTableSource from "../components/TaskTable.tsx?raw";
 import taskDetailModalSource from "../components/TaskDetailModal.tsx?raw";
 import attentionTaskSource from "../components/AttentionTaskTable.tsx?raw";
 import { formatDateTime, formatDuration, type Locale } from "../i18n";
-import type { Goal } from "./api";
+import uiSource from "./ui.ts?raw";
+import type { Goal, TaskView } from "./api";
 import {
   DECISION_EVENT_NAMES,
   decisionAutoSettlementSeconds,
@@ -25,6 +26,7 @@ import {
   hasCompletionReport,
   isDecisionEventName,
   resolveGoalID,
+  sortTasksByOrder,
   statusLabel,
   validateAnswer,
   groupGoalsByProject,
@@ -52,6 +54,25 @@ function fixtureGoal(id: string, projectName: string): Goal {
   };
 }
 
+function fixtureTask(id: string, order: number): TaskView {
+  return {
+    id,
+    goal_id: "goal-1",
+    title: id,
+    status: "todo",
+    agent: "fixture-agent",
+    order,
+    declare_key: "fixture-declare",
+    claimed_by: "fixture-run",
+    created_at: "",
+    updated_at: "",
+    held_for_seconds: 0,
+    open_decisions: [],
+    project_id: "project-1",
+    project_name: "Fixture project",
+  };
+}
+
 describe("groupGoalsByProject", () => {
   it("sorts project names and keeps each project's goals together", () => {
     const alphaGoal = fixtureGoal("alpha-1", "Alpha");
@@ -62,6 +83,28 @@ describe("groupGoalsByProject", () => {
       ["Alpha", [alphaGoal]],
       ["Zeta", [zetaGoal, zetaFollowUp]],
     ]);
+  });
+});
+
+describe("sortTasksByOrder", () => {
+  it("sorts tasks by ascending order without mutating the input", () => {
+    const tasks = [fixtureTask("task-two", 2), fixtureTask("task-zero", 0), fixtureTask("task-one", 1)];
+    const original = [...tasks];
+
+    expect(sortTasksByOrder(tasks).map((task) => task.id)).toEqual([
+      "task-zero",
+      "task-one",
+      "task-two",
+    ]);
+    expect(tasks).toEqual(original);
+  });
+
+  it("keeps duplicate order values without throwing or dropping tasks", () => {
+    const tasks = [fixtureTask("task-two", 2), fixtureTask("task-one-a", 1), fixtureTask("task-one-b", 1)];
+
+    expect(() => sortTasksByOrder(tasks)).not.toThrow();
+    expect(sortTasksByOrder(tasks)).toHaveLength(3);
+    expect(sortTasksByOrder(tasks).map((task) => task.order)).toEqual([1, 1, 2]);
   });
 });
 
@@ -327,7 +370,9 @@ describe("goal detail answer flows", () => {
     expect(goalDetailSource).toContain('mode="goal"');
     expect(goalDetailSource).toContain("decisionHistory={data.goal.decision_history}");
     expect(taskTableSource).toContain('mode: "now" | "needs_decision" | "next" | "goal"');
-    expect(taskTableSource).toContain("left.order - right.order");
+    expect(uiSource).toContain("left.order - right.order");
+    expect(taskTableSource).toContain("sortTasksByOrder");
+    expect(goalTableSource).toContain("sortTasksByOrder");
     expect(taskDetailModalSource).toContain("DialogRoot");
     expect(taskDetailModalSource).toContain("DialogTrigger");
     expect(taskDetailModalSource).toContain("DialogClose");
