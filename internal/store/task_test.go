@@ -646,7 +646,7 @@ func TestUpdateTaskRejectsDoneForOtherClaimHolder(t *testing.T) {
 	if err == nil {
 		t.Fatal("UpdateTask(done) succeeded for a non-holder")
 	}
-	for _, want := range []string{"claimed by another agent session", "only the claim holder", "todo"} {
+	for _, want := range []string{"work lock held by another agent session", "only the lock holder", "todo"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("UpdateTask(done) error %q does not contain %q", err, want)
 		}
@@ -660,7 +660,7 @@ func TestUpdateTaskRejectsDroppedForOtherClaimHolder(t *testing.T) {
 	if err == nil {
 		t.Fatal("UpdateTask(dropped) succeeded for a non-holder")
 	}
-	for _, want := range []string{"claimed by another agent session", "only the claim holder", "todo"} {
+	for _, want := range []string{"work lock held by another agent session", "only the lock holder", "todo"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("UpdateTask(dropped) error %q does not contain %q", err, want)
 		}

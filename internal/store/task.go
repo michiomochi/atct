@@ -343,7 +343,7 @@ func (s *Store) authorizeTaskStatusRelease(ctx context.Context, taskID string, s
 	}
 
 	if status == domain.TaskDone || status == domain.TaskDropped {
-		return "", fmt.Errorf("task %q is claimed by another agent session; only the claim holder can set it to %s; if that session is no longer running, return it to todo with atct_task_update, then claim it before retrying", taskID, status)
+		return "", fmt.Errorf("task %q has a work lock held by another agent session; only the lock holder can set it to %s; if that session is no longer running, return it to todo with atct_task_update, then acquire the work lock with atct_task_claim before retrying", taskID, status)
 	}
 
 	projectID, err := s.ProjectIDForTask(ctx, taskID)
@@ -355,12 +355,12 @@ func (s *Store) authorizeTaskStatusRelease(ctx context.Context, taskID string, s
 		return "", fmt.Errorf("check task claim liveness: %w", err)
 	}
 	if taskClaimMatches(running, taskID, claimedBy) {
-		return "", fmt.Errorf("task %q is claimed by another agent session that is still running; wait for it to finish or stop, then return it to todo with atct_task_update and claim it", taskID)
+		return "", fmt.Errorf("task %q has a work lock held by another agent session that is still running; wait for it to finish or stop, then return it to todo with atct_task_update and acquire the work lock with atct_task_claim", taskID)
 	}
 	if taskClaimMatches(stale, taskID, claimedBy) {
 		return claimedBy, nil
 	}
-	return "", fmt.Errorf("task %q is claimed by another agent session, but its claim changed while checking whether it is running; retry the update after confirming the claim is stale", taskID)
+	return "", fmt.Errorf("task %q has a work lock held by another agent session, but its work lock changed while checking whether it is running; retry the update after confirming the work lock is stale", taskID)
 }
 
 func taskClaimMatches(tasks []domain.Task, taskID, claimedBy string) bool {

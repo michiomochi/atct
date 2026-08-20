@@ -16,21 +16,21 @@ var errNoPendingDecisions = errors.New("no unapplied decisions")
 
 const (
 	atctAgentSessionIDEnv        = "ATCT_AGENT_SESSION_ID"
-	unfinishedClaimMarker        = "Unfinished claimed tasks:"
-	staleClaimMarker             = "Stale claimed tasks:"
+	unfinishedClaimMarker        = "Unfinished tasks with work locks:"
+	staleClaimMarker             = "Stale work locks:"
 	undeclaredGoalMarker         = "Undeclared active goals:"
 	pendingDecisionReason        = "A human answered a decision you parked. Call `atct_decision_poll` with each decision_id below, then continue the work that was waiting on it."
 	pendingDefaultDecisionReason = "No one answered a decision you parked, so its default was applied. Call `atct_decision_poll` with each decision_id below, then continue the work that was waiting on it."
-	pendingClaimReason           = "A task claimed by this agent session is still open. If you forgot to close it, close it; if you are still working on it, continue."
-	pendingStaleClaimReason      = "A task claimed by another agent session is no longer running. You can take it over by returning it to todo with `atct_task_update`, then claim it."
+	pendingClaimReason           = "A task with a work lock held by this agent session is still open. If you forgot to close it, close it; if you are still working on it, continue."
+	pendingStaleClaimReason      = "A task with a work lock held by another agent session is no longer running. You can take it over by returning it to todo with `atct_task_update`, then acquire the work lock with `atct_task_claim`."
 	pendingUndeclaredGoalReason  = "An active goal has no tasks declared. Call `atct_task_declare` for each goal below, then continue the work."
-	pendingWakeupReason          = "An active goal has unstarted tasks and no running claim. Call `atct_task_claim` for a task below, then continue the work."
+	pendingWakeupReason          = "An active goal has unstarted tasks and no running work lock. Call `atct_task_claim` for a task below, then continue the work."
 	pendingCompletedGoalReason   = "All tasks are done but the active goal has no completion report. Call `atct_goal_complete` for each goal below, then continue the work."
 	pendingDroppedGoalReason     = "All tasks in an active goal were dropped. Call `atct_goal_complete` to report that the work was withdrawn; call `atct_task_declare` to declare tasks again if it should be resumed."
-	pendingUnclaimedDoingReason  = "A task is doing without a claim. Return it to todo with `atct_task_update`, then continue the work."
+	pendingUnclaimedDoingReason  = "A task is doing without a work lock. Return it to todo with `atct_task_update`, then call `atct_task_claim` before continuing the work."
 	completedGoalMarker          = "Goals with all tasks done:"
 	droppedGoalMarker            = "Goals with all tasks dropped:"
-	unclaimedDoingMarker         = "Doing tasks without a claim:"
+	unclaimedDoingMarker         = "Doing tasks without a work lock:"
 )
 
 func currentAgentSessionID() string {

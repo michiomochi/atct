@@ -216,7 +216,7 @@ func TestPendingCommandIncludesAllPendingReasons(t *testing.T) {
 	}
 	for _, want := range []string{
 		"A human answered a decision you parked.",
-		"A task claimed by this agent session is still open.",
+		pendingClaimReason,
 		"An active goal has no tasks declared.",
 		decision.ID,
 		"unfinished claimed work",
@@ -304,7 +304,7 @@ func TestPendingCommandReportsStaleClaimSeparatelyFromOwnClaim(t *testing.T) {
 	for _, want := range []string{
 		pendingClaimReason,
 		"my unfinished task",
-		"A task claimed by another agent session is no longer running.",
+		pendingStaleClaimReason,
 		"abandoned task",
 	} {
 		if !strings.Contains(output, want) {
@@ -843,7 +843,7 @@ func TestPendingCommandReportsDoingTaskWithoutClaimUntilReturnedToTodo(t *testin
 	if exitCode != 0 {
 		t.Fatalf("pendingCommand exit code = %d, want 0", exitCode)
 	}
-	if !strings.Contains(output, "A task is doing without a claim.") {
+	if !strings.Contains(output, "A task is doing without a work lock.") {
 		t.Fatalf("pendingCommand output does not report the unclaimed doing task: %q", output)
 	}
 	if !strings.Contains(output, tasks[0].ID) {
@@ -862,7 +862,7 @@ func TestPendingCommandReportsDoingTaskWithoutClaimUntilReturnedToTodo(t *testin
 	if err != nil {
 		t.Fatalf("pendingCommand after UpdateTask: %v", err)
 	}
-	if strings.Contains(output, "A task is doing without a claim.") {
+	if strings.Contains(output, "A task is doing without a work lock.") {
 		t.Fatalf("pendingCommand kept the unclaimed doing reason after returning to todo: %q", output)
 	}
 }
