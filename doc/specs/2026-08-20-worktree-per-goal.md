@@ -53,6 +53,63 @@
 **つまり worktree を作っただけでは `go test ./...` が通らない。** 何が必要か
 （`pnpm install` と `pnpm build`、その所要時間とディスク）を測る。
 
+## 実測の結果（2026-08-20）
+
+| 測ったこと | 結果 |
+|---|---|
+| ATCT のプロジェクト | **main と worktree で同一。** `pending` も `context` も一致した |
+| 素の worktree の `go test ./...` | **落ちる。** `pnpm install` と `pnpm build` が必要 |
+| `pnpm install` | 16.2 秒 / **node_modules 433MB** |
+| `pnpm build` | 90.4 秒 / dist 652KB |
+| 準備後の `go test ./...` | 全通過 |
+| 2 つの worktree の分離 | **分離した。** wt1 をコミットしても wt2 は未コミットのまま、main には出ない |
+| 主チェックアウト | 変更なし（他の executor の分は残っていた） |
+
+**worktree 1 つあたり 433MB と約 107 秒。** これがこの設計のいちばん重いコストである。
+
+## 決定
+
+### 1 ゴール 1 worktree にしない。1 executor 1 worktree にする
+
+**準備が 107 秒・433MB かかるので、ゴールごとに作ると使い捨てのコストが大きい。**
+executor は 3 台までなので、**worktree も 3 つを作り置きして使い回す。**
+
+ゴールが変わっても worktree は変えない。**分離したいのは executor 同士であり、
+ゴール同士ではない**（同じゴールを 2 台で分担することもある）。
+
+### ブランチは executor ごとの固定名にする
+
+    wt/executor-1  wt/executor-2  wt/executor-3
+
+ゴール名を入れない。**使い回すので、名前にゴールを入れると嘘になる。**
+
+### 変更は commander が主チェックアウトで受け取る
+
+executor は自分の worktree でコミットしない。**いまと同じく、commander が
+レビューしてコミットする。**
+
+受け取り方は `git -C <worktree> diff` を主チェックアウトに適用する形にする。
+**`merge` を使わない**理由: executor のブランチに履歴を作ると、commander が
+書いているコミットメッセージ（何をなぜ変えたか）が二重になる。
+
+### claim の強制と委譲ガードは変わらない
+
+commander が claim を持ち、executor に渡す形は同じ。**worktree は作業場所の分離であり、
+責任の分離ではない。**
+
+### 準備は 1 回だけにする
+
+worktree を作ったら `pnpm install` と `pnpm build` を 1 回走らせ、以後は使い回す。
+**`web/dist` は gitignore なので worktree ごとに必要**（`internal/daemon/web_test.go`
+が `dist/goals/_/index.html` を読む）。
+
+## やらないこと
+
+- **ゴールごとに worktree を作らない**（コストが見合わない）
+- **executor にコミットさせない**（claim の強制と委譲ガードの前提が変わる）
+- `herdr worktree create` は使わない。**素の `git worktree` で足りる**
+  （herdr の worktree は pane と結びつくが、ここで必要なのは作業ツリーの分離だけ）
+
 ## 未決（測ってから決める）
 
 - 1 ゴール 1 worktree か、1 executor 1 worktree か
