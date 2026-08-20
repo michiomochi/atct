@@ -17,8 +17,6 @@ export const en = {
   "dashboard.unapplied.empty":
     "No answered decisions are waiting to be applied. Apply an answer when it is ready.",
   "dashboard.attention.title": "Tasks blocked on you",
-  "dashboard.attention.empty":
-    "No tasks are blocked on you. They will appear here when a decision needs your answer.",
   "dashboard.projects.title": "Projects",
   "dashboard.projects.empty": "No projects have active goals. Create a goal below to add one.",
   "dashboard.activeGoals.title": "Active goals",
@@ -67,7 +65,6 @@ export const en = {
   "goal.column.needsDecision": "Needs decision",
   "goal.column.next": "Next",
   "goal.tasks.title": "Tasks",
-  "goal.unattached.title": "Decisions for this goal",
   "goal.history.title": "Decision history",
   "goal.history.caption": "Applied decision history",
   "goal.history.column.question": "Question",
@@ -102,14 +99,10 @@ export const en = {
   "goal.completion.error.update": "Could not update the completion decision.",
   "goal.error.load": "Could not load the goal.",
 
-  "task.caption.attention": "Tasks blocked on you",
   "task.column.order": "Order",
   "task.column.task": "Task",
   "task.column.goal": "Goal",
   "task.column.status": "Status",
-  "task.column.claimedBy": "Claimed by",
-  "task.column.claimDuration": "Claim duration",
-  "task.claim.noHolder": "Unclaimed",
   "task.claim.release": "Release claim",
   "task.claim.releasing": "Releasing...",
   "task.claim.unclaimed": "No active claim",

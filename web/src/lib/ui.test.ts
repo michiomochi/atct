@@ -1,3 +1,9 @@
+// @ts-expect-error The test runs in Node, but this project does not include Node type declarations.
+import { readdirSync, readFileSync } from "node:fs";
+// @ts-expect-error The test runs in Node, but this project does not include Node type declarations.
+import { dirname, extname, join, relative, resolve } from "node:path";
+// @ts-expect-error The test runs in Node, but this project does not include Node type declarations.
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import decisionFormSource from "../components/DecisionAnswerForm.tsx?raw";
 import decisionTableSource from "../components/DecisionTable.tsx?raw";
@@ -6,12 +12,10 @@ import goalDetailSource from "../components/GoalDetail.tsx?raw";
 import goalTableSource from "../components/GoalTable.tsx?raw";
 import dashboardSource from "../components/Dashboard.tsx?raw";
 import localeSwitchSource from "../components/LocaleSwitch.tsx?raw";
-import needsDecisionSource from "../components/NeedsDecisionList.tsx?raw";
 import sectionSource from "../components/Section.tsx?raw";
 import stateMessageSource from "../components/StateMessage.tsx?raw";
 import taskTableSource from "../components/TaskTable.tsx?raw";
 import taskDetailPageSource from "../components/TaskDetailPage.tsx?raw";
-import attentionTaskSource from "../components/AttentionTaskTable.tsx?raw";
 import { formatDateTime, formatDuration, type Locale } from "../i18n";
 import uiSource from "./ui.ts?raw";
 import type { Goal, TaskView } from "./api";
@@ -31,6 +35,65 @@ import {
   validateAnswer,
   groupGoalsByProject,
 } from "./ui";
+
+const sourceDirectory = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const componentsDirectory = join(sourceDirectory, "components");
+
+interface DirectoryEntry {
+  name: string;
+  isDirectory: () => boolean;
+}
+
+function sourceFiles(directory: string): string[] {
+  return (readdirSync(directory, { withFileTypes: true }) as DirectoryEntry[]).flatMap((entry) => {
+    const filePath = join(directory, entry.name);
+    return entry.isDirectory() ? sourceFiles(filePath) : [filePath];
+  });
+}
+
+function isSourceFile(filePath: string) {
+  return /\.(?:astro|[cm]?[jt]sx?)$/.test(filePath);
+}
+
+function isTestFile(filePath: string) {
+  return /(?:\.test|\.spec)\.[^.]+$/.test(filePath);
+}
+
+function importsComponent(importerPath: string, specifier: string, componentPath: string) {
+  if (!specifier.startsWith(".")) return false;
+  const cleanSpecifier = specifier.split("?", 1)[0];
+  const importedPath = resolve(dirname(importerPath), cleanSpecifier);
+  return importedPath === componentPath || `${importedPath}.tsx` === componentPath;
+}
+
+function importedSpecifiers(source: string) {
+  const specifiers: string[] = [];
+  const importPattern = /\bimport\s+(?:type\s+)?(?:[^"'()]*?\s+from\s+)?["']([^"']+)["']|\bimport\s*\(\s*["']([^"']+)["']\s*\)/g;
+  for (const match of source.matchAll(importPattern)) {
+    specifiers.push(match[1] ?? match[2]);
+  }
+  return specifiers;
+}
+
+describe("component liveness", () => {
+  it("requires every component to be imported outside its own test", () => {
+    const components = sourceFiles(componentsDirectory).filter(
+      (filePath) => extname(filePath) === ".tsx" && !isTestFile(filePath),
+    );
+    const importers = sourceFiles(sourceDirectory).filter(
+      (filePath) => isSourceFile(filePath) && !isTestFile(filePath),
+    );
+    const unreferenced = components
+      .filter((componentPath) => !importers.some((importerPath) => {
+        if (importerPath === componentPath) return false;
+        return importedSpecifiers(String(readFileSync(importerPath, "utf8"))).some((specifier) =>
+          importsComponent(importerPath, specifier, componentPath));
+      }))
+      .map((filePath) => relative(componentsDirectory, filePath));
+
+    expect(unreferenced, `Unreferenced components: ${unreferenced.join(", ")}`).toEqual([]);
+  });
+});
 
 function fixtureGoal(id: string, projectName: string): Goal {
   return {
@@ -262,7 +325,7 @@ describe("localized UI labels", () => {
 describe("localized date and duration renderers", () => {
   it("routes timestamps and claims through the shared locale formatters", () => {
     const dateSources = [goalTableSource, decisionTableSource];
-    const durationSources = [taskTableSource, attentionTaskSource, needsDecisionSource];
+    const durationSources = [taskTableSource];
 
     for (const source of dateSources) {
       expect(source).toContain("formatDateTime");
@@ -380,10 +443,8 @@ describe("goal detail answer flows", () => {
     expect(taskDetailPageSource).toContain("subscribeToDecisionEvents");
     expect(taskDetailPageSource).toContain('t("state.updateAvailable")');
     expect(taskTableSource).not.toContain("TaskDetailModal");
-    expect(needsDecisionSource).toContain('data-testid="needs-decision-list"');
-    expect(needsDecisionSource).not.toContain("<Table");
-    expect(needsDecisionSource).not.toContain("table-scroll");
-    expect(needsDecisionSource).not.toContain("bg-surface p-4");
+    expect(taskTableSource).toContain("<Table");
+    expect(taskTableSource).toContain("table-scroll");
   });
 
   it("exposes the completion approval API in Goal detail", () => {

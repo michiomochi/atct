@@ -18,8 +18,6 @@ export const ja: Record<TranslationKey, string> = {
   "dashboard.unapplied.empty":
     "適用待ちの回答はありません。エージェントが受け取ると適用されます。",
   "dashboard.attention.title": "回答待ちで止まっているタスク",
-  "dashboard.attention.empty":
-    "回答待ちで止まっているタスクはありません。回答が必要になるとここに表示されます。",
   "dashboard.projects.title": "プロジェクト",
   "dashboard.projects.empty": "進行中のゴールがあるプロジェクトはありません。下のフォームからゴールを作成できます。",
   "dashboard.activeGoals.title": "進行中のゴール",
@@ -68,7 +66,6 @@ export const ja: Record<TranslationKey, string> = {
   "goal.column.needsDecision": "判断待ち",
   "goal.column.next": "次",
   "goal.tasks.title": "タスク一覧",
-  "goal.unattached.title": "このゴールの判断",
   "goal.history.title": "決定履歴",
   "goal.history.caption": "適用済み決定履歴",
   "goal.history.column.question": "質問",
@@ -103,14 +100,10 @@ export const ja: Record<TranslationKey, string> = {
   "goal.completion.error.update": "完了の判断を更新できませんでした。",
   "goal.error.load": "ゴールを読み込めませんでした。",
 
-  "task.caption.attention": "回答待ちで止まっているタスク一覧",
   "task.column.order": "順序",
   "task.column.task": "タスク",
   "task.column.goal": "ゴール",
   "task.column.status": "状態",
-  "task.column.claimedBy": "保持者",
-  "task.column.claimDuration": "保持時間",
-  "task.claim.noHolder": "未保持",
   "task.claim.release": "保持を解放",
   "task.claim.releasing": "解放中...",
   "task.claim.unclaimed": "アクティブな保持なし",
