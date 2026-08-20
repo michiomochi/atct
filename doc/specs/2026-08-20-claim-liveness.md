@@ -36,16 +36,52 @@ MCP の最終活動時刻ではそれを死亡と区別できない。誤って�
 
 ## 決定
 
-### 1. run ID と pid の登録簿を持つ
+### 1. run ID と pid の登録簿を持つ。名前は `sessions`
 
 ```
-~/.atct/runs/<pid>   →  <run ID> <プロセスの起動時刻>
+~/.atct/sessions/<pid>   →  <run ID> <プロセスの起動時刻>
 ```
+
+**`runs` にしない。** `runs` は既にテーブル名（`id` / `project_id` / `registered_at`）であり、
+別物と区別できない。記録しているのは shim の親、つまり**セッションのプロセス**なので
+意味としても `sessions` が正確である。
 
 MCP shim が起動時に書き、終了時に消す。**タスクに列を足さない**
 （`claimed_by` に run ID が既に入っている）。
 
-先例は `~/.atct/watchers/<pid>`（`internal/daemonctl/stop.go:16`）。同じ形にする。
+先例は `~/.atct/watchers/<pid>`（`internal/daemonctl/stop.go:16` の `RegisterWatch`）。
+`filepath.Join(dir, "watchers")` に `os.Getpid()` の名前でファイルを作り、
+クリーンアップ関数を返す形をそのまま使う。
+
+```
+~/.atct/
+  atct.db
+  atct.sock
+  watchers/<pid>    ← SSE を購読しているプロセス（既存）
+  sessions/<pid>    ← run ID を持つセッション（新規）
+```
+
+### 1b. 判定はファイルなので daemon と CLI の両方から読める
+
+これが要点である。`dir`（`~/.atct`、`cmd/atct/main.go:217`）の下に置くので、
+**2 つの読み手が同じものを見られる。**
+
+| 読む側 | いつ | DB への到達方法 |
+|---|---|---|
+| daemon | 30 秒ごとの評価 | 常駐して開いている |
+| `atct pending` | Stop hook から | **DB を直接開く**（daemon に依存できない） |
+
+`pending` は `pendingTextForProject(dir, cwd, ...)` で既に `dir` を受け取っている
+（`cmd/atct/pending.go:50-51`）。同じ `dir` から登録簿も読める。
+
+判定関数の形:
+
+```
+judge(store, dir) → 実行中の claim / 放置された claim
+```
+
+`store` と `dir` を渡せば、daemon 経由でも DB 直読みでも同じ判定が動く。
+**同じ判定を 2 箇所に書かない。**
 
 ### 2. 記録するのは shim の pid ではなく、その親（セッション）の pid
 
@@ -156,6 +192,7 @@ pid だけで判定すると、**再利用された pid を「生きている」
 - claim の自動解放（決定 6）
 - `claimed_at` の経過時間による判定（根拠が無い）
 - `runs` テーブルへの心拍列の追加（登録簿で足りる。定期書き込みを増やさない）
+- 登録簿を `runs` という名前にすること（テーブル名と衝突する）
 - 別のマシンで動く run の判定（ATCT は unix socket と 127.0.0.1 のローカル前提）
 
 ## 記録: 別の穴
