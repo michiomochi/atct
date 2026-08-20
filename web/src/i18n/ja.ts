@@ -169,6 +169,8 @@ export const ja: Record<TranslationKey, string> = {
 
   "state.loadingLabel": "{{label}}を読み込み中",
   "state.retry": "再試行",
+  "state.updateAvailable": "新しい更新があります。最新の情報を取得してください。",
+  "state.fetchLatest": "最新を取得",
 
   "duration.seconds": "{{value}}秒",
   "duration.minutes": "{{value}}分",

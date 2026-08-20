@@ -8,7 +8,6 @@ import { formatDateTime, formatDuration } from "../i18n";
 import { sortTasksByOrder, statusLabel } from "../lib/ui";
 import { DecisionAnswerForm } from "./DecisionAnswerForm";
 import { EmptyState } from "./StateMessage";
-import { TaskDetailModal } from "./TaskDetailModal";
 
 interface Props {
   tasks: TaskView[];
@@ -77,26 +76,18 @@ function TaskTitle({ task }: { task: TaskView }) {
 
 function GoalTaskTitle({
   task,
-  openDecisions,
-  decisionHistory,
-  onRefresh,
 }: {
   task: TaskView;
-  openDecisions: Decision[];
-  decisionHistory: DecisionHistoryEntry[];
-  onRefresh: () => void;
 }) {
   return (
-    <TaskDetailModal
-      task={task}
-      openDecisions={openDecisions}
-      decisionHistory={decisionHistory}
-      onUpdated={onRefresh}
+    <a
+      className="focus-ring inline-block w-fit max-w-full text-left"
+      href={`/tasks/${encodeURIComponent(task.id)}`}
     >
       <span className="text-clamp-2 block max-w-[32rem] break-words font-medium text-ink-950" title={task.title}>
         {task.title}
       </span>
-    </TaskDetailModal>
+    </a>
   );
 }
 
@@ -104,7 +95,7 @@ function DecisionCell({ decision, onRefresh }: { decision: Decision; onRefresh: 
   return <DecisionAnswerForm decision={decision} onUpdated={onRefresh} />;
 }
 
-export function TaskTable({ tasks, mode, onRefresh, openDecisions = [], decisionHistory = [] }: Props) {
+export function TaskTable({ tasks, mode, onRefresh }: Props) {
   const { t, i18n } = useTranslation();
   const locale = i18n.language.startsWith("ja") ? "ja" : "en";
   if (tasks.length === 0) {
@@ -135,12 +126,7 @@ export function TaskTable({ tasks, mode, onRefresh, openDecisions = [], decision
               <Table.Row className="border-b border-line align-top last:border-b-0" key={task.id}>
                 <Table.Cell className="w-16 px-3 py-4 text-ink-700">{index + 1}</Table.Cell>
                 <Table.Cell className="min-w-0 px-3 py-4">
-                  <GoalTaskTitle
-                    task={task}
-                    openDecisions={openDecisions}
-                    decisionHistory={decisionHistory}
-                    onRefresh={onRefresh}
-                  />
+                  <GoalTaskTitle task={task} />
                 </Table.Cell>
                 <Table.Cell className="px-3 py-4 text-ink-700">{statusLabel(locale, task.status)}</Table.Cell>
                 <Table.Cell className="whitespace-nowrap px-3 py-4 text-ink-700">{formatDateTime(locale, task.updated_at)}</Table.Cell>

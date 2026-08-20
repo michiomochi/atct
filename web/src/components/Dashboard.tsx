@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
+import { Button } from "@cloudflare/kumo/components/button";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { fetchInbox, subscribeToDecisionEvents, type InboxResponse } from "../lib/api";
 import { DecisionTable } from "./DecisionTable";
@@ -19,9 +20,12 @@ function errorMessage(reason: unknown, fallback: string): string {
 
 export function Dashboard() {
   const [state, setState] = useState<LoadState>({ kind: "loading" });
+  const [updatePending, setUpdatePending] = useState(false);
+  const goalCreateDirtyRef = useRef(false);
   const { t } = useTranslation();
 
   const load = useCallback(async () => {
+    setUpdatePending(false);
     setState({ kind: "loading" });
     try {
       setState({ kind: "ready", data: await fetchInbox() });
@@ -30,10 +34,22 @@ export function Dashboard() {
     }
   }, [t]);
 
+  const handleDecisionEvent = useCallback(() => {
+    if (goalCreateDirtyRef.current) {
+      setUpdatePending(true);
+      return;
+    }
+    void load();
+  }, [load]);
+
+  const handleGoalCreateDirtyChange = useCallback((dirty: boolean) => {
+    goalCreateDirtyRef.current = dirty;
+  }, []);
+
   useEffect(() => {
     void load();
-    return subscribeToDecisionEvents(() => void load());
-  }, [load]);
+    return subscribeToDecisionEvents(handleDecisionEvent);
+  }, [handleDecisionEvent, load]);
 
   const data = state.kind === "ready" ? state.data : undefined;
   const projectGroups = data ? groupGoalsByProject(data.active_goals) : undefined;
@@ -44,6 +60,19 @@ export function Dashboard() {
       <div>
         <h1 className="font-display text-3xl font-semibold tracking-tight text-ink-950">{t("dashboard.title")}</h1>
       </div>
+
+      {updatePending && (
+        <div className="border border-notice-800 bg-notice-100 px-4 py-4 text-sm text-notice-800" role="status" aria-live="polite">
+          <p>{t("state.updateAvailable")}</p>
+          <Button
+            type="button"
+            className="focus-ring mt-3 border border-notice-800 bg-surface px-3 py-2 text-sm font-medium text-notice-800 hover:bg-notice-100"
+            onClick={() => void load()}
+          >
+            {t("state.fetchLatest")}
+          </Button>
+        </div>
+      )}
 
       <div className="space-y-10">
         <Section id="open-decisions" title={t("dashboard.waiting.title")} count={data?.open_decisions.length}>
@@ -68,7 +97,7 @@ export function Dashboard() {
             ))}
           </div>
         )}
-        {data && <GoalCreateForm onCreated={load} />}
+        {data && <GoalCreateForm onCreated={load} onDirtyChange={handleGoalCreateDirtyChange} />}
       </Section>
     </main>
   );

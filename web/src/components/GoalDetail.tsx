@@ -1,5 +1,5 @@
 import { Button } from "@cloudflare/kumo/components/button";
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
 import {
   ApiError,
@@ -85,9 +85,18 @@ function CompletionReport({ goal }: { goal: Goal }) {
   );
 }
 
-function CompletionApproval({ decision, onUpdated }: { decision: Decision; onUpdated: () => void }) {
+function CompletionApproval({
+  decision,
+  onUpdated,
+  reason,
+  onReasonChange,
+}: {
+  decision: Decision;
+  onUpdated: () => void;
+  reason: string;
+  onReasonChange: (reason: string) => void;
+}) {
   const { t } = useTranslation();
-  const [reason, setReason] = useState("");
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [conflict, setConflict] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -152,7 +161,7 @@ function CompletionApproval({ decision, onUpdated }: { decision: Decision; onUpd
             className="focus-ring mt-1 block min-h-24 w-full resize-y border border-line bg-surface px-3 py-2 text-sm leading-6 text-ink-950"
             id={reasonID}
             value={reason}
-            onChange={(event) => setReason(event.target.value)}
+            onChange={(event) => onReasonChange(event.target.value)}
           />
         </label>
         {submitError && <p className="mb-3 text-sm text-danger-700" role="alert">{submitError}</p>}
@@ -181,11 +190,22 @@ function CompletionApproval({ decision, onUpdated }: { decision: Decision; onUpd
 
 export function GoalDetail({ id }: Props) {
   const [state, setState] = useState<LoadState>({ kind: "loading" });
+  const [completionReason, setCompletionReason] = useState("");
+  const [updatePending, setUpdatePending] = useState(false);
+  const completionReasonRef = useRef("");
   const { t, i18n } = useTranslation();
   const pathname = id === "_" && typeof window !== "undefined" ? window.location.pathname : "";
   const resolvedID = resolveGoalID(id, pathname);
 
+  const handleCompletionReasonChange = useCallback((reason: string) => {
+    completionReasonRef.current = reason;
+    setCompletionReason(reason);
+  }, []);
+
   const load = useCallback(async () => {
+    setUpdatePending(false);
+    completionReasonRef.current = "";
+    setCompletionReason("");
     setState({ kind: "loading" });
     try {
       const goal = await fetchGoal(resolvedID);
@@ -196,10 +216,18 @@ export function GoalDetail({ id }: Props) {
     }
   }, [resolvedID, t]);
 
+  const handleDecisionEvent = useCallback(() => {
+    if (completionReasonRef.current.trim() !== "") {
+      setUpdatePending(true);
+      return;
+    }
+    void load();
+  }, [load]);
+
   useEffect(() => {
     void load();
-    return subscribeToDecisionEvents(() => void load());
-  }, [load]);
+    return subscribeToDecisionEvents(handleDecisionEvent);
+  }, [handleDecisionEvent, load]);
 
   const data = state.kind === "ready" ? state.data : undefined;
   const retry = () => void load();
@@ -234,9 +262,29 @@ export function GoalDetail({ id }: Props) {
         )}
       </div>
 
+      {updatePending && (
+        <div className="border border-notice-800 bg-notice-100 px-4 py-4 text-sm text-notice-800" role="status" aria-live="polite">
+          <p>{t("state.updateAvailable")}</p>
+          <Button
+            type="button"
+            className="focus-ring mt-3 border border-notice-800 bg-surface px-3 py-2 text-sm font-medium text-notice-800 hover:bg-notice-100"
+            onClick={() => void load()}
+          >
+            {t("state.fetchLatest")}
+          </Button>
+        </div>
+      )}
+
       {data && <CompletionReport goal={data.goal.goal} />}
 
-      {data?.completion && <CompletionApproval decision={data.completion} onUpdated={load} />}
+      {data?.completion && (
+        <CompletionApproval
+          decision={data.completion}
+          onUpdated={load}
+          reason={completionReason}
+          onReasonChange={handleCompletionReasonChange}
+        />
+      )}
 
       <section className="min-w-0 border-t border-line pt-5" data-testid="task-list" aria-labelledby="task-list-heading">
         <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-2">

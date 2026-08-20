@@ -6,11 +6,12 @@ import { AreaLoading, ErrorState } from "./StateMessage";
 
 interface GoalCreateFormProps {
   onCreated: () => void;
+  onDirtyChange: (dirty: boolean) => void;
 }
 
 const DATA_OVERLOAD_LIMIT = 100;
 
-export function GoalCreateForm({ onCreated }: GoalCreateFormProps) {
+export function GoalCreateForm({ onCreated, onDirtyChange }: GoalCreateFormProps) {
   const { t } = useTranslation();
   const [projects, setProjects] = useState<Project[]>([]);
   const [projectsLoading, setProjectsLoading] = useState(true);
@@ -42,6 +43,13 @@ export function GoalCreateForm({ onCreated }: GoalCreateFormProps) {
   useEffect(() => {
     void loadProjects();
   }, [loadProjects]);
+
+  useEffect(() => {
+    const dirty = [projectID, title, description].some((value) => value.trim() !== "");
+    onDirtyChange(dirty);
+  }, [description, onDirtyChange, projectID, title]);
+
+  useEffect(() => () => onDirtyChange(false), [onDirtyChange]);
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();

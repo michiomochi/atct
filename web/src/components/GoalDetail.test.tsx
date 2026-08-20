@@ -1,8 +1,9 @@
 import { within } from "@testing-library/dom";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { Goal, GoalResponse, TaskView } from "../lib/api";
-import { fetchGoal } from "../lib/api";
+import type { Decision, Goal, GoalResponse, InboxResponse, Project, TaskView } from "../lib/api";
+import { fetchGoal, fetchInbox, fetchProjects, subscribeToDecisionEvents } from "../lib/api";
+import { Dashboard } from "./Dashboard";
 import { GoalDetail } from "./GoalDetail";
 
 const i18nMock = vi.hoisted(() => ({
@@ -14,7 +15,10 @@ const i18nMock = vi.hoisted(() => ({
 const apiMock = vi.hoisted(() => ({
   approveCompletion: vi.fn(),
   answerDecision: vi.fn(),
+  createGoal: vi.fn(),
   fetchGoal: vi.fn(),
+  fetchInbox: vi.fn(),
+  fetchProjects: vi.fn(),
   rejectCompletion: vi.fn(),
   reviseDecision: vi.fn(),
   subscribeToDecisionEvents: vi.fn(() => () => undefined),
@@ -92,7 +96,100 @@ function taskView(id: string, title: string, order: number): TaskView {
   };
 }
 
+function completionDecision(): Decision {
+  return {
+    id: "completion-1",
+    goal_id: "goal-1",
+    goal_title: "Fixture goal",
+    kind: "completion",
+    question: "Review the completion",
+    options: [],
+    status: "open",
+    agent_session_id: "fixture-run",
+    created_at: "2026-08-20T00:00:00Z",
+  };
+}
+
+function emptyInbox(): InboxResponse {
+  return {
+    open_decisions: [],
+    unapplied_decisions: [],
+    active_goals: [],
+    attention_tasks: [],
+  };
+}
+
+function fixtureProject(): Project {
+  return {
+    id: "project-1",
+    name: "Fixture project",
+    root_path: "/tmp/fixture",
+    created_at: "2026-08-20T00:00:00Z",
+  };
+}
+
 describe("GoalDetail", () => {
+  it("defers GoalDetail reload while completion reason is dirty and reloads after explicit refresh", async () => {
+    let decisionEvent: Parameters<typeof subscribeToDecisionEvents>[0] | undefined;
+    vi.mocked(subscribeToDecisionEvents).mockImplementation((callback) => {
+      decisionEvent = callback;
+      return () => undefined;
+    });
+    const response = goalResponse({});
+    response.unattached_decisions = [completionDecision()];
+    vi.mocked(fetchGoal).mockResolvedValue(response);
+
+    render(<GoalDetail id="goal-1" />);
+
+    await waitFor(() => expect(screen.getByRole("textbox")).not.toBeNull());
+    const reason = screen.getByRole("textbox");
+    fireEvent.change(reason, { target: { value: "keep this reason" } });
+    act(() => decisionEvent?.("decision.created"));
+
+    expect((reason as HTMLTextAreaElement).value).toBe("keep this reason");
+    expect(fetchGoal).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("state.updateAvailable")).not.toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "state.fetchLatest" }));
+    await waitFor(() => expect(fetchGoal).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toBe(""));
+
+    act(() => decisionEvent?.("decision.created"));
+    await waitFor(() => expect(fetchGoal).toHaveBeenCalledTimes(3));
+    expect(screen.queryByText("state.updateAvailable")).toBeNull();
+  });
+
+  it("defers Dashboard reload while GoalCreateForm is dirty and reloads after explicit refresh", async () => {
+    let decisionEvent: Parameters<typeof subscribeToDecisionEvents>[0] | undefined;
+    vi.mocked(subscribeToDecisionEvents).mockImplementation((callback) => {
+      decisionEvent = callback;
+      return () => undefined;
+    });
+    vi.mocked(fetchInbox).mockResolvedValue(emptyInbox());
+    vi.mocked(fetchProjects).mockResolvedValue([fixtureProject()]);
+
+    render(<Dashboard />);
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "form.goal.action.new" })).not.toBeNull());
+    fireEvent.click(screen.getByRole("button", { name: "form.goal.action.new" }));
+    const title = screen.getByLabelText("form.goal.title.label");
+    fireEvent.change(title, { target: { value: "typed title" } });
+    act(() => decisionEvent?.("decision.created"));
+
+    expect((title as HTMLInputElement).value).toBe("typed title");
+    expect(fetchInbox).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("state.updateAvailable")).not.toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "state.fetchLatest" }));
+    await waitFor(() => expect(fetchInbox).toHaveBeenCalledTimes(2));
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "form.goal.action.new" })).not.toBeNull());
+    fireEvent.click(screen.getByRole("button", { name: "form.goal.action.new" }));
+    act(() => decisionEvent?.("decision.created"));
+    await waitFor(() => expect(fetchInbox).toHaveBeenCalledTimes(3));
+    expect(screen.queryByText("state.updateAvailable")).toBeNull();
+  });
+
   it("renders a goal with null tasks without throwing", async () => {
     vi.mocked(fetchGoal).mockResolvedValueOnce(
       goalResponse({ tasks: null, work_done: "The goal was completed." }),

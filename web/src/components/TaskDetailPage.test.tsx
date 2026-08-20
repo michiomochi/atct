@@ -1,0 +1,211 @@
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import type { Decision, DecisionHistoryEntry, Task, TaskDetailResponse } from "../lib/api";
+import { fetchTask, subscribeToDecisionEvents } from "../lib/api";
+import { TaskDetailPage } from "./TaskDetailPage";
+
+const i18nMock = vi.hoisted(() => ({
+  t: (key: string) => key,
+  i18n: { language: "en" },
+  initReactI18next: { type: "3rdParty", init: () => undefined },
+}));
+
+const apiMock = vi.hoisted(() => ({
+  answerDecision: vi.fn(),
+  fetchTask: vi.fn(),
+  reviseDecision: vi.fn(),
+  subscribeToDecisionEvents: vi.fn(() => () => undefined),
+}));
+
+vi.mock("react-i18next", () => ({
+  useTranslation: () => i18nMock,
+  initReactI18next: i18nMock.initReactI18next,
+}));
+
+vi.mock("../lib/api", () => ({
+  ...apiMock,
+  ApiError: class MockApiError extends Error {
+    status = 0;
+  },
+}));
+
+afterEach(() => {
+  cleanup();
+  vi.clearAllMocks();
+});
+
+function task(id: string, title: string, description = ""): Task {
+  return {
+    id,
+    goal_id: "goal-1",
+    title,
+    description,
+    status: "todo",
+    agent: "fixture-agent",
+    files: ["src/task.ts"],
+    order: 0,
+    declare_key: "fixture-declare",
+    claimed_by: "fixture-run",
+    created_at: "2026-08-20T00:00:00Z",
+    updated_at: "2026-08-20T00:00:00Z",
+  };
+}
+
+function openDecision(id: string, taskID: string): Decision {
+  return {
+    id,
+    goal_id: "goal-1",
+    goal_title: "Fixture goal",
+    task_id: taskID,
+    kind: "question",
+    question: "Which option should be used?",
+    options: [{ label: "A", description: "", consequence: "" }],
+    status: "open",
+    agent_session_id: "fixture-run",
+    created_at: "2026-08-20T00:00:00Z",
+  };
+}
+
+function historyEntry(id: string, taskID: string): DecisionHistoryEntry {
+  return {
+    decision_id: id,
+    task_id: taskID,
+    question: "Which option was used?",
+    answer_label: "A",
+    answer_text: "",
+    settled_by_default: false,
+    answered_at: "2026-08-20T00:00:00Z",
+    applied_at: "2026-08-20T00:00:00Z",
+  };
+}
+
+function detailResponse(
+  taskData: Task,
+  openDecisions: Decision[] = [],
+  decisionHistory: DecisionHistoryEntry[] = [],
+): TaskDetailResponse {
+  return {
+    task: taskData,
+    goal: { id: taskData.goal_id, title: "Fixture goal", project_name: "Fixture project" },
+    open_decisions: openDecisions,
+    decision_history: decisionHistory,
+    decision_history_omitted: 0,
+  };
+}
+
+async function renderTask(response: TaskDetailResponse) {
+  vi.mocked(fetchTask).mockResolvedValue(response);
+  render(<TaskDetailPage id={response.task.id} />);
+  await screen.findByRole("heading", { name: response.task.title });
+}
+
+describe("TaskDetailPage", () => {
+  it("shows decision history only for the task that has history", async () => {
+    const taskWithHistory = task("task-with-history", "Task with history");
+    const taskWithoutHistory = task("task-without-history", "Task without history");
+
+    await renderTask(detailResponse(taskWithHistory, [], [historyEntry("decision-history", taskWithHistory.id)]));
+    expect(screen.getByTestId("decision-history")).not.toBeNull();
+
+    cleanup();
+
+    await renderTask(detailResponse(taskWithoutHistory));
+    expect(screen.queryByTestId("decision-history")).toBeNull();
+  });
+
+  it("shows the answer form only for the task with an open decision", async () => {
+    const taskWithDecision = task("task-with-decision", "Task with decision");
+    const taskWithoutDecision = task("task-without-decision", "Task without decision");
+
+    await renderTask(detailResponse(taskWithDecision, [openDecision("decision-open", taskWithDecision.id)]));
+    expect(screen.getByTestId("task-answer-form")).not.toBeNull();
+
+    cleanup();
+
+    await renderTask(detailResponse(taskWithoutDecision));
+    expect(screen.queryByTestId("task-answer-form")).toBeNull();
+  });
+
+  it("exposes a change-assumption button for a history row", async () => {
+    const taskData = task("task-history", "Task history");
+    await renderTask(detailResponse(taskData, [], [historyEntry("decision-history", taskData.id)]));
+
+    expect(screen.getByRole("button", { name: "goal.history.changeAssumption" })).not.toBeNull();
+  });
+
+  it("shows descriptions only when present and always shows task attributes", async () => {
+    const taskWithDescription = task(
+      "task-with-description",
+      "Task with description",
+      "Describe the work and its prerequisites.",
+    );
+    const taskWithoutDescription = task("task-without-description", "Task without description");
+
+    await renderTask(detailResponse(taskWithDescription));
+    expect(screen.getByText("task.detail.description")).not.toBeNull();
+    expect(screen.getByText("Describe the work and its prerequisites.")).not.toBeNull();
+    expect(screen.getByText("task.detail.attributes")).not.toBeNull();
+
+    cleanup();
+
+    await renderTask(detailResponse(taskWithoutDescription));
+    expect(screen.queryByText("task.detail.description")).toBeNull();
+    expect(screen.getByText("task.detail.attributes")).not.toBeNull();
+  });
+
+  it("omits the description section for whitespace-only descriptions", async () => {
+    const taskData = task("task-whitespace-description", "Task with whitespace description", " \n\t ");
+    await renderTask(detailResponse(taskData));
+
+    expect(screen.queryByText("task.detail.description")).toBeNull();
+    expect(screen.getByText("task.detail.attributes")).not.toBeNull();
+  });
+
+  it("keeps answer input when a decision event arrives while answering", async () => {
+    let decisionEvent: Parameters<typeof subscribeToDecisionEvents>[0] | undefined;
+    vi.mocked(subscribeToDecisionEvents).mockImplementation((callback) => {
+      decisionEvent = callback;
+      return () => undefined;
+    });
+    const taskData = task("task-answer", "Task answer");
+    await renderTask(detailResponse(taskData, [openDecision("decision-open", taskData.id)]));
+
+    const answer = screen.getByRole("textbox");
+    fireEvent.change(answer, { target: { value: "keep this answer" } });
+    act(() => decisionEvent?.("decision.created"));
+
+    expect((answer as HTMLTextAreaElement).value).toBe("keep this answer");
+    expect(fetchTask).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("state.updateAvailable")).not.toBeNull();
+  });
+
+  it("reloads immediately when an event arrives without answer input", async () => {
+    let decisionEvent: Parameters<typeof subscribeToDecisionEvents>[0] | undefined;
+    vi.mocked(subscribeToDecisionEvents).mockImplementation((callback) => {
+      decisionEvent = callback;
+      return () => undefined;
+    });
+    const taskData = task("task-no-answer", "Task without answer");
+    await renderTask(detailResponse(taskData, [openDecision("decision-open", taskData.id)]));
+
+    act(() => decisionEvent?.("decision.created"));
+    await waitFor(() => expect(fetchTask).toHaveBeenCalledTimes(2));
+    expect(screen.queryByText("state.updateAvailable")).toBeNull();
+  });
+
+  it("treats whitespace-only answer input as empty for event reloads", async () => {
+    let decisionEvent: Parameters<typeof subscribeToDecisionEvents>[0] | undefined;
+    vi.mocked(subscribeToDecisionEvents).mockImplementation((callback) => {
+      decisionEvent = callback;
+      return () => undefined;
+    });
+    const taskData = task("task-whitespace-answer", "Task whitespace answer");
+    await renderTask(detailResponse(taskData, [openDecision("decision-open", taskData.id)]));
+
+    const answer = screen.getByRole("textbox");
+    fireEvent.change(answer, { target: { value: " \n\t " } });
+    act(() => decisionEvent?.("decision.created"));
+    await waitFor(() => expect(fetchTask).toHaveBeenCalledTimes(2));
+    expect(screen.queryByText("state.updateAvailable")).toBeNull();
+  });
+});

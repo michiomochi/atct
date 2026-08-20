@@ -168,6 +168,8 @@ export const en = {
 
   "state.loadingLabel": "Loading {{label}}",
   "state.retry": "Retry",
+  "state.updateAvailable": "New updates are available. Fetch the latest data.",
+  "state.fetchLatest": "Fetch latest",
 
   "duration.seconds": "{{value}}s",
   "duration.minutes": "{{value}}m",

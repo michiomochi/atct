@@ -46,6 +46,7 @@ export interface Task {
   description: string;
   status: string;
   agent: string;
+  files?: string[];
   order: number;
   declare_key: string;
   claimed_by: string;
@@ -107,6 +108,20 @@ export interface GoalResponse {
   needs_decision: TaskView[];
   unattached_decisions: Decision[];
   next: TaskView[];
+  decision_history: DecisionHistoryEntry[];
+  decision_history_omitted: number;
+}
+
+export interface TaskGoalSummary {
+  id: string;
+  title: string;
+  project_name?: string;
+}
+
+export interface TaskDetailResponse {
+  task: Task;
+  goal: TaskGoalSummary;
+  open_decisions: Decision[];
   decision_history: DecisionHistoryEntry[];
   decision_history_omitted: number;
 }
@@ -183,6 +198,18 @@ export function normalizeGoal(value: unknown): GoalResponse {
   };
 }
 
+export function normalizeTaskDetail(value: unknown): TaskDetailResponse {
+  const source = isRecord(value) ? value : {};
+  const omitted = source.decision_history_omitted;
+  return {
+    task: source.task as Task,
+    goal: source.goal as TaskGoalSummary,
+    open_decisions: arrayOrEmpty<Decision>(source.open_decisions),
+    decision_history: arrayOrEmpty<DecisionHistoryEntry>(source.decision_history),
+    decision_history_omitted: typeof omitted === "number" && Number.isFinite(omitted) && omitted > 0 ? Math.floor(omitted) : 0,
+  };
+}
+
 export async function fetchInbox(): Promise<InboxResponse> {
   return normalizeInbox(await requestJson<unknown>("/api/inbox"));
 }
@@ -202,6 +229,10 @@ export async function createGoal(payload: CreateGoalPayload): Promise<Goal> {
 
 export async function fetchGoal(id: string): Promise<GoalResponse> {
   return normalizeGoal(await requestJson<unknown>(`/api/goals/${encodeURIComponent(id)}`));
+}
+
+export async function fetchTask(id: string): Promise<TaskDetailResponse> {
+  return normalizeTaskDetail(await requestJson<unknown>(`/api/tasks/${encodeURIComponent(id)}`));
 }
 
 export async function answerDecision(id: string, payload: AnswerPayload): Promise<Decision> {
