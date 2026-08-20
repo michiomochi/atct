@@ -29,7 +29,7 @@ import {
   findOpenCompletion,
   hasCompletionReport,
   isDecisionEventName,
-  resolveGoalID,
+  resolveRouteID,
   sortTasksByOrder,
   statusLabel,
   validateAnswer,
@@ -363,11 +363,11 @@ describe("goal history IDs", () => {
     ["_", "/goals/a%2Fb", "a/b"],
     ["known", "/goals/other", "known"],
   ])("resolves %s at %s to %s", (id, pathname, expected) => {
-    expect(resolveGoalID(id, pathname)).toBe(expected);
+    expect(resolveRouteID(id, pathname, "/goals/")).toBe(expected);
   });
 
   it("resolves a sentinel using a supplied URL prefix", () => {
-    expect(resolveGoalID("_", "/tasks/task123", "/tasks/")).toBe("task123");
+    expect(resolveRouteID("_", "/tasks/task123", "/tasks/")).toBe("task123");
   });
 });
 

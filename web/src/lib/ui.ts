@@ -93,7 +93,7 @@ export function sortTasksByOrder(tasks: TaskView[]): TaskView[] {
   return [...tasks].sort((left, right) => left.order - right.order);
 }
 
-export function resolveGoalID(id: string, pathname: string, prefix = "/goals/"): string {
+export function resolveRouteID(id: string, pathname: string, prefix: string): string {
   if (id !== "_") return id;
 
   const segment = pathname.slice(prefix.length).split("/", 1)[0] ?? "";

@@ -9,7 +9,7 @@ import {
   type DecisionHistoryEntry,
   type TaskDetailResponse,
 } from "../lib/api";
-import { resolveGoalID } from "../lib/ui";
+import { resolveRouteID } from "../lib/ui";
 import { AreaLoading, ErrorState } from "./StateMessage";
 import { DecisionAnswerForm } from "./DecisionAnswerForm";
 import { DecisionHistoryTable } from "./DecisionHistoryTable";
@@ -42,7 +42,7 @@ function taskDecisionsFor(taskID: string, decisions: Decision[]): Decision[] {
 export function TaskDetailPage({ id }: Props) {
   const { t, i18n } = useTranslation();
   const pathname = id === "_" && typeof window !== "undefined" ? window.location.pathname : "";
-  const resolvedID = resolveGoalID(id, pathname, "/tasks/");
+  const resolvedID = resolveRouteID(id, pathname, "/tasks/");
   const [state, setState] = useState<LoadState>({ kind: "loading" });
   const [updatePending, setUpdatePending] = useState(false);
   const dirtyDecisionIDs = useRef(new Set<string>());
