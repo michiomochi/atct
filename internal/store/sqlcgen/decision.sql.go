@@ -67,6 +67,24 @@ func (q *Queries) CountAppliedDecisions(ctx context.Context, goalID string) (int
 	return count, err
 }
 
+const countAppliedDecisionsForTask = `-- name: CountAppliedDecisionsForTask :one
+SELECT COUNT(*)
+FROM decisions
+WHERE goal_id = ? AND task_id = ? AND status = 'applied'
+`
+
+type CountAppliedDecisionsForTaskParams struct {
+	GoalID string
+	TaskID sql.NullString
+}
+
+func (q *Queries) CountAppliedDecisionsForTask(ctx context.Context, arg CountAppliedDecisionsForTaskParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countAppliedDecisionsForTask, arg.GoalID, arg.TaskID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createDecision = `-- name: CreateDecision :exec
 INSERT INTO decisions (
   id, goal_id, task_id, kind, question, options, status,
@@ -404,6 +422,81 @@ func (q *Queries) ListAppliedDecisions(ctx context.Context, goalID string) ([]Li
 	var items []ListAppliedDecisionsRow
 	for rows.Next() {
 		var i ListAppliedDecisionsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.GoalID,
+			&i.TaskID,
+			&i.Kind,
+			&i.Question,
+			&i.Options,
+			&i.Status,
+			&i.DefaultOption,
+			&i.DefaultAfterMs,
+			&i.DefaultAppliedAt,
+			&i.AnswerLabel,
+			&i.AnswerText,
+			&i.AnsweredAt,
+			&i.AppliedAt,
+			&i.AgentSessionID,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAppliedDecisionsForTask = `-- name: ListAppliedDecisionsForTask :many
+SELECT
+  id, goal_id, COALESCE(task_id, '') AS task_id, kind, question, options, status,
+  default_option, default_after_ms, default_applied_at,
+  answer_label, answer_text, answered_at, applied_at, agent_session_id, created_at
+FROM decisions
+WHERE goal_id = ? AND task_id = ? AND status = 'applied'
+ORDER BY answered_at DESC, applied_at DESC, id DESC
+LIMIT 20
+`
+
+type ListAppliedDecisionsForTaskParams struct {
+	GoalID string
+	TaskID sql.NullString
+}
+
+type ListAppliedDecisionsForTaskRow struct {
+	ID               string
+	GoalID           string
+	TaskID           string
+	Kind             string
+	Question         string
+	Options          string
+	Status           string
+	DefaultOption    string
+	DefaultAfterMs   sql.NullInt64
+	DefaultAppliedAt sql.NullString
+	AnswerLabel      string
+	AnswerText       string
+	AnsweredAt       sql.NullString
+	AppliedAt        sql.NullString
+	AgentSessionID   string
+	CreatedAt        string
+}
+
+func (q *Queries) ListAppliedDecisionsForTask(ctx context.Context, arg ListAppliedDecisionsForTaskParams) ([]ListAppliedDecisionsForTaskRow, error) {
+	rows, err := q.db.QueryContext(ctx, listAppliedDecisionsForTask, arg.GoalID, arg.TaskID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListAppliedDecisionsForTaskRow
+	for rows.Next() {
+		var i ListAppliedDecisionsForTaskRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.GoalID,

@@ -520,16 +520,14 @@ func (s *Server) handleTask(w http.ResponseWriter, r *http.Request, taskID strin
 		}
 	}
 
-	appliedDecisions, decisionHistoryOmitted, err := s.store.ListAppliedDecisions(ctx, goal.ID)
+	appliedDecisions, decisionHistoryOmitted, err := s.store.ListAppliedDecisionsForTask(ctx, goal.ID, task.ID)
 	if err != nil {
 		writeStoreError(w, err)
 		return
 	}
 	decisionHistory := make([]decisionHistoryView, 0)
 	for _, decision := range appliedDecisions {
-		if decision.TaskID == task.ID {
-			decisionHistory = append(decisionHistory, newDecisionHistoryView(decision))
-		}
+		decisionHistory = append(decisionHistory, newDecisionHistoryView(decision))
 	}
 
 	writeJSON(w, http.StatusOK, taskDetailResponse{

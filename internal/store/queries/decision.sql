@@ -102,6 +102,11 @@ SELECT COUNT(*)
 FROM decisions
 WHERE goal_id = ? AND status = 'applied';
 
+-- name: CountAppliedDecisionsForTask :one
+SELECT COUNT(*)
+FROM decisions
+WHERE goal_id = ? AND task_id = ? AND status = 'applied';
+
 -- name: ListAppliedDecisions :many
 SELECT
   id, goal_id, COALESCE(task_id, '') AS task_id, kind, question, options, status,
@@ -109,5 +114,15 @@ SELECT
   answer_label, answer_text, answered_at, applied_at, agent_session_id, created_at
 FROM decisions
 WHERE goal_id = ? AND status = 'applied'
+ORDER BY answered_at DESC, applied_at DESC, id DESC
+LIMIT 20;
+
+-- name: ListAppliedDecisionsForTask :many
+SELECT
+  id, goal_id, COALESCE(task_id, '') AS task_id, kind, question, options, status,
+  default_option, default_after_ms, default_applied_at,
+  answer_label, answer_text, answered_at, applied_at, agent_session_id, created_at
+FROM decisions
+WHERE goal_id = ? AND task_id = ? AND status = 'applied'
 ORDER BY answered_at DESC, applied_at DESC, id DESC
 LIMIT 20;

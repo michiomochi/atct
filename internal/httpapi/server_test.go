@@ -1102,6 +1102,248 @@ func TestHTTPTaskDetailReturnsTaskAndDecisionData(t *testing.T) {
 	}
 }
 
+func TestHTTPTaskDetailDoesNotCapHistoryByAnotherTask(t *testing.T) {
+	f := newBareFixture(t)
+	tasks, err := f.store.DeclareTasks(
+		f.ctx,
+		f.goal.ID,
+		"fixture-agent",
+		"task-history-cap-declare",
+		[]string{"Target task", "Other task"},
+		[]string{"The task whose history is requested.", "A different task in the same goal."},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	target, err := f.store.AskDecision(f.ctx, store.AskInput{
+		GoalID:         f.goal.ID,
+		TaskID:         tasks[0].ID,
+		Kind:           domain.DecisionKind("question"),
+		Question:       "Target history",
+		AgentSessionID: "target-history-run",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.store.AnswerDecision(f.ctx, store.AnswerInput{
+		DecisionID:  target.ID,
+		AnswerLabel: "Target answer",
+		AnswerText:  "The target answer.",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.store.PollDecisions(f.ctx, "target-history-run", target.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	for i := 0; i < 20; i++ {
+		decision, err := f.store.AskDecision(f.ctx, store.AskInput{
+			GoalID:         f.goal.ID,
+			TaskID:         tasks[1].ID,
+			Kind:           domain.DecisionKind("question"),
+			Question:       "Other task history",
+			AgentSessionID: "other-history-run",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.store.AnswerDecision(f.ctx, store.AnswerInput{
+			DecisionID:  decision.ID,
+			AnswerLabel: "Other answer",
+			AnswerText:  "The other task answer.",
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.store.PollDecisions(f.ctx, "other-history-run", decision.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+	status, _, body := doRequest(t, srv.Client(), http.MethodGet, srv.URL+"/api/tasks/"+tasks[0].ID, nil)
+	if status != http.StatusOK {
+		t.Fatalf("task detail status = %d; body=%s", status, body)
+	}
+	var response struct {
+		DecisionHistory []struct {
+			DecisionID string `json:"decision_id"`
+			TaskID     string `json:"task_id"`
+		} `json:"decision_history"`
+		DecisionHistoryOmitted int `json:"decision_history_omitted"`
+	}
+	if err := json.Unmarshal(body, &response); err != nil {
+		t.Fatalf("decode task detail: %v; body=%s", err, body)
+	}
+	if len(response.DecisionHistory) != 1 || response.DecisionHistory[0].DecisionID != target.ID || response.DecisionHistory[0].TaskID != tasks[0].ID {
+		t.Fatalf("decision_history = %+v, want only target decision %s", response.DecisionHistory, target.ID)
+	}
+	if response.DecisionHistoryOmitted != 0 {
+		t.Fatalf("decision_history_omitted = %d, want 0", response.DecisionHistoryOmitted)
+	}
+}
+
+func TestHTTPTaskDetailReportsOmittedHistoryPerTask(t *testing.T) {
+	f := newBareFixture(t)
+	tasks, err := f.store.DeclareTasks(
+		f.ctx,
+		f.goal.ID,
+		"fixture-agent",
+		"task-history-omitted-declare",
+		[]string{"Target task", "Other task"},
+		[]string{"The task whose history is requested.", "A different task in the same goal."},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	createApplied := func(taskID, sessionID string) domain.Decision {
+		decision, err := f.store.AskDecision(f.ctx, store.AskInput{
+			GoalID:         f.goal.ID,
+			TaskID:         taskID,
+			Kind:           domain.DecisionKind("question"),
+			Question:       "Task history",
+			AgentSessionID: sessionID,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.store.AnswerDecision(f.ctx, store.AnswerInput{
+			DecisionID:  decision.ID,
+			AnswerLabel: "Answer",
+			AnswerText:  "The answer.",
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.store.PollDecisions(f.ctx, sessionID, decision.ID); err != nil {
+			t.Fatal(err)
+		}
+		return decision
+	}
+
+	for i := 0; i < 3; i++ {
+		createApplied(tasks[1].ID, "other-history-run")
+	}
+	for i := 0; i < 23; i++ {
+		createApplied(tasks[0].ID, "target-history-run")
+	}
+
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+	status, _, body := doRequest(t, srv.Client(), http.MethodGet, srv.URL+"/api/tasks/"+tasks[0].ID, nil)
+	if status != http.StatusOK {
+		t.Fatalf("task detail status = %d; body=%s", status, body)
+	}
+	var response struct {
+		DecisionHistory []struct {
+			TaskID string `json:"task_id"`
+		} `json:"decision_history"`
+		DecisionHistoryOmitted int `json:"decision_history_omitted"`
+	}
+	if err := json.Unmarshal(body, &response); err != nil {
+		t.Fatalf("decode task detail: %v; body=%s", err, body)
+	}
+	if len(response.DecisionHistory) != 20 {
+		t.Fatalf("decision_history length = %d, want 20", len(response.DecisionHistory))
+	}
+	for _, history := range response.DecisionHistory {
+		if history.TaskID != tasks[0].ID {
+			t.Fatalf("history task_id = %q, want %q", history.TaskID, tasks[0].ID)
+		}
+	}
+	if response.DecisionHistoryOmitted != 3 {
+		t.Fatalf("decision_history_omitted = %d, want 3", response.DecisionHistoryOmitted)
+	}
+}
+
+func TestHTTPTaskDetailExcludesOtherProjectDecisionWithSameTaskID(t *testing.T) {
+	f := newBareFixture(t)
+	tasks, err := f.store.DeclareTasks(
+		f.ctx,
+		f.goal.ID,
+		"fixture-agent",
+		"task-history-project-declare",
+		[]string{"Target task"},
+		[]string{"The task whose history is requested."},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	target, err := f.store.AskDecision(f.ctx, store.AskInput{
+		GoalID:         f.goal.ID,
+		TaskID:         tasks[0].ID,
+		Kind:           domain.DecisionKind("question"),
+		Question:       "Target project history",
+		AgentSessionID: "target-project-history-run",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.store.AnswerDecision(f.ctx, store.AnswerInput{
+		DecisionID:  target.ID,
+		AnswerLabel: "Target answer",
+		AnswerText:  "The target answer.",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.store.PollDecisions(f.ctx, "target-project-history-run", target.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	otherProject, err := f.store.CreateProject(f.ctx, "other", t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherGoal, err := f.store.CreateGoal(f.ctx, otherProject.ID, "Other project goal", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := f.store.AskDecision(f.ctx, store.AskInput{
+		GoalID:         otherGoal.ID,
+		TaskID:         tasks[0].ID,
+		Kind:           domain.DecisionKind("question"),
+		Question:       "Orphaned other project history",
+		AgentSessionID: "other-project-history-run",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.store.AnswerDecision(f.ctx, store.AnswerInput{
+		DecisionID:  other.ID,
+		AnswerLabel: "Other answer",
+		AnswerText:  "The other project answer.",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.store.PollDecisions(f.ctx, "other-project-history-run", other.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+	status, _, body := doRequest(t, srv.Client(), http.MethodGet, srv.URL+"/api/tasks/"+tasks[0].ID, nil)
+	if status != http.StatusOK {
+		t.Fatalf("task detail status = %d; body=%s", status, body)
+	}
+	var response struct {
+		DecisionHistory []struct {
+			DecisionID string `json:"decision_id"`
+		} `json:"decision_history"`
+		DecisionHistoryOmitted int `json:"decision_history_omitted"`
+	}
+	if err := json.Unmarshal(body, &response); err != nil {
+		t.Fatalf("decode task detail: %v; body=%s", err, body)
+	}
+	if len(response.DecisionHistory) != 1 || response.DecisionHistory[0].DecisionID != target.ID {
+		t.Fatalf("decision_history = %+v, want only target decision %s", response.DecisionHistory, target.ID)
+	}
+	if response.DecisionHistoryOmitted != 0 {
+		t.Fatalf("decision_history_omitted = %d, want 0", response.DecisionHistoryOmitted)
+	}
+}
+
 func TestHTTPTaskDetailReturnsNotFoundForUnknownTask(t *testing.T) {
 	f := newBareFixture(t)
 	srv := newTestServer(t, f.store)

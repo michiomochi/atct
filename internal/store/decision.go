@@ -629,3 +629,61 @@ func (s *Store) ListAppliedDecisions(ctx context.Context, goalID string) ([]doma
 	}
 	return out, omitted, nil
 }
+
+// ListAppliedDecisionsForTask returns the most recent applied Decisions for a task
+// and the exact number omitted by the history limit.
+func (s *Store) ListAppliedDecisionsForTask(ctx context.Context, goalID, taskID string) ([]domain.Decision, int, error) {
+	totalCount, err := decisionQueries(s).CountAppliedDecisionsForTask(ctx, sqlcgen.CountAppliedDecisionsForTaskParams{
+		GoalID: goalID,
+		TaskID: sql.NullString{String: taskID, Valid: true},
+	})
+	if err != nil {
+		return nil, 0, fmt.Errorf("count applied decisions for task: %w", err)
+	}
+	total := int(totalCount)
+
+	rows, err := decisionQueries(s).ListAppliedDecisionsForTask(ctx, sqlcgen.ListAppliedDecisionsForTaskParams{
+		GoalID: goalID,
+		TaskID: sql.NullString{String: taskID, Valid: true},
+	})
+	if err != nil {
+		return nil, 0, fmt.Errorf("query applied decisions for task: %w", err)
+	}
+
+	limit := total
+	if limit > 20 {
+		limit = 20
+	}
+	out, err := convertDecisionRows(rows, func(row sqlcgen.ListAppliedDecisionsForTaskRow) decisionRow {
+		return decisionRow{
+			ID:               row.ID,
+			GoalID:           row.GoalID,
+			TaskID:           row.TaskID,
+			Kind:             row.Kind,
+			Question:         row.Question,
+			Options:          row.Options,
+			Status:           row.Status,
+			DefaultOption:    row.DefaultOption,
+			DefaultAfterMs:   row.DefaultAfterMs,
+			DefaultAppliedAt: row.DefaultAppliedAt,
+			AnswerLabel:      row.AnswerLabel,
+			AnswerText:       row.AnswerText,
+			AnsweredAt:       row.AnsweredAt,
+			AppliedAt:        row.AppliedAt,
+			AgentSessionID:   row.AgentSessionID,
+			CreatedAt:        row.CreatedAt,
+		}
+	})
+	if err != nil {
+		return nil, 0, err
+	}
+	if out == nil {
+		out = make([]domain.Decision, 0, limit)
+	}
+
+	omitted := total - len(out)
+	if omitted < 0 {
+		omitted = 0
+	}
+	return out, omitted, nil
+}
