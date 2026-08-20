@@ -79,3 +79,56 @@ WHERE id = ?;
 SELECT id
 FROM tasks
 WHERE id = ?;
+
+-- name: RegisterAgentSession :exec
+INSERT OR IGNORE INTO agent_sessions (id, project_id, pid, started_at, registered_at)
+VALUES (?, NULL, ?, ?, ?);
+
+-- name: DeleteExpiredAgentSessions :exec
+DELETE FROM agent_sessions
+WHERE registered_at < ?;
+
+-- name: UpdateAgentSessionProject :execresult
+UPDATE agent_sessions
+SET project_id = ?
+WHERE id = ?;
+
+-- name: InsertAgentSessionAssociation :exec
+INSERT INTO agent_sessions (id, project_id, registered_at)
+VALUES (?, ?, ?);
+
+-- name: GetAgentSessionRegisteredAt :one
+SELECT registered_at
+FROM agent_sessions
+WHERE id = ?;
+
+-- name: DeleteExpiredAgentSessionsExcept :exec
+DELETE FROM agent_sessions
+WHERE id <> ? AND registered_at < ?;
+
+-- name: DeleteOlderProjectAgentSessions :exec
+DELETE FROM agent_sessions
+WHERE project_id = ? AND id <> ? AND registered_at < ?;
+
+-- name: GetLatestAgentSessionID :one
+SELECT id
+FROM agent_sessions
+WHERE project_id = ?
+ORDER BY registered_at DESC, id DESC
+LIMIT 1;
+
+-- name: GetAgentSessionProjectID :one
+SELECT project_id
+FROM agent_sessions
+WHERE id = ?;
+
+-- name: GetTaskProjectID :one
+SELECT g.project_id
+FROM tasks AS t
+JOIN goals AS g ON g.id = t.goal_id
+WHERE t.id = ?;
+
+-- name: GetAgentSessionLiveness :one
+SELECT pid, started_at
+FROM agent_sessions
+WHERE id = ?;

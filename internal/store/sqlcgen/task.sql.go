@@ -89,6 +89,106 @@ func (q *Queries) CreateTask(ctx context.Context, arg CreateTaskParams) error {
 	return err
 }
 
+const deleteExpiredAgentSessions = `-- name: DeleteExpiredAgentSessions :exec
+DELETE FROM agent_sessions
+WHERE registered_at < ?
+`
+
+func (q *Queries) DeleteExpiredAgentSessions(ctx context.Context, registeredAt string) error {
+	_, err := q.db.ExecContext(ctx, deleteExpiredAgentSessions, registeredAt)
+	return err
+}
+
+const deleteExpiredAgentSessionsExcept = `-- name: DeleteExpiredAgentSessionsExcept :exec
+DELETE FROM agent_sessions
+WHERE id <> ? AND registered_at < ?
+`
+
+type DeleteExpiredAgentSessionsExceptParams struct {
+	ID           string
+	RegisteredAt string
+}
+
+func (q *Queries) DeleteExpiredAgentSessionsExcept(ctx context.Context, arg DeleteExpiredAgentSessionsExceptParams) error {
+	_, err := q.db.ExecContext(ctx, deleteExpiredAgentSessionsExcept, arg.ID, arg.RegisteredAt)
+	return err
+}
+
+const deleteOlderProjectAgentSessions = `-- name: DeleteOlderProjectAgentSessions :exec
+DELETE FROM agent_sessions
+WHERE project_id = ? AND id <> ? AND registered_at < ?
+`
+
+type DeleteOlderProjectAgentSessionsParams struct {
+	ProjectID    sql.NullString
+	ID           string
+	RegisteredAt string
+}
+
+func (q *Queries) DeleteOlderProjectAgentSessions(ctx context.Context, arg DeleteOlderProjectAgentSessionsParams) error {
+	_, err := q.db.ExecContext(ctx, deleteOlderProjectAgentSessions, arg.ProjectID, arg.ID, arg.RegisteredAt)
+	return err
+}
+
+const getAgentSessionLiveness = `-- name: GetAgentSessionLiveness :one
+SELECT pid, started_at
+FROM agent_sessions
+WHERE id = ?
+`
+
+type GetAgentSessionLivenessRow struct {
+	Pid       int64
+	StartedAt string
+}
+
+func (q *Queries) GetAgentSessionLiveness(ctx context.Context, id string) (GetAgentSessionLivenessRow, error) {
+	row := q.db.QueryRowContext(ctx, getAgentSessionLiveness, id)
+	var i GetAgentSessionLivenessRow
+	err := row.Scan(&i.Pid, &i.StartedAt)
+	return i, err
+}
+
+const getAgentSessionProjectID = `-- name: GetAgentSessionProjectID :one
+SELECT project_id
+FROM agent_sessions
+WHERE id = ?
+`
+
+func (q *Queries) GetAgentSessionProjectID(ctx context.Context, id string) (sql.NullString, error) {
+	row := q.db.QueryRowContext(ctx, getAgentSessionProjectID, id)
+	var project_id sql.NullString
+	err := row.Scan(&project_id)
+	return project_id, err
+}
+
+const getAgentSessionRegisteredAt = `-- name: GetAgentSessionRegisteredAt :one
+SELECT registered_at
+FROM agent_sessions
+WHERE id = ?
+`
+
+func (q *Queries) GetAgentSessionRegisteredAt(ctx context.Context, id string) (string, error) {
+	row := q.db.QueryRowContext(ctx, getAgentSessionRegisteredAt, id)
+	var registered_at string
+	err := row.Scan(&registered_at)
+	return registered_at, err
+}
+
+const getLatestAgentSessionID = `-- name: GetLatestAgentSessionID :one
+SELECT id
+FROM agent_sessions
+WHERE project_id = ?
+ORDER BY registered_at DESC, id DESC
+LIMIT 1
+`
+
+func (q *Queries) GetLatestAgentSessionID(ctx context.Context, projectID sql.NullString) (string, error) {
+	row := q.db.QueryRowContext(ctx, getLatestAgentSessionID, projectID)
+	var id string
+	err := row.Scan(&id)
+	return id, err
+}
+
 const getTaskClaimedBy = `-- name: GetTaskClaimedBy :one
 SELECT claimed_by
 FROM tasks
@@ -142,6 +242,36 @@ func (q *Queries) GetTaskGoalID(ctx context.Context, id string) (string, error) 
 	var goal_id string
 	err := row.Scan(&goal_id)
 	return goal_id, err
+}
+
+const getTaskProjectID = `-- name: GetTaskProjectID :one
+SELECT g.project_id
+FROM tasks AS t
+JOIN goals AS g ON g.id = t.goal_id
+WHERE t.id = ?
+`
+
+func (q *Queries) GetTaskProjectID(ctx context.Context, id string) (string, error) {
+	row := q.db.QueryRowContext(ctx, getTaskProjectID, id)
+	var project_id string
+	err := row.Scan(&project_id)
+	return project_id, err
+}
+
+const insertAgentSessionAssociation = `-- name: InsertAgentSessionAssociation :exec
+INSERT INTO agent_sessions (id, project_id, registered_at)
+VALUES (?, ?, ?)
+`
+
+type InsertAgentSessionAssociationParams struct {
+	ID           string
+	ProjectID    sql.NullString
+	RegisteredAt string
+}
+
+func (q *Queries) InsertAgentSessionAssociation(ctx context.Context, arg InsertAgentSessionAssociationParams) error {
+	_, err := q.db.ExecContext(ctx, insertAgentSessionAssociation, arg.ID, arg.ProjectID, arg.RegisteredAt)
+	return err
 }
 
 const listClaimedTasksForConflict = `-- name: ListClaimedTasksForConflict :many
@@ -316,6 +446,28 @@ func (q *Queries) MaxTaskSortOrder(ctx context.Context, goalID string) (int64, e
 	return sort_order, err
 }
 
+const registerAgentSession = `-- name: RegisterAgentSession :exec
+INSERT OR IGNORE INTO agent_sessions (id, project_id, pid, started_at, registered_at)
+VALUES (?, NULL, ?, ?, ?)
+`
+
+type RegisterAgentSessionParams struct {
+	ID           string
+	Pid          int64
+	StartedAt    string
+	RegisteredAt string
+}
+
+func (q *Queries) RegisterAgentSession(ctx context.Context, arg RegisterAgentSessionParams) error {
+	_, err := q.db.ExecContext(ctx, registerAgentSession,
+		arg.ID,
+		arg.Pid,
+		arg.StartedAt,
+		arg.RegisteredAt,
+	)
+	return err
+}
+
 const releaseTask = `-- name: ReleaseTask :execresult
 UPDATE tasks
 SET status = 'todo', claimed_by = '', claimed_at = NULL, updated_at = ?
@@ -342,6 +494,21 @@ func (q *Queries) TaskExists(ctx context.Context, id string) (string, error) {
 	var id_2 string
 	err := row.Scan(&id_2)
 	return id_2, err
+}
+
+const updateAgentSessionProject = `-- name: UpdateAgentSessionProject :execresult
+UPDATE agent_sessions
+SET project_id = ?
+WHERE id = ?
+`
+
+type UpdateAgentSessionProjectParams struct {
+	ProjectID sql.NullString
+	ID        string
+}
+
+func (q *Queries) UpdateAgentSessionProject(ctx context.Context, arg UpdateAgentSessionProjectParams) (sql.Result, error) {
+	return q.db.ExecContext(ctx, updateAgentSessionProject, arg.ProjectID, arg.ID)
 }
 
 const updateTaskStatus = `-- name: UpdateTaskStatus :execresult

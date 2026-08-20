@@ -7,6 +7,7 @@ import (
 	"syscall"
 
 	"github.com/michiomochi/atct/internal/domain"
+	"github.com/michiomochi/atct/internal/store/sqlcgen"
 )
 
 // ClaimLiveness separates claimed tasks whose recorded process is still the
@@ -41,15 +42,12 @@ func ClaimLiveness(ctx context.Context, s *Store, projectID string) (running []d
 }
 
 func claimIsRunning(ctx context.Context, s *Store, agentSessionID string) bool {
-	var pid int
-	var startedAt string
-	if err := s.db.QueryRowContext(ctx, `
-		SELECT pid, started_at
-		FROM agent_sessions
-		WHERE id = ?
-	`, strings.TrimSpace(agentSessionID)).Scan(&pid, &startedAt); err != nil {
+	session, err := sqlcgen.New(s.db).GetAgentSessionLiveness(ctx, strings.TrimSpace(agentSessionID))
+	if err != nil {
 		return false
 	}
+	pid := int(session.Pid)
+	startedAt := session.StartedAt
 	if pid == 0 {
 		return false
 	}

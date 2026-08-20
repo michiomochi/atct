@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/michiomochi/atct/internal/store/sqlcgen"
 )
 
 var (
@@ -21,7 +23,7 @@ func (s *Store) ProjectIDForAgentSession(ctx context.Context, agentSessionID str
 	}
 
 	var projectID sql.NullString
-	err = s.db.QueryRowContext(ctx, `SELECT project_id FROM agent_sessions WHERE id = ?`, agentSessionID).Scan(&projectID)
+	projectID, err = sqlcgen.New(s.db).GetAgentSessionProjectID(ctx, agentSessionID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", fmt.Errorf("agent session %q is not registered: %w", agentSessionID, ErrAgentSessionNotRegistered)
 	}
@@ -42,12 +44,7 @@ func (s *Store) ProjectIDForTask(ctx context.Context, taskID string) (string, er
 	}
 
 	var projectID string
-	err := s.db.QueryRowContext(ctx, `
-		SELECT g.project_id
-		FROM tasks AS t
-		JOIN goals AS g ON g.id = t.goal_id
-		WHERE t.id = ?
-	`, taskID).Scan(&projectID)
+	projectID, err := sqlcgen.New(s.db).GetTaskProjectID(ctx, taskID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", fmt.Errorf("task %q is not found", taskID)
 	}
