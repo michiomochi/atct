@@ -41,6 +41,15 @@ type goalView struct {
 	Tasks            []TaskView `json:"tasks"`
 }
 
+type proposedGoalView struct {
+	ID          string    `json:"id"`
+	ProjectID   string    `json:"project_id"`
+	Title       string    `json:"title"`
+	Description string    `json:"description"`
+	CreatedAt   time.Time `json:"created_at"`
+	ProjectName string    `json:"project_name"`
+}
+
 type decisionView struct {
 	domain.Decision
 	ProjectID        string `json:"project_id"`
@@ -52,10 +61,11 @@ type decisionView struct {
 }
 
 type inboxResponse struct {
-	OpenDecisions      []decisionView `json:"open_decisions"`
-	UnappliedDecisions []decisionView `json:"unapplied_decisions"`
-	ActiveGoals        []goalView     `json:"active_goals"`
-	AttentionTasks     []TaskView     `json:"attention_tasks"`
+	OpenDecisions      []decisionView     `json:"open_decisions"`
+	UnappliedDecisions []decisionView     `json:"unapplied_decisions"`
+	ActiveGoals        []goalView         `json:"active_goals"`
+	ProposedGoals      []proposedGoalView `json:"proposed_goals"`
+	AttentionTasks     []TaskView         `json:"attention_tasks"`
 }
 
 type goalResponse struct {
@@ -336,8 +346,20 @@ func (s *Server) handleInbox(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	activeGoals := make([]goalView, 0)
+	proposedGoals := make([]proposedGoalView, 0)
 	attentionTasks := make([]TaskView, 0)
 	for _, goal := range goals {
+		if goal.Status == domain.GoalProposed {
+			proposedGoals = append(proposedGoals, proposedGoalView{
+				ID:          goal.ID,
+				ProjectID:   goal.ProjectID,
+				Title:       goal.Title,
+				Description: goal.Description,
+				CreatedAt:   goal.CreatedAt,
+				ProjectName: projectNames[goal.ProjectID],
+			})
+			continue
+		}
 		tasks, err := s.store.ListTasks(ctx, goal.ID)
 		if err != nil {
 			writeStoreError(w, err)
@@ -377,6 +399,7 @@ func (s *Server) handleInbox(w http.ResponseWriter, r *http.Request) {
 		OpenDecisions:      openDecisionViews,
 		UnappliedDecisions: unappliedDecisionViews,
 		ActiveGoals:        activeGoals,
+		ProposedGoals:      proposedGoals,
 		AttentionTasks:     nonNilTaskViews(attentionTasks),
 	})
 }

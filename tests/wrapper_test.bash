@@ -4,6 +4,8 @@ set -euo pipefail
 REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 TEMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/atct-wrapper-test.XXXXXX")"
 trap 'rm -rf -- "$TEMP_ROOT"' EXIT
+# Hook fixtures must not inherit a developer's cached versioned binaries.
+export HOME="$TEMP_ROOT/hook-home"
 
 fail() {
   printf 'FAIL: %s\n' "$*" >&2

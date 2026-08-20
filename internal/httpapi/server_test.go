@@ -263,6 +263,82 @@ func TestHTTPInboxIncludesTasksPerActiveGoalInOrder(t *testing.T) {
 	}
 }
 
+func TestHTTPInboxProposedGoalsAreSeparateNonNilAndDisappearOnReject(t *testing.T) {
+	f := newBareFixture(t)
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+	client := srv.Client()
+	readInbox := func() map[string]json.RawMessage {
+		status, _, body := doRequest(t, client, http.MethodGet, srv.URL+"/api/inbox", nil)
+		if status != http.StatusOK {
+			t.Fatalf("inbox status = %d; body=%s", status, body)
+		}
+		var raw map[string]json.RawMessage
+		if err := json.Unmarshal(body, &raw); err != nil {
+			t.Fatalf("decode inbox: %v; body=%s", err, body)
+		}
+		return raw
+	}
+
+	raw := readInbox()
+	if got := string(raw["proposed_goals"]); got != "[]" {
+		t.Fatalf("empty proposed_goals = %s, want []", got)
+	}
+
+	proposed, err := f.store.CreateGoal(f.ctx, f.project.ID, "Needs approval", "Wait for human approval", "agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw = readInbox()
+	var activeGoals []struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(raw["active_goals"], &activeGoals); err != nil {
+		t.Fatalf("decode active_goals: %v", err)
+	}
+	for _, goal := range activeGoals {
+		if goal.ID == proposed.ID {
+			t.Fatalf("proposed goal leaked into active_goals: %s", string(raw["active_goals"]))
+		}
+	}
+	var proposedGoals []struct {
+		ID          string    `json:"id"`
+		Title       string    `json:"title"`
+		Description string    `json:"description"`
+		CreatedAt   time.Time `json:"created_at"`
+		ProjectName string    `json:"project_name"`
+	}
+	if err := json.Unmarshal(raw["proposed_goals"], &proposedGoals); err != nil {
+		t.Fatalf("decode proposed_goals: %v", err)
+	}
+	if len(proposedGoals) != 1 || proposedGoals[0].ID != proposed.ID || proposedGoals[0].Title != proposed.Title || proposedGoals[0].Description != proposed.Description || proposedGoals[0].ProjectName != "fixture" || proposedGoals[0].CreatedAt.IsZero() {
+		t.Fatalf("proposed_goals = %+v; raw=%s", proposedGoals, string(raw["proposed_goals"]))
+	}
+	var proposedObjects []map[string]json.RawMessage
+	if err := json.Unmarshal(raw["proposed_goals"], &proposedObjects); err != nil {
+		t.Fatalf("decode proposed goal objects: %v", err)
+	}
+	if _, ok := proposedObjects[0]["tasks"]; ok {
+		t.Fatalf("proposed goal unexpectedly includes tasks: %s", string(raw["proposed_goals"]))
+	}
+
+	decisions, err := f.store.ListOpenDecisions(f.ctx, proposed.ID)
+	if err != nil {
+		t.Fatalf("ListOpenDecisions: %v", err)
+	}
+	if len(decisions) != 1 {
+		t.Fatalf("proposed goal decisions = %+v", decisions)
+	}
+	status, _, body := doRequest(t, client, http.MethodPost, srv.URL+"/api/decisions/"+decisions[0].ID+"/reject", mustJSON(t, map[string]string{"reason": "not approved"}))
+	if status != http.StatusOK {
+		t.Fatalf("reject status = %d; body=%s", status, body)
+	}
+	raw = readInbox()
+	if got := string(raw["proposed_goals"]); got != "[]" {
+		t.Fatalf("proposed_goals after reject = %s, want []", got)
+	}
+}
+
 type goalDetailResponse struct {
 	Goal                domain.Goal        `json:"goal"`
 	NeedsDecision       []httpapi.TaskView `json:"needs_decision"`

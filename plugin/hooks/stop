@@ -11,27 +11,44 @@ if [[ "$HOOK_DIR" == "${BASH_SOURCE[0]}" ]]; then
   HOOK_DIR='.'
 fi
 
+version_gt() {
+  local a b i
+  local IFS=.
+  local -a av=($1) bv=($2)
+  for ((i = 0; i < ${#av[@]} || i < ${#bv[@]}; i++)); do
+    a=${av[i]:-0}; b=${bv[i]:-0}
+    ((10#$a > 10#$b)) && return 0
+    ((10#$a < 10#$b)) && return 1
+  done
+  return 1
+}
+
 resolve_atct_bin() {
+  local wrapper="$HOOK_DIR/../bin/atct"
+  [[ -e "$wrapper" ]] || return 1
+
   local atct_bin_dir="${HOME:-}/.atct/bin"
-  local candidate candidate_name
-  local -a versioned_bins=()
+  local candidate candidate_name version best="" best_version=""
 
   for candidate in "$atct_bin_dir"/atct-*; do
     [[ -x "$candidate" ]] || continue
     candidate_name="${candidate##*/}"
-    [[ "$candidate_name" =~ ^atct-[0-9]+([.][0-9]+)+$ ]] || continue
-    versioned_bins+=("$candidate")
+    [[ "$candidate_name" =~ ^atct-([0-9]+([.][0-9]+)+)$ ]] || continue
+    version="${BASH_REMATCH[1]}"
+    if [[ -z "$best" ]] || version_gt "$version" "$best_version"; then
+      best="$candidate"; best_version="$version"
+    fi
   done
 
-  if ((${#versioned_bins[@]} > 0)); then
-    printf '%s\n' "${versioned_bins[@]}" | sort -V | tail -n 1
+  if [[ -n "$best" ]]; then
+    printf '%s\n' "$best"
     return 0
   fi
 
   printf '%s\n' "$HOOK_DIR/../bin/atct"
 }
 
-ATCT_BIN="$(resolve_atct_bin)"
+ATCT_BIN="$(resolve_atct_bin)" || exit 0
 [[ -x "$ATCT_BIN" ]] || exit 0
 
 PENDING_OUTPUT="$($ATCT_BIN pending 2>/dev/null)" || exit 0
