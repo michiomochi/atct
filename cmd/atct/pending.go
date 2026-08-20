@@ -15,22 +15,23 @@ import (
 var errNoPendingDecisions = errors.New("no unapplied decisions")
 
 const (
-	atctAgentSessionIDEnv        = "ATCT_AGENT_SESSION_ID"
-	unfinishedClaimMarker        = "Unfinished tasks with work locks:"
-	staleClaimMarker             = "Stale work locks:"
-	undeclaredGoalMarker         = "Undeclared active goals:"
-	pendingDecisionReason        = "A human answered a decision you parked. Call `atct_decision_poll` with each decision_id below, then continue the work that was waiting on it."
-	pendingDefaultDecisionReason = "No one answered a decision you parked, so its default was applied. Call `atct_decision_poll` with each decision_id below, then continue the work that was waiting on it."
-	pendingClaimReason           = "A task with a work lock held by this agent session is still open. If you forgot to close it, close it; if you are still working on it, continue."
-	pendingStaleClaimReason      = "A task with a work lock held by another agent session is no longer running. You can take it over by returning it to todo with `atct_task_update`, then acquire the work lock with `atct_task_claim`."
-	pendingUndeclaredGoalReason  = "An active goal has no tasks declared. Call `atct_task_declare` for each goal below, then continue the work."
-	pendingWakeupReason          = "An active goal has unstarted tasks and no running work lock. Call `atct_task_claim` for a task below, then continue the work."
-	pendingCompletedGoalReason   = "All tasks are done but the active goal has no completion report. Call `atct_goal_complete` for each goal below, then continue the work."
-	pendingDroppedGoalReason     = "All tasks in an active goal were dropped. Call `atct_goal_complete` to report that the work was withdrawn; call `atct_task_declare` to declare tasks again if it should be resumed."
-	pendingUnclaimedDoingReason  = "A task is doing without a work lock. Return it to todo with `atct_task_update`, then call `atct_task_claim` before continuing the work."
-	completedGoalMarker          = "Goals with all tasks done:"
-	droppedGoalMarker            = "Goals with all tasks dropped:"
-	unclaimedDoingMarker         = "Doing tasks without a work lock:"
+	atctAgentSessionIDEnv          = "ATCT_AGENT_SESSION_ID"
+	unfinishedClaimMarker          = "Unfinished tasks with work locks:"
+	staleClaimMarker               = "Stale work locks:"
+	undeclaredGoalMarker           = "Undeclared active goals:"
+	pendingDecisionReason          = "A human answered a decision you parked. Call `atct_decision_poll` with each decision_id below, then continue the work that was waiting on it."
+	pendingDefaultDecisionReason   = "No one answered a decision you parked, so its default was applied. Call `atct_decision_poll` with each decision_id below, then continue the work that was waiting on it."
+	pendingClaimReason             = "You hold"
+	pendingNoDefaultDecisionReason = "You are waiting on a human for %d decisions with no default. That does not\nblock the %d tasks below."
+	pendingStaleClaimReason        = "A task with a work lock held by another agent session is no longer running. You can take it over by returning it to todo with `atct_task_update`, then acquire the work lock with `atct_task_claim`."
+	pendingUndeclaredGoalReason    = "An active goal has no tasks declared. Call `atct_task_declare` for each goal below, then continue the work."
+	pendingWakeupReason            = "An active goal has unstarted tasks and no running work lock. Call `atct_task_claim` for a task below, then continue the work."
+	pendingCompletedGoalReason     = "All tasks are done but the active goal has no completion report. Call `atct_goal_complete` for each goal below, then continue the work."
+	pendingDroppedGoalReason       = "All tasks in an active goal were dropped. Call `atct_goal_complete` to report that the work was withdrawn; call `atct_task_declare` to declare tasks again if it should be resumed."
+	pendingUnclaimedDoingReason    = "A task is doing without a work lock. Return it to todo with `atct_task_update`, then call `atct_task_claim` before continuing the work."
+	completedGoalMarker            = "Goals with all tasks done:"
+	droppedGoalMarker              = "Goals with all tasks dropped:"
+	unclaimedDoingMarker           = "Doing tasks without a work lock:"
 )
 
 func currentAgentSessionID() string {
@@ -118,6 +119,21 @@ func pendingTextForProject(dir, cwd, projectName string, projectSpecified bool) 
 			return "", fmt.Errorf("find latest agent session: %w", err)
 		}
 	}
+	openNoDefaultDecisionCount := 0
+	if agentSessionID != "" {
+		for _, goal := range goals {
+			openDecisions, err := s.ListOpenDecisions(ctx, goal.ID)
+			if err != nil {
+				return "", fmt.Errorf("list open decisions for goal %s: %w", goal.ID, err)
+			}
+			for _, decision := range openDecisions {
+				if decision.Status != "open" || decision.DefaultOption != "" || decision.AgentSessionID != agentSessionID {
+					continue
+				}
+				openNoDefaultDecisionCount++
+			}
+		}
+	}
 	if agentSessionID != "" {
 		for _, goal := range goals {
 			if goal.Status != domain.GoalActive {
@@ -183,18 +199,6 @@ func pendingTextForProject(dir, cwd, projectName string, projectSpecified bool) 
 	}
 	writeDecisionSection(pendingDecisionReason, humanAnsweredDecisions)
 	writeDecisionSection(pendingDefaultDecisionReason, defaultAppliedDecisions)
-	if len(unfinishedTasks) > 0 {
-		if output.Len() > 0 {
-			output.WriteString("\n\n")
-		}
-		output.WriteString(pendingClaimReason)
-		output.WriteString("\n\n")
-		output.WriteString(unfinishedClaimMarker)
-		output.WriteByte('\n')
-		for _, task := range unfinishedTasks {
-			fmt.Fprintf(&output, "- %s (task_id: %s)\n", oneLine(task.Title), task.ID)
-		}
-	}
 	if len(otherStaleClaimedTasks) > 0 {
 		if output.Len() > 0 {
 			output.WriteString("\n\n")
@@ -223,6 +227,12 @@ func pendingTextForProject(dir, cwd, projectName string, projectSpecified bool) 
 	if err != nil {
 		return "", fmt.Errorf("detect wakeup: %w", err)
 	}
+	if openNoDefaultDecisionCount > 0 && wakeupState.UnstartedTaskCount > 0 {
+		if output.Len() > 0 {
+			output.WriteString("\n\n")
+		}
+		output.WriteString(fmt.Sprintf(pendingNoDefaultDecisionReason, openNoDefaultDecisionCount, wakeupState.UnstartedTaskCount))
+	}
 	if len(wakeupState.Tasks) > 0 {
 		if output.Len() > 0 {
 			output.WriteString("\n\n")
@@ -232,6 +242,18 @@ func pendingTextForProject(dir, cwd, projectName string, projectSpecified bool) 
 		output.WriteString("Unstarted tasks:")
 		output.WriteByte('\n')
 		for _, task := range wakeupState.Tasks {
+			fmt.Fprintf(&output, "- %s (task_id: %s)\n", oneLine(task.Title), task.ID)
+		}
+	}
+	if len(unfinishedTasks) > 0 {
+		if output.Len() > 0 {
+			output.WriteString("\n\n")
+		}
+		output.WriteString(pendingClaimReasonFor(len(unfinishedTasks), wakeupState.UnstartedTaskCount))
+		output.WriteString("\n\n")
+		output.WriteString(unfinishedClaimMarker)
+		output.WriteByte('\n')
+		for _, task := range unfinishedTasks {
 			fmt.Fprintf(&output, "- %s (task_id: %s)\n", oneLine(task.Title), task.ID)
 		}
 	}
@@ -272,6 +294,14 @@ func pendingTextForProject(dir, cwd, projectName string, projectSpecified bool) 
 		}
 	}
 	return output.String(), nil
+}
+
+func pendingClaimReasonFor(lockCount, unstartedTaskCount int) string {
+	reason := fmt.Sprintf("You hold %d work locks.", lockCount)
+	if unstartedTaskCount == 0 {
+		return reason
+	}
+	return fmt.Sprintf("%s %d tasks in active goals have no work lock.\nIf you are waiting on a human, take one of those instead of stopping.", reason, unstartedTaskCount)
 }
 
 func runPending(dir string) error {

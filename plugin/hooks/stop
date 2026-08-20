@@ -10,7 +10,28 @@ HOOK_DIR="${BASH_SOURCE[0]%/*}"
 if [[ "$HOOK_DIR" == "${BASH_SOURCE[0]}" ]]; then
   HOOK_DIR='.'
 fi
-ATCT_BIN="$HOOK_DIR/../bin/atct"
+
+resolve_atct_bin() {
+  local atct_bin_dir="${HOME:-}/.atct/bin"
+  local candidate candidate_name
+  local -a versioned_bins=()
+
+  for candidate in "$atct_bin_dir"/atct-*; do
+    [[ -x "$candidate" ]] || continue
+    candidate_name="${candidate##*/}"
+    [[ "$candidate_name" =~ ^atct-[0-9]+([.][0-9]+)+$ ]] || continue
+    versioned_bins+=("$candidate")
+  done
+
+  if ((${#versioned_bins[@]} > 0)); then
+    printf '%s\n' "${versioned_bins[@]}" | sort -V | tail -n 1
+    return 0
+  fi
+
+  printf '%s\n' "$HOOK_DIR/../bin/atct"
+}
+
+ATCT_BIN="$(resolve_atct_bin)"
 [[ -x "$ATCT_BIN" ]] || exit 0
 
 PENDING_OUTPUT="$($ATCT_BIN pending 2>/dev/null)" || exit 0
