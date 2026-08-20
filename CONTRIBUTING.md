@@ -106,6 +106,27 @@ cd web
 pnpm build      # writes web/dist/, which is embedded into the binary
 ```
 
+### SQL
+
+Every query that reads or writes rows goes through sqlc. Write it in
+`internal/store/queries/*.sql`, run `go tool sqlc generate`, and call the
+generated method. Do not hand-write `ExecContext`, `QueryContext`, or
+`QueryRowContext` for row access.
+
+The reason is a bug this repository already shipped: removing a column left a
+`Scan` reading the old positions, which compiled fine and failed at runtime.
+sqlc makes that a build error instead.
+
+Raw SQL stays in exactly one place: `internal/store/migrations.go`. It runs
+before the schema is known to be current, so it cannot depend on generated code.
+What lives there is transaction control, `PRAGMA`, the `schema_migrations`
+bookkeeping, and the DDL of each migration -- nothing that reads or writes
+application rows.
+
+Schema definitions are DDL and stay hand-written. sqlc reads `schema.sql` as its
+input, so that file and the migrations must agree; if they drift, sqlc generates
+against a schema the database does not have and nothing complains.
+
 ### Tests
 
 Changes need tests. This project is built test-first, and the implementation plan in `doc/plans/`
