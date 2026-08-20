@@ -70,7 +70,7 @@ func (q *Queries) CountAppliedDecisions(ctx context.Context, goalID string) (int
 const createDecision = `-- name: CreateDecision :exec
 INSERT INTO decisions (
   id, goal_id, task_id, kind, question, options, status,
-  default_option, default_after_ms, run_id, created_at
+  default_option, default_after_ms, agent_session_id, created_at
 )
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
@@ -85,7 +85,7 @@ type CreateDecisionParams struct {
 	Status         string
 	DefaultOption  string
 	DefaultAfterMs sql.NullInt64
-	RunID          string
+	AgentSessionID string
 	CreatedAt      string
 }
 
@@ -100,7 +100,7 @@ func (q *Queries) CreateDecision(ctx context.Context, arg CreateDecisionParams) 
 		arg.Status,
 		arg.DefaultOption,
 		arg.DefaultAfterMs,
-		arg.RunID,
+		arg.AgentSessionID,
 		arg.CreatedAt,
 	)
 	return err
@@ -110,7 +110,7 @@ const getDecision = `-- name: GetDecision :one
 SELECT
   id, goal_id, COALESCE(task_id, '') AS task_id, kind, question, options, status,
   default_option, default_after_ms, default_applied_at,
-  answer_label, answer_text, answered_at, applied_at, run_id, created_at
+  answer_label, answer_text, answered_at, applied_at, agent_session_id, created_at
 FROM decisions
 WHERE id = ?
 `
@@ -130,7 +130,7 @@ type GetDecisionRow struct {
 	AnswerText       string
 	AnsweredAt       sql.NullString
 	AppliedAt        sql.NullString
-	RunID            string
+	AgentSessionID   string
 	CreatedAt        string
 }
 
@@ -152,7 +152,7 @@ func (q *Queries) GetDecision(ctx context.Context, id string) (GetDecisionRow, e
 		&i.AnswerText,
 		&i.AnsweredAt,
 		&i.AppliedAt,
-		&i.RunID,
+		&i.AgentSessionID,
 		&i.CreatedAt,
 	)
 	return i, err
@@ -162,7 +162,7 @@ const listAllOpenDecisions = `-- name: ListAllOpenDecisions :many
 SELECT
   id, goal_id, COALESCE(task_id, '') AS task_id, kind, question, options, status,
   default_option, default_after_ms, default_applied_at,
-  answer_label, answer_text, answered_at, applied_at, run_id, created_at
+  answer_label, answer_text, answered_at, applied_at, agent_session_id, created_at
 FROM decisions
 WHERE status = 'open'
 ORDER BY created_at
@@ -183,7 +183,7 @@ type ListAllOpenDecisionsRow struct {
 	AnswerText       string
 	AnsweredAt       sql.NullString
 	AppliedAt        sql.NullString
-	RunID            string
+	AgentSessionID   string
 	CreatedAt        string
 }
 
@@ -211,7 +211,7 @@ func (q *Queries) ListAllOpenDecisions(ctx context.Context) ([]ListAllOpenDecisi
 			&i.AnswerText,
 			&i.AnsweredAt,
 			&i.AppliedAt,
-			&i.RunID,
+			&i.AgentSessionID,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -231,7 +231,7 @@ const listAnsweredDecisionForID = `-- name: ListAnsweredDecisionForID :many
 SELECT
   id, goal_id, COALESCE(task_id, '') AS task_id, kind, question, options, status,
   default_option, default_after_ms, default_applied_at,
-  answer_label, answer_text, answered_at, applied_at, run_id, created_at
+  answer_label, answer_text, answered_at, applied_at, agent_session_id, created_at
 FROM decisions
 WHERE status = 'answered' AND id = ?
 ORDER BY answered_at
@@ -252,7 +252,7 @@ type ListAnsweredDecisionForIDRow struct {
 	AnswerText       string
 	AnsweredAt       sql.NullString
 	AppliedAt        sql.NullString
-	RunID            string
+	AgentSessionID   string
 	CreatedAt        string
 }
 
@@ -280,7 +280,7 @@ func (q *Queries) ListAnsweredDecisionForID(ctx context.Context, id string) ([]L
 			&i.AnswerText,
 			&i.AnsweredAt,
 			&i.AppliedAt,
-			&i.RunID,
+			&i.AgentSessionID,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -296,17 +296,17 @@ func (q *Queries) ListAnsweredDecisionForID(ctx context.Context, id string) ([]L
 	return items, nil
 }
 
-const listAnsweredDecisionsForRun = `-- name: ListAnsweredDecisionsForRun :many
+const listAnsweredDecisionsForAgentSession = `-- name: ListAnsweredDecisionsForAgentSession :many
 SELECT
   id, goal_id, COALESCE(task_id, '') AS task_id, kind, question, options, status,
   default_option, default_after_ms, default_applied_at,
-  answer_label, answer_text, answered_at, applied_at, run_id, created_at
+  answer_label, answer_text, answered_at, applied_at, agent_session_id, created_at
 FROM decisions
-WHERE status = 'answered' AND run_id = ?
+WHERE status = 'answered' AND agent_session_id = ?
 ORDER BY answered_at
 `
 
-type ListAnsweredDecisionsForRunRow struct {
+type ListAnsweredDecisionsForAgentSessionRow struct {
 	ID               string
 	GoalID           string
 	TaskID           string
@@ -321,19 +321,19 @@ type ListAnsweredDecisionsForRunRow struct {
 	AnswerText       string
 	AnsweredAt       sql.NullString
 	AppliedAt        sql.NullString
-	RunID            string
+	AgentSessionID   string
 	CreatedAt        string
 }
 
-func (q *Queries) ListAnsweredDecisionsForRun(ctx context.Context, runID string) ([]ListAnsweredDecisionsForRunRow, error) {
-	rows, err := q.db.QueryContext(ctx, listAnsweredDecisionsForRun, runID)
+func (q *Queries) ListAnsweredDecisionsForAgentSession(ctx context.Context, agentSessionID string) ([]ListAnsweredDecisionsForAgentSessionRow, error) {
+	rows, err := q.db.QueryContext(ctx, listAnsweredDecisionsForAgentSession, agentSessionID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ListAnsweredDecisionsForRunRow
+	var items []ListAnsweredDecisionsForAgentSessionRow
 	for rows.Next() {
-		var i ListAnsweredDecisionsForRunRow
+		var i ListAnsweredDecisionsForAgentSessionRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.GoalID,
@@ -349,7 +349,7 @@ func (q *Queries) ListAnsweredDecisionsForRun(ctx context.Context, runID string)
 			&i.AnswerText,
 			&i.AnsweredAt,
 			&i.AppliedAt,
-			&i.RunID,
+			&i.AgentSessionID,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -369,7 +369,7 @@ const listAppliedDecisions = `-- name: ListAppliedDecisions :many
 SELECT
   id, goal_id, COALESCE(task_id, '') AS task_id, kind, question, options, status,
   default_option, default_after_ms, default_applied_at,
-  answer_label, answer_text, answered_at, applied_at, run_id, created_at
+  answer_label, answer_text, answered_at, applied_at, agent_session_id, created_at
 FROM decisions
 WHERE goal_id = ? AND status = 'applied'
 ORDER BY answered_at DESC, applied_at DESC, id DESC
@@ -391,7 +391,7 @@ type ListAppliedDecisionsRow struct {
 	AnswerText       string
 	AnsweredAt       sql.NullString
 	AppliedAt        sql.NullString
-	RunID            string
+	AgentSessionID   string
 	CreatedAt        string
 }
 
@@ -419,7 +419,7 @@ func (q *Queries) ListAppliedDecisions(ctx context.Context, goalID string) ([]Li
 			&i.AnswerText,
 			&i.AnsweredAt,
 			&i.AppliedAt,
-			&i.RunID,
+			&i.AgentSessionID,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -439,7 +439,7 @@ const listExpiredDecisions = `-- name: ListExpiredDecisions :many
 SELECT
   id, goal_id, COALESCE(task_id, '') AS task_id, kind, question, options, status,
   default_option, default_after_ms, default_applied_at,
-  answer_label, answer_text, answered_at, applied_at, run_id, created_at
+  answer_label, answer_text, answered_at, applied_at, agent_session_id, created_at
 FROM decisions
 WHERE status = 'open' AND default_after_ms IS NOT NULL AND default_option != ''
 ORDER BY created_at
@@ -460,7 +460,7 @@ type ListExpiredDecisionsRow struct {
 	AnswerText       string
 	AnsweredAt       sql.NullString
 	AppliedAt        sql.NullString
-	RunID            string
+	AgentSessionID   string
 	CreatedAt        string
 }
 
@@ -488,7 +488,7 @@ func (q *Queries) ListExpiredDecisions(ctx context.Context) ([]ListExpiredDecisi
 			&i.AnswerText,
 			&i.AnsweredAt,
 			&i.AppliedAt,
-			&i.RunID,
+			&i.AgentSessionID,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -508,7 +508,7 @@ const listOpenDecisions = `-- name: ListOpenDecisions :many
 SELECT
   id, goal_id, COALESCE(task_id, '') AS task_id, kind, question, options, status,
   default_option, default_after_ms, default_applied_at,
-  answer_label, answer_text, answered_at, applied_at, run_id, created_at
+  answer_label, answer_text, answered_at, applied_at, agent_session_id, created_at
 FROM decisions
 WHERE goal_id = ? AND status = 'open'
 ORDER BY created_at
@@ -529,7 +529,7 @@ type ListOpenDecisionsRow struct {
 	AnswerText       string
 	AnsweredAt       sql.NullString
 	AppliedAt        sql.NullString
-	RunID            string
+	AgentSessionID   string
 	CreatedAt        string
 }
 
@@ -557,7 +557,7 @@ func (q *Queries) ListOpenDecisions(ctx context.Context, goalID string) ([]ListO
 			&i.AnswerText,
 			&i.AnsweredAt,
 			&i.AppliedAt,
-			&i.RunID,
+			&i.AgentSessionID,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -577,7 +577,7 @@ const listUnappliedDecisions = `-- name: ListUnappliedDecisions :many
 SELECT
   id, goal_id, COALESCE(task_id, '') AS task_id, kind, question, options, status,
   default_option, default_after_ms, default_applied_at,
-  answer_label, answer_text, answered_at, applied_at, run_id, created_at
+  answer_label, answer_text, answered_at, applied_at, agent_session_id, created_at
 FROM decisions
 WHERE status = 'answered'
 ORDER BY answered_at
@@ -598,7 +598,7 @@ type ListUnappliedDecisionsRow struct {
 	AnswerText       string
 	AnsweredAt       sql.NullString
 	AppliedAt        sql.NullString
-	RunID            string
+	AgentSessionID   string
 	CreatedAt        string
 }
 
@@ -626,7 +626,7 @@ func (q *Queries) ListUnappliedDecisions(ctx context.Context) ([]ListUnappliedDe
 			&i.AnswerText,
 			&i.AnsweredAt,
 			&i.AppliedAt,
-			&i.RunID,
+			&i.AgentSessionID,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -646,7 +646,7 @@ const listUnappliedDecisionsForProject = `-- name: ListUnappliedDecisionsForProj
 SELECT
   id, goal_id, COALESCE(task_id, '') AS task_id, kind, question, options, status,
   default_option, default_after_ms, default_applied_at,
-  answer_label, answer_text, answered_at, applied_at, run_id, created_at
+  answer_label, answer_text, answered_at, applied_at, agent_session_id, created_at
 FROM decisions
 WHERE status = 'answered'
   AND goal_id IN (SELECT id FROM goals WHERE project_id = ?)
@@ -668,7 +668,7 @@ type ListUnappliedDecisionsForProjectRow struct {
 	AnswerText       string
 	AnsweredAt       sql.NullString
 	AppliedAt        sql.NullString
-	RunID            string
+	AgentSessionID   string
 	CreatedAt        string
 }
 
@@ -696,7 +696,7 @@ func (q *Queries) ListUnappliedDecisionsForProject(ctx context.Context, projectI
 			&i.AnswerText,
 			&i.AnsweredAt,
 			&i.AppliedAt,
-			&i.RunID,
+			&i.AgentSessionID,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err

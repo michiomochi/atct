@@ -9,27 +9,27 @@ import (
 )
 
 var (
-	ErrRunNotRegistered = errors.New("run is not registered")
-	ErrRunNotAssociated = errors.New("run is not associated with a project")
+	ErrAgentSessionNotRegistered = errors.New("agent session is not registered")
+	ErrAgentSessionNotAssociated = errors.New("agent session is not associated with a project")
 )
 
-// ProjectIDForRun returns the project assigned to a registered run.
-func (s *Store) ProjectIDForRun(ctx context.Context, runID string) (string, error) {
-	runID, err := requireRunID(runID)
+// ProjectIDForAgentSession returns the project assigned to a registered agent session.
+func (s *Store) ProjectIDForAgentSession(ctx context.Context, agentSessionID string) (string, error) {
+	agentSessionID, err := requireAgentSessionID(agentSessionID)
 	if err != nil {
 		return "", err
 	}
 
 	var projectID sql.NullString
-	err = s.db.QueryRowContext(ctx, `SELECT project_id FROM runs WHERE id = ?`, runID).Scan(&projectID)
+	err = s.db.QueryRowContext(ctx, `SELECT project_id FROM agent_sessions WHERE id = ?`, agentSessionID).Scan(&projectID)
 	if errors.Is(err, sql.ErrNoRows) {
-		return "", fmt.Errorf("run %q is not registered: %w", runID, ErrRunNotRegistered)
+		return "", fmt.Errorf("agent session %q is not registered: %w", agentSessionID, ErrAgentSessionNotRegistered)
 	}
 	if err != nil {
-		return "", fmt.Errorf("find project for run %q: %w", runID, err)
+		return "", fmt.Errorf("find project for agent session %q: %w", agentSessionID, err)
 	}
 	if !projectID.Valid || strings.TrimSpace(projectID.String) == "" {
-		return "", fmt.Errorf("run %q is not associated with a project: %w", runID, ErrRunNotAssociated)
+		return "", fmt.Errorf("agent session %q is not associated with a project: %w", agentSessionID, ErrAgentSessionNotAssociated)
 	}
 	return projectID.String, nil
 }

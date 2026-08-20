@@ -361,7 +361,7 @@ func TestDeclareTasksPersistsFiles(t *testing.T) {
 	}
 }
 
-func TestClaimTaskRejectsOverlappingFilesAcrossRuns(t *testing.T) {
+func TestClaimTaskRejectsOverlappingFilesAcrossAgentSessions(t *testing.T) {
 	s := newTestStore(t)
 	goalID := newTestGoal(t, s)
 	firstID := declareOneTaskWithFiles(t, s, goalID, "conflict-1", "first", []string{"internal/store/task.go"})
@@ -375,7 +375,7 @@ func TestClaimTaskRejectsOverlappingFilesAcrossRuns(t *testing.T) {
 	}
 }
 
-func TestClaimTaskAllowsNonOverlappingFilesAcrossRuns(t *testing.T) {
+func TestClaimTaskAllowsNonOverlappingFilesAcrossAgentSessions(t *testing.T) {
 	s := newTestStore(t)
 	goalID := newTestGoal(t, s)
 	firstID := declareOneTaskWithFiles(t, s, goalID, "non-overlap-1", "first", []string{"internal/store/task.go"})
@@ -389,7 +389,7 @@ func TestClaimTaskAllowsNonOverlappingFilesAcrossRuns(t *testing.T) {
 	}
 }
 
-func TestClaimTaskAllowsOverlappingFilesForSameRun(t *testing.T) {
+func TestClaimTaskAllowsOverlappingFilesForSameAgentSession(t *testing.T) {
 	s := newTestStore(t)
 	goalID := newTestGoal(t, s)
 	firstID := declareOneTaskWithFiles(t, s, goalID, "same-run-1", "first", []string{"internal/store/task.go"})

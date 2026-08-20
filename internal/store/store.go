@@ -18,7 +18,7 @@ type Store struct {
 
 const schemaVersion = 6
 
-const runRetention = 30 * 24 * time.Hour
+const agentSessionRetention = 30 * 24 * time.Hour
 
 func Open(path string) (*Store, error) {
 	db, err := sql.Open("sqlite", path)
@@ -99,6 +99,12 @@ func migrateSchema(db *sql.DB) (err error) {
 	if _, err := tx.Exec(legacyMigrations[0].sql); err != nil {
 		return fmt.Errorf("bootstrap legacy schema: %w", err)
 	}
+	if len(legacyMigrations) < 4 {
+		return fmt.Errorf("legacy schema bootstrap has %d migrations, want at least 4", len(legacyMigrations))
+	}
+	if _, err := tx.Exec(legacyMigrations[3].sql); err != nil {
+		return fmt.Errorf("migrate agent sessions: %w", err)
+	}
 
 	if version < 4 {
 		var invalidDecisionCount int
@@ -160,18 +166,26 @@ func migrateSchema(db *sql.DB) (err error) {
 			return fmt.Errorf("migrate goals table: %w", err)
 		}
 	}
-	if _, err := tx.Exec(`
-CREATE TABLE IF NOT EXISTS runs (
-  id            TEXT PRIMARY KEY,
-  project_id    TEXT REFERENCES projects(id),
-  registered_at TEXT NOT NULL
-)`); err != nil {
-		return fmt.Errorf("create runs table: %w", err)
+	for _, migration := range legacyMigrations[1:3] {
+		if _, err := tx.Exec(migration.sql); err != nil {
+			return fmt.Errorf("apply %s during historical bridge: %w", migration.filename, err)
+		}
 	}
 	if _, err := tx.Exec(`
-CREATE INDEX IF NOT EXISTS idx_runs_project_registered_at
-  ON runs(project_id, registered_at DESC)`); err != nil {
-		return fmt.Errorf("create runs index: %w", err)
+CREATE TABLE IF NOT EXISTS schema_migrations (
+  filename TEXT PRIMARY KEY,
+  applied_at TEXT NOT NULL
+)`); err != nil {
+		return fmt.Errorf("create schema migrations table: %w", err)
+	}
+	for _, migration := range legacyMigrations[:4] {
+		if _, err := tx.Exec(
+			`INSERT OR IGNORE INTO schema_migrations(filename, applied_at) VALUES (?, ?)`,
+			migration.filename,
+			time.Now().UTC().Format(time.RFC3339Nano),
+		); err != nil {
+			return fmt.Errorf("record %s during historical bridge: %w", migration.filename, err)
+		}
 	}
 	if _, err := tx.Exec(fmt.Sprintf("PRAGMA user_version = %d", schemaVersion)); err != nil {
 		return fmt.Errorf("write schema version: %w", err)
@@ -307,16 +321,16 @@ func goalIndexes(tx *sql.Tx) ([]string, error) {
 	return indexes, rows.Err()
 }
 
-func requireRunID(runID string) (string, error) {
-	runID = strings.TrimSpace(runID)
-	if runID == "" {
-		return "", fmt.Errorf("run_id is required")
+func requireAgentSessionID(agentSessionID string) (string, error) {
+	agentSessionID = strings.TrimSpace(agentSessionID)
+	if agentSessionID == "" {
+		return "", fmt.Errorf("agent_session_id is required")
 	}
-	return runID, nil
+	return agentSessionID, nil
 }
 
-func (s *Store) RegisterRun(ctx context.Context, runID string) error {
-	runID, err := requireRunID(runID)
+func (s *Store) RegisterAgentSession(ctx context.Context, agentSessionID string) error {
+	agentSessionID, err := requireAgentSessionID(agentSessionID)
 	if err != nil {
 		return err
 	}
@@ -325,28 +339,28 @@ func (s *Store) RegisterRun(ctx context.Context, runID string) error {
 	registeredAt := now.Format(time.RFC3339Nano)
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("begin run registration: %w", err)
+		return fmt.Errorf("begin agent session registration: %w", err)
 	}
 	defer tx.Rollback()
 
 	if _, err := tx.ExecContext(ctx, `
-		INSERT OR IGNORE INTO runs (id, project_id, registered_at)
-		VALUES (?, NULL, ?)`, runID, registeredAt); err != nil {
-		return fmt.Errorf("register run: %w", err)
+		INSERT OR IGNORE INTO agent_sessions (id, project_id, registered_at)
+		VALUES (?, NULL, ?)`, agentSessionID, registeredAt); err != nil {
+		return fmt.Errorf("register agent session: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `
-		DELETE FROM runs
-		WHERE registered_at < ?`, now.Add(-runRetention).Format(time.RFC3339Nano)); err != nil {
-		return fmt.Errorf("clean up old runs: %w", err)
+		DELETE FROM agent_sessions
+		WHERE registered_at < ?`, now.Add(-agentSessionRetention).Format(time.RFC3339Nano)); err != nil {
+		return fmt.Errorf("clean up old agent sessions: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit run registration: %w", err)
+		return fmt.Errorf("commit agent session registration: %w", err)
 	}
 	return nil
 }
 
-func (s *Store) AssociateRunWithProject(ctx context.Context, runID, projectID string) error {
-	runID, err := requireRunID(runID)
+func (s *Store) AssociateAgentSessionWithProject(ctx context.Context, agentSessionID, projectID string) error {
+	agentSessionID, err := requireAgentSessionID(agentSessionID)
 	if err != nil {
 		return err
 	}
@@ -359,74 +373,74 @@ func (s *Store) AssociateRunWithProject(ctx context.Context, runID, projectID st
 	registeredAt := now.Format(time.RFC3339Nano)
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("begin run association: %w", err)
+		return fmt.Errorf("begin agent session association: %w", err)
 	}
 	defer tx.Rollback()
 
 	result, err := tx.ExecContext(ctx, `
-		UPDATE runs SET project_id = ?
-		WHERE id = ?`, projectID, runID)
+		UPDATE agent_sessions SET project_id = ?
+		WHERE id = ?`, projectID, agentSessionID)
 	if err != nil {
-		return fmt.Errorf("associate run with project: %w", err)
+		return fmt.Errorf("associate agent session with project: %w", err)
 	}
 	affected, err := result.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("inspect run association: %w", err)
+		return fmt.Errorf("inspect agent session association: %w", err)
 	}
 	if affected == 0 {
 		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO runs (id, project_id, registered_at)
-			VALUES (?, ?, ?)`, runID, projectID, registeredAt); err != nil {
-			return fmt.Errorf("insert associated run: %w", err)
+			INSERT INTO agent_sessions (id, project_id, registered_at)
+			VALUES (?, ?, ?)`, agentSessionID, projectID, registeredAt); err != nil {
+			return fmt.Errorf("insert associated agent session: %w", err)
 		}
 	}
 
 	var currentRegisteredAt string
 	if err := tx.QueryRowContext(ctx, `
-		SELECT registered_at FROM runs WHERE id = ?`, runID).Scan(&currentRegisteredAt); err != nil {
-		return fmt.Errorf("read associated run: %w", err)
+		SELECT registered_at FROM agent_sessions WHERE id = ?`, agentSessionID).Scan(&currentRegisteredAt); err != nil {
+		return fmt.Errorf("read associated agent session: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `
-		DELETE FROM runs
-		WHERE id <> ? AND registered_at < ?`, runID, now.Add(-runRetention).Format(time.RFC3339Nano)); err != nil {
-		return fmt.Errorf("clean up old runs: %w", err)
+		DELETE FROM agent_sessions
+		WHERE id <> ? AND registered_at < ?`, agentSessionID, now.Add(-agentSessionRetention).Format(time.RFC3339Nano)); err != nil {
+		return fmt.Errorf("clean up old agent sessions: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `
-		DELETE FROM runs
-		WHERE project_id = ? AND id <> ? AND registered_at < ?`, projectID, runID, currentRegisteredAt); err != nil {
-		return fmt.Errorf("clean up old project runs: %w", err)
+		DELETE FROM agent_sessions
+		WHERE project_id = ? AND id <> ? AND registered_at < ?`, projectID, agentSessionID, currentRegisteredAt); err != nil {
+		return fmt.Errorf("clean up old project agent sessions: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit run association: %w", err)
+		return fmt.Errorf("commit agent session association: %w", err)
 	}
 	return nil
 }
 
-func (s *Store) LatestRunID(ctx context.Context, projectID string) (string, error) {
+func (s *Store) LatestAgentSessionID(ctx context.Context, projectID string) (string, error) {
 	projectID = strings.TrimSpace(projectID)
 	if projectID == "" {
 		return "", fmt.Errorf("project_id is required")
 	}
 
-	var runID string
+	var agentSessionID string
 	err := s.db.QueryRowContext(ctx, `
-		SELECT id FROM runs
+		SELECT id FROM agent_sessions
 		WHERE project_id = ?
 		ORDER BY registered_at DESC, id DESC
-		LIMIT 1`, projectID).Scan(&runID)
+		LIMIT 1`, projectID).Scan(&agentSessionID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
 	}
 	if err != nil {
-		return "", fmt.Errorf("find latest run: %w", err)
+		return "", fmt.Errorf("find latest agent session: %w", err)
 	}
-	return runID, nil
+	return agentSessionID, nil
 }
 
 const decisionsMigrationColumns = `
 	id, goal_id, task_id, kind, question, options, status,
 	default_option, default_after_ms, default_applied_at,
-	answer_label, answer_text, answered_at, applied_at, run_id, created_at`
+	answer_label, answer_text, answered_at, applied_at, agent_session_id, created_at`
 
 func rebuildDecisionsTable(tx *sql.Tx) error {
 	indexes, err := decisionIndexes(tx)
@@ -450,7 +464,7 @@ CREATE TABLE decisions_new (
   answer_text  TEXT NOT NULL DEFAULT '',
   answered_at  TEXT,
   applied_at   TEXT,
-  run_id       TEXT NOT NULL DEFAULT '',
+  agent_session_id TEXT NOT NULL DEFAULT '',
   created_at   TEXT NOT NULL,
   CHECK (kind <> 'decision' OR status NOT IN ('open', 'answered') OR (task_id IS NOT NULL AND task_id <> ''))
 )`); err != nil {

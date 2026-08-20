@@ -27,7 +27,7 @@ func TestTaskClaimNotificationDoesNotApplyDecision(t *testing.T) {
 	decision, err := s.AskDecision(ctx, store.AskInput{
 		GoalID: goal.ID, TaskID: tasks[0].ID, Kind: domain.KindDecision,
 		Question: "Which implementation should be used?",
-		Options:  []domain.Option{{Label: "A"}}, RunID: "answer-run",
+		Options:  []domain.Option{{Label: "A"}}, AgentSessionID: "answer-run",
 	})
 	if err != nil {
 		t.Fatalf("AskDecision: %v", err)
@@ -35,15 +35,15 @@ func TestTaskClaimNotificationDoesNotApplyDecision(t *testing.T) {
 	if _, err := s.AnswerDecision(ctx, store.AnswerInput{DecisionID: decision.ID, AnswerLabel: "A", AnswerText: "Use A"}); err != nil {
 		t.Fatalf("AnswerDecision: %v", err)
 	}
-	if err := s.RegisterRun(ctx, "claim-run"); err != nil {
-		t.Fatalf("RegisterRun: %v", err)
+	if err := s.RegisterAgentSession(ctx, "claim-run"); err != nil {
+		t.Fatalf("RegisterAgentSession: %v", err)
 	}
-	if err := s.AssociateRunWithProject(ctx, "claim-run", project.ID); err != nil {
-		t.Fatalf("AssociateRunWithProject: %v", err)
+	if err := s.AssociateAgentSessionWithProject(ctx, "claim-run", project.ID); err != nil {
+		t.Fatalf("AssociateAgentSessionWithProject: %v", err)
 	}
 
 	params, err := json.Marshal(map[string]any{
-		"task_id": tasks[0].ID, "run_id": "claim-run", "include_unapplied_answers": true,
+		"task_id": tasks[0].ID, "agent_session_id": "claim-run", "include_unapplied_answers": true,
 	})
 	if err != nil {
 		t.Fatalf("Marshal params: %v", err)
@@ -94,12 +94,12 @@ func TestGoalListNotificationIsProjectScoped(t *testing.T) {
 	}
 	decision := answerPendingResponseDecision(t, s, goal.ID, tasks[0].ID, "project decision")
 	otherDecision := answerPendingResponseDecision(t, s, otherGoal.ID, otherTasks[0].ID, "other project decision")
-	if err := s.RegisterRun(ctx, "query-run"); err != nil {
-		t.Fatalf("RegisterRun: %v", err)
+	if err := s.RegisterAgentSession(ctx, "query-run"); err != nil {
+		t.Fatalf("RegisterAgentSession: %v", err)
 	}
 
 	params, err := json.Marshal(map[string]any{
-		"cwd": projectRoot, "run_id": "query-run", "include_unapplied_answers": true,
+		"cwd": projectRoot, "agent_session_id": "query-run", "include_unapplied_answers": true,
 	})
 	if err != nil {
 		t.Fatalf("Marshal params: %v", err)
@@ -131,12 +131,12 @@ func TestDecisionPollNotificationExcludesPolledDecision(t *testing.T) {
 	}
 	polled := answerPendingResponseDecision(t, s, goal.ID, tasks[0].ID, "polled decision")
 	other := answerPendingResponseDecision(t, s, goal.ID, tasks[1].ID, "other decision")
-	if err := s.RegisterRun(ctx, "poll-run"); err != nil {
-		t.Fatalf("RegisterRun: %v", err)
+	if err := s.RegisterAgentSession(ctx, "poll-run"); err != nil {
+		t.Fatalf("RegisterAgentSession: %v", err)
 	}
 
 	params, err := json.Marshal(map[string]any{
-		"run_id": "poll-run", "decision_id": polled.ID, "include_unapplied_answers": true,
+		"agent_session_id": "poll-run", "decision_id": polled.ID, "include_unapplied_answers": true,
 	})
 	if err != nil {
 		t.Fatalf("Marshal params: %v", err)
@@ -188,17 +188,17 @@ func TestDecisionAskParkedIncludesClaimableTasks(t *testing.T) {
 
 	params, err := json.Marshal(map[string]any{
 		"goal_id": parkGoal.ID, "task_id": parked[0].ID, "question": "Which implementation should be used?",
-		"options": []domain.Option{{Label: "A"}}, "run_id": "park-run", "wait_ms": 0,
+		"options": []domain.Option{{Label: "A"}}, "agent_session_id": "park-run", "wait_ms": 0,
 		"include_unapplied_answers": true,
 	})
 	if err != nil {
 		t.Fatalf("Marshal params: %v", err)
 	}
-	if err := s.RegisterRun(ctx, "park-run"); err != nil {
-		t.Fatalf("RegisterRun(park-run): %v", err)
+	if err := s.RegisterAgentSession(ctx, "park-run"); err != nil {
+		t.Fatalf("RegisterAgentSession(park-run): %v", err)
 	}
-	if err := s.AssociateRunWithProject(ctx, "park-run", project.ID); err != nil {
-		t.Fatalf("AssociateRunWithProject(park-run): %v", err)
+	if err := s.AssociateAgentSessionWithProject(ctx, "park-run", project.ID); err != nil {
+		t.Fatalf("AssociateAgentSessionWithProject(park-run): %v", err)
 	}
 	raw, err := New(s).dispatch(ctx, rpc.Request{Method: "decision.ask", Params: params})
 	if err != nil {
@@ -234,19 +234,19 @@ func TestProjectScopedWritesRejectOtherProject(t *testing.T) {
 		{
 			name:   "task.claim",
 			method: "task.claim",
-			params: map[string]any{"task_id": f.targetTask.ID, "run_id": f.runID},
+			params: map[string]any{"task_id": f.targetTask.ID, "agent_session_id": f.agentSessionID},
 		},
 		{
 			name:   "task.update",
 			method: "task.update",
-			params: map[string]any{"task_id": f.targetTask.ID, "status": "done", "run_id": f.runID},
+			params: map[string]any{"task_id": f.targetTask.ID, "status": "done", "agent_session_id": f.agentSessionID},
 		},
 		{
 			name:   "task.declare",
 			method: "task.declare",
 			params: map[string]any{
 				"goal_id": f.targetGoal.ID, "agent": "agent", "idempotency_key": "cross-project",
-				"titles": []string{"must be rejected"}, "descriptions": []string{"Complete the task only in the assigned project."}, "run_id": f.runID,
+				"titles": []string{"must be rejected"}, "descriptions": []string{"Complete the task only in the assigned project."}, "agent_session_id": f.agentSessionID,
 			},
 		},
 		{
@@ -254,7 +254,7 @@ func TestProjectScopedWritesRejectOtherProject(t *testing.T) {
 			method: "decision.ask",
 			params: map[string]any{
 				"goal_id": f.targetGoal.ID, "task_id": f.targetTask.ID, "question": "must be rejected",
-				"options": []domain.Option{{Label: "yes"}}, "run_id": f.runID, "wait_ms": 0,
+				"options": []domain.Option{{Label: "yes"}}, "agent_session_id": f.agentSessionID, "wait_ms": 0,
 			},
 		},
 		{
@@ -263,7 +263,7 @@ func TestProjectScopedWritesRejectOtherProject(t *testing.T) {
 			params: map[string]any{
 				"goal_id": f.targetGoal.ID, "work_done": "done", "now_possible": "now",
 				"how_to_verify": "verify", "surprises": "none", "needs_review": "none",
-				"next_steps": "none", "run_id": f.runID,
+				"next_steps": "none", "agent_session_id": f.agentSessionID,
 			},
 		},
 	}
@@ -303,7 +303,7 @@ func TestProjectScopedWritesRejectOtherProject(t *testing.T) {
 	}
 }
 
-func TestTaskWritesWithoutRunIDSkipProjectGuard(t *testing.T) {
+func TestTaskWritesWithoutAgentSessionIDSkipProjectGuard(t *testing.T) {
 	f := newProjectScopeFixture(t)
 
 	params, err := json.Marshal(map[string]any{
@@ -346,14 +346,14 @@ func TestTaskWritesWithoutRunIDSkipProjectGuard(t *testing.T) {
 
 func TestTaskClaimAssignsUnassociatedRunToTargetProject(t *testing.T) {
 	f := newProjectScopeFixture(t)
-	runID := "first-write-run"
-	if err := f.store.RegisterRun(f.ctx, runID); err != nil {
-		t.Fatalf("RegisterRun: %v", err)
+	agentSessionID := "first-write-run"
+	if err := f.store.RegisterAgentSession(f.ctx, agentSessionID); err != nil {
+		t.Fatalf("RegisterAgentSession: %v", err)
 	}
 
 	params, err := json.Marshal(map[string]any{
-		"task_id": f.targetTask.ID,
-		"run_id":  runID,
+		"task_id":          f.targetTask.ID,
+		"agent_session_id": agentSessionID,
 	})
 	if err != nil {
 		t.Fatalf("Marshal task.claim params: %v", err)
@@ -362,9 +362,9 @@ func TestTaskClaimAssignsUnassociatedRunToTargetProject(t *testing.T) {
 		t.Fatalf("task.claim: %v", err)
 	}
 
-	projectID, err := f.store.ProjectIDForRun(f.ctx, runID)
+	projectID, err := f.store.ProjectIDForAgentSession(f.ctx, agentSessionID)
 	if err != nil {
-		t.Fatalf("ProjectIDForRun: %v", err)
+		t.Fatalf("ProjectIDForAgentSession: %v", err)
 	}
 	if projectID != f.target.ID {
 		t.Fatalf("run project_id = %q, want target project %q", projectID, f.target.ID)
@@ -376,7 +376,7 @@ func TestProjectScopedWritesAllowAssignedProjectAndGoalListReadsOtherProject(t *
 
 	params, err := json.Marshal(map[string]any{
 		"goal_id": f.assignedGoal.ID, "agent": "agent", "idempotency_key": "assigned-project",
-		"titles": []string{"assigned declaration"}, "descriptions": []string{"Complete the declaration in the assigned project."}, "run_id": f.runID,
+		"titles": []string{"assigned declaration"}, "descriptions": []string{"Complete the declaration in the assigned project."}, "agent_session_id": f.agentSessionID,
 	})
 	if err != nil {
 		t.Fatalf("Marshal task.declare params: %v", err)
@@ -393,14 +393,14 @@ func TestProjectScopedWritesAllowAssignedProjectAndGoalListReadsOtherProject(t *
 		t.Fatalf("declared tasks = %#v, want one task", declared)
 	}
 
-	params, err = json.Marshal(map[string]any{"task_id": declared[0].ID, "run_id": f.runID})
+	params, err = json.Marshal(map[string]any{"task_id": declared[0].ID, "agent_session_id": f.agentSessionID})
 	if err != nil {
 		t.Fatalf("Marshal task.claim params: %v", err)
 	}
 	if _, err := f.daemon.dispatch(f.ctx, rpc.Request{Method: "task.claim", Params: params}); err != nil {
 		t.Fatalf("task.claim: %v", err)
 	}
-	params, err = json.Marshal(map[string]any{"task_id": declared[0].ID, "status": "done", "run_id": f.runID})
+	params, err = json.Marshal(map[string]any{"task_id": declared[0].ID, "status": "done", "agent_session_id": f.agentSessionID})
 	if err != nil {
 		t.Fatalf("Marshal task.update params: %v", err)
 	}
@@ -410,7 +410,7 @@ func TestProjectScopedWritesAllowAssignedProjectAndGoalListReadsOtherProject(t *
 
 	params, err = json.Marshal(map[string]any{
 		"goal_id": f.assignedGoal.ID, "task_id": declared[0].ID, "question": "assigned question",
-		"options": []domain.Option{{Label: "yes"}}, "run_id": f.runID, "wait_ms": 0,
+		"options": []domain.Option{{Label: "yes"}}, "agent_session_id": f.agentSessionID, "wait_ms": 0,
 	})
 	if err != nil {
 		t.Fatalf("Marshal decision.ask params: %v", err)
@@ -422,7 +422,7 @@ func TestProjectScopedWritesAllowAssignedProjectAndGoalListReadsOtherProject(t *
 	params, err = json.Marshal(map[string]any{
 		"goal_id": f.completeGoal.ID, "work_done": "done", "now_possible": "now",
 		"how_to_verify": "verify", "surprises": "none", "needs_review": "none",
-		"next_steps": "none", "run_id": f.runID,
+		"next_steps": "none", "agent_session_id": f.agentSessionID,
 	})
 	if err != nil {
 		t.Fatalf("Marshal goal.complete params: %v", err)
@@ -431,10 +431,10 @@ func TestProjectScopedWritesAllowAssignedProjectAndGoalListReadsOtherProject(t *
 		t.Fatalf("goal.complete: %v", err)
 	}
 
-	if err := f.store.RegisterRun(f.ctx, "read-run"); err != nil {
-		t.Fatalf("RegisterRun(read-run): %v", err)
+	if err := f.store.RegisterAgentSession(f.ctx, "read-run"); err != nil {
+		t.Fatalf("RegisterAgentSession(read-run): %v", err)
 	}
-	params, err = json.Marshal(map[string]any{"cwd": f.target.RootPath, "run_id": "read-run"})
+	params, err = json.Marshal(map[string]any{"cwd": f.target.RootPath, "agent_session_id": "read-run"})
 	if err != nil {
 		t.Fatalf("Marshal goal.list params: %v", err)
 	}
@@ -454,16 +454,16 @@ func TestProjectScopedWritesAllowAssignedProjectAndGoalListReadsOtherProject(t *
 }
 
 type projectScopeFixture struct {
-	ctx          context.Context
-	store        *store.Store
-	daemon       *Daemon
-	assigned     domain.Project
-	target       domain.Project
-	runID        string
-	assignedGoal domain.Goal
-	targetGoal   domain.Goal
-	completeGoal domain.Goal
-	targetTask   domain.Task
+	ctx            context.Context
+	store          *store.Store
+	daemon         *Daemon
+	assigned       domain.Project
+	target         domain.Project
+	agentSessionID string
+	assignedGoal   domain.Goal
+	targetGoal     domain.Goal
+	completeGoal   domain.Goal
+	targetTask     domain.Task
 }
 
 func newProjectScopeFixture(t *testing.T) projectScopeFixture {
@@ -494,15 +494,15 @@ func newProjectScopeFixture(t *testing.T) projectScopeFixture {
 	if err != nil {
 		t.Fatalf("DeclareTasks(target): %v", err)
 	}
-	if err := s.RegisterRun(ctx, "assigned-run"); err != nil {
-		t.Fatalf("RegisterRun: %v", err)
+	if err := s.RegisterAgentSession(ctx, "assigned-run"); err != nil {
+		t.Fatalf("RegisterAgentSession: %v", err)
 	}
-	if err := s.AssociateRunWithProject(ctx, "assigned-run", assigned.ID); err != nil {
-		t.Fatalf("AssociateRunWithProject: %v", err)
+	if err := s.AssociateAgentSessionWithProject(ctx, "assigned-run", assigned.ID); err != nil {
+		t.Fatalf("AssociateAgentSessionWithProject: %v", err)
 	}
 	return projectScopeFixture{
 		ctx: ctx, store: s, daemon: New(s), assigned: assigned, target: target,
-		runID: "assigned-run", assignedGoal: assignedGoal, targetGoal: targetGoal,
+		agentSessionID: "assigned-run", assignedGoal: assignedGoal, targetGoal: targetGoal,
 		completeGoal: completeGoal, targetTask: targetTasks[0],
 	}
 }
@@ -547,7 +547,7 @@ func answerPendingResponseDecision(t *testing.T, s *store.Store, goalID, taskID,
 	ctx := context.Background()
 	decision, err := s.AskDecision(ctx, store.AskInput{
 		GoalID: goalID, TaskID: taskID, Kind: domain.KindDecision, Question: question,
-		Options: []domain.Option{{Label: "yes"}}, RunID: "answer-run",
+		Options: []domain.Option{{Label: "yes"}}, AgentSessionID: "answer-run",
 	})
 	if err != nil {
 		t.Fatalf("AskDecision: %v", err)

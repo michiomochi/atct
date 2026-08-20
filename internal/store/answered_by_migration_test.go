@@ -104,20 +104,20 @@ INSERT INTO decisions (
 			}
 
 			for _, want := range []struct {
-				id, question, label, text, runID string
-				status                           string
+				id, question, label, text, agentSessionID string
+				status                                    string
 			}{
-				{id: "decision-one", question: "Choose one", label: "A", text: "first answer", runID: "run-one", status: "answered"},
-				{id: "decision-two", question: "Approve?", label: "approve", text: "", runID: "run-two", status: "applied"},
+				{id: "decision-one", question: "Choose one", label: "A", text: "first answer", agentSessionID: "run-one", status: "answered"},
+				{id: "decision-two", question: "Approve?", label: "approve", text: "", agentSessionID: "run-two", status: "applied"},
 			} {
 				got, err := s.GetDecision(context.Background(), want.id)
 				if err != nil {
 					t.Fatalf("GetDecision(%q): %v", want.id, err)
 				}
 				if got.ID != want.id || got.Question != want.question || got.AnswerLabel != want.label ||
-					got.AnswerText != want.text || string(got.Status) != want.status || got.RunID != want.runID {
+					got.AnswerText != want.text || string(got.Status) != want.status || got.AgentSessionID != want.agentSessionID {
 					t.Fatalf("migrated decision = %+v, want id=%q question=%q label=%q text=%q status=%q run_id=%q",
-						got, want.id, want.question, want.label, want.text, want.status, want.runID)
+						got, want.id, want.question, want.label, want.text, want.status, want.agentSessionID)
 				}
 			}
 		})

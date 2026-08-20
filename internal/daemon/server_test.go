@@ -224,11 +224,11 @@ func TestDecisionAskDistinguishesOmittedWaitFromExplicitZero(t *testing.T) {
 	}
 	started := time.Now()
 	zeroResp := call(t, zeroConn, "decision.ask", map[string]any{
-		"goal_id":  zeroGoalID,
-		"task_id":  zeroTaskID,
-		"question": "Should the run continue?",
-		"run_id":   "run-zero",
-		"wait_ms":  0,
+		"goal_id":          zeroGoalID,
+		"task_id":          zeroTaskID,
+		"question":         "Should the run continue?",
+		"agent_session_id": "run-zero",
+		"wait_ms":          0,
 	})
 	if elapsed := time.Since(started); elapsed >= time.Second {
 		t.Fatalf("explicit wait_ms=0 took %s; want an immediate parked response", elapsed)
@@ -250,10 +250,10 @@ func TestDecisionAskDistinguishesOmittedWaitFromExplicitZero(t *testing.T) {
 	omittedConn := newDaemonConn(t)
 	omittedGoalID, omittedTaskID := createDecisionFixture(t, omittedConn)
 	params, err := json.Marshal(map[string]any{
-		"goal_id":  omittedGoalID,
-		"task_id":  omittedTaskID,
-		"question": "Should the run continue?",
-		"run_id":   "run-omitted",
+		"goal_id":          omittedGoalID,
+		"task_id":          omittedTaskID,
+		"question":         "Should the run continue?",
+		"agent_session_id": "run-omitted",
 	})
 	if err != nil {
 		t.Fatalf("marshal omitted params: %v", err)
@@ -313,12 +313,12 @@ func createDecisionFixture(t *testing.T, conn net.Conn) (string, string) {
 		t.Fatalf("unmarshal goal: %v", err)
 	}
 	taskResp := call(t, conn, "task.declare", map[string]any{
-		"goal_id":         goal.ID,
-		"agent":           "test-agent",
-		"idempotency_key": "wait-semantics",
-		"titles":          []string{"Wait for a decision"},
-		"descriptions":    []string{"Complete the task after the decision is answered."},
-		"run_id":          "fixture-run",
+		"goal_id":          goal.ID,
+		"agent":            "test-agent",
+		"idempotency_key":  "wait-semantics",
+		"titles":           []string{"Wait for a decision"},
+		"descriptions":     []string{"Complete the task after the decision is answered."},
+		"agent_session_id": "fixture-run",
 	})
 	if taskResp.Error != "" {
 		t.Fatalf("task.declare: %s", taskResp.Error)

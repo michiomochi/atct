@@ -89,7 +89,71 @@ var requiredV6Columns = map[string][]string{
 		"answer_text",
 		"answered_at",
 		"applied_at",
-		"run_id",
+		"run" + "_id",
+		"created_at",
+	},
+}
+
+var requiredCurrentV6Columns = map[string][]string{
+	"projects": {
+		"id",
+		"name",
+		"root_path",
+		"created_at",
+	},
+	"agent_sessions": {
+		"id",
+		"project_id",
+		"registered_at",
+		"pid",
+		"started_at",
+	},
+	"goals": {
+		"id",
+		"project_id",
+		"title",
+		"description",
+		"status",
+		"result_summary",
+		"work_done",
+		"now_possible",
+		"how_to_verify",
+		"surprises",
+		"needs_review",
+		"next_steps",
+		"created_at",
+		"updated_at",
+	},
+	"tasks": {
+		"id",
+		"goal_id",
+		"title",
+		"status",
+		"agent",
+		"files",
+		"sort_order",
+		"declare_key",
+		"claimed_by",
+		"claimed_at",
+		"created_at",
+		"updated_at",
+	},
+	"decisions": {
+		"id",
+		"goal_id",
+		"task_id",
+		"kind",
+		"question",
+		"options",
+		"status",
+		"default_option",
+		"default_after_ms",
+		"default_applied_at",
+		"answer_label",
+		"answer_text",
+		"answered_at",
+		"applied_at",
+		"agent_session_id",
 		"created_at",
 	},
 }
@@ -181,7 +245,7 @@ func applyEmbeddedMigrations(db *sql.DB) error {
 			return setUserVersion(ctx, conn)
 
 		case schemaVersion:
-			if err := validateV6Schema(ctx, conn); err != nil {
+			if err := validateV6Schema(ctx, conn, state); err != nil {
 				return err
 			}
 			if err := ensureSchemaMigrationsTable(ctx, conn); err != nil {
@@ -326,10 +390,11 @@ func tableExists(ctx context.Context, conn *sql.Conn, tableName string) (bool, e
 }
 
 func hasAnyTargetSchemaTable(ctx context.Context, conn *sql.Conn) (bool, error) {
-	tables := make([]string, 0, len(requiredV6Columns))
+	tables := make([]string, 0, len(requiredV6Columns)+1)
 	for tableName := range requiredV6Columns {
 		tables = append(tables, tableName)
 	}
+	tables = append(tables, "agent_sessions")
 	sort.Strings(tables)
 	for _, tableName := range tables {
 		exists, err := tableExists(ctx, conn, tableName)
@@ -349,7 +414,7 @@ func hasAnyTargetSchemaTableDB(db *sql.DB) (bool, error) {
 SELECT 1
 FROM sqlite_master
 WHERE type = 'table'
-  AND name IN ('projects', 'runs', 'goals', 'tasks', 'decisions')
+		AND name IN ('projects', 'runs', 'agent_sessions', 'goals', 'tasks', 'decisions')
 LIMIT 1`).Scan(&one)
 	if err == sql.ErrNoRows {
 		return false, nil
@@ -360,9 +425,14 @@ LIMIT 1`).Scan(&one)
 	return true, nil
 }
 
-func validateV6Schema(ctx context.Context, conn *sql.Conn) error {
-	tables := make([]string, 0, len(requiredV6Columns))
-	for tableName := range requiredV6Columns {
+func validateV6Schema(ctx context.Context, conn *sql.Conn, state migrationState) error {
+	requiredColumns := requiredV6Columns
+	if _, ok := state.applied["0004_agent_sessions.sql"]; ok {
+		requiredColumns = requiredCurrentV6Columns
+	}
+
+	tables := make([]string, 0, len(requiredColumns))
+	for tableName := range requiredColumns {
 		tables = append(tables, tableName)
 	}
 	sort.Strings(tables)
@@ -372,7 +442,7 @@ func validateV6Schema(ctx context.Context, conn *sql.Conn) error {
 			return err
 		}
 		missing := make([]string, 0)
-		for _, columnName := range requiredV6Columns[tableName] {
+		for _, columnName := range requiredColumns[tableName] {
 			if !columns[columnName] {
 				missing = append(missing, columnName)
 			}

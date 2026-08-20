@@ -71,7 +71,7 @@ export interface Decision {
   answer_text?: string;
   answered_at?: string;
   applied_at?: string;
-  run_id: string;
+  agent_session_id: string;
   created_at: string;
 }
 

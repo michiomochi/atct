@@ -285,21 +285,21 @@ func newFixture(t *testing.T) *fixture {
 		t.Fatal(err)
 	}
 	f.open, err = f.store.AskDecision(f.ctx, store.AskInput{
-		GoalID:   f.goal.ID,
-		TaskID:   f.tasks[0].ID,
-		Kind:     domain.DecisionKind("question"),
-		Question: "Which option?",
-		RunID:    "fixture-run",
+		GoalID:         f.goal.ID,
+		TaskID:         f.tasks[0].ID,
+		Kind:           domain.DecisionKind("question"),
+		Question:       "Which option?",
+		AgentSessionID: "fixture-run",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	f.answered, err = f.store.AskDecision(f.ctx, store.AskInput{
-		GoalID:   f.goal.ID,
-		TaskID:   f.tasks[2].ID,
-		Kind:     domain.DecisionKind("question"),
-		Question: "Already answered?",
-		RunID:    "fixture-run",
+		GoalID:         f.goal.ID,
+		TaskID:         f.tasks[2].ID,
+		Kind:           domain.DecisionKind("question"),
+		Question:       "Already answered?",
+		AgentSessionID: "fixture-run",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -384,7 +384,7 @@ func TestHTTPGoalDetailDecisionHistoryRecordsSettlementSource(t *testing.T) {
 		Options:        []domain.Option{{Label: "A"}, {Label: "B"}},
 		DefaultOption:  "A",
 		DefaultAfterMs: &afterMs,
-		RunID:          "default-run",
+		AgentSessionID: "default-run",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -399,11 +399,11 @@ func TestHTTPGoalDetailDecisionHistoryRecordsSettlementSource(t *testing.T) {
 	}
 
 	humanDecision, err := f.store.AskDecision(f.ctx, store.AskInput{
-		GoalID:   f.goal.ID,
-		Kind:     domain.DecisionKind("question"),
-		Question: "Which option should a person choose?",
-		Options:  []domain.Option{{Label: "A"}, {Label: "B"}},
-		RunID:    "human-run",
+		GoalID:         f.goal.ID,
+		Kind:           domain.DecisionKind("question"),
+		Question:       "Which option should a person choose?",
+		Options:        []domain.Option{{Label: "A"}, {Label: "B"}},
+		AgentSessionID: "human-run",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -486,7 +486,7 @@ func TestHTTPDecisionRevisionPreservesSettledDecision(t *testing.T) {
 		Options:        []domain.Option{{Label: "A"}, {Label: "B"}},
 		DefaultOption:  "A",
 		DefaultAfterMs: &afterMs,
-		RunID:          "revision-original-run",
+		AgentSessionID: "revision-original-run",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -854,11 +854,11 @@ func TestHTTPGoalDetailDecisionHistoryIncludesTaskIDs(t *testing.T) {
 	decisionsByTask := make(map[string]domain.Decision, len(tasks))
 	for i, task := range tasks {
 		decision, err := f.store.AskDecision(f.ctx, store.AskInput{
-			GoalID:   f.goal.ID,
-			TaskID:   task.ID,
-			Kind:     domain.DecisionKind("question"),
-			Question: fmt.Sprintf("Question for task %d", i),
-			RunID:    fmt.Sprintf("history-run-%d", i),
+			GoalID:         f.goal.ID,
+			TaskID:         task.ID,
+			Kind:           domain.DecisionKind("question"),
+			Question:       fmt.Sprintf("Question for task %d", i),
+			AgentSessionID: fmt.Sprintf("history-run-%d", i),
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -869,7 +869,7 @@ func TestHTTPGoalDetailDecisionHistoryIncludesTaskIDs(t *testing.T) {
 		}); err != nil {
 			t.Fatal(err)
 		}
-		if applied, err := f.store.PollDecisions(f.ctx, decision.RunID, decision.ID); err != nil {
+		if applied, err := f.store.PollDecisions(f.ctx, decision.AgentSessionID, decision.ID); err != nil {
 			t.Fatal(err)
 		} else if len(applied) != 1 {
 			t.Fatalf("applied decisions for task %s = %+v", task.ID, applied)
@@ -878,10 +878,10 @@ func TestHTTPGoalDetailDecisionHistoryIncludesTaskIDs(t *testing.T) {
 	}
 
 	taskless, err := f.store.AskDecision(f.ctx, store.AskInput{
-		GoalID:   f.goal.ID,
-		Kind:     domain.DecisionKind("question"),
-		Question: "Question without a task",
-		RunID:    "history-taskless-run",
+		GoalID:         f.goal.ID,
+		Kind:           domain.DecisionKind("question"),
+		Question:       "Question without a task",
+		AgentSessionID: "history-taskless-run",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -892,7 +892,7 @@ func TestHTTPGoalDetailDecisionHistoryIncludesTaskIDs(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if applied, err := f.store.PollDecisions(f.ctx, taskless.RunID, taskless.ID); err != nil {
+	if applied, err := f.store.PollDecisions(f.ctx, taskless.AgentSessionID, taskless.ID); err != nil {
 		t.Fatal(err)
 	} else if len(applied) != 1 {
 		t.Fatalf("taskless applied decisions = %+v", applied)
@@ -982,10 +982,10 @@ func TestHTTPGoalDetailDecisionHistoryIncludesTaskIDs(t *testing.T) {
 func TestHTTPGoalDetailIncludesTasklessOpenDecision(t *testing.T) {
 	f := newBareFixture(t)
 	decision, err := f.store.AskDecision(f.ctx, store.AskInput{
-		GoalID:   f.goal.ID,
-		Kind:     domain.DecisionKind("question"),
-		Question: "Which direction should we take?",
-		RunID:    "taskless-run",
+		GoalID:         f.goal.ID,
+		Kind:           domain.DecisionKind("question"),
+		Question:       "Which direction should we take?",
+		AgentSessionID: "taskless-run",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1000,10 +1000,10 @@ func TestHTTPGoalDetailIncludesTasklessOpenDecision(t *testing.T) {
 func TestHTTPGoalDetailDoesNotDuplicateTaskDecision(t *testing.T) {
 	f := newFixture(t)
 	taskless, err := f.store.AskDecision(f.ctx, store.AskInput{
-		GoalID:   f.goal.ID,
-		Kind:     domain.DecisionKind("question"),
-		Question: "A decision without a task",
-		RunID:    "taskless-run",
+		GoalID:         f.goal.ID,
+		Kind:           domain.DecisionKind("question"),
+		Question:       "A decision without a task",
+		AgentSessionID: "taskless-run",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1463,10 +1463,10 @@ func TestSSEPublishesAllDecisionTransitionsWithExactPayloads(t *testing.T) {
 	reader := bufio.NewReader(stream.Body)
 
 	created, err := f.store.AskDecision(f.ctx, store.AskInput{
-		GoalID:   f.goal.ID,
-		Kind:     domain.DecisionKind("question"),
-		Question: "Need an answer",
-		RunID:    "poll-run",
+		GoalID:         f.goal.ID,
+		Kind:           domain.DecisionKind("question"),
+		Question:       "Need an answer",
+		AgentSessionID: "poll-run",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1489,10 +1489,10 @@ func TestSSEPublishesAllDecisionTransitionsWithExactPayloads(t *testing.T) {
 	assertSSEDecision(t, reader, "decision.applied", applied[0])
 
 	withdrawn, err := f.store.AskDecision(f.ctx, store.AskInput{
-		GoalID:   f.goal.ID,
-		Kind:     domain.DecisionKind("question"),
-		Question: "Withdraw me",
-		RunID:    "withdraw-run",
+		GoalID:         f.goal.ID,
+		Kind:           domain.DecisionKind("question"),
+		Question:       "Withdraw me",
+		AgentSessionID: "withdraw-run",
 	})
 	if err != nil {
 		t.Fatal(err)

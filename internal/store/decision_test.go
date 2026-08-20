@@ -23,7 +23,7 @@ func TestAskDecisionStartsOpen(t *testing.T) {
 			{Label: "backoff", Description: "Exponential backoff", Consequence: "Simpler implementation but duplicate execution is possible"},
 			{Label: "idempotency", Description: "Add an idempotency key", Consequence: "Prevents duplicates but requires a schema change"},
 		},
-		RunID: "run-1",
+		AgentSessionID: "run-1",
 	})
 	if err != nil {
 		t.Fatalf("AskDecision: %v", err)
@@ -47,7 +47,7 @@ func TestUpdateTaskRejectsDoneWhileDecisionOpen(t *testing.T) {
 	}
 	if _, err := s.AskDecision(ctx, AskInput{
 		GoalID: goalID, TaskID: tasks[0].ID, Kind: domain.KindDecision,
-		Question: "What should we do?", RunID: "run-1",
+		Question: "What should we do?", AgentSessionID: "run-1",
 	}); err != nil {
 		t.Fatalf("AskDecision: %v", err)
 	}

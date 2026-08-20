@@ -51,15 +51,15 @@ func main() {
 	}
 	sock := filepath.Join(home, ".atct", "atct.sock")
 
-	// run_id is unique per process start and records which execution owns a parked decision.
-	runID := uuid.NewString()
+	// agent_session_id is unique per process start and records which execution owns a parked decision.
+	agentSessionID := uuid.NewString()
 	client := mcpshim.NewClient(sock)
-	if err := client.Call(context.Background(), "run.register", map[string]string{"run_id": runID}, nil); err != nil {
-		log.Fatalf("register run: %v", err)
+	if err := client.Call(context.Background(), "run.register", map[string]string{"agent_session_id": agentSessionID}, nil); err != nil {
+		log.Fatalf("register agent session: %v", err)
 	}
 
 	server := mcp.NewServer(&mcp.Implementation{Name: "atct", Version: version}, nil)
-	mcpshim.Register(server, client, runID)
+	mcpshim.Register(server, client, agentSessionID)
 
 	if err := server.Run(context.Background(), &mcp.StdioTransport{}); err != nil {
 		log.Fatal(err)

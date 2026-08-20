@@ -112,11 +112,11 @@ func TestPendingCommandIncludesAllPendingReasons(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DeclareTasks claimed: %v", err)
 	}
-	if err := s.RegisterRun(ctx, "run-all"); err != nil {
-		t.Fatalf("RegisterRun: %v", err)
+	if err := s.RegisterAgentSession(ctx, "run-all"); err != nil {
+		t.Fatalf("RegisterAgentSession: %v", err)
 	}
-	if err := s.AssociateRunWithProject(ctx, "run-all", project.ID); err != nil {
-		t.Fatalf("AssociateRunWithProject: %v", err)
+	if err := s.AssociateAgentSessionWithProject(ctx, "run-all", project.ID); err != nil {
+		t.Fatalf("AssociateAgentSessionWithProject: %v", err)
 	}
 	if _, err := s.ClaimTask(ctx, claimedTasks[0].ID, "run-all"); err != nil {
 		t.Fatalf("ClaimTask: %v", err)
@@ -131,7 +131,7 @@ func TestPendingCommandIncludesAllPendingReasons(t *testing.T) {
 	}
 	decision, err := s.AskDecision(ctx, store.AskInput{
 		GoalID: decisionGoal.ID, TaskID: decisionTasks[0].ID, Kind: domain.KindDecision,
-		Question: "Which pending reason should remain?", RunID: "run-decision",
+		Question: "Which pending reason should remain?", AgentSessionID: "run-decision",
 	})
 	if err != nil {
 		t.Fatalf("AskDecision: %v", err)
@@ -142,7 +142,7 @@ func TestPendingCommandIncludesAllPendingReasons(t *testing.T) {
 	if err := s.Close(); err != nil {
 		t.Fatalf("Store.Close: %v", err)
 	}
-	t.Setenv(atctRunIDEnv, "run-all")
+	t.Setenv(atctAgentSessionIDEnv, "run-all")
 
 	output, exitCode, err := pendingCommand(dir, projectRoot)
 	if err != nil {
@@ -153,7 +153,7 @@ func TestPendingCommandIncludesAllPendingReasons(t *testing.T) {
 	}
 	for _, want := range []string{
 		"A human answered a decision you parked.",
-		"A task claimed by this run is still open.",
+		"A task claimed by this agent session is still open.",
 		"An active goal has no tasks declared.",
 		decision.ID,
 		"unfinished claimed work",
@@ -185,7 +185,7 @@ func TestPendingCommandReturnsDecisionIDAndQuestion(t *testing.T) {
 		t.Fatalf("DeclareTasks: %v", err)
 	}
 	decision, err := s.AskDecision(ctx, store.AskInput{
-		GoalID: goal.ID, TaskID: tasks[0].ID, Kind: domain.KindDecision, Question: "Which release channel should we use?", RunID: "run-1",
+		GoalID: goal.ID, TaskID: tasks[0].ID, Kind: domain.KindDecision, Question: "Which release channel should we use?", AgentSessionID: "run-1",
 	})
 	if err != nil {
 		t.Fatalf("AskDecision: %v", err)
@@ -339,7 +339,7 @@ func TestPendingCommandFiltersDecisionsFromOtherProject(t *testing.T) {
 		t.Fatalf("DeclareTasks: %v", err)
 	}
 	decision, err := s.AskDecision(ctx, store.AskInput{
-		GoalID: goal.ID, TaskID: tasks[0].ID, Kind: domain.KindDecision, Question: "Question from another project", RunID: "run-other",
+		GoalID: goal.ID, TaskID: tasks[0].ID, Kind: domain.KindDecision, Question: "Question from another project", AgentSessionID: "run-other",
 	})
 	if err != nil {
 		t.Fatalf("AskDecision: %v", err)
@@ -389,7 +389,7 @@ func TestPendingCommandReturnsExitOneForUnregisteredCWD(t *testing.T) {
 	}
 }
 
-func TestPendingCommandUsesLatestProjectRunWithoutEnv(t *testing.T) {
+func TestPendingCommandUsesLatestProjectAgentSessionWithoutEnv(t *testing.T) {
 	dir, projectRoot := newPendingFixture(t)
 	s := openPendingStore(t, dir)
 	ctx := context.Background()
@@ -405,11 +405,11 @@ func TestPendingCommandUsesLatestProjectRunWithoutEnv(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DeclareTasks: %v", err)
 	}
-	if err := s.RegisterRun(ctx, "run-latest"); err != nil {
-		t.Fatalf("RegisterRun: %v", err)
+	if err := s.RegisterAgentSession(ctx, "run-latest"); err != nil {
+		t.Fatalf("RegisterAgentSession: %v", err)
 	}
-	if err := s.AssociateRunWithProject(ctx, "run-latest", project.ID); err != nil {
-		t.Fatalf("AssociateRunWithProject: %v", err)
+	if err := s.AssociateAgentSessionWithProject(ctx, "run-latest", project.ID); err != nil {
+		t.Fatalf("AssociateAgentSessionWithProject: %v", err)
 	}
 	if _, err := s.ClaimTask(ctx, tasks[0].ID, "run-latest"); err != nil {
 		t.Fatalf("ClaimTask: %v", err)
@@ -417,7 +417,7 @@ func TestPendingCommandUsesLatestProjectRunWithoutEnv(t *testing.T) {
 	if err := s.Close(); err != nil {
 		t.Fatalf("Store.Close: %v", err)
 	}
-	t.Setenv(atctRunIDEnv, "")
+	t.Setenv(atctAgentSessionIDEnv, "")
 
 	output, exitCode, err := pendingCommand(dir, projectRoot)
 	if err != nil {
@@ -431,7 +431,7 @@ func TestPendingCommandUsesLatestProjectRunWithoutEnv(t *testing.T) {
 	}
 }
 
-func TestPendingCommandPrefersExplicitRunIDOverLatestProjectRun(t *testing.T) {
+func TestPendingCommandPrefersExplicitAgentSessionIDOverLatestProjectAgentSession(t *testing.T) {
 	dir, projectRoot := newPendingFixture(t)
 	s := openPendingStore(t, dir)
 	ctx := context.Background()
@@ -447,17 +447,17 @@ func TestPendingCommandPrefersExplicitRunIDOverLatestProjectRun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DeclareTasks: %v", err)
 	}
-	if err := s.RegisterRun(ctx, "run-latest"); err != nil {
-		t.Fatalf("RegisterRun latest: %v", err)
+	if err := s.RegisterAgentSession(ctx, "run-latest"); err != nil {
+		t.Fatalf("RegisterAgentSession latest: %v", err)
 	}
-	if err := s.AssociateRunWithProject(ctx, "run-latest", project.ID); err != nil {
-		t.Fatalf("AssociateRunWithProject latest: %v", err)
+	if err := s.AssociateAgentSessionWithProject(ctx, "run-latest", project.ID); err != nil {
+		t.Fatalf("AssociateAgentSessionWithProject latest: %v", err)
 	}
 	if _, err := s.ClaimTask(ctx, tasks[0].ID, "run-latest"); err != nil {
 		t.Fatalf("ClaimTask latest: %v", err)
 	}
-	if err := s.RegisterRun(ctx, "run-explicit"); err != nil {
-		t.Fatalf("RegisterRun explicit: %v", err)
+	if err := s.RegisterAgentSession(ctx, "run-explicit"); err != nil {
+		t.Fatalf("RegisterAgentSession explicit: %v", err)
 	}
 	if _, err := s.ClaimTask(ctx, tasks[1].ID, "run-explicit"); err != nil {
 		t.Fatalf("ClaimTask explicit: %v", err)
@@ -465,7 +465,7 @@ func TestPendingCommandPrefersExplicitRunIDOverLatestProjectRun(t *testing.T) {
 	if err := s.Close(); err != nil {
 		t.Fatalf("Store.Close: %v", err)
 	}
-	t.Setenv(atctRunIDEnv, "run-explicit")
+	t.Setenv(atctAgentSessionIDEnv, "run-explicit")
 
 	output, exitCode, err := pendingCommand(dir, projectRoot)
 	if err != nil {
@@ -478,11 +478,11 @@ func TestPendingCommandPrefersExplicitRunIDOverLatestProjectRun(t *testing.T) {
 		t.Fatalf("pendingCommand did not report the explicitly selected run: %q", output)
 	}
 	if strings.Contains(output, "latest task") {
-		t.Fatalf("pendingCommand reported the latest run despite ATCT_RUN_ID override: %q", output)
+		t.Fatalf("pendingCommand reported the latest agent session despite ATCT_AGENT_SESSION_ID override: %q", output)
 	}
 }
 
-func TestPendingCommandDoesNotReportAnotherRunsClaim(t *testing.T) {
+func TestPendingCommandDoesNotReportAnotherAgentSessionsClaim(t *testing.T) {
 	dir, projectRoot := newPendingFixture(t)
 	s := openPendingStore(t, dir)
 	ctx := context.Background()
@@ -498,11 +498,11 @@ func TestPendingCommandDoesNotReportAnotherRunsClaim(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DeclareTasks: %v", err)
 	}
-	if err := s.RegisterRun(ctx, "run-latest"); err != nil {
-		t.Fatalf("RegisterRun: %v", err)
+	if err := s.RegisterAgentSession(ctx, "run-latest"); err != nil {
+		t.Fatalf("RegisterAgentSession: %v", err)
 	}
-	if err := s.AssociateRunWithProject(ctx, "run-latest", project.ID); err != nil {
-		t.Fatalf("AssociateRunWithProject: %v", err)
+	if err := s.AssociateAgentSessionWithProject(ctx, "run-latest", project.ID); err != nil {
+		t.Fatalf("AssociateAgentSessionWithProject: %v", err)
 	}
 	if _, err := s.ClaimTask(ctx, tasks[0].ID, "run-other"); err != nil {
 		t.Fatalf("ClaimTask: %v", err)
@@ -510,7 +510,7 @@ func TestPendingCommandDoesNotReportAnotherRunsClaim(t *testing.T) {
 	if err := s.Close(); err != nil {
 		t.Fatalf("Store.Close: %v", err)
 	}
-	t.Setenv(atctRunIDEnv, "")
+	t.Setenv(atctAgentSessionIDEnv, "")
 
 	output, exitCode, err := pendingCommand(dir, projectRoot)
 	if err != nil {
@@ -555,7 +555,7 @@ func addPendingTestDecision(t *testing.T, s *store.Store, ctx context.Context, g
 	}
 	input := store.AskInput{
 		GoalID: goalID, TaskID: tasks[0].ID, Kind: domain.KindDecision,
-		Question: question, RunID: "run-" + taskKey,
+		Question: question, AgentSessionID: "run-" + taskKey,
 	}
 	if applyDefault {
 		zero := int64(0)

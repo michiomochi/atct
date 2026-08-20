@@ -9,36 +9,36 @@ import (
 	"time"
 )
 
-func TestProjectIDForRun(t *testing.T) {
+func TestProjectIDForAgentSession(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 	project, err := s.CreateProject(ctx, "atct", "/repos/atct")
 	if err != nil {
 		t.Fatalf("CreateProject: %v", err)
 	}
-	if err := s.RegisterRun(ctx, "run-project"); err != nil {
-		t.Fatalf("RegisterRun: %v", err)
+	if err := s.RegisterAgentSession(ctx, "run-project"); err != nil {
+		t.Fatalf("RegisterAgentSession: %v", err)
 	}
-	if err := s.AssociateRunWithProject(ctx, "run-project", project.ID); err != nil {
-		t.Fatalf("AssociateRunWithProject: %v", err)
+	if err := s.AssociateAgentSessionWithProject(ctx, "run-project", project.ID); err != nil {
+		t.Fatalf("AssociateAgentSessionWithProject: %v", err)
 	}
 
-	got, err := s.ProjectIDForRun(ctx, "run-project")
+	got, err := s.ProjectIDForAgentSession(ctx, "run-project")
 	if err != nil {
-		t.Fatalf("ProjectIDForRun: %v", err)
+		t.Fatalf("ProjectIDForAgentSession: %v", err)
 	}
 	if got != project.ID {
-		t.Fatalf("ProjectIDForRun = %q, want %q", got, project.ID)
+		t.Fatalf("ProjectIDForAgentSession = %q, want %q", got, project.ID)
 	}
 
-	if err := s.RegisterRun(ctx, "run-unassociated"); err != nil {
-		t.Fatalf("RegisterRun(unassociated): %v", err)
+	if err := s.RegisterAgentSession(ctx, "run-unassociated"); err != nil {
+		t.Fatalf("RegisterAgentSession(unassociated): %v", err)
 	}
-	if _, err := s.ProjectIDForRun(ctx, "run-unassociated"); err == nil || !strings.Contains(err.Error(), "not associated") {
-		t.Fatalf("ProjectIDForRun(unassociated) error = %v, want not associated error", err)
+	if _, err := s.ProjectIDForAgentSession(ctx, "run-unassociated"); err == nil || !strings.Contains(err.Error(), "not associated") {
+		t.Fatalf("ProjectIDForAgentSession(unassociated) error = %v, want not associated error", err)
 	}
-	if _, err := s.ProjectIDForRun(ctx, "run-missing"); err == nil || !strings.Contains(err.Error(), "not registered") {
-		t.Fatalf("ProjectIDForRun(missing) error = %v, want not registered error", err)
+	if _, err := s.ProjectIDForAgentSession(ctx, "run-missing"); err == nil || !strings.Contains(err.Error(), "not registered") {
+		t.Fatalf("ProjectIDForAgentSession(missing) error = %v, want not registered error", err)
 	}
 }
 
@@ -70,7 +70,7 @@ func TestProjectIDForTask(t *testing.T) {
 	}
 }
 
-func TestRunCleanupRemovesOldRecordsWithoutRemovingProjects(t *testing.T) {
+func TestAgentSessionCleanupRemovesOldRecordsWithoutRemovingProjects(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 	project, err := s.CreateProject(ctx, "atct", "/repos/atct")
@@ -79,30 +79,30 @@ func TestRunCleanupRemovesOldRecordsWithoutRemovingProjects(t *testing.T) {
 	}
 	old := time.Now().UTC().Add(-90 * 24 * time.Hour).Format(time.RFC3339Nano)
 	if _, err := s.DB().ExecContext(ctx, `
-		INSERT INTO runs (id, project_id, registered_at) VALUES (?, ?, ?), (?, NULL, ?)
+		INSERT INTO agent_sessions (id, project_id, registered_at) VALUES (?, ?, ?), (?, NULL, ?)
 	`, "run-old-project", project.ID, old, "run-old-unbound", old); err != nil {
-		t.Fatalf("insert old runs: %v", err)
+		t.Fatalf("insert old agent sessions: %v", err)
 	}
-	if err := s.RegisterRun(ctx, "run-current"); err != nil {
-		t.Fatalf("RegisterRun: %v", err)
+	if err := s.RegisterAgentSession(ctx, "run-current"); err != nil {
+		t.Fatalf("RegisterAgentSession: %v", err)
 	}
-	if err := s.AssociateRunWithProject(ctx, "run-current", project.ID); err != nil {
-		t.Fatalf("AssociateRunWithProject: %v", err)
+	if err := s.AssociateAgentSessionWithProject(ctx, "run-current", project.ID); err != nil {
+		t.Fatalf("AssociateAgentSessionWithProject: %v", err)
 	}
 
-	latest, err := s.LatestRunID(ctx, project.ID)
+	latest, err := s.LatestAgentSessionID(ctx, project.ID)
 	if err != nil {
-		t.Fatalf("LatestRunID: %v", err)
+		t.Fatalf("LatestAgentSessionID: %v", err)
 	}
 	if latest != "run-current" {
-		t.Fatalf("LatestRunID = %q, want %q", latest, "run-current")
+		t.Fatalf("LatestAgentSessionID = %q, want %q", latest, "run-current")
 	}
 	var oldCount int
-	if err := s.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM runs WHERE id IN (?, ?)`, "run-old-project", "run-old-unbound").Scan(&oldCount); err != nil {
-		t.Fatalf("count old runs: %v", err)
+	if err := s.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM agent_sessions WHERE id IN (?, ?)`, "run-old-project", "run-old-unbound").Scan(&oldCount); err != nil {
+		t.Fatalf("count old agent sessions: %v", err)
 	}
 	if oldCount != 0 {
-		t.Fatalf("old run count = %d, want 0", oldCount)
+		t.Fatalf("old agent session count = %d, want 0", oldCount)
 	}
 	var projectCount int
 	if err := s.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM projects WHERE id = ?`, project.ID).Scan(&projectCount); err != nil {
@@ -212,12 +212,12 @@ PRAGMA user_version = 4;
 	if version != schemaVersion {
 		t.Fatalf("schema version = %d, want %d", version, schemaVersion)
 	}
-	var runTable string
-	if err := s.DB().QueryRow(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'runs'`).Scan(&runTable); err != nil {
-		t.Fatalf("find runs table: %v", err)
+	var agentSessionTable string
+	if err := s.DB().QueryRow(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'agent_sessions'`).Scan(&agentSessionTable); err != nil {
+		t.Fatalf("find agent_sessions table: %v", err)
 	}
-	if runTable != "runs" {
-		t.Fatalf("runs table = %q, want runs", runTable)
+	if agentSessionTable != "agent_sessions" {
+		t.Fatalf("agent_sessions table = %q, want agent_sessions", agentSessionTable)
 	}
 	var projectName, goalTitle, taskTitle, taskFiles, decisionQuestion, decisionAnswer string
 	if err := s.DB().QueryRow(`SELECT name FROM projects WHERE id = ?`, "project-human").Scan(&projectName); err != nil {

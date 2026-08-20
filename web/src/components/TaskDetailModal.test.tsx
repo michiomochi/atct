@@ -57,7 +57,7 @@ function openDecision(id: string, taskID: string): Decision {
     question: "Which option should be used?",
     options: [{ label: "A", description: "", consequence: "" }],
     status: "open",
-    run_id: "fixture-run",
+    agent_session_id: "fixture-run",
     created_at: "2026-08-20T00:00:00Z",
   };
 }

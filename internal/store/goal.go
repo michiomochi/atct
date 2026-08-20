@@ -151,7 +151,7 @@ func validateCompletionReport(report domain.CompletionReport) error {
 // CompleteGoal keeps the pre-v6 Go call shape source-compatible for packages
 // that have not adopted the structured report yet. The MCP API uses
 // CompleteGoalWithReport and does not expose this compatibility path.
-func (s *Store) CompleteGoal(ctx context.Context, goalID, resultSummary, runID string) (domain.Decision, error) {
+func (s *Store) CompleteGoal(ctx context.Context, goalID, resultSummary, agentSessionID string) (domain.Decision, error) {
 	if strings.TrimSpace(resultSummary) == "" {
 		resultSummary = "なし"
 	}
@@ -162,12 +162,12 @@ func (s *Store) CompleteGoal(ctx context.Context, goalID, resultSummary, runID s
 		Surprises:   "なし",
 		NeedsReview: "なし",
 		NextSteps:   "なし",
-	}, runID)
+	}, agentSessionID)
 }
 
 // CompleteGoalWithReport creates a kind=completion Decision.
 // A Goal cannot close while a child Decision is open (invariant 4).
-func (s *Store) CompleteGoalWithReport(ctx context.Context, goalID string, report domain.CompletionReport, runID string) (domain.Decision, error) {
+func (s *Store) CompleteGoalWithReport(ctx context.Context, goalID string, report domain.CompletionReport, agentSessionID string) (domain.Decision, error) {
 	if err := validateCompletionReport(report); err != nil {
 		return domain.Decision{}, err
 	}
@@ -203,7 +203,7 @@ func (s *Store) CompleteGoalWithReport(ctx context.Context, goalID string, repor
 			{Label: "approve", Description: "Approve as complete", Consequence: "The goal becomes done"},
 			{Label: "reject", Description: "Send back", Consequence: "The goal remains active and the agent continues"},
 		},
-		RunID: runID,
+		AgentSessionID: agentSessionID,
 	})
 }
 

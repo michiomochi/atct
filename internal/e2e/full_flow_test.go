@@ -203,7 +203,7 @@ func declareTasks(t *testing.T, s *e2eStack, goalID string, titles []string) []d
 	return tasks
 }
 
-func askParked(t *testing.T, s *e2eStack, goalID, taskID, runID string) parkedDecision {
+func askParked(t *testing.T, s *e2eStack, goalID, taskID, agentSessionID string) parkedDecision {
 	t.Helper()
 	var result parkedDecision
 	callDaemon(t, s, "decision.ask", map[string]any{
@@ -213,8 +213,8 @@ func askParked(t *testing.T, s *e2eStack, goalID, taskID, runID string) parkedDe
 		"options": []domain.Option{{
 			Label: "continue", Description: "Continue the task", Consequence: "The run proceeds",
 		}},
-		"run_id":  runID,
-		"wait_ms": 0,
+		"agent_session_id": agentSessionID,
+		"wait_ms":          0,
 	}, &result)
 	if !result.Parked || result.DecisionID == "" {
 		t.Fatalf("decision.ask returned %+v, want parked decision", result)
@@ -339,23 +339,23 @@ func TestFullFlowThroughDaemonAndHTTP(t *testing.T) {
 
 	var listed e2eGoalList
 	callDaemon(t, stack, "goal.list", map[string]any{
-		"cwd": e2eRoot, "run_id": "flow-run",
+		"cwd": e2eRoot, "agent_session_id": "flow-run",
 	}, &listed)
 	if listed.Project.ID != project.ID || len(listed.Goals) != 1 || listed.Goals[0].ID != goal.ID {
 		t.Fatalf("goal.list returned %+v", listed)
 	}
 
 	tasks := declareTasks(t, stack, goal.ID, []string{"Prepare the run", "Resolve the question", "Finish the goal"})
-	runID := "flow-run"
+	agentSessionID := "flow-run"
 	var claimed domain.Task
 	callDaemon(t, stack, "task.claim", map[string]any{
-		"task_id": tasks[0].ID, "run_id": runID,
+		"task_id": tasks[0].ID, "agent_session_id": agentSessionID,
 	}, &claimed)
-	if claimed.ClaimedBy != runID || claimed.ClaimedAt == nil {
+	if claimed.ClaimedBy != agentSessionID || claimed.ClaimedAt == nil {
 		t.Fatalf("task.claim returned %+v", claimed)
 	}
 
-	parked := askParked(t, stack, goal.ID, tasks[1].ID, runID)
+	parked := askParked(t, stack, goal.ID, tasks[1].ID, agentSessionID)
 	status, raw := httpJSON(t, stack, http.MethodGet, "/api/inbox", nil)
 	if status != http.StatusOK {
 		t.Fatalf("GET /api/inbox status = %d, body %s", status, raw)
@@ -384,7 +384,7 @@ func TestFullFlowThroughDaemonAndHTTP(t *testing.T) {
 
 	var applied []domain.Decision
 	callDaemon(t, stack, "decision.poll", map[string]any{
-		"run_id": runID, "decision_id": parked.DecisionID,
+		"agent_session_id": agentSessionID, "decision_id": parked.DecisionID,
 	}, &applied)
 	if len(applied) != 1 || applied[0].ID != parked.DecisionID || applied[0].Status != domain.DecisionApplied {
 		t.Fatalf("decision.poll returned %+v", applied)
@@ -409,7 +409,7 @@ func TestFullFlowThroughDaemonAndHTTP(t *testing.T) {
 		"now_possible":  "The goal can be approved",
 		"how_to_verify": "Check the completion response",
 		"surprises":     "なし", "needs_review": "なし", "next_steps": "なし",
-		"run_id": runID,
+		"agent_session_id": agentSessionID,
 	}, &completion)
 	if completion.Kind != domain.KindCompletion || completion.Status != domain.DecisionOpen {
 		t.Fatalf("goal.complete returned %+v", completion)
@@ -526,29 +526,29 @@ func TestAnsweredDecisionAppearsUnappliedInInbox(t *testing.T) {
 	}
 }
 
-func TestOnlyOneRunClaimsTaskThroughDaemon(t *testing.T) {
+func TestOnlyOneAgentSessionClaimsTaskThroughDaemon(t *testing.T) {
 	stack := newE2EStack(t)
 	createProject(t, stack)
 	goal := createGoal(t, stack)
 	tasks := declareTasks(t, stack, goal.ID, []string{"Competing task"})
 
 	type claimResult struct {
-		runID string
-		err   error
-		task  domain.Task
+		agentSessionID string
+		err            error
+		task           domain.Task
 	}
 	results := make(chan claimResult, 2)
 	var group sync.WaitGroup
-	for _, runID := range []string{"claim-run-a", "claim-run-b"} {
+	for _, agentSessionID := range []string{"claim-run-a", "claim-run-b"} {
 		group.Add(1)
-		go func(runID string) {
+		go func(agentSessionID string) {
 			defer group.Done()
 			var task domain.Task
 			err := stack.call("task.claim", map[string]any{
-				"task_id": tasks[0].ID, "run_id": runID,
+				"task_id": tasks[0].ID, "agent_session_id": agentSessionID,
 			}, &task)
-			results <- claimResult{runID: runID, err: err, task: task}
-		}(runID)
+			results <- claimResult{agentSessionID: agentSessionID, err: err, task: task}
+		}(agentSessionID)
 	}
 	group.Wait()
 	close(results)
@@ -567,7 +567,7 @@ func TestOnlyOneRunClaimsTaskThroughDaemon(t *testing.T) {
 	if winners != 1 || losers != 1 {
 		t.Fatalf("claim results: winners=%d losers=%d, want one each", winners, losers)
 	}
-	if winner.task.ClaimedBy != winner.runID {
+	if winner.task.ClaimedBy != winner.agentSessionID {
 		t.Fatalf("winning claim = %+v", winner.task)
 	}
 }
@@ -625,7 +625,7 @@ func TestSessionCanAdoptAnsweredDecision(t *testing.T) {
 
 	var listed e2eGoalList
 	callDaemon(t, stack, "goal.list", map[string]any{
-		"cwd": e2eRoot, "run_id": "run-b",
+		"cwd": e2eRoot, "agent_session_id": "run-b",
 	}, &listed)
 	if !containsDecision(listed.OrphanedDecisions, decision.DecisionID) {
 		t.Fatalf("orphaned_decisions does not contain answered decision: %+v", listed.OrphanedDecisions)
@@ -633,13 +633,13 @@ func TestSessionCanAdoptAnsweredDecision(t *testing.T) {
 
 	var applied []domain.Decision
 	callDaemon(t, stack, "decision.poll", map[string]any{
-		"run_id": "run-b", "decision_id": decision.DecisionID,
+		"agent_session_id": "run-b", "decision_id": decision.DecisionID,
 	}, &applied)
 	if len(applied) != 1 || applied[0].ID != decision.DecisionID || applied[0].Status != domain.DecisionApplied {
 		t.Fatalf("decision.poll returned %+v", applied)
 	}
-	if applied[0].RunID != "run-a" {
-		t.Fatalf("adopted decision run_id = %q, want run-a", applied[0].RunID)
+	if applied[0].AgentSessionID != "run-a" {
+		t.Fatalf("adopted decision agent_session_id = %q, want run-a", applied[0].AgentSessionID)
 	}
 
 	status, raw = httpJSON(t, stack, http.MethodGet, "/api/inbox", nil)
@@ -679,7 +679,7 @@ func TestGoalListScopesDecisionsToProject(t *testing.T) {
 
 	var orphaned e2eGoalList
 	callDaemon(t, stack, "goal.list", map[string]any{
-		"cwd": e2eRoot, "run_id": "scope-run-new",
+		"cwd": e2eRoot, "agent_session_id": "scope-run-new",
 	}, &orphaned)
 	if !containsDecision(orphaned.OrphanedDecisions, decision.DecisionID) {
 		t.Fatalf("orphaned_decisions does not contain own decision: %+v", orphaned.OrphanedDecisions)
@@ -690,7 +690,7 @@ func TestGoalListScopesDecisionsToProject(t *testing.T) {
 
 	var answered e2eGoalList
 	callDaemon(t, stack, "goal.list", map[string]any{
-		"cwd": e2eRoot, "run_id": "scope-run-a",
+		"cwd": e2eRoot, "agent_session_id": "scope-run-a",
 	}, &answered)
 	if !containsDecision(answered.AnsweredDecisions, decision.DecisionID) {
 		t.Fatalf("answered_decisions does not contain own decision: %+v", answered.AnsweredDecisions)

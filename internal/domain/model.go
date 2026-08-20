@@ -75,6 +75,6 @@ type Decision struct {
 	AnswerText       string         `json:"answer_text,omitempty"`
 	AnsweredAt       *time.Time     `json:"answered_at,omitempty"`
 	AppliedAt        *time.Time     `json:"applied_at,omitempty"`
-	RunID            string         `json:"run_id"`
+	AgentSessionID   string         `json:"agent_session_id"`
 	CreatedAt        time.Time      `json:"created_at"`
 }

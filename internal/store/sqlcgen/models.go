@@ -8,6 +8,14 @@ import (
 	"database/sql"
 )
 
+type AgentSession struct {
+	ID           string
+	ProjectID    sql.NullString
+	RegisteredAt string
+	Pid          int64
+	StartedAt    string
+}
+
 type Decision struct {
 	ID               string
 	GoalID           string
@@ -23,7 +31,7 @@ type Decision struct {
 	AnswerText       string
 	AnsweredAt       sql.NullString
 	AppliedAt        sql.NullString
-	RunID            string
+	AgentSessionID   string
 	CreatedAt        string
 }
 
@@ -49,12 +57,6 @@ type Project struct {
 	Name      string
 	RootPath  string
 	CreatedAt string
-}
-
-type Run struct {
-	ID           string
-	ProjectID    sql.NullString
-	RegisteredAt string
 }
 
 type Task struct {

@@ -289,15 +289,15 @@ func renderContextLegacy(goals []contextGoal, decisions []domain.Decision) strin
 }
 
 func renderContext(goals []contextGoal, decisions []domain.Decision) string {
-	return renderContextForRun(goals, decisions, currentRunID())
+	return renderContextForAgentSession(goals, decisions, currentAgentSessionID())
 }
 
-func renderContextForRun(goals []contextGoal, decisions []domain.Decision, runID string) string {
+func renderContextForAgentSession(goals []contextGoal, decisions []domain.Decision, agentSessionID string) string {
 	const (
 		maxGoals = 3
 		maxTasks = 5
 	)
-	runID = strings.TrimSpace(runID)
+	agentSessionID = strings.TrimSpace(agentSessionID)
 
 	active := make([]contextGoal, 0, len(goals))
 	activeIDs := make(map[string]struct{}, len(goals))
@@ -358,8 +358,8 @@ func renderContextForRun(goals []contextGoal, decisions []domain.Decision, runID
 			status := string(task.Status)
 			if strings.TrimSpace(task.ClaimedBy) != "" {
 				status = "claimed"
-				if runID != "" && strings.TrimSpace(task.ClaimedBy) == runID && task.Status != domain.TaskDone {
-					status = "claimed by this run"
+				if agentSessionID != "" && strings.TrimSpace(task.ClaimedBy) == agentSessionID && task.Status != domain.TaskDone {
+					status = "claimed by this agent session"
 				}
 			}
 			fmt.Fprintf(&b, "- [%s] %s (task_id: %s)\n", status, oneLine(task.Title), task.ID)

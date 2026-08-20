@@ -537,8 +537,8 @@ func listGoals(ctx context.Context, client *mcpshim.Client) error {
 		Goals []domain.Goal `json:"goals"`
 	}
 	if err := client.Call(ctx, "goal.list", map[string]string{
-		"cwd":    rootPath,
-		"run_id": "",
+		"cwd":              rootPath,
+		"agent_session_id": "",
 	}, &result); err != nil {
 		return err
 	}

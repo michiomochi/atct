@@ -14,7 +14,7 @@ func TestPollMarksApplied(t *testing.T) {
 	taskID := newTestDecisionTask(t, s, goalID, "poll-marks-applied")
 
 	d, err := s.AskDecision(ctx, AskInput{
-		GoalID: goalID, TaskID: taskID, Kind: domain.KindDecision, Question: "What should we do?", RunID: "run-1",
+		GoalID: goalID, TaskID: taskID, Kind: domain.KindDecision, Question: "What should we do?", AgentSessionID: "run-1",
 	})
 	if err != nil {
 		t.Fatalf("AskDecision: %v", err)
@@ -50,12 +50,12 @@ func TestPollMarksApplied(t *testing.T) {
 	}
 }
 
-func TestPollAdoptsDecisionByExplicitIDAcrossRuns(t *testing.T) {
+func TestPollAdoptsDecisionByExplicitIDAcrossAgentSessions(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	goalID := newTestGoal(t, s)
 
-	d := answeredDecisionForRun(t, s, goalID, "run-a")
+	d := answeredDecisionForAgentSession(t, s, goalID, "run-a")
 	got, err := s.PollDecisions(ctx, "run-b", d.ID)
 	if err != nil {
 		t.Fatalf("PollDecisions: %v", err)
@@ -65,12 +65,12 @@ func TestPollAdoptsDecisionByExplicitIDAcrossRuns(t *testing.T) {
 	}
 }
 
-func TestPollWithoutDecisionIDKeepsRunFilter(t *testing.T) {
+func TestPollWithoutDecisionIDKeepsAgentSessionFilter(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	goalID := newTestGoal(t, s)
 
-	d := answeredDecisionForRun(t, s, goalID, "run-a")
+	d := answeredDecisionForAgentSession(t, s, goalID, "run-a")
 	got, err := s.PollDecisions(ctx, "run-b", "")
 	if err != nil {
 		t.Fatalf("PollDecisions: %v", err)
@@ -88,12 +88,12 @@ func TestPollWithoutDecisionIDKeepsRunFilter(t *testing.T) {
 	}
 }
 
-func TestPollAdoptionPreservesOriginalRunID(t *testing.T) {
+func TestPollAdoptionPreservesOriginalAgentSessionID(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	goalID := newTestGoal(t, s)
 
-	d := answeredDecisionForRun(t, s, goalID, "run-a")
+	d := answeredDecisionForAgentSession(t, s, goalID, "run-a")
 	got, err := s.PollDecisions(ctx, "run-b", d.ID)
 	if err != nil {
 		t.Fatalf("PollDecisions: %v", err)
@@ -101,17 +101,17 @@ func TestPollAdoptionPreservesOriginalRunID(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("poll returned %d decisions, want 1", len(got))
 	}
-	if got[0].RunID != "run-a" {
-		t.Fatalf("adopted decision run_id = %q, want original run-a", got[0].RunID)
+	if got[0].AgentSessionID != "run-a" {
+		t.Fatalf("adopted decision agent_session_id = %q, want original run-a", got[0].AgentSessionID)
 	}
 }
 
-func answeredDecisionForRun(t *testing.T, s *Store, goalID, runID string) domain.Decision {
+func answeredDecisionForAgentSession(t *testing.T, s *Store, goalID, agentSessionID string) domain.Decision {
 	t.Helper()
 	ctx := context.Background()
-	taskID := newTestDecisionTask(t, s, goalID, runID)
+	taskID := newTestDecisionTask(t, s, goalID, agentSessionID)
 	d, err := s.AskDecision(ctx, AskInput{
-		GoalID: goalID, TaskID: taskID, Kind: domain.KindDecision, Question: "What should we do?", RunID: runID,
+		GoalID: goalID, TaskID: taskID, Kind: domain.KindDecision, Question: "What should we do?", AgentSessionID: agentSessionID,
 	})
 	if err != nil {
 		t.Fatalf("AskDecision: %v", err)

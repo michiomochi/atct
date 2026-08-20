@@ -180,7 +180,7 @@ func TestContextIsSilentForUnregisteredProject(t *testing.T) {
 }
 
 func TestRenderContextDistinguishesClaimedTasks(t *testing.T) {
-	t.Setenv(atctRunIDEnv, "run-self")
+	t.Setenv(atctAgentSessionIDEnv, "run-self")
 
 	got := renderContext([]contextGoal{{
 		Goal: domain.Goal{ID: "goal-claim", Title: "Claimed goal", Status: domain.GoalActive},
@@ -194,7 +194,7 @@ func TestRenderContextDistinguishesClaimedTasks(t *testing.T) {
 	if !strings.Contains(got, "- [todo] Unclaimed (task_id: task-free)") {
 		t.Fatalf("unclaimed task missing from context:\n%s", got)
 	}
-	if !strings.Contains(got, "- [claimed by this run] Self claim (task_id: task-self)") {
+	if !strings.Contains(got, "- [claimed by this agent session] Self claim (task_id: task-self)") {
 		t.Fatalf("current-run claim marker missing from context:\n%s", got)
 	}
 	if !strings.Contains(got, "- [claimed] Other claim (task_id: task-other)") {
@@ -342,11 +342,11 @@ func (f contextCheckFixture) addUnappliedAnswer(t *testing.T) {
 		t.Fatalf("DeclareTasks: %v", err)
 	}
 	decision, err := f.db.AskDecision(context.Background(), store.AskInput{
-		GoalID:   f.goal.ID,
-		TaskID:   tasks[0].ID,
-		Kind:     domain.KindDecision,
-		Question: "Which path should be taken?",
-		RunID:    "run-context-check",
+		GoalID:         f.goal.ID,
+		TaskID:         tasks[0].ID,
+		Kind:           domain.KindDecision,
+		Question:       "Which path should be taken?",
+		AgentSessionID: "run-context-check",
 	})
 	if err != nil {
 		t.Fatalf("AskDecision: %v", err)
@@ -598,20 +598,20 @@ func newProjectSelectionFixture(t *testing.T) projectSelectionFixture {
 	}
 }
 
-func (f projectSelectionFixture) addPendingDecision(t *testing.T, goalID, question, runID string) {
+func (f projectSelectionFixture) addPendingDecision(t *testing.T, goalID, question, agentSessionID string) {
 	t.Helper()
 
 	// An active decision has to name the task it is holding up.
-	tasks, err := f.db.DeclareTasks(context.Background(), goalID, "agent", "blocked-"+runID, []string{"blocked task"}, []string{"Complete the blocked task after the pending decision is handled."})
+	tasks, err := f.db.DeclareTasks(context.Background(), goalID, "agent", "blocked-"+agentSessionID, []string{"blocked task"}, []string{"Complete the blocked task after the pending decision is handled."})
 	if err != nil {
 		t.Fatalf("DeclareTasks: %v", err)
 	}
 	decision, err := f.db.AskDecision(context.Background(), store.AskInput{
-		GoalID:   goalID,
-		TaskID:   tasks[0].ID,
-		Kind:     domain.KindDecision,
-		Question: question,
-		RunID:    runID,
+		GoalID:         goalID,
+		TaskID:         tasks[0].ID,
+		Kind:           domain.KindDecision,
+		Question:       question,
+		AgentSessionID: agentSessionID,
 	})
 	if err != nil {
 		t.Fatalf("AskDecision: %v", err)

@@ -91,20 +91,20 @@ func (d *Daemon) listClaimableTasks(ctx context.Context, projectID, excludedTask
 	return claimable, nil
 }
 
-func (d *Daemon) ensureRunProject(ctx context.Context, runID, targetProjectID string) error {
-	if strings.TrimSpace(runID) == "" {
+func (d *Daemon) ensureAgentSessionProject(ctx context.Context, agentSessionID, targetProjectID string) error {
+	if strings.TrimSpace(agentSessionID) == "" {
 		return nil
 	}
-	assignedProjectID, err := d.store.ProjectIDForRun(ctx, runID)
+	assignedProjectID, err := d.store.ProjectIDForAgentSession(ctx, agentSessionID)
 	if err != nil {
-		if errors.Is(err, store.ErrRunNotRegistered) {
-			if err := d.store.RegisterRun(ctx, runID); err != nil {
+		if errors.Is(err, store.ErrAgentSessionNotRegistered) {
+			if err := d.store.RegisterAgentSession(ctx, agentSessionID); err != nil {
 				return err
 			}
-			return d.store.AssociateRunWithProject(ctx, runID, targetProjectID)
+			return d.store.AssociateAgentSessionWithProject(ctx, agentSessionID, targetProjectID)
 		}
-		if errors.Is(err, store.ErrRunNotAssociated) {
-			return d.store.AssociateRunWithProject(ctx, runID, targetProjectID)
+		if errors.Is(err, store.ErrAgentSessionNotAssociated) {
+			return d.store.AssociateAgentSessionWithProject(ctx, agentSessionID, targetProjectID)
 		}
 		return err
 	}
@@ -126,19 +126,19 @@ func (d *Daemon) ensureRunProject(ctx context.Context, runID, targetProjectID st
 			targetProjectName = project.Name
 		}
 	}
-	return fmt.Errorf("run project scope violation: assigned project %q, target project %q", assignedProjectName, targetProjectName)
+	return fmt.Errorf("agent session project scope violation: assigned project %q, target project %q", assignedProjectName, targetProjectName)
 }
 
 func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage, error) {
 	switch req.Method {
 	case "run.register":
 		var p struct {
-			RunID string `json:"run_id"`
+			AgentSessionID string `json:"agent_session_id"`
 		}
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, err
 		}
-		if err := d.store.RegisterRun(ctx, p.RunID); err != nil {
+		if err := d.store.RegisterAgentSession(ctx, p.AgentSessionID); err != nil {
 			return nil, err
 		}
 		return marshal(map[string]any{"ok": true}, nil)
@@ -166,7 +166,7 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 	case "goal.list":
 		var p struct {
 			Cwd                     string `json:"cwd"`
-			RunID                   string `json:"run_id"`
+			AgentSessionID          string `json:"agent_session_id"`
 			IncludeUnappliedAnswers bool   `json:"include_unapplied_answers"`
 		}
 		if err := json.Unmarshal(req.Params, &p); err != nil {
@@ -176,8 +176,8 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		if err != nil {
 			return nil, err
 		}
-		if strings.TrimSpace(p.RunID) != "" {
-			if err := d.store.AssociateRunWithProject(ctx, p.RunID, ns.ID); err != nil {
+		if strings.TrimSpace(p.AgentSessionID) != "" {
+			if err := d.store.AssociateAgentSessionWithProject(ctx, p.AgentSessionID, ns.ID); err != nil {
 				return nil, err
 			}
 		}
@@ -187,8 +187,8 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		}
 		// spec section 7: goal.list returns active Goals and unapplied answers together.
 		// This return value lets a new session recover answers (spec section 8, paragraph 3).
-		// Mark matching run_id answers as applied; return others for reference only.
-		mine, err := d.store.PollDecisions(ctx, p.RunID, "")
+		// Mark matching agent_session_id answers as applied; return others for reference only.
+		mine, err := d.store.PollDecisions(ctx, p.AgentSessionID, "")
 		if err != nil {
 			return nil, err
 		}
@@ -238,7 +238,7 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 			Titles                  []string   `json:"titles"`
 			Descriptions            []string   `json:"descriptions"`
 			Files                   [][]string `json:"files"`
-			RunID                   string     `json:"run_id"`
+			AgentSessionID          string     `json:"agent_session_id"`
 			IncludeUnappliedAnswers bool       `json:"include_unapplied_answers"`
 		}
 		if err := json.Unmarshal(req.Params, &p); err != nil {
@@ -248,7 +248,7 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		if err != nil {
 			return nil, err
 		}
-		if err := d.ensureRunProject(ctx, p.RunID, goal.ProjectID); err != nil {
+		if err := d.ensureAgentSessionProject(ctx, p.AgentSessionID, goal.ProjectID); err != nil {
 			return nil, err
 		}
 		tasks, err := d.store.DeclareTasks(ctx, p.GoalID, p.Agent, p.IdempotencyKey, p.Titles, p.Descriptions, p.Files)
@@ -262,7 +262,7 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		var p struct {
 			TaskID                  string `json:"task_id"`
 			Status                  string `json:"status"`
-			RunID                   string `json:"run_id"`
+			AgentSessionID          string `json:"agent_session_id"`
 			IncludeUnappliedAnswers bool   `json:"include_unapplied_answers"`
 		}
 		if err := json.Unmarshal(req.Params, &p); err != nil {
@@ -272,7 +272,7 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		if err != nil {
 			return nil, err
 		}
-		if err := d.ensureRunProject(ctx, p.RunID, targetProjectID); err != nil {
+		if err := d.ensureAgentSessionProject(ctx, p.AgentSessionID, targetProjectID); err != nil {
 			return nil, err
 		}
 		st, err := domain.ParseTaskStatus(p.Status)
@@ -289,7 +289,7 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 	case "task.claim":
 		var p struct {
 			TaskID                  string `json:"task_id"`
-			RunID                   string `json:"run_id"`
+			AgentSessionID          string `json:"agent_session_id"`
 			IncludeUnappliedAnswers bool   `json:"include_unapplied_answers"`
 		}
 		if err := json.Unmarshal(req.Params, &p); err != nil {
@@ -299,10 +299,10 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		if err != nil {
 			return nil, err
 		}
-		if err := d.ensureRunProject(ctx, p.RunID, targetProjectID); err != nil {
+		if err := d.ensureAgentSessionProject(ctx, p.AgentSessionID, targetProjectID); err != nil {
 			return nil, err
 		}
-		tk, err := d.store.ClaimTask(ctx, p.TaskID, p.RunID)
+		tk, err := d.store.ClaimTask(ctx, p.TaskID, p.AgentSessionID)
 		if errors.Is(err, store.ErrTaskAlreadyClaimed) {
 			return nil, ErrTaskAlreadyClaimed
 		}
@@ -340,7 +340,7 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 			Options                 []domain.Option `json:"options"`
 			DefaultOption           string          `json:"default_option"`
 			DefaultAfterMs          *int64          `json:"default_after_ms"`
-			RunID                   string          `json:"run_id"`
+			AgentSessionID          string          `json:"agent_session_id"`
 			WaitMs                  *int            `json:"wait_ms"`
 			IncludeUnappliedAnswers bool            `json:"include_unapplied_answers"`
 		}
@@ -351,7 +351,7 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		if err != nil {
 			return nil, err
 		}
-		if err := d.ensureRunProject(ctx, p.RunID, goal.ProjectID); err != nil {
+		if err := d.ensureAgentSessionProject(ctx, p.AgentSessionID, goal.ProjectID); err != nil {
 			return nil, err
 		}
 		if p.TaskID != "" {
@@ -359,14 +359,14 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 			if err != nil {
 				return nil, err
 			}
-			if err := d.ensureRunProject(ctx, p.RunID, targetProjectID); err != nil {
+			if err := d.ensureAgentSessionProject(ctx, p.AgentSessionID, targetProjectID); err != nil {
 				return nil, err
 			}
 		}
 		dec, err := d.store.AskDecision(ctx, store.AskInput{
 			GoalID: p.GoalID, TaskID: p.TaskID, Kind: domain.KindDecision,
 			Question: p.Question, Options: p.Options, DefaultOption: p.DefaultOption,
-			DefaultAfterMs: p.DefaultAfterMs, RunID: p.RunID,
+			DefaultAfterMs: p.DefaultAfterMs, AgentSessionID: p.AgentSessionID,
 		})
 		if err != nil {
 			return nil, err
@@ -411,7 +411,7 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 			response.ClaimableTasks, err = d.listClaimableTasks(ctx, goal.ProjectID, p.TaskID)
 			return marshal(response, err)
 		}
-		applied, err := d.store.PollDecisions(ctx, p.RunID, dec.ID)
+		applied, err := d.store.PollDecisions(ctx, p.AgentSessionID, dec.ID)
 		if err != nil {
 			return nil, err
 		}
@@ -427,14 +427,14 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 
 	case "decision.poll":
 		var p struct {
-			RunID                   string `json:"run_id"`
+			AgentSessionID          string `json:"agent_session_id"`
 			DecisionID              string `json:"decision_id"`
 			IncludeUnappliedAnswers bool   `json:"include_unapplied_answers"`
 		}
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, err
 		}
-		decs, err := d.store.PollDecisions(ctx, p.RunID, p.DecisionID)
+		decs, err := d.store.PollDecisions(ctx, p.AgentSessionID, p.DecisionID)
 		if err != nil || !p.IncludeUnappliedAnswers {
 			return marshal(decs, err)
 		}
@@ -494,7 +494,7 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 			Surprises               string `json:"surprises"`
 			NeedsReview             string `json:"needs_review"`
 			NextSteps               string `json:"next_steps"`
-			RunID                   string `json:"run_id"`
+			AgentSessionID          string `json:"agent_session_id"`
 			IncludeUnappliedAnswers bool   `json:"include_unapplied_answers"`
 		}
 		if err := json.Unmarshal(req.Params, &p); err != nil {
@@ -504,7 +504,7 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		if err != nil {
 			return nil, err
 		}
-		if err := d.ensureRunProject(ctx, p.RunID, goal.ProjectID); err != nil {
+		if err := d.ensureAgentSessionProject(ctx, p.AgentSessionID, goal.ProjectID); err != nil {
 			return nil, err
 		}
 		dec, err := d.store.CompleteGoalWithReport(ctx, p.GoalID, domain.CompletionReport{
@@ -514,7 +514,7 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 			Surprises:   p.Surprises,
 			NeedsReview: p.NeedsReview,
 			NextSteps:   p.NextSteps,
-		}, p.RunID)
+		}, p.AgentSessionID)
 		if err != nil || !p.IncludeUnappliedAnswers {
 			return marshal(dec, err)
 		}

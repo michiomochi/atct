@@ -5,14 +5,16 @@ CREATE TABLE IF NOT EXISTS projects (
   created_at TEXT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS runs (
+CREATE TABLE IF NOT EXISTS agent_sessions (
   id            TEXT PRIMARY KEY,
   project_id    TEXT REFERENCES projects(id),
-  registered_at TEXT NOT NULL
+  registered_at TEXT NOT NULL,
+  pid           INTEGER NOT NULL DEFAULT 0,
+  started_at    TEXT NOT NULL DEFAULT ''
 );
 
-CREATE INDEX IF NOT EXISTS idx_runs_project_registered_at
-  ON runs(project_id, registered_at DESC);
+CREATE INDEX IF NOT EXISTS idx_agent_sessions_project_registered_at
+  ON agent_sessions(project_id, registered_at DESC);
 
 CREATE TABLE IF NOT EXISTS goals (
   id             TEXT PRIMARY KEY,
@@ -78,7 +80,7 @@ CREATE TABLE IF NOT EXISTS decisions (
   answer_text  TEXT NOT NULL DEFAULT '',
   answered_at  TEXT,
   applied_at   TEXT,
-  run_id       TEXT NOT NULL DEFAULT '',
+  agent_session_id TEXT NOT NULL DEFAULT '',
   created_at   TEXT NOT NULL,
   CHECK (kind <> 'decision' OR status NOT IN ('open', 'answered') OR (task_id IS NOT NULL AND task_id <> ''))
 );

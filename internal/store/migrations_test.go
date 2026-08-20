@@ -37,10 +37,121 @@ func TestEmptyDatabaseAppliesBaselineMigration(t *testing.T) {
 		t.Fatalf("apply embedded migrations: %v", err)
 	}
 	assertUserVersion(t, db, schemaVersion)
-	assertMigrationRecorded(t, db, "0001_baseline.sql")
-	for _, table := range []string{"projects", "runs", "goals", "tasks", "decisions", "schema_migrations"} {
+	for _, filename := range []string{
+		"0001_baseline.sql",
+		"0002_task_description.sql",
+		"0003_unique_task_sort_order.sql",
+		"0004_agent_sessions.sql",
+	} {
+		assertMigrationRecorded(t, db, filename)
+	}
+	for _, table := range []string{"projects", "agent_sessions", "goals", "tasks", "decisions", "schema_migrations"} {
 		assertTableExists(t, db, table)
 	}
+}
+
+func TestAgentSessionMigrationRenamesLegacySchema(t *testing.T) {
+	db := openMigrationTestDB(t)
+	if _, err := db.Exec(embeddedBaselineSQL(t)); err != nil {
+		t.Fatalf("create legacy schema: %v", err)
+	}
+	if _, err := db.Exec(`
+INSERT INTO projects (id, name, root_path, created_at)
+VALUES ('project-legacy', 'legacy project', '/legacy', '2026-08-20T00:00:00Z');
+INSERT INTO goals (id, project_id, title, status, created_at, updated_at)
+VALUES ('goal-legacy', 'project-legacy', 'Legacy goal', 'active', '2026-08-20T00:00:00Z', '2026-08-20T00:00:00Z');
+INSERT INTO runs (id, project_id, registered_at)
+VALUES ('session-one', 'project-legacy', '2026-08-20T00:01:00Z'),
+       ('session-two', NULL, '2026-08-20T00:02:00Z');
+INSERT INTO decisions (id, goal_id, kind, question, status, run_id, created_at)
+VALUES ('decision-legacy', 'goal-legacy', 'completion', 'Continue?', 'open', 'session-one', '2026-08-20T00:03:00Z');
+PRAGMA user_version = 6;
+`); err != nil {
+		t.Fatalf("insert legacy rows: %v", err)
+	}
+
+	var beforeSessions, beforeDecisions int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM runs`).Scan(&beforeSessions); err != nil {
+		t.Fatalf("count legacy runs: %v", err)
+	}
+	if err := db.QueryRow(`SELECT COUNT(*) FROM decisions`).Scan(&beforeDecisions); err != nil {
+		t.Fatalf("count legacy decisions: %v", err)
+	}
+
+	if err := applyEmbeddedMigrations(db); err != nil {
+		t.Fatalf("apply agent session migration: %v", err)
+	}
+
+	assertTableExists(t, db, "agent_sessions")
+	var oldTableCount int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'runs'`).Scan(&oldTableCount); err != nil {
+		t.Fatalf("check old runs table: %v", err)
+	}
+	if oldTableCount != 0 {
+		t.Fatalf("old runs table count = %d, want 0", oldTableCount)
+	}
+
+	agentSessionColumns := migrationTableColumns(t, db, "agent_sessions")
+	for _, column := range []string{"id", "project_id", "registered_at", "pid", "started_at"} {
+		if _, ok := agentSessionColumns[column]; !ok {
+			t.Errorf("agent_sessions is missing column %q", column)
+		}
+	}
+	decisionColumns := migrationTableColumns(t, db, "decisions")
+	if _, ok := decisionColumns["agent_session_id"]; !ok {
+		t.Error("decisions is missing column agent_session_id")
+	}
+	if _, ok := decisionColumns["run_id"]; ok {
+		t.Error("decisions still has column run_id")
+	}
+
+	var afterSessions, afterDecisions int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM agent_sessions`).Scan(&afterSessions); err != nil {
+		t.Fatalf("count migrated agent sessions: %v", err)
+	}
+	if err := db.QueryRow(`SELECT COUNT(*) FROM decisions`).Scan(&afterDecisions); err != nil {
+		t.Fatalf("count migrated decisions: %v", err)
+	}
+	if afterSessions != beforeSessions {
+		t.Fatalf("agent_sessions row count = %d, want %d", afterSessions, beforeSessions)
+	}
+	if afterDecisions != beforeDecisions {
+		t.Fatalf("decisions row count = %d, want %d", afterDecisions, beforeDecisions)
+	}
+
+	rows, err := db.Query(`SELECT pid, started_at FROM agent_sessions ORDER BY id`)
+	if err != nil {
+		t.Fatalf("read migrated agent session defaults: %v", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var pid int
+		var startedAt string
+		if err := rows.Scan(&pid, &startedAt); err != nil {
+			t.Fatalf("scan migrated agent session defaults: %v", err)
+		}
+		if pid != 0 || startedAt != "" {
+			t.Errorf("migrated agent session defaults = pid %d, started_at %q; want 0, empty", pid, startedAt)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("read migrated agent session defaults: %v", err)
+	}
+
+	var indexCount int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_agent_sessions_project_registered_at'`).Scan(&indexCount); err != nil {
+		t.Fatalf("check agent session index: %v", err)
+	}
+	if indexCount != 1 {
+		t.Fatalf("agent session index count = %d, want 1", indexCount)
+	}
+	if err := db.QueryRow(`SELECT COUNT(*) FROM schema_migrations`).Scan(&indexCount); err != nil {
+		t.Fatalf("count schema migrations: %v", err)
+	}
+	if indexCount != 4 {
+		t.Fatalf("schema migration count = %d, want 4", indexCount)
+	}
+	assertMigrationRecorded(t, db, "0004_agent_sessions.sql")
 }
 
 func TestExistingV6DatabaseRecordsBaselineWithoutExecutingIt(t *testing.T) {
@@ -162,4 +273,26 @@ func assertTableExists(t *testing.T, db *sql.DB, table string) {
 	if count != 1 {
 		t.Fatalf("table %q does not exist", table)
 	}
+}
+
+func migrationTableColumns(t *testing.T, db *sql.DB, table string) map[string]struct{} {
+	t.Helper()
+	rows, err := db.Query(`SELECT name FROM pragma_table_info(?)`, table)
+	if err != nil {
+		t.Fatalf("read columns for %q: %v", table, err)
+	}
+	defer rows.Close()
+
+	columns := make(map[string]struct{})
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			t.Fatalf("scan column for %q: %v", table, err)
+		}
+		columns[name] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("read columns for %q: %v", table, err)
+	}
+	return columns
 }

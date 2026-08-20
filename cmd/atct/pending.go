@@ -15,17 +15,17 @@ import (
 var errNoPendingDecisions = errors.New("no unapplied decisions")
 
 const (
-	atctRunIDEnv                 = "ATCT_RUN_ID"
+	atctAgentSessionIDEnv        = "ATCT_AGENT_SESSION_ID"
 	unfinishedClaimMarker        = "Unfinished claimed tasks:"
 	undeclaredGoalMarker         = "Undeclared active goals:"
 	pendingDecisionReason        = "A human answered a decision you parked. Call `atct_decision_poll` with each decision_id below, then continue the work that was waiting on it."
 	pendingDefaultDecisionReason = "No one answered a decision you parked, so its default was applied. Call `atct_decision_poll` with each decision_id below, then continue the work that was waiting on it."
-	pendingClaimReason           = "A task claimed by this run is still open. If you forgot to close it, close it; if you are still working on it, continue."
+	pendingClaimReason           = "A task claimed by this agent session is still open. If you forgot to close it, close it; if you are still working on it, continue."
 	pendingUndeclaredGoalReason  = "An active goal has no tasks declared. Call `atct_task_declare` for each goal below, then continue the work."
 )
 
-func currentRunID() string {
-	return strings.TrimSpace(os.Getenv(atctRunIDEnv))
+func currentAgentSessionID() string {
+	return strings.TrimSpace(os.Getenv(atctAgentSessionIDEnv))
 }
 
 func pendingCommand(dir, cwd string) (string, int, error) {
@@ -102,19 +102,19 @@ func pendingTextForProject(dir, cwd, projectName string, projectSpecified bool) 
 	}
 
 	unfinishedTasks := make([]domain.Task, 0)
-	runID := currentRunID()
-	if runID == "" {
-		runID, err = s.LatestRunID(ctx, project.ID)
+	agentSessionID := currentAgentSessionID()
+	if agentSessionID == "" {
+		agentSessionID, err = s.LatestAgentSessionID(ctx, project.ID)
 		if err != nil {
-			return "", fmt.Errorf("find latest run: %w", err)
+			return "", fmt.Errorf("find latest agent session: %w", err)
 		}
 	}
-	if runID != "" {
+	if agentSessionID != "" {
 		for _, goal := range goals {
 			if goal.Status != domain.GoalActive {
 				continue
 			}
-			tasks, err := s.ListOpenTasksClaimedBy(ctx, goal.ID, runID)
+			tasks, err := s.ListOpenTasksClaimedBy(ctx, goal.ID, agentSessionID)
 			if err != nil {
 				return "", fmt.Errorf("list claimed tasks for goal %s: %w", goal.ID, err)
 			}

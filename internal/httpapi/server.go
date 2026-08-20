@@ -525,12 +525,12 @@ func (s *Server) handleRevise(w http.ResponseWriter, r *http.Request, decisionID
 	}
 
 	revised, err := s.store.AskDecision(r.Context(), store.AskInput{
-		GoalID:   original.GoalID,
-		TaskID:   original.TaskID,
-		Kind:     original.Kind,
-		Question: revisionQuestion(original),
-		Options:  request.Options,
-		RunID:    original.RunID,
+		GoalID:         original.GoalID,
+		TaskID:         original.TaskID,
+		Kind:           original.Kind,
+		Question:       revisionQuestion(original),
+		Options:        request.Options,
+		AgentSessionID: original.AgentSessionID,
 	})
 	if err != nil {
 		writeStoreError(w, err)

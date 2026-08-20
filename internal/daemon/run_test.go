@@ -11,7 +11,7 @@ import (
 	"github.com/michiomochi/atct/internal/store"
 )
 
-func TestDaemonRegistersRunAndAssociatesItWithGoalProject(t *testing.T) {
+func TestDaemonRegistersAgentSessionAndAssociatesItWithGoalProject(t *testing.T) {
 	s, err := store.Open(filepath.Join(t.TempDir(), "atct.db"))
 	if err != nil {
 		t.Fatalf("store.Open: %v", err)
@@ -25,7 +25,7 @@ func TestDaemonRegistersRunAndAssociatesItWithGoalProject(t *testing.T) {
 	}
 	d := New(s)
 
-	registerParams, err := json.Marshal(map[string]string{"run_id": "run-startup"})
+	registerParams, err := json.Marshal(map[string]string{"agent_session_id": "run-startup"})
 	if err != nil {
 		t.Fatalf("marshal run.register params: %v", err)
 	}
@@ -42,7 +42,7 @@ func TestDaemonRegistersRunAndAssociatesItWithGoalProject(t *testing.T) {
 	}
 
 	var projectID sql.NullString
-	if err := s.DB().QueryRowContext(ctx, `SELECT project_id FROM runs WHERE id = ?`, "run-startup").Scan(&projectID); err != nil {
+	if err := s.DB().QueryRowContext(ctx, `SELECT project_id FROM agent_sessions WHERE id = ?`, "run-startup").Scan(&projectID); err != nil {
 		t.Fatalf("lookup registered run: %v", err)
 	}
 	if projectID.Valid {
@@ -50,8 +50,8 @@ func TestDaemonRegistersRunAndAssociatesItWithGoalProject(t *testing.T) {
 	}
 
 	goalListParams, err := json.Marshal(map[string]string{
-		"cwd":    "/repos/atct/subdir",
-		"run_id": "run-startup",
+		"cwd":              "/repos/atct/subdir",
+		"agent_session_id": "run-startup",
 	})
 	if err != nil {
 		t.Fatalf("marshal goal.list params: %v", err)
@@ -59,7 +59,7 @@ func TestDaemonRegistersRunAndAssociatesItWithGoalProject(t *testing.T) {
 	if _, err := d.dispatch(ctx, rpc.Request{Method: "goal.list", Params: goalListParams}); err != nil {
 		t.Fatalf("goal.list: %v", err)
 	}
-	if err := s.DB().QueryRowContext(ctx, `SELECT project_id FROM runs WHERE id = ?`, "run-startup").Scan(&projectID); err != nil {
+	if err := s.DB().QueryRowContext(ctx, `SELECT project_id FROM agent_sessions WHERE id = ?`, "run-startup").Scan(&projectID); err != nil {
 		t.Fatalf("lookup associated run: %v", err)
 	}
 	if !projectID.Valid || projectID.String != project.ID {

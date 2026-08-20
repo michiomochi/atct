@@ -29,7 +29,7 @@ type AskInput struct {
 	Options        []domain.Option
 	DefaultOption  string
 	DefaultAfterMs *int64
-	RunID          string
+	AgentSessionID string
 }
 
 func (s *Store) AskDecision(ctx context.Context, in AskInput) (domain.Decision, error) {
@@ -45,16 +45,16 @@ func (s *Store) AskDecision(ctx context.Context, in AskInput) (domain.Decision, 
 	}
 
 	d := domain.Decision{
-		ID:            uuid.NewString(),
-		GoalID:        in.GoalID,
-		TaskID:        in.TaskID,
-		Kind:          in.Kind,
-		Question:      in.Question,
-		Options:       in.Options,
-		DefaultOption: in.DefaultOption,
-		Status:        domain.DecisionOpen,
-		RunID:         in.RunID,
-		CreatedAt:     time.Now().UTC(),
+		ID:             uuid.NewString(),
+		GoalID:         in.GoalID,
+		TaskID:         in.TaskID,
+		Kind:           in.Kind,
+		Question:       in.Question,
+		Options:        in.Options,
+		DefaultOption:  in.DefaultOption,
+		Status:         domain.DecisionOpen,
+		AgentSessionID: in.AgentSessionID,
+		CreatedAt:      time.Now().UTC(),
 	}
 	if in.DefaultAfterMs != nil {
 		after := *in.DefaultAfterMs
@@ -63,16 +63,16 @@ func (s *Store) AskDecision(ctx context.Context, in AskInput) (domain.Decision, 
 
 	q := decisionQueries(s)
 	params := sqlcgen.CreateDecisionParams{
-		ID:            d.ID,
-		GoalID:        d.GoalID,
-		TaskID:        sql.NullString{String: in.TaskID, Valid: in.TaskID != ""},
-		Kind:          string(d.Kind),
-		Question:      d.Question,
-		Options:       string(raw),
-		Status:        string(d.Status),
-		DefaultOption: d.DefaultOption,
-		RunID:         d.RunID,
-		CreatedAt:     d.CreatedAt.Format(time.RFC3339),
+		ID:             d.ID,
+		GoalID:         d.GoalID,
+		TaskID:         sql.NullString{String: in.TaskID, Valid: in.TaskID != ""},
+		Kind:           string(d.Kind),
+		Question:       d.Question,
+		Options:        string(raw),
+		Status:         string(d.Status),
+		DefaultOption:  d.DefaultOption,
+		AgentSessionID: d.AgentSessionID,
+		CreatedAt:      d.CreatedAt.Format(time.RFC3339),
 	}
 	if in.DefaultAfterMs != nil {
 		params.DefaultAfterMs = sql.NullInt64{Int64: *in.DefaultAfterMs, Valid: true}
@@ -119,23 +119,23 @@ type decisionRow struct {
 	AnswerText       string
 	AnsweredAt       sql.NullString
 	AppliedAt        sql.NullString
-	RunID            string
+	AgentSessionID   string
 	CreatedAt        string
 }
 
 func decisionFromRow(row decisionRow) (domain.Decision, error) {
 	d := domain.Decision{
-		ID:            row.ID,
-		GoalID:        row.GoalID,
-		TaskID:        row.TaskID,
-		Kind:          domain.DecisionKind(row.Kind),
-		Question:      row.Question,
-		Status:        domain.DecisionStatus(row.Status),
-		DefaultOption: row.DefaultOption,
-		AnswerLabel:   row.AnswerLabel,
-		AnswerText:    row.AnswerText,
-		RunID:         row.RunID,
-		CreatedAt:     time.Time{},
+		ID:             row.ID,
+		GoalID:         row.GoalID,
+		TaskID:         row.TaskID,
+		Kind:           domain.DecisionKind(row.Kind),
+		Question:       row.Question,
+		Status:         domain.DecisionStatus(row.Status),
+		DefaultOption:  row.DefaultOption,
+		AnswerLabel:    row.AnswerLabel,
+		AnswerText:     row.AnswerText,
+		AgentSessionID: row.AgentSessionID,
+		CreatedAt:      time.Time{},
 	}
 	if row.DefaultAfterMs.Valid {
 		after := row.DefaultAfterMs.Int64
@@ -211,7 +211,7 @@ func (s *Store) GetDecision(ctx context.Context, id string) (domain.Decision, er
 		AnswerText:       row.AnswerText,
 		AnsweredAt:       row.AnsweredAt,
 		AppliedAt:        row.AppliedAt,
-		RunID:            row.RunID,
+		AgentSessionID:   row.AgentSessionID,
 		CreatedAt:        row.CreatedAt,
 	})
 }
@@ -237,7 +237,7 @@ func (s *Store) ListOpenDecisions(ctx context.Context, goalID string) ([]domain.
 			AnswerText:       row.AnswerText,
 			AnsweredAt:       row.AnsweredAt,
 			AppliedAt:        row.AppliedAt,
-			RunID:            row.RunID,
+			AgentSessionID:   row.AgentSessionID,
 			CreatedAt:        row.CreatedAt,
 		}
 	})
@@ -264,7 +264,7 @@ func (s *Store) ListAllOpenDecisions(ctx context.Context) ([]domain.Decision, er
 			AnswerText:       row.AnswerText,
 			AnsweredAt:       row.AnsweredAt,
 			AppliedAt:        row.AppliedAt,
-			RunID:            row.RunID,
+			AgentSessionID:   row.AgentSessionID,
 			CreatedAt:        row.CreatedAt,
 		}
 	})
@@ -344,7 +344,7 @@ func (s *Store) ApplyExpiredDefaults(ctx context.Context, now time.Time) (int, e
 			AnswerText:       row.AnswerText,
 			AnsweredAt:       row.AnsweredAt,
 			AppliedAt:        row.AppliedAt,
-			RunID:            row.RunID,
+			AgentSessionID:   row.AgentSessionID,
 			CreatedAt:        row.CreatedAt,
 		}
 	})
@@ -430,7 +430,7 @@ func (s *Store) WithdrawDecision(ctx context.Context, decisionID, reason string)
 // PollDecisions returns answered Decisions and transitions them to applied in one transaction.
 // "Human answered" and "agent received" are distinct facts.
 // A decision becomes applied when returned; if the process dies before return, it remains answered and the next poll can recover it.
-func (s *Store) PollDecisions(ctx context.Context, runID string, decisionID string) ([]domain.Decision, error) {
+func (s *Store) PollDecisions(ctx context.Context, agentSessionID string, decisionID string) ([]domain.Decision, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, fmt.Errorf("begin tx: %w", err)
@@ -441,11 +441,11 @@ func (s *Store) PollDecisions(ctx context.Context, runID string, decisionID stri
 	var out []domain.Decision
 	var conversionErr error
 	if decisionID == "" {
-		rows, queryErr := q.ListAnsweredDecisionsForRun(ctx, runID)
+		rows, queryErr := q.ListAnsweredDecisionsForAgentSession(ctx, agentSessionID)
 		if queryErr != nil {
 			return nil, fmt.Errorf("query answered decisions: %w", queryErr)
 		}
-		out, conversionErr = convertDecisionRows(rows, func(row sqlcgen.ListAnsweredDecisionsForRunRow) decisionRow {
+		out, conversionErr = convertDecisionRows(rows, func(row sqlcgen.ListAnsweredDecisionsForAgentSessionRow) decisionRow {
 			return decisionRow{
 				ID:               row.ID,
 				GoalID:           row.GoalID,
@@ -461,7 +461,7 @@ func (s *Store) PollDecisions(ctx context.Context, runID string, decisionID stri
 				AnswerText:       row.AnswerText,
 				AnsweredAt:       row.AnsweredAt,
 				AppliedAt:        row.AppliedAt,
-				RunID:            row.RunID,
+				AgentSessionID:   row.AgentSessionID,
 				CreatedAt:        row.CreatedAt,
 			}
 		})
@@ -486,7 +486,7 @@ func (s *Store) PollDecisions(ctx context.Context, runID string, decisionID stri
 				AnswerText:       row.AnswerText,
 				AnsweredAt:       row.AnsweredAt,
 				AppliedAt:        row.AppliedAt,
-				RunID:            row.RunID,
+				AgentSessionID:   row.AgentSessionID,
 				CreatedAt:        row.CreatedAt,
 			}
 		})
@@ -543,7 +543,7 @@ func (s *Store) ListUnappliedDecisions(ctx context.Context) ([]domain.Decision, 
 			AnswerText:       row.AnswerText,
 			AnsweredAt:       row.AnsweredAt,
 			AppliedAt:        row.AppliedAt,
-			RunID:            row.RunID,
+			AgentSessionID:   row.AgentSessionID,
 			CreatedAt:        row.CreatedAt,
 		}
 	})
@@ -572,7 +572,7 @@ func (s *Store) ListUnappliedDecisionsForProject(ctx context.Context, projectID 
 			AnswerText:       row.AnswerText,
 			AnsweredAt:       row.AnsweredAt,
 			AppliedAt:        row.AppliedAt,
-			RunID:            row.RunID,
+			AgentSessionID:   row.AgentSessionID,
 			CreatedAt:        row.CreatedAt,
 		}
 	})
@@ -612,7 +612,7 @@ func (s *Store) ListAppliedDecisions(ctx context.Context, goalID string) ([]doma
 			AnswerText:       row.AnswerText,
 			AnsweredAt:       row.AnsweredAt,
 			AppliedAt:        row.AppliedAt,
-			RunID:            row.RunID,
+			AgentSessionID:   row.AgentSessionID,
 			CreatedAt:        row.CreatedAt,
 		}
 	})

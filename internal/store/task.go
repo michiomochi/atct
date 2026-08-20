@@ -213,10 +213,10 @@ func taskQueries(s *Store) *sqlcgen.Queries {
 }
 
 // ListOpenTasksClaimedBy returns tasks that still need closing and belong to
-// the supplied run. A blank run ID cannot identify a caller's own claims.
-func (s *Store) ListOpenTasksClaimedBy(ctx context.Context, goalID, runID string) ([]domain.Task, error) {
-	runID = strings.TrimSpace(runID)
-	if runID == "" {
+// the supplied agent session. A blank agent session ID cannot identify a caller's own claims.
+func (s *Store) ListOpenTasksClaimedBy(ctx context.Context, goalID, agentSessionID string) ([]domain.Task, error) {
+	agentSessionID = strings.TrimSpace(agentSessionID)
+	if agentSessionID == "" {
 		return []domain.Task{}, nil
 	}
 
@@ -226,7 +226,7 @@ func (s *Store) ListOpenTasksClaimedBy(ctx context.Context, goalID, runID string
 	}
 	open := make([]domain.Task, 0)
 	for _, task := range tasks {
-		if task.Status == domain.TaskDone || strings.TrimSpace(task.ClaimedBy) != runID {
+		if task.Status == domain.TaskDone || strings.TrimSpace(task.ClaimedBy) != agentSessionID {
 			continue
 		}
 		open = append(open, task)
@@ -300,8 +300,8 @@ func (s *Store) UpdateTask(ctx context.Context, taskID string, status domain.Tas
 	return domain.Task{}, fmt.Errorf("task not found after update: %s", taskID)
 }
 
-// ClaimTask atomically assigns a task to one run.
-func (s *Store) ClaimTask(ctx context.Context, taskID, runID string) (domain.Task, error) {
+// ClaimTask atomically assigns a task to one agent session.
+func (s *Store) ClaimTask(ctx context.Context, taskID, agentSessionID string) (domain.Task, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return domain.Task{}, fmt.Errorf("begin claim tx: %w", err)
@@ -325,14 +325,14 @@ func (s *Store) ClaimTask(ctx context.Context, taskID, runID string) (domain.Tas
 		return domain.Task{}, fmt.Errorf("parse task files: %w", err)
 	}
 	if len(files) > 0 {
-		if err := rejectTaskFileConflict(ctx, q, task.GoalID, taskID, task.Title, files, runID); err != nil {
+		if err := rejectTaskFileConflict(ctx, q, task.GoalID, taskID, task.Title, files, agentSessionID); err != nil {
 			return domain.Task{}, err
 		}
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339)
 	res, err := q.ClaimTask(ctx, sqlcgen.ClaimTaskParams{
-		ClaimedBy: runID,
+		ClaimedBy: agentSessionID,
 		ClaimedAt: sql.NullString{String: now, Valid: true},
 		UpdatedAt: now,
 		ID:        taskID,
@@ -369,10 +369,10 @@ type taskClaimConflictInfo struct {
 	Files []string
 }
 
-func rejectTaskFileConflict(ctx context.Context, q *sqlcgen.Queries, goalID, taskID, title string, files []string, runID string) error {
+func rejectTaskFileConflict(ctx context.Context, q *sqlcgen.Queries, goalID, taskID, title string, files []string, agentSessionID string) error {
 	rows, err := q.ListClaimedTasksForConflict(ctx, sqlcgen.ListClaimedTasksForConflictParams{
 		ID:        taskID,
-		ClaimedBy: runID,
+		ClaimedBy: agentSessionID,
 		Status:    string(domain.TaskDone),
 		Status_2:  string(domain.TaskDropped),
 	})

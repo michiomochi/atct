@@ -17,14 +17,14 @@ func TestListAppliedDecisionsReturnsOnlyAppliedDecisionsForGoal(t *testing.T) {
 	applied := createAppliedHistoryDecision(t, s, goalID, "applied", time.Time{})
 	openTaskID := newTestDecisionTask(t, s, goalID, "history-open")
 	open, err := s.AskDecision(ctx, AskInput{
-		GoalID: goalID, TaskID: openTaskID, Kind: domain.KindDecision, Question: "open", RunID: "open-run",
+		GoalID: goalID, TaskID: openTaskID, Kind: domain.KindDecision, Question: "open", AgentSessionID: "open-run",
 	})
 	if err != nil {
 		t.Fatalf("AskDecision open: %v", err)
 	}
 	answeredTaskID := newTestDecisionTask(t, s, goalID, "history-answered")
 	answered, err := s.AskDecision(ctx, AskInput{
-		GoalID: goalID, TaskID: answeredTaskID, Kind: domain.KindDecision, Question: "answered", RunID: "answered-run",
+		GoalID: goalID, TaskID: answeredTaskID, Kind: domain.KindDecision, Question: "answered", AgentSessionID: "answered-run",
 	})
 	if err != nil {
 		t.Fatalf("AskDecision answered: %v", err)
@@ -124,10 +124,10 @@ func TestListAppliedDecisionsLimitsToTwentyAndReportsOmittedCount(t *testing.T) 
 func createAppliedHistoryDecision(t *testing.T, s *Store, goalID, question string, answeredAt time.Time) domain.Decision {
 	t.Helper()
 	ctx := context.Background()
-	runID := fmt.Sprintf("history-run-%s", question)
-	taskID := newTestDecisionTask(t, s, goalID, runID)
+	agentSessionID := fmt.Sprintf("history-run-%s", question)
+	taskID := newTestDecisionTask(t, s, goalID, agentSessionID)
 	d, err := s.AskDecision(ctx, AskInput{
-		GoalID: goalID, TaskID: taskID, Kind: domain.KindDecision, Question: question, RunID: runID,
+		GoalID: goalID, TaskID: taskID, Kind: domain.KindDecision, Question: question, AgentSessionID: agentSessionID,
 	})
 	if err != nil {
 		t.Fatalf("AskDecision %q: %v", question, err)
@@ -137,7 +137,7 @@ func createAppliedHistoryDecision(t *testing.T, s *Store, goalID, question strin
 	}); err != nil {
 		t.Fatalf("AnswerDecision %q: %v", question, err)
 	}
-	if _, err := s.PollDecisions(ctx, runID, ""); err != nil {
+	if _, err := s.PollDecisions(ctx, agentSessionID, ""); err != nil {
 		t.Fatalf("PollDecisions %q: %v", question, err)
 	}
 	if !answeredAt.IsZero() {

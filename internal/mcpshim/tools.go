@@ -144,14 +144,14 @@ func callWithUnappliedDecisions(ctx context.Context, c *Client, method string, p
 
 // Register adds eight agent-facing tools to the MCP server.
 // Human operations (answer, approve, reject, and stale-claim release) belong to the Web UI and are not exposed through MCP.
-func Register(server *mcp.Server, c *Client, runID string) {
+func Register(server *mcp.Server, c *Client, agentSessionID string) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:         "atct_goal_list",
-		Description:  "Get active Goals and unapplied answers relevant to the current run. Call at startup and resume.",
+		Description:  "Get active Goals and unapplied answers relevant to the current agent session. Call at startup and resume.",
 		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in GoalListIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
 		return callWithUnappliedDecisions(ctx, c, "goal.list", map[string]any{
-			"cwd": in.Cwd, "run_id": runID, "include_unapplied_answers": true,
+			"cwd": in.Cwd, "agent_session_id": agentSessionID, "include_unapplied_answers": true,
 		})
 	})
 
@@ -163,7 +163,7 @@ func Register(server *mcp.Server, c *Client, runID string) {
 		params := map[string]any{
 			"goal_id": in.GoalID, "titles": in.Titles, "descriptions": in.Descriptions,
 			"idempotency_key": in.IdempotencyKey, "agent": in.Agent,
-			"run_id":                    runID,
+			"agent_session_id":          agentSessionID,
 			"include_unapplied_answers": true,
 		}
 		if in.Files != nil {
@@ -174,11 +174,11 @@ func Register(server *mcp.Server, c *Client, runID string) {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:         "atct_task_claim",
-		Description:  "Claim a task for this run. Only one concurrent run can claim a task.",
+		Description:  "Claim a task for this agent session. Only one concurrent agent session can claim a task.",
 		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in TaskClaimIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
 		return callWithUnappliedDecisions(ctx, c, "task.claim", map[string]any{
-			"task_id": in.TaskID, "run_id": runID, "include_unapplied_answers": true,
+			"task_id": in.TaskID, "agent_session_id": agentSessionID, "include_unapplied_answers": true,
 		})
 	})
 
@@ -188,7 +188,7 @@ func Register(server *mcp.Server, c *Client, runID string) {
 		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in TaskUpdateIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
 		return callWithUnappliedDecisions(ctx, c, "task.update", map[string]any{
-			"task_id": in.TaskID, "status": in.Status, "run_id": runID,
+			"task_id": in.TaskID, "status": in.Status, "agent_session_id": agentSessionID,
 			"include_unapplied_answers": true,
 		})
 	})
@@ -201,7 +201,7 @@ func Register(server *mcp.Server, c *Client, runID string) {
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in DecisionAskIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
 		params := map[string]any{
 			"goal_id": in.GoalID, "task_id": in.TaskID, "question": in.Question,
-			"options": in.Options, "run_id": runID, "include_unapplied_answers": true,
+			"options": in.Options, "agent_session_id": agentSessionID, "include_unapplied_answers": true,
 		}
 		if in.DefaultOption != "" {
 			params["default_option"] = in.DefaultOption
@@ -221,7 +221,7 @@ func Register(server *mcp.Server, c *Client, runID string) {
 		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in DecisionPollIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
 		return callWithUnappliedDecisions(ctx, c, "decision.poll", map[string]any{
-			"run_id": runID, "decision_id": in.DecisionID, "include_unapplied_answers": true,
+			"agent_session_id": agentSessionID, "decision_id": in.DecisionID, "include_unapplied_answers": true,
 		})
 	})
 
@@ -245,7 +245,7 @@ func Register(server *mcp.Server, c *Client, runID string) {
 			"goal_id": in.GoalID, "work_done": in.WorkDone,
 			"now_possible": in.NowPossible, "how_to_verify": in.HowToVerify,
 			"surprises": in.Surprises, "needs_review": in.NeedsReview,
-			"next_steps": in.NextSteps, "run_id": runID, "include_unapplied_answers": true,
+			"next_steps": in.NextSteps, "agent_session_id": agentSessionID, "include_unapplied_answers": true,
 		})
 	})
 }

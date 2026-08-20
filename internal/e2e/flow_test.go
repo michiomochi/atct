@@ -41,7 +41,7 @@ func TestFullGoalLifecycle(t *testing.T) {
 		Options: []domain.Option{
 			{Label: "sqlite", Description: "SQLite", Consequence: "No external server required"},
 		},
-		RunID: "run-1",
+		AgentSessionID: "run-1",
 	})
 	if err != nil {
 		t.Fatalf("AskDecision: %v", err)
@@ -104,7 +104,7 @@ func TestAnswerSurvivesSessionChange(t *testing.T) {
 	}
 	d, err := s.AskDecision(ctx, store.AskInput{
 		GoalID: g.ID, TaskID: tasks[0].ID, Kind: domain.KindDecision,
-		Question: "What should we do?", RunID: "run-1",
+		Question: "What should we do?", AgentSessionID: "run-1",
 	})
 	if err != nil {
 		t.Fatalf("AskDecision: %v", err)
