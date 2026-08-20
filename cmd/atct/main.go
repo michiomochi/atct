@@ -41,17 +41,19 @@ type cliConfig struct {
 	goalAction       string
 	goalTitle        string
 	goalDescription  string
+	taskIDs          []string
 }
 
 var errInvalidArgs = errors.New("invalid command line")
 
 var validSubcommands = map[string]bool{
-	"daemon":  true,
-	"project": true,
-	"goal":    true,
-	"context": true,
-	"pending": true,
-	"watch":   true,
+	"daemon":      true,
+	"project":     true,
+	"goal":        true,
+	"context":     true,
+	"pending":     true,
+	"watch":       true,
+	"claim-check": true,
 }
 
 var validDaemonActions = map[string]bool{"start": true, "stop": true}
@@ -71,6 +73,7 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "  context              Print the current goal context for an AI session")
 	fmt.Fprintln(os.Stderr, "  pending              Print unanswered human decisions for the current project")
 	fmt.Fprintln(os.Stderr, "  watch                Stream human decision events for a Monitor")
+	fmt.Fprintln(os.Stderr, "  claim-check <ids...> Exit 0 only if every task is claimed by a running session")
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Options:")
 	fmt.Fprintln(os.Stderr, "  -listen string   HTTP listen address (default \"127.0.0.1:8787\")")
@@ -161,7 +164,9 @@ func parseArgs(args []string) (cliConfig, error) {
 		description = flags.String("d", "", "goal description")
 	}
 	flags.Parse(rest)
-	if len(flags.Args()) > 0 {
+	if sub == "claim-check" {
+		cfg.taskIDs = flags.Args()
+	} else if len(flags.Args()) > 0 {
 		fmt.Fprintf(os.Stderr, "unexpected argument %q\n", flags.Args()[0])
 		printUsage()
 		return cliConfig{}, errInvalidArgs
@@ -287,6 +292,12 @@ func main() {
 			log.Fatalf("pending: %v", err)
 		}
 		return
+	case "claim-check":
+		code, err := claimCheckCommand(dir, config.taskIDs)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+		}
+		os.Exit(code)
 	case "watch":
 		if err := runWatch(dir); err != nil {
 			log.Fatalf("watch: %v", err)
