@@ -98,7 +98,7 @@ func (d *Daemon) ensureAgentSessionProject(ctx context.Context, agentSessionID, 
 	assignedProjectID, err := d.store.ProjectIDForAgentSession(ctx, agentSessionID)
 	if err != nil {
 		if errors.Is(err, store.ErrAgentSessionNotRegistered) {
-			if err := d.store.RegisterAgentSession(ctx, agentSessionID); err != nil {
+			if err := d.store.RegisterAgentSession(ctx, agentSessionID, 0); err != nil {
 				return err
 			}
 			return d.store.AssociateAgentSessionWithProject(ctx, agentSessionID, targetProjectID)
@@ -134,11 +134,12 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 	case "run.register":
 		var p struct {
 			AgentSessionID string `json:"agent_session_id"`
+			PID            int    `json:"pid"`
 		}
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, err
 		}
-		if err := d.store.RegisterAgentSession(ctx, p.AgentSessionID); err != nil {
+		if err := d.store.RegisterAgentSession(ctx, p.AgentSessionID, p.PID); err != nil {
 			return nil, err
 		}
 		return marshal(map[string]any{"ok": true}, nil)

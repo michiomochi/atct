@@ -54,7 +54,10 @@ func main() {
 	// agent_session_id is unique per process start and records which execution owns a parked decision.
 	agentSessionID := uuid.NewString()
 	client := mcpshim.NewClient(sock)
-	if err := client.Call(context.Background(), "run.register", map[string]string{"agent_session_id": agentSessionID}, nil); err != nil {
+	if err := client.Call(context.Background(), "run.register", map[string]any{
+		"agent_session_id": agentSessionID,
+		"pid":              os.Getpid(),
+	}, nil); err != nil {
 		log.Fatalf("register agent session: %v", err)
 	}
 

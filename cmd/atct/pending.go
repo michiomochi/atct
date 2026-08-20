@@ -17,10 +17,12 @@ var errNoPendingDecisions = errors.New("no unapplied decisions")
 const (
 	atctAgentSessionIDEnv        = "ATCT_AGENT_SESSION_ID"
 	unfinishedClaimMarker        = "Unfinished claimed tasks:"
+	staleClaimMarker             = "Stale claimed tasks:"
 	undeclaredGoalMarker         = "Undeclared active goals:"
 	pendingDecisionReason        = "A human answered a decision you parked. Call `atct_decision_poll` with each decision_id below, then continue the work that was waiting on it."
 	pendingDefaultDecisionReason = "No one answered a decision you parked, so its default was applied. Call `atct_decision_poll` with each decision_id below, then continue the work that was waiting on it."
 	pendingClaimReason           = "A task claimed by this agent session is still open. If you forgot to close it, close it; if you are still working on it, continue."
+	pendingStaleClaimReason      = "A task claimed by another agent session is no longer running. You can take it over by returning it to todo with `atct_task_update`, then claim it."
 	pendingUndeclaredGoalReason  = "An active goal has no tasks declared. Call `atct_task_declare` for each goal below, then continue the work."
 )
 
@@ -122,6 +124,27 @@ func pendingTextForProject(dir, cwd, projectName string, projectSpecified bool) 
 		}
 	}
 
+	_, staleClaimedTasks, err := store.ClaimLiveness(ctx, s, project.ID)
+	if err != nil {
+		return "", fmt.Errorf("check claim liveness: %w", err)
+	}
+	activeGoalIDs := make(map[string]struct{}, len(goals))
+	for _, goal := range goals {
+		if goal.Status == domain.GoalActive {
+			activeGoalIDs[goal.ID] = struct{}{}
+		}
+	}
+	otherStaleClaimedTasks := make([]domain.Task, 0)
+	for _, task := range staleClaimedTasks {
+		if _, ok := activeGoalIDs[task.GoalID]; !ok {
+			continue
+		}
+		if task.ClaimedBy == agentSessionID {
+			continue
+		}
+		otherStaleClaimedTasks = append(otherStaleClaimedTasks, task)
+	}
+
 	var output strings.Builder
 	humanAnsweredDecisions := make([]domain.Decision, 0)
 	defaultAppliedDecisions := make([]domain.Decision, 0)
@@ -162,6 +185,18 @@ func pendingTextForProject(dir, cwd, projectName string, projectSpecified bool) 
 		output.WriteString(unfinishedClaimMarker)
 		output.WriteByte('\n')
 		for _, task := range unfinishedTasks {
+			fmt.Fprintf(&output, "- %s (task_id: %s)\n", oneLine(task.Title), task.ID)
+		}
+	}
+	if len(otherStaleClaimedTasks) > 0 {
+		if output.Len() > 0 {
+			output.WriteString("\n\n")
+		}
+		output.WriteString(pendingStaleClaimReason)
+		output.WriteString("\n\n")
+		output.WriteString(staleClaimMarker)
+		output.WriteByte('\n')
+		for _, task := range otherStaleClaimedTasks {
 			fmt.Fprintf(&output, "- %s (task_id: %s)\n", oneLine(task.Title), task.ID)
 		}
 	}

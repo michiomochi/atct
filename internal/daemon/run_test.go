@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -25,7 +26,10 @@ func TestDaemonRegistersAgentSessionAndAssociatesItWithGoalProject(t *testing.T)
 	}
 	d := New(s)
 
-	registerParams, err := json.Marshal(map[string]string{"agent_session_id": "run-startup"})
+	registerParams, err := json.Marshal(map[string]any{
+		"agent_session_id": "run-startup",
+		"pid":              os.Getpid(),
+	})
 	if err != nil {
 		t.Fatalf("marshal run.register params: %v", err)
 	}
@@ -47,6 +51,15 @@ func TestDaemonRegistersAgentSessionAndAssociatesItWithGoalProject(t *testing.T)
 	}
 	if projectID.Valid {
 		t.Fatalf("registered run project_id = %q, want unbound before goal.list", projectID.String)
+	}
+	var registeredPID int
+	var startedAt string
+	if err := s.DB().QueryRowContext(ctx, `
+		SELECT pid, started_at FROM agent_sessions WHERE id = ?`, "run-startup").Scan(&registeredPID, &startedAt); err != nil {
+		t.Fatalf("lookup registered process identity: %v", err)
+	}
+	if registeredPID != os.Getpid() || startedAt == "" {
+		t.Fatalf("registered process identity = pid %d, started_at %q; want pid %d and a non-empty start time", registeredPID, startedAt, os.Getpid())
 	}
 
 	goalListParams, err := json.Marshal(map[string]string{

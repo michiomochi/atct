@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -112,7 +113,7 @@ func TestPendingCommandIncludesAllPendingReasons(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DeclareTasks claimed: %v", err)
 	}
-	if err := s.RegisterAgentSession(ctx, "run-all"); err != nil {
+	if err := s.RegisterAgentSession(ctx, "run-all", 0); err != nil {
 		t.Fatalf("RegisterAgentSession: %v", err)
 	}
 	if err := s.AssociateAgentSessionWithProject(ctx, "run-all", project.ID); err != nil {
@@ -164,6 +165,95 @@ func TestPendingCommandIncludesAllPendingReasons(t *testing.T) {
 		if !strings.Contains(output, want) {
 			t.Fatalf("pendingCommand output does not contain %q: %q", want, output)
 		}
+	}
+}
+
+func TestPendingCommandReportsStaleClaimSeparatelyFromOwnClaim(t *testing.T) {
+	dir, projectRoot := newPendingFixture(t)
+	s := openPendingStore(t, dir)
+	ctx := context.Background()
+	project, err := s.ResolveProject(ctx, projectRoot)
+	if err != nil {
+		t.Fatalf("ResolveProject: %v", err)
+	}
+
+	ownGoal, err := s.CreateGoal(ctx, project.ID, "Continue my work", "")
+	if err != nil {
+		t.Fatalf("CreateGoal own: %v", err)
+	}
+	ownTasks, err := s.DeclareTasks(ctx, ownGoal.ID, "agent", "own-claim", []string{"my unfinished task"}, []string{"Continue the task claimed by the current agent session."})
+	if err != nil {
+		t.Fatalf("DeclareTasks own: %v", err)
+	}
+	if _, err := s.ClaimTask(ctx, ownTasks[0].ID, "own-run"); err != nil {
+		t.Fatalf("ClaimTask own: %v", err)
+	}
+
+	staleGoal, err := s.CreateGoal(ctx, project.ID, "Recover abandoned work", "")
+	if err != nil {
+		t.Fatalf("CreateGoal stale: %v", err)
+	}
+	staleTasks, err := s.DeclareTasks(ctx, staleGoal.ID, "agent", "stale-claim", []string{"abandoned task"}, []string{"Recover the task left by an agent session that stopped."})
+	if err != nil {
+		t.Fatalf("DeclareTasks stale: %v", err)
+	}
+	if err := s.RegisterAgentSession(ctx, "stale-run", 0); err != nil {
+		t.Fatalf("RegisterAgentSession stale: %v", err)
+	}
+	if err := s.AssociateAgentSessionWithProject(ctx, "stale-run", project.ID); err != nil {
+		t.Fatalf("AssociateAgentSessionWithProject stale: %v", err)
+	}
+	if _, err := s.ClaimTask(ctx, staleTasks[0].ID, "stale-run"); err != nil {
+		t.Fatalf("ClaimTask stale: %v", err)
+	}
+	otherProject, err := s.CreateProject(ctx, "other", filepath.Join(t.TempDir(), "other-project"))
+	if err != nil {
+		t.Fatalf("CreateProject other: %v", err)
+	}
+	otherGoal, err := s.CreateGoal(ctx, otherProject.ID, "Leave another project alone", "")
+	if err != nil {
+		t.Fatalf("CreateGoal other: %v", err)
+	}
+	otherTasks, err := s.DeclareTasks(ctx, otherGoal.ID, "agent", "other-stale-claim", []string{"other project task"}, []string{"Do not report this task for the selected project."})
+	if err != nil {
+		t.Fatalf("DeclareTasks other: %v", err)
+	}
+	if err := s.RegisterAgentSession(ctx, "other-stale-run", 0); err != nil {
+		t.Fatalf("RegisterAgentSession other: %v", err)
+	}
+	if err := s.AssociateAgentSessionWithProject(ctx, "other-stale-run", otherProject.ID); err != nil {
+		t.Fatalf("AssociateAgentSessionWithProject other: %v", err)
+	}
+	if _, err := s.ClaimTask(ctx, otherTasks[0].ID, "other-stale-run"); err != nil {
+		t.Fatalf("ClaimTask other: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("Store.Close: %v", err)
+	}
+	t.Setenv(atctAgentSessionIDEnv, "own-run")
+
+	output, exitCode, err := pendingCommand(dir, projectRoot)
+	if err != nil {
+		t.Fatalf("pendingCommand: %v", err)
+	}
+	if exitCode != 0 {
+		t.Fatalf("pendingCommand exit code = %d, want 0", exitCode)
+	}
+	for _, want := range []string{
+		pendingClaimReason,
+		"my unfinished task",
+		"A task claimed by another agent session is no longer running.",
+		"abandoned task",
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("pendingCommand output does not contain %q: %q", want, output)
+		}
+	}
+	if strings.Count(output, "my unfinished task") != 1 {
+		t.Fatalf("pendingCommand repeated own claim in stale section: %q", output)
+	}
+	if strings.Contains(output, "other project task") {
+		t.Fatalf("pendingCommand reported a claim from another project: %q", output)
 	}
 }
 
@@ -405,7 +495,7 @@ func TestPendingCommandUsesLatestProjectAgentSessionWithoutEnv(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DeclareTasks: %v", err)
 	}
-	if err := s.RegisterAgentSession(ctx, "run-latest"); err != nil {
+	if err := s.RegisterAgentSession(ctx, "run-latest", os.Getpid()); err != nil {
 		t.Fatalf("RegisterAgentSession: %v", err)
 	}
 	if err := s.AssociateAgentSessionWithProject(ctx, "run-latest", project.ID); err != nil {
@@ -447,7 +537,7 @@ func TestPendingCommandPrefersExplicitAgentSessionIDOverLatestProjectAgentSessio
 	if err != nil {
 		t.Fatalf("DeclareTasks: %v", err)
 	}
-	if err := s.RegisterAgentSession(ctx, "run-latest"); err != nil {
+	if err := s.RegisterAgentSession(ctx, "run-latest", os.Getpid()); err != nil {
 		t.Fatalf("RegisterAgentSession latest: %v", err)
 	}
 	if err := s.AssociateAgentSessionWithProject(ctx, "run-latest", project.ID); err != nil {
@@ -456,7 +546,7 @@ func TestPendingCommandPrefersExplicitAgentSessionIDOverLatestProjectAgentSessio
 	if _, err := s.ClaimTask(ctx, tasks[0].ID, "run-latest"); err != nil {
 		t.Fatalf("ClaimTask latest: %v", err)
 	}
-	if err := s.RegisterAgentSession(ctx, "run-explicit"); err != nil {
+	if err := s.RegisterAgentSession(ctx, "run-explicit", 0); err != nil {
 		t.Fatalf("RegisterAgentSession explicit: %v", err)
 	}
 	if _, err := s.ClaimTask(ctx, tasks[1].ID, "run-explicit"); err != nil {
@@ -482,7 +572,7 @@ func TestPendingCommandPrefersExplicitAgentSessionIDOverLatestProjectAgentSessio
 	}
 }
 
-func TestPendingCommandDoesNotReportAnotherAgentSessionsClaim(t *testing.T) {
+func TestPendingCommandDoesNotReportRunningAnotherAgentSessionsClaim(t *testing.T) {
 	dir, projectRoot := newPendingFixture(t)
 	s := openPendingStore(t, dir)
 	ctx := context.Background()
@@ -498,11 +588,17 @@ func TestPendingCommandDoesNotReportAnotherAgentSessionsClaim(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DeclareTasks: %v", err)
 	}
-	if err := s.RegisterAgentSession(ctx, "run-latest"); err != nil {
+	if err := s.RegisterAgentSession(ctx, "run-latest", 0); err != nil {
 		t.Fatalf("RegisterAgentSession: %v", err)
 	}
 	if err := s.AssociateAgentSessionWithProject(ctx, "run-latest", project.ID); err != nil {
 		t.Fatalf("AssociateAgentSessionWithProject: %v", err)
+	}
+	if err := s.RegisterAgentSession(ctx, "run-other", os.Getpid()); err != nil {
+		t.Fatalf("RegisterAgentSession other: %v", err)
+	}
+	if err := s.AssociateAgentSessionWithProject(ctx, "run-other", project.ID); err != nil {
+		t.Fatalf("AssociateAgentSessionWithProject other: %v", err)
 	}
 	if _, err := s.ClaimTask(ctx, tasks[0].ID, "run-other"); err != nil {
 		t.Fatalf("ClaimTask: %v", err)
@@ -510,7 +606,7 @@ func TestPendingCommandDoesNotReportAnotherAgentSessionsClaim(t *testing.T) {
 	if err := s.Close(); err != nil {
 		t.Fatalf("Store.Close: %v", err)
 	}
-	t.Setenv(atctAgentSessionIDEnv, "")
+	t.Setenv(atctAgentSessionIDEnv, "run-latest")
 
 	output, exitCode, err := pendingCommand(dir, projectRoot)
 	if err != nil {

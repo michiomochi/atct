@@ -16,7 +16,7 @@ func TestProjectIDForAgentSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateProject: %v", err)
 	}
-	if err := s.RegisterAgentSession(ctx, "run-project"); err != nil {
+	if err := s.RegisterAgentSession(ctx, "run-project", 0); err != nil {
 		t.Fatalf("RegisterAgentSession: %v", err)
 	}
 	if err := s.AssociateAgentSessionWithProject(ctx, "run-project", project.ID); err != nil {
@@ -31,7 +31,7 @@ func TestProjectIDForAgentSession(t *testing.T) {
 		t.Fatalf("ProjectIDForAgentSession = %q, want %q", got, project.ID)
 	}
 
-	if err := s.RegisterAgentSession(ctx, "run-unassociated"); err != nil {
+	if err := s.RegisterAgentSession(ctx, "run-unassociated", 0); err != nil {
 		t.Fatalf("RegisterAgentSession(unassociated): %v", err)
 	}
 	if _, err := s.ProjectIDForAgentSession(ctx, "run-unassociated"); err == nil || !strings.Contains(err.Error(), "not associated") {
@@ -83,7 +83,7 @@ func TestAgentSessionCleanupRemovesOldRecordsWithoutRemovingProjects(t *testing.
 	`, "run-old-project", project.ID, old, "run-old-unbound", old); err != nil {
 		t.Fatalf("insert old agent sessions: %v", err)
 	}
-	if err := s.RegisterAgentSession(ctx, "run-current"); err != nil {
+	if err := s.RegisterAgentSession(ctx, "run-current", 0); err != nil {
 		t.Fatalf("RegisterAgentSession: %v", err)
 	}
 	if err := s.AssociateAgentSessionWithProject(ctx, "run-current", project.ID); err != nil {

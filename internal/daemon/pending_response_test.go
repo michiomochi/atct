@@ -35,7 +35,7 @@ func TestTaskClaimNotificationDoesNotApplyDecision(t *testing.T) {
 	if _, err := s.AnswerDecision(ctx, store.AnswerInput{DecisionID: decision.ID, AnswerLabel: "A", AnswerText: "Use A"}); err != nil {
 		t.Fatalf("AnswerDecision: %v", err)
 	}
-	if err := s.RegisterAgentSession(ctx, "claim-run"); err != nil {
+	if err := s.RegisterAgentSession(ctx, "claim-run", 0); err != nil {
 		t.Fatalf("RegisterAgentSession: %v", err)
 	}
 	if err := s.AssociateAgentSessionWithProject(ctx, "claim-run", project.ID); err != nil {
@@ -94,7 +94,7 @@ func TestGoalListNotificationIsProjectScoped(t *testing.T) {
 	}
 	decision := answerPendingResponseDecision(t, s, goal.ID, tasks[0].ID, "project decision")
 	otherDecision := answerPendingResponseDecision(t, s, otherGoal.ID, otherTasks[0].ID, "other project decision")
-	if err := s.RegisterAgentSession(ctx, "query-run"); err != nil {
+	if err := s.RegisterAgentSession(ctx, "query-run", 0); err != nil {
 		t.Fatalf("RegisterAgentSession: %v", err)
 	}
 
@@ -131,7 +131,7 @@ func TestDecisionPollNotificationExcludesPolledDecision(t *testing.T) {
 	}
 	polled := answerPendingResponseDecision(t, s, goal.ID, tasks[0].ID, "polled decision")
 	other := answerPendingResponseDecision(t, s, goal.ID, tasks[1].ID, "other decision")
-	if err := s.RegisterAgentSession(ctx, "poll-run"); err != nil {
+	if err := s.RegisterAgentSession(ctx, "poll-run", 0); err != nil {
 		t.Fatalf("RegisterAgentSession: %v", err)
 	}
 
@@ -194,7 +194,7 @@ func TestDecisionAskParkedIncludesClaimableTasks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Marshal params: %v", err)
 	}
-	if err := s.RegisterAgentSession(ctx, "park-run"); err != nil {
+	if err := s.RegisterAgentSession(ctx, "park-run", 0); err != nil {
 		t.Fatalf("RegisterAgentSession(park-run): %v", err)
 	}
 	if err := s.AssociateAgentSessionWithProject(ctx, "park-run", project.ID); err != nil {
@@ -347,7 +347,7 @@ func TestTaskWritesWithoutAgentSessionIDSkipProjectGuard(t *testing.T) {
 func TestTaskClaimAssignsUnassociatedRunToTargetProject(t *testing.T) {
 	f := newProjectScopeFixture(t)
 	agentSessionID := "first-write-run"
-	if err := f.store.RegisterAgentSession(f.ctx, agentSessionID); err != nil {
+	if err := f.store.RegisterAgentSession(f.ctx, agentSessionID, 0); err != nil {
 		t.Fatalf("RegisterAgentSession: %v", err)
 	}
 
@@ -431,7 +431,7 @@ func TestProjectScopedWritesAllowAssignedProjectAndGoalListReadsOtherProject(t *
 		t.Fatalf("goal.complete: %v", err)
 	}
 
-	if err := f.store.RegisterAgentSession(f.ctx, "read-run"); err != nil {
+	if err := f.store.RegisterAgentSession(f.ctx, "read-run", 0); err != nil {
 		t.Fatalf("RegisterAgentSession(read-run): %v", err)
 	}
 	params, err = json.Marshal(map[string]any{"cwd": f.target.RootPath, "agent_session_id": "read-run"})
@@ -494,7 +494,7 @@ func newProjectScopeFixture(t *testing.T) projectScopeFixture {
 	if err != nil {
 		t.Fatalf("DeclareTasks(target): %v", err)
 	}
-	if err := s.RegisterAgentSession(ctx, "assigned-run"); err != nil {
+	if err := s.RegisterAgentSession(ctx, "assigned-run", 0); err != nil {
 		t.Fatalf("RegisterAgentSession: %v", err)
 	}
 	if err := s.AssociateAgentSessionWithProject(ctx, "assigned-run", assigned.ID); err != nil {

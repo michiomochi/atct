@@ -329,10 +329,16 @@ func requireAgentSessionID(agentSessionID string) (string, error) {
 	return agentSessionID, nil
 }
 
-func (s *Store) RegisterAgentSession(ctx context.Context, agentSessionID string) error {
+func (s *Store) RegisterAgentSession(ctx context.Context, agentSessionID string, pid int) error {
 	agentSessionID, err := requireAgentSessionID(agentSessionID)
 	if err != nil {
 		return err
+	}
+	storedPID := 0
+	startedAt := ""
+	if actualStartedAt, err := processStartedAt(pid); err == nil {
+		storedPID = pid
+		startedAt = actualStartedAt
 	}
 
 	now := time.Now().UTC()
@@ -344,8 +350,8 @@ func (s *Store) RegisterAgentSession(ctx context.Context, agentSessionID string)
 	defer tx.Rollback()
 
 	if _, err := tx.ExecContext(ctx, `
-		INSERT OR IGNORE INTO agent_sessions (id, project_id, registered_at)
-		VALUES (?, NULL, ?)`, agentSessionID, registeredAt); err != nil {
+		INSERT OR IGNORE INTO agent_sessions (id, project_id, pid, started_at, registered_at)
+		VALUES (?, NULL, ?, ?, ?)`, agentSessionID, storedPID, startedAt, registeredAt); err != nil {
 		return fmt.Errorf("register agent session: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `
