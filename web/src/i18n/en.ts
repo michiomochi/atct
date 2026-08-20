@@ -1,25 +1,15 @@
 export const en = {
-  "app.name": "ATCT",
   "nav.dashboard": "Dashboard",
   "locale.label": "Language",
   "locale.en": "English",
   "locale.ja": "日本語",
 
-  "dashboard.eyebrow": "DASHBOARD",
   "dashboard.title": "Dashboard",
-  "dashboard.description":
-    "Review decisions awaiting answers, answered decisions that are not yet applied, tasks blocked on you, and active goals.",
   "dashboard.waiting.title": "Waiting for answers",
-  "dashboard.openDecisions.title": "Decisions awaiting an answer",
   "dashboard.openDecisions.empty":
     "No decisions are waiting for an answer. Answer a decision to move it forward.",
-  "dashboard.unapplied.title": "Answered decisions not yet applied",
-  "dashboard.unapplied.empty":
-    "No answered decisions are waiting to be applied. Apply an answer when it is ready.",
-  "dashboard.attention.title": "Tasks blocked on you",
   "dashboard.projects.title": "Projects",
   "dashboard.projects.empty": "No projects have active goals. Create a goal below to add one.",
-  "dashboard.activeGoals.title": "Active goals",
   "dashboard.activeGoals.empty":
     "No active goals are in progress. Resume work on a goal to see it here.",
 
@@ -27,8 +17,6 @@ export const en = {
 
   "decision.caption.list": "Decision list",
   "decision.column.question": "Question",
-  "decision.column.status": "Status",
-  "decision.column.answer": "Answer",
   "decision.column.project": "Project",
   "decision.column.goal": "Goal",
   "decision.column.createdAt": "Created at",
@@ -61,9 +49,6 @@ export const en = {
   "goal.backToDashboard": "Back to dashboard",
   "goal.project": "Project",
   "goal.status": "Status: {{status}}",
-  "goal.column.now": "Now",
-  "goal.column.needsDecision": "Needs decision",
-  "goal.column.next": "Next",
   "goal.tasks.title": "Tasks",
   "goal.history.title": "Decision history",
   "goal.history.caption": "Applied decision history",
@@ -86,7 +71,6 @@ export const en = {
   "goal.completion.reject": "Reject",
   "goal.completion.conflict": "This completion has already been reviewed in another tab or by another person.",
   "goal.completion.fetchLatest": "Fetch the latest decision",
-  "goal.completion.noSummary": "The agent did not provide a result summary.",
   "goal.completion.report.title": "Completion report",
   "goal.completion.report.workDone": "Completed work",
   "goal.completion.report.nowPossible": "What is now possible",
@@ -101,7 +85,6 @@ export const en = {
 
   "task.column.order": "Order",
   "task.column.task": "Task",
-  "task.column.goal": "Goal",
   "task.column.status": "Status",
   "task.claim.release": "Release the work lock",
   "task.claim.releasing": "Releasing the work lock...",
@@ -129,7 +112,6 @@ export const en = {
   "task.detail.updatedAt": "Updated at",
   "task.detail.none": "None",
   "task.detail.answer": "Awaiting decisions",
-  "task.detail.close": "Close",
 
   "form.goal.project.label": "Project",
   "form.goal.title.label": "Title",
@@ -157,7 +139,6 @@ export const en = {
   "form.answer.fetchLatest": "Fetch the latest decision",
   "form.answer.error.submit": "Could not submit the answer.",
   "form.answer.error.labelOrText": "Enter a label or answer text.",
-  "form.required": "(required)",
   "form.optional": "(optional)",
 
   "state.loadingLabel": "Loading {{label}}",

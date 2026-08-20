@@ -1,7 +1,23 @@
 import { describe, expect, it } from "vitest";
 import { en } from "./en";
 import { ja } from "./ja";
-import { formatDateTime, formatDuration, resolveLocale, t } from "./index";
+import i18n, { formatDateTime, formatDuration, resolveLocale, t } from "./index";
+import currentTestSource from "./i18n.test.ts?raw";
+
+const sourceModules = import.meta.glob("../**/*.{ts,tsx,astro}", {
+  eager: true,
+  import: "default",
+  query: "?raw",
+}) as Record<string, string>;
+
+function collectSourceText(): string {
+  return [
+    currentTestSource,
+    ...Object.entries(sourceModules)
+      .filter(([path]) => !path.endsWith("/en.ts") && !path.endsWith("/ja.ts"))
+      .map(([, source]) => source),
+  ].join("\n");
+}
 
 describe("resource parity", () => {
   it("uses the required Japanese completion report headings", () => {
@@ -21,6 +37,13 @@ describe("resource parity", () => {
 
   it("has the same keys in both languages", () => {
     expect(Object.keys(ja).sort()).toEqual(Object.keys(en).sort());
+  });
+
+  it("references every translation key outside the resource definitions", () => {
+    const sourceText = collectSourceText();
+    const unreferencedKeys = Object.keys(en).filter((key) => !sourceText.includes(key));
+
+    expect(unreferencedKeys, `unreferenced translation keys: ${unreferencedKeys.join(", ")}`).toEqual([]);
   });
 
   it("uses the same language names in both resources", () => {
@@ -72,7 +95,6 @@ describe("resolveLocale", () => {
 
 describe("translation", () => {
   it("returns the string for the active language", async () => {
-    const { default: i18n } = await import("./index");
     await i18n.changeLanguage("en");
     expect(t("dashboard.title")).toBe(en["dashboard.title"]);
     await i18n.changeLanguage("ja");
@@ -85,6 +107,7 @@ describe("translation", () => {
   });
 
   it("does not treat a colon in copy as a namespace separator", () => {
+    // @ts-expect-error 存在しないキーは型で拒否される。この行がエラーにならなくなったら型が緩んだ
     expect(t("definitely:not:a:key")).toBe("definitely:not:a:key");
   });
 });

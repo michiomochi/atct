@@ -23,7 +23,7 @@ i18n.use(initReactI18next).init({
 
 export default i18n;
 
-export function t(key: TranslationKey | string, params?: Record<string, string | number>): string {
+export function t(key: TranslationKey, params?: Record<string, string | number>): string {
   return i18n.t(key, params) as string;
 }
 

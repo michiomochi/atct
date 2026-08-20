@@ -1,26 +1,16 @@
 import type { TranslationKey } from "./en";
 
 export const ja: Record<TranslationKey, string> = {
-  "app.name": "ATCT",
   "nav.dashboard": "ダッシュボード",
   "locale.label": "言語",
   "locale.en": "English",
   "locale.ja": "日本語",
 
-  "dashboard.eyebrow": "ダッシュボード",
   "dashboard.title": "ダッシュボード",
-  "dashboard.description":
-    "回答待ちの判断、回答済みでまだ適用されていない判断、回答待ちで止まっているタスク、進行中のゴールを確認します。",
   "dashboard.waiting.title": "回答待ち",
-  "dashboard.openDecisions.title": "回答待ちの判断",
   "dashboard.openDecisions.empty": "回答待ちの判断はありません。判断に答えると先へ進みます。",
-  "dashboard.unapplied.title": "回答済み・未適用の判断",
-  "dashboard.unapplied.empty":
-    "適用待ちの回答はありません。エージェントが受け取ると適用されます。",
-  "dashboard.attention.title": "回答待ちで止まっているタスク",
   "dashboard.projects.title": "プロジェクト",
   "dashboard.projects.empty": "進行中のゴールがあるプロジェクトはありません。下のフォームからゴールを作成できます。",
-  "dashboard.activeGoals.title": "進行中のゴール",
   "dashboard.activeGoals.empty":
     "進行中のゴールはありません。ゴールを再開するとここに表示されます。",
 
@@ -28,8 +18,6 @@ export const ja: Record<TranslationKey, string> = {
 
   "decision.caption.list": "判断一覧",
   "decision.column.question": "質問",
-  "decision.column.status": "状態",
-  "decision.column.answer": "回答",
   "decision.column.project": "プロジェクト",
   "decision.column.goal": "ゴール",
   "decision.column.createdAt": "作成日時",
@@ -62,9 +50,6 @@ export const ja: Record<TranslationKey, string> = {
   "goal.backToDashboard": "ダッシュボードに戻る",
   "goal.project": "プロジェクト",
   "goal.status": "状態: {{status}}",
-  "goal.column.now": "現在",
-  "goal.column.needsDecision": "判断待ち",
-  "goal.column.next": "次",
   "goal.tasks.title": "タスク一覧",
   "goal.history.title": "決定履歴",
   "goal.history.caption": "適用済み決定履歴",
@@ -87,7 +72,6 @@ export const ja: Record<TranslationKey, string> = {
   "goal.completion.reject": "却下",
   "goal.completion.conflict": "この完了は別のタブまたは別の人によって既に確認されています。",
   "goal.completion.fetchLatest": "最新の判断を取得",
-  "goal.completion.noSummary": "エージェントは結果の概要を提供していません。",
   "goal.completion.report.title": "完了報告",
   "goal.completion.report.workDone": "完了した作業内容",
   "goal.completion.report.nowPossible": "できるようになったこと",
@@ -102,7 +86,6 @@ export const ja: Record<TranslationKey, string> = {
 
   "task.column.order": "順序",
   "task.column.task": "タスク",
-  "task.column.goal": "ゴール",
   "task.column.status": "状態",
   "task.claim.release": "作業ロックを解除",
   "task.claim.releasing": "作業ロックを解除中...",
@@ -130,7 +113,6 @@ export const ja: Record<TranslationKey, string> = {
   "task.detail.updatedAt": "更新日時",
   "task.detail.none": "なし",
   "task.detail.answer": "回答待ちの判断",
-  "task.detail.close": "閉じる",
 
   "form.goal.project.label": "プロジェクト",
   "form.goal.title.label": "タイトル",
@@ -158,7 +140,6 @@ export const ja: Record<TranslationKey, string> = {
   "form.answer.fetchLatest": "最新の判断を取得",
   "form.answer.error.submit": "回答を送信できませんでした。",
   "form.answer.error.labelOrText": "ラベルまたは回答文を入力してください。",
-  "form.required": "(必須)",
   "form.optional": "(任意)",
 
   "state.loadingLabel": "{{label}}を読み込み中",
