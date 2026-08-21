@@ -15,7 +15,7 @@ func TestDetectWakeupReportsUnstartedTasksWithoutRunningClaim(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateProject: %v", err)
 	}
-	goal, err := s.CreateGoal(ctx, project.ID, "Resume the active goal", "")
+	goal, err := s.CreateGoal(ctx, project.ID, "Resume the active goal", "human")
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
@@ -51,7 +51,7 @@ func TestDetectWakeupExcludesGoalWaitingForOpenDecision(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateProject: %v", err)
 	}
-	goal, err := s.CreateGoal(ctx, project.ID, "Wait for human answer", "")
+	goal, err := s.CreateGoal(ctx, project.ID, "Wait for human answer", "human")
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
@@ -93,7 +93,7 @@ func TestDetectWakeupExcludesProposedGoal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateProject: %v", err)
 	}
-	goal, err := s.CreateGoal(ctx, project.ID, "Await approval before wakeup", "", "agent")
+	goal, err := s.CreateGoal(ctx, project.ID, "Await approval before wakeup", "agent")
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
@@ -117,7 +117,7 @@ func TestDetectWakeupExcludesGoalWithRunningClaim(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateProject: %v", err)
 	}
-	goal, err := s.CreateGoal(ctx, project.ID, "Continue the running goal", "")
+	goal, err := s.CreateGoal(ctx, project.ID, "Continue the running goal", "human")
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}

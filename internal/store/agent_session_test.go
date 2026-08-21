@@ -49,7 +49,7 @@ func TestProjectIDForTask(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateProject: %v", err)
 	}
-	goal, err := s.CreateGoal(ctx, project.ID, "goal", "description")
+	goal, err := s.CreateGoal(ctx, project.ID, "goal\n\ndescription", "human")
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
@@ -219,11 +219,11 @@ PRAGMA user_version = 4;
 	if agentSessionTable != "agent_sessions" {
 		t.Fatalf("agent_sessions table = %q, want agent_sessions", agentSessionTable)
 	}
-	var projectName, goalTitle, taskTitle, taskFiles, decisionQuestion, decisionAnswer string
+	var projectName, goalContent, taskTitle, taskFiles, decisionQuestion, decisionAnswer string
 	if err := s.DB().QueryRow(`SELECT name FROM projects WHERE id = ?`, "project-human").Scan(&projectName); err != nil {
 		t.Fatalf("read migrated project: %v", err)
 	}
-	if err := s.DB().QueryRow(`SELECT title FROM goals WHERE id = ?`, "goal-human").Scan(&goalTitle); err != nil {
+	if err := s.DB().QueryRow(`SELECT content FROM goals WHERE id = ?`, "goal-human").Scan(&goalContent); err != nil {
 		t.Fatalf("read migrated goal: %v", err)
 	}
 	if err := s.DB().QueryRow(`SELECT title, files FROM tasks WHERE id = ?`, "task-human").Scan(&taskTitle, &taskFiles); err != nil {
@@ -232,7 +232,7 @@ PRAGMA user_version = 4;
 	if err := s.DB().QueryRow(`SELECT question, answer_text FROM decisions WHERE id = ?`, "decision-human").Scan(&decisionQuestion, &decisionAnswer); err != nil {
 		t.Fatalf("read migrated decision: %v", err)
 	}
-	if projectName != "human project" || goalTitle != "Human goal" || taskTitle != "Human task" || taskFiles != `["src/main.go"]` || decisionQuestion != "Keep this decision" || decisionAnswer != "Keep it" {
-		t.Fatalf("migrated human data changed: project=%q goal=%q task=%q files=%q decision=%q answer=%q", projectName, goalTitle, taskTitle, taskFiles, decisionQuestion, decisionAnswer)
+	if projectName != "human project" || goalContent != "Human goal\n\nKeep this goal" || taskTitle != "Human task" || taskFiles != `["src/main.go"]` || decisionQuestion != "Keep this decision" || decisionAnswer != "Keep it" {
+		t.Fatalf("migrated human data changed: project=%q goal=%q task=%q files=%q decision=%q answer=%q", projectName, goalContent, taskTitle, taskFiles, decisionQuestion, decisionAnswer)
 	}
 }

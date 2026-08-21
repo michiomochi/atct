@@ -15,7 +15,7 @@ func TestCreateGoalStartsActive(t *testing.T) {
 		t.Fatalf("CreateProject: %v", err)
 	}
 
-	g, err := s.CreateGoal(ctx, ns.ID, "Build an MCP server", "Implement seven tools")
+	g, err := s.CreateGoal(ctx, ns.ID, "Build an MCP server\n\nImplement seven tools", "human")
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}

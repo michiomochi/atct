@@ -57,31 +57,29 @@ func (q *Queries) CountOpenDecisionsForGoal(ctx context.Context, goalID string) 
 
 const createGoal = `-- name: CreateGoal :exec
 INSERT INTO goals (
-  id, project_id, title, description, status, creator,
+  id, project_id, content, status, creator,
   result_summary,
   work_done, now_possible, how_to_verify, surprises, needs_review, next_steps,
   created_at, updated_at
 )
-VALUES (?, ?, ?, ?, ?, ?, '', '', '', '', '', '', '', ?, ?)
+VALUES (?, ?, ?, ?, ?, '', '', '', '', '', '', '', ?, ?)
 `
 
 type CreateGoalParams struct {
-	ID          string
-	ProjectID   string
-	Title       string
-	Description string
-	Status      string
-	Creator     string
-	CreatedAt   string
-	UpdatedAt   string
+	ID        string
+	ProjectID string
+	Content   string
+	Status    string
+	Creator   string
+	CreatedAt string
+	UpdatedAt string
 }
 
 func (q *Queries) CreateGoal(ctx context.Context, arg CreateGoalParams) error {
 	_, err := q.db.ExecContext(ctx, createGoal,
 		arg.ID,
 		arg.ProjectID,
-		arg.Title,
-		arg.Description,
+		arg.Content,
 		arg.Status,
 		arg.Creator,
 		arg.CreatedAt,
@@ -105,7 +103,7 @@ func (q *Queries) GetCompletionDecisionGoalID(ctx context.Context, id string) (s
 
 const getGoal = `-- name: GetGoal :one
 SELECT
-  id, project_id, title, description, status, creator, result_summary,
+  id, project_id, content, status, creator, result_summary,
   work_done, now_possible, how_to_verify, surprises, needs_review, next_steps,
   created_at, updated_at
 FROM goals
@@ -118,8 +116,7 @@ func (q *Queries) GetGoal(ctx context.Context, id string) (Goal, error) {
 	err := row.Scan(
 		&i.ID,
 		&i.ProjectID,
-		&i.Title,
-		&i.Description,
+		&i.Content,
 		&i.Status,
 		&i.Creator,
 		&i.ResultSummary,
@@ -150,7 +147,7 @@ func (q *Queries) GetGoalApprovalDecisionGoalID(ctx context.Context, id string) 
 
 const listAllGoals = `-- name: ListAllGoals :many
 SELECT
-  id, project_id, title, description, status, creator, result_summary,
+  id, project_id, content, status, creator, result_summary,
   work_done, now_possible, how_to_verify, surprises, needs_review, next_steps,
   created_at, updated_at
 FROM goals
@@ -169,8 +166,7 @@ func (q *Queries) ListAllGoals(ctx context.Context) ([]Goal, error) {
 		if err := rows.Scan(
 			&i.ID,
 			&i.ProjectID,
-			&i.Title,
-			&i.Description,
+			&i.Content,
 			&i.Status,
 			&i.Creator,
 			&i.ResultSummary,
@@ -198,7 +194,7 @@ func (q *Queries) ListAllGoals(ctx context.Context) ([]Goal, error) {
 
 const listGoals = `-- name: ListGoals :many
 SELECT
-  id, project_id, title, description, status, creator, result_summary,
+  id, project_id, content, status, creator, result_summary,
   work_done, now_possible, how_to_verify, surprises, needs_review, next_steps,
   created_at, updated_at
 FROM goals
@@ -218,8 +214,7 @@ func (q *Queries) ListGoals(ctx context.Context, projectID string) ([]Goal, erro
 		if err := rows.Scan(
 			&i.ID,
 			&i.ProjectID,
-			&i.Title,
-			&i.Description,
+			&i.Content,
 			&i.Status,
 			&i.Creator,
 			&i.ResultSummary,

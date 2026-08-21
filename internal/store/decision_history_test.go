@@ -39,7 +39,7 @@ func TestListAppliedDecisionsReturnsOnlyAppliedDecisionsForGoal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateProject other: %v", err)
 	}
-	otherGoal, err := s.CreateGoal(ctx, otherProject.ID, "other-goal", "")
+	otherGoal, err := s.CreateGoal(ctx, otherProject.ID, "other-goal", "human")
 	if err != nil {
 		t.Fatalf("CreateGoal other: %v", err)
 	}

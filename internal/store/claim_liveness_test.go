@@ -75,7 +75,7 @@ func TestClaimLivenessReportsCurrentProcessAsRunning(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateProject: %v", err)
 	}
-	goal, err := s.CreateGoal(ctx, project.ID, "Live claim", "")
+	goal, err := s.CreateGoal(ctx, project.ID, "Live claim", "human")
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
@@ -112,7 +112,7 @@ func TestClaimLivenessTreatsUnknownAndUnverifiableClaimsAsStale(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateProject: %v", err)
 	}
-	goal, err := s.CreateGoal(ctx, project.ID, "Stale claims", "")
+	goal, err := s.CreateGoal(ctx, project.ID, "Stale claims", "human")
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
@@ -158,7 +158,7 @@ func TestClaimLivenessTreatsPIDReuseAsStale(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateProject: %v", err)
 	}
-	goal, err := s.CreateGoal(ctx, project.ID, "PID reuse", "")
+	goal, err := s.CreateGoal(ctx, project.ID, "PID reuse", "human")
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
@@ -194,7 +194,7 @@ func TestClaimLivenessFiltersClaimsByProject(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateProject other: %v", err)
 	}
-	goal, err := s.CreateGoal(ctx, otherProject.ID, "Other project", "")
+	goal, err := s.CreateGoal(ctx, otherProject.ID, "Other project", "human")
 	if err != nil {
 		t.Fatalf("CreateGoal other: %v", err)
 	}

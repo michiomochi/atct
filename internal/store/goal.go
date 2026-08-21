@@ -20,36 +20,35 @@ var (
 	ErrGoalNotActive   = errors.New("goal is not active")
 )
 
-// CreateGoal keeps the no-creator call shape source-compatible for direct
-// store users. API boundaries pass a creator explicitly; an omitted or
-// unknown creator there is treated as an agent-created goal.
-func (s *Store) CreateGoal(ctx context.Context, projectID, title, description string, creatorInput ...string) (domain.Goal, error) {
+func (s *Store) CreateGoal(ctx context.Context, projectID, content, creator string) (domain.Goal, error) {
+	if strings.TrimSpace(content) == "" {
+		return domain.Goal{}, errors.New("goal content must not be blank")
+	}
+
 	now := time.Now().UTC()
-	creator := normalizeGoalCreator(creatorInput)
+	creator = normalizeGoalCreator([]string{creator})
 	status := domain.GoalActive
 	if creator == "agent" {
 		status = domain.GoalProposed
 	}
 	g := domain.Goal{
-		ID:          uuid.NewString(),
-		ProjectID:   projectID,
-		Title:       title,
-		Description: description,
-		Status:      status,
-		Creator:     creator,
-		CreatedAt:   now,
-		UpdatedAt:   now,
+		ID:        uuid.NewString(),
+		ProjectID: projectID,
+		Content:   content,
+		Status:    status,
+		Creator:   creator,
+		CreatedAt: now,
+		UpdatedAt: now,
 	}
 	q := sqlcgen.New(s.db)
 	err := q.CreateGoal(ctx, sqlcgen.CreateGoalParams{
-		ID:          g.ID,
-		ProjectID:   g.ProjectID,
-		Title:       g.Title,
-		Description: g.Description,
-		Status:      string(g.Status),
-		Creator:     g.Creator,
-		CreatedAt:   now.Format(time.RFC3339),
-		UpdatedAt:   now.Format(time.RFC3339),
+		ID:        g.ID,
+		ProjectID: g.ProjectID,
+		Content:   g.Content,
+		Status:    string(g.Status),
+		Creator:   g.Creator,
+		CreatedAt: now.Format(time.RFC3339),
+		UpdatedAt: now.Format(time.RFC3339),
 	})
 	if err != nil {
 		return domain.Goal{}, fmt.Errorf("insert goal: %w", err)
@@ -84,8 +83,7 @@ func goalFromRow(row sqlcgen.Goal) (domain.Goal, error) {
 	g := domain.Goal{
 		ID:            row.ID,
 		ProjectID:     row.ProjectID,
-		Title:         row.Title,
-		Description:   row.Description,
+		Content:       row.Content,
 		Status:        domain.GoalStatus(row.Status),
 		Creator:       row.Creator,
 		ResultSummary: row.ResultSummary,

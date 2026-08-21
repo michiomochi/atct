@@ -21,7 +21,7 @@ func newTestGoal(t *testing.T, s *Store) string {
 	if err != nil {
 		t.Fatalf("CreateProject: %v", err)
 	}
-	g, err := s.CreateGoal(ctx, ns.ID, "goal", "")
+	g, err := s.CreateGoal(ctx, ns.ID, "goal", "human")
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
@@ -35,11 +35,11 @@ func newOrderTestGoals(t *testing.T, s *Store) (string, string) {
 	if err != nil {
 		t.Fatalf("CreateProject: %v", err)
 	}
-	first, err := s.CreateGoal(ctx, ns.ID, "first order goal", "")
+	first, err := s.CreateGoal(ctx, ns.ID, "first order goal", "human")
 	if err != nil {
 		t.Fatalf("CreateGoal first: %v", err)
 	}
-	second, err := s.CreateGoal(ctx, ns.ID, "second order goal", "")
+	second, err := s.CreateGoal(ctx, ns.ID, "second order goal", "human")
 	if err != nil {
 		t.Fatalf("CreateGoal second: %v", err)
 	}
@@ -602,7 +602,7 @@ func newTaskStatusClaimFixture(t *testing.T, holderPID, otherPID int) taskStatus
 	if err != nil {
 		t.Fatalf("CreateProject: %v", err)
 	}
-	goal, err := s.CreateGoal(ctx, project.ID, "status claim guard", "")
+	goal, err := s.CreateGoal(ctx, project.ID, "status claim guard", "human")
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
@@ -712,7 +712,7 @@ func TestUpdateTaskAllowsStatusChangeForUnclaimedTask(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateProject: %v", err)
 	}
-	goal, err := s.CreateGoal(ctx, project.ID, "unclaimed status guard", "")
+	goal, err := s.CreateGoal(ctx, project.ID, "unclaimed status guard", "human")
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}

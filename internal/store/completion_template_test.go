@@ -30,7 +30,7 @@ func completionTemplateStore(t *testing.T) (*Store, context.Context, domain.Goal
 	if err != nil {
 		t.Fatalf("create project: %v", err)
 	}
-	goal, err := s.CreateGoal(ctx, project.ID, "completion template", "")
+	goal, err := s.CreateGoal(ctx, project.ID, "completion template", "human")
 	if err != nil {
 		t.Fatalf("create goal: %v", err)
 	}

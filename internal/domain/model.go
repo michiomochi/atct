@@ -1,6 +1,9 @@
 package domain
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 type Option struct {
 	Label       string `json:"label"`
@@ -27,8 +30,7 @@ type CompletionReport struct {
 type Goal struct {
 	ID          string     `json:"id"`
 	ProjectID   string     `json:"project_id"`
-	Title       string     `json:"title"`
-	Description string     `json:"description"`
+	Content     string     `json:"content"`
 	Status      GoalStatus `json:"status"`
 	Creator     string     `json:"creator"`
 	WorkDone    string     `json:"work_done"`
@@ -43,6 +45,13 @@ type Goal struct {
 	ResultSummary string    `json:"result_summary"`
 	CreatedAt     time.Time `json:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at"`
+}
+
+func Headline(content string) string {
+	if index := strings.IndexByte(content, '\n'); index >= 0 {
+		return strings.TrimSpace(content[:index])
+	}
+	return strings.TrimSpace(content)
 }
 
 type Task struct {

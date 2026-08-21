@@ -38,7 +38,7 @@ func TestWithdrawActiveGoalRejectsProposedGoal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateProject: %v", err)
 	}
-	goal, err := s.CreateGoal(ctx, project.ID, "proposed goal", "", "agent")
+	goal, err := s.CreateGoal(ctx, project.ID, "proposed goal", "agent")
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}

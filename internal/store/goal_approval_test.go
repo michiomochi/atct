@@ -17,7 +17,7 @@ func TestCreateGoalWithHumanCreatorStartsActiveWithoutApproval(t *testing.T) {
 		t.Fatalf("CreateProject: %v", err)
 	}
 
-	goal, err := s.CreateGoal(ctx, project.ID, "human goal", "description", "human")
+	goal, err := s.CreateGoal(ctx, project.ID, "human goal\n\ndescription", "human")
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
@@ -44,7 +44,7 @@ func TestCreateGoalWithAgentCreatorProposesAndAsksWithoutDefault(t *testing.T) {
 		t.Fatalf("CreateProject: %v", err)
 	}
 
-	goal, err := s.CreateGoal(ctx, project.ID, "agent goal", "description", "agent")
+	goal, err := s.CreateGoal(ctx, project.ID, "agent goal\n\ndescription", "agent")
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
@@ -79,7 +79,7 @@ func TestCreateGoalTreatsEmptyAndUnknownCreatorsAsAgent(t *testing.T) {
 	}
 
 	for _, creator := range []string{"", "automation"} {
-		goal, err := s.CreateGoal(ctx, project.ID, "normalized creator", "description", creator)
+		goal, err := s.CreateGoal(ctx, project.ID, "normalized creator\n\ndescription", creator)
 		if err != nil {
 			t.Fatalf("CreateGoal(%q): %v", creator, err)
 		}
@@ -103,7 +103,7 @@ func TestApproveGoalActivatesGoalAndAppliesApproval(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateProject: %v", err)
 	}
-	goal, err := s.CreateGoal(ctx, project.ID, "approve goal", "description", "agent")
+	goal, err := s.CreateGoal(ctx, project.ID, "approve goal\n\ndescription", "agent")
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
@@ -146,7 +146,7 @@ func TestRejectGoalDropsGoalAndKeepsReason(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateProject: %v", err)
 	}
-	goal, err := s.CreateGoal(ctx, project.ID, "reject goal", "description", "agent")
+	goal, err := s.CreateGoal(ctx, project.ID, "reject goal\n\ndescription", "agent")
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
@@ -182,7 +182,7 @@ func TestClaimTaskRejectsTaskForProposedGoal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateProject: %v", err)
 	}
-	goal, err := s.CreateGoal(ctx, project.ID, "proposed goal", "description", "agent")
+	goal, err := s.CreateGoal(ctx, project.ID, "proposed goal\n\ndescription", "agent")
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}

@@ -1,15 +1,15 @@
 -- name: CreateGoal :exec
 INSERT INTO goals (
-  id, project_id, title, description, status, creator,
+  id, project_id, content, status, creator,
   result_summary,
   work_done, now_possible, how_to_verify, surprises, needs_review, next_steps,
   created_at, updated_at
 )
-VALUES (?, ?, ?, ?, ?, ?, '', '', '', '', '', '', '', ?, ?);
+VALUES (?, ?, ?, ?, ?, '', '', '', '', '', '', '', ?, ?);
 
 -- name: GetGoal :one
 SELECT
-  id, project_id, title, description, status, creator, result_summary,
+  id, project_id, content, status, creator, result_summary,
   work_done, now_possible, how_to_verify, surprises, needs_review, next_steps,
   created_at, updated_at
 FROM goals
@@ -44,7 +44,7 @@ WHERE id = ? AND kind = 'goal_approval' AND status = 'open';
 
 -- name: ListGoals :many
 SELECT
-  id, project_id, title, description, status, creator, result_summary,
+  id, project_id, content, status, creator, result_summary,
   work_done, now_possible, how_to_verify, surprises, needs_review, next_steps,
   created_at, updated_at
 FROM goals
@@ -53,7 +53,7 @@ ORDER BY created_at;
 
 -- name: ListAllGoals :many
 SELECT
-  id, project_id, title, description, status, creator, result_summary,
+  id, project_id, content, status, creator, result_summary,
   work_done, now_possible, how_to_verify, surprises, needs_review, next_steps,
   created_at, updated_at
 FROM goals
