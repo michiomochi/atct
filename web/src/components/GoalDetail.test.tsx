@@ -52,8 +52,7 @@ function goal(overrides: Partial<Goal> = {}): Goal {
     id: "goal-1",
     project_id: "project-1",
     project_name: "Fixture project",
-    title: "Fixture goal",
-    description: "",
+    content: "Fixture goal",
     status: "active",
     awaiting_decision: false,
     result_summary: "",
@@ -106,7 +105,7 @@ function completionDecision(): Decision {
   return {
     id: "completion-1",
     goal_id: "goal-1",
-    goal_title: "Fixture goal",
+    goal_headline: "Fixture goal",
     kind: "completion",
     question: "Review the completion",
     options: [],
@@ -120,7 +119,7 @@ function goalApprovalDecision(): Decision {
   return {
     id: "goal-approval-1",
     goal_id: "goal-1",
-    goal_title: "Fixture goal",
+    goal_headline: "Fixture goal",
     kind: "goal_approval",
     question: "Approve the proposed goal",
     options: [],

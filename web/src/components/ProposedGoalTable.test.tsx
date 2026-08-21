@@ -21,8 +21,7 @@ describe("ProposedGoalTable", () => {
           {
             id: "goal-1",
             project_id: "project-1",
-            title: "Proposed goal",
-            description: "A proposed description",
+            content: "Proposed goal\n\nA proposed description",
             created_at: "2026-08-21T00:00:00Z",
             project_name: "Project",
           },

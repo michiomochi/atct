@@ -64,12 +64,12 @@ describe("goal creation API", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    await createGoal({ project_id: "project-1", title: "Ship it", description: "Details", creator: "human" });
+    await createGoal({ project_id: "project-1", content: "Ship it\n\nDetails", creator: "human" });
 
     expect(fetchMock).toHaveBeenCalledWith("/api/goals", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ project_id: "project-1", title: "Ship it", description: "Details", creator: "human" }),
+      body: JSON.stringify({ project_id: "project-1", content: "Ship it\n\nDetails", creator: "human" }),
     });
   });
 });

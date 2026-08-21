@@ -1,5 +1,6 @@
 import { Table } from "@cloudflare/kumo/components/table";
 import { useTranslation } from "react-i18next";
+import { body, headline } from "../lib/ui";
 import { formatDateTime } from "../i18n";
 import type { ProposedGoal } from "../lib/api";
 
@@ -16,7 +17,7 @@ export function ProposedGoalTable({ goals }: Props) {
       <Table>
         <thead>
           <Table.Row className="border-b border-line text-left">
-            <th className="px-3 py-2 text-xs font-semibold text-ink-500">{t("form.goal.title.label")}</th>
+            <th className="px-3 py-2 text-xs font-semibold text-ink-500">{t("form.goal.content.label")}</th>
             <th className="px-3 py-2 text-xs font-semibold text-ink-500">{t("goal.project")}</th>
             <th className="px-3 py-2 text-xs font-semibold text-ink-500">{t("task.detail.createdAt")}</th>
             <th className="px-3 py-2 text-xs font-semibold text-ink-500">{t("task.column.action")}</th>
@@ -29,13 +30,13 @@ export function ProposedGoalTable({ goals }: Props) {
                 <a
                   className="focus-ring text-clamp-2 w-fit max-w-[34rem] font-medium text-accent-700 underline decoration-accent-100 underline-offset-4 hover:decoration-accent-700"
                   href={`/goals/${encodeURIComponent(goal.id)}`}
-                  title={goal.title}
+                  title={headline(goal.content)}
                 >
-                  {goal.title}
+                  {headline(goal.content)}
                 </a>
-                {goal.description && (
+                {body(goal.content) && (
                   <p className="text-clamp-2 mt-1 block max-w-[32rem] break-words text-sm text-ink-500">
-                    {goal.description}
+                    {body(goal.content)}
                   </p>
                 )}
               </Table.Cell>

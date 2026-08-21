@@ -244,7 +244,7 @@ function openDecision(id: string, taskID: string): Decision {
   return {
     id,
     goal_id: "goal-1",
-    goal_title: "Fixture goal",
+    goal_headline: "Fixture goal",
     task_id: taskID,
     kind: "question",
     question: "Which option should be used?",

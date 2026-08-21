@@ -132,8 +132,7 @@ export const ja: Record<TranslationKey, string> = {
   "task.detail.answer": "回答待ちの判断",
 
   "form.goal.project.label": "プロジェクト",
-  "form.goal.title.label": "タイトル",
-  "form.goal.description.label": "説明",
+  "form.goal.content.label": "内容",
   "form.goal.project.placeholder": "プロジェクトを選択",
   "form.goal.submit": "ゴールを作成",
   "form.goal.cancel": "キャンセル",

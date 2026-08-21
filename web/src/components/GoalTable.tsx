@@ -1,6 +1,6 @@
 import type { Goal } from "../lib/api";
 import { formatDateTime } from "../i18n";
-import { encodePathSegment, sortTasksByOrder, statusLabel } from "../lib/ui";
+import { encodePathSegment, headline, sortTasksByOrder, statusLabel } from "../lib/ui";
 import { Table } from "@cloudflare/kumo/components/table";
 import { Fragment } from "react";
 import { useTranslation } from "react-i18next";
@@ -42,9 +42,9 @@ export function GoalTable({ goals, showProject = true }: Props) {
                     <a
                       className="focus-ring text-clamp-2 w-fit font-medium text-accent-700 underline decoration-accent-100 underline-offset-4 hover:decoration-accent-700"
                       href={`/goals/${encodePathSegment(goal.id)}`}
-                      title={goal.title}
+                      title={headline(goal.content)}
                     >
-                      {goal.title}
+                      {headline(goal.content)}
                     </a>
                   </Table.Cell>
                   {showProject && <Table.Cell className="px-3 py-4 text-ink-700">{goal.project_name || "-"}</Table.Cell>}

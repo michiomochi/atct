@@ -131,8 +131,7 @@ export const en = {
   "task.detail.answer": "Awaiting decisions",
 
   "form.goal.project.label": "Project",
-  "form.goal.title.label": "Title",
-  "form.goal.description.label": "Description",
+  "form.goal.content.label": "Content",
   "form.goal.project.placeholder": "Select a project",
   "form.goal.submit": "Create goal",
   "form.goal.cancel": "Cancel",

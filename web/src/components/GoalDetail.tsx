@@ -13,14 +13,7 @@ import {
   type GoalResponse,
 } from "../lib/api";
 import { formatDateTime } from "../i18n";
-import {
-  findOpenCompletion,
-  findOpenGoalApproval,
-  hasCompletionReport,
-  resolveRouteID,
-  statusLabel,
-  type CompletionReportFields,
-} from "../lib/ui";
+import { body, findOpenCompletion, findOpenGoalApproval, hasCompletionReport, headline, resolveRouteID, statusLabel, type CompletionReportFields } from "../lib/ui";
 import { AreaLoading, ErrorState } from "./StateMessage";
 import { TaskTable } from "./TaskTable";
 
@@ -394,9 +387,9 @@ export function GoalDetail({ id }: Props) {
           {t("goal.backToDashboard")}
         </a>
         <h1 className="mt-2 font-display text-3xl font-semibold tracking-tight text-ink-950">
-          {data?.goal.goal.title ?? t("goal.title")}
+          {data ? headline(data.goal.goal.content) : t("goal.title")}
         </h1>
-        {data?.goal.goal.description && <p className="mt-3 max-w-3xl whitespace-pre-wrap text-sm leading-6 text-ink-700">{data.goal.goal.description}</p>}
+        {data && body(data.goal.goal.content) && <p className="mt-3 max-w-3xl whitespace-pre-wrap text-sm leading-6 text-ink-700">{body(data.goal.goal.content)}</p>}
         {data && (
           <dl className="mt-5 grid min-w-0 gap-x-6 gap-y-3 border-t border-line pt-4 sm:grid-cols-3">
             <div className="min-w-0">

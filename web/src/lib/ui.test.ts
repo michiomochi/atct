@@ -101,8 +101,7 @@ function fixtureGoal(id: string, projectName: string): Goal {
     id,
     project_id: projectName.toLowerCase(),
     project_name: projectName,
-    title: id,
-    description: "",
+    content: id,
     status: "active",
     awaiting_decision: false,
     result_summary: "",
@@ -504,8 +503,7 @@ describe("goal detail answer flows", () => {
     expect(goalCreateFormSource).toContain("createGoal");
     expect(goalCreateFormSource).toContain('t("form.goal.noProject")');
     expect(goalCreateFormSource).toContain('t("form.goal.project.placeholder")');
-    expect(goalCreateFormSource).toContain('name="title"');
-    expect(goalCreateFormSource).toContain('name="description"');
+    expect(goalCreateFormSource).toContain('name="content"');
     expect(goalCreateFormSource).toContain("status === 409");
     expect(goalCreateFormSource).toContain('t("form.goal.action.creating")');
     expect(goalCreateFormSource).toContain("role=\"alert\"");

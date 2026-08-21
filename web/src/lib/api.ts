@@ -10,8 +10,7 @@ export interface Goal {
   id: string;
   project_id: string;
   project_name?: string;
-  title: string;
-  description: string;
+  content: string;
   status: string;
   awaiting_decision: boolean;
   result_summary: string;
@@ -35,8 +34,7 @@ export interface Project {
 
 export interface CreateGoalPayload {
   project_id: string;
-  title: string;
-  description: string;
+  content: string;
   creator: string;
 }
 
@@ -59,7 +57,7 @@ export interface Task {
 export interface Decision {
   id: string;
   goal_id: string;
-  goal_title: string;
+  goal_headline: string;
   project_name?: string;
   task_id?: string;
   kind: string;
@@ -99,8 +97,7 @@ export interface DecisionHistoryEntry {
 export interface ProposedGoal {
   id: string;
   project_id: string;
-  title: string;
-  description: string;
+  content: string;
   created_at: string;
   project_name: string;
 }

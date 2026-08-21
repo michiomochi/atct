@@ -29,7 +29,7 @@ describe("GoalCreateForm header dialog", () => {
 
     render(<GoalCreateForm onDirtyChange={handleDirty} />);
     fireEvent.click(await screen.findByRole("button", { name: "form.goal.action.new" }));
-    fireEvent.change(await screen.findByLabelText("form.goal.title.label"), {
+    fireEvent.change(await screen.findByLabelText("form.goal.content.label"), {
       target: { value: "Draft goal" },
     });
 
@@ -47,15 +47,14 @@ describe("GoalCreateForm header dialog", () => {
     fireEvent.change(await screen.findByLabelText("form.goal.project.label"), {
       target: { value: "project-1" },
     });
-    fireEvent.change(await screen.findByLabelText("form.goal.title.label"), {
+    fireEvent.change(await screen.findByLabelText("form.goal.content.label"), {
       target: { value: "Created goal" },
     });
     fireEvent.submit(screen.getByRole("button", { name: "form.goal.submit" }).closest("form")!);
 
     await waitFor(() => expect(createGoal).toHaveBeenCalledWith({
       project_id: "project-1",
-      title: "Created goal",
-      description: "",
+      content: "Created goal",
       creator: "human",
     }));
     await waitFor(() => expect(onCreated).toHaveBeenCalledTimes(1));

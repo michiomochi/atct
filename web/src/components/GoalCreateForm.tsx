@@ -19,8 +19,7 @@ export function GoalCreateForm({ onCreated, onDirtyChange }: Props = {}) {
   const [projectsError, setProjectsError] = useState<Error | null>(null);
   const [open, setOpen] = useState(false);
   const [projectID, setProjectID] = useState("");
-  const [title, setTitle] = useState("");
-  const [description, setDescription] = useState("");
+  const [content, setContent] = useState("");
   const [validationError, setValidationError] = useState("");
   const [submitError, setSubmitError] = useState<Error | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -46,9 +45,9 @@ export function GoalCreateForm({ onCreated, onDirtyChange }: Props = {}) {
   }, [loadProjects]);
 
   useEffect(() => {
-    const dirty = [projectID, title, description].some((value) => value.trim() !== "");
+    const dirty = [projectID, content].some((value) => value.trim() !== "");
     onDirtyChange?.(open && dirty);
-  }, [description, onDirtyChange, open, projectID, title]);
+  }, [content, onDirtyChange, open, projectID]);
 
   useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
 
@@ -68,16 +67,15 @@ export function GoalCreateForm({ onCreated, onDirtyChange }: Props = {}) {
     event.preventDefault();
     setValidationError("");
     setSubmitError(null);
-    if (!projectID || !title.trim()) {
+    if (!projectID || !content.trim()) {
       setValidationError(t("form.goal.error.required"));
       return;
     }
 
     setSubmitting(true);
     try {
-      await createGoal({ project_id: projectID, title, description, creator: "human" });
-      setTitle("");
-      setDescription("");
+      await createGoal({ project_id: projectID, content, creator: "human" });
+      setContent("");
       closeDialog();
       onCreated?.();
     } catch (reason) {
@@ -155,33 +153,20 @@ export function GoalCreateForm({ onCreated, onDirtyChange }: Props = {}) {
           </div>
 
           <div>
-            <label className="mb-1 block text-sm font-medium text-ink" htmlFor="goal-title">
-              {t("form.goal.title.label")}
-            </label>
-            <input
-              id="goal-title"
-              name="title"
-              className="focus-ring w-full border border-line bg-surface px-3 py-2 text-sm text-ink"
-              value={title}
-              onChange={(event) => {
-                setTitle(event.target.value);
-                setValidationError("");
-              }}
-              required
-            />
-          </div>
-
-          <div>
-            <label className="mb-1 block text-sm font-medium text-ink" htmlFor="goal-description">
-              {t("form.goal.description.label")}
+            <label className="mb-1 block text-sm font-medium text-ink" htmlFor="goal-content">
+              {t("form.goal.content.label")}
             </label>
             <textarea
-              id="goal-description"
-              name="description"
+              id="goal-content"
+              name="content"
               className="focus-ring min-h-24 w-full border border-line bg-surface px-3 py-2 text-sm text-ink"
-              value={description}
-              onChange={(event) => setDescription(event.target.value)}
-              rows={4}
+              value={content}
+              onChange={(event) => {
+                setContent(event.target.value);
+                setValidationError("");
+              }}
+              rows={5}
+              required
             />
           </div>
 
