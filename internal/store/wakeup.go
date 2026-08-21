@@ -29,8 +29,8 @@ type WakeupEvent struct {
 	WaitingAnswerCount int    `json:"waiting_answer_count"`
 }
 
-// WakeupDiscrepancyEvent records a disagreement between the liveness-aware
-// detector and an intentionally separate simple count.
+// WakeupDiscrepancyEvent records a disagreement between the detector and an
+// independent evaluation using the same liveness-aware wakeup rules.
 type WakeupDiscrepancyEvent struct {
 	WakeupID                   string `json:"wakeup_id"`
 	ProjectID                  string `json:"project_id"`
@@ -194,9 +194,9 @@ func (s *Store) DetectWakeup(ctx context.Context, projectID string) (WakeupState
 	return state, nil
 }
 
-// CountUnstartedTasks is deliberately an independent simple count used to
-// detect drift in the liveness-aware detector. It does not consult claim
-// liveness.
+// CountUnstartedTasks returns an independent simple count that does not
+// consult claim liveness. Callers that need the wakeup definition should use
+// CountUnstartedTasksForWakeup instead.
 func (s *Store) CountUnstartedTasks(ctx context.Context, projectID string) (int, error) {
 	goals, err := s.ListGoals(ctx, projectID)
 	if err != nil {
@@ -225,6 +225,18 @@ func (s *Store) CountUnstartedTasks(ctx context.Context, projectID string) (int,
 		}
 	}
 	return count, nil
+}
+
+// CountUnstartedTasksForWakeup returns the unstarted count using the same
+// claim-liveness and open-decision rules as DetectWakeup. CountUnstartedTasks
+// intentionally keeps its independent simple-count definition for callers
+// that rely on it.
+func (s *Store) CountUnstartedTasksForWakeup(ctx context.Context, projectID string) (int, error) {
+	state, err := s.DetectWakeup(ctx, projectID)
+	if err != nil {
+		return 0, err
+	}
+	return state.UnstartedTaskCount, nil
 }
 
 func NewWakeupID() string {

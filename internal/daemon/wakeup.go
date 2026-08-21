@@ -59,6 +59,10 @@ func (t *wakeupTracker) publishDetection(now time.Time, name, targetID, projectI
 }
 
 func (t *wakeupTracker) evaluate(ctx context.Context, s *store.Store, now time.Time) ([]store.DecisionEvent, error) {
+	return t.evaluateWith(ctx, s, now, s.DetectWakeup)
+}
+
+func (t *wakeupTracker) evaluateWith(ctx context.Context, s *store.Store, now time.Time, detect func(context.Context, string) (store.WakeupState, error)) ([]store.DecisionEvent, error) {
 	projects, err := s.ListProjects(ctx)
 	if err != nil {
 		return nil, err
@@ -67,16 +71,27 @@ func (t *wakeupTracker) evaluate(ctx context.Context, s *store.Store, now time.T
 	var events []store.DecisionEvent
 	currentDetectionKeys := make(map[string]struct{})
 	for _, project := range projects {
-		state, err := s.DetectWakeup(ctx, project.ID)
+		state, err := detect(ctx, project.ID)
 		if err != nil {
 			return nil, err
 		}
-		counted, err := s.CountUnstartedTasks(ctx, project.ID)
+		counted, err := s.CountUnstartedTasksForWakeup(ctx, project.ID)
 		if err != nil {
 			return nil, err
 		}
 
 		mismatch := state.UnstartedTaskCount == 0 && counted > 0
+		if mismatch {
+			state, err = detect(ctx, project.ID)
+			if err != nil {
+				return nil, err
+			}
+			counted, err = s.CountUnstartedTasksForWakeup(ctx, project.ID)
+			if err != nil {
+				return nil, err
+			}
+			mismatch = state.UnstartedTaskCount == 0 && counted > 0
+		}
 		if mismatch {
 			if !t.discrepancySeen[project.ID] {
 				id := store.NewWakeupID()

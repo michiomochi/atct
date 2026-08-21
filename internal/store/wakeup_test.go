@@ -154,6 +154,14 @@ func TestDetectWakeupExcludesGoalWithRunningClaim(t *testing.T) {
 	if counted != 1 {
 		t.Fatalf("counted unstarted tasks = %d, want 1", counted)
 	}
+
+	wakeupCount, err := s.CountUnstartedTasksForWakeup(ctx, project.ID)
+	if err != nil {
+		t.Fatalf("CountUnstartedTasksForWakeup: %v", err)
+	}
+	if wakeupCount != 0 {
+		t.Fatalf("wakeup-rule unstarted tasks = %d, want 0 for a goal with a running claim", wakeupCount)
+	}
 }
 
 func TestDetectWakeupDoesNotReportGoalWithTasksAsUndeclared(t *testing.T) {

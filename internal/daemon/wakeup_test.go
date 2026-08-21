@@ -115,23 +115,16 @@ func TestWakeupTrackerReportsDetectorCountDiscrepancyOnce(t *testing.T) {
 	ctx := context.Background()
 	s := newWakeupTestStore(t)
 	projectID, goalID := newWakeupTestGoal(t, s, "discrepancy")
-	tasks, err := s.DeclareTasks(ctx, goalID, "agent", "discrepancy-tasks", []string{"Running task", "Unstarted task"}, []string{"Keep working on the running task.", "Start the remaining task later."})
-	if err != nil {
+	if _, err := s.DeclareTasks(ctx, goalID, "agent", "discrepancy-tasks", []string{"Unstarted task"}, []string{"Start the task later."}); err != nil {
 		t.Fatalf("DeclareTasks: %v", err)
-	}
-	if err := s.RegisterAgentSession(ctx, "discrepancy-running", os.Getpid()); err != nil {
-		t.Fatalf("RegisterAgentSession: %v", err)
-	}
-	if err := s.AssociateAgentSessionWithProject(ctx, "discrepancy-running", projectID); err != nil {
-		t.Fatalf("AssociateAgentSessionWithProject: %v", err)
-	}
-	if _, err := s.ClaimTask(ctx, tasks[0].ID, "discrepancy-running"); err != nil {
-		t.Fatalf("ClaimTask: %v", err)
 	}
 
 	tracker := newWakeupTracker()
 	now := time.Date(2026, 8, 20, 13, 0, 0, 0, time.UTC)
-	events, err := tracker.evaluate(ctx, s, now)
+	detect := func(context.Context, string) (store.WakeupState, error) {
+		return store.WakeupState{}, nil
+	}
+	events, err := tracker.evaluateWith(ctx, s, now, detect)
 	if err != nil {
 		t.Fatalf("initial evaluate: %v", err)
 	}
@@ -146,10 +139,76 @@ func TestWakeupTrackerReportsDetectorCountDiscrepancyOnce(t *testing.T) {
 		t.Fatalf("discrepancy = %+v, want detector 0 and counted 1 for project %s", discrepancy, projectID)
 	}
 
-	if events, err := tracker.evaluate(ctx, s, now.Add(time.Minute)); err != nil {
+	if events, err := tracker.evaluateWith(ctx, s, now.Add(time.Minute), detect); err != nil {
 		t.Fatalf("duplicate evaluate: %v", err)
 	} else if len(events) != 0 {
 		t.Fatalf("duplicate discrepancy events = %#v, want empty", events)
+	}
+}
+
+func TestWakeupTrackerIgnoresGoalWithRunningClaimAndUnstartedTask(t *testing.T) {
+	ctx := context.Background()
+	s := newWakeupTestStore(t)
+	projectID, goalID := newWakeupTestGoal(t, s, "running-goal")
+	tasks, err := s.DeclareTasks(ctx, goalID, "agent", "running-goal-tasks", []string{"Running task", "Unstarted task"}, []string{"Keep working on the running task.", "Start the remaining task later."})
+	if err != nil {
+		t.Fatalf("DeclareTasks: %v", err)
+	}
+	if err := s.RegisterAgentSession(ctx, "running-goal-session", os.Getpid()); err != nil {
+		t.Fatalf("RegisterAgentSession: %v", err)
+	}
+	if err := s.AssociateAgentSessionWithProject(ctx, "running-goal-session", projectID); err != nil {
+		t.Fatalf("AssociateAgentSessionWithProject: %v", err)
+	}
+	if _, err := s.ClaimTask(ctx, tasks[0].ID, "running-goal-session"); err != nil {
+		t.Fatalf("ClaimTask: %v", err)
+	}
+
+	tracker := newWakeupTracker()
+	now := time.Date(2026, 8, 20, 13, 0, 0, 0, time.UTC)
+	events, err := tracker.evaluate(ctx, s, now)
+	if err != nil {
+		t.Fatalf("evaluate: %v", err)
+	}
+	if len(events) != 0 {
+		t.Fatalf("definition-difference events = %#v, want empty", events)
+	}
+}
+
+func TestWakeupTrackerIgnoresSnapshotDiscrepancyAfterTaskDeclaration(t *testing.T) {
+	ctx := context.Background()
+	s := newWakeupTestStore(t)
+	projectID, goalID := newWakeupTestGoal(t, s, "snapshot")
+
+	tracker := newWakeupTracker()
+	now := time.Date(2026, 8, 20, 14, 0, 0, 0, time.UTC)
+	detectCalls := 0
+	events, err := tracker.evaluateWith(ctx, s, now, func(ctx context.Context, detectedProjectID string) (store.WakeupState, error) {
+		detectCalls++
+		if detectCalls == 1 {
+			if _, err := s.DeclareTasks(ctx, goalID, "agent", "snapshot-tasks", []string{"First task", "Second task"}, []string{"Complete the first task.", "Complete the second task."}); err != nil {
+				t.Fatalf("DeclareTasks: %v", err)
+			}
+			return store.WakeupState{}, nil
+		}
+		return s.DetectWakeup(ctx, detectedProjectID)
+	})
+	if err != nil {
+		t.Fatalf("evaluate: %v", err)
+	}
+	if len(events) != 0 {
+		t.Fatalf("snapshot discrepancy events = %#v, want empty", events)
+	}
+	if detectCalls != 2 {
+		t.Fatalf("DetectWakeup calls = %d, want initial snapshot plus one recheck", detectCalls)
+	}
+
+	counted, err := s.CountUnstartedTasks(ctx, projectID)
+	if err != nil {
+		t.Fatalf("CountUnstartedTasks: %v", err)
+	}
+	if counted != 2 {
+		t.Fatalf("counted unstarted tasks = %d, want 2", counted)
 	}
 }
 
