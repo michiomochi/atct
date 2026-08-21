@@ -1,7 +1,6 @@
 import type { TranslationKey } from "./en";
 
 export const ja: Record<TranslationKey, string> = {
-  "nav.dashboard": "ダッシュボード",
   "locale.label": "言語",
   "locale.en": "English",
   "locale.ja": "日本語",

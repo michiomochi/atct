@@ -1,5 +1,4 @@
 export const en = {
-  "nav.dashboard": "Dashboard",
   "locale.label": "Language",
   "locale.en": "English",
   "locale.ja": "日本語",

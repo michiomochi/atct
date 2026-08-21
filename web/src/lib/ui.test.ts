@@ -12,6 +12,7 @@ import goalDetailSource from "../components/GoalDetail.tsx?raw";
 import goalTableSource from "../components/GoalTable.tsx?raw";
 import dashboardSource from "../components/Dashboard.tsx?raw";
 import localeSwitchSource from "../components/LocaleSwitch.tsx?raw";
+import shellSource from "../layouts/Shell.astro?raw";
 import sectionSource from "../components/Section.tsx?raw";
 import stateMessageSource from "../components/StateMessage.tsx?raw";
 import taskTableSource from "../components/TaskTable.tsx?raw";
@@ -481,10 +482,12 @@ describe("goal detail answer flows", () => {
     expect(decisionFormSource).toContain('t("form.answer.submit")');
   });
 
-  it("localizes the Decision kind and header Dashboard link", () => {
+  it("localizes the Decision kind", () => {
     expect(decisionTableSource).toContain("decisionKindLabel");
-    expect(localeSwitchSource).toContain('t("nav.dashboard")');
-    expect(localeSwitchSource).toContain('href="/"');
+  });
+
+  it("keeps the Shell ATCT link pointed at the home page", () => {
+    expect(shellSource).toContain('href="/"');
   });
 
   it("applies the stored locale after the client islands hydrate", () => {
