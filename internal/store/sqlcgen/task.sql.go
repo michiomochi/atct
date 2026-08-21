@@ -278,6 +278,36 @@ func (q *Queries) InsertAgentSessionAssociation(ctx context.Context, arg InsertA
 	return err
 }
 
+const linkTaskCommit = `-- name: LinkTaskCommit :exec
+INSERT OR REPLACE INTO task_commits (
+  task_id, sha, subject, files_changed, insertions, deletions, created_at
+)
+VALUES (?, ?, ?, ?, ?, ?, ?)
+`
+
+type LinkTaskCommitParams struct {
+	TaskID       string
+	Sha          string
+	Subject      string
+	FilesChanged int64
+	Insertions   int64
+	Deletions    int64
+	CreatedAt    string
+}
+
+func (q *Queries) LinkTaskCommit(ctx context.Context, arg LinkTaskCommitParams) error {
+	_, err := q.db.ExecContext(ctx, linkTaskCommit,
+		arg.TaskID,
+		arg.Sha,
+		arg.Subject,
+		arg.FilesChanged,
+		arg.Insertions,
+		arg.Deletions,
+		arg.CreatedAt,
+	)
+	return err
+}
+
 const listClaimedTasksForConflict = `-- name: ListClaimedTasksForConflict :many
 SELECT id, title, description, status, claimed_by, files
 FROM tasks
@@ -377,6 +407,52 @@ func (q *Queries) ListTaskAlternatives(ctx context.Context, arg ListTaskAlternat
 			&i.Status,
 			&i.ClaimedBy,
 			&i.Files,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listTaskCommits = `-- name: ListTaskCommits :many
+SELECT sha, subject, files_changed, insertions, deletions, created_at
+FROM task_commits
+WHERE task_id = ?
+ORDER BY created_at ASC
+`
+
+type ListTaskCommitsRow struct {
+	Sha          string
+	Subject      string
+	FilesChanged int64
+	Insertions   int64
+	Deletions    int64
+	CreatedAt    string
+}
+
+func (q *Queries) ListTaskCommits(ctx context.Context, taskID string) ([]ListTaskCommitsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listTaskCommits, taskID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListTaskCommitsRow
+	for rows.Next() {
+		var i ListTaskCommitsRow
+		if err := rows.Scan(
+			&i.Sha,
+			&i.Subject,
+			&i.FilesChanged,
+			&i.Insertions,
+			&i.Deletions,
+			&i.CreatedAt,
 		); err != nil {
 			return nil, err
 		}

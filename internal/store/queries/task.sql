@@ -29,6 +29,18 @@ UPDATE tasks
 SET status = ?, updated_at = ?
 WHERE id = ?;
 
+-- name: LinkTaskCommit :exec
+INSERT OR REPLACE INTO task_commits (
+  task_id, sha, subject, files_changed, insertions, deletions, created_at
+)
+VALUES (?, ?, ?, ?, ?, ?, ?);
+
+-- name: ListTaskCommits :many
+SELECT sha, subject, files_changed, insertions, deletions, created_at
+FROM task_commits
+WHERE task_id = ?
+ORDER BY created_at ASC;
+
 -- name: UpdateTaskStatusAndReleaseClaim :execresult
 UPDATE tasks
 SET status = ?, claimed_by = '', claimed_at = NULL, updated_at = ?

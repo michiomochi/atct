@@ -61,6 +61,15 @@ type Task struct {
 	UpdatedAt   time.Time  `json:"updated_at"`
 }
 
+type TaskCommit struct {
+	SHA          string    `json:"sha"`
+	Subject      string    `json:"subject"`
+	FilesChanged int       `json:"files_changed"`
+	Insertions   int       `json:"insertions"`
+	Deletions    int       `json:"deletions"`
+	CreatedAt    time.Time `json:"created_at"`
+}
+
 type Decision struct {
 	ID               string         `json:"id"`
 	GoalID           string         `json:"goal_id"`

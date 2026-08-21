@@ -176,6 +176,46 @@ func (s *Store) ListTasks(ctx context.Context, goalID string) ([]domain.Task, er
 	return out, nil
 }
 
+func (s *Store) LinkTaskCommit(ctx context.Context, taskID string, c domain.TaskCommit) error {
+	err := taskQueries(s).LinkTaskCommit(ctx, sqlcgen.LinkTaskCommitParams{
+		TaskID:       taskID,
+		Sha:          c.SHA,
+		Subject:      c.Subject,
+		FilesChanged: int64(c.FilesChanged),
+		Insertions:   int64(c.Insertions),
+		Deletions:    int64(c.Deletions),
+		CreatedAt:    c.CreatedAt.UTC().Format(time.RFC3339Nano),
+	})
+	if err != nil {
+		return fmt.Errorf("link task commit: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) ListTaskCommits(ctx context.Context, taskID string) ([]domain.TaskCommit, error) {
+	rows, err := taskQueries(s).ListTaskCommits(ctx, taskID)
+	if err != nil {
+		return nil, fmt.Errorf("query task commits: %w", err)
+	}
+
+	out := make([]domain.TaskCommit, 0, len(rows))
+	for _, row := range rows {
+		createdAt, err := time.Parse(time.RFC3339Nano, row.CreatedAt)
+		if err != nil {
+			return nil, fmt.Errorf("parse task commit created_at: %w", err)
+		}
+		out = append(out, domain.TaskCommit{
+			SHA:          row.Sha,
+			Subject:      row.Subject,
+			FilesChanged: int(row.FilesChanged),
+			Insertions:   int(row.Insertions),
+			Deletions:    int(row.Deletions),
+			CreatedAt:    createdAt,
+		})
+	}
+	return out, nil
+}
+
 func (s *Store) GetTaskGoalID(ctx context.Context, taskID string) (string, error) {
 	goalID, err := taskQueries(s).GetTaskGoalID(ctx, taskID)
 	if errors.Is(err, sql.ErrNoRows) {

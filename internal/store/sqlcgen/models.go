@@ -75,3 +75,13 @@ type Task struct {
 	CreatedAt   string
 	UpdatedAt   string
 }
+
+type TaskCommit struct {
+	TaskID       string
+	Sha          string
+	Subject      string
+	FilesChanged int64
+	Insertions   int64
+	Deletions    int64
+	CreatedAt    string
+}

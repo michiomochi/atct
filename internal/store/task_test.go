@@ -735,3 +735,93 @@ func TestUpdateTaskAllowsStatusChangeForUnclaimedTask(t *testing.T) {
 		t.Fatalf("unclaimed task was not updated: %+v", updated)
 	}
 }
+
+func newTaskCommitTestTask(t *testing.T, s *Store, key string) string {
+	t.Helper()
+	goalID := newTestGoal(t, s)
+	tasks, err := s.DeclareTasks(context.Background(), goalID, "agent", key, []string{"Task"}, []string{"Task description"})
+	if err != nil {
+		t.Fatalf("DeclareTasks: %v", err)
+	}
+	return tasks[0].ID
+}
+
+func TestLinkTaskCommitDoesNotDuplicateSameSHA(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	taskID := newTaskCommitTestTask(t, s, "same-sha")
+
+	first := domain.TaskCommit{
+		SHA:          "abc123",
+		Subject:      "first subject",
+		FilesChanged: 1,
+		Insertions:   2,
+		Deletions:    3,
+		CreatedAt:    time.Date(2026, 8, 21, 1, 2, 3, 0, time.UTC),
+	}
+	second := first
+	second.Subject = "replacement subject"
+	second.FilesChanged = 4
+	second.CreatedAt = first.CreatedAt.Add(time.Minute)
+	if err := s.LinkTaskCommit(ctx, taskID, first); err != nil {
+		t.Fatalf("LinkTaskCommit first: %v", err)
+	}
+	if err := s.LinkTaskCommit(ctx, taskID, second); err != nil {
+		t.Fatalf("LinkTaskCommit second: %v", err)
+	}
+
+	commits, err := s.ListTaskCommits(ctx, taskID)
+	if err != nil {
+		t.Fatalf("ListTaskCommits: %v", err)
+	}
+	if len(commits) != 1 {
+		t.Fatalf("commit count = %d, want 1", len(commits))
+	}
+	if commits[0] != second {
+		t.Fatalf("stored commit = %+v, want %+v", commits[0], second)
+	}
+}
+
+func TestListTaskCommitsDoesNotMixTasks(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	goalID := newTestGoal(t, s)
+	tasks, err := s.DeclareTasks(ctx, goalID, "agent", "different-tasks", []string{"First", "Second"}, []string{"First description", "Second description"})
+	if err != nil {
+		t.Fatalf("DeclareTasks: %v", err)
+	}
+	first := domain.TaskCommit{SHA: "first-sha", Subject: "first", CreatedAt: time.Date(2026, 8, 21, 1, 0, 0, 0, time.UTC)}
+	second := domain.TaskCommit{SHA: "second-sha", Subject: "second", CreatedAt: time.Date(2026, 8, 21, 2, 0, 0, 0, time.UTC)}
+	if err := s.LinkTaskCommit(ctx, tasks[0].ID, first); err != nil {
+		t.Fatalf("LinkTaskCommit first: %v", err)
+	}
+	if err := s.LinkTaskCommit(ctx, tasks[1].ID, second); err != nil {
+		t.Fatalf("LinkTaskCommit second: %v", err)
+	}
+
+	firstCommits, err := s.ListTaskCommits(ctx, tasks[0].ID)
+	if err != nil {
+		t.Fatalf("ListTaskCommits first: %v", err)
+	}
+	secondCommits, err := s.ListTaskCommits(ctx, tasks[1].ID)
+	if err != nil {
+		t.Fatalf("ListTaskCommits second: %v", err)
+	}
+	if len(firstCommits) != 1 || firstCommits[0] != first {
+		t.Fatalf("first task commits = %+v, want [%+v]", firstCommits, first)
+	}
+	if len(secondCommits) != 1 || secondCommits[0] != second {
+		t.Fatalf("second task commits = %+v, want [%+v]", secondCommits, second)
+	}
+}
+
+func TestLinkTaskCommitRejectsMissingTask(t *testing.T) {
+	c := domain.TaskCommit{
+		SHA:       "missing-task-sha",
+		Subject:   "missing task",
+		CreatedAt: time.Date(2026, 8, 21, 3, 0, 0, 0, time.UTC),
+	}
+	if err := newTestStore(t).LinkTaskCommit(context.Background(), "missing-task", c); err == nil {
+		t.Fatal("LinkTaskCommit succeeded for a missing task")
+	}
+}
