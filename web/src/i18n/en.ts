@@ -6,7 +6,6 @@ export const en = {
   "dashboard.title": "Dashboard",
   "dashboard.waiting.title": "Waiting for answers",
   "dashboard.proposed.title": "Proposed goals",
-  "dashboard.proposed.approveHint": "Approve from the answers table above",
   "dashboard.openDecisions.empty":
     "No decisions are waiting for an answer. Answer a decision to move it forward.",
   "dashboard.goals.title": "Goals",

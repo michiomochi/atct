@@ -20,7 +20,6 @@ export function ProposedGoalTable({ goals }: Props) {
             <th className="px-3 py-2 text-xs font-semibold text-ink-500">{t("form.goal.content.label")}</th>
             <th className="px-3 py-2 text-xs font-semibold text-ink-500">{t("goal.project")}</th>
             <th className="px-3 py-2 text-xs font-semibold text-ink-500">{t("task.detail.createdAt")}</th>
-            <th className="px-3 py-2 text-xs font-semibold text-ink-500">{t("task.column.action")}</th>
           </Table.Row>
         </thead>
         <Table.Body>
@@ -42,7 +41,6 @@ export function ProposedGoalTable({ goals }: Props) {
               </Table.Cell>
               <Table.Cell className="px-3 py-4 text-ink-700">{goal.project_name || "-"}</Table.Cell>
               <Table.Cell className="px-3 py-4 text-ink-700">{formatDateTime(locale, goal.created_at)}</Table.Cell>
-              <Table.Cell className="px-3 py-4 text-ink-700">{t("dashboard.proposed.approveHint")}</Table.Cell>
             </Table.Row>
           ))}
         </Table.Body>

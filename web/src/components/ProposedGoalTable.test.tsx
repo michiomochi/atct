@@ -14,7 +14,7 @@ vi.mock("react-i18next", () => ({
 }));
 
 describe("ProposedGoalTable", () => {
-  it("shows the approval hint without an approval button", () => {
+  it("shows the three goal columns without an action column", () => {
     render(
       <ProposedGoalTable
         goals={[
@@ -32,7 +32,10 @@ describe("ProposedGoalTable", () => {
     expect(screen.getByText("Proposed goal")).not.toBeNull();
     expect(screen.getByText("A proposed description")).not.toBeNull();
     expect(screen.getByText("Project")).not.toBeNull();
-    expect(screen.getByText(/dashboard\.proposed\.approveHint|Approve from the answers table above|上の回答待ちの表から承認します/)).not.toBeNull();
+    expect(screen.getByRole("columnheader", { name: "form.goal.content.label" })).not.toBeNull();
+    expect(screen.getByRole("columnheader", { name: "goal.project" })).not.toBeNull();
+    expect(screen.getByRole("columnheader", { name: "task.detail.createdAt" })).not.toBeNull();
+    expect(screen.queryByRole("columnheader", { name: "task.column.action" })).toBeNull();
     expect(screen.queryByRole("button")).toBeNull();
   });
 });

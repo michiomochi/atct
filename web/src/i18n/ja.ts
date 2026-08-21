@@ -8,7 +8,6 @@ export const ja: Record<TranslationKey, string> = {
   "dashboard.title": "ダッシュボード",
   "dashboard.waiting.title": "回答待ち",
   "dashboard.proposed.title": "提案中のゴール",
-  "dashboard.proposed.approveHint": "上の回答待ちの表から承認します",
   "dashboard.openDecisions.empty": "回答待ちの判断はありません。判断に答えると先へ進みます。",
   "dashboard.goals.title": "ゴール",
   "dashboard.goals.empty": "進行中のゴールはありません。見出し右側のボタンから作成できます。",
