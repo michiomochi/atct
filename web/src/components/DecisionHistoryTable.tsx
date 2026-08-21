@@ -52,7 +52,7 @@ export function DecisionHistoryTable({ decisions, omittedCount }: Props) {
   return (
     <section className="border-t border-line pt-5" data-testid="decision-history" aria-labelledby="decision-history-heading">
       <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-2">
-        <h2 id="decision-history-heading" className="font-display text-lg font-semibold tracking-tight text-ink-950">
+        <h2 id="decision-history-heading" className="font-display text-lg font-semibold text-ink-950">
           {t("goal.history.title")}
         </h2>
         {omittedCount > 0 && <p className="text-sm text-ink-700">{t("goal.history.omitted", { count: omittedCount })}</p>}
@@ -60,7 +60,7 @@ export function DecisionHistoryTable({ decisions, omittedCount }: Props) {
       <div className="table-scroll mt-4">
         <Table className="min-w-[52rem] w-full border-collapse text-left text-sm">
           <caption className="sr-only">{t("goal.history.caption")}</caption>
-          <Table.Header className="border-b-2 border-ink-300 text-xs tracking-wide text-ink-700">
+          <Table.Header className="border-b-2 border-ink-300 text-xs text-ink-700">
             <Table.Row>
               <Table.Head {...columnScope} className="px-3 py-3 font-semibold">{t("goal.history.column.question")}</Table.Head>
               <Table.Head {...columnScope} className="w-64 px-3 py-3 font-semibold">{t("goal.history.column.answer")}</Table.Head>

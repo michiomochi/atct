@@ -6,6 +6,7 @@ import { dirname, extname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import decisionFormSource from "../components/DecisionAnswerForm.tsx?raw";
+import decisionHistoryTableSource from "../components/DecisionHistoryTable.tsx?raw";
 import decisionTableSource from "../components/DecisionTable.tsx?raw";
 import goalCreateFormSource from "../components/GoalCreateForm.tsx?raw";
 import goalDetailSource from "../components/GoalDetail.tsx?raw";
@@ -385,6 +386,31 @@ describe("goal history IDs", () => {
 
   it("resolves a sentinel using a supplied URL prefix", () => {
     expect(resolveRouteID("_", "/tasks/task123", "/tasks/")).toBe("task123");
+  });
+});
+
+describe("Kumo font tracking", () => {
+  it("keeps tracking classes out of every audited source", () => {
+    const sourceFiles: Array<{ name: string; source: string }> = [
+      { name: "GoalDetail.tsx", source: goalDetailSource },
+      { name: "TaskDetailPage.tsx", source: taskDetailPageSource },
+      { name: "Dashboard.tsx", source: dashboardSource },
+      { name: "DecisionTable.tsx", source: decisionTableSource },
+      { name: "GoalTable.tsx", source: goalTableSource },
+      { name: "Section.tsx", source: sectionSource },
+      { name: "TaskTable.tsx", source: taskTableSource },
+      { name: "DecisionHistoryTable.tsx", source: decisionHistoryTableSource },
+      { name: "Shell.astro", source: shellSource },
+    ];
+
+    expect(sourceFiles).toHaveLength(9);
+    expect(sourceFiles.every(({ source }) => source.length > 0)).toBe(true);
+
+    const trackingMatches = sourceFiles.flatMap(({ name, source }) =>
+      (source.match(/\btracking-[\w-]+/g) ?? []).map((match) => `${name}: ${match}`),
+    );
+
+    expect(trackingMatches).toEqual([]);
   });
 });
 

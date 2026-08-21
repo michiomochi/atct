@@ -67,7 +67,7 @@ export function Dashboard() {
   return (
     <main className="space-y-6">
       <div>
-        <h1 className="font-display text-3xl font-semibold tracking-tight text-ink-950">{t("dashboard.title")}</h1>
+        <h1 className="font-display text-3xl font-semibold text-ink-950">{t("dashboard.title")}</h1>
       </div>
 
       {updatePending && (
@@ -111,7 +111,7 @@ export function Dashboard() {
           <div className="space-y-8">
             {projectGroups.map(([projectName, goals]) => (
               <div className="space-y-3" key={projectName}>
-                <h3 className="font-display text-base font-semibold tracking-tight text-ink-950">{projectName}</h3>
+                <h3 className="font-display text-base font-semibold text-ink-950">{projectName}</h3>
                 <GoalTable goals={goals} showProject={false} />
               </div>
             ))}

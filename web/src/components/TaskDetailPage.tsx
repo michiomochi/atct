@@ -101,46 +101,46 @@ export function TaskDetailPage({ id }: Props) {
             >
               {data.goal.project_name ? `${t("goal.project")}: ${data.goal.project_name}` : t("goal.backToDashboard")}
             </a>
-            <h1 className="mt-2 font-display text-3xl font-semibold tracking-tight text-ink-950">{data.task.title}</h1>
+            <h1 className="mt-2 font-display text-3xl font-semibold text-ink-950">{data.task.title}</h1>
             {data.task.description.trim() && (
               <section className="mt-5 max-w-3xl">
-                <h2 className="font-display text-lg font-semibold tracking-tight text-ink-950">{t("task.detail.description")}</h2>
+                <h2 className="font-display text-lg font-semibold text-ink-950">{t("task.detail.description")}</h2>
                 <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-6 text-ink-700">{data.task.description}</p>
               </section>
             )}
           </div>
 
           <section className="min-w-0 border-t border-line pt-5" aria-labelledby="task-attributes-heading">
-            <h2 id="task-attributes-heading" className="font-display text-lg font-semibold tracking-tight text-ink-950">
+                <h2 id="task-attributes-heading" className="font-display text-lg font-semibold text-ink-950">
               {t("task.detail.attributes")}
             </h2>
             <dl className="mt-6 grid min-w-0 gap-x-6 gap-y-4 border-t border-line pt-5 sm:grid-cols-2">
               <div className="min-w-0">
-                <dt className="text-xs font-semibold uppercase tracking-wide text-ink-700">{t("task.detail.files")}</dt>
+                <dt className="text-xs font-semibold uppercase text-ink-700">{t("task.detail.files")}</dt>
                 <dd className="mt-1 break-words text-sm text-ink-950">
                   {displayValue([...data.task.files ?? [], data.task.declare_key].filter(Boolean).join(" · "), noValue)}
                 </dd>
               </div>
               <div className="min-w-0">
-                <dt className="text-xs font-semibold uppercase tracking-wide text-ink-700">{t("task.detail.agent")}</dt>
+                <dt className="text-xs font-semibold uppercase text-ink-700">{t("task.detail.agent")}</dt>
                 <dd className="mt-1 break-words text-sm text-ink-950">{displayValue(data.task.agent, noValue)}</dd>
               </div>
               <div className="min-w-0">
-                <dt className="text-xs font-semibold uppercase tracking-wide text-ink-700">{t("task.detail.claimedRun")}</dt>
+                <dt className="text-xs font-semibold uppercase text-ink-700">{t("task.detail.claimedRun")}</dt>
                 <dd className="mt-1 break-words text-sm text-ink-950">{displayValue(data.task.claimed_by, noValue)}</dd>
               </div>
               <div className="min-w-0">
-                <dt className="text-xs font-semibold uppercase tracking-wide text-ink-700">{t("task.detail.order")}</dt>
+                <dt className="text-xs font-semibold uppercase text-ink-700">{t("task.detail.order")}</dt>
                 <dd className="mt-1 text-sm text-ink-950">{data.task.order}</dd>
               </div>
               <div className="min-w-0">
-                <dt className="text-xs font-semibold uppercase tracking-wide text-ink-700">{t("task.detail.createdAt")}</dt>
+                <dt className="text-xs font-semibold uppercase text-ink-700">{t("task.detail.createdAt")}</dt>
                 <dd className="mt-1 break-words text-sm text-ink-950">
                   {displayValue(data.task.created_at ? formatDateTime(locale, data.task.created_at) : undefined, noValue)}
                 </dd>
               </div>
               <div className="min-w-0">
-                <dt className="text-xs font-semibold uppercase tracking-wide text-ink-700">{t("task.detail.updatedAt")}</dt>
+                <dt className="text-xs font-semibold uppercase text-ink-700">{t("task.detail.updatedAt")}</dt>
                 <dd className="mt-1 break-words text-sm text-ink-950">
                   {displayValue(data.task.updated_at ? formatDateTime(locale, data.task.updated_at) : undefined, noValue)}
                 </dd>
@@ -150,7 +150,7 @@ export function TaskDetailPage({ id }: Props) {
 
           {taskCommits.length > 0 && (
             <section className="min-w-0 border-t border-line pt-5" aria-labelledby="task-commits-heading">
-              <h2 id="task-commits-heading" className="font-display text-lg font-semibold tracking-tight text-ink-950">
+              <h2 id="task-commits-heading" className="font-display text-lg font-semibold text-ink-950">
                 {t("task.detail.commits")}
               </h2>
               <div className="mt-6">
@@ -180,7 +180,7 @@ export function TaskDetailPage({ id }: Props) {
 
       {data && taskOpenDecisions.length > 0 && (
         <section className="min-w-0 border-t border-line pt-5" data-testid="task-answer-form" aria-labelledby="task-answer-heading">
-          <h2 id="task-answer-heading" className="font-display text-lg font-semibold tracking-tight text-ink-950">{t("task.detail.answer")}</h2>
+          <h2 id="task-answer-heading" className="font-display text-lg font-semibold text-ink-950">{t("task.detail.answer")}</h2>
           <div className="mt-4 space-y-5">
             {taskOpenDecisions.map((decision) => (
               <DecisionAnswerForm

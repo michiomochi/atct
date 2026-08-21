@@ -67,7 +67,7 @@ function CompletionReport({ goal }: { goal: Goal }) {
 
   return (
     <section className="min-w-0 border-t border-line pt-5" data-testid="completion-report" aria-labelledby="completion-report-heading">
-      <h2 id="completion-report-heading" className="font-display text-lg font-semibold tracking-tight text-ink-950">{t("goal.completion.report.title")}</h2>
+      <h2 id="completion-report-heading" className="font-display text-lg font-semibold text-ink-950">{t("goal.completion.report.title")}</h2>
       <div className="mt-4 grid min-w-0 gap-6 sm:grid-cols-2">
         {completionReportFields.map(({ key, label }) => {
           const value = report[key].trim() ? report[key] : t("goal.completion.report.empty");
@@ -134,7 +134,7 @@ function CompletionApproval({
   if (conflict) {
     return (
       <section className="min-w-0 border-t border-line pt-5" data-testid="completion-approval" aria-labelledby="completion-approval-heading">
-        <h2 id="completion-approval-heading" className="font-display text-lg font-semibold tracking-tight text-ink-950">{t("goal.completion.title")}</h2>
+        <h2 id="completion-approval-heading" className="font-display text-lg font-semibold text-ink-950">{t("goal.completion.title")}</h2>
         <div className="mt-4 border border-notice-800 bg-notice-100 px-4 py-4 text-sm text-notice-800" role="alert">
           <p>{t("goal.completion.conflict")}</p>
           <Button
@@ -152,7 +152,7 @@ function CompletionApproval({
 
   return (
     <section className="min-w-0 border-t border-line pt-5" data-testid="completion-approval" aria-labelledby="completion-approval-heading">
-      <h2 id="completion-approval-heading" className="font-display text-lg font-semibold tracking-tight text-ink-950">{t("goal.completion.title")}</h2>
+        <h2 id="completion-approval-heading" className="font-display text-lg font-semibold text-ink-950">{t("goal.completion.title")}</h2>
       <form className="mt-4 min-w-0 max-w-3xl border-l-2 border-accent-600 pl-4" onSubmit={handleSubmit} noValidate>
         <label className="mb-3 block text-sm text-ink-800" htmlFor={reasonID}>
           {t("goal.completion.reason")} <span className="text-ink-500">{t("form.optional")}</span>
@@ -237,7 +237,7 @@ function GoalApproval({
 
   return (
     <section className="min-w-0 border-t border-line pt-5" data-testid="goal-approval" aria-labelledby="goal-approval-heading">
-      <h2 id="goal-approval-heading" className="font-display text-lg font-semibold tracking-tight text-ink-950">{t("goal.approval.title")}</h2>
+      <h2 id="goal-approval-heading" className="font-display text-lg font-semibold text-ink-950">{t("goal.approval.title")}</h2>
       <p className="mt-2 max-w-3xl text-sm leading-6 text-ink-700">{t("goal.approval.description")}</p>
       <form className="mt-4 min-w-0 max-w-3xl border-l-2 border-accent-600 pl-4" onSubmit={handleSubmit} noValidate>
         <label className="mb-3 block text-sm text-ink-800" htmlFor={reasonID}>
@@ -425,7 +425,7 @@ export function GoalDetail({ id }: Props) {
           {t("goal.backToDashboard")}
         </a>
         <div className="mt-2 flex flex-wrap items-start justify-between gap-4">
-          <h1 className="font-display text-3xl font-semibold tracking-tight text-ink-950">
+          <h1 className="font-display text-3xl font-semibold text-ink-950">
             {data ? headline(data.goal.goal.content) : t("goal.title")}
           </h1>
           {data && <GoalWithdrawal goal={data.goal.goal} onUpdated={load} />}
@@ -434,15 +434,15 @@ export function GoalDetail({ id }: Props) {
         {data && (
           <dl className="mt-5 grid min-w-0 gap-x-6 gap-y-3 border-t border-line pt-4 sm:grid-cols-3">
             <div className="min-w-0">
-              <dt className="text-xs font-semibold uppercase tracking-wide text-ink-700">{t("goal.project")}</dt>
+              <dt className="text-xs font-semibold uppercase text-ink-700">{t("goal.project")}</dt>
               <dd className="mt-1 break-words text-sm text-ink-950">{data.goal.goal.project_name || "-"}</dd>
             </div>
             <div className="min-w-0">
-              <dt className="text-xs font-semibold uppercase tracking-wide text-ink-700">{t("goal.column.status")}</dt>
+              <dt className="text-xs font-semibold uppercase text-ink-700">{t("goal.column.status")}</dt>
               <dd className="mt-1 break-words text-sm text-ink-950">{statusLabel(locale, data.goal.goal.status)}</dd>
             </div>
             <div className="min-w-0">
-              <dt className="text-xs font-semibold uppercase tracking-wide text-ink-700">{t("goal.column.updatedAt")}</dt>
+              <dt className="text-xs font-semibold uppercase text-ink-700">{t("goal.column.updatedAt")}</dt>
               <dd className="mt-1 break-words text-sm text-ink-950">{formatDateTime(locale, data.goal.goal.updated_at)}</dd>
             </div>
           </dl>
@@ -485,7 +485,7 @@ export function GoalDetail({ id }: Props) {
 
       <section className="min-w-0 border-t border-line pt-5" data-testid="task-list" aria-labelledby="task-list-heading">
         <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-2">
-          <h2 id="task-list-heading" className="font-display text-lg font-semibold tracking-tight text-ink-950">{t("goal.tasks.title")}</h2>
+          <h2 id="task-list-heading" className="font-display text-lg font-semibold text-ink-950">{t("goal.tasks.title")}</h2>
           {data && <p className="text-sm text-ink-700">{tasks.length}</p>}
         </div>
         <div className="mt-4 min-w-0">
@@ -505,13 +505,13 @@ export function GoalDetail({ id }: Props) {
 
       {taskCommits.length > 0 && (
         <section className="min-w-0 border-t border-line pt-5" aria-labelledby="goal-commits-heading">
-          <h2 id="goal-commits-heading" className="font-display text-lg font-semibold tracking-tight text-ink-950">
+          <h2 id="goal-commits-heading" className="font-display text-lg font-semibold text-ink-950">
             {t("goal.commits.title")}
           </h2>
           <div className="mt-6 space-y-8">
             {taskCommits.map(({ task_id, task_title, commits }) => (
               <div key={task_id} className="min-w-0">
-                <h3 className="font-display text-base font-semibold tracking-tight text-ink-950">
+                <h3 className="font-display text-base font-semibold text-ink-950">
                   <a
                     className="focus-ring inline-block w-fit max-w-full text-left text-accent-700 underline decoration-accent-100 underline-offset-4 hover:decoration-accent-700"
                     href={`/tasks/${encodeURIComponent(task_id)}`}
