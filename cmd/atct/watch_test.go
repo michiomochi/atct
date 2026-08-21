@@ -622,6 +622,62 @@ func TestEmitWatchDetectionSeparatesTargets(t *testing.T) {
 	}
 }
 
+func TestEmitWatchGoalCreatedWritesOneLine(t *testing.T) {
+	var output bytes.Buffer
+	delivered := make(map[watchDeliveryKey]struct{})
+	wakeupDelivered := make(map[watchWakeupDeliveryKey]struct{})
+	detectionDelivered := make(map[watchDetectionDeliveryKey]struct{})
+
+	if err := emitWatchDecision(&output, "goal.created", watchDecision{GoalID: "goal-1"}, delivered, wakeupDelivered, detectionDelivered); err != nil {
+		t.Fatalf("emitWatchDecision: %v", err)
+	}
+
+	want := "atct goal created (goal_id: goal-1)\n"
+	if got := output.String(); got != want {
+		t.Fatalf("output = %q, want %q", got, want)
+	}
+}
+
+func TestEmitWatchGoalCreatedDoesNotRepeatSameGoal(t *testing.T) {
+	var output bytes.Buffer
+	delivered := make(map[watchDeliveryKey]struct{})
+	wakeupDelivered := make(map[watchWakeupDeliveryKey]struct{})
+	detectionDelivered := make(map[watchDetectionDeliveryKey]struct{})
+
+	for _, decision := range []watchDecision{
+		{ID: "event-1", GoalID: "goal-1"},
+		{ID: "event-2", GoalID: "goal-1"},
+	} {
+		if err := emitWatchDecision(&output, "goal.created", decision, delivered, wakeupDelivered, detectionDelivered); err != nil {
+			t.Fatalf("emitWatchDecision: %v", err)
+		}
+	}
+
+	want := "atct goal created (goal_id: goal-1)\n"
+	if got := output.String(); got != want {
+		t.Fatalf("output = %q, want %q", got, want)
+	}
+}
+
+func TestEmitWatchGoalCreatedSeparatesGoals(t *testing.T) {
+	var output bytes.Buffer
+	delivered := make(map[watchDeliveryKey]struct{})
+	wakeupDelivered := make(map[watchWakeupDeliveryKey]struct{})
+	detectionDelivered := make(map[watchDetectionDeliveryKey]struct{})
+
+	for _, goalID := range []string{"goal-1", "goal-2"} {
+		if err := emitWatchDecision(&output, "goal.created", watchDecision{GoalID: goalID}, delivered, wakeupDelivered, detectionDelivered); err != nil {
+			t.Fatalf("emitWatchDecision(%s): %v", goalID, err)
+		}
+	}
+
+	want := "atct goal created (goal_id: goal-1)\n" +
+		"atct goal created (goal_id: goal-2)\n"
+	if got := output.String(); got != want {
+		t.Fatalf("output = %q, want %q", got, want)
+	}
+}
+
 func TestEmitWatchDetectionIgnoresUnknownEvent(t *testing.T) {
 	var output bytes.Buffer
 	delivered := make(map[watchDeliveryKey]struct{})

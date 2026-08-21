@@ -503,12 +503,15 @@ func emitWatchDecision(out io.Writer, eventName string, decision watchDecision, 
 	if !ok {
 		return nil
 	}
-	if strings.HasPrefix(eventName, "detection.") {
+	if eventName == "goal.created" || strings.HasPrefix(eventName, "detection.") {
 		target := decision.GoalID
-		if target == "" {
+		if strings.HasPrefix(eventName, "detection.") && target == "" {
 			target = decision.TaskID
 		}
 		if target == "" {
+			if eventName == "goal.created" {
+				return fmt.Errorf("SSE event %s has no goal_id", eventName)
+			}
 			return fmt.Errorf("SSE event %s has neither goal_id nor task_id", eventName)
 		}
 		key := watchDetectionDeliveryKey{eventName: eventName, targetID: target}
@@ -566,6 +569,8 @@ func formatWatchDecision(eventName string, decision watchDecision) (string, bool
 		return fmt.Sprintf("atct decision approved (decision_id: %s)", decision.decisionID()), true
 	case "decision.rejected":
 		return fmt.Sprintf("atct decision rejected (decision_id: %s)", decision.decisionID()), true
+	case "goal.created":
+		return fmt.Sprintf("atct goal created (goal_id: %s)", decision.GoalID), true
 	case "wakeup":
 		return fmt.Sprintf("atct wakeup: active_goals=%d unstarted_tasks=%d waiting_answers=%d", decision.ActiveGoalCount, decision.UnstartedTaskCount, decision.WaitingAnswerCount), true
 	case "detection.completion_report_missing":
