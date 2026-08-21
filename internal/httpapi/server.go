@@ -376,6 +376,11 @@ func (s *Server) handleInbox(w http.ResponseWriter, r *http.Request) {
 	}
 	openDecisionViews := make([]decisionView, 0, len(openDecisions))
 	for _, decision := range openDecisions {
+		// A goal waiting for approval is shown in its own section, and approving it
+		// happens on the goal page. Listing it here too puts one act in two places.
+		if decision.Kind == domain.KindGoalApproval {
+			continue
+		}
 		openDecisionViews = append(openDecisionViews, decisionView{
 			Decision:         decision,
 			ProjectID:        goalProjectIDs[decision.GoalID],
