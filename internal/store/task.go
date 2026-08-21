@@ -65,6 +65,21 @@ func (e *TaskFileConflictError) Error() string {
 
 func (e *TaskFileConflictError) Unwrap() error { return ErrTaskFileConflict }
 
+func goalNotActiveError(goalID string, status domain.GoalStatus, beforeAction, action string) error {
+	var stateMessage string
+	switch status {
+	case domain.GoalProposed:
+		stateMessage = fmt.Sprintf("goal %q is not approved; obtain human approval before %s its tasks (承認されていないため、先に人間の承認を得てください)", goalID, beforeAction)
+	case domain.GoalDone:
+		stateMessage = fmt.Sprintf("goal %q is complete; cannot %s its tasks (ゴールが完了しているため、タスク操作はできません)", goalID, action)
+	case domain.GoalDropped:
+		stateMessage = fmt.Sprintf("goal %q has been withdrawn; cannot %s its tasks (ゴールが取り下げられているため、タスク操作はできません)", goalID, action)
+	default:
+		stateMessage = fmt.Sprintf("goal %q has status %q and is not active; cannot %s its tasks (ゴールの状態 %q はアクティブではないため、タスク操作はできません)", goalID, status, action, status)
+	}
+	return fmt.Errorf("%w: %s", ErrGoalNotActive, stateMessage)
+}
+
 // DeclareTasks derives declare_key from the idempotency key and task position.
 // The unique (goal_id, declare_key) constraint absorbs duplicate declarations.
 // Agents retry and repeat declarations after context compaction, so this prevents task multiplication.
@@ -96,7 +111,7 @@ func (s *Store) DeclareTasks(ctx context.Context, goalID, agent, idempotencyKey 
 		return nil, fmt.Errorf("get goal for declaring tasks: %w", err)
 	}
 	if goal.Status != domain.GoalActive {
-		return nil, fmt.Errorf("%w: goal %q is not approved; obtain human approval before declaring its tasks (承認されていないため、先に人間の承認を得てください)", ErrGoalNotActive, goalID)
+		return nil, goalNotActiveError(goalID, goal.Status, "declaring", "declare")
 	}
 
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -437,7 +452,7 @@ func (s *Store) ClaimTask(ctx context.Context, taskID, agentSessionID string) (d
 		return domain.Task{}, fmt.Errorf("lookup task claim: %w", err)
 	}
 	if task.GoalStatus != string(domain.GoalActive) {
-		return domain.Task{}, fmt.Errorf("%w: goal %q is not approved; obtain human approval before claiming its tasks (承認されていないため、先に人間の承認を得てください)", ErrGoalNotActive, task.GoalID)
+		return domain.Task{}, goalNotActiveError(task.GoalID, domain.GoalStatus(task.GoalStatus), "claiming", "claim")
 	}
 	if task.ClaimedBy != "" {
 		return domain.Task{}, fmt.Errorf("%w: %s", ErrTaskAlreadyClaimed, taskID)
