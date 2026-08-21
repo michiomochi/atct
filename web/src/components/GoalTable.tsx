@@ -2,7 +2,7 @@ import type { Goal } from "../lib/api";
 import { formatDateTime } from "../i18n";
 import { encodePathSegment, headline, sortTasksByOrder, statusLabel } from "../lib/ui";
 import { Table } from "@cloudflare/kumo/components/table";
-import { Fragment } from "react";
+import { Fragment, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { EmptyState } from "./StateMessage";
 
@@ -16,6 +16,7 @@ const columnScope = { scope: "col" } as const;
 export function GoalTable({ goals, showProject = true }: Props) {
   const { t, i18n } = useTranslation();
   const locale = i18n.language.startsWith("ja") ? "ja" : "en";
+  const [openGoals, setOpenGoals] = useState<Record<string, boolean>>({});
 
   if (goals.length === 0) return <EmptyState>{t("dashboard.activeGoals.empty")}</EmptyState>;
 
@@ -35,23 +36,47 @@ export function GoalTable({ goals, showProject = true }: Props) {
           {goals.map((goal) => {
             const tasks = sortTasksByOrder(goal.tasks ?? []);
             const goalStatus = goal.awaiting_decision ? t("status.awaitingDecision") : statusLabel(locale, goal.status);
+            const isOpen = openGoals[goal.id] ?? false;
+            const goalLink = (
+              <a
+                className="focus-ring text-clamp-2 w-fit font-medium text-accent-700 underline decoration-accent-100 underline-offset-4 hover:decoration-accent-700"
+                href={`/goals/${encodePathSegment(goal.id)}`}
+                title={headline(goal.content)}
+              >
+                {headline(goal.content)}
+              </a>
+            );
             return (
               <Fragment key={goal.id}>
                 <Table.Row className="border-b border-line align-top last:border-b-0">
                   <Table.Cell className="px-3 py-4">
-                    <a
-                      className="focus-ring text-clamp-2 w-fit font-medium text-accent-700 underline decoration-accent-100 underline-offset-4 hover:decoration-accent-700"
-                      href={`/goals/${encodePathSegment(goal.id)}`}
-                      title={headline(goal.content)}
-                    >
-                      {headline(goal.content)}
-                    </a>
+                    {tasks.length > 0 ? (
+                      <div className="flex items-start gap-2">
+                        <button
+                          type="button"
+                          aria-expanded={isOpen}
+                          aria-label={t("goal.tasks.title")}
+                          className="focus-ring shrink-0 text-ink-700 hover:text-ink-950"
+                          onClick={() => {
+                            setOpenGoals((current) => ({
+                              ...current,
+                              [goal.id]: !(current[goal.id] ?? false),
+                            }));
+                          }}
+                        >
+                          <span aria-hidden="true">{isOpen ? "▼" : "▶"}</span>
+                        </button>
+                        {goalLink}
+                      </div>
+                    ) : (
+                      goalLink
+                    )}
                   </Table.Cell>
                   {showProject && <Table.Cell className="px-3 py-4 text-ink-700">{goal.project_name || "-"}</Table.Cell>}
                   <Table.Cell className="px-3 py-4 text-ink-700">{goalStatus}</Table.Cell>
                   <Table.Cell className="px-3 py-4 text-ink-700">{formatDateTime(locale, goal.updated_at)}</Table.Cell>
                 </Table.Row>
-                {tasks.map((task, index) => (
+                {isOpen && tasks.map((task, index) => (
                   <Table.Row className="border-b border-line align-top last:border-b-0" key={task.id}>
                     <Table.Cell className="px-3 py-3 text-ink-700">
                       <div className="flex items-start pl-6">
