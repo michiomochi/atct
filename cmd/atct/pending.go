@@ -27,9 +27,11 @@ const (
 	pendingUndeclaredGoalReason    = "An active goal has no tasks declared. Call `atct_task_declare` for each goal below, then continue the work."
 	pendingWakeupReason            = "An active goal has unstarted tasks and no running work lock. Call `atct_task_claim` for a task below, then continue the work."
 	pendingCompletedGoalReason     = "All tasks are done but the active goal has no completion report. Call `atct_goal_complete` for each goal below, then continue the work."
+	pendingCommitlessGoalReason    = "All tasks in an active goal are done but no task has a linked commit. Call `atct_task_update` with `commits` for at least one task below to link its commit, then continue the work."
 	pendingDroppedGoalReason       = "All tasks in an active goal were dropped. Call `atct_goal_complete` to report that the work was withdrawn; call `atct_task_declare` to declare tasks again if it should be resumed."
 	pendingUnclaimedDoingReason    = "A task is doing without a work lock. Return it to todo with `atct_task_update`, then call `atct_task_claim` before continuing the work."
 	completedGoalMarker            = "Goals with all tasks done:"
+	commitlessGoalMarker           = "Goals with no linked commits:"
 	droppedGoalMarker              = "Goals with all tasks dropped:"
 	unclaimedDoingMarker           = "Doing tasks without a work lock:"
 )
@@ -88,11 +90,16 @@ func pendingTextForProject(dir, cwd, projectName string, projectSpecified bool) 
 	if err != nil {
 		return "", fmt.Errorf("list goals: %w", err)
 	}
+	decisions, err := s.ListUnappliedDecisions(ctx)
+	if err != nil {
+		return "", fmt.Errorf("list unapplied decisions: %w", err)
+	}
 	projectGoalIDs := make(map[string]struct{}, len(goals))
 	for _, goal := range goals {
 		projectGoalIDs[goal.ID] = struct{}{}
 	}
 	undeclaredGoals := make([]domain.Goal, 0)
+	commitlessGoals := make([]domain.Goal, 0)
 	for _, goal := range goals {
 		if goal.Status != domain.GoalActive {
 			continue
@@ -103,12 +110,50 @@ func pendingTextForProject(dir, cwd, projectName string, projectSpecified bool) 
 		}
 		if len(tasks) == 0 {
 			undeclaredGoals = append(undeclaredGoals, goal)
+			continue
 		}
-	}
-
-	decisions, err := s.ListUnappliedDecisions(ctx)
-	if err != nil {
-		return "", fmt.Errorf("list unapplied decisions: %w", err)
+		allTasksTerminal := true
+		hasDoneTask := false
+		for _, task := range tasks {
+			switch task.Status {
+			case domain.TaskDone:
+				hasDoneTask = true
+			case domain.TaskDropped:
+			default:
+				allTasksTerminal = false
+			}
+		}
+		if !allTasksTerminal || !hasDoneTask {
+			continue
+		}
+		openDecisions, err := s.ListOpenDecisions(ctx, goal.ID)
+		if err != nil {
+			return "", fmt.Errorf("list open decisions for goal %s: %w", goal.ID, err)
+		}
+		hasOpenCompletionDecision := false
+		for _, decision := range openDecisions {
+			if decision.Kind == domain.KindCompletion && decision.Status == domain.DecisionOpen {
+				hasOpenCompletionDecision = true
+				break
+			}
+		}
+		if hasOpenCompletionDecision {
+			continue
+		}
+		hasLinkedCommit := false
+		for _, task := range tasks {
+			commits, err := s.ListTaskCommits(ctx, task.ID)
+			if err != nil {
+				return "", fmt.Errorf("list commits for task %s: %w", task.ID, err)
+			}
+			if len(commits) > 0 {
+				hasLinkedCommit = true
+				break
+			}
+		}
+		if !hasLinkedCommit {
+			commitlessGoals = append(commitlessGoals, goal)
+		}
 	}
 
 	unfinishedTasks := make([]domain.Task, 0)
@@ -266,6 +311,18 @@ func pendingTextForProject(dir, cwd, projectName string, projectSpecified bool) 
 		output.WriteString(completedGoalMarker)
 		output.WriteByte('\n')
 		for _, goal := range wakeupState.CompletedGoals {
+			fmt.Fprintf(&output, "- %s (goal_id: %s)\n", oneLine(goal.Title), goal.ID)
+		}
+	}
+	if len(commitlessGoals) > 0 {
+		if output.Len() > 0 {
+			output.WriteString("\n\n")
+		}
+		output.WriteString(pendingCommitlessGoalReason)
+		output.WriteString("\n\n")
+		output.WriteString(commitlessGoalMarker)
+		output.WriteByte('\n')
+		for _, goal := range commitlessGoals {
 			fmt.Fprintf(&output, "- %s (goal_id: %s)\n", oneLine(goal.Title), goal.ID)
 		}
 	}

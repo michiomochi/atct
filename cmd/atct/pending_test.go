@@ -774,6 +774,9 @@ func TestPendingCommandDoesNotReportGoalWithCompletionReport(t *testing.T) {
 	if _, err := s.UpdateTask(ctx, tasks[0].ID, domain.TaskDone, ""); err != nil {
 		t.Fatalf("UpdateTask: %v", err)
 	}
+	if err := s.LinkTaskCommit(ctx, tasks[0].ID, domain.TaskCommit{}); err != nil {
+		t.Fatalf("LinkTaskCommit: %v", err)
+	}
 	if _, err := s.AskDecision(ctx, store.AskInput{
 		GoalID: goal.ID, Kind: "completion", Question: "Approve this goal as complete?",
 	}); err != nil {
@@ -841,6 +844,214 @@ func TestPendingCommandUsesSeparateReasonForAllDroppedGoal(t *testing.T) {
 		if !strings.Contains(strings.ToLower(output), strings.ToLower(want)) {
 			t.Fatalf("pendingCommand output does not contain %q: %q", want, output)
 		}
+	}
+}
+
+func TestPendingCommandDoesNotReportCommitlessGoalWhenAnyTaskHasLinkedCommit(t *testing.T) {
+	dir, projectRoot := newPendingFixture(t)
+	s := openPendingStore(t, dir)
+	ctx := context.Background()
+	project, err := s.ResolveProject(ctx, projectRoot)
+	if err != nil {
+		t.Fatalf("ResolveProject: %v", err)
+	}
+	goal, err := s.CreateGoal(ctx, project.ID, "Report linked work", "")
+	if err != nil {
+		t.Fatalf("CreateGoal: %v", err)
+	}
+	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "linked-work", []string{"linked task", "unlinked task"}, []string{"Record the linked work.", "Record the unlinked work."})
+	if err != nil {
+		t.Fatalf("DeclareTasks: %v", err)
+	}
+	for _, task := range tasks {
+		if _, err := s.UpdateTask(ctx, task.ID, domain.TaskDone, ""); err != nil {
+			t.Fatalf("UpdateTask: %v", err)
+		}
+	}
+	if err := s.LinkTaskCommit(ctx, tasks[0].ID, domain.TaskCommit{}); err != nil {
+		t.Fatalf("LinkTaskCommit: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("Store.Close: %v", err)
+	}
+
+	output, _, err := pendingCommand(dir, projectRoot)
+	if err != nil {
+		t.Fatalf("pendingCommand: %v", err)
+	}
+	if strings.Contains(output, commitlessGoalMarker) {
+		t.Fatalf("pendingCommand reported a goal with a linked commit as commitless: %q", output)
+	}
+}
+
+func TestPendingCommandDoesNotReportCommitlessGoalWhenTodoTaskRemains(t *testing.T) {
+	dir, projectRoot := newPendingFixture(t)
+	s := openPendingStore(t, dir)
+	ctx := context.Background()
+	project, err := s.ResolveProject(ctx, projectRoot)
+	if err != nil {
+		t.Fatalf("ResolveProject: %v", err)
+	}
+	goal, err := s.CreateGoal(ctx, project.ID, "Continue unfinished work", "")
+	if err != nil {
+		t.Fatalf("CreateGoal: %v", err)
+	}
+	if _, err := s.DeclareTasks(ctx, goal.ID, "agent", "unfinished-work", []string{"unfinished task"}, []string{"Continue the unfinished work."}); err != nil {
+		t.Fatalf("DeclareTasks: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("Store.Close: %v", err)
+	}
+
+	output, _, err := pendingCommand(dir, projectRoot)
+	if err != nil {
+		t.Fatalf("pendingCommand: %v", err)
+	}
+	if strings.Contains(output, commitlessGoalMarker) {
+		t.Fatalf("pendingCommand reported a goal with a todo task as commitless: %q", output)
+	}
+}
+
+func TestPendingCommandDoesNotReportCommitlessGoalWhenAllTasksDropped(t *testing.T) {
+	dir, projectRoot := newPendingFixture(t)
+	s := openPendingStore(t, dir)
+	ctx := context.Background()
+	project, err := s.ResolveProject(ctx, projectRoot)
+	if err != nil {
+		t.Fatalf("ResolveProject: %v", err)
+	}
+	goal, err := s.CreateGoal(ctx, project.ID, "Withdraw unfinished work", "")
+	if err != nil {
+		t.Fatalf("CreateGoal: %v", err)
+	}
+	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "withdrawn-work", []string{"withdrawn task"}, []string{"Withdraw the unfinished work."})
+	if err != nil {
+		t.Fatalf("DeclareTasks: %v", err)
+	}
+	if _, err := s.UpdateTask(ctx, tasks[0].ID, domain.TaskDropped, ""); err != nil {
+		t.Fatalf("UpdateTask: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("Store.Close: %v", err)
+	}
+
+	output, _, err := pendingCommand(dir, projectRoot)
+	if err != nil {
+		t.Fatalf("pendingCommand: %v", err)
+	}
+	if strings.Contains(output, commitlessGoalMarker) {
+		t.Fatalf("pendingCommand reported an all-dropped goal as commitless: %q", output)
+	}
+}
+
+func TestPendingCommandDoesNotReportCommitlessGoalWhenNoTasksExist(t *testing.T) {
+	dir, projectRoot := newPendingFixture(t)
+	s := openPendingStore(t, dir)
+	ctx := context.Background()
+	project, err := s.ResolveProject(ctx, projectRoot)
+	if err != nil {
+		t.Fatalf("ResolveProject: %v", err)
+	}
+	if _, err := s.CreateGoal(ctx, project.ID, "Declare work before reporting", ""); err != nil {
+		t.Fatalf("CreateGoal: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("Store.Close: %v", err)
+	}
+
+	output, _, err := pendingCommand(dir, projectRoot)
+	if err != nil {
+		t.Fatalf("pendingCommand: %v", err)
+	}
+	if strings.Contains(output, commitlessGoalMarker) {
+		t.Fatalf("pendingCommand reported a goal with no tasks as commitless: %q", output)
+	}
+}
+
+func TestPendingCommandReportsCommitlessGoalWhenAllTasksDoneWithoutLinkedCommit(t *testing.T) {
+	dir, projectRoot := newPendingFixture(t)
+	s := openPendingStore(t, dir)
+	ctx := context.Background()
+	project, err := s.ResolveProject(ctx, projectRoot)
+	if err != nil {
+		t.Fatalf("ResolveProject: %v", err)
+	}
+	goal, err := s.CreateGoal(ctx, project.ID, "Link the completed work", "")
+	if err != nil {
+		t.Fatalf("CreateGoal: %v", err)
+	}
+	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "completed-unlinked-work", []string{"completed task"}, []string{"Link the completed work."})
+	if err != nil {
+		t.Fatalf("DeclareTasks: %v", err)
+	}
+	if _, err := s.UpdateTask(ctx, tasks[0].ID, domain.TaskDone, ""); err != nil {
+		t.Fatalf("UpdateTask: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("Store.Close: %v", err)
+	}
+
+	output, exitCode, err := pendingCommand(dir, projectRoot)
+	if err != nil {
+		t.Fatalf("pendingCommand: %v", err)
+	}
+	if exitCode != 0 {
+		t.Fatalf("pendingCommand exit code = %d, want 0", exitCode)
+	}
+	for _, want := range []string{
+		commitlessGoalMarker,
+		goal.Title,
+		goal.ID,
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("pendingCommand output does not contain %q: %q", want, output)
+		}
+	}
+}
+
+func TestPendingCommandDoesNotReportCommitlessGoalWhenOpenCompletionDecisionExists(t *testing.T) {
+	dir, projectRoot := newPendingFixture(t)
+	s := openPendingStore(t, dir)
+	ctx := context.Background()
+	project, err := s.ResolveProject(ctx, projectRoot)
+	if err != nil {
+		t.Fatalf("ResolveProject: %v", err)
+	}
+	goal, err := s.CreateGoal(ctx, project.ID, "Await completion approval", "")
+	if err != nil {
+		t.Fatalf("CreateGoal: %v", err)
+	}
+	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "await-completion-approval", []string{"completed task"}, []string{"Await completion approval."})
+	if err != nil {
+		t.Fatalf("DeclareTasks: %v", err)
+	}
+	if _, err := s.UpdateTask(ctx, tasks[0].ID, domain.TaskDone, ""); err != nil {
+		t.Fatalf("UpdateTask: %v", err)
+	}
+	if _, err := s.AskDecision(ctx, store.AskInput{
+		GoalID: goal.ID, Kind: domain.KindCompletion, Question: "Approve this goal as complete?",
+	}); err != nil {
+		t.Fatalf("AskDecision: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("Store.Close: %v", err)
+	}
+
+	output, exitCode, err := pendingCommand(dir, projectRoot)
+	if err != nil {
+		t.Fatalf("pendingCommand: %v", err)
+	}
+	if strings.Contains(output, commitlessGoalMarker) {
+		t.Fatalf("pendingCommand reported a goal with an open completion decision as commitless: %q", output)
+	}
+	if strings.Contains(output, goal.Title) {
+		t.Fatalf("pendingCommand reported the goal with an open completion decision: %q", output)
+	}
+	if output != "" {
+		t.Fatalf("pendingCommand output = %q, want empty", output)
+	}
+	if exitCode != 1 {
+		t.Fatalf("pendingCommand exit code = %d, want 1", exitCode)
 	}
 }
 
