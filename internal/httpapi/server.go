@@ -8,12 +8,15 @@ import (
 	"io"
 	"net/http"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/michiomochi/atct/internal/domain"
 	"github.com/michiomochi/atct/internal/store"
 )
+
+const commitDiffBodyLineLimit = 400
 
 type Server struct {
 	store *store.Store
@@ -117,6 +120,21 @@ type taskCommitView struct {
 	CreatedAt    time.Time `json:"created_at"`
 }
 
+type taskCommitDiffView struct {
+	SHA          string               `json:"sha"`
+	InHistory    bool                 `json:"in_history"`
+	Files        []taskCommitDiffFile `json:"files"`
+	Body         string               `json:"body"`
+	OmittedLines int                  `json:"omitted_lines"`
+}
+
+type taskCommitDiffFile struct {
+	Path       string `json:"path"`
+	Insertions int    `json:"insertions"`
+	Deletions  int    `json:"deletions"`
+	Binary     bool   `json:"binary"`
+}
+
 type answerRequest struct {
 	AnswerLabel string `json:"answer_label"`
 	AnswerText  string `json:"answer_text"`
@@ -206,6 +224,18 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.handleTask(w, r, parts[2])
+		return
+	}
+	if len(parts) == 6 && parts[0] == "api" && parts[1] == "tasks" && parts[3] == "commits" && parts[5] == "diff" {
+		if parts[2] == "" || parts[4] == "" {
+			writeError(w, http.StatusBadRequest, "task commit path is malformed")
+			return
+		}
+		if r.Method != http.MethodGet {
+			writeError(w, http.StatusBadRequest, "method is not allowed for this endpoint")
+			return
+		}
+		s.handleTaskCommitDiff(w, r, parts[2], parts[4])
 		return
 	}
 	if len(parts) == 4 && parts[0] == "api" && parts[1] == "tasks" && parts[3] == "release" {
@@ -653,6 +683,128 @@ func (s *Server) handleTask(w http.ResponseWriter, r *http.Request, taskID strin
 		DecisionHistoryOmitted: decisionHistoryOmitted,
 		Commits:                commits,
 	})
+}
+
+func (s *Server) handleTaskCommitDiff(w http.ResponseWriter, r *http.Request, taskID, sha string) {
+	ctx := r.Context()
+	goalID, err := s.store.GetTaskGoalID(ctx, taskID)
+	if errors.Is(err, store.ErrTaskNotFound) {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+
+	linkedCommits, err := s.store.ListTaskCommits(ctx, taskID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	var linkedCommit domain.TaskCommit
+	found := false
+	for _, commit := range linkedCommits {
+		if commit.SHA != sha {
+			continue
+		}
+		linkedCommit = commit
+		found = true
+		break
+	}
+	if !found {
+		writeError(w, http.StatusNotFound, "commit is not linked to this task")
+		return
+	}
+
+	goal, err := s.store.GetGoal(ctx, goalID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	projects, err := s.store.ListProjects(ctx)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	projectRootPath := ""
+	for _, project := range projects {
+		if project.ID == goal.ProjectID {
+			projectRootPath = project.RootPath
+			break
+		}
+	}
+
+	inHistory := gitCommitInHistory(ctx, projectRootPath, linkedCommit.SHA)
+	response := taskCommitDiffView{
+		SHA:       linkedCommit.SHA,
+		InHistory: inHistory,
+		Files:     make([]taskCommitDiffFile, 0),
+	}
+	if !inHistory {
+		writeJSON(w, http.StatusOK, response)
+		return
+	}
+
+	numstatOutput, err := exec.CommandContext(ctx, "git", "-C", projectRootPath, "show", "--numstat", "--format=", linkedCommit.SHA).Output()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("commit diff files could not be read: %v", err))
+		return
+	}
+	response.Files, err = parseTaskCommitDiffNumstat(string(numstatOutput))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	diffOutput, err := exec.CommandContext(ctx, "git", "-C", projectRootPath, "show", "--format=", linkedCommit.SHA).Output()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("commit diff body could not be read: %v", err))
+		return
+	}
+	response.Body, response.OmittedLines = truncateCommitDiffBody(string(diffOutput))
+	writeJSON(w, http.StatusOK, response)
+}
+
+func parseTaskCommitDiffNumstat(output string) ([]taskCommitDiffFile, error) {
+	files := make([]taskCommitDiffFile, 0)
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSuffix(line, "\r")
+		if line == "" {
+			continue
+		}
+		fields := strings.SplitN(line, "\t", 3)
+		if len(fields) != 3 {
+			return nil, fmt.Errorf("invalid numstat line: %q", line)
+		}
+
+		file := taskCommitDiffFile{Path: fields[2]}
+		if fields[0] == "-" && fields[1] == "-" {
+			file.Binary = true
+			files = append(files, file)
+			continue
+		}
+		insertions, err := strconv.Atoi(fields[0])
+		if err != nil {
+			return nil, fmt.Errorf("invalid insertion count %q: %w", fields[0], err)
+		}
+		deletions, err := strconv.Atoi(fields[1])
+		if err != nil {
+			return nil, fmt.Errorf("invalid deletion count %q: %w", fields[1], err)
+		}
+		file.Insertions = insertions
+		file.Deletions = deletions
+		files = append(files, file)
+	}
+	return files, nil
+}
+
+func truncateCommitDiffBody(body string) (string, int) {
+	lines := strings.SplitAfter(body, "\n")
+	if len(lines) <= commitDiffBodyLineLimit {
+		return body, 0
+	}
+	return strings.Join(lines[:commitDiffBodyLineLimit], ""), len(lines) - commitDiffBodyLineLimit
 }
 
 func gitCommitInHistory(ctx context.Context, rootPath, sha string) bool {
