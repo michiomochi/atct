@@ -41,6 +41,9 @@ type watchDecision struct {
 	WaitingAnswerCount         int     `json:"waiting_answer_count"`
 	DetectorUnstartedTaskCount int     `json:"detector_unstarted_task_count"`
 	CountedUnstartedTaskCount  int     `json:"counted_unstarted_task_count"`
+	DetectionID                string  `json:"detection_id"`
+	GoalID                     string  `json:"goal_id"`
+	TaskID                     string  `json:"task_id"`
 }
 
 type watchInbox struct {
@@ -61,6 +64,14 @@ type watchDeliveryKey struct {
 type watchWakeupDeliveryKey struct {
 	eventName string
 	wakeupID  string
+}
+
+// Keyed by the target rather than the detection id, which is fresh on every
+// publish: the point is to say a condition once per goal or task, not once per
+// occurrence.
+type watchDetectionDeliveryKey struct {
+	eventName string
+	targetID  string
 }
 
 type watchSnapshotFunc func(context.Context) (string, []watchDecision, error)
@@ -132,6 +143,7 @@ func watchLoopWithEnsureAndProjectID(ctx context.Context, out io.Writer, client 
 	}
 	delivered := make(map[watchDeliveryKey]struct{})
 	wakeupDelivered := make(map[watchWakeupDeliveryKey]struct{})
+	detectionDelivered := make(map[watchDetectionDeliveryKey]struct{})
 	ensureFailures := 0
 	ensureDisabled := false
 	recoverDaemon := func() error {
@@ -184,12 +196,12 @@ func watchLoopWithEnsureAndProjectID(ctx context.Context, out io.Writer, client 
 			if filterProjectID != "" && decision.ProjectID != "" && decision.ProjectID != filterProjectID {
 				continue
 			}
-			if err := emitWatchDecision(out, "decision.answered", decision, delivered, wakeupDelivered); err != nil {
+			if err := emitWatchDecision(out, "decision.answered", decision, delivered, wakeupDelivered, detectionDelivered); err != nil {
 				return err
 			}
 		}
 
-		if err := consumeWatchEventsWithTimeout(ctx, client, baseURL, filterProjectID, out, watchKeepaliveTimeout, delivered, wakeupDelivered); err != nil && ctx.Err() == nil {
+		if err := consumeWatchEventsWithTimeout(ctx, client, baseURL, filterProjectID, out, watchKeepaliveTimeout, delivered, wakeupDelivered, detectionDelivered); err != nil && ctx.Err() == nil {
 			if err := recoverDaemon(); err != nil {
 				return err
 			}
@@ -325,7 +337,7 @@ func watchPathWithin(root, path string) bool {
 }
 
 func consumeWatchEvents(ctx context.Context, client *http.Client, baseURL, projectID string, out io.Writer, delivered map[watchDeliveryKey]struct{}) error {
-	return consumeWatchEventsWithTimeout(ctx, client, baseURL, projectID, out, watchKeepaliveTimeout, delivered, make(map[watchWakeupDeliveryKey]struct{}))
+	return consumeWatchEventsWithTimeout(ctx, client, baseURL, projectID, out, watchKeepaliveTimeout, delivered, make(map[watchWakeupDeliveryKey]struct{}), make(map[watchDetectionDeliveryKey]struct{}))
 }
 
 type watchSSEFrame struct {
@@ -333,7 +345,7 @@ type watchSSEFrame struct {
 	data string
 }
 
-func consumeWatchEventsWithTimeout(ctx context.Context, client *http.Client, baseURL, projectID string, out io.Writer, keepaliveTimeout time.Duration, delivered map[watchDeliveryKey]struct{}, wakeupDelivered map[watchWakeupDeliveryKey]struct{}) error {
+func consumeWatchEventsWithTimeout(ctx context.Context, client *http.Client, baseURL, projectID string, out io.Writer, keepaliveTimeout time.Duration, delivered map[watchDeliveryKey]struct{}, wakeupDelivered map[watchWakeupDeliveryKey]struct{}, detectionDelivered map[watchDetectionDeliveryKey]struct{}) error {
 	eventsURL, err := watchEventsURL(baseURL, projectID)
 	if err != nil {
 		return err
@@ -402,7 +414,7 @@ func consumeWatchEventsWithTimeout(ctx context.Context, client *http.Client, bas
 			if projectID != "" && decision.ProjectID != "" && decision.ProjectID != projectID {
 				continue
 			}
-			if err := emitWatchDecision(out, frame.name, decision, delivered, wakeupDelivered); err != nil {
+			if err := emitWatchDecision(out, frame.name, decision, delivered, wakeupDelivered, detectionDelivered); err != nil {
 				return err
 			}
 		}
@@ -486,9 +498,27 @@ func watchEventsURL(baseURL, projectID string) (string, error) {
 	return parsed.String(), nil
 }
 
-func emitWatchDecision(out io.Writer, eventName string, decision watchDecision, delivered map[watchDeliveryKey]struct{}, wakeupDelivered map[watchWakeupDeliveryKey]struct{}) error {
+func emitWatchDecision(out io.Writer, eventName string, decision watchDecision, delivered map[watchDeliveryKey]struct{}, wakeupDelivered map[watchWakeupDeliveryKey]struct{}, detectionDelivered map[watchDetectionDeliveryKey]struct{}) error {
 	line, ok := formatWatchDecision(eventName, decision)
 	if !ok {
+		return nil
+	}
+	if strings.HasPrefix(eventName, "detection.") {
+		target := decision.GoalID
+		if target == "" {
+			target = decision.TaskID
+		}
+		if target == "" {
+			return fmt.Errorf("SSE event %s has neither goal_id nor task_id", eventName)
+		}
+		key := watchDetectionDeliveryKey{eventName: eventName, targetID: target}
+		if _, ok := detectionDelivered[key]; ok {
+			return nil
+		}
+		if _, err := fmt.Fprintln(out, line); err != nil {
+			return err
+		}
+		detectionDelivered[key] = struct{}{}
 		return nil
 	}
 	if eventName == "wakeup" || eventName == "wakeup.discrepancy" {
@@ -538,6 +568,16 @@ func formatWatchDecision(eventName string, decision watchDecision) (string, bool
 		return fmt.Sprintf("atct decision rejected (decision_id: %s)", decision.decisionID()), true
 	case "wakeup":
 		return fmt.Sprintf("atct wakeup: active_goals=%d unstarted_tasks=%d waiting_answers=%d", decision.ActiveGoalCount, decision.UnstartedTaskCount, decision.WaitingAnswerCount), true
+	case "detection.completion_report_missing":
+		return fmt.Sprintf("atct detection: goal %s has all tasks done but no completion report", decision.GoalID), true
+	case "detection.commits_missing":
+		return fmt.Sprintf("atct detection: goal %s has no linked commits", decision.GoalID), true
+	case "detection.undeclared_goal":
+		return fmt.Sprintf("atct detection: goal %s has no tasks declared", decision.GoalID), true
+	case "detection.all_tasks_dropped":
+		return fmt.Sprintf("atct detection: goal %s has all tasks dropped", decision.GoalID), true
+	case "detection.unclaimed_doing":
+		return fmt.Sprintf("atct detection: task %s is doing without a work lock", decision.TaskID), true
 	case "wakeup.discrepancy":
 		return fmt.Sprintf("atct wakeup discrepancy: detector_unstarted_tasks=%d counted_unstarted_tasks=%d", decision.DetectorUnstartedTaskCount, decision.CountedUnstartedTaskCount), true
 	default:

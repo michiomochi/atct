@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -145,9 +146,10 @@ func TestWatchEmitsWakeupEvents(t *testing.T) {
 	var output strings.Builder
 	delivered := make(map[watchDeliveryKey]struct{})
 	wakeupDelivered := make(map[watchWakeupDeliveryKey]struct{})
+	detectionDelivered := make(map[watchDetectionDeliveryKey]struct{})
 
 	for _, id := range []string{"wakeup-1", "wakeup-2"} {
-		if err := emitWatchDecision(&output, "wakeup", watchDecision{WakeupID: id}, delivered, wakeupDelivered); err != nil {
+		if err := emitWatchDecision(&output, "wakeup", watchDecision{WakeupID: id}, delivered, wakeupDelivered, detectionDelivered); err != nil {
 			t.Fatalf("emitWatchDecision(%s): %v", id, err)
 		}
 	}
@@ -163,9 +165,10 @@ func TestWatchEmitsWakeupAgainAfterStateReturns(t *testing.T) {
 	var output strings.Builder
 	delivered := make(map[watchDeliveryKey]struct{})
 	wakeupDelivered := make(map[watchWakeupDeliveryKey]struct{})
+	detectionDelivered := make(map[watchDetectionDeliveryKey]struct{})
 
 	for _, wakeupID := range []string{"wakeup-before", "wakeup-after"} {
-		if err := emitWatchDecision(&output, "wakeup", watchDecision{WakeupID: wakeupID}, delivered, wakeupDelivered); err != nil {
+		if err := emitWatchDecision(&output, "wakeup", watchDecision{WakeupID: wakeupID}, delivered, wakeupDelivered, detectionDelivered); err != nil {
 			t.Fatalf("emitWatchDecision(%s): %v", wakeupID, err)
 		}
 	}
@@ -205,7 +208,7 @@ func TestWatchKeepsQuietWhileKeepalivesArriveAndReportsAfterTheyStop(t *testing.
 	})}
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- consumeWatchEventsWithTimeout(ctx, client, "http://watch.test", "", &output, timeout, make(map[watchDeliveryKey]struct{}), make(map[watchWakeupDeliveryKey]struct{}))
+		errCh <- consumeWatchEventsWithTimeout(ctx, client, "http://watch.test", "", &output, timeout, make(map[watchDeliveryKey]struct{}), make(map[watchWakeupDeliveryKey]struct{}), make(map[watchDetectionDeliveryKey]struct{}))
 	}()
 
 	for i := 0; i < 5; i++ {
@@ -252,7 +255,7 @@ func TestWatchReportsOneKeepaliveMissingLine(t *testing.T) {
 	})}
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- consumeWatchEventsWithTimeout(ctx, client, "http://watch.test", "", &output, timeout, make(map[watchDeliveryKey]struct{}), make(map[watchWakeupDeliveryKey]struct{}))
+		errCh <- consumeWatchEventsWithTimeout(ctx, client, "http://watch.test", "", &output, timeout, make(map[watchDeliveryKey]struct{}), make(map[watchWakeupDeliveryKey]struct{}), make(map[watchDetectionDeliveryKey]struct{}))
 	}()
 
 	select {
@@ -551,4 +554,101 @@ func (w *cancelOnOutput) String() string {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return fmt.Sprint(w.buf.String())
+}
+
+func TestEmitWatchDetectionWritesOneLinePerCondition(t *testing.T) {
+	cases := []struct {
+		event  string
+		record watchDecision
+		want   string
+	}{
+		{"detection.completion_report_missing", watchDecision{GoalID: "goal-1"}, "atct detection: goal goal-1 has all tasks done but no completion report"},
+		{"detection.commits_missing", watchDecision{GoalID: "goal-2"}, "atct detection: goal goal-2 has no linked commits"},
+		{"detection.undeclared_goal", watchDecision{GoalID: "goal-3"}, "atct detection: goal goal-3 has no tasks declared"},
+		{"detection.all_tasks_dropped", watchDecision{GoalID: "goal-4"}, "atct detection: goal goal-4 has all tasks dropped"},
+		{"detection.unclaimed_doing", watchDecision{TaskID: "task-1"}, "atct detection: task task-1 is doing without a work lock"},
+	}
+	for _, tc := range cases {
+		var output bytes.Buffer
+		delivered := make(map[watchDeliveryKey]struct{})
+		wakeupDelivered := make(map[watchWakeupDeliveryKey]struct{})
+		detectionDelivered := make(map[watchDetectionDeliveryKey]struct{})
+		if err := emitWatchDecision(&output, tc.event, tc.record, delivered, wakeupDelivered, detectionDelivered); err != nil {
+			t.Fatalf("emitWatchDecision(%s): %v", tc.event, err)
+		}
+		if got := strings.TrimSpace(output.String()); got != tc.want {
+			t.Fatalf("%s wrote %q, want %q", tc.event, got, tc.want)
+		}
+	}
+}
+
+func TestEmitWatchDetectionDoesNotRepeatSameTarget(t *testing.T) {
+	var output bytes.Buffer
+	delivered := make(map[watchDeliveryKey]struct{})
+	wakeupDelivered := make(map[watchWakeupDeliveryKey]struct{})
+	detectionDelivered := make(map[watchDetectionDeliveryKey]struct{})
+
+	// A fresh detection_id on the second delivery must not make it look new;
+	// the key is the target, not the occurrence.
+	first := watchDecision{GoalID: "goal-1", DetectionID: "detection-1"}
+	second := watchDecision{GoalID: "goal-1", DetectionID: "detection-2"}
+	for _, record := range []watchDecision{first, second} {
+		if err := emitWatchDecision(&output, "detection.commits_missing", record, delivered, wakeupDelivered, detectionDelivered); err != nil {
+			t.Fatalf("emitWatchDecision: %v", err)
+		}
+	}
+	if lines := strings.Count(strings.TrimSpace(output.String()), "\n"); lines != 0 {
+		t.Fatalf("output = %q, want a single line", output.String())
+	}
+}
+
+func TestEmitWatchDetectionSeparatesTargets(t *testing.T) {
+	var output bytes.Buffer
+	delivered := make(map[watchDeliveryKey]struct{})
+	wakeupDelivered := make(map[watchWakeupDeliveryKey]struct{})
+	detectionDelivered := make(map[watchDetectionDeliveryKey]struct{})
+
+	// Deduplication must not be so broad that a second goal with the same
+	// condition goes unreported.
+	for _, goalID := range []string{"goal-1", "goal-2"} {
+		if err := emitWatchDecision(&output, "detection.commits_missing", watchDecision{GoalID: goalID}, delivered, wakeupDelivered, detectionDelivered); err != nil {
+			t.Fatalf("emitWatchDecision(%s): %v", goalID, err)
+		}
+	}
+	for _, goalID := range []string{"goal-1", "goal-2"} {
+		if !strings.Contains(output.String(), goalID) {
+			t.Fatalf("output = %q, want it to mention %s", output.String(), goalID)
+		}
+	}
+}
+
+func TestEmitWatchDetectionIgnoresUnknownEvent(t *testing.T) {
+	var output bytes.Buffer
+	delivered := make(map[watchDeliveryKey]struct{})
+	wakeupDelivered := make(map[watchWakeupDeliveryKey]struct{})
+	detectionDelivered := make(map[watchDetectionDeliveryKey]struct{})
+
+	// A newer daemon may publish conditions this build has never heard of.
+	// Staying quiet is correct; failing is not.
+	if err := emitWatchDecision(&output, "detection.something_new", watchDecision{GoalID: "goal-1"}, delivered, wakeupDelivered, detectionDelivered); err != nil {
+		t.Fatalf("emitWatchDecision(unknown): %v", err)
+	}
+	if output.Len() != 0 {
+		t.Fatalf("output = %q, want nothing", output.String())
+	}
+}
+
+func TestEmitWatchDetectionRejectsMissingTarget(t *testing.T) {
+	var output bytes.Buffer
+	delivered := make(map[watchDeliveryKey]struct{})
+	wakeupDelivered := make(map[watchWakeupDeliveryKey]struct{})
+	detectionDelivered := make(map[watchDetectionDeliveryKey]struct{})
+
+	err := emitWatchDecision(&output, "detection.commits_missing", watchDecision{}, delivered, wakeupDelivered, detectionDelivered)
+	if err == nil {
+		t.Fatal("emitWatchDecision() with no target = nil, want an error")
+	}
+	if output.Len() != 0 {
+		t.Fatalf("output = %q, want nothing", output.String())
+	}
 }
