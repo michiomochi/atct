@@ -1,6 +1,5 @@
 ---
 import "../styles/global.css";
-import { GoalCreateForm } from "../components/GoalCreateForm";
 import { LocaleSwitch } from "../components/LocaleSwitch";
 
 interface Props {
@@ -27,7 +26,6 @@ const { title, description = "Review ATCT tasks and decisions." } = Astro.props;
         </a>
         <nav class="flex items-center gap-4" aria-label="Main navigation">
           <LocaleSwitch client:load />
-          <GoalCreateForm client:load />
         </nav>
       </div>
     </header>

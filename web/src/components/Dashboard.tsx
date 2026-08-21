@@ -5,6 +5,7 @@ import { fetchInbox, subscribeToDecisionEvents, type InboxResponse } from "../li
 import { DecisionTable } from "./DecisionTable";
 import { GoalTable } from "./GoalTable";
 import { ProposedGoalTable } from "./ProposedGoalTable";
+import { GoalCreateForm } from "./GoalCreateForm";
 import { AreaLoading, EmptyState, ErrorState } from "./StateMessage";
 import { Section } from "./Section";
 import { groupGoalsByProject } from "../lib/ui";
@@ -42,8 +43,8 @@ export function Dashboard() {
     void load();
   }, [load]);
 
-  const handleGoalCreateDirtyChange = useCallback((event: Event) => {
-    goalCreateDirtyRef.current = (event as CustomEvent<boolean>).detail === true;
+  const handleGoalCreateDirtyChange = useCallback((dirty: boolean) => {
+    goalCreateDirtyRef.current = dirty;
   }, []);
 
   const handleGoalCreated = useCallback(() => {
@@ -52,15 +53,11 @@ export function Dashboard() {
 
   useEffect(() => {
     void load();
-    window.addEventListener("atct:form-dirty", handleGoalCreateDirtyChange);
-    window.addEventListener("atct:goal-created", handleGoalCreated);
     const unsubscribe = subscribeToDecisionEvents(handleDecisionEvent);
     return () => {
-      window.removeEventListener("atct:form-dirty", handleGoalCreateDirtyChange);
-      window.removeEventListener("atct:goal-created", handleGoalCreated);
       unsubscribe();
     };
-  }, [handleDecisionEvent, handleGoalCreateDirtyChange, handleGoalCreated, load]);
+  }, [handleDecisionEvent, load]);
 
   const data = state.kind === "ready" ? state.data : undefined;
   const projectGroups = data ? groupGoalsByProject(data.active_goals) : undefined;
@@ -100,10 +97,15 @@ export function Dashboard() {
         </Section>
       </div>
 
-      <Section id="active-goals" title={t("dashboard.projects.title")} count={projectGroups?.length}>
-        {state.kind === "loading" && <AreaLoading label={t("dashboard.projects.title")} />}
+      <Section
+        id="active-goals"
+        title={t("dashboard.goals.title")}
+        count={projectGroups?.length}
+        action={<GoalCreateForm onCreated={handleGoalCreated} onDirtyChange={handleGoalCreateDirtyChange} />}
+      >
+        {state.kind === "loading" && <AreaLoading label={t("dashboard.goals.title")} />}
         {state.kind === "error" && <ErrorState message={state.message} onRetry={retry} />}
-        {data && projectGroups && projectGroups.length === 0 && <EmptyState>{t("dashboard.projects.empty")}</EmptyState>}
+        {data && projectGroups && projectGroups.length === 0 && <EmptyState>{t("dashboard.goals.empty")}</EmptyState>}
         {data && projectGroups && projectGroups.length > 0 && (
           <div className="space-y-8">
             {projectGroups.map(([projectName, goals]) => (

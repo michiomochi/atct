@@ -503,7 +503,7 @@ describe("goal detail answer flows", () => {
     expect(dashboardSource).toContain("useTranslation");
     expect(dashboardSource).toContain('id="open-decisions"');
     expect(dashboardSource).toContain('id="active-goals"');
-    expect(dashboardSource).toContain('t("dashboard.projects.empty")');
+    expect(dashboardSource).toContain('t("dashboard.goals.empty")');
     expect(sectionSource).toContain("id: string");
     expect(sectionSource).toContain("aria-labelledby={`${id}-heading`}");
   });

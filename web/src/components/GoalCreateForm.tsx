@@ -7,19 +7,12 @@ import { AreaLoading, ErrorState } from "./StateMessage";
 
 const DATA_OVERLOAD_LIMIT = 100;
 
-function dispatchFormDirty(dirty: boolean) {
-  if (typeof window !== "undefined") {
-    window.dispatchEvent(new CustomEvent<boolean>("atct:form-dirty", { detail: dirty }));
-  }
+interface Props {
+  onCreated?: () => void;
+  onDirtyChange?: (dirty: boolean) => void;
 }
 
-function dispatchGoalCreated() {
-  if (typeof window !== "undefined") {
-    window.dispatchEvent(new CustomEvent("atct:goal-created"));
-  }
-}
-
-export function GoalCreateForm() {
+export function GoalCreateForm({ onCreated, onDirtyChange }: Props = {}) {
   const { t } = useTranslation();
   const [projects, setProjects] = useState<Project[]>([]);
   const [projectsLoading, setProjectsLoading] = useState(true);
@@ -54,20 +47,20 @@ export function GoalCreateForm() {
 
   useEffect(() => {
     const dirty = [projectID, title, description].some((value) => value.trim() !== "");
-    dispatchFormDirty(open && dirty);
-  }, [description, open, projectID, title]);
+    onDirtyChange?.(open && dirty);
+  }, [description, onDirtyChange, open, projectID, title]);
 
-  useEffect(() => () => dispatchFormDirty(false), []);
+  useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
 
   const closeDialog = () => {
     setOpen(false);
-    dispatchFormDirty(false);
+    onDirtyChange?.(false);
   };
 
   const handleDialogOpenChange = (nextOpen: boolean) => {
     setOpen(nextOpen);
     if (!nextOpen) {
-      dispatchFormDirty(false);
+      onDirtyChange?.(false);
     }
   };
 
@@ -86,7 +79,7 @@ export function GoalCreateForm() {
       setTitle("");
       setDescription("");
       closeDialog();
-      dispatchGoalCreated();
+      onCreated?.();
     } catch (reason) {
       setSubmitError(reason instanceof Error ? reason : new Error(t("form.goal.error.create")));
     } finally {

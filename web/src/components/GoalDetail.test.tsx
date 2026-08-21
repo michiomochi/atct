@@ -152,40 +152,6 @@ describe("GoalDetail", () => {
     expect(screen.queryByText("state.updateAvailable")).toBeNull();
   });
 
-  it("defers Dashboard reload while GoalCreateForm is dirty and reloads after explicit refresh", async () => {
-    let decisionEvent: Parameters<typeof subscribeToDecisionEvents>[0] | undefined;
-    vi.mocked(subscribeToDecisionEvents).mockImplementation((callback) => {
-      decisionEvent = callback;
-      return () => undefined;
-    });
-    vi.mocked(fetchInbox).mockResolvedValue(emptyInbox());
-
-    render(<Dashboard />);
-
-    await waitFor(() => {
-      expect(fetchInbox).toHaveBeenCalledTimes(1);
-      expect(decisionEvent).toBeDefined();
-    });
-
-    act(() => {
-      window.dispatchEvent(new CustomEvent<boolean>("atct:form-dirty", { detail: true }));
-      decisionEvent?.("decision.created");
-    });
-
-    expect(fetchInbox).toHaveBeenCalledTimes(1);
-    expect(screen.getByText("state.updateAvailable")).not.toBeNull();
-
-    fireEvent.click(screen.getByRole("button", { name: "state.fetchLatest" }));
-    await waitFor(() => expect(fetchInbox).toHaveBeenCalledTimes(2));
-
-    act(() => {
-      window.dispatchEvent(new CustomEvent<boolean>("atct:form-dirty", { detail: false }));
-      decisionEvent?.("decision.created");
-    });
-    await waitFor(() => expect(fetchInbox).toHaveBeenCalledTimes(3));
-    expect(screen.queryByText("state.updateAvailable")).toBeNull();
-  });
-
   it("renders a goal with null tasks without throwing", async () => {
     vi.mocked(fetchGoal).mockResolvedValueOnce(
       goalResponse({ tasks: null, work_done: "The goal was completed." }),

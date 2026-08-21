@@ -10,8 +10,8 @@ export const en = {
   "dashboard.proposed.approveHint": "Approve from the answers table above",
   "dashboard.openDecisions.empty":
     "No decisions are waiting for an answer. Answer a decision to move it forward.",
-  "dashboard.projects.title": "Projects",
-  "dashboard.projects.empty": "No projects have active goals. Create a goal below to add one.",
+  "dashboard.goals.title": "Goals",
+  "dashboard.goals.empty": "No active goals are in progress. Create one with the button beside the heading.",
   "dashboard.activeGoals.empty":
     "No active goals are in progress. Resume work on a goal to see it here.",
 
