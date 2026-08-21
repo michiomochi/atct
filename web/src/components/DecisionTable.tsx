@@ -45,12 +45,15 @@ export function DecisionTable({ decisions, emptyText }: Props) {
             const autoSettlement = autoSettlementSeconds === undefined
               ? undefined
               : t("decision.autoSettlesIn", { duration: formatDuration(locale, autoSettlementSeconds) });
+            const questionHref = decision.task_id
+              ? `/tasks/${encodePathSegment(decision.task_id)}`
+              : `/goals/${encodePathSegment(decision.goal_id)}`;
             return (
               <Table.Row className="border-b border-line align-top last:border-b-0" key={decision.id}>
                 <Table.Cell className="px-3 py-4">
                   <a
                     className="focus-ring text-clamp-2 w-fit max-w-[34rem] font-medium text-accent-700 underline decoration-accent-100 underline-offset-4 hover:decoration-accent-700"
-                    href={`/goals/${encodePathSegment(decision.goal_id)}`}
+                    href={questionHref}
                     title={decision.question}
                   >
                     {decision.question}
