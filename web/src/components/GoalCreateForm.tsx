@@ -110,7 +110,8 @@ export function GoalCreateForm({ onCreated, onDirtyChange }: Props = {}) {
           <Button
             {...triggerProps}
             type="button"
-            className="focus-ring border border-line bg-surface px-3 py-2 text-sm !text-ink-950 hover:bg-accent-100"
+            variant="outline"
+            className="focus-ring px-3 py-2 text-sm"
           >
             {t("form.goal.action.new")}
           </Button>
@@ -190,7 +191,8 @@ export function GoalCreateForm({ onCreated, onDirtyChange }: Props = {}) {
           <div className="flex gap-3">
             <Button
               type="submit"
-              className="focus-ring bg-accent-700 px-3 py-2 text-sm !text-white hover:bg-accent-600 disabled:cursor-wait disabled:opacity-60"
+              variant="primary"
+              className="focus-ring px-3 py-2 text-sm disabled:cursor-wait disabled:opacity-60"
               disabled={submitting}
             >
               {submitting ? t("form.goal.action.creating") : t("form.goal.submit")}
@@ -200,7 +202,8 @@ export function GoalCreateForm({ onCreated, onDirtyChange }: Props = {}) {
                 <Button
                   {...closeProps}
                   type="button"
-                  className="focus-ring border border-line bg-surface px-3 py-2 text-sm !text-ink-950 hover:bg-accent-100"
+                  variant="outline"
+                  className="focus-ring px-3 py-2 text-sm"
                 >
                   {t("form.goal.cancel")}
                 </Button>

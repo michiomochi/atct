@@ -138,7 +138,8 @@ function CompletionApproval({
           <p>{t("goal.completion.conflict")}</p>
           <Button
             type="button"
-            className="focus-ring mt-3 border border-notice-800 bg-surface px-3 py-2 text-sm font-medium !text-notice-800 hover:bg-notice-100"
+            variant="outline"
+            className="focus-ring mt-3 px-3 py-2 text-sm font-medium"
             onClick={onUpdated}
           >
             {t("goal.completion.fetchLatest")}
@@ -166,16 +167,18 @@ function CompletionApproval({
           <Button
             type="submit"
             value="approve"
+            variant="primary"
             disabled={submitting}
-            className="focus-ring border border-accent-700 bg-accent-700 px-3 py-2 text-sm font-medium !text-white transition hover:bg-accent-600 disabled:cursor-wait disabled:opacity-60"
+            className="focus-ring px-3 py-2 text-sm font-medium disabled:cursor-wait disabled:opacity-60"
           >
             {submitting ? t("goal.completion.submitting") : t("goal.completion.approve")}
           </Button>
           <Button
             type="submit"
             value="reject"
+            variant="secondary-destructive"
             disabled={submitting}
-            className="focus-ring border border-danger-700 bg-surface px-3 py-2 text-sm font-medium !text-danger-700 transition hover:bg-danger-100 disabled:cursor-wait disabled:opacity-60"
+            className="focus-ring px-3 py-2 text-sm font-medium disabled:cursor-wait disabled:opacity-60"
           >
             {t("goal.completion.reject")}
           </Button>
@@ -252,16 +255,18 @@ function GoalApproval({
           <Button
             type="submit"
             value="approve"
+            variant="primary"
             disabled={submitting}
-            className="focus-ring border border-accent-700 bg-accent-700 px-3 py-2 text-sm font-medium !text-white transition hover:bg-accent-600 disabled:cursor-wait disabled:opacity-60"
+            className="focus-ring px-3 py-2 text-sm font-medium disabled:cursor-wait disabled:opacity-60"
           >
             {submitting ? t("goal.completion.submitting") : t("goal.approval.approve")}
           </Button>
           <Button
             type="submit"
             value="reject"
+            variant="secondary-destructive"
             disabled={submitting || reason.trim() === ""}
-            className="focus-ring border border-danger-700 bg-surface px-3 py-2 text-sm font-medium !text-danger-700 transition hover:bg-danger-100 disabled:cursor-not-allowed disabled:opacity-60"
+            className="focus-ring px-3 py-2 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-60"
           >
             {t("goal.approval.reject")}
           </Button>
@@ -315,8 +320,9 @@ function GoalWithdrawal({ goal, onUpdated }: { goal: Goal; onUpdated: () => void
         {submitError && <p className="mb-3 text-sm text-danger-700" role="alert">{submitError}</p>}
         <Button
           type="submit"
+          variant="secondary-destructive"
           disabled={submitting || reason.trim() === ""}
-          className="focus-ring border border-danger-700 bg-surface px-3 py-2 text-sm font-medium !text-danger-700 transition hover:bg-danger-100 disabled:cursor-not-allowed disabled:opacity-60"
+          className="focus-ring px-3 py-2 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-60"
         >
           {t("goal.withdraw.submit")}
         </Button>
@@ -415,7 +421,8 @@ export function GoalDetail({ id }: Props) {
           <p>{t("state.updateAvailable")}</p>
           <Button
             type="button"
-            className="focus-ring mt-3 border border-notice-800 bg-surface px-3 py-2 text-sm font-medium !text-notice-800 hover:bg-notice-100"
+            variant="outline"
+            className="focus-ring mt-3 px-3 py-2 text-sm font-medium"
             onClick={() => void load()}
           >
             {t("state.fetchLatest")}

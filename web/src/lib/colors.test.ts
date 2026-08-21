@@ -45,32 +45,33 @@ function usedTokens(families: string[]): Map<string, string[]> {
   return found;
 }
 
-function usedKumoButtonTextClasses(): Map<string, string[]> {
+function usedKumoButtonClassNames(): Map<string, string[]> {
   const buttonPattern = /<Button\b[\s\S]*?(?<![=])>/g;
   const classNamePattern = /\bclassName\s*=\s*"([^"]*)"/;
-  const textClassPattern = /(?:^|\s)((?:[a-z-]+:)*!?text-[^\s"'`]+)/g;
   const found = new Map<string, string[]>();
 
   for (const [path, source] of Object.entries(sourceModules)) {
     if (path.endsWith("/colors.test.ts")) continue;
     for (const button of source.matchAll(buttonPattern)) {
       const className = button[0].match(classNamePattern)?.[1];
-      if (!className) continue;
-      const classes = [...className.matchAll(textClassPattern)].map((match) => match[1]);
-      if (classes.length === 0) continue;
-      found.set(path, [...(found.get(path) ?? []), ...classes]);
+      if (className === undefined) continue;
+      found.set(path, [...(found.get(path) ?? []), className]);
     }
   }
   return found;
 }
 
-function usedKumoButtonColourTextClasses(): Map<string, string[]> {
+function usedKumoButtonColourClasses(): Map<string, string[]> {
   const colourTokens = new Set([...definedTokens(), "white"]);
   const found = new Map<string, string[]>();
 
-  for (const [path, classes] of usedKumoButtonTextClasses()) {
-    const colourClasses = classes.filter((token) =>
-      colourTokens.has(token.replace(/^(?:[a-z-]+:)*!?text-/, "")),
+  for (const [path, classNames] of usedKumoButtonClassNames()) {
+    const colourClasses = classNames.flatMap((className) =>
+      className.split(/\s+/).filter((token) => {
+        const utility = token.replace(/^(?:[a-z-]+:)*!?/, "");
+        const match = /^(?:text|bg|border)-(.+)$/.exec(utility);
+        return match !== null && colourTokens.has(match[1]);
+      }),
     );
     if (colourClasses.length > 0) found.set(path, colourClasses);
   }
@@ -100,19 +101,17 @@ describe("colour tokens", () => {
     expect(used.size).toBeGreaterThan(5);
   });
 
-  it("requires important colour text utilities on Kumo Buttons", () => {
-    const violations = [...usedKumoButtonColourTextClasses().entries()].flatMap(([path, classes]) =>
-      classes
-        .filter((token) => !/(?:^|:)!text-/.test(token))
-        .map((token) => `${path}: ${token}`),
+  it("does not add colour utilities to Kumo Buttons", () => {
+    const violations = [...usedKumoButtonColourClasses().entries()].flatMap(([path, classes]) =>
+      classes.map((token) => `${path}: ${token}`),
     );
 
     expect(violations).toEqual([]);
   });
 
-  it("finds colour text utilities on Kumo Buttons", () => {
-    const used = usedKumoButtonColourTextClasses();
-    const count = [...used.values()].reduce((total, classes) => total + classes.length, 0);
-    expect(count).toBeGreaterThanOrEqual(17);
+  it("finds className attributes on Kumo Buttons", () => {
+    const used = usedKumoButtonClassNames();
+    const count = [...used.values()].reduce((total, classNames) => total + classNames.length, 0);
+    expect(count).toBeGreaterThan(0);
   });
 });

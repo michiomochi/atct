@@ -48,7 +48,8 @@ export function LocaleSwitch() {
             key={locale}
             type="button"
             aria-pressed={active === locale}
-            className="focus-ring px-2 py-1 text-sm font-medium !text-ink-700 hover:!text-ink-950"
+            variant="ghost"
+            className="focus-ring px-2 py-1 text-sm font-medium"
             onClick={() => select(locale)}
           >
             {t(`locale.${locale}`)}

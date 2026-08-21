@@ -32,7 +32,8 @@ export function ErrorState({ message, onRetry }: { message: string; onRetry: () 
       <p>{message}</p>
       <Button
         type="button"
-        className="focus-ring mt-3 border border-danger-700 bg-surface px-3 py-2 text-sm font-medium !text-danger-700 transition hover:bg-danger-100 disabled:cursor-wait disabled:opacity-60"
+        variant="secondary-destructive"
+        className="focus-ring mt-3 px-3 py-2 text-sm font-medium disabled:cursor-wait disabled:opacity-60"
         onClick={onRetry}
       >
         {t("state.retry")}

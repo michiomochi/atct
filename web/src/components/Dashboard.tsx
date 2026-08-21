@@ -75,7 +75,8 @@ export function Dashboard() {
           <p>{t("state.updateAvailable")}</p>
           <Button
             type="button"
-            className="focus-ring mt-3 border border-notice-800 bg-surface px-3 py-2 text-sm font-medium !text-notice-800 hover:bg-notice-100"
+            variant="outline"
+            className="focus-ring mt-3 px-3 py-2 text-sm font-medium"
             onClick={() => void load()}
           >
             {t("state.fetchLatest")}
