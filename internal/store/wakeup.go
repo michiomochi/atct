@@ -49,12 +49,14 @@ type WakeupState struct {
 	CompletedGoals      []domain.Goal
 	DroppedGoals        []domain.Goal
 	UnclaimedDoingTasks []domain.Task
+	UndeclaredGoals     []domain.Goal
+	CommitlessGoals     []domain.Goal
 }
 
-// DetectWakeup implements condition 5: an active goal has at least one todo
-// task that has not been claimed and no running claim for that goal. Goals
-// waiting on an open human decision are excluded. ClaimLiveness is the source
-// of truth for the running-claim part of this condition.
+// DetectWakeup assembles the wakeup state used by pending output and the
+// daemon. It combines goal, task, decision, commit, and claim-liveness
+// conditions for active goals. ClaimLiveness is the source of truth for the
+// running-claim part of the wakeup condition.
 func (s *Store) DetectWakeup(ctx context.Context, projectID string) (WakeupState, error) {
 	goals, err := s.ListGoals(ctx, projectID)
 	if err != nil {
@@ -85,31 +87,56 @@ func (s *Store) DetectWakeup(ctx context.Context, projectID string) (WakeupState
 		if err != nil {
 			return WakeupState{}, err
 		}
-		hasCompletionReport := false
+		hasOpenCompletionDecision := false
 		for _, decision := range openDecisions {
-			if decision.Kind == "completion" {
-				hasCompletionReport = true
+			if decision.Kind == domain.KindCompletion && decision.Status == domain.DecisionOpen {
+				hasOpenCompletionDecision = true
 				break
 			}
 		}
-		if len(tasks) > 0 {
+		if len(tasks) == 0 {
+			state.UndeclaredGoals = append(state.UndeclaredGoals, goal)
+		} else {
 			allDone := true
 			allDropped := true
+			allTerminal := true
+			hasDoneTask := false
 			for _, task := range tasks {
 				if task.Status != domain.TaskDone {
 					allDone = false
+				} else {
+					hasDoneTask = true
 				}
 				if task.Status != domain.TaskDropped {
 					allDropped = false
+				}
+				if task.Status != domain.TaskDone && task.Status != domain.TaskDropped {
+					allTerminal = false
 				}
 				if task.Status == domain.TaskDoing && task.ClaimedBy == "" {
 					state.UnclaimedDoingTasks = append(state.UnclaimedDoingTasks, task)
 				}
 			}
-			if allDone && !hasCompletionReport {
+			if allDone && !hasOpenCompletionDecision {
 				state.CompletedGoals = append(state.CompletedGoals, goal)
-			} else if allDropped && !hasCompletionReport {
+			} else if allDropped && !hasOpenCompletionDecision {
 				state.DroppedGoals = append(state.DroppedGoals, goal)
+			}
+			if allTerminal && hasDoneTask && !hasOpenCompletionDecision {
+				hasLinkedCommit := false
+				for _, task := range tasks {
+					commits, err := s.ListTaskCommits(ctx, task.ID)
+					if err != nil {
+						return WakeupState{}, err
+					}
+					if len(commits) > 0 {
+						hasLinkedCommit = true
+						break
+					}
+				}
+				if !hasLinkedCommit {
+					state.CommitlessGoals = append(state.CommitlessGoals, goal)
+				}
 			}
 		}
 		if len(openDecisions) > 0 {
@@ -143,6 +170,12 @@ func (s *Store) DetectWakeup(ctx context.Context, projectID string) (WakeupState
 	}
 	if state.UnclaimedDoingTasks == nil {
 		state.UnclaimedDoingTasks = []domain.Task{}
+	}
+	if state.UndeclaredGoals == nil {
+		state.UndeclaredGoals = []domain.Goal{}
+	}
+	if state.CommitlessGoals == nil {
+		state.CommitlessGoals = []domain.Goal{}
 	}
 	return state, nil
 }

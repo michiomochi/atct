@@ -98,63 +98,6 @@ func pendingTextForProject(dir, cwd, projectName string, projectSpecified bool) 
 	for _, goal := range goals {
 		projectGoalIDs[goal.ID] = struct{}{}
 	}
-	undeclaredGoals := make([]domain.Goal, 0)
-	commitlessGoals := make([]domain.Goal, 0)
-	for _, goal := range goals {
-		if goal.Status != domain.GoalActive {
-			continue
-		}
-		tasks, err := s.ListTasks(ctx, goal.ID)
-		if err != nil {
-			return "", fmt.Errorf("list tasks for goal %s: %w", goal.ID, err)
-		}
-		if len(tasks) == 0 {
-			undeclaredGoals = append(undeclaredGoals, goal)
-			continue
-		}
-		allTasksTerminal := true
-		hasDoneTask := false
-		for _, task := range tasks {
-			switch task.Status {
-			case domain.TaskDone:
-				hasDoneTask = true
-			case domain.TaskDropped:
-			default:
-				allTasksTerminal = false
-			}
-		}
-		if !allTasksTerminal || !hasDoneTask {
-			continue
-		}
-		openDecisions, err := s.ListOpenDecisions(ctx, goal.ID)
-		if err != nil {
-			return "", fmt.Errorf("list open decisions for goal %s: %w", goal.ID, err)
-		}
-		hasOpenCompletionDecision := false
-		for _, decision := range openDecisions {
-			if decision.Kind == domain.KindCompletion && decision.Status == domain.DecisionOpen {
-				hasOpenCompletionDecision = true
-				break
-			}
-		}
-		if hasOpenCompletionDecision {
-			continue
-		}
-		hasLinkedCommit := false
-		for _, task := range tasks {
-			commits, err := s.ListTaskCommits(ctx, task.ID)
-			if err != nil {
-				return "", fmt.Errorf("list commits for task %s: %w", task.ID, err)
-			}
-			if len(commits) > 0 {
-				hasLinkedCommit = true
-				break
-			}
-		}
-		if !hasLinkedCommit {
-			commitlessGoals = append(commitlessGoals, goal)
-		}
-	}
 
 	unfinishedTasks := make([]domain.Task, 0)
 	agentSessionID := currentAgentSessionID()
@@ -212,6 +155,10 @@ func pendingTextForProject(dir, cwd, projectName string, projectSpecified bool) 
 		}
 		otherStaleClaimedTasks = append(otherStaleClaimedTasks, task)
 	}
+	wakeupState, err := s.DetectWakeup(ctx, project.ID)
+	if err != nil {
+		return "", fmt.Errorf("detect wakeup: %w", err)
+	}
 
 	var output strings.Builder
 	humanAnsweredDecisions := make([]domain.Decision, 0)
@@ -256,7 +203,7 @@ func pendingTextForProject(dir, cwd, projectName string, projectSpecified bool) 
 			fmt.Fprintf(&output, "- %s (task_id: %s)\n", oneLine(task.Title), task.ID)
 		}
 	}
-	if len(undeclaredGoals) > 0 {
+	if len(wakeupState.UndeclaredGoals) > 0 {
 		if output.Len() > 0 {
 			output.WriteString("\n\n")
 		}
@@ -264,13 +211,9 @@ func pendingTextForProject(dir, cwd, projectName string, projectSpecified bool) 
 		output.WriteString("\n\n")
 		output.WriteString(undeclaredGoalMarker)
 		output.WriteByte('\n')
-		for _, goal := range undeclaredGoals {
+		for _, goal := range wakeupState.UndeclaredGoals {
 			fmt.Fprintf(&output, "- %s (goal_id: %s)\n", oneLine(domain.Headline(goal.Content)), goal.ID)
 		}
-	}
-	wakeupState, err := s.DetectWakeup(ctx, project.ID)
-	if err != nil {
-		return "", fmt.Errorf("detect wakeup: %w", err)
 	}
 	if openNoDefaultDecisionCount > 0 && wakeupState.UnstartedTaskCount > 0 {
 		if output.Len() > 0 {
@@ -314,7 +257,7 @@ func pendingTextForProject(dir, cwd, projectName string, projectSpecified bool) 
 			fmt.Fprintf(&output, "- %s (goal_id: %s)\n", oneLine(domain.Headline(goal.Content)), goal.ID)
 		}
 	}
-	if len(commitlessGoals) > 0 {
+	if len(wakeupState.CommitlessGoals) > 0 {
 		if output.Len() > 0 {
 			output.WriteString("\n\n")
 		}
@@ -322,7 +265,7 @@ func pendingTextForProject(dir, cwd, projectName string, projectSpecified bool) 
 		output.WriteString("\n\n")
 		output.WriteString(commitlessGoalMarker)
 		output.WriteByte('\n')
-		for _, goal := range commitlessGoals {
+		for _, goal := range wakeupState.CommitlessGoals {
 			fmt.Fprintf(&output, "- %s (goal_id: %s)\n", oneLine(domain.Headline(goal.Content)), goal.ID)
 		}
 	}
