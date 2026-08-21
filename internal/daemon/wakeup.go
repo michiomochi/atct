@@ -14,17 +14,48 @@ const wakeupPublishAfter = 15 * time.Minute
 // published, and becoming false resets that period so a later occurrence gets
 // a fresh wakeup ID.
 type wakeupTracker struct {
-	activeSince     map[string]time.Time
-	published       map[string]bool
-	discrepancySeen map[string]bool
+	activeSince          map[string]time.Time
+	published            map[string]bool
+	discrepancySeen      map[string]bool
+	detectionActiveSince map[string]time.Time
+	detectionPublished   map[string]bool
 }
 
 func newWakeupTracker() *wakeupTracker {
 	return &wakeupTracker{
-		activeSince:     make(map[string]time.Time),
-		published:       make(map[string]bool),
-		discrepancySeen: make(map[string]bool),
+		activeSince:          make(map[string]time.Time),
+		published:            make(map[string]bool),
+		discrepancySeen:      make(map[string]bool),
+		detectionActiveSince: make(map[string]time.Time),
+		detectionPublished:   make(map[string]bool),
 	}
+}
+
+func detectionTrackerKey(name, targetID string) string {
+	return name + "\x00" + targetID
+}
+
+func (t *wakeupTracker) publishDetection(now time.Time, name, targetID, projectID, goalID, taskID string) (store.DecisionEvent, bool) {
+	key := detectionTrackerKey(name, targetID)
+	startedAt, ok := t.detectionActiveSince[key]
+	if !ok {
+		t.detectionActiveSince[key] = now
+		delete(t.detectionPublished, key)
+		return store.DecisionEvent{}, false
+	}
+	if t.detectionPublished[key] || now.Before(startedAt.Add(wakeupPublishAfter)) {
+		return store.DecisionEvent{}, false
+	}
+	t.detectionPublished[key] = true
+	return store.DecisionEvent{
+		Name: name,
+		Data: store.DetectionEvent{
+			DetectionID: store.NewDetectionID(),
+			ProjectID:   projectID,
+			GoalID:      goalID,
+			TaskID:      taskID,
+		},
+	}, true
 }
 
 func (t *wakeupTracker) evaluate(ctx context.Context, s *store.Store, now time.Time) ([]store.DecisionEvent, error) {
@@ -34,6 +65,7 @@ func (t *wakeupTracker) evaluate(ctx context.Context, s *store.Store, now time.T
 	}
 
 	var events []store.DecisionEvent
+	currentDetectionKeys := make(map[string]struct{})
 	for _, project := range projects {
 		state, err := s.DetectWakeup(ctx, project.ID)
 		if err != nil {
@@ -67,27 +99,57 @@ func (t *wakeupTracker) evaluate(ctx context.Context, s *store.Store, now time.T
 		if !active {
 			delete(t.activeSince, project.ID)
 			delete(t.published, project.ID)
-			continue
+		} else {
+			startedAt, ok := t.activeSince[project.ID]
+			if !ok {
+				t.activeSince[project.ID] = now
+				delete(t.published, project.ID)
+			} else if !t.published[project.ID] && !now.Before(startedAt.Add(wakeupPublishAfter)) {
+				events = append(events, store.DecisionEvent{
+					Name: store.EventWakeup,
+					Data: store.WakeupEvent{
+						WakeupID:           store.NewWakeupID(),
+						ProjectID:          project.ID,
+						ActiveGoalCount:    state.ActiveGoalCount,
+						UnstartedTaskCount: state.UnstartedTaskCount,
+						WaitingAnswerCount: state.WaitingAnswerCount,
+					},
+				})
+				t.published[project.ID] = true
+			}
 		}
 
-		startedAt, ok := t.activeSince[project.ID]
-		if !ok {
-			t.activeSince[project.ID] = now
-			delete(t.published, project.ID)
-			continue
+		recordDetection := func(name, targetID, goalID, taskID string) {
+			currentDetectionKeys[detectionTrackerKey(name, targetID)] = struct{}{}
+			if event, ok := t.publishDetection(now, name, targetID, project.ID, goalID, taskID); ok {
+				events = append(events, event)
+			}
 		}
-		if !t.published[project.ID] && !now.Before(startedAt.Add(wakeupPublishAfter)) {
-			events = append(events, store.DecisionEvent{
-				Name: store.EventWakeup,
-				Data: store.WakeupEvent{
-					WakeupID:           store.NewWakeupID(),
-					ProjectID:          project.ID,
-					ActiveGoalCount:    state.ActiveGoalCount,
-					UnstartedTaskCount: state.UnstartedTaskCount,
-					WaitingAnswerCount: state.WaitingAnswerCount,
-				},
-			})
-			t.published[project.ID] = true
+		for _, goal := range state.CompletedGoals {
+			recordDetection(store.EventDetectionCompletionReportMissing, goal.ID, goal.ID, "")
+		}
+		for _, goal := range state.CommitlessGoals {
+			recordDetection(store.EventDetectionCommitsMissing, goal.ID, goal.ID, "")
+		}
+		for _, goal := range state.UndeclaredGoals {
+			recordDetection(store.EventDetectionUndeclaredGoal, goal.ID, goal.ID, "")
+		}
+		for _, goal := range state.DroppedGoals {
+			recordDetection(store.EventDetectionAllTasksDropped, goal.ID, goal.ID, "")
+		}
+		for _, task := range state.UnclaimedDoingTasks {
+			recordDetection(store.EventDetectionUnclaimedDoing, task.ID, "", task.ID)
+		}
+	}
+	for key := range t.detectionActiveSince {
+		if _, ok := currentDetectionKeys[key]; !ok {
+			delete(t.detectionActiveSince, key)
+			delete(t.detectionPublished, key)
+		}
+	}
+	for key := range t.detectionPublished {
+		if _, ok := currentDetectionKeys[key]; !ok {
+			delete(t.detectionPublished, key)
 		}
 	}
 	return events, nil

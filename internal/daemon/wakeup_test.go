@@ -178,3 +178,224 @@ func TestRunMaintenancePublishesKeepaliveWithInjectedTime(t *testing.T) {
 		t.Fatal("timed out waiting for keepalive event")
 	}
 }
+
+func TestWakeupTrackerPublishesCompletionDetectionWithoutUnstartedTasks(t *testing.T) {
+	ctx := context.Background()
+	s := newWakeupTestStore(t)
+	projectID, goalID := newWakeupTestGoal(t, s, "completion-no-unstarted")
+	tasks, err := s.DeclareTasks(ctx, goalID, "agent", "completion-no-unstarted", []string{"Completed task"}, []string{"The task is already complete."})
+	if err != nil {
+		t.Fatalf("DeclareTasks: %v", err)
+	}
+	if _, err := s.UpdateTask(ctx, tasks[0].ID, domain.TaskDone, ""); err != nil {
+		t.Fatalf("UpdateTask: %v", err)
+	}
+
+	tracker := newWakeupTracker()
+	start := time.Date(2026, 8, 20, 15, 0, 0, 0, time.UTC)
+	if events, err := tracker.evaluate(ctx, s, start); err != nil {
+		t.Fatalf("initial evaluate: %v", err)
+	} else if _, ok := findDetectionEvent(events, store.EventDetectionCompletionReportMissing, goalID); ok {
+		t.Fatalf("initial events = %#v, want no completion detection before grace", events)
+	}
+
+	events, err := tracker.evaluate(ctx, s, start.Add(wakeupPublishAfter))
+	if err != nil {
+		t.Fatalf("publish evaluate: %v", err)
+	}
+	detection, ok := findDetectionEvent(events, store.EventDetectionCompletionReportMissing, goalID)
+	if !ok {
+		t.Fatalf("published events = %#v, want completion detection", events)
+	}
+	if detection.ProjectID != projectID || detection.GoalID != goalID || detection.TaskID != "" || detection.DetectionID == "" {
+		t.Fatalf("completion detection = %+v, want project %s and goal %s", detection, projectID, goalID)
+	}
+}
+
+func TestWakeupTrackerDelaysDetectionUntilGracePeriod(t *testing.T) {
+	ctx := context.Background()
+	s := newWakeupTestStore(t)
+	_, goalID := newWakeupTestGoal(t, s, "completion-grace")
+	tasks, err := s.DeclareTasks(ctx, goalID, "agent", "completion-grace", []string{"Completed task"}, []string{"Wait for the grace period."})
+	if err != nil {
+		t.Fatalf("DeclareTasks: %v", err)
+	}
+	if _, err := s.UpdateTask(ctx, tasks[0].ID, domain.TaskDone, ""); err != nil {
+		t.Fatalf("UpdateTask: %v", err)
+	}
+
+	tracker := newWakeupTracker()
+	start := time.Date(2026, 8, 20, 16, 0, 0, 0, time.UTC)
+	if _, err := tracker.evaluate(ctx, s, start); err != nil {
+		t.Fatalf("initial evaluate: %v", err)
+	}
+	preGrace := start.Add(wakeupPublishAfter - time.Nanosecond)
+	if events, err := tracker.evaluate(ctx, s, preGrace); err != nil {
+		t.Fatalf("pre-grace evaluate: %v", err)
+	} else if _, ok := findDetectionEvent(events, store.EventDetectionCompletionReportMissing, goalID); ok {
+		t.Fatalf("pre-grace events = %#v, want no completion detection", events)
+	}
+}
+
+func TestWakeupTrackerDoesNotRepeatDetectionForSameCondition(t *testing.T) {
+	ctx := context.Background()
+	s := newWakeupTestStore(t)
+	_, goalID := newWakeupTestGoal(t, s, "completion-duplicate")
+	tasks, err := s.DeclareTasks(ctx, goalID, "agent", "completion-duplicate", []string{"Completed task"}, []string{"Do not repeat the detection."})
+	if err != nil {
+		t.Fatalf("DeclareTasks: %v", err)
+	}
+	if _, err := s.UpdateTask(ctx, tasks[0].ID, domain.TaskDone, ""); err != nil {
+		t.Fatalf("UpdateTask: %v", err)
+	}
+
+	tracker := newWakeupTracker()
+	start := time.Date(2026, 8, 20, 17, 0, 0, 0, time.UTC)
+	if _, err := tracker.evaluate(ctx, s, start); err != nil {
+		t.Fatalf("initial evaluate: %v", err)
+	}
+	firstEvents, err := tracker.evaluate(ctx, s, start.Add(wakeupPublishAfter))
+	if err != nil {
+		t.Fatalf("publish evaluate: %v", err)
+	}
+	first, ok := findDetectionEvent(firstEvents, store.EventDetectionCompletionReportMissing, goalID)
+	if !ok {
+		t.Fatalf("published events = %#v, want completion detection", firstEvents)
+	}
+	secondEvents, err := tracker.evaluate(ctx, s, start.Add(wakeupPublishAfter+time.Hour))
+	if err != nil {
+		t.Fatalf("duplicate evaluate: %v", err)
+	}
+	if second, ok := findDetectionEvent(secondEvents, store.EventDetectionCompletionReportMissing, goalID); ok {
+		t.Fatalf("duplicate completion detection = %+v after first %+v", second, first)
+	}
+}
+
+func TestWakeupTrackerResetsDetectionAfterConditionClears(t *testing.T) {
+	ctx := context.Background()
+	s := newWakeupTestStore(t)
+	_, goalID := newWakeupTestGoal(t, s, "completion-reset")
+	tasks, err := s.DeclareTasks(ctx, goalID, "agent", "completion-reset-first", []string{"First completed task"}, []string{"Complete the first task."})
+	if err != nil {
+		t.Fatalf("DeclareTasks first: %v", err)
+	}
+	if _, err := s.UpdateTask(ctx, tasks[0].ID, domain.TaskDone, ""); err != nil {
+		t.Fatalf("UpdateTask first: %v", err)
+	}
+
+	tracker := newWakeupTracker()
+	start := time.Date(2026, 8, 20, 18, 0, 0, 0, time.UTC)
+	if _, err := tracker.evaluate(ctx, s, start); err != nil {
+		t.Fatalf("initial evaluate: %v", err)
+	}
+	firstEvents, err := tracker.evaluate(ctx, s, start.Add(wakeupPublishAfter))
+	if err != nil {
+		t.Fatalf("first publish evaluate: %v", err)
+	}
+	first, ok := findDetectionEvent(firstEvents, store.EventDetectionCompletionReportMissing, goalID)
+	if !ok {
+		t.Fatalf("first published events = %#v, want completion detection", firstEvents)
+	}
+
+	if _, err := s.UpdateTask(ctx, tasks[0].ID, domain.TaskDoing, ""); err != nil {
+		t.Fatalf("UpdateTask doing: %v", err)
+	}
+	clearedEvents, err := tracker.evaluate(ctx, s, start.Add(wakeupPublishAfter+time.Minute))
+	if err != nil {
+		t.Fatalf("cleared evaluate: %v", err)
+	}
+	if cleared, ok := findDetectionEvent(clearedEvents, store.EventDetectionCompletionReportMissing, goalID); ok {
+		t.Fatalf("cleared completion detection = %+v, want none", cleared)
+	}
+	if _, err := s.UpdateTask(ctx, tasks[0].ID, domain.TaskDone, ""); err != nil {
+		t.Fatalf("UpdateTask second done: %v", err)
+	}
+	secondStart := start.Add(wakeupPublishAfter + 2*time.Minute)
+	if events, err := tracker.evaluate(ctx, s, secondStart); err != nil {
+		t.Fatalf("second start evaluate: %v", err)
+	} else if detection, ok := findDetectionEvent(events, store.EventDetectionCompletionReportMissing, goalID); ok {
+		t.Fatalf("second start completion detection = %+v, want none", detection)
+	}
+	secondEvents, err := tracker.evaluate(ctx, s, secondStart.Add(wakeupPublishAfter))
+	if err != nil {
+		t.Fatalf("second publish evaluate: %v", err)
+	}
+	second, ok := findDetectionEvent(secondEvents, store.EventDetectionCompletionReportMissing, goalID)
+	if !ok {
+		t.Fatalf("second published events = %#v, want completion detection", secondEvents)
+	}
+	if second.DetectionID == first.DetectionID {
+		t.Fatalf("second detection ID = %q, want a fresh ID after reset", second.DetectionID)
+	}
+}
+
+func TestWakeupTrackerKeepsDetectionGracePerTarget(t *testing.T) {
+	ctx := context.Background()
+	s := newWakeupTestStore(t)
+	projectID, goalAID := newWakeupTestGoal(t, s, "completion-target-a")
+	tasksA, err := s.DeclareTasks(ctx, goalAID, "agent", "completion-target-a", []string{"Goal A task"}, []string{"Complete goal A."})
+	if err != nil {
+		t.Fatalf("DeclareTasks A: %v", err)
+	}
+	if _, err := s.UpdateTask(ctx, tasksA[0].ID, domain.TaskDone, ""); err != nil {
+		t.Fatalf("UpdateTask A: %v", err)
+	}
+
+	tracker := newWakeupTracker()
+	start := time.Date(2026, 8, 20, 19, 0, 0, 0, time.UTC)
+	if _, err := tracker.evaluate(ctx, s, start); err != nil {
+		t.Fatalf("initial evaluate: %v", err)
+	}
+
+	goalB, err := s.CreateGoal(ctx, projectID, "Resume completion-target-b", "human")
+	if err != nil {
+		t.Fatalf("CreateGoal B: %v", err)
+	}
+	tasksB, err := s.DeclareTasks(ctx, goalB.ID, "agent", "completion-target-b", []string{"Goal B task"}, []string{"Complete goal B."})
+	if err != nil {
+		t.Fatalf("DeclareTasks B: %v", err)
+	}
+	if _, err := s.UpdateTask(ctx, tasksB[0].ID, domain.TaskDone, ""); err != nil {
+		t.Fatalf("UpdateTask B: %v", err)
+	}
+	if events, err := tracker.evaluate(ctx, s, start.Add(10*time.Minute)); err != nil {
+		t.Fatalf("goal B start evaluate: %v", err)
+	} else if detection, ok := findDetectionEvent(events, store.EventDetectionCompletionReportMissing, goalB.ID); ok {
+		t.Fatalf("goal B early completion detection = %+v, want none", detection)
+	}
+
+	goalAEvents, err := tracker.evaluate(ctx, s, start.Add(wakeupPublishAfter))
+	if err != nil {
+		t.Fatalf("goal A publish evaluate: %v", err)
+	}
+	if detection, ok := findDetectionEvent(goalAEvents, store.EventDetectionCompletionReportMissing, goalAID); !ok {
+		t.Fatalf("goal A events = %#v, want completion detection", goalAEvents)
+	} else if other, ok := findDetectionEvent(goalAEvents, store.EventDetectionCompletionReportMissing, goalB.ID); ok {
+		t.Fatalf("goal B early completion detection = %+v, want none", other)
+	} else if detection.GoalID != goalAID {
+		t.Fatalf("goal A detection = %+v, want goal %s", detection, goalAID)
+	}
+
+	goalBEvents, err := tracker.evaluate(ctx, s, start.Add(25*time.Minute))
+	if err != nil {
+		t.Fatalf("goal B publish evaluate: %v", err)
+	}
+	if detection, ok := findDetectionEvent(goalBEvents, store.EventDetectionCompletionReportMissing, goalB.ID); !ok {
+		t.Fatalf("goal B events = %#v, want completion detection", goalBEvents)
+	} else if detection.GoalID != goalB.ID {
+		t.Fatalf("goal B detection = %+v, want goal %s", detection, goalB.ID)
+	}
+}
+
+func findDetectionEvent(events []store.DecisionEvent, name, goalID string) (store.DetectionEvent, bool) {
+	for _, event := range events {
+		if event.Name != name {
+			continue
+		}
+		detection, ok := event.Data.(store.DetectionEvent)
+		if ok && detection.GoalID == goalID {
+			return detection, true
+		}
+	}
+	return store.DetectionEvent{}, false
+}

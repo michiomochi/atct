@@ -9,9 +9,14 @@ import (
 )
 
 const (
-	EventWakeup            = "wakeup"
-	EventKeepalive         = "keepalive"
-	EventWakeupDiscrepancy = "wakeup.discrepancy"
+	EventWakeup                           = "wakeup"
+	EventKeepalive                        = "keepalive"
+	EventWakeupDiscrepancy                = "wakeup.discrepancy"
+	EventDetectionCompletionReportMissing = "detection.completion_report_missing"
+	EventDetectionCommitsMissing          = "detection.commits_missing"
+	EventDetectionUndeclaredGoal          = "detection.undeclared_goal"
+	EventDetectionAllTasksDropped         = "detection.all_tasks_dropped"
+	EventDetectionUnclaimedDoing          = "detection.unclaimed_doing"
 )
 
 // WakeupEvent is the visible state that caused a wakeup notification. The
@@ -31,6 +36,15 @@ type WakeupDiscrepancyEvent struct {
 	ProjectID                  string `json:"project_id"`
 	DetectorUnstartedTaskCount int    `json:"detector_unstarted_task_count"`
 	CountedUnstartedTaskCount  int    `json:"counted_unstarted_task_count"`
+}
+
+// DetectionEvent identifies the project and object that need attention for a
+// condition-specific detection.
+type DetectionEvent struct {
+	DetectionID string `json:"detection_id"`
+	ProjectID   string `json:"project_id"`
+	GoalID      string `json:"goal_id,omitempty"`
+	TaskID      string `json:"task_id,omitempty"`
 }
 
 // KeepaliveEvent lets a watch process distinguish a quiet daemon from a dead
@@ -214,5 +228,9 @@ func (s *Store) CountUnstartedTasks(ctx context.Context, projectID string) (int,
 }
 
 func NewWakeupID() string {
+	return uuid.NewString()
+}
+
+func NewDetectionID() string {
 	return uuid.NewString()
 }
