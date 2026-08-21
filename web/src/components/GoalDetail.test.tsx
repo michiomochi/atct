@@ -114,6 +114,7 @@ function emptyInbox(): InboxResponse {
     open_decisions: [],
     unapplied_decisions: [],
     active_goals: [],
+    proposed_goals: [],
     attention_tasks: [],
   };
 }

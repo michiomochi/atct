@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { fetchInbox, subscribeToDecisionEvents, type InboxResponse } from "../lib/api";
 import { DecisionTable } from "./DecisionTable";
 import { GoalTable } from "./GoalTable";
+import { ProposedGoalTable } from "./ProposedGoalTable";
 import { AreaLoading, EmptyState, ErrorState } from "./StateMessage";
 import { Section } from "./Section";
 import { groupGoalsByProject } from "../lib/ui";
@@ -63,6 +64,7 @@ export function Dashboard() {
 
   const data = state.kind === "ready" ? state.data : undefined;
   const projectGroups = data ? groupGoalsByProject(data.active_goals) : undefined;
+  const proposedGoals = data?.proposed_goals ?? [];
   const retry = () => void load();
 
   return (
@@ -90,6 +92,12 @@ export function Dashboard() {
           {state.kind === "error" && <ErrorState message={state.message} onRetry={retry} />}
           {data && <DecisionTable decisions={data.open_decisions} emptyText={t("dashboard.openDecisions.empty")} />}
         </Section>
+
+        {proposedGoals.length > 0 && (
+          <Section id="proposed-goals" title={t("dashboard.proposed.title")} count={proposedGoals.length}>
+            <ProposedGoalTable goals={proposedGoals} />
+          </Section>
+        )}
 
       </div>
 

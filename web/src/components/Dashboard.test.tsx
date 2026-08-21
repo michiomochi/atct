@@ -2,11 +2,19 @@ import { act, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Dashboard } from "./Dashboard";
 
-const { fetchInbox, subscribeToDecisionEvents, t } = vi.hoisted(() => ({
-  fetchInbox: vi.fn(),
-  subscribeToDecisionEvents: vi.fn(),
-  t: (key: string) => key,
-}));
+const { fetchInbox, subscribeToDecisionEvents, t, i18nMock } = vi.hoisted(() => {
+  const t = (key: string) => key;
+  return {
+    fetchInbox: vi.fn(),
+    subscribeToDecisionEvents: vi.fn(),
+    t,
+    i18nMock: {
+      t,
+      i18n: { language: "en" },
+      initReactI18next: { type: "3rdParty", init: () => undefined },
+    },
+  };
+});
 
 vi.mock("../lib/api", () => ({
   fetchInbox,
@@ -14,7 +22,8 @@ vi.mock("../lib/api", () => ({
 }));
 
 vi.mock("react-i18next", () => ({
-  useTranslation: () => ({ t }),
+  useTranslation: () => i18nMock,
+  initReactI18next: i18nMock.initReactI18next,
 }));
 
 vi.mock("./GoalCreateForm", () => ({
@@ -40,6 +49,15 @@ describe("Dashboard goal creation refresh guard", () => {
         decisionEvent = undefined;
       };
     });
+  });
+
+  it("does not render the proposed goals section when there are no proposed goals", async () => {
+    fetchInbox.mockResolvedValue({ open_decisions: [], active_goals: [], proposed_goals: [] });
+
+    render(<Dashboard />);
+    await screen.findByRole("heading", { name: /projects|プロジェクト/i });
+
+    expect(screen.queryByRole("region", { name: /proposed goals|提案中のゴール/i })).toBeNull();
   });
 
   it("keeps the current data while the goal form is dirty and reloads after it is clean", async () => {
