@@ -189,3 +189,23 @@ pnpm は普通グローバルの store から hardlink するので見かけほ�
 
 主チェックアウトから同じコマンドを叩くと 0.2 秒で成功する。**Codex の sandbox が
 `.git` への書き込みを止めている。** worktree の作成と準備は commander が行う。
+
+## 準備は `script/worktree-setup.sh` 1 本にする
+
+    script/worktree-setup.sh 1     # -> ../atct-wt1、ブランチ wt/executor-1
+
+**冪等である。**既にあれば作り直さず、借り直しだけを行って終わる。
+主チェックアウトに `web/node_modules` か `web/dist/index.html` が無ければ、
+**何を先に走らせればよいかを書いて** exit 2 で止まる（理由だけ書いて手順を書かないと、
+止められた側は同じことを繰り返す）。
+
+実測（2026-08-21・commander が主チェックアウトで実行）:
+
+| 実行 | 実時間 |
+|---|---|
+| 初回（`git worktree add` 込み） | 1.42 秒 |
+| 2 回目（冪等の借り直しだけ） | 0.27 秒 |
+| 準備後の `go test ./...` | 21.4 秒、rc=0、9 パッケージ ok |
+
+**executor はこのスクリプトを実行できない**（sandbox が `.git` への書き込みを止める）。
+worktree の作成と準備は commander が行う。
