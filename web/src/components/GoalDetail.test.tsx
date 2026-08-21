@@ -2,7 +2,7 @@ import { within } from "@testing-library/dom";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Decision, Goal, GoalResponse, InboxResponse, TaskView } from "../lib/api";
-import { fetchGoal, fetchInbox, subscribeToDecisionEvents } from "../lib/api";
+import { fetchGoal, fetchInbox, subscribeToDecisionEvents, withdrawGoal } from "../lib/api";
 import { Dashboard } from "./Dashboard";
 import { GoalDetail } from "./GoalDetail";
 
@@ -21,6 +21,7 @@ const apiMock = vi.hoisted(() => ({
   rejectCompletion: vi.fn(),
   reviseDecision: vi.fn(),
   subscribeToDecisionEvents: vi.fn(() => () => undefined),
+  withdrawGoal: vi.fn(),
 }));
 
 vi.mock("react-i18next", () => ({
@@ -132,8 +133,9 @@ describe("GoalDetail", () => {
 
     render(<GoalDetail id="goal-1" />);
 
-    await waitFor(() => expect(screen.getByRole("textbox")).not.toBeNull());
-    const reason = screen.getByRole("textbox");
+    const completionApproval = () => within(screen.getByTestId("completion-approval"));
+    await waitFor(() => expect(completionApproval().getByRole("textbox")).not.toBeNull());
+    const reason = completionApproval().getByRole("textbox");
     fireEvent.change(reason, { target: { value: "keep this reason" } });
     act(() => decisionEvent?.("decision.created"));
 
@@ -143,7 +145,7 @@ describe("GoalDetail", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "state.fetchLatest" }));
     await waitFor(() => expect(fetchGoal).toHaveBeenCalledTimes(2));
-    await waitFor(() => expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toBe(""));
+    await waitFor(() => expect((completionApproval().getByRole("textbox") as HTMLTextAreaElement).value).toBe(""));
 
     act(() => decisionEvent?.("decision.created"));
     await waitFor(() => expect(fetchGoal).toHaveBeenCalledTimes(3));
@@ -258,5 +260,73 @@ describe("GoalDetail", () => {
 
     expect(orderLabels).toEqual(["1", "2", "3"]);
     expect(orderLabels).not.toEqual(["1", "1", "1"]);
+  });
+
+  it("disables goal withdrawal while the reason is empty or whitespace", async () => {
+    vi.mocked(fetchGoal).mockResolvedValueOnce(goalResponse());
+
+    render(<GoalDetail id="goal-1" />);
+
+    await waitFor(() => expect(screen.getByTestId("goal-withdraw")).not.toBeNull());
+    const reason = screen.getByRole("textbox", { name: "goal.withdraw.reason" });
+    const submit = screen.getByRole("button", { name: "goal.withdraw.submit" });
+
+    expect((submit as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(reason, { target: { value: "   " } });
+    expect((submit as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("does not render goal withdrawal for a proposed goal", async () => {
+    vi.mocked(fetchGoal).mockResolvedValueOnce(goalResponse({ status: "proposed" }));
+
+    render(<GoalDetail id="goal-1" />);
+
+    await waitFor(() => expect(fetchGoal).toHaveBeenCalledWith("goal-1"));
+    expect(screen.queryByTestId("goal-withdraw")).toBeNull();
+  });
+
+  it("does not render goal withdrawal for a done goal", async () => {
+    vi.mocked(fetchGoal).mockResolvedValueOnce(goalResponse({ status: "done" }));
+
+    render(<GoalDetail id="goal-1" />);
+
+    await waitFor(() => expect(fetchGoal).toHaveBeenCalledWith("goal-1"));
+    expect(screen.queryByTestId("goal-withdraw")).toBeNull();
+  });
+
+  it("shows the server message when goal withdrawal returns a conflict", async () => {
+    const serverMessage = "goal goal-1 is dropped, not active";
+    const serverError = Object.assign(new Error(serverMessage), { status: 409 });
+    vi.mocked(fetchGoal).mockResolvedValueOnce(goalResponse());
+    vi.mocked(withdrawGoal).mockRejectedValueOnce(serverError);
+
+    render(<GoalDetail id="goal-1" />);
+
+    await waitFor(() => expect(screen.getByTestId("goal-withdraw")).not.toBeNull());
+    fireEvent.change(screen.getByRole("textbox", { name: "goal.withdraw.reason" }), {
+      target: { value: "No longer needed" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "goal.withdraw.submit" }));
+
+    await waitFor(() => expect(screen.getByText(serverMessage)).not.toBeNull());
+  });
+
+  it("withdraws the goal with the provided reason and reloads after success", async () => {
+    vi.mocked(fetchGoal)
+      .mockResolvedValueOnce(goalResponse())
+      .mockResolvedValueOnce(goalResponse({ status: "dropped" }));
+    vi.mocked(withdrawGoal).mockResolvedValueOnce(goal());
+
+    render(<GoalDetail id="goal-1" />);
+
+    await waitFor(() => expect(screen.getByTestId("goal-withdraw")).not.toBeNull());
+    fireEvent.change(screen.getByRole("textbox", { name: "goal.withdraw.reason" }), {
+      target: { value: "  No longer needed  " },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "goal.withdraw.submit" }));
+
+    await waitFor(() => expect(withdrawGoal).toHaveBeenCalledWith("goal-1", "No longer needed"));
+    await waitFor(() => expect(fetchGoal).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.queryByTestId("goal-withdraw")).toBeNull());
   });
 });

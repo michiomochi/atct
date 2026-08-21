@@ -83,6 +83,10 @@ export const en = {
   "goal.completion.report.empty": "Not provided",
   "goal.completion.submitting": "Submitting...",
   "goal.completion.error.update": "Could not update the completion decision.",
+  "goal.withdraw.title": "Withdraw this goal",
+  "goal.withdraw.description": "Withdrawing this goal closes open decisions and unfinished or in-progress tasks; completed tasks remain unchanged.",
+  "goal.withdraw.reason": "Reason",
+  "goal.withdraw.submit": "Withdraw",
   "goal.error.load": "Could not load the goal.",
 
   "task.column.order": "Order",

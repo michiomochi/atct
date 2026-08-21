@@ -291,6 +291,14 @@ export async function rejectCompletion(id: string, reason: string): Promise<Deci
   });
 }
 
+export async function withdrawGoal(id: string, reason: string): Promise<Goal> {
+  return requestJson<Goal>(`/api/goals/${encodeURIComponent(id)}/withdraw`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ reason }),
+  });
+}
+
 export async function releaseTask(id: string): Promise<TaskView> {
   return requestJson<TaskView>(`/api/tasks/${encodeURIComponent(id)}/release`, {
     method: "POST",

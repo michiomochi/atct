@@ -7,6 +7,7 @@ import {
   fetchGoal,
   rejectCompletion,
   subscribeToDecisionEvents,
+  withdrawGoal,
   type Decision,
   type Goal,
   type GoalResponse,
@@ -188,6 +189,60 @@ function CompletionApproval({
   );
 }
 
+function GoalWithdrawal({ goal, onUpdated }: { goal: Goal; onUpdated: () => void }) {
+  const { t } = useTranslation();
+  const [reason, setReason] = useState("");
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  const reasonID = `goal-withdraw-reason-${goal.id}`;
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const trimmedReason = reason.trim();
+    if (!trimmedReason || submitting) return;
+
+    setSubmitError(null);
+    setSubmitting(true);
+    try {
+      await withdrawGoal(goal.id, trimmedReason);
+      onUpdated();
+    } catch (error) {
+      setSubmitError(errorMessage(error, t("goal.error.load")));
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <section className="min-w-0 border-t border-line pt-5" data-testid="goal-withdraw" aria-labelledby="goal-withdraw-heading">
+      <h2 id="goal-withdraw-heading" className="font-display text-lg font-semibold tracking-tight text-ink-950">{t("goal.withdraw.title")}</h2>
+      <p className="mt-2 max-w-3xl text-sm leading-6 text-ink-700">{t("goal.withdraw.description")}</p>
+      <form className="mt-4 min-w-0 max-w-3xl border-l-2 border-danger-700 pl-4" onSubmit={handleSubmit} noValidate>
+        <label className="mb-3 block text-sm text-ink-800" htmlFor={reasonID}>
+          {t("goal.withdraw.reason")}
+          <textarea
+            className="focus-ring mt-1 block min-h-24 w-full resize-y border border-line bg-surface px-3 py-2 text-sm leading-6 text-ink-950"
+            id={reasonID}
+            value={reason}
+            onChange={(event) => setReason(event.target.value)}
+            required
+            aria-required="true"
+          />
+        </label>
+        {submitError && <p className="mb-3 text-sm text-danger-700" role="alert">{submitError}</p>}
+        <Button
+          type="submit"
+          disabled={submitting || reason.trim() === ""}
+          className="focus-ring border border-danger-700 bg-surface px-3 py-2 text-sm font-medium text-danger-700 transition hover:bg-danger-100 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {t("goal.withdraw.submit")}
+        </Button>
+      </form>
+    </section>
+  );
+}
+
 export function GoalDetail({ id }: Props) {
   const [state, setState] = useState<LoadState>({ kind: "loading" });
   const [completionReason, setCompletionReason] = useState("");
@@ -305,6 +360,8 @@ export function GoalDetail({ id }: Props) {
           )}
         </div>
       </section>
+
+      {data?.goal.goal.status === "active" && <GoalWithdrawal goal={data.goal.goal} onUpdated={load} />}
     </main>
   );
 }

@@ -84,6 +84,10 @@ export const ja: Record<TranslationKey, string> = {
   "goal.completion.report.empty": "未記載",
   "goal.completion.submitting": "送信中...",
   "goal.completion.error.update": "完了の判断を更新できませんでした。",
+  "goal.withdraw.title": "このゴールを取り下げる",
+  "goal.withdraw.description": "このゴールを取り下げると、開いている決定と未着手・作業中のタスクが閉じられ、完了したタスクはそのまま残ります。",
+  "goal.withdraw.reason": "理由",
+  "goal.withdraw.submit": "取り下げる",
   "goal.error.load": "ゴールを読み込めませんでした。",
 
   "task.column.order": "順序",
