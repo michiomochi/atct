@@ -407,3 +407,70 @@ func (s *Store) RejectGoal(ctx context.Context, decisionID, reason string) error
 	s.notify.publishEvent(Event{Name: "decision.rejected", Data: d})
 	return nil
 }
+
+// WithdrawActiveGoal drops an active Goal and atomically closes its open work.
+func (s *Store) WithdrawActiveGoal(ctx context.Context, goalID, reason string) error {
+	if strings.TrimSpace(reason) == "" {
+		return errors.New("withdrawal reason is required")
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin goal withdrawal tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	q := sqlcgen.New(tx)
+	now := time.Now().UTC().Format(time.RFC3339)
+	result, err := q.WithdrawActiveGoal(ctx, sqlcgen.WithdrawActiveGoalParams{
+		ResultSummary: reason,
+		UpdatedAt:     now,
+		ID:            goalID,
+	})
+	if err != nil {
+		return fmt.Errorf("withdraw goal: %w", err)
+	}
+	if rows, err := result.RowsAffected(); err != nil {
+		return fmt.Errorf("withdraw goal rows affected: %w", err)
+	} else if rows != 1 {
+		return fmt.Errorf("%w: %s", ErrGoalNotActive, goalID)
+	}
+
+	openDecisions, err := q.ListOpenDecisions(ctx, goalID)
+	if err != nil {
+		return fmt.Errorf("list open decisions for withdrawn goal: %w", err)
+	}
+	for _, decision := range openDecisions {
+		if err := withdrawDecisionWith(ctx, q, decision.ID, reason); err != nil {
+			return fmt.Errorf("withdraw decision %s: %w", decision.ID, err)
+		}
+	}
+
+	result, err = q.DropOpenTasksForGoal(ctx, sqlcgen.DropOpenTasksForGoalParams{
+		UpdatedAt: now,
+		GoalID:    goalID,
+	})
+	if err != nil {
+		return fmt.Errorf("drop open tasks for withdrawn goal: %w", err)
+	}
+	if _, err := result.RowsAffected(); err != nil {
+		return fmt.Errorf("drop open tasks rows affected: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit goal withdrawal: %w", err)
+	}
+
+	for _, decision := range openDecisions {
+		d, err := s.GetDecision(ctx, decision.ID)
+		if err != nil {
+			return err
+		}
+		s.notify.publish(decision.ID)
+		s.notify.publishEvent(Event{Name: "decision.withdrawn", Data: d})
+	}
+	if len(openDecisions) > 0 {
+		s.notify.publishAll()
+	}
+	return nil
+}

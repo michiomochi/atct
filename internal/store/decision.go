@@ -403,7 +403,21 @@ func (s *Store) ApplyExpiredDefaults(ctx context.Context, now time.Time) (int, e
 }
 
 func (s *Store) WithdrawDecision(ctx context.Context, decisionID, reason string) error {
-	res, err := decisionQueries(s).WithdrawDecision(ctx, sqlcgen.WithdrawDecisionParams{
+	if err := withdrawDecisionWith(ctx, decisionQueries(s), decisionID, reason); err != nil {
+		return err
+	}
+	d, err := s.GetDecision(ctx, decisionID)
+	if err != nil {
+		return err
+	}
+	s.notify.publish(decisionID)
+	s.notify.publishAll()
+	s.notify.publishEvent(Event{Name: "decision.withdrawn", Data: d})
+	return nil
+}
+
+func withdrawDecisionWith(ctx context.Context, q *sqlcgen.Queries, decisionID, reason string) error {
+	res, err := q.WithdrawDecision(ctx, sqlcgen.WithdrawDecisionParams{
 		AnswerText: reason,
 		ID:         decisionID,
 	})
@@ -417,13 +431,6 @@ func (s *Store) WithdrawDecision(ctx context.Context, decisionID, reason string)
 	if n == 0 {
 		return fmt.Errorf("%w: %s", ErrDecisionNotOpen, decisionID)
 	}
-	d, err := s.GetDecision(ctx, decisionID)
-	if err != nil {
-		return err
-	}
-	s.notify.publish(decisionID)
-	s.notify.publishAll()
-	s.notify.publishEvent(Event{Name: "decision.withdrawn", Data: d})
 	return nil
 }
 

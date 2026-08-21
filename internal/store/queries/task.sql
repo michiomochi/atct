@@ -14,6 +14,10 @@ FROM tasks
 WHERE goal_id = ?
 ORDER BY sort_order, id;
 
+-- name: DropOpenTasksForGoal :execresult
+UPDATE tasks SET status = 'dropped', claimed_by = '', claimed_at = NULL, updated_at = ?
+WHERE goal_id = ? AND status IN ('todo', 'doing');
+
 -- name: MaxTaskSortOrder :one
 SELECT CAST(COALESCE(MAX(sort_order), -1) AS INTEGER) AS sort_order
 FROM tasks

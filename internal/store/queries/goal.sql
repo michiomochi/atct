@@ -23,6 +23,10 @@ WHERE id = ? AND status = 'proposed';
 UPDATE goals SET status = 'dropped', updated_at = ?
 WHERE id = ? AND status = 'proposed';
 
+-- name: WithdrawActiveGoal :execresult
+UPDATE goals SET status = 'dropped', result_summary = ?, updated_at = ?
+WHERE id = ? AND status = 'active';
+
 -- name: GetGoalApprovalDecisionGoalID :one
 SELECT goal_id
 FROM decisions

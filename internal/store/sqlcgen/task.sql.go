@@ -130,6 +130,20 @@ func (q *Queries) DeleteOlderProjectAgentSessions(ctx context.Context, arg Delet
 	return err
 }
 
+const dropOpenTasksForGoal = `-- name: DropOpenTasksForGoal :execresult
+UPDATE tasks SET status = 'dropped', claimed_by = '', claimed_at = NULL, updated_at = ?
+WHERE goal_id = ? AND status IN ('todo', 'doing')
+`
+
+type DropOpenTasksForGoalParams struct {
+	UpdatedAt string
+	GoalID    string
+}
+
+func (q *Queries) DropOpenTasksForGoal(ctx context.Context, arg DropOpenTasksForGoalParams) (sql.Result, error) {
+	return q.db.ExecContext(ctx, dropOpenTasksForGoal, arg.UpdatedAt, arg.GoalID)
+}
+
 const getAgentSessionLiveness = `-- name: GetAgentSessionLiveness :one
 SELECT pid, started_at
 FROM agent_sessions

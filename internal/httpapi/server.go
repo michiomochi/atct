@@ -184,6 +184,18 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.handleGoal(w, r, parts[2])
 		return
 	}
+	if len(parts) == 4 && parts[0] == "api" && parts[1] == "goals" && parts[3] == "withdraw" {
+		if parts[2] == "" {
+			writeError(w, http.StatusBadRequest, "goal id is missing")
+			return
+		}
+		if r.Method != http.MethodPost {
+			writeError(w, http.StatusBadRequest, "method is not allowed for this endpoint")
+			return
+		}
+		s.handleWithdraw(w, r, parts[2])
+		return
+	}
 	if len(parts) == 3 && parts[0] == "api" && parts[1] == "tasks" {
 		if parts[2] == "" {
 			writeError(w, http.StatusBadRequest, "task id is missing")
@@ -493,6 +505,43 @@ func (s *Server) handleGoal(w http.ResponseWriter, r *http.Request, goalID strin
 	response.Goal.Tasks = nonNilTaskViews(allTaskViews)
 
 	writeJSON(w, http.StatusOK, response)
+}
+
+func (s *Server) handleWithdraw(w http.ResponseWriter, r *http.Request, goalID string) {
+	var request rejectionRequest
+	if err := decodeJSONBody(r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if strings.TrimSpace(request.Reason) == "" {
+		writeError(w, http.StatusBadRequest, "reason is required")
+		return
+	}
+
+	if err := s.store.WithdrawActiveGoal(r.Context(), goalID, request.Reason); err != nil {
+		if errors.Is(err, store.ErrGoalNotActive) {
+			goal, goalErr := s.store.GetGoal(r.Context(), goalID)
+			if errors.Is(goalErr, store.ErrGoalNotFound) {
+				writeError(w, http.StatusNotFound, goalErr.Error())
+				return
+			}
+			if goalErr != nil {
+				writeStoreError(w, goalErr)
+				return
+			}
+			writeError(w, http.StatusConflict, fmt.Sprintf("goal %s is %s, not active", goalID, goal.Status))
+			return
+		}
+		writeStoreError(w, err)
+		return
+	}
+
+	goal, err := s.store.GetGoal(r.Context(), goalID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, goal)
 }
 
 func (s *Server) handleTask(w http.ResponseWriter, r *http.Request, taskID string) {
