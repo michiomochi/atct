@@ -1429,6 +1429,139 @@ func TestHTTPTaskDetailReturnsNotFoundForUnknownTask(t *testing.T) {
 	assertErrorObject(t, status, headers, body, http.StatusNotFound)
 }
 
+func TestHTTPTaskDetailReturnsEmptyCommitsArray(t *testing.T) {
+	f := newBareFixture(t)
+	tasks, err := f.store.DeclareTasks(
+		f.ctx,
+		f.goal.ID,
+		"fixture-agent",
+		"task-commits-empty",
+		[]string{"Task without commits"},
+		[]string{"A task without linked commits."},
+		[][]string{{"src/target.go"}},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+	status, _, body := doRequest(t, srv.Client(), http.MethodGet, srv.URL+"/api/tasks/"+tasks[0].ID, nil)
+	if status != http.StatusOK {
+		t.Fatalf("task detail status = %d; body=%s", status, body)
+	}
+
+	var response struct {
+		Commits []json.RawMessage `json:"commits"`
+	}
+	if err := json.Unmarshal(body, &response); err != nil {
+		t.Fatalf("decode task detail: %v; body=%s", err, body)
+	}
+	if response.Commits == nil {
+		t.Fatal("commits is null, want []")
+	}
+	if len(response.Commits) != 0 {
+		t.Fatalf("commits = %s, want []", body)
+	}
+}
+
+func TestHTTPTaskDetailMarksMissingCommitOutOfHistory(t *testing.T) {
+	f := newBareFixture(t)
+	tasks, err := f.store.DeclareTasks(
+		f.ctx,
+		f.goal.ID,
+		"fixture-agent",
+		"task-commits-missing",
+		[]string{"Task with missing commit"},
+		[]string{"A task with a commit no longer in history."},
+		[][]string{{"src/target.go"}},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sha := "0000000000000000000000000000000000000000"
+	if err := f.store.LinkTaskCommit(f.ctx, tasks[0].ID, domain.TaskCommit{
+		SHA:          sha,
+		Subject:      "subject saved before rebase",
+		FilesChanged: 3,
+		Insertions:   5,
+		Deletions:    2,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+	status, _, body := doRequest(t, srv.Client(), http.MethodGet, srv.URL+"/api/tasks/"+tasks[0].ID, nil)
+	if status != http.StatusOK {
+		t.Fatalf("task detail status = %d; body=%s", status, body)
+	}
+
+	var response struct {
+		Commits []struct {
+			SHA          string `json:"sha"`
+			ShortSHA     string `json:"short_sha"`
+			Subject      string `json:"subject"`
+			FilesChanged int    `json:"files_changed"`
+			Insertions   int    `json:"insertions"`
+			Deletions    int    `json:"deletions"`
+			InHistory    bool   `json:"in_history"`
+		} `json:"commits"`
+	}
+	if err := json.Unmarshal(body, &response); err != nil {
+		t.Fatalf("decode task detail: %v; body=%s", err, body)
+	}
+	if len(response.Commits) != 1 {
+		t.Fatalf("commits = %+v, want one commit", response.Commits)
+	}
+	commit := response.Commits[0]
+	if commit.SHA != sha || commit.ShortSHA != sha[:7] || commit.Subject != "subject saved before rebase" || commit.FilesChanged != 3 || commit.Insertions != 5 || commit.Deletions != 2 || commit.InHistory {
+		t.Fatalf("commit = %+v, want saved data with in_history=false", commit)
+	}
+}
+
+func TestHTTPTaskDetailDoesNotMixCommitsFromOtherTasks(t *testing.T) {
+	f := newBareFixture(t)
+	tasks, err := f.store.DeclareTasks(
+		f.ctx,
+		f.goal.ID,
+		"fixture-agent",
+		"task-commits-isolated",
+		[]string{"Target task", "Other task"},
+		[]string{"The task being requested.", "A different task."},
+		[][]string{{"src/target.go"}, {"src/other.go"}},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.store.LinkTaskCommit(f.ctx, tasks[1].ID, domain.TaskCommit{
+		SHA:     "1111111111111111111111111111111111111111",
+		Subject: "other task commit",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+	status, _, body := doRequest(t, srv.Client(), http.MethodGet, srv.URL+"/api/tasks/"+tasks[0].ID, nil)
+	if status != http.StatusOK {
+		t.Fatalf("task detail status = %d; body=%s", status, body)
+	}
+
+	var response struct {
+		Commits []json.RawMessage `json:"commits"`
+	}
+	if err := json.Unmarshal(body, &response); err != nil {
+		t.Fatalf("decode task detail: %v; body=%s", err, body)
+	}
+	if response.Commits == nil {
+		t.Fatal("commits is null, want []")
+	}
+	if len(response.Commits) != 0 {
+		t.Fatalf("commits = %s, want target task to have no commits", body)
+	}
+}
+
 func TestHTTPGoalDetailIncludesTasklessOpenDecision(t *testing.T) {
 	f := newBareFixture(t)
 	decision, err := f.store.AskDecision(f.ctx, store.AskInput{

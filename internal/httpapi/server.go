@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -90,6 +91,7 @@ type taskDetailResponse struct {
 	OpenDecisions          []domain.Decision     `json:"open_decisions"`
 	DecisionHistory        []decisionHistoryView `json:"decision_history"`
 	DecisionHistoryOmitted int                   `json:"decision_history_omitted"`
+	Commits                []taskCommitView      `json:"commits"`
 }
 
 type decisionHistoryView struct {
@@ -102,6 +104,17 @@ type decisionHistoryView struct {
 	DefaultAppliedAt *time.Time `json:"default_applied_at"`
 	AnsweredAt       *time.Time `json:"answered_at"`
 	AppliedAt        *time.Time `json:"applied_at"`
+}
+
+type taskCommitView struct {
+	SHA          string    `json:"sha"`
+	ShortSHA     string    `json:"short_sha"`
+	Subject      string    `json:"subject"`
+	FilesChanged int       `json:"files_changed"`
+	Insertions   int       `json:"insertions"`
+	Deletions    int       `json:"deletions"`
+	InHistory    bool      `json:"in_history"`
+	CreatedAt    time.Time `json:"created_at"`
 }
 
 type answerRequest struct {
@@ -525,9 +538,11 @@ func (s *Server) handleTask(w http.ResponseWriter, r *http.Request, taskID strin
 		return
 	}
 	projectName := ""
+	projectRootPath := ""
 	for _, project := range projects {
 		if project.ID == goal.ProjectID {
 			projectName = project.Name
+			projectRootPath = project.RootPath
 			break
 		}
 	}
@@ -554,6 +569,29 @@ func (s *Server) handleTask(w http.ResponseWriter, r *http.Request, taskID strin
 		decisionHistory = append(decisionHistory, newDecisionHistoryView(decision))
 	}
 
+	linkedCommits, err := s.store.ListTaskCommits(ctx, task.ID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	commits := make([]taskCommitView, 0, len(linkedCommits))
+	for _, commit := range linkedCommits {
+		shortSHA := commit.SHA
+		if len(shortSHA) > 7 {
+			shortSHA = shortSHA[:7]
+		}
+		commits = append(commits, taskCommitView{
+			SHA:          commit.SHA,
+			ShortSHA:     shortSHA,
+			Subject:      commit.Subject,
+			FilesChanged: commit.FilesChanged,
+			Insertions:   commit.Insertions,
+			Deletions:    commit.Deletions,
+			InHistory:    gitCommitInHistory(ctx, projectRootPath, commit.SHA),
+			CreatedAt:    commit.CreatedAt,
+		})
+	}
+
 	writeJSON(w, http.StatusOK, taskDetailResponse{
 		Task: task,
 		Goal: taskGoalView{
@@ -564,7 +602,15 @@ func (s *Server) handleTask(w http.ResponseWriter, r *http.Request, taskID strin
 		OpenDecisions:          taskOpenDecisions,
 		DecisionHistory:        decisionHistory,
 		DecisionHistoryOmitted: decisionHistoryOmitted,
+		Commits:                commits,
 	})
+}
+
+func gitCommitInHistory(ctx context.Context, rootPath, sha string) bool {
+	if rootPath == "" || sha == "" {
+		return false
+	}
+	return exec.CommandContext(ctx, "git", "-C", rootPath, "cat-file", "-e", sha+"^{commit}").Run() == nil
 }
 
 func (s *Server) handleRelease(w http.ResponseWriter, r *http.Request, taskID string) {
