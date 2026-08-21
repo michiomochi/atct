@@ -52,6 +52,7 @@ export const en = {
   "goal.project": "Project",
   "goal.status": "Status: {{status}}",
   "goal.tasks.title": "Tasks",
+  "goal.commits.title": "Commits",
   "goal.history.title": "Decision history",
   "goal.history.caption": "Applied decision history",
   "goal.history.column.question": "Question",

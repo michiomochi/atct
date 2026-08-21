@@ -1,11 +1,12 @@
 import { within } from "@testing-library/dom";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { Decision, Goal, GoalResponse, InboxResponse, TaskView } from "../lib/api";
+import type { Decision, Goal, GoalResponse, InboxResponse, TaskCommit, TaskView } from "../lib/api";
 import {
   approveDecision,
   fetchGoal,
   fetchInbox,
+  fetchTaskCommitDiff,
   subscribeToDecisionEvents,
   withdrawGoal,
 } from "../lib/api";
@@ -24,6 +25,7 @@ const apiMock = vi.hoisted(() => ({
   createGoal: vi.fn(),
   fetchGoal: vi.fn(),
   fetchInbox: vi.fn(),
+  fetchTaskCommitDiff: vi.fn(),
   rejectDecision: vi.fn(),
   reviseDecision: vi.fn(),
   subscribeToDecisionEvents: vi.fn(() => () => undefined),
@@ -78,7 +80,27 @@ function goalResponse(overrides: Partial<Goal> = {}): GoalResponse {
     next: [],
     decision_history: [],
     decision_history_omitted: 0,
+    task_commits: [],
   };
+}
+
+function taskCommit(sha: string, subject: string): TaskCommit {
+  return {
+    sha,
+    short_sha: sha.slice(0, 7),
+    subject,
+    files_changed: 1,
+    insertions: 2,
+    deletions: 0,
+    in_history: true,
+    created_at: "2026-08-20T00:00:00Z",
+  };
+}
+
+function goalResponseWithTaskCommits(
+  task_commits: Array<{ task_id: string; task_title: string; commits: TaskCommit[] }>,
+): GoalResponse {
+  return { ...goalResponse(), task_commits } as GoalResponse;
 }
 
 function taskView(id: string, title: string, order: number): TaskView {
@@ -310,6 +332,90 @@ describe("GoalDetail", () => {
 
     expect(orderLabels).toEqual(["1", "2", "3"]);
     expect(orderLabels).not.toEqual(["1", "1", "1"]);
+  });
+
+  it("renders all commits from all goal tasks", async () => {
+    vi.mocked(fetchGoal).mockResolvedValueOnce(
+      goalResponseWithTaskCommits([
+        {
+          task_id: "task-1",
+          task_title: "First task",
+          commits: [taskCommit("111111111111111", "First task first commit"), taskCommit("111111122222222", "First task second commit")],
+        },
+        {
+          task_id: "task-2",
+          task_title: "Second task",
+          commits: [taskCommit("222222211111111", "Second task first commit"), taskCommit("222222222222222", "Second task second commit")],
+        },
+      ]),
+    );
+
+    render(<GoalDetail id="goal-1" />);
+
+    await waitFor(() => expect(screen.getByRole("heading", { name: "goal.commits.title" })).not.toBeNull());
+    expect(screen.getByRole("link", { name: "First task" })).not.toBeNull();
+    expect(screen.getByRole("link", { name: "Second task" })).not.toBeNull();
+    expect(screen.getByText("First task first commit")).not.toBeNull();
+    expect(screen.getByText("First task second commit")).not.toBeNull();
+    expect(screen.getByText("Second task first commit")).not.toBeNull();
+    expect(screen.getByText("Second task second commit")).not.toBeNull();
+  });
+
+  it("does not render the goal commits section when task_commits is empty", async () => {
+    vi.mocked(fetchGoal).mockResolvedValueOnce(goalResponseWithTaskCommits([]));
+
+    render(<GoalDetail id="goal-1" />);
+
+    await waitFor(() => expect(fetchGoal).toHaveBeenCalledWith("goal-1"));
+    expect(screen.queryByRole("heading", { name: "goal.commits.title" })).toBeNull();
+  });
+
+  it("does not fetch a goal task commit diff until details are opened", async () => {
+    vi.mocked(fetchGoal).mockResolvedValueOnce(
+      goalResponseWithTaskCommits([
+        {
+          task_id: "task-1",
+          task_title: "First task",
+          commits: [taskCommit("111111111111111", "First task commit")],
+        },
+      ]),
+    );
+
+    render(<GoalDetail id="goal-1" />);
+
+    await waitFor(() => expect(screen.getByText("First task commit")).not.toBeNull());
+    expect(fetchTaskCommitDiff).not.toHaveBeenCalled();
+  });
+
+  it("fetches a second goal task commit diff with its owning task ID", async () => {
+    vi.mocked(fetchGoal).mockResolvedValueOnce(
+      goalResponseWithTaskCommits([
+        {
+          task_id: "task-1",
+          task_title: "First task",
+          commits: [taskCommit("111111111111111", "First task commit")],
+        },
+        {
+          task_id: "task-2",
+          task_title: "Second task",
+          commits: [taskCommit("222222222222222", "Second task commit")],
+        },
+      ]),
+    );
+    vi.mocked(fetchTaskCommitDiff).mockResolvedValueOnce({
+      sha: "222222222222222",
+      in_history: true,
+      files: [],
+      body: "second diff",
+      omitted_lines: 0,
+    });
+
+    render(<GoalDetail id="goal-1" />);
+
+    await waitFor(() => expect(screen.getByText("Second task commit")).not.toBeNull());
+    fireEvent.click(screen.getAllByText("task.detail.commitDiff")[1]);
+
+    await waitFor(() => expect(fetchTaskCommitDiff).toHaveBeenCalledWith("task-2", "222222222222222"));
   });
 
   it("disables goal withdrawal while the reason is empty or whitespace", async () => {

@@ -919,6 +919,136 @@ func TestHTTPGoalDetailIncludesAllTasksWithoutCrossGoalMixing(t *testing.T) {
 	}
 }
 
+func TestHTTPGoalDetailIncludesAllTaskCommitsInTaskOrder(t *testing.T) {
+	f := newBareFixture(t)
+	tasks, err := f.store.DeclareTasks(f.ctx, f.goal.ID, "commit-agent", "commit-declare", []string{"first task", "second task"}, []string{"Complete the first task.", "Complete the second task."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	commitSpecs := [][]domain.TaskCommit{
+		{
+			{SHA: "1111111111111111111111111111111111111111", Subject: "first task commit one", FilesChanged: 1, Insertions: 2, Deletions: 0, CreatedAt: time.Now().UTC()},
+			{SHA: "2222222222222222222222222222222222222222", Subject: "first task commit two", FilesChanged: 2, Insertions: 3, Deletions: 1, CreatedAt: time.Now().UTC()},
+		},
+		{
+			{SHA: "3333333333333333333333333333333333333333", Subject: "second task commit one", FilesChanged: 3, Insertions: 4, Deletions: 2, CreatedAt: time.Now().UTC()},
+			{SHA: "4444444444444444444444444444444444444444", Subject: "second task commit two", FilesChanged: 4, Insertions: 5, Deletions: 3, CreatedAt: time.Now().UTC()},
+		},
+	}
+	for i, task := range tasks {
+		for _, commit := range commitSpecs[i] {
+			if err := f.store.LinkTaskCommit(f.ctx, task.ID, commit); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+	status, _, body := doRequest(t, srv.Client(), http.MethodGet, srv.URL+"/api/goals/"+f.goal.ID, nil)
+	if status != http.StatusOK {
+		t.Fatalf("goal status = %d; body=%s", status, body)
+	}
+	var response struct {
+		TaskCommits []struct {
+			TaskID    string `json:"task_id"`
+			TaskTitle string `json:"task_title"`
+			Commits   []struct {
+				SHA     string `json:"sha"`
+				Subject string `json:"subject"`
+			} `json:"commits"`
+		} `json:"task_commits"`
+	}
+	if err := json.Unmarshal(body, &response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.TaskCommits) != 2 {
+		t.Fatalf("task_commits = %+v, want two task entries", response.TaskCommits)
+	}
+	for i, task := range tasks {
+		entry := response.TaskCommits[i]
+		if entry.TaskID != task.ID || entry.TaskTitle != task.Title {
+			t.Fatalf("task_commits[%d] = %+v, want task %s (%s)", i, entry, task.ID, task.Title)
+		}
+		if len(entry.Commits) != 2 {
+			t.Fatalf("task_commits[%d].commits = %+v, want two commits", i, entry.Commits)
+		}
+		gotSubjects := make(map[string]bool, len(entry.Commits))
+		for _, commit := range entry.Commits {
+			gotSubjects[commit.SHA] = true
+		}
+		for _, want := range commitSpecs[i] {
+			if !gotSubjects[want.SHA] {
+				t.Fatalf("task_commits[%d].commits = %+v, missing %s", i, entry.Commits, want.SHA)
+			}
+		}
+	}
+}
+
+func TestHTTPGoalDetailReturnsEmptyTaskCommitsArrayWithoutCommits(t *testing.T) {
+	f := newBareFixture(t)
+	if _, err := f.store.DeclareTasks(f.ctx, f.goal.ID, "empty-commit-agent", "empty-commit-declare", []string{"first task", "second task"}, []string{"Complete the first task.", "Complete the second task."}); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+	status, _, body := doRequest(t, srv.Client(), http.MethodGet, srv.URL+"/api/goals/"+f.goal.ID, nil)
+	if status != http.StatusOK {
+		t.Fatalf("goal status = %d; body=%s", status, body)
+	}
+	var response struct {
+		TaskCommits []json.RawMessage `json:"task_commits"`
+	}
+	if err := json.Unmarshal(body, &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.TaskCommits == nil {
+		t.Fatalf("task_commits is null; body=%s", body)
+	}
+	if len(response.TaskCommits) != 0 {
+		t.Fatalf("task_commits = %s, want []", body)
+	}
+}
+
+func TestHTTPGoalDetailOmitsTasksWithoutCommits(t *testing.T) {
+	f := newBareFixture(t)
+	tasks, err := f.store.DeclareTasks(f.ctx, f.goal.ID, "mixed-commit-agent", "mixed-commit-declare", []string{"with commits", "without commits"}, []string{"Complete the first task.", "Complete the second task."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.store.LinkTaskCommit(f.ctx, tasks[0].ID, domain.TaskCommit{
+		SHA:          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		Subject:      "linked commit",
+		FilesChanged: 1,
+		Insertions:   1,
+		CreatedAt:    time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+	status, _, body := doRequest(t, srv.Client(), http.MethodGet, srv.URL+"/api/goals/"+f.goal.ID, nil)
+	if status != http.StatusOK {
+		t.Fatalf("goal status = %d; body=%s", status, body)
+	}
+	var response struct {
+		TaskCommits []struct {
+			TaskID string `json:"task_id"`
+		} `json:"task_commits"`
+	}
+	if err := json.Unmarshal(body, &response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.TaskCommits) != 1 {
+		t.Fatalf("task_commits = %+v, want one task entry", response.TaskCommits)
+	}
+	if response.TaskCommits[0].TaskID != tasks[0].ID {
+		t.Fatalf("task_commits = %+v, want only task %s", response.TaskCommits, tasks[0].ID)
+	}
+}
+
 func TestHTTPGoalDetailDecisionHistoryIncludesTaskIDs(t *testing.T) {
 	f := newBareFixture(t)
 	tasks, err := f.store.DeclareTasks(f.ctx, f.goal.ID, "history-agent", "history-declare", []string{"first task", "second task"}, []string{"Complete the first task before recording its decision.", "Complete the second task before recording its decision."})

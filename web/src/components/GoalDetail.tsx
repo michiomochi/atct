@@ -15,6 +15,7 @@ import {
 import { formatDateTime } from "../i18n";
 import { body, findOpenCompletion, findOpenGoalApproval, hasCompletionReport, headline, resolveRouteID, statusLabel, type CompletionReportFields } from "../lib/ui";
 import { AreaLoading, ErrorState } from "./StateMessage";
+import { TaskCommitList } from "./TaskCommitList";
 import { TaskTable } from "./TaskTable";
 
 interface Props {
@@ -379,6 +380,7 @@ export function GoalDetail({ id }: Props) {
   const retry = () => void load();
   const locale = i18n.language.startsWith("ja") ? "ja" : "en";
   const tasks = data?.goal.goal.tasks ?? [];
+  const taskCommits = data?.goal.task_commits ?? [];
 
   return (
     <main className="min-w-0 max-w-full space-y-10 overflow-x-hidden">
@@ -460,6 +462,33 @@ export function GoalDetail({ id }: Props) {
           )}
         </div>
       </section>
+
+      {taskCommits.length > 0 && (
+        <section className="min-w-0 border-t border-line pt-5" aria-labelledby="goal-commits-heading">
+          <h2 id="goal-commits-heading" className="font-display text-lg font-semibold tracking-tight text-ink-950">
+            {t("goal.commits.title")}
+          </h2>
+          <div className="mt-6 space-y-8">
+            {taskCommits.map(({ task_id, task_title, commits }) => (
+              <div key={task_id} className="min-w-0">
+                <h3 className="font-display text-base font-semibold tracking-tight text-ink-950">
+                  <a
+                    className="focus-ring inline-block w-fit max-w-full text-left text-accent-700 underline decoration-accent-100 underline-offset-4 hover:decoration-accent-700"
+                    href={`/tasks/${encodeURIComponent(task_id)}`}
+                  >
+                    <span className="text-clamp-2 block max-w-[32rem] break-words font-medium" title={task_title}>
+                      {task_title}
+                    </span>
+                  </a>
+                </h3>
+                <div className="mt-4">
+                  <TaskCommitList taskID={task_id} commits={commits} />
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
 
       {data?.goal.goal.status === "active" && <GoalWithdrawal goal={data.goal.goal} onUpdated={load} />}
     </main>

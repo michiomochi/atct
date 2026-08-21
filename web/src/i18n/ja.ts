@@ -53,6 +53,7 @@ export const ja: Record<TranslationKey, string> = {
   "goal.project": "プロジェクト",
   "goal.status": "状態: {{status}}",
   "goal.tasks.title": "タスク一覧",
+  "goal.commits.title": "コミット",
   "goal.history.title": "決定履歴",
   "goal.history.caption": "適用済み決定履歴",
   "goal.history.column.question": "質問",

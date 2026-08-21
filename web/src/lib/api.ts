@@ -118,6 +118,7 @@ export interface GoalResponse {
   next: TaskView[];
   decision_history: DecisionHistoryEntry[];
   decision_history_omitted: number;
+  task_commits: GoalTaskCommits[];
 }
 
 export interface TaskGoalSummary {
@@ -135,6 +136,12 @@ export interface TaskCommit {
   deletions: number;
   in_history: boolean;
   created_at: string;
+}
+
+export interface GoalTaskCommits {
+  task_id: string;
+  task_title: string;
+  commits: TaskCommit[];
 }
 
 export interface TaskCommitDiffFile {
@@ -223,7 +230,7 @@ export function normalizeInbox(value: unknown): InboxResponse {
 export function normalizeGoal(value: unknown): GoalResponse {
   const source = isRecord(value) ? value : {};
   const omitted = source.decision_history_omitted;
-  return {
+  const response: GoalResponse = {
     goal: source.goal as Goal,
     now: arrayOrEmpty<TaskView>(source.now),
     needs_decision: arrayOrEmpty<TaskView>(source.needs_decision),
@@ -231,7 +238,9 @@ export function normalizeGoal(value: unknown): GoalResponse {
     next: arrayOrEmpty<TaskView>(source.next),
     decision_history: arrayOrEmpty<DecisionHistoryEntry>(source.decision_history),
     decision_history_omitted: typeof omitted === "number" && Number.isFinite(omitted) && omitted > 0 ? Math.floor(omitted) : 0,
+    task_commits: arrayOrEmpty<GoalTaskCommits>(source.task_commits),
   };
+  return response;
 }
 
 export function normalizeTaskDetail(value: unknown): TaskDetailResponse {

@@ -45,6 +45,12 @@ type goalView struct {
 	Tasks            []TaskView `json:"tasks"`
 }
 
+type goalTaskCommitsView struct {
+	TaskID    string           `json:"task_id"`
+	TaskTitle string           `json:"task_title"`
+	Commits   []taskCommitView `json:"commits"`
+}
+
 type proposedGoalView struct {
 	ID          string    `json:"id"`
 	ProjectID   string    `json:"project_id"`
@@ -77,6 +83,7 @@ type goalResponse struct {
 	NeedsDecision          []TaskView            `json:"needs_decision"`
 	UnattachedDecisions    []domain.Decision     `json:"unattached_decisions"`
 	Next                   []TaskView            `json:"next"`
+	TaskCommits            []goalTaskCommitsView `json:"task_commits"`
 	DecisionHistory        []decisionHistoryView `json:"decision_history"`
 	DecisionHistoryOmitted int                   `json:"decision_history_omitted"`
 }
@@ -478,9 +485,11 @@ func (s *Server) handleGoal(w http.ResponseWriter, r *http.Request, goalID strin
 		return
 	}
 	projectName := ""
+	projectRootPath := ""
 	for _, project := range projects {
 		if project.ID == goal.ProjectID {
 			projectName = project.Name
+			projectRootPath = project.RootPath
 			break
 		}
 	}
@@ -518,6 +527,7 @@ func (s *Server) handleGoal(w http.ResponseWriter, r *http.Request, goalID strin
 		NeedsDecision:          make([]TaskView, 0),
 		UnattachedDecisions:    unattachedDecisions,
 		Next:                   make([]TaskView, 0),
+		TaskCommits:            make([]goalTaskCommitsView, 0),
 		DecisionHistory:        decisionHistory,
 		DecisionHistoryOmitted: decisionHistoryOmitted,
 	}
@@ -525,6 +535,22 @@ func (s *Server) handleGoal(w http.ResponseWriter, r *http.Request, goalID strin
 		decisions := openByTask[task.ID]
 		view := newTaskView(task, decisions)
 		allTaskViews = append(allTaskViews, view)
+		linkedCommits, err := s.store.ListTaskCommits(ctx, task.ID)
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		if len(linkedCommits) > 0 {
+			commits := make([]taskCommitView, 0, len(linkedCommits))
+			for _, commit := range linkedCommits {
+				commits = append(commits, newTaskCommitView(ctx, projectRootPath, commit))
+			}
+			response.TaskCommits = append(response.TaskCommits, goalTaskCommitsView{
+				TaskID:    task.ID,
+				TaskTitle: task.Title,
+				Commits:   commits,
+			})
+		}
 		switch {
 		case len(decisions) > 0 && isProjectableTask(task.Status):
 			response.NeedsDecision = append(response.NeedsDecision, view)
@@ -657,20 +683,7 @@ func (s *Server) handleTask(w http.ResponseWriter, r *http.Request, taskID strin
 	}
 	commits := make([]taskCommitView, 0, len(linkedCommits))
 	for _, commit := range linkedCommits {
-		shortSHA := commit.SHA
-		if len(shortSHA) > 7 {
-			shortSHA = shortSHA[:7]
-		}
-		commits = append(commits, taskCommitView{
-			SHA:          commit.SHA,
-			ShortSHA:     shortSHA,
-			Subject:      commit.Subject,
-			FilesChanged: commit.FilesChanged,
-			Insertions:   commit.Insertions,
-			Deletions:    commit.Deletions,
-			InHistory:    gitCommitInHistory(ctx, projectRootPath, commit.SHA),
-			CreatedAt:    commit.CreatedAt,
-		})
+		commits = append(commits, newTaskCommitView(ctx, projectRootPath, commit))
 	}
 
 	writeJSON(w, http.StatusOK, taskDetailResponse{
@@ -814,6 +827,23 @@ func gitCommitInHistory(ctx context.Context, rootPath, sha string) bool {
 		return false
 	}
 	return exec.CommandContext(ctx, "git", "-C", rootPath, "cat-file", "-e", sha+"^{commit}").Run() == nil
+}
+
+func newTaskCommitView(ctx context.Context, rootPath string, commit domain.TaskCommit) taskCommitView {
+	shortSHA := commit.SHA
+	if len(shortSHA) > 7 {
+		shortSHA = shortSHA[:7]
+	}
+	return taskCommitView{
+		SHA:          commit.SHA,
+		ShortSHA:     shortSHA,
+		Subject:      commit.Subject,
+		FilesChanged: commit.FilesChanged,
+		Insertions:   commit.Insertions,
+		Deletions:    commit.Deletions,
+		InHistory:    gitCommitInHistory(ctx, rootPath, commit.SHA),
+		CreatedAt:    commit.CreatedAt,
+	}
 }
 
 func (s *Server) handleRelease(w http.ResponseWriter, r *http.Request, taskID string) {
