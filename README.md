@@ -51,32 +51,27 @@ shell; it does not change what the plugin runs.
 
 ## Getting started
 
+Register the repository once, from inside it:
+
 ```bash
 cd /path/to/your/repo
-atct project add                 # put this repository under ATCT
-atct goal add "Ship the thing"   # or create it from the dashboard
+atct project add
 ```
 
-Open <http://127.0.0.1:8787/> for the dashboard. The daemon starts on its own the first time
-anything needs it.
+That is the only thing the terminal is needed for. Open <http://127.0.0.1:8787/> and create
+your first goal there — **everything a human does happens on the dashboard.** The daemon
+starts on its own the first time anything needs it.
+
+A goal is one field. Write what you want in as much or as little detail as you like; the
+first line is what lists and links show, and anything after it is the detail.
 
 From then on, opening Claude Code in a registered repository is enough. A session hook hands
-the agent the active goals — their titles, their `goal_id`, the tasks under them, and any
+the agent the active goals — their `goal_id`, what each one says, the tasks under them, and any
 answer waiting to be picked up — so it knows what it is working on before you type anything.
 **Repositories you never registered are untouched**: the hook stays silent, so unrelated work
 does not pay for a ceremony it did not ask for.
 
-Two commands cover day-to-day use:
-
-| Command | What it does |
-|---|---|
-| `atct project add` | Register a repository. Run once per repository |
-| `atct goal add "…"` | Create a goal for the current repository |
-
-`atct project list`, `atct goal list`, `atct daemon start`, and `atct daemon stop` round out the CLI. The
-dashboard handles everything a human answers.
-
-Use `atct daemon start` to start the ATCT daemon and `atct daemon stop` to stop it.
+`atct daemon start` and `atct daemon stop` are there if you ever need to restart it by hand.
 
 ## Setting a goal is the approval
 
@@ -90,6 +85,10 @@ state back** — a commit is undoable, a force push over work that exists nowher
 
 Say `/atct:start` to hand a session that responsibility explicitly. Whoever runs it owns what
 ATCT says about this repository: every claim, every completed task, every parked decision.
+
+Your side of it is three things: answer the decisions that are parked, approve or send back the
+completion report when a goal claims to be finished, and approve or reject the goals an agent
+proposes. Everything else runs without you.
 
 ## Your answer reaches a session that already moved on
 
@@ -205,9 +204,16 @@ agents stays your business.
 | | |
 |---|---|
 | **Project** | A project. Derived from the working directory, so agents never have to name it |
-| **Goal** | What you want. You write it; agents do not invent goals |
+| **Goal** | What you want, in one field. Active means agents may work on it |
 | **Task** | A unit of work toward the goal. Agents declare and claim these |
+| **Work lock** | The claim on a task. One agent session holds it, so two never take the same task |
 | **Decision** | A question an agent cannot settle alone, with options it wrote itself |
+
+A goal is `active`, `proposed`, `done`, or `dropped`. **You create goals active.** An agent
+can propose one — it lands as `proposed` and does nothing until you approve it, which is the
+one place an agent gets to suggest what to work on. A goal you no longer want is withdrawn
+with a reason, from its own page; that closes its open decisions and its unfinished tasks
+along with it.
 
 Every option carries a `consequence` — what happens if you pick it. You should be able to decide
 without going back to ask what the choice actually means.
@@ -217,10 +223,15 @@ hold the same one.
 
 ## The screens
 
-- **Dashboard** — every unanswered decision, across every project. The one screen that matters.
-- **Goal detail** — three columns: what is running now, what needs a decision, what is queued next.
-- **Decision** — the question, the options and their consequences, and a free-text field for
-  answers that are not on the list.
+- **Dashboard** — goals an agent has proposed, then every unanswered decision across every
+  project, then the goals themselves grouped by project. The one screen that matters.
+- **Goal detail** — what is running now, what needs a decision, what is queued next, the
+  completion report when there is one, and the controls for approving or withdrawing the goal.
+- **Task detail** — the task, its answer history, and the commits it produced, with the diff
+  of each one readable in place.
+
+Decisions are answered where they appear: the question, the options and their consequences, and
+a free-text field for answers that are not on the list.
 
 ## What ATCT is not
 
@@ -240,8 +251,8 @@ The design is written up in full:
 - [`doc/plans/2026-08-15-atct-core.md`](doc/plans/2026-08-15-atct-core.md) — the implementation,
   written test-first, task by task
 
-Requires Go 1.26+. Node 22.12+ and pnpm are needed only for the web UI; prebuilt assets are
-committed so a Go-only build works without them.
+Requires Go 1.26+, plus Node 22.12+ and pnpm. The web assets are built, not committed, and the
+daemon embeds them, so a build needs both toolchains.
 
 ## Contributing
 
