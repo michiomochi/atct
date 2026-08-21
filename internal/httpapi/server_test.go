@@ -2296,6 +2296,49 @@ func TestHTTPProjectsAndGoalCreationEndpoints(t *testing.T) {
 	assertErrorObject(t, status, headers, body, http.StatusNotFound)
 }
 
+func TestHTTPGoalCreationDefaultsToProposedWithoutCreator(t *testing.T) {
+	f := newBareFixture(t)
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+
+	status, _, body := doRequest(t, srv.Client(), http.MethodPost, srv.URL+"/api/goals", mustJSON(t, map[string]string{
+		"project_id": f.project.ID,
+		"title":      "Created without creator",
+	}))
+	if status != http.StatusOK {
+		t.Fatalf("create goal status = %d; body=%s", status, body)
+	}
+	var created domain.Goal
+	if err := json.Unmarshal(body, &created); err != nil {
+		t.Fatalf("decode created goal: %v; body=%s", err, body)
+	}
+	if created.Creator != "agent" || created.Status != domain.GoalProposed {
+		t.Fatalf("created goal = %+v, want agent/proposed", created)
+	}
+}
+
+func TestHTTPGoalCreationWithHumanCreatorIsActive(t *testing.T) {
+	f := newBareFixture(t)
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+
+	status, _, body := doRequest(t, srv.Client(), http.MethodPost, srv.URL+"/api/goals", mustJSON(t, map[string]string{
+		"project_id": f.project.ID,
+		"title":      "Created by a human",
+		"creator":    "human",
+	}))
+	if status != http.StatusOK {
+		t.Fatalf("create goal status = %d; body=%s", status, body)
+	}
+	var created domain.Goal
+	if err := json.Unmarshal(body, &created); err != nil {
+		t.Fatalf("decode created goal: %v; body=%s", err, body)
+	}
+	if created.Creator != "human" || created.Status != domain.GoalActive {
+		t.Fatalf("created goal = %+v, want human/active", created)
+	}
+}
+
 func TestHTTPGoalApprovalEndpointsTransitionProposedGoal(t *testing.T) {
 	f := newBareFixture(t)
 	srv := newTestServer(t, f.store)

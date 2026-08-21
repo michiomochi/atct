@@ -66,6 +66,10 @@ export function findOpenCompletion<T extends CompletionLike>(decisions: T[]): T 
   return decisions.find((decision) => decision.kind === "completion" && decision.status === "open");
 }
 
+export function findOpenGoalApproval<T extends CompletionLike>(decisions: T[]): T | undefined {
+  return decisions.find((decision) => decision.kind === "goal_approval" && decision.status === "open");
+}
+
 export function encodePathSegment(value: string): string {
   return encodeURIComponent(value);
 }

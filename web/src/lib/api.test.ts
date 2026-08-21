@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { approveCompletion, createGoal, fetchProjects, rejectCompletion } from "./api";
+import { approveDecision, createGoal, fetchProjects, rejectDecision } from "./api";
 
 describe("completion API", () => {
   afterEach(() => {
@@ -13,7 +13,7 @@ describe("completion API", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    await approveCompletion("decision/1");
+    await approveDecision("decision/1");
 
     expect(fetchMock).toHaveBeenCalledWith("/api/decisions/decision%2F1/approve", {
       method: "POST",
@@ -29,7 +29,7 @@ describe("completion API", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    await rejectCompletion("decision-1", "Needs more evidence");
+    await rejectDecision("decision-1", "Needs more evidence");
 
     expect(fetchMock).toHaveBeenCalledWith("/api/decisions/decision-1/reject", {
       method: "POST",
@@ -64,12 +64,12 @@ describe("goal creation API", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    await createGoal({ project_id: "project-1", title: "Ship it", description: "Details" });
+    await createGoal({ project_id: "project-1", title: "Ship it", description: "Details", creator: "human" });
 
     expect(fetchMock).toHaveBeenCalledWith("/api/goals", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ project_id: "project-1", title: "Ship it", description: "Details" }),
+      body: JSON.stringify({ project_id: "project-1", title: "Ship it", description: "Details", creator: "human" }),
     });
   });
 });

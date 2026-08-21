@@ -3,9 +3,9 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
 import { useTranslation } from "react-i18next";
 import {
   ApiError,
-  approveCompletion,
+  approveDecision,
   fetchGoal,
-  rejectCompletion,
+  rejectDecision,
   subscribeToDecisionEvents,
   withdrawGoal,
   type Decision,
@@ -15,6 +15,7 @@ import {
 import { formatDateTime } from "../i18n";
 import {
   findOpenCompletion,
+  findOpenGoalApproval,
   hasCompletionReport,
   resolveRouteID,
   statusLabel,
@@ -35,6 +36,7 @@ type LoadState =
 interface GoalDetailData {
   goal: GoalResponse;
   completion?: Decision;
+  goalApproval?: Decision;
 }
 
 type CompletionAction = "approve" | "reject";
@@ -111,9 +113,9 @@ function CompletionApproval({
     setSubmitting(true);
     try {
       if (action === "approve") {
-        await approveCompletion(decision.id);
+        await approveDecision(decision.id);
       } else {
-        await rejectCompletion(decision.id, reason.trim());
+        await rejectDecision(decision.id, reason.trim());
       }
       onUpdated();
     } catch (error) {
@@ -189,6 +191,92 @@ function CompletionApproval({
   );
 }
 
+type GoalApprovalAction = "approve" | "reject";
+
+function GoalApproval({
+  decision,
+  onUpdated,
+  reason,
+  onReasonChange,
+}: {
+  decision: Decision;
+  onUpdated: () => void;
+  reason: string;
+  onReasonChange: (reason: string) => void;
+}) {
+  const { t } = useTranslation();
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  const reasonID = `goal-approval-reason-${decision.id}`;
+
+  async function submit(action: GoalApprovalAction) {
+    const trimmedReason = reason.trim();
+    if (submitting || (action === "reject" && trimmedReason === "")) return;
+
+    setSubmitError(null);
+    setSubmitting(true);
+    try {
+      if (action === "approve") {
+        await approveDecision(decision.id);
+      } else {
+        await rejectDecision(decision.id, trimmedReason);
+      }
+      onUpdated();
+    } catch (error) {
+      setSubmitError(errorMessage(error, t("goal.error.load")));
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const submitter = (event.nativeEvent as SubmitEvent).submitter;
+    const action: GoalApprovalAction = submitter instanceof HTMLButtonElement && submitter.value === "reject" ? "reject" : "approve";
+    void submit(action);
+  }
+
+  return (
+    <section className="min-w-0 border-t border-line pt-5" data-testid="goal-approval" aria-labelledby="goal-approval-heading">
+      <h2 id="goal-approval-heading" className="font-display text-lg font-semibold tracking-tight text-ink-950">{t("goal.approval.title")}</h2>
+      <p className="mt-2 max-w-3xl text-sm leading-6 text-ink-700">{t("goal.approval.description")}</p>
+      <form className="mt-4 min-w-0 max-w-3xl border-l-2 border-accent-600 pl-4" onSubmit={handleSubmit} noValidate>
+        <label className="mb-3 block text-sm text-ink-800" htmlFor={reasonID}>
+          {t("goal.completion.reason")}
+          <textarea
+            className="focus-ring mt-1 block min-h-24 w-full resize-y border border-line bg-surface px-3 py-2 text-sm leading-6 text-ink-950"
+            id={reasonID}
+            value={reason}
+            onChange={(event) => onReasonChange(event.target.value)}
+            required
+            aria-required="true"
+          />
+        </label>
+        {submitError && <p className="mb-3 text-sm text-danger-700" role="alert">{submitError}</p>}
+        <div className="flex flex-wrap gap-3">
+          <Button
+            type="submit"
+            value="approve"
+            disabled={submitting}
+            className="focus-ring border border-accent-700 bg-accent-700 px-3 py-2 text-sm font-medium text-white transition hover:bg-accent-600 disabled:cursor-wait disabled:opacity-60"
+          >
+            {submitting ? t("goal.completion.submitting") : t("goal.approval.approve")}
+          </Button>
+          <Button
+            type="submit"
+            value="reject"
+            disabled={submitting || reason.trim() === ""}
+            className="focus-ring border border-danger-700 bg-surface px-3 py-2 text-sm font-medium text-danger-700 transition hover:bg-danger-100 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {t("goal.approval.reject")}
+          </Button>
+        </div>
+      </form>
+    </section>
+  );
+}
+
 function GoalWithdrawal({ goal, onUpdated }: { goal: Goal; onUpdated: () => void }) {
   const { t } = useTranslation();
   const [reason, setReason] = useState("");
@@ -246,8 +334,10 @@ function GoalWithdrawal({ goal, onUpdated }: { goal: Goal; onUpdated: () => void
 export function GoalDetail({ id }: Props) {
   const [state, setState] = useState<LoadState>({ kind: "loading" });
   const [completionReason, setCompletionReason] = useState("");
+  const [goalApprovalReason, setGoalApprovalReason] = useState("");
   const [updatePending, setUpdatePending] = useState(false);
   const completionReasonRef = useRef("");
+  const goalApprovalReasonRef = useRef("");
   const { t, i18n } = useTranslation();
   const pathname = id === "_" && typeof window !== "undefined" ? window.location.pathname : "";
   const resolvedID = resolveRouteID(id, pathname, "/goals/");
@@ -257,22 +347,30 @@ export function GoalDetail({ id }: Props) {
     setCompletionReason(reason);
   }, []);
 
+  const handleGoalApprovalReasonChange = useCallback((reason: string) => {
+    goalApprovalReasonRef.current = reason;
+    setGoalApprovalReason(reason);
+  }, []);
+
   const load = useCallback(async () => {
     setUpdatePending(false);
     completionReasonRef.current = "";
     setCompletionReason("");
+    goalApprovalReasonRef.current = "";
+    setGoalApprovalReason("");
     setState({ kind: "loading" });
     try {
       const goal = await fetchGoal(resolvedID);
       const completion = findOpenCompletion(goal.unattached_decisions);
-      setState({ kind: "ready", data: { goal, completion } });
+      const goalApproval = findOpenGoalApproval(goal.unattached_decisions);
+      setState({ kind: "ready", data: { goal, completion, goalApproval } });
     } catch (reason) {
       setState({ kind: "error", message: errorMessage(reason, t("goal.error.load")) });
     }
   }, [resolvedID, t]);
 
   const handleDecisionEvent = useCallback(() => {
-    if (completionReasonRef.current.trim() !== "") {
+    if (completionReasonRef.current.trim() !== "" || goalApprovalReasonRef.current.trim() !== "") {
       setUpdatePending(true);
       return;
     }
@@ -338,6 +436,15 @@ export function GoalDetail({ id }: Props) {
           onUpdated={load}
           reason={completionReason}
           onReasonChange={handleCompletionReasonChange}
+        />
+      )}
+
+      {data?.goal.goal.status === "proposed" && data.goalApproval && (
+        <GoalApproval
+          decision={data.goalApproval}
+          onUpdated={load}
+          reason={goalApprovalReason}
+          onReasonChange={handleGoalApprovalReasonChange}
         />
       )}
 

@@ -37,6 +37,7 @@ export interface CreateGoalPayload {
   project_id: string;
   title: string;
   description: string;
+  creator: string;
 }
 
 export interface Task {
@@ -296,7 +297,7 @@ export async function reviseDecision(id: string, payload: ReviseDecisionPayload)
   });
 }
 
-export async function approveCompletion(id: string): Promise<Goal> {
+export async function approveDecision(id: string): Promise<Goal> {
   return requestJson<Goal>(`/api/decisions/${encodeURIComponent(id)}/approve`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -304,7 +305,7 @@ export async function approveCompletion(id: string): Promise<Goal> {
   });
 }
 
-export async function rejectCompletion(id: string, reason: string): Promise<Decision> {
+export async function rejectDecision(id: string, reason: string): Promise<Decision> {
   return requestJson<Decision>(`/api/decisions/${encodeURIComponent(id)}/reject`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

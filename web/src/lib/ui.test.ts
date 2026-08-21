@@ -27,6 +27,7 @@ import {
   decisionSettlementLabel,
   filterDecisionsByTask,
   findOpenCompletion,
+  findOpenGoalApproval,
   hasCompletionReport,
   isDecisionEventName,
   resolveRouteID,
@@ -430,6 +431,16 @@ describe("goal detail answer flows", () => {
     expect(findOpenCompletion([{ id: "done-1", kind: "completion", status: "applied" }])).toBeUndefined();
   });
 
+  it("finds only an open goal approval decision", () => {
+    const goalApproval = { id: "goal-approval-1", kind: "goal_approval", status: "open" };
+    expect(findOpenGoalApproval([
+      { id: "completion-1", kind: "completion", status: "open" },
+      { id: "answered-1", kind: "goal_approval", status: "answered" },
+      goalApproval,
+    ])).toBe(goalApproval);
+    expect(findOpenGoalApproval([{ id: "completion-2", kind: "completion", status: "open" }])).toBeUndefined();
+  });
+
   it("renders one ordered task list and moves decisions into task details", () => {
     expect(goalDetailSource).not.toContain("NeedsDecisionList");
     expect(goalDetailSource).not.toContain("xl:grid-cols-3");
@@ -451,12 +462,13 @@ describe("goal detail answer flows", () => {
     expect(taskTableSource).toContain("table-scroll");
   });
 
-  it("exposes the completion approval API in Goal detail", () => {
+  it("exposes the decision approval API in Goal detail", () => {
     expect(goalDetailSource).toContain("fetchGoal");
     expect(goalDetailSource).toContain("unattached_decisions");
-    expect(goalDetailSource).toContain("approveCompletion");
-    expect(goalDetailSource).toContain("rejectCompletion");
+    expect(goalDetailSource).toContain("approveDecision");
+    expect(goalDetailSource).toContain("rejectDecision");
     expect(goalDetailSource).toContain('t("goal.completion.title")');
+    expect(goalDetailSource).toContain('t("goal.approval.title")');
     expect(goalDetailSource).toContain("result_summary");
   });
 

@@ -56,6 +56,7 @@ describe("GoalCreateForm header dialog", () => {
       project_id: "project-1",
       title: "Created goal",
       description: "",
+      creator: "human",
     }));
     await waitFor(() => expect(onCreated).toHaveBeenCalledTimes(1));
   });

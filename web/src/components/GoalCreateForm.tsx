@@ -75,7 +75,7 @@ export function GoalCreateForm({ onCreated, onDirtyChange }: Props = {}) {
 
     setSubmitting(true);
     try {
-      await createGoal({ project_id: projectID, title, description });
+      await createGoal({ project_id: projectID, title, description, creator: "human" });
       setTitle("");
       setDescription("");
       closeDialog();

@@ -2,7 +2,13 @@ import { within } from "@testing-library/dom";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Decision, Goal, GoalResponse, InboxResponse, TaskView } from "../lib/api";
-import { fetchGoal, fetchInbox, subscribeToDecisionEvents, withdrawGoal } from "../lib/api";
+import {
+  approveDecision,
+  fetchGoal,
+  fetchInbox,
+  subscribeToDecisionEvents,
+  withdrawGoal,
+} from "../lib/api";
 import { Dashboard } from "./Dashboard";
 import { GoalDetail } from "./GoalDetail";
 
@@ -13,12 +19,12 @@ const i18nMock = vi.hoisted(() => ({
 }));
 
 const apiMock = vi.hoisted(() => ({
-  approveCompletion: vi.fn(),
+  approveDecision: vi.fn(),
   answerDecision: vi.fn(),
   createGoal: vi.fn(),
   fetchGoal: vi.fn(),
   fetchInbox: vi.fn(),
-  rejectCompletion: vi.fn(),
+  rejectDecision: vi.fn(),
   reviseDecision: vi.fn(),
   subscribeToDecisionEvents: vi.fn(() => () => undefined),
   withdrawGoal: vi.fn(),
@@ -110,6 +116,20 @@ function completionDecision(): Decision {
   };
 }
 
+function goalApprovalDecision(): Decision {
+  return {
+    id: "goal-approval-1",
+    goal_id: "goal-1",
+    goal_title: "Fixture goal",
+    kind: "goal_approval",
+    question: "Approve the proposed goal",
+    options: [],
+    status: "open",
+    agent_session_id: "fixture-run",
+    created_at: "2026-08-20T00:00:00Z",
+  };
+}
+
 function emptyInbox(): InboxResponse {
   return {
     open_decisions: [],
@@ -121,6 +141,71 @@ function emptyInbox(): InboxResponse {
 }
 
 describe("GoalDetail", () => {
+  it("does not render goal approval for an active goal", async () => {
+    const response = goalResponse({ status: "active" });
+    response.unattached_decisions = [goalApprovalDecision()];
+    vi.mocked(fetchGoal).mockResolvedValueOnce(response);
+
+    render(<GoalDetail id="goal-1" />);
+
+    await waitFor(() => expect(fetchGoal).toHaveBeenCalledWith("goal-1"));
+    expect(screen.queryByTestId("goal-approval")).toBeNull();
+  });
+
+  it("does not render goal approval for a done goal", async () => {
+    const response = goalResponse({ status: "done" });
+    response.unattached_decisions = [goalApprovalDecision()];
+    vi.mocked(fetchGoal).mockResolvedValueOnce(response);
+
+    render(<GoalDetail id="goal-1" />);
+
+    await waitFor(() => expect(fetchGoal).toHaveBeenCalledWith("goal-1"));
+    expect(screen.queryByTestId("goal-approval")).toBeNull();
+  });
+
+  it("disables goal approval rejection while the reason is empty", async () => {
+    const response = goalResponse({ status: "proposed" });
+    response.unattached_decisions = [goalApprovalDecision()];
+    vi.mocked(fetchGoal).mockResolvedValue(response);
+
+    render(<GoalDetail id="goal-1" />);
+
+    const approval = () => within(screen.getByTestId("goal-approval"));
+    await waitFor(() => expect(approval().getByRole("textbox")).not.toBeNull());
+    expect((approval().getByRole("button", { name: "goal.approval.reject" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((approval().getByRole("button", { name: "goal.approval.approve" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("approves a goal with its decision ID", async () => {
+    const response = goalResponse({ status: "proposed" });
+    response.unattached_decisions = [goalApprovalDecision()];
+    vi.mocked(fetchGoal).mockResolvedValue(response);
+    vi.mocked(approveDecision).mockResolvedValueOnce(goal({ status: "active" }));
+
+    render(<GoalDetail id="goal-1" />);
+
+    await waitFor(() => expect(screen.getByTestId("goal-approval")).not.toBeNull());
+    fireEvent.click(screen.getByRole("button", { name: "goal.approval.approve" }));
+
+    await waitFor(() => expect(approveDecision).toHaveBeenCalledWith("goal-approval-1"));
+  });
+
+  it("shows the server message when goal approval returns a conflict", async () => {
+    const serverMessage = "goal goal-1 was already reviewed";
+    const serverError = Object.assign(new Error(serverMessage), { status: 409 });
+    const response = goalResponse({ status: "proposed" });
+    response.unattached_decisions = [goalApprovalDecision()];
+    vi.mocked(fetchGoal).mockResolvedValue(response);
+    vi.mocked(approveDecision).mockRejectedValueOnce(serverError);
+
+    render(<GoalDetail id="goal-1" />);
+
+    await waitFor(() => expect(screen.getByTestId("goal-approval")).not.toBeNull());
+    fireEvent.click(screen.getByRole("button", { name: "goal.approval.approve" }));
+
+    await waitFor(() => expect(screen.getByText(serverMessage)).not.toBeNull());
+  });
+
   it("defers GoalDetail reload while completion reason is dirty and reloads after explicit refresh", async () => {
     let decisionEvent: Parameters<typeof subscribeToDecisionEvents>[0] | undefined;
     vi.mocked(subscribeToDecisionEvents).mockImplementation((callback) => {
