@@ -44,7 +44,7 @@ function TaskRelease({ task, onRefresh }: { task: TaskView; onRefresh: () => voi
       <Button
         type="button"
         disabled={releasing}
-        className="focus-ring border border-line bg-surface px-3 py-2 text-sm font-medium text-ink-800 hover:border-ink-500 hover:bg-paper disabled:cursor-wait disabled:opacity-60"
+        className="focus-ring border border-line bg-surface px-3 py-2 text-sm font-medium !text-ink-800 hover:border-ink-500 hover:bg-paper disabled:cursor-wait disabled:opacity-60"
         onClick={handleRelease}
       >
         {releasing ? t("task.claim.releasing") : t("task.claim.release")}

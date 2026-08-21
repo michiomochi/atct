@@ -138,7 +138,7 @@ function CompletionApproval({
           <p>{t("goal.completion.conflict")}</p>
           <Button
             type="button"
-            className="focus-ring mt-3 border border-notice-800 bg-surface px-3 py-2 text-sm font-medium text-notice-800 hover:bg-notice-100"
+            className="focus-ring mt-3 border border-notice-800 bg-surface px-3 py-2 text-sm font-medium !text-notice-800 hover:bg-notice-100"
             onClick={onUpdated}
           >
             {t("goal.completion.fetchLatest")}
@@ -167,7 +167,7 @@ function CompletionApproval({
             type="submit"
             value="approve"
             disabled={submitting}
-            className="focus-ring border border-accent-700 bg-accent-700 px-3 py-2 text-sm font-medium text-white transition hover:bg-accent-600 disabled:cursor-wait disabled:opacity-60"
+            className="focus-ring border border-accent-700 bg-accent-700 px-3 py-2 text-sm font-medium !text-white transition hover:bg-accent-600 disabled:cursor-wait disabled:opacity-60"
           >
             {submitting ? t("goal.completion.submitting") : t("goal.completion.approve")}
           </Button>
@@ -175,7 +175,7 @@ function CompletionApproval({
             type="submit"
             value="reject"
             disabled={submitting}
-            className="focus-ring border border-danger-700 bg-surface px-3 py-2 text-sm font-medium text-danger-700 transition hover:bg-danger-100 disabled:cursor-wait disabled:opacity-60"
+            className="focus-ring border border-danger-700 bg-surface px-3 py-2 text-sm font-medium !text-danger-700 transition hover:bg-danger-100 disabled:cursor-wait disabled:opacity-60"
           >
             {t("goal.completion.reject")}
           </Button>
@@ -253,7 +253,7 @@ function GoalApproval({
             type="submit"
             value="approve"
             disabled={submitting}
-            className="focus-ring border border-accent-700 bg-accent-700 px-3 py-2 text-sm font-medium text-white transition hover:bg-accent-600 disabled:cursor-wait disabled:opacity-60"
+            className="focus-ring border border-accent-700 bg-accent-700 px-3 py-2 text-sm font-medium !text-white transition hover:bg-accent-600 disabled:cursor-wait disabled:opacity-60"
           >
             {submitting ? t("goal.completion.submitting") : t("goal.approval.approve")}
           </Button>
@@ -261,7 +261,7 @@ function GoalApproval({
             type="submit"
             value="reject"
             disabled={submitting || reason.trim() === ""}
-            className="focus-ring border border-danger-700 bg-surface px-3 py-2 text-sm font-medium text-danger-700 transition hover:bg-danger-100 disabled:cursor-not-allowed disabled:opacity-60"
+            className="focus-ring border border-danger-700 bg-surface px-3 py-2 text-sm font-medium !text-danger-700 transition hover:bg-danger-100 disabled:cursor-not-allowed disabled:opacity-60"
           >
             {t("goal.approval.reject")}
           </Button>
@@ -316,7 +316,7 @@ function GoalWithdrawal({ goal, onUpdated }: { goal: Goal; onUpdated: () => void
         <Button
           type="submit"
           disabled={submitting || reason.trim() === ""}
-          className="focus-ring border border-danger-700 bg-surface px-3 py-2 text-sm font-medium text-danger-700 transition hover:bg-danger-100 disabled:cursor-not-allowed disabled:opacity-60"
+          className="focus-ring border border-danger-700 bg-surface px-3 py-2 text-sm font-medium !text-danger-700 transition hover:bg-danger-100 disabled:cursor-not-allowed disabled:opacity-60"
         >
           {t("goal.withdraw.submit")}
         </Button>
@@ -415,7 +415,7 @@ export function GoalDetail({ id }: Props) {
           <p>{t("state.updateAvailable")}</p>
           <Button
             type="button"
-            className="focus-ring mt-3 border border-notice-800 bg-surface px-3 py-2 text-sm font-medium text-notice-800 hover:bg-notice-100"
+            className="focus-ring mt-3 border border-notice-800 bg-surface px-3 py-2 text-sm font-medium !text-notice-800 hover:bg-notice-100"
             onClick={() => void load()}
           >
             {t("state.fetchLatest")}

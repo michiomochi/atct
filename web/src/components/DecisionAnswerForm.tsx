@@ -73,7 +73,7 @@ export function DecisionAnswerForm({ decision, onUpdated, onInputStateChange }: 
         <p>{t("form.answer.conflict")}</p>
         <Button
           type="button"
-          className="focus-ring mt-3 border border-notice-800 bg-surface px-3 py-2 text-sm font-medium text-notice-800 hover:bg-notice-100"
+          className="focus-ring mt-3 border border-notice-800 bg-surface px-3 py-2 text-sm font-medium !text-notice-800 hover:bg-notice-100"
           onClick={onUpdated}
         >
           {t("form.answer.fetchLatest")}
@@ -143,7 +143,7 @@ export function DecisionAnswerForm({ decision, onUpdated, onInputStateChange }: 
       <Button
         type="submit"
         disabled={submitting}
-        className="focus-ring border border-accent-700 bg-accent-700 px-3 py-2 text-sm font-medium text-white transition hover:bg-accent-600 disabled:cursor-wait disabled:opacity-60"
+        className="focus-ring border border-accent-700 bg-accent-700 px-3 py-2 text-sm font-medium !text-white transition hover:bg-accent-600 disabled:cursor-wait disabled:opacity-60"
       >
         {submitting ? t("form.answer.submitting") : t("form.answer.submit")}
       </Button>

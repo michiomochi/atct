@@ -45,6 +45,38 @@ function usedTokens(families: string[]): Map<string, string[]> {
   return found;
 }
 
+function usedKumoButtonTextClasses(): Map<string, string[]> {
+  const buttonPattern = /<Button\b[\s\S]*?(?<![=])>/g;
+  const classNamePattern = /\bclassName\s*=\s*"([^"]*)"/;
+  const textClassPattern = /(?:^|\s)((?:[a-z-]+:)*!?text-[^\s"'`]+)/g;
+  const found = new Map<string, string[]>();
+
+  for (const [path, source] of Object.entries(sourceModules)) {
+    if (path.endsWith("/colors.test.ts")) continue;
+    for (const button of source.matchAll(buttonPattern)) {
+      const className = button[0].match(classNamePattern)?.[1];
+      if (!className) continue;
+      const classes = [...className.matchAll(textClassPattern)].map((match) => match[1]);
+      if (classes.length === 0) continue;
+      found.set(path, [...(found.get(path) ?? []), ...classes]);
+    }
+  }
+  return found;
+}
+
+function usedKumoButtonColourTextClasses(): Map<string, string[]> {
+  const colourTokens = new Set([...definedTokens(), "white"]);
+  const found = new Map<string, string[]>();
+
+  for (const [path, classes] of usedKumoButtonTextClasses()) {
+    const colourClasses = classes.filter((token) =>
+      colourTokens.has(token.replace(/^(?:[a-z-]+:)*!?text-/, "")),
+    );
+    if (colourClasses.length > 0) found.set(path, colourClasses);
+  }
+  return found;
+}
+
 describe("colour tokens", () => {
   it("uses only shades the Tailwind config defines", () => {
     const defined = definedTokens();
@@ -66,5 +98,21 @@ describe("colour tokens", () => {
     // would pass by looking at nothing.
     const used = usedTokens(["ink", "accent", "danger", "line", "surface", "notice"]);
     expect(used.size).toBeGreaterThan(5);
+  });
+
+  it("requires important colour text utilities on Kumo Buttons", () => {
+    const violations = [...usedKumoButtonColourTextClasses().entries()].flatMap(([path, classes]) =>
+      classes
+        .filter((token) => !/(?:^|:)!text-/.test(token))
+        .map((token) => `${path}: ${token}`),
+    );
+
+    expect(violations).toEqual([]);
+  });
+
+  it("finds colour text utilities on Kumo Buttons", () => {
+    const used = usedKumoButtonColourTextClasses();
+    const count = [...used.values()].reduce((total, classes) => total + classes.length, 0);
+    expect(count).toBeGreaterThanOrEqual(17);
   });
 });
