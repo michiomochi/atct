@@ -1,5 +1,42 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { approveDecision, createGoal, fetchProjects, rejectDecision } from "./api";
+import {
+  approveDecision,
+  createGoal,
+  fetchProjects,
+  rejectDecision,
+  subscribeToDecisionEvents,
+} from "./api";
+
+class FakeEventSource {
+  static instances: FakeEventSource[] = [];
+
+  private readonly listeners = new Map<string, Set<(event: Event) => void>>();
+  readonly close = vi.fn();
+
+  constructor(readonly url: string) {
+    FakeEventSource.instances.push(this);
+  }
+
+  addEventListener(name: string, listener: (event: Event) => void) {
+    const listeners = this.listeners.get(name) ?? new Set<(event: Event) => void>();
+    listeners.add(listener);
+    this.listeners.set(name, listeners);
+  }
+
+  removeEventListener(name: string, listener: (event: Event) => void) {
+    this.listeners.get(name)?.delete(listener);
+  }
+
+  registeredNames() {
+    return [...this.listeners.keys()];
+  }
+
+  emit(name: string) {
+    for (const listener of this.listeners.get(name) ?? []) {
+      listener(new Event(name));
+    }
+  }
+}
 
 describe("completion API", () => {
   afterEach(() => {
@@ -71,5 +108,67 @@ describe("goal creation API", () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ project_id: "project-1", content: "Ship it\n\nDetails", creator: "human" }),
     });
+  });
+});
+
+describe("decision event subscription", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    FakeEventSource.instances = [];
+  });
+
+  it("registers every event and does not refresh for keepalive", () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("EventSource", FakeEventSource);
+    const onEvent = vi.fn();
+    const unsubscribe = subscribeToDecisionEvents(onEvent);
+    const source = FakeEventSource.instances[0]!;
+
+    expect(source.registeredNames()).toEqual([
+      "decision.created",
+      "decision.answered",
+      "decision.withdrawn",
+      "decision.applied",
+      "decision.approved",
+      "decision.rejected",
+      "goal.created",
+      "detection.completion_report_missing",
+      "detection.commits_missing",
+      "detection.undeclared_goal",
+      "detection.all_tasks_dropped",
+      "detection.unclaimed_doing",
+      "keepalive",
+    ]);
+
+    source.emit("keepalive");
+    source.emit("goal.created");
+    source.emit("detection.commits_missing");
+    source.emit("decision.created");
+
+    expect(onEvent).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(100);
+    expect(onEvent).toHaveBeenCalledTimes(1);
+    expect(onEvent).toHaveBeenCalledWith("decision.created");
+    unsubscribe();
+  });
+
+  it("reconnects after 90 seconds since the last event, including keepalive", () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("EventSource", FakeEventSource);
+    const onEvent = vi.fn();
+    const unsubscribe = subscribeToDecisionEvents(onEvent);
+    const firstSource = FakeEventSource.instances[0];
+
+    vi.advanceTimersByTime(60_000);
+    firstSource.emit("keepalive");
+    vi.advanceTimersByTime(60_000);
+    expect(FakeEventSource.instances).toHaveLength(1);
+    vi.advanceTimersByTime(30_000);
+
+    expect(FakeEventSource.instances).toHaveLength(2);
+    expect(firstSource.close).toHaveBeenCalledTimes(1);
+    expect(onEvent).not.toHaveBeenCalled();
+    unsubscribe();
   });
 });

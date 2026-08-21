@@ -10,7 +10,15 @@ export const DECISION_EVENT_NAMES = [
   "decision.applied",
   "decision.approved",
   "decision.rejected",
+  "goal.created",
+  "detection.completion_report_missing",
+  "detection.commits_missing",
+  "detection.undeclared_goal",
+  "detection.all_tasks_dropped",
+  "detection.unclaimed_doing",
 ] as const;
+
+export const KEEPALIVE_EVENT_NAME = "keepalive" as const;
 
 export type DecisionEventName = (typeof DECISION_EVENT_NAMES)[number];
 

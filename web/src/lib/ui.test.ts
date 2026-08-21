@@ -350,7 +350,7 @@ describe("localized date and duration renderers", () => {
 });
 
 describe("decision SSE events", () => {
-  it("keeps the six event names exact", () => {
+  it("keeps the subscribed event names exact", () => {
     expect(DECISION_EVENT_NAMES).toEqual([
       "decision.created",
       "decision.answered",
@@ -358,6 +358,12 @@ describe("decision SSE events", () => {
       "decision.applied",
       "decision.approved",
       "decision.rejected",
+      "goal.created",
+      "detection.completion_report_missing",
+      "detection.commits_missing",
+      "detection.undeclared_goal",
+      "detection.all_tasks_dropped",
+      "detection.unclaimed_doing",
     ]);
   });
 

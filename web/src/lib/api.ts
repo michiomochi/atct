@@ -1,4 +1,9 @@
-import { DECISION_EVENT_NAMES, isDecisionEventName, type DecisionEventName } from "./ui";
+import {
+  DECISION_EVENT_NAMES,
+  isDecisionEventName,
+  KEEPALIVE_EVENT_NAME,
+  type DecisionEventName,
+} from "./ui";
 
 export interface Option {
   label: string;
@@ -336,14 +341,58 @@ export async function releaseTask(id: string): Promise<TaskView> {
 export function subscribeToDecisionEvents(onEvent: (name: DecisionEventName) => void): () => void {
   if (typeof EventSource === "undefined") return () => undefined;
 
-  const source = new EventSource("/api/events");
+  const watchKeepaliveTimeout = 90_000;
+  const watchKeepaliveInterval = 30_000;
+  const refreshDebounce = 100;
+  let source: EventSource | undefined;
+  let lastEventAt = Date.now();
+  let refreshTimer: ReturnType<typeof setTimeout> | undefined;
+  let livenessTimer: ReturnType<typeof setInterval> | undefined;
+  let closed = false;
+
   const handler = (event: Event) => {
-    if (isDecisionEventName(event.type)) onEvent(event.type);
+    lastEventAt = Date.now();
+    if (event.type === KEEPALIVE_EVENT_NAME) return;
+    const name = event.type;
+    if (!isDecisionEventName(name)) return;
+
+    if (refreshTimer !== undefined) clearTimeout(refreshTimer);
+    refreshTimer = setTimeout(() => {
+      refreshTimer = undefined;
+      onEvent(name);
+    }, refreshDebounce);
   };
 
-  DECISION_EVENT_NAMES.forEach((name) => source.addEventListener(name, handler));
-  return () => {
-    DECISION_EVENT_NAMES.forEach((name) => source.removeEventListener(name, handler));
+  const closeSource = () => {
+    if (source === undefined) return;
+    DECISION_EVENT_NAMES.forEach((name) => source?.removeEventListener(name, handler));
+    source.removeEventListener(KEEPALIVE_EVENT_NAME, handler);
     source.close();
+    source = undefined;
+  };
+
+  const openSource = () => {
+    if (closed) return;
+    source = new EventSource("/api/events");
+    DECISION_EVENT_NAMES.forEach((name) => source?.addEventListener(name, handler));
+    source.addEventListener(KEEPALIVE_EVENT_NAME, handler);
+  };
+
+  const reconnect = () => {
+    closeSource();
+    lastEventAt = Date.now();
+    openSource();
+  };
+
+  openSource();
+  livenessTimer = setInterval(() => {
+    if (Date.now() - lastEventAt >= watchKeepaliveTimeout) reconnect();
+  }, watchKeepaliveInterval);
+
+  return () => {
+    closed = true;
+    if (refreshTimer !== undefined) clearTimeout(refreshTimer);
+    if (livenessTimer !== undefined) clearInterval(livenessTimer);
+    closeSource();
   };
 }
