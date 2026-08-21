@@ -91,6 +91,14 @@ func (s *Store) DeclareTasks(ctx context.Context, goalID, agent, idempotencyKey 
 		}
 	}
 
+	goal, err := s.GetGoal(ctx, goalID)
+	if err != nil {
+		return nil, fmt.Errorf("get goal for declaring tasks: %w", err)
+	}
+	if goal.Status != domain.GoalActive {
+		return nil, fmt.Errorf("%w: goal %q is not approved; obtain human approval before declaring its tasks (承認されていないため、先に人間の承認を得てください)", ErrGoalNotActive, goalID)
+	}
+
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, fmt.Errorf("begin tx: %w", err)

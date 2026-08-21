@@ -306,6 +306,7 @@ func createDecisionFixture(t *testing.T, conn net.Conn) (string, string) {
 	goalResp := call(t, conn, "goal.create", map[string]string{
 		"cwd":     "/repos/atct",
 		"content": "Wait semantics",
+		"creator": "human",
 	})
 	if goalResp.Error != "" {
 		t.Fatalf("goal.create: %s", goalResp.Error)

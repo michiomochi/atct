@@ -93,12 +93,16 @@ func TestDetectWakeupExcludesProposedGoal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateProject: %v", err)
 	}
-	goal, err := s.CreateGoal(ctx, project.ID, "Await approval before wakeup", "agent")
+	goal, err := s.CreateGoal(ctx, project.ID, "Await approval before wakeup", "human")
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
 	if _, err := s.DeclareTasks(ctx, goal.ID, "agent", "wakeup-proposed", []string{"Proposed task"}, []string{"Wait for approval before wakeup."}); err != nil {
 		t.Fatalf("DeclareTasks: %v", err)
+	}
+	// This state can only exist in databases created before the declaration gate.
+	if _, err := s.db.ExecContext(ctx, "UPDATE goals SET status = ? WHERE id = ?", string(domain.GoalProposed), goal.ID); err != nil {
+		t.Fatalf("set goal proposed: %v", err)
 	}
 
 	state, err := s.DetectWakeup(ctx, project.ID)
@@ -309,13 +313,17 @@ func TestDetectWakeupDoesNotReportProposedGoalAsUndeclaredOrCommitless(t *testin
 	if err != nil {
 		t.Fatalf("CreateGoal proposed empty: %v", err)
 	}
-	proposedDoneGoal, err := s.CreateGoal(ctx, project.ID, "Proposed done goal", "agent")
+	proposedDoneGoal, err := s.CreateGoal(ctx, project.ID, "Proposed done goal", "human")
 	if err != nil {
 		t.Fatalf("CreateGoal proposed done: %v", err)
 	}
 	proposedTasks, err := s.DeclareTasks(ctx, proposedDoneGoal.ID, "agent", "wakeup-proposed-done", []string{"Proposed done task"}, []string{"Complete the proposed done task."})
 	if err != nil {
 		t.Fatalf("DeclareTasks proposed: %v", err)
+	}
+	// This state can only exist in databases created before the declaration gate.
+	if _, err := s.db.ExecContext(ctx, "UPDATE goals SET status = ? WHERE id = ?", string(domain.GoalProposed), proposedDoneGoal.ID); err != nil {
+		t.Fatalf("set goal proposed: %v", err)
 	}
 	updateWakeupTask(t, s, proposedTasks[0].ID, domain.TaskDone)
 
