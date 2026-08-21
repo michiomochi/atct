@@ -1,4 +1,5 @@
 import { Button } from "@cloudflare/kumo/components/button";
+import { Dialog } from "@cloudflare/kumo/components/dialog";
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
 import {
@@ -278,6 +279,7 @@ function GoalApproval({
 
 function GoalWithdrawal({ goal, onUpdated }: { goal: Goal; onUpdated: () => void }) {
   const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
   const [reason, setReason] = useState("");
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -302,32 +304,60 @@ function GoalWithdrawal({ goal, onUpdated }: { goal: Goal; onUpdated: () => void
   }
 
   return (
-    <section className="min-w-0 border-t border-line pt-5" data-testid="goal-withdraw" aria-labelledby="goal-withdraw-heading">
-      <h2 id="goal-withdraw-heading" className="font-display text-lg font-semibold tracking-tight text-ink-950">{t("goal.withdraw.title")}</h2>
-      <p className="mt-2 max-w-3xl text-sm leading-6 text-ink-700">{t("goal.withdraw.description")}</p>
-      <form className="mt-4 min-w-0 max-w-3xl border-l-2 border-danger-700 pl-4" onSubmit={handleSubmit} noValidate>
-        <label className="mb-3 block text-sm text-ink-800" htmlFor={reasonID}>
-          {t("goal.withdraw.reason")}
-          <textarea
-            className="focus-ring mt-1 block min-h-24 w-full resize-y border border-line bg-surface px-3 py-2 text-sm leading-6 text-ink-950"
-            id={reasonID}
-            value={reason}
-            onChange={(event) => setReason(event.target.value)}
-            required
-            aria-required="true"
-          />
-        </label>
-        {submitError && <p className="mb-3 text-sm text-danger-700" role="alert">{submitError}</p>}
-        <Button
-          type="submit"
-          variant="secondary-destructive"
-          disabled={submitting || reason.trim() === ""}
-          className="focus-ring px-3 py-2 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          {t("goal.withdraw.submit")}
-        </Button>
-      </form>
-    </section>
+    <Dialog.Root open={open} onOpenChange={setOpen}>
+      {goal.status === "active" && (
+        <Dialog.Trigger
+          render={(triggerProps) => (
+            <Button
+              {...triggerProps}
+              data-testid="goal-withdraw-trigger"
+              type="button"
+              variant="secondary-destructive"
+              className="focus-ring px-3 py-2 text-sm font-medium"
+            >
+              {t("goal.withdraw.submit")}
+            </Button>
+          )}
+        />
+      )}
+      <Dialog className="p-6">
+        <Dialog.Title className="mb-4 font-display text-xl font-semibold text-ink-950">
+          {t("goal.withdraw.title")}
+        </Dialog.Title>
+        <p className="mb-4 max-w-3xl text-sm leading-6 text-ink-700">{t("goal.withdraw.description")}</p>
+        <form className="min-w-0 max-w-3xl" onSubmit={handleSubmit} noValidate>
+          <label className="mb-3 block text-sm text-ink-800" htmlFor={reasonID}>
+            {t("goal.withdraw.reason")}
+            <textarea
+              className="focus-ring mt-1 block min-h-24 w-full resize-y border border-line bg-surface px-3 py-2 text-sm leading-6 text-ink-950"
+              id={reasonID}
+              value={reason}
+              onChange={(event) => setReason(event.target.value)}
+              required
+              aria-required="true"
+            />
+          </label>
+          {submitError && <p className="mb-3 text-sm text-danger-700" role="alert">{submitError}</p>}
+          <div className="flex flex-wrap gap-3">
+            <Button
+              type="submit"
+              variant="secondary-destructive"
+              disabled={submitting || reason.trim() === ""}
+              className="focus-ring px-3 py-2 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {t("goal.withdraw.submit")}
+            </Button>
+            <Dialog.Close
+              render={(closeProps) => (
+                <Button {...closeProps} type="button" variant="outline" className="focus-ring px-3 py-2 text-sm">
+                  {t("form.goal.cancel")}
+                </Button>
+              )}
+            />
+          </div>
+        </form>
+      </Dialog>
+    </Dialog.Root>
   );
 }
 
@@ -394,9 +424,12 @@ export function GoalDetail({ id }: Props) {
         <a className="focus-ring text-sm font-medium text-accent-700 hover:text-accent-600" href="/">
           {t("goal.backToDashboard")}
         </a>
-        <h1 className="mt-2 font-display text-3xl font-semibold tracking-tight text-ink-950">
-          {data ? headline(data.goal.goal.content) : t("goal.title")}
-        </h1>
+        <div className="mt-2 flex flex-wrap items-start justify-between gap-4">
+          <h1 className="font-display text-3xl font-semibold tracking-tight text-ink-950">
+            {data ? headline(data.goal.goal.content) : t("goal.title")}
+          </h1>
+          {data && <GoalWithdrawal goal={data.goal.goal} onUpdated={load} />}
+        </div>
         {data && body(data.goal.goal.content) && <p className="mt-3 max-w-3xl whitespace-pre-wrap text-sm leading-6 text-ink-700">{body(data.goal.goal.content)}</p>}
         {data && (
           <dl className="mt-5 grid min-w-0 gap-x-6 gap-y-3 border-t border-line pt-4 sm:grid-cols-3">
@@ -497,7 +530,6 @@ export function GoalDetail({ id }: Props) {
         </section>
       )}
 
-      {data?.goal.goal.status === "active" && <GoalWithdrawal goal={data.goal.goal} onUpdated={load} />}
     </main>
   );
 }

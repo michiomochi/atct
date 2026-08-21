@@ -418,27 +418,65 @@ describe("GoalDetail", () => {
     await waitFor(() => expect(fetchTaskCommitDiff).toHaveBeenCalledWith("task-2", "222222222222222"));
   });
 
+  it("shows the withdrawal action beside an active goal title", async () => {
+    vi.mocked(fetchGoal).mockResolvedValueOnce(goalResponse());
+
+    render(<GoalDetail id="goal-1" />);
+
+    await waitFor(() => expect(screen.getByTestId("goal-withdraw-trigger")).not.toBeNull());
+    const heading = screen.getByRole("heading", { level: 1, name: "Fixture goal" });
+    expect(heading.parentElement?.contains(screen.getByTestId("goal-withdraw-trigger"))).toBe(true);
+  });
+
+  it("opens the withdrawal dialog from the active goal title action", async () => {
+    vi.mocked(fetchGoal).mockResolvedValueOnce(goalResponse());
+
+    render(<GoalDetail id="goal-1" />);
+
+    await waitFor(() => expect(screen.getByTestId("goal-withdraw-trigger")).not.toBeNull());
+    fireEvent.click(screen.getByTestId("goal-withdraw-trigger"));
+
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByRole("textbox", { name: "goal.withdraw.reason" })).not.toBeNull();
+  });
+
   it("disables goal withdrawal while the reason is empty or whitespace", async () => {
     vi.mocked(fetchGoal).mockResolvedValueOnce(goalResponse());
 
     render(<GoalDetail id="goal-1" />);
 
-    await waitFor(() => expect(screen.getByTestId("goal-withdraw")).not.toBeNull());
-    const reason = screen.getByRole("textbox", { name: "goal.withdraw.reason" });
-    const submit = screen.getByRole("button", { name: "goal.withdraw.submit" });
+    await waitFor(() => expect(screen.getByTestId("goal-withdraw-trigger")).not.toBeNull());
+    fireEvent.click(screen.getByTestId("goal-withdraw-trigger"));
+    const dialog = await screen.findByRole("dialog");
+    const reason = within(dialog).getByRole("textbox", { name: "goal.withdraw.reason" });
+    const submit = within(dialog).getByRole("button", { name: "goal.withdraw.submit" });
 
     expect((submit as HTMLButtonElement).disabled).toBe(true);
     fireEvent.change(reason, { target: { value: "   " } });
     expect((submit as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it("does not render goal withdrawal for a proposed goal", async () => {
+  it("keeps the withdrawal form inside the dialog", async () => {
+    vi.mocked(fetchGoal).mockResolvedValueOnce(goalResponse());
+
+    render(<GoalDetail id="goal-1" />);
+
+    await waitFor(() => expect(screen.getByTestId("goal-withdraw-trigger")).not.toBeNull());
+    fireEvent.click(screen.getByTestId("goal-withdraw-trigger"));
+    const dialog = await screen.findByRole("dialog");
+    const reasons = screen.getAllByRole("textbox", { name: "goal.withdraw.reason" });
+
+    expect(reasons).toHaveLength(1);
+    expect(dialog.contains(reasons[0])).toBe(true);
+  });
+
+  it("does not render the withdrawal action for a proposed goal", async () => {
     vi.mocked(fetchGoal).mockResolvedValueOnce(goalResponse({ status: "proposed" }));
 
     render(<GoalDetail id="goal-1" />);
 
     await waitFor(() => expect(fetchGoal).toHaveBeenCalledWith("goal-1"));
-    expect(screen.queryByTestId("goal-withdraw")).toBeNull();
+    expect(screen.queryByTestId("goal-withdraw-trigger")).toBeNull();
   });
 
   it("does not render goal withdrawal for a done goal", async () => {
@@ -447,7 +485,7 @@ describe("GoalDetail", () => {
     render(<GoalDetail id="goal-1" />);
 
     await waitFor(() => expect(fetchGoal).toHaveBeenCalledWith("goal-1"));
-    expect(screen.queryByTestId("goal-withdraw")).toBeNull();
+    expect(screen.queryByTestId("goal-withdraw-trigger")).toBeNull();
   });
 
   it("shows the server message when goal withdrawal returns a conflict", async () => {
@@ -458,11 +496,13 @@ describe("GoalDetail", () => {
 
     render(<GoalDetail id="goal-1" />);
 
-    await waitFor(() => expect(screen.getByTestId("goal-withdraw")).not.toBeNull());
-    fireEvent.change(screen.getByRole("textbox", { name: "goal.withdraw.reason" }), {
+    await waitFor(() => expect(screen.getByTestId("goal-withdraw-trigger")).not.toBeNull());
+    fireEvent.click(screen.getByTestId("goal-withdraw-trigger"));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.change(within(dialog).getByRole("textbox", { name: "goal.withdraw.reason" }), {
       target: { value: "No longer needed" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "goal.withdraw.submit" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "goal.withdraw.submit" }));
 
     await waitFor(() => expect(screen.getByText(serverMessage)).not.toBeNull());
   });
@@ -475,14 +515,16 @@ describe("GoalDetail", () => {
 
     render(<GoalDetail id="goal-1" />);
 
-    await waitFor(() => expect(screen.getByTestId("goal-withdraw")).not.toBeNull());
-    fireEvent.change(screen.getByRole("textbox", { name: "goal.withdraw.reason" }), {
+    await waitFor(() => expect(screen.getByTestId("goal-withdraw-trigger")).not.toBeNull());
+    fireEvent.click(screen.getByTestId("goal-withdraw-trigger"));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.change(within(dialog).getByRole("textbox", { name: "goal.withdraw.reason" }), {
       target: { value: "  No longer needed  " },
     });
-    fireEvent.click(screen.getByRole("button", { name: "goal.withdraw.submit" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "goal.withdraw.submit" }));
 
     await waitFor(() => expect(withdrawGoal).toHaveBeenCalledWith("goal-1", "No longer needed"));
     await waitFor(() => expect(fetchGoal).toHaveBeenCalledTimes(2));
-    await waitFor(() => expect(screen.queryByTestId("goal-withdraw")).toBeNull());
+    await waitFor(() => expect(screen.queryByTestId("goal-withdraw-trigger")).toBeNull());
   });
 });
