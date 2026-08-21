@@ -131,7 +131,7 @@ export function TaskDetailPage({ id }: Props) {
         <>
           <div className="border-b border-line pb-6">
             <a
-              className="focus-ring text-sm font-medium text-accent-700 hover:text-accent-900"
+              className="focus-ring text-sm font-medium text-accent-700 hover:text-accent-600"
               href={`/goals/${encodeURIComponent(data.goal.id)}`}
             >
               {data.goal.project_name ? `${t("goal.project")}: ${data.goal.project_name}` : t("goal.backToDashboard")}
@@ -151,31 +151,31 @@ export function TaskDetailPage({ id }: Props) {
             </h2>
             <dl className="mt-6 grid min-w-0 gap-x-6 gap-y-4 border-t border-line pt-5 sm:grid-cols-2">
               <div className="min-w-0">
-                <dt className="text-xs font-semibold uppercase tracking-wide text-ink-600">{t("task.detail.files")}</dt>
+                <dt className="text-xs font-semibold uppercase tracking-wide text-ink-700">{t("task.detail.files")}</dt>
                 <dd className="mt-1 break-words text-sm text-ink-950">
                   {displayValue([...data.task.files ?? [], data.task.declare_key].filter(Boolean).join(" · "), noValue)}
                 </dd>
               </div>
               <div className="min-w-0">
-                <dt className="text-xs font-semibold uppercase tracking-wide text-ink-600">{t("task.detail.agent")}</dt>
+                <dt className="text-xs font-semibold uppercase tracking-wide text-ink-700">{t("task.detail.agent")}</dt>
                 <dd className="mt-1 break-words text-sm text-ink-950">{displayValue(data.task.agent, noValue)}</dd>
               </div>
               <div className="min-w-0">
-                <dt className="text-xs font-semibold uppercase tracking-wide text-ink-600">{t("task.detail.claimedRun")}</dt>
+                <dt className="text-xs font-semibold uppercase tracking-wide text-ink-700">{t("task.detail.claimedRun")}</dt>
                 <dd className="mt-1 break-words text-sm text-ink-950">{displayValue(data.task.claimed_by, noValue)}</dd>
               </div>
               <div className="min-w-0">
-                <dt className="text-xs font-semibold uppercase tracking-wide text-ink-600">{t("task.detail.order")}</dt>
+                <dt className="text-xs font-semibold uppercase tracking-wide text-ink-700">{t("task.detail.order")}</dt>
                 <dd className="mt-1 text-sm text-ink-950">{data.task.order}</dd>
               </div>
               <div className="min-w-0">
-                <dt className="text-xs font-semibold uppercase tracking-wide text-ink-600">{t("task.detail.createdAt")}</dt>
+                <dt className="text-xs font-semibold uppercase tracking-wide text-ink-700">{t("task.detail.createdAt")}</dt>
                 <dd className="mt-1 break-words text-sm text-ink-950">
                   {displayValue(data.task.created_at ? formatDateTime(locale, data.task.created_at) : undefined, noValue)}
                 </dd>
               </div>
               <div className="min-w-0">
-                <dt className="text-xs font-semibold uppercase tracking-wide text-ink-600">{t("task.detail.updatedAt")}</dt>
+                <dt className="text-xs font-semibold uppercase tracking-wide text-ink-700">{t("task.detail.updatedAt")}</dt>
                 <dd className="mt-1 break-words text-sm text-ink-950">
                   {displayValue(data.task.updated_at ? formatDateTime(locale, data.task.updated_at) : undefined, noValue)}
                 </dd>
@@ -198,7 +198,7 @@ export function TaskDetailPage({ id }: Props) {
                       <span className="font-mono text-ink-950">{commit.short_sha}</span>
                       <span className="min-w-0 break-words text-ink-950">{commit.subject}</span>
                     </div>
-                    <div className="mt-2 flex flex-wrap items-baseline gap-3 text-sm text-ink-600">
+                    <div className="mt-2 flex flex-wrap items-baseline gap-3 text-sm text-ink-700">
                       <span className="whitespace-nowrap">
                         {commit.files_changed} {t("task.detail.commitFiles")} · +{commit.insertions} −{commit.deletions}
                       </span>
@@ -212,7 +212,7 @@ export function TaskDetailPage({ id }: Props) {
                         }
                       }}
                     >
-                      <summary className="focus-ring cursor-pointer text-sm font-medium text-accent-700 hover:text-accent-900">
+                      <summary className="focus-ring cursor-pointer text-sm font-medium text-accent-700 hover:text-accent-600">
                         {t("task.detail.commitDiff")}
                       </summary>
                       {diffState?.kind === "loading" && (
@@ -231,7 +231,7 @@ export function TaskDetailPage({ id }: Props) {
                                 <li key={file.path} className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1">
                                   <span className="min-w-0 break-words font-mono">{file.path}</span>
                                   {file.binary ? (
-                                    <span className="text-ink-600">{t("task.detail.commitDiffBinary")}</span>
+                                    <span className="text-ink-700">{t("task.detail.commitDiffBinary")}</span>
                                   ) : (
                                     <span className="whitespace-nowrap">
                                       +{file.insertions} −{file.deletions}
@@ -244,7 +244,7 @@ export function TaskDetailPage({ id }: Props) {
                               {diffState.data.body}
                             </pre>
                             {diffState.data.omitted_lines > 0 && (
-                              <p className="text-sm text-ink-600">
+                              <p className="text-sm text-ink-700">
                                 {t("task.detail.commitDiffOmitted", {
                                   count: diffState.data.omitted_lines,
                                 })}
@@ -252,7 +252,7 @@ export function TaskDetailPage({ id }: Props) {
                             )}
                       </div>
                         ) : (
-                          <p className="mt-4 text-sm text-ink-600">{t("task.detail.commitDiffEmpty")}</p>
+                          <p className="mt-4 text-sm text-ink-700">{t("task.detail.commitDiffEmpty")}</p>
                         ))}
                     </details>
                     </li>

@@ -383,7 +383,7 @@ export function GoalDetail({ id }: Props) {
   return (
     <main className="min-w-0 max-w-full space-y-10 overflow-x-hidden">
       <div className="border-b border-line pb-6">
-        <a className="focus-ring text-sm font-medium text-accent-700 hover:text-accent-900" href="/">
+        <a className="focus-ring text-sm font-medium text-accent-700 hover:text-accent-600" href="/">
           {t("goal.backToDashboard")}
         </a>
         <h1 className="mt-2 font-display text-3xl font-semibold tracking-tight text-ink-950">
@@ -393,15 +393,15 @@ export function GoalDetail({ id }: Props) {
         {data && (
           <dl className="mt-5 grid min-w-0 gap-x-6 gap-y-3 border-t border-line pt-4 sm:grid-cols-3">
             <div className="min-w-0">
-              <dt className="text-xs font-semibold uppercase tracking-wide text-ink-600">{t("goal.project")}</dt>
+              <dt className="text-xs font-semibold uppercase tracking-wide text-ink-700">{t("goal.project")}</dt>
               <dd className="mt-1 break-words text-sm text-ink-950">{data.goal.goal.project_name || "-"}</dd>
             </div>
             <div className="min-w-0">
-              <dt className="text-xs font-semibold uppercase tracking-wide text-ink-600">{t("goal.column.status")}</dt>
+              <dt className="text-xs font-semibold uppercase tracking-wide text-ink-700">{t("goal.column.status")}</dt>
               <dd className="mt-1 break-words text-sm text-ink-950">{statusLabel(locale, data.goal.goal.status)}</dd>
             </div>
             <div className="min-w-0">
-              <dt className="text-xs font-semibold uppercase tracking-wide text-ink-600">{t("goal.column.updatedAt")}</dt>
+              <dt className="text-xs font-semibold uppercase tracking-wide text-ink-700">{t("goal.column.updatedAt")}</dt>
               <dd className="mt-1 break-words text-sm text-ink-950">{formatDateTime(locale, data.goal.goal.updated_at)}</dd>
             </div>
           </dl>
@@ -444,7 +444,7 @@ export function GoalDetail({ id }: Props) {
       <section className="min-w-0 border-t border-line pt-5" data-testid="task-list" aria-labelledby="task-list-heading">
         <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-2">
           <h2 id="task-list-heading" className="font-display text-lg font-semibold tracking-tight text-ink-950">{t("goal.tasks.title")}</h2>
-          {data && <p className="text-sm text-ink-600">{tasks.length}</p>}
+          {data && <p className="text-sm text-ink-700">{tasks.length}</p>}
         </div>
         <div className="mt-4 min-w-0">
           {state.kind === "loading" && <AreaLoading label={t("goal.tasks.title")} />}

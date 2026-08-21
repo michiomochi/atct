@@ -86,7 +86,7 @@ export function DecisionAnswerForm({ decision, onUpdated, onInputStateChange }: 
     <form className="mt-3 border-l-2 border-accent-600 pl-3" onSubmit={handleSubmit} noValidate>
       <p className="mb-3 whitespace-pre-wrap break-words text-sm leading-6 text-ink-800">{decision.question}</p>
       {autoSettlementDuration && (
-        <p className="mb-3 text-xs text-ink-600">
+        <p className="mb-3 text-xs text-ink-700">
           {t("decision.autoSettlesIn", { duration: autoSettlementDuration })}
         </p>
       )}

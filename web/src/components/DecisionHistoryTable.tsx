@@ -55,7 +55,7 @@ export function DecisionHistoryTable({ decisions, omittedCount }: Props) {
         <h2 id="decision-history-heading" className="font-display text-lg font-semibold tracking-tight text-ink-950">
           {t("goal.history.title")}
         </h2>
-        {omittedCount > 0 && <p className="text-sm text-ink-600">{t("goal.history.omitted", { count: omittedCount })}</p>}
+        {omittedCount > 0 && <p className="text-sm text-ink-700">{t("goal.history.omitted", { count: omittedCount })}</p>}
       </div>
       <div className="table-scroll mt-4">
         <Table className="min-w-[52rem] w-full border-collapse text-left text-sm">
@@ -138,7 +138,7 @@ export function DecisionHistoryTable({ decisions, omittedCount }: Props) {
                       </button>
                     )}
                     {revisionMessage?.decisionID === decision.decision_id && (
-                      <p className={`mt-2 text-xs ${revisionMessage.error ? "text-red-700" : "text-ink-600"}`} role="status">
+                      <p className={`mt-2 text-xs ${revisionMessage.error ? "text-red-700" : "text-ink-700"}`} role="status">
                         {revisionMessage.text}
                       </p>
                     )}
