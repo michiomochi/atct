@@ -59,10 +59,10 @@ export function GoalTable({ goals, showProject = true }: Props) {
                           {index === tasks.length - 1 ? "└─" : "├─"}
                         </span>
                         <a
-                          className="focus-ring inline-block w-fit max-w-full text-left"
+                          className="focus-ring inline-block w-fit max-w-full text-left text-accent-700 underline decoration-accent-100 underline-offset-4 hover:decoration-accent-700"
                           href={`/tasks/${encodePathSegment(task.id)}`}
                         >
-                          <span className="text-clamp-2 block max-w-[32rem] break-words font-medium text-ink-950" title={task.title}>
+                          <span className="text-clamp-2 block max-w-[32rem] break-words font-medium" title={task.title}>
                             {task.title}
                           </span>
                         </a>

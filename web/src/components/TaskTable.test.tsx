@@ -56,6 +56,7 @@ describe("TaskTable", () => {
     const link = screen.getByRole("link", { name: "Task title" });
     expect(link.getAttribute("href")).toBe("/tasks/task-1");
     expect(link.classList.contains("w-fit")).toBe(true);
+    expect(link.classList.contains("text-accent-700")).toBe(true);
     expect(link.closest("td")).not.toBeNull();
     expect(link.parentElement?.tagName).toBe("TD");
     expect(link.parentElement?.children).toHaveLength(1);

@@ -95,5 +95,6 @@ describe("GoalTable", () => {
 
     expect(taskLink.getAttribute("href")).toBe("/tasks/task-detail");
     expect(taskLink.className).toContain("w-fit");
+    expect(taskLink.className).toContain("text-accent-700");
   });
 });
