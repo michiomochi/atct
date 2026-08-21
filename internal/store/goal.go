@@ -53,6 +53,7 @@ func (s *Store) CreateGoal(ctx context.Context, projectID, content, creator stri
 	if err != nil {
 		return domain.Goal{}, fmt.Errorf("insert goal: %w", err)
 	}
+	s.notify.publishEvent(Event{Name: "goal.created", Data: g})
 	if creator == "agent" {
 		if _, err := s.AskDecision(ctx, AskInput{
 			GoalID:   g.ID,
