@@ -38,6 +38,10 @@ vi.mock("./GoalTable", () => ({
   GoalTable: () => null,
 }));
 
+vi.mock("./ProposedGoalTable", () => ({
+  ProposedGoalTable: () => null,
+}));
+
 describe("Dashboard goal creation refresh guard", () => {
   let decisionEvent: (() => void) | undefined;
 
@@ -58,6 +62,21 @@ describe("Dashboard goal creation refresh guard", () => {
     await screen.findByRole("heading", { name: /projects|プロジェクト/i });
 
     expect(screen.queryByRole("region", { name: /proposed goals|提案中のゴール/i })).toBeNull();
+  });
+
+  it("renders proposed goals before open decisions", async () => {
+    fetchInbox.mockResolvedValue({ open_decisions: [], active_goals: [], proposed_goals: [{}] });
+
+    const { container } = render(<Dashboard />);
+    await screen.findByRole("heading", { name: /dashboard\.proposed\.title/, level: 2 });
+
+    const headings = Array.from(container.querySelectorAll("h2"));
+    const proposedHeadingIndex = headings.findIndex((heading) => heading.id === "proposed-goals-heading");
+    const openDecisionsHeadingIndex = headings.findIndex((heading) => heading.id === "open-decisions-heading");
+
+    expect(proposedHeadingIndex).toBeGreaterThanOrEqual(0);
+    expect(openDecisionsHeadingIndex).toBeGreaterThanOrEqual(0);
+    expect(proposedHeadingIndex).toBeLessThan(openDecisionsHeadingIndex);
   });
 
   it("keeps the current data while the goal form is dirty and reloads after it is clean", async () => {

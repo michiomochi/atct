@@ -87,18 +87,17 @@ export function Dashboard() {
       )}
 
       <div className="space-y-10">
-        <Section id="open-decisions" title={t("dashboard.waiting.title")} count={data?.open_decisions.length}>
-          {state.kind === "loading" && <AreaLoading label={t("dashboard.waiting.title")} />}
-          {state.kind === "error" && <ErrorState message={state.message} onRetry={retry} />}
-          {data && <DecisionTable decisions={data.open_decisions} emptyText={t("dashboard.openDecisions.empty")} />}
-        </Section>
-
         {proposedGoals.length > 0 && (
           <Section id="proposed-goals" title={t("dashboard.proposed.title")} count={proposedGoals.length}>
             <ProposedGoalTable goals={proposedGoals} />
           </Section>
         )}
 
+        <Section id="open-decisions" title={t("dashboard.waiting.title")} count={data?.open_decisions.length}>
+          {state.kind === "loading" && <AreaLoading label={t("dashboard.waiting.title")} />}
+          {state.kind === "error" && <ErrorState message={state.message} onRetry={retry} />}
+          {data && <DecisionTable decisions={data.open_decisions} emptyText={t("dashboard.openDecisions.empty")} />}
+        </Section>
       </div>
 
       <Section id="active-goals" title={t("dashboard.projects.title")} count={projectGroups?.length}>
