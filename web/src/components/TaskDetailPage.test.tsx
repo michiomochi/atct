@@ -1,11 +1,12 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { Decision, DecisionHistoryEntry, Task, TaskDetailResponse } from "../lib/api";
-import { fetchTask, subscribeToDecisionEvents } from "../lib/api";
+import type { Decision, DecisionHistoryEntry, Task, TaskCommitDiff, TaskDetailResponse } from "../lib/api";
+import { fetchTask, fetchTaskCommitDiff, subscribeToDecisionEvents } from "../lib/api";
 import { TaskDetailPage } from "./TaskDetailPage";
 
 const i18nMock = vi.hoisted(() => ({
-  t: (key: string) => key,
+  t: (key: string, options?: { count?: number }) =>
+    options?.count === undefined ? key : `${key}:${options.count}`,
   i18n: { language: "en" },
   initReactI18next: { type: "3rdParty", init: () => undefined },
 }));
@@ -13,6 +14,7 @@ const i18nMock = vi.hoisted(() => ({
 const apiMock = vi.hoisted(() => ({
   answerDecision: vi.fn(),
   fetchTask: vi.fn(),
+  fetchTaskCommitDiff: vi.fn(),
   reviseDecision: vi.fn(),
   subscribeToDecisionEvents: vi.fn(() => () => undefined),
 }));
@@ -93,6 +95,131 @@ describe("TaskDetailPage commits", () => {
 
     expect(screen.getByRole("heading", { name: "task.detail.commits" })).toBeTruthy();
     expect(screen.queryByText("task.detail.commitMissing")).toBeNull();
+  });
+
+  it("does not fetch a commit diff until its details are opened", async () => {
+    await renderTaskDetailWithCommits([
+      {
+        sha: "abcdef1234567890",
+        short_sha: "abcdef1",
+        subject: "read commit diff",
+        files_changed: 1,
+        insertions: 2,
+        deletions: 0,
+        in_history: true,
+      },
+    ]);
+
+    expect(fetchTaskCommitDiff).not.toHaveBeenCalled();
+  });
+
+  it("fetches a commit diff only once when details are reopened", async () => {
+    const commitSHA = "abcdef1234567890";
+    const diff: TaskCommitDiff = {
+      sha: commitSHA,
+      in_history: true,
+      files: [{ path: "src/task.ts", insertions: 2, deletions: 0, binary: false }],
+      body: "diff --git a/src/task.ts b/src/task.ts",
+      omitted_lines: 0,
+    };
+    vi.mocked(fetchTaskCommitDiff).mockResolvedValue(diff);
+    await renderTaskDetailWithCommits([
+      {
+        sha: commitSHA,
+        short_sha: "abcdef1",
+        subject: "read commit diff",
+        files_changed: 1,
+        insertions: 2,
+        deletions: 0,
+        in_history: true,
+      },
+    ]);
+
+    const summary = screen.getByText("task.detail.commitDiff");
+    fireEvent.click(summary);
+    await screen.findByText(diff.body);
+    fireEvent.click(summary);
+    fireEvent.click(summary);
+    await waitFor(() => expect(fetchTaskCommitDiff).toHaveBeenCalledTimes(1));
+    expect(fetchTaskCommitDiff).toHaveBeenCalledWith("task-1", commitSHA);
+  });
+
+  it("does not show omitted lines when omitted_lines is zero", async () => {
+    vi.mocked(fetchTaskCommitDiff).mockResolvedValue({
+      sha: "abcdef1234567890",
+      in_history: true,
+      files: [{ path: "src/task.ts", insertions: 2, deletions: 0, binary: false }],
+      body: "diff --git a/src/task.ts b/src/task.ts",
+      omitted_lines: 0,
+    });
+    await renderTaskDetailWithCommits([
+      {
+        sha: "abcdef1234567890",
+        short_sha: "abcdef1",
+        subject: "read commit diff",
+        files_changed: 1,
+        insertions: 2,
+        deletions: 0,
+        in_history: true,
+      },
+    ]);
+
+    fireEvent.click(screen.getByText("task.detail.commitDiff"));
+    await screen.findByText("diff --git a/src/task.ts b/src/task.ts");
+
+    expect(screen.queryByText("task.detail.commitDiffOmitted:0")).toBeNull();
+    expect(screen.queryByText("task.detail.commitDiffOmitted")).toBeNull();
+  });
+
+  it("shows the omitted line count when omitted_lines is positive", async () => {
+    vi.mocked(fetchTaskCommitDiff).mockResolvedValue({
+      sha: "abcdef1234567890",
+      in_history: true,
+      files: [{ path: "src/task.ts", insertions: 2, deletions: 0, binary: false }],
+      body: "diff --git a/src/task.ts b/src/task.ts",
+      omitted_lines: 3,
+    });
+    await renderTaskDetailWithCommits([
+      {
+        sha: "abcdef1234567890",
+        short_sha: "abcdef1",
+        subject: "read commit diff",
+        files_changed: 1,
+        insertions: 2,
+        deletions: 0,
+        in_history: true,
+      },
+    ]);
+
+    fireEvent.click(screen.getByText("task.detail.commitDiff"));
+
+    expect(await screen.findByText("task.detail.commitDiffOmitted:3")).toBeTruthy();
+  });
+
+  it("shows an empty message instead of an error for commits outside history", async () => {
+    vi.mocked(fetchTaskCommitDiff).mockResolvedValue({
+      sha: "abcdef1234567890",
+      in_history: false,
+      files: [],
+      body: "",
+      omitted_lines: 0,
+    });
+    await renderTaskDetailWithCommits([
+      {
+        sha: "abcdef1234567890",
+        short_sha: "abcdef1",
+        subject: "read commit diff",
+        files_changed: 1,
+        insertions: 2,
+        deletions: 0,
+        in_history: false,
+      },
+    ]);
+
+    fireEvent.click(screen.getByText("task.detail.commitDiff"));
+
+    expect(await screen.findByText("task.detail.commitDiffEmpty")).toBeTruthy();
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 });
 

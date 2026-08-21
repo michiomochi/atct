@@ -139,6 +139,21 @@ export interface TaskCommit {
   created_at: string;
 }
 
+export interface TaskCommitDiffFile {
+  path: string;
+  insertions: number;
+  deletions: number;
+  binary: boolean;
+}
+
+export interface TaskCommitDiff {
+  sha: string;
+  in_history: boolean;
+  files: TaskCommitDiffFile[];
+  body: string;
+  omitted_lines: number;
+}
+
 export interface TaskDetailResponse {
   commits?: TaskCommit[];
   task: Task;
@@ -257,6 +272,12 @@ export async function fetchGoal(id: string): Promise<GoalResponse> {
 
 export async function fetchTask(id: string): Promise<TaskDetailResponse> {
   return normalizeTaskDetail(await requestJson<unknown>(`/api/tasks/${encodeURIComponent(id)}`));
+}
+
+export async function fetchTaskCommitDiff(taskID: string, sha: string): Promise<TaskCommitDiff> {
+  return requestJson<TaskCommitDiff>(
+    `/api/tasks/${encodeURIComponent(taskID)}/commits/${encodeURIComponent(sha)}/diff`,
+  );
 }
 
 export async function answerDecision(id: string, payload: AnswerPayload): Promise<Decision> {

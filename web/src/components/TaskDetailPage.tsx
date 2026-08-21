@@ -4,9 +4,11 @@ import { useTranslation } from "react-i18next";
 import { formatDateTime } from "../i18n";
 import {
   fetchTask,
+  fetchTaskCommitDiff,
   subscribeToDecisionEvents,
   type Decision,
   type DecisionHistoryEntry,
+  type TaskCommitDiff,
   type TaskDetailResponse,
 } from "../lib/api";
 import { resolveRouteID } from "../lib/ui";
@@ -21,6 +23,11 @@ interface Props {
 type LoadState =
   | { kind: "loading" }
   | { kind: "ready"; data: TaskDetailResponse }
+  | { kind: "error"; message: string };
+
+type CommitDiffState =
+  | { kind: "loading" }
+  | { kind: "ready"; data: TaskCommitDiff }
   | { kind: "error"; message: string };
 
 function errorMessage(reason: unknown, fallback: string): string {
@@ -46,7 +53,31 @@ export function TaskDetailPage({ id }: Props) {
   const [state, setState] = useState<LoadState>({ kind: "loading" });
   const [updatePending, setUpdatePending] = useState(false);
   const dirtyDecisionIDs = useRef(new Set<string>());
+  const [commitDiffStates, setCommitDiffStates] = useState<Record<string, CommitDiffState>>({});
+  const commitDiffStatesRef = useRef<Record<string, CommitDiffState>>({});
   const locale = i18n.language.startsWith("ja") ? "ja" : "en";
+
+  const setCommitDiffState = useCallback((sha: string, next: CommitDiffState) => {
+    const nextStates = { ...commitDiffStatesRef.current, [sha]: next };
+    commitDiffStatesRef.current = nextStates;
+    setCommitDiffStates(nextStates);
+  }, []);
+
+  const loadCommitDiff = useCallback(
+    async (sha: string) => {
+      if (commitDiffStatesRef.current[sha]) {
+        return;
+      }
+      setCommitDiffState(sha, { kind: "loading" });
+      try {
+        const diff = await fetchTaskCommitDiff(resolvedID, sha);
+        setCommitDiffState(sha, { kind: "ready", data: diff });
+      } catch (reason) {
+        setCommitDiffState(sha, { kind: "error", message: errorMessage(reason, t("goal.error.load")) });
+      }
+    },
+    [resolvedID, setCommitDiffState, t],
+  );
 
   const load = useCallback(async () => {
     dirtyDecisionIDs.current.clear();
@@ -81,6 +112,11 @@ export function TaskDetailPage({ id }: Props) {
     void load();
     return subscribeToDecisionEvents(handleDecisionEvent);
   }, [handleDecisionEvent, load]);
+
+  useEffect(() => {
+    commitDiffStatesRef.current = {};
+    setCommitDiffStates({});
+  }, [resolvedID]);
 
   const data = state.kind === "ready" ? state.data : undefined;
   const taskOpenDecisions = data ? taskDecisionsFor(data.task.id, data.open_decisions) : [];
@@ -153,8 +189,11 @@ export function TaskDetailPage({ id }: Props) {
                 {t("task.detail.commits")}
               </h2>
               <ul className="mt-6 space-y-4">
-                {taskCommits.map((commit) => (
-                  <li key={commit.sha} className="min-w-0 border-t border-line pt-4 first:border-t-0 first:pt-0">
+                {taskCommits.map((commit) => {
+                  const diffState = commitDiffStates[commit.sha];
+
+                  return (
+                    <li key={commit.sha} className="min-w-0 border-t border-line pt-4 first:border-t-0 first:pt-0">
                     <div className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1 text-sm">
                       <span className="font-mono text-ink-950">{commit.short_sha}</span>
                       <span className="min-w-0 break-words text-ink-950">{commit.subject}</span>
@@ -165,8 +204,60 @@ export function TaskDetailPage({ id }: Props) {
                       </span>
                       {!commit.in_history && <span className="text-accent-700">{t("task.detail.commitMissing")}</span>}
                     </div>
-                  </li>
-                ))}
+                    <details
+                      className="mt-4 min-w-0"
+                      onToggle={(event) => {
+                        if (event.currentTarget.open) {
+                          void loadCommitDiff(commit.sha);
+                        }
+                      }}
+                    >
+                      <summary className="focus-ring cursor-pointer text-sm font-medium text-accent-700 hover:text-accent-900">
+                        {t("task.detail.commitDiff")}
+                      </summary>
+                      {diffState?.kind === "loading" && (
+                        <AreaLoading label={t("task.detail.commitDiff")} />
+                      )}
+                      {diffState?.kind === "error" && (
+                        <p className="mt-4 break-words text-sm text-danger-700" role="alert">
+                          {diffState.message}
+                        </p>
+                      )}
+                      {diffState?.kind === "ready" &&
+                        (diffState.data.in_history ? (
+                          <div className="mt-4 min-w-0 max-w-full space-y-4">
+                            <ul className="min-w-0 space-y-2 text-sm text-ink-700">
+                              {diffState.data.files.map((file) => (
+                                <li key={file.path} className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1">
+                                  <span className="min-w-0 break-words font-mono">{file.path}</span>
+                                  {file.binary ? (
+                                    <span className="text-ink-600">{t("task.detail.commitDiffBinary")}</span>
+                                  ) : (
+                                    <span className="whitespace-nowrap">
+                                      +{file.insertions} −{file.deletions}
+                                    </span>
+                                  )}
+                                </li>
+                              ))}
+                            </ul>
+                            <pre className="min-w-0 max-w-full overflow-x-auto whitespace-pre rounded border border-line bg-surface p-4 font-mono text-xs leading-5 text-ink-800">
+                              {diffState.data.body}
+                            </pre>
+                            {diffState.data.omitted_lines > 0 && (
+                              <p className="text-sm text-ink-600">
+                                {t("task.detail.commitDiffOmitted", {
+                                  count: diffState.data.omitted_lines,
+                                })}
+                              </p>
+                            )}
+                      </div>
+                        ) : (
+                          <p className="mt-4 text-sm text-ink-600">{t("task.detail.commitDiffEmpty")}</p>
+                        ))}
+                    </details>
+                    </li>
+                  );
+                })}
               </ul>
             </section>
           )}
