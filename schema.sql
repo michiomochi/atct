@@ -19,6 +19,7 @@ CREATE INDEX IF NOT EXISTS idx_agent_sessions_project_registered_at
 CREATE TABLE IF NOT EXISTS goals (
   id             TEXT PRIMARY KEY,
   project_id     TEXT NOT NULL REFERENCES projects(id),
+  derived_from_goal_id TEXT REFERENCES goals(id),
   content        TEXT NOT NULL,
   status         TEXT NOT NULL,
   creator        TEXT NOT NULL DEFAULT 'human',

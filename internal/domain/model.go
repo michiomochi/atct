@@ -28,17 +28,18 @@ type CompletionReport struct {
 }
 
 type Goal struct {
-	ID          string     `json:"id"`
-	ProjectID   string     `json:"project_id"`
-	Content     string     `json:"content"`
-	Status      GoalStatus `json:"status"`
-	Creator     string     `json:"creator"`
-	WorkDone    string     `json:"work_done"`
-	NowPossible string     `json:"now_possible"`
-	HowToVerify string     `json:"how_to_verify"`
-	Surprises   string     `json:"surprises"`
-	NeedsReview string     `json:"needs_review"`
-	NextSteps   string     `json:"next_steps"`
+	ID                string     `json:"id"`
+	ProjectID         string     `json:"project_id"`
+	DerivedFromGoalID string     `json:"derived_from_goal_id"`
+	Content           string     `json:"content"`
+	Status            GoalStatus `json:"status"`
+	Creator           string     `json:"creator"`
+	WorkDone          string     `json:"work_done"`
+	NowPossible       string     `json:"now_possible"`
+	HowToVerify       string     `json:"how_to_verify"`
+	Surprises         string     `json:"surprises"`
+	NeedsReview       string     `json:"needs_review"`
+	NextSteps         string     `json:"next_steps"`
 
 	// ResultSummary preserves the legacy completion report field for API clients
 	// that still use the pre-structured report format.

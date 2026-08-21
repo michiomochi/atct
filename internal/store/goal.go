@@ -20,9 +20,16 @@ var (
 	ErrGoalNotActive   = errors.New("goal is not active")
 )
 
-func (s *Store) CreateGoal(ctx context.Context, projectID, content, creator string) (domain.Goal, error) {
+func (s *Store) CreateGoal(ctx context.Context, projectID, content, creator string, derivedFromGoalID ...string) (domain.Goal, error) {
 	if strings.TrimSpace(content) == "" {
 		return domain.Goal{}, errors.New("goal content must not be blank")
+	}
+	if len(derivedFromGoalID) > 1 {
+		return domain.Goal{}, errors.New("goal can have at most one derived-from goal")
+	}
+	parentID := ""
+	if len(derivedFromGoalID) == 1 {
+		parentID = strings.TrimSpace(derivedFromGoalID[0])
 	}
 
 	now := time.Now().UTC()
@@ -32,23 +39,25 @@ func (s *Store) CreateGoal(ctx context.Context, projectID, content, creator stri
 		status = domain.GoalProposed
 	}
 	g := domain.Goal{
-		ID:        uuid.NewString(),
-		ProjectID: projectID,
-		Content:   content,
-		Status:    status,
-		Creator:   creator,
-		CreatedAt: now,
-		UpdatedAt: now,
+		ID:                uuid.NewString(),
+		ProjectID:         projectID,
+		DerivedFromGoalID: parentID,
+		Content:           content,
+		Status:            status,
+		Creator:           creator,
+		CreatedAt:         now,
+		UpdatedAt:         now,
 	}
 	q := sqlcgen.New(s.db)
 	err := q.CreateGoal(ctx, sqlcgen.CreateGoalParams{
-		ID:        g.ID,
-		ProjectID: g.ProjectID,
-		Content:   g.Content,
-		Status:    string(g.Status),
-		Creator:   g.Creator,
-		CreatedAt: now.Format(time.RFC3339),
-		UpdatedAt: now.Format(time.RFC3339),
+		ID:                g.ID,
+		ProjectID:         g.ProjectID,
+		DerivedFromGoalID: nullableGoalID(parentID),
+		Content:           g.Content,
+		Status:            string(g.Status),
+		Creator:           g.Creator,
+		CreatedAt:         now.Format(time.RFC3339),
+		UpdatedAt:         now.Format(time.RFC3339),
 	})
 	if err != nil {
 		return domain.Goal{}, fmt.Errorf("insert goal: %w", err)
@@ -82,18 +91,19 @@ func normalizeGoalCreator(input []string) string {
 
 func goalFromRow(row sqlcgen.Goal) (domain.Goal, error) {
 	g := domain.Goal{
-		ID:            row.ID,
-		ProjectID:     row.ProjectID,
-		Content:       row.Content,
-		Status:        domain.GoalStatus(row.Status),
-		Creator:       row.Creator,
-		ResultSummary: row.ResultSummary,
-		WorkDone:      row.WorkDone,
-		NowPossible:   row.NowPossible,
-		HowToVerify:   row.HowToVerify,
-		Surprises:     row.Surprises,
-		NeedsReview:   row.NeedsReview,
-		NextSteps:     row.NextSteps,
+		ID:                row.ID,
+		ProjectID:         row.ProjectID,
+		DerivedFromGoalID: row.DerivedFromGoalID.String,
+		Content:           row.Content,
+		Status:            domain.GoalStatus(row.Status),
+		Creator:           row.Creator,
+		ResultSummary:     row.ResultSummary,
+		WorkDone:          row.WorkDone,
+		NowPossible:       row.NowPossible,
+		HowToVerify:       row.HowToVerify,
+		Surprises:         row.Surprises,
+		NeedsReview:       row.NeedsReview,
+		NextSteps:         row.NextSteps,
 	}
 	var err error
 	if g.CreatedAt, err = time.Parse(time.RFC3339, row.CreatedAt); err != nil {
@@ -114,6 +124,39 @@ func (s *Store) GetGoal(ctx context.Context, id string) (domain.Goal, error) {
 		return domain.Goal{}, err
 	}
 	return goalFromRow(row)
+}
+
+func nullableGoalID(id string) sql.NullString {
+	return sql.NullString{String: id, Valid: id != ""}
+}
+
+func (s *Store) SetGoalDerivedFrom(ctx context.Context, goalID, derivedFromGoalID string) error {
+	goalID = strings.TrimSpace(goalID)
+	parentID := strings.TrimSpace(derivedFromGoalID)
+	if goalID == "" {
+		return fmt.Errorf("%w: empty id", ErrGoalNotFound)
+	}
+	if parentID != "" && goalID == parentID {
+		return errors.New("goal cannot be derived from itself")
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	result, err := sqlcgen.New(s.db).SetGoalDerivedFrom(ctx, sqlcgen.SetGoalDerivedFromParams{
+		DerivedFromGoalID: nullableGoalID(parentID),
+		UpdatedAt:         now,
+		ID:                goalID,
+	})
+	if err != nil {
+		return fmt.Errorf("set goal derived-from goal: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("check updated goal: %w", err)
+	}
+	if affected == 0 {
+		return fmt.Errorf("%w: %s", ErrGoalNotFound, goalID)
+	}
+	return nil
 }
 
 func (s *Store) ListGoals(ctx context.Context, projectID string) ([]domain.Goal, error) {

@@ -36,20 +36,21 @@ type Decision struct {
 }
 
 type Goal struct {
-	ID            string
-	ProjectID     string
-	Content       string
-	Status        string
-	Creator       string
-	ResultSummary string
-	WorkDone      string
-	NowPossible   string
-	HowToVerify   string
-	Surprises     string
-	NeedsReview   string
-	NextSteps     string
-	CreatedAt     string
-	UpdatedAt     string
+	ID                string
+	ProjectID         string
+	DerivedFromGoalID sql.NullString
+	Content           string
+	Status            string
+	Creator           string
+	ResultSummary     string
+	WorkDone          string
+	NowPossible       string
+	HowToVerify       string
+	Surprises         string
+	NeedsReview       string
+	NextSteps         string
+	CreatedAt         string
+	UpdatedAt         string
 }
 
 type Project struct {
