@@ -51,9 +51,10 @@ shell; it does not change what the plugin runs.
 
 ## Getting started
 
-From inside any repository, say `/atct:start`. If it is not registered yet, the repository is
-registered on the spot. Running `/atct:start` in a repository you did not intend to manage also
-places that repository under atct management.
+After installing the atct plugin, open Claude Code or Codex in the repository you want to manage
+and enter `/atct:start` in the agent chat — not in a terminal. If it is not registered yet, the
+repository is registered on the spot. Running `/atct:start` in a repository you did not intend to
+manage also places that repository under atct management.
 
 Open <http://127.0.0.1:8787/> and create your first goal there — **everything a human does happens
 on the dashboard.** The daemon starts on its own the first time anything needs it.
