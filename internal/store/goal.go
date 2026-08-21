@@ -193,6 +193,23 @@ func (s *Store) ListAllGoals(ctx context.Context) ([]domain.Goal, error) {
 	return out, nil
 }
 
+func (s *Store) ListDerivedGoals(ctx context.Context, derivedFromGoalID string) ([]domain.Goal, error) {
+	rows, err := sqlcgen.New(s.db).ListDerivedGoals(ctx, nullableGoalID(derivedFromGoalID))
+	if err != nil {
+		return nil, fmt.Errorf("query derived goals: %w", err)
+	}
+
+	out := make([]domain.Goal, 0, len(rows))
+	for _, row := range rows {
+		g, err := goalFromRow(row)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, g)
+	}
+	return out, nil
+}
+
 type completionReportField struct {
 	name  string
 	value string

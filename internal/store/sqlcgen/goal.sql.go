@@ -196,6 +196,55 @@ func (q *Queries) ListAllGoals(ctx context.Context) ([]Goal, error) {
 	return items, nil
 }
 
+const listDerivedGoals = `-- name: ListDerivedGoals :many
+SELECT
+  id, project_id, derived_from_goal_id, content, status, creator, result_summary,
+  work_done, now_possible, how_to_verify, surprises, needs_review, next_steps,
+  created_at, updated_at
+FROM goals
+WHERE derived_from_goal_id = ?
+ORDER BY created_at
+`
+
+func (q *Queries) ListDerivedGoals(ctx context.Context, derivedFromGoalID sql.NullString) ([]Goal, error) {
+	rows, err := q.db.QueryContext(ctx, listDerivedGoals, derivedFromGoalID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Goal
+	for rows.Next() {
+		var i Goal
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.DerivedFromGoalID,
+			&i.Content,
+			&i.Status,
+			&i.Creator,
+			&i.ResultSummary,
+			&i.WorkDone,
+			&i.NowPossible,
+			&i.HowToVerify,
+			&i.Surprises,
+			&i.NeedsReview,
+			&i.NextSteps,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listGoals = `-- name: ListGoals :many
 SELECT
   id, project_id, derived_from_goal_id, content, status, creator, result_summary,

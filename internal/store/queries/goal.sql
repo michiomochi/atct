@@ -59,6 +59,15 @@ SELECT
 FROM goals
 ORDER BY created_at;
 
+-- name: ListDerivedGoals :many
+SELECT
+  id, project_id, derived_from_goal_id, content, status, creator, result_summary,
+  work_done, now_possible, how_to_verify, surprises, needs_review, next_steps,
+  created_at, updated_at
+FROM goals
+WHERE derived_from_goal_id = ?
+ORDER BY created_at;
+
 -- name: SetGoalDerivedFrom :execresult
 UPDATE goals SET derived_from_goal_id = ?, updated_at = ?
 WHERE id = ?;

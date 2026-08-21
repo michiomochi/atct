@@ -79,6 +79,8 @@ type inboxResponse struct {
 
 type goalResponse struct {
 	Goal                   goalView              `json:"goal"`
+	DerivedFrom            *taskGoalView         `json:"derived_from,omitempty"`
+	DerivedGoals           []taskGoalView        `json:"derived_goals"`
 	Now                    []TaskView            `json:"now"`
 	NeedsDecision          []TaskView            `json:"needs_decision"`
 	UnattachedDecisions    []domain.Decision     `json:"unattached_decisions"`
@@ -486,12 +488,33 @@ func (s *Server) handleGoal(w http.ResponseWriter, r *http.Request, goalID strin
 	}
 	projectName := ""
 	projectRootPath := ""
+	projectNames := make(map[string]string, len(projects))
 	for _, project := range projects {
+		projectNames[project.ID] = project.Name
 		if project.ID == goal.ProjectID {
 			projectName = project.Name
 			projectRootPath = project.RootPath
-			break
 		}
+	}
+	var derivedFrom *taskGoalView
+	if goal.DerivedFromGoalID != "" {
+		parent, err := s.store.GetGoal(ctx, goal.DerivedFromGoalID)
+		if err == nil {
+			view := newGoalLineageView(parent, projectNames[parent.ProjectID])
+			derivedFrom = &view
+		} else if !errors.Is(err, store.ErrGoalNotFound) {
+			writeStoreError(w, err)
+			return
+		}
+	}
+	derivedGoals, err := s.store.ListDerivedGoals(ctx, goal.ID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	derivedGoalViews := make([]taskGoalView, 0, len(derivedGoals))
+	for _, derivedGoal := range derivedGoals {
+		derivedGoalViews = append(derivedGoalViews, newGoalLineageView(derivedGoal, projectNames[derivedGoal.ProjectID]))
 	}
 	tasks, err := s.store.ListTasks(ctx, goalID)
 	if err != nil {
@@ -523,6 +546,8 @@ func (s *Server) handleGoal(w http.ResponseWriter, r *http.Request, goalID strin
 	allTaskViews := make([]TaskView, 0, len(tasks))
 	response := goalResponse{
 		Goal:                   goalView{Goal: goal, ProjectName: projectName},
+		DerivedFrom:            derivedFrom,
+		DerivedGoals:           derivedGoalViews,
 		Now:                    make([]TaskView, 0),
 		NeedsDecision:          make([]TaskView, 0),
 		UnattachedDecisions:    unattachedDecisions,
@@ -827,6 +852,14 @@ func gitCommitInHistory(ctx context.Context, rootPath, sha string) bool {
 		return false
 	}
 	return exec.CommandContext(ctx, "git", "-C", rootPath, "cat-file", "-e", sha+"^{commit}").Run() == nil
+}
+
+func newGoalLineageView(goal domain.Goal, projectName string) taskGoalView {
+	return taskGoalView{
+		ID:          goal.ID,
+		Headline:    domain.Headline(goal.Content),
+		ProjectName: projectName,
+	}
 }
 
 func newTaskCommitView(ctx context.Context, rootPath string, commit domain.TaskCommit) taskCommitView {

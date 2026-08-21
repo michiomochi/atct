@@ -919,6 +919,154 @@ func TestHTTPGoalDetailIncludesAllTasksWithoutCrossGoalMixing(t *testing.T) {
 	}
 }
 
+func TestHTTPGoalDetailIncludesDerivedFromGoal(t *testing.T) {
+	f := newBareFixture(t)
+	parent, err := f.store.CreateGoal(f.ctx, f.project.ID, "Parent goal", "human")
+	if err != nil {
+		t.Fatal(err)
+	}
+	child, err := f.store.CreateGoal(f.ctx, f.project.ID, "Child goal", "human", parent.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+	status, _, body := doRequest(t, srv.Client(), http.MethodGet, srv.URL+"/api/goals/"+child.ID, nil)
+	if status != http.StatusOK {
+		t.Fatalf("goal status = %d; body=%s", status, body)
+	}
+	var payload struct {
+		DerivedFrom *struct {
+			ID          string `json:"id"`
+			Headline    string `json:"headline"`
+			ProjectName string `json:"project_name"`
+		} `json:"derived_from"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatalf("decode goal detail: %v; body=%s", err, body)
+	}
+	if payload.DerivedFrom == nil {
+		t.Fatalf("derived_from is missing: %s", body)
+	}
+	if payload.DerivedFrom.ID != parent.ID || payload.DerivedFrom.Headline != "Parent goal" {
+		t.Fatalf("derived_from = %+v, want id=%s headline=%q", *payload.DerivedFrom, parent.ID, "Parent goal")
+	}
+}
+
+func TestHTTPGoalDetailOmitsDerivedFromGoalWhenUnset(t *testing.T) {
+	f := newBareFixture(t)
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+	status, _, body := doRequest(t, srv.Client(), http.MethodGet, srv.URL+"/api/goals/"+f.goal.ID, nil)
+	if status != http.StatusOK {
+		t.Fatalf("goal status = %d; body=%s", status, body)
+	}
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatalf("decode goal detail: %v; body=%s", err, body)
+	}
+	if _, ok := payload["derived_from"]; ok {
+		t.Fatalf("derived_from should be omitted: %s", body)
+	}
+}
+
+func TestHTTPGoalDetailOmitsMissingDerivedFromGoal(t *testing.T) {
+	f := newBareFixture(t)
+	child, err := f.store.CreateGoal(f.ctx, f.project.ID, "Child goal", "human")
+	if err != nil {
+		t.Fatal(err)
+	}
+	missingParentID := "missing-parent-id"
+	if _, err := f.store.DB().ExecContext(f.ctx, "PRAGMA foreign_keys = OFF"); err != nil {
+		t.Fatalf("disable foreign keys: %v", err)
+	}
+	if _, err := f.store.DB().ExecContext(f.ctx, "UPDATE goals SET derived_from_goal_id = ? WHERE id = ?", missingParentID, child.ID); err != nil {
+		t.Fatalf("set missing parent: %v", err)
+	}
+	if _, err := f.store.DB().ExecContext(f.ctx, "PRAGMA foreign_keys = ON"); err != nil {
+		t.Fatalf("restore foreign keys: %v", err)
+	}
+
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+	status, _, body := doRequest(t, srv.Client(), http.MethodGet, srv.URL+"/api/goals/"+child.ID, nil)
+	if status != http.StatusOK {
+		t.Fatalf("goal status = %d; body=%s", status, body)
+	}
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatalf("decode goal detail: %v; body=%s", err, body)
+	}
+	if _, ok := payload["derived_from"]; ok {
+		t.Fatalf("derived_from should be omitted when parent is missing: %s", body)
+	}
+}
+
+func TestHTTPGoalDetailIncludesDerivedGoals(t *testing.T) {
+	f := newBareFixture(t)
+	parent, err := f.store.CreateGoal(f.ctx, f.project.ID, "Parent goal", "human")
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := f.store.CreateGoal(f.ctx, f.project.ID, "First derived goal", "human", parent.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := f.store.CreateGoal(f.ctx, f.project.ID, "Second derived goal", "human", parent.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+	status, _, body := doRequest(t, srv.Client(), http.MethodGet, srv.URL+"/api/goals/"+parent.ID, nil)
+	if status != http.StatusOK {
+		t.Fatalf("goal status = %d; body=%s", status, body)
+	}
+	var payload struct {
+		DerivedGoals []struct {
+			ID       string `json:"id"`
+			Headline string `json:"headline"`
+		} `json:"derived_goals"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatalf("decode goal detail: %v; body=%s", err, body)
+	}
+	if len(payload.DerivedGoals) != 2 {
+		t.Fatalf("derived_goals = %+v, want 2 entries", payload.DerivedGoals)
+	}
+	got := make(map[string]string, len(payload.DerivedGoals))
+	for _, derived := range payload.DerivedGoals {
+		got[derived.ID] = derived.Headline
+	}
+	if got[first.ID] != "First derived goal" || got[second.ID] != "Second derived goal" {
+		t.Fatalf("derived_goals = %+v, want both derived goals", got)
+	}
+}
+
+func TestHTTPGoalDetailReturnsEmptyDerivedGoalsArray(t *testing.T) {
+	f := newBareFixture(t)
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+	status, _, body := doRequest(t, srv.Client(), http.MethodGet, srv.URL+"/api/goals/"+f.goal.ID, nil)
+	if status != http.StatusOK {
+		t.Fatalf("goal status = %d; body=%s", status, body)
+	}
+	var payload struct {
+		DerivedGoals []json.RawMessage `json:"derived_goals"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatalf("decode goal detail: %v; body=%s", err, body)
+	}
+	if payload.DerivedGoals == nil {
+		t.Fatalf("derived_goals is missing or null: %s", body)
+	}
+	if len(payload.DerivedGoals) != 0 {
+		t.Fatalf("derived_goals = %s, want []", body)
+	}
+}
+
 func TestHTTPGoalDetailIncludesAllTaskCommitsInTaskOrder(t *testing.T) {
 	f := newBareFixture(t)
 	tasks, err := f.store.DeclareTasks(f.ctx, f.goal.ID, "commit-agent", "commit-declare", []string{"first task", "second task"}, []string{"Complete the first task.", "Complete the second task."})
