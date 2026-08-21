@@ -578,6 +578,9 @@ func (s *Store) ListUnappliedDecisionsForProject(ctx context.Context, projectID 
 	})
 }
 
+// AppliedDecisionHistoryLimit is the maximum number of applied Decisions returned.
+const AppliedDecisionHistoryLimit = 20
+
 // ListAppliedDecisions returns the most recent applied Decisions for a goal
 // and the exact number omitted by the history limit.
 func (s *Store) ListAppliedDecisions(ctx context.Context, goalID string) ([]domain.Decision, int, error) {
@@ -587,15 +590,15 @@ func (s *Store) ListAppliedDecisions(ctx context.Context, goalID string) ([]doma
 	}
 	total := int(totalCount)
 
-	rows, err := decisionQueries(s).ListAppliedDecisions(ctx, goalID)
+	rows, err := decisionQueries(s).ListAppliedDecisions(ctx, sqlcgen.ListAppliedDecisionsParams{
+		GoalID:       goalID,
+		HistoryLimit: int64(AppliedDecisionHistoryLimit),
+	})
 	if err != nil {
 		return nil, 0, fmt.Errorf("query applied decisions: %w", err)
 	}
 
-	limit := total
-	if limit > 20 {
-		limit = 20
-	}
+	limit := min(total, AppliedDecisionHistoryLimit)
 	out, err := convertDecisionRows(rows, func(row sqlcgen.ListAppliedDecisionsRow) decisionRow {
 		return decisionRow{
 			ID:               row.ID,
@@ -643,17 +646,15 @@ func (s *Store) ListAppliedDecisionsForTask(ctx context.Context, goalID, taskID 
 	total := int(totalCount)
 
 	rows, err := decisionQueries(s).ListAppliedDecisionsForTask(ctx, sqlcgen.ListAppliedDecisionsForTaskParams{
-		GoalID: goalID,
-		TaskID: sql.NullString{String: taskID, Valid: true},
+		GoalID:       goalID,
+		TaskID:       sql.NullString{String: taskID, Valid: true},
+		HistoryLimit: int64(AppliedDecisionHistoryLimit),
 	})
 	if err != nil {
 		return nil, 0, fmt.Errorf("query applied decisions for task: %w", err)
 	}
 
-	limit := total
-	if limit > 20 {
-		limit = 20
-	}
+	limit := min(total, AppliedDecisionHistoryLimit)
 	out, err := convertDecisionRows(rows, func(row sqlcgen.ListAppliedDecisionsForTaskRow) decisionRow {
 		return decisionRow{
 			ID:               row.ID,

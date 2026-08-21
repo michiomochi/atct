@@ -115,7 +115,7 @@ SELECT
 FROM decisions
 WHERE goal_id = ? AND status = 'applied'
 ORDER BY answered_at DESC, applied_at DESC, id DESC
-LIMIT 20;
+LIMIT sqlc.arg(history_limit);
 
 -- name: ListAppliedDecisionsForTask :many
 SELECT
@@ -125,4 +125,4 @@ SELECT
 FROM decisions
 WHERE goal_id = ? AND task_id = ? AND status = 'applied'
 ORDER BY answered_at DESC, applied_at DESC, id DESC
-LIMIT 20;
+LIMIT sqlc.arg(history_limit);

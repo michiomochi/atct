@@ -391,8 +391,13 @@ SELECT
 FROM decisions
 WHERE goal_id = ? AND status = 'applied'
 ORDER BY answered_at DESC, applied_at DESC, id DESC
-LIMIT 20
+LIMIT ?2
 `
+
+type ListAppliedDecisionsParams struct {
+	GoalID       string
+	HistoryLimit int64
+}
 
 type ListAppliedDecisionsRow struct {
 	ID               string
@@ -413,8 +418,8 @@ type ListAppliedDecisionsRow struct {
 	CreatedAt        string
 }
 
-func (q *Queries) ListAppliedDecisions(ctx context.Context, goalID string) ([]ListAppliedDecisionsRow, error) {
-	rows, err := q.db.QueryContext(ctx, listAppliedDecisions, goalID)
+func (q *Queries) ListAppliedDecisions(ctx context.Context, arg ListAppliedDecisionsParams) ([]ListAppliedDecisionsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listAppliedDecisions, arg.GoalID, arg.HistoryLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -461,12 +466,13 @@ SELECT
 FROM decisions
 WHERE goal_id = ? AND task_id = ? AND status = 'applied'
 ORDER BY answered_at DESC, applied_at DESC, id DESC
-LIMIT 20
+LIMIT ?3
 `
 
 type ListAppliedDecisionsForTaskParams struct {
-	GoalID string
-	TaskID sql.NullString
+	GoalID       string
+	TaskID       sql.NullString
+	HistoryLimit int64
 }
 
 type ListAppliedDecisionsForTaskRow struct {
@@ -489,7 +495,7 @@ type ListAppliedDecisionsForTaskRow struct {
 }
 
 func (q *Queries) ListAppliedDecisionsForTask(ctx context.Context, arg ListAppliedDecisionsForTaskParams) ([]ListAppliedDecisionsForTaskRow, error) {
-	rows, err := q.db.QueryContext(ctx, listAppliedDecisionsForTask, arg.GoalID, arg.TaskID)
+	rows, err := q.db.QueryContext(ctx, listAppliedDecisionsForTask, arg.GoalID, arg.TaskID, arg.HistoryLimit)
 	if err != nil {
 		return nil, err
 	}
