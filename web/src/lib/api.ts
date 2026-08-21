@@ -128,7 +128,19 @@ export interface TaskGoalSummary {
   project_name?: string;
 }
 
+export interface TaskCommit {
+  sha: string;
+  short_sha: string;
+  subject: string;
+  files_changed: number;
+  insertions: number;
+  deletions: number;
+  in_history: boolean;
+  created_at: string;
+}
+
 export interface TaskDetailResponse {
+  commits?: TaskCommit[];
   task: Task;
   goal: TaskGoalSummary;
   open_decisions: Decision[];
@@ -215,6 +227,7 @@ export function normalizeTaskDetail(value: unknown): TaskDetailResponse {
   return {
     task: source.task as Task,
     goal: source.goal as TaskGoalSummary,
+    commits: arrayOrEmpty<TaskCommit>(source.commits),
     open_decisions: arrayOrEmpty<Decision>(source.open_decisions),
     decision_history: arrayOrEmpty<DecisionHistoryEntry>(source.decision_history),
     decision_history_omitted: typeof omitted === "number" && Number.isFinite(omitted) && omitted > 0 ? Math.floor(omitted) : 0,

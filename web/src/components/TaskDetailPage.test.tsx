@@ -35,6 +35,67 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
+function taskDetailWithCommits(commits: unknown[]): TaskDetailResponse {
+  return {
+    task: task("task-1", "Commit task"),
+    goal: {} as TaskDetailResponse["goal"],
+    open_decisions: [],
+    decision_history: [],
+    decision_history_omitted: 0,
+    commits,
+  } as TaskDetailResponse;
+}
+
+async function renderTaskDetailWithCommits(commits: unknown[]) {
+  window.history.replaceState({}, "", "/tasks/task-1");
+  apiMock.fetchTask.mockResolvedValue(taskDetailWithCommits(commits));
+  render(<TaskDetailPage id="task-1" />);
+  await screen.findByRole("heading", { name: "Commit task" });
+}
+
+describe("TaskDetailPage commits", () => {
+  it("does not render the commits section when commits are empty", async () => {
+    await renderTaskDetailWithCommits([]);
+
+    expect(screen.queryByRole("heading", { name: "task.detail.commits" })).toBeNull();
+  });
+
+  it("renders missing-history commits with subject and stats", async () => {
+    await renderTaskDetailWithCommits([
+      {
+        sha: "abcdef1234567890",
+        short_sha: "abcdef1",
+        subject: "keep task detail history",
+        files_changed: 3,
+        insertions: 40,
+        deletions: 12,
+        in_history: false,
+      },
+    ]);
+
+    expect(screen.getByText("keep task detail history")).toBeTruthy();
+    expect(screen.getByText(/3 task\.detail\.commitFiles · \+40 −12/)).toBeTruthy();
+    expect(screen.getByText("task.detail.commitMissing")).toBeTruthy();
+  });
+
+  it("does not mark commits that remain in history as missing", async () => {
+    await renderTaskDetailWithCommits([
+      {
+        sha: "abcdef1234567890",
+        short_sha: "abcdef1",
+        subject: "keep task detail history",
+        files_changed: 3,
+        insertions: 40,
+        deletions: 12,
+        in_history: true,
+      },
+    ]);
+
+    expect(screen.getByRole("heading", { name: "task.detail.commits" })).toBeTruthy();
+    expect(screen.queryByText("task.detail.commitMissing")).toBeNull();
+  });
+});
+
 function task(id: string, title: string, description = ""): Task {
   return {
     id,
@@ -91,6 +152,7 @@ function detailResponse(
     open_decisions: openDecisions,
     decision_history: decisionHistory,
     decision_history_omitted: 0,
+    commits: [],
   };
 }
 

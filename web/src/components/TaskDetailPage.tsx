@@ -85,6 +85,7 @@ export function TaskDetailPage({ id }: Props) {
   const data = state.kind === "ready" ? state.data : undefined;
   const taskOpenDecisions = data ? taskDecisionsFor(data.task.id, data.open_decisions) : [];
   const taskHistory = data ? taskHistoryFor(data.task.id, data.decision_history) : [];
+  const taskCommits = data?.commits ?? [];
   const noValue = t("task.detail.none");
   const retry = () => void load();
 
@@ -145,6 +146,30 @@ export function TaskDetailPage({ id }: Props) {
               </div>
             </dl>
           </section>
+
+          {taskCommits.length > 0 && (
+            <section className="min-w-0 border-t border-line pt-5" aria-labelledby="task-commits-heading">
+              <h2 id="task-commits-heading" className="font-display text-lg font-semibold tracking-tight text-ink-950">
+                {t("task.detail.commits")}
+              </h2>
+              <ul className="mt-6 space-y-4">
+                {taskCommits.map((commit) => (
+                  <li key={commit.sha} className="min-w-0 border-t border-line pt-4 first:border-t-0 first:pt-0">
+                    <div className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1 text-sm">
+                      <span className="font-mono text-ink-950">{commit.short_sha}</span>
+                      <span className="min-w-0 break-words text-ink-950">{commit.subject}</span>
+                    </div>
+                    <div className="mt-2 flex flex-wrap items-baseline gap-3 text-sm text-ink-600">
+                      <span className="whitespace-nowrap">
+                        {commit.files_changed} {t("task.detail.commitFiles")} · +{commit.insertions} −{commit.deletions}
+                      </span>
+                      {!commit.in_history && <span className="text-accent-700">{t("task.detail.commitMissing")}</span>}
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
         </>
       )}
 
