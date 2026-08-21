@@ -3,6 +3,8 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -344,6 +346,117 @@ func TestTaskWritesWithoutAgentSessionIDSkipProjectGuard(t *testing.T) {
 	}
 }
 
+func TestTaskUpdateWithoutCommitsPreservesExistingBehavior(t *testing.T) {
+	root, _ := createPendingResponseGitRepository(t)
+	s := openPendingResponseTestStore(t)
+	ctx := context.Background()
+	project := createPendingResponseProject(t, s, root, "task-update-no-commits")
+	goal, err := s.CreateGoal(ctx, project.ID, "task-update-goal", "description")
+	if err != nil {
+		t.Fatalf("CreateGoal: %v", err)
+	}
+	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "task-update-no-commits", []string{"task update"}, []string{"Complete the task update."}, nil)
+	if err != nil {
+		t.Fatalf("DeclareTasks: %v", err)
+	}
+	d := New(s)
+
+	params, err := json.Marshal(map[string]any{
+		"task_id": tasks[0].ID, "status": string(domain.TaskDone),
+	})
+	if err != nil {
+		t.Fatalf("Marshal task.update params: %v", err)
+	}
+	raw, err := d.dispatch(ctx, rpc.Request{Method: "task.update", Params: params})
+	if err != nil {
+		t.Fatalf("task.update: %v", err)
+	}
+	var updated domain.Task
+	if err := json.Unmarshal(raw, &updated); err != nil {
+		t.Fatalf("unmarshal task.update response %s: %v", raw, err)
+	}
+	if updated.Status != domain.TaskDone {
+		t.Fatalf("updated task = %#v, want done", updated)
+	}
+	commits, err := s.ListTaskCommits(ctx, tasks[0].ID)
+	if err != nil {
+		t.Fatalf("ListTaskCommits: %v", err)
+	}
+	if len(commits) != 0 {
+		t.Fatalf("task commits = %#v, want none", commits)
+	}
+}
+
+func TestTaskUpdateWithUnknownCommitKeepsStatusUnchanged(t *testing.T) {
+	root, _ := createPendingResponseGitRepository(t)
+	s := openPendingResponseTestStore(t)
+	ctx := context.Background()
+	project := createPendingResponseProject(t, s, root, "task-update-unknown-commit")
+	goal, err := s.CreateGoal(ctx, project.ID, "task-update-goal", "description")
+	if err != nil {
+		t.Fatalf("CreateGoal: %v", err)
+	}
+	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "task-update-unknown-commit", []string{"task update"}, []string{"Complete the task update."}, nil)
+	if err != nil {
+		t.Fatalf("DeclareTasks: %v", err)
+	}
+	d := New(s)
+
+	params, err := json.Marshal(map[string]any{
+		"task_id": tasks[0].ID, "status": string(domain.TaskDone),
+		"commits": []string{"0000000000000000000000000000000000000000"},
+	})
+	if err != nil {
+		t.Fatalf("Marshal task.update params: %v", err)
+	}
+	if _, err := d.dispatch(ctx, rpc.Request{Method: "task.update", Params: params}); err == nil {
+		t.Fatal("task.update succeeded, want unknown commit error")
+	}
+	storedTasks, err := s.ListTasks(ctx, goal.ID)
+	if err != nil {
+		t.Fatalf("ListTasks: %v", err)
+	}
+	if len(storedTasks) != 1 || storedTasks[0].Status != domain.TaskTodo {
+		t.Fatalf("target tasks after rejected commit = %#v, want one todo task", storedTasks)
+	}
+}
+
+func TestTaskUpdateWithDuplicateCommitLinksOnce(t *testing.T) {
+	root, sha := createPendingResponseGitRepository(t)
+	s := openPendingResponseTestStore(t)
+	ctx := context.Background()
+	project := createPendingResponseProject(t, s, root, "task-update-duplicate-commit")
+	goal, err := s.CreateGoal(ctx, project.ID, "task-update-goal", "description")
+	if err != nil {
+		t.Fatalf("CreateGoal: %v", err)
+	}
+	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "task-update-duplicate-commit", []string{"task update"}, []string{"Complete the task update."}, nil)
+	if err != nil {
+		t.Fatalf("DeclareTasks: %v", err)
+	}
+	d := New(s)
+	params, err := json.Marshal(map[string]any{
+		"task_id": tasks[0].ID, "status": string(domain.TaskDone),
+		"commits": []string{sha, sha},
+	})
+	if err != nil {
+		t.Fatalf("Marshal task.update params: %v", err)
+	}
+	if _, err := d.dispatch(ctx, rpc.Request{Method: "task.update", Params: params}); err != nil {
+		t.Fatalf("task.update: %v", err)
+	}
+	commits, err := s.ListTaskCommits(ctx, tasks[0].ID)
+	if err != nil {
+		t.Fatalf("ListTaskCommits: %v", err)
+	}
+	if len(commits) != 1 {
+		t.Fatalf("task commits = %#v, want one commit", commits)
+	}
+	if commits[0].SHA != sha {
+		t.Fatalf("linked commit SHA = %q, want %q", commits[0].SHA, sha)
+	}
+}
+
 func TestTaskClaimAssignsUnassociatedRunToTargetProject(t *testing.T) {
 	f := newProjectScopeFixture(t)
 	agentSessionID := "first-write-run"
@@ -540,6 +653,28 @@ func createPendingResponseProject(t *testing.T, s *store.Store, root, name strin
 		t.Fatalf("CreateProject: %v", err)
 	}
 	return project
+}
+
+func createPendingResponseGitRepository(t *testing.T) (string, string) {
+	t.Helper()
+	root := t.TempDir()
+	runGit := func(args ...string) string {
+		cmdArgs := append([]string{"-C", root}, args...)
+		output, err := exec.Command("git", cmdArgs...).CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, output)
+		}
+		return strings.TrimSpace(string(output))
+	}
+	runGit("init")
+	runGit("config", "user.email", "pending-response-test@example.com")
+	runGit("config", "user.name", "Pending Response Test")
+	if err := os.WriteFile(filepath.Join(root, "commit.txt"), []byte("pending response test\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	runGit("add", "commit.txt")
+	runGit("commit", "-m", "pending response test commit")
+	return root, runGit("rev-parse", "HEAD")
 }
 
 func answerPendingResponseDecision(t *testing.T, s *store.Store, goalID, taskID, question string) domain.Decision {

@@ -262,10 +262,11 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 
 	case "task.update":
 		var p struct {
-			TaskID                  string `json:"task_id"`
-			Status                  string `json:"status"`
-			AgentSessionID          string `json:"agent_session_id"`
-			IncludeUnappliedAnswers bool   `json:"include_unapplied_answers"`
+			TaskID                  string   `json:"task_id"`
+			Status                  string   `json:"status"`
+			Commits                 []string `json:"commits"`
+			AgentSessionID          string   `json:"agent_session_id"`
+			IncludeUnappliedAnswers bool     `json:"include_unapplied_answers"`
 		}
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, err
@@ -280,6 +281,33 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		st, err := domain.ParseTaskStatus(p.Status)
 		if err != nil {
 			return nil, err
+		}
+		if len(p.Commits) > 0 {
+			projects, err := d.store.ListProjects(ctx)
+			if err != nil {
+				return nil, err
+			}
+			var projectRoot string
+			for _, project := range projects {
+				if project.ID == targetProjectID {
+					projectRoot = project.RootPath
+					break
+				}
+			}
+			resolvedCommits := make([]domain.TaskCommit, 0, len(p.Commits))
+			for _, sha := range p.Commits {
+				commit, err := d.store.ResolveCommit(ctx, projectRoot, sha)
+				if err != nil {
+					return nil, err
+				}
+				resolvedCommits = append(resolvedCommits, commit)
+			}
+			for _, commit := range resolvedCommits {
+				commit.CreatedAt = time.Now()
+				if err := d.store.LinkTaskCommit(ctx, p.TaskID, commit); err != nil {
+					return nil, err
+				}
+			}
 		}
 		tk, err := d.store.UpdateTask(ctx, p.TaskID, st, p.AgentSessionID)
 		if err != nil || !p.IncludeUnappliedAnswers {

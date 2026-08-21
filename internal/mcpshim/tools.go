@@ -26,8 +26,9 @@ type TaskClaimIn struct {
 }
 
 type TaskUpdateIn struct {
-	TaskID string `json:"task_id"`
-	Status string `json:"status" jsonschema:"todo | doing | done | dropped"`
+	TaskID  string   `json:"task_id"`
+	Status  string   `json:"status" jsonschema:"todo | doing | done | dropped"`
+	Commits []string `json:"commits,omitempty" jsonschema:"commit SHAs produced by this task; optional"`
 }
 
 type DecisionAskIn struct {
@@ -184,11 +185,12 @@ func Register(server *mcp.Server, c *Client, agentSessionID string) {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:         "atct_task_update",
-		Description:  "Change a task status. Setting todo, done, or dropped releases the claim; a task with an open Decision cannot become done.",
+		Description:  "Change a task status. Setting todo, done, or dropped releases the claim; a task with an open Decision cannot become done. Optionally pass the commit SHAs this task produced.",
 		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in TaskUpdateIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
 		return callWithUnappliedDecisions(ctx, c, "task.update", map[string]any{
 			"task_id": in.TaskID, "status": in.Status, "agent_session_id": agentSessionID,
+			"commits":                   in.Commits,
 			"include_unapplied_answers": true,
 		})
 	})
