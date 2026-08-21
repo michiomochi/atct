@@ -898,7 +898,12 @@ func (s *Server) handleAnswer(w http.ResponseWriter, r *http.Request, decisionID
 		writeError(w, http.StatusBadRequest, "an answer label or text is required")
 		return
 	}
-	if !s.ensureOpenDecision(w, r.Context(), decisionID) {
+	decision, ok := s.ensureOpenDecision(w, r.Context(), decisionID)
+	if !ok {
+		return
+	}
+	if decision.Kind == domain.KindCompletion || decision.Kind == domain.KindGoalApproval {
+		writeError(w, http.StatusBadRequest, "use approve or reject for this decision")
 		return
 	}
 	decision, err := s.store.AnswerDecision(r.Context(), store.AnswerInput{
@@ -1045,21 +1050,21 @@ func (s *Server) handleReject(w http.ResponseWriter, r *http.Request, decisionID
 	writeJSON(w, http.StatusOK, decision)
 }
 
-func (s *Server) ensureOpenDecision(w http.ResponseWriter, ctx context.Context, decisionID string) bool {
+func (s *Server) ensureOpenDecision(w http.ResponseWriter, ctx context.Context, decisionID string) (domain.Decision, bool) {
 	decision, err := s.store.GetDecision(ctx, decisionID)
 	if errors.Is(err, store.ErrDecisionNotFound) {
 		writeError(w, http.StatusNotFound, err.Error())
-		return false
+		return domain.Decision{}, false
 	}
 	if err != nil {
 		writeStoreError(w, err)
-		return false
+		return domain.Decision{}, false
 	}
 	if decision.Status != domain.DecisionOpen {
 		writeError(w, http.StatusConflict, store.ErrDecisionNotOpen.Error())
-		return false
+		return domain.Decision{}, false
 	}
-	return true
+	return decision, true
 }
 
 func (s *Server) getOpenDecision(w http.ResponseWriter, ctx context.Context, decisionID string) (domain.Decision, bool) {

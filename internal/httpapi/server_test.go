@@ -1875,6 +1875,96 @@ func TestHTTPDecisionAndReleaseEndpointsValidateAndTransition(t *testing.T) {
 	assertErrorObject(t, status, headers, body, http.StatusBadRequest)
 }
 
+func TestHTTPAnswerRejectsCompletionDecision(t *testing.T) {
+	f := newFixture(t)
+	completion, err := f.store.AskDecision(f.ctx, store.AskInput{
+		GoalID:   f.goal.ID,
+		TaskID:   f.tasks[0].ID,
+		Kind:     domain.KindCompletion,
+		Question: "May this task be completed?",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+
+	status, headers, body := doRequest(t, srv.Client(), http.MethodPost, srv.URL+"/api/decisions/"+completion.ID+"/answer", mustJSON(t, map[string]string{
+		"answer_text": "yes",
+	}))
+	assertErrorObject(t, status, headers, body, http.StatusBadRequest)
+	var response map[string]string
+	if err := json.Unmarshal(body, &response); err != nil {
+		t.Fatal(err)
+	}
+	if response["error"] != "use approve or reject for this decision" {
+		t.Fatalf("unexpected answer guard error = %q", response["error"])
+	}
+	got, err := f.store.GetDecision(f.ctx, completion.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != domain.DecisionOpen {
+		t.Fatalf("completion decision status = %q, want open", got.Status)
+	}
+}
+
+func TestHTTPAnswerRejectsGoalApprovalDecision(t *testing.T) {
+	f := newFixture(t)
+	approval, err := f.store.AskDecision(f.ctx, store.AskInput{
+		GoalID:   f.goal.ID,
+		Kind:     domain.KindGoalApproval,
+		Question: "Approve this goal?",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+
+	status, headers, body := doRequest(t, srv.Client(), http.MethodPost, srv.URL+"/api/decisions/"+approval.ID+"/answer", mustJSON(t, map[string]string{
+		"answer_label": "maybe",
+	}))
+	assertErrorObject(t, status, headers, body, http.StatusBadRequest)
+	var response map[string]string
+	if err := json.Unmarshal(body, &response); err != nil {
+		t.Fatal(err)
+	}
+	if response["error"] != "use approve or reject for this decision" {
+		t.Fatalf("unexpected answer guard error = %q", response["error"])
+	}
+	got, err := f.store.GetDecision(f.ctx, approval.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != domain.DecisionOpen {
+		t.Fatalf("goal approval decision status = %q, want open", got.Status)
+	}
+}
+
+func TestHTTPAnswerAllowsDecisionKind(t *testing.T) {
+	f := newFixture(t)
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+
+	status, headers, body := doRequest(t, srv.Client(), http.MethodPost, srv.URL+"/api/decisions/"+f.open.ID+"/answer", mustJSON(t, map[string]string{
+		"answer_text": "yes",
+	}))
+	if status != http.StatusOK {
+		t.Fatalf("answer status = %d; body=%s", status, body)
+	}
+	if headers.Get("Content-Type") == "" {
+		t.Fatal("answer response has no content type")
+	}
+	got, err := f.store.GetDecision(f.ctx, f.open.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != domain.DecisionStatus("answered") || got.AnswerText != "yes" {
+		t.Fatalf("answered decision = %+v", got)
+	}
+}
+
 func TestHTTPApproveAndRejectCompletionEndpoints(t *testing.T) {
 	f := newBareFixture(t)
 	srv := newTestServer(t, f.store)
