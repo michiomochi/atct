@@ -148,7 +148,7 @@ Content-Type の取り違えは起きていない。**
 | 場面 | 手段 |
 |---|---|
 | Claude Code のセッションから 1 画面見る | **MCP を使う。**登録済みで、起動コストが無い |
-| executor（Codex）から見る | **スクリプト。**MCP は Claude Code 側の登録なので Codex からは使えない |
+| executor（Codex）から見る | **MCP を使う。**下の訂正を読むこと |
 | 素の `npx @playwright/mcp` を自分で起動する | **やらない。**引数なしは 180 秒で落ちる |
 
 ### MCP を使うときの注意（実測）
@@ -157,3 +157,29 @@ Content-Type の取り違えは起きていない。**
 `Loading Waiting for answers` / `Loading Projects` の状態だった。**ATCT の画面はデータを
 fetch してから描くので、遷移直後のスナップショットは中身を見ていない。**
 `browser_wait_for` で本文の文字を待ってからスナップショットを取ること。
+
+## 訂正: Codex からも MCP は使える（2026-08-21）
+
+上の表に「Codex からは使えない」と書いたが、**人間が `~/.codex/config.toml` に
+`[mcp_servers.playwright]` を足したので使える。**設定は Claude Code 側と同じ形である。
+
+    npx -y @playwright/mcp@latest --headless --isolated --output-dir ~/.cache/playwright-mcp
+    startup_timeout_sec = 120
+
+executor に実際に叩かせた（2026-08-21）。
+
+| 測ったこと | 結果 |
+|---|---|
+| 使えたツール | `browser_navigate` / `browser_wait_for` / `browser_evaluate` / `browser_console_messages` |
+| `http://127.0.0.1:8787/` の遷移 | **約 6.1 秒で成功。**180 秒のタイムアウトには当たらない |
+| タイトル | `Dashboard | ATCT` |
+| console のエラー | 0 件 |
+| 確認完了まで | 約 71 秒 |
+
+**「MCP が使えるのは Claude Code だけ」という一般化が誤りだった。**設定した側から使える。
+
+### 待つ文字はロケールに合わせる（実測）
+
+executor は `Projects`（英語）で待って **35 秒でタイムアウト**し、`プロジェクト` に
+変えて成功した。**画面のロケールは origin ごとに localStorage で保持される。**
+待ち文字を決める前に、その origin がどちらで描かれているかを確かめること。
