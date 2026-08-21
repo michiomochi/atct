@@ -230,8 +230,10 @@ func renderContextLegacy(goals []contextGoal, decisions []domain.Decision) strin
 	declareTasks := false
 	claimTasks := false
 	for _, item := range active {
-		fmt.Fprintf(&b, "Goal: %s\n", oneLine(item.Goal.Title))
-		fmt.Fprintf(&b, "Description: %s\n", oneLine(item.Goal.Description))
+		fmt.Fprintf(&b, "Goal: %s\n", oneLine(domain.Headline(item.Goal.Content)))
+		if body := oneLine(domain.Body(item.Goal.Content)); body != "" {
+			fmt.Fprintf(&b, "Description: %s\n", body)
+		}
 		fmt.Fprintf(&b, "goal_id: %s\n", oneLine(item.Goal.ID))
 		b.WriteString("Tasks:\n")
 		listed := 0
@@ -342,9 +344,9 @@ func renderContextForAgentSession(goals []contextGoal, decisions []domain.Decisi
 		displayed = displayed[:maxGoals]
 	}
 	for _, item := range displayed {
-		fmt.Fprintf(&b, "Goal: %s\n", oneLine(item.Goal.Title))
-		if description := oneLine(item.Goal.Description); description != "" {
-			fmt.Fprintf(&b, "Description: %s\n", description)
+		fmt.Fprintf(&b, "Goal: %s\n", oneLine(domain.Headline(item.Goal.Content)))
+		if body := oneLine(domain.Body(item.Goal.Content)); body != "" {
+			fmt.Fprintf(&b, "Description: %s\n", body)
 		}
 		fmt.Fprintf(&b, "goal_id: %s\n", item.Goal.ID)
 		b.WriteString("Tasks:\n")

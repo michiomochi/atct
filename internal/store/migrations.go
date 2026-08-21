@@ -111,8 +111,7 @@ var requiredCurrentV6Columns = map[string][]string{
 	"goals": {
 		"id",
 		"project_id",
-		"title",
-		"description",
+		"content",
 		"status",
 		"result_summary",
 		"work_done",
@@ -805,10 +804,37 @@ LIMIT 1`).Scan(&one)
 	return true, nil
 }
 
+// withPreContentGoalColumns swaps the goals expectation back to title and
+// description, for a database that has not reached 0007_goal_content.sql yet.
+func withPreContentGoalColumns(required map[string][]string) map[string][]string {
+	out := make(map[string][]string, len(required))
+	for table, columns := range required {
+		if table != "goals" {
+			out[table] = columns
+			continue
+		}
+		swapped := make([]string, 0, len(columns)+1)
+		for _, column := range columns {
+			if column == "content" {
+				swapped = append(swapped, "title", "description")
+				continue
+			}
+			swapped = append(swapped, column)
+		}
+		out[table] = swapped
+	}
+	return out
+}
+
 func validateV6Schema(ctx context.Context, conn *sql.Conn, state migrationState) error {
+	// This runs before the pending migrations are applied, so the expectation has
+	// to match the database as it stands, not as it will look afterwards.
 	requiredColumns := requiredV6Columns
 	if _, ok := state.applied["0004_agent_sessions.sql"]; ok {
 		requiredColumns = requiredCurrentV6Columns
+	}
+	if _, ok := state.applied["0007_goal_content.sql"]; !ok {
+		requiredColumns = withPreContentGoalColumns(requiredColumns)
 	}
 
 	tables := make([]string, 0, len(requiredColumns))

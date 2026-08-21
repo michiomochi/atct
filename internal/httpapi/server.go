@@ -48,8 +48,7 @@ type goalView struct {
 type proposedGoalView struct {
 	ID          string    `json:"id"`
 	ProjectID   string    `json:"project_id"`
-	Title       string    `json:"title"`
-	Description string    `json:"description"`
+	Content     string    `json:"content"`
 	CreatedAt   time.Time `json:"created_at"`
 	ProjectName string    `json:"project_name"`
 }
@@ -58,7 +57,7 @@ type decisionView struct {
 	domain.Decision
 	ProjectID        string `json:"project_id"`
 	ProjectName      string `json:"project_name"`
-	GoalTitle        string `json:"goal_title"`
+	GoalHeadline     string `json:"goal_headline"`
 	DefaultOption    string `json:"default_option"`
 	DefaultAfterMs   *int64 `json:"default_after_ms,omitempty"`
 	SettledByDefault bool   `json:"settled_by_default"`
@@ -84,7 +83,7 @@ type goalResponse struct {
 
 type taskGoalView struct {
 	ID          string `json:"id"`
-	Title       string `json:"title"`
+	Headline    string `json:"headline"`
 	ProjectName string `json:"project_name"`
 }
 
@@ -149,10 +148,9 @@ type rejectionRequest struct {
 }
 
 type createGoalRequest struct {
-	ProjectID   string `json:"project_id"`
-	Title       string `json:"title"`
-	Description string `json:"description"`
-	Creator     string `json:"creator"`
+	ProjectID string `json:"project_id"`
+	Content   string `json:"content"`
+	Creator   string `json:"creator"`
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -306,8 +304,8 @@ func (s *Server) handleCreateGoal(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "project_id is required")
 		return
 	}
-	if strings.TrimSpace(request.Title) == "" {
-		writeError(w, http.StatusBadRequest, "title is required")
+	if strings.TrimSpace(request.Content) == "" {
+		writeError(w, http.StatusBadRequest, "content is required")
 		return
 	}
 
@@ -328,7 +326,7 @@ func (s *Server) handleCreateGoal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	goal, err := s.store.CreateGoal(r.Context(), request.ProjectID, request.Title, request.Description, request.Creator)
+	goal, err := s.store.CreateGoal(r.Context(), request.ProjectID, request.Content, request.Creator)
 	if err != nil {
 		writeStoreError(w, err)
 		return
@@ -364,11 +362,11 @@ func (s *Server) handleInbox(w http.ResponseWriter, r *http.Request) {
 	}
 	goalProjectIDs := make(map[string]string, len(goals))
 	goalProjectNames := make(map[string]string, len(goals))
-	goalTitles := make(map[string]string, len(goals))
+	goalHeadlines := make(map[string]string, len(goals))
 	for _, goal := range goals {
 		goalProjectIDs[goal.ID] = goal.ProjectID
 		goalProjectNames[goal.ID] = projectNames[goal.ProjectID]
-		goalTitles[goal.ID] = goal.Title
+		goalHeadlines[goal.ID] = domain.Headline(goal.Content)
 	}
 
 	openByTask := indexDecisions(openDecisions)
@@ -382,7 +380,7 @@ func (s *Server) handleInbox(w http.ResponseWriter, r *http.Request) {
 			Decision:         decision,
 			ProjectID:        goalProjectIDs[decision.GoalID],
 			ProjectName:      goalProjectNames[decision.GoalID],
-			GoalTitle:        goalTitles[decision.GoalID],
+			GoalHeadline:     goalHeadlines[decision.GoalID],
 			DefaultOption:    decision.DefaultOption,
 			DefaultAfterMs:   decision.DefaultAfterMs,
 			SettledByDefault: decision.DefaultAppliedAt != nil,
@@ -394,7 +392,7 @@ func (s *Server) handleInbox(w http.ResponseWriter, r *http.Request) {
 			Decision:         decision,
 			ProjectID:        goalProjectIDs[decision.GoalID],
 			ProjectName:      goalProjectNames[decision.GoalID],
-			GoalTitle:        goalTitles[decision.GoalID],
+			GoalHeadline:     goalHeadlines[decision.GoalID],
 			DefaultOption:    decision.DefaultOption,
 			DefaultAfterMs:   decision.DefaultAfterMs,
 			SettledByDefault: decision.DefaultAppliedAt != nil,
@@ -408,8 +406,7 @@ func (s *Server) handleInbox(w http.ResponseWriter, r *http.Request) {
 			proposedGoals = append(proposedGoals, proposedGoalView{
 				ID:          goal.ID,
 				ProjectID:   goal.ProjectID,
-				Title:       goal.Title,
-				Description: goal.Description,
+				Content:     goal.Content,
 				CreatedAt:   goal.CreatedAt,
 				ProjectName: projectNames[goal.ProjectID],
 			})
@@ -675,7 +672,7 @@ func (s *Server) handleTask(w http.ResponseWriter, r *http.Request, taskID strin
 		Task: task,
 		Goal: taskGoalView{
 			ID:          goal.ID,
-			Title:       goal.Title,
+			Headline:    domain.Headline(goal.Content),
 			ProjectName: projectName,
 		},
 		OpenDecisions:          taskOpenDecisions,

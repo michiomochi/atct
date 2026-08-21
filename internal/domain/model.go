@@ -54,6 +54,16 @@ func Headline(content string) string {
 	return strings.TrimSpace(content)
 }
 
+// Body returns everything after a Goal's headline. Empty when the content is a
+// single line, which is what four goals in five look like.
+func Body(content string) string {
+	index := strings.IndexByte(content, '\n')
+	if index < 0 {
+		return ""
+	}
+	return strings.TrimSpace(content[index+1:])
+}
+
 type Task struct {
 	ID          string     `json:"id"`
 	GoalID      string     `json:"goal_id"`

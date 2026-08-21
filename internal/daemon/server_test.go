@@ -194,9 +194,8 @@ func TestDaemonCreatesGoalForResolvedProject(t *testing.T) {
 	}
 
 	goalResp := call(t, conn, "goal.create", map[string]string{
-		"cwd":         "/repos/atct",
-		"title":       "Build the next release",
-		"description": "Coordinate the release work",
+		"cwd":     "/repos/atct",
+		"content": "Build the next release\n\nCoordinate the release work",
 	})
 	if goalResp.Error != "" {
 		t.Fatalf("goal.create: %s", goalResp.Error)
@@ -208,11 +207,11 @@ func TestDaemonCreatesGoalForResolvedProject(t *testing.T) {
 	if goal.ProjectID != project.ID {
 		t.Fatalf("project_id = %q, want %q", goal.ProjectID, project.ID)
 	}
-	if goal.Title != "Build the next release" {
-		t.Fatalf("title = %q, want %q", goal.Title, "Build the next release")
+	if domain.Headline(goal.Content) != "Build the next release" {
+		t.Fatalf("headline = %q, want %q", domain.Headline(goal.Content), "Build the next release")
 	}
-	if goal.Description != "Coordinate the release work" {
-		t.Fatalf("description = %q, want %q", goal.Description, "Coordinate the release work")
+	if domain.Body(goal.Content) != "Coordinate the release work" {
+		t.Fatalf("body = %q, want %q", domain.Body(goal.Content), "Coordinate the release work")
 	}
 	if goal.Creator != "agent" || goal.Status != domain.GoalProposed {
 		t.Fatalf("goal creator/status = %q/%q, want agent/proposed", goal.Creator, goal.Status)
@@ -305,8 +304,8 @@ func createDecisionFixture(t *testing.T, conn net.Conn) (string, string) {
 		t.Fatalf("project.create: %s", projectResp.Error)
 	}
 	goalResp := call(t, conn, "goal.create", map[string]string{
-		"cwd":   "/repos/atct",
-		"title": "Wait semantics",
+		"cwd":     "/repos/atct",
+		"content": "Wait semantics",
 	})
 	if goalResp.Error != "" {
 		t.Fatalf("goal.create: %s", goalResp.Error)

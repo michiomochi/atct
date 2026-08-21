@@ -265,7 +265,7 @@ func pendingTextForProject(dir, cwd, projectName string, projectSpecified bool) 
 		output.WriteString(undeclaredGoalMarker)
 		output.WriteByte('\n')
 		for _, goal := range undeclaredGoals {
-			fmt.Fprintf(&output, "- %s (goal_id: %s)\n", oneLine(goal.Title), goal.ID)
+			fmt.Fprintf(&output, "- %s (goal_id: %s)\n", oneLine(domain.Headline(goal.Content)), goal.ID)
 		}
 	}
 	wakeupState, err := s.DetectWakeup(ctx, project.ID)
@@ -311,7 +311,7 @@ func pendingTextForProject(dir, cwd, projectName string, projectSpecified bool) 
 		output.WriteString(completedGoalMarker)
 		output.WriteByte('\n')
 		for _, goal := range wakeupState.CompletedGoals {
-			fmt.Fprintf(&output, "- %s (goal_id: %s)\n", oneLine(goal.Title), goal.ID)
+			fmt.Fprintf(&output, "- %s (goal_id: %s)\n", oneLine(domain.Headline(goal.Content)), goal.ID)
 		}
 	}
 	if len(commitlessGoals) > 0 {
@@ -323,7 +323,7 @@ func pendingTextForProject(dir, cwd, projectName string, projectSpecified bool) 
 		output.WriteString(commitlessGoalMarker)
 		output.WriteByte('\n')
 		for _, goal := range commitlessGoals {
-			fmt.Fprintf(&output, "- %s (goal_id: %s)\n", oneLine(goal.Title), goal.ID)
+			fmt.Fprintf(&output, "- %s (goal_id: %s)\n", oneLine(domain.Headline(goal.Content)), goal.ID)
 		}
 	}
 	if len(wakeupState.DroppedGoals) > 0 {
@@ -335,7 +335,7 @@ func pendingTextForProject(dir, cwd, projectName string, projectSpecified bool) 
 		output.WriteString(droppedGoalMarker)
 		output.WriteByte('\n')
 		for _, goal := range wakeupState.DroppedGoals {
-			fmt.Fprintf(&output, "- %s (goal_id: %s)\n", oneLine(goal.Title), goal.ID)
+			fmt.Fprintf(&output, "- %s (goal_id: %s)\n", oneLine(domain.Headline(goal.Content)), goal.ID)
 		}
 	}
 	if len(wakeupState.UnclaimedDoingTasks) > 0 {

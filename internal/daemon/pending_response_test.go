@@ -18,7 +18,7 @@ func TestTaskClaimNotificationDoesNotApplyDecision(t *testing.T) {
 	ctx := context.Background()
 	s := openPendingResponseTestStore(t)
 	project := createPendingResponseProject(t, s, t.TempDir(), "project")
-	goal, err := s.CreateGoal(ctx, project.ID, "goal", "description")
+	goal, err := s.CreateGoal(ctx, project.ID, "goal\n\ndescription", "human")
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
@@ -78,11 +78,11 @@ func TestGoalListNotificationIsProjectScoped(t *testing.T) {
 	otherRoot := t.TempDir()
 	project := createPendingResponseProject(t, s, projectRoot, "project")
 	otherProject := createPendingResponseProject(t, s, otherRoot, "other")
-	goal, err := s.CreateGoal(ctx, project.ID, "goal", "description")
+	goal, err := s.CreateGoal(ctx, project.ID, "goal\n\ndescription", "human")
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
-	otherGoal, err := s.CreateGoal(ctx, otherProject.ID, "other-goal", "description")
+	otherGoal, err := s.CreateGoal(ctx, otherProject.ID, "other-goal\n\ndescription", "human")
 	if err != nil {
 		t.Fatalf("CreateGoal(other): %v", err)
 	}
@@ -123,7 +123,7 @@ func TestDecisionPollNotificationExcludesPolledDecision(t *testing.T) {
 	ctx := context.Background()
 	s := openPendingResponseTestStore(t)
 	project := createPendingResponseProject(t, s, t.TempDir(), "project")
-	goal, err := s.CreateGoal(ctx, project.ID, "goal", "description")
+	goal, err := s.CreateGoal(ctx, project.ID, "goal\n\ndescription", "human")
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
@@ -160,7 +160,7 @@ func TestDecisionAskParkedIncludesClaimableTasks(t *testing.T) {
 	ctx := context.Background()
 	s := openPendingResponseTestStore(t)
 	project := createPendingResponseProject(t, s, t.TempDir(), "project")
-	parkGoal, err := s.CreateGoal(ctx, project.ID, "parked-goal", "description")
+	parkGoal, err := s.CreateGoal(ctx, project.ID, "parked-goal\n\ndescription", "human")
 	if err != nil {
 		t.Fatalf("CreateGoal(parked): %v", err)
 	}
@@ -168,7 +168,7 @@ func TestDecisionAskParkedIncludesClaimableTasks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DeclareTasks(parked): %v", err)
 	}
-	otherGoal, err := s.CreateGoal(ctx, project.ID, "other-goal", "description")
+	otherGoal, err := s.CreateGoal(ctx, project.ID, "other-goal\n\ndescription", "human")
 	if err != nil {
 		t.Fatalf("CreateGoal(other): %v", err)
 	}
@@ -351,7 +351,7 @@ func TestTaskUpdateWithoutCommitsPreservesExistingBehavior(t *testing.T) {
 	s := openPendingResponseTestStore(t)
 	ctx := context.Background()
 	project := createPendingResponseProject(t, s, root, "task-update-no-commits")
-	goal, err := s.CreateGoal(ctx, project.ID, "task-update-goal", "description")
+	goal, err := s.CreateGoal(ctx, project.ID, "task-update-goal\n\ndescription", "human")
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
@@ -392,7 +392,7 @@ func TestTaskUpdateWithUnknownCommitKeepsStatusUnchanged(t *testing.T) {
 	s := openPendingResponseTestStore(t)
 	ctx := context.Background()
 	project := createPendingResponseProject(t, s, root, "task-update-unknown-commit")
-	goal, err := s.CreateGoal(ctx, project.ID, "task-update-goal", "description")
+	goal, err := s.CreateGoal(ctx, project.ID, "task-update-goal\n\ndescription", "human")
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
@@ -426,7 +426,7 @@ func TestTaskUpdateWithDuplicateCommitLinksOnce(t *testing.T) {
 	s := openPendingResponseTestStore(t)
 	ctx := context.Background()
 	project := createPendingResponseProject(t, s, root, "task-update-duplicate-commit")
-	goal, err := s.CreateGoal(ctx, project.ID, "task-update-goal", "description")
+	goal, err := s.CreateGoal(ctx, project.ID, "task-update-goal\n\ndescription", "human")
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
@@ -591,15 +591,15 @@ func newProjectScopeFixture(t *testing.T) projectScopeFixture {
 	if err != nil {
 		t.Fatalf("CreateProject(target): %v", err)
 	}
-	assignedGoal, err := s.CreateGoal(ctx, assigned.ID, "assigned-goal", "description")
+	assignedGoal, err := s.CreateGoal(ctx, assigned.ID, "assigned-goal\n\ndescription", "human")
 	if err != nil {
 		t.Fatalf("CreateGoal(assigned): %v", err)
 	}
-	targetGoal, err := s.CreateGoal(ctx, target.ID, "target-goal", "description")
+	targetGoal, err := s.CreateGoal(ctx, target.ID, "target-goal\n\ndescription", "human")
 	if err != nil {
 		t.Fatalf("CreateGoal(target): %v", err)
 	}
-	completeGoal, err := s.CreateGoal(ctx, assigned.ID, "complete-goal", "description")
+	completeGoal, err := s.CreateGoal(ctx, assigned.ID, "complete-goal\n\ndescription", "human")
 	if err != nil {
 		t.Fatalf("CreateGoal(complete): %v", err)
 	}

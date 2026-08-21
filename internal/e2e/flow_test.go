@@ -22,7 +22,7 @@ func TestFullGoalLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateProject: %v", err)
 	}
-	g, err := s.CreateGoal(ctx, ns.ID, "Build an MCP server", "eight tools")
+	g, err := s.CreateGoal(ctx, ns.ID, "Build an MCP server\n\neight tools", "human")
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
@@ -96,7 +96,7 @@ func TestAnswerSurvivesSessionChange(t *testing.T) {
 		t.Fatalf("store.Open: %v", err)
 	}
 	ns, _ := s.CreateProject(ctx, "atct", "/repos/atct")
-	g, _ := s.CreateGoal(ctx, ns.ID, "goal", "")
+	g, _ := s.CreateGoal(ctx, ns.ID, "goal", "human")
 	// An active decision has to name the task it is holding up.
 	tasks, err := s.DeclareTasks(ctx, g.ID, "agent", "batch-1", []string{"do the thing"}, []string{"Complete the requested work and verify its observable result."})
 	if err != nil {

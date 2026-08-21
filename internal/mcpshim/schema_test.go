@@ -251,7 +251,7 @@ func callDecisionAsk(t *testing.T, args map[string]any) (*mcp.CallToolResult, er
 		s.Close()
 		t.Fatalf("CreateProject: %v", err)
 	}
-	goal, err := s.CreateGoal(context.Background(), project.ID, "decision defaults", "")
+	goal, err := s.CreateGoal(context.Background(), project.ID, "decision defaults", "human")
 	if err != nil {
 		s.Close()
 		t.Fatalf("CreateGoal: %v", err)

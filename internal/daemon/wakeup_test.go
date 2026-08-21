@@ -28,7 +28,7 @@ func newWakeupTestGoal(t *testing.T, s *store.Store, key string) (string, string
 	if err != nil {
 		t.Fatalf("CreateProject: %v", err)
 	}
-	goal, err := s.CreateGoal(ctx, project.ID, "Resume "+key, "")
+	goal, err := s.CreateGoal(ctx, project.ID, "Resume "+key, "human")
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}

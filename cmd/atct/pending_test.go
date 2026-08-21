@@ -35,7 +35,7 @@ func TestPendingCommandReportsActiveGoalWithoutTasks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveProject: %v", err)
 	}
-	goal, err := s.CreateGoal(ctx, project.ID, "Break this goal into tasks", "")
+	goal, err := s.CreateGoal(ctx, project.ID, "Break this goal into tasks", "human")
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
@@ -53,12 +53,43 @@ func TestPendingCommandReportsActiveGoalWithoutTasks(t *testing.T) {
 	for _, want := range []string{
 		"An active goal has no tasks declared.",
 		"Undeclared active goals:",
-		goal.Title,
+		domain.Headline(goal.Content),
 		"goal_id: " + goal.ID,
 	} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("pendingCommand output does not contain %q: %q", want, output)
 		}
+	}
+}
+
+func TestPendingCommandKeepsMultilineGoalOnOneLine(t *testing.T) {
+	dir, projectRoot := newPendingFixture(t)
+	s := openPendingStore(t, dir)
+	ctx := context.Background()
+	project, err := s.ResolveProject(ctx, projectRoot)
+	if err != nil {
+		t.Fatalf("ResolveProject: %v", err)
+	}
+	goal, err := s.CreateGoal(ctx, project.ID, "Break this goal into tasks\n\nDetails must stay out of pending output.", "human")
+	if err != nil {
+		t.Fatalf("CreateGoal: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("Store.Close: %v", err)
+	}
+
+	output, exitCode, err := pendingCommand(dir, projectRoot)
+	if err != nil {
+		t.Fatalf("pendingCommand: %v", err)
+	}
+	if exitCode != 0 {
+		t.Fatalf("pendingCommand exit code = %d, want 0", exitCode)
+	}
+	if !strings.Contains(output, domain.Headline(goal.Content)) {
+		t.Fatalf("pendingCommand output does not contain goal headline %q: %q", domain.Headline(goal.Content), output)
+	}
+	if strings.Contains(output, domain.Body(goal.Content)) {
+		t.Fatalf("pendingCommand output included goal body: %q", output)
 	}
 }
 
@@ -70,7 +101,7 @@ func TestPendingCommandExcludesProposedGoal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveProject: %v", err)
 	}
-	goal, err := s.CreateGoal(ctx, project.ID, "Await approval before pending work", "", "agent")
+	goal, err := s.CreateGoal(ctx, project.ID, "Await approval before pending work", "agent")
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
@@ -101,7 +132,7 @@ func TestPendingCommandReportsGoalAfterTaskDeclarationUntilTaskDone(t *testing.T
 	if err != nil {
 		t.Fatalf("ResolveProject: %v", err)
 	}
-	goal, err := s.CreateGoal(ctx, project.ID, "Declare work for this goal", "")
+	goal, err := s.CreateGoal(ctx, project.ID, "Declare work for this goal", "human")
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
@@ -138,7 +169,7 @@ func TestPendingCommandReportsGoalAfterTaskDeclarationUntilTaskDone(t *testing.T
 	if err != nil {
 		t.Fatalf("pendingCommand after UpdateTask: %v", err)
 	}
-	for _, want := range []string{pendingCompletedGoalReason, goal.Title, goal.ID} {
+	for _, want := range []string{pendingCompletedGoalReason, domain.Headline(goal.Content), goal.ID} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("pendingCommand output after UpdateTask does not contain %q: %q", want, output)
 		}
@@ -156,7 +187,7 @@ func TestPendingCommandExcludesGoalWaitingForHumanAnswerFromWakeup(t *testing.T)
 	if err != nil {
 		t.Fatalf("ResolveProject: %v", err)
 	}
-	goal, err := s.CreateGoal(ctx, project.ID, "Wait for a human answer", "")
+	goal, err := s.CreateGoal(ctx, project.ID, "Wait for a human answer", "human")
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
@@ -194,11 +225,11 @@ func TestPendingCommandIncludesAllPendingReasons(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveProject: %v", err)
 	}
-	undeclaredGoal, err := s.CreateGoal(ctx, project.ID, "Declare the missing goal work", "")
+	undeclaredGoal, err := s.CreateGoal(ctx, project.ID, "Declare the missing goal work", "human")
 	if err != nil {
 		t.Fatalf("CreateGoal undeclared: %v", err)
 	}
-	claimedGoal, err := s.CreateGoal(ctx, project.ID, "Continue the claimed goal work", "")
+	claimedGoal, err := s.CreateGoal(ctx, project.ID, "Continue the claimed goal work", "human")
 	if err != nil {
 		t.Fatalf("CreateGoal claimed: %v", err)
 	}
@@ -215,7 +246,7 @@ func TestPendingCommandIncludesAllPendingReasons(t *testing.T) {
 	if _, err := s.ClaimTask(ctx, claimedTasks[0].ID, "run-all"); err != nil {
 		t.Fatalf("ClaimTask: %v", err)
 	}
-	decisionGoal, err := s.CreateGoal(ctx, project.ID, "Wait for the answered decision", "")
+	decisionGoal, err := s.CreateGoal(ctx, project.ID, "Wait for the answered decision", "human")
 	if err != nil {
 		t.Fatalf("CreateGoal decision: %v", err)
 	}
@@ -252,7 +283,7 @@ func TestPendingCommandIncludesAllPendingReasons(t *testing.T) {
 		decision.ID,
 		"unfinished claimed work",
 		claimedTasks[0].ID,
-		undeclaredGoal.Title,
+		domain.Headline(undeclaredGoal.Content),
 		undeclaredGoal.ID,
 	} {
 		if !strings.Contains(output, want) {
@@ -270,7 +301,7 @@ func TestPendingCommandReportsStaleClaimSeparatelyFromOwnClaim(t *testing.T) {
 		t.Fatalf("ResolveProject: %v", err)
 	}
 
-	ownGoal, err := s.CreateGoal(ctx, project.ID, "Continue my work", "")
+	ownGoal, err := s.CreateGoal(ctx, project.ID, "Continue my work", "human")
 	if err != nil {
 		t.Fatalf("CreateGoal own: %v", err)
 	}
@@ -282,7 +313,7 @@ func TestPendingCommandReportsStaleClaimSeparatelyFromOwnClaim(t *testing.T) {
 		t.Fatalf("ClaimTask own: %v", err)
 	}
 
-	staleGoal, err := s.CreateGoal(ctx, project.ID, "Recover abandoned work", "")
+	staleGoal, err := s.CreateGoal(ctx, project.ID, "Recover abandoned work", "human")
 	if err != nil {
 		t.Fatalf("CreateGoal stale: %v", err)
 	}
@@ -303,7 +334,7 @@ func TestPendingCommandReportsStaleClaimSeparatelyFromOwnClaim(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateProject other: %v", err)
 	}
-	otherGoal, err := s.CreateGoal(ctx, otherProject.ID, "Leave another project alone", "")
+	otherGoal, err := s.CreateGoal(ctx, otherProject.ID, "Leave another project alone", "human")
 	if err != nil {
 		t.Fatalf("CreateGoal other: %v", err)
 	}
@@ -358,7 +389,7 @@ func TestPendingCommandReturnsDecisionIDAndQuestion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveProject: %v", err)
 	}
-	goal, err := s.CreateGoal(ctx, project.ID, "Wait for a human", "")
+	goal, err := s.CreateGoal(ctx, project.ID, "Wait for a human", "human")
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
@@ -405,7 +436,7 @@ func TestPendingCommandDoesNotCallDefaultAnswerHuman(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveProject: %v", err)
 	}
-	goal, err := s.CreateGoal(ctx, project.ID, "Wait for defaults", "")
+	goal, err := s.CreateGoal(ctx, project.ID, "Wait for defaults", "human")
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
@@ -438,7 +469,7 @@ func TestPendingCommandKeepsHumanAnswerReason(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveProject: %v", err)
 	}
-	goal, err := s.CreateGoal(ctx, project.ID, "Wait for human answers", "")
+	goal, err := s.CreateGoal(ctx, project.ID, "Wait for human answers", "human")
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
@@ -471,7 +502,7 @@ func TestPendingCommandListsHumanReasonBeforeDefaultReason(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveProject: %v", err)
 	}
-	goal, err := s.CreateGoal(ctx, project.ID, "Wait for either answer", "")
+	goal, err := s.CreateGoal(ctx, project.ID, "Wait for either answer", "human")
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
@@ -512,7 +543,7 @@ func TestPendingCommandFiltersDecisionsFromOtherProject(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateProject other: %v", err)
 	}
-	goal, err := s.CreateGoal(ctx, other.ID, "Other goal", "")
+	goal, err := s.CreateGoal(ctx, other.ID, "Other goal", "human")
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
@@ -580,7 +611,7 @@ func TestPendingCommandUsesLatestProjectAgentSessionWithoutEnv(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveProject: %v", err)
 	}
-	goal, err := s.CreateGoal(ctx, project.ID, "Resume the claimed work", "")
+	goal, err := s.CreateGoal(ctx, project.ID, "Resume the claimed work", "human")
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
@@ -622,7 +653,7 @@ func TestPendingCommandPrefersExplicitAgentSessionIDOverLatestProjectAgentSessio
 	if err != nil {
 		t.Fatalf("ResolveProject: %v", err)
 	}
-	goal, err := s.CreateGoal(ctx, project.ID, "Use the selected run", "")
+	goal, err := s.CreateGoal(ctx, project.ID, "Use the selected run", "human")
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
@@ -673,7 +704,7 @@ func TestPendingCommandDoesNotReportRunningAnotherAgentSessionsClaim(t *testing.
 	if err != nil {
 		t.Fatalf("ResolveProject: %v", err)
 	}
-	goal, err := s.CreateGoal(ctx, project.ID, "Do not steal another run's work", "")
+	goal, err := s.CreateGoal(ctx, project.ID, "Do not steal another run's work", "human")
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
@@ -721,7 +752,7 @@ func TestPendingCommandReportsActiveGoalAfterAllTasksDone(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveProject: %v", err)
 	}
-	goal, err := s.CreateGoal(ctx, project.ID, "Report completed work", "")
+	goal, err := s.CreateGoal(ctx, project.ID, "Report completed work", "human")
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
@@ -746,7 +777,7 @@ func TestPendingCommandReportsActiveGoalAfterAllTasksDone(t *testing.T) {
 	for _, want := range []string{
 		"All tasks are done but the active goal has no completion report.",
 		"Call `atct_goal_complete`",
-		goal.Title,
+		domain.Headline(goal.Content),
 		goal.ID,
 	} {
 		if !strings.Contains(output, want) {
@@ -763,7 +794,7 @@ func TestPendingCommandDoesNotReportGoalWithCompletionReport(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveProject: %v", err)
 	}
-	goal, err := s.CreateGoal(ctx, project.ID, "Already reported completed work", "")
+	goal, err := s.CreateGoal(ctx, project.ID, "Already reported completed work", "human")
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
@@ -793,7 +824,7 @@ func TestPendingCommandDoesNotReportGoalWithCompletionReport(t *testing.T) {
 	if strings.Contains(output, pendingCompletedGoalReason) {
 		t.Fatalf("pendingCommand reported a goal with a completion report: %q", output)
 	}
-	if strings.Contains(output, goal.Title) {
+	if strings.Contains(output, domain.Headline(goal.Content)) {
 		t.Fatalf("pendingCommand reported the completed goal: %q", output)
 	}
 	if output != "" {
@@ -812,7 +843,7 @@ func TestPendingCommandUsesSeparateReasonForAllDroppedGoal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveProject: %v", err)
 	}
-	goal, err := s.CreateGoal(ctx, project.ID, "Close withdrawn work", "")
+	goal, err := s.CreateGoal(ctx, project.ID, "Close withdrawn work", "human")
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
@@ -840,7 +871,7 @@ func TestPendingCommandUsesSeparateReasonForAllDroppedGoal(t *testing.T) {
 	if strings.Contains(output, "All tasks are done but the active goal has no completion report.") {
 		t.Fatalf("pendingCommand reported the dropped goal as completed: %q", output)
 	}
-	for _, want := range []string{goal.Title, goal.ID, "atct_goal_complete", "atct_task_declare"} {
+	for _, want := range []string{domain.Headline(goal.Content), goal.ID, "atct_goal_complete", "atct_task_declare"} {
 		if !strings.Contains(strings.ToLower(output), strings.ToLower(want)) {
 			t.Fatalf("pendingCommand output does not contain %q: %q", want, output)
 		}
@@ -855,7 +886,7 @@ func TestPendingCommandDoesNotReportCommitlessGoalWhenAnyTaskHasLinkedCommit(t *
 	if err != nil {
 		t.Fatalf("ResolveProject: %v", err)
 	}
-	goal, err := s.CreateGoal(ctx, project.ID, "Report linked work", "")
+	goal, err := s.CreateGoal(ctx, project.ID, "Report linked work", "human")
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
@@ -892,7 +923,7 @@ func TestPendingCommandDoesNotReportCommitlessGoalWhenTodoTaskRemains(t *testing
 	if err != nil {
 		t.Fatalf("ResolveProject: %v", err)
 	}
-	goal, err := s.CreateGoal(ctx, project.ID, "Continue unfinished work", "")
+	goal, err := s.CreateGoal(ctx, project.ID, "Continue unfinished work", "human")
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
@@ -920,7 +951,7 @@ func TestPendingCommandDoesNotReportCommitlessGoalWhenAllTasksDropped(t *testing
 	if err != nil {
 		t.Fatalf("ResolveProject: %v", err)
 	}
-	goal, err := s.CreateGoal(ctx, project.ID, "Withdraw unfinished work", "")
+	goal, err := s.CreateGoal(ctx, project.ID, "Withdraw unfinished work", "human")
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
@@ -952,7 +983,7 @@ func TestPendingCommandDoesNotReportCommitlessGoalWhenNoTasksExist(t *testing.T)
 	if err != nil {
 		t.Fatalf("ResolveProject: %v", err)
 	}
-	if _, err := s.CreateGoal(ctx, project.ID, "Declare work before reporting", ""); err != nil {
+	if _, err := s.CreateGoal(ctx, project.ID, "Declare work before reporting", "human"); err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
 	if err := s.Close(); err != nil {
@@ -976,7 +1007,7 @@ func TestPendingCommandReportsCommitlessGoalWhenAllTasksDoneWithoutLinkedCommit(
 	if err != nil {
 		t.Fatalf("ResolveProject: %v", err)
 	}
-	goal, err := s.CreateGoal(ctx, project.ID, "Link the completed work", "")
+	goal, err := s.CreateGoal(ctx, project.ID, "Link the completed work", "human")
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
@@ -1000,7 +1031,7 @@ func TestPendingCommandReportsCommitlessGoalWhenAllTasksDoneWithoutLinkedCommit(
 	}
 	for _, want := range []string{
 		commitlessGoalMarker,
-		goal.Title,
+		domain.Headline(goal.Content),
 		goal.ID,
 	} {
 		if !strings.Contains(output, want) {
@@ -1017,7 +1048,7 @@ func TestPendingCommandDoesNotReportCommitlessGoalWhenOpenCompletionDecisionExis
 	if err != nil {
 		t.Fatalf("ResolveProject: %v", err)
 	}
-	goal, err := s.CreateGoal(ctx, project.ID, "Await completion approval", "")
+	goal, err := s.CreateGoal(ctx, project.ID, "Await completion approval", "human")
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
@@ -1044,7 +1075,7 @@ func TestPendingCommandDoesNotReportCommitlessGoalWhenOpenCompletionDecisionExis
 	if strings.Contains(output, commitlessGoalMarker) {
 		t.Fatalf("pendingCommand reported a goal with an open completion decision as commitless: %q", output)
 	}
-	if strings.Contains(output, goal.Title) {
+	if strings.Contains(output, domain.Headline(goal.Content)) {
 		t.Fatalf("pendingCommand reported the goal with an open completion decision: %q", output)
 	}
 	if output != "" {
@@ -1063,7 +1094,7 @@ func TestPendingCommandReportsDoingTaskWithoutClaimUntilReturnedToTodo(t *testin
 	if err != nil {
 		t.Fatalf("ResolveProject: %v", err)
 	}
-	goal, err := s.CreateGoal(ctx, project.ID, "Recover an unclaimed task", "")
+	goal, err := s.CreateGoal(ctx, project.ID, "Recover an unclaimed task", "human")
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
@@ -1124,7 +1155,7 @@ func TestPendingCommandFiltersNewConditionsFromOtherProject(t *testing.T) {
 		t.Fatalf("CreateProject other: %v", err)
 	}
 
-	doneGoal, err := s.CreateGoal(ctx, other.ID, "Other completed goal", "")
+	doneGoal, err := s.CreateGoal(ctx, other.ID, "Other completed goal", "human")
 	if err != nil {
 		t.Fatalf("CreateGoal done: %v", err)
 	}
@@ -1136,7 +1167,7 @@ func TestPendingCommandFiltersNewConditionsFromOtherProject(t *testing.T) {
 		t.Fatalf("UpdateTask done: %v", err)
 	}
 
-	droppedGoal, err := s.CreateGoal(ctx, other.ID, "Other withdrawn goal", "")
+	droppedGoal, err := s.CreateGoal(ctx, other.ID, "Other withdrawn goal", "human")
 	if err != nil {
 		t.Fatalf("CreateGoal dropped: %v", err)
 	}
@@ -1148,7 +1179,7 @@ func TestPendingCommandFiltersNewConditionsFromOtherProject(t *testing.T) {
 		t.Fatalf("UpdateTask dropped: %v", err)
 	}
 
-	doingGoal, err := s.CreateGoal(ctx, other.ID, "Other unclaimed goal", "")
+	doingGoal, err := s.CreateGoal(ctx, other.ID, "Other unclaimed goal", "human")
 	if err != nil {
 		t.Fatalf("CreateGoal doing: %v", err)
 	}
@@ -1186,7 +1217,7 @@ func TestReleaseTaskReturnsDoingTaskToTodo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveProject: %v", err)
 	}
-	goal, err := s.CreateGoal(ctx, project.ID, "Release stale work", "")
+	goal, err := s.CreateGoal(ctx, project.ID, "Release stale work", "human")
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
@@ -1223,7 +1254,7 @@ func TestPendingCommandPutsUnstartedTasksBeforeOwnClaim(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveProject: %v", err)
 	}
-	claimedGoal, err := s.CreateGoal(ctx, project.ID, "Continue the held work", "")
+	claimedGoal, err := s.CreateGoal(ctx, project.ID, "Continue the held work", "human")
 	if err != nil {
 		t.Fatalf("CreateGoal claimed: %v", err)
 	}
@@ -1234,7 +1265,7 @@ func TestPendingCommandPutsUnstartedTasksBeforeOwnClaim(t *testing.T) {
 	if _, err := s.ClaimTask(ctx, claimedTasks[0].ID, "run-lock"); err != nil {
 		t.Fatalf("ClaimTask: %v", err)
 	}
-	availableGoal, err := s.CreateGoal(ctx, project.ID, "Take available work", "")
+	availableGoal, err := s.CreateGoal(ctx, project.ID, "Take available work", "human")
 	if err != nil {
 		t.Fatalf("CreateGoal available: %v", err)
 	}
@@ -1270,7 +1301,7 @@ func TestPendingCommandOmitsAvailableWorkTailWhenCountIsZero(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveProject: %v", err)
 	}
-	goal, err := s.CreateGoal(ctx, project.ID, "Continue only held work", "")
+	goal, err := s.CreateGoal(ctx, project.ID, "Continue only held work", "human")
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
@@ -1309,7 +1340,7 @@ func TestPendingCommandCombinesOpenNoDefaultDecisionWithUnstartedWork(t *testing
 	if err != nil {
 		t.Fatalf("ResolveProject: %v", err)
 	}
-	decisionGoal, err := s.CreateGoal(ctx, project.ID, "Wait for human choice", "")
+	decisionGoal, err := s.CreateGoal(ctx, project.ID, "Wait for human choice", "human")
 	if err != nil {
 		t.Fatalf("CreateGoal decision: %v", err)
 	}
@@ -1323,7 +1354,7 @@ func TestPendingCommandCombinesOpenNoDefaultDecisionWithUnstartedWork(t *testing
 	}); err != nil {
 		t.Fatalf("AskDecision: %v", err)
 	}
-	availableGoal, err := s.CreateGoal(ctx, project.ID, "Take work while waiting", "")
+	availableGoal, err := s.CreateGoal(ctx, project.ID, "Take work while waiting", "human")
 	if err != nil {
 		t.Fatalf("CreateGoal available: %v", err)
 	}
@@ -1356,7 +1387,7 @@ func TestPendingCommandDoesNotCombineDefaultedDecisionWithUnstartedWork(t *testi
 	if err != nil {
 		t.Fatalf("ResolveProject: %v", err)
 	}
-	decisionGoal, err := s.CreateGoal(ctx, project.ID, "Use the default later", "")
+	decisionGoal, err := s.CreateGoal(ctx, project.ID, "Use the default later", "human")
 	if err != nil {
 		t.Fatalf("CreateGoal decision: %v", err)
 	}
@@ -1372,7 +1403,7 @@ func TestPendingCommandDoesNotCombineDefaultedDecisionWithUnstartedWork(t *testi
 	}); err != nil {
 		t.Fatalf("AskDecision: %v", err)
 	}
-	availableGoal, err := s.CreateGoal(ctx, project.ID, "Take work with a default pending", "")
+	availableGoal, err := s.CreateGoal(ctx, project.ID, "Take work with a default pending", "human")
 	if err != nil {
 		t.Fatalf("CreateGoal available: %v", err)
 	}
@@ -1404,7 +1435,7 @@ func TestPendingCommandDoesNotCombineNoDefaultDecisionWithoutUnstartedWork(t *te
 	if err != nil {
 		t.Fatalf("ResolveProject: %v", err)
 	}
-	goal, err := s.CreateGoal(ctx, project.ID, "Wait without available work", "")
+	goal, err := s.CreateGoal(ctx, project.ID, "Wait without available work", "human")
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
@@ -1449,7 +1480,7 @@ func TestPendingCommandCountsUnstartedTasksOnlyInSelectedProject(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateProject other: %v", err)
 	}
-	claimedGoal, err := s.CreateGoal(ctx, current.ID, "Hold current work", "")
+	claimedGoal, err := s.CreateGoal(ctx, current.ID, "Hold current work", "human")
 	if err != nil {
 		t.Fatalf("CreateGoal claimed: %v", err)
 	}
@@ -1460,14 +1491,14 @@ func TestPendingCommandCountsUnstartedTasksOnlyInSelectedProject(t *testing.T) {
 	if _, err := s.ClaimTask(ctx, claimedTasks[0].ID, "run-current"); err != nil {
 		t.Fatalf("ClaimTask: %v", err)
 	}
-	currentAvailableGoal, err := s.CreateGoal(ctx, current.ID, "Take current work", "")
+	currentAvailableGoal, err := s.CreateGoal(ctx, current.ID, "Take current work", "human")
 	if err != nil {
 		t.Fatalf("CreateGoal current available: %v", err)
 	}
 	if _, err := s.DeclareTasks(ctx, currentAvailableGoal.ID, "agent", "current-available", []string{"current available task"}, []string{"Take current available work."}); err != nil {
 		t.Fatalf("DeclareTasks current available: %v", err)
 	}
-	otherGoal, err := s.CreateGoal(ctx, other.ID, "Leave other work alone", "")
+	otherGoal, err := s.CreateGoal(ctx, other.ID, "Leave other work alone", "human")
 	if err != nil {
 		t.Fatalf("CreateGoal other: %v", err)
 	}

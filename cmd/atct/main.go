@@ -68,7 +68,7 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "  daemon stop           Stop the running daemon")
 	fmt.Fprintln(os.Stderr, "  project add [name]   Register the current project")
 	fmt.Fprintln(os.Stderr, "  project list         List registered projects")
-	fmt.Fprintln(os.Stderr, "  goal add <title>     Create a goal for the current project")
+	fmt.Fprintln(os.Stderr, "  goal add <content>   Create a goal for the current project")
 	fmt.Fprintln(os.Stderr, "  goal list            List goals for the current project")
 	fmt.Fprintln(os.Stderr, "  context              Print the current goal context for an AI session")
 	fmt.Fprintln(os.Stderr, "  pending              Print unanswered human decisions for the current project")
@@ -520,7 +520,14 @@ func runGoal(config cliConfig, dir, exePath string) error {
 	}
 }
 
-func addGoal(ctx context.Context, client *mcpshim.Client, title, description string) error {
+// addGoal joins the positional argument and --description the same way the
+// migration joined a goal's old title and description, so a script that still
+// passes the flag keeps producing the content it used to.
+func addGoal(ctx context.Context, client *mcpshim.Client, headline, body string) error {
+	content := headline
+	if strings.TrimSpace(body) != "" {
+		content = headline + "\n\n" + body
+	}
 	rootPath, err := os.Getwd()
 	if err != nil {
 		return fmt.Errorf("resolve current directory: %w", err)
@@ -528,13 +535,12 @@ func addGoal(ctx context.Context, client *mcpshim.Client, title, description str
 
 	var goal domain.Goal
 	if err := client.Call(ctx, "goal.create", map[string]string{
-		"cwd":         rootPath,
-		"title":       title,
-		"description": description,
+		"cwd":     rootPath,
+		"content": content,
 	}, &goal); err != nil {
 		return err
 	}
-	fmt.Fprintf(os.Stderr, "created goal %q\n", goal.Title)
+	fmt.Fprintf(os.Stderr, "created goal %q\n", domain.Headline(goal.Content))
 	return nil
 }
 
@@ -554,7 +560,7 @@ func listGoals(ctx context.Context, client *mcpshim.Client) error {
 		return err
 	}
 	for _, goal := range result.Goals {
-		fmt.Fprintf(os.Stdout, "%s\t%s\n", goal.Title, goal.Status)
+		fmt.Fprintf(os.Stdout, "%s\t%s\n", domain.Headline(goal.Content), goal.Status)
 	}
 	return nil
 }

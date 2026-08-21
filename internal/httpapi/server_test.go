@@ -36,7 +36,7 @@ func TestInboxAttentionTasksIncludeProjectIdentityPerTask(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	otherGoal, err := f.store.CreateGoal(f.ctx, otherProject.ID, "Other project goal", "")
+	otherGoal, err := f.store.CreateGoal(f.ctx, otherProject.ID, "Other project goal", "human")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +106,7 @@ func TestInboxAttentionTasksIncludeProjectIdentityPerTask(t *testing.T) {
 type decisionViewResponse struct {
 	domain.Decision
 	ProjectID        string `json:"project_id"`
-	GoalTitle        string `json:"goal_title"`
+	GoalHeadline     string `json:"goal_headline"`
 	SettledByDefault bool   `json:"settled_by_default"`
 	DefaultOption    string `json:"default_option"`
 	DefaultAfterMs   *int64 `json:"default_after_ms"`
@@ -126,7 +126,7 @@ func TestHTTPInboxIncludesGoalTitlePerDecision(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	otherGoal, err := f.store.CreateGoal(f.ctx, otherProject.ID, "Other goal", "")
+	otherGoal, err := f.store.CreateGoal(f.ctx, otherProject.ID, "Other goal", "human")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,18 +153,18 @@ func TestHTTPInboxIncludesGoalTitlePerDecision(t *testing.T) {
 	}
 	got := make(map[string]string, len(response.OpenDecisions))
 	for _, decision := range response.OpenDecisions {
-		got[decision.ID] = decision.GoalTitle
+		got[decision.ID] = decision.GoalHeadline
 	}
 	want := map[string]string{
-		first.ID:  f.goal.Title,
-		second.ID: otherGoal.Title,
+		first.ID:  domain.Headline(f.goal.Content),
+		second.ID: domain.Headline(otherGoal.Content),
 	}
 	if len(got) != len(want) {
-		t.Fatalf("open decision goal titles = %+v, want %+v", got, want)
+		t.Fatalf("open decision goal headlines = %+v, want %+v", got, want)
 	}
-	for decisionID, wantTitle := range want {
-		if gotTitle := got[decisionID]; gotTitle != wantTitle {
-			t.Fatalf("decision %s goal title = %q, want %q", decisionID, gotTitle, wantTitle)
+	for decisionID, wantHeadline := range want {
+		if gotHeadline := got[decisionID]; gotHeadline != wantHeadline {
+			t.Fatalf("decision %s goal headline = %q, want %q", decisionID, gotHeadline, wantHeadline)
 		}
 	}
 }
@@ -178,7 +178,7 @@ func TestHTTPInboxIncludesTasksPerActiveGoalInOrder(t *testing.T) {
 	if _, err := f.store.UpdateTask(f.ctx, firstTasks[1].ID, domain.TaskDoing, ""); err != nil {
 		t.Fatal(err)
 	}
-	secondGoal, err := f.store.CreateGoal(f.ctx, f.project.ID, "Second goal", "")
+	secondGoal, err := f.store.CreateGoal(f.ctx, f.project.ID, "Second goal", "human")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -285,7 +285,7 @@ func TestHTTPInboxProposedGoalsAreSeparateNonNilAndDisappearOnReject(t *testing.
 		t.Fatalf("empty proposed_goals = %s, want []", got)
 	}
 
-	proposed, err := f.store.CreateGoal(f.ctx, f.project.ID, "Needs approval", "Wait for human approval", "agent")
+	proposed, err := f.store.CreateGoal(f.ctx, f.project.ID, "Needs approval\n\nWait for human approval", "agent")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -303,15 +303,14 @@ func TestHTTPInboxProposedGoalsAreSeparateNonNilAndDisappearOnReject(t *testing.
 	}
 	var proposedGoals []struct {
 		ID          string    `json:"id"`
-		Title       string    `json:"title"`
-		Description string    `json:"description"`
+		Content     string    `json:"content"`
 		CreatedAt   time.Time `json:"created_at"`
 		ProjectName string    `json:"project_name"`
 	}
 	if err := json.Unmarshal(raw["proposed_goals"], &proposedGoals); err != nil {
 		t.Fatalf("decode proposed_goals: %v", err)
 	}
-	if len(proposedGoals) != 1 || proposedGoals[0].ID != proposed.ID || proposedGoals[0].Title != proposed.Title || proposedGoals[0].Description != proposed.Description || proposedGoals[0].ProjectName != "fixture" || proposedGoals[0].CreatedAt.IsZero() {
+	if len(proposedGoals) != 1 || proposedGoals[0].ID != proposed.ID || proposedGoals[0].Content != proposed.Content || proposedGoals[0].ProjectName != "fixture" || proposedGoals[0].CreatedAt.IsZero() {
 		t.Fatalf("proposed_goals = %+v; raw=%s", proposedGoals, string(raw["proposed_goals"]))
 	}
 	var proposedObjects []map[string]json.RawMessage
@@ -402,7 +401,7 @@ func newBareFixture(t *testing.T) *fixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	goal, err := db.CreateGoal(ctx, ns.ID, "Fixture goal", "For HTTP API tests")
+	goal, err := db.CreateGoal(ctx, ns.ID, "Fixture goal\n\nFor HTTP API tests", "human")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -858,7 +857,7 @@ func TestHTTPGoalDetailIncludesAllTasksWithoutCrossGoalMixing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	otherGoal, err := f.store.CreateGoal(f.ctx, f.project.ID, "Other goal", "")
+	otherGoal, err := f.store.CreateGoal(f.ctx, f.project.ID, "Other goal", "human")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -866,7 +865,7 @@ func TestHTTPGoalDetailIncludesAllTasksWithoutCrossGoalMixing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	emptyGoal, err := f.store.CreateGoal(f.ctx, f.project.ID, "Empty goal", "")
+	emptyGoal, err := f.store.CreateGoal(f.ctx, f.project.ID, "Empty goal", "human")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1138,7 +1137,7 @@ func TestHTTPTaskDetailReturnsTaskAndDecisionData(t *testing.T) {
 		Task domain.Task `json:"task"`
 		Goal struct {
 			ID          string `json:"id"`
-			Title       string `json:"title"`
+			Headline    string `json:"headline"`
 			ProjectName string `json:"project_name"`
 		} `json:"goal"`
 		OpenDecisions   []domain.Decision `json:"open_decisions"`
@@ -1157,8 +1156,8 @@ func TestHTTPTaskDetailReturnsTaskAndDecisionData(t *testing.T) {
 	if response.Task.ID != tasks[0].ID || response.Task.GoalID != f.goal.ID || response.Task.Title != tasks[0].Title || response.Task.Description != tasks[0].Description || len(response.Task.Files) != 1 || response.Task.Files[0] != "src/target.go" {
 		t.Fatalf("task = %+v, want target task %+v", response.Task, tasks[0])
 	}
-	if response.Goal.ID != f.goal.ID || response.Goal.Title != f.goal.Title || response.Goal.ProjectName != "fixture" {
-		t.Fatalf("goal = %+v, want id=%s title=%q project_name=%q", response.Goal, f.goal.ID, f.goal.Title, "fixture")
+	if response.Goal.ID != f.goal.ID || response.Goal.Headline != domain.Headline(f.goal.Content) || response.Goal.ProjectName != "fixture" {
+		t.Fatalf("goal = %+v, want id=%s headline=%q project_name=%q", response.Goal, f.goal.ID, domain.Headline(f.goal.Content), "fixture")
 	}
 	if len(response.OpenDecisions) != 1 || response.OpenDecisions[0].ID != targetOpen.ID || response.OpenDecisions[0].TaskID != tasks[0].ID {
 		t.Fatalf("open_decisions = %+v, want only target decision %s", response.OpenDecisions, targetOpen.ID)
@@ -1372,7 +1371,7 @@ func TestHTTPTaskDetailExcludesOtherProjectDecisionWithSameTaskID(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	otherGoal, err := f.store.CreateGoal(f.ctx, otherProject.ID, "Other project goal", "")
+	otherGoal, err := f.store.CreateGoal(f.ctx, otherProject.ID, "Other project goal", "human")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1752,7 +1751,7 @@ func TestHTTPApproveAndRejectCompletionEndpoints(t *testing.T) {
 	defer srv.Close()
 	client := srv.Client()
 
-	approveGoal, err := f.store.CreateGoal(f.ctx, f.project.ID, "Approve me", "")
+	approveGoal, err := f.store.CreateGoal(f.ctx, f.project.ID, "Approve me", "human")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1779,7 +1778,7 @@ func TestHTTPApproveAndRejectCompletionEndpoints(t *testing.T) {
 		t.Fatalf("approved goal = %+v", approvedGoal)
 	}
 
-	rejectGoal, err := f.store.CreateGoal(f.ctx, f.project.ID, "Reject me", "")
+	rejectGoal, err := f.store.CreateGoal(f.ctx, f.project.ID, "Reject me", "human")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1927,11 +1926,11 @@ func TestSSEFiltersDecisionEventsByProjectID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	currentGoal, err := f.store.CreateGoal(f.ctx, f.project.ID, "Current project", "")
+	currentGoal, err := f.store.CreateGoal(f.ctx, f.project.ID, "Current project", "human")
 	if err != nil {
 		t.Fatal(err)
 	}
-	otherGoal, err := f.store.CreateGoal(f.ctx, otherProject.ID, "Other project", "")
+	otherGoal, err := f.store.CreateGoal(f.ctx, otherProject.ID, "Other project", "human")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2019,11 +2018,11 @@ func TestSSEWithoutProjectIDPublishesEventsFromAllProjects(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	currentGoal, err := f.store.CreateGoal(f.ctx, f.project.ID, "Current project", "")
+	currentGoal, err := f.store.CreateGoal(f.ctx, f.project.ID, "Current project", "human")
 	if err != nil {
 		t.Fatal(err)
 	}
-	otherGoal, err := f.store.CreateGoal(f.ctx, otherProject.ID, "Other project", "")
+	otherGoal, err := f.store.CreateGoal(f.ctx, otherProject.ID, "Other project", "human")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2058,7 +2057,7 @@ func TestSSEPublishesAllDecisionTransitionsWithExactPayloads(t *testing.T) {
 	f := newBareFixture(t)
 	goals := make([]domain.Goal, 0, 3)
 	for _, title := range []string{"Approve later", "Reject later"} {
-		goal, err := f.store.CreateGoal(f.ctx, f.project.ID, title, "")
+		goal, err := f.store.CreateGoal(f.ctx, f.project.ID, title, "human")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -2245,10 +2244,9 @@ func TestHTTPProjectsAndGoalCreationEndpoints(t *testing.T) {
 	}
 
 	status, _, body = doRequest(t, client, http.MethodPost, srv.URL+"/api/goals", mustJSON(t, map[string]string{
-		"project_id":  f.project.ID,
-		"title":       "Created in inbox",
-		"description": "Created through the human UI endpoint",
-		"creator":     "human",
+		"project_id": f.project.ID,
+		"content":    "Created in inbox\n\nCreated through the human UI endpoint",
+		"creator":    "human",
 	}))
 	if status != http.StatusOK {
 		t.Fatalf("create goal status = %d; body=%s", status, body)
@@ -2257,14 +2255,13 @@ func TestHTTPProjectsAndGoalCreationEndpoints(t *testing.T) {
 	if err := json.Unmarshal(body, &created); err != nil {
 		t.Fatalf("decode created goal: %v; body=%s", err, body)
 	}
-	if created.ProjectID != f.project.ID || created.Title != "Created in inbox" || created.Description != "Created through the human UI endpoint" || created.Creator != "human" || created.Status != domain.GoalActive {
+	if created.ProjectID != f.project.ID || created.Content != "Created in inbox\n\nCreated through the human UI endpoint" || created.Creator != "human" || created.Status != domain.GoalActive {
 		t.Fatalf("created goal = %+v", created)
 	}
 
 	status, _, body = doRequest(t, client, http.MethodPost, srv.URL+"/api/goals", mustJSON(t, map[string]string{
-		"project_id":  f.project.ID,
-		"title":       "Created by an agent",
-		"description": "Needs human approval",
+		"project_id": f.project.ID,
+		"content":    "Created by an agent\n\nNeeds human approval",
 	}))
 	if status != http.StatusOK {
 		t.Fatalf("agent goal status = %d; body=%s", status, body)
@@ -2291,7 +2288,7 @@ func TestHTTPProjectsAndGoalCreationEndpoints(t *testing.T) {
 
 	status, headers, body = doRequest(t, client, http.MethodPost, srv.URL+"/api/goals", mustJSON(t, map[string]string{
 		"project_id": "missing-project",
-		"title":      "Unknown project",
+		"content":    "Unknown project",
 	}))
 	assertErrorObject(t, status, headers, body, http.StatusNotFound)
 }
@@ -2303,7 +2300,7 @@ func TestHTTPGoalCreationDefaultsToProposedWithoutCreator(t *testing.T) {
 
 	status, _, body := doRequest(t, srv.Client(), http.MethodPost, srv.URL+"/api/goals", mustJSON(t, map[string]string{
 		"project_id": f.project.ID,
-		"title":      "Created without creator",
+		"content":    "Created without creator",
 	}))
 	if status != http.StatusOK {
 		t.Fatalf("create goal status = %d; body=%s", status, body)
@@ -2324,7 +2321,7 @@ func TestHTTPGoalCreationWithHumanCreatorIsActive(t *testing.T) {
 
 	status, _, body := doRequest(t, srv.Client(), http.MethodPost, srv.URL+"/api/goals", mustJSON(t, map[string]string{
 		"project_id": f.project.ID,
-		"title":      "Created by a human",
+		"content":    "Created by a human",
 		"creator":    "human",
 	}))
 	if status != http.StatusOK {
@@ -2347,7 +2344,7 @@ func TestHTTPGoalApprovalEndpointsTransitionProposedGoal(t *testing.T) {
 
 	status, _, body := doRequest(t, client, http.MethodPost, srv.URL+"/api/goals", mustJSON(t, map[string]string{
 		"project_id": f.project.ID,
-		"title":      "Approve through HTTP",
+		"content":    "Approve through HTTP",
 		"creator":    "agent",
 	}))
 	if status != http.StatusOK {
@@ -2379,7 +2376,7 @@ func TestHTTPGoalApprovalEndpointsTransitionProposedGoal(t *testing.T) {
 
 	status, _, body = doRequest(t, client, http.MethodPost, srv.URL+"/api/goals", mustJSON(t, map[string]string{
 		"project_id": f.project.ID,
-		"title":      "Reject through HTTP",
+		"content":    "Reject through HTTP",
 		"creator":    "agent",
 	}))
 	if status != http.StatusOK {

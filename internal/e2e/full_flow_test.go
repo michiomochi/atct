@@ -173,10 +173,9 @@ func createGoalAt(t *testing.T, s *e2eStack, cwd string) domain.Goal {
 	t.Helper()
 	var goal domain.Goal
 	callDaemon(t, s, "goal.create", map[string]any{
-		"cwd":         cwd,
-		"title":       "Complete the end-to-end flow",
-		"description": "Verify the daemon and human-facing routes together",
-		"creator":     "human",
+		"cwd":     cwd,
+		"content": "Complete the end-to-end flow\n\nVerify the daemon and human-facing routes together",
+		"creator": "human",
 	}, &goal)
 	if goal.ID == "" || goal.Status != domain.GoalActive {
 		t.Fatalf("goal.create returned %+v", goal)
