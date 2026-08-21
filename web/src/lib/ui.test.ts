@@ -472,6 +472,12 @@ describe("goal detail answer flows", () => {
     expect(taskTableSource).toContain("table-scroll");
   });
 
+  it("keeps the goal task toggle pointer-interactive", () => {
+    expect(goalTableSource).toContain(
+      'className="focus-ring shrink-0 cursor-pointer text-ink-700 hover:text-ink-950"',
+    );
+  });
+
   it("exposes the decision approval API in Goal detail", () => {
     expect(goalDetailSource).toContain("fetchGoal");
     expect(goalDetailSource).toContain("unattached_decisions");

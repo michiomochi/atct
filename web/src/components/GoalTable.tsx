@@ -56,7 +56,7 @@ export function GoalTable({ goals, showProject = true }: Props) {
                           type="button"
                           aria-expanded={isOpen}
                           aria-label={t("goal.tasks.title")}
-                          className="focus-ring shrink-0 text-ink-700 hover:text-ink-950"
+                          className="focus-ring shrink-0 cursor-pointer text-ink-700 hover:text-ink-950"
                           onClick={() => {
                             setOpenGoals((current) => ({
                               ...current,
