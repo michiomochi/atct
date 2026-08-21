@@ -26,7 +26,7 @@
 ### Chromium を使う。Google Chrome は使わない
 
 `product-ui` スキルに「`channel: 'chrome'` は Google Chrome の起動に実測で失敗する」と
-書いてある。**同日それを踏んだ。** playwright MCP は Chrome の起動で 180 秒
+書いてある。**同日それを踏んだ。** 素で起動した playwright MCP は Chrome の起動で 180 秒
 タイムアウトし、キャッシュの `chrome-headless-shell` を `--dump-dom` で直接叩く形も
 6 分 40 秒で打ち切りになった。
 
@@ -66,7 +66,7 @@ Chromium はキャッシュ（`~/Library/Caches/ms-playwright/chromium-1234`）�
 | 知識 | 内容 |
 |---|---|
 | playwright の入手 | **依存に足さない。** グローバルに入っている（`npm root -g`）。`NODE_PATH="$(npm root -g)" node <script>` で解決する |
-| MCP | **使わない。** `npx -y @playwright/mcp@latest` は既定が実物の Google Chrome かつ headed で、初期化が 180 秒でタイムアウトする（スキルに実測として記録済み。同日また踏んだ） |
+| MCP | **設定済みのものは使える。**下の訂正を読むこと。`npx -y @playwright/mcp@latest` を**素で**起動すると既定が実物の Google Chrome かつ headed で、初期化が 180 秒でタイムアウトする |
 | 使うブラウザ | playwright 同梱の Chromium。キャッシュにあり、起動は 1 秒（実測 151.0.7922.34） |
 | 一時 HOME | **短いパスにする**（`/private/tmp/atct-vh` など）。100 バイトを超えると daemon が `bind: invalid argument` で落ちる（macOS の unix ソケット 104 バイト制限） |
 
@@ -126,3 +126,34 @@ Content-Type の取り違えは起きていない。**
   試す。捕まえられない手段を入れても意味がない）
 - **v0.22.0 の順序表示を、この手段で捕まえられたかを測る**（描画された文字列を読む。
   列見出しだけ見て中身を読まなかったのが当時の見落としである）
+
+## 訂正: MCP が駄目なのではなく、素で起動したのが駄目だった（2026-08-21）
+
+人間から「なんで claude 上の playwright MCP じゃだめなの？」と差し戻され、実際に叩いて測った。
+
+**動く。** Claude Code に登録済みの `playwright` MCP でダッシュボードを開いたところ、
+待ちなしで描画され、`Page Title: Dashboard | ATCT`、アクセシビリティのスナップショット
+21 行、console のエラーと警告は 0 件だった。
+
+差が出たのは**起動時の引数**である。`~/.claude.json` の登録はこうなっている。
+
+    npx -y @playwright/mcp@latest --headless --isolated --output-dir ~/.cache/playwright-mcp
+
+上の表に「MCP は使わない」と書いたとき、私が測ったのは `npx -y @playwright/mcp@latest` を
+**引数なしで**起動したものだった。既定は実物の Google Chrome かつ headed なので 180 秒で
+落ちる。**登録済みの MCP はその既定を踏んでいない。**「MCP が駄目」と一般化したのが誤りである。
+
+### どちらを使うか
+
+| 場面 | 手段 |
+|---|---|
+| Claude Code のセッションから 1 画面見る | **MCP を使う。**登録済みで、起動コストが無い |
+| executor（Codex）から見る | **スクリプト。**MCP は Claude Code 側の登録なので Codex からは使えない |
+| 素の `npx @playwright/mcp` を自分で起動する | **やらない。**引数なしは 180 秒で落ちる |
+
+### MCP を使うときの注意（実測）
+
+`browser_navigate` が返した直後のスナップショットは、島がまだ
+`Loading Waiting for answers` / `Loading Projects` の状態だった。**ATCT の画面はデータを
+fetch してから描くので、遷移直後のスナップショットは中身を見ていない。**
+`browser_wait_for` で本文の文字を待ってからスナップショットを取ること。

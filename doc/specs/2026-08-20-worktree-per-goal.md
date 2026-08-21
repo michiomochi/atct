@@ -126,3 +126,66 @@ worktree を作ったら `pnpm install` と `pnpm build` を 1 回走らせ、�
 - **2 つの worktree で同じファイルを別の内容に変え、互いに上書きしないこと**
 - **それぞれの `git status` が自分の変更しか見ないこと**（これが本題）
 - worktree で `go test ./...` が通ること（通すために必要な手順を明記する）
+
+## 内訳: 107 秒の中身（2026-08-21 の実測）
+
+人間から「なんで worktree 作成にそんなに時間がかかるの？」と差し戻された。
+**合計しか測っていなかったのが問題である。** 分けて測り直した。
+
+| 手順 | 実時間 | 生まれるもの |
+|---|---|---|
+| `git worktree add` | **0.2 秒** | 2.0MB |
+| `pnpm install` | 20.4 秒 | node_modules 431MB |
+| `pnpm build`（`astro check && astro build`） | **69.9 秒** | dist 696KB |
+| `go test ./...` | 11.4 秒 | - |
+
+**worktree の作成そのものは 0.2 秒である。** 遅いのは worktree ではなく、
+**gitignore されている `web/node_modules` と `web/dist` を毎回作り直していること**である。
+90.3 秒のうち 69.9 秒が `pnpm build` で、その大半は `astro check`（型検査）が占める。
+
+### 431MB は本当に増えたディスクである
+
+pnpm は普通グローバルの store から hardlink するので見かけほど増えない、と考えていた。
+**測ったら違った。**
+
+    find web/node_modules -type f -links +1 | wc -l  ->      0
+    find web/node_modules -type f -links 1  | wc -l  ->  43467
+
+**hardlink が 1 つも無い。** 43467 ファイルすべてが実体である。worktree ごとに 431MB
+増える。3 台なら 1.3GB。
+
+## 決定: 作り直さず、主チェックアウトから借りる
+
+`pnpm install` と `pnpm build` を worktree で走らせない。
+
+| 作るもの | やり方 | 実時間 |
+|---|---|---|
+| `web/node_modules` | 主チェックアウトへの **symlink** | 0.0 秒 |
+| `web/dist` | 主チェックアウトから `cp -R web/dist/. <wt>/web/dist/` | 0.05 秒 |
+
+**実測: これで `go test ./...` が全通過する**（wt2 で 3.9 秒、rc=0）。
+準備は **90.5 秒 → 0.8 秒**、ディスクは **431MB → 700KB** になる。
+
+### `cp -R` の宛先に注意（実測で踏んだ）
+
+`web/dist` は `.gitkeep` を持つので worktree にも**既に存在する**。
+`cp -R main/web/dist <wt>/web/dist` と書くと `<wt>/web/dist/dist` に入れ子になり、
+`internal/daemon/web_test.go` が `dist/index.html` を見つけられずに落ちる。
+**`cp -R main/web/dist/. <wt>/web/dist/` と書くこと。**
+
+### 借りることの代償
+
+- **`node_modules` は共有である。** worktree で `pnpm install` を走らせると
+  主チェックアウトごと変わる。**worktree で `pnpm install` を禁止する**
+- **`dist` は主チェックアウトのビルド時点のものである。** worktree で `web/src` を
+  変えたなら、その worktree で `pnpm build` を 1 回走らせる必要がある
+  （Go 側だけを触る作業では要らない）
+
+## executor は worktree を作れない（実測）
+
+`git worktree add` を executor（Codex）に実行させたら **0.01 秒で失敗**した。
+
+    unable to create directory for refs/heads/wt/measure-1
+
+主チェックアウトから同じコマンドを叩くと 0.2 秒で成功する。**Codex の sandbox が
+`.git` への書き込みを止めている。** worktree の作成と準備は commander が行う。
