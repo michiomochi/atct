@@ -694,6 +694,24 @@ func withImmediateMigrationTx(ctx context.Context, db *sql.DB, fn func(*sql.Conn
 	}
 	defer conn.Close()
 
+	// foreign_keys is per-connection and a no-op inside a transaction, so it has
+	// to be turned off on this pinned connection before BEGIN. A migration that
+	// rebuilds a referenced table -- 0007 rebuilds goals -- fails with FOREIGN KEY
+	// constraint failed without this, and only against a database that actually
+	// has rows pointing at it.
+	var foreignKeys int
+	if err := conn.QueryRowContext(ctx, "PRAGMA foreign_keys").Scan(&foreignKeys); err != nil {
+		return fmt.Errorf("read foreign_keys pragma: %w", err)
+	}
+	if foreignKeys != 0 {
+		if _, err := conn.ExecContext(ctx, "PRAGMA foreign_keys=OFF"); err != nil {
+			return fmt.Errorf("disable foreign_keys for migration: %w", err)
+		}
+		defer func() {
+			_, _ = conn.ExecContext(ctx, fmt.Sprintf("PRAGMA foreign_keys=%d", foreignKeys))
+		}()
+	}
+
 	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
 		return fmt.Errorf("begin migration transaction: %w", err)
 	}
