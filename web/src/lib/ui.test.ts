@@ -34,6 +34,7 @@ import {
   resolveRouteID,
   sortTasksByOrder,
   statusLabel,
+  taskStatusLabel,
   validateAnswer,
   groupGoalsByProject,
 } from "./ui";
@@ -285,6 +286,15 @@ describe("localized UI labels", () => {
   it("translates dropped task statuses", () => {
     expect(statusLabel("ja", "dropped")).toBe("取り下げ");
     expect(statusLabel("ja", "dropped")).not.toBe("dropped");
+  });
+
+  it.each([
+    ["en", "todo", 0, "Not started"],
+    ["en", "todo", 1, "Awaiting decision"],
+    ["en", "doing", 1, "In progress"],
+    ["en", "done", 1, "Completed"],
+  ])("labels task status %s/%s with %s open decisions as %s", (locale, status, openDecisionCount, expected) => {
+    expect(taskStatusLabel(locale as Locale, status, openDecisionCount)).toBe(expected);
   });
 
   it.each([

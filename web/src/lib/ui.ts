@@ -150,6 +150,13 @@ export function statusLabel(locale: Locale, status: string): string {
   return key ? localized(key, locale) : status;
 }
 
+export function taskStatusLabel(locale: Locale, status: string, openDecisionCount: number): string {
+  if (status === "todo" && openDecisionCount > 0) {
+    return localized("status.task.awaitingDecision", locale);
+  }
+  return statusLabel(locale, status);
+}
+
 export function decisionKindLabel(locale: Locale, kind: string): string {
   const key = decisionKindKeys[kind];
   return key ? localized(key, locale) : kind;

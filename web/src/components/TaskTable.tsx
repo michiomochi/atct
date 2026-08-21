@@ -5,7 +5,7 @@ import { useTranslation } from "react-i18next";
 import type { Decision, DecisionHistoryEntry, TaskView } from "../lib/api";
 import { ApiError, releaseTask } from "../lib/api";
 import { formatDateTime, formatDuration } from "../i18n";
-import { sortTasksByOrder, statusLabel } from "../lib/ui";
+import { sortTasksByOrder, taskStatusLabel } from "../lib/ui";
 import { DecisionAnswerForm } from "./DecisionAnswerForm";
 import { EmptyState } from "./StateMessage";
 
@@ -128,7 +128,7 @@ export function TaskTable({ tasks, mode, onRefresh }: Props) {
                 <Table.Cell className="min-w-0 px-3 py-4">
                   <GoalTaskTitle task={task} />
                 </Table.Cell>
-                <Table.Cell className="px-3 py-4 text-ink-700">{statusLabel(locale, task.status)}</Table.Cell>
+                <Table.Cell className="px-3 py-4 text-ink-700">{taskStatusLabel(locale, task.status, task.open_decisions?.length ?? 0)}</Table.Cell>
                 <Table.Cell className="whitespace-nowrap px-3 py-4 text-ink-700">{formatDateTime(locale, task.updated_at)}</Table.Cell>
               </Table.Row>
             ))}
@@ -166,7 +166,7 @@ export function TaskTable({ tasks, mode, onRefresh }: Props) {
                   {decision ? <DecisionCell decision={decision} onRefresh={onRefresh} /> : <span className="text-ink-500">{t("task.decision.noDetails")}</span>}
                 </Table.Cell>
               )}
-              <Table.Cell className="px-3 py-4 text-ink-700">{statusLabel(locale, task.status)}</Table.Cell>
+              <Table.Cell className="px-3 py-4 text-ink-700">{taskStatusLabel(locale, task.status, task.open_decisions?.length ?? 0)}</Table.Cell>
               <Table.Cell className="px-3 py-4"><ClaimCell task={task} /></Table.Cell>
               <Table.Cell className="px-3 py-4"><TaskRelease task={task} onRefresh={onRefresh} /></Table.Cell>
             </Table.Row>

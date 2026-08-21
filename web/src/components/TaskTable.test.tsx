@@ -28,7 +28,7 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-function taskView(): TaskView {
+function taskView(openDecisionCount = 0): TaskView {
   return {
     id: "task-1",
     goal_id: "goal-1",
@@ -43,7 +43,9 @@ function taskView(): TaskView {
     created_at: "2026-08-20T00:00:00Z",
     updated_at: "2026-08-20T00:00:00Z",
     held_for_seconds: 0,
-    open_decisions: [],
+    open_decisions: openDecisionCount > 0
+      ? ([{ id: "decision-1" }] as NonNullable<TaskView["open_decisions"]>)
+      : [],
     project_id: "project-1",
     project_name: "Fixture project",
   };
@@ -61,5 +63,17 @@ describe("TaskTable", () => {
     expect(link.parentElement?.tagName).toBe("TD");
     expect(link.parentElement?.children).toHaveLength(1);
     expect(link.closest("tr")?.querySelectorAll("a")).toHaveLength(1);
+  });
+
+  it("renders awaiting decision for a todo task with open decisions", () => {
+    render(<TaskTable tasks={[taskView(1)]} mode="goal" onRefresh={vi.fn()} />);
+
+    expect(screen.getByText("Awaiting decision")).toBeTruthy();
+  });
+
+  it("renders not started for a todo task without open decisions", () => {
+    render(<TaskTable tasks={[taskView()]} mode="goal" onRefresh={vi.fn()} />);
+
+    expect(screen.getByText("Not started")).toBeTruthy();
   });
 });

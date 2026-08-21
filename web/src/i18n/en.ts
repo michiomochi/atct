@@ -31,6 +31,7 @@ export const en = {
   "status.task.dropped": "Dropped",
   "status.task.active": "In progress",
   "status.task.completed": "Completed",
+  "status.task.awaitingDecision": "Awaiting decision",
   "status.awaitingDecision": "Waiting on you",
   "status.decision.open": "Awaiting answer",
   "status.decision.answered": "Answered",
