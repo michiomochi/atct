@@ -61,7 +61,7 @@ export function TaskCommitList({ taskID, commits }: Props) {
         return (
           <li key={commit.sha} className="min-w-0 border-t border-line pt-4 first:border-t-0 first:pt-0">
             <div className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1 text-sm">
-              <span className="font-mono text-ink-950">{commit.short_sha}</span>
+              <span className="font-mono text-[0.9em] text-ink-950">{commit.short_sha}</span>
               <span className="min-w-0 break-words text-ink-950">{commit.subject}</span>
             </div>
             <div className="mt-2 flex flex-wrap items-baseline gap-3 text-sm text-ink-700">
@@ -93,7 +93,7 @@ export function TaskCommitList({ taskID, commits }: Props) {
                     <ul className="min-w-0 space-y-2 text-sm text-ink-700">
                       {diffState.data.files.map((file) => (
                         <li key={file.path} className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1">
-                          <span className="min-w-0 break-words font-mono">{file.path}</span>
+                          <span className="min-w-0 break-words font-mono text-[0.9em]">{file.path}</span>
                           {file.binary ? (
                             <span className="text-ink-700">{t("task.detail.commitDiffBinary")}</span>
                           ) : (

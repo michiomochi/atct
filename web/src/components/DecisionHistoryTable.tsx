@@ -60,7 +60,7 @@ export function DecisionHistoryTable({ decisions, omittedCount }: Props) {
       <div className="table-scroll mt-4">
         <Table className="min-w-[52rem] w-full border-collapse text-left text-sm">
           <caption className="sr-only">{t("goal.history.caption")}</caption>
-          <Table.Header className="border-b-2 border-ink-300 text-xs uppercase tracking-wide text-ink-700">
+          <Table.Header className="border-b-2 border-ink-300 text-xs tracking-wide text-ink-700">
             <Table.Row>
               <Table.Head {...columnScope} className="px-3 py-3 font-semibold">{t("goal.history.column.question")}</Table.Head>
               <Table.Head {...columnScope} className="w-64 px-3 py-3 font-semibold">{t("goal.history.column.answer")}</Table.Head>

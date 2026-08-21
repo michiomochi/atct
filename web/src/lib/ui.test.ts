@@ -388,6 +388,23 @@ describe("goal history IDs", () => {
   });
 });
 
+describe("Kumo table headers", () => {
+  it("keeps table headers out of uppercase styling", () => {
+    const componentSources: string[] = [
+      decisionTableSource,
+      goalTableSource,
+      taskTableSource,
+      readFileSync(join(componentsDirectory, "DecisionHistoryTable.tsx"), "utf8"),
+    ];
+    const tableHeaderLines = componentSources.flatMap((source) =>
+      source.split("\n").filter((line) => line.includes("Table.Header")),
+    );
+
+    expect(tableHeaderLines.length).toBeGreaterThan(0);
+    expect(tableHeaderLines.filter((line) => line.includes("uppercase"))).toEqual([]);
+  });
+});
+
 describe("Kumo buttons", () => {
   it("keeps button semantics and the shared focus ring", () => {
     const componentSources = [decisionFormSource, stateMessageSource, taskTableSource];

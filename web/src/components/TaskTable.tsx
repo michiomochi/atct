@@ -114,7 +114,7 @@ export function TaskTable({ tasks, mode, onRefresh }: Props) {
       <div className="table-scroll">
         <Table className="min-w-[52rem] w-full border-collapse text-left text-sm">
           <caption className="sr-only">{t("task.caption.list")}</caption>
-          <Table.Header className="border-b-2 border-ink-300 text-xs uppercase tracking-wide text-ink-700">
+          <Table.Header className="border-b-2 border-ink-300 text-xs tracking-wide text-ink-700">
             <Table.Row>
               <Table.Head {...columnScope} className="w-16 px-3 py-3 font-semibold">{t("task.column.order")}</Table.Head>
               <Table.Head {...columnScope} className="px-3 py-3 font-semibold">{t("task.column.task")}</Table.Head>
@@ -149,7 +149,7 @@ export function TaskTable({ tasks, mode, onRefresh }: Props) {
     <div className="table-scroll">
       <Table className={needsDecision ? "min-w-[70rem] w-full border-collapse text-left text-sm" : "min-w-[52rem] w-full border-collapse text-left text-sm"}>
         <caption className="sr-only">{needsDecision ? t("task.caption.needsDecision") : t("task.caption.list")}</caption>
-        <Table.Header className="border-b-2 border-ink-300 text-xs uppercase tracking-wide text-ink-700">
+        <Table.Header className="border-b-2 border-ink-300 text-xs tracking-wide text-ink-700">
           <Table.Row>
             <Table.Head {...columnScope} className="w-64 px-3 py-3 font-semibold">{t("task.column.task")}</Table.Head>
             {needsDecision && <Table.Head {...columnScope} className="min-w-[34rem] px-3 py-3 font-semibold">{t("task.column.decision")}</Table.Head>}

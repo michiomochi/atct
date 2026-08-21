@@ -28,7 +28,7 @@ export function DecisionTable({ decisions, emptyText }: Props) {
     <div className="table-scroll">
       <Table className="min-w-[64rem] w-full border-collapse text-left text-sm">
         <caption className="sr-only">{t("decision.caption.list")}</caption>
-        <Table.Header className="border-b-2 border-ink-300 text-xs uppercase tracking-wide text-ink-700">
+        <Table.Header className="border-b-2 border-ink-300 text-xs tracking-wide text-ink-700">
           <Table.Row>
             <Table.Head {...columnScope} className="px-3 py-3 font-semibold">{t("decision.column.question")}</Table.Head>
             <Table.Head {...columnScope} className="w-40 px-3 py-3 font-semibold">{t("decision.column.project")}</Table.Head>
