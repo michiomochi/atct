@@ -51,16 +51,19 @@ shell; it does not change what the plugin runs.
 
 ## Getting started
 
-Register the repository once, from inside it:
+From inside any repository, say `/atct:start`. If it is not registered yet, the repository is
+registered on the spot. Running `/atct:start` in a repository you did not intend to manage also
+places that repository under atct management.
+
+Open <http://127.0.0.1:8787/> and create your first goal there — **everything a human does happens
+on the dashboard.** The daemon starts on its own the first time anything needs it.
+
+If you prefer to register a repository manually, `atct project add` remains available:
 
 ```bash
 cd /path/to/your/repo
 atct project add
 ```
-
-That is the only thing the terminal is needed for. Open <http://127.0.0.1:8787/> and create
-your first goal there — **everything a human does happens on the dashboard.** The daemon
-starts on its own the first time anything needs it.
 
 A goal is one field. Write what you want in as much or as little detail as you like; the
 first line is what lists and links show, and anything after it is the detail.

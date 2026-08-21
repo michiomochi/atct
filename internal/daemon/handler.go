@@ -129,6 +129,33 @@ func (d *Daemon) ensureAgentSessionProject(ctx context.Context, agentSessionID, 
 	return fmt.Errorf("agent session project scope violation: assigned project %q, target project %q", assignedProjectName, targetProjectName)
 }
 
+func (d *Daemon) resolveOrRegisterProject(ctx context.Context, cwd string) (domain.Project, error) {
+	project, err := d.store.ResolveProject(ctx, cwd)
+	if err == nil {
+		return project, nil
+	}
+	if !errors.Is(err, store.ErrProjectNotFound) {
+		return domain.Project{}, err
+	}
+
+	rootPath := store.NormalizeRoot(ctx, cwd)
+	project, err = d.store.CreateProject(ctx, filepath.Base(rootPath), rootPath)
+	if err == nil {
+		return project, nil
+	}
+
+	project, resolveErr := d.store.ResolveProject(ctx, cwd)
+	if resolveErr == nil {
+		return project, nil
+	}
+	if !errors.Is(resolveErr, store.ErrProjectNotFound) {
+		return domain.Project{}, resolveErr
+	}
+
+	fallbackName := filepath.Join(filepath.Base(filepath.Dir(rootPath)), filepath.Base(rootPath))
+	return d.store.CreateProject(ctx, fallbackName, rootPath)
+}
+
 func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage, error) {
 	switch req.Method {
 	case "run.register":
@@ -173,7 +200,7 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, err
 		}
-		ns, err := d.store.ResolveProject(ctx, p.Cwd)
+		ns, err := d.resolveOrRegisterProject(ctx, p.Cwd)
 		if err != nil {
 			return nil, err
 		}

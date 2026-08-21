@@ -145,6 +145,119 @@ func TestDaemonListsProjects(t *testing.T) {
 	}
 }
 
+func TestDaemonAutoRegistersProjectForGoalList(t *testing.T) {
+	conn := newDaemonConn(t)
+	resp := call(t, conn, "goal.list", map[string]string{"cwd": "/repos/auto-register"})
+	if resp.Error != "" {
+		t.Fatalf("goal.list: %s", resp.Error)
+	}
+
+	var result struct {
+		Project domain.Project `json:"project"`
+	}
+	if err := json.Unmarshal(resp.Result, &result); err != nil {
+		t.Fatalf("unmarshal goal.list: %v", err)
+	}
+	if result.Project.Name != "auto-register" {
+		t.Fatalf("project name = %q, want %q", result.Project.Name, "auto-register")
+	}
+}
+
+func TestDaemonReusesAutoRegisteredProjectForGoalList(t *testing.T) {
+	conn := newDaemonConn(t)
+	params := map[string]string{"cwd": "/repos/auto-register"}
+	for range 2 {
+		resp := call(t, conn, "goal.list", params)
+		if resp.Error != "" {
+			t.Fatalf("goal.list: %s", resp.Error)
+		}
+	}
+
+	listed := call(t, conn, "project.list", map[string]string{})
+	if listed.Error != "" {
+		t.Fatalf("project.list: %s", listed.Error)
+	}
+	var projects []domain.Project
+	if err := json.Unmarshal(listed.Result, &projects); err != nil {
+		t.Fatalf("unmarshal projects: %v", err)
+	}
+	if len(projects) != 1 {
+		t.Fatalf("project.list returned %d projects, want 1", len(projects))
+	}
+}
+
+func TestDaemonAutoRegistersDuplicateBasenameWithParentName(t *testing.T) {
+	conn := newDaemonConn(t)
+	created := call(t, conn, "project.create", map[string]string{
+		"name":      "atct",
+		"root_path": "/repos/old/atct",
+	})
+	if created.Error != "" {
+		t.Fatalf("project.create: %s", created.Error)
+	}
+
+	resp := call(t, conn, "goal.list", map[string]string{"cwd": "/repos/new/atct"})
+	if resp.Error != "" {
+		t.Fatalf("goal.list: %s", resp.Error)
+	}
+	var result struct {
+		Project domain.Project `json:"project"`
+	}
+	if err := json.Unmarshal(resp.Result, &result); err != nil {
+		t.Fatalf("unmarshal goal.list: %v", err)
+	}
+	if result.Project.Name != "new/atct" {
+		t.Fatalf("project name = %q, want %q", result.Project.Name, "new/atct")
+	}
+
+	listed := call(t, conn, "project.list", map[string]string{})
+	if listed.Error != "" {
+		t.Fatalf("project.list: %s", listed.Error)
+	}
+	var projects []domain.Project
+	if err := json.Unmarshal(listed.Result, &projects); err != nil {
+		t.Fatalf("unmarshal projects: %v", err)
+	}
+	var foundOriginal bool
+	for _, project := range projects {
+		if project.RootPath == "/repos/old/atct" && project.Name == "atct" {
+			foundOriginal = true
+			break
+		}
+	}
+	if !foundOriginal {
+		t.Fatalf("original project name was changed or project was removed: %#v", projects)
+	}
+}
+
+func TestDaemonAutoRegistersDuplicateBasenameAsSecondProject(t *testing.T) {
+	conn := newDaemonConn(t)
+	created := call(t, conn, "project.create", map[string]string{
+		"name":      "atct",
+		"root_path": "/repos/old/atct",
+	})
+	if created.Error != "" {
+		t.Fatalf("project.create: %s", created.Error)
+	}
+
+	resp := call(t, conn, "goal.list", map[string]string{"cwd": "/repos/new/atct"})
+	if resp.Error != "" {
+		t.Fatalf("goal.list: %s", resp.Error)
+	}
+
+	listed := call(t, conn, "project.list", map[string]string{})
+	if listed.Error != "" {
+		t.Fatalf("project.list: %s", listed.Error)
+	}
+	var projects []domain.Project
+	if err := json.Unmarshal(listed.Result, &projects); err != nil {
+		t.Fatalf("unmarshal projects: %v", err)
+	}
+	if len(projects) != 2 {
+		t.Fatalf("project.list returned %d projects, want 2", len(projects))
+	}
+}
+
 func TestDaemonListsProjectsWhenNoneExist(t *testing.T) {
 	resp := call(t, newDaemonConn(t), "project.list", map[string]string{})
 	if resp.Error != "" {
