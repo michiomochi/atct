@@ -7,7 +7,11 @@ import (
 	"github.com/michiomochi/atct/internal/store"
 )
 
-const wakeupPublishAfter = 15 * time.Minute
+const (
+	wakeupPublishAfter   = 15 * time.Minute
+	wakeupInitialWait    = 10 * time.Minute
+	wakeupResendInterval = 10 * time.Minute
+)
 
 // wakeupTracker keeps the transition state that is intentionally not stored
 // in SQLite. A condition must remain true for the grace period before it is
@@ -15,7 +19,7 @@ const wakeupPublishAfter = 15 * time.Minute
 // a fresh wakeup ID.
 type wakeupTracker struct {
 	activeSince          map[string]time.Time
-	published            map[string]bool
+	published            map[string]time.Time
 	discrepancySeen      map[string]bool
 	detectionActiveSince map[string]time.Time
 	detectionPublished   map[string]bool
@@ -24,7 +28,7 @@ type wakeupTracker struct {
 func newWakeupTracker() *wakeupTracker {
 	return &wakeupTracker{
 		activeSince:          make(map[string]time.Time),
-		published:            make(map[string]bool),
+		published:            make(map[string]time.Time),
 		discrepancySeen:      make(map[string]bool),
 		detectionActiveSince: make(map[string]time.Time),
 		detectionPublished:   make(map[string]bool),
@@ -119,18 +123,25 @@ func (t *wakeupTracker) evaluateWith(ctx context.Context, s *store.Store, now ti
 			if !ok {
 				t.activeSince[project.ID] = now
 				delete(t.published, project.ID)
-			} else if !t.published[project.ID] && !now.Before(startedAt.Add(wakeupPublishAfter)) {
-				events = append(events, store.DecisionEvent{
-					Name: store.EventWakeup,
-					Data: store.WakeupEvent{
-						WakeupID:           store.NewWakeupID(),
-						ProjectID:          project.ID,
-						ActiveGoalCount:    state.ActiveGoalCount,
-						UnstartedTaskCount: state.UnstartedTaskCount,
-						WaitingAnswerCount: state.WaitingAnswerCount,
-					},
-				})
-				t.published[project.ID] = true
+			} else {
+				lastPublishedAt, hasPublished := t.published[project.ID]
+				shouldPublish := !hasPublished && !now.Before(startedAt.Add(wakeupInitialWait))
+				if hasPublished {
+					shouldPublish = !now.Before(lastPublishedAt.Add(wakeupResendInterval))
+				}
+				if shouldPublish {
+					events = append(events, store.DecisionEvent{
+						Name: store.EventWakeup,
+						Data: store.WakeupEvent{
+							WakeupID:           store.NewWakeupID(),
+							ProjectID:          project.ID,
+							ActiveGoalCount:    state.ActiveGoalCount,
+							UnstartedTaskCount: state.UnstartedTaskCount,
+							WaitingAnswerCount: state.WaitingAnswerCount,
+						},
+					})
+					t.published[project.ID] = now
+				}
 			}
 		}
 

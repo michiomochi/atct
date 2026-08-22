@@ -45,18 +45,19 @@ func TestWakeupTrackerPublishesAfterGracePeriodAndResets(t *testing.T) {
 
 	tracker := newWakeupTracker()
 	start := time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)
+	initialWait := 10 * time.Minute
 	if events, err := tracker.evaluate(ctx, s, start); err != nil {
 		t.Fatalf("initial evaluate: %v", err)
 	} else if len(events) != 0 {
 		t.Fatalf("initial events = %#v, want empty", events)
 	}
-	if events, err := tracker.evaluate(ctx, s, start.Add(wakeupPublishAfter-time.Nanosecond)); err != nil {
+	if events, err := tracker.evaluate(ctx, s, start.Add(initialWait-time.Nanosecond)); err != nil {
 		t.Fatalf("pre-grace evaluate: %v", err)
 	} else if len(events) != 0 {
 		t.Fatalf("pre-grace events = %#v, want empty", events)
 	}
 
-	events, err := tracker.evaluate(ctx, s, start.Add(wakeupPublishAfter))
+	events, err := tracker.evaluate(ctx, s, start.Add(initialWait))
 	if err != nil {
 		t.Fatalf("publish evaluate: %v", err)
 	}
@@ -71,7 +72,7 @@ func TestWakeupTrackerPublishesAfterGracePeriodAndResets(t *testing.T) {
 		t.Fatalf("published wakeup = %+v, want project %s with one active goal and task", first, projectID)
 	}
 
-	if events, err := tracker.evaluate(ctx, s, start.Add(wakeupPublishAfter+time.Second)); err != nil {
+	if events, err := tracker.evaluate(ctx, s, start.Add(initialWait+time.Second)); err != nil {
 		t.Fatalf("duplicate evaluate: %v", err)
 	} else if len(events) != 0 {
 		t.Fatalf("duplicate events = %#v, want empty", events)
@@ -98,7 +99,7 @@ func TestWakeupTrackerPublishesAfterGracePeriodAndResets(t *testing.T) {
 	} else if len(events) != 0 {
 		t.Fatalf("second start events = %#v, want empty", events)
 	}
-	events, err = tracker.evaluate(ctx, s, start.Add(31*time.Minute+time.Second))
+	events, err = tracker.evaluate(ctx, s, start.Add(16*time.Minute+initialWait+time.Second))
 	if err != nil {
 		t.Fatalf("second publish evaluate: %v", err)
 	}
@@ -109,6 +110,43 @@ func TestWakeupTrackerPublishesAfterGracePeriodAndResets(t *testing.T) {
 	if second.WakeupID == first.WakeupID {
 		t.Fatalf("second wakeup ID = %q, want a fresh ID after the condition reset", second.WakeupID)
 	}
+}
+
+func TestWakeupTrackerRepublishesWhileConditionRemainsActive(t *testing.T) {
+	ctx := context.Background()
+	s := newWakeupTestStore(t)
+	_, goalID := newWakeupTestGoal(t, s, "repeat")
+	if _, err := s.DeclareTasks(ctx, goalID, "agent", "repeat-tasks", []string{"Unstarted task"}, []string{"Keep the task unstarted."}); err != nil {
+		t.Fatalf("DeclareTasks: %v", err)
+	}
+
+	tracker := newWakeupTracker()
+	start := time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)
+	evaluateAt := func(now time.Time, wantEvents int) {
+		t.Helper()
+		events, err := tracker.evaluateWith(ctx, s, now, s.DetectWakeup)
+		if err != nil {
+			t.Fatalf("evaluate at %s: %v", now, err)
+		}
+		if len(events) != wantEvents {
+			t.Fatalf("events at %s = %#v, want %d event(s)", now, events, wantEvents)
+		}
+		for _, event := range events {
+			if event.Name != store.EventWakeup {
+				t.Fatalf("events at %s = %#v, want only %q", now, events, store.EventWakeup)
+			}
+		}
+	}
+
+	evaluateAt(start, 0)
+	// Start at the existing grace boundary so the baseline failure isolates missing resend behavior.
+	firstAt := start.Add(wakeupPublishAfter)
+	evaluateAt(firstAt, 1)
+	resendInterval := 10 * time.Minute
+	evaluateAt(firstAt.Add(resendInterval-time.Nanosecond), 0)
+	evaluateAt(firstAt.Add(resendInterval), 1)
+	evaluateAt(firstAt.Add(2*resendInterval), 1)
+	evaluateAt(firstAt.Add(3*resendInterval), 1)
 }
 
 func TestWakeupTrackerReportsDetectorCountDiscrepancyOnce(t *testing.T) {
