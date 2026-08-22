@@ -794,3 +794,31 @@ claim している限り、重なりは見えない。
 **commander が自分で気づくしかない。**タスクの `files` を宣言しておく価値は残る
 （読めば重なりが分かる）。実際、今日は `atct_goal_list` の応答で 2 つのタスクの
 `files` を並べて見て気づいた。**宣言していなければ気づけなかった。**
+
+## 追記: 消し合いは 1 回では終わらない（2026-08-22・追加の実測）
+
+上で「2 人目が入ると 1 人目の生存記録が消える」と書いたが、**症状はもっと重い。**
+
+`AssociateAgentSessionWithProject` を呼ぶ場所を全部数えたところ、
+**`goal.list` の中にあった**（`internal/daemon/handler.go:210`）。
+
+```
+case "goal.list":
+    ...
+    if err := d.store.AssociateAgentSessionWithProject(ctx, p.AgentSessionID, ns.ID); err != nil {
+```
+
+**`goal.list` は `atct:start` の 1 手目である。**さらにセッションが状況を見るたびに呼ぶ。
+
+したがって 3 層ではこうなる。
+
+```
+1. subcommander が起動して goal.list      → commander の記録が消える
+2. commander が次に goal.list             → 自分を登録し直し、subcommander の記録が消える
+3. subcommander がまた goal.list          → 1 に戻る
+```
+
+**両方が動いている限り、交互に消し合い続ける。**「2 人目が入った瞬間だけ」ではない。
+
+`dotfiles-commander` の指摘のとおり、**worktree の用意が楽になったぶん subcommander を
+作る回数が増え、この不具合に当たる回数も増える。**3 層を展開する前に直すべきである。
