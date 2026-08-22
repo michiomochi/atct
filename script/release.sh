@@ -13,7 +13,48 @@
 # places to stop and write a summary instead of continuing.
 set -euo pipefail
 
-version="${1:?usage: script/release.sh <version>   e.g. 0.26.0}"
+version=""
+reviewed=0
+
+for arg in "$@"; do
+  case "$arg" in
+    --reviewed)
+      reviewed=1
+      ;;
+    *)
+      if [[ -n "$version" ]]; then
+        echo "usage: script/release.sh <version> [--reviewed]" >&2
+        exit 1
+      fi
+      version="$arg"
+      ;;
+  esac
+done
+
+if [[ -z "$version" ]]; then
+  echo "usage: script/release.sh <version> [--reviewed]" >&2
+  exit 1
+fi
+
+if (( reviewed == 0 )); then
+  cat <<'EOF'
+Cross-goal review, before this release goes out:
+
+  1. Did a change rely on a count that another goal has since moved?
+     (text-xs was 34 in a brief and 36 in the tree)
+  2. Did a published name change meaning, leaving another caller lying?
+     (UnstartedTaskCount went from claimable to total; pending, the nudge list,
+      and the wakeup condition each read it, and only one was updated)
+  3. Did a change break an existing way of measuring or verifying?
+     (SSE made playwright's waitUntil: networkidle wait forever)
+  4. Did a change introduce a new violation of a cross-cutting rule?
+     (Kumo has 15; fixing one component can break a different rule)
+
+Re-run with --reviewed once you have been through these.
+EOF
+  exit 1
+fi
+
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo"
 
@@ -22,6 +63,7 @@ if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   exit 1
 fi
 
+# RELEASE_GATE_TEST_MARKER
 current="$(python3 -c 'import json;print(json.load(open("plugin/.claude-plugin/plugin.json"))["version"])')"
 echo "==> $current -> $version"
 
