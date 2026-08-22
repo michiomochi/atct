@@ -271,9 +271,21 @@ atct 以外の space でも使う。**「atct のゴール 1 件 = space 1 つ�
 - **executor は `.git` を書けない**（実測済み）。worktree の作成は commander の仕事
 - **共有ツリーでのリリースは落ちる**（実測済み）。worktree に分ければこの問題は減るが、
   リリース時に本体が clean である必要は残る
-- 古い worktree が残る。2026-08-22 時点で `atct-wt1` と `atct-wt2` が残っており、
-  **`atct-wt2` には未コミットの変更がある**（`internal/store/migrations.go`）。
-  **後片付けの担当を決めないと溜まる**
+- 古い worktree が残る。**後片付けの担当を決めないと溜まる。**
+
+  **実測（2026-08-22）**: `atct-wt1` と `atct-wt2` が残っており、`atct-wt2` には
+  未コミットの変更があった（`internal/store/migrations.go`）。commander が片付けた。
+
+  **片付けるときは、未コミットの変更が残骸かどうかを 1 行ずつ確かめる。**wt2 の 17 行は
+  すべて本体に存在した（commit `1980f14` で取り込まれた後の残骸だった）。
+  **確かめる前は「捨てられかけた実在のバグの修正」と誤読し、ゴールまで立てた。**
+
+  ```sh
+  git -C <worktree> diff <file> | grep '^+' | grep -v '^+++' | sed 's/^+//'     | while IFS= read -r l; do grep -qF "$l" <file> || echo "無い: $l"; done
+  ```
+
+  **worktree を消してもブランチは残る。**`wt/executor-1` と `wt/executor-2` が残った。
+  ブランチを消すかは人間の判断（worktree は再生成できるが、ブランチ名は記録である）
 
 ## B-2. ゴール横断の知識 → atct に `knowledge` は作らない（決定済み）
 
