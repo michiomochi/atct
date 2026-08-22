@@ -51,7 +51,7 @@ atct-c22a6d79-executor
 | 担当の記録 | **ゴールに claim を持たせる。**タスクの claim とは別物 |
 | 古い worktree の片付け | commander。未コミットの変更は人間に出す |
 | 最終成果物のレビュー | commander。**リリースを関門にする**（観点 4 つ） |
-| `pnpm install` | subcommander が worktree を作った直後に 1 回 |
+| worktree の準備 | **`script/worktree-setup.sh` を使う。`pnpm install` は走らせない**（`node_modules` は symlink で借りる。2026-08-20 の spec） |
 | 通知の受け口 | **wakeup に統一。Stop hook を廃止。間隔 3 分**（下記） |
 | atct 固有の名前の置き場 | **atct 側で持つ。**`orchestration` には書かない（下記） |
 

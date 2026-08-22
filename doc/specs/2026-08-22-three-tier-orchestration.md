@@ -396,8 +396,19 @@ atct 以外の space でも使う。**「atct のゴール 1 件 = space 1 つ�
 
 ### 決めること（3 つだけ）
 
-1. **`pnpm install` を誰がいつ走らせるか。**ストアがあるのでハードリンクだが、worktree
-   作成時に 1 回は要る。commander が space を立てた直後が素直
+1. **`pnpm install` は走らせない。**2026-08-20 の spec
+   `doc/specs/2026-08-20-worktree-per-goal.md` で既に決まっており、
+   **`script/worktree-setup.sh` として実装済みである。**
+
+   commander は今日これを知らずに「worktree を作った直後に 1 回走らせる」と書いたが、
+   **誤りだった。**`node_modules` は主チェックアウトへの symlink で借りるので、
+   **worktree で `pnpm install` を走らせると主チェックアウトごと変わる。**
+   あの spec は「worktree で `pnpm install` を禁止する」と明記している。
+
+   実測（2026-08-20）: 借りる形で準備は **90.5 秒 → 0.8 秒**、ディスクは
+   **431MB → 700KB**。`go test ./...` は全通過する。
+   `web/dist` は `cp -R main/web/dist/. <wt>/web/dist/` と書く（`/.` を落とすと
+   入れ子になり `web_test.go` が落ちる）
 2. **マージの衝突を誰が解くか。**worktree は「静かに消える」を「見える衝突」に変える
    だけで、解決者は要る。**これはゴールをまたぐ作業なので B-2 の穴に落ちる。**
    commander が持つのが妥当
@@ -622,7 +633,7 @@ subcommander (goal C) ─┘                              │
 | 古い worktree の片付け | commander。未コミットの変更があるものは人間に出す |
 | 最終成果物のレビュー | commander。**リリースを関門にする。**観点は 4 つ（B-5b） |
 | 1 ゴールあたりの subcommander | **1 台。**作る前に `herdr agent list` で確認する（A-1） |
-| `pnpm install` | subcommander が worktree を作った直後に 1 回 |
+| worktree の準備 | **`script/worktree-setup.sh` を使う。`pnpm install` は走らせない**（B-1） |
 | 通知の受け口 | **wakeup に統一。Stop hook を廃止。間隔 3 分**（A-3b） |
 | workspace 名の制約 | **無い。**32 文字の規約は agent 名だけ（A-1） |
 | 役割定義の置き場 | `orchestration` スキル（`b66acc5` で着地。`chezmoi apply` は承認待ち） |
