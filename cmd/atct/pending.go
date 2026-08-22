@@ -215,11 +215,11 @@ func pendingTextForProject(dir, cwd, projectName string, projectSpecified bool) 
 			fmt.Fprintf(&output, "- %s (goal_id: %s)\n", oneLine(domain.Headline(goal.Content)), goal.ID)
 		}
 	}
-	if openNoDefaultDecisionCount > 0 && wakeupState.UnstartedTaskCount > 0 {
+	if openNoDefaultDecisionCount > 0 && wakeupState.UntouchedTaskCount > 0 {
 		if output.Len() > 0 {
 			output.WriteString("\n\n")
 		}
-		output.WriteString(fmt.Sprintf(pendingNoDefaultDecisionReason, openNoDefaultDecisionCount, wakeupState.UnstartedTaskCount))
+		output.WriteString(fmt.Sprintf(pendingNoDefaultDecisionReason, openNoDefaultDecisionCount, wakeupState.UntouchedTaskCount))
 	}
 	if len(wakeupState.Tasks) > 0 {
 		if output.Len() > 0 {
@@ -237,7 +237,13 @@ func pendingTextForProject(dir, cwd, projectName string, projectSpecified bool) 
 		if output.Len() > 0 {
 			output.WriteString("\n\n")
 		}
-		output.WriteString(pendingClaimReasonFor(len(unfinishedTasks), wakeupState.UnstartedTaskCount))
+		output.WriteString(pendingClaimReasonFor(
+			len(unfinishedTasks),
+			wakeupState.UnstartedTaskCount,
+			wakeupState.WaitingAnswerTaskCount,
+			wakeupState.WorkingTaskCount,
+			wakeupState.UntouchedTaskCount,
+		))
 		output.WriteString("\n\n")
 		output.WriteString(unfinishedClaimMarker)
 		output.WriteByte('\n')
@@ -296,12 +302,12 @@ func pendingTextForProject(dir, cwd, projectName string, projectSpecified bool) 
 	return output.String(), nil
 }
 
-func pendingClaimReasonFor(lockCount, unstartedTaskCount int) string {
+func pendingClaimReasonFor(lockCount, unstartedTaskCount, waitingAnswerTaskCount, workingTaskCount, untouchedTaskCount int) string {
 	reason := fmt.Sprintf("You hold %d work locks.", lockCount)
-	if unstartedTaskCount == 0 {
+	if untouchedTaskCount == 0 {
 		return reason
 	}
-	return fmt.Sprintf("%s %d tasks in active goals have no work lock.\nIf you are waiting on a human, take one of those instead of stopping.", reason, unstartedTaskCount)
+	return fmt.Sprintf("%s %d unstarted tasks in active goals (waiting for an answer: %d / working: %d / untouched: %d). %d tasks in active goals have no work lock.\nIf you are waiting on a human, take one of those instead of stopping.", reason, unstartedTaskCount, waitingAnswerTaskCount, workingTaskCount, untouchedTaskCount, untouchedTaskCount)
 }
 
 func runPending(dir string) error {

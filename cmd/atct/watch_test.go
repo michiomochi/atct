@@ -154,8 +154,28 @@ func TestWatchEmitsWakeupEvents(t *testing.T) {
 		}
 	}
 
-	want := "atct wakeup: active_goals=0 unstarted_tasks=0 waiting_answers=0\n" +
-		"atct wakeup: active_goals=0 unstarted_tasks=0 waiting_answers=0\n"
+	want := "atct wakeup: active_goals=0 unstarted_tasks=0 waiting_answer_tasks=0 working_tasks=0 untouched_tasks=0 waiting_answers=0\n" +
+		"atct wakeup: active_goals=0 unstarted_tasks=0 waiting_answer_tasks=0 working_tasks=0 untouched_tasks=0 waiting_answers=0\n"
+	if got := output.String(); got != want {
+		t.Fatalf("wakeup output = %q, want %q", got, want)
+	}
+}
+
+func TestWatchEmitsWakeupTaskBreakdownSeparatelyFromDecisionCount(t *testing.T) {
+	var output strings.Builder
+	delivered := make(map[watchDeliveryKey]struct{})
+	wakeupDelivered := make(map[watchWakeupDeliveryKey]struct{})
+	detectionDelivered := make(map[watchDetectionDeliveryKey]struct{})
+
+	var decision watchDecision
+	if err := json.Unmarshal([]byte(`{"wakeup_id":"wakeup-breakdown","active_goal_count":3,"unstarted_task_count":3,"waiting_answer_task_count":1,"working_task_count":1,"untouched_task_count":1,"waiting_answer_count":2}`), &decision); err != nil {
+		t.Fatalf("json.Unmarshal: %v", err)
+	}
+	if err := emitWatchDecision(&output, "wakeup", decision, delivered, wakeupDelivered, detectionDelivered); err != nil {
+		t.Fatalf("emitWatchDecision: %v", err)
+	}
+
+	want := "atct wakeup: active_goals=3 unstarted_tasks=3 waiting_answer_tasks=1 working_tasks=1 untouched_tasks=1 waiting_answers=2\n"
 	if got := output.String(); got != want {
 		t.Fatalf("wakeup output = %q, want %q", got, want)
 	}
@@ -173,8 +193,8 @@ func TestWatchEmitsWakeupAgainAfterStateReturns(t *testing.T) {
 		}
 	}
 
-	want := "atct wakeup: active_goals=0 unstarted_tasks=0 waiting_answers=0\n" +
-		"atct wakeup: active_goals=0 unstarted_tasks=0 waiting_answers=0\n"
+	want := "atct wakeup: active_goals=0 unstarted_tasks=0 waiting_answer_tasks=0 working_tasks=0 untouched_tasks=0 waiting_answers=0\n" +
+		"atct wakeup: active_goals=0 unstarted_tasks=0 waiting_answer_tasks=0 working_tasks=0 untouched_tasks=0 waiting_answers=0\n"
 	if got := output.String(); got != want {
 		t.Fatalf("wakeup output = %q, want %q", got, want)
 	}
