@@ -255,9 +255,11 @@ embedded migrations are not a linear sequence at "0011_goal_claims.sql": expecte
 
 ## 準備は `script/worktree-setup.sh` 1 本にする
 
-    script/worktree-setup.sh <goal-id>   # -> ../atct-wt-<goal8>、ブランチ wt/goal-<goal8>
+    script/worktree-setup.sh <goal-id>   # -> .worktrees/<goal8>、ブランチ wt/goal-<goal8>
 
-**引数は 2026-08-22 に番号からゴール ID へ変わった**（`337830b`）。フル UUID でも
+**引数は 2026-08-22 に番号からゴール ID へ変わった**（`337830b`）。
+**置き場所は同日、主チェックアウトの隣から中へ変わった**（`192dbdf`）。
+理由と片付けの手順は `doc/specs/2026-08-22-worktrees-inside-the-checkout.md`。フル UUID でも
 先頭 8 文字でも同じ worktree になる。番号を渡すと `exit 2` で拒む。理由と経緯は
 `doc/specs/2026-08-22-worktree-automation.md`。
 
