@@ -477,3 +477,82 @@ if len(openDecisions) > 0 {
 内訳ではなく独立した項目に見える。読み手は「作業中が 0 件」と受け取る。
 2026-08-22 の実測では、3 件が `doing` かつ生存 claim を持っている最中に
 `working_tasks=0` が出ていた。
+
+## 検知 11 種類の到達可能性（2026-08-22 に稼働版 0.40.0 で実測）
+
+ゴール 9c7df582 のタスク 3846c275「10 種類すべてが届くことを稼働版で実測する」の記録。
+**これは Stop hook を消す前の門である。**
+
+空の DB で一時 daemon（port 8801）を立て、11 種類すべての条件を人工的に作って測った。
+本番の DB は触っていない。
+
+### 発行までの待ち時間（`internal/daemon/wakeup.go` の定数）
+
+```
+ 0 分   decision_answered_unapplied
+ 3 分   decision_default_unapplied / claim_stale
+15 分   all_tasks_dropped / commits_missing / completion_report_missing /
+        unclaimed_doing / undeclared_goal        ← wakeupPublishAfter
+30 分   handoff_unreceived / handoff_unreported / claim_undelegated
+```
+
+**最初の計測は 6 分で打ち切って「1 件も届かない」と読みかけた。**15 分の壁を知らずに
+測っていた。条件を作ってから測るまでの時間を、待ち時間の表と突き合わせること。
+
+### 到達できない検知が 3 つある
+
+**1. `handoff_unreceived` と `handoff_unreported` は原理的に発火しない。**
+
+条件は `handoffs` を走査して `RequestedAt != nil` の行を探す形だが、
+**`task_handoffs` に行を作る経路が存在しない。**
+
+```
+RequestTaskHandoff   internal/store/task_handoff.go:96   呼び出し元 0 件
+ReceiveTaskHandoff   internal/store/task_handoff.go:118  呼び出し元 0 件
+```
+
+daemon の RPC（14 個）にも HTTP にも MCP にも CLI にも handoff の経路が無い。
+テーブル（`3782ac7`）と store の関数（`2bfa531`）だけが入っていて、そこへ届く道が無い。
+
+**2. `unclaimed_doing` も発火しない。**
+
+`ReleaseTask` の SQL が `SET status = 'todo', claimed_by = ''` を**同時に**行うので、
+claim を外すと status も todo に戻る。HTTP の `/api/tasks/<id>/release` も同じ
+`ReleaseTask` を呼ぶ。**「doing のまま claim だけ無い」状態を作る経路が無い。**
+
+時系列を見ると、**穴は検知より先に塞がっていた。**
+
+```
+08-20 21:33  4ea5705  ReleaseTask が status='todo' も書くようになる（穴が塞がる）
+08-21 20:02  bcdb032  unclaimed_doing を検知イベントとして発行するようになる
+```
+
+**塞いだ翌日に、塞がった条件の検知を足している。**
+
+### 常に鳴る検知が 1 つある
+
+`claim_undelegated` の条件はこれである（`internal/store/wakeup.go:226`）。
+
+```go
+if task.ClaimedAt != nil && !delegated {
+    state.UndelegatedClaims = append(state.UndelegatedClaims, task)
+}
+```
+
+`delegated` が真になるのは `RequestedAt != nil` の handoff 行がある場合だけで、
+**その行を作る経路が無い。**したがって **claim したタスクは 30 分後に必ず鳴る。**
+実際 2026-08-22 に commander が claim した `9f1b6470` と `d637f058` の両方で鳴っている。
+
+**これは誤検知ではなく、正しく実装された検知が、片側だけ実装された機能を見ている形である。**
+015c9b1a（委譲の依頼と受領が記録されない）が完成するまで鳴り続ける。
+
+### Stop hook を消してよいか
+
+**コード上は消してよい。**Stop hook は `atct pending` の出力をそのまま出しており、
+`pending` と検知イベントは**同じ `WakeupState` を読む**。したがって検知イベントは
+Stop hook の上位互換である。上の 3 つの穴は**どちらの経路にも等しくある**ので、
+Stop hook を残しても埋まらない。
+
+ただし待ち時間が違う。Stop hook はターンの終わりに**即座に**言うが、検知イベントは
+15 分または 30 分待つ。**「今すぐ言ってほしいこと」が 15 分遅れる。**
+これは消す前に判断すべき差である。
