@@ -8,6 +8,7 @@ import {
   fetchInbox,
   fetchTaskCommitDiff,
   subscribeToDecisionEvents,
+  updateGoalContent,
   withdrawGoal,
 } from "../lib/api";
 import { Dashboard } from "./Dashboard";
@@ -29,6 +30,7 @@ const apiMock = vi.hoisted(() => ({
   rejectDecision: vi.fn(),
   reviseDecision: vi.fn(),
   subscribeToDecisionEvents: vi.fn(() => () => undefined),
+  updateGoalContent: vi.fn(),
   withdrawGoal: vi.fn(),
 }));
 
@@ -640,5 +642,88 @@ describe("GoalDetail", () => {
     await waitFor(() => expect(withdrawGoal).toHaveBeenCalledWith("goal-1", "No longer needed"));
     await waitFor(() => expect(fetchGoal).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(screen.queryByTestId("goal-withdraw-trigger")).toBeNull());
+  });
+
+  it("shows the content edit action and opens its dialog for a proposed goal", async () => {
+    vi.mocked(fetchGoal).mockResolvedValueOnce(goalResponse({ status: "proposed" }));
+
+    render(<GoalDetail id="goal-1" />);
+
+    await waitFor(() => expect(screen.getByTestId("goal-content-edit-trigger")).not.toBeNull());
+    fireEvent.click(screen.getByTestId("goal-content-edit-trigger"));
+
+    expect(await screen.findByRole("dialog")).not.toBeNull();
+  });
+
+  it("initializes the content edit textarea with the current goal content", async () => {
+    const currentContent = `${"A".repeat(1500)}\n\nDetails that must remain editable`;
+    vi.mocked(fetchGoal).mockResolvedValueOnce(goalResponse({ status: "proposed", content: currentContent }));
+
+    render(<GoalDetail id="goal-1" />);
+
+    await waitFor(() => expect(screen.getByTestId("goal-content-edit-trigger")).not.toBeNull());
+    fireEvent.click(screen.getByTestId("goal-content-edit-trigger"));
+    const dialog = await screen.findByRole("dialog");
+    const content = within(dialog).getByRole("textbox", { name: "goal.content.edit.label" });
+
+    expect((content as HTMLTextAreaElement).value).toBe(currentContent);
+  });
+
+  it("updates proposed goal content and reloads after success", async () => {
+    const updatedContent = "Updated proposed goal\n\nWith details";
+    vi.mocked(fetchGoal)
+      .mockResolvedValueOnce(goalResponse({ status: "proposed", content: "Original proposed goal" }))
+      .mockResolvedValueOnce(goalResponse({ status: "proposed", content: updatedContent }));
+    vi.mocked(updateGoalContent).mockResolvedValueOnce(goal({ status: "proposed", content: updatedContent }));
+
+    render(<GoalDetail id="goal-1" />);
+
+    await waitFor(() => expect(screen.getByTestId("goal-content-edit-trigger")).not.toBeNull());
+    fireEvent.click(screen.getByTestId("goal-content-edit-trigger"));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.change(within(dialog).getByRole("textbox", { name: "goal.content.edit.label" }), {
+      target: { value: updatedContent },
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "goal.content.edit.submit" }));
+
+    await waitFor(() => expect(updateGoalContent).toHaveBeenCalledWith("goal-1", updatedContent));
+    await waitFor(() => expect(fetchGoal).toHaveBeenCalledTimes(2));
+  });
+
+  it("does not render the content edit action for an active goal", async () => {
+    vi.mocked(fetchGoal).mockResolvedValueOnce(goalResponse({ status: "active" }));
+
+    render(<GoalDetail id="goal-1" />);
+
+    await waitFor(() => expect(fetchGoal).toHaveBeenCalledWith("goal-1"));
+    expect(screen.queryByTestId("goal-content-edit-trigger")).toBeNull();
+  });
+
+  it("does not render the content edit action for done or dropped goals", async () => {
+    for (const status of ["done", "dropped"] as const) {
+      vi.mocked(fetchGoal).mockResolvedValueOnce(goalResponse({ status }));
+
+      render(<GoalDetail id="goal-1" />);
+
+      await waitFor(() => expect(fetchGoal).toHaveBeenCalledWith("goal-1"));
+      expect(screen.queryByTestId("goal-content-edit-trigger")).toBeNull();
+      cleanup();
+    }
+  });
+
+  it("shows the server message when content editing returns a conflict", async () => {
+    const serverMessage = "goal goal-1 is active, not proposed";
+    const serverError = Object.assign(new Error(serverMessage), { status: 409 });
+    vi.mocked(fetchGoal).mockResolvedValueOnce(goalResponse({ status: "proposed" }));
+    vi.mocked(updateGoalContent).mockRejectedValueOnce(serverError);
+
+    render(<GoalDetail id="goal-1" />);
+
+    await waitFor(() => expect(screen.getByTestId("goal-content-edit-trigger")).not.toBeNull());
+    fireEvent.click(screen.getByTestId("goal-content-edit-trigger"));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "goal.content.edit.submit" }));
+
+    await waitFor(() => expect(screen.getByText(serverMessage)).not.toBeNull());
   });
 });

@@ -94,6 +94,11 @@ export const ja: Record<TranslationKey, string> = {
   "goal.withdraw.description": "このゴールを取り下げると、開いている決定と未着手・作業中のタスクが閉じられ、完了したタスクはそのまま残ります。",
   "goal.withdraw.reason": "理由",
   "goal.withdraw.submit": "取り下げる",
+  "goal.content.edit.title": "このゴールの本文を編集",
+  "goal.content.edit.description": "承認前のゴール本文を更新できます。",
+  "goal.content.edit.label": "本文",
+  "goal.content.edit.submit": "保存",
+  "goal.content.edit.submitting": "保存中...",
   "goal.error.load": "ゴールを読み込めませんでした。",
 
   "task.column.order": "順序",

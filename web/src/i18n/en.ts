@@ -93,6 +93,11 @@ export const en = {
   "goal.withdraw.description": "Withdrawing this goal closes open decisions and unfinished or in-progress tasks; completed tasks remain unchanged.",
   "goal.withdraw.reason": "Reason",
   "goal.withdraw.submit": "Withdraw",
+  "goal.content.edit.title": "Edit this goal's content",
+  "goal.content.edit.description": "Update the proposed goal content before approving it.",
+  "goal.content.edit.label": "Content",
+  "goal.content.edit.submit": "Save",
+  "goal.content.edit.submitting": "Saving...",
   "goal.error.load": "Could not load the goal.",
 
   "task.column.order": "Order",

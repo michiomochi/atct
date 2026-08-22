@@ -343,6 +343,14 @@ export async function withdrawGoal(id: string, reason: string): Promise<Goal> {
   });
 }
 
+export async function updateGoalContent(id: string, content: string): Promise<Goal> {
+  return requestJson<Goal>(`/api/goals/${encodeURIComponent(id)}/content`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ content }),
+  });
+}
+
 export async function releaseTask(id: string): Promise<TaskView> {
   return requestJson<TaskView>(`/api/tasks/${encodeURIComponent(id)}/release`, {
     method: "POST",

@@ -8,6 +8,7 @@ import {
   fetchGoal,
   rejectDecision,
   subscribeToDecisionEvents,
+  updateGoalContent,
   withdrawGoal,
   type Decision,
   type Goal,
@@ -361,6 +362,90 @@ function GoalWithdrawal({ goal, onUpdated }: { goal: Goal; onUpdated: () => void
   );
 }
 
+function GoalContentEdit({ goal, onUpdated }: { goal: Goal; onUpdated: () => void }) {
+  const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
+  const [content, setContent] = useState(goal.content);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  const contentID = `goal-content-edit-${goal.id}`;
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (content.trim() === "" || submitting) return;
+
+    setSubmitError(null);
+    setSubmitting(true);
+    try {
+      await updateGoalContent(goal.id, content);
+      setOpen(false);
+      onUpdated();
+    } catch (error) {
+      setSubmitError(errorMessage(error, t("goal.error.load")));
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <Dialog.Root open={open} onOpenChange={setOpen}>
+      {goal.status === "proposed" && (
+        <Dialog.Trigger
+          render={(triggerProps) => (
+            <Button
+              {...triggerProps}
+              data-testid="goal-content-edit-trigger"
+              type="button"
+              variant="outline"
+              className="focus-ring shrink-0 px-3 py-2 text-base font-medium"
+            >
+              {t("goal.content.edit.submit")}
+            </Button>
+          )}
+        />
+      )}
+      <Dialog className="p-6">
+        <Dialog.Title className="mb-4 font-display text-xl font-semibold text-ink-950">
+          {t("goal.content.edit.title")}
+        </Dialog.Title>
+        <p className="mb-4 max-w-3xl text-base leading-6 text-ink-700">{t("goal.content.edit.description")}</p>
+        <form className="min-w-0 max-w-3xl" onSubmit={handleSubmit} noValidate>
+          <label className="mb-3 block text-base text-ink-800" htmlFor={contentID}>
+            {t("goal.content.edit.label")}
+            <textarea
+              className="focus-ring mt-1 block min-h-48 w-full resize-y border border-line bg-surface px-3 py-2 text-base leading-6 text-ink-950"
+              id={contentID}
+              value={content}
+              onChange={(event) => setContent(event.target.value)}
+              required
+              aria-required="true"
+            />
+          </label>
+          {submitError && <p className="mb-3 text-base text-danger-700" role="alert">{submitError}</p>}
+          <div className="flex flex-wrap gap-3">
+            <Button
+              type="submit"
+              variant="primary"
+              disabled={submitting || content.trim() === ""}
+              className="focus-ring px-3 py-2 text-base font-medium disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {submitting ? t("goal.content.edit.submitting") : t("goal.content.edit.submit")}
+            </Button>
+            <Dialog.Close
+              render={(closeProps) => (
+                <Button {...closeProps} type="button" variant="outline" className="focus-ring px-3 py-2 text-base">
+                  {t("form.goal.cancel")}
+                </Button>
+              )}
+            />
+          </div>
+        </form>
+      </Dialog>
+    </Dialog.Root>
+  );
+}
+
 export function GoalDetail({ id }: Props) {
   const [state, setState] = useState<LoadState>({ kind: "loading" });
   const [completionReason, setCompletionReason] = useState("");
@@ -428,7 +513,12 @@ export function GoalDetail({ id }: Props) {
           <h1 className="min-w-0 flex-1 font-display text-3xl font-semibold text-ink-950">
             {data ? headline(data.goal.goal.content) : t("goal.title")}
           </h1>
-          {data && <GoalWithdrawal goal={data.goal.goal} onUpdated={load} />}
+          {data && (
+            <>
+              <GoalWithdrawal goal={data.goal.goal} onUpdated={load} />
+              <GoalContentEdit goal={data.goal.goal} onUpdated={load} />
+            </>
+          )}
         </div>
         {data && body(data.goal.goal.content) && <p className="mt-3 max-w-3xl whitespace-pre-wrap text-base leading-6 text-ink-700">{body(data.goal.goal.content)}</p>}
         {data && (
