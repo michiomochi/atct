@@ -659,3 +659,56 @@ A-1 の穴を 2 か所に書いたのと同じ理由が、ここでは逆向き�
 
 **強制されていないものを 2 つ、A-1 に書いた。**フックは絶対パス呼び出しと
 名前より前のフラグを素通しする。**意図的である。**過大に見積もらないこと。
+
+## 3 層は現在の atct の上に乗らない（2026-08-22 に実測）
+
+`ba452792` の最後のタスク `0b79b6a3`「稼働版で 2 人目が入れないことを実測する」で
+分かったこと。**ゴールの claim は守れない。**そして理由は claim の側ではない。
+
+### 実測
+
+稼働版 0.41.0、空の DB の一時 daemon。生きた pid を持つ 2 つのセッション。
+
+```
+probeX（pid 30176・kill -0 で生存確認）が goal.claim  → claimed_by = probeX
+probeY（pid 30176・同じく生存）が goal.claim         → claimed_by = probeY
+```
+
+**2 人目が通る。**単体テスト `TestClaimGoalRejectsLiveClaimFromOtherSession` は緑のまま。
+あれは `store` を直接叩いており、**daemon の経路を通らない。**
+
+### 原因
+
+`internal/store/store.go:141`、`AssociateAgentSessionWithProject` の末尾。
+
+```sql
+DELETE FROM agent_sessions WHERE project_id = ? AND id <> ? AND registered_at < ?
+```
+
+**セッションをプロジェクトへ紐づけると、そのプロジェクトの古いセッションが全部消える。**
+
+`goal.claim` は `ClaimGoal` の前に `ensureAgentSessionProject` を通す。2 人目がそこで
+紐づいた瞬間に 1 人目の行が消え、`claimIsRunning(1 人目)` が `false` を返し、
+「死んだ claim は引き継ぐ」の枝に落ちる。
+
+実測で確認した: `probeY` の claim 後、`probeX` の行は DB から消えていた。
+
+### これは claim の穴ではなく、設計の前提の食い違いである
+
+**この削除は「1 プロジェクトに 1 セッション」を強制している。**
+
+この文書が設計している 3 層は、同じプロジェクトに commander 1 台と subcommander 複数台が
+**同時に居る**形である。**いまの atct はその状態を保持できない。**後から来たセッションが
+先に居たセッションの記録を消す。`ba452792` の claim も、`f7a8661b` の 3 層化も、
+この削除の上には乗らない。
+
+期限による掃除は同じ関数の中で `DeleteExpiredAgentSessionsExcept`（保持 30 日）が
+別に行っている。**この削除は期限を見ず、新しいセッションが来たというだけで消す。**
+何のために入れたかを確かめてから外すこと。
+
+### 測り方の教訓
+
+**store を直接叩くテストでは通り抜けた。**daemon の経路には
+`ensureAgentSessionProject` があり、そこが状態を壊していた。
+**同じ関数を呼んでいても、前後に挟まるものが違えば結果が変わる。**
+稼働版で測って初めて出た。
