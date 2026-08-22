@@ -52,7 +52,26 @@ atct-c22a6d79-executor
 | 古い worktree の片付け | commander。未コミットの変更は人間に出す |
 | 最終成果物のレビュー | commander。**リリースを関門にする**（観点 4 つ） |
 | `pnpm install` | subcommander が worktree を作った直後に 1 回 |
-| `ATCT_SCOPE_GOAL` の名前 | **atct 側で持つ。**`orchestration` には書かない |
+| `ATCT_SCOPE_GOAL` の名前 | **atct 側で持つ。**`orchestration` には書かない（下記） |
+
+### 何をどの文書に書くか
+
+`orchestration` スキルは**全 space が読む**（atct / stock-data / HQ / stock-ai / dotfiles）。
+atct 固有の名前をそこに書くと、atct を使わない space もそれを読む。
+
+| 文書 | 書くこと |
+|---|---|
+| `orchestration` スキル | **汎用形だけ。**「pane に作業単位を示す環境変数を渡すなら、名前を付けるコマンドと同じ場所に書く」 |
+| atct の spec と手順 | **`ATCT_SCOPE_GOAL` という具体名** |
+
+**判定の軸は「全 space が読むか、1 つのプロジェクトだけが読むか」。**
+置き場のもう 1 つの軸（「公開物か、この環境の設定か」。2026-08-20 に確定）とは別物で、
+**両方を通す。**
+
+- `herdr` を見るフックは atct に置かない ← 公開物かどうかの軸
+- `subcommander` という語は `orchestration` に書くが「atct のゴール 1 件 = space 1 つ」は
+  書かない ← 全 space が読むかどうかの軸
+- `ATCT_SCOPE_GOAL` の名前は atct 側 ← 同じ軸
 
 ## 通知の受け口
 
