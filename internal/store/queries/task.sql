@@ -150,3 +150,41 @@ WHERE t.id = ?;
 SELECT pid, started_at
 FROM agent_sessions
 WHERE id = ?;
+
+-- name: GetTaskHandoff :one
+SELECT id, task_id, requested_by, received_by,
+       requested_at, received_at, completed_report_at
+FROM task_handoffs
+WHERE id = ?;
+
+-- name: ListTaskHandoffs :many
+SELECT id, task_id, requested_by, received_by,
+       requested_at, received_at, completed_report_at
+FROM task_handoffs
+WHERE task_id = ?
+ORDER BY id;
+
+-- name: GetTaskHandoffTaskID :one
+SELECT task_id
+FROM task_handoffs
+WHERE id = ?;
+
+-- name: RequestTaskHandoff :exec
+INSERT INTO task_handoffs (id, task_id, requested_by, requested_at)
+VALUES (?, ?, ?, ?)
+ON CONFLICT(id) DO UPDATE SET
+  requested_by = COALESCE(task_handoffs.requested_by, excluded.requested_by),
+  requested_at = COALESCE(task_handoffs.requested_at, excluded.requested_at);
+
+-- name: ReceiveTaskHandoff :exec
+INSERT INTO task_handoffs (id, task_id, received_by, received_at)
+VALUES (?, ?, ?, ?)
+ON CONFLICT(id) DO UPDATE SET
+  received_by = COALESCE(task_handoffs.received_by, excluded.received_by),
+  received_at = COALESCE(task_handoffs.received_at, excluded.received_at);
+
+-- name: CompleteTaskHandoff :exec
+INSERT INTO task_handoffs (id, task_id, completed_report_at)
+VALUES (?, ?, ?)
+ON CONFLICT(id) DO UPDATE SET
+  completed_report_at = COALESCE(task_handoffs.completed_report_at, excluded.completed_report_at);

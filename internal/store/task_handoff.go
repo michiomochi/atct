@@ -1,0 +1,157 @@
+package store
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"time"
+
+	"github.com/michiomochi/atct/internal/store/sqlcgen"
+)
+
+var (
+	ErrTaskHandoffNotFound     = errors.New("task handoff not found")
+	ErrTaskHandoffTaskMismatch = errors.New("task handoff task mismatch")
+)
+
+// TaskHandoff records one delegation between agents. Each event timestamp is
+// independent so a partial handoff remains observable.
+type TaskHandoff struct {
+	ID                string
+	TaskID            string
+	RequestedBy       string
+	ReceivedBy        string
+	RequestedAt       *time.Time
+	ReceivedAt        *time.Time
+	CompletedReportAt *time.Time
+}
+
+func taskHandoffFromRow(row sqlcgen.TaskHandoff) (TaskHandoff, error) {
+	handoff := TaskHandoff{
+		ID:          row.ID,
+		TaskID:      row.TaskID,
+		RequestedBy: row.RequestedBy.String,
+		ReceivedBy:  row.ReceivedBy.String,
+	}
+	var err error
+	if handoff.RequestedAt, err = parseTaskHandoffTime("requested_at", row.RequestedAt); err != nil {
+		return TaskHandoff{}, err
+	}
+	if handoff.ReceivedAt, err = parseTaskHandoffTime("received_at", row.ReceivedAt); err != nil {
+		return TaskHandoff{}, err
+	}
+	if handoff.CompletedReportAt, err = parseTaskHandoffTime("completed_report_at", row.CompletedReportAt); err != nil {
+		return TaskHandoff{}, err
+	}
+	return handoff, nil
+}
+
+func parseTaskHandoffTime(column string, value sql.NullString) (*time.Time, error) {
+	if !value.Valid || value.String == "" {
+		return nil, nil
+	}
+	parsed, err := time.Parse(time.RFC3339Nano, value.String)
+	if err != nil {
+		return nil, fmt.Errorf("parse task handoff %s: %w", column, err)
+	}
+	return &parsed, nil
+}
+
+func (s *Store) ensureTaskHandoffTask(ctx context.Context, handoffID, taskID string) error {
+	existingTaskID, err := sqlcgen.New(s.db).GetTaskHandoffTaskID(ctx, handoffID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("find task handoff %q: %w", handoffID, err)
+	}
+	if existingTaskID != taskID {
+		return fmt.Errorf("%w: %q belongs to task %q, not %q", ErrTaskHandoffTaskMismatch, handoffID, existingTaskID, taskID)
+	}
+	return nil
+}
+
+// RequestTaskHandoff records the request side of a handoff. It only writes
+// request columns; a receipt or completion report is a separate call.
+func (s *Store) RequestTaskHandoff(ctx context.Context, handoffID, taskID, requestedBy string) (TaskHandoff, error) {
+	if err := s.ensureTaskHandoffTask(ctx, handoffID, taskID); err != nil {
+		return TaskHandoff{}, err
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if err := sqlcgen.New(s.db).RequestTaskHandoff(ctx, sqlcgen.RequestTaskHandoffParams{
+		ID:          handoffID,
+		TaskID:      taskID,
+		RequestedBy: sql.NullString{String: requestedBy, Valid: true},
+		RequestedAt: sql.NullString{String: now, Valid: true},
+	}); err != nil {
+		return TaskHandoff{}, fmt.Errorf("request task handoff: %w", err)
+	}
+	return s.GetTaskHandoff(ctx, handoffID)
+}
+
+// ReceiveTaskHandoff records the receipt side of a handoff. If the request
+// row does not exist yet, this creates a receipt-only row with request fields
+// left NULL; the same handoff ID can be completed by a later request call.
+func (s *Store) ReceiveTaskHandoff(ctx context.Context, handoffID, taskID, receivedBy string) (TaskHandoff, error) {
+	if err := s.ensureTaskHandoffTask(ctx, handoffID, taskID); err != nil {
+		return TaskHandoff{}, err
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if err := sqlcgen.New(s.db).ReceiveTaskHandoff(ctx, sqlcgen.ReceiveTaskHandoffParams{
+		ID:         handoffID,
+		TaskID:     taskID,
+		ReceivedBy: sql.NullString{String: receivedBy, Valid: true},
+		ReceivedAt: sql.NullString{String: now, Valid: true},
+	}); err != nil {
+		return TaskHandoff{}, fmt.Errorf("receive task handoff: %w", err)
+	}
+	return s.GetTaskHandoff(ctx, handoffID)
+}
+
+// CompleteTaskHandoff records the completion report side of a handoff. It
+// only writes the completion timestamp and therefore preserves partial states.
+func (s *Store) CompleteTaskHandoff(ctx context.Context, handoffID, taskID string) (TaskHandoff, error) {
+	if err := s.ensureTaskHandoffTask(ctx, handoffID, taskID); err != nil {
+		return TaskHandoff{}, err
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if err := sqlcgen.New(s.db).CompleteTaskHandoff(ctx, sqlcgen.CompleteTaskHandoffParams{
+		ID:                handoffID,
+		TaskID:            taskID,
+		CompletedReportAt: sql.NullString{String: now, Valid: true},
+	}); err != nil {
+		return TaskHandoff{}, fmt.Errorf("complete task handoff: %w", err)
+	}
+	return s.GetTaskHandoff(ctx, handoffID)
+}
+
+// GetTaskHandoff returns one handoff, including NULL timestamps as nil.
+func (s *Store) GetTaskHandoff(ctx context.Context, handoffID string) (TaskHandoff, error) {
+	row, err := sqlcgen.New(s.db).GetTaskHandoff(ctx, handoffID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return TaskHandoff{}, fmt.Errorf("%w: %s", ErrTaskHandoffNotFound, handoffID)
+	}
+	if err != nil {
+		return TaskHandoff{}, fmt.Errorf("get task handoff %q: %w", handoffID, err)
+	}
+	return taskHandoffFromRow(row)
+}
+
+// ListTaskHandoffs returns all handoffs for a task, including partial rows.
+func (s *Store) ListTaskHandoffs(ctx context.Context, taskID string) ([]TaskHandoff, error) {
+	rows, err := sqlcgen.New(s.db).ListTaskHandoffs(ctx, taskID)
+	if err != nil {
+		return nil, fmt.Errorf("list task handoffs: %w", err)
+	}
+
+	handoffs := make([]TaskHandoff, 0, len(rows))
+	for _, row := range rows {
+		handoff, err := taskHandoffFromRow(row)
+		if err != nil {
+			return nil, fmt.Errorf("parse task handoff: %w", err)
+		}
+		handoffs = append(handoffs, handoff)
+	}
+	return handoffs, nil
+}

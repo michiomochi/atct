@@ -32,6 +32,24 @@ func (q *Queries) ClaimTask(ctx context.Context, arg ClaimTaskParams) (sql.Resul
 	)
 }
 
+const completeTaskHandoff = `-- name: CompleteTaskHandoff :exec
+INSERT INTO task_handoffs (id, task_id, completed_report_at)
+VALUES (?, ?, ?)
+ON CONFLICT(id) DO UPDATE SET
+  completed_report_at = COALESCE(task_handoffs.completed_report_at, excluded.completed_report_at)
+`
+
+type CompleteTaskHandoffParams struct {
+	ID                string
+	TaskID            string
+	CompletedReportAt sql.NullString
+}
+
+func (q *Queries) CompleteTaskHandoff(ctx context.Context, arg CompleteTaskHandoffParams) error {
+	_, err := q.db.ExecContext(ctx, completeTaskHandoff, arg.ID, arg.TaskID, arg.CompletedReportAt)
+	return err
+}
+
 const countOpenDecisionsForTask = `-- name: CountOpenDecisionsForTask :one
 SELECT COUNT(*)
 FROM decisions
@@ -262,6 +280,41 @@ func (q *Queries) GetTaskGoalID(ctx context.Context, id string) (string, error) 
 	return goal_id, err
 }
 
+const getTaskHandoff = `-- name: GetTaskHandoff :one
+SELECT id, task_id, requested_by, received_by,
+       requested_at, received_at, completed_report_at
+FROM task_handoffs
+WHERE id = ?
+`
+
+func (q *Queries) GetTaskHandoff(ctx context.Context, id string) (TaskHandoff, error) {
+	row := q.db.QueryRowContext(ctx, getTaskHandoff, id)
+	var i TaskHandoff
+	err := row.Scan(
+		&i.ID,
+		&i.TaskID,
+		&i.RequestedBy,
+		&i.ReceivedBy,
+		&i.RequestedAt,
+		&i.ReceivedAt,
+		&i.CompletedReportAt,
+	)
+	return i, err
+}
+
+const getTaskHandoffTaskID = `-- name: GetTaskHandoffTaskID :one
+SELECT task_id
+FROM task_handoffs
+WHERE id = ?
+`
+
+func (q *Queries) GetTaskHandoffTaskID(ctx context.Context, id string) (string, error) {
+	row := q.db.QueryRowContext(ctx, getTaskHandoffTaskID, id)
+	var task_id string
+	err := row.Scan(&task_id)
+	return task_id, err
+}
+
 const getTaskProjectID = `-- name: GetTaskProjectID :one
 SELECT g.project_id
 FROM tasks AS t
@@ -481,6 +534,45 @@ func (q *Queries) ListTaskCommits(ctx context.Context, taskID string) ([]ListTas
 	return items, nil
 }
 
+const listTaskHandoffs = `-- name: ListTaskHandoffs :many
+SELECT id, task_id, requested_by, received_by,
+       requested_at, received_at, completed_report_at
+FROM task_handoffs
+WHERE task_id = ?
+ORDER BY id
+`
+
+func (q *Queries) ListTaskHandoffs(ctx context.Context, taskID string) ([]TaskHandoff, error) {
+	rows, err := q.db.QueryContext(ctx, listTaskHandoffs, taskID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []TaskHandoff
+	for rows.Next() {
+		var i TaskHandoff
+		if err := rows.Scan(
+			&i.ID,
+			&i.TaskID,
+			&i.RequestedBy,
+			&i.ReceivedBy,
+			&i.RequestedAt,
+			&i.ReceivedAt,
+			&i.CompletedReportAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listTasks = `-- name: ListTasks :many
 SELECT
   id, goal_id, title, description, status, agent, files, sort_order, declare_key,
@@ -540,6 +632,31 @@ func (q *Queries) MaxTaskSortOrder(ctx context.Context, goalID string) (int64, e
 	return sort_order, err
 }
 
+const receiveTaskHandoff = `-- name: ReceiveTaskHandoff :exec
+INSERT INTO task_handoffs (id, task_id, received_by, received_at)
+VALUES (?, ?, ?, ?)
+ON CONFLICT(id) DO UPDATE SET
+  received_by = COALESCE(task_handoffs.received_by, excluded.received_by),
+  received_at = COALESCE(task_handoffs.received_at, excluded.received_at)
+`
+
+type ReceiveTaskHandoffParams struct {
+	ID         string
+	TaskID     string
+	ReceivedBy sql.NullString
+	ReceivedAt sql.NullString
+}
+
+func (q *Queries) ReceiveTaskHandoff(ctx context.Context, arg ReceiveTaskHandoffParams) error {
+	_, err := q.db.ExecContext(ctx, receiveTaskHandoff,
+		arg.ID,
+		arg.TaskID,
+		arg.ReceivedBy,
+		arg.ReceivedAt,
+	)
+	return err
+}
+
 const registerAgentSession = `-- name: RegisterAgentSession :exec
 INSERT OR IGNORE INTO agent_sessions (id, project_id, pid, started_at, registered_at)
 VALUES (?, NULL, ?, ?, ?)
@@ -575,6 +692,31 @@ type ReleaseTaskParams struct {
 
 func (q *Queries) ReleaseTask(ctx context.Context, arg ReleaseTaskParams) (sql.Result, error) {
 	return q.db.ExecContext(ctx, releaseTask, arg.UpdatedAt, arg.ID)
+}
+
+const requestTaskHandoff = `-- name: RequestTaskHandoff :exec
+INSERT INTO task_handoffs (id, task_id, requested_by, requested_at)
+VALUES (?, ?, ?, ?)
+ON CONFLICT(id) DO UPDATE SET
+  requested_by = COALESCE(task_handoffs.requested_by, excluded.requested_by),
+  requested_at = COALESCE(task_handoffs.requested_at, excluded.requested_at)
+`
+
+type RequestTaskHandoffParams struct {
+	ID          string
+	TaskID      string
+	RequestedBy sql.NullString
+	RequestedAt sql.NullString
+}
+
+func (q *Queries) RequestTaskHandoff(ctx context.Context, arg RequestTaskHandoffParams) error {
+	_, err := q.db.ExecContext(ctx, requestTaskHandoff,
+		arg.ID,
+		arg.TaskID,
+		arg.RequestedBy,
+		arg.RequestedAt,
+	)
+	return err
 }
 
 const taskExists = `-- name: TaskExists :one

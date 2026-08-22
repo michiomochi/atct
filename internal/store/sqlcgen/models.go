@@ -85,3 +85,13 @@ type TaskCommit struct {
 	Deletions    int64
 	CreatedAt    string
 }
+
+type TaskHandoff struct {
+	ID                string
+	TaskID            string
+	RequestedBy       sql.NullString
+	ReceivedBy        sql.NullString
+	RequestedAt       sql.NullString
+	ReceivedAt        sql.NullString
+	CompletedReportAt sql.NullString
+}
