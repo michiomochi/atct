@@ -701,3 +701,60 @@ handoff_unreported  0 件
 `internal/daemon/wakeup.go` の 18-20 行。今日の実測では、条件を作ってから
 30 分より前に測って「届かない」と読みかけた。**待ち時間の表と突き合わせてから
 結論すること。**
+
+## 見送りも同じ形で止まっている（2026-08-22 に実測）
+
+`6eeb7890`「人間が見送ったタスクを 10 分ごとに催促してくる」のタスク
+`7d62af52`「見送ったタスクが催促されないことを実測する」の記録。
+
+**これで 3 例目である。**handoff と同じく、**書く側だけが無い。**
+
+### 読む側はある
+
+`internal/store/wakeup.go` の 235 行と 324 行が、催促の対象から見送りを外している。
+
+```go
+if task.Status == domain.TaskTodo && task.ClaimedBy == "" &&
+   (task.SnoozedUntil == nil || !task.SnoozedUntil.After(now)) {
+```
+
+`SnoozeTask`（`internal/store/task.go:205`）も、`snoozed_until` の列も、
+期限切れが催促に戻る形も入っている。
+
+### 書く側が無い
+
+```
+daemon の RPC   task.snooze / task.defer / snooze.set → すべて "unknown method"
+HTTP            POST /api/tasks/<id>/snooze → 経路無し
+MCP             tools.go に snooze の文字列 0 件
+CLI             main.go に snooze の文字列 0 件
+SnoozeTask      非テストの呼び出し元 0 件（テストは wakeup_test.go に 4 箇所）
+```
+
+**人間が見送りを記録する手段が無い。**ゴール `6eeb7890` は「人間が 9f0af794 について
+『のこしておいてよ』と判断したが催促が続く」という形で立っている。
+**その判断を書き込む先が無いままである。**
+
+### 画面にも出ない
+
+`web/src` に `snooze` は 0 件。加えて `6eeb7890` の本文が指摘していた死んだラベルが
+そのまま残っている。
+
+```
+web/src/i18n/ja.ts:30   "status.task.blocked": "ブロック"
+web/src/lib/ui.ts:141   blocked: "status.task.blocked"
+```
+
+`domain` はこの状態を作れないので、**画面に出ることのないラベルである。**
+
+### 3 例に共通する形
+
+```
+handoff       テーブル・store の関数・検知 → ある。書く経路 → 無い
+ゴールの claim  列・拒否の判定           → ある。daemon の経路で崩れる
+見送り         列・store の関数・催促の除外 → ある。書く経路 → 無い
+```
+
+**どれも「作る」と「呼べるようにする」を別のタスクに分けた結果、
+後者が誰の担当でもなくなっている。**タスクを分けるとき、
+**作ったものを呼ぶ経路を明示的に 1 タスクにすること。**
