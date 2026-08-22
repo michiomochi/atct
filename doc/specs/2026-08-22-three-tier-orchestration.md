@@ -753,3 +753,44 @@ PreToolUse    matcher=AskUserQuestion         チャットで聞くのを止め 
 **「subcommander の space で `atct:start` を呼ばない」だけ。**
 呼べば Monitor が張られ、通知に反応して設計を始める。呼ばなければ届かない。
 これは commander が space を作るときの手順の話で、atct 側の設定ではない。
+
+## ファイル衝突の検査は 1 セッション運用では効かない（2026-08-22 に実測）
+
+`rejectTaskFileConflict`（`internal/store/task.go:551`）は、claim しようとしたタスクの
+`files` が既に claim されている別タスクの `files` と重なると拒む。**設計は正しい。**
+
+**しかし今日それをすり抜けた。**
+
+`9f0af794`（派生元を画面からたどる）と `007c3e78`（画面から本文を書き換える）は
+どちらも `web/src/components/GoalDetail.tsx` を `files` に持つ。**両方 claim できた。**
+私が executor-2 に渡す直前に、executor-1 が同じファイルを編集中であることに
+気づいて止めた。**atct は止めなかった。**
+
+### 理由
+
+`ListClaimedTasksForConflict`（`internal/store/queries/task.sql:70`）の `WHERE` 句。
+
+```sql
+WHERE id <> ?
+  AND claimed_by <> ''
+  AND claimed_by <> ?        -- ← 自分のセッションを除外する
+  AND status NOT IN (?, ?)
+```
+
+**自分が claim しているタスクは衝突の相手として数えない。**同じセッションが両方を
+claim している限り、重なりは見えない。
+
+### 3 層では効く。いまは効かない
+
+3 層では commander と subcommander が別セッションなので、2 人目の claim で拒まれる。
+**しかし今日の運用では commander が全ゴールの全タスクを claim している**
+（`ba452792` の本文が指摘しているとおり）。**その状態ではこの防御が丸ごと無効である。**
+
+これは `ba452792` の「入れ子の扱いをいつ入れるか」と同じ構造の話で、
+**「3 層に移ってから効く仕組み」が、移る前は守ってくれない**という形である。
+
+### 当面の代償
+
+**commander が自分で気づくしかない。**タスクの `files` を宣言しておく価値は残る
+（読めば重なりが分かる）。実際、今日は `atct_goal_list` の応答で 2 つのタスクの
+`files` を並べて見て気づいた。**宣言していなければ気づけなかった。**
