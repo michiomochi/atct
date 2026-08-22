@@ -48,7 +48,7 @@ atct-c22a6d79-executor
 | 決定の宛先 | subcommander が直接人間に聞く |
 | マージ衝突の解決 | commander |
 | リリース | commander が本体ツリーで |
-| 担当の記録 | **atct には持たない。**`herdr agent list` の名前と claim で足りる |
+| 担当の記録 | **ゴールに claim を持たせる。**タスクの claim とは別物 |
 | 古い worktree の片付け | commander。未コミットの変更は人間に出す |
 | 最終成果物のレビュー | commander。**リリースを関門にする**（観点 4 つ） |
 | `pnpm install` | subcommander が worktree を作った直後に 1 回 |
