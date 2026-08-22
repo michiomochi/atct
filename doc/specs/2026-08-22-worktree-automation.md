@@ -62,6 +62,42 @@ herdr agent start --pane <ID>                        ← cwd の指定が無い
 3. exit 2 で止め、「用意した。--cwd を <path> に向けろ」と言う
 ```
 
+### 関係ない space の作成を止めないこと（人間の指摘、2026-08-22）
+
+**フックは全 space の `workspace create` で走る。**`stock-data` や `HQ` の space を作る
+ときにも発火する。**そこで止めてはいけない。**
+
+**今日それで事故が起きている。**`claim-before-delegate` は `atct pending` が失敗すると
+`exit 2` を返し、**atct に登録されていない space でも条件に当たる委譲を全部止めていた。**
+
+判定の順序:
+
+| `--cwd` の状態 | どうするか |
+|---|---|
+| git リポジトリでない | **通す**（worktree の話ではない） |
+| **atct に登録されていない** | **通す**（atct の作業ではない） |
+| worktree である | 通す |
+| atct 管理下の主チェックアウト | **止める** |
+
+**「atct に登録されているか」の判定は手段がある。**2026-08-22 に `pre-ask` フックで
+使った形をそのまま流用できる。
+
+```
+atct context の出力が空でなければ、atct が管理している
+```
+
+`atct context` は **DB を直接開く**（daemon を必要としない）。プロジェクトが未登録なら
+**空を返して `exit 0`** する（`cmd/atct/context.go` の `ErrProjectNotFound` の枝）。
+
+### 残る穴: 主チェックアウトに space を作りたい正当な場合
+
+**commander 自身の space がそれである。**atct を管理下に持ち、かつ主チェックアウトで
+作業する。**この形を止めてはいけない。**
+
+**未決**: どう区別するか。候補は (1) 最初の 1 つは通す（既に主の space があるかを見る）
+(2) 環境変数などで明示する (3) label に規約を持たせる。
+**確かめる前に決めないこと。**
+
 **判断できないときは通す。**`HERDR_ENV` 未設定 / `herdr` 不在 / 入力 JSON 不正 /
 `worktree-setup.sh` が失敗 → すべて `exit 0`。
 `claim-before-delegate` が `exit 2` で条件に当たる委譲を全部止めた事故と同型に
