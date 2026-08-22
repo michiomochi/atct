@@ -91,9 +91,9 @@ subcommander は atct:start を呼ばない → 通知が届かない
 Stop hook は廃止する → 両方の層で発火する問題が消える
 ```
 
-**`ATCT_SCOPE_GOAL` は不要になった。**環境変数も Stop hook の変更も要らない。
-Monitor はプラグインが張るのではなく**セッションが自分で張る**（`plugin/hooks/*.json` に
-`watch` は 0 件）ので、張らなければ届かない。
+**環境変数も Stop hook の変更も要らない。**Monitor はプラグインが張るのではなく
+**セッションが自分で張る**（`plugin/hooks/*.json` に `watch` は 0 件）ので、
+張らなければ届かない。
 
 **先に足すものが 3 件ある。**Stop hook が言っていて検知イベントに無いもの。
 
@@ -145,6 +145,3 @@ herdr agent start --kind codex NAME          名前より前にフラグ
 | Stop hook を消す | atct | 上の 2 つを実測した後 |
 | `single-subcommander.sh` の apply | dotfiles | 人間の承認待ち |
 | `chezmoi apply`（役割定義 `b66acc5`） | dotfiles | 人間の承認待ち |
-
-**`ATCT_SCOPE_GOAL` の実装は不要になった。**Stop hook を廃止するので、絞り込む対象が
-無くなる。
