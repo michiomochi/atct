@@ -244,16 +244,46 @@ commander の推奨は **commander が直接聞く。**決定は `goal_id` を�
 出どころは分かる。orchestrator を通すと、通すために内容を読む必要が出て、
 orchestrator を薄く保つ目的と衝突する。
 
-## B-4. orchestrator が必要とする問い合わせ
+## B-4. 担当の記録 → atct には持たない（決定済み）
 
 orchestrator は「どのゴールに人手が付いていて、どれが空いているか」を知る必要がある。
-いまの `atct_goal_list` と `atct context` はゴールとタスクを返すが、
-**「このゴールに commander が付いているか」は atct が知らない。**
+当初 commander は「atct にゴールの担当を記録する場所が要るのではないか」と書いた。
 
-これは 015c9b1a（依頼と受領の記録）と同じ形の話である。**ゴールに担当を記録する場所が
-要るのか、それとも claim の集約で足りるのかを決める。**
+人間の判断: **「別に持たなくていい。claim 見れば作業されているか分かる。」**
 
-## B-5. 先に決めること（この 2 つが決まるまで着手しない）
+**そのとおりで、しかも理由はもう 1 つ強い。**A-1 で決めた命名の帰結として、
+**エージェント名にゴール ID が入る。**
+
+```
+herdr agent list  →  atct-c22a6d79-commander が居るか
+```
+
+**atct に聞く必要がない。**そして atct は herdr を知らないままで済む（既存の方針を
+崩さない）。
+
+### 2 つの信号は別のことを答える
+
+| 見るもの | 答えること | 効く場面 |
+|---|---|---|
+| `herdr agent list` | **commander が付いているか** | タスクを宣言する前の窓でも分かる |
+| claim | **実際に作業が進んでいるか** | 宣言後 |
+
+claim だけだと、commander が立ってタスクを宣言するまでの窓で二重に立てる余地が残る。
+その窓は 2026-08-22 の実測では 1 分程度だが、調査を伴うゴールでは 10 分以上になる。
+**名前で見れば、その窓も埋まる。**
+
+## B-5. 古い worktree の後片付け → orchestrator（決定済み）
+
+人間の判断: **orchestrator。**
+
+2026-08-22 時点で `atct-wt1` と `atct-wt2` が残っており、**`atct-wt2` には未コミットの
+変更がある**（`internal/store/migrations.go`）。**未コミットの変更がある worktree を
+黙って消してはいけない**ので、片付けの手順には「中身を確認して人間に出す」段が要る。
+
+`git worktree remove` は clean でなければ `--force` を要求する。**`--force` を既定に
+しない。**
+
+## B-6. 先に決めること
 
 **B-1 は worktree で、B-2 は「knowledge を作らない」で決着した。着手を止める論点は
 残っていない。**
@@ -268,6 +298,8 @@ orchestrator は「どのゴールに人手が付いていて、どれが空い�
 | 決定の宛先 | commander が直接聞く（`goal_id` で出どころが分かる） |
 | マージ衝突の解決 | orchestrator |
 | リリース | orchestrator が本体ツリーで |
+| 担当の記録 | atct には持たない。`herdr agent list` の名前と claim で足りる |
+| 古い worktree の片付け | orchestrator。未コミットの変更があるものは人間に出す |
 | `pnpm install` | commander が worktree を作った直後に 1 回 |
 
 **残るのは A（dotfiles 側の役割定義と space の作り方）だけである。**名前の規約は
