@@ -201,7 +201,7 @@ func TestRenderContextDistinguishesClaimedTasks(t *testing.T) {
 	}
 }
 
-func TestRenderContextLimitsGoalsAndReportsOmissions(t *testing.T) {
+func TestRenderContextIncludesAllActiveGoals(t *testing.T) {
 	goals := make([]contextGoal, 0, 4)
 	for i := 1; i <= 4; i++ {
 		goals = append(goals, contextGoal{Goal: domain.Goal{
@@ -212,16 +212,82 @@ func TestRenderContextLimitsGoalsAndReportsOmissions(t *testing.T) {
 	}
 
 	got := renderContext(goals, nil)
-	for i := 1; i <= 3; i++ {
+	for i := 1; i <= 4; i++ {
 		if !strings.Contains(got, fmt.Sprintf("Goal: Goal %d", i)) {
 			t.Errorf("goal %d missing from context:\n%s", i, got)
 		}
 	}
-	if strings.Contains(got, "Goal: Goal 4") {
-		t.Fatalf("fourth goal should be omitted from context:\n%s", got)
+}
+
+func TestRenderContextOmitsGoalOmissionSummary(t *testing.T) {
+	goals := make([]contextGoal, 0, 4)
+	for i := 1; i <= 4; i++ {
+		goals = append(goals, contextGoal{Goal: domain.Goal{
+			ID:      fmt.Sprintf("goal-%d", i),
+			Content: fmt.Sprintf("Goal %d\n\nvisible", i),
+			Status:  domain.GoalActive,
+		}})
 	}
-	if !strings.Contains(got, "... and 1 more goals") {
-		t.Fatalf("goal omission count missing from context:\n%s", got)
+
+	got := renderContext(goals, nil)
+	for _, line := range strings.Split(got, "\n") {
+		if strings.Contains(line, "... and ") && strings.HasSuffix(line, " goals") {
+			t.Fatalf("goal omission summary should be absent from context:\n%s", got)
+		}
+	}
+}
+
+func TestRenderContextTruncatesLongDescriptionByRune(t *testing.T) {
+	longDescription := strings.Repeat("日", 101)
+	goals := []contextGoal{
+		{Goal: domain.Goal{
+			ID:      "goal-long-description",
+			Content: "Long description\n\n" + longDescription,
+			Status:  domain.GoalActive,
+		}},
+	}
+	for i := 2; i <= 4; i++ {
+		goals = append(goals, contextGoal{Goal: domain.Goal{
+			ID:      fmt.Sprintf("goal-%d", i),
+			Content: fmt.Sprintf("Goal %d", i),
+			Status:  domain.GoalActive,
+		}})
+	}
+
+	got := renderContext(goals, nil)
+	want := "Description: " + strings.Repeat("日", 100) + "…"
+	if !strings.Contains(got, want+"\n") {
+		t.Fatalf("long description should be truncated to 100 runes with an ellipsis:\n%s", got)
+	}
+	if strings.Contains(got, "\uFFFD") {
+		t.Fatalf("long Japanese description should not be corrupted:\n%s", got)
+	}
+}
+
+func TestRenderContextKeepsShortDescriptionWithoutEllipsis(t *testing.T) {
+	shortDescription := strings.Repeat("文", 100)
+	goals := []contextGoal{
+		{Goal: domain.Goal{
+			ID:      "goal-short-description",
+			Content: "Short description\n\n" + shortDescription,
+			Status:  domain.GoalActive,
+		}},
+	}
+	for i := 2; i <= 4; i++ {
+		goals = append(goals, contextGoal{Goal: domain.Goal{
+			ID:      fmt.Sprintf("goal-%d", i),
+			Content: fmt.Sprintf("Goal %d", i),
+			Status:  domain.GoalActive,
+		}})
+	}
+
+	got := renderContext(goals, nil)
+	want := "Description: " + shortDescription
+	if !strings.Contains(got, want+"\n") {
+		t.Fatalf("description at the 100-rune limit should be unchanged:\n%s", got)
+	}
+	if strings.Contains(got, want+"…") {
+		t.Fatalf("description at the 100-rune limit should not have an ellipsis:\n%s", got)
 	}
 }
 
@@ -284,9 +350,6 @@ func TestRenderContextKeepsAllDecisionsOutsideCaps(t *testing.T) {
 	}
 
 	got := renderContext(goals, decisions)
-	if !strings.Contains(got, "... and 1 more goals") {
-		t.Fatalf("goal omission count missing from context:\n%s", got)
-	}
 	for i := 1; i <= 6; i++ {
 		if !strings.Contains(got, fmt.Sprintf("decision-%d", i)) {
 			t.Errorf("decision %d missing from context:\n%s", i, got)

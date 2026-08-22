@@ -296,7 +296,6 @@ func renderContext(goals []contextGoal, decisions []domain.Decision) string {
 
 func renderContextForAgentSession(goals []contextGoal, decisions []domain.Decision, agentSessionID string) string {
 	const (
-		maxGoals = 3
 		maxTasks = 5
 	)
 	agentSessionID = strings.TrimSpace(agentSessionID)
@@ -339,13 +338,13 @@ func renderContextForAgentSession(goals []contextGoal, decisions []domain.Decisi
 
 	var b strings.Builder
 	b.WriteString("ATCT context\n")
-	displayed := active
-	if len(displayed) > maxGoals {
-		displayed = displayed[:maxGoals]
-	}
-	for _, item := range displayed {
+	for _, item := range active {
 		fmt.Fprintf(&b, "Goal: %s\n", oneLine(domain.Headline(item.Goal.Content)))
-		if body := oneLine(domain.Body(item.Goal.Content)); body != "" {
+		body := oneLine(domain.Body(item.Goal.Content))
+		if runes := []rune(body); len(runes) > 100 {
+			body = string(runes[:100]) + "…"
+		}
+		if body != "" {
 			fmt.Fprintf(&b, "Description: %s\n", body)
 		}
 		fmt.Fprintf(&b, "goal_id: %s\n", item.Goal.ID)
@@ -375,10 +374,6 @@ func renderContextForAgentSession(goals []contextGoal, decisions []domain.Decisi
 			fmt.Fprintf(&b, "- ... and %d more tasks\n", len(actionable)-maxTasks)
 		}
 	}
-	if omitted := len(active) - len(displayed); omitted > 0 {
-		fmt.Fprintf(&b, "... and %d more goals\n", omitted)
-	}
-
 	filteredDecisions := make([]domain.Decision, 0, len(decisions))
 	for _, decision := range decisions {
 		if decision.Status != domain.DecisionAnswered || decision.AppliedAt != nil {
