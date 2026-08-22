@@ -16,6 +16,11 @@ type GoalClaimIn struct {
 	GoalID string `json:"goal_id"`
 }
 
+type GoalUpdateContentIn struct {
+	GoalID  string `json:"goal_id"`
+	Content string `json:"content"`
+}
+
 type TaskDeclareIn struct {
 	GoalID         string     `json:"goal_id"`
 	Titles         []string   `json:"titles" jsonschema:"task titles decomposed from the goal, in execution order"`
@@ -152,7 +157,7 @@ func callWithUnappliedDecisions(ctx context.Context, c *Client, method string, p
 	return nil, RawWithUnappliedDecisions{Data: out}, nil
 }
 
-// Register adds ten agent-facing tools to the MCP server.
+// Register adds eleven agent-facing tools to the MCP server.
 // Human operations (answer, approve, reject, and stale-claim release) belong to the Web UI and are not exposed through MCP.
 func Register(server *mcp.Server, c *Client, agentSessionID string) {
 	mcp.AddTool(server, &mcp.Tool{
@@ -172,6 +177,17 @@ func Register(server *mcp.Server, c *Client, agentSessionID string) {
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in GoalClaimIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
 		return callWithUnappliedDecisions(ctx, c, "goal.claim", map[string]any{
 			"goal_id": in.GoalID, "agent_session_id": agentSessionID, "include_unapplied_answers": true,
+		})
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:         "atct_goal_update_content",
+		Description:  "Rewrite a proposed goal's content. Only a proposed goal can be rewritten; an approved goal (active, done, or dropped) is refused.",
+		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in GoalUpdateContentIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
+		return callWithUnappliedDecisions(ctx, c, "goal.update_content", map[string]any{
+			"goal_id": in.GoalID, "content": in.Content,
+			"agent_session_id": agentSessionID, "include_unapplied_answers": true,
 		})
 	})
 

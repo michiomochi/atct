@@ -1006,6 +1006,20 @@ func claimGoalForTest(t *testing.T, fixture goalListFixture, goalID, sessionID s
 	return fixture.daemon.dispatch(context.Background(), rpc.Request{Method: "goal.claim", Params: params})
 }
 
+func updateGoalContentForTest(t *testing.T, fixture goalListFixture, goalID, content, sessionID string) (json.RawMessage, error) {
+	t.Helper()
+	params, err := json.Marshal(map[string]any{
+		"goal_id":                   goalID,
+		"content":                   content,
+		"agent_session_id":          sessionID,
+		"include_unapplied_answers": false,
+	})
+	if err != nil {
+		t.Fatalf("marshal goal.update_content params: %v", err)
+	}
+	return fixture.daemon.dispatch(context.Background(), rpc.Request{Method: "goal.update_content", Params: params})
+}
+
 func listGoalForClaimTest(t *testing.T, fixture goalListFixture, goalID, sessionID string) goalListItem {
 	t.Helper()
 	params, err := json.Marshal(map[string]string{
@@ -1032,6 +1046,82 @@ func listGoalForClaimTest(t *testing.T, fixture goalListFixture, goalID, session
 	}
 	t.Fatalf("goal.list omitted goal %s", goalID)
 	return goalListItem{}
+}
+
+func TestGoalUpdateContentRewritesProposedGoal(t *testing.T) {
+	fixture := newGoalListFixture(t)
+	defer fixture.store.Close()
+
+	const content = "rewritten proposed goal"
+	result, err := updateGoalContentForTest(t, fixture, fixture.proposed[0].ID, content, "goal-update-content-run")
+	if err != nil {
+		t.Fatalf("goal.update_content: %v", err)
+	}
+	var updated domain.Goal
+	if err := json.Unmarshal(result, &updated); err != nil {
+		t.Fatalf("unmarshal goal.update_content result: %v", err)
+	}
+	if updated.Content != content {
+		t.Fatalf("content = %q, want %q", updated.Content, content)
+	}
+	if updated.Status != domain.GoalProposed {
+		t.Fatalf("status = %q, want %q", updated.Status, domain.GoalProposed)
+	}
+}
+
+func TestGoalUpdateContentRejectsActiveGoal(t *testing.T) {
+	fixture := newGoalListFixture(t)
+	defer fixture.store.Close()
+
+	if _, err := updateGoalContentForTest(t, fixture, fixture.active[0].ID, "must be rejected", "goal-update-active-run"); !errors.Is(err, ErrGoalNotProposed) {
+		t.Fatalf("goal.update_content error = %v, want ErrGoalNotProposed", err)
+	}
+}
+
+func TestGoalUpdateContentRejectsDoneAndDroppedGoals(t *testing.T) {
+	fixture := newGoalListFixture(t)
+	defer fixture.store.Close()
+
+	for _, tc := range []struct {
+		name string
+		goal domain.Goal
+	}{
+		{name: "done", goal: fixture.done[0]},
+		{name: "dropped", goal: fixture.dropped[0]},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := updateGoalContentForTest(t, fixture, tc.goal.ID, "must be rejected", "goal-update-terminal-run"); !errors.Is(err, ErrGoalNotProposed) {
+				t.Fatalf("goal.update_content error = %v, want ErrGoalNotProposed", err)
+			}
+		})
+	}
+}
+
+func TestGoalUpdateContentKeepsRejectedGoalUnchanged(t *testing.T) {
+	fixture := newGoalListFixture(t)
+	defer fixture.store.Close()
+
+	for _, tc := range []struct {
+		name string
+		goal domain.Goal
+	}{
+		{name: "active", goal: fixture.active[0]},
+		{name: "done", goal: fixture.done[0]},
+		{name: "dropped", goal: fixture.dropped[0]},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := updateGoalContentForTest(t, fixture, tc.goal.ID, "must not replace original", "goal-update-unchanged-run"); !errors.Is(err, ErrGoalNotProposed) {
+				t.Fatalf("goal.update_content error = %v, want ErrGoalNotProposed", err)
+			}
+			got, err := fixture.store.GetGoal(context.Background(), tc.goal.ID)
+			if err != nil {
+				t.Fatalf("GetGoal after rejected update: %v", err)
+			}
+			if got.Content != tc.goal.Content {
+				t.Fatalf("content after rejected update = %q, want %q", got.Content, tc.goal.Content)
+			}
+		})
+	}
 }
 
 func TestGoalClaimSetsClaimedBy(t *testing.T) {

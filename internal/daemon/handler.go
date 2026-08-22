@@ -16,6 +16,7 @@ import (
 
 var ErrTaskAlreadyClaimed = errors.New("task already claimed")
 var ErrGoalAlreadyClaimed = errors.New("goal already claimed")
+var ErrGoalNotProposed = errors.New("goal is not proposed")
 
 type responseWithUnappliedDecisions struct {
 	Data               any                             `json:"data"`
@@ -340,6 +341,33 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 			Data:               claimed,
 			UnappliedDecisions: unappliedDecisionNotifications(unapplied),
 		}, nil)
+
+	case "goal.update_content":
+		var p struct {
+			GoalID                  string `json:"goal_id"`
+			Content                 string `json:"content"`
+			AgentSessionID          string `json:"agent_session_id"`
+			IncludeUnappliedAnswers bool   `json:"include_unapplied_answers"`
+		}
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		goal, err := d.store.GetGoal(ctx, p.GoalID)
+		if err != nil {
+			return nil, err
+		}
+		if err := d.ensureAgentSessionProject(ctx, p.AgentSessionID, goal.ProjectID); err != nil {
+			return nil, err
+		}
+		updated, err := d.store.UpdateGoalContent(ctx, p.GoalID, p.Content)
+		if errors.Is(err, store.ErrGoalNotProposed) {
+			return nil, ErrGoalNotProposed
+		}
+		if err != nil || !p.IncludeUnappliedAnswers {
+			return marshal(updated, err)
+		}
+		response, err := d.responseWithProjectUnappliedDecisions(ctx, updated, p.GoalID)
+		return marshal(response, err)
 
 	case "task.declare":
 		var p struct {
