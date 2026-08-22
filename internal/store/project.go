@@ -15,7 +15,10 @@ import (
 	"github.com/michiomochi/atct/internal/store/sqlcgen"
 )
 
-var ErrProjectNotFound = errors.New("project not found for cwd")
+var (
+	ErrProjectNotFound       = errors.New("project not found for cwd")
+	ErrProjectAlreadyClaimed = errors.New("project already claimed")
+)
 
 func (s *Store) CreateProject(ctx context.Context, name, rootPath string) (domain.Project, error) {
 	rootPath = normalizeProjectPath(rootPath)
@@ -35,6 +38,107 @@ func (s *Store) CreateProject(ctx context.Context, name, rootPath string) (domai
 		return domain.Project{}, fmt.Errorf("insert project: %w", err)
 	}
 	return ns, nil
+}
+
+func (s *Store) ClaimProject(ctx context.Context, projectID, agentSessionID string) (domain.Project, error) {
+	projectID = strings.TrimSpace(projectID)
+	if projectID == "" {
+		return domain.Project{}, fmt.Errorf("%w: empty id", ErrProjectNotFound)
+	}
+	agentSessionID = strings.TrimSpace(agentSessionID)
+
+	currentRow, err := sqlcgen.New(s.db).GetProject(ctx, projectID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return domain.Project{}, fmt.Errorf("%w: %s", ErrProjectNotFound, projectID)
+		}
+		return domain.Project{}, fmt.Errorf("lookup project claim: %w", err)
+	}
+	currentClaim := strings.TrimSpace(currentRow.ClaimedBy)
+	if agentSessionID != "" && currentClaim != "" && currentClaim != agentSessionID && claimIsRunning(ctx, s, currentClaim) {
+		return domain.Project{}, fmt.Errorf("%w: %s", ErrProjectAlreadyClaimed, projectID)
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return domain.Project{}, fmt.Errorf("begin project claim tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	q := sqlcgen.New(tx)
+	project, err := q.GetProject(ctx, projectID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return domain.Project{}, fmt.Errorf("%w: %s", ErrProjectNotFound, projectID)
+		}
+		return domain.Project{}, fmt.Errorf("lookup project claim: %w", err)
+	}
+	if agentSessionID != "" && strings.TrimSpace(project.ClaimedBy) != currentClaim && strings.TrimSpace(project.ClaimedBy) != "" {
+		return domain.Project{}, fmt.Errorf("%w: %s", ErrProjectAlreadyClaimed, projectID)
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	claimedAt := sql.NullString{}
+	if agentSessionID != "" {
+		claimedAt = sql.NullString{String: now, Valid: true}
+	}
+	result, err := q.ClaimProject(ctx, sqlcgen.ClaimProjectParams{
+		ClaimedBy: agentSessionID,
+		ClaimedAt: claimedAt,
+		ID:        projectID,
+	})
+	if err != nil {
+		return domain.Project{}, fmt.Errorf("claim project: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return domain.Project{}, fmt.Errorf("check claimed project: %w", err)
+	}
+	if affected == 0 {
+		return domain.Project{}, fmt.Errorf("%w: %s", ErrProjectNotFound, projectID)
+	}
+	if err := tx.Commit(); err != nil {
+		return domain.Project{}, fmt.Errorf("commit project claim: %w", err)
+	}
+
+	claimedRow, err := sqlcgen.New(s.db).GetProject(ctx, projectID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return domain.Project{}, fmt.Errorf("%w: %s", ErrProjectNotFound, projectID)
+		}
+		return domain.Project{}, fmt.Errorf("lookup claimed project: %w", err)
+	}
+	return projectFromRow(claimedRow)
+}
+
+// ReleaseProject clears a project's claim.
+func (s *Store) ReleaseProject(ctx context.Context, projectID string) error {
+	projectID = strings.TrimSpace(projectID)
+	if projectID == "" {
+		return fmt.Errorf("%w: empty id", ErrProjectNotFound)
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin project claim release tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	result, err := sqlcgen.New(tx).ReleaseProject(ctx, projectID)
+	if err != nil {
+		return fmt.Errorf("release project claim: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("check released project: %w", err)
+	}
+	if affected == 0 {
+		return fmt.Errorf("%w: %s", ErrProjectNotFound, projectID)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit project claim release: %w", err)
+	}
+	return nil
 }
 
 // NormalizeRoot exposes the shared project-root normalization used when
@@ -89,7 +193,20 @@ func projectFromRow(row sqlcgen.Project) (domain.Project, error) {
 		Name:      row.Name,
 		RootPath:  row.RootPath,
 		CreatedAt: t,
+		ClaimedBy: row.ClaimedBy,
+		ClaimedAt: parseClaimedAt(row.ClaimedAt),
 	}, nil
+}
+
+func parseClaimedAt(value sql.NullString) *time.Time {
+	if !value.Valid || strings.TrimSpace(value.String) == "" {
+		return nil
+	}
+	t, err := time.Parse(time.RFC3339, value.String)
+	if err != nil {
+		return nil
+	}
+	return &t
 }
 
 func normalizeWorktreePath(ctx context.Context, cwd, gitCommand string) string {

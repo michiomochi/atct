@@ -16,6 +16,18 @@ type GoalClaimIn struct {
 	GoalID string `json:"goal_id"`
 }
 
+type GoalReleaseIn struct {
+	GoalID string `json:"goal_id"`
+}
+
+type ProjectClaimIn struct {
+	ProjectID string `json:"project_id"`
+}
+
+type ProjectReleaseIn struct {
+	ProjectID string `json:"project_id"`
+}
+
 type GoalUpdateContentIn struct {
 	GoalID  string `json:"goal_id"`
 	Content string `json:"content"`
@@ -31,6 +43,10 @@ type TaskDeclareIn struct {
 }
 
 type TaskClaimIn struct {
+	TaskID string `json:"task_id"`
+}
+
+type TaskReleaseIn struct {
 	TaskID string `json:"task_id"`
 }
 
@@ -157,9 +173,29 @@ func callWithUnappliedDecisions(ctx context.Context, c *Client, method string, p
 	return nil, RawWithUnappliedDecisions{Data: out}, nil
 }
 
-// Register adds eleven agent-facing tools to the MCP server.
-// Human operations (answer, approve, reject, and stale-claim release) belong to the Web UI and are not exposed through MCP.
+// Register adds fifteen agent-facing tools to the MCP server.
+// Human operations (answer, approve, and reject) belong to the Web UI and are not exposed through MCP.
 func Register(server *mcp.Server, c *Client, agentSessionID string) {
+	mcp.AddTool(server, &mcp.Tool{
+		Name:         "atct_project_claim",
+		Description:  "Claim a project for this agent session. A live claim from another session is refused; a dead session's claim is taken over.",
+		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in ProjectClaimIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
+		return callWithUnappliedDecisions(ctx, c, "project.claim", map[string]any{
+			"project_id": in.ProjectID, "agent_session_id": agentSessionID, "include_unapplied_answers": true,
+		})
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:         "atct_project_release",
+		Description:  "Release the claim on a project.",
+		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in ProjectReleaseIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
+		return callWithUnappliedDecisions(ctx, c, "project.release", map[string]any{
+			"project_id": in.ProjectID,
+		})
+	})
+
 	mcp.AddTool(server, &mcp.Tool{
 		Name:         "atct_goal_list",
 		Description:  "Get active Goals and unapplied answers relevant to the current agent session. Call at startup and resume.",
@@ -177,6 +213,16 @@ func Register(server *mcp.Server, c *Client, agentSessionID string) {
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in GoalClaimIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
 		return callWithUnappliedDecisions(ctx, c, "goal.claim", map[string]any{
 			"goal_id": in.GoalID, "agent_session_id": agentSessionID, "include_unapplied_answers": true,
+		})
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:         "atct_goal_release",
+		Description:  "Release the claim on a goal.",
+		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in GoalReleaseIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
+		return callWithUnappliedDecisions(ctx, c, "goal.release", map[string]any{
+			"goal_id": in.GoalID,
 		})
 	})
 
@@ -215,6 +261,16 @@ func Register(server *mcp.Server, c *Client, agentSessionID string) {
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in TaskClaimIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
 		return callWithUnappliedDecisions(ctx, c, "task.claim", map[string]any{
 			"task_id": in.TaskID, "agent_session_id": agentSessionID, "include_unapplied_answers": true,
+		})
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:         "atct_task_release",
+		Description:  "Release the claim on a task.",
+		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in TaskReleaseIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
+		return callWithUnappliedDecisions(ctx, c, "task.release", map[string]any{
+			"task_id": in.TaskID,
 		})
 	})
 

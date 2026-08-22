@@ -1,0 +1,2 @@
+ALTER TABLE projects ADD COLUMN claimed_by TEXT NOT NULL DEFAULT '';
+ALTER TABLE projects ADD COLUMN claimed_at TEXT;

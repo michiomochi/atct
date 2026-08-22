@@ -15,7 +15,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-func TestRegisterPublishesElevenToolsWithFlexibleOutputSchema(t *testing.T) {
+func TestRegisterPublishesFifteenToolsWithFlexibleOutputSchema(t *testing.T) {
 	ctx := context.Background()
 	socketPath := startSchemaTestDaemon(t)
 	server := mcp.NewServer(&mcp.Implementation{Name: "atct-test", Version: "test"}, nil)
@@ -43,6 +43,7 @@ func TestRegisterPublishesElevenToolsWithFlexibleOutputSchema(t *testing.T) {
 		"atct_goal_list":             true,
 		"atct_task_declare":          true,
 		"atct_task_claim":            true,
+		"atct_task_release":          true,
 		"atct_task_update":           true,
 		"atct_decision_ask":          true,
 		"atct_decision_poll":         true,
@@ -50,7 +51,10 @@ func TestRegisterPublishesElevenToolsWithFlexibleOutputSchema(t *testing.T) {
 		"atct_goal_complete":         true,
 		"atct_goal_set_derived_from": true,
 		"atct_goal_claim":            true,
+		"atct_goal_release":          true,
 		"atct_goal_update_content":   true,
+		"atct_project_claim":         true,
+		"atct_project_release":       true,
 	}
 	if len(got.Tools) != len(wantNames) {
 		t.Fatalf("tool count = %d, want %d", len(got.Tools), len(wantNames))

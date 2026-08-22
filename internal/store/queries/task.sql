@@ -120,18 +120,9 @@ WHERE id = ?;
 INSERT INTO agent_sessions (id, project_id, registered_at)
 VALUES (?, ?, ?);
 
--- name: GetAgentSessionRegisteredAt :one
-SELECT registered_at
-FROM agent_sessions
-WHERE id = ?;
-
 -- name: DeleteExpiredAgentSessionsExcept :exec
 DELETE FROM agent_sessions
 WHERE id <> ? AND registered_at < ?;
-
--- name: DeleteOlderProjectAgentSessions :exec
-DELETE FROM agent_sessions
-WHERE project_id = ? AND id <> ? AND registered_at < ?;
 
 -- name: GetLatestAgentSessionID :one
 SELECT id

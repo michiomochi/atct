@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -265,5 +266,163 @@ func TestNormalizeRootMapsWorktreeToMainRepository(t *testing.T) {
 	}
 	if gotResolved != want {
 		t.Fatalf("NormalizeRoot = %q, want %q", gotResolved, want)
+	}
+}
+
+func TestClaimProjectClaimsUnclaimedProject(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	project, err := s.CreateProject(ctx, "claimable", "/projects/claimable")
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+
+	got, err := s.ClaimProject(ctx, project.ID, "session-one")
+	if err != nil {
+		t.Fatalf("ClaimProject: %v", err)
+	}
+	if got.ClaimedBy != "session-one" {
+		t.Fatalf("ClaimedBy = %q, want %q", got.ClaimedBy, "session-one")
+	}
+	if got.ClaimedAt == nil {
+		t.Fatal("ClaimedAt is nil, want a claim timestamp")
+	}
+}
+
+func TestReleaseProjectClearsClaim(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	project, err := s.CreateProject(ctx, "releasable", "/projects/releasable")
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	if _, err := s.ClaimProject(ctx, project.ID, "session-one"); err != nil {
+		t.Fatalf("ClaimProject: %v", err)
+	}
+
+	if err := s.ReleaseProject(ctx, project.ID); err != nil {
+		t.Fatalf("ReleaseProject: %v", err)
+	}
+	got, err := s.ResolveProject(ctx, project.RootPath)
+	if err != nil {
+		t.Fatalf("ResolveProject: %v", err)
+	}
+	if got.ClaimedBy != "" {
+		t.Fatalf("ClaimedBy = %q, want empty", got.ClaimedBy)
+	}
+	if got.ClaimedAt != nil {
+		t.Fatalf("ClaimedAt = %v, want nil", got.ClaimedAt)
+	}
+}
+
+func TestReleasedProjectCanBeClaimedByAnotherSession(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	project, err := s.CreateProject(ctx, "reclaimable", "/projects/reclaimable")
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	if _, err := s.ClaimProject(ctx, project.ID, "session-one"); err != nil {
+		t.Fatalf("first ClaimProject: %v", err)
+	}
+	if err := s.ReleaseProject(ctx, project.ID); err != nil {
+		t.Fatalf("ReleaseProject: %v", err)
+	}
+
+	got, err := s.ClaimProject(ctx, project.ID, "session-two")
+	if err != nil {
+		t.Fatalf("second ClaimProject: %v", err)
+	}
+	if got.ClaimedBy != "session-two" {
+		t.Fatalf("ClaimedBy = %q, want %q", got.ClaimedBy, "session-two")
+	}
+}
+
+func TestClaimProjectRejectsSecondLiveSession(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	project, err := s.CreateProject(ctx, "live-claimed", "/projects/live-claimed")
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	if err := s.RegisterAgentSession(ctx, "live-session", os.Getpid()); err != nil {
+		t.Fatalf("RegisterAgentSession: %v", err)
+	}
+	if _, err := s.ClaimProject(ctx, project.ID, "live-session"); err != nil {
+		t.Fatalf("first ClaimProject: %v", err)
+	}
+
+	_, err = s.ClaimProject(ctx, project.ID, "other-session")
+	if !errors.Is(err, ErrProjectAlreadyClaimed) {
+		t.Fatalf("second ClaimProject error = %v, want ErrProjectAlreadyClaimed", err)
+	}
+}
+
+func TestClaimProjectTakesOverDeadSessionClaim(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	project, err := s.CreateProject(ctx, "dead-claimed", "/projects/dead-claimed")
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	if err := s.RegisterAgentSession(ctx, "live-session", os.Getpid()); err != nil {
+		t.Fatalf("RegisterAgentSession live: %v", err)
+	}
+
+	deadProcess := exec.Command("sleep", "60")
+	if err := deadProcess.Start(); err != nil {
+		t.Fatalf("start dead-session fixture: %v", err)
+	}
+	t.Cleanup(func() {
+		if deadProcess.ProcessState == nil {
+			_ = deadProcess.Process.Kill()
+			_ = deadProcess.Wait()
+		}
+	})
+	if err := s.RegisterAgentSession(ctx, "dead-session", deadProcess.Process.Pid); err != nil {
+		t.Fatalf("RegisterAgentSession dead: %v", err)
+	}
+	if err := deadProcess.Process.Kill(); err != nil {
+		t.Fatalf("kill dead-session fixture: %v", err)
+	}
+	_ = deadProcess.Wait()
+
+	if _, err := s.ClaimProject(ctx, project.ID, "dead-session"); err != nil {
+		t.Fatalf("claim with dead session: %v", err)
+	}
+	got, err := s.ClaimProject(ctx, project.ID, "next-session")
+	if err != nil {
+		t.Fatalf("take over dead claim: %v", err)
+	}
+	if got.ClaimedBy != "next-session" {
+		t.Fatalf("ClaimedBy = %q, want %q", got.ClaimedBy, "next-session")
+	}
+}
+
+func TestUnclaimedProjectIsReadableByListAndResolve(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	project, err := s.CreateProject(ctx, "readable", "/projects/readable")
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+
+	listed, err := s.ListProjects(ctx)
+	if err != nil {
+		t.Fatalf("ListProjects: %v", err)
+	}
+	if len(listed) != 1 {
+		t.Fatalf("ListProjects returned %d projects, want 1", len(listed))
+	}
+	if listed[0].ID != project.ID || listed[0].ClaimedBy != "" || listed[0].ClaimedAt != nil {
+		t.Fatalf("listed project = %#v, want unclaimed project %q", listed[0], project.ID)
+	}
+
+	resolved, err := s.ResolveProject(ctx, project.RootPath)
+	if err != nil {
+		t.Fatalf("ResolveProject: %v", err)
+	}
+	if resolved.ID != project.ID || resolved.ClaimedBy != "" || resolved.ClaimedAt != nil {
+		t.Fatalf("resolved project = %#v, want unclaimed project %q", resolved, project.ID)
 	}
 }

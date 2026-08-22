@@ -16,6 +16,7 @@ import (
 
 var ErrTaskAlreadyClaimed = errors.New("task already claimed")
 var ErrGoalAlreadyClaimed = errors.New("goal already claimed")
+var ErrProjectAlreadyClaimed = errors.New("project already claimed")
 var ErrGoalNotProposed = errors.New("goal is not proposed")
 
 type responseWithUnappliedDecisions struct {
@@ -193,6 +194,33 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		projects, err := d.store.ListProjects(ctx)
 		return marshal(projects, err)
 
+	case "project.claim":
+		var p struct {
+			ProjectID      string `json:"project_id"`
+			AgentSessionID string `json:"agent_session_id"`
+		}
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		if err := d.ensureAgentSessionProject(ctx, p.AgentSessionID, p.ProjectID); err != nil {
+			return nil, err
+		}
+		claimed, err := d.store.ClaimProject(ctx, p.ProjectID, p.AgentSessionID)
+		if errors.Is(err, store.ErrProjectAlreadyClaimed) {
+			return nil, ErrProjectAlreadyClaimed
+		}
+		return marshal(claimed, err)
+
+	case "project.release":
+		var p struct {
+			ProjectID string `json:"project_id"`
+		}
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		err := d.store.ReleaseProject(ctx, p.ProjectID)
+		return marshal(nil, err)
+
 	case "goal.list":
 		var p struct {
 			Cwd                     string `json:"cwd"`
@@ -341,6 +369,16 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 			Data:               claimed,
 			UnappliedDecisions: unappliedDecisionNotifications(unapplied),
 		}, nil)
+
+	case "goal.release":
+		var p struct {
+			GoalID string `json:"goal_id"`
+		}
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		err := d.store.ReleaseGoal(ctx, p.GoalID)
+		return marshal(nil, err)
 
 	case "goal.update_content":
 		var p struct {

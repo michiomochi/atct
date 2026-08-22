@@ -134,22 +134,6 @@ func (q *Queries) DeleteExpiredAgentSessionsExcept(ctx context.Context, arg Dele
 	return err
 }
 
-const deleteOlderProjectAgentSessions = `-- name: DeleteOlderProjectAgentSessions :exec
-DELETE FROM agent_sessions
-WHERE project_id = ? AND id <> ? AND registered_at < ?
-`
-
-type DeleteOlderProjectAgentSessionsParams struct {
-	ProjectID    sql.NullString
-	ID           string
-	RegisteredAt string
-}
-
-func (q *Queries) DeleteOlderProjectAgentSessions(ctx context.Context, arg DeleteOlderProjectAgentSessionsParams) error {
-	_, err := q.db.ExecContext(ctx, deleteOlderProjectAgentSessions, arg.ProjectID, arg.ID, arg.RegisteredAt)
-	return err
-}
-
 const dropOpenTasksForGoal = `-- name: DropOpenTasksForGoal :execresult
 UPDATE tasks SET status = 'dropped', claimed_by = '', claimed_at = NULL, updated_at = ?
 WHERE goal_id = ? AND status IN ('todo', 'doing')
@@ -193,19 +177,6 @@ func (q *Queries) GetAgentSessionProjectID(ctx context.Context, id string) (sql.
 	var project_id sql.NullString
 	err := row.Scan(&project_id)
 	return project_id, err
-}
-
-const getAgentSessionRegisteredAt = `-- name: GetAgentSessionRegisteredAt :one
-SELECT registered_at
-FROM agent_sessions
-WHERE id = ?
-`
-
-func (q *Queries) GetAgentSessionRegisteredAt(ctx context.Context, id string) (string, error) {
-	row := q.db.QueryRowContext(ctx, getAgentSessionRegisteredAt, id)
-	var registered_at string
-	err := row.Scan(&registered_at)
-	return registered_at, err
 }
 
 const getLatestAgentSessionID = `-- name: GetLatestAgentSessionID :one

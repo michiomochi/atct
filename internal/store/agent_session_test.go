@@ -70,6 +70,40 @@ func TestProjectIDForTask(t *testing.T) {
 	}
 }
 
+func TestAgentSessionsCanShareProject(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	project, err := s.CreateProject(ctx, "atct", "/repos/atct")
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+
+	if err := s.RegisterAgentSession(ctx, "run-first", 0); err != nil {
+		t.Fatalf("RegisterAgentSession(first): %v", err)
+	}
+	old := time.Now().UTC().Add(-time.Hour).Format(time.RFC3339Nano)
+	if _, err := s.DB().ExecContext(ctx, `UPDATE agent_sessions SET registered_at = ? WHERE id = ?`, old, "run-first"); err != nil {
+		t.Fatalf("age first agent session: %v", err)
+	}
+	if err := s.AssociateAgentSessionWithProject(ctx, "run-first", project.ID); err != nil {
+		t.Fatalf("AssociateAgentSessionWithProject(first): %v", err)
+	}
+	if err := s.RegisterAgentSession(ctx, "run-second", 0); err != nil {
+		t.Fatalf("RegisterAgentSession(second): %v", err)
+	}
+	if err := s.AssociateAgentSessionWithProject(ctx, "run-second", project.ID); err != nil {
+		t.Fatalf("AssociateAgentSessionWithProject(second): %v", err)
+	}
+
+	var count int
+	if err := s.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM agent_sessions WHERE project_id = ?`, project.ID).Scan(&count); err != nil {
+		t.Fatalf("count project agent sessions: %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("project agent session count = %d, want 2", count)
+	}
+}
+
 func TestAgentSessionCleanupRemovesOldRecordsWithoutRemovingProjects(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
@@ -110,6 +144,40 @@ func TestAgentSessionCleanupRemovesOldRecordsWithoutRemovingProjects(t *testing.
 	}
 	if projectCount != 1 {
 		t.Fatalf("project count = %d, want 1", projectCount)
+	}
+}
+
+func TestAgentSessionAssociationKeepsExpiryCleanup(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	project, err := s.CreateProject(ctx, "atct", "/repos/atct")
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	otherProject, err := s.CreateProject(ctx, "other", "/repos/other")
+	if err != nil {
+		t.Fatalf("CreateProject(other): %v", err)
+	}
+	if err := s.RegisterAgentSession(ctx, "run-current", 0); err != nil {
+		t.Fatalf("RegisterAgentSession(current): %v", err)
+	}
+
+	old := time.Now().UTC().Add(-90 * 24 * time.Hour).Format(time.RFC3339Nano)
+	if _, err := s.DB().ExecContext(ctx, `
+		INSERT INTO agent_sessions (id, project_id, registered_at) VALUES (?, ?, ?), (?, NULL, ?)
+	`, "run-old-project", otherProject.ID, old, "run-old-unbound", old); err != nil {
+		t.Fatalf("insert old agent sessions: %v", err)
+	}
+	if err := s.AssociateAgentSessionWithProject(ctx, "run-current", project.ID); err != nil {
+		t.Fatalf("AssociateAgentSessionWithProject(current): %v", err)
+	}
+
+	var remaining int
+	if err := s.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM agent_sessions WHERE id IN (?, ?)`, "run-old-project", "run-old-unbound").Scan(&remaining); err != nil {
+		t.Fatalf("count expired agent sessions: %v", err)
+	}
+	if remaining != 0 {
+		t.Fatalf("expired agent session count = %d, want 0", remaining)
 	}
 }
 

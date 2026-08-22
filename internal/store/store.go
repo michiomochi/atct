@@ -128,22 +128,11 @@ func (s *Store) AssociateAgentSessionWithProject(ctx context.Context, agentSessi
 		}
 	}
 
-	currentRegisteredAt, err := queries.GetAgentSessionRegisteredAt(ctx, agentSessionID)
-	if err != nil {
-		return fmt.Errorf("read associated agent session: %w", err)
-	}
 	if err := queries.DeleteExpiredAgentSessionsExcept(ctx, sqlcgen.DeleteExpiredAgentSessionsExceptParams{
 		ID:           agentSessionID,
 		RegisteredAt: now.Add(-agentSessionRetention).Format(time.RFC3339Nano),
 	}); err != nil {
 		return fmt.Errorf("clean up old agent sessions: %w", err)
-	}
-	if err := queries.DeleteOlderProjectAgentSessions(ctx, sqlcgen.DeleteOlderProjectAgentSessionsParams{
-		ProjectID:    projectIDValue,
-		ID:           agentSessionID,
-		RegisteredAt: currentRegisteredAt,
-	}); err != nil {
-		return fmt.Errorf("clean up old project agent sessions: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit agent session association: %w", err)

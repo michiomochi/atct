@@ -7,7 +7,24 @@ package sqlcgen
 
 import (
 	"context"
+	"database/sql"
 )
+
+const claimProject = `-- name: ClaimProject :execresult
+UPDATE projects
+SET claimed_by = ?, claimed_at = ?
+WHERE id = ?
+`
+
+type ClaimProjectParams struct {
+	ClaimedBy string
+	ClaimedAt sql.NullString
+	ID        string
+}
+
+func (q *Queries) ClaimProject(ctx context.Context, arg ClaimProjectParams) (sql.Result, error) {
+	return q.db.ExecContext(ctx, claimProject, arg.ClaimedBy, arg.ClaimedAt, arg.ID)
+}
 
 const createProject = `-- name: CreateProject :exec
 INSERT INTO projects (id, name, root_path, created_at)
@@ -31,8 +48,28 @@ func (q *Queries) CreateProject(ctx context.Context, arg CreateProjectParams) er
 	return err
 }
 
+const getProject = `-- name: GetProject :one
+SELECT id, name, root_path, created_at, claimed_by, claimed_at
+FROM projects
+WHERE id = ?
+`
+
+func (q *Queries) GetProject(ctx context.Context, id string) (Project, error) {
+	row := q.db.QueryRowContext(ctx, getProject, id)
+	var i Project
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.RootPath,
+		&i.CreatedAt,
+		&i.ClaimedBy,
+		&i.ClaimedAt,
+	)
+	return i, err
+}
+
 const listProjects = `-- name: ListProjects :many
-SELECT id, name, root_path, created_at
+SELECT id, name, root_path, created_at, claimed_by, claimed_at
 FROM projects
 ORDER BY created_at
 `
@@ -51,6 +88,8 @@ func (q *Queries) ListProjects(ctx context.Context) ([]Project, error) {
 			&i.Name,
 			&i.RootPath,
 			&i.CreatedAt,
+			&i.ClaimedBy,
+			&i.ClaimedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -65,8 +104,18 @@ func (q *Queries) ListProjects(ctx context.Context) ([]Project, error) {
 	return items, nil
 }
 
+const releaseProject = `-- name: ReleaseProject :execresult
+UPDATE projects
+SET claimed_by = '', claimed_at = NULL
+WHERE id = ?
+`
+
+func (q *Queries) ReleaseProject(ctx context.Context, id string) (sql.Result, error) {
+	return q.db.ExecContext(ctx, releaseProject, id)
+}
+
 const resolveProject = `-- name: ResolveProject :one
-SELECT id, name, root_path, created_at
+SELECT id, name, root_path, created_at, claimed_by, claimed_at
 FROM projects
 WHERE ? = root_path OR ? LIKE root_path || '/%'
 ORDER BY LENGTH(root_path) DESC
@@ -86,6 +135,8 @@ func (q *Queries) ResolveProject(ctx context.Context, arg ResolveProjectParams) 
 		&i.Name,
 		&i.RootPath,
 		&i.CreatedAt,
+		&i.ClaimedBy,
+		&i.ClaimedAt,
 	)
 	return i, err
 }

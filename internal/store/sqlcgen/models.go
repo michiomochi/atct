@@ -60,6 +60,8 @@ type Project struct {
 	Name      string
 	RootPath  string
 	CreatedAt string
+	ClaimedBy string
+	ClaimedAt sql.NullString
 }
 
 type Task struct {
