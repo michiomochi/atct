@@ -64,6 +64,11 @@ type GoalCompleteIn struct {
 	ResultSummary string `json:"-"`
 }
 
+type GoalSetDerivedFromIn struct {
+	GoalID            string `json:"goal_id"`
+	DerivedFromGoalID string `json:"derived_from_goal_id"`
+}
+
 type Raw struct {
 	Data any `json:"data"`
 }
@@ -143,7 +148,7 @@ func callWithUnappliedDecisions(ctx context.Context, c *Client, method string, p
 	return nil, RawWithUnappliedDecisions{Data: out}, nil
 }
 
-// Register adds eight agent-facing tools to the MCP server.
+// Register adds nine agent-facing tools to the MCP server.
 // Human operations (answer, approve, reject, and stale-claim release) belong to the Web UI and are not exposed through MCP.
 func Register(server *mcp.Server, c *Client, agentSessionID string) {
 	mcp.AddTool(server, &mcp.Tool{
@@ -248,6 +253,17 @@ func Register(server *mcp.Server, c *Client, agentSessionID string) {
 			"now_possible": in.NowPossible, "how_to_verify": in.HowToVerify,
 			"surprises": in.Surprises, "needs_review": in.NeedsReview,
 			"next_steps": in.NextSteps, "agent_session_id": agentSessionID, "include_unapplied_answers": true,
+		})
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:         "atct_goal_set_derived_from",
+		Description:  "Set or clear the goal from which this Goal was derived. Pass an empty derived_from_goal_id to clear it. Self-reference and cycles are rejected.",
+		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in GoalSetDerivedFromIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
+		return callWithUnappliedDecisions(ctx, c, "goal.set_derived_from", map[string]any{
+			"goal_id": in.GoalID, "derived_from_goal_id": in.DerivedFromGoalID,
+			"agent_session_id": agentSessionID, "include_unapplied_answers": true,
 		})
 	})
 }

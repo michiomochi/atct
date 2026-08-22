@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -328,6 +329,64 @@ func TestDaemonCreatesGoalForResolvedProject(t *testing.T) {
 	}
 	if goal.Creator != "agent" || goal.Status != domain.GoalProposed {
 		t.Fatalf("goal creator/status = %q/%q, want agent/proposed", goal.Creator, goal.Status)
+	}
+}
+
+func TestDaemonSetsGoalDerivedFromAndDistinguishesErrors(t *testing.T) {
+	conn := newDaemonConn(t)
+	projectResp := call(t, conn, "project.create", map[string]string{
+		"name": "atct", "root_path": "/repos/atct",
+	})
+	if projectResp.Error != "" {
+		t.Fatalf("project.create: %s", projectResp.Error)
+	}
+
+	createGoal := func(content string) domain.Goal {
+		t.Helper()
+		resp := call(t, conn, "goal.create", map[string]string{
+			"cwd": "/repos/atct", "content": content, "creator": "human",
+		})
+		if resp.Error != "" {
+			t.Fatalf("goal.create: %s", resp.Error)
+		}
+		var goal domain.Goal
+		if err := json.Unmarshal(resp.Result, &goal); err != nil {
+			t.Fatalf("unmarshal goal: %v", err)
+		}
+		return goal
+	}
+	parent := createGoal("Parent goal")
+	child := createGoal("Child goal")
+
+	set := call(t, conn, "goal.set_derived_from", map[string]string{
+		"goal_id": child.ID, "derived_from_goal_id": parent.ID,
+	})
+	if set.Error != "" {
+		t.Fatalf("goal.set_derived_from: %s", set.Error)
+	}
+	var updated domain.Goal
+	if err := json.Unmarshal(set.Result, &updated); err != nil {
+		t.Fatalf("unmarshal updated goal: %v", err)
+	}
+	if updated.DerivedFromGoalID != parent.ID {
+		t.Fatalf("updated DerivedFromGoalID = %q, want %q", updated.DerivedFromGoalID, parent.ID)
+	}
+
+	unknown := call(t, conn, "goal.set_derived_from", map[string]string{
+		"goal_id": child.ID, "derived_from_goal_id": "missing-goal-id",
+	})
+	if !strings.Contains(unknown.Error, "goal not found") {
+		t.Fatalf("unknown parent error = %q, want goal not found", unknown.Error)
+	}
+
+	self := call(t, conn, "goal.set_derived_from", map[string]string{
+		"goal_id": child.ID, "derived_from_goal_id": child.ID,
+	})
+	if !strings.Contains(self.Error, "cannot be derived from itself") {
+		t.Fatalf("self-reference error = %q, want self-reference error", self.Error)
+	}
+	if unknown.Error == self.Error {
+		t.Fatalf("unknown parent and self-reference errors are identical: %q", unknown.Error)
 	}
 }
 

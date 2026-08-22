@@ -15,9 +15,11 @@ import (
 )
 
 var (
-	ErrGoalNotFound    = errors.New("goal not found")
-	ErrGoalNotProposed = errors.New("goal is not proposed")
-	ErrGoalNotActive   = errors.New("goal is not active")
+	ErrGoalNotFound        = errors.New("goal not found")
+	ErrGoalNotProposed     = errors.New("goal is not proposed")
+	ErrGoalNotActive       = errors.New("goal is not active")
+	ErrGoalSelfReference   = errors.New("goal cannot be derived from itself")
+	ErrGoalDerivationCycle = errors.New("goal derivation would create a cycle")
 )
 
 func (s *Store) CreateGoal(ctx context.Context, projectID, content, creator string, derivedFromGoalID ...string) (domain.Goal, error) {
@@ -137,7 +139,25 @@ func (s *Store) SetGoalDerivedFrom(ctx context.Context, goalID, derivedFromGoalI
 		return fmt.Errorf("%w: empty id", ErrGoalNotFound)
 	}
 	if parentID != "" && goalID == parentID {
-		return errors.New("goal cannot be derived from itself")
+		return ErrGoalSelfReference
+	}
+	if parentID != "" {
+		seen := make(map[string]struct{})
+		for currentID := parentID; currentID != ""; {
+			if currentID == goalID {
+				return ErrGoalDerivationCycle
+			}
+			if _, ok := seen[currentID]; ok {
+				return ErrGoalDerivationCycle
+			}
+			seen[currentID] = struct{}{}
+
+			parent, err := s.GetGoal(ctx, currentID)
+			if err != nil {
+				return err
+			}
+			currentID = parent.DerivedFromGoalID
+		}
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339)

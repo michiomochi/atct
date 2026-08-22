@@ -59,6 +59,7 @@ func TestAdditionalToolResponsesIncludeUnappliedDecisions(t *testing.T) {
 		"atct_decision_poll",
 		"atct_decision_withdraw",
 		"atct_goal_complete",
+		"atct_goal_set_derived_from",
 	} {
 		result := callNotificationTestTool(t, name, notificationTestArgs(name),
 			`{"data":{"ok":true},"unapplied_decisions":[{"decision_id":"decision-3","question":"Which option should be used?"}]}`)
@@ -110,6 +111,7 @@ func TestOtherToolResponsesRemainUnchanged(t *testing.T) {
 		"atct_decision_poll",
 		"atct_decision_withdraw",
 		"atct_goal_complete",
+		"atct_goal_set_derived_from",
 	} {
 		result := callNotificationTestTool(t, name, notificationTestArgs(name), want)
 		if got := string(result["data"]); got != want {
@@ -178,6 +180,8 @@ func notificationTestArgs(name string) map[string]any {
 			"how_to_verify": "check the goal", "surprises": "なし",
 			"needs_review": "なし", "next_steps": "なし",
 		}
+	case "atct_goal_set_derived_from":
+		return map[string]any{"goal_id": "goal-1", "derived_from_goal_id": "goal-2"}
 	default:
 		return nil
 	}

@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/michiomochi/atct/internal/domain"
@@ -131,5 +132,125 @@ func TestSetGoalDerivedFromAndRejectsSelfReference(t *testing.T) {
 	}
 	if got.DerivedFromGoalID != parent.ID {
 		t.Fatalf("DerivedFromGoalID after self-reference rejection = %q, want %q", got.DerivedFromGoalID, parent.ID)
+	}
+}
+
+func TestSetGoalDerivedFromRejectsUnknownParent(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	ns, err := s.CreateProject(ctx, "atct", "/repos/atct")
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	child, err := s.CreateGoal(ctx, ns.ID, "Child goal", "human")
+	if err != nil {
+		t.Fatalf("CreateGoal: %v", err)
+	}
+
+	err = s.SetGoalDerivedFrom(ctx, child.ID, "missing-goal-id")
+	if !errors.Is(err, ErrGoalNotFound) {
+		t.Fatalf("SetGoalDerivedFrom error = %v, want ErrGoalNotFound", err)
+	}
+}
+
+func TestSetGoalDerivedFromRejectsTwoNodeCycle(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	ns, err := s.CreateProject(ctx, "atct", "/repos/atct")
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	first, err := s.CreateGoal(ctx, ns.ID, "First goal", "human")
+	if err != nil {
+		t.Fatalf("CreateGoal first: %v", err)
+	}
+	second, err := s.CreateGoal(ctx, ns.ID, "Second goal", "human")
+	if err != nil {
+		t.Fatalf("CreateGoal second: %v", err)
+	}
+	if err := s.SetGoalDerivedFrom(ctx, first.ID, second.ID); err != nil {
+		t.Fatalf("SetGoalDerivedFrom first: %v", err)
+	}
+
+	err = s.SetGoalDerivedFrom(ctx, second.ID, first.ID)
+	if !errors.Is(err, ErrGoalDerivationCycle) {
+		t.Fatalf("SetGoalDerivedFrom cycle error = %v, want ErrGoalDerivationCycle", err)
+	}
+	got, err := s.GetGoal(ctx, second.ID)
+	if err != nil {
+		t.Fatalf("GetGoal: %v", err)
+	}
+	if got.DerivedFromGoalID != "" {
+		t.Fatalf("second.DerivedFromGoalID after cycle rejection = %q, want empty", got.DerivedFromGoalID)
+	}
+}
+
+func TestSetGoalDerivedFromRejectsThreeNodeCycle(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	ns, err := s.CreateProject(ctx, "atct", "/repos/atct")
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	first, err := s.CreateGoal(ctx, ns.ID, "First goal", "human")
+	if err != nil {
+		t.Fatalf("CreateGoal first: %v", err)
+	}
+	second, err := s.CreateGoal(ctx, ns.ID, "Second goal", "human")
+	if err != nil {
+		t.Fatalf("CreateGoal second: %v", err)
+	}
+	third, err := s.CreateGoal(ctx, ns.ID, "Third goal", "human")
+	if err != nil {
+		t.Fatalf("CreateGoal third: %v", err)
+	}
+	if err := s.SetGoalDerivedFrom(ctx, first.ID, second.ID); err != nil {
+		t.Fatalf("SetGoalDerivedFrom first: %v", err)
+	}
+	if err := s.SetGoalDerivedFrom(ctx, second.ID, third.ID); err != nil {
+		t.Fatalf("SetGoalDerivedFrom second: %v", err)
+	}
+
+	err = s.SetGoalDerivedFrom(ctx, third.ID, first.ID)
+	if !errors.Is(err, ErrGoalDerivationCycle) {
+		t.Fatalf("SetGoalDerivedFrom cycle error = %v, want ErrGoalDerivationCycle", err)
+	}
+	got, err := s.GetGoal(ctx, third.ID)
+	if err != nil {
+		t.Fatalf("GetGoal: %v", err)
+	}
+	if got.DerivedFromGoalID != "" {
+		t.Fatalf("third.DerivedFromGoalID after cycle rejection = %q, want empty", got.DerivedFromGoalID)
+	}
+}
+
+func TestSetGoalDerivedFromClearsParent(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	ns, err := s.CreateProject(ctx, "atct", "/repos/atct")
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	parent, err := s.CreateGoal(ctx, ns.ID, "Parent goal", "human")
+	if err != nil {
+		t.Fatalf("CreateGoal parent: %v", err)
+	}
+	child, err := s.CreateGoal(ctx, ns.ID, "Child goal", "human")
+	if err != nil {
+		t.Fatalf("CreateGoal child: %v", err)
+	}
+	if err := s.SetGoalDerivedFrom(ctx, child.ID, parent.ID); err != nil {
+		t.Fatalf("SetGoalDerivedFrom parent: %v", err)
+	}
+	if err := s.SetGoalDerivedFrom(ctx, child.ID, ""); err != nil {
+		t.Fatalf("SetGoalDerivedFrom clear: %v", err)
+	}
+
+	got, err := s.GetGoal(ctx, child.ID)
+	if err != nil {
+		t.Fatalf("GetGoal: %v", err)
+	}
+	if got.DerivedFromGoalID != "" {
+		t.Fatalf("DerivedFromGoalID after clear = %q, want empty", got.DerivedFromGoalID)
 	}
 }

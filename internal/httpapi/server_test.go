@@ -971,6 +971,48 @@ func TestHTTPGoalDetailOmitsDerivedFromGoalWhenUnset(t *testing.T) {
 	}
 }
 
+func TestHTTPSetGoalDerivedFromAndDistinguishesErrors(t *testing.T) {
+	f := newBareFixture(t)
+	parent, err := f.store.CreateGoal(f.ctx, f.project.ID, "Parent goal", "human")
+	if err != nil {
+		t.Fatal(err)
+	}
+	child, err := f.store.CreateGoal(f.ctx, f.project.ID, "Child goal", "human")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+	status, _, body := doRequest(t, srv.Client(), http.MethodPost, srv.URL+"/api/goals/"+child.ID+"/derived-from", mustJSON(t, map[string]string{
+		"derived_from_goal_id": parent.ID,
+	}))
+	if status != http.StatusOK {
+		t.Fatalf("set derived-from status = %d; body=%s", status, body)
+	}
+	var updated domain.Goal
+	if err := json.Unmarshal(body, &updated); err != nil {
+		t.Fatalf("decode updated goal: %v; body=%s", err, body)
+	}
+	if updated.DerivedFromGoalID != parent.ID {
+		t.Fatalf("updated DerivedFromGoalID = %q, want %q", updated.DerivedFromGoalID, parent.ID)
+	}
+
+	status, _, body = doRequest(t, srv.Client(), http.MethodPost, srv.URL+"/api/goals/"+child.ID+"/derived-from", mustJSON(t, map[string]string{
+		"derived_from_goal_id": "missing-goal-id",
+	}))
+	if status != http.StatusNotFound || !strings.Contains(string(body), "goal not found") {
+		t.Fatalf("unknown parent response = %d %s, want 404 with goal not found", status, body)
+	}
+
+	status, _, body = doRequest(t, srv.Client(), http.MethodPost, srv.URL+"/api/goals/"+child.ID+"/derived-from", mustJSON(t, map[string]string{
+		"derived_from_goal_id": child.ID,
+	}))
+	if status != http.StatusBadRequest || !strings.Contains(string(body), "cannot be derived from itself") {
+		t.Fatalf("self-reference response = %d %s, want 400 with self-reference error", status, body)
+	}
+}
+
 func TestHTTPGoalDetailOmitsMissingDerivedFromGoal(t *testing.T) {
 	f := newBareFixture(t)
 	child, err := f.store.CreateGoal(f.ctx, f.project.ID, "Child goal", "human")

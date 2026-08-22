@@ -15,7 +15,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-func TestRegisterPublishesEightToolsWithFlexibleOutputSchema(t *testing.T) {
+func TestRegisterPublishesNineToolsWithFlexibleOutputSchema(t *testing.T) {
 	ctx := context.Background()
 	socketPath := startSchemaTestDaemon(t)
 	server := mcp.NewServer(&mcp.Implementation{Name: "atct-test", Version: "test"}, nil)
@@ -40,14 +40,15 @@ func TestRegisterPublishesEightToolsWithFlexibleOutputSchema(t *testing.T) {
 		t.Fatalf("ListTools: %v", err)
 	}
 	wantNames := map[string]bool{
-		"atct_goal_list":         true,
-		"atct_task_declare":      true,
-		"atct_task_claim":        true,
-		"atct_task_update":       true,
-		"atct_decision_ask":      true,
-		"atct_decision_poll":     true,
-		"atct_decision_withdraw": true,
-		"atct_goal_complete":     true,
+		"atct_goal_list":             true,
+		"atct_task_declare":          true,
+		"atct_task_claim":            true,
+		"atct_task_update":           true,
+		"atct_decision_ask":          true,
+		"atct_decision_poll":         true,
+		"atct_decision_withdraw":     true,
+		"atct_goal_complete":         true,
+		"atct_goal_set_derived_from": true,
 	}
 	if len(got.Tools) != len(wantNames) {
 		t.Fatalf("tool count = %d, want %d", len(got.Tools), len(wantNames))
@@ -111,6 +112,9 @@ func TestRegisterPublishesEightToolsWithFlexibleOutputSchema(t *testing.T) {
 			"goal_id": "goal-1", "work_done": "done", "now_possible": "ready",
 			"how_to_verify": "check the goal", "surprises": "なし",
 			"needs_review": "なし", "next_steps": "なし",
+		}},
+		{name: "atct_goal_set_derived_from", args: map[string]any{
+			"goal_id": "goal-1", "derived_from_goal_id": "goal-2",
 		}},
 	} {
 		result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{Name: tc.name, Arguments: tc.args})

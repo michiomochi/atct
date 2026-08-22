@@ -156,6 +156,10 @@ type rejectionRequest struct {
 	Reason string `json:"reason"`
 }
 
+type setGoalDerivedFromRequest struct {
+	DerivedFromGoalID string `json:"derived_from_goal_id"`
+}
+
 type createGoalRequest struct {
 	ProjectID string `json:"project_id"`
 	Content   string `json:"content"`
@@ -219,6 +223,18 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.handleWithdraw(w, r, parts[2])
+		return
+	}
+	if len(parts) == 4 && parts[0] == "api" && parts[1] == "goals" && parts[3] == "derived-from" {
+		if parts[2] == "" {
+			writeError(w, http.StatusBadRequest, "goal id is missing")
+			return
+		}
+		if r.Method != http.MethodPost {
+			writeError(w, http.StatusBadRequest, "method is not allowed for this endpoint")
+			return
+		}
+		s.handleSetGoalDerivedFrom(w, r, parts[2])
 		return
 	}
 	if len(parts) == 3 && parts[0] == "api" && parts[1] == "tasks" {
@@ -620,6 +636,39 @@ func (s *Server) handleWithdraw(w http.ResponseWriter, r *http.Request, goalID s
 	}
 
 	goal, err := s.store.GetGoal(r.Context(), goalID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, goal)
+}
+
+func (s *Server) handleSetGoalDerivedFrom(w http.ResponseWriter, r *http.Request, goalID string) {
+	var request setGoalDerivedFromRequest
+	if err := decodeJSONBody(r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+
+	err := s.store.SetGoalDerivedFrom(r.Context(), goalID, request.DerivedFromGoalID)
+	if errors.Is(err, store.ErrGoalNotFound) {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	if errors.Is(err, store.ErrGoalSelfReference) || errors.Is(err, store.ErrGoalDerivationCycle) {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+
+	goal, err := s.store.GetGoal(r.Context(), goalID)
+	if errors.Is(err, store.ErrGoalNotFound) {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
 	if err != nil {
 		writeStoreError(w, err)
 		return

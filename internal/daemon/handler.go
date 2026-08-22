@@ -541,6 +541,33 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		response, err := d.responseWithProjectUnappliedDecisions(ctx, data, decision.GoalID, decision.ID)
 		return marshal(response, err)
 
+	case "goal.set_derived_from":
+		var p struct {
+			GoalID                  string `json:"goal_id"`
+			DerivedFromGoalID       string `json:"derived_from_goal_id"`
+			AgentSessionID          string `json:"agent_session_id"`
+			IncludeUnappliedAnswers bool   `json:"include_unapplied_answers"`
+		}
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		goal, err := d.store.GetGoal(ctx, p.GoalID)
+		if err != nil {
+			return nil, err
+		}
+		if err := d.ensureAgentSessionProject(ctx, p.AgentSessionID, goal.ProjectID); err != nil {
+			return nil, err
+		}
+		if err := d.store.SetGoalDerivedFrom(ctx, p.GoalID, p.DerivedFromGoalID); err != nil {
+			return nil, err
+		}
+		goal, err = d.store.GetGoal(ctx, p.GoalID)
+		if err != nil || !p.IncludeUnappliedAnswers {
+			return marshal(goal, err)
+		}
+		response, err := d.responseWithProjectUnappliedDecisions(ctx, goal, p.GoalID)
+		return marshal(response, err)
+
 	case "goal.complete":
 		var p struct {
 			GoalID                  string `json:"goal_id"`
