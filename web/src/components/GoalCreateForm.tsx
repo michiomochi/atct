@@ -95,7 +95,7 @@ export function GoalCreateForm({ onCreated, onDirtyChange }: Props = {}) {
 
   if (projects.length === 0) {
     return (
-      <p className="mt-4 border-t border-line pt-4 text-sm text-muted">
+      <p className="mt-4 border-t border-line pt-4 text-base text-muted">
         {t("form.goal.noProject")}
       </p>
     );
@@ -111,7 +111,7 @@ export function GoalCreateForm({ onCreated, onDirtyChange }: Props = {}) {
             {...triggerProps}
             type="button"
             variant="outline"
-            className="focus-ring px-3 py-2 text-sm"
+            className="focus-ring px-3 py-2 text-base"
           >
             {t("form.goal.action.new")}
           </Button>
@@ -123,18 +123,18 @@ export function GoalCreateForm({ onCreated, onDirtyChange }: Props = {}) {
         </Dialog.Title>
         <form className="space-y-4" onSubmit={handleSubmit} aria-busy={submitting}>
           {dataOverloaded && (
-            <p className="text-sm text-muted" role="status">
+            <p className="text-base text-muted" role="status">
               {t("form.goal.overload.description", { count: projects.length })}
             </p>
           )}
           <div>
-            <label className="mb-1 block text-sm font-medium text-ink-950" htmlFor="goal-project">
+            <label className="mb-1 block text-base font-medium text-ink-950" htmlFor="goal-project">
               {t("form.goal.project.label")}
             </label>
             <select
               id="goal-project"
               name="project_id"
-              className="focus-ring w-full border border-line bg-surface px-3 py-2 text-sm text-ink-950"
+              className="focus-ring w-full border border-line bg-surface px-3 py-2 text-base text-ink-950"
               value={projectID}
               onChange={(event) => {
                 setProjectID(event.target.value);
@@ -154,13 +154,13 @@ export function GoalCreateForm({ onCreated, onDirtyChange }: Props = {}) {
           </div>
 
           <div>
-            <label className="mb-1 block text-sm font-medium text-ink-950" htmlFor="goal-content">
+            <label className="mb-1 block text-base font-medium text-ink-950" htmlFor="goal-content">
               {t("form.goal.content.label")}
             </label>
             <textarea
               id="goal-content"
               name="content"
-              className="focus-ring min-h-24 w-full border border-line bg-surface px-3 py-2 text-sm text-ink-950"
+              className="focus-ring min-h-24 w-full border border-line bg-surface px-3 py-2 text-base text-ink-950"
               value={content}
               onChange={(event) => {
                 setContent(event.target.value);
@@ -172,7 +172,7 @@ export function GoalCreateForm({ onCreated, onDirtyChange }: Props = {}) {
           </div>
 
           {validationError && (
-            <p className="text-sm text-danger-700" role="alert">
+            <p className="text-base text-danger-700" role="alert">
               {validationError}
             </p>
           )}
@@ -192,7 +192,7 @@ export function GoalCreateForm({ onCreated, onDirtyChange }: Props = {}) {
             <Button
               type="submit"
               variant="primary"
-              className="focus-ring px-3 py-2 text-sm disabled:cursor-wait disabled:opacity-60"
+              className="focus-ring px-3 py-2 text-base disabled:cursor-wait disabled:opacity-60"
               disabled={submitting}
             >
               {submitting ? t("form.goal.action.creating") : t("form.goal.submit")}
@@ -203,7 +203,7 @@ export function GoalCreateForm({ onCreated, onDirtyChange }: Props = {}) {
                   {...closeProps}
                   type="button"
                   variant="outline"
-                  className="focus-ring px-3 py-2 text-sm"
+                  className="focus-ring px-3 py-2 text-base"
                 >
                   {t("form.goal.cancel")}
                 </Button>

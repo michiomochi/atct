@@ -419,18 +419,22 @@ describe("Kumo font tracking", () => {
 describe("Kumo content text size", () => {
   it("keeps the compact text utility out of audited source files", () => {
     const auditedSources: Array<{ name: string; source: string }> = [
-      { name: "DecisionTable.tsx", source: decisionTableSource },
-      { name: "TaskDetailPage.tsx", source: taskDetailPageSource },
-      { name: "DecisionHistoryTable.tsx", source: decisionHistoryTableSource },
-      { name: "TaskTable.tsx", source: taskTableSource },
-      { name: "DecisionAnswerForm.tsx", source: decisionFormSource },
-      { name: "GoalDetail.tsx", source: goalDetailSource },
-      { name: "ProposedGoalTable.tsx", source: proposedGoalTableSource },
-      { name: "GoalTable.tsx", source: goalTableSource },
+      { name: "GoalCreateForm.tsx", source: goalCreateFormSource },
+      { name: "LocaleSwitch.tsx", source: localeSwitchSource },
       { name: "TaskCommitList.tsx", source: taskCommitListSource },
+      { name: "Dashboard.tsx", source: dashboardSource },
+      { name: "GoalDetail.tsx", source: goalDetailSource },
+      { name: "DecisionHistoryTable.tsx", source: decisionHistoryTableSource },
+      { name: "DecisionTable.tsx", source: decisionTableSource },
+      { name: "StateMessage.tsx", source: stateMessageSource },
+      { name: "DecisionAnswerForm.tsx", source: decisionFormSource },
+      { name: "TaskTable.tsx", source: taskTableSource },
+      { name: "GoalTable.tsx", source: goalTableSource },
+      { name: "TaskDetailPage.tsx", source: taskDetailPageSource },
+      { name: "ProposedGoalTable.tsx", source: proposedGoalTableSource },
     ];
 
-    expect(auditedSources).toHaveLength(9);
+    expect(auditedSources).toHaveLength(13);
     expect(auditedSources.every(({ source }) => source.length > 0)).toBe(true);
 
     const classNameLines = auditedSources.flatMap(({ name, source }) =>
@@ -441,7 +445,7 @@ describe("Kumo content text size", () => {
     );
     expect(classNameLines.length).toBeGreaterThanOrEqual(36);
 
-    const forbiddenTextSize = ["text", "xs"].join("-");
+    const forbiddenTextSize = ["text", "sm"].join("-");
     const forbiddenTextPattern = new RegExp(`\\b${forbiddenTextSize}\\b`);
     const violations = auditedSources.flatMap(({ name, source }) =>
       source.split("\n").flatMap((line, lineNumber) =>

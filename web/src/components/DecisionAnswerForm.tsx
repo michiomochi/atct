@@ -69,12 +69,12 @@ export function DecisionAnswerForm({ decision, onUpdated, onInputStateChange }: 
 
   if (conflict) {
     return (
-      <div className="mt-3 border border-notice-800 bg-notice-100 px-3 py-3 text-sm text-notice-800" role="alert">
+      <div className="mt-3 border border-notice-800 bg-notice-100 px-3 py-3 text-base text-notice-800" role="alert">
         <p>{t("form.answer.conflict")}</p>
         <Button
           type="button"
           variant="outline"
-          className="focus-ring mt-3 px-3 py-2 text-sm font-medium"
+          className="focus-ring mt-3 px-3 py-2 text-base font-medium"
           onClick={onUpdated}
         >
           {t("form.answer.fetchLatest")}
@@ -85,17 +85,17 @@ export function DecisionAnswerForm({ decision, onUpdated, onInputStateChange }: 
 
   return (
     <form className="mt-3 border-l-2 border-accent-600 pl-3" onSubmit={handleSubmit} noValidate>
-      <p className="mb-3 whitespace-pre-wrap break-words text-sm leading-6 text-ink-800">{decision.question}</p>
+      <p className="mb-3 whitespace-pre-wrap break-words text-base leading-6 text-ink-800">{decision.question}</p>
       {autoSettlementDuration && (
-        <p className="mb-3 text-sm text-ink-700">
+        <p className="mb-3 text-base text-ink-700">
           {t("decision.autoSettlesIn", { duration: autoSettlementDuration })}
         </p>
       )}
       {options.length > 0 ? (
-        <label className="mb-3 block text-sm text-ink-800" htmlFor={labelId}>
+        <label className="mb-3 block text-base text-ink-800" htmlFor={labelId}>
           {t("form.answer.label")} <span className="text-ink-500">{t("form.optional")}</span>
           <select
-            className="focus-ring mt-1 block w-full border border-line bg-surface px-3 py-2 text-sm text-ink-950"
+            className="focus-ring mt-1 block w-full border border-line bg-surface px-3 py-2 text-base text-ink-950"
             id={labelId}
             value={answerLabel}
             onChange={(event) => setAnswerLabel(event.target.value)}
@@ -112,40 +112,40 @@ export function DecisionAnswerForm({ decision, onUpdated, onInputStateChange }: 
               );
             })}
           </select>
-          {errors.answer_label && <span className="mt-1 block text-sm text-danger-700" id={`${labelId}-error`}>{t("form.answer.error.labelOrText")}</span>}
+          {errors.answer_label && <span className="mt-1 block text-base text-danger-700" id={`${labelId}-error`}>{t("form.answer.error.labelOrText")}</span>}
         </label>
       ) : (
-        <label className="mb-3 block text-sm text-ink-800" htmlFor={labelId}>
+        <label className="mb-3 block text-base text-ink-800" htmlFor={labelId}>
           {t("form.answer.label")} <span className="text-ink-500">{t("form.optional")}</span>
           <input
-            className="focus-ring mt-1 block w-full border border-line bg-surface px-3 py-2 text-sm text-ink-950"
+            className="focus-ring mt-1 block w-full border border-line bg-surface px-3 py-2 text-base text-ink-950"
             id={labelId}
             value={answerLabel}
             onChange={(event) => setAnswerLabel(event.target.value)}
             aria-invalid={Boolean(errors.answer_label)}
             aria-describedby={errors.answer_label ? `${labelId}-error` : undefined}
           />
-          {errors.answer_label && <span className="mt-1 block text-sm text-danger-700" id={`${labelId}-error`}>{t("form.answer.error.labelOrText")}</span>}
+          {errors.answer_label && <span className="mt-1 block text-base text-danger-700" id={`${labelId}-error`}>{t("form.answer.error.labelOrText")}</span>}
         </label>
       )}
-      <label className="mb-3 block text-sm text-ink-800" htmlFor={textId}>
+      <label className="mb-3 block text-base text-ink-800" htmlFor={textId}>
         {t("form.answer.text")} <span className="text-ink-500">{t("form.optional")}</span>
         <textarea
-          className="focus-ring mt-1 block min-h-24 w-full resize-y border border-line bg-surface px-3 py-2 text-sm leading-6 text-ink-950"
+          className="focus-ring mt-1 block min-h-24 w-full resize-y border border-line bg-surface px-3 py-2 text-base leading-6 text-ink-950"
           id={textId}
           value={answerText}
           onChange={(event) => setAnswerText(event.target.value)}
           aria-invalid={Boolean(errors.answer_text)}
           aria-describedby={errors.answer_text ? `${textId}-error` : undefined}
         />
-        {errors.answer_text && <span className="mt-1 block text-sm text-danger-700" id={`${textId}-error`}>{t("form.answer.error.labelOrText")}</span>}
+        {errors.answer_text && <span className="mt-1 block text-base text-danger-700" id={`${textId}-error`}>{t("form.answer.error.labelOrText")}</span>}
       </label>
-      {submitError && <p className="mb-3 text-sm text-danger-700" role="alert">{submitError}</p>}
+      {submitError && <p className="mb-3 text-base text-danger-700" role="alert">{submitError}</p>}
       <Button
         type="submit"
         variant="primary"
         disabled={submitting}
-        className="focus-ring px-3 py-2 text-sm font-medium disabled:cursor-wait disabled:opacity-60"
+        className="focus-ring px-3 py-2 text-base font-medium disabled:cursor-wait disabled:opacity-60"
       >
         {submitting ? t("form.answer.submitting") : t("form.answer.submit")}
       </Button>

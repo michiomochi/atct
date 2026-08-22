@@ -22,9 +22,9 @@ export function GoalTable({ goals, showProject = true }: Props) {
 
   return (
     <div className="table-scroll">
-      <Table className="min-w-[48rem] w-full border-collapse text-left text-sm">
+      <Table className="min-w-[48rem] w-full border-collapse text-left text-base">
         <caption className="sr-only">{t("goal.caption.activeList")}</caption>
-        <Table.Header className="border-b-2 border-ink-300 text-sm text-ink-700">
+        <Table.Header className="border-b-2 border-ink-300 text-base text-ink-700">
           <Table.Row>
             <Table.Head {...columnScope} className="px-3 py-3 font-semibold">{t("goal.column.goal")}</Table.Head>
             {showProject && <Table.Head {...columnScope} className="w-40 px-3 py-3 font-semibold">{t("goal.column.project")}</Table.Head>}

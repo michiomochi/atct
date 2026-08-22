@@ -74,7 +74,7 @@ function CompletionReport({ goal }: { goal: Goal }) {
           return (
             <section key={key} className="min-w-0 border-t border-line pt-3">
               <h3 className="font-display text-base font-semibold text-ink-950">{t(label)}</h3>
-              <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-6 text-ink-800">{value}</p>
+              <p className="mt-2 whitespace-pre-wrap break-words text-base leading-6 text-ink-800">{value}</p>
             </section>
           );
         })}
@@ -135,12 +135,12 @@ function CompletionApproval({
     return (
       <section className="min-w-0 border-t border-line pt-5" data-testid="completion-approval" aria-labelledby="completion-approval-heading">
         <h2 id="completion-approval-heading" className="font-display text-lg font-semibold text-ink-950">{t("goal.completion.title")}</h2>
-        <div className="mt-4 border border-notice-800 bg-notice-100 px-4 py-4 text-sm text-notice-800" role="alert">
+        <div className="mt-4 border border-notice-800 bg-notice-100 px-4 py-4 text-base text-notice-800" role="alert">
           <p>{t("goal.completion.conflict")}</p>
           <Button
             type="button"
             variant="outline"
-            className="focus-ring mt-3 px-3 py-2 text-sm font-medium"
+            className="focus-ring mt-3 px-3 py-2 text-base font-medium"
             onClick={onUpdated}
           >
             {t("goal.completion.fetchLatest")}
@@ -154,23 +154,23 @@ function CompletionApproval({
     <section className="min-w-0 border-t border-line pt-5" data-testid="completion-approval" aria-labelledby="completion-approval-heading">
         <h2 id="completion-approval-heading" className="font-display text-lg font-semibold text-ink-950">{t("goal.completion.title")}</h2>
       <form className="mt-4 min-w-0 max-w-3xl border-l-2 border-accent-600 pl-4" onSubmit={handleSubmit} noValidate>
-        <label className="mb-3 block text-sm text-ink-800" htmlFor={reasonID}>
+        <label className="mb-3 block text-base text-ink-800" htmlFor={reasonID}>
           {t("goal.completion.reason")} <span className="text-ink-500">{t("form.optional")}</span>
           <textarea
-            className="focus-ring mt-1 block min-h-24 w-full resize-y border border-line bg-surface px-3 py-2 text-sm leading-6 text-ink-950"
+            className="focus-ring mt-1 block min-h-24 w-full resize-y border border-line bg-surface px-3 py-2 text-base leading-6 text-ink-950"
             id={reasonID}
             value={reason}
             onChange={(event) => onReasonChange(event.target.value)}
           />
         </label>
-        {submitError && <p className="mb-3 text-sm text-danger-700" role="alert">{submitError}</p>}
+        {submitError && <p className="mb-3 text-base text-danger-700" role="alert">{submitError}</p>}
         <div className="flex flex-wrap gap-3">
           <Button
             type="submit"
             value="approve"
             variant="primary"
             disabled={submitting}
-            className="focus-ring px-3 py-2 text-sm font-medium disabled:cursor-wait disabled:opacity-60"
+            className="focus-ring px-3 py-2 text-base font-medium disabled:cursor-wait disabled:opacity-60"
           >
             {submitting ? t("goal.completion.submitting") : t("goal.completion.approve")}
           </Button>
@@ -179,7 +179,7 @@ function CompletionApproval({
             value="reject"
             variant="secondary-destructive"
             disabled={submitting}
-            className="focus-ring px-3 py-2 text-sm font-medium disabled:cursor-wait disabled:opacity-60"
+            className="focus-ring px-3 py-2 text-base font-medium disabled:cursor-wait disabled:opacity-60"
           >
             {t("goal.completion.reject")}
           </Button>
@@ -238,12 +238,12 @@ function GoalApproval({
   return (
     <section className="min-w-0 border-t border-line pt-5" data-testid="goal-approval" aria-labelledby="goal-approval-heading">
       <h2 id="goal-approval-heading" className="font-display text-lg font-semibold text-ink-950">{t("goal.approval.title")}</h2>
-      <p className="mt-2 max-w-3xl text-sm leading-6 text-ink-700">{t("goal.approval.description")}</p>
+      <p className="mt-2 max-w-3xl text-base leading-6 text-ink-700">{t("goal.approval.description")}</p>
       <form className="mt-4 min-w-0 max-w-3xl border-l-2 border-accent-600 pl-4" onSubmit={handleSubmit} noValidate>
-        <label className="mb-3 block text-sm text-ink-800" htmlFor={reasonID}>
+        <label className="mb-3 block text-base text-ink-800" htmlFor={reasonID}>
           {t("goal.completion.reason")}
           <textarea
-            className="focus-ring mt-1 block min-h-24 w-full resize-y border border-line bg-surface px-3 py-2 text-sm leading-6 text-ink-950"
+            className="focus-ring mt-1 block min-h-24 w-full resize-y border border-line bg-surface px-3 py-2 text-base leading-6 text-ink-950"
             id={reasonID}
             value={reason}
             onChange={(event) => onReasonChange(event.target.value)}
@@ -251,14 +251,14 @@ function GoalApproval({
             aria-required="true"
           />
         </label>
-        {submitError && <p className="mb-3 text-sm text-danger-700" role="alert">{submitError}</p>}
+        {submitError && <p className="mb-3 text-base text-danger-700" role="alert">{submitError}</p>}
         <div className="flex flex-wrap gap-3">
           <Button
             type="submit"
             value="approve"
             variant="primary"
             disabled={submitting}
-            className="focus-ring px-3 py-2 text-sm font-medium disabled:cursor-wait disabled:opacity-60"
+            className="focus-ring px-3 py-2 text-base font-medium disabled:cursor-wait disabled:opacity-60"
           >
             {submitting ? t("goal.completion.submitting") : t("goal.approval.approve")}
           </Button>
@@ -267,7 +267,7 @@ function GoalApproval({
             value="reject"
             variant="secondary-destructive"
             disabled={submitting || reason.trim() === ""}
-            className="focus-ring px-3 py-2 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-60"
+            className="focus-ring px-3 py-2 text-base font-medium disabled:cursor-not-allowed disabled:opacity-60"
           >
             {t("goal.approval.reject")}
           </Button>
@@ -313,7 +313,7 @@ function GoalWithdrawal({ goal, onUpdated }: { goal: Goal; onUpdated: () => void
               data-testid="goal-withdraw-trigger"
               type="button"
               variant="secondary-destructive"
-              className="focus-ring shrink-0 px-3 py-2 text-sm font-medium"
+              className="focus-ring shrink-0 px-3 py-2 text-base font-medium"
             >
               {t("goal.withdraw.submit")}
             </Button>
@@ -324,12 +324,12 @@ function GoalWithdrawal({ goal, onUpdated }: { goal: Goal; onUpdated: () => void
         <Dialog.Title className="mb-4 font-display text-xl font-semibold text-ink-950">
           {t("goal.withdraw.title")}
         </Dialog.Title>
-        <p className="mb-4 max-w-3xl text-sm leading-6 text-ink-700">{t("goal.withdraw.description")}</p>
+        <p className="mb-4 max-w-3xl text-base leading-6 text-ink-700">{t("goal.withdraw.description")}</p>
         <form className="min-w-0 max-w-3xl" onSubmit={handleSubmit} noValidate>
-          <label className="mb-3 block text-sm text-ink-800" htmlFor={reasonID}>
+          <label className="mb-3 block text-base text-ink-800" htmlFor={reasonID}>
             {t("goal.withdraw.reason")}
             <textarea
-              className="focus-ring mt-1 block min-h-24 w-full resize-y border border-line bg-surface px-3 py-2 text-sm leading-6 text-ink-950"
+              className="focus-ring mt-1 block min-h-24 w-full resize-y border border-line bg-surface px-3 py-2 text-base leading-6 text-ink-950"
               id={reasonID}
               value={reason}
               onChange={(event) => setReason(event.target.value)}
@@ -337,19 +337,19 @@ function GoalWithdrawal({ goal, onUpdated }: { goal: Goal; onUpdated: () => void
               aria-required="true"
             />
           </label>
-          {submitError && <p className="mb-3 text-sm text-danger-700" role="alert">{submitError}</p>}
+          {submitError && <p className="mb-3 text-base text-danger-700" role="alert">{submitError}</p>}
           <div className="flex flex-wrap gap-3">
             <Button
               type="submit"
               variant="secondary-destructive"
               disabled={submitting || reason.trim() === ""}
-              className="focus-ring px-3 py-2 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-60"
+              className="focus-ring px-3 py-2 text-base font-medium disabled:cursor-not-allowed disabled:opacity-60"
             >
               {t("goal.withdraw.submit")}
             </Button>
             <Dialog.Close
               render={(closeProps) => (
-                <Button {...closeProps} type="button" variant="outline" className="focus-ring px-3 py-2 text-sm">
+                <Button {...closeProps} type="button" variant="outline" className="focus-ring px-3 py-2 text-base">
                   {t("form.goal.cancel")}
                 </Button>
               )}
@@ -421,7 +421,7 @@ export function GoalDetail({ id }: Props) {
   return (
     <main className="min-w-0 max-w-full space-y-10 overflow-x-hidden">
       <div className="border-b border-line pb-6">
-        <a className="focus-ring text-sm font-medium text-accent-700 hover:text-accent-600" href="/">
+        <a className="focus-ring text-base font-medium text-accent-700 hover:text-accent-600" href="/">
           {t("goal.backToDashboard")}
         </a>
         <div className="mt-2 flex flex-wrap items-start justify-between gap-4 sm:flex-nowrap">
@@ -430,32 +430,32 @@ export function GoalDetail({ id }: Props) {
           </h1>
           {data && <GoalWithdrawal goal={data.goal.goal} onUpdated={load} />}
         </div>
-        {data && body(data.goal.goal.content) && <p className="mt-3 max-w-3xl whitespace-pre-wrap text-sm leading-6 text-ink-700">{body(data.goal.goal.content)}</p>}
+        {data && body(data.goal.goal.content) && <p className="mt-3 max-w-3xl whitespace-pre-wrap text-base leading-6 text-ink-700">{body(data.goal.goal.content)}</p>}
         {data && (
           <dl className="mt-5 grid min-w-0 gap-x-6 gap-y-3 border-t border-line pt-4 sm:grid-cols-3">
             <div className="min-w-0">
-              <dt className="text-sm font-semibold uppercase text-ink-700">{t("goal.project")}</dt>
-              <dd className="mt-1 break-words text-sm text-ink-950">{data.goal.goal.project_name || "-"}</dd>
+              <dt className="text-base font-semibold uppercase text-ink-700">{t("goal.project")}</dt>
+              <dd className="mt-1 break-words text-base text-ink-950">{data.goal.goal.project_name || "-"}</dd>
             </div>
             <div className="min-w-0">
-              <dt className="text-sm font-semibold uppercase text-ink-700">{t("goal.column.status")}</dt>
-              <dd className="mt-1 break-words text-sm text-ink-950">{statusLabel(locale, data.goal.goal.status)}</dd>
+              <dt className="text-base font-semibold uppercase text-ink-700">{t("goal.column.status")}</dt>
+              <dd className="mt-1 break-words text-base text-ink-950">{statusLabel(locale, data.goal.goal.status)}</dd>
             </div>
             <div className="min-w-0">
-              <dt className="text-sm font-semibold uppercase text-ink-700">{t("goal.column.updatedAt")}</dt>
-              <dd className="mt-1 break-words text-sm text-ink-950">{formatDateTime(locale, data.goal.goal.updated_at)}</dd>
+              <dt className="text-base font-semibold uppercase text-ink-700">{t("goal.column.updatedAt")}</dt>
+              <dd className="mt-1 break-words text-base text-ink-950">{formatDateTime(locale, data.goal.goal.updated_at)}</dd>
             </div>
           </dl>
         )}
       </div>
 
       {updatePending && (
-        <div className="border border-notice-800 bg-notice-100 px-4 py-4 text-sm text-notice-800" role="status" aria-live="polite">
+        <div className="border border-notice-800 bg-notice-100 px-4 py-4 text-base text-notice-800" role="status" aria-live="polite">
           <p>{t("state.updateAvailable")}</p>
           <Button
             type="button"
             variant="outline"
-            className="focus-ring mt-3 px-3 py-2 text-sm font-medium"
+            className="focus-ring mt-3 px-3 py-2 text-base font-medium"
             onClick={() => void load()}
           >
             {t("state.fetchLatest")}
@@ -486,7 +486,7 @@ export function GoalDetail({ id }: Props) {
       <section className="min-w-0 border-t border-line pt-5" data-testid="task-list" aria-labelledby="task-list-heading">
         <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-2">
           <h2 id="task-list-heading" className="font-display text-lg font-semibold text-ink-950">{t("goal.tasks.title")}</h2>
-          {data && <p className="text-sm text-ink-700">{tasks.length}</p>}
+          {data && <p className="text-base text-ink-700">{tasks.length}</p>}
         </div>
         <div className="mt-4 min-w-0">
           {state.kind === "loading" && <AreaLoading label={t("goal.tasks.title")} />}

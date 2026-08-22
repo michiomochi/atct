@@ -49,7 +49,7 @@ export function LocaleSwitch() {
             type="button"
             aria-pressed={active === locale}
             variant="ghost"
-            className="focus-ring px-2 py-1 text-sm font-medium"
+            className="focus-ring px-2 py-1 text-base font-medium"
             onClick={() => select(locale)}
           >
             {t(`locale.${locale}`)}

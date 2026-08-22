@@ -7,7 +7,7 @@ interface MessageProps {
 }
 
 export function EmptyState({ children }: MessageProps) {
-  return <p className="border border-dashed border-line px-4 py-6 text-sm text-ink-700">{children}</p>;
+  return <p className="border border-dashed border-line px-4 py-6 text-base text-ink-700">{children}</p>;
 }
 
 export function AreaLoading({ label }: { label: string }) {
@@ -28,12 +28,12 @@ export function ErrorState({ message, onRetry }: { message: string; onRetry: () 
   const { t } = useTranslation();
 
   return (
-    <div className="border border-danger-700 bg-danger-100 px-4 py-4 text-sm text-danger-700" role="alert">
+    <div className="border border-danger-700 bg-danger-100 px-4 py-4 text-base text-danger-700" role="alert">
       <p>{message}</p>
       <Button
         type="button"
         variant="secondary-destructive"
-        className="focus-ring mt-3 px-3 py-2 text-sm font-medium disabled:cursor-wait disabled:opacity-60"
+        className="focus-ring mt-3 px-3 py-2 text-base font-medium disabled:cursor-wait disabled:opacity-60"
         onClick={onRetry}
       >
         {t("state.retry")}

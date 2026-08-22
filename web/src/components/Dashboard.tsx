@@ -71,12 +71,12 @@ export function Dashboard() {
       </div>
 
       {updatePending && (
-        <div className="border border-notice-800 bg-notice-100 px-4 py-4 text-sm text-notice-800" role="status" aria-live="polite">
+        <div className="border border-notice-800 bg-notice-100 px-4 py-4 text-base text-notice-800" role="status" aria-live="polite">
           <p>{t("state.updateAvailable")}</p>
           <Button
             type="button"
             variant="outline"
-            className="focus-ring mt-3 px-3 py-2 text-sm font-medium"
+            className="focus-ring mt-3 px-3 py-2 text-base font-medium"
             onClick={() => void load()}
           >
             {t("state.fetchLatest")}

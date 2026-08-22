@@ -60,11 +60,11 @@ export function TaskCommitList({ taskID, commits }: Props) {
 
         return (
           <li key={commit.sha} className="min-w-0 border-t border-line pt-4 first:border-t-0 first:pt-0">
-            <div className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1 text-sm">
+            <div className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1 text-base">
               <span className="font-mono text-[0.9em] text-ink-950">{commit.short_sha}</span>
               <span className="min-w-0 break-words text-ink-950">{commit.subject}</span>
             </div>
-            <div className="mt-2 flex flex-wrap items-baseline gap-3 text-sm text-ink-700">
+            <div className="mt-2 flex flex-wrap items-baseline gap-3 text-base text-ink-700">
               <span className="whitespace-nowrap">
                 {commit.files_changed} {t("task.detail.commitFiles")} · +{commit.insertions} −{commit.deletions}
               </span>
@@ -78,19 +78,19 @@ export function TaskCommitList({ taskID, commits }: Props) {
                 }
               }}
             >
-              <summary className="focus-ring cursor-pointer text-sm font-medium text-accent-700 hover:text-accent-600">
+              <summary className="focus-ring cursor-pointer text-base font-medium text-accent-700 hover:text-accent-600">
                 {t("task.detail.commitDiff")}
               </summary>
               {diffState?.kind === "loading" && <AreaLoading label={t("task.detail.commitDiff")} />}
               {diffState?.kind === "error" && (
-                <p className="mt-4 break-words text-sm text-danger-700" role="alert">
+                <p className="mt-4 break-words text-base text-danger-700" role="alert">
                   {diffState.message}
                 </p>
               )}
               {diffState?.kind === "ready" &&
                 (diffState.data.in_history ? (
                   <div className="mt-4 min-w-0 max-w-full space-y-4">
-                    <ul className="min-w-0 space-y-2 text-sm text-ink-700">
+                    <ul className="min-w-0 space-y-2 text-base text-ink-700">
                       {diffState.data.files.map((file) => (
                         <li key={file.path} className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1">
                           <span className="min-w-0 break-words font-mono text-[0.9em]">{file.path}</span>
@@ -104,11 +104,11 @@ export function TaskCommitList({ taskID, commits }: Props) {
                         </li>
                       ))}
                     </ul>
-                    <pre className="min-w-0 max-w-full overflow-x-auto whitespace-pre rounded border border-line bg-surface p-4 font-mono text-sm leading-5 text-ink-800">
+                    <pre className="min-w-0 max-w-full overflow-x-auto whitespace-pre rounded border border-line bg-surface p-4 font-mono text-base leading-5 text-ink-800">
                       {diffState.data.body}
                     </pre>
                     {diffState.data.omitted_lines > 0 && (
-                      <p className="text-sm text-ink-700">
+                      <p className="text-base text-ink-700">
                         {t("task.detail.commitDiffOmitted", {
                           count: diffState.data.omitted_lines,
                         })}
@@ -116,7 +116,7 @@ export function TaskCommitList({ taskID, commits }: Props) {
                     )}
                   </div>
                 ) : (
-                  <p className="mt-4 text-sm text-ink-700">{t("task.detail.commitDiffEmpty")}</p>
+                  <p className="mt-4 text-base text-ink-700">{t("task.detail.commitDiffEmpty")}</p>
                 ))}
             </details>
           </li>

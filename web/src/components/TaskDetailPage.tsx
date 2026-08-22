@@ -96,7 +96,7 @@ export function TaskDetailPage({ id }: Props) {
         <>
           <div className="border-b border-line pb-6">
             <a
-              className="focus-ring text-sm font-medium text-accent-700 hover:text-accent-600"
+              className="focus-ring text-base font-medium text-accent-700 hover:text-accent-600"
               href={`/goals/${encodeURIComponent(data.goal.id)}`}
             >
               {data.goal.project_name ? `${t("goal.project")}: ${data.goal.project_name}` : t("goal.backToDashboard")}
@@ -105,7 +105,7 @@ export function TaskDetailPage({ id }: Props) {
             {data.task.description.trim() && (
               <section className="mt-5 max-w-3xl">
                 <h2 className="font-display text-lg font-semibold text-ink-950">{t("task.detail.description")}</h2>
-                <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-6 text-ink-700">{data.task.description}</p>
+                <p className="mt-2 whitespace-pre-wrap break-words text-base leading-6 text-ink-700">{data.task.description}</p>
               </section>
             )}
           </div>
@@ -116,32 +116,32 @@ export function TaskDetailPage({ id }: Props) {
             </h2>
             <dl className="mt-6 grid min-w-0 gap-x-6 gap-y-4 border-t border-line pt-5 sm:grid-cols-2">
               <div className="min-w-0">
-                <dt className="text-sm font-semibold uppercase text-ink-700">{t("task.detail.files")}</dt>
-                <dd className="mt-1 break-words text-sm text-ink-950">
+                <dt className="text-base font-semibold uppercase text-ink-700">{t("task.detail.files")}</dt>
+                <dd className="mt-1 break-words text-base text-ink-950">
                   {displayValue([...data.task.files ?? [], data.task.declare_key].filter(Boolean).join(" · "), noValue)}
                 </dd>
               </div>
               <div className="min-w-0">
-                <dt className="text-sm font-semibold uppercase text-ink-700">{t("task.detail.agent")}</dt>
-                <dd className="mt-1 break-words text-sm text-ink-950">{displayValue(data.task.agent, noValue)}</dd>
+                <dt className="text-base font-semibold uppercase text-ink-700">{t("task.detail.agent")}</dt>
+                <dd className="mt-1 break-words text-base text-ink-950">{displayValue(data.task.agent, noValue)}</dd>
               </div>
               <div className="min-w-0">
-                <dt className="text-sm font-semibold uppercase text-ink-700">{t("task.detail.claimedRun")}</dt>
-                <dd className="mt-1 break-words text-sm text-ink-950">{displayValue(data.task.claimed_by, noValue)}</dd>
+                <dt className="text-base font-semibold uppercase text-ink-700">{t("task.detail.claimedRun")}</dt>
+                <dd className="mt-1 break-words text-base text-ink-950">{displayValue(data.task.claimed_by, noValue)}</dd>
               </div>
               <div className="min-w-0">
-                <dt className="text-sm font-semibold uppercase text-ink-700">{t("task.detail.order")}</dt>
-                <dd className="mt-1 text-sm text-ink-950">{data.task.order}</dd>
+                <dt className="text-base font-semibold uppercase text-ink-700">{t("task.detail.order")}</dt>
+                <dd className="mt-1 text-base text-ink-950">{data.task.order}</dd>
               </div>
               <div className="min-w-0">
-                <dt className="text-sm font-semibold uppercase text-ink-700">{t("task.detail.createdAt")}</dt>
-                <dd className="mt-1 break-words text-sm text-ink-950">
+                <dt className="text-base font-semibold uppercase text-ink-700">{t("task.detail.createdAt")}</dt>
+                <dd className="mt-1 break-words text-base text-ink-950">
                   {displayValue(data.task.created_at ? formatDateTime(locale, data.task.created_at) : undefined, noValue)}
                 </dd>
               </div>
               <div className="min-w-0">
-                <dt className="text-sm font-semibold uppercase text-ink-700">{t("task.detail.updatedAt")}</dt>
-                <dd className="mt-1 break-words text-sm text-ink-950">
+                <dt className="text-base font-semibold uppercase text-ink-700">{t("task.detail.updatedAt")}</dt>
+                <dd className="mt-1 break-words text-base text-ink-950">
                   {displayValue(data.task.updated_at ? formatDateTime(locale, data.task.updated_at) : undefined, noValue)}
                 </dd>
               </div>
@@ -162,12 +162,12 @@ export function TaskDetailPage({ id }: Props) {
       )}
 
       {updatePending && (
-        <div className="border border-notice-800 bg-notice-100 px-4 py-4 text-sm text-notice-800" role="status" aria-live="polite">
+        <div className="border border-notice-800 bg-notice-100 px-4 py-4 text-base text-notice-800" role="status" aria-live="polite">
           <p>{t("state.updateAvailable")}</p>
           <Button
             type="button"
             variant="outline"
-            className="focus-ring mt-3 px-3 py-2 text-sm font-medium"
+            className="focus-ring mt-3 px-3 py-2 text-base font-medium"
             onClick={retry}
           >
             {t("state.fetchLatest")}
