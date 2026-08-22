@@ -2,7 +2,7 @@
 # Prepare a reusable executor worktree by borrowing frontend dependencies from
 # the primary checkout.
 #
-#   script/worktree-setup.sh <executor-number>
+#   script/worktree-setup.sh <goal-id>
 #
 # node_modules is shared with the primary checkout. Running pnpm install in a
 # worktree changes the primary checkout's dependencies too.
@@ -10,15 +10,16 @@
 # a worktree, run pnpm build there once to refresh the copied output.
 set -euo pipefail
 
-executor_number="${1:?usage: script/worktree-setup.sh <executor-number>}"
-if [[ $# -ne 1 || ! "$executor_number" =~ ^[0-9]+$ ]]; then
-  echo "usage: script/worktree-setup.sh <executor-number>" >&2
+goal_id="${1:-}"
+if [[ $# -ne 1 || ! "$goal_id" =~ ^[0-9a-f]{8,} ]]; then
+  echo "usage: script/worktree-setup.sh <goal-id>" >&2
   exit 2
 fi
+goal8="${goal_id:0:8}"
 
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-worktree="$(cd "$repo/.." && pwd)/atct-wt${executor_number}"
-branch="wt/executor-${executor_number}"
+worktree="$(cd "$repo/.." && pwd)/atct-wt-${goal8}"
+branch="wt/goal-${goal8}"
 
 if [[ ! -d "$repo/web/node_modules" ]]; then
   echo "主チェックアウトに web/node_modules がありません。先に主で pnpm install を走らせろ" >&2
