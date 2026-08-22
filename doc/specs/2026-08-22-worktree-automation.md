@@ -13,9 +13,13 @@ executor 2 台を主チェックアウトで並行して動かし、
 `internal/store/task.go:147: unknown field SnoozedUntil` でビルドが壊れた。
 どちらの変更が原因かを切り分ける手間が出た。**道具はあったのに使わなかった。**
 
-## 見張る対象は `pane split` である（`agent start` ではない）
+## 見張る対象は `workspace create` である
 
-commander は当初「`herdr agent start` を見る」と書いたが、**誤りだった。**
+commander は当初「`herdr agent start` を見る」と書き、次に「`pane split` を見る」と
+書いたが、**どちらも誤りだった（人間の指摘、2026-08-22）。**
+
+**subcommander は pane ではなく space に立つ。**3 層の設計では「作業単位ごとに space」
+なので、cwd が決まるのは **`workspace create` の時点**である。
 
 ```
 herdr agent start --help
@@ -25,11 +29,21 @@ herdr agent start --help
 
 **cwd は pane が持っている。**決まるのは `pane split --cwd <dir>` の時点である。
 
+```
+herdr workspace create --cwd <PATH> --label <TEXT>    ← ここで cwd が決まる
+herdr pane split --cwd <PATH>                        ← 同じ space の中で増やすとき
+herdr agent start --pane <ID>                        ← cwd の指定が無い
+```
+
 | 見る対象 | 判定 |
 |---|---|
-| `herdr pane split --cwd <主チェックアウト>` | **止める** |
-| `herdr pane split --cwd <worktree>` | 通す |
-| `--cwd` が無い | 呼び出した pane の cwd を継ぐので、**主なら止める** |
+| `herdr workspace create --cwd <主チェックアウト>` | **止める** |
+| `herdr workspace create --cwd <worktree>` | 通す |
+| `--cwd` が無い | 呼び出し元の cwd を継ぐので、**主なら止める** |
+
+**`pane split` も同じ形で見る。**同じ space の中で executor を増やすときに使うので、
+そこも主チェックアウトを向いていたら止める。ただし**主たる関門は
+`workspace create`** である。
 
 **これで「cwd を書き換えられるか」という未検証点が消えた。**書き換えは要らない。
 
@@ -65,7 +79,7 @@ herdr agent start --help
 ## 塞がない穴（`single-subcommander.sh` と同じ判断）
 
 ```
-/usr/bin/herdr pane split ...          絶対パス呼び出し → 素通り
+/usr/bin/herdr workspace create ...    絶対パス呼び出し → 素通り
 ```
 
 スキルが定める形は「素の `herdr`」であり、**実際に通られたときが直す合図。**
@@ -73,7 +87,7 @@ herdr agent start --help
 
 ## 置き場
 
-**dotfiles。**`herdr pane split` を見る規則なので、この環境の設定である。
+**dotfiles。**`herdr workspace create` を見る規則なので、この環境の設定である。
 **atct には置けない**（atct は公開物で herdr を知らない。`claim-before-delegate` を
 外したのと同じ理由）。
 

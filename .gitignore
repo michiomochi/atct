@@ -12,6 +12,9 @@ doc/research/
 
 # Frontend
 node_modules/
+# The worktree setup symlinks web/node_modules to the primary checkout, and a
+# trailing-slash pattern only matches directories, so the symlink needs its own line.
+web/node_modules
 .astro/
 # The frontend build output is generated at release time, but the directory has
 # to survive: go:embed rejects a missing or empty one. See web/embed.go.
