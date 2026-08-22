@@ -146,11 +146,14 @@ func TestDetectWakeupClassifiesUnstartedTasksForGoalWithRunningClaim(t *testing.
 	if err != nil {
 		t.Fatalf("DetectWakeup: %v", err)
 	}
-	if state.ActiveGoalCount != 1 || state.UnstartedTaskCount != 1 || len(state.Tasks) != 0 {
-		t.Fatalf("wakeup state = %+v, want one counted but non-actionable task", state)
+	if state.ActiveGoalCount != 1 || state.UnstartedTaskCount != 1 || len(state.Tasks) != 1 || state.Tasks[0].ID != tasks[1].ID {
+		t.Fatalf("wakeup state = %+v, want one counted and actionable sibling task", state)
 	}
-	if state.WaitingAnswerTaskCount != 0 || state.WorkingTaskCount != 1 || state.UntouchedTaskCount != 0 {
-		t.Fatalf("wakeup task breakdown = %+v, want one working task", state)
+	if state.WaitingAnswerTaskCount != 0 || state.WorkingTaskCount != 0 || state.UntouchedTaskCount != 1 {
+		t.Fatalf("wakeup task breakdown = %+v, want one untouched task", state)
+	}
+	if state.UnstartedTaskCount != state.WaitingAnswerTaskCount+state.WorkingTaskCount+state.UntouchedTaskCount {
+		t.Fatalf("unstarted task breakdown = %+v, want total to equal category sum", state)
 	}
 
 	counted, err := s.CountUnstartedTasks(ctx, project.ID)
@@ -167,6 +170,55 @@ func TestDetectWakeupClassifiesUnstartedTasksForGoalWithRunningClaim(t *testing.
 	}
 	if wakeupCount != 1 {
 		t.Fatalf("wakeup-rule unstarted tasks = %d, want 1 for a goal with a running claim", wakeupCount)
+	}
+}
+
+func TestDetectWakeupClassifiesUnstartedTasksByOwnOpenDecision(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	project, err := s.CreateProject(ctx, "atct", "/repos/atct")
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	goal, err := s.CreateGoal(ctx, project.ID, "Continue independent tasks", "human")
+	if err != nil {
+		t.Fatalf("CreateGoal: %v", err)
+	}
+	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "wakeup-task-level", []string{"Claimed sibling", "Waiting task", "Available sibling"}, []string{"Continue the claimed sibling.", "Continue after its decision is answered.", "Claim the available sibling."})
+	if err != nil {
+		t.Fatalf("DeclareTasks: %v", err)
+	}
+	if err := s.RegisterAgentSession(ctx, "wakeup-task-level-session", os.Getpid()); err != nil {
+		t.Fatalf("RegisterAgentSession: %v", err)
+	}
+	if err := s.AssociateAgentSessionWithProject(ctx, "wakeup-task-level-session", project.ID); err != nil {
+		t.Fatalf("AssociateAgentSessionWithProject: %v", err)
+	}
+	if _, err := s.ClaimTask(ctx, tasks[0].ID, "wakeup-task-level-session"); err != nil {
+		t.Fatalf("ClaimTask: %v", err)
+	}
+	if _, err := s.AskDecision(ctx, AskInput{
+		GoalID: goal.ID, TaskID: tasks[1].ID,
+		Kind: domain.KindDecision, Question: "Which path should the waiting task take?",
+	}); err != nil {
+		t.Fatalf("AskDecision: %v", err)
+	}
+
+	state, err := s.DetectWakeup(ctx, project.ID)
+	if err != nil {
+		t.Fatalf("DetectWakeup: %v", err)
+	}
+	if state.UnstartedTaskCount != 2 {
+		t.Fatalf("unstarted task count = %d, want 2", state.UnstartedTaskCount)
+	}
+	if state.WaitingAnswerTaskCount != 1 || state.UntouchedTaskCount != 1 {
+		t.Fatalf("wakeup task breakdown = %+v, want one waiting and one untouched task", state)
+	}
+	if state.UnstartedTaskCount != state.WaitingAnswerTaskCount+state.UntouchedTaskCount {
+		t.Fatalf("unstarted task breakdown = %+v, want total to equal category sum", state)
+	}
+	if len(state.Tasks) != state.UntouchedTaskCount || len(state.Tasks) != 1 || state.Tasks[0].ID != tasks[2].ID {
+		t.Fatalf("actionable tasks = %#v, want only available sibling %s", state.Tasks, tasks[2].ID)
 	}
 }
 
@@ -229,8 +281,8 @@ func TestDetectWakeupCountsAndClassifiesAllUnstartedTasks(t *testing.T) {
 	claim(workingTasks[0].ID)
 	_, workingSecondTasks := declareGoal("Second working-only goal", "wakeup-breakdown-working-second")
 	claim(workingSecondTasks[0].ID)
-	untouchedGoal, _ := declareGoal("Untouched goal", "wakeup-breakdown-untouched", "Unstarted task")
-	secondUntouchedGoal, _ := declareGoal("Second untouched goal", "wakeup-breakdown-untouched-second", "Unstarted task")
+	_, untouchedTasks := declareGoal("Untouched goal", "wakeup-breakdown-untouched", "Unstarted task")
+	_, secondUntouchedTasks := declareGoal("Second untouched goal", "wakeup-breakdown-untouched-second", "Unstarted task")
 
 	state, err := s.DetectWakeup(ctx, project.ID)
 	if err != nil {
@@ -242,20 +294,36 @@ func TestDetectWakeupCountsAndClassifiesAllUnstartedTasks(t *testing.T) {
 	if state.UnstartedTaskCount != 6 {
 		t.Fatalf("unstarted task count = %d, want 6", state.UnstartedTaskCount)
 	}
-	if state.WaitingAnswerTaskCount != 2 {
-		t.Fatalf("waiting-answer task count = %d, want 2", state.WaitingAnswerTaskCount)
+	if state.WaitingAnswerTaskCount != 1 {
+		t.Fatalf("waiting-answer task count = %d, want 1", state.WaitingAnswerTaskCount)
 	}
-	if state.WorkingTaskCount != 2 {
-		t.Fatalf("working task count = %d, want 2", state.WorkingTaskCount)
+	if state.WorkingTaskCount != 0 {
+		t.Fatalf("working task count = %d, want 0", state.WorkingTaskCount)
 	}
-	if state.UntouchedTaskCount != 2 {
-		t.Fatalf("untouched task count = %d, want 2", state.UntouchedTaskCount)
+	if state.UntouchedTaskCount != 5 {
+		t.Fatalf("untouched task count = %d, want 5", state.UntouchedTaskCount)
 	}
 	if state.UnstartedTaskCount != state.WaitingAnswerTaskCount+state.WorkingTaskCount+state.UntouchedTaskCount {
 		t.Fatalf("unstarted task breakdown = %+v, want total to equal category sum", state)
 	}
-	if len(state.Tasks) != 2 || state.Tasks[0].GoalID != untouchedGoal.ID || state.Tasks[1].GoalID != secondUntouchedGoal.ID {
-		t.Fatalf("actionable tasks = %#v, want the two untouched goals only", state.Tasks)
+	wantTaskIDs := map[string]struct{}{
+		overlapTasks[1].ID:         {},
+		workingTasks[1].ID:         {},
+		workingSecondTasks[1].ID:   {},
+		untouchedTasks[0].ID:       {},
+		secondUntouchedTasks[0].ID: {},
+	}
+	if len(state.Tasks) != len(wantTaskIDs) || len(state.Tasks) != state.UntouchedTaskCount {
+		t.Fatalf("actionable tasks = %#v, want %d untouched tasks", state.Tasks, len(wantTaskIDs))
+	}
+	for _, task := range state.Tasks {
+		if _, ok := wantTaskIDs[task.ID]; !ok {
+			t.Fatalf("unexpected actionable task = %#v", task)
+		}
+		delete(wantTaskIDs, task.ID)
+	}
+	if len(wantTaskIDs) != 0 {
+		t.Fatalf("missing actionable tasks = %#v", wantTaskIDs)
 	}
 
 	wakeupCount, err := s.CountUnstartedTasksForWakeup(ctx, project.ID)

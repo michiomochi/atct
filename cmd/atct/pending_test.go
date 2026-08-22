@@ -1297,12 +1297,61 @@ func TestPendingCommandPutsUnstartedTasksBeforeOwnClaim(t *testing.T) {
 	if exitCode != 0 {
 		t.Fatalf("pendingCommand exit code = %d, want 0", exitCode)
 	}
-	wantReason := "You hold 1 work locks. 2 unstarted tasks in active goals (waiting for an answer: 0 / working: 0 / untouched: 2). 2 tasks in active goals have no work lock.\nIf you are waiting on a human, take one of those instead of stopping."
+	wantReason := "You hold 1 work locks. 2 unstarted tasks in active goals (waiting for an answer: 0 / available: 2). 2 tasks in active goals have no work lock.\nIf you are waiting on a human, take one of those instead of stopping."
 	if !strings.Contains(output, wantReason) {
 		t.Fatalf("pendingCommand output does not contain %q: %q", wantReason, output)
 	}
 	if strings.Index(output, "Unstarted tasks:") > strings.Index(output, unfinishedClaimMarker) {
 		t.Fatalf("pendingCommand listed held work before unstarted work: %q", output)
+	}
+}
+
+func TestPendingCommandListsUnstartedSiblingOfClaimedTask(t *testing.T) {
+	dir, projectRoot := newPendingFixture(t)
+	s := openPendingStore(t, dir)
+	ctx := context.Background()
+	project, err := s.ResolveProject(ctx, projectRoot)
+	if err != nil {
+		t.Fatalf("ResolveProject: %v", err)
+	}
+	goal, err := s.CreateGoal(ctx, project.ID, "Continue one task while another is available", "human")
+	if err != nil {
+		t.Fatalf("CreateGoal: %v", err)
+	}
+	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "claimed-sibling", []string{"claimed sibling", "available sibling"}, []string{"Continue the claimed sibling.", "Claim the available sibling."})
+	if err != nil {
+		t.Fatalf("DeclareTasks: %v", err)
+	}
+	if err := s.RegisterAgentSession(ctx, "run-claimed-sibling", os.Getpid()); err != nil {
+		t.Fatalf("RegisterAgentSession: %v", err)
+	}
+	if err := s.AssociateAgentSessionWithProject(ctx, "run-claimed-sibling", project.ID); err != nil {
+		t.Fatalf("AssociateAgentSessionWithProject: %v", err)
+	}
+	if _, err := s.ClaimTask(ctx, tasks[0].ID, "run-claimed-sibling"); err != nil {
+		t.Fatalf("ClaimTask: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("Store.Close: %v", err)
+	}
+	t.Setenv(atctAgentSessionIDEnv, "run-claimed-sibling")
+
+	output, exitCode, err := pendingCommand(dir, projectRoot)
+	if err != nil {
+		t.Fatalf("pendingCommand: %v", err)
+	}
+	if exitCode != 0 {
+		t.Fatalf("pendingCommand exit code = %d, want 0", exitCode)
+	}
+	for _, want := range []string{
+		pendingWakeupReason,
+		"available sibling",
+		tasks[1].ID,
+		"You hold 1 work locks. 1 unstarted tasks in active goals (waiting for an answer: 0 / available: 1). 1 tasks in active goals have no work lock.",
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("pendingCommand output does not contain %q: %q", want, output)
+		}
 	}
 }
 
@@ -1370,9 +1419,10 @@ func TestPendingCommandReportsUnstartedTaskBreakdown(t *testing.T) {
 		t.Fatalf("pendingCommand exit code = %d, want 0", exitCode)
 	}
 	for _, want := range []string{
-		"You are waiting on a human for 2 decisions with no default. That does not\nblock the 1 tasks below.",
-		"You hold 1 work locks. 3 unstarted tasks in active goals (waiting for an answer: 1 / working: 1 / untouched: 1). 1 tasks in active goals have no work lock.\nIf you are waiting on a human, take one of those instead of stopping.",
+		"You are waiting on a human for 2 decisions with no default. That does not\nblock the 2 tasks below.",
+		"You hold 1 work locks. 3 unstarted tasks in active goals (waiting for an answer: 1 / available: 2). 2 tasks in active goals have no work lock.\nIf you are waiting on a human, take one of those instead of stopping.",
 		"Unstarted tasks:",
+		"working task",
 		"untouched task",
 	} {
 		if !strings.Contains(output, want) {
@@ -1608,7 +1658,7 @@ func TestPendingCommandCountsUnstartedTasksOnlyInSelectedProject(t *testing.T) {
 	if exitCode != 0 {
 		t.Fatalf("pendingCommand exit code = %d, want 0", exitCode)
 	}
-	if !strings.Contains(output, "You hold 1 work locks. 1 unstarted tasks in active goals (waiting for an answer: 0 / working: 0 / untouched: 1). 1 tasks in active goals have no work lock.") {
+	if !strings.Contains(output, "You hold 1 work locks. 1 unstarted tasks in active goals (waiting for an answer: 0 / available: 1). 1 tasks in active goals have no work lock.") {
 		t.Fatalf("pendingCommand did not count only the selected project's task: %q", output)
 	}
 	if strings.Contains(output, "3 tasks in active goals have no work lock") {

@@ -25,7 +25,7 @@ const (
 	pendingNoDefaultDecisionReason = "You are waiting on a human for %d decisions with no default. That does not\nblock the %d tasks below."
 	pendingStaleClaimReason        = "A task with a work lock held by another agent session is no longer running. You can take it over by returning it to todo with `atct_task_update`, then acquire the work lock with `atct_task_claim`."
 	pendingUndeclaredGoalReason    = "An active goal has no tasks declared. Call `atct_task_declare` for each goal below, then continue the work."
-	pendingWakeupReason            = "An active goal has unstarted tasks and no running work lock. Call `atct_task_claim` for a task below, then continue the work."
+	pendingWakeupReason            = "An active goal has unstarted tasks available to claim. Call `atct_task_claim` for a task below, then continue the work."
 	pendingCompletedGoalReason     = "All tasks are done but the active goal has no completion report. Call `atct_goal_complete` for each goal below, then continue the work."
 	pendingCommitlessGoalReason    = "All tasks in an active goal are done but no task has a linked commit. Call `atct_task_update` with `commits` for at least one task below to link its commit, then continue the work."
 	pendingDroppedGoalReason       = "All tasks in an active goal were dropped. Call `atct_goal_complete` to report that the work was withdrawn; call `atct_task_declare` to declare tasks again if it should be resumed."
@@ -215,11 +215,12 @@ func pendingTextForProject(dir, cwd, projectName string, projectSpecified bool) 
 			fmt.Fprintf(&output, "- %s (goal_id: %s)\n", oneLine(domain.Headline(goal.Content)), goal.ID)
 		}
 	}
-	if openNoDefaultDecisionCount > 0 && wakeupState.UntouchedTaskCount > 0 {
+	availableTaskCount := len(wakeupState.Tasks)
+	if openNoDefaultDecisionCount > 0 && availableTaskCount > 0 {
 		if output.Len() > 0 {
 			output.WriteString("\n\n")
 		}
-		output.WriteString(fmt.Sprintf(pendingNoDefaultDecisionReason, openNoDefaultDecisionCount, wakeupState.UntouchedTaskCount))
+		output.WriteString(fmt.Sprintf(pendingNoDefaultDecisionReason, openNoDefaultDecisionCount, availableTaskCount))
 	}
 	if len(wakeupState.Tasks) > 0 {
 		if output.Len() > 0 {
@@ -241,8 +242,7 @@ func pendingTextForProject(dir, cwd, projectName string, projectSpecified bool) 
 			len(unfinishedTasks),
 			wakeupState.UnstartedTaskCount,
 			wakeupState.WaitingAnswerTaskCount,
-			wakeupState.WorkingTaskCount,
-			wakeupState.UntouchedTaskCount,
+			availableTaskCount,
 		))
 		output.WriteString("\n\n")
 		output.WriteString(unfinishedClaimMarker)
@@ -302,12 +302,12 @@ func pendingTextForProject(dir, cwd, projectName string, projectSpecified bool) 
 	return output.String(), nil
 }
 
-func pendingClaimReasonFor(lockCount, unstartedTaskCount, waitingAnswerTaskCount, workingTaskCount, untouchedTaskCount int) string {
+func pendingClaimReasonFor(lockCount, unstartedTaskCount, waitingAnswerTaskCount, availableTaskCount int) string {
 	reason := fmt.Sprintf("You hold %d work locks.", lockCount)
-	if untouchedTaskCount == 0 {
+	if availableTaskCount == 0 {
 		return reason
 	}
-	return fmt.Sprintf("%s %d unstarted tasks in active goals (waiting for an answer: %d / working: %d / untouched: %d). %d tasks in active goals have no work lock.\nIf you are waiting on a human, take one of those instead of stopping.", reason, unstartedTaskCount, waitingAnswerTaskCount, workingTaskCount, untouchedTaskCount, untouchedTaskCount)
+	return fmt.Sprintf("%s %d unstarted tasks in active goals (waiting for an answer: %d / available: %d). %d tasks in active goals have no work lock.\nIf you are waiting on a human, take one of those instead of stopping.", reason, unstartedTaskCount, waitingAnswerTaskCount, availableTaskCount, availableTaskCount)
 }
 
 func runPending(dir string) error {
