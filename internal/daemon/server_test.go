@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"net"
 	"os"
 	"path/filepath"
@@ -983,5 +984,157 @@ func TestGoalListIncludesBothDecisionResponseKeys(t *testing.T) {
 	}
 	if len(unapplied) == 0 {
 		t.Fatal("unapplied_decisions is empty")
+	}
+}
+
+func registerLiveGoalClaimSession(t *testing.T, fixture goalListFixture, sessionID string) {
+	t.Helper()
+	if err := fixture.store.RegisterAgentSession(context.Background(), sessionID, os.Getpid()); err != nil {
+		t.Fatalf("RegisterAgentSession(%q): %v", sessionID, err)
+	}
+}
+
+func claimGoalForTest(t *testing.T, fixture goalListFixture, goalID, sessionID string) (json.RawMessage, error) {
+	t.Helper()
+	params, err := json.Marshal(map[string]string{
+		"goal_id":          goalID,
+		"agent_session_id": sessionID,
+	})
+	if err != nil {
+		t.Fatalf("marshal goal.claim params: %v", err)
+	}
+	return fixture.daemon.dispatch(context.Background(), rpc.Request{Method: "goal.claim", Params: params})
+}
+
+func listGoalForClaimTest(t *testing.T, fixture goalListFixture, goalID, sessionID string) goalListItem {
+	t.Helper()
+	params, err := json.Marshal(map[string]string{
+		"cwd":              fixture.project.RootPath,
+		"agent_session_id": sessionID,
+	})
+	if err != nil {
+		t.Fatalf("marshal goal.list params: %v", err)
+	}
+	result, err := fixture.daemon.dispatch(context.Background(), rpc.Request{Method: "goal.list", Params: params})
+	if err != nil {
+		t.Fatalf("goal.list: %v", err)
+	}
+	var response struct {
+		Goals []goalListItem `json:"goals"`
+	}
+	if err := json.Unmarshal(result, &response); err != nil {
+		t.Fatalf("unmarshal goal.list response: %v", err)
+	}
+	for _, goal := range response.Goals {
+		if goal.ID == goalID {
+			return goal
+		}
+	}
+	t.Fatalf("goal.list omitted goal %s", goalID)
+	return goalListItem{}
+}
+
+func TestGoalClaimSetsClaimedBy(t *testing.T) {
+	fixture := newGoalListFixture(t)
+	defer fixture.store.Close()
+
+	const sessionID = "goal-claim-run"
+	registerLiveGoalClaimSession(t, fixture, sessionID)
+	result, err := claimGoalForTest(t, fixture, fixture.emptyTaskGoal.ID, sessionID)
+	if err != nil {
+		t.Fatalf("goal.claim: %v", err)
+	}
+	var claimed domain.Goal
+	if err := json.Unmarshal(result, &claimed); err != nil {
+		t.Fatalf("unmarshal goal.claim result: %v", err)
+	}
+	if claimed.ClaimedBy != sessionID {
+		t.Fatalf("claimed_by = %q, want %q", claimed.ClaimedBy, sessionID)
+	}
+}
+
+func TestGoalClaimAppearsInGoalList(t *testing.T) {
+	fixture := newGoalListFixture(t)
+	defer fixture.store.Close()
+
+	const sessionID = "goal-list-after-claim-run"
+	registerLiveGoalClaimSession(t, fixture, sessionID)
+	if _, err := claimGoalForTest(t, fixture, fixture.emptyTaskGoal.ID, sessionID); err != nil {
+		t.Fatalf("goal.claim: %v", err)
+	}
+	listed := listGoalForClaimTest(t, fixture, fixture.emptyTaskGoal.ID, sessionID)
+	if listed.ClaimedBy != sessionID {
+		t.Fatalf("goal.list claimed_by = %q, want %q", listed.ClaimedBy, sessionID)
+	}
+}
+
+func TestGoalClaimRejectsLiveOtherSession(t *testing.T) {
+	fixture := newGoalListFixture(t)
+	defer fixture.store.Close()
+
+	registerLiveGoalClaimSession(t, fixture, "goal-other-run")
+	registerLiveGoalClaimSession(t, fixture, "goal-owner-run")
+	if _, err := claimGoalForTest(t, fixture, fixture.emptyTaskGoal.ID, "goal-owner-run"); err != nil {
+		t.Fatalf("initial goal.claim: %v", err)
+	}
+	if _, err := claimGoalForTest(t, fixture, fixture.emptyTaskGoal.ID, "goal-other-run"); !errors.Is(err, ErrGoalAlreadyClaimed) {
+		t.Fatalf("second goal.claim error = %v, want ErrGoalAlreadyClaimed", err)
+	}
+}
+
+func TestGoalClaimKeepsOwnerAfterRejection(t *testing.T) {
+	fixture := newGoalListFixture(t)
+	defer fixture.store.Close()
+
+	registerLiveGoalClaimSession(t, fixture, "goal-rejected-run")
+	registerLiveGoalClaimSession(t, fixture, "goal-owner-unchanged-run")
+	if _, err := claimGoalForTest(t, fixture, fixture.emptyTaskGoal.ID, "goal-owner-unchanged-run"); err != nil {
+		t.Fatalf("initial goal.claim: %v", err)
+	}
+	if _, err := claimGoalForTest(t, fixture, fixture.emptyTaskGoal.ID, "goal-rejected-run"); !errors.Is(err, ErrGoalAlreadyClaimed) {
+		t.Fatalf("second goal.claim error = %v, want ErrGoalAlreadyClaimed", err)
+	}
+	claimed, err := fixture.store.GetGoal(context.Background(), fixture.emptyTaskGoal.ID)
+	if err != nil {
+		t.Fatalf("GetGoal after rejected claim: %v", err)
+	}
+	if claimed.ClaimedBy != "goal-owner-unchanged-run" {
+		t.Fatalf("claimed_by after rejected claim = %q, want %q", claimed.ClaimedBy, "goal-owner-unchanged-run")
+	}
+}
+
+func TestGoalClaimMissingGoalReturnsNotFound(t *testing.T) {
+	fixture := newGoalListFixture(t)
+	defer fixture.store.Close()
+
+	if _, err := claimGoalForTest(t, fixture, "missing-goal-id", "missing-goal-run"); !errors.Is(err, store.ErrGoalNotFound) {
+		t.Fatalf("goal.claim error = %v, want store.ErrGoalNotFound", err)
+	}
+}
+
+func TestTaskClaimStillClaimsTask(t *testing.T) {
+	fixture := newGoalListFixture(t)
+	defer fixture.store.Close()
+
+	const sessionID = "task-claim-regression-run"
+	result, err := func() (json.RawMessage, error) {
+		params, err := json.Marshal(map[string]string{
+			"task_id":          fixture.tasks[1].ID,
+			"agent_session_id": sessionID,
+		})
+		if err != nil {
+			t.Fatalf("marshal task.claim params: %v", err)
+		}
+		return fixture.daemon.dispatch(context.Background(), rpc.Request{Method: "task.claim", Params: params})
+	}()
+	if err != nil {
+		t.Fatalf("task.claim: %v", err)
+	}
+	var claimed domain.Task
+	if err := json.Unmarshal(result, &claimed); err != nil {
+		t.Fatalf("unmarshal task.claim result: %v", err)
+	}
+	if claimed.ClaimedBy != sessionID {
+		t.Fatalf("task claimed_by = %q, want %q", claimed.ClaimedBy, sessionID)
 	}
 }

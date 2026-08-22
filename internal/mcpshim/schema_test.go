@@ -15,7 +15,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-func TestRegisterPublishesNineToolsWithFlexibleOutputSchema(t *testing.T) {
+func TestRegisterPublishesTenToolsWithFlexibleOutputSchema(t *testing.T) {
 	ctx := context.Background()
 	socketPath := startSchemaTestDaemon(t)
 	server := mcp.NewServer(&mcp.Implementation{Name: "atct-test", Version: "test"}, nil)
@@ -49,6 +49,7 @@ func TestRegisterPublishesNineToolsWithFlexibleOutputSchema(t *testing.T) {
 		"atct_decision_withdraw":     true,
 		"atct_goal_complete":         true,
 		"atct_goal_set_derived_from": true,
+		"atct_goal_claim":            true,
 	}
 	if len(got.Tools) != len(wantNames) {
 		t.Fatalf("tool count = %d, want %d", len(got.Tools), len(wantNames))
@@ -96,6 +97,7 @@ func TestRegisterPublishesNineToolsWithFlexibleOutputSchema(t *testing.T) {
 		args map[string]any
 	}{
 		{name: "atct_goal_list", args: map[string]any{"cwd": "/tmp"}},
+		{name: "atct_goal_claim", args: map[string]any{"goal_id": "goal-1"}},
 		{name: "atct_task_declare", args: map[string]any{
 			"goal_id": "goal-1", "titles": []string{"task"},
 			"descriptions":    []string{"Complete the declared task and verify its result."},
