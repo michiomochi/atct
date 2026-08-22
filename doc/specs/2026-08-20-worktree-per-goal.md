@@ -196,6 +196,28 @@ fatal: pathspec 'web/node_modules/' is beyond a symbolic link
 作業中の worktree では `reset --hard` が使えないので、
 `git -C <worktree> checkout <主の HEAD> -- .gitignore` で 1 ファイルだけ取る。
 
+### 移行の番号は worktree で分離できない（2026-08-22 に実測）
+
+**移行は線形の連番でなければならない。**`internal/store/migrations.go:559` が
+`number != i+1` で落ちる。
+
+```
+embedded migrations are not a linear sequence at "0011_goal_claims.sql": expected 0010
+```
+
+**worktree で移行を足している間に、主に新しい移行が入ると飛び番になる。**
+番号は全体で 1 つの列なので、**worktree の分離が効かない唯一の資源である。**
+
+実際に起きたこと: worktree で `0011_goal_claims.sql` を書いている間に、主に
+`0010_task_snooze.sql` が入った。worktree には `0010` が無いので、
+`newTestStore` が動かなくなった。
+
+**対処**: worktree 側は**主の最後の番号 + 1** を使う。ずれたら**着地時に commander が
+振り直す。**executor に主の変更を取り込ませない（sqlc の生成物や `schema.sql` が
+重なって作業が消える）。
+
+**worktree で移行を足す依頼は、同時に 1 つだけにするのが安全である。**
+
 ### 借りることの代償
 
 - **`node_modules` は共有である。** worktree で `pnpm install` を走らせると
