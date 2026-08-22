@@ -45,7 +45,15 @@ func TestWakeupTrackerPublishesAfterGracePeriodAndResets(t *testing.T) {
 
 	tracker := newWakeupTracker()
 	start := time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)
-	initialWait := 10 * time.Minute
+	// Spelled out rather than reading the constant, so changing the interval
+	// has to be a deliberate edit here too.
+	initialWait := 3 * time.Minute
+	if wakeupInitialWait != initialWait {
+		t.Fatalf("wakeupInitialWait = %s, want %s", wakeupInitialWait, initialWait)
+	}
+	if wakeupResendInterval != 3*time.Minute {
+		t.Fatalf("wakeupResendInterval = %s, want 3m", wakeupResendInterval)
+	}
 	if events, err := tracker.evaluate(ctx, s, start); err != nil {
 		t.Fatalf("initial evaluate: %v", err)
 	} else if len(events) != 0 {
@@ -327,14 +335,13 @@ func TestWakeupTrackerRepublishesWhileConditionRemainsActive(t *testing.T) {
 	}
 
 	evaluateAt(start, 0)
-	// Start at the existing grace boundary so the baseline failure isolates missing resend behavior.
-	firstAt := start.Add(wakeupPublishAfter)
+	// Start at the initial wait so the baseline failure isolates missing resend behavior.
+	firstAt := start.Add(wakeupInitialWait)
 	evaluateAt(firstAt, 1)
-	resendInterval := 10 * time.Minute
-	evaluateAt(firstAt.Add(resendInterval-time.Nanosecond), 0)
-	evaluateAt(firstAt.Add(resendInterval), 1)
-	evaluateAt(firstAt.Add(2*resendInterval), 1)
-	evaluateAt(firstAt.Add(3*resendInterval), 1)
+	evaluateAt(firstAt.Add(wakeupResendInterval-time.Nanosecond), 0)
+	evaluateAt(firstAt.Add(wakeupResendInterval), 1)
+	evaluateAt(firstAt.Add(2*wakeupResendInterval), 1)
+	evaluateAt(firstAt.Add(3*wakeupResendInterval), 1)
 }
 
 func TestWakeupTrackerReportsDetectorCountDiscrepancyOnce(t *testing.T) {
@@ -514,7 +521,7 @@ func TestWakeupTrackerDelaysDetectionUntilGracePeriod(t *testing.T) {
 	if _, err := tracker.evaluate(ctx, s, start); err != nil {
 		t.Fatalf("initial evaluate: %v", err)
 	}
-	preGrace := start.Add(wakeupPublishAfter - time.Nanosecond)
+	preGrace := start.Add(wakeupInitialWait - time.Nanosecond)
 	if events, err := tracker.evaluate(ctx, s, preGrace); err != nil {
 		t.Fatalf("pre-grace evaluate: %v", err)
 	} else if _, ok := findDetectionEvent(events, store.EventDetectionCompletionReportMissing, goalID); ok {

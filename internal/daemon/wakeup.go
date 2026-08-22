@@ -9,8 +9,12 @@ import (
 
 const (
 	wakeupPublishAfter                      = 15 * time.Minute
-	wakeupInitialWait                       = 10 * time.Minute
-	wakeupResendInterval                    = 10 * time.Minute
+	// Three minutes sits just under the p75 of observed gaps between agent
+	// writes (0.6 / 3.7 / 13.8 minutes for p50 / p75 / p90 over 708 events), so
+	// it fires during normal work too. That is the price of dropping the Stop
+	// hook, which used to be the only thing that could not be ignored.
+	wakeupInitialWait                       = 3 * time.Minute
+	wakeupResendInterval                    = 3 * time.Minute
 	detectionHandoffUnreceivedAfter         = 30 * time.Minute
 	detectionHandoffUnreportedAfter         = 30 * time.Minute
 	detectionClaimUndelegatedAfter          = 30 * time.Minute
