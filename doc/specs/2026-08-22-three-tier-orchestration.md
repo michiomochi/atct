@@ -1,10 +1,10 @@
-# 3 層に分ける（orchestrator / commander / executor）
+# 3 層に分ける（commander / subcommander / executor）
 
 2026-08-22。人間の提案:
 
 > 1 つの claude が atct からの通知をさばき、設計もし、commander への依頼も担当すると
 > なるとボトルネックとなってしまいスピードがでない。なので atct のフロントに立つ
-> claude（orchestrator）を作成し、orchestrator はゴールの対応毎に別で herdr で space を
+> claude（commander）を作成し、commander はゴールの対応毎に別で herdr で space を
 > 作成し claude（commander）をたてる、commander は codex の executor をたてる。
 
 commander の判定: **形は正しい。**ただし**先に決めないと壊れる点が 2 つある**（末尾）。
@@ -28,29 +28,33 @@ commander の判定: **形は正しい。**ただし**先に決めないと壊�
 ## 全体像
 
 ```
-                    ┌──────────────────────────────┐
-                    │  atct daemon                  │
-                    │   SSE / Stop hook / pending   │
-                    └───────────┬──────────────────┘
+                 ┌──────────────────────────────────┐
+                 │  atct daemon                      │
+                 │   SSE / Stop hook / pending       │
+                 └──────────────┬───────────────────┘
                                 │ 通知はここ 1 か所に集まる
                                 ▼
-                    ┌──────────────────────────────┐
-                    │  orchestrator (claude)        │
-                    │  ・通知をさばく                │
-                    │  ・ゴールを commander へ割る   │
-                    │  ・space を作る                │
-                    │  ・設計も実装もしない          │
-                    └───┬──────────┬──────────┬────┘
-                        │          │          │  ゴール 1 件 = space 1 つ
-              ┌─────────▼──┐ ┌─────▼──────┐ ┌─▼──────────┐
-              │ commander  │ │ commander  │ │ commander  │
-              │ (goal A)   │ │ (goal B)   │ │ (goal C)   │
-              │ 設計・レビュー│ │            │ │            │
-              └──┬───┬─────┘ └──┬─────────┘ └──┬─────────┘
-                 │   │           │              │
-            ┌────▼┐ ┌▼────┐  ┌───▼──┐       ┌───▼──┐
-            │ exec│ │ exec│  │ exec │       │ exec │   codex
-            └─────┘ └─────┘  └──────┘       └──────┘
+                 ┌──────────────────────────────────┐
+                 │  commander (claude)               │
+                 │  ・通知をさばく                    │
+                 │  ・ゴールを subcommander へ割る     │
+                 │  ・space を作る                    │
+                 │  ・着地した差分をレビューする        │
+                 │  ・リリースする                    │
+                 │  ・設計も実装もしない               │
+                 └───┬──────────┬──────────┬────────┘
+                     │          │          │  ゴール 1 件 = space 1 つ
+        ┌────────────▼─┐ ┌──────▼───────┐ ┌▼─────────────┐
+        │ subcommander │ │ subcommander │ │ subcommander │
+        │  (goal A)    │ │  (goal B)    │ │  (goal C)    │
+        │ 設計・依頼書   │ │              │ │              │
+        │ 実装レビュー   │ │              │ │              │
+        │ worktree     │ │              │ │              │
+        └───┬───┬──────┘ └──┬───────────┘ └──┬───────────┘
+            │   │           │                │
+        ┌───▼┐ ┌▼───┐   ┌───▼──┐         ┌───▼──┐
+        │exec│ │exec│   │ exec │         │ exec │        codex
+        └────┘ └────┘   └──────┘         └──────┘
 ```
 
 **ゴールが space の単位になるのが要点。**「話題が変わったら pane を作り直す」という既存の
@@ -60,11 +64,16 @@ commander の判定: **形は正しい。**ただし**先に決めないと壊�
 
 | 層 | やること | やらないこと |
 |---|---|---|
-| orchestrator | 通知をさばく / ゴールを割る / space を作る / **着地した差分のレビュー** / リリース / マージ衝突の解決 | 設計・実装・ファイルの編集 |
-| commander | そのゴールの設計・依頼書・実装レビュー・完了報告 / worktree を作る | 他のゴールを見る / リリース |
-| executor | 実装とテスト | 設計判断 / 再委譲 / commit |
+| **commander** | 通知をさばく / ゴールを割る / space を作る / **着地した差分のレビュー** / リリース / マージ衝突の解決 / 古い worktree の片付け | 設計・実装・ファイルの編集 |
+| **subcommander** | そのゴールの設計・依頼書・実装レビュー・完了報告 / worktree を作る / 人間へ決定を出す | 他のゴールを見る / リリース / space を作る |
+| **executor** | 実装とテスト | 設計判断 / 再委譲 / commit / `.git` を書く |
 
-**orchestrator は設計しない。**設計を始めると今日と同じ場所で詰まる。
+**commander は設計しない。**設計を始めると今日と同じ場所で詰まる。今日この space が
+詰まったのは、通知をさばく者が設計もしていたからである。
+
+**subcommander は space を作らない。**executor を立てるのは pane の分割であって space の
+作成ではない。2026-08-14 に executor が自分の下に 3 台を立てて同じ 8 ファイルを二重に
+編集した事故があり、**「下を作れる者」を 1 段に限る**のがその対策である。
 
 ## 提案が既に解いている問題
 
@@ -76,61 +85,71 @@ commander の判定: **形は正しい。**ただし**先に決めないと壊�
 
 # A. dotfiles への依頼分（この環境の設定）
 
-## A-1. 役割定義を 3 つに増やす（名前の規約は変えない）
+## A-1. 役割定義を 3 つに増やす（名前は人間が決めた）
 
 `orchestration` スキルの「役割の割り当て」ブロックはいま 2 行（commander と executor）。
 これを 3 層にする。**このブロックだけを書き換える形は維持する**（以下の記述に
 ハーネス名・モデル名を書かない、という既存の方針）。
 
-**名前の規約は変えなくてよい。**当初 commander は「orchestrator は space をまたぐので
-`<space>-` を前置できない」と書いた。**これは誤り。**orchestrator は自分の space を
-持っている（今日この space がやっていることが、そのまま orchestrator の役割）。
-またぐのは**作る対象**であって、居場所ではない。
+人間の判断（2026-08-22）: **`commander` / `subcommander` / `executor`。**
+提案時の呼び名「commander」は使わず、**いちばん上を `commander` と呼ぶ。**
 
-いまの規約 `<space>-<役割>` はそのまま使える。**変わるのは「space とは何か」の定義だけ**
-── プロジェクトごとから、ゴールごとへ。
+**利点: いまの `atct-commander` が名前を変えずに済む。**今日この space がやっている
+ことが、そのまま新しい `commander` の役割である。新しい語が増えるのは中間層だけ。
 
 ```
-atct-orchestrator                 ← プロジェクトの space（今の space がそのまま昇格）
-atct-c22a6d79-commander           ← ゴールごとの space（ゴール ID の先頭 8 桁）
+atct-commander                    ← プロジェクトの space（今の space がそのまま）
+atct-c22a6d79-subcommander        ← ゴールごとの space（ゴール ID の先頭 8 桁）
 atct-c22a6d79-executor
 atct-c22a6d79-executor-2
 ```
 
+規約 `<space>-<役割>` は変えない。**変わるのは「space とは何か」の定義だけ** ──
+プロジェクトごとから、ゴールごとへ。
+
+当初 commander は「いちばん上は space をまたぐので `<space>-` を前置できない」と書いた。
+**これは誤りだった。**いちばん上も自分の space を持っている。またぐのは**作る対象**で
+あって、居場所ではない。
+
 **汎用名の事故は起きない。**すべての名前がプロジェクト名で始まるので、2026-08-15 の誤配
 （汎用名 `commander` を名乗る space に別 space の完了報告が届いた）の条件を満たさない。
 
-### 長さの予算（実測）
+### 長さの予算（実測）— ここに制約が出る
 
-herdr の名前は `[a-z][a-z0-9_-]{0,31}` で **32 文字まで**。現在の最長は
-`stock-data-commander` の 20 文字。
+herdr の名前は `[a-z][a-z0-9_-]{0,31}` で **32 文字まで**。
 
-| 名前 | 長さ |
-|---|---|
-| `stock-data-orchestrator` | 23 |
-| `stock-data-c22a6d79-commander` | 29 |
-| `stock-data-c22a6d79-executor-2` | **30** |
+```
+ 14  atct-commander
+ 20  stock-data-commander
+ 26  atct-c22a6d79-subcommander
+ 32  stock-data-c22a6d79-subcommander      ← ぴったり上限
+ 30  stock-data-c22a6d79-executor-2
+ 34  stock-data-c22a6d79-subcommander-2    ← 溢れる
+```
 
-**プロジェクト名は 12 文字まで**（`p + 20 ≤ 32`）。`stock-data` は 10 文字なので
-余裕は 2 文字しかない。**これより長いプロジェクト名を使うなら、役割の語を短縮する
-必要がある。**
+**制約 1: 1 ゴールに subcommander は 1 台。**`-2` を付ける形は `stock-data` で溢れる。
+そもそも 1 ゴールに 2 台立てる理由が無いので、これは制約として書けば足りる。
 
-## A-2. orchestrator が space を作る手順
+**制約 2: プロジェクト名は 10 文字まで。**11 文字だと 1 台目から溢れる
+（`p + 22 ≤ 32`）。`stock-data` がちょうど 10 文字で、**余裕はゼロ。**これより長い
+プロジェクト名を使うなら、ゴール ID の桁数を 8 から減らすか、役割の語を短縮する。
+
+## A-2. commander が space を作る手順
 
 space 名はゴール ID の先頭 8 桁を使う（`atct-c22a6d79`）。`herdr workspace create` の戻り値（`.result.workspace` / `.result.tab` /
 `.result.root_pane`）から ID を読み、そこに commander を立てる。**ゴール ID を space 名に
 入れるかを決める必要がある**（名前は `[a-z][a-z0-9_-]{0,31}` で 32 文字まで。UUID は
 入らないので先頭 8 桁になる）。
 
-## A-3. 通知の受け口を orchestrator に寄せる
+## A-3. 通知の受け口を commander に寄せる
 
 いまは commander の pane で `atct watch` を Monitor に流し、Stop hook も commander で
-効いている。**両方を orchestrator へ移す。**commander 側に残すと、今日と同じで
+効いている。**両方を commander へ移す。**commander 側に残すと、今日と同じで
 commander が通知に反応して設計を始める。
 
-## A-4. commander に「他のゴールを見ない」を書く
+## A-4. subcommander に「他のゴールを見ない」を書く
 
-いま commander は全ゴールを見る前提で書かれている。**1 ゴールに閉じる指示が必要。**
+いまの commander は全ゴールを見る前提で書かれている。subcommander には**1 ゴールに閉じる指示が必要。**
 ただし後述の B-2（ゴール横断の知識）と衝突するので、**どこまで閉じるかは B-2 と
 セットで決める。**
 
@@ -172,10 +191,10 @@ atct 以外の space でも使う。**「atct のゴール 1 件 = space 1 つ�
    作成時に 1 回は要る。commander が space を立てた直後が素直
 2. **マージの衝突を誰が解くか。**worktree は「静かに消える」を「見える衝突」に変える
    だけで、解決者は要る。**これはゴールをまたぐ作業なので B-2 の穴に落ちる。**
-   orchestrator が持つのが妥当
+   commander が持つのが妥当
 3. **リリースは本体ツリーでしか通らない。**`script/release.sh` は clean tree を要求し、
    `git push origin main` と goreleaser を叩く。worktree のブランチからは出せないので、
-   **リリースは orchestrator が本体で行う**
+   **リリースは commander が本体で行う**
 
 ### 既存の注意
 
@@ -196,7 +215,7 @@ atct 以外の space でも使う。**「atct のゴール 1 件 = space 1 つ�
   **`pending.go` の文面が嘘になった。**別のタスクの変更が別のコマンドを壊した
 - kumo の監査は全コンポーネントにまたがる
 
-**1 ゴールに閉じた commander はこれを見つけられない。**
+**1 ゴールに閉じた subcommander はこれを見つけられない。**
 
 人間の提案は「atct の概念として `knowledge` を作り atct DB に保存するか、各プロジェクトの
 `doc` に溜めて AI がそれを見るか」。**決定は「atct に `knowledge` は作らない」。**
@@ -221,32 +240,32 @@ atct 以外の space でも使う。**「atct のゴール 1 件 = space 1 つ�
 
 ### 発見の問題は新機能なしで解ける
 
-本当の穴は「per-goal commander はどの spec を読めばいいか分からない」である。
+本当の穴は「subcommander はどの spec を読めばいいか分からない」である。
 **`atct context` はゴールの内容をそのまま出す。**ゴールの記述に「`doc/specs/X` を
-読むこと」と書けば commander に届く。**2026-08-22 の依頼 39 で実際にそうした**
+読むこと」と書けば subcommander に届く。**2026-08-22 の依頼 39 で実際にそうした**
 （「spec の該当節だけ読め」と書いた）。新しいテーブルは要らない。
 
 ### 残る担当
 
 **B-1 のマージ衝突の解決者は、この穴に落ちる。**衝突の解決はゴールをまたぐ作業で、
-テストにも spec にも書けない。**orchestrator が持つ。**
+テストにも spec にも書けない。**commander が持つ。**
 
 ## B-3. 決定の宛先
 
 いまは 1 つの commander が全部の決定を出し、人間の受信箱に 1 本の流れで届く。
-**commander が N 人になると N 本になる。**決定には `goal_id` が入っているので
+**subcommander が N 人になると N 本になる。**決定には `goal_id` が入っているので
 ダッシュボードは分けて表示できるが、**「誰が人間に聞くか」を決める必要がある。**
 
-候補: commander が直接聞く（速い。窓口が増える）/ orchestrator を通す（窓口 1 つ。
-遅い、かつ orchestrator が内容を理解する必要が出て太る）。
+候補: subcommander が直接聞く（速い。窓口が増える）/ commander を通す（窓口 1 つ。
+遅い、かつ commander が内容を理解する必要が出て太る）。
 
-commander の推奨は **commander が直接聞く。**決定は `goal_id` を持っているので
-出どころは分かる。orchestrator を通すと、通すために内容を読む必要が出て、
-orchestrator を薄く保つ目的と衝突する。
+commander の推奨は **subcommander が直接聞く。**決定は `goal_id` を持っているので
+出どころは分かる。commander を通すと、通すために内容を読む必要が出て、
+commander を薄く保つ目的と衝突する。
 
 ## B-4. 担当の記録 → atct には持たない（決定済み）
 
-orchestrator は「どのゴールに人手が付いていて、どれが空いているか」を知る必要がある。
+commander は「どのゴールに人手が付いていて、どれが空いているか」を知る必要がある。
 当初 commander は「atct にゴールの担当を記録する場所が要るのではないか」と書いた。
 
 人間の判断: **「別に持たなくていい。claim 見れば作業されているか分かる。」**
@@ -272,9 +291,9 @@ claim だけだと、commander が立ってタスクを宣言するまでの窓�
 その窓は 2026-08-22 の実測では 1 分程度だが、調査を伴うゴールでは 10 分以上になる。
 **名前で見れば、その窓も埋まる。**
 
-## B-5. 古い worktree の後片付け → orchestrator（決定済み）
+## B-5. 古い worktree の後片付け → commander（決定済み）
 
-人間の判断: **orchestrator。**
+人間の判断: **commander。**
 
 2026-08-22 時点で `atct-wt1` と `atct-wt2` が残っており、**`atct-wt2` には未コミットの
 変更がある**（`internal/store/migrations.go`）。**未コミットの変更がある worktree を
@@ -283,23 +302,23 @@ claim だけだと、commander が立ってタスクを宣言するまでの窓�
 `git worktree remove` は clean でなければ `--force` を要求する。**`--force` を既定に
 しない。**
 
-## B-5b. 最終成果物は orchestrator がレビューする（決定済み）
+## B-5b. 最終成果物は commander がレビューする（決定済み）
 
-人間の判断: **「最終的な成果物は orchestrator がレビューするようにして。主な観点は
+人間の判断: **「最終的な成果物は commander がレビューするようにして。主な観点は
 ゴールを跨いだ知識を用いたレビュー。」**
 
 これは commander が挙げた「速さのために質を下げうる」という懸念への答えである。
 
 ### どこで行うか — リリースが関門になる
 
-**新しい仕組みを足さない。**orchestrator は既にリリースを持つ（B-1 の決定: リリースは
-本体ツリーでしか通らないので orchestrator が行う）。**リリースの前に、そこまでに
+**新しい仕組みを足さない。**commander は既にリリースを持つ（B-1 の決定: リリースは
+本体ツリーでしか通らないので commander が行う）。**リリースの前に、そこまでに
 溜まった差分をレビューする。**
 
 ```
-commander (goal A) ─┐
-commander (goal B) ─┼─▶ 本体に着地した差分 ─▶ orchestrator のレビュー ─▶ リリース
-commander (goal C) ─┘                              │
+subcommander (goal A) ─┐
+subcommander (goal B) ─┼─▶ 本体に着地した差分 ─▶ commander のレビュー ─▶ リリース
+subcommander (goal C) ─┘                              │
                                                    └─▶ 差し戻し or ゴールに切り出す
 ```
 
@@ -310,7 +329,7 @@ commander (goal C) ─┘                              │
 ### 観点（今日の 4 件から起こした）
 
 抽象的な「ゴール横断の知識でレビュー」では判定できない。**4 つの問いにする。**
-どれも 2026-08-22 に実際に起きたもので、1 ゴールに閉じた commander では見つからなかった。
+どれも 2026-08-22 に実際に起きたもので、1 ゴールに閉じた subcommander では見つからなかった。
 
 | # | 問い | 今日の実例 |
 |---|---|---|
@@ -320,13 +339,13 @@ commander (goal C) ─┘                              │
 | 4 | **横断規則に新しい違反を持ち込んでいないか** | kumo の 15 規則。1 つのコンポーネントを直す差分が、別の規則を破ることがある |
 
 **1 と 4 は検査に落とせる**（B-2 の決定どおり、ソースを読んで数える検査）。
-**2 と 3 は落としにくい。**ここが orchestrator が人手で見る部分である。
+**2 と 3 は落としにくい。**ここが commander が人手で見る部分である。
 
 ### 差し戻しの行き先
 
 レビューで問題が出たとき、**その場で直さない。**
 
-- そのゴールの範囲内なら、commander の space へ差し戻す
+- そのゴールの範囲内なら、subcommander の space へ差し戻す
 - 範囲を超えるなら、**別のゴールとして切り出す**（既存の規則。残作業を報告に書いて
   終わらせない）
 
@@ -347,13 +366,13 @@ commander (goal C) ─┘                              │
 | ファイル単位の直列化 | ゴールごとに worktree。atct 側の変更は不要（正規化済みを実測） |
 | ゴール横断の知識 | atct に `knowledge` を作らない。事実はテスト、判断は `doc/specs/` |
 | 発見の経路 | ゴールの記述に読むべき spec を書く（`atct context` が運ぶ） |
-| 決定の宛先 | commander が直接聞く（`goal_id` で出どころが分かる） |
-| マージ衝突の解決 | orchestrator |
-| リリース | orchestrator が本体ツリーで |
+| 決定の宛先 | subcommander が直接聞く（`goal_id` で出どころが分かる） |
+| マージ衝突の解決 | commander |
+| リリース | commander が本体ツリーで |
 | 担当の記録 | atct には持たない。`herdr agent list` の名前と claim で足りる |
-| 古い worktree の片付け | orchestrator。未コミットの変更があるものは人間に出す |
-| 最終成果物のレビュー | orchestrator。**リリースを関門にする。**観点は 4 つ（B-5b） |
-| `pnpm install` | commander が worktree を作った直後に 1 回 |
+| 古い worktree の片付け | commander。未コミットの変更があるものは人間に出す |
+| 最終成果物のレビュー | commander。**リリースを関門にする。**観点は 4 つ（B-5b） |
+| `pnpm install` | subcommander が worktree を作った直後に 1 回 |
 
 **残るのは A（dotfiles 側の役割定義と space の作り方）だけである。**名前の規約は
 A-1 で決着した（既存の規約をそのまま使い、space の定義だけを変える）。
