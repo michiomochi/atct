@@ -22,11 +22,13 @@ const (
 // WakeupEvent is the visible state that caused a wakeup notification. The
 // counts are part of the event so a consumer can act without a second query.
 type WakeupEvent struct {
-	WakeupID           string `json:"wakeup_id"`
-	ProjectID          string `json:"project_id"`
-	ActiveGoalCount    int    `json:"active_goal_count"`
-	UnstartedTaskCount int    `json:"unstarted_task_count"`
-	WaitingAnswerCount int    `json:"waiting_answer_count"`
+	WakeupID               string `json:"wakeup_id"`
+	ProjectID              string `json:"project_id"`
+	ActiveGoalCount        int    `json:"active_goal_count"`
+	UnstartedTaskCount     int    `json:"unstarted_task_count"`
+	WaitingAnswerTaskCount int    `json:"waiting_answer_task_count"`
+	UntouchedTaskCount     int    `json:"untouched_task_count"`
+	WaitingAnswerCount     int    `json:"waiting_answer_count"`
 }
 
 // WakeupDiscrepancyEvent records a disagreement between the detector and an

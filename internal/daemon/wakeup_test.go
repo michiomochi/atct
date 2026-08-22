@@ -112,6 +112,59 @@ func TestWakeupTrackerPublishesAfterGracePeriodAndResets(t *testing.T) {
 	}
 }
 
+func TestWakeupTrackerPublishesTaskBreakdown(t *testing.T) {
+	ctx := context.Background()
+	s := newWakeupTestStore(t)
+	projectID, goalID := newWakeupTestGoal(t, s, "breakdown")
+	if _, err := s.DeclareTasks(ctx, goalID, "agent", "breakdown-tasks", []string{"Waiting task", "Untouched task one", "Untouched task two"}, []string{"Answer the first task.", "Start the second task.", "Start the third task."}); err != nil {
+		t.Fatalf("DeclareTasks: %v", err)
+	}
+
+	state := store.WakeupState{
+		ActiveGoalCount:        1,
+		UnstartedTaskCount:     3,
+		WaitingAnswerTaskCount: 1,
+		WorkingTaskCount:       0,
+		UntouchedTaskCount:     2,
+		WaitingAnswerCount:     2,
+	}
+	detect := func(context.Context, string) (store.WakeupState, error) {
+		return state, nil
+	}
+
+	tracker := newWakeupTracker()
+	start := time.Date(2026, 8, 20, 15, 0, 0, 0, time.UTC)
+	if events, err := tracker.evaluateWith(ctx, s, start, detect); err != nil {
+		t.Fatalf("initial evaluate: %v", err)
+	} else if len(events) != 0 {
+		t.Fatalf("initial events = %#v, want empty", events)
+	}
+
+	events, err := tracker.evaluateWith(ctx, s, start.Add(wakeupInitialWait), detect)
+	if err != nil {
+		t.Fatalf("publish evaluate: %v", err)
+	}
+	if len(events) != 1 || events[0].Name != store.EventWakeup {
+		t.Fatalf("published events = %#v, want one %q event", events, store.EventWakeup)
+	}
+	wakeup, ok := events[0].Data.(store.WakeupEvent)
+	if !ok {
+		t.Fatalf("published data type = %T, want store.WakeupEvent", events[0].Data)
+	}
+	if wakeup.ProjectID != projectID || wakeup.ActiveGoalCount != state.ActiveGoalCount || wakeup.UnstartedTaskCount != state.UnstartedTaskCount {
+		t.Fatalf("published totals = %+v, want project %s and state totals %+v", wakeup, projectID, state)
+	}
+	if wakeup.WaitingAnswerCount != state.WaitingAnswerCount {
+		t.Fatalf("published waiting answer count = %d, want decision count %d", wakeup.WaitingAnswerCount, state.WaitingAnswerCount)
+	}
+	if wakeup.WaitingAnswerTaskCount != state.WaitingAnswerTaskCount || wakeup.UntouchedTaskCount != state.UntouchedTaskCount {
+		t.Fatalf("published task breakdown = %+v, want state breakdown waiting=%d untouched=%d", wakeup, state.WaitingAnswerTaskCount, state.UntouchedTaskCount)
+	}
+	if total := wakeup.WaitingAnswerTaskCount + wakeup.UntouchedTaskCount; wakeup.UnstartedTaskCount != total {
+		t.Fatalf("published task total = %d, want breakdown sum %d", wakeup.UnstartedTaskCount, total)
+	}
+}
+
 func TestWakeupTrackerRepublishesWhileConditionRemainsActive(t *testing.T) {
 	ctx := context.Background()
 	s := newWakeupTestStore(t)

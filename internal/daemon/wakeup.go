@@ -133,11 +133,13 @@ func (t *wakeupTracker) evaluateWith(ctx context.Context, s *store.Store, now ti
 					events = append(events, store.DecisionEvent{
 						Name: store.EventWakeup,
 						Data: store.WakeupEvent{
-							WakeupID:           store.NewWakeupID(),
-							ProjectID:          project.ID,
-							ActiveGoalCount:    state.ActiveGoalCount,
-							UnstartedTaskCount: state.UnstartedTaskCount,
-							WaitingAnswerCount: state.WaitingAnswerCount,
+							WakeupID:               store.NewWakeupID(),
+							ProjectID:              project.ID,
+							ActiveGoalCount:        state.ActiveGoalCount,
+							UnstartedTaskCount:     state.UnstartedTaskCount,
+							WaitingAnswerTaskCount: state.WaitingAnswerTaskCount,
+							UntouchedTaskCount:     state.UntouchedTaskCount,
+							WaitingAnswerCount:     state.WaitingAnswerCount,
 						},
 					})
 					t.published[project.ID] = now
