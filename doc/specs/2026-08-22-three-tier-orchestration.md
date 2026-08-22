@@ -76,20 +76,48 @@ commander の判定: **形は正しい。**ただし**先に決めないと壊�
 
 # A. dotfiles への依頼分（この環境の設定）
 
-## A-1. 役割定義を 3 つに増やす
+## A-1. 役割定義を 3 つに増やす（名前の規約は変えない）
 
 `orchestration` スキルの「役割の割り当て」ブロックはいま 2 行（commander と executor）。
 これを 3 層にする。**このブロックだけを書き換える形は維持する**（以下の記述に
 ハーネス名・モデル名を書かない、という既存の方針）。
 
-名前の規約も 3 層に広げる。いまは `<space>-commander` / `<space>-executor`。
-**orchestrator は space をまたぐので、`<space>-` を前置できない。**別の規約が必要。
-実測（2026-08-15）: 汎用名 `commander` を名乗っていた space に別 space の完了報告が
-届いた。**汎用名 `orchestrator` は同じ事故を起こす。**
+**名前の規約は変えなくてよい。**当初 commander は「orchestrator は space をまたぐので
+`<space>-` を前置できない」と書いた。**これは誤り。**orchestrator は自分の space を
+持っている（今日この space がやっていることが、そのまま orchestrator の役割）。
+またぐのは**作る対象**であって、居場所ではない。
+
+いまの規約 `<space>-<役割>` はそのまま使える。**変わるのは「space とは何か」の定義だけ**
+── プロジェクトごとから、ゴールごとへ。
+
+```
+atct-orchestrator                 ← プロジェクトの space（今の space がそのまま昇格）
+atct-c22a6d79-commander           ← ゴールごとの space（ゴール ID の先頭 8 桁）
+atct-c22a6d79-executor
+atct-c22a6d79-executor-2
+```
+
+**汎用名の事故は起きない。**すべての名前がプロジェクト名で始まるので、2026-08-15 の誤配
+（汎用名 `commander` を名乗る space に別 space の完了報告が届いた）の条件を満たさない。
+
+### 長さの予算（実測）
+
+herdr の名前は `[a-z][a-z0-9_-]{0,31}` で **32 文字まで**。現在の最長は
+`stock-data-commander` の 20 文字。
+
+| 名前 | 長さ |
+|---|---|
+| `stock-data-orchestrator` | 23 |
+| `stock-data-c22a6d79-commander` | 29 |
+| `stock-data-c22a6d79-executor-2` | **30** |
+
+**プロジェクト名は 12 文字まで**（`p + 20 ≤ 32`）。`stock-data` は 10 文字なので
+余裕は 2 文字しかない。**これより長いプロジェクト名を使うなら、役割の語を短縮する
+必要がある。**
 
 ## A-2. orchestrator が space を作る手順
 
-`herdr workspace create` の戻り値（`.result.workspace` / `.result.tab` /
+space 名はゴール ID の先頭 8 桁を使う（`atct-c22a6d79`）。`herdr workspace create` の戻り値（`.result.workspace` / `.result.tab` /
 `.result.root_pane`）から ID を読み、そこに commander を立てる。**ゴール ID を space 名に
 入れるかを決める必要がある**（名前は `[a-z][a-z0-9_-]{0,31}` で 32 文字まで。UUID は
 入らないので先頭 8 桁になる）。
@@ -242,5 +270,5 @@ orchestrator は「どのゴールに人手が付いていて、どれが空い�
 | リリース | orchestrator が本体ツリーで |
 | `pnpm install` | commander が worktree を作った直後に 1 回 |
 
-**残るのは A（dotfiles 側の役割定義と space の作り方）と、orchestrator を名乗る名前の
-規約だけである。**
+**残るのは A（dotfiles 側の役割定義と space の作り方）だけである。**名前の規約は
+A-1 で決着した（既存の規約をそのまま使い、space の定義だけを変える）。
