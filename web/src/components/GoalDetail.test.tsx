@@ -44,6 +44,17 @@ vi.mock("../lib/api", () => ({
   },
 }));
 
+type RelatedGoalFixture = {
+  id: string;
+  headline: string;
+  project_name: string;
+};
+
+type GoalResponseFixture = GoalResponse & {
+  derived_from: RelatedGoalFixture | null;
+  derived_goals: RelatedGoalFixture[];
+};
+
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
@@ -71,7 +82,7 @@ function goal(overrides: Partial<Goal> = {}): Goal {
   };
 }
 
-function goalResponse(overrides: Partial<Goal> = {}): GoalResponse {
+function goalResponse(overrides: Partial<Goal> = {}): GoalResponseFixture {
   return {
     goal: goal(overrides),
     now: [],
@@ -81,6 +92,8 @@ function goalResponse(overrides: Partial<Goal> = {}): GoalResponse {
     decision_history: [],
     decision_history_omitted: 0,
     task_commits: [],
+    derived_from: null,
+    derived_goals: [],
   };
 }
 
@@ -99,8 +112,8 @@ function taskCommit(sha: string, subject: string): TaskCommit {
 
 function goalResponseWithTaskCommits(
   task_commits: Array<{ task_id: string; task_title: string; commits: TaskCommit[] }>,
-): GoalResponse {
-  return { ...goalResponse(), task_commits } as GoalResponse;
+): GoalResponseFixture {
+  return { ...goalResponse(), task_commits };
 }
 
 function taskView(id: string, title: string, order: number): TaskView {
@@ -359,6 +372,90 @@ describe("GoalDetail", () => {
     expect(screen.getByText("First task second commit")).not.toBeNull();
     expect(screen.getByText("Second task first commit")).not.toBeNull();
     expect(screen.getByText("Second task second commit")).not.toBeNull();
+  });
+
+  it("renders the derived-from headline as a link to its goal", async () => {
+    const response = goalResponse();
+    response.derived_from = {
+      id: "goal-parent",
+      headline: "Parent goal",
+      project_name: "Fixture project",
+    };
+    vi.mocked(fetchGoal).mockResolvedValueOnce(response);
+
+    render(<GoalDetail id="goal-1" />);
+
+    const link = await screen.findByRole("link", { name: "Parent goal" });
+    expect(link.getAttribute("href")).toBe("/goals/goal-parent");
+  });
+
+  it("renders each derived goal as a link", async () => {
+    const response = goalResponse();
+    response.derived_goals = [
+      { id: "goal-child", headline: "Child goal", project_name: "Fixture project" },
+    ];
+    vi.mocked(fetchGoal).mockResolvedValueOnce(response);
+
+    render(<GoalDetail id="goal-1" />);
+
+    const link = await screen.findByRole("link", { name: "Child goal" });
+    expect(link.getAttribute("href")).toBe("/goals/goal-child");
+  });
+
+  it("renders all derived goals when there are multiple", async () => {
+    const response = goalResponse();
+    response.derived_goals = [
+      { id: "goal-child-1", headline: "First child goal", project_name: "Fixture project" },
+      { id: "goal-child-2", headline: "Second child goal", project_name: "Fixture project" },
+    ];
+    vi.mocked(fetchGoal).mockResolvedValueOnce(response);
+
+    render(<GoalDetail id="goal-1" />);
+
+    const firstLink = await screen.findByRole("link", { name: "First child goal" });
+    const secondLink = await screen.findByRole("link", { name: "Second child goal" });
+    expect(firstLink.getAttribute("href")).toBe("/goals/goal-child-1");
+    expect(secondLink.getAttribute("href")).toBe("/goals/goal-child-2");
+  });
+
+  it("does not render the derived-from section when there is no source goal", async () => {
+    vi.mocked(fetchGoal).mockResolvedValueOnce(goalResponse());
+
+    render(<GoalDetail id="goal-1" />);
+
+    await screen.findByTestId("task-list");
+    expect(screen.queryByRole("heading", { name: "goal.derivedFrom.title" })).toBeNull();
+  });
+
+  it("does not render the derived-goals section when there are no derived goals", async () => {
+    vi.mocked(fetchGoal).mockResolvedValueOnce(goalResponse());
+
+    render(<GoalDetail id="goal-1" />);
+
+    await screen.findByTestId("task-list");
+    expect(screen.queryByRole("heading", { name: "goal.derivedGoals.title" })).toBeNull();
+  });
+
+  it("preserves the completion report, task list, and commit list", async () => {
+    const response = goalResponse({
+      work_done: "Completed work",
+      tasks: [taskView("task-1", "Existing task", 0)],
+    });
+    response.task_commits = [
+      {
+        task_id: "task-1",
+        task_title: "Existing task",
+        commits: [taskCommit("111111111111111", "Existing commit")],
+      },
+    ];
+    vi.mocked(fetchGoal).mockResolvedValueOnce(response);
+
+    render(<GoalDetail id="goal-1" />);
+
+    await screen.findByTestId("completion-report");
+    expect((await screen.findAllByText("Existing task")).length).toBeGreaterThan(0);
+    await screen.findByRole("heading", { name: "goal.commits.title" });
+    expect(screen.getByText("Existing commit")).not.toBeNull();
   });
 
   it("does not render the goal commits section when task_commits is empty", async () => {

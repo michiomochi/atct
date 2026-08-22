@@ -483,6 +483,51 @@ export function GoalDetail({ id }: Props) {
         />
       )}
 
+      {data?.goal.derived_from && (
+        <section className="min-w-0 border-t border-line pt-5" aria-labelledby="goal-derived-from-heading">
+          <h2 id="goal-derived-from-heading" className="font-display text-lg font-semibold text-ink-950">
+            {t("goal.derivedFrom.title")}
+          </h2>
+          <div className="mt-6">
+            <h3 className="font-display text-base font-semibold text-ink-950">
+              <a
+                className="focus-ring inline-block w-fit max-w-full text-left text-accent-700 underline decoration-accent-100 underline-offset-4 hover:decoration-accent-700"
+                href={`/goals/${encodeURIComponent(data.goal.derived_from.id)}`}
+              >
+                <span
+                  className="text-clamp-2 block max-w-[32rem] break-words font-medium"
+                  title={data.goal.derived_from.headline}
+                >
+                  {data.goal.derived_from.headline}
+                </span>
+              </a>
+            </h3>
+          </div>
+        </section>
+      )}
+
+      {data && data.goal.derived_goals.length > 0 && (
+        <section className="min-w-0 border-t border-line pt-5" aria-labelledby="goal-derived-goals-heading">
+          <h2 id="goal-derived-goals-heading" className="font-display text-lg font-semibold text-ink-950">
+            {t("goal.derivedGoals.title")}
+          </h2>
+          <div className="mt-6 space-y-6">
+            {data.goal.derived_goals.map(({ id, headline }) => (
+              <h3 key={id} className="font-display text-base font-semibold text-ink-950">
+                <a
+                  className="focus-ring inline-block w-fit max-w-full text-left text-accent-700 underline decoration-accent-100 underline-offset-4 hover:decoration-accent-700"
+                  href={`/goals/${encodeURIComponent(id)}`}
+                >
+                  <span className="text-clamp-2 block max-w-[32rem] break-words font-medium" title={headline}>
+                    {headline}
+                  </span>
+                </a>
+              </h3>
+            ))}
+          </div>
+        </section>
+      )}
+
       <section className="min-w-0 border-t border-line pt-5" data-testid="task-list" aria-labelledby="task-list-heading">
         <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-2">
           <h2 id="task-list-heading" className="font-display text-lg font-semibold text-ink-950">{t("goal.tasks.title")}</h2>
