@@ -218,6 +218,24 @@ embedded migrations are not a linear sequence at "0011_goal_claims.sql": expecte
 
 **worktree で移行を足す依頼は、同時に 1 つだけにするのが安全である。**
 
+### 取り込みはファイル単位でやらない（2026-08-22 に実測）
+
+**worktree の成果を主へ持ってくるとき、`cp` でファイルを上書きしてはいけない。**
+主に別の変更が入っていると消える。
+
+実際に起きたこと: worktree で `goals` に claim の列を足している間に、主で
+`tasks` に `snoozed_until` が入った（別の依頼）。両方が `internal/domain/model.go` と
+`schema.sql` を触るので、**worktree のファイルで上書きすると `snoozed_until` が消える。**
+`cp` が上書きの確認を求めて止まったので気づいた。
+
+**やり方**: 重なるファイルは `diff` を取り、**足す行だけを入れる。**
+重ならないファイルはそのままコピーしてよい。**sqlc の生成物は再生成する**
+（コピーすると両方の変更が反映されない）。
+
+**列の並びにも注意。**worktree 側の `queries/*.sql` が列を別の順で書いていたため、
+`schema.sql` の型と一致せず専用の行型が生成され、ビルドが落ちた。
+**`schema.sql` の並びに揃える。**
+
 ### 借りることの代償
 
 - **`node_modules` は共有である。** worktree で `pnpm install` を走らせると
