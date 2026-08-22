@@ -167,11 +167,41 @@ space 名はゴール ID の先頭 8 桁を使う（`atct-c22a6d79`）。
 入れるかを決める必要がある**（名前は `[a-z][a-z0-9_-]{0,31}` で 32 文字まで。UUID は
 入らないので先頭 8 桁になる）。
 
-## A-3. 通知の受け口を commander に寄せる
+## A-3. 通知の受け口を commander に寄せる（atct 側の変更が必要と判明）
 
 いまは commander の pane で `atct watch` を Monitor に流し、Stop hook も commander で
-効いている。**両方を commander へ移す。**commander 側に残すと、今日と同じで
-commander が通知に反応して設計を始める。
+効いている。**両方を上の層へ寄せる。**subcommander 側に残すと、今日と同じで
+subcommander が通知に反応して設計を始める。
+
+### `atct watch` の Monitor は寄せられる
+
+Monitor はセッションが張るものなので、subcommander が張らなければ済む。**手順の話。**
+
+### Stop hook は寄せられない（dotfiles-commander の調査、2026-08-22）
+
+**dotfiles 側で塞ぐ手段が無い。**
+
+- `plugin/hooks/stop` の早期 exit は 4 つだけ（`stop_hook_active` / バイナリが無い /
+  `atct pending` が失敗 / 出力が空）。**オプトアウトの環境変数が無い**
+- `ATCT_BIN` は読むが、`resolve_atct_bin()` の結果に**無条件で上書きされる**ので、
+  事前に渡しても効かない
+- `disableAllHooks` は全か無かで、他のフックも一緒に死ぬ。採れない
+
+**機構は herdr 側にある。**`herdr pane split --env KEY=VALUE` と
+`herdr workspace create --env KEY=VALUE` の両方が使える（`--help` で確認済み）。
+**したがって atct 側で env を見る判定を足せば解決する。**
+
+### 「無効化」ではなく「役割の宣言」にする（commander の判断）
+
+素直な形は `ATCT_STOP_HOOK=off` で通すことだが、**間違って設定すると静かに防護が
+消える。**今日 atct で見つけた欠陥 5 件はすべて「静かに永久に隠す」形だった。
+同じ性質のものを足すことになる。
+
+**渡すのは役割にする。**`commander` / `subcommander` / `executor` のどれか。
+**渡し忘れたときに安全側（通常どおり働く）へ倒れる。**dotfiles 側の
+`single-subcommander.sh` も同じ方針（判断できないときは通す）なので揃う。
+
+この件はゴールとして切り出した（`f7a8661b` から派生）。**設計はそこで詰める。**
 
 ## A-4. subcommander に「他のゴールを見ない」を書く
 
