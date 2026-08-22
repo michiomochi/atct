@@ -509,23 +509,38 @@ func createDecisionFixture(t *testing.T, conn net.Conn) (string, string) {
 }
 
 type goalListFixture struct {
-	store    *store.Store
-	daemon   *Daemon
-	project  domain.Project
-	active   []domain.Goal
-	proposed []domain.Goal
-	done     []domain.Goal
-	dropped  []domain.Goal
+	store         *store.Store
+	daemon        *Daemon
+	project       domain.Project
+	active        []domain.Goal
+	proposed      []domain.Goal
+	done          []domain.Goal
+	dropped       []domain.Goal
+	taskGoal      domain.Goal
+	emptyTaskGoal domain.Goal
+	doneOnlyGoal  domain.Goal
+	tasks         []domain.Task
+}
+
+type goalListTaskItem struct {
+	ID          string            `json:"id"`
+	GoalID      string            `json:"goal_id"`
+	Title       string            `json:"title"`
+	Description string            `json:"description"`
+	Status      domain.TaskStatus `json:"status"`
+	ClaimedBy   string            `json:"claimed_by"`
+	Order       int               `json:"order"`
 }
 
 type goalListItem struct {
-	ID                string            `json:"id"`
-	ProjectID         string            `json:"project_id"`
-	DerivedFromGoalID string            `json:"derived_from_goal_id"`
-	Content           string            `json:"content"`
-	Status            domain.GoalStatus `json:"status"`
-	ClaimedBy         string            `json:"claimed_by"`
-	CreatedAt         time.Time         `json:"created_at"`
+	ID                string             `json:"id"`
+	ProjectID         string             `json:"project_id"`
+	DerivedFromGoalID string             `json:"derived_from_goal_id"`
+	Content           string             `json:"content"`
+	Status            domain.GoalStatus  `json:"status"`
+	ClaimedBy         string             `json:"claimed_by"`
+	CreatedAt         time.Time          `json:"created_at"`
+	Tasks             []goalListTaskItem `json:"tasks"`
 }
 
 func newGoalListFixture(t *testing.T) goalListFixture {
@@ -554,6 +569,9 @@ func newGoalListFixture(t *testing.T) goalListFixture {
 
 	activeParent := create("active parent", "human")
 	activeChild := create("active child", "human", activeParent.ID)
+	taskGoal := create("task goal", "human")
+	emptyTaskGoal := create("empty task goal", "human")
+	doneOnlyGoal := create("done-only task goal", "human")
 	proposedOne := create("proposed one", "agent")
 	proposedTwo := create("proposed two", "agent")
 	doneOne := mark(create("done one", "human"), domain.GoalDone)
@@ -566,14 +584,51 @@ func newGoalListFixture(t *testing.T) goalListFixture {
 	}
 	activeChild.ClaimedBy = "claimed-agent"
 
+	tasks, err := s.DeclareTasks(ctx, taskGoal.ID, "fixture-agent", "goal-list-tasks",
+		[]string{"doing task", "todo task", "done task", "dropped task"},
+		[]string{"doing description", "todo description", "done description", "dropped description"})
+	if err != nil {
+		t.Fatalf("DeclareTasks: %v", err)
+	}
+	if _, err := s.ClaimTask(ctx, tasks[0].ID, "task-agent"); err != nil {
+		t.Fatalf("ClaimTask: %v", err)
+	}
+	if tasks[0], err = s.UpdateTask(ctx, tasks[0].ID, domain.TaskDoing, "task-agent"); err != nil {
+		t.Fatalf("UpdateTask doing: %v", err)
+	}
+	if tasks[2], err = s.UpdateTask(ctx, tasks[2].ID, domain.TaskDone, ""); err != nil {
+		t.Fatalf("UpdateTask done: %v", err)
+	}
+	if tasks[3], err = s.UpdateTask(ctx, tasks[3].ID, domain.TaskDropped, ""); err != nil {
+		t.Fatalf("UpdateTask dropped: %v", err)
+	}
+	if _, err := s.DeclareTasks(ctx, doneOnlyGoal.ID, "fixture-agent", "goal-list-done-only",
+		[]string{"completed task"}, []string{"completed description"}); err != nil {
+		t.Fatalf("DeclareTasks done-only: %v", err)
+	}
+	doneOnlyTasks, err := s.ListTasks(ctx, doneOnlyGoal.ID)
+	if err != nil {
+		t.Fatalf("ListTasks done-only: %v", err)
+	}
+	if len(doneOnlyTasks) != 1 {
+		t.Fatalf("done-only goal has %d tasks, want 1", len(doneOnlyTasks))
+	}
+	if _, err := s.UpdateTask(ctx, doneOnlyTasks[0].ID, domain.TaskDone, ""); err != nil {
+		t.Fatalf("UpdateTask done-only: %v", err)
+	}
+
 	return goalListFixture{
-		store:    s,
-		daemon:   New(s),
-		project:  project,
-		active:   []domain.Goal{activeParent, activeChild},
-		proposed: []domain.Goal{proposedOne, proposedTwo},
-		done:     []domain.Goal{doneOne, doneTwo},
-		dropped:  []domain.Goal{droppedOne, droppedTwo},
+		store:         s,
+		daemon:        New(s),
+		project:       project,
+		active:        []domain.Goal{activeParent, activeChild, taskGoal, emptyTaskGoal, doneOnlyGoal},
+		proposed:      []domain.Goal{proposedOne, proposedTwo},
+		done:          []domain.Goal{doneOne, doneTwo},
+		dropped:       []domain.Goal{droppedOne, droppedTwo},
+		taskGoal:      taskGoal,
+		emptyTaskGoal: emptyTaskGoal,
+		doneOnlyGoal:  doneOnlyGoal,
+		tasks:         tasks,
 	}
 }
 
@@ -691,5 +746,242 @@ func TestGoalListKeepsGoalIdentityFields(t *testing.T) {
 	}
 	if got.CreatedAt.IsZero() {
 		t.Fatal("created_at is zero")
+	}
+}
+
+func TestGoalListIncludesTodoAndDoingTasks(t *testing.T) {
+	fixture := newGoalListFixture(t)
+	defer fixture.store.Close()
+
+	var got goalListItem
+	for _, raw := range listGoalsForTest(t, fixture) {
+		var item goalListItem
+		if err := json.Unmarshal(raw, &item); err != nil {
+			t.Fatalf("unmarshal goal: %v", err)
+		}
+		if item.ID == fixture.taskGoal.ID {
+			got = item
+			break
+		}
+	}
+	if got.ID == "" {
+		t.Fatalf("goal.list omitted task goal %s", fixture.taskGoal.ID)
+	}
+	if len(got.Tasks) != 2 {
+		t.Fatalf("task goal has %d visible tasks, want 2", len(got.Tasks))
+	}
+	statuses := map[domain.TaskStatus]bool{}
+	for _, task := range got.Tasks {
+		statuses[task.Status] = true
+	}
+	for _, status := range []domain.TaskStatus{domain.TaskTodo, domain.TaskDoing} {
+		if !statuses[status] {
+			t.Fatalf("goal.list omitted visible task status %s", status)
+		}
+	}
+}
+
+func TestGoalListIncludesTaskFields(t *testing.T) {
+	fixture := newGoalListFixture(t)
+	defer fixture.store.Close()
+
+	var rawGoal json.RawMessage
+	for _, raw := range listGoalsForTest(t, fixture) {
+		var item goalListItem
+		if err := json.Unmarshal(raw, &item); err != nil {
+			t.Fatalf("unmarshal goal: %v", err)
+		}
+		if item.ID == fixture.taskGoal.ID {
+			rawGoal = raw
+			break
+		}
+	}
+	if rawGoal == nil {
+		t.Fatalf("goal.list omitted task goal %s", fixture.taskGoal.ID)
+	}
+
+	var item goalListItem
+	if err := json.Unmarshal(rawGoal, &item); err != nil {
+		t.Fatalf("unmarshal task goal: %v", err)
+	}
+	want := map[string]domain.Task{
+		fixture.tasks[0].ID: fixture.tasks[0],
+		fixture.tasks[1].ID: fixture.tasks[1],
+	}
+	if len(item.Tasks) != len(want) {
+		t.Fatalf("task goal has %d visible tasks, want %d", len(item.Tasks), len(want))
+	}
+	for _, got := range item.Tasks {
+		wantTask, ok := want[got.ID]
+		if !ok {
+			t.Fatalf("unexpected visible task %s", got.ID)
+		}
+		if got.GoalID != wantTask.GoalID || got.Title != wantTask.Title || got.Description != wantTask.Description || got.Status != wantTask.Status || got.ClaimedBy != wantTask.ClaimedBy || got.Order != wantTask.Order {
+			t.Fatalf("task %s = %+v, want fields from %+v", got.ID, got, wantTask)
+		}
+	}
+
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(rawGoal, &fields); err != nil {
+		t.Fatalf("unmarshal task goal fields: %v", err)
+	}
+	var taskFields []map[string]json.RawMessage
+	if err := json.Unmarshal(fields["tasks"], &taskFields); err != nil {
+		t.Fatalf("unmarshal task fields: %v", err)
+	}
+	wantKeys := map[string]bool{
+		"id": true, "goal_id": true, "title": true, "description": true,
+		"status": true, "claimed_by": true, "order": true,
+	}
+	for _, task := range taskFields {
+		if len(task) != len(wantKeys) {
+			t.Fatalf("task response has %d fields, want %d: %v", len(task), len(wantKeys), task)
+		}
+		for key := range task {
+			if !wantKeys[key] {
+				t.Fatalf("task response contains unexpected field %q", key)
+			}
+		}
+		for key := range wantKeys {
+			if _, ok := task[key]; !ok {
+				t.Fatalf("task response omitted field %q", key)
+			}
+		}
+	}
+}
+
+func TestGoalListSortsTasksByOrder(t *testing.T) {
+	fixture := newGoalListFixture(t)
+	defer fixture.store.Close()
+
+	for _, raw := range listGoalsForTest(t, fixture) {
+		var item goalListItem
+		if err := json.Unmarshal(raw, &item); err != nil {
+			t.Fatalf("unmarshal goal: %v", err)
+		}
+		if item.ID != fixture.taskGoal.ID {
+			continue
+		}
+		for i := 1; i < len(item.Tasks); i++ {
+			if item.Tasks[i].Order < item.Tasks[i-1].Order {
+				t.Fatalf("task order at index %d is %d after %d", i, item.Tasks[i].Order, item.Tasks[i-1].Order)
+			}
+		}
+		return
+	}
+	t.Fatalf("goal.list omitted task goal %s", fixture.taskGoal.ID)
+}
+
+func TestGoalListOmitsDoneAndDroppedTasks(t *testing.T) {
+	fixture := newGoalListFixture(t)
+	defer fixture.store.Close()
+
+	for _, raw := range listGoalsForTest(t, fixture) {
+		var item goalListItem
+		if err := json.Unmarshal(raw, &item); err != nil {
+			t.Fatalf("unmarshal goal: %v", err)
+		}
+		if item.ID != fixture.taskGoal.ID {
+			continue
+		}
+		for _, task := range item.Tasks {
+			if task.ID == fixture.tasks[2].ID || task.ID == fixture.tasks[3].ID {
+				t.Fatalf("goal.list returned non-visible task %s with status %s", task.ID, task.Status)
+			}
+		}
+		if len(item.Tasks) != 2 {
+			t.Fatalf("task goal has %d visible tasks, want 2", len(item.Tasks))
+		}
+		return
+	}
+	t.Fatalf("goal.list omitted task goal %s", fixture.taskGoal.ID)
+}
+
+func TestGoalListKeepsGoalsWithEmptyTaskLists(t *testing.T) {
+	fixture := newGoalListFixture(t)
+	defer fixture.store.Close()
+
+	got := make(map[string]goalListItem)
+	for _, raw := range listGoalsForTest(t, fixture) {
+		var item goalListItem
+		if err := json.Unmarshal(raw, &item); err != nil {
+			t.Fatalf("unmarshal goal: %v", err)
+		}
+		got[item.ID] = item
+	}
+	for _, goal := range []domain.Goal{fixture.emptyTaskGoal, fixture.doneOnlyGoal} {
+		item, ok := got[goal.ID]
+		if !ok {
+			t.Fatalf("goal.list omitted goal %s", goal.ID)
+		}
+		if item.Tasks == nil {
+			t.Fatalf("goal %s has nil tasks; want an empty array", goal.ID)
+		}
+		if len(item.Tasks) != 0 {
+			t.Fatalf("goal %s has %d visible tasks, want 0", goal.ID, len(item.Tasks))
+		}
+	}
+}
+
+func TestGoalListIncludesBothDecisionResponseKeys(t *testing.T) {
+	fixture := newGoalListFixture(t)
+	defer fixture.store.Close()
+
+	decision, err := fixture.store.AskDecision(context.Background(), store.AskInput{
+		GoalID:         fixture.taskGoal.ID,
+		TaskID:         fixture.tasks[0].ID,
+		Kind:           domain.KindDecision,
+		Question:       "Which task should proceed?",
+		AgentSessionID: "fixture-agent",
+	})
+	if err != nil {
+		t.Fatalf("AskDecision: %v", err)
+	}
+	if _, err := fixture.store.AnswerDecision(context.Background(), store.AnswerInput{
+		DecisionID:  decision.ID,
+		AnswerLabel: "proceed",
+		AnswerText:  "Proceed with the task.",
+	}); err != nil {
+		t.Fatalf("AnswerDecision: %v", err)
+	}
+
+	params, err := json.Marshal(map[string]any{
+		"cwd":                       fixture.project.RootPath,
+		"include_unapplied_answers": true,
+	})
+	if err != nil {
+		t.Fatalf("marshal goal.list params: %v", err)
+	}
+	result, err := fixture.daemon.dispatch(context.Background(), rpc.Request{Method: "goal.list", Params: params})
+	if err != nil {
+		t.Fatalf("goal.list: %v", err)
+	}
+	var response map[string]json.RawMessage
+	if err := json.Unmarshal(result, &response); err != nil {
+		t.Fatalf("unmarshal goal.list response: %v", err)
+	}
+	var data map[string]json.RawMessage
+	if err := json.Unmarshal(response["data"], &data); err != nil {
+		t.Fatalf("unmarshal goal.list data: %v", err)
+	}
+	if _, ok := data["orphaned_decisions"]; !ok {
+		t.Fatal("goal.list omitted orphaned_decisions")
+	}
+	if _, ok := response["unapplied_decisions"]; !ok {
+		t.Fatal("goal.list omitted unapplied_decisions")
+	}
+	var orphaned []json.RawMessage
+	if err := json.Unmarshal(data["orphaned_decisions"], &orphaned); err != nil {
+		t.Fatalf("unmarshal orphaned_decisions: %v", err)
+	}
+	if len(orphaned) == 0 {
+		t.Fatal("orphaned_decisions is empty")
+	}
+	var unapplied []json.RawMessage
+	if err := json.Unmarshal(response["unapplied_decisions"], &unapplied); err != nil {
+		t.Fatalf("unmarshal unapplied_decisions: %v", err)
+	}
+	if len(unapplied) == 0 {
+		t.Fatal("unapplied_decisions is empty")
 	}
 }

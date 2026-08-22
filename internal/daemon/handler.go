@@ -213,6 +213,15 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		if err != nil {
 			return nil, err
 		}
+		type goalListTask struct {
+			ID          string            `json:"id"`
+			GoalID      string            `json:"goal_id"`
+			Title       string            `json:"title"`
+			Description string            `json:"description"`
+			Status      domain.TaskStatus `json:"status"`
+			ClaimedBy   string            `json:"claimed_by"`
+			Order       int               `json:"order"`
+		}
 		type goalListResponse struct {
 			ID                string            `json:"id"`
 			ProjectID         string            `json:"project_id"`
@@ -221,11 +230,31 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 			Status            domain.GoalStatus `json:"status"`
 			ClaimedBy         string            `json:"claimed_by"`
 			CreatedAt         time.Time         `json:"created_at"`
+			Tasks             []goalListTask    `json:"tasks"`
 		}
 		visibleGoals := make([]goalListResponse, 0, len(goals))
 		for _, goal := range goals {
 			if goal.Status == domain.GoalDone || goal.Status == domain.GoalDropped {
 				continue
+			}
+			tasks, err := d.store.ListTasks(ctx, goal.ID)
+			if err != nil {
+				return nil, err
+			}
+			activeTasks := make([]goalListTask, 0, len(tasks))
+			for _, task := range tasks {
+				if task.Status != domain.TaskTodo && task.Status != domain.TaskDoing {
+					continue
+				}
+				activeTasks = append(activeTasks, goalListTask{
+					ID:          task.ID,
+					GoalID:      task.GoalID,
+					Title:       task.Title,
+					Description: task.Description,
+					Status:      task.Status,
+					ClaimedBy:   task.ClaimedBy,
+					Order:       task.Order,
+				})
 			}
 			visibleGoals = append(visibleGoals, goalListResponse{
 				ID:                goal.ID,
@@ -235,6 +264,7 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 				Status:            goal.Status,
 				ClaimedBy:         goal.ClaimedBy,
 				CreatedAt:         goal.CreatedAt,
+				Tasks:             activeTasks,
 			})
 		}
 		// spec section 7: goal.list returns active Goals and unapplied answers together.
@@ -257,13 +287,9 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		if !p.IncludeUnappliedAnswers {
 			return marshal(data, nil)
 		}
-		unapplied, err := d.store.ListUnappliedDecisionsForProject(ctx, ns.ID)
-		if err != nil {
-			return nil, err
-		}
 		return marshal(responseWithUnappliedDecisions{
 			Data:               data,
-			UnappliedDecisions: unappliedDecisionNotifications(unapplied),
+			UnappliedDecisions: unappliedDecisionNotifications(orphaned),
 		}, nil)
 
 	case "goal.create":
