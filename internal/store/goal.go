@@ -18,6 +18,7 @@ var (
 	ErrGoalNotFound        = errors.New("goal not found")
 	ErrGoalNotProposed     = errors.New("goal is not proposed")
 	ErrGoalNotActive       = errors.New("goal is not active")
+	ErrGoalAlreadyClaimed  = errors.New("goal already claimed")
 	ErrGoalSelfReference   = errors.New("goal cannot be derived from itself")
 	ErrGoalDerivationCycle = errors.New("goal derivation would create a cycle")
 )
@@ -146,6 +147,15 @@ func (s *Store) ClaimGoal(ctx context.Context, goalID, agentSessionID string) (d
 	}
 	agentSessionID = strings.TrimSpace(agentSessionID)
 
+	currentGoal, err := s.GetGoal(ctx, goalID)
+	if err != nil {
+		return domain.Goal{}, err
+	}
+	currentClaim := strings.TrimSpace(currentGoal.ClaimedBy)
+	if agentSessionID != "" && currentClaim != "" && currentClaim != agentSessionID && claimIsRunning(ctx, s, currentClaim) {
+		return domain.Goal{}, fmt.Errorf("%w: %s", ErrGoalAlreadyClaimed, goalID)
+	}
+
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return domain.Goal{}, fmt.Errorf("begin goal claim tx: %w", err)
@@ -153,11 +163,15 @@ func (s *Store) ClaimGoal(ctx context.Context, goalID, agentSessionID string) (d
 	defer tx.Rollback()
 
 	q := sqlcgen.New(tx)
-	if _, err := q.GetGoal(ctx, goalID); err != nil {
+	goal, err := q.GetGoal(ctx, goalID)
+	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return domain.Goal{}, fmt.Errorf("%w: %s", ErrGoalNotFound, goalID)
 		}
 		return domain.Goal{}, fmt.Errorf("lookup goal claim: %w", err)
+	}
+	if agentSessionID != "" && strings.TrimSpace(goal.ClaimedBy) != currentClaim && strings.TrimSpace(goal.ClaimedBy) != "" {
+		return domain.Goal{}, fmt.Errorf("%w: %s", ErrGoalAlreadyClaimed, goalID)
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339)

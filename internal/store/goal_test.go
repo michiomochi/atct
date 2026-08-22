@@ -280,6 +280,118 @@ func TestClaimGoal(t *testing.T) {
 	}
 }
 
+func TestClaimGoalRejectsLiveClaimFromOtherSession(t *testing.T) {
+	ctx := context.Background()
+	s, goal := newGoalClaimFixture(t)
+	if err := s.RegisterAgentSession(ctx, "live-run", os.Getpid()); err != nil {
+		t.Fatalf("RegisterAgentSession: %v", err)
+	}
+	if _, err := s.ClaimGoal(ctx, goal.ID, "live-run"); err != nil {
+		t.Fatalf("ClaimGoal live: %v", err)
+	}
+
+	if _, err := s.ClaimGoal(ctx, goal.ID, "other-run"); !errors.Is(err, ErrGoalAlreadyClaimed) {
+		t.Fatalf("ClaimGoal error = %v, want ErrGoalAlreadyClaimed", err)
+	}
+}
+
+func TestClaimGoalKeepsLiveClaimOwnerAfterRejection(t *testing.T) {
+	ctx := context.Background()
+	s, goal := newGoalClaimFixture(t)
+	if err := s.RegisterAgentSession(ctx, "live-run", os.Getpid()); err != nil {
+		t.Fatalf("RegisterAgentSession: %v", err)
+	}
+	if _, err := s.ClaimGoal(ctx, goal.ID, "live-run"); err != nil {
+		t.Fatalf("ClaimGoal live: %v", err)
+	}
+
+	if _, err := s.ClaimGoal(ctx, goal.ID, "other-run"); err == nil {
+		t.Fatal("ClaimGoal unexpectedly succeeded for a live claim")
+	}
+	got, err := s.GetGoal(ctx, goal.ID)
+	if err != nil {
+		t.Fatalf("GetGoal: %v", err)
+	}
+	if got.ClaimedBy != "live-run" {
+		t.Fatalf("ClaimedBy after rejection = %q, want live-run", got.ClaimedBy)
+	}
+}
+
+func TestClaimGoalTakesOverDeadClaim(t *testing.T) {
+	ctx := context.Background()
+	s, goal := newGoalClaimFixture(t)
+	if err := s.RegisterAgentSession(ctx, "dead-run", 999999); err != nil {
+		t.Fatalf("RegisterAgentSession: %v", err)
+	}
+	if _, err := s.ClaimGoal(ctx, goal.ID, "dead-run"); err != nil {
+		t.Fatalf("ClaimGoal dead: %v", err)
+	}
+
+	claimed, err := s.ClaimGoal(ctx, goal.ID, "new-run")
+	if err != nil {
+		t.Fatalf("ClaimGoal takeover: %v", err)
+	}
+	if claimed.ClaimedBy != "new-run" {
+		t.Fatalf("ClaimedBy after takeover = %q, want new-run", claimed.ClaimedBy)
+	}
+}
+
+func TestClaimGoalAllowsUnclaimedGoal(t *testing.T) {
+	ctx := context.Background()
+	s, goal := newGoalClaimFixture(t)
+
+	claimed, err := s.ClaimGoal(ctx, goal.ID, "new-run")
+	if err != nil {
+		t.Fatalf("ClaimGoal: %v", err)
+	}
+	if claimed.ClaimedBy != "new-run" {
+		t.Fatalf("ClaimedBy = %q, want new-run", claimed.ClaimedBy)
+	}
+}
+
+func TestClaimGoalAllowsSameSessionToReclaim(t *testing.T) {
+	ctx := context.Background()
+	s, goal := newGoalClaimFixture(t)
+	if err := s.RegisterAgentSession(ctx, "same-run", os.Getpid()); err != nil {
+		t.Fatalf("RegisterAgentSession: %v", err)
+	}
+	if _, err := s.ClaimGoal(ctx, goal.ID, "same-run"); err != nil {
+		t.Fatalf("ClaimGoal initial: %v", err)
+	}
+
+	claimed, err := s.ClaimGoal(ctx, goal.ID, "same-run")
+	if err != nil {
+		t.Fatalf("ClaimGoal retry: %v", err)
+	}
+	if claimed.ClaimedBy != "same-run" {
+		t.Fatalf("ClaimedBy after retry = %q, want same-run", claimed.ClaimedBy)
+	}
+}
+
+func TestClaimGoalRejectsMissingGoalBeforeClaimLivenessCheck(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+
+	if _, err := s.ClaimGoal(ctx, "missing-goal-id", "new-run"); !errors.Is(err, ErrGoalNotFound) {
+		t.Fatalf("ClaimGoal error = %v, want ErrGoalNotFound", err)
+	}
+}
+
+func newGoalClaimFixture(t *testing.T) (*Store, domain.Goal) {
+	t.Helper()
+	ctx := context.Background()
+	s := newTestStore(t)
+	project, err := s.CreateProject(ctx, "atct", "/repos/atct")
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	goal, err := s.CreateGoal(ctx, project.ID, "Claimable goal", "human")
+	if err != nil {
+		t.Fatalf("CreateGoal: %v", err)
+	}
+	return s, goal
+}
+
 func TestUnclaimedGoalHasEmptyClaim(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
