@@ -712,3 +712,44 @@ DELETE FROM agent_sessions WHERE project_id = ? AND id <> ? AND registered_at < 
 `ensureAgentSessionProject` があり、そこが状態を壊していた。
 **同じ関数を呼んでいても、前後に挟まるものが違えば結果が変わる。**
 稼働版で測って初めて出た。
+
+## 通知の受け口はもう commander に寄っている（2026-08-22 に実測）
+
+`f7a8661b` のタスク `9b4b98e1`「通知の受け口を commander に寄せる」の記録。
+完了条件は「`atct watch` の Monitor と Stop hook が commander の space で動き、
+subcommander の space では動かないことを実測する」だった。
+
+**半分は今日消え、残り半分は既に満たされていた。作業は要らない。**
+
+### Stop hook の側は前提ごと消えた
+
+`aa6a9eb` で削除した。0.41.0 の `plugin/hooks/hooks.json` は
+`['PreToolUse', 'SessionStart']` である。**space ごとに入れるか切るかを確かめる、という
+未検証点そのものが無くなった。**
+
+### Monitor の側は最初から寄っている
+
+**プラグインは Monitor を張らない。**`plugin/hooks/hooks.json` に `watch` の記述は 0 件。
+張るのは `atct:start` スキルを呼んだセッション自身である（`skills/start/SKILL.md:11-17`
+が「最初に Monitor を張れ」と指示している）。
+
+したがって **subcommander が `atct:start` を呼ばなければ通知は届かない。**
+これは設定ではなく、スキルを呼ぶかどうかで決まる。
+`ATCT_SCOPE_GOAL` のような絞り込みが不要になったのと同じ理由である。
+
+### 残る 2 つのフックは subcommander でも害がない
+
+```
+SessionStart  matcher=startup|clear|compact   ATCT context を出す
+PreToolUse    matcher=AskUserQuestion         チャットで聞くのを止め atct へ寄せる
+```
+
+`session-start` は subcommander も自分のゴールを知る必要がある。
+`pre-ask` はチャットで判断を仰がない規則（`fa888894`）で、subcommander にも
+適用したいものである。**どちらも切る理由がない。**
+
+### 3 層で守るべきことは 1 つに減った
+
+**「subcommander の space で `atct:start` を呼ばない」だけ。**
+呼べば Monitor が張られ、通知に反応して設計を始める。呼ばなければ届かない。
+これは commander が space を作るときの手順の話で、atct 側の設定ではない。
