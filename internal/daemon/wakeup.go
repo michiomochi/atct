@@ -114,7 +114,7 @@ func (t *wakeupTracker) evaluateWith(ctx context.Context, s *store.Store, now ti
 			delete(t.discrepancySeen, project.ID)
 		}
 
-		active := state.ActiveGoalCount > 0 && state.UnstartedTaskCount > 0
+		active := len(state.Tasks) > 0
 		if !active {
 			delete(t.activeSince, project.ID)
 			delete(t.published, project.ID)

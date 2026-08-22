@@ -116,7 +116,8 @@ func TestWakeupTrackerPublishesTaskBreakdown(t *testing.T) {
 	ctx := context.Background()
 	s := newWakeupTestStore(t)
 	projectID, goalID := newWakeupTestGoal(t, s, "breakdown")
-	if _, err := s.DeclareTasks(ctx, goalID, "agent", "breakdown-tasks", []string{"Waiting task", "Untouched task one", "Untouched task two"}, []string{"Answer the first task.", "Start the second task.", "Start the third task."}); err != nil {
+	tasks, err := s.DeclareTasks(ctx, goalID, "agent", "breakdown-tasks", []string{"Waiting task", "Untouched task one", "Untouched task two"}, []string{"Answer the first task.", "Start the second task.", "Start the third task."})
+	if err != nil {
 		t.Fatalf("DeclareTasks: %v", err)
 	}
 
@@ -127,6 +128,7 @@ func TestWakeupTrackerPublishesTaskBreakdown(t *testing.T) {
 		WorkingTaskCount:       0,
 		UntouchedTaskCount:     2,
 		WaitingAnswerCount:     2,
+		Tasks:                  tasks[1:],
 	}
 	detect := func(context.Context, string) (store.WakeupState, error) {
 		return state, nil
@@ -162,6 +164,139 @@ func TestWakeupTrackerPublishesTaskBreakdown(t *testing.T) {
 	}
 	if total := wakeup.WaitingAnswerTaskCount + wakeup.UntouchedTaskCount; wakeup.UnstartedTaskCount != total {
 		t.Fatalf("published task total = %d, want breakdown sum %d", wakeup.UnstartedTaskCount, total)
+	}
+}
+
+func TestWakeupTrackerDoesNotPublishForWaitingAnswerTasksOnly(t *testing.T) {
+	ctx := context.Background()
+	s := newWakeupTestStore(t)
+	_, goalID := newWakeupTestGoal(t, s, "waiting-only")
+	if _, err := s.DeclareTasks(ctx, goalID, "agent", "waiting-only", []string{"Waiting task"}, []string{"Answer the task."}); err != nil {
+		t.Fatalf("DeclareTasks: %v", err)
+	}
+
+	state := store.WakeupState{
+		ActiveGoalCount:        1,
+		UnstartedTaskCount:     1,
+		WaitingAnswerTaskCount: 1,
+		UntouchedTaskCount:     0,
+	}
+	detect := func(context.Context, string) (store.WakeupState, error) {
+		return state, nil
+	}
+
+	tracker := newWakeupTracker()
+	start := time.Date(2026, 8, 20, 15, 30, 0, 0, time.UTC)
+	if events, err := tracker.evaluateWith(ctx, s, start, detect); err != nil {
+		t.Fatalf("initial evaluate: %v", err)
+	} else if len(events) != 0 {
+		t.Fatalf("initial events = %#v, want empty", events)
+	}
+
+	events, err := tracker.evaluateWith(ctx, s, start.Add(wakeupInitialWait), detect)
+	if err != nil {
+		t.Fatalf("waiting-only evaluate: %v", err)
+	}
+	if len(events) != 0 {
+		t.Fatalf("waiting-only events = %#v, want empty", events)
+	}
+}
+
+func TestWakeupTrackerPublishesForActionableTasks(t *testing.T) {
+	ctx := context.Background()
+	s := newWakeupTestStore(t)
+	_, goalID := newWakeupTestGoal(t, s, "actionable")
+	tasks, err := s.DeclareTasks(ctx, goalID, "agent", "actionable", []string{"Actionable task"}, []string{"Start the task."})
+	if err != nil {
+		t.Fatalf("DeclareTasks: %v", err)
+	}
+
+	state := store.WakeupState{
+		ActiveGoalCount:    1,
+		UnstartedTaskCount: 1,
+		UntouchedTaskCount: 1,
+		Tasks:              tasks,
+	}
+	detect := func(context.Context, string) (store.WakeupState, error) {
+		return state, nil
+	}
+
+	tracker := newWakeupTracker()
+	start := time.Date(2026, 8, 20, 16, 0, 0, 0, time.UTC)
+	if events, err := tracker.evaluateWith(ctx, s, start, detect); err != nil {
+		t.Fatalf("initial evaluate: %v", err)
+	} else if len(events) != 0 {
+		t.Fatalf("initial events = %#v, want empty", events)
+	}
+
+	events, err := tracker.evaluateWith(ctx, s, start.Add(wakeupInitialWait), detect)
+	if err != nil {
+		t.Fatalf("actionable evaluate: %v", err)
+	}
+	if len(events) != 1 || events[0].Name != store.EventWakeup {
+		t.Fatalf("actionable events = %#v, want one %q event", events, store.EventWakeup)
+	}
+}
+
+func TestWakeupTrackerRestartsGracePeriodAfterActionableTasksDisappearAndReturn(t *testing.T) {
+	ctx := context.Background()
+	s := newWakeupTestStore(t)
+	_, goalID := newWakeupTestGoal(t, s, "actionable-reset")
+	tasks, err := s.DeclareTasks(ctx, goalID, "agent", "actionable-reset", []string{"Actionable task"}, []string{"Start the task."})
+	if err != nil {
+		t.Fatalf("DeclareTasks: %v", err)
+	}
+
+	state := store.WakeupState{
+		ActiveGoalCount:    1,
+		UnstartedTaskCount: 1,
+		UntouchedTaskCount: 1,
+		Tasks:              tasks,
+	}
+	detect := func(context.Context, string) (store.WakeupState, error) {
+		return state, nil
+	}
+
+	tracker := newWakeupTracker()
+	start := time.Date(2026, 8, 20, 16, 30, 0, 0, time.UTC)
+	if _, err := tracker.evaluateWith(ctx, s, start, detect); err != nil {
+		t.Fatalf("initial evaluate: %v", err)
+	}
+	firstAt := start.Add(wakeupInitialWait)
+	if events, err := tracker.evaluateWith(ctx, s, firstAt, detect); err != nil {
+		t.Fatalf("first publish evaluate: %v", err)
+	} else if len(events) != 1 {
+		t.Fatalf("first publish events = %#v, want one event", events)
+	}
+
+	state.WaitingAnswerTaskCount = 1
+	state.UntouchedTaskCount = 0
+	state.Tasks = nil
+	clearedAt := firstAt.Add(time.Minute)
+	if events, err := tracker.evaluateWith(ctx, s, clearedAt, detect); err != nil {
+		t.Fatalf("cleared evaluate: %v", err)
+	} else if len(events) != 0 {
+		t.Fatalf("cleared events = %#v, want empty", events)
+	}
+
+	state.WaitingAnswerTaskCount = 0
+	state.UntouchedTaskCount = 1
+	state.Tasks = tasks
+	resumedAt := clearedAt.Add(time.Minute)
+	if events, err := tracker.evaluateWith(ctx, s, resumedAt, detect); err != nil {
+		t.Fatalf("resumed start evaluate: %v", err)
+	} else if len(events) != 0 {
+		t.Fatalf("resumed start events = %#v, want empty", events)
+	}
+	if events, err := tracker.evaluateWith(ctx, s, resumedAt.Add(wakeupInitialWait-time.Nanosecond), detect); err != nil {
+		t.Fatalf("resumed pre-grace evaluate: %v", err)
+	} else if len(events) != 0 {
+		t.Fatalf("resumed pre-grace events = %#v, want empty", events)
+	}
+	if events, err := tracker.evaluateWith(ctx, s, resumedAt.Add(wakeupInitialWait), detect); err != nil {
+		t.Fatalf("resumed publish evaluate: %v", err)
+	} else if len(events) != 1 || events[0].Name != store.EventWakeup {
+		t.Fatalf("resumed publish events = %#v, want one %q event", events, store.EventWakeup)
 	}
 }
 
