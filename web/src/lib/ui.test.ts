@@ -367,6 +367,9 @@ describe("decision SSE events", () => {
       "detection.undeclared_goal",
       "detection.all_tasks_dropped",
       "detection.unclaimed_doing",
+      "detection.handoff_unreceived",
+      "detection.handoff_unreported",
+      "detection.claim_undelegated",
     ]);
   });
 

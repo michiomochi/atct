@@ -16,6 +16,9 @@ export const DECISION_EVENT_NAMES = [
   "detection.undeclared_goal",
   "detection.all_tasks_dropped",
   "detection.unclaimed_doing",
+  "detection.handoff_unreceived",
+  "detection.handoff_unreported",
+  "detection.claim_undelegated",
 ] as const;
 
 export const KEEPALIVE_EVENT_NAME = "keepalive" as const;
