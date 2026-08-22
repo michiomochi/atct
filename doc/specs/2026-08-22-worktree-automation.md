@@ -77,7 +77,44 @@ herdr agent start --pane <ID>                        ← cwd の指定が無い
 | git リポジトリでない | **通す**（worktree の話ではない） |
 | **atct に登録されていない** | **通す**（atct の作業ではない） |
 | worktree である | 通す |
+| **登録済みだが `worktree-setup.sh` が無い** | **通す**（このフックの管轄外。下の訂正を見よ） |
 | atct 管理下の主チェックアウト | **止める** |
+
+### 訂正: 「atct 管理下」は「atct リポジトリ」ではない（2026-08-22・`dotfiles-commander` の実測）
+
+**この表は当初 4 行で、上から 4 行目が無かった。**そのせいで実害が出た。
+
+`dotfiles-commander` が apply 直後に実環境を通したところ、**`stock-data` の space 作成が
+`exit 2` で止まった。**
+
+```
+stock-data で atct context   → 1356 バイト返る（登録済み）
+script/worktree-setup.sh     → 無い
+```
+
+**atct は複数のプロジェクトを管理するが、`worktree-setup.sh` は atct 自身にしかない。**
+本番の登録は 4 件（`atct` / `stock-data` / `HQ` / `stock-ai`）で、
+**script を持つのは `atct` だけである。**
+
+**この表を書いたのは私（commander）で、「atct 管理下」を「atct リポジトリ」の意味で
+書いていた。**読み手には区別がつかない。`dotfiles-commander` のレビューも同じ読み替えを
+しており、**shim では原理的に出なかった**（テスト用のリポジトリには script を置いていたため）。
+
+### 3 つの状態を分ける
+
+```
+worktree-setup.sh が無い    → 通す   このプロジェクトは worktree 運用をしていない
+                                    （git でない・未登録と同じ「管轄外」）
+あるが失敗した              → 止める  運用しているのに手当てが失敗した
+判断できない                → 通す   HERDR_ENV 未設定 / herdr 不在 / 入力 JSON 不正
+```
+
+**「無い」を「失敗」として扱うと、worktree を使わないプロジェクトを永久に止める。**
+下の「判断できないときは通す」の節と合わせて、**通す理由が 2 種類あることに注意する。**
+管轄外だから通すのと、判断できないから通すのは別である。
+
+修正後、実環境の全 space で `exit 0` を確認済み
+（`dotfiles` / `stock-data` / `HQ` / `stock-ai` / `tmp` / `atct-wt1`）。
 
 **「atct に登録されているか」の判定は手段がある。**2026-08-22 に `pre-ask` フックで
 使った形をそのまま流用できる。
