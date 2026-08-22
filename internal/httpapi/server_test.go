@@ -2819,3 +2819,161 @@ func TestHTTPGoalApprovalEndpointsTransitionProposedGoal(t *testing.T) {
 		t.Fatalf("dropped goal status = %q, want %q", dropped.Status, domain.GoalDropped)
 	}
 }
+
+func TestHTTPGoalContentUpdatesProposedGoal(t *testing.T) {
+	f := newBareFixture(t)
+	proposed, err := f.store.CreateGoal(f.ctx, f.project.ID, "Original proposed content", "agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+	updatedContent := "Updated proposed content\n\nwith details"
+	status, _, body := doRequest(t, srv.Client(), http.MethodPost, srv.URL+"/api/goals/"+proposed.ID+"/content", mustJSON(t, map[string]string{
+		"content": updatedContent,
+	}))
+	if status != http.StatusOK {
+		t.Fatalf("update content status = %d; body=%s", status, body)
+	}
+	var got domain.Goal
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatalf("decode updated goal: %v; body=%s", err, body)
+	}
+	if got.ID != proposed.ID || got.Content != updatedContent || got.Status != domain.GoalProposed {
+		t.Fatalf("updated goal = %+v, want id %q, content %q, status %q", got, proposed.ID, updatedContent, domain.GoalProposed)
+	}
+}
+
+func TestHTTPGoalContentRejectsBlankContent(t *testing.T) {
+	for i, content := range []string{"", " \t\n"} {
+		t.Run(fmt.Sprintf("blank_%d", i), func(t *testing.T) {
+			f := newBareFixture(t)
+			proposed, err := f.store.CreateGoal(f.ctx, f.project.ID, "Original proposed content", "agent")
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			srv := newTestServer(t, f.store)
+			defer srv.Close()
+			status, headers, body := doRequest(t, srv.Client(), http.MethodPost, srv.URL+"/api/goals/"+proposed.ID+"/content", mustJSON(t, map[string]string{
+				"content": content,
+			}))
+			assertErrorObject(t, status, headers, body, http.StatusBadRequest)
+		})
+	}
+}
+
+func TestHTTPGoalContentReturnsNotFoundForUnknownGoal(t *testing.T) {
+	f := newBareFixture(t)
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+
+	status, headers, body := doRequest(t, srv.Client(), http.MethodPost, srv.URL+"/api/goals/missing-goal/content", mustJSON(t, map[string]string{
+		"content": "new content",
+	}))
+	assertErrorObject(t, status, headers, body, http.StatusNotFound)
+}
+
+func TestHTTPGoalContentRejectsActiveGoalWithStatus(t *testing.T) {
+	f := newBareFixture(t)
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+
+	status, headers, body := doRequest(t, srv.Client(), http.MethodPost, srv.URL+"/api/goals/"+f.goal.ID+"/content", mustJSON(t, map[string]string{
+		"content": "new content",
+	}))
+	assertErrorObject(t, status, headers, body, http.StatusConflict)
+	var response map[string]string
+	if err := json.Unmarshal(body, &response); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(response["error"], string(domain.GoalActive)) {
+		t.Fatalf("error = %q, want it to contain %q", response["error"], domain.GoalActive)
+	}
+}
+
+func TestHTTPGoalContentRejectsDoneAndDroppedGoals(t *testing.T) {
+	f := newBareFixture(t)
+	done, err := f.store.CreateGoal(f.ctx, f.project.ID, "Done goal", "human")
+	if err != nil {
+		t.Fatal(err)
+	}
+	completion, err := f.store.CompleteGoalWithReport(f.ctx, done.ID, domain.CompletionReport{
+		WorkDone:    "done",
+		NowPossible: "none",
+		HowToVerify: "verify",
+		Surprises:   "none",
+		NeedsReview: "none",
+		NextSteps:   "none",
+	}, "done-run")
+	if err != nil {
+		t.Fatalf("complete done goal: %v", err)
+	}
+	if _, err := f.store.ApproveCompletion(f.ctx, completion.ID); err != nil {
+		t.Fatalf("approve done goal: %v", err)
+	}
+
+	dropped, err := f.store.CreateGoal(f.ctx, f.project.ID, "Dropped goal", "agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	decisions, err := f.store.ListOpenDecisions(f.ctx, dropped.ID)
+	if err != nil {
+		t.Fatalf("list dropped goal decisions: %v", err)
+	}
+	if len(decisions) != 1 {
+		t.Fatalf("dropped goal open decisions = %d, want 1", len(decisions))
+	}
+	if err := f.store.RejectGoal(f.ctx, decisions[0].ID, "not approved"); err != nil {
+		t.Fatalf("reject dropped goal: %v", err)
+	}
+
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+	for _, test := range []struct {
+		name   string
+		goalID string
+		status domain.GoalStatus
+	}{
+		{name: "done", goalID: done.ID, status: domain.GoalDone},
+		{name: "dropped", goalID: dropped.ID, status: domain.GoalDropped},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			status, headers, body := doRequest(t, srv.Client(), http.MethodPost, srv.URL+"/api/goals/"+test.goalID+"/content", mustJSON(t, map[string]string{
+				"content": "new content",
+			}))
+			assertErrorObject(t, status, headers, body, http.StatusConflict)
+			var response map[string]string
+			if err := json.Unmarshal(body, &response); err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(response["error"], string(test.status)) {
+				t.Fatalf("error = %q, want it to contain %q", response["error"], test.status)
+			}
+		})
+	}
+}
+
+func TestHTTPGoalContentDoesNotChangeRejectedGoal(t *testing.T) {
+	f := newBareFixture(t)
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+
+	status, headers, body := doRequest(t, srv.Client(), http.MethodPost, srv.URL+"/api/goals/"+f.goal.ID+"/content", mustJSON(t, map[string]string{
+		"content": "this must not be saved",
+	}))
+	assertErrorObject(t, status, headers, body, http.StatusConflict)
+
+	status, _, body = doRequest(t, srv.Client(), http.MethodGet, srv.URL+"/api/goals/"+f.goal.ID, nil)
+	if status != http.StatusOK {
+		t.Fatalf("get rejected goal status = %d; body=%s", status, body)
+	}
+	var response goalDetailResponse
+	if err := json.Unmarshal(body, &response); err != nil {
+		t.Fatalf("decode rejected goal: %v; body=%s", err, body)
+	}
+	if response.Goal.Content != f.goal.Content {
+		t.Fatalf("rejected goal content = %q, want unchanged %q", response.Goal.Content, f.goal.Content)
+	}
+}

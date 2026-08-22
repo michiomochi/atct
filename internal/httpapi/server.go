@@ -156,6 +156,10 @@ type rejectionRequest struct {
 	Reason string `json:"reason"`
 }
 
+type updateGoalContentRequest struct {
+	Content string `json:"content"`
+}
+
 type setGoalDerivedFromRequest struct {
 	DerivedFromGoalID string `json:"derived_from_goal_id"`
 }
@@ -223,6 +227,18 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.handleWithdraw(w, r, parts[2])
+		return
+	}
+	if len(parts) == 4 && parts[0] == "api" && parts[1] == "goals" && parts[3] == "content" {
+		if parts[2] == "" {
+			writeError(w, http.StatusBadRequest, "goal id is missing")
+			return
+		}
+		if r.Method != http.MethodPost {
+			writeError(w, http.StatusBadRequest, "method is not allowed for this endpoint")
+			return
+		}
+		s.handleUpdateGoalContent(w, r, parts[2])
 		return
 	}
 	if len(parts) == 4 && parts[0] == "api" && parts[1] == "goals" && parts[3] == "derived-from" {
@@ -636,6 +652,42 @@ func (s *Server) handleWithdraw(w http.ResponseWriter, r *http.Request, goalID s
 	}
 
 	goal, err := s.store.GetGoal(r.Context(), goalID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, goal)
+}
+
+func (s *Server) handleUpdateGoalContent(w http.ResponseWriter, r *http.Request, goalID string) {
+	var request updateGoalContentRequest
+	if err := decodeJSONBody(r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if strings.TrimSpace(request.Content) == "" {
+		writeError(w, http.StatusBadRequest, "content is required")
+		return
+	}
+
+	goal, err := s.store.UpdateGoalContent(r.Context(), goalID, request.Content)
+	if errors.Is(err, store.ErrGoalNotProposed) {
+		current, goalErr := s.store.GetGoal(r.Context(), goalID)
+		if errors.Is(goalErr, store.ErrGoalNotFound) {
+			writeError(w, http.StatusNotFound, goalErr.Error())
+			return
+		}
+		if goalErr != nil {
+			writeStoreError(w, goalErr)
+			return
+		}
+		writeError(w, http.StatusConflict, fmt.Sprintf("goal %s is %s, not proposed", goalID, current.Status))
+		return
+	}
+	if errors.Is(err, store.ErrGoalNotFound) {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
 	if err != nil {
 		writeStoreError(w, err)
 		return
