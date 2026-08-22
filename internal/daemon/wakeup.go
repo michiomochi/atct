@@ -8,12 +8,15 @@ import (
 )
 
 const (
-	wakeupPublishAfter              = 15 * time.Minute
-	wakeupInitialWait               = 10 * time.Minute
-	wakeupResendInterval            = 10 * time.Minute
-	detectionHandoffUnreceivedAfter = 30 * time.Minute
-	detectionHandoffUnreportedAfter = 30 * time.Minute
-	detectionClaimUndelegatedAfter  = 30 * time.Minute
+	wakeupPublishAfter                      = 15 * time.Minute
+	wakeupInitialWait                       = 10 * time.Minute
+	wakeupResendInterval                    = 10 * time.Minute
+	detectionHandoffUnreceivedAfter         = 30 * time.Minute
+	detectionHandoffUnreportedAfter         = 30 * time.Minute
+	detectionClaimUndelegatedAfter          = 30 * time.Minute
+	detectionAnsweredDecisionUnappliedAfter = 0
+	detectionDefaultDecisionUnappliedAfter  = 3 * time.Minute
+	detectionStaleClaimAfter                = 3 * time.Minute
 )
 
 // wakeupTracker keeps the transition state that is intentionally not stored
@@ -43,6 +46,10 @@ func detectionTrackerKey(name, targetID string) string {
 }
 
 func (t *wakeupTracker) publishDetection(now, startedAt time.Time, after time.Duration, name, targetID, projectID, goalID, taskID, handoffID string) (store.DecisionEvent, bool) {
+	return t.publishDetectionWithDecision(now, startedAt, after, name, targetID, projectID, goalID, taskID, handoffID, "")
+}
+
+func (t *wakeupTracker) publishDetectionWithDecision(now, startedAt time.Time, after time.Duration, name, targetID, projectID, goalID, taskID, handoffID, decisionID string) (store.DecisionEvent, bool) {
 	key := detectionTrackerKey(name, targetID)
 	trackedAt, ok := t.detectionActiveSince[key]
 	if !ok {
@@ -65,6 +72,7 @@ func (t *wakeupTracker) publishDetection(now, startedAt time.Time, after time.Du
 		Name: name,
 		Data: store.DetectionEvent{
 			DetectionID: store.NewDetectionID(),
+			DecisionID:  decisionID,
 			ProjectID:   projectID,
 			GoalID:      goalID,
 			TaskID:      taskID,
@@ -158,44 +166,60 @@ func (t *wakeupTracker) evaluateWith(ctx context.Context, s *store.Store, now ti
 			}
 		}
 
-		recordDetection := func(name, targetID string, startedAt time.Time, after time.Duration, goalID, taskID, handoffID string) {
+		recordDetection := func(name, targetID string, startedAt time.Time, after time.Duration, goalID, taskID, handoffID, decisionID string) {
 			currentDetectionKeys[detectionTrackerKey(name, targetID)] = struct{}{}
-			if event, ok := t.publishDetection(now, startedAt, after, name, targetID, project.ID, goalID, taskID, handoffID); ok {
+			if event, ok := t.publishDetectionWithDecision(now, startedAt, after, name, targetID, project.ID, goalID, taskID, handoffID, decisionID); ok {
 				events = append(events, event)
 			}
 		}
 		for _, goal := range state.CompletedGoals {
-			recordDetection(store.EventDetectionCompletionReportMissing, goal.ID, time.Time{}, wakeupPublishAfter, goal.ID, "", "")
+			recordDetection(store.EventDetectionCompletionReportMissing, goal.ID, time.Time{}, wakeupPublishAfter, goal.ID, "", "", "")
 		}
 		for _, goal := range state.CommitlessGoals {
-			recordDetection(store.EventDetectionCommitsMissing, goal.ID, time.Time{}, wakeupPublishAfter, goal.ID, "", "")
+			recordDetection(store.EventDetectionCommitsMissing, goal.ID, time.Time{}, wakeupPublishAfter, goal.ID, "", "", "")
 		}
 		for _, goal := range state.UndeclaredGoals {
-			recordDetection(store.EventDetectionUndeclaredGoal, goal.ID, time.Time{}, wakeupPublishAfter, goal.ID, "", "")
+			recordDetection(store.EventDetectionUndeclaredGoal, goal.ID, time.Time{}, wakeupPublishAfter, goal.ID, "", "", "")
 		}
 		for _, goal := range state.DroppedGoals {
-			recordDetection(store.EventDetectionAllTasksDropped, goal.ID, time.Time{}, wakeupPublishAfter, goal.ID, "", "")
+			recordDetection(store.EventDetectionAllTasksDropped, goal.ID, time.Time{}, wakeupPublishAfter, goal.ID, "", "", "")
 		}
 		for _, task := range state.UnclaimedDoingTasks {
-			recordDetection(store.EventDetectionUnclaimedDoing, task.ID, time.Time{}, wakeupPublishAfter, "", task.ID, "")
+			recordDetection(store.EventDetectionUnclaimedDoing, task.ID, time.Time{}, wakeupPublishAfter, "", task.ID, "", "")
 		}
 		for _, handoff := range state.HandoffsAwaitingReceipt {
 			if handoff.RequestedAt == nil {
 				continue
 			}
-			recordDetection(store.EventDetectionHandoffUnreceived, handoff.ID, *handoff.RequestedAt, detectionHandoffUnreceivedAfter, "", handoff.TaskID, handoff.ID)
+			recordDetection(store.EventDetectionHandoffUnreceived, handoff.ID, *handoff.RequestedAt, detectionHandoffUnreceivedAfter, "", handoff.TaskID, handoff.ID, "")
 		}
 		for _, handoff := range state.HandoffsAwaitingReport {
 			if handoff.ReceivedAt == nil {
 				continue
 			}
-			recordDetection(store.EventDetectionHandoffUnreported, handoff.ID, *handoff.ReceivedAt, detectionHandoffUnreportedAfter, "", handoff.TaskID, handoff.ID)
+			recordDetection(store.EventDetectionHandoffUnreported, handoff.ID, *handoff.ReceivedAt, detectionHandoffUnreportedAfter, "", handoff.TaskID, handoff.ID, "")
 		}
 		for _, task := range state.UndelegatedClaims {
 			if task.ClaimedAt == nil {
 				continue
 			}
-			recordDetection(store.EventDetectionClaimUndelegated, task.ID, *task.ClaimedAt, detectionClaimUndelegatedAfter, "", task.ID, "")
+			recordDetection(store.EventDetectionClaimUndelegated, task.ID, *task.ClaimedAt, detectionClaimUndelegatedAfter, "", task.ID, "", "")
+		}
+		for _, decision := range state.AnsweredUnappliedDecisions {
+			recordDetection(store.EventDetectionDecisionAnsweredUnapplied, decision.ID, time.Time{}, detectionAnsweredDecisionUnappliedAfter, decision.GoalID, decision.TaskID, "", decision.ID)
+		}
+		for _, decision := range state.DefaultUnappliedDecisions {
+			startedAt := time.Time{}
+			if decision.DefaultAppliedAt != nil {
+				startedAt = *decision.DefaultAppliedAt
+			}
+			recordDetection(store.EventDetectionDecisionDefaultUnapplied, decision.ID, startedAt, detectionDefaultDecisionUnappliedAfter, decision.GoalID, decision.TaskID, "", decision.ID)
+		}
+		for _, task := range state.StaleClaims {
+			if task.ClaimedAt == nil {
+				continue
+			}
+			recordDetection(store.EventDetectionClaimStale, task.ID, *task.ClaimedAt, detectionStaleClaimAfter, "", task.ID, "", "")
 		}
 	}
 	for key := range t.detectionActiveSince {

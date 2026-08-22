@@ -683,6 +683,120 @@ func TestDetectWakeupCollectsStalledHandoffCandidates(t *testing.T) {
 	}
 }
 
+func TestClassifyWakeupDecisionsUsesPendingPredicates(t *testing.T) {
+	defaultAppliedAt := time.Now().UTC()
+	appliedAt := time.Now().UTC()
+	projectGoalIDs := map[string]struct{}{"goal-active": {}}
+
+	human, defaultApplied := classifyWakeupDecisions([]domain.Decision{
+		{ID: "decision-human", GoalID: "goal-active", Status: domain.DecisionAnswered},
+		{
+			ID:               "decision-default",
+			GoalID:           "goal-active",
+			Status:           domain.DecisionAnswered,
+			DefaultAppliedAt: &defaultAppliedAt,
+		},
+		{
+			ID:        "decision-applied",
+			GoalID:    "goal-active",
+			Status:    domain.DecisionAnswered,
+			AppliedAt: &appliedAt,
+		},
+		{ID: "decision-open", GoalID: "goal-active", Status: domain.DecisionOpen},
+		{ID: "decision-other-goal", GoalID: "goal-other", Status: domain.DecisionAnswered},
+	}, projectGoalIDs)
+
+	if got := len(human); got != 1 || human[0].ID != "decision-human" {
+		t.Fatalf("human answered decisions = %#v, want only decision-human", human)
+	}
+	if got := len(defaultApplied); got != 1 || defaultApplied[0].ID != "decision-default" {
+		t.Fatalf("default-applied decisions = %#v, want only decision-default", defaultApplied)
+	}
+}
+
+func TestDetectWakeupCollectsUnappliedDecisionsAndStaleClaims(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	project, err := s.CreateProject(ctx, "atct", "/repos/atct")
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	goal, err := s.CreateGoal(ctx, project.ID, "Detect stalled handoffs", "human")
+	if err != nil {
+		t.Fatalf("CreateGoal: %v", err)
+	}
+	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "wakeup-detections", []string{
+		"human decision task",
+		"default decision task",
+		"stale claim task",
+		"live claim task",
+	}, []string{
+		"Receive a human decision.",
+		"Receive a default decision.",
+		"Keep the stale claim visible.",
+		"Keep the live claim hidden.",
+	})
+	if err != nil {
+		t.Fatalf("DeclareTasks: %v", err)
+	}
+
+	humanDecision, err := s.AskDecision(ctx, AskInput{
+		GoalID:   goal.ID,
+		TaskID:   tasks[0].ID,
+		Kind:     domain.KindDecision,
+		Question: "human answer",
+	})
+	if err != nil {
+		t.Fatalf("AskDecision human: %v", err)
+	}
+	if _, err := s.AnswerDecision(ctx, AnswerInput{DecisionID: humanDecision.ID, AnswerText: "answer"}); err != nil {
+		t.Fatalf("AnswerDecision: %v", err)
+	}
+
+	defaultAfterMs := int64(1)
+	if _, err := s.AskDecision(ctx, AskInput{
+		GoalID:         goal.ID,
+		TaskID:         tasks[1].ID,
+		Kind:           domain.KindDecision,
+		Question:       "default answer",
+		Options:        []domain.Option{{Label: "A"}},
+		DefaultOption:  "A",
+		DefaultAfterMs: &defaultAfterMs,
+	}); err != nil {
+		t.Fatalf("AskDecision default: %v", err)
+	}
+	if _, err := s.ApplyExpiredDefaults(ctx, time.Now().UTC().Add(time.Second)); err != nil {
+		t.Fatalf("ApplyExpiredDefaults: %v", err)
+	}
+
+	if _, err := s.ClaimTask(ctx, tasks[2].ID, "missing-session"); err != nil {
+		t.Fatalf("ClaimTask stale: %v", err)
+	}
+	if err := s.RegisterAgentSession(ctx, "live-session", os.Getpid()); err != nil {
+		t.Fatalf("RegisterAgentSession: %v", err)
+	}
+	if err := s.AssociateAgentSessionWithProject(ctx, "live-session", project.ID); err != nil {
+		t.Fatalf("AssociateAgentSessionWithProject: %v", err)
+	}
+	if _, err := s.ClaimTask(ctx, tasks[3].ID, "live-session"); err != nil {
+		t.Fatalf("ClaimTask live: %v", err)
+	}
+
+	state, err := s.DetectWakeup(ctx, project.ID)
+	if err != nil {
+		t.Fatalf("DetectWakeup: %v", err)
+	}
+	if got := len(state.AnsweredUnappliedDecisions); got != 1 || state.AnsweredUnappliedDecisions[0].ID != humanDecision.ID {
+		t.Fatalf("answered unapplied decisions = %#v, want %s", state.AnsweredUnappliedDecisions, humanDecision.ID)
+	}
+	if got := len(state.DefaultUnappliedDecisions); got != 1 {
+		t.Fatalf("default unapplied decisions = %#v, want one", state.DefaultUnappliedDecisions)
+	}
+	if got := len(state.StaleClaims); got != 1 || state.StaleClaims[0].ID != tasks[2].ID {
+		t.Fatalf("stale claims = %#v, want only %s", state.StaleClaims, tasks[2].ID)
+	}
+}
+
 func taskIDsProjectID(t *testing.T, s *Store, taskID string) string {
 	t.Helper()
 	projectID, err := s.ProjectIDForTask(context.Background(), taskID)

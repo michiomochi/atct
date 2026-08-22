@@ -743,6 +743,69 @@ func TestWakeupTrackerPublishesStalledHandoffDetections(t *testing.T) {
 	}
 }
 
+func TestWakeupTrackerPublishesUnappliedDecisionAndStaleClaimDetections(t *testing.T) {
+	ctx := context.Background()
+	s := newWakeupTestStore(t)
+	projectID, goalID := newWakeupTestGoal(t, s, "unapplied-decisions")
+	start := time.Date(2026, 8, 20, 20, 0, 0, 0, time.UTC)
+	defaultAppliedAt := start.Add(-detectionDefaultDecisionUnappliedAfter + time.Nanosecond)
+	claimedAt := start.Add(-detectionStaleClaimAfter + time.Nanosecond)
+	state := store.WakeupState{
+		AnsweredUnappliedDecisions: []domain.Decision{{ID: "decision-human", GoalID: goalID}},
+		DefaultUnappliedDecisions: []domain.Decision{{
+			ID:               "decision-default",
+			GoalID:           goalID,
+			DefaultAppliedAt: &defaultAppliedAt,
+		}},
+		StaleClaims: []domain.Task{{ID: "task-stale", GoalID: goalID, ClaimedAt: &claimedAt}},
+	}
+	detect := func(context.Context, string) (store.WakeupState, error) {
+		return state, nil
+	}
+	tracker := newWakeupTracker()
+
+	events, err := tracker.evaluateWith(ctx, s, start, detect)
+	if err != nil {
+		t.Fatalf("pre-threshold evaluate: %v", err)
+	}
+	if len(events) != 1 || events[0].Name != store.EventDetectionDecisionAnsweredUnapplied {
+		t.Fatalf("pre-threshold events = %#v, want immediate answered decision event", events)
+	}
+	humanDetection, ok := events[0].Data.(store.DetectionEvent)
+	if !ok || humanDetection.ProjectID != projectID || humanDetection.DecisionID != "decision-human" {
+		t.Fatalf("human detection = %#v, want project %s and decision decision-human", events[0].Data, projectID)
+	}
+
+	events, err = tracker.evaluateWith(ctx, s, start.Add(2*time.Nanosecond), detect)
+	if err != nil {
+		t.Fatalf("post-threshold evaluate: %v", err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("post-threshold events = %#v, want default decision and stale claim", events)
+	}
+	want := map[string]bool{
+		store.EventDetectionDecisionDefaultUnapplied: false,
+		store.EventDetectionClaimStale:               false,
+	}
+	for _, event := range events {
+		if _, ok := want[event.Name]; !ok {
+			t.Fatalf("unexpected event = %#v", event)
+		}
+		want[event.Name] = true
+	}
+	for name, found := range want {
+		if !found {
+			t.Fatalf("missing event %s: %#v", name, events)
+		}
+	}
+
+	if events, err := tracker.evaluateWith(ctx, s, start.Add(time.Hour), detect); err != nil {
+		t.Fatalf("duplicate evaluate: %v", err)
+	} else if len(events) != 0 {
+		t.Fatalf("duplicate events = %#v, want empty", events)
+	}
+}
+
 func findDetectionEvent(events []store.DecisionEvent, name, goalID string) (store.DetectionEvent, bool) {
 	for _, event := range events {
 		if event.Name != name {

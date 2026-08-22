@@ -141,6 +141,9 @@ describe("decision event subscription", () => {
       "detection.handoff_unreceived",
       "detection.handoff_unreported",
       "detection.claim_undelegated",
+      "detection.decision_answered_unapplied",
+      "detection.decision_default_unapplied",
+      "detection.claim_stale",
       "keepalive",
     ]);
 

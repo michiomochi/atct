@@ -9,17 +9,20 @@ import (
 )
 
 const (
-	EventWakeup                           = "wakeup"
-	EventKeepalive                        = "keepalive"
-	EventWakeupDiscrepancy                = "wakeup.discrepancy"
-	EventDetectionCompletionReportMissing = "detection.completion_report_missing"
-	EventDetectionCommitsMissing          = "detection.commits_missing"
-	EventDetectionUndeclaredGoal          = "detection.undeclared_goal"
-	EventDetectionAllTasksDropped         = "detection.all_tasks_dropped"
-	EventDetectionUnclaimedDoing          = "detection.unclaimed_doing"
-	EventDetectionHandoffUnreceived       = "detection.handoff_unreceived"
-	EventDetectionHandoffUnreported       = "detection.handoff_unreported"
-	EventDetectionClaimUndelegated        = "detection.claim_undelegated"
+	EventWakeup                             = "wakeup"
+	EventKeepalive                          = "keepalive"
+	EventWakeupDiscrepancy                  = "wakeup.discrepancy"
+	EventDetectionCompletionReportMissing   = "detection.completion_report_missing"
+	EventDetectionCommitsMissing            = "detection.commits_missing"
+	EventDetectionUndeclaredGoal            = "detection.undeclared_goal"
+	EventDetectionAllTasksDropped           = "detection.all_tasks_dropped"
+	EventDetectionUnclaimedDoing            = "detection.unclaimed_doing"
+	EventDetectionHandoffUnreceived         = "detection.handoff_unreceived"
+	EventDetectionHandoffUnreported         = "detection.handoff_unreported"
+	EventDetectionClaimUndelegated          = "detection.claim_undelegated"
+	EventDetectionDecisionAnsweredUnapplied = "detection.decision_answered_unapplied"
+	EventDetectionDecisionDefaultUnapplied  = "detection.decision_default_unapplied"
+	EventDetectionClaimStale                = "detection.claim_stale"
 )
 
 // WakeupEvent is the visible state that caused a wakeup notification. The
@@ -47,6 +50,7 @@ type WakeupDiscrepancyEvent struct {
 // condition-specific detection.
 type DetectionEvent struct {
 	DetectionID string `json:"detection_id"`
+	DecisionID  string `json:"decision_id,omitempty"`
 	ProjectID   string `json:"project_id"`
 	GoalID      string `json:"goal_id,omitempty"`
 	TaskID      string `json:"task_id,omitempty"`
@@ -68,18 +72,38 @@ type WakeupState struct {
 	// WorkingTaskCount is retained for compatibility with wakeup consumers.
 	// It is always zero: a claimed task is not unstarted, and an unstarted task
 	// remains claimable regardless of claims on sibling tasks.
-	WorkingTaskCount        int
-	UntouchedTaskCount      int
-	WaitingAnswerCount      int
-	Tasks                   []domain.Task
-	CompletedGoals          []domain.Goal
-	DroppedGoals            []domain.Goal
-	UnclaimedDoingTasks     []domain.Task
-	UndeclaredGoals         []domain.Goal
-	CommitlessGoals         []domain.Goal
-	HandoffsAwaitingReceipt []TaskHandoff
-	HandoffsAwaitingReport  []TaskHandoff
-	UndelegatedClaims       []domain.Task
+	WorkingTaskCount           int
+	UntouchedTaskCount         int
+	WaitingAnswerCount         int
+	Tasks                      []domain.Task
+	CompletedGoals             []domain.Goal
+	DroppedGoals               []domain.Goal
+	UnclaimedDoingTasks        []domain.Task
+	UndeclaredGoals            []domain.Goal
+	CommitlessGoals            []domain.Goal
+	HandoffsAwaitingReceipt    []TaskHandoff
+	HandoffsAwaitingReport     []TaskHandoff
+	UndelegatedClaims          []domain.Task
+	AnsweredUnappliedDecisions []domain.Decision
+	DefaultUnappliedDecisions  []domain.Decision
+	StaleClaims                []domain.Task
+}
+
+func classifyWakeupDecisions(decisions []domain.Decision, projectGoalIDs map[string]struct{}) (humanAnswered, defaultApplied []domain.Decision) {
+	for _, decision := range decisions {
+		if decision.Status != domain.DecisionAnswered || decision.AppliedAt != nil {
+			continue
+		}
+		if _, ok := projectGoalIDs[decision.GoalID]; !ok {
+			continue
+		}
+		if decision.DefaultAppliedAt != nil {
+			defaultApplied = append(defaultApplied, decision)
+			continue
+		}
+		humanAnswered = append(humanAnswered, decision)
+	}
+	return humanAnswered, defaultApplied
 }
 
 // DetectWakeup assembles the wakeup state used by pending output and the
@@ -92,7 +116,31 @@ func (s *Store) DetectWakeup(ctx context.Context, projectID string) (WakeupState
 		return WakeupState{}, err
 	}
 
+	decisions, err := s.ListUnappliedDecisions(ctx)
+	if err != nil {
+		return WakeupState{}, err
+	}
+	projectGoalIDs := make(map[string]struct{}, len(goals))
+	activeGoalIDs := make(map[string]struct{}, len(goals))
+	for _, goal := range goals {
+		projectGoalIDs[goal.ID] = struct{}{}
+		if goal.Status == domain.GoalActive {
+			activeGoalIDs[goal.ID] = struct{}{}
+		}
+	}
+
 	state := WakeupState{}
+	state.AnsweredUnappliedDecisions, state.DefaultUnappliedDecisions = classifyWakeupDecisions(decisions, projectGoalIDs)
+	_, staleClaimedTasks, err := ClaimLiveness(ctx, s, projectID)
+	if err != nil {
+		return WakeupState{}, err
+	}
+	for _, task := range staleClaimedTasks {
+		if _, ok := activeGoalIDs[task.GoalID]; ok {
+			state.StaleClaims = append(state.StaleClaims, task)
+		}
+	}
+
 	now := time.Now().UTC()
 	for _, goal := range goals {
 		if goal.Status != domain.GoalActive {
@@ -234,6 +282,15 @@ func (s *Store) DetectWakeup(ctx context.Context, projectID string) (WakeupState
 	}
 	if state.UndelegatedClaims == nil {
 		state.UndelegatedClaims = []domain.Task{}
+	}
+	if state.AnsweredUnappliedDecisions == nil {
+		state.AnsweredUnappliedDecisions = []domain.Decision{}
+	}
+	if state.DefaultUnappliedDecisions == nil {
+		state.DefaultUnappliedDecisions = []domain.Decision{}
+	}
+	if state.StaleClaims == nil {
+		state.StaleClaims = []domain.Task{}
 	}
 	return state, nil
 }

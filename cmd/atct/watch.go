@@ -509,8 +509,14 @@ func emitWatchDecision(out io.Writer, eventName string, decision watchDecision, 
 	}
 	if eventName == "goal.created" || strings.HasPrefix(eventName, "detection.") {
 		target := decision.GoalID
-		if strings.HasPrefix(eventName, "detection.") && target == "" {
-			target = decision.HandoffID
+		if strings.HasPrefix(eventName, "detection.") {
+			target = decision.DecisionID
+			if target == "" {
+				target = decision.GoalID
+			}
+			if target == "" {
+				target = decision.HandoffID
+			}
 			if target == "" {
 				target = decision.TaskID
 			}
@@ -519,7 +525,7 @@ func emitWatchDecision(out io.Writer, eventName string, decision watchDecision, 
 			if eventName == "goal.created" {
 				return fmt.Errorf("SSE event %s has no goal_id", eventName)
 			}
-			return fmt.Errorf("SSE event %s has neither goal_id, handoff_id, nor task_id", eventName)
+			return fmt.Errorf("SSE event %s has neither decision_id, goal_id, handoff_id, nor task_id", eventName)
 		}
 		key := watchDetectionDeliveryKey{eventName: eventName, targetID: target}
 		if _, ok := detectionDelivered[key]; ok {
@@ -596,6 +602,12 @@ func formatWatchDecision(eventName string, decision watchDecision) (string, bool
 		return fmt.Sprintf("atct detection: handoff %s has no completion report", decision.HandoffID), true
 	case "detection.claim_undelegated":
 		return fmt.Sprintf("atct detection: task %s has no handoff request", decision.TaskID), true
+	case "detection.decision_answered_unapplied":
+		return fmt.Sprintf("atct detection: decision %s was answered but not applied", decision.DecisionID), true
+	case "detection.decision_default_unapplied":
+		return fmt.Sprintf("atct detection: decision %s was default-applied but not applied", decision.DecisionID), true
+	case "detection.claim_stale":
+		return fmt.Sprintf("atct detection: task %s has a stale claim", decision.TaskID), true
 	case "wakeup.discrepancy":
 		return fmt.Sprintf("atct wakeup discrepancy: detector_unstarted_tasks=%d counted_unstarted_tasks=%d", decision.DetectorUnstartedTaskCount, decision.CountedUnstartedTaskCount), true
 	default:

@@ -590,6 +590,9 @@ func TestEmitWatchDetectionWritesOneLinePerCondition(t *testing.T) {
 		{"detection.handoff_unreceived", watchDecision{HandoffID: "handoff-1"}, "atct detection: handoff handoff-1 has no receipt"},
 		{"detection.handoff_unreported", watchDecision{HandoffID: "handoff-2"}, "atct detection: handoff handoff-2 has no completion report"},
 		{"detection.claim_undelegated", watchDecision{TaskID: "task-2"}, "atct detection: task task-2 has no handoff request"},
+		{"detection.decision_answered_unapplied", watchDecision{DecisionID: "decision-1", GoalID: "goal-1"}, "atct detection: decision decision-1 was answered but not applied"},
+		{"detection.decision_default_unapplied", watchDecision{DecisionID: "decision-2", GoalID: "goal-1"}, "atct detection: decision decision-2 was default-applied but not applied"},
+		{"detection.claim_stale", watchDecision{TaskID: "task-3"}, "atct detection: task task-3 has a stale claim"},
 	}
 	for _, tc := range cases {
 		var output bytes.Buffer
@@ -622,6 +625,27 @@ func TestEmitWatchDetectionDoesNotRepeatSameTarget(t *testing.T) {
 	}
 	if lines := strings.Count(strings.TrimSpace(output.String()), "\n"); lines != 0 {
 		t.Fatalf("output = %q, want a single line", output.String())
+	}
+}
+
+func TestEmitWatchDetectionDoesNotRepeatSameDecision(t *testing.T) {
+	var output bytes.Buffer
+	delivered := make(map[watchDeliveryKey]struct{})
+	wakeupDelivered := make(map[watchWakeupDeliveryKey]struct{})
+	detectionDelivered := make(map[watchDetectionDeliveryKey]struct{})
+
+	for _, record := range []watchDecision{
+		{ID: "event-1", DecisionID: "decision-1", GoalID: "goal-1"},
+		{ID: "event-2", DecisionID: "decision-1", GoalID: "goal-2"},
+	} {
+		if err := emitWatchDecision(&output, "detection.decision_answered_unapplied", record, delivered, wakeupDelivered, detectionDelivered); err != nil {
+			t.Fatalf("emitWatchDecision: %v", err)
+		}
+	}
+
+	want := "atct detection: decision decision-1 was answered but not applied\n"
+	if got := output.String(); got != want {
+		t.Fatalf("output = %q, want %q", got, want)
 	}
 }
 
