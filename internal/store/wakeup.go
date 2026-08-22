@@ -56,15 +56,18 @@ type KeepaliveEvent struct {
 // WakeupState is the detector result used by pending output and the daemon.
 // Tasks contains the actionable task list for pending's human-readable view.
 type WakeupState struct {
-	ActiveGoalCount     int
-	UnstartedTaskCount  int
-	WaitingAnswerCount  int
-	Tasks               []domain.Task
-	CompletedGoals      []domain.Goal
-	DroppedGoals        []domain.Goal
-	UnclaimedDoingTasks []domain.Task
-	UndeclaredGoals     []domain.Goal
-	CommitlessGoals     []domain.Goal
+	ActiveGoalCount        int
+	UnstartedTaskCount     int
+	WaitingAnswerTaskCount int
+	WorkingTaskCount       int
+	UntouchedTaskCount     int
+	WaitingAnswerCount     int
+	Tasks                  []domain.Task
+	CompletedGoals         []domain.Goal
+	DroppedGoals           []domain.Goal
+	UnclaimedDoingTasks    []domain.Task
+	UndeclaredGoals        []domain.Goal
+	CommitlessGoals        []domain.Goal
 }
 
 // DetectWakeup assembles the wakeup state used by pending output and the
@@ -155,10 +158,6 @@ func (s *Store) DetectWakeup(ctx context.Context, projectID string) (WakeupState
 		}
 		if len(openDecisions) > 0 {
 			state.WaitingAnswerCount += len(openDecisions)
-			continue
-		}
-		if _, ok := runningByGoal[goal.ID]; ok {
-			continue
 		}
 		var unstarted []domain.Task
 		for _, task := range tasks {
@@ -171,7 +170,14 @@ func (s *Store) DetectWakeup(ctx context.Context, projectID string) (WakeupState
 		}
 		state.ActiveGoalCount++
 		state.UnstartedTaskCount += len(unstarted)
-		state.Tasks = append(state.Tasks, unstarted...)
+		if len(openDecisions) > 0 {
+			state.WaitingAnswerTaskCount += len(unstarted)
+		} else if _, ok := runningByGoal[goal.ID]; ok {
+			state.WorkingTaskCount += len(unstarted)
+		} else {
+			state.UntouchedTaskCount += len(unstarted)
+			state.Tasks = append(state.Tasks, unstarted...)
+		}
 	}
 	if state.Tasks == nil {
 		state.Tasks = []domain.Task{}
@@ -227,10 +233,10 @@ func (s *Store) CountUnstartedTasks(ctx context.Context, projectID string) (int,
 	return count, nil
 }
 
-// CountUnstartedTasksForWakeup returns the unstarted count using the same
-// claim-liveness and open-decision rules as DetectWakeup. CountUnstartedTasks
-// intentionally keeps its independent simple-count definition for callers
-// that rely on it.
+// CountUnstartedTasksForWakeup returns the total unstarted count from
+// DetectWakeup, including tasks classified as waiting for an answer, being
+// worked on, or untouched. CountUnstartedTasks intentionally keeps its
+// independent simple-count definition for callers that rely on it.
 func (s *Store) CountUnstartedTasksForWakeup(ctx context.Context, projectID string) (int, error) {
 	state, err := s.DetectWakeup(ctx, projectID)
 	if err != nil {
