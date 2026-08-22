@@ -428,6 +428,23 @@ describe("GoalDetail", () => {
     expect(heading.parentElement?.contains(screen.getByTestId("goal-withdraw-trigger"))).toBe(true);
   });
 
+  it("keeps a long goal title and withdrawal action in the title row", async () => {
+    const longTitle = "A very long goal title that should occupy multiple lines without pushing the withdrawal action out of its row";
+    vi.mocked(fetchGoal).mockResolvedValueOnce(goalResponse({ content: longTitle }));
+
+    render(<GoalDetail id="goal-1" />);
+
+    const heading = await screen.findByRole("heading", { level: 1, name: longTitle });
+    const withdrawalTrigger = screen.getByTestId("goal-withdraw-trigger");
+    const titleRow = heading.parentElement;
+
+    expect(titleRow?.className).toContain("sm:flex-nowrap");
+    expect(heading.className).toContain("min-w-0");
+    expect(heading.className).toContain("flex-1");
+    expect(withdrawalTrigger.className).toContain("shrink-0");
+    expect(heading.nextElementSibling).toBe(withdrawalTrigger);
+  });
+
   it("opens the withdrawal dialog from the active goal title action", async () => {
     vi.mocked(fetchGoal).mockResolvedValueOnce(goalResponse());
 

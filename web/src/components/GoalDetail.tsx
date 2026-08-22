@@ -313,7 +313,7 @@ function GoalWithdrawal({ goal, onUpdated }: { goal: Goal; onUpdated: () => void
               data-testid="goal-withdraw-trigger"
               type="button"
               variant="secondary-destructive"
-              className="focus-ring px-3 py-2 text-sm font-medium"
+              className="focus-ring shrink-0 px-3 py-2 text-sm font-medium"
             >
               {t("goal.withdraw.submit")}
             </Button>
@@ -424,8 +424,8 @@ export function GoalDetail({ id }: Props) {
         <a className="focus-ring text-sm font-medium text-accent-700 hover:text-accent-600" href="/">
           {t("goal.backToDashboard")}
         </a>
-        <div className="mt-2 flex flex-wrap items-start justify-between gap-4">
-          <h1 className="font-display text-3xl font-semibold text-ink-950">
+        <div className="mt-2 flex flex-wrap items-start justify-between gap-4 sm:flex-nowrap">
+          <h1 className="min-w-0 flex-1 font-display text-3xl font-semibold text-ink-950">
             {data ? headline(data.goal.goal.content) : t("goal.title")}
           </h1>
           {data && <GoalWithdrawal goal={data.goal.goal} onUpdated={load} />}
