@@ -214,7 +214,7 @@ space 名はゴール ID の先頭 8 桁を使う（`atct-c22a6d79`）。
 入れるかを決める必要がある**（名前は `[a-z][a-z0-9_-]{0,31}` で 32 文字まで。UUID は
 入らないので先頭 8 桁になる）。
 
-## A-3. 通知の受け口を commander に寄せる（atct 側の変更が必要と判明）
+## A-3. 通知の受け口を commander に寄せる（検討の記録）
 
 いまは commander の pane で `atct watch` を Monitor に流し、Stop hook も commander で
 効いている。**両方を上の層へ寄せる。**subcommander 側に残すと、今日と同じで
@@ -238,7 +238,12 @@ Monitor はセッションが張るものなので、subcommander が張らな�
 `herdr workspace create --env KEY=VALUE` の両方が使える（`--help` で確認済み）。
 **したがって atct 側で env を見る判定を足せば解決する。**
 
-### 確定した形: `ATCT_SCOPE_GOAL` で絞る（抑止しない）
+### 撤回された案: `ATCT_SCOPE_GOAL` で絞る
+
+**この案は採用されなかった。**2026-08-22 に人間が「wakeup に統一し Stop hook を廃止する」
+と決めたため、**絞り込む対象そのものが無くなった。**実装しないこと。
+
+以下は検討の記録である。**判断の理由に価値があるので残すが、作業の指示ではない。**
 
 **候補として「1 行出す」「役割を渡す」「受け入れる」の 3 つを挙げたが、採用したのは
 どれでもない。**4 つ目の形に決まった。
@@ -287,7 +292,7 @@ Supported JSON output fields:  continue, systemMessage, terminalSequence
 当初「告知のためにブロックするのは本末転倒なので可視化できない」と考えたが、
 **block は不要だった。**
 
-### `ATCT_SCOPE_GOAL` の名前は atct 側で持つ
+### atct 固有の名前は atct 側で持つ
 
 `orchestration` スキルには**変数名を書かない。**あのスキルは全 space が読むので、
 atct 固有の名前は atct 側（この spec と atct のスキル）に置く。
@@ -299,6 +304,57 @@ dotfiles 側には汎用形だけが入った（commit `b66acc5`）。
 > どちらが正しいか誰も突き合わせない不整合になる。
 
 **この「同じ場所に書く」は守る。**離れた場所で設定できる形にすると必ずずれる。
+
+## A-3b. 確定した形: wakeup に統一し Stop hook を廃止する
+
+**人間の判断（2026-08-22）: wakeup に統一する。Stop hook を廃止する。間隔は 3 分。**
+
+```
+Monitor を張るのは commander だけ（atct:start を呼ぶ）
+subcommander は atct:start を呼ばない → 通知が届かない
+Stop hook は廃止する → 両方の層で発火する問題が消える
+```
+
+**環境変数も Stop hook の改造も要らない。**Monitor はプラグインが張るのではなく
+**セッションが自分で張る**（`plugin/hooks/*.json` に `watch` は 0 件。張るのは
+`atct:start` スキルの最初の手順）ので、**張らなければ届かない。**
+
+### なぜ統一できるか
+
+Stop hook が言う 10 種類のうち **7 種類はすでに検知イベントとして SSE を流れている。**
+
+```
+未着手がある                → wakeup
+タスクが未宣言              → detection.undeclared_goal
+完了報告が無い              → detection.completion_report_missing
+コミットが紐づいていない      → detection.commits_missing
+全タスクが dropped          → detection.all_tasks_dropped
+claim 無しで doing          → detection.unclaimed_doing
+claim したまま渡していない    → detection.claim_undelegated
+```
+
+そして **Monitor の通知は人間が何も言わなくてもエージェントのターンを起こす。**
+この session 中に `atct wakeup:` の通知で実際に作業が進んだ。**自走する。**
+
+### 先に足すものが 3 件ある。順序を守る
+
+```
+答えられた決定が未適用      ← 人間の回答が届かないまま止まる。最も落とせない
+既定で閉じた決定が未適用
+死んだセッションの claim が残っている
+```
+
+**足す → 実測する → Stop hook を消す。**逆にすると、その間だけ人間の回答が届かない
+穴が空く。
+
+### 間隔 3 分の代償
+
+実行ログ 708 件の間隔は p50 が 0.6 分、p75 が 3.7 分、p90 が 13.8 分。
+**3 分は p75 の少し下なので、正常な作業の合間にも鳴る。**加えて wakeup はプロジェクト
+単位なので、条件を満たすプロジェクト数の倍だけ増える（2026-08-22 に 1 周期で 4 プロジェクト
+が同時に鳴った）。10 分 → 3 分で約 3.3 倍。
+
+**Stop hook を捨てる代償として受け入れる判断である。**
 
 ## A-4. subcommander に「他のゴールを見ない」を書く
 
@@ -547,10 +603,10 @@ subcommander (goal C) ─┘                              │
 | 最終成果物のレビュー | commander。**リリースを関門にする。**観点は 4 つ（B-5b） |
 | 1 ゴールあたりの subcommander | **1 台。**作る前に `herdr agent list` で確認する（A-1） |
 | `pnpm install` | subcommander が worktree を作った直後に 1 回 |
-| 通知の受け口 | `ATCT_SCOPE_GOAL` で絞る（抑止しない）。可視化は `systemMessage`（A-3） |
+| 通知の受け口 | **wakeup に統一。Stop hook を廃止。間隔 3 分**（A-3b） |
 | workspace 名の制約 | **無い。**32 文字の規約は agent 名だけ（A-1） |
 | 役割定義の置き場 | `orchestration` スキル（`b66acc5` で着地。`chezmoi apply` は承認待ち） |
-| `ATCT_SCOPE_GOAL` の名前 | **atct 側で持つ。**`orchestration` には書かない |
+| atct 固有の名前の置き場 | **atct 側で持つ。**`orchestration` には書かない |
 
 ## B-7. 残っているもの
 
