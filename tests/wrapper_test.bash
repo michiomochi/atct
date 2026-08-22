@@ -139,6 +139,47 @@ test_static_contract() {
   fi
 }
 
+test_hooks_json_has_no_stop_section() {
+  if python3 - "$REPO_ROOT/plugin/hooks/hooks.json" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as stream:
+    hooks = json.load(stream)["hooks"]
+
+if "Stop" in hooks:
+    raise SystemExit("Stop hook is still registered")
+PY
+  then
+    return
+  fi
+  fail 'hooks.json must not register Stop'
+}
+
+test_hooks_json_keeps_session_start_and_pre_tool_use_sections() {
+  if python3 - "$REPO_ROOT/plugin/hooks/hooks.json" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as stream:
+    hooks = json.load(stream)["hooks"]
+
+missing = {"SessionStart", "PreToolUse"} - hooks.keys()
+if missing:
+    raise SystemExit(f"missing hook sections: {sorted(missing)}")
+PY
+  then
+    return
+  fi
+  fail 'hooks.json must keep SessionStart and PreToolUse'
+}
+
+test_stop_hook_file_is_removed_but_other_hooks_remain() {
+  [[ ! -e "$REPO_ROOT/plugin/hooks/stop" ]] || fail 'plugin/hooks/stop must be absent'
+  [[ -f "$REPO_ROOT/plugin/hooks/pre-ask" ]] || fail 'plugin/hooks/pre-ask must remain'
+  [[ -f "$REPO_ROOT/plugin/hooks/session-start" ]] || fail 'plugin/hooks/session-start must remain'
+}
+
 test_download_cache_and_mcp_stdout() {
   local fixtures="$TEMP_ROOT/fixtures"
   local fake_bin="$TEMP_ROOT/fake-bin"
@@ -450,220 +491,10 @@ test_session_start_is_silent_without_atct_wrapper() {
   assert_eq '' "$output" 'missing atct wrapper must keep the hook silent'
 }
 
-test_stop_hook_active_is_silent() {
-  local fixture="$TEMP_ROOT/stop-hook-active"
-  local hook="$fixture/plugin/hooks/stop"
-  local adjacent="$fixture/plugin/bin/atct"
-  local marker="$fixture/marker"
-  local output
-
-  mkdir -p "$(dirname "$hook")" "$(dirname "$adjacent")"
-  cp "$REPO_ROOT/plugin/hooks/stop" "$hook"
-  cat >"$adjacent" <<'SCRIPT'
-#!/bin/bash
-printf 'called\n' >"$MARKER"
-SCRIPT
-  chmod +x "$adjacent"
-
-  if ! output="$(MARKER="$marker" HOME="$fixture" PATH="" /bin/bash "$hook" <<< '{"stop_hook_active":true}' 2>&1)"; then
-    fail 'stop hook failed while stop_hook_active was true'
-  fi
-  assert_eq '' "$output" 'stop_hook_active must keep the hook silent'
-  [[ ! -e "$marker" ]] || fail 'stop_hook_active must prevent wrapper execution'
-}
-
-test_stop_hook_is_silent_without_adjacent_wrapper() {
-  local fixture="$TEMP_ROOT/stop-hook-no-wrapper"
-  local hook="$fixture/plugin/hooks/stop"
-  local output
-
-  mkdir -p "$(dirname "$hook")"
-  cp "$REPO_ROOT/plugin/hooks/stop" "$hook"
-
-  if ! output="$(HOME="$fixture" PATH="" /bin/bash "$hook" <<< '{}' 2>&1)"; then
-    fail 'stop hook failed without an adjacent atct wrapper'
-  fi
-  assert_eq '' "$output" 'missing atct wrapper must keep the hook silent'
-}
-
-test_stop_hook_is_silent_when_pending_is_empty() {
-  local fixture="$TEMP_ROOT/stop-hook-empty"
-  local hook="$fixture/plugin/hooks/stop"
-  local adjacent="$fixture/plugin/bin/atct"
-  local args_log="$fixture/args.log"
-  local output
-
-  mkdir -p "$(dirname "$hook")" "$(dirname "$adjacent")"
-  cp "$REPO_ROOT/plugin/hooks/stop" "$hook"
-  cat >"$adjacent" <<'SCRIPT'
-#!/bin/bash
-printf '%s\n' "$*" >"$ATCT_ARGS_LOG"
-exit 1
-SCRIPT
-  chmod +x "$adjacent"
-
-  if ! output="$(ATCT_ARGS_LOG="$args_log" HOME="$fixture" PATH="" /bin/bash "$hook" <<< '{}' 2>&1)"; then
-    fail 'stop hook failed when atct pending reported no answers'
-  fi
-  assert_eq '' "$output" 'empty pending output must keep the hook silent'
-  assert_file_contains 'pending' "$args_log"
-}
-
-test_stop_hook_is_silent_when_no_claim_or_pending_exists() {
-  local fixture="$TEMP_ROOT/stop-hook-no-work"
-  local hook="$fixture/plugin/hooks/stop"
-  local adjacent="$fixture/plugin/bin/atct"
-  local output
-
-  mkdir -p "$(dirname "$hook")" "$(dirname "$adjacent")"
-  cp "$REPO_ROOT/plugin/hooks/stop" "$hook"
-  cat >"$adjacent" <<'SCRIPT'
-#!/bin/bash
-if [[ "${1:-}" == pending ]]; then
-  exit 0
-fi
-exit 99
-SCRIPT
-  chmod +x "$adjacent"
-
-  if ! output="$(HOME="$fixture" PATH="" /bin/bash "$hook" <<< '{}' 2>&1)"; then
-    fail 'stop hook failed when there was no pending work'
-  fi
-  assert_eq '' "$output" 'no claim or pending answer must keep the hook silent'
-}
-
-test_stop_hook_blocks_when_unfinished_claim_exists() {
-  local fixture="$TEMP_ROOT/stop-hook-claim"
-  local hook="$fixture/plugin/hooks/stop"
-  local adjacent="$fixture/plugin/bin/atct"
-  local claim_output=$'A task claimed by this run is still open. If you forgot to close it, close it; if you are still working on it, continue.\n\nUnfinished claimed tasks:\n- unfinished implementation (task_id: t-1)'
-  local output
-
-  mkdir -p "$(dirname "$hook")" "$(dirname "$adjacent")"
-  cp "$REPO_ROOT/plugin/hooks/stop" "$hook"
-  cat >"$adjacent" <<'SCRIPT'
-#!/bin/bash
-if [[ "${1:-}" == pending ]]; then
-  printf '%s' "$CLAIM_OUTPUT"
-fi
-SCRIPT
-  chmod +x "$adjacent"
-
-  if ! output="$(CLAIM_OUTPUT="$claim_output" HOME="$fixture" PATH="" /bin/bash "$hook" <<< '{}' 2>&1)"; then
-    fail 'stop hook failed when an unfinished claim existed'
-  fi
-  [[ "$output" == *'"decision":"block"'* ]] || fail 'unfinished claim must block the stop hook'
-  [[ "$output" == *'If you forgot to close it, close it; if you are still working on it, continue.'* ]] || fail 'claim reason must offer close-or-continue guidance'
-  [[ "$output" == *'unfinished implementation'* ]] || fail 'claim reason must include the unfinished task'
-}
-
-test_stop_hook_reason_passes_all_pending_reasons() {
-  local fixture="$TEMP_ROOT/stop-hook-both"
-  local hook="$fixture/plugin/hooks/stop"
-  local adjacent="$fixture/plugin/bin/atct"
-  local pending_output=$'A human answered a decision you parked. Call `atct_decision_poll` with each decision_id below, then continue the work that was waiting on it.\n\n- Review mode? (decision_id: d-1)\n\nA task claimed by this run is still open. If you forgot to close it, close it; if you are still working on it, continue.\n\nUnfinished claimed tasks:\n- unfinished implementation (task_id: t-1)\n\nAn active goal has no tasks declared. Call `atct_task_declare` for each goal below, then continue the work.\n\nUndeclared active goals:\n- Break this goal into tasks (goal_id: g-1)'
-  local output
-
-  mkdir -p "$(dirname "$hook")" "$(dirname "$adjacent")"
-  cp "$REPO_ROOT/plugin/hooks/stop" "$hook"
-  cat >"$adjacent" <<'SCRIPT'
-#!/bin/bash
-if [[ "${1:-}" == pending ]]; then
-  printf '%s' "$PENDING_OUTPUT"
-fi
-SCRIPT
-  chmod +x "$adjacent"
-
-  if ! output="$(PENDING_OUTPUT="$pending_output" HOME="$fixture" PATH="" /bin/bash "$hook" <<< '{}' 2>&1)"; then
-    fail 'stop hook failed when pending work and an unfinished claim coexisted'
-  fi
-  [[ "$output" == *'"decision":"block"'* ]] || fail 'both pending conditions must block the stop hook'
-  [[ "$output" == *'A human answered a decision you parked.'* ]] || fail 'reason omitted the pending-decision guidance'
-  [[ "$output" == *'If you forgot to close it, close it; if you are still working on it, continue.'* ]] || fail 'reason omitted the unfinished-claim guidance'
-  [[ "$output" == *'Review mode?'* && "$output" == *'unfinished implementation'* && "$output" == *'Break this goal into tasks'* ]] || fail 'reason omitted one of the three pending conditions'
-}
-
-test_stop_hook_blocks_when_pending_exists() {
-  local fixture="$TEMP_ROOT/stop-hook-pending"
-  local hook="$fixture/plugin/hooks/stop"
-  local adjacent="$fixture/plugin/bin/atct"
-  local output_file="$fixture/output.json"
-  local pending_output=$'A human answered a decision you parked. Call `atct_decision_poll` with each decision_id below, then continue the work that was waiting on it.\n\n- Review mode? (decision_id: d-1)'
-  local output
-
-  mkdir -p "$(dirname "$hook")" "$(dirname "$adjacent")"
-  cp "$REPO_ROOT/plugin/hooks/stop" "$hook"
-  cat >"$adjacent" <<'SCRIPT'
-#!/bin/bash
-if [[ "${1:-}" == pending ]]; then
-  printf '%s' "$PENDING_OUTPUT"
-fi
-SCRIPT
-  chmod +x "$adjacent"
-
-  if ! output="$(PENDING_OUTPUT="$pending_output" HOME="$fixture" PATH="" /bin/bash "$hook" <<< '{}' 2>&1)"; then
-    fail 'stop hook failed when atct pending reported an answer'
-  fi
-  [[ "$output" == *'"decision":"block"'* ]] || fail 'pending answer must block the stop hook'
-  [[ "$output" == *'"reason":'* ]] || fail 'pending answer must include a reason'
-  printf '%s' "$output" >"$output_file"
-  if ! JSON_OUTPUT_FILE="$output_file" EXPECTED_REASON="$pending_output" python3 -c '
-import json
-import os
-
-with open(os.environ["JSON_OUTPUT_FILE"], encoding="utf-8") as stream:
-    payload = json.load(stream)
-
-if payload.get("decision") != "block":
-    raise SystemExit("decision was not block")
-if payload.get("reason") != os.environ["EXPECTED_REASON"]:
-    raise SystemExit("reason did not pass through exactly")
-'; then
-    fail 'reason must include pending output exactly'
-  fi
-}
-
-test_stop_hook_escapes_pending_json_characters() {
-  local fixture="$TEMP_ROOT/stop-hook-json-escape"
-  local hook="$fixture/plugin/hooks/stop"
-  local adjacent="$fixture/plugin/bin/atct"
-  local output_file="$fixture/output.json"
-  local pending_output
-  local expected_reason
-
-  pending_output=$'answer "quoted"\npath \\ root\tcolumn'
-  expected_reason="$pending_output"
-
-  mkdir -p "$(dirname "$hook")" "$(dirname "$adjacent")"
-  cp "$REPO_ROOT/plugin/hooks/stop" "$hook"
-  cat >"$adjacent" <<'SCRIPT'
-#!/bin/bash
-if [[ "${1:-}" == pending ]]; then
-  printf '%s' "$PENDING_OUTPUT"
-fi
-SCRIPT
-  chmod +x "$adjacent"
-
-  if ! PENDING_OUTPUT="$pending_output" HOME="$fixture" PATH="" /bin/bash "$hook" <<< '{}' >"$output_file" 2>&1; then
-    fail 'stop hook failed while escaping pending output'
-  fi
-  if ! JSON_OUTPUT_FILE="$output_file" EXPECTED_REASON="$expected_reason" python3 -c '
-import json
-import os
-
-with open(os.environ["JSON_OUTPUT_FILE"], encoding="utf-8") as stream:
-    payload = json.load(stream)
-
-if payload.get("decision") != "block":
-    raise SystemExit("decision was not block")
-if payload.get("reason") != os.environ["EXPECTED_REASON"]:
-    raise SystemExit("reason did not round-trip exactly")
-'; then
-    fail 'stop hook output was not valid JSON or reason was altered'
-  fi
-}
-
 test_static_contract
+test_hooks_json_has_no_stop_section
+test_hooks_json_keeps_session_start_and_pre_tool_use_sections
+test_stop_hook_file_is_removed_but_other_hooks_remain
 test_download_cache_and_mcp_stdout
 test_context_check_preserves_exit_code
 test_cleanup_failure_is_best_effort
@@ -675,12 +506,4 @@ test_session_start_preserves_context_and_silence
 test_session_start_mentions_active_goal_permission
 test_session_start_mentions_undo_boundary
 test_session_start_is_silent_without_atct_wrapper
-test_stop_hook_active_is_silent
-test_stop_hook_is_silent_without_adjacent_wrapper
-test_stop_hook_is_silent_when_pending_is_empty
-test_stop_hook_is_silent_when_no_claim_or_pending_exists
-test_stop_hook_blocks_when_unfinished_claim_exists
-test_stop_hook_blocks_when_pending_exists
-test_stop_hook_reason_passes_all_pending_reasons
-test_stop_hook_escapes_pending_json_characters
 printf 'PASS wrapper tests\n'
