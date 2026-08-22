@@ -128,3 +128,68 @@ atct context の出力が空でなければ、atct が管理している
 外したのと同じ理由）。
 
 ただし **`worktree-setup.sh` の命名の変更は atct 側**である。両方が揃って初めて動く。
+
+## 主チェックアウトの space をどう区別するか（実測して決めた。2026-08-22）
+
+上の「残る穴」の未決を埋める。**確かめてから決めた。**
+
+### 実測
+
+```
+herdr workspace list      cwd フィールドが存在しない（キー自体が無い）
+                          返るのは workspace_id / label / number / pane_count /
+                          tab_count / active_tab_id / agent_status / focused
+
+herdr pane list           cwd と foreground_cwd を pane ごとに持つ。workspace_id も持つ
+
+herdr workspace create    --cwd / --label / --env <KEY=VALUE> / --focus / --no-focus
+
+現存する 5 space の label   dotfiles / stock-data / HQ / stock-ai / atct
+                          プロジェクト名そのもの。規約は入っていない
+```
+
+**フックは引数を全部見られる。**`single-subcommander.sh`（21〜33 行）が既に
+`tool_input.command` を丸ごと受け取り `shlex.split` している。**`--cwd` も `--label` も
+`--env` も見える。**この点は未検証だったが、既存フックの実装で確認した。
+
+### 決定: `--env` で明示する（候補 2）
+
+```
+herdr workspace create --cwd <主チェックアウト> --env ATCT_MAIN_CHECKOUT=1
+```
+
+フックはこの引数があれば通す。無ければ worktree を用意して `exit 2` で止める。
+
+### 候補 1（最初の 1 つは通す）を採らない理由
+
+`pane list` が cwd を持つので**実装はできる。**採らないのは別の理由である。
+
+**判定が「今どの pane が存在するか」に乗るため、状態依存になる。**
+`pane list` で「主チェックアウトを向いた pane が既にあるか」を見る形になるが、
+**pane を閉じた瞬間に「1 つ目」の枠が空く。**commander の pane が落ちている間に
+executor 用の space を主へ作ると**通ってしまう。**同じコマンドが日によって通ったり
+止まったりする。
+
+**さらに、忘れたときに倒れる向きが逆である。**
+
+| | 明示を忘れた / 誤って主に作った |
+|---|---|
+| 候補 1 | 1 つ目なら**通る**（事故がすり抜ける） |
+| 候補 2 | **止まる**。ただし worktree は用意済みなので直すのは引数だけ |
+
+`claim-before-delegate` の事故は「止めすぎ」だったが、**ここで欲しいのは
+「止め漏らさない」側である。**止まる側の代償が「引数を直す」だけになる形
+（用意してから止める）を先に入れたので、安全側へ倒して損がない。
+
+### 候補 3（label に規約）を採らない理由
+
+現存 5 space の label はプロジェクト名そのもので、規約は入っていない。
+**入れるには 5 つ全部の改名が要る。**かつ label は人間が読む名前であり、
+そこへ機械の規約を混ぜると表示が汚れる。`--env` は人間が読む場所ではない。
+
+### 副産物
+
+`--env ATCT_MAIN_CHECKOUT=1` は**引数として見えるだけでなく、実際にその space の
+環境変数になる。**space 自身が「自分は主チェックアウトだ」と答えられるので、
+後で別の規則を足すときにも使える。フックは引数を見るので、環境変数が
+子プロセスへ伝わるかには依存しない。
