@@ -57,8 +57,15 @@ atct-c22a6d79-executor
 
 ### 何をどの文書に書くか
 
-`orchestration` スキルは**全 space が読む**（atct / stock-data / HQ / stock-ai / dotfiles）。
-atct 固有の名前をそこに書くと、atct を使わない space もそれを読む。
+`orchestration` スキルは全 space が読む（atct / stock-data / HQ / stock-ai / dotfiles）。
+
+**ただし前提が 1 つ違っていた（人間の指摘、2026-08-22）。**この環境の dotfiles は
+`orchestration` スキルを含めて **atct 前提**である。したがって「atct を使わない space が
+読む」という commander の懸念は成り立たない。**atct 固有の名前を書いてよい。**
+
+**それでも分ける価値はある。**`orchestration` は役割と委譲の作法を扱うスキルであって、
+atct の実装の詳細（環境変数名、スキル名）はその主題ではない。**スキルにその主題に属さない
+規則を書かない**という既存の方針（`ai-config` の書き方方針）に従う。
 
 | 文書 | 書くこと |
 |---|---|
