@@ -61,19 +61,20 @@ type Project struct {
 }
 
 type Task struct {
-	ID          string
-	GoalID      string
-	Title       string
-	Description string
-	Status      string
-	Agent       string
-	Files       string
-	SortOrder   int64
-	DeclareKey  string
-	ClaimedBy   string
-	ClaimedAt   sql.NullString
-	CreatedAt   string
-	UpdatedAt   string
+	ID           string
+	GoalID       string
+	Title        string
+	Description  string
+	Status       string
+	Agent        string
+	Files        string
+	SortOrder    int64
+	DeclareKey   string
+	ClaimedBy    string
+	ClaimedAt    sql.NullString
+	SnoozedUntil sql.NullString
+	CreatedAt    string
+	UpdatedAt    string
 }
 
 type TaskCommit struct {

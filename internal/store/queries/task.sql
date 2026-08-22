@@ -1,18 +1,23 @@
 -- name: CreateTask :exec
 INSERT INTO tasks (
   id, goal_id, title, description, status, agent, files, sort_order, declare_key,
-  claimed_by, claimed_at, created_at, updated_at
+  claimed_by, claimed_at, snoozed_until, created_at, updated_at
 )
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(goal_id, declare_key) DO NOTHING;
 
 -- name: ListTasks :many
 SELECT
   id, goal_id, title, description, status, agent, files, sort_order, declare_key,
-  claimed_by, claimed_at, created_at, updated_at
+  claimed_by, claimed_at, snoozed_until, created_at, updated_at
 FROM tasks
 WHERE goal_id = ?
 ORDER BY sort_order, id;
+
+-- name: UpdateTaskSnooze :execresult
+UPDATE tasks
+SET snoozed_until = ?, updated_at = ?
+WHERE id = ?;
 
 -- name: DropOpenTasksForGoal :execresult
 UPDATE tasks SET status = 'dropped', claimed_by = '', claimed_at = NULL, updated_at = ?

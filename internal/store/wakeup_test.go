@@ -4,9 +4,105 @@ import (
 	"context"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/michiomochi/atct/internal/domain"
 )
+
+func TestSnoozeTaskUsesDeadlineToControlWakeupWithoutChangingTodo(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	project, err := s.CreateProject(ctx, "atct", "/repos/atct")
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	goal, err := s.CreateGoal(ctx, project.ID, "Defer tasks", "human")
+	if err != nil {
+		t.Fatalf("CreateGoal: %v", err)
+	}
+	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "snooze-tasks", []string{
+		"Future task",
+		"Expired task",
+		"Empty deadline task",
+		"Cleared deadline task",
+	}, []string{
+		"Stay deferred until the future deadline.",
+		"Return to wakeup after the deadline.",
+		"Remain actionable without a deadline.",
+		"Return to wakeup after clearing the deadline.",
+	})
+	if err != nil {
+		t.Fatalf("DeclareTasks: %v", err)
+	}
+
+	future := time.Now().UTC().Add(time.Hour).Truncate(time.Millisecond)
+	past := time.Now().UTC().Add(-time.Hour).Truncate(time.Millisecond)
+
+	deferred, err := s.SnoozeTask(ctx, tasks[0].ID, &future)
+	if err != nil {
+		t.Fatalf("SnoozeTask future: %v", err)
+	}
+	if deferred.Status != domain.TaskTodo || deferred.SnoozedUntil == nil || !deferred.SnoozedUntil.Equal(future) {
+		t.Fatalf("future snooze result = %+v, want todo with deadline %s", deferred, future)
+	}
+
+	expired, err := s.SnoozeTask(ctx, tasks[1].ID, &past)
+	if err != nil {
+		t.Fatalf("SnoozeTask past: %v", err)
+	}
+	if expired.Status != domain.TaskTodo {
+		t.Fatalf("expired snooze changed status to %q, want todo", expired.Status)
+	}
+
+	if _, err := s.SnoozeTask(ctx, tasks[3].ID, &future); err != nil {
+		t.Fatalf("SnoozeTask before clear: %v", err)
+	}
+	cleared, err := s.SnoozeTask(ctx, tasks[3].ID, nil)
+	if err != nil {
+		t.Fatalf("SnoozeTask clear: %v", err)
+	}
+	if cleared.Status != domain.TaskTodo || cleared.SnoozedUntil != nil {
+		t.Fatalf("cleared snooze result = %+v, want todo without deadline", cleared)
+	}
+
+	state, err := s.DetectWakeup(ctx, project.ID)
+	if err != nil {
+		t.Fatalf("DetectWakeup: %v", err)
+	}
+	if state.UnstartedTaskCount != 3 || len(state.Tasks) != 3 {
+		t.Fatalf("wakeup state = %+v, want three actionable todo tasks", state)
+	}
+	got := make(map[string]bool, len(state.Tasks))
+	for _, task := range state.Tasks {
+		got[task.ID] = true
+	}
+	for _, task := range tasks[1:] {
+		if !got[task.ID] {
+			t.Fatalf("wakeup tasks = %#v, missing actionable task %s", state.Tasks, task.ID)
+		}
+	}
+	if got[tasks[0].ID] {
+		t.Fatalf("future-snoozed task %s was included in wakeup tasks", tasks[0].ID)
+	}
+
+	counted, err := s.CountUnstartedTasks(ctx, project.ID)
+	if err != nil {
+		t.Fatalf("CountUnstartedTasks: %v", err)
+	}
+	if counted != 3 {
+		t.Fatalf("counted unstarted tasks = %d, want 3", counted)
+	}
+
+	listed, err := s.ListTasks(ctx, goal.ID)
+	if err != nil {
+		t.Fatalf("ListTasks: %v", err)
+	}
+	for _, task := range listed {
+		if task.Status != domain.TaskTodo {
+			t.Fatalf("task %s status = %q, want todo", task.ID, task.Status)
+		}
+	}
+}
 
 func TestDetectWakeupReportsUnstartedTasksWithoutRunningClaim(t *testing.T) {
 	ctx := context.Background()

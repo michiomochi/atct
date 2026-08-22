@@ -66,26 +66,27 @@ func (q *Queries) CountOpenDecisionsForTask(ctx context.Context, taskID sql.Null
 const createTask = `-- name: CreateTask :exec
 INSERT INTO tasks (
   id, goal_id, title, description, status, agent, files, sort_order, declare_key,
-  claimed_by, claimed_at, created_at, updated_at
+  claimed_by, claimed_at, snoozed_until, created_at, updated_at
 )
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(goal_id, declare_key) DO NOTHING
 `
 
 type CreateTaskParams struct {
-	ID          string
-	GoalID      string
-	Title       string
-	Description string
-	Status      string
-	Agent       string
-	Files       string
-	SortOrder   int64
-	DeclareKey  string
-	ClaimedBy   string
-	ClaimedAt   sql.NullString
-	CreatedAt   string
-	UpdatedAt   string
+	ID           string
+	GoalID       string
+	Title        string
+	Description  string
+	Status       string
+	Agent        string
+	Files        string
+	SortOrder    int64
+	DeclareKey   string
+	ClaimedBy    string
+	ClaimedAt    sql.NullString
+	SnoozedUntil sql.NullString
+	CreatedAt    string
+	UpdatedAt    string
 }
 
 func (q *Queries) CreateTask(ctx context.Context, arg CreateTaskParams) error {
@@ -101,6 +102,7 @@ func (q *Queries) CreateTask(ctx context.Context, arg CreateTaskParams) error {
 		arg.DeclareKey,
 		arg.ClaimedBy,
 		arg.ClaimedAt,
+		arg.SnoozedUntil,
 		arg.CreatedAt,
 		arg.UpdatedAt,
 	)
@@ -576,7 +578,7 @@ func (q *Queries) ListTaskHandoffs(ctx context.Context, taskID string) ([]TaskHa
 const listTasks = `-- name: ListTasks :many
 SELECT
   id, goal_id, title, description, status, agent, files, sort_order, declare_key,
-  claimed_by, claimed_at, created_at, updated_at
+  claimed_by, claimed_at, snoozed_until, created_at, updated_at
 FROM tasks
 WHERE goal_id = ?
 ORDER BY sort_order, id
@@ -603,6 +605,7 @@ func (q *Queries) ListTasks(ctx context.Context, goalID string) ([]Task, error) 
 			&i.DeclareKey,
 			&i.ClaimedBy,
 			&i.ClaimedAt,
+			&i.SnoozedUntil,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -745,6 +748,22 @@ type UpdateAgentSessionProjectParams struct {
 
 func (q *Queries) UpdateAgentSessionProject(ctx context.Context, arg UpdateAgentSessionProjectParams) (sql.Result, error) {
 	return q.db.ExecContext(ctx, updateAgentSessionProject, arg.ProjectID, arg.ID)
+}
+
+const updateTaskSnooze = `-- name: UpdateTaskSnooze :execresult
+UPDATE tasks
+SET snoozed_until = ?, updated_at = ?
+WHERE id = ?
+`
+
+type UpdateTaskSnoozeParams struct {
+	SnoozedUntil sql.NullString
+	UpdatedAt    string
+	ID           string
+}
+
+func (q *Queries) UpdateTaskSnooze(ctx context.Context, arg UpdateTaskSnoozeParams) (sql.Result, error) {
+	return q.db.ExecContext(ctx, updateTaskSnooze, arg.SnoozedUntil, arg.UpdatedAt, arg.ID)
 }
 
 const updateTaskStatus = `-- name: UpdateTaskStatus :execresult

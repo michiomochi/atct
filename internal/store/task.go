@@ -133,19 +133,20 @@ func (s *Store) DeclareTasks(ctx context.Context, goalID, agent, idempotencyKey 
 			return nil, fmt.Errorf("encode task %d files: %w", i, err)
 		}
 		err = q.CreateTask(ctx, sqlcgen.CreateTaskParams{
-			ID:          uuid.NewString(),
-			GoalID:      goalID,
-			Title:       title,
-			Description: descriptions[i],
-			Status:      string(domain.TaskTodo),
-			Agent:       agent,
-			Files:       filesJSON,
-			SortOrder:   maxSortOrder + 1 + int64(i),
-			DeclareKey:  declareKey,
-			ClaimedBy:   "",
-			ClaimedAt:   sql.NullString{},
-			CreatedAt:   now,
-			UpdatedAt:   now,
+			ID:           uuid.NewString(),
+			GoalID:       goalID,
+			Title:        title,
+			Description:  descriptions[i],
+			Status:       string(domain.TaskTodo),
+			Agent:        agent,
+			Files:        filesJSON,
+			SortOrder:    maxSortOrder + 1 + int64(i),
+			DeclareKey:   declareKey,
+			ClaimedBy:    "",
+			ClaimedAt:    sql.NullString{},
+			SnoozedUntil: sql.NullString{},
+			CreatedAt:    now,
+			UpdatedAt:    now,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("insert task %d: %w", i, err)
@@ -197,6 +198,39 @@ func (s *Store) ListTasks(ctx context.Context, goalID string) ([]domain.Task, er
 		out = append(out, tk)
 	}
 	return out, nil
+}
+
+// SnoozeTask sets or clears the absolute deadline that temporarily hides a
+// todo task from wakeup detection. A nil deadline clears the snooze.
+func (s *Store) SnoozeTask(ctx context.Context, taskID string, until *time.Time) (domain.Task, error) {
+	var snoozedUntil sql.NullString
+	if until != nil {
+		snoozedUntil = sql.NullString{String: until.UTC().Format(time.RFC3339Nano), Valid: true}
+	}
+
+	res, err := taskQueries(s).UpdateTaskSnooze(ctx, sqlcgen.UpdateTaskSnoozeParams{
+		SnoozedUntil: snoozedUntil,
+		UpdatedAt:    time.Now().UTC().Format(time.RFC3339),
+		ID:           taskID,
+	})
+	if err != nil {
+		return domain.Task{}, fmt.Errorf("snooze task: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return domain.Task{}, fmt.Errorf("snooze rows affected: %w", err)
+	}
+	if n == 0 {
+		_, lookupErr := taskQueries(s).TaskExists(ctx, taskID)
+		if errors.Is(lookupErr, sql.ErrNoRows) {
+			return domain.Task{}, fmt.Errorf("%w: %s", ErrTaskNotFound, taskID)
+		}
+		if lookupErr != nil {
+			return domain.Task{}, fmt.Errorf("lookup task after snooze: %w", lookupErr)
+		}
+		return domain.Task{}, fmt.Errorf("snooze task affected no rows: %s", taskID)
+	}
+	return s.loadTask(ctx, taskID)
 }
 
 func (s *Store) LinkTaskCommit(ctx context.Context, taskID string, c domain.TaskCommit) error {
@@ -273,6 +307,13 @@ func taskFromRow(row sqlcgen.Task) (domain.Task, error) {
 			return domain.Task{}, fmt.Errorf("parse claimed_at: %w", err)
 		}
 		tk.ClaimedAt = &t
+	}
+	if row.SnoozedUntil.Valid {
+		t, err := time.Parse(time.RFC3339Nano, row.SnoozedUntil.String)
+		if err != nil {
+			return domain.Task{}, fmt.Errorf("parse snoozed_until: %w", err)
+		}
+		tk.SnoozedUntil = &t
 	}
 	if tk.CreatedAt, err = time.Parse(time.RFC3339, row.CreatedAt); err != nil {
 		return domain.Task{}, fmt.Errorf("parse created_at: %w", err)

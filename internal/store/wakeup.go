@@ -93,6 +93,7 @@ func (s *Store) DetectWakeup(ctx context.Context, projectID string) (WakeupState
 	}
 
 	state := WakeupState{}
+	now := time.Now().UTC()
 	for _, goal := range goals {
 		if goal.Status != domain.GoalActive {
 			continue
@@ -183,7 +184,7 @@ func (s *Store) DetectWakeup(ctx context.Context, projectID string) (WakeupState
 		}
 		var unstarted []domain.Task
 		for _, task := range tasks {
-			if task.Status == domain.TaskTodo && task.ClaimedBy == "" {
+			if task.Status == domain.TaskTodo && task.ClaimedBy == "" && (task.SnoozedUntil == nil || !task.SnoozedUntil.After(now)) {
 				unstarted = append(unstarted, task)
 			}
 		}
@@ -246,6 +247,7 @@ func (s *Store) CountUnstartedTasks(ctx context.Context, projectID string) (int,
 		return 0, err
 	}
 	count := 0
+	now := time.Now().UTC()
 	for _, goal := range goals {
 		if goal.Status != domain.GoalActive {
 			continue
@@ -262,7 +264,7 @@ func (s *Store) CountUnstartedTasks(ctx context.Context, projectID string) (int,
 			return 0, err
 		}
 		for _, task := range tasks {
-			if task.Status == domain.TaskTodo && task.ClaimedBy == "" {
+			if task.Status == domain.TaskTodo && task.ClaimedBy == "" && (task.SnoozedUntil == nil || !task.SnoozedUntil.After(now)) {
 				count++
 			}
 		}

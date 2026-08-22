@@ -56,6 +56,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   declare_key TEXT NOT NULL,
   claimed_by TEXT NOT NULL DEFAULT '',
   claimed_at TEXT,
+  snoozed_until TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );

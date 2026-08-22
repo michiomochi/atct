@@ -66,19 +66,20 @@ func Body(content string) string {
 }
 
 type Task struct {
-	ID          string     `json:"id"`
-	GoalID      string     `json:"goal_id"`
-	Title       string     `json:"title"`
-	Description string     `json:"description"`
-	Status      TaskStatus `json:"status"`
-	Agent       string     `json:"agent"`
-	Files       []string   `json:"files"`
-	Order       int        `json:"order"`
-	DeclareKey  string     `json:"declare_key"`
-	ClaimedBy   string     `json:"claimed_by"`
-	ClaimedAt   *time.Time `json:"claimed_at,omitempty"`
-	CreatedAt   time.Time  `json:"created_at"`
-	UpdatedAt   time.Time  `json:"updated_at"`
+	ID           string     `json:"id"`
+	GoalID       string     `json:"goal_id"`
+	Title        string     `json:"title"`
+	Description  string     `json:"description"`
+	Status       TaskStatus `json:"status"`
+	Agent        string     `json:"agent"`
+	Files        []string   `json:"files"`
+	Order        int        `json:"order"`
+	DeclareKey   string     `json:"declare_key"`
+	ClaimedBy    string     `json:"claimed_by"`
+	ClaimedAt    *time.Time `json:"claimed_at,omitempty"`
+	SnoozedUntil *time.Time `json:"snoozed_until,omitempty"`
+	CreatedAt    time.Time  `json:"created_at"`
+	UpdatedAt    time.Time  `json:"updated_at"`
 }
 
 type TaskCommit struct {
