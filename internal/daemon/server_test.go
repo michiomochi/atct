@@ -507,3 +507,189 @@ func createDecisionFixture(t *testing.T, conn net.Conn) (string, string) {
 	}
 	return goal.ID, tasks[0].ID
 }
+
+type goalListFixture struct {
+	store    *store.Store
+	daemon   *Daemon
+	project  domain.Project
+	active   []domain.Goal
+	proposed []domain.Goal
+	done     []domain.Goal
+	dropped  []domain.Goal
+}
+
+type goalListItem struct {
+	ID                string            `json:"id"`
+	ProjectID         string            `json:"project_id"`
+	DerivedFromGoalID string            `json:"derived_from_goal_id"`
+	Content           string            `json:"content"`
+	Status            domain.GoalStatus `json:"status"`
+	ClaimedBy         string            `json:"claimed_by"`
+	CreatedAt         time.Time         `json:"created_at"`
+}
+
+func newGoalListFixture(t *testing.T) goalListFixture {
+	t.Helper()
+	ctx := context.Background()
+	s := openPendingResponseTestStore(t)
+	project := createPendingResponseProject(t, s, t.TempDir(), "goal-list")
+
+	create := func(content, creator string, derivedFrom ...string) domain.Goal {
+		goal, err := s.CreateGoal(ctx, project.ID, content, creator, derivedFrom...)
+		if err != nil {
+			t.Fatalf("CreateGoal(%q): %v", content, err)
+		}
+		return goal
+	}
+	mark := func(goal domain.Goal, status domain.GoalStatus) domain.Goal {
+		_, err := s.DB().ExecContext(ctx, "UPDATE goals SET status = ?, work_done = ?, now_possible = ?, how_to_verify = ?, surprises = ?, needs_review = ?, next_steps = ?, result_summary = ? WHERE id = ?", string(status), "recorded work", "recorded now", "recorded verification", "recorded surprises", "recorded review", "recorded next steps", "recorded summary", goal.ID)
+		if err != nil {
+			t.Fatalf("mark goal %s as %s: %v", goal.ID, status, err)
+		}
+		goal.Status = status
+		goal.WorkDone = "recorded work"
+		goal.ResultSummary = "recorded summary"
+		return goal
+	}
+
+	activeParent := create("active parent", "human")
+	activeChild := create("active child", "human", activeParent.ID)
+	proposedOne := create("proposed one", "agent")
+	proposedTwo := create("proposed two", "agent")
+	doneOne := mark(create("done one", "human"), domain.GoalDone)
+	doneTwo := mark(create("done two", "human"), domain.GoalDone)
+	droppedOne := mark(create("dropped one", "human"), domain.GoalDropped)
+	droppedTwo := mark(create("dropped two", "human"), domain.GoalDropped)
+
+	if _, err := s.DB().ExecContext(ctx, "UPDATE goals SET claimed_by = ? WHERE id = ?", "claimed-agent", activeChild.ID); err != nil {
+		t.Fatalf("claim goal %s: %v", activeChild.ID, err)
+	}
+	activeChild.ClaimedBy = "claimed-agent"
+
+	return goalListFixture{
+		store:    s,
+		daemon:   New(s),
+		project:  project,
+		active:   []domain.Goal{activeParent, activeChild},
+		proposed: []domain.Goal{proposedOne, proposedTwo},
+		done:     []domain.Goal{doneOne, doneTwo},
+		dropped:  []domain.Goal{droppedOne, droppedTwo},
+	}
+}
+
+func listGoalsForTest(t *testing.T, fixture goalListFixture) []json.RawMessage {
+	t.Helper()
+	params, err := json.Marshal(map[string]string{"cwd": fixture.project.RootPath})
+	if err != nil {
+		t.Fatalf("marshal goal.list params: %v", err)
+	}
+	result, err := fixture.daemon.dispatch(context.Background(), rpc.Request{Method: "goal.list", Params: params})
+	if err != nil {
+		t.Fatalf("goal.list: %v", err)
+	}
+	var response struct {
+		Goals []json.RawMessage `json:"goals"`
+	}
+	if err := json.Unmarshal(result, &response); err != nil {
+		t.Fatalf("unmarshal goal.list response: %v", err)
+	}
+	return response.Goals
+}
+
+func TestGoalListOmitsDoneAndDroppedGoals(t *testing.T) {
+	fixture := newGoalListFixture(t)
+	defer fixture.store.Close()
+
+	goals := listGoalsForTest(t, fixture)
+	var items []goalListItem
+	for _, raw := range goals {
+		var item goalListItem
+		if err := json.Unmarshal(raw, &item); err != nil {
+			t.Fatalf("unmarshal goal: %v", err)
+		}
+		items = append(items, item)
+	}
+
+	for _, omitted := range append(fixture.done, fixture.dropped...) {
+		for _, item := range items {
+			if item.ID == omitted.ID {
+				t.Fatalf("goal.list returned omitted goal %s with status %s", omitted.ID, omitted.Status)
+			}
+		}
+	}
+}
+
+func TestGoalListOmitsCompletionDetails(t *testing.T) {
+	fixture := newGoalListFixture(t)
+	defer fixture.store.Close()
+
+	for _, raw := range listGoalsForTest(t, fixture) {
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &fields); err != nil {
+			t.Fatalf("unmarshal goal fields: %v", err)
+		}
+		if _, ok := fields["work_done"]; ok {
+			t.Fatalf("goal.list response unexpectedly contains work_done")
+		}
+		if _, ok := fields["result_summary"]; ok {
+			t.Fatalf("goal.list response unexpectedly contains result_summary")
+		}
+	}
+}
+
+func TestGoalListKeepsActiveAndProposedGoals(t *testing.T) {
+	fixture := newGoalListFixture(t)
+	defer fixture.store.Close()
+
+	got := make(map[string]bool)
+	for _, raw := range listGoalsForTest(t, fixture) {
+		var item goalListItem
+		if err := json.Unmarshal(raw, &item); err != nil {
+			t.Fatalf("unmarshal goal: %v", err)
+		}
+		got[item.ID] = true
+	}
+	for _, retained := range append(fixture.active, fixture.proposed...) {
+		if !got[retained.ID] {
+			t.Fatalf("goal.list omitted retained goal %s with status %s", retained.ID, retained.Status)
+		}
+	}
+}
+
+func TestGoalListKeepsGoalIdentityFields(t *testing.T) {
+	fixture := newGoalListFixture(t)
+	defer fixture.store.Close()
+
+	var got goalListItem
+	for _, raw := range listGoalsForTest(t, fixture) {
+		var item goalListItem
+		if err := json.Unmarshal(raw, &item); err != nil {
+			t.Fatalf("unmarshal goal: %v", err)
+		}
+		if item.ID == fixture.active[1].ID {
+			got = item
+			break
+		}
+	}
+	if got.ID != fixture.active[1].ID {
+		t.Fatalf("goal.list omitted active child %s", fixture.active[1].ID)
+	}
+	if got.ProjectID != fixture.project.ID {
+		t.Fatalf("project_id = %q, want %q", got.ProjectID, fixture.project.ID)
+	}
+	if got.DerivedFromGoalID != fixture.active[0].ID {
+		t.Fatalf("derived_from_goal_id = %q, want %q", got.DerivedFromGoalID, fixture.active[0].ID)
+	}
+	if got.Content != "active child" {
+		t.Fatalf("content = %q, want %q", got.Content, "active child")
+	}
+	if got.Status != domain.GoalActive {
+		t.Fatalf("status = %q, want %q", got.Status, domain.GoalActive)
+	}
+	if got.ClaimedBy != "claimed-agent" {
+		t.Fatalf("claimed_by = %q, want %q", got.ClaimedBy, "claimed-agent")
+	}
+	if got.CreatedAt.IsZero() {
+		t.Fatal("created_at is zero")
+	}
+}

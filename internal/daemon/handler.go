@@ -213,6 +213,30 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		if err != nil {
 			return nil, err
 		}
+		type goalListResponse struct {
+			ID                string            `json:"id"`
+			ProjectID         string            `json:"project_id"`
+			DerivedFromGoalID string            `json:"derived_from_goal_id"`
+			Content           string            `json:"content"`
+			Status            domain.GoalStatus `json:"status"`
+			ClaimedBy         string            `json:"claimed_by"`
+			CreatedAt         time.Time         `json:"created_at"`
+		}
+		visibleGoals := make([]goalListResponse, 0, len(goals))
+		for _, goal := range goals {
+			if goal.Status == domain.GoalDone || goal.Status == domain.GoalDropped {
+				continue
+			}
+			visibleGoals = append(visibleGoals, goalListResponse{
+				ID:                goal.ID,
+				ProjectID:         goal.ProjectID,
+				DerivedFromGoalID: goal.DerivedFromGoalID,
+				Content:           goal.Content,
+				Status:            goal.Status,
+				ClaimedBy:         goal.ClaimedBy,
+				CreatedAt:         goal.CreatedAt,
+			})
+		}
 		// spec section 7: goal.list returns active Goals and unapplied answers together.
 		// This return value lets a new session recover answers (spec section 8, paragraph 3).
 		// Mark matching agent_session_id answers as applied; return others for reference only.
@@ -226,7 +250,7 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		}
 		data := map[string]any{
 			"project":            ns,
-			"goals":              goals,
+			"goals":              visibleGoals,
 			"answered_decisions": mine,
 			"orphaned_decisions": orphaned,
 		}
