@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+
+INPUT="$(/bin/cat)"
+TOOL_NAME_RE='"tool_name"[[:space:]]*:[[:space:]]*"([^"]*)"'
+[[ "$INPUT" =~ $TOOL_NAME_RE ]] || exit 0
+[[ "${BASH_REMATCH[1]}" == "AskUserQuestion" ]] || exit 0
+
+CWD_RE='"cwd"[[:space:]]*:[[:space:]]*"([^"]*)"'
+[[ "$INPUT" =~ $CWD_RE ]] || exit 0
+CWD="${BASH_REMATCH[1]}"
+
+HOOK_DIR="${BASH_SOURCE[0]%/*}"
+if [[ "$HOOK_DIR" == "${BASH_SOURCE[0]}" ]]; then
+  HOOK_DIR='.'
+fi
+
+version_gt() {
+  local a b i
+  local IFS=.
+  local -a av=($1) bv=($2)
+  for ((i = 0; i < ${#av[@]} || i < ${#bv[@]}; i++)); do
+    a=${av[i]:-0}; b=${bv[i]:-0}
+    ((10#$a > 10#$b)) && return 0
+    ((10#$a < 10#$b)) && return 1
+  done
+  return 1
+}
+
+resolve_atct_bin() {
+  local wrapper="$HOOK_DIR/../bin/atct"
+  [[ -e "$wrapper" ]] || return 1
+
+  local atct_bin_dir="${HOME:-}/.atct/bin"
+  local candidate candidate_name version best="" best_version=""
+
+  for candidate in "$atct_bin_dir"/atct-*; do
+    [[ -x "$candidate" ]] || continue
+    candidate_name="${candidate##*/}"
+    [[ "$candidate_name" =~ ^atct-([0-9]+([.][0-9]+)+)$ ]] || continue
+    version="${BASH_REMATCH[1]}"
+    if [[ -z "$best" ]] || version_gt "$version" "$best_version"; then
+      best="$candidate"; best_version="$version"
+    fi
+  done
+
+  if [[ -n "$best" ]]; then
+    printf '%s\n' "$best"
+    return 0
+  fi
+
+  printf '%s\n' "$HOOK_DIR/../bin/atct"
+}
+
+ATCT_BIN="$(resolve_atct_bin)" || exit 0
+[[ -x "$ATCT_BIN" ]] || exit 0
+[[ -d "$CWD" ]] || exit 0
+
+(
+  cd -- "$CWD" || exit 0
+  CONTEXT_OUTPUT="$($ATCT_BIN context 2>/dev/null)" || exit 0
+  [[ -n "$CONTEXT_OUTPUT" ]] || exit 0
+  printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"atct_decision_ask: include at least two options and state the consequence of each (option A: continue with the first path; option B: continue with the second path). For reversible choices, execute first, record wait_ms=0, and do not wait. For irreversible choices, omit default_option and wait."}}'
+)
