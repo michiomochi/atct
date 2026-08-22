@@ -52,7 +52,8 @@ atct-c22a6d79-executor
 | 古い worktree の片付け | commander。未コミットの変更は人間に出す |
 | 最終成果物のレビュー | commander。**リリースを関門にする**（観点 4 つ） |
 | `pnpm install` | subcommander が worktree を作った直後に 1 回 |
-| `ATCT_SCOPE_GOAL` の名前 | **atct 側で持つ。**`orchestration` には書かない（下記） |
+| 通知の受け口 | **wakeup に統一。Stop hook を廃止。間隔 3 分**（下記） |
+| atct 固有の名前の置き場 | **atct 側で持つ。**`orchestration` には書かない（下記） |
 
 ### 何をどの文書に書くか
 
@@ -62,7 +63,7 @@ atct 固有の名前をそこに書くと、atct を使わない space もそれ
 | 文書 | 書くこと |
 |---|---|
 | `orchestration` スキル | **汎用形だけ。**「pane に作業単位を示す環境変数を渡すなら、名前を付けるコマンドと同じ場所に書く」 |
-| atct の spec と手順 | **`ATCT_SCOPE_GOAL` という具体名** |
+| atct の spec と手順 | **`atct:start` を呼ぶかどうかなど、atct 固有の手順** |
 
 **判定の軸は「全 space が読むか、1 つのプロジェクトだけが読むか」。**
 置き場のもう 1 つの軸（「公開物か、この環境の設定か」。2026-08-20 に確定）とは別物で、
@@ -71,7 +72,7 @@ atct 固有の名前をそこに書くと、atct を使わない space もそれ
 - `herdr` を見るフックは atct に置かない ← 公開物かどうかの軸
 - `subcommander` という語は `orchestration` に書くが「atct のゴール 1 件 = space 1 つ」は
   書かない ← 全 space が読むかどうかの軸
-- `ATCT_SCOPE_GOAL` の名前は atct 側 ← 同じ軸
+- 「subcommander は `atct:start` を呼ばない」は atct 側 ← 同じ軸
 
 ## 通知の受け口
 
@@ -128,10 +129,15 @@ herdr agent start --kind codex NAME          名前より前にフラグ
 **このフックは「1 単位 1 subcommander」を強制しない。**規約どおりに書いたときの
 間違いを止めるだけ。
 
-## 残っているもの（すべて人間の承認待ち）
+## 残っているもの
 
-| 残り | 担当 |
-|---|---|
-| `ATCT_SCOPE_GOAL` の実装 | atct |
-| `single-subcommander.sh` の apply | dotfiles |
-| `chezmoi apply`（役割定義 `b66acc5`） | dotfiles |
+| 残り | 担当 | 状態 |
+|---|---|---|
+| 足りない 3 つの検知を足す | atct | **承認済み。着手できる** |
+| `wakeup` の間隔を 3 分にする | atct | **承認済み。着手できる** |
+| Stop hook を消す | atct | 上の 2 つを実測した後 |
+| `single-subcommander.sh` の apply | dotfiles | 人間の承認待ち |
+| `chezmoi apply`（役割定義 `b66acc5`） | dotfiles | 人間の承認待ち |
+
+**`ATCT_SCOPE_GOAL` の実装は不要になった。**Stop hook を廃止するので、絞り込む対象が
+無くなる。
