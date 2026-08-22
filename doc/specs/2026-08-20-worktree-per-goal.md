@@ -173,6 +173,29 @@ pnpm は普通グローバルの store から hardlink するので見かけほ�
 `internal/daemon/web_test.go` が `dist/index.html` を見つけられずに落ちる。
 **`cp -R main/web/dist/. <wt>/web/dist/` と書くこと。**
 
+### symlink は `.gitignore` に別の行が要る（2026-08-22 に実測）
+
+**`node_modules/` は末尾スラッシュなのでディレクトリだけを指し、symlink には一致しない。**
+git は symlink をファイルとして扱う。そのため worktree の `git status` に
+`?? web/node_modules` が出続け、**executor が毎回「これは自分の変更ではない」と
+判断する手間が生まれる。**
+
+```
+$ git -C <worktree> check-ignore -v web/node_modules
+（何も返さない。exit 1）
+
+$ git -C <worktree> check-ignore -v web/node_modules/
+fatal: pathspec 'web/node_modules/' is beyond a symbolic link
+```
+
+`.gitignore` に **`web/node_modules`（スラッシュ無し）** の行を足して解決した。
+**末尾スラッシュを外すだけでは効かない**（`node_modules` にしても一致しなかった）。
+パスを明示した行が必要である。
+
+**`.gitignore` は追跡ファイルなので、worktree に届けるにはコミットが要る。**
+作業中の worktree では `reset --hard` が使えないので、
+`git -C <worktree> checkout <主の HEAD> -- .gitignore` で 1 ファイルだけ取る。
+
 ### 借りることの代償
 
 - **`node_modules` は共有である。** worktree で `pnpm install` を走らせると
