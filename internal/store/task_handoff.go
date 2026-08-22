@@ -11,8 +11,9 @@ import (
 )
 
 var (
-	ErrTaskHandoffNotFound     = errors.New("task handoff not found")
-	ErrTaskHandoffTaskMismatch = errors.New("task handoff task mismatch")
+	ErrTaskHandoffNotFound      = errors.New("task handoff not found")
+	ErrTaskHandoffTaskMismatch  = errors.New("task handoff task mismatch")
+	ErrTaskHandoffTaskUnclaimed = errors.New("task handoff task is unclaimed")
 )
 
 // TaskHandoff records one delegation between agents. Each event timestamp is
@@ -72,10 +73,31 @@ func (s *Store) ensureTaskHandoffTask(ctx context.Context, handoffID, taskID str
 	return nil
 }
 
+func (s *Store) requireLiveTaskClaim(ctx context.Context, taskID string) error {
+	projectID, err := sqlcgen.New(s.db).GetTaskProjectID(ctx, taskID)
+	if err != nil {
+		return fmt.Errorf("find project for task %q: %w", taskID, err)
+	}
+
+	running, _, err := ClaimLiveness(ctx, s, projectID)
+	if err != nil {
+		return fmt.Errorf("check claim liveness for task %q: %w", taskID, err)
+	}
+	for _, task := range running {
+		if task.ID == taskID {
+			return nil
+		}
+	}
+	return fmt.Errorf("%w: %s", ErrTaskHandoffTaskUnclaimed, taskID)
+}
+
 // RequestTaskHandoff records the request side of a handoff. It only writes
 // request columns; a receipt or completion report is a separate call.
 func (s *Store) RequestTaskHandoff(ctx context.Context, handoffID, taskID, requestedBy string) (TaskHandoff, error) {
 	if err := s.ensureTaskHandoffTask(ctx, handoffID, taskID); err != nil {
+		return TaskHandoff{}, err
+	}
+	if err := s.requireLiveTaskClaim(ctx, taskID); err != nil {
 		return TaskHandoff{}, err
 	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)

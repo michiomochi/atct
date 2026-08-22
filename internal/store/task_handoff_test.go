@@ -2,8 +2,13 @@ package store
 
 import (
 	"context"
+	"database/sql"
+	"errors"
+	"os"
 	"testing"
 	"time"
+
+	"github.com/michiomochi/atct/internal/store/sqlcgen"
 )
 
 func addTestAgentSession(t *testing.T, s *Store, id string) {
@@ -42,12 +47,47 @@ func addTestTasks(t *testing.T, s *Store, count int) []string {
 	return ids
 }
 
+func addLiveTaskClaim(t *testing.T, s *Store, taskID, sessionID string) {
+	t.Helper()
+
+	ctx := context.Background()
+	projectID, err := sqlcgen.New(s.DB()).GetTaskProjectID(ctx, taskID)
+	if err != nil {
+		t.Fatalf("GetTaskProjectID failed: %v", err)
+	}
+	if err := s.RegisterAgentSession(ctx, sessionID, os.Getpid()); err != nil {
+		t.Fatalf("RegisterAgentSession failed: %v", err)
+	}
+	if err := s.AssociateAgentSessionWithProject(ctx, sessionID, projectID); err != nil {
+		t.Fatalf("AssociateAgentSessionWithProject failed: %v", err)
+	}
+	if _, err := s.ClaimTask(ctx, taskID, sessionID); err != nil {
+		t.Fatalf("ClaimTask failed: %v", err)
+	}
+}
+
+func addRequestOnlyTaskHandoff(t *testing.T, s *Store, handoffID, taskID, requestedBy string) {
+	t.Helper()
+
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	err := sqlcgen.New(s.DB()).RequestTaskHandoff(context.Background(), sqlcgen.RequestTaskHandoffParams{
+		ID:          handoffID,
+		TaskID:      taskID,
+		RequestedBy: sql.NullString{String: requestedBy, Valid: true},
+		RequestedAt: sql.NullString{String: now, Valid: true},
+	})
+	if err != nil {
+		t.Fatalf("insert request-only task handoff failed: %v", err)
+	}
+}
+
 func TestTaskHandoffRequestReceiveAndComplete(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 	taskID := addTestTasks(t, s, 1)[0]
 	addTestAgentSession(t, s, "requester")
 	addTestAgentSession(t, s, "receiver")
+	addLiveTaskClaim(t, s, taskID, "request-claim-owner")
 
 	handoff, err := s.RequestTaskHandoff(ctx, "handoff-1", taskID, "requester")
 	if err != nil {
@@ -96,6 +136,7 @@ func TestTaskHandoffAllowsSecondHandoffForSameTask(t *testing.T) {
 	ctx := context.Background()
 	taskID := addTestTasks(t, s, 1)[0]
 	addTestAgentSession(t, s, "requester")
+	addLiveTaskClaim(t, s, taskID, "second-handoff-claim-owner")
 
 	first, err := s.RequestTaskHandoff(ctx, "handoff-1", taskID, "requester")
 	if err != nil {
@@ -127,6 +168,75 @@ func TestTaskHandoffRejectsMissingTask(t *testing.T) {
 	}
 }
 
+func TestTaskHandoffRejectsUnclaimedTask(t *testing.T) {
+	s := newTestStore(t)
+	taskID := addTestTasks(t, s, 1)[0]
+	addTestAgentSession(t, s, "requester")
+
+	if _, err := s.RequestTaskHandoff(context.Background(), "handoff-unclaimed", taskID, "requester"); err == nil {
+		t.Fatal("RequestTaskHandoff should reject an unclaimed task")
+	}
+}
+
+func TestTaskHandoffAllowsLiveClaim(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	taskID := addTestTasks(t, s, 1)[0]
+	addTestAgentSession(t, s, "requester")
+	addLiveTaskClaim(t, s, taskID, "live-claim-owner")
+
+	if _, err := s.RequestTaskHandoff(ctx, "handoff-live-claim", taskID, "requester"); err != nil {
+		t.Fatalf("RequestTaskHandoff with a live claim failed: %v", err)
+	}
+}
+
+func TestTaskHandoffRejectsDeadClaim(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	taskID := addTestTasks(t, s, 1)[0]
+	addTestAgentSession(t, s, "requester")
+	addTestAgentSession(t, s, "dead-claim-owner")
+
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err := s.DB().ExecContext(ctx, `
+		UPDATE tasks SET claimed_by = ?, claimed_at = ?, updated_at = ? WHERE id = ?
+	`, "dead-claim-owner", now, now, taskID); err != nil {
+		t.Fatalf("dead claim fixture insert failed: %v", err)
+	}
+
+	if _, err := s.RequestTaskHandoff(ctx, "handoff-dead-claim", taskID, "requester"); err == nil {
+		t.Fatal("RequestTaskHandoff should reject a task with only a dead claim")
+	}
+}
+
+func TestTaskHandoffReceiveAllowsUnclaimedTask(t *testing.T) {
+	s := newTestStore(t)
+	taskID := addTestTasks(t, s, 1)[0]
+	addTestAgentSession(t, s, "receiver")
+
+	handoff, err := s.ReceiveTaskHandoff(context.Background(), "handoff-receipt-only", taskID, "receiver")
+	if err != nil {
+		t.Fatalf("ReceiveTaskHandoff without a claim failed: %v", err)
+	}
+	if handoff.RequestedAt != nil || handoff.ReceivedAt == nil {
+		t.Fatalf("receipt-only handoff has unexpected state: %+v", handoff)
+	}
+}
+
+func TestTaskHandoffUnclaimedErrorIsDistinguishable(t *testing.T) {
+	s := newTestStore(t)
+	taskID := addTestTasks(t, s, 1)[0]
+	addTestAgentSession(t, s, "requester")
+
+	_, err := s.RequestTaskHandoff(context.Background(), "handoff-unclaimed-error", taskID, "requester")
+	if !errors.Is(err, ErrTaskHandoffTaskUnclaimed) {
+		t.Fatalf("error = %v, want ErrTaskHandoffTaskUnclaimed", err)
+	}
+	if errors.Is(err, ErrTaskHandoffNotFound) {
+		t.Fatalf("unclaimed error must not be ErrTaskHandoffNotFound: %v", err)
+	}
+}
+
 func TestTaskHandoffStatesRemainDistinct(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
@@ -143,12 +253,12 @@ func TestTaskHandoffStatesRemainDistinct(t *testing.T) {
 		t.Fatalf("claim fixture insert failed: %v", err)
 	}
 
-	// A handoff request without a task claim.
-	if _, err := s.RequestTaskHandoff(ctx, "request-only", taskIDs[1], "requester"); err != nil {
-		t.Fatalf("request fixture insert failed: %v", err)
-	}
+	// A handoff request without a task claim. This fixture bypasses the public
+	// request method because the state is intentionally a detected anomaly.
+	addRequestOnlyTaskHandoff(t, s, "request-only", taskIDs[1], "requester")
 
 	// A handoff request without a receipt.
+	addLiveTaskClaim(t, s, taskIDs[2], "unreceived-claim-owner")
 	requested, err := s.RequestTaskHandoff(ctx, "unreceived", taskIDs[2], "requester")
 	if err != nil {
 		t.Fatalf("unreceived fixture insert failed: %v", err)
