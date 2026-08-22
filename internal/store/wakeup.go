@@ -17,6 +17,9 @@ const (
 	EventDetectionUndeclaredGoal          = "detection.undeclared_goal"
 	EventDetectionAllTasksDropped         = "detection.all_tasks_dropped"
 	EventDetectionUnclaimedDoing          = "detection.unclaimed_doing"
+	EventDetectionHandoffUnreceived       = "detection.handoff_unreceived"
+	EventDetectionHandoffUnreported       = "detection.handoff_unreported"
+	EventDetectionClaimUndelegated        = "detection.claim_undelegated"
 )
 
 // WakeupEvent is the visible state that caused a wakeup notification. The
@@ -47,6 +50,7 @@ type DetectionEvent struct {
 	ProjectID   string `json:"project_id"`
 	GoalID      string `json:"goal_id,omitempty"`
 	TaskID      string `json:"task_id,omitempty"`
+	HandoffID   string `json:"handoff_id,omitempty"`
 }
 
 // KeepaliveEvent lets a watch process distinguish a quiet daemon from a dead
@@ -64,15 +68,18 @@ type WakeupState struct {
 	// WorkingTaskCount is retained for compatibility with wakeup consumers.
 	// It is always zero: a claimed task is not unstarted, and an unstarted task
 	// remains claimable regardless of claims on sibling tasks.
-	WorkingTaskCount    int
-	UntouchedTaskCount  int
-	WaitingAnswerCount  int
-	Tasks               []domain.Task
-	CompletedGoals      []domain.Goal
-	DroppedGoals        []domain.Goal
-	UnclaimedDoingTasks []domain.Task
-	UndeclaredGoals     []domain.Goal
-	CommitlessGoals     []domain.Goal
+	WorkingTaskCount        int
+	UntouchedTaskCount      int
+	WaitingAnswerCount      int
+	Tasks                   []domain.Task
+	CompletedGoals          []domain.Goal
+	DroppedGoals            []domain.Goal
+	UnclaimedDoingTasks     []domain.Task
+	UndeclaredGoals         []domain.Goal
+	CommitlessGoals         []domain.Goal
+	HandoffsAwaitingReceipt []TaskHandoff
+	HandoffsAwaitingReport  []TaskHandoff
+	UndelegatedClaims       []domain.Task
 }
 
 // DetectWakeup assembles the wakeup state used by pending output and the
@@ -150,6 +157,27 @@ func (s *Store) DetectWakeup(ctx context.Context, projectID string) (WakeupState
 				}
 			}
 		}
+		for _, task := range tasks {
+			handoffs, err := s.ListTaskHandoffs(ctx, task.ID)
+			if err != nil {
+				return WakeupState{}, err
+			}
+			delegated := false
+			for _, handoff := range handoffs {
+				if handoff.RequestedAt != nil {
+					delegated = true
+					if handoff.ReceivedAt == nil {
+						state.HandoffsAwaitingReceipt = append(state.HandoffsAwaitingReceipt, handoff)
+					}
+				}
+				if handoff.ReceivedAt != nil && handoff.CompletedReportAt == nil {
+					state.HandoffsAwaitingReport = append(state.HandoffsAwaitingReport, handoff)
+				}
+			}
+			if task.ClaimedAt != nil && !delegated {
+				state.UndelegatedClaims = append(state.UndelegatedClaims, task)
+			}
+		}
 		if len(openDecisions) > 0 {
 			state.WaitingAnswerCount += len(openDecisions)
 		}
@@ -196,6 +224,15 @@ func (s *Store) DetectWakeup(ctx context.Context, projectID string) (WakeupState
 	}
 	if state.CommitlessGoals == nil {
 		state.CommitlessGoals = []domain.Goal{}
+	}
+	if state.HandoffsAwaitingReceipt == nil {
+		state.HandoffsAwaitingReceipt = []TaskHandoff{}
+	}
+	if state.HandoffsAwaitingReport == nil {
+		state.HandoffsAwaitingReport = []TaskHandoff{}
+	}
+	if state.UndelegatedClaims == nil {
+		state.UndelegatedClaims = []domain.Task{}
 	}
 	return state, nil
 }

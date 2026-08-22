@@ -518,6 +518,84 @@ func TestDetectWakeupDoesNotReportProposedGoalAsUndeclaredOrCommitless(t *testin
 	}
 }
 
+func TestDetectWakeupCollectsStalledHandoffCandidates(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	taskIDs := addTestTasks(t, s, 5)
+	const claimSessionID = "stalled-handoff-claim"
+	addLiveTaskClaim(t, s, taskIDs[0], claimSessionID)
+	for _, taskID := range taskIDs[1:] {
+		if _, err := s.ClaimTask(ctx, taskID, claimSessionID); err != nil {
+			t.Fatalf("ClaimTask %s: %v", taskID, err)
+		}
+	}
+	if err := s.RegisterAgentSession(ctx, "stalled-handoff-requester", os.Getpid()); err != nil {
+		t.Fatalf("RegisterAgentSession requester: %v", err)
+	}
+	if err := s.RegisterAgentSession(ctx, "stalled-handoff-receiver", os.Getpid()); err != nil {
+		t.Fatalf("RegisterAgentSession receiver: %v", err)
+	}
+
+	unreceived, err := s.RequestTaskHandoff(ctx, "handoff-unreceived", taskIDs[0], "stalled-handoff-requester")
+	if err != nil {
+		t.Fatalf("RequestTaskHandoff unreceived: %v", err)
+	}
+	unreported, err := s.RequestTaskHandoff(ctx, "handoff-unreported", taskIDs[1], "stalled-handoff-requester")
+	if err != nil {
+		t.Fatalf("RequestTaskHandoff unreported: %v", err)
+	}
+	if _, err := s.ReceiveTaskHandoff(ctx, unreported.ID, taskIDs[1], "stalled-handoff-receiver"); err != nil {
+		t.Fatalf("ReceiveTaskHandoff unreported: %v", err)
+	}
+	completed, err := s.RequestTaskHandoff(ctx, "handoff-completed", taskIDs[2], "stalled-handoff-requester")
+	if err != nil {
+		t.Fatalf("RequestTaskHandoff completed: %v", err)
+	}
+	if _, err := s.ReceiveTaskHandoff(ctx, completed.ID, taskIDs[2], "stalled-handoff-receiver"); err != nil {
+		t.Fatalf("ReceiveTaskHandoff completed: %v", err)
+	}
+	if _, err := s.CompleteTaskHandoff(ctx, completed.ID, taskIDs[2]); err != nil {
+		t.Fatalf("CompleteTaskHandoff completed: %v", err)
+	}
+	requestedClaim, err := s.RequestTaskHandoff(ctx, "handoff-requested-claim", taskIDs[4], "stalled-handoff-requester")
+	if err != nil {
+		t.Fatalf("RequestTaskHandoff requested claim: %v", err)
+	}
+
+	state, err := s.DetectWakeup(ctx, taskIDsProjectID(t, s, taskIDs[0]))
+	if err != nil {
+		t.Fatalf("DetectWakeup: %v", err)
+	}
+	if len(state.HandoffsAwaitingReceipt) != 2 {
+		t.Fatalf("handoffs awaiting receipt = %#v, want %s and %s", state.HandoffsAwaitingReceipt, unreceived.ID, requestedClaim.ID)
+	}
+	if len(state.HandoffsAwaitingReport) != 1 || state.HandoffsAwaitingReport[0].ID != unreported.ID {
+		t.Fatalf("handoffs awaiting report = %#v, want only %s", state.HandoffsAwaitingReport, unreported.ID)
+	}
+	if len(state.UndelegatedClaims) != 1 || state.UndelegatedClaims[0].ID != taskIDs[3] {
+		t.Fatalf("undelegated claims = %#v, want only %s", state.UndelegatedClaims, taskIDs[3])
+	}
+	for _, handoff := range state.HandoffsAwaitingReceipt {
+		if handoff.ID == completed.ID {
+			t.Fatalf("completed handoff %s was reported as awaiting receipt", completed.ID)
+		}
+	}
+	for _, handoff := range state.HandoffsAwaitingReport {
+		if handoff.ID == completed.ID {
+			t.Fatalf("completed handoff %s was reported as awaiting report", completed.ID)
+		}
+	}
+}
+
+func taskIDsProjectID(t *testing.T, s *Store, taskID string) string {
+	t.Helper()
+	projectID, err := s.ProjectIDForTask(context.Background(), taskID)
+	if err != nil {
+		t.Fatalf("ProjectIDForTask: %v", err)
+	}
+	return projectID
+}
+
 func updateWakeupTask(t *testing.T, s *Store, taskID string, status domain.TaskStatus) {
 	t.Helper()
 	if _, err := s.UpdateTask(context.Background(), taskID, status, ""); err != nil {

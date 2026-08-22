@@ -587,6 +587,9 @@ func TestEmitWatchDetectionWritesOneLinePerCondition(t *testing.T) {
 		{"detection.undeclared_goal", watchDecision{GoalID: "goal-3"}, "atct detection: goal goal-3 has no tasks declared"},
 		{"detection.all_tasks_dropped", watchDecision{GoalID: "goal-4"}, "atct detection: goal goal-4 has all tasks dropped"},
 		{"detection.unclaimed_doing", watchDecision{TaskID: "task-1"}, "atct detection: task task-1 is doing without a work lock"},
+		{"detection.handoff_unreceived", watchDecision{HandoffID: "handoff-1"}, "atct detection: handoff handoff-1 has no receipt"},
+		{"detection.handoff_unreported", watchDecision{HandoffID: "handoff-2"}, "atct detection: handoff handoff-2 has no completion report"},
+		{"detection.claim_undelegated", watchDecision{TaskID: "task-2"}, "atct detection: task task-2 has no handoff request"},
 	}
 	for _, tc := range cases {
 		var output bytes.Buffer
@@ -619,6 +622,26 @@ func TestEmitWatchDetectionDoesNotRepeatSameTarget(t *testing.T) {
 	}
 	if lines := strings.Count(strings.TrimSpace(output.String()), "\n"); lines != 0 {
 		t.Fatalf("output = %q, want a single line", output.String())
+	}
+}
+
+func TestEmitWatchDetectionDoesNotRepeatSameHandoff(t *testing.T) {
+	var output bytes.Buffer
+	delivered := make(map[watchDeliveryKey]struct{})
+	wakeupDelivered := make(map[watchWakeupDeliveryKey]struct{})
+	detectionDelivered := make(map[watchDetectionDeliveryKey]struct{})
+
+	for _, record := range []watchDecision{
+		{HandoffID: "handoff-1", DetectionID: "detection-1"},
+		{HandoffID: "handoff-1", DetectionID: "detection-2"},
+	} {
+		if err := emitWatchDecision(&output, "detection.handoff_unreceived", record, delivered, wakeupDelivered, detectionDelivered); err != nil {
+			t.Fatalf("emitWatchDecision: %v", err)
+		}
+	}
+	want := "atct detection: handoff handoff-1 has no receipt\n"
+	if got := output.String(); got != want {
+		t.Fatalf("output = %q, want %q", got, want)
 	}
 }
 
