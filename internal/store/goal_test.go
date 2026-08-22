@@ -9,6 +9,203 @@ import (
 	"github.com/michiomochi/atct/internal/domain"
 )
 
+func TestUpdateGoalContentUpdatesProposedGoal(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	project, err := s.CreateProject(ctx, "test-project", "/repos/atct")
+	if err != nil {
+		t.Fatal(err)
+	}
+	goal, err := s.CreateGoal(ctx, project.ID, "original content", "agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := s.UpdateGoalContent(ctx, goal.ID, "updated content")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Content != "updated content" {
+		t.Fatalf("content = %q, want %q", got.Content, "updated content")
+	}
+	if got.Status != domain.GoalProposed {
+		t.Fatalf("status = %q, want %q", got.Status, domain.GoalProposed)
+	}
+
+	persisted, err := s.GetGoal(ctx, goal.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persisted.Content != "updated content" {
+		t.Fatalf("persisted content = %q, want %q", persisted.Content, "updated content")
+	}
+}
+
+func TestUpdateGoalContentRejectsBlankContent(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		content string
+	}{
+		{name: "empty", content: ""},
+		{name: "whitespace", content: " \t\n "},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			s := newTestStore(t)
+			project, err := s.CreateProject(ctx, "test-project", "/repos/atct")
+			if err != nil {
+				t.Fatal(err)
+			}
+			goal, err := s.CreateGoal(ctx, project.ID, "original content", "agent")
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			_, err = s.UpdateGoalContent(ctx, goal.ID, tt.content)
+			if err == nil {
+				t.Fatal("UpdateGoalContent succeeded for blank content")
+			}
+			persisted, getErr := s.GetGoal(ctx, goal.ID)
+			if getErr != nil {
+				t.Fatal(getErr)
+			}
+			if persisted.Content != "original content" {
+				t.Fatalf("content = %q after rejected update, want %q", persisted.Content, "original content")
+			}
+		})
+	}
+}
+
+func TestUpdateGoalContentReturnsNotFoundForMissingGoal(t *testing.T) {
+	_, err := newTestStore(t).UpdateGoalContent(context.Background(), "missing-goal", "new content")
+	if !errors.Is(err, ErrGoalNotFound) {
+		t.Fatalf("error = %v, want ErrGoalNotFound", err)
+	}
+}
+
+func TestUpdateGoalContentRejectsActiveGoal(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	project, err := s.CreateProject(ctx, "test-project", "/repos/atct")
+	if err != nil {
+		t.Fatal(err)
+	}
+	goal, err := s.CreateGoal(ctx, project.ID, "active content", "human")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = s.UpdateGoalContent(ctx, goal.ID, "new content")
+	if !errors.Is(err, ErrGoalNotProposed) {
+		t.Fatalf("error = %v, want ErrGoalNotProposed", err)
+	}
+	persisted, err := s.GetGoal(ctx, goal.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persisted.Content != "active content" {
+		t.Fatalf("content = %q after rejected update, want %q", persisted.Content, "active content")
+	}
+}
+
+func TestUpdateGoalContentRejectsDoneAndDroppedGoals(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	project, err := s.CreateProject(ctx, "test-project", "/repos/atct")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, status := range []domain.GoalStatus{domain.GoalDone, domain.GoalDropped} {
+		t.Run(string(status), func(t *testing.T) {
+			for i := 0; i < 2; i++ {
+				var goal domain.Goal
+				switch status {
+				case domain.GoalDone:
+					goal, err = s.CreateGoal(ctx, project.ID, "done content", "human")
+					if err != nil {
+						t.Fatal(err)
+					}
+					decision, completeErr := s.CompleteGoal(ctx, goal.ID, "done summary", "done-run")
+					if completeErr != nil {
+						t.Fatal(completeErr)
+					}
+					if _, approveErr := s.ApproveCompletion(ctx, decision.ID); approveErr != nil {
+						t.Fatal(approveErr)
+					}
+				case domain.GoalDropped:
+					goal, err = s.CreateGoal(ctx, project.ID, "dropped content", "agent")
+					if err != nil {
+						t.Fatal(err)
+					}
+					decisions, listErr := s.ListOpenDecisions(ctx, goal.ID)
+					if listErr != nil {
+						t.Fatal(listErr)
+					}
+					if len(decisions) == 0 {
+						t.Fatal("no approval decision for dropped goal")
+					}
+					if rejectErr := s.RejectGoal(ctx, decisions[0].ID, "not needed"); rejectErr != nil {
+						t.Fatal(rejectErr)
+					}
+				}
+
+				_, updateErr := s.UpdateGoalContent(ctx, goal.ID, "new content")
+				if !errors.Is(updateErr, ErrGoalNotProposed) {
+					t.Fatalf("fixture %d: error = %v, want ErrGoalNotProposed", i, updateErr)
+				}
+			}
+		})
+	}
+}
+
+func TestUpdateGoalContentPreservesCompletionReport(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	project, err := s.CreateProject(ctx, "test-project", "/repos/atct")
+	if err != nil {
+		t.Fatal(err)
+	}
+	goal, err := s.CreateGoal(ctx, project.ID, "original content", "agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantReport := domain.CompletionReport{
+		WorkDone:    "work done before",
+		NowPossible: "now possible before",
+		HowToVerify: "verify before",
+		Surprises:   "surprises before",
+		NeedsReview: "review before",
+		NextSteps:   "next steps before",
+	}
+	if _, err := s.DB().ExecContext(ctx, `
+		UPDATE goals SET
+			work_done = ?, now_possible = ?, how_to_verify = ?,
+			surprises = ?, needs_review = ?, next_steps = ?
+		WHERE id = ?`,
+		wantReport.WorkDone, wantReport.NowPossible, wantReport.HowToVerify,
+		wantReport.Surprises, wantReport.NeedsReview, wantReport.NextSteps, goal.ID,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := s.UpdateGoalContent(ctx, goal.ID, "updated content")
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotReport := domain.CompletionReport{
+		WorkDone:    got.WorkDone,
+		NowPossible: got.NowPossible,
+		HowToVerify: got.HowToVerify,
+		Surprises:   got.Surprises,
+		NeedsReview: got.NeedsReview,
+		NextSteps:   got.NextSteps,
+	}
+	if gotReport != wantReport {
+		t.Fatalf("completion report = %+v, want %+v", gotReport, wantReport)
+	}
+}
+
 func TestCreateGoalStartsActive(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)

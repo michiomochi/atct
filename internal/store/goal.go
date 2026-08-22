@@ -82,6 +82,36 @@ func (s *Store) CreateGoal(ctx context.Context, projectID, content, creator stri
 	return g, nil
 }
 
+func (s *Store) UpdateGoalContent(ctx context.Context, goalID, content string) (domain.Goal, error) {
+	if strings.TrimSpace(content) == "" {
+		return domain.Goal{}, errors.New("goal content must not be blank")
+	}
+	goalID = strings.TrimSpace(goalID)
+	if goalID == "" {
+		return domain.Goal{}, fmt.Errorf("%w: empty id", ErrGoalNotFound)
+	}
+
+	result, err := sqlcgen.New(s.db).UpdateGoalContent(ctx, sqlcgen.UpdateGoalContentParams{
+		Content:   content,
+		UpdatedAt: time.Now().UTC().Format(time.RFC3339),
+		ID:        goalID,
+	})
+	if err != nil {
+		return domain.Goal{}, fmt.Errorf("update goal content: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return domain.Goal{}, fmt.Errorf("check updated goal content: %w", err)
+	}
+	if affected == 0 {
+		if _, err := s.GetGoal(ctx, goalID); err != nil {
+			return domain.Goal{}, err
+		}
+		return domain.Goal{}, fmt.Errorf("%w: %s", ErrGoalNotProposed, goalID)
+	}
+	return s.GetGoal(ctx, goalID)
+}
+
 func normalizeGoalCreator(input []string) string {
 	if len(input) == 0 {
 		return "human"

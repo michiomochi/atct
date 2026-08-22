@@ -29,6 +29,10 @@ WHERE id = ?;
 UPDATE goals SET status = 'active', updated_at = ?
 WHERE id = ? AND status = 'proposed';
 
+-- name: UpdateGoalContent :execresult
+UPDATE goals SET content = ?, updated_at = ?
+WHERE id = ? AND status = 'proposed';
+
 -- name: MarkGoalDropped :execresult
 UPDATE goals SET status = 'dropped', updated_at = ?
 WHERE id = ? AND status = 'proposed';

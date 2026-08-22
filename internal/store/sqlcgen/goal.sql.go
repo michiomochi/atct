@@ -446,6 +446,21 @@ func (q *Queries) UpdateGoalCompletionReport(ctx context.Context, arg UpdateGoal
 	)
 }
 
+const updateGoalContent = `-- name: UpdateGoalContent :execresult
+UPDATE goals SET content = ?, updated_at = ?
+WHERE id = ? AND status = 'proposed'
+`
+
+type UpdateGoalContentParams struct {
+	Content   string
+	UpdatedAt string
+	ID        string
+}
+
+func (q *Queries) UpdateGoalContent(ctx context.Context, arg UpdateGoalContentParams) (sql.Result, error) {
+	return q.db.ExecContext(ctx, updateGoalContent, arg.Content, arg.UpdatedAt, arg.ID)
+}
+
 const withdrawActiveGoal = `-- name: WithdrawActiveGoal :execresult
 UPDATE goals SET status = 'dropped', result_summary = ?, updated_at = ?
 WHERE id = ? AND status = 'active'
