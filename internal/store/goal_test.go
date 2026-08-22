@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"os"
 	"testing"
 
 	"github.com/michiomochi/atct/internal/domain"
@@ -252,5 +253,130 @@ func TestSetGoalDerivedFromClearsParent(t *testing.T) {
 	}
 	if got.DerivedFromGoalID != "" {
 		t.Fatalf("DerivedFromGoalID after clear = %q, want empty", got.DerivedFromGoalID)
+	}
+}
+
+func TestClaimGoal(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	ns, err := s.CreateProject(ctx, "atct", "/repos/atct")
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	g, err := s.CreateGoal(ctx, ns.ID, "Claimable goal", "human")
+	if err != nil {
+		t.Fatalf("CreateGoal: %v", err)
+	}
+
+	claimed, err := s.ClaimGoal(ctx, g.ID, "session-1")
+	if err != nil {
+		t.Fatalf("ClaimGoal: %v", err)
+	}
+	if claimed.ClaimedBy != "session-1" {
+		t.Fatalf("ClaimedBy = %q, want session-1", claimed.ClaimedBy)
+	}
+	if claimed.ClaimedAt.IsZero() {
+		t.Fatal("ClaimedAt is zero after claiming goal")
+	}
+}
+
+func TestUnclaimedGoalHasEmptyClaim(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	ns, err := s.CreateProject(ctx, "atct", "/repos/atct")
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	g, err := s.CreateGoal(ctx, ns.ID, "Unclaimed goal", "human")
+	if err != nil {
+		t.Fatalf("CreateGoal: %v", err)
+	}
+
+	got, err := s.GetGoal(ctx, g.ID)
+	if err != nil {
+		t.Fatalf("GetGoal: %v", err)
+	}
+	if got.ClaimedBy != "" {
+		t.Fatalf("ClaimedBy = %q, want empty", got.ClaimedBy)
+	}
+}
+
+func TestReleaseGoal(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	ns, err := s.CreateProject(ctx, "atct", "/repos/atct")
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	g, err := s.CreateGoal(ctx, ns.ID, "Releasable goal", "human")
+	if err != nil {
+		t.Fatalf("CreateGoal: %v", err)
+	}
+	if _, err := s.ClaimGoal(ctx, g.ID, "session-1"); err != nil {
+		t.Fatalf("ClaimGoal: %v", err)
+	}
+
+	if err := s.ReleaseGoal(ctx, g.ID); err != nil {
+		t.Fatalf("ReleaseGoal: %v", err)
+	}
+	got, err := s.GetGoal(ctx, g.ID)
+	if err != nil {
+		t.Fatalf("GetGoal: %v", err)
+	}
+	if got.ClaimedBy != "" {
+		t.Fatalf("ClaimedBy after release = %q, want empty", got.ClaimedBy)
+	}
+	if got.ClaimedAt != nil {
+		t.Fatalf("ClaimedAt after release = %v, want nil", got.ClaimedAt)
+	}
+}
+
+func TestClaimGoalRejectsUnknownGoal(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+
+	if _, err := s.ClaimGoal(ctx, "missing-goal-id", "session-1"); !errors.Is(err, ErrGoalNotFound) {
+		t.Fatalf("ClaimGoal error = %v, want ErrGoalNotFound", err)
+	}
+}
+
+func TestGoalClaimLivenessSeparatesLiveAndDeadSessions(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	ns, err := s.CreateProject(ctx, "atct", "/repos/atct")
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	liveGoal, err := s.CreateGoal(ctx, ns.ID, "Live goal", "human")
+	if err != nil {
+		t.Fatalf("CreateGoal live: %v", err)
+	}
+	deadGoal, err := s.CreateGoal(ctx, ns.ID, "Dead goal", "human")
+	if err != nil {
+		t.Fatalf("CreateGoal dead: %v", err)
+	}
+
+	if err := s.RegisterAgentSession(ctx, "goal-live-session", os.Getpid()); err != nil {
+		t.Fatalf("RegisterAgentSession live: %v", err)
+	}
+	if err := s.RegisterAgentSession(ctx, "goal-dead-session", 999999); err != nil {
+		t.Fatalf("RegisterAgentSession dead: %v", err)
+	}
+	if _, err := s.ClaimGoal(ctx, liveGoal.ID, "goal-live-session"); err != nil {
+		t.Fatalf("ClaimGoal live: %v", err)
+	}
+	if _, err := s.ClaimGoal(ctx, deadGoal.ID, "goal-dead-session"); err != nil {
+		t.Fatalf("ClaimGoal dead: %v", err)
+	}
+
+	running, stale, err := GoalClaimLiveness(ctx, s, ns.ID)
+	if err != nil {
+		t.Fatalf("GoalClaimLiveness: %v", err)
+	}
+	if len(running) != 1 || running[0].ID != liveGoal.ID {
+		t.Fatalf("running goals = %#v, want [%s]", running, liveGoal.ID)
+	}
+	if len(stale) != 1 || stale[0].ID != deadGoal.ID {
+		t.Fatalf("stale goals = %#v, want [%s]", stale, deadGoal.ID)
 	}
 }

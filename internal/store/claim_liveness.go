@@ -41,6 +41,32 @@ func ClaimLiveness(ctx context.Context, s *Store, projectID string) (running []d
 	return running, stale, nil
 }
 
+// GoalClaimLiveness separates claimed goals whose recorded process is still
+// the process that owns the claim from claims that can no longer be verified.
+// It deliberately uses the same claimIsRunning check as ClaimLiveness.
+func GoalClaimLiveness(ctx context.Context, s *Store, projectID string) (running []domain.Goal, stale []domain.Goal, err error) {
+	projectID = strings.TrimSpace(projectID)
+	if projectID == "" {
+		return nil, nil, fmt.Errorf("project id is required")
+	}
+
+	goals, err := s.ListGoals(ctx, projectID)
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, goal := range goals {
+		if strings.TrimSpace(goal.ClaimedBy) == "" {
+			continue
+		}
+		if claimIsRunning(ctx, s, goal.ClaimedBy) {
+			running = append(running, goal)
+		} else {
+			stale = append(stale, goal)
+		}
+	}
+	return running, stale, nil
+}
+
 func claimIsRunning(ctx context.Context, s *Store, agentSessionID string) bool {
 	session, err := sqlcgen.New(s.db).GetAgentSessionLiveness(ctx, strings.TrimSpace(agentSessionID))
 	if err != nil {

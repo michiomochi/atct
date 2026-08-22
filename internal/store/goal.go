@@ -99,6 +99,7 @@ func goalFromRow(row sqlcgen.Goal) (domain.Goal, error) {
 		Content:           row.Content,
 		Status:            domain.GoalStatus(row.Status),
 		Creator:           row.Creator,
+		ClaimedBy:         row.ClaimedBy,
 		ResultSummary:     row.ResultSummary,
 		WorkDone:          row.WorkDone,
 		NowPossible:       row.NowPossible,
@@ -114,6 +115,13 @@ func goalFromRow(row sqlcgen.Goal) (domain.Goal, error) {
 	if g.UpdatedAt, err = time.Parse(time.RFC3339, row.UpdatedAt); err != nil {
 		return domain.Goal{}, fmt.Errorf("parse updated_at: %w", err)
 	}
+	if row.ClaimedAt.Valid {
+		claimedAt, err := time.Parse(time.RFC3339, row.ClaimedAt.String)
+		if err != nil {
+			return domain.Goal{}, fmt.Errorf("parse claimed_at: %w", err)
+		}
+		g.ClaimedAt = &claimedAt
+	}
 	return g, nil
 }
 
@@ -126,6 +134,90 @@ func (s *Store) GetGoal(ctx context.Context, id string) (domain.Goal, error) {
 		return domain.Goal{}, err
 	}
 	return goalFromRow(row)
+}
+
+// ClaimGoal records the agent session that owns a goal. An empty session ID
+// clears the claim; callers that only need to release a claim can use
+// ReleaseGoal.
+func (s *Store) ClaimGoal(ctx context.Context, goalID, agentSessionID string) (domain.Goal, error) {
+	goalID = strings.TrimSpace(goalID)
+	if goalID == "" {
+		return domain.Goal{}, fmt.Errorf("%w: empty id", ErrGoalNotFound)
+	}
+	agentSessionID = strings.TrimSpace(agentSessionID)
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return domain.Goal{}, fmt.Errorf("begin goal claim tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	q := sqlcgen.New(tx)
+	if _, err := q.GetGoal(ctx, goalID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return domain.Goal{}, fmt.Errorf("%w: %s", ErrGoalNotFound, goalID)
+		}
+		return domain.Goal{}, fmt.Errorf("lookup goal claim: %w", err)
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	claimedAt := sql.NullString{}
+	if agentSessionID != "" {
+		claimedAt = sql.NullString{String: now, Valid: true}
+	}
+	result, err := q.ClaimGoal(ctx, sqlcgen.ClaimGoalParams{
+		ClaimedBy: agentSessionID,
+		ClaimedAt: claimedAt,
+		UpdatedAt: now,
+		ID:        goalID,
+	})
+	if err != nil {
+		return domain.Goal{}, fmt.Errorf("claim goal: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return domain.Goal{}, fmt.Errorf("check claimed goal: %w", err)
+	}
+	if affected == 0 {
+		return domain.Goal{}, fmt.Errorf("%w: %s", ErrGoalNotFound, goalID)
+	}
+	if err := tx.Commit(); err != nil {
+		return domain.Goal{}, fmt.Errorf("commit goal claim: %w", err)
+	}
+	return s.GetGoal(ctx, goalID)
+}
+
+// ReleaseGoal clears a goal's claim.
+func (s *Store) ReleaseGoal(ctx context.Context, goalID string) error {
+	goalID = strings.TrimSpace(goalID)
+	if goalID == "" {
+		return fmt.Errorf("%w: empty id", ErrGoalNotFound)
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin goal claim release tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	result, err := sqlcgen.New(tx).ReleaseGoal(ctx, sqlcgen.ReleaseGoalParams{
+		UpdatedAt: time.Now().UTC().Format(time.RFC3339),
+		ID:        goalID,
+	})
+	if err != nil {
+		return fmt.Errorf("release goal claim: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("check released goal: %w", err)
+	}
+	if affected == 0 {
+		return fmt.Errorf("%w: %s", ErrGoalNotFound, goalID)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit goal claim release: %w", err)
+	}
+	return nil
 }
 
 func nullableGoalID(id string) sql.NullString {

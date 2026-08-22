@@ -49,6 +49,8 @@ type Goal struct {
 	Surprises         string
 	NeedsReview       string
 	NextSteps         string
+	ClaimedBy         string
+	ClaimedAt         sql.NullString
 	CreatedAt         string
 	UpdatedAt         string
 }

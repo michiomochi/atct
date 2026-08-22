@@ -30,6 +30,8 @@ CREATE TABLE IF NOT EXISTS goals (
   surprises      TEXT NOT NULL DEFAULT '',
   needs_review   TEXT NOT NULL DEFAULT '',
   next_steps     TEXT NOT NULL DEFAULT '',
+  claimed_by     TEXT NOT NULL DEFAULT '',
+  claimed_at     TEXT,
   created_at     TEXT NOT NULL,
   updated_at     TEXT NOT NULL,
   CHECK (

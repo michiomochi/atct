@@ -42,6 +42,28 @@ func (q *Queries) ApplyGoalApprovalDecision(ctx context.Context, arg ApplyGoalAp
 	return q.db.ExecContext(ctx, applyGoalApprovalDecision, arg.AnsweredAt, arg.AppliedAt, arg.ID)
 }
 
+const claimGoal = `-- name: ClaimGoal :execresult
+UPDATE goals
+SET claimed_by = ?, claimed_at = ?, updated_at = ?
+WHERE id = ?
+`
+
+type ClaimGoalParams struct {
+	ClaimedBy string
+	ClaimedAt sql.NullString
+	UpdatedAt string
+	ID        string
+}
+
+func (q *Queries) ClaimGoal(ctx context.Context, arg ClaimGoalParams) (sql.Result, error) {
+	return q.db.ExecContext(ctx, claimGoal,
+		arg.ClaimedBy,
+		arg.ClaimedAt,
+		arg.UpdatedAt,
+		arg.ID,
+	)
+}
+
 const countOpenDecisionsForGoal = `-- name: CountOpenDecisionsForGoal :one
 SELECT COUNT(*)
 FROM decisions
@@ -107,7 +129,7 @@ const getGoal = `-- name: GetGoal :one
 SELECT
   id, project_id, derived_from_goal_id, content, status, creator, result_summary,
   work_done, now_possible, how_to_verify, surprises, needs_review, next_steps,
-  created_at, updated_at
+  claimed_by, claimed_at, created_at, updated_at
 FROM goals
 WHERE id = ?
 `
@@ -129,6 +151,8 @@ func (q *Queries) GetGoal(ctx context.Context, id string) (Goal, error) {
 		&i.Surprises,
 		&i.NeedsReview,
 		&i.NextSteps,
+		&i.ClaimedBy,
+		&i.ClaimedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -152,7 +176,7 @@ const listAllGoals = `-- name: ListAllGoals :many
 SELECT
   id, project_id, derived_from_goal_id, content, status, creator, result_summary,
   work_done, now_possible, how_to_verify, surprises, needs_review, next_steps,
-  created_at, updated_at
+  claimed_by, claimed_at, created_at, updated_at
 FROM goals
 ORDER BY created_at
 `
@@ -180,6 +204,8 @@ func (q *Queries) ListAllGoals(ctx context.Context) ([]Goal, error) {
 			&i.Surprises,
 			&i.NeedsReview,
 			&i.NextSteps,
+			&i.ClaimedBy,
+			&i.ClaimedAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -200,7 +226,7 @@ const listDerivedGoals = `-- name: ListDerivedGoals :many
 SELECT
   id, project_id, derived_from_goal_id, content, status, creator, result_summary,
   work_done, now_possible, how_to_verify, surprises, needs_review, next_steps,
-  created_at, updated_at
+  claimed_by, claimed_at, created_at, updated_at
 FROM goals
 WHERE derived_from_goal_id = ?
 ORDER BY created_at
@@ -229,6 +255,8 @@ func (q *Queries) ListDerivedGoals(ctx context.Context, derivedFromGoalID sql.Nu
 			&i.Surprises,
 			&i.NeedsReview,
 			&i.NextSteps,
+			&i.ClaimedBy,
+			&i.ClaimedAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -249,7 +277,7 @@ const listGoals = `-- name: ListGoals :many
 SELECT
   id, project_id, derived_from_goal_id, content, status, creator, result_summary,
   work_done, now_possible, how_to_verify, surprises, needs_review, next_steps,
-  created_at, updated_at
+  claimed_by, claimed_at, created_at, updated_at
 FROM goals
 WHERE project_id = ?
 ORDER BY created_at
@@ -278,6 +306,8 @@ func (q *Queries) ListGoals(ctx context.Context, projectID string) ([]Goal, erro
 			&i.Surprises,
 			&i.NeedsReview,
 			&i.NextSteps,
+			&i.ClaimedBy,
+			&i.ClaimedAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -350,6 +380,21 @@ type RejectGoalApprovalDecisionParams struct {
 
 func (q *Queries) RejectGoalApprovalDecision(ctx context.Context, arg RejectGoalApprovalDecisionParams) (sql.Result, error) {
 	return q.db.ExecContext(ctx, rejectGoalApprovalDecision, arg.AnswerText, arg.AnsweredAt, arg.ID)
+}
+
+const releaseGoal = `-- name: ReleaseGoal :execresult
+UPDATE goals
+SET claimed_by = '', claimed_at = NULL, updated_at = ?
+WHERE id = ?
+`
+
+type ReleaseGoalParams struct {
+	UpdatedAt string
+	ID        string
+}
+
+func (q *Queries) ReleaseGoal(ctx context.Context, arg ReleaseGoalParams) (sql.Result, error) {
+	return q.db.ExecContext(ctx, releaseGoal, arg.UpdatedAt, arg.ID)
 }
 
 const setGoalDerivedFrom = `-- name: SetGoalDerivedFrom :execresult

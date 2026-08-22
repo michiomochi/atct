@@ -34,6 +34,8 @@ type Goal struct {
 	Content           string     `json:"content"`
 	Status            GoalStatus `json:"status"`
 	Creator           string     `json:"creator"`
+	ClaimedBy         string     `json:"claimed_by"`
+	ClaimedAt         *time.Time `json:"claimed_at,omitempty"`
 	WorkDone          string     `json:"work_done"`
 	NowPossible       string     `json:"now_possible"`
 	HowToVerify       string     `json:"how_to_verify"`
