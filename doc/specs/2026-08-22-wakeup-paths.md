@@ -403,3 +403,77 @@ H は「何も起きていない」を時間で測るもので、**委譲後の�
 
 決定 1 と 2 は同じ緊張関係（どれだけ鳴らすか）の裏表なので、**1 つのゴールで扱う。**
 別々に入れると片方がもう片方を打ち消す。ゴール `c22a6d79`。
+
+## working_tasks が常に 0 になった経緯（2026-08-22 に追跡）
+
+この文書の上のほうに「合計 2 に対して内訳が 0/0/0」という実測がある。あれは
+**JSON にキーが無く Go のゼロ値が印字されていた**欠陥で、`b2c1d95` で直った。
+
+**しかし `working_tasks` だけは直っていなかった。**別の理由で 0 だったのが、
+同じ症状に紛れていた。
+
+### 時系列（すべて 2026-08-22）
+
+| 時刻 | コミット | 何が起きたか |
+|---|---|---|
+| 08-20 19:25 | `f10d947` | `ClaimLiveness` から `runningByGoal` を作る形が入る |
+| 10:13 | `4fa3330` | 未着手を 4 分類に。`WorkingTaskCount` が生まれ、**代入もされていた** |
+| 10:31 | `4637f65` | `working_tasks=` の印字と `working_task_count` の JSON タグを追加。**この時点では動いていた** |
+| 10:57 | `28b68da` | 兄弟の claim がタスクを隠す欠陥を修正。**その過程で唯一の供給元を削除** |
+| 11:01 | `b2c1d95` | 内訳をイベントに載せる（キー欠落の修正）。テストに `WorkingTaskCount: 0` を固定 |
+| 11:07 | `1d6593d` | 観測された `0/0/0` の 1 行をこの文書に記録 |
+
+### 何が供給元だったか
+
+`4fa3330` が入れた分類はゴール単位だった。
+
+```go
+if len(openDecisions) > 0 {
+    state.WaitingAnswerTaskCount += len(unstarted)
+} else if _, ok := runningByGoal[goal.ID]; ok {
+    state.WorkingTaskCount += len(unstarted)          // ← 唯一の代入
+} else {
+    state.UntouchedTaskCount += len(unstarted)
+    state.Tasks = append(state.Tasks, unstarted...)   // ← ここだけが claim 候補に入る
+}
+```
+
+**ゴール内に生存 claim が 1 つでもあれば、そのゴールの未着手タスクを全部
+`working` に数え、かつ `state.Tasks` から外していた。**外していたことが欠陥である。
+`28b68da` のメッセージ「兄弟の作業ロックが、claim できるタスクを隠すのをやめる」は
+これを指している。
+
+`28b68da` は分類を**ゴール単位からタスク単位へ**変えた。`WaitingAnswerTaskCount` は
+「そのタスク自身に open な決定があるもの」だけを数えるようになり、残りは全部
+`UntouchedTaskCount` に入って `state.Tasks` にも入るようになった。
+**`ClaimLiveness` の呼び出しごと消えたので、`WorkingTaskCount` は供給元を失った。**
+
+### なぜ気づかれなかったか
+
+3 つが重なっている。
+
+1. **同じ症状の別の欠陥に紛れた。**11:01 の時点で 3 つの内訳はどれも 0 だった。
+   キー欠落を直したら 2 つが生き返り、**3 つ目も直ったように見えた**
+2. **印字が残った。**`4637f65` が入れた `working_tasks=` を `28b68da` は消さなかった。
+   `28b68da` が触ったのは `wakeup.go` / `wakeup_test.go` / `pending.go` /
+   `pending_test.go` の 4 つで、`cmd/atct/watch.go` は入っていない
+3. **テストが 0 を固定した。**`wakeup_test.go:396` は `WorkingTaskCount != 0` を
+   失敗条件にしている。**何も代入しないので必ず通る。**壊して落ちることを
+   確かめていない検査である。`:251` と `:402` の
+   `Unstarted == WaitingAnswer + Working + Untouched` も、`Working` が定数 0 なら
+   何も守らない
+
+### コメントの理屈は正しい。範囲が違う
+
+```go
+// It is always zero: a claimed task is not unstarted, and an unstarted task
+// remains claimable regardless of claims on sibling tasks.
+```
+
+**未着手プールの内訳としては、この理屈は正しい。**doing のタスクは未着手ではないので、
+未着手の内訳に現れなくてよい。
+
+**問題は印字の側にある。**`atct wakeup:` の 1 行では、`working_tasks=` は未着手の
+内訳ではなく独立した項目に見える。読み手は「作業中が 0 件」と受け取る。
+2026-08-22 の実測では、3 件が `doing` かつ生存 claim を持っている最中に
+`working_tasks=0` が出ていた。
