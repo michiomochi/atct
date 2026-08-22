@@ -104,7 +104,7 @@ export function TaskCommitList({ taskID, commits }: Props) {
                         </li>
                       ))}
                     </ul>
-                    <pre className="min-w-0 max-w-full overflow-x-auto whitespace-pre rounded border border-line bg-surface p-4 font-mono text-xs leading-5 text-ink-800">
+                    <pre className="min-w-0 max-w-full overflow-x-auto whitespace-pre rounded border border-line bg-surface p-4 font-mono text-sm leading-5 text-ink-800">
                       {diffState.data.body}
                     </pre>
                     {diffState.data.omitted_lines > 0 && (

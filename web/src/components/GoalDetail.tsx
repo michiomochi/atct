@@ -434,15 +434,15 @@ export function GoalDetail({ id }: Props) {
         {data && (
           <dl className="mt-5 grid min-w-0 gap-x-6 gap-y-3 border-t border-line pt-4 sm:grid-cols-3">
             <div className="min-w-0">
-              <dt className="text-xs font-semibold uppercase text-ink-700">{t("goal.project")}</dt>
+              <dt className="text-sm font-semibold uppercase text-ink-700">{t("goal.project")}</dt>
               <dd className="mt-1 break-words text-sm text-ink-950">{data.goal.goal.project_name || "-"}</dd>
             </div>
             <div className="min-w-0">
-              <dt className="text-xs font-semibold uppercase text-ink-700">{t("goal.column.status")}</dt>
+              <dt className="text-sm font-semibold uppercase text-ink-700">{t("goal.column.status")}</dt>
               <dd className="mt-1 break-words text-sm text-ink-950">{statusLabel(locale, data.goal.goal.status)}</dd>
             </div>
             <div className="min-w-0">
-              <dt className="text-xs font-semibold uppercase text-ink-700">{t("goal.column.updatedAt")}</dt>
+              <dt className="text-sm font-semibold uppercase text-ink-700">{t("goal.column.updatedAt")}</dt>
               <dd className="mt-1 break-words text-sm text-ink-950">{formatDateTime(locale, data.goal.goal.updated_at)}</dd>
             </div>
           </dl>

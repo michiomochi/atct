@@ -17,9 +17,9 @@ export function ProposedGoalTable({ goals }: Props) {
       <Table>
         <thead>
           <Table.Row className="border-b border-line text-left">
-            <th className="px-3 py-2 text-xs font-semibold text-ink-500">{t("form.goal.content.label")}</th>
-            <th className="px-3 py-2 text-xs font-semibold text-ink-500">{t("goal.project")}</th>
-            <th className="px-3 py-2 text-xs font-semibold text-ink-500">{t("task.detail.createdAt")}</th>
+            <th className="px-3 py-2 text-sm font-semibold text-ink-500">{t("form.goal.content.label")}</th>
+            <th className="px-3 py-2 text-sm font-semibold text-ink-500">{t("goal.project")}</th>
+            <th className="px-3 py-2 text-sm font-semibold text-ink-500">{t("task.detail.createdAt")}</th>
           </Table.Row>
         </thead>
         <Table.Body>

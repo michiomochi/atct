@@ -11,6 +11,7 @@ import decisionTableSource from "../components/DecisionTable.tsx?raw";
 import goalCreateFormSource from "../components/GoalCreateForm.tsx?raw";
 import goalDetailSource from "../components/GoalDetail.tsx?raw";
 import goalTableSource from "../components/GoalTable.tsx?raw";
+import proposedGoalTableSource from "../components/ProposedGoalTable.tsx?raw";
 import dashboardSource from "../components/Dashboard.tsx?raw";
 import localeSwitchSource from "../components/LocaleSwitch.tsx?raw";
 import shellSource from "../layouts/Shell.astro?raw";
@@ -18,6 +19,7 @@ import sectionSource from "../components/Section.tsx?raw";
 import stateMessageSource from "../components/StateMessage.tsx?raw";
 import taskTableSource from "../components/TaskTable.tsx?raw";
 import taskDetailPageSource from "../components/TaskDetailPage.tsx?raw";
+import taskCommitListSource from "../components/TaskCommitList.tsx?raw";
 import { formatDateTime, formatDuration, type Locale } from "../i18n";
 import uiSource from "./ui.ts?raw";
 import type { Goal, TaskView } from "./api";
@@ -411,6 +413,45 @@ describe("Kumo font tracking", () => {
     );
 
     expect(trackingMatches).toEqual([]);
+  });
+});
+
+describe("Kumo content text size", () => {
+  it("keeps the compact text utility out of audited source files", () => {
+    const auditedSources: Array<{ name: string; source: string }> = [
+      { name: "DecisionTable.tsx", source: decisionTableSource },
+      { name: "TaskDetailPage.tsx", source: taskDetailPageSource },
+      { name: "DecisionHistoryTable.tsx", source: decisionHistoryTableSource },
+      { name: "TaskTable.tsx", source: taskTableSource },
+      { name: "DecisionAnswerForm.tsx", source: decisionFormSource },
+      { name: "GoalDetail.tsx", source: goalDetailSource },
+      { name: "ProposedGoalTable.tsx", source: proposedGoalTableSource },
+      { name: "GoalTable.tsx", source: goalTableSource },
+      { name: "TaskCommitList.tsx", source: taskCommitListSource },
+    ];
+
+    expect(auditedSources).toHaveLength(9);
+    expect(auditedSources.every(({ source }) => source.length > 0)).toBe(true);
+
+    const classNameLines = auditedSources.flatMap(({ name, source }) =>
+      source
+        .split("\n")
+        .filter((line) => line.includes("className"))
+        .map((line) => `${name}: ${line}`),
+    );
+    expect(classNameLines.length).toBeGreaterThanOrEqual(36);
+
+    const forbiddenTextSize = ["text", "xs"].join("-");
+    const forbiddenTextPattern = new RegExp(`\\b${forbiddenTextSize}\\b`);
+    const violations = auditedSources.flatMap(({ name, source }) =>
+      source.split("\n").flatMap((line, lineNumber) =>
+        forbiddenTextPattern.test(line)
+          ? [`${name}:${lineNumber + 1}: ${line.trim()}`]
+          : [],
+      ),
+    );
+
+    expect(violations).toEqual([]);
   });
 });
 

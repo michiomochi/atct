@@ -30,7 +30,7 @@ export function DecisionTable({ decisions, emptyText }: Props) {
     <div className="table-scroll">
       <Table className="min-w-[64rem] w-full border-collapse text-left text-sm">
         <caption className="sr-only">{t("decision.caption.list")}</caption>
-          <Table.Header className="border-b-2 border-ink-300 text-xs text-ink-700">
+          <Table.Header className="border-b-2 border-ink-300 text-sm text-ink-700">
           <Table.Row>
             <Table.Head {...columnScope} className="px-3 py-3 font-semibold">{t("decision.column.question")}</Table.Head>
             <Table.Head {...columnScope} className="w-40 px-3 py-3 font-semibold">{t("decision.column.project")}</Table.Head>
@@ -85,10 +85,10 @@ export function DecisionTable({ decisions, emptyText }: Props) {
                         {decision.question}
                       </a>
                     )}
-                    <p className="mt-1 font-mono text-xs text-ink-500">{decisionKindLabel(locale, decision.kind)}</p>
-                    {recommendation && <p className="mt-1 text-xs font-medium text-accent-700">{recommendation}: {decision.default_option}</p>}
-                    {autoSettlement && <p className="mt-1 text-xs text-ink-500">{autoSettlement}</p>}
-                    {settlement && <p className="mt-1 text-xs text-ink-500">{settlement}</p>}
+                    <p className="mt-1 font-mono text-sm text-ink-500">{decisionKindLabel(locale, decision.kind)}</p>
+                    {recommendation && <p className="mt-1 text-sm font-medium text-accent-700">{recommendation}: {decision.default_option}</p>}
+                    {autoSettlement && <p className="mt-1 text-sm text-ink-500">{autoSettlement}</p>}
+                    {settlement && <p className="mt-1 text-sm text-ink-500">{settlement}</p>}
                   </Table.Cell>
                   <Table.Cell className="px-3 py-4 text-ink-700">{decision.project_name || "-"}</Table.Cell>
                   <Table.Cell className="px-3 py-4">
@@ -107,7 +107,7 @@ export function DecisionTable({ decisions, emptyText }: Props) {
                       <div className="space-y-4">
                         <p className="whitespace-pre-wrap font-medium text-ink-950">{decision.question}</p>
                         {(recommendation || autoSettlement || settlement) && (
-                          <div className="space-y-1 text-xs">
+                          <div className="space-y-1 text-sm">
                             {recommendation && <p className="font-medium text-accent-700">{recommendation}: {decision.default_option}</p>}
                             {autoSettlement && <p className="text-ink-500">{autoSettlement}</p>}
                             {settlement && <p className="text-ink-500">{settlement}</p>}
@@ -126,7 +126,7 @@ export function DecisionTable({ decisions, emptyText }: Props) {
                                   <p className="font-medium text-ink-950">
                                     {option.label}
                                     {optionRecommendation && (
-                                      <span className="ml-2 text-xs font-medium text-accent-700">{optionRecommendation}</span>
+                                      <span className="ml-2 text-sm font-medium text-accent-700">{optionRecommendation}</span>
                                     )}
                                   </p>
                                   <p className="mt-1 text-sm text-ink-700">{option.description}</p>

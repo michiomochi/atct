@@ -116,31 +116,31 @@ export function TaskDetailPage({ id }: Props) {
             </h2>
             <dl className="mt-6 grid min-w-0 gap-x-6 gap-y-4 border-t border-line pt-5 sm:grid-cols-2">
               <div className="min-w-0">
-                <dt className="text-xs font-semibold uppercase text-ink-700">{t("task.detail.files")}</dt>
+                <dt className="text-sm font-semibold uppercase text-ink-700">{t("task.detail.files")}</dt>
                 <dd className="mt-1 break-words text-sm text-ink-950">
                   {displayValue([...data.task.files ?? [], data.task.declare_key].filter(Boolean).join(" · "), noValue)}
                 </dd>
               </div>
               <div className="min-w-0">
-                <dt className="text-xs font-semibold uppercase text-ink-700">{t("task.detail.agent")}</dt>
+                <dt className="text-sm font-semibold uppercase text-ink-700">{t("task.detail.agent")}</dt>
                 <dd className="mt-1 break-words text-sm text-ink-950">{displayValue(data.task.agent, noValue)}</dd>
               </div>
               <div className="min-w-0">
-                <dt className="text-xs font-semibold uppercase text-ink-700">{t("task.detail.claimedRun")}</dt>
+                <dt className="text-sm font-semibold uppercase text-ink-700">{t("task.detail.claimedRun")}</dt>
                 <dd className="mt-1 break-words text-sm text-ink-950">{displayValue(data.task.claimed_by, noValue)}</dd>
               </div>
               <div className="min-w-0">
-                <dt className="text-xs font-semibold uppercase text-ink-700">{t("task.detail.order")}</dt>
+                <dt className="text-sm font-semibold uppercase text-ink-700">{t("task.detail.order")}</dt>
                 <dd className="mt-1 text-sm text-ink-950">{data.task.order}</dd>
               </div>
               <div className="min-w-0">
-                <dt className="text-xs font-semibold uppercase text-ink-700">{t("task.detail.createdAt")}</dt>
+                <dt className="text-sm font-semibold uppercase text-ink-700">{t("task.detail.createdAt")}</dt>
                 <dd className="mt-1 break-words text-sm text-ink-950">
                   {displayValue(data.task.created_at ? formatDateTime(locale, data.task.created_at) : undefined, noValue)}
                 </dd>
               </div>
               <div className="min-w-0">
-                <dt className="text-xs font-semibold uppercase text-ink-700">{t("task.detail.updatedAt")}</dt>
+                <dt className="text-sm font-semibold uppercase text-ink-700">{t("task.detail.updatedAt")}</dt>
                 <dd className="mt-1 break-words text-sm text-ink-950">
                   {displayValue(data.task.updated_at ? formatDateTime(locale, data.task.updated_at) : undefined, noValue)}
                 </dd>

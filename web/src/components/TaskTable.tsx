@@ -50,7 +50,7 @@ function TaskRelease({ task, onRefresh }: { task: TaskView; onRefresh: () => voi
       >
         {releasing ? t("task.claim.releasing") : t("task.claim.release")}
       </Button>
-      {error && <p className="mt-2 max-w-48 text-xs text-danger-700" role="alert">{error}</p>}
+      {error && <p className="mt-2 max-w-48 text-sm text-danger-700" role="alert">{error}</p>}
     </div>
   );
 }
@@ -61,7 +61,7 @@ function ClaimCell({ task }: { task: TaskView }) {
   return (
     <div className="space-y-1 text-ink-700">
       <p>{task.claimed_by || t("task.claim.noHolder")}</p>
-      <p className="text-xs text-ink-500">{task.claimed_by ? formatDuration(locale, task.held_for_seconds) : t("task.claim.unclaimed")}</p>
+      <p className="text-sm text-ink-500">{task.claimed_by ? formatDuration(locale, task.held_for_seconds) : t("task.claim.unclaimed")}</p>
     </div>
   );
 }
@@ -70,7 +70,7 @@ function TaskTitle({ task }: { task: TaskView }) {
   return (
     <div>
       <p className="text-clamp-2 max-w-[24rem] font-medium text-ink-950" title={task.title}>{task.title}</p>
-      <p className="mt-1 font-mono text-xs text-ink-500">{task.id}</p>
+      <p className="mt-1 font-mono text-sm text-ink-500">{task.id}</p>
     </div>
   );
 }
@@ -114,7 +114,7 @@ export function TaskTable({ tasks, mode, onRefresh }: Props) {
       <div className="table-scroll">
         <Table className="min-w-[52rem] w-full border-collapse text-left text-sm">
           <caption className="sr-only">{t("task.caption.list")}</caption>
-          <Table.Header className="border-b-2 border-ink-300 text-xs text-ink-700">
+          <Table.Header className="border-b-2 border-ink-300 text-sm text-ink-700">
             <Table.Row>
               <Table.Head {...columnScope} className="w-16 px-3 py-3 font-semibold">{t("task.column.order")}</Table.Head>
               <Table.Head {...columnScope} className="px-3 py-3 font-semibold">{t("task.column.task")}</Table.Head>
@@ -149,7 +149,7 @@ export function TaskTable({ tasks, mode, onRefresh }: Props) {
     <div className="table-scroll">
       <Table className={needsDecision ? "min-w-[70rem] w-full border-collapse text-left text-sm" : "min-w-[52rem] w-full border-collapse text-left text-sm"}>
         <caption className="sr-only">{needsDecision ? t("task.caption.needsDecision") : t("task.caption.list")}</caption>
-        <Table.Header className="border-b-2 border-ink-300 text-xs text-ink-700">
+        <Table.Header className="border-b-2 border-ink-300 text-sm text-ink-700">
           <Table.Row>
             <Table.Head {...columnScope} className="w-64 px-3 py-3 font-semibold">{t("task.column.task")}</Table.Head>
             {needsDecision && <Table.Head {...columnScope} className="min-w-[34rem] px-3 py-3 font-semibold">{t("task.column.decision")}</Table.Head>}

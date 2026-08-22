@@ -87,7 +87,7 @@ export function DecisionAnswerForm({ decision, onUpdated, onInputStateChange }: 
     <form className="mt-3 border-l-2 border-accent-600 pl-3" onSubmit={handleSubmit} noValidate>
       <p className="mb-3 whitespace-pre-wrap break-words text-sm leading-6 text-ink-800">{decision.question}</p>
       {autoSettlementDuration && (
-        <p className="mb-3 text-xs text-ink-700">
+        <p className="mb-3 text-sm text-ink-700">
           {t("decision.autoSettlesIn", { duration: autoSettlementDuration })}
         </p>
       )}
@@ -112,7 +112,7 @@ export function DecisionAnswerForm({ decision, onUpdated, onInputStateChange }: 
               );
             })}
           </select>
-          {errors.answer_label && <span className="mt-1 block text-xs text-danger-700" id={`${labelId}-error`}>{t("form.answer.error.labelOrText")}</span>}
+          {errors.answer_label && <span className="mt-1 block text-sm text-danger-700" id={`${labelId}-error`}>{t("form.answer.error.labelOrText")}</span>}
         </label>
       ) : (
         <label className="mb-3 block text-sm text-ink-800" htmlFor={labelId}>
@@ -125,7 +125,7 @@ export function DecisionAnswerForm({ decision, onUpdated, onInputStateChange }: 
             aria-invalid={Boolean(errors.answer_label)}
             aria-describedby={errors.answer_label ? `${labelId}-error` : undefined}
           />
-          {errors.answer_label && <span className="mt-1 block text-xs text-danger-700" id={`${labelId}-error`}>{t("form.answer.error.labelOrText")}</span>}
+          {errors.answer_label && <span className="mt-1 block text-sm text-danger-700" id={`${labelId}-error`}>{t("form.answer.error.labelOrText")}</span>}
         </label>
       )}
       <label className="mb-3 block text-sm text-ink-800" htmlFor={textId}>
@@ -138,7 +138,7 @@ export function DecisionAnswerForm({ decision, onUpdated, onInputStateChange }: 
           aria-invalid={Boolean(errors.answer_text)}
           aria-describedby={errors.answer_text ? `${textId}-error` : undefined}
         />
-        {errors.answer_text && <span className="mt-1 block text-xs text-danger-700" id={`${textId}-error`}>{t("form.answer.error.labelOrText")}</span>}
+        {errors.answer_text && <span className="mt-1 block text-sm text-danger-700" id={`${textId}-error`}>{t("form.answer.error.labelOrText")}</span>}
       </label>
       {submitError && <p className="mb-3 text-sm text-danger-700" role="alert">{submitError}</p>}
       <Button

@@ -60,7 +60,7 @@ export function DecisionHistoryTable({ decisions, omittedCount }: Props) {
       <div className="table-scroll mt-4">
         <Table className="min-w-[52rem] w-full border-collapse text-left text-sm">
           <caption className="sr-only">{t("goal.history.caption")}</caption>
-          <Table.Header className="border-b-2 border-ink-300 text-xs text-ink-700">
+          <Table.Header className="border-b-2 border-ink-300 text-sm text-ink-700">
             <Table.Row>
               <Table.Head {...columnScope} className="px-3 py-3 font-semibold">{t("goal.history.column.question")}</Table.Head>
               <Table.Head {...columnScope} className="w-64 px-3 py-3 font-semibold">{t("goal.history.column.answer")}</Table.Head>
@@ -78,7 +78,7 @@ export function DecisionHistoryTable({ decisions, omittedCount }: Props) {
                   <Table.Cell className="max-w-[28rem] break-words px-3 py-4 font-medium text-ink-950">{decision.question}</Table.Cell>
                   <Table.Cell className="max-w-64 break-words px-3 py-4 text-ink-700">
                     <p>{answer || "-"}</p>
-                    {settlement && <p className="mt-1 text-xs text-ink-500">{settlement}</p>}
+                    {settlement && <p className="mt-1 text-sm text-ink-500">{settlement}</p>}
                   </Table.Cell>
                   <Table.Cell className="whitespace-nowrap px-3 py-4 text-ink-700">{decision.answered_at ? formatDateTime(locale, decision.answered_at) : "-"}</Table.Cell>
                   <Table.Cell className="whitespace-nowrap px-3 py-4 text-ink-700">{decision.applied_at ? formatDateTime(locale, decision.applied_at) : "-"}</Table.Cell>
@@ -104,14 +104,14 @@ export function DecisionHistoryTable({ decisions, omittedCount }: Props) {
                         />
                         <div className="flex gap-2">
                           <button
-                            className="rounded bg-ink-950 px-2 py-1 text-xs font-semibold text-white disabled:opacity-50"
+                            className="rounded bg-ink-950 px-2 py-1 text-sm font-semibold text-white disabled:opacity-50"
                             type="submit"
                             disabled={revisionSubmitting}
                           >
                             {revisionSubmitting ? t("goal.history.revision.creating") : t("goal.history.revision.create")}
                           </button>
                           <button
-                            className="rounded border border-line px-2 py-1 text-xs font-semibold text-ink-700"
+                            className="rounded border border-line px-2 py-1 text-sm font-semibold text-ink-700"
                             type="button"
                             onClick={() => {
                               setRevisingDecisionID(null);
@@ -126,7 +126,7 @@ export function DecisionHistoryTable({ decisions, omittedCount }: Props) {
                       </form>
                     ) : (
                       <button
-                        className="rounded border border-line px-2 py-1 text-xs font-semibold text-ink-700 hover:border-ink-500"
+                        className="rounded border border-line px-2 py-1 text-sm font-semibold text-ink-700 hover:border-ink-500"
                         type="button"
                         onClick={() => {
                           setRevisingDecisionID(decision.decision_id);
@@ -138,7 +138,7 @@ export function DecisionHistoryTable({ decisions, omittedCount }: Props) {
                       </button>
                     )}
                     {revisionMessage?.decisionID === decision.decision_id && (
-                      <p className={`mt-2 text-xs ${revisionMessage.error ? "text-red-700" : "text-ink-700"}`} role="status">
+                      <p className={`mt-2 text-sm ${revisionMessage.error ? "text-red-700" : "text-ink-700"}`} role="status">
                         {revisionMessage.text}
                       </p>
                     )}
