@@ -1,6 +1,7 @@
 # Primary research material. Contains competitive analysis and tool evaluations,
 # and is deliberately not published. The spec under doc/specs/ cites only what it needs.
 doc/research/
+/.worktrees/
 
 # Build artifacts. Anchored to the repository root so they do not match
 # cmd/atct/ or the atct entries under web/.

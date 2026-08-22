@@ -18,7 +18,13 @@ fi
 goal8="${goal_id:0:8}"
 
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-worktree="$(cd "$repo/.." && pwd)/atct-wt-${goal8}"
+git_dir="$(git -C "$repo" rev-parse --absolute-git-dir)"
+git_common_dir="$(git -C "$repo" rev-parse --path-format=absolute --git-common-dir)"
+if [[ "$git_dir" != "$git_common_dir" ]]; then
+  echo "作業ツリーの中では実行できない。主チェックアウトで実行しろ" >&2
+  exit 2
+fi
+worktree="$repo/.worktrees/${goal8}"
 branch="wt/goal-${goal8}"
 
 if [[ ! -d "$repo/web/node_modules" ]]; then
