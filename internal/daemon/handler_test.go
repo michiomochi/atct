@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/michiomochi/atct/internal/domain"
+	"github.com/michiomochi/atct/internal/mcpshim"
 	"github.com/michiomochi/atct/internal/rpc"
 	"github.com/michiomochi/atct/internal/store"
 )
@@ -835,24 +836,53 @@ func TestContractB5GoalListRemainsAvailableToContextConsumers(t *testing.T) {
 	}
 }
 
-func TestContractB6SessionStartHookKeepsFixedInstructionBlock(t *testing.T) {
+func TestContractB6SessionStartHookMovesFixedInstructionsToMCP(t *testing.T) {
 	output, err := runSessionStartHookForContractTest(t, `#!/usr/bin/env bash
-if [[ "$1" == "context" && "$2" == "-brief" ]]; then
-  printf 'ATCT: project atct / active goals 1 / todo tasks 1 / waiting answers 0\n'
-  exit 0
-fi
-exit 1
+case "$1 $2" in
+  "daemon start") printf 'atct daemon ready: pid 123, http 127.0.0.1:8788\n' ;;
+  "context -brief") printf 'ATCT: project atct / active goals 1 / todo tasks 1 / waiting answers 0\n' ;;
+  *) exit 1 ;;
+esac
 `)
 	if err != nil {
 		t.Fatalf("session-start hook: %v\noutput: %s", err, output)
+	}
+	for _, line := range strings.Split(mcpshim.Instructions, "\n") {
+		if line == "" {
+			continue
+		}
+		if strings.Contains(output, line) {
+			t.Errorf("session-start output contains MCP instruction %q: %q", line, output)
+		}
+	}
+	const warning = "ATCT warning: daemon is listening at 127.0.0.1:8788; MCP endpoint is fixed at http://127.0.0.1:8787/mcp."
+	if !strings.Contains(output, warning) {
+		t.Fatalf("session-start output missing daemon address warning %q: %q", warning, output)
+	}
+
+	fixture := newMCPHTTPTestServer(t)
+	defer fixture.server.Close()
+	client := newMCPHTTPTestClient(fixture.server.URL + "/mcp")
+	payload := client.initialize(t)
+	result := mcpResult(t, payload)
+	instructionsValue, ok := result["instructions"]
+	if !ok {
+		t.Fatalf("MCP initialize result has no instructions: %#v", result)
+	}
+	instructions, ok := instructionsValue.(string)
+	if !ok {
+		t.Fatalf("MCP initialize instructions = %#v, want string", instructionsValue)
+	}
+	if instructions != mcpshim.Instructions {
+		t.Fatalf("MCP initialize instructions = %q, want shared instructions", instructions)
 	}
 	for _, marker := range []string{
 		"This repository is registered with ATCT.",
 		"An active goal is permission to work.",
 		"See the `atct` skill for details.",
 	} {
-		if !strings.Contains(output, marker) {
-			t.Errorf("session-start output missing fixed instruction %q", marker)
+		if !strings.Contains(instructions, marker) {
+			t.Errorf("MCP initialize instructions missing fixed instruction %q", marker)
 		}
 	}
 }

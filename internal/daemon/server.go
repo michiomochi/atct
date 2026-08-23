@@ -65,7 +65,9 @@ func (d *Daemon) HTTPHandler() http.Handler {
 			return nil
 		}
 
-		server := mcp.NewServer(&mcp.Implementation{Name: "atct", Version: d.version}, nil)
+		server := mcp.NewServer(&mcp.Implementation{Name: "atct", Version: d.version}, &mcp.ServerOptions{
+			Instructions: mcpshim.Instructions,
+		})
 		mcpshim.Register(server, client, agentSessionID)
 		return server
 	}, nil)
