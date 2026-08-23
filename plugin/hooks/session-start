@@ -7,9 +7,8 @@ fi
 ATCT_BIN="$HOOK_DIR/../bin/atct"
 [[ -x "$ATCT_BIN" ]] || exit 0
 
-CONTEXT_OUTPUT="$($ATCT_BIN context 2>/dev/null)" || exit 0
+CONTEXT_OUTPUT="$($ATCT_BIN context -brief 2>/dev/null)" || exit 0
 [[ -n "$CONTEXT_OUTPUT" ]] || exit 0
-
 printf '%s\n' "$CONTEXT_OUTPUT"
 
 /bin/cat <<'EOF'

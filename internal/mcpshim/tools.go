@@ -12,6 +12,10 @@ type GoalListIn struct {
 	Cwd string `json:"cwd" jsonschema:"agent working directory; used to derive the project automatically"`
 }
 
+type GoalGetIn struct {
+	GoalID string `json:"goal_id"`
+}
+
 type GoalClaimIn struct {
 	GoalID string `json:"goal_id"`
 }
@@ -173,7 +177,7 @@ func callWithUnappliedDecisions(ctx context.Context, c *Client, method string, p
 	return nil, RawWithUnappliedDecisions{Data: out}, nil
 }
 
-// Register adds fifteen agent-facing tools to the MCP server.
+// Register adds sixteen agent-facing tools to the MCP server.
 // Human operations (answer, approve, and reject) belong to the Web UI and are not exposed through MCP.
 func Register(server *mcp.Server, c *Client, agentSessionID string) {
 	mcp.AddTool(server, &mcp.Tool{
@@ -203,6 +207,16 @@ func Register(server *mcp.Server, c *Client, agentSessionID string) {
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in GoalListIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
 		return callWithUnappliedDecisions(ctx, c, "goal.list", map[string]any{
 			"cwd": in.Cwd, "agent_session_id": agentSessionID, "include_unapplied_answers": true,
+		})
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:         "atct_goal_get",
+		Description:  "Get a goal's full content and all tasks, including done and dropped tasks.",
+		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in GoalGetIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
+		return callWithUnappliedDecisions(ctx, c, "goal.get", map[string]any{
+			"goal_id": in.GoalID,
 		})
 	})
 

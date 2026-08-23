@@ -51,6 +51,67 @@ func contextTextForProject(dir, cwd, projectName string, projectSpecified bool) 
 	return renderContext(snapshot.goals, snapshot.decisions), nil
 }
 
+func contextBriefTextForProject(dir, cwd, projectName string, projectSpecified bool) (string, error) {
+	dbPath := filepath.Join(dir, "atct.db")
+	if _, err := os.Stat(dbPath); err != nil {
+		if errors.Is(err, os.ErrNotExist) && !projectSpecified {
+			return "", nil
+		}
+		if errors.Is(err, os.ErrNotExist) {
+			return "", fmt.Errorf("project %q not found", projectName)
+		}
+		return "", fmt.Errorf("stat store: %w", err)
+	}
+
+	s, err := store.Open(dbPath)
+	if err != nil {
+		return "", fmt.Errorf("open store: %w", err)
+	}
+	defer s.Close()
+
+	ctx := context.Background()
+	project, err := resolveProjectSelection(ctx, s, cwd, projectName, projectSpecified)
+	if errors.Is(err, store.ErrProjectNotFound) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("resolve project: %w", err)
+	}
+
+	goals, err := s.ListGoals(ctx, project.ID)
+	if err != nil {
+		return "", fmt.Errorf("list goals: %w", err)
+	}
+	activeGoals := 0
+	todoTasks := 0
+	waitingAnswers := 0
+	for _, goal := range goals {
+		if goal.Status != domain.GoalActive {
+			continue
+		}
+		activeGoals++
+		tasks, err := s.ListTasks(ctx, goal.ID)
+		if err != nil {
+			return "", fmt.Errorf("list tasks for goal %s: %w", goal.ID, err)
+		}
+		for _, task := range tasks {
+			if task.Status == domain.TaskTodo {
+				todoTasks++
+			}
+		}
+		decisions, err := s.ListOpenDecisions(ctx, goal.ID)
+		if err != nil {
+			return "", fmt.Errorf("list open decisions for goal %s: %w", goal.ID, err)
+		}
+		waitingAnswers += len(decisions)
+	}
+
+	return fmt.Sprintf(
+		"ATCT: project %s / active goals %d / todo tasks %d / waiting answers %d\n",
+		oneLine(project.Name), activeGoals, todoTasks, waitingAnswers,
+	), nil
+}
+
 func loadContextSnapshot(dir, cwd string) (contextSnapshot, error) {
 	return loadContextSnapshotForProject(dir, cwd, "", false)
 }
@@ -183,6 +244,21 @@ func runContextForProject(dir, projectName string, projectSpecified bool) error 
 		return fmt.Errorf("resolve current directory: %w", err)
 	}
 	output, err := contextTextForProject(dir, cwd, projectName, projectSpecified)
+	if err != nil {
+		return err
+	}
+	if output != "" {
+		_, err = fmt.Fprint(os.Stdout, output)
+	}
+	return err
+}
+
+func runContextBriefForProject(dir, projectName string, projectSpecified bool) error {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("resolve current directory: %w", err)
+	}
+	output, err := contextBriefTextForProject(dir, cwd, projectName, projectSpecified)
 	if err != nil {
 		return err
 	}

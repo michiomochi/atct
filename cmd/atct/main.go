@@ -34,6 +34,7 @@ type cliConfig struct {
 	daemonAction     string
 	listenAddr       string
 	listenExplicit   bool
+	contextBrief     bool
 	contextCheck     bool
 	projectSpecified bool
 	projectAction    string
@@ -70,7 +71,7 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "  project list         List registered projects")
 	fmt.Fprintln(os.Stderr, "  goal add <content>   Create a goal for the current project")
 	fmt.Fprintln(os.Stderr, "  goal list            List goals for the current project")
-	fmt.Fprintln(os.Stderr, "  context              Print the current goal context for an AI session")
+	fmt.Fprintln(os.Stderr, "  context [-brief]      Print the current goal context for an AI session")
 	fmt.Fprintln(os.Stderr, "  pending              Print unanswered human decisions for the current project")
 	fmt.Fprintln(os.Stderr, "  watch                Stream human decision events for a Monitor")
 	fmt.Fprintln(os.Stderr, "  claim-check <ids...>|any  Exit 0 only if the tasks are claimed by a running session")
@@ -152,8 +153,10 @@ func parseArgs(args []string) (cliConfig, error) {
 	flags.SetOutput(os.Stderr)
 	flags.Usage = printUsage
 	listenAddr := flags.String("listen", defaultListenAddr, "HTTP listen address")
+	contextBrief := false
 	contextCheck := false
 	if sub == "context" {
+		flags.BoolVar(&contextBrief, "brief", false, "print a one-line context summary")
 		flags.BoolVar(&contextCheck, "check", false, "exit successfully when context work exists")
 	}
 	if sub == "context" || sub == "pending" {
@@ -184,6 +187,7 @@ func parseArgs(args []string) (cliConfig, error) {
 	if description != nil {
 		cfg.goalDescription = *description
 	}
+	cfg.contextBrief = contextBrief
 	cfg.contextCheck = contextCheck
 	return cfg, nil
 }
@@ -271,6 +275,12 @@ func main() {
 		}
 		return
 	case "context":
+		if config.contextBrief {
+			if err := runContextBriefForProject(dir, config.projectName, config.projectSpecified); err != nil {
+				log.Fatalf("context: %v", err)
+			}
+			return
+		}
 		if config.contextCheck {
 			if err := runContextCheckForProject(dir, config.projectName, config.projectSpecified); err != nil {
 				if errors.Is(err, errNoContextWork) {
