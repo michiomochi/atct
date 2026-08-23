@@ -8,7 +8,6 @@
     font-family: theme("fontFamily.sans");
     color: theme("colors.ink.950");
     background: theme("colors.paper");
-    --color-kumo-brand: light-dark(oklch(36% .2324 260), oklch(33% .2324 260));
     font-synthesis: none;
     text-rendering: optimizeLegibility;
   }
@@ -28,6 +27,10 @@
   textarea {
     font: inherit;
   }
+}
+
+:root {
+  --color-kumo-brand: light-dark(oklch(36% .2324 260), oklch(33% .2324 260));
 }
 
 @layer components {

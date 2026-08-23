@@ -83,4 +83,20 @@ describe("Kumo brand contrast", () => {
     expect(brand.c).toBeCloseTo(0.2324, 4);
     expect(brand.h).toBe(260);
   });
+
+  it("N5: declares Kumo's brand outside a cascade layer", () => {
+    const declarationIndex = globalCss.indexOf("--color-kumo-brand:");
+    expect(declarationIndex).toBeGreaterThanOrEqual(0);
+
+    let braceDepth = 0;
+    for (const character of globalCss.slice(0, declarationIndex)) {
+      if (character === "{") {
+        braceDepth++;
+      } else if (character === "}") {
+        braceDepth--;
+      }
+    }
+
+    expect(braceDepth).toBe(1);
+  });
 });
