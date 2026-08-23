@@ -4,6 +4,7 @@ HOOK_DIR="${BASH_SOURCE[0]%/*}"
 if [[ "$HOOK_DIR" == "${BASH_SOURCE[0]}" ]]; then
   HOOK_DIR='.'
 fi
+HOOK_DIR="$(cd -- "$HOOK_DIR" && pwd -P)" || exit 0
 ATCT_BIN="$HOOK_DIR/../bin/atct"
 [[ -x "$ATCT_BIN" ]] || exit 0
 

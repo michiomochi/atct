@@ -123,6 +123,7 @@ type UnappliedDecisionNotice struct {
 
 type RawWithUnappliedDecisions struct {
 	Data               any                       `json:"data"`
+	Role               string                    `json:"role,omitempty"`
 	UnappliedDecisions []UnappliedDecisionNotice `json:"unapplied_decisions,omitempty"`
 	ClaimableTasks     json.RawMessage           `json:"claimable_tasks,omitempty"`
 }
@@ -142,6 +143,7 @@ func rawOutputSchemaWithUnappliedDecisions() map[string]any {
 		"type": "object",
 		"properties": map[string]any{
 			"data": map[string]any{},
+			"role": map[string]any{"type": "string"},
 			"unapplied_decisions": map[string]any{
 				"type": "array",
 				"items": map[string]any{
@@ -178,17 +180,40 @@ func callWithUnappliedDecisions(ctx context.Context, c *Client, method string, p
 
 	var envelope struct {
 		Data               json.RawMessage           `json:"data"`
+		Role               string                    `json:"role"`
 		UnappliedDecisions []UnappliedDecisionNotice `json:"unapplied_decisions"`
 		ClaimableTasks     json.RawMessage           `json:"claimable_tasks"`
 	}
 	if err := json.Unmarshal(out, &envelope); err == nil && envelope.Data != nil {
 		return nil, RawWithUnappliedDecisions{
 			Data:               envelope.Data,
+			Role:               envelope.Role,
 			UnappliedDecisions: envelope.UnappliedDecisions,
 			ClaimableTasks:     envelope.ClaimableTasks,
 		}, nil
 	}
 	return nil, RawWithUnappliedDecisions{Data: out}, nil
+}
+
+func sessionRole(ctx context.Context, c *Client, agentSessionID string) (roleResult, error) {
+	var response roleResult
+	if err := c.Call(ctx, "session.role", map[string]any{"agent_session_id": strings.TrimSpace(agentSessionID)}, &response); err != nil {
+		return roleResult{}, err
+	}
+	return response, nil
+}
+
+func callClaimWithRole(ctx context.Context, c *Client, method string, params any, agentSessionID string) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
+	_, result, err := callWithUnappliedDecisions(ctx, c, method, params)
+	if err != nil {
+		return nil, RawWithUnappliedDecisions{}, err
+	}
+	response, err := sessionRole(ctx, c, agentSessionID)
+	if err != nil {
+		return nil, result, nil
+	}
+	result.Role = response.Role
+	return nil, result, nil
 }
 
 func callRole(ctx context.Context, c *Client, in RoleIn, agentSessionID string) (*mcp.CallToolResult, Raw, error) {
@@ -197,8 +222,8 @@ func callRole(ctx context.Context, c *Client, in RoleIn, agentSessionID string) 
 		return nil, Raw{}, fmt.Errorf("expected_role must be one of commander, subcommander, executor")
 	}
 
-	var response roleResult
-	if err := c.Call(ctx, "session.role", map[string]any{"agent_session_id": strings.TrimSpace(agentSessionID)}, &response); err != nil {
+	response, err := sessionRole(ctx, c, agentSessionID)
+	if err != nil {
 		return nil, Raw{}, err
 	}
 	if expectedRole != "" {
@@ -238,9 +263,9 @@ func Register(server *mcp.Server, c *Client, agentSessionID string) {
 		Description:  "Claim a project for this agent session. A live claim from another session is refused; a dead session's claim is taken over.",
 		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in ProjectClaimIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
-		return callWithUnappliedDecisions(ctx, c, "project.claim", map[string]any{
+		return callClaimWithRole(ctx, c, "project.claim", map[string]any{
 			"project_id": in.ProjectID, "agent_session_id": agentSessionID, "include_unapplied_answers": true,
-		})
+		}, agentSessionID)
 	})
 
 	mcp.AddTool(server, &mcp.Tool{
@@ -278,9 +303,9 @@ func Register(server *mcp.Server, c *Client, agentSessionID string) {
 		Description:  "Claim a goal for this agent session. A live claim from another session is refused; a dead session's claim is taken over.",
 		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in GoalClaimIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
-		return callWithUnappliedDecisions(ctx, c, "goal.claim", map[string]any{
+		return callClaimWithRole(ctx, c, "goal.claim", map[string]any{
 			"goal_id": in.GoalID, "agent_session_id": agentSessionID, "include_unapplied_answers": true,
-		})
+		}, agentSessionID)
 	})
 
 	mcp.AddTool(server, &mcp.Tool{

@@ -102,6 +102,68 @@ func TestResponsesOmitUnappliedDecisionsWhenEmpty(t *testing.T) {
 	}
 }
 
+func TestProjectClaimResponseIncludesRole(t *testing.T) {
+	result := callNotificationTestTool(t, "atct_project_claim", map[string]any{"project_id": "project-1"},
+		`{"data":{"id":"project-1","name":"atct"},"role":"commander"}`)
+
+	var role string
+	if err := json.Unmarshal(result["role"], &role); err != nil {
+		t.Fatalf("unmarshal role: %v", err)
+	}
+	if role != "commander" {
+		t.Fatalf("role = %q, want commander", role)
+	}
+}
+
+func TestGoalClaimResponseIncludesRole(t *testing.T) {
+	result := callNotificationTestTool(t, "atct_goal_claim", map[string]any{"goal_id": "goal-1"},
+		`{"data":{"id":"goal-1","status":"active"},"role":"subcommander"}`)
+
+	var role string
+	if err := json.Unmarshal(result["role"], &role); err != nil {
+		t.Fatalf("unmarshal role: %v", err)
+	}
+	if role != "subcommander" {
+		t.Fatalf("role = %q, want subcommander", role)
+	}
+}
+
+func TestRoleBearingClaimResponsePreservesData(t *testing.T) {
+	result := callNotificationTestTool(t, "atct_project_claim", map[string]any{"project_id": "project-1"},
+		`{"data":{"id":"project-1","name":"atct","claimed_by":"run-1"},"role":"commander"}`)
+
+	assertClaimPayload := func(t *testing.T, result map[string]json.RawMessage) {
+		t.Helper()
+		var data struct {
+			ID        string `json:"id"`
+			Name      string `json:"name"`
+			ClaimedBy string `json:"claimed_by"`
+		}
+		if err := json.Unmarshal(result["data"], &data); err != nil {
+			t.Fatalf("unmarshal data: %v", err)
+		}
+		if data.ID != "project-1" || data.Name != "atct" || data.ClaimedBy != "run-1" {
+			t.Fatalf("data = %s, want existing claim payload", result["data"])
+		}
+	}
+	assertClaimPayload(t, result)
+
+	t.Run("role lookup failure preserves claim payload", func(t *testing.T) {
+		result, err := callNotificationTestToolWithResponses(t, "atct_project_claim",
+			map[string]any{"project_id": "project-1"},
+			`{"result":{"data":{"id":"project-1","name":"atct","claimed_by":"run-1"}}}`,
+			`{"error":{"code":-32000,"message":"role unavailable"}}`,
+		)
+		if err != nil {
+			t.Fatalf("CallTool should preserve a successful claim: %v", err)
+		}
+		assertClaimPayload(t, result)
+		if _, ok := result["role"]; ok {
+			t.Fatalf("role = %s, want role omitted when lookup fails", result["role"])
+		}
+	})
+}
+
 func TestOtherToolResponsesRemainUnchanged(t *testing.T) {
 	want := `{"ok":true}`
 	for _, name := range []string{
@@ -125,7 +187,16 @@ func TestOtherToolResponsesRemainUnchanged(t *testing.T) {
 
 func callNotificationTestTool(t *testing.T, name string, args map[string]any, daemonResult string) map[string]json.RawMessage {
 	t.Helper()
-	socketPath := startNotificationTestDaemon(t, daemonResult)
+	result, err := callNotificationTestToolWithResponses(t, name, args, `{"result":`+daemonResult+`}`)
+	if err != nil {
+		t.Fatalf("CallTool(%s): %v", name, err)
+	}
+	return result
+}
+
+func callNotificationTestToolWithResponses(t *testing.T, name string, args map[string]any, responses ...string) (map[string]json.RawMessage, error) {
+	t.Helper()
+	socketPath := startNotificationTestDaemonWithResponses(t, responses...)
 	server := mcp.NewServer(&mcp.Implementation{Name: "atct-test", Version: "test"}, nil)
 	Register(server, NewClient(socketPath), "run-1")
 
@@ -145,7 +216,7 @@ func callNotificationTestTool(t *testing.T, name string, args map[string]any, da
 
 	result, err := clientSession.CallTool(context.Background(), &mcp.CallToolParams{Name: name, Arguments: args})
 	if err != nil {
-		t.Fatalf("CallTool(%s): %v", name, err)
+		return nil, err
 	}
 	encoded, err := json.Marshal(result.StructuredContent)
 	if err != nil {
@@ -155,7 +226,7 @@ func callNotificationTestTool(t *testing.T, name string, args map[string]any, da
 	if err := json.Unmarshal(encoded, &got); err != nil {
 		t.Fatalf("unmarshal structured content %s: %v", encoded, err)
 	}
-	return got
+	return got, nil
 }
 
 func notificationTestArgs(name string) map[string]any {
@@ -188,7 +259,14 @@ func notificationTestArgs(name string) map[string]any {
 }
 
 func startNotificationTestDaemon(t *testing.T, result string) string {
+	return startNotificationTestDaemonWithResponses(t, `{"result":`+result+`}`)
+}
+
+func startNotificationTestDaemonWithResponses(t *testing.T, responses ...string) string {
 	t.Helper()
+	if len(responses) == 0 {
+		t.Fatal("startNotificationTestDaemonWithResponses requires a response")
+	}
 	// t.TempDir() embeds the test name, which pushes the socket path past the
 	// 104-byte limit macOS enforces on Unix sockets.
 	dir, err := os.MkdirTemp("", "atct")
@@ -202,6 +280,7 @@ func startNotificationTestDaemon(t *testing.T, result string) string {
 		t.Fatalf("Listen: %v", err)
 	}
 	done := make(chan struct{})
+	responseIndex := 0
 	go func() {
 		defer close(done)
 		for {
@@ -214,7 +293,12 @@ func startNotificationTestDaemon(t *testing.T, result string) string {
 				if _, err := bufio.NewReader(conn).ReadBytes('\n'); err != nil {
 					return
 				}
-				_, _ = io.WriteString(conn, `{"result":`+result+"}\n")
+				response := responses[len(responses)-1]
+				if responseIndex < len(responses) {
+					response = responses[responseIndex]
+				}
+				responseIndex++
+				_, _ = io.WriteString(conn, response+"\n")
 			}()
 		}
 	}()

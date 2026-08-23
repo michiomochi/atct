@@ -107,9 +107,23 @@ func contextBriefTextForProject(dir, cwd, projectName string, projectSpecified b
 	}
 
 	return fmt.Sprintf(
-		"ATCT: project %s / active goals %d / todo tasks %d / waiting answers %d\n",
-		oneLine(project.Name), activeGoals, todoTasks, waitingAnswers,
+		"ATCT: project %s / active goals %d / todo tasks %d / waiting answers %d / commander %s\n",
+		oneLine(project.Name), activeGoals, todoTasks, waitingAnswers, briefCommander(project),
 	), nil
+}
+
+// briefCommander reports the project claim holder because -brief reads the
+// store directly and has no session identity with which to derive a role.
+func briefCommander(project domain.Project) string {
+	claimedBy := strings.TrimSpace(project.ClaimedBy)
+	if claimedBy == "" {
+		return "absent"
+	}
+	runes := []rune(claimedBy)
+	if len(runes) > 8 {
+		return string(runes[:8]) + "…"
+	}
+	return claimedBy
 }
 
 func loadContextSnapshot(dir, cwd string) (contextSnapshot, error) {
