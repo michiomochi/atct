@@ -178,6 +178,53 @@ func TestContextIsSilentForUnregisteredProject(t *testing.T) {
 	}
 }
 
+func TestContextBriefIncludesClaimedCommander(t *testing.T) {
+	fixture := newContextCheckFixture(t)
+	if _, err := fixture.db.ClaimProject(context.Background(), fixture.goal.ProjectID, "atct-commander"); err != nil {
+		t.Fatalf("ClaimProject: %v", err)
+	}
+
+	got, err := contextBriefTextForProject(fixture.dir, fixture.cwd, "", false)
+	if err != nil {
+		t.Fatalf("contextBriefTextForProject: %v", err)
+	}
+	if !strings.Contains(got, "commander atct-com…") {
+		t.Fatalf("brief omitted visibly truncated commander: %q", got)
+	}
+}
+
+func TestContextBriefIsSilentForUnregisteredProject(t *testing.T) {
+	dbDir := t.TempDir()
+	db, err := store.Open(filepath.Join(dbDir, "atct.db"))
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("db.Close: %v", err)
+	}
+	dir := t.TempDir()
+
+	got, err := contextBriefTextForProject(dir, t.TempDir(), "", false)
+	if err != nil {
+		t.Fatalf("contextBriefTextForProject: %v", err)
+	}
+	if got != "" {
+		t.Fatalf("contextBriefTextForProject = %q, want empty output", got)
+	}
+}
+
+func TestContextBriefShowsAbsentCommanderForUnclaimedProject(t *testing.T) {
+	fixture := newContextCheckFixture(t)
+
+	got, err := contextBriefTextForProject(fixture.dir, fixture.cwd, "", false)
+	if err != nil {
+		t.Fatalf("contextBriefTextForProject: %v", err)
+	}
+	if !strings.Contains(got, "commander absent") {
+		t.Fatalf("brief omitted absent commander: %q", got)
+	}
+}
+
 func TestRenderContextDistinguishesClaimedTasks(t *testing.T) {
 	t.Setenv(atctAgentSessionIDEnv, "run-self")
 
