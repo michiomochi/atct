@@ -146,7 +146,14 @@ func watchLoopWithEnsureAndProjectID(ctx context.Context, out io.Writer, client 
 		retryInterval = watchReconnectInterval
 	}
 	delivered := make(map[watchDeliveryKey]struct{})
-	wakeupDelivered := make(map[watchWakeupDeliveryKey]struct{})
+	// Keep only the last rendered wakeup content in this watch loop. On daemon
+	// restart the daemon forgets its history, but this watch retains its last
+	// content across reconnects and suppresses an unchanged first post-restart
+	// wakeup; a changed line is sent. A newly started watch has no prior content
+	// and sends its first current wakeup. State is per watch loop so a later
+	// watch is not silenced by another watch's delivery.
+	var lastWakeupContent string
+	wakeupDiscrepancyDelivered := make(map[watchWakeupDeliveryKey]struct{})
 	detectionDelivered := make(map[watchDetectionDeliveryKey]struct{})
 	ensureFailures := 0
 	ensureDisabled := false
@@ -200,12 +207,12 @@ func watchLoopWithEnsureAndProjectID(ctx context.Context, out io.Writer, client 
 			if filterProjectID != "" && decision.ProjectID != "" && decision.ProjectID != filterProjectID {
 				continue
 			}
-			if err := emitWatchDecision(out, "decision.answered", decision, delivered, wakeupDelivered, detectionDelivered); err != nil {
+			if err := emitWatchDecisionWithState(out, "decision.answered", decision, delivered, &lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered); err != nil {
 				return err
 			}
 		}
 
-		if err := consumeWatchEventsWithTimeout(ctx, client, baseURL, filterProjectID, out, watchKeepaliveTimeout, delivered, wakeupDelivered, detectionDelivered); err != nil && ctx.Err() == nil {
+		if err := consumeWatchEventsWithState(ctx, client, baseURL, filterProjectID, out, watchKeepaliveTimeout, delivered, &lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered); err != nil && ctx.Err() == nil {
 			if err := recoverDaemon(); err != nil {
 				return err
 			}
@@ -349,7 +356,12 @@ type watchSSEFrame struct {
 	data string
 }
 
-func consumeWatchEventsWithTimeout(ctx context.Context, client *http.Client, baseURL, projectID string, out io.Writer, keepaliveTimeout time.Duration, delivered map[watchDeliveryKey]struct{}, wakeupDelivered map[watchWakeupDeliveryKey]struct{}, detectionDelivered map[watchDetectionDeliveryKey]struct{}) error {
+func consumeWatchEventsWithTimeout(ctx context.Context, client *http.Client, baseURL, projectID string, out io.Writer, keepaliveTimeout time.Duration, delivered map[watchDeliveryKey]struct{}, wakeupDiscrepancyDelivered map[watchWakeupDeliveryKey]struct{}, detectionDelivered map[watchDetectionDeliveryKey]struct{}) error {
+	var lastWakeupContent string
+	return consumeWatchEventsWithState(ctx, client, baseURL, projectID, out, keepaliveTimeout, delivered, &lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered)
+}
+
+func consumeWatchEventsWithState(ctx context.Context, client *http.Client, baseURL, projectID string, out io.Writer, keepaliveTimeout time.Duration, delivered map[watchDeliveryKey]struct{}, lastWakeupContent *string, wakeupDiscrepancyDelivered map[watchWakeupDeliveryKey]struct{}, detectionDelivered map[watchDetectionDeliveryKey]struct{}) error {
 	eventsURL, err := watchEventsURL(baseURL, projectID)
 	if err != nil {
 		return err
@@ -418,7 +430,7 @@ func consumeWatchEventsWithTimeout(ctx context.Context, client *http.Client, bas
 			if projectID != "" && decision.ProjectID != "" && decision.ProjectID != projectID {
 				continue
 			}
-			if err := emitWatchDecision(out, frame.name, decision, delivered, wakeupDelivered, detectionDelivered); err != nil {
+			if err := emitWatchDecisionWithState(out, frame.name, decision, delivered, lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered); err != nil {
 				return err
 			}
 		}
@@ -502,7 +514,7 @@ func watchEventsURL(baseURL, projectID string) (string, error) {
 	return parsed.String(), nil
 }
 
-func emitWatchDecision(out io.Writer, eventName string, decision watchDecision, delivered map[watchDeliveryKey]struct{}, wakeupDelivered map[watchWakeupDeliveryKey]struct{}, detectionDelivered map[watchDetectionDeliveryKey]struct{}) error {
+func emitWatchDecisionWithState(out io.Writer, eventName string, decision watchDecision, delivered map[watchDeliveryKey]struct{}, lastWakeupContent *string, wakeupDiscrepancyDelivered map[watchWakeupDeliveryKey]struct{}, detectionDelivered map[watchDetectionDeliveryKey]struct{}) error {
 	line, ok := formatWatchDecision(eventName, decision)
 	if !ok {
 		return nil
@@ -542,14 +554,29 @@ func emitWatchDecision(out io.Writer, eventName string, decision watchDecision, 
 		if id == "" {
 			return fmt.Errorf("SSE event %s has no wakeup_id", eventName)
 		}
+		if eventName == "wakeup" {
+			if lastWakeupContent == nil {
+				return errors.New("wakeup delivery state is nil")
+			}
+			// The daemon assigns a fresh ID to each periodic resend. Compare only
+			// with the last rendered content so A -> B -> A delivers the final A.
+			if *lastWakeupContent == line {
+				return nil
+			}
+			if _, err := fmt.Fprintln(out, line); err != nil {
+				return err
+			}
+			*lastWakeupContent = line
+			return nil
+		}
 		key := watchWakeupDeliveryKey{eventName: eventName, wakeupID: id}
-		if _, ok := wakeupDelivered[key]; ok {
+		if _, ok := wakeupDiscrepancyDelivered[key]; ok {
 			return nil
 		}
 		if _, err := fmt.Fprintln(out, line); err != nil {
 			return err
 		}
-		wakeupDelivered[key] = struct{}{}
+		wakeupDiscrepancyDelivered[key] = struct{}{}
 		return nil
 	}
 	id := decision.decisionID()
