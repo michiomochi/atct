@@ -183,6 +183,30 @@ plugin/hooks/session-start（現在）
 （grep で 0 件）。**この仕組みが効くことは確認済み**——commander 自身のコンテキストに
 `# MCP Server Instructions` として他のサーバーの文言が入っている。
 
+## URL が 8787 に固定であることについて
+
+**`.mcp.json` は静的な JSON で、`~/.atct/daemon.json` を読めない。**したがって URL は
+固定になる。**しかし daemon は 8787 に固定されていない。**
+
+```
+cmd/atct/main.go:431
+for port := defaultListenPort; port <= lastListenPort; port++    // 8787 → 8796
+```
+
+8787 が塞がっていれば 8788 へ移り、**プラグインは 8787 を叩いて何も見つけられない。
+しかも黙って失敗する**（retry 3 回で諦め、ツールが 0 個になるだけ）。2026-08-24 に
+孤児プロセスが 8788 を掴んでいた実例がある。
+
+**当面は、フックが実際のアドレスを見て食い違いを警告する。**
+
+```
+ATCT warning: daemon is listening at 127.0.0.1:8788;
+MCP endpoint is fixed at http://127.0.0.1:8787/mcp.
+```
+
+**恒久策は決めていない。**決定 `2fd85a78` で人間に問うている。動的な解決を入れるなら、
+起動役を挟むか、別の設定機構が要る。
+
 ## 未検証
 
 - **Codex が後発起動を自動で拾うか。**偽サーバー停止中に `rmcp ... http/request failed` が
