@@ -1,4 +1,4 @@
-package mcpshim
+package mcpshim_test
 
 import (
 	"context"
@@ -10,6 +10,7 @@ import (
 
 	"github.com/michiomochi/atct/internal/daemon"
 	"github.com/michiomochi/atct/internal/domain"
+	"github.com/michiomochi/atct/internal/mcpshim"
 	"github.com/michiomochi/atct/internal/store"
 )
 
@@ -39,7 +40,7 @@ func TestClientCallReachesDaemon(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 
-	client := NewClient(sock)
+	client := mcpshim.NewClient(sock)
 	var ns domain.Project
 	err = client.Call(ctx, "project.create",
 		map[string]string{"name": "atct", "root_path": "/repos/atct"}, &ns)
