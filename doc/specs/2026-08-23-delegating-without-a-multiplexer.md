@@ -122,7 +122,7 @@ atct role --expect executor    引数の期待値と実態を突き合わせる�
                                      atct role --expect <役割> で明示する
 ```
 
-これで形 A / 形 B という抽象語を使わずに済み、読む者は自分がどちらかを即座に判断できる。
+読む者は、自分がどちらの環境にいるかを即座に判断できる。
 
 ## 却下した案
 
@@ -138,7 +138,7 @@ atct role --expect executor    引数の期待値と実態を突き合わせる�
 
 ## 未検証
 
-- **sub-agent が `atct` を叩けるか。**環境によっては bash が無い。無い場合、形 B では
+- **sub-agent が `atct` を叩けるか。**環境によっては bash が無い。無い場合、sub-agent では
   検査ができない。そのとき何を保証するかは決めていない
 - **`atct role` が daemon を必要とするか。**`atct context` は DB を直接開くので daemon 不要
   だが、`session.role` は RPC である。**働く側が daemon に届かない環境**（別ホストの
