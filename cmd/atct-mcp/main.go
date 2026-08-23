@@ -61,7 +61,9 @@ func main() {
 		log.Fatalf("register agent session: %v", err)
 	}
 
-	server := mcp.NewServer(&mcp.Implementation{Name: "atct", Version: version}, nil)
+	server := mcp.NewServer(&mcp.Implementation{Name: "atct", Version: version}, &mcp.ServerOptions{
+		Instructions: mcpshim.Instructions,
+	})
 	mcpshim.Register(server, client, agentSessionID)
 
 	if err := server.Run(context.Background(), &mcp.StdioTransport{}); err != nil {
