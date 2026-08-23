@@ -23,7 +23,13 @@ var ErrGoalNotProposed = errors.New("goal is not proposed")
 type responseWithUnappliedDecisions struct {
 	Data               any                             `json:"data"`
 	UnappliedDecisions []unappliedDecisionNotification `json:"unapplied_decisions,omitempty"`
-	ClaimableTasks     []domain.Task                   `json:"claimable_tasks,omitempty"`
+	ClaimableTasks     []claimableTaskSummary          `json:"claimable_tasks,omitempty"`
+}
+
+type claimableTaskSummary struct {
+	ID     string `json:"id"`
+	Title  string `json:"title"`
+	GoalID string `json:"goal_id"`
 }
 
 type goalListTaskCounts struct {
@@ -93,12 +99,12 @@ func (d *Daemon) responseWithProjectUnappliedDecisions(ctx context.Context, data
 	}, nil
 }
 
-func (d *Daemon) listClaimableTasks(ctx context.Context, projectID, excludedTaskID string) ([]domain.Task, error) {
+func (d *Daemon) listClaimableTasks(ctx context.Context, projectID, excludedTaskID string) ([]claimableTaskSummary, error) {
 	goals, err := d.store.ListGoals(ctx, projectID)
 	if err != nil {
 		return nil, err
 	}
-	claimable := make([]domain.Task, 0, 3)
+	claimable := make([]claimableTaskSummary, 0, 3)
 	for _, goal := range goals {
 		tasks, err := d.store.ListTasks(ctx, goal.ID)
 		if err != nil {
@@ -108,13 +114,27 @@ func (d *Daemon) listClaimableTasks(ctx context.Context, projectID, excludedTask
 			if task.ID == excludedTaskID || task.Status != domain.TaskTodo || strings.TrimSpace(task.ClaimedBy) != "" {
 				continue
 			}
-			claimable = append(claimable, task)
+			claimable = append(claimable, claimableTaskSummary{
+				ID: task.ID, Title: task.Title, GoalID: task.GoalID,
+			})
 			if len(claimable) == 3 {
 				return claimable, nil
 			}
 		}
 	}
 	return claimable, nil
+}
+
+func tasksDeclaredWithIdempotencyKey(tasks []domain.Task, idempotencyKey string) []domain.Task {
+	var declared []domain.Task
+	for _, task := range tasks {
+		separator := strings.LastIndex(task.DeclareKey, "#")
+		if separator < 0 || task.DeclareKey[:separator] != idempotencyKey {
+			continue
+		}
+		declared = append(declared, task)
+	}
+	return declared
 }
 
 func (d *Daemon) ensureAgentSessionProject(ctx context.Context, agentSessionID, targetProjectID string) error {
@@ -502,6 +522,9 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 			return nil, err
 		}
 		tasks, err := d.store.DeclareTasks(ctx, p.GoalID, p.Agent, p.IdempotencyKey, p.Titles, p.Descriptions, p.Files)
+		if err == nil {
+			tasks = tasksDeclaredWithIdempotencyKey(tasks, p.IdempotencyKey)
+		}
 		if err != nil || !p.IncludeUnappliedAnswers {
 			return marshal(tasks, err)
 		}
