@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/michiomochi/atct/internal/domain"
 	"github.com/michiomochi/atct/internal/rpc"
@@ -23,6 +24,28 @@ type responseWithUnappliedDecisions struct {
 	Data               any                             `json:"data"`
 	UnappliedDecisions []unappliedDecisionNotification `json:"unapplied_decisions,omitempty"`
 	ClaimableTasks     []domain.Task                   `json:"claimable_tasks,omitempty"`
+}
+
+type goalListTaskCounts struct {
+	Todo    int `json:"todo"`
+	Doing   int `json:"doing"`
+	Done    int `json:"done"`
+	Dropped int `json:"dropped"`
+}
+
+func goalTitle(content string) string {
+	for _, line := range strings.Split(content, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		runes := []rune(line)
+		if len(runes) > 120 {
+			return string(runes[:120]) + "…"
+		}
+		return line
+	}
+	return ""
 }
 
 type unappliedDecisionNotification struct {
@@ -253,18 +276,35 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 			Order       int               `json:"order"`
 		}
 		type goalListResponse struct {
-			ID                string            `json:"id"`
-			ProjectID         string            `json:"project_id"`
-			DerivedFromGoalID string            `json:"derived_from_goal_id"`
-			Content           string            `json:"content"`
-			Status            domain.GoalStatus `json:"status"`
-			ClaimedBy         string            `json:"claimed_by"`
-			CreatedAt         time.Time         `json:"created_at"`
-			Tasks             []goalListTask    `json:"tasks"`
+			ID                string             `json:"id"`
+			DerivedFromGoalID string             `json:"derived_from_goal_id,omitempty"`
+			Title             string             `json:"title"`
+			ContentChars      int                `json:"content_chars"`
+			TaskCounts        goalListTaskCounts `json:"task_counts"`
+			Status            domain.GoalStatus  `json:"status"`
+			ClaimedBy         string             `json:"claimed_by,omitempty"`
+			CreatedAt         time.Time          `json:"created_at"`
+			Tasks             []goalListTask     `json:"tasks"`
 		}
 		visibleGoals := make([]goalListResponse, 0, len(goals))
+		awaitingApprovalCount := 0
 		for _, goal := range goals {
 			if goal.Status == domain.GoalDone || goal.Status == domain.GoalDropped {
+				continue
+			}
+			openDecisions, err := d.store.ListOpenDecisions(ctx, goal.ID)
+			if err != nil {
+				return nil, err
+			}
+			awaitingApproval := false
+			for _, decision := range openDecisions {
+				if decision.Kind == domain.KindCompletion {
+					awaitingApproval = true
+					break
+				}
+			}
+			if awaitingApproval {
+				awaitingApprovalCount++
 				continue
 			}
 			tasks, err := d.store.ListTasks(ctx, goal.ID)
@@ -272,7 +312,18 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 				return nil, err
 			}
 			activeTasks := make([]goalListTask, 0, len(tasks))
+			taskCounts := goalListTaskCounts{}
 			for _, task := range tasks {
+				switch task.Status {
+				case domain.TaskTodo:
+					taskCounts.Todo++
+				case domain.TaskDoing:
+					taskCounts.Doing++
+				case domain.TaskDone:
+					taskCounts.Done++
+				case domain.TaskDropped:
+					taskCounts.Dropped++
+				}
 				if task.Status != domain.TaskTodo && task.Status != domain.TaskDoing {
 					continue
 				}
@@ -280,7 +331,7 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 					ID:          task.ID,
 					GoalID:      task.GoalID,
 					Title:       task.Title,
-					Description: task.Description,
+					Description: goalTitle(task.Description),
 					Status:      task.Status,
 					ClaimedBy:   task.ClaimedBy,
 					Order:       task.Order,
@@ -288,9 +339,10 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 			}
 			visibleGoals = append(visibleGoals, goalListResponse{
 				ID:                goal.ID,
-				ProjectID:         goal.ProjectID,
 				DerivedFromGoalID: goal.DerivedFromGoalID,
-				Content:           goal.Content,
+				Title:             goalTitle(goal.Content),
+				ContentChars:      utf8.RuneCountInString(goal.Content),
+				TaskCounts:        taskCounts,
 				Status:            goal.Status,
 				ClaimedBy:         goal.ClaimedBy,
 				CreatedAt:         goal.CreatedAt,
@@ -309,10 +361,11 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 			return nil, err
 		}
 		data := map[string]any{
-			"project":            ns,
-			"goals":              visibleGoals,
-			"answered_decisions": mine,
-			"orphaned_decisions": orphaned,
+			"project":                 ns,
+			"goals":                   visibleGoals,
+			"awaiting_approval_count": awaitingApprovalCount,
+			"answered_decisions":      mine,
+			"orphaned_decisions":      orphaned,
 		}
 		if !p.IncludeUnappliedAnswers {
 			return marshal(data, nil)
@@ -320,6 +373,26 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		return marshal(responseWithUnappliedDecisions{
 			Data:               data,
 			UnappliedDecisions: unappliedDecisionNotifications(orphaned),
+		}, nil)
+
+	case "goal.get":
+		var p struct {
+			GoalID string `json:"goal_id"`
+		}
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		goal, err := d.store.GetGoal(ctx, p.GoalID)
+		if err != nil {
+			return nil, err
+		}
+		tasks, err := d.store.ListTasks(ctx, p.GoalID)
+		if err != nil {
+			return nil, err
+		}
+		return marshal(map[string]any{
+			"goal":  goal,
+			"tasks": tasks,
 		}, nil)
 
 	case "goal.create":

@@ -41,6 +41,7 @@ func TestRegisterPublishesFifteenToolsWithFlexibleOutputSchema(t *testing.T) {
 	}
 	wantNames := map[string]bool{
 		"atct_goal_list":             true,
+		"atct_goal_get":              true,
 		"atct_task_declare":          true,
 		"atct_task_claim":            true,
 		"atct_task_release":          true,
@@ -102,6 +103,7 @@ func TestRegisterPublishesFifteenToolsWithFlexibleOutputSchema(t *testing.T) {
 		args map[string]any
 	}{
 		{name: "atct_goal_list", args: map[string]any{"cwd": "/tmp"}},
+		{name: "atct_goal_get", args: map[string]any{"goal_id": "goal-1"}},
 		{name: "atct_goal_claim", args: map[string]any{"goal_id": "goal-1"}},
 		{name: "atct_goal_update_content", args: map[string]any{
 			"goal_id": "goal-1", "content": "updated goal",

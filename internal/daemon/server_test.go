@@ -730,14 +730,8 @@ func TestGoalListKeepsGoalIdentityFields(t *testing.T) {
 	if got.ID != fixture.active[1].ID {
 		t.Fatalf("goal.list omitted active child %s", fixture.active[1].ID)
 	}
-	if got.ProjectID != fixture.project.ID {
-		t.Fatalf("project_id = %q, want %q", got.ProjectID, fixture.project.ID)
-	}
 	if got.DerivedFromGoalID != fixture.active[0].ID {
 		t.Fatalf("derived_from_goal_id = %q, want %q", got.DerivedFromGoalID, fixture.active[0].ID)
-	}
-	if got.Content != "active child" {
-		t.Fatalf("content = %q, want %q", got.Content, "active child")
 	}
 	if got.Status != domain.GoalActive {
 		t.Fatalf("status = %q, want %q", got.Status, domain.GoalActive)
