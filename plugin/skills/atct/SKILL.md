@@ -44,8 +44,8 @@ that worker is started:
    how the worker is started or how the role is transmitted.
 3. Put this exact instruction at the very beginning of the request:
 
-   > First run `atct role --expect <role>`. If it exits non-zero, do not start
-   > work; return the task.
+   > First invoke the role-verification MCP tool with the expected role. If it
+   > reports a mismatch, do not start work; return the task.
 
 4. Keep one worker per task. Return a correction, review fix, follow-up
    question, or clarification for the same task to the same worker. Start a

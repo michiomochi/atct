@@ -3,6 +3,8 @@ package mcpshim
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"strings"
 
 	"github.com/michiomochi/atct/internal/domain"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -98,6 +100,18 @@ type GoalSetDerivedFromIn struct {
 	DerivedFromGoalID string `json:"derived_from_goal_id"`
 }
 
+type RoleIn struct {
+	ExpectedRole string `json:"expected_role,omitempty" jsonschema:"optional expected role; a mismatch is returned in matches"`
+}
+
+type roleResult struct {
+	Role         string `json:"role"`
+	ProjectID    string `json:"project_id"`
+	GoalID       string `json:"goal_id"`
+	ExpectedRole string `json:"expected_role,omitempty"`
+	Matches      *bool  `json:"matches,omitempty"`
+}
+
 type Raw struct {
 	Data any `json:"data"`
 }
@@ -177,9 +191,48 @@ func callWithUnappliedDecisions(ctx context.Context, c *Client, method string, p
 	return nil, RawWithUnappliedDecisions{Data: out}, nil
 }
 
-// Register adds sixteen agent-facing tools to the MCP server.
+func callRole(ctx context.Context, c *Client, in RoleIn, agentSessionID string) (*mcp.CallToolResult, Raw, error) {
+	expectedRole := strings.TrimSpace(in.ExpectedRole)
+	if expectedRole != "" && !validRole(expectedRole) {
+		return nil, Raw{}, fmt.Errorf("expected_role must be one of commander, subcommander, executor")
+	}
+
+	var response roleResult
+	if err := c.Call(ctx, "session.role", map[string]any{"agent_session_id": strings.TrimSpace(agentSessionID)}, &response); err != nil {
+		return nil, Raw{}, err
+	}
+	if expectedRole != "" {
+		matches := response.Role == expectedRole
+		response.ExpectedRole = expectedRole
+		response.Matches = &matches
+	}
+	raw, err := json.Marshal(response)
+	if err != nil {
+		return nil, Raw{}, fmt.Errorf("marshal role response: %w", err)
+	}
+	return nil, Raw{Data: json.RawMessage(raw)}, nil
+}
+
+func validRole(role string) bool {
+	switch role {
+	case "commander", "subcommander", "executor":
+		return true
+	default:
+		return false
+	}
+}
+
+// Register adds seventeen agent-facing tools to the MCP server.
 // Human operations (answer, approve, and reject) belong to the Web UI and are not exposed through MCP.
 func Register(server *mcp.Server, c *Client, agentSessionID string) {
+	mcp.AddTool(server, &mcp.Tool{
+		Name:         "atct_role",
+		Description:  "Verify the current agent role and its project/goal claim evidence through the daemon. An optional expected_role is reported as matches; a mismatch is returned as structured data.",
+		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in RoleIn) (*mcp.CallToolResult, Raw, error) {
+		return callRole(ctx, c, in, agentSessionID)
+	})
+
 	mcp.AddTool(server, &mcp.Tool{
 		Name:         "atct_project_claim",
 		Description:  "Claim a project for this agent session. A live claim from another session is refused; a dead session's claim is taken over.",

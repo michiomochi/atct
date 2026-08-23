@@ -3,6 +3,7 @@ package mcpshim
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"io"
 	"net"
 	"os"
@@ -15,7 +16,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-func TestRegisterPublishesFifteenToolsWithFlexibleOutputSchema(t *testing.T) {
+func TestRegisterPublishesSeventeenToolsWithFlexibleOutputSchema(t *testing.T) {
 	ctx := context.Background()
 	socketPath := startSchemaTestDaemon(t)
 	server := mcp.NewServer(&mcp.Implementation{Name: "atct-test", Version: "test"}, nil)
@@ -56,6 +57,7 @@ func TestRegisterPublishesFifteenToolsWithFlexibleOutputSchema(t *testing.T) {
 		"atct_goal_update_content":   true,
 		"atct_project_claim":         true,
 		"atct_project_release":       true,
+		"atct_role":                  true,
 	}
 	if len(got.Tools) != len(wantNames) {
 		t.Fatalf("tool count = %d, want %d", len(got.Tools), len(wantNames))
@@ -128,6 +130,7 @@ func TestRegisterPublishesFifteenToolsWithFlexibleOutputSchema(t *testing.T) {
 		{name: "atct_goal_set_derived_from", args: map[string]any{
 			"goal_id": "goal-1", "derived_from_goal_id": "goal-2",
 		}},
+		{name: "atct_role", args: map[string]any{}},
 	} {
 		result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{Name: tc.name, Arguments: tc.args})
 		if err != nil {
@@ -138,6 +141,226 @@ func TestRegisterPublishesFifteenToolsWithFlexibleOutputSchema(t *testing.T) {
 			t.Errorf("CallTool(%s) returned no structured content", tc.name)
 		}
 	}
+}
+
+func TestRoleToolReturnsAllRolesWithEvidence(t *testing.T) {
+	tests := []struct {
+		name         string
+		wantRole     string
+		claimProject bool
+		claimGoal    bool
+		withTask     bool
+	}{
+		{name: "commander_project_only", wantRole: "commander", claimProject: true},
+		{name: "commander_project_and_goal", wantRole: "commander", claimProject: true, claimGoal: true},
+		{name: "subcommander_empty_task_goal", wantRole: "subcommander", claimGoal: true},
+		{name: "subcommander_active_goal", wantRole: "subcommander", claimGoal: true, withTask: true},
+		{name: "executor_unclaimed", wantRole: "executor"},
+		{name: "executor_second_unclaimed", wantRole: "executor"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			result, callErr, wantProjectID, wantGoalID := callRoleTool(t, tc.claimProject, tc.claimGoal, tc.withTask, "")
+			if callErr != nil {
+				t.Fatalf("atct_role: %v", callErr)
+			}
+			if result == nil || result.IsError {
+				t.Fatalf("atct_role returned error result: %+v", result)
+			}
+			data := decodeRoleResult(t, result)
+			if got := decodeRoleString(t, data, "role"); got != tc.wantRole {
+				t.Errorf("role = %q, want %q", got, tc.wantRole)
+			}
+			if got := decodeRoleString(t, data, "project_id"); got != wantProjectID {
+				t.Errorf("project_id = %q, want %q", got, wantProjectID)
+			}
+			if got := decodeRoleString(t, data, "goal_id"); got != wantGoalID {
+				t.Errorf("goal_id = %q, want %q", got, wantGoalID)
+			}
+			for _, field := range []string{"project_id", "goal_id"} {
+				if _, ok := data[field]; !ok {
+					t.Errorf("role response omitted evidence field %q", field)
+				}
+			}
+		})
+	}
+}
+
+func TestRoleToolReportsExpectedRoleMismatchInResult(t *testing.T) {
+	result, callErr, wantProjectID, wantGoalID := callRoleTool(t, false, true, false, "executor")
+	if callErr != nil {
+		t.Fatalf("atct_role: %v", callErr)
+	}
+	if result == nil || result.IsError {
+		t.Fatalf("atct_role mismatch returned error result: %+v", result)
+	}
+	data := decodeRoleResult(t, result)
+	if got := decodeRoleString(t, data, "role"); got != "subcommander" {
+		t.Errorf("role = %q, want subcommander", got)
+	}
+	if got := decodeRoleString(t, data, "expected_role"); got != "executor" {
+		t.Errorf("expected_role = %q, want executor", got)
+	}
+	var matches bool
+	if err := json.Unmarshal(data["matches"], &matches); err != nil {
+		t.Fatalf("decode matches: %v", err)
+	}
+	if matches {
+		t.Error("matches = true, want false")
+	}
+	if got := decodeRoleString(t, data, "project_id"); got != wantProjectID {
+		t.Errorf("project_id = %q, want %q", got, wantProjectID)
+	}
+	if got := decodeRoleString(t, data, "goal_id"); got != wantGoalID {
+		t.Errorf("goal_id = %q, want %q", got, wantGoalID)
+	}
+}
+
+func callRoleTool(t *testing.T, claimProject, claimGoal, withTask bool, expectedRole string) (*mcp.CallToolResult, error, string, string) {
+	t.Helper()
+	ctx := context.Background()
+	storeDir := t.TempDir()
+	s, err := store.Open(filepath.Join(storeDir, "atct.db"))
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	project, err := s.CreateProject(ctx, "atct", filepath.Join(storeDir, "repo"))
+	if err != nil {
+		s.Close()
+		t.Fatalf("CreateProject: %v", err)
+	}
+	goal, err := s.CreateGoal(ctx, project.ID, "role fixture", "human")
+	if err != nil {
+		s.Close()
+		t.Fatalf("CreateGoal: %v", err)
+	}
+	if withTask {
+		if _, err := s.DeclareTasks(ctx, goal.ID, "agent", "role-fixture-task", []string{"role fixture task"}, []string{"Complete the role fixture task."}); err != nil {
+			s.Close()
+			t.Fatalf("DeclareTasks: %v", err)
+		}
+	}
+	sessionID := "role-test-session"
+	if claimProject {
+		if _, err := s.ClaimProject(ctx, project.ID, sessionID); err != nil {
+			s.Close()
+			t.Fatalf("ClaimProject: %v", err)
+		}
+	}
+	if claimGoal {
+		if _, err := s.ClaimGoal(ctx, goal.ID, sessionID); err != nil {
+			s.Close()
+			t.Fatalf("ClaimGoal: %v", err)
+		}
+	}
+
+	socketDir, err := os.MkdirTemp("/tmp", "atct-role-")
+	if err != nil {
+		s.Close()
+		t.Fatalf("MkdirTemp socket: %v", err)
+	}
+	serverCtx, cancel := context.WithCancel(ctx)
+	socketPath := filepath.Join(socketDir, "daemon.sock")
+	daemonDone := make(chan error, 1)
+	go func() { daemonDone <- daemon.New(s).Serve(serverCtx, socketPath) }()
+	var dialErr error
+	for i := 0; i < 50; i++ {
+		var probe net.Conn
+		probe, dialErr = net.Dial("unix", socketPath)
+		if dialErr == nil {
+			probe.Close()
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if dialErr != nil {
+		cancel()
+		s.Close()
+		os.RemoveAll(socketDir)
+		t.Fatalf("dial daemon: %v", dialErr)
+	}
+
+	server := mcp.NewServer(&mcp.Implementation{Name: "atct-test", Version: "test"}, nil)
+	Register(server, NewClient(socketPath), sessionID)
+	clientTransport, serverTransport := mcp.NewInMemoryTransports()
+	serverSession, err := server.Connect(serverCtx, serverTransport, nil)
+	if err != nil {
+		cancel()
+		s.Close()
+		os.RemoveAll(socketDir)
+		t.Fatalf("server.Connect: %v", err)
+	}
+	client := mcp.NewClient(&mcp.Implementation{Name: "role-test", Version: "test"}, nil)
+	clientSession, err := client.Connect(serverCtx, clientTransport, nil)
+	if err != nil {
+		serverSession.Close()
+		cancel()
+		s.Close()
+		os.RemoveAll(socketDir)
+		t.Fatalf("client.Connect: %v", err)
+	}
+	t.Cleanup(func() {
+		clientSession.Close()
+		serverSession.Close()
+		cancel()
+		if serveErr := <-daemonDone; serveErr != nil {
+			t.Errorf("daemon.Serve: %v", serveErr)
+		}
+		s.Close()
+		os.RemoveAll(socketDir)
+	})
+
+	args := map[string]any{}
+	if expectedRole != "" {
+		args["expected_role"] = expectedRole
+	}
+	result, callErr := clientSession.CallTool(serverCtx, &mcp.CallToolParams{
+		Name: "atct_role", Arguments: args,
+	})
+	wantProjectID, wantGoalID := "", ""
+	if claimProject {
+		wantProjectID = project.ID
+	}
+	if claimGoal {
+		wantGoalID = goal.ID
+	}
+	return result, callErr, wantProjectID, wantGoalID
+}
+
+func decodeRoleResult(t *testing.T, result *mcp.CallToolResult) map[string]json.RawMessage {
+	t.Helper()
+	encoded, err := json.Marshal(result.StructuredContent)
+	if err != nil {
+		t.Fatalf("marshal structured content: %v", err)
+	}
+	var envelope struct {
+		Data json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal(encoded, &envelope); err != nil {
+		t.Fatalf("decode role envelope: %v (json=%s)", err, encoded)
+	}
+	if len(envelope.Data) == 0 {
+		t.Fatalf("role envelope has no data: %s", encoded)
+	}
+	var data map[string]json.RawMessage
+	if err := json.Unmarshal(envelope.Data, &data); err != nil {
+		t.Fatalf("decode role data: %v (data=%s)", err, envelope.Data)
+	}
+	return data
+}
+
+func decodeRoleString(t *testing.T, data map[string]json.RawMessage, field string) string {
+	t.Helper()
+	value, ok := data[field]
+	if !ok {
+		t.Fatalf("role response omitted %q", field)
+	}
+	var decoded string
+	if err := json.Unmarshal(value, &decoded); err != nil {
+		t.Fatalf("decode %s: %v", field, err)
+	}
+	return decoded
 }
 
 func startSchemaTestDaemon(t *testing.T) string {
