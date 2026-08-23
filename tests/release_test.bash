@@ -62,15 +62,15 @@ make_bump_only() {
 make_bump_fixture() {
   local fixture="$1"
 
-  mkdir -p "$fixture/plugin/.claude-plugin" "$fixture/plugin/.codex-plugin" "$fixture/plugin/bin"
-  cp "$REPO_ROOT/plugin/.claude-plugin/plugin.json" "$fixture/plugin/.claude-plugin/plugin.json"
-  cp "$REPO_ROOT/plugin/.codex-plugin/plugin.json" "$fixture/plugin/.codex-plugin/plugin.json"
-  cp "$REPO_ROOT/plugin/bin/_resolve" "$fixture/plugin/bin/_resolve"
+  mkdir -p "$fixture/.claude-plugin" "$fixture/.codex-plugin" "$fixture/bin"
+  cp "$REPO_ROOT/.claude-plugin"/plugin.json "$fixture/.claude-plugin"/plugin.json
+  cp "$REPO_ROOT/.codex-plugin"/plugin.json "$fixture/.codex-plugin"/plugin.json
+  cp "$REPO_ROOT/bin/_resolve" "$fixture/bin/_resolve"
 }
 
 test_plugin_manifests_are_in_sync() {
-  local claude_manifest="$REPO_ROOT/plugin/.claude-plugin/plugin.json"
-  local codex_manifest="$REPO_ROOT/plugin/.codex-plugin/plugin.json"
+  local claude_manifest="$REPO_ROOT/.claude-plugin"/plugin.json
+  local codex_manifest="$REPO_ROOT/.codex-plugin"/plugin.json
 
   [[ -f "$claude_manifest" ]] || fail "missing Claude plugin manifest: $claude_manifest"
   [[ -f "$codex_manifest" ]] || fail "missing Codex plugin manifest: $codex_manifest"
@@ -87,11 +87,11 @@ test_release_bumps_both_plugin_manifests() {
   make_bump_only "$bump_script"
   (cd "$fixture" && python3 "$bump_script" "$version")
 
-  assert_eq "$version" "$(manifest_version "$fixture/plugin/.claude-plugin/plugin.json")" \
+  assert_eq "$version" "$(manifest_version "$fixture/.claude-plugin"/plugin.json)" \
     'Claude plugin version after release bump'
-  assert_eq "$version" "$(manifest_version "$fixture/plugin/.codex-plugin/plugin.json")" \
+  assert_eq "$version" "$(manifest_version "$fixture/.codex-plugin"/plugin.json)" \
     'Codex plugin version after release bump'
-  assert_file_contains "$version" "$fixture/plugin/bin/_resolve"
+  assert_file_contains "$version" "$fixture/bin/_resolve"
 }
 
 test_release_rejects_mismatched_plugin_versions() {
@@ -101,7 +101,7 @@ test_release_rejects_mismatched_plugin_versions() {
   local status=0
 
   make_bump_fixture "$fixture"
-  python3 - "$fixture/plugin/.codex-plugin/plugin.json" <<'PY'
+  python3 - "$fixture/.codex-plugin"/plugin.json <<'PY'
 import json
 import pathlib
 import sys
