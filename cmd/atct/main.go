@@ -30,19 +30,22 @@ const (
 )
 
 type cliConfig struct {
-	subcommand       string
-	daemonAction     string
-	listenAddr       string
-	listenExplicit   bool
-	contextBrief     bool
-	contextCheck     bool
-	projectSpecified bool
-	projectAction    string
-	projectName      string
-	goalAction       string
-	goalTitle        string
-	goalDescription  string
-	taskIDs          []string
+	subcommand         string
+	daemonAction       string
+	listenAddr         string
+	listenExplicit     bool
+	contextBrief       bool
+	contextCheck       bool
+	projectSpecified   bool
+	projectAction      string
+	projectName        string
+	goalAction         string
+	goalTitle          string
+	goalDescription    string
+	taskIDs            []string
+	roleExpected       string
+	roleExpectedSet    bool
+	roleAgentSessionID string
 }
 
 var errInvalidArgs = errors.New("invalid command line")
@@ -55,6 +58,7 @@ var validSubcommands = map[string]bool{
 	"pending":     true,
 	"watch":       true,
 	"claim-check": true,
+	"role":        true,
 }
 
 var validDaemonActions = map[string]bool{"start": true, "stop": true}
@@ -75,10 +79,13 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "  pending              Print unanswered human decisions for the current project")
 	fmt.Fprintln(os.Stderr, "  watch                Stream human decision events for a Monitor")
 	fmt.Fprintln(os.Stderr, "  claim-check <ids...>|any  Exit 0 only if the tasks are claimed by a running session")
+	fmt.Fprintln(os.Stderr, "  role                 Report the claim-derived role for an agent session")
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Options:")
 	fmt.Fprintln(os.Stderr, "  -listen string   HTTP listen address (default \"127.0.0.1:8787\")")
 	fmt.Fprintln(os.Stderr, "  -project string  Select a registered project by name (context, pending)")
+	fmt.Fprintln(os.Stderr, "  -expect string   Expected role for the role command")
+	fmt.Fprintln(os.Stderr, "  -agent-session-id string  Session identity for the role command")
 }
 
 func parseArgs(args []string) (cliConfig, error) {
@@ -162,6 +169,10 @@ func parseArgs(args []string) (cliConfig, error) {
 	if sub == "context" || sub == "pending" {
 		flags.StringVar(&cfg.projectName, "project", "", "select a registered project by name")
 	}
+	if sub == "role" {
+		flags.StringVar(&cfg.roleExpected, "expect", "", "require this role: commander, subcommander, or executor")
+		flags.StringVar(&cfg.roleAgentSessionID, "agent-session-id", "", "agent session identity used by session.role")
+	}
 	var description *string
 	if sub == "goal" && cfg.goalAction == "add" {
 		description = flags.String("d", "", "goal description")
@@ -183,7 +194,16 @@ func parseArgs(args []string) (cliConfig, error) {
 		if f.Name == "project" {
 			cfg.projectSpecified = true
 		}
+		if f.Name == "expect" {
+			cfg.roleExpectedSet = true
+		}
 	})
+	if sub == "role" && cfg.roleExpectedSet {
+		if err := validateExpectedRole(cfg.roleExpected); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return cliConfig{}, errInvalidArgs
+		}
+	}
 	if description != nil {
 		cfg.goalDescription = *description
 	}
@@ -306,6 +326,15 @@ func main() {
 		code, err := claimCheckCommand(dir, config.taskIDs)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
+		}
+		os.Exit(code)
+	case "role":
+		code, err := runRole(config, dir, exePath)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			if code == 0 {
+				code = 1
+			}
 		}
 		os.Exit(code)
 	case "watch":
