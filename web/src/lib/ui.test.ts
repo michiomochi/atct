@@ -423,11 +423,12 @@ describe("Kumo font tracking", () => {
 });
 
 describe("Kumo content text size", () => {
-  it("keeps the compact text utility out of audited source files", () => {
+  it("keeps disallowed content text sizes out of audited source files", () => {
     const auditedSources: Array<{ name: string; source: string }> = [
       { name: "GoalCreateForm.tsx", source: goalCreateFormSource },
       { name: "LocaleSwitch.tsx", source: localeSwitchSource },
       { name: "TaskCommitList.tsx", source: taskCommitListSource },
+      { name: "Section.tsx", source: sectionSource },
       { name: "Dashboard.tsx", source: dashboardSource },
       { name: "GoalDetail.tsx", source: goalDetailSource },
       { name: "DecisionHistoryTable.tsx", source: decisionHistoryTableSource },
@@ -440,7 +441,7 @@ describe("Kumo content text size", () => {
       { name: "ProposedGoalTable.tsx", source: proposedGoalTableSource },
     ];
 
-    expect(auditedSources).toHaveLength(13);
+    expect(auditedSources).toHaveLength(14);
     expect(auditedSources.every(({ source }) => source.length > 0)).toBe(true);
 
     const classNameLines = auditedSources.flatMap(({ name, source }) =>
@@ -451,11 +452,13 @@ describe("Kumo content text size", () => {
     );
     expect(classNameLines.length).toBeGreaterThanOrEqual(36);
 
-    const forbiddenTextSize = ["text", "sm"].join("-");
-    const forbiddenTextPattern = new RegExp(`\\b${forbiddenTextSize}\\b`);
+    const forbiddenTextPatterns = [
+      /\btext-(?:xs|sm)\b/,
+      /\btext-\[[^\]]+\]/,
+    ];
     const violations = auditedSources.flatMap(({ name, source }) =>
       source.split("\n").flatMap((line, lineNumber) =>
-        forbiddenTextPattern.test(line)
+        forbiddenTextPatterns.some((pattern) => pattern.test(line))
           ? [`${name}:${lineNumber + 1}: ${line.trim()}`]
           : [],
       ),
