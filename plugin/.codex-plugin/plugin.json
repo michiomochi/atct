@@ -1,0 +1,41 @@
+{
+  "name": "atct",
+  "version": "0.46.0",
+  "description": "Declare tasks, claim work, and ask a human for decisions without leaving the session.",
+  "author": {
+    "name": "michiomochi",
+    "url": "https://github.com/michiomochi"
+  },
+  "homepage": "https://github.com/michiomochi/atct",
+  "repository": "https://github.com/michiomochi/atct",
+  "license": "AGPL-3.0-only",
+  "keywords": [
+    "task-coordination",
+    "claims",
+    "agent-collaboration",
+    "human-decisions",
+    "mcp"
+  ],
+  "skills": "./skills/",
+  "hooks": "./hooks/hooks.json",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "ATCT",
+    "shortDescription": "Coordinate tasks and claims across coding-agent sessions",
+    "longDescription": "Declare tasks, claim work, and ask a human for decisions while keeping the coordination state available to the next session.",
+    "developerName": "michiomochi",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write"
+    ],
+    "defaultPrompt": [
+      "Show me the tasks and claims for this workspace.",
+      "Help me coordinate this coding task across sessions."
+    ],
+    "websiteURL": "https://github.com/michiomochi/atct",
+    "brandColor": "#2563EB",
+    "screenshots": []
+  }
+}
