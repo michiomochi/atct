@@ -26,6 +26,12 @@ type responseWithUnappliedDecisions struct {
 	ClaimableTasks     []claimableTaskSummary          `json:"claimable_tasks,omitempty"`
 }
 
+type sessionRoleResponse struct {
+	Role      string `json:"role"`
+	ProjectID string `json:"project_id"`
+	GoalID    string `json:"goal_id"`
+}
+
 type claimableTaskSummary struct {
 	ID     string `json:"id"`
 	Title  string `json:"title"`
@@ -216,6 +222,44 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 			return nil, err
 		}
 		return marshal(map[string]any{"ok": true}, nil)
+
+	case "session.role":
+		var p struct {
+			AgentSessionID string `json:"agent_session_id"`
+		}
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+
+		response := sessionRoleResponse{Role: "executor"}
+		if sessionID := strings.TrimSpace(p.AgentSessionID); sessionID != "" {
+			projects, err := d.store.ListProjects(ctx)
+			if err != nil {
+				return nil, err
+			}
+			for _, project := range projects {
+				if strings.TrimSpace(project.ClaimedBy) == sessionID {
+					response.Role = "commander"
+					response.ProjectID = project.ID
+					break
+				}
+			}
+
+			goals, err := d.store.ListAllGoals(ctx)
+			if err != nil {
+				return nil, err
+			}
+			for _, goal := range goals {
+				if strings.TrimSpace(goal.ClaimedBy) == sessionID {
+					response.GoalID = goal.ID
+					break
+				}
+			}
+			if response.Role != "commander" && response.GoalID != "" {
+				response.Role = "subcommander"
+			}
+		}
+		return marshal(response, nil)
 
 	case "project.create":
 		var p struct {
