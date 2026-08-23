@@ -106,9 +106,10 @@ func start(cfg Config) (Registry, error) {
 				searchedDir = filepath.Dir(executable)
 			}
 			return Registry{}, fmt.Errorf(
-				// No Homebrew tap exists yet, so naming one here would send the
-				// user to a command that fails. Add it once the tap is published.
-				"start daemon: %q was not found; searched for it in %s (beside atct-mcp) and in PATH. Put atct next to atct-mcp, or install it with `go install github.com/michiomochi/atct/cmd/atct@latest`: %w",
+				// atct supports only Claude and Codex plugins; other installation
+				// routes cause confusion, so this error must not provide a
+				// non-plugin install path.
+				"start daemon: %q was not found; searched for it in %s (beside atct-mcp) and in PATH. Put atct next to atct-mcp. Reload or reinstall the atct plugin and retry: %w",
 				cfg.Executable, searchedDir, err)
 		}
 		return Registry{}, fmt.Errorf("start daemon: %w", err)

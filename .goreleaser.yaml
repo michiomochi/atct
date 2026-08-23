@@ -34,29 +34,3 @@ checksum:
 
 release:
   draft: true
-
-# Homebrew cask. `brews` is deprecated since v2.16; casks are the supported way
-# to ship pre-compiled binaries. The tap repository must exist before a release
-# runs, because GoReleaser pushes the generated cask into it.
-homebrew_casks:
-  - name: atct
-    repository:
-      owner: michiomochi
-      name: homebrew-tap
-    homepage: "https://github.com/michiomochi/atct"
-    description: "The air traffic control tower for your coding agents"
-    license: "AGPL-3.0"
-    # Both binaries ship in one archive. Without this the cask installs only
-    # `atct`, and `atct-mcp` — the MCP entry point — never lands on PATH.
-    binaries: [atct, atct-mcp]
-    # Helps `brew audit` when the homepage and the download host differ.
-    url:
-      verified: github.com/michiomochi/atct
-    hooks:
-      post:
-        # The binaries are not signed or notarized, so macOS quarantines them.
-        install: |
-          if OS.mac?
-            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/atct"]
-            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/atct-mcp"]
-          end
