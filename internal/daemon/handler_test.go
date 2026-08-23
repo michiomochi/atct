@@ -17,6 +17,93 @@ import (
 	"github.com/michiomochi/atct/internal/store"
 )
 
+func TestSessionRoleDerivesFromClaims(t *testing.T) {
+	tests := []struct {
+		name         string
+		claimProject bool
+		claimGoal    bool
+		goalIndex    int
+		wantRole     string
+	}{
+		{name: "commander-project-only", claimProject: true, wantRole: "commander"},
+		{name: "commander-project-and-goal", claimProject: true, claimGoal: true, wantRole: "commander"},
+		{name: "subcommander-empty-task-goal", claimGoal: true, goalIndex: -1, wantRole: "subcommander"},
+		{name: "subcommander-active-goal", claimGoal: true, goalIndex: 0, wantRole: "subcommander"},
+		{name: "executor-unclaimed-session", wantRole: "executor"},
+		{name: "executor-second-unclaimed-session", wantRole: "executor"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fixture := newGoalListFixture(t)
+			defer fixture.store.Close()
+
+			sessionID := "session-role-" + tt.name
+			if tt.claimProject {
+				params, err := json.Marshal(map[string]string{
+					"project_id":       fixture.project.ID,
+					"agent_session_id": sessionID,
+				})
+				if err != nil {
+					t.Fatalf("marshal project.claim params: %v", err)
+				}
+				if _, err := fixture.daemon.dispatch(context.Background(), rpc.Request{Method: "project.claim", Params: params}); err != nil {
+					t.Fatalf("project.claim: %v", err)
+				}
+			}
+
+			goalID := ""
+			if tt.claimGoal {
+				goalID = fixture.emptyTaskGoal.ID
+				if tt.goalIndex >= 0 {
+					goalID = fixture.active[tt.goalIndex].ID
+				}
+				params, err := json.Marshal(map[string]string{
+					"goal_id":          goalID,
+					"agent_session_id": sessionID,
+				})
+				if err != nil {
+					t.Fatalf("marshal goal.claim params: %v", err)
+				}
+				if _, err := fixture.daemon.dispatch(context.Background(), rpc.Request{Method: "goal.claim", Params: params}); err != nil {
+					t.Fatalf("goal.claim: %v", err)
+				}
+			}
+
+			params, err := json.Marshal(map[string]string{"agent_session_id": sessionID})
+			if err != nil {
+				t.Fatalf("marshal session.role params: %v", err)
+			}
+			raw, err := fixture.daemon.dispatch(context.Background(), rpc.Request{Method: "session.role", Params: params})
+			if err != nil {
+				t.Fatalf("session.role: %v", err)
+			}
+
+			var got struct {
+				Role      string `json:"role"`
+				ProjectID string `json:"project_id"`
+				GoalID    string `json:"goal_id"`
+			}
+			if err := json.Unmarshal(raw, &got); err != nil {
+				t.Fatalf("decode session.role response %q: %v", raw, err)
+			}
+			if got.Role != tt.wantRole {
+				t.Fatalf("role = %q, want %q (response %s)", got.Role, tt.wantRole, raw)
+			}
+			wantProjectID := ""
+			if tt.claimProject {
+				wantProjectID = fixture.project.ID
+			}
+			if got.ProjectID != wantProjectID {
+				t.Fatalf("project_id = %q, want %q (response %s)", got.ProjectID, wantProjectID, raw)
+			}
+			if got.GoalID != goalID {
+				t.Fatalf("goal_id = %q, want %q (response %s)", got.GoalID, goalID, raw)
+			}
+		})
+	}
+}
+
 func ageAgentSessionForTest(t *testing.T, fixture goalListFixture, sessionID string) {
 	t.Helper()
 	old := time.Now().UTC().Add(-time.Hour).Format(time.RFC3339Nano)
