@@ -83,11 +83,20 @@ echo "==> bump"
 python3 - "$version" <<'PY'
 import json, pathlib, sys
 version = sys.argv[1]
-path = pathlib.Path("plugin/.claude-plugin/plugin.json")
-data = json.loads(path.read_text())
-previous = data["version"]
-data["version"] = version
-path.write_text(json.dumps(data, indent=2) + "\n")
+manifest_paths = [
+    pathlib.Path("plugin/.claude-plugin/plugin.json"),
+    pathlib.Path("plugin/.codex-plugin/plugin.json"),
+]
+manifest_data = [(path, json.loads(path.read_text())) for path in manifest_paths]
+previous_versions = {data["version"] for _, data in manifest_data}
+if len(previous_versions) != 1:
+    raise SystemExit(
+        f"plugin manifests have different versions: {sorted(previous_versions)}"
+    )
+previous = next(iter(previous_versions))
+for path, data in manifest_data:
+    data["version"] = version
+    path.write_text(json.dumps(data, indent=2) + "\n")
 
 resolve = pathlib.Path("plugin/bin/_resolve")
 text = resolve.read_text()
@@ -99,7 +108,7 @@ go build ./...
 bash tests/wrapper_test.bash >/dev/null
 
 echo "==> commit and tag"
-git add plugin/.claude-plugin/plugin.json plugin/bin/_resolve
+git add plugin/.claude-plugin/plugin.json plugin/.codex-plugin/plugin.json plugin/bin/_resolve
 git -c commit.gpgsign=false commit -q -m "chore: bump to $version"
 git -c commit.gpgsign=false tag -a "v$version" -m "v$version"
 
