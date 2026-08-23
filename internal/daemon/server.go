@@ -13,24 +13,41 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/michiomochi/atct/internal/httpapi"
+	"github.com/michiomochi/atct/internal/mcpshim"
 	"github.com/michiomochi/atct/internal/rpc"
 	"github.com/michiomochi/atct/internal/store"
 	atctweb "github.com/michiomochi/atct/web"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 type Daemon struct {
-	store *store.Store
-	clock func() time.Time
+	store      *store.Store
+	clock      func() time.Time
+	version    string
+	socketPath string
 }
 
-func New(s *store.Store) *Daemon { return newDaemonWithClock(s, time.Now) }
+const defaultVersion = "dev"
+
+func New(s *store.Store) *Daemon {
+	return newDaemonWithClockAndVersion(s, time.Now, defaultVersion, "")
+}
+
+func NewWithVersion(s *store.Store, version, socketPath string) *Daemon {
+	return newDaemonWithClockAndVersion(s, time.Now, version, socketPath)
+}
 
 func newDaemonWithClock(s *store.Store, clock func() time.Time) *Daemon {
+	return newDaemonWithClockAndVersion(s, clock, defaultVersion, "")
+}
+
+func newDaemonWithClockAndVersion(s *store.Store, clock func() time.Time, version, socketPath string) *Daemon {
 	if clock == nil {
 		clock = time.Now
 	}
-	return &Daemon{store: s, clock: clock}
+	return &Daemon{store: s, clock: clock, version: version, socketPath: socketPath}
 }
 
 // HTTPHandler returns the daemon's HTTP handler, including the API and the
@@ -38,6 +55,20 @@ func newDaemonWithClock(s *store.Store, clock func() time.Time) *Daemon {
 // typo cannot be answered with the index document.
 func (d *Daemon) HTTPHandler() http.Handler {
 	api := httpapi.New(d.store).Handler()
+	mcpHandler := mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server {
+		agentSessionID := uuid.NewString()
+		client := mcpshim.NewClient(d.socketPath)
+		if err := client.Call(r.Context(), "run.register", map[string]any{
+			"agent_session_id": agentSessionID,
+			"pid":              os.Getpid(),
+		}, nil); err != nil {
+			return nil
+		}
+
+		server := mcp.NewServer(&mcp.Implementation{Name: "atct", Version: d.version}, nil)
+		mcpshim.Register(server, client, agentSessionID)
+		return server
+	}, nil)
 	dist, err := fs.Sub(atctweb.Dist, "dist")
 	if err != nil {
 		panic(fmt.Sprintf("web assets: %v", err))
@@ -47,6 +78,10 @@ func (d *Daemon) HTTPHandler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api" || strings.HasPrefix(r.URL.Path, "/api/") {
 			api.ServeHTTP(w, r)
+			return
+		}
+		if r.URL.Path == "/mcp" {
+			mcpHandler.ServeHTTP(w, r)
 			return
 		}
 

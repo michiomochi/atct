@@ -360,7 +360,7 @@ func runDaemon(config cliConfig, dir string) error {
 	defer stop()
 
 	sock := filepath.Join(dir, "atct.sock")
-	d := daemon.New(s)
+	d := daemon.NewWithVersion(s, version, sock)
 	httpListener, err := listenHTTP(config.listenAddr, config.listenExplicit)
 	if err != nil {
 		return err

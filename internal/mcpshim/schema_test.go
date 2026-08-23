@@ -1,4 +1,4 @@
-package mcpshim
+package mcpshim_test
 
 import (
 	"bufio"
@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/michiomochi/atct/internal/daemon"
+	"github.com/michiomochi/atct/internal/mcpshim"
 	"github.com/michiomochi/atct/internal/store"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -20,7 +21,7 @@ func TestRegisterPublishesSeventeenToolsWithFlexibleOutputSchema(t *testing.T) {
 	ctx := context.Background()
 	socketPath := startSchemaTestDaemon(t)
 	server := mcp.NewServer(&mcp.Implementation{Name: "atct-test", Version: "test"}, nil)
-	Register(server, NewClient(socketPath), "run-1")
+	mcpshim.Register(server, mcpshim.NewClient(socketPath), "run-1")
 
 	clientTransport, serverTransport := mcp.NewInMemoryTransports()
 	serverSession, err := server.Connect(ctx, serverTransport, nil)
@@ -282,7 +283,7 @@ func callRoleTool(t *testing.T, claimProject, claimGoal, withTask bool, expected
 	}
 
 	server := mcp.NewServer(&mcp.Implementation{Name: "atct-test", Version: "test"}, nil)
-	Register(server, NewClient(socketPath), sessionID)
+	mcpshim.Register(server, mcpshim.NewClient(socketPath), sessionID)
 	clientTransport, serverTransport := mcp.NewInMemoryTransports()
 	serverSession, err := server.Connect(serverCtx, serverTransport, nil)
 	if err != nil {
@@ -526,7 +527,7 @@ func callDecisionAsk(t *testing.T, args map[string]any) (*mcp.CallToolResult, er
 	}
 
 	server := mcp.NewServer(&mcp.Implementation{Name: "atct-test", Version: "test"}, nil)
-	Register(server, NewClient(socketPath), "run-test")
+	mcpshim.Register(server, mcpshim.NewClient(socketPath), "run-test")
 	clientTransport, serverTransport := mcp.NewInMemoryTransports()
 	serverSession, err := server.Connect(ctx, serverTransport, nil)
 	if err != nil {
