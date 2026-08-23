@@ -33,6 +33,34 @@ working on it anyway.
 Release a task by setting it back to `todo` with `atct_task_update`. There is
 no separate release tool.
 
+## Delegate a claimed task
+
+When handing a task to another worker, keep the contract independent of how
+that worker is started:
+
+1. Claim the task before handing it off.
+2. Wake the worker through the environment. A terminal multiplexer can host a
+   working pane, or a sub-agent can perform the work. ATCT does not prescribe
+   how the worker is started or how the role is transmitted.
+3. Put this exact instruction at the very beginning of the request:
+
+   > First run `atct role --expect <role>`. If it exits non-zero, do not start
+   > work; return the task.
+
+4. Keep one worker per task. Return a correction, review fix, follow-up
+   question, or clarification for the same task to the same worker. Start a
+   new worker for a different task. When the task is done, end that worker.
+   A correction or review fix remains the same task because it is a delta
+   against the immediately preceding implementation; sending it to a new
+   worker would make that worker reread the same files. Although a new worker
+   rereads the files named by the request, that rereading has an upper bound;
+   accumulated work has no upper bound.
+
+The worker must run this check itself before doing any work. The delegator must
+not run it on the worker's behalf or treat a worker name, pane title, or launch
+context as proof of the role. If the check fails, the worker returns the task
+without touching it.
+
 ## Close a task the moment it is finished
 
 Call `atct_task_update` with `done` as soon as the work lands, before you claim
