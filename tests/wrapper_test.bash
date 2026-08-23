@@ -76,7 +76,7 @@ SCRIPT
 }
 
 wrapper_version() {
-  sed -n 's/^VERSION="\([0-9][0-9.]*\)"/\1/p' "$REPO_ROOT/plugin/bin/_resolve" | head -1
+  sed -n 's/^VERSION="\([0-9][0-9.]*\)"/\1/p' "$REPO_ROOT/bin/_resolve" | head -1
 }
 
 make_archives() {
@@ -116,31 +116,31 @@ SCRIPT
 }
 
 test_static_contract() {
-  [[ -x "$REPO_ROOT/plugin/bin/atct" ]] || fail 'plugin/bin/atct is not executable'
-  [[ -x "$REPO_ROOT/plugin/bin/atct-mcp" ]] || fail 'plugin/bin/atct-mcp is not executable'
-  assert_file_contains '#!/usr/bin/env bash' "$REPO_ROOT/plugin/bin/atct"
-  assert_file_contains 'set -euo pipefail' "$REPO_ROOT/plugin/bin/atct"
-  assert_file_contains 'set -euo pipefail' "$REPO_ROOT/plugin/bin/atct-mcp"
-  assert_file_contains '"command": "${CLAUDE_PLUGIN_ROOT}/bin/atct-mcp"' "$REPO_ROOT/plugin/.mcp.json"
-  assert_file_contains '"source": "./plugin"' "$REPO_ROOT/.claude-plugin/marketplace.json"
+  [[ -x "$REPO_ROOT/bin/atct" ]] || fail 'bin/atct is not executable'
+  [[ -x "$REPO_ROOT/bin/atct-mcp" ]] || fail 'bin/atct-mcp is not executable'
+  assert_file_contains '#!/usr/bin/env bash' "$REPO_ROOT/bin/atct"
+  assert_file_contains 'set -euo pipefail' "$REPO_ROOT/bin/atct"
+  assert_file_contains 'set -euo pipefail' "$REPO_ROOT/bin/atct-mcp"
+  assert_file_contains '"command": "${CLAUDE_PLUGIN_ROOT}/bin/atct-mcp"' "$REPO_ROOT/.mcp.json"
+  assert_file_contains '"source": "./"' "$REPO_ROOT/.claude-plugin"/marketplace.json
   # Pin the two version declarations to each other rather than to a literal, so a
   # release does not silently leave this test asserting the previous version.
   local plugin_version resolve_version
-  plugin_version="$(sed -n 's/.*"version": "\([0-9][0-9.]*\)".*/\1/p' "$REPO_ROOT/plugin/.claude-plugin/plugin.json" | head -1)"
-  resolve_version="$(sed -n 's/^VERSION="\([0-9][0-9.]*\)"/\1/p' "$REPO_ROOT/plugin/bin/_resolve" | head -1)"
+  plugin_version="$(sed -n 's/.*"version": "\([0-9][0-9.]*\)".*/\1/p' "$REPO_ROOT/.claude-plugin"/plugin.json | head -1)"
+  resolve_version="$(sed -n 's/^VERSION="\([0-9][0-9.]*\)"/\1/p' "$REPO_ROOT/bin/_resolve" | head -1)"
   [[ -n "$plugin_version" ]] || fail 'plugin.json has no version'
   [[ -n "$resolve_version" ]] || fail '_resolve has no VERSION'
   assert_eq "$plugin_version" "$resolve_version" 'plugin.json and _resolve must declare the same version'
-  assert_file_contains 'RELEASE_BASE="https://github.com/michiomochi/atct/releases/download/v${VERSION}"' "$REPO_ROOT/plugin/bin/_resolve"
-  assert_file_contains 'ARCHIVE_NAME="atct_${VERSION}_${OS}_${ARCH}.tar.gz"' "$REPO_ROOT/plugin/bin/_resolve"
-  [[ ! -e "$REPO_ROOT/.mcp.json" ]] || fail 'repository root must not contain .mcp.json'
-  if grep -Fq 'latest' "$REPO_ROOT/plugin/bin/_resolve"; then
+  assert_file_contains 'RELEASE_BASE="https://github.com/michiomochi/atct/releases/download/v${VERSION}"' "$REPO_ROOT/bin/_resolve"
+  assert_file_contains 'ARCHIVE_NAME="atct_${VERSION}_${OS}_${ARCH}.tar.gz"' "$REPO_ROOT/bin/_resolve"
+  [[ -f "$REPO_ROOT/.mcp.json" ]] || fail 'repository root must contain .mcp.json'
+  if grep -Fq 'latest' "$REPO_ROOT/bin/_resolve"; then
     fail 'wrapper must not use the latest release'
   fi
 }
 
 test_hooks_json_has_no_stop_section() {
-  if python3 - "$REPO_ROOT/plugin/hooks/hooks.json" <<'PY'
+  if python3 - "$REPO_ROOT/hooks/hooks.json" <<'PY'
 import json
 import sys
 
@@ -157,7 +157,7 @@ PY
 }
 
 test_hooks_json_keeps_session_start_and_pre_tool_use_sections() {
-  if python3 - "$REPO_ROOT/plugin/hooks/hooks.json" <<'PY'
+  if python3 - "$REPO_ROOT/hooks/hooks.json" <<'PY'
 import json
 import sys
 
@@ -175,9 +175,9 @@ PY
 }
 
 test_stop_hook_file_is_removed_but_other_hooks_remain() {
-  [[ ! -e "$REPO_ROOT/plugin/hooks/stop" ]] || fail 'plugin/hooks/stop must be absent'
-  [[ -f "$REPO_ROOT/plugin/hooks/pre-ask" ]] || fail 'plugin/hooks/pre-ask must remain'
-  [[ -f "$REPO_ROOT/plugin/hooks/session-start" ]] || fail 'plugin/hooks/session-start must remain'
+  [[ ! -e "$REPO_ROOT/hooks/stop" ]] || fail 'hooks/stop must be absent'
+  [[ -f "$REPO_ROOT/hooks/pre-ask" ]] || fail 'hooks/pre-ask must remain'
+  [[ -f "$REPO_ROOT/hooks/session-start" ]] || fail 'hooks/session-start must remain'
 }
 
 test_download_cache_and_mcp_stdout() {
@@ -197,7 +197,7 @@ test_download_cache_and_mcp_stdout() {
   make_archives "$fixtures" good
   write_fake_tools "$fake_bin"
 
-  first_out="$(HOME="$home" PATH="$fake_bin:$PATH" FIXTURES_DIR="$fixtures" CURL_LOG="$curl_log" FAKE_OS=Darwin FAKE_ARCH=arm64 "$REPO_ROOT/plugin/bin/atct" project list)"
+  first_out="$(HOME="$home" PATH="$fake_bin:$PATH" FIXTURES_DIR="$fixtures" CURL_LOG="$curl_log" FAKE_OS=Darwin FAKE_ARCH=arm64 "$REPO_ROOT/bin/atct" project list)"
   assert_eq 'fake atct <project> <list>' "$first_out" 'first wrapper execution'
   local version
   version="$(wrapper_version)"
@@ -208,10 +208,10 @@ test_download_cache_and_mcp_stdout() {
     [[ ! -e "$candidate" ]] || fail "download directory remained after success: $candidate"
   done
 
-  HOME="$home" PATH="$fake_bin:$PATH" FIXTURES_DIR="$fixtures" CURL_LOG="$curl_log" ATCT_ATCT_BIN_LOG="$atct_wrapper_log" FAKE_OS=Darwin FAKE_ARCH=arm64 "$REPO_ROOT/plugin/bin/atct-mcp" </dev/null >"$mcp_stdout" 2>"$mcp_stderr"
+  HOME="$home" PATH="$fake_bin:$PATH" FIXTURES_DIR="$fixtures" CURL_LOG="$curl_log" ATCT_ATCT_BIN_LOG="$atct_wrapper_log" FAKE_OS=Darwin FAKE_ARCH=arm64 "$REPO_ROOT/bin/atct-mcp" </dev/null >"$mcp_stdout" 2>"$mcp_stderr"
   assert_empty_file "$mcp_stdout"
   assert_file_contains 'fake mcp' "$mcp_stderr"
-  assert_eq "$REPO_ROOT/plugin/bin/atct" "$(<"$atct_wrapper_log")" 'MCP wrapper must select the matching atct wrapper'
+  assert_eq "$REPO_ROOT/bin/atct" "$(<"$atct_wrapper_log")" 'MCP wrapper must select the matching atct wrapper'
   [[ -x "$home/.atct/bin/atct-mcp-$(wrapper_version)" ]] || fail 'versioned atct-mcp cache is missing'
 
   mkdir -p "$home/.atct/bin/.download.stale"
@@ -220,19 +220,19 @@ test_download_cache_and_mcp_stdout() {
   mkdir -p "$home/.atct/bin/.download.active"
   printf 'active\n' >"$home/.atct/bin/.download.active/file"
   printf 'database\n' >"$home/.atct/atct.db"
-  first_out="$(HOME="$home" PATH="$fake_bin:$PATH" FIXTURES_DIR="$fixtures" CURL_LOG="$curl_log" CURL_FAIL=1 FAKE_OS=Darwin FAKE_ARCH=arm64 "$REPO_ROOT/plugin/bin/atct" project list)"
+  first_out="$(HOME="$home" PATH="$fake_bin:$PATH" FIXTURES_DIR="$fixtures" CURL_LOG="$curl_log" CURL_FAIL=1 FAKE_OS=Darwin FAKE_ARCH=arm64 "$REPO_ROOT/bin/atct" project list)"
   assert_eq 'fake atct <project> <list>' "$first_out" 'cached execution after stale cleanup'
   [[ -e "$home/.atct/bin/.download.active/file" ]] || fail 'just-created download directory was removed'
   [[ ! -e "$home/.atct/bin/.download.stale" ]] || fail 'stale download directory was not removed'
   assert_file_contains 'database' "$home/.atct/atct.db"
 
   before="$(wc -l <"$curl_log" | tr -d ' ')"
-  first_out="$(HOME="$home" PATH="$fake_bin:$PATH" FIXTURES_DIR="$fixtures" CURL_LOG="$curl_log" CURL_FAIL=1 FAKE_OS=Darwin FAKE_ARCH=arm64 "$REPO_ROOT/plugin/bin/atct" project list)"
+  first_out="$(HOME="$home" PATH="$fake_bin:$PATH" FIXTURES_DIR="$fixtures" CURL_LOG="$curl_log" CURL_FAIL=1 FAKE_OS=Darwin FAKE_ARCH=arm64 "$REPO_ROOT/bin/atct" project list)"
   after="$(wc -l <"$curl_log" | tr -d ' ')"
   assert_eq "$before" "$after" 'cached execution must not use the network'
   assert_eq 'fake atct <project> <list>' "$first_out" 'cached wrapper execution'
 
-  HOME="$home" PATH="$fake_bin:$PATH" FIXTURES_DIR="$fixtures" CURL_LOG="$curl_log" CURL_FAIL=1 FAKE_OS=Darwin FAKE_ARCH=arm64 "$REPO_ROOT/plugin/bin/atct-mcp" </dev/null >"$mcp_stdout" 2>"$mcp_stderr"
+  HOME="$home" PATH="$fake_bin:$PATH" FIXTURES_DIR="$fixtures" CURL_LOG="$curl_log" CURL_FAIL=1 FAKE_OS=Darwin FAKE_ARCH=arm64 "$REPO_ROOT/bin/atct-mcp" </dev/null >"$mcp_stdout" 2>"$mcp_stderr"
   assert_empty_file "$mcp_stdout"
   assert_file_contains 'fake mcp' "$mcp_stderr"
   assert_eq 4 "$(wc -l <"$curl_log" | tr -d ' ')" 'first executions should download archive and checksums once per binary'
@@ -271,7 +271,7 @@ SCRIPT
   write_fake_tools "$fake_bin"
 
   HOME="$home" PATH="$fake_bin:$PATH" FIXTURES_DIR="$fixtures" CURL_LOG="$curl_log" FAKE_OS=Darwin FAKE_ARCH=arm64 \
-    "$REPO_ROOT/plugin/bin/atct" context --check >"$stdout" 2>"$stderr" || status=$?
+    "$REPO_ROOT/bin/atct" context --check >"$stdout" 2>"$stderr" || status=$?
 
   assert_eq 1 "$status" 'context --check exit status must pass through the shell wrapper'
   assert_empty_file "$stdout"
@@ -303,7 +303,7 @@ exit 1
 SCRIPT
   chmod +x "$fake_bin/rm"
 
-  if ! output="$(HOME="$home" PATH="$fake_bin:$PATH" RM_LOG="$rm_log" "$REPO_ROOT/plugin/bin/atct" project list)"; then
+  if ! output="$(HOME="$home" PATH="$fake_bin:$PATH" RM_LOG="$rm_log" "$REPO_ROOT/bin/atct" project list)"; then
     fail 'cleanup failure prevented cached execution'
   fi
   assert_eq 'cached after cleanup failure' "$output" 'cached execution after cleanup failure'
@@ -323,7 +323,7 @@ test_checksum_failure() {
   make_archives "$fixtures" bad
   write_fake_tools "$fake_bin"
 
-  if HOME="$home" PATH="$fake_bin:$PATH" FIXTURES_DIR="$fixtures" CURL_LOG="$curl_log" FAKE_OS=Darwin FAKE_ARCH=arm64 "$REPO_ROOT/plugin/bin/atct" project list >"$stdout" 2>"$stderr"; then
+  if HOME="$home" PATH="$fake_bin:$PATH" FIXTURES_DIR="$fixtures" CURL_LOG="$curl_log" FAKE_OS=Darwin FAKE_ARCH=arm64 "$REPO_ROOT/bin/atct" project list >"$stdout" 2>"$stderr"; then
     fail 'checksum mismatch unexpectedly succeeded'
   fi
   assert_empty_file "$stdout"
@@ -354,7 +354,7 @@ test_missing_checksum_tool_fails() {
   ln -s "$fake_bin/curl" "$restricted_path/curl"
   ln -s "$fake_bin/uname" "$restricted_path/uname"
 
-  if HOME="$home" PATH="$restricted_path" FIXTURES_DIR="$fixtures" CURL_LOG="$curl_log" FAKE_OS=Darwin FAKE_ARCH=arm64 "$REPO_ROOT/plugin/bin/atct" project list >/dev/null 2>"$stderr"; then
+  if HOME="$home" PATH="$restricted_path" FIXTURES_DIR="$fixtures" CURL_LOG="$curl_log" FAKE_OS=Darwin FAKE_ARCH=arm64 "$REPO_ROOT/bin/atct" project list >/dev/null 2>"$stderr"; then
     fail 'missing checksum tool unexpectedly succeeded'
   fi
   assert_file_contains 'shasum or sha256sum' "$stderr"
@@ -372,7 +372,7 @@ test_unsupported_platform_fails() {
   make_archives "$fixtures" good
   write_fake_tools "$fake_bin"
 
-  if HOME="$home" PATH="$fake_bin:$PATH" FIXTURES_DIR="$fixtures" CURL_LOG="$curl_log" FAKE_OS=FreeBSD FAKE_ARCH=arm64 "$REPO_ROOT/plugin/bin/atct" project list >/dev/null 2>"$stderr"; then
+  if HOME="$home" PATH="$fake_bin:$PATH" FIXTURES_DIR="$fixtures" CURL_LOG="$curl_log" FAKE_OS=FreeBSD FAKE_ARCH=arm64 "$REPO_ROOT/bin/atct" project list >/dev/null 2>"$stderr"; then
     fail 'unsupported platform unexpectedly succeeded'
   fi
   assert_file_contains 'Unsupported platform' "$stderr"
@@ -381,13 +381,13 @@ test_unsupported_platform_fails() {
 
 test_session_start_uses_adjacent_context_wrapper() {
   local fixture="$TEMP_ROOT/session-start-path"
-  local hook="$fixture/plugin/hooks/session-start"
-  local adjacent="$fixture/plugin/bin/atct"
+  local hook="$fixture/hooks/session-start"
+  local adjacent="$fixture/bin/atct"
   local path_atct="$fixture/path/atct"
   local output
 
   mkdir -p "$(dirname "$hook")" "$(dirname "$adjacent")" "$(dirname "$path_atct")"
-  cp "$REPO_ROOT/plugin/hooks/session-start" "$hook"
+  cp "$REPO_ROOT/hooks/session-start" "$hook"
   cat >"$adjacent" <<'SCRIPT'
 #!/bin/bash
 if [[ "${1:-}" == context ]]; then
@@ -410,14 +410,14 @@ SCRIPT
 
 test_session_start_preserves_context_and_silence() {
   local fixture="$TEMP_ROOT/session-start-output"
-  local hook="$fixture/plugin/hooks/session-start"
-  local adjacent="$fixture/plugin/bin/atct"
-  local no_wrapper_hook="$fixture/no-wrapper/plugin/hooks/session-start"
+  local hook="$fixture/hooks/session-start"
+  local adjacent="$fixture/bin/atct"
+  local no_wrapper_hook="$fixture/no-wrapper/hooks/session-start"
   local output
 
   mkdir -p "$(dirname "$hook")" "$(dirname "$adjacent")" "$(dirname "$no_wrapper_hook")"
-  cp "$REPO_ROOT/plugin/hooks/session-start" "$hook"
-  cp "$REPO_ROOT/plugin/hooks/session-start" "$no_wrapper_hook"
+  cp "$REPO_ROOT/hooks/session-start" "$hook"
+  cp "$REPO_ROOT/hooks/session-start" "$no_wrapper_hook"
   cat >"$adjacent" <<'SCRIPT'
 #!/bin/bash
 if [[ "${1:-}" == context && -n "${FAKE_CONTEXT:-}" ]]; then
@@ -441,12 +441,12 @@ SCRIPT
 
 test_session_start_mentions_active_goal_permission() {
   local fixture="$TEMP_ROOT/session-start-active-goal"
-  local hook="$fixture/plugin/hooks/session-start"
-  local adjacent="$fixture/plugin/bin/atct"
+  local hook="$fixture/hooks/session-start"
+  local adjacent="$fixture/bin/atct"
   local output
 
   mkdir -p "$(dirname "$hook")" "$(dirname "$adjacent")"
-  cp "$REPO_ROOT/plugin/hooks/session-start" "$hook"
+  cp "$REPO_ROOT/hooks/session-start" "$hook"
   cat >"$adjacent" <<'SCRIPT'
 #!/bin/bash
 if [[ "${1:-}" == context ]]; then
@@ -461,12 +461,12 @@ SCRIPT
 
 test_session_start_mentions_undo_boundary() {
   local fixture="$TEMP_ROOT/session-start-undo-boundary"
-  local hook="$fixture/plugin/hooks/session-start"
-  local adjacent="$fixture/plugin/bin/atct"
+  local hook="$fixture/hooks/session-start"
+  local adjacent="$fixture/bin/atct"
   local output
 
   mkdir -p "$(dirname "$hook")" "$(dirname "$adjacent")"
-  cp "$REPO_ROOT/plugin/hooks/session-start" "$hook"
+  cp "$REPO_ROOT/hooks/session-start" "$hook"
   cat >"$adjacent" <<'SCRIPT'
 #!/bin/bash
 if [[ "${1:-}" == context ]]; then
@@ -481,11 +481,11 @@ SCRIPT
 
 test_session_start_is_silent_without_atct_wrapper() {
   local fixture="$TEMP_ROOT/session-start-no-wrapper"
-  local hook="$fixture/plugin/hooks/session-start"
+  local hook="$fixture/hooks/session-start"
   local output
 
   mkdir -p "$(dirname "$hook")"
-  cp "$REPO_ROOT/plugin/hooks/session-start" "$hook"
+  cp "$REPO_ROOT/hooks/session-start" "$hook"
 
   output="$(PATH="" /bin/bash "$hook" 2>&1)" || fail 'hook failed without an atct wrapper'
   assert_eq '' "$output" 'missing atct wrapper must keep the hook silent'

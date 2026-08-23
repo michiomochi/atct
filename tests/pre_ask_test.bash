@@ -73,7 +73,7 @@ SCRIPT
 make_hook_without_wrapper() {
   local hook_root="$1"
   mkdir -p "$hook_root/hooks"
-  cp "$REPO_ROOT/plugin/hooks/pre-ask" "$hook_root/hooks/pre-ask"
+  cp "$REPO_ROOT/hooks/pre-ask" "$hook_root/hooks/pre-ask"
   chmod +x "$hook_root/hooks/pre-ask"
 }
 
@@ -108,7 +108,7 @@ test_managed_ask_is_denied() {
 
   local input
   input="$(printf '{"tool_name":"AskUserQuestion","cwd":"%s"}' "$project")"
-  run_hook "$REPO_ROOT/plugin/hooks/pre-ask" "$home" "$input" managed "$log"
+  run_hook "$REPO_ROOT/hooks/pre-ask" "$home" "$input" managed "$log"
 
   assert_eq 0 "$RUN_STATUS" 'managed AskUserQuestion hook status'
   assert_contains '"hookEventName":"PreToolUse"' "$RUN_OUTPUT"
@@ -121,8 +121,8 @@ test_managed_ask_is_denied() {
   local expected_cwd
   expected_cwd="$(cd -- "$project" && pwd)"
   assert_eq "$expected_cwd|context" "$(<"$log")" 'atct context must run from hook cwd'
-  assert_file_contains '"PreToolUse"' "$REPO_ROOT/plugin/hooks/hooks.json"
-  assert_file_contains '"matcher": "AskUserQuestion"' "$REPO_ROOT/plugin/hooks/hooks.json"
+  assert_file_contains '"PreToolUse"' "$REPO_ROOT/hooks/hooks.json"
+  assert_file_contains '"matcher": "AskUserQuestion"' "$REPO_ROOT/hooks/hooks.json"
 }
 
 test_other_tool_is_ignored() {
@@ -136,7 +136,7 @@ test_other_tool_is_ignored() {
 
   local input
   input="$(printf '{"tool_name":"Bash","cwd":"%s"}' "$project")"
-  run_hook "$REPO_ROOT/plugin/hooks/pre-ask" "$home" "$input" managed "$log"
+  run_hook "$REPO_ROOT/hooks/pre-ask" "$home" "$input" managed "$log"
 
   assert_eq 0 "$RUN_STATUS" 'non-AskUserQuestion hook status'
   assert_empty "$RUN_OUTPUT"
@@ -173,7 +173,7 @@ test_context_failure_is_ignored() {
 
   local input
   input="$(printf '{"tool_name":"AskUserQuestion","cwd":"%s"}' "$project")"
-  run_hook "$REPO_ROOT/plugin/hooks/pre-ask" "$home" "$input" failure "$log"
+  run_hook "$REPO_ROOT/hooks/pre-ask" "$home" "$input" failure "$log"
 
   assert_eq 0 "$RUN_STATUS" 'failed atct context hook status'
   assert_empty "$RUN_OUTPUT"
@@ -193,7 +193,7 @@ test_empty_context_is_ignored() {
 
   local input
   input="$(printf '{"tool_name":"AskUserQuestion","cwd":"%s"}' "$project")"
-  run_hook "$REPO_ROOT/plugin/hooks/pre-ask" "$home" "$input" empty "$log"
+  run_hook "$REPO_ROOT/hooks/pre-ask" "$home" "$input" empty "$log"
 
   assert_eq 0 "$RUN_STATUS" 'empty context hook status'
   assert_empty "$RUN_OUTPUT"
@@ -202,7 +202,7 @@ test_empty_context_is_ignored() {
   assert_eq "$expected_cwd|context" "$(<"$log")" 'empty context must still be attempted'
 }
 
-[[ -f "$REPO_ROOT/plugin/hooks/pre-ask" ]] || fail 'pre-ask hook is missing'
+[[ -f "$REPO_ROOT/hooks/pre-ask" ]] || fail 'pre-ask hook is missing'
 test_managed_ask_is_denied
 test_other_tool_is_ignored
 test_missing_atct_is_ignored

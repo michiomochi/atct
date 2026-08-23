@@ -1087,7 +1087,7 @@ func runSessionStartHookForContractTest(t *testing.T, atctScript string) (string
 		t.Fatal("runtime.Caller failed")
 	}
 	repoRoot := filepath.Clean(filepath.Join(filepath.Dir(sourceFile), "..", ".."))
-	source, err := os.ReadFile(filepath.Join(repoRoot, "plugin", "hooks", "session-start"))
+	source, err := os.ReadFile(filepath.Join(repoRoot, "hooks", "session-start"))
 	if err != nil {
 		t.Fatalf("read session-start hook: %v", err)
 	}
