@@ -20,34 +20,14 @@ claude plugin marketplace add michiomochi/atct
 claude plugin install atct@atct
 ```
 
-That is the whole install. **No Homebrew, no Go toolchain, no `PATH` to edit.** The plugin
-ships wrappers that fetch the two binaries the first time something needs them, verify them
-against the release checksums, and cache them under `~/.atct/bin/`.
+That is the supported install. The plugin ships wrappers that fetch the two binaries the first
+time something needs them, verify them against the release checksums, and cache them under
+`~/.atct/bin/`.
 
 Restart Claude Code once — or run `/reload-plugins` — so the new MCP server is picked up.
 
 macOS and Linux, on amd64 and arm64. Windows is not supported: the daemon talks over a Unix
 domain socket.
-
-<details>
-<summary>Installing the binaries yourself</summary>
-
-The wrappers exist so you don't have to. If you would rather manage the binaries — to pin a
-version, to install offline, or to use `atct` from a shell outside any plugin:
-
-```bash
-brew install --cask michiomochi/tap/atct
-# or, with a Go toolchain:
-#   go install github.com/michiomochi/atct/cmd/atct@latest
-#   go install github.com/michiomochi/atct/cmd/atct-mcp@latest
-```
-
-Note that the wrappers do not consult `PATH`. They always run the binary matching the
-plugin's own version, so an agent never talks to a daemon built from a different release than
-the tool definitions it was given. Installing the binaries yourself gives you `atct` in any
-shell; it does not change what the plugin runs.
-
-</details>
 
 ## Getting started
 

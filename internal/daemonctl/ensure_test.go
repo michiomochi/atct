@@ -230,7 +230,7 @@ func TestEnsureReportsAlivePIDWithSilentSocket(t *testing.T) {
 	}
 }
 
-func TestEnsureReportsMissingExecutableWithInstallGuidance(t *testing.T) {
+func TestEnsureReportsMissingExecutableWithPluginGuidance(t *testing.T) {
 	dir := socketDir(t)
 	t.Setenv("PATH", dir)
 	cfg := Config{
@@ -244,7 +244,14 @@ func TestEnsureReportsMissingExecutableWithInstallGuidance(t *testing.T) {
 	if !errors.Is(err, exec.ErrNotFound) {
 		t.Fatalf("err = %v, want exec.ErrNotFound", err)
 	}
-	if !strings.Contains(err.Error(), "go install") {
-		t.Fatalf("err = %v, want go install guidance", err)
+	if strings.Contains(err.Error(), "go install") {
+		t.Fatalf("err = %v, must not contain go install guidance", err)
+	}
+	if !strings.Contains(err.Error(), "Reload or reinstall the atct plugin and retry") {
+		t.Fatalf("err = %v, want plugin reinstall guidance", err)
+	}
+	if !strings.Contains(err.Error(), "(beside atct-mcp) and in PATH") ||
+		!strings.Contains(err.Error(), "Put atct next to atct-mcp") {
+		t.Fatalf("err = %v, want daemon search diagnostics", err)
 	}
 }

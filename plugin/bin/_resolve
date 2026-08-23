@@ -10,7 +10,7 @@ fail() {
 }
 
 if [[ $# -lt 1 ]]; then
-  fail 'internal wrapper error: a binary name is required. Install with brew or go install.'
+  fail 'internal wrapper error: a binary name is required. Reload or reinstall the atct plugin and retry.'
 fi
 
 BINARY_NAME="$1"
@@ -18,19 +18,19 @@ shift
 
 case "$BINARY_NAME" in
   atct|atct-mcp) ;;
-  *) fail "internal wrapper error: unsupported binary <$BINARY_NAME>. Install with brew or go install." ;;
+  *) fail "internal wrapper error: unsupported binary <$BINARY_NAME>. Reload or reinstall the atct plugin and retry." ;;
 esac
 
 ATCT_WRAPPER="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/atct"
 
 HOME_DIR="${HOME:-}"
-[[ -n "$HOME_DIR" ]] || fail 'HOME is not set, so the downloaded binary cannot be cached. Set HOME and retry, or install with brew or go install.'
+[[ -n "$HOME_DIR" ]] || fail 'HOME is not set, so the downloaded binary cannot be cached. Set HOME and retry.'
 
 CACHE_DIR="$HOME_DIR/.atct/bin"
 CACHED_BINARY="$CACHE_DIR/${BINARY_NAME}-${VERSION}"
 
 if ! mkdir -p "$CACHE_DIR"; then
-  fail "Could not create the cache directory <$CACHE_DIR>. Check its permissions, or install with brew or go install."
+  fail "Could not create the cache directory <$CACHE_DIR>. Check its permissions and retry."
 fi
 
 TEMP_DIR=''
@@ -51,25 +51,25 @@ if [[ -x "$CACHED_BINARY" ]]; then
 fi
 
 if ! command -v curl >/dev/null 2>&1; then
-  fail 'curl is required to download ATCT. Install curl and retry, or install ATCT with brew install --cask michiomochi/tap/atct or go install.'
+  fail "curl is required to download ATCT. Install curl with your operating system's package manager and retry."
 fi
 
 if ! KERNEL="$(uname -s 2>/dev/null)"; then
-  fail 'The operating system could not be determined. Install ATCT with brew install --cask michiomochi/tap/atct or go install.'
+  fail 'The operating system could not be determined. Run the plugin on a supported system and retry.'
 fi
 case "$KERNEL" in
   Darwin) OS="darwin" ;;
   Linux) OS="linux" ;;
-  *) fail "Unsupported platform <$KERNEL>. Install ATCT with brew install --cask michiomochi/tap/atct or go install." ;;
+  *) fail "Unsupported platform <$KERNEL>. The ATCT plugin supports macOS and Linux only." ;;
 esac
 
 if ! MACHINE="$(uname -m 2>/dev/null)"; then
-  fail 'The CPU architecture could not be determined. Install ATCT with brew install --cask michiomochi/tap/atct or go install.'
+  fail 'The CPU architecture could not be determined. Run the plugin on a supported architecture and retry.'
 fi
 case "$MACHINE" in
   x86_64|amd64) ARCH="amd64" ;;
   arm64|aarch64) ARCH="arm64" ;;
-  *) fail "Unsupported architecture <$MACHINE>. Install ATCT with brew install --cask michiomochi/tap/atct or go install." ;;
+  *) fail "Unsupported architecture <$MACHINE>. The ATCT plugin supports amd64 and arm64 only." ;;
 esac
 
 if command -v shasum >/dev/null 2>&1; then
@@ -77,7 +77,7 @@ if command -v shasum >/dev/null 2>&1; then
 elif command -v sha256sum >/dev/null 2>&1; then
   CHECKSUM_TOOL='sha256sum'
 else
-  fail 'SHA-256 verification requires shasum or sha256sum, but neither is available. Install one and retry, or install ATCT with brew install --cask michiomochi/tap/atct or go install.'
+  fail "SHA-256 verification requires shasum or sha256sum, but neither is available. Install one with your operating system's package manager and retry."
 fi
 
 ARCHIVE_NAME="atct_${VERSION}_${OS}_${ARCH}.tar.gz"
@@ -85,17 +85,17 @@ ARCHIVE_URL="${RELEASE_BASE}/${ARCHIVE_NAME}"
 CHECKSUMS_URL="${RELEASE_BASE}/checksums.txt"
 
 if ! TEMP_DIR="$(mktemp -d "$CACHE_DIR/.download.XXXXXX")"; then
-  fail "Could not create a temporary download directory in <$CACHE_DIR>. Check its permissions, or install ATCT with brew install --cask michiomochi/tap/atct or go install."
+  fail "Could not create a temporary download directory in <$CACHE_DIR>. Check its permissions and retry."
 fi
 
 ARCHIVE_PATH="$TEMP_DIR/$ARCHIVE_NAME"
 CHECKSUMS_PATH="$TEMP_DIR/checksums.txt"
 
 if ! curl --fail --location --silent --show-error --output "$ARCHIVE_PATH" "$ARCHIVE_URL"; then
-  fail "Could not download <$ARCHIVE_NAME> from GitHub Releases. Check your network connection and retry, or install ATCT with brew install --cask michiomochi/tap/atct or go install."
+  fail "Could not download <$ARCHIVE_NAME> from GitHub Releases. Check your network connection and retry."
 fi
 if ! curl --fail --location --silent --show-error --output "$CHECKSUMS_PATH" "$CHECKSUMS_URL"; then
-  fail 'Could not download checksums.txt from GitHub Releases. Check your network connection and retry, or install ATCT with brew install --cask michiomochi/tap/atct or go install.'
+  fail 'Could not download checksums.txt from GitHub Releases. Check your network connection and retry.'
 fi
 
 EXPECTED_CHECKSUM="$(awk -v target="$ARCHIVE_NAME" '
@@ -108,7 +108,7 @@ EXPECTED_CHECKSUM="$(awk -v target="$ARCHIVE_NAME" '
     }
   }
 ' "$CHECKSUMS_PATH")"
-[[ -n "$EXPECTED_CHECKSUM" ]] || fail "checksums.txt does not contain <$ARCHIVE_NAME>; the release is incomplete. Retry later, or install ATCT with brew install --cask michiomochi/tap/atct or go install."
+[[ -n "$EXPECTED_CHECKSUM" ]] || fail "checksums.txt does not contain <$ARCHIVE_NAME>; the release metadata is incomplete. Retry later."
 
 if [[ "$CHECKSUM_TOOL" == shasum ]]; then
   if ! ACTUAL_CHECKSUM="$(shasum -a 256 "$ARCHIVE_PATH" | awk '{print tolower($1)}')"; then
@@ -121,19 +121,19 @@ else
 fi
 
 if [[ "$ACTUAL_CHECKSUM" != "$EXPECTED_CHECKSUM" ]]; then
-  fail "Checksum verification failed for <$ARCHIVE_NAME>: expected <$EXPECTED_CHECKSUM>, got <$ACTUAL_CHECKSUM>. The download was not executed. Retry later, or install ATCT with brew install --cask michiomochi/tap/atct or go install."
+  fail "Checksum verification failed for <$ARCHIVE_NAME>: expected <$EXPECTED_CHECKSUM>, got <$ACTUAL_CHECKSUM>. The download was not executed. Retry later."
 fi
 
 if ! tar -xzf "$ARCHIVE_PATH" -C "$TEMP_DIR" "$BINARY_NAME"; then
-  fail "Could not extract <$BINARY_NAME> from <$ARCHIVE_NAME>. Retry later, or install ATCT with brew install --cask michiomochi/tap/atct or go install."
+  fail "Could not extract <$BINARY_NAME> from <$ARCHIVE_NAME>. The release archive may be incomplete; retry later."
 fi
-[[ -f "$TEMP_DIR/$BINARY_NAME" ]] || fail "The verified archive did not contain <$BINARY_NAME>. Retry later, or install ATCT with brew install --cask michiomochi/tap/atct or go install."
+[[ -f "$TEMP_DIR/$BINARY_NAME" ]] || fail "The verified archive did not contain <$BINARY_NAME>. The release archive is incomplete; retry later."
 
 if ! chmod +x "$TEMP_DIR/$BINARY_NAME"; then
-  fail "Could not make the downloaded <$BINARY_NAME> executable. Check permissions for <$CACHE_DIR>, or install ATCT with brew install --cask michiomochi/tap/atct or go install."
+  fail "Could not make the downloaded <$BINARY_NAME> executable. Check permissions for <$CACHE_DIR> and retry."
 fi
 if ! mv "$TEMP_DIR/$BINARY_NAME" "$CACHED_BINARY"; then
-  fail "Could not cache <$BINARY_NAME> in <$CACHE_DIR>. Check permissions and retry, or install ATCT with brew install --cask michiomochi/tap/atct or go install."
+  fail "Could not cache <$BINARY_NAME> in <$CACHE_DIR>. Check permissions and retry."
 fi
 
 cleanup
