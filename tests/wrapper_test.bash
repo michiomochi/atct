@@ -486,12 +486,23 @@ test_delegated_claim_contract_is_explicit() {
   assert_file_contains 'The delegator must call `atct_handoff_request`' "$atct_skill"
   assert_file_contains 'Then record receipt of the handoff by calling `atct_handoff_receive` with only' "$atct_skill"
   assert_file_contains 'the `task_id` provided in this request.' "$atct_skill"
+  assert_file_contains 'Claim the goal with `atct_goal_claim` before handing it off.' "$atct_skill"
+  assert_file_contains 'The delegator must call `atct_goal_handoff_request`' "$atct_skill"
+  assert_file_contains 'with only the `goal_id` provided in this request.' "$atct_skill"
+  assert_file_contains '`atct_goal_handoff_complete` with only the `goal_id` provided in this' "$atct_skill"
+  assert_file_contains 'Do this before starting work.' "$atct_skill"
+  assert_file_contains 'When the work is complete, record completion by calling `atct_handoff_complete`' "$atct_skill"
+  assert_file_contains 'A subcommander must not claim the project' "$atct_skill"
+  assert_file_contains 'A subcommander must not call `atct_goal_release`' "$atct_skill"
+  assert_file_contains "commander's job." "$atct_skill"
   assert_file_contains 'The worker must perform both instructions itself before doing any work.' "$atct_skill"
   assert_file_not_contains 'Call `atct_task_claim` before working on a task.' "$atct_skill"
   assert_file_not_contains '4. **Take one.** Call `atct_task_claim`.' "$start_skill"
   assert_file_not_contains '2. Wake the worker through the environment.' "$atct_skill"
   assert_file_not_contains 'The worker must run this check itself before doing any work.' "$atct_skill"
   assert_file_not_contains "the delegator's identity" "$atct_skill"
+  assert_file_not_contains 'Do this whenever convenient.' "$atct_skill"
+  assert_file_not_contains 'atct_goal_handoff_receive` with only the `handoff_id` provided in this request.' "$atct_skill"
 }
 
 test_role_contract_matches_implementation() {

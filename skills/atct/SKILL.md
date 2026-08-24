@@ -69,6 +69,9 @@ that worker is started:
    > Then record receipt of the handoff by calling `atct_handoff_receive` with only
    > the `task_id` provided in this request. Do this before starting work. Do not
    > pass a handoff ID or session; ATCT supplies them.
+   >
+   > When the work is complete, record completion by calling `atct_handoff_complete`
+   > with only the `task_id` provided in this request.
 
 5. Keep one worker per task. Return a correction, review fix, follow-up
    question, or clarification for the same task to the same worker. Start a
@@ -83,6 +86,44 @@ The worker must perform both instructions itself before doing any work. The
 delegator must not run either instruction on the worker's behalf or treat a
 worker name, pane title, or launch context as proof of the role. If the role
 check reports a mismatch, the worker returns the task without touching it.
+
+## Delegate a claimed goal
+
+When handing a goal to a subcommander, keep the contract independent of how
+that subcommander is started:
+
+1. Claim the goal with `atct_goal_claim` before handing it off. An unclaimed
+   goal cannot be delegated.
+2. Record the handoff before waking the subcommander.
+   The delegator must call `atct_goal_handoff_request` with a unique `handoff_id`
+   and the claimed `goal_id`. The request takes only `handoff_id` and `goal_id`;
+   do not pass `requested_by`; ATCT supplies it. Wait for the request to succeed
+   before waking the subcommander; this creates the record needed to receive and
+   complete the handoff.
+3. Wake the subcommander through the environment. ATCT does not prescribe how
+   the subcommander is started or how the role is transmitted.
+4. Put these exact instructions at the very beginning of the request:
+
+   > First invoke the `atct_role` MCP tool with `expected_role` set to
+   > `subcommander`. If it reports `matches: false`, do not start work; return
+   > the goal.
+   >
+   > Then record receipt of the goal handoff by calling
+   > `atct_goal_handoff_receive` with only the `goal_id` provided in this request.
+   > Do this before starting work. Do not pass a handoff ID or session; ATCT
+   > supplies them.
+   >
+   > When the work is complete, record completion by calling
+   > `atct_goal_handoff_complete` with only the `goal_id` provided in this
+   > request.
+
+5. Keep one subcommander per goal. A subcommander may wake executors for its
+   goal, but must not inspect or manage other goals, create another
+   subcommander, or release the goal.
+   A subcommander must not call `atct_goal_release`; releasing the goal is the
+   commander's job.
+   A subcommander must not claim the project. Claiming the project changes its
+   role to commander.
 
 ## Close a task the moment it is finished
 
