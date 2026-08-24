@@ -683,6 +683,38 @@ func TestDetectWakeupCollectsStalledHandoffCandidates(t *testing.T) {
 	}
 }
 
+func TestDetectWakeupExcludesCommanderClaimAndKeepsUndelegatedExecutorClaim(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	taskIDs := addTestTasks(t, s, 3)
+	projectID := taskIDsProjectID(t, s, taskIDs[0])
+	const commanderSessionID = "commander-session"
+	const executorSessionID = "executor-session"
+
+	if _, err := s.ClaimProject(ctx, projectID, commanderSessionID); err != nil {
+		t.Fatalf("ClaimProject: %v", err)
+	}
+	if _, err := s.ClaimTask(ctx, taskIDs[0], commanderSessionID); err != nil {
+		t.Fatalf("ClaimTask commander: %v", err)
+	}
+	if _, err := s.ClaimTask(ctx, taskIDs[1], executorSessionID); err != nil {
+		t.Fatalf("ClaimTask executor: %v", err)
+	}
+	if _, err := s.ClaimTask(ctx, taskIDs[2], executorSessionID); err != nil {
+		t.Fatalf("ClaimTask delegated: %v", err)
+	}
+	addTestAgentSession(t, s, "requester")
+	addRequestOnlyTaskHandoff(t, s, "commander-test-handoff", taskIDs[2], "requester")
+
+	state, err := s.DetectWakeup(ctx, projectID)
+	if err != nil {
+		t.Fatalf("DetectWakeup: %v", err)
+	}
+	if len(state.UndelegatedClaims) != 1 || state.UndelegatedClaims[0].ID != taskIDs[1] {
+		t.Fatalf("undelegated claims = %#v, want only executor task %s", state.UndelegatedClaims, taskIDs[1])
+	}
+}
+
 func TestClassifyWakeupDecisionsUsesPendingPredicates(t *testing.T) {
 	defaultAppliedAt := time.Now().UTC()
 	appliedAt := time.Now().UTC()

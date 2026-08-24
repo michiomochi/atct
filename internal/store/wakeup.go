@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -115,6 +116,10 @@ func (s *Store) DetectWakeup(ctx context.Context, projectID string) (WakeupState
 	if err != nil {
 		return WakeupState{}, err
 	}
+	projects, err := s.ListProjects(ctx)
+	if err != nil {
+		return WakeupState{}, err
+	}
 
 	decisions, err := s.ListUnappliedDecisions(ctx)
 	if err != nil {
@@ -224,7 +229,18 @@ func (s *Store) DetectWakeup(ctx context.Context, projectID string) (WakeupState
 				}
 			}
 			if task.ClaimedAt != nil && !delegated {
-				state.UndelegatedClaims = append(state.UndelegatedClaims, task)
+				commanderClaim := false
+				if sessionID := strings.TrimSpace(task.ClaimedBy); sessionID != "" {
+					for _, project := range projects {
+						if strings.TrimSpace(project.ClaimedBy) == sessionID {
+							commanderClaim = true
+							break
+						}
+					}
+				}
+				if !commanderClaim {
+					state.UndelegatedClaims = append(state.UndelegatedClaims, task)
+				}
 			}
 		}
 		if len(openDecisions) > 0 {
