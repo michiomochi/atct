@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -19,6 +20,24 @@ import (
 )
 
 func TestSessionRoleDerivesFromClaims(t *testing.T) {
+	wantBoundary := map[string]struct {
+		does    []string
+		doesNot []string
+	}{
+		"commander": {
+			does:    []string{"triage incoming work", "split goals", "prepare a working area", "review landed changes", "publish", "resolve conflicts", "clean up"},
+			doesNot: []string{"design the goal", "implement the goal", "edit executor deliverables"},
+		},
+		"subcommander": {
+			does:    []string{"design the goal", "delegate the goal's work", "review implementation", "report completion for the goal", "issue decisions to the human"},
+			doesNot: []string{"inspect or manage other goals", "publish", "create another subcommander", "claim the project"},
+		},
+		"executor": {
+			does:    []string{"implement", "test"},
+			doesNot: []string{"make design decisions", "re-delegate", "commit", "write internal version-control details"},
+		},
+	}
+
 	tests := []struct {
 		name         string
 		claimProject bool
@@ -81,9 +100,11 @@ func TestSessionRoleDerivesFromClaims(t *testing.T) {
 			}
 
 			var got struct {
-				Role      string `json:"role"`
-				ProjectID string `json:"project_id"`
-				GoalID    string `json:"goal_id"`
+				Role      string   `json:"role"`
+				ProjectID string   `json:"project_id"`
+				GoalID    string   `json:"goal_id"`
+				Does      []string `json:"does"`
+				DoesNot   []string `json:"does_not"`
 			}
 			if err := json.Unmarshal(raw, &got); err != nil {
 				t.Fatalf("decode session.role response %q: %v", raw, err)
@@ -100,6 +121,13 @@ func TestSessionRoleDerivesFromClaims(t *testing.T) {
 			}
 			if got.GoalID != goalID {
 				t.Fatalf("goal_id = %q, want %q (response %s)", got.GoalID, goalID, raw)
+			}
+			want := wantBoundary[tt.wantRole]
+			if !reflect.DeepEqual(got.Does, want.does) {
+				t.Fatalf("does = %#v, want %#v (response %s)", got.Does, want.does, raw)
+			}
+			if !reflect.DeepEqual(got.DoesNot, want.doesNot) {
+				t.Fatalf("does_not = %#v, want %#v (response %s)", got.DoesNot, want.doesNot, raw)
 			}
 		})
 	}

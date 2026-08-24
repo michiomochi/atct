@@ -262,6 +262,31 @@ func TestTaskHandoffCompleteByTask(t *testing.T) {
 	}
 }
 
+func TestTaskHandoffCompleteByTaskRejectsUnreceived(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	taskID := addTestTasks(t, s, 1)[0]
+	handoffID := "complete-unreceived-task"
+	addTestAgentSession(t, s, "complete-unreceived-task-requester")
+	addRequestOnlyTaskHandoff(t, s, handoffID, taskID, "complete-unreceived-task-requester")
+
+	_, err := s.CompleteTaskHandoffForTask(ctx, taskID, "should not complete")
+	if !errors.Is(err, ErrTaskHandoffNotFound) {
+		t.Fatalf("error = %v, want ErrTaskHandoffNotFound", err)
+	}
+
+	handoff, err := s.GetTaskHandoff(ctx, handoffID)
+	if err != nil {
+		t.Fatalf("GetTaskHandoff failed: %v", err)
+	}
+	if handoff.CompletedReportAt != nil {
+		t.Fatalf("unreceived handoff has completion time: %+v", handoff)
+	}
+	if handoff.CompleteReport != "" {
+		t.Fatalf("unreceived handoff complete report = %q, want empty", handoff.CompleteReport)
+	}
+}
+
 func TestTaskHandoffCompleteByTaskRejectsMultipleReceivedIncomplete(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

@@ -223,6 +223,31 @@ func TestGoalHandoffCompleteByGoal(t *testing.T) {
 	}
 }
 
+func TestGoalHandoffCompleteByGoalRejectsUnreceived(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	goalID := newTestGoal(t, s)
+	handoffID := "complete-unreceived-goal"
+	addTestAgentSession(t, s, "complete-unreceived-goal-requester")
+	addRequestOnlyGoalHandoff(t, s, handoffID, goalID, "complete-unreceived-goal-requester")
+
+	_, err := s.CompleteGoalHandoffForGoal(ctx, goalID, "should not complete")
+	if !errors.Is(err, ErrGoalHandoffNotFound) {
+		t.Fatalf("error = %v, want ErrGoalHandoffNotFound", err)
+	}
+
+	handoff, err := s.GetGoalHandoff(ctx, handoffID)
+	if err != nil {
+		t.Fatalf("GetGoalHandoff failed: %v", err)
+	}
+	if handoff.CompletedReportAt != nil {
+		t.Fatalf("unreceived handoff has completion time: %+v", handoff)
+	}
+	if handoff.CompleteReport != "" {
+		t.Fatalf("unreceived handoff complete report = %q, want empty", handoff.CompleteReport)
+	}
+}
+
 func TestGoalHandoffCompleteByGoalRejectsMultipleReceivedIncomplete(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

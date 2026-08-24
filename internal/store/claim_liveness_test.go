@@ -181,6 +181,44 @@ func TestClaimLivenessTreatsUnknownAndUnverifiableClaimsAsStale(t *testing.T) {
 	}
 }
 
+func TestClaimLivenessTreatsUnreadableProcessStartAsStale(t *testing.T) {
+	saved := processStartedAt
+	processStartedAt = func(pid int) (string, error) {
+		return "", fmt.Errorf("process start time unavailable for pid %d", pid)
+	}
+	t.Cleanup(func() { processStartedAt = saved })
+
+	s := newTestStore(t)
+	ctx := context.Background()
+	project, err := s.CreateProject(ctx, "atct", "/repos/atct")
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	goal, err := s.CreateGoal(ctx, project.ID, "Unreadable process start", "human")
+	if err != nil {
+		t.Fatalf("CreateGoal: %v", err)
+	}
+	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "unreadable-process-start", []string{"Unreadable start"}, []string{"Treat an unreadable process start as stale."})
+	if err != nil {
+		t.Fatalf("DeclareTasks: %v", err)
+	}
+	insertClaimLivenessSession(t, s, "unreadable-start-run", project.ID, os.Getpid(), "")
+	if _, err := s.ClaimTask(ctx, tasks[0].ID, "unreadable-start-run"); err != nil {
+		t.Fatalf("ClaimTask: %v", err)
+	}
+
+	running, stale, err := ClaimLiveness(ctx, s, project.ID)
+	if err != nil {
+		t.Fatalf("ClaimLiveness: %v", err)
+	}
+	if len(running) != 0 {
+		t.Fatalf("running claims = %#v, want empty", running)
+	}
+	if len(stale) != 1 || stale[0].ID != tasks[0].ID {
+		t.Fatalf("stale claims = %#v, want task %s", stale, tasks[0].ID)
+	}
+}
+
 func TestClaimLivenessTreatsPIDReuseAsStale(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
