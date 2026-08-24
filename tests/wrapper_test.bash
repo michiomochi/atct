@@ -482,8 +482,11 @@ test_delegated_claim_contract_is_explicit() {
   assert_file_contains 'The following loop is for self-directed work: find and take a task yourself.' "$start_skill"
   assert_file_contains 'Do not call `atct_task_claim` for a delegated task.' "$atct_skill"
   assert_file_contains '`task already claimed` is normal; continue.' "$atct_skill"
+  assert_file_contains 'Record the handoff before waking the worker.' "$atct_skill"
+  assert_file_contains 'The delegator must call `atct_handoff_request`' "$atct_skill"
   assert_file_not_contains 'Call `atct_task_claim` before working on a task.' "$atct_skill"
   assert_file_not_contains '4. **Take one.** Call `atct_task_claim`.' "$start_skill"
+  assert_file_not_contains '2. Wake the worker through the environment.' "$atct_skill"
 }
 
 test_static_contract

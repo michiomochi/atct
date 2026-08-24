@@ -43,15 +43,20 @@ When handing a task to another worker, keep the contract independent of how
 that worker is started:
 
 1. Claim the task before handing it off.
-2. Wake the worker through the environment. A terminal multiplexer can host a
+2. Record the handoff before waking the worker.
+   The delegator must call `atct_handoff_request` with a unique handoff ID, the
+   claimed task ID, and the delegator's identity. Wait for the request to
+   succeed before waking the worker; this creates the record needed to receive
+   and complete the handoff.
+3. Wake the worker through the environment. A terminal multiplexer can host a
    working pane, or a sub-agent can perform the work. ATCT does not prescribe
    how the worker is started or how the role is transmitted.
-3. Put this exact instruction at the very beginning of the request:
+4. Put this exact instruction at the very beginning of the request:
 
    > First invoke the role-verification MCP tool with the expected role. If it
    > reports a mismatch, do not start work; return the task.
 
-4. Keep one worker per task. Return a correction, review fix, follow-up
+5. Keep one worker per task. Return a correction, review fix, follow-up
    question, or clarification for the same task to the same worker. Start a
    new worker for a different task. When the task is done, end that worker.
    A correction or review fix remains the same task because it is a delta
