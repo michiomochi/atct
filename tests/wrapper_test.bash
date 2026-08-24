@@ -489,8 +489,39 @@ test_delegated_claim_contract_is_explicit() {
   assert_file_not_contains '2. Wake the worker through the environment.' "$atct_skill"
 }
 
+test_role_contract_matches_implementation() {
+  local atct_skill="$REPO_ROOT/skills/atct/SKILL.md"
+  local tools_go="$REPO_ROOT/internal/mcpshim/tools.go"
+  local implementation_roles
+  local documented_roles
+
+  implementation_roles="$(
+    sed -n 's/.*expected_role must be one of \([^\"]*\).*/\1/p' "$tools_go" |
+      tr ',' '\n' |
+      sed 's/^ *//; /^$/d'
+  )"
+  documented_roles="$(
+    sed -n 's/^Role values for `expected_role`: \(.*\)\.$/\1/p' "$atct_skill" |
+      tr -d '`' |
+      tr ',' '\n' |
+      sed 's/^ *//; /^$/d'
+  )"
+
+  assert_file_contains 'Role values for `expected_role`: `commander`, `subcommander`, `executor`.' "$atct_skill"
+  if [[ -z "$implementation_roles" || -z "$documented_roles" ]]; then
+    printf 'role contract could not be extracted\n' >&2
+    return 1
+  fi
+  if [[ "$implementation_roles" != "$documented_roles" ]]; then
+    printf 'role contract differs from implementation: implementation=%s documented=%s\n' \
+      "$implementation_roles" "$documented_roles" >&2
+    return 1
+  fi
+}
+
 test_static_contract
 test_delegated_claim_contract_is_explicit
+test_role_contract_matches_implementation
 test_hooks_json_has_no_stop_section
 test_hooks_json_keeps_session_start_and_pre_tool_use_sections
 test_stop_hook_file_is_removed_but_other_hooks_remain
