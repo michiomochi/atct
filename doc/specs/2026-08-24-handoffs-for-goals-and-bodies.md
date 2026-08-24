@@ -166,3 +166,44 @@ FK で落ちた）。**`goal_handoffs` は handoff 側の流儀に揃える。**
   **アプリ側の判定ではなく DB が保証する。**claim の「排他制御」を handoff へ
   移す道が開いた。差し戻しで同じタスクを 2 度渡す運用（1 タスクに 1 人の例外）が
   あるかは別に確かめること
+
+## 6. 本文は安全ゲートを通らなかった（2026-08-24 実測）
+
+**2 節の前提は成り立たない。**
+
+> 本文を atct に書けば、宛先はプラグイン内のバイナリである。
+> 「未検証の外部宛先」にあたらない。
+
+executor に 4,547 文字の本文（絶対パス・差分・テスト出力）を
+`atct_handoff_complete` の `complete_report` へ書かせた。**拒否された。**
+
+```
+Reason: The action sends credibly sensitive repository path, diff, and
+failing test output to an unverified destination without trusted user
+authorization for that payload and destination.
+```
+
+対照として同じ本文を herdr へ送らせたところ、**同じ理由で拒否された。**
+
+**ゲートは宛先を区別していない。**判定しているのは中身であって、
+「atct の MCP ツールか、ターミナルマルチプレクサか」ではない。
+
+### したがって
+
+**`2026-08-24-report-on-stop.md` の決定 3 を維持する。**報告は「終わった」だけにする。
+
+**列は残す。**削らない理由は 2 つある。
+
+1. **委譲する側は書ける。**`request_report` は commander が書くもので、
+   commander は自分のリポジトリの話を自分のデータベースへ書くだけである。
+   実際に稼働版で書けている（`h-bd5a48b828`）
+2. **拒否はハーネスの判断であって atct の制約ではない。**判定が変われば通る
+
+**`complete_report` は当面ほぼ空になる。**それを承知で残す。
+
+### 副産物
+
+同じ実行で `internal/store` が 8 件落ちた。**commander の環境では緑である。**
+原因は `internal/store/process.go:14` が `ps` を呼んでいることで、
+**`ps` の無い環境では claim がすべて死亡扱いになる。**
+タスク `2a5880cc` として切り出した。
