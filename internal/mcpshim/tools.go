@@ -71,6 +71,21 @@ type HandoffCompleteIn struct {
 	TaskID    string `json:"task_id"`
 }
 
+type GoalHandoffRequestIn struct {
+	HandoffID string `json:"handoff_id"`
+	GoalID    string `json:"goal_id"`
+}
+
+type GoalHandoffReceiveIn struct {
+	HandoffID string `json:"handoff_id,omitempty"`
+	GoalID    string `json:"goal_id"`
+}
+
+type GoalHandoffCompleteIn struct {
+	HandoffID string `json:"handoff_id"`
+	GoalID    string `json:"goal_id"`
+}
+
 type TaskUpdateIn struct {
 	TaskID  string   `json:"task_id"`
 	Status  string   `json:"status" jsonschema:"todo | doing | done | dropped"`
@@ -412,6 +427,40 @@ func Register(server *mcp.Server, c *Client, agentSessionID string) {
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in HandoffCompleteIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
 		return callWithUnappliedDecisions(ctx, c, "handoff.complete", map[string]any{
 			"handoff_id": in.HandoffID, "task_id": in.TaskID,
+		})
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:         "atct_goal_handoff_request",
+		Description:  "Request a goal handoff. The goal must have a live claim.",
+		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in GoalHandoffRequestIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
+		return callWithUnappliedDecisions(ctx, c, "goal.handoff.request", map[string]any{
+			"handoff_id": in.HandoffID, "goal_id": in.GoalID, "requested_by": agentSessionID,
+		})
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:         "atct_goal_handoff_receive",
+		Description:  "Record that a goal handoff was received.",
+		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in GoalHandoffReceiveIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
+		params := map[string]any{
+			"goal_id": in.GoalID, "received_by": agentSessionID,
+		}
+		if in.HandoffID != "" {
+			params["handoff_id"] = in.HandoffID
+		}
+		return callWithUnappliedDecisions(ctx, c, "goal.handoff.receive", params)
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:         "atct_goal_handoff_complete",
+		Description:  "Report that a goal handoff was completed.",
+		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in GoalHandoffCompleteIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
+		return callWithUnappliedDecisions(ctx, c, "goal.handoff.complete", map[string]any{
+			"handoff_id": in.HandoffID, "goal_id": in.GoalID,
 		})
 	})
 

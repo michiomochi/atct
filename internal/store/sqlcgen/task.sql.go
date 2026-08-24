@@ -32,6 +32,24 @@ func (q *Queries) ClaimTask(ctx context.Context, arg ClaimTaskParams) (sql.Resul
 	)
 }
 
+const completeGoalHandoff = `-- name: CompleteGoalHandoff :exec
+INSERT INTO goal_handoffs (id, goal_id, completed_report_at)
+VALUES (?, ?, ?)
+ON CONFLICT(id) DO UPDATE SET
+  completed_report_at = COALESCE(goal_handoffs.completed_report_at, excluded.completed_report_at)
+`
+
+type CompleteGoalHandoffParams struct {
+	ID                string
+	GoalID            string
+	CompletedReportAt sql.NullString
+}
+
+func (q *Queries) CompleteGoalHandoff(ctx context.Context, arg CompleteGoalHandoffParams) error {
+	_, err := q.db.ExecContext(ctx, completeGoalHandoff, arg.ID, arg.GoalID, arg.CompletedReportAt)
+	return err
+}
+
 const completeTaskHandoff = `-- name: CompleteTaskHandoff :exec
 INSERT INTO task_handoffs (id, task_id, completed_report_at)
 VALUES (?, ?, ?)
@@ -177,6 +195,41 @@ func (q *Queries) GetAgentSessionProjectID(ctx context.Context, id string) (sql.
 	var project_id sql.NullString
 	err := row.Scan(&project_id)
 	return project_id, err
+}
+
+const getGoalHandoff = `-- name: GetGoalHandoff :one
+SELECT id, goal_id, requested_by, received_by,
+       requested_at, received_at, completed_report_at
+FROM goal_handoffs
+WHERE id = ?
+`
+
+func (q *Queries) GetGoalHandoff(ctx context.Context, id string) (GoalHandoff, error) {
+	row := q.db.QueryRowContext(ctx, getGoalHandoff, id)
+	var i GoalHandoff
+	err := row.Scan(
+		&i.ID,
+		&i.GoalID,
+		&i.RequestedBy,
+		&i.ReceivedBy,
+		&i.RequestedAt,
+		&i.ReceivedAt,
+		&i.CompletedReportAt,
+	)
+	return i, err
+}
+
+const getGoalHandoffGoalID = `-- name: GetGoalHandoffGoalID :one
+SELECT goal_id
+FROM goal_handoffs
+WHERE id = ?
+`
+
+func (q *Queries) GetGoalHandoffGoalID(ctx context.Context, id string) (string, error) {
+	row := q.db.QueryRowContext(ctx, getGoalHandoffGoalID, id)
+	var goal_id string
+	err := row.Scan(&goal_id)
+	return goal_id, err
 }
 
 const getLatestAgentSessionID = `-- name: GetLatestAgentSessionID :one
@@ -409,6 +462,45 @@ func (q *Queries) ListClaimedTasksForConflict(ctx context.Context, arg ListClaim
 	return items, nil
 }
 
+const listGoalHandoffs = `-- name: ListGoalHandoffs :many
+SELECT id, goal_id, requested_by, received_by,
+       requested_at, received_at, completed_report_at
+FROM goal_handoffs
+WHERE goal_id = ?
+ORDER BY id
+`
+
+func (q *Queries) ListGoalHandoffs(ctx context.Context, goalID string) ([]GoalHandoff, error) {
+	rows, err := q.db.QueryContext(ctx, listGoalHandoffs, goalID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GoalHandoff
+	for rows.Next() {
+		var i GoalHandoff
+		if err := rows.Scan(
+			&i.ID,
+			&i.GoalID,
+			&i.RequestedBy,
+			&i.ReceivedBy,
+			&i.RequestedAt,
+			&i.ReceivedAt,
+			&i.CompletedReportAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listTaskAlternatives = `-- name: ListTaskAlternatives :many
 SELECT id, title, description, status, claimed_by, files
 FROM tasks
@@ -606,6 +698,31 @@ func (q *Queries) MaxTaskSortOrder(ctx context.Context, goalID string) (int64, e
 	return sort_order, err
 }
 
+const receiveGoalHandoff = `-- name: ReceiveGoalHandoff :exec
+INSERT INTO goal_handoffs (id, goal_id, received_by, received_at)
+VALUES (?, ?, ?, ?)
+ON CONFLICT(id) DO UPDATE SET
+  received_by = COALESCE(goal_handoffs.received_by, excluded.received_by),
+  received_at = COALESCE(goal_handoffs.received_at, excluded.received_at)
+`
+
+type ReceiveGoalHandoffParams struct {
+	ID         string
+	GoalID     string
+	ReceivedBy sql.NullString
+	ReceivedAt sql.NullString
+}
+
+func (q *Queries) ReceiveGoalHandoff(ctx context.Context, arg ReceiveGoalHandoffParams) error {
+	_, err := q.db.ExecContext(ctx, receiveGoalHandoff,
+		arg.ID,
+		arg.GoalID,
+		arg.ReceivedBy,
+		arg.ReceivedAt,
+	)
+	return err
+}
+
 const receiveTaskHandoff = `-- name: ReceiveTaskHandoff :exec
 INSERT INTO task_handoffs (id, task_id, received_by, received_at)
 VALUES (?, ?, ?, ?)
@@ -666,6 +783,31 @@ type ReleaseTaskParams struct {
 
 func (q *Queries) ReleaseTask(ctx context.Context, arg ReleaseTaskParams) (sql.Result, error) {
 	return q.db.ExecContext(ctx, releaseTask, arg.UpdatedAt, arg.ID)
+}
+
+const requestGoalHandoff = `-- name: RequestGoalHandoff :exec
+INSERT INTO goal_handoffs (id, goal_id, requested_by, requested_at)
+VALUES (?, ?, ?, ?)
+ON CONFLICT(id) DO UPDATE SET
+  requested_by = COALESCE(goal_handoffs.requested_by, excluded.requested_by),
+  requested_at = COALESCE(goal_handoffs.requested_at, excluded.requested_at)
+`
+
+type RequestGoalHandoffParams struct {
+	ID          string
+	GoalID      string
+	RequestedBy sql.NullString
+	RequestedAt sql.NullString
+}
+
+func (q *Queries) RequestGoalHandoff(ctx context.Context, arg RequestGoalHandoffParams) error {
+	_, err := q.db.ExecContext(ctx, requestGoalHandoff,
+		arg.ID,
+		arg.GoalID,
+		arg.RequestedBy,
+		arg.RequestedAt,
+	)
+	return err
 }
 
 const requestTaskHandoff = `-- name: RequestTaskHandoff :exec

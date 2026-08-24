@@ -17,7 +17,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-func TestRegisterPublishesTwentyToolsWithFlexibleOutputSchema(t *testing.T) {
+func TestRegisterPublishesTwentyThreeToolsWithFlexibleOutputSchema(t *testing.T) {
 	ctx := context.Background()
 	socketPath := startSchemaTestDaemon(t)
 	server := mcp.NewServer(&mcp.Implementation{Name: "atct-test", Version: "test"}, nil)
@@ -62,6 +62,9 @@ func TestRegisterPublishesTwentyToolsWithFlexibleOutputSchema(t *testing.T) {
 		"atct_handoff_request":       true,
 		"atct_handoff_receive":       true,
 		"atct_handoff_complete":      true,
+		"atct_goal_handoff_request":  true,
+		"atct_goal_handoff_receive":  true,
+		"atct_goal_handoff_complete": true,
 	}
 	if len(got.Tools) != len(wantNames) {
 		t.Fatalf("tool count = %d, want %d", len(got.Tools), len(wantNames))
@@ -74,7 +77,11 @@ func TestRegisterPublishesTwentyToolsWithFlexibleOutputSchema(t *testing.T) {
 		}
 		seen[tool.Name] = true
 		switch tool.Name {
-		case "atct_handoff_request", "atct_handoff_receive":
+		case "atct_handoff_request", "atct_handoff_receive", "atct_goal_handoff_request", "atct_goal_handoff_receive":
+			idField := "task_id"
+			if tool.Name == "atct_goal_handoff_request" || tool.Name == "atct_goal_handoff_receive" {
+				idField = "goal_id"
+			}
 			inputSchema, ok := tool.InputSchema.(map[string]any)
 			if !ok {
 				t.Fatalf("%s input schema = %T, want object schema", tool.Name, tool.InputSchema)
@@ -86,7 +93,7 @@ func TestRegisterPublishesTwentyToolsWithFlexibleOutputSchema(t *testing.T) {
 			if len(inputProperties) != 2 {
 				t.Errorf("%s input property count = %d, want 2", tool.Name, len(inputProperties))
 			}
-			for _, field := range []string{"handoff_id", "task_id"} {
+			for _, field := range []string{"handoff_id", idField} {
 				if _, ok := inputProperties[field]; !ok {
 					t.Errorf("%s input schema omitted %q", tool.Name, field)
 				}
@@ -107,11 +114,13 @@ func TestRegisterPublishesTwentyToolsWithFlexibleOutputSchema(t *testing.T) {
 					requiredFields[name] = true
 				}
 			}
-			if !requiredFields["task_id"] {
-				t.Errorf("%s input schema must require task_id", tool.Name)
+			if !requiredFields[idField] {
+				t.Errorf("%s input schema must require %s", tool.Name, idField)
 			}
-			if tool.Name == "atct_handoff_receive" && requiredFields["handoff_id"] {
-				t.Errorf("%s input schema must allow task_id-only calls", tool.Name)
+			if tool.Name == "atct_handoff_receive" || tool.Name == "atct_goal_handoff_receive" {
+				if requiredFields["handoff_id"] {
+					t.Errorf("%s input schema must allow %s-only calls", tool.Name, idField)
+				}
 			}
 		}
 		schema, ok := tool.OutputSchema.(map[string]any)
@@ -170,6 +179,15 @@ func TestRegisterPublishesTwentyToolsWithFlexibleOutputSchema(t *testing.T) {
 		}},
 		{name: "atct_handoff_complete", args: map[string]any{
 			"handoff_id": "handoff-1", "task_id": "task-1",
+		}},
+		{name: "atct_goal_handoff_request", args: map[string]any{
+			"handoff_id": "goal-handoff-1", "goal_id": "goal-1",
+		}},
+		{name: "atct_goal_handoff_receive", args: map[string]any{
+			"goal_id": "goal-1",
+		}},
+		{name: "atct_goal_handoff_complete", args: map[string]any{
+			"handoff_id": "goal-handoff-1", "goal_id": "goal-1",
 		}},
 		{name: "atct_decision_ask", args: map[string]any{
 			"goal_id": "goal-1", "question": "question", "options": []any{}, "wait_ms": 0,
@@ -232,6 +250,14 @@ func TestHandoffToolsInjectAgentSessionID(t *testing.T) {
 			name: "atct_handoff_receive", method: "handoff.receive", ownedBy: "received_by", otherOwned: "requested_by",
 			args: map[string]any{"task_id": "task-1"},
 		},
+		{
+			name: "atct_goal_handoff_request", method: "goal.handoff.request", ownedBy: "requested_by", otherOwned: "received_by",
+			args: map[string]any{"handoff_id": "goal-handoff-1", "goal_id": "goal-1"},
+		},
+		{
+			name: "atct_goal_handoff_receive", method: "goal.handoff.receive", ownedBy: "received_by", otherOwned: "requested_by",
+			args: map[string]any{"goal_id": "goal-1"},
+		},
 	} {
 		result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
 			Name:      tc.name,
@@ -259,9 +285,13 @@ func TestHandoffToolsInjectAgentSessionID(t *testing.T) {
 		if _, ok := call.params[tc.otherOwned]; ok {
 			t.Errorf("RPC params unexpectedly included %q", tc.otherOwned)
 		}
-		if tc.name == "atct_handoff_receive" {
+		if tc.name == "atct_handoff_receive" || tc.name == "atct_goal_handoff_receive" {
 			if _, ok := call.params["handoff_id"]; ok {
-				t.Error("task_id-only receive unexpectedly included handoff_id")
+				idField := "goal_id"
+				if tc.name == "atct_handoff_receive" {
+					idField = "task_id"
+				}
+				t.Errorf("%s-only receive unexpectedly included handoff_id", idField)
 			}
 		}
 	}

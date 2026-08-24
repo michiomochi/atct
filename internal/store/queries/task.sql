@@ -184,3 +184,41 @@ INSERT INTO task_handoffs (id, task_id, completed_report_at)
 VALUES (?, ?, ?)
 ON CONFLICT(id) DO UPDATE SET
   completed_report_at = COALESCE(task_handoffs.completed_report_at, excluded.completed_report_at);
+
+-- name: GetGoalHandoff :one
+SELECT id, goal_id, requested_by, received_by,
+       requested_at, received_at, completed_report_at
+FROM goal_handoffs
+WHERE id = ?;
+
+-- name: ListGoalHandoffs :many
+SELECT id, goal_id, requested_by, received_by,
+       requested_at, received_at, completed_report_at
+FROM goal_handoffs
+WHERE goal_id = ?
+ORDER BY id;
+
+-- name: GetGoalHandoffGoalID :one
+SELECT goal_id
+FROM goal_handoffs
+WHERE id = ?;
+
+-- name: RequestGoalHandoff :exec
+INSERT INTO goal_handoffs (id, goal_id, requested_by, requested_at)
+VALUES (?, ?, ?, ?)
+ON CONFLICT(id) DO UPDATE SET
+  requested_by = COALESCE(goal_handoffs.requested_by, excluded.requested_by),
+  requested_at = COALESCE(goal_handoffs.requested_at, excluded.requested_at);
+
+-- name: ReceiveGoalHandoff :exec
+INSERT INTO goal_handoffs (id, goal_id, received_by, received_at)
+VALUES (?, ?, ?, ?)
+ON CONFLICT(id) DO UPDATE SET
+  received_by = COALESCE(goal_handoffs.received_by, excluded.received_by),
+  received_at = COALESCE(goal_handoffs.received_at, excluded.received_at);
+
+-- name: CompleteGoalHandoff :exec
+INSERT INTO goal_handoffs (id, goal_id, completed_report_at)
+VALUES (?, ?, ?)
+ON CONFLICT(id) DO UPDATE SET
+  completed_report_at = COALESCE(goal_handoffs.completed_report_at, excluded.completed_report_at);

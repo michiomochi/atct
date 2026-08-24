@@ -117,3 +117,16 @@ CREATE TABLE IF NOT EXISTS task_handoffs (
 
 CREATE INDEX IF NOT EXISTS idx_task_handoffs_task_id
   ON task_handoffs(task_id);
+
+CREATE TABLE IF NOT EXISTS goal_handoffs (
+  id                  TEXT PRIMARY KEY,
+  goal_id             TEXT NOT NULL REFERENCES goals(id),
+  requested_by        TEXT REFERENCES agent_sessions(id),
+  received_by         TEXT REFERENCES agent_sessions(id),
+  requested_at        TEXT,
+  received_at         TEXT,
+  completed_report_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_goal_handoffs_goal_id
+  ON goal_handoffs(goal_id);

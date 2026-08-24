@@ -55,6 +55,16 @@ type Goal struct {
 	UpdatedAt         string
 }
 
+type GoalHandoff struct {
+	ID                string
+	GoalID            string
+	RequestedBy       sql.NullString
+	ReceivedBy        sql.NullString
+	RequestedAt       sql.NullString
+	ReceivedAt        sql.NullString
+	CompletedReportAt sql.NullString
+}
+
 type Project struct {
 	ID        string
 	Name      string
