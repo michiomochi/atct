@@ -23,6 +23,14 @@ assert_file_contains() {
   grep -Fq -- "$needle" "$file" || fail "<$file> does not contain <$needle>"
 }
 
+assert_file_not_contains() {
+  local needle="$1"
+  local file="$2"
+  if grep -Fq -- "$needle" "$file"; then
+    fail "<$file> must not contain <$needle>"
+  fi
+}
+
 assert_empty_file() {
   local file="$1"
   [[ ! -s "$file" ]] || fail "<$file> is not empty"
@@ -466,7 +474,20 @@ test_session_start_is_silent_without_atct_wrapper() {
   assert_eq '' "$output" 'missing atct wrapper must keep the hook silent'
 }
 
+test_delegated_claim_contract_is_explicit() {
+  local atct_skill="$REPO_ROOT/skills/atct/SKILL.md"
+  local start_skill="$REPO_ROOT/skills/start/SKILL.md"
+
+  assert_file_contains 'A delegated worker must not claim the task; the delegator owns the claim.' "$atct_skill"
+  assert_file_contains 'The following loop is for self-directed work: find and take a task yourself.' "$start_skill"
+  assert_file_contains 'Do not call `atct_task_claim` for a delegated task.' "$atct_skill"
+  assert_file_contains '`task already claimed` is normal; continue.' "$atct_skill"
+  assert_file_not_contains 'Call `atct_task_claim` before working on a task.' "$atct_skill"
+  assert_file_not_contains '4. **Take one.** Call `atct_task_claim`.' "$start_skill"
+}
+
 test_static_contract
+test_delegated_claim_contract_is_explicit
 test_hooks_json_has_no_stop_section
 test_hooks_json_keeps_session_start_and_pre_tool_use_sections
 test_stop_hook_file_is_removed_but_other_hooks_remain
