@@ -186,6 +186,42 @@ atct handoff: task <id> reported complete
 
 **`b01a92b8` の承認が要る。**あれが 1 と 2 を持っている。
 
+## 決定 5: 働く側は task_id で引く。cwd で完了する（2026-08-24 追記）
+
+人間の承認: 決定 `af25c691` の A。**ただし A だけでは片方しか解けない。**
+
+```
+A が解く      Stop hook が「どの handoff を完了させるか」を cwd で引ける
+A が解かない  働く側が receive を呼ぶための handoff_id をどう知るか
+```
+
+**働く側が知っているのは `task_id` である。**依頼書に必ず書かれる。`handoff_id` は
+commander が発行するもので、働く側は知らない。**そこを埋める。**
+
+```
+atct_handoff_receive(task_id)
+  → その task の「依頼済み・未受領」の handoff を引く
+  → received_by に shim のセッションを入れる
+  → **働く側の cwd も記録する**（新しい列）
+
+Stop hook
+  → 自分の cwd で「受領済み・未完了」の handoff を引く
+  → completed_report_at を埋める
+```
+
+**どちらも引数は 1 つ以下になる。**働く側は `task_id` だけ、Stop hook は何も渡さない
+（cwd はフックの JSON に入っている）。
+
+### なぜ task_id で引けるか
+
+**1 タスクに 1 人**（`skills/atct/SKILL.md` の手順 5）。同じタスクに未受領の依頼が
+2 つ並ぶことはない。**並んだらそれ自体が欠陥**なので、その場合は拒む。
+
+### handoff_id は残す
+
+RPC と CLI は `handoff_id` を受け取るままにする。**commander はソケットへ直接投げるので
+明示できる**（MCP が起動時に凍るため、今日それをした）。**MCP の層だけを変える。**
+
 ## 未検証
 
 - **Codex の Stop hook が何を渡してくるか。**`crit` が使っていることは確かめた
