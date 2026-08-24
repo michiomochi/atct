@@ -1,0 +1,134 @@
+# 働く側が黙って終わっても、委譲した側に届く
+
+2026-08-24。人間の指示:「executor が報告を送らないことが多いので stop hook で自分の
+atct role を確認し、executor だったら subcommander に報告する」。決定は **A**。
+
+## 問題
+
+**executor は報告を忘れる。**2026-08-24 だけで繰り返し起きた。commander が
+`herdr agent read` で画面を覗いて初めて「終わっている」と分かる、という形が常態化した。
+
+**気づくのが遅れるだけではない。**executor が黙って終わったのか、まだ考えているのかを
+**外から区別できない。**pane の状態は `idle` としか言わない。
+
+## 使えるものは既にある
+
+```
+CREATE TABLE task_handoffs (
+  id, task_id,
+  requested_by  → agent_sessions(id)     委譲した側
+  received_by   → agent_sessions(id)     受け取った側
+  requested_at, received_at,
+  completed_report_at                    ← 「終わったと伝えた時刻」
+)
+```
+
+`internal/store/task_handoff.go` に `RequestTaskHandoff` / `ReceiveTaskHandoff` /
+`CompleteTaskHandoff` / `GetTaskHandoff` / `ListTaskHandoffs` が揃っている。
+
+**足りないのは経路だけである。**
+
+```
+handler.go の handoff RPC     0 件
+mcpshim の handoff ツール     0 件
+task_handoffs の行            0 件
+```
+
+**検知だけが先に入っている。**
+
+```
+cmd/atct/watch.go:631
+atct detection: task %s has no handoff request
+```
+
+**記録する手段が無いまま告発している。**これが `b01a92b8`「テーブルと関数はあるが、
+そこへ届く経路が無い」の実体である。
+
+## 決定 1: Stop hook を復活させる。ただし役割で分ける
+
+`9c7df582` は 2026-08-22 に Stop hook を廃止した。理由は
+**「commander と subcommander の両方で発火するので、3 層に分けられない」。**
+
+**その理由はいま解ける。**`atct_role` が claim から役割を導く（`2f924bd` / `d9c3bce`）。
+**誰の Stop かを区別できる。**
+
+```
+Stop hook
+  atct_role を呼ぶ
+  role != executor  → 何もしない。終わり
+  role == executor  → 「このタスクを終えた」を daemon へ伝える
+```
+
+**廃止の決定を全面的に覆すのではない。**`9c7df582` が消したのは「10 種類の状況を
+Stop のたびに数え直して催促する」振る舞いで、**それは wakeup に統一されたままにする。**
+**新しい Stop は 1 つのことしかしない。**
+
+`tests/wrapper_test.bash` の `test_hooks_json_has_no_stop_section` は書き換える。
+**「Stop が無いこと」ではなく「Stop が報告以外のことをしないこと」を検査する。**
+
+## 決定 2: 宛先は `claimed_by` から引く。herdr を知らない
+
+**atct は pane 名を知らないし、知る必要もない。**
+
+```
+tasks.claimed_by = 0c827a1e-…      委譲した側のセッション ID
+~/.atct/watchers/<pid>             そのセッションへの生きた経路
+```
+
+daemon が `claimed_by` からセッションを引き、**その watch へイベントを流す。**
+
+```
+executor の Stop
+  → RPC「タスク T を終えた」
+  → daemon が tasks.claimed_by からセッション S を引く
+  → task_handoffs.completed_report_at を埋める
+  → S の watch へ流す
+  → commander の Monitor が鳴る
+```
+
+**`2026-08-23-delegating-without-a-multiplexer.md` の決定 4 を守る。**個別ツールの名前も
+コマンドの綴りも出てこない。
+
+## 決定 3: 報告の中身は「終わった」だけにする
+
+**何をしたかは書かせない。**理由は 2 つ。
+
+1. **Stop hook は本文を持たない。**終了したという事実しか分からない
+2. **中身のある報告は依然 executor が送る。**これは**その代わりではなく、
+   届かなかったときの網である**
+
+commander が受け取るのはこの 1 行でよい。
+
+```
+atct handoff: task <id> reported complete
+```
+
+**それだけで「画面を見に行け」と分かる。**
+
+## 決定 4: 経路は 3 つ要る。順に入れる
+
+```
+1. handoff の RPC と MCP ツール        request / receive / complete
+2. 委譲するときに request を書く        commander 側
+3. Stop hook が complete を書く         executor 側
+```
+
+**2 が無いと 3 が書けない。**`completed_report_at` は `task_handoffs` の行に載るので、
+**行が無ければ完了も記録できない。**
+
+**`b01a92b8` の承認が要る。**あれが 1 と 2 を持っている。
+
+## 未検証
+
+- **Codex の Stop hook が何を渡してくるか。**`crit` が使っていることは確かめた
+  （`hooks.json` に `Stop` がある）が、**入力の形は見ていない。**Claude と同じ JSON か
+- **Stop hook が複数回発火するか。**1 回の作業で何度も鳴るなら、`completed_report_at` を
+  何度も上書きすることになる
+- **executor が Stop 時に MCP を呼べるか。**フックはハーネスの外のプロセスである。
+  MCP ツールは使えない可能性が高く、**その場合は CLI か daemon のソケットを直接叩く**
+  ことになる。だが **executor の PATH に `atct` は無い**（Codex では実測済み）。
+  **ここが最大の未検証点である**
+- **どのタスクを終えたかを Stop hook がどう知るか。**役割は claim から導けるが、
+  **claim を持つのは commander であって executor ではない。**executor は自分が
+  どのタスクを渡されたかを atct 上では持っていない。**`received_by` に自分が
+  記録されていれば引ける**が、それは決定 4 の 2 が入ってからである
