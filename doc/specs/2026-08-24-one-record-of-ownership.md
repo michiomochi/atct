@@ -118,10 +118,10 @@ task を配る  → その goal の handoff を受領していること
 ```
 落とす   goals.claimed_by / goals.claimed_at
          tasks.claimed_by / tasks.claimed_at
-         atct_goal_claim / atct_goal_release
-         atct_task_claim / atct_task_release
 残す     projects.claimed_by / projects.claimed_at
          atct_project_claim / atct_project_release
+         atct_task_claim / atct_task_release      ← 書き込む先が handoff に変わる（8.1）
+         atct_goal_claim / atct_goal_release      ← 同上
 ```
 
 **`claim_undelegated` の検知が不要になる。**claim と handoff を突き合わせる必要が
@@ -142,17 +142,51 @@ web        11 箇所
 `1e082f2f` は表を作り直すので、**claim の列が残っていればそれも一緒に運ぶ。**
 **落としてから移行するほうが運ぶ量が減る。**
 
-## 8. 決めていないこと
+## 8. 決めたこと（2026-08-24・commander）
 
-- **既存の行をどうするか。**いま claim を持つ task は、handoff を持たないものがある。
-  **移行で自分宛の handoff を作るか、捨てるか。**捨てると「誰がやっていたか」が消える
-- **部分一意索引と、pane 作り直しの両立。**
-  `TestTaskHandoffAllowsSecondHandoffForSameTask` は、同じタスクに 2 つ目の handoff を
-  作れることを検査している（pane を作り直したときの形）。**索引はそれを禁じる。**
-  「作り直す前に古い handoff を完了させる」を手順にするなら両立するが、
-  **その手順が守られなかったとき何が起きるかを決めていない**
-- **`atct_task_claim` を消したあと、自分でやる場合の入口をどう呼ぶか。**
-  `atct_handoff_request` を自分宛に呼ぶのは意味が通るが、**名前が委譲を示唆する**
+### 8.1 `claim` という動詞は残す。**消えるのは列だけ**
+
+**当初 6 節に「`atct_task_claim` を落とす」と書いたが、取り下げる。**
+
+自分でやる場合に `handoff_request` + `receive` の 2 回を呼ばせるのは、
+**1 回で済んでいた最も多い経路を悪くする。**名前も委譲を示唆して読み違えを招く。
+
+    atct_task_claim    自分宛の受領済み handoff を 1 回で作る
+    atct_task_release  それを完了させる
+    atct_goal_claim / atct_goal_release   同じ
+
+**動詞は 2 つとも意味を持ち続ける。**`claim` は「自分で取る」、`handoff` は「人に渡す」。
+**書き込む先が同じ 1 つの表になるだけで、重複は消える。**
+
+### 8.2 既存の行は、セッションが実在するものだけ移す
+
+実測（2026-08-24）:
+
+    生きている claim   tasks 4 件 / goals 0 件
+    うちセッションが実在しない   1 件
+
+**外部キーが無いので実在しないセッションを指す claim が書けている。**その実例である。
+
+**実在するものは自分宛の handoff にする**
+（`requested_by = received_by = claimed_by`、`requested_at = received_at = claimed_at`）。
+**実在しないものは捨て、捨てた件数を移行が報告する。**
+
+### 8.3 部分一意索引を入れる。**死んだ受け取り手は自動で引き継ぐ**
+
+    CREATE UNIQUE INDEX ... ON task_handoffs(task_id) WHERE completed_report_at IS NULL
+
+**開いた handoff は 1 つまでを DB が保証する。**
+
+`TestTaskHandoffAllowsSecondHandoffForSameTask` はこれを禁じられる。
+**しかしその形（pane を作り直して 2 人目が持つ）は、claim では
+`ClaimLiveness` が死んだ持ち主から奪い返して処理していた。**同じことをする。
+
+    開いた handoff がある + 受け取り手が生きている   → 拒む
+    開いた handoff がある + 受け取り手が死んでいる   → 古いほうを完了させてから作る
+                                                       完了報告に「セッションが停止した」と書く
+
+**これは claim の 2 つ目の仕事（死者からの回収）をそのまま移したものである。**
+**索引と両立し、pane の作り直しも通る。**
 
 ## 9. やらないこと
 
