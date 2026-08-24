@@ -96,6 +96,23 @@ func TestRegisterPublishesTwentyToolsWithFlexibleOutputSchema(t *testing.T) {
 					t.Errorf("%s input schema exposes shim-owned field %q", tool.Name, field)
 				}
 			}
+			required, ok := inputSchema["required"].([]any)
+			if !ok {
+				t.Fatalf("%s input schema required = %T, want array", tool.Name, inputSchema["required"])
+			}
+			requiredFields := make(map[string]bool, len(required))
+			for _, field := range required {
+				name, ok := field.(string)
+				if ok {
+					requiredFields[name] = true
+				}
+			}
+			if !requiredFields["task_id"] {
+				t.Errorf("%s input schema must require task_id", tool.Name)
+			}
+			if tool.Name == "atct_handoff_receive" && requiredFields["handoff_id"] {
+				t.Errorf("%s input schema must allow task_id-only calls", tool.Name)
+			}
 		}
 		schema, ok := tool.OutputSchema.(map[string]any)
 		if !ok {
@@ -205,13 +222,20 @@ func TestHandoffToolsInjectAgentSessionID(t *testing.T) {
 		method     string
 		ownedBy    string
 		otherOwned string
+		args       map[string]any
 	}{
-		{name: "atct_handoff_request", method: "handoff.request", ownedBy: "requested_by", otherOwned: "received_by"},
-		{name: "atct_handoff_receive", method: "handoff.receive", ownedBy: "received_by", otherOwned: "requested_by"},
+		{
+			name: "atct_handoff_request", method: "handoff.request", ownedBy: "requested_by", otherOwned: "received_by",
+			args: map[string]any{"handoff_id": "handoff-1", "task_id": "task-1"},
+		},
+		{
+			name: "atct_handoff_receive", method: "handoff.receive", ownedBy: "received_by", otherOwned: "requested_by",
+			args: map[string]any{"task_id": "task-1"},
+		},
 	} {
 		result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
 			Name:      tc.name,
-			Arguments: map[string]any{"handoff_id": "handoff-1", "task_id": "task-1"},
+			Arguments: tc.args,
 		})
 		if err != nil {
 			t.Fatalf("CallTool(%s): %v", tc.name, err)
@@ -234,6 +258,11 @@ func TestHandoffToolsInjectAgentSessionID(t *testing.T) {
 		}
 		if _, ok := call.params[tc.otherOwned]; ok {
 			t.Errorf("RPC params unexpectedly included %q", tc.otherOwned)
+		}
+		if tc.name == "atct_handoff_receive" {
+			if _, ok := call.params["handoff_id"]; ok {
+				t.Error("task_id-only receive unexpectedly included handoff_id")
+			}
 		}
 	}
 }

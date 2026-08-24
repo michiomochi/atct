@@ -698,7 +698,13 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, err
 		}
-		handoff, err := d.store.ReceiveTaskHandoff(ctx, p.HandoffID, p.TaskID, p.ReceivedBy)
+		var handoff store.TaskHandoff
+		var err error
+		if p.HandoffID == "" {
+			handoff, err = d.store.ReceiveTaskHandoffForTask(ctx, p.TaskID, p.ReceivedBy)
+		} else {
+			handoff, err = d.store.ReceiveTaskHandoff(ctx, p.HandoffID, p.TaskID, p.ReceivedBy)
+		}
 		return marshal(handoff, err)
 
 	case "handoff.complete":

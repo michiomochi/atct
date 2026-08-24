@@ -159,6 +159,48 @@ func TestTaskHandoffAllowsSecondHandoffForSameTask(t *testing.T) {
 	}
 }
 
+func TestTaskHandoffReceiveByTask(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	taskID := addTestTasks(t, s, 1)[0]
+	addTestAgentSession(t, s, "requester")
+	addTestAgentSession(t, s, "receiver")
+	addLiveTaskClaim(t, s, taskID, "receive-by-task-claim-owner")
+
+	requested, err := s.RequestTaskHandoff(ctx, "receive-by-task", taskID, "requester")
+	if err != nil {
+		t.Fatalf("RequestTaskHandoff failed: %v", err)
+	}
+
+	received, err := s.ReceiveTaskHandoffForTask(ctx, taskID, "receiver")
+	if err != nil {
+		t.Fatalf("ReceiveTaskHandoffForTask failed: %v", err)
+	}
+	if received.ID != requested.ID || received.ReceivedBy != "receiver" {
+		t.Fatalf("unexpected received handoff: %+v", received)
+	}
+}
+
+func TestTaskHandoffReceiveByTaskRejectsMultipleUnreceived(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	taskID := addTestTasks(t, s, 1)[0]
+	addTestAgentSession(t, s, "requester")
+	addTestAgentSession(t, s, "receiver")
+	addLiveTaskClaim(t, s, taskID, "ambiguous-receive-claim-owner")
+
+	for _, handoffID := range []string{"ambiguous-handoff-1", "ambiguous-handoff-2"} {
+		if _, err := s.RequestTaskHandoff(ctx, handoffID, taskID, "requester"); err != nil {
+			t.Fatalf("RequestTaskHandoff(%q) failed: %v", handoffID, err)
+		}
+	}
+
+	_, err := s.ReceiveTaskHandoffForTask(ctx, taskID, "receiver")
+	if !errors.Is(err, ErrTaskHandoffAmbiguous) {
+		t.Fatalf("error = %v, want ErrTaskHandoffAmbiguous", err)
+	}
+}
+
 func TestTaskHandoffRejectsMissingTask(t *testing.T) {
 	s := newTestStore(t)
 	addTestAgentSession(t, s, "requester")
