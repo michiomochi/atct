@@ -68,7 +68,7 @@ type HandoffReceiveIn struct {
 }
 
 type HandoffCompleteIn struct {
-	HandoffID      string `json:"handoff_id"`
+	HandoffID      string `json:"handoff_id,omitempty"`
 	TaskID         string `json:"task_id"`
 	CompleteReport string `json:"complete_report,omitempty"`
 }
@@ -85,7 +85,7 @@ type GoalHandoffReceiveIn struct {
 }
 
 type GoalHandoffCompleteIn struct {
-	HandoffID      string `json:"handoff_id"`
+	HandoffID      string `json:"handoff_id,omitempty"`
 	GoalID         string `json:"goal_id"`
 	CompleteReport string `json:"complete_report,omitempty"`
 }
@@ -430,9 +430,13 @@ func Register(server *mcp.Server, c *Client, agentSessionID string) {
 		Description:  "Report that a task handoff was completed.",
 		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in HandoffCompleteIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
-		return callWithUnappliedDecisions(ctx, c, "handoff.complete", map[string]any{
-			"handoff_id": in.HandoffID, "task_id": in.TaskID, "complete_report": in.CompleteReport,
-		})
+		params := map[string]any{
+			"task_id": in.TaskID, "complete_report": in.CompleteReport,
+		}
+		if in.HandoffID != "" {
+			params["handoff_id"] = in.HandoffID
+		}
+		return callWithUnappliedDecisions(ctx, c, "handoff.complete", params)
 	})
 
 	mcp.AddTool(server, &mcp.Tool{
@@ -465,9 +469,13 @@ func Register(server *mcp.Server, c *Client, agentSessionID string) {
 		Description:  "Report that a goal handoff was completed.",
 		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in GoalHandoffCompleteIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
-		return callWithUnappliedDecisions(ctx, c, "goal.handoff.complete", map[string]any{
-			"handoff_id": in.HandoffID, "goal_id": in.GoalID, "complete_report": in.CompleteReport,
-		})
+		params := map[string]any{
+			"goal_id": in.GoalID, "complete_report": in.CompleteReport,
+		}
+		if in.HandoffID != "" {
+			params["handoff_id"] = in.HandoffID
+		}
+		return callWithUnappliedDecisions(ctx, c, "goal.handoff.complete", params)
 	})
 
 	mcp.AddTool(server, &mcp.Tool{

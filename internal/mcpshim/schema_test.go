@@ -135,7 +135,7 @@ func TestRegisterPublishesTwentyThreeToolsWithFlexibleOutputSchema(t *testing.T)
 			if reportField != "" && requiredFields[reportField] {
 				t.Errorf("%s input schema must allow omitted %s", tool.Name, reportField)
 			}
-			if tool.Name == "atct_handoff_receive" || tool.Name == "atct_goal_handoff_receive" {
+			if tool.Name == "atct_handoff_receive" || tool.Name == "atct_goal_handoff_receive" || tool.Name == "atct_handoff_complete" || tool.Name == "atct_goal_handoff_complete" {
 				if requiredFields["handoff_id"] {
 					t.Errorf("%s input schema must allow %s-only calls", tool.Name, idField)
 				}
@@ -283,12 +283,12 @@ func TestHandoffToolsInjectAgentSessionID(t *testing.T) {
 		{
 			name: "atct_handoff_complete", method: "handoff.complete",
 			reportField: "complete_report", reportValue: "task complete report",
-			args: map[string]any{"handoff_id": "handoff-1", "task_id": "task-1", "complete_report": "task complete report"},
+			args: map[string]any{"task_id": "task-1", "complete_report": "task complete report"},
 		},
 		{
 			name: "atct_goal_handoff_complete", method: "goal.handoff.complete",
 			reportField: "complete_report", reportValue: "goal complete report",
-			args: map[string]any{"handoff_id": "goal-handoff-1", "goal_id": "goal-1", "complete_report": "goal complete report"},
+			args: map[string]any{"goal_id": "goal-1", "complete_report": "goal complete report"},
 		},
 	} {
 		result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
@@ -324,13 +324,13 @@ func TestHandoffToolsInjectAgentSessionID(t *testing.T) {
 				t.Errorf("%s = %#v, want %q", tc.reportField, got, tc.reportValue)
 			}
 		}
-		if tc.name == "atct_handoff_receive" || tc.name == "atct_goal_handoff_receive" {
+		if tc.name == "atct_handoff_receive" || tc.name == "atct_goal_handoff_receive" || tc.name == "atct_handoff_complete" || tc.name == "atct_goal_handoff_complete" {
 			if _, ok := call.params["handoff_id"]; ok {
 				idField := "goal_id"
-				if tc.name == "atct_handoff_receive" {
+				if tc.name == "atct_handoff_receive" || tc.name == "atct_handoff_complete" {
 					idField = "task_id"
 				}
-				t.Errorf("%s-only receive unexpectedly included handoff_id", idField)
+				t.Errorf("%s-only %s unexpectedly included handoff_id", idField, tc.method)
 			}
 		}
 	}

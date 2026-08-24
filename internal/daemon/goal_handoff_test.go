@@ -167,6 +167,67 @@ func TestGoalHandoffRoutesOverRPC(t *testing.T) {
 	}
 }
 
+func TestGoalHandoffCompleteByGoalOverRPC(t *testing.T) {
+	fixture := newGoalHandoffRPCTestFixture(t)
+	client := mcpshim.NewClient(fixture.socketPath)
+	ctx := context.Background()
+
+	var requested store.GoalHandoff
+	if err := client.Call(ctx, "goal.handoff.request", map[string]string{
+		"handoff_id": "rpc-complete-by-goal", "goal_id": fixture.claimedGoalID, "requested_by": "rpc-goal-requester",
+	}, &requested); err != nil {
+		t.Fatalf("goal.handoff.request: %v", err)
+	}
+	var received store.GoalHandoff
+	if err := client.Call(ctx, "goal.handoff.receive", map[string]string{
+		"handoff_id": requested.ID, "goal_id": fixture.claimedGoalID, "received_by": "rpc-goal-receiver",
+	}, &received); err != nil {
+		t.Fatalf("goal.handoff.receive: %v", err)
+	}
+
+	var completed store.GoalHandoff
+	if err := client.Call(ctx, "goal.handoff.complete", map[string]string{
+		"goal_id": fixture.claimedGoalID, "complete_report": "RPC goal-ID completion report",
+	}, &completed); err != nil {
+		t.Fatalf("goal.handoff.complete by goal_id: %v", err)
+	}
+	if completed.ID != requested.ID || completed.CompletedReportAt == nil || completed.CompleteReport != "RPC goal-ID completion report" {
+		t.Fatalf("completed handoff = %#v, want request ID, timestamp, and report", completed)
+	}
+}
+
+func TestGoalHandoffCompleteByGoalOverRPCRejectsAmbiguousPendingRequests(t *testing.T) {
+	fixture := newGoalHandoffRPCTestFixture(t)
+	client := mcpshim.NewClient(fixture.socketPath)
+	ctx := context.Background()
+
+	for _, handoffID := range []string{"rpc-goal-complete-ambiguous-1", "rpc-goal-complete-ambiguous-2"} {
+		var requested store.GoalHandoff
+		if err := client.Call(ctx, "goal.handoff.request", map[string]string{
+			"handoff_id": handoffID, "goal_id": fixture.claimedGoalID, "requested_by": "rpc-goal-requester",
+		}, &requested); err != nil {
+			t.Fatalf("goal.handoff.request(%q): %v", handoffID, err)
+		}
+		var received store.GoalHandoff
+		if err := client.Call(ctx, "goal.handoff.receive", map[string]string{
+			"handoff_id": handoffID, "goal_id": fixture.claimedGoalID, "received_by": "rpc-goal-receiver",
+		}, &received); err != nil {
+			t.Fatalf("goal.handoff.receive(%q): %v", handoffID, err)
+		}
+	}
+
+	var completed store.GoalHandoff
+	err := client.Call(ctx, "goal.handoff.complete", map[string]string{
+		"goal_id": fixture.claimedGoalID,
+	}, &completed)
+	if err == nil {
+		t.Fatalf("ambiguous goal handoff complete succeeded: %#v", completed)
+	}
+	if !strings.Contains(err.Error(), store.ErrGoalHandoffAmbiguous.Error()) {
+		t.Fatalf("ambiguous goal handoff complete error = %q, want %q", err, store.ErrGoalHandoffAmbiguous)
+	}
+}
+
 func TestGoalHandoffReceiveOverRPCRejectsAmbiguousPendingRequests(t *testing.T) {
 	fixture := newGoalHandoffRPCTestFixture(t)
 	client := mcpshim.NewClient(fixture.socketPath)

@@ -2,9 +2,13 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"os"
 	"testing"
+	"time"
+
+	"github.com/michiomochi/atct/internal/store/sqlcgen"
 )
 
 func addLiveGoalClaim(t *testing.T, s *Store, goalID, sessionID string) {
@@ -23,6 +27,22 @@ func addLiveGoalClaim(t *testing.T, s *Store, goalID, sessionID string) {
 	}
 	if _, err := s.ClaimGoal(ctx, goalID, sessionID); err != nil {
 		t.Fatalf("ClaimGoal failed: %v", err)
+	}
+}
+
+func addRequestOnlyGoalHandoff(t *testing.T, s *Store, handoffID, goalID, requestedBy string) {
+	t.Helper()
+
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	err := sqlcgen.New(s.DB()).RequestGoalHandoff(context.Background(), sqlcgen.RequestGoalHandoffParams{
+		ID:            handoffID,
+		GoalID:        goalID,
+		RequestedBy:   sql.NullString{String: requestedBy, Valid: true},
+		RequestedAt:   sql.NullString{String: now, Valid: true},
+		RequestReport: sql.NullString{},
+	})
+	if err != nil {
+		t.Fatalf("insert request-only goal handoff failed: %v", err)
 	}
 }
 
@@ -172,6 +192,54 @@ func TestGoalHandoffReceiveByGoal(t *testing.T) {
 	}
 	if received.ID != requested.ID || received.ReceivedBy != "goal-receiver" {
 		t.Fatalf("unexpected received handoff: %+v", received)
+	}
+}
+
+func TestGoalHandoffCompleteByGoal(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	goalID := newTestGoal(t, s)
+	addTestAgentSession(t, s, "complete-by-goal-requester")
+	addTestAgentSession(t, s, "complete-by-goal-receiver")
+
+	addRequestOnlyGoalHandoff(t, s, "complete-by-goal", goalID, "complete-by-goal-requester")
+	requested, err := s.GetGoalHandoff(ctx, "complete-by-goal")
+	if err != nil {
+		t.Fatalf("GetGoalHandoff failed: %v", err)
+	}
+	if _, err := s.ReceiveGoalHandoff(ctx, requested.ID, goalID, "complete-by-goal-receiver"); err != nil {
+		t.Fatalf("ReceiveGoalHandoff failed: %v", err)
+	}
+
+	completed, err := s.CompleteGoalHandoffForGoal(ctx, goalID, "completed by goal ID")
+	if err != nil {
+		t.Fatalf("CompleteGoalHandoffForGoal failed: %v", err)
+	}
+	if completed.ID != requested.ID || completed.GoalID != goalID || completed.CompletedReportAt == nil {
+		t.Fatalf("unexpected completed handoff: %+v", completed)
+	}
+	if completed.CompleteReport != "completed by goal ID" {
+		t.Fatalf("complete report = %q, want goal-ID completion report", completed.CompleteReport)
+	}
+}
+
+func TestGoalHandoffCompleteByGoalRejectsMultipleReceivedIncomplete(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	goalID := newTestGoal(t, s)
+	addTestAgentSession(t, s, "complete-goal-ambiguous-requester")
+	addTestAgentSession(t, s, "complete-goal-ambiguous-receiver")
+
+	for _, handoffID := range []string{"complete-goal-ambiguous-1", "complete-goal-ambiguous-2"} {
+		addRequestOnlyGoalHandoff(t, s, handoffID, goalID, "complete-goal-ambiguous-requester")
+		if _, err := s.ReceiveGoalHandoff(ctx, handoffID, goalID, "complete-goal-ambiguous-receiver"); err != nil {
+			t.Fatalf("ReceiveGoalHandoff(%q) failed: %v", handoffID, err)
+		}
+	}
+
+	_, err := s.CompleteGoalHandoffForGoal(ctx, goalID, "")
+	if !errors.Is(err, ErrGoalHandoffAmbiguous) {
+		t.Fatalf("error = %v, want ErrGoalHandoffAmbiguous", err)
 	}
 }
 

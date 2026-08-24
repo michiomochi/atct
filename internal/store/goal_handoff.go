@@ -160,6 +160,30 @@ func (s *Store) ReceiveGoalHandoffForGoal(ctx context.Context, goalID, receivedB
 	return s.ReceiveGoalHandoff(ctx, pending[0].ID, goalID, receivedBy)
 }
 
+// CompleteGoalHandoffForGoal finds the single requested, received, and
+// incomplete handoff for a goal and records its completion. Multiple
+// incomplete handoffs are rejected so completion cannot be assigned to the
+// wrong delegation.
+func (s *Store) CompleteGoalHandoffForGoal(ctx context.Context, goalID, completeReport string) (GoalHandoff, error) {
+	handoffs, err := s.ListGoalHandoffs(ctx, goalID)
+	if err != nil {
+		return GoalHandoff{}, fmt.Errorf("list incomplete goal handoffs: %w", err)
+	}
+	pending := make([]GoalHandoff, 0, len(handoffs))
+	for _, handoff := range handoffs {
+		if handoff.RequestedAt != nil && handoff.ReceivedAt != nil && handoff.CompletedReportAt == nil {
+			pending = append(pending, handoff)
+		}
+	}
+	if len(pending) == 0 {
+		return GoalHandoff{}, fmt.Errorf("%w: goal %s", ErrGoalHandoffNotFound, goalID)
+	}
+	if len(pending) > 1 {
+		return GoalHandoff{}, fmt.Errorf("%w: goal %q has %d incomplete handoffs", ErrGoalHandoffAmbiguous, goalID, len(pending))
+	}
+	return s.CompleteGoalHandoff(ctx, pending[0].ID, goalID, completeReport)
+}
+
 // CompleteGoalHandoff records the completion report side of a handoff. It
 // only writes the completion timestamp and report and therefore preserves partial states.
 func (s *Store) CompleteGoalHandoff(ctx context.Context, handoffID, goalID string, completeReport string) (GoalHandoff, error) {

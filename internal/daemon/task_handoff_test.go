@@ -25,7 +25,15 @@ type taskHandoffRPCTestFixture struct {
 
 func newTaskHandoffRPCTestFixture(t *testing.T) taskHandoffRPCTestFixture {
 	t.Helper()
-	dir := t.TempDir()
+	dir, err := os.MkdirTemp("", "atct-th-")
+	if err != nil {
+		t.Fatalf("MkdirTemp: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.RemoveAll(dir); err != nil {
+			t.Errorf("RemoveAll(%q): %v", dir, err)
+		}
+	})
 	s, err := store.Open(filepath.Join(dir, "atct.db"))
 	if err != nil {
 		t.Fatalf("store.Open: %v", err)
@@ -173,5 +181,66 @@ func TestTaskHandoffRoutesOverRPC(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), store.ErrTaskHandoffTaskUnclaimed.Error()) {
 		t.Fatalf("unclaimed handoff request error = %q, want %q", err, store.ErrTaskHandoffTaskUnclaimed)
+	}
+}
+
+func TestTaskHandoffCompleteByTaskOverRPC(t *testing.T) {
+	fixture := newTaskHandoffRPCTestFixture(t)
+	client := mcpshim.NewClient(fixture.socketPath)
+	ctx := context.Background()
+
+	var requested store.TaskHandoff
+	if err := client.Call(ctx, "handoff.request", map[string]string{
+		"handoff_id": "rpc-complete-by-task", "task_id": fixture.claimedTaskID, "requested_by": "rpc-handoff-requester",
+	}, &requested); err != nil {
+		t.Fatalf("handoff.request: %v", err)
+	}
+	var received store.TaskHandoff
+	if err := client.Call(ctx, "handoff.receive", map[string]string{
+		"handoff_id": requested.ID, "task_id": fixture.claimedTaskID, "received_by": "rpc-handoff-receiver",
+	}, &received); err != nil {
+		t.Fatalf("handoff.receive: %v", err)
+	}
+
+	var completed store.TaskHandoff
+	if err := client.Call(ctx, "handoff.complete", map[string]string{
+		"task_id": fixture.claimedTaskID, "complete_report": "RPC task-ID completion report",
+	}, &completed); err != nil {
+		t.Fatalf("handoff.complete by task_id: %v", err)
+	}
+	if completed.ID != requested.ID || completed.CompletedReportAt == nil || completed.CompleteReport != "RPC task-ID completion report" {
+		t.Fatalf("completed handoff = %#v, want request ID, timestamp, and report", completed)
+	}
+}
+
+func TestTaskHandoffCompleteByTaskOverRPCRejectsAmbiguousPendingRequests(t *testing.T) {
+	fixture := newTaskHandoffRPCTestFixture(t)
+	client := mcpshim.NewClient(fixture.socketPath)
+	ctx := context.Background()
+
+	for _, handoffID := range []string{"rpc-task-complete-ambiguous-1", "rpc-task-complete-ambiguous-2"} {
+		var requested store.TaskHandoff
+		if err := client.Call(ctx, "handoff.request", map[string]string{
+			"handoff_id": handoffID, "task_id": fixture.claimedTaskID, "requested_by": "rpc-handoff-requester",
+		}, &requested); err != nil {
+			t.Fatalf("handoff.request(%q): %v", handoffID, err)
+		}
+		var received store.TaskHandoff
+		if err := client.Call(ctx, "handoff.receive", map[string]string{
+			"handoff_id": handoffID, "task_id": fixture.claimedTaskID, "received_by": "rpc-handoff-receiver",
+		}, &received); err != nil {
+			t.Fatalf("handoff.receive(%q): %v", handoffID, err)
+		}
+	}
+
+	var completed store.TaskHandoff
+	err := client.Call(ctx, "handoff.complete", map[string]string{
+		"task_id": fixture.claimedTaskID,
+	}, &completed)
+	if err == nil {
+		t.Fatalf("ambiguous task handoff complete succeeded: %#v", completed)
+	}
+	if !strings.Contains(err.Error(), store.ErrTaskHandoffAmbiguous.Error()) {
+		t.Fatalf("ambiguous task handoff complete error = %q, want %q", err, store.ErrTaskHandoffAmbiguous)
 	}
 }

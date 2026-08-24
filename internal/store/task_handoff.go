@@ -160,6 +160,30 @@ func (s *Store) ReceiveTaskHandoffForTask(ctx context.Context, taskID, receivedB
 	return s.ReceiveTaskHandoff(ctx, pending[0].ID, taskID, receivedBy)
 }
 
+// CompleteTaskHandoffForTask finds the single requested, received, and
+// incomplete handoff for a task and records its completion. Multiple
+// incomplete handoffs are rejected so completion cannot be assigned to the
+// wrong delegation.
+func (s *Store) CompleteTaskHandoffForTask(ctx context.Context, taskID, completeReport string) (TaskHandoff, error) {
+	handoffs, err := s.ListTaskHandoffs(ctx, taskID)
+	if err != nil {
+		return TaskHandoff{}, fmt.Errorf("list incomplete task handoffs: %w", err)
+	}
+	pending := make([]TaskHandoff, 0, len(handoffs))
+	for _, handoff := range handoffs {
+		if handoff.RequestedAt != nil && handoff.ReceivedAt != nil && handoff.CompletedReportAt == nil {
+			pending = append(pending, handoff)
+		}
+	}
+	if len(pending) == 0 {
+		return TaskHandoff{}, fmt.Errorf("%w: task %s", ErrTaskHandoffNotFound, taskID)
+	}
+	if len(pending) > 1 {
+		return TaskHandoff{}, fmt.Errorf("%w: task %q has %d incomplete handoffs", ErrTaskHandoffAmbiguous, taskID, len(pending))
+	}
+	return s.CompleteTaskHandoff(ctx, pending[0].ID, taskID, completeReport)
+}
+
 // CompleteTaskHandoff records the completion report side of a handoff. It
 // only writes the completion timestamp and report and therefore preserves partial states.
 func (s *Store) CompleteTaskHandoff(ctx context.Context, handoffID, taskID string, completeReport string) (TaskHandoff, error) {
