@@ -73,6 +73,30 @@ func TestRegisterPublishesTwentyToolsWithFlexibleOutputSchema(t *testing.T) {
 			t.Errorf("unexpected tool %q", tool.Name)
 		}
 		seen[tool.Name] = true
+		switch tool.Name {
+		case "atct_handoff_request", "atct_handoff_receive":
+			inputSchema, ok := tool.InputSchema.(map[string]any)
+			if !ok {
+				t.Fatalf("%s input schema = %T, want object schema", tool.Name, tool.InputSchema)
+			}
+			inputProperties, ok := inputSchema["properties"].(map[string]any)
+			if !ok {
+				t.Fatalf("%s input schema properties = %T, want object", tool.Name, inputSchema["properties"])
+			}
+			if len(inputProperties) != 2 {
+				t.Errorf("%s input property count = %d, want 2", tool.Name, len(inputProperties))
+			}
+			for _, field := range []string{"handoff_id", "task_id"} {
+				if _, ok := inputProperties[field]; !ok {
+					t.Errorf("%s input schema omitted %q", tool.Name, field)
+				}
+			}
+			for _, field := range []string{"requested_by", "received_by"} {
+				if _, ok := inputProperties[field]; ok {
+					t.Errorf("%s input schema exposes shim-owned field %q", tool.Name, field)
+				}
+			}
+		}
 		schema, ok := tool.OutputSchema.(map[string]any)
 		if !ok {
 			t.Fatalf("%s output schema = %T, want object schema", tool.Name, tool.OutputSchema)
@@ -122,10 +146,10 @@ func TestRegisterPublishesTwentyToolsWithFlexibleOutputSchema(t *testing.T) {
 		{name: "atct_task_claim", args: map[string]any{"task_id": "task-1"}},
 		{name: "atct_task_update", args: map[string]any{"task_id": "task-1", "status": "doing"}},
 		{name: "atct_handoff_request", args: map[string]any{
-			"handoff_id": "handoff-1", "task_id": "task-1", "requested_by": "requester",
+			"handoff_id": "handoff-1", "task_id": "task-1",
 		}},
 		{name: "atct_handoff_receive", args: map[string]any{
-			"handoff_id": "handoff-1", "task_id": "task-1", "received_by": "receiver",
+			"handoff_id": "handoff-1", "task_id": "task-1",
 		}},
 		{name: "atct_handoff_complete", args: map[string]any{
 			"handoff_id": "handoff-1", "task_id": "task-1",
@@ -152,6 +176,64 @@ func TestRegisterPublishesTwentyToolsWithFlexibleOutputSchema(t *testing.T) {
 		}
 		if result == nil || result.StructuredContent == nil {
 			t.Errorf("CallTool(%s) returned no structured content", tc.name)
+		}
+	}
+}
+
+func TestHandoffToolsInjectAgentSessionID(t *testing.T) {
+	ctx := context.Background()
+	socketPath, calls := startCapturingSchemaTestDaemon(t)
+	server := mcp.NewServer(&mcp.Implementation{Name: "atct-test", Version: "test"}, nil)
+	mcpshim.Register(server, mcpshim.NewClient(socketPath), "session-22")
+
+	clientTransport, serverTransport := mcp.NewInMemoryTransports()
+	serverSession, err := server.Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatalf("server.Connect: %v", err)
+	}
+	defer serverSession.Close()
+
+	client := mcp.NewClient(&mcp.Implementation{Name: "schema-test", Version: "test"}, nil)
+	clientSession, err := client.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatalf("client.Connect: %v", err)
+	}
+	defer clientSession.Close()
+
+	for _, tc := range []struct {
+		name       string
+		method     string
+		ownedBy    string
+		otherOwned string
+	}{
+		{name: "atct_handoff_request", method: "handoff.request", ownedBy: "requested_by", otherOwned: "received_by"},
+		{name: "atct_handoff_receive", method: "handoff.receive", ownedBy: "received_by", otherOwned: "requested_by"},
+	} {
+		result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+			Name:      tc.name,
+			Arguments: map[string]any{"handoff_id": "handoff-1", "task_id": "task-1"},
+		})
+		if err != nil {
+			t.Fatalf("CallTool(%s): %v", tc.name, err)
+		}
+		if result == nil || result.IsError {
+			t.Fatalf("CallTool(%s) returned error result: %+v", tc.name, result)
+		}
+
+		var call capturedSchemaDaemonCall
+		select {
+		case call = <-calls:
+		case <-time.After(time.Second):
+			t.Fatalf("timed out waiting for %s RPC", tc.method)
+		}
+		if call.method != tc.method {
+			t.Fatalf("RPC method = %q, want %q", call.method, tc.method)
+		}
+		if got := call.params[tc.ownedBy]; got != "session-22" {
+			t.Errorf("%s = %#v, want injected agent session ID", tc.ownedBy, got)
+		}
+		if _, ok := call.params[tc.otherOwned]; ok {
+			t.Errorf("RPC params unexpectedly included %q", tc.otherOwned)
 		}
 	}
 }
@@ -411,6 +493,58 @@ func startSchemaTestDaemon(t *testing.T) string {
 		os.RemoveAll(dir)
 	})
 	return socketPath
+}
+
+type capturedSchemaDaemonCall struct {
+	method string
+	params map[string]any
+}
+
+func startCapturingSchemaTestDaemon(t *testing.T) (string, <-chan capturedSchemaDaemonCall) {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "atct")
+	if err != nil {
+		t.Fatalf("MkdirTemp: %v", err)
+	}
+	socketPath := filepath.Join(dir, "daemon.sock")
+	listener, err := net.Listen("unix", socketPath)
+	if err != nil {
+		os.RemoveAll(dir)
+		t.Fatalf("Listen: %v", err)
+	}
+	calls := make(chan capturedSchemaDaemonCall, 2)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			func() {
+				defer conn.Close()
+				line, err := bufio.NewReader(conn).ReadBytes('\n')
+				if err != nil {
+					return
+				}
+				var request struct {
+					Method string         `json:"method"`
+					Params map[string]any `json:"params"`
+				}
+				if err := json.Unmarshal(line, &request); err != nil {
+					return
+				}
+				calls <- capturedSchemaDaemonCall{method: request.Method, params: request.Params}
+				_, _ = io.WriteString(conn, "{\"result\":{\"ok\":true}}\n")
+			}()
+		}
+	}()
+	t.Cleanup(func() {
+		listener.Close()
+		<-done
+		os.RemoveAll(dir)
+	})
+	return socketPath, calls
 }
 
 func TestDecisionAskRejectsDefaultNotInOptions(t *testing.T) {
