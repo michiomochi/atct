@@ -208,27 +208,33 @@ func TestHTTPHandlerMCPTaskHandoffRoutes(t *testing.T) {
 		t.Fatalf("CreateGoal: %v", err)
 	}
 	tasks, err := fixture.store.DeclareTasks(ctx, goal.ID, "commander", "handoff-mcp", []string{
-		"claimed task", "unclaimed task",
+		"delegated task", "claimable task",
 	}, []string{
-		"A task with a live claim for the handoff request.",
-		"A task without a claim for rejection coverage.",
+		"A task delegated by the goal owner.",
+		"A task used to verify the existing task claim tool.",
 	})
 	if err != nil {
 		t.Fatalf("DeclareTasks: %v", err)
 	}
-	if err := fixture.store.RegisterAgentSession(ctx, "mcp-handoff-requester", os.Getpid()); err != nil {
-		t.Fatalf("RegisterAgentSession: %v", err)
+	unclaimedGoal, err := fixture.store.CreateGoal(ctx, project.ID, "unclaimed handoff goal", "human")
+	if err != nil {
+		t.Fatalf("CreateGoal unclaimed: %v", err)
 	}
-	if err := fixture.store.RegisterAgentSession(ctx, "mcp-handoff-receiver", os.Getpid()); err != nil {
-		t.Fatalf("RegisterAgentSession: %v", err)
-	}
-	if _, err := fixture.store.ClaimTask(ctx, tasks[0].ID, "mcp-handoff-requester"); err != nil {
-		t.Fatalf("ClaimTask: %v", err)
+	unclaimedTasks, err := fixture.store.DeclareTasks(ctx, unclaimedGoal.ID, "commander", "unclaimed-handoff-mcp", []string{"unclaimed task"}, []string{"A task in a goal without a claim."})
+	if err != nil {
+		t.Fatalf("DeclareTasks unclaimed: %v", err)
 	}
 
 	client := newMCPHTTPTestClient(fixture.server.URL + "/mcp")
 	client.initialize(t)
 	client.initialized(t)
+	goalClaim := mcpResult(t, client.call(t, "tools/call", map[string]any{
+		"name":      "atct_goal_claim",
+		"arguments": map[string]any{"goal_id": goal.ID},
+	}))
+	if goalClaim["isError"] == true {
+		t.Fatalf("goal claim for task handoff failed: %#v", goalClaim)
+	}
 
 	request := mcpResult(t, client.call(t, "tools/call", map[string]any{
 		"name": "atct_handoff_request",
@@ -289,7 +295,7 @@ func TestHTTPHandlerMCPTaskHandoffRoutes(t *testing.T) {
 	rejected := mcpResult(t, client.call(t, "tools/call", map[string]any{
 		"name": "atct_handoff_request",
 		"arguments": map[string]any{
-			"handoff_id": "mcp-handoff-unclaimed", "task_id": tasks[1].ID,
+			"handoff_id": "mcp-handoff-unclaimed", "task_id": unclaimedTasks[0].ID,
 		},
 	}))
 	if rejected["isError"] != true {
@@ -308,23 +314,24 @@ func TestHTTPHandlerMCPGoalHandoffRoutes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGoal claimed: %v", err)
 	}
-	unclaimedGoal, err := fixture.store.CreateGoal(ctx, project.ID, "unclaimed handoff goal", "human")
+	unclaimedProject, err := fixture.store.CreateProject(ctx, "other", filepath.Join(t.TempDir(), "other-repo"))
+	if err != nil {
+		t.Fatalf("CreateProject unclaimed: %v", err)
+	}
+	unclaimedGoal, err := fixture.store.CreateGoal(ctx, unclaimedProject.ID, "unclaimed handoff goal", "human")
 	if err != nil {
 		t.Fatalf("CreateGoal unclaimed: %v", err)
 	}
-	if err := fixture.store.RegisterAgentSession(ctx, "mcp-goal-handoff-claim-owner", os.Getpid()); err != nil {
-		t.Fatalf("RegisterAgentSession: %v", err)
-	}
-	if err := fixture.store.AssociateAgentSessionWithProject(ctx, "mcp-goal-handoff-claim-owner", project.ID); err != nil {
-		t.Fatalf("AssociateAgentSessionWithProject: %v", err)
-	}
-	if _, err := fixture.store.ClaimGoal(ctx, claimedGoal.ID, "mcp-goal-handoff-claim-owner"); err != nil {
-		t.Fatalf("ClaimGoal: %v", err)
-	}
-
 	client := newMCPHTTPTestClient(fixture.server.URL + "/mcp")
 	client.initialize(t)
 	client.initialized(t)
+	projectClaim := mcpResult(t, client.call(t, "tools/call", map[string]any{
+		"name":      "atct_project_claim",
+		"arguments": map[string]any{"project_id": project.ID},
+	}))
+	if projectClaim["isError"] == true {
+		t.Fatalf("project claim for goal handoff failed: %#v", projectClaim)
+	}
 
 	request := mcpResult(t, client.call(t, "tools/call", map[string]any{
 		"name": "atct_goal_handoff_request",

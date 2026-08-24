@@ -505,14 +505,30 @@ type taskClaimConflictInfo struct {
 }
 
 func rejectTaskFileConflict(ctx context.Context, s *Store, q *sqlcgen.Queries, goalID, taskID, title string, files []string, agentSessionID string) error {
-	tasks, err := s.ListOpenTasksClaimedBy(ctx, goalID, agentSessionID)
+	tasks, err := s.ListTasks(ctx, goalID)
 	if err != nil {
-		return fmt.Errorf("list claimed tasks: %w", err)
+		return fmt.Errorf("list tasks: %w", err)
 	}
+	handoffs, err := s.ListOpenTaskHandoffsForGoal(ctx, goalID)
+	if err != nil {
+		return fmt.Errorf("list open task handoffs: %w", err)
+	}
+	agentSessionID = strings.TrimSpace(agentSessionID)
 
 	var claimedTasks []taskClaimConflictInfo
 	for _, task := range tasks {
 		if task.ID == taskID {
+			continue
+		}
+		if task.Status == domain.TaskDone || task.Status == domain.TaskDropped {
+			continue
+		}
+		handoff := handoffs[task.ID]
+		if handoff == nil || handoff.ReceivedAt == nil {
+			continue
+		}
+		ownerID := strings.TrimSpace(handoff.ReceivedBy)
+		if ownerID == agentSessionID {
 			continue
 		}
 		claimedTasks = append(claimedTasks, taskClaimConflictInfo{
@@ -600,10 +616,7 @@ func firstOverlappingFile(files, otherFiles []string) (string, bool) {
 
 // ReleaseTask clears a task claim for the human stale-claim release path.
 func (s *Store) ReleaseTask(ctx context.Context, taskID string) (domain.Task, error) {
-	if _, err := s.CompleteTaskHandoffForTask(ctx, taskID, ""); err != nil {
-		return domain.Task{}, fmt.Errorf("complete task handoff after release: %w", err)
-	}
-	return s.loadTask(ctx, taskID)
+	return s.UpdateTask(ctx, taskID, domain.TaskTodo, "")
 }
 
 func (s *Store) loadTask(ctx context.Context, taskID string) (domain.Task, error) {

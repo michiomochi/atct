@@ -352,8 +352,13 @@ func TestFullFlowThroughDaemonAndHTTP(t *testing.T) {
 	callDaemon(t, stack, "task.claim", map[string]any{
 		"task_id": tasks[0].ID, "agent_session_id": agentSessionID,
 	}, &claimed)
-	if claimed.ClaimedBy != agentSessionID || claimed.ClaimedAt == nil {
-		t.Fatalf("task.claim returned %+v", claimed)
+	claimedHandoffs, err := stack.db.ListOpenTaskHandoffsForGoal(context.Background(), goal.ID)
+	if err != nil {
+		t.Fatalf("ListOpenTaskHandoffsForGoal after claim: %v", err)
+	}
+	claimedHandoff := claimedHandoffs[claimed.ID]
+	if claimedHandoff == nil || claimedHandoff.ReceivedBy != agentSessionID || claimedHandoff.ReceivedAt == nil {
+		t.Fatalf("task.claim handoff = %+v, task = %+v", claimedHandoff, claimed)
 	}
 
 	parked := askParked(t, stack, goal.ID, tasks[1].ID, agentSessionID)
@@ -399,9 +404,13 @@ func TestFullFlowThroughDaemonAndHTTP(t *testing.T) {
 		if updated.Status != domain.TaskDone {
 			t.Fatalf("task.update returned %+v", updated)
 		}
-		if task.ID == claimed.ID && updated.ClaimedBy != "" {
-			t.Fatalf("completed claimed task still held: %+v", updated)
-		}
+	}
+	openAfterUpdates, err := stack.db.ListOpenTaskHandoffsForGoal(context.Background(), goal.ID)
+	if err != nil {
+		t.Fatalf("ListOpenTaskHandoffsForGoal after updates: %v", err)
+	}
+	if openAfterUpdates[claimed.ID] != nil {
+		t.Fatalf("completed claimed task still held: %+v", openAfterUpdates[claimed.ID])
 	}
 
 	var completion domain.Decision
@@ -571,8 +580,13 @@ func TestOnlyOneAgentSessionClaimsTaskThroughDaemon(t *testing.T) {
 	if winners != 1 || losers != 1 {
 		t.Fatalf("claim results: winners=%d losers=%d, want one each", winners, losers)
 	}
-	if winner.task.ClaimedBy != winner.agentSessionID {
-		t.Fatalf("winning claim = %+v", winner.task)
+	handoffs, err := stack.db.ListOpenTaskHandoffsForGoal(context.Background(), goal.ID)
+	if err != nil {
+		t.Fatalf("ListOpenTaskHandoffsForGoal after concurrent claims: %v", err)
+	}
+	winnerHandoff := handoffs[tasks[0].ID]
+	if winnerHandoff == nil || winnerHandoff.ReceivedBy != winner.agentSessionID {
+		t.Fatalf("winning claim handoff = %+v, task = %+v", winnerHandoff, winner.task)
 	}
 }
 

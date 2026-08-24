@@ -51,6 +51,36 @@ type claimableTaskSummary struct {
 	GoalID string `json:"goal_id"`
 }
 
+func taskHandoffClaimedBy(handoff *store.TaskHandoff) string {
+	if handoff == nil {
+		return ""
+	}
+	if handoff.ReceivedBy != "" {
+		return handoff.ReceivedBy
+	}
+	return handoff.RequestedBy
+}
+
+func taskHandoffClaimedAt(handoff *store.TaskHandoff) *time.Time {
+	if handoff == nil {
+		return nil
+	}
+	if handoff.ReceivedAt != nil {
+		return handoff.ReceivedAt
+	}
+	return handoff.RequestedAt
+}
+
+func goalHandoffClaimedBy(handoff *store.GoalHandoff) string {
+	if handoff == nil {
+		return ""
+	}
+	if handoff.ReceivedBy != "" {
+		return handoff.ReceivedBy
+	}
+	return handoff.RequestedBy
+}
+
 type goalListTaskCounts struct {
 	Todo    int `json:"todo"`
 	Doing   int `json:"doing"`
@@ -129,8 +159,12 @@ func (d *Daemon) listClaimableTasks(ctx context.Context, projectID, excludedTask
 		if err != nil {
 			return nil, err
 		}
+		handoffs, err := d.store.ListOpenTaskHandoffsForGoal(ctx, goal.ID)
+		if err != nil {
+			return nil, err
+		}
 		for _, task := range tasks {
-			if task.ID == excludedTaskID || task.Status != domain.TaskTodo || strings.TrimSpace(task.ClaimedBy) != "" {
+			if task.ID == excludedTaskID || task.Status != domain.TaskTodo || handoffs[task.ID] != nil {
 				continue
 			}
 			claimable = append(claimable, claimableTaskSummary{
@@ -262,8 +296,13 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 			if err != nil {
 				return nil, err
 			}
+			goalHandoffs, err := d.store.ListOpenGoalHandoffs(ctx)
+			if err != nil {
+				return nil, err
+			}
 			for _, goal := range goals {
-				if strings.TrimSpace(goal.ClaimedBy) == sessionID {
+				handoff := goalHandoffs[goal.ID]
+				if handoff != nil && handoff.ReceivedAt != nil && strings.TrimSpace(goalHandoffClaimedBy(handoff)) == sessionID {
 					response.GoalID = goal.ID
 					break
 				}
@@ -346,6 +385,10 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		if err != nil {
 			return nil, err
 		}
+		goalHandoffs, err := d.store.ListOpenGoalHandoffs(ctx)
+		if err != nil {
+			return nil, err
+		}
 		type goalListTask struct {
 			ID          string            `json:"id"`
 			GoalID      string            `json:"goal_id"`
@@ -391,6 +434,10 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 			if err != nil {
 				return nil, err
 			}
+			taskHandoffs, err := d.store.ListOpenTaskHandoffsForGoal(ctx, goal.ID)
+			if err != nil {
+				return nil, err
+			}
 			activeTasks := make([]goalListTask, 0, len(tasks))
 			taskCounts := goalListTaskCounts{}
 			for _, task := range tasks {
@@ -413,7 +460,7 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 					Title:       task.Title,
 					Description: goalTitle(task.Description),
 					Status:      task.Status,
-					ClaimedBy:   task.ClaimedBy,
+					ClaimedBy:   taskHandoffClaimedBy(taskHandoffs[task.ID]),
 					Order:       task.Order,
 				})
 			}
@@ -424,7 +471,7 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 				ContentChars:      utf8.RuneCountInString(goal.Content),
 				TaskCounts:        taskCounts,
 				Status:            goal.Status,
-				ClaimedBy:         goal.ClaimedBy,
+				ClaimedBy:         goalHandoffClaimedBy(goalHandoffs[goal.ID]),
 				CreatedAt:         goal.CreatedAt,
 				Tasks:             activeTasks,
 			})

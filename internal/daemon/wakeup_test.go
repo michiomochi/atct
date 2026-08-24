@@ -35,6 +35,30 @@ func newWakeupTestGoal(t *testing.T, s *store.Store, key string) (string, string
 	return project.ID, goal.ID
 }
 
+func insertWakeupOpenTaskHandoff(t *testing.T, s *store.Store, handoffID, taskID string, requestedAt, receivedAt *time.Time) {
+	t.Helper()
+	const sessionID = "wakeup-handoff-agent"
+	if err := s.RegisterAgentSession(context.Background(), sessionID, os.Getpid()); err != nil {
+		t.Fatalf("RegisterAgentSession: %v", err)
+	}
+	var requestedValue any
+	if requestedAt != nil {
+		requestedValue = requestedAt.Format(time.RFC3339Nano)
+	}
+	var receivedValue any
+	var receivedBy any
+	if receivedAt != nil {
+		receivedValue = receivedAt.Format(time.RFC3339Nano)
+		receivedBy = sessionID
+	}
+	if _, err := s.DB().ExecContext(context.Background(), `
+		INSERT INTO task_handoffs (id, task_id, requested_by, received_by, requested_at, received_at)
+		VALUES (?, ?, ?, ?, ?, ?)
+	`, handoffID, taskID, sessionID, receivedBy, requestedValue, receivedValue); err != nil {
+		t.Fatalf("insert task handoff %s: %v", handoffID, err)
+	}
+}
+
 func TestWakeupTrackerPublishesAfterGracePeriodAndResets(t *testing.T) {
 	ctx := context.Background()
 	s := newWakeupTestStore(t)
@@ -682,21 +706,27 @@ func TestWakeupTrackerKeepsDetectionGracePerTarget(t *testing.T) {
 func TestWakeupTrackerPublishesStalledHandoffDetections(t *testing.T) {
 	ctx := context.Background()
 	s := newWakeupTestStore(t)
-	projectID, _ := newWakeupTestGoal(t, s, "stalled-handoff")
+	projectID, goalID := newWakeupTestGoal(t, s, "stalled-handoff")
+	tasks, err := s.DeclareTasks(ctx, goalID, "agent", "stalled-handoff-task", []string{"Stalled task"}, []string{"Keep the task handoff open."})
+	if err != nil {
+		t.Fatalf("DeclareTasks: %v", err)
+	}
 	tracker := newWakeupTracker()
 	start := time.Date(2026, 8, 20, 20, 0, 0, 0, time.UTC)
 
 	requestedAt := start.Add(-detectionHandoffUnreceivedAfter + time.Nanosecond)
 	receivedAt := start.Add(-detectionHandoffUnreportedAfter + time.Nanosecond)
 	claimedAt := start.Add(-detectionClaimUndelegatedAfter + time.Nanosecond)
+	insertWakeupOpenTaskHandoff(t, s, "handoff-undelegated", tasks[0].ID, &claimedAt, nil)
 	state := store.WakeupState{
+		UnstartedTaskCount: 1,
 		HandoffsAwaitingReceipt: []store.TaskHandoff{{
 			ID: "handoff-unreceived", TaskID: "task-unreceived", RequestedAt: &requestedAt,
 		}},
 		HandoffsAwaitingReport: []store.TaskHandoff{{
 			ID: "handoff-unreported", TaskID: "task-unreported", ReceivedAt: &receivedAt,
 		}},
-		UndelegatedClaims: []domain.Task{{ID: "task-undelegated", ClaimedAt: &claimedAt}},
+		UndelegatedClaims: []domain.Task{{ID: tasks[0].ID, GoalID: goalID}},
 	}
 	detect := func(context.Context, string) (store.WakeupState, error) {
 		return state, nil
@@ -723,7 +753,7 @@ func TestWakeupTrackerPublishesStalledHandoffDetections(t *testing.T) {
 	}{
 		store.EventDetectionHandoffUnreceived: {projectID: projectID, handoffID: "handoff-unreceived", taskID: "task-unreceived"},
 		store.EventDetectionHandoffUnreported: {projectID: projectID, handoffID: "handoff-unreported", taskID: "task-unreported"},
-		store.EventDetectionClaimUndelegated:  {projectID: projectID, taskID: "task-undelegated"},
+		store.EventDetectionClaimUndelegated:  {projectID: projectID, taskID: tasks[0].ID},
 	}
 	for _, event := range events {
 		expected, ok := want[event.Name]
@@ -754,9 +784,14 @@ func TestWakeupTrackerPublishesUnappliedDecisionAndStaleClaimDetections(t *testi
 	ctx := context.Background()
 	s := newWakeupTestStore(t)
 	projectID, goalID := newWakeupTestGoal(t, s, "unapplied-decisions")
+	tasks, err := s.DeclareTasks(ctx, goalID, "agent", "stale-claim-task", []string{"Stale task"}, []string{"Keep the task handoff open."})
+	if err != nil {
+		t.Fatalf("DeclareTasks: %v", err)
+	}
 	start := time.Date(2026, 8, 20, 20, 0, 0, 0, time.UTC)
 	defaultAppliedAt := start.Add(-detectionDefaultDecisionUnappliedAfter + time.Nanosecond)
 	claimedAt := start.Add(-detectionStaleClaimAfter + time.Nanosecond)
+	insertWakeupOpenTaskHandoff(t, s, "handoff-stale", tasks[0].ID, &claimedAt, &claimedAt)
 	state := store.WakeupState{
 		AnsweredUnappliedDecisions: []domain.Decision{{ID: "decision-human", GoalID: goalID}},
 		DefaultUnappliedDecisions: []domain.Decision{{
@@ -764,7 +799,7 @@ func TestWakeupTrackerPublishesUnappliedDecisionAndStaleClaimDetections(t *testi
 			GoalID:           goalID,
 			DefaultAppliedAt: &defaultAppliedAt,
 		}},
-		StaleClaims: []domain.Task{{ID: "task-stale", GoalID: goalID, ClaimedAt: &claimedAt}},
+		StaleClaims: []domain.Task{{ID: tasks[0].ID, GoalID: goalID}},
 	}
 	detect := func(context.Context, string) (store.WakeupState, error) {
 		return state, nil

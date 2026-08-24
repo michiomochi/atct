@@ -234,6 +234,11 @@ func TestTaskHandoffAllowsSecondHandoffForSameTask(t *testing.T) {
 	taskID := addTestTasks(t, s, 1)[0]
 	addLiveParentGoalClaim(t, s, taskID, "requester")
 	addTestAgentSession(t, s, "dead-receiver")
+	if _, err := s.DB().ExecContext(ctx, `
+		UPDATE agent_sessions SET pid = ?, started_at = ? WHERE id = ?
+	`, 999999, "dead", "dead-receiver"); err != nil {
+		t.Fatalf("dead receiver session fixture update failed: %v", err)
+	}
 
 	first, err := s.RequestTaskHandoff(ctx, "handoff-1", taskID, "requester", "")
 	if err != nil {
@@ -494,22 +499,33 @@ func TestTaskHandoffAllowsLiveClaim(t *testing.T) {
 	}
 }
 
-func TestTaskHandoffRejectsDeadClaim(t *testing.T) {
+func TestTaskHandoffReclaimsDeadClaim(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 	taskID := addTestTasks(t, s, 1)[0]
-	addTestAgentSession(t, s, "requester")
+	addLiveParentGoalClaim(t, s, taskID, "requester")
 	addTestAgentSession(t, s, "dead-claim-owner")
 
-	now := time.Now().UTC().Format(time.RFC3339Nano)
 	if _, err := s.DB().ExecContext(ctx, `
-		UPDATE tasks SET claimed_by = ?, claimed_at = ?, updated_at = ? WHERE id = ?
-	`, "dead-claim-owner", now, now, taskID); err != nil {
-		t.Fatalf("dead claim fixture insert failed: %v", err)
+		UPDATE agent_sessions SET pid = ?, started_at = ? WHERE id = ?
+	`, 999999, "dead", "dead-claim-owner"); err != nil {
+		t.Fatalf("dead claim session fixture update failed: %v", err)
 	}
+	addTaskHandoffDirect(t, s, "handoff-dead-claim-existing", taskID, "dead-claim-owner", "dead-claim-owner")
 
-	if _, err := s.RequestTaskHandoff(ctx, "handoff-dead-claim", taskID, "requester", ""); err == nil {
-		t.Fatal("RequestTaskHandoff should reject a task with only a dead claim")
+	handoff, err := s.RequestTaskHandoff(ctx, "handoff-dead-claim", taskID, "requester", "")
+	if err != nil {
+		t.Fatalf("RequestTaskHandoff should reclaim a dead task claim: %v", err)
+	}
+	if handoff.ID != "handoff-dead-claim" || handoff.RequestedBy != "requester" {
+		t.Fatalf("unexpected replacement handoff: %+v", handoff)
+	}
+	previous, err := s.GetTaskHandoff(ctx, "handoff-dead-claim-existing")
+	if err != nil {
+		t.Fatalf("GetTaskHandoff reclaimed claim: %v", err)
+	}
+	if previous.CompletedReportAt == nil || previous.CompleteReport != "セッションが停止した" {
+		t.Fatalf("dead claim was not completed during reclaim: %+v", previous)
 	}
 }
 
@@ -546,16 +562,7 @@ func TestTaskHandoffStatesRemainDistinct(t *testing.T) {
 	ctx := context.Background()
 	taskIDs := addTestTasks(t, s, 4)
 	addLiveParentGoalClaim(t, s, taskIDs[0], "requester")
-	addTestAgentSession(t, s, "receiver")
-
-	// A task claim without a handoff request.
-	now := time.Now().UTC().Format(time.RFC3339Nano)
-	_, err := s.DB().ExecContext(ctx, `
-		UPDATE tasks SET claimed_by = ?, claimed_at = ?, updated_at = ? WHERE id = ?
-	`, "receiver", now, now, taskIDs[0])
-	if err != nil {
-		t.Fatalf("claim fixture insert failed: %v", err)
-	}
+	addLiveTaskClaim(t, s, taskIDs[0], "receiver")
 
 	// A handoff request without a task claim. This fixture bypasses the public
 	// request method because the state is intentionally a detected anomaly.
@@ -574,22 +581,10 @@ func TestTaskHandoffStatesRemainDistinct(t *testing.T) {
 		t.Fatalf("receipt-only fixture insert failed: %v", err)
 	}
 
-	claimed := make(map[string]string, len(taskIDs))
-	for _, taskID := range taskIDs {
-		var claimedBy string
-		if err := s.DB().QueryRowContext(ctx, `SELECT claimed_by FROM tasks WHERE id = ?`, taskID).Scan(&claimedBy); err != nil {
-			t.Fatalf("read claim fixture for %q failed: %v", taskID, err)
-		}
-		claimed[taskID] = claimedBy
-	}
-	if claimed[taskIDs[0]] != "receiver" || claimed[taskIDs[1]] != "" {
-		t.Fatalf("claim/request states are not distinct: %+v", claimed)
-	}
-
 	if got, err := s.ListTaskHandoffs(ctx, taskIDs[0]); err != nil {
-		t.Fatalf("ListTaskHandoffs for claim-only task failed: %v", err)
-	} else if len(got) != 0 {
-		t.Fatalf("claim-only task unexpectedly has handoffs: %+v", got)
+		t.Fatalf("ListTaskHandoffs for claim handoff failed: %v", err)
+	} else if len(got) != 1 || got[0].RequestedAt == nil || got[0].ReceivedAt == nil || got[0].CompletedReportAt != nil || got[0].ReceivedBy != "receiver" {
+		t.Fatalf("claim handoff state is not distinct: %+v", got)
 	}
 	if got, err := s.ListTaskHandoffs(ctx, taskIDs[1]); err != nil {
 		t.Fatalf("ListTaskHandoffs for request-only task failed: %v", err)

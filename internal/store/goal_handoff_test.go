@@ -206,6 +206,11 @@ func TestGoalHandoffAllowsSecondHandoffForSameGoal(t *testing.T) {
 	goalID := newTestGoal(t, s)
 	addLiveProjectClaim(t, s, goalID, "goal-requester")
 	addTestAgentSession(t, s, "goal-dead-receiver")
+	if _, err := s.DB().ExecContext(ctx, `
+		UPDATE agent_sessions SET pid = ?, started_at = ? WHERE id = ?
+	`, 999999, "dead", "goal-dead-receiver"); err != nil {
+		t.Fatalf("dead receiver session fixture update failed: %v", err)
+	}
 
 	first, err := s.RequestGoalHandoff(ctx, "goal-handoff-1", goalID, "goal-requester", "")
 	if err != nil {

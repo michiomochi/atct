@@ -176,9 +176,9 @@ func TestListTasksUsesSortOrderAndIDAsTieBreakers(t *testing.T) {
 		_, err := s.DB().ExecContext(ctx, `
 INSERT INTO tasks (
   id, goal_id, title, description, status, agent, files, sort_order, declare_key,
-  claimed_by, claimed_at, created_at, updated_at
+  created_at, updated_at
 )
-VALUES (?, ?, ?, ?, 'todo', '', '[]', ?, ?, '', NULL, ?, ?)`,
+VALUES (?, ?, ?, ?, 'todo', '', '[]', ?, ?, ?, ?)`,
 			id, goalID, title, "Verify the stable sort-order ordering for this fixture.", sortOrder, declareKey, createdAt, createdAt)
 		if err != nil {
 			t.Fatalf("insert task %s: %v", id, err)

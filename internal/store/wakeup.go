@@ -230,13 +230,15 @@ func (s *Store) DetectWakeup(ctx context.Context, projectID string) (WakeupState
 			handoffs := taskHandoffs[task.ID]
 			delegated := false
 			for _, handoff := range handoffs {
-				if handoff.RequestedAt != nil {
+				isDelegated := handoff.RequestedAt != nil &&
+					(handoff.ReceivedAt == nil || strings.TrimSpace(handoff.RequestedBy) != strings.TrimSpace(handoff.ReceivedBy))
+				if isDelegated {
 					delegated = true
 					if handoff.ReceivedAt == nil {
 						state.HandoffsAwaitingReceipt = append(state.HandoffsAwaitingReceipt, handoff)
 					}
 				}
-				if handoff.ReceivedAt != nil && handoff.CompletedReportAt == nil {
+				if isDelegated && handoff.ReceivedAt != nil && handoff.CompletedReportAt == nil {
 					state.HandoffsAwaitingReport = append(state.HandoffsAwaitingReport, handoff)
 				}
 			}

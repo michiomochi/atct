@@ -142,6 +142,7 @@ func TestApproveGoalActivatesGoalAndAppliesApproval(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DeclareTasks: %v", err)
 	}
+	addTestAgentSession(t, s, "approved-agent-session")
 	claimed, err := s.ClaimTask(ctx, tasks[0].ID, "approved-agent-session")
 	if err != nil {
 		t.Fatalf("ClaimTask after approval: %v", err)

@@ -310,9 +310,9 @@ func insertSortOrderConstraintTask(s *Store, goalID, id string, sortOrder int) e
 	_, err := s.DB().ExecContext(context.Background(), `
 INSERT INTO tasks (
   id, goal_id, title, description, status, agent, files, sort_order, declare_key,
-  claimed_by, claimed_at, created_at, updated_at
+  created_at, updated_at
 )
-VALUES (?, ?, ?, ?, 'todo', 'constraint-test', '[]', ?, ?, '', NULL, ?, ?)`,
+VALUES (?, ?, ?, ?, 'todo', 'constraint-test', '[]', ?, ?, ?, ?)`,
 		id,
 		goalID,
 		"Persist a task for the sort-order constraint",

@@ -140,9 +140,17 @@ func pendingTextForProject(dir, cwd, projectName string, projectSpecified bool) 
 		return "", fmt.Errorf("check claim liveness: %w", err)
 	}
 	activeGoalIDs := make(map[string]struct{}, len(goals))
+	openTaskHandoffs := make(map[string]*store.TaskHandoff)
 	for _, goal := range goals {
 		if goal.Status == domain.GoalActive {
 			activeGoalIDs[goal.ID] = struct{}{}
+			handoffs, err := s.ListOpenTaskHandoffsForGoal(ctx, goal.ID)
+			if err != nil {
+				return "", fmt.Errorf("list open task handoffs for goal %s: %w", goal.ID, err)
+			}
+			for taskID, handoff := range handoffs {
+				openTaskHandoffs[taskID] = handoff
+			}
 		}
 	}
 	otherStaleClaimedTasks := make([]domain.Task, 0)
@@ -150,7 +158,7 @@ func pendingTextForProject(dir, cwd, projectName string, projectSpecified bool) 
 		if _, ok := activeGoalIDs[task.GoalID]; !ok {
 			continue
 		}
-		if task.ClaimedBy == agentSessionID {
+		if contextTaskHandoffOwner(openTaskHandoffs[task.ID]) == strings.TrimSpace(agentSessionID) {
 			continue
 		}
 		otherStaleClaimedTasks = append(otherStaleClaimedTasks, task)

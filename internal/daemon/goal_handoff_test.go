@@ -44,29 +44,30 @@ func newGoalHandoffRPCTestFixture(t *testing.T) goalHandoffRPCTestFixture {
 		s.Close()
 		t.Fatalf("CreateGoal claimed: %v", err)
 	}
-	unclaimedGoal, err := s.CreateGoal(ctx, project.ID, "unclaimed handoff goal", "human")
+	unclaimedProject, err := s.CreateProject(ctx, "other", filepath.Join(dir, "other-repo"))
+	if err != nil {
+		s.Close()
+		t.Fatalf("CreateProject unclaimed: %v", err)
+	}
+	unclaimedGoal, err := s.CreateGoal(ctx, unclaimedProject.ID, "unclaimed handoff goal", "human")
 	if err != nil {
 		s.Close()
 		t.Fatalf("CreateGoal unclaimed: %v", err)
 	}
 
-	if err := s.RegisterAgentSession(ctx, "rpc-goal-claim-owner", os.Getpid()); err != nil {
-		s.Close()
-		t.Fatalf("RegisterAgentSession: %v", err)
-	}
 	for _, sessionID := range []string{"rpc-goal-requester", "rpc-goal-receiver"} {
 		if err := s.RegisterAgentSession(ctx, sessionID, os.Getpid()); err != nil {
 			s.Close()
 			t.Fatalf("RegisterAgentSession(%s): %v", sessionID, err)
 		}
 	}
-	if err := s.AssociateAgentSessionWithProject(ctx, "rpc-goal-claim-owner", project.ID); err != nil {
+	if err := s.AssociateAgentSessionWithProject(ctx, "rpc-goal-requester", project.ID); err != nil {
 		s.Close()
 		t.Fatalf("AssociateAgentSessionWithProject: %v", err)
 	}
-	if _, err := s.ClaimGoal(ctx, claimedGoal.ID, "rpc-goal-claim-owner"); err != nil {
+	if _, err := s.ClaimProject(ctx, project.ID, "rpc-goal-requester"); err != nil {
 		s.Close()
-		t.Fatalf("ClaimGoal: %v", err)
+		t.Fatalf("ClaimProject: %v", err)
 	}
 
 	socketPath := filepath.Join(dir, "daemon.sock")

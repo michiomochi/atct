@@ -435,6 +435,10 @@ func callRoleTool(t *testing.T, claimProject, claimGoal, withTask bool, expected
 		}
 	}
 	sessionID := "role-test-session"
+	if err := s.RegisterAgentSession(ctx, sessionID, os.Getpid()); err != nil {
+		s.Close()
+		t.Fatalf("RegisterAgentSession: %v", err)
+	}
 	if claimProject {
 		if _, err := s.ClaimProject(ctx, project.ID, sessionID); err != nil {
 			s.Close()

@@ -178,6 +178,19 @@ func (s *Store) ClaimGoal(ctx context.Context, goalID, agentSessionID string) (d
 	if _, err := s.GetGoal(ctx, goalID); err != nil {
 		return domain.Goal{}, err
 	}
+	open, err := s.openGoalHandoff(ctx, goalID)
+	if err != nil {
+		return domain.Goal{}, fmt.Errorf("find open goal claim: %w", err)
+	}
+	if open != nil {
+		owner := strings.TrimSpace(open.ReceivedBy)
+		if owner == "" {
+			owner = strings.TrimSpace(open.RequestedBy)
+		}
+		if owner == agentSessionID {
+			return s.GetGoal(ctx, goalID)
+		}
+	}
 
 	handoffID := uuid.NewString()
 	if err := s.reclaimOpenGoalHandoff(ctx, handoffID, goalID); err != nil {
@@ -617,6 +630,20 @@ func (s *Store) WithdrawActiveGoal(ctx context.Context, goalID, reason string) e
 	}
 	if _, err := result.RowsAffected(); err != nil {
 		return fmt.Errorf("drop open tasks rows affected: %w", err)
+	}
+	openTaskHandoffs, err := q.ListOpenTaskHandoffsForGoal(ctx, goalID)
+	if err != nil {
+		return fmt.Errorf("list task handoffs for withdrawn goal: %w", err)
+	}
+	for _, handoff := range openTaskHandoffs {
+		if err := q.CompleteTaskHandoff(ctx, sqlcgen.CompleteTaskHandoffParams{
+			ID:                handoff.ID,
+			TaskID:            handoff.TaskID,
+			CompletedReportAt: sql.NullString{String: now, Valid: true},
+			CompleteReport:    sql.NullString{String: reason, Valid: reason != ""},
+		}); err != nil {
+			return fmt.Errorf("complete task handoff %s for withdrawn goal: %w", handoff.ID, err)
+		}
 	}
 
 	if err := tx.Commit(); err != nil {

@@ -138,6 +138,16 @@ FROM task_handoffs
 WHERE task_id = ?
 ORDER BY id;
 
+-- name: ListOpenTaskHandoffsForGoal :many
+SELECT th.id, th.task_id, th.requested_by, th.received_by,
+       th.requested_at, th.received_at, th.completed_report_at,
+       th.request_report, th.complete_report
+FROM task_handoffs AS th
+JOIN tasks AS t ON t.id = th.task_id
+WHERE t.goal_id = ?
+  AND th.completed_report_at IS NULL
+ORDER BY th.id;
+
 -- name: GetTaskHandoffTaskID :one
 SELECT task_id
 FROM task_handoffs

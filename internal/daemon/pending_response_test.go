@@ -184,6 +184,9 @@ func TestDecisionAskParkedIncludesClaimableTasks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DeclareTasks(candidates): %v", err)
 	}
+	if err := s.RegisterAgentSession(ctx, "other-run", 0); err != nil {
+		t.Fatalf("RegisterAgentSession(other-run): %v", err)
+	}
 	if _, err := s.ClaimTask(ctx, candidates[1].ID, "other-run"); err != nil {
 		t.Fatalf("ClaimTask: %v", err)
 	}

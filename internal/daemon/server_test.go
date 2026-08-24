@@ -580,16 +580,21 @@ func newGoalListFixture(t *testing.T) goalListFixture {
 	droppedOne := mark(create("dropped one", "human"), domain.GoalDropped)
 	droppedTwo := mark(create("dropped two", "human"), domain.GoalDropped)
 
-	if _, err := s.DB().ExecContext(ctx, "UPDATE goals SET claimed_by = ? WHERE id = ?", "claimed-agent", activeChild.ID); err != nil {
+	if err := s.RegisterAgentSession(ctx, "claimed-agent", os.Getpid()); err != nil {
+		t.Fatalf("RegisterAgentSession claimed-agent: %v", err)
+	}
+	if _, err := s.ClaimGoal(ctx, activeChild.ID, "claimed-agent"); err != nil {
 		t.Fatalf("claim goal %s: %v", activeChild.ID, err)
 	}
-	activeChild.ClaimedBy = "claimed-agent"
 
 	tasks, err := s.DeclareTasks(ctx, taskGoal.ID, "fixture-agent", "goal-list-tasks",
 		[]string{"doing task", "todo task", "done task", "dropped task"},
 		[]string{"doing description", "todo description", "done description", "dropped description"})
 	if err != nil {
 		t.Fatalf("DeclareTasks: %v", err)
+	}
+	if err := s.RegisterAgentSession(ctx, "task-agent", os.Getpid()); err != nil {
+		t.Fatalf("RegisterAgentSession task-agent: %v", err)
 	}
 	if _, err := s.ClaimTask(ctx, tasks[0].ID, "task-agent"); err != nil {
 		t.Fatalf("ClaimTask: %v", err)
@@ -811,7 +816,11 @@ func TestGoalListIncludesTaskFields(t *testing.T) {
 		if !ok {
 			t.Fatalf("unexpected visible task %s", got.ID)
 		}
-		if got.GoalID != wantTask.GoalID || got.Title != wantTask.Title || got.Description != wantTask.Description || got.Status != wantTask.Status || got.ClaimedBy != wantTask.ClaimedBy || got.Order != wantTask.Order {
+		wantClaimedBy := ""
+		if got.ID == fixture.tasks[0].ID {
+			wantClaimedBy = "task-agent"
+		}
+		if got.GoalID != wantTask.GoalID || got.Title != wantTask.Title || got.Description != wantTask.Description || got.Status != wantTask.Status || got.ClaimedBy != wantClaimedBy || got.Order != wantTask.Order {
 			t.Fatalf("task %s = %+v, want fields from %+v", got.ID, got, wantTask)
 		}
 	}
@@ -1054,6 +1063,24 @@ func listGoalForClaimTest(t *testing.T, fixture goalListFixture, goalID, session
 	return goalListItem{}
 }
 
+func openGoalHandoffForTest(t *testing.T, fixture goalListFixture, goalID string) *store.GoalHandoff {
+	t.Helper()
+	handoffs, err := fixture.store.ListOpenGoalHandoffs(context.Background())
+	if err != nil {
+		t.Fatalf("ListOpenGoalHandoffs: %v", err)
+	}
+	return handoffs[goalID]
+}
+
+func openTaskHandoffForTest(t *testing.T, fixture goalListFixture, goalID, taskID string) *store.TaskHandoff {
+	t.Helper()
+	handoffs, err := fixture.store.ListOpenTaskHandoffsForGoal(context.Background(), goalID)
+	if err != nil {
+		t.Fatalf("ListOpenTaskHandoffsForGoal: %v", err)
+	}
+	return handoffs[taskID]
+}
+
 func TestGoalUpdateContentRewritesProposedGoal(t *testing.T) {
 	fixture := newGoalListFixture(t)
 	defer fixture.store.Close()
@@ -1144,8 +1171,9 @@ func TestGoalClaimSetsClaimedBy(t *testing.T) {
 	if err := json.Unmarshal(result, &claimed); err != nil {
 		t.Fatalf("unmarshal goal.claim result: %v", err)
 	}
-	if claimed.ClaimedBy != sessionID {
-		t.Fatalf("claimed_by = %q, want %q", claimed.ClaimedBy, sessionID)
+	handoff := openGoalHandoffForTest(t, fixture, fixture.emptyTaskGoal.ID)
+	if handoff == nil || handoff.ReceivedBy != sessionID {
+		t.Fatalf("goal handoff = %+v, want received_by %q", handoff, sessionID)
 	}
 }
 
@@ -1194,12 +1222,9 @@ func TestGoalClaimRejectsLiveOtherSessionWithOwnerRegisteredFirst(t *testing.T) 
 	if _, err := claimGoalForTest(t, fixture, fixture.emptyTaskGoal.ID, "goal-other-second-run"); !errors.Is(err, ErrGoalAlreadyClaimed) {
 		t.Fatalf("second goal.claim error = %v, want ErrGoalAlreadyClaimed", err)
 	}
-	claimed, err := fixture.store.GetGoal(context.Background(), fixture.emptyTaskGoal.ID)
-	if err != nil {
-		t.Fatalf("GetGoal after rejected claim: %v", err)
-	}
-	if claimed.ClaimedBy != "goal-owner-first-run" {
-		t.Fatalf("claimed_by after rejected claim = %q, want %q", claimed.ClaimedBy, "goal-owner-first-run")
+	handoff := openGoalHandoffForTest(t, fixture, fixture.emptyTaskGoal.ID)
+	if handoff == nil || handoff.ReceivedBy != "goal-owner-first-run" {
+		t.Fatalf("goal handoff after rejected claim = %+v, want received_by %q", handoff, "goal-owner-first-run")
 	}
 }
 
@@ -1215,12 +1240,9 @@ func TestGoalClaimKeepsOwnerAfterRejection(t *testing.T) {
 	if _, err := claimGoalForTest(t, fixture, fixture.emptyTaskGoal.ID, "goal-rejected-run"); !errors.Is(err, ErrGoalAlreadyClaimed) {
 		t.Fatalf("second goal.claim error = %v, want ErrGoalAlreadyClaimed", err)
 	}
-	claimed, err := fixture.store.GetGoal(context.Background(), fixture.emptyTaskGoal.ID)
-	if err != nil {
-		t.Fatalf("GetGoal after rejected claim: %v", err)
-	}
-	if claimed.ClaimedBy != "goal-owner-unchanged-run" {
-		t.Fatalf("claimed_by after rejected claim = %q, want %q", claimed.ClaimedBy, "goal-owner-unchanged-run")
+	handoff := openGoalHandoffForTest(t, fixture, fixture.emptyTaskGoal.ID)
+	if handoff == nil || handoff.ReceivedBy != "goal-owner-unchanged-run" {
+		t.Fatalf("goal handoff after rejected claim = %+v, want received_by %q", handoff, "goal-owner-unchanged-run")
 	}
 }
 
@@ -1369,8 +1391,9 @@ func TestTaskClaimStillClaimsTask(t *testing.T) {
 	if err := json.Unmarshal(result, &claimed); err != nil {
 		t.Fatalf("unmarshal task.claim result: %v", err)
 	}
-	if claimed.ClaimedBy != sessionID {
-		t.Fatalf("task claimed_by = %q, want %q", claimed.ClaimedBy, sessionID)
+	handoff := openTaskHandoffForTest(t, fixture, fixture.tasks[1].GoalID, fixture.tasks[1].ID)
+	if handoff == nil || handoff.ReceivedBy != sessionID {
+		t.Fatalf("task handoff = %+v, want received_by %q", handoff, sessionID)
 	}
 }
 
@@ -1402,8 +1425,8 @@ func TestTaskClaimAndReleaseStillWork(t *testing.T) {
 	if err := json.Unmarshal(result, &released); err != nil {
 		t.Fatalf("unmarshal task.release result: %v", err)
 	}
-	if released.ClaimedBy != "" {
-		t.Fatalf("task claimed_by after task.release = %q, want empty", released.ClaimedBy)
+	if handoff := openTaskHandoffForTest(t, fixture, fixture.tasks[1].GoalID, fixture.tasks[1].ID); handoff != nil {
+		t.Fatalf("task handoff after release = %+v, want none", handoff)
 	}
 }
 

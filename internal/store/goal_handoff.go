@@ -131,7 +131,7 @@ func (s *Store) reclaimOpenGoalHandoff(ctx context.Context, handoffID, goalID st
 		// is the only available liveness signal.
 		ownerID = open.RequestedBy
 	}
-	if ownerID == "" || claimIsRunning(ctx, s, ownerID) {
+	if ownerID == "" || !claimIsDefinitelyDead(ctx, s, ownerID) {
 		return fmt.Errorf("%w: goal %q has a live handoff owner", ErrGoalHandoffAlreadyOpen, goalID)
 	}
 	if _, err := s.CompleteGoalHandoff(ctx, open.ID, goalID, "セッションが停止した"); err != nil {
@@ -309,6 +309,24 @@ func (s *Store) ListGoalHandoffs(ctx context.Context, goalID string) ([]GoalHand
 			return nil, fmt.Errorf("parse goal handoff: %w", err)
 		}
 		handoffs = append(handoffs, handoff)
+	}
+	return handoffs, nil
+}
+
+// ListOpenGoalHandoffs returns all incomplete goal handoffs with one query.
+func (s *Store) ListOpenGoalHandoffs(ctx context.Context) (map[string]*GoalHandoff, error) {
+	rows, err := sqlcgen.New(s.db).ListOpenGoalHandoffs(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list open goal handoffs: %w", err)
+	}
+
+	handoffs := make(map[string]*GoalHandoff, len(rows))
+	for _, row := range rows {
+		handoff, err := goalHandoffFromRow(row)
+		if err != nil {
+			return nil, fmt.Errorf("parse open goal handoff: %w", err)
+		}
+		handoffs[handoff.GoalID] = &handoff
 	}
 	return handoffs, nil
 }

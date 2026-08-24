@@ -129,7 +129,7 @@ func (s *Store) reclaimOpenTaskHandoff(ctx context.Context, handoffID, taskID st
 		// is the only available liveness signal.
 		ownerID = open.RequestedBy
 	}
-	if ownerID == "" || claimIsRunning(ctx, s, ownerID) {
+	if ownerID == "" || !claimIsDefinitelyDead(ctx, s, ownerID) {
 		return fmt.Errorf("%w: task %q has a live handoff owner", ErrTaskHandoffAlreadyOpen, taskID)
 	}
 	if _, err := s.CompleteTaskHandoff(ctx, open.ID, taskID, "セッションが停止した"); err != nil {
@@ -307,6 +307,25 @@ func (s *Store) ListTaskHandoffs(ctx context.Context, taskID string) ([]TaskHand
 			return nil, fmt.Errorf("parse task handoff: %w", err)
 		}
 		handoffs = append(handoffs, handoff)
+	}
+	return handoffs, nil
+}
+
+// ListOpenTaskHandoffsForGoal returns all incomplete handoffs for tasks in a
+// goal with one query.
+func (s *Store) ListOpenTaskHandoffsForGoal(ctx context.Context, goalID string) (map[string]*TaskHandoff, error) {
+	rows, err := sqlcgen.New(s.db).ListOpenTaskHandoffsForGoal(ctx, goalID)
+	if err != nil {
+		return nil, fmt.Errorf("list open task handoffs for goal: %w", err)
+	}
+
+	handoffs := make(map[string]*TaskHandoff, len(rows))
+	for _, row := range rows {
+		handoff, err := taskHandoffFromRow(row)
+		if err != nil {
+			return nil, fmt.Errorf("parse open task handoff: %w", err)
+		}
+		handoffs[handoff.TaskID] = &handoff
 	}
 	return handoffs, nil
 }

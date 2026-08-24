@@ -232,8 +232,12 @@ func TestRenderContextDistinguishesClaimedTasks(t *testing.T) {
 		Goal: domain.Goal{ID: "goal-claim", Content: "Claimed goal", Status: domain.GoalActive},
 		Tasks: []domain.Task{
 			{ID: "task-free", Title: "Unclaimed", Status: domain.TaskTodo},
-			{ID: "task-self", Title: "Self claim", Status: domain.TaskDoing, ClaimedBy: "run-self"},
-			{ID: "task-other", Title: "Other claim", Status: domain.TaskDoing, ClaimedBy: "run-other"},
+			{ID: "task-self", Title: "Self claim", Status: domain.TaskDoing},
+			{ID: "task-other", Title: "Other claim", Status: domain.TaskDoing},
+		},
+		TaskHandoffs: map[string]*store.TaskHandoff{
+			"task-self":  {ReceivedBy: "run-self"},
+			"task-other": {ReceivedBy: "run-other"},
 		},
 	}}, nil)
 

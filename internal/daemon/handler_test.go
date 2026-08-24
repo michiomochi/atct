@@ -504,8 +504,12 @@ func TestDecisionAskClaimableTasksKeepsIdentityFieldsWithoutDescription(t *testi
 		if err != nil {
 			t.Fatalf("ListTasks(%s): %v", goal.ID, err)
 		}
+		handoffs, err := fixture.store.ListOpenTaskHandoffsForGoal(context.Background(), goal.ID)
+		if err != nil {
+			t.Fatalf("ListOpenTaskHandoffsForGoal(%s): %v", goal.ID, err)
+		}
 		for _, task := range tasks {
-			if task.Status != domain.TaskTodo || strings.TrimSpace(task.ClaimedBy) != "" {
+			if task.Status != domain.TaskTodo || handoffs[task.ID] != nil {
 				continue
 			}
 			if _, err := fixture.store.ClaimTask(context.Background(), task.ID, sessionID); err != nil {
@@ -593,8 +597,12 @@ func TestDecisionAskOmitsEmptyClaimableTasks(t *testing.T) {
 		if err != nil {
 			t.Fatalf("ListTasks(%s): %v", goal.ID, err)
 		}
+		handoffs, err := fixture.store.ListOpenTaskHandoffsForGoal(context.Background(), goal.ID)
+		if err != nil {
+			t.Fatalf("ListOpenTaskHandoffsForGoal(%s): %v", goal.ID, err)
+		}
 		for _, task := range tasks {
-			if task.Status != domain.TaskTodo || strings.TrimSpace(task.ClaimedBy) != "" {
+			if task.Status != domain.TaskTodo || handoffs[task.ID] != nil {
 				continue
 			}
 			if _, err := fixture.store.ClaimTask(context.Background(), task.ID, sessionID); err != nil {
@@ -962,6 +970,9 @@ func TestContractB10GoalListKeepsNonEmptyOptionalFields(t *testing.T) {
 	derived, err := fixture.store.CreateGoal(context.Background(), fixture.project.ID, "derived contract goal", "contract-test", fixture.emptyTaskGoal.ID)
 	if err != nil {
 		t.Fatalf("CreateGoal derived: %v", err)
+	}
+	if err := fixture.store.RegisterAgentSession(context.Background(), "contract-claimed", os.Getpid()); err != nil {
+		t.Fatalf("RegisterAgentSession contract-claimed: %v", err)
 	}
 	if _, err := fixture.store.ClaimGoal(context.Background(), fixture.emptyTaskGoal.ID, "contract-claimed"); err != nil {
 		t.Fatalf("ClaimGoal: %v", err)

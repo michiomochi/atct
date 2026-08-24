@@ -120,3 +120,20 @@ func claimIsRunning(ctx context.Context, s *Store, agentSessionID string) bool {
 	actualStartedAt, err := processStartedAt(pid)
 	return err == nil && actualStartedAt == startedAt
 }
+
+// claimIsDefinitelyDead is intentionally stricter than claimIsRunning. A
+// session registered without process identity cannot be proven dead, so an
+// open handoff owned by it must not be reclaimed by a concurrent claimant.
+func claimIsDefinitelyDead(ctx context.Context, s *Store, agentSessionID string) bool {
+	session, err := sqlcgen.New(s.db).GetAgentSessionLiveness(ctx, strings.TrimSpace(agentSessionID))
+	if err != nil || session.Pid == 0 || session.StartedAt == "" {
+		return false
+	}
+
+	pid := int(session.Pid)
+	if err := syscall.Kill(pid, 0); err != nil {
+		return true
+	}
+	actualStartedAt, err := processStartedAt(pid)
+	return err == nil && actualStartedAt != session.StartedAt
+}

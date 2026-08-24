@@ -96,6 +96,7 @@ func TestWithdrawActiveGoalDropsOpenTasksAndReleasesClaims(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DeclareTasks: %v", err)
 	}
+	addTestAgentSession(t, s, "agent-run")
 	for _, task := range tasks {
 		if _, err := s.ClaimTask(ctx, task.ID, "agent-run"); err != nil {
 			t.Fatalf("ClaimTask(%s): %v", task.ID, err)

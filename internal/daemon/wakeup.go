@@ -8,7 +8,7 @@ import (
 )
 
 const (
-	wakeupPublishAfter                      = 15 * time.Minute
+	wakeupPublishAfter = 15 * time.Minute
 	// Three minutes sits just under the p75 of observed gaps between agent
 	// writes (0.6 / 3.7 / 13.8 minutes for p50 / p75 / p90 over 708 events), so
 	// it fires during normal work too. That is the price of dropping the Stop
@@ -176,6 +176,27 @@ func (t *wakeupTracker) evaluateWith(ctx context.Context, s *store.Store, now ti
 				events = append(events, event)
 			}
 		}
+		openTaskHandoffs := make(map[string]*store.TaskHandoff)
+		goalIDs := make(map[string]struct{})
+		for _, task := range state.UndelegatedClaims {
+			if task.GoalID != "" {
+				goalIDs[task.GoalID] = struct{}{}
+			}
+		}
+		for _, task := range state.StaleClaims {
+			if task.GoalID != "" {
+				goalIDs[task.GoalID] = struct{}{}
+			}
+		}
+		for goalID := range goalIDs {
+			handoffs, err := s.ListOpenTaskHandoffsForGoal(ctx, goalID)
+			if err != nil {
+				return nil, err
+			}
+			for taskID, handoff := range handoffs {
+				openTaskHandoffs[taskID] = handoff
+			}
+		}
 		for _, goal := range state.CompletedGoals {
 			recordDetection(store.EventDetectionCompletionReportMissing, goal.ID, time.Time{}, wakeupPublishAfter, goal.ID, "", "", "")
 		}
@@ -204,10 +225,11 @@ func (t *wakeupTracker) evaluateWith(ctx context.Context, s *store.Store, now ti
 			recordDetection(store.EventDetectionHandoffUnreported, handoff.ID, *handoff.ReceivedAt, detectionHandoffUnreportedAfter, "", handoff.TaskID, handoff.ID, "")
 		}
 		for _, task := range state.UndelegatedClaims {
-			if task.ClaimedAt == nil {
+			claimedAt := taskHandoffClaimedAt(openTaskHandoffs[task.ID])
+			if claimedAt == nil {
 				continue
 			}
-			recordDetection(store.EventDetectionClaimUndelegated, task.ID, *task.ClaimedAt, detectionClaimUndelegatedAfter, "", task.ID, "", "")
+			recordDetection(store.EventDetectionClaimUndelegated, task.ID, *claimedAt, detectionClaimUndelegatedAfter, "", task.ID, "", "")
 		}
 		for _, decision := range state.AnsweredUnappliedDecisions {
 			recordDetection(store.EventDetectionDecisionAnsweredUnapplied, decision.ID, time.Time{}, detectionAnsweredDecisionUnappliedAfter, decision.GoalID, decision.TaskID, "", decision.ID)
@@ -220,10 +242,11 @@ func (t *wakeupTracker) evaluateWith(ctx context.Context, s *store.Store, now ti
 			recordDetection(store.EventDetectionDecisionDefaultUnapplied, decision.ID, startedAt, detectionDefaultDecisionUnappliedAfter, decision.GoalID, decision.TaskID, "", decision.ID)
 		}
 		for _, task := range state.StaleClaims {
-			if task.ClaimedAt == nil {
+			claimedAt := taskHandoffClaimedAt(openTaskHandoffs[task.ID])
+			if claimedAt == nil {
 				continue
 			}
-			recordDetection(store.EventDetectionClaimStale, task.ID, *task.ClaimedAt, detectionStaleClaimAfter, "", task.ID, "", "")
+			recordDetection(store.EventDetectionClaimStale, task.ID, *claimedAt, detectionStaleClaimAfter, "", task.ID, "", "")
 		}
 	}
 	for key := range t.detectionActiveSince {

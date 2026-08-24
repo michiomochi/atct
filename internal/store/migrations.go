@@ -851,6 +851,9 @@ func validateV6Schema(ctx context.Context, conn *sql.Conn, state migrationState)
 	if _, ok := state.applied["0004_agent_sessions.sql"]; ok {
 		requiredColumns = requiredCurrentV6Columns
 	}
+	if _, ok := state.applied["0016_drop_claim_columns.sql"]; ok {
+		requiredColumns = withoutTaskAndGoalClaimColumns(requiredColumns)
+	}
 	if _, ok := state.applied["0007_goal_content.sql"]; !ok {
 		requiredColumns = withPreContentGoalColumns(requiredColumns)
 	}
@@ -876,6 +879,21 @@ func validateV6Schema(ctx context.Context, conn *sql.Conn, state migrationState)
 		}
 	}
 	return nil
+}
+
+func withoutTaskAndGoalClaimColumns(required map[string][]string) map[string][]string {
+	withoutClaims := make(map[string][]string, len(required))
+	for table, columns := range required {
+		filtered := make([]string, 0, len(columns))
+		for _, column := range columns {
+			if (table == "tasks" || table == "goals") && (column == "claimed_by" || column == "claimed_at") {
+				continue
+			}
+			filtered = append(filtered, column)
+		}
+		withoutClaims[table] = filtered
+	}
+	return withoutClaims
 }
 
 func tableColumns(ctx context.Context, conn *sql.Conn, tableName string) (map[string]bool, error) {

@@ -13,8 +13,9 @@ import (
 )
 
 type contextGoal struct {
-	Goal  domain.Goal
-	Tasks []domain.Task
+	Goal         domain.Goal
+	Tasks        []domain.Task
+	TaskHandoffs map[string]*store.TaskHandoff
 }
 
 type contextSnapshot struct {
@@ -171,7 +172,11 @@ func loadContextSnapshotForProject(dir, cwd, projectName string, projectSpecifie
 		if err != nil {
 			return contextSnapshot{}, fmt.Errorf("list tasks for goal %s: %w", goal.ID, err)
 		}
-		active = append(active, contextGoal{Goal: goal, Tasks: tasks})
+		taskHandoffs, err := s.ListOpenTaskHandoffsForGoal(ctx, goal.ID)
+		if err != nil {
+			return contextSnapshot{}, fmt.Errorf("list open task handoffs for goal %s: %w", goal.ID, err)
+		}
+		active = append(active, contextGoal{Goal: goal, Tasks: tasks, TaskHandoffs: taskHandoffs})
 		activeIDs[goal.ID] = true
 	}
 	if len(active) == 0 {
@@ -240,12 +245,22 @@ func contextNeedsWakeup(snapshot contextSnapshot) bool {
 			return true
 		}
 		for _, task := range item.Tasks {
-			if task.Status == domain.TaskTodo && strings.TrimSpace(task.ClaimedBy) == "" {
+			if task.Status == domain.TaskTodo && contextTaskHandoffOwner(item.TaskHandoffs[task.ID]) == "" {
 				return true
 			}
 		}
 	}
 	return false
+}
+
+func contextTaskHandoffOwner(handoff *store.TaskHandoff) string {
+	if handoff == nil {
+		return ""
+	}
+	if owner := strings.TrimSpace(handoff.ReceivedBy); owner != "" {
+		return owner
+	}
+	return strings.TrimSpace(handoff.RequestedBy)
 }
 
 func runContext(dir string) error {
@@ -447,9 +462,9 @@ func renderContextForAgentSession(goals []contextGoal, decisions []domain.Decisi
 		}
 		for _, task := range actionable[:listed] {
 			status := string(task.Status)
-			if strings.TrimSpace(task.ClaimedBy) != "" {
+			if claimedBy := contextTaskHandoffOwner(item.TaskHandoffs[task.ID]); claimedBy != "" {
 				status = "claimed"
-				if agentSessionID != "" && strings.TrimSpace(task.ClaimedBy) == agentSessionID && task.Status != domain.TaskDone {
+				if agentSessionID != "" && claimedBy == agentSessionID && task.Status != domain.TaskDone {
 					status = "claimed by this agent session"
 				}
 			}

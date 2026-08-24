@@ -422,6 +422,50 @@ func (q *Queries) ListGoalHandoffs(ctx context.Context, goalID string) ([]GoalHa
 	return items, nil
 }
 
+const listOpenTaskHandoffsForGoal = `-- name: ListOpenTaskHandoffsForGoal :many
+SELECT th.id, th.task_id, th.requested_by, th.received_by,
+       th.requested_at, th.received_at, th.completed_report_at,
+       th.request_report, th.complete_report
+FROM task_handoffs AS th
+JOIN tasks AS t ON t.id = th.task_id
+WHERE t.goal_id = ?
+  AND th.completed_report_at IS NULL
+ORDER BY th.id
+`
+
+func (q *Queries) ListOpenTaskHandoffsForGoal(ctx context.Context, goalID string) ([]TaskHandoff, error) {
+	rows, err := q.db.QueryContext(ctx, listOpenTaskHandoffsForGoal, goalID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []TaskHandoff
+	for rows.Next() {
+		var i TaskHandoff
+		if err := rows.Scan(
+			&i.ID,
+			&i.TaskID,
+			&i.RequestedBy,
+			&i.ReceivedBy,
+			&i.RequestedAt,
+			&i.ReceivedAt,
+			&i.CompletedReportAt,
+			&i.RequestReport,
+			&i.CompleteReport,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listTaskAlternatives = `-- name: ListTaskAlternatives :many
 SELECT id, title, description, status, files
 FROM tasks

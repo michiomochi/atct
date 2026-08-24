@@ -535,6 +535,11 @@ func TestClaimGoalTakesOverDeadClaim(t *testing.T) {
 	if err := s.RegisterAgentSession(ctx, "dead-run", 999999); err != nil {
 		t.Fatalf("RegisterAgentSession: %v", err)
 	}
+	if _, err := s.DB().ExecContext(ctx, `
+		UPDATE agent_sessions SET pid = ?, started_at = ? WHERE id = ?
+	`, 999999, "dead", "dead-run"); err != nil {
+		t.Fatalf("dead session fixture update failed: %v", err)
+	}
 	if _, err := s.ClaimGoal(ctx, goal.ID, "dead-run"); err != nil {
 		t.Fatalf("ClaimGoal dead: %v", err)
 	}

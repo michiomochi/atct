@@ -44,6 +44,9 @@ func TestInboxAttentionTasksIncludeProjectIdentityPerTask(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := f.store.RegisterAgentSession(f.ctx, "other-run", 0); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := f.store.ClaimTask(f.ctx, otherTasks[0].ID, "other-run"); err != nil {
 		t.Fatal(err)
 	}
@@ -351,6 +354,9 @@ func newFixture(t *testing.T) *fixture {
 	var err error
 	f.tasks, err = f.store.DeclareTasks(f.ctx, f.goal.ID, "fixture-agent", "fixture-declare", []string{"needs", "now", "next"}, []string{"Resolve the prerequisite work.", "Continue the current implementation work.", "Complete the remaining follow-up work."})
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.store.RegisterAgentSession(f.ctx, "fixture-run", 0); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := f.store.ClaimTask(f.ctx, f.tasks[0].ID, "fixture-run"); err != nil {
@@ -2051,7 +2057,7 @@ func TestHTTPDecisionAndReleaseEndpointsValidateAndTransition(t *testing.T) {
 	if status != http.StatusOK {
 		t.Fatalf("release status = %d; body=%s", status, body)
 	}
-	var released domain.Task
+	var released httpapi.TaskView
 	if err := json.Unmarshal(body, &released); err != nil {
 		t.Fatal(err)
 	}

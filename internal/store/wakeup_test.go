@@ -619,15 +619,8 @@ func TestDetectWakeupCollectsStalledHandoffCandidates(t *testing.T) {
 	s := newTestStore(t)
 	taskIDs := addTestTasks(t, s, 5)
 	const claimSessionID = "stalled-handoff-claim"
-	addLiveTaskClaim(t, s, taskIDs[0], claimSessionID)
-	for _, taskID := range taskIDs[1:] {
-		if _, err := s.ClaimTask(ctx, taskID, claimSessionID); err != nil {
-			t.Fatalf("ClaimTask %s: %v", taskID, err)
-		}
-	}
-	if err := s.RegisterAgentSession(ctx, "stalled-handoff-requester", os.Getpid()); err != nil {
-		t.Fatalf("RegisterAgentSession requester: %v", err)
-	}
+	addLiveTaskClaim(t, s, taskIDs[3], claimSessionID)
+	addLiveParentGoalClaim(t, s, taskIDs[0], "stalled-handoff-requester")
 	if err := s.RegisterAgentSession(ctx, "stalled-handoff-receiver", os.Getpid()); err != nil {
 		t.Fatalf("RegisterAgentSession receiver: %v", err)
 	}
@@ -691,6 +684,10 @@ func TestDetectWakeupExcludesCommanderClaimAndKeepsUndelegatedExecutorClaim(t *t
 	const commanderSessionID = "commander-session"
 	const executorSessionID = "executor-session"
 
+	if err := s.RegisterAgentSession(ctx, commanderSessionID, os.Getpid()); err != nil {
+		t.Fatalf("RegisterAgentSession commander: %v", err)
+	}
+	addTestAgentSession(t, s, executorSessionID)
 	if _, err := s.ClaimProject(ctx, projectID, commanderSessionID); err != nil {
 		t.Fatalf("ClaimProject: %v", err)
 	}
@@ -700,11 +697,10 @@ func TestDetectWakeupExcludesCommanderClaimAndKeepsUndelegatedExecutorClaim(t *t
 	if _, err := s.ClaimTask(ctx, taskIDs[1], executorSessionID); err != nil {
 		t.Fatalf("ClaimTask executor: %v", err)
 	}
-	if _, err := s.ClaimTask(ctx, taskIDs[2], executorSessionID); err != nil {
-		t.Fatalf("ClaimTask delegated: %v", err)
+	addLiveParentGoalClaim(t, s, taskIDs[0], commanderSessionID)
+	if _, err := s.RequestTaskHandoff(ctx, "commander-test-handoff", taskIDs[2], commanderSessionID, ""); err != nil {
+		t.Fatalf("RequestTaskHandoff delegated: %v", err)
 	}
-	addTestAgentSession(t, s, "requester")
-	addRequestOnlyTaskHandoff(t, s, "commander-test-handoff", taskIDs[2], "requester")
 
 	state, err := s.DetectWakeup(ctx, projectID)
 	if err != nil {
@@ -801,6 +797,7 @@ func TestDetectWakeupCollectsUnappliedDecisionsAndStaleClaims(t *testing.T) {
 		t.Fatalf("ApplyExpiredDefaults: %v", err)
 	}
 
+	addTestAgentSession(t, s, "missing-session")
 	if _, err := s.ClaimTask(ctx, tasks[2].ID, "missing-session"); err != nil {
 		t.Fatalf("ClaimTask stale: %v", err)
 	}

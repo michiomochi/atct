@@ -322,6 +322,9 @@ func TestPendingCommandReportsStaleClaimSeparatelyFromOwnClaim(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DeclareTasks own: %v", err)
 	}
+	if err := s.RegisterAgentSession(ctx, "own-run", 0); err != nil {
+		t.Fatalf("RegisterAgentSession own: %v", err)
+	}
 	if _, err := s.ClaimTask(ctx, ownTasks[0].ID, "own-run"); err != nil {
 		t.Fatalf("ClaimTask own: %v", err)
 	}
@@ -1238,6 +1241,9 @@ func TestReleaseTaskReturnsDoingTaskToTodo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DeclareTasks: %v", err)
 	}
+	if err := s.RegisterAgentSession(ctx, "stale-run", 0); err != nil {
+		t.Fatalf("RegisterAgentSession: %v", err)
+	}
 	if _, err := s.ClaimTask(ctx, tasks[0].ID, "stale-run"); err != nil {
 		t.Fatalf("ClaimTask: %v", err)
 	}
@@ -1251,8 +1257,12 @@ func TestReleaseTaskReturnsDoingTaskToTodo(t *testing.T) {
 	if released.Status != domain.TaskTodo {
 		t.Fatalf("released task status = %s, want %s", released.Status, domain.TaskTodo)
 	}
-	if released.ClaimedBy != "" {
-		t.Fatalf("released task claimed_by = %q, want empty", released.ClaimedBy)
+	handoffs, err := s.ListOpenTaskHandoffsForGoal(ctx, goal.ID)
+	if err != nil {
+		t.Fatalf("ListOpenTaskHandoffsForGoal: %v", err)
+	}
+	if handoffs[released.ID] != nil {
+		t.Fatalf("released task still has an open handoff: %+v", handoffs[released.ID])
 	}
 	if err := s.Close(); err != nil {
 		t.Fatalf("Store.Close: %v", err)
@@ -1274,6 +1284,9 @@ func TestPendingCommandPutsUnstartedTasksBeforeOwnClaim(t *testing.T) {
 	claimedTasks, err := s.DeclareTasks(ctx, claimedGoal.ID, "agent", "held-work", []string{"held task"}, []string{"Continue the held task."})
 	if err != nil {
 		t.Fatalf("DeclareTasks claimed: %v", err)
+	}
+	if err := s.RegisterAgentSession(ctx, "run-lock", 0); err != nil {
+		t.Fatalf("RegisterAgentSession: %v", err)
 	}
 	if _, err := s.ClaimTask(ctx, claimedTasks[0].ID, "run-lock"); err != nil {
 		t.Fatalf("ClaimTask: %v", err)
@@ -1449,6 +1462,9 @@ func TestPendingCommandOmitsAvailableWorkTailWhenCountIsZero(t *testing.T) {
 	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "held-only", []string{"held task"}, []string{"Continue the held task."})
 	if err != nil {
 		t.Fatalf("DeclareTasks: %v", err)
+	}
+	if err := s.RegisterAgentSession(ctx, "run-held-only", 0); err != nil {
+		t.Fatalf("RegisterAgentSession: %v", err)
 	}
 	if _, err := s.ClaimTask(ctx, tasks[0].ID, "run-held-only"); err != nil {
 		t.Fatalf("ClaimTask: %v", err)
@@ -1628,6 +1644,9 @@ func TestPendingCommandCountsUnstartedTasksOnlyInSelectedProject(t *testing.T) {
 	claimedTasks, err := s.DeclareTasks(ctx, claimedGoal.ID, "agent", "current-held", []string{"current held task"}, []string{"Continue current held work."})
 	if err != nil {
 		t.Fatalf("DeclareTasks claimed: %v", err)
+	}
+	if err := s.RegisterAgentSession(ctx, "run-current", 0); err != nil {
+		t.Fatalf("RegisterAgentSession: %v", err)
 	}
 	if _, err := s.ClaimTask(ctx, claimedTasks[0].ID, "run-current"); err != nil {
 		t.Fatalf("ClaimTask: %v", err)
