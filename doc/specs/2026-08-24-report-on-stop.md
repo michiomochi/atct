@@ -100,6 +100,40 @@ Stop のたびに数え直して催促する」振る舞いで、**それは wak
 `tests/wrapper_test.bash` の `test_hooks_json_has_no_stop_section` は書き換える。
 **「Stop が無いこと」ではなく「Stop が報告以外のことをしないこと」を検査する。**
 
+### 削除した理由が、復活を支持している
+
+`aa6a9eb`（2026-08-22）のコミットメッセージ:
+
+> **It can go because it never knew anything of its own:** it printed `atct pending`,
+> and `pending` and the detection events read the same `WakeupState`.
+
+**古い Stop は、他の経路で得られる情報を繰り返していただけだった。**だから消せた。
+
+**新しい Stop は逆である。**「このセッションが終わる」は**フックにしか分からない。**
+wakeup も検知も、セッションの終わりを知らない。**繰り返しではない。**
+
+同じメッセージが当時の害も書いている:
+
+> The Stop hook fired in every space the plugin reached, **including a subcommander's**,
+> where a notice meant for the commander started design work instead.
+
+**`atct_role` がこれを解く。**executor 以外では何もしない。
+
+### 入力の形も、複数回発火も、既に分かっていた
+
+削除前の `plugin/hooks/stop` にこうあった。
+
+```bash
+INPUT="$(/bin/cat)"
+STOP_HOOK_ACTIVE_RE='"stop_hook_active"[[:space:]]*:[[:space:]]*true'
+if [[ "$INPUT" =~ $STOP_HOOK_ACTIVE_RE ]]; then
+  exit 0
+fi
+```
+
+**stdin で JSON を受け取る。複数回発火する**ので `stop_hook_active` で早期に抜ける。
+**この 2 つを「未検証」に挙げたが、答えは自分たちのコードにあった。**
+
 ## 決定 2: 宛先は `claimed_by` から引く。herdr を知らない
 
 **atct は pane 名を知らないし、知る必要もない。**
@@ -155,9 +189,8 @@ atct handoff: task <id> reported complete
 ## 未検証
 
 - **Codex の Stop hook が何を渡してくるか。**`crit` が使っていることは確かめた
-  （`hooks.json` に `Stop` がある）が、**入力の形は見ていない。**Claude と同じ JSON か
-- **Stop hook が複数回発火するか。**1 回の作業で何度も鳴るなら、`completed_report_at` を
-  何度も上書きすることになる
+  （`hooks.json` に `Stop` がある）が、**入力の形は見ていない。**Claude と同じ JSON か。
+  **Claude 側は分かった**（削除前の実装が stdin の JSON を読み、`stop_hook_active` を見ている）
 - ~~**executor が Stop 時に atct へ届くか。**~~ **解決した（2026-08-24 追記）。**
   PATH は要らない。`hooks/session-start` が既に `ATCT_BIN="$HOOK_DIR/../bin/atct"` で
   **フック自身の位置から相対にバイナリを引いている。**Codex 側のプラグインにも
