@@ -17,7 +17,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-func TestRegisterPublishesSeventeenToolsWithFlexibleOutputSchema(t *testing.T) {
+func TestRegisterPublishesTwentyToolsWithFlexibleOutputSchema(t *testing.T) {
 	ctx := context.Background()
 	socketPath := startSchemaTestDaemon(t)
 	server := mcp.NewServer(&mcp.Implementation{Name: "atct-test", Version: "test"}, nil)
@@ -59,6 +59,9 @@ func TestRegisterPublishesSeventeenToolsWithFlexibleOutputSchema(t *testing.T) {
 		"atct_project_claim":         true,
 		"atct_project_release":       true,
 		"atct_role":                  true,
+		"atct_handoff_request":       true,
+		"atct_handoff_receive":       true,
+		"atct_handoff_complete":      true,
 	}
 	if len(got.Tools) != len(wantNames) {
 		t.Fatalf("tool count = %d, want %d", len(got.Tools), len(wantNames))
@@ -118,6 +121,15 @@ func TestRegisterPublishesSeventeenToolsWithFlexibleOutputSchema(t *testing.T) {
 		}},
 		{name: "atct_task_claim", args: map[string]any{"task_id": "task-1"}},
 		{name: "atct_task_update", args: map[string]any{"task_id": "task-1", "status": "doing"}},
+		{name: "atct_handoff_request", args: map[string]any{
+			"handoff_id": "handoff-1", "task_id": "task-1", "requested_by": "requester",
+		}},
+		{name: "atct_handoff_receive", args: map[string]any{
+			"handoff_id": "handoff-1", "task_id": "task-1", "received_by": "receiver",
+		}},
+		{name: "atct_handoff_complete", args: map[string]any{
+			"handoff_id": "handoff-1", "task_id": "task-1",
+		}},
 		{name: "atct_decision_ask", args: map[string]any{
 			"goal_id": "goal-1", "question": "question", "options": []any{}, "wait_ms": 0,
 		}},

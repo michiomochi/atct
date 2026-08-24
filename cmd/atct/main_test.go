@@ -549,3 +549,16 @@ func acceptDaemonTestConnections(listener net.Listener) {
 		_ = conn.Close()
 	}
 }
+
+func TestParseHandoffComplete(t *testing.T) {
+	cfg, err := parseArgs([]string{"handoff", "complete", "handoff-1", "task-1"})
+	if err != nil {
+		t.Fatalf("parseArgs: %v", err)
+	}
+	if cfg.subcommand != "handoff" || cfg.handoffAction != "complete" {
+		t.Fatalf("handoff command = %#v, want complete", cfg)
+	}
+	if cfg.handoffID != "handoff-1" || cfg.handoffTaskID != "task-1" {
+		t.Fatalf("handoff identifiers = %q, %q; want handoff-1, task-1", cfg.handoffID, cfg.handoffTaskID)
+	}
+}
