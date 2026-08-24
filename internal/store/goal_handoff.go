@@ -94,6 +94,7 @@ func (s *Store) requireLiveGoalClaim(ctx context.Context, goalID string) error {
 			return nil
 		}
 	}
+
 	return fmt.Errorf("%w: %s", ErrGoalHandoffGoalUnclaimed, goalID)
 }
 
@@ -137,14 +138,47 @@ func (s *Store) reclaimOpenGoalHandoff(ctx context.Context, handoffID, goalID st
 	return nil
 }
 
+// openGoalHandoff returns the goal's single received, incomplete handoff.
+// Request-only handoffs are not claims and therefore do not authorize goal
+// release.
+func (s *Store) openGoalHandoff(ctx context.Context, goalID string) (*GoalHandoff, error) {
+	handoffs, err := s.ListGoalHandoffs(ctx, goalID)
+	if err != nil {
+		return nil, err
+	}
+
+	var open *GoalHandoff
+	for i := range handoffs {
+		if handoffs[i].ReceivedAt == nil || handoffs[i].CompletedReportAt != nil {
+			continue
+		}
+		if open != nil {
+			return nil, fmt.Errorf("%w: goal %q has multiple open handoffs", ErrGoalHandoffAmbiguous, goalID)
+		}
+		candidate := handoffs[i]
+		open = &candidate
+	}
+	return open, nil
+}
+
 // RequestGoalHandoff records the request side of a handoff. It requires a
 // live claim on the target goal; receipt and completion are separate calls.
 func (s *Store) RequestGoalHandoff(ctx context.Context, handoffID, goalID, requestedBy string, requestReport string) (GoalHandoff, error) {
+	return s.requestGoalHandoff(ctx, handoffID, goalID, requestedBy, requestReport, true)
+}
+
+func (s *Store) requestGoalHandoffForClaim(ctx context.Context, handoffID, goalID, requestedBy string) (GoalHandoff, error) {
+	return s.requestGoalHandoff(ctx, handoffID, goalID, requestedBy, "", false)
+}
+
+func (s *Store) requestGoalHandoff(ctx context.Context, handoffID, goalID, requestedBy, requestReport string, requireLiveClaim bool) (GoalHandoff, error) {
 	if err := s.ensureGoalHandoffGoal(ctx, handoffID, goalID); err != nil {
 		return GoalHandoff{}, err
 	}
-	if err := s.requireLiveGoalClaim(ctx, goalID); err != nil {
-		return GoalHandoff{}, err
+	if requireLiveClaim {
+		if err := s.requireLiveGoalClaim(ctx, goalID); err != nil {
+			return GoalHandoff{}, err
+		}
 	}
 	if err := s.reclaimOpenGoalHandoff(ctx, handoffID, goalID); err != nil {
 		return GoalHandoff{}, err

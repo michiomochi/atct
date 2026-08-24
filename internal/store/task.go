@@ -356,9 +356,14 @@ func (s *Store) ListOpenTasksClaimedBy(ctx context.Context, goalID, agentSession
 func (s *Store) UpdateTask(ctx context.Context, taskID string, status domain.TaskStatus, agentSessionID string) (domain.Task, error) {
 	agentSessionID = strings.TrimSpace(agentSessionID)
 	var releaseClaim string
+	var releaseHandoff *TaskHandoff
 	var err error
 	if status == domain.TaskTodo || status == domain.TaskDone || status == domain.TaskDropped {
-		releaseClaim, err = s.authorizeTaskStatusRelease(ctx, taskID, status, agentSessionID)
+		releaseHandoff, err = s.openTaskHandoff(ctx, taskID)
+		if err != nil {
+			return domain.Task{}, err
+		}
+		releaseClaim, err = s.authorizeTaskStatusRelease(ctx, taskID, status, agentSessionID, releaseHandoff)
 		if err != nil {
 			return domain.Task{}, err
 		}
@@ -383,7 +388,13 @@ func (s *Store) UpdateTask(ctx context.Context, taskID string, status domain.Tas
 
 	now := time.Now().UTC().Format(time.RFC3339)
 	var res sql.Result
-	if status == domain.TaskTodo || status == domain.TaskDone || status == domain.TaskDropped {
+	if releaseHandoff != nil {
+		res, err = q.UpdateTaskStatus(ctx, sqlcgen.UpdateTaskStatusParams{
+			Status:    string(status),
+			UpdatedAt: now,
+			ID:        taskID,
+		})
+	} else if status == domain.TaskTodo || status == domain.TaskDone || status == domain.TaskDropped {
 		res, err = q.UpdateTaskStatusAndReleaseClaim(ctx, sqlcgen.UpdateTaskStatusAndReleaseClaimParams{
 			Status:    string(status),
 			UpdatedAt: now,
@@ -415,6 +426,11 @@ func (s *Store) UpdateTask(ctx context.Context, taskID string, status domain.Tas
 	if err := tx.Commit(); err != nil {
 		return domain.Task{}, fmt.Errorf("commit: %w", err)
 	}
+	if releaseHandoff != nil {
+		if _, err := s.CompleteTaskHandoff(ctx, releaseHandoff.ID, taskID, ""); err != nil {
+			return domain.Task{}, fmt.Errorf("complete task handoff after release: %w", err)
+		}
+	}
 
 	goalID, err := taskQueries(s).GetTaskGoalID(ctx, taskID)
 	if err != nil {
@@ -432,13 +448,27 @@ func (s *Store) UpdateTask(ctx context.Context, taskID string, status domain.Tas
 	return domain.Task{}, fmt.Errorf("%w after update: %s", ErrTaskNotFound, taskID)
 }
 
-func (s *Store) authorizeTaskStatusRelease(ctx context.Context, taskID string, status domain.TaskStatus, agentSessionID string) (string, error) {
+func (s *Store) authorizeTaskStatusRelease(ctx context.Context, taskID string, status domain.TaskStatus, agentSessionID string, releaseHandoff *TaskHandoff) (string, error) {
 	task, err := taskQueries(s).GetTaskForClaim(ctx, taskID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", fmt.Errorf("%w: %s", ErrTaskNotFound, taskID)
 	}
 	if err != nil {
 		return "", fmt.Errorf("lookup task claim: %w", err)
+	}
+
+	if releaseHandoff != nil {
+		ownerID := strings.TrimSpace(releaseHandoff.ReceivedBy)
+		if ownerID == agentSessionID {
+			return "", nil
+		}
+		if status == domain.TaskDone || status == domain.TaskDropped {
+			return "", fmt.Errorf("task %q has a work lock held by another agent session; only the lock holder can set it to %s; if that session is no longer running, return it to todo with atct_task_update, then acquire the work lock with atct_task_claim before retrying", taskID, status)
+		}
+		if ownerID == "" || claimIsRunning(ctx, s, ownerID) {
+			return "", fmt.Errorf("task %q has a work lock held by another agent session that is still running; wait for it to finish or stop, then return it to todo with atct_task_update and acquire the work lock with atct_task_claim", taskID)
+		}
+		return "", nil
 	}
 
 	claimedBy := strings.TrimSpace(task.ClaimedBy)
@@ -478,13 +508,7 @@ func taskClaimMatches(tasks []domain.Task, taskID, claimedBy string) bool {
 
 // ClaimTask atomically assigns a task to one agent session.
 func (s *Store) ClaimTask(ctx context.Context, taskID, agentSessionID string) (domain.Task, error) {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return domain.Task{}, fmt.Errorf("begin claim tx: %w", err)
-	}
-	defer tx.Rollback()
-
-	q := sqlcgen.New(tx)
+	q := taskQueries(s)
 	task, err := q.GetTaskForClaim(ctx, taskID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -495,8 +519,10 @@ func (s *Store) ClaimTask(ctx context.Context, taskID, agentSessionID string) (d
 	if task.GoalStatus != string(domain.GoalActive) {
 		return domain.Task{}, goalNotActiveError(task.GoalID, domain.GoalStatus(task.GoalStatus), "claiming", "claim")
 	}
-	if task.ClaimedBy != "" {
-		return domain.Task{}, fmt.Errorf("%w: %s", ErrTaskAlreadyClaimed, taskID)
+
+	handoffID := uuid.NewString()
+	if err := s.reclaimOpenTaskHandoff(ctx, handoffID, taskID); err != nil {
+		return domain.Task{}, mapTaskClaimHandoffError(taskID, err)
 	}
 
 	files, err := unmarshalTaskFiles(task.Files)
@@ -509,37 +535,20 @@ func (s *Store) ClaimTask(ctx context.Context, taskID, agentSessionID string) (d
 		}
 	}
 
-	now := time.Now().UTC().Format(time.RFC3339)
-	res, err := q.ClaimTask(ctx, sqlcgen.ClaimTaskParams{
-		ClaimedBy: agentSessionID,
-		ClaimedAt: sql.NullString{String: now, Valid: true},
-		UpdatedAt: now,
-		ID:        taskID,
-	})
-	if err != nil {
-		return domain.Task{}, fmt.Errorf("claim task: %w", err)
+	if _, err := s.requestTaskHandoffForClaim(ctx, handoffID, taskID, agentSessionID); err != nil {
+		return domain.Task{}, mapTaskClaimHandoffError(taskID, err)
 	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return domain.Task{}, fmt.Errorf("claim rows affected: %w", err)
-	}
-	if n == 0 {
-		currentClaim, err := q.GetTaskClaimedBy(ctx, taskID)
-		if errors.Is(err, sql.ErrNoRows) {
-			return domain.Task{}, fmt.Errorf("%w: %s", ErrTaskNotFound, taskID)
-		}
-		if err != nil {
-			return domain.Task{}, fmt.Errorf("lookup task claim: %w", err)
-		}
-		if currentClaim != "" {
-			return domain.Task{}, fmt.Errorf("%w: %s", ErrTaskAlreadyClaimed, taskID)
-		}
-		return domain.Task{}, fmt.Errorf("claim task affected no rows: %s", taskID)
-	}
-	if err := tx.Commit(); err != nil {
-		return domain.Task{}, fmt.Errorf("commit claim: %w", err)
+	if _, err := s.ReceiveTaskHandoff(ctx, handoffID, taskID, agentSessionID); err != nil {
+		return domain.Task{}, fmt.Errorf("receive task claim handoff: %w", err)
 	}
 	return s.loadTask(ctx, taskID)
+}
+
+func mapTaskClaimHandoffError(taskID string, err error) error {
+	if errors.Is(err, ErrTaskHandoffAlreadyOpen) || strings.Contains(strings.ToLower(err.Error()), "unique constraint failed") {
+		return fmt.Errorf("%w: %s", ErrTaskAlreadyClaimed, taskID)
+	}
+	return err
 }
 
 type taskClaimConflictInfo struct {
@@ -569,7 +578,6 @@ func rejectTaskFileConflict(ctx context.Context, q *sqlcgen.Queries, goalID, tas
 			ID: row.ID, Title: row.Title, Files: otherFiles,
 		})
 	}
-
 	for _, other := range claimedTasks {
 		if file, ok := firstOverlappingFile(files, other.Files); ok {
 			candidates, omitted, err := taskFileConflictCandidates(ctx, q, goalID, taskID, claimedTasks)

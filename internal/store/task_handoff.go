@@ -94,6 +94,7 @@ func (s *Store) requireLiveTaskClaim(ctx context.Context, taskID string) error {
 			return nil
 		}
 	}
+
 	return fmt.Errorf("%w: %s", ErrTaskHandoffTaskUnclaimed, taskID)
 }
 
@@ -137,14 +138,48 @@ func (s *Store) reclaimOpenTaskHandoff(ctx context.Context, handoffID, taskID st
 	return nil
 }
 
+// openTaskHandoff returns the task's single received, incomplete handoff.
+// Request-only handoffs are not claims and therefore do not authorize task
+// release. The partial unique index should make multiple open rows
+// impossible, but keep the ambiguity check at this boundary as well.
+func (s *Store) openTaskHandoff(ctx context.Context, taskID string) (*TaskHandoff, error) {
+	handoffs, err := s.ListTaskHandoffs(ctx, taskID)
+	if err != nil {
+		return nil, err
+	}
+
+	var open *TaskHandoff
+	for i := range handoffs {
+		if handoffs[i].ReceivedAt == nil || handoffs[i].CompletedReportAt != nil {
+			continue
+		}
+		if open != nil {
+			return nil, fmt.Errorf("%w: task %q has multiple open handoffs", ErrTaskHandoffAmbiguous, taskID)
+		}
+		candidate := handoffs[i]
+		open = &candidate
+	}
+	return open, nil
+}
+
 // RequestTaskHandoff records the request side of a handoff. It only writes
 // request columns; a receipt or completion report is a separate call.
 func (s *Store) RequestTaskHandoff(ctx context.Context, handoffID, taskID, requestedBy string, requestReport string) (TaskHandoff, error) {
+	return s.requestTaskHandoff(ctx, handoffID, taskID, requestedBy, requestReport, true)
+}
+
+func (s *Store) requestTaskHandoffForClaim(ctx context.Context, handoffID, taskID, requestedBy string) (TaskHandoff, error) {
+	return s.requestTaskHandoff(ctx, handoffID, taskID, requestedBy, "", false)
+}
+
+func (s *Store) requestTaskHandoff(ctx context.Context, handoffID, taskID, requestedBy, requestReport string, requireLiveClaim bool) (TaskHandoff, error) {
 	if err := s.ensureTaskHandoffTask(ctx, handoffID, taskID); err != nil {
 		return TaskHandoff{}, err
 	}
-	if err := s.requireLiveTaskClaim(ctx, taskID); err != nil {
-		return TaskHandoff{}, err
+	if requireLiveClaim {
+		if err := s.requireLiveTaskClaim(ctx, taskID); err != nil {
+			return TaskHandoff{}, err
+		}
 	}
 	if err := s.reclaimOpenTaskHandoff(ctx, handoffID, taskID); err != nil {
 		return TaskHandoff{}, err

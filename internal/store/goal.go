@@ -177,58 +177,34 @@ func (s *Store) ClaimGoal(ctx context.Context, goalID, agentSessionID string) (d
 	}
 	agentSessionID = strings.TrimSpace(agentSessionID)
 
-	currentGoal, err := s.GetGoal(ctx, goalID)
-	if err != nil {
+	if agentSessionID == "" {
+		if err := s.ReleaseGoal(ctx, goalID); err != nil {
+			return domain.Goal{}, err
+		}
+		return s.GetGoal(ctx, goalID)
+	}
+	if _, err := s.GetGoal(ctx, goalID); err != nil {
 		return domain.Goal{}, err
 	}
-	currentClaim := strings.TrimSpace(currentGoal.ClaimedBy)
-	if agentSessionID != "" && currentClaim != "" && currentClaim != agentSessionID && claimIsRunning(ctx, s, currentClaim) {
-		return domain.Goal{}, fmt.Errorf("%w: %s", ErrGoalAlreadyClaimed, goalID)
-	}
 
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return domain.Goal{}, fmt.Errorf("begin goal claim tx: %w", err)
+	handoffID := uuid.NewString()
+	if err := s.reclaimOpenGoalHandoff(ctx, handoffID, goalID); err != nil {
+		return domain.Goal{}, mapGoalClaimHandoffError(goalID, err)
 	}
-	defer tx.Rollback()
-
-	q := sqlcgen.New(tx)
-	goal, err := q.GetGoal(ctx, goalID)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return domain.Goal{}, fmt.Errorf("%w: %s", ErrGoalNotFound, goalID)
-		}
-		return domain.Goal{}, fmt.Errorf("lookup goal claim: %w", err)
+	if _, err := s.requestGoalHandoffForClaim(ctx, handoffID, goalID, agentSessionID); err != nil {
+		return domain.Goal{}, mapGoalClaimHandoffError(goalID, err)
 	}
-	if agentSessionID != "" && strings.TrimSpace(goal.ClaimedBy) != currentClaim && strings.TrimSpace(goal.ClaimedBy) != "" {
-		return domain.Goal{}, fmt.Errorf("%w: %s", ErrGoalAlreadyClaimed, goalID)
-	}
-
-	now := time.Now().UTC().Format(time.RFC3339)
-	claimedAt := sql.NullString{}
-	if agentSessionID != "" {
-		claimedAt = sql.NullString{String: now, Valid: true}
-	}
-	result, err := q.ClaimGoal(ctx, sqlcgen.ClaimGoalParams{
-		ClaimedBy: agentSessionID,
-		ClaimedAt: claimedAt,
-		UpdatedAt: now,
-		ID:        goalID,
-	})
-	if err != nil {
-		return domain.Goal{}, fmt.Errorf("claim goal: %w", err)
-	}
-	affected, err := result.RowsAffected()
-	if err != nil {
-		return domain.Goal{}, fmt.Errorf("check claimed goal: %w", err)
-	}
-	if affected == 0 {
-		return domain.Goal{}, fmt.Errorf("%w: %s", ErrGoalNotFound, goalID)
-	}
-	if err := tx.Commit(); err != nil {
-		return domain.Goal{}, fmt.Errorf("commit goal claim: %w", err)
+	if _, err := s.ReceiveGoalHandoff(ctx, handoffID, goalID, agentSessionID); err != nil {
+		return domain.Goal{}, fmt.Errorf("receive goal claim handoff: %w", err)
 	}
 	return s.GetGoal(ctx, goalID)
+}
+
+func mapGoalClaimHandoffError(goalID string, err error) error {
+	if errors.Is(err, ErrGoalHandoffAlreadyOpen) || strings.Contains(strings.ToLower(err.Error()), "unique constraint failed") {
+		return fmt.Errorf("%w: %s", ErrGoalAlreadyClaimed, goalID)
+	}
+	return err
 }
 
 // ReleaseGoal clears a goal's claim.
@@ -236,6 +212,16 @@ func (s *Store) ReleaseGoal(ctx context.Context, goalID string) error {
 	goalID = strings.TrimSpace(goalID)
 	if goalID == "" {
 		return fmt.Errorf("%w: empty id", ErrGoalNotFound)
+	}
+	openHandoff, err := s.openGoalHandoff(ctx, goalID)
+	if err != nil {
+		return err
+	}
+	if openHandoff != nil {
+		if _, err := s.CompleteGoalHandoff(ctx, openHandoff.ID, goalID, ""); err != nil {
+			return fmt.Errorf("complete goal handoff after release: %w", err)
+		}
+		return nil
 	}
 
 	tx, err := s.db.BeginTx(ctx, nil)

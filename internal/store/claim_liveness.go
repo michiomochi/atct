@@ -28,10 +28,28 @@ func ClaimLiveness(ctx context.Context, s *Store, projectID string) (running []d
 			return nil, nil, err
 		}
 		for _, task := range tasks {
-			if strings.TrimSpace(task.ClaimedBy) == "" {
+			handoffs, err := s.ListTaskHandoffs(ctx, task.ID)
+			if err != nil {
+				return nil, nil, err
+			}
+			var agentSessionID string
+			open := false
+			for _, handoff := range handoffs {
+				if handoff.CompletedReportAt != nil {
+					continue
+				}
+				open = true
+				agentSessionID = strings.TrimSpace(handoff.ReceivedBy)
+				if agentSessionID == "" {
+					// Until receipt, requested_by is the only session identity available.
+					agentSessionID = strings.TrimSpace(handoff.RequestedBy)
+				}
+				break
+			}
+			if !open {
 				continue
 			}
-			if claimIsRunning(ctx, s, task.ClaimedBy) {
+			if claimIsRunning(ctx, s, agentSessionID) {
 				running = append(running, task)
 			} else {
 				stale = append(stale, task)
@@ -55,10 +73,28 @@ func GoalClaimLiveness(ctx context.Context, s *Store, projectID string) (running
 		return nil, nil, err
 	}
 	for _, goal := range goals {
-		if strings.TrimSpace(goal.ClaimedBy) == "" {
+		handoffs, err := s.ListGoalHandoffs(ctx, goal.ID)
+		if err != nil {
+			return nil, nil, err
+		}
+		var agentSessionID string
+		open := false
+		for _, handoff := range handoffs {
+			if handoff.CompletedReportAt != nil {
+				continue
+			}
+			open = true
+			agentSessionID = strings.TrimSpace(handoff.ReceivedBy)
+			if agentSessionID == "" {
+				// Until receipt, requested_by is the only session identity available.
+				agentSessionID = strings.TrimSpace(handoff.RequestedBy)
+			}
+			break
+		}
+		if !open {
 			continue
 		}
-		if claimIsRunning(ctx, s, goal.ClaimedBy) {
+		if claimIsRunning(ctx, s, agentSessionID) {
 			running = append(running, goal)
 		} else {
 			stale = append(stale, goal)
