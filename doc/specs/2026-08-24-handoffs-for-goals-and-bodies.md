@@ -82,6 +82,51 @@ claim が無くなれば、**自分でやる場合は `requested_by == received_
 さらに `claim_undelegated` の検知が不要になる——**claim と handoff を突き合わせる
 必要が無くなる**ためである。今日その突き合わせで 3 回壊れた。
 
+## 3.5 表の形（2026-08-24 確定）
+
+人間の指示: 「**pkey 用の id を別でつくって**」「`received_cwd` は不要」。
+
+```
+goal_handoffs                      task_handoffs
+  id            PK                   id            PK
+  goal_id       → goals(id)          task_id       → tasks(id)
+  requested_by  → agent_sessions     requested_by  → agent_sessions
+  received_by   → agent_sessions     received_by   → agent_sessions
+  requested_at                       requested_at
+  received_at                        received_at
+  completed_report_at                completed_report_at
+  request_report   TEXT NULL 可      request_report   TEXT NULL 可
+  complete_report  TEXT NULL 可      complete_report  TEXT NULL 可
+```
+
+**両者は同じ形にする。**違うのは参照先の列名だけである。
+
+### id を別に持つ理由
+
+**`task_id` を主キーにすると 1 タスクに 1 行だけ**になり、**誰が持っていたかの履歴が消える。**
+
+実測（2026-08-24）: タスク `c4c5b223` は executor-13 が着手し、圧縮 5 回で pane を
+作り直したあと executor-14 が引き継いだ。**同じタスクを 2 人が順に持った。**
+この日 pane の作り直しは 5 回あり、珍しいことではない。
+
+**排他は主キーではなく部分インデックスで守る。**
+
+```sql
+CREATE UNIQUE INDEX ... ON task_handoffs(task_id) WHERE completed_report_at IS NULL
+```
+
+**未完了は 1 タスクに 1 つまでを DB が保証しつつ、完了した行は残る。**
+
+### `received_cwd` を作らない理由
+
+commander は「受領時の cwd を記録し、Stop hook が自分の cwd で引く」案を出したが、
+**executor は作業中に `cd` する。**Stop 時の cwd が受領時と同じ保証が無い。
+
+**したがって Stop hook が「どの handoff を完了させるか」を知る手段は未解決である。**
+`agent_sessions` は `pid` を持つので、**executor の MCP プロセスが死んだことを daemon が
+検知できれば Stop hook 自体が不要**かもしれない。`ClaimLiveness` が既に近いことをしている。
+**別に決める。**
+
 ## 4. 流儀を揃える
 
 ```
