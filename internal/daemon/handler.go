@@ -717,7 +717,13 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, err
 		}
-		handoff, err := d.store.CompleteTaskHandoff(ctx, p.HandoffID, p.TaskID, p.CompleteReport)
+		var handoff store.TaskHandoff
+		var err error
+		if p.HandoffID == "" {
+			handoff, err = d.store.CompleteTaskHandoffForTask(ctx, p.TaskID, p.CompleteReport)
+		} else {
+			handoff, err = d.store.CompleteTaskHandoff(ctx, p.HandoffID, p.TaskID, p.CompleteReport)
+		}
 		return marshal(handoff, err)
 
 	case "goal.handoff.request":
@@ -760,7 +766,13 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, err
 		}
-		handoff, err := d.store.CompleteGoalHandoff(ctx, p.HandoffID, p.GoalID, p.CompleteReport)
+		var handoff store.GoalHandoff
+		var err error
+		if p.HandoffID == "" {
+			handoff, err = d.store.CompleteGoalHandoffForGoal(ctx, p.GoalID, p.CompleteReport)
+		} else {
+			handoff, err = d.store.CompleteGoalHandoff(ctx, p.HandoffID, p.GoalID, p.CompleteReport)
+		}
 		return marshal(handoff, err)
 
 	case "decision.ask":

@@ -234,6 +234,54 @@ func TestTaskHandoffReceiveByTask(t *testing.T) {
 	}
 }
 
+func TestTaskHandoffCompleteByTask(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	taskID := addTestTasks(t, s, 1)[0]
+	addTestAgentSession(t, s, "complete-by-task-requester")
+	addTestAgentSession(t, s, "complete-by-task-receiver")
+
+	addRequestOnlyTaskHandoff(t, s, "complete-by-task", taskID, "complete-by-task-requester")
+	requested, err := s.GetTaskHandoff(ctx, "complete-by-task")
+	if err != nil {
+		t.Fatalf("GetTaskHandoff failed: %v", err)
+	}
+	if _, err := s.ReceiveTaskHandoff(ctx, requested.ID, taskID, "complete-by-task-receiver"); err != nil {
+		t.Fatalf("ReceiveTaskHandoff failed: %v", err)
+	}
+
+	completed, err := s.CompleteTaskHandoffForTask(ctx, taskID, "completed by task ID")
+	if err != nil {
+		t.Fatalf("CompleteTaskHandoffForTask failed: %v", err)
+	}
+	if completed.ID != requested.ID || completed.TaskID != taskID || completed.CompletedReportAt == nil {
+		t.Fatalf("unexpected completed handoff: %+v", completed)
+	}
+	if completed.CompleteReport != "completed by task ID" {
+		t.Fatalf("complete report = %q, want task-ID completion report", completed.CompleteReport)
+	}
+}
+
+func TestTaskHandoffCompleteByTaskRejectsMultipleReceivedIncomplete(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	taskID := addTestTasks(t, s, 1)[0]
+	addTestAgentSession(t, s, "complete-task-ambiguous-requester")
+	addTestAgentSession(t, s, "complete-task-ambiguous-receiver")
+
+	for _, handoffID := range []string{"complete-task-ambiguous-1", "complete-task-ambiguous-2"} {
+		addRequestOnlyTaskHandoff(t, s, handoffID, taskID, "complete-task-ambiguous-requester")
+		if _, err := s.ReceiveTaskHandoff(ctx, handoffID, taskID, "complete-task-ambiguous-receiver"); err != nil {
+			t.Fatalf("ReceiveTaskHandoff(%q) failed: %v", handoffID, err)
+		}
+	}
+
+	_, err := s.CompleteTaskHandoffForTask(ctx, taskID, "")
+	if !errors.Is(err, ErrTaskHandoffAmbiguous) {
+		t.Fatalf("error = %v, want ErrTaskHandoffAmbiguous", err)
+	}
+}
+
 func TestTaskHandoffReceiveByTaskRejectsMultipleUnreceived(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
