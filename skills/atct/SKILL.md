@@ -54,18 +54,21 @@ that worker is started:
 
 1. Claim the task before handing it off.
 2. Record the handoff before waking the worker.
-   The delegator must call `atct_handoff_request` with a unique handoff ID, the
-   claimed task ID, and the delegator's identity. Wait for the request to
-   succeed before waking the worker; this creates the record needed to receive
-   and complete the handoff.
+   The delegator must call `atct_handoff_request` with a unique handoff ID and
+   the claimed task ID. Wait for the request to succeed before waking the
+   worker; this creates the record needed to receive and complete the handoff.
 3. Wake the worker through the environment. A terminal multiplexer can host a
    working pane, or a sub-agent can perform the work. ATCT does not prescribe
    how the worker is started or how the role is transmitted.
-4. Put this exact instruction at the very beginning of the request:
+4. Put these exact instructions at the very beginning of the request:
 
    > First invoke the `atct_role` MCP tool with `expected_role` set to one of
    > `commander`, `subcommander`, or `executor`. If it reports `matches: false`,
    > do not start work; return the task.
+   >
+   > Then record receipt of the handoff by calling `atct_handoff_receive` with only
+   > the `task_id` provided in this request. Do this before starting work. Do not
+   > pass a handoff ID or session; ATCT supplies them.
 
 5. Keep one worker per task. Return a correction, review fix, follow-up
    question, or clarification for the same task to the same worker. Start a
@@ -76,10 +79,10 @@ that worker is started:
    rereads the files named by the request, that rereading has an upper bound;
    accumulated work has no upper bound.
 
-The worker must run this check itself before doing any work. The delegator must
-not run it on the worker's behalf or treat a worker name, pane title, or launch
-context as proof of the role. If the check fails, the worker returns the task
-without touching it.
+The worker must perform both instructions itself before doing any work. The
+delegator must not run either instruction on the worker's behalf or treat a
+worker name, pane title, or launch context as proof of the role. If the role
+check reports a mismatch, the worker returns the task without touching it.
 
 ## Close a task the moment it is finished
 
