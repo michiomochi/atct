@@ -233,7 +233,7 @@ func TestHTTPHandlerMCPTaskHandoffRoutes(t *testing.T) {
 	request := mcpResult(t, client.call(t, "tools/call", map[string]any{
 		"name": "atct_handoff_request",
 		"arguments": map[string]any{
-			"handoff_id": "mcp-handoff-1", "task_id": tasks[0].ID, "requested_by": "mcp-handoff-requester",
+			"handoff_id": "mcp-handoff-1", "task_id": tasks[0].ID,
 		},
 	}))
 	if request["isError"] == true {
@@ -243,14 +243,16 @@ func TestHTTPHandlerMCPTaskHandoffRoutes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetTaskHandoff after request: %v", err)
 	}
-	if requested.RequestedAt == nil || requested.RequestedBy != "mcp-handoff-requester" {
-		t.Fatalf("request handoff = %#v, want requested timestamp and requester", requested)
+	// The HTTP path mints a session per connection, so the requester is not a
+	// value the caller chose. It must still be filled in by the shim.
+	if requested.RequestedAt == nil || requested.RequestedBy == "" {
+		t.Fatalf("request handoff = %#v, want requested timestamp and an injected requester", requested)
 	}
 
 	receive := mcpResult(t, client.call(t, "tools/call", map[string]any{
 		"name": "atct_handoff_receive",
 		"arguments": map[string]any{
-			"handoff_id": "mcp-handoff-1", "task_id": tasks[0].ID, "received_by": "mcp-handoff-receiver",
+			"handoff_id": "mcp-handoff-1", "task_id": tasks[0].ID,
 		},
 	}))
 	if receive["isError"] == true {
@@ -260,7 +262,10 @@ func TestHTTPHandlerMCPTaskHandoffRoutes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetTaskHandoff after receive: %v", err)
 	}
-	if received.ReceivedAt == nil || received.ReceivedBy != "mcp-handoff-receiver" {
+	// Both calls ride the same connection, so the shim supplies the same
+	// session for each. A receiver that differs from the requester here would
+	// mean the injection is per-call rather than per-session.
+	if received.ReceivedAt == nil || received.ReceivedBy != requested.RequestedBy {
 		t.Fatalf("received handoff = %#v, want received timestamp and receiver", received)
 	}
 
@@ -284,7 +289,7 @@ func TestHTTPHandlerMCPTaskHandoffRoutes(t *testing.T) {
 	rejected := mcpResult(t, client.call(t, "tools/call", map[string]any{
 		"name": "atct_handoff_request",
 		"arguments": map[string]any{
-			"handoff_id": "mcp-handoff-unclaimed", "task_id": tasks[1].ID, "requested_by": "mcp-handoff-requester",
+			"handoff_id": "mcp-handoff-unclaimed", "task_id": tasks[1].ID,
 		},
 	}))
 	if rejected["isError"] != true {
