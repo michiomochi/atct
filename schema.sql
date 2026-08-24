@@ -112,7 +112,9 @@ CREATE TABLE IF NOT EXISTS task_handoffs (
   received_by         TEXT REFERENCES agent_sessions(id),
   requested_at        TEXT,
   received_at         TEXT,
-  completed_report_at TEXT
+  completed_report_at TEXT,
+  request_report      TEXT,
+  complete_report     TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_task_handoffs_task_id
@@ -125,7 +127,9 @@ CREATE TABLE IF NOT EXISTS goal_handoffs (
   received_by         TEXT REFERENCES agent_sessions(id),
   requested_at        TEXT,
   received_at         TEXT,
-  completed_report_at TEXT
+  completed_report_at TEXT,
+  request_report      TEXT,
+  complete_report     TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_goal_handoffs_goal_id

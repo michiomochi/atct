@@ -679,14 +679,15 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 
 	case "handoff.request":
 		var p struct {
-			HandoffID   string `json:"handoff_id"`
-			TaskID      string `json:"task_id"`
-			RequestedBy string `json:"requested_by"`
+			HandoffID     string `json:"handoff_id"`
+			TaskID        string `json:"task_id"`
+			RequestedBy   string `json:"requested_by"`
+			RequestReport string `json:"request_report"`
 		}
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, err
 		}
-		handoff, err := d.store.RequestTaskHandoff(ctx, p.HandoffID, p.TaskID, p.RequestedBy)
+		handoff, err := d.store.RequestTaskHandoff(ctx, p.HandoffID, p.TaskID, p.RequestedBy, p.RequestReport)
 		return marshal(handoff, err)
 
 	case "handoff.receive":
@@ -709,25 +710,27 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 
 	case "handoff.complete":
 		var p struct {
-			HandoffID string `json:"handoff_id"`
-			TaskID    string `json:"task_id"`
+			HandoffID      string `json:"handoff_id"`
+			TaskID         string `json:"task_id"`
+			CompleteReport string `json:"complete_report"`
 		}
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, err
 		}
-		handoff, err := d.store.CompleteTaskHandoff(ctx, p.HandoffID, p.TaskID)
+		handoff, err := d.store.CompleteTaskHandoff(ctx, p.HandoffID, p.TaskID, p.CompleteReport)
 		return marshal(handoff, err)
 
 	case "goal.handoff.request":
 		var p struct {
-			HandoffID   string `json:"handoff_id"`
-			GoalID      string `json:"goal_id"`
-			RequestedBy string `json:"requested_by"`
+			HandoffID     string `json:"handoff_id"`
+			GoalID        string `json:"goal_id"`
+			RequestedBy   string `json:"requested_by"`
+			RequestReport string `json:"request_report"`
 		}
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, err
 		}
-		handoff, err := d.store.RequestGoalHandoff(ctx, p.HandoffID, p.GoalID, p.RequestedBy)
+		handoff, err := d.store.RequestGoalHandoff(ctx, p.HandoffID, p.GoalID, p.RequestedBy, p.RequestReport)
 		return marshal(handoff, err)
 
 	case "goal.handoff.receive":
@@ -750,13 +753,14 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 
 	case "goal.handoff.complete":
 		var p struct {
-			HandoffID string `json:"handoff_id"`
-			GoalID    string `json:"goal_id"`
+			HandoffID      string `json:"handoff_id"`
+			GoalID         string `json:"goal_id"`
+			CompleteReport string `json:"complete_report"`
 		}
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, err
 		}
-		handoff, err := d.store.CompleteGoalHandoff(ctx, p.HandoffID, p.GoalID)
+		handoff, err := d.store.CompleteGoalHandoff(ctx, p.HandoffID, p.GoalID, p.CompleteReport)
 		return marshal(handoff, err)
 
 	case "decision.ask":

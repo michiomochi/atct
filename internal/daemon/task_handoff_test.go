@@ -125,11 +125,12 @@ func TestTaskHandoffRoutesOverRPC(t *testing.T) {
 	var requested store.TaskHandoff
 	if err := client.Call(ctx, "handoff.request", map[string]string{
 		"handoff_id": "rpc-handoff-1", "task_id": fixture.claimedTaskID, "requested_by": "rpc-handoff-requester",
+		"request_report": "RPC task request report",
 	}, &requested); err != nil {
 		t.Fatalf("handoff.request: %v", err)
 	}
-	if requested.RequestedAt == nil || requested.RequestedBy != "rpc-handoff-requester" {
-		t.Fatalf("requested handoff = %#v, want request timestamp and requester", requested)
+	if requested.RequestedAt == nil || requested.RequestedBy != "rpc-handoff-requester" || requested.RequestReport != "RPC task request report" {
+		t.Fatalf("requested handoff = %#v, want request timestamp, requester, and report", requested)
 	}
 
 	var received store.TaskHandoff
@@ -144,12 +145,12 @@ func TestTaskHandoffRoutesOverRPC(t *testing.T) {
 
 	var completed store.TaskHandoff
 	if err := client.Call(ctx, "handoff.complete", map[string]string{
-		"handoff_id": "rpc-handoff-1", "task_id": fixture.claimedTaskID,
+		"handoff_id": "rpc-handoff-1", "task_id": fixture.claimedTaskID, "complete_report": "RPC task completion report",
 	}, &completed); err != nil {
 		t.Fatalf("handoff.complete: %v", err)
 	}
-	if completed.CompletedReportAt == nil {
-		t.Fatalf("completed handoff = %#v, want completion timestamp", completed)
+	if completed.CompletedReportAt == nil || completed.CompleteReport != "RPC task completion report" {
+		t.Fatalf("completed handoff = %#v, want completion timestamp and report", completed)
 	}
 
 	var claimed domain.Task

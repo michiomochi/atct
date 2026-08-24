@@ -632,28 +632,28 @@ func TestDetectWakeupCollectsStalledHandoffCandidates(t *testing.T) {
 		t.Fatalf("RegisterAgentSession receiver: %v", err)
 	}
 
-	unreceived, err := s.RequestTaskHandoff(ctx, "handoff-unreceived", taskIDs[0], "stalled-handoff-requester")
+	unreceived, err := s.RequestTaskHandoff(ctx, "handoff-unreceived", taskIDs[0], "stalled-handoff-requester", "")
 	if err != nil {
 		t.Fatalf("RequestTaskHandoff unreceived: %v", err)
 	}
-	unreported, err := s.RequestTaskHandoff(ctx, "handoff-unreported", taskIDs[1], "stalled-handoff-requester")
+	unreported, err := s.RequestTaskHandoff(ctx, "handoff-unreported", taskIDs[1], "stalled-handoff-requester", "")
 	if err != nil {
 		t.Fatalf("RequestTaskHandoff unreported: %v", err)
 	}
 	if _, err := s.ReceiveTaskHandoff(ctx, unreported.ID, taskIDs[1], "stalled-handoff-receiver"); err != nil {
 		t.Fatalf("ReceiveTaskHandoff unreported: %v", err)
 	}
-	completed, err := s.RequestTaskHandoff(ctx, "handoff-completed", taskIDs[2], "stalled-handoff-requester")
+	completed, err := s.RequestTaskHandoff(ctx, "handoff-completed", taskIDs[2], "stalled-handoff-requester", "")
 	if err != nil {
 		t.Fatalf("RequestTaskHandoff completed: %v", err)
 	}
 	if _, err := s.ReceiveTaskHandoff(ctx, completed.ID, taskIDs[2], "stalled-handoff-receiver"); err != nil {
 		t.Fatalf("ReceiveTaskHandoff completed: %v", err)
 	}
-	if _, err := s.CompleteTaskHandoff(ctx, completed.ID, taskIDs[2]); err != nil {
+	if _, err := s.CompleteTaskHandoff(ctx, completed.ID, taskIDs[2], ""); err != nil {
 		t.Fatalf("CompleteTaskHandoff completed: %v", err)
 	}
-	requestedClaim, err := s.RequestTaskHandoff(ctx, "handoff-requested-claim", taskIDs[4], "stalled-handoff-requester")
+	requestedClaim, err := s.RequestTaskHandoff(ctx, "handoff-requested-claim", taskIDs[4], "stalled-handoff-requester", "")
 	if err != nil {
 		t.Fatalf("RequestTaskHandoff requested claim: %v", err)
 	}

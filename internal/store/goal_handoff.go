@@ -24,6 +24,8 @@ type GoalHandoff struct {
 	GoalID            string
 	RequestedBy       string
 	ReceivedBy        string
+	RequestReport     string
+	CompleteReport    string
 	RequestedAt       *time.Time
 	ReceivedAt        *time.Time
 	CompletedReportAt *time.Time
@@ -31,10 +33,12 @@ type GoalHandoff struct {
 
 func goalHandoffFromRow(row sqlcgen.GoalHandoff) (GoalHandoff, error) {
 	handoff := GoalHandoff{
-		ID:          row.ID,
-		GoalID:      row.GoalID,
-		RequestedBy: row.RequestedBy.String,
-		ReceivedBy:  row.ReceivedBy.String,
+		ID:             row.ID,
+		GoalID:         row.GoalID,
+		RequestedBy:    row.RequestedBy.String,
+		ReceivedBy:     row.ReceivedBy.String,
+		RequestReport:  row.RequestReport.String,
+		CompleteReport: row.CompleteReport.String,
 	}
 	var err error
 	if handoff.RequestedAt, err = parseGoalHandoffTime("requested_at", row.RequestedAt); err != nil {
@@ -94,7 +98,7 @@ func (s *Store) requireLiveGoalClaim(ctx context.Context, goalID string) error {
 
 // RequestGoalHandoff records the request side of a handoff. It requires a
 // live claim on the target goal; receipt and completion are separate calls.
-func (s *Store) RequestGoalHandoff(ctx context.Context, handoffID, goalID, requestedBy string) (GoalHandoff, error) {
+func (s *Store) RequestGoalHandoff(ctx context.Context, handoffID, goalID, requestedBy string, requestReport string) (GoalHandoff, error) {
 	if err := s.ensureGoalHandoffGoal(ctx, handoffID, goalID); err != nil {
 		return GoalHandoff{}, err
 	}
@@ -103,10 +107,11 @@ func (s *Store) RequestGoalHandoff(ctx context.Context, handoffID, goalID, reque
 	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	if err := sqlcgen.New(s.db).RequestGoalHandoff(ctx, sqlcgen.RequestGoalHandoffParams{
-		ID:          handoffID,
-		GoalID:      goalID,
-		RequestedBy: sql.NullString{String: requestedBy, Valid: true},
-		RequestedAt: sql.NullString{String: now, Valid: true},
+		ID:            handoffID,
+		GoalID:        goalID,
+		RequestedBy:   sql.NullString{String: requestedBy, Valid: true},
+		RequestedAt:   sql.NullString{String: now, Valid: true},
+		RequestReport: sql.NullString{String: requestReport, Valid: requestReport != ""},
 	}); err != nil {
 		return GoalHandoff{}, fmt.Errorf("request goal handoff: %w", err)
 	}
@@ -156,8 +161,8 @@ func (s *Store) ReceiveGoalHandoffForGoal(ctx context.Context, goalID, receivedB
 }
 
 // CompleteGoalHandoff records the completion report side of a handoff. It
-// only writes the completion timestamp and therefore preserves partial states.
-func (s *Store) CompleteGoalHandoff(ctx context.Context, handoffID, goalID string) (GoalHandoff, error) {
+// only writes the completion timestamp and report and therefore preserves partial states.
+func (s *Store) CompleteGoalHandoff(ctx context.Context, handoffID, goalID string, completeReport string) (GoalHandoff, error) {
 	if err := s.ensureGoalHandoffGoal(ctx, handoffID, goalID); err != nil {
 		return GoalHandoff{}, err
 	}
@@ -166,6 +171,7 @@ func (s *Store) CompleteGoalHandoff(ctx context.Context, handoffID, goalID strin
 		ID:                handoffID,
 		GoalID:            goalID,
 		CompletedReportAt: sql.NullString{String: now, Valid: true},
+		CompleteReport:    sql.NullString{String: completeReport, Valid: completeReport != ""},
 	}); err != nil {
 		return GoalHandoff{}, fmt.Errorf("complete goal handoff: %w", err)
 	}

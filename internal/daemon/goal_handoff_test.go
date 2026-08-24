@@ -127,11 +127,12 @@ func TestGoalHandoffRoutesOverRPC(t *testing.T) {
 	var requested store.GoalHandoff
 	if err := client.Call(ctx, "goal.handoff.request", map[string]string{
 		"handoff_id": "rpc-goal-handoff-1", "goal_id": fixture.claimedGoalID, "requested_by": "rpc-goal-requester",
+		"request_report": "RPC goal request report",
 	}, &requested); err != nil {
 		t.Fatalf("goal.handoff.request: %v", err)
 	}
-	if requested.GoalID != fixture.claimedGoalID || requested.RequestedAt == nil || requested.RequestedBy != "rpc-goal-requester" {
-		t.Fatalf("requested handoff = %#v, want goal, timestamp, and requester", requested)
+	if requested.GoalID != fixture.claimedGoalID || requested.RequestedAt == nil || requested.RequestedBy != "rpc-goal-requester" || requested.RequestReport != "RPC goal request report" {
+		t.Fatalf("requested handoff = %#v, want goal, timestamp, requester, and report", requested)
 	}
 
 	var received store.GoalHandoff
@@ -146,12 +147,12 @@ func TestGoalHandoffRoutesOverRPC(t *testing.T) {
 
 	var completed store.GoalHandoff
 	if err := client.Call(ctx, "goal.handoff.complete", map[string]string{
-		"handoff_id": requested.ID, "goal_id": fixture.claimedGoalID,
+		"handoff_id": requested.ID, "goal_id": fixture.claimedGoalID, "complete_report": "RPC goal completion report",
 	}, &completed); err != nil {
 		t.Fatalf("goal.handoff.complete: %v", err)
 	}
-	if completed.CompletedReportAt == nil {
-		t.Fatalf("completed handoff = %#v, want completion timestamp", completed)
+	if completed.CompletedReportAt == nil || completed.CompleteReport != "RPC goal completion report" {
+		t.Fatalf("completed handoff = %#v, want completion timestamp and report", completed)
 	}
 
 	var rejected store.GoalHandoff

@@ -71,10 +71,11 @@ func addRequestOnlyTaskHandoff(t *testing.T, s *Store, handoffID, taskID, reques
 
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	err := sqlcgen.New(s.DB()).RequestTaskHandoff(context.Background(), sqlcgen.RequestTaskHandoffParams{
-		ID:          handoffID,
-		TaskID:      taskID,
-		RequestedBy: sql.NullString{String: requestedBy, Valid: true},
-		RequestedAt: sql.NullString{String: now, Valid: true},
+		ID:            handoffID,
+		TaskID:        taskID,
+		RequestedBy:   sql.NullString{String: requestedBy, Valid: true},
+		RequestedAt:   sql.NullString{String: now, Valid: true},
+		RequestReport: sql.NullString{},
 	})
 	if err != nil {
 		t.Fatalf("insert request-only task handoff failed: %v", err)
@@ -89,7 +90,7 @@ func TestTaskHandoffRequestReceiveAndComplete(t *testing.T) {
 	addTestAgentSession(t, s, "receiver")
 	addLiveTaskClaim(t, s, taskID, "request-claim-owner")
 
-	handoff, err := s.RequestTaskHandoff(ctx, "handoff-1", taskID, "requester")
+	handoff, err := s.RequestTaskHandoff(ctx, "handoff-1", taskID, "requester", "")
 	if err != nil {
 		t.Fatalf("RequestTaskHandoff failed: %v", err)
 	}
@@ -122,12 +123,64 @@ func TestTaskHandoffRequestReceiveAndComplete(t *testing.T) {
 		t.Fatalf("receive must preserve request and incomplete state: %+v", received)
 	}
 
-	completed, err := s.CompleteTaskHandoff(ctx, handoff.ID, taskID)
+	completed, err := s.CompleteTaskHandoff(ctx, handoff.ID, taskID, "")
 	if err != nil {
 		t.Fatalf("CompleteTaskHandoff failed: %v", err)
 	}
 	if completed.CompletedReportAt == nil || completed.RequestedAt == nil || completed.ReceivedAt == nil {
 		t.Fatalf("completion must preserve all prior timestamps: %+v", completed)
+	}
+}
+
+func TestTaskHandoffReportsAreStored(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	taskID := addTestTasks(t, s, 1)[0]
+	addTestAgentSession(t, s, "task-report-requester")
+	addTestAgentSession(t, s, "task-report-receiver")
+	addLiveTaskClaim(t, s, taskID, "task-report-claim-owner")
+
+	requested, err := s.RequestTaskHandoff(ctx, "task-report-handoff", taskID, "task-report-requester", "Please take over the task.")
+	if err != nil {
+		t.Fatalf("RequestTaskHandoff: %v", err)
+	}
+	if requested.RequestReport != "Please take over the task." {
+		t.Fatalf("request report = %q, want request body", requested.RequestReport)
+	}
+
+	if _, err := s.ReceiveTaskHandoff(ctx, requested.ID, taskID, "task-report-receiver"); err != nil {
+		t.Fatalf("ReceiveTaskHandoff: %v", err)
+	}
+	completed, err := s.CompleteTaskHandoff(ctx, requested.ID, taskID, "I completed the task and verified it.")
+	if err != nil {
+		t.Fatalf("CompleteTaskHandoff: %v", err)
+	}
+	if completed.CompleteReport != "I completed the task and verified it." {
+		t.Fatalf("complete report = %q, want completion body", completed.CompleteReport)
+	}
+}
+
+func TestTaskHandoffReportsMayBeOmitted(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	taskID := addTestTasks(t, s, 1)[0]
+	addTestAgentSession(t, s, "task-empty-report-requester")
+	addLiveTaskClaim(t, s, taskID, "task-empty-report-claim-owner")
+
+	handoff, err := s.RequestTaskHandoff(ctx, "task-empty-report-handoff", taskID, "task-empty-report-requester", "")
+	if err != nil {
+		t.Fatalf("RequestTaskHandoff without report: %v", err)
+	}
+	if handoff.RequestReport != "" {
+		t.Fatalf("omitted request report = %q, want empty", handoff.RequestReport)
+	}
+
+	completed, err := s.CompleteTaskHandoff(ctx, handoff.ID, taskID, "")
+	if err != nil {
+		t.Fatalf("CompleteTaskHandoff without report: %v", err)
+	}
+	if completed.CompleteReport != "" {
+		t.Fatalf("omitted complete report = %q, want empty", completed.CompleteReport)
 	}
 }
 
@@ -138,11 +191,11 @@ func TestTaskHandoffAllowsSecondHandoffForSameTask(t *testing.T) {
 	addTestAgentSession(t, s, "requester")
 	addLiveTaskClaim(t, s, taskID, "second-handoff-claim-owner")
 
-	first, err := s.RequestTaskHandoff(ctx, "handoff-1", taskID, "requester")
+	first, err := s.RequestTaskHandoff(ctx, "handoff-1", taskID, "requester", "")
 	if err != nil {
 		t.Fatalf("first RequestTaskHandoff failed: %v", err)
 	}
-	second, err := s.RequestTaskHandoff(ctx, "handoff-2", taskID, "requester")
+	second, err := s.RequestTaskHandoff(ctx, "handoff-2", taskID, "requester", "")
 	if err != nil {
 		t.Fatalf("second RequestTaskHandoff failed: %v", err)
 	}
@@ -167,7 +220,7 @@ func TestTaskHandoffReceiveByTask(t *testing.T) {
 	addTestAgentSession(t, s, "receiver")
 	addLiveTaskClaim(t, s, taskID, "receive-by-task-claim-owner")
 
-	requested, err := s.RequestTaskHandoff(ctx, "receive-by-task", taskID, "requester")
+	requested, err := s.RequestTaskHandoff(ctx, "receive-by-task", taskID, "requester", "")
 	if err != nil {
 		t.Fatalf("RequestTaskHandoff failed: %v", err)
 	}
@@ -190,7 +243,7 @@ func TestTaskHandoffReceiveByTaskRejectsMultipleUnreceived(t *testing.T) {
 	addLiveTaskClaim(t, s, taskID, "ambiguous-receive-claim-owner")
 
 	for _, handoffID := range []string{"ambiguous-handoff-1", "ambiguous-handoff-2"} {
-		if _, err := s.RequestTaskHandoff(ctx, handoffID, taskID, "requester"); err != nil {
+		if _, err := s.RequestTaskHandoff(ctx, handoffID, taskID, "requester", ""); err != nil {
 			t.Fatalf("RequestTaskHandoff(%q) failed: %v", handoffID, err)
 		}
 	}
@@ -205,7 +258,7 @@ func TestTaskHandoffRejectsMissingTask(t *testing.T) {
 	s := newTestStore(t)
 	addTestAgentSession(t, s, "requester")
 
-	if _, err := s.RequestTaskHandoff(context.Background(), "handoff-missing", "missing-task", "requester"); err == nil {
+	if _, err := s.RequestTaskHandoff(context.Background(), "handoff-missing", "missing-task", "requester", ""); err == nil {
 		t.Fatal("RequestTaskHandoff should reject a missing task")
 	}
 }
@@ -215,7 +268,7 @@ func TestTaskHandoffRejectsUnclaimedTask(t *testing.T) {
 	taskID := addTestTasks(t, s, 1)[0]
 	addTestAgentSession(t, s, "requester")
 
-	if _, err := s.RequestTaskHandoff(context.Background(), "handoff-unclaimed", taskID, "requester"); err == nil {
+	if _, err := s.RequestTaskHandoff(context.Background(), "handoff-unclaimed", taskID, "requester", ""); err == nil {
 		t.Fatal("RequestTaskHandoff should reject an unclaimed task")
 	}
 }
@@ -227,7 +280,7 @@ func TestTaskHandoffAllowsLiveClaim(t *testing.T) {
 	addTestAgentSession(t, s, "requester")
 	addLiveTaskClaim(t, s, taskID, "live-claim-owner")
 
-	if _, err := s.RequestTaskHandoff(ctx, "handoff-live-claim", taskID, "requester"); err != nil {
+	if _, err := s.RequestTaskHandoff(ctx, "handoff-live-claim", taskID, "requester", ""); err != nil {
 		t.Fatalf("RequestTaskHandoff with a live claim failed: %v", err)
 	}
 }
@@ -246,7 +299,7 @@ func TestTaskHandoffRejectsDeadClaim(t *testing.T) {
 		t.Fatalf("dead claim fixture insert failed: %v", err)
 	}
 
-	if _, err := s.RequestTaskHandoff(ctx, "handoff-dead-claim", taskID, "requester"); err == nil {
+	if _, err := s.RequestTaskHandoff(ctx, "handoff-dead-claim", taskID, "requester", ""); err == nil {
 		t.Fatal("RequestTaskHandoff should reject a task with only a dead claim")
 	}
 }
@@ -270,7 +323,7 @@ func TestTaskHandoffUnclaimedErrorIsDistinguishable(t *testing.T) {
 	taskID := addTestTasks(t, s, 1)[0]
 	addTestAgentSession(t, s, "requester")
 
-	_, err := s.RequestTaskHandoff(context.Background(), "handoff-unclaimed-error", taskID, "requester")
+	_, err := s.RequestTaskHandoff(context.Background(), "handoff-unclaimed-error", taskID, "requester", "")
 	if !errors.Is(err, ErrTaskHandoffTaskUnclaimed) {
 		t.Fatalf("error = %v, want ErrTaskHandoffTaskUnclaimed", err)
 	}
@@ -301,7 +354,7 @@ func TestTaskHandoffStatesRemainDistinct(t *testing.T) {
 
 	// A handoff request without a receipt.
 	addLiveTaskClaim(t, s, taskIDs[2], "unreceived-claim-owner")
-	requested, err := s.RequestTaskHandoff(ctx, "unreceived", taskIDs[2], "requester")
+	requested, err := s.RequestTaskHandoff(ctx, "unreceived", taskIDs[2], "requester", "")
 	if err != nil {
 		t.Fatalf("unreceived fixture insert failed: %v", err)
 	}

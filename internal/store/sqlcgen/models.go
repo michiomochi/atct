@@ -63,6 +63,8 @@ type GoalHandoff struct {
 	RequestedAt       sql.NullString
 	ReceivedAt        sql.NullString
 	CompletedReportAt sql.NullString
+	RequestReport     sql.NullString
+	CompleteReport    sql.NullString
 }
 
 type Project struct {
@@ -109,4 +111,6 @@ type TaskHandoff struct {
 	RequestedAt       sql.NullString
 	ReceivedAt        sql.NullString
 	CompletedReportAt sql.NullString
+	RequestReport     sql.NullString
+	CompleteReport    sql.NullString
 }

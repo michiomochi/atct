@@ -24,6 +24,8 @@ type TaskHandoff struct {
 	TaskID            string
 	RequestedBy       string
 	ReceivedBy        string
+	RequestReport     string
+	CompleteReport    string
 	RequestedAt       *time.Time
 	ReceivedAt        *time.Time
 	CompletedReportAt *time.Time
@@ -31,10 +33,12 @@ type TaskHandoff struct {
 
 func taskHandoffFromRow(row sqlcgen.TaskHandoff) (TaskHandoff, error) {
 	handoff := TaskHandoff{
-		ID:          row.ID,
-		TaskID:      row.TaskID,
-		RequestedBy: row.RequestedBy.String,
-		ReceivedBy:  row.ReceivedBy.String,
+		ID:             row.ID,
+		TaskID:         row.TaskID,
+		RequestedBy:    row.RequestedBy.String,
+		ReceivedBy:     row.ReceivedBy.String,
+		RequestReport:  row.RequestReport.String,
+		CompleteReport: row.CompleteReport.String,
 	}
 	var err error
 	if handoff.RequestedAt, err = parseTaskHandoffTime("requested_at", row.RequestedAt); err != nil {
@@ -94,7 +98,7 @@ func (s *Store) requireLiveTaskClaim(ctx context.Context, taskID string) error {
 
 // RequestTaskHandoff records the request side of a handoff. It only writes
 // request columns; a receipt or completion report is a separate call.
-func (s *Store) RequestTaskHandoff(ctx context.Context, handoffID, taskID, requestedBy string) (TaskHandoff, error) {
+func (s *Store) RequestTaskHandoff(ctx context.Context, handoffID, taskID, requestedBy string, requestReport string) (TaskHandoff, error) {
 	if err := s.ensureTaskHandoffTask(ctx, handoffID, taskID); err != nil {
 		return TaskHandoff{}, err
 	}
@@ -103,10 +107,11 @@ func (s *Store) RequestTaskHandoff(ctx context.Context, handoffID, taskID, reque
 	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	if err := sqlcgen.New(s.db).RequestTaskHandoff(ctx, sqlcgen.RequestTaskHandoffParams{
-		ID:          handoffID,
-		TaskID:      taskID,
-		RequestedBy: sql.NullString{String: requestedBy, Valid: true},
-		RequestedAt: sql.NullString{String: now, Valid: true},
+		ID:            handoffID,
+		TaskID:        taskID,
+		RequestedBy:   sql.NullString{String: requestedBy, Valid: true},
+		RequestedAt:   sql.NullString{String: now, Valid: true},
+		RequestReport: sql.NullString{String: requestReport, Valid: requestReport != ""},
 	}); err != nil {
 		return TaskHandoff{}, fmt.Errorf("request task handoff: %w", err)
 	}
@@ -156,8 +161,8 @@ func (s *Store) ReceiveTaskHandoffForTask(ctx context.Context, taskID, receivedB
 }
 
 // CompleteTaskHandoff records the completion report side of a handoff. It
-// only writes the completion timestamp and therefore preserves partial states.
-func (s *Store) CompleteTaskHandoff(ctx context.Context, handoffID, taskID string) (TaskHandoff, error) {
+// only writes the completion timestamp and report and therefore preserves partial states.
+func (s *Store) CompleteTaskHandoff(ctx context.Context, handoffID, taskID string, completeReport string) (TaskHandoff, error) {
 	if err := s.ensureTaskHandoffTask(ctx, handoffID, taskID); err != nil {
 		return TaskHandoff{}, err
 	}
@@ -166,6 +171,7 @@ func (s *Store) CompleteTaskHandoff(ctx context.Context, handoffID, taskID strin
 		ID:                handoffID,
 		TaskID:            taskID,
 		CompletedReportAt: sql.NullString{String: now, Valid: true},
+		CompleteReport:    sql.NullString{String: completeReport, Valid: completeReport != ""},
 	}); err != nil {
 		return TaskHandoff{}, fmt.Errorf("complete task handoff: %w", err)
 	}

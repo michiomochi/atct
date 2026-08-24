@@ -57,8 +57,9 @@ type TaskReleaseIn struct {
 }
 
 type HandoffRequestIn struct {
-	HandoffID string `json:"handoff_id"`
-	TaskID    string `json:"task_id"`
+	HandoffID     string `json:"handoff_id"`
+	TaskID        string `json:"task_id"`
+	RequestReport string `json:"request_report,omitempty"`
 }
 
 type HandoffReceiveIn struct {
@@ -67,13 +68,15 @@ type HandoffReceiveIn struct {
 }
 
 type HandoffCompleteIn struct {
-	HandoffID string `json:"handoff_id"`
-	TaskID    string `json:"task_id"`
+	HandoffID      string `json:"handoff_id"`
+	TaskID         string `json:"task_id"`
+	CompleteReport string `json:"complete_report,omitempty"`
 }
 
 type GoalHandoffRequestIn struct {
-	HandoffID string `json:"handoff_id"`
-	GoalID    string `json:"goal_id"`
+	HandoffID     string `json:"handoff_id"`
+	GoalID        string `json:"goal_id"`
+	RequestReport string `json:"request_report,omitempty"`
 }
 
 type GoalHandoffReceiveIn struct {
@@ -82,8 +85,9 @@ type GoalHandoffReceiveIn struct {
 }
 
 type GoalHandoffCompleteIn struct {
-	HandoffID string `json:"handoff_id"`
-	GoalID    string `json:"goal_id"`
+	HandoffID      string `json:"handoff_id"`
+	GoalID         string `json:"goal_id"`
+	CompleteReport string `json:"complete_report,omitempty"`
 }
 
 type TaskUpdateIn struct {
@@ -403,6 +407,7 @@ func Register(server *mcp.Server, c *Client, agentSessionID string) {
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in HandoffRequestIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
 		return callWithUnappliedDecisions(ctx, c, "handoff.request", map[string]any{
 			"handoff_id": in.HandoffID, "task_id": in.TaskID, "requested_by": agentSessionID,
+			"request_report": in.RequestReport,
 		})
 	})
 
@@ -426,7 +431,7 @@ func Register(server *mcp.Server, c *Client, agentSessionID string) {
 		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in HandoffCompleteIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
 		return callWithUnappliedDecisions(ctx, c, "handoff.complete", map[string]any{
-			"handoff_id": in.HandoffID, "task_id": in.TaskID,
+			"handoff_id": in.HandoffID, "task_id": in.TaskID, "complete_report": in.CompleteReport,
 		})
 	})
 
@@ -437,6 +442,7 @@ func Register(server *mcp.Server, c *Client, agentSessionID string) {
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in GoalHandoffRequestIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
 		return callWithUnappliedDecisions(ctx, c, "goal.handoff.request", map[string]any{
 			"handoff_id": in.HandoffID, "goal_id": in.GoalID, "requested_by": agentSessionID,
+			"request_report": in.RequestReport,
 		})
 	})
 
@@ -460,7 +466,7 @@ func Register(server *mcp.Server, c *Client, agentSessionID string) {
 		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in GoalHandoffCompleteIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
 		return callWithUnappliedDecisions(ctx, c, "goal.handoff.complete", map[string]any{
-			"handoff_id": in.HandoffID, "goal_id": in.GoalID,
+			"handoff_id": in.HandoffID, "goal_id": in.GoalID, "complete_report": in.CompleteReport,
 		})
 	})
 

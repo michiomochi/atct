@@ -189,6 +189,82 @@ func TestExistingV6DatabaseRecordsBaselineWithoutExecutingIt(t *testing.T) {
 	}
 }
 
+func TestOpenMigratesPreHandoffReportsDatabaseWithoutLosingHandoffRows(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "handoffs.db")
+	raw, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	raw.SetMaxOpenConns(1)
+
+	migrations, err := loadEmbeddedMigrations()
+	if err != nil {
+		raw.Close()
+		t.Fatalf("load embedded migrations: %v", err)
+	}
+	for _, migration := range migrations {
+		if migration.filename == "0014_handoff_reports.sql" {
+			break
+		}
+		if _, err := raw.Exec(migration.sql); err != nil {
+			raw.Close()
+			t.Fatalf("apply fixture migration %s: %v", migration.filename, err)
+		}
+		if _, err := raw.Exec(`INSERT INTO schema_migrations (filename, applied_at) VALUES (?, ?)`, migration.filename, "2026-08-24T00:00:00Z"); err != nil {
+			raw.Close()
+			t.Fatalf("record fixture migration %s: %v", migration.filename, err)
+		}
+	}
+	if _, err := raw.Exec(`PRAGMA user_version = 6`); err != nil {
+		raw.Close()
+		t.Fatalf("set fixture schema version: %v", err)
+	}
+	if _, err := raw.Exec(`
+INSERT INTO projects (id, name, root_path, created_at)
+VALUES ('old-project', 'old project', '/old-project', '2026-08-24T00:00:00Z');
+INSERT INTO goals (id, project_id, content, status, created_at, updated_at)
+VALUES ('old-goal', 'old-project', 'old goal', 'active', '2026-08-24T00:00:00Z', '2026-08-24T00:00:00Z');
+INSERT INTO tasks (id, goal_id, title, status, declare_key, created_at, updated_at)
+VALUES ('old-task', 'old-goal', 'old task', 'todo', 'old-task-key', '2026-08-24T00:00:00Z', '2026-08-24T00:00:00Z');
+INSERT INTO task_handoffs (id, task_id, requested_at)
+VALUES ('old-task-handoff', 'old-task', '2026-08-24T00:01:00Z');
+INSERT INTO goal_handoffs (id, goal_id, requested_at)
+VALUES ('old-goal-handoff', 'old-goal', '2026-08-24T00:02:00Z');
+`); err != nil {
+		raw.Close()
+		t.Fatalf("insert old handoff rows: %v", err)
+	}
+	if err := raw.Close(); err != nil {
+		t.Fatalf("close fixture database: %v", err)
+	}
+
+	migrated, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("Open pre-handoff-reports database: %v", err)
+	}
+	defer migrated.Close()
+
+	for _, tableAndID := range []struct {
+		table string
+		id    string
+	}{
+		{table: "task_handoffs", id: "old-task-handoff"},
+		{table: "goal_handoffs", id: "old-goal-handoff"},
+	} {
+		var requestReport, completeReport sql.NullString
+		query := `SELECT request_report, complete_report FROM ` + tableAndID.table + ` WHERE id = ?`
+		if err := migrated.DB().QueryRow(query, tableAndID.id).Scan(&requestReport, &completeReport); err != nil {
+			t.Fatalf("read migrated %s row: %v", tableAndID.table, err)
+		}
+		if requestReport.Valid || requestReport.String != "" {
+			t.Errorf("%s request_report = %#v, want NULL", tableAndID.table, requestReport)
+		}
+		if completeReport.Valid || completeReport.String != "" {
+			t.Errorf("%s complete_report = %#v, want NULL", tableAndID.table, completeReport)
+		}
+	}
+}
+
 func TestV3DatabaseRunsHistoricalBridgeAndRecordsBaseline(t *testing.T) {
 	db := openMigrationTestDB(t)
 	if _, err := db.Exec(embeddedBaselineSQL(t)); err != nil {

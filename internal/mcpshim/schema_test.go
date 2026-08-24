@@ -77,9 +77,9 @@ func TestRegisterPublishesTwentyThreeToolsWithFlexibleOutputSchema(t *testing.T)
 		}
 		seen[tool.Name] = true
 		switch tool.Name {
-		case "atct_handoff_request", "atct_handoff_receive", "atct_goal_handoff_request", "atct_goal_handoff_receive":
+		case "atct_handoff_request", "atct_goal_handoff_request", "atct_handoff_receive", "atct_goal_handoff_receive", "atct_handoff_complete", "atct_goal_handoff_complete":
 			idField := "task_id"
-			if tool.Name == "atct_goal_handoff_request" || tool.Name == "atct_goal_handoff_receive" {
+			if tool.Name == "atct_goal_handoff_request" || tool.Name == "atct_goal_handoff_receive" || tool.Name == "atct_goal_handoff_complete" {
 				idField = "goal_id"
 			}
 			inputSchema, ok := tool.InputSchema.(map[string]any)
@@ -90,8 +90,18 @@ func TestRegisterPublishesTwentyThreeToolsWithFlexibleOutputSchema(t *testing.T)
 			if !ok {
 				t.Fatalf("%s input schema properties = %T, want object", tool.Name, inputSchema["properties"])
 			}
-			if len(inputProperties) != 2 {
-				t.Errorf("%s input property count = %d, want 2", tool.Name, len(inputProperties))
+			wantPropertyCount := 2
+			reportField := ""
+			switch tool.Name {
+			case "atct_handoff_request", "atct_goal_handoff_request":
+				wantPropertyCount = 3
+				reportField = "request_report"
+			case "atct_handoff_complete", "atct_goal_handoff_complete":
+				wantPropertyCount = 3
+				reportField = "complete_report"
+			}
+			if len(inputProperties) != wantPropertyCount {
+				t.Errorf("%s input property count = %d, want %d", tool.Name, len(inputProperties), wantPropertyCount)
 			}
 			for _, field := range []string{"handoff_id", idField} {
 				if _, ok := inputProperties[field]; !ok {
@@ -101,6 +111,11 @@ func TestRegisterPublishesTwentyThreeToolsWithFlexibleOutputSchema(t *testing.T)
 			for _, field := range []string{"requested_by", "received_by"} {
 				if _, ok := inputProperties[field]; ok {
 					t.Errorf("%s input schema exposes shim-owned field %q", tool.Name, field)
+				}
+			}
+			if reportField != "" {
+				if _, ok := inputProperties[reportField]; !ok {
+					t.Errorf("%s input schema omitted %q", tool.Name, reportField)
 				}
 			}
 			required, ok := inputSchema["required"].([]any)
@@ -116,6 +131,9 @@ func TestRegisterPublishesTwentyThreeToolsWithFlexibleOutputSchema(t *testing.T)
 			}
 			if !requiredFields[idField] {
 				t.Errorf("%s input schema must require %s", tool.Name, idField)
+			}
+			if reportField != "" && requiredFields[reportField] {
+				t.Errorf("%s input schema must allow omitted %s", tool.Name, reportField)
 			}
 			if tool.Name == "atct_handoff_receive" || tool.Name == "atct_goal_handoff_receive" {
 				if requiredFields["handoff_id"] {
@@ -236,15 +254,18 @@ func TestHandoffToolsInjectAgentSessionID(t *testing.T) {
 	defer clientSession.Close()
 
 	for _, tc := range []struct {
-		name       string
-		method     string
-		ownedBy    string
-		otherOwned string
-		args       map[string]any
+		name        string
+		method      string
+		ownedBy     string
+		otherOwned  string
+		reportField string
+		reportValue string
+		args        map[string]any
 	}{
 		{
 			name: "atct_handoff_request", method: "handoff.request", ownedBy: "requested_by", otherOwned: "received_by",
-			args: map[string]any{"handoff_id": "handoff-1", "task_id": "task-1"},
+			reportField: "request_report", reportValue: "task request report",
+			args: map[string]any{"handoff_id": "handoff-1", "task_id": "task-1", "request_report": "task request report"},
 		},
 		{
 			name: "atct_handoff_receive", method: "handoff.receive", ownedBy: "received_by", otherOwned: "requested_by",
@@ -252,11 +273,22 @@ func TestHandoffToolsInjectAgentSessionID(t *testing.T) {
 		},
 		{
 			name: "atct_goal_handoff_request", method: "goal.handoff.request", ownedBy: "requested_by", otherOwned: "received_by",
-			args: map[string]any{"handoff_id": "goal-handoff-1", "goal_id": "goal-1"},
+			reportField: "request_report", reportValue: "goal request report",
+			args: map[string]any{"handoff_id": "goal-handoff-1", "goal_id": "goal-1", "request_report": "goal request report"},
 		},
 		{
 			name: "atct_goal_handoff_receive", method: "goal.handoff.receive", ownedBy: "received_by", otherOwned: "requested_by",
 			args: map[string]any{"goal_id": "goal-1"},
+		},
+		{
+			name: "atct_handoff_complete", method: "handoff.complete",
+			reportField: "complete_report", reportValue: "task complete report",
+			args: map[string]any{"handoff_id": "handoff-1", "task_id": "task-1", "complete_report": "task complete report"},
+		},
+		{
+			name: "atct_goal_handoff_complete", method: "goal.handoff.complete",
+			reportField: "complete_report", reportValue: "goal complete report",
+			args: map[string]any{"handoff_id": "goal-handoff-1", "goal_id": "goal-1", "complete_report": "goal complete report"},
 		},
 	} {
 		result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
@@ -279,11 +311,18 @@ func TestHandoffToolsInjectAgentSessionID(t *testing.T) {
 		if call.method != tc.method {
 			t.Fatalf("RPC method = %q, want %q", call.method, tc.method)
 		}
-		if got := call.params[tc.ownedBy]; got != "session-22" {
-			t.Errorf("%s = %#v, want injected agent session ID", tc.ownedBy, got)
+		if tc.ownedBy != "" {
+			if got := call.params[tc.ownedBy]; got != "session-22" {
+				t.Errorf("%s = %#v, want injected agent session ID", tc.ownedBy, got)
+			}
+			if _, ok := call.params[tc.otherOwned]; ok {
+				t.Errorf("RPC params unexpectedly included %q", tc.otherOwned)
+			}
 		}
-		if _, ok := call.params[tc.otherOwned]; ok {
-			t.Errorf("RPC params unexpectedly included %q", tc.otherOwned)
+		if tc.reportField != "" {
+			if got := call.params[tc.reportField]; got != tc.reportValue {
+				t.Errorf("%s = %#v, want %q", tc.reportField, got, tc.reportValue)
+			}
 		}
 		if tc.name == "atct_handoff_receive" || tc.name == "atct_goal_handoff_receive" {
 			if _, ok := call.params["handoff_id"]; ok {
