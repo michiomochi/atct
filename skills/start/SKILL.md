@@ -49,6 +49,11 @@ found it before the agent did.
 
 ## The loop
 
+The following loop is for self-directed work: find and take a task yourself.
+A delegated worker does not claim the delegated task or follow the claim step;
+the delegator already holds the claim. If `task already claimed` is reported
+for delegated work, that is normal; continue with the delegated task.
+
 Run this until nothing is left, not until the next natural pause.
 
 1. **Look.** Call `atct_goal_list` with the current directory as `cwd`. This
@@ -71,8 +76,9 @@ Run this until nothing is left, not until the next natural pause.
    the breakdown is right: propose it by declaring it, and let the human correct
    it from the dashboard.
 
-4. **Take one.** Call `atct_task_claim`. If the claim fails, another run owns it;
-   take a different one. Then do the work and carry it to a commit.
+4. **Take one (self-directed work only).** Call `atct_task_claim`. If the claim
+   fails, another run owns it; take a different one. Then do the work and carry
+   it to a commit.
 
 5. **Close it.** Call `atct_task_update` with `done` **as soon as the work is
    finished**, before you claim anything else. A task left open after the work

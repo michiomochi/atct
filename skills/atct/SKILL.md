@@ -26,9 +26,13 @@ it when the task was declared.
 
 ## Claim before you start
 
-Call `atct_task_claim` before working on a task. Exactly one run wins a claim.
-If the claim fails the task is already owned, so pick another one rather than
-working on it anyway.
+For self-directed work—when you find a task yourself—call `atct_task_claim`
+before working on it. Exactly one run wins a claim. If the claim fails the task
+is already owned, so pick another one rather than working on it anyway.
+
+A delegated worker must not claim the task; the delegator owns the claim.
+Do not call `atct_task_claim` for a delegated task. For a delegated task,
+`task already claimed` is normal; continue.
 
 Release a task by setting it back to `todo` with `atct_task_update`. There is
 no separate release tool.
