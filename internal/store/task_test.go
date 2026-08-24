@@ -369,6 +369,8 @@ func TestClaimTaskRejectsOverlappingFilesAcrossAgentSessions(t *testing.T) {
 	goalID := newTestGoal(t, s)
 	firstID := declareOneTaskWithFiles(t, s, goalID, "conflict-1", "first", []string{"internal/store/task.go"})
 	secondID := declareOneTaskWithFiles(t, s, goalID, "conflict-2", "second", []string{"internal/store/task.go"})
+	addTestAgentSession(t, s, "run-1")
+	addTestAgentSession(t, s, "run-2")
 
 	if _, err := s.ClaimTask(context.Background(), firstID, "run-1"); err != nil {
 		t.Fatalf("first ClaimTask: %v", err)
@@ -383,6 +385,8 @@ func TestClaimTaskAllowsNonOverlappingFilesAcrossAgentSessions(t *testing.T) {
 	goalID := newTestGoal(t, s)
 	firstID := declareOneTaskWithFiles(t, s, goalID, "non-overlap-1", "first", []string{"internal/store/task.go"})
 	secondID := declareOneTaskWithFiles(t, s, goalID, "non-overlap-2", "second", []string{"internal/store/schema.go"})
+	addTestAgentSession(t, s, "run-1")
+	addTestAgentSession(t, s, "run-2")
 
 	if _, err := s.ClaimTask(context.Background(), firstID, "run-1"); err != nil {
 		t.Fatalf("first ClaimTask: %v", err)
@@ -397,6 +401,7 @@ func TestClaimTaskAllowsOverlappingFilesForSameAgentSession(t *testing.T) {
 	goalID := newTestGoal(t, s)
 	firstID := declareOneTaskWithFiles(t, s, goalID, "same-run-1", "first", []string{"internal/store/task.go"})
 	secondID := declareOneTaskWithFiles(t, s, goalID, "same-run-2", "second", []string{"internal/store/task.go"})
+	addTestAgentSession(t, s, "run-1")
 
 	if _, err := s.ClaimTask(context.Background(), firstID, "run-1"); err != nil {
 		t.Fatalf("first ClaimTask: %v", err)
@@ -411,6 +416,8 @@ func TestClaimTaskIgnoresUndeclaredFiles(t *testing.T) {
 	goalID := newTestGoal(t, s)
 	firstID := declareOneTaskWithFiles(t, s, goalID, "empty-files-1", "first", nil)
 	secondID := declareOneTaskWithFiles(t, s, goalID, "empty-files-2", "second", []string{"internal/store/task.go"})
+	addTestAgentSession(t, s, "run-1")
+	addTestAgentSession(t, s, "run-2")
 
 	if _, err := s.ClaimTask(context.Background(), firstID, "run-1"); err != nil {
 		t.Fatalf("first ClaimTask: %v", err)
@@ -584,6 +591,8 @@ func TestClaimTaskIgnoresTerminalClaims(t *testing.T) {
 			goalID := newTestGoal(t, s)
 			ownerID := declareOneTaskWithFiles(t, s, goalID, "terminal-owner-"+status, "owner", []string{"internal/store/task.go"})
 			candidateID := declareOneTaskWithFiles(t, s, goalID, "terminal-candidate-"+status, "candidate", []string{"internal/store/task.go"})
+			addTestAgentSession(t, s, "run-owner")
+			addTestAgentSession(t, s, "run-candidate")
 
 			if _, err := s.ClaimTask(context.Background(), ownerID, "run-owner"); err != nil {
 				t.Fatalf("owner ClaimTask: %v", err)
@@ -603,6 +612,8 @@ func TestClaimTaskConflictErrorNamesTaskAndFile(t *testing.T) {
 	goalID := newTestGoal(t, s)
 	ownerID := declareOneTaskWithFiles(t, s, goalID, "error-owner", "owner task", []string{"internal/store/task.go"})
 	candidateID := declareOneTaskWithFiles(t, s, goalID, "error-candidate", "candidate task", []string{"internal/store/task.go"})
+	addTestAgentSession(t, s, "run-owner")
+	addTestAgentSession(t, s, "run-candidate")
 
 	if _, err := s.ClaimTask(context.Background(), ownerID, "run-owner"); err != nil {
 		t.Fatalf("owner ClaimTask: %v", err)
@@ -625,6 +636,8 @@ func TestClaimTaskConflictErrorReturnsClaimableCandidates(t *testing.T) {
 	blockedID := declareOneTaskWithFiles(t, s, goalID, "candidate-blocked", "blocked alternative", []string{"internal/store/task.go"})
 	alternativeID := declareOneTaskWithFiles(t, s, goalID, "candidate-safe", "safe alternative", []string{"internal/store/schema.go"})
 	targetID := declareOneTaskWithFiles(t, s, goalID, "candidate-target", "target task", []string{"internal/store/task.go"})
+	addTestAgentSession(t, s, "run-owner")
+	addTestAgentSession(t, s, "run-target")
 
 	if _, err := s.ClaimTask(context.Background(), ownerID, "run-owner"); err != nil {
 		t.Fatalf("owner ClaimTask: %v", err)
@@ -650,6 +663,8 @@ func TestClaimTaskConflictCandidatesAreClaimable(t *testing.T) {
 	targetID := declareOneTaskWithFiles(t, s, goalID, "claimable-target", "target task", []string{"internal/store/task.go"})
 	fileAlternativeID := declareOneTaskWithFiles(t, s, goalID, "claimable-file", "file alternative", []string{"internal/store/schema.go"})
 	emptyAlternativeID := declareOneTaskWithFiles(t, s, goalID, "claimable-empty", "empty alternative", nil)
+	addTestAgentSession(t, s, "run-owner")
+	addTestAgentSession(t, s, "run-target")
 
 	if _, err := s.ClaimTask(context.Background(), ownerID, "run-owner"); err != nil {
 		t.Fatalf("owner ClaimTask: %v", err)
@@ -675,6 +690,8 @@ func TestClaimTaskConflictErrorReportsNoCandidates(t *testing.T) {
 	goalID := newTestGoal(t, s)
 	ownerID := declareOneTaskWithFiles(t, s, goalID, "no-candidate-owner", "owner task", []string{"internal/store/task.go"})
 	targetID := declareOneTaskWithFiles(t, s, goalID, "no-candidate-target", "target task", []string{"internal/store/task.go"})
+	addTestAgentSession(t, s, "run-owner")
+	addTestAgentSession(t, s, "run-target")
 
 	if _, err := s.ClaimTask(context.Background(), ownerID, "run-owner"); err != nil {
 		t.Fatalf("owner ClaimTask: %v", err)

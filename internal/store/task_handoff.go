@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/michiomochi/atct/internal/store/sqlcgen"
@@ -79,20 +80,19 @@ func (s *Store) ensureTaskHandoffTask(ctx context.Context, handoffID, taskID str
 	return nil
 }
 
-func (s *Store) requireLiveTaskClaim(ctx context.Context, taskID string) error {
-	projectID, err := sqlcgen.New(s.db).GetTaskProjectID(ctx, taskID)
+func (s *Store) requireLiveTaskClaim(ctx context.Context, taskID, requestedBy string) error {
+	goalID, err := sqlcgen.New(s.db).GetTaskGoalID(ctx, taskID)
 	if err != nil {
-		return fmt.Errorf("find project for task %q: %w", taskID, err)
+		return fmt.Errorf("find goal for task %q: %w", taskID, err)
 	}
 
-	running, _, err := ClaimLiveness(ctx, s, projectID)
+	goalHandoff, err := s.openGoalHandoff(ctx, goalID)
 	if err != nil {
-		return fmt.Errorf("check claim liveness for task %q: %w", taskID, err)
+		return fmt.Errorf("find live goal handoff for task %q: %w", taskID, err)
 	}
-	for _, task := range running {
-		if task.ID == taskID {
-			return nil
-		}
+	requestedBy = strings.TrimSpace(requestedBy)
+	if goalHandoff != nil && strings.TrimSpace(goalHandoff.ReceivedBy) == requestedBy && claimIsRunning(ctx, s, requestedBy) {
+		return nil
 	}
 
 	return fmt.Errorf("%w: %s", ErrTaskHandoffTaskUnclaimed, taskID)
@@ -177,7 +177,7 @@ func (s *Store) requestTaskHandoff(ctx context.Context, handoffID, taskID, reque
 		return TaskHandoff{}, err
 	}
 	if requireLiveClaim {
-		if err := s.requireLiveTaskClaim(ctx, taskID); err != nil {
+		if err := s.requireLiveTaskClaim(ctx, taskID, requestedBy); err != nil {
 			return TaskHandoff{}, err
 		}
 	}

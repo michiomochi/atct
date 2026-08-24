@@ -49,8 +49,6 @@ type Goal struct {
 	Surprises         string
 	NeedsReview       string
 	NextSteps         string
-	ClaimedBy         string
-	ClaimedAt         sql.NullString
 	CreatedAt         string
 	UpdatedAt         string
 }
@@ -86,8 +84,6 @@ type Task struct {
 	Files        string
 	SortOrder    int64
 	DeclareKey   string
-	ClaimedBy    string
-	ClaimedAt    sql.NullString
 	SnoozedUntil sql.NullString
 	CreatedAt    string
 	UpdatedAt    string

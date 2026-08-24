@@ -10,28 +10,6 @@ import (
 	"database/sql"
 )
 
-const claimTask = `-- name: ClaimTask :execresult
-UPDATE tasks
-SET claimed_by = ?, claimed_at = ?, updated_at = ?
-WHERE id = ? AND claimed_by = ''
-`
-
-type ClaimTaskParams struct {
-	ClaimedBy string
-	ClaimedAt sql.NullString
-	UpdatedAt string
-	ID        string
-}
-
-func (q *Queries) ClaimTask(ctx context.Context, arg ClaimTaskParams) (sql.Result, error) {
-	return q.db.ExecContext(ctx, claimTask,
-		arg.ClaimedBy,
-		arg.ClaimedAt,
-		arg.UpdatedAt,
-		arg.ID,
-	)
-}
-
 const completeGoalHandoff = `-- name: CompleteGoalHandoff :exec
 INSERT INTO goal_handoffs (id, goal_id, completed_report_at, complete_report)
 VALUES (?, ?, ?, ?)
@@ -98,9 +76,9 @@ func (q *Queries) CountOpenDecisionsForTask(ctx context.Context, taskID sql.Null
 const createTask = `-- name: CreateTask :exec
 INSERT INTO tasks (
   id, goal_id, title, description, status, agent, files, sort_order, declare_key,
-  claimed_by, claimed_at, snoozed_until, created_at, updated_at
+  snoozed_until, created_at, updated_at
 )
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(goal_id, declare_key) DO NOTHING
 `
 
@@ -114,8 +92,6 @@ type CreateTaskParams struct {
 	Files        string
 	SortOrder    int64
 	DeclareKey   string
-	ClaimedBy    string
-	ClaimedAt    sql.NullString
 	SnoozedUntil sql.NullString
 	CreatedAt    string
 	UpdatedAt    string
@@ -132,8 +108,6 @@ func (q *Queries) CreateTask(ctx context.Context, arg CreateTaskParams) error {
 		arg.Files,
 		arg.SortOrder,
 		arg.DeclareKey,
-		arg.ClaimedBy,
-		arg.ClaimedAt,
 		arg.SnoozedUntil,
 		arg.CreatedAt,
 		arg.UpdatedAt,
@@ -167,7 +141,7 @@ func (q *Queries) DeleteExpiredAgentSessionsExcept(ctx context.Context, arg Dele
 }
 
 const dropOpenTasksForGoal = `-- name: DropOpenTasksForGoal :execresult
-UPDATE tasks SET status = 'dropped', claimed_by = '', claimed_at = NULL, updated_at = ?
+UPDATE tasks SET status = 'dropped', updated_at = ?
 WHERE goal_id = ? AND status IN ('todo', 'doing')
 `
 
@@ -264,21 +238,8 @@ func (q *Queries) GetLatestAgentSessionID(ctx context.Context, projectID sql.Nul
 	return id, err
 }
 
-const getTaskClaimedBy = `-- name: GetTaskClaimedBy :one
-SELECT claimed_by
-FROM tasks
-WHERE id = ?
-`
-
-func (q *Queries) GetTaskClaimedBy(ctx context.Context, id string) (string, error) {
-	row := q.db.QueryRowContext(ctx, getTaskClaimedBy, id)
-	var claimed_by string
-	err := row.Scan(&claimed_by)
-	return claimed_by, err
-}
-
 const getTaskForClaim = `-- name: GetTaskForClaim :one
-SELECT t.goal_id, t.title, t.description, t.status, t.claimed_by, t.files,
+SELECT t.goal_id, t.title, t.description, t.status, t.files,
        g.status AS goal_status
 FROM tasks AS t
 JOIN goals AS g ON g.id = t.goal_id
@@ -290,7 +251,6 @@ type GetTaskForClaimRow struct {
 	Title       string
 	Description string
 	Status      string
-	ClaimedBy   string
 	Files       string
 	GoalStatus  string
 }
@@ -303,7 +263,6 @@ func (q *Queries) GetTaskForClaim(ctx context.Context, id string) (GetTaskForCla
 		&i.Title,
 		&i.Description,
 		&i.Status,
-		&i.ClaimedBy,
 		&i.Files,
 		&i.GoalStatus,
 	)
@@ -421,67 +380,6 @@ func (q *Queries) LinkTaskCommit(ctx context.Context, arg LinkTaskCommitParams) 
 	return err
 }
 
-const listClaimedTasksForConflict = `-- name: ListClaimedTasksForConflict :many
-SELECT id, title, description, status, claimed_by, files
-FROM tasks
-WHERE id <> ?
-  AND claimed_by <> ''
-  AND claimed_by <> ?
-  AND status NOT IN (?, ?)
-ORDER BY sort_order, id
-`
-
-type ListClaimedTasksForConflictParams struct {
-	ID        string
-	ClaimedBy string
-	Status    string
-	Status_2  string
-}
-
-type ListClaimedTasksForConflictRow struct {
-	ID          string
-	Title       string
-	Description string
-	Status      string
-	ClaimedBy   string
-	Files       string
-}
-
-func (q *Queries) ListClaimedTasksForConflict(ctx context.Context, arg ListClaimedTasksForConflictParams) ([]ListClaimedTasksForConflictRow, error) {
-	rows, err := q.db.QueryContext(ctx, listClaimedTasksForConflict,
-		arg.ID,
-		arg.ClaimedBy,
-		arg.Status,
-		arg.Status_2,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ListClaimedTasksForConflictRow
-	for rows.Next() {
-		var i ListClaimedTasksForConflictRow
-		if err := rows.Scan(
-			&i.ID,
-			&i.Title,
-			&i.Description,
-			&i.Status,
-			&i.ClaimedBy,
-			&i.Files,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const listGoalHandoffs = `-- name: ListGoalHandoffs :many
 SELECT id, goal_id, requested_by, received_by,
        requested_at, received_at, completed_report_at,
@@ -525,7 +423,7 @@ func (q *Queries) ListGoalHandoffs(ctx context.Context, goalID string) ([]GoalHa
 }
 
 const listTaskAlternatives = `-- name: ListTaskAlternatives :many
-SELECT id, title, description, status, claimed_by, files
+SELECT id, title, description, status, files
 FROM tasks
 WHERE goal_id = ?
   AND id <> ?
@@ -542,7 +440,6 @@ type ListTaskAlternativesRow struct {
 	Title       string
 	Description string
 	Status      string
-	ClaimedBy   string
 	Files       string
 }
 
@@ -560,7 +457,6 @@ func (q *Queries) ListTaskAlternatives(ctx context.Context, arg ListTaskAlternat
 			&i.Title,
 			&i.Description,
 			&i.Status,
-			&i.ClaimedBy,
 			&i.Files,
 		); err != nil {
 			return nil, err
@@ -667,7 +563,7 @@ func (q *Queries) ListTaskHandoffs(ctx context.Context, taskID string) ([]TaskHa
 const listTasks = `-- name: ListTasks :many
 SELECT
   id, goal_id, title, description, status, agent, files, sort_order, declare_key,
-  claimed_by, claimed_at, snoozed_until, created_at, updated_at
+  snoozed_until, created_at, updated_at
 FROM tasks
 WHERE goal_id = ?
 ORDER BY sort_order, id
@@ -692,8 +588,6 @@ func (q *Queries) ListTasks(ctx context.Context, goalID string) ([]Task, error) 
 			&i.Files,
 			&i.SortOrder,
 			&i.DeclareKey,
-			&i.ClaimedBy,
-			&i.ClaimedAt,
 			&i.SnoozedUntil,
 			&i.CreatedAt,
 			&i.UpdatedAt,
@@ -798,7 +692,7 @@ func (q *Queries) RegisterAgentSession(ctx context.Context, arg RegisterAgentSes
 
 const releaseTask = `-- name: ReleaseTask :execresult
 UPDATE tasks
-SET status = 'todo', claimed_by = '', claimed_at = NULL, updated_at = ?
+SET status = 'todo', updated_at = ?
 WHERE id = ?
 `
 
@@ -925,26 +819,4 @@ type UpdateTaskStatusParams struct {
 
 func (q *Queries) UpdateTaskStatus(ctx context.Context, arg UpdateTaskStatusParams) (sql.Result, error) {
 	return q.db.ExecContext(ctx, updateTaskStatus, arg.Status, arg.UpdatedAt, arg.ID)
-}
-
-const updateTaskStatusAndReleaseClaim = `-- name: UpdateTaskStatusAndReleaseClaim :execresult
-UPDATE tasks
-SET status = ?, claimed_by = '', claimed_at = NULL, updated_at = ?
-WHERE id = ? AND (claimed_by = '' OR claimed_by = ?)
-`
-
-type UpdateTaskStatusAndReleaseClaimParams struct {
-	Status    string
-	UpdatedAt string
-	ID        string
-	ClaimedBy string
-}
-
-func (q *Queries) UpdateTaskStatusAndReleaseClaim(ctx context.Context, arg UpdateTaskStatusAndReleaseClaimParams) (sql.Result, error) {
-	return q.db.ExecContext(ctx, updateTaskStatusAndReleaseClaim,
-		arg.Status,
-		arg.UpdatedAt,
-		arg.ID,
-		arg.ClaimedBy,
-	)
 }

@@ -465,6 +465,7 @@ func TestClaimGoal(t *testing.T) {
 		t.Fatalf("CreateGoal: %v", err)
 	}
 
+	addTestAgentSession(t, s, "session-1")
 	claimed, err := s.ClaimGoal(ctx, g.ID, "session-1")
 	if err != nil {
 		t.Fatalf("ClaimGoal: %v", err)
@@ -523,6 +524,7 @@ func TestClaimGoalTakesOverDeadClaim(t *testing.T) {
 	if _, err := s.ClaimGoal(ctx, goal.ID, "dead-run"); err != nil {
 		t.Fatalf("ClaimGoal dead: %v", err)
 	}
+	addTestAgentSession(t, s, "new-run")
 
 	claimed, err := s.ClaimGoal(ctx, goal.ID, "new-run")
 	if err != nil {
@@ -537,6 +539,7 @@ func TestClaimGoalAllowsUnclaimedGoal(t *testing.T) {
 	ctx := context.Background()
 	s, goal := newGoalClaimFixture(t)
 
+	addTestAgentSession(t, s, "new-run")
 	claimed, err := s.ClaimGoal(ctx, goal.ID, "new-run")
 	if err != nil {
 		t.Fatalf("ClaimGoal: %v", err)
@@ -621,6 +624,7 @@ func TestReleaseGoal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
+	addTestAgentSession(t, s, "session-1")
 	if _, err := s.ClaimGoal(ctx, g.ID, "session-1"); err != nil {
 		t.Fatalf("ClaimGoal: %v", err)
 	}

@@ -11,18 +11,8 @@ VALUES (?, ?, ?, ?, ?, ?, '', '', '', '', '', '', '', ?, ?);
 SELECT
   id, project_id, derived_from_goal_id, content, status, creator, result_summary,
   work_done, now_possible, how_to_verify, surprises, needs_review, next_steps,
-  claimed_by, claimed_at, created_at, updated_at
+  created_at, updated_at
 FROM goals
-WHERE id = ?;
-
--- name: ClaimGoal :execresult
-UPDATE goals
-SET claimed_by = ?, claimed_at = ?, updated_at = ?
-WHERE id = ?;
-
--- name: ReleaseGoal :execresult
-UPDATE goals
-SET claimed_by = '', claimed_at = NULL, updated_at = ?
 WHERE id = ?;
 
 -- name: MarkGoalActive :execresult
@@ -60,7 +50,7 @@ WHERE id = ? AND kind = 'goal_approval' AND status = 'open';
 SELECT
   id, project_id, derived_from_goal_id, content, status, creator, result_summary,
   work_done, now_possible, how_to_verify, surprises, needs_review, next_steps,
-  claimed_by, claimed_at, created_at, updated_at
+  created_at, updated_at
 FROM goals
 WHERE project_id = ?
 ORDER BY created_at;
@@ -69,7 +59,7 @@ ORDER BY created_at;
 SELECT
   id, project_id, derived_from_goal_id, content, status, creator, result_summary,
   work_done, now_possible, how_to_verify, surprises, needs_review, next_steps,
-  claimed_by, claimed_at, created_at, updated_at
+  created_at, updated_at
 FROM goals
 ORDER BY created_at;
 
@@ -77,7 +67,7 @@ ORDER BY created_at;
 SELECT
   id, project_id, derived_from_goal_id, content, status, creator, result_summary,
   work_done, now_possible, how_to_verify, surprises, needs_review, next_steps,
-  claimed_by, claimed_at, created_at, updated_at
+  created_at, updated_at
 FROM goals
 WHERE derived_from_goal_id = ?
 ORDER BY created_at;

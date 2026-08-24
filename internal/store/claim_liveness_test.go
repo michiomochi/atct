@@ -119,9 +119,7 @@ func TestClaimLivenessReportsCurrentProcessAsRunning(t *testing.T) {
 	if err := s.AssociateAgentSessionWithProject(ctx, "live-run", project.ID); err != nil {
 		t.Fatalf("AssociateAgentSessionWithProject: %v", err)
 	}
-	if _, err := s.ClaimTask(ctx, tasks[0].ID, "live-run"); err != nil {
-		t.Fatalf("ClaimTask: %v", err)
-	}
+	insertClaimLivenessHandoff(t, s, tasks[0].ID, "live-claim-handoff", "live-run")
 
 	running, stale, err := ClaimLiveness(ctx, s, project.ID)
 	if err != nil {
@@ -164,9 +162,11 @@ func TestClaimLivenessTreatsUnknownAndUnverifiableClaimsAsStale(t *testing.T) {
 		if claim.id != "missing-run" {
 			insertClaimLivenessSession(t, s, claim.id, project.ID, claim.pid, claim.startedAt)
 		}
-		if _, err := s.ClaimTask(ctx, tasks[i].ID, claim.id); err != nil {
-			t.Fatalf("ClaimTask(%s): %v", claim.id, err)
+		requestedBy := any(nil)
+		if claim.id != "missing-run" {
+			requestedBy = claim.id
 		}
+		insertClaimLivenessHandoff(t, s, tasks[i].ID, "claim-"+claim.id, requestedBy)
 	}
 
 	running, stale, err := ClaimLiveness(ctx, s, project.ID)
@@ -203,9 +203,7 @@ func TestClaimLivenessTreatsUnreadableProcessStartAsStale(t *testing.T) {
 		t.Fatalf("DeclareTasks: %v", err)
 	}
 	insertClaimLivenessSession(t, s, "unreadable-start-run", project.ID, os.Getpid(), "")
-	if _, err := s.ClaimTask(ctx, tasks[0].ID, "unreadable-start-run"); err != nil {
-		t.Fatalf("ClaimTask: %v", err)
-	}
+	insertClaimLivenessHandoff(t, s, tasks[0].ID, "unreadable-start-handoff", "unreadable-start-run")
 
 	running, stale, err := ClaimLiveness(ctx, s, project.ID)
 	if err != nil {
@@ -235,9 +233,7 @@ func TestClaimLivenessTreatsPIDReuseAsStale(t *testing.T) {
 		t.Fatalf("DeclareTasks: %v", err)
 	}
 	insertClaimLivenessSession(t, s, "reused-pid-run", project.ID, os.Getpid(), "not-the-process-start")
-	if _, err := s.ClaimTask(ctx, tasks[0].ID, "reused-pid-run"); err != nil {
-		t.Fatalf("ClaimTask: %v", err)
-	}
+	insertClaimLivenessHandoff(t, s, tasks[0].ID, "reused-pid-handoff", "reused-pid-run")
 
 	running, stale, err := ClaimLiveness(ctx, s, project.ID)
 	if err != nil {
@@ -270,9 +266,7 @@ func TestClaimLivenessFiltersClaimsByProject(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DeclareTasks other: %v", err)
 	}
-	if _, err := s.ClaimTask(ctx, tasks[0].ID, "other-run"); err != nil {
-		t.Fatalf("ClaimTask: %v", err)
-	}
+	insertClaimLivenessHandoff(t, s, tasks[0].ID, "other-project-handoff", nil)
 
 	running, stale, err := ClaimLiveness(ctx, s, project.ID)
 	if err != nil {
@@ -289,5 +283,14 @@ func insertClaimLivenessSession(t *testing.T, s *Store, id, projectID string, pi
 		INSERT INTO agent_sessions (id, project_id, pid, started_at, registered_at)
 		VALUES (?, ?, ?, ?, ?)`, id, projectID, pid, startedAt, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
 		t.Fatalf("insert agent session %s: %v", id, err)
+	}
+}
+
+func insertClaimLivenessHandoff(t *testing.T, s *Store, taskID, handoffID string, requestedBy any) {
+	t.Helper()
+	if _, err := s.DB().ExecContext(context.Background(), `
+		INSERT INTO task_handoffs (id, task_id, requested_by, requested_at)
+		VALUES (?, ?, ?, ?)`, handoffID, taskID, requestedBy, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+		t.Fatalf("insert task handoff %s: %v", handoffID, err)
 	}
 }

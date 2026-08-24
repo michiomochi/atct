@@ -32,8 +32,6 @@ CREATE TABLE IF NOT EXISTS goals (
   surprises      TEXT NOT NULL DEFAULT '',
   needs_review   TEXT NOT NULL DEFAULT '',
   next_steps     TEXT NOT NULL DEFAULT '',
-  claimed_by     TEXT NOT NULL DEFAULT '',
-  claimed_at     TEXT,
   created_at     TEXT NOT NULL,
   updated_at     TEXT NOT NULL,
   CHECK (
@@ -58,8 +56,6 @@ CREATE TABLE IF NOT EXISTS tasks (
   files      TEXT NOT NULL DEFAULT '[]',
   sort_order INTEGER NOT NULL DEFAULT 0,
   declare_key TEXT NOT NULL,
-  claimed_by TEXT NOT NULL DEFAULT '',
-  claimed_at TEXT,
   snoozed_until TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/michiomochi/atct/internal/store/sqlcgen"
@@ -79,20 +80,21 @@ func (s *Store) ensureGoalHandoffGoal(ctx context.Context, handoffID, goalID str
 	return nil
 }
 
-func (s *Store) requireLiveGoalClaim(ctx context.Context, goalID string) error {
+func (s *Store) requireLiveGoalClaim(ctx context.Context, goalID, requestedBy string) error {
 	goal, err := s.GetGoal(ctx, goalID)
 	if err != nil {
 		return fmt.Errorf("find goal %q: %w", goalID, err)
 	}
 
-	running, _, err := GoalClaimLiveness(ctx, s, goal.ProjectID)
+	project, err := sqlcgen.New(s.db).GetProject(ctx, goal.ProjectID)
 	if err != nil {
-		return fmt.Errorf("check claim liveness for goal %q: %w", goalID, err)
+		return fmt.Errorf("find project for goal %q: %w", goalID, err)
 	}
-	for _, runningGoal := range running {
-		if runningGoal.ID == goalID {
-			return nil
-		}
+
+	requestedBy = strings.TrimSpace(requestedBy)
+	projectOwner := strings.TrimSpace(project.ClaimedBy)
+	if projectOwner == requestedBy && projectOwner != "" && claimIsRunning(ctx, s, projectOwner) {
+		return nil
 	}
 
 	return fmt.Errorf("%w: %s", ErrGoalHandoffGoalUnclaimed, goalID)
@@ -161,8 +163,9 @@ func (s *Store) openGoalHandoff(ctx context.Context, goalID string) (*GoalHandof
 	return open, nil
 }
 
-// RequestGoalHandoff records the request side of a handoff. It requires a
-// live claim on the target goal; receipt and completion are separate calls.
+// RequestGoalHandoff records the request side of a handoff. It requires the
+// requester to hold a live claim on the goal's project; receipt and completion
+// are separate calls.
 func (s *Store) RequestGoalHandoff(ctx context.Context, handoffID, goalID, requestedBy string, requestReport string) (GoalHandoff, error) {
 	return s.requestGoalHandoff(ctx, handoffID, goalID, requestedBy, requestReport, true)
 }
@@ -176,7 +179,7 @@ func (s *Store) requestGoalHandoff(ctx context.Context, handoffID, goalID, reque
 		return GoalHandoff{}, err
 	}
 	if requireLiveClaim {
-		if err := s.requireLiveGoalClaim(ctx, goalID); err != nil {
+		if err := s.requireLiveGoalClaim(ctx, goalID, requestedBy); err != nil {
 			return GoalHandoff{}, err
 		}
 	}

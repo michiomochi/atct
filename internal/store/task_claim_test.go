@@ -18,6 +18,8 @@ func TestClaimTaskAllowsExactlyOneConcurrentWinner(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DeclareTasks: %v", err)
 	}
+	addTestAgentSession(t, s, "run-0")
+	addTestAgentSession(t, s, "run-1")
 
 	var wg sync.WaitGroup
 	results := make(chan error, 2)
@@ -65,6 +67,7 @@ func TestUpdateTaskReleasesClaimWhenTerminal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DeclareTasks: %v", err)
 	}
+	addTestAgentSession(t, s, "run-1")
 	if _, err := s.ClaimTask(ctx, tasks[0].ID, "run-1"); err != nil {
 		t.Fatalf("ClaimTask: %v", err)
 	}
@@ -86,6 +89,7 @@ func TestUpdateTaskReleasesClaimWhenTodo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DeclareTasks: %v", err)
 	}
+	addTestAgentSession(t, s, "run-1")
 	if _, err := s.UpdateTask(ctx, tasks[0].ID, domain.TaskDoing, "run-1"); err != nil {
 		t.Fatalf("UpdateTask doing: %v", err)
 	}
@@ -110,6 +114,7 @@ func TestUpdateTaskKeepsClaimWhenDoing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DeclareTasks: %v", err)
 	}
+	addTestAgentSession(t, s, "run-1")
 	claimed, err := s.ClaimTask(ctx, tasks[0].ID, "run-1")
 	if err != nil {
 		t.Fatalf("ClaimTask: %v", err)
@@ -135,6 +140,7 @@ func TestReleaseTaskClearsClaim(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DeclareTasks: %v", err)
 	}
+	addTestAgentSession(t, s, "dead-run")
 	if _, err := s.ClaimTask(ctx, tasks[0].ID, "dead-run"); err != nil {
 		t.Fatalf("ClaimTask: %v", err)
 	}

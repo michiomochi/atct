@@ -30,6 +30,22 @@ func addLiveGoalClaim(t *testing.T, s *Store, goalID, sessionID string) {
 	}
 }
 
+func addLiveProjectClaim(t *testing.T, s *Store, goalID, sessionID string) {
+	t.Helper()
+
+	ctx := context.Background()
+	goal, err := s.GetGoal(ctx, goalID)
+	if err != nil {
+		t.Fatalf("GetGoal failed: %v", err)
+	}
+	if err := s.RegisterAgentSession(ctx, sessionID, os.Getpid()); err != nil {
+		t.Fatalf("RegisterAgentSession failed: %v", err)
+	}
+	if _, err := s.ClaimProject(ctx, goal.ProjectID, sessionID); err != nil {
+		t.Fatalf("ClaimProject failed: %v", err)
+	}
+}
+
 func addRequestOnlyGoalHandoff(t *testing.T, s *Store, handoffID, goalID, requestedBy string) {
 	t.Helper()
 
@@ -92,9 +108,8 @@ func TestGoalHandoffRequestReceiveAndComplete(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 	goalID := newTestGoal(t, s)
-	addTestAgentSession(t, s, "goal-requester")
+	addLiveProjectClaim(t, s, goalID, "goal-requester")
 	addTestAgentSession(t, s, "goal-receiver")
-	addLiveGoalClaim(t, s, goalID, "goal-claim-owner")
 
 	handoff, err := s.RequestGoalHandoff(ctx, "goal-handoff-1", goalID, "goal-requester", "")
 	if err != nil {
@@ -139,9 +154,8 @@ func TestGoalHandoffReportsAreStored(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 	goalID := newTestGoal(t, s)
-	addTestAgentSession(t, s, "goal-report-requester")
+	addLiveProjectClaim(t, s, goalID, "goal-report-requester")
 	addTestAgentSession(t, s, "goal-report-receiver")
-	addLiveGoalClaim(t, s, goalID, "goal-report-claim-owner")
 
 	requested, err := s.RequestGoalHandoff(ctx, "goal-report-handoff", goalID, "goal-report-requester", "Please take over the goal.")
 	if err != nil {
@@ -167,8 +181,7 @@ func TestGoalHandoffReportsMayBeOmitted(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 	goalID := newTestGoal(t, s)
-	addTestAgentSession(t, s, "goal-empty-report-requester")
-	addLiveGoalClaim(t, s, goalID, "goal-empty-report-claim-owner")
+	addLiveProjectClaim(t, s, goalID, "goal-empty-report-requester")
 
 	handoff, err := s.RequestGoalHandoff(ctx, "goal-empty-report-handoff", goalID, "goal-empty-report-requester", "")
 	if err != nil {
@@ -191,9 +204,8 @@ func TestGoalHandoffAllowsSecondHandoffForSameGoal(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 	goalID := newTestGoal(t, s)
-	addTestAgentSession(t, s, "goal-requester")
+	addLiveProjectClaim(t, s, goalID, "goal-requester")
 	addTestAgentSession(t, s, "goal-dead-receiver")
-	addLiveGoalClaim(t, s, goalID, "goal-second-claim-owner")
 
 	first, err := s.RequestGoalHandoff(ctx, "goal-handoff-1", goalID, "goal-requester", "")
 	if err != nil {
@@ -230,8 +242,7 @@ func TestGoalHandoffRejectsSecondHandoffForLiveReceiver(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 	goalID := newTestGoal(t, s)
-	addTestAgentSession(t, s, "goal-live-receiver-requester")
-	addLiveGoalClaim(t, s, goalID, "goal-live-receiver-claim-owner")
+	addLiveProjectClaim(t, s, goalID, "goal-live-receiver-requester")
 	if err := s.RegisterAgentSession(ctx, "goal-live-receiver", os.Getpid()); err != nil {
 		t.Fatalf("RegisterAgentSession failed: %v", err)
 	}
@@ -253,9 +264,8 @@ func TestGoalHandoffReceiveByGoal(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 	goalID := newTestGoal(t, s)
-	addTestAgentSession(t, s, "goal-requester")
+	addLiveProjectClaim(t, s, goalID, "goal-requester")
 	addTestAgentSession(t, s, "goal-receiver")
-	addLiveGoalClaim(t, s, goalID, "goal-receive-claim-owner")
 
 	requested, err := s.RequestGoalHandoff(ctx, "goal-receive-by-goal", goalID, "goal-requester", "")
 	if err != nil {
@@ -347,9 +357,8 @@ func TestGoalHandoffReceiveByGoalRejectsMultipleUnreceived(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 	goalID := newTestGoal(t, s)
-	addTestAgentSession(t, s, "goal-requester")
+	addLiveProjectClaim(t, s, goalID, "goal-requester")
 	addTestAgentSession(t, s, "goal-receiver")
-	addLiveGoalClaim(t, s, goalID, "goal-ambiguous-claim-owner")
 
 	if _, err := s.RequestGoalHandoff(ctx, "goal-ambiguous-1", goalID, "goal-requester", ""); err != nil {
 		t.Fatalf("RequestGoalHandoff failed: %v", err)
@@ -366,9 +375,8 @@ func TestGoalHandoffAllowsNewHandoffAfterCompletion(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 	goalID := newTestGoal(t, s)
-	addTestAgentSession(t, s, "completed-goal-requester")
+	addLiveProjectClaim(t, s, goalID, "completed-goal-requester")
 	addTestAgentSession(t, s, "completed-goal-receiver")
-	addLiveGoalClaim(t, s, goalID, "completed-goal-claim-owner")
 
 	first, err := s.RequestGoalHandoff(ctx, "completed-goal-1", goalID, "completed-goal-requester", "")
 	if err != nil {
@@ -390,8 +398,7 @@ func TestGoalHandoffRejectsMultipleOpenHandoffsInDatabase(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 	goalID := newTestGoal(t, s)
-	addTestAgentSession(t, s, "goal-database-requester")
-	addLiveGoalClaim(t, s, goalID, "goal-database-claim-owner")
+	addLiveProjectClaim(t, s, goalID, "goal-database-requester")
 	if _, err := s.RequestGoalHandoff(ctx, "goal-database-handoff-1", goalID, "goal-database-requester", ""); err != nil {
 		t.Fatalf("first RequestGoalHandoff failed: %v", err)
 	}
@@ -414,6 +421,27 @@ func TestGoalHandoffRejectsMissingGoal(t *testing.T) {
 
 	if _, err := s.RequestGoalHandoff(context.Background(), "goal-handoff-missing", "missing-goal", "goal-requester", ""); err == nil {
 		t.Fatal("RequestGoalHandoff should reject a missing goal")
+	}
+}
+
+func TestGoalHandoffRequiresRequesterProjectClaim(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	goalID := newTestGoal(t, s)
+	goal, err := s.GetGoal(ctx, goalID)
+	if err != nil {
+		t.Fatalf("GetGoal failed: %v", err)
+	}
+	requester := "goal-project-owner"
+	if err := s.RegisterAgentSession(ctx, requester, os.Getpid()); err != nil {
+		t.Fatalf("RegisterAgentSession failed: %v", err)
+	}
+	if _, err := s.ClaimProject(ctx, goal.ProjectID, requester); err != nil {
+		t.Fatalf("ClaimProject failed: %v", err)
+	}
+
+	if _, err := s.RequestGoalHandoff(ctx, "goal-handoff-project-owner", goalID, requester, ""); err != nil {
+		t.Fatalf("RequestGoalHandoff with requester project claim failed: %v", err)
 	}
 }
 

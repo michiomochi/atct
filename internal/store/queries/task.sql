@@ -1,15 +1,15 @@
 -- name: CreateTask :exec
 INSERT INTO tasks (
   id, goal_id, title, description, status, agent, files, sort_order, declare_key,
-  claimed_by, claimed_at, snoozed_until, created_at, updated_at
+  snoozed_until, created_at, updated_at
 )
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(goal_id, declare_key) DO NOTHING;
 
 -- name: ListTasks :many
 SELECT
   id, goal_id, title, description, status, agent, files, sort_order, declare_key,
-  claimed_by, claimed_at, snoozed_until, created_at, updated_at
+  snoozed_until, created_at, updated_at
 FROM tasks
 WHERE goal_id = ?
 ORDER BY sort_order, id;
@@ -20,7 +20,7 @@ SET snoozed_until = ?, updated_at = ?
 WHERE id = ?;
 
 -- name: DropOpenTasksForGoal :execresult
-UPDATE tasks SET status = 'dropped', claimed_by = '', claimed_at = NULL, updated_at = ?
+UPDATE tasks SET status = 'dropped', updated_at = ?
 WHERE goal_id = ? AND status IN ('todo', 'doing');
 
 -- name: MaxTaskSortOrder :one
@@ -50,44 +50,20 @@ FROM task_commits
 WHERE task_id = ?
 ORDER BY created_at ASC;
 
--- name: UpdateTaskStatusAndReleaseClaim :execresult
-UPDATE tasks
-SET status = ?, claimed_by = '', claimed_at = NULL, updated_at = ?
-WHERE id = ? AND (claimed_by = '' OR claimed_by = ?);
-
 -- name: GetTaskGoalID :one
 SELECT goal_id
 FROM tasks
 WHERE id = ?;
 
 -- name: GetTaskForClaim :one
-SELECT t.goal_id, t.title, t.description, t.status, t.claimed_by, t.files,
+SELECT t.goal_id, t.title, t.description, t.status, t.files,
        g.status AS goal_status
 FROM tasks AS t
 JOIN goals AS g ON g.id = t.goal_id
 WHERE t.id = ?;
 
--- name: ListClaimedTasksForConflict :many
-SELECT id, title, description, status, claimed_by, files
-FROM tasks
-WHERE id <> ?
-  AND claimed_by <> ''
-  AND claimed_by <> ?
-  AND status NOT IN (?, ?)
-ORDER BY sort_order, id;
-
--- name: ClaimTask :execresult
-UPDATE tasks
-SET claimed_by = ?, claimed_at = ?, updated_at = ?
-WHERE id = ? AND claimed_by = '';
-
--- name: GetTaskClaimedBy :one
-SELECT claimed_by
-FROM tasks
-WHERE id = ?;
-
 -- name: ListTaskAlternatives :many
-SELECT id, title, description, status, claimed_by, files
+SELECT id, title, description, status, files
 FROM tasks
 WHERE goal_id = ?
   AND id <> ?
@@ -95,7 +71,7 @@ ORDER BY sort_order, id;
 
 -- name: ReleaseTask :execresult
 UPDATE tasks
-SET status = 'todo', claimed_by = '', claimed_at = NULL, updated_at = ?
+SET status = 'todo', updated_at = ?
 WHERE id = ?;
 
 -- name: TaskExists :one
