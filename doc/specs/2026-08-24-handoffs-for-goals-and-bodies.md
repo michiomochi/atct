@@ -106,5 +106,18 @@ FK で落ちた）。**`goal_handoffs` は handoff 側の流儀に揃える。**
   task の場合と違って自分を名乗れる。**task と同じ形にするか、claim を使うか決めていない**
 - **完了報告の決定（`kind=completion`）との関係。**ゴールの完了報告は既に決定として
   存在する。`complete_report` と二重になるのではないか
-- **一意制約をどう書くか。**「未完了の handoff は 1 つまで」は部分インデックスで
-  表せるが、SQLite の対応を確かめていない
+- ~~**一意制約をどう書くか。**~~ **解決した（2026-08-24 追記）。**SQLite 3.51.0 で
+  部分インデックスが効くことを確かめた。
+
+  ```sql
+  CREATE UNIQUE INDEX ux ON task_handoffs(task_id) WHERE completed_report_at IS NULL
+  ```
+
+  ```
+  同じ task に未完了の handoff を 2 つ  → UNIQUE constraint failed
+  完了させてから新しい行を作る          → 通る
+  ```
+
+  **アプリ側の判定ではなく DB が保証する。**claim の「排他制御」を handoff へ
+  移す道が開いた。差し戻しで同じタスクを 2 度渡す運用（1 タスクに 1 人の例外）が
+  あるかは別に確かめること
