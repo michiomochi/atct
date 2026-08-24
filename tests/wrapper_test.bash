@@ -23,6 +23,12 @@ assert_file_contains() {
   grep -Fq -- "$needle" "$file" || fail "<$file> does not contain <$needle>"
 }
 
+assert_file_matches() {
+  local pattern="$1"
+  local file="$2"
+  grep -Eq -- "$pattern" "$file" || fail "<$file> does not match <$pattern>"
+}
+
 assert_file_not_contains() {
   local needle="$1"
   local file="$2"
@@ -505,11 +511,71 @@ test_delegated_claim_contract_is_explicit() {
   assert_file_not_contains 'atct_goal_handoff_receive` with only the `handoff_id` provided in this request.' "$atct_skill"
 }
 
+test_role_contract_is_documented() {
+  local atct_skill="$REPO_ROOT/skills/atct/SKILL.md"
+  local documented_rows
+  local role
+  local row
+  local does
+  local does_not
+
+  assert_file_contains '| Layer | Does | Does not |' "$atct_skill"
+  documented_rows="$(
+    sed -n '/^## Roles$/,/^## Declare before you work$/p' "$atct_skill" |
+      sed -nE 's/^\|[[:space:]]*`(commander|subcommander|executor)`[[:space:]]*\|[[:space:]]*([^|]+)[[:space:]]*\|[[:space:]]*([^|]+)[[:space:]]*\|[[:space:]]*$/\1|\2|\3/p'
+  )"
+  assert_eq $'commander\nexecutor\nsubcommander' "$(printf '%s\n' "$documented_rows" | cut -d'|' -f1 | sort)" \
+    'role boundary table must contain exactly one row for each role'
+
+  for role in commander subcommander executor; do
+    row="$(printf '%s\n' "$documented_rows" | awk -F'|' -v role="$role" '$1 == role { print; exit }')"
+    [[ -n "$row" ]] || fail "role boundary table is missing $role"
+    does="${row#*|}"
+    does="${does%%|*}"
+    does_not="${row##*|}"
+    [[ -n "$(tr -d '[:space:]' <<<"$does")" ]] || fail "$role boundary table has no does value"
+    [[ -n "$(tr -d '[:space:]' <<<"$does_not")" ]] || fail "$role boundary table has no does_not value"
+  done
+}
+
+test_role_response_exposes_boundary_fields() {
+  local handler_go="$REPO_ROOT/internal/daemon/handler.go"
+  local tools_go="$REPO_ROOT/internal/mcpshim/tools.go"
+
+  assert_file_matches '^[[:space:]]*Does[[:space:]]+\[\]string[[:space:]]+`json:"does"`' "$handler_go"
+  assert_file_matches '^[[:space:]]*DoesNot[[:space:]]+\[\]string[[:space:]]+`json:"does_not"`' "$handler_go"
+  assert_file_matches '^[[:space:]]*Does[[:space:]]+\[\]string[[:space:]]+`json:"does"`' "$tools_go"
+  assert_file_matches '^[[:space:]]*DoesNot[[:space:]]+\[\]string[[:space:]]+`json:"does_not"`' "$tools_go"
+}
+
+test_role_contract_uses_neutral_language() {
+  local atct_skill="$REPO_ROOT/skills/atct/SKILL.md"
+  local roles_section
+
+  roles_section="$(sed -n '/^## Roles$/,/^## Declare before you work$/p' "$atct_skill")"
+  if grep -Eiq 'space|worktree|git|harness|multiplexer' <<<"$roles_section"; then
+    fail 'role boundary table must use neutral language'
+  fi
+}
+
+test_role_boundaries_cover_version_control_and_delegation_direction() {
+  local atct_skill="$REPO_ROOT/skills/atct/SKILL.md"
+  local handler_go="$REPO_ROOT/internal/daemon/handler.go"
+
+  assert_file_contains "delegate the goal's work" "$atct_skill"
+  assert_file_contains 'write internal version-control details' "$atct_skill"
+  assert_file_contains "delegate the goal's work" "$handler_go"
+  assert_file_contains '"executor":     {Does: []string{"implement", "test"}, DoesNot: []string{"make design decisions", "re-delegate", "commit", "write internal version-control details"}}' "$handler_go"
+}
+
 test_role_contract_matches_implementation() {
   local atct_skill="$REPO_ROOT/skills/atct/SKILL.md"
+  local handler_go="$REPO_ROOT/internal/daemon/handler.go"
   local tools_go="$REPO_ROOT/internal/mcpshim/tools.go"
   local implementation_roles
   local documented_roles
+  local implementation_boundaries
+  local documented_boundaries
 
   implementation_roles="$(
     sed -n 's/.*expected_role must be one of \([^\"]*\).*/\1/p' "$tools_go" |
@@ -533,11 +599,44 @@ test_role_contract_matches_implementation() {
       "$implementation_roles" "$documented_roles" >&2
     return 1
   fi
+
+  implementation_boundaries="$(
+    sed -nE 's/^[[:space:]]*"((commander|subcommander|executor))":[[:space:]]*\{[[:space:]]*Does:[[:space:]]*\[\]string\{([^}]*)\},[[:space:]]*DoesNot:[[:space:]]*\[\]string\{([^}]*)\},?[[:space:]]*\},?[[:space:]]*$/\1|\3|\4/p' "$handler_go" |
+      sed -E 's/"//g; s/[[:space:]]*,[[:space:]]*/ \/ /g; s/[[:space:]]*\|[[:space:]]*/|/g; s/[[:space:]]+/ /g; s/^[[:space:]]+|[[:space:]]+$//g'
+  )"
+  documented_boundaries="$(
+    sed -nE 's/^\|[[:space:]]*`(commander|subcommander|executor)`[[:space:]]*\|[[:space:]]*([^|]+)[[:space:]]*\|[[:space:]]*([^|]+)[[:space:]]*\|[[:space:]]*$/\1|\2|\3/p' "$atct_skill" |
+      sed -E 's/[[:space:]]*\/[[:space:]]*/ \/ /g; s/[[:space:]]*\|[[:space:]]*/|/g; s/[[:space:]]+/ /g; s/^[[:space:]]+|[[:space:]]+$//g'
+  )"
+  if [[ -z "$implementation_boundaries" || -z "$documented_boundaries" ]]; then
+    printf 'role boundary contract could not be extracted\n' >&2
+    return 1
+  fi
+  if [[ "$implementation_boundaries" != "$documented_boundaries" ]]; then
+    printf 'role boundary contract differs from implementation: implementation=%s documented=%s\n' \
+      "$implementation_boundaries" "$documented_boundaries" >&2
+    return 1
+  fi
+}
+
+test_role_response_does_not_leak_other_boundaries() {
+  local handler_go="$REPO_ROOT/internal/daemon/handler.go"
+  local selected_role
+
+  selected_role="$(sed -nE 's/^[[:space:]]*boundary := roleBoundaries\[([^]]+)\][[:space:]]*$/\1/p' "$handler_go")"
+  assert_eq 'response.Role' "$selected_role" 'role response must select the boundary for its current role'
+  assert_file_contains 'response.Does = boundary.Does' "$handler_go"
+  assert_file_contains 'response.DoesNot = boundary.DoesNot' "$handler_go"
 }
 
 test_static_contract
 test_delegated_claim_contract_is_explicit
+test_role_contract_is_documented
+test_role_response_exposes_boundary_fields
+test_role_contract_uses_neutral_language
+test_role_boundaries_cover_version_control_and_delegation_direction
 test_role_contract_matches_implementation
+test_role_response_does_not_leak_other_boundaries
 test_hooks_json_has_no_stop_section
 test_hooks_json_keeps_session_start_and_pre_tool_use_sections
 test_stop_hook_file_is_removed_but_other_hooks_remain

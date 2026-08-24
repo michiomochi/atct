@@ -19,6 +19,12 @@ The daemon derives the role from claims:
 - `subcommander`: the agent holds a goal claim but no project claim.
 - `executor`: the agent holds neither a project claim nor a goal claim.
 
+| Layer | Does | Does not |
+|---|---|---|
+| `commander` | triage incoming work / split goals / prepare a working area / review landed changes / publish / resolve conflicts / clean up | design the goal / implement the goal / edit executor deliverables |
+| `subcommander` | design the goal / delegate the goal's work / review implementation / report completion for the goal / issue decisions to the human | inspect or manage other goals / publish / create another subcommander / claim the project |
+| `executor` | implement / test | make design decisions / re-delegate / commit / write internal version-control details |
+
 ## Declare before you work
 
 Call `atct_task_declare` with the tasks you intend to do, before doing them.

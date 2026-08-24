@@ -27,9 +27,22 @@ type responseWithUnappliedDecisions struct {
 }
 
 type sessionRoleResponse struct {
-	Role      string `json:"role"`
-	ProjectID string `json:"project_id"`
-	GoalID    string `json:"goal_id"`
+	Role      string   `json:"role"`
+	ProjectID string   `json:"project_id"`
+	GoalID    string   `json:"goal_id"`
+	Does      []string `json:"does"`
+	DoesNot   []string `json:"does_not"`
+}
+
+type roleBoundary struct {
+	Does    []string
+	DoesNot []string
+}
+
+var roleBoundaries = map[string]roleBoundary{
+	"commander":    {Does: []string{"triage incoming work", "split goals", "prepare a working area", "review landed changes", "publish", "resolve conflicts", "clean up"}, DoesNot: []string{"design the goal", "implement the goal", "edit executor deliverables"}},
+	"subcommander": {Does: []string{"design the goal", "delegate the goal's work", "review implementation", "report completion for the goal", "issue decisions to the human"}, DoesNot: []string{"inspect or manage other goals", "publish", "create another subcommander", "claim the project"}},
+	"executor":     {Does: []string{"implement", "test"}, DoesNot: []string{"make design decisions", "re-delegate", "commit", "write internal version-control details"}},
 }
 
 type claimableTaskSummary struct {
@@ -259,6 +272,9 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 				response.Role = "subcommander"
 			}
 		}
+		boundary := roleBoundaries[response.Role]
+		response.Does = boundary.Does
+		response.DoesNot = boundary.DoesNot
 		return marshal(response, nil)
 
 	case "project.create":

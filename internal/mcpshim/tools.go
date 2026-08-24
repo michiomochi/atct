@@ -139,11 +139,13 @@ type RoleIn struct {
 }
 
 type roleResult struct {
-	Role         string `json:"role"`
-	ProjectID    string `json:"project_id"`
-	GoalID       string `json:"goal_id"`
-	ExpectedRole string `json:"expected_role,omitempty"`
-	Matches      *bool  `json:"matches,omitempty"`
+	Role         string   `json:"role"`
+	ProjectID    string   `json:"project_id"`
+	GoalID       string   `json:"goal_id"`
+	Does         []string `json:"does"`
+	DoesNot      []string `json:"does_not"`
+	ExpectedRole string   `json:"expected_role,omitempty"`
+	Matches      *bool    `json:"matches,omitempty"`
 }
 
 type Raw struct {
