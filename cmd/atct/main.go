@@ -36,6 +36,9 @@ type cliConfig struct {
 	listenExplicit     bool
 	contextBrief       bool
 	contextCheck       bool
+	handoffAction      string
+	handoffID          string
+	handoffTaskID      string
 	projectSpecified   bool
 	projectAction      string
 	projectName        string
@@ -59,11 +62,13 @@ var validSubcommands = map[string]bool{
 	"watch":       true,
 	"claim-check": true,
 	"role":        true,
+	"handoff":     true,
 }
 
 var validDaemonActions = map[string]bool{"start": true, "stop": true}
 var validProjectActions = map[string]bool{"add": true, "list": true}
 var validGoalActions = map[string]bool{"add": true, "list": true}
+var validHandoffActions = map[string]bool{"complete": true}
 
 func printUsage() {
 	fmt.Fprintln(os.Stderr, "Usage: atct <command> [options]")
@@ -80,6 +85,7 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "  watch                Stream human decision events for a Monitor")
 	fmt.Fprintln(os.Stderr, "  claim-check <ids...>|any  Exit 0 only if the tasks are claimed by a running session")
 	fmt.Fprintln(os.Stderr, "  role                 Report the claim-derived role for an agent session")
+	fmt.Fprintln(os.Stderr, "  handoff complete <handoff-id> <task-id>  Report a handoff complete")
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Options:")
 	fmt.Fprintln(os.Stderr, "  -listen string   HTTP listen address (default \"127.0.0.1:8787\")")
@@ -154,6 +160,30 @@ func parseArgs(args []string) (cliConfig, error) {
 			cfg.goalTitle = rest[0]
 			rest = rest[1:]
 		}
+	}
+	if sub == "handoff" {
+		if len(rest) < 1 {
+			fmt.Fprintln(os.Stderr, "handoff requires an action: complete")
+			printUsage()
+			return cliConfig{}, errInvalidArgs
+		}
+		action := rest[0]
+		if !validHandoffActions[action] {
+			fmt.Fprintf(os.Stderr, "unknown handoff action %q\n", action)
+			fmt.Fprintln(os.Stderr, "handoff requires an action: complete")
+			printUsage()
+			return cliConfig{}, errInvalidArgs
+		}
+		cfg.handoffAction = action
+		rest = rest[1:]
+		if len(rest) < 2 || strings.HasPrefix(rest[0], "-") || strings.HasPrefix(rest[1], "-") {
+			fmt.Fprintln(os.Stderr, "handoff complete requires a handoff ID and task ID")
+			printUsage()
+			return cliConfig{}, errInvalidArgs
+		}
+		cfg.handoffID = rest[0]
+		cfg.handoffTaskID = rest[1]
+		rest = rest[2:]
 	}
 
 	flags := flag.NewFlagSet(sub, flag.ExitOnError)
@@ -292,6 +322,11 @@ func main() {
 	case "goal":
 		if err := runGoal(config, dir, exePath); err != nil {
 			log.Fatalf("goal %s: %v", config.goalAction, err)
+		}
+		return
+	case "handoff":
+		if err := runHandoff(config, dir, exePath); err != nil {
+			log.Fatalf("handoff %s: %v", config.handoffAction, err)
 		}
 		return
 	case "context":
@@ -557,6 +592,30 @@ func runGoal(config cliConfig, dir, exePath string) error {
 	default:
 		return fmt.Errorf("unsupported goal action %q", config.goalAction)
 	}
+}
+
+func runHandoff(config cliConfig, dir, exePath string) error {
+	reg, err := daemonctl.Ensure(daemonctl.Config{
+		Dir:            dir,
+		Version:        version,
+		Executable:     exePath,
+		ListenAddr:     config.listenAddr,
+		ListenExplicit: config.listenExplicit,
+	})
+	if err != nil {
+		return err
+	}
+
+	client := mcpshim.NewClient(reg.SocketPath)
+	var handoff store.TaskHandoff
+	if err := client.Call(context.Background(), "handoff.complete", map[string]string{
+		"handoff_id": config.handoffID,
+		"task_id":    config.handoffTaskID,
+	}, &handoff); err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "atct handoff: task %s reported complete\n", handoff.TaskID)
+	return nil
 }
 
 // addGoal joins the positional argument and --description the same way the

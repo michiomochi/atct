@@ -169,7 +169,7 @@ func TestHTTPHandlerMCPInitializeReturnsStreamableResponse(t *testing.T) {
 	}
 }
 
-func TestHTTPHandlerMCPListsSeventeenTools(t *testing.T) {
+func TestHTTPHandlerMCPListsTwentyTools(t *testing.T) {
 	fixture := newMCPHTTPTestServer(t)
 	client := newMCPHTTPTestClient(fixture.server.URL + "/mcp")
 	client.initialize(t)
@@ -181,8 +181,8 @@ func TestHTTPHandlerMCPListsSeventeenTools(t *testing.T) {
 	if !ok {
 		t.Fatalf("tools/list result.tools = %T, want array", result["tools"])
 	}
-	if len(tools) != 17 {
-		t.Fatalf("tools/list returned %d tools, want 17", len(tools))
+	if len(tools) != 20 {
+		t.Fatalf("tools/list returned %d tools, want 20", len(tools))
 	}
 	for _, rawTool := range tools {
 		tool, ok := rawTool.(map[string]any)
@@ -194,6 +194,102 @@ func TestHTTPHandlerMCPListsSeventeenTools(t *testing.T) {
 		}
 	}
 	t.Fatal("tools/list did not include atct_role")
+}
+
+func TestHTTPHandlerMCPTaskHandoffRoutes(t *testing.T) {
+	fixture := newMCPHTTPTestServer(t)
+	ctx := context.Background()
+	project, err := fixture.store.CreateProject(ctx, "atct", filepath.Join(t.TempDir(), "repo"))
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	goal, err := fixture.store.CreateGoal(ctx, project.ID, "handoff", "human")
+	if err != nil {
+		t.Fatalf("CreateGoal: %v", err)
+	}
+	tasks, err := fixture.store.DeclareTasks(ctx, goal.ID, "commander", "handoff-mcp", []string{
+		"claimed task", "unclaimed task",
+	}, []string{
+		"A task with a live claim for the handoff request.",
+		"A task without a claim for rejection coverage.",
+	})
+	if err != nil {
+		t.Fatalf("DeclareTasks: %v", err)
+	}
+	if err := fixture.store.RegisterAgentSession(ctx, "mcp-handoff-requester", os.Getpid()); err != nil {
+		t.Fatalf("RegisterAgentSession: %v", err)
+	}
+	if err := fixture.store.RegisterAgentSession(ctx, "mcp-handoff-receiver", os.Getpid()); err != nil {
+		t.Fatalf("RegisterAgentSession: %v", err)
+	}
+	if _, err := fixture.store.ClaimTask(ctx, tasks[0].ID, "mcp-handoff-requester"); err != nil {
+		t.Fatalf("ClaimTask: %v", err)
+	}
+
+	client := newMCPHTTPTestClient(fixture.server.URL + "/mcp")
+	client.initialize(t)
+	client.initialized(t)
+
+	request := mcpResult(t, client.call(t, "tools/call", map[string]any{
+		"name": "atct_handoff_request",
+		"arguments": map[string]any{
+			"handoff_id": "mcp-handoff-1", "task_id": tasks[0].ID, "requested_by": "mcp-handoff-requester",
+		},
+	}))
+	if request["isError"] == true {
+		t.Fatalf("handoff request returned an error result: %#v", request)
+	}
+	requested, err := fixture.store.GetTaskHandoff(ctx, "mcp-handoff-1")
+	if err != nil {
+		t.Fatalf("GetTaskHandoff after request: %v", err)
+	}
+	if requested.RequestedAt == nil || requested.RequestedBy != "mcp-handoff-requester" {
+		t.Fatalf("request handoff = %#v, want requested timestamp and requester", requested)
+	}
+
+	receive := mcpResult(t, client.call(t, "tools/call", map[string]any{
+		"name": "atct_handoff_receive",
+		"arguments": map[string]any{
+			"handoff_id": "mcp-handoff-1", "task_id": tasks[0].ID, "received_by": "mcp-handoff-receiver",
+		},
+	}))
+	if receive["isError"] == true {
+		t.Fatalf("handoff receive returned an error result: %#v", receive)
+	}
+	received, err := fixture.store.GetTaskHandoff(ctx, "mcp-handoff-1")
+	if err != nil {
+		t.Fatalf("GetTaskHandoff after receive: %v", err)
+	}
+	if received.ReceivedAt == nil || received.ReceivedBy != "mcp-handoff-receiver" {
+		t.Fatalf("received handoff = %#v, want received timestamp and receiver", received)
+	}
+
+	complete := mcpResult(t, client.call(t, "tools/call", map[string]any{
+		"name": "atct_handoff_complete",
+		"arguments": map[string]any{
+			"handoff_id": "mcp-handoff-1", "task_id": tasks[0].ID,
+		},
+	}))
+	if complete["isError"] == true {
+		t.Fatalf("handoff complete returned an error result: %#v", complete)
+	}
+	completed, err := fixture.store.GetTaskHandoff(ctx, "mcp-handoff-1")
+	if err != nil {
+		t.Fatalf("GetTaskHandoff after complete: %v", err)
+	}
+	if completed.CompletedReportAt == nil {
+		t.Fatalf("completed handoff = %#v, want completion timestamp", completed)
+	}
+
+	rejected := mcpResult(t, client.call(t, "tools/call", map[string]any{
+		"name": "atct_handoff_request",
+		"arguments": map[string]any{
+			"handoff_id": "mcp-handoff-unclaimed", "task_id": tasks[1].ID, "requested_by": "mcp-handoff-requester",
+		},
+	}))
+	if rejected["isError"] != true {
+		t.Fatalf("unclaimed handoff request succeeded, want rejection: %#v", rejected)
+	}
 }
 
 func TestHTTPHandlerMCPCallsAtctRole(t *testing.T) {

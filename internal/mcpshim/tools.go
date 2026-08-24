@@ -56,6 +56,23 @@ type TaskReleaseIn struct {
 	TaskID string `json:"task_id"`
 }
 
+type HandoffRequestIn struct {
+	HandoffID   string `json:"handoff_id"`
+	TaskID      string `json:"task_id"`
+	RequestedBy string `json:"requested_by"`
+}
+
+type HandoffReceiveIn struct {
+	HandoffID  string `json:"handoff_id"`
+	TaskID     string `json:"task_id"`
+	ReceivedBy string `json:"received_by"`
+}
+
+type HandoffCompleteIn struct {
+	HandoffID string `json:"handoff_id"`
+	TaskID    string `json:"task_id"`
+}
+
 type TaskUpdateIn struct {
 	TaskID  string   `json:"task_id"`
 	Status  string   `json:"status" jsonschema:"todo | doing | done | dropped"`
@@ -247,7 +264,7 @@ func validRole(role string) bool {
 	}
 }
 
-// Register adds seventeen agent-facing tools to the MCP server.
+// Register adds twenty agent-facing tools to the MCP server.
 // Human operations (answer, approve, and reject) belong to the Web UI and are not exposed through MCP.
 func Register(server *mcp.Server, c *Client, agentSessionID string) {
 	mcp.AddTool(server, &mcp.Tool{
@@ -363,6 +380,36 @@ func Register(server *mcp.Server, c *Client, agentSessionID string) {
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in TaskReleaseIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
 		return callWithUnappliedDecisions(ctx, c, "task.release", map[string]any{
 			"task_id": in.TaskID,
+		})
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:         "atct_handoff_request",
+		Description:  "Request a task handoff. The task must have a live claim.",
+		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in HandoffRequestIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
+		return callWithUnappliedDecisions(ctx, c, "handoff.request", map[string]any{
+			"handoff_id": in.HandoffID, "task_id": in.TaskID, "requested_by": in.RequestedBy,
+		})
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:         "atct_handoff_receive",
+		Description:  "Record that a task handoff was received.",
+		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in HandoffReceiveIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
+		return callWithUnappliedDecisions(ctx, c, "handoff.receive", map[string]any{
+			"handoff_id": in.HandoffID, "task_id": in.TaskID, "received_by": in.ReceivedBy,
+		})
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:         "atct_handoff_complete",
+		Description:  "Report that a task handoff was completed.",
+		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in HandoffCompleteIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
+		return callWithUnappliedDecisions(ctx, c, "handoff.complete", map[string]any{
+			"handoff_id": in.HandoffID, "task_id": in.TaskID,
 		})
 	})
 
