@@ -146,8 +146,15 @@ func TestApproveGoalActivatesGoalAndAppliesApproval(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ClaimTask after approval: %v", err)
 	}
-	if claimed.ClaimedBy != "approved-agent-session" {
-		t.Fatalf("claimed_by = %q, want approved-agent-session", claimed.ClaimedBy)
+	handoff, err := s.openTaskHandoff(ctx, claimed.ID)
+	if err != nil {
+		t.Fatalf("openTaskHandoff: %v", err)
+	}
+	if handoff == nil {
+		t.Fatal("task handoff is missing after claim")
+	}
+	if handoff.ReceivedBy != "approved-agent-session" {
+		t.Fatalf("task handoff receiver = %q, want approved-agent-session", handoff.ReceivedBy)
 	}
 }
 

@@ -130,7 +130,6 @@ func goalFromRow(row sqlcgen.Goal) (domain.Goal, error) {
 		Content:           row.Content,
 		Status:            domain.GoalStatus(row.Status),
 		Creator:           row.Creator,
-		ClaimedBy:         row.ClaimedBy,
 		ResultSummary:     row.ResultSummary,
 		WorkDone:          row.WorkDone,
 		NowPossible:       row.NowPossible,
@@ -145,13 +144,6 @@ func goalFromRow(row sqlcgen.Goal) (domain.Goal, error) {
 	}
 	if g.UpdatedAt, err = time.Parse(time.RFC3339, row.UpdatedAt); err != nil {
 		return domain.Goal{}, fmt.Errorf("parse updated_at: %w", err)
-	}
-	if row.ClaimedAt.Valid {
-		claimedAt, err := time.Parse(time.RFC3339, row.ClaimedAt.String)
-		if err != nil {
-			return domain.Goal{}, fmt.Errorf("parse claimed_at: %w", err)
-		}
-		g.ClaimedAt = &claimedAt
 	}
 	return g, nil
 }
@@ -213,39 +205,8 @@ func (s *Store) ReleaseGoal(ctx context.Context, goalID string) error {
 	if goalID == "" {
 		return fmt.Errorf("%w: empty id", ErrGoalNotFound)
 	}
-	openHandoff, err := s.openGoalHandoff(ctx, goalID)
-	if err != nil {
-		return err
-	}
-	if openHandoff != nil {
-		if _, err := s.CompleteGoalHandoff(ctx, openHandoff.ID, goalID, ""); err != nil {
-			return fmt.Errorf("complete goal handoff after release: %w", err)
-		}
-		return nil
-	}
-
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("begin goal claim release tx: %w", err)
-	}
-	defer tx.Rollback()
-
-	result, err := sqlcgen.New(tx).ReleaseGoal(ctx, sqlcgen.ReleaseGoalParams{
-		UpdatedAt: time.Now().UTC().Format(time.RFC3339),
-		ID:        goalID,
-	})
-	if err != nil {
-		return fmt.Errorf("release goal claim: %w", err)
-	}
-	affected, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("check released goal: %w", err)
-	}
-	if affected == 0 {
-		return fmt.Errorf("%w: %s", ErrGoalNotFound, goalID)
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit goal claim release: %w", err)
+	if _, err := s.CompleteGoalHandoffForGoal(ctx, goalID, ""); err != nil {
+		return fmt.Errorf("complete goal handoff after release: %w", err)
 	}
 	return nil
 }

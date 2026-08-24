@@ -166,9 +166,24 @@ func (s *Store) DetectWakeup(ctx context.Context, projectID string) (WakeupState
 				break
 			}
 		}
+		taskHandoffs := make(map[string][]TaskHandoff, len(tasks))
+		taskClaimed := make(map[string]bool, len(tasks))
 		if len(tasks) == 0 {
 			state.UndeclaredGoals = append(state.UndeclaredGoals, goal)
 		} else {
+			for _, task := range tasks {
+				handoffs, err := s.ListTaskHandoffs(ctx, task.ID)
+				if err != nil {
+					return WakeupState{}, err
+				}
+				taskHandoffs[task.ID] = handoffs
+				for _, handoff := range handoffs {
+					if handoff.ReceivedAt != nil && handoff.CompletedReportAt == nil {
+						taskClaimed[task.ID] = true
+						break
+					}
+				}
+			}
 			allDone := true
 			allDropped := true
 			allTerminal := true
@@ -185,7 +200,7 @@ func (s *Store) DetectWakeup(ctx context.Context, projectID string) (WakeupState
 				if task.Status != domain.TaskDone && task.Status != domain.TaskDropped {
 					allTerminal = false
 				}
-				if task.Status == domain.TaskDoing && task.ClaimedBy == "" {
+				if task.Status == domain.TaskDoing && !taskClaimed[task.ID] {
 					state.UnclaimedDoingTasks = append(state.UnclaimedDoingTasks, task)
 				}
 			}
@@ -212,10 +227,7 @@ func (s *Store) DetectWakeup(ctx context.Context, projectID string) (WakeupState
 			}
 		}
 		for _, task := range tasks {
-			handoffs, err := s.ListTaskHandoffs(ctx, task.ID)
-			if err != nil {
-				return WakeupState{}, err
-			}
+			handoffs := taskHandoffs[task.ID]
 			delegated := false
 			for _, handoff := range handoffs {
 				if handoff.RequestedAt != nil {
@@ -228,9 +240,16 @@ func (s *Store) DetectWakeup(ctx context.Context, projectID string) (WakeupState
 					state.HandoffsAwaitingReport = append(state.HandoffsAwaitingReport, handoff)
 				}
 			}
-			if task.ClaimedAt != nil && !delegated {
+			if taskClaimed[task.ID] && !delegated {
 				commanderClaim := false
-				if sessionID := strings.TrimSpace(task.ClaimedBy); sessionID != "" {
+				sessionID := ""
+				for _, handoff := range handoffs {
+					if handoff.ReceivedAt != nil && handoff.CompletedReportAt == nil {
+						sessionID = strings.TrimSpace(handoff.ReceivedBy)
+						break
+					}
+				}
+				if sessionID != "" {
 					for _, project := range projects {
 						if strings.TrimSpace(project.ClaimedBy) == sessionID {
 							commanderClaim = true
@@ -248,7 +267,7 @@ func (s *Store) DetectWakeup(ctx context.Context, projectID string) (WakeupState
 		}
 		var unstarted []domain.Task
 		for _, task := range tasks {
-			if task.Status == domain.TaskTodo && task.ClaimedBy == "" && (task.SnoozedUntil == nil || !task.SnoozedUntil.After(now)) {
+			if task.Status == domain.TaskTodo && !taskClaimed[task.ID] && (task.SnoozedUntil == nil || !task.SnoozedUntil.After(now)) {
 				unstarted = append(unstarted, task)
 			}
 		}
@@ -336,8 +355,21 @@ func (s *Store) CountUnstartedTasks(ctx context.Context, projectID string) (int,
 		if err != nil {
 			return 0, err
 		}
+		taskClaimed := make(map[string]bool, len(tasks))
 		for _, task := range tasks {
-			if task.Status == domain.TaskTodo && task.ClaimedBy == "" && (task.SnoozedUntil == nil || !task.SnoozedUntil.After(now)) {
+			handoffs, err := s.ListTaskHandoffs(ctx, task.ID)
+			if err != nil {
+				return 0, err
+			}
+			for _, handoff := range handoffs {
+				if handoff.ReceivedAt != nil && handoff.CompletedReportAt == nil {
+					taskClaimed[task.ID] = true
+					break
+				}
+			}
+		}
+		for _, task := range tasks {
+			if task.Status == domain.TaskTodo && !taskClaimed[task.ID] && (task.SnoozedUntil == nil || !task.SnoozedUntil.After(now)) {
 				count++
 			}
 		}

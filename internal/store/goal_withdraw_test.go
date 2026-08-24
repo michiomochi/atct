@@ -127,8 +127,11 @@ func TestWithdrawActiveGoalDropsOpenTasksAndReleasesClaims(t *testing.T) {
 		if found.Status != domain.TaskDropped {
 			t.Errorf("task %s status = %q, want %q", found.ID, found.Status, domain.TaskDropped)
 		}
-		if found.ClaimedBy != "" || found.ClaimedAt != nil {
-			t.Errorf("task %s claim = %q/%v, want released", found.ID, found.ClaimedBy, found.ClaimedAt)
+		handoff, err := s.openTaskHandoff(ctx, found.ID)
+		if err != nil {
+			t.Errorf("task %s openTaskHandoff: %v", found.ID, err)
+		} else if handoff != nil {
+			t.Errorf("task %s handoff = %#v, want released", found.ID, handoff)
 		}
 	}
 }

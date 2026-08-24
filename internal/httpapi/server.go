@@ -32,6 +32,8 @@ func (s *Server) Handler() http.Handler {
 
 type TaskView struct {
 	domain.Task
+	ClaimedBy      string            `json:"claimed_by"`
+	ClaimedAt      *time.Time        `json:"claimed_at"`
 	HeldForSeconds int64             `json:"held_for_seconds"`
 	OpenDecisions  []domain.Decision `json:"open_decisions"`
 	ProjectID      string            `json:"project_id"`
@@ -463,6 +465,11 @@ func (s *Server) handleInbox(w http.ResponseWriter, r *http.Request) {
 			writeStoreError(w, err)
 			return
 		}
+		handoffs, err := s.store.ListOpenTaskHandoffsForGoal(ctx, goal.ID)
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
 		if goal.Status == domain.GoalActive {
 			goalTasks := append([]domain.Task(nil), tasks...)
 			for i := 1; i < len(goalTasks); i++ {
@@ -472,7 +479,7 @@ func (s *Server) handleInbox(w http.ResponseWriter, r *http.Request) {
 			}
 			taskViews := make([]TaskView, 0, len(goalTasks))
 			for _, task := range goalTasks {
-				taskViews = append(taskViews, newTaskView(task, openByTask[task.ID]))
+				taskViews = append(taskViews, newTaskView(task, handoffs[task.ID], openByTask[task.ID]))
 			}
 			activeGoals = append(activeGoals, goalView{
 				Goal:             goal,
@@ -486,7 +493,7 @@ func (s *Server) handleInbox(w http.ResponseWriter, r *http.Request) {
 			if len(decisions) == 0 || !isProjectableTask(task.Status) {
 				continue
 			}
-			taskView := newTaskView(task, decisions)
+			taskView := newTaskView(task, handoffs[task.ID], decisions)
 			taskView.ProjectID = goal.ProjectID
 			taskView.ProjectName = projectNames[goal.ProjectID]
 			attentionTasks = append(attentionTasks, taskView)
@@ -553,6 +560,11 @@ func (s *Server) handleGoal(w http.ResponseWriter, r *http.Request, goalID strin
 		writeStoreError(w, err)
 		return
 	}
+	handoffs, err := s.store.ListOpenTaskHandoffsForGoal(ctx, goalID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
 	openDecisions, err := s.store.ListOpenDecisions(ctx, goalID)
 	if err != nil {
 		writeStoreError(w, err)
@@ -590,7 +602,7 @@ func (s *Server) handleGoal(w http.ResponseWriter, r *http.Request, goalID strin
 	}
 	for _, task := range tasks {
 		decisions := openByTask[task.ID]
-		view := newTaskView(task, decisions)
+		view := newTaskView(task, handoffs[task.ID], decisions)
 		allTaskViews = append(allTaskViews, view)
 		linkedCommits, err := s.store.ListTaskCommits(ctx, task.ID)
 		if err != nil {
@@ -1322,17 +1334,35 @@ func indexDecisions(decisions []domain.Decision) map[string][]domain.Decision {
 	return byTask
 }
 
-func newTaskView(task domain.Task, decisions []domain.Decision) TaskView {
+func newTaskView(task domain.Task, handoff *store.TaskHandoff, decisions []domain.Decision) TaskView {
 	if decisions == nil {
 		decisions = make([]domain.Decision, 0)
 	}
+	claimedBy := ""
+	var claimedAt *time.Time
+	if handoff != nil {
+		claimedBy = handoff.ReceivedBy
+		if claimedBy == "" {
+			claimedBy = handoff.RequestedBy
+		}
+		claimedAt = handoff.ReceivedAt
+		if claimedAt == nil {
+			claimedAt = handoff.RequestedAt
+		}
+	}
 	held := int64(0)
-	if task.ClaimedBy != "" && task.ClaimedAt != nil {
-		if elapsed := time.Since(*task.ClaimedAt); elapsed > 0 {
+	if claimedAt != nil {
+		if elapsed := time.Since(*claimedAt); elapsed > 0 {
 			held = int64(elapsed / time.Second)
 		}
 	}
-	return TaskView{Task: task, HeldForSeconds: held, OpenDecisions: decisions}
+	return TaskView{
+		Task:           task,
+		ClaimedBy:      claimedBy,
+		ClaimedAt:      claimedAt,
+		HeldForSeconds: held,
+		OpenDecisions:  decisions,
+	}
 }
 
 func isProjectableTask(status domain.TaskStatus) bool {

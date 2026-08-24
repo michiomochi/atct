@@ -432,13 +432,8 @@ func TestClaimTaskUsesSelfHandoffWithoutWritingClaimedBy(t *testing.T) {
 	s := newTestStore(t)
 	goalID := newTestGoal(t, s)
 	taskID := declareOneTaskWithFiles(t, s, goalID, "self-handoff", "self handoff", nil)
-	const legacyClaim = "legacy-task-owner"
 	const ownerID = "task-handoff-owner"
 	const nextOwnerID = "task-handoff-next-owner"
-	claimedAt := time.Now().UTC().Format(time.RFC3339Nano)
-	if _, err := s.DB().Exec(`UPDATE tasks SET claimed_by = ?, claimed_at = ?, updated_at = ? WHERE id = ?`, legacyClaim, claimedAt, claimedAt, taskID); err != nil {
-		t.Fatalf("seed legacy task claim: %v", err)
-	}
 	if err := s.RegisterAgentSession(ctx, ownerID, os.Getpid()); err != nil {
 		t.Fatalf("RegisterAgentSession(%s): %v", ownerID, err)
 	}
@@ -446,12 +441,8 @@ func TestClaimTaskUsesSelfHandoffWithoutWritingClaimedBy(t *testing.T) {
 		t.Fatalf("RegisterAgentSession(%s): %v", nextOwnerID, err)
 	}
 
-	claimed, err := s.ClaimTask(ctx, taskID, ownerID)
-	if err != nil {
+	if _, err := s.ClaimTask(ctx, taskID, ownerID); err != nil {
 		t.Fatalf("ClaimTask: %v", err)
-	}
-	if claimed.ClaimedBy != legacyClaim {
-		t.Fatalf("ClaimTask claimed_by = %q, want legacy value %q", claimed.ClaimedBy, legacyClaim)
 	}
 	handoffs, err := s.ListTaskHandoffs(ctx, taskID)
 	if err != nil {
@@ -479,12 +470,8 @@ func TestClaimTaskUsesSelfHandoffWithoutWritingClaimedBy(t *testing.T) {
 		t.Fatalf("task handoffs after release = %+v, want one completed handoff", handoffs)
 	}
 
-	claimed, err = s.ClaimTask(ctx, taskID, nextOwnerID)
-	if err != nil {
+	if _, err := s.ClaimTask(ctx, taskID, nextOwnerID); err != nil {
 		t.Fatalf("ClaimTask after release: %v", err)
-	}
-	if claimed.ClaimedBy != legacyClaim {
-		t.Fatalf("ClaimTask after release claimed_by = %q, want legacy value %q", claimed.ClaimedBy, legacyClaim)
 	}
 	handoffs, err = s.ListTaskHandoffs(ctx, taskID)
 	if err != nil {
@@ -510,13 +497,8 @@ func TestClaimGoalUsesSelfHandoffWithoutWritingClaimedBy(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	goalID := newTestGoal(t, s)
-	const legacyClaim = "legacy-goal-owner"
 	const ownerID = "goal-handoff-owner"
 	const nextOwnerID = "goal-handoff-next-owner"
-	claimedAt := time.Now().UTC().Format(time.RFC3339Nano)
-	if _, err := s.DB().Exec(`UPDATE goals SET claimed_by = ?, claimed_at = ?, updated_at = ? WHERE id = ?`, legacyClaim, claimedAt, claimedAt, goalID); err != nil {
-		t.Fatalf("seed legacy goal claim: %v", err)
-	}
 	if err := s.RegisterAgentSession(ctx, ownerID, os.Getpid()); err != nil {
 		t.Fatalf("RegisterAgentSession(%s): %v", ownerID, err)
 	}
@@ -524,12 +506,8 @@ func TestClaimGoalUsesSelfHandoffWithoutWritingClaimedBy(t *testing.T) {
 		t.Fatalf("RegisterAgentSession(%s): %v", nextOwnerID, err)
 	}
 
-	claimed, err := s.ClaimGoal(ctx, goalID, ownerID)
-	if err != nil {
+	if _, err := s.ClaimGoal(ctx, goalID, ownerID); err != nil {
 		t.Fatalf("ClaimGoal: %v", err)
-	}
-	if claimed.ClaimedBy != legacyClaim {
-		t.Fatalf("ClaimGoal claimed_by = %q, want legacy value %q", claimed.ClaimedBy, legacyClaim)
 	}
 	handoffs, err := s.ListGoalHandoffs(ctx, goalID)
 	if err != nil {
@@ -557,12 +535,8 @@ func TestClaimGoalUsesSelfHandoffWithoutWritingClaimedBy(t *testing.T) {
 		t.Fatalf("goal handoffs after release = %+v, want one completed handoff", handoffs)
 	}
 
-	claimed, err = s.ClaimGoal(ctx, goalID, nextOwnerID)
-	if err != nil {
+	if _, err := s.ClaimGoal(ctx, goalID, nextOwnerID); err != nil {
 		t.Fatalf("ClaimGoal after release: %v", err)
-	}
-	if claimed.ClaimedBy != legacyClaim {
-		t.Fatalf("ClaimGoal after release claimed_by = %q, want legacy value %q", claimed.ClaimedBy, legacyClaim)
 	}
 	handoffs, err = s.ListGoalHandoffs(ctx, goalID)
 	if err != nil {
@@ -862,8 +836,12 @@ func TestUpdateTaskAllowsTodoForStaleOtherClaim(t *testing.T) {
 	if err != nil {
 		t.Fatalf("UpdateTask(todo): %v", err)
 	}
-	if updated.Status != domain.TaskTodo || updated.ClaimedBy != "" || updated.ClaimedAt != nil {
-		t.Fatalf("stale claim was not released with todo status: %+v", updated)
+	handoff, err := fixture.store.openTaskHandoff(fixture.ctx, updated.ID)
+	if err != nil {
+		t.Fatalf("load task handoff: %v", err)
+	}
+	if updated.Status != domain.TaskTodo || handoff != nil {
+		t.Fatalf("stale claim was not released with todo status: status=%s handoff=%v", updated.Status, handoff)
 	}
 }
 
@@ -874,8 +852,12 @@ func TestUpdateTaskAllowsDoneForClaimHolder(t *testing.T) {
 	if err != nil {
 		t.Fatalf("UpdateTask(done): %v", err)
 	}
-	if updated.Status != domain.TaskDone || updated.ClaimedBy != "" || updated.ClaimedAt != nil {
-		t.Fatalf("holder completion did not release its claim: %+v", updated)
+	handoff, err := fixture.store.openTaskHandoff(fixture.ctx, updated.ID)
+	if err != nil {
+		t.Fatalf("load task handoff: %v", err)
+	}
+	if updated.Status != domain.TaskDone || handoff != nil {
+		t.Fatalf("holder completion did not release its claim: status=%s handoff=%v", updated.Status, handoff)
 	}
 }
 
@@ -905,8 +887,12 @@ func TestUpdateTaskAllowsStatusChangeForUnclaimedTask(t *testing.T) {
 	if err != nil {
 		t.Fatalf("UpdateTask(done): %v", err)
 	}
-	if updated.Status != domain.TaskDone || updated.ClaimedBy != "" {
-		t.Fatalf("unclaimed task was not updated: %+v", updated)
+	handoff, err := s.openTaskHandoff(ctx, updated.ID)
+	if err != nil {
+		t.Fatalf("load task handoff: %v", err)
+	}
+	if updated.Status != domain.TaskDone || handoff != nil {
+		t.Fatalf("unclaimed task was not updated: status=%s handoff=%v", updated.Status, handoff)
 	}
 }
 

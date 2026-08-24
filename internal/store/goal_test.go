@@ -470,11 +470,18 @@ func TestClaimGoal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ClaimGoal: %v", err)
 	}
-	if claimed.ClaimedBy != "session-1" {
-		t.Fatalf("ClaimedBy = %q, want session-1", claimed.ClaimedBy)
+	handoff, err := s.openGoalHandoff(ctx, claimed.ID)
+	if err != nil {
+		t.Fatalf("openGoalHandoff: %v", err)
 	}
-	if claimed.ClaimedAt.IsZero() {
-		t.Fatal("ClaimedAt is zero after claiming goal")
+	if handoff == nil {
+		t.Fatal("goal handoff is missing after claim")
+	}
+	if handoff.ReceivedBy != "session-1" {
+		t.Fatalf("goal handoff receiver = %q, want session-1", handoff.ReceivedBy)
+	}
+	if handoff.ReceivedAt == nil {
+		t.Fatal("goal handoff has no receipt timestamp after claiming")
 	}
 }
 
@@ -510,8 +517,15 @@ func TestClaimGoalKeepsLiveClaimOwnerAfterRejection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetGoal: %v", err)
 	}
-	if got.ClaimedBy != "live-run" {
-		t.Fatalf("ClaimedBy after rejection = %q, want live-run", got.ClaimedBy)
+	handoff, err := s.openGoalHandoff(ctx, got.ID)
+	if err != nil {
+		t.Fatalf("openGoalHandoff: %v", err)
+	}
+	if handoff == nil {
+		t.Fatal("goal handoff is missing after rejected claim")
+	}
+	if handoff.ReceivedBy != "live-run" {
+		t.Fatalf("goal handoff receiver after rejection = %q, want live-run", handoff.ReceivedBy)
 	}
 }
 
@@ -530,8 +544,15 @@ func TestClaimGoalTakesOverDeadClaim(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ClaimGoal takeover: %v", err)
 	}
-	if claimed.ClaimedBy != "new-run" {
-		t.Fatalf("ClaimedBy after takeover = %q, want new-run", claimed.ClaimedBy)
+	handoff, err := s.openGoalHandoff(ctx, claimed.ID)
+	if err != nil {
+		t.Fatalf("openGoalHandoff: %v", err)
+	}
+	if handoff == nil || handoff.ReceivedBy != "new-run" {
+		if handoff == nil {
+			t.Fatal("goal handoff is missing after takeover")
+		}
+		t.Fatalf("goal handoff receiver after takeover = %q, want new-run", handoff.ReceivedBy)
 	}
 }
 
@@ -544,8 +565,15 @@ func TestClaimGoalAllowsUnclaimedGoal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ClaimGoal: %v", err)
 	}
-	if claimed.ClaimedBy != "new-run" {
-		t.Fatalf("ClaimedBy = %q, want new-run", claimed.ClaimedBy)
+	handoff, err := s.openGoalHandoff(ctx, claimed.ID)
+	if err != nil {
+		t.Fatalf("openGoalHandoff: %v", err)
+	}
+	if handoff == nil {
+		t.Fatal("goal handoff is missing after claim")
+	}
+	if handoff.ReceivedBy != "new-run" {
+		t.Fatalf("goal handoff receiver = %q, want new-run", handoff.ReceivedBy)
 	}
 }
 
@@ -563,8 +591,15 @@ func TestClaimGoalAllowsSameSessionToReclaim(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ClaimGoal retry: %v", err)
 	}
-	if claimed.ClaimedBy != "same-run" {
-		t.Fatalf("ClaimedBy after retry = %q, want same-run", claimed.ClaimedBy)
+	handoff, err := s.openGoalHandoff(ctx, claimed.ID)
+	if err != nil {
+		t.Fatalf("openGoalHandoff: %v", err)
+	}
+	if handoff == nil {
+		t.Fatal("goal handoff is missing after retry")
+	}
+	if handoff.ReceivedBy != "same-run" {
+		t.Fatalf("goal handoff receiver after retry = %q, want same-run", handoff.ReceivedBy)
 	}
 }
 
@@ -608,8 +643,12 @@ func TestUnclaimedGoalHasEmptyClaim(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetGoal: %v", err)
 	}
-	if got.ClaimedBy != "" {
-		t.Fatalf("ClaimedBy = %q, want empty", got.ClaimedBy)
+	handoff, err := s.openGoalHandoff(ctx, got.ID)
+	if err != nil {
+		t.Fatalf("openGoalHandoff: %v", err)
+	}
+	if handoff != nil {
+		t.Fatalf("goal handoff = %#v, want nil", handoff)
 	}
 }
 
@@ -636,11 +675,12 @@ func TestReleaseGoal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetGoal: %v", err)
 	}
-	if got.ClaimedBy != "" {
-		t.Fatalf("ClaimedBy after release = %q, want empty", got.ClaimedBy)
+	handoff, err := s.openGoalHandoff(ctx, got.ID)
+	if err != nil {
+		t.Fatalf("openGoalHandoff after release: %v", err)
 	}
-	if got.ClaimedAt != nil {
-		t.Fatalf("ClaimedAt after release = %v, want nil", got.ClaimedAt)
+	if handoff != nil {
+		t.Fatalf("goal handoff after release = %#v, want nil", handoff)
 	}
 }
 

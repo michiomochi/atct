@@ -36,8 +36,6 @@ type Goal struct {
 	Content           string     `json:"content"`
 	Status            GoalStatus `json:"status"`
 	Creator           string     `json:"creator"`
-	ClaimedBy         string     `json:"claimed_by"`
-	ClaimedAt         *time.Time `json:"claimed_at,omitempty"`
 	WorkDone          string     `json:"work_done"`
 	NowPossible       string     `json:"now_possible"`
 	HowToVerify       string     `json:"how_to_verify"`
@@ -79,8 +77,6 @@ type Task struct {
 	Files        []string   `json:"files"`
 	Order        int        `json:"order"`
 	DeclareKey   string     `json:"declare_key"`
-	ClaimedBy    string     `json:"claimed_by"`
-	ClaimedAt    *time.Time `json:"claimed_at,omitempty"`
 	SnoozedUntil *time.Time `json:"snoozed_until,omitempty"`
 	CreatedAt    time.Time  `json:"created_at"`
 	UpdatedAt    time.Time  `json:"updated_at"`

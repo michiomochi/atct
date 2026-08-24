@@ -54,8 +54,12 @@ func TestClaimTaskAllowsExactlyOneConcurrentWinner(t *testing.T) {
 		t.Fatalf("concurrent claim winners = %d, want 1", winnerCount)
 	}
 	winner := <-winners
-	if winner.ClaimedBy == "" || winner.ClaimedAt == nil {
-		t.Fatalf("winner has no claim metadata: %+v", winner)
+	handoff, err := s.openTaskHandoff(ctx, winner.ID)
+	if err != nil {
+		t.Fatalf("openTaskHandoff: %v", err)
+	}
+	if handoff == nil || handoff.ReceivedBy == "" || handoff.ReceivedAt == nil {
+		t.Fatalf("winner has no open handoff: %#v", handoff)
 	}
 }
 
@@ -76,8 +80,12 @@ func TestUpdateTaskReleasesClaimWhenTerminal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("UpdateTask: %v", err)
 	}
-	if updated.ClaimedBy != "" || updated.ClaimedAt != nil {
-		t.Fatalf("terminal task retained claim: %+v", updated)
+	handoff, err := s.openTaskHandoff(ctx, updated.ID)
+	if err != nil {
+		t.Fatalf("openTaskHandoff after terminal update: %v", err)
+	}
+	if handoff != nil {
+		t.Fatalf("terminal task retained handoff: %#v", handoff)
 	}
 }
 
@@ -101,8 +109,12 @@ func TestUpdateTaskReleasesClaimWhenTodo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("UpdateTask todo: %v", err)
 	}
-	if updated.ClaimedBy != "" || updated.ClaimedAt != nil {
-		t.Fatalf("todo task retained claim: %+v", updated)
+	handoff, err := s.openTaskHandoff(ctx, updated.ID)
+	if err != nil {
+		t.Fatalf("openTaskHandoff after todo update: %v", err)
+	}
+	if handoff != nil {
+		t.Fatalf("todo task retained handoff: %#v", handoff)
 	}
 }
 
@@ -115,8 +127,7 @@ func TestUpdateTaskKeepsClaimWhenDoing(t *testing.T) {
 		t.Fatalf("DeclareTasks: %v", err)
 	}
 	addTestAgentSession(t, s, "run-1")
-	claimed, err := s.ClaimTask(ctx, tasks[0].ID, "run-1")
-	if err != nil {
+	if _, err := s.ClaimTask(ctx, tasks[0].ID, "run-1"); err != nil {
 		t.Fatalf("ClaimTask: %v", err)
 	}
 
@@ -124,11 +135,12 @@ func TestUpdateTaskKeepsClaimWhenDoing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("UpdateTask doing: %v", err)
 	}
-	if updated.ClaimedBy != claimed.ClaimedBy {
-		t.Fatalf("claimed_by changed on doing: %q -> %q", claimed.ClaimedBy, updated.ClaimedBy)
+	handoff, err := s.openTaskHandoff(ctx, updated.ID)
+	if err != nil {
+		t.Fatalf("openTaskHandoff after doing update: %v", err)
 	}
-	if updated.ClaimedAt == nil {
-		t.Fatalf("claimed_at cleared on doing: %+v", updated)
+	if handoff == nil || handoff.ReceivedBy != "run-1" || handoff.ReceivedAt == nil {
+		t.Fatalf("doing task lost its open handoff: %#v", handoff)
 	}
 }
 
@@ -149,7 +161,11 @@ func TestReleaseTaskClearsClaim(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReleaseTask: %v", err)
 	}
-	if released.ClaimedBy != "" || released.ClaimedAt != nil {
-		t.Fatalf("released task retained claim: %+v", released)
+	handoff, err := s.openTaskHandoff(ctx, released.ID)
+	if err != nil {
+		t.Fatalf("openTaskHandoff after release: %v", err)
+	}
+	if handoff != nil {
+		t.Fatalf("released task retained handoff: %#v", handoff)
 	}
 }
