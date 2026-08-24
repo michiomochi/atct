@@ -82,6 +82,48 @@ func addRequestOnlyTaskHandoff(t *testing.T, s *Store, handoffID, taskID, reques
 	}
 }
 
+func addTaskHandoffDirect(t *testing.T, s *Store, handoffID, taskID, requestedBy, receivedBy string) {
+	t.Helper()
+
+	ctx := context.Background()
+	if _, err := s.DB().ExecContext(ctx, `DROP INDEX IF EXISTS idx_task_handoffs_open_task_id`); err != nil {
+		t.Fatalf("drop task handoff uniqueness index: %v", err)
+	}
+	t.Cleanup(func() {
+		if _, err := s.DB().ExecContext(ctx, `DELETE FROM task_handoffs WHERE id = ?`, handoffID); err != nil {
+			t.Errorf("delete direct task handoff %q: %v", handoffID, err)
+		}
+		if _, err := s.DB().ExecContext(ctx, `
+			CREATE UNIQUE INDEX idx_task_handoffs_open_task_id
+			ON task_handoffs(task_id)
+			WHERE completed_report_at IS NULL
+		`); err != nil {
+			t.Errorf("restore task handoff uniqueness index: %v", err)
+		}
+	})
+
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	var err error
+	if receivedBy == "" {
+		_, err = s.DB().ExecContext(ctx, `
+			INSERT INTO task_handoffs (
+				id, task_id, requested_by, requested_at, request_report,
+				received_by, received_at, completed_report_at, complete_report
+			) VALUES (?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL)
+		`, handoffID, taskID, requestedBy, now)
+	} else {
+		_, err = s.DB().ExecContext(ctx, `
+			INSERT INTO task_handoffs (
+				id, task_id, requested_by, requested_at, request_report,
+				received_by, received_at, completed_report_at, complete_report
+			) VALUES (?, ?, ?, ?, NULL, ?, ?, NULL, NULL)
+		`, handoffID, taskID, requestedBy, now, receivedBy, now)
+	}
+	if err != nil {
+		t.Fatalf("insert direct task handoff %q failed: %v", handoffID, err)
+	}
+}
+
 func TestTaskHandoffRequestReceiveAndComplete(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
@@ -318,6 +360,44 @@ func TestTaskHandoffCompleteByTaskRejectsUnreceived(t *testing.T) {
 	}
 	if handoff.CompleteReport != "" {
 		t.Fatalf("unreceived handoff complete report = %q, want empty", handoff.CompleteReport)
+	}
+}
+
+func TestTaskHandoffCompleteByTaskRejectsMultipleReceivedIncomplete(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	taskID := addTestTasks(t, s, 1)[0]
+	addTestAgentSession(t, s, "complete-task-ambiguous-requester")
+	addTestAgentSession(t, s, "complete-task-ambiguous-receiver")
+
+	addRequestOnlyTaskHandoff(t, s, "complete-task-ambiguous-1", taskID, "complete-task-ambiguous-requester")
+	if _, err := s.ReceiveTaskHandoff(ctx, "complete-task-ambiguous-1", taskID, "complete-task-ambiguous-receiver"); err != nil {
+		t.Fatalf("ReceiveTaskHandoff failed: %v", err)
+	}
+	addTaskHandoffDirect(t, s, "complete-task-ambiguous-2", taskID, "complete-task-ambiguous-requester", "complete-task-ambiguous-receiver")
+
+	_, err := s.CompleteTaskHandoffForTask(ctx, taskID, "")
+	if !errors.Is(err, ErrTaskHandoffAmbiguous) {
+		t.Fatalf("error = %v, want ErrTaskHandoffAmbiguous", err)
+	}
+}
+
+func TestTaskHandoffReceiveByTaskRejectsMultipleUnreceived(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	taskID := addTestTasks(t, s, 1)[0]
+	addTestAgentSession(t, s, "requester")
+	addTestAgentSession(t, s, "receiver")
+	addLiveTaskClaim(t, s, taskID, "ambiguous-receive-claim-owner")
+
+	if _, err := s.RequestTaskHandoff(ctx, "ambiguous-handoff-1", taskID, "requester", ""); err != nil {
+		t.Fatalf("RequestTaskHandoff failed: %v", err)
+	}
+	addTaskHandoffDirect(t, s, "ambiguous-handoff-2", taskID, "requester", "")
+
+	_, err := s.ReceiveTaskHandoffForTask(ctx, taskID, "receiver")
+	if !errors.Is(err, ErrTaskHandoffAmbiguous) {
+		t.Fatalf("error = %v, want ErrTaskHandoffAmbiguous", err)
 	}
 }
 

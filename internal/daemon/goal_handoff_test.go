@@ -119,6 +119,48 @@ func newGoalHandoffRPCTestFixture(t *testing.T) goalHandoffRPCTestFixture {
 	}
 }
 
+func addGoalHandoffDirect(t *testing.T, s *store.Store, handoffID, goalID, requestedBy, receivedBy string) {
+	t.Helper()
+
+	ctx := context.Background()
+	if _, err := s.DB().ExecContext(ctx, `DROP INDEX IF EXISTS idx_goal_handoffs_open_goal_id`); err != nil {
+		t.Fatalf("drop goal handoff uniqueness index: %v", err)
+	}
+	t.Cleanup(func() {
+		if _, err := s.DB().ExecContext(ctx, `DELETE FROM goal_handoffs WHERE id = ?`, handoffID); err != nil {
+			t.Errorf("delete direct goal handoff %q: %v", handoffID, err)
+		}
+		if _, err := s.DB().ExecContext(ctx, `
+			CREATE UNIQUE INDEX idx_goal_handoffs_open_goal_id
+			ON goal_handoffs(goal_id)
+			WHERE completed_report_at IS NULL
+		`); err != nil {
+			t.Errorf("restore goal handoff uniqueness index: %v", err)
+		}
+	})
+
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	var err error
+	if receivedBy == "" {
+		_, err = s.DB().ExecContext(ctx, `
+			INSERT INTO goal_handoffs (
+				id, goal_id, requested_by, requested_at, request_report,
+				received_by, received_at, completed_report_at, complete_report
+			) VALUES (?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL)
+		`, handoffID, goalID, requestedBy, now)
+	} else {
+		_, err = s.DB().ExecContext(ctx, `
+			INSERT INTO goal_handoffs (
+				id, goal_id, requested_by, requested_at, request_report,
+				received_by, received_at, completed_report_at, complete_report
+			) VALUES (?, ?, ?, ?, NULL, ?, ?, NULL, NULL)
+		`, handoffID, goalID, requestedBy, now, receivedBy, now)
+	}
+	if err != nil {
+		t.Fatalf("insert direct goal handoff %q failed: %v", handoffID, err)
+	}
+}
+
 func TestGoalHandoffRoutesOverRPC(t *testing.T) {
 	fixture := newGoalHandoffRPCTestFixture(t)
 	client := mcpshim.NewClient(fixture.socketPath)
@@ -201,20 +243,19 @@ func TestGoalHandoffCompleteByGoalOverRPCRejectsAmbiguousPendingRequests(t *test
 	client := mcpshim.NewClient(fixture.socketPath)
 	ctx := context.Background()
 
-	for _, handoffID := range []string{"rpc-goal-complete-ambiguous-1", "rpc-goal-complete-ambiguous-2"} {
-		var requested store.GoalHandoff
-		if err := client.Call(ctx, "goal.handoff.request", map[string]string{
-			"handoff_id": handoffID, "goal_id": fixture.claimedGoalID, "requested_by": "rpc-goal-requester",
-		}, &requested); err != nil {
-			t.Fatalf("goal.handoff.request(%q): %v", handoffID, err)
-		}
-		var received store.GoalHandoff
-		if err := client.Call(ctx, "goal.handoff.receive", map[string]string{
-			"handoff_id": handoffID, "goal_id": fixture.claimedGoalID, "received_by": "rpc-goal-receiver",
-		}, &received); err != nil {
-			t.Fatalf("goal.handoff.receive(%q): %v", handoffID, err)
-		}
+	var requested store.GoalHandoff
+	if err := client.Call(ctx, "goal.handoff.request", map[string]string{
+		"handoff_id": "rpc-goal-complete-ambiguous-1", "goal_id": fixture.claimedGoalID, "requested_by": "rpc-goal-requester",
+	}, &requested); err != nil {
+		t.Fatalf("goal.handoff.request: %v", err)
 	}
+	var received store.GoalHandoff
+	if err := client.Call(ctx, "goal.handoff.receive", map[string]string{
+		"handoff_id": requested.ID, "goal_id": fixture.claimedGoalID, "received_by": "rpc-goal-receiver",
+	}, &received); err != nil {
+		t.Fatalf("goal.handoff.receive: %v", err)
+	}
+	addGoalHandoffDirect(t, fixture.store, "rpc-goal-complete-ambiguous-2", fixture.claimedGoalID, "rpc-goal-requester", "rpc-goal-receiver")
 
 	var completed store.GoalHandoff
 	err := client.Call(ctx, "goal.handoff.complete", map[string]string{
@@ -233,14 +274,13 @@ func TestGoalHandoffReceiveOverRPCRejectsAmbiguousPendingRequests(t *testing.T) 
 	client := mcpshim.NewClient(fixture.socketPath)
 	ctx := context.Background()
 
-	for _, handoffID := range []string{"rpc-goal-ambiguous-1", "rpc-goal-ambiguous-2"} {
-		var requested store.GoalHandoff
-		if err := client.Call(ctx, "goal.handoff.request", map[string]string{
-			"handoff_id": handoffID, "goal_id": fixture.claimedGoalID, "requested_by": "rpc-goal-requester",
-		}, &requested); err != nil {
-			t.Fatalf("goal.handoff.request(%q): %v", handoffID, err)
-		}
+	var requested store.GoalHandoff
+	if err := client.Call(ctx, "goal.handoff.request", map[string]string{
+		"handoff_id": "rpc-goal-ambiguous-1", "goal_id": fixture.claimedGoalID, "requested_by": "rpc-goal-requester",
+	}, &requested); err != nil {
+		t.Fatalf("goal.handoff.request: %v", err)
 	}
+	addGoalHandoffDirect(t, fixture.store, "rpc-goal-ambiguous-2", fixture.claimedGoalID, "rpc-goal-requester", "")
 
 	var received store.GoalHandoff
 	err := client.Call(ctx, "goal.handoff.receive", map[string]string{

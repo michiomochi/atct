@@ -125,6 +125,48 @@ func newTaskHandoffRPCTestFixture(t *testing.T) taskHandoffRPCTestFixture {
 	}
 }
 
+func addTaskHandoffDirect(t *testing.T, s *store.Store, handoffID, taskID, requestedBy, receivedBy string) {
+	t.Helper()
+
+	ctx := context.Background()
+	if _, err := s.DB().ExecContext(ctx, `DROP INDEX IF EXISTS idx_task_handoffs_open_task_id`); err != nil {
+		t.Fatalf("drop task handoff uniqueness index: %v", err)
+	}
+	t.Cleanup(func() {
+		if _, err := s.DB().ExecContext(ctx, `DELETE FROM task_handoffs WHERE id = ?`, handoffID); err != nil {
+			t.Errorf("delete direct task handoff %q: %v", handoffID, err)
+		}
+		if _, err := s.DB().ExecContext(ctx, `
+			CREATE UNIQUE INDEX idx_task_handoffs_open_task_id
+			ON task_handoffs(task_id)
+			WHERE completed_report_at IS NULL
+		`); err != nil {
+			t.Errorf("restore task handoff uniqueness index: %v", err)
+		}
+	})
+
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	var err error
+	if receivedBy == "" {
+		_, err = s.DB().ExecContext(ctx, `
+			INSERT INTO task_handoffs (
+				id, task_id, requested_by, requested_at, request_report,
+				received_by, received_at, completed_report_at, complete_report
+			) VALUES (?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL)
+		`, handoffID, taskID, requestedBy, now)
+	} else {
+		_, err = s.DB().ExecContext(ctx, `
+			INSERT INTO task_handoffs (
+				id, task_id, requested_by, requested_at, request_report,
+				received_by, received_at, completed_report_at, complete_report
+			) VALUES (?, ?, ?, ?, NULL, ?, ?, NULL, NULL)
+		`, handoffID, taskID, requestedBy, now, receivedBy, now)
+	}
+	if err != nil {
+		t.Fatalf("insert direct task handoff %q failed: %v", handoffID, err)
+	}
+}
+
 func TestTaskHandoffRoutesOverRPC(t *testing.T) {
 	fixture := newTaskHandoffRPCTestFixture(t)
 	client := mcpshim.NewClient(fixture.socketPath)
@@ -218,20 +260,19 @@ func TestTaskHandoffCompleteByTaskOverRPCRejectsAmbiguousPendingRequests(t *test
 	client := mcpshim.NewClient(fixture.socketPath)
 	ctx := context.Background()
 
-	for _, handoffID := range []string{"rpc-task-complete-ambiguous-1", "rpc-task-complete-ambiguous-2"} {
-		var requested store.TaskHandoff
-		if err := client.Call(ctx, "handoff.request", map[string]string{
-			"handoff_id": handoffID, "task_id": fixture.claimedTaskID, "requested_by": "rpc-handoff-requester",
-		}, &requested); err != nil {
-			t.Fatalf("handoff.request(%q): %v", handoffID, err)
-		}
-		var received store.TaskHandoff
-		if err := client.Call(ctx, "handoff.receive", map[string]string{
-			"handoff_id": handoffID, "task_id": fixture.claimedTaskID, "received_by": "rpc-handoff-receiver",
-		}, &received); err != nil {
-			t.Fatalf("handoff.receive(%q): %v", handoffID, err)
-		}
+	var requested store.TaskHandoff
+	if err := client.Call(ctx, "handoff.request", map[string]string{
+		"handoff_id": "rpc-task-complete-ambiguous-1", "task_id": fixture.claimedTaskID, "requested_by": "rpc-handoff-requester",
+	}, &requested); err != nil {
+		t.Fatalf("handoff.request: %v", err)
 	}
+	var received store.TaskHandoff
+	if err := client.Call(ctx, "handoff.receive", map[string]string{
+		"handoff_id": requested.ID, "task_id": fixture.claimedTaskID, "received_by": "rpc-handoff-receiver",
+	}, &received); err != nil {
+		t.Fatalf("handoff.receive: %v", err)
+	}
+	addTaskHandoffDirect(t, fixture.store, "rpc-task-complete-ambiguous-2", fixture.claimedTaskID, "rpc-handoff-requester", "rpc-handoff-receiver")
 
 	var completed store.TaskHandoff
 	err := client.Call(ctx, "handoff.complete", map[string]string{

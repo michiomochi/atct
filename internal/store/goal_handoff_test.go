@@ -46,6 +46,48 @@ func addRequestOnlyGoalHandoff(t *testing.T, s *Store, handoffID, goalID, reques
 	}
 }
 
+func addGoalHandoffDirect(t *testing.T, s *Store, handoffID, goalID, requestedBy, receivedBy string) {
+	t.Helper()
+
+	ctx := context.Background()
+	if _, err := s.DB().ExecContext(ctx, `DROP INDEX IF EXISTS idx_goal_handoffs_open_goal_id`); err != nil {
+		t.Fatalf("drop goal handoff uniqueness index: %v", err)
+	}
+	t.Cleanup(func() {
+		if _, err := s.DB().ExecContext(ctx, `DELETE FROM goal_handoffs WHERE id = ?`, handoffID); err != nil {
+			t.Errorf("delete direct goal handoff %q: %v", handoffID, err)
+		}
+		if _, err := s.DB().ExecContext(ctx, `
+			CREATE UNIQUE INDEX idx_goal_handoffs_open_goal_id
+			ON goal_handoffs(goal_id)
+			WHERE completed_report_at IS NULL
+		`); err != nil {
+			t.Errorf("restore goal handoff uniqueness index: %v", err)
+		}
+	})
+
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	var err error
+	if receivedBy == "" {
+		_, err = s.DB().ExecContext(ctx, `
+			INSERT INTO goal_handoffs (
+				id, goal_id, requested_by, requested_at, request_report,
+				received_by, received_at, completed_report_at, complete_report
+			) VALUES (?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL)
+		`, handoffID, goalID, requestedBy, now)
+	} else {
+		_, err = s.DB().ExecContext(ctx, `
+			INSERT INTO goal_handoffs (
+				id, goal_id, requested_by, requested_at, request_report,
+				received_by, received_at, completed_report_at, complete_report
+			) VALUES (?, ?, ?, ?, NULL, ?, ?, NULL, NULL)
+		`, handoffID, goalID, requestedBy, now, receivedBy, now)
+	}
+	if err != nil {
+		t.Fatalf("insert direct goal handoff %q failed: %v", handoffID, err)
+	}
+}
+
 func TestGoalHandoffRequestReceiveAndComplete(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
@@ -279,6 +321,44 @@ func TestGoalHandoffCompleteByGoalRejectsUnreceived(t *testing.T) {
 	}
 	if handoff.CompleteReport != "" {
 		t.Fatalf("unreceived handoff complete report = %q, want empty", handoff.CompleteReport)
+	}
+}
+
+func TestGoalHandoffCompleteByGoalRejectsMultipleReceivedIncomplete(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	goalID := newTestGoal(t, s)
+	addTestAgentSession(t, s, "complete-goal-ambiguous-requester")
+	addTestAgentSession(t, s, "complete-goal-ambiguous-receiver")
+
+	addRequestOnlyGoalHandoff(t, s, "complete-goal-ambiguous-1", goalID, "complete-goal-ambiguous-requester")
+	if _, err := s.ReceiveGoalHandoff(ctx, "complete-goal-ambiguous-1", goalID, "complete-goal-ambiguous-receiver"); err != nil {
+		t.Fatalf("ReceiveGoalHandoff failed: %v", err)
+	}
+	addGoalHandoffDirect(t, s, "complete-goal-ambiguous-2", goalID, "complete-goal-ambiguous-requester", "complete-goal-ambiguous-receiver")
+
+	_, err := s.CompleteGoalHandoffForGoal(ctx, goalID, "")
+	if !errors.Is(err, ErrGoalHandoffAmbiguous) {
+		t.Fatalf("error = %v, want ErrGoalHandoffAmbiguous", err)
+	}
+}
+
+func TestGoalHandoffReceiveByGoalRejectsMultipleUnreceived(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	goalID := newTestGoal(t, s)
+	addTestAgentSession(t, s, "goal-requester")
+	addTestAgentSession(t, s, "goal-receiver")
+	addLiveGoalClaim(t, s, goalID, "goal-ambiguous-claim-owner")
+
+	if _, err := s.RequestGoalHandoff(ctx, "goal-ambiguous-1", goalID, "goal-requester", ""); err != nil {
+		t.Fatalf("RequestGoalHandoff failed: %v", err)
+	}
+	addGoalHandoffDirect(t, s, "goal-ambiguous-2", goalID, "goal-requester", "")
+
+	_, err := s.ReceiveGoalHandoffForGoal(ctx, goalID, "goal-receiver")
+	if !errors.Is(err, ErrGoalHandoffAmbiguous) {
+		t.Fatalf("error = %v, want ErrGoalHandoffAmbiguous", err)
 	}
 }
 
