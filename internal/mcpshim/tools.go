@@ -62,7 +62,7 @@ type HandoffRequestIn struct {
 }
 
 type HandoffReceiveIn struct {
-	HandoffID string `json:"handoff_id"`
+	HandoffID string `json:"handoff_id,omitempty"`
 	TaskID    string `json:"task_id"`
 }
 
@@ -396,9 +396,13 @@ func Register(server *mcp.Server, c *Client, agentSessionID string) {
 		Description:  "Record that a task handoff was received.",
 		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in HandoffReceiveIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
-		return callWithUnappliedDecisions(ctx, c, "handoff.receive", map[string]any{
-			"handoff_id": in.HandoffID, "task_id": in.TaskID, "received_by": agentSessionID,
-		})
+		params := map[string]any{
+			"task_id": in.TaskID, "received_by": agentSessionID,
+		}
+		if in.HandoffID != "" {
+			params["handoff_id"] = in.HandoffID
+		}
+		return callWithUnappliedDecisions(ctx, c, "handoff.receive", params)
 	})
 
 	mcp.AddTool(server, &mcp.Tool{

@@ -14,6 +14,7 @@ var (
 	ErrTaskHandoffNotFound      = errors.New("task handoff not found")
 	ErrTaskHandoffTaskMismatch  = errors.New("task handoff task mismatch")
 	ErrTaskHandoffTaskUnclaimed = errors.New("task handoff task is unclaimed")
+	ErrTaskHandoffAmbiguous     = errors.New("multiple task handoffs pending receipt")
 )
 
 // TaskHandoff records one delegation between agents. Each event timestamp is
@@ -129,6 +130,29 @@ func (s *Store) ReceiveTaskHandoff(ctx context.Context, handoffID, taskID, recei
 		return TaskHandoff{}, fmt.Errorf("receive task handoff: %w", err)
 	}
 	return s.GetTaskHandoff(ctx, handoffID)
+}
+
+// ReceiveTaskHandoffForTask finds the single requested and unreceived handoff
+// for a task and records the receipt. Multiple pending handoffs are rejected
+// so receipt cannot be assigned to the wrong delegation.
+func (s *Store) ReceiveTaskHandoffForTask(ctx context.Context, taskID, receivedBy string) (TaskHandoff, error) {
+	handoffs, err := s.ListTaskHandoffs(ctx, taskID)
+	if err != nil {
+		return TaskHandoff{}, fmt.Errorf("list pending task handoffs: %w", err)
+	}
+	pending := make([]TaskHandoff, 0, len(handoffs))
+	for _, handoff := range handoffs {
+		if handoff.RequestedAt != nil && handoff.ReceivedAt == nil {
+			pending = append(pending, handoff)
+		}
+	}
+	if len(pending) == 0 {
+		return TaskHandoff{}, fmt.Errorf("%w: task %s", ErrTaskHandoffNotFound, taskID)
+	}
+	if len(pending) > 1 {
+		return TaskHandoff{}, fmt.Errorf("%w: task %q has %d pending handoffs", ErrTaskHandoffAmbiguous, taskID, len(pending))
+	}
+	return s.ReceiveTaskHandoff(ctx, pending[0].ID, taskID, receivedBy)
 }
 
 // CompleteTaskHandoff records the completion report side of a handoff. It
