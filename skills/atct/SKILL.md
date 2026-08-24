@@ -9,6 +9,16 @@ ATCT records what you are working on and routes your questions to a human's
 inbox. Registering tools is not enough; the value comes from calling them at
 the right moments.
 
+## Roles
+
+Role values for `expected_role`: `commander`, `subcommander`, `executor`.
+
+The daemon derives the role from claims:
+
+- `commander`: the agent holds a project claim.
+- `subcommander`: the agent holds a goal claim but no project claim.
+- `executor`: the agent holds neither a project claim nor a goal claim.
+
 ## Declare before you work
 
 Call `atct_task_declare` with the tasks you intend to do, before doing them.
@@ -53,8 +63,9 @@ that worker is started:
    how the worker is started or how the role is transmitted.
 4. Put this exact instruction at the very beginning of the request:
 
-   > First invoke the role-verification MCP tool with the expected role. If it
-   > reports a mismatch, do not start work; return the task.
+   > First invoke the `atct_role` MCP tool with `expected_role` set to one of
+   > `commander`, `subcommander`, or `executor`. If it reports `matches: false`,
+   > do not start work; return the task.
 
 5. Keep one worker per task. Return a correction, review fix, follow-up
    question, or clarification for the same task to the same worker. Start a
