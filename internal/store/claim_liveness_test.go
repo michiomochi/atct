@@ -2,23 +2,51 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"os"
+	"syscall"
 	"testing"
 	"time"
 )
 
-func TestProcessStartedAtReturnsKernelStartTimeForCurrentProcess(t *testing.T) {
-	startedAt, err := processStartedAt(os.Getpid())
-	if err != nil {
-		t.Fatalf("processStartedAt: %v", err)
+func TestMain(m *testing.M) {
+	processStartedAt = fakeProcessStartedAt
+	os.Exit(m.Run())
+}
+
+func fakeProcessStartedAt(pid int) (string, error) {
+	if pid <= 0 {
+		return "", fmt.Errorf("pid must be positive: %d", pid)
 	}
-	t.Logf("processStartedAt self pid=%d: %q", os.Getpid(), startedAt)
+	if err := syscall.Kill(pid, 0); err != nil {
+		return "", fmt.Errorf("get process start time for pid %d: %w", pid, err)
+	}
+	return fmt.Sprintf("fake-start-%d", pid), nil
+}
+
+func useRealProcessStartedAt(t *testing.T) {
+	t.Helper()
+	if _, err := realProcessStartedAt(os.Getpid()); err != nil {
+		t.Skipf("skip: real process start time requires ps, which is unavailable: %v", err)
+	}
+	saved := processStartedAt
+	processStartedAt = realProcessStartedAt
+	t.Cleanup(func() { processStartedAt = saved })
+}
+
+func TestProcessStartedAtReturnsKernelStartTimeForCurrentProcess(t *testing.T) {
+	startedAt, err := realProcessStartedAt(os.Getpid())
+	if err != nil {
+		t.Skipf("skip: real process start time requires ps, which is unavailable: %v", err)
+	}
+	t.Logf("realProcessStartedAt self pid=%d: %q", os.Getpid(), startedAt)
 	if startedAt == "" {
 		t.Fatal("processStartedAt returned an empty start time")
 	}
 }
 
 func TestProcessStartedAtRejectsMissingProcess(t *testing.T) {
+	useRealProcessStartedAt(t)
 	if _, err := processStartedAt(999999); err == nil {
 		t.Fatal("processStartedAt(missing pid) returned nil error")
 	} else {
@@ -27,6 +55,7 @@ func TestProcessStartedAtRejectsMissingProcess(t *testing.T) {
 }
 
 func TestRegisterAgentSessionStoresProcessIdentity(t *testing.T) {
+	useRealProcessStartedAt(t)
 	s := newTestStore(t)
 	ctx := context.Background()
 
@@ -40,9 +69,9 @@ func TestRegisterAgentSessionStoresProcessIdentity(t *testing.T) {
 		SELECT pid, started_at FROM agent_sessions WHERE id = ?`, "registered-run").Scan(&pid, &startedAt); err != nil {
 		t.Fatalf("read registered agent session: %v", err)
 	}
-	wantStartedAt, err := processStartedAt(os.Getpid())
+	wantStartedAt, err := realProcessStartedAt(os.Getpid())
 	if err != nil {
-		t.Fatalf("processStartedAt: %v", err)
+		t.Skipf("skip: real process start time requires ps, which is unavailable: %v", err)
 	}
 	if pid != os.Getpid() || startedAt != wantStartedAt {
 		t.Fatalf("stored process identity = pid %d, started_at %q; want pid %d, started_at %q", pid, startedAt, os.Getpid(), wantStartedAt)
@@ -50,6 +79,7 @@ func TestRegisterAgentSessionStoresProcessIdentity(t *testing.T) {
 }
 
 func TestRegisterAgentSessionStoresZeroIdentityWhenProcessLookupFails(t *testing.T) {
+	useRealProcessStartedAt(t)
 	s := newTestStore(t)
 	ctx := context.Background()
 

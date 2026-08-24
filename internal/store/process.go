@@ -6,7 +6,9 @@ import (
 	"strconv"
 )
 
-func processStartedAt(pid int) (string, error) {
+var processStartedAt = realProcessStartedAt
+
+func realProcessStartedAt(pid int) (string, error) {
 	if pid <= 0 {
 		return "", fmt.Errorf("pid must be positive: %d", pid)
 	}
