@@ -150,11 +150,15 @@ func TestGoalHandoffAllowsSecondHandoffForSameGoal(t *testing.T) {
 	ctx := context.Background()
 	goalID := newTestGoal(t, s)
 	addTestAgentSession(t, s, "goal-requester")
+	addTestAgentSession(t, s, "goal-dead-receiver")
 	addLiveGoalClaim(t, s, goalID, "goal-second-claim-owner")
 
 	first, err := s.RequestGoalHandoff(ctx, "goal-handoff-1", goalID, "goal-requester", "")
 	if err != nil {
 		t.Fatalf("first RequestGoalHandoff failed: %v", err)
+	}
+	if _, err := s.ReceiveGoalHandoff(ctx, first.ID, goalID, "goal-dead-receiver"); err != nil {
+		t.Fatalf("ReceiveGoalHandoff failed: %v", err)
 	}
 	second, err := s.RequestGoalHandoff(ctx, "goal-handoff-2", goalID, "goal-requester", "")
 	if err != nil {
@@ -163,6 +167,13 @@ func TestGoalHandoffAllowsSecondHandoffForSameGoal(t *testing.T) {
 	if first.ID == second.ID {
 		t.Fatalf("same goal handoffs must have distinct IDs: %q", first.ID)
 	}
+	first, err = s.GetGoalHandoff(ctx, first.ID)
+	if err != nil {
+		t.Fatalf("GetGoalHandoff for reclaimed handoff failed: %v", err)
+	}
+	if first.CompletedReportAt == nil || first.CompleteReport != "セッションが停止した" {
+		t.Fatalf("dead receiver handoff was not reclaimed: %+v", first)
+	}
 
 	handoffs, err := s.ListGoalHandoffs(ctx, goalID)
 	if err != nil {
@@ -170,6 +181,29 @@ func TestGoalHandoffAllowsSecondHandoffForSameGoal(t *testing.T) {
 	}
 	if len(handoffs) != 2 {
 		t.Fatalf("got %d handoffs, want 2: %+v", len(handoffs), handoffs)
+	}
+}
+
+func TestGoalHandoffRejectsSecondHandoffForLiveReceiver(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	goalID := newTestGoal(t, s)
+	addTestAgentSession(t, s, "goal-live-receiver-requester")
+	addLiveGoalClaim(t, s, goalID, "goal-live-receiver-claim-owner")
+	if err := s.RegisterAgentSession(ctx, "goal-live-receiver", os.Getpid()); err != nil {
+		t.Fatalf("RegisterAgentSession failed: %v", err)
+	}
+
+	first, err := s.RequestGoalHandoff(ctx, "goal-live-receiver-handoff-1", goalID, "goal-live-receiver-requester", "")
+	if err != nil {
+		t.Fatalf("first RequestGoalHandoff failed: %v", err)
+	}
+	if _, err := s.ReceiveGoalHandoff(ctx, first.ID, goalID, "goal-live-receiver"); err != nil {
+		t.Fatalf("ReceiveGoalHandoff failed: %v", err)
+	}
+
+	if _, err := s.RequestGoalHandoff(ctx, "goal-live-receiver-handoff-2", goalID, "goal-live-receiver-requester", ""); err == nil {
+		t.Fatal("RequestGoalHandoff should reject takeover from a live receiver")
 	}
 }
 
@@ -248,43 +282,49 @@ func TestGoalHandoffCompleteByGoalRejectsUnreceived(t *testing.T) {
 	}
 }
 
-func TestGoalHandoffCompleteByGoalRejectsMultipleReceivedIncomplete(t *testing.T) {
+func TestGoalHandoffAllowsNewHandoffAfterCompletion(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 	goalID := newTestGoal(t, s)
-	addTestAgentSession(t, s, "complete-goal-ambiguous-requester")
-	addTestAgentSession(t, s, "complete-goal-ambiguous-receiver")
+	addTestAgentSession(t, s, "completed-goal-requester")
+	addTestAgentSession(t, s, "completed-goal-receiver")
+	addLiveGoalClaim(t, s, goalID, "completed-goal-claim-owner")
 
-	for _, handoffID := range []string{"complete-goal-ambiguous-1", "complete-goal-ambiguous-2"} {
-		addRequestOnlyGoalHandoff(t, s, handoffID, goalID, "complete-goal-ambiguous-requester")
-		if _, err := s.ReceiveGoalHandoff(ctx, handoffID, goalID, "complete-goal-ambiguous-receiver"); err != nil {
-			t.Fatalf("ReceiveGoalHandoff(%q) failed: %v", handoffID, err)
-		}
+	first, err := s.RequestGoalHandoff(ctx, "completed-goal-1", goalID, "completed-goal-requester", "")
+	if err != nil {
+		t.Fatalf("first RequestGoalHandoff failed: %v", err)
+	}
+	if _, err := s.ReceiveGoalHandoff(ctx, first.ID, goalID, "completed-goal-receiver"); err != nil {
+		t.Fatalf("ReceiveGoalHandoff failed: %v", err)
+	}
+	if _, err := s.CompleteGoalHandoff(ctx, first.ID, goalID, "done"); err != nil {
+		t.Fatalf("CompleteGoalHandoff failed: %v", err)
 	}
 
-	_, err := s.CompleteGoalHandoffForGoal(ctx, goalID, "")
-	if !errors.Is(err, ErrGoalHandoffAmbiguous) {
-		t.Fatalf("error = %v, want ErrGoalHandoffAmbiguous", err)
+	if _, err := s.RequestGoalHandoff(ctx, "completed-goal-2", goalID, "completed-goal-requester", ""); err != nil {
+		t.Fatalf("new handoff after completion failed: %v", err)
 	}
 }
 
-func TestGoalHandoffReceiveByGoalRejectsMultipleUnreceived(t *testing.T) {
+func TestGoalHandoffRejectsMultipleOpenHandoffsInDatabase(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 	goalID := newTestGoal(t, s)
-	addTestAgentSession(t, s, "goal-requester")
-	addTestAgentSession(t, s, "goal-receiver")
-	addLiveGoalClaim(t, s, goalID, "goal-ambiguous-claim-owner")
-
-	for _, handoffID := range []string{"goal-ambiguous-1", "goal-ambiguous-2"} {
-		if _, err := s.RequestGoalHandoff(ctx, handoffID, goalID, "goal-requester", ""); err != nil {
-			t.Fatalf("RequestGoalHandoff(%q) failed: %v", handoffID, err)
-		}
+	addTestAgentSession(t, s, "goal-database-requester")
+	addLiveGoalClaim(t, s, goalID, "goal-database-claim-owner")
+	if _, err := s.RequestGoalHandoff(ctx, "goal-database-handoff-1", goalID, "goal-database-requester", ""); err != nil {
+		t.Fatalf("first RequestGoalHandoff failed: %v", err)
 	}
 
-	_, err := s.ReceiveGoalHandoffForGoal(ctx, goalID, "goal-receiver")
-	if !errors.Is(err, ErrGoalHandoffAmbiguous) {
-		t.Fatalf("error = %v, want ErrGoalHandoffAmbiguous", err)
+	err := sqlcgen.New(s.DB()).RequestGoalHandoff(ctx, sqlcgen.RequestGoalHandoffParams{
+		ID:            "goal-database-handoff-2",
+		GoalID:        goalID,
+		RequestedBy:   sql.NullString{String: "goal-database-requester", Valid: true},
+		RequestedAt:   sql.NullString{String: time.Now().UTC().Format(time.RFC3339Nano), Valid: true},
+		RequestReport: sql.NullString{},
+	})
+	if err == nil {
+		t.Fatal("database should reject a second open handoff for the same goal")
 	}
 }
 

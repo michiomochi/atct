@@ -14,6 +14,7 @@ var (
 	ErrGoalHandoffNotFound      = errors.New("goal handoff not found")
 	ErrGoalHandoffGoalMismatch  = errors.New("goal handoff goal mismatch")
 	ErrGoalHandoffGoalUnclaimed = errors.New("goal handoff goal is unclaimed")
+	ErrGoalHandoffAlreadyOpen   = errors.New("goal handoff already open")
 	ErrGoalHandoffAmbiguous     = errors.New("multiple goal handoffs pending receipt")
 )
 
@@ -96,6 +97,46 @@ func (s *Store) requireLiveGoalClaim(ctx context.Context, goalID string) error {
 	return fmt.Errorf("%w: %s", ErrGoalHandoffGoalUnclaimed, goalID)
 }
 
+// reclaimOpenGoalHandoff enforces the one-open-handoff rule before inserting a
+// new request. A retry for the same handoff ID is allowed to fill an existing
+// receipt-only row. For a different ID, only a handoff whose owner is no longer
+// running may be reclaimed; an unknown owner is treated as active because its
+// liveness cannot be disproved.
+func (s *Store) reclaimOpenGoalHandoff(ctx context.Context, handoffID, goalID string) error {
+	handoffs, err := s.ListGoalHandoffs(ctx, goalID)
+	if err != nil {
+		return fmt.Errorf("list open goal handoffs: %w", err)
+	}
+
+	var open *GoalHandoff
+	for i := range handoffs {
+		if handoffs[i].CompletedReportAt != nil || handoffs[i].ID == handoffID {
+			continue
+		}
+		if open != nil {
+			return fmt.Errorf("%w: goal %q has multiple open handoffs", ErrGoalHandoffAlreadyOpen, goalID)
+		}
+		open = &handoffs[i]
+	}
+	if open == nil {
+		return nil
+	}
+
+	ownerID := open.ReceivedBy
+	if ownerID == "" {
+		// An unreceived handoff has no receiver to inspect, so the requester
+		// is the only available liveness signal.
+		ownerID = open.RequestedBy
+	}
+	if ownerID == "" || claimIsRunning(ctx, s, ownerID) {
+		return fmt.Errorf("%w: goal %q has a live handoff owner", ErrGoalHandoffAlreadyOpen, goalID)
+	}
+	if _, err := s.CompleteGoalHandoff(ctx, open.ID, goalID, "セッションが停止した"); err != nil {
+		return fmt.Errorf("reclaim goal handoff %q: %w", open.ID, err)
+	}
+	return nil
+}
+
 // RequestGoalHandoff records the request side of a handoff. It requires a
 // live claim on the target goal; receipt and completion are separate calls.
 func (s *Store) RequestGoalHandoff(ctx context.Context, handoffID, goalID, requestedBy string, requestReport string) (GoalHandoff, error) {
@@ -103,6 +144,9 @@ func (s *Store) RequestGoalHandoff(ctx context.Context, handoffID, goalID, reque
 		return GoalHandoff{}, err
 	}
 	if err := s.requireLiveGoalClaim(ctx, goalID); err != nil {
+		return GoalHandoff{}, err
+	}
+	if err := s.reclaimOpenGoalHandoff(ctx, handoffID, goalID); err != nil {
 		return GoalHandoff{}, err
 	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)

@@ -189,11 +189,15 @@ func TestTaskHandoffAllowsSecondHandoffForSameTask(t *testing.T) {
 	ctx := context.Background()
 	taskID := addTestTasks(t, s, 1)[0]
 	addTestAgentSession(t, s, "requester")
+	addTestAgentSession(t, s, "dead-receiver")
 	addLiveTaskClaim(t, s, taskID, "second-handoff-claim-owner")
 
 	first, err := s.RequestTaskHandoff(ctx, "handoff-1", taskID, "requester", "")
 	if err != nil {
 		t.Fatalf("first RequestTaskHandoff failed: %v", err)
+	}
+	if _, err := s.ReceiveTaskHandoff(ctx, first.ID, taskID, "dead-receiver"); err != nil {
+		t.Fatalf("ReceiveTaskHandoff failed: %v", err)
 	}
 	second, err := s.RequestTaskHandoff(ctx, "handoff-2", taskID, "requester", "")
 	if err != nil {
@@ -202,6 +206,13 @@ func TestTaskHandoffAllowsSecondHandoffForSameTask(t *testing.T) {
 	if first.ID == second.ID {
 		t.Fatalf("same task handoffs must have distinct IDs: %q", first.ID)
 	}
+	first, err = s.GetTaskHandoff(ctx, first.ID)
+	if err != nil {
+		t.Fatalf("GetTaskHandoff for reclaimed handoff failed: %v", err)
+	}
+	if first.CompletedReportAt == nil || first.CompleteReport != "セッションが停止した" {
+		t.Fatalf("dead receiver handoff was not reclaimed: %+v", first)
+	}
 
 	handoffs, err := s.ListTaskHandoffs(ctx, taskID)
 	if err != nil {
@@ -209,6 +220,29 @@ func TestTaskHandoffAllowsSecondHandoffForSameTask(t *testing.T) {
 	}
 	if len(handoffs) != 2 {
 		t.Fatalf("got %d handoffs, want 2: %+v", len(handoffs), handoffs)
+	}
+}
+
+func TestTaskHandoffRejectsSecondHandoffForLiveReceiver(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	taskID := addTestTasks(t, s, 1)[0]
+	addTestAgentSession(t, s, "live-receiver-requester")
+	addLiveTaskClaim(t, s, taskID, "live-receiver-claim-owner")
+	if err := s.RegisterAgentSession(ctx, "live-receiver", os.Getpid()); err != nil {
+		t.Fatalf("RegisterAgentSession failed: %v", err)
+	}
+
+	first, err := s.RequestTaskHandoff(ctx, "live-receiver-handoff-1", taskID, "live-receiver-requester", "")
+	if err != nil {
+		t.Fatalf("first RequestTaskHandoff failed: %v", err)
+	}
+	if _, err := s.ReceiveTaskHandoff(ctx, first.ID, taskID, "live-receiver"); err != nil {
+		t.Fatalf("ReceiveTaskHandoff failed: %v", err)
+	}
+
+	if _, err := s.RequestTaskHandoff(ctx, "live-receiver-handoff-2", taskID, "live-receiver-requester", ""); err == nil {
+		t.Fatal("RequestTaskHandoff should reject takeover from a live receiver")
 	}
 }
 
@@ -287,43 +321,49 @@ func TestTaskHandoffCompleteByTaskRejectsUnreceived(t *testing.T) {
 	}
 }
 
-func TestTaskHandoffCompleteByTaskRejectsMultipleReceivedIncomplete(t *testing.T) {
+func TestTaskHandoffAllowsNewHandoffAfterCompletion(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 	taskID := addTestTasks(t, s, 1)[0]
-	addTestAgentSession(t, s, "complete-task-ambiguous-requester")
-	addTestAgentSession(t, s, "complete-task-ambiguous-receiver")
+	addTestAgentSession(t, s, "completed-task-requester")
+	addTestAgentSession(t, s, "completed-task-receiver")
+	addLiveTaskClaim(t, s, taskID, "completed-task-claim-owner")
 
-	for _, handoffID := range []string{"complete-task-ambiguous-1", "complete-task-ambiguous-2"} {
-		addRequestOnlyTaskHandoff(t, s, handoffID, taskID, "complete-task-ambiguous-requester")
-		if _, err := s.ReceiveTaskHandoff(ctx, handoffID, taskID, "complete-task-ambiguous-receiver"); err != nil {
-			t.Fatalf("ReceiveTaskHandoff(%q) failed: %v", handoffID, err)
-		}
+	first, err := s.RequestTaskHandoff(ctx, "completed-task-1", taskID, "completed-task-requester", "")
+	if err != nil {
+		t.Fatalf("first RequestTaskHandoff failed: %v", err)
+	}
+	if _, err := s.ReceiveTaskHandoff(ctx, first.ID, taskID, "completed-task-receiver"); err != nil {
+		t.Fatalf("ReceiveTaskHandoff failed: %v", err)
+	}
+	if _, err := s.CompleteTaskHandoff(ctx, first.ID, taskID, "done"); err != nil {
+		t.Fatalf("CompleteTaskHandoff failed: %v", err)
 	}
 
-	_, err := s.CompleteTaskHandoffForTask(ctx, taskID, "")
-	if !errors.Is(err, ErrTaskHandoffAmbiguous) {
-		t.Fatalf("error = %v, want ErrTaskHandoffAmbiguous", err)
+	if _, err := s.RequestTaskHandoff(ctx, "completed-task-2", taskID, "completed-task-requester", ""); err != nil {
+		t.Fatalf("new handoff after completion failed: %v", err)
 	}
 }
 
-func TestTaskHandoffReceiveByTaskRejectsMultipleUnreceived(t *testing.T) {
+func TestTaskHandoffRejectsMultipleOpenHandoffsInDatabase(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 	taskID := addTestTasks(t, s, 1)[0]
-	addTestAgentSession(t, s, "requester")
-	addTestAgentSession(t, s, "receiver")
-	addLiveTaskClaim(t, s, taskID, "ambiguous-receive-claim-owner")
-
-	for _, handoffID := range []string{"ambiguous-handoff-1", "ambiguous-handoff-2"} {
-		if _, err := s.RequestTaskHandoff(ctx, handoffID, taskID, "requester", ""); err != nil {
-			t.Fatalf("RequestTaskHandoff(%q) failed: %v", handoffID, err)
-		}
+	addTestAgentSession(t, s, "database-requester")
+	addLiveTaskClaim(t, s, taskID, "database-claim-owner")
+	if _, err := s.RequestTaskHandoff(ctx, "database-handoff-1", taskID, "database-requester", ""); err != nil {
+		t.Fatalf("first RequestTaskHandoff failed: %v", err)
 	}
 
-	_, err := s.ReceiveTaskHandoffForTask(ctx, taskID, "receiver")
-	if !errors.Is(err, ErrTaskHandoffAmbiguous) {
-		t.Fatalf("error = %v, want ErrTaskHandoffAmbiguous", err)
+	err := sqlcgen.New(s.DB()).RequestTaskHandoff(ctx, sqlcgen.RequestTaskHandoffParams{
+		ID:            "database-handoff-2",
+		TaskID:        taskID,
+		RequestedBy:   sql.NullString{String: "database-requester", Valid: true},
+		RequestedAt:   sql.NullString{String: time.Now().UTC().Format(time.RFC3339Nano), Valid: true},
+		RequestReport: sql.NullString{},
+	})
+	if err == nil {
+		t.Fatal("database should reject a second open handoff for the same task")
 	}
 }
 

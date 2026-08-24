@@ -14,6 +14,7 @@ var (
 	ErrTaskHandoffNotFound      = errors.New("task handoff not found")
 	ErrTaskHandoffTaskMismatch  = errors.New("task handoff task mismatch")
 	ErrTaskHandoffTaskUnclaimed = errors.New("task handoff task is unclaimed")
+	ErrTaskHandoffAlreadyOpen   = errors.New("task handoff already open")
 	ErrTaskHandoffAmbiguous     = errors.New("multiple task handoffs pending receipt")
 )
 
@@ -96,6 +97,46 @@ func (s *Store) requireLiveTaskClaim(ctx context.Context, taskID string) error {
 	return fmt.Errorf("%w: %s", ErrTaskHandoffTaskUnclaimed, taskID)
 }
 
+// reclaimOpenTaskHandoff enforces the one-open-handoff rule before inserting a
+// new request. A retry for the same handoff ID is allowed to fill an existing
+// receipt-only row. For a different ID, only a handoff whose owner is no longer
+// running may be reclaimed; an unknown owner is treated as active because its
+// liveness cannot be disproved.
+func (s *Store) reclaimOpenTaskHandoff(ctx context.Context, handoffID, taskID string) error {
+	handoffs, err := s.ListTaskHandoffs(ctx, taskID)
+	if err != nil {
+		return fmt.Errorf("list open task handoffs: %w", err)
+	}
+
+	var open *TaskHandoff
+	for i := range handoffs {
+		if handoffs[i].CompletedReportAt != nil || handoffs[i].ID == handoffID {
+			continue
+		}
+		if open != nil {
+			return fmt.Errorf("%w: task %q has multiple open handoffs", ErrTaskHandoffAlreadyOpen, taskID)
+		}
+		open = &handoffs[i]
+	}
+	if open == nil {
+		return nil
+	}
+
+	ownerID := open.ReceivedBy
+	if ownerID == "" {
+		// An unreceived handoff has no receiver to inspect, so the requester
+		// is the only available liveness signal.
+		ownerID = open.RequestedBy
+	}
+	if ownerID == "" || claimIsRunning(ctx, s, ownerID) {
+		return fmt.Errorf("%w: task %q has a live handoff owner", ErrTaskHandoffAlreadyOpen, taskID)
+	}
+	if _, err := s.CompleteTaskHandoff(ctx, open.ID, taskID, "セッションが停止した"); err != nil {
+		return fmt.Errorf("reclaim task handoff %q: %w", open.ID, err)
+	}
+	return nil
+}
+
 // RequestTaskHandoff records the request side of a handoff. It only writes
 // request columns; a receipt or completion report is a separate call.
 func (s *Store) RequestTaskHandoff(ctx context.Context, handoffID, taskID, requestedBy string, requestReport string) (TaskHandoff, error) {
@@ -103,6 +144,9 @@ func (s *Store) RequestTaskHandoff(ctx context.Context, handoffID, taskID, reque
 		return TaskHandoff{}, err
 	}
 	if err := s.requireLiveTaskClaim(ctx, taskID); err != nil {
+		return TaskHandoff{}, err
+	}
+	if err := s.reclaimOpenTaskHandoff(ctx, handoffID, taskID); err != nil {
 		return TaskHandoff{}, err
 	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)

@@ -120,6 +120,10 @@ CREATE TABLE IF NOT EXISTS task_handoffs (
 CREATE INDEX IF NOT EXISTS idx_task_handoffs_task_id
   ON task_handoffs(task_id);
 
+CREATE UNIQUE INDEX IF NOT EXISTS idx_task_handoffs_open_task_id
+  ON task_handoffs(task_id)
+  WHERE completed_report_at IS NULL;
+
 CREATE TABLE IF NOT EXISTS goal_handoffs (
   id                  TEXT PRIMARY KEY,
   goal_id             TEXT NOT NULL REFERENCES goals(id),
@@ -134,3 +138,7 @@ CREATE TABLE IF NOT EXISTS goal_handoffs (
 
 CREATE INDEX IF NOT EXISTS idx_goal_handoffs_goal_id
   ON goal_handoffs(goal_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_goal_handoffs_open_goal_id
+  ON goal_handoffs(goal_id)
+  WHERE completed_report_at IS NULL;
