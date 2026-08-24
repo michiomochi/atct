@@ -124,10 +124,12 @@ atct handoff: task <id> reported complete
   （`hooks.json` に `Stop` がある）が、**入力の形は見ていない。**Claude と同じ JSON か
 - **Stop hook が複数回発火するか。**1 回の作業で何度も鳴るなら、`completed_report_at` を
   何度も上書きすることになる
-- **executor が Stop 時に MCP を呼べるか。**フックはハーネスの外のプロセスである。
-  MCP ツールは使えない可能性が高く、**その場合は CLI か daemon のソケットを直接叩く**
-  ことになる。だが **executor の PATH に `atct` は無い**（Codex では実測済み）。
-  **ここが最大の未検証点である**
+- ~~**executor が Stop 時に atct へ届くか。**~~ **解決した（2026-08-24 追記）。**
+  PATH は要らない。`hooks/session-start` が既に `ATCT_BIN="$HOOK_DIR/../bin/atct"` で
+  **フック自身の位置から相対にバイナリを引いている。**Codex 側のプラグインにも
+  `bin/atct` は入っており、`session-start` が Codex で動くことは実測済みである。
+  **Stop hook も同じ形でよい。**commander はこの点を最大の未検証と書いたが、
+  **既存の実装が既に解いていた。**
 - **どのタスクを終えたかを Stop hook がどう知るか。**役割は claim から導けるが、
   **claim を持つのは commander であって executor ではない。**executor は自分が
   どのタスクを渡されたかを atct 上では持っていない。**`received_by` に自分が
