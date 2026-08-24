@@ -121,7 +121,11 @@ test_static_contract() {
   assert_file_contains '#!/usr/bin/env bash' "$REPO_ROOT/bin/atct"
   assert_file_contains 'set -euo pipefail' "$REPO_ROOT/bin/atct"
   assert_file_contains 'set -euo pipefail' "$REPO_ROOT/bin/atct-mcp"
-  assert_file_contains '"command": "${CLAUDE_PLUGIN_ROOT}/bin/atct-mcp"' "$REPO_ROOT/.mcp.json"
+  assert_file_contains '"type": "http"' "$REPO_ROOT/.mcp.json"
+  assert_file_contains '"url": "http://127.0.0.1:8787/mcp"' "$REPO_ROOT/.mcp.json"
+  if grep -Fq 'CLAUDE_PLUGIN_ROOT' "$REPO_ROOT/.mcp.json"; then
+    fail '.mcp.json must not name CLAUDE_PLUGIN_ROOT'
+  fi
   assert_file_contains '"source": "./"' "$REPO_ROOT/.claude-plugin"/marketplace.json
   # Pin the two version declarations to each other rather than to a literal, so a
   # release does not silently leave this test asserting the previous version.
@@ -428,9 +432,12 @@ SCRIPT
 
   output="$(FAKE_CONTEXT='hook context' PATH="/usr/bin:/bin" bash "$hook")"
   [[ "$output" == hook\ context* ]] || fail 'context was not printed before the boilerplate'
-  [[ "$output" == *'An active goal is permission to work.'* ]] || fail 'active-goal permission guidance was removed'
-  [[ "$output" == *'Stop only before what cannot be undone:'* ]] || fail 'irreversible-change guidance was removed'
-  [[ "$output" == *'See the `atct` skill for details.'* ]] || fail 'existing boilerplate was changed'
+  [[ "$output" != *'An active goal is permission to work.'* ]] || fail 'fixed instructions leaked into the session-start hook'
+  [[ "$output" != *'Stop only before what cannot be undone:'* ]] || fail 'fixed instructions leaked into the session-start hook'
+  [[ "$output" != *'See the `atct` skill for details.'* ]] || fail 'fixed instructions leaked into the session-start hook'
+  assert_file_contains 'An active goal is permission to work.' "$REPO_ROOT/internal/mcpshim/instructions.go"
+  assert_file_contains 'Stop only before what cannot be undone:' "$REPO_ROOT/internal/mcpshim/instructions.go"
+  assert_file_contains 'See the `atct` skill for details.' "$REPO_ROOT/internal/mcpshim/instructions.go"
 
   output="$(PATH="/usr/bin:/bin" bash "$hook")"
   assert_eq '' "$output" 'empty context must keep the hook silent'
@@ -439,44 +446,12 @@ SCRIPT
   assert_eq '' "$output" 'missing atct must keep the hook silent'
 }
 
-test_session_start_mentions_active_goal_permission() {
-  local fixture="$TEMP_ROOT/session-start-active-goal"
-  local hook="$fixture/hooks/session-start"
-  local adjacent="$fixture/bin/atct"
-  local output
-
-  mkdir -p "$(dirname "$hook")" "$(dirname "$adjacent")"
-  cp "$REPO_ROOT/hooks/session-start" "$hook"
-  cat >"$adjacent" <<'SCRIPT'
-#!/bin/bash
-if [[ "${1:-}" == context ]]; then
-  printf 'goal context\n'
-fi
-SCRIPT
-  chmod +x "$adjacent"
-
-  output="$(PATH="" /bin/bash "$hook")"
-  [[ "$output" == *'An active goal is permission to work.'* ]] || fail 'hook omitted active-goal permission guidance'
+test_mcp_instructions_include_active_goal_permission() {
+  assert_file_contains 'An active goal is permission to work.' "$REPO_ROOT/internal/mcpshim/instructions.go"
 }
 
-test_session_start_mentions_undo_boundary() {
-  local fixture="$TEMP_ROOT/session-start-undo-boundary"
-  local hook="$fixture/hooks/session-start"
-  local adjacent="$fixture/bin/atct"
-  local output
-
-  mkdir -p "$(dirname "$hook")" "$(dirname "$adjacent")"
-  cp "$REPO_ROOT/hooks/session-start" "$hook"
-  cat >"$adjacent" <<'SCRIPT'
-#!/bin/bash
-if [[ "${1:-}" == context ]]; then
-  printf 'goal context\n'
-fi
-SCRIPT
-  chmod +x "$adjacent"
-
-  output="$(PATH="" /bin/bash "$hook")"
-  [[ "$output" == *'cannot be undone'* ]] || fail 'hook omitted cannot-be-undone boundary'
+test_mcp_instructions_include_undo_boundary() {
+  assert_file_contains 'Stop only before what cannot be undone:' "$REPO_ROOT/internal/mcpshim/instructions.go"
 }
 
 test_session_start_is_silent_without_atct_wrapper() {
@@ -503,7 +478,7 @@ test_missing_checksum_tool_fails
 test_unsupported_platform_fails
 test_session_start_uses_adjacent_context_wrapper
 test_session_start_preserves_context_and_silence
-test_session_start_mentions_active_goal_permission
-test_session_start_mentions_undo_boundary
+test_mcp_instructions_include_active_goal_permission
+test_mcp_instructions_include_undo_boundary
 test_session_start_is_silent_without_atct_wrapper
 printf 'PASS wrapper tests\n'
