@@ -50,9 +50,8 @@ found it before the agent did.
 ## The loop
 
 The following loop is for self-directed work: find and take a task yourself.
-A delegated worker does not claim the delegated task or follow the claim step;
-the delegator already holds the claim. If `task already claimed` is reported
-for delegated work, that is normal; continue with the delegated task.
+A delegated worker receives the task with `atct_handoff_receive` and owns the
+delegated task; the claim step applies only to self-directed work.
 
 Run this until nothing is left, not until the next natural pause.
 

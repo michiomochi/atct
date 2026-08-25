@@ -13,11 +13,11 @@ the right moments.
 
 Role values for `expected_role`: `commander`, `subcommander`, `executor`.
 
-The daemon derives the role from claims:
+The daemon derives the role in this order:
 
-- `commander`: the agent holds a project claim.
-- `subcommander`: the agent holds a goal claim but no project claim.
-- `executor`: the agent holds neither a project claim nor a goal claim.
+- It checks the project claim first; if the agent holds one, the role is `commander`.
+- `subcommander`: the agent has a received, uncompleted goal handoff and no project claim.
+- If neither condition applies, the role is `executor`.
 
 | Layer | Does | Does not |
 |---|---|---|
@@ -46,9 +46,9 @@ For self-directed work—when you find a task yourself—call `atct_task_claim`
 before working on it. Exactly one run wins a claim. If the claim fails the task
 is already owned, so pick another one rather than working on it anyway.
 
-A delegated worker must not claim the task; the delegator owns the claim.
-Do not call `atct_task_claim` for a delegated task. For a delegated task,
-`task already claimed` is normal; continue.
+A delegated worker owns the task it was given. Receive it with
+`atct_handoff_receive`, not `atct_task_claim`; receipt is exclusive, so a handoff
+cannot be received twice.
 
 Release a task by setting it back to `todo` with `atct_task_update`. There is
 no separate release tool.
@@ -58,7 +58,8 @@ no separate release tool.
 When handing a task to another worker, keep the contract independent of how
 that worker is started:
 
-1. Claim the task before handing it off.
+1. Hold the parent, not the task. The delegator does not hold the task; it must
+   have received the handoff for that task's goal before handing it off.
 2. Record the handoff before waking the worker.
    The delegator must call `atct_handoff_request` with a unique handoff ID and
    the claimed task ID. Wait for the request to succeed before waking the
@@ -68,13 +69,13 @@ that worker is started:
    how the worker is started or how the role is transmitted.
 4. Put these exact instructions at the very beginning of the request:
 
-   > First invoke the `atct_role` MCP tool with `expected_role` set to one of
-   > `commander`, `subcommander`, or `executor`. If it reports `matches: false`,
-   > do not start work; return the task.
-   >
-   > Then record receipt of the handoff by calling `atct_handoff_receive` with only
+   > First record receipt of the handoff by calling `atct_handoff_receive` with only
    > the `task_id` provided in this request. Do this before starting work. Do not
    > pass a handoff ID or session; ATCT supplies them.
+   >
+   > Then invoke the `atct_role` MCP tool with `expected_role` set to one of
+   > `commander`, `subcommander`, or `executor`. If it reports `matches: false`,
+   > do not start work; return the task.
    >
    > When the work is complete, record completion by calling `atct_handoff_complete`
    > with only the `task_id` provided in this request.
@@ -83,10 +84,15 @@ that worker is started:
    question, or clarification for the same task to the same worker. Start a
    new worker for a different task. When the task is done, end that worker.
    A correction or review fix remains the same task because it is a delta
-   against the immediately preceding implementation; sending it to a new
-   worker would make that worker reread the same files. Although a new worker
-   rereads the files named by the request, that rereading has an upper bound;
-   accumulated work has no upper bound.
+   against the immediately preceding implementation; send it back to the same
+   worker. What breaks when you batch is the record, not the context. A handoff
+   points to one task. If three tasks are sent in one message, only one handoff
+   is created; the other two have no owner, receipt, or completion, so the
+   dashboard says nobody started them. In a 2026-08-24 measurement, sending
+   three tasks to executor-33 in one message broke the records for two of the
+   three. Task count and compression count are not correlated: in that same
+   measurement, the three-task pane compressed twice while the one-task pane
+   compressed seven times.
 
 The worker must perform both instructions itself before doing any work. The
 delegator must not run either instruction on the worker's behalf or treat a
@@ -98,8 +104,10 @@ check reports a mismatch, the worker returns the task without touching it.
 When handing a goal to a subcommander, keep the contract independent of how
 that subcommander is started:
 
-1. Claim the goal with `atct_goal_claim` before handing it off. An unclaimed
-   goal cannot be delegated.
+1. Hold the parent, not the goal. The delegator does not hold the goal; it must
+   have a project claim before handing it off. Claiming the goal first always
+   causes the handoff request to be refused because the claim already writes an
+   open handoff.
 2. Record the handoff before waking the subcommander.
    The delegator must call `atct_goal_handoff_request` with a unique `handoff_id`
    and the claimed `goal_id`. The request takes only `handoff_id` and `goal_id`;
@@ -110,15 +118,18 @@ that subcommander is started:
    the subcommander is started or how the role is transmitted.
 4. Put these exact instructions at the very beginning of the request:
 
-   > First invoke the `atct_role` MCP tool with `expected_role` set to
-   > `subcommander`. If it reports `matches: false`, do not start work; return
-   > the goal.
-   >
-   > Then record receipt of the goal handoff by calling
+   > First record receipt of the goal handoff by calling
    > `atct_goal_handoff_receive` with only the `goal_id` provided in this request.
    > Do this before starting work. Do not pass a handoff ID or session; ATCT
    > supplies them.
    >
+   > Then invoke the `atct_role` MCP tool with `expected_role` set to
+   > `subcommander`. If it reports `matches: false`, do not start work; return
+   > the goal.
+
+   The order matters: the role is derived from a received, uncompleted goal
+   handoff, so checking it before receipt always returns `matches: false`.
+
    > When the work is complete, record completion by calling
    > `atct_goal_handoff_complete` with only the `goal_id` provided in this
    > request.
