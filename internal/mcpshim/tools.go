@@ -40,6 +40,13 @@ type GoalUpdateContentIn struct {
 	Content string `json:"content"`
 }
 
+type TaskUpdateContentIn struct {
+	TaskID      string    `json:"task_id"`
+	Title       *string   `json:"title,omitempty"`
+	Description *string   `json:"description,omitempty"`
+	Files       *[]string `json:"files,omitempty"`
+}
+
 type TaskDeclareIn struct {
 	GoalID         string     `json:"goal_id"`
 	Titles         []string   `json:"titles" jsonschema:"task titles decomposed from the goal, in execution order"`
@@ -545,6 +552,27 @@ func Register(server *mcp.Server, c *Client, agentSessionID string) {
 			"commits":                   in.Commits,
 			"include_unapplied_answers": true,
 		})
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:         "atct_task_update_content",
+		Description:  "Rewrite a task's content. Only todo and doing tasks can be updated; done and dropped tasks are refused.",
+		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in TaskUpdateContentIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
+		params := map[string]any{
+			"task_id": in.TaskID, "agent_session_id": sessionID.Get(),
+			"include_unapplied_answers": true,
+		}
+		if in.Title != nil {
+			params["title"] = *in.Title
+		}
+		if in.Description != nil {
+			params["description"] = *in.Description
+		}
+		if in.Files != nil {
+			params["files"] = *in.Files
+		}
+		return callWithUnappliedDecisions(ctx, c, "task.update_content", params)
 	})
 
 	mcp.AddTool(server, &mcp.Tool{

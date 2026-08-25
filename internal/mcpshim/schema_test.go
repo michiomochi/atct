@@ -56,6 +56,7 @@ func TestRegisterPublishesTwentyFourToolsWithFlexibleOutputSchema(t *testing.T) 
 		"atct_goal_claim":            true,
 		"atct_goal_release":          true,
 		"atct_goal_update_content":   true,
+		"atct_task_update_content":   true,
 		"atct_project_claim":         true,
 		"atct_project_release":       true,
 		"atct_role":                  true,
@@ -183,6 +184,19 @@ func TestRegisterPublishesTwentyFourToolsWithFlexibleOutputSchema(t *testing.T) 
 		{name: "atct_goal_update_content", args: map[string]any{
 			"goal_id": "goal-1", "content": "updated goal",
 		}},
+		{name: "atct_task_update_content", args: map[string]any{
+			"task_id": "task-1", "description": "updated task",
+		}},
+		{name: "atct_task_update_content", args: map[string]any{
+			"task_id": "task-1", "title": "updated title",
+		}},
+		{name: "atct_task_update_content", args: map[string]any{
+			"task_id": "task-1", "files": []string{"internal/mcpshim/tools.go"},
+		}},
+		{name: "atct_task_update_content", args: map[string]any{
+			"task_id": "task-1", "title": "updated title", "description": "updated task",
+			"files": []string{"internal/mcpshim/tools.go"},
+		}},
 		{name: "atct_task_declare", args: map[string]any{
 			"goal_id": "goal-1", "titles": []string{"task"},
 			"descriptions":    []string{"Complete the declared task and verify its result."},
@@ -231,6 +245,68 @@ func TestRegisterPublishesTwentyFourToolsWithFlexibleOutputSchema(t *testing.T) 
 		}
 		if result == nil || result.StructuredContent == nil {
 			t.Errorf("CallTool(%s) returned no structured content", tc.name)
+		}
+	}
+}
+
+func TestTaskUpdateContentOmitsUnspecifiedOptionalParameters(t *testing.T) {
+	ctx := context.Background()
+	socketPath, calls := startCapturingSchemaTestDaemon(t)
+	server := mcp.NewServer(&mcp.Implementation{Name: "atct-test", Version: "test"}, nil)
+	const sessionID = "task-update-session"
+	mcpshim.Register(server, mcpshim.NewClient(socketPath), sessionID)
+
+	clientTransport, serverTransport := mcp.NewInMemoryTransports()
+	serverSession, err := server.Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatalf("server.Connect: %v", err)
+	}
+	defer serverSession.Close()
+
+	client := mcp.NewClient(&mcp.Implementation{Name: "schema-test", Version: "test"}, nil)
+	clientSession, err := client.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatalf("client.Connect: %v", err)
+	}
+	defer clientSession.Close()
+
+	result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name: "atct_task_update_content",
+		Arguments: map[string]any{
+			"task_id": "task-1", "description": "updated task",
+		},
+	})
+	if err != nil {
+		t.Fatalf("CallTool(atct_task_update_content): %v", err)
+	}
+	if result == nil || result.IsError {
+		t.Fatalf("atct_task_update_content returned error result: %+v", result)
+	}
+
+	var call capturedSchemaDaemonCall
+	select {
+	case call = <-calls:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for task.update_content RPC")
+	}
+	if call.method != "task.update_content" {
+		t.Fatalf("RPC method = %q, want task.update_content", call.method)
+	}
+	if got := call.params["task_id"]; got != "task-1" {
+		t.Errorf("task_id = %#v, want task-1", got)
+	}
+	if got := call.params["description"]; got != "updated task" {
+		t.Errorf("description = %#v, want updated task", got)
+	}
+	if got := call.params["agent_session_id"]; got != sessionID {
+		t.Errorf("agent_session_id = %#v, want %s", got, sessionID)
+	}
+	if got := call.params["include_unapplied_answers"]; got != true {
+		t.Errorf("include_unapplied_answers = %#v, want true", got)
+	}
+	for _, field := range []string{"title", "files"} {
+		if _, ok := call.params[field]; ok {
+			t.Errorf("RPC params unexpectedly included %q", field)
 		}
 	}
 }
