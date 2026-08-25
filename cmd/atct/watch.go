@@ -82,7 +82,7 @@ type watchDetectionDeliveryKey struct {
 type watchSnapshotFunc func(context.Context) (string, []watchDecision, error)
 type watchEnsureFunc func() error
 
-func runWatch(dir string) error {
+func runWatch(dir, goalID string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	cwd, err := os.Getwd()
@@ -98,9 +98,9 @@ func runWatch(dir string) error {
 
 	client := &http.Client{}
 	snapshot, projectID := watchSnapshotWithProject(client, watchBaseURLs(dir), cwd)
-	return watchLoopWithEnsureAndProjectID(ctx, os.Stdout, client, watchReconnectInterval, snapshot, func() error {
+	return watchLoopWithEnsureAndProjectIDAndGoal(ctx, os.Stdout, client, watchReconnectInterval, snapshot, func() error {
 		return ensureWatchDaemon(dir)
-	}, projectID)
+	}, projectID, goalID)
 }
 
 func ensureWatchDaemon(dir string) error {
@@ -127,11 +127,15 @@ func watchWithURLs(ctx context.Context, urls []string, out io.Writer, client *ht
 }
 
 func watchWithURLsAndProject(ctx context.Context, urls []string, out io.Writer, client *http.Client, retryInterval time.Duration, cwd string) error {
+	return watchWithURLsAndProjectAndGoal(ctx, urls, out, client, retryInterval, cwd, "")
+}
+
+func watchWithURLsAndProjectAndGoal(ctx context.Context, urls []string, out io.Writer, client *http.Client, retryInterval time.Duration, cwd, goalID string) error {
 	if client == nil {
 		client = &http.Client{}
 	}
 	snapshot, projectID := watchSnapshotWithProject(client, urls, cwd)
-	return watchLoopWithEnsureAndProjectID(ctx, out, client, retryInterval, snapshot, nil, projectID)
+	return watchLoopWithEnsureAndProjectIDAndGoal(ctx, out, client, retryInterval, snapshot, nil, projectID, goalID)
 }
 
 func watchLoop(ctx context.Context, out io.Writer, client *http.Client, retryInterval time.Duration, snapshot watchSnapshotFunc) error {
@@ -143,6 +147,10 @@ func watchLoopWithEnsure(ctx context.Context, out io.Writer, client *http.Client
 }
 
 func watchLoopWithEnsureAndProjectID(ctx context.Context, out io.Writer, client *http.Client, retryInterval time.Duration, snapshot watchSnapshotFunc, ensure watchEnsureFunc, projectID func() string) error {
+	return watchLoopWithEnsureAndProjectIDAndGoal(ctx, out, client, retryInterval, snapshot, ensure, projectID, "")
+}
+
+func watchLoopWithEnsureAndProjectIDAndGoal(ctx context.Context, out io.Writer, client *http.Client, retryInterval time.Duration, snapshot watchSnapshotFunc, ensure watchEnsureFunc, projectID func() string, goalID string) error {
 	if retryInterval <= 0 {
 		retryInterval = watchReconnectInterval
 	}
@@ -213,7 +221,7 @@ func watchLoopWithEnsureAndProjectID(ctx context.Context, out io.Writer, client 
 			}
 		}
 
-		if err := consumeWatchEventsWithState(ctx, client, baseURL, filterProjectID, out, watchKeepaliveTimeout, delivered, &lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered); err != nil && ctx.Err() == nil {
+		if err := consumeWatchEventsWithStateAndGoal(ctx, client, baseURL, filterProjectID, goalID, out, watchKeepaliveTimeout, delivered, &lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered); err != nil && ctx.Err() == nil {
 			if err := recoverDaemon(); err != nil {
 				return err
 			}
@@ -363,7 +371,11 @@ func consumeWatchEventsWithTimeout(ctx context.Context, client *http.Client, bas
 }
 
 func consumeWatchEventsWithState(ctx context.Context, client *http.Client, baseURL, projectID string, out io.Writer, keepaliveTimeout time.Duration, delivered map[watchDeliveryKey]struct{}, lastWakeupContent *string, wakeupDiscrepancyDelivered map[watchWakeupDeliveryKey]struct{}, detectionDelivered map[watchDetectionDeliveryKey]struct{}) error {
-	eventsURL, err := watchEventsURL(baseURL, projectID)
+	return consumeWatchEventsWithStateAndGoal(ctx, client, baseURL, projectID, "", out, keepaliveTimeout, delivered, lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered)
+}
+
+func consumeWatchEventsWithStateAndGoal(ctx context.Context, client *http.Client, baseURL, projectID, goalID string, out io.Writer, keepaliveTimeout time.Duration, delivered map[watchDeliveryKey]struct{}, lastWakeupContent *string, wakeupDiscrepancyDelivered map[watchWakeupDeliveryKey]struct{}, detectionDelivered map[watchDetectionDeliveryKey]struct{}) error {
+	eventsURL, err := watchEventsURLWithGoal(baseURL, projectID, goalID)
 	if err != nil {
 		return err
 	}
@@ -501,8 +513,12 @@ func readWatchSSEFrames(ctx context.Context, body io.Reader) (<-chan watchSSEFra
 }
 
 func watchEventsURL(baseURL, projectID string) (string, error) {
+	return watchEventsURLWithGoal(baseURL, projectID, "")
+}
+
+func watchEventsURLWithGoal(baseURL, projectID, goalID string) (string, error) {
 	endpoint := strings.TrimRight(baseURL, "/") + "/api/events"
-	if projectID == "" {
+	if projectID == "" && goalID == "" {
 		return endpoint, nil
 	}
 	parsed, err := url.Parse(endpoint)
@@ -510,7 +526,12 @@ func watchEventsURL(baseURL, projectID string) (string, error) {
 		return "", err
 	}
 	query := parsed.Query()
-	query.Set("project_id", projectID)
+	if projectID != "" {
+		query.Set("project_id", projectID)
+	}
+	if goalID != "" {
+		query.Set("goal_id", goalID)
+	}
 	parsed.RawQuery = query.Encode()
 	return parsed.String(), nil
 }

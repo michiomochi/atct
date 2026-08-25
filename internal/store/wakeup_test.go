@@ -804,7 +804,7 @@ func TestDetectWakeupCollectsReportedTaskAndGoalHandoffs(t *testing.T) {
 		t.Fatalf("reported handoffs = %#v, want task and goal reports", state.HandoffsReported)
 	}
 	want := map[string]ReportedHandoff{
-		taskHandoff.ID: {ID: taskHandoff.ID, TaskID: tasks[0].ID, CompleteReport: "task report"},
+		taskHandoff.ID: {ID: taskHandoff.ID, GoalID: goal.ID, TaskID: tasks[0].ID, CompleteReport: "task report"},
 		goalHandoff.ID: {ID: goalHandoff.ID, GoalID: goalForGoalHandoff.ID, CompleteReport: "goal report"},
 	}
 	for _, reported := range state.HandoffsReported {

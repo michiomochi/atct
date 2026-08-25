@@ -209,6 +209,7 @@ func (s *Store) DetectWakeup(ctx context.Context, projectID string) (WakeupState
 					if handoff.RequestedAt != nil && handoff.ReceivedAt != nil && handoff.CompletedReportAt != nil {
 						state.HandoffsReported = append(state.HandoffsReported, ReportedHandoff{
 							ID:                handoff.ID,
+							GoalID:            goal.ID,
 							TaskID:            handoff.TaskID,
 							CompleteReport:    handoff.CompleteReport,
 							CompletedReportAt: handoff.CompletedReportAt,

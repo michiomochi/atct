@@ -49,6 +49,7 @@ type cliConfig struct {
 	roleExpected       string
 	roleExpectedSet    bool
 	roleAgentSessionID string
+	watchGoalID        string
 }
 
 var errInvalidArgs = errors.New("invalid command line")
@@ -82,7 +83,7 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "  goal list            List goals for the current project")
 	fmt.Fprintln(os.Stderr, "  context [-brief]      Print the current goal context for an AI session")
 	fmt.Fprintln(os.Stderr, "  pending              Print unanswered human decisions for the current project")
-	fmt.Fprintln(os.Stderr, "  watch                Stream human decision events for a Monitor")
+	fmt.Fprintln(os.Stderr, "  watch [-goal string]  Stream human decision events for a Monitor")
 	fmt.Fprintln(os.Stderr, "  claim-check <ids...>|any  Exit 0 only if the tasks are claimed by a running session")
 	fmt.Fprintln(os.Stderr, "  role                 Report the claim-derived role for an agent session")
 	fmt.Fprintln(os.Stderr, "  handoff complete <handoff-id> <task-id>  Report a handoff complete")
@@ -213,6 +214,9 @@ func parseArgs(args []string) (cliConfig, error) {
 	if sub == "role" {
 		flags.StringVar(&cfg.roleExpected, "expect", "", "require this role: commander, subcommander, or executor")
 		flags.StringVar(&cfg.roleAgentSessionID, "agent-session-id", "", "agent session identity used by session.role")
+	}
+	if sub == "watch" {
+		flags.StringVar(&cfg.watchGoalID, "goal", "", "filter watch events to this goal")
 	}
 	var description *string
 	if sub == "goal" && cfg.goalAction == "add" {
@@ -384,7 +388,7 @@ func main() {
 		}
 		os.Exit(code)
 	case "watch":
-		if err := runWatch(dir); err != nil {
+		if err := runWatch(dir, config.watchGoalID); err != nil {
 			log.Fatalf("watch: %v", err)
 		}
 		return

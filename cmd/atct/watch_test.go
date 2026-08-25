@@ -328,6 +328,10 @@ func (f watchRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) 
 }
 
 func runWatchWithProjects(t *testing.T, cwd string, projects []watchProject) (url.Values, int) {
+	return runWatchWithProjectsAndGoal(t, cwd, projects, "")
+}
+
+func runWatchWithProjectsAndGoal(t *testing.T, cwd string, projects []watchProject, goalID string) (url.Values, int) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -366,13 +370,47 @@ func runWatchWithProjects(t *testing.T, cwd string, projects []watchProject) (ur
 	}))
 	defer server.Close()
 
-	if err := watchWithURLsAndProject(ctx, []string{server.URL}, &output, server.Client(), time.Millisecond, cwd); err != nil {
-		t.Fatalf("watchWithURLsAndProject() error = %v", err)
+	if err := watchWithURLsAndProjectAndGoal(ctx, []string{server.URL}, &output, server.Client(), time.Millisecond, cwd, goalID); err != nil {
+		t.Fatalf("watchWithURLsAndProjectAndGoal() error = %v", err)
 	}
 	query := <-queries
 	mu.Lock()
 	defer mu.Unlock()
 	return query, projectCalls
+}
+
+func TestWatchPassesGoalIDToEvents(t *testing.T) {
+	cwd := t.TempDir()
+	query, _ := runWatchWithProjectsAndGoal(t, cwd, []watchProject{{ID: "project-1", RootPath: cwd}}, "goal-1")
+	if got := query.Get("goal_id"); got != "goal-1" {
+		t.Fatalf("events goal_id = %q, want %q", got, "goal-1")
+	}
+}
+
+func TestWatchOmitsGoalIDWhenNotSet(t *testing.T) {
+	cwd := t.TempDir()
+	query, _ := runWatchWithProjectsAndGoal(t, cwd, []watchProject{{ID: "project-1", RootPath: cwd}}, "")
+	if _, ok := query["goal_id"]; ok {
+		t.Fatalf("events unexpectedly received goal_id = %q", query.Get("goal_id"))
+	}
+}
+
+func TestParseWatchGoal(t *testing.T) {
+	config, err := parseArgs([]string{"watch", "--goal", "goal-1"})
+	if err != nil {
+		t.Fatalf("parseArgs(watch --goal): %v", err)
+	}
+	if config.watchGoalID != "goal-1" {
+		t.Fatalf("watch goal_id = %q, want %q", config.watchGoalID, "goal-1")
+	}
+
+	config, err = parseArgs([]string{"watch"})
+	if err != nil {
+		t.Fatalf("parseArgs(watch): %v", err)
+	}
+	if config.watchGoalID != "" {
+		t.Fatalf("watch goal_id = %q, want empty", config.watchGoalID)
+	}
 }
 
 func TestWatchPassesMatchingProjectIDToEvents(t *testing.T) {

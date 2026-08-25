@@ -212,19 +212,27 @@ func (t *wakeupTracker) evaluateWith(ctx context.Context, s *store.Store, now ti
 			recordDetection(store.EventDetectionAllTasksDropped, goal.ID, time.Time{}, wakeupPublishAfter, goal.ID, "", "", "")
 		}
 		for _, task := range state.UnclaimedDoingTasks {
-			recordDetection(store.EventDetectionUnclaimedDoing, task.ID, time.Time{}, wakeupPublishAfter, "", task.ID, "", "")
+			recordDetection(store.EventDetectionUnclaimedDoing, task.ID, time.Time{}, wakeupPublishAfter, task.GoalID, task.ID, "", "")
 		}
 		for _, handoff := range state.HandoffsAwaitingReceipt {
 			if handoff.RequestedAt == nil {
 				continue
 			}
-			recordDetection(store.EventDetectionHandoffUnreceived, handoff.ID, *handoff.RequestedAt, detectionHandoffUnreceivedAfter, "", handoff.TaskID, handoff.ID, "")
+			goalID, err := s.GetTaskGoalID(ctx, handoff.TaskID)
+			if err != nil {
+				return nil, err
+			}
+			recordDetection(store.EventDetectionHandoffUnreceived, handoff.ID, *handoff.RequestedAt, detectionHandoffUnreceivedAfter, goalID, handoff.TaskID, handoff.ID, "")
 		}
 		for _, handoff := range state.HandoffsAwaitingReport {
 			if handoff.ReceivedAt == nil {
 				continue
 			}
-			recordDetection(store.EventDetectionHandoffUnreported, handoff.ID, *handoff.ReceivedAt, detectionHandoffUnreportedAfter, "", handoff.TaskID, handoff.ID, "")
+			goalID, err := s.GetTaskGoalID(ctx, handoff.TaskID)
+			if err != nil {
+				return nil, err
+			}
+			recordDetection(store.EventDetectionHandoffUnreported, handoff.ID, *handoff.ReceivedAt, detectionHandoffUnreportedAfter, goalID, handoff.TaskID, handoff.ID, "")
 		}
 		for _, handoff := range state.HandoffsReported {
 			key := detectionTrackerKey(store.EventHandoffReported, handoff.ID)
@@ -248,7 +256,7 @@ func (t *wakeupTracker) evaluateWith(ctx context.Context, s *store.Store, now ti
 			if claimedAt == nil {
 				continue
 			}
-			recordDetection(store.EventDetectionClaimUndelegated, task.ID, *claimedAt, detectionClaimUndelegatedAfter, "", task.ID, "", "")
+			recordDetection(store.EventDetectionClaimUndelegated, task.ID, *claimedAt, detectionClaimUndelegatedAfter, task.GoalID, task.ID, "", "")
 		}
 		for _, decision := range state.AnsweredUnappliedDecisions {
 			recordDetection(store.EventDetectionDecisionAnsweredUnapplied, decision.ID, time.Time{}, detectionAnsweredDecisionUnappliedAfter, decision.GoalID, decision.TaskID, "", decision.ID)
@@ -265,7 +273,7 @@ func (t *wakeupTracker) evaluateWith(ctx context.Context, s *store.Store, now ti
 			if claimedAt == nil {
 				continue
 			}
-			recordDetection(store.EventDetectionClaimStale, task.ID, *claimedAt, detectionStaleClaimAfter, "", task.ID, "", "")
+			recordDetection(store.EventDetectionClaimStale, task.ID, *claimedAt, detectionStaleClaimAfter, task.GoalID, task.ID, "", "")
 		}
 	}
 	for key := range t.detectionActiveSince {

@@ -1237,6 +1237,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	projectID := r.URL.Query().Get("project_id")
+	goalID := r.URL.Query().Get("goal_id")
 	ch, cancel := s.store.SubscribeEvents()
 	defer cancel()
 
@@ -1257,6 +1258,9 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 					continue
 				}
 			}
+			if goalID != "" && !eventMatchesGoalID(event, goalID) {
+				continue
+			}
 			data, err := json.Marshal(event.Data)
 			if err != nil {
 				return
@@ -1266,6 +1270,19 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 			}
 			flusher.Flush()
 		}
+	}
+}
+
+func eventMatchesGoalID(event store.DecisionEvent, goalID string) bool {
+	switch data := event.Data.(type) {
+	case store.KeepaliveEvent, *store.KeepaliveEvent:
+		return true
+	case store.DetectionEvent:
+		return data.GoalID != "" && data.GoalID == goalID
+	case *store.DetectionEvent:
+		return data != nil && data.GoalID != "" && data.GoalID == goalID
+	default:
+		return false
 	}
 }
 

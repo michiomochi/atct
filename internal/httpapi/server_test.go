@@ -2336,6 +2336,12 @@ func eventsURL(baseURL, projectID string) string {
 	return baseURL + "/api/events?" + query.Encode()
 }
 
+func eventsURLWithGoal(baseURL, goalID string) string {
+	query := url.Values{}
+	query.Set("goal_id", goalID)
+	return baseURL + "/api/events?" + query.Encode()
+}
+
 func TestSSEFiltersDecisionEventsByProjectID(t *testing.T) {
 	f := newBareFixture(t)
 	otherProject, err := f.store.CreateProject(f.ctx, "other", t.TempDir())
@@ -2405,6 +2411,87 @@ func TestSSEFiltersDetectionEventsByProjectID(t *testing.T) {
 	}
 	if got.DetectionID != current.DetectionID {
 		t.Fatalf("SSE detection id = %q, want %q", got.DetectionID, current.DetectionID)
+	}
+}
+
+func TestSSEFiltersDetectionEventsByGoalID(t *testing.T) {
+	f := newBareFixture(t)
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+	streamCtx, cancel := context.WithCancel(f.ctx)
+	defer cancel()
+	stream, reader := openSSEStream(t, streamCtx, srv.Client(), eventsURLWithGoal(srv.URL, "current-goal"))
+	defer stream.Body.Close()
+
+	f.store.PublishEvent(store.DecisionEvent{
+		Name: store.EventDetectionCompletionReportMissing,
+		Data: store.DetectionEvent{DetectionID: "other-detection", GoalID: "other-goal"},
+	})
+	f.store.PublishEvent(store.DecisionEvent{
+		Name: store.EventDetectionCompletionReportMissing,
+		Data: store.DetectionEvent{DetectionID: "goal-less-detection"},
+	})
+	f.store.PublishEvent(store.DecisionEvent{
+		Name: store.EventDetectionCompletionReportMissing,
+		Data: store.DetectionEvent{DetectionID: "current-detection", GoalID: "current-goal"},
+	})
+
+	frame := readSSEFrame(t, reader)
+	if frame.event != store.EventDetectionCompletionReportMissing {
+		t.Fatalf("SSE detection event = %q, want %q; lines=%v", frame.event, store.EventDetectionCompletionReportMissing, frame.lines)
+	}
+	var got store.DetectionEvent
+	if err := json.Unmarshal([]byte(frame.data), &got); err != nil {
+		t.Fatalf("SSE detection data is not a DetectionEvent: %v; data=%q", err, frame.data)
+	}
+	if got.DetectionID != "current-detection" || got.GoalID != "current-goal" {
+		t.Fatalf("SSE detection = %+v, want current goal detection", got)
+	}
+}
+
+func TestSSEGoalIDPublishesKeepaliveButNotWakeup(t *testing.T) {
+	f := newBareFixture(t)
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+	streamCtx, cancel := context.WithCancel(f.ctx)
+	defer cancel()
+	stream, reader := openSSEStream(t, streamCtx, srv.Client(), eventsURLWithGoal(srv.URL, "current-goal"))
+	defer stream.Body.Close()
+
+	f.store.PublishEvent(store.DecisionEvent{
+		Name: store.EventWakeup,
+		Data: store.WakeupEvent{WakeupID: "wakeup-should-be-filtered", ProjectID: f.project.ID},
+	})
+	keepalive := store.KeepaliveEvent{At: time.Date(2026, 8, 20, 15, 0, 0, 0, time.UTC)}
+	f.store.PublishEvent(store.DecisionEvent{Name: store.EventKeepalive, Data: keepalive})
+
+	frame := readSSEFrame(t, reader)
+	if frame.event != store.EventKeepalive {
+		t.Fatalf("SSE event = %q, want %q; lines=%v", frame.event, store.EventKeepalive, frame.lines)
+	}
+	if frame.data != string(mustJSON(t, keepalive)) {
+		t.Fatalf("SSE keepalive data = %s, want exact %s", frame.data, mustJSON(t, keepalive))
+	}
+}
+
+func TestSSENoGoalIDKeepsPublishingDetectionEvents(t *testing.T) {
+	f := newBareFixture(t)
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+	streamCtx, cancel := context.WithCancel(f.ctx)
+	defer cancel()
+	stream, reader := openSSEStream(t, streamCtx, srv.Client(), srv.URL+"/api/events")
+	defer stream.Body.Close()
+
+	detection := store.DetectionEvent{DetectionID: "unscoped-detection", GoalID: "other-goal"}
+	f.store.PublishEvent(store.DecisionEvent{Name: store.EventDetectionCompletionReportMissing, Data: detection})
+
+	frame := readSSEFrame(t, reader)
+	if frame.event != store.EventDetectionCompletionReportMissing {
+		t.Fatalf("SSE event = %q, want %q; lines=%v", frame.event, store.EventDetectionCompletionReportMissing, frame.lines)
+	}
+	if frame.data != string(mustJSON(t, detection)) {
+		t.Fatalf("SSE detection data = %s, want exact %s", frame.data, mustJSON(t, detection))
 	}
 }
 

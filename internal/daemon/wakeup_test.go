@@ -707,7 +707,7 @@ func TestWakeupTrackerPublishesStalledHandoffDetections(t *testing.T) {
 	ctx := context.Background()
 	s := newWakeupTestStore(t)
 	projectID, goalID := newWakeupTestGoal(t, s, "stalled-handoff")
-	tasks, err := s.DeclareTasks(ctx, goalID, "agent", "stalled-handoff-task", []string{"Stalled task"}, []string{"Keep the task handoff open."})
+	tasks, err := s.DeclareTasks(ctx, goalID, "agent", "stalled-handoff-task", []string{"Stalled task", "Stale task"}, []string{"Keep the task handoff open.", "Keep the stale claim open."})
 	if err != nil {
 		t.Fatalf("DeclareTasks: %v", err)
 	}
@@ -717,16 +717,20 @@ func TestWakeupTrackerPublishesStalledHandoffDetections(t *testing.T) {
 	requestedAt := start.Add(-detectionHandoffUnreceivedAfter + time.Nanosecond)
 	receivedAt := start.Add(-detectionHandoffUnreportedAfter + time.Nanosecond)
 	claimedAt := start.Add(-detectionClaimUndelegatedAfter + time.Nanosecond)
+	staleClaimedAt := start.Add(-detectionStaleClaimAfter + time.Nanosecond)
 	insertWakeupOpenTaskHandoff(t, s, "handoff-undelegated", tasks[0].ID, &claimedAt, nil)
+	insertWakeupOpenTaskHandoff(t, s, "handoff-stale", tasks[1].ID, &staleClaimedAt, &staleClaimedAt)
 	state := store.WakeupState{
-		UnstartedTaskCount: 1,
+		UnstartedTaskCount: 2,
 		HandoffsAwaitingReceipt: []store.TaskHandoff{{
-			ID: "handoff-unreceived", TaskID: "task-unreceived", RequestedAt: &requestedAt,
+			ID: "handoff-unreceived", TaskID: tasks[0].ID, RequestedAt: &requestedAt,
 		}},
 		HandoffsAwaitingReport: []store.TaskHandoff{{
-			ID: "handoff-unreported", TaskID: "task-unreported", ReceivedAt: &receivedAt,
+			ID: "handoff-unreported", TaskID: tasks[0].ID, ReceivedAt: &receivedAt,
 		}},
-		UndelegatedClaims: []domain.Task{{ID: tasks[0].ID, GoalID: goalID}},
+		UnclaimedDoingTasks: []domain.Task{{ID: tasks[0].ID, GoalID: goalID}},
+		UndelegatedClaims:   []domain.Task{{ID: tasks[0].ID, GoalID: goalID}},
+		StaleClaims:         []domain.Task{{ID: tasks[1].ID, GoalID: goalID}},
 	}
 	detect := func(context.Context, string) (store.WakeupState, error) {
 		return state, nil
@@ -738,22 +742,25 @@ func TestWakeupTrackerPublishesStalledHandoffDetections(t *testing.T) {
 		t.Fatalf("pre-threshold events = %#v, want empty", events)
 	}
 
-	after := start.Add(2 * time.Nanosecond)
+	after := start.Add(detectionHandoffUnreceivedAfter + time.Nanosecond)
 	events, err := tracker.evaluateWith(ctx, s, after, detect)
 	if err != nil {
 		t.Fatalf("post-threshold evaluate: %v", err)
 	}
-	if len(events) != 3 {
-		t.Fatalf("post-threshold events = %#v, want three detections", events)
+	if len(events) != 5 {
+		t.Fatalf("post-threshold events = %#v, want five detections", events)
 	}
 	want := map[string]struct {
 		projectID string
+		goalID    string
 		handoffID string
 		taskID    string
 	}{
-		store.EventDetectionHandoffUnreceived: {projectID: projectID, handoffID: "handoff-unreceived", taskID: "task-unreceived"},
-		store.EventDetectionHandoffUnreported: {projectID: projectID, handoffID: "handoff-unreported", taskID: "task-unreported"},
-		store.EventDetectionClaimUndelegated:  {projectID: projectID, taskID: tasks[0].ID},
+		store.EventDetectionUnclaimedDoing:    {projectID: projectID, goalID: goalID, taskID: tasks[0].ID},
+		store.EventDetectionHandoffUnreceived: {projectID: projectID, goalID: goalID, handoffID: "handoff-unreceived", taskID: tasks[0].ID},
+		store.EventDetectionHandoffUnreported: {projectID: projectID, goalID: goalID, handoffID: "handoff-unreported", taskID: tasks[0].ID},
+		store.EventDetectionClaimUndelegated:  {projectID: projectID, goalID: goalID, taskID: tasks[0].ID},
+		store.EventDetectionClaimStale:        {projectID: projectID, goalID: goalID, taskID: tasks[1].ID},
 	}
 	for _, event := range events {
 		expected, ok := want[event.Name]
@@ -764,8 +771,8 @@ func TestWakeupTrackerPublishesStalledHandoffDetections(t *testing.T) {
 		if !ok {
 			t.Fatalf("event %s data type = %T, want store.DetectionEvent", event.Name, event.Data)
 		}
-		if detection.ProjectID != expected.projectID || detection.HandoffID != expected.handoffID || detection.TaskID != expected.taskID || detection.DetectionID == "" {
-			t.Fatalf("event %s detection = %+v, want project=%s handoff=%s task=%s", event.Name, detection, expected.projectID, expected.handoffID, expected.taskID)
+		if detection.ProjectID != expected.projectID || detection.GoalID != expected.goalID || detection.HandoffID != expected.handoffID || detection.TaskID != expected.taskID || detection.DetectionID == "" {
+			t.Fatalf("event %s detection = %+v, want project=%s goal=%s handoff=%s task=%s", event.Name, detection, expected.projectID, expected.goalID, expected.handoffID, expected.taskID)
 		}
 		delete(want, event.Name)
 	}
@@ -1001,6 +1008,12 @@ func TestWakeupTrackerPublishesUnappliedDecisionAndStaleClaimDetections(t *testi
 	for _, event := range events {
 		if _, ok := want[event.Name]; !ok {
 			t.Fatalf("unexpected event = %#v", event)
+		}
+		if event.Name == store.EventDetectionClaimStale {
+			detection, ok := event.Data.(store.DetectionEvent)
+			if !ok || detection.GoalID != goalID {
+				t.Fatalf("stale detection = %#v, want goal %s", event.Data, goalID)
+			}
 		}
 		want[event.Name] = true
 	}

@@ -305,6 +305,41 @@ dotfiles 側には汎用形だけが入った（commit `b66acc5`）。
 
 **この「同じ場所に書く」は守る。**離れた場所で設定できる形にすると必ずずれる。
 
+## A-3 への追記: 範囲を持たせれば subcommander も張れる（2026-08-25 追記）
+
+**「subcommander が張らなければ済む」は、範囲の無い `atct watch` を前提にしていた。**
+当時 `atct watch` はプロジェクト単位でしか購読できず、張れば他のゴールの検知も届いた。
+**役割の境界（`inspect or manage other goals` は subcommander の `does_not`）と
+両立しないので、張らせないという手順で避けた。**
+
+**実測（2026-08-25、subcommander を space ごとに分けた直後）でその代償が出た。**
+
+```
+detection: handoff th-446d87f0-exec1-20260825 has no completion report
+detection: handoff th-e81fadf9-exec2-20260825 has no completion report
+```
+
+どちらもゴールを持っている subcommander には届かず、**commander が人間の代わりに
+中継した。**space を分けた分だけ中継の量が増える。**commander が見落とせば届かないが、
+見落とした側には記録が残らない。**
+
+### 決定: 購読に範囲を持たせ、subcommander は自分のゴールだけを張る
+
+`/api/events` にクエリ `goal_id` を足し、`atct watch -goal <goal-id>` から渡す。
+指定した購読者にはそのゴールの検知と keepalive だけが流れる。
+`wakeup` は流さない（プロジェクト全体の件数なので他のゴールを含む）。
+**`goal_id` を指定しない購読者の振る舞いは変えない**ので、commander は今までどおりである。
+
+**これで前提が変わる。**張っても他のゴールは見えないので、**役割の境界を越えない。**
+A-3 の「寄せる」は手順で避ける形だったが、**いまは仕組みで分けられる。**
+
+### なぜセッションの同一性から導かないか
+
+`atct watch` は自分の `agent_session_id` を持たず、持たせる経路も無い。
+`cmd/atct/role.go` は「process や環境変数から推測するな」を comment で明示している
+（推測すると、別のセッションの claim を自分のものと誤認する）。
+**呼び手が値を持ってくる。**subcommander は `atct_role` の応答から `goal_id` を知る。
+
 ## A-3b. 確定した形: wakeup に統一し Stop hook を廃止する
 
 **人間の判断（2026-08-22）: wakeup に統一する。Stop hook を廃止する。間隔は 3 分。**
