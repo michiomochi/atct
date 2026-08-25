@@ -205,8 +205,8 @@ func TestGoalHandoffRoutesOverRPC(t *testing.T) {
 	if err == nil {
 		t.Fatalf("unclaimed goal handoff request succeeded: %#v", rejected)
 	}
-	if !strings.Contains(err.Error(), store.ErrGoalHandoffGoalUnclaimed.Error()) {
-		t.Fatalf("unclaimed goal handoff request error = %q, want %q", err, store.ErrGoalHandoffGoalUnclaimed)
+	if !strings.Contains(err.Error(), store.ErrGoalHandoffProjectNotHeld.Error()) {
+		t.Fatalf("unclaimed goal handoff request error = %q, want %q", err, store.ErrGoalHandoffProjectNotHeld)
 	}
 }
 

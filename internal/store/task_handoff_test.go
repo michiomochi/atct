@@ -549,8 +549,8 @@ func TestTaskHandoffUnclaimedErrorIsDistinguishable(t *testing.T) {
 	addTestAgentSession(t, s, "requester")
 
 	_, err := s.RequestTaskHandoff(context.Background(), "handoff-unclaimed-error", taskID, "requester", "")
-	if !errors.Is(err, ErrTaskHandoffTaskUnclaimed) {
-		t.Fatalf("error = %v, want ErrTaskHandoffTaskUnclaimed", err)
+	if !errors.Is(err, ErrTaskHandoffGoalNotHeld) {
+		t.Fatalf("error = %v, want ErrTaskHandoffGoalNotHeld", err)
 	}
 	if errors.Is(err, ErrTaskHandoffNotFound) {
 		t.Fatalf("unclaimed error must not be ErrTaskHandoffNotFound: %v", err)

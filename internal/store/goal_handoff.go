@@ -12,11 +12,11 @@ import (
 )
 
 var (
-	ErrGoalHandoffNotFound      = errors.New("goal handoff not found")
-	ErrGoalHandoffGoalMismatch  = errors.New("goal handoff goal mismatch")
-	ErrGoalHandoffGoalUnclaimed = errors.New("goal handoff goal is unclaimed")
-	ErrGoalHandoffAlreadyOpen   = errors.New("goal handoff already open")
-	ErrGoalHandoffAmbiguous     = errors.New("multiple goal handoffs pending receipt")
+	ErrGoalHandoffNotFound       = errors.New("goal handoff not found")
+	ErrGoalHandoffGoalMismatch   = errors.New("goal handoff goal mismatch")
+	ErrGoalHandoffProjectNotHeld = errors.New("goal handoff requires the project claim: caller does not hold a live claim on project")
+	ErrGoalHandoffAlreadyOpen    = errors.New("goal handoff already open")
+	ErrGoalHandoffAmbiguous      = errors.New("multiple goal handoffs pending receipt")
 )
 
 // GoalHandoff records one delegation between agents. Each event timestamp is
@@ -80,7 +80,7 @@ func (s *Store) ensureGoalHandoffGoal(ctx context.Context, handoffID, goalID str
 	return nil
 }
 
-func (s *Store) requireLiveGoalClaim(ctx context.Context, goalID, requestedBy string) error {
+func (s *Store) requireProjectClaimForGoal(ctx context.Context, goalID, requestedBy string) error {
 	goal, err := s.GetGoal(ctx, goalID)
 	if err != nil {
 		return fmt.Errorf("find goal %q: %w", goalID, err)
@@ -97,7 +97,7 @@ func (s *Store) requireLiveGoalClaim(ctx context.Context, goalID, requestedBy st
 		return nil
 	}
 
-	return fmt.Errorf("%w: %s", ErrGoalHandoffGoalUnclaimed, goalID)
+	return fmt.Errorf("%w: %s", ErrGoalHandoffProjectNotHeld, project.ID)
 }
 
 // reclaimOpenGoalHandoff enforces the one-open-handoff rule before inserting a
@@ -179,7 +179,7 @@ func (s *Store) requestGoalHandoff(ctx context.Context, handoffID, goalID, reque
 		return GoalHandoff{}, err
 	}
 	if requireLiveClaim {
-		if err := s.requireLiveGoalClaim(ctx, goalID, requestedBy); err != nil {
+		if err := s.requireProjectClaimForGoal(ctx, goalID, requestedBy); err != nil {
 			return GoalHandoff{}, err
 		}
 	}

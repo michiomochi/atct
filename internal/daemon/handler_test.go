@@ -1340,7 +1340,7 @@ func TestHandoffSequenceRequiresReceiveBeforeRole(t *testing.T) {
 			"handoff_id":   "handoff-sequence-n3-goal",
 			"goal_id":      fixture.taskGoal.ID,
 			"requested_by": sessionID,
-		}, "goal is unclaimed")
+		}, "caller does not hold a live claim on project")
 	})
 
 	t.Run("n4-unclaimed-task-handoff-request", func(t *testing.T) {
@@ -1353,6 +1353,6 @@ func TestHandoffSequenceRequiresReceiveBeforeRole(t *testing.T) {
 			"handoff_id":   "handoff-sequence-n4-task",
 			"task_id":      fixture.tasks[1].ID,
 			"requested_by": sessionID,
-		}, "task is unclaimed")
+		}, "caller does not hold an open received handoff for goal")
 	})
 }

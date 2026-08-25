@@ -12,11 +12,11 @@ import (
 )
 
 var (
-	ErrTaskHandoffNotFound      = errors.New("task handoff not found")
-	ErrTaskHandoffTaskMismatch  = errors.New("task handoff task mismatch")
-	ErrTaskHandoffTaskUnclaimed = errors.New("task handoff task is unclaimed")
-	ErrTaskHandoffAlreadyOpen   = errors.New("task handoff already open")
-	ErrTaskHandoffAmbiguous     = errors.New("multiple task handoffs pending receipt")
+	ErrTaskHandoffNotFound     = errors.New("task handoff not found")
+	ErrTaskHandoffTaskMismatch = errors.New("task handoff task mismatch")
+	ErrTaskHandoffGoalNotHeld  = errors.New("task handoff requires the goal's handoff: caller does not hold an open received handoff for goal")
+	ErrTaskHandoffAlreadyOpen  = errors.New("task handoff already open")
+	ErrTaskHandoffAmbiguous    = errors.New("multiple task handoffs pending receipt")
 )
 
 // TaskHandoff records one delegation between agents. Each event timestamp is
@@ -80,7 +80,7 @@ func (s *Store) ensureTaskHandoffTask(ctx context.Context, handoffID, taskID str
 	return nil
 }
 
-func (s *Store) requireLiveTaskClaim(ctx context.Context, taskID, requestedBy string) error {
+func (s *Store) requireGoalHandoffForTask(ctx context.Context, taskID, requestedBy string) error {
 	goalID, err := sqlcgen.New(s.db).GetTaskGoalID(ctx, taskID)
 	if err != nil {
 		return fmt.Errorf("find goal for task %q: %w", taskID, err)
@@ -95,7 +95,7 @@ func (s *Store) requireLiveTaskClaim(ctx context.Context, taskID, requestedBy st
 		return nil
 	}
 
-	return fmt.Errorf("%w: %s", ErrTaskHandoffTaskUnclaimed, taskID)
+	return fmt.Errorf("%w: %s", ErrTaskHandoffGoalNotHeld, goalID)
 }
 
 // reclaimOpenTaskHandoff enforces the one-open-handoff rule before inserting a
@@ -177,7 +177,7 @@ func (s *Store) requestTaskHandoff(ctx context.Context, handoffID, taskID, reque
 		return TaskHandoff{}, err
 	}
 	if requireLiveClaim {
-		if err := s.requireLiveTaskClaim(ctx, taskID, requestedBy); err != nil {
+		if err := s.requireGoalHandoffForTask(ctx, taskID, requestedBy); err != nil {
 			return TaskHandoff{}, err
 		}
 	}

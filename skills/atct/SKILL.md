@@ -60,6 +60,9 @@ that worker is started:
 
 1. Hold the parent, not the task. The delegator does not hold the task; it must
    have received the handoff for that task's goal before handing it off.
+
+Delegating a task requires a received goal handoff, not a project claim. A two-layer delegation keeps the commander role while the commander delegates the goal tasks.
+
 2. Record the handoff before waking the worker.
    The delegator must call `atct_handoff_request` with a unique handoff ID and
    the task ID. Wait for the request to succeed before waking the

@@ -456,7 +456,7 @@ func TestGoalHandoffRejectsUnclaimedGoal(t *testing.T) {
 	addTestAgentSession(t, s, "goal-requester")
 
 	_, err := s.RequestGoalHandoff(context.Background(), "goal-handoff-unclaimed", goalID, "goal-requester", "")
-	if !errors.Is(err, ErrGoalHandoffGoalUnclaimed) {
-		t.Fatalf("error = %v, want ErrGoalHandoffGoalUnclaimed", err)
+	if !errors.Is(err, ErrGoalHandoffProjectNotHeld) {
+		t.Fatalf("error = %v, want ErrGoalHandoffProjectNotHeld", err)
 	}
 }
