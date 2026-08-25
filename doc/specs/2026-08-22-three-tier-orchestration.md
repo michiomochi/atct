@@ -338,7 +338,25 @@ A-3 の「寄せる」は手順で避ける形だったが、**いまは仕組�
 `atct watch` は自分の `agent_session_id` を持たず、持たせる経路も無い。
 `cmd/atct/role.go` は「process や環境変数から推測するな」を comment で明示している
 （推測すると、別のセッションの claim を自分のものと誤認する）。
-**呼び手が値を持ってくる。**subcommander は `atct_role` の応答から `goal_id` を知る。
+**呼び手が値を持ってくる。**subcommander は**依頼書に書かれた `goal_id`** を使う。
+
+**`atct_role` の応答から取ってはいけない（2026-08-25 に実測）。**`internal/daemon/handler.go`
+の `session.role` は、受領済みの goal handoff を持つ**最初の 1 件で `break` する。**
+
+```
+for _, goal := range goals {
+    handoff := goalHandoffs[goal.ID]
+    if handoff != nil && handoff.ReceivedAt != nil && … == sessionID {
+        response.GoalID = goal.ID
+        break        // ← 2 件目以降は返らない
+    }
+}
+```
+
+**subcommander が複数のゴールを同時に持つと、`atct_role` は 1 件だけを返し、残りを黙って
+隠す。**曖昧だというエラーにもならない。実測: 開いた goal handoff を 4 件持つ状態で
+`atct_role` を呼び、返ったのは `ListAllGoals` の順で最初の 1 件だけだった。
+**したがって範囲つき watch の `goal_id` は、役割の応答ではなく依頼書から取る。**
 
 ### 追記: 判断イベントも同じ範囲で流す（2026-08-25）
 
