@@ -3,6 +3,9 @@
   "owner": {
     "name": "michiomochi"
   },
+  "allowCrossMarketplaceDependenciesOn": [
+    "claude-plugins-official"
+  ],
   "plugins": [
     {
       "name": "atct",

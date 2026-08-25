@@ -144,7 +144,9 @@ test_static_contract() {
   # Pin the two version declarations to each other rather than to a literal, so a
   # release does not silently leave this test asserting the previous version.
   local plugin_version resolve_version
-  plugin_version="$(sed -n 's/.*"version": "\([0-9][0-9.]*\)".*/\1/p' "$REPO_ROOT/.claude-plugin"/plugin.json | head -1)"
+  # Parse the manifest as JSON. A sed match on the first "version" line breaks as
+  # soon as another key carries a version, such as a dependency constraint.
+  plugin_version="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["version"])' "$REPO_ROOT/.claude-plugin"/plugin.json)"
   resolve_version="$(sed -n 's/^VERSION="\([0-9][0-9.]*\)"/\1/p' "$REPO_ROOT/bin/_resolve" | head -1)"
   [[ -n "$plugin_version" ]] || fail 'plugin.json has no version'
   [[ -n "$resolve_version" ]] || fail '_resolve has no VERSION'
