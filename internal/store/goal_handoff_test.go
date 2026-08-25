@@ -318,6 +318,17 @@ func TestGoalHandoffReceiveRejectsUnrequestedHandoff(t *testing.T) {
 	}
 }
 
+func TestGoalHandoffReceiveRejectsUnknownUUIDNotFound(t *testing.T) {
+	s := newTestStore(t)
+	goalID := newTestGoal(t, s)
+	unknownHandoffID := "9dfc8983-f430-4c7f-92a0-3882941dd393"
+
+	_, err := s.ReceiveGoalHandoff(context.Background(), unknownHandoffID, goalID, "receiver")
+	if !errors.Is(err, ErrGoalHandoffNotFound) {
+		t.Fatalf("error = %v, want ErrGoalHandoffNotFound", err)
+	}
+}
+
 func TestGoalHandoffCompleteByGoal(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

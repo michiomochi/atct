@@ -572,6 +572,17 @@ func TestTaskHandoffReceiveRejectsEmptyHandoffID(t *testing.T) {
 	}
 }
 
+func TestTaskHandoffReceiveRejectsUnknownUUIDNotFound(t *testing.T) {
+	s := newTestStore(t)
+	taskID := addTestTasks(t, s, 1)[0]
+	unknownHandoffID := "9dfc8983-f430-4c7f-92a0-3882941dd393"
+
+	_, err := s.ReceiveTaskHandoff(context.Background(), unknownHandoffID, taskID, "receiver")
+	if !errors.Is(err, ErrTaskHandoffNotFound) {
+		t.Fatalf("error = %v, want ErrTaskHandoffNotFound", err)
+	}
+}
+
 func TestTaskHandoffCompleteRejectsUnrequestedHandoff(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
