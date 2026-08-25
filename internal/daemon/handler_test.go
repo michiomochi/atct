@@ -1172,3 +1172,187 @@ func runSessionStartHookForContractTest(t *testing.T, atctScript string) (string
 	output, err := cmd.CombinedOutput()
 	return string(output), err
 }
+
+func TestHandoffSequenceRequiresReceiveBeforeRole(t *testing.T) {
+	ctx := context.Background()
+
+	dispatch := func(t *testing.T, fixture goalListFixture, method string, params map[string]string) (json.RawMessage, error) {
+		t.Helper()
+		rawParams, err := json.Marshal(params)
+		if err != nil {
+			t.Fatalf("marshal %s params: %v", method, err)
+		}
+		return fixture.daemon.dispatch(ctx, rpc.Request{Method: method, Params: rawParams})
+	}
+	register := func(t *testing.T, fixture goalListFixture, sessionIDs ...string) {
+		t.Helper()
+		for _, sessionID := range sessionIDs {
+			if err := fixture.store.RegisterAgentSession(ctx, sessionID, os.Getpid()); err != nil {
+				t.Fatalf("RegisterAgentSession %s: %v", sessionID, err)
+			}
+		}
+	}
+	role := func(t *testing.T, fixture goalListFixture, sessionID string) string {
+		t.Helper()
+		raw, err := dispatch(t, fixture, "session.role", map[string]string{"agent_session_id": sessionID})
+		if err != nil {
+			t.Fatalf("session.role %s: %v", sessionID, err)
+		}
+		var response struct {
+			Role string `json:"role"`
+		}
+		if err := json.Unmarshal(raw, &response); err != nil {
+			t.Fatalf("decode session.role %s response %q: %v", sessionID, raw, err)
+		}
+		return response.Role
+	}
+	expectError := func(t *testing.T, fixture goalListFixture, method string, params map[string]string, wantMessage string) {
+		t.Helper()
+		_, err := dispatch(t, fixture, method, params)
+		if err == nil {
+			t.Fatalf("%s unexpectedly succeeded", method)
+		}
+		if !strings.Contains(err.Error(), wantMessage) {
+			t.Fatalf("%s error = %q, want message containing %q", method, err, wantMessage)
+		}
+	}
+
+	t.Run("positive-receive-before-role", func(t *testing.T) {
+		fixture := newGoalListFixture(t)
+		defer fixture.store.Close()
+
+		commander := "handoff-sequence-a"
+		subcommander := "handoff-sequence-b"
+		executor := "handoff-sequence-c"
+		register(t, fixture, commander, subcommander, executor)
+
+		if _, err := dispatch(t, fixture, "project.claim", map[string]string{
+			"project_id":       fixture.project.ID,
+			"agent_session_id": commander,
+		}); err != nil {
+			t.Fatalf("project.claim: %v", err)
+		}
+		if got := role(t, fixture, commander); got != "commander" {
+			t.Fatalf("commander role = %q, want %q", got, "commander")
+		}
+
+		if _, err := dispatch(t, fixture, "goal.handoff.request", map[string]string{
+			"handoff_id":     "handoff-sequence-goal",
+			"goal_id":        fixture.taskGoal.ID,
+			"requested_by":   commander,
+			"request_report": "delegate goal",
+		}); err != nil {
+			t.Fatalf("goal.handoff.request: %v", err)
+		}
+		if _, err := dispatch(t, fixture, "goal.handoff.receive", map[string]string{
+			"goal_id":     fixture.taskGoal.ID,
+			"received_by": subcommander,
+		}); err != nil {
+			t.Fatalf("goal.handoff.receive: %v", err)
+		}
+		if got := role(t, fixture, subcommander); got != "subcommander" {
+			t.Fatalf("subcommander role = %q, want %q", got, "subcommander")
+		}
+
+		if _, err := dispatch(t, fixture, "handoff.request", map[string]string{
+			"handoff_id":     "handoff-sequence-task",
+			"task_id":        fixture.tasks[1].ID,
+			"requested_by":   subcommander,
+			"request_report": "delegate task",
+		}); err != nil {
+			t.Fatalf("handoff.request: %v", err)
+		}
+		if _, err := dispatch(t, fixture, "handoff.receive", map[string]string{
+			"task_id":     fixture.tasks[1].ID,
+			"received_by": executor,
+		}); err != nil {
+			t.Fatalf("handoff.receive: %v", err)
+		}
+		if got := role(t, fixture, executor); got != "executor" {
+			t.Fatalf("executor role = %q, want %q", got, "executor")
+		}
+	})
+
+	t.Run("n1-goal-claim-before-handoff-request", func(t *testing.T) {
+		fixture := newGoalListFixture(t)
+		defer fixture.store.Close()
+
+		commander := "handoff-sequence-n1-a"
+		register(t, fixture, commander)
+		if _, err := dispatch(t, fixture, "project.claim", map[string]string{
+			"project_id":       fixture.project.ID,
+			"agent_session_id": commander,
+		}); err != nil {
+			t.Fatalf("project.claim: %v", err)
+		}
+		if _, err := dispatch(t, fixture, "goal.claim", map[string]string{
+			"goal_id":          fixture.taskGoal.ID,
+			"agent_session_id": commander,
+		}); err != nil {
+			t.Fatalf("goal.claim: %v", err)
+		}
+		expectError(t, fixture, "goal.handoff.request", map[string]string{
+			"handoff_id":   "handoff-sequence-n1-goal",
+			"goal_id":      fixture.taskGoal.ID,
+			"requested_by": commander,
+		}, "already open")
+	})
+
+	t.Run("n2-role-before-goal-handoff-receive", func(t *testing.T) {
+		fixture := newGoalListFixture(t)
+		defer fixture.store.Close()
+
+		commander := "handoff-sequence-n2-a"
+		subcommander := "handoff-sequence-n2-b"
+		register(t, fixture, commander, subcommander)
+		if _, err := dispatch(t, fixture, "project.claim", map[string]string{
+			"project_id":       fixture.project.ID,
+			"agent_session_id": commander,
+		}); err != nil {
+			t.Fatalf("project.claim: %v", err)
+		}
+		if _, err := dispatch(t, fixture, "goal.handoff.request", map[string]string{
+			"handoff_id":   "handoff-sequence-n2-goal",
+			"goal_id":      fixture.taskGoal.ID,
+			"requested_by": commander,
+		}); err != nil {
+			t.Fatalf("goal.handoff.request: %v", err)
+		}
+		if got := role(t, fixture, subcommander); got != "executor" {
+			t.Fatalf("pre-receive role = %q, want %q", got, "executor")
+		}
+	})
+
+	t.Run("n3-unclaimed-goal-handoff-request", func(t *testing.T) {
+		fixture := newGoalListFixture(t)
+		defer fixture.store.Close()
+
+		commander := "handoff-sequence-n3-a"
+		sessionID := "handoff-sequence-n3-d"
+		register(t, fixture, commander, sessionID)
+		if _, err := dispatch(t, fixture, "project.claim", map[string]string{
+			"project_id":       fixture.project.ID,
+			"agent_session_id": commander,
+		}); err != nil {
+			t.Fatalf("project.claim: %v", err)
+		}
+		expectError(t, fixture, "goal.handoff.request", map[string]string{
+			"handoff_id":   "handoff-sequence-n3-goal",
+			"goal_id":      fixture.taskGoal.ID,
+			"requested_by": sessionID,
+		}, "goal is unclaimed")
+	})
+
+	t.Run("n4-unclaimed-task-handoff-request", func(t *testing.T) {
+		fixture := newGoalListFixture(t)
+		defer fixture.store.Close()
+
+		sessionID := "handoff-sequence-n4-d"
+		register(t, fixture, sessionID)
+		expectError(t, fixture, "handoff.request", map[string]string{
+			"handoff_id":   "handoff-sequence-n4-task",
+			"task_id":      fixture.tasks[1].ID,
+			"requested_by": sessionID,
+		}, "task is unclaimed")
+	})
+}
