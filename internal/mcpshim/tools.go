@@ -615,6 +615,7 @@ func Register(server *mcp.Server, c *Client, agentSessionID string) {
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in DecisionWithdrawIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
 		return callWithUnappliedDecisions(ctx, c, "decision.withdraw", map[string]any{
 			"decision_id": in.DecisionID, "reason": in.Reason, "include_unapplied_answers": true,
+			"agent_session_id": sessionID.Get(),
 		})
 	})
 

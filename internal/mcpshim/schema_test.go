@@ -249,6 +249,71 @@ func TestRegisterPublishesTwentyFourToolsWithFlexibleOutputSchema(t *testing.T) 
 	}
 }
 
+func TestDecisionWithdrawSendsAgentSessionID(t *testing.T) {
+	ctx := context.Background()
+	socketPath, calls := startCapturingSchemaTestDaemon(t)
+	server := mcp.NewServer(&mcp.Implementation{Name: "atct-test", Version: "test"}, nil)
+	mcpshim.Register(server, mcpshim.NewClient(socketPath), "withdraw-session")
+
+	clientTransport, serverTransport := mcp.NewInMemoryTransports()
+	serverSession, err := server.Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatalf("server.Connect: %v", err)
+	}
+	defer serverSession.Close()
+
+	client := mcp.NewClient(&mcp.Implementation{Name: "schema-test", Version: "test"}, nil)
+	clientSession, err := client.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatalf("client.Connect: %v", err)
+	}
+	defer clientSession.Close()
+
+	identifyResult, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name: "atct_session_identify",
+		Arguments: map[string]any{
+			"session_key": "withdraw-session",
+		},
+	})
+	if err != nil {
+		t.Fatalf("CallTool(atct_session_identify): %v", err)
+	}
+	if identifyResult == nil || identifyResult.IsError {
+		t.Fatalf("atct_session_identify returned error result: %+v", identifyResult)
+	}
+	select {
+	case <-calls:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for session.identify RPC")
+	}
+
+	result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name: "atct_decision_withdraw",
+		Arguments: map[string]any{
+			"decision_id": "decision-1", "reason": "reason",
+		},
+	})
+	if err != nil {
+		t.Fatalf("CallTool(atct_decision_withdraw): %v", err)
+	}
+	if result == nil || result.IsError {
+		t.Fatalf("atct_decision_withdraw returned error result: %+v", result)
+	}
+
+	var call capturedSchemaDaemonCall
+	select {
+	case call = <-calls:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for decision.withdraw RPC")
+	}
+	if call.method != "decision.withdraw" {
+		t.Fatalf("RPC method = %q, want decision.withdraw", call.method)
+	}
+	if got := call.params["agent_session_id"]; got != "canonical-session" {
+		t.Errorf("agent_session_id = %#v, want canonical-session", got)
+	}
+}
+
 func TestTaskUpdateContentOmitsUnspecifiedOptionalParameters(t *testing.T) {
 	ctx := context.Background()
 	socketPath, calls := startCapturingSchemaTestDaemon(t)
