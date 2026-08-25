@@ -725,6 +725,65 @@ test_irreversible_decision_still_omits_defaults() {
     fail 'irreversible decision guidance no longer omits default_option'
 }
 
+test_start_identifies_before_monitor() {
+  local start_skill="$REPO_ROOT/skills/start/SKILL.md"
+  local identify_line
+  local monitor_line
+
+  identify_line="$(grep -n '^## First step: identify' "$start_skill" | head -1 | cut -d: -f1)"
+  monitor_line="$(grep -n '^## .*Claude Code Monitor' "$start_skill" | head -1 | cut -d: -f1)"
+  [[ -n "$identify_line" && -n "$monitor_line" ]] ||
+    fail 'start order requires identify and monitor headings'
+  (( identify_line < monitor_line )) ||
+    fail "session identification must precede Monitor: identify=$identify_line monitor=$monitor_line"
+}
+
+test_start_session_key_contract_is_explicit() {
+  local start_skill="$REPO_ROOT/skills/start/SKILL.md"
+
+  assert_file_contains 'atct_session_identify` with `session_key`' "$start_skill"
+  assert_file_contains '<project>-<unit>-<role>' "$start_skill"
+  assert_file_contains 'rather than only the role' "$start_skill"
+}
+
+test_start_explains_claim_recovery_boundary() {
+  local start_skill="$REPO_ROOT/skills/start/SKILL.md"
+
+  assert_file_contains 'claim taken before the key was registered is not restored' "$start_skill"
+}
+
+test_start_explains_mcp_reconnect_gap() {
+  local start_skill="$REPO_ROOT/skills/start/SKILL.md"
+
+  assert_file_contains 'new version has just' "$start_skill"
+  assert_file_contains 'MCP has not reconnected' "$start_skill"
+  assert_file_contains 'recovery section in `skills/atct/SKILL.md`' "$start_skill"
+}
+
+test_start_monitor_is_not_first_step() {
+  local start_skill="$REPO_ROOT/skills/start/SKILL.md"
+
+  assert_file_not_contains '## First step: attach the Claude Code Monitor' "$start_skill"
+}
+
+test_start_does_not_branch_on_session_attachment() {
+  local start_skill="$REPO_ROOT/skills/start/SKILL.md"
+
+  assert_file_not_contains 'reattached' "$start_skill"
+}
+
+test_start_does_not_duplicate_delegated_worker_preamble() {
+  local start_skill="$REPO_ROOT/skills/start/SKILL.md"
+
+  assert_file_not_contains 'First call `atct_session_identify` with a stable session key' "$start_skill"
+}
+
+test_start_keeps_monitor_persistence_requirement() {
+  local start_skill="$REPO_ROOT/skills/start/SKILL.md"
+
+  assert_file_contains 'Always set `persistent: true`' "$start_skill"
+}
+
 test_task_handoff_recreation_cause_is_documented() {
   local atct_skill="$REPO_ROOT/skills/atct/SKILL.md"
   local task_section
@@ -953,6 +1012,14 @@ test_static_contract
 test_delegated_claim_contract_is_explicit
 test_decision_guidance_names_done_guard
 test_irreversible_decision_still_omits_defaults
+test_start_identifies_before_monitor
+test_start_session_key_contract_is_explicit
+test_start_explains_claim_recovery_boundary
+test_start_explains_mcp_reconnect_gap
+test_start_monitor_is_not_first_step
+test_start_does_not_branch_on_session_attachment
+test_start_does_not_duplicate_delegated_worker_preamble
+test_start_keeps_monitor_persistence_requirement
 test_goal_handoff_watch_contract_is_explicit
 test_goal_handoff_watch_contract_omits_unsafe_variants
 test_goal_handoff_watch_contract_has_required_order

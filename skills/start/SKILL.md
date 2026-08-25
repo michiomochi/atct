@@ -8,10 +8,23 @@ description: Start working through the ATCT goals for this repository without st
 This skill turns an ATCT-managed repository into work. It is the entry point the
 human reaches for when they want progress rather than a plan.
 
-## First step: attach the Claude Code Monitor
+## First step: identify the session
 
-Before entering the goal loop, attach `atct watch` to a Claude Code Monitor
-task and keep that task's id for this session.
+Before entering the goal loop, call `atct_session_identify` with `session_key`
+set to this pane's agent name in the `<project>-<unit>-<role>` form. Use the
+full agent name rather than only the role, such as `commander`: a role-only key
+can collide across projects and merge their sessions into one row.
+
+A claim taken before the key was registered is not restored after a reconnect;
+only a claim retaken after identification can return. If a new version has just
+been installed and `atct_session_identify` is not yet in the tool list because
+MCP has not reconnected, use the recovery section in `skills/atct/SKILL.md` once
+the tools are available.
+
+## Attach the Claude Code Monitor
+
+After identifying the session, attach `atct watch` to a Claude Code Monitor task
+and keep that task's id for this session.
 
 - If this session already has an `atct watch` Monitor, keep it; do not attach a
   second one. Two Monitors emit the same answer twice.
