@@ -618,7 +618,6 @@ test_delegated_claim_contract_is_explicit() {
   assert_file_contains 'A delegated worker owns the task it was given.' "$atct_skill"
   assert_file_contains 'Delegating a task requires a received goal handoff, not a project claim.' "$atct_skill"
   assert_file_contains 'For two-layer delegation, the commander calls `atct_goal_claim` to create a goal handoff addressed to itself.' "$atct_skill"
-  assert_file_contains 'What breaks when you batch is the record, not the context.' "$atct_skill"
   assert_file_contains 'a received, uncompleted goal handoff' "$atct_skill"
   assert_file_contains 'A delegated worker receives the task with `atct_handoff_receive`' "$start_skill"
   assert_file_contains 'The following loop is for self-directed work: find and take a task yourself.' "$start_skill"
@@ -654,6 +653,64 @@ test_delegated_claim_contract_is_explicit() {
   assert_file_not_contains "the delegator's identity" "$atct_skill"
   assert_file_not_contains 'Do this whenever convenient.' "$atct_skill"
   assert_file_not_contains 'atct_goal_handoff_receive` with only the `handoff_id` provided in this request.' "$atct_skill"
+}
+
+test_task_handoff_recreation_cause_is_documented() {
+  local atct_skill="$REPO_ROOT/skills/atct/SKILL.md"
+  local task_section
+
+  task_section="$(sed -n '/^## Delegate a task$/,/^## Delegate a goal$/p' "$atct_skill")"
+  grep -Fq -- 'Claiming' <<<"$task_section" ||
+    fail 'task delegation section omits the claim-to-handoff refusal cause'
+  grep -Fq -- 'task first always' <<<"$task_section" ||
+    fail 'task delegation section omits the claim-to-handoff refusal cause'
+  grep -Fq -- 'already writes an open handoff' <<<"$task_section" ||
+    fail 'task delegation section omits the open handoff cause'
+}
+
+test_task_handoff_recreation_uses_new_id() {
+  local atct_skill="$REPO_ROOT/skills/atct/SKILL.md"
+  local task_section
+
+  task_section="$(sed -n '/^## Delegate a task$/,/^## Delegate a goal$/p' "$atct_skill")"
+  grep -Fq -- 'new `handoff_id`' <<<"$task_section" ||
+    fail 'task delegation section omits new handoff_id recreation'
+}
+
+test_task_handoff_recreation_keeps_worker_identity() {
+  local atct_skill="$REPO_ROOT/skills/atct/SKILL.md"
+  local task_section
+
+  task_section="$(sed -n '/^## Delegate a task$/,/^## Delegate a goal$/p' "$atct_skill")"
+  grep -Fq -- 'does not mean a different worker' <<<"$task_section" ||
+    fail 'task delegation section changes worker identity for a follow-up'
+}
+
+test_goal_handoff_cause_is_preserved() {
+  local atct_skill="$REPO_ROOT/skills/atct/SKILL.md"
+  local goal_section
+
+  goal_section="$(sed -n '/^## Delegate a goal$/,/^## Recover when your role comes back wrong$/p' "$atct_skill")"
+  grep -Fq -- 'Claiming the goal first always' <<<"$goal_section" ||
+    fail 'goal delegation section lost the claim-to-handoff refusal cause'
+}
+
+test_task_batch_record_context_reason_is_preserved() {
+  local atct_skill="$REPO_ROOT/skills/atct/SKILL.md"
+  local task_section
+
+  task_section="$(sed -n '/^## Delegate a task$/,/^## Delegate a goal$/p' "$atct_skill")"
+  grep -Fq -- 'What breaks when you batch is the record, not the context.' <<<"$task_section" ||
+    fail 'task delegation section lost the record/context reason'
+}
+
+test_task_batch_measurement_is_preserved() {
+  local atct_skill="$REPO_ROOT/skills/atct/SKILL.md"
+  local task_section
+
+  task_section="$(sed -n '/^## Delegate a task$/,/^## Delegate a goal$/p' "$atct_skill")"
+  grep -Fq -- 'executor-33' <<<"$task_section" ||
+    fail 'task delegation section lost the three-task measurement'
 }
 
 test_role_contract_is_documented() {
@@ -824,6 +881,12 @@ test_role_response_does_not_leak_other_boundaries() {
 
 test_static_contract
 test_delegated_claim_contract_is_explicit
+test_task_handoff_recreation_cause_is_documented
+test_task_handoff_recreation_uses_new_id
+test_task_handoff_recreation_keeps_worker_identity
+test_goal_handoff_cause_is_preserved
+test_task_batch_record_context_reason_is_preserved
+test_task_batch_measurement_is_preserved
 test_role_contract_is_documented
 test_role_response_exposes_boundary_fields
 test_role_contract_uses_neutral_language

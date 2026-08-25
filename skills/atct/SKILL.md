@@ -64,7 +64,9 @@ When handing a task to another worker, keep the contract independent of how
 that worker is started:
 
 1. Hold the parent, not the task. The delegator does not hold the task; it must
-   have received the handoff for that task's goal before handing it off.
+   have received the handoff for that task's goal before handing it off. Claiming
+   the task first always causes the handoff request to be refused because the
+   claim already writes an open handoff.
 
 2. Record the handoff before waking the worker.
    The delegator must call `atct_handoff_request` with a unique handoff ID and
@@ -101,6 +103,10 @@ that worker is started:
    three. Task count and compression count are not correlated: in that same
    measurement, the three-task pane compressed twice while the one-task pane
    compressed seven times.
+
+   For a follow-up to the same worker, recreate the `atct_handoff_request` with
+   a new `handoff_id`; a closed `handoff_id` cannot be reused. The new handoff
+   does not mean a different worker; it gives the same worker a new ID.
 
 The worker must perform both instructions itself before doing any work. The
 delegator must not run either instruction on the worker's behalf or treat a
