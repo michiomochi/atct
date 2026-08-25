@@ -1250,7 +1250,7 @@ func TestReleaseTaskReturnsDoingTaskToTodo(t *testing.T) {
 	if _, err := s.UpdateTask(ctx, tasks[0].ID, domain.TaskDoing, "stale-run"); err != nil {
 		t.Fatalf("UpdateTask: %v", err)
 	}
-	released, err := s.ReleaseTask(ctx, tasks[0].ID)
+	released, err := s.ReleaseTaskForHuman(ctx, tasks[0].ID)
 	if err != nil {
 		t.Fatalf("ReleaseTask: %v", err)
 	}

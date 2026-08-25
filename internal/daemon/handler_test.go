@@ -321,6 +321,135 @@ func TestProjectReleaseRejectsSessionBoundToAnotherProject(t *testing.T) {
 	}
 }
 
+func TestTaskReleaseAllowsHolderSession(t *testing.T) {
+	fixture := newGoalListFixture(t)
+	defer fixture.store.Close()
+
+	const holderSession = "daemon-task-release-holder-run"
+	registerLiveGoalClaimSession(t, fixture, holderSession)
+	if _, err := fixture.store.ClaimTask(context.Background(), fixture.tasks[1].ID, holderSession); err != nil {
+		t.Fatalf("task.claim: %v", err)
+	}
+
+	params, err := json.Marshal(map[string]string{
+		"task_id":          fixture.tasks[1].ID,
+		"agent_session_id": holderSession,
+	})
+	if err != nil {
+		t.Fatalf("marshal task.release params: %v", err)
+	}
+	result, err := fixture.daemon.dispatch(context.Background(), rpc.Request{Method: "task.release", Params: params})
+	if err != nil {
+		t.Fatalf("task.release: %v", err)
+	}
+	var released domain.Task
+	if err := json.Unmarshal(result, &released); err != nil {
+		t.Fatalf("unmarshal task.release result: %v", err)
+	}
+	if released.Status != domain.TaskTodo {
+		t.Fatalf("released task status = %s, want %s", released.Status, domain.TaskTodo)
+	}
+	if handoff := openTaskHandoffForTest(t, fixture, fixture.tasks[1].GoalID, fixture.tasks[1].ID); handoff != nil {
+		t.Fatalf("task handoff after release = %+v, want none", handoff)
+	}
+}
+
+func TestTaskReleaseAllowsSessionBoundToProject(t *testing.T) {
+	fixture := newGoalListFixture(t)
+	defer fixture.store.Close()
+
+	const (
+		holderSession = "daemon-task-release-bound-holder-run"
+		callerSession = "daemon-task-release-bound-caller-run"
+	)
+	registerLiveGoalClaimSession(t, fixture, holderSession)
+	registerLiveGoalClaimSession(t, fixture, callerSession)
+	if err := fixture.store.AssociateAgentSessionWithProject(context.Background(), callerSession, fixture.project.ID); err != nil {
+		t.Fatalf("associate caller session with project: %v", err)
+	}
+	if _, err := fixture.store.ClaimTask(context.Background(), fixture.tasks[1].ID, holderSession); err != nil {
+		t.Fatalf("task.claim: %v", err)
+	}
+
+	params, err := json.Marshal(map[string]string{
+		"task_id":          fixture.tasks[1].ID,
+		"agent_session_id": callerSession,
+	})
+	if err != nil {
+		t.Fatalf("marshal task.release params: %v", err)
+	}
+	result, err := fixture.daemon.dispatch(context.Background(), rpc.Request{Method: "task.release", Params: params})
+	if err != nil {
+		t.Fatalf("task.release: %v", err)
+	}
+	var released domain.Task
+	if err := json.Unmarshal(result, &released); err != nil {
+		t.Fatalf("unmarshal task.release result: %v", err)
+	}
+	if released.Status != domain.TaskTodo {
+		t.Fatalf("released task status = %s, want %s", released.Status, domain.TaskTodo)
+	}
+	if handoff := openTaskHandoffForTest(t, fixture, fixture.tasks[1].GoalID, fixture.tasks[1].ID); handoff != nil {
+		t.Fatalf("task handoff after release = %+v, want none", handoff)
+	}
+}
+
+func TestTaskReleaseRejectsEmptyAgentSession(t *testing.T) {
+	fixture := newGoalListFixture(t)
+	defer fixture.store.Close()
+
+	const holderSession = "daemon-task-release-empty-holder-run"
+	registerLiveGoalClaimSession(t, fixture, holderSession)
+	if _, err := fixture.store.ClaimTask(context.Background(), fixture.tasks[1].ID, holderSession); err != nil {
+		t.Fatalf("task.claim: %v", err)
+	}
+
+	params, err := json.Marshal(map[string]string{
+		"task_id":          fixture.tasks[1].ID,
+		"agent_session_id": "",
+	})
+	if err != nil {
+		t.Fatalf("marshal task.release params: %v", err)
+	}
+	if _, err := fixture.daemon.dispatch(context.Background(), rpc.Request{Method: "task.release", Params: params}); err == nil {
+		t.Fatal("task.release succeeded without agent_session_id")
+	}
+}
+
+func TestTaskReleaseRejectsSessionBoundToAnotherProject(t *testing.T) {
+	fixture := newGoalListFixture(t)
+	defer fixture.store.Close()
+
+	const (
+		holderSession  = "daemon-task-release-foreign-holder-run"
+		foreignSession = "daemon-task-release-foreign-caller-run"
+	)
+	registerLiveGoalClaimSession(t, fixture, holderSession)
+	registerLiveGoalClaimSession(t, fixture, foreignSession)
+	foreignProject, err := fixture.store.CreateProject(context.Background(), "foreign-task-release-project", t.TempDir())
+	if err != nil {
+		t.Fatalf("create foreign project: %v", err)
+	}
+	if err := fixture.store.AssociateAgentSessionWithProject(context.Background(), foreignSession, foreignProject.ID); err != nil {
+		t.Fatalf("associate foreign session with project: %v", err)
+	}
+	if _, err := fixture.store.ClaimTask(context.Background(), fixture.tasks[1].ID, holderSession); err != nil {
+		t.Fatalf("task.claim: %v", err)
+	}
+
+	params, err := json.Marshal(map[string]string{
+		"task_id":          fixture.tasks[1].ID,
+		"agent_session_id": foreignSession,
+	})
+	if err != nil {
+		t.Fatalf("marshal task.release params: %v", err)
+	}
+	_, err = fixture.daemon.dispatch(context.Background(), rpc.Request{Method: "task.release", Params: params})
+	if err == nil {
+		t.Fatal("task.release succeeded for a session bound to another project")
+	}
+}
+
 func TestProjectClaimTakesOverDeadDaemonSession(t *testing.T) {
 	fixture := newGoalListFixture(t)
 	defer fixture.store.Close()

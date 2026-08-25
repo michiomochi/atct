@@ -850,7 +850,7 @@ func TestUpdateTaskRejectsTodoForRunningOtherClaim(t *testing.T) {
 func TestReleaseTaskAllowsHumanPathWithRunningClaim(t *testing.T) {
 	fixture := newTaskStatusClaimFixture(t, os.Getpid(), os.Getpid())
 
-	released, err := fixture.store.ReleaseTask(fixture.ctx, fixture.taskID)
+	released, err := fixture.store.ReleaseTaskForHuman(fixture.ctx, fixture.taskID)
 	if err != nil {
 		t.Fatalf("ReleaseTask: %v", err)
 	}

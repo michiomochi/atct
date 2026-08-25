@@ -1472,7 +1472,7 @@ func TestTaskClaimAndReleaseStillWork(t *testing.T) {
 		t.Fatalf("task.claim: %v", err)
 	}
 
-	releaseParams, err := json.Marshal(map[string]string{"task_id": fixture.tasks[1].ID})
+	releaseParams, err := json.Marshal(map[string]string{"task_id": fixture.tasks[1].ID, "agent_session_id": sessionID})
 	if err != nil {
 		t.Fatalf("marshal task.release params: %v", err)
 	}

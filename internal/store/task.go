@@ -627,8 +627,8 @@ func firstOverlappingFile(files, otherFiles []string) (string, bool) {
 	return "", false
 }
 
-// ReleaseTask clears a task claim for the human stale-claim release path.
-func (s *Store) ReleaseTask(ctx context.Context, taskID string) (domain.Task, error) {
+// ReleaseTaskForHuman clears a task claim for the human stale-claim release path.
+func (s *Store) ReleaseTaskForHuman(ctx context.Context, taskID string) (domain.Task, error) {
 	releaseHandoff, err := s.openTaskHandoff(ctx, taskID)
 	if err != nil {
 		return domain.Task{}, err

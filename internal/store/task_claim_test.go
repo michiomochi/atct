@@ -157,7 +157,7 @@ func TestReleaseTaskClearsClaim(t *testing.T) {
 		t.Fatalf("ClaimTask: %v", err)
 	}
 
-	released, err := s.ReleaseTask(ctx, tasks[0].ID)
+	released, err := s.ReleaseTaskForHuman(ctx, tasks[0].ID)
 	if err != nil {
 		t.Fatalf("ReleaseTask: %v", err)
 	}

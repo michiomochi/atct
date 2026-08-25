@@ -993,7 +993,7 @@ func newTaskCommitView(ctx context.Context, rootPath string, commit domain.TaskC
 }
 
 func (s *Server) handleRelease(w http.ResponseWriter, r *http.Request, taskID string) {
-	task, err := s.store.ReleaseTask(r.Context(), taskID)
+	task, err := s.store.ReleaseTaskForHuman(r.Context(), taskID)
 	if err != nil {
 		if errors.Is(err, store.ErrTaskNotFound) {
 			writeError(w, http.StatusNotFound, err.Error())

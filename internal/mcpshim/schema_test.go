@@ -343,6 +343,47 @@ func TestSessionIdentifyKeepsTransportIDWhenDaemonReturnsEmpty(t *testing.T) {
 	}
 }
 
+func TestTaskReleaseInjectsAgentSessionID(t *testing.T) {
+	ctx := context.Background()
+	socketPath, calls := startCapturingSchemaTestDaemon(t)
+	server := mcp.NewServer(&mcp.Implementation{Name: "atct-test", Version: "test"}, nil)
+	const sessionID = "task-release-session"
+	mcpshim.Register(server, mcpshim.NewClient(socketPath), sessionID)
+
+	clientTransport, serverTransport := mcp.NewInMemoryTransports()
+	serverSession, err := server.Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatalf("server.Connect: %v", err)
+	}
+	defer serverSession.Close()
+
+	client := mcp.NewClient(&mcp.Implementation{Name: "schema-test", Version: "test"}, nil)
+	clientSession, err := client.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatalf("client.Connect: %v", err)
+	}
+	defer clientSession.Close()
+
+	result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "atct_task_release",
+		Arguments: map[string]any{"task_id": "task-1"},
+	})
+	if err != nil {
+		t.Fatalf("CallTool(atct_task_release): %v", err)
+	}
+	if result == nil || result.IsError {
+		t.Fatalf("atct_task_release returned error result: %+v", result)
+	}
+
+	call := <-calls
+	if call.method != "task.release" {
+		t.Fatalf("RPC method = %q, want task.release", call.method)
+	}
+	if got := call.params["agent_session_id"]; got != sessionID {
+		t.Fatalf("task.release agent_session_id = %#v, want %s", got, sessionID)
+	}
+}
+
 func TestHandoffToolsInjectAgentSessionID(t *testing.T) {
 	ctx := context.Background()
 	socketPath, calls := startCapturingSchemaTestDaemon(t)

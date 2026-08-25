@@ -774,12 +774,13 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 
 	case "task.release":
 		var p struct {
-			TaskID string `json:"task_id"`
+			TaskID         string `json:"task_id"`
+			AgentSessionID string `json:"agent_session_id"`
 		}
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, err
 		}
-		tk, err := d.store.ReleaseTask(ctx, p.TaskID)
+		tk, err := d.store.ReleaseTaskAs(ctx, p.TaskID, p.AgentSessionID)
 		return marshal(tk, err)
 
 	case "handoff.request":
