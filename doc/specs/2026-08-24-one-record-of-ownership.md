@@ -194,3 +194,69 @@ web        11 箇所
 
 **役割を claim 以外から導かない。**「受領済みの handoff を持つ」は claim の
 置き換えであって、別系統の判定を足すのではない。**導出は 1 本のままにする。**
+
+## 10. 3 層が成立することの実測（2026-08-25・0.54.0）
+
+**1 節の欠陥が解けたことを、稼働中の daemon で確かめた。**3 つのセッションを別々に立て、
+daemon に直接 `session.role` を問うた（自己申告ではなく観測）。
+
+```
+$ printf '{"id":"r","method":"session.role","params":{"agent_session_id":"<id>"}}\n' \
+    | nc -U ~/.atct/atct.sock
+
+commander     {"role":"commander",   "project_id":"1ff70f35...","goal_id":"36d5332e..."}
+subcommander  {"role":"subcommander","project_id":"",          "goal_id":"419e0dff..."}
+executor      {"role":"executor",    "project_id":"",          "goal_id":""}
+```
+
+**中間層が成立したのはこれが初めてである。**1 節の実測（`{"role":"executor"}`）と比べること。
+
+ゴールは実際に進んだ。subcommander が task `8ec0e09c` を executor に渡し、`1bd6830` が着地した。
+
+### 10.1 スキルの委譲手順は 2 か所とも成立しない
+
+**そのまま実行して両方とも失敗した。**どちらも順序と前提の誤りで、daemon の欠陥ではない。
+
+**手順 1「渡す前に対象を claim しろ」** — claim が handoff を書くので、claim した後に
+handoff を要求すると部分一意索引に当たる。
+
+```
+atct_goal_claim(419e0dff)      → 成功
+atct_goal_handoff_request(...) → goal handoff already open:
+                                 goal "419e0dff..." has a live handoff owner
+```
+
+**渡す側は対象を持たない。親を持つ。**goal を渡す側は project claim を、task を渡す側は
+受領済みの goal handoff を持つ。
+
+**手順 4「まず role を確かめ、次に receive しろ」** — 役割は**受領済みの** goal handoff から
+導かれるので、受領前に問えば必ず `executor` が返る。
+
+```
+{"expected_role":"subcommander","matches":false,"role":"executor",
+ "project_id":"","goal_id":""}
+```
+
+**受領を先にする。**`atct_goal_handoff_receive` は開いた未受領の要求があるときしか通らないので、
+**受領の排他が誤配の防止を担い、役割の確認は事後の裏取りになる。**（決定 `96e311f2`）
+
+### 10.2 2 層の経路
+
+commander が task を配るには、**自分宛の goal handoff が要る**（`atct_goal_claim`）。
+project claim だけでは配れない。**それでも役割は commander のまま**である。
+
+```
+atct_goal_claim(36d5332e) → {"role":"commander"}
+```
+
+拒否のメッセージが `task handoff task is unclaimed` と、**このゴールで消したはずの概念を
+名乗る。**真の条件は「呼び出し元がその goal の handoff を受領していない」である（task `960c0051`）。
+
+### 10.3 なぜ検査が拾わなかったか
+
+`TestSessionRoleDerivesFromClaims` は `goal.claim` を直接 dispatch して subcommander を作る。
+**近道で状態を作っているので、request → receive の順路を一度も通っていない。**
+`tests/wrapper_test.bash` はスキルの文言と境界表の一致しか見ない。
+
+**「スキルに書いてある順番どおりに呼ぶと成立するか」を実行する検査が 1 つも無かった。**
+task `58ae6a12` がそれを足す。
