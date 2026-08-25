@@ -363,7 +363,10 @@ func (s *Store) UpdateTask(ctx context.Context, taskID string, status domain.Tas
 			return domain.Task{}, err
 		}
 	}
+	return s.updateTask(ctx, taskID, status, releaseHandoff)
+}
 
+func (s *Store) updateTask(ctx context.Context, taskID string, status domain.TaskStatus, releaseHandoff *TaskHandoff) (domain.Task, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return domain.Task{}, fmt.Errorf("begin tx: %w", err)
@@ -438,14 +441,24 @@ func (s *Store) authorizeTaskStatusRelease(ctx context.Context, taskID string, s
 
 	if releaseHandoff != nil {
 		ownerID := strings.TrimSpace(releaseHandoff.ReceivedBy)
-		if ownerID == agentSessionID {
+		isHolder := agentSessionID != "" && ownerID == agentSessionID
+		if isHolder {
+			return "", nil
+		}
+		taskProjectID, err := s.ProjectIDForTask(ctx, taskID)
+		if err != nil {
+			return "", fmt.Errorf("lookup task project for release: %w", err)
+		}
+		callerProjectID, sessionProjectErr := s.ProjectIDForAgentSession(ctx, agentSessionID)
+		isProjectBound := sessionProjectErr == nil && callerProjectID == taskProjectID
+		if isProjectBound {
 			return "", nil
 		}
 		if status == domain.TaskDone || status == domain.TaskDropped {
-			return "", fmt.Errorf("task %q has a work lock held by another agent session; only the lock holder can set it to %s; if that session is no longer running, return it to todo with atct_task_update, then acquire the work lock with atct_task_claim before retrying", taskID, status)
+			return "", fmt.Errorf("task %q has a work lock held by another agent session; only the lock holder or a caller bound to the task's project can set it to %s; if that session is no longer running, return it to todo with atct_task_update, then acquire the work lock with atct_task_claim before retrying", taskID, status)
 		}
 		if ownerID == "" || claimIsRunning(ctx, s, ownerID) {
-			return "", fmt.Errorf("task %q has a work lock held by another agent session that is still running; wait for it to finish or stop, then return it to todo with atct_task_update and acquire the work lock with atct_task_claim", taskID)
+			return "", fmt.Errorf("task %q has a work lock held by another agent session that is still running; only the lock holder or a caller bound to the task's project can release it; wait for it to finish or stop, then return it to todo with atct_task_update and acquire the work lock with atct_task_claim", taskID)
 		}
 		return "", nil
 	}
@@ -616,7 +629,16 @@ func firstOverlappingFile(files, otherFiles []string) (string, bool) {
 
 // ReleaseTask clears a task claim for the human stale-claim release path.
 func (s *Store) ReleaseTask(ctx context.Context, taskID string) (domain.Task, error) {
-	return s.UpdateTask(ctx, taskID, domain.TaskTodo, "")
+	releaseHandoff, err := s.openTaskHandoff(ctx, taskID)
+	if err != nil {
+		return domain.Task{}, err
+	}
+	return s.updateTask(ctx, taskID, domain.TaskTodo, releaseHandoff)
+}
+
+// ReleaseTaskAs clears a task claim through the agent authorization path.
+func (s *Store) ReleaseTaskAs(ctx context.Context, taskID, agentSessionID string) (domain.Task, error) {
+	return s.UpdateTask(ctx, taskID, domain.TaskTodo, agentSessionID)
 }
 
 func (s *Store) loadTask(ctx context.Context, taskID string) (domain.Task, error) {

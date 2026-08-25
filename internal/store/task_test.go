@@ -734,12 +734,14 @@ func TestOpenMigratesTasksFilesColumnWithoutLosingData(t *testing.T) {
 }
 
 type taskStatusClaimFixture struct {
-	store     *Store
-	ctx       context.Context
-	taskID    string
-	projectID string
-	holderID  string
-	otherID   string
+	store      *Store
+	ctx        context.Context
+	taskID     string
+	projectID  string
+	holderID   string
+	otherID    string
+	peerID     string
+	strangerID string
 }
 
 func newTaskStatusClaimFixture(t *testing.T, holderPID, otherPID int) taskStatusClaimFixture {
@@ -749,6 +751,10 @@ func newTaskStatusClaimFixture(t *testing.T, holderPID, otherPID int) taskStatus
 	project, err := s.CreateProject(ctx, "atct-status-claims", filepath.Join(t.TempDir(), "atct-status-claims"))
 	if err != nil {
 		t.Fatalf("CreateProject: %v", err)
+	}
+	strangerProject, err := s.CreateProject(ctx, "atct-status-claims-stranger", filepath.Join(t.TempDir(), "atct-status-claims-stranger"))
+	if err != nil {
+		t.Fatalf("CreateProject stranger: %v", err)
 	}
 	goal, err := s.CreateGoal(ctx, project.ID, "status claim guard", "human")
 	if err != nil {
@@ -760,12 +766,16 @@ func newTaskStatusClaimFixture(t *testing.T, holderPID, otherPID int) taskStatus
 	}
 	const holderID = "status-holder"
 	const otherID = "status-other"
+	const peerID = "status-peer"
+	const strangerID = "status-stranger"
 	for _, session := range []struct {
 		id  string
 		pid int
 	}{
 		{id: holderID, pid: holderPID},
 		{id: otherID, pid: otherPID},
+		{id: peerID, pid: os.Getpid()},
+		{id: strangerID, pid: os.Getpid()},
 	} {
 		if err := s.RegisterAgentSession(ctx, session.id, session.pid); err != nil {
 			t.Fatalf("RegisterAgentSession(%s): %v", session.id, err)
@@ -774,16 +784,24 @@ func newTaskStatusClaimFixture(t *testing.T, holderPID, otherPID int) taskStatus
 	if err := s.AssociateAgentSessionWithProject(ctx, holderID, project.ID); err != nil {
 		t.Fatalf("AssociateAgentSessionWithProject(%s): %v", holderID, err)
 	}
+	if err := s.AssociateAgentSessionWithProject(ctx, peerID, project.ID); err != nil {
+		t.Fatalf("AssociateAgentSessionWithProject(%s): %v", peerID, err)
+	}
+	if err := s.AssociateAgentSessionWithProject(ctx, strangerID, strangerProject.ID); err != nil {
+		t.Fatalf("AssociateAgentSessionWithProject(%s): %v", strangerID, err)
+	}
 	if _, err := s.ClaimTask(ctx, tasks[0].ID, holderID); err != nil {
 		t.Fatalf("ClaimTask: %v", err)
 	}
 	return taskStatusClaimFixture{
-		store:     s,
-		ctx:       ctx,
-		taskID:    tasks[0].ID,
-		projectID: project.ID,
-		holderID:  holderID,
-		otherID:   otherID,
+		store:      s,
+		ctx:        ctx,
+		taskID:     tasks[0].ID,
+		projectID:  project.ID,
+		holderID:   holderID,
+		otherID:    otherID,
+		peerID:     peerID,
+		strangerID: strangerID,
 	}
 }
 
@@ -826,6 +844,126 @@ func TestUpdateTaskRejectsTodoForRunningOtherClaim(t *testing.T) {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("UpdateTask(todo) error %q does not contain %q", err, want)
 		}
+	}
+}
+
+func TestReleaseTaskAllowsHumanPathWithRunningClaim(t *testing.T) {
+	fixture := newTaskStatusClaimFixture(t, os.Getpid(), os.Getpid())
+
+	released, err := fixture.store.ReleaseTask(fixture.ctx, fixture.taskID)
+	if err != nil {
+		t.Fatalf("ReleaseTask: %v", err)
+	}
+	handoff, err := fixture.store.openTaskHandoff(fixture.ctx, released.ID)
+	if err != nil {
+		t.Fatalf("load task handoff: %v", err)
+	}
+	if released.Status != domain.TaskTodo || handoff != nil {
+		t.Fatalf("human release did not clear running claim: status=%s handoff=%v", released.Status, handoff)
+	}
+}
+
+func TestUpdateTaskAllowsTodoForClaimHolder(t *testing.T) {
+	fixture := newTaskStatusClaimFixture(t, os.Getpid(), os.Getpid())
+
+	updated, err := fixture.store.UpdateTask(fixture.ctx, fixture.taskID, domain.TaskTodo, fixture.holderID)
+	if err != nil {
+		t.Fatalf("UpdateTask(todo): %v", err)
+	}
+	handoff, err := fixture.store.openTaskHandoff(fixture.ctx, updated.ID)
+	if err != nil {
+		t.Fatalf("load task handoff: %v", err)
+	}
+	if updated.Status != domain.TaskTodo || handoff != nil {
+		t.Fatalf("holder release did not clear claim: status=%s handoff=%v", updated.Status, handoff)
+	}
+}
+
+func TestUpdateTaskAllowsTodoForProjectBoundPeer(t *testing.T) {
+	fixture := newTaskStatusClaimFixture(t, os.Getpid(), os.Getpid())
+
+	updated, err := fixture.store.UpdateTask(fixture.ctx, fixture.taskID, domain.TaskTodo, fixture.peerID)
+	if err != nil {
+		t.Fatalf("UpdateTask(todo): %v", err)
+	}
+	handoff, err := fixture.store.openTaskHandoff(fixture.ctx, updated.ID)
+	if err != nil {
+		t.Fatalf("load task handoff: %v", err)
+	}
+	if updated.Status != domain.TaskTodo || handoff != nil {
+		t.Fatalf("project-bound peer release did not clear claim: status=%s handoff=%v", updated.Status, handoff)
+	}
+}
+
+func TestUpdateTaskAllowsDoneForProjectBoundPeer(t *testing.T) {
+	fixture := newTaskStatusClaimFixture(t, os.Getpid(), os.Getpid())
+
+	updated, err := fixture.store.UpdateTask(fixture.ctx, fixture.taskID, domain.TaskDone, fixture.peerID)
+	if err != nil {
+		t.Fatalf("UpdateTask(done): %v", err)
+	}
+	handoff, err := fixture.store.openTaskHandoff(fixture.ctx, updated.ID)
+	if err != nil {
+		t.Fatalf("load task handoff: %v", err)
+	}
+	if updated.Status != domain.TaskDone || handoff != nil {
+		t.Fatalf("project-bound peer completion did not clear claim: status=%s handoff=%v", updated.Status, handoff)
+	}
+}
+
+func TestUpdateTaskRejectsTodoForDifferentProjectCaller(t *testing.T) {
+	fixture := newTaskStatusClaimFixture(t, os.Getpid(), os.Getpid())
+
+	if _, err := fixture.store.UpdateTask(fixture.ctx, fixture.taskID, domain.TaskTodo, fixture.strangerID); err == nil {
+		t.Fatal("UpdateTask(todo) succeeded for a caller bound to another project")
+	}
+}
+
+func TestUpdateTaskRejectsDoneForDifferentProjectCaller(t *testing.T) {
+	fixture := newTaskStatusClaimFixture(t, os.Getpid(), os.Getpid())
+
+	if _, err := fixture.store.UpdateTask(fixture.ctx, fixture.taskID, domain.TaskDone, fixture.strangerID); err == nil {
+		t.Fatal("UpdateTask(done) succeeded for a caller bound to another project")
+	}
+}
+
+func TestUpdateTaskRejectsTodoForEmptyCaller(t *testing.T) {
+	fixture := newTaskStatusClaimFixture(t, os.Getpid(), os.Getpid())
+
+	if _, err := fixture.store.UpdateTask(fixture.ctx, fixture.taskID, domain.TaskTodo, ""); err == nil {
+		t.Fatal("UpdateTask(todo) succeeded for an empty agent session")
+	}
+}
+
+func TestUpdateTaskRejectsTodoForUnassociatedCaller(t *testing.T) {
+	fixture := newTaskStatusClaimFixture(t, os.Getpid(), os.Getpid())
+
+	if _, err := fixture.store.UpdateTask(fixture.ctx, fixture.taskID, domain.TaskTodo, fixture.otherID); err == nil {
+		t.Fatal("UpdateTask(todo) succeeded for an unassociated agent session")
+	}
+}
+
+func TestReleaseTaskAsAllowsProjectBoundPeer(t *testing.T) {
+	fixture := newTaskStatusClaimFixture(t, os.Getpid(), os.Getpid())
+
+	released, err := fixture.store.ReleaseTaskAs(fixture.ctx, fixture.taskID, fixture.peerID)
+	if err != nil {
+		t.Fatalf("ReleaseTaskAs: %v", err)
+	}
+	handoff, err := fixture.store.openTaskHandoff(fixture.ctx, released.ID)
+	if err != nil {
+		t.Fatalf("load task handoff: %v", err)
+	}
+	if released.Status != domain.TaskTodo || handoff != nil {
+		t.Fatalf("project-bound peer release did not clear claim: status=%s handoff=%v", released.Status, handoff)
+	}
+}
+
+func TestReleaseTaskAsRejectsDifferentProjectCaller(t *testing.T) {
+	fixture := newTaskStatusClaimFixture(t, os.Getpid(), os.Getpid())
+
+	if _, err := fixture.store.ReleaseTaskAs(fixture.ctx, fixture.taskID, fixture.strangerID); err == nil {
+		t.Fatal("ReleaseTaskAs succeeded for a caller bound to another project")
 	}
 }
 
