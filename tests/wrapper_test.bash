@@ -525,6 +525,86 @@ test_session_start_is_silent_without_atct_wrapper() {
   assert_eq '' "$output" 'missing atct wrapper must keep the hook silent'
 }
 
+recovery_section() {
+  sed -n '/^## Recover when your role comes back wrong$/,/^## Close a task/p' \
+    "$REPO_ROOT/skills/atct/SKILL.md"
+}
+
+recovery_section_contains() {
+  local needle="$1"
+  local section
+  section="$(recovery_section)"
+  grep -Fq -- "$needle" <<<"$section" ||
+    fail "recovery section does not contain <$needle>"
+}
+
+recovery_section_not_contains() {
+  local needle="$1"
+  local section
+  section="$(recovery_section)"
+  if grep -Fq -- "$needle" <<<"$section"; then
+    fail "recovery section must not contain <$needle>"
+  fi
+}
+
+test_recovery_section_has_role_entry() {
+  recovery_section_contains 'If `atct_role` returns `executor` while you still hold work that should be yours, stop working and read this section.'
+}
+
+test_recovery_section_prioritizes_session_identify() {
+  recovery_section_contains 'The first recovery path is `atct_session_identify`; follow `### Session keys` first.'
+}
+
+test_recovery_section_has_project_path() {
+  recovery_section_contains '- project: `atct_project_release` → `atct_project_claim`'
+}
+
+test_recovery_section_has_goal_path() {
+  recovery_section_contains '- goal: `atct_goal_handoff_complete` → `atct_goal_handoff_request` (the commander must issue the handoff again)'
+  recovery_section_contains 'A subcommander cannot restore its own goal; ask the commander to issue the goal handoff again'
+}
+
+test_recovery_section_has_task_path_and_non_repair_note() {
+  recovery_section_contains '- task: `atct_handoff_complete` (with only `task_id`) → `atct_task_claim`'
+  recovery_section_contains 'This is a procedure, not a repair; it becomes unnecessary once the issue is fixed.'
+}
+
+test_recovery_section_omits_session_header() {
+  recovery_section_not_contains 'Mcp-Session-Id'
+}
+
+test_recovery_section_omits_agent_sessions() {
+  recovery_section_not_contains 'agent_sessions'
+}
+
+test_recovery_section_omits_task_release() {
+  recovery_section_not_contains 'atct_task_release'
+}
+
+test_recovery_section_omits_task_update() {
+  recovery_section_not_contains 'atct_task_update'
+}
+
+test_recovery_section_omits_goal_release() {
+  recovery_section_not_contains 'atct_goal_release'
+}
+
+test_recovery_section_names_existing_tools() {
+  local section
+  local tool_names
+  local tool
+
+  section="$(recovery_section)"
+  tool_names="$(grep -oE 'atct_[a-z_]+' <<<"$section" | sort -u || true)"
+  [[ -n "$tool_names" ]] || fail 'recovery section names no tools'
+
+  for tool in $tool_names; do
+    grep -Eq "Name:[[:space:]]+\"$tool\"" \
+      "$REPO_ROOT/internal/mcpshim/tools.go" ||
+      fail "recovery section names a tool that does not exist: $tool"
+  done
+}
+
 test_delegated_claim_contract_is_explicit() {
   local atct_skill="$REPO_ROOT/skills/atct/SKILL.md"
   local start_skill="$REPO_ROOT/skills/start/SKILL.md"
@@ -702,6 +782,17 @@ test_role_contract_uses_neutral_language
 test_role_boundaries_cover_version_control_and_delegation_direction
 test_role_contract_matches_implementation
 test_role_response_does_not_leak_other_boundaries
+test_recovery_section_has_role_entry
+test_recovery_section_prioritizes_session_identify
+test_recovery_section_has_project_path
+test_recovery_section_has_goal_path
+test_recovery_section_has_task_path_and_non_repair_note
+test_recovery_section_omits_session_header
+test_recovery_section_omits_agent_sessions
+test_recovery_section_omits_task_release
+test_recovery_section_omits_task_update
+test_recovery_section_omits_goal_release
+test_recovery_section_names_existing_tools
 test_stop_hook_only_reports
 test_hooks_json_keeps_session_start_and_pre_tool_use_sections
 test_stop_hook_file_is_executable_but_other_hooks_remain
