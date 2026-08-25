@@ -1,6 +1,6 @@
 {
   "name": "atct",
-  "version": "0.55.0",
+  "version": "0.56.0",
   "description": "Declare tasks, claim work, and ask a human for decisions without leaving the session.",
   "author": {
     "name": "michiomochi",
