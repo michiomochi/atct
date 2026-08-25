@@ -12,6 +12,8 @@ const NON_SCREEN_EVENT_NAMES = [
   // wakeup events are agent signals, not reasons for a human dashboard refresh.
   "wakeup",
   "wakeup.discrepancy",
+  // handoff_yielded saves no state, so it is not a reason for a human dashboard refresh.
+  "handoff_yielded",
 ] as const;
 
 function readServerEventNames(): string[] {
