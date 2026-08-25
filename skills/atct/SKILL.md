@@ -61,8 +61,6 @@ that worker is started:
 1. Hold the parent, not the task. The delegator does not hold the task; it must
    have received the handoff for that task's goal before handing it off.
 
-Delegating a task requires a received goal handoff, not a project claim. A two-layer delegation keeps the commander role while the commander delegates the goal tasks.
-
 2. Record the handoff before waking the worker.
    The delegator must call `atct_handoff_request` with a unique handoff ID and
    the task ID. Wait for the request to succeed before waking the
@@ -96,6 +94,10 @@ Delegating a task requires a received goal handoff, not a project claim. A two-l
    three. Task count and compression count are not correlated: in that same
    measurement, the three-task pane compressed twice while the one-task pane
    compressed seven times.
+
+### Two-layer delegation
+
+Delegating a task requires a received goal handoff, not a project claim. For two-layer delegation, the commander calls `atct_goal_claim` to create a goal handoff addressed to itself. The project claim is checked first by `session.role` in `internal/daemon/handler.go`, so the role remains `commander`. Then the commander calls `atct_handoff_request` to delegate each task.
 
 The worker must perform both instructions itself before doing any work. The
 delegator must not run either instruction on the worker's behalf or treat a
