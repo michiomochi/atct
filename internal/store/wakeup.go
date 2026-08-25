@@ -13,6 +13,7 @@ const (
 	EventWakeup                             = "wakeup"
 	EventKeepalive                          = "keepalive"
 	EventWakeupDiscrepancy                  = "wakeup.discrepancy"
+	EventHandoffReported                    = "handoff_reported"
 	EventDetectionCompletionReportMissing   = "detection.completion_report_missing"
 	EventDetectionCommitsMissing            = "detection.commits_missing"
 	EventDetectionUndeclaredGoal            = "detection.undeclared_goal"
@@ -50,12 +51,22 @@ type WakeupDiscrepancyEvent struct {
 // DetectionEvent identifies the project and object that need attention for a
 // condition-specific detection.
 type DetectionEvent struct {
-	DetectionID string `json:"detection_id"`
-	DecisionID  string `json:"decision_id,omitempty"`
-	ProjectID   string `json:"project_id"`
-	GoalID      string `json:"goal_id,omitempty"`
-	TaskID      string `json:"task_id,omitempty"`
-	HandoffID   string `json:"handoff_id,omitempty"`
+	DetectionID    string `json:"detection_id"`
+	DecisionID     string `json:"decision_id,omitempty"`
+	ProjectID      string `json:"project_id"`
+	GoalID         string `json:"goal_id,omitempty"`
+	TaskID         string `json:"task_id,omitempty"`
+	HandoffID      string `json:"handoff_id,omitempty"`
+	CompleteReport string `json:"complete_report,omitempty"`
+}
+
+// ReportedHandoff is a completed task or goal handoff that the daemon has not
+// yet announced during this process lifetime.
+type ReportedHandoff struct {
+	ID             string
+	GoalID         string
+	TaskID         string
+	CompleteReport string
 }
 
 // KeepaliveEvent lets a watch process distinguish a quiet daemon from a dead
@@ -84,6 +95,7 @@ type WakeupState struct {
 	CommitlessGoals            []domain.Goal
 	HandoffsAwaitingReceipt    []TaskHandoff
 	HandoffsAwaitingReport     []TaskHandoff
+	HandoffsReported           []ReportedHandoff
 	UndelegatedClaims          []domain.Task
 	AnsweredUnappliedDecisions []domain.Decision
 	DefaultUnappliedDecisions  []domain.Decision
@@ -159,6 +171,19 @@ func (s *Store) DetectWakeup(ctx context.Context, projectID string) (WakeupState
 		if err != nil {
 			return WakeupState{}, err
 		}
+		goalHandoffs, err := s.ListGoalHandoffs(ctx, goal.ID)
+		if err != nil {
+			return WakeupState{}, err
+		}
+		for _, handoff := range goalHandoffs {
+			if handoff.RequestedAt != nil && handoff.ReceivedAt != nil && handoff.CompletedReportAt != nil {
+				state.HandoffsReported = append(state.HandoffsReported, ReportedHandoff{
+					ID:             handoff.ID,
+					GoalID:         handoff.GoalID,
+					CompleteReport: handoff.CompleteReport,
+				})
+			}
+		}
 		hasOpenCompletionDecision := false
 		for _, decision := range openDecisions {
 			if decision.Kind == domain.KindCompletion && decision.Status == domain.DecisionOpen {
@@ -178,6 +203,13 @@ func (s *Store) DetectWakeup(ctx context.Context, projectID string) (WakeupState
 				}
 				taskHandoffs[task.ID] = handoffs
 				for _, handoff := range handoffs {
+					if handoff.RequestedAt != nil && handoff.ReceivedAt != nil && handoff.CompletedReportAt != nil {
+						state.HandoffsReported = append(state.HandoffsReported, ReportedHandoff{
+							ID:             handoff.ID,
+							TaskID:         handoff.TaskID,
+							CompleteReport: handoff.CompleteReport,
+						})
+					}
 					if handoff.ReceivedAt != nil && handoff.CompletedReportAt == nil {
 						taskClaimed[task.ID] = true
 						break
@@ -316,6 +348,9 @@ func (s *Store) DetectWakeup(ctx context.Context, projectID string) (WakeupState
 	}
 	if state.HandoffsAwaitingReport == nil {
 		state.HandoffsAwaitingReport = []TaskHandoff{}
+	}
+	if state.HandoffsReported == nil {
+		state.HandoffsReported = []ReportedHandoff{}
 	}
 	if state.UndelegatedClaims == nil {
 		state.UndelegatedClaims = []domain.Task{}

@@ -224,6 +224,17 @@ func (t *wakeupTracker) evaluateWith(ctx context.Context, s *store.Store, now ti
 			}
 			recordDetection(store.EventDetectionHandoffUnreported, handoff.ID, *handoff.ReceivedAt, detectionHandoffUnreportedAfter, "", handoff.TaskID, handoff.ID, "")
 		}
+		for _, handoff := range state.HandoffsReported {
+			currentDetectionKeys[detectionTrackerKey(store.EventHandoffReported, handoff.ID)] = struct{}{}
+			event, ok := t.publishDetectionWithDecision(now, time.Time{}, 0, store.EventHandoffReported, handoff.ID, project.ID, handoff.GoalID, handoff.TaskID, handoff.ID, "")
+			if !ok {
+				continue
+			}
+			detection := event.Data.(store.DetectionEvent)
+			detection.CompleteReport = handoff.CompleteReport
+			event.Data = detection
+			events = append(events, event)
+		}
 		for _, task := range state.UndelegatedClaims {
 			claimedAt := taskHandoffClaimedAt(openTaskHandoffs[task.ID])
 			if claimedAt == nil {

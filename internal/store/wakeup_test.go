@@ -595,6 +595,24 @@ func TestWakeupEventMarshalsActionableGoalCount(t *testing.T) {
 	}
 }
 
+func TestDetectionEventJSONIncludesCompletionReport(t *testing.T) {
+	event := DetectionEvent{
+		DetectionID:    "detection-report",
+		ProjectID:      "project",
+		TaskID:         "task",
+		HandoffID:      "handoff",
+		CompleteReport: "task report",
+	}
+	got, err := json.Marshal(event)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+	const want = `{"detection_id":"detection-report","project_id":"project","task_id":"task","handoff_id":"handoff","complete_report":"task report"}`
+	if string(got) != want {
+		t.Fatalf("detection JSON = %s, want %s", got, want)
+	}
+}
+
 func TestDetectWakeupDoesNotReportAllDroppedGoalAsCommitless(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
@@ -727,6 +745,80 @@ func TestDetectWakeupCollectsStalledHandoffCandidates(t *testing.T) {
 		if handoff.ID == completed.ID {
 			t.Fatalf("completed handoff %s was reported as awaiting report", completed.ID)
 		}
+	}
+}
+
+func TestDetectWakeupCollectsReportedTaskAndGoalHandoffs(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	project, err := s.CreateProject(ctx, "atct", "/repos/atct")
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	goal, err := s.CreateGoal(ctx, project.ID, "Reported handoffs", "human")
+	if err != nil {
+		t.Fatalf("CreateGoal: %v", err)
+	}
+	goalForGoalHandoff, err := s.CreateGoal(ctx, project.ID, "Reported goal handoff", "human")
+	if err != nil {
+		t.Fatalf("CreateGoal goal handoff: %v", err)
+	}
+	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "reported-handoffs", []string{"Reported task"}, []string{"Complete the reported task."})
+	if err != nil {
+		t.Fatalf("DeclareTasks: %v", err)
+	}
+
+	const requesterID = "reported-handoff-requester"
+	const receiverID = "reported-handoff-receiver"
+	addLiveParentGoalClaim(t, s, tasks[0].ID, requesterID)
+	addLiveProjectClaim(t, s, goalForGoalHandoff.ID, requesterID)
+	addTestAgentSession(t, s, receiverID)
+
+	taskHandoff, err := s.RequestTaskHandoff(ctx, "reported-task-handoff", tasks[0].ID, requesterID, "")
+	if err != nil {
+		t.Fatalf("RequestTaskHandoff: %v", err)
+	}
+	if _, err := s.ReceiveTaskHandoff(ctx, taskHandoff.ID, tasks[0].ID, receiverID); err != nil {
+		t.Fatalf("ReceiveTaskHandoff: %v", err)
+	}
+	if _, err := s.CompleteTaskHandoff(ctx, taskHandoff.ID, tasks[0].ID, "task report"); err != nil {
+		t.Fatalf("CompleteTaskHandoff: %v", err)
+	}
+
+	goalHandoff, err := s.RequestGoalHandoff(ctx, "reported-goal-handoff", goalForGoalHandoff.ID, requesterID, "")
+	if err != nil {
+		t.Fatalf("RequestGoalHandoff: %v", err)
+	}
+	if _, err := s.ReceiveGoalHandoff(ctx, goalHandoff.ID, goalForGoalHandoff.ID, receiverID); err != nil {
+		t.Fatalf("ReceiveGoalHandoff: %v", err)
+	}
+	if _, err := s.CompleteGoalHandoff(ctx, goalHandoff.ID, goalForGoalHandoff.ID, "goal report"); err != nil {
+		t.Fatalf("CompleteGoalHandoff: %v", err)
+	}
+
+	state, err := s.DetectWakeup(ctx, project.ID)
+	if err != nil {
+		t.Fatalf("DetectWakeup: %v", err)
+	}
+	if len(state.HandoffsReported) != 2 {
+		t.Fatalf("reported handoffs = %#v, want task and goal reports", state.HandoffsReported)
+	}
+	want := map[string]ReportedHandoff{
+		taskHandoff.ID: {ID: taskHandoff.ID, TaskID: tasks[0].ID, CompleteReport: "task report"},
+		goalHandoff.ID: {ID: goalHandoff.ID, GoalID: goalForGoalHandoff.ID, CompleteReport: "goal report"},
+	}
+	for _, reported := range state.HandoffsReported {
+		expected, ok := want[reported.ID]
+		if !ok {
+			t.Fatalf("unexpected reported handoff = %+v", reported)
+		}
+		if reported.ID != expected.ID || reported.TaskID != expected.TaskID || reported.GoalID != expected.GoalID || reported.CompleteReport != expected.CompleteReport {
+			t.Fatalf("reported handoff = %+v, want %+v", reported, expected)
+		}
+		delete(want, reported.ID)
+	}
+	if len(want) != 0 {
+		t.Fatalf("missing reported handoffs = %#v", want)
 	}
 }
 

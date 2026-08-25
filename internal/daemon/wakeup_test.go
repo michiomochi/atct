@@ -780,6 +780,66 @@ func TestWakeupTrackerPublishesStalledHandoffDetections(t *testing.T) {
 	}
 }
 
+func TestWakeupTrackerPublishesReportedTaskAndGoalHandoffsImmediately(t *testing.T) {
+	ctx := context.Background()
+	s := newWakeupTestStore(t)
+	projectID, goalID := newWakeupTestGoal(t, s, "reported-handoffs")
+	tracker := newWakeupTracker()
+	start := time.Date(2026, 8, 25, 12, 0, 0, 0, time.UTC)
+	state := store.WakeupState{
+		HandoffsReported: []store.ReportedHandoff{
+			{ID: "reported-task", TaskID: "task-1", CompleteReport: "task report"},
+			{ID: "reported-goal", GoalID: goalID, CompleteReport: "goal report"},
+		},
+	}
+	detect := func(context.Context, string) (store.WakeupState, error) {
+		return state, nil
+	}
+
+	events, err := tracker.evaluateWith(ctx, s, start, detect)
+	if err != nil {
+		t.Fatalf("reported handoff evaluate: %v", err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("reported handoff events = %#v, want task and goal reports", events)
+	}
+	want := map[string]struct {
+		goalID         string
+		taskID         string
+		handoffID      string
+		completeReport string
+	}{
+		"reported-task": {taskID: "task-1", handoffID: "reported-task", completeReport: "task report"},
+		"reported-goal": {goalID: goalID, handoffID: "reported-goal", completeReport: "goal report"},
+	}
+	for _, event := range events {
+		if event.Name != store.EventHandoffReported {
+			t.Fatalf("unexpected event = %#v, want %q", event, store.EventHandoffReported)
+		}
+		detection, ok := event.Data.(store.DetectionEvent)
+		if !ok {
+			t.Fatalf("reported event data type = %T, want store.DetectionEvent", event.Data)
+		}
+		expected, ok := want[detection.HandoffID]
+		if !ok {
+			t.Fatalf("unexpected reported handoff = %+v", detection)
+		}
+		if detection.ProjectID != projectID || detection.GoalID != expected.goalID || detection.TaskID != expected.taskID || detection.HandoffID != expected.handoffID || detection.CompleteReport != expected.completeReport || detection.DetectionID == "" {
+			t.Fatalf("reported detection = %+v, want project=%s goal=%s task=%s handoff=%s report=%q", detection, projectID, expected.goalID, expected.taskID, expected.handoffID, expected.completeReport)
+		}
+		delete(want, detection.HandoffID)
+	}
+	if len(want) != 0 {
+		t.Fatalf("missing reported handoff events = %#v", want)
+	}
+
+	if events, err := tracker.evaluateWith(ctx, s, start.Add(time.Hour), detect); err != nil {
+		t.Fatalf("duplicate reported handoff evaluate: %v", err)
+	} else if len(events) != 0 {
+		t.Fatalf("duplicate reported handoff events = %#v, want empty", events)
+	}
+}
+
 func TestWakeupTrackerPublishesUnappliedDecisionAndStaleClaimDetections(t *testing.T) {
 	ctx := context.Background()
 	s := newWakeupTestStore(t)

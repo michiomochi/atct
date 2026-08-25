@@ -48,6 +48,7 @@ type watchDecision struct {
 	GoalID                     string  `json:"goal_id"`
 	TaskID                     string  `json:"task_id"`
 	HandoffID                  string  `json:"handoff_id"`
+	CompleteReport             string  `json:"complete_report"`
 }
 
 type watchInbox struct {
@@ -519,7 +520,7 @@ func emitWatchDecisionWithState(out io.Writer, eventName string, decision watchD
 	if !ok {
 		return nil
 	}
-	if eventName == "goal.created" || strings.HasPrefix(eventName, "detection.") {
+	if eventName == "goal.created" || strings.HasPrefix(eventName, "detection.") || eventName == "handoff_reported" {
 		target := decision.GoalID
 		if strings.HasPrefix(eventName, "detection.") {
 			target = decision.DecisionID
@@ -532,6 +533,8 @@ func emitWatchDecisionWithState(out io.Writer, eventName string, decision watchD
 			if target == "" {
 				target = decision.TaskID
 			}
+		} else if eventName == "handoff_reported" {
+			target = decision.HandoffID
 		}
 		if target == "" {
 			if eventName == "goal.created" {
@@ -627,6 +630,12 @@ func formatWatchDecision(eventName string, decision watchDecision) (string, bool
 		return fmt.Sprintf("atct detection: handoff %s has no receipt", decision.HandoffID), true
 	case "detection.handoff_unreported":
 		return fmt.Sprintf("atct detection: handoff %s has no completion report", decision.HandoffID), true
+	case "handoff_reported":
+		target := "goal " + decision.GoalID
+		if decision.TaskID != "" {
+			target = "task " + decision.TaskID
+		}
+		return fmt.Sprintf("atct handoff reported: %s (handoff %s): %s", target, decision.HandoffID, watchHandoffReportPreview(decision.CompleteReport)), true
 	case "detection.claim_undelegated":
 		return fmt.Sprintf("atct detection: task %s has no handoff request", decision.TaskID), true
 	case "detection.decision_answered_unapplied":
@@ -665,6 +674,16 @@ func formatWatchKeepaliveMissing(timeout time.Duration) string {
 
 func (d watchDecision) defaultApplied() bool {
 	return d.SettledByDefault || (d.DefaultAppliedAt != nil && strings.TrimSpace(*d.DefaultAppliedAt) != "")
+}
+
+func watchHandoffReportPreview(report string) string {
+	report = strings.Join(strings.Fields(report), " ")
+	const maxReportRunes = 80
+	runes := []rune(report)
+	if len(runes) <= maxReportRunes {
+		return report
+	}
+	return string(runes[:maxReportRunes]) + "…"
 }
 
 func waitForWatchReconnect(ctx context.Context, out io.Writer, interval time.Duration) error {
