@@ -158,6 +158,21 @@ session and identify only that caller; the caller's agent name is suitable. If
 a reconnect causes the role to appear wrong, call `atct_session_identify` again
 with the same key to return to the original session row.
 
+## Recover when your role comes back wrong
+
+If `atct_role` returns `executor` while you still hold work that should be yours, stop working and read this section.
+
+The first recovery path is `atct_session_identify`; follow `### Session keys` first.
+
+Only if the session key does not restore your role, recover each layer as follows:
+
+- project: `atct_project_release` → `atct_project_claim`
+- goal: `atct_goal_handoff_complete` → `atct_goal_handoff_request` (the commander must issue the handoff again)
+- task: `atct_handoff_complete` (with only `task_id`) → `atct_task_claim`
+
+A subcommander cannot restore its own goal; ask the commander to issue the goal handoff again because reissuing it requires a project claim. This is a procedure, not a repair; it becomes unnecessary once the issue is fixed.
+For background, see `doc/specs/2026-08-25-session-id-swap.md`.
+
 ## Close a task the moment it is finished
 
 Call `atct_task_update` with `done` as soon as the work lands, before you claim
