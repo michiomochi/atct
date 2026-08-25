@@ -1,9 +1,11 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"syscall"
 	"testing"
 	"time"
@@ -45,12 +47,71 @@ func TestProcessStartedAtReturnsKernelStartTimeForCurrentProcess(t *testing.T) {
 	}
 }
 
+func TestProcessStartedAtMatchesPSOutput(t *testing.T) {
+	want, err := exec.Command("ps", "-p", fmt.Sprintf("%d", os.Getpid()), "-o", "lstart=").Output()
+	if err != nil {
+		t.Skipf("skip: ps is unavailable: %v", err)
+	}
+
+	got, err := realProcessStartedAt(os.Getpid())
+	if err != nil {
+		t.Fatalf("real process start time: %v", err)
+	}
+	if !bytes.Equal([]byte(got), want) {
+		t.Fatalf("realProcessStartedAt = %q; ps = %q", got, want)
+	}
+}
+
+func TestFormatProcessStartedAtUsesFixedPSLayout(t *testing.T) {
+	tests := []struct {
+		name string
+		when time.Time
+		want string
+	}{
+		{
+			name: "single digit day",
+			when: time.Date(2026, time.August, 5, 9, 3, 1, 0, time.Local),
+			want: "Wed Aug  5 09:03:01 2026    \n",
+		},
+		{
+			name: "two digit day",
+			when: time.Date(2026, time.August, 25, 18, 7, 20, 0, time.Local),
+			want: "Tue Aug 25 18:07:20 2026    \n",
+		},
+		{
+			name: "single digit day in December",
+			when: time.Date(2026, time.December, 1, 0, 0, 0, 0, time.Local),
+			want: "Tue Dec  1 00:00:00 2026    \n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := formatProcessStartedAt(tt.when.Unix(), 0)
+			if got != tt.want {
+				t.Fatalf("formatProcessStartedAt = %q; want %q", got, tt.want)
+			}
+			if len(got) != 29 {
+				t.Fatalf("formatProcessStartedAt length = %d; want 29", len(got))
+			}
+		})
+	}
+}
+
 func TestProcessStartedAtRejectsMissingProcess(t *testing.T) {
 	useRealProcessStartedAt(t)
 	if _, err := processStartedAt(999999); err == nil {
 		t.Fatal("processStartedAt(missing pid) returned nil error")
 	} else {
 		t.Logf("processStartedAt missing pid=999999: %v", err)
+	}
+}
+
+func TestProcessStartedAtRejectsNonPositivePID(t *testing.T) {
+	for _, pid := range []int{0, -1} {
+		if _, err := realProcessStartedAt(pid); err == nil {
+			t.Errorf("realProcessStartedAt(%d) returned nil error", pid)
+		}
 	}
 }
 

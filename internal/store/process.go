@@ -1,24 +1,12 @@
 package store
 
 import (
-	"fmt"
-	"os/exec"
-	"strconv"
+	"time"
 )
 
 var processStartedAt = realProcessStartedAt
 
-func realProcessStartedAt(pid int) (string, error) {
-	if pid <= 0 {
-		return "", fmt.Errorf("pid must be positive: %d", pid)
-	}
-
-	startedAt, err := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "lstart=").Output()
-	if err != nil {
-		return "", fmt.Errorf("get process start time for pid %d: %w", pid, err)
-	}
-	if len(startedAt) == 0 {
-		return "", fmt.Errorf("process %d has no start time", pid)
-	}
-	return string(startedAt), nil
+func formatProcessStartedAt(sec int64, usec int32) string {
+	startedAt := time.Unix(sec, int64(usec)*1000).Local()
+	return startedAt.Format("Mon Jan _2 15:04:05 2006") + "    \n"
 }
