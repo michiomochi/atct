@@ -168,6 +168,139 @@ func TestGoalHandoffRequestReceiveAndComplete(t *testing.T) {
 	}
 }
 
+func TestListGoalSessionsIncludesSubcommander(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	goalID := newTestGoal(t, s)
+	addTestAgentSession(t, s, "goal-sessions-subcommander")
+
+	canonicalID, _, err := s.IdentifyAgentSession(ctx, "goal-sessions-subcommander", "atct-goal-sessions-subcommander")
+	if err != nil {
+		t.Fatalf("IdentifyAgentSession failed: %v", err)
+	}
+	addGoalHandoffDirect(t, s, "goal-sessions-goal-handoff", goalID, canonicalID, canonicalID)
+
+	sessions, err := s.ListGoalSessions(ctx, goalID)
+	if err != nil {
+		t.Fatalf("ListGoalSessions failed: %v", err)
+	}
+	if len(sessions) != 1 {
+		t.Fatalf("got %d sessions, want 1: %+v", len(sessions), sessions)
+	}
+	if got := sessions[0]; got.SessionKey != "atct-goal-sessions-subcommander" || got.Role != "subcommander" || !got.HandoffOpen {
+		t.Fatalf("unexpected subcommander session: %+v", got)
+	}
+}
+
+func TestListGoalSessionsDeduplicatesExecutorTaskHandoffs(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	taskIDs := addTestTasks(t, s, 2)
+	var goalID string
+	if err := s.DB().QueryRowContext(ctx, "SELECT goal_id FROM tasks WHERE id = ?", taskIDs[0]).Scan(&goalID); err != nil {
+		t.Fatalf("find task goal: %v", err)
+	}
+	addTestAgentSession(t, s, "goal-sessions-executor")
+
+	canonicalID, _, err := s.IdentifyAgentSession(ctx, "goal-sessions-executor", "atct-goal-sessions-executor")
+	if err != nil {
+		t.Fatalf("IdentifyAgentSession failed: %v", err)
+	}
+	addTaskHandoffDirect(t, s, "goal-sessions-task-handoff-1", taskIDs[0], canonicalID, canonicalID)
+	const secondHandoffID = "goal-sessions-task-handoff-2"
+	if _, err := s.DB().ExecContext(ctx, `
+		INSERT INTO task_handoffs (
+			id, task_id, requested_by, requested_at, request_report,
+			received_by, received_at, completed_report_at, complete_report
+		) VALUES (?, ?, ?, ?, NULL, ?, ?, NULL, NULL)
+	`, secondHandoffID, taskIDs[1], canonicalID, "now", canonicalID, "now"); err != nil {
+		t.Fatalf("insert second task handoff: %v", err)
+	}
+	t.Cleanup(func() {
+		if _, err := s.DB().ExecContext(ctx, `DELETE FROM task_handoffs WHERE id = ?`, secondHandoffID); err != nil {
+			t.Errorf("delete second task handoff %q: %v", secondHandoffID, err)
+		}
+	})
+
+	sessions, err := s.ListGoalSessions(ctx, goalID)
+	if err != nil {
+		t.Fatalf("ListGoalSessions failed: %v", err)
+	}
+	if len(sessions) != 1 {
+		t.Fatalf("got %d sessions, want one deduplicated executor: %+v", len(sessions), sessions)
+	}
+	if got := sessions[0]; got.SessionKey != "atct-goal-sessions-executor" || got.Role != "executor" || !got.HandoffOpen {
+		t.Fatalf("unexpected executor session: %+v", got)
+	}
+}
+
+func TestListGoalSessionsExcludesEmptySessionKeys(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	goalID := newTestGoal(t, s)
+	addTestAgentSession(t, s, "goal-sessions-empty")
+	addGoalHandoffDirect(t, s, "goal-sessions-empty-key-handoff", goalID, "goal-sessions-empty", "goal-sessions-empty")
+
+	sessions, err := s.ListGoalSessions(ctx, goalID)
+	if err != nil {
+		t.Fatalf("ListGoalSessions failed: %v", err)
+	}
+	if len(sessions) != 0 {
+		t.Fatalf("got sessions for an empty session key: %+v", sessions)
+	}
+}
+
+func TestListGoalSessionsIncludesCompletedHandoffs(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	goalID := newTestGoal(t, s)
+	addTestAgentSession(t, s, "goal-sessions-completed")
+
+	canonicalID, _, err := s.IdentifyAgentSession(ctx, "goal-sessions-completed", "atct-goal-sessions-completed")
+	if err != nil {
+		t.Fatalf("IdentifyAgentSession failed: %v", err)
+	}
+	const handoffID = "goal-sessions-completed-handoff"
+	addGoalHandoffDirect(t, s, handoffID, goalID, canonicalID, canonicalID)
+	if _, err := s.DB().ExecContext(ctx, "UPDATE goal_handoffs SET completed_report_at = ? WHERE id = ?", "completed", handoffID); err != nil {
+		t.Fatalf("complete direct goal handoff: %v", err)
+	}
+
+	sessions, err := s.ListGoalSessions(ctx, goalID)
+	if err != nil {
+		t.Fatalf("ListGoalSessions failed: %v", err)
+	}
+	if len(sessions) != 1 || sessions[0].HandoffOpen {
+		t.Fatalf("completed handoff was not returned as closed: %+v", sessions)
+	}
+}
+
+func TestListGoalSessionsPrefersSubcommanderRole(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	taskIDs := addTestTasks(t, s, 1)
+	var goalID string
+	if err := s.DB().QueryRowContext(ctx, "SELECT goal_id FROM tasks WHERE id = ?", taskIDs[0]).Scan(&goalID); err != nil {
+		t.Fatalf("find task goal: %v", err)
+	}
+	addTestAgentSession(t, s, "goal-sessions-dual")
+
+	canonicalID, _, err := s.IdentifyAgentSession(ctx, "goal-sessions-dual", "atct-goal-sessions-dual")
+	if err != nil {
+		t.Fatalf("IdentifyAgentSession failed: %v", err)
+	}
+	addGoalHandoffDirect(t, s, "goal-sessions-dual-goal-handoff", goalID, canonicalID, canonicalID)
+	addTaskHandoffDirect(t, s, "goal-sessions-dual-task-handoff", taskIDs[0], canonicalID, canonicalID)
+
+	sessions, err := s.ListGoalSessions(ctx, goalID)
+	if err != nil {
+		t.Fatalf("ListGoalSessions failed: %v", err)
+	}
+	if len(sessions) != 1 || sessions[0].Role != "subcommander" {
+		t.Fatalf("subcommander role was not preferred: %+v", sessions)
+	}
+}
+
 func TestGoalHandoffReportsAreStored(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

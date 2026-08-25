@@ -19,6 +19,10 @@ type GoalGetIn struct {
 	GoalID string `json:"goal_id"`
 }
 
+type GoalSessionsIn struct {
+	GoalID string `json:"goal_id"`
+}
+
 type GoalClaimIn struct {
 	GoalID string `json:"goal_id"`
 }
@@ -392,6 +396,16 @@ func Register(server *mcp.Server, c *Client, agentSessionID string) {
 		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in GoalGetIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
 		return callWithUnappliedDecisions(ctx, c, "goal.get", map[string]any{
+			"goal_id": in.GoalID,
+		})
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:         "atct_goal_sessions",
+		Description:  "List the session keys, roles, and handoff state for a goal.",
+		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in GoalSessionsIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
+		return callWithUnappliedDecisions(ctx, c, "goal.sessions", map[string]any{
 			"goal_id": in.GoalID,
 		})
 	})

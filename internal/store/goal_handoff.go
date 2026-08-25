@@ -33,6 +33,13 @@ type GoalHandoff struct {
 	CompletedReportAt *time.Time
 }
 
+// GoalSession identifies an agent session that received a handoff for a goal.
+type GoalSession struct {
+	SessionKey  string
+	Role        string
+	HandoffOpen bool
+}
+
 func goalHandoffFromRow(row sqlcgen.GoalHandoff) (GoalHandoff, error) {
 	handoff := GoalHandoff{
 		ID:             row.ID,
@@ -333,6 +340,24 @@ func (s *Store) ListGoalHandoffs(ctx context.Context, goalID string) ([]GoalHand
 		handoffs = append(handoffs, handoff)
 	}
 	return handoffs, nil
+}
+
+// ListGoalSessions returns the identified sessions that received a handoff for a goal.
+func (s *Store) ListGoalSessions(ctx context.Context, goalID string) ([]GoalSession, error) {
+	rows, err := sqlcgen.New(s.db).ListGoalSessionKeys(ctx, goalID)
+	if err != nil {
+		return nil, fmt.Errorf("list goal sessions: %w", err)
+	}
+
+	sessions := make([]GoalSession, 0, len(rows))
+	for _, row := range rows {
+		sessions = append(sessions, GoalSession{
+			SessionKey:  row.SessionKey,
+			Role:        row.Role,
+			HandoffOpen: row.HandoffOpen != 0,
+		})
+	}
+	return sessions, nil
 }
 
 // ListOpenGoalHandoffs returns all incomplete goal handoffs with one query.

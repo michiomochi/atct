@@ -588,6 +588,19 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 			"tasks": tasks,
 		}, nil)
 
+	case "goal.sessions":
+		var p struct {
+			GoalID string `json:"goal_id"`
+		}
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		sessions, err := d.store.ListGoalSessions(ctx, p.GoalID)
+		if err != nil {
+			return nil, err
+		}
+		return marshal(map[string]any{"sessions": sessions}, nil)
+
 	case "goal.create":
 		var p struct {
 			Cwd     string `json:"cwd"`

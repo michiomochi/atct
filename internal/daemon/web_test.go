@@ -169,7 +169,7 @@ func TestHTTPHandlerMCPInitializeReturnsStreamableResponse(t *testing.T) {
 	}
 }
 
-func TestHTTPHandlerMCPListsTwentyFiveTools(t *testing.T) {
+func TestHTTPHandlerMCPListsTwentySixTools(t *testing.T) {
 	fixture := newMCPHTTPTestServer(t)
 	client := newMCPHTTPTestClient(fixture.server.URL + "/mcp")
 	client.initialize(t)
@@ -181,8 +181,8 @@ func TestHTTPHandlerMCPListsTwentyFiveTools(t *testing.T) {
 	if !ok {
 		t.Fatalf("tools/list result.tools = %T, want array", result["tools"])
 	}
-	if len(tools) != 25 {
-		t.Fatalf("tools/list returned %d tools, want 25", len(tools))
+	if len(tools) != 26 {
+		t.Fatalf("tools/list returned %d tools, want 26", len(tools))
 	}
 	for _, rawTool := range tools {
 		tool, ok := rawTool.(map[string]any)

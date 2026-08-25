@@ -44,6 +44,7 @@ func TestRegisterPublishesTwentyFourToolsWithFlexibleOutputSchema(t *testing.T) 
 	wantNames := map[string]bool{
 		"atct_goal_list":             true,
 		"atct_goal_get":              true,
+		"atct_goal_sessions":         true,
 		"atct_task_declare":          true,
 		"atct_task_claim":            true,
 		"atct_task_release":          true,
