@@ -40,6 +40,16 @@ approval failure was withdrawn because its assumption was wrong. If that
 assumption had been written in the description, a human could have corrected
 it when the task was declared.
 
+## Fix a declared task
+
+- After declaring a task, use `atct_task_update_content` to fix its `title`,
+  `description`, or `files`.
+- Only `todo` and `doing` tasks can be fixed. `done` and `dropped` tasks are
+  rejected because changing them would change the basis for a completion report
+  after the fact.
+- Re-declaring with the same `idempotency_key` does not update the task;
+  re-declaration is not a way to fix it.
+
 ## Claim before you start
 
 For self-directed work—when you find a task yourself—call `atct_task_claim`
