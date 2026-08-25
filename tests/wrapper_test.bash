@@ -486,6 +486,8 @@ test_delegated_claim_contract_is_explicit() {
 
   assert_file_contains 'Hold the parent, not the task.' "$atct_skill"
   assert_file_contains 'Hold the parent, not the goal.' "$atct_skill"
+  assert_file_contains '## Delegate a task' "$atct_skill"
+  assert_file_contains '## Delegate a goal' "$atct_skill"
   assert_file_contains 'First record receipt of the handoff by calling `atct_handoff_receive` with only' "$atct_skill"
   assert_file_contains 'First record receipt of the goal handoff by calling' "$atct_skill"
   assert_file_contains 'A delegated worker owns the task it was given.' "$atct_skill"
@@ -508,6 +510,8 @@ test_delegated_claim_contract_is_explicit() {
   assert_file_not_contains 'Call `atct_task_claim` before working on a task.' "$atct_skill"
   assert_file_not_contains 'A delegated worker must not claim the task; the delegator owns the claim.' "$atct_skill"
   assert_file_not_contains 'Do not call `atct_task_claim` for a delegated task.' "$atct_skill"
+  assert_file_not_contains '## Delegate a claimed task' "$atct_skill"
+  assert_file_not_contains '## Delegate a claimed goal' "$atct_skill"
   assert_file_not_contains '1. Claim the task before handing it off.' "$atct_skill"
   assert_file_not_contains 'Claim the goal with `atct_goal_claim` before handing it off.' "$atct_skill"
   assert_file_not_contains 'First invoke the `atct_role` MCP tool with `expected_role` set to one of' "$atct_skill"

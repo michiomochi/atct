@@ -53,7 +53,7 @@ cannot be received twice.
 Release a task by setting it back to `todo` with `atct_task_update`. There is
 no separate release tool.
 
-## Delegate a claimed task
+## Delegate a task
 
 When handing a task to another worker, keep the contract independent of how
 that worker is started:
@@ -62,7 +62,7 @@ that worker is started:
    have received the handoff for that task's goal before handing it off.
 2. Record the handoff before waking the worker.
    The delegator must call `atct_handoff_request` with a unique handoff ID and
-   the claimed task ID. Wait for the request to succeed before waking the
+   the task ID. Wait for the request to succeed before waking the
    worker; this creates the record needed to receive and complete the handoff.
 3. Wake the worker through the environment. A terminal multiplexer can host a
    working pane, or a sub-agent can perform the work. ATCT does not prescribe
@@ -99,7 +99,7 @@ delegator must not run either instruction on the worker's behalf or treat a
 worker name, pane title, or launch context as proof of the role. If the role
 check reports a mismatch, the worker returns the task without touching it.
 
-## Delegate a claimed goal
+## Delegate a goal
 
 When handing a goal to a subcommander, keep the contract independent of how
 that subcommander is started:
@@ -110,7 +110,7 @@ that subcommander is started:
    open handoff.
 2. Record the handoff before waking the subcommander.
    The delegator must call `atct_goal_handoff_request` with a unique `handoff_id`
-   and the claimed `goal_id`. The request takes only `handoff_id` and `goal_id`;
+   and the `goal_id`. The request takes only `handoff_id` and `goal_id`;
    do not pass `requested_by`; ATCT supplies it. Wait for the request to succeed
    before waking the subcommander; this creates the record needed to receive and
    complete the handoff.
@@ -126,13 +126,13 @@ that subcommander is started:
    > Then invoke the `atct_role` MCP tool with `expected_role` set to
    > `subcommander`. If it reports `matches: false`, do not start work; return
    > the goal.
-
-   The order matters: the role is derived from a received, uncompleted goal
-   handoff, so checking it before receipt always returns `matches: false`.
-
+   >
    > When the work is complete, record completion by calling
    > `atct_goal_handoff_complete` with only the `goal_id` provided in this
    > request.
+
+   The order matters: the role is derived from a received, uncompleted goal
+   handoff, so checking it before receipt always returns `matches: false`.
 
 5. Keep one subcommander per goal. A subcommander may wake executors for its
    goal, but must not inspect or manage other goals, create another
