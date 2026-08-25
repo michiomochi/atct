@@ -340,6 +340,47 @@ A-3 の「寄せる」は手順で避ける形だったが、**いまは仕組�
 （推測すると、別のセッションの claim を自分のものと誤認する）。
 **呼び手が値を持ってくる。**subcommander は `atct_role` の応答から `goal_id` を知る。
 
+### 追記: 判断イベントも同じ範囲で流す（2026-08-25）
+
+上の決定は「そのゴールの検知と keepalive だけを流す」と書いたが、**実装（`189d8da`）は
+そのゴールの `domain.Decision` も流す。**理由は次である。
+
+**Monitor の本来の役目は答えの配達である。**`skills/start/SKILL.md` は Monitor の
+`description` を `ATCT answer watch` と定めており、`cmd/atct/watch_test.go` の
+`TestWatchEmitsHumanDecisionEventsOnly` は watch が人間の判断イベントを出すことを
+検査している。**検知は後から乗った側であって、判断の答えが本体である。**
+
+**そのゴールの `domain.Decision` を落とすと、subcommander は自分が出した判断の答えを
+受け取れない。**`internal/daemon/handler.go` の `roleBoundaries` は subcommander の
+`Does` に `issue decisions to the human` を挙げている。**問える者に答えが届かないのは、
+範囲を持たせる前より悪い。**
+
+したがって範囲つきの購読が流すのは、**そのゴールの判断イベントと、そのゴールの検知と、
+keepalive** である。`GoalID` が空のものと他のゴールのものは流さない
+（`internal/httpapi/server.go` の `eventMatchesGoalID`）。`wakeup` は変わらず流さない
+（プロジェクト全体の件数なので他のゴールを含む）。
+
+### 判断を出せるのはタスクを持つ者だけである（2026-08-25 に実測）
+
+**この決定には前提の穴がある。**上で「subcommander は自分が出した判断の答えを受け取る」
+と書いたが、**subcommander はタスクに紐づかない判断を出せない。**
+
+```
+atct_decision_ask(goal_id=..., question=..., options=[...])
+  → insert decision: constraint failed: CHECK constraint failed:
+    kind <> 'decision' OR status NOT IN ('open','answered')
+    OR (task_id IS NOT NULL AND task_id <> '')
+```
+
+`schema.sql` の `decisions` の CHECK が、open な `kind='decision'` に `task_id` を
+必須にしている。**ゴール全体に関わる判断（たとえば「この穴を新しいゴールにするか、
+このゴールのタスクにするか」）は、どのタスクにも属さないので park できない。**
+開いているタスクに無理に紐づけると、**そのタスクが done にできなくなる**
+（`atct_task_update` は open な判断を持つタスクの done を拒む）。
+
+**範囲つき購読はこの穴を埋めない。**配達経路を作っても、出せない判断は流れない。
+**別の主題として切り出す。**
+
 ## A-3b. 確定した形: wakeup に統一し Stop hook を廃止する
 
 **人間の判断（2026-08-22）: wakeup に統一する。Stop hook を廃止する。間隔は 3 分。**
