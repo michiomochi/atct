@@ -230,6 +230,8 @@ INSERT INTO task_handoffs (id, task_id, requested_at)
 VALUES ('old-task-handoff', 'old-task', '2026-08-24T00:01:00Z');
 INSERT INTO goal_handoffs (id, goal_id, requested_at)
 VALUES ('old-goal-handoff', 'old-goal', '2026-08-24T00:02:00Z');
+INSERT INTO agent_sessions (id, project_id, pid, started_at, registered_at)
+VALUES ('old-agent-session', NULL, 0, '', '2026-08-24T00:03:00Z');
 `); err != nil {
 		raw.Close()
 		t.Fatalf("insert old handoff rows: %v", err)
@@ -243,6 +245,14 @@ VALUES ('old-goal-handoff', 'old-goal', '2026-08-24T00:02:00Z');
 		t.Fatalf("Open pre-handoff-reports database: %v", err)
 	}
 	defer migrated.Close()
+	assertMigrationRecorded(t, migrated.DB(), "0017_agent_session_keys.sql")
+	var agentSessionCount int
+	if err := migrated.DB().QueryRow(`SELECT COUNT(*) FROM agent_sessions WHERE id = ?`, "old-agent-session").Scan(&agentSessionCount); err != nil {
+		t.Fatalf("read migrated agent session: %v", err)
+	}
+	if agentSessionCount != 1 {
+		t.Fatalf("migrated agent session count = %d, want 1", agentSessionCount)
+	}
 
 	for _, tableAndID := range []struct {
 		table string

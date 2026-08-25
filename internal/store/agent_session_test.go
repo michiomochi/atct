@@ -9,6 +9,178 @@ import (
 	"time"
 )
 
+func TestIdentifyAgentSessionStoresKey(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	canonicalID, reattached, err := s.IdentifyAgentSession(ctx, "transport-one", " stable-key ")
+	if err != nil {
+		t.Fatalf("IdentifyAgentSession: %v", err)
+	}
+	if canonicalID != "transport-one" {
+		t.Fatalf("canonical ID = %q, want transport-one", canonicalID)
+	}
+	if reattached {
+		t.Fatal("reattached = true, want false for a new key")
+	}
+
+	var storedKey string
+	if err := s.DB().QueryRowContext(ctx, `SELECT session_key FROM agent_sessions WHERE id = ?`, canonicalID).Scan(&storedKey); err != nil {
+		t.Fatalf("read session key: %v", err)
+	}
+	if storedKey != "stable-key" {
+		t.Fatalf("session key = %q, want stable-key", storedKey)
+	}
+}
+
+func TestIdentifyAgentSessionReattachesExistingKey(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	if canonicalID, reattached, err := s.IdentifyAgentSession(ctx, "transport-one", "stable-key"); err != nil {
+		t.Fatalf("IdentifyAgentSession(first): %v", err)
+	} else if canonicalID != "transport-one" || reattached {
+		t.Fatalf("first identify = (%q, %v), want (transport-one, false)", canonicalID, reattached)
+	}
+
+	canonicalID, reattached, err := s.IdentifyAgentSession(ctx, "transport-two", "stable-key")
+	if err != nil {
+		t.Fatalf("IdentifyAgentSession(second): %v", err)
+	}
+	if canonicalID != "transport-one" {
+		t.Fatalf("canonical ID = %q, want transport-one", canonicalID)
+	}
+	if !reattached {
+		t.Fatal("reattached = false, want true")
+	}
+
+	var keyCount int
+	if err := s.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM agent_sessions WHERE session_key = ?`, "stable-key").Scan(&keyCount); err != nil {
+		t.Fatalf("count session keys: %v", err)
+	}
+	if keyCount != 1 {
+		t.Fatalf("session key count = %d, want 1", keyCount)
+	}
+	var transportKey string
+	if err := s.DB().QueryRowContext(ctx, `SELECT session_key FROM agent_sessions WHERE id = ?`, "transport-two").Scan(&transportKey); err != nil {
+		t.Fatalf("read transport session key: %v", err)
+	}
+	if transportKey != "" {
+		t.Fatalf("transport session key = %q, want empty", transportKey)
+	}
+}
+
+func TestIdentifyAgentSessionRestoresLivenessAfterReattach(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	if err := s.RegisterAgentSession(ctx, "old-transport", 0); err != nil {
+		t.Fatalf("RegisterAgentSession: %v", err)
+	}
+	if _, _, err := s.IdentifyAgentSession(ctx, "old-transport", "stable-key"); err != nil {
+		t.Fatalf("IdentifyAgentSession(old): %v", err)
+	}
+	if _, err := s.DB().ExecContext(ctx, `UPDATE agent_sessions SET pid = ?, started_at = ? WHERE id = ?`, 999999, "stale-start", "old-transport"); err != nil {
+		t.Fatalf("age agent session: %v", err)
+	}
+
+	originalProcessStartedAt := processStartedAt
+	processStartedAt = func(int) (string, error) { return "current-start", nil }
+	t.Cleanup(func() { processStartedAt = originalProcessStartedAt })
+
+	canonicalID, reattached, err := s.IdentifyAgentSession(ctx, "new-transport", "stable-key")
+	if err != nil {
+		t.Fatalf("IdentifyAgentSession(new): %v", err)
+	}
+	if canonicalID != "old-transport" || !reattached {
+		t.Fatalf("identify = (%q, %v), want (old-transport, true)", canonicalID, reattached)
+	}
+	if !claimIsRunning(ctx, s, canonicalID) {
+		t.Fatal("claimIsRunning = false after reattach, want true")
+	}
+
+	var pid int
+	var startedAt string
+	if err := s.DB().QueryRowContext(ctx, `SELECT pid, started_at FROM agent_sessions WHERE id = ?`, canonicalID).Scan(&pid, &startedAt); err != nil {
+		t.Fatalf("read canonical process identity: %v", err)
+	}
+	if pid == 999999 || startedAt != "current-start" {
+		t.Fatalf("canonical process identity = (%d, %q), want current process and current-start", pid, startedAt)
+	}
+}
+
+func TestIdentifyAgentSessionRejectsBlankKeyWithoutWriting(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	if err := s.RegisterAgentSession(ctx, "transport-one", 0); err != nil {
+		t.Fatalf("RegisterAgentSession: %v", err)
+	}
+
+	var before struct {
+		RegisteredAt string
+		Pid          int
+		StartedAt    string
+		SessionKey   string
+	}
+	if err := s.DB().QueryRowContext(ctx, `SELECT registered_at, pid, started_at, session_key FROM agent_sessions WHERE id = ?`, "transport-one").Scan(&before.RegisteredAt, &before.Pid, &before.StartedAt, &before.SessionKey); err != nil {
+		t.Fatalf("read initial session: %v", err)
+	}
+
+	for _, key := range []string{"", "   "} {
+		if _, _, err := s.IdentifyAgentSession(ctx, "transport-one", key); err == nil {
+			t.Fatalf("IdentifyAgentSession(%q) succeeded, want error", key)
+		}
+		var after struct {
+			RegisteredAt string
+			Pid          int
+			StartedAt    string
+			SessionKey   string
+		}
+		if err := s.DB().QueryRowContext(ctx, `SELECT registered_at, pid, started_at, session_key FROM agent_sessions WHERE id = ?`, "transport-one").Scan(&after.RegisteredAt, &after.Pid, &after.StartedAt, &after.SessionKey); err != nil {
+			t.Fatalf("read unchanged session for %q: %v", key, err)
+		}
+		if after != before {
+			t.Fatalf("session changed for blank key %q: before=%+v after=%+v", key, before, after)
+		}
+	}
+}
+
+func TestIdentifyAgentSessionDoesNotStealDifferentKey(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	project, err := s.CreateProject(ctx, "atct", "/repos/atct")
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	if err := s.RegisterAgentSession(ctx, "owner", 0); err != nil {
+		t.Fatalf("RegisterAgentSession(owner): %v", err)
+	}
+	if _, err := s.ClaimProject(ctx, project.ID, "owner"); err != nil {
+		t.Fatalf("ClaimProject: %v", err)
+	}
+	if _, _, err := s.IdentifyAgentSession(ctx, "owner", "owner-key"); err != nil {
+		t.Fatalf("IdentifyAgentSession(owner): %v", err)
+	}
+
+	canonicalID, reattached, err := s.IdentifyAgentSession(ctx, "other", "other-key")
+	if err != nil {
+		t.Fatalf("IdentifyAgentSession(other): %v", err)
+	}
+	if canonicalID != "other" || reattached {
+		t.Fatalf("identify = (%q, %v), want (other, false)", canonicalID, reattached)
+	}
+
+	var ownerKey, claimedBy string
+	if err := s.DB().QueryRowContext(ctx, `SELECT session_key FROM agent_sessions WHERE id = ?`, "owner").Scan(&ownerKey); err != nil {
+		t.Fatalf("read owner key: %v", err)
+	}
+	if err := s.DB().QueryRowContext(ctx, `SELECT claimed_by FROM projects WHERE id = ?`, project.ID).Scan(&claimedBy); err != nil {
+		t.Fatalf("read project claim: %v", err)
+	}
+	if ownerKey != "owner-key" || claimedBy != "owner" {
+		t.Fatalf("owner state = (key %q, claim %q), want (owner-key, owner)", ownerKey, claimedBy)
+	}
+}
+
 func TestProjectIDForAgentSession(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

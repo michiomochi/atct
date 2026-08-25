@@ -169,7 +169,7 @@ func TestHTTPHandlerMCPInitializeReturnsStreamableResponse(t *testing.T) {
 	}
 }
 
-func TestHTTPHandlerMCPListsTwentyThreeTools(t *testing.T) {
+func TestHTTPHandlerMCPListsTwentyFourTools(t *testing.T) {
 	fixture := newMCPHTTPTestServer(t)
 	client := newMCPHTTPTestClient(fixture.server.URL + "/mcp")
 	client.initialize(t)
@@ -181,8 +181,8 @@ func TestHTTPHandlerMCPListsTwentyThreeTools(t *testing.T) {
 	if !ok {
 		t.Fatalf("tools/list result.tools = %T, want array", result["tools"])
 	}
-	if len(tools) != 23 {
-		t.Fatalf("tools/list returned %d tools, want 23", len(tools))
+	if len(tools) != 24 {
+		t.Fatalf("tools/list returned %d tools, want 24", len(tools))
 	}
 	for _, rawTool := range tools {
 		tool, ok := rawTool.(map[string]any)
@@ -670,18 +670,9 @@ func agentSessionIDs(t *testing.T, s *store.Store) []string {
 	}
 	sessionColumn := -1
 	for i, column := range columns {
-		normalized := strings.ToLower(strings.ReplaceAll(column, "_", ""))
-		if normalized == "agentsessionid" || strings.Contains(normalized, "session") {
+		if strings.EqualFold(column, "id") {
 			sessionColumn = i
 			break
-		}
-	}
-	if sessionColumn < 0 {
-		for i, column := range columns {
-			if strings.EqualFold(column, "id") {
-				sessionColumn = i
-				break
-			}
 		}
 	}
 	if sessionColumn < 0 {

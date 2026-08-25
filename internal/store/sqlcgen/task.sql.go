@@ -154,6 +154,19 @@ func (q *Queries) DropOpenTasksForGoal(ctx context.Context, arg DropOpenTasksFor
 	return q.db.ExecContext(ctx, dropOpenTasksForGoal, arg.UpdatedAt, arg.GoalID)
 }
 
+const getAgentSessionIDByKey = `-- name: GetAgentSessionIDByKey :one
+SELECT id
+FROM agent_sessions
+WHERE session_key = ?
+`
+
+func (q *Queries) GetAgentSessionIDByKey(ctx context.Context, sessionKey string) (string, error) {
+	row := q.db.QueryRowContext(ctx, getAgentSessionIDByKey, sessionKey)
+	var id string
+	err := row.Scan(&id)
+	return id, err
+}
+
 const getAgentSessionLiveness = `-- name: GetAgentSessionLiveness :one
 SELECT pid, started_at
 FROM agent_sessions
@@ -816,6 +829,45 @@ func (q *Queries) TaskExists(ctx context.Context, id string) (string, error) {
 	var id_2 string
 	err := row.Scan(&id_2)
 	return id_2, err
+}
+
+const updateAgentSessionKey = `-- name: UpdateAgentSessionKey :exec
+UPDATE agent_sessions
+SET session_key = ?
+WHERE id = ?
+`
+
+type UpdateAgentSessionKeyParams struct {
+	SessionKey string
+	ID         string
+}
+
+func (q *Queries) UpdateAgentSessionKey(ctx context.Context, arg UpdateAgentSessionKeyParams) error {
+	_, err := q.db.ExecContext(ctx, updateAgentSessionKey, arg.SessionKey, arg.ID)
+	return err
+}
+
+const updateAgentSessionProcessIdentity = `-- name: UpdateAgentSessionProcessIdentity :exec
+UPDATE agent_sessions
+SET pid = ?, started_at = ?, registered_at = ?
+WHERE id = ?
+`
+
+type UpdateAgentSessionProcessIdentityParams struct {
+	Pid          int64
+	StartedAt    string
+	RegisteredAt string
+	ID           string
+}
+
+func (q *Queries) UpdateAgentSessionProcessIdentity(ctx context.Context, arg UpdateAgentSessionProcessIdentityParams) error {
+	_, err := q.db.ExecContext(ctx, updateAgentSessionProcessIdentity,
+		arg.Pid,
+		arg.StartedAt,
+		arg.RegisteredAt,
+		arg.ID,
+	)
+	return err
 }
 
 const updateAgentSessionProject = `-- name: UpdateAgentSessionProject :execresult

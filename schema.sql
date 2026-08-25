@@ -12,11 +12,15 @@ CREATE TABLE IF NOT EXISTS agent_sessions (
   project_id    TEXT REFERENCES projects(id),
   registered_at TEXT NOT NULL,
   pid           INTEGER NOT NULL DEFAULT 0,
-  started_at    TEXT NOT NULL DEFAULT ''
+  started_at    TEXT NOT NULL DEFAULT '',
+  session_key   TEXT NOT NULL DEFAULT ''
 );
 
 CREATE INDEX IF NOT EXISTS idx_agent_sessions_project_registered_at
   ON agent_sessions(project_id, registered_at DESC);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_sessions_session_key
+  ON agent_sessions(session_key) WHERE session_key <> '';
 
 CREATE TABLE IF NOT EXISTS goals (
   id             TEXT PRIMARY KEY,

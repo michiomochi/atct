@@ -83,6 +83,21 @@ WHERE id = ?;
 INSERT OR IGNORE INTO agent_sessions (id, project_id, pid, started_at, registered_at)
 VALUES (?, NULL, ?, ?, ?);
 
+-- name: GetAgentSessionIDByKey :one
+SELECT id
+FROM agent_sessions
+WHERE session_key = ?;
+
+-- name: UpdateAgentSessionKey :exec
+UPDATE agent_sessions
+SET session_key = ?
+WHERE id = ?;
+
+-- name: UpdateAgentSessionProcessIdentity :exec
+UPDATE agent_sessions
+SET pid = ?, started_at = ?, registered_at = ?
+WHERE id = ?;
+
 -- name: DeleteExpiredAgentSessions :exec
 DELETE FROM agent_sessions
 WHERE registered_at < ?;

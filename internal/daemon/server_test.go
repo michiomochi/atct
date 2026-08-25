@@ -544,6 +544,62 @@ type goalListItem struct {
 	Tasks             []goalListTaskItem `json:"tasks"`
 }
 
+func TestSessionIdentifyReattachesProjectClaimForRole(t *testing.T) {
+	fixture := newGoalListFixture(t)
+	ctx := context.Background()
+	const (
+		oldSessionID = "old-transport"
+		newSessionID = "new-transport"
+		sessionKey   = "stable-key"
+	)
+
+	registerLiveGoalClaimSession(t, fixture, oldSessionID)
+	if _, _, err := fixture.store.IdentifyAgentSession(ctx, oldSessionID, sessionKey); err != nil {
+		t.Fatalf("IdentifyAgentSession(old): %v", err)
+	}
+	if _, err := claimProjectForTest(t, fixture, fixture.project.ID, oldSessionID); err != nil {
+		t.Fatalf("project.claim: %v", err)
+	}
+
+	identifyParams, err := json.Marshal(map[string]string{
+		"agent_session_id": newSessionID,
+		"session_key":      sessionKey,
+	})
+	if err != nil {
+		t.Fatalf("marshal session.identify params: %v", err)
+	}
+	identifyResult, err := fixture.daemon.dispatch(ctx, rpc.Request{Method: "session.identify", Params: identifyParams})
+	if err != nil {
+		t.Fatalf("session.identify: %v", err)
+	}
+	var identifyResponse struct {
+		AgentSessionID string `json:"agent_session_id"`
+		Reattached     bool   `json:"reattached"`
+	}
+	if err := json.Unmarshal(identifyResult, &identifyResponse); err != nil {
+		t.Fatalf("unmarshal session.identify response: %v", err)
+	}
+	if identifyResponse.AgentSessionID != oldSessionID || !identifyResponse.Reattached {
+		t.Fatalf("session.identify response = (%q, %v), want (%q, true)", identifyResponse.AgentSessionID, identifyResponse.Reattached, oldSessionID)
+	}
+
+	roleParams, err := json.Marshal(map[string]string{"agent_session_id": identifyResponse.AgentSessionID})
+	if err != nil {
+		t.Fatalf("marshal session.role params: %v", err)
+	}
+	roleResult, err := fixture.daemon.dispatch(ctx, rpc.Request{Method: "session.role", Params: roleParams})
+	if err != nil {
+		t.Fatalf("session.role: %v", err)
+	}
+	var roleResponse sessionRoleResponse
+	if err := json.Unmarshal(roleResult, &roleResponse); err != nil {
+		t.Fatalf("unmarshal session.role response: %v", err)
+	}
+	if roleResponse.Role != "commander" {
+		t.Fatalf("session.role = %q, want commander", roleResponse.Role)
+	}
+}
+
 func newGoalListFixture(t *testing.T) goalListFixture {
 	t.Helper()
 	ctx := context.Background()

@@ -14,6 +14,7 @@ type AgentSession struct {
 	RegisteredAt string
 	Pid          int64
 	StartedAt    string
+	SessionKey   string
 }
 
 type Decision struct {

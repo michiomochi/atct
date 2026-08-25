@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/michiomochi/atct/internal/domain"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -136,6 +137,27 @@ type GoalSetDerivedFromIn struct {
 
 type RoleIn struct {
 	ExpectedRole string `json:"expected_role,omitempty" jsonschema:"optional expected role; a mismatch is returned in matches"`
+}
+
+type SessionIdentifyIn struct {
+	SessionKey string `json:"session_key"`
+}
+
+type agentSessionIDHolder struct {
+	mu sync.RWMutex
+	id string
+}
+
+func (h *agentSessionIDHolder) Get() string {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.id
+}
+
+func (h *agentSessionIDHolder) Set(id string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.id = id
 }
 
 type roleResult struct {
@@ -274,6 +296,29 @@ func callRole(ctx context.Context, c *Client, in RoleIn, agentSessionID string) 
 	return nil, Raw{Data: json.RawMessage(raw)}, nil
 }
 
+type sessionIdentifyResult struct {
+	AgentSessionID string `json:"agent_session_id"`
+	Reattached     bool   `json:"reattached"`
+}
+
+func callSessionIdentify(ctx context.Context, c *Client, in SessionIdentifyIn, agentSessionID *agentSessionIDHolder) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
+	var response sessionIdentifyResult
+	if err := c.Call(ctx, "session.identify", map[string]any{
+		"agent_session_id": agentSessionID.Get(),
+		"session_key":      strings.TrimSpace(in.SessionKey),
+	}, &response); err != nil {
+		return nil, RawWithUnappliedDecisions{}, err
+	}
+	if canonicalID := strings.TrimSpace(response.AgentSessionID); canonicalID != "" {
+		agentSessionID.Set(canonicalID)
+	}
+	raw, err := json.Marshal(response)
+	if err != nil {
+		return nil, RawWithUnappliedDecisions{}, fmt.Errorf("marshal session identify response: %w", err)
+	}
+	return nil, RawWithUnappliedDecisions{Data: json.RawMessage(raw)}, nil
+}
+
 func validRole(role string) bool {
 	switch role {
 	case "commander", "subcommander", "executor":
@@ -283,15 +328,25 @@ func validRole(role string) bool {
 	}
 }
 
-// Register adds twenty agent-facing tools to the MCP server.
+// Register adds agent-facing tools to the MCP server.
 // Human operations (answer, approve, and reject) belong to the Web UI and are not exposed through MCP.
 func Register(server *mcp.Server, c *Client, agentSessionID string) {
+	sessionID := &agentSessionIDHolder{id: strings.TrimSpace(agentSessionID)}
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:         "atct_session_identify",
+		Description:  "Associate this transport with a stable caller-owned session key before using other atct tools.",
+		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in SessionIdentifyIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
+		return callSessionIdentify(ctx, c, in, sessionID)
+	})
+
 	mcp.AddTool(server, &mcp.Tool{
 		Name:         "atct_role",
 		Description:  "Verify the current agent role and its project/goal claim evidence through the daemon. An optional expected_role is reported as matches; a mismatch is returned as structured data.",
 		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in RoleIn) (*mcp.CallToolResult, Raw, error) {
-		return callRole(ctx, c, in, agentSessionID)
+		return callRole(ctx, c, in, sessionID.Get())
 	})
 
 	mcp.AddTool(server, &mcp.Tool{
@@ -300,8 +355,8 @@ func Register(server *mcp.Server, c *Client, agentSessionID string) {
 		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in ProjectClaimIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
 		return callClaimWithRole(ctx, c, "project.claim", map[string]any{
-			"project_id": in.ProjectID, "agent_session_id": agentSessionID, "include_unapplied_answers": true,
-		}, agentSessionID)
+			"project_id": in.ProjectID, "agent_session_id": sessionID.Get(), "include_unapplied_answers": true,
+		}, sessionID.Get())
 	})
 
 	mcp.AddTool(server, &mcp.Tool{
@@ -310,7 +365,7 @@ func Register(server *mcp.Server, c *Client, agentSessionID string) {
 		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in ProjectReleaseIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
 		return callWithUnappliedDecisions(ctx, c, "project.release", map[string]any{
-			"project_id": in.ProjectID, "agent_session_id": agentSessionID,
+			"project_id": in.ProjectID, "agent_session_id": sessionID.Get(),
 		})
 	})
 
@@ -320,7 +375,7 @@ func Register(server *mcp.Server, c *Client, agentSessionID string) {
 		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in GoalListIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
 		return callWithUnappliedDecisions(ctx, c, "goal.list", map[string]any{
-			"cwd": in.Cwd, "agent_session_id": agentSessionID, "include_unapplied_answers": true,
+			"cwd": in.Cwd, "agent_session_id": sessionID.Get(), "include_unapplied_answers": true,
 		})
 	})
 
@@ -340,8 +395,8 @@ func Register(server *mcp.Server, c *Client, agentSessionID string) {
 		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in GoalClaimIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
 		return callClaimWithRole(ctx, c, "goal.claim", map[string]any{
-			"goal_id": in.GoalID, "agent_session_id": agentSessionID, "include_unapplied_answers": true,
-		}, agentSessionID)
+			"goal_id": in.GoalID, "agent_session_id": sessionID.Get(), "include_unapplied_answers": true,
+		}, sessionID.Get())
 	})
 
 	mcp.AddTool(server, &mcp.Tool{
@@ -361,7 +416,7 @@ func Register(server *mcp.Server, c *Client, agentSessionID string) {
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in GoalUpdateContentIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
 		return callWithUnappliedDecisions(ctx, c, "goal.update_content", map[string]any{
 			"goal_id": in.GoalID, "content": in.Content,
-			"agent_session_id": agentSessionID, "include_unapplied_answers": true,
+			"agent_session_id": sessionID.Get(), "include_unapplied_answers": true,
 		})
 	})
 
@@ -373,7 +428,7 @@ func Register(server *mcp.Server, c *Client, agentSessionID string) {
 		params := map[string]any{
 			"goal_id": in.GoalID, "titles": in.Titles, "descriptions": in.Descriptions,
 			"idempotency_key": in.IdempotencyKey, "agent": in.Agent,
-			"agent_session_id":          agentSessionID,
+			"agent_session_id":          sessionID.Get(),
 			"include_unapplied_answers": true,
 		}
 		if in.Files != nil {
@@ -388,7 +443,7 @@ func Register(server *mcp.Server, c *Client, agentSessionID string) {
 		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in TaskClaimIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
 		return callWithUnappliedDecisions(ctx, c, "task.claim", map[string]any{
-			"task_id": in.TaskID, "agent_session_id": agentSessionID, "include_unapplied_answers": true,
+			"task_id": in.TaskID, "agent_session_id": sessionID.Get(), "include_unapplied_answers": true,
 		})
 	})
 
@@ -408,7 +463,7 @@ func Register(server *mcp.Server, c *Client, agentSessionID string) {
 		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in HandoffRequestIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
 		return callWithUnappliedDecisions(ctx, c, "handoff.request", map[string]any{
-			"handoff_id": in.HandoffID, "task_id": in.TaskID, "requested_by": agentSessionID,
+			"handoff_id": in.HandoffID, "task_id": in.TaskID, "requested_by": sessionID.Get(),
 			"request_report": in.RequestReport,
 		})
 	})
@@ -419,7 +474,7 @@ func Register(server *mcp.Server, c *Client, agentSessionID string) {
 		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in HandoffReceiveIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
 		params := map[string]any{
-			"task_id": in.TaskID, "received_by": agentSessionID,
+			"task_id": in.TaskID, "received_by": sessionID.Get(),
 		}
 		if in.HandoffID != "" {
 			params["handoff_id"] = in.HandoffID
@@ -447,7 +502,7 @@ func Register(server *mcp.Server, c *Client, agentSessionID string) {
 		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in GoalHandoffRequestIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
 		return callWithUnappliedDecisions(ctx, c, "goal.handoff.request", map[string]any{
-			"handoff_id": in.HandoffID, "goal_id": in.GoalID, "requested_by": agentSessionID,
+			"handoff_id": in.HandoffID, "goal_id": in.GoalID, "requested_by": sessionID.Get(),
 			"request_report": in.RequestReport,
 		})
 	})
@@ -458,7 +513,7 @@ func Register(server *mcp.Server, c *Client, agentSessionID string) {
 		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in GoalHandoffReceiveIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
 		params := map[string]any{
-			"goal_id": in.GoalID, "received_by": agentSessionID,
+			"goal_id": in.GoalID, "received_by": sessionID.Get(),
 		}
 		if in.HandoffID != "" {
 			params["handoff_id"] = in.HandoffID
@@ -486,7 +541,7 @@ func Register(server *mcp.Server, c *Client, agentSessionID string) {
 		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in TaskUpdateIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
 		return callWithUnappliedDecisions(ctx, c, "task.update", map[string]any{
-			"task_id": in.TaskID, "status": in.Status, "agent_session_id": agentSessionID,
+			"task_id": in.TaskID, "status": in.Status, "agent_session_id": sessionID.Get(),
 			"commits":                   in.Commits,
 			"include_unapplied_answers": true,
 		})
@@ -500,7 +555,7 @@ func Register(server *mcp.Server, c *Client, agentSessionID string) {
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in DecisionAskIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
 		params := map[string]any{
 			"goal_id": in.GoalID, "task_id": in.TaskID, "question": in.Question,
-			"options": in.Options, "agent_session_id": agentSessionID, "include_unapplied_answers": true,
+			"options": in.Options, "agent_session_id": sessionID.Get(), "include_unapplied_answers": true,
 		}
 		if in.DefaultOption != "" {
 			params["default_option"] = in.DefaultOption
@@ -520,7 +575,7 @@ func Register(server *mcp.Server, c *Client, agentSessionID string) {
 		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in DecisionPollIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
 		return callWithUnappliedDecisions(ctx, c, "decision.poll", map[string]any{
-			"agent_session_id": agentSessionID, "decision_id": in.DecisionID, "include_unapplied_answers": true,
+			"agent_session_id": sessionID.Get(), "decision_id": in.DecisionID, "include_unapplied_answers": true,
 		})
 	})
 
@@ -544,7 +599,7 @@ func Register(server *mcp.Server, c *Client, agentSessionID string) {
 			"goal_id": in.GoalID, "work_done": in.WorkDone,
 			"now_possible": in.NowPossible, "how_to_verify": in.HowToVerify,
 			"surprises": in.Surprises, "needs_review": in.NeedsReview,
-			"next_steps": in.NextSteps, "agent_session_id": agentSessionID, "include_unapplied_answers": true,
+			"next_steps": in.NextSteps, "agent_session_id": sessionID.Get(), "include_unapplied_answers": true,
 		})
 	})
 
@@ -555,7 +610,7 @@ func Register(server *mcp.Server, c *Client, agentSessionID string) {
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in GoalSetDerivedFromIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
 		return callWithUnappliedDecisions(ctx, c, "goal.set_derived_from", map[string]any{
 			"goal_id": in.GoalID, "derived_from_goal_id": in.DerivedFromGoalID,
-			"agent_session_id": agentSessionID, "include_unapplied_answers": true,
+			"agent_session_id": sessionID.Get(), "include_unapplied_answers": true,
 		})
 	})
 }

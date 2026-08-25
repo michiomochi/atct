@@ -270,6 +270,23 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		}
 		return marshal(map[string]any{"ok": true}, nil)
 
+	case "session.identify":
+		var p struct {
+			AgentSessionID string `json:"agent_session_id"`
+			SessionKey     string `json:"session_key"`
+		}
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		canonicalID, reattached, err := d.store.IdentifyAgentSession(ctx, p.AgentSessionID, p.SessionKey)
+		if err != nil {
+			return nil, err
+		}
+		return marshal(map[string]any{
+			"agent_session_id": canonicalID,
+			"reattached":       reattached,
+		}, nil)
+
 	case "session.role":
 		var p struct {
 			AgentSessionID string `json:"agent_session_id"`

@@ -70,7 +70,9 @@ that worker is started:
    how the worker is started or how the role is transmitted.
 4. Put these exact instructions at the very beginning of the request:
 
-   > First record receipt of the handoff by calling `atct_handoff_receive` with only
+   > First call `atct_session_identify` with a stable session key that remains unchanged for this session and identifies only you. Your agent name is suitable. Do this before any other atct call.
+   >
+   > Then record receipt of the handoff by calling `atct_handoff_receive` with only
    > the `task_id` provided in this request. Do this before starting work. Do not
    > pass a handoff ID or session; ATCT supplies them.
    >
@@ -123,7 +125,9 @@ that subcommander is started:
    the subcommander is started or how the role is transmitted.
 4. Put these exact instructions at the very beginning of the request:
 
-   > First record receipt of the goal handoff by calling
+   > First call `atct_session_identify` with a stable session key that remains unchanged for this session and identifies only you. Your agent name is suitable. Do this before any other atct call.
+   >
+   > Then record receipt of the goal handoff by calling
    > `atct_goal_handoff_receive` with only the `goal_id` provided in this request.
    > Do this before starting work. Do not pass a handoff ID or session; ATCT
    > supplies them.
@@ -146,6 +150,13 @@ that subcommander is started:
    commander's job.
    A subcommander must not claim the project. Claiming the project changes its
    role to commander.
+
+### Session keys
+
+The caller owns the session key. It must remain unchanged for the life of the
+session and identify only that caller; the caller's agent name is suitable. If
+a reconnect causes the role to appear wrong, call `atct_session_identify` again
+with the same key to return to the original session row.
 
 ## Close a task the moment it is finished
 

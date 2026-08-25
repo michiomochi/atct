@@ -17,7 +17,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-func TestRegisterPublishesTwentyThreeToolsWithFlexibleOutputSchema(t *testing.T) {
+func TestRegisterPublishesTwentyFourToolsWithFlexibleOutputSchema(t *testing.T) {
 	ctx := context.Background()
 	socketPath := startSchemaTestDaemon(t)
 	server := mcp.NewServer(&mcp.Implementation{Name: "atct-test", Version: "test"}, nil)
@@ -59,6 +59,7 @@ func TestRegisterPublishesTwentyThreeToolsWithFlexibleOutputSchema(t *testing.T)
 		"atct_project_claim":         true,
 		"atct_project_release":       true,
 		"atct_role":                  true,
+		"atct_session_identify":      true,
 		"atct_handoff_request":       true,
 		"atct_handoff_receive":       true,
 		"atct_handoff_complete":      true,
@@ -221,6 +222,7 @@ func TestRegisterPublishesTwentyThreeToolsWithFlexibleOutputSchema(t *testing.T)
 			"goal_id": "goal-1", "derived_from_goal_id": "goal-2",
 		}},
 		{name: "atct_role", args: map[string]any{}},
+		{name: "atct_session_identify", args: map[string]any{"session_key": "stable-key"}},
 	} {
 		result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{Name: tc.name, Arguments: tc.args})
 		if err != nil {
@@ -230,6 +232,114 @@ func TestRegisterPublishesTwentyThreeToolsWithFlexibleOutputSchema(t *testing.T)
 		if result == nil || result.StructuredContent == nil {
 			t.Errorf("CallTool(%s) returned no structured content", tc.name)
 		}
+	}
+}
+
+func TestSessionIdentifyUpdatesAgentSessionIDForFollowingTool(t *testing.T) {
+	ctx := context.Background()
+	socketPath, calls := startCapturingSchemaTestDaemon(t)
+	server := mcp.NewServer(&mcp.Implementation{Name: "atct-test", Version: "test"}, nil)
+	mcpshim.Register(server, mcpshim.NewClient(socketPath), "transport-session")
+
+	clientTransport, serverTransport := mcp.NewInMemoryTransports()
+	serverSession, err := server.Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatalf("server.Connect: %v", err)
+	}
+	defer serverSession.Close()
+
+	client := mcp.NewClient(&mcp.Implementation{Name: "schema-test", Version: "test"}, nil)
+	clientSession, err := client.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatalf("client.Connect: %v", err)
+	}
+	defer clientSession.Close()
+
+	identifyResult, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "atct_session_identify",
+		Arguments: map[string]any{"session_key": "stable-key"},
+	})
+	if err != nil {
+		t.Fatalf("CallTool(atct_session_identify): %v", err)
+	}
+	if identifyResult == nil || identifyResult.IsError {
+		t.Fatalf("atct_session_identify returned error result: %+v", identifyResult)
+	}
+	identifyCall := <-calls
+	if identifyCall.method != "session.identify" {
+		t.Fatalf("identify RPC method = %q, want session.identify", identifyCall.method)
+	}
+	if got := identifyCall.params["agent_session_id"]; got != "transport-session" {
+		t.Fatalf("identify agent_session_id = %#v, want transport-session", got)
+	}
+
+	roleResult, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "atct_role",
+		Arguments: map[string]any{},
+	})
+	if err != nil {
+		t.Fatalf("CallTool(atct_role): %v", err)
+	}
+	if roleResult == nil || roleResult.IsError {
+		t.Fatalf("atct_role returned error result: %+v", roleResult)
+	}
+	roleCall := <-calls
+	if roleCall.method != "session.role" {
+		t.Fatalf("role RPC method = %q, want session.role", roleCall.method)
+	}
+	if got := roleCall.params["agent_session_id"]; got != "canonical-session" {
+		t.Fatalf("role agent_session_id = %#v, want canonical-session", got)
+	}
+}
+
+func TestSessionIdentifyKeepsTransportIDWhenDaemonReturnsEmpty(t *testing.T) {
+	ctx := context.Background()
+	socketPath, calls := startCapturingSchemaTestDaemonWithIdentifyResponse(t, `{"result":{"agent_session_id":"","reattached":false}}`)
+	server := mcp.NewServer(&mcp.Implementation{Name: "atct-test", Version: "test"}, nil)
+	mcpshim.Register(server, mcpshim.NewClient(socketPath), "transport-session")
+
+	clientTransport, serverTransport := mcp.NewInMemoryTransports()
+	serverSession, err := server.Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatalf("server.Connect: %v", err)
+	}
+	defer serverSession.Close()
+
+	client := mcp.NewClient(&mcp.Implementation{Name: "schema-test", Version: "test"}, nil)
+	clientSession, err := client.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatalf("client.Connect: %v", err)
+	}
+	defer clientSession.Close()
+
+	identifyResult, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "atct_session_identify",
+		Arguments: map[string]any{"session_key": "stable-key"},
+	})
+	if err != nil {
+		t.Fatalf("CallTool(atct_session_identify): %v", err)
+	}
+	if identifyResult == nil || identifyResult.IsError {
+		t.Fatalf("atct_session_identify returned error result: %+v", identifyResult)
+	}
+	<-calls
+
+	roleResult, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "atct_role",
+		Arguments: map[string]any{},
+	})
+	if err != nil {
+		t.Fatalf("CallTool(atct_role): %v", err)
+	}
+	if roleResult == nil || roleResult.IsError {
+		t.Fatalf("atct_role returned error result: %+v", roleResult)
+	}
+	roleCall := <-calls
+	if roleCall.method != "session.role" {
+		t.Fatalf("role RPC method = %q, want session.role", roleCall.method)
+	}
+	if got := roleCall.params["agent_session_id"]; got != "transport-session" {
+		t.Fatalf("role agent_session_id = %#v, want transport-session", got)
 	}
 }
 
@@ -603,6 +713,10 @@ type capturedSchemaDaemonCall struct {
 }
 
 func startCapturingSchemaTestDaemon(t *testing.T) (string, <-chan capturedSchemaDaemonCall) {
+	return startCapturingSchemaTestDaemonWithIdentifyResponse(t, `{"result":{"agent_session_id":"canonical-session","reattached":true}}`)
+}
+
+func startCapturingSchemaTestDaemonWithIdentifyResponse(t *testing.T, identifyResponse string) (string, <-chan capturedSchemaDaemonCall) {
 	t.Helper()
 	dir, err := os.MkdirTemp("", "atct")
 	if err != nil {
@@ -637,7 +751,11 @@ func startCapturingSchemaTestDaemon(t *testing.T) (string, <-chan capturedSchema
 					return
 				}
 				calls <- capturedSchemaDaemonCall{method: request.Method, params: request.Params}
-				_, _ = io.WriteString(conn, "{\"result\":{\"ok\":true}}\n")
+				response := `{"result":{"ok":true}}`
+				if request.Method == "session.identify" {
+					response = identifyResponse
+				}
+				_, _ = io.WriteString(conn, response+"\n")
 			}()
 		}
 	}()

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -85,6 +86,70 @@ func (s *Store) RegisterAgentSession(ctx context.Context, agentSessionID string,
 		return fmt.Errorf("commit agent session registration: %w", err)
 	}
 	return nil
+}
+
+func (s *Store) IdentifyAgentSession(ctx context.Context, agentSessionID, sessionKey string) (canonicalID string, reattached bool, err error) {
+	sessionKey = strings.TrimSpace(sessionKey)
+	if sessionKey == "" {
+		return "", false, fmt.Errorf("session_key is required")
+	}
+	agentSessionID, err = requireAgentSessionID(agentSessionID)
+	if err != nil {
+		return "", false, err
+	}
+
+	storedPID := 0
+	startedAt := ""
+	if actualStartedAt, processErr := processStartedAt(os.Getpid()); processErr == nil {
+		storedPID = os.Getpid()
+		startedAt = actualStartedAt
+	}
+	now := time.Now().UTC()
+	registeredAt := now.Format(time.RFC3339Nano)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return "", false, fmt.Errorf("begin agent session identification: %w", err)
+	}
+	defer tx.Rollback()
+
+	queries := sqlcgen.New(s.db).WithTx(tx)
+	if err := queries.RegisterAgentSession(ctx, sqlcgen.RegisterAgentSessionParams{
+		ID:           agentSessionID,
+		Pid:          int64(storedPID),
+		StartedAt:    startedAt,
+		RegisteredAt: registeredAt,
+	}); err != nil {
+		return "", false, fmt.Errorf("register agent session for identification: %w", err)
+	}
+
+	canonicalID = agentSessionID
+	existingID, lookupErr := queries.GetAgentSessionIDByKey(ctx, sessionKey)
+	if lookupErr == nil && existingID != agentSessionID {
+		canonicalID = existingID
+		reattached = true
+		if err := queries.UpdateAgentSessionProcessIdentity(ctx, sqlcgen.UpdateAgentSessionProcessIdentityParams{
+			Pid:          int64(storedPID),
+			StartedAt:    startedAt,
+			RegisteredAt: registeredAt,
+			ID:           canonicalID,
+		}); err != nil {
+			return "", false, fmt.Errorf("update canonical agent session identity: %w", err)
+		}
+	} else if errors.Is(lookupErr, sql.ErrNoRows) || lookupErr == nil {
+		if err := queries.UpdateAgentSessionKey(ctx, sqlcgen.UpdateAgentSessionKeyParams{
+			SessionKey: sessionKey,
+			ID:         agentSessionID,
+		}); err != nil {
+			return "", false, fmt.Errorf("set agent session key: %w", err)
+		}
+	} else {
+		return "", false, fmt.Errorf("find agent session by key: %w", lookupErr)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return "", false, fmt.Errorf("commit agent session identification: %w", err)
+	}
+	return canonicalID, reattached, nil
 }
 
 func (s *Store) AssociateAgentSessionWithProject(ctx context.Context, agentSessionID, projectID string) error {
