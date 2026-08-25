@@ -69,7 +69,7 @@ func parseTaskHandoffTime(column string, value sql.NullString) (*time.Time, erro
 func (s *Store) ensureTaskHandoffTask(ctx context.Context, handoffID, taskID string) error {
 	existingTaskID, err := sqlcgen.New(s.db).GetTaskHandoffTaskID(ctx, handoffID)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil
+		return fmt.Errorf("%w: %q", ErrTaskHandoffNotFound, handoffID)
 	}
 	if err != nil {
 		return fmt.Errorf("find task handoff %q: %w", handoffID, err)
@@ -78,6 +78,14 @@ func (s *Store) ensureTaskHandoffTask(ctx context.Context, handoffID, taskID str
 		return fmt.Errorf("%w: %q belongs to task %q, not %q", ErrTaskHandoffTaskMismatch, handoffID, existingTaskID, taskID)
 	}
 	return nil
+}
+
+func (s *Store) ensureTaskHandoffTaskForRequest(ctx context.Context, handoffID, taskID string) error {
+	err := s.ensureTaskHandoffTask(ctx, handoffID, taskID)
+	if errors.Is(err, ErrTaskHandoffNotFound) {
+		return nil
+	}
+	return err
 }
 
 func (s *Store) requireGoalHandoffForTask(ctx context.Context, taskID, requestedBy string) error {
@@ -173,7 +181,7 @@ func (s *Store) requestTaskHandoffForClaim(ctx context.Context, handoffID, taskI
 }
 
 func (s *Store) requestTaskHandoff(ctx context.Context, handoffID, taskID, requestedBy, requestReport string, requireLiveClaim bool) (TaskHandoff, error) {
-	if err := s.ensureTaskHandoffTask(ctx, handoffID, taskID); err != nil {
+	if err := s.ensureTaskHandoffTaskForRequest(ctx, handoffID, taskID); err != nil {
 		return TaskHandoff{}, err
 	}
 	if requireLiveClaim {
@@ -197,21 +205,27 @@ func (s *Store) requestTaskHandoff(ctx context.Context, handoffID, taskID, reque
 	return s.GetTaskHandoff(ctx, handoffID)
 }
 
-// ReceiveTaskHandoff records the receipt side of a handoff. If the request
-// row does not exist yet, this creates a receipt-only row with request fields
-// left NULL; the same handoff ID can be completed by a later request call.
+// ReceiveTaskHandoff records the receipt side of a requested handoff.
 func (s *Store) ReceiveTaskHandoff(ctx context.Context, handoffID, taskID, receivedBy string) (TaskHandoff, error) {
 	if err := s.ensureTaskHandoffTask(ctx, handoffID, taskID); err != nil {
 		return TaskHandoff{}, err
 	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	if err := sqlcgen.New(s.db).ReceiveTaskHandoff(ctx, sqlcgen.ReceiveTaskHandoffParams{
+	result, err := sqlcgen.New(s.db).ReceiveTaskHandoff(ctx, sqlcgen.ReceiveTaskHandoffParams{
 		ID:         handoffID,
 		TaskID:     taskID,
 		ReceivedBy: sql.NullString{String: receivedBy, Valid: true},
 		ReceivedAt: sql.NullString{String: now, Valid: true},
-	}); err != nil {
+	})
+	if err != nil {
 		return TaskHandoff{}, fmt.Errorf("receive task handoff: %w", err)
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return TaskHandoff{}, fmt.Errorf("receive task handoff rows affected: %w", err)
+	}
+	if n == 0 {
+		return TaskHandoff{}, fmt.Errorf("%w: %s", ErrTaskHandoffNotFound, handoffID)
 	}
 	return s.GetTaskHandoff(ctx, handoffID)
 }
@@ -270,13 +284,21 @@ func (s *Store) CompleteTaskHandoff(ctx context.Context, handoffID, taskID strin
 		return TaskHandoff{}, err
 	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	if err := sqlcgen.New(s.db).CompleteTaskHandoff(ctx, sqlcgen.CompleteTaskHandoffParams{
+	result, err := sqlcgen.New(s.db).CompleteTaskHandoff(ctx, sqlcgen.CompleteTaskHandoffParams{
 		ID:                handoffID,
 		TaskID:            taskID,
 		CompletedReportAt: sql.NullString{String: now, Valid: true},
 		CompleteReport:    sql.NullString{String: completeReport, Valid: completeReport != ""},
-	}); err != nil {
+	})
+	if err != nil {
 		return TaskHandoff{}, fmt.Errorf("complete task handoff: %w", err)
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return TaskHandoff{}, fmt.Errorf("complete task handoff rows affected: %w", err)
+	}
+	if n == 0 {
+		return TaskHandoff{}, fmt.Errorf("%w: %s", ErrTaskHandoffNotFound, handoffID)
 	}
 	return s.GetTaskHandoff(ctx, handoffID)
 }

@@ -87,6 +87,24 @@ func addRequestOnlyTaskHandoff(t *testing.T, s *Store, handoffID, taskID, reques
 	}
 }
 
+func addReceiptOnlyTaskHandoff(t *testing.T, s *Store, handoffID, taskID, receivedBy string) {
+	t.Helper()
+
+	ctx := context.Background()
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err := s.DB().ExecContext(ctx, `
+		INSERT INTO task_handoffs (id, task_id, requested_by, received_by, received_at)
+		VALUES (?, ?, ?, ?, ?)
+	`, handoffID, taskID, receivedBy, receivedBy, now); err != nil {
+		t.Fatalf("insert receipt-only task handoff failed: %v", err)
+	}
+	t.Cleanup(func() {
+		if _, err := s.DB().ExecContext(ctx, `DELETE FROM task_handoffs WHERE id = ?`, handoffID); err != nil {
+			t.Errorf("delete receipt-only task handoff %q: %v", handoffID, err)
+		}
+	})
+}
+
 func addTaskHandoffDirect(t *testing.T, s *Store, handoffID, taskID, requestedBy, receivedBy string) {
 	t.Helper()
 
@@ -529,17 +547,59 @@ func TestTaskHandoffReclaimsDeadClaim(t *testing.T) {
 	}
 }
 
-func TestTaskHandoffReceiveAllowsUnclaimedTask(t *testing.T) {
+func TestTaskHandoffReceiveRejectsUnrequestedHandoff(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	taskID := addTestTasks(t, s, 1)[0]
+	handoffID := "handoff-receipt-only"
+	addTestAgentSession(t, s, "receiver")
+	addReceiptOnlyTaskHandoff(t, s, handoffID, taskID, "receiver")
+
+	_, err := s.ReceiveTaskHandoff(ctx, handoffID, taskID, "receiver")
+	if !errors.Is(err, ErrTaskHandoffNotFound) {
+		t.Fatalf("error = %v, want ErrTaskHandoffNotFound", err)
+	}
+}
+
+func TestTaskHandoffReceiveRejectsEmptyHandoffID(t *testing.T) {
 	s := newTestStore(t)
 	taskID := addTestTasks(t, s, 1)[0]
 	addTestAgentSession(t, s, "receiver")
 
-	handoff, err := s.ReceiveTaskHandoff(context.Background(), "handoff-receipt-only", taskID, "receiver")
-	if err != nil {
-		t.Fatalf("ReceiveTaskHandoff without a claim failed: %v", err)
+	_, err := s.ReceiveTaskHandoff(context.Background(), "", taskID, "receiver")
+	if !errors.Is(err, ErrTaskHandoffNotFound) {
+		t.Fatalf("error = %v, want ErrTaskHandoffNotFound", err)
 	}
-	if handoff.RequestedAt != nil || handoff.ReceivedAt == nil {
-		t.Fatalf("receipt-only handoff has unexpected state: %+v", handoff)
+}
+
+func TestTaskHandoffCompleteRejectsUnrequestedHandoff(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	taskID := addTestTasks(t, s, 1)[0]
+	handoffID := "complete-receipt-only"
+	addTestAgentSession(t, s, "receiver")
+	addReceiptOnlyTaskHandoff(t, s, handoffID, taskID, "receiver")
+
+	_, err := s.CompleteTaskHandoff(ctx, handoffID, taskID, "should not complete")
+	if !errors.Is(err, ErrTaskHandoffNotFound) {
+		t.Fatalf("error = %v, want ErrTaskHandoffNotFound", err)
+	}
+}
+
+func TestTaskHandoffRejectsTaskMismatch(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	taskIDs := addTestTasks(t, s, 2)
+	handoffID := "task-mismatch"
+	addTestAgentSession(t, s, "requester")
+	addRequestOnlyTaskHandoff(t, s, handoffID, taskIDs[0], "requester")
+
+	_, err := s.ReceiveTaskHandoff(ctx, handoffID, taskIDs[1], "receiver")
+	if !errors.Is(err, ErrTaskHandoffTaskMismatch) {
+		t.Fatalf("error = %v, want ErrTaskHandoffTaskMismatch", err)
+	}
+	if errors.Is(err, ErrTaskHandoffNotFound) {
+		t.Fatalf("task mismatch must not be ErrTaskHandoffNotFound: %v", err)
 	}
 }
 
@@ -560,7 +620,7 @@ func TestTaskHandoffUnclaimedErrorIsDistinguishable(t *testing.T) {
 func TestTaskHandoffStatesRemainDistinct(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
-	taskIDs := addTestTasks(t, s, 4)
+	taskIDs := addTestTasks(t, s, 3)
 	addLiveParentGoalClaim(t, s, taskIDs[0], "requester")
 	addLiveTaskClaim(t, s, taskIDs[0], "receiver")
 
@@ -572,13 +632,6 @@ func TestTaskHandoffStatesRemainDistinct(t *testing.T) {
 	requested, err := s.RequestTaskHandoff(ctx, "unreceived", taskIDs[2], "requester", "")
 	if err != nil {
 		t.Fatalf("unreceived fixture insert failed: %v", err)
-	}
-
-	// A receipt without a request, proving the three timestamp columns are
-	// independently nullable rather than one overloaded handoff timestamp.
-	_, err = s.ReceiveTaskHandoff(ctx, "receipt-without-request", taskIDs[3], "receiver")
-	if err != nil {
-		t.Fatalf("receipt-only fixture insert failed: %v", err)
 	}
 
 	if got, err := s.ListTaskHandoffs(ctx, taskIDs[0]); err != nil {
@@ -595,10 +648,5 @@ func TestTaskHandoffStatesRemainDistinct(t *testing.T) {
 		t.Fatalf("GetTaskHandoff for unreceived task failed: %v", err)
 	} else if got.RequestedAt == nil || got.ReceivedAt != nil || got.CompletedReportAt != nil {
 		t.Fatalf("unreceived state is not distinct: %+v", got)
-	}
-	if got, err := s.GetTaskHandoff(ctx, "receipt-without-request"); err != nil {
-		t.Fatalf("GetTaskHandoff for receipt-only state failed: %v", err)
-	} else if got.RequestedAt != nil || got.ReceivedAt == nil || got.CompletedReportAt != nil {
-		t.Fatalf("receipt-only state is not distinct: %+v", got)
 	}
 }

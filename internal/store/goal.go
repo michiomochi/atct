@@ -636,13 +636,17 @@ func (s *Store) WithdrawActiveGoal(ctx context.Context, goalID, reason string) e
 		return fmt.Errorf("list task handoffs for withdrawn goal: %w", err)
 	}
 	for _, handoff := range openTaskHandoffs {
-		if err := q.CompleteTaskHandoff(ctx, sqlcgen.CompleteTaskHandoffParams{
+		result, err := q.CompleteTaskHandoff(ctx, sqlcgen.CompleteTaskHandoffParams{
 			ID:                handoff.ID,
 			TaskID:            handoff.TaskID,
 			CompletedReportAt: sql.NullString{String: now, Valid: true},
 			CompleteReport:    sql.NullString{String: reason, Valid: reason != ""},
-		}); err != nil {
+		})
+		if err != nil {
 			return fmt.Errorf("complete task handoff %s for withdrawn goal: %w", handoff.ID, err)
+		}
+		if _, err := result.RowsAffected(); err != nil {
+			return fmt.Errorf("complete task handoff %s rows affected: %w", handoff.ID, err)
 		}
 	}
 

@@ -184,19 +184,15 @@ ON CONFLICT(id) DO UPDATE SET
   requested_at = COALESCE(task_handoffs.requested_at, excluded.requested_at),
   request_report = COALESCE(task_handoffs.request_report, excluded.request_report);
 
--- name: ReceiveTaskHandoff :exec
-INSERT INTO task_handoffs (id, task_id, received_by, received_at)
-VALUES (?, ?, ?, ?)
-ON CONFLICT(id) DO UPDATE SET
-  received_by = COALESCE(task_handoffs.received_by, excluded.received_by),
-  received_at = COALESCE(task_handoffs.received_at, excluded.received_at);
+-- name: ReceiveTaskHandoff :execresult
+UPDATE task_handoffs
+SET received_by = ?, received_at = ?
+WHERE id = ? AND task_id = ? AND requested_at IS NOT NULL;
 
--- name: CompleteTaskHandoff :exec
-INSERT INTO task_handoffs (id, task_id, completed_report_at, complete_report)
-VALUES (?, ?, ?, ?)
-ON CONFLICT(id) DO UPDATE SET
-  completed_report_at = COALESCE(task_handoffs.completed_report_at, excluded.completed_report_at),
-  complete_report = COALESCE(task_handoffs.complete_report, excluded.complete_report);
+-- name: CompleteTaskHandoff :execresult
+UPDATE task_handoffs
+SET completed_report_at = ?, complete_report = ?
+WHERE id = ? AND task_id = ? AND requested_at IS NOT NULL;
 
 -- name: GetGoalHandoff :one
 SELECT id, goal_id, requested_by, received_by,
@@ -226,16 +222,12 @@ ON CONFLICT(id) DO UPDATE SET
   requested_at = COALESCE(goal_handoffs.requested_at, excluded.requested_at),
   request_report = COALESCE(goal_handoffs.request_report, excluded.request_report);
 
--- name: ReceiveGoalHandoff :exec
-INSERT INTO goal_handoffs (id, goal_id, received_by, received_at)
-VALUES (?, ?, ?, ?)
-ON CONFLICT(id) DO UPDATE SET
-  received_by = COALESCE(goal_handoffs.received_by, excluded.received_by),
-  received_at = COALESCE(goal_handoffs.received_at, excluded.received_at);
+-- name: ReceiveGoalHandoff :execresult
+UPDATE goal_handoffs
+SET received_by = ?, received_at = ?
+WHERE id = ? AND goal_id = ? AND requested_at IS NOT NULL;
 
--- name: CompleteGoalHandoff :exec
-INSERT INTO goal_handoffs (id, goal_id, completed_report_at, complete_report)
-VALUES (?, ?, ?, ?)
-ON CONFLICT(id) DO UPDATE SET
-  completed_report_at = COALESCE(goal_handoffs.completed_report_at, excluded.completed_report_at),
-  complete_report = COALESCE(goal_handoffs.complete_report, excluded.complete_report);
+-- name: CompleteGoalHandoff :execresult
+UPDATE goal_handoffs
+SET completed_report_at = ?, complete_report = ?
+WHERE id = ? AND goal_id = ? AND requested_at IS NOT NULL;

@@ -10,54 +10,48 @@ import (
 	"database/sql"
 )
 
-const completeGoalHandoff = `-- name: CompleteGoalHandoff :exec
-INSERT INTO goal_handoffs (id, goal_id, completed_report_at, complete_report)
-VALUES (?, ?, ?, ?)
-ON CONFLICT(id) DO UPDATE SET
-  completed_report_at = COALESCE(goal_handoffs.completed_report_at, excluded.completed_report_at),
-  complete_report = COALESCE(goal_handoffs.complete_report, excluded.complete_report)
+const completeGoalHandoff = `-- name: CompleteGoalHandoff :execresult
+UPDATE goal_handoffs
+SET completed_report_at = ?, complete_report = ?
+WHERE id = ? AND goal_id = ? AND requested_at IS NOT NULL
 `
 
 type CompleteGoalHandoffParams struct {
-	ID                string
-	GoalID            string
 	CompletedReportAt sql.NullString
 	CompleteReport    sql.NullString
+	ID                string
+	GoalID            string
 }
 
-func (q *Queries) CompleteGoalHandoff(ctx context.Context, arg CompleteGoalHandoffParams) error {
-	_, err := q.db.ExecContext(ctx, completeGoalHandoff,
-		arg.ID,
-		arg.GoalID,
+func (q *Queries) CompleteGoalHandoff(ctx context.Context, arg CompleteGoalHandoffParams) (sql.Result, error) {
+	return q.db.ExecContext(ctx, completeGoalHandoff,
 		arg.CompletedReportAt,
 		arg.CompleteReport,
+		arg.ID,
+		arg.GoalID,
 	)
-	return err
 }
 
-const completeTaskHandoff = `-- name: CompleteTaskHandoff :exec
-INSERT INTO task_handoffs (id, task_id, completed_report_at, complete_report)
-VALUES (?, ?, ?, ?)
-ON CONFLICT(id) DO UPDATE SET
-  completed_report_at = COALESCE(task_handoffs.completed_report_at, excluded.completed_report_at),
-  complete_report = COALESCE(task_handoffs.complete_report, excluded.complete_report)
+const completeTaskHandoff = `-- name: CompleteTaskHandoff :execresult
+UPDATE task_handoffs
+SET completed_report_at = ?, complete_report = ?
+WHERE id = ? AND task_id = ? AND requested_at IS NOT NULL
 `
 
 type CompleteTaskHandoffParams struct {
-	ID                string
-	TaskID            string
 	CompletedReportAt sql.NullString
 	CompleteReport    sql.NullString
+	ID                string
+	TaskID            string
 }
 
-func (q *Queries) CompleteTaskHandoff(ctx context.Context, arg CompleteTaskHandoffParams) error {
-	_, err := q.db.ExecContext(ctx, completeTaskHandoff,
-		arg.ID,
-		arg.TaskID,
+func (q *Queries) CompleteTaskHandoff(ctx context.Context, arg CompleteTaskHandoffParams) (sql.Result, error) {
+	return q.db.ExecContext(ctx, completeTaskHandoff,
 		arg.CompletedReportAt,
 		arg.CompleteReport,
+		arg.ID,
+		arg.TaskID,
 	)
-	return err
 }
 
 const countOpenDecisionsForTask = `-- name: CountOpenDecisionsForTask :one
@@ -675,54 +669,48 @@ func (q *Queries) MaxTaskSortOrder(ctx context.Context, goalID string) (int64, e
 	return sort_order, err
 }
 
-const receiveGoalHandoff = `-- name: ReceiveGoalHandoff :exec
-INSERT INTO goal_handoffs (id, goal_id, received_by, received_at)
-VALUES (?, ?, ?, ?)
-ON CONFLICT(id) DO UPDATE SET
-  received_by = COALESCE(goal_handoffs.received_by, excluded.received_by),
-  received_at = COALESCE(goal_handoffs.received_at, excluded.received_at)
+const receiveGoalHandoff = `-- name: ReceiveGoalHandoff :execresult
+UPDATE goal_handoffs
+SET received_by = ?, received_at = ?
+WHERE id = ? AND goal_id = ? AND requested_at IS NOT NULL
 `
 
 type ReceiveGoalHandoffParams struct {
-	ID         string
-	GoalID     string
 	ReceivedBy sql.NullString
 	ReceivedAt sql.NullString
+	ID         string
+	GoalID     string
 }
 
-func (q *Queries) ReceiveGoalHandoff(ctx context.Context, arg ReceiveGoalHandoffParams) error {
-	_, err := q.db.ExecContext(ctx, receiveGoalHandoff,
-		arg.ID,
-		arg.GoalID,
+func (q *Queries) ReceiveGoalHandoff(ctx context.Context, arg ReceiveGoalHandoffParams) (sql.Result, error) {
+	return q.db.ExecContext(ctx, receiveGoalHandoff,
 		arg.ReceivedBy,
 		arg.ReceivedAt,
+		arg.ID,
+		arg.GoalID,
 	)
-	return err
 }
 
-const receiveTaskHandoff = `-- name: ReceiveTaskHandoff :exec
-INSERT INTO task_handoffs (id, task_id, received_by, received_at)
-VALUES (?, ?, ?, ?)
-ON CONFLICT(id) DO UPDATE SET
-  received_by = COALESCE(task_handoffs.received_by, excluded.received_by),
-  received_at = COALESCE(task_handoffs.received_at, excluded.received_at)
+const receiveTaskHandoff = `-- name: ReceiveTaskHandoff :execresult
+UPDATE task_handoffs
+SET received_by = ?, received_at = ?
+WHERE id = ? AND task_id = ? AND requested_at IS NOT NULL
 `
 
 type ReceiveTaskHandoffParams struct {
-	ID         string
-	TaskID     string
 	ReceivedBy sql.NullString
 	ReceivedAt sql.NullString
+	ID         string
+	TaskID     string
 }
 
-func (q *Queries) ReceiveTaskHandoff(ctx context.Context, arg ReceiveTaskHandoffParams) error {
-	_, err := q.db.ExecContext(ctx, receiveTaskHandoff,
-		arg.ID,
-		arg.TaskID,
+func (q *Queries) ReceiveTaskHandoff(ctx context.Context, arg ReceiveTaskHandoffParams) (sql.Result, error) {
+	return q.db.ExecContext(ctx, receiveTaskHandoff,
 		arg.ReceivedBy,
 		arg.ReceivedAt,
+		arg.ID,
+		arg.TaskID,
 	)
-	return err
 }
 
 const registerAgentSession = `-- name: RegisterAgentSession :exec

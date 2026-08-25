@@ -62,6 +62,24 @@ func addRequestOnlyGoalHandoff(t *testing.T, s *Store, handoffID, goalID, reques
 	}
 }
 
+func addReceiptOnlyGoalHandoff(t *testing.T, s *Store, handoffID, goalID, receivedBy string) {
+	t.Helper()
+
+	ctx := context.Background()
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err := s.DB().ExecContext(ctx, `
+		INSERT INTO goal_handoffs (id, goal_id, requested_by, received_by, received_at)
+		VALUES (?, ?, ?, ?, ?)
+	`, handoffID, goalID, receivedBy, receivedBy, now); err != nil {
+		t.Fatalf("insert receipt-only goal handoff failed: %v", err)
+	}
+	t.Cleanup(func() {
+		if _, err := s.DB().ExecContext(ctx, `DELETE FROM goal_handoffs WHERE id = ?`, handoffID); err != nil {
+			t.Errorf("delete receipt-only goal handoff %q: %v", handoffID, err)
+		}
+	})
+}
+
 func addGoalHandoffDirect(t *testing.T, s *Store, handoffID, goalID, requestedBy, receivedBy string) {
 	t.Helper()
 
@@ -283,6 +301,20 @@ func TestGoalHandoffReceiveByGoal(t *testing.T) {
 	}
 	if received.ID != requested.ID || received.ReceivedBy != "goal-receiver" {
 		t.Fatalf("unexpected received handoff: %+v", received)
+	}
+}
+
+func TestGoalHandoffReceiveRejectsUnrequestedHandoff(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	goalID := newTestGoal(t, s)
+	handoffID := "goal-receipt-only"
+	addTestAgentSession(t, s, "receiver")
+	addReceiptOnlyGoalHandoff(t, s, handoffID, goalID, "receiver")
+
+	_, err := s.ReceiveGoalHandoff(ctx, handoffID, goalID, "receiver")
+	if !errors.Is(err, ErrGoalHandoffNotFound) {
+		t.Fatalf("error = %v, want ErrGoalHandoffNotFound", err)
 	}
 }
 

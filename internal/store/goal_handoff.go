@@ -69,7 +69,7 @@ func parseGoalHandoffTime(column string, value sql.NullString) (*time.Time, erro
 func (s *Store) ensureGoalHandoffGoal(ctx context.Context, handoffID, goalID string) error {
 	existingGoalID, err := sqlcgen.New(s.db).GetGoalHandoffGoalID(ctx, handoffID)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil
+		return fmt.Errorf("%w: %q", ErrGoalHandoffNotFound, handoffID)
 	}
 	if err != nil {
 		return fmt.Errorf("find goal handoff %q: %w", handoffID, err)
@@ -78,6 +78,14 @@ func (s *Store) ensureGoalHandoffGoal(ctx context.Context, handoffID, goalID str
 		return fmt.Errorf("%w: %q belongs to goal %q, not %q", ErrGoalHandoffGoalMismatch, handoffID, existingGoalID, goalID)
 	}
 	return nil
+}
+
+func (s *Store) ensureGoalHandoffGoalForRequest(ctx context.Context, handoffID, goalID string) error {
+	err := s.ensureGoalHandoffGoal(ctx, handoffID, goalID)
+	if errors.Is(err, ErrGoalHandoffNotFound) {
+		return nil
+	}
+	return err
 }
 
 func (s *Store) requireProjectClaimForGoal(ctx context.Context, goalID, requestedBy string) error {
@@ -175,7 +183,7 @@ func (s *Store) requestGoalHandoffForClaim(ctx context.Context, handoffID, goalI
 }
 
 func (s *Store) requestGoalHandoff(ctx context.Context, handoffID, goalID, requestedBy, requestReport string, requireLiveClaim bool) (GoalHandoff, error) {
-	if err := s.ensureGoalHandoffGoal(ctx, handoffID, goalID); err != nil {
+	if err := s.ensureGoalHandoffGoalForRequest(ctx, handoffID, goalID); err != nil {
 		return GoalHandoff{}, err
 	}
 	if requireLiveClaim {
@@ -199,21 +207,27 @@ func (s *Store) requestGoalHandoff(ctx context.Context, handoffID, goalID, reque
 	return s.GetGoalHandoff(ctx, handoffID)
 }
 
-// ReceiveGoalHandoff records the receipt side of a handoff. If the request
-// row does not exist yet, this creates a receipt-only row with request fields
-// left NULL; the same handoff ID can be completed by a later request call.
+// ReceiveGoalHandoff records the receipt side of a requested handoff.
 func (s *Store) ReceiveGoalHandoff(ctx context.Context, handoffID, goalID, receivedBy string) (GoalHandoff, error) {
 	if err := s.ensureGoalHandoffGoal(ctx, handoffID, goalID); err != nil {
 		return GoalHandoff{}, err
 	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	if err := sqlcgen.New(s.db).ReceiveGoalHandoff(ctx, sqlcgen.ReceiveGoalHandoffParams{
+	result, err := sqlcgen.New(s.db).ReceiveGoalHandoff(ctx, sqlcgen.ReceiveGoalHandoffParams{
 		ID:         handoffID,
 		GoalID:     goalID,
 		ReceivedBy: sql.NullString{String: receivedBy, Valid: true},
 		ReceivedAt: sql.NullString{String: now, Valid: true},
-	}); err != nil {
+	})
+	if err != nil {
 		return GoalHandoff{}, fmt.Errorf("receive goal handoff: %w", err)
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return GoalHandoff{}, fmt.Errorf("receive goal handoff rows affected: %w", err)
+	}
+	if n == 0 {
+		return GoalHandoff{}, fmt.Errorf("%w: %s", ErrGoalHandoffNotFound, handoffID)
 	}
 	return s.GetGoalHandoff(ctx, handoffID)
 }
@@ -272,13 +286,21 @@ func (s *Store) CompleteGoalHandoff(ctx context.Context, handoffID, goalID strin
 		return GoalHandoff{}, err
 	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	if err := sqlcgen.New(s.db).CompleteGoalHandoff(ctx, sqlcgen.CompleteGoalHandoffParams{
+	result, err := sqlcgen.New(s.db).CompleteGoalHandoff(ctx, sqlcgen.CompleteGoalHandoffParams{
 		ID:                handoffID,
 		GoalID:            goalID,
 		CompletedReportAt: sql.NullString{String: now, Valid: true},
 		CompleteReport:    sql.NullString{String: completeReport, Valid: completeReport != ""},
-	}); err != nil {
+	})
+	if err != nil {
 		return GoalHandoff{}, fmt.Errorf("complete goal handoff: %w", err)
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return GoalHandoff{}, fmt.Errorf("complete goal handoff rows affected: %w", err)
+	}
+	if n == 0 {
+		return GoalHandoff{}, fmt.Errorf("%w: %s", ErrGoalHandoffNotFound, handoffID)
 	}
 	return s.GetGoalHandoff(ctx, handoffID)
 }
