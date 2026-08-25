@@ -18,6 +18,8 @@ export const DECISION_EVENT_NAMES = [
   "detection.unclaimed_doing",
   "detection.handoff_unreceived",
   "detection.handoff_unreported",
+  // 報告が届いたことは異常ではないが、handoff の状態が変わるので画面は更新する。
+  "handoff_reported",
   "detection.claim_undelegated",
   "detection.decision_answered_unapplied",
   "detection.decision_default_unapplied",
