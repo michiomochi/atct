@@ -34,3 +34,6 @@ web/dist/*
 
 # macOS
 .DS_Store
+# Go build cache when GOCACHE is pointed inside the repo. Ignored so a stray
+# cache cannot be staged by `git add -A` and cannot bury `git status` output.
+.atct-tmp/
