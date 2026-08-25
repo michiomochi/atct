@@ -39,7 +39,6 @@ type watchDecision struct {
 	ActionableGoalCount        int     `json:"actionable_goal_count"`
 	UnstartedTaskCount         int     `json:"unstarted_task_count"`
 	WaitingAnswerTaskCount     int     `json:"waiting_answer_task_count"`
-	WorkingTaskCount           int     `json:"working_task_count"`
 	UntouchedTaskCount         int     `json:"untouched_task_count"`
 	WaitingAnswerCount         int     `json:"waiting_answer_count"`
 	DetectorUnstartedTaskCount int     `json:"detector_unstarted_task_count"`
@@ -640,7 +639,7 @@ func formatWatchDecision(eventName string, decision watchDecision) (string, bool
 	case "goal.created":
 		return fmt.Sprintf("atct goal created (goal_id: %s)", decision.GoalID), true
 	case "wakeup":
-		return fmt.Sprintf("atct wakeup: actionable_goals=%d unstarted_tasks=%d waiting_answer_tasks=%d working_tasks=%d untouched_tasks=%d waiting_answers=%d", decision.ActionableGoalCount, decision.UnstartedTaskCount, decision.WaitingAnswerTaskCount, decision.WorkingTaskCount, decision.UntouchedTaskCount, decision.WaitingAnswerCount), true
+		return fmt.Sprintf("atct wakeup: actionable_goals=%d unstarted_tasks=%d waiting_answer_tasks=%d untouched_tasks=%d waiting_answers=%d", decision.ActionableGoalCount, decision.UnstartedTaskCount, decision.WaitingAnswerTaskCount, decision.UntouchedTaskCount, decision.WaitingAnswerCount), true
 	case "detection.completion_report_missing":
 		return fmt.Sprintf("atct detection: goal %s has all tasks done but no completion report", decision.GoalID), true
 	case "detection.commits_missing":

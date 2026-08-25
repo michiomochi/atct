@@ -80,13 +80,9 @@ type KeepaliveEvent struct {
 // WakeupState is the detector result used by pending output and the daemon.
 // Tasks contains the actionable task list for pending's human-readable view.
 type WakeupState struct {
-	ActionableGoalCount    int
-	UnstartedTaskCount     int
-	WaitingAnswerTaskCount int
-	// WorkingTaskCount is retained for compatibility with wakeup consumers.
-	// It is always zero: a claimed task is not unstarted, and an unstarted task
-	// remains claimable regardless of claims on sibling tasks.
-	WorkingTaskCount           int
+	ActionableGoalCount        int
+	UnstartedTaskCount         int
+	WaitingAnswerTaskCount     int
 	UntouchedTaskCount         int
 	WaitingAnswerCount         int
 	Tasks                      []domain.Task

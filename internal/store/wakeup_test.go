@@ -173,7 +173,7 @@ func TestDetectWakeupClassifiesUnstartedTasksForGoalWaitingForOpenDecision(t *te
 	if state.WaitingAnswerCount != 1 {
 		t.Fatalf("waiting answer count = %d, want 1", state.WaitingAnswerCount)
 	}
-	if state.WaitingAnswerTaskCount != 1 || state.WorkingTaskCount != 0 || state.UntouchedTaskCount != 0 {
+	if state.WaitingAnswerTaskCount != 1 || state.UntouchedTaskCount != 0 {
 		t.Fatalf("wakeup task breakdown = %+v, want one waiting-answer task", state)
 	}
 
@@ -246,10 +246,10 @@ func TestDetectWakeupClassifiesUnstartedTasksForGoalWithRunningClaim(t *testing.
 	if state.ActionableGoalCount != 1 || state.UnstartedTaskCount != 1 || len(state.Tasks) != 1 || state.Tasks[0].ID != tasks[1].ID {
 		t.Fatalf("wakeup state = %+v, want one counted and actionable sibling task", state)
 	}
-	if state.WaitingAnswerTaskCount != 0 || state.WorkingTaskCount != 0 || state.UntouchedTaskCount != 1 {
+	if state.WaitingAnswerTaskCount != 0 || state.UntouchedTaskCount != 1 {
 		t.Fatalf("wakeup task breakdown = %+v, want one untouched task", state)
 	}
-	if state.UnstartedTaskCount != state.WaitingAnswerTaskCount+state.WorkingTaskCount+state.UntouchedTaskCount {
+	if state.UnstartedTaskCount != state.WaitingAnswerTaskCount+state.UntouchedTaskCount {
 		t.Fatalf("unstarted task breakdown = %+v, want total to equal category sum", state)
 	}
 
@@ -394,13 +394,10 @@ func TestDetectWakeupCountsAndClassifiesAllUnstartedTasks(t *testing.T) {
 	if state.WaitingAnswerTaskCount != 1 {
 		t.Fatalf("waiting-answer task count = %d, want 1", state.WaitingAnswerTaskCount)
 	}
-	if state.WorkingTaskCount != 0 {
-		t.Fatalf("working task count = %d, want 0", state.WorkingTaskCount)
-	}
 	if state.UntouchedTaskCount != 5 {
 		t.Fatalf("untouched task count = %d, want 5", state.UntouchedTaskCount)
 	}
-	if state.UnstartedTaskCount != state.WaitingAnswerTaskCount+state.WorkingTaskCount+state.UntouchedTaskCount {
+	if state.UnstartedTaskCount != state.WaitingAnswerTaskCount+state.UntouchedTaskCount {
 		t.Fatalf("unstarted task breakdown = %+v, want total to equal category sum", state)
 	}
 	wantTaskIDs := map[string]struct{}{

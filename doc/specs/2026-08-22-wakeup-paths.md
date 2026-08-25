@@ -478,6 +478,13 @@ if len(openDecisions) > 0 {
 2026-08-22 の実測では、3 件が `doing` かつ生存 claim を持っている最中に
 `working_tasks=0` が出ていた。
 
+2026-08-25 に `WorkingTaskCount`、`working_task_count`、および wakeup 行の
+`working_tasks=` を削除した。wakeup 行の残る内訳は
+`unstarted_tasks = waiting_answer_tasks + untouched_tasks` であり、常に 0 の
+独立項目を測定値らしく表示しない。互換性のためだけに残っていた field であり、
+消費者は `cmd/atct/watch.go` だけだった。供給元を復活させるには、兄弟 task の
+claim が claim 可能な task を隠した欠陥を直した `28b68da` の join を戻す必要がある。
+
 ## 検知 11 種類の到達可能性（2026-08-22 に稼働版 0.40.0 で実測）
 
 ゴール 9c7df582 のタスク 3846c275「10 種類すべてが届くことを稼働版で実測する」の記録。

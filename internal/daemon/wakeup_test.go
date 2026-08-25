@@ -157,7 +157,6 @@ func TestWakeupTrackerPublishesTaskBreakdown(t *testing.T) {
 		ActionableGoalCount:    1,
 		UnstartedTaskCount:     3,
 		WaitingAnswerTaskCount: 1,
-		WorkingTaskCount:       0,
 		UntouchedTaskCount:     2,
 		WaitingAnswerCount:     2,
 		Tasks:                  tasks[1:],
