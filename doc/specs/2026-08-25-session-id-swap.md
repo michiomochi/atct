@@ -241,6 +241,7 @@ canonical はそちらになり、transport の行は鍵なしで残る。**こ�
 （手順を破って identify より前に atct を呼んでいた場合、その行が handoff から
 参照されている可能性があるため消せない）、参照が無ければ 30 日の retention が掃除する。
 **2026-08-25 時点で `reattached=true` は 1 度も観測されていない。**
+（この記述は同日中に古くなった。11 節を参照。）
 
 **何が 2 回登録しているかは依然として不明である。**`7b194d4e` の完了条件 (2) は未達。
 **推測で埋めない。**
@@ -248,3 +249,32 @@ canonical はそちらになり、transport の行は鍵なしで残る。**こ�
 （commander は当初この節と逆の結論——identify が孤児を作る——を書いた。
 コードの `RegisterAgentSession` を「行を作る」と読み違えたためで、
 上の実測が否定した。）
+
+## 11. `reattached=true` を実測した（dotfiles-commander・2026-08-25）
+
+10 節の「1 度も観測されていない」は同日中に古くなった。**MCP 再接続を挟んだ実測で
+`reattached=true` が返り、claim を取り直さずに役割が戻った。**
+
+    atct_role(expected_role=commander)          matches:false  role:'executor'   project_id:''
+    atct_session_identify('dotfiles-commander') reattached:true agent_session_id:0dac5e66
+    atct_role(expected_role=commander)          matches:true   role:'commander'  project_id:4d20dc48
+
+`agent_session_id` は 09:09 に鍵を登録したときと同一（`0dac5e66`）。**新しい行を作らず、
+同じ行に戻っている。**
+
+**効果の大きさは同日の対照で出た。**同じ space で、鍵を登録する前は
+project claim を 3 回取り直し、goal handoff を 4 本発行している
+（`handoff-dotfiles-0fe78eaf-01` から `-04`）。うち 2 回は MCP 再接続、1 回は daemon
+入れ替えが原因である。**鍵を登録した後の再接続では 0 回。**
+MCP 再接続 1 回あたり、持ち主側の 1 往復（`release` → `claim`）と
+受け手側の 1 往復（`receive` のやり直し）が消える。
+
+### 鍵を登録する前に取った claim は戻らない
+
+**この非対称が手順の位置を決める。**戻ったのは鍵を登録した**あとに**取り直した claim
+だけである。1 回失ってから鍵を登録しても、失った分は戻らない。
+
+したがって `identify` は **`atct:start` の先頭**で呼ばれなければならない。
+「役割がおかしくなったら identify を呼ぶ」という回復手順（7 節）だけでは、
+**最初の 1 回の損失は防げない。**回復手順は残すが、それは 2 回目以降のためのものである。
+
