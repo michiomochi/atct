@@ -504,7 +504,7 @@ export function GoalDetail({ id }: Props) {
   const taskCommits = data?.goal.task_commits ?? [];
 
   return (
-    <main className="min-w-0 max-w-full space-y-10 overflow-x-hidden">
+    <main className="min-w-0 max-w-full space-y-10 overflow-x-hidden px-0.5">
       <div className="border-b border-line pb-6">
         <a className="focus-ring text-base font-medium text-accent-700 hover:text-accent-600" href="/">
           {t("goal.backToDashboard")}
