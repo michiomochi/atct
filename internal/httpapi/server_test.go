@@ -2377,6 +2377,37 @@ func TestSSEFiltersDecisionEventsByProjectID(t *testing.T) {
 	_ = otherDecision
 }
 
+func TestSSEFiltersDetectionEventsByProjectID(t *testing.T) {
+	f := newBareFixture(t)
+	otherProject, err := f.store.CreateProject(f.ctx, "other", t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+	streamCtx, cancel := context.WithCancel(f.ctx)
+	defer cancel()
+	stream, reader := openSSEStream(t, streamCtx, srv.Client(), eventsURL(srv.URL, f.project.ID))
+	defer stream.Body.Close()
+
+	other := &store.DetectionEvent{DetectionID: "other-detection", ProjectID: otherProject.ID, GoalID: "other-goal"}
+	current := store.DetectionEvent{DetectionID: "current-detection", ProjectID: f.project.ID, GoalID: "current-goal"}
+	f.store.PublishEvent(store.DecisionEvent{Name: store.EventDetectionCompletionReportMissing, Data: other})
+	f.store.PublishEvent(store.DecisionEvent{Name: store.EventDetectionCompletionReportMissing, Data: current})
+
+	frame := readSSEFrame(t, reader)
+	if frame.event != store.EventDetectionCompletionReportMissing {
+		t.Fatalf("SSE detection event = %q, want %q; lines=%v", frame.event, store.EventDetectionCompletionReportMissing, frame.lines)
+	}
+	var got store.DetectionEvent
+	if err := json.Unmarshal([]byte(frame.data), &got); err != nil {
+		t.Fatalf("SSE detection data is not a DetectionEvent: %v; data=%q", err, frame.data)
+	}
+	if got.DetectionID != current.DetectionID {
+		t.Fatalf("SSE detection id = %q, want %q", got.DetectionID, current.DetectionID)
+	}
+}
+
 func TestSSEPublishesGenericWakeupAndKeepaliveEvents(t *testing.T) {
 	f := newBareFixture(t)
 	otherProject, err := f.store.CreateProject(f.ctx, "other", t.TempDir())

@@ -1286,6 +1286,13 @@ func (s *Server) eventProjectID(ctx context.Context, event store.DecisionEvent) 
 			return "", err
 		}
 		return goal.ProjectID, nil
+	case store.DetectionEvent:
+		return data.ProjectID, nil
+	case *store.DetectionEvent:
+		if data == nil {
+			return "", nil
+		}
+		return data.ProjectID, nil
 	case store.WakeupEvent:
 		return data.ProjectID, nil
 	case *store.WakeupEvent:
