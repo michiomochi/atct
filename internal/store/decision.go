@@ -585,6 +585,35 @@ func (s *Store) ListUnappliedDecisionsForProject(ctx context.Context, projectID 
 	})
 }
 
+// ListUnappliedDecisionsForGoal returns answered Decisions not yet received by an agent
+// for the given Goal.
+func (s *Store) ListUnappliedDecisionsForGoal(ctx context.Context, goalID string) ([]domain.Decision, error) {
+	rows, err := decisionQueries(s).ListUnappliedDecisionsForGoal(ctx, goalID)
+	if err != nil {
+		return nil, fmt.Errorf("query goal unapplied decisions: %w", err)
+	}
+	return convertDecisionRows(rows, func(row sqlcgen.ListUnappliedDecisionsForGoalRow) decisionRow {
+		return decisionRow{
+			ID:               row.ID,
+			GoalID:           row.GoalID,
+			TaskID:           row.TaskID,
+			Kind:             row.Kind,
+			Question:         row.Question,
+			Options:          row.Options,
+			Status:           row.Status,
+			DefaultOption:    row.DefaultOption,
+			DefaultAfterMs:   row.DefaultAfterMs,
+			DefaultAppliedAt: row.DefaultAppliedAt,
+			AnswerLabel:      row.AnswerLabel,
+			AnswerText:       row.AnswerText,
+			AnsweredAt:       row.AnsweredAt,
+			AppliedAt:        row.AppliedAt,
+			AgentSessionID:   row.AgentSessionID,
+			CreatedAt:        row.CreatedAt,
+		}
+	})
+}
+
 // AppliedDecisionHistoryLimit is the maximum number of applied Decisions returned.
 const AppliedDecisionHistoryLimit = 20
 

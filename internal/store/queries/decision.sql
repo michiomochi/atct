@@ -97,6 +97,16 @@ WHERE status = 'answered'
   AND goal_id IN (SELECT id FROM goals WHERE project_id = ?)
 ORDER BY answered_at;
 
+-- name: ListUnappliedDecisionsForGoal :many
+SELECT
+  id, goal_id, COALESCE(task_id, '') AS task_id, kind, question, options, status,
+  default_option, default_after_ms, default_applied_at,
+  answer_label, answer_text, answered_at, applied_at, agent_session_id, created_at
+FROM decisions
+WHERE status = 'answered'
+  AND goal_id = ?
+ORDER BY answered_at;
+
 -- name: CountAppliedDecisions :one
 SELECT COUNT(*)
 FROM decisions

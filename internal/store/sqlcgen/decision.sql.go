@@ -741,6 +741,76 @@ func (q *Queries) ListUnappliedDecisions(ctx context.Context) ([]ListUnappliedDe
 	return items, nil
 }
 
+const listUnappliedDecisionsForGoal = `-- name: ListUnappliedDecisionsForGoal :many
+SELECT
+  id, goal_id, COALESCE(task_id, '') AS task_id, kind, question, options, status,
+  default_option, default_after_ms, default_applied_at,
+  answer_label, answer_text, answered_at, applied_at, agent_session_id, created_at
+FROM decisions
+WHERE status = 'answered'
+  AND goal_id = ?
+ORDER BY answered_at
+`
+
+type ListUnappliedDecisionsForGoalRow struct {
+	ID               string
+	GoalID           string
+	TaskID           string
+	Kind             string
+	Question         string
+	Options          string
+	Status           string
+	DefaultOption    string
+	DefaultAfterMs   sql.NullInt64
+	DefaultAppliedAt sql.NullString
+	AnswerLabel      string
+	AnswerText       string
+	AnsweredAt       sql.NullString
+	AppliedAt        sql.NullString
+	AgentSessionID   string
+	CreatedAt        string
+}
+
+func (q *Queries) ListUnappliedDecisionsForGoal(ctx context.Context, goalID string) ([]ListUnappliedDecisionsForGoalRow, error) {
+	rows, err := q.db.QueryContext(ctx, listUnappliedDecisionsForGoal, goalID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListUnappliedDecisionsForGoalRow
+	for rows.Next() {
+		var i ListUnappliedDecisionsForGoalRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.GoalID,
+			&i.TaskID,
+			&i.Kind,
+			&i.Question,
+			&i.Options,
+			&i.Status,
+			&i.DefaultOption,
+			&i.DefaultAfterMs,
+			&i.DefaultAppliedAt,
+			&i.AnswerLabel,
+			&i.AnswerText,
+			&i.AnsweredAt,
+			&i.AppliedAt,
+			&i.AgentSessionID,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listUnappliedDecisionsForProject = `-- name: ListUnappliedDecisionsForProject :many
 SELECT
   id, goal_id, COALESCE(task_id, '') AS task_id, kind, question, options, status,
