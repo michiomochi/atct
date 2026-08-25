@@ -37,10 +37,10 @@ Invoking this skill is not only a request to begin. It assigns you a role: **for
 this repository, you own what ATCT says.** Every claim, every `done`, every
 parked decision is yours to keep accurate, and nobody else will do it for you.
 
-That obligation does not transfer when the work does. If you delegate a task to
-another agent, **you still close it** — the delegate cannot, because it does not
-hold the claim and usually cannot reach these tools at all. A delegate reporting
-success is the signal to call `atct_task_update`, not a substitute for it.
+That obligation transfers with the work. If you delegate a task to another
+agent, the delegate calls `atct_task_update` with `done` as soon as it finishes.
+If that call cannot complete, the delegator closes the task as a fallback. A
+delegate reporting success is not a substitute for a successful task update.
 
 The failure this prevents is specific and has happened: an orchestrator
 delegated six tasks, all six landed, and every one of them still read `todo` on

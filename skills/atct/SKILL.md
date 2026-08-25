@@ -22,8 +22,8 @@ The daemon derives the role in this order:
 | Layer | Does | Does not |
 |---|---|---|
 | `commander` | triage incoming work / split goals / prepare a working area / review landed changes / publish / resolve conflicts / clean up | design the goal / implement the goal / edit executor deliverables |
-| `subcommander` | design the goal / delegate the goal's work / review implementation / report completion for the goal / issue decisions to the human | inspect or manage other goals / publish / create another subcommander / claim the project |
-| `executor` | implement / test | make design decisions / re-delegate / commit / write internal version-control details |
+| `subcommander` | design the goal / delegate the goal's work / review implementation / report completion for the goal / issue decisions to the human / commit the goal's work / close a task its worker cannot | inspect or manage other goals / publish / create another subcommander / claim the project |
+| `executor` | implement / test / close the task it was given | make design decisions / re-delegate / commit / write internal version-control details |
 
 ## Declare before you work
 
@@ -52,6 +52,11 @@ cannot be received twice.
 
 Release a task by setting it back to `todo` with `atct_task_update`. There is
 no separate release tool.
+
+## Commit safely
+
+When committing the goal's work, name the paths explicitly; never use `git add -A`.
+If another worker's uncommitted changes share a file, stage only your hunks with `git apply --cached`.
 
 ## Delegate a task
 

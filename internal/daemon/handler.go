@@ -41,8 +41,8 @@ type roleBoundary struct {
 
 var roleBoundaries = map[string]roleBoundary{
 	"commander":    {Does: []string{"triage incoming work", "split goals", "prepare a working area", "review landed changes", "publish", "resolve conflicts", "clean up"}, DoesNot: []string{"design the goal", "implement the goal", "edit executor deliverables"}},
-	"subcommander": {Does: []string{"design the goal", "delegate the goal's work", "review implementation", "report completion for the goal", "issue decisions to the human"}, DoesNot: []string{"inspect or manage other goals", "publish", "create another subcommander", "claim the project"}},
-	"executor":     {Does: []string{"implement", "test"}, DoesNot: []string{"make design decisions", "re-delegate", "commit", "write internal version-control details"}},
+	"subcommander": {Does: []string{"design the goal", "delegate the goal's work", "review implementation", "report completion for the goal", "issue decisions to the human", "commit the goal's work", "close a task its worker cannot"}, DoesNot: []string{"inspect or manage other goals", "publish", "create another subcommander", "claim the project"}},
+	"executor":     {Does: []string{"implement", "test", "close the task it was given"}, DoesNot: []string{"make design decisions", "re-delegate", "commit", "write internal version-control details"}},
 }
 
 type claimableTaskSummary struct {

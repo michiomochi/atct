@@ -708,9 +708,57 @@ test_role_boundaries_cover_version_control_and_delegation_direction() {
   local handler_go="$REPO_ROOT/internal/daemon/handler.go"
 
   assert_file_contains "delegate the goal's work" "$atct_skill"
+  assert_file_contains "commit the goal's work" "$atct_skill"
+  assert_file_contains "close a task its worker cannot" "$atct_skill"
   assert_file_contains 'write internal version-control details' "$atct_skill"
   assert_file_contains "delegate the goal's work" "$handler_go"
-  assert_file_contains '"executor":     {Does: []string{"implement", "test"}, DoesNot: []string{"make design decisions", "re-delegate", "commit", "write internal version-control details"}}' "$handler_go"
+  assert_file_contains '"executor":     {Does: []string{"implement", "test", "close the task it was given"}, DoesNot: []string{"make design decisions", "re-delegate", "commit", "write internal version-control details"}}' "$handler_go"
+}
+
+test_executor_boundary_includes_task_closure() {
+  local atct_skill="$REPO_ROOT/skills/atct/SKILL.md"
+
+  assert_file_contains 'close the task it was given' "$atct_skill"
+}
+
+test_subcommander_boundary_includes_goal_commit() {
+  local atct_skill="$REPO_ROOT/skills/atct/SKILL.md"
+
+  assert_file_contains "commit the goal's work" "$atct_skill"
+}
+
+test_commit_workflow_requires_explicit_paths() {
+  local atct_skill="$REPO_ROOT/skills/atct/SKILL.md"
+
+  assert_file_contains 'name the paths explicitly; never use `git add -A`' "$atct_skill"
+}
+
+test_executor_boundary_keeps_commit_exclusion() {
+  local atct_skill="$REPO_ROOT/skills/atct/SKILL.md"
+
+  assert_file_contains '| `executor` | implement / test / close the task it was given | make design decisions / re-delegate / commit / write internal version-control details |' "$atct_skill"
+}
+
+test_start_does_not_claim_delegate_cannot_close() {
+  local start_skill="$REPO_ROOT/skills/start/SKILL.md"
+
+  assert_file_not_contains 'the delegate cannot' "$start_skill"
+}
+
+test_start_does_not_claim_delegate_lacks_claim() {
+  local start_skill="$REPO_ROOT/skills/start/SKILL.md"
+
+  assert_file_not_contains 'does not hold the claim' "$start_skill"
+}
+
+test_role_table_has_no_task_update_procedure() {
+  local atct_skill="$REPO_ROOT/skills/atct/SKILL.md"
+  local roles_section
+
+  roles_section="$(sed -n '/^## Roles$/,/^## Declare before you work$/p' "$atct_skill")"
+  if grep -Fq -- 'atct_task_update' <<<"$roles_section"; then
+    fail 'role boundary table must not prescribe atct_task_update procedure'
+  fi
 }
 
 test_role_contract_matches_implementation() {
@@ -780,6 +828,13 @@ test_role_contract_is_documented
 test_role_response_exposes_boundary_fields
 test_role_contract_uses_neutral_language
 test_role_boundaries_cover_version_control_and_delegation_direction
+test_executor_boundary_includes_task_closure
+test_subcommander_boundary_includes_goal_commit
+test_commit_workflow_requires_explicit_paths
+test_executor_boundary_keeps_commit_exclusion
+test_start_does_not_claim_delegate_cannot_close
+test_start_does_not_claim_delegate_lacks_claim
+test_role_table_has_no_task_update_procedure
 test_role_contract_matches_implementation
 test_role_response_does_not_leak_other_boundaries
 test_recovery_section_has_role_entry
