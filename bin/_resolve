@@ -28,6 +28,7 @@ HOME_DIR="${HOME:-}"
 
 CACHE_DIR="$HOME_DIR/.atct/bin"
 CACHED_BINARY="$CACHE_DIR/${BINARY_NAME}-${VERSION}"
+CACHE_TTL_DAYS=14
 
 if ! mkdir -p "$CACHE_DIR"; then
   fail "Could not create the cache directory <$CACHE_DIR>. Check its permissions and retry."
@@ -44,8 +45,10 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 
 find "$CACHE_DIR" -maxdepth 1 -type d -name '.download.*' -mmin +60 -exec rm -rf -- {} + 2>/dev/null || true
+find "$CACHE_DIR" -maxdepth 1 -type f ! -name "*-${VERSION}" -mmin +$((CACHE_TTL_DAYS * 1440)) -exec rm -f -- {} + 2>/dev/null || true
 
 if [[ -x "$CACHED_BINARY" ]]; then
+  touch "$CACHED_BINARY" 2>/dev/null || true
   export ATCT_ATCT_BIN="$ATCT_WRAPPER"
   exec "$CACHED_BINARY" "$@"
 fi

@@ -76,6 +76,7 @@ fi
 echo "==> tests"
 go build ./...
 go test -count=1 -timeout 600s ./... >/dev/null
+bash tests/cache_prune_test.bash >/dev/null
 bash tests/wrapper_test.bash >/dev/null
 ( cd web && pnpm test >/dev/null && pnpm typecheck >/dev/null )
 
