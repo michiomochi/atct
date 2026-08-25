@@ -95,14 +95,14 @@ that worker is started:
    measurement, the three-task pane compressed twice while the one-task pane
    compressed seven times.
 
-### Two-layer delegation
-
-Delegating a task requires a received goal handoff, not a project claim. For two-layer delegation, the commander calls `atct_goal_claim` to create a goal handoff addressed to itself. The project claim is checked first by `session.role` in `internal/daemon/handler.go`, so the role remains `commander`. Then the commander calls `atct_handoff_request` to delegate each task.
-
 The worker must perform both instructions itself before doing any work. The
 delegator must not run either instruction on the worker's behalf or treat a
 worker name, pane title, or launch context as proof of the role. If the role
 check reports a mismatch, the worker returns the task without touching it.
+
+### Two-layer delegation
+
+Delegating a task requires a received goal handoff, not a project claim. For two-layer delegation, the commander calls `atct_goal_claim` to create a goal handoff addressed to itself. The project claim is checked first by `session.role` in `internal/daemon/handler.go`, so the role remains `commander`. Then the commander calls `atct_handoff_request` to delegate each task.
 
 ## Delegate a goal
 
