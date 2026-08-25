@@ -133,12 +133,64 @@ func unappliedDecisionNotificationsExcept(decisions []domain.Decision, excludedI
 	return notices
 }
 
-func (d *Daemon) responseWithProjectUnappliedDecisions(ctx context.Context, data any, goalID string, excludedIDs ...string) (responseWithUnappliedDecisions, error) {
+func (d *Daemon) deriveSessionRole(ctx context.Context, agentSessionID string) (sessionRoleResponse, error) {
+	response := sessionRoleResponse{Role: "executor"}
+	if sessionID := strings.TrimSpace(agentSessionID); sessionID != "" {
+		projects, err := d.store.ListProjects(ctx)
+		if err != nil {
+			return sessionRoleResponse{}, err
+		}
+		for _, project := range projects {
+			if strings.TrimSpace(project.ClaimedBy) == sessionID {
+				response.Role = "commander"
+				response.ProjectID = project.ID
+				break
+			}
+		}
+
+		goals, err := d.store.ListAllGoals(ctx)
+		if err != nil {
+			return sessionRoleResponse{}, err
+		}
+		goalHandoffs, err := d.store.ListOpenGoalHandoffs(ctx)
+		if err != nil {
+			return sessionRoleResponse{}, err
+		}
+		for _, goal := range goals {
+			handoff := goalHandoffs[goal.ID]
+			if handoff != nil && handoff.ReceivedAt != nil && strings.TrimSpace(goalHandoffClaimedBy(handoff)) == sessionID {
+				response.GoalID = goal.ID
+				break
+			}
+		}
+		if response.Role != "commander" && response.GoalID != "" {
+			response.Role = "subcommander"
+		}
+	}
+	return response, nil
+}
+
+func (d *Daemon) unappliedDecisionsForSessionInProject(ctx context.Context, projectID, agentSessionID string) ([]domain.Decision, error) {
+	role, err := d.deriveSessionRole(ctx, agentSessionID)
+	if err != nil {
+		return nil, err
+	}
+	if role.Role == "subcommander" && role.GoalID != "" {
+		return d.store.ListUnappliedDecisionsForGoal(ctx, role.GoalID)
+	}
+	return d.store.ListUnappliedDecisionsForProject(ctx, projectID)
+}
+
+func (d *Daemon) unappliedDecisionsForSession(ctx context.Context, goalID, agentSessionID string) ([]domain.Decision, error) {
 	goal, err := d.store.GetGoal(ctx, goalID)
 	if err != nil {
-		return responseWithUnappliedDecisions{}, err
+		return nil, err
 	}
-	unapplied, err := d.store.ListUnappliedDecisionsForProject(ctx, goal.ProjectID)
+	return d.unappliedDecisionsForSessionInProject(ctx, goal.ProjectID, agentSessionID)
+}
+
+func (d *Daemon) responseWithScopedUnappliedDecisions(ctx context.Context, data any, goalID, agentSessionID string, excludedIDs ...string) (responseWithUnappliedDecisions, error) {
+	unapplied, err := d.unappliedDecisionsForSession(ctx, goalID, agentSessionID)
 	if err != nil {
 		return responseWithUnappliedDecisions{}, err
 	}
@@ -295,38 +347,9 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 			return nil, err
 		}
 
-		response := sessionRoleResponse{Role: "executor"}
-		if sessionID := strings.TrimSpace(p.AgentSessionID); sessionID != "" {
-			projects, err := d.store.ListProjects(ctx)
-			if err != nil {
-				return nil, err
-			}
-			for _, project := range projects {
-				if strings.TrimSpace(project.ClaimedBy) == sessionID {
-					response.Role = "commander"
-					response.ProjectID = project.ID
-					break
-				}
-			}
-
-			goals, err := d.store.ListAllGoals(ctx)
-			if err != nil {
-				return nil, err
-			}
-			goalHandoffs, err := d.store.ListOpenGoalHandoffs(ctx)
-			if err != nil {
-				return nil, err
-			}
-			for _, goal := range goals {
-				handoff := goalHandoffs[goal.ID]
-				if handoff != nil && handoff.ReceivedAt != nil && strings.TrimSpace(goalHandoffClaimedBy(handoff)) == sessionID {
-					response.GoalID = goal.ID
-					break
-				}
-			}
-			if response.Role != "commander" && response.GoalID != "" {
-				response.Role = "subcommander"
-			}
+		response, err := d.deriveSessionRole(ctx, p.AgentSessionID)
+		if err != nil {
+			return nil, err
 		}
 		boundary := roleBoundaries[response.Role]
 		response.Does = boundary.Does
@@ -525,7 +548,7 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		if err != nil {
 			return nil, err
 		}
-		orphaned, err := d.store.ListUnappliedDecisionsForProject(ctx, ns.ID)
+		orphaned, err := d.unappliedDecisionsForSessionInProject(ctx, ns.ID, p.AgentSessionID)
 		if err != nil {
 			return nil, err
 		}
@@ -603,7 +626,7 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		if err != nil || !p.IncludeUnappliedAnswers {
 			return marshal(claimed, err)
 		}
-		unapplied, err := d.store.ListUnappliedDecisionsForProject(ctx, goal.ProjectID)
+		unapplied, err := d.unappliedDecisionsForSession(ctx, p.GoalID, p.AgentSessionID)
 		if err != nil {
 			return nil, err
 		}
@@ -646,7 +669,7 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		if err != nil || !p.IncludeUnappliedAnswers {
 			return marshal(updated, err)
 		}
-		response, err := d.responseWithProjectUnappliedDecisions(ctx, updated, p.GoalID)
+		response, err := d.responseWithScopedUnappliedDecisions(ctx, updated, p.GoalID, p.AgentSessionID)
 		return marshal(response, err)
 
 	case "task.update_content":
@@ -676,7 +699,7 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		if err != nil || !p.IncludeUnappliedAnswers {
 			return marshal(updated, err)
 		}
-		response, err := d.responseWithProjectUnappliedDecisions(ctx, updated, goalID)
+		response, err := d.responseWithScopedUnappliedDecisions(ctx, updated, goalID, p.AgentSessionID)
 		return marshal(response, err)
 
 	case "task.declare":
@@ -707,7 +730,7 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		if err != nil || !p.IncludeUnappliedAnswers {
 			return marshal(tasks, err)
 		}
-		response, err := d.responseWithProjectUnappliedDecisions(ctx, tasks, p.GoalID)
+		response, err := d.responseWithScopedUnappliedDecisions(ctx, tasks, p.GoalID, p.AgentSessionID)
 		return marshal(response, err)
 
 	case "task.update":
@@ -763,7 +786,7 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		if err != nil || !p.IncludeUnappliedAnswers {
 			return marshal(tk, err)
 		}
-		response, err := d.responseWithProjectUnappliedDecisions(ctx, tk, tk.GoalID)
+		response, err := d.responseWithScopedUnappliedDecisions(ctx, tk, tk.GoalID, p.AgentSessionID)
 		return marshal(response, err)
 
 	case "task.claim":
@@ -789,11 +812,7 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		if err != nil || !p.IncludeUnappliedAnswers {
 			return marshal(tk, err)
 		}
-		goal, err := d.store.GetGoal(ctx, tk.GoalID)
-		if err != nil {
-			return nil, err
-		}
-		unapplied, err := d.store.ListUnappliedDecisionsForProject(ctx, goal.ProjectID)
+		unapplied, err := d.unappliedDecisionsForSession(ctx, tk.GoalID, p.AgentSessionID)
 		if err != nil {
 			return nil, err
 		}
@@ -994,7 +1013,7 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 			if !p.IncludeUnappliedAnswers {
 				return marshal(data, nil)
 			}
-			response, err := d.responseWithProjectUnappliedDecisions(ctx, data, p.GoalID, dec.ID)
+			response, err := d.responseWithScopedUnappliedDecisions(ctx, data, p.GoalID, p.AgentSessionID, dec.ID)
 			if err != nil {
 				return nil, err
 			}
@@ -1014,7 +1033,7 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 			if !p.IncludeUnappliedAnswers {
 				return marshal(data, nil)
 			}
-			response, err := d.responseWithProjectUnappliedDecisions(ctx, data, p.GoalID, dec.ID)
+			response, err := d.responseWithScopedUnappliedDecisions(ctx, data, p.GoalID, p.AgentSessionID, dec.ID)
 			if err != nil {
 				return nil, err
 			}
@@ -1036,7 +1055,7 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		if !p.IncludeUnappliedAnswers {
 			return marshal(data, nil)
 		}
-		response, err := d.responseWithProjectUnappliedDecisions(ctx, data, p.GoalID, dec.ID)
+		response, err := d.responseWithScopedUnappliedDecisions(ctx, data, p.GoalID, p.AgentSessionID, dec.ID)
 		return marshal(response, err)
 
 	case "decision.poll":
@@ -1069,7 +1088,7 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		for _, decision := range decs {
 			excludedIDs = append(excludedIDs, decision.ID)
 		}
-		response, err := d.responseWithProjectUnappliedDecisions(ctx, decs, goalID, excludedIDs...)
+		response, err := d.responseWithScopedUnappliedDecisions(ctx, decs, goalID, p.AgentSessionID, excludedIDs...)
 		return marshal(response, err)
 
 	case "decision.withdraw":
@@ -1096,7 +1115,7 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		if !p.IncludeUnappliedAnswers {
 			return marshal(data, nil)
 		}
-		response, err := d.responseWithProjectUnappliedDecisions(ctx, data, decision.GoalID, decision.ID)
+		response, err := d.responseWithScopedUnappliedDecisions(ctx, data, decision.GoalID, "", decision.ID)
 		return marshal(response, err)
 
 	case "goal.set_derived_from":
@@ -1123,7 +1142,7 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		if err != nil || !p.IncludeUnappliedAnswers {
 			return marshal(goal, err)
 		}
-		response, err := d.responseWithProjectUnappliedDecisions(ctx, goal, p.GoalID)
+		response, err := d.responseWithScopedUnappliedDecisions(ctx, goal, p.GoalID, p.AgentSessionID)
 		return marshal(response, err)
 
 	case "goal.complete":
@@ -1159,7 +1178,7 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		if err != nil || !p.IncludeUnappliedAnswers {
 			return marshal(dec, err)
 		}
-		response, err := d.responseWithProjectUnappliedDecisions(ctx, dec, p.GoalID)
+		response, err := d.responseWithScopedUnappliedDecisions(ctx, dec, p.GoalID, p.AgentSessionID)
 		return marshal(response, err)
 	}
 	return nil, fmt.Errorf("unknown method: %s", req.Method)
