@@ -38,6 +38,14 @@ UPDATE tasks
 SET status = ?, updated_at = ?
 WHERE id = ?;
 
+-- name: UpdateTaskContent :execresult
+UPDATE tasks
+SET title = COALESCE(sqlc.narg('title'), title),
+    description = COALESCE(sqlc.narg('description'), description),
+    files = COALESCE(sqlc.narg('files'), files),
+    updated_at = sqlc.arg('updated_at')
+WHERE id = sqlc.arg('id') AND status IN ('todo', 'doing');
+
 -- name: LinkTaskCommit :exec
 INSERT OR REPLACE INTO task_commits (
   task_id, sha, subject, files_changed, insertions, deletions, created_at

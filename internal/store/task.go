@@ -17,6 +17,7 @@ import (
 var ErrTaskNotFound = errors.New("task not found")
 var ErrTaskAlreadyClaimed = errors.New("task already claimed")
 var ErrTaskFileConflict = errors.New("task file conflict")
+var ErrTaskNotEditable = errors.New("task not editable")
 
 const maxTaskFileConflictCandidates = 8
 const maxOpenDecisionQuestionLength = 160
@@ -370,6 +371,54 @@ func (s *Store) UpdateTask(ctx context.Context, taskID string, status domain.Tas
 		}
 	}
 	return s.updateTask(ctx, taskID, status, releaseHandoff)
+}
+
+func (s *Store) UpdateTaskContent(ctx context.Context, taskID string, title, description *string, files *[]string) (domain.Task, error) {
+	if title == nil && description == nil && files == nil {
+		return domain.Task{}, errors.New("task content update requires at least one field")
+	}
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return domain.Task{}, fmt.Errorf("%w: empty id", ErrTaskNotFound)
+	}
+
+	var titleValue, descriptionValue, filesValue sql.NullString
+	if title != nil {
+		titleValue = sql.NullString{String: *title, Valid: true}
+	}
+	if description != nil {
+		descriptionValue = sql.NullString{String: *description, Valid: true}
+	}
+	if files != nil {
+		filesJSON, err := marshalTaskFiles(*files)
+		if err != nil {
+			return domain.Task{}, fmt.Errorf("encode task files: %w", err)
+		}
+		filesValue = sql.NullString{String: filesJSON, Valid: true}
+	}
+
+	result, err := sqlcgen.New(s.db).UpdateTaskContent(ctx, sqlcgen.UpdateTaskContentParams{
+		Title:       titleValue,
+		Description: descriptionValue,
+		Files:       filesValue,
+		UpdatedAt:   time.Now().UTC().Format(time.RFC3339),
+		ID:          taskID,
+	})
+	if err != nil {
+		return domain.Task{}, fmt.Errorf("update task content: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return domain.Task{}, fmt.Errorf("check updated task content: %w", err)
+	}
+	if affected == 0 {
+		task, err := s.loadTask(ctx, taskID)
+		if err != nil {
+			return domain.Task{}, err
+		}
+		return domain.Task{}, fmt.Errorf("%w: task %s is %s, not todo or doing", ErrTaskNotEditable, taskID, task.Status)
+	}
+	return s.loadTask(ctx, taskID)
 }
 
 func listOpenTaskDecisions(ctx context.Context, q *sqlcgen.Queries, taskID string) ([]openTaskDecision, error) {

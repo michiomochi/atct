@@ -885,6 +885,33 @@ func (q *Queries) UpdateAgentSessionProject(ctx context.Context, arg UpdateAgent
 	return q.db.ExecContext(ctx, updateAgentSessionProject, arg.ProjectID, arg.ID)
 }
 
+const updateTaskContent = `-- name: UpdateTaskContent :execresult
+UPDATE tasks
+SET title = COALESCE(?1, title),
+    description = COALESCE(?2, description),
+    files = COALESCE(?3, files),
+    updated_at = ?4
+WHERE id = ?5 AND status IN ('todo', 'doing')
+`
+
+type UpdateTaskContentParams struct {
+	Title       sql.NullString
+	Description sql.NullString
+	Files       sql.NullString
+	UpdatedAt   string
+	ID          string
+}
+
+func (q *Queries) UpdateTaskContent(ctx context.Context, arg UpdateTaskContentParams) (sql.Result, error) {
+	return q.db.ExecContext(ctx, updateTaskContent,
+		arg.Title,
+		arg.Description,
+		arg.Files,
+		arg.UpdatedAt,
+		arg.ID,
+	)
+}
+
 const updateTaskSnooze = `-- name: UpdateTaskSnooze :execresult
 UPDATE tasks
 SET snoozed_until = ?, updated_at = ?

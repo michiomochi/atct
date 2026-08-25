@@ -346,6 +346,202 @@ func declareOneTaskWithFiles(t *testing.T, s *Store, goalID, key, title string, 
 	return ""
 }
 
+func setTaskContentStatus(t *testing.T, s *Store, taskID string, status domain.TaskStatus) {
+	t.Helper()
+	if _, err := s.DB().ExecContext(context.Background(), "UPDATE tasks SET status = ? WHERE id = ?", string(status), taskID); err != nil {
+		t.Fatalf("set task %s status to %s: %v", taskID, status, err)
+	}
+}
+
+func TestUpdateTaskContentAllowsTodo(t *testing.T) {
+	s := newTestStore(t)
+	goalID := newTestGoal(t, s)
+	firstID := declareOneTaskWithFiles(t, s, goalID, "content-todo-1", "first todo", nil)
+	secondID := declareOneTaskWithFiles(t, s, goalID, "content-todo-2", "second todo", nil)
+
+	wants := map[string]string{
+		firstID:  "updated first todo description",
+		secondID: "updated second todo description",
+	}
+	for taskID, want := range wants {
+		description := want
+		updated, err := s.UpdateTaskContent(context.Background(), taskID, nil, &description, nil)
+		if err != nil {
+			t.Fatalf("UpdateTaskContent(%s): %v", taskID, err)
+		}
+		if updated.Description != want || updated.Status != domain.TaskTodo {
+			t.Fatalf("updated task = %+v, want description %q and status %q", updated, want, domain.TaskTodo)
+		}
+	}
+}
+
+func TestUpdateTaskContentAllowsDoing(t *testing.T) {
+	s := newTestStore(t)
+	goalID := newTestGoal(t, s)
+	firstID := declareOneTaskWithFiles(t, s, goalID, "content-doing-1", "first doing", nil)
+	secondID := declareOneTaskWithFiles(t, s, goalID, "content-doing-2", "second doing", nil)
+	setTaskContentStatus(t, s, firstID, domain.TaskStatus("doing"))
+	setTaskContentStatus(t, s, secondID, domain.TaskStatus("doing"))
+
+	wants := map[string]string{
+		firstID:  "updated first doing description",
+		secondID: "updated second doing description",
+	}
+	for taskID, want := range wants {
+		description := want
+		updated, err := s.UpdateTaskContent(context.Background(), taskID, nil, &description, nil)
+		if err != nil {
+			t.Fatalf("UpdateTaskContent(%s): %v", taskID, err)
+		}
+		if updated.Description != want || string(updated.Status) != "doing" {
+			t.Fatalf("updated task = %+v, want description %q and status doing", updated, want)
+		}
+	}
+}
+
+func TestUpdateTaskContentUpdatesTitleOnly(t *testing.T) {
+	s := newTestStore(t)
+	goalID := newTestGoal(t, s)
+	const originalTitle = "original title"
+	originalFiles := []string{"old.go"}
+	taskID := declareOneTaskWithFiles(t, s, goalID, "content-title-only", originalTitle, originalFiles)
+	tasks, err := s.ListTasks(context.Background(), goalID)
+	if err != nil {
+		t.Fatalf("ListTasks: %v", err)
+	}
+	original := tasks[0]
+	newTitle := "updated title"
+
+	updated, err := s.UpdateTaskContent(context.Background(), taskID, &newTitle, nil, nil)
+	if err != nil {
+		t.Fatalf("UpdateTaskContent: %v", err)
+	}
+	if updated.Title != newTitle || updated.Description != original.Description || !reflect.DeepEqual(updated.Files, original.Files) {
+		t.Fatalf("updated task = %+v, want only title changed from %+v", updated, original)
+	}
+}
+
+func TestUpdateTaskContentUpdatesFilesOnly(t *testing.T) {
+	s := newTestStore(t)
+	goalID := newTestGoal(t, s)
+	originalFiles := []string{"old.go"}
+	taskID := declareOneTaskWithFiles(t, s, goalID, "content-files-only", "original title", originalFiles)
+	tasks, err := s.ListTasks(context.Background(), goalID)
+	if err != nil {
+		t.Fatalf("ListTasks: %v", err)
+	}
+	original := tasks[0]
+	newFiles := []string{"new.go", "new_test.go"}
+
+	updated, err := s.UpdateTaskContent(context.Background(), taskID, nil, nil, &newFiles)
+	if err != nil {
+		t.Fatalf("UpdateTaskContent: %v", err)
+	}
+	if !reflect.DeepEqual(updated.Files, newFiles) || updated.Title != original.Title || updated.Description != original.Description {
+		t.Fatalf("updated task = %+v, want only files changed from %+v", updated, original)
+	}
+}
+
+func TestUpdateTaskContentPreservesOmittedFields(t *testing.T) {
+	s := newTestStore(t)
+	goalID := newTestGoal(t, s)
+	originalFiles := []string{"old.go"}
+	taskID := declareOneTaskWithFiles(t, s, goalID, "content-partial", "original title", originalFiles)
+	tasks, err := s.ListTasks(context.Background(), goalID)
+	if err != nil {
+		t.Fatalf("ListTasks: %v", err)
+	}
+	original := tasks[0]
+	newDescription := "updated description only"
+
+	updated, err := s.UpdateTaskContent(context.Background(), taskID, nil, &newDescription, nil)
+	if err != nil {
+		t.Fatalf("UpdateTaskContent: %v", err)
+	}
+	if updated.Description != newDescription || updated.Title != original.Title || !reflect.DeepEqual(updated.Files, original.Files) {
+		t.Fatalf("updated task = %+v, want description changed and omitted fields preserved from %+v", updated, original)
+	}
+}
+
+func TestUpdateTaskContentRejectsDone(t *testing.T) {
+	s := newTestStore(t)
+	goalID := newTestGoal(t, s)
+	firstID := declareOneTaskWithFiles(t, s, goalID, "content-done-1", "first done", nil)
+	secondID := declareOneTaskWithFiles(t, s, goalID, "content-done-2", "second done", nil)
+	setTaskContentStatus(t, s, firstID, domain.TaskDone)
+	setTaskContentStatus(t, s, secondID, domain.TaskDone)
+
+	for _, taskID := range []string{firstID, secondID} {
+		title := "must not update"
+		if _, err := s.UpdateTaskContent(context.Background(), taskID, &title, nil, nil); !errors.Is(err, ErrTaskNotEditable) {
+			t.Fatalf("UpdateTaskContent(%s) error = %v, want ErrTaskNotEditable", taskID, err)
+		}
+	}
+}
+
+func TestUpdateTaskContentRejectsDropped(t *testing.T) {
+	s := newTestStore(t)
+	goalID := newTestGoal(t, s)
+	firstID := declareOneTaskWithFiles(t, s, goalID, "content-dropped-1", "first dropped", nil)
+	secondID := declareOneTaskWithFiles(t, s, goalID, "content-dropped-2", "second dropped", nil)
+	setTaskContentStatus(t, s, firstID, domain.TaskDropped)
+	setTaskContentStatus(t, s, secondID, domain.TaskDropped)
+
+	for _, taskID := range []string{firstID, secondID} {
+		title := "must not update"
+		if _, err := s.UpdateTaskContent(context.Background(), taskID, &title, nil, nil); !errors.Is(err, ErrTaskNotEditable) {
+			t.Fatalf("UpdateTaskContent(%s) error = %v, want ErrTaskNotEditable", taskID, err)
+		}
+	}
+}
+
+func TestUpdateTaskContentErrorIncludesStatus(t *testing.T) {
+	s := newTestStore(t)
+	goalID := newTestGoal(t, s)
+	taskID := declareOneTaskWithFiles(t, s, goalID, "content-error-status", "done task", nil)
+	setTaskContentStatus(t, s, taskID, domain.TaskDone)
+	title := "must not update"
+
+	_, err := s.UpdateTaskContent(context.Background(), taskID, &title, nil, nil)
+	if err == nil {
+		t.Fatal("UpdateTaskContent unexpectedly succeeded for done task")
+	}
+	if !strings.Contains(err.Error(), taskID) || !strings.Contains(err.Error(), "done") {
+		t.Fatalf("UpdateTaskContent error = %q, want task ID and status done", err)
+	}
+}
+
+func TestUpdateTaskContentReturnsNotFound(t *testing.T) {
+	s := newTestStore(t)
+	missingID := "missing-task-id"
+	description := "updated description"
+
+	if _, err := s.UpdateTaskContent(context.Background(), missingID, nil, &description, nil); !errors.Is(err, ErrTaskNotFound) {
+		t.Fatalf("UpdateTaskContent error = %v, want ErrTaskNotFound", err)
+	}
+}
+
+func TestUpdateTaskContentRejectsEmptyUpdate(t *testing.T) {
+	s := newTestStore(t)
+	goalID := newTestGoal(t, s)
+	taskID := declareOneTaskWithFiles(t, s, goalID, "content-empty", "original title", []string{"old.go"})
+	before, err := s.ListTasks(context.Background(), goalID)
+	if err != nil {
+		t.Fatalf("ListTasks before: %v", err)
+	}
+
+	if _, err := s.UpdateTaskContent(context.Background(), taskID, nil, nil, nil); err == nil {
+		t.Fatal("UpdateTaskContent unexpectedly succeeded without fields")
+	}
+	after, err := s.ListTasks(context.Background(), goalID)
+	if err != nil {
+		t.Fatalf("ListTasks after: %v", err)
+	}
+	if !reflect.DeepEqual(after, before) {
+		t.Fatalf("task changed after empty update: before=%+v after=%+v", before, after)
+	}
+}
+
 func TestDeclareTasksPersistsFiles(t *testing.T) {
 	s := newTestStore(t)
 	goalID := newTestGoal(t, s)
