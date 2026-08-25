@@ -19,6 +19,12 @@ var ErrTaskAlreadyClaimed = errors.New("task already claimed")
 var ErrTaskFileConflict = errors.New("task file conflict")
 
 const maxTaskFileConflictCandidates = 8
+const maxOpenDecisionQuestionLength = 160
+
+type openTaskDecision struct {
+	ID       string
+	Question string
+}
 
 // TaskConflictCandidate identifies a task that can be claimed instead of the
 // task that hit a file conflict.
@@ -366,6 +372,37 @@ func (s *Store) UpdateTask(ctx context.Context, taskID string, status domain.Tas
 	return s.updateTask(ctx, taskID, status, releaseHandoff)
 }
 
+func listOpenTaskDecisions(ctx context.Context, q *sqlcgen.Queries, taskID string) ([]openTaskDecision, error) {
+	rows, err := q.ListAllOpenDecisions(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	var decisions []openTaskDecision
+	for _, row := range rows {
+		if row.TaskID != taskID {
+			continue
+		}
+		decisions = append(decisions, openTaskDecision{ID: row.ID, Question: row.Question})
+	}
+	return decisions, nil
+}
+
+func taskHasOpenDecisionsError(taskID string, decisions []openTaskDecision) error {
+	details := make([]string, 0, len(decisions))
+	for _, decision := range decisions {
+		question := strings.TrimSpace(decision.Question)
+		if len([]rune(question)) > maxOpenDecisionQuestionLength {
+			question = string([]rune(question)[:maxOpenDecisionQuestionLength]) + "…"
+		}
+		details = append(details, fmt.Sprintf("decision %s asks %q", decision.ID, question))
+	}
+	if len(details) == 0 {
+		return fmt.Errorf("%w: %s", ErrTaskHasOpenDecision, taskID)
+	}
+	return fmt.Errorf("%w: task %s is blocked by open decisions: %s; wait for a human answer, or if this was intended as a record, withdraw the decision and reissue it with default_option and default_after_ms=0", ErrTaskHasOpenDecision, taskID, strings.Join(details, "; "))
+}
+
 func (s *Store) updateTask(ctx context.Context, taskID string, status domain.TaskStatus, releaseHandoff *TaskHandoff) (domain.Task, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -380,7 +417,11 @@ func (s *Store) updateTask(ctx context.Context, taskID string, status domain.Tas
 			return domain.Task{}, fmt.Errorf("count open decisions: %w", err)
 		}
 		if open > 0 {
-			return domain.Task{}, fmt.Errorf("%w: %s", ErrTaskHasOpenDecision, taskID)
+			decisions, err := listOpenTaskDecisions(ctx, q, taskID)
+			if err != nil {
+				return domain.Task{}, fmt.Errorf("list open decisions: %w", err)
+			}
+			return domain.Task{}, taskHasOpenDecisionsError(taskID, decisions)
 		}
 	}
 

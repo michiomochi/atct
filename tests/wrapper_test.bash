@@ -525,6 +525,58 @@ test_session_start_is_silent_without_atct_wrapper() {
   assert_eq '' "$output" 'missing atct wrapper must keep the hook silent'
 }
 
+delegate_goal_section() {
+  sed -n '/^## Delegate a goal$/,/^## Recover when your role comes back wrong$/p' \
+    "$REPO_ROOT/skills/atct/SKILL.md"
+}
+
+delegate_goal_section_contains() {
+  local needle="$1"
+  local section
+  section="$(delegate_goal_section)"
+  grep -Fq -- "$needle" <<<"$section" ||
+    fail "goal delegation section does not contain <$needle>"
+}
+
+delegate_goal_section_not_contains() {
+  local needle="$1"
+  local section
+  section="$(delegate_goal_section)"
+  if grep -Fq -- "$needle" <<<"$section"; then
+    fail "goal delegation section must not contain <$needle>"
+  fi
+}
+
+test_goal_handoff_watch_contract_is_explicit() {
+  delegate_goal_section_contains 'Then attach `atct watch -goal <goal_id>` to a background stream the way'
+  delegate_goal_section_contains 'Pass no other goal; a subcommander must not inspect other goals.'
+  delegate_goal_section_contains 'Codex has no Monitor, so a Codex reader'
+}
+
+test_goal_handoff_watch_contract_omits_unsafe_variants() {
+  delegate_goal_section_not_contains 'Then attach `atct watch` to a background stream'
+  delegate_goal_section_not_contains 'attach `atct watch` for the whole project'
+  delegate_goal_section_not_contains 'Invoke the `start` skill'
+  delegate_goal_section_not_contains 'The delegator relays the detections for this goal'
+}
+
+test_goal_handoff_watch_contract_has_required_order() {
+  local lineno
+  local role
+  local watch
+  local fin
+
+  lineno() { delegate_goal_section | grep -n -F -- "$1" | head -1 | cut -d: -f1; }
+  role="$(lineno 'Then invoke the `atct_role` MCP tool with `expected_role` set to')"
+  watch="$(lineno 'Then attach `atct watch -goal <goal_id>` to a background stream the way')"
+  fin="$(lineno 'When the work is complete, record completion by calling')"
+
+  [[ -n "$role" && -n "$watch" && -n "$fin" ]] ||
+    fail 'goal handoff watch order requires role, watch, and completion paragraphs'
+  (( role < watch && watch < fin )) ||
+    fail "goal handoff watch paragraphs are in the wrong order: role=$role watch=$watch completion=$fin"
+}
+
 recovery_section() {
   sed -n '/^## Recover when your role comes back wrong$/,/^## Close a task/p' \
     "$REPO_ROOT/skills/atct/SKILL.md"
@@ -653,6 +705,24 @@ test_delegated_claim_contract_is_explicit() {
   assert_file_not_contains "the delegator's identity" "$atct_skill"
   assert_file_not_contains 'Do this whenever convenient.' "$atct_skill"
   assert_file_not_contains 'atct_goal_handoff_receive` with only the `handoff_id` provided in this request.' "$atct_skill"
+}
+
+test_decision_guidance_names_done_guard() {
+  local atct_skill="$REPO_ROOT/skills/atct/SKILL.md"
+  local decision_section
+
+  decision_section="$(sed -n '/^## Act on reversible choices, ask about irreversible ones$/,/^## Apply what you were told$/p' "$atct_skill")"
+  grep -Fq -- 'default_after_ms=0' <<<"$decision_section" ||
+    fail 'decision guidance omits immediate record defaults'
+  grep -Fq -- 'blocks `done`' <<<"$decision_section" ||
+    fail 'decision guidance omits the done guard for human-waiting questions'
+}
+
+test_irreversible_decision_still_omits_defaults() {
+  local atct_skill="$REPO_ROOT/skills/atct/SKILL.md"
+
+  grep -Fq -- 'omit `default_option`' "$atct_skill" ||
+    fail 'irreversible decision guidance no longer omits default_option'
 }
 
 test_task_handoff_recreation_cause_is_documented() {
@@ -881,6 +951,11 @@ test_role_response_does_not_leak_other_boundaries() {
 
 test_static_contract
 test_delegated_claim_contract_is_explicit
+test_decision_guidance_names_done_guard
+test_irreversible_decision_still_omits_defaults
+test_goal_handoff_watch_contract_is_explicit
+test_goal_handoff_watch_contract_omits_unsafe_variants
+test_goal_handoff_watch_contract_has_required_order
 test_task_handoff_recreation_cause_is_documented
 test_task_handoff_recreation_uses_new_id
 test_task_handoff_recreation_keeps_worker_identity

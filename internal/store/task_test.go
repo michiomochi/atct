@@ -737,6 +737,7 @@ type taskStatusClaimFixture struct {
 	store      *Store
 	ctx        context.Context
 	taskID     string
+	goalID     string
 	projectID  string
 	holderID   string
 	otherID    string
@@ -797,11 +798,138 @@ func newTaskStatusClaimFixture(t *testing.T, holderPID, otherPID int) taskStatus
 		store:      s,
 		ctx:        ctx,
 		taskID:     tasks[0].ID,
+		goalID:     goal.ID,
 		projectID:  project.ID,
 		holderID:   holderID,
 		otherID:    otherID,
 		peerID:     peerID,
 		strangerID: strangerID,
+	}
+}
+
+func askOpenTaskDecision(t *testing.T, fixture taskStatusClaimFixture, question string) domain.Decision {
+	t.Helper()
+	decision, err := fixture.store.AskDecision(fixture.ctx, AskInput{
+		GoalID:         fixture.goalID,
+		TaskID:         fixture.taskID,
+		Kind:           domain.DecisionKind("test"),
+		Question:       question,
+		AgentSessionID: fixture.holderID,
+	})
+	if err != nil {
+		t.Fatalf("AskDecision: %v", err)
+	}
+	return decision
+}
+
+func TestUpdateTaskAllowsDoneWithAppliedDefaultDecision(t *testing.T) {
+	fixture := newTaskStatusClaimFixture(t, os.Getpid(), os.Getpid())
+	decision := askOpenTaskDecision(t, fixture, "record this status")
+
+	if _, err := fixture.store.DB().ExecContext(fixture.ctx,
+		"UPDATE decisions SET default_option = ?, default_after_ms = ? WHERE id = ?",
+		"record", int64(0), decision.ID,
+	); err != nil {
+		t.Fatalf("set decision default: %v", err)
+	}
+	if applied, err := fixture.store.ApplyExpiredDefaults(fixture.ctx, time.Now().Add(time.Second)); err != nil {
+		t.Fatalf("ApplyExpiredDefaults: %v", err)
+	} else if applied != 1 {
+		t.Fatalf("ApplyExpiredDefaults applied %d decisions, want 1", applied)
+	}
+
+	task, err := fixture.store.UpdateTask(fixture.ctx, fixture.taskID, domain.TaskDone, fixture.holderID)
+	if err != nil {
+		t.Fatalf("UpdateTask(done): %v", err)
+	}
+	if task.Status != domain.TaskDone {
+		t.Fatalf("task status = %q, want %q", task.Status, domain.TaskDone)
+	}
+}
+
+func TestUpdateTaskErrorIncludesAllOpenDecisionIDs(t *testing.T) {
+	fixture := newTaskStatusClaimFixture(t, os.Getpid(), os.Getpid())
+	first := askOpenTaskDecision(t, fixture, "first question")
+	second := askOpenTaskDecision(t, fixture, "second question")
+
+	_, err := fixture.store.UpdateTask(fixture.ctx, fixture.taskID, domain.TaskDone, fixture.holderID)
+	if err == nil {
+		t.Fatal("UpdateTask(done) succeeded with open decisions")
+	}
+	for _, id := range []string{first.ID, second.ID} {
+		if !strings.Contains(err.Error(), id) {
+			t.Fatalf("UpdateTask(done) error %q does not contain decision id %q", err, id)
+		}
+	}
+}
+
+func TestUpdateTaskErrorIncludesOpenDecisionQuestion(t *testing.T) {
+	fixture := newTaskStatusClaimFixture(t, os.Getpid(), os.Getpid())
+	question := "Which release path should the worker use?"
+	askOpenTaskDecision(t, fixture, question)
+
+	_, err := fixture.store.UpdateTask(fixture.ctx, fixture.taskID, domain.TaskDone, fixture.holderID)
+	if err == nil {
+		t.Fatal("UpdateTask(done) succeeded with an open decision")
+	}
+	if !strings.Contains(err.Error(), question) {
+		t.Fatalf("UpdateTask(done) error %q does not contain question %q", err, question)
+	}
+}
+
+func TestUpdateTaskErrorOffersOpenDecisionExits(t *testing.T) {
+	fixture := newTaskStatusClaimFixture(t, os.Getpid(), os.Getpid())
+	askOpenTaskDecision(t, fixture, "Should this be recorded or answered?")
+
+	_, err := fixture.store.UpdateTask(fixture.ctx, fixture.taskID, domain.TaskDone, fixture.holderID)
+	if err == nil {
+		t.Fatal("UpdateTask(done) succeeded with an open decision")
+	}
+	for _, want := range []string{"wait for a human answer", "withdraw", "default_option", "default_after_ms=0"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("UpdateTask(done) error %q does not contain %q", err, want)
+		}
+	}
+}
+
+func TestUpdateTaskStillRejectsOpenDecision(t *testing.T) {
+	fixture := newTaskStatusClaimFixture(t, os.Getpid(), os.Getpid())
+	askOpenTaskDecision(t, fixture, "A human answer is required")
+
+	_, err := fixture.store.UpdateTask(fixture.ctx, fixture.taskID, domain.TaskDone, fixture.holderID)
+	if err == nil || !errors.Is(err, ErrTaskHasOpenDecision) {
+		t.Fatalf("UpdateTask(done) error = %v, want ErrTaskHasOpenDecision", err)
+	}
+}
+
+func TestUpdateTaskIgnoresOpenDecisionForOtherTask(t *testing.T) {
+	fixture := newTaskStatusClaimFixture(t, os.Getpid(), os.Getpid())
+	otherTasks, err := fixture.store.DeclareTasks(fixture.ctx, fixture.goalID, "agent", "other-task", []string{"Other task"}, []string{"A task with an independent decision."})
+	if err != nil {
+		t.Fatalf("DeclareTasks: %v", err)
+	}
+	var otherTaskID string
+	for _, task := range otherTasks {
+		if task.ID != fixture.taskID {
+			otherTaskID = task.ID
+			break
+		}
+	}
+	if otherTaskID == "" {
+		t.Fatalf("DeclareTasks returned no task other than %s", fixture.taskID)
+	}
+	if _, err := fixture.store.AskDecision(fixture.ctx, AskInput{
+		GoalID:         fixture.goalID,
+		TaskID:         otherTaskID,
+		Kind:           domain.DecisionKind("test"),
+		Question:       "Other task question",
+		AgentSessionID: fixture.holderID,
+	}); err != nil {
+		t.Fatalf("AskDecision for other task: %v", err)
+	}
+
+	if _, err := fixture.store.UpdateTask(fixture.ctx, fixture.taskID, domain.TaskDone, fixture.holderID); err != nil {
+		t.Fatalf("UpdateTask(done) was blocked by another task decision: %v", err)
 	}
 }
 

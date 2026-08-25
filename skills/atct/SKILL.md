@@ -147,6 +147,14 @@ that subcommander is started:
    > `subcommander`. If it reports `matches: false`, do not start work; return
    > the goal.
    >
+   > Then attach `atct watch -goal <goal_id>` to a background stream the way
+   > your harness watches one, passing only the `goal_id` provided in this
+   > request. The detections for this goal, and the answers to the decisions
+   > you raise for it, then reach you without the delegator relaying them.
+   > Pass no other goal; a subcommander must not inspect other goals. This
+   > step applies only in Claude Code; Codex has no Monitor, so a Codex reader
+   > skips it.
+   >
    > When the work is complete, record completion by calling
    > `atct_goal_handoff_complete` with only the `goal_id` provided in this
    > request.
@@ -320,6 +328,11 @@ Classify the decision before asking:
 - For an irreversible choice, ask before acting: omit `default_option` and
   `default_after_ms`, and wait for the human's approval. Use `wait_ms=0` to park
   it while doing unrelated work.
+
+As of 2026-08-25, a decision used as a record sets `default_option` and
+`default_after_ms=0`; it is applied immediately and does not block `done`. A
+human-waiting question omits both; it blocks `done` until answered. This is the
+form for an irreversible choice.
 
 The test is whether the human can get the previous state back. A commit is
 undoable. A force push over work that exists nowhere else is not.
