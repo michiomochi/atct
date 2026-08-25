@@ -143,7 +143,16 @@ atct_goal_handoff_complete(<goal_id>)          開いている受領を閉じる
 atct_goal_handoff_request(<goal_id>, <新 ID>)  新しい handoff_id で出し直す
 ```
 
-**subcommander は自力で戻れない。**再発行には project claim が要るためである。
+**~~subcommander は自力で戻れない。再発行には project claim が要るためである。~~**
+**2026-08-25 に 0.56.0 で偽になった。**`atct_session_identify` を同じ鍵で呼べば
+`reattached: true` で元の行に戻り、**subcommander が自分で復帰できる。**
+w4B と w4C の両方が実測している（役割が `executor` に落ちた状態から、
+identify 1 回で `subcommander` に戻り、handoff の再発行が通った）。
+**commander への依頼は不要になった。**
+
+**この節の 3 行の手順は、鍵で戻れないときだけ使う**——鍵を名乗る道具が
+ツール一覧に無い場合（版が上がった直後のセッション）と、鍵を登録する前に
+取った claim が残っている場合である。
 **したがって subcommander には「役割が executor に戻ったら作業を止めて commander に
 再発行を求めろ」と指示しておくこと。**気づかずに進むと、委譲だけが静かに失敗する。
 
