@@ -19,6 +19,7 @@ var ErrTaskAlreadyClaimed = errors.New("task already claimed")
 var ErrGoalAlreadyClaimed = errors.New("goal already claimed")
 var ErrProjectAlreadyClaimed = errors.New("project already claimed")
 var ErrGoalNotProposed = errors.New("goal is not proposed")
+var ErrDecisionOutsideGoal = errors.New("decision belongs to another goal")
 
 type responseWithUnappliedDecisions struct {
 	Data               any                             `json:"data"`
@@ -1066,6 +1067,22 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		}
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, err
+		}
+		if strings.TrimSpace(p.DecisionID) != "" {
+			role, err := d.deriveSessionRole(ctx, p.AgentSessionID)
+			if err != nil {
+				return nil, err
+			}
+			if role.Role == "subcommander" && role.GoalID != "" {
+				decision, err := d.store.GetDecision(ctx, p.DecisionID)
+				if err != nil {
+					return nil, err
+				}
+				if decision.GoalID != role.GoalID {
+					return nil, fmt.Errorf("%w: decision %s belongs to goal %s, not the goal %s you hold; hand it to that goal's owner instead of polling it",
+						ErrDecisionOutsideGoal, p.DecisionID, decision.GoalID, role.GoalID)
+				}
+			}
 		}
 		decs, err := d.store.PollDecisions(ctx, p.AgentSessionID, p.DecisionID)
 		if err != nil || !p.IncludeUnappliedAnswers {
