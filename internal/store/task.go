@@ -129,6 +129,15 @@ func (s *Store) DeclareTasks(ctx context.Context, goalID, agent, idempotencyKey 
 
 	now := time.Now().UTC().Format(time.RFC3339)
 	q := sqlcgen.New(tx)
+	existingTasks, err := q.ListTasks(ctx, goalID)
+	if err != nil {
+		return nil, fmt.Errorf("list existing tasks: %w", err)
+	}
+	existingDeclareKeys := make(map[string]struct{}, len(existingTasks))
+	for _, task := range existingTasks {
+		existingDeclareKeys[task.DeclareKey] = struct{}{}
+	}
+	declaredByKey := make(map[string]bool, len(titles))
 	maxSortOrder, err := q.MaxTaskSortOrder(ctx, goalID)
 	if err != nil {
 		return nil, fmt.Errorf("get max task sort order: %w", err)
@@ -139,6 +148,8 @@ func (s *Store) DeclareTasks(ctx context.Context, goalID, agent, idempotencyKey 
 		if err != nil {
 			return nil, fmt.Errorf("encode task %d files: %w", i, err)
 		}
+		_, alreadyExists := existingDeclareKeys[declareKey]
+		declaredByKey[declareKey] = !alreadyExists
 		err = q.CreateTask(ctx, sqlcgen.CreateTaskParams{
 			ID:           uuid.NewString(),
 			GoalID:       goalID,
@@ -160,7 +171,19 @@ func (s *Store) DeclareTasks(ctx context.Context, goalID, agent, idempotencyKey 
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("commit: %w", err)
 	}
-	return s.ListTasks(ctx, goalID)
+	tasks, err := s.ListTasks(ctx, goalID)
+	if err != nil {
+		return nil, err
+	}
+	for i := range tasks {
+		declared, ok := declaredByKey[tasks[i].DeclareKey]
+		if !ok {
+			continue
+		}
+		tasks[i].Declared = new(bool)
+		*tasks[i].Declared = declared
+	}
+	return tasks, nil
 }
 
 func marshalTaskFiles(files []string) (string, error) {

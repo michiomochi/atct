@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -327,6 +328,122 @@ func TestDeclareTasksIsIdempotent(t *testing.T) {
 	}
 	if all[0].ID != first[0].ID {
 		t.Fatalf("task id changed on re-declare: %s -> %s", first[0].ID, all[0].ID)
+	}
+}
+
+func TestDeclareTasksReportsWhichTasksWereCreated(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	goalID := newTestGoal(t, s)
+
+	declare := func(titles []string) []domain.Task {
+		t.Helper()
+		descriptions := make([]string, len(titles))
+		for i, title := range titles {
+			descriptions[i] = "Complete the task titled " + title + "."
+		}
+		tasks, err := s.DeclareTasks(ctx, goalID, "codex", "declared-status", titles, descriptions)
+		if err != nil {
+			t.Fatalf("DeclareTasks(%v): %v", titles, err)
+		}
+		return tasks
+	}
+
+	first := declare([]string{"Design", "Implement"})
+	if len(first) != 2 {
+		t.Fatalf("first returned %d tasks, want 2", len(first))
+	}
+	for _, task := range first {
+		if task.Declared == nil || !*task.Declared {
+			t.Fatalf("first declaration task %+v has Declared = %v, want true", task, task.Declared)
+		}
+	}
+
+	second := declare([]string{"Design", "Implement"})
+	if len(second) != 2 {
+		t.Fatalf("second returned %d tasks, want 2", len(second))
+	}
+	for _, task := range second {
+		if task.Declared == nil || *task.Declared {
+			t.Fatalf("redeclared task %+v has Declared = %v, want false", task, task.Declared)
+		}
+	}
+
+	third := declare([]string{"Design", "Implement", "Test"})
+	if len(third) != 3 {
+		t.Fatalf("partial redeclaration returned %d tasks, want 3", len(third))
+	}
+	for _, task := range third {
+		want := task.DeclareKey == "declared-status#2"
+		if task.Declared == nil || *task.Declared != want {
+			t.Fatalf("partial redeclaration task %+v has Declared = %v, want %t", task, task.Declared, want)
+		}
+	}
+
+	fourth := declare([]string{"Design", "Implement", "Test", "Document"})
+	if len(fourth) != 4 {
+		t.Fatalf("third redeclaration returned %d tasks, want 4", len(fourth))
+	}
+	for _, task := range fourth {
+		want := task.DeclareKey == "declared-status#3"
+		if task.Declared == nil || *task.Declared != want {
+			t.Fatalf("third redeclaration task %+v has Declared = %v, want %t", task, task.Declared, want)
+		}
+	}
+}
+
+func TestDeclareTasksLeavesOtherDeclarationsWithoutDeclaredStatus(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	goalID := newTestGoal(t, s)
+
+	if _, err := s.DeclareTasks(ctx, goalID, "codex", "other-declaration", []string{"Other"}, []string{"Complete the other task."}); err != nil {
+		t.Fatalf("other DeclareTasks: %v", err)
+	}
+	tasks, err := s.DeclareTasks(ctx, goalID, "codex", "target-declaration", []string{"Target"}, []string{"Complete the target task."})
+	if err != nil {
+		t.Fatalf("target DeclareTasks: %v", err)
+	}
+
+	var other, target *domain.Task
+	for i := range tasks {
+		task := &tasks[i]
+		switch task.DeclareKey {
+		case "other-declaration#0":
+			other = task
+		case "target-declaration#0":
+			target = task
+		}
+	}
+	if other == nil || target == nil {
+		t.Fatalf("DeclareTasks returned tasks = %+v, want both declarations", tasks)
+	}
+	if other.Declared != nil {
+		t.Fatalf("other declaration has Declared = %v, want nil", other.Declared)
+	}
+	if target.Declared == nil || !*target.Declared {
+		t.Fatalf("target declaration has Declared = %v, want true", target.Declared)
+	}
+}
+
+func TestDeclareTasksListTasksJSONOmitsDeclared(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	goalID := newTestGoal(t, s)
+	if _, err := s.DeclareTasks(ctx, goalID, "codex", "json-declared", []string{"Task"}, []string{"Complete the task."}); err != nil {
+		t.Fatalf("DeclareTasks: %v", err)
+	}
+
+	tasks, err := s.ListTasks(ctx, goalID)
+	if err != nil {
+		t.Fatalf("ListTasks: %v", err)
+	}
+	payload, err := json.Marshal(tasks)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+	if strings.Contains(string(payload), `"declared"`) {
+		t.Fatalf("ListTasks JSON = %s, must omit declared", payload)
 	}
 }
 
