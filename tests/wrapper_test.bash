@@ -707,6 +707,21 @@ test_delegated_claim_contract_is_explicit() {
   assert_file_not_contains 'atct_goal_handoff_receive` with only the `handoff_id` provided in this request.' "$atct_skill"
 }
 
+test_declared_task_content_fix_contract_is_explicit() {
+  local atct_skill="$REPO_ROOT/skills/atct/SKILL.md"
+  local task_section
+
+  task_section="$(sed -n '/^## Fix a declared task$/,/^## Claim before you start$/p' "$atct_skill")"
+  grep -Fq -- 'atct_task_update_content' <<<"$task_section" ||
+    fail 'declared task content fix section omits atct_task_update_content'
+  grep -Fq -- 'todo' <<<"$task_section" ||
+    fail 'declared task content fix section omits todo'
+  grep -Fq -- 'done' <<<"$task_section" ||
+    fail 'declared task content fix section omits done'
+  grep -Fq -- 'idempotency_key' <<<"$task_section" ||
+    fail 'declared task content fix section omits idempotency_key'
+}
+
 test_decision_guidance_names_done_guard() {
   local atct_skill="$REPO_ROOT/skills/atct/SKILL.md"
   local decision_section
@@ -1010,6 +1025,7 @@ test_role_response_does_not_leak_other_boundaries() {
 
 test_static_contract
 test_delegated_claim_contract_is_explicit
+test_declared_task_content_fix_contract_is_explicit
 test_decision_guidance_names_done_guard
 test_irreversible_decision_still_omits_defaults
 test_start_identifies_before_monitor
