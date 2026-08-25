@@ -68,7 +68,7 @@ var validSubcommands = map[string]bool{
 var validDaemonActions = map[string]bool{"start": true, "stop": true}
 var validProjectActions = map[string]bool{"add": true, "list": true}
 var validGoalActions = map[string]bool{"add": true, "list": true}
-var validHandoffActions = map[string]bool{"complete": true}
+var validHandoffActions = map[string]bool{"complete": true, "yielded": true}
 
 func printUsage() {
 	fmt.Fprintln(os.Stderr, "Usage: atct <command> [options]")
@@ -86,6 +86,7 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "  claim-check <ids...>|any  Exit 0 only if the tasks are claimed by a running session")
 	fmt.Fprintln(os.Stderr, "  role                 Report the claim-derived role for an agent session")
 	fmt.Fprintln(os.Stderr, "  handoff complete <handoff-id> <task-id>  Report a handoff complete")
+	fmt.Fprintln(os.Stderr, "  handoff yielded <task-id>  Report that the worker yielded")
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Options:")
 	fmt.Fprintln(os.Stderr, "  -listen string   HTTP listen address (default \"127.0.0.1:8787\")")
@@ -176,14 +177,24 @@ func parseArgs(args []string) (cliConfig, error) {
 		}
 		cfg.handoffAction = action
 		rest = rest[1:]
-		if len(rest) < 2 || strings.HasPrefix(rest[0], "-") || strings.HasPrefix(rest[1], "-") {
-			fmt.Fprintln(os.Stderr, "handoff complete requires a handoff ID and task ID")
-			printUsage()
-			return cliConfig{}, errInvalidArgs
+		if action == "yielded" {
+			if len(rest) < 1 || strings.HasPrefix(rest[0], "-") {
+				fmt.Fprintln(os.Stderr, "handoff yielded requires a task ID")
+				printUsage()
+				return cliConfig{}, errInvalidArgs
+			}
+			cfg.handoffTaskID = rest[0]
+			rest = rest[1:]
+		} else {
+			if len(rest) < 2 || strings.HasPrefix(rest[0], "-") || strings.HasPrefix(rest[1], "-") {
+				fmt.Fprintln(os.Stderr, "handoff complete requires a handoff ID and task ID")
+				printUsage()
+				return cliConfig{}, errInvalidArgs
+			}
+			cfg.handoffID = rest[0]
+			cfg.handoffTaskID = rest[1]
+			rest = rest[2:]
 		}
-		cfg.handoffID = rest[0]
-		cfg.handoffTaskID = rest[1]
-		rest = rest[2:]
 	}
 
 	flags := flag.NewFlagSet(sub, flag.ExitOnError)
@@ -595,6 +606,24 @@ func runGoal(config cliConfig, dir, exePath string) error {
 }
 
 func runHandoff(config cliConfig, dir, exePath string) error {
+	if config.handoffAction == "yielded" {
+		reg, err := daemonctl.ReadRegistry(dir)
+		if err != nil {
+			if errors.Is(err, daemonctl.ErrNoRegistry) {
+				return nil
+			}
+			return err
+		}
+		if !reg.Healthy() {
+			return nil
+		}
+
+		client := mcpshim.NewClient(reg.SocketPath)
+		return client.Call(context.Background(), "handoff.yielded", map[string]string{
+			"task_id": config.handoffTaskID,
+		}, nil)
+	}
+
 	reg, err := daemonctl.Ensure(daemonctl.Config{
 		Dir:            dir,
 		Version:        version,

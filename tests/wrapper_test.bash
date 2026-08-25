@@ -157,7 +157,7 @@ test_static_contract() {
   fi
 }
 
-test_hooks_json_has_no_stop_section() {
+test_stop_hook_only_reports() {
   if python3 - "$REPO_ROOT/hooks/hooks.json" <<'PY'
 import json
 import sys
@@ -165,13 +165,58 @@ import sys
 with open(sys.argv[1], encoding="utf-8") as stream:
     hooks = json.load(stream)["hooks"]
 
-if "Stop" in hooks:
-    raise SystemExit("Stop hook is still registered")
+stop = hooks.get("Stop")
+if stop != [{
+    "hooks": [{
+        "type": "command",
+        "command": '"${CLAUDE_PLUGIN_ROOT}/hooks/stop"',
+        "shell": "bash",
+        "async": False,
+    }],
+}]:
+    raise SystemExit(f"Stop hook registration is not report-only: {stop!r}")
 PY
   then
-    return
+    :
+  else
+    fail 'hooks.json must register only the report-only Stop hook'
   fi
-  fail 'hooks.json must not register Stop'
+
+  local fixture="$TEMP_ROOT/stop-hook"
+  local hook="$fixture/hooks/stop"
+  local adjacent="$fixture/bin/atct"
+  local log="$fixture/atct.log"
+  local output
+
+  mkdir -p "$(dirname "$hook")" "$(dirname "$adjacent")"
+  cp "$REPO_ROOT/hooks/stop" "$hook"
+  cat >"$adjacent" <<'SCRIPT'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$ATCT_STOP_LOG"
+if [[ "${ATCT_STOP_FAIL:-0}" == 1 ]]; then
+  exit 1
+fi
+SCRIPT
+  chmod +x "$hook" "$adjacent"
+
+  output="$(ATCT_STOP_LOG="$log" ATCT_TASK_ID=task-1 /bin/bash "$hook" <<< '{"stop_hook_active": false}')"
+  assert_eq '' "$output" 'Stop hook must not print the yielded event'
+  assert_eq 'handoff yielded task-1' "$(<"$log")" 'Stop hook must only yield the task'
+
+  : >"$log"
+  output="$(ATCT_STOP_LOG="$log" ATCT_TASK_ID=task-1 ATCT_STOP_FAIL=1 /bin/bash "$hook" <<< '{"stop_hook_active": false}')"
+  assert_eq '' "$output" 'Stop hook must stay silent when the CLI fails'
+  assert_eq 'handoff yielded task-1' "$(<"$log")" 'Stop hook must not run other commands on CLI failure'
+
+  : >"$log"
+  output="$(ATCT_STOP_LOG="$log" ATCT_TASK_ID=task-1 /bin/bash "$hook" <<< '{"stop_hook_active": true}')"
+  assert_eq '' "$output" 'active Stop hook must be ignored'
+  assert_empty_file "$log"
+
+  : >"$log"
+  output="$(ATCT_STOP_LOG="$log" ATCT_TASK_ID= /bin/bash "$hook" <<< '{}')"
+  assert_eq '' "$output" 'Stop hook without ATCT_TASK_ID must be silent'
+  assert_empty_file "$log"
 }
 
 test_hooks_json_keeps_session_start_and_pre_tool_use_sections() {
@@ -192,8 +237,8 @@ PY
   fail 'hooks.json must keep SessionStart and PreToolUse'
 }
 
-test_stop_hook_file_is_removed_but_other_hooks_remain() {
-  [[ ! -e "$REPO_ROOT/hooks/stop" ]] || fail 'hooks/stop must be absent'
+test_stop_hook_file_is_executable_but_other_hooks_remain() {
+  [[ -x "$REPO_ROOT/hooks/stop" ]] || fail 'hooks/stop must be executable'
   [[ -f "$REPO_ROOT/hooks/pre-ask" ]] || fail 'hooks/pre-ask must remain'
   [[ -f "$REPO_ROOT/hooks/session-start" ]] || fail 'hooks/session-start must remain'
 }
@@ -657,9 +702,9 @@ test_role_contract_uses_neutral_language
 test_role_boundaries_cover_version_control_and_delegation_direction
 test_role_contract_matches_implementation
 test_role_response_does_not_leak_other_boundaries
-test_hooks_json_has_no_stop_section
+test_stop_hook_only_reports
 test_hooks_json_keeps_session_start_and_pre_tool_use_sections
-test_stop_hook_file_is_removed_but_other_hooks_remain
+test_stop_hook_file_is_executable_but_other_hooks_remain
 test_download_cache_and_mcp_stdout
 test_context_check_preserves_exit_code
 test_cleanup_failure_is_best_effort

@@ -621,6 +621,7 @@ func TestEmitWatchDetectionWritesOneLinePerCondition(t *testing.T) {
 		{"detection.handoff_unreported", watchDecision{HandoffID: "handoff-2"}, "atct detection: handoff handoff-2 has no completion report"},
 		{"handoff_reported", watchDecision{HandoffID: "handoff-3", TaskID: "task-3", CompleteReport: "task report"}, "atct handoff reported: task task-3 (handoff handoff-3): task report"},
 		{"handoff_reported", watchDecision{HandoffID: "handoff-4", GoalID: "goal-4", CompleteReport: "goal report"}, "atct handoff reported: goal goal-4 (handoff handoff-4): goal report"},
+		{"handoff_yielded", watchDecision{TaskID: "task-yielded"}, "atct handoff yielded: task task-yielded"},
 		{"detection.claim_undelegated", watchDecision{TaskID: "task-2"}, "atct detection: task task-2 has no handoff request"},
 		{"detection.decision_answered_unapplied", watchDecision{DecisionID: "decision-1", GoalID: "goal-1"}, "atct detection: decision decision-1 was answered but not applied"},
 		{"detection.decision_default_unapplied", watchDecision{DecisionID: "decision-2", GoalID: "goal-1"}, "atct detection: decision decision-2 was default-applied but not applied"},
@@ -637,6 +638,26 @@ func TestEmitWatchDetectionWritesOneLinePerCondition(t *testing.T) {
 		if got := strings.TrimSpace(output.String()); got != tc.want {
 			t.Fatalf("%s wrote %q, want %q", tc.event, got, tc.want)
 		}
+	}
+}
+
+func TestEmitWatchHandoffYieldedRepeatsEveryDelivery(t *testing.T) {
+	var output bytes.Buffer
+	delivered := make(map[watchDeliveryKey]struct{})
+	wakeupDiscrepancyDelivered := make(map[watchWakeupDeliveryKey]struct{})
+	detectionDelivered := make(map[watchDetectionDeliveryKey]struct{})
+	record := watchDecision{TaskID: "task-yielded"}
+
+	for range 2 {
+		if err := emitWatchDecisionWithState(&output, "handoff_yielded", record, delivered, nil, wakeupDiscrepancyDelivered, detectionDelivered); err != nil {
+			t.Fatalf("emitWatchDecision: %v", err)
+		}
+	}
+
+	want := "atct handoff yielded: task task-yielded\n" +
+		"atct handoff yielded: task task-yielded\n"
+	if got := output.String(); got != want {
+		t.Fatalf("output = %q, want %q", got, want)
 	}
 }
 

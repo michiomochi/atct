@@ -283,3 +283,15 @@ Stop hook → daemon → 委譲した側の watch へ即座に流す
   **claim を持つのは commander であって executor ではない。**executor は自分が
   どのタスクを渡されたかを atct 上では持っていない。**`received_by` に自分が
   記録されていれば引ける**が、それは決定 4 の 2 が入ってからである
+
+## 実装方針の追記（2026-08-25）
+
+決定 6 により、Stop hook は毎ターン「手を空けた」事実を流すだけであり、
+タスク本文の完了条件 (1) にあった `completed_report_at` の書き込みを否定する。
+Stop hook はこの列を更新せず、受領済み・未完了の handoff が存在する場合だけ、
+その task を指定した `handoff_yielded` イベントを daemon から watch へ流す。
+
+どの task を対象にするかは、人間の決定 `d55c762c`（2026-08-25 適用）により、
+pane 作成時に渡される環境変数 `ATCT_TASK_ID` から引くことに決まった。環境変数が
+空なら何もしない。`atct role` は `--agent-session-id` を要求するため、Stop hook
+から役割を引くことはできず、役割の代わりに daemon が task の handoff 状態を確認する。

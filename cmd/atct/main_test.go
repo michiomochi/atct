@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bufio"
+	"encoding/json"
 	"errors"
 	"io"
 	"net"
@@ -15,6 +17,7 @@ import (
 	"time"
 
 	"github.com/michiomochi/atct/internal/daemonctl"
+	"github.com/michiomochi/atct/internal/rpc"
 )
 
 func TestParseArgs(t *testing.T) {
@@ -560,5 +563,84 @@ func TestParseHandoffComplete(t *testing.T) {
 	}
 	if cfg.handoffID != "handoff-1" || cfg.handoffTaskID != "task-1" {
 		t.Fatalf("handoff identifiers = %q, %q; want handoff-1, task-1", cfg.handoffID, cfg.handoffTaskID)
+	}
+}
+
+func TestParseHandoffYielded(t *testing.T) {
+	cfg, err := parseArgs([]string{"handoff", "yielded", "task-1"})
+	if err != nil {
+		t.Fatalf("parseArgs: %v", err)
+	}
+	if cfg.subcommand != "handoff" || cfg.handoffAction != "yielded" {
+		t.Fatalf("handoff command = %#v, want yielded", cfg)
+	}
+	if cfg.handoffID != "" || cfg.handoffTaskID != "task-1" {
+		t.Fatalf("handoff identifiers = %q, %q; want empty handoff ID and task-1", cfg.handoffID, cfg.handoffTaskID)
+	}
+}
+
+func TestRunHandoffYieldedUsesExistingDaemonWithoutStartingOne(t *testing.T) {
+	dir := shortDaemonTestDir(t)
+	var err error
+	listener, err := net.Listen("unix", filepath.Join(dir, "atct.sock"))
+	if err != nil {
+		t.Fatalf("net.Listen: %v", err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+	if err := daemonctl.WriteRegistry(dir, daemonctl.Registry{
+		PID:        os.Getpid(),
+		SocketPath: listener.Addr().String(),
+		Version:    version,
+	}); err != nil {
+		t.Fatalf("WriteRegistry: %v", err)
+	}
+
+	requests := make(chan rpc.Request, 1)
+	go func() {
+		for {
+			conn, acceptErr := listener.Accept()
+			if acceptErr != nil {
+				return
+			}
+			go func() {
+				defer conn.Close()
+				scanner := bufio.NewScanner(conn)
+				if !scanner.Scan() {
+					return
+				}
+				var req rpc.Request
+				if err := json.Unmarshal(scanner.Bytes(), &req); err != nil {
+					return
+				}
+				requests <- req
+				_, _ = conn.Write([]byte(`{"result":null}` + "\n"))
+			}()
+		}
+	}()
+
+	if err := runHandoff(cliConfig{handoffAction: "yielded", handoffTaskID: "task-1"}, dir, filepath.Join(dir, "atct-not-started")); err != nil {
+		t.Fatalf("runHandoff: %v", err)
+	}
+	select {
+	case req := <-requests:
+		if req.Method != "handoff.yielded" {
+			t.Fatalf("RPC method = %q, want handoff.yielded", req.Method)
+		}
+		var params map[string]string
+		if err := json.Unmarshal(req.Params, &params); err != nil {
+			t.Fatalf("RPC params: %v", err)
+		}
+		if params["task_id"] != "task-1" || len(params) != 1 {
+			t.Fatalf("RPC params = %#v, want only task_id=task-1", params)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for handoff.yielded RPC")
+	}
+}
+
+func TestRunHandoffYieldedIsSilentWhenDaemonIsAbsent(t *testing.T) {
+	dir := shortDaemonTestDir(t)
+	if err := runHandoff(cliConfig{handoffAction: "yielded", handoffTaskID: "task-1"}, dir, filepath.Join(dir, "atct-not-started")); err != nil {
+		t.Fatalf("runHandoff without daemon: %v", err)
 	}
 }

@@ -14,6 +14,7 @@ const (
 	EventKeepalive                          = "keepalive"
 	EventWakeupDiscrepancy                  = "wakeup.discrepancy"
 	EventHandoffReported                    = "handoff_reported"
+	EventHandoffYielded                     = "handoff_yielded"
 	EventDetectionCompletionReportMissing   = "detection.completion_report_missing"
 	EventDetectionCommitsMissing            = "detection.commits_missing"
 	EventDetectionUndeclaredGoal            = "detection.undeclared_goal"

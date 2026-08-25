@@ -831,6 +831,41 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		}
 		return marshal(handoff, err)
 
+	case "handoff.yielded":
+		var p struct {
+			TaskID string `json:"task_id"`
+		}
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		handoffs, err := d.store.ListTaskHandoffs(ctx, p.TaskID)
+		if err != nil {
+			return nil, err
+		}
+		for _, handoff := range handoffs {
+			if handoff.ReceivedAt == nil || handoff.CompletedReportAt != nil {
+				continue
+			}
+			goalID, err := d.store.GetTaskGoalID(ctx, p.TaskID)
+			if err != nil {
+				return nil, err
+			}
+			goal, err := d.store.GetGoal(ctx, goalID)
+			if err != nil {
+				return nil, err
+			}
+			d.store.PublishEvent(store.DecisionEvent{
+				Name: store.EventHandoffYielded,
+				Data: store.DetectionEvent{
+					ProjectID: goal.ProjectID,
+					GoalID:    goalID,
+					TaskID:    p.TaskID,
+				},
+			})
+			break
+		}
+		return marshal(nil, nil)
+
 	case "goal.handoff.request":
 		var p struct {
 			HandoffID     string `json:"handoff_id"`

@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+
+INPUT="$(/bin/cat)"
+STOP_HOOK_ACTIVE_RE='"stop_hook_active"[[:space:]]*:[[:space:]]*true'
+if [[ "$INPUT" =~ $STOP_HOOK_ACTIVE_RE ]]; then
+  exit 0
+fi
+
+[[ -n "${ATCT_TASK_ID:-}" ]] || exit 0
+
+HOOK_DIR="${BASH_SOURCE[0]%/*}"
+if [[ "$HOOK_DIR" == "${BASH_SOURCE[0]}" ]]; then
+  HOOK_DIR='.'
+fi
+HOOK_DIR="$(cd -- "$HOOK_DIR" && pwd -P)" || exit 0
+ATCT_BIN="$HOOK_DIR/../bin/atct"
+[[ -x "$ATCT_BIN" ]] || exit 0
+
+"$ATCT_BIN" handoff yielded "$ATCT_TASK_ID" >/dev/null 2>&1 || true
+exit 0
