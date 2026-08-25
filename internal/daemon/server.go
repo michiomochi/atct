@@ -50,6 +50,10 @@ func newDaemonWithClockAndVersion(s *store.Store, clock func() time.Time, versio
 	return &Daemon{store: s, clock: clock, version: version, socketPath: socketPath}
 }
 
+func (d *Daemon) newTracker() *wakeupTracker {
+	return newWakeupTracker(d.clock())
+}
+
 // HTTPHandler returns the daemon's HTTP handler, including the API and the
 // embedded Web UI. API routes are registered before the UI fallback so an API
 // typo cannot be answered with the index document.
@@ -149,7 +153,7 @@ func (d *Daemon) Serve(ctx context.Context, socketPath string) error {
 
 	tickerCtx, stopTicker := context.WithCancel(ctx)
 	tickerDone := make(chan struct{})
-	tracker := newWakeupTracker()
+	tracker := d.newTracker()
 	go func() {
 		defer close(tickerDone)
 		ticker := time.NewTicker(30 * time.Second)

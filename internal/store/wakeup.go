@@ -63,10 +63,11 @@ type DetectionEvent struct {
 // ReportedHandoff is a completed task or goal handoff that the daemon has not
 // yet announced during this process lifetime.
 type ReportedHandoff struct {
-	ID             string
-	GoalID         string
-	TaskID         string
-	CompleteReport string
+	ID                string
+	GoalID            string
+	TaskID            string
+	CompleteReport    string
+	CompletedReportAt *time.Time
 }
 
 // KeepaliveEvent lets a watch process distinguish a quiet daemon from a dead
@@ -178,9 +179,10 @@ func (s *Store) DetectWakeup(ctx context.Context, projectID string) (WakeupState
 		for _, handoff := range goalHandoffs {
 			if handoff.RequestedAt != nil && handoff.ReceivedAt != nil && handoff.CompletedReportAt != nil {
 				state.HandoffsReported = append(state.HandoffsReported, ReportedHandoff{
-					ID:             handoff.ID,
-					GoalID:         handoff.GoalID,
-					CompleteReport: handoff.CompleteReport,
+					ID:                handoff.ID,
+					GoalID:            handoff.GoalID,
+					CompleteReport:    handoff.CompleteReport,
+					CompletedReportAt: handoff.CompletedReportAt,
 				})
 			}
 		}
@@ -205,9 +207,10 @@ func (s *Store) DetectWakeup(ctx context.Context, projectID string) (WakeupState
 				for _, handoff := range handoffs {
 					if handoff.RequestedAt != nil && handoff.ReceivedAt != nil && handoff.CompletedReportAt != nil {
 						state.HandoffsReported = append(state.HandoffsReported, ReportedHandoff{
-							ID:             handoff.ID,
-							TaskID:         handoff.TaskID,
-							CompleteReport: handoff.CompleteReport,
+							ID:                handoff.ID,
+							TaskID:            handoff.TaskID,
+							CompleteReport:    handoff.CompleteReport,
+							CompletedReportAt: handoff.CompletedReportAt,
 						})
 					}
 					if handoff.ReceivedAt != nil && handoff.CompletedReportAt == nil {

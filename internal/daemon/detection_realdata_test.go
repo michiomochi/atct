@@ -30,7 +30,7 @@ func TestDetectionAgainstRealDatabaseCopy(t *testing.T) {
 	}
 	defer s.Close()
 
-	tracker := newWakeupTracker()
+	tracker := newWakeupTracker(time.Time{})
 	start := time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)
 	if _, err := tracker.evaluate(ctx, s, start); err != nil {
 		t.Fatalf("initial evaluate: %v", err)

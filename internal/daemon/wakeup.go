@@ -28,6 +28,7 @@ const (
 // published, and becoming false resets that period so a later occurrence gets
 // a fresh wakeup ID.
 type wakeupTracker struct {
+	startedAt            time.Time
 	activeSince          map[string]time.Time
 	published            map[string]time.Time
 	discrepancySeen      map[string]bool
@@ -35,8 +36,9 @@ type wakeupTracker struct {
 	detectionPublished   map[string]bool
 }
 
-func newWakeupTracker() *wakeupTracker {
+func newWakeupTracker(startedAt time.Time) *wakeupTracker {
 	return &wakeupTracker{
+		startedAt:            startedAt,
 		activeSince:          make(map[string]time.Time),
 		published:            make(map[string]time.Time),
 		discrepancySeen:      make(map[string]bool),
@@ -225,7 +227,13 @@ func (t *wakeupTracker) evaluateWith(ctx context.Context, s *store.Store, now ti
 			recordDetection(store.EventDetectionHandoffUnreported, handoff.ID, *handoff.ReceivedAt, detectionHandoffUnreportedAfter, "", handoff.TaskID, handoff.ID, "")
 		}
 		for _, handoff := range state.HandoffsReported {
-			currentDetectionKeys[detectionTrackerKey(store.EventHandoffReported, handoff.ID)] = struct{}{}
+			key := detectionTrackerKey(store.EventHandoffReported, handoff.ID)
+			currentDetectionKeys[key] = struct{}{}
+			if handoff.CompletedReportAt != nil && handoff.CompletedReportAt.Before(t.startedAt) {
+				t.detectionActiveSince[key] = t.startedAt
+				t.detectionPublished[key] = true
+				continue
+			}
 			event, ok := t.publishDetectionWithDecision(now, time.Time{}, 0, store.EventHandoffReported, handoff.ID, project.ID, handoff.GoalID, handoff.TaskID, handoff.ID, "")
 			if !ok {
 				continue

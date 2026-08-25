@@ -67,7 +67,7 @@ func TestWakeupTrackerPublishesAfterGracePeriodAndResets(t *testing.T) {
 		t.Fatalf("DeclareTasks: %v", err)
 	}
 
-	tracker := newWakeupTracker()
+	tracker := newWakeupTracker(time.Time{})
 	start := time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)
 	// Spelled out rather than reading the constant, so changing the interval
 	// has to be a deliberate edit here too.
@@ -166,7 +166,7 @@ func TestWakeupTrackerPublishesTaskBreakdown(t *testing.T) {
 		return state, nil
 	}
 
-	tracker := newWakeupTracker()
+	tracker := newWakeupTracker(time.Time{})
 	start := time.Date(2026, 8, 20, 15, 0, 0, 0, time.UTC)
 	if events, err := tracker.evaluateWith(ctx, s, start, detect); err != nil {
 		t.Fatalf("initial evaluate: %v", err)
@@ -217,7 +217,7 @@ func TestWakeupTrackerDoesNotPublishForWaitingAnswerTasksOnly(t *testing.T) {
 		return state, nil
 	}
 
-	tracker := newWakeupTracker()
+	tracker := newWakeupTracker(time.Time{})
 	start := time.Date(2026, 8, 20, 15, 30, 0, 0, time.UTC)
 	if events, err := tracker.evaluateWith(ctx, s, start, detect); err != nil {
 		t.Fatalf("initial evaluate: %v", err)
@@ -253,7 +253,7 @@ func TestWakeupTrackerPublishesForActionableTasks(t *testing.T) {
 		return state, nil
 	}
 
-	tracker := newWakeupTracker()
+	tracker := newWakeupTracker(time.Time{})
 	start := time.Date(2026, 8, 20, 16, 0, 0, 0, time.UTC)
 	if events, err := tracker.evaluateWith(ctx, s, start, detect); err != nil {
 		t.Fatalf("initial evaluate: %v", err)
@@ -289,7 +289,7 @@ func TestWakeupTrackerRestartsGracePeriodAfterActionableTasksDisappearAndReturn(
 		return state, nil
 	}
 
-	tracker := newWakeupTracker()
+	tracker := newWakeupTracker(time.Time{})
 	start := time.Date(2026, 8, 20, 16, 30, 0, 0, time.UTC)
 	if _, err := tracker.evaluateWith(ctx, s, start, detect); err != nil {
 		t.Fatalf("initial evaluate: %v", err)
@@ -340,7 +340,7 @@ func TestWakeupTrackerRepublishesWhileConditionRemainsActive(t *testing.T) {
 		t.Fatalf("DeclareTasks: %v", err)
 	}
 
-	tracker := newWakeupTracker()
+	tracker := newWakeupTracker(time.Time{})
 	start := time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)
 	evaluateAt := func(now time.Time, wantEvents int) {
 		t.Helper()
@@ -376,7 +376,7 @@ func TestWakeupTrackerReportsDetectorCountDiscrepancyOnce(t *testing.T) {
 		t.Fatalf("DeclareTasks: %v", err)
 	}
 
-	tracker := newWakeupTracker()
+	tracker := newWakeupTracker(time.Time{})
 	now := time.Date(2026, 8, 20, 13, 0, 0, 0, time.UTC)
 	detect := func(context.Context, string) (store.WakeupState, error) {
 		return store.WakeupState{}, nil
@@ -421,7 +421,7 @@ func TestWakeupTrackerIgnoresGoalWithRunningClaimAndUnstartedTask(t *testing.T) 
 		t.Fatalf("ClaimTask: %v", err)
 	}
 
-	tracker := newWakeupTracker()
+	tracker := newWakeupTracker(time.Time{})
 	now := time.Date(2026, 8, 20, 13, 0, 0, 0, time.UTC)
 	events, err := tracker.evaluate(ctx, s, now)
 	if err != nil {
@@ -437,7 +437,7 @@ func TestWakeupTrackerIgnoresSnapshotDiscrepancyAfterTaskDeclaration(t *testing.
 	s := newWakeupTestStore(t)
 	projectID, goalID := newWakeupTestGoal(t, s, "snapshot")
 
-	tracker := newWakeupTracker()
+	tracker := newWakeupTracker(time.Time{})
 	now := time.Date(2026, 8, 20, 14, 0, 0, 0, time.UTC)
 	detectCalls := 0
 	events, err := tracker.evaluateWith(ctx, s, now, func(ctx context.Context, detectedProjectID string) (store.WakeupState, error) {
@@ -476,7 +476,7 @@ func TestRunMaintenancePublishesKeepaliveWithInjectedTime(t *testing.T) {
 	defer cancel()
 
 	now := time.Date(2026, 8, 20, 14, 0, 0, 123, time.UTC)
-	newDaemonWithClock(s, func() time.Time { return now }).runMaintenance(ctx, newWakeupTracker(), now)
+	newDaemonWithClock(s, func() time.Time { return now }).runMaintenance(ctx, newWakeupTracker(time.Time{}), now)
 
 	select {
 	case event := <-ch:
@@ -507,7 +507,7 @@ func TestWakeupTrackerPublishesCompletionDetectionWithoutUnstartedTasks(t *testi
 		t.Fatalf("UpdateTask: %v", err)
 	}
 
-	tracker := newWakeupTracker()
+	tracker := newWakeupTracker(time.Time{})
 	start := time.Date(2026, 8, 20, 15, 0, 0, 0, time.UTC)
 	if events, err := tracker.evaluate(ctx, s, start); err != nil {
 		t.Fatalf("initial evaluate: %v", err)
@@ -540,7 +540,7 @@ func TestWakeupTrackerDelaysDetectionUntilGracePeriod(t *testing.T) {
 		t.Fatalf("UpdateTask: %v", err)
 	}
 
-	tracker := newWakeupTracker()
+	tracker := newWakeupTracker(time.Time{})
 	start := time.Date(2026, 8, 20, 16, 0, 0, 0, time.UTC)
 	if _, err := tracker.evaluate(ctx, s, start); err != nil {
 		t.Fatalf("initial evaluate: %v", err)
@@ -565,7 +565,7 @@ func TestWakeupTrackerDoesNotRepeatDetectionForSameCondition(t *testing.T) {
 		t.Fatalf("UpdateTask: %v", err)
 	}
 
-	tracker := newWakeupTracker()
+	tracker := newWakeupTracker(time.Time{})
 	start := time.Date(2026, 8, 20, 17, 0, 0, 0, time.UTC)
 	if _, err := tracker.evaluate(ctx, s, start); err != nil {
 		t.Fatalf("initial evaluate: %v", err)
@@ -599,7 +599,7 @@ func TestWakeupTrackerResetsDetectionAfterConditionClears(t *testing.T) {
 		t.Fatalf("UpdateTask first: %v", err)
 	}
 
-	tracker := newWakeupTracker()
+	tracker := newWakeupTracker(time.Time{})
 	start := time.Date(2026, 8, 20, 18, 0, 0, 0, time.UTC)
 	if _, err := tracker.evaluate(ctx, s, start); err != nil {
 		t.Fatalf("initial evaluate: %v", err)
@@ -657,7 +657,7 @@ func TestWakeupTrackerKeepsDetectionGracePerTarget(t *testing.T) {
 		t.Fatalf("UpdateTask A: %v", err)
 	}
 
-	tracker := newWakeupTracker()
+	tracker := newWakeupTracker(time.Time{})
 	start := time.Date(2026, 8, 20, 19, 0, 0, 0, time.UTC)
 	if _, err := tracker.evaluate(ctx, s, start); err != nil {
 		t.Fatalf("initial evaluate: %v", err)
@@ -711,7 +711,7 @@ func TestWakeupTrackerPublishesStalledHandoffDetections(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DeclareTasks: %v", err)
 	}
-	tracker := newWakeupTracker()
+	tracker := newWakeupTracker(time.Time{})
 	start := time.Date(2026, 8, 20, 20, 0, 0, 0, time.UTC)
 
 	requestedAt := start.Add(-detectionHandoffUnreceivedAfter + time.Nanosecond)
@@ -784,12 +784,14 @@ func TestWakeupTrackerPublishesReportedTaskAndGoalHandoffsImmediately(t *testing
 	ctx := context.Background()
 	s := newWakeupTestStore(t)
 	projectID, goalID := newWakeupTestGoal(t, s, "reported-handoffs")
-	tracker := newWakeupTracker()
 	start := time.Date(2026, 8, 25, 12, 0, 0, 0, time.UTC)
+	tracker := newWakeupTracker(start)
+	taskCompletedAt := start.Add(time.Second)
+	goalCompletedAt := start.Add(2 * time.Second)
 	state := store.WakeupState{
 		HandoffsReported: []store.ReportedHandoff{
-			{ID: "reported-task", TaskID: "task-1", CompleteReport: "task report"},
-			{ID: "reported-goal", GoalID: goalID, CompleteReport: "goal report"},
+			{ID: "reported-task", TaskID: "task-1", CompleteReport: "task report", CompletedReportAt: &taskCompletedAt},
+			{ID: "reported-goal", GoalID: goalID, CompleteReport: "goal report", CompletedReportAt: &goalCompletedAt},
 		},
 	}
 	detect := func(context.Context, string) (store.WakeupState, error) {
@@ -840,6 +842,113 @@ func TestWakeupTrackerPublishesReportedTaskAndGoalHandoffsImmediately(t *testing
 	}
 }
 
+func TestDaemonNewTrackerUsesDaemonClock(t *testing.T) {
+	s := newWakeupTestStore(t)
+	startedAt := time.Date(2026, 8, 25, 15, 0, 0, 0, time.UTC)
+	d := newDaemonWithClock(s, func() time.Time { return startedAt })
+
+	tracker := d.newTracker()
+	if !tracker.startedAt.Equal(startedAt) {
+		t.Fatalf("tracker startedAt = %s, want %s", tracker.startedAt, startedAt)
+	}
+}
+
+func TestDaemonNewTrackerSuppressesReportCompletedBeforeDaemonClock(t *testing.T) {
+	ctx := context.Background()
+	s := newWakeupTestStore(t)
+	_, goalID := newWakeupTestGoal(t, s, "daemon-tracker-reported-before-start")
+	startedAt := time.Date(2026, 8, 25, 16, 0, 0, 0, time.UTC)
+	completedAt := startedAt.Add(-time.Second)
+	d := newDaemonWithClock(s, func() time.Time { return startedAt })
+	tracker := d.newTracker()
+	state := store.WakeupState{
+		HandoffsReported: []store.ReportedHandoff{{
+			ID:                "daemon-tracker-reported-before-start",
+			GoalID:            goalID,
+			CompleteReport:    "old report",
+			CompletedReportAt: &completedAt,
+		}},
+	}
+	detect := func(context.Context, string) (store.WakeupState, error) {
+		return state, nil
+	}
+
+	events, err := tracker.evaluateWith(ctx, s, startedAt, detect)
+	if err != nil {
+		t.Fatalf("evaluate: %v", err)
+	}
+	if len(events) != 0 {
+		t.Fatalf("events = %#v, want no events for pre-start report", events)
+	}
+}
+
+func TestWakeupTrackerSuppressesReportedHandoffCompletedBeforeDaemonStart(t *testing.T) {
+	ctx := context.Background()
+	s := newWakeupTestStore(t)
+	_, goalID := newWakeupTestGoal(t, s, "reported-before-start")
+	start := time.Date(2026, 8, 25, 13, 0, 0, 0, time.UTC)
+	completedAt := start.Add(-time.Second)
+	tracker := newWakeupTracker(start)
+	state := store.WakeupState{
+		HandoffsReported: []store.ReportedHandoff{{
+			ID:                "reported-before-start",
+			GoalID:            goalID,
+			CompleteReport:    "old report",
+			CompletedReportAt: &completedAt,
+		}},
+	}
+	detect := func(context.Context, string) (store.WakeupState, error) {
+		return state, nil
+	}
+
+	for _, now := range []time.Time{start, start.Add(time.Hour)} {
+		events, err := tracker.evaluateWith(ctx, s, now, detect)
+		if err != nil {
+			t.Fatalf("evaluate at %s: %v", now, err)
+		}
+		if len(events) != 0 {
+			t.Fatalf("events at %s = %#v, want no events for pre-start report", now, events)
+		}
+	}
+}
+
+func TestWakeupTrackerPublishesOnlyReportedHandoffCompletedAfterDaemonStart(t *testing.T) {
+	ctx := context.Background()
+	s := newWakeupTestStore(t)
+	_, goalID := newWakeupTestGoal(t, s, "reported-mixed")
+	start := time.Date(2026, 8, 25, 14, 0, 0, 0, time.UTC)
+	oldCompletedAt := start.Add(-time.Second)
+	newCompletedAt := start.Add(time.Second)
+	tracker := newWakeupTracker(start)
+	state := store.WakeupState{
+		HandoffsReported: []store.ReportedHandoff{
+			{ID: "reported-old", GoalID: goalID, CompleteReport: "old report", CompletedReportAt: &oldCompletedAt},
+			{ID: "reported-new", GoalID: goalID, CompleteReport: "new report", CompletedReportAt: &newCompletedAt},
+		},
+	}
+	detect := func(context.Context, string) (store.WakeupState, error) {
+		return state, nil
+	}
+
+	events, err := tracker.evaluateWith(ctx, s, start, detect)
+	if err != nil {
+		t.Fatalf("mixed reported handoff evaluate: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("mixed reported handoff events = %#v, want one event", events)
+	}
+	if events[0].Name != store.EventHandoffReported {
+		t.Fatalf("mixed reported handoff event = %#v, want %q", events[0], store.EventHandoffReported)
+	}
+	detection, ok := events[0].Data.(store.DetectionEvent)
+	if !ok {
+		t.Fatalf("mixed reported handoff data type = %T, want store.DetectionEvent", events[0].Data)
+	}
+	if detection.ProjectID == "" || detection.GoalID != goalID || detection.HandoffID != "reported-new" || detection.CompleteReport != "new report" || detection.DetectionID == "" {
+		t.Fatalf("mixed reported handoff detection = %+v, want only new report", detection)
+	}
+}
+
 func TestWakeupTrackerPublishesUnappliedDecisionAndStaleClaimDetections(t *testing.T) {
 	ctx := context.Background()
 	s := newWakeupTestStore(t)
@@ -864,7 +973,7 @@ func TestWakeupTrackerPublishesUnappliedDecisionAndStaleClaimDetections(t *testi
 	detect := func(context.Context, string) (store.WakeupState, error) {
 		return state, nil
 	}
-	tracker := newWakeupTracker()
+	tracker := newWakeupTracker(time.Time{})
 
 	events, err := tracker.evaluateWith(ctx, s, start, detect)
 	if err != nil {
