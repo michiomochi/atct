@@ -1277,6 +1277,10 @@ func eventMatchesGoalID(event store.DecisionEvent, goalID string) bool {
 	switch data := event.Data.(type) {
 	case store.KeepaliveEvent, *store.KeepaliveEvent:
 		return true
+	case domain.Decision:
+		return data.GoalID != "" && data.GoalID == goalID
+	case *domain.Decision:
+		return data != nil && data.GoalID != "" && data.GoalID == goalID
 	case store.DetectionEvent:
 		return data.GoalID != "" && data.GoalID == goalID
 	case *store.DetectionEvent:

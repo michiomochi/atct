@@ -2449,6 +2449,58 @@ func TestSSEFiltersDetectionEventsByGoalID(t *testing.T) {
 	}
 }
 
+func TestSSEPublishesDecisionEventsForGoalID(t *testing.T) {
+	f := newBareFixture(t)
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+	streamCtx, cancel := context.WithCancel(f.ctx)
+	defer cancel()
+	stream, reader := openSSEStream(t, streamCtx, srv.Client(), eventsURLWithGoal(srv.URL, "current-goal"))
+	defer stream.Body.Close()
+
+	current := &domain.Decision{ID: "current-decision", GoalID: "current-goal"}
+	f.store.PublishEvent(store.DecisionEvent{Name: "decision.created", Data: current})
+
+	frame := readSSEFrame(t, reader)
+	if frame.event != "decision.created" {
+		t.Fatalf("SSE decision event = %q, want %q; lines=%v", frame.event, "decision.created", frame.lines)
+	}
+	var got domain.Decision
+	if err := json.Unmarshal([]byte(frame.data), &got); err != nil {
+		t.Fatalf("SSE decision data is not a Decision: %v; data=%q", err, frame.data)
+	}
+	if got.ID != current.ID || got.GoalID != current.GoalID {
+		t.Fatalf("SSE decision = %+v, want current goal decision", got)
+	}
+}
+
+func TestSSEFiltersOtherGoalDecisionEventsByGoalID(t *testing.T) {
+	f := newBareFixture(t)
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+	streamCtx, cancel := context.WithCancel(f.ctx)
+	defer cancel()
+	stream, reader := openSSEStream(t, streamCtx, srv.Client(), eventsURLWithGoal(srv.URL, "current-goal"))
+	defer stream.Body.Close()
+
+	other := domain.Decision{ID: "other-decision", GoalID: "other-goal"}
+	current := domain.Decision{ID: "current-decision", GoalID: "current-goal"}
+	f.store.PublishEvent(store.DecisionEvent{Name: "decision.created", Data: other})
+	f.store.PublishEvent(store.DecisionEvent{Name: "decision.created", Data: current})
+
+	frame := readSSEFrame(t, reader)
+	if frame.event != "decision.created" {
+		t.Fatalf("SSE decision event = %q, want %q; lines=%v", frame.event, "decision.created", frame.lines)
+	}
+	var got domain.Decision
+	if err := json.Unmarshal([]byte(frame.data), &got); err != nil {
+		t.Fatalf("SSE decision data is not a Decision: %v; data=%q", err, frame.data)
+	}
+	if got.ID != current.ID || got.GoalID != current.GoalID {
+		t.Fatalf("SSE decision = %+v, want current goal decision", got)
+	}
+}
+
 func TestSSEGoalIDPublishesKeepaliveButNotWakeup(t *testing.T) {
 	f := newBareFixture(t)
 	srv := newTestServer(t, f.store)
