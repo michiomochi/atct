@@ -121,3 +121,35 @@ b4d5bc37-bbde-450b-b18e-1e54d415050c  1ff70f35-9060-45e9-8169-5952bd1032ef  2026
 
 subcommander の登録間隔は `03:16:34.005595 → 03:46:34.398962` の `30:00.393367`、commander は約 50:00.696561 である。30 分定数は存在するが用途も基準時刻も一致せず、今回の ID swap の直接原因とは確認できなかった。
 旧 goal handoff の `received_at` は `03:19:49.168453Z` であり、これを 30 分 detection の基準にすると `03:49:49.168453Z` になる。実際の subcommander swap `03:46:34.398962Z` とは一致しない。
+
+## 7. 回復手順（commander が 3 回使ったもの）
+
+**これは手順であって修理ではない。**直るまでは、止まったらこれで戻す。
+
+役割が `executor` に戻っていることに気づいたら:
+
+```
+atct_project_release(<project_id>)   保持者でなくても通る（タスク 06435e48）
+atct_project_claim(<project_id>)     → role が commander に戻る
+```
+
+**`release` を先に呼ぶ必要がある。**古い ID は pid が daemon のものなので永久に
+生存扱いになり、`atct_project_claim` だけでは `project already claimed` で拒まれる。
+
+subcommander に渡したゴールが同じ形で切れたときは、commander が:
+
+```
+atct_goal_handoff_complete(<goal_id>)          開いている受領を閉じる
+atct_goal_handoff_request(<goal_id>, <新 ID>)  新しい handoff_id で出し直す
+```
+
+**subcommander は自力で戻れない。**再発行には project claim が要るためである。
+**したがって subcommander には「役割が executor に戻ったら作業を止めて commander に
+再発行を求めろ」と指示しておくこと。**気づかずに進むと、委譲だけが静かに失敗する。
+
+### 観測された頻度（2026-08-25）
+
+    commander      03:12 → 04:02（50 分） → 04:37（35 分） → 04:47（10 分）
+    subcommander   03:16 → 03:46（30 分） → 04:47（61 分）
+
+**周期ではない。**最後の 1 回は 3 つのセッションがほぼ同時に切れた。
