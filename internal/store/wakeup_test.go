@@ -580,13 +580,13 @@ func TestDetectWakeupCountsActionableGoalsWithoutCompletionApproval(t *testing.T
 	}
 }
 
-func TestWakeupEventMarshalsActionableGoalCount(t *testing.T) {
-	event := WakeupEvent{WakeupID: "wakeup-json", ProjectID: "project", ActionableGoalCount: 3}
+func TestWakeupEventMarshalsWakeupCounts(t *testing.T) {
+	event := WakeupEvent{WakeupID: "wakeup-json", ProjectID: "project", ActionableGoalCount: 3, DelegatedTaskCount: 2}
 	got, err := json.Marshal(event)
 	if err != nil {
 		t.Fatalf("json.Marshal: %v", err)
 	}
-	const want = `{"wakeup_id":"wakeup-json","project_id":"project","actionable_goal_count":3,"unstarted_task_count":0,"waiting_answer_task_count":0,"untouched_task_count":0,"waiting_answer_count":0}`
+	const want = `{"wakeup_id":"wakeup-json","project_id":"project","actionable_goal_count":3,"unstarted_task_count":0,"waiting_answer_task_count":0,"untouched_task_count":0,"delegated_task_count":2,"waiting_answer_count":0}`
 	if string(got) != want {
 		t.Fatalf("wakeup JSON = %s, want %s", got, want)
 	}
@@ -686,7 +686,7 @@ func TestDetectWakeupDoesNotReportProposedGoalAsUndeclaredOrCommitless(t *testin
 func TestDetectWakeupCollectsStalledHandoffCandidates(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	taskIDs := addTestTasks(t, s, 5)
+	taskIDs := addTestTasks(t, s, 8)
 	const claimSessionID = "stalled-handoff-claim"
 	addLiveTaskClaim(t, s, taskIDs[3], claimSessionID)
 	addLiveParentGoalClaim(t, s, taskIDs[0], "stalled-handoff-requester")
@@ -705,6 +705,13 @@ func TestDetectWakeupCollectsStalledHandoffCandidates(t *testing.T) {
 	if _, err := s.ReceiveTaskHandoff(ctx, unreported.ID, taskIDs[1], "stalled-handoff-receiver"); err != nil {
 		t.Fatalf("ReceiveTaskHandoff unreported: %v", err)
 	}
+	secondUnreported, err := s.RequestTaskHandoff(ctx, "handoff-unreported-second", taskIDs[5], "stalled-handoff-requester", "")
+	if err != nil {
+		t.Fatalf("RequestTaskHandoff second unreported: %v", err)
+	}
+	if _, err := s.ReceiveTaskHandoff(ctx, secondUnreported.ID, taskIDs[5], "stalled-handoff-receiver"); err != nil {
+		t.Fatalf("ReceiveTaskHandoff second unreported: %v", err)
+	}
 	completed, err := s.RequestTaskHandoff(ctx, "handoff-completed", taskIDs[2], "stalled-handoff-requester", "")
 	if err != nil {
 		t.Fatalf("RequestTaskHandoff completed: %v", err)
@@ -715,32 +722,49 @@ func TestDetectWakeupCollectsStalledHandoffCandidates(t *testing.T) {
 	if _, err := s.CompleteTaskHandoff(ctx, completed.ID, taskIDs[2], ""); err != nil {
 		t.Fatalf("CompleteTaskHandoff completed: %v", err)
 	}
+	secondCompleted, err := s.RequestTaskHandoff(ctx, "handoff-completed-second", taskIDs[7], "stalled-handoff-requester", "")
+	if err != nil {
+		t.Fatalf("RequestTaskHandoff second completed: %v", err)
+	}
+	if _, err := s.ReceiveTaskHandoff(ctx, secondCompleted.ID, taskIDs[7], "stalled-handoff-receiver"); err != nil {
+		t.Fatalf("ReceiveTaskHandoff second completed: %v", err)
+	}
+	if _, err := s.CompleteTaskHandoff(ctx, secondCompleted.ID, taskIDs[7], ""); err != nil {
+		t.Fatalf("CompleteTaskHandoff second completed: %v", err)
+	}
 	requestedClaim, err := s.RequestTaskHandoff(ctx, "handoff-requested-claim", taskIDs[4], "stalled-handoff-requester", "")
 	if err != nil {
 		t.Fatalf("RequestTaskHandoff requested claim: %v", err)
+	}
+	secondUnreceived, err := s.RequestTaskHandoff(ctx, "handoff-unreceived-second", taskIDs[6], "stalled-handoff-requester", "")
+	if err != nil {
+		t.Fatalf("RequestTaskHandoff second unreceived: %v", err)
 	}
 
 	state, err := s.DetectWakeup(ctx, taskIDsProjectID(t, s, taskIDs[0]))
 	if err != nil {
 		t.Fatalf("DetectWakeup: %v", err)
 	}
-	if len(state.HandoffsAwaitingReceipt) != 2 {
-		t.Fatalf("handoffs awaiting receipt = %#v, want %s and %s", state.HandoffsAwaitingReceipt, unreceived.ID, requestedClaim.ID)
+	if len(state.HandoffsAwaitingReceipt) != 3 {
+		t.Fatalf("handoffs awaiting receipt = %#v, want %s, %s, and %s", state.HandoffsAwaitingReceipt, unreceived.ID, requestedClaim.ID, secondUnreceived.ID)
 	}
-	if len(state.HandoffsAwaitingReport) != 1 || state.HandoffsAwaitingReport[0].ID != unreported.ID {
-		t.Fatalf("handoffs awaiting report = %#v, want only %s", state.HandoffsAwaitingReport, unreported.ID)
+	if len(state.HandoffsAwaitingReport) != 2 {
+		t.Fatalf("handoffs awaiting report = %#v, want %s and %s", state.HandoffsAwaitingReport, unreported.ID, secondUnreported.ID)
+	}
+	if state.DelegatedTaskCount != 2 {
+		t.Fatalf("delegated task count = %d, want 2 open received handoffs", state.DelegatedTaskCount)
 	}
 	if len(state.UndelegatedClaims) != 1 || state.UndelegatedClaims[0].ID != taskIDs[3] {
 		t.Fatalf("undelegated claims = %#v, want only %s", state.UndelegatedClaims, taskIDs[3])
 	}
 	for _, handoff := range state.HandoffsAwaitingReceipt {
-		if handoff.ID == completed.ID {
-			t.Fatalf("completed handoff %s was reported as awaiting receipt", completed.ID)
+		if handoff.ID == completed.ID || handoff.ID == secondCompleted.ID {
+			t.Fatalf("completed handoff was reported as awaiting receipt: %#v", handoff)
 		}
 	}
 	for _, handoff := range state.HandoffsAwaitingReport {
-		if handoff.ID == completed.ID {
-			t.Fatalf("completed handoff %s was reported as awaiting report", completed.ID)
+		if handoff.ID == completed.ID || handoff.ID == secondCompleted.ID {
+			t.Fatalf("completed handoff was reported as awaiting report: %#v", handoff)
 		}
 	}
 }

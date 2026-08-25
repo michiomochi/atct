@@ -158,8 +158,8 @@ func TestWatchEmitsWakeupEvents(t *testing.T) {
 		}
 	}
 
-	want := "atct wakeup: actionable_goals=0 unstarted_tasks=0 waiting_answer_tasks=0 untouched_tasks=0 waiting_answers=0\n" +
-		"atct wakeup: actionable_goals=0 unstarted_tasks=1 waiting_answer_tasks=0 untouched_tasks=0 waiting_answers=0\n"
+	want := "atct wakeup: actionable_goals=0 unstarted_tasks=0 waiting_answer_tasks=0 untouched_tasks=0 delegated_tasks=0 waiting_answers=0\n" +
+		"atct wakeup: actionable_goals=0 unstarted_tasks=1 waiting_answer_tasks=0 untouched_tasks=0 delegated_tasks=0 waiting_answers=0\n"
 	if strings.Contains(output.String(), "working_tasks=") {
 		t.Fatalf("wakeup output contains removed working-task count: %q", output.String())
 	}
@@ -181,7 +181,7 @@ func TestWatchFormatsActionableGoalCount(t *testing.T) {
 	if strings.Contains(line, "active_goals=") {
 		t.Fatalf("wakeup output uses the old goal label: %q", line)
 	}
-	want := "atct wakeup: actionable_goals=3 unstarted_tasks=0 waiting_answer_tasks=0 untouched_tasks=0 waiting_answers=0"
+	want := "atct wakeup: actionable_goals=3 unstarted_tasks=0 waiting_answer_tasks=0 untouched_tasks=0 delegated_tasks=0 waiting_answers=0"
 	if line != want {
 		t.Fatalf("wakeup output = %q, want %q", line, want)
 	}
@@ -202,9 +202,27 @@ func TestWatchEmitsWakeupTaskBreakdownSeparatelyFromDecisionCount(t *testing.T) 
 		t.Fatalf("emitWatchDecision: %v", err)
 	}
 
-	want := "atct wakeup: actionable_goals=3 unstarted_tasks=3 waiting_answer_tasks=1 untouched_tasks=2 waiting_answers=2\n"
+	want := "atct wakeup: actionable_goals=3 unstarted_tasks=3 waiting_answer_tasks=1 untouched_tasks=2 delegated_tasks=0 waiting_answers=2\n"
 	if got := output.String(); got != want {
 		t.Fatalf("wakeup output = %q, want %q", got, want)
+	}
+}
+
+func TestWatchFormatsDelegatedTaskCountOutsideUnstartedBreakdown(t *testing.T) {
+	line, ok := formatWatchDecision("wakeup", watchDecision{
+		WakeupID:               "wakeup-delegated",
+		UnstartedTaskCount:     3,
+		WaitingAnswerTaskCount: 1,
+		UntouchedTaskCount:     2,
+		WaitingAnswerCount:     4,
+		DelegatedTaskCount:     2,
+	})
+	if !ok {
+		t.Fatal("formatWatchDecision returned false, want true")
+	}
+	const want = "atct wakeup: actionable_goals=0 unstarted_tasks=3 waiting_answer_tasks=1 untouched_tasks=2 delegated_tasks=2 waiting_answers=4"
+	if line != want {
+		t.Fatalf("wakeup output = %q, want %q", line, want)
 	}
 }
 
@@ -225,9 +243,9 @@ func TestWatchEmitsWakeupAgainAfterStateReturns(t *testing.T) {
 		}
 	}
 
-	want := "atct wakeup: actionable_goals=0 unstarted_tasks=0 waiting_answer_tasks=0 untouched_tasks=0 waiting_answers=0\n" +
-		"atct wakeup: actionable_goals=0 unstarted_tasks=1 waiting_answer_tasks=0 untouched_tasks=0 waiting_answers=0\n" +
-		"atct wakeup: actionable_goals=0 unstarted_tasks=0 waiting_answer_tasks=0 untouched_tasks=0 waiting_answers=0\n"
+	want := "atct wakeup: actionable_goals=0 unstarted_tasks=0 waiting_answer_tasks=0 untouched_tasks=0 delegated_tasks=0 waiting_answers=0\n" +
+		"atct wakeup: actionable_goals=0 unstarted_tasks=1 waiting_answer_tasks=0 untouched_tasks=0 delegated_tasks=0 waiting_answers=0\n" +
+		"atct wakeup: actionable_goals=0 unstarted_tasks=0 waiting_answer_tasks=0 untouched_tasks=0 delegated_tasks=0 waiting_answers=0\n"
 	if got := output.String(); got != want {
 		t.Fatalf("wakeup output = %q, want %q", got, want)
 	}

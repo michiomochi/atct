@@ -164,6 +164,7 @@ func (t *wakeupTracker) evaluateWith(ctx context.Context, s *store.Store, now ti
 							UnstartedTaskCount:     state.UnstartedTaskCount,
 							WaitingAnswerTaskCount: state.WaitingAnswerTaskCount,
 							UntouchedTaskCount:     state.UntouchedTaskCount,
+							DelegatedTaskCount:     state.DelegatedTaskCount,
 							WaitingAnswerCount:     state.WaitingAnswerCount,
 						},
 					})

@@ -34,8 +34,8 @@ func TestEmitWatchDecisionSuppressesUnchangedWakeupAndEmitsChangedContent(t *tes
 
 	got := strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n")
 	want := []string{
-		"atct wakeup: actionable_goals=4 unstarted_tasks=4 waiting_answer_tasks=0 untouched_tasks=4 waiting_answers=24",
-		"atct wakeup: actionable_goals=4 unstarted_tasks=3 waiting_answer_tasks=0 untouched_tasks=3 waiting_answers=24",
+		"atct wakeup: actionable_goals=4 unstarted_tasks=4 waiting_answer_tasks=0 untouched_tasks=4 delegated_tasks=0 waiting_answers=24",
+		"atct wakeup: actionable_goals=4 unstarted_tasks=3 waiting_answer_tasks=0 untouched_tasks=3 delegated_tasks=0 waiting_answers=24",
 	}
 	if len(got) != len(want) {
 		t.Fatalf("emitted lines = %q, want %q", got, want)
@@ -72,7 +72,7 @@ func TestEmitWatchDecisionKeepsWakeupDeliveryPerWatch(t *testing.T) {
 		t.Fatalf("second watch emitWatchDecision: %v", err)
 	}
 
-	want := "atct wakeup: actionable_goals=1 unstarted_tasks=1 waiting_answer_tasks=0 untouched_tasks=1 waiting_answers=0\n"
+	want := "atct wakeup: actionable_goals=1 unstarted_tasks=1 waiting_answer_tasks=0 untouched_tasks=1 delegated_tasks=0 waiting_answers=0\n"
 	if firstOut.String() != want {
 		t.Fatalf("first watch output = %q, want %q", firstOut.String(), want)
 	}
@@ -107,9 +107,9 @@ func TestEmitWatchDecisionEmitsWakeupWhenContentReturns(t *testing.T) {
 	}
 
 	want := strings.Join([]string{
-		"atct wakeup: actionable_goals=4 unstarted_tasks=4 waiting_answer_tasks=0 untouched_tasks=4 waiting_answers=0",
-		"atct wakeup: actionable_goals=4 unstarted_tasks=3 waiting_answer_tasks=0 untouched_tasks=3 waiting_answers=0",
-		"atct wakeup: actionable_goals=4 unstarted_tasks=4 waiting_answer_tasks=0 untouched_tasks=4 waiting_answers=0",
+		"atct wakeup: actionable_goals=4 unstarted_tasks=4 waiting_answer_tasks=0 untouched_tasks=4 delegated_tasks=0 waiting_answers=0",
+		"atct wakeup: actionable_goals=4 unstarted_tasks=3 waiting_answer_tasks=0 untouched_tasks=3 delegated_tasks=0 waiting_answers=0",
+		"atct wakeup: actionable_goals=4 unstarted_tasks=4 waiting_answer_tasks=0 untouched_tasks=4 delegated_tasks=0 waiting_answers=0",
 	}, "\n") + "\n"
 	if out.String() != want {
 		t.Fatalf("emitted output = %q, want %q", out.String(), want)

@@ -37,6 +37,7 @@ type WakeupEvent struct {
 	UnstartedTaskCount     int    `json:"unstarted_task_count"`
 	WaitingAnswerTaskCount int    `json:"waiting_answer_task_count"`
 	UntouchedTaskCount     int    `json:"untouched_task_count"`
+	DelegatedTaskCount     int    `json:"delegated_task_count"`
 	WaitingAnswerCount     int    `json:"waiting_answer_count"`
 }
 
@@ -84,6 +85,7 @@ type WakeupState struct {
 	UnstartedTaskCount         int
 	WaitingAnswerTaskCount     int
 	UntouchedTaskCount         int
+	DelegatedTaskCount         int
 	WaitingAnswerCount         int
 	Tasks                      []domain.Task
 	CompletedGoals             []domain.Goal
@@ -326,6 +328,7 @@ func (s *Store) DetectWakeup(ctx context.Context, projectID string) (WakeupState
 			state.Tasks = append(state.Tasks, task)
 		}
 	}
+	state.DelegatedTaskCount = len(state.HandoffsAwaitingReport)
 	if state.Tasks == nil {
 		state.Tasks = []domain.Task{}
 	}

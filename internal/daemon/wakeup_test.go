@@ -158,6 +158,7 @@ func TestWakeupTrackerPublishesTaskBreakdown(t *testing.T) {
 		UnstartedTaskCount:     3,
 		WaitingAnswerTaskCount: 1,
 		UntouchedTaskCount:     2,
+		DelegatedTaskCount:     2,
 		WaitingAnswerCount:     2,
 		Tasks:                  tasks[1:],
 	}
@@ -192,6 +193,9 @@ func TestWakeupTrackerPublishesTaskBreakdown(t *testing.T) {
 	}
 	if wakeup.WaitingAnswerTaskCount != state.WaitingAnswerTaskCount || wakeup.UntouchedTaskCount != state.UntouchedTaskCount {
 		t.Fatalf("published task breakdown = %+v, want state breakdown waiting=%d untouched=%d", wakeup, state.WaitingAnswerTaskCount, state.UntouchedTaskCount)
+	}
+	if wakeup.DelegatedTaskCount != state.DelegatedTaskCount {
+		t.Fatalf("published delegated task count = %d, want %d", wakeup.DelegatedTaskCount, state.DelegatedTaskCount)
 	}
 	if total := wakeup.WaitingAnswerTaskCount + wakeup.UntouchedTaskCount; wakeup.UnstartedTaskCount != total {
 		t.Fatalf("published task total = %d, want breakdown sum %d", wakeup.UnstartedTaskCount, total)
