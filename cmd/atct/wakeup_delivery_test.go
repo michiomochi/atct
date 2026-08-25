@@ -8,7 +8,7 @@ import (
 func TestEmitWatchDecisionSuppressesUnchangedWakeupAndEmitsChangedContent(t *testing.T) {
 	first := watchDecision{
 		WakeupID:               "wakeup-1",
-		ActiveGoalCount:        4,
+		ActionableGoalCount:    4,
 		UnstartedTaskCount:     4,
 		WaitingAnswerTaskCount: 0,
 		WorkingTaskCount:       0,
@@ -35,8 +35,8 @@ func TestEmitWatchDecisionSuppressesUnchangedWakeupAndEmitsChangedContent(t *tes
 
 	got := strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n")
 	want := []string{
-		"atct wakeup: active_goals=4 unstarted_tasks=4 waiting_answer_tasks=0 working_tasks=0 untouched_tasks=4 waiting_answers=24",
-		"atct wakeup: active_goals=4 unstarted_tasks=3 waiting_answer_tasks=0 working_tasks=0 untouched_tasks=3 waiting_answers=24",
+		"atct wakeup: actionable_goals=4 unstarted_tasks=4 waiting_answer_tasks=0 working_tasks=0 untouched_tasks=4 waiting_answers=24",
+		"atct wakeup: actionable_goals=4 unstarted_tasks=3 waiting_answer_tasks=0 working_tasks=0 untouched_tasks=3 waiting_answers=24",
 	}
 	if len(got) != len(want) {
 		t.Fatalf("emitted lines = %q, want %q", got, want)
@@ -50,10 +50,10 @@ func TestEmitWatchDecisionSuppressesUnchangedWakeupAndEmitsChangedContent(t *tes
 
 func TestEmitWatchDecisionKeepsWakeupDeliveryPerWatch(t *testing.T) {
 	decision := watchDecision{
-		WakeupID:           "wakeup-1",
-		ActiveGoalCount:    1,
-		UnstartedTaskCount: 1,
-		UntouchedTaskCount: 1,
+		WakeupID:            "wakeup-1",
+		ActionableGoalCount: 1,
+		UnstartedTaskCount:  1,
+		UntouchedTaskCount:  1,
 	}
 
 	var firstOut, secondOut strings.Builder
@@ -73,7 +73,7 @@ func TestEmitWatchDecisionKeepsWakeupDeliveryPerWatch(t *testing.T) {
 		t.Fatalf("second watch emitWatchDecision: %v", err)
 	}
 
-	want := "atct wakeup: active_goals=1 unstarted_tasks=1 waiting_answer_tasks=0 working_tasks=0 untouched_tasks=1 waiting_answers=0\n"
+	want := "atct wakeup: actionable_goals=1 unstarted_tasks=1 waiting_answer_tasks=0 working_tasks=0 untouched_tasks=1 waiting_answers=0\n"
 	if firstOut.String() != want {
 		t.Fatalf("first watch output = %q, want %q", firstOut.String(), want)
 	}
@@ -84,10 +84,10 @@ func TestEmitWatchDecisionKeepsWakeupDeliveryPerWatch(t *testing.T) {
 
 func TestEmitWatchDecisionEmitsWakeupWhenContentReturns(t *testing.T) {
 	first := watchDecision{
-		WakeupID:           "wakeup-1",
-		ActiveGoalCount:    4,
-		UnstartedTaskCount: 4,
-		UntouchedTaskCount: 4,
+		WakeupID:            "wakeup-1",
+		ActionableGoalCount: 4,
+		UnstartedTaskCount:  4,
+		UntouchedTaskCount:  4,
 	}
 	changed := first
 	changed.WakeupID = "wakeup-2"
@@ -108,9 +108,9 @@ func TestEmitWatchDecisionEmitsWakeupWhenContentReturns(t *testing.T) {
 	}
 
 	want := strings.Join([]string{
-		"atct wakeup: active_goals=4 unstarted_tasks=4 waiting_answer_tasks=0 working_tasks=0 untouched_tasks=4 waiting_answers=0",
-		"atct wakeup: active_goals=4 unstarted_tasks=3 waiting_answer_tasks=0 working_tasks=0 untouched_tasks=3 waiting_answers=0",
-		"atct wakeup: active_goals=4 unstarted_tasks=4 waiting_answer_tasks=0 working_tasks=0 untouched_tasks=4 waiting_answers=0",
+		"atct wakeup: actionable_goals=4 unstarted_tasks=4 waiting_answer_tasks=0 working_tasks=0 untouched_tasks=4 waiting_answers=0",
+		"atct wakeup: actionable_goals=4 unstarted_tasks=3 waiting_answer_tasks=0 working_tasks=0 untouched_tasks=3 waiting_answers=0",
+		"atct wakeup: actionable_goals=4 unstarted_tasks=4 waiting_answer_tasks=0 working_tasks=0 untouched_tasks=4 waiting_answers=0",
 	}, "\n") + "\n"
 	if out.String() != want {
 		t.Fatalf("emitted output = %q, want %q", out.String(), want)

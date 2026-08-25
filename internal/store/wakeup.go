@@ -31,7 +31,7 @@ const (
 type WakeupEvent struct {
 	WakeupID               string `json:"wakeup_id"`
 	ProjectID              string `json:"project_id"`
-	ActiveGoalCount        int    `json:"active_goal_count"`
+	ActionableGoalCount    int    `json:"actionable_goal_count"`
 	UnstartedTaskCount     int    `json:"unstarted_task_count"`
 	WaitingAnswerTaskCount int    `json:"waiting_answer_task_count"`
 	UntouchedTaskCount     int    `json:"untouched_task_count"`
@@ -67,7 +67,7 @@ type KeepaliveEvent struct {
 // WakeupState is the detector result used by pending output and the daemon.
 // Tasks contains the actionable task list for pending's human-readable view.
 type WakeupState struct {
-	ActiveGoalCount        int
+	ActionableGoalCount    int
 	UnstartedTaskCount     int
 	WaitingAnswerTaskCount int
 	// WorkingTaskCount is retained for compatibility with wakeup consumers.
@@ -276,7 +276,7 @@ func (s *Store) DetectWakeup(ctx context.Context, projectID string) (WakeupState
 		if len(unstarted) == 0 {
 			continue
 		}
-		state.ActiveGoalCount++
+		state.ActionableGoalCount++
 		state.UnstartedTaskCount += len(unstarted)
 		openDecisionTaskIDs := make(map[string]struct{}, len(openDecisions))
 		for _, decision := range openDecisions {

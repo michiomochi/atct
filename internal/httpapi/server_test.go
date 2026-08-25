@@ -2391,18 +2391,18 @@ func TestSSEPublishesGenericWakeupAndKeepaliveEvents(t *testing.T) {
 	defer stream.Body.Close()
 
 	other := store.WakeupEvent{
-		WakeupID:           "other-wakeup",
-		ProjectID:          otherProject.ID,
-		ActiveGoalCount:    2,
-		UnstartedTaskCount: 3,
-		WaitingAnswerCount: 1,
+		WakeupID:            "other-wakeup",
+		ProjectID:           otherProject.ID,
+		ActionableGoalCount: 2,
+		UnstartedTaskCount:  3,
+		WaitingAnswerCount:  1,
 	}
 	current := store.WakeupEvent{
-		WakeupID:           "current-wakeup",
-		ProjectID:          f.project.ID,
-		ActiveGoalCount:    1,
-		UnstartedTaskCount: 2,
-		WaitingAnswerCount: 0,
+		WakeupID:            "current-wakeup",
+		ProjectID:           f.project.ID,
+		ActionableGoalCount: 1,
+		UnstartedTaskCount:  2,
+		WaitingAnswerCount:  0,
 	}
 	f.store.PublishEvent(store.DecisionEvent{Name: store.EventWakeup, Data: other})
 	f.store.PublishEvent(store.DecisionEvent{Name: store.EventWakeup, Data: current})

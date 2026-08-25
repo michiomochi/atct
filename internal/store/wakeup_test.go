@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"testing"
 	"time"
@@ -124,7 +125,7 @@ func TestDetectWakeupReportsUnstartedTasksWithoutRunningClaim(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DetectWakeup: %v", err)
 	}
-	if state.ActiveGoalCount != 1 || state.UnstartedTaskCount != len(tasks) {
+	if state.ActionableGoalCount != 1 || state.UnstartedTaskCount != len(tasks) {
 		t.Fatalf("wakeup state counts = %+v, want one active goal and %d tasks", state, len(tasks))
 	}
 	if len(state.Tasks) != len(tasks) || state.Tasks[0].ID != tasks[0].ID || state.Tasks[1].ID != tasks[1].ID {
@@ -166,7 +167,7 @@ func TestDetectWakeupClassifiesUnstartedTasksForGoalWaitingForOpenDecision(t *te
 	if err != nil {
 		t.Fatalf("DetectWakeup: %v", err)
 	}
-	if state.ActiveGoalCount != 1 || state.UnstartedTaskCount != 1 || len(state.Tasks) != 0 {
+	if state.ActionableGoalCount != 1 || state.UnstartedTaskCount != 1 || len(state.Tasks) != 0 {
 		t.Fatalf("wakeup state = %+v, want one counted but non-actionable task", state)
 	}
 	if state.WaitingAnswerCount != 1 {
@@ -208,7 +209,7 @@ func TestDetectWakeupExcludesProposedGoal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DetectWakeup: %v", err)
 	}
-	if state.ActiveGoalCount != 0 || state.UnstartedTaskCount != 0 || len(state.Tasks) != 0 {
+	if state.ActionableGoalCount != 0 || state.UnstartedTaskCount != 0 || len(state.Tasks) != 0 {
 		t.Fatalf("wakeup state = %+v, want proposed goal excluded", state)
 	}
 }
@@ -242,7 +243,7 @@ func TestDetectWakeupClassifiesUnstartedTasksForGoalWithRunningClaim(t *testing.
 	if err != nil {
 		t.Fatalf("DetectWakeup: %v", err)
 	}
-	if state.ActiveGoalCount != 1 || state.UnstartedTaskCount != 1 || len(state.Tasks) != 1 || state.Tasks[0].ID != tasks[1].ID {
+	if state.ActionableGoalCount != 1 || state.UnstartedTaskCount != 1 || len(state.Tasks) != 1 || state.Tasks[0].ID != tasks[1].ID {
 		t.Fatalf("wakeup state = %+v, want one counted and actionable sibling task", state)
 	}
 	if state.WaitingAnswerTaskCount != 0 || state.WorkingTaskCount != 0 || state.UntouchedTaskCount != 1 {
@@ -384,8 +385,8 @@ func TestDetectWakeupCountsAndClassifiesAllUnstartedTasks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DetectWakeup: %v", err)
 	}
-	if state.ActiveGoalCount != 6 {
-		t.Fatalf("active goal count = %d, want 6", state.ActiveGoalCount)
+	if state.ActionableGoalCount != 6 {
+		t.Fatalf("actionable goal count = %d, want 6", state.ActionableGoalCount)
 	}
 	if state.UnstartedTaskCount != 6 {
 		t.Fatalf("unstarted task count = %d, want 6", state.UnstartedTaskCount)
@@ -538,6 +539,59 @@ func TestDetectWakeupDoesNotReportGoalWithOpenCompletionDecisionAsCommitless(t *
 	}
 	if len(state.CommitlessGoals) != 1 || state.CommitlessGoals[0].ID != readyGoal.ID {
 		t.Fatalf("commitless goals = %#v, want only %s", state.CommitlessGoals, readyGoal.ID)
+	}
+}
+
+func TestDetectWakeupCountsActionableGoalsWithoutCompletionApproval(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	project, err := s.CreateProject(ctx, "atct", "/repos/atct")
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+
+	waitingGoal, err := s.CreateGoal(ctx, project.ID, "Goal awaiting completion approval", "human")
+	if err != nil {
+		t.Fatalf("CreateGoal waiting: %v", err)
+	}
+	waitingTasks, err := s.DeclareTasks(ctx, waitingGoal.ID, "agent", "wakeup-actionable-completion", []string{"Completed task"}, []string{"Complete the task."})
+	if err != nil {
+		t.Fatalf("DeclareTasks waiting: %v", err)
+	}
+	updateWakeupTask(t, s, waitingTasks[0].ID, domain.TaskDone)
+	if _, err := s.AskDecision(ctx, AskInput{
+		GoalID: waitingGoal.ID, TaskID: waitingTasks[0].ID,
+		Kind: domain.KindCompletion, Question: "Approve this goal as complete?",
+	}); err != nil {
+		t.Fatalf("AskDecision: %v", err)
+	}
+
+	actionableGoal, err := s.CreateGoal(ctx, project.ID, "Goal with actionable task", "human")
+	if err != nil {
+		t.Fatalf("CreateGoal actionable: %v", err)
+	}
+	if _, err := s.DeclareTasks(ctx, actionableGoal.ID, "agent", "wakeup-actionable-task", []string{"Todo task"}, []string{"Complete the task."}); err != nil {
+		t.Fatalf("DeclareTasks actionable: %v", err)
+	}
+
+	state, err := s.DetectWakeup(ctx, project.ID)
+	if err != nil {
+		t.Fatalf("DetectWakeup: %v", err)
+	}
+	if state.ActionableGoalCount != 1 {
+		t.Fatalf("actionable goal count = %d, want 1", state.ActionableGoalCount)
+	}
+}
+
+func TestWakeupEventMarshalsActionableGoalCount(t *testing.T) {
+	event := WakeupEvent{WakeupID: "wakeup-json", ProjectID: "project", ActionableGoalCount: 3}
+	got, err := json.Marshal(event)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+	const want = `{"wakeup_id":"wakeup-json","project_id":"project","actionable_goal_count":3,"unstarted_task_count":0,"waiting_answer_task_count":0,"untouched_task_count":0,"waiting_answer_count":0}`
+	if string(got) != want {
+		t.Fatalf("wakeup JSON = %s, want %s", got, want)
 	}
 }
 

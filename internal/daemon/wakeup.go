@@ -158,7 +158,7 @@ func (t *wakeupTracker) evaluateWith(ctx context.Context, s *store.Store, now ti
 						Data: store.WakeupEvent{
 							WakeupID:               store.NewWakeupID(),
 							ProjectID:              project.ID,
-							ActiveGoalCount:        state.ActiveGoalCount,
+							ActionableGoalCount:    state.ActionableGoalCount,
 							UnstartedTaskCount:     state.UnstartedTaskCount,
 							WaitingAnswerTaskCount: state.WaitingAnswerTaskCount,
 							UntouchedTaskCount:     state.UntouchedTaskCount,
