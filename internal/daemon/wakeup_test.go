@@ -100,7 +100,7 @@ func TestWakeupTrackerPublishesAfterGracePeriodAndResets(t *testing.T) {
 	if !ok {
 		t.Fatalf("published data type = %T, want store.WakeupEvent", events[0].Data)
 	}
-	if first.ProjectID != projectID || first.ActiveGoalCount != 1 || first.UnstartedTaskCount != 1 {
+	if first.ProjectID != projectID || first.ActionableGoalCount != 1 || first.UnstartedTaskCount != 1 {
 		t.Fatalf("published wakeup = %+v, want project %s with one active goal and task", first, projectID)
 	}
 
@@ -154,7 +154,7 @@ func TestWakeupTrackerPublishesTaskBreakdown(t *testing.T) {
 	}
 
 	state := store.WakeupState{
-		ActiveGoalCount:        1,
+		ActionableGoalCount:    1,
 		UnstartedTaskCount:     3,
 		WaitingAnswerTaskCount: 1,
 		WorkingTaskCount:       0,
@@ -185,7 +185,7 @@ func TestWakeupTrackerPublishesTaskBreakdown(t *testing.T) {
 	if !ok {
 		t.Fatalf("published data type = %T, want store.WakeupEvent", events[0].Data)
 	}
-	if wakeup.ProjectID != projectID || wakeup.ActiveGoalCount != state.ActiveGoalCount || wakeup.UnstartedTaskCount != state.UnstartedTaskCount {
+	if wakeup.ProjectID != projectID || wakeup.ActionableGoalCount != state.ActionableGoalCount || wakeup.UnstartedTaskCount != state.UnstartedTaskCount {
 		t.Fatalf("published totals = %+v, want project %s and state totals %+v", wakeup, projectID, state)
 	}
 	if wakeup.WaitingAnswerCount != state.WaitingAnswerCount {
@@ -208,7 +208,7 @@ func TestWakeupTrackerDoesNotPublishForWaitingAnswerTasksOnly(t *testing.T) {
 	}
 
 	state := store.WakeupState{
-		ActiveGoalCount:        1,
+		ActionableGoalCount:    1,
 		UnstartedTaskCount:     1,
 		WaitingAnswerTaskCount: 1,
 		UntouchedTaskCount:     0,
@@ -244,10 +244,10 @@ func TestWakeupTrackerPublishesForActionableTasks(t *testing.T) {
 	}
 
 	state := store.WakeupState{
-		ActiveGoalCount:    1,
-		UnstartedTaskCount: 1,
-		UntouchedTaskCount: 1,
-		Tasks:              tasks,
+		ActionableGoalCount: 1,
+		UnstartedTaskCount:  1,
+		UntouchedTaskCount:  1,
+		Tasks:               tasks,
 	}
 	detect := func(context.Context, string) (store.WakeupState, error) {
 		return state, nil
@@ -280,10 +280,10 @@ func TestWakeupTrackerRestartsGracePeriodAfterActionableTasksDisappearAndReturn(
 	}
 
 	state := store.WakeupState{
-		ActiveGoalCount:    1,
-		UnstartedTaskCount: 1,
-		UntouchedTaskCount: 1,
-		Tasks:              tasks,
+		ActionableGoalCount: 1,
+		UnstartedTaskCount:  1,
+		UntouchedTaskCount:  1,
+		Tasks:               tasks,
 	}
 	detect := func(context.Context, string) (store.WakeupState, error) {
 		return state, nil
