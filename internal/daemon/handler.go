@@ -355,12 +355,37 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 
 	case "project.release":
 		var p struct {
-			ProjectID string `json:"project_id"`
+			ProjectID      string `json:"project_id"`
+			AgentSessionID string `json:"agent_session_id"`
 		}
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, err
 		}
-		err := d.store.ReleaseProject(ctx, p.ProjectID)
+		projectID := strings.TrimSpace(p.ProjectID)
+		agentSessionID := strings.TrimSpace(p.AgentSessionID)
+		if agentSessionID == "" {
+			return nil, fmt.Errorf("project release requires agent_session_id: caller is not bound to project %q", projectID)
+		}
+		projects, err := d.store.ListProjects(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("project release authorization: list projects: %w", err)
+		}
+		isHolder := false
+		for _, project := range projects {
+			if project.ID == projectID {
+				isHolder = strings.TrimSpace(project.ClaimedBy) == agentSessionID
+				break
+			}
+		}
+		callerProjectID, sessionProjectErr := d.store.ProjectIDForAgentSession(ctx, agentSessionID)
+		isProjectBound := sessionProjectErr == nil && callerProjectID == projectID
+		if !isHolder && !isProjectBound {
+			if sessionProjectErr != nil {
+				return nil, fmt.Errorf("project release denied: caller %q is not the holder and is not bound to project %q: %w", agentSessionID, projectID, sessionProjectErr)
+			}
+			return nil, fmt.Errorf("project release denied: caller %q is bound to project %q, not project %q", agentSessionID, callerProjectID, projectID)
+		}
+		err = d.store.ReleaseProject(ctx, projectID)
 		return marshal(nil, err)
 
 	case "goal.list":

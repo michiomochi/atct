@@ -310,7 +310,7 @@ func Register(server *mcp.Server, c *Client, agentSessionID string) {
 		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in ProjectReleaseIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
 		return callWithUnappliedDecisions(ctx, c, "project.release", map[string]any{
-			"project_id": in.ProjectID,
+			"project_id": in.ProjectID, "agent_session_id": agentSessionID,
 		})
 	})
 

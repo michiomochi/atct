@@ -192,7 +192,10 @@ func TestProjectReleaseAllowsSecondDaemonSessionToClaim(t *testing.T) {
 	if _, err := claimProjectForTest(t, fixture, fixture.project.ID, "daemon-release-owner-run"); err != nil {
 		t.Fatalf("initial project.claim: %v", err)
 	}
-	params, err := json.Marshal(map[string]string{"project_id": fixture.project.ID})
+	params, err := json.Marshal(map[string]string{
+		"project_id":       fixture.project.ID,
+		"agent_session_id": "daemon-release-owner-run",
+	})
 	if err != nil {
 		t.Fatalf("marshal project.release params: %v", err)
 	}
@@ -201,6 +204,120 @@ func TestProjectReleaseAllowsSecondDaemonSessionToClaim(t *testing.T) {
 	}
 	if _, err := claimProjectForTest(t, fixture, fixture.project.ID, "daemon-release-next-run"); err != nil {
 		t.Fatalf("second project.claim after release: %v", err)
+	}
+}
+
+func TestProjectReleaseAllowsHolderSession(t *testing.T) {
+	fixture := newGoalListFixture(t)
+	defer fixture.store.Close()
+
+	const sessionID = "daemon-release-holder-run"
+	registerLiveGoalClaimSession(t, fixture, sessionID)
+	if _, err := fixture.store.ClaimProject(context.Background(), fixture.project.ID, sessionID); err != nil {
+		t.Fatalf("project.claim: %v", err)
+	}
+
+	params, err := json.Marshal(map[string]string{
+		"project_id":       fixture.project.ID,
+		"agent_session_id": sessionID,
+	})
+	if err != nil {
+		t.Fatalf("marshal project.release params: %v", err)
+	}
+	if _, err := fixture.daemon.dispatch(context.Background(), rpc.Request{Method: "project.release", Params: params}); err != nil {
+		t.Fatalf("project.release: %v", err)
+	}
+}
+
+func TestProjectReleaseAllowsSessionBoundToProject(t *testing.T) {
+	fixture := newGoalListFixture(t)
+	defer fixture.store.Close()
+
+	const (
+		holderSession = "daemon-release-bound-holder-run"
+		callerSession = "daemon-release-bound-caller-run"
+	)
+	registerLiveGoalClaimSession(t, fixture, holderSession)
+	registerLiveGoalClaimSession(t, fixture, callerSession)
+	if _, err := claimProjectForTest(t, fixture, fixture.project.ID, holderSession); err != nil {
+		t.Fatalf("project.claim: %v", err)
+	}
+	if err := fixture.store.AssociateAgentSessionWithProject(context.Background(), callerSession, fixture.project.ID); err != nil {
+		t.Fatalf("associate caller session with project: %v", err)
+	}
+
+	params, err := json.Marshal(map[string]string{
+		"project_id":       fixture.project.ID,
+		"agent_session_id": callerSession,
+	})
+	if err != nil {
+		t.Fatalf("marshal project.release params: %v", err)
+	}
+	if _, err := fixture.daemon.dispatch(context.Background(), rpc.Request{Method: "project.release", Params: params}); err != nil {
+		t.Fatalf("project.release: %v", err)
+	}
+}
+
+func TestProjectReleaseRejectsEmptyAgentSession(t *testing.T) {
+	fixture := newGoalListFixture(t)
+	defer fixture.store.Close()
+
+	const holderSession = "daemon-release-empty-holder-run"
+	registerLiveGoalClaimSession(t, fixture, holderSession)
+	if _, err := claimProjectForTest(t, fixture, fixture.project.ID, holderSession); err != nil {
+		t.Fatalf("project.claim: %v", err)
+	}
+
+	params, err := json.Marshal(map[string]string{
+		"project_id":       fixture.project.ID,
+		"agent_session_id": "",
+	})
+	if err != nil {
+		t.Fatalf("marshal project.release params: %v", err)
+	}
+	_, err = fixture.daemon.dispatch(context.Background(), rpc.Request{Method: "project.release", Params: params})
+	if err == nil {
+		t.Fatal("project.release succeeded without agent_session_id")
+	}
+	if !strings.Contains(err.Error(), "requires agent_session_id") || !strings.Contains(err.Error(), fixture.project.ID) {
+		t.Fatalf("project.release error = %v, want required agent_session_id and project %q", err, fixture.project.ID)
+	}
+}
+
+func TestProjectReleaseRejectsSessionBoundToAnotherProject(t *testing.T) {
+	fixture := newGoalListFixture(t)
+	defer fixture.store.Close()
+
+	const (
+		holderSession  = "daemon-release-foreign-holder-run"
+		foreignSession = "daemon-release-foreign-caller-run"
+	)
+	registerLiveGoalClaimSession(t, fixture, holderSession)
+	registerLiveGoalClaimSession(t, fixture, foreignSession)
+	if _, err := claimProjectForTest(t, fixture, fixture.project.ID, holderSession); err != nil {
+		t.Fatalf("project.claim: %v", err)
+	}
+	foreignProject, err := fixture.store.CreateProject(context.Background(), "foreign-release-project", t.TempDir())
+	if err != nil {
+		t.Fatalf("create foreign project: %v", err)
+	}
+	if err := fixture.store.AssociateAgentSessionWithProject(context.Background(), foreignSession, foreignProject.ID); err != nil {
+		t.Fatalf("associate foreign session with project: %v", err)
+	}
+
+	params, err := json.Marshal(map[string]string{
+		"project_id":       fixture.project.ID,
+		"agent_session_id": foreignSession,
+	})
+	if err != nil {
+		t.Fatalf("marshal project.release params: %v", err)
+	}
+	_, err = fixture.daemon.dispatch(context.Background(), rpc.Request{Method: "project.release", Params: params})
+	if err == nil {
+		t.Fatal("project.release succeeded for a session bound to another project")
+	}
+	if !strings.Contains(err.Error(), foreignSession) || !strings.Contains(err.Error(), fixture.project.ID) || !strings.Contains(err.Error(), foreignProject.ID) {
+		t.Fatalf("project.release error = %v, want caller %q and projects %q/%q", err, foreignSession, foreignProject.ID, fixture.project.ID)
 	}
 }
 

@@ -1299,7 +1299,10 @@ func TestProjectReleaseClearsClaimViaRPC(t *testing.T) {
 	if _, err := claimProjectForTest(t, fixture, fixture.project.ID, sessionID); err != nil {
 		t.Fatalf("project.claim: %v", err)
 	}
-	params, err := json.Marshal(map[string]string{"project_id": fixture.project.ID})
+	params, err := json.Marshal(map[string]string{
+		"project_id":       fixture.project.ID,
+		"agent_session_id": sessionID,
+	})
 	if err != nil {
 		t.Fatalf("marshal project.release params: %v", err)
 	}
@@ -1434,15 +1437,26 @@ func TestReleaseMissingIDsReturnErrorsViaRPC(t *testing.T) {
 	fixture := newGoalListFixture(t)
 	defer fixture.store.Close()
 
+	const projectReleaseSessionID = "release-missing-project-run"
+	registerLiveGoalClaimSession(t, fixture, projectReleaseSessionID)
+	if err := fixture.store.AssociateAgentSessionWithProject(context.Background(), projectReleaseSessionID, fixture.project.ID); err != nil {
+		t.Fatalf("associate project.release session with project: %v", err)
+	}
+
 	for _, tc := range []struct {
-		method string
-		key    string
+		method         string
+		key            string
+		agentSessionID string
 	}{
-		{method: "project.release", key: "project_id"},
+		{method: "project.release", key: "project_id", agentSessionID: projectReleaseSessionID},
 		{method: "goal.release", key: "goal_id"},
 		{method: "task.release", key: "task_id"},
 	} {
-		params, err := json.Marshal(map[string]string{tc.key: "missing-" + tc.key})
+		paramValues := map[string]string{tc.key: "missing-" + tc.key}
+		if tc.agentSessionID != "" {
+			paramValues["agent_session_id"] = tc.agentSessionID
+		}
+		params, err := json.Marshal(paramValues)
 		if err != nil {
 			t.Fatalf("marshal %s params: %v", tc.method, err)
 		}
