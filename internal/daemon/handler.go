@@ -649,6 +649,36 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		response, err := d.responseWithProjectUnappliedDecisions(ctx, updated, p.GoalID)
 		return marshal(response, err)
 
+	case "task.update_content":
+		var p struct {
+			TaskID                  string    `json:"task_id"`
+			Title                   *string   `json:"title"`
+			Description             *string   `json:"description"`
+			Files                   *[]string `json:"files"`
+			AgentSessionID          string    `json:"agent_session_id"`
+			IncludeUnappliedAnswers bool      `json:"include_unapplied_answers"`
+		}
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		goalID, err := d.store.GetTaskGoalID(ctx, p.TaskID)
+		if err != nil {
+			return nil, err
+		}
+		goal, err := d.store.GetGoal(ctx, goalID)
+		if err != nil {
+			return nil, err
+		}
+		if err := d.ensureAgentSessionProject(ctx, p.AgentSessionID, goal.ProjectID); err != nil {
+			return nil, err
+		}
+		updated, err := d.store.UpdateTaskContent(ctx, p.TaskID, p.Title, p.Description, p.Files)
+		if err != nil || !p.IncludeUnappliedAnswers {
+			return marshal(updated, err)
+		}
+		response, err := d.responseWithProjectUnappliedDecisions(ctx, updated, goalID)
+		return marshal(response, err)
+
 	case "task.declare":
 		var p struct {
 			GoalID                  string     `json:"goal_id"`

@@ -1091,6 +1091,48 @@ func updateGoalContentForTest(t *testing.T, fixture goalListFixture, goalID, con
 	return fixture.daemon.dispatch(context.Background(), rpc.Request{Method: "goal.update_content", Params: params})
 }
 
+func updateTaskContentForTest(t *testing.T, fixture goalListFixture, taskID string, fields map[string]any, sessionID string) (json.RawMessage, error) {
+	t.Helper()
+	params := map[string]any{
+		"task_id":                   taskID,
+		"agent_session_id":          sessionID,
+		"include_unapplied_answers": false,
+	}
+	for key, value := range fields {
+		params[key] = value
+	}
+	paramsJSON, err := json.Marshal(params)
+	if err != nil {
+		t.Fatalf("marshal task.update_content params: %v", err)
+	}
+	return fixture.daemon.dispatch(context.Background(), rpc.Request{Method: "task.update_content", Params: paramsJSON})
+}
+
+func addTaskForUpdateContentTest(t *testing.T, fixture goalListFixture, status domain.TaskStatus, title, description string, files []string) domain.Task {
+	t.Helper()
+	ctx := context.Background()
+	tasks, err := fixture.store.DeclareTasks(ctx, fixture.tasks[0].GoalID, "fixture-agent", "task-update-content-extra", []string{title}, []string{description})
+	if err != nil {
+		t.Fatalf("DeclareTasks extra task: %v", err)
+	}
+	if len(tasks) == 0 {
+		t.Fatal("DeclareTasks extra task returned no tasks")
+	}
+	task := tasks[len(tasks)-1]
+	filesJSON, err := json.Marshal(files)
+	if err != nil {
+		t.Fatalf("marshal extra task files: %v", err)
+	}
+	if _, err := fixture.store.DB().ExecContext(ctx, "UPDATE tasks SET status = ?, title = ?, description = ?, files = ? WHERE id = ?", string(status), title, description, string(filesJSON), task.ID); err != nil {
+		t.Fatalf("update extra task %s: %v", task.ID, err)
+	}
+	task.Status = status
+	task.Title = title
+	task.Description = description
+	task.Files = files
+	return task
+}
+
 func listGoalForClaimTest(t *testing.T, fixture goalListFixture, goalID, sessionID string) goalListItem {
 	t.Helper()
 	params, err := json.Marshal(map[string]string{
@@ -1210,6 +1252,158 @@ func TestGoalUpdateContentKeepsRejectedGoalUnchanged(t *testing.T) {
 				t.Fatalf("content after rejected update = %q, want %q", got.Content, tc.goal.Content)
 			}
 		})
+	}
+}
+
+func TestTaskUpdateContentUpdatesTodoAndDoingTasks(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		taskIndex    int
+		status       domain.TaskStatus
+		extra        bool
+		updatedTitle string
+		updatedDesc  string
+		updatedFiles []string
+	}{
+		{name: "todo-one", taskIndex: 1, status: domain.TaskTodo, updatedTitle: "updated todo one", updatedDesc: "updated todo one description", updatedFiles: []string{"todo-one.md", "todo-one.go"}},
+		{name: "todo-two", taskIndex: 1, status: domain.TaskTodo, extra: true, updatedTitle: "updated todo two", updatedDesc: "updated todo two description", updatedFiles: []string{"todo-two.md", "todo-two.go"}},
+		{name: "doing-one", taskIndex: 0, status: domain.TaskDoing, updatedTitle: "updated doing one", updatedDesc: "updated doing one description", updatedFiles: []string{"doing-one.md", "doing-one.go"}},
+		{name: "doing-two", taskIndex: 0, status: domain.TaskDoing, extra: true, updatedTitle: "updated doing two", updatedDesc: "updated doing two description", updatedFiles: []string{"doing-two.md", "doing-two.go"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fixture := newGoalListFixture(t)
+			defer fixture.store.Close()
+
+			task := fixture.tasks[tc.taskIndex]
+			if tc.extra {
+				task = addTaskForUpdateContentTest(t, fixture, tc.status, "extra "+string(tc.status)+" title", "extra "+string(tc.status)+" description", []string{"extra-" + string(tc.status) + ".md"})
+			}
+			fields := map[string]any{
+				"title":       tc.updatedTitle,
+				"description": tc.updatedDesc,
+				"files":       tc.updatedFiles,
+			}
+			result, err := updateTaskContentForTest(t, fixture, task.ID, fields, "task-update-content-run")
+			if err != nil {
+				t.Fatalf("task.update_content: %v", err)
+			}
+
+			var updated domain.Task
+			if err := json.Unmarshal(result, &updated); err != nil {
+				t.Fatalf("unmarshal task.update_content result: %v", err)
+			}
+			if updated.ID != task.ID {
+				t.Fatalf("id = %q, want %q", updated.ID, task.ID)
+			}
+			if updated.Status != tc.status {
+				t.Fatalf("status = %q, want %q", updated.Status, tc.status)
+			}
+			if updated.Title != tc.updatedTitle {
+				t.Fatalf("title = %q, want %q", updated.Title, tc.updatedTitle)
+			}
+			if updated.Description != tc.updatedDesc {
+				t.Fatalf("description = %q, want %q", updated.Description, tc.updatedDesc)
+			}
+			if strings.Join(updated.Files, "\x00") != strings.Join(tc.updatedFiles, "\x00") {
+				t.Fatalf("files = %#v, want %#v", updated.Files, tc.updatedFiles)
+			}
+		})
+	}
+}
+
+func TestTaskUpdateContentPreservesOmittedFields(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		taskIndex int
+		fields    map[string]any
+	}{
+		{name: "title-only", taskIndex: 1, fields: map[string]any{"title": "title only"}},
+		{name: "files-only", taskIndex: 0, fields: map[string]any{"files": []string{"only.txt"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fixture := newGoalListFixture(t)
+			defer fixture.store.Close()
+
+			before := fixture.tasks[tc.taskIndex]
+			result, err := updateTaskContentForTest(t, fixture, before.ID, tc.fields, "task-update-content-partial-run")
+			if err != nil {
+				t.Fatalf("task.update_content: %v", err)
+			}
+			var updated domain.Task
+			if err := json.Unmarshal(result, &updated); err != nil {
+				t.Fatalf("unmarshal task.update_content result: %v", err)
+			}
+
+			switch tc.name {
+			case "title-only":
+				if updated.Title != "title only" {
+					t.Fatalf("title = %q, want %q", updated.Title, "title only")
+				}
+				if updated.Description != before.Description {
+					t.Fatalf("description = %q, want unchanged %q", updated.Description, before.Description)
+				}
+				if strings.Join(updated.Files, "\x00") != strings.Join(before.Files, "\x00") {
+					t.Fatalf("files = %#v, want unchanged %#v", updated.Files, before.Files)
+				}
+			case "files-only":
+				if updated.Title != before.Title {
+					t.Fatalf("title = %q, want unchanged %q", updated.Title, before.Title)
+				}
+				if updated.Description != before.Description {
+					t.Fatalf("description = %q, want unchanged %q", updated.Description, before.Description)
+				}
+				if strings.Join(updated.Files, "\x00") != "only.txt" {
+					t.Fatalf("files = %#v, want %#v", updated.Files, []string{"only.txt"})
+				}
+			}
+		})
+	}
+}
+
+func TestTaskUpdateContentRejectsTerminalTasksWithStatus(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		taskIndex int
+		status    domain.TaskStatus
+		extra     bool
+	}{
+		{name: "done-one", taskIndex: 2, status: domain.TaskDone},
+		{name: "done-two", taskIndex: 2, status: domain.TaskDone, extra: true},
+		{name: "dropped-one", taskIndex: 3, status: domain.TaskDropped},
+		{name: "dropped-two", taskIndex: 3, status: domain.TaskDropped, extra: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fixture := newGoalListFixture(t)
+			defer fixture.store.Close()
+
+			task := fixture.tasks[tc.taskIndex]
+			if tc.extra {
+				task = addTaskForUpdateContentTest(t, fixture, tc.status, "extra "+string(tc.status)+" title", "extra "+string(tc.status)+" description", []string{"extra-" + string(tc.status) + ".md"})
+			}
+			_, err := updateTaskContentForTest(t, fixture, task.ID, map[string]any{"title": "must be rejected"}, "task-update-content-terminal-run")
+			if err == nil {
+				t.Fatal("task.update_content succeeded for terminal task")
+			}
+			t.Logf("task.update_content error = %q", err)
+			if !strings.Contains(err.Error(), task.ID) {
+				t.Fatalf("error = %q, want task ID %q", err, task.ID)
+			}
+			if !strings.Contains(err.Error(), string(tc.status)) {
+				t.Fatalf("error = %q, want status %q", err, tc.status)
+			}
+		})
+	}
+}
+
+func TestTaskUpdateContentRejectsUnknownTaskAndMissingFields(t *testing.T) {
+	fixture := newGoalListFixture(t)
+	defer fixture.store.Close()
+
+	if _, err := updateTaskContentForTest(t, fixture, fixture.tasks[1].ID, nil, "task-update-content-empty-run"); err == nil || !strings.Contains(err.Error(), "requires at least one field") {
+		t.Fatalf("empty task.update_content error = %v, want missing-field error", err)
+	}
+	if _, err := updateTaskContentForTest(t, fixture, "missing-task-for-update-content", map[string]any{"title": "missing"}, "task-update-content-missing-run"); err == nil {
+		t.Fatal("task.update_content succeeded for unknown task")
 	}
 }
 
