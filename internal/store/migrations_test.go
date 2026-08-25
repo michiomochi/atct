@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -310,6 +311,29 @@ func TestOpeningFutureSchemaVersionReturnsError(t *testing.T) {
 
 	if _, err := Open(path); err == nil {
 		t.Fatal("Open succeeded for unsupported schema version 7")
+	}
+}
+
+func TestOpeningDatabaseWithUnknownMigrationReturnsSentinelError(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "unknown-migration.db")
+	db, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open fixture: %v", err)
+	}
+	if _, err := db.DB().Exec(`INSERT INTO schema_migrations (filename, applied_at) VALUES (?, ?)`, "9999_future.sql", "now"); err != nil {
+		db.Close()
+		t.Fatalf("insert unknown migration: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close fixture: %v", err)
+	}
+
+	_, err = Open(path)
+	if err == nil {
+		t.Fatal("Open succeeded for unknown schema migration")
+	}
+	if !errors.Is(err, ErrUnknownSchemaMigration) {
+		t.Fatalf("Open error = %v, want ErrUnknownSchemaMigration", err)
 	}
 }
 

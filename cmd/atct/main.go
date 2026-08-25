@@ -260,6 +260,21 @@ func parseArgs(args []string) (cliConfig, error) {
 // version is overridden at build time with -ldflags "-X main.version=...".
 var version = "dev"
 
+func contextExitCode(err error) int {
+	if errors.Is(err, store.ErrUnknownSchemaMigration) {
+		return 3
+	}
+	return 1
+}
+
+func exitContextError(err error) {
+	if code := contextExitCode(err); code != 1 {
+		log.Printf("context: %v", err)
+		os.Exit(code)
+	}
+	log.Fatalf("context: %v", err)
+}
+
 func prepareDaemonStart(dir string) error {
 	reg, err := daemonctl.ReadRegistry(dir)
 	if err == nil {
@@ -347,7 +362,7 @@ func main() {
 	case "context":
 		if config.contextBrief {
 			if err := runContextBriefForProject(dir, config.projectName, config.projectSpecified); err != nil {
-				log.Fatalf("context: %v", err)
+				exitContextError(err)
 			}
 			return
 		}
@@ -356,12 +371,12 @@ func main() {
 				if errors.Is(err, errNoContextWork) {
 					os.Exit(1)
 				}
-				log.Fatalf("context: %v", err)
+				exitContextError(err)
 			}
 			return
 		}
 		if err := runContextForProject(dir, config.projectName, config.projectSpecified); err != nil {
-			log.Fatalf("context: %v", err)
+			exitContextError(err)
 		}
 		return
 	case "pending":

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"embed"
+	"errors"
 	"fmt"
 	"io/fs"
 	"regexp"
@@ -19,6 +20,8 @@ var migrationFS embed.FS
 var migrationFilenamePattern = regexp.MustCompile(`^[0-9]{4}_[A-Za-z0-9][A-Za-z0-9_-]*\.sql$`)
 
 const schemaMigrationsTable = "schema_migrations"
+
+var ErrUnknownSchemaMigration = errors.New("unknown schema migration")
 
 type embeddedMigration struct {
 	filename string
@@ -949,7 +952,7 @@ func validateAppliedMigrations(state migrationState, migrations []embeddedMigrat
 	}
 	for filename := range state.applied {
 		if _, ok := known[filename]; !ok {
-			return fmt.Errorf("database records unknown schema migration %q", filename)
+			return fmt.Errorf("database records unknown schema migration %q: %w", filename, ErrUnknownSchemaMigration)
 		}
 	}
 

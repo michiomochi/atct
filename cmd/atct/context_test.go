@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -21,6 +22,19 @@ func TestParseArgsAcceptsContext(t *testing.T) {
 	}
 	if cfg.subcommand != "context" {
 		t.Fatalf("subcommand = %q, want context", cfg.subcommand)
+	}
+}
+
+func TestContextExitCodeReturnsThreeForUnknownSchemaMigration(t *testing.T) {
+	err := fmt.Errorf("context failed: %w", store.ErrUnknownSchemaMigration)
+	if got := contextExitCode(err); got != 3 {
+		t.Fatalf("contextExitCode = %d, want 3", got)
+	}
+}
+
+func TestContextExitCodeReturnsOneForOrdinaryError(t *testing.T) {
+	if got := contextExitCode(errors.New("ordinary context failure")); got != 1 {
+		t.Fatalf("contextExitCode = %d, want 1", got)
 	}
 }
 
