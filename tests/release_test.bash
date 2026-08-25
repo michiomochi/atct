@@ -200,10 +200,24 @@ test_invalid_version_still_fails() {
   assert_file_contains 'version must look like 1.2.3, got: nope' "$stderr"
 }
 
+test_project_claim_reacquisition_is_documented() {
+  local release_header="$TEMP_ROOT/release-header"
+  local release_done="$TEMP_ROOT/release-done"
+
+  sed -n '1,20p' "$RELEASE_SCRIPT" >"$release_header"
+  awk '/^echo "==> done\./ { capture = 1 } capture { print }' "$RELEASE_SCRIPT" >"$release_done"
+
+  assert_file_contains 'After the replacement, each space must reacquire its project claim' "$release_header"
+  assert_file_contains 'After the replacement, each space must reacquire its project claim' "$release_done"
+  assert_file_contains 'call atct_project_release first' "$release_done"
+  assert_file_contains 'then atct_project_claim' "$release_done"
+}
+
 test_plugin_manifests_are_in_sync
 test_release_bumps_both_plugin_manifests
 test_release_rejects_mismatched_plugin_versions
 test_review_is_required
 test_reviewed_positions_pass_gate
 test_invalid_version_still_fails
+test_project_claim_reacquisition_is_documented
 printf 'PASS: release review gate\n'

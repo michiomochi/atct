@@ -181,6 +181,93 @@ func TestClaimLivenessTreatsUnknownAndUnverifiableClaimsAsStale(t *testing.T) {
 	}
 }
 
+func TestClaimLivenessTreatsSharedDeadPIDClaimsAsStale(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	project, err := s.CreateProject(ctx, "atct", "/repos/atct")
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	goal, err := s.CreateGoal(ctx, project.ID, "Shared dead PID claims", "human")
+	if err != nil {
+		t.Fatalf("CreateGoal: %v", err)
+	}
+	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "shared-dead-pid", []string{
+		"First space claim",
+		"Second space claim",
+		"Third space claim",
+	}, []string{
+		"Treat the first dead PID claim as stale.",
+		"Treat the second dead PID claim as stale.",
+		"Treat the third dead PID claim as stale.",
+	})
+	if err != nil {
+		t.Fatalf("DeclareTasks: %v", err)
+	}
+	for i, task := range tasks {
+		sessionID := fmt.Sprintf("shared-dead-run-%d", i)
+		insertClaimLivenessSession(t, s, sessionID, project.ID, 999999, "daemon-before-restart")
+		insertClaimLivenessHandoff(t, s, task.ID, fmt.Sprintf("shared-dead-handoff-%d", i), sessionID)
+	}
+
+	running, stale, err := ClaimLiveness(ctx, s, project.ID)
+	if err != nil {
+		t.Fatalf("ClaimLiveness: %v", err)
+	}
+	if len(running) != 0 {
+		t.Fatalf("running claims = %#v, want empty", running)
+	}
+	if len(stale) != len(tasks) {
+		t.Fatalf("stale claims = %#v, want %d tasks", stale, len(tasks))
+	}
+}
+
+func TestClaimLivenessKeepsSharedLivePIDClaimsRunning(t *testing.T) {
+	useRealProcessStartedAt(t)
+	s := newTestStore(t)
+	ctx := context.Background()
+	project, err := s.CreateProject(ctx, "atct", "/repos/atct")
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	goal, err := s.CreateGoal(ctx, project.ID, "Shared live PID claims", "human")
+	if err != nil {
+		t.Fatalf("CreateGoal: %v", err)
+	}
+	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "shared-live-pid", []string{
+		"First live space claim",
+		"Second live space claim",
+		"Third live space claim",
+	}, []string{
+		"Keep the first live PID claim running.",
+		"Keep the second live PID claim running.",
+		"Keep the third live PID claim running.",
+	})
+	if err != nil {
+		t.Fatalf("DeclareTasks: %v", err)
+	}
+	startedAt, err := realProcessStartedAt(os.Getpid())
+	if err != nil {
+		t.Fatalf("realProcessStartedAt: %v", err)
+	}
+	for i, task := range tasks {
+		sessionID := fmt.Sprintf("shared-live-run-%d", i)
+		insertClaimLivenessSession(t, s, sessionID, project.ID, os.Getpid(), startedAt)
+		insertClaimLivenessHandoff(t, s, task.ID, fmt.Sprintf("shared-live-handoff-%d", i), sessionID)
+	}
+
+	running, stale, err := ClaimLiveness(ctx, s, project.ID)
+	if err != nil {
+		t.Fatalf("ClaimLiveness: %v", err)
+	}
+	if len(running) != len(tasks) {
+		t.Fatalf("running claims = %#v, want %d tasks", running, len(tasks))
+	}
+	if len(stale) != 0 {
+		t.Fatalf("stale claims = %#v, want empty", stale)
+	}
+}
+
 func TestClaimLivenessTreatsUnreadableProcessStartAsStale(t *testing.T) {
 	saved := processStartedAt
 	processStartedAt = func(pid int) (string, error) {
