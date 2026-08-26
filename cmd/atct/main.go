@@ -11,7 +11,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -26,8 +25,11 @@ import (
 const (
 	defaultListenAddr = "127.0.0.1:8787"
 	defaultListenPort = 8787
-	lastListenPort    = 8796
+	// This range is for watch URL discovery, not daemon bind fallback.
+	lastListenPort = 8796
 )
+
+var listenTCP = net.Listen
 
 type cliConfig struct {
 	subcommand         string
@@ -481,27 +483,18 @@ func runDaemon(config cliConfig, dir string) error {
 
 func listenHTTP(addr string, explicit bool) (net.Listener, error) {
 	if explicit || addr != defaultListenAddr {
-		listener, err := net.Listen("tcp", addr)
+		listener, err := listenTCP("tcp", addr)
 		if err != nil {
 			return nil, fmt.Errorf("listen HTTP on %s: %w", addr, err)
 		}
 		return listener, nil
 	}
 
-	host, _, err := net.SplitHostPort(addr)
+	listener, err := listenTCP("tcp", addr)
 	if err != nil {
-		return nil, fmt.Errorf("parse default HTTP listen address %s: %w", addr, err)
+		return nil, fmt.Errorf("listen HTTP on %s: %w", addr, err)
 	}
-	var lastErr error
-	for port := defaultListenPort; port <= lastListenPort; port++ {
-		candidate := net.JoinHostPort(host, strconv.Itoa(port))
-		listener, err := net.Listen("tcp", candidate)
-		if err == nil {
-			return listener, nil
-		}
-		lastErr = err
-	}
-	return nil, fmt.Errorf("listen HTTP on %s: tried ports %d-%d: %w", host, defaultListenPort, lastListenPort, lastErr)
+	return listener, nil
 }
 
 func daemonRegistry(listener net.Listener, socketPath, daemonVersion string) daemonctl.Registry {

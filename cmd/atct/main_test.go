@@ -10,7 +10,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -70,17 +69,45 @@ func TestParseArgs(t *testing.T) {
 	}
 }
 
-func TestListenHTTPFallsBackToNextDefaultPort(t *testing.T) {
-	listenTestTCP(t, defaultListenAddr)
+func TestListenHTTPDefaultAddressBindsOnceWhenAvailable(t *testing.T) {
+	listener := &fakeNetListener{addr: fakeNetAddr(defaultListenAddr)}
+	var calls []string
+	replaceListenTCP(t, func(network, addr string) (net.Listener, error) {
+		calls = append(calls, addr)
+		return listener, nil
+	})
 
-	listener, err := listenHTTP(defaultListenAddr, false)
+	got, err := listenHTTP(defaultListenAddr, false)
 	if err != nil {
 		t.Fatalf("listenHTTP() error = %v", err)
 	}
-	t.Cleanup(func() { _ = listener.Close() })
+	if got != listener {
+		t.Fatalf("listenHTTP() listener = %v, want fake listener", got)
+	}
+	if len(calls) != 1 || calls[0] != defaultListenAddr {
+		t.Fatalf("listenHTTP() calls = %v, want one call to %q", calls, defaultListenAddr)
+	}
+}
 
-	if got, want := listener.Addr().String(), "127.0.0.1:8788"; got != want {
-		t.Fatalf("listenHTTP() address = %q, want %q", got, want)
+func TestListenHTTPDefaultAddressFailureDoesNotFallback(t *testing.T) {
+	var calls []string
+	replaceListenTCP(t, func(network, addr string) (net.Listener, error) {
+		calls = append(calls, addr)
+		return nil, syscall.EADDRINUSE
+	})
+
+	listener, err := listenHTTP(defaultListenAddr, false)
+	if err == nil {
+		t.Fatal("listenHTTP() error = nil, want default bind failure")
+	}
+	if listener != nil {
+		t.Fatalf("listenHTTP() listener = %v, want nil", listener)
+	}
+	if !strings.Contains(err.Error(), defaultListenAddr) {
+		t.Fatalf("listenHTTP() error = %q, want blocked address", err)
+	}
+	if len(calls) != 1 || calls[0] != defaultListenAddr {
+		t.Fatalf("listenHTTP() calls = %v, want one call to %q", calls, defaultListenAddr)
 	}
 }
 
@@ -119,23 +146,6 @@ func TestDaemonRegistryRecordsActualHTTPBindAddress(t *testing.T) {
 	}
 }
 
-func TestListenHTTPReportsDefaultPortRangeWhenAllPortsAreBusy(t *testing.T) {
-	for port := 8787; port <= 8796; port++ {
-		listenTestTCP(t, "127.0.0.1:"+strconv.Itoa(port))
-	}
-
-	listener, err := listenHTTP(defaultListenAddr, false)
-	if err == nil {
-		_ = listener.Close()
-		t.Fatal("listenHTTP() error = nil, want all-candidates bind failure")
-	}
-	for _, want := range []string{"8787", "8796"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Fatalf("listenHTTP() error = %q, want attempted range to include %s", err, want)
-		}
-	}
-}
-
 func listenTestTCP(t *testing.T, addr string) net.Listener {
 	t.Helper()
 
@@ -149,6 +159,26 @@ func listenTestTCP(t *testing.T, addr string) net.Listener {
 	}
 	t.Cleanup(func() { _ = listener.Close() })
 	return listener
+}
+
+type fakeNetListener struct {
+	addr net.Addr
+}
+
+func (l *fakeNetListener) Accept() (net.Conn, error) { return nil, io.EOF }
+func (l *fakeNetListener) Close() error              { return nil }
+func (l *fakeNetListener) Addr() net.Addr            { return l.addr }
+
+type fakeNetAddr string
+
+func (a fakeNetAddr) Network() string { return "tcp" }
+func (a fakeNetAddr) String() string  { return string(a) }
+
+func replaceListenTCP(t *testing.T, replacement func(string, string) (net.Listener, error)) {
+	t.Helper()
+	original := listenTCP
+	listenTCP = replacement
+	t.Cleanup(func() { listenTCP = original })
 }
 
 func TestParseArgsRejectsRemovedCommandsAsUnknown(t *testing.T) {
