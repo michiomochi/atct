@@ -89,7 +89,7 @@ type goalListTaskCounts struct {
 	Dropped int `json:"dropped"`
 }
 
-func goalTitle(content string) string {
+func summaryLine(content string) string {
 	for _, line := range strings.Split(content, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
@@ -524,7 +524,7 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 					ID:          task.ID,
 					GoalID:      task.GoalID,
 					Title:       task.Title,
-					Description: goalTitle(task.Description),
+					Description: summaryLine(task.Description),
 					Status:      task.Status,
 					ClaimedBy:   taskHandoffClaimedBy(taskHandoffs[task.ID]),
 					Order:       task.Order,
@@ -533,7 +533,7 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 			visibleGoals = append(visibleGoals, goalListResponse{
 				ID:                goal.ID,
 				DerivedFromGoalID: goal.DerivedFromGoalID,
-				Title:             goalTitle(goal.Content),
+				Title:             summaryLine(goal.Content),
 				ContentChars:      utf8.RuneCountInString(goal.Content),
 				TaskCounts:        taskCounts,
 				Status:            goal.Status,
@@ -797,6 +797,9 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 			}
 		}
 		tk, err := d.store.UpdateTask(ctx, p.TaskID, st, p.AgentSessionID)
+		if err == nil {
+			tk.Description = summaryLine(tk.Description)
+		}
 		if err != nil || !p.IncludeUnappliedAnswers {
 			return marshal(tk, err)
 		}

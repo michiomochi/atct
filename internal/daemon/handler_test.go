@@ -1012,6 +1012,206 @@ func TestContractN11GoalListTruncatesTaskDescription(t *testing.T) {
 	}
 }
 
+func TestContractN12TaskUpdateTruncatesDescription(t *testing.T) {
+	fixture := newGoalListFixture(t)
+	defer fixture.store.Close()
+
+	sessionID := "task-update-description-contract-session"
+	registerLiveGoalClaimSession(t, fixture, sessionID)
+	fullDescription := strings.Repeat("あ", 300)
+	tasks, err := fixture.store.DeclareTasks(
+		context.Background(),
+		fixture.emptyTaskGoal.ID,
+		"contract-test",
+		"task-update-description-contract",
+		[]string{"task.update without answers", "task.update with answers"},
+		[]string{fullDescription, fullDescription},
+	)
+	if err != nil {
+		t.Fatalf("DeclareTasks: %v", err)
+	}
+	if len(tasks) != 2 {
+		t.Fatalf("DeclareTasks returned %d tasks, want 2", len(tasks))
+	}
+
+	wantDescription := strings.Repeat("あ", 120) + "…"
+	for i, includeUnappliedAnswers := range []bool{false, true} {
+		params, err := json.Marshal(map[string]any{
+			"task_id":                   tasks[i].ID,
+			"status":                    "todo",
+			"agent_session_id":          sessionID,
+			"include_unapplied_answers": includeUnappliedAnswers,
+		})
+		if err != nil {
+			t.Fatalf("marshal task.update params: %v", err)
+		}
+		raw, err := fixture.daemon.dispatch(context.Background(), rpc.Request{Method: "task.update", Params: params})
+		if err != nil {
+			t.Fatalf("task.update include_unapplied_answers=%t: %v", includeUnappliedAnswers, err)
+		}
+		t.Logf("task.update include_unapplied_answers=%t len(raw)=%d", includeUnappliedAnswers, len(raw))
+
+		payload := raw
+		if includeUnappliedAnswers {
+			var wrapped struct {
+				Data json.RawMessage `json:"data"`
+			}
+			if err := json.Unmarshal(raw, &wrapped); err != nil {
+				t.Fatalf("decode task.update wrapper: %v", err)
+			}
+			payload = wrapped.Data
+		}
+
+		var response struct {
+			ID          string `json:"id"`
+			GoalID      string `json:"goal_id"`
+			Status      string `json:"status"`
+			UpdatedAt   string `json:"updated_at"`
+			Description string `json:"description"`
+		}
+		if err := json.Unmarshal(payload, &response); err != nil {
+			t.Fatalf("decode task.update response: %v", err)
+		}
+		if response.Description != wantDescription {
+			t.Errorf("task.update include_unapplied_answers=%t description rune count = %d, want 121", includeUnappliedAnswers, len([]rune(response.Description)))
+		}
+		if strings.Contains(response.Description, fullDescription) {
+			t.Errorf("task.update include_unapplied_answers=%t response still contains the full description", includeUnappliedAnswers)
+		}
+		if response.ID != tasks[i].ID {
+			t.Errorf("task.update include_unapplied_answers=%t id = %q, want %q", includeUnappliedAnswers, response.ID, tasks[i].ID)
+		}
+		if response.GoalID != fixture.emptyTaskGoal.ID {
+			t.Errorf("task.update include_unapplied_answers=%t goal_id = %q, want %q", includeUnappliedAnswers, response.GoalID, fixture.emptyTaskGoal.ID)
+		}
+		if response.Status != "todo" {
+			t.Errorf("task.update include_unapplied_answers=%t status = %q, want todo", includeUnappliedAnswers, response.Status)
+		}
+		if response.UpdatedAt == "" {
+			t.Errorf("task.update include_unapplied_answers=%t updated_at is empty", includeUnappliedAnswers)
+		}
+	}
+}
+
+func TestContractN13GoalGetResponseSizeBreakdown(t *testing.T) {
+	fixture := newGoalListFixture(t)
+	defer fixture.store.Close()
+
+	titles := []string{
+		"goal.get size task 1",
+		"goal.get size task 2",
+		"goal.get size task 3",
+		"goal.get size task 4",
+		"goal.get size task 5",
+		"goal.get size task 6",
+		"goal.get size task 7",
+		"goal.get size task 8",
+	}
+	fullDescription := strings.Repeat("あ", 300)
+	descriptions := make([]string, len(titles))
+	for i := range descriptions {
+		descriptions[i] = fullDescription
+	}
+	tasks, err := fixture.store.DeclareTasks(context.Background(), fixture.emptyTaskGoal.ID, "contract-test", "goal-get-size-contract", titles, descriptions)
+	if err != nil {
+		t.Fatalf("DeclareTasks: %v", err)
+	}
+	if len(tasks) != len(titles) {
+		t.Fatalf("DeclareTasks returned %d tasks, want %d", len(tasks), len(titles))
+	}
+
+	measure := func(label, goalID string) {
+		t.Helper()
+		params, err := json.Marshal(map[string]string{"goal_id": goalID})
+		if err != nil {
+			t.Fatalf("marshal goal.get params: %v", err)
+		}
+		raw, err := fixture.daemon.dispatch(context.Background(), rpc.Request{Method: "goal.get", Params: params})
+		if err != nil {
+			t.Fatalf("goal.get %s: %v", label, err)
+		}
+		var response struct {
+			Goal  json.RawMessage `json:"goal"`
+			Tasks json.RawMessage `json:"tasks"`
+		}
+		if err := json.Unmarshal(raw, &response); err != nil {
+			t.Fatalf("decode goal.get %s response: %v", label, err)
+		}
+		var returnedTasks []struct {
+			Description string `json:"description"`
+		}
+		if err := json.Unmarshal(response.Tasks, &returnedTasks); err != nil {
+			t.Fatalf("decode goal.get %s tasks: %v", label, err)
+		}
+		if len(returnedTasks) != len(titles) {
+			t.Fatalf("goal.get %s returned %d tasks, want %d", label, len(returnedTasks), len(titles))
+		}
+		for i, task := range returnedTasks {
+			if task.Description != fullDescription {
+				t.Fatalf("goal.get %s task %d description rune count = %d, want %d", label, i, len([]rune(task.Description)), len([]rune(fullDescription)))
+			}
+		}
+		goalOnly, err := json.Marshal(map[string]json.RawMessage{"goal": response.Goal})
+		if err != nil {
+			t.Fatalf("marshal goal.get %s goal-only payload: %v", label, err)
+		}
+		tasksOnly, err := json.Marshal(map[string]json.RawMessage{"tasks": response.Tasks})
+		if err != nil {
+			t.Fatalf("marshal goal.get %s tasks-only payload: %v", label, err)
+		}
+		t.Logf("goal.get shape=%s len(raw)=%d len({\"goal\":...})=%d len({\"tasks\":[...]})=%d", label, len(raw), len(goalOnly), len(tasksOnly))
+	}
+
+	measure("short-content", fixture.emptyTaskGoal.ID)
+
+	longContent := strings.Repeat("goal body line\n", 350)
+	longGoal, err := fixture.store.CreateGoal(context.Background(), fixture.project.ID, longContent, "human")
+	if err != nil {
+		t.Fatalf("CreateGoal long-content: %v", err)
+	}
+	longTasks, err := fixture.store.DeclareTasks(context.Background(), longGoal.ID, "contract-test", "goal-get-size-long-contract", titles, descriptions)
+	if err != nil {
+		t.Fatalf("DeclareTasks long-content: %v", err)
+	}
+	if len(longTasks) != len(titles) {
+		t.Fatalf("DeclareTasks long-content returned %d tasks, want %d", len(longTasks), len(titles))
+	}
+	measure("long-content", longGoal.ID)
+}
+
+func TestContractB13TaskClaimReturnsFullTaskDescription(t *testing.T) {
+	fixture := newGoalListFixture(t)
+	defer fixture.store.Close()
+
+	sessionID := "task-claim-description-contract-session"
+	registerLiveGoalClaimSession(t, fixture, sessionID)
+	fullDescription := strings.Repeat("あ", 300)
+	tasks, err := fixture.store.DeclareTasks(context.Background(), fixture.emptyTaskGoal.ID, "contract-test", "task-claim-description-contract", []string{"full task.claim description"}, []string{fullDescription})
+	if err != nil {
+		t.Fatalf("DeclareTasks: %v", err)
+	}
+	if len(tasks) != 1 {
+		t.Fatalf("DeclareTasks returned %d tasks, want 1", len(tasks))
+	}
+	params, err := json.Marshal(map[string]string{"task_id": tasks[0].ID, "agent_session_id": sessionID})
+	if err != nil {
+		t.Fatalf("marshal task.claim params: %v", err)
+	}
+	raw, err := fixture.daemon.dispatch(context.Background(), rpc.Request{Method: "task.claim", Params: params})
+	if err != nil {
+		t.Fatalf("task.claim: %v", err)
+	}
+	var response struct {
+		Description string `json:"description"`
+	}
+	if err := json.Unmarshal(raw, &response); err != nil {
+		t.Fatalf("decode task.claim response: %v", err)
+	}
+	if response.Description != fullDescription {
+		t.Fatalf("task.claim description rune count = %d, want %d", len([]rune(response.Description)), len([]rune(fullDescription)))
+	}
+}
+
 func TestContractB1GoalListKeepsActiveAndProposedGoals(t *testing.T) {
 	fixture := newGoalListFixture(t)
 	defer fixture.store.Close()
