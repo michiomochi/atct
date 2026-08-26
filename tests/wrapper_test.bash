@@ -1105,12 +1105,26 @@ test_worktree_paths_match_the_setup_script() {
 
 test_role_response_does_not_leak_other_boundaries() {
   local handler_go="$REPO_ROOT/internal/daemon/handler.go"
+  local role_response
   local selected_role
+  local response_block
 
-  selected_role="$(sed -nE 's/^[[:space:]]*boundary := roleBoundaries\[([^]]+)\][[:space:]]*$/\1/p' "$handler_go")"
-  assert_eq 'response.Role' "$selected_role" 'role response must select the boundary for its current role'
-  assert_file_contains 'response.Does = boundary.Does' "$handler_go"
-  assert_file_contains 'response.DoesNot = boundary.DoesNot' "$handler_go"
+  role_response="$(sed -n '/^func roleResponseFor(assignment roleAssignment) any {$/,/^}$/p' "$handler_go")"
+  [[ -n "$role_response" ]] || fail 'role response function could not be extracted'
+
+  selected_role="$(sed -nE 's/^[[:space:]]*boundary := roleBoundaries\[([^]]+)\][[:space:]]*$/\1/p' <<<"$role_response")"
+  assert_eq 'assignment.Role' "$selected_role" 'role response must select the boundary for its current role'
+
+  for response_type in commanderRole subcommanderRole executorRole; do
+    response_block="$(sed -n "/return ${response_type}{/,/^[[:space:]]*}[[:space:]]*$/p" <<<"$role_response")"
+    [[ -n "$response_block" ]] || fail "$response_type response block could not be extracted"
+    grep -Fq -- 'Does:    boundary.Does' <<<"$response_block" ||
+      grep -Fq -- 'Does:      boundary.Does' <<<"$response_block" ||
+      fail "$response_type response must use the selected boundary's Does"
+    grep -Fq -- 'DoesNot: boundary.DoesNot' <<<"$response_block" ||
+      grep -Fq -- 'DoesNot:   boundary.DoesNot' <<<"$response_block" ||
+      fail "$response_type response must use the selected boundary's DoesNot"
+  done
 }
 
 test_static_contract
