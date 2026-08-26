@@ -17,7 +17,7 @@ func TestHTTPWithdrawActiveGoalRejectsDroppedGoal(t *testing.T) {
 
 	srv := newTestServer(t, f.store)
 	defer srv.Close()
-	status, _, body := doRequest(t, srv.Client(), http.MethodPost, fmt.Sprintf("%s/api/goals/%s/withdraw", srv.URL, f.goal.ID), mustJSON(t, map[string]string{
+	status, _, body := doRequest(t, srv.Client(), http.MethodPost, fmt.Sprintf("%s/api/goals/%d/withdraw", srv.URL, f.goal.ID), mustJSON(t, map[string]string{
 		"reason": "second withdrawal",
 	}))
 	if status != http.StatusConflict {
@@ -27,7 +27,7 @@ func TestHTTPWithdrawActiveGoalRejectsDroppedGoal(t *testing.T) {
 	if err := json.Unmarshal(body, &response); err != nil {
 		t.Fatalf("decode error response: %v; body=%s", err, body)
 	}
-	want := fmt.Sprintf("goal %s is dropped, not active", f.goal.ID)
+	want := fmt.Sprintf("goal %d is dropped, not active", f.goal.ID)
 	if response["error"] != want {
 		t.Fatalf("error = %q, want %q", response["error"], want)
 	}
@@ -53,10 +53,10 @@ func TestHTTPInboxOmitsGoalApprovalFromOpenDecisions(t *testing.T) {
 	var response struct {
 		OpenDecisions []struct {
 			Kind   string `json:"kind"`
-			GoalID string `json:"goal_id"`
+			GoalID int64  `json:"goal_id"`
 		} `json:"open_decisions"`
 		ProposedGoals []struct {
-			ID string `json:"id"`
+			ID int64 `json:"id"`
 		} `json:"proposed_goals"`
 	}
 	if err := json.Unmarshal(body, &response); err != nil {
@@ -65,7 +65,7 @@ func TestHTTPInboxOmitsGoalApprovalFromOpenDecisions(t *testing.T) {
 
 	for _, decision := range response.OpenDecisions {
 		if decision.Kind == string(domain.KindGoalApproval) {
-			t.Fatalf("open_decisions contains a goal_approval for %s; it belongs to the proposed section only", decision.GoalID)
+			t.Fatalf("open_decisions contains a goal_approval for %d; it belongs to the proposed section only", decision.GoalID)
 		}
 	}
 
@@ -78,6 +78,6 @@ func TestHTTPInboxOmitsGoalApprovalFromOpenDecisions(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Fatalf("proposed_goals does not contain %s", proposed.ID)
+		t.Fatalf("proposed_goals does not contain %d", proposed.ID)
 	}
 }

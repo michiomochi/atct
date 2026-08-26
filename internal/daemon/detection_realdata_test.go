@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"os"
+	"strconv"
 	"testing"
 	"time"
 
@@ -18,9 +19,13 @@ func TestDetectionAgainstRealDatabaseCopy(t *testing.T) {
 	if path == "" {
 		t.Skip("set ATCT_REAL_DB to a copy of a real database")
 	}
-	goalID := os.Getenv("ATCT_REAL_GOAL")
-	if goalID == "" {
+	goalIDText := os.Getenv("ATCT_REAL_GOAL")
+	if goalIDText == "" {
 		t.Skip("set ATCT_REAL_GOAL to the goal expected to be reported")
+	}
+	goalID, err := strconv.ParseInt(goalIDText, 10, 64)
+	if err != nil {
+		t.Fatalf("parse ATCT_REAL_GOAL: %v", err)
 	}
 
 	ctx := context.Background()
@@ -42,11 +47,11 @@ func TestDetectionAgainstRealDatabaseCopy(t *testing.T) {
 
 	if _, ok := findDetectionEvent(events, store.EventDetectionCompletionReportMissing, goalID); !ok {
 		for _, event := range events {
-			t.Logf("published %s %#v", event.Name, event.Data)
+			t.Logf("published %v %#v", event.Name, event.Data)
 		}
-		t.Fatalf("no completion detection for %s", goalID)
+		t.Fatalf("no completion detection for %v", goalID)
 	}
-	t.Logf("published %d events; completion detection present for %s", len(events), goalID)
+	t.Logf("published %d events; completion detection present for %v", len(events), goalID)
 
 	// Converges: asking again without the condition changing says nothing new.
 	again, err := tracker.evaluate(ctx, s, start.Add(wakeupPublishAfter+time.Minute))
@@ -54,6 +59,6 @@ func TestDetectionAgainstRealDatabaseCopy(t *testing.T) {
 		t.Fatalf("second evaluate: %v", err)
 	}
 	if _, ok := findDetectionEvent(again, store.EventDetectionCompletionReportMissing, goalID); ok {
-		t.Fatalf("completion detection repeated for %s", goalID)
+		t.Fatalf("completion detection repeated for %v", goalID)
 	}
 }

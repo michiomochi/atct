@@ -73,17 +73,17 @@ func TestSnoozeTaskUsesDeadlineToControlWakeupWithoutChangingTodo(t *testing.T) 
 	if state.UnstartedTaskCount != 3 || len(state.Tasks) != 3 {
 		t.Fatalf("wakeup state = %+v, want three actionable todo tasks", state)
 	}
-	got := make(map[string]bool, len(state.Tasks))
+	got := make(map[int64]bool, len(state.Tasks))
 	for _, task := range state.Tasks {
 		got[task.ID] = true
 	}
 	for _, task := range tasks[1:] {
 		if !got[task.ID] {
-			t.Fatalf("wakeup tasks = %#v, missing actionable task %s", state.Tasks, task.ID)
+			t.Fatalf("wakeup tasks = %#v, missing actionable task %d", state.Tasks, task.ID)
 		}
 	}
 	if got[tasks[0].ID] {
-		t.Fatalf("future-snoozed task %s was included in wakeup tasks", tasks[0].ID)
+		t.Fatalf("future-snoozed task %d was included in wakeup tasks", tasks[0].ID)
 	}
 
 	counted, err := s.CountUnstartedTasks(ctx, project.ID)
@@ -100,7 +100,7 @@ func TestSnoozeTaskUsesDeadlineToControlWakeupWithoutChangingTodo(t *testing.T) 
 	}
 	for _, task := range listed {
 		if task.Status != domain.TaskTodo {
-			t.Fatalf("task %s status = %q, want todo", task.ID, task.Status)
+			t.Fatalf("task %d status = %q, want todo", task.ID, task.Status)
 		}
 	}
 }
@@ -229,13 +229,14 @@ func TestDetectWakeupClassifiesUnstartedTasksForGoalWithRunningClaim(t *testing.
 	if err != nil {
 		t.Fatalf("DeclareTasks: %v", err)
 	}
-	if err := s.RegisterAgentSession(ctx, "wakeup-running-session", os.Getpid()); err != nil {
+	runningSessionID, err := s.RegisterAgentSession(ctx, os.Getpid())
+	if err != nil {
 		t.Fatalf("RegisterAgentSession: %v", err)
 	}
-	if err := s.AssociateAgentSessionWithProject(ctx, "wakeup-running-session", project.ID); err != nil {
+	if err := s.AssociateAgentSessionWithProject(ctx, runningSessionID, project.ID); err != nil {
 		t.Fatalf("AssociateAgentSessionWithProject: %v", err)
 	}
-	if _, err := s.ClaimTask(ctx, tasks[0].ID, "wakeup-running-session"); err != nil {
+	if _, err := s.ClaimTask(ctx, tasks[0].ID, runningSessionID); err != nil {
 		t.Fatalf("ClaimTask: %v", err)
 	}
 
@@ -285,13 +286,14 @@ func TestDetectWakeupClassifiesUnstartedTasksByOwnOpenDecision(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DeclareTasks: %v", err)
 	}
-	if err := s.RegisterAgentSession(ctx, "wakeup-task-level-session", os.Getpid()); err != nil {
+	taskLevelSessionID, err := s.RegisterAgentSession(ctx, os.Getpid())
+	if err != nil {
 		t.Fatalf("RegisterAgentSession: %v", err)
 	}
-	if err := s.AssociateAgentSessionWithProject(ctx, "wakeup-task-level-session", project.ID); err != nil {
+	if err := s.AssociateAgentSessionWithProject(ctx, taskLevelSessionID, project.ID); err != nil {
 		t.Fatalf("AssociateAgentSessionWithProject: %v", err)
 	}
-	if _, err := s.ClaimTask(ctx, tasks[0].ID, "wakeup-task-level-session"); err != nil {
+	if _, err := s.ClaimTask(ctx, tasks[0].ID, taskLevelSessionID); err != nil {
 		t.Fatalf("ClaimTask: %v", err)
 	}
 	if _, err := s.AskDecision(ctx, AskInput{
@@ -315,7 +317,7 @@ func TestDetectWakeupClassifiesUnstartedTasksByOwnOpenDecision(t *testing.T) {
 		t.Fatalf("unstarted task breakdown = %+v, want total to equal category sum", state)
 	}
 	if len(state.Tasks) != state.UntouchedTaskCount || len(state.Tasks) != 1 || state.Tasks[0].ID != tasks[2].ID {
-		t.Fatalf("actionable tasks = %#v, want only available sibling %s", state.Tasks, tasks[2].ID)
+		t.Fatalf("actionable tasks = %#v, want only available sibling %d", state.Tasks, tasks[2].ID)
 	}
 }
 
@@ -346,26 +348,26 @@ func TestDetectWakeupCountsAndClassifiesAllUnstartedTasks(t *testing.T) {
 		}
 		return goal, tasks
 	}
-	const runningSessionID = "wakeup-breakdown-running-session"
-	if err := s.RegisterAgentSession(ctx, runningSessionID, os.Getpid()); err != nil {
+	runningSessionID, err := s.RegisterAgentSession(ctx, os.Getpid())
+	if err != nil {
 		t.Fatalf("RegisterAgentSession: %v", err)
 	}
 	if err := s.AssociateAgentSessionWithProject(ctx, runningSessionID, project.ID); err != nil {
 		t.Fatalf("AssociateAgentSessionWithProject: %v", err)
 	}
-	claim := func(taskID string) {
+	claim := func(taskID int64) {
 		t.Helper()
 		if _, err := s.ClaimTask(ctx, taskID, runningSessionID); err != nil {
-			t.Fatalf("ClaimTask %s: %v", taskID, err)
+			t.Fatalf("ClaimTask %d: %v", taskID, err)
 		}
 	}
-	ask := func(goalID, taskID, question string) {
+	ask := func(goalID, taskID int64, question string) {
 		t.Helper()
 		if _, err := s.AskDecision(ctx, AskInput{
 			GoalID: goalID, TaskID: taskID,
 			Kind: domain.KindDecision, Question: question,
 		}); err != nil {
-			t.Fatalf("AskDecision %s: %v", goalID, err)
+			t.Fatalf("AskDecision %d: %v", goalID, err)
 		}
 	}
 
@@ -400,7 +402,7 @@ func TestDetectWakeupCountsAndClassifiesAllUnstartedTasks(t *testing.T) {
 	if state.UnstartedTaskCount != state.WaitingAnswerTaskCount+state.UntouchedTaskCount {
 		t.Fatalf("unstarted task breakdown = %+v, want total to equal category sum", state)
 	}
-	wantTaskIDs := map[string]struct{}{
+	wantTaskIDs := map[int64]struct{}{
 		overlapTasks[1].ID:         {},
 		workingTasks[1].ID:         {},
 		workingSecondTasks[1].ID:   {},
@@ -453,7 +455,7 @@ func TestDetectWakeupDoesNotReportGoalWithTasksAsUndeclared(t *testing.T) {
 		t.Fatalf("DetectWakeup: %v", err)
 	}
 	if len(state.UndeclaredGoals) != 1 || state.UndeclaredGoals[0].ID != emptyGoal.ID {
-		t.Fatalf("undeclared goals = %#v, want only %s", state.UndeclaredGoals, emptyGoal.ID)
+		t.Fatalf("undeclared goals = %#v, want only %d", state.UndeclaredGoals, emptyGoal.ID)
 	}
 }
 
@@ -494,7 +496,7 @@ func TestDetectWakeupDoesNotReportGoalWithLinkedTaskCommitAsCommitless(t *testin
 		t.Fatalf("DetectWakeup: %v", err)
 	}
 	if len(state.CommitlessGoals) != 1 || state.CommitlessGoals[0].ID != commitlessGoal.ID {
-		t.Fatalf("commitless goals = %#v, want only %s", state.CommitlessGoals, commitlessGoal.ID)
+		t.Fatalf("commitless goals = %#v, want only %d", state.CommitlessGoals, commitlessGoal.ID)
 	}
 }
 
@@ -535,7 +537,7 @@ func TestDetectWakeupDoesNotReportGoalWithOpenCompletionDecisionAsCommitless(t *
 		t.Fatalf("DetectWakeup: %v", err)
 	}
 	if len(state.CommitlessGoals) != 1 || state.CommitlessGoals[0].ID != readyGoal.ID {
-		t.Fatalf("commitless goals = %#v, want only %s", state.CommitlessGoals, readyGoal.ID)
+		t.Fatalf("commitless goals = %#v, want only %d", state.CommitlessGoals, readyGoal.ID)
 	}
 }
 
@@ -581,12 +583,12 @@ func TestDetectWakeupCountsActionableGoalsWithoutCompletionApproval(t *testing.T
 }
 
 func TestWakeupEventMarshalsWakeupCounts(t *testing.T) {
-	event := WakeupEvent{WakeupID: "wakeup-json", ProjectID: "project", ActionableGoalCount: 3, DelegatedTaskCount: 2}
+	event := WakeupEvent{WakeupID: "wakeup-json", ProjectID: 1, ActionableGoalCount: 3, DelegatedTaskCount: 2}
 	got, err := json.Marshal(event)
 	if err != nil {
 		t.Fatalf("json.Marshal: %v", err)
 	}
-	const want = `{"wakeup_id":"wakeup-json","project_id":"project","actionable_goal_count":3,"unstarted_task_count":0,"waiting_answer_task_count":0,"untouched_task_count":0,"delegated_task_count":2,"waiting_answer_count":0}`
+	const want = `{"wakeup_id":"wakeup-json","project_id":1,"actionable_goal_count":3,"unstarted_task_count":0,"waiting_answer_task_count":0,"untouched_task_count":0,"delegated_task_count":2,"waiting_answer_count":0}`
 	if string(got) != want {
 		t.Fatalf("wakeup JSON = %s, want %s", got, want)
 	}
@@ -595,8 +597,8 @@ func TestWakeupEventMarshalsWakeupCounts(t *testing.T) {
 func TestDetectionEventJSONIncludesCompletionReport(t *testing.T) {
 	event := DetectionEvent{
 		DetectionID:    "detection-report",
-		ProjectID:      "project",
-		TaskID:         "task",
+		ProjectID:      1,
+		TaskID:         2,
 		HandoffID:      "handoff",
 		CompleteReport: "task report",
 	}
@@ -604,7 +606,7 @@ func TestDetectionEventJSONIncludesCompletionReport(t *testing.T) {
 	if err != nil {
 		t.Fatalf("json.Marshal: %v", err)
 	}
-	const want = `{"detection_id":"detection-report","project_id":"project","task_id":"task","handoff_id":"handoff","complete_report":"task report"}`
+	const want = `{"detection_id":"detection-report","project_id":1,"task_id":2,"handoff_id":"handoff","complete_report":"task report"}`
 	if string(got) != want {
 		t.Fatalf("detection JSON = %s, want %s", got, want)
 	}
@@ -642,7 +644,7 @@ func TestDetectWakeupDoesNotReportAllDroppedGoalAsCommitless(t *testing.T) {
 		t.Fatalf("DetectWakeup: %v", err)
 	}
 	if len(state.CommitlessGoals) != 1 || state.CommitlessGoals[0].ID != mixedGoal.ID {
-		t.Fatalf("commitless goals = %#v, want only %s", state.CommitlessGoals, mixedGoal.ID)
+		t.Fatalf("commitless goals = %#v, want only %d", state.CommitlessGoals, mixedGoal.ID)
 	}
 }
 
@@ -676,10 +678,10 @@ func TestDetectWakeupDoesNotReportProposedGoalAsUndeclaredOrCommitless(t *testin
 		t.Fatalf("DetectWakeup: %v", err)
 	}
 	if len(state.UndeclaredGoals) != 0 {
-		t.Fatalf("undeclared goals = %#v, want proposed goal %s excluded", state.UndeclaredGoals, proposedEmptyGoal.ID)
+		t.Fatalf("undeclared goals = %#v, want proposed goal %d excluded", state.UndeclaredGoals, proposedEmptyGoal.ID)
 	}
 	if len(state.CommitlessGoals) != 0 {
-		t.Fatalf("commitless goals = %#v, want proposed goal %s excluded", state.CommitlessGoals, proposedDoneGoal.ID)
+		t.Fatalf("commitless goals = %#v, want proposed goal %d excluded", state.CommitlessGoals, proposedDoneGoal.ID)
 	}
 }
 
@@ -690,53 +692,55 @@ func TestDetectWakeupCollectsStalledHandoffCandidates(t *testing.T) {
 	const claimSessionID = "stalled-handoff-claim"
 	addLiveTaskClaim(t, s, taskIDs[3], claimSessionID)
 	addLiveParentGoalClaim(t, s, taskIDs[0], "stalled-handoff-requester")
-	if err := s.RegisterAgentSession(ctx, "stalled-handoff-receiver", os.Getpid()); err != nil {
+	stalledHandoffReceiverID, err := s.RegisterAgentSession(ctx, os.Getpid())
+	if err != nil {
 		t.Fatalf("RegisterAgentSession receiver: %v", err)
 	}
 
-	unreceived, err := s.RequestTaskHandoff(ctx, "handoff-unreceived", taskIDs[0], "stalled-handoff-requester", "")
+	requesterID := testSessionID("stalled-handoff-requester")
+	unreceived, err := s.RequestTaskHandoff(ctx, "handoff-unreceived", taskIDs[0], requesterID, "")
 	if err != nil {
 		t.Fatalf("RequestTaskHandoff unreceived: %v", err)
 	}
-	unreported, err := s.RequestTaskHandoff(ctx, "handoff-unreported", taskIDs[1], "stalled-handoff-requester", "")
+	unreported, err := s.RequestTaskHandoff(ctx, "handoff-unreported", taskIDs[1], requesterID, "")
 	if err != nil {
 		t.Fatalf("RequestTaskHandoff unreported: %v", err)
 	}
-	if _, err := s.ReceiveTaskHandoff(ctx, unreported.ID, taskIDs[1], "stalled-handoff-receiver"); err != nil {
+	if _, err := s.ReceiveTaskHandoff(ctx, unreported.ID, taskIDs[1], stalledHandoffReceiverID); err != nil {
 		t.Fatalf("ReceiveTaskHandoff unreported: %v", err)
 	}
-	secondUnreported, err := s.RequestTaskHandoff(ctx, "handoff-unreported-second", taskIDs[5], "stalled-handoff-requester", "")
+	secondUnreported, err := s.RequestTaskHandoff(ctx, "handoff-unreported-second", taskIDs[5], requesterID, "")
 	if err != nil {
 		t.Fatalf("RequestTaskHandoff second unreported: %v", err)
 	}
-	if _, err := s.ReceiveTaskHandoff(ctx, secondUnreported.ID, taskIDs[5], "stalled-handoff-receiver"); err != nil {
+	if _, err := s.ReceiveTaskHandoff(ctx, secondUnreported.ID, taskIDs[5], stalledHandoffReceiverID); err != nil {
 		t.Fatalf("ReceiveTaskHandoff second unreported: %v", err)
 	}
-	completed, err := s.RequestTaskHandoff(ctx, "handoff-completed", taskIDs[2], "stalled-handoff-requester", "")
+	completed, err := s.RequestTaskHandoff(ctx, "handoff-completed", taskIDs[2], requesterID, "")
 	if err != nil {
 		t.Fatalf("RequestTaskHandoff completed: %v", err)
 	}
-	if _, err := s.ReceiveTaskHandoff(ctx, completed.ID, taskIDs[2], "stalled-handoff-receiver"); err != nil {
+	if _, err := s.ReceiveTaskHandoff(ctx, completed.ID, taskIDs[2], stalledHandoffReceiverID); err != nil {
 		t.Fatalf("ReceiveTaskHandoff completed: %v", err)
 	}
 	if _, err := s.CompleteTaskHandoff(ctx, completed.ID, taskIDs[2], ""); err != nil {
 		t.Fatalf("CompleteTaskHandoff completed: %v", err)
 	}
-	secondCompleted, err := s.RequestTaskHandoff(ctx, "handoff-completed-second", taskIDs[7], "stalled-handoff-requester", "")
+	secondCompleted, err := s.RequestTaskHandoff(ctx, "handoff-completed-second", taskIDs[7], requesterID, "")
 	if err != nil {
 		t.Fatalf("RequestTaskHandoff second completed: %v", err)
 	}
-	if _, err := s.ReceiveTaskHandoff(ctx, secondCompleted.ID, taskIDs[7], "stalled-handoff-receiver"); err != nil {
+	if _, err := s.ReceiveTaskHandoff(ctx, secondCompleted.ID, taskIDs[7], stalledHandoffReceiverID); err != nil {
 		t.Fatalf("ReceiveTaskHandoff second completed: %v", err)
 	}
 	if _, err := s.CompleteTaskHandoff(ctx, secondCompleted.ID, taskIDs[7], ""); err != nil {
 		t.Fatalf("CompleteTaskHandoff second completed: %v", err)
 	}
-	requestedClaim, err := s.RequestTaskHandoff(ctx, "handoff-requested-claim", taskIDs[4], "stalled-handoff-requester", "")
+	requestedClaim, err := s.RequestTaskHandoff(ctx, "handoff-requested-claim", taskIDs[4], requesterID, "")
 	if err != nil {
 		t.Fatalf("RequestTaskHandoff requested claim: %v", err)
 	}
-	secondUnreceived, err := s.RequestTaskHandoff(ctx, "handoff-unreceived-second", taskIDs[6], "stalled-handoff-requester", "")
+	secondUnreceived, err := s.RequestTaskHandoff(ctx, "handoff-unreceived-second", taskIDs[6], requesterID, "")
 	if err != nil {
 		t.Fatalf("RequestTaskHandoff second unreceived: %v", err)
 	}
@@ -755,7 +759,7 @@ func TestDetectWakeupCollectsStalledHandoffCandidates(t *testing.T) {
 		t.Fatalf("delegated task count = %d, want 2 open received handoffs", state.DelegatedTaskCount)
 	}
 	if len(state.UndelegatedClaims) != 1 || state.UndelegatedClaims[0].ID != taskIDs[3] {
-		t.Fatalf("undelegated claims = %#v, want only %s", state.UndelegatedClaims, taskIDs[3])
+		t.Fatalf("undelegated claims = %#v, want only %d", state.UndelegatedClaims, taskIDs[3])
 	}
 	for _, handoff := range state.HandoffsAwaitingReceipt {
 		if handoff.ID == completed.ID || handoff.ID == secondCompleted.ID {
@@ -789,11 +793,13 @@ func TestDetectWakeupCollectsReportedTaskAndGoalHandoffs(t *testing.T) {
 		t.Fatalf("DeclareTasks: %v", err)
 	}
 
-	const requesterID = "reported-handoff-requester"
-	const receiverID = "reported-handoff-receiver"
-	addLiveParentGoalClaim(t, s, tasks[0].ID, requesterID)
-	addLiveProjectClaim(t, s, goalForGoalHandoff.ID, requesterID)
-	addTestAgentSession(t, s, receiverID)
+	const requesterLabel = "reported-handoff-requester"
+	const receiverLabel = "reported-handoff-receiver"
+	requesterID := testSessionID(requesterLabel)
+	receiverID := testSessionID(receiverLabel)
+	addLiveParentGoalClaim(t, s, tasks[0].ID, requesterLabel)
+	addLiveProjectClaim(t, s, goalForGoalHandoff.ID, requesterLabel)
+	addTestAgentSession(t, s, receiverLabel)
 
 	taskHandoff, err := s.RequestTaskHandoff(ctx, "reported-task-handoff", tasks[0].ID, requesterID, "")
 	if err != nil {
@@ -848,13 +854,13 @@ func TestDetectWakeupExcludesCommanderClaimAndKeepsUndelegatedExecutorClaim(t *t
 	s := newTestStore(t)
 	taskIDs := addTestTasks(t, s, 3)
 	projectID := taskIDsProjectID(t, s, taskIDs[0])
-	const commanderSessionID = "commander-session"
-	const executorSessionID = "executor-session"
+	const commanderSessionLabel = "commander-session"
+	const executorSessionLabel = "executor-session"
+	commanderSessionID := testSessionID(commanderSessionLabel)
+	executorSessionID := testSessionID(executorSessionLabel)
 
-	if err := s.RegisterAgentSession(ctx, commanderSessionID, os.Getpid()); err != nil {
-		t.Fatalf("RegisterAgentSession commander: %v", err)
-	}
-	addTestAgentSession(t, s, executorSessionID)
+	registerNamedTestAgentSession(t, s, commanderSessionLabel, os.Getpid())
+	addTestAgentSession(t, s, executorSessionLabel)
 	if _, err := s.ClaimProject(ctx, projectID, commanderSessionID); err != nil {
 		t.Fatalf("ClaimProject: %v", err)
 	}
@@ -864,7 +870,7 @@ func TestDetectWakeupExcludesCommanderClaimAndKeepsUndelegatedExecutorClaim(t *t
 	if _, err := s.ClaimTask(ctx, taskIDs[1], executorSessionID); err != nil {
 		t.Fatalf("ClaimTask executor: %v", err)
 	}
-	addLiveParentGoalClaim(t, s, taskIDs[0], commanderSessionID)
+	addLiveParentGoalClaim(t, s, taskIDs[0], commanderSessionLabel)
 	if _, err := s.RequestTaskHandoff(ctx, "commander-test-handoff", taskIDs[2], commanderSessionID, ""); err != nil {
 		t.Fatalf("RequestTaskHandoff delegated: %v", err)
 	}
@@ -874,37 +880,37 @@ func TestDetectWakeupExcludesCommanderClaimAndKeepsUndelegatedExecutorClaim(t *t
 		t.Fatalf("DetectWakeup: %v", err)
 	}
 	if len(state.UndelegatedClaims) != 1 || state.UndelegatedClaims[0].ID != taskIDs[1] {
-		t.Fatalf("undelegated claims = %#v, want only executor task %s", state.UndelegatedClaims, taskIDs[1])
+		t.Fatalf("undelegated claims = %#v, want only executor task %d", state.UndelegatedClaims, taskIDs[1])
 	}
 }
 
 func TestClassifyWakeupDecisionsUsesPendingPredicates(t *testing.T) {
 	defaultAppliedAt := time.Now().UTC()
 	appliedAt := time.Now().UTC()
-	projectGoalIDs := map[string]struct{}{"goal-active": {}}
+	projectGoalIDs := map[int64]struct{}{2: {}}
 
 	human, defaultApplied := classifyWakeupDecisions([]domain.Decision{
-		{ID: "decision-human", GoalID: "goal-active", Status: domain.DecisionAnswered},
+		{ID: 1, GoalID: 2, Status: domain.DecisionAnswered},
 		{
-			ID:               "decision-default",
-			GoalID:           "goal-active",
+			ID:               2,
+			GoalID:           2,
 			Status:           domain.DecisionAnswered,
 			DefaultAppliedAt: &defaultAppliedAt,
 		},
 		{
-			ID:        "decision-applied",
-			GoalID:    "goal-active",
+			ID:        3,
+			GoalID:    2,
 			Status:    domain.DecisionAnswered,
 			AppliedAt: &appliedAt,
 		},
-		{ID: "decision-open", GoalID: "goal-active", Status: domain.DecisionOpen},
-		{ID: "decision-other-goal", GoalID: "goal-other", Status: domain.DecisionAnswered},
+		{ID: 4, GoalID: 2, Status: domain.DecisionOpen},
+		{ID: 5, GoalID: 3, Status: domain.DecisionAnswered},
 	}, projectGoalIDs)
 
-	if got := len(human); got != 1 || human[0].ID != "decision-human" {
+	if got := len(human); got != 1 || human[0].ID != 1 {
 		t.Fatalf("human answered decisions = %#v, want only decision-human", human)
 	}
-	if got := len(defaultApplied); got != 1 || defaultApplied[0].ID != "decision-default" {
+	if got := len(defaultApplied); got != 1 || defaultApplied[0].ID != 2 {
 		t.Fatalf("default-applied decisions = %#v, want only decision-default", defaultApplied)
 	}
 }
@@ -965,16 +971,17 @@ func TestDetectWakeupCollectsUnappliedDecisionsAndStaleClaims(t *testing.T) {
 	}
 
 	addTestAgentSession(t, s, "missing-session")
-	if _, err := s.ClaimTask(ctx, tasks[2].ID, "missing-session"); err != nil {
+	if _, err := s.ClaimTask(ctx, tasks[2].ID, testSessionID("missing-session")); err != nil {
 		t.Fatalf("ClaimTask stale: %v", err)
 	}
-	if err := s.RegisterAgentSession(ctx, "live-session", os.Getpid()); err != nil {
+	liveSessionID, err := s.RegisterAgentSession(ctx, os.Getpid())
+	if err != nil {
 		t.Fatalf("RegisterAgentSession: %v", err)
 	}
-	if err := s.AssociateAgentSessionWithProject(ctx, "live-session", project.ID); err != nil {
+	if err := s.AssociateAgentSessionWithProject(ctx, liveSessionID, project.ID); err != nil {
 		t.Fatalf("AssociateAgentSessionWithProject: %v", err)
 	}
-	if _, err := s.ClaimTask(ctx, tasks[3].ID, "live-session"); err != nil {
+	if _, err := s.ClaimTask(ctx, tasks[3].ID, liveSessionID); err != nil {
 		t.Fatalf("ClaimTask live: %v", err)
 	}
 
@@ -983,17 +990,17 @@ func TestDetectWakeupCollectsUnappliedDecisionsAndStaleClaims(t *testing.T) {
 		t.Fatalf("DetectWakeup: %v", err)
 	}
 	if got := len(state.AnsweredUnappliedDecisions); got != 1 || state.AnsweredUnappliedDecisions[0].ID != humanDecision.ID {
-		t.Fatalf("answered unapplied decisions = %#v, want %s", state.AnsweredUnappliedDecisions, humanDecision.ID)
+		t.Fatalf("answered unapplied decisions = %#v, want %d", state.AnsweredUnappliedDecisions, humanDecision.ID)
 	}
 	if got := len(state.DefaultUnappliedDecisions); got != 1 {
 		t.Fatalf("default unapplied decisions = %#v, want one", state.DefaultUnappliedDecisions)
 	}
 	if got := len(state.StaleClaims); got != 1 || state.StaleClaims[0].ID != tasks[2].ID {
-		t.Fatalf("stale claims = %#v, want only %s", state.StaleClaims, tasks[2].ID)
+		t.Fatalf("stale claims = %#v, want only %d", state.StaleClaims, tasks[2].ID)
 	}
 }
 
-func taskIDsProjectID(t *testing.T, s *Store, taskID string) string {
+func taskIDsProjectID(t *testing.T, s *Store, taskID int64) int64 {
 	t.Helper()
 	projectID, err := s.ProjectIDForTask(context.Background(), taskID)
 	if err != nil {
@@ -1002,9 +1009,9 @@ func taskIDsProjectID(t *testing.T, s *Store, taskID string) string {
 	return projectID
 }
 
-func updateWakeupTask(t *testing.T, s *Store, taskID string, status domain.TaskStatus) {
+func updateWakeupTask(t *testing.T, s *Store, taskID int64, status domain.TaskStatus) {
 	t.Helper()
-	if _, err := s.UpdateTask(context.Background(), taskID, status, ""); err != nil {
-		t.Fatalf("UpdateTask %s: %v", taskID, err)
+	if _, err := s.UpdateTask(context.Background(), taskID, status, 0); err != nil {
+		t.Fatalf("UpdateTask %d: %v", taskID, err)
 	}
 }

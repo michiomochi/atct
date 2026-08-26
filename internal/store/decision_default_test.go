@@ -120,7 +120,7 @@ VALUES ('old-decision', 'old-goal', 'old-task', 'decision', 'old question', '[]'
 	}
 	defer s.Close()
 
-	got, err := s.GetDecision(context.Background(), "old-decision")
+	got, err := s.GetDecision(context.Background(), 1)
 	if err != nil {
 		t.Fatal(err)
 	}

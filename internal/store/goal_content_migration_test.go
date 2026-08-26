@@ -15,7 +15,7 @@ func TestCreateGoalRejectsBlankContent(t *testing.T) {
 
 	for _, content := range []string{"", " \t\n "} {
 		t.Run(content, func(t *testing.T) {
-			if _, err := s.CreateGoal(context.Background(), "project-goal-content", content, "human"); err == nil {
+			if _, err := s.CreateGoal(context.Background(), 0, content, "human"); err == nil {
 				t.Fatalf("CreateGoal(%q) succeeded, want an error", content)
 			}
 		})
@@ -42,9 +42,10 @@ func TestOpenMigratesGoalContentWithoutLosingData(t *testing.T) {
 	}
 	defer rows.Close()
 
-	got := make(map[string]string)
+	got := make(map[int64]string)
 	for rows.Next() {
-		var id, content string
+		var id int64
+		var content string
 		if err := rows.Scan(&id, &content); err != nil {
 			t.Fatalf("scan migrated goal: %v", err)
 		}
@@ -54,14 +55,14 @@ func TestOpenMigratesGoalContentWithoutLosingData(t *testing.T) {
 		t.Fatalf("iterate migrated goals: %v", err)
 	}
 
-	if got["goal-content-empty-desc"] != "First goal title" {
-		t.Fatalf("empty-description content = %q, want %q", got["goal-content-empty-desc"], "First goal title")
+	if got[1] != "First goal title" {
+		t.Fatalf("empty-description content = %q, want %q", got[1], "First goal title")
 	}
-	if got["goal-content-space-desc"] != "Third goal title" {
-		t.Fatalf("space-only-description content = %q, want %q", got["goal-content-space-desc"], "Third goal title")
+	if got[3] != "Third goal title" {
+		t.Fatalf("space-only-description content = %q, want %q", got[3], "Third goal title")
 	}
 
-	withDescription := got["goal-content-with-desc"]
+	withDescription := got[2]
 	if gotHeadline := domain.Headline(withDescription); gotHeadline != "Second goal title" {
 		t.Fatalf("non-empty-description headline = %q, want %q", gotHeadline, "Second goal title")
 	}

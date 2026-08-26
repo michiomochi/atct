@@ -1,15 +1,15 @@
 CREATE TABLE IF NOT EXISTS projects (
-  id         TEXT PRIMARY KEY,
+  id         INTEGER PRIMARY KEY,
   name       TEXT NOT NULL UNIQUE,
   root_path  TEXT NOT NULL UNIQUE,
   created_at TEXT NOT NULL,
-  claimed_by TEXT NOT NULL DEFAULT '',
+  claimed_by INTEGER NOT NULL DEFAULT 0,
   claimed_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS agent_sessions (
-  id            TEXT PRIMARY KEY,
-  project_id    TEXT REFERENCES projects(id),
+  id            INTEGER PRIMARY KEY,
+  project_id    INTEGER REFERENCES projects(id),
   registered_at TEXT NOT NULL,
   pid           INTEGER NOT NULL DEFAULT 0,
   started_at    TEXT NOT NULL DEFAULT '',
@@ -23,9 +23,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_sessions_session_key
   ON agent_sessions(session_key) WHERE session_key <> '';
 
 CREATE TABLE IF NOT EXISTS goals (
-  id             TEXT PRIMARY KEY,
-  project_id     TEXT NOT NULL REFERENCES projects(id),
-  derived_from_goal_id TEXT REFERENCES goals(id),
+  id             INTEGER PRIMARY KEY,
+  project_id     INTEGER NOT NULL REFERENCES projects(id),
+  derived_from_goal_id INTEGER REFERENCES goals(id),
   content        TEXT NOT NULL,
   status         TEXT NOT NULL,
   creator        TEXT NOT NULL DEFAULT 'human',
@@ -51,8 +51,8 @@ CREATE TABLE IF NOT EXISTS goals (
 );
 
 CREATE TABLE IF NOT EXISTS tasks (
-  id         TEXT PRIMARY KEY,
-  goal_id    TEXT NOT NULL REFERENCES goals(id),
+  id         INTEGER PRIMARY KEY,
+  goal_id    INTEGER NOT NULL REFERENCES goals(id),
   title      TEXT NOT NULL,
   description TEXT NOT NULL DEFAULT '',
   status     TEXT NOT NULL,
@@ -72,9 +72,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_goal_sort_order
   ON tasks(goal_id, sort_order);
 
 CREATE TABLE IF NOT EXISTS decisions (
-  id           TEXT PRIMARY KEY,
-  goal_id      TEXT NOT NULL REFERENCES goals(id),
-  task_id      TEXT REFERENCES tasks(id),
+  id           INTEGER PRIMARY KEY,
+  goal_id      INTEGER NOT NULL REFERENCES goals(id),
+  task_id      INTEGER REFERENCES tasks(id),
   kind         TEXT NOT NULL,
   question     TEXT NOT NULL,
   options      TEXT NOT NULL DEFAULT '[]',
@@ -86,7 +86,7 @@ CREATE TABLE IF NOT EXISTS decisions (
   answer_text  TEXT NOT NULL DEFAULT '',
   answered_at  TEXT,
   applied_at   TEXT,
-  agent_session_id TEXT NOT NULL DEFAULT '',
+  agent_session_id INTEGER NOT NULL DEFAULT 0,
   created_at   TEXT NOT NULL,
   CHECK (kind <> 'decision' OR status NOT IN ('open', 'answered') OR (task_id IS NOT NULL AND task_id <> ''))
 );
@@ -95,7 +95,7 @@ CREATE INDEX IF NOT EXISTS idx_decisions_open
   ON decisions(status, goal_id);
 
 CREATE TABLE IF NOT EXISTS task_commits (
-  task_id      TEXT NOT NULL REFERENCES tasks(id),
+  task_id      INTEGER NOT NULL REFERENCES tasks(id),
   sha          TEXT NOT NULL,
   subject      TEXT NOT NULL,
   files_changed INTEGER NOT NULL DEFAULT 0,
@@ -107,9 +107,9 @@ CREATE TABLE IF NOT EXISTS task_commits (
 
 CREATE TABLE IF NOT EXISTS task_handoffs (
   id                  TEXT PRIMARY KEY,
-  task_id             TEXT NOT NULL REFERENCES tasks(id),
-  requested_by        TEXT REFERENCES agent_sessions(id),
-  received_by         TEXT REFERENCES agent_sessions(id),
+  task_id             INTEGER NOT NULL REFERENCES tasks(id),
+  requested_by        INTEGER REFERENCES agent_sessions(id),
+  received_by         INTEGER REFERENCES agent_sessions(id),
   requested_at        TEXT,
   received_at         TEXT,
   completed_report_at TEXT,
@@ -126,9 +126,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_task_handoffs_open_task_id
 
 CREATE TABLE IF NOT EXISTS goal_handoffs (
   id                  TEXT PRIMARY KEY,
-  goal_id             TEXT NOT NULL REFERENCES goals(id),
-  requested_by        TEXT REFERENCES agent_sessions(id),
-  received_by         TEXT REFERENCES agent_sessions(id),
+  goal_id             INTEGER NOT NULL REFERENCES goals(id),
+  requested_by        INTEGER REFERENCES agent_sessions(id),
+  received_by         INTEGER REFERENCES agent_sessions(id),
   requested_at        TEXT,
   received_at         TEXT,
   completed_report_at TEXT,

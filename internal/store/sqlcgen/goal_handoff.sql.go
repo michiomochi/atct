@@ -40,7 +40,7 @@ type ListGoalSessionKeysRow struct {
 	HandoffOpen int64
 }
 
-func (q *Queries) ListGoalSessionKeys(ctx context.Context, goalID string) ([]ListGoalSessionKeysRow, error) {
+func (q *Queries) ListGoalSessionKeys(ctx context.Context, goalID int64) ([]ListGoalSessionKeysRow, error) {
 	rows, err := q.db.QueryContext(ctx, listGoalSessionKeys, goalID)
 	if err != nil {
 		return nil, err

@@ -64,46 +64,51 @@ VALUES
 		t.Fatalf("Open pre-claim-columns database: %v", err)
 	}
 	defer migrated.Close()
+	var liveSessionID int64
+	if err := migrated.DB().QueryRow(`SELECT id FROM agent_sessions WHERE registered_at = ?`, "2026-08-24T00:01:00Z").Scan(&liveSessionID); err != nil {
+		t.Fatalf("read migrated live agent session: %v", err)
+	}
 
-	assertLiveHandoff := func(table, entityColumn, entityID, claimedAt string) {
+	assertLiveHandoff := func(table, entityTable, entityColumn string, entityID int64, claimedAt string) {
 		t.Helper()
 		var count int
-		countQuery := `SELECT COUNT(*) FROM ` + table + ` WHERE ` + entityColumn + ` = ?`
+		countQuery := `SELECT COUNT(*) FROM ` + table + ` AS h JOIN ` + entityTable + ` AS e ON e.id = h.` + entityColumn + ` WHERE e.id = ?`
 		if err := migrated.DB().QueryRow(countQuery, entityID).Scan(&count); err != nil {
 			t.Fatalf("count %s rows: %v", table, err)
 		}
 		if count != 1 {
-			t.Fatalf("%s rows for %s = %d, want 1", table, entityID, count)
+			t.Fatalf("%s rows for %d = %d, want 1", table, entityID, count)
 		}
 
-		var requestedBy, receivedBy, receivedAt string
-		rowQuery := `SELECT requested_by, received_by, received_at FROM ` + table + ` WHERE ` + entityColumn + ` = ?`
+		var requestedBy, receivedBy int64
+		var receivedAt string
+		rowQuery := `SELECT h.requested_by, h.received_by, h.received_at FROM ` + table + ` AS h JOIN ` + entityTable + ` AS e ON e.id = h.` + entityColumn + ` WHERE e.id = ?`
 		if err := migrated.DB().QueryRow(rowQuery, entityID).Scan(&requestedBy, &receivedBy, &receivedAt); err != nil {
 			t.Fatalf("read %s row: %v", table, err)
 		}
-		if requestedBy != "live-session" || receivedBy != "live-session" {
-			t.Errorf("%s session IDs = (%q, %q), want (live-session, live-session)", table, requestedBy, receivedBy)
+		if requestedBy != liveSessionID || receivedBy != liveSessionID {
+			t.Errorf("%s session IDs = (%d, %d), want (%d, %d)", table, requestedBy, receivedBy, liveSessionID, liveSessionID)
 		}
 		if receivedAt != claimedAt {
 			t.Errorf("%s received_at = %q, want %q", table, receivedAt, claimedAt)
 		}
 	}
-	assertLiveHandoff("task_handoffs", "task_id", "live-task", "2026-08-24T00:20:00Z")
-	assertLiveHandoff("goal_handoffs", "goal_id", "live-goal", "2026-08-24T00:10:00Z")
+	assertLiveHandoff("task_handoffs", "tasks", "task_id", 1, "2026-08-24T00:20:00Z")
+	assertLiveHandoff("goal_handoffs", "goals", "goal_id", 1, "2026-08-24T00:10:00Z")
 
-	assertNoHandoff := func(table, entityColumn, entityID string) {
+	assertNoHandoff := func(table, entityTable, entityColumn string, entityID int64) {
 		t.Helper()
 		var count int
-		query := `SELECT COUNT(*) FROM ` + table + ` WHERE ` + entityColumn + ` = ?`
+		query := `SELECT COUNT(*) FROM ` + table + ` AS h JOIN ` + entityTable + ` AS e ON e.id = h.` + entityColumn + ` WHERE e.id = ?`
 		if err := migrated.DB().QueryRow(query, entityID).Scan(&count); err != nil {
 			t.Fatalf("count %s rows: %v", table, err)
 		}
 		if count != 0 {
-			t.Errorf("%s rows for %s = %d, want 0", table, entityID, count)
+			t.Errorf("%s rows for %d = %d, want 0", table, entityID, count)
 		}
 	}
-	assertNoHandoff("task_handoffs", "task_id", "ghost-task")
-	assertNoHandoff("goal_handoffs", "goal_id", "ghost-goal")
+	assertNoHandoff("task_handoffs", "tasks", "task_id", 2)
+	assertNoHandoff("goal_handoffs", "goals", "goal_id", 2)
 
 	for _, table := range []string{"tasks", "goals"} {
 		rows, err := migrated.DB().Query(`PRAGMA table_info(` + table + `)`)

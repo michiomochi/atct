@@ -37,7 +37,7 @@ func TestHTTPTaskCommitDiffRejectsUnlinkedCommit(t *testing.T) {
 
 	srv := newTestServer(t, f.store)
 	defer srv.Close()
-	status, _, body := doRequest(t, srv.Client(), http.MethodGet, fmt.Sprintf("%s/api/tasks/%s/commits/%s/diff", srv.URL, task.ID, strings.Repeat("a", 40)), nil)
+	status, _, body := doRequest(t, srv.Client(), http.MethodGet, fmt.Sprintf("%s/api/tasks/%d/commits/%s/diff", srv.URL, task.ID, strings.Repeat("a", 40)), nil)
 	if status != http.StatusNotFound {
 		t.Fatalf("status = %d, want %d; body=%s", status, http.StatusNotFound, body)
 	}
@@ -62,7 +62,7 @@ func TestHTTPTaskCommitDiffReturnsEmptyFilesForCommitOutsideHistory(t *testing.T
 
 	srv := newTestServer(t, f.store)
 	defer srv.Close()
-	status, _, body := doRequest(t, srv.Client(), http.MethodGet, fmt.Sprintf("%s/api/tasks/%s/commits/%s/diff", srv.URL, task.ID, sha), nil)
+	status, _, body := doRequest(t, srv.Client(), http.MethodGet, fmt.Sprintf("%s/api/tasks/%d/commits/%s/diff", srv.URL, task.ID, sha), nil)
 	if status != http.StatusOK {
 		t.Fatalf("status = %d, want %d; body=%s", status, http.StatusOK, body)
 	}
@@ -98,7 +98,7 @@ func TestHTTPTaskCommitDiffOmitsBodyLinesButKeepsAllFiles(t *testing.T) {
 
 	srv := newTestServer(t, f.store)
 	defer srv.Close()
-	status, _, body := doRequest(t, srv.Client(), http.MethodGet, fmt.Sprintf("%s/api/tasks/%s/commits/%s/diff", srv.URL, task.ID, sha), nil)
+	status, _, body := doRequest(t, srv.Client(), http.MethodGet, fmt.Sprintf("%s/api/tasks/%d/commits/%s/diff", srv.URL, task.ID, sha), nil)
 	if status != http.StatusOK {
 		t.Fatalf("status = %d, want %d; body=%s", status, http.StatusOK, body)
 	}
@@ -131,7 +131,7 @@ func TestHTTPTaskCommitDiffKeepsBodyWithinLimit(t *testing.T) {
 
 	srv := newTestServer(t, f.store)
 	defer srv.Close()
-	status, _, body := doRequest(t, srv.Client(), http.MethodGet, fmt.Sprintf("%s/api/tasks/%s/commits/%s/diff", srv.URL, task.ID, sha), nil)
+	status, _, body := doRequest(t, srv.Client(), http.MethodGet, fmt.Sprintf("%s/api/tasks/%d/commits/%s/diff", srv.URL, task.ID, sha), nil)
 	if status != http.StatusOK {
 		t.Fatalf("status = %d, want %d; body=%s", status, http.StatusOK, body)
 	}
@@ -159,7 +159,7 @@ func declareTask(t *testing.T, f *fixture) domain.Task {
 	return tasks[0]
 }
 
-func linkTaskCommit(t *testing.T, f *fixture, taskID, sha string) {
+func linkTaskCommit(t *testing.T, f *fixture, taskID int64, sha string) {
 	t.Helper()
 	if err := f.store.LinkTaskCommit(f.ctx, taskID, domain.TaskCommit{SHA: sha, Subject: "diff fixture commit"}); err != nil {
 		t.Fatalf("LinkTaskCommit: %v", err)

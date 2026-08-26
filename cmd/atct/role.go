@@ -2,10 +2,12 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/michiomochi/atct/internal/daemonctl"
@@ -13,10 +15,63 @@ import (
 	"github.com/michiomochi/atct/internal/store"
 )
 
-type sessionRoleResponse struct {
-	Role      string `json:"role"`
-	ProjectID string `json:"project_id"`
-	GoalID    string `json:"goal_id"`
+type commanderRole struct {
+	Role      string   `json:"role"`
+	ProjectID int64    `json:"project_id"`
+	Does      []string `json:"does"`
+	DoesNot   []string `json:"does_not"`
+}
+
+type subcommanderRole struct {
+	Role    string   `json:"role"`
+	GoalID  int64    `json:"goal_id"`
+	Does    []string `json:"does"`
+	DoesNot []string `json:"does_not"`
+}
+
+type executorRole struct {
+	Role    string   `json:"role"`
+	Does    []string `json:"does"`
+	DoesNot []string `json:"does_not"`
+}
+
+type roleResponse interface {
+	roleName() string
+}
+
+func (r commanderRole) roleName() string    { return r.Role }
+func (r subcommanderRole) roleName() string { return r.Role }
+func (r executorRole) roleName() string     { return r.Role }
+
+func decodeSessionRole(raw json.RawMessage) (roleResponse, error) {
+	var discriminator struct {
+		Role string `json:"role"`
+	}
+	if err := json.Unmarshal(raw, &discriminator); err != nil {
+		return nil, fmt.Errorf("decode session.role discriminator: %w", err)
+	}
+	switch discriminator.Role {
+	case "commander":
+		var response commanderRole
+		if err := json.Unmarshal(raw, &response); err != nil {
+			return nil, fmt.Errorf("decode commander role: %w", err)
+		}
+		return response, nil
+	case "subcommander":
+		var response subcommanderRole
+		if err := json.Unmarshal(raw, &response); err != nil {
+			return nil, fmt.Errorf("decode subcommander role: %w", err)
+		}
+		return response, nil
+	case "executor":
+		var response executorRole
+		if err := json.Unmarshal(raw, &response); err != nil {
+			return nil, fmt.Errorf("decode executor role: %w", err)
+		}
+		return response, nil
+	default:
+		return nil, fmt.Errorf("decode session.role: unknown role %q", discriminator.Role)
+	}
 }
 
 var validSessionRoles = map[string]struct{}{
@@ -25,11 +80,17 @@ var validSessionRoles = map[string]struct{}{
 	"executor":     {},
 }
 
-func formatSessionRole(response sessionRoleResponse) string {
-	return fmt.Sprintf(
-		"role: %s\nproject_id: %s\ngoal_id: %s\n",
-		response.Role, response.ProjectID, response.GoalID,
-	)
+func formatSessionRole(response roleResponse) string {
+	switch response := response.(type) {
+	case commanderRole:
+		return fmt.Sprintf("role: %s\nproject_id: %d\n", response.Role, response.ProjectID)
+	case subcommanderRole:
+		return fmt.Sprintf("role: %s\ngoal_id: %d\n", response.Role, response.GoalID)
+	case executorRole:
+		return fmt.Sprintf("role: %s\n", response.Role)
+	default:
+		return ""
+	}
 }
 
 func validateExpectedRole(expected string) error {
@@ -42,14 +103,20 @@ func validateExpectedRole(expected string) error {
 	return fmt.Errorf("invalid expected role %q (choose commander, subcommander, or executor)", expected)
 }
 
-func checkExpectedRole(response sessionRoleResponse, expected string) (int, string) {
-	if expected == "" || response.Role == expected {
+func checkExpectedRole(response roleResponse, expected string) (int, string) {
+	if expected == "" || response.roleName() == expected {
 		return 0, ""
 	}
-	return 1, fmt.Sprintf(
-		"role mismatch: expected: %s; actual: %s; project_id: %s; goal_id: %s",
-		expected, response.Role, response.ProjectID, response.GoalID,
-	)
+	switch response := response.(type) {
+	case commanderRole:
+		return 1, fmt.Sprintf("role mismatch: expected: %s; actual: %s; project_id: %d", expected, response.Role, response.ProjectID)
+	case subcommanderRole:
+		return 1, fmt.Sprintf("role mismatch: expected: %s; actual: %s; goal_id: %d", expected, response.Role, response.GoalID)
+	case executorRole:
+		return 1, fmt.Sprintf("role mismatch: expected: %s; actual: %s", expected, response.Role)
+	default:
+		return 1, fmt.Sprintf("role mismatch: expected: %s", expected)
+	}
 }
 
 func roleProjectRegistered(dir, cwd string) (bool, error) {
@@ -102,6 +169,10 @@ func runRole(config cliConfig, dir, exePath string) (int, error) {
 	if sessionID == "" {
 		return 2, errors.New("role requires --agent-session-id for a registered project")
 	}
+	agentSessionID, err := strconv.ParseInt(sessionID, 10, 64)
+	if err != nil || agentSessionID <= 0 {
+		return 2, fmt.Errorf("role requires a positive numeric --agent-session-id")
+	}
 
 	// session.role is an RPC and the daemon is the authority for claim-derived
 	// roles. A registered project therefore fails closed when the daemon cannot
@@ -118,10 +189,14 @@ func runRole(config cliConfig, dir, exePath string) (int, error) {
 	}
 
 	client := mcpshim.NewClient(reg.SocketPath)
-	var response sessionRoleResponse
-	if err := client.Call(context.Background(), "session.role", map[string]string{
-		"agent_session_id": sessionID,
-	}, &response); err != nil {
+	var raw json.RawMessage
+	if err := client.Call(context.Background(), "session.role", map[string]any{
+		"agent_session_id": agentSessionID,
+	}, &raw); err != nil {
+		return 1, fmt.Errorf("session.role: %w", err)
+	}
+	response, err := decodeSessionRole(raw)
+	if err != nil {
 		return 1, fmt.Errorf("session.role: %w", err)
 	}
 

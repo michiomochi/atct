@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -18,6 +20,45 @@ import (
 	"github.com/michiomochi/atct/internal/rpc"
 	"github.com/michiomochi/atct/internal/store"
 )
+
+func TestDispatchResolvesCanonicalNumericStringEntityIDs(t *testing.T) {
+	fixture := newGoalListFixture(t)
+	defer fixture.store.Close()
+
+	params, err := json.Marshal(map[string]any{
+		"project_id":       strconv.FormatInt(fixture.project.ID, 10),
+		"agent_session_id": daemonTestSessionID(t, fixture.store, "dispatch-id-resolution-session"),
+	})
+	if err != nil {
+		t.Fatalf("marshal project.claim params: %v", err)
+	}
+	if _, err := fixture.daemon.dispatch(context.Background(), rpc.Request{Method: "project.claim", Params: params}); err != nil {
+		t.Fatalf("project.claim with numeric string: %v", err)
+	}
+}
+
+func TestDispatchRejectsLegacyEntityIDsWithMigrationGuidance(t *testing.T) {
+	fixture := newGoalListFixture(t)
+	defer fixture.store.Close()
+
+	params, err := json.Marshal(map[string]any{
+		"project_id":       "1e082f2f",
+		"agent_session_id": daemonTestSessionID(t, fixture.store, "dispatch-legacy-id-session"),
+	})
+	if err != nil {
+		t.Fatalf("marshal project.claim params: %v", err)
+	}
+	if _, err := fixture.daemon.dispatch(context.Background(), rpc.Request{Method: "project.claim", Params: params}); err == nil {
+		t.Fatal("project.claim with legacy ID unexpectedly succeeded")
+	} else {
+		if !strings.Contains(err.Error(), "id must be a number; UUID-style ids were removed in 0020.") {
+			t.Fatalf("legacy ID error = %q, want migration guidance", err)
+		}
+		if !strings.Contains(err.Error(), "doc/specs/2026-08-27-uuid-to-integer-mapping.md") {
+			t.Fatalf("legacy ID error = %q, want mapping path", err)
+		}
+	}
+}
 
 func TestSessionRoleDerivesFromClaims(t *testing.T) {
 	wantBoundary := map[string]struct {
@@ -58,9 +99,9 @@ func TestSessionRoleDerivesFromClaims(t *testing.T) {
 			fixture := newGoalListFixture(t)
 			defer fixture.store.Close()
 
-			sessionID := "session-role-" + tt.name
+			sessionID := daemonTestSessionID(t, fixture.store, "session-role-"+tt.name)
 			if tt.claimProject {
-				params, err := json.Marshal(map[string]string{
+				params, err := json.Marshal(map[string]any{
 					"project_id":       fixture.project.ID,
 					"agent_session_id": sessionID,
 				})
@@ -72,13 +113,13 @@ func TestSessionRoleDerivesFromClaims(t *testing.T) {
 				}
 			}
 
-			goalID := ""
+			var goalID int64
 			if tt.claimGoal {
 				goalID = fixture.emptyTaskGoal.ID
 				if tt.goalIndex >= 0 {
 					goalID = fixture.active[tt.goalIndex].ID
 				}
-				params, err := json.Marshal(map[string]string{
+				params, err := json.Marshal(map[string]any{
 					"goal_id":          goalID,
 					"agent_session_id": sessionID,
 				})
@@ -90,7 +131,7 @@ func TestSessionRoleDerivesFromClaims(t *testing.T) {
 				}
 			}
 
-			params, err := json.Marshal(map[string]string{"agent_session_id": sessionID})
+			params, err := json.Marshal(map[string]any{"agent_session_id": sessionID})
 			if err != nil {
 				t.Fatalf("marshal session.role params: %v", err)
 			}
@@ -99,35 +140,58 @@ func TestSessionRoleDerivesFromClaims(t *testing.T) {
 				t.Fatalf("session.role: %v", err)
 			}
 
-			var got struct {
-				Role      string   `json:"role"`
-				ProjectID string   `json:"project_id"`
-				GoalID    string   `json:"goal_id"`
-				Does      []string `json:"does"`
-				DoesNot   []string `json:"does_not"`
+			var gotRole string
+			var gotDoes, gotDoesNot []string
+			var fields map[string]json.RawMessage
+			if err := json.Unmarshal(raw, &fields); err != nil {
+				t.Fatalf("decode session.role fields %v: %v", raw, err)
 			}
-			if err := json.Unmarshal(raw, &got); err != nil {
-				t.Fatalf("decode session.role response %q: %v", raw, err)
+			switch tt.wantRole {
+			case "commander":
+				var got commanderRole
+				if err := json.Unmarshal(raw, &got); err != nil {
+					t.Fatalf("decode commander role response %v: %v", raw, err)
+				}
+				gotRole, gotDoes, gotDoesNot = got.Role, got.Does, got.DoesNot
+				if got.ProjectID != fixture.project.ID {
+					t.Fatalf("project_id = %v, want %v (response %v)", got.ProjectID, fixture.project.ID, raw)
+				}
+				if _, ok := fields["goal_id"]; ok {
+					t.Fatalf("commander response contains goal_id: %v", raw)
+				}
+			case "subcommander":
+				var got subcommanderRole
+				if err := json.Unmarshal(raw, &got); err != nil {
+					t.Fatalf("decode subcommander role response %v: %v", raw, err)
+				}
+				gotRole, gotDoes, gotDoesNot = got.Role, got.Does, got.DoesNot
+				if got.GoalID != goalID {
+					t.Fatalf("goal_id = %v, want %v (response %v)", got.GoalID, goalID, raw)
+				}
+				if _, ok := fields["project_id"]; ok {
+					t.Fatalf("subcommander response contains project_id: %v", raw)
+				}
+			case "executor":
+				var got executorRole
+				if err := json.Unmarshal(raw, &got); err != nil {
+					t.Fatalf("decode executor role response %v: %v", raw, err)
+				}
+				gotRole, gotDoes, gotDoesNot = got.Role, got.Does, got.DoesNot
+				for _, field := range []string{"project_id", "goal_id"} {
+					if _, ok := fields[field]; ok {
+						t.Fatalf("executor response contains %s: %v", field, raw)
+					}
+				}
 			}
-			if got.Role != tt.wantRole {
-				t.Fatalf("role = %q, want %q (response %s)", got.Role, tt.wantRole, raw)
-			}
-			wantProjectID := ""
-			if tt.claimProject {
-				wantProjectID = fixture.project.ID
-			}
-			if got.ProjectID != wantProjectID {
-				t.Fatalf("project_id = %q, want %q (response %s)", got.ProjectID, wantProjectID, raw)
-			}
-			if got.GoalID != goalID {
-				t.Fatalf("goal_id = %q, want %q (response %s)", got.GoalID, goalID, raw)
+			if gotRole != tt.wantRole {
+				t.Fatalf("role = %v, want %v (response %v)", gotRole, tt.wantRole, raw)
 			}
 			want := wantBoundary[tt.wantRole]
-			if !reflect.DeepEqual(got.Does, want.does) {
-				t.Fatalf("does = %#v, want %#v (response %s)", got.Does, want.does, raw)
+			if !reflect.DeepEqual(gotDoes, want.does) {
+				t.Fatalf("does = %#v, want %#v (response %v)", gotDoes, want.does, raw)
 			}
-			if !reflect.DeepEqual(got.DoesNot, want.doesNot) {
-				t.Fatalf("does_not = %#v, want %#v (response %s)", got.DoesNot, want.doesNot, raw)
+			if !reflect.DeepEqual(gotDoesNot, want.doesNot) {
+				t.Fatalf("does_not = %#v, want %#v (response %v)", gotDoesNot, want.doesNot, raw)
 			}
 		})
 	}
@@ -136,8 +200,8 @@ func TestSessionRoleDerivesFromClaims(t *testing.T) {
 func ageAgentSessionForTest(t *testing.T, fixture goalListFixture, sessionID string) {
 	t.Helper()
 	old := time.Now().UTC().Add(-time.Hour).Format(time.RFC3339Nano)
-	if _, err := fixture.store.DB().ExecContext(context.Background(), `UPDATE agent_sessions SET registered_at = ? WHERE id = ?`, old, sessionID); err != nil {
-		t.Fatalf("age agent session %q: %v", sessionID, err)
+	if _, err := fixture.store.DB().ExecContext(context.Background(), `UPDATE agent_sessions SET registered_at = ? WHERE id = ?`, old, daemonTestSessionID(t, fixture.store, sessionID)); err != nil {
+		t.Fatalf("age agent session %v: %v", sessionID, err)
 	}
 }
 
@@ -174,12 +238,13 @@ func TestProjectClaimRejectsLiveOtherSessionAfterDaemonAssociation(t *testing.T)
 		t.Fatalf("second project.claim error = %v, want ErrProjectAlreadyClaimed", err)
 	}
 
-	var claimedBy string
+	var claimedBy int64
 	if err := fixture.store.DB().QueryRowContext(context.Background(), `SELECT claimed_by FROM projects WHERE id = ?`, fixture.project.ID).Scan(&claimedBy); err != nil {
 		t.Fatalf("read project claim: %v", err)
 	}
-	if claimedBy != "daemon-project-owner-run" {
-		t.Fatalf("project claimed_by = %q, want %q", claimedBy, "daemon-project-owner-run")
+	wantClaimedBy := daemonTestSessionID(t, fixture.store, "daemon-project-owner-run")
+	if claimedBy != wantClaimedBy {
+		t.Fatalf("project claimed_by = %v, want %v", claimedBy, wantClaimedBy)
 	}
 }
 
@@ -192,9 +257,9 @@ func TestProjectReleaseAllowsSecondDaemonSessionToClaim(t *testing.T) {
 	if _, err := claimProjectForTest(t, fixture, fixture.project.ID, "daemon-release-owner-run"); err != nil {
 		t.Fatalf("initial project.claim: %v", err)
 	}
-	params, err := json.Marshal(map[string]string{
+	params, err := json.Marshal(map[string]any{
 		"project_id":       fixture.project.ID,
-		"agent_session_id": "daemon-release-owner-run",
+		"agent_session_id": daemonTestSessionID(t, fixture.store, "daemon-release-owner-run"),
 	})
 	if err != nil {
 		t.Fatalf("marshal project.release params: %v", err)
@@ -211,13 +276,14 @@ func TestProjectReleaseAllowsHolderSession(t *testing.T) {
 	fixture := newGoalListFixture(t)
 	defer fixture.store.Close()
 
-	const sessionID = "daemon-release-holder-run"
-	registerLiveGoalClaimSession(t, fixture, sessionID)
+	const sessionLabel = "daemon-release-holder-run"
+	registerLiveGoalClaimSession(t, fixture, sessionLabel)
+	sessionID := daemonTestSessionID(t, fixture.store, sessionLabel)
 	if _, err := fixture.store.ClaimProject(context.Background(), fixture.project.ID, sessionID); err != nil {
 		t.Fatalf("project.claim: %v", err)
 	}
 
-	params, err := json.Marshal(map[string]string{
+	params, err := json.Marshal(map[string]any{
 		"project_id":       fixture.project.ID,
 		"agent_session_id": sessionID,
 	})
@@ -242,13 +308,13 @@ func TestProjectReleaseAllowsSessionBoundToProject(t *testing.T) {
 	if _, err := claimProjectForTest(t, fixture, fixture.project.ID, holderSession); err != nil {
 		t.Fatalf("project.claim: %v", err)
 	}
-	if err := fixture.store.AssociateAgentSessionWithProject(context.Background(), callerSession, fixture.project.ID); err != nil {
+	if err := fixture.store.AssociateAgentSessionWithProject(context.Background(), daemonTestSessionID(t, fixture.store, callerSession), fixture.project.ID); err != nil {
 		t.Fatalf("associate caller session with project: %v", err)
 	}
 
-	params, err := json.Marshal(map[string]string{
+	params, err := json.Marshal(map[string]any{
 		"project_id":       fixture.project.ID,
-		"agent_session_id": callerSession,
+		"agent_session_id": daemonTestSessionID(t, fixture.store, callerSession),
 	})
 	if err != nil {
 		t.Fatalf("marshal project.release params: %v", err)
@@ -268,7 +334,7 @@ func TestProjectReleaseRejectsEmptyAgentSession(t *testing.T) {
 		t.Fatalf("project.claim: %v", err)
 	}
 
-	params, err := json.Marshal(map[string]string{
+	params, err := json.Marshal(map[string]any{
 		"project_id":       fixture.project.ID,
 		"agent_session_id": "",
 	})
@@ -279,8 +345,8 @@ func TestProjectReleaseRejectsEmptyAgentSession(t *testing.T) {
 	if err == nil {
 		t.Fatal("project.release succeeded without agent_session_id")
 	}
-	if !strings.Contains(err.Error(), "requires agent_session_id") || !strings.Contains(err.Error(), fixture.project.ID) {
-		t.Fatalf("project.release error = %v, want required agent_session_id and project %q", err, fixture.project.ID)
+	if !strings.Contains(err.Error(), "requires agent_session_id") || !strings.Contains(err.Error(), fmt.Sprint(fixture.project.ID)) {
+		t.Fatalf("project.release error = %v, want required agent_session_id and project %v", err, fixture.project.ID)
 	}
 }
 
@@ -301,13 +367,13 @@ func TestProjectReleaseRejectsSessionBoundToAnotherProject(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create foreign project: %v", err)
 	}
-	if err := fixture.store.AssociateAgentSessionWithProject(context.Background(), foreignSession, foreignProject.ID); err != nil {
+	if err := fixture.store.AssociateAgentSessionWithProject(context.Background(), daemonTestSessionID(t, fixture.store, foreignSession), foreignProject.ID); err != nil {
 		t.Fatalf("associate foreign session with project: %v", err)
 	}
 
-	params, err := json.Marshal(map[string]string{
+	params, err := json.Marshal(map[string]any{
 		"project_id":       fixture.project.ID,
-		"agent_session_id": foreignSession,
+		"agent_session_id": daemonTestSessionID(t, fixture.store, foreignSession),
 	})
 	if err != nil {
 		t.Fatalf("marshal project.release params: %v", err)
@@ -316,8 +382,9 @@ func TestProjectReleaseRejectsSessionBoundToAnotherProject(t *testing.T) {
 	if err == nil {
 		t.Fatal("project.release succeeded for a session bound to another project")
 	}
-	if !strings.Contains(err.Error(), foreignSession) || !strings.Contains(err.Error(), fixture.project.ID) || !strings.Contains(err.Error(), foreignProject.ID) {
-		t.Fatalf("project.release error = %v, want caller %q and projects %q/%q", err, foreignSession, foreignProject.ID, fixture.project.ID)
+	foreignSessionID := daemonTestSessionID(t, fixture.store, foreignSession)
+	if !strings.Contains(err.Error(), fmt.Sprint(foreignSessionID)) || !strings.Contains(err.Error(), fmt.Sprint(fixture.project.ID)) || !strings.Contains(err.Error(), fmt.Sprint(foreignProject.ID)) {
+		t.Fatalf("project.release error = %v, want caller %v and projects %v/%v", err, foreignSessionID, foreignProject.ID, fixture.project.ID)
 	}
 }
 
@@ -327,13 +394,13 @@ func TestTaskReleaseAllowsHolderSession(t *testing.T) {
 
 	const holderSession = "daemon-task-release-holder-run"
 	registerLiveGoalClaimSession(t, fixture, holderSession)
-	if _, err := fixture.store.ClaimTask(context.Background(), fixture.tasks[1].ID, holderSession); err != nil {
+	if _, err := fixture.store.ClaimTask(context.Background(), fixture.tasks[1].ID, daemonTestSessionID(t, fixture.store, holderSession)); err != nil {
 		t.Fatalf("task.claim: %v", err)
 	}
 
-	params, err := json.Marshal(map[string]string{
+	params, err := json.Marshal(map[string]any{
 		"task_id":          fixture.tasks[1].ID,
-		"agent_session_id": holderSession,
+		"agent_session_id": daemonTestSessionID(t, fixture.store, holderSession),
 	})
 	if err != nil {
 		t.Fatalf("marshal task.release params: %v", err)
@@ -347,7 +414,7 @@ func TestTaskReleaseAllowsHolderSession(t *testing.T) {
 		t.Fatalf("unmarshal task.release result: %v", err)
 	}
 	if released.Status != domain.TaskTodo {
-		t.Fatalf("released task status = %s, want %s", released.Status, domain.TaskTodo)
+		t.Fatalf("released task status = %v, want %v", released.Status, domain.TaskTodo)
 	}
 	if handoff := openTaskHandoffForTest(t, fixture, fixture.tasks[1].GoalID, fixture.tasks[1].ID); handoff != nil {
 		t.Fatalf("task handoff after release = %+v, want none", handoff)
@@ -364,16 +431,16 @@ func TestTaskReleaseAllowsSessionBoundToProject(t *testing.T) {
 	)
 	registerLiveGoalClaimSession(t, fixture, holderSession)
 	registerLiveGoalClaimSession(t, fixture, callerSession)
-	if err := fixture.store.AssociateAgentSessionWithProject(context.Background(), callerSession, fixture.project.ID); err != nil {
+	if err := fixture.store.AssociateAgentSessionWithProject(context.Background(), daemonTestSessionID(t, fixture.store, callerSession), fixture.project.ID); err != nil {
 		t.Fatalf("associate caller session with project: %v", err)
 	}
-	if _, err := fixture.store.ClaimTask(context.Background(), fixture.tasks[1].ID, holderSession); err != nil {
+	if _, err := fixture.store.ClaimTask(context.Background(), fixture.tasks[1].ID, daemonTestSessionID(t, fixture.store, holderSession)); err != nil {
 		t.Fatalf("task.claim: %v", err)
 	}
 
-	params, err := json.Marshal(map[string]string{
+	params, err := json.Marshal(map[string]any{
 		"task_id":          fixture.tasks[1].ID,
-		"agent_session_id": callerSession,
+		"agent_session_id": daemonTestSessionID(t, fixture.store, callerSession),
 	})
 	if err != nil {
 		t.Fatalf("marshal task.release params: %v", err)
@@ -387,7 +454,7 @@ func TestTaskReleaseAllowsSessionBoundToProject(t *testing.T) {
 		t.Fatalf("unmarshal task.release result: %v", err)
 	}
 	if released.Status != domain.TaskTodo {
-		t.Fatalf("released task status = %s, want %s", released.Status, domain.TaskTodo)
+		t.Fatalf("released task status = %v, want %v", released.Status, domain.TaskTodo)
 	}
 	if handoff := openTaskHandoffForTest(t, fixture, fixture.tasks[1].GoalID, fixture.tasks[1].ID); handoff != nil {
 		t.Fatalf("task handoff after release = %+v, want none", handoff)
@@ -400,11 +467,11 @@ func TestTaskReleaseRejectsEmptyAgentSession(t *testing.T) {
 
 	const holderSession = "daemon-task-release-empty-holder-run"
 	registerLiveGoalClaimSession(t, fixture, holderSession)
-	if _, err := fixture.store.ClaimTask(context.Background(), fixture.tasks[1].ID, holderSession); err != nil {
+	if _, err := fixture.store.ClaimTask(context.Background(), fixture.tasks[1].ID, daemonTestSessionID(t, fixture.store, holderSession)); err != nil {
 		t.Fatalf("task.claim: %v", err)
 	}
 
-	params, err := json.Marshal(map[string]string{
+	params, err := json.Marshal(map[string]any{
 		"task_id":          fixture.tasks[1].ID,
 		"agent_session_id": "",
 	})
@@ -430,16 +497,16 @@ func TestTaskReleaseRejectsSessionBoundToAnotherProject(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create foreign project: %v", err)
 	}
-	if err := fixture.store.AssociateAgentSessionWithProject(context.Background(), foreignSession, foreignProject.ID); err != nil {
+	if err := fixture.store.AssociateAgentSessionWithProject(context.Background(), daemonTestSessionID(t, fixture.store, foreignSession), foreignProject.ID); err != nil {
 		t.Fatalf("associate foreign session with project: %v", err)
 	}
-	if _, err := fixture.store.ClaimTask(context.Background(), fixture.tasks[1].ID, holderSession); err != nil {
+	if _, err := fixture.store.ClaimTask(context.Background(), fixture.tasks[1].ID, daemonTestSessionID(t, fixture.store, holderSession)); err != nil {
 		t.Fatalf("task.claim: %v", err)
 	}
 
-	params, err := json.Marshal(map[string]string{
+	params, err := json.Marshal(map[string]any{
 		"task_id":          fixture.tasks[1].ID,
-		"agent_session_id": foreignSession,
+		"agent_session_id": daemonTestSessionID(t, fixture.store, foreignSession),
 	})
 	if err != nil {
 		t.Fatalf("marshal task.release params: %v", err)
@@ -464,9 +531,7 @@ func TestProjectClaimTakesOverDeadDaemonSession(t *testing.T) {
 			_ = deadProcess.Wait()
 		}
 	})
-	if err := fixture.store.RegisterAgentSession(context.Background(), "daemon-dead-run", deadProcess.Process.Pid); err != nil {
-		t.Fatalf("RegisterAgentSession(dead): %v", err)
-	}
+	_ = daemonTestSessionIDWithPID(t, fixture.store, "daemon-dead-run", deadProcess.Process.Pid)
 	if err := deadProcess.Process.Kill(); err != nil {
 		t.Fatalf("kill dead-session fixture: %v", err)
 	}
@@ -480,12 +545,13 @@ func TestProjectClaimTakesOverDeadDaemonSession(t *testing.T) {
 		t.Fatalf("take over dead project.claim: %v", err)
 	}
 
-	var claimedBy string
+	var claimedBy int64
 	if err := fixture.store.DB().QueryRowContext(context.Background(), `SELECT claimed_by FROM projects WHERE id = ?`, fixture.project.ID).Scan(&claimedBy); err != nil {
 		t.Fatalf("read project claim: %v", err)
 	}
-	if claimedBy != "daemon-live-run" {
-		t.Fatalf("project claimed_by = %q, want %q", claimedBy, "daemon-live-run")
+	wantClaimedBy := daemonTestSessionID(t, fixture.store, "daemon-live-run")
+	if claimedBy != wantClaimedBy {
+		t.Fatalf("project claimed_by = %v, want %v", claimedBy, wantClaimedBy)
 	}
 }
 
@@ -495,7 +561,7 @@ func TestContractN1GoalListOmitsContentField(t *testing.T) {
 
 	for _, goal := range listGoalPayloadsForContractTest(t, fixture) {
 		if _, ok := goal["content"]; ok {
-			t.Fatalf("goal.list returned content field: %s", goal["content"])
+			t.Fatalf("goal.list returned content field: %v", goal["content"])
 		}
 	}
 }
@@ -516,10 +582,10 @@ func TestContractN2GoalListUsesFirstNonEmptyLineAsTitle(t *testing.T) {
 		t.Fatalf("decode title: %v", err)
 	}
 	if title != content[:20] {
-		t.Fatalf("title = %q, want %q", title, content[:20])
+		t.Fatalf("title = %v, want %v", title, content[:20])
 	}
 	if strings.Contains(title, "…") {
-		t.Fatalf("short title unexpectedly contains ellipsis: %q", title)
+		t.Fatalf("short title unexpectedly contains ellipsis: %v", title)
 	}
 }
 
@@ -539,7 +605,7 @@ func TestContractN3GoalListTruncatesTitleAndCountsRunes(t *testing.T) {
 		t.Fatalf("decode title: %v", err)
 	}
 	if want := strings.Repeat("あ", 120) + "…"; title != want {
-		t.Fatalf("title rune truncation = %q, want %q", title, want)
+		t.Fatalf("title rune truncation = %v, want %v", title, want)
 	}
 	var contentChars int
 	if err := json.Unmarshal(goal["content_chars"], &contentChars); err != nil {
@@ -597,7 +663,7 @@ func TestContractN5GoalGetReturnsContentAndAllTaskStatuses(t *testing.T) {
 		t.Fatal("done-only fixture has no tasks")
 	}
 
-	params, err := json.Marshal(map[string]string{"goal_id": fixture.doneOnlyGoal.ID})
+	params, err := json.Marshal(map[string]any{"goal_id": fixture.doneOnlyGoal.ID})
 	if err != nil {
 		t.Fatalf("marshal goal.get params: %v", err)
 	}
@@ -610,7 +676,7 @@ func TestContractN5GoalGetReturnsContentAndAllTaskStatuses(t *testing.T) {
 			Content string `json:"content"`
 		} `json:"goal"`
 		Tasks []struct {
-			ID     string `json:"id"`
+			ID     int64  `json:"id"`
 			Status string `json:"status"`
 		} `json:"tasks"`
 	}
@@ -623,13 +689,13 @@ func TestContractN5GoalGetReturnsContentAndAllTaskStatuses(t *testing.T) {
 	if len(response.Tasks) != len(wantTasks) {
 		t.Fatalf("goal.get task count = %d, want %d", len(response.Tasks), len(wantTasks))
 	}
-	seen := make(map[string]string, len(response.Tasks))
+	seen := make(map[int64]any, len(response.Tasks))
 	for _, task := range response.Tasks {
 		seen[task.ID] = task.Status
 	}
 	for _, task := range wantTasks {
 		if got, ok := seen[task.ID]; !ok || got != string(task.Status) {
-			t.Errorf("goal.get task %q = (%q, %v), want status %q", task.ID, got, ok, task.Status)
+			t.Errorf("goal.get task %v = (%v, %v), want status %v", task.ID, got, ok, task.Status)
 		}
 	}
 }
@@ -638,7 +704,7 @@ func TestContractN6GoalGetMissingGoalReturnsError(t *testing.T) {
 	fixture := newGoalListFixture(t)
 	defer fixture.store.Close()
 
-	params, err := json.Marshal(map[string]string{"goal_id": "missing-goal"})
+	params, err := json.Marshal(map[string]any{"goal_id": "missing-goal"})
 	if err != nil {
 		t.Fatalf("marshal goal.get params: %v", err)
 	}
@@ -659,30 +725,30 @@ func TestTaskDeclareReturnsOnlyTasksDeclaredByThisCall(t *testing.T) {
 	}
 
 	var responseSize int
-	declaredIDs := make(map[string]struct{}, 3)
+	declaredIDs := make(map[int64]struct{}, 3)
 	for _, key := range []string{"declare-contract-key-1", "declare-contract-key-2", "declare-contract-key-3"} {
 		raw, response := dispatchTaskDeclareForContractTest(t, fixture, sessionID, key, "declared task", "declared description")
 		if len(response) != 1 {
-			t.Fatalf("task.declare %q returned %d tasks, want exactly 1; response bytes=%d: %s", key, len(response), len(raw), raw)
+			t.Fatalf("task.declare %v returned %d tasks, want exactly 1; response bytes=%d: %v", key, len(response), len(raw), raw)
 		}
 		if response[0].GoalID != fixture.emptyTaskGoal.ID {
-			t.Fatalf("task.declare %q returned goal_id %q, want %q", key, response[0].GoalID, fixture.emptyTaskGoal.ID)
+			t.Fatalf("task.declare %v returned goal_id %v, want %v", key, response[0].GoalID, fixture.emptyTaskGoal.ID)
 		}
 		if response[0].Title != "declared task" {
-			t.Fatalf("task.declare %q returned title %q, want declared task", key, response[0].Title)
+			t.Fatalf("task.declare %v returned title %v, want declared task", key, response[0].Title)
 		}
 		if _, duplicate := declaredIDs[response[0].ID]; duplicate {
-			t.Fatalf("task.declare %q returned a duplicate task id %q", key, response[0].ID)
+			t.Fatalf("task.declare %v returned a duplicate task id %v", key, response[0].ID)
 		}
 		declaredIDs[response[0].ID] = struct{}{}
 		if responseSize == 0 {
 			responseSize = len(raw)
 		} else if len(raw) != responseSize {
-			t.Fatalf("task.declare response grew across repeated declarations: first=%d current=%d; response=%s", responseSize, len(raw), raw)
+			t.Fatalf("task.declare response grew across repeated declarations: first=%d current=%d; response=%v", responseSize, len(raw), raw)
 		}
 	}
 
-	goalParams, err := json.Marshal(map[string]string{"goal_id": fixture.emptyTaskGoal.ID})
+	goalParams, err := json.Marshal(map[string]any{"goal_id": fixture.emptyTaskGoal.ID})
 	if err != nil {
 		t.Fatalf("marshal goal.get params: %v", err)
 	}
@@ -692,7 +758,7 @@ func TestTaskDeclareReturnsOnlyTasksDeclaredByThisCall(t *testing.T) {
 	}
 	var goalResponse struct {
 		Tasks []struct {
-			ID string `json:"id"`
+			ID int64 `json:"id"`
 		} `json:"tasks"`
 	}
 	if err := json.Unmarshal(raw, &goalResponse); err != nil {
@@ -748,18 +814,18 @@ func TestDecisionAskClaimableTasksKeepsIdentityFieldsWithoutDescription(t *testi
 	for _, goal := range goals {
 		tasks, err := fixture.store.ListTasks(context.Background(), goal.ID)
 		if err != nil {
-			t.Fatalf("ListTasks(%s): %v", goal.ID, err)
+			t.Fatalf("ListTasks(%v): %v", goal.ID, err)
 		}
 		handoffs, err := fixture.store.ListOpenTaskHandoffsForGoal(context.Background(), goal.ID)
 		if err != nil {
-			t.Fatalf("ListOpenTaskHandoffsForGoal(%s): %v", goal.ID, err)
+			t.Fatalf("ListOpenTaskHandoffsForGoal(%v): %v", goal.ID, err)
 		}
 		for _, task := range tasks {
 			if task.Status != domain.TaskTodo || handoffs[task.ID] != nil {
 				continue
 			}
-			if _, err := fixture.store.ClaimTask(context.Background(), task.ID, sessionID); err != nil {
-				t.Fatalf("ClaimTask(%s): %v", task.ID, err)
+			if _, err := fixture.store.ClaimTask(context.Background(), task.ID, daemonTestSessionID(t, fixture.store, sessionID)); err != nil {
+				t.Fatalf("ClaimTask(%v): %v", task.ID, err)
 			}
 		}
 	}
@@ -783,19 +849,20 @@ func TestDecisionAskClaimableTasksKeepsIdentityFieldsWithoutDescription(t *testi
 		t.Fatalf("decode decision.ask response: %v", err)
 	}
 	if len(response.ClaimableTasks) == 0 {
-		t.Fatalf("decision.ask dropped claimable_tasks; response: %s", raw)
+		t.Fatalf("decision.ask dropped claimable_tasks; response: %v", raw)
 	}
 	foundDeclared := false
 	for _, task := range response.ClaimableTasks {
 		for _, key := range []string{"id", "title", "goal_id"} {
 			if _, ok := task[key]; !ok {
-				t.Errorf("claimable_tasks item missing %q: %s", key, task)
+				t.Errorf("claimable_tasks item missing %v: %v", key, task)
 			}
 		}
 		if _, ok := task["description"]; ok {
-			t.Errorf("claimable_tasks item contains description: %s", task)
+			t.Errorf("claimable_tasks item contains description: %v", task)
 		}
-		var id, title, goalID string
+		var id, goalID int64
+		var title string
 		if err := json.Unmarshal(task["id"], &id); err != nil {
 			t.Errorf("decode claimable task id: %v", err)
 		}
@@ -810,7 +877,7 @@ func TestDecisionAskClaimableTasksKeepsIdentityFieldsWithoutDescription(t *testi
 		}
 	}
 	if !foundDeclared {
-		t.Fatalf("claimable_tasks omitted declared task %q: %s", declared[1].ID, raw)
+		t.Fatalf("claimable_tasks omitted declared task %v: %v", declared[1].ID, raw)
 	}
 }
 
@@ -822,7 +889,7 @@ func TestDecisionAskOmitsEmptyClaimableTasks(t *testing.T) {
 	registerLiveGoalClaimSession(t, fixture, sessionID)
 	decisionTasks, err := fixture.store.ListTasks(context.Background(), fixture.emptyTaskGoal.ID)
 	if err != nil {
-		t.Fatalf("ListTasks(%s): %v", fixture.emptyTaskGoal.ID, err)
+		t.Fatalf("ListTasks(%v): %v", fixture.emptyTaskGoal.ID, err)
 	}
 	if len(decisionTasks) == 0 {
 		decisionTasks, err = fixture.store.DeclareTasks(
@@ -830,7 +897,7 @@ func TestDecisionAskOmitsEmptyClaimableTasks(t *testing.T) {
 			[]string{"decision task"}, []string{"decision task"},
 		)
 		if err != nil {
-			t.Fatalf("DeclareTasks(%s): %v", fixture.emptyTaskGoal.ID, err)
+			t.Fatalf("DeclareTasks(%v): %v", fixture.emptyTaskGoal.ID, err)
 		}
 	}
 	decisionTaskID := decisionTasks[0].ID
@@ -841,18 +908,18 @@ func TestDecisionAskOmitsEmptyClaimableTasks(t *testing.T) {
 	for _, goal := range goals {
 		tasks, err := fixture.store.ListTasks(context.Background(), goal.ID)
 		if err != nil {
-			t.Fatalf("ListTasks(%s): %v", goal.ID, err)
+			t.Fatalf("ListTasks(%v): %v", goal.ID, err)
 		}
 		handoffs, err := fixture.store.ListOpenTaskHandoffsForGoal(context.Background(), goal.ID)
 		if err != nil {
-			t.Fatalf("ListOpenTaskHandoffsForGoal(%s): %v", goal.ID, err)
+			t.Fatalf("ListOpenTaskHandoffsForGoal(%v): %v", goal.ID, err)
 		}
 		for _, task := range tasks {
 			if task.Status != domain.TaskTodo || handoffs[task.ID] != nil {
 				continue
 			}
-			if _, err := fixture.store.ClaimTask(context.Background(), task.ID, sessionID); err != nil {
-				t.Fatalf("ClaimTask(%s): %v", task.ID, err)
+			if _, err := fixture.store.ClaimTask(context.Background(), task.ID, daemonTestSessionID(t, fixture.store, sessionID)); err != nil {
+				t.Fatalf("ClaimTask(%v): %v", task.ID, err)
 			}
 		}
 	}
@@ -863,13 +930,13 @@ func TestDecisionAskOmitsEmptyClaimableTasks(t *testing.T) {
 		t.Fatalf("decode decision.ask response: %v", err)
 	}
 	if _, ok := response["claimable_tasks"]; ok {
-		t.Fatalf("decision.ask changed empty claimable_tasks response: %s", raw)
+		t.Fatalf("decision.ask changed empty claimable_tasks response: %v", raw)
 	}
 }
 
 type taskDeclareResponseForContractTest struct {
-	ID          string `json:"id"`
-	GoalID      string `json:"goal_id"`
+	ID          int64  `json:"id"`
+	GoalID      int64  `json:"goal_id"`
 	Title       string `json:"title"`
 	Description string `json:"description"`
 }
@@ -883,30 +950,30 @@ func dispatchTaskDeclareForContractTest(t *testing.T, fixture goalListFixture, s
 		"titles":           []string{title},
 		"descriptions":     []string{description},
 		"files":            [][]string{{"internal/daemon/handler.go"}},
-		"agent_session_id": sessionID,
+		"agent_session_id": daemonTestSessionID(t, fixture.store, sessionID),
 	})
 	if err != nil {
 		t.Fatalf("marshal task.declare params: %v", err)
 	}
 	raw, err := fixture.daemon.dispatch(context.Background(), rpc.Request{Method: "task.declare", Params: params})
 	if err != nil {
-		t.Fatalf("task.declare %q: %v", idempotencyKey, err)
+		t.Fatalf("task.declare %v: %v", idempotencyKey, err)
 	}
 	var response []taskDeclareResponseForContractTest
 	if err := json.Unmarshal(raw, &response); err != nil {
-		t.Fatalf("decode task.declare %q response: %v; raw=%s", idempotencyKey, err, raw)
+		t.Fatalf("decode task.declare %v response: %v; raw=%v", idempotencyKey, err, raw)
 	}
 	return raw, response
 }
 
-func dispatchDecisionAskForContractTest(t *testing.T, fixture goalListFixture, sessionID, goalID, taskID string) []byte {
+func dispatchDecisionAskForContractTest(t *testing.T, fixture goalListFixture, sessionID string, goalID, taskID int64) []byte {
 	t.Helper()
 	params, err := json.Marshal(map[string]any{
 		"goal_id":                   goalID,
 		"task_id":                   taskID,
 		"question":                  "contract test decision",
 		"wait_ms":                   0,
-		"agent_session_id":          sessionID,
+		"agent_session_id":          daemonTestSessionID(t, fixture.store, sessionID),
 		"include_unapplied_answers": true,
 	})
 	if err != nil {
@@ -928,10 +995,10 @@ else
 fi
 `)
 	if err != nil {
-		t.Fatalf("session-start hook: %v\noutput: %s", err, output)
+		t.Fatalf("session-start hook: %v\noutput: %v", err, output)
 	}
 	if strings.Contains(output, "SECRET_GOAL_BODY") {
-		t.Fatalf("session-start output contains goal body: %q", output)
+		t.Fatalf("session-start output contains goal body: %v", output)
 	}
 }
 
@@ -939,13 +1006,13 @@ func TestContractN8GoalListHidesGoalsAwaitingCompletionApproval(t *testing.T) {
 	fixture := newGoalListFixture(t)
 	defer fixture.store.Close()
 
-	for _, goalID := range []string{fixture.emptyTaskGoal.ID, fixture.taskGoal.ID} {
+	for _, goalID := range []int64{fixture.emptyTaskGoal.ID, fixture.taskGoal.ID} {
 		askOpenDecisionForContractTest(t, fixture, goalID, domain.KindCompletion)
 	}
 	response := goalListResponseForContractTest(t, fixture)
-	for _, goalID := range []string{fixture.emptyTaskGoal.ID, fixture.taskGoal.ID} {
+	for _, goalID := range []int64{fixture.emptyTaskGoal.ID, fixture.taskGoal.ID} {
 		if goalPayloadExistsForContractTest(response.Goals, goalID) {
-			t.Errorf("goal.list returned goal %q while completion approval is open", goalID)
+			t.Errorf("goal.list returned goal %v while completion approval is open", goalID)
 		}
 	}
 }
@@ -963,7 +1030,7 @@ func TestContractN9GoalListOmitsRedundantGoalFields(t *testing.T) {
 	empty := findGoalPayloadForContractTest(t, response.Goals, fixture.emptyTaskGoal.ID)
 	for _, key := range []string{"derived_from_goal_id", "claimed_by"} {
 		if _, ok := empty[key]; ok {
-			t.Fatalf("goal.list returned empty %s field", key)
+			t.Fatalf("goal.list returned empty %v field", key)
 		}
 	}
 }
@@ -972,7 +1039,7 @@ func TestContractN10GoalListReturnsAwaitingApprovalCount(t *testing.T) {
 	fixture := newGoalListFixture(t)
 	defer fixture.store.Close()
 
-	for _, goalID := range []string{fixture.emptyTaskGoal.ID, fixture.taskGoal.ID} {
+	for _, goalID := range []int64{fixture.emptyTaskGoal.ID, fixture.taskGoal.ID} {
 		askOpenDecisionForContractTest(t, fixture, goalID, domain.KindCompletion)
 	}
 	response := goalListResponseForContractTest(t, fixture)
@@ -980,7 +1047,7 @@ func TestContractN10GoalListReturnsAwaitingApprovalCount(t *testing.T) {
 		t.Fatalf("awaiting_approval_count = %d, want 2", response.AwaitingApprovalCount)
 	}
 	if len(response.AwaitingApprovalGoalIDs) != 0 {
-		t.Fatalf("goal.list returned deprecated awaiting_approval_goal_ids: %s", response.AwaitingApprovalGoalIDs)
+		t.Fatalf("goal.list returned deprecated awaiting_approval_goal_ids: %v", response.AwaitingApprovalGoalIDs)
 	}
 }
 
@@ -998,17 +1065,17 @@ func TestContractN11GoalListTruncatesTaskDescription(t *testing.T) {
 	}
 	goal := findGoalPayloadForContractTest(t, goalListResponseForContractTest(t, fixture).Goals, fixture.emptyTaskGoal.ID)
 	var listed []struct {
-		ID          string `json:"id"`
+		ID          int64  `json:"id"`
 		Description string `json:"description"`
 	}
 	if err := json.Unmarshal(goal["tasks"], &listed); err != nil {
 		t.Fatalf("decode listed tasks: %v", err)
 	}
 	if len(listed) != 1 || listed[0].ID != tasks[0].ID {
-		t.Fatalf("goal.list tasks = %+v, want task %s", listed, tasks[0].ID)
+		t.Fatalf("goal.list tasks = %+v, want task %v", listed, tasks[0].ID)
 	}
 	if want := strings.Repeat("あ", 120) + "…"; listed[0].Description != want {
-		t.Fatalf("task description = %q, want %q", listed[0].Description, want)
+		t.Fatalf("task description = %v, want %v", listed[0].Description, want)
 	}
 }
 
@@ -1039,7 +1106,7 @@ func TestContractN12TaskUpdateTruncatesDescription(t *testing.T) {
 		params, err := json.Marshal(map[string]any{
 			"task_id":                   tasks[i].ID,
 			"status":                    "todo",
-			"agent_session_id":          sessionID,
+			"agent_session_id":          daemonTestSessionID(t, fixture.store, sessionID),
 			"include_unapplied_answers": includeUnappliedAnswers,
 		})
 		if err != nil {
@@ -1063,8 +1130,8 @@ func TestContractN12TaskUpdateTruncatesDescription(t *testing.T) {
 		}
 
 		var response struct {
-			ID          string `json:"id"`
-			GoalID      string `json:"goal_id"`
+			ID          int64  `json:"id"`
+			GoalID      int64  `json:"goal_id"`
 			Status      string `json:"status"`
 			UpdatedAt   string `json:"updated_at"`
 			Description string `json:"description"`
@@ -1079,13 +1146,13 @@ func TestContractN12TaskUpdateTruncatesDescription(t *testing.T) {
 			t.Errorf("task.update include_unapplied_answers=%t response still contains the full description", includeUnappliedAnswers)
 		}
 		if response.ID != tasks[i].ID {
-			t.Errorf("task.update include_unapplied_answers=%t id = %q, want %q", includeUnappliedAnswers, response.ID, tasks[i].ID)
+			t.Errorf("task.update include_unapplied_answers=%t id = %v, want %v", includeUnappliedAnswers, response.ID, tasks[i].ID)
 		}
 		if response.GoalID != fixture.emptyTaskGoal.ID {
-			t.Errorf("task.update include_unapplied_answers=%t goal_id = %q, want %q", includeUnappliedAnswers, response.GoalID, fixture.emptyTaskGoal.ID)
+			t.Errorf("task.update include_unapplied_answers=%t goal_id = %v, want %v", includeUnappliedAnswers, response.GoalID, fixture.emptyTaskGoal.ID)
 		}
 		if response.Status != "todo" {
-			t.Errorf("task.update include_unapplied_answers=%t status = %q, want todo", includeUnappliedAnswers, response.Status)
+			t.Errorf("task.update include_unapplied_answers=%t status = %v, want todo", includeUnappliedAnswers, response.Status)
 		}
 		if response.UpdatedAt == "" {
 			t.Errorf("task.update include_unapplied_answers=%t updated_at is empty", includeUnappliedAnswers)
@@ -1120,46 +1187,46 @@ func TestContractN13GoalGetResponseSizeBreakdown(t *testing.T) {
 		t.Fatalf("DeclareTasks returned %d tasks, want %d", len(tasks), len(titles))
 	}
 
-	measure := func(label, goalID string) {
+	measure := func(label string, goalID int64) {
 		t.Helper()
-		params, err := json.Marshal(map[string]string{"goal_id": goalID})
+		params, err := json.Marshal(map[string]any{"goal_id": goalID})
 		if err != nil {
 			t.Fatalf("marshal goal.get params: %v", err)
 		}
 		raw, err := fixture.daemon.dispatch(context.Background(), rpc.Request{Method: "goal.get", Params: params})
 		if err != nil {
-			t.Fatalf("goal.get %s: %v", label, err)
+			t.Fatalf("goal.get %v: %v", label, err)
 		}
 		var response struct {
 			Goal  json.RawMessage `json:"goal"`
 			Tasks json.RawMessage `json:"tasks"`
 		}
 		if err := json.Unmarshal(raw, &response); err != nil {
-			t.Fatalf("decode goal.get %s response: %v", label, err)
+			t.Fatalf("decode goal.get %v response: %v", label, err)
 		}
 		var returnedTasks []struct {
 			Description string `json:"description"`
 		}
 		if err := json.Unmarshal(response.Tasks, &returnedTasks); err != nil {
-			t.Fatalf("decode goal.get %s tasks: %v", label, err)
+			t.Fatalf("decode goal.get %v tasks: %v", label, err)
 		}
 		if len(returnedTasks) != len(titles) {
-			t.Fatalf("goal.get %s returned %d tasks, want %d", label, len(returnedTasks), len(titles))
+			t.Fatalf("goal.get %v returned %d tasks, want %d", label, len(returnedTasks), len(titles))
 		}
 		for i, task := range returnedTasks {
 			if task.Description != fullDescription {
-				t.Fatalf("goal.get %s task %d description rune count = %d, want %d", label, i, len([]rune(task.Description)), len([]rune(fullDescription)))
+				t.Fatalf("goal.get %v task %d description rune count = %d, want %d", label, i, len([]rune(task.Description)), len([]rune(fullDescription)))
 			}
 		}
 		goalOnly, err := json.Marshal(map[string]json.RawMessage{"goal": response.Goal})
 		if err != nil {
-			t.Fatalf("marshal goal.get %s goal-only payload: %v", label, err)
+			t.Fatalf("marshal goal.get %v goal-only payload: %v", label, err)
 		}
 		tasksOnly, err := json.Marshal(map[string]json.RawMessage{"tasks": response.Tasks})
 		if err != nil {
-			t.Fatalf("marshal goal.get %s tasks-only payload: %v", label, err)
+			t.Fatalf("marshal goal.get %v tasks-only payload: %v", label, err)
 		}
-		t.Logf("goal.get shape=%s len(raw)=%d len({\"goal\":...})=%d len({\"tasks\":[...]})=%d", label, len(raw), len(goalOnly), len(tasksOnly))
+		t.Logf("goal.get shape=%v len(raw)=%d len({\"goal\":...})=%d len({\"tasks\":[...]})=%d", label, len(raw), len(goalOnly), len(tasksOnly))
 	}
 
 	measure("short-content", fixture.emptyTaskGoal.ID)
@@ -1193,7 +1260,7 @@ func TestContractB13TaskClaimReturnsFullTaskDescription(t *testing.T) {
 	if len(tasks) != 1 {
 		t.Fatalf("DeclareTasks returned %d tasks, want 1", len(tasks))
 	}
-	params, err := json.Marshal(map[string]string{"task_id": tasks[0].ID, "agent_session_id": sessionID})
+	params, err := json.Marshal(map[string]any{"task_id": tasks[0].ID, "agent_session_id": daemonTestSessionID(t, fixture.store, sessionID)})
 	if err != nil {
 		t.Fatalf("marshal task.claim params: %v", err)
 	}
@@ -1238,7 +1305,7 @@ func TestContractB2GoalListKeepsOnlyTodoAndDoingTasks(t *testing.T) {
 		}
 		for _, task := range tasks {
 			if task.Status != "todo" && task.Status != "doing" {
-				t.Errorf("goal.list returned non-active task status %q", task.Status)
+				t.Errorf("goal.list returned non-active task status %v", task.Status)
 			}
 		}
 	}
@@ -1248,7 +1315,7 @@ func TestContractB3GoalListKeepsDecisionResponseKeys(t *testing.T) {
 	fixture := newGoalListFixture(t)
 	defer fixture.store.Close()
 
-	params, err := json.Marshal(map[string]string{"cwd": fixture.project.RootPath})
+	params, err := json.Marshal(map[string]any{"cwd": fixture.project.RootPath})
 	if err != nil {
 		t.Fatalf("marshal goal.list params: %v", err)
 	}
@@ -1262,7 +1329,7 @@ func TestContractB3GoalListKeepsDecisionResponseKeys(t *testing.T) {
 	}
 	for _, key := range []string{"answered_decisions", "orphaned_decisions"} {
 		if _, ok := response[key]; !ok {
-			t.Errorf("goal.list response missing %q", key)
+			t.Errorf("goal.list response missing %v", key)
 		}
 	}
 }
@@ -1271,7 +1338,7 @@ func TestContractB4GoalGetKeepsCompleteGoalData(t *testing.T) {
 	fixture := newGoalListFixture(t)
 	defer fixture.store.Close()
 
-	params, err := json.Marshal(map[string]string{"goal_id": fixture.doneOnlyGoal.ID})
+	params, err := json.Marshal(map[string]any{"goal_id": fixture.doneOnlyGoal.ID})
 	if err != nil {
 		t.Fatalf("marshal goal.get params: %v", err)
 	}
@@ -1305,7 +1372,7 @@ func TestContractB4GoalGetKeepsCompleteGoalData(t *testing.T) {
 	}
 	for key, wantValue := range want {
 		if got[key] == nil {
-			t.Errorf("goal.get missing goal field %q (want %v)", key, wantValue)
+			t.Errorf("goal.get missing goal field %v (want %v)", key, wantValue)
 		}
 	}
 }
@@ -1327,19 +1394,19 @@ case "$1 $2" in
 esac
 `)
 	if err != nil {
-		t.Fatalf("session-start hook: %v\noutput: %s", err, output)
+		t.Fatalf("session-start hook: %v\noutput: %v", err, output)
 	}
 	for _, line := range strings.Split(mcpshim.Instructions, "\n") {
 		if line == "" {
 			continue
 		}
 		if strings.Contains(output, line) {
-			t.Errorf("session-start output contains MCP instruction %q: %q", line, output)
+			t.Errorf("session-start output contains MCP instruction %v: %v", line, output)
 		}
 	}
 	const warning = "ATCT warning: daemon is listening at 127.0.0.1:8788; MCP endpoint is fixed at http://127.0.0.1:8787/mcp."
 	if !strings.Contains(output, warning) {
-		t.Fatalf("session-start output missing daemon address warning %q: %q", warning, output)
+		t.Fatalf("session-start output missing daemon address warning %v: %v", warning, output)
 	}
 
 	fixture := newMCPHTTPTestServer(t)
@@ -1356,7 +1423,7 @@ esac
 		t.Fatalf("MCP initialize instructions = %#v, want string", instructionsValue)
 	}
 	if instructions != mcpshim.Instructions {
-		t.Fatalf("MCP initialize instructions = %q, want shared instructions", instructions)
+		t.Fatalf("MCP initialize instructions = %v, want shared instructions", instructions)
 	}
 	for _, marker := range []string{
 		"This repository is registered with ATCT.",
@@ -1364,7 +1431,7 @@ esac
 		"See the `atct` skill for details.",
 	} {
 		if !strings.Contains(instructions, marker) {
-			t.Errorf("MCP initialize instructions missing fixed instruction %q", marker)
+			t.Errorf("MCP initialize instructions missing fixed instruction %v", marker)
 		}
 	}
 }
@@ -1379,11 +1446,11 @@ case "$1 $2" in
 esac
 `)
 	if err != nil {
-		t.Fatalf("session-start hook: %v\noutput: %s", err, output)
+		t.Fatalf("session-start hook: %v\noutput: %v", err, output)
 	}
-	t.Logf("unregistered repository hook output: %q", output)
+	t.Logf("unregistered repository hook output: %v", output)
 	if output != "" {
-		t.Fatalf("unregistered repository produced hook output: %q", output)
+		t.Fatalf("unregistered repository produced hook output: %v", output)
 	}
 }
 
@@ -1391,13 +1458,13 @@ func TestContractB8GoalListKeepsGoalsWithOpenDecision(t *testing.T) {
 	fixture := newGoalListFixture(t)
 	defer fixture.store.Close()
 
-	for _, goalID := range []string{fixture.active[0].ID, fixture.active[1].ID} {
+	for _, goalID := range []int64{fixture.active[0].ID, fixture.active[1].ID} {
 		askOpenDecisionForContractTest(t, fixture, goalID, domain.KindDecision)
 	}
 	goals := goalListResponseForContractTest(t, fixture).Goals
-	for _, goalID := range []string{fixture.active[0].ID, fixture.active[1].ID} {
+	for _, goalID := range []int64{fixture.active[0].ID, fixture.active[1].ID} {
 		if !goalPayloadExistsForContractTest(goals, goalID) {
-			t.Errorf("goal.list omitted goal %q with an open decision", goalID)
+			t.Errorf("goal.list omitted goal %v with an open decision", goalID)
 		}
 	}
 }
@@ -1417,27 +1484,26 @@ func TestContractB10GoalListKeepsNonEmptyOptionalFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGoal derived: %v", err)
 	}
-	if err := fixture.store.RegisterAgentSession(context.Background(), "contract-claimed", os.Getpid()); err != nil {
-		t.Fatalf("RegisterAgentSession contract-claimed: %v", err)
-	}
-	if _, err := fixture.store.ClaimGoal(context.Background(), fixture.emptyTaskGoal.ID, "contract-claimed"); err != nil {
+	contractClaimedSessionID := daemonTestSessionID(t, fixture.store, "contract-claimed")
+	if _, err := fixture.store.ClaimGoal(context.Background(), fixture.emptyTaskGoal.ID, contractClaimedSessionID); err != nil {
 		t.Fatalf("ClaimGoal: %v", err)
 	}
 	goals := goalListResponseForContractTest(t, fixture).Goals
 	derivedPayload := findGoalPayloadForContractTest(t, goals, derived.ID)
 	claimedPayload := findGoalPayloadForContractTest(t, goals, fixture.emptyTaskGoal.ID)
-	var gotDerived, gotClaimed string
+	var gotDerived int64
+	var gotClaimed int64
 	if err := json.Unmarshal(derivedPayload["derived_from_goal_id"], &gotDerived); err != nil {
 		t.Fatalf("decode derived_from_goal_id: %v", err)
 	}
 	if gotDerived != fixture.emptyTaskGoal.ID {
-		t.Fatalf("derived_from_goal_id = %q, want %q", gotDerived, fixture.emptyTaskGoal.ID)
+		t.Fatalf("derived_from_goal_id = %v, want %v", gotDerived, fixture.emptyTaskGoal.ID)
 	}
 	if err := json.Unmarshal(claimedPayload["claimed_by"], &gotClaimed); err != nil {
 		t.Fatalf("decode claimed_by: %v", err)
 	}
-	if gotClaimed != "contract-claimed" {
-		t.Fatalf("claimed_by = %q, want contract-claimed", gotClaimed)
+	if gotClaimed != contractClaimedSessionID {
+		t.Fatalf("claimed_by = %v, want %v", gotClaimed, contractClaimedSessionID)
 	}
 }
 
@@ -1452,17 +1518,17 @@ func TestContractB11GoalListKeepsShortTaskDescription(t *testing.T) {
 	}
 	goal := findGoalPayloadForContractTest(t, goalListResponseForContractTest(t, fixture).Goals, fixture.emptyTaskGoal.ID)
 	var listed []struct {
-		ID          string `json:"id"`
+		ID          int64  `json:"id"`
 		Description string `json:"description"`
 	}
 	if err := json.Unmarshal(goal["tasks"], &listed); err != nil {
 		t.Fatalf("decode listed tasks: %v", err)
 	}
 	if len(listed) != 1 || listed[0].ID != tasks[0].ID {
-		t.Fatalf("goal.list tasks = %+v, want task %s", listed, tasks[0].ID)
+		t.Fatalf("goal.list tasks = %+v, want task %v", listed, tasks[0].ID)
 	}
 	if listed[0].Description != "first line" {
-		t.Fatalf("short task description = %q, want first line without ellipsis", listed[0].Description)
+		t.Fatalf("short task description = %v, want first line without ellipsis", listed[0].Description)
 	}
 }
 
@@ -1475,7 +1541,7 @@ func TestContractB12GoalGetReturnsFullTaskDescription(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DeclareTasks: %v", err)
 	}
-	params, err := json.Marshal(map[string]string{"goal_id": fixture.emptyTaskGoal.ID})
+	params, err := json.Marshal(map[string]any{"goal_id": fixture.emptyTaskGoal.ID})
 	if err != nil {
 		t.Fatalf("marshal goal.get params: %v", err)
 	}
@@ -1485,7 +1551,7 @@ func TestContractB12GoalGetReturnsFullTaskDescription(t *testing.T) {
 	}
 	var response struct {
 		Tasks []struct {
-			ID          string `json:"id"`
+			ID          int64  `json:"id"`
 			Description string `json:"description"`
 		} `json:"tasks"`
 	}
@@ -1500,7 +1566,7 @@ func TestContractB12GoalGetReturnsFullTaskDescription(t *testing.T) {
 			return
 		}
 	}
-	t.Fatalf("goal.get did not return task %q", tasks[0].ID)
+	t.Fatalf("goal.get did not return task %v", tasks[0].ID)
 }
 
 type contractGoalListResponse struct {
@@ -1511,7 +1577,7 @@ type contractGoalListResponse struct {
 
 func goalListResponseForContractTest(t *testing.T, fixture goalListFixture) contractGoalListResponse {
 	t.Helper()
-	params, err := json.Marshal(map[string]string{"cwd": fixture.project.RootPath})
+	params, err := json.Marshal(map[string]any{"cwd": fixture.project.RootPath})
 	if err != nil {
 		t.Fatalf("marshal goal.list params: %v", err)
 	}
@@ -1531,10 +1597,10 @@ func listGoalPayloadsForContractTest(t *testing.T, fixture goalListFixture) []ma
 	return goalListResponseForContractTest(t, fixture).Goals
 }
 
-func findGoalPayloadForContractTest(t *testing.T, goals []map[string]json.RawMessage, id string) map[string]json.RawMessage {
+func findGoalPayloadForContractTest(t *testing.T, goals []map[string]json.RawMessage, id int64) map[string]json.RawMessage {
 	t.Helper()
 	for _, goal := range goals {
-		var gotID string
+		var gotID int64
 		if err := json.Unmarshal(goal["id"], &gotID); err != nil {
 			t.Fatalf("decode goal id: %v", err)
 		}
@@ -1542,13 +1608,13 @@ func findGoalPayloadForContractTest(t *testing.T, goals []map[string]json.RawMes
 			return goal
 		}
 	}
-	t.Fatalf("goal.list did not return goal %q", id)
+	t.Fatalf("goal.list did not return goal %v", id)
 	return nil
 }
 
-func goalPayloadExistsForContractTest(goals []map[string]json.RawMessage, id string) bool {
+func goalPayloadExistsForContractTest(goals []map[string]json.RawMessage, id int64) bool {
 	for _, goal := range goals {
-		var gotID string
+		var gotID int64
 		if err := json.Unmarshal(goal["id"], &gotID); err != nil {
 			continue
 		}
@@ -1559,7 +1625,7 @@ func goalPayloadExistsForContractTest(goals []map[string]json.RawMessage, id str
 	return false
 }
 
-func askOpenDecisionForContractTest(t *testing.T, fixture goalListFixture, goalID string, kind domain.DecisionKind) {
+func askOpenDecisionForContractTest(t *testing.T, fixture goalListFixture, goalID int64, kind domain.DecisionKind) {
 	t.Helper()
 	input := store.AskInput{
 		GoalID:   goalID,
@@ -1569,12 +1635,12 @@ func askOpenDecisionForContractTest(t *testing.T, fixture goalListFixture, goalI
 	if kind == domain.KindDecision {
 		tasks, err := fixture.store.ListTasks(context.Background(), goalID)
 		if err != nil {
-			t.Fatalf("ListTasks(%s): %v", goalID, err)
+			t.Fatalf("ListTasks(%v): %v", goalID, err)
 		}
 		if len(tasks) == 0 {
 			declared, err := fixture.store.DeclareTasks(context.Background(), goalID, "contract-test", "decision-contract", []string{"decision task"}, []string{"decision task"})
 			if err != nil {
-				t.Fatalf("DeclareTasks(%s): %v", goalID, err)
+				t.Fatalf("DeclareTasks(%v): %v", goalID, err)
 			}
 			tasks = declared
 		}
@@ -1582,7 +1648,7 @@ func askOpenDecisionForContractTest(t *testing.T, fixture goalListFixture, goalI
 	}
 	_, err := fixture.store.AskDecision(context.Background(), input)
 	if err != nil {
-		t.Fatalf("AskDecision(%s): %v", kind, err)
+		t.Fatalf("AskDecision(%v): %v", kind, err)
 	}
 }
 
@@ -1622,44 +1688,42 @@ func runSessionStartHookForContractTest(t *testing.T, atctScript string) (string
 func TestHandoffSequenceRequiresReceiveBeforeRole(t *testing.T) {
 	ctx := context.Background()
 
-	dispatch := func(t *testing.T, fixture goalListFixture, method string, params map[string]string) (json.RawMessage, error) {
+	dispatch := func(t *testing.T, fixture goalListFixture, method string, params map[string]any) (json.RawMessage, error) {
 		t.Helper()
 		rawParams, err := json.Marshal(params)
 		if err != nil {
-			t.Fatalf("marshal %s params: %v", method, err)
+			t.Fatalf("marshal %v params: %v", method, err)
 		}
 		return fixture.daemon.dispatch(ctx, rpc.Request{Method: method, Params: rawParams})
 	}
 	register := func(t *testing.T, fixture goalListFixture, sessionIDs ...string) {
 		t.Helper()
 		for _, sessionID := range sessionIDs {
-			if err := fixture.store.RegisterAgentSession(ctx, sessionID, os.Getpid()); err != nil {
-				t.Fatalf("RegisterAgentSession %s: %v", sessionID, err)
-			}
+			_ = daemonTestSessionID(t, fixture.store, sessionID)
 		}
 	}
 	role := func(t *testing.T, fixture goalListFixture, sessionID string) string {
 		t.Helper()
-		raw, err := dispatch(t, fixture, "session.role", map[string]string{"agent_session_id": sessionID})
+		raw, err := dispatch(t, fixture, "session.role", map[string]any{"agent_session_id": daemonTestSessionID(t, fixture.store, sessionID)})
 		if err != nil {
-			t.Fatalf("session.role %s: %v", sessionID, err)
+			t.Fatalf("session.role %v: %v", sessionID, err)
 		}
 		var response struct {
 			Role string `json:"role"`
 		}
 		if err := json.Unmarshal(raw, &response); err != nil {
-			t.Fatalf("decode session.role %s response %q: %v", sessionID, raw, err)
+			t.Fatalf("decode session.role %v response %v: %v", sessionID, raw, err)
 		}
 		return response.Role
 	}
-	expectError := func(t *testing.T, fixture goalListFixture, method string, params map[string]string, wantMessage string) {
+	expectError := func(t *testing.T, fixture goalListFixture, method string, params map[string]any, wantMessage string) {
 		t.Helper()
 		_, err := dispatch(t, fixture, method, params)
 		if err == nil {
-			t.Fatalf("%s unexpectedly succeeded", method)
+			t.Fatalf("%v unexpectedly succeeded", method)
 		}
 		if !strings.Contains(err.Error(), wantMessage) {
-			t.Fatalf("%s error = %q, want message containing %q", method, err, wantMessage)
+			t.Fatalf("%v error = %v, want message containing %v", method, err, wantMessage)
 		}
 	}
 
@@ -1672,50 +1736,50 @@ func TestHandoffSequenceRequiresReceiveBeforeRole(t *testing.T) {
 		executor := "handoff-sequence-c"
 		register(t, fixture, commander, subcommander, executor)
 
-		if _, err := dispatch(t, fixture, "project.claim", map[string]string{
+		if _, err := dispatch(t, fixture, "project.claim", map[string]any{
 			"project_id":       fixture.project.ID,
-			"agent_session_id": commander,
+			"agent_session_id": daemonTestSessionID(t, fixture.store, commander),
 		}); err != nil {
 			t.Fatalf("project.claim: %v", err)
 		}
 		if got := role(t, fixture, commander); got != "commander" {
-			t.Fatalf("commander role = %q, want %q", got, "commander")
+			t.Fatalf("commander role = %v, want %v", got, "commander")
 		}
 
-		if _, err := dispatch(t, fixture, "goal.handoff.request", map[string]string{
+		if _, err := dispatch(t, fixture, "goal.handoff.request", map[string]any{
 			"handoff_id":     "handoff-sequence-goal",
 			"goal_id":        fixture.taskGoal.ID,
-			"requested_by":   commander,
+			"requested_by":   daemonTestSessionID(t, fixture.store, commander),
 			"request_report": "delegate goal",
 		}); err != nil {
 			t.Fatalf("goal.handoff.request: %v", err)
 		}
-		if _, err := dispatch(t, fixture, "goal.handoff.receive", map[string]string{
+		if _, err := dispatch(t, fixture, "goal.handoff.receive", map[string]any{
 			"goal_id":     fixture.taskGoal.ID,
-			"received_by": subcommander,
+			"received_by": daemonTestSessionID(t, fixture.store, subcommander),
 		}); err != nil {
 			t.Fatalf("goal.handoff.receive: %v", err)
 		}
 		if got := role(t, fixture, subcommander); got != "subcommander" {
-			t.Fatalf("subcommander role = %q, want %q", got, "subcommander")
+			t.Fatalf("subcommander role = %v, want %v", got, "subcommander")
 		}
 
-		if _, err := dispatch(t, fixture, "handoff.request", map[string]string{
+		if _, err := dispatch(t, fixture, "handoff.request", map[string]any{
 			"handoff_id":     "handoff-sequence-task",
 			"task_id":        fixture.tasks[1].ID,
-			"requested_by":   subcommander,
+			"requested_by":   daemonTestSessionID(t, fixture.store, subcommander),
 			"request_report": "delegate task",
 		}); err != nil {
 			t.Fatalf("handoff.request: %v", err)
 		}
-		if _, err := dispatch(t, fixture, "handoff.receive", map[string]string{
+		if _, err := dispatch(t, fixture, "handoff.receive", map[string]any{
 			"task_id":     fixture.tasks[1].ID,
-			"received_by": executor,
+			"received_by": daemonTestSessionID(t, fixture.store, executor),
 		}); err != nil {
 			t.Fatalf("handoff.receive: %v", err)
 		}
 		if got := role(t, fixture, executor); got != "executor" {
-			t.Fatalf("executor role = %q, want %q", got, "executor")
+			t.Fatalf("executor role = %v, want %v", got, "executor")
 		}
 	})
 
@@ -1725,22 +1789,22 @@ func TestHandoffSequenceRequiresReceiveBeforeRole(t *testing.T) {
 
 		commander := "handoff-sequence-n1-a"
 		register(t, fixture, commander)
-		if _, err := dispatch(t, fixture, "project.claim", map[string]string{
+		if _, err := dispatch(t, fixture, "project.claim", map[string]any{
 			"project_id":       fixture.project.ID,
-			"agent_session_id": commander,
+			"agent_session_id": daemonTestSessionID(t, fixture.store, commander),
 		}); err != nil {
 			t.Fatalf("project.claim: %v", err)
 		}
-		if _, err := dispatch(t, fixture, "goal.claim", map[string]string{
+		if _, err := dispatch(t, fixture, "goal.claim", map[string]any{
 			"goal_id":          fixture.taskGoal.ID,
-			"agent_session_id": commander,
+			"agent_session_id": daemonTestSessionID(t, fixture.store, commander),
 		}); err != nil {
 			t.Fatalf("goal.claim: %v", err)
 		}
-		expectError(t, fixture, "goal.handoff.request", map[string]string{
+		expectError(t, fixture, "goal.handoff.request", map[string]any{
 			"handoff_id":   "handoff-sequence-n1-goal",
 			"goal_id":      fixture.taskGoal.ID,
-			"requested_by": commander,
+			"requested_by": daemonTestSessionID(t, fixture.store, commander),
 		}, "already open")
 	})
 
@@ -1751,21 +1815,21 @@ func TestHandoffSequenceRequiresReceiveBeforeRole(t *testing.T) {
 		commander := "handoff-sequence-n2-a"
 		subcommander := "handoff-sequence-n2-b"
 		register(t, fixture, commander, subcommander)
-		if _, err := dispatch(t, fixture, "project.claim", map[string]string{
+		if _, err := dispatch(t, fixture, "project.claim", map[string]any{
 			"project_id":       fixture.project.ID,
-			"agent_session_id": commander,
+			"agent_session_id": daemonTestSessionID(t, fixture.store, commander),
 		}); err != nil {
 			t.Fatalf("project.claim: %v", err)
 		}
-		if _, err := dispatch(t, fixture, "goal.handoff.request", map[string]string{
+		if _, err := dispatch(t, fixture, "goal.handoff.request", map[string]any{
 			"handoff_id":   "handoff-sequence-n2-goal",
 			"goal_id":      fixture.taskGoal.ID,
-			"requested_by": commander,
+			"requested_by": daemonTestSessionID(t, fixture.store, commander),
 		}); err != nil {
 			t.Fatalf("goal.handoff.request: %v", err)
 		}
 		if got := role(t, fixture, subcommander); got != "executor" {
-			t.Fatalf("pre-receive role = %q, want %q", got, "executor")
+			t.Fatalf("pre-receive role = %v, want %v", got, "executor")
 		}
 	})
 
@@ -1776,16 +1840,16 @@ func TestHandoffSequenceRequiresReceiveBeforeRole(t *testing.T) {
 		commander := "handoff-sequence-n3-a"
 		sessionID := "handoff-sequence-n3-d"
 		register(t, fixture, commander, sessionID)
-		if _, err := dispatch(t, fixture, "project.claim", map[string]string{
+		if _, err := dispatch(t, fixture, "project.claim", map[string]any{
 			"project_id":       fixture.project.ID,
-			"agent_session_id": commander,
+			"agent_session_id": daemonTestSessionID(t, fixture.store, commander),
 		}); err != nil {
 			t.Fatalf("project.claim: %v", err)
 		}
-		expectError(t, fixture, "goal.handoff.request", map[string]string{
+		expectError(t, fixture, "goal.handoff.request", map[string]any{
 			"handoff_id":   "handoff-sequence-n3-goal",
 			"goal_id":      fixture.taskGoal.ID,
-			"requested_by": sessionID,
+			"requested_by": daemonTestSessionID(t, fixture.store, sessionID),
 		}, "caller does not hold a live claim on project")
 	})
 
@@ -1795,10 +1859,10 @@ func TestHandoffSequenceRequiresReceiveBeforeRole(t *testing.T) {
 
 		sessionID := "handoff-sequence-n4-d"
 		register(t, fixture, sessionID)
-		expectError(t, fixture, "handoff.request", map[string]string{
+		expectError(t, fixture, "handoff.request", map[string]any{
 			"handoff_id":   "handoff-sequence-n4-task",
 			"task_id":      fixture.tasks[1].ID,
-			"requested_by": sessionID,
+			"requested_by": daemonTestSessionID(t, fixture.store, sessionID),
 		}, "caller does not hold an open received handoff for goal")
 	})
 }

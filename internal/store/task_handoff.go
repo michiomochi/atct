@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/michiomochi/atct/internal/store/sqlcgen"
@@ -23,9 +22,9 @@ var (
 // independent so a partial handoff remains observable.
 type TaskHandoff struct {
 	ID                string
-	TaskID            string
-	RequestedBy       string
-	ReceivedBy        string
+	TaskID            int64
+	RequestedBy       int64
+	ReceivedBy        int64
 	RequestReport     string
 	CompleteReport    string
 	RequestedAt       *time.Time
@@ -37,8 +36,8 @@ func taskHandoffFromRow(row sqlcgen.TaskHandoff) (TaskHandoff, error) {
 	handoff := TaskHandoff{
 		ID:             row.ID,
 		TaskID:         row.TaskID,
-		RequestedBy:    row.RequestedBy.String,
-		ReceivedBy:     row.ReceivedBy.String,
+		RequestedBy:    nullableAgentSessionID(row.RequestedBy),
+		ReceivedBy:     nullableAgentSessionID(row.ReceivedBy),
 		RequestReport:  row.RequestReport.String,
 		CompleteReport: row.CompleteReport.String,
 	}
@@ -55,6 +54,13 @@ func taskHandoffFromRow(row sqlcgen.TaskHandoff) (TaskHandoff, error) {
 	return handoff, nil
 }
 
+func nullableAgentSessionID(value sql.NullInt64) int64 {
+	if !value.Valid {
+		return 0
+	}
+	return value.Int64
+}
+
 func parseTaskHandoffTime(column string, value sql.NullString) (*time.Time, error) {
 	if !value.Valid || value.String == "" {
 		return nil, nil
@@ -66,7 +72,7 @@ func parseTaskHandoffTime(column string, value sql.NullString) (*time.Time, erro
 	return &parsed, nil
 }
 
-func (s *Store) ensureTaskHandoffTask(ctx context.Context, handoffID, taskID string) error {
+func (s *Store) ensureTaskHandoffTask(ctx context.Context, handoffID string, taskID int64) error {
 	existingTaskID, err := sqlcgen.New(s.db).GetTaskHandoffTaskID(ctx, handoffID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("%w: %q", ErrTaskHandoffNotFound, handoffID)
@@ -75,12 +81,12 @@ func (s *Store) ensureTaskHandoffTask(ctx context.Context, handoffID, taskID str
 		return fmt.Errorf("find task handoff %q: %w", handoffID, err)
 	}
 	if existingTaskID != taskID {
-		return fmt.Errorf("%w: %q belongs to task %q, not %q", ErrTaskHandoffTaskMismatch, handoffID, existingTaskID, taskID)
+		return fmt.Errorf("%w: %q belongs to task %d, not %d", ErrTaskHandoffTaskMismatch, handoffID, existingTaskID, taskID)
 	}
 	return nil
 }
 
-func (s *Store) ensureTaskHandoffTaskForRequest(ctx context.Context, handoffID, taskID string) error {
+func (s *Store) ensureTaskHandoffTaskForRequest(ctx context.Context, handoffID string, taskID int64) error {
 	err := s.ensureTaskHandoffTask(ctx, handoffID, taskID)
 	if errors.Is(err, ErrTaskHandoffNotFound) {
 		return nil
@@ -88,22 +94,21 @@ func (s *Store) ensureTaskHandoffTaskForRequest(ctx context.Context, handoffID, 
 	return err
 }
 
-func (s *Store) requireGoalHandoffForTask(ctx context.Context, taskID, requestedBy string) error {
+func (s *Store) requireGoalHandoffForTask(ctx context.Context, taskID int64, requestedBy int64) error {
 	goalID, err := sqlcgen.New(s.db).GetTaskGoalID(ctx, taskID)
 	if err != nil {
-		return fmt.Errorf("find goal for task %q: %w", taskID, err)
+		return fmt.Errorf("find goal for task %d: %w", taskID, err)
 	}
 
 	goalHandoff, err := s.openGoalHandoff(ctx, goalID)
 	if err != nil {
-		return fmt.Errorf("find live goal handoff for task %q: %w", taskID, err)
+		return fmt.Errorf("find live goal handoff for task %d: %w", taskID, err)
 	}
-	requestedBy = strings.TrimSpace(requestedBy)
-	if goalHandoff != nil && strings.TrimSpace(goalHandoff.ReceivedBy) == requestedBy && claimIsRunning(ctx, s, requestedBy) {
+	if goalHandoff != nil && goalHandoff.ReceivedBy == requestedBy && requestedBy != 0 && claimIsRunning(ctx, s, requestedBy) {
 		return nil
 	}
 
-	return fmt.Errorf("%w: %s", ErrTaskHandoffGoalNotHeld, goalID)
+	return fmt.Errorf("%w: %d", ErrTaskHandoffGoalNotHeld, goalID)
 }
 
 // reclaimOpenTaskHandoff enforces the one-open-handoff rule before inserting a
@@ -111,7 +116,7 @@ func (s *Store) requireGoalHandoffForTask(ctx context.Context, taskID, requested
 // receipt-only row. For a different ID, only a handoff whose owner is no longer
 // running may be reclaimed; an unknown owner is treated as active because its
 // liveness cannot be disproved.
-func (s *Store) reclaimOpenTaskHandoff(ctx context.Context, handoffID, taskID string) error {
+func (s *Store) reclaimOpenTaskHandoff(ctx context.Context, handoffID string, taskID int64) error {
 	handoffs, err := s.ListTaskHandoffs(ctx, taskID)
 	if err != nil {
 		return fmt.Errorf("list open task handoffs: %w", err)
@@ -123,7 +128,7 @@ func (s *Store) reclaimOpenTaskHandoff(ctx context.Context, handoffID, taskID st
 			continue
 		}
 		if open != nil {
-			return fmt.Errorf("%w: task %q has multiple open handoffs", ErrTaskHandoffAlreadyOpen, taskID)
+			return fmt.Errorf("%w: task %d has multiple open handoffs", ErrTaskHandoffAlreadyOpen, taskID)
 		}
 		open = &handoffs[i]
 	}
@@ -132,13 +137,13 @@ func (s *Store) reclaimOpenTaskHandoff(ctx context.Context, handoffID, taskID st
 	}
 
 	ownerID := open.ReceivedBy
-	if ownerID == "" {
+	if ownerID == 0 {
 		// An unreceived handoff has no receiver to inspect, so the requester
 		// is the only available liveness signal.
 		ownerID = open.RequestedBy
 	}
-	if ownerID == "" || !claimIsDefinitelyDead(ctx, s, ownerID) {
-		return fmt.Errorf("%w: task %q has a live handoff owner", ErrTaskHandoffAlreadyOpen, taskID)
+	if ownerID == 0 || !claimIsDefinitelyDead(ctx, s, ownerID) {
+		return fmt.Errorf("%w: task %d has a live handoff owner", ErrTaskHandoffAlreadyOpen, taskID)
 	}
 	if _, err := s.CompleteTaskHandoff(ctx, open.ID, taskID, "セッションが停止した"); err != nil {
 		return fmt.Errorf("reclaim task handoff %q: %w", open.ID, err)
@@ -150,7 +155,7 @@ func (s *Store) reclaimOpenTaskHandoff(ctx context.Context, handoffID, taskID st
 // Request-only handoffs are not claims and therefore do not authorize task
 // release. The partial unique index should make multiple open rows
 // impossible, but keep the ambiguity check at this boundary as well.
-func (s *Store) openTaskHandoff(ctx context.Context, taskID string) (*TaskHandoff, error) {
+func (s *Store) openTaskHandoff(ctx context.Context, taskID int64) (*TaskHandoff, error) {
 	handoffs, err := s.ListTaskHandoffs(ctx, taskID)
 	if err != nil {
 		return nil, err
@@ -162,7 +167,7 @@ func (s *Store) openTaskHandoff(ctx context.Context, taskID string) (*TaskHandof
 			continue
 		}
 		if open != nil {
-			return nil, fmt.Errorf("%w: task %q has multiple open handoffs", ErrTaskHandoffAmbiguous, taskID)
+			return nil, fmt.Errorf("%w: task %d has multiple open handoffs", ErrTaskHandoffAmbiguous, taskID)
 		}
 		candidate := handoffs[i]
 		open = &candidate
@@ -172,15 +177,15 @@ func (s *Store) openTaskHandoff(ctx context.Context, taskID string) (*TaskHandof
 
 // RequestTaskHandoff records the request side of a handoff. It only writes
 // request columns; a receipt or completion report is a separate call.
-func (s *Store) RequestTaskHandoff(ctx context.Context, handoffID, taskID, requestedBy string, requestReport string) (TaskHandoff, error) {
+func (s *Store) RequestTaskHandoff(ctx context.Context, handoffID string, taskID int64, requestedBy int64, requestReport string) (TaskHandoff, error) {
 	return s.requestTaskHandoff(ctx, handoffID, taskID, requestedBy, requestReport, true)
 }
 
-func (s *Store) requestTaskHandoffForClaim(ctx context.Context, handoffID, taskID, requestedBy string) (TaskHandoff, error) {
+func (s *Store) requestTaskHandoffForClaim(ctx context.Context, handoffID string, taskID int64, requestedBy int64) (TaskHandoff, error) {
 	return s.requestTaskHandoff(ctx, handoffID, taskID, requestedBy, "", false)
 }
 
-func (s *Store) requestTaskHandoff(ctx context.Context, handoffID, taskID, requestedBy, requestReport string, requireLiveClaim bool) (TaskHandoff, error) {
+func (s *Store) requestTaskHandoff(ctx context.Context, handoffID string, taskID int64, requestedBy int64, requestReport string, requireLiveClaim bool) (TaskHandoff, error) {
 	if err := s.ensureTaskHandoffTaskForRequest(ctx, handoffID, taskID); err != nil {
 		return TaskHandoff{}, err
 	}
@@ -196,7 +201,7 @@ func (s *Store) requestTaskHandoff(ctx context.Context, handoffID, taskID, reque
 	if err := sqlcgen.New(s.db).RequestTaskHandoff(ctx, sqlcgen.RequestTaskHandoffParams{
 		ID:            handoffID,
 		TaskID:        taskID,
-		RequestedBy:   sql.NullString{String: requestedBy, Valid: true},
+		RequestedBy:   sql.NullInt64{Int64: requestedBy, Valid: requestedBy != 0},
 		RequestedAt:   sql.NullString{String: now, Valid: true},
 		RequestReport: sql.NullString{String: requestReport, Valid: requestReport != ""},
 	}); err != nil {
@@ -206,7 +211,7 @@ func (s *Store) requestTaskHandoff(ctx context.Context, handoffID, taskID, reque
 }
 
 // ReceiveTaskHandoff records the receipt side of a requested handoff.
-func (s *Store) ReceiveTaskHandoff(ctx context.Context, handoffID, taskID, receivedBy string) (TaskHandoff, error) {
+func (s *Store) ReceiveTaskHandoff(ctx context.Context, handoffID string, taskID int64, receivedBy int64) (TaskHandoff, error) {
 	if err := s.ensureTaskHandoffTask(ctx, handoffID, taskID); err != nil {
 		return TaskHandoff{}, err
 	}
@@ -214,7 +219,7 @@ func (s *Store) ReceiveTaskHandoff(ctx context.Context, handoffID, taskID, recei
 	result, err := sqlcgen.New(s.db).ReceiveTaskHandoff(ctx, sqlcgen.ReceiveTaskHandoffParams{
 		ID:         handoffID,
 		TaskID:     taskID,
-		ReceivedBy: sql.NullString{String: receivedBy, Valid: true},
+		ReceivedBy: sql.NullInt64{Int64: receivedBy, Valid: receivedBy != 0},
 		ReceivedAt: sql.NullString{String: now, Valid: true},
 	})
 	if err != nil {
@@ -233,7 +238,7 @@ func (s *Store) ReceiveTaskHandoff(ctx context.Context, handoffID, taskID, recei
 // ReceiveTaskHandoffForTask finds the single requested and unreceived handoff
 // for a task and records the receipt. Multiple pending handoffs are rejected
 // so receipt cannot be assigned to the wrong delegation.
-func (s *Store) ReceiveTaskHandoffForTask(ctx context.Context, taskID, receivedBy string) (TaskHandoff, error) {
+func (s *Store) ReceiveTaskHandoffForTask(ctx context.Context, taskID int64, receivedBy int64) (TaskHandoff, error) {
 	handoffs, err := s.ListTaskHandoffs(ctx, taskID)
 	if err != nil {
 		return TaskHandoff{}, fmt.Errorf("list pending task handoffs: %w", err)
@@ -245,10 +250,10 @@ func (s *Store) ReceiveTaskHandoffForTask(ctx context.Context, taskID, receivedB
 		}
 	}
 	if len(pending) == 0 {
-		return TaskHandoff{}, fmt.Errorf("%w: task %s", ErrTaskHandoffNotFound, taskID)
+		return TaskHandoff{}, fmt.Errorf("%w: task %d", ErrTaskHandoffNotFound, taskID)
 	}
 	if len(pending) > 1 {
-		return TaskHandoff{}, fmt.Errorf("%w: task %q has %d pending handoffs", ErrTaskHandoffAmbiguous, taskID, len(pending))
+		return TaskHandoff{}, fmt.Errorf("%w: task %d has %d pending handoffs", ErrTaskHandoffAmbiguous, taskID, len(pending))
 	}
 	return s.ReceiveTaskHandoff(ctx, pending[0].ID, taskID, receivedBy)
 }
@@ -257,7 +262,7 @@ func (s *Store) ReceiveTaskHandoffForTask(ctx context.Context, taskID, receivedB
 // incomplete handoff for a task and records its completion. Multiple
 // incomplete handoffs are rejected so completion cannot be assigned to the
 // wrong delegation.
-func (s *Store) CompleteTaskHandoffForTask(ctx context.Context, taskID, completeReport string) (TaskHandoff, error) {
+func (s *Store) CompleteTaskHandoffForTask(ctx context.Context, taskID int64, completeReport string) (TaskHandoff, error) {
 	handoffs, err := s.ListTaskHandoffs(ctx, taskID)
 	if err != nil {
 		return TaskHandoff{}, fmt.Errorf("list incomplete task handoffs: %w", err)
@@ -269,17 +274,17 @@ func (s *Store) CompleteTaskHandoffForTask(ctx context.Context, taskID, complete
 		}
 	}
 	if len(pending) == 0 {
-		return TaskHandoff{}, fmt.Errorf("%w: task %s", ErrTaskHandoffNotFound, taskID)
+		return TaskHandoff{}, fmt.Errorf("%w: task %d", ErrTaskHandoffNotFound, taskID)
 	}
 	if len(pending) > 1 {
-		return TaskHandoff{}, fmt.Errorf("%w: task %q has %d incomplete handoffs", ErrTaskHandoffAmbiguous, taskID, len(pending))
+		return TaskHandoff{}, fmt.Errorf("%w: task %d has %d incomplete handoffs", ErrTaskHandoffAmbiguous, taskID, len(pending))
 	}
 	return s.CompleteTaskHandoff(ctx, pending[0].ID, taskID, completeReport)
 }
 
 // CompleteTaskHandoff records the completion report side of a handoff. It
 // only writes the completion timestamp and report and therefore preserves partial states.
-func (s *Store) CompleteTaskHandoff(ctx context.Context, handoffID, taskID string, completeReport string) (TaskHandoff, error) {
+func (s *Store) CompleteTaskHandoff(ctx context.Context, handoffID string, taskID int64, completeReport string) (TaskHandoff, error) {
 	if err := s.ensureTaskHandoffTask(ctx, handoffID, taskID); err != nil {
 		return TaskHandoff{}, err
 	}
@@ -316,7 +321,7 @@ func (s *Store) GetTaskHandoff(ctx context.Context, handoffID string) (TaskHando
 }
 
 // ListTaskHandoffs returns all handoffs for a task, including partial rows.
-func (s *Store) ListTaskHandoffs(ctx context.Context, taskID string) ([]TaskHandoff, error) {
+func (s *Store) ListTaskHandoffs(ctx context.Context, taskID int64) ([]TaskHandoff, error) {
 	rows, err := sqlcgen.New(s.db).ListTaskHandoffs(ctx, taskID)
 	if err != nil {
 		return nil, fmt.Errorf("list task handoffs: %w", err)
@@ -335,13 +340,13 @@ func (s *Store) ListTaskHandoffs(ctx context.Context, taskID string) ([]TaskHand
 
 // ListOpenTaskHandoffsForGoal returns all incomplete handoffs for tasks in a
 // goal with one query.
-func (s *Store) ListOpenTaskHandoffsForGoal(ctx context.Context, goalID string) (map[string]*TaskHandoff, error) {
+func (s *Store) ListOpenTaskHandoffsForGoal(ctx context.Context, goalID int64) (map[int64]*TaskHandoff, error) {
 	rows, err := sqlcgen.New(s.db).ListOpenTaskHandoffsForGoal(ctx, goalID)
 	if err != nil {
 		return nil, fmt.Errorf("list open task handoffs for goal: %w", err)
 	}
 
-	handoffs := make(map[string]*TaskHandoff, len(rows))
+	handoffs := make(map[int64]*TaskHandoff, len(rows))
 	for _, row := range rows {
 		handoff, err := taskHandoffFromRow(row)
 		if err != nil {

@@ -187,6 +187,40 @@ func TestWatchFormatsActionableGoalCount(t *testing.T) {
 	}
 }
 
+func TestWatchDecodesNumericEntityIDs(t *testing.T) {
+	var decision watchDecision
+	if err := json.Unmarshal([]byte(`{"id":11,"decision_id":12,"project_id":13,"wakeup_id":14,"detection_id":15,"goal_id":16,"task_id":17,"handoff_id":18}`), &decision); err != nil {
+		t.Fatalf("json.Unmarshal decision: %v", err)
+	}
+
+	for name, values := range map[string]struct {
+		got  string
+		want string
+	}{
+		"id":           {decision.ID, "11"},
+		"decision_id":  {decision.DecisionID, "12"},
+		"project_id":   {decision.ProjectID, "13"},
+		"wakeup_id":    {decision.WakeupID, "14"},
+		"detection_id": {decision.DetectionID, "15"},
+		"goal_id":      {decision.GoalID, "16"},
+		"task_id":      {decision.TaskID, "17"},
+		"handoff_id":   {decision.HandoffID, "18"},
+	} {
+		got, want := values.got, values.want
+		if got != want {
+			t.Errorf("%s = %q, want %q", name, got, want)
+		}
+	}
+
+	var project watchProject
+	if err := json.Unmarshal([]byte(`{"id":19,"root_path":"/repo"}`), &project); err != nil {
+		t.Fatalf("json.Unmarshal project: %v", err)
+	}
+	if project.ID != "19" {
+		t.Fatalf("project ID = %q, want %q", project.ID, "19")
+	}
+}
+
 func TestWatchEmitsWakeupTaskBreakdownSeparatelyFromDecisionCount(t *testing.T) {
 	var output strings.Builder
 	delivered := make(map[watchDeliveryKey]struct{})

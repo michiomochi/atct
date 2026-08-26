@@ -120,14 +120,15 @@ func TestRegisterAgentSessionStoresProcessIdentity(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	if err := s.RegisterAgentSession(ctx, "registered-run", os.Getpid()); err != nil {
+	registeredID, err := s.RegisterAgentSession(ctx, os.Getpid())
+	if err != nil {
 		t.Fatalf("RegisterAgentSession: %v", err)
 	}
 
 	var pid int
 	var startedAt string
 	if err := s.DB().QueryRowContext(ctx, `
-		SELECT pid, started_at FROM agent_sessions WHERE id = ?`, "registered-run").Scan(&pid, &startedAt); err != nil {
+		SELECT pid, started_at FROM agent_sessions WHERE id = ?`, registeredID).Scan(&pid, &startedAt); err != nil {
 		t.Fatalf("read registered agent session: %v", err)
 	}
 	wantStartedAt, err := realProcessStartedAt(os.Getpid())
@@ -144,14 +145,15 @@ func TestRegisterAgentSessionStoresZeroIdentityWhenProcessLookupFails(t *testing
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	if err := s.RegisterAgentSession(ctx, "unavailable-run", 999999); err != nil {
+	unavailableID, err := s.RegisterAgentSession(ctx, 999999)
+	if err != nil {
 		t.Fatalf("RegisterAgentSession: %v", err)
 	}
 
 	var pid int
 	var startedAt string
 	if err := s.DB().QueryRowContext(ctx, `
-		SELECT pid, started_at FROM agent_sessions WHERE id = ?`, "unavailable-run").Scan(&pid, &startedAt); err != nil {
+		SELECT pid, started_at FROM agent_sessions WHERE id = ?`, unavailableID).Scan(&pid, &startedAt); err != nil {
 		t.Fatalf("read registered agent session: %v", err)
 	}
 	if pid != 0 || startedAt != "" {
@@ -174,20 +176,21 @@ func TestClaimLivenessReportsCurrentProcessAsRunning(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DeclareTasks: %v", err)
 	}
-	if err := s.RegisterAgentSession(ctx, "live-run", os.Getpid()); err != nil {
+	liveID, err := s.RegisterAgentSession(ctx, os.Getpid())
+	if err != nil {
 		t.Fatalf("RegisterAgentSession: %v", err)
 	}
-	if err := s.AssociateAgentSessionWithProject(ctx, "live-run", project.ID); err != nil {
+	if err := s.AssociateAgentSessionWithProject(ctx, liveID, project.ID); err != nil {
 		t.Fatalf("AssociateAgentSessionWithProject: %v", err)
 	}
-	insertClaimLivenessHandoff(t, s, tasks[0].ID, "live-claim-handoff", "live-run")
+	insertClaimLivenessHandoff(t, s, tasks[0].ID, "live-claim-handoff", liveID)
 
 	running, stale, err := ClaimLiveness(ctx, s, project.ID)
 	if err != nil {
 		t.Fatalf("ClaimLiveness: %v", err)
 	}
 	if len(running) != 1 || running[0].ID != tasks[0].ID {
-		t.Fatalf("running claims = %#v, want task %s", running, tasks[0].ID)
+		t.Fatalf("running claims = %#v, want task %d", running, tasks[0].ID)
 	}
 	if len(stale) != 0 {
 		t.Fatalf("stale claims = %#v, want empty", stale)
@@ -361,7 +364,7 @@ func TestClaimLivenessTreatsUnreadableProcessStartAsStale(t *testing.T) {
 		t.Fatalf("running claims = %#v, want empty", running)
 	}
 	if len(stale) != 1 || stale[0].ID != tasks[0].ID {
-		t.Fatalf("stale claims = %#v, want task %s", stale, tasks[0].ID)
+		t.Fatalf("stale claims = %#v, want task %d", stale, tasks[0].ID)
 	}
 }
 
@@ -391,7 +394,7 @@ func TestClaimLivenessTreatsPIDReuseAsStale(t *testing.T) {
 		t.Fatalf("running claims = %#v, want empty", running)
 	}
 	if len(stale) != 1 || stale[0].ID != tasks[0].ID {
-		t.Fatalf("stale claims = %#v, want task %s", stale, tasks[0].ID)
+		t.Fatalf("stale claims = %#v, want task %d", stale, tasks[0].ID)
 	}
 }
 
@@ -425,17 +428,21 @@ func TestClaimLivenessFiltersClaimsByProject(t *testing.T) {
 	}
 }
 
-func insertClaimLivenessSession(t *testing.T, s *Store, id, projectID string, pid int, startedAt string) {
+func insertClaimLivenessSession(t *testing.T, s *Store, id string, projectID int64, pid int, startedAt string) {
 	t.Helper()
+	sessionID := testSessionID(id)
 	if _, err := s.DB().ExecContext(context.Background(), `
 		INSERT INTO agent_sessions (id, project_id, pid, started_at, registered_at)
-		VALUES (?, ?, ?, ?, ?)`, id, projectID, pid, startedAt, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+		VALUES (?, ?, ?, ?, ?)`, sessionID, projectID, pid, startedAt, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
 		t.Fatalf("insert agent session %s: %v", id, err)
 	}
 }
 
-func insertClaimLivenessHandoff(t *testing.T, s *Store, taskID, handoffID string, requestedBy any) {
+func insertClaimLivenessHandoff(t *testing.T, s *Store, taskID int64, handoffID string, requestedBy any) {
 	t.Helper()
+	if label, ok := requestedBy.(string); ok {
+		requestedBy = testSessionID(label)
+	}
 	if _, err := s.DB().ExecContext(context.Background(), `
 		INSERT INTO task_handoffs (id, task_id, requested_by, requested_at)
 		VALUES (?, ?, ?, ?)`, handoffID, taskID, requestedBy, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {

@@ -14,7 +14,7 @@ func TestPollMarksApplied(t *testing.T) {
 	taskID := newTestDecisionTask(t, s, goalID, "poll-marks-applied")
 
 	d, err := s.AskDecision(ctx, AskInput{
-		GoalID: goalID, TaskID: taskID, Kind: domain.KindDecision, Question: "What should we do?", AgentSessionID: "run-1",
+		GoalID: goalID, TaskID: taskID, Kind: domain.KindDecision, Question: "What should we do?", AgentSessionID: testSessionID("run-1"),
 	})
 	if err != nil {
 		t.Fatalf("AskDecision: %v", err)
@@ -33,7 +33,7 @@ func TestPollMarksApplied(t *testing.T) {
 		t.Fatalf("%d unapplied, want 1", len(unapplied))
 	}
 
-	got, err := s.PollDecisions(ctx, "run-1", "")
+	got, err := s.PollDecisions(ctx, testSessionID("run-1"), 0)
 	if err != nil {
 		t.Fatalf("PollDecisions: %v", err)
 	}
@@ -41,7 +41,7 @@ func TestPollMarksApplied(t *testing.T) {
 		t.Fatalf("poll returned %+v, want 1 applied decision", got)
 	}
 
-	again, err := s.PollDecisions(ctx, "run-1", "")
+	again, err := s.PollDecisions(ctx, testSessionID("run-1"), 0)
 	if err != nil {
 		t.Fatalf("second PollDecisions: %v", err)
 	}
@@ -56,12 +56,12 @@ func TestPollAdoptsDecisionByExplicitIDAcrossAgentSessions(t *testing.T) {
 	goalID := newTestGoal(t, s)
 
 	d := answeredDecisionForAgentSession(t, s, goalID, "run-a")
-	got, err := s.PollDecisions(ctx, "run-b", d.ID)
+	got, err := s.PollDecisions(ctx, testSessionID("run-b"), d.ID)
 	if err != nil {
 		t.Fatalf("PollDecisions: %v", err)
 	}
 	if len(got) != 1 || got[0].ID != d.ID || got[0].Status != domain.DecisionApplied {
-		t.Fatalf("poll returned %+v, want decision %q applied", got, d.ID)
+		t.Fatalf("poll returned %+v, want decision %d applied", got, d.ID)
 	}
 }
 
@@ -71,7 +71,7 @@ func TestPollWithoutDecisionIDKeepsAgentSessionFilter(t *testing.T) {
 	goalID := newTestGoal(t, s)
 
 	d := answeredDecisionForAgentSession(t, s, goalID, "run-a")
-	got, err := s.PollDecisions(ctx, "run-b", "")
+	got, err := s.PollDecisions(ctx, testSessionID("run-b"), 0)
 	if err != nil {
 		t.Fatalf("PollDecisions: %v", err)
 	}
@@ -84,7 +84,7 @@ func TestPollWithoutDecisionIDKeepsAgentSessionFilter(t *testing.T) {
 		t.Fatalf("ListUnappliedDecisions: %v", err)
 	}
 	if len(unapplied) != 1 || unapplied[0].ID != d.ID {
-		t.Fatalf("unapplied decisions = %+v, want decision %q", unapplied, d.ID)
+		t.Fatalf("unapplied decisions = %+v, want decision %d", unapplied, d.ID)
 	}
 }
 
@@ -94,24 +94,25 @@ func TestPollAdoptionPreservesOriginalAgentSessionID(t *testing.T) {
 	goalID := newTestGoal(t, s)
 
 	d := answeredDecisionForAgentSession(t, s, goalID, "run-a")
-	got, err := s.PollDecisions(ctx, "run-b", d.ID)
+	got, err := s.PollDecisions(ctx, testSessionID("run-b"), d.ID)
 	if err != nil {
 		t.Fatalf("PollDecisions: %v", err)
 	}
 	if len(got) != 1 {
 		t.Fatalf("poll returned %d decisions, want 1", len(got))
 	}
-	if got[0].AgentSessionID != "run-a" {
-		t.Fatalf("adopted decision agent_session_id = %q, want original run-a", got[0].AgentSessionID)
+	if got[0].AgentSessionID != testSessionID("run-a") {
+		t.Fatalf("adopted decision agent_session_id = %d, want original run-a (%d)", got[0].AgentSessionID, testSessionID("run-a"))
 	}
 }
 
-func answeredDecisionForAgentSession(t *testing.T, s *Store, goalID, agentSessionID string) domain.Decision {
+func answeredDecisionForAgentSession(t *testing.T, s *Store, goalID int64, agentSessionID string) domain.Decision {
 	t.Helper()
 	ctx := context.Background()
+	sessionID := testSessionID(agentSessionID)
 	taskID := newTestDecisionTask(t, s, goalID, agentSessionID)
 	d, err := s.AskDecision(ctx, AskInput{
-		GoalID: goalID, TaskID: taskID, Kind: domain.KindDecision, Question: "What should we do?", AgentSessionID: agentSessionID,
+		GoalID: goalID, TaskID: taskID, Kind: domain.KindDecision, Question: "What should we do?", AgentSessionID: sessionID,
 	})
 	if err != nil {
 		t.Fatalf("AskDecision: %v", err)

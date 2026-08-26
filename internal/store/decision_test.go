@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/michiomochi/atct/internal/domain"
@@ -23,7 +24,7 @@ func TestAskDecisionStartsOpen(t *testing.T) {
 			{Label: "backoff", Description: "Exponential backoff", Consequence: "Simpler implementation but duplicate execution is possible"},
 			{Label: "idempotency", Description: "Add an idempotency key", Consequence: "Prevents duplicates but requires a schema change"},
 		},
-		AgentSessionID: "run-1",
+		AgentSessionID: testSessionID("run-1"),
 	})
 	if err != nil {
 		t.Fatalf("AskDecision: %v", err)
@@ -47,17 +48,17 @@ func TestUpdateTaskRejectsDoneWhileDecisionOpen(t *testing.T) {
 	}
 	if _, err := s.AskDecision(ctx, AskInput{
 		GoalID: goalID, TaskID: tasks[0].ID, Kind: domain.KindDecision,
-		Question: "What should we do?", AgentSessionID: "run-1",
+		Question: "What should we do?", AgentSessionID: testSessionID("run-1"),
 	}); err != nil {
 		t.Fatalf("AskDecision: %v", err)
 	}
 
-	_, err = s.UpdateTask(ctx, tasks[0].ID, domain.TaskDone, "")
+	_, err = s.UpdateTask(ctx, tasks[0].ID, domain.TaskDone, 0)
 	if !errors.Is(err, ErrTaskHasOpenDecision) {
 		t.Fatalf("err = %v, want ErrTaskHasOpenDecision", err)
 	}
 
-	if _, err := s.UpdateTask(ctx, tasks[0].ID, domain.TaskDoing, ""); err != nil {
+	if _, err := s.UpdateTask(ctx, tasks[0].ID, domain.TaskDoing, 0); err != nil {
 		t.Fatalf("UpdateTask to doing should succeed: %v", err)
 	}
 }
@@ -82,7 +83,7 @@ func TestListUnappliedDecisionsForGoal(t *testing.T) {
 	approveTestGoal(t, s, ctx, goalB)
 
 	for _, tc := range []struct {
-		goalID string
+		goalID int64
 		label  string
 	}{
 		{goalID: goalA, label: "A"},
@@ -91,7 +92,7 @@ func TestListUnappliedDecisionsForGoal(t *testing.T) {
 		taskID := newTestDecisionTask(t, s, tc.goalID, "unapplied-"+tc.label)
 		d, err := s.AskDecision(ctx, AskInput{
 			GoalID: tc.goalID, TaskID: taskID, Kind: domain.KindDecision,
-			Question: "What should we do for " + tc.label + "?", AgentSessionID: "run-" + tc.label,
+			Question: "What should we do for " + tc.label + "?", AgentSessionID: testSessionID("run-" + tc.label),
 		})
 		if err != nil {
 			t.Fatalf("AskDecision(%s): %v", tc.label, err)
@@ -110,7 +111,7 @@ func TestListUnappliedDecisionsForGoal(t *testing.T) {
 	}
 	for _, d := range got {
 		if d.GoalID != goalA {
-			t.Fatalf("got decision for goal %q while querying goal %q", d.GoalID, goalA)
+			t.Fatalf("got decision for goal %d while querying goal %d", d.GoalID, goalA)
 		}
 	}
 }
@@ -136,7 +137,7 @@ func TestListUnappliedDecisionsForProject(t *testing.T) {
 	approveTestGoal(t, s, ctx, goalB)
 
 	for _, tc := range []struct {
-		goalID string
+		goalID int64
 		label  string
 	}{
 		{goalID: goalA, label: "A"},
@@ -145,7 +146,7 @@ func TestListUnappliedDecisionsForProject(t *testing.T) {
 		taskID := newTestDecisionTask(t, s, tc.goalID, "project-unapplied-"+tc.label)
 		d, err := s.AskDecision(ctx, AskInput{
 			GoalID: tc.goalID, TaskID: taskID, Kind: domain.KindDecision,
-			Question: "What should we do for " + tc.label + "?", AgentSessionID: "project-run-" + tc.label,
+			Question: "What should we do for " + tc.label + "?", AgentSessionID: testSessionID("project-run-" + tc.label),
 		})
 		if err != nil {
 			t.Fatalf("AskDecision(%s): %v", tc.label, err)
@@ -162,20 +163,20 @@ func TestListUnappliedDecisionsForProject(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("got %d decisions for project, want 2", len(got))
 	}
-	seen := map[string]bool{}
+	seen := map[int64]bool{}
 	for _, d := range got {
 		seen[d.GoalID] = true
 	}
 	if !seen[goalA] || !seen[goalB] {
-		t.Fatalf("got decisions for goals A/B = %v, want both %q and %q", seen, goalA, goalB)
+		t.Fatalf("got decisions for goals A/B = %v, want both %d and %d", seen, goalA, goalB)
 	}
 }
 
-func approveTestGoal(t *testing.T, s *Store, ctx context.Context, goalID string) {
+func approveTestGoal(t *testing.T, s *Store, ctx context.Context, goalID int64) {
 	t.Helper()
 	approval, err := s.AskDecision(ctx, AskInput{
 		GoalID: goalID, Kind: domain.KindGoalApproval, Question: "Approve goal?",
-		Options: []domain.Option{{Label: "approve"}}, AgentSessionID: "approval-" + goalID,
+		Options: []domain.Option{{Label: "approve"}}, AgentSessionID: testSessionID(fmt.Sprintf("approval-%d", goalID)),
 	})
 	if err != nil {
 		t.Fatalf("AskDecision goal approval: %v", err)

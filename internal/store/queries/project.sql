@@ -1,6 +1,7 @@
--- name: CreateProject :exec
-INSERT INTO projects (id, name, root_path, created_at)
-VALUES (?, ?, ?, ?);
+-- name: CreateProject :one
+INSERT INTO projects (name, root_path, created_at)
+VALUES (?, ?, ?)
+RETURNING id;
 
 -- name: GetProject :one
 SELECT id, name, root_path, created_at, claimed_by, claimed_at
@@ -26,5 +27,5 @@ WHERE id = ?;
 
 -- name: ReleaseProject :execresult
 UPDATE projects
-SET claimed_by = '', claimed_at = NULL
+SET claimed_by = 0, claimed_at = NULL
 WHERE id = ?;

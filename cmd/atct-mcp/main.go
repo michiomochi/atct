@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/google/uuid"
 	"github.com/michiomochi/atct/internal/daemonctl"
 	"github.com/michiomochi/atct/internal/mcpshim"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -51,20 +50,20 @@ func main() {
 	}
 	sock := filepath.Join(home, ".atct", "atct.sock")
 
-	// agent_session_id is unique per process start and records which execution owns a parked decision.
-	agentSessionID := uuid.NewString()
 	client := mcpshim.NewClient(sock)
+	var registerResponse struct {
+		AgentSessionID int64 `json:"agent_session_id"`
+	}
 	if err := client.Call(context.Background(), "run.register", map[string]any{
-		"agent_session_id": agentSessionID,
-		"pid":              os.Getpid(),
-	}, nil); err != nil {
+		"pid": os.Getpid(),
+	}, &registerResponse); err != nil {
 		log.Fatalf("register agent session: %v", err)
 	}
 
 	server := mcp.NewServer(&mcp.Implementation{Name: "atct", Version: version}, &mcp.ServerOptions{
 		Instructions: mcpshim.Instructions,
 	})
-	mcpshim.Register(server, client, agentSessionID)
+	mcpshim.Register(server, client, registerResponse.AgentSessionID)
 
 	if err := server.Run(context.Background(), &mcp.StdioTransport{}); err != nil {
 		log.Fatal(err)

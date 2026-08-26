@@ -23,9 +23,8 @@ func TestDecisionConstraintRejectsMissingTaskID(t *testing.T) {
 		{status: "answered", taskID: ""},
 	} {
 		_, err := s.DB().Exec(`
-INSERT INTO decisions (id, goal_id, task_id, kind, question, status, created_at)
-		VALUES (?, ?, ?, 'decision', 'Choose one', ?, '2026-08-18T00:00:00Z')`,
-			fmt.Sprintf("missing-task-%s-%v", test.status, test.taskID), goalID, test.taskID, test.status)
+	INSERT INTO decisions (goal_id, task_id, kind, question, status, created_at)
+		VALUES (?, ?, 'decision', 'Choose one', ?, '2026-08-18T00:00:00Z')`, goalID, test.taskID, test.status)
 		if err == nil {
 			t.Fatalf("insert with status=%q and task_id=%#v succeeded, want CHECK constraint failure", test.status, test.taskID)
 		}
@@ -52,8 +51,8 @@ func TestDecisionConstraintAllowsTaskID(t *testing.T) {
 	}
 
 	if _, err := s.DB().Exec(`
-INSERT INTO decisions (id, goal_id, task_id, kind, question, status, created_at)
-VALUES ('with-task', ?, ?, 'decision', 'Choose one', 'open', '2026-08-18T00:00:00Z')`, goalID, tasks[0].ID); err != nil {
+	INSERT INTO decisions (goal_id, task_id, kind, question, status, created_at)
+	VALUES (?, ?, 'decision', 'Choose one', 'open', '2026-08-18T00:00:00Z')`, goalID, tasks[0].ID); err != nil {
 		t.Fatalf("insert with task_id: %v", err)
 	}
 }
@@ -63,8 +62,8 @@ func TestCompletionDecisionAllowsMissingTaskID(t *testing.T) {
 	goalID := newTestGoal(t, s)
 
 	if _, err := s.DB().Exec(`
-	INSERT INTO decisions (id, goal_id, kind, question, status, created_at)
-VALUES ('completion-without-task', ?, 'completion', 'Approve?', 'open', '2026-08-18T00:00:00Z')`, goalID); err != nil {
+	INSERT INTO decisions (goal_id, kind, question, status, created_at)
+	VALUES (?, 'completion', 'Approve?', 'open', '2026-08-18T00:00:00Z')`, goalID); err != nil {
 		t.Fatalf("insert completion without task_id: %v", err)
 	}
 }
@@ -87,20 +86,24 @@ func TestOpenMigratesDecisionsWithoutLosingData(t *testing.T) {
 		t.Fatalf("migrated decision count = %d, want 2", count)
 	}
 
-	var taskID, kind string
-	if err := s.DB().QueryRow(`SELECT task_id, kind FROM decisions WHERE id = 'decision-old'`).Scan(&taskID, &kind); err != nil {
+	var taskID int64
+	var kind string
+	if err := s.DB().QueryRow(`
+		SELECT d.task_id, d.kind
+		FROM decisions AS d JOIN tasks AS t ON t.id = d.task_id
+		WHERE d.id = 1`).Scan(&taskID, &kind); err != nil {
 		t.Fatalf("read migrated decision: %v", err)
 	}
-	if taskID != "task-old" || kind != "decision" {
-		t.Fatalf("migrated decision = task_id %q, kind %q, want task-old/decision", taskID, kind)
+	if taskID != 1 || kind != "decision" {
+		t.Fatalf("migrated decision = task_id %d, kind %q, want task 1/decision", taskID, kind)
 	}
 
-	var completionTaskID sql.NullString
-	if err := s.DB().QueryRow(`SELECT task_id FROM decisions WHERE id = 'completion-old'`).Scan(&completionTaskID); err != nil {
+	var completionTaskID sql.NullInt64
+	if err := s.DB().QueryRow(`SELECT task_id FROM decisions WHERE id = 2`).Scan(&completionTaskID); err != nil {
 		t.Fatalf("read migrated completion: %v", err)
 	}
 	if completionTaskID.Valid {
-		t.Fatalf("migrated completion task_id = %q, want NULL", completionTaskID.String)
+		t.Fatalf("migrated completion task_id = %d, want NULL", completionTaskID.Int64)
 	}
 
 	var indexName string
@@ -176,7 +179,7 @@ func TestOpenDecisionMigrationIncrementsUserVersion(t *testing.T) {
 	}
 }
 
-func newTestDecisionTask(t *testing.T, s *Store, goalID, declareKey string) string {
+func newTestDecisionTask(t *testing.T, s *Store, goalID int64, declareKey string) int64 {
 	t.Helper()
 
 	tasks, err := s.DeclareTasks(context.Background(), goalID, "test-agent", declareKey, []string{"decision task"}, []string{"Create the decision task that the migration test will reference."})
@@ -198,15 +201,15 @@ func testMigratesClosedDecisionWithoutTaskID(t *testing.T, status string) {
 	defer s.Close()
 
 	var gotStatus string
-	var taskID sql.NullString
-	if err := s.DB().QueryRow(`SELECT status, task_id FROM decisions WHERE id = 'decision-without-task'`).Scan(&gotStatus, &taskID); err != nil {
+	var taskID sql.NullInt64
+	if err := s.DB().QueryRow(`SELECT status, task_id FROM decisions WHERE id = 1`).Scan(&gotStatus, &taskID); err != nil {
 		t.Fatalf("read migrated %s decision: %v", status, err)
 	}
 	if gotStatus != status {
 		t.Fatalf("migrated decision status = %q, want %q", gotStatus, status)
 	}
 	if taskID.Valid {
-		t.Fatalf("migrated %s decision task_id = %q, want NULL", status, taskID.String)
+		t.Fatalf("migrated %s decision task_id = %d, want NULL", status, taskID.Int64)
 	}
 
 	var version int

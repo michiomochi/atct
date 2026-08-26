@@ -21,7 +21,7 @@ func TestRegisterPublishesTwentyFourToolsWithFlexibleOutputSchema(t *testing.T) 
 	ctx := context.Background()
 	socketPath := startSchemaTestDaemon(t)
 	server := mcp.NewServer(&mcp.Implementation{Name: "atct-test", Version: "test"}, nil)
-	mcpshim.Register(server, mcpshim.NewClient(socketPath), "run-1")
+	mcpshim.Register(server, mcpshim.NewClient(socketPath), 1)
 
 	clientTransport, serverTransport := mcp.NewInMemoryTransports()
 	serverSession, err := server.Connect(ctx, serverTransport, nil)
@@ -254,7 +254,7 @@ func TestDecisionWithdrawSendsAgentSessionID(t *testing.T) {
 	ctx := context.Background()
 	socketPath, calls := startCapturingSchemaTestDaemon(t)
 	server := mcp.NewServer(&mcp.Implementation{Name: "atct-test", Version: "test"}, nil)
-	mcpshim.Register(server, mcpshim.NewClient(socketPath), "withdraw-session")
+	mcpshim.Register(server, mcpshim.NewClient(socketPath), 2)
 
 	clientTransport, serverTransport := mcp.NewInMemoryTransports()
 	serverSession, err := server.Connect(ctx, serverTransport, nil)
@@ -310,8 +310,8 @@ func TestDecisionWithdrawSendsAgentSessionID(t *testing.T) {
 	if call.method != "decision.withdraw" {
 		t.Fatalf("RPC method = %q, want decision.withdraw", call.method)
 	}
-	if got := call.params["agent_session_id"]; got != "canonical-session" {
-		t.Errorf("agent_session_id = %#v, want canonical-session", got)
+	if got := call.params["agent_session_id"]; got != float64(9) {
+		t.Errorf("agent_session_id = %#v, want 9", got)
 	}
 }
 
@@ -319,7 +319,7 @@ func TestTaskUpdateContentOmitsUnspecifiedOptionalParameters(t *testing.T) {
 	ctx := context.Background()
 	socketPath, calls := startCapturingSchemaTestDaemon(t)
 	server := mcp.NewServer(&mcp.Implementation{Name: "atct-test", Version: "test"}, nil)
-	const sessionID = "task-update-session"
+	const sessionID int64 = 3
 	mcpshim.Register(server, mcpshim.NewClient(socketPath), sessionID)
 
 	clientTransport, serverTransport := mcp.NewInMemoryTransports()
@@ -364,8 +364,8 @@ func TestTaskUpdateContentOmitsUnspecifiedOptionalParameters(t *testing.T) {
 	if got := call.params["description"]; got != "updated task" {
 		t.Errorf("description = %#v, want updated task", got)
 	}
-	if got := call.params["agent_session_id"]; got != sessionID {
-		t.Errorf("agent_session_id = %#v, want %s", got, sessionID)
+	if got := call.params["agent_session_id"]; got != float64(sessionID) {
+		t.Errorf("agent_session_id = %#v, want %d", got, sessionID)
 	}
 	if got := call.params["include_unapplied_answers"]; got != true {
 		t.Errorf("include_unapplied_answers = %#v, want true", got)
@@ -381,7 +381,8 @@ func TestSessionIdentifyUpdatesAgentSessionIDForFollowingTool(t *testing.T) {
 	ctx := context.Background()
 	socketPath, calls := startCapturingSchemaTestDaemon(t)
 	server := mcp.NewServer(&mcp.Implementation{Name: "atct-test", Version: "test"}, nil)
-	mcpshim.Register(server, mcpshim.NewClient(socketPath), "transport-session")
+	const transportSessionID int64 = 4
+	mcpshim.Register(server, mcpshim.NewClient(socketPath), transportSessionID)
 
 	clientTransport, serverTransport := mcp.NewInMemoryTransports()
 	serverSession, err := server.Connect(ctx, serverTransport, nil)
@@ -411,8 +412,8 @@ func TestSessionIdentifyUpdatesAgentSessionIDForFollowingTool(t *testing.T) {
 	if identifyCall.method != "session.identify" {
 		t.Fatalf("identify RPC method = %q, want session.identify", identifyCall.method)
 	}
-	if got := identifyCall.params["agent_session_id"]; got != "transport-session" {
-		t.Fatalf("identify agent_session_id = %#v, want transport-session", got)
+	if got := identifyCall.params["agent_session_id"]; got != float64(transportSessionID) {
+		t.Fatalf("identify agent_session_id = %#v, want %d", got, transportSessionID)
 	}
 
 	roleResult, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
@@ -429,16 +430,17 @@ func TestSessionIdentifyUpdatesAgentSessionIDForFollowingTool(t *testing.T) {
 	if roleCall.method != "session.role" {
 		t.Fatalf("role RPC method = %q, want session.role", roleCall.method)
 	}
-	if got := roleCall.params["agent_session_id"]; got != "canonical-session" {
-		t.Fatalf("role agent_session_id = %#v, want canonical-session", got)
+	if got := roleCall.params["agent_session_id"]; got != float64(9) {
+		t.Fatalf("role agent_session_id = %#v, want 9", got)
 	}
 }
 
 func TestSessionIdentifyKeepsTransportIDWhenDaemonReturnsEmpty(t *testing.T) {
 	ctx := context.Background()
-	socketPath, calls := startCapturingSchemaTestDaemonWithIdentifyResponse(t, `{"result":{"agent_session_id":"","reattached":false}}`)
+	socketPath, calls := startCapturingSchemaTestDaemonWithIdentifyResponse(t, `{"result":{"agent_session_id":0,"reattached":false}}`)
 	server := mcp.NewServer(&mcp.Implementation{Name: "atct-test", Version: "test"}, nil)
-	mcpshim.Register(server, mcpshim.NewClient(socketPath), "transport-session")
+	const transportSessionID int64 = 4
+	mcpshim.Register(server, mcpshim.NewClient(socketPath), transportSessionID)
 
 	clientTransport, serverTransport := mcp.NewInMemoryTransports()
 	serverSession, err := server.Connect(ctx, serverTransport, nil)
@@ -480,8 +482,8 @@ func TestSessionIdentifyKeepsTransportIDWhenDaemonReturnsEmpty(t *testing.T) {
 	if roleCall.method != "session.role" {
 		t.Fatalf("role RPC method = %q, want session.role", roleCall.method)
 	}
-	if got := roleCall.params["agent_session_id"]; got != "transport-session" {
-		t.Fatalf("role agent_session_id = %#v, want transport-session", got)
+	if got := roleCall.params["agent_session_id"]; got != float64(transportSessionID) {
+		t.Fatalf("role agent_session_id = %#v, want %d", got, transportSessionID)
 	}
 }
 
@@ -489,7 +491,7 @@ func TestTaskReleaseInjectsAgentSessionID(t *testing.T) {
 	ctx := context.Background()
 	socketPath, calls := startCapturingSchemaTestDaemon(t)
 	server := mcp.NewServer(&mcp.Implementation{Name: "atct-test", Version: "test"}, nil)
-	const sessionID = "task-release-session"
+	const sessionID int64 = 5
 	mcpshim.Register(server, mcpshim.NewClient(socketPath), sessionID)
 
 	clientTransport, serverTransport := mcp.NewInMemoryTransports()
@@ -521,8 +523,8 @@ func TestTaskReleaseInjectsAgentSessionID(t *testing.T) {
 	if call.method != "task.release" {
 		t.Fatalf("RPC method = %q, want task.release", call.method)
 	}
-	if got := call.params["agent_session_id"]; got != sessionID {
-		t.Fatalf("task.release agent_session_id = %#v, want %s", got, sessionID)
+	if got := call.params["agent_session_id"]; got != float64(sessionID) {
+		t.Fatalf("task.release agent_session_id = %#v, want %d", got, sessionID)
 	}
 }
 
@@ -530,7 +532,8 @@ func TestHandoffToolsInjectAgentSessionID(t *testing.T) {
 	ctx := context.Background()
 	socketPath, calls := startCapturingSchemaTestDaemon(t)
 	server := mcp.NewServer(&mcp.Implementation{Name: "atct-test", Version: "test"}, nil)
-	mcpshim.Register(server, mcpshim.NewClient(socketPath), "session-22")
+	const sessionID int64 = 6
+	mcpshim.Register(server, mcpshim.NewClient(socketPath), sessionID)
 
 	clientTransport, serverTransport := mcp.NewInMemoryTransports()
 	serverSession, err := server.Connect(ctx, serverTransport, nil)
@@ -605,7 +608,7 @@ func TestHandoffToolsInjectAgentSessionID(t *testing.T) {
 			t.Fatalf("RPC method = %q, want %q", call.method, tc.method)
 		}
 		if tc.ownedBy != "" {
-			if got := call.params[tc.ownedBy]; got != "session-22" {
+			if got := call.params[tc.ownedBy]; got != float64(sessionID) {
 				t.Errorf("%s = %#v, want injected agent session ID", tc.ownedBy, got)
 			}
 			if _, ok := call.params[tc.otherOwned]; ok {
@@ -658,15 +661,26 @@ func TestRoleToolReturnsAllRolesWithEvidence(t *testing.T) {
 			if got := decodeRoleString(t, data, "role"); got != tc.wantRole {
 				t.Errorf("role = %q, want %q", got, tc.wantRole)
 			}
-			if got := decodeRoleString(t, data, "project_id"); got != wantProjectID {
-				t.Errorf("project_id = %q, want %q", got, wantProjectID)
-			}
-			if got := decodeRoleString(t, data, "goal_id"); got != wantGoalID {
-				t.Errorf("goal_id = %q, want %q", got, wantGoalID)
-			}
-			for _, field := range []string{"project_id", "goal_id"} {
-				if _, ok := data[field]; !ok {
-					t.Errorf("role response omitted evidence field %q", field)
+			switch tc.wantRole {
+			case "commander":
+				if got := decodeRoleID(t, data, "project_id"); got != wantProjectID {
+					t.Errorf("project_id = %d, want %d", got, wantProjectID)
+				}
+				if _, ok := data["goal_id"]; ok {
+					t.Errorf("commander role unexpectedly contains goal_id")
+				}
+			case "subcommander":
+				if got := decodeRoleID(t, data, "goal_id"); got != wantGoalID {
+					t.Errorf("goal_id = %d, want %d", got, wantGoalID)
+				}
+				if _, ok := data["project_id"]; ok {
+					t.Errorf("subcommander role unexpectedly contains project_id")
+				}
+			case "executor":
+				for _, field := range []string{"project_id", "goal_id"} {
+					if _, ok := data[field]; ok {
+						t.Errorf("executor role unexpectedly contains %s", field)
+					}
 				}
 			}
 		})
@@ -674,7 +688,7 @@ func TestRoleToolReturnsAllRolesWithEvidence(t *testing.T) {
 }
 
 func TestRoleToolReportsExpectedRoleMismatchInResult(t *testing.T) {
-	result, callErr, wantProjectID, wantGoalID := callRoleTool(t, false, true, false, "executor")
+	result, callErr, _, wantGoalID := callRoleTool(t, false, true, false, "executor")
 	if callErr != nil {
 		t.Fatalf("atct_role: %v", callErr)
 	}
@@ -695,15 +709,15 @@ func TestRoleToolReportsExpectedRoleMismatchInResult(t *testing.T) {
 	if matches {
 		t.Error("matches = true, want false")
 	}
-	if got := decodeRoleString(t, data, "project_id"); got != wantProjectID {
-		t.Errorf("project_id = %q, want %q", got, wantProjectID)
+	if _, ok := data["project_id"]; ok {
+		t.Errorf("subcommander mismatch unexpectedly contains project_id")
 	}
-	if got := decodeRoleString(t, data, "goal_id"); got != wantGoalID {
-		t.Errorf("goal_id = %q, want %q", got, wantGoalID)
+	if got := decodeRoleID(t, data, "goal_id"); got != wantGoalID {
+		t.Errorf("goal_id = %d, want %d", got, wantGoalID)
 	}
 }
 
-func callRoleTool(t *testing.T, claimProject, claimGoal, withTask bool, expectedRole string) (*mcp.CallToolResult, error, string, string) {
+func callRoleTool(t *testing.T, claimProject, claimGoal, withTask bool, expectedRole string) (*mcp.CallToolResult, error, int64, int64) {
 	t.Helper()
 	ctx := context.Background()
 	storeDir := t.TempDir()
@@ -727,8 +741,8 @@ func callRoleTool(t *testing.T, claimProject, claimGoal, withTask bool, expected
 			t.Fatalf("DeclareTasks: %v", err)
 		}
 	}
-	sessionID := "role-test-session"
-	if err := s.RegisterAgentSession(ctx, sessionID, os.Getpid()); err != nil {
+	sessionID, err := s.RegisterAgentSession(ctx, os.Getpid())
+	if err != nil {
 		s.Close()
 		t.Fatalf("RegisterAgentSession: %v", err)
 	}
@@ -808,7 +822,7 @@ func callRoleTool(t *testing.T, claimProject, claimGoal, withTask bool, expected
 	result, callErr := clientSession.CallTool(serverCtx, &mcp.CallToolParams{
 		Name: "atct_role", Arguments: args,
 	})
-	wantProjectID, wantGoalID := "", ""
+	wantProjectID, wantGoalID := int64(0), int64(0)
 	if claimProject {
 		wantProjectID = project.ID
 	}
@@ -853,6 +867,19 @@ func decodeRoleString(t *testing.T, data map[string]json.RawMessage, field strin
 	return decoded
 }
 
+func decodeRoleID(t *testing.T, data map[string]json.RawMessage, field string) int64 {
+	t.Helper()
+	value, ok := data[field]
+	if !ok {
+		t.Fatalf("role response omitted %q", field)
+	}
+	var decoded int64
+	if err := json.Unmarshal(value, &decoded); err != nil {
+		t.Fatalf("decode %s: %v", field, err)
+	}
+	return decoded
+}
+
 func startSchemaTestDaemon(t *testing.T) string {
 	t.Helper()
 	dir, err := os.MkdirTemp("", "atct")
@@ -875,10 +902,21 @@ func startSchemaTestDaemon(t *testing.T) string {
 			}
 			func() {
 				defer conn.Close()
-				if _, err := bufio.NewReader(conn).ReadBytes('\n'); err != nil {
+				line, err := bufio.NewReader(conn).ReadBytes('\n')
+				if err != nil {
 					return
 				}
-				_, _ = io.WriteString(conn, "{\"result\":{\"ok\":true}}\n")
+				var request struct {
+					Method string `json:"method"`
+				}
+				if err := json.Unmarshal(line, &request); err != nil {
+					return
+				}
+				response := `{"result":{"ok":true}}`
+				if request.Method == "session.role" {
+					response = `{"result":{"role":"executor","does":[],"does_not":[]}}`
+				}
+				_, _ = io.WriteString(conn, response+"\n")
 			}()
 		}
 	}()
@@ -896,7 +934,7 @@ type capturedSchemaDaemonCall struct {
 }
 
 func startCapturingSchemaTestDaemon(t *testing.T) (string, <-chan capturedSchemaDaemonCall) {
-	return startCapturingSchemaTestDaemonWithIdentifyResponse(t, `{"result":{"agent_session_id":"canonical-session","reattached":true}}`)
+	return startCapturingSchemaTestDaemonWithIdentifyResponse(t, `{"result":{"agent_session_id":9,"reattached":true}}`)
 }
 
 func startCapturingSchemaTestDaemonWithIdentifyResponse(t *testing.T, identifyResponse string) (string, <-chan capturedSchemaDaemonCall) {
@@ -935,8 +973,11 @@ func startCapturingSchemaTestDaemonWithIdentifyResponse(t *testing.T, identifyRe
 				}
 				calls <- capturedSchemaDaemonCall{method: request.Method, params: request.Params}
 				response := `{"result":{"ok":true}}`
-				if request.Method == "session.identify" {
+				switch request.Method {
+				case "session.identify":
 					response = identifyResponse
+				case "session.role":
+					response = `{"result":{"role":"executor","does":[],"does_not":[]}}`
 				}
 				_, _ = io.WriteString(conn, response+"\n")
 			}()
@@ -1028,7 +1069,7 @@ func TestDecisionAskWithoutDefaultStillWorks(t *testing.T) {
 	}
 }
 
-func callDecisionAsk(t *testing.T, args map[string]any) (*mcp.CallToolResult, error, *store.Store, string) {
+func callDecisionAsk(t *testing.T, args map[string]any) (*mcp.CallToolResult, error, *store.Store, int64) {
 	t.Helper()
 	dir := t.TempDir()
 	s, err := store.Open(filepath.Join(dir, "atct.db"))
@@ -1050,6 +1091,11 @@ func callDecisionAsk(t *testing.T, args map[string]any) (*mcp.CallToolResult, er
 	if err != nil {
 		s.Close()
 		t.Fatalf("DeclareTasks: %v", err)
+	}
+	registeredSessionID, err := s.RegisterAgentSession(context.Background(), os.Getpid())
+	if err != nil {
+		s.Close()
+		t.Fatalf("RegisterAgentSession: %v", err)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -1076,7 +1122,7 @@ func callDecisionAsk(t *testing.T, args map[string]any) (*mcp.CallToolResult, er
 	}
 
 	server := mcp.NewServer(&mcp.Implementation{Name: "atct-test", Version: "test"}, nil)
-	mcpshim.Register(server, mcpshim.NewClient(socketPath), "run-test")
+	mcpshim.Register(server, mcpshim.NewClient(socketPath), registeredSessionID)
 	clientTransport, serverTransport := mcp.NewInMemoryTransports()
 	serverSession, err := server.Connect(ctx, serverTransport, nil)
 	if err != nil {

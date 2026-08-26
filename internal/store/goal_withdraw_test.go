@@ -69,7 +69,7 @@ func TestWithdrawActiveGoalKeepsDoneTasks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DeclareTasks: %v", err)
 	}
-	if _, err := s.UpdateTask(ctx, tasks[0].ID, domain.TaskDone, ""); err != nil {
+	if _, err := s.UpdateTask(ctx, tasks[0].ID, domain.TaskDone, 0); err != nil {
 		t.Fatalf("UpdateTask done: %v", err)
 	}
 
@@ -98,11 +98,11 @@ func TestWithdrawActiveGoalDropsOpenTasksAndReleasesClaims(t *testing.T) {
 	}
 	addTestAgentSession(t, s, "agent-run")
 	for _, task := range tasks {
-		if _, err := s.ClaimTask(ctx, task.ID, "agent-run"); err != nil {
-			t.Fatalf("ClaimTask(%s): %v", task.ID, err)
+		if _, err := s.ClaimTask(ctx, task.ID, testSessionID("agent-run")); err != nil {
+			t.Fatalf("ClaimTask(%d): %v", task.ID, err)
 		}
 	}
-	if _, err := s.UpdateTask(ctx, tasks[1].ID, domain.TaskDoing, ""); err != nil {
+	if _, err := s.UpdateTask(ctx, tasks[1].ID, domain.TaskDoing, 0); err != nil {
 		t.Fatalf("UpdateTask doing: %v", err)
 	}
 
@@ -122,17 +122,17 @@ func TestWithdrawActiveGoalDropsOpenTasksAndReleasesClaims(t *testing.T) {
 				break
 			}
 		}
-		if found.ID == "" {
-			t.Fatalf("task %s missing after withdrawal", want.ID)
+		if found.ID == 0 {
+			t.Fatalf("task %d missing after withdrawal", want.ID)
 		}
 		if found.Status != domain.TaskDropped {
-			t.Errorf("task %s status = %q, want %q", found.ID, found.Status, domain.TaskDropped)
+			t.Errorf("task %d status = %q, want %q", found.ID, found.Status, domain.TaskDropped)
 		}
 		handoff, err := s.openTaskHandoff(ctx, found.ID)
 		if err != nil {
-			t.Errorf("task %s openTaskHandoff: %v", found.ID, err)
+			t.Errorf("task %d openTaskHandoff: %v", found.ID, err)
 		} else if handoff != nil {
-			t.Errorf("task %s handoff = %#v, want released", found.ID, handoff)
+			t.Errorf("task %d handoff = %#v, want released", found.ID, handoff)
 		}
 	}
 }

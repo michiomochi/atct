@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -40,7 +41,7 @@ func TestContextExitCodeReturnsOneForOrdinaryError(t *testing.T) {
 
 func TestRenderContextOmitsInactiveGoals(t *testing.T) {
 	got := renderContext([]contextGoal{
-		{Goal: domain.Goal{ID: "done-goal", Content: "Finished", Status: domain.GoalDone}},
+		{Goal: domain.Goal{ID: 1, Content: "Finished", Status: domain.GoalDone}},
 	}, nil)
 	if got != "" {
 		t.Fatalf("renderContext = %q, want empty output", got)
@@ -50,7 +51,7 @@ func TestRenderContextOmitsInactiveGoals(t *testing.T) {
 func TestRenderContextIncludesGoalDetails(t *testing.T) {
 	got := renderContext([]contextGoal{{
 		Goal: domain.Goal{
-			ID:      "goal-123",
+			ID:      123,
 			Content: "Ship context\n\nExpose the current ATCT state to the next session.",
 			Status:  domain.GoalActive,
 		},
@@ -58,7 +59,7 @@ func TestRenderContextIncludesGoalDetails(t *testing.T) {
 	for _, want := range []string{
 		"Goal: Ship context",
 		"Description: Expose the current ATCT state to the next session.",
-		"goal_id: goal-123",
+		"goal_id: 123",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("context does not contain %q: %q", want, got)
@@ -68,29 +69,29 @@ func TestRenderContextIncludesGoalDetails(t *testing.T) {
 
 func TestRenderContextIncludesActionableTasksAndIDs(t *testing.T) {
 	got := renderContext([]contextGoal{{
-		Goal: domain.Goal{ID: "goal-123", Content: "Ship context", Status: domain.GoalActive},
+		Goal: domain.Goal{ID: 123, Content: "Ship context", Status: domain.GoalActive},
 		Tasks: []domain.Task{
-			{ID: "task-todo", Title: "Declare tests", Status: domain.TaskTodo},
-			{ID: "task-doing", Title: "Implement command", Status: domain.TaskDoing},
-			{ID: "task-done", Title: "Review design", Status: domain.TaskDone},
+			{ID: 1, Title: "Declare tests", Status: domain.TaskTodo},
+			{ID: 2, Title: "Implement command", Status: domain.TaskDoing},
+			{ID: 3, Title: "Review design", Status: domain.TaskDone},
 		},
 	}}, nil)
 	for _, want := range []string{
-		"[todo] Declare tests (task_id: task-todo)",
-		"[doing] Implement command (task_id: task-doing)",
+		"[todo] Declare tests (task_id: 1)",
+		"[doing] Implement command (task_id: 2)",
 		"atct_task_claim",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("context does not contain %q: %q", want, got)
 		}
 	}
-	if strings.Contains(got, "task-done") || strings.Contains(got, "Review design") {
+	if strings.Contains(got, "task_id: 3") || strings.Contains(got, "Review design") {
 		t.Fatalf("done task should not be listed: %q", got)
 	}
-	manyTasks := contextGoal{Goal: domain.Goal{ID: "goal-many", Content: "Many tasks", Status: domain.GoalActive}}
+	manyTasks := contextGoal{Goal: domain.Goal{ID: 4, Content: "Many tasks", Status: domain.GoalActive}}
 	for i := 0; i < 6; i++ {
 		manyTasks.Tasks = append(manyTasks.Tasks, domain.Task{
-			ID: "task-many-" + string(rune('a'+i)), Title: "Task", Status: domain.TaskTodo,
+			ID: int64(10 + i), Title: "Task", Status: domain.TaskTodo,
 		})
 	}
 	manyOutput := renderContext([]contextGoal{manyTasks}, nil)
@@ -101,17 +102,17 @@ func TestRenderContextIncludesActionableTasksAndIDs(t *testing.T) {
 
 func TestRenderContextIncludesUnappliedDecisionsAndPollTool(t *testing.T) {
 	got := renderContext([]contextGoal{{
-		Goal: domain.Goal{ID: "goal-123", Content: "Ship context", Status: domain.GoalActive},
+		Goal: domain.Goal{ID: 123, Content: "Ship context", Status: domain.GoalActive},
 	}}, []domain.Decision{
 		{
-			ID: "decision-456", GoalID: "goal-123", Question: "Which output format should be used?",
+			ID: 456, GoalID: 123, Question: "Which output format should be used?",
 			AnswerLabel: "compact", AnswerText: "Use compact lines.", Status: domain.DecisionAnswered,
 			AnsweredAt: ptrTime(time.Unix(1, 0)),
 		},
-		{ID: "decision-applied", GoalID: "goal-123", Question: "Already handled", Status: domain.DecisionApplied},
+		{ID: 457, GoalID: 123, Question: "Already handled", Status: domain.DecisionApplied},
 	})
 	for _, want := range []string{
-		"decision_id: decision-456",
+		"decision_id: 456",
 		"Which output format should be used?",
 		"compact",
 		"atct_decision_poll",
@@ -120,19 +121,19 @@ func TestRenderContextIncludesUnappliedDecisionsAndPollTool(t *testing.T) {
 			t.Errorf("context does not contain %q: %q", want, got)
 		}
 	}
-	if strings.Contains(got, "decision-applied") || strings.Contains(got, "Already handled") {
+	if strings.Contains(got, "decision_id: 457") || strings.Contains(got, "Already handled") {
 		t.Fatalf("applied decision should not be listed: %q", got)
 	}
 
 	noTasks := renderContext([]contextGoal{{
-		Goal: domain.Goal{ID: "goal-empty", Content: "No tasks", Status: domain.GoalActive},
+		Goal: domain.Goal{ID: 5, Content: "No tasks", Status: domain.GoalActive},
 	}}, nil)
 	if !strings.Contains(noTasks, "atct_task_declare") || strings.Contains(noTasks, "atct_task_claim") {
 		t.Fatalf("no-task state has wrong next tool: %q", noTasks)
 	}
 	withTodo := renderContext([]contextGoal{{
-		Goal:  domain.Goal{ID: "goal-todo", Content: "Todo", Status: domain.GoalActive},
-		Tasks: []domain.Task{{ID: "task-todo", Title: "A task", Status: domain.TaskTodo}},
+		Goal:  domain.Goal{ID: 6, Content: "Todo", Status: domain.GoalActive},
+		Tasks: []domain.Task{{ID: 7, Title: "A task", Status: domain.TaskTodo}},
 	}}, nil)
 	if !strings.Contains(withTodo, "atct_task_claim") || strings.Contains(withTodo, "atct_task_declare") {
 		t.Fatalf("todo state has wrong next tool: %q", withTodo)
@@ -142,18 +143,18 @@ func TestRenderContextIncludesUnappliedDecisionsAndPollTool(t *testing.T) {
 func TestRenderContextMarksDefaultAppliedAnswers(t *testing.T) {
 	decisions := []domain.Decision{
 		{
-			ID: "decision-human", GoalID: "goal-123", Question: "Which human answer?",
+			ID: 458, GoalID: 123, Question: "Which human answer?",
 			AnswerLabel: "human", AnswerText: "human answer", Status: domain.DecisionAnswered,
 			AnsweredAt: ptrTime(time.Unix(1, 0)),
 		},
 		{
-			ID: "decision-default", GoalID: "goal-123", Question: "Which default answer?",
+			ID: 459, GoalID: 123, Question: "Which default answer?",
 			AnswerLabel: "default", AnswerText: "default answer", Status: domain.DecisionAnswered,
 			AnsweredAt: ptrTime(time.Unix(2, 0)), DefaultAppliedAt: ptrTime(time.Unix(3, 0)),
 		},
 	}
 	goals := []contextGoal{{
-		Goal: domain.Goal{ID: "goal-123", Content: "Ship context", Status: domain.GoalActive},
+		Goal: domain.Goal{ID: 123, Content: "Ship context", Status: domain.GoalActive},
 	}}
 	for name, got := range map[string]string{
 		"current": renderContext(goals, decisions),
@@ -194,7 +195,11 @@ func TestContextIsSilentForUnregisteredProject(t *testing.T) {
 
 func TestContextBriefIncludesClaimedCommander(t *testing.T) {
 	fixture := newContextCheckFixture(t)
-	if _, err := fixture.db.ClaimProject(context.Background(), fixture.goal.ProjectID, "atct-commander"); err != nil {
+	sessionID, err := fixture.db.RegisterAgentSession(context.Background(), os.Getpid())
+	if err != nil {
+		t.Fatalf("RegisterAgentSession: %v", err)
+	}
+	if _, err := fixture.db.ClaimProject(context.Background(), fixture.goal.ProjectID, sessionID); err != nil {
 		t.Fatalf("ClaimProject: %v", err)
 	}
 
@@ -202,7 +207,7 @@ func TestContextBriefIncludesClaimedCommander(t *testing.T) {
 	if err != nil {
 		t.Fatalf("contextBriefTextForProject: %v", err)
 	}
-	if !strings.Contains(got, "commander atct-com…") {
+	if !strings.Contains(got, fmt.Sprintf("commander %d", sessionID)) {
 		t.Fatalf("brief omitted visibly truncated commander: %q", got)
 	}
 }
@@ -240,28 +245,30 @@ func TestContextBriefShowsAbsentCommanderForUnclaimedProject(t *testing.T) {
 }
 
 func TestRenderContextDistinguishesClaimedTasks(t *testing.T) {
-	t.Setenv(atctAgentSessionIDEnv, "run-self")
+	const selfSessionID int64 = 1
+	const otherSessionID int64 = 2
+	t.Setenv(atctAgentSessionIDEnv, strconv.FormatInt(selfSessionID, 10))
 
 	got := renderContext([]contextGoal{{
-		Goal: domain.Goal{ID: "goal-claim", Content: "Claimed goal", Status: domain.GoalActive},
+		Goal: domain.Goal{ID: 8, Content: "Claimed goal", Status: domain.GoalActive},
 		Tasks: []domain.Task{
-			{ID: "task-free", Title: "Unclaimed", Status: domain.TaskTodo},
-			{ID: "task-self", Title: "Self claim", Status: domain.TaskDoing},
-			{ID: "task-other", Title: "Other claim", Status: domain.TaskDoing},
+			{ID: 9, Title: "Unclaimed", Status: domain.TaskTodo},
+			{ID: 10, Title: "Self claim", Status: domain.TaskDoing},
+			{ID: 11, Title: "Other claim", Status: domain.TaskDoing},
 		},
-		TaskHandoffs: map[string]*store.TaskHandoff{
-			"task-self":  {ReceivedBy: "run-self"},
-			"task-other": {ReceivedBy: "run-other"},
+		TaskHandoffs: map[int64]*store.TaskHandoff{
+			10: {ReceivedBy: selfSessionID},
+			11: {ReceivedBy: otherSessionID},
 		},
 	}}, nil)
 
-	if !strings.Contains(got, "- [todo] Unclaimed (task_id: task-free)") {
+	if !strings.Contains(got, "- [todo] Unclaimed (task_id: 9)") {
 		t.Fatalf("unclaimed task missing from context:\n%s", got)
 	}
-	if !strings.Contains(got, "- [claimed by this agent session] Self claim (task_id: task-self)") {
+	if !strings.Contains(got, "- [claimed by this agent session] Self claim (task_id: 10)") {
 		t.Fatalf("current-run claim marker missing from context:\n%s", got)
 	}
-	if !strings.Contains(got, "- [claimed] Other claim (task_id: task-other)") {
+	if !strings.Contains(got, "- [claimed] Other claim (task_id: 11)") {
 		t.Fatalf("other-run claim marker missing from context:\n%s", got)
 	}
 }
@@ -270,7 +277,7 @@ func TestRenderContextIncludesAllActiveGoals(t *testing.T) {
 	goals := make([]contextGoal, 0, 4)
 	for i := 1; i <= 4; i++ {
 		goals = append(goals, contextGoal{Goal: domain.Goal{
-			ID:      fmt.Sprintf("goal-%d", i),
+			ID:      int64(i),
 			Content: fmt.Sprintf("Goal %d\n\nvisible", i),
 			Status:  domain.GoalActive,
 		}})
@@ -288,7 +295,7 @@ func TestRenderContextOmitsGoalOmissionSummary(t *testing.T) {
 	goals := make([]contextGoal, 0, 4)
 	for i := 1; i <= 4; i++ {
 		goals = append(goals, contextGoal{Goal: domain.Goal{
-			ID:      fmt.Sprintf("goal-%d", i),
+			ID:      int64(i),
 			Content: fmt.Sprintf("Goal %d\n\nvisible", i),
 			Status:  domain.GoalActive,
 		}})
@@ -306,14 +313,14 @@ func TestRenderContextTruncatesLongDescriptionByRune(t *testing.T) {
 	longDescription := strings.Repeat("日", 101)
 	goals := []contextGoal{
 		{Goal: domain.Goal{
-			ID:      "goal-long-description",
+			ID:      12,
 			Content: "Long description\n\n" + longDescription,
 			Status:  domain.GoalActive,
 		}},
 	}
 	for i := 2; i <= 4; i++ {
 		goals = append(goals, contextGoal{Goal: domain.Goal{
-			ID:      fmt.Sprintf("goal-%d", i),
+			ID:      int64(i),
 			Content: fmt.Sprintf("Goal %d", i),
 			Status:  domain.GoalActive,
 		}})
@@ -333,14 +340,14 @@ func TestRenderContextKeepsShortDescriptionWithoutEllipsis(t *testing.T) {
 	shortDescription := strings.Repeat("文", 100)
 	goals := []contextGoal{
 		{Goal: domain.Goal{
-			ID:      "goal-short-description",
+			ID:      13,
 			Content: "Short description\n\n" + shortDescription,
 			Status:  domain.GoalActive,
 		}},
 	}
 	for i := 2; i <= 4; i++ {
 		goals = append(goals, contextGoal{Goal: domain.Goal{
-			ID:      fmt.Sprintf("goal-%d", i),
+			ID:      int64(i),
 			Content: fmt.Sprintf("Goal %d", i),
 			Status:  domain.GoalActive,
 		}})
@@ -360,14 +367,14 @@ func TestRenderContextLimitsTasksAndReportsOmissions(t *testing.T) {
 	tasks := make([]domain.Task, 0, 6)
 	for i := 1; i <= 6; i++ {
 		tasks = append(tasks, domain.Task{
-			ID:     fmt.Sprintf("task-%d", i),
+			ID:     int64(i),
 			Title:  fmt.Sprintf("Task %d", i),
 			Status: domain.TaskTodo,
 		})
 	}
 
 	got := renderContext([]contextGoal{{
-		Goal:  domain.Goal{ID: "goal-tasks", Content: "Task goal", Status: domain.GoalActive},
+		Goal:  domain.Goal{ID: 14, Content: "Task goal", Status: domain.GoalActive},
 		Tasks: tasks,
 	}}, nil)
 	for i := 1; i <= 5; i++ {
@@ -385,7 +392,7 @@ func TestRenderContextLimitsTasksAndReportsOmissions(t *testing.T) {
 
 func TestRenderContextOmitsEmptyDescription(t *testing.T) {
 	got := renderContext([]contextGoal{{
-		Goal: domain.Goal{ID: "goal-empty-description", Content: "No description", Status: domain.GoalActive},
+		Goal: domain.Goal{ID: 15, Content: "No description", Status: domain.GoalActive},
 	}}, nil)
 
 	if strings.Contains(got, "Description:") {
@@ -397,7 +404,7 @@ func TestRenderContextKeepsAllDecisionsOutsideCaps(t *testing.T) {
 	goals := make([]contextGoal, 0, 4)
 	for i := 1; i <= 4; i++ {
 		goals = append(goals, contextGoal{Goal: domain.Goal{
-			ID:      fmt.Sprintf("goal-%d", i),
+			ID:      int64(i),
 			Content: fmt.Sprintf("Goal %d", i),
 			Status:  domain.GoalActive,
 		}})
@@ -405,8 +412,8 @@ func TestRenderContextKeepsAllDecisionsOutsideCaps(t *testing.T) {
 	decisions := make([]domain.Decision, 0, 6)
 	for i := 1; i <= 6; i++ {
 		decisions = append(decisions, domain.Decision{
-			ID:          fmt.Sprintf("decision-%d", i),
-			GoalID:      "goal-4",
+			ID:          int64(i),
+			GoalID:      4,
 			Question:    fmt.Sprintf("Question %d", i),
 			AnswerLabel: "Yes",
 			AnswerText:  fmt.Sprintf("Answer %d", i),
@@ -416,7 +423,7 @@ func TestRenderContextKeepsAllDecisionsOutsideCaps(t *testing.T) {
 
 	got := renderContext(goals, decisions)
 	for i := 1; i <= 6; i++ {
-		if !strings.Contains(got, fmt.Sprintf("decision-%d", i)) {
+		if !strings.Contains(got, fmt.Sprintf("decision_id: %d", i)) {
 			t.Errorf("decision %d missing from context:\n%s", i, got)
 		}
 	}
@@ -472,7 +479,7 @@ func (f contextCheckFixture) addUnappliedAnswer(t *testing.T) {
 		TaskID:         tasks[0].ID,
 		Kind:           domain.KindDecision,
 		Question:       "Which path should be taken?",
-		AgentSessionID: "run-context-check",
+		AgentSessionID: 3,
 	})
 	if err != nil {
 		t.Fatalf("AskDecision: %v", err)
@@ -582,7 +589,7 @@ func TestContextCheckReturnsZeroForUndeclaredActiveGoal(t *testing.T) {
 func TestContextCheckIgnoresDoingTasks(t *testing.T) {
 	fixture := newContextCheckFixture(t)
 	task := fixture.addTask(t, "already doing")
-	if _, err := fixture.db.UpdateTask(context.Background(), task.ID, domain.TaskDoing, ""); err != nil {
+	if _, err := fixture.db.UpdateTask(context.Background(), task.ID, domain.TaskDoing, 0); err != nil {
 		t.Fatalf("UpdateTask: %v", err)
 	}
 
@@ -598,7 +605,7 @@ func TestContextCheckIgnoresDoingTasks(t *testing.T) {
 func TestContextCheckReturnsOneWhenNothingNeedsDoing(t *testing.T) {
 	fixture := newContextCheckFixture(t)
 	task := fixture.addTask(t, "finished")
-	if _, err := fixture.db.UpdateTask(context.Background(), task.ID, domain.TaskDone, ""); err != nil {
+	if _, err := fixture.db.UpdateTask(context.Background(), task.ID, domain.TaskDone, 0); err != nil {
 		t.Fatalf("UpdateTask: %v", err)
 	}
 
@@ -724,7 +731,7 @@ func newProjectSelectionFixture(t *testing.T) projectSelectionFixture {
 	}
 }
 
-func (f projectSelectionFixture) addPendingDecision(t *testing.T, goalID, question, agentSessionID string) {
+func (f projectSelectionFixture) addPendingDecision(t *testing.T, goalID int64, question, agentSessionID string) {
 	t.Helper()
 
 	// An active decision has to name the task it is holding up.
@@ -737,7 +744,7 @@ func (f projectSelectionFixture) addPendingDecision(t *testing.T, goalID, questi
 		TaskID:         tasks[0].ID,
 		Kind:           domain.KindDecision,
 		Question:       question,
-		AgentSessionID: agentSessionID,
+		AgentSessionID: cliTestSessionID(agentSessionID),
 	})
 	if err != nil {
 		t.Fatalf("AskDecision: %v", err)

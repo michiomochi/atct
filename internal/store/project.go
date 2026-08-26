@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/michiomochi/atct/internal/domain"
 	"github.com/michiomochi/atct/internal/store/sqlcgen"
 )
@@ -23,13 +22,11 @@ var (
 func (s *Store) CreateProject(ctx context.Context, name, rootPath string) (domain.Project, error) {
 	rootPath = normalizeProjectPath(rootPath)
 	ns := domain.Project{
-		ID:        uuid.NewString(),
 		Name:      name,
 		RootPath:  rootPath,
 		CreatedAt: time.Now().UTC(),
 	}
-	err := sqlcgen.New(s.db).CreateProject(ctx, sqlcgen.CreateProjectParams{
-		ID:        ns.ID,
+	id, err := sqlcgen.New(s.db).CreateProject(ctx, sqlcgen.CreateProjectParams{
 		Name:      ns.Name,
 		RootPath:  ns.RootPath,
 		CreatedAt: ns.CreatedAt.Format(time.RFC3339),
@@ -37,26 +34,23 @@ func (s *Store) CreateProject(ctx context.Context, name, rootPath string) (domai
 	if err != nil {
 		return domain.Project{}, fmt.Errorf("insert project: %w", err)
 	}
+	ns.ID = id
 	return ns, nil
 }
 
-func (s *Store) ClaimProject(ctx context.Context, projectID, agentSessionID string) (domain.Project, error) {
-	projectID = strings.TrimSpace(projectID)
-	if projectID == "" {
-		return domain.Project{}, fmt.Errorf("%w: empty id", ErrProjectNotFound)
-	}
-	agentSessionID = strings.TrimSpace(agentSessionID)
+func (s *Store) ClaimProject(ctx context.Context, projectID int64, agentSessionID int64) (domain.Project, error) {
+	id := projectID
 
-	currentRow, err := sqlcgen.New(s.db).GetProject(ctx, projectID)
+	currentRow, err := sqlcgen.New(s.db).GetProject(ctx, id)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return domain.Project{}, fmt.Errorf("%w: %s", ErrProjectNotFound, projectID)
+			return domain.Project{}, fmt.Errorf("%w: %d", ErrProjectNotFound, projectID)
 		}
 		return domain.Project{}, fmt.Errorf("lookup project claim: %w", err)
 	}
-	currentClaim := strings.TrimSpace(currentRow.ClaimedBy)
-	if agentSessionID != "" && currentClaim != "" && currentClaim != agentSessionID && claimIsRunning(ctx, s, currentClaim) {
-		return domain.Project{}, fmt.Errorf("%w: %s", ErrProjectAlreadyClaimed, projectID)
+	currentClaim := currentRow.ClaimedBy
+	if agentSessionID != 0 && currentClaim != 0 && currentClaim != agentSessionID && claimIsRunning(ctx, s, currentClaim) {
+		return domain.Project{}, fmt.Errorf("%w: %d", ErrProjectAlreadyClaimed, projectID)
 	}
 
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -66,26 +60,26 @@ func (s *Store) ClaimProject(ctx context.Context, projectID, agentSessionID stri
 	defer tx.Rollback()
 
 	q := sqlcgen.New(tx)
-	project, err := q.GetProject(ctx, projectID)
+	project, err := q.GetProject(ctx, id)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return domain.Project{}, fmt.Errorf("%w: %s", ErrProjectNotFound, projectID)
+			return domain.Project{}, fmt.Errorf("%w: %d", ErrProjectNotFound, projectID)
 		}
 		return domain.Project{}, fmt.Errorf("lookup project claim: %w", err)
 	}
-	if agentSessionID != "" && strings.TrimSpace(project.ClaimedBy) != currentClaim && strings.TrimSpace(project.ClaimedBy) != "" {
-		return domain.Project{}, fmt.Errorf("%w: %s", ErrProjectAlreadyClaimed, projectID)
+	if agentSessionID != 0 && project.ClaimedBy != currentClaim && project.ClaimedBy != 0 {
+		return domain.Project{}, fmt.Errorf("%w: %d", ErrProjectAlreadyClaimed, projectID)
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339)
 	claimedAt := sql.NullString{}
-	if agentSessionID != "" {
+	if agentSessionID != 0 {
 		claimedAt = sql.NullString{String: now, Valid: true}
 	}
 	result, err := q.ClaimProject(ctx, sqlcgen.ClaimProjectParams{
 		ClaimedBy: agentSessionID,
 		ClaimedAt: claimedAt,
-		ID:        projectID,
+		ID:        id,
 	})
 	if err != nil {
 		return domain.Project{}, fmt.Errorf("claim project: %w", err)
@@ -95,28 +89,25 @@ func (s *Store) ClaimProject(ctx context.Context, projectID, agentSessionID stri
 		return domain.Project{}, fmt.Errorf("check claimed project: %w", err)
 	}
 	if affected == 0 {
-		return domain.Project{}, fmt.Errorf("%w: %s", ErrProjectNotFound, projectID)
+		return domain.Project{}, fmt.Errorf("%w: %d", ErrProjectNotFound, projectID)
 	}
 	if err := tx.Commit(); err != nil {
 		return domain.Project{}, fmt.Errorf("commit project claim: %w", err)
 	}
 
-	claimedRow, err := sqlcgen.New(s.db).GetProject(ctx, projectID)
+	claimedRow, err := sqlcgen.New(s.db).GetProject(ctx, id)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return domain.Project{}, fmt.Errorf("%w: %s", ErrProjectNotFound, projectID)
+			return domain.Project{}, fmt.Errorf("%w: %d", ErrProjectNotFound, projectID)
 		}
 		return domain.Project{}, fmt.Errorf("lookup claimed project: %w", err)
 	}
-	return projectFromRow(claimedRow)
+	return projectFromValues(claimedRow.ID, claimedRow.Name, claimedRow.RootPath, claimedRow.CreatedAt, claimedRow.ClaimedBy, claimedRow.ClaimedAt)
 }
 
 // ReleaseProject clears a project's claim.
-func (s *Store) ReleaseProject(ctx context.Context, projectID string) error {
-	projectID = strings.TrimSpace(projectID)
-	if projectID == "" {
-		return fmt.Errorf("%w: empty id", ErrProjectNotFound)
-	}
+func (s *Store) ReleaseProject(ctx context.Context, projectID int64) error {
+	id := projectID
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -124,7 +115,7 @@ func (s *Store) ReleaseProject(ctx context.Context, projectID string) error {
 	}
 	defer tx.Rollback()
 
-	result, err := sqlcgen.New(tx).ReleaseProject(ctx, projectID)
+	result, err := sqlcgen.New(tx).ReleaseProject(ctx, id)
 	if err != nil {
 		return fmt.Errorf("release project claim: %w", err)
 	}
@@ -133,7 +124,7 @@ func (s *Store) ReleaseProject(ctx context.Context, projectID string) error {
 		return fmt.Errorf("check released project: %w", err)
 	}
 	if affected == 0 {
-		return fmt.Errorf("%w: %s", ErrProjectNotFound, projectID)
+		return fmt.Errorf("%w: %d", ErrProjectNotFound, projectID)
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit project claim release: %w", err)
@@ -155,7 +146,7 @@ func (s *Store) ListProjects(ctx context.Context) ([]domain.Project, error) {
 
 	out := []domain.Project{}
 	for _, row := range rows {
-		p, err := projectFromRow(row)
+		p, err := projectFromValues(row.ID, row.Name, row.RootPath, row.CreatedAt, row.ClaimedBy, row.ClaimedAt)
 		if err != nil {
 			return nil, err
 		}
@@ -180,21 +171,21 @@ func (s *Store) ResolveProject(ctx context.Context, cwd string) (domain.Project,
 		}
 		return domain.Project{}, fmt.Errorf("scan project: %w", err)
 	}
-	return projectFromRow(row)
+	return projectFromValues(row.ID, row.Name, row.RootPath, row.CreatedAt, row.ClaimedBy, row.ClaimedAt)
 }
 
-func projectFromRow(row sqlcgen.Project) (domain.Project, error) {
-	t, err := time.Parse(time.RFC3339, row.CreatedAt)
+func projectFromValues(id int64, name, rootPath, createdAt string, claimedBy int64, claimedAt sql.NullString) (domain.Project, error) {
+	t, err := time.Parse(time.RFC3339, createdAt)
 	if err != nil {
 		return domain.Project{}, fmt.Errorf("parse created_at: %w", err)
 	}
 	return domain.Project{
-		ID:        row.ID,
-		Name:      row.Name,
-		RootPath:  row.RootPath,
+		ID:        id,
+		Name:      name,
+		RootPath:  rootPath,
 		CreatedAt: t,
-		ClaimedBy: row.ClaimedBy,
-		ClaimedAt: parseClaimedAt(row.ClaimedAt),
+		ClaimedBy: claimedBy,
+		ClaimedAt: parseClaimedAt(claimedAt),
 	}, nil
 }
 

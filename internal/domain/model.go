@@ -12,11 +12,11 @@ type Option struct {
 }
 
 type Project struct {
-	ID        string     `json:"id"`
+	ID        int64      `json:"id"`
 	Name      string     `json:"name"`
 	RootPath  string     `json:"root_path"`
 	CreatedAt time.Time  `json:"created_at"`
-	ClaimedBy string     `json:"claimed_by"`
+	ClaimedBy int64      `json:"claimed_by"`
 	ClaimedAt *time.Time `json:"claimed_at,omitempty"`
 }
 
@@ -30,9 +30,9 @@ type CompletionReport struct {
 }
 
 type Goal struct {
-	ID                string     `json:"id"`
-	ProjectID         string     `json:"project_id"`
-	DerivedFromGoalID string     `json:"derived_from_goal_id"`
+	ID                int64      `json:"id"`
+	ProjectID         int64      `json:"project_id"`
+	DerivedFromGoalID int64      `json:"derived_from_goal_id"`
 	Content           string     `json:"content"`
 	Status            GoalStatus `json:"status"`
 	Creator           string     `json:"creator"`
@@ -68,8 +68,8 @@ func Body(content string) string {
 }
 
 type Task struct {
-	ID           string     `json:"id"`
-	GoalID       string     `json:"goal_id"`
+	ID           int64      `json:"id"`
+	GoalID       int64      `json:"goal_id"`
 	Title        string     `json:"title"`
 	Description  string     `json:"description"`
 	Status       TaskStatus `json:"status"`
@@ -93,9 +93,9 @@ type TaskCommit struct {
 }
 
 type Decision struct {
-	ID               string         `json:"id"`
-	GoalID           string         `json:"goal_id"`
-	TaskID           string         `json:"task_id,omitempty"`
+	ID               int64          `json:"id"`
+	GoalID           int64          `json:"goal_id"`
+	TaskID           int64          `json:"task_id,omitempty"`
 	Kind             DecisionKind   `json:"kind"`
 	Question         string         `json:"question"`
 	Options          []Option       `json:"options"`
@@ -107,6 +107,6 @@ type Decision struct {
 	AnswerText       string         `json:"answer_text,omitempty"`
 	AnsweredAt       *time.Time     `json:"answered_at,omitempty"`
 	AppliedAt        *time.Time     `json:"applied_at,omitempty"`
-	AgentSessionID   string         `json:"agent_session_id"`
+	AgentSessionID   int64          `json:"agent_session_id"`
 	CreatedAt        time.Time      `json:"created_at"`
 }

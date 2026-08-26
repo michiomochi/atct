@@ -30,7 +30,7 @@ func TestHTTPHandlerServesEmbeddedIndex(t *testing.T) {
 		t.Fatalf("status = %d, want %d", response.Code, http.StatusOK)
 	}
 	if !strings.HasPrefix(response.Header().Get("Content-Type"), "text/html") {
-		t.Fatalf("content type = %q, want text/html", response.Header().Get("Content-Type"))
+		t.Fatalf("content type = %v, want text/html", response.Header().Get("Content-Type"))
 	}
 	if !strings.Contains(strings.ToLower(response.Body.String()), "<html") {
 		t.Fatal("response does not contain embedded HTML")
@@ -47,7 +47,7 @@ func TestHTTPHandlerRoutesAPI(t *testing.T) {
 		t.Fatalf("status = %d, want %d", response.Code, http.StatusOK)
 	}
 	if !strings.HasPrefix(response.Header().Get("Content-Type"), "application/json") {
-		t.Fatalf("content type = %q, want application/json", response.Header().Get("Content-Type"))
+		t.Fatalf("content type = %v, want application/json", response.Header().Get("Content-Type"))
 	}
 	var payload map[string]json.RawMessage
 	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
@@ -128,7 +128,7 @@ func TestHTTPHandlerRoutesEmbeddedDynamicPagesAndFallsBackToRoot(t *testing.T) {
 				t.Fatalf("status = %d, want %d", response.Code, http.StatusOK)
 			}
 			if response.Body.String() != string(tt.want) {
-				t.Fatalf("route %s returned unexpected embedded page", tt.path)
+				t.Fatalf("route %v returned unexpected embedded page", tt.path)
 			}
 		})
 	}
@@ -144,9 +144,9 @@ func TestHTTPHandlerReturnsJSON404ForUnknownAPI(t *testing.T) {
 		t.Fatalf("status = %d, want %d", response.Code, http.StatusNotFound)
 	}
 	if !strings.HasPrefix(response.Header().Get("Content-Type"), "application/json") {
-		t.Fatalf("content type = %q, want application/json", response.Header().Get("Content-Type"))
+		t.Fatalf("content type = %v, want application/json", response.Header().Get("Content-Type"))
 	}
-	var payload map[string]string
+	var payload map[string]any
 	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
 		t.Fatalf("response is not JSON: %v", err)
 	}
@@ -251,7 +251,7 @@ func TestHTTPHandlerMCPTaskHandoffRoutes(t *testing.T) {
 	}
 	// The HTTP path mints a session per connection, so the requester is not a
 	// value the caller chose. It must still be filled in by the shim.
-	if requested.RequestedAt == nil || requested.RequestedBy == "" {
+	if requested.RequestedAt == nil || requested.RequestedBy == 0 {
 		t.Fatalf("request handoff = %#v, want requested timestamp and an injected requester", requested)
 	}
 
@@ -346,7 +346,7 @@ func TestHTTPHandlerMCPGoalHandoffRoutes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetGoalHandoff after request: %v", err)
 	}
-	if requested.RequestedAt == nil || requested.RequestedBy == "" {
+	if requested.RequestedAt == nil || requested.RequestedBy == 0 {
 		t.Fatalf("request handoff = %#v, want requested timestamp and an injected requester", requested)
 	}
 
@@ -433,7 +433,7 @@ func TestHTTPHandlerMCPUsesDistinctAgentSessionsForClaims(t *testing.T) {
 		t.Errorf("agent_sessions count = %d, want 2", len(ids))
 	}
 	if len(ids) >= 2 {
-		if ids[0] == "" || ids[1] == "" {
+		if ids[0] == 0 || ids[1] == 0 {
 			t.Errorf("agent_sessions contains an empty id: %#v", ids)
 		}
 		if ids[0] == ids[1] {
@@ -517,7 +517,7 @@ func waitForMCPTestSocket(t *testing.T, socketPath string, serveDone <-chan erro
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatalf("daemon socket %q did not appear", socketPath)
+	t.Fatalf("daemon socket %v did not appear", socketPath)
 }
 
 type mcpHTTPTestClient struct {
@@ -549,13 +549,13 @@ func (c *mcpHTTPTestClient) initialize(t *testing.T) map[string]any {
 		t.Fatalf("initialize status = %d, want %d", status, http.StatusOK)
 	}
 	if got := headers.Get("Content-Type"); !strings.HasPrefix(got, "text/event-stream") {
-		t.Fatalf("initialize content type = %q, want text/event-stream", got)
+		t.Fatalf("initialize content type = %v, want text/event-stream", got)
 	}
 	if c.sessionID == "" {
 		t.Fatal("initialize did not return Mcp-Session-Id")
 	}
 	if !bytes.Contains(body, []byte("event: message")) {
-		t.Fatalf("initialize response is not an SSE message: %q", body)
+		t.Fatalf("initialize response is not an SSE message: %v", body)
 	}
 	payload := decodeMCPEvent(t, body)
 	if payload["jsonrpc"] != "2.0" {
@@ -579,7 +579,7 @@ func (c *mcpHTTPTestClient) call(t *testing.T, method string, params map[string]
 	t.Helper()
 	status, _, body := c.post(t, method, params, true)
 	if status != http.StatusOK {
-		t.Fatalf("%s status = %d, want %d", method, status, http.StatusOK)
+		t.Fatalf("%v status = %d, want %d", method, status, http.StatusOK)
 	}
 	return decodeMCPEvent(t, body)
 }
@@ -597,11 +597,11 @@ func (c *mcpHTTPTestClient) post(t *testing.T, method string, params map[string]
 	}
 	body, err := json.Marshal(requestBody)
 	if err != nil {
-		t.Fatalf("marshal %s request: %v", method, err)
+		t.Fatalf("marshal %v request: %v", method, err)
 	}
 	req, err := http.NewRequest(http.MethodPost, c.endpoint, bytes.NewReader(body))
 	if err != nil {
-		t.Fatalf("new %s request: %v", method, err)
+		t.Fatalf("new %v request: %v", method, err)
 	}
 	req.Header.Set("Accept", "application/json, text/event-stream")
 	req.Header.Set("Content-Type", "application/json")
@@ -610,16 +610,16 @@ func (c *mcpHTTPTestClient) post(t *testing.T, method string, params map[string]
 	}
 	response, err := c.http.Do(req)
 	if err != nil {
-		t.Fatalf("POST %s: %v", method, err)
+		t.Fatalf("POST %v: %v", method, err)
 	}
 	defer response.Body.Close()
 	responseBody, err := io.ReadAll(response.Body)
 	if err != nil {
-		t.Fatalf("read %s response: %v", method, err)
+		t.Fatalf("read %v response: %v", method, err)
 	}
 	if sessionID := response.Header.Get("Mcp-Session-Id"); sessionID != "" {
 		if c.sessionID != "" && c.sessionID != sessionID {
-			t.Fatalf("Mcp-Session-Id changed from %q to %q", c.sessionID, sessionID)
+			t.Fatalf("Mcp-Session-Id changed from %v to %v", c.sessionID, sessionID)
 		}
 		c.sessionID = sessionID
 	}
@@ -636,11 +636,11 @@ func decodeMCPEvent(t *testing.T, body []byte) map[string]any {
 		}
 	}
 	if len(data) == 0 {
-		t.Fatalf("SSE response has no data event: %q", body)
+		t.Fatalf("SSE response has no data event: %v", body)
 	}
 	var payload map[string]any
 	if err := json.Unmarshal([]byte(strings.Join(data, "\n")), &payload); err != nil {
-		t.Fatalf("decode SSE data: %v (body=%q)", err, body)
+		t.Fatalf("decode SSE data: %v (body=%v)", err, body)
 	}
 	return payload
 }
@@ -657,7 +657,7 @@ func mcpResult(t *testing.T, payload map[string]any) map[string]any {
 	return result
 }
 
-func agentSessionIDs(t *testing.T, s *store.Store) []string {
+func agentSessionIDs(t *testing.T, s *store.Store) []int64 {
 	t.Helper()
 	rows, err := s.DB().QueryContext(context.Background(), "SELECT * FROM agent_sessions")
 	if err != nil {
@@ -679,7 +679,7 @@ func agentSessionIDs(t *testing.T, s *store.Store) []string {
 		t.Fatalf("agent_sessions has no session id column: %v", columns)
 	}
 
-	var ids []string
+	var ids []int64
 	for rows.Next() {
 		values := make([]any, len(columns))
 		pointers := make([]any, len(values))
@@ -689,12 +689,14 @@ func agentSessionIDs(t *testing.T, s *store.Store) []string {
 		if err := rows.Scan(pointers...); err != nil {
 			t.Fatalf("scan agent_sessions: %v", err)
 		}
-		var id string
+		var id int64
 		switch value := values[sessionColumn].(type) {
-		case string:
+		case int64:
 			id = value
+		case string:
+			t.Fatalf("agent session id has legacy string type %T: %q", value, value)
 		case []byte:
-			id = string(value)
+			t.Fatalf("agent session id has legacy blob type %T: %q", value, value)
 		default:
 			t.Fatalf("agent session id has type %T", value)
 		}

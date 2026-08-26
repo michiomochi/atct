@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -44,10 +45,8 @@ func TestInboxAttentionTasksIncludeProjectIdentityPerTask(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := f.store.RegisterAgentSession(f.ctx, "other-run", 0); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := f.store.ClaimTask(f.ctx, otherTasks[0].ID, "other-run"); err != nil {
+	otherRunID := registerTestSession(t, f.store, "other-run", 0)
+	if _, err := f.store.ClaimTask(f.ctx, otherTasks[0].ID, otherRunID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := f.store.AskDecision(f.ctx, store.AskInput{
@@ -68,8 +67,8 @@ func TestInboxAttentionTasksIncludeProjectIdentityPerTask(t *testing.T) {
 	}
 	var inbox struct {
 		AttentionTasks []struct {
-			ID          string `json:"id"`
-			ProjectID   string `json:"project_id"`
+			ID          int64  `json:"id"`
+			ProjectID   int64  `json:"project_id"`
 			ProjectName string `json:"project_name"`
 		} `json:"attention_tasks"`
 	}
@@ -79,18 +78,18 @@ func TestInboxAttentionTasksIncludeProjectIdentityPerTask(t *testing.T) {
 	if len(inbox.AttentionTasks) != 2 {
 		t.Fatalf("attention tasks = %+v", inbox.AttentionTasks)
 	}
-	got := make(map[string]struct {
-		projectID   string
+	got := make(map[int64]struct {
+		projectID   int64
 		projectName string
 	})
 	for _, task := range inbox.AttentionTasks {
 		got[task.ID] = struct {
-			projectID   string
+			projectID   int64
 			projectName string
 		}{projectID: task.ProjectID, projectName: task.ProjectName}
 	}
-	want := map[string]struct {
-		projectID   string
+	want := map[int64]struct {
+		projectID   int64
 		projectName string
 	}{
 		f.tasks[0].ID:    {projectID: f.project.ID, projectName: "fixture"},
@@ -101,14 +100,14 @@ func TestInboxAttentionTasksIncludeProjectIdentityPerTask(t *testing.T) {
 	}
 	for taskID, wantIdentity := range want {
 		if gotIdentity, ok := got[taskID]; !ok || gotIdentity != wantIdentity {
-			t.Fatalf("attention task %s identity = %+v, want %+v", taskID, gotIdentity, wantIdentity)
+			t.Fatalf("attention task %d identity = %+v, want %+v", taskID, gotIdentity, wantIdentity)
 		}
 	}
 }
 
 type decisionViewResponse struct {
 	domain.Decision
-	ProjectID        string `json:"project_id"`
+	ProjectID        int64  `json:"project_id"`
 	GoalHeadline     string `json:"goal_headline"`
 	SettledByDefault bool   `json:"settled_by_default"`
 	DefaultOption    string `json:"default_option"`
@@ -154,11 +153,11 @@ func TestHTTPInboxIncludesGoalTitlePerDecision(t *testing.T) {
 	if err := json.Unmarshal(body, &response); err != nil {
 		t.Fatal(err)
 	}
-	got := make(map[string]string, len(response.OpenDecisions))
+	got := make(map[int64]string, len(response.OpenDecisions))
 	for _, decision := range response.OpenDecisions {
 		got[decision.ID] = decision.GoalHeadline
 	}
-	want := map[string]string{
+	want := map[int64]string{
 		first.ID:  domain.Headline(f.goal.Content),
 		second.ID: domain.Headline(otherGoal.Content),
 	}
@@ -167,7 +166,7 @@ func TestHTTPInboxIncludesGoalTitlePerDecision(t *testing.T) {
 	}
 	for decisionID, wantHeadline := range want {
 		if gotHeadline := got[decisionID]; gotHeadline != wantHeadline {
-			t.Fatalf("decision %s goal headline = %q, want %q", decisionID, gotHeadline, wantHeadline)
+			t.Fatalf("decision %d goal headline = %q, want %q", decisionID, gotHeadline, wantHeadline)
 		}
 	}
 }
@@ -178,7 +177,7 @@ func TestHTTPInboxIncludesTasksPerActiveGoalInOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.store.UpdateTask(f.ctx, firstTasks[1].ID, domain.TaskDoing, ""); err != nil {
+	if _, err := f.store.UpdateTask(f.ctx, firstTasks[1].ID, domain.TaskDoing, 0); err != nil {
 		t.Fatal(err)
 	}
 	secondGoal, err := f.store.CreateGoal(f.ctx, f.project.ID, "Second goal", "human")
@@ -205,12 +204,12 @@ func TestHTTPInboxIncludesTasksPerActiveGoalInOrder(t *testing.T) {
 	}
 	var response struct {
 		ActiveGoals []struct {
-			ID               string `json:"id"`
-			AwaitingDecision bool   `json:"awaiting_decision"`
+			ID               int64 `json:"id"`
+			AwaitingDecision bool  `json:"awaiting_decision"`
 			Tasks            []struct {
-				ID     string `json:"id"`
-				GoalID string `json:"goal_id"`
-				Order  int    `json:"order"`
+				ID     int64 `json:"id"`
+				GoalID int64 `json:"goal_id"`
+				Order  int   `json:"order"`
 			} `json:"tasks"`
 		} `json:"active_goals"`
 	}
@@ -218,17 +217,17 @@ func TestHTTPInboxIncludesTasksPerActiveGoalInOrder(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	goals := make(map[string][]struct {
-		ID     string `json:"id"`
-		GoalID string `json:"goal_id"`
-		Order  int    `json:"order"`
+	goals := make(map[int64][]struct {
+		ID     int64 `json:"id"`
+		GoalID int64 `json:"goal_id"`
+		Order  int   `json:"order"`
 	}, len(response.ActiveGoals))
-	awaiting := make(map[string]bool, len(response.ActiveGoals))
+	awaiting := make(map[int64]bool, len(response.ActiveGoals))
 	for _, goal := range response.ActiveGoals {
 		tasks := make([]struct {
-			ID     string `json:"id"`
-			GoalID string `json:"goal_id"`
-			Order  int    `json:"order"`
+			ID     int64 `json:"id"`
+			GoalID int64 `json:"goal_id"`
+			Order  int   `json:"order"`
 		}, len(goal.Tasks))
 		for i, task := range goal.Tasks {
 			tasks[i] = task
@@ -245,7 +244,7 @@ func TestHTTPInboxIncludesTasksPerActiveGoalInOrder(t *testing.T) {
 
 	firstGot, ok := goals[f.goal.ID]
 	if !ok {
-		t.Fatalf("active goal %s missing from response: %+v", f.goal.ID, response.ActiveGoals)
+		t.Fatalf("active goal %d missing from response: %+v", f.goal.ID, response.ActiveGoals)
 	}
 	if len(firstGot) != len(firstTasks) {
 		t.Fatalf("first goal tasks = %+v, want %d tasks", firstGot, len(firstTasks))
@@ -253,16 +252,16 @@ func TestHTTPInboxIncludesTasksPerActiveGoalInOrder(t *testing.T) {
 	for i, wantTask := range firstTasks {
 		gotTask := firstGot[i]
 		if gotTask.ID != wantTask.ID || gotTask.GoalID != f.goal.ID || gotTask.Order != i {
-			t.Fatalf("first goal task %d = %+v, want id=%s goal_id=%s order=%d", i, gotTask, wantTask.ID, f.goal.ID, i)
+			t.Fatalf("first goal task %d = %+v, want id=%d goal_id=%d order=%d", i, gotTask, wantTask.ID, f.goal.ID, i)
 		}
 	}
 
 	secondGot, ok := goals[secondGoal.ID]
 	if !ok {
-		t.Fatalf("active goal %s missing from response: %+v", secondGoal.ID, response.ActiveGoals)
+		t.Fatalf("active goal %d missing from response: %+v", secondGoal.ID, response.ActiveGoals)
 	}
 	if len(secondGot) != len(secondTasks) || secondGot[0].ID != secondTasks[0].ID || secondGot[0].GoalID != secondGoal.ID {
-		t.Fatalf("second goal tasks = %+v, want task %s owned by %s", secondGot, secondTasks[0].ID, secondGoal.ID)
+		t.Fatalf("second goal tasks = %+v, want task %d owned by %d", secondGot, secondTasks[0].ID, secondGoal.ID)
 	}
 }
 
@@ -294,7 +293,7 @@ func TestHTTPInboxProposedGoalsAreSeparateNonNilAndDisappearOnReject(t *testing.
 	}
 	raw = readInbox()
 	var activeGoals []struct {
-		ID string `json:"id"`
+		ID int64 `json:"id"`
 	}
 	if err := json.Unmarshal(raw["active_goals"], &activeGoals); err != nil {
 		t.Fatalf("decode active_goals: %v", err)
@@ -305,7 +304,7 @@ func TestHTTPInboxProposedGoalsAreSeparateNonNilAndDisappearOnReject(t *testing.
 		}
 	}
 	var proposedGoals []struct {
-		ID          string    `json:"id"`
+		ID          int64     `json:"id"`
 		Content     string    `json:"content"`
 		CreatedAt   time.Time `json:"created_at"`
 		ProjectName string    `json:"project_name"`
@@ -331,7 +330,7 @@ func TestHTTPInboxProposedGoalsAreSeparateNonNilAndDisappearOnReject(t *testing.
 	if len(decisions) != 1 {
 		t.Fatalf("proposed goal decisions = %+v", decisions)
 	}
-	status, _, body := doRequest(t, client, http.MethodPost, srv.URL+"/api/decisions/"+decisions[0].ID+"/reject", mustJSON(t, map[string]string{"reason": "not approved"}))
+	status, _, body := doRequest(t, client, http.MethodPost, urlID(srv.URL+"/api/decisions/", decisions[0].ID)+"/reject", mustJSON(t, map[string]string{"reason": "not approved"}))
 	if status != http.StatusOK {
 		t.Fatalf("reject status = %d; body=%s", status, body)
 	}
@@ -356,13 +355,11 @@ func newFixture(t *testing.T) *fixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := f.store.RegisterAgentSession(f.ctx, "fixture-run", 0); err != nil {
+	fixtureRunID := registerTestSession(t, f.store, "fixture-run", 0)
+	if _, err := f.store.ClaimTask(f.ctx, f.tasks[0].ID, fixtureRunID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.store.ClaimTask(f.ctx, f.tasks[0].ID, "fixture-run"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := f.store.UpdateTask(f.ctx, f.tasks[1].ID, domain.TaskDoing, ""); err != nil {
+	if _, err := f.store.UpdateTask(f.ctx, f.tasks[1].ID, domain.TaskDoing, 0); err != nil {
 		t.Fatal(err)
 	}
 	f.open, err = f.store.AskDecision(f.ctx, store.AskInput{
@@ -370,7 +367,7 @@ func newFixture(t *testing.T) *fixture {
 		TaskID:         f.tasks[0].ID,
 		Kind:           domain.DecisionKind("question"),
 		Question:       "Which option?",
-		AgentSessionID: "fixture-run",
+		AgentSessionID: fixtureRunID,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -380,7 +377,7 @@ func newFixture(t *testing.T) *fixture {
 		TaskID:         f.tasks[2].ID,
 		Kind:           domain.DecisionKind("question"),
 		Question:       "Already answered?",
-		AgentSessionID: "fixture-run",
+		AgentSessionID: fixtureRunID,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -448,7 +445,7 @@ func TestHTTPInboxMarksDefaultSettledDecision(t *testing.T) {
 		t.Fatalf("unapplied decisions = %+v", response.UnappliedDecisions)
 	}
 	if response.UnappliedDecisions[0].ProjectID != f.goal.ProjectID {
-		t.Fatalf("project_id = %q, want %q", response.UnappliedDecisions[0].ProjectID, f.goal.ProjectID)
+		t.Fatalf("project_id = %d, want %d", response.UnappliedDecisions[0].ProjectID, f.goal.ProjectID)
 	}
 	if !response.UnappliedDecisions[0].SettledByDefault {
 		t.Fatalf("settled_by_default = false; response=%s", body)
@@ -465,7 +462,7 @@ func TestHTTPGoalDetailDecisionHistoryRecordsSettlementSource(t *testing.T) {
 		Options:        []domain.Option{{Label: "A"}, {Label: "B"}},
 		DefaultOption:  "A",
 		DefaultAfterMs: &afterMs,
-		AgentSessionID: "default-run",
+		AgentSessionID: testSessionID("default-run"),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -473,7 +470,7 @@ func TestHTTPGoalDetailDecisionHistoryRecordsSettlementSource(t *testing.T) {
 	if _, err := f.store.ApplyExpiredDefaults(f.ctx, defaultDecision.CreatedAt.Add(time.Millisecond)); err != nil {
 		t.Fatal(err)
 	}
-	if applied, err := f.store.PollDecisions(f.ctx, "default-run", defaultDecision.ID); err != nil {
+	if applied, err := f.store.PollDecisions(f.ctx, testSessionID("default-run"), defaultDecision.ID); err != nil {
 		t.Fatal(err)
 	} else if len(applied) != 1 {
 		t.Fatalf("default applied decisions = %+v", applied)
@@ -484,7 +481,7 @@ func TestHTTPGoalDetailDecisionHistoryRecordsSettlementSource(t *testing.T) {
 		Kind:           domain.DecisionKind("question"),
 		Question:       "Which option should a person choose?",
 		Options:        []domain.Option{{Label: "A"}, {Label: "B"}},
-		AgentSessionID: "human-run",
+		AgentSessionID: testSessionID("human-run"),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -495,7 +492,7 @@ func TestHTTPGoalDetailDecisionHistoryRecordsSettlementSource(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if applied, err := f.store.PollDecisions(f.ctx, "human-run", humanDecision.ID); err != nil {
+	if applied, err := f.store.PollDecisions(f.ctx, testSessionID("human-run"), humanDecision.ID); err != nil {
 		t.Fatal(err)
 	} else if len(applied) != 1 {
 		t.Fatalf("human applied decisions = %+v", applied)
@@ -503,13 +500,13 @@ func TestHTTPGoalDetailDecisionHistoryRecordsSettlementSource(t *testing.T) {
 
 	srv := newTestServer(t, f.store)
 	defer srv.Close()
-	status, _, body := doRequest(t, srv.Client(), http.MethodGet, srv.URL+"/api/goals/"+f.goal.ID, nil)
+	status, _, body := doRequest(t, srv.Client(), http.MethodGet, urlID(srv.URL+"/api/goals/", f.goal.ID), nil)
 	if status != http.StatusOK {
 		t.Fatalf("goal status = %d; body=%s", status, body)
 	}
 	var response struct {
 		DecisionHistory []struct {
-			DecisionID       string     `json:"decision_id"`
+			DecisionID       int64      `json:"decision_id"`
 			SettledByDefault bool       `json:"settled_by_default"`
 			DefaultAppliedAt *time.Time `json:"default_applied_at"`
 		} `json:"decision_history"`
@@ -567,7 +564,7 @@ func TestHTTPDecisionRevisionPreservesSettledDecision(t *testing.T) {
 		Options:        []domain.Option{{Label: "A"}, {Label: "B"}},
 		DefaultOption:  "A",
 		DefaultAfterMs: &afterMs,
-		AgentSessionID: "revision-original-run",
+		AgentSessionID: testSessionID("revision-original-run"),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -575,7 +572,7 @@ func TestHTTPDecisionRevisionPreservesSettledDecision(t *testing.T) {
 	if _, err := f.store.ApplyExpiredDefaults(f.ctx, original.CreatedAt.Add(time.Millisecond)); err != nil {
 		t.Fatal(err)
 	}
-	if applied, err := f.store.PollDecisions(f.ctx, "revision-original-run", original.ID); err != nil {
+	if applied, err := f.store.PollDecisions(f.ctx, testSessionID("revision-original-run"), original.ID); err != nil {
 		t.Fatal(err)
 	} else if len(applied) != 1 {
 		t.Fatalf("applied decisions = %+v", applied)
@@ -583,12 +580,12 @@ func TestHTTPDecisionRevisionPreservesSettledDecision(t *testing.T) {
 
 	srv := newTestServer(t, f.store)
 	defer srv.Close()
-	status, headers, body := doRequest(t, srv.Client(), http.MethodPost, srv.URL+"/api/decisions/"+original.ID+"/answer", mustJSON(t, map[string]string{
+	status, headers, body := doRequest(t, srv.Client(), http.MethodPost, urlID(srv.URL+"/api/decisions/", original.ID)+"/answer", mustJSON(t, map[string]string{
 		"answer_label": "B",
 	}))
 	assertErrorObject(t, status, headers, body, http.StatusConflict)
 
-	status, headers, body = doRequest(t, srv.Client(), http.MethodPost, srv.URL+"/api/decisions/"+original.ID+"/revise", mustJSON(t, struct {
+	status, headers, body = doRequest(t, srv.Client(), http.MethodPost, urlID(srv.URL+"/api/decisions/", original.ID)+"/revise", mustJSON(t, struct {
 		Options []domain.Option `json:"options"`
 	}{
 		Options: []domain.Option{{Label: "C"}, {Label: "D"}},
@@ -603,8 +600,8 @@ func TestHTTPDecisionRevisionPreservesSettledDecision(t *testing.T) {
 	if err := json.Unmarshal(body, &revised); err != nil {
 		t.Fatal(err)
 	}
-	if revised.ID == "" || revised.ID == original.ID {
-		t.Fatalf("revised decision id = %q; original = %q", revised.ID, original.ID)
+	if revised.ID == 0 || revised.ID == original.ID {
+		t.Fatalf("revised decision id = %d; original = %d", revised.ID, original.ID)
 	}
 	if !strings.Contains(revised.Question, original.Question) {
 		t.Fatalf("revised question = %q; missing original question", revised.Question)
@@ -616,13 +613,13 @@ func TestHTTPDecisionRevisionPreservesSettledDecision(t *testing.T) {
 		t.Fatalf("revised options = %+v", revised.Options)
 	}
 
-	status, _, body = doRequest(t, srv.Client(), http.MethodGet, srv.URL+"/api/goals/"+f.goal.ID, nil)
+	status, _, body = doRequest(t, srv.Client(), http.MethodGet, urlID(srv.URL+"/api/goals/", f.goal.ID), nil)
 	if status != http.StatusOK {
 		t.Fatalf("goal status = %d; body=%s", status, body)
 	}
 	var response struct {
 		DecisionHistory []struct {
-			DecisionID string     `json:"decision_id"`
+			DecisionID int64      `json:"decision_id"`
 			AppliedAt  *time.Time `json:"applied_at"`
 		} `json:"decision_history"`
 	}
@@ -633,7 +630,7 @@ func TestHTTPDecisionRevisionPreservesSettledDecision(t *testing.T) {
 		t.Fatalf("decision_history = %+v; body=%s", response.DecisionHistory, body)
 	}
 	if response.DecisionHistory[0].DecisionID != original.ID {
-		t.Fatalf("decision_history id = %q; want original %q", response.DecisionHistory[0].DecisionID, original.ID)
+		t.Fatalf("decision_history id = %d; want original %d", response.DecisionHistory[0].DecisionID, original.ID)
 	}
 	if response.DecisionHistory[0].AppliedAt == nil {
 		t.Fatal("original decision is no longer applied")
@@ -827,7 +824,7 @@ func TestInboxAndGoalDetailUseExclusiveTaskColumns(t *testing.T) {
 		t.Fatalf("held_for_seconds = %d", inbox.AttentionTasks[0].HeldForSeconds)
 	}
 
-	status, _, body = doRequest(t, srv.Client(), http.MethodGet, srv.URL+"/api/goals/"+f.goal.ID, nil)
+	status, _, body = doRequest(t, srv.Client(), http.MethodGet, urlID(srv.URL+"/api/goals/", f.goal.ID), nil)
 	if status != http.StatusOK {
 		t.Fatalf("goal status = %d; body=%s", status, body)
 	}
@@ -878,7 +875,7 @@ func TestHTTPGoalDetailIncludesAllTasksWithoutCrossGoalMixing(t *testing.T) {
 
 	srv := newTestServer(t, f.store)
 	defer srv.Close()
-	status, _, body := doRequest(t, srv.Client(), http.MethodGet, srv.URL+"/api/goals/"+f.goal.ID, nil)
+	status, _, body := doRequest(t, srv.Client(), http.MethodGet, urlID(srv.URL+"/api/goals/", f.goal.ID), nil)
 	if status != http.StatusOK {
 		t.Fatalf("goal status = %d; body=%s", status, body)
 	}
@@ -905,11 +902,11 @@ func TestHTTPGoalDetailIncludesAllTasksWithoutCrossGoalMixing(t *testing.T) {
 			t.Fatalf("goal.tasks[%d] crosses goal boundary: %+v", i, gotTask)
 		}
 		if gotTask.ID != wantTask.ID || gotTask.Order != wantTask.Order {
-			t.Fatalf("goal.tasks[%d] = %+v, want id=%s order=%d", i, gotTask, wantTask.ID, wantTask.Order)
+			t.Fatalf("goal.tasks[%d] = %+v, want id=%d order=%d", i, gotTask, wantTask.ID, wantTask.Order)
 		}
 	}
 
-	status, _, body = doRequest(t, srv.Client(), http.MethodGet, srv.URL+"/api/goals/"+emptyGoal.ID, nil)
+	status, _, body = doRequest(t, srv.Client(), http.MethodGet, urlID(srv.URL+"/api/goals/", emptyGoal.ID), nil)
 	if status != http.StatusOK {
 		t.Fatalf("empty goal status = %d; body=%s", status, body)
 	}
@@ -938,13 +935,13 @@ func TestHTTPGoalDetailIncludesDerivedFromGoal(t *testing.T) {
 
 	srv := newTestServer(t, f.store)
 	defer srv.Close()
-	status, _, body := doRequest(t, srv.Client(), http.MethodGet, srv.URL+"/api/goals/"+child.ID, nil)
+	status, _, body := doRequest(t, srv.Client(), http.MethodGet, urlID(srv.URL+"/api/goals/", child.ID), nil)
 	if status != http.StatusOK {
 		t.Fatalf("goal status = %d; body=%s", status, body)
 	}
 	var payload struct {
 		DerivedFrom *struct {
-			ID          string `json:"id"`
+			ID          int64  `json:"id"`
 			Headline    string `json:"headline"`
 			ProjectName string `json:"project_name"`
 		} `json:"derived_from"`
@@ -956,7 +953,7 @@ func TestHTTPGoalDetailIncludesDerivedFromGoal(t *testing.T) {
 		t.Fatalf("derived_from is missing: %s", body)
 	}
 	if payload.DerivedFrom.ID != parent.ID || payload.DerivedFrom.Headline != "Parent goal" {
-		t.Fatalf("derived_from = %+v, want id=%s headline=%q", *payload.DerivedFrom, parent.ID, "Parent goal")
+		t.Fatalf("derived_from = %+v, want id=%d headline=%q", *payload.DerivedFrom, parent.ID, "Parent goal")
 	}
 }
 
@@ -964,7 +961,7 @@ func TestHTTPGoalDetailOmitsDerivedFromGoalWhenUnset(t *testing.T) {
 	f := newBareFixture(t)
 	srv := newTestServer(t, f.store)
 	defer srv.Close()
-	status, _, body := doRequest(t, srv.Client(), http.MethodGet, srv.URL+"/api/goals/"+f.goal.ID, nil)
+	status, _, body := doRequest(t, srv.Client(), http.MethodGet, urlID(srv.URL+"/api/goals/", f.goal.ID), nil)
 	if status != http.StatusOK {
 		t.Fatalf("goal status = %d; body=%s", status, body)
 	}
@@ -990,8 +987,8 @@ func TestHTTPSetGoalDerivedFromAndDistinguishesErrors(t *testing.T) {
 
 	srv := newTestServer(t, f.store)
 	defer srv.Close()
-	status, _, body := doRequest(t, srv.Client(), http.MethodPost, srv.URL+"/api/goals/"+child.ID+"/derived-from", mustJSON(t, map[string]string{
-		"derived_from_goal_id": parent.ID,
+	status, _, body := doRequest(t, srv.Client(), http.MethodPost, urlID(srv.URL+"/api/goals/", child.ID)+"/derived-from", mustJSON(t, map[string]string{
+		"derived_from_goal_id": idText(parent.ID),
 	}))
 	if status != http.StatusOK {
 		t.Fatalf("set derived-from status = %d; body=%s", status, body)
@@ -1001,18 +998,18 @@ func TestHTTPSetGoalDerivedFromAndDistinguishesErrors(t *testing.T) {
 		t.Fatalf("decode updated goal: %v; body=%s", err, body)
 	}
 	if updated.DerivedFromGoalID != parent.ID {
-		t.Fatalf("updated DerivedFromGoalID = %q, want %q", updated.DerivedFromGoalID, parent.ID)
+		t.Fatalf("updated DerivedFromGoalID = %d, want %d", updated.DerivedFromGoalID, parent.ID)
 	}
 
-	status, _, body = doRequest(t, srv.Client(), http.MethodPost, srv.URL+"/api/goals/"+child.ID+"/derived-from", mustJSON(t, map[string]string{
+	status, _, body = doRequest(t, srv.Client(), http.MethodPost, urlID(srv.URL+"/api/goals/", child.ID)+"/derived-from", mustJSON(t, map[string]string{
 		"derived_from_goal_id": "missing-goal-id",
 	}))
-	if status != http.StatusNotFound || !strings.Contains(string(body), "goal not found") {
-		t.Fatalf("unknown parent response = %d %s, want 404 with goal not found", status, body)
+	if status != http.StatusNotFound || !strings.Contains(string(body), "id must be a number; UUID-style ids were removed in 0020.") || !strings.Contains(string(body), "doc/specs/2026-08-27-uuid-to-integer-mapping.md") {
+		t.Fatalf("removed-format parent response = %d %s, want 404 with migration guidance", status, body)
 	}
 
-	status, _, body = doRequest(t, srv.Client(), http.MethodPost, srv.URL+"/api/goals/"+child.ID+"/derived-from", mustJSON(t, map[string]string{
-		"derived_from_goal_id": child.ID,
+	status, _, body = doRequest(t, srv.Client(), http.MethodPost, urlID(srv.URL+"/api/goals/", child.ID)+"/derived-from", mustJSON(t, map[string]string{
+		"derived_from_goal_id": idText(child.ID),
 	}))
 	if status != http.StatusBadRequest || !strings.Contains(string(body), "cannot be derived from itself") {
 		t.Fatalf("self-reference response = %d %s, want 400 with self-reference error", status, body)
@@ -1038,7 +1035,7 @@ func TestHTTPGoalDetailOmitsMissingDerivedFromGoal(t *testing.T) {
 
 	srv := newTestServer(t, f.store)
 	defer srv.Close()
-	status, _, body := doRequest(t, srv.Client(), http.MethodGet, srv.URL+"/api/goals/"+child.ID, nil)
+	status, _, body := doRequest(t, srv.Client(), http.MethodGet, urlID(srv.URL+"/api/goals/", child.ID), nil)
 	if status != http.StatusOK {
 		t.Fatalf("goal status = %d; body=%s", status, body)
 	}
@@ -1068,13 +1065,13 @@ func TestHTTPGoalDetailIncludesDerivedGoals(t *testing.T) {
 
 	srv := newTestServer(t, f.store)
 	defer srv.Close()
-	status, _, body := doRequest(t, srv.Client(), http.MethodGet, srv.URL+"/api/goals/"+parent.ID, nil)
+	status, _, body := doRequest(t, srv.Client(), http.MethodGet, urlID(srv.URL+"/api/goals/", parent.ID), nil)
 	if status != http.StatusOK {
 		t.Fatalf("goal status = %d; body=%s", status, body)
 	}
 	var payload struct {
 		DerivedGoals []struct {
-			ID       string `json:"id"`
+			ID       int64  `json:"id"`
 			Headline string `json:"headline"`
 		} `json:"derived_goals"`
 	}
@@ -1084,7 +1081,7 @@ func TestHTTPGoalDetailIncludesDerivedGoals(t *testing.T) {
 	if len(payload.DerivedGoals) != 2 {
 		t.Fatalf("derived_goals = %+v, want 2 entries", payload.DerivedGoals)
 	}
-	got := make(map[string]string, len(payload.DerivedGoals))
+	got := make(map[int64]string, len(payload.DerivedGoals))
 	for _, derived := range payload.DerivedGoals {
 		got[derived.ID] = derived.Headline
 	}
@@ -1097,7 +1094,7 @@ func TestHTTPGoalDetailReturnsEmptyDerivedGoalsArray(t *testing.T) {
 	f := newBareFixture(t)
 	srv := newTestServer(t, f.store)
 	defer srv.Close()
-	status, _, body := doRequest(t, srv.Client(), http.MethodGet, srv.URL+"/api/goals/"+f.goal.ID, nil)
+	status, _, body := doRequest(t, srv.Client(), http.MethodGet, urlID(srv.URL+"/api/goals/", f.goal.ID), nil)
 	if status != http.StatusOK {
 		t.Fatalf("goal status = %d; body=%s", status, body)
 	}
@@ -1141,13 +1138,13 @@ func TestHTTPGoalDetailIncludesAllTaskCommitsInTaskOrder(t *testing.T) {
 
 	srv := newTestServer(t, f.store)
 	defer srv.Close()
-	status, _, body := doRequest(t, srv.Client(), http.MethodGet, srv.URL+"/api/goals/"+f.goal.ID, nil)
+	status, _, body := doRequest(t, srv.Client(), http.MethodGet, urlID(srv.URL+"/api/goals/", f.goal.ID), nil)
 	if status != http.StatusOK {
 		t.Fatalf("goal status = %d; body=%s", status, body)
 	}
 	var response struct {
 		TaskCommits []struct {
-			TaskID    string `json:"task_id"`
+			TaskID    int64  `json:"task_id"`
 			TaskTitle string `json:"task_title"`
 			Commits   []struct {
 				SHA     string `json:"sha"`
@@ -1164,7 +1161,7 @@ func TestHTTPGoalDetailIncludesAllTaskCommitsInTaskOrder(t *testing.T) {
 	for i, task := range tasks {
 		entry := response.TaskCommits[i]
 		if entry.TaskID != task.ID || entry.TaskTitle != task.Title {
-			t.Fatalf("task_commits[%d] = %+v, want task %s (%s)", i, entry, task.ID, task.Title)
+			t.Fatalf("task_commits[%d] = %+v, want task %d (%s)", i, entry, task.ID, task.Title)
 		}
 		if len(entry.Commits) != 2 {
 			t.Fatalf("task_commits[%d].commits = %+v, want two commits", i, entry.Commits)
@@ -1189,7 +1186,7 @@ func TestHTTPGoalDetailReturnsEmptyTaskCommitsArrayWithoutCommits(t *testing.T) 
 
 	srv := newTestServer(t, f.store)
 	defer srv.Close()
-	status, _, body := doRequest(t, srv.Client(), http.MethodGet, srv.URL+"/api/goals/"+f.goal.ID, nil)
+	status, _, body := doRequest(t, srv.Client(), http.MethodGet, urlID(srv.URL+"/api/goals/", f.goal.ID), nil)
 	if status != http.StatusOK {
 		t.Fatalf("goal status = %d; body=%s", status, body)
 	}
@@ -1225,13 +1222,13 @@ func TestHTTPGoalDetailOmitsTasksWithoutCommits(t *testing.T) {
 
 	srv := newTestServer(t, f.store)
 	defer srv.Close()
-	status, _, body := doRequest(t, srv.Client(), http.MethodGet, srv.URL+"/api/goals/"+f.goal.ID, nil)
+	status, _, body := doRequest(t, srv.Client(), http.MethodGet, urlID(srv.URL+"/api/goals/", f.goal.ID), nil)
 	if status != http.StatusOK {
 		t.Fatalf("goal status = %d; body=%s", status, body)
 	}
 	var response struct {
 		TaskCommits []struct {
-			TaskID string `json:"task_id"`
+			TaskID int64 `json:"task_id"`
 		} `json:"task_commits"`
 	}
 	if err := json.Unmarshal(body, &response); err != nil {
@@ -1241,7 +1238,7 @@ func TestHTTPGoalDetailOmitsTasksWithoutCommits(t *testing.T) {
 		t.Fatalf("task_commits = %+v, want one task entry", response.TaskCommits)
 	}
 	if response.TaskCommits[0].TaskID != tasks[0].ID {
-		t.Fatalf("task_commits = %+v, want only task %s", response.TaskCommits, tasks[0].ID)
+		t.Fatalf("task_commits = %+v, want only task %d", response.TaskCommits, tasks[0].ID)
 	}
 }
 
@@ -1252,14 +1249,14 @@ func TestHTTPGoalDetailDecisionHistoryIncludesTaskIDs(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	decisionsByTask := make(map[string]domain.Decision, len(tasks))
+	decisionsByTask := make(map[int64]domain.Decision, len(tasks))
 	for i, task := range tasks {
 		decision, err := f.store.AskDecision(f.ctx, store.AskInput{
 			GoalID:         f.goal.ID,
 			TaskID:         task.ID,
 			Kind:           domain.DecisionKind("question"),
 			Question:       fmt.Sprintf("Question for task %d", i),
-			AgentSessionID: fmt.Sprintf("history-run-%d", i),
+			AgentSessionID: testSessionID(fmt.Sprintf("history-run-%d", i)),
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -1273,7 +1270,7 @@ func TestHTTPGoalDetailDecisionHistoryIncludesTaskIDs(t *testing.T) {
 		if applied, err := f.store.PollDecisions(f.ctx, decision.AgentSessionID, decision.ID); err != nil {
 			t.Fatal(err)
 		} else if len(applied) != 1 {
-			t.Fatalf("applied decisions for task %s = %+v", task.ID, applied)
+			t.Fatalf("applied decisions for task %d = %+v", task.ID, applied)
 		}
 		decisionsByTask[task.ID] = decision
 	}
@@ -1282,7 +1279,7 @@ func TestHTTPGoalDetailDecisionHistoryIncludesTaskIDs(t *testing.T) {
 		GoalID:         f.goal.ID,
 		Kind:           domain.DecisionKind("question"),
 		Question:       "Question without a task",
-		AgentSessionID: "history-taskless-run",
+		AgentSessionID: testSessionID("history-taskless-run"),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1301,7 +1298,7 @@ func TestHTTPGoalDetailDecisionHistoryIncludesTaskIDs(t *testing.T) {
 
 	srv := newTestServer(t, f.store)
 	defer srv.Close()
-	status, _, body := doRequest(t, srv.Client(), http.MethodGet, srv.URL+"/api/goals/"+f.goal.ID, nil)
+	status, _, body := doRequest(t, srv.Client(), http.MethodGet, urlID(srv.URL+"/api/goals/", f.goal.ID), nil)
 	if status != http.StatusOK {
 		t.Fatalf("goal status = %d; body=%s", status, body)
 	}
@@ -1319,7 +1316,7 @@ func TestHTTPGoalDetailDecisionHistoryIncludesTaskIDs(t *testing.T) {
 		t.Fatalf("decode decision_history: %v; history=%s", err, historyRaw)
 	}
 
-	entriesByDecision := make(map[string]map[string]json.RawMessage, len(history))
+	entriesByDecision := make(map[int64]map[string]json.RawMessage, len(history))
 	for _, raw := range history {
 		var entry map[string]json.RawMessage
 		if err := json.Unmarshal(raw, &entry); err != nil {
@@ -1329,7 +1326,7 @@ func TestHTTPGoalDetailDecisionHistoryIncludesTaskIDs(t *testing.T) {
 		if !ok {
 			t.Fatalf("history entry has no decision_id: %s", raw)
 		}
-		var decisionID string
+		var decisionID int64
 		if err := json.Unmarshal(decisionIDRaw, &decisionID); err != nil {
 			t.Fatalf("decode history decision_id: %v; entry=%s", err, raw)
 		}
@@ -1339,44 +1336,44 @@ func TestHTTPGoalDetailDecisionHistoryIncludesTaskIDs(t *testing.T) {
 	for taskID, decision := range decisionsByTask {
 		entry, ok := entriesByDecision[decision.ID]
 		if !ok {
-			t.Fatalf("decision %s missing from history", decision.ID)
+			t.Fatalf("decision %d missing from history", decision.ID)
 		}
 		taskIDRaw, ok := entry["task_id"]
 		if !ok || bytes.Equal(bytes.TrimSpace(taskIDRaw), []byte("null")) {
 			t.Fatalf("history entry task_id is missing or null: %v", entry)
 		}
-		var gotTaskID string
+		var gotTaskID int64
 		if err := json.Unmarshal(taskIDRaw, &gotTaskID); err != nil {
 			t.Fatalf("decode history task_id: %v; entry=%s", err, entry)
 		}
 		if gotTaskID != taskID {
-			t.Fatalf("history task_id = %q, want %q; entry=%v", gotTaskID, taskID, entry)
+			t.Fatalf("history task_id = %d, want %d; entry=%v", gotTaskID, taskID, entry)
 		}
 	}
 
 	tasklessEntry, ok := entriesByDecision[taskless.ID]
 	if !ok {
-		t.Fatalf("taskless decision %s missing from history", taskless.ID)
+		t.Fatalf("taskless decision %d missing from history", taskless.ID)
 	}
 	tasklessTaskID, ok := tasklessEntry["task_id"]
 	if !ok || bytes.Equal(bytes.TrimSpace(tasklessTaskID), []byte("null")) {
 		t.Fatalf("taskless history task_id is missing or null: %v", tasklessEntry)
 	}
-	var gotTasklessTaskID string
+	var gotTasklessTaskID int64
 	if err := json.Unmarshal(tasklessTaskID, &gotTasklessTaskID); err != nil {
 		t.Fatalf("decode taskless history task_id: %v; entry=%s", err, tasklessEntry)
 	}
-	if gotTasklessTaskID != "" {
-		t.Fatalf("taskless history task_id = %q, want empty string", gotTasklessTaskID)
+	if gotTasklessTaskID != 0 {
+		t.Fatalf("taskless history task_id = %d, want zero", gotTasklessTaskID)
 	}
 
 	firstHistory := entriesByDecision[decisionsByTask[tasks[0].ID].ID]
-	var firstTaskID string
+	var firstTaskID int64
 	if err := json.Unmarshal(firstHistory["task_id"], &firstTaskID); err != nil {
 		t.Fatal(err)
 	}
 	if firstTaskID == tasks[1].ID {
-		t.Fatalf("first task history points to second task: %q", firstTaskID)
+		t.Fatalf("first task history points to second task: %d", firstTaskID)
 	}
 }
 
@@ -1400,7 +1397,7 @@ func TestHTTPTaskDetailReturnsTaskAndDecisionData(t *testing.T) {
 		TaskID:         tasks[0].ID,
 		Kind:           domain.DecisionKind("question"),
 		Question:       "Which target path should be used?",
-		AgentSessionID: "target-run",
+		AgentSessionID: testSessionID("target-run"),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1412,7 +1409,7 @@ func TestHTTPTaskDetailReturnsTaskAndDecisionData(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.store.PollDecisions(f.ctx, "target-run", targetApplied.ID); err != nil {
+	if _, err := f.store.PollDecisions(f.ctx, testSessionID("target-run"), targetApplied.ID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1421,7 +1418,7 @@ func TestHTTPTaskDetailReturnsTaskAndDecisionData(t *testing.T) {
 		TaskID:         tasks[1].ID,
 		Kind:           domain.DecisionKind("question"),
 		Question:       "Which other path should be used?",
-		AgentSessionID: "other-run",
+		AgentSessionID: testSessionID("other-run"),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1433,7 +1430,7 @@ func TestHTTPTaskDetailReturnsTaskAndDecisionData(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.store.PollDecisions(f.ctx, "other-run", otherApplied.ID); err != nil {
+	if _, err := f.store.PollDecisions(f.ctx, testSessionID("other-run"), otherApplied.ID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1442,7 +1439,7 @@ func TestHTTPTaskDetailReturnsTaskAndDecisionData(t *testing.T) {
 		TaskID:         tasks[0].ID,
 		Kind:           domain.DecisionKind("question"),
 		Question:       "Which target option is still open?",
-		AgentSessionID: "target-run",
+		AgentSessionID: testSessionID("target-run"),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1450,7 +1447,7 @@ func TestHTTPTaskDetailReturnsTaskAndDecisionData(t *testing.T) {
 
 	srv := newTestServer(t, f.store)
 	defer srv.Close()
-	status, headers, body := doRequest(t, srv.Client(), http.MethodGet, srv.URL+"/api/tasks/"+tasks[0].ID, nil)
+	status, headers, body := doRequest(t, srv.Client(), http.MethodGet, urlID(srv.URL+"/api/tasks/", tasks[0].ID), nil)
 	if status != http.StatusOK {
 		t.Fatalf("task detail status = %d; body=%s", status, body)
 	}
@@ -1462,14 +1459,14 @@ func TestHTTPTaskDetailReturnsTaskAndDecisionData(t *testing.T) {
 	var response struct {
 		Task domain.Task `json:"task"`
 		Goal struct {
-			ID          string `json:"id"`
+			ID          int64  `json:"id"`
 			Headline    string `json:"headline"`
 			ProjectName string `json:"project_name"`
 		} `json:"goal"`
 		OpenDecisions   []domain.Decision `json:"open_decisions"`
 		DecisionHistory []struct {
-			DecisionID  string `json:"decision_id"`
-			TaskID      string `json:"task_id"`
+			DecisionID  int64  `json:"decision_id"`
+			TaskID      int64  `json:"task_id"`
 			Question    string `json:"question"`
 			AnswerLabel string `json:"answer_label"`
 			AnswerText  string `json:"answer_text"`
@@ -1483,17 +1480,17 @@ func TestHTTPTaskDetailReturnsTaskAndDecisionData(t *testing.T) {
 		t.Fatalf("task = %+v, want target task %+v", response.Task, tasks[0])
 	}
 	if response.Goal.ID != f.goal.ID || response.Goal.Headline != domain.Headline(f.goal.Content) || response.Goal.ProjectName != "fixture" {
-		t.Fatalf("goal = %+v, want id=%s headline=%q project_name=%q", response.Goal, f.goal.ID, domain.Headline(f.goal.Content), "fixture")
+		t.Fatalf("goal = %+v, want id=%d headline=%q project_name=%q", response.Goal, f.goal.ID, domain.Headline(f.goal.Content), "fixture")
 	}
 	if len(response.OpenDecisions) != 1 || response.OpenDecisions[0].ID != targetOpen.ID || response.OpenDecisions[0].TaskID != tasks[0].ID {
-		t.Fatalf("open_decisions = %+v, want only target decision %s", response.OpenDecisions, targetOpen.ID)
+		t.Fatalf("open_decisions = %+v, want only target decision %d", response.OpenDecisions, targetOpen.ID)
 	}
 	if len(response.DecisionHistory) != 1 {
 		t.Fatalf("decision_history = %+v, want only target history", response.DecisionHistory)
 	}
 	history := response.DecisionHistory[0]
 	if history.DecisionID != targetApplied.ID || history.TaskID != tasks[0].ID || history.Question != targetApplied.Question || history.AnswerLabel != "Use target path" || history.AnswerText != "The target path is the one to use." {
-		t.Fatalf("decision_history[0] = %+v, want target decision %s", history, targetApplied.ID)
+		t.Fatalf("decision_history[0] = %+v, want target decision %d", history, targetApplied.ID)
 	}
 	if history.DecisionID == otherApplied.ID || history.TaskID == tasks[1].ID {
 		t.Fatalf("other task history leaked into response: %+v", history)
@@ -1522,7 +1519,7 @@ func TestHTTPTaskDetailDoesNotCapHistoryByAnotherTask(t *testing.T) {
 		TaskID:         tasks[0].ID,
 		Kind:           domain.DecisionKind("question"),
 		Question:       "Target history",
-		AgentSessionID: "target-history-run",
+		AgentSessionID: testSessionID("target-history-run"),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1534,7 +1531,7 @@ func TestHTTPTaskDetailDoesNotCapHistoryByAnotherTask(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.store.PollDecisions(f.ctx, "target-history-run", target.ID); err != nil {
+	if _, err := f.store.PollDecisions(f.ctx, testSessionID("target-history-run"), target.ID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1544,7 +1541,7 @@ func TestHTTPTaskDetailDoesNotCapHistoryByAnotherTask(t *testing.T) {
 			TaskID:         tasks[1].ID,
 			Kind:           domain.DecisionKind("question"),
 			Question:       "Other task history",
-			AgentSessionID: "other-history-run",
+			AgentSessionID: testSessionID("other-history-run"),
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -1556,21 +1553,21 @@ func TestHTTPTaskDetailDoesNotCapHistoryByAnotherTask(t *testing.T) {
 		}); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := f.store.PollDecisions(f.ctx, "other-history-run", decision.ID); err != nil {
+		if _, err := f.store.PollDecisions(f.ctx, testSessionID("other-history-run"), decision.ID); err != nil {
 			t.Fatal(err)
 		}
 	}
 
 	srv := newTestServer(t, f.store)
 	defer srv.Close()
-	status, _, body := doRequest(t, srv.Client(), http.MethodGet, srv.URL+"/api/tasks/"+tasks[0].ID, nil)
+	status, _, body := doRequest(t, srv.Client(), http.MethodGet, urlID(srv.URL+"/api/tasks/", tasks[0].ID), nil)
 	if status != http.StatusOK {
 		t.Fatalf("task detail status = %d; body=%s", status, body)
 	}
 	var response struct {
 		DecisionHistory []struct {
-			DecisionID string `json:"decision_id"`
-			TaskID     string `json:"task_id"`
+			DecisionID int64 `json:"decision_id"`
+			TaskID     int64 `json:"task_id"`
 		} `json:"decision_history"`
 		DecisionHistoryOmitted int `json:"decision_history_omitted"`
 	}
@@ -1578,7 +1575,7 @@ func TestHTTPTaskDetailDoesNotCapHistoryByAnotherTask(t *testing.T) {
 		t.Fatalf("decode task detail: %v; body=%s", err, body)
 	}
 	if len(response.DecisionHistory) != 1 || response.DecisionHistory[0].DecisionID != target.ID || response.DecisionHistory[0].TaskID != tasks[0].ID {
-		t.Fatalf("decision_history = %+v, want only target decision %s", response.DecisionHistory, target.ID)
+		t.Fatalf("decision_history = %+v, want only target decision %d", response.DecisionHistory, target.ID)
 	}
 	if response.DecisionHistoryOmitted != 0 {
 		t.Fatalf("decision_history_omitted = %d, want 0", response.DecisionHistoryOmitted)
@@ -1599,13 +1596,13 @@ func TestHTTPTaskDetailReportsOmittedHistoryPerTask(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	createApplied := func(taskID, sessionID string) domain.Decision {
+	createApplied := func(taskID int64, sessionID string) domain.Decision {
 		decision, err := f.store.AskDecision(f.ctx, store.AskInput{
 			GoalID:         f.goal.ID,
 			TaskID:         taskID,
 			Kind:           domain.DecisionKind("question"),
 			Question:       "Task history",
-			AgentSessionID: sessionID,
+			AgentSessionID: testSessionID(sessionID),
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -1617,7 +1614,7 @@ func TestHTTPTaskDetailReportsOmittedHistoryPerTask(t *testing.T) {
 		}); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := f.store.PollDecisions(f.ctx, sessionID, decision.ID); err != nil {
+		if _, err := f.store.PollDecisions(f.ctx, testSessionID(sessionID), decision.ID); err != nil {
 			t.Fatal(err)
 		}
 		return decision
@@ -1632,13 +1629,13 @@ func TestHTTPTaskDetailReportsOmittedHistoryPerTask(t *testing.T) {
 
 	srv := newTestServer(t, f.store)
 	defer srv.Close()
-	status, _, body := doRequest(t, srv.Client(), http.MethodGet, srv.URL+"/api/tasks/"+tasks[0].ID, nil)
+	status, _, body := doRequest(t, srv.Client(), http.MethodGet, urlID(srv.URL+"/api/tasks/", tasks[0].ID), nil)
 	if status != http.StatusOK {
 		t.Fatalf("task detail status = %d; body=%s", status, body)
 	}
 	var response struct {
 		DecisionHistory []struct {
-			TaskID string `json:"task_id"`
+			TaskID int64 `json:"task_id"`
 		} `json:"decision_history"`
 		DecisionHistoryOmitted int `json:"decision_history_omitted"`
 	}
@@ -1650,7 +1647,7 @@ func TestHTTPTaskDetailReportsOmittedHistoryPerTask(t *testing.T) {
 	}
 	for _, history := range response.DecisionHistory {
 		if history.TaskID != tasks[0].ID {
-			t.Fatalf("history task_id = %q, want %q", history.TaskID, tasks[0].ID)
+			t.Fatalf("history task_id = %d, want %d", history.TaskID, tasks[0].ID)
 		}
 	}
 	if response.DecisionHistoryOmitted != 3 {
@@ -1677,7 +1674,7 @@ func TestHTTPTaskDetailExcludesOtherProjectDecisionWithSameTaskID(t *testing.T) 
 		TaskID:         tasks[0].ID,
 		Kind:           domain.DecisionKind("question"),
 		Question:       "Target project history",
-		AgentSessionID: "target-project-history-run",
+		AgentSessionID: testSessionID("target-project-history-run"),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1689,7 +1686,7 @@ func TestHTTPTaskDetailExcludesOtherProjectDecisionWithSameTaskID(t *testing.T) 
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.store.PollDecisions(f.ctx, "target-project-history-run", target.ID); err != nil {
+	if _, err := f.store.PollDecisions(f.ctx, testSessionID("target-project-history-run"), target.ID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1706,7 +1703,7 @@ func TestHTTPTaskDetailExcludesOtherProjectDecisionWithSameTaskID(t *testing.T) 
 		TaskID:         tasks[0].ID,
 		Kind:           domain.DecisionKind("question"),
 		Question:       "Orphaned other project history",
-		AgentSessionID: "other-project-history-run",
+		AgentSessionID: testSessionID("other-project-history-run"),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1718,19 +1715,19 @@ func TestHTTPTaskDetailExcludesOtherProjectDecisionWithSameTaskID(t *testing.T) 
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.store.PollDecisions(f.ctx, "other-project-history-run", other.ID); err != nil {
+	if _, err := f.store.PollDecisions(f.ctx, testSessionID("other-project-history-run"), other.ID); err != nil {
 		t.Fatal(err)
 	}
 
 	srv := newTestServer(t, f.store)
 	defer srv.Close()
-	status, _, body := doRequest(t, srv.Client(), http.MethodGet, srv.URL+"/api/tasks/"+tasks[0].ID, nil)
+	status, _, body := doRequest(t, srv.Client(), http.MethodGet, urlID(srv.URL+"/api/tasks/", tasks[0].ID), nil)
 	if status != http.StatusOK {
 		t.Fatalf("task detail status = %d; body=%s", status, body)
 	}
 	var response struct {
 		DecisionHistory []struct {
-			DecisionID string `json:"decision_id"`
+			DecisionID int64 `json:"decision_id"`
 		} `json:"decision_history"`
 		DecisionHistoryOmitted int `json:"decision_history_omitted"`
 	}
@@ -1738,7 +1735,7 @@ func TestHTTPTaskDetailExcludesOtherProjectDecisionWithSameTaskID(t *testing.T) 
 		t.Fatalf("decode task detail: %v; body=%s", err, body)
 	}
 	if len(response.DecisionHistory) != 1 || response.DecisionHistory[0].DecisionID != target.ID {
-		t.Fatalf("decision_history = %+v, want only target decision %s", response.DecisionHistory, target.ID)
+		t.Fatalf("decision_history = %+v, want only target decision %d", response.DecisionHistory, target.ID)
 	}
 	if response.DecisionHistoryOmitted != 0 {
 		t.Fatalf("decision_history_omitted = %d, want 0", response.DecisionHistoryOmitted)
@@ -1771,7 +1768,7 @@ func TestHTTPTaskDetailReturnsEmptyCommitsArray(t *testing.T) {
 
 	srv := newTestServer(t, f.store)
 	defer srv.Close()
-	status, _, body := doRequest(t, srv.Client(), http.MethodGet, srv.URL+"/api/tasks/"+tasks[0].ID, nil)
+	status, _, body := doRequest(t, srv.Client(), http.MethodGet, urlID(srv.URL+"/api/tasks/", tasks[0].ID), nil)
 	if status != http.StatusOK {
 		t.Fatalf("task detail status = %d; body=%s", status, body)
 	}
@@ -1817,7 +1814,7 @@ func TestHTTPTaskDetailMarksMissingCommitOutOfHistory(t *testing.T) {
 
 	srv := newTestServer(t, f.store)
 	defer srv.Close()
-	status, _, body := doRequest(t, srv.Client(), http.MethodGet, srv.URL+"/api/tasks/"+tasks[0].ID, nil)
+	status, _, body := doRequest(t, srv.Client(), http.MethodGet, urlID(srv.URL+"/api/tasks/", tasks[0].ID), nil)
 	if status != http.StatusOK {
 		t.Fatalf("task detail status = %d; body=%s", status, body)
 	}
@@ -1868,7 +1865,7 @@ func TestHTTPTaskDetailDoesNotMixCommitsFromOtherTasks(t *testing.T) {
 
 	srv := newTestServer(t, f.store)
 	defer srv.Close()
-	status, _, body := doRequest(t, srv.Client(), http.MethodGet, srv.URL+"/api/tasks/"+tasks[0].ID, nil)
+	status, _, body := doRequest(t, srv.Client(), http.MethodGet, urlID(srv.URL+"/api/tasks/", tasks[0].ID), nil)
 	if status != http.StatusOK {
 		t.Fatalf("task detail status = %d; body=%s", status, body)
 	}
@@ -1893,7 +1890,7 @@ func TestHTTPGoalDetailIncludesTasklessOpenDecision(t *testing.T) {
 		GoalID:         f.goal.ID,
 		Kind:           domain.DecisionKind("question"),
 		Question:       "Which direction should we take?",
-		AgentSessionID: "taskless-run",
+		AgentSessionID: testSessionID("taskless-run"),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1911,7 +1908,7 @@ func TestHTTPGoalDetailDoesNotDuplicateTaskDecision(t *testing.T) {
 		GoalID:         f.goal.ID,
 		Kind:           domain.DecisionKind("question"),
 		Question:       "A decision without a task",
-		AgentSessionID: "taskless-run",
+		AgentSessionID: testSessionID("taskless-run"),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1938,7 +1935,7 @@ func TestHTTPGoalDetailIncludesCompletionDecision(t *testing.T) {
 		Surprises:   "なし",
 		NeedsReview: "なし",
 		NextSteps:   "なし",
-	}, "completion-run")
+	}, testSessionID("completion-run"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1948,7 +1945,7 @@ func TestHTTPGoalDetailIncludesCompletionDecision(t *testing.T) {
 		t.Fatalf("unattached_decisions = %+v", detail.UnattachedDecisions)
 	}
 	got := detail.UnattachedDecisions[0]
-	if got.ID != decision.ID || got.Kind != domain.DecisionKind("completion") || got.TaskID != "" {
+	if got.ID != decision.ID || got.Kind != domain.DecisionKind("completion") || got.TaskID != 0 {
 		t.Fatalf("completion decision = %+v", got)
 	}
 }
@@ -1962,13 +1959,13 @@ func TestHTTPGoalDetailIncludesCompletionReportFields(t *testing.T) {
 		Surprises:   "なし",
 		NeedsReview: "なし",
 		NextSteps:   "なし",
-	}, "completion-run"); err != nil {
+	}, testSessionID("completion-run")); err != nil {
 		t.Fatal(err)
 	}
 
 	srv := newTestServer(t, f.store)
 	defer srv.Close()
-	status, _, body := doRequest(t, srv.Client(), http.MethodGet, srv.URL+"/api/goals/"+f.goal.ID, nil)
+	status, _, body := doRequest(t, srv.Client(), http.MethodGet, urlID(srv.URL+"/api/goals/", f.goal.ID), nil)
 	if status != http.StatusOK {
 		t.Fatalf("goal status = %d; body=%s", status, body)
 	}
@@ -2009,7 +2006,7 @@ func fetchGoalDetail(t *testing.T, f *fixture) goalDetailResponse {
 	t.Helper()
 	srv := newTestServer(t, f.store)
 	defer srv.Close()
-	status, _, body := doRequest(t, srv.Client(), http.MethodGet, srv.URL+"/api/goals/"+f.goal.ID, nil)
+	status, _, body := doRequest(t, srv.Client(), http.MethodGet, urlID(srv.URL+"/api/goals/", f.goal.ID), nil)
 	if status != http.StatusOK {
 		t.Fatalf("goal status = %d; body=%s", status, body)
 	}
@@ -2026,7 +2023,7 @@ func TestHTTPDecisionAndReleaseEndpointsValidateAndTransition(t *testing.T) {
 	defer srv.Close()
 	client := srv.Client()
 
-	status, headers, body := doRequest(t, client, http.MethodPost, srv.URL+"/api/decisions/"+f.open.ID+"/answer", mustJSON(t, map[string]string{}))
+	status, headers, body := doRequest(t, client, http.MethodPost, urlID(srv.URL+"/api/decisions/", f.open.ID)+"/answer", mustJSON(t, map[string]string{}))
 	assertErrorObject(t, status, headers, body, http.StatusBadRequest)
 	var invalidAnswer map[string]string
 	if err := json.Unmarshal(body, &invalidAnswer); err != nil {
@@ -2039,7 +2036,7 @@ func TestHTTPDecisionAndReleaseEndpointsValidateAndTransition(t *testing.T) {
 	status, headers, body = doRequest(t, client, http.MethodPost, srv.URL+"/api/decisions/missing/answer", mustJSON(t, map[string]string{"answer_text": "yes"}))
 	assertErrorObject(t, status, headers, body, http.StatusNotFound)
 
-	status, headers, body = doRequest(t, client, http.MethodPost, srv.URL+"/api/decisions/"+f.open.ID+"/answer", mustJSON(t, map[string]string{"answer_text": "yes"}))
+	status, headers, body = doRequest(t, client, http.MethodPost, urlID(srv.URL+"/api/decisions/", f.open.ID)+"/answer", mustJSON(t, map[string]string{"answer_text": "yes"}))
 	if status != http.StatusOK {
 		t.Fatalf("answer status = %d; body=%s", status, body)
 	}
@@ -2050,10 +2047,10 @@ func TestHTTPDecisionAndReleaseEndpointsValidateAndTransition(t *testing.T) {
 	if answered.Status != domain.DecisionStatus("answered") || answered.AnswerText != "yes" {
 		t.Fatalf("answered decision = %+v", answered)
 	}
-	status, headers, body = doRequest(t, client, http.MethodPost, srv.URL+"/api/decisions/"+f.open.ID+"/answer", mustJSON(t, map[string]string{"answer_text": "again"}))
+	status, headers, body = doRequest(t, client, http.MethodPost, urlID(srv.URL+"/api/decisions/", f.open.ID)+"/answer", mustJSON(t, map[string]string{"answer_text": "again"}))
 	assertErrorObject(t, status, headers, body, http.StatusConflict)
 
-	status, _, body = doRequest(t, client, http.MethodPost, srv.URL+"/api/tasks/"+f.tasks[0].ID+"/release", nil)
+	status, _, body = doRequest(t, client, http.MethodPost, urlID(srv.URL+"/api/tasks/", f.tasks[0].ID)+"/release", nil)
 	if status != http.StatusOK {
 		t.Fatalf("release status = %d; body=%s", status, body)
 	}
@@ -2061,13 +2058,13 @@ func TestHTTPDecisionAndReleaseEndpointsValidateAndTransition(t *testing.T) {
 	if err := json.Unmarshal(body, &released); err != nil {
 		t.Fatal(err)
 	}
-	if released.ClaimedBy != "" || released.ClaimedAt != nil {
+	if released.ClaimedBy != 0 || released.ClaimedAt != nil {
 		t.Fatalf("released task = %+v", released)
 	}
 	status, headers, body = doRequest(t, client, http.MethodPost, srv.URL+"/api/tasks/missing/release", nil)
 	assertErrorObject(t, status, headers, body, http.StatusNotFound)
 
-	status, headers, body = doRequest(t, client, http.MethodGet, srv.URL+"/api/goals/"+f.goal.ID+"/extra", nil)
+	status, headers, body = doRequest(t, client, http.MethodGet, urlID(srv.URL+"/api/goals/", f.goal.ID)+"/extra", nil)
 	assertErrorObject(t, status, headers, body, http.StatusBadRequest)
 }
 
@@ -2085,7 +2082,7 @@ func TestHTTPAnswerRejectsCompletionDecision(t *testing.T) {
 	srv := newTestServer(t, f.store)
 	defer srv.Close()
 
-	status, headers, body := doRequest(t, srv.Client(), http.MethodPost, srv.URL+"/api/decisions/"+completion.ID+"/answer", mustJSON(t, map[string]string{
+	status, headers, body := doRequest(t, srv.Client(), http.MethodPost, urlID(srv.URL+"/api/decisions/", completion.ID)+"/answer", mustJSON(t, map[string]string{
 		"answer_text": "yes",
 	}))
 	assertErrorObject(t, status, headers, body, http.StatusBadRequest)
@@ -2118,7 +2115,7 @@ func TestHTTPAnswerRejectsGoalApprovalDecision(t *testing.T) {
 	srv := newTestServer(t, f.store)
 	defer srv.Close()
 
-	status, headers, body := doRequest(t, srv.Client(), http.MethodPost, srv.URL+"/api/decisions/"+approval.ID+"/answer", mustJSON(t, map[string]string{
+	status, headers, body := doRequest(t, srv.Client(), http.MethodPost, urlID(srv.URL+"/api/decisions/", approval.ID)+"/answer", mustJSON(t, map[string]string{
 		"answer_label": "maybe",
 	}))
 	assertErrorObject(t, status, headers, body, http.StatusBadRequest)
@@ -2143,7 +2140,7 @@ func TestHTTPAnswerAllowsDecisionKind(t *testing.T) {
 	srv := newTestServer(t, f.store)
 	defer srv.Close()
 
-	status, headers, body := doRequest(t, srv.Client(), http.MethodPost, srv.URL+"/api/decisions/"+f.open.ID+"/answer", mustJSON(t, map[string]string{
+	status, headers, body := doRequest(t, srv.Client(), http.MethodPost, urlID(srv.URL+"/api/decisions/", f.open.ID)+"/answer", mustJSON(t, map[string]string{
 		"answer_text": "yes",
 	}))
 	if status != http.StatusOK {
@@ -2178,11 +2175,11 @@ func TestHTTPApproveAndRejectCompletionEndpoints(t *testing.T) {
 		Surprises:   "なし",
 		NeedsReview: "なし",
 		NextSteps:   "なし",
-	}, "approve-run")
+	}, testSessionID("approve-run"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	status, headers, body := doRequest(t, client, http.MethodPost, srv.URL+"/api/decisions/"+approveDecision.ID+"/approve", mustJSON(t, map[string]string{}))
+	status, headers, body := doRequest(t, client, http.MethodPost, urlID(srv.URL+"/api/decisions/", approveDecision.ID)+"/approve", mustJSON(t, map[string]string{}))
 	if status != http.StatusOK {
 		t.Fatalf("approve status = %d; body=%s", status, body)
 	}
@@ -2205,11 +2202,11 @@ func TestHTTPApproveAndRejectCompletionEndpoints(t *testing.T) {
 		Surprises:   "なし",
 		NeedsReview: "needs work",
 		NextSteps:   "Revise the goal",
-	}, "reject-run")
+	}, testSessionID("reject-run"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	status, _, body = doRequest(t, client, http.MethodPost, srv.URL+"/api/decisions/"+rejectDecision.ID+"/reject", mustJSON(t, map[string]string{"reason": "needs work"}))
+	status, _, body = doRequest(t, client, http.MethodPost, urlID(srv.URL+"/api/decisions/", rejectDecision.ID)+"/reject", mustJSON(t, map[string]string{"reason": "needs work"}))
 	if status != http.StatusOK {
 		t.Fatalf("reject status = %d; body=%s", status, body)
 	}
@@ -2220,7 +2217,7 @@ func TestHTTPApproveAndRejectCompletionEndpoints(t *testing.T) {
 	if rejected.ID != rejectDecision.ID || rejected.Status != domain.DecisionStatus("answered") {
 		t.Fatalf("rejected decision = %+v", rejected)
 	}
-	status, headers, body = doRequest(t, client, http.MethodPost, srv.URL+"/api/decisions/"+rejectDecision.ID+"/reject", mustJSON(t, map[string]string{}))
+	status, headers, body = doRequest(t, client, http.MethodPost, urlID(srv.URL+"/api/decisions/", rejectDecision.ID)+"/reject", mustJSON(t, map[string]string{}))
 	assertErrorObject(t, status, headers, body, http.StatusConflict)
 }
 
@@ -2342,6 +2339,10 @@ func eventsURLWithGoal(baseURL, goalID string) string {
 	return baseURL + "/api/events?" + query.Encode()
 }
 
+func urlID(prefix string, id int64) string { return prefix + strconv.FormatInt(id, 10) }
+
+func idText(id int64) string { return strconv.FormatInt(id, 10) }
+
 func TestSSEFiltersDecisionEventsByProjectID(t *testing.T) {
 	f := newBareFixture(t)
 	otherProject, err := f.store.CreateProject(f.ctx, "other", t.TempDir())
@@ -2360,7 +2361,7 @@ func TestSSEFiltersDecisionEventsByProjectID(t *testing.T) {
 	defer srv.Close()
 	streamCtx, cancel := context.WithCancel(f.ctx)
 	defer cancel()
-	stream, reader := openSSEStream(t, streamCtx, srv.Client(), eventsURL(srv.URL, f.project.ID))
+	stream, reader := openSSEStream(t, streamCtx, srv.Client(), eventsURL(srv.URL, idText(f.project.ID)))
 	defer stream.Body.Close()
 
 	otherDecision, err := f.store.AskDecision(f.ctx, store.AskInput{
@@ -2393,11 +2394,11 @@ func TestSSEFiltersDetectionEventsByProjectID(t *testing.T) {
 	defer srv.Close()
 	streamCtx, cancel := context.WithCancel(f.ctx)
 	defer cancel()
-	stream, reader := openSSEStream(t, streamCtx, srv.Client(), eventsURL(srv.URL, f.project.ID))
+	stream, reader := openSSEStream(t, streamCtx, srv.Client(), eventsURL(srv.URL, idText(f.project.ID)))
 	defer stream.Body.Close()
 
-	other := &store.DetectionEvent{DetectionID: "other-detection", ProjectID: otherProject.ID, GoalID: "other-goal"}
-	current := store.DetectionEvent{DetectionID: "current-detection", ProjectID: f.project.ID, GoalID: "current-goal"}
+	other := &store.DetectionEvent{DetectionID: "other-detection", ProjectID: otherProject.ID, GoalID: 2}
+	current := store.DetectionEvent{DetectionID: "current-detection", ProjectID: f.project.ID, GoalID: 1}
 	f.store.PublishEvent(store.DecisionEvent{Name: store.EventDetectionCompletionReportMissing, Data: other})
 	f.store.PublishEvent(store.DecisionEvent{Name: store.EventDetectionCompletionReportMissing, Data: current})
 
@@ -2420,12 +2421,12 @@ func TestSSEFiltersDetectionEventsByGoalID(t *testing.T) {
 	defer srv.Close()
 	streamCtx, cancel := context.WithCancel(f.ctx)
 	defer cancel()
-	stream, reader := openSSEStream(t, streamCtx, srv.Client(), eventsURLWithGoal(srv.URL, "current-goal"))
+	stream, reader := openSSEStream(t, streamCtx, srv.Client(), eventsURLWithGoal(srv.URL, "1"))
 	defer stream.Body.Close()
 
 	f.store.PublishEvent(store.DecisionEvent{
 		Name: store.EventDetectionCompletionReportMissing,
-		Data: store.DetectionEvent{DetectionID: "other-detection", GoalID: "other-goal"},
+		Data: store.DetectionEvent{DetectionID: "other-detection", GoalID: 2},
 	})
 	f.store.PublishEvent(store.DecisionEvent{
 		Name: store.EventDetectionCompletionReportMissing,
@@ -2433,7 +2434,7 @@ func TestSSEFiltersDetectionEventsByGoalID(t *testing.T) {
 	})
 	f.store.PublishEvent(store.DecisionEvent{
 		Name: store.EventDetectionCompletionReportMissing,
-		Data: store.DetectionEvent{DetectionID: "current-detection", GoalID: "current-goal"},
+		Data: store.DetectionEvent{DetectionID: "current-detection", GoalID: 1},
 	})
 
 	frame := readSSEFrame(t, reader)
@@ -2444,7 +2445,7 @@ func TestSSEFiltersDetectionEventsByGoalID(t *testing.T) {
 	if err := json.Unmarshal([]byte(frame.data), &got); err != nil {
 		t.Fatalf("SSE detection data is not a DetectionEvent: %v; data=%q", err, frame.data)
 	}
-	if got.DetectionID != "current-detection" || got.GoalID != "current-goal" {
+	if got.DetectionID != "current-detection" || got.GoalID != 1 {
 		t.Fatalf("SSE detection = %+v, want current goal detection", got)
 	}
 }
@@ -2455,10 +2456,10 @@ func TestSSEPublishesDecisionEventsForGoalID(t *testing.T) {
 	defer srv.Close()
 	streamCtx, cancel := context.WithCancel(f.ctx)
 	defer cancel()
-	stream, reader := openSSEStream(t, streamCtx, srv.Client(), eventsURLWithGoal(srv.URL, "current-goal"))
+	stream, reader := openSSEStream(t, streamCtx, srv.Client(), eventsURLWithGoal(srv.URL, "1"))
 	defer stream.Body.Close()
 
-	current := &domain.Decision{ID: "current-decision", GoalID: "current-goal"}
+	current := &domain.Decision{ID: 1, GoalID: 1}
 	f.store.PublishEvent(store.DecisionEvent{Name: "decision.created", Data: current})
 
 	frame := readSSEFrame(t, reader)
@@ -2480,11 +2481,11 @@ func TestSSEFiltersOtherGoalDecisionEventsByGoalID(t *testing.T) {
 	defer srv.Close()
 	streamCtx, cancel := context.WithCancel(f.ctx)
 	defer cancel()
-	stream, reader := openSSEStream(t, streamCtx, srv.Client(), eventsURLWithGoal(srv.URL, "current-goal"))
+	stream, reader := openSSEStream(t, streamCtx, srv.Client(), eventsURLWithGoal(srv.URL, "1"))
 	defer stream.Body.Close()
 
-	other := domain.Decision{ID: "other-decision", GoalID: "other-goal"}
-	current := domain.Decision{ID: "current-decision", GoalID: "current-goal"}
+	other := domain.Decision{ID: 2, GoalID: 2}
+	current := domain.Decision{ID: 1, GoalID: 1}
 	f.store.PublishEvent(store.DecisionEvent{Name: "decision.created", Data: other})
 	f.store.PublishEvent(store.DecisionEvent{Name: "decision.created", Data: current})
 
@@ -2507,7 +2508,7 @@ func TestSSEGoalIDPublishesKeepaliveButNotWakeup(t *testing.T) {
 	defer srv.Close()
 	streamCtx, cancel := context.WithCancel(f.ctx)
 	defer cancel()
-	stream, reader := openSSEStream(t, streamCtx, srv.Client(), eventsURLWithGoal(srv.URL, "current-goal"))
+	stream, reader := openSSEStream(t, streamCtx, srv.Client(), eventsURLWithGoal(srv.URL, "1"))
 	defer stream.Body.Close()
 
 	f.store.PublishEvent(store.DecisionEvent{
@@ -2535,7 +2536,7 @@ func TestSSENoGoalIDKeepsPublishingDetectionEvents(t *testing.T) {
 	stream, reader := openSSEStream(t, streamCtx, srv.Client(), srv.URL+"/api/events")
 	defer stream.Body.Close()
 
-	detection := store.DetectionEvent{DetectionID: "unscoped-detection", GoalID: "other-goal"}
+	detection := store.DetectionEvent{DetectionID: "unscoped-detection", GoalID: 2}
 	f.store.PublishEvent(store.DecisionEvent{Name: store.EventDetectionCompletionReportMissing, Data: detection})
 
 	frame := readSSEFrame(t, reader)
@@ -2557,7 +2558,7 @@ func TestSSEPublishesGenericWakeupAndKeepaliveEvents(t *testing.T) {
 	defer srv.Close()
 	streamCtx, cancel := context.WithCancel(f.ctx)
 	defer cancel()
-	stream, reader := openSSEStream(t, streamCtx, srv.Client(), eventsURL(srv.URL, f.project.ID))
+	stream, reader := openSSEStream(t, streamCtx, srv.Client(), eventsURL(srv.URL, idText(f.project.ID)))
 	defer stream.Body.Close()
 
 	other := store.WakeupEvent{
@@ -2685,7 +2686,7 @@ func TestSSEPublishesAllDecisionTransitionsWithExactPayloads(t *testing.T) {
 		GoalID:         f.goal.ID,
 		Kind:           domain.DecisionKind("question"),
 		Question:       "Need an answer",
-		AgentSessionID: "poll-run",
+		AgentSessionID: testSessionID("poll-run"),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -2698,7 +2699,7 @@ func TestSSEPublishesAllDecisionTransitionsWithExactPayloads(t *testing.T) {
 	}
 	assertSSEDecision(t, reader, "decision.answered", answered)
 
-	applied, err := f.store.PollDecisions(f.ctx, "poll-run", created.ID)
+	applied, err := f.store.PollDecisions(f.ctx, testSessionID("poll-run"), created.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2711,7 +2712,7 @@ func TestSSEPublishesAllDecisionTransitionsWithExactPayloads(t *testing.T) {
 		GoalID:         f.goal.ID,
 		Kind:           domain.DecisionKind("question"),
 		Question:       "Withdraw me",
-		AgentSessionID: "withdraw-run",
+		AgentSessionID: testSessionID("withdraw-run"),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -2733,7 +2734,7 @@ func TestSSEPublishesAllDecisionTransitionsWithExactPayloads(t *testing.T) {
 		Surprises:   "なし",
 		NeedsReview: "なし",
 		NextSteps:   "なし",
-	}, "approve-run")
+	}, testSessionID("approve-run"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2754,7 +2755,7 @@ func TestSSEPublishesAllDecisionTransitionsWithExactPayloads(t *testing.T) {
 		Surprises:   "なし",
 		NeedsReview: "needs work",
 		NextSteps:   "Revise and retry",
-	}, "reject-run")
+	}, testSessionID("reject-run"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2785,7 +2786,7 @@ func TestTaskViewJSONIncludesDomainFieldsAndDerivedFields(t *testing.T) {
 	f := newFixture(t)
 	srv := newTestServer(t, f.store)
 	defer srv.Close()
-	status, _, body := doRequest(t, srv.Client(), http.MethodGet, srv.URL+"/api/goals/"+f.goal.ID, nil)
+	status, _, body := doRequest(t, srv.Client(), http.MethodGet, urlID(srv.URL+"/api/goals/", f.goal.ID), nil)
 	if status != http.StatusOK {
 		t.Fatalf("status = %d; body=%s", status, body)
 	}
@@ -2830,7 +2831,7 @@ func TestHTTPProjectsAndGoalCreationEndpoints(t *testing.T) {
 	}
 
 	status, _, body = doRequest(t, client, http.MethodPost, srv.URL+"/api/goals", mustJSON(t, map[string]string{
-		"project_id": f.project.ID,
+		"project_id": idText(f.project.ID),
 		"content":    "Created in inbox\n\nCreated through the human UI endpoint",
 		"creator":    "human",
 	}))
@@ -2846,7 +2847,7 @@ func TestHTTPProjectsAndGoalCreationEndpoints(t *testing.T) {
 	}
 
 	status, _, body = doRequest(t, client, http.MethodPost, srv.URL+"/api/goals", mustJSON(t, map[string]string{
-		"project_id": f.project.ID,
+		"project_id": idText(f.project.ID),
 		"content":    "Created by an agent\n\nNeeds human approval",
 	}))
 	if status != http.StatusOK {
@@ -2868,7 +2869,7 @@ func TestHTTPProjectsAndGoalCreationEndpoints(t *testing.T) {
 	}
 
 	status, headers, body = doRequest(t, client, http.MethodPost, srv.URL+"/api/goals", mustJSON(t, map[string]string{
-		"project_id": f.project.ID,
+		"project_id": idText(f.project.ID),
 	}))
 	assertErrorObject(t, status, headers, body, http.StatusBadRequest)
 
@@ -2885,7 +2886,7 @@ func TestHTTPGoalCreationDefaultsToProposedWithoutCreator(t *testing.T) {
 	defer srv.Close()
 
 	status, _, body := doRequest(t, srv.Client(), http.MethodPost, srv.URL+"/api/goals", mustJSON(t, map[string]string{
-		"project_id": f.project.ID,
+		"project_id": idText(f.project.ID),
 		"content":    "Created without creator",
 	}))
 	if status != http.StatusOK {
@@ -2906,7 +2907,7 @@ func TestHTTPGoalCreationWithHumanCreatorIsActive(t *testing.T) {
 	defer srv.Close()
 
 	status, _, body := doRequest(t, srv.Client(), http.MethodPost, srv.URL+"/api/goals", mustJSON(t, map[string]string{
-		"project_id": f.project.ID,
+		"project_id": idText(f.project.ID),
 		"content":    "Created by a human",
 		"creator":    "human",
 	}))
@@ -2929,7 +2930,7 @@ func TestHTTPGoalApprovalEndpointsTransitionProposedGoal(t *testing.T) {
 	client := srv.Client()
 
 	status, _, body := doRequest(t, client, http.MethodPost, srv.URL+"/api/goals", mustJSON(t, map[string]string{
-		"project_id": f.project.ID,
+		"project_id": idText(f.project.ID),
 		"content":    "Approve through HTTP",
 		"creator":    "agent",
 	}))
@@ -2948,7 +2949,7 @@ func TestHTTPGoalApprovalEndpointsTransitionProposedGoal(t *testing.T) {
 		t.Fatalf("open decisions = %+v", decisions)
 	}
 
-	status, _, body = doRequest(t, client, http.MethodPost, srv.URL+"/api/decisions/"+decisions[0].ID+"/approve", mustJSON(t, map[string]string{}))
+	status, _, body = doRequest(t, client, http.MethodPost, urlID(srv.URL+"/api/decisions/", decisions[0].ID)+"/approve", mustJSON(t, map[string]string{}))
 	if status != http.StatusOK {
 		t.Fatalf("approve goal status = %d; body=%s", status, body)
 	}
@@ -2961,7 +2962,7 @@ func TestHTTPGoalApprovalEndpointsTransitionProposedGoal(t *testing.T) {
 	}
 
 	status, _, body = doRequest(t, client, http.MethodPost, srv.URL+"/api/goals", mustJSON(t, map[string]string{
-		"project_id": f.project.ID,
+		"project_id": idText(f.project.ID),
 		"content":    "Reject through HTTP",
 		"creator":    "agent",
 	}))
@@ -2976,7 +2977,7 @@ func TestHTTPGoalApprovalEndpointsTransitionProposedGoal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListOpenDecisions reject: %v", err)
 	}
-	status, _, body = doRequest(t, client, http.MethodPost, srv.URL+"/api/decisions/"+decisions[0].ID+"/reject", mustJSON(t, map[string]string{"reason": "scope is not approved"}))
+	status, _, body = doRequest(t, client, http.MethodPost, urlID(srv.URL+"/api/decisions/", decisions[0].ID)+"/reject", mustJSON(t, map[string]string{"reason": "scope is not approved"}))
 	if status != http.StatusOK {
 		t.Fatalf("reject goal status = %d; body=%s", status, body)
 	}
@@ -3006,7 +3007,7 @@ func TestHTTPGoalContentUpdatesProposedGoal(t *testing.T) {
 	srv := newTestServer(t, f.store)
 	defer srv.Close()
 	updatedContent := "Updated proposed content\n\nwith details"
-	status, _, body := doRequest(t, srv.Client(), http.MethodPost, srv.URL+"/api/goals/"+proposed.ID+"/content", mustJSON(t, map[string]string{
+	status, _, body := doRequest(t, srv.Client(), http.MethodPost, urlID(srv.URL+"/api/goals/", proposed.ID)+"/content", mustJSON(t, map[string]string{
 		"content": updatedContent,
 	}))
 	if status != http.StatusOK {
@@ -3017,7 +3018,7 @@ func TestHTTPGoalContentUpdatesProposedGoal(t *testing.T) {
 		t.Fatalf("decode updated goal: %v; body=%s", err, body)
 	}
 	if got.ID != proposed.ID || got.Content != updatedContent || got.Status != domain.GoalProposed {
-		t.Fatalf("updated goal = %+v, want id %q, content %q, status %q", got, proposed.ID, updatedContent, domain.GoalProposed)
+		t.Fatalf("updated goal = %+v, want id %d, content %q, status %q", got, proposed.ID, updatedContent, domain.GoalProposed)
 	}
 }
 
@@ -3032,7 +3033,7 @@ func TestHTTPGoalContentRejectsBlankContent(t *testing.T) {
 
 			srv := newTestServer(t, f.store)
 			defer srv.Close()
-			status, headers, body := doRequest(t, srv.Client(), http.MethodPost, srv.URL+"/api/goals/"+proposed.ID+"/content", mustJSON(t, map[string]string{
+			status, headers, body := doRequest(t, srv.Client(), http.MethodPost, urlID(srv.URL+"/api/goals/", proposed.ID)+"/content", mustJSON(t, map[string]string{
 				"content": content,
 			}))
 			assertErrorObject(t, status, headers, body, http.StatusBadRequest)
@@ -3056,7 +3057,7 @@ func TestHTTPGoalContentRejectsActiveGoalWithStatus(t *testing.T) {
 	srv := newTestServer(t, f.store)
 	defer srv.Close()
 
-	status, headers, body := doRequest(t, srv.Client(), http.MethodPost, srv.URL+"/api/goals/"+f.goal.ID+"/content", mustJSON(t, map[string]string{
+	status, headers, body := doRequest(t, srv.Client(), http.MethodPost, urlID(srv.URL+"/api/goals/", f.goal.ID)+"/content", mustJSON(t, map[string]string{
 		"content": "new content",
 	}))
 	assertErrorObject(t, status, headers, body, http.StatusConflict)
@@ -3082,7 +3083,7 @@ func TestHTTPGoalContentRejectsDoneAndDroppedGoals(t *testing.T) {
 		Surprises:   "none",
 		NeedsReview: "none",
 		NextSteps:   "none",
-	}, "done-run")
+	}, testSessionID("done-run"))
 	if err != nil {
 		t.Fatalf("complete done goal: %v", err)
 	}
@@ -3109,14 +3110,14 @@ func TestHTTPGoalContentRejectsDoneAndDroppedGoals(t *testing.T) {
 	defer srv.Close()
 	for _, test := range []struct {
 		name   string
-		goalID string
+		goalID int64
 		status domain.GoalStatus
 	}{
 		{name: "done", goalID: done.ID, status: domain.GoalDone},
 		{name: "dropped", goalID: dropped.ID, status: domain.GoalDropped},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			status, headers, body := doRequest(t, srv.Client(), http.MethodPost, srv.URL+"/api/goals/"+test.goalID+"/content", mustJSON(t, map[string]string{
+			status, headers, body := doRequest(t, srv.Client(), http.MethodPost, urlID(srv.URL+"/api/goals/", test.goalID)+"/content", mustJSON(t, map[string]string{
 				"content": "new content",
 			}))
 			assertErrorObject(t, status, headers, body, http.StatusConflict)
@@ -3136,12 +3137,12 @@ func TestHTTPGoalContentDoesNotChangeRejectedGoal(t *testing.T) {
 	srv := newTestServer(t, f.store)
 	defer srv.Close()
 
-	status, headers, body := doRequest(t, srv.Client(), http.MethodPost, srv.URL+"/api/goals/"+f.goal.ID+"/content", mustJSON(t, map[string]string{
+	status, headers, body := doRequest(t, srv.Client(), http.MethodPost, urlID(srv.URL+"/api/goals/", f.goal.ID)+"/content", mustJSON(t, map[string]string{
 		"content": "this must not be saved",
 	}))
 	assertErrorObject(t, status, headers, body, http.StatusConflict)
 
-	status, _, body = doRequest(t, srv.Client(), http.MethodGet, srv.URL+"/api/goals/"+f.goal.ID, nil)
+	status, _, body = doRequest(t, srv.Client(), http.MethodGet, urlID(srv.URL+"/api/goals/", f.goal.ID), nil)
 	if status != http.StatusOK {
 		t.Fatalf("get rejected goal status = %d; body=%s", status, body)
 	}

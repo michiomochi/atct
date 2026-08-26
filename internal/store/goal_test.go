@@ -77,7 +77,7 @@ func TestUpdateGoalContentRejectsBlankContent(t *testing.T) {
 }
 
 func TestUpdateGoalContentReturnsNotFoundForMissingGoal(t *testing.T) {
-	_, err := newTestStore(t).UpdateGoalContent(context.Background(), "missing-goal", "new content")
+	_, err := newTestStore(t).UpdateGoalContent(context.Background(), 0, "new content")
 	if !errors.Is(err, ErrGoalNotFound) {
 		t.Fatalf("error = %v, want ErrGoalNotFound", err)
 	}
@@ -126,7 +126,7 @@ func TestUpdateGoalContentRejectsDoneAndDroppedGoals(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					decision, completeErr := s.CompleteGoal(ctx, goal.ID, "done summary", "done-run")
+					decision, completeErr := s.CompleteGoal(ctx, goal.ID, "done summary", testSessionID("done-run"))
 					if completeErr != nil {
 						t.Fatal(completeErr)
 					}
@@ -227,7 +227,7 @@ func TestCreateGoalStartsActive(t *testing.T) {
 		t.Fatalf("ListGoals: %v", err)
 	}
 	if len(goals) != 1 || goals[0].ID != g.ID {
-		t.Fatalf("ListGoals returned %d goals, want 1 matching %s", len(goals), g.ID)
+		t.Fatalf("ListGoals returned %d goals, want 1 matching %d", len(goals), g.ID)
 	}
 }
 
@@ -248,7 +248,7 @@ func TestCreateGoalWithDerivedFromGoal(t *testing.T) {
 		t.Fatalf("CreateGoal child: %v", err)
 	}
 	if child.DerivedFromGoalID != parent.ID {
-		t.Fatalf("child.DerivedFromGoalID = %q, want %q", child.DerivedFromGoalID, parent.ID)
+		t.Fatalf("child.DerivedFromGoalID = %d, want %d", child.DerivedFromGoalID, parent.ID)
 	}
 
 	got, err := s.GetGoal(ctx, child.ID)
@@ -256,7 +256,7 @@ func TestCreateGoalWithDerivedFromGoal(t *testing.T) {
 		t.Fatalf("GetGoal: %v", err)
 	}
 	if got.DerivedFromGoalID != parent.ID {
-		t.Fatalf("GetGoal DerivedFromGoalID = %q, want %q", got.DerivedFromGoalID, parent.ID)
+		t.Fatalf("GetGoal DerivedFromGoalID = %d, want %d", got.DerivedFromGoalID, parent.ID)
 	}
 }
 
@@ -276,8 +276,8 @@ func TestCreateGoalWithoutDerivedFromGoal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetGoal: %v", err)
 	}
-	if got.DerivedFromGoalID != "" {
-		t.Fatalf("DerivedFromGoalID = %q, want NULL represented as empty", got.DerivedFromGoalID)
+	if got.DerivedFromGoalID != 0 {
+		t.Fatalf("DerivedFromGoalID = %d, want zero represented as empty", got.DerivedFromGoalID)
 	}
 }
 
@@ -289,7 +289,7 @@ func TestCreateGoalRejectsUnknownDerivedFromGoal(t *testing.T) {
 		t.Fatalf("CreateProject: %v", err)
 	}
 
-	if _, err := s.CreateGoal(ctx, ns.ID, "Orphan goal", "human", "missing-goal-id"); err == nil {
+	if _, err := s.CreateGoal(ctx, ns.ID, "Orphan goal", "human", 999999); err == nil {
 		t.Fatal("CreateGoal succeeded with a nonexistent derived-from goal")
 	}
 	goals, err := s.ListGoals(ctx, ns.ID)
@@ -329,7 +329,7 @@ func TestSetGoalDerivedFromAndRejectsSelfReference(t *testing.T) {
 		t.Fatalf("GetGoal: %v", err)
 	}
 	if got.DerivedFromGoalID != parent.ID {
-		t.Fatalf("DerivedFromGoalID after self-reference rejection = %q, want %q", got.DerivedFromGoalID, parent.ID)
+		t.Fatalf("DerivedFromGoalID after self-reference rejection = %d, want %d", got.DerivedFromGoalID, parent.ID)
 	}
 }
 
@@ -345,7 +345,7 @@ func TestSetGoalDerivedFromRejectsUnknownParent(t *testing.T) {
 		t.Fatalf("CreateGoal: %v", err)
 	}
 
-	err = s.SetGoalDerivedFrom(ctx, child.ID, "missing-goal-id")
+	err = s.SetGoalDerivedFrom(ctx, child.ID, 999999)
 	if !errors.Is(err, ErrGoalNotFound) {
 		t.Fatalf("SetGoalDerivedFrom error = %v, want ErrGoalNotFound", err)
 	}
@@ -378,8 +378,8 @@ func TestSetGoalDerivedFromRejectsTwoNodeCycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetGoal: %v", err)
 	}
-	if got.DerivedFromGoalID != "" {
-		t.Fatalf("second.DerivedFromGoalID after cycle rejection = %q, want empty", got.DerivedFromGoalID)
+	if got.DerivedFromGoalID != 0 {
+		t.Fatalf("second.DerivedFromGoalID after cycle rejection = %d, want empty", got.DerivedFromGoalID)
 	}
 }
 
@@ -417,8 +417,8 @@ func TestSetGoalDerivedFromRejectsThreeNodeCycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetGoal: %v", err)
 	}
-	if got.DerivedFromGoalID != "" {
-		t.Fatalf("third.DerivedFromGoalID after cycle rejection = %q, want empty", got.DerivedFromGoalID)
+	if got.DerivedFromGoalID != 0 {
+		t.Fatalf("third.DerivedFromGoalID after cycle rejection = %d, want empty", got.DerivedFromGoalID)
 	}
 }
 
@@ -440,7 +440,7 @@ func TestSetGoalDerivedFromClearsParent(t *testing.T) {
 	if err := s.SetGoalDerivedFrom(ctx, child.ID, parent.ID); err != nil {
 		t.Fatalf("SetGoalDerivedFrom parent: %v", err)
 	}
-	if err := s.SetGoalDerivedFrom(ctx, child.ID, ""); err != nil {
+	if err := s.SetGoalDerivedFrom(ctx, child.ID, 0); err != nil {
 		t.Fatalf("SetGoalDerivedFrom clear: %v", err)
 	}
 
@@ -448,8 +448,8 @@ func TestSetGoalDerivedFromClearsParent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetGoal: %v", err)
 	}
-	if got.DerivedFromGoalID != "" {
-		t.Fatalf("DerivedFromGoalID after clear = %q, want empty", got.DerivedFromGoalID)
+	if got.DerivedFromGoalID != 0 {
+		t.Fatalf("DerivedFromGoalID after clear = %d, want empty", got.DerivedFromGoalID)
 	}
 }
 
@@ -466,7 +466,7 @@ func TestClaimGoal(t *testing.T) {
 	}
 
 	addTestAgentSession(t, s, "session-1")
-	claimed, err := s.ClaimGoal(ctx, g.ID, "session-1")
+	claimed, err := s.ClaimGoal(ctx, g.ID, testSessionID("session-1"))
 	if err != nil {
 		t.Fatalf("ClaimGoal: %v", err)
 	}
@@ -477,8 +477,8 @@ func TestClaimGoal(t *testing.T) {
 	if handoff == nil {
 		t.Fatal("goal handoff is missing after claim")
 	}
-	if handoff.ReceivedBy != "session-1" {
-		t.Fatalf("goal handoff receiver = %q, want session-1", handoff.ReceivedBy)
+	if handoff.ReceivedBy != testSessionID("session-1") {
+		t.Fatalf("goal handoff receiver = %d, want session-1 (%d)", handoff.ReceivedBy, testSessionID("session-1"))
 	}
 	if handoff.ReceivedAt == nil {
 		t.Fatal("goal handoff has no receipt timestamp after claiming")
@@ -488,14 +488,15 @@ func TestClaimGoal(t *testing.T) {
 func TestClaimGoalRejectsLiveClaimFromOtherSession(t *testing.T) {
 	ctx := context.Background()
 	s, goal := newGoalClaimFixture(t)
-	if err := s.RegisterAgentSession(ctx, "live-run", os.Getpid()); err != nil {
+	liveID, err := s.RegisterAgentSession(ctx, os.Getpid())
+	if err != nil {
 		t.Fatalf("RegisterAgentSession: %v", err)
 	}
-	if _, err := s.ClaimGoal(ctx, goal.ID, "live-run"); err != nil {
+	if _, err := s.ClaimGoal(ctx, goal.ID, liveID); err != nil {
 		t.Fatalf("ClaimGoal live: %v", err)
 	}
 
-	if _, err := s.ClaimGoal(ctx, goal.ID, "other-run"); !errors.Is(err, ErrGoalAlreadyClaimed) {
+	if _, err := s.ClaimGoal(ctx, goal.ID, testSessionID("other-run")); !errors.Is(err, ErrGoalAlreadyClaimed) {
 		t.Fatalf("ClaimGoal error = %v, want ErrGoalAlreadyClaimed", err)
 	}
 }
@@ -503,14 +504,15 @@ func TestClaimGoalRejectsLiveClaimFromOtherSession(t *testing.T) {
 func TestClaimGoalKeepsLiveClaimOwnerAfterRejection(t *testing.T) {
 	ctx := context.Background()
 	s, goal := newGoalClaimFixture(t)
-	if err := s.RegisterAgentSession(ctx, "live-run", os.Getpid()); err != nil {
+	liveID, err := s.RegisterAgentSession(ctx, os.Getpid())
+	if err != nil {
 		t.Fatalf("RegisterAgentSession: %v", err)
 	}
-	if _, err := s.ClaimGoal(ctx, goal.ID, "live-run"); err != nil {
+	if _, err := s.ClaimGoal(ctx, goal.ID, liveID); err != nil {
 		t.Fatalf("ClaimGoal live: %v", err)
 	}
 
-	if _, err := s.ClaimGoal(ctx, goal.ID, "other-run"); err == nil {
+	if _, err := s.ClaimGoal(ctx, goal.ID, testSessionID("other-run")); err == nil {
 		t.Fatal("ClaimGoal unexpectedly succeeded for a live claim")
 	}
 	got, err := s.GetGoal(ctx, goal.ID)
@@ -524,28 +526,29 @@ func TestClaimGoalKeepsLiveClaimOwnerAfterRejection(t *testing.T) {
 	if handoff == nil {
 		t.Fatal("goal handoff is missing after rejected claim")
 	}
-	if handoff.ReceivedBy != "live-run" {
-		t.Fatalf("goal handoff receiver after rejection = %q, want live-run", handoff.ReceivedBy)
+	if handoff.ReceivedBy != liveID {
+		t.Fatalf("goal handoff receiver after rejection = %d, want live-run (%d)", handoff.ReceivedBy, liveID)
 	}
 }
 
 func TestClaimGoalTakesOverDeadClaim(t *testing.T) {
 	ctx := context.Background()
 	s, goal := newGoalClaimFixture(t)
-	if err := s.RegisterAgentSession(ctx, "dead-run", 999999); err != nil {
+	deadID, err := s.RegisterAgentSession(ctx, 999999)
+	if err != nil {
 		t.Fatalf("RegisterAgentSession: %v", err)
 	}
 	if _, err := s.DB().ExecContext(ctx, `
 		UPDATE agent_sessions SET pid = ?, started_at = ? WHERE id = ?
-	`, 999999, "dead", "dead-run"); err != nil {
+	`, 999999, "dead", deadID); err != nil {
 		t.Fatalf("dead session fixture update failed: %v", err)
 	}
-	if _, err := s.ClaimGoal(ctx, goal.ID, "dead-run"); err != nil {
+	if _, err := s.ClaimGoal(ctx, goal.ID, deadID); err != nil {
 		t.Fatalf("ClaimGoal dead: %v", err)
 	}
 	addTestAgentSession(t, s, "new-run")
 
-	claimed, err := s.ClaimGoal(ctx, goal.ID, "new-run")
+	claimed, err := s.ClaimGoal(ctx, goal.ID, testSessionID("new-run"))
 	if err != nil {
 		t.Fatalf("ClaimGoal takeover: %v", err)
 	}
@@ -553,11 +556,11 @@ func TestClaimGoalTakesOverDeadClaim(t *testing.T) {
 	if err != nil {
 		t.Fatalf("openGoalHandoff: %v", err)
 	}
-	if handoff == nil || handoff.ReceivedBy != "new-run" {
+	if handoff == nil || handoff.ReceivedBy != testSessionID("new-run") {
 		if handoff == nil {
 			t.Fatal("goal handoff is missing after takeover")
 		}
-		t.Fatalf("goal handoff receiver after takeover = %q, want new-run", handoff.ReceivedBy)
+		t.Fatalf("goal handoff receiver after takeover = %d, want new-run (%d)", handoff.ReceivedBy, testSessionID("new-run"))
 	}
 }
 
@@ -566,7 +569,7 @@ func TestClaimGoalAllowsUnclaimedGoal(t *testing.T) {
 	s, goal := newGoalClaimFixture(t)
 
 	addTestAgentSession(t, s, "new-run")
-	claimed, err := s.ClaimGoal(ctx, goal.ID, "new-run")
+	claimed, err := s.ClaimGoal(ctx, goal.ID, testSessionID("new-run"))
 	if err != nil {
 		t.Fatalf("ClaimGoal: %v", err)
 	}
@@ -577,22 +580,23 @@ func TestClaimGoalAllowsUnclaimedGoal(t *testing.T) {
 	if handoff == nil {
 		t.Fatal("goal handoff is missing after claim")
 	}
-	if handoff.ReceivedBy != "new-run" {
-		t.Fatalf("goal handoff receiver = %q, want new-run", handoff.ReceivedBy)
+	if handoff.ReceivedBy != testSessionID("new-run") {
+		t.Fatalf("goal handoff receiver = %d, want new-run (%d)", handoff.ReceivedBy, testSessionID("new-run"))
 	}
 }
 
 func TestClaimGoalAllowsSameSessionToReclaim(t *testing.T) {
 	ctx := context.Background()
 	s, goal := newGoalClaimFixture(t)
-	if err := s.RegisterAgentSession(ctx, "same-run", os.Getpid()); err != nil {
+	sameID, err := s.RegisterAgentSession(ctx, os.Getpid())
+	if err != nil {
 		t.Fatalf("RegisterAgentSession: %v", err)
 	}
-	if _, err := s.ClaimGoal(ctx, goal.ID, "same-run"); err != nil {
+	if _, err := s.ClaimGoal(ctx, goal.ID, sameID); err != nil {
 		t.Fatalf("ClaimGoal initial: %v", err)
 	}
 
-	claimed, err := s.ClaimGoal(ctx, goal.ID, "same-run")
+	claimed, err := s.ClaimGoal(ctx, goal.ID, sameID)
 	if err != nil {
 		t.Fatalf("ClaimGoal retry: %v", err)
 	}
@@ -603,8 +607,8 @@ func TestClaimGoalAllowsSameSessionToReclaim(t *testing.T) {
 	if handoff == nil {
 		t.Fatal("goal handoff is missing after retry")
 	}
-	if handoff.ReceivedBy != "same-run" {
-		t.Fatalf("goal handoff receiver after retry = %q, want same-run", handoff.ReceivedBy)
+	if handoff.ReceivedBy != sameID {
+		t.Fatalf("goal handoff receiver after retry = %d, want same-run (%d)", handoff.ReceivedBy, sameID)
 	}
 }
 
@@ -612,7 +616,7 @@ func TestClaimGoalRejectsMissingGoalBeforeClaimLivenessCheck(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 
-	if _, err := s.ClaimGoal(ctx, "missing-goal-id", "new-run"); !errors.Is(err, ErrGoalNotFound) {
+	if _, err := s.ClaimGoal(ctx, 0, testSessionID("new-run")); !errors.Is(err, ErrGoalNotFound) {
 		t.Fatalf("ClaimGoal error = %v, want ErrGoalNotFound", err)
 	}
 }
@@ -669,7 +673,7 @@ func TestReleaseGoal(t *testing.T) {
 		t.Fatalf("CreateGoal: %v", err)
 	}
 	addTestAgentSession(t, s, "session-1")
-	if _, err := s.ClaimGoal(ctx, g.ID, "session-1"); err != nil {
+	if _, err := s.ClaimGoal(ctx, g.ID, testSessionID("session-1")); err != nil {
 		t.Fatalf("ClaimGoal: %v", err)
 	}
 
@@ -693,7 +697,7 @@ func TestClaimGoalRejectsUnknownGoal(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 
-	if _, err := s.ClaimGoal(ctx, "missing-goal-id", "session-1"); !errors.Is(err, ErrGoalNotFound) {
+	if _, err := s.ClaimGoal(ctx, 0, testSessionID("session-1")); !errors.Is(err, ErrGoalNotFound) {
 		t.Fatalf("ClaimGoal error = %v, want ErrGoalNotFound", err)
 	}
 }
@@ -714,16 +718,18 @@ func TestGoalClaimLivenessSeparatesLiveAndDeadSessions(t *testing.T) {
 		t.Fatalf("CreateGoal dead: %v", err)
 	}
 
-	if err := s.RegisterAgentSession(ctx, "goal-live-session", os.Getpid()); err != nil {
+	liveID, err := s.RegisterAgentSession(ctx, os.Getpid())
+	if err != nil {
 		t.Fatalf("RegisterAgentSession live: %v", err)
 	}
-	if err := s.RegisterAgentSession(ctx, "goal-dead-session", 999999); err != nil {
+	deadID, err := s.RegisterAgentSession(ctx, 999999)
+	if err != nil {
 		t.Fatalf("RegisterAgentSession dead: %v", err)
 	}
-	if _, err := s.ClaimGoal(ctx, liveGoal.ID, "goal-live-session"); err != nil {
+	if _, err := s.ClaimGoal(ctx, liveGoal.ID, liveID); err != nil {
 		t.Fatalf("ClaimGoal live: %v", err)
 	}
-	if _, err := s.ClaimGoal(ctx, deadGoal.ID, "goal-dead-session"); err != nil {
+	if _, err := s.ClaimGoal(ctx, deadGoal.ID, deadID); err != nil {
 		t.Fatalf("ClaimGoal dead: %v", err)
 	}
 
@@ -732,9 +738,9 @@ func TestGoalClaimLivenessSeparatesLiveAndDeadSessions(t *testing.T) {
 		t.Fatalf("GoalClaimLiveness: %v", err)
 	}
 	if len(running) != 1 || running[0].ID != liveGoal.ID {
-		t.Fatalf("running goals = %#v, want [%s]", running, liveGoal.ID)
+		t.Fatalf("running goals = %#v, want [%d]", running, liveGoal.ID)
 	}
 	if len(stale) != 1 || stale[0].ID != deadGoal.ID {
-		t.Fatalf("stale goals = %#v, want [%s]", stale, deadGoal.ID)
+		t.Fatalf("stale goals = %#v, want [%d]", stale, deadGoal.ID)
 	}
 }

@@ -10,7 +10,7 @@ import (
 
 type notifier struct {
 	mu        sync.Mutex
-	subs      map[string][]chan struct{}
+	subs      map[int64][]chan struct{}
 	broadcast map[chan struct{}]struct{}
 	events    map[chan DecisionEvent]struct{}
 }
@@ -30,13 +30,13 @@ type Event = DecisionEvent
 
 func newNotifier() *notifier {
 	return &notifier{
-		subs:      make(map[string][]chan struct{}),
+		subs:      make(map[int64][]chan struct{}),
 		broadcast: make(map[chan struct{}]struct{}),
 		events:    make(map[chan DecisionEvent]struct{}),
 	}
 }
 
-func (n *notifier) subscribe(decisionID string) (<-chan struct{}, func()) {
+func (n *notifier) subscribe(decisionID int64) (<-chan struct{}, func()) {
 	ch := make(chan struct{}, 1)
 	n.mu.Lock()
 	n.subs[decisionID] = append(n.subs[decisionID], ch)
@@ -58,7 +58,7 @@ func (n *notifier) subscribe(decisionID string) (<-chan struct{}, func()) {
 	}
 }
 
-func (n *notifier) publish(decisionID string) {
+func (n *notifier) publish(decisionID int64) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	for _, ch := range n.subs[decisionID] {
@@ -138,11 +138,12 @@ func (s *Store) PublishEvent(event DecisionEvent) {
 // WaitForAnswer waits for an answer and returns ok=false when timeout parks it.
 // Subscribe before reading the current value; the reverse order can miss an answer
 // that arrives between the read and the subscription.
-func (s *Store) WaitForAnswer(ctx context.Context, decisionID string, timeout time.Duration) (domain.Decision, bool, error) {
-	ch, cancel := s.notify.subscribe(decisionID)
+func (s *Store) WaitForAnswer(ctx context.Context, decisionID int64, timeout time.Duration) (domain.Decision, bool, error) {
+	id := decisionID
+	ch, cancel := s.notify.subscribe(id)
 	defer cancel()
 
-	d, err := s.GetDecision(ctx, decisionID)
+	d, err := s.GetDecision(ctx, id)
 	if err != nil {
 		return domain.Decision{}, false, err
 	}
@@ -155,7 +156,7 @@ func (s *Store) WaitForAnswer(ctx context.Context, decisionID string, timeout ti
 
 	select {
 	case <-ch:
-		d, err := s.GetDecision(ctx, decisionID)
+		d, err := s.GetDecision(ctx, id)
 		if err != nil {
 			return domain.Decision{}, false, err
 		}

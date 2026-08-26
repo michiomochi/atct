@@ -60,6 +60,85 @@ type watchProject struct {
 	RootPath string `json:"root_path"`
 }
 
+// decodeEntityID accepts numeric IDs emitted by the daemon and preserves string
+// input for URL/query and delivery-map keys. The CLI keeps IDs as strings
+// internally even though the canonical IDs are numeric.
+func decodeEntityID(data []byte) (string, error) {
+	trimmed := strings.TrimSpace(string(data))
+	if trimmed == "" || trimmed == "null" {
+		return "", nil
+	}
+
+	var text string
+	if err := json.Unmarshal([]byte(trimmed), &text); err == nil {
+		return text, nil
+	}
+
+	var number json.Number
+	if err := json.Unmarshal([]byte(trimmed), &number); err != nil {
+		return "", fmt.Errorf("entity ID must be an integer or string: %w", err)
+	}
+	if _, err := strconv.ParseInt(number.String(), 10, 64); err != nil {
+		return "", fmt.Errorf("entity ID must be an integer or string: %w", err)
+	}
+	return number.String(), nil
+}
+
+func decodeEntityIDObject(data []byte, ids map[string]*string, target any) error {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	for name, destination := range ids {
+		raw, ok := fields[name]
+		if !ok {
+			continue
+		}
+		value, err := decodeEntityID(raw)
+		if err != nil {
+			return fmt.Errorf("decode %s: %w", name, err)
+		}
+		*destination = value
+		delete(fields, name)
+	}
+	rest, err := json.Marshal(fields)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(rest, target)
+}
+
+func (d *watchDecision) UnmarshalJSON(data []byte) error {
+	type plain watchDecision
+	var decoded plain
+	if err := decodeEntityIDObject(data, map[string]*string{
+		"id":           &decoded.ID,
+		"decision_id":  &decoded.DecisionID,
+		"project_id":   &decoded.ProjectID,
+		"wakeup_id":    &decoded.WakeupID,
+		"detection_id": &decoded.DetectionID,
+		"goal_id":      &decoded.GoalID,
+		"task_id":      &decoded.TaskID,
+		"handoff_id":   &decoded.HandoffID,
+	}, &decoded); err != nil {
+		return err
+	}
+	*d = watchDecision(decoded)
+	return nil
+}
+
+func (p *watchProject) UnmarshalJSON(data []byte) error {
+	type plain watchProject
+	var decoded plain
+	if err := decodeEntityIDObject(data, map[string]*string{
+		"id": &decoded.ID,
+	}, &decoded); err != nil {
+		return err
+	}
+	*p = watchProject(decoded)
+	return nil
+}
+
 type watchDeliveryKey struct {
 	eventName      string
 	decisionID     string

@@ -17,35 +17,32 @@ WHERE id = ?
 `
 
 type ClaimProjectParams struct {
-	ClaimedBy string
+	ClaimedBy int64
 	ClaimedAt sql.NullString
-	ID        string
+	ID        int64
 }
 
 func (q *Queries) ClaimProject(ctx context.Context, arg ClaimProjectParams) (sql.Result, error) {
 	return q.db.ExecContext(ctx, claimProject, arg.ClaimedBy, arg.ClaimedAt, arg.ID)
 }
 
-const createProject = `-- name: CreateProject :exec
-INSERT INTO projects (id, name, root_path, created_at)
-VALUES (?, ?, ?, ?)
+const createProject = `-- name: CreateProject :one
+INSERT INTO projects (name, root_path, created_at)
+VALUES (?, ?, ?)
+RETURNING id
 `
 
 type CreateProjectParams struct {
-	ID        string
 	Name      string
 	RootPath  string
 	CreatedAt string
 }
 
-func (q *Queries) CreateProject(ctx context.Context, arg CreateProjectParams) error {
-	_, err := q.db.ExecContext(ctx, createProject,
-		arg.ID,
-		arg.Name,
-		arg.RootPath,
-		arg.CreatedAt,
-	)
-	return err
+func (q *Queries) CreateProject(ctx context.Context, arg CreateProjectParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, createProject, arg.Name, arg.RootPath, arg.CreatedAt)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
 }
 
 const getProject = `-- name: GetProject :one
@@ -54,9 +51,18 @@ FROM projects
 WHERE id = ?
 `
 
-func (q *Queries) GetProject(ctx context.Context, id string) (Project, error) {
+type GetProjectRow struct {
+	ID        int64
+	Name      string
+	RootPath  string
+	CreatedAt string
+	ClaimedBy int64
+	ClaimedAt sql.NullString
+}
+
+func (q *Queries) GetProject(ctx context.Context, id int64) (GetProjectRow, error) {
 	row := q.db.QueryRowContext(ctx, getProject, id)
-	var i Project
+	var i GetProjectRow
 	err := row.Scan(
 		&i.ID,
 		&i.Name,
@@ -74,15 +80,24 @@ FROM projects
 ORDER BY created_at
 `
 
-func (q *Queries) ListProjects(ctx context.Context) ([]Project, error) {
+type ListProjectsRow struct {
+	ID        int64
+	Name      string
+	RootPath  string
+	CreatedAt string
+	ClaimedBy int64
+	ClaimedAt sql.NullString
+}
+
+func (q *Queries) ListProjects(ctx context.Context) ([]ListProjectsRow, error) {
 	rows, err := q.db.QueryContext(ctx, listProjects)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Project
+	var items []ListProjectsRow
 	for rows.Next() {
-		var i Project
+		var i ListProjectsRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.Name,
@@ -106,11 +121,11 @@ func (q *Queries) ListProjects(ctx context.Context) ([]Project, error) {
 
 const releaseProject = `-- name: ReleaseProject :execresult
 UPDATE projects
-SET claimed_by = '', claimed_at = NULL
+SET claimed_by = 0, claimed_at = NULL
 WHERE id = ?
 `
 
-func (q *Queries) ReleaseProject(ctx context.Context, id string) (sql.Result, error) {
+func (q *Queries) ReleaseProject(ctx context.Context, id int64) (sql.Result, error) {
 	return q.db.ExecContext(ctx, releaseProject, id)
 }
 
@@ -127,9 +142,18 @@ type ResolveProjectParams struct {
 	RootPath_2 string
 }
 
-func (q *Queries) ResolveProject(ctx context.Context, arg ResolveProjectParams) (Project, error) {
+type ResolveProjectRow struct {
+	ID        int64
+	Name      string
+	RootPath  string
+	CreatedAt string
+	ClaimedBy int64
+	ClaimedAt sql.NullString
+}
+
+func (q *Queries) ResolveProject(ctx context.Context, arg ResolveProjectParams) (ResolveProjectRow, error) {
 	row := q.db.QueryRowContext(ctx, resolveProject, arg.RootPath, arg.RootPath_2)
-	var i Project
+	var i ResolveProjectRow
 	err := row.Scan(
 		&i.ID,
 		&i.Name,
@@ -139,4 +163,38 @@ func (q *Queries) ResolveProject(ctx context.Context, arg ResolveProjectParams) 
 		&i.ClaimedAt,
 	)
 	return i, err
+}
+
+const resolveProjectIDByLegacyPrefix = `-- name: ResolveProjectIDByLegacyPrefix :many
+SELECT id FROM projects
+WHERE legacy_id >= ?1 AND legacy_id < ?2
+LIMIT 2
+`
+
+type ResolveProjectIDByLegacyPrefixParams struct {
+	Prefix    sql.NullString
+	PrefixEnd sql.NullString
+}
+
+func (q *Queries) ResolveProjectIDByLegacyPrefix(ctx context.Context, arg ResolveProjectIDByLegacyPrefixParams) ([]int64, error) {
+	rows, err := q.db.QueryContext(ctx, resolveProjectIDByLegacyPrefix, arg.Prefix, arg.PrefixEnd)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }

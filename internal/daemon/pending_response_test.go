@@ -29,7 +29,7 @@ func TestTaskClaimNotificationDoesNotApplyDecision(t *testing.T) {
 	decision, err := s.AskDecision(ctx, store.AskInput{
 		GoalID: goal.ID, TaskID: tasks[0].ID, Kind: domain.KindDecision,
 		Question: "Which implementation should be used?",
-		Options:  []domain.Option{{Label: "A"}}, AgentSessionID: "answer-run",
+		Options:  []domain.Option{{Label: "A"}}, AgentSessionID: daemonTestSessionID(t, s, "answer-run"),
 	})
 	if err != nil {
 		t.Fatalf("AskDecision: %v", err)
@@ -37,15 +37,13 @@ func TestTaskClaimNotificationDoesNotApplyDecision(t *testing.T) {
 	if _, err := s.AnswerDecision(ctx, store.AnswerInput{DecisionID: decision.ID, AnswerLabel: "A", AnswerText: "Use A"}); err != nil {
 		t.Fatalf("AnswerDecision: %v", err)
 	}
-	if err := s.RegisterAgentSession(ctx, "claim-run", 0); err != nil {
-		t.Fatalf("RegisterAgentSession: %v", err)
-	}
-	if err := s.AssociateAgentSessionWithProject(ctx, "claim-run", project.ID); err != nil {
+	claimSessionID := daemonTestSessionID(t, s, "claim-run")
+	if err := s.AssociateAgentSessionWithProject(ctx, claimSessionID, project.ID); err != nil {
 		t.Fatalf("AssociateAgentSessionWithProject: %v", err)
 	}
 
 	params, err := json.Marshal(map[string]any{
-		"task_id": tasks[0].ID, "agent_session_id": "claim-run", "include_unapplied_answers": true,
+		"task_id": tasks[0].ID, "agent_session_id": claimSessionID, "include_unapplied_answers": true,
 	})
 	if err != nil {
 		t.Fatalf("Marshal params: %v", err)
@@ -56,10 +54,10 @@ func TestTaskClaimNotificationDoesNotApplyDecision(t *testing.T) {
 	}
 	var response pendingResponseEnvelope
 	if err := json.Unmarshal(raw, &response); err != nil {
-		t.Fatalf("unmarshal task.claim response %s: %v", raw, err)
+		t.Fatalf("unmarshal task.claim response %v: %v", raw, err)
 	}
 	if len(response.UnappliedDecisions) != 1 || response.UnappliedDecisions[0].DecisionID != decision.ID {
-		t.Fatalf("unapplied_decisions = %#v, want %s", response.UnappliedDecisions, decision.ID)
+		t.Fatalf("unapplied_decisions = %#v, want %v", response.UnappliedDecisions, decision.ID)
 	}
 
 	got, err := s.GetDecision(ctx, decision.ID)
@@ -67,7 +65,7 @@ func TestTaskClaimNotificationDoesNotApplyDecision(t *testing.T) {
 		t.Fatalf("GetDecision: %v", err)
 	}
 	if got.Status != domain.DecisionAnswered || got.AppliedAt != nil {
-		t.Fatalf("decision after notification = status %q applied_at %v, want answered and unapplied", got.Status, got.AppliedAt)
+		t.Fatalf("decision after notification = status %v applied_at %v, want answered and unapplied", got.Status, got.AppliedAt)
 	}
 }
 
@@ -96,12 +94,10 @@ func TestGoalListNotificationIsProjectScoped(t *testing.T) {
 	}
 	decision := answerPendingResponseDecision(t, s, goal.ID, tasks[0].ID, "project decision")
 	otherDecision := answerPendingResponseDecision(t, s, otherGoal.ID, otherTasks[0].ID, "other project decision")
-	if err := s.RegisterAgentSession(ctx, "query-run", 0); err != nil {
-		t.Fatalf("RegisterAgentSession: %v", err)
-	}
+	querySessionID := daemonTestSessionID(t, s, "query-run")
 
 	params, err := json.Marshal(map[string]any{
-		"cwd": projectRoot, "agent_session_id": "query-run", "include_unapplied_answers": true,
+		"cwd": projectRoot, "agent_session_id": querySessionID, "include_unapplied_answers": true,
 	})
 	if err != nil {
 		t.Fatalf("Marshal params: %v", err)
@@ -112,10 +108,10 @@ func TestGoalListNotificationIsProjectScoped(t *testing.T) {
 	}
 	var response pendingResponseEnvelope
 	if err := json.Unmarshal(raw, &response); err != nil {
-		t.Fatalf("unmarshal goal.list response %s: %v", raw, err)
+		t.Fatalf("unmarshal goal.list response %v: %v", raw, err)
 	}
 	if len(response.UnappliedDecisions) != 1 || response.UnappliedDecisions[0].DecisionID != decision.ID {
-		t.Fatalf("unapplied_decisions = %#v, want only %s (excluded %s)", response.UnappliedDecisions, decision.ID, otherDecision.ID)
+		t.Fatalf("unapplied_decisions = %#v, want only %v (excluded %v)", response.UnappliedDecisions, decision.ID, otherDecision.ID)
 	}
 }
 
@@ -133,12 +129,10 @@ func TestDecisionPollNotificationExcludesPolledDecision(t *testing.T) {
 	}
 	polled := answerPendingResponseDecision(t, s, goal.ID, tasks[0].ID, "polled decision")
 	other := answerPendingResponseDecision(t, s, goal.ID, tasks[1].ID, "other decision")
-	if err := s.RegisterAgentSession(ctx, "poll-run", 0); err != nil {
-		t.Fatalf("RegisterAgentSession: %v", err)
-	}
+	pollSessionID := daemonTestSessionID(t, s, "poll-run")
 
 	params, err := json.Marshal(map[string]any{
-		"agent_session_id": "poll-run", "decision_id": polled.ID, "include_unapplied_answers": true,
+		"agent_session_id": pollSessionID, "decision_id": polled.ID, "include_unapplied_answers": true,
 	})
 	if err != nil {
 		t.Fatalf("Marshal params: %v", err)
@@ -149,10 +143,10 @@ func TestDecisionPollNotificationExcludesPolledDecision(t *testing.T) {
 	}
 	var response pendingResponseEnvelope
 	if err := json.Unmarshal(raw, &response); err != nil {
-		t.Fatalf("unmarshal decision.poll response %s: %v", raw, err)
+		t.Fatalf("unmarshal decision.poll response %v: %v", raw, err)
 	}
 	if len(response.UnappliedDecisions) != 1 || response.UnappliedDecisions[0].DecisionID != other.ID {
-		t.Fatalf("unapplied_decisions = %#v, want only %s (excluded %s)", response.UnappliedDecisions, other.ID, polled.ID)
+		t.Fatalf("unapplied_decisions = %#v, want only %v (excluded %v)", response.UnappliedDecisions, other.ID, polled.ID)
 	}
 }
 
@@ -184,26 +178,22 @@ func TestDecisionAskParkedIncludesClaimableTasks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DeclareTasks(candidates): %v", err)
 	}
-	if err := s.RegisterAgentSession(ctx, "other-run", 0); err != nil {
-		t.Fatalf("RegisterAgentSession(other-run): %v", err)
-	}
-	if _, err := s.ClaimTask(ctx, candidates[1].ID, "other-run"); err != nil {
+	otherSessionID := daemonTestSessionID(t, s, "other-run")
+	if _, err := s.ClaimTask(ctx, candidates[1].ID, otherSessionID); err != nil {
 		t.Fatalf("ClaimTask: %v", err)
 	}
 
+	parkSessionID := daemonTestSessionID(t, s, "park-run")
+	if err := s.AssociateAgentSessionWithProject(ctx, parkSessionID, project.ID); err != nil {
+		t.Fatalf("AssociateAgentSessionWithProject(park-run): %v", err)
+	}
 	params, err := json.Marshal(map[string]any{
 		"goal_id": parkGoal.ID, "task_id": parked[0].ID, "question": "Which implementation should be used?",
-		"options": []domain.Option{{Label: "A"}}, "agent_session_id": "park-run", "wait_ms": 0,
+		"options": []domain.Option{{Label: "A"}}, "agent_session_id": parkSessionID, "wait_ms": 0,
 		"include_unapplied_answers": true,
 	})
 	if err != nil {
 		t.Fatalf("Marshal params: %v", err)
-	}
-	if err := s.RegisterAgentSession(ctx, "park-run", 0); err != nil {
-		t.Fatalf("RegisterAgentSession(park-run): %v", err)
-	}
-	if err := s.AssociateAgentSessionWithProject(ctx, "park-run", project.ID); err != nil {
-		t.Fatalf("AssociateAgentSessionWithProject(park-run): %v", err)
 	}
 	raw, err := New(s).dispatch(ctx, rpc.Request{Method: "decision.ask", Params: params})
 	if err != nil {
@@ -211,7 +201,7 @@ func TestDecisionAskParkedIncludesClaimableTasks(t *testing.T) {
 	}
 	var response pendingResponseEnvelope
 	if err := json.Unmarshal(raw, &response); err != nil {
-		t.Fatalf("unmarshal decision.ask response %s: %v", raw, err)
+		t.Fatalf("unmarshal decision.ask response %v: %v", raw, err)
 	}
 	if len(response.ClaimableTasks) != 3 {
 		t.Fatalf("claimable_tasks = %#v, want three tasks", response.ClaimableTasks)
@@ -219,7 +209,7 @@ func TestDecisionAskParkedIncludesClaimableTasks(t *testing.T) {
 	wantTitles := []string{"free-1", "free-2", "free-3"}
 	for i, want := range wantTitles {
 		if response.ClaimableTasks[i].Title != want {
-			t.Fatalf("claimable_tasks[%d] = %#v, want title %q", i, response.ClaimableTasks[i], want)
+			t.Fatalf("claimable_tasks[%d] = %#v, want title %v", i, response.ClaimableTasks[i], want)
 		}
 	}
 	for _, task := range response.ClaimableTasks {
@@ -283,10 +273,10 @@ func TestProjectScopedWritesRejectOtherProject(t *testing.T) {
 				t.Fatal("dispatch succeeded, want cross-project error")
 			} else {
 				if !strings.Contains(err.Error(), f.assigned.Name) {
-					t.Fatalf("error = %q, want assigned project %q", err, f.assigned.Name)
+					t.Fatalf("error = %v, want assigned project %v", err, f.assigned.Name)
 				}
 				if !strings.Contains(err.Error(), f.target.Name) {
-					t.Fatalf("error = %q, want target project %q", err, f.target.Name)
+					t.Fatalf("error = %v, want target project %v", err, f.target.Name)
 				}
 			}
 		})
@@ -304,7 +294,7 @@ func TestProjectScopedWritesRejectOtherProject(t *testing.T) {
 		t.Fatalf("GetGoal: %v", err)
 	}
 	if goal.Status != "active" {
-		t.Fatalf("target goal status after rejected writes = %q, want active", goal.Status)
+		t.Fatalf("target goal status after rejected writes = %v, want active", goal.Status)
 	}
 }
 
@@ -324,7 +314,7 @@ func TestTaskWritesWithoutAgentSessionIDSkipProjectGuard(t *testing.T) {
 	}
 	var declared []domain.Task
 	if err := json.Unmarshal(raw, &declared); err != nil {
-		t.Fatalf("unmarshal task.declare response %s: %v", raw, err)
+		t.Fatalf("unmarshal task.declare response %v: %v", raw, err)
 	}
 	if len(declared) != 1 {
 		t.Fatalf("declared tasks = %#v, want one task", declared)
@@ -342,7 +332,7 @@ func TestTaskWritesWithoutAgentSessionIDSkipProjectGuard(t *testing.T) {
 	}
 	var updated domain.Task
 	if err := json.Unmarshal(raw, &updated); err != nil {
-		t.Fatalf("unmarshal task.update response %s: %v", raw, err)
+		t.Fatalf("unmarshal task.update response %v: %v", raw, err)
 	}
 	if updated.Status != domain.TaskDone {
 		t.Fatalf("updated task = %#v, want done", updated)
@@ -376,7 +366,7 @@ func TestTaskUpdateWithoutCommitsPreservesExistingBehavior(t *testing.T) {
 	}
 	var updated domain.Task
 	if err := json.Unmarshal(raw, &updated); err != nil {
-		t.Fatalf("unmarshal task.update response %s: %v", raw, err)
+		t.Fatalf("unmarshal task.update response %v: %v", raw, err)
 	}
 	if updated.Status != domain.TaskDone {
 		t.Fatalf("updated task = %#v, want done", updated)
@@ -456,16 +446,13 @@ func TestTaskUpdateWithDuplicateCommitLinksOnce(t *testing.T) {
 		t.Fatalf("task commits = %#v, want one commit", commits)
 	}
 	if commits[0].SHA != sha {
-		t.Fatalf("linked commit SHA = %q, want %q", commits[0].SHA, sha)
+		t.Fatalf("linked commit SHA = %v, want %v", commits[0].SHA, sha)
 	}
 }
 
 func TestTaskClaimAssignsUnassociatedRunToTargetProject(t *testing.T) {
 	f := newProjectScopeFixture(t)
-	agentSessionID := "first-write-run"
-	if err := f.store.RegisterAgentSession(f.ctx, agentSessionID, 0); err != nil {
-		t.Fatalf("RegisterAgentSession: %v", err)
-	}
+	agentSessionID := daemonTestSessionID(t, f.store, "first-write-run")
 
 	params, err := json.Marshal(map[string]any{
 		"task_id":          f.targetTask.ID,
@@ -483,7 +470,7 @@ func TestTaskClaimAssignsUnassociatedRunToTargetProject(t *testing.T) {
 		t.Fatalf("ProjectIDForAgentSession: %v", err)
 	}
 	if projectID != f.target.ID {
-		t.Fatalf("run project_id = %q, want target project %q", projectID, f.target.ID)
+		t.Fatalf("run project_id = %v, want target project %v", projectID, f.target.ID)
 	}
 }
 
@@ -503,7 +490,7 @@ func TestProjectScopedWritesAllowAssignedProjectAndGoalListReadsOtherProject(t *
 	}
 	var declared []domain.Task
 	if err := json.Unmarshal(raw, &declared); err != nil {
-		t.Fatalf("unmarshal task.declare response %s: %v", raw, err)
+		t.Fatalf("unmarshal task.declare response %v: %v", raw, err)
 	}
 	if len(declared) != 1 {
 		t.Fatalf("declared tasks = %#v, want one task", declared)
@@ -547,10 +534,8 @@ func TestProjectScopedWritesAllowAssignedProjectAndGoalListReadsOtherProject(t *
 		t.Fatalf("goal.complete: %v", err)
 	}
 
-	if err := f.store.RegisterAgentSession(f.ctx, "read-run", 0); err != nil {
-		t.Fatalf("RegisterAgentSession(read-run): %v", err)
-	}
-	params, err = json.Marshal(map[string]any{"cwd": f.target.RootPath, "agent_session_id": "read-run"})
+	readSessionID := daemonTestSessionID(t, f.store, "read-run")
+	params, err = json.Marshal(map[string]any{"cwd": f.target.RootPath, "agent_session_id": readSessionID})
 	if err != nil {
 		t.Fatalf("Marshal goal.list params: %v", err)
 	}
@@ -562,10 +547,10 @@ func TestProjectScopedWritesAllowAssignedProjectAndGoalListReadsOtherProject(t *
 		Project domain.Project `json:"project"`
 	}
 	if err := json.Unmarshal(raw, &listed); err != nil {
-		t.Fatalf("unmarshal goal.list response %s: %v", raw, err)
+		t.Fatalf("unmarshal goal.list response %v: %v", raw, err)
 	}
 	if listed.Project.ID != f.target.ID {
-		t.Fatalf("goal.list project = %#v, want %q", listed.Project, f.target.ID)
+		t.Fatalf("goal.list project = %#v, want %v", listed.Project, f.target.ID)
 	}
 }
 
@@ -575,7 +560,7 @@ type projectScopeFixture struct {
 	daemon         *Daemon
 	assigned       domain.Project
 	target         domain.Project
-	agentSessionID string
+	agentSessionID int64
 	assignedGoal   domain.Goal
 	targetGoal     domain.Goal
 	completeGoal   domain.Goal
@@ -610,15 +595,13 @@ func newProjectScopeFixture(t *testing.T) projectScopeFixture {
 	if err != nil {
 		t.Fatalf("DeclareTasks(target): %v", err)
 	}
-	if err := s.RegisterAgentSession(ctx, "assigned-run", 0); err != nil {
-		t.Fatalf("RegisterAgentSession: %v", err)
-	}
-	if err := s.AssociateAgentSessionWithProject(ctx, "assigned-run", assigned.ID); err != nil {
+	agentSessionID := daemonTestSessionID(t, s, "assigned-run")
+	if err := s.AssociateAgentSessionWithProject(ctx, agentSessionID, assigned.ID); err != nil {
 		t.Fatalf("AssociateAgentSessionWithProject: %v", err)
 	}
 	return projectScopeFixture{
 		ctx: ctx, store: s, daemon: New(s), assigned: assigned, target: target,
-		agentSessionID: "assigned-run", assignedGoal: assignedGoal, targetGoal: targetGoal,
+		agentSessionID: agentSessionID, assignedGoal: assignedGoal, targetGoal: targetGoal,
 		completeGoal: completeGoal, targetTask: targetTasks[0],
 	}
 }
@@ -630,12 +613,12 @@ type pendingResponseEnvelope struct {
 }
 
 type pendingDecisionNotification struct {
-	DecisionID string `json:"decision_id"`
+	DecisionID int64  `json:"decision_id"`
 	Question   string `json:"question"`
 }
 
 type pendingClaimableTask struct {
-	ID    string `json:"id"`
+	ID    int64  `json:"id"`
 	Title string `json:"title"`
 }
 
@@ -665,7 +648,7 @@ func createPendingResponseGitRepository(t *testing.T) (string, string) {
 		cmdArgs := append([]string{"-C", root}, args...)
 		output, err := exec.Command("git", cmdArgs...).CombinedOutput()
 		if err != nil {
-			t.Fatalf("git %v: %v\n%s", args, err, output)
+			t.Fatalf("git %v: %v\n%v", args, err, output)
 		}
 		return strings.TrimSpace(string(output))
 	}
@@ -680,12 +663,12 @@ func createPendingResponseGitRepository(t *testing.T) (string, string) {
 	return root, runGit("rev-parse", "HEAD")
 }
 
-func answerPendingResponseDecision(t *testing.T, s *store.Store, goalID, taskID, question string) domain.Decision {
+func answerPendingResponseDecision(t *testing.T, s *store.Store, goalID, taskID int64, question string) domain.Decision {
 	t.Helper()
 	ctx := context.Background()
 	decision, err := s.AskDecision(ctx, store.AskInput{
 		GoalID: goalID, TaskID: taskID, Kind: domain.KindDecision, Question: question,
-		Options: []domain.Option{{Label: "yes"}}, AgentSessionID: "answer-run",
+		Options: []domain.Option{{Label: "yes"}}, AgentSessionID: daemonTestSessionID(t, s, "answer-run"),
 	})
 	if err != nil {
 		t.Fatalf("AskDecision: %v", err)

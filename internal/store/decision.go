@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/michiomochi/atct/internal/domain"
 	"github.com/michiomochi/atct/internal/store/sqlcgen"
 )
@@ -22,14 +21,14 @@ var (
 )
 
 type AskInput struct {
-	GoalID         string
-	TaskID         string
+	GoalID         int64
+	TaskID         int64
 	Kind           domain.DecisionKind
 	Question       string
 	Options        []domain.Option
 	DefaultOption  string
 	DefaultAfterMs *int64
-	AgentSessionID string
+	AgentSessionID int64
 }
 
 func (s *Store) AskDecision(ctx context.Context, in AskInput) (domain.Decision, error) {
@@ -45,7 +44,6 @@ func (s *Store) AskDecision(ctx context.Context, in AskInput) (domain.Decision, 
 	}
 
 	d := domain.Decision{
-		ID:             uuid.NewString(),
 		GoalID:         in.GoalID,
 		TaskID:         in.TaskID,
 		Kind:           in.Kind,
@@ -63,9 +61,8 @@ func (s *Store) AskDecision(ctx context.Context, in AskInput) (domain.Decision, 
 
 	q := decisionQueries(s)
 	params := sqlcgen.CreateDecisionParams{
-		ID:             d.ID,
 		GoalID:         d.GoalID,
-		TaskID:         sql.NullString{String: in.TaskID, Valid: in.TaskID != ""},
+		TaskID:         sql.NullInt64{Int64: in.TaskID, Valid: in.TaskID != 0},
 		Kind:           string(d.Kind),
 		Question:       d.Question,
 		Options:        string(raw),
@@ -77,9 +74,11 @@ func (s *Store) AskDecision(ctx context.Context, in AskInput) (domain.Decision, 
 	if in.DefaultAfterMs != nil {
 		params.DefaultAfterMs = sql.NullInt64{Int64: *in.DefaultAfterMs, Valid: true}
 	}
-	if err = q.CreateDecision(ctx, params); err != nil {
+	id, err := q.CreateDecision(ctx, params)
+	if err != nil {
 		return domain.Decision{}, fmt.Errorf("insert decision: %w", err)
 	}
+	d.ID = id
 	s.notify.publish(d.ID)
 	s.notify.publishAll()
 	s.notify.publishEvent(Event{Name: "decision.created", Data: d})
@@ -105,9 +104,9 @@ func validateDecisionDefault(options []domain.Option, defaultOption string, defa
 }
 
 type decisionRow struct {
-	ID               string
-	GoalID           string
-	TaskID           string
+	ID               int64
+	GoalID           int64
+	TaskID           sql.NullInt64
 	Kind             string
 	Question         string
 	Options          string
@@ -119,7 +118,7 @@ type decisionRow struct {
 	AnswerText       string
 	AnsweredAt       sql.NullString
 	AppliedAt        sql.NullString
-	AgentSessionID   string
+	AgentSessionID   int64
 	CreatedAt        string
 }
 
@@ -127,7 +126,7 @@ func decisionFromRow(row decisionRow) (domain.Decision, error) {
 	d := domain.Decision{
 		ID:             row.ID,
 		GoalID:         row.GoalID,
-		TaskID:         row.TaskID,
+		TaskID:         row.TaskID.Int64,
 		Kind:           domain.DecisionKind(row.Kind),
 		Question:       row.Question,
 		Status:         domain.DecisionStatus(row.Status),
@@ -188,10 +187,10 @@ func decisionQueries(s *Store) *sqlcgen.Queries {
 	return sqlcgen.New(s.db)
 }
 
-func (s *Store) GetDecision(ctx context.Context, id string) (domain.Decision, error) {
+func (s *Store) GetDecision(ctx context.Context, id int64) (domain.Decision, error) {
 	row, err := decisionQueries(s).GetDecision(ctx, id)
 	if errors.Is(err, sql.ErrNoRows) {
-		return domain.Decision{}, fmt.Errorf("%w: %s", ErrDecisionNotFound, id)
+		return domain.Decision{}, fmt.Errorf("%w: %d", ErrDecisionNotFound, id)
 	}
 	if err != nil {
 		return domain.Decision{}, err
@@ -216,7 +215,7 @@ func (s *Store) GetDecision(ctx context.Context, id string) (domain.Decision, er
 	})
 }
 
-func (s *Store) ListOpenDecisions(ctx context.Context, goalID string) ([]domain.Decision, error) {
+func (s *Store) ListOpenDecisions(ctx context.Context, goalID int64) ([]domain.Decision, error) {
 	rows, err := decisionQueries(s).ListOpenDecisions(ctx, goalID)
 	if err != nil {
 		return nil, fmt.Errorf("query open decisions: %w", err)
@@ -271,7 +270,7 @@ func (s *Store) ListAllOpenDecisions(ctx context.Context) ([]domain.Decision, er
 }
 
 type AnswerInput struct {
-	DecisionID  string
+	DecisionID  int64
 	AnswerLabel string
 	AnswerText  string
 }
@@ -300,7 +299,7 @@ func (s *Store) answerDecision(ctx context.Context, in AnswerInput, eventName st
 		return domain.Decision{}, fmt.Errorf("rows affected: %w", err)
 	}
 	if n == 0 {
-		return domain.Decision{}, fmt.Errorf("%w: %s", ErrDecisionNotOpen, in.DecisionID)
+		return domain.Decision{}, fmt.Errorf("%w: %d", ErrDecisionNotOpen, in.DecisionID)
 	}
 	d, err := s.GetDecision(ctx, in.DecisionID)
 	if err != nil {
@@ -402,7 +401,7 @@ func (s *Store) ApplyExpiredDefaults(ctx context.Context, now time.Time) (int, e
 	return len(settledDecisions), nil
 }
 
-func (s *Store) WithdrawDecision(ctx context.Context, decisionID, reason string) error {
+func (s *Store) WithdrawDecision(ctx context.Context, decisionID int64, reason string) error {
 	if err := withdrawDecisionWith(ctx, decisionQueries(s), decisionID, reason); err != nil {
 		return err
 	}
@@ -416,7 +415,7 @@ func (s *Store) WithdrawDecision(ctx context.Context, decisionID, reason string)
 	return nil
 }
 
-func withdrawDecisionWith(ctx context.Context, q *sqlcgen.Queries, decisionID, reason string) error {
+func withdrawDecisionWith(ctx context.Context, q *sqlcgen.Queries, decisionID int64, reason string) error {
 	res, err := q.WithdrawDecision(ctx, sqlcgen.WithdrawDecisionParams{
 		AnswerText: reason,
 		ID:         decisionID,
@@ -429,7 +428,7 @@ func withdrawDecisionWith(ctx context.Context, q *sqlcgen.Queries, decisionID, r
 		return fmt.Errorf("rows affected: %w", err)
 	}
 	if n == 0 {
-		return fmt.Errorf("%w: %s", ErrDecisionNotOpen, decisionID)
+		return fmt.Errorf("%w: %d", ErrDecisionNotOpen, decisionID)
 	}
 	return nil
 }
@@ -437,7 +436,7 @@ func withdrawDecisionWith(ctx context.Context, q *sqlcgen.Queries, decisionID, r
 // PollDecisions returns answered Decisions and transitions them to applied in one transaction.
 // "Human answered" and "agent received" are distinct facts.
 // A decision becomes applied when returned; if the process dies before return, it remains answered and the next poll can recover it.
-func (s *Store) PollDecisions(ctx context.Context, agentSessionID string, decisionID string) ([]domain.Decision, error) {
+func (s *Store) PollDecisions(ctx context.Context, agentSessionID int64, decisionID int64) ([]domain.Decision, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, fmt.Errorf("begin tx: %w", err)
@@ -447,7 +446,7 @@ func (s *Store) PollDecisions(ctx context.Context, agentSessionID string, decisi
 	q := decisionQueries(s).WithTx(tx)
 	var out []domain.Decision
 	var conversionErr error
-	if decisionID == "" {
+	if decisionID == 0 {
 		rows, queryErr := q.ListAnsweredDecisionsForAgentSession(ctx, agentSessionID)
 		if queryErr != nil {
 			return nil, fmt.Errorf("query answered decisions: %w", queryErr)
@@ -558,7 +557,7 @@ func (s *Store) ListUnappliedDecisions(ctx context.Context) ([]domain.Decision, 
 
 // ListUnappliedDecisionsForProject returns answered Decisions not yet received by an agent
 // for Goals belonging to the given project.
-func (s *Store) ListUnappliedDecisionsForProject(ctx context.Context, projectID string) ([]domain.Decision, error) {
+func (s *Store) ListUnappliedDecisionsForProject(ctx context.Context, projectID int64) ([]domain.Decision, error) {
 	rows, err := decisionQueries(s).ListUnappliedDecisionsForProject(ctx, projectID)
 	if err != nil {
 		return nil, fmt.Errorf("query project unapplied decisions: %w", err)
@@ -587,7 +586,7 @@ func (s *Store) ListUnappliedDecisionsForProject(ctx context.Context, projectID 
 
 // ListUnappliedDecisionsForGoal returns answered Decisions not yet received by an agent
 // for the given Goal.
-func (s *Store) ListUnappliedDecisionsForGoal(ctx context.Context, goalID string) ([]domain.Decision, error) {
+func (s *Store) ListUnappliedDecisionsForGoal(ctx context.Context, goalID int64) ([]domain.Decision, error) {
 	rows, err := decisionQueries(s).ListUnappliedDecisionsForGoal(ctx, goalID)
 	if err != nil {
 		return nil, fmt.Errorf("query goal unapplied decisions: %w", err)
@@ -619,7 +618,7 @@ const AppliedDecisionHistoryLimit = 20
 
 // ListAppliedDecisions returns the most recent applied Decisions for a goal
 // and the exact number omitted by the history limit.
-func (s *Store) ListAppliedDecisions(ctx context.Context, goalID string) ([]domain.Decision, int, error) {
+func (s *Store) ListAppliedDecisions(ctx context.Context, goalID int64) ([]domain.Decision, int, error) {
 	totalCount, err := decisionQueries(s).CountAppliedDecisions(ctx, goalID)
 	if err != nil {
 		return nil, 0, fmt.Errorf("count applied decisions: %w", err)
@@ -671,10 +670,10 @@ func (s *Store) ListAppliedDecisions(ctx context.Context, goalID string) ([]doma
 
 // ListAppliedDecisionsForTask returns the most recent applied Decisions for a task
 // and the exact number omitted by the history limit.
-func (s *Store) ListAppliedDecisionsForTask(ctx context.Context, goalID, taskID string) ([]domain.Decision, int, error) {
+func (s *Store) ListAppliedDecisionsForTask(ctx context.Context, goalID, taskID int64) ([]domain.Decision, int, error) {
 	totalCount, err := decisionQueries(s).CountAppliedDecisionsForTask(ctx, sqlcgen.CountAppliedDecisionsForTaskParams{
 		GoalID: goalID,
-		TaskID: sql.NullString{String: taskID, Valid: true},
+		TaskID: sql.NullInt64{Int64: taskID, Valid: true},
 	})
 	if err != nil {
 		return nil, 0, fmt.Errorf("count applied decisions for task: %w", err)
@@ -683,7 +682,7 @@ func (s *Store) ListAppliedDecisionsForTask(ctx context.Context, goalID, taskID 
 
 	rows, err := decisionQueries(s).ListAppliedDecisionsForTask(ctx, sqlcgen.ListAppliedDecisionsForTaskParams{
 		GoalID:       goalID,
-		TaskID:       sql.NullString{String: taskID, Valid: true},
+		TaskID:       sql.NullInt64{Int64: taskID, Valid: true},
 		HistoryLimit: int64(AppliedDecisionHistoryLimit),
 	})
 	if err != nil {
@@ -695,7 +694,7 @@ func (s *Store) ListAppliedDecisionsForTask(ctx context.Context, goalID, taskID 
 		return decisionRow{
 			ID:               row.ID,
 			GoalID:           row.GoalID,
-			TaskID:           row.TaskID,
+			TaskID:           sql.NullInt64{Int64: row.TaskID, Valid: true},
 			Kind:             row.Kind,
 			Question:         row.Question,
 			Options:          row.Options,

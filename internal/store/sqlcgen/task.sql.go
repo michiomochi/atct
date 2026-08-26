@@ -20,7 +20,7 @@ type CompleteGoalHandoffParams struct {
 	CompletedReportAt sql.NullString
 	CompleteReport    sql.NullString
 	ID                string
-	GoalID            string
+	GoalID            int64
 }
 
 func (q *Queries) CompleteGoalHandoff(ctx context.Context, arg CompleteGoalHandoffParams) (sql.Result, error) {
@@ -42,7 +42,7 @@ type CompleteTaskHandoffParams struct {
 	CompletedReportAt sql.NullString
 	CompleteReport    sql.NullString
 	ID                string
-	TaskID            string
+	TaskID            int64
 }
 
 func (q *Queries) CompleteTaskHandoff(ctx context.Context, arg CompleteTaskHandoffParams) (sql.Result, error) {
@@ -60,25 +60,25 @@ FROM decisions
 WHERE task_id = ? AND status = 'open'
 `
 
-func (q *Queries) CountOpenDecisionsForTask(ctx context.Context, taskID sql.NullString) (int64, error) {
+func (q *Queries) CountOpenDecisionsForTask(ctx context.Context, taskID sql.NullInt64) (int64, error) {
 	row := q.db.QueryRowContext(ctx, countOpenDecisionsForTask, taskID)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
 }
 
-const createTask = `-- name: CreateTask :exec
+const createTask = `-- name: CreateTask :one
 INSERT INTO tasks (
-  id, goal_id, title, description, status, agent, files, sort_order, declare_key,
+  goal_id, title, description, status, agent, files, sort_order, declare_key,
   snoozed_until, created_at, updated_at
 )
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-ON CONFLICT(goal_id, declare_key) DO NOTHING
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(goal_id, declare_key) DO UPDATE SET id = tasks.id
+RETURNING id
 `
 
 type CreateTaskParams struct {
-	ID           string
-	GoalID       string
+	GoalID       int64
 	Title        string
 	Description  string
 	Status       string
@@ -91,9 +91,8 @@ type CreateTaskParams struct {
 	UpdatedAt    string
 }
 
-func (q *Queries) CreateTask(ctx context.Context, arg CreateTaskParams) error {
-	_, err := q.db.ExecContext(ctx, createTask,
-		arg.ID,
+func (q *Queries) CreateTask(ctx context.Context, arg CreateTaskParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, createTask,
 		arg.GoalID,
 		arg.Title,
 		arg.Description,
@@ -106,7 +105,9 @@ func (q *Queries) CreateTask(ctx context.Context, arg CreateTaskParams) error {
 		arg.CreatedAt,
 		arg.UpdatedAt,
 	)
-	return err
+	var id int64
+	err := row.Scan(&id)
+	return id, err
 }
 
 const deleteExpiredAgentSessions = `-- name: DeleteExpiredAgentSessions :exec
@@ -125,7 +126,7 @@ WHERE id <> ? AND registered_at < ?
 `
 
 type DeleteExpiredAgentSessionsExceptParams struct {
-	ID           string
+	ID           int64
 	RegisteredAt string
 }
 
@@ -141,7 +142,7 @@ WHERE goal_id = ? AND status IN ('todo', 'doing')
 
 type DropOpenTasksForGoalParams struct {
 	UpdatedAt string
-	GoalID    string
+	GoalID    int64
 }
 
 func (q *Queries) DropOpenTasksForGoal(ctx context.Context, arg DropOpenTasksForGoalParams) (sql.Result, error) {
@@ -154,9 +155,9 @@ FROM agent_sessions
 WHERE session_key = ?
 `
 
-func (q *Queries) GetAgentSessionIDByKey(ctx context.Context, sessionKey string) (string, error) {
+func (q *Queries) GetAgentSessionIDByKey(ctx context.Context, sessionKey string) (int64, error) {
 	row := q.db.QueryRowContext(ctx, getAgentSessionIDByKey, sessionKey)
-	var id string
+	var id int64
 	err := row.Scan(&id)
 	return id, err
 }
@@ -172,7 +173,7 @@ type GetAgentSessionLivenessRow struct {
 	StartedAt string
 }
 
-func (q *Queries) GetAgentSessionLiveness(ctx context.Context, id string) (GetAgentSessionLivenessRow, error) {
+func (q *Queries) GetAgentSessionLiveness(ctx context.Context, id int64) (GetAgentSessionLivenessRow, error) {
 	row := q.db.QueryRowContext(ctx, getAgentSessionLiveness, id)
 	var i GetAgentSessionLivenessRow
 	err := row.Scan(&i.Pid, &i.StartedAt)
@@ -185,9 +186,9 @@ FROM agent_sessions
 WHERE id = ?
 `
 
-func (q *Queries) GetAgentSessionProjectID(ctx context.Context, id string) (sql.NullString, error) {
+func (q *Queries) GetAgentSessionProjectID(ctx context.Context, id int64) (sql.NullInt64, error) {
 	row := q.db.QueryRowContext(ctx, getAgentSessionProjectID, id)
-	var project_id sql.NullString
+	var project_id sql.NullInt64
 	err := row.Scan(&project_id)
 	return project_id, err
 }
@@ -223,9 +224,9 @@ FROM goal_handoffs
 WHERE id = ?
 `
 
-func (q *Queries) GetGoalHandoffGoalID(ctx context.Context, id string) (string, error) {
+func (q *Queries) GetGoalHandoffGoalID(ctx context.Context, id string) (int64, error) {
 	row := q.db.QueryRowContext(ctx, getGoalHandoffGoalID, id)
-	var goal_id string
+	var goal_id int64
 	err := row.Scan(&goal_id)
 	return goal_id, err
 }
@@ -238,9 +239,9 @@ ORDER BY registered_at DESC, id DESC
 LIMIT 1
 `
 
-func (q *Queries) GetLatestAgentSessionID(ctx context.Context, projectID sql.NullString) (string, error) {
+func (q *Queries) GetLatestAgentSessionID(ctx context.Context, projectID sql.NullInt64) (int64, error) {
 	row := q.db.QueryRowContext(ctx, getLatestAgentSessionID, projectID)
-	var id string
+	var id int64
 	err := row.Scan(&id)
 	return id, err
 }
@@ -254,7 +255,7 @@ WHERE t.id = ?
 `
 
 type GetTaskForClaimRow struct {
-	GoalID      string
+	GoalID      int64
 	Title       string
 	Description string
 	Status      string
@@ -262,7 +263,7 @@ type GetTaskForClaimRow struct {
 	GoalStatus  string
 }
 
-func (q *Queries) GetTaskForClaim(ctx context.Context, id string) (GetTaskForClaimRow, error) {
+func (q *Queries) GetTaskForClaim(ctx context.Context, id int64) (GetTaskForClaimRow, error) {
 	row := q.db.QueryRowContext(ctx, getTaskForClaim, id)
 	var i GetTaskForClaimRow
 	err := row.Scan(
@@ -282,9 +283,9 @@ FROM tasks
 WHERE id = ?
 `
 
-func (q *Queries) GetTaskGoalID(ctx context.Context, id string) (string, error) {
+func (q *Queries) GetTaskGoalID(ctx context.Context, id int64) (int64, error) {
 	row := q.db.QueryRowContext(ctx, getTaskGoalID, id)
-	var goal_id string
+	var goal_id int64
 	err := row.Scan(&goal_id)
 	return goal_id, err
 }
@@ -320,9 +321,9 @@ FROM task_handoffs
 WHERE id = ?
 `
 
-func (q *Queries) GetTaskHandoffTaskID(ctx context.Context, id string) (string, error) {
+func (q *Queries) GetTaskHandoffTaskID(ctx context.Context, id string) (int64, error) {
 	row := q.db.QueryRowContext(ctx, getTaskHandoffTaskID, id)
-	var task_id string
+	var task_id int64
 	err := row.Scan(&task_id)
 	return task_id, err
 }
@@ -334,9 +335,9 @@ JOIN goals AS g ON g.id = t.goal_id
 WHERE t.id = ?
 `
 
-func (q *Queries) GetTaskProjectID(ctx context.Context, id string) (string, error) {
+func (q *Queries) GetTaskProjectID(ctx context.Context, id int64) (int64, error) {
 	row := q.db.QueryRowContext(ctx, getTaskProjectID, id)
-	var project_id string
+	var project_id int64
 	err := row.Scan(&project_id)
 	return project_id, err
 }
@@ -347,8 +348,8 @@ VALUES (?, ?, ?)
 `
 
 type InsertAgentSessionAssociationParams struct {
-	ID           string
-	ProjectID    sql.NullString
+	ID           int64
+	ProjectID    sql.NullInt64
 	RegisteredAt string
 }
 
@@ -365,7 +366,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?)
 `
 
 type LinkTaskCommitParams struct {
-	TaskID       string
+	TaskID       int64
 	Sha          string
 	Subject      string
 	FilesChanged int64
@@ -396,7 +397,7 @@ WHERE goal_id = ?
 ORDER BY id
 `
 
-func (q *Queries) ListGoalHandoffs(ctx context.Context, goalID string) ([]GoalHandoff, error) {
+func (q *Queries) ListGoalHandoffs(ctx context.Context, goalID int64) ([]GoalHandoff, error) {
 	rows, err := q.db.QueryContext(ctx, listGoalHandoffs, goalID)
 	if err != nil {
 		return nil, err
@@ -440,7 +441,7 @@ WHERE t.goal_id = ?
 ORDER BY th.id
 `
 
-func (q *Queries) ListOpenTaskHandoffsForGoal(ctx context.Context, goalID string) ([]TaskHandoff, error) {
+func (q *Queries) ListOpenTaskHandoffsForGoal(ctx context.Context, goalID int64) ([]TaskHandoff, error) {
 	rows, err := q.db.QueryContext(ctx, listOpenTaskHandoffsForGoal, goalID)
 	if err != nil {
 		return nil, err
@@ -482,12 +483,12 @@ ORDER BY sort_order, id
 `
 
 type ListTaskAlternativesParams struct {
-	GoalID string
-	ID     string
+	GoalID int64
+	ID     int64
 }
 
 type ListTaskAlternativesRow struct {
-	ID          string
+	ID          int64
 	Title       string
 	Description string
 	Status      string
@@ -539,7 +540,7 @@ type ListTaskCommitsRow struct {
 	CreatedAt    string
 }
 
-func (q *Queries) ListTaskCommits(ctx context.Context, taskID string) ([]ListTaskCommitsRow, error) {
+func (q *Queries) ListTaskCommits(ctx context.Context, taskID int64) ([]ListTaskCommitsRow, error) {
 	rows, err := q.db.QueryContext(ctx, listTaskCommits, taskID)
 	if err != nil {
 		return nil, err
@@ -578,7 +579,7 @@ WHERE task_id = ?
 ORDER BY id
 `
 
-func (q *Queries) ListTaskHandoffs(ctx context.Context, taskID string) ([]TaskHandoff, error) {
+func (q *Queries) ListTaskHandoffs(ctx context.Context, taskID int64) ([]TaskHandoff, error) {
 	rows, err := q.db.QueryContext(ctx, listTaskHandoffs, taskID)
 	if err != nil {
 		return nil, err
@@ -620,15 +621,30 @@ WHERE goal_id = ?
 ORDER BY sort_order, id
 `
 
-func (q *Queries) ListTasks(ctx context.Context, goalID string) ([]Task, error) {
+type ListTasksRow struct {
+	ID           int64
+	GoalID       int64
+	Title        string
+	Description  string
+	Status       string
+	Agent        string
+	Files        string
+	SortOrder    int64
+	DeclareKey   string
+	SnoozedUntil sql.NullString
+	CreatedAt    string
+	UpdatedAt    string
+}
+
+func (q *Queries) ListTasks(ctx context.Context, goalID int64) ([]ListTasksRow, error) {
 	rows, err := q.db.QueryContext(ctx, listTasks, goalID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Task
+	var items []ListTasksRow
 	for rows.Next() {
-		var i Task
+		var i ListTasksRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.GoalID,
@@ -662,7 +678,7 @@ FROM tasks
 WHERE goal_id = ?
 `
 
-func (q *Queries) MaxTaskSortOrder(ctx context.Context, goalID string) (int64, error) {
+func (q *Queries) MaxTaskSortOrder(ctx context.Context, goalID int64) (int64, error) {
 	row := q.db.QueryRowContext(ctx, maxTaskSortOrder, goalID)
 	var sort_order int64
 	err := row.Scan(&sort_order)
@@ -676,10 +692,10 @@ WHERE id = ? AND goal_id = ? AND requested_at IS NOT NULL
 `
 
 type ReceiveGoalHandoffParams struct {
-	ReceivedBy sql.NullString
+	ReceivedBy sql.NullInt64
 	ReceivedAt sql.NullString
 	ID         string
-	GoalID     string
+	GoalID     int64
 }
 
 func (q *Queries) ReceiveGoalHandoff(ctx context.Context, arg ReceiveGoalHandoffParams) (sql.Result, error) {
@@ -698,10 +714,10 @@ WHERE id = ? AND task_id = ? AND requested_at IS NOT NULL
 `
 
 type ReceiveTaskHandoffParams struct {
-	ReceivedBy sql.NullString
+	ReceivedBy sql.NullInt64
 	ReceivedAt sql.NullString
 	ID         string
-	TaskID     string
+	TaskID     int64
 }
 
 func (q *Queries) ReceiveTaskHandoff(ctx context.Context, arg ReceiveTaskHandoffParams) (sql.Result, error) {
@@ -713,26 +729,27 @@ func (q *Queries) ReceiveTaskHandoff(ctx context.Context, arg ReceiveTaskHandoff
 	)
 }
 
-const registerAgentSession = `-- name: RegisterAgentSession :exec
-INSERT OR IGNORE INTO agent_sessions (id, project_id, pid, started_at, registered_at)
-VALUES (?, NULL, ?, ?, ?)
+const registerAgentSession = `-- name: RegisterAgentSession :one
+INSERT INTO agent_sessions (project_id, pid, started_at, registered_at)
+VALUES (NULL, ?, ?, ?)
+RETURNING id
 `
 
 type RegisterAgentSessionParams struct {
-	ID           string
 	Pid          int64
 	StartedAt    string
 	RegisteredAt string
 }
 
-func (q *Queries) RegisterAgentSession(ctx context.Context, arg RegisterAgentSessionParams) error {
-	_, err := q.db.ExecContext(ctx, registerAgentSession,
-		arg.ID,
+func (q *Queries) RegisterAgentSession(ctx context.Context, arg RegisterAgentSessionParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, registerAgentSession,
 		arg.Pid,
 		arg.StartedAt,
 		arg.RegisteredAt,
 	)
-	return err
+	var id int64
+	err := row.Scan(&id)
+	return id, err
 }
 
 const releaseTask = `-- name: ReleaseTask :execresult
@@ -743,7 +760,7 @@ WHERE id = ?
 
 type ReleaseTaskParams struct {
 	UpdatedAt string
-	ID        string
+	ID        int64
 }
 
 func (q *Queries) ReleaseTask(ctx context.Context, arg ReleaseTaskParams) (sql.Result, error) {
@@ -761,8 +778,8 @@ ON CONFLICT(id) DO UPDATE SET
 
 type RequestGoalHandoffParams struct {
 	ID            string
-	GoalID        string
-	RequestedBy   sql.NullString
+	GoalID        int64
+	RequestedBy   sql.NullInt64
 	RequestedAt   sql.NullString
 	RequestReport sql.NullString
 }
@@ -789,8 +806,8 @@ ON CONFLICT(id) DO UPDATE SET
 
 type RequestTaskHandoffParams struct {
 	ID            string
-	TaskID        string
-	RequestedBy   sql.NullString
+	TaskID        int64
+	RequestedBy   sql.NullInt64
 	RequestedAt   sql.NullString
 	RequestReport sql.NullString
 }
@@ -806,15 +823,49 @@ func (q *Queries) RequestTaskHandoff(ctx context.Context, arg RequestTaskHandoff
 	return err
 }
 
+const resolveTaskIDByLegacyPrefix = `-- name: ResolveTaskIDByLegacyPrefix :many
+SELECT id FROM tasks
+WHERE legacy_id >= ?1 AND legacy_id < ?2
+LIMIT 2
+`
+
+type ResolveTaskIDByLegacyPrefixParams struct {
+	Prefix    sql.NullString
+	PrefixEnd sql.NullString
+}
+
+func (q *Queries) ResolveTaskIDByLegacyPrefix(ctx context.Context, arg ResolveTaskIDByLegacyPrefixParams) ([]int64, error) {
+	rows, err := q.db.QueryContext(ctx, resolveTaskIDByLegacyPrefix, arg.Prefix, arg.PrefixEnd)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const taskExists = `-- name: TaskExists :one
 SELECT id
 FROM tasks
 WHERE id = ?
 `
 
-func (q *Queries) TaskExists(ctx context.Context, id string) (string, error) {
+func (q *Queries) TaskExists(ctx context.Context, id int64) (int64, error) {
 	row := q.db.QueryRowContext(ctx, taskExists, id)
-	var id_2 string
+	var id_2 int64
 	err := row.Scan(&id_2)
 	return id_2, err
 }
@@ -827,7 +878,7 @@ WHERE id = ?
 
 type UpdateAgentSessionKeyParams struct {
 	SessionKey string
-	ID         string
+	ID         int64
 }
 
 func (q *Queries) UpdateAgentSessionKey(ctx context.Context, arg UpdateAgentSessionKeyParams) error {
@@ -845,7 +896,7 @@ type UpdateAgentSessionProcessIdentityParams struct {
 	Pid          int64
 	StartedAt    string
 	RegisteredAt string
-	ID           string
+	ID           int64
 }
 
 func (q *Queries) UpdateAgentSessionProcessIdentity(ctx context.Context, arg UpdateAgentSessionProcessIdentityParams) error {
@@ -865,8 +916,8 @@ WHERE id = ?
 `
 
 type UpdateAgentSessionProjectParams struct {
-	ProjectID sql.NullString
-	ID        string
+	ProjectID sql.NullInt64
+	ID        int64
 }
 
 func (q *Queries) UpdateAgentSessionProject(ctx context.Context, arg UpdateAgentSessionProjectParams) (sql.Result, error) {
@@ -887,7 +938,7 @@ type UpdateTaskContentParams struct {
 	Description sql.NullString
 	Files       sql.NullString
 	UpdatedAt   string
-	ID          string
+	ID          int64
 }
 
 func (q *Queries) UpdateTaskContent(ctx context.Context, arg UpdateTaskContentParams) (sql.Result, error) {
@@ -909,7 +960,7 @@ WHERE id = ?
 type UpdateTaskSnoozeParams struct {
 	SnoozedUntil sql.NullString
 	UpdatedAt    string
-	ID           string
+	ID           int64
 }
 
 func (q *Queries) UpdateTaskSnooze(ctx context.Context, arg UpdateTaskSnoozeParams) (sql.Result, error) {
@@ -925,7 +976,7 @@ WHERE id = ?
 type UpdateTaskStatusParams struct {
 	Status    string
 	UpdatedAt string
-	ID        string
+	ID        int64
 }
 
 func (q *Queries) UpdateTaskStatus(ctx context.Context, arg UpdateTaskStatusParams) (sql.Result, error) {

@@ -9,8 +9,8 @@ import (
 )
 
 type AgentSession struct {
-	ID           string
-	ProjectID    sql.NullString
+	ID           int64
+	ProjectID    sql.NullInt64
 	RegisteredAt string
 	Pid          int64
 	StartedAt    string
@@ -18,9 +18,10 @@ type AgentSession struct {
 }
 
 type Decision struct {
-	ID               string
-	GoalID           string
-	TaskID           sql.NullString
+	ID               int64
+	LegacyID         sql.NullString
+	GoalID           int64
+	TaskID           sql.NullInt64
 	Kind             string
 	Question         string
 	Options          string
@@ -32,14 +33,15 @@ type Decision struct {
 	AnswerText       string
 	AnsweredAt       sql.NullString
 	AppliedAt        sql.NullString
-	AgentSessionID   string
+	AgentSessionID   int64
 	CreatedAt        string
 }
 
 type Goal struct {
-	ID                string
-	ProjectID         string
-	DerivedFromGoalID sql.NullString
+	ID                int64
+	LegacyID          sql.NullString
+	ProjectID         int64
+	DerivedFromGoalID sql.NullInt64
 	Content           string
 	Status            string
 	Creator           string
@@ -56,9 +58,9 @@ type Goal struct {
 
 type GoalHandoff struct {
 	ID                string
-	GoalID            string
-	RequestedBy       sql.NullString
-	ReceivedBy        sql.NullString
+	GoalID            int64
+	RequestedBy       sql.NullInt64
+	ReceivedBy        sql.NullInt64
 	RequestedAt       sql.NullString
 	ReceivedAt        sql.NullString
 	CompletedReportAt sql.NullString
@@ -67,17 +69,19 @@ type GoalHandoff struct {
 }
 
 type Project struct {
-	ID        string
+	ID        int64
+	LegacyID  sql.NullString
 	Name      string
 	RootPath  string
 	CreatedAt string
-	ClaimedBy string
+	ClaimedBy int64
 	ClaimedAt sql.NullString
 }
 
 type Task struct {
-	ID           string
-	GoalID       string
+	ID           int64
+	LegacyID     sql.NullString
+	GoalID       int64
 	Title        string
 	Description  string
 	Status       string
@@ -91,7 +95,7 @@ type Task struct {
 }
 
 type TaskCommit struct {
-	TaskID       string
+	TaskID       int64
 	Sha          string
 	Subject      string
 	FilesChanged int64
@@ -102,9 +106,9 @@ type TaskCommit struct {
 
 type TaskHandoff struct {
 	ID                string
-	TaskID            string
-	RequestedBy       sql.NullString
-	ReceivedBy        sql.NullString
+	TaskID            int64
+	RequestedBy       sql.NullInt64
+	ReceivedBy        sql.NullInt64
 	RequestedAt       sql.NullString
 	ReceivedAt        sql.NullString
 	CompletedReportAt sql.NullString

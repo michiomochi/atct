@@ -15,12 +15,12 @@ func TestCompleteGoalRejectedWhenOpenDecisionExists(t *testing.T) {
 	taskID := newTestDecisionTask(t, s, goalID, "complete-open")
 
 	if _, err := s.AskDecision(ctx, AskInput{
-		GoalID: goalID, TaskID: taskID, Kind: domain.KindDecision, Question: "Unresolved", AgentSessionID: "run-1",
+		GoalID: goalID, TaskID: taskID, Kind: domain.KindDecision, Question: "Unresolved", AgentSessionID: testSessionID("run-1"),
 	}); err != nil {
 		t.Fatalf("AskDecision: %v", err)
 	}
 
-	_, err := s.CompleteGoal(ctx, goalID, "Done", "run-1")
+	_, err := s.CompleteGoal(ctx, goalID, "Done", testSessionID("run-1"))
 	if !errors.Is(err, ErrGoalHasOpenDecision) {
 		t.Fatalf("err = %v, want ErrGoalHasOpenDecision", err)
 	}
@@ -31,7 +31,7 @@ func TestApproveCompletionClosesGoalImmediately(t *testing.T) {
 	s := newTestStore(t)
 	goalID := newTestGoal(t, s)
 
-	d, err := s.CompleteGoal(ctx, goalID, "All tasks complete", "run-1")
+	d, err := s.CompleteGoal(ctx, goalID, "All tasks complete", testSessionID("run-1"))
 	if err != nil {
 		t.Fatalf("CompleteGoal: %v", err)
 	}
@@ -65,7 +65,7 @@ func TestRejectCompletionKeepsGoalActiveAndAwaitsAgent(t *testing.T) {
 	s := newTestStore(t)
 	goalID := newTestGoal(t, s)
 
-	d, err := s.CompleteGoal(ctx, goalID, "Thought it was done", "run-1")
+	d, err := s.CompleteGoal(ctx, goalID, "Thought it was done", testSessionID("run-1"))
 	if err != nil {
 		t.Fatalf("CompleteGoal: %v", err)
 	}

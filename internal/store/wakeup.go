@@ -2,7 +2,6 @@ package store
 
 import (
 	"context"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -32,7 +31,7 @@ const (
 // counts are part of the event so a consumer can act without a second query.
 type WakeupEvent struct {
 	WakeupID               string `json:"wakeup_id"`
-	ProjectID              string `json:"project_id"`
+	ProjectID              int64  `json:"project_id"`
 	ActionableGoalCount    int    `json:"actionable_goal_count"`
 	UnstartedTaskCount     int    `json:"unstarted_task_count"`
 	WaitingAnswerTaskCount int    `json:"waiting_answer_task_count"`
@@ -45,7 +44,7 @@ type WakeupEvent struct {
 // independent evaluation using the same liveness-aware wakeup rules.
 type WakeupDiscrepancyEvent struct {
 	WakeupID                   string `json:"wakeup_id"`
-	ProjectID                  string `json:"project_id"`
+	ProjectID                  int64  `json:"project_id"`
 	DetectorUnstartedTaskCount int    `json:"detector_unstarted_task_count"`
 	CountedUnstartedTaskCount  int    `json:"counted_unstarted_task_count"`
 }
@@ -54,10 +53,10 @@ type WakeupDiscrepancyEvent struct {
 // condition-specific detection.
 type DetectionEvent struct {
 	DetectionID    string `json:"detection_id"`
-	DecisionID     string `json:"decision_id,omitempty"`
-	ProjectID      string `json:"project_id"`
-	GoalID         string `json:"goal_id,omitempty"`
-	TaskID         string `json:"task_id,omitempty"`
+	DecisionID     int64  `json:"decision_id,omitempty"`
+	ProjectID      int64  `json:"project_id"`
+	GoalID         int64  `json:"goal_id,omitempty"`
+	TaskID         int64  `json:"task_id,omitempty"`
 	HandoffID      string `json:"handoff_id,omitempty"`
 	CompleteReport string `json:"complete_report,omitempty"`
 }
@@ -66,8 +65,8 @@ type DetectionEvent struct {
 // yet announced during this process lifetime.
 type ReportedHandoff struct {
 	ID                string
-	GoalID            string
-	TaskID            string
+	GoalID            int64
+	TaskID            int64
 	CompleteReport    string
 	CompletedReportAt *time.Time
 }
@@ -102,7 +101,7 @@ type WakeupState struct {
 	StaleClaims                []domain.Task
 }
 
-func classifyWakeupDecisions(decisions []domain.Decision, projectGoalIDs map[string]struct{}) (humanAnswered, defaultApplied []domain.Decision) {
+func classifyWakeupDecisions(decisions []domain.Decision, projectGoalIDs map[int64]struct{}) (humanAnswered, defaultApplied []domain.Decision) {
 	for _, decision := range decisions {
 		if decision.Status != domain.DecisionAnswered || decision.AppliedAt != nil {
 			continue
@@ -123,7 +122,7 @@ func classifyWakeupDecisions(decisions []domain.Decision, projectGoalIDs map[str
 // daemon. It combines goal, task, decision, and commit conditions for active
 // goals. Unstarted tasks are classified independently so a claim on a sibling
 // task does not hide work that can still be claimed.
-func (s *Store) DetectWakeup(ctx context.Context, projectID string) (WakeupState, error) {
+func (s *Store) DetectWakeup(ctx context.Context, projectID int64) (WakeupState, error) {
 	goals, err := s.ListGoals(ctx, projectID)
 	if err != nil {
 		return WakeupState{}, err
@@ -137,8 +136,8 @@ func (s *Store) DetectWakeup(ctx context.Context, projectID string) (WakeupState
 	if err != nil {
 		return WakeupState{}, err
 	}
-	projectGoalIDs := make(map[string]struct{}, len(goals))
-	activeGoalIDs := make(map[string]struct{}, len(goals))
+	projectGoalIDs := make(map[int64]struct{}, len(goals))
+	activeGoalIDs := make(map[int64]struct{}, len(goals))
 	for _, goal := range goals {
 		projectGoalIDs[goal.ID] = struct{}{}
 		if goal.Status == domain.GoalActive {
@@ -192,8 +191,8 @@ func (s *Store) DetectWakeup(ctx context.Context, projectID string) (WakeupState
 				break
 			}
 		}
-		taskHandoffs := make(map[string][]TaskHandoff, len(tasks))
-		taskClaimed := make(map[string]bool, len(tasks))
+		taskHandoffs := make(map[int64][]TaskHandoff, len(tasks))
+		taskClaimed := make(map[int64]bool, len(tasks))
 		if len(tasks) == 0 {
 			state.UndeclaredGoals = append(state.UndeclaredGoals, goal)
 		} else {
@@ -266,7 +265,7 @@ func (s *Store) DetectWakeup(ctx context.Context, projectID string) (WakeupState
 			delegated := false
 			for _, handoff := range handoffs {
 				isDelegated := handoff.RequestedAt != nil &&
-					(handoff.ReceivedAt == nil || strings.TrimSpace(handoff.RequestedBy) != strings.TrimSpace(handoff.ReceivedBy))
+					(handoff.ReceivedAt == nil || handoff.RequestedBy != handoff.ReceivedBy)
 				if isDelegated {
 					delegated = true
 					if handoff.ReceivedAt == nil {
@@ -279,16 +278,16 @@ func (s *Store) DetectWakeup(ctx context.Context, projectID string) (WakeupState
 			}
 			if taskClaimed[task.ID] && !delegated {
 				commanderClaim := false
-				sessionID := ""
+				var sessionID int64
 				for _, handoff := range handoffs {
 					if handoff.ReceivedAt != nil && handoff.CompletedReportAt == nil {
-						sessionID = strings.TrimSpace(handoff.ReceivedBy)
+						sessionID = handoff.ReceivedBy
 						break
 					}
 				}
-				if sessionID != "" {
+				if sessionID != 0 {
 					for _, project := range projects {
-						if strings.TrimSpace(project.ClaimedBy) == sessionID {
+						if project.ClaimedBy == sessionID {
 							commanderClaim = true
 							break
 						}
@@ -313,9 +312,9 @@ func (s *Store) DetectWakeup(ctx context.Context, projectID string) (WakeupState
 		}
 		state.ActionableGoalCount++
 		state.UnstartedTaskCount += len(unstarted)
-		openDecisionTaskIDs := make(map[string]struct{}, len(openDecisions))
+		openDecisionTaskIDs := make(map[int64]struct{}, len(openDecisions))
 		for _, decision := range openDecisions {
-			if decision.TaskID != "" {
+			if decision.TaskID != 0 {
 				openDecisionTaskIDs[decision.TaskID] = struct{}{}
 			}
 		}
@@ -374,7 +373,7 @@ func (s *Store) DetectWakeup(ctx context.Context, projectID string) (WakeupState
 // CountUnstartedTasks returns an independent simple count that does not
 // consult claim liveness. Callers that need the wakeup definition should use
 // CountUnstartedTasksForWakeup instead.
-func (s *Store) CountUnstartedTasks(ctx context.Context, projectID string) (int, error) {
+func (s *Store) CountUnstartedTasks(ctx context.Context, projectID int64) (int, error) {
 	goals, err := s.ListGoals(ctx, projectID)
 	if err != nil {
 		return 0, err
@@ -396,7 +395,7 @@ func (s *Store) CountUnstartedTasks(ctx context.Context, projectID string) (int,
 		if err != nil {
 			return 0, err
 		}
-		taskClaimed := make(map[string]bool, len(tasks))
+		taskClaimed := make(map[int64]bool, len(tasks))
 		for _, task := range tasks {
 			handoffs, err := s.ListTaskHandoffs(ctx, task.ID)
 			if err != nil {
@@ -422,7 +421,7 @@ func (s *Store) CountUnstartedTasks(ctx context.Context, projectID string) (int,
 // DetectWakeup, including tasks classified as waiting for an answer or
 // untouched. CountUnstartedTasks intentionally keeps its independent
 // simple-count definition for callers that rely on it.
-func (s *Store) CountUnstartedTasksForWakeup(ctx context.Context, projectID string) (int, error) {
+func (s *Store) CountUnstartedTasksForWakeup(ctx context.Context, projectID int64) (int, error) {
 	state, err := s.DetectWakeup(ctx, projectID)
 	if err != nil {
 		return 0, err

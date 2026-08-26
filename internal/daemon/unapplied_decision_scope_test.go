@@ -18,13 +18,13 @@ type unappliedDecisionScopeRPCTestFixture struct {
 	store                 *store.Store
 	socketPath            string
 	projectRoot           string
-	projectID             string
-	goalAID               string
-	goalBID               string
-	decisionAID           string
-	decisionBID           string
-	commanderSessionID    string
-	subcommanderSessionID string
+	projectID             int64
+	goalAID               int64
+	goalBID               int64
+	decisionAID           int64
+	decisionBID           int64
+	commanderSessionID    int64
+	subcommanderSessionID int64
 }
 
 func newUnappliedDecisionScopeRPCTestFixture(t *testing.T) unappliedDecisionScopeRPCTestFixture {
@@ -56,16 +56,12 @@ func newUnappliedDecisionScopeRPCTestFixture(t *testing.T) unappliedDecisionScop
 		s.Close()
 		t.Fatalf("CreateGoal B: %v", err)
 	}
-	commanderSessionID := "decision-scope-commander"
-	subcommanderSessionID := "decision-scope-subcommander"
-	for _, sessionID := range []string{commanderSessionID, subcommanderSessionID} {
-		if err := s.RegisterAgentSession(ctx, sessionID, os.Getpid()); err != nil {
-			s.Close()
-			t.Fatalf("RegisterAgentSession(%s): %v", sessionID, err)
-		}
+	commanderSessionID := daemonTestSessionID(t, s, "decision-scope-commander")
+	subcommanderSessionID := daemonTestSessionID(t, s, "decision-scope-subcommander")
+	for _, sessionID := range []int64{commanderSessionID, subcommanderSessionID} {
 		if err := s.AssociateAgentSessionWithProject(ctx, sessionID, project.ID); err != nil {
 			s.Close()
-			t.Fatalf("AssociateAgentSessionWithProject(%s): %v", sessionID, err)
+			t.Fatalf("AssociateAgentSessionWithProject(%v): %v", sessionID, err)
 		}
 	}
 	if _, err := s.ClaimProject(ctx, project.ID, commanderSessionID); err != nil {
@@ -93,7 +89,7 @@ func newUnappliedDecisionScopeRPCTestFixture(t *testing.T) unappliedDecisionScop
 	}
 	decisionA, err := s.AskDecision(ctx, store.AskInput{
 		GoalID: goalA.ID, TaskID: taskA[0].ID, Kind: domain.KindDecision,
-		Question: "Question for goal A", AgentSessionID: "decision-scope-answer-a",
+		Question: "Question for goal A", AgentSessionID: daemonTestSessionID(t, s, "decision-scope-answer-a"),
 	})
 	if err != nil {
 		s.Close()
@@ -105,7 +101,7 @@ func newUnappliedDecisionScopeRPCTestFixture(t *testing.T) unappliedDecisionScop
 	}
 	decisionB, err := s.AskDecision(ctx, store.AskInput{
 		GoalID: goalB.ID, TaskID: taskB[0].ID, Kind: domain.KindDecision,
-		Question: "Question for goal B", AgentSessionID: "decision-scope-answer-b",
+		Question: "Question for goal B", AgentSessionID: daemonTestSessionID(t, s, "decision-scope-answer-b"),
 	})
 	if err != nil {
 		s.Close()
@@ -186,63 +182,63 @@ func (f unappliedDecisionScopeRPCTestFixture) callRPC(t *testing.T, method strin
 		"params":  params,
 	}
 	if err := json.NewEncoder(conn).Encode(request); err != nil {
-		t.Fatalf("encode %s: %v", method, err)
+		t.Fatalf("encode %v: %v", method, err)
 	}
 	var response struct {
 		Result json.RawMessage `json:"result"`
 		Error  json.RawMessage `json:"error"`
 	}
 	if err := json.NewDecoder(conn).Decode(&response); err != nil {
-		t.Fatalf("decode %s: %v", method, err)
+		t.Fatalf("decode %v: %v", method, err)
 	}
 	if len(response.Error) > 0 && string(response.Error) != "null" {
-		t.Fatalf("RPC %s returned error: %s", method, response.Error)
+		t.Fatalf("RPC %v returned error: %v", method, response.Error)
 	}
 	var result map[string]any
 	if err := json.Unmarshal(response.Result, &result); err != nil {
-		t.Fatalf("decode %s result: %v", method, err)
+		t.Fatalf("decode %v result: %v", method, err)
 	}
 	return result
 }
 
-func notificationIDs(t *testing.T, result map[string]any) map[string]bool {
+func notificationIDs(t *testing.T, result map[string]any) map[int64]bool {
 	t.Helper()
 	items, ok := result["unapplied_decisions"].([]any)
 	if !ok {
 		t.Fatalf("unapplied_decisions = %#v, want array", result["unapplied_decisions"])
 	}
-	ids := make(map[string]bool, len(items))
+	ids := make(map[int64]bool, len(items))
 	for _, item := range items {
 		decision, ok := item.(map[string]any)
 		if !ok {
 			t.Fatalf("unapplied decision = %#v, want object", item)
 		}
-		id, ok := decision["decision_id"].(string)
+		id, ok := decision["decision_id"].(float64)
 		if !ok {
-			t.Fatalf("unapplied decision id = %#v, want string", decision["decision_id"])
+			t.Fatalf("unapplied decision id = %#v, want number", decision["decision_id"])
 		}
-		ids[id] = true
+		ids[int64(id)] = true
 	}
 	return ids
 }
 
-func orphanedDecisionIDs(t *testing.T, result map[string]any) map[string]bool {
+func orphanedDecisionIDs(t *testing.T, result map[string]any) map[int64]bool {
 	t.Helper()
 	items, ok := result["orphaned_decisions"].([]any)
 	if !ok {
 		t.Fatalf("orphaned_decisions = %#v, want array", result["orphaned_decisions"])
 	}
-	ids := make(map[string]bool, len(items))
+	ids := make(map[int64]bool, len(items))
 	for _, item := range items {
 		decision, ok := item.(map[string]any)
 		if !ok {
 			t.Fatalf("orphaned decision = %#v, want object", item)
 		}
-		id, ok := decision["id"].(string)
+		id, ok := decision["id"].(float64)
 		if !ok {
-			t.Fatalf("orphaned decision id = %#v, want string", decision["id"])
+			t.Fatalf("orphaned decision id = %#v, want number", decision["id"])
 		}
-		ids[id] = true
+		ids[int64(id)] = true
 	}
 	return ids
 }
@@ -256,7 +252,7 @@ func responseData(t *testing.T, result map[string]any) map[string]any {
 	return data
 }
 
-func assertDecisionSet(t *testing.T, got map[string]bool, want ...string) {
+func assertDecisionSet(t *testing.T, got map[int64]bool, want ...int64) {
 	t.Helper()
 	if len(got) != len(want) {
 		t.Fatalf("decision IDs = %v, want %v", got, want)
@@ -298,12 +294,18 @@ func TestGoalListForSubcommanderExcludesOtherGoalOrphanedDecisions(t *testing.T)
 func TestSessionRoleUnchangedAfterExtractingHelper(t *testing.T) {
 	f := newUnappliedDecisionScopeRPCTestFixture(t)
 	commander := f.callRPC(t, "session.role", map[string]any{"agent_session_id": f.commanderSessionID})
-	if commander["role"] != "commander" || commander["project_id"] != f.projectID || commander["goal_id"] != "" {
+	if commander["role"] != "commander" || commander["project_id"] != float64(f.projectID) {
 		t.Fatalf("commander role response = %#v", commander)
 	}
+	if _, ok := commander["goal_id"]; ok {
+		t.Fatalf("commander role response unexpectedly contains goal_id: %#v", commander)
+	}
 	subcommander := f.callRPC(t, "session.role", map[string]any{"agent_session_id": f.subcommanderSessionID})
-	if subcommander["role"] != "subcommander" || subcommander["goal_id"] != f.goalAID || subcommander["project_id"] != "" {
+	if subcommander["role"] != "subcommander" || subcommander["goal_id"] != float64(f.goalAID) {
 		t.Fatalf("subcommander role response = %#v", subcommander)
+	}
+	if _, ok := subcommander["project_id"]; ok {
+		t.Fatalf("subcommander role response unexpectedly contains project_id: %#v", subcommander)
 	}
 }
 

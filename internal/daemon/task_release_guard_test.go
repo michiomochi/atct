@@ -30,10 +30,10 @@ func TestDaemonDoesNotCallHumanTaskRelease(t *testing.T) {
 		path := filepath.Join(filepath.Dir(filename), name)
 		contents, err := os.ReadFile(path)
 		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
+			t.Fatalf("read %v: %v", name, err)
 		}
 		if strings.Contains(string(contents), "ReleaseTaskForHuman(") {
-			t.Errorf("%s calls human task release path", name)
+			t.Errorf("%v calls human task release path", name)
 		}
 	}
 	if checkedFiles == 0 {

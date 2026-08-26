@@ -18,9 +18,11 @@ import (
 type taskHandoffRPCTestFixture struct {
 	store           *store.Store
 	socketPath      string
-	claimedTaskID   string
-	unclaimedTaskID string
-	claimableTaskID string
+	claimedTaskID   int64
+	unclaimedTaskID int64
+	claimableTaskID int64
+	requesterID     int64
+	receiverID      int64
 }
 
 func newTaskHandoffRPCTestFixture(t *testing.T) taskHandoffRPCTestFixture {
@@ -31,7 +33,7 @@ func newTaskHandoffRPCTestFixture(t *testing.T) taskHandoffRPCTestFixture {
 	}
 	t.Cleanup(func() {
 		if err := os.RemoveAll(dir); err != nil {
-			t.Errorf("RemoveAll(%q): %v", dir, err)
+			t.Errorf("RemoveAll(%v): %v", dir, err)
 		}
 	})
 	s, err := store.Open(filepath.Join(dir, "atct.db"))
@@ -60,15 +62,9 @@ func newTaskHandoffRPCTestFixture(t *testing.T) taskHandoffRPCTestFixture {
 		s.Close()
 		t.Fatalf("DeclareTasks: %v", err)
 	}
-	if err := s.RegisterAgentSession(ctx, "rpc-handoff-requester", os.Getpid()); err != nil {
-		s.Close()
-		t.Fatalf("RegisterAgentSession: %v", err)
-	}
-	if err := s.RegisterAgentSession(ctx, "rpc-handoff-receiver", os.Getpid()); err != nil {
-		s.Close()
-		t.Fatalf("RegisterAgentSession: %v", err)
-	}
-	if _, err := s.ClaimGoal(ctx, goal.ID, "rpc-handoff-requester"); err != nil {
+	requesterID := daemonTestSessionID(t, s, "rpc-handoff-requester")
+	receiverID := daemonTestSessionID(t, s, "rpc-handoff-receiver")
+	if _, err := s.ClaimGoal(ctx, goal.ID, requesterID); err != nil {
 		s.Close()
 		t.Fatalf("ClaimGoal: %v", err)
 	}
@@ -131,10 +127,12 @@ func newTaskHandoffRPCTestFixture(t *testing.T) taskHandoffRPCTestFixture {
 		claimedTaskID:   tasks[0].ID,
 		unclaimedTaskID: unclaimedTasks[0].ID,
 		claimableTaskID: tasks[1].ID,
+		requesterID:     requesterID,
+		receiverID:      receiverID,
 	}
 }
 
-func addTaskHandoffDirect(t *testing.T, s *store.Store, handoffID, taskID, requestedBy, receivedBy string) {
+func addTaskHandoffDirect(t *testing.T, s *store.Store, handoffID string, taskID, requestedBy, receivedBy int64) {
 	t.Helper()
 
 	ctx := context.Background()
@@ -143,7 +141,7 @@ func addTaskHandoffDirect(t *testing.T, s *store.Store, handoffID, taskID, reque
 	}
 	t.Cleanup(func() {
 		if _, err := s.DB().ExecContext(ctx, `DELETE FROM task_handoffs WHERE id = ?`, handoffID); err != nil {
-			t.Errorf("delete direct task handoff %q: %v", handoffID, err)
+			t.Errorf("delete direct task handoff %v: %v", handoffID, err)
 		}
 		if _, err := s.DB().ExecContext(ctx, `
 			CREATE UNIQUE INDEX idx_task_handoffs_open_task_id
@@ -156,23 +154,23 @@ func addTaskHandoffDirect(t *testing.T, s *store.Store, handoffID, taskID, reque
 
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	var err error
-	if receivedBy == "" {
+	if receivedBy == 0 {
 		_, err = s.DB().ExecContext(ctx, `
 			INSERT INTO task_handoffs (
 				id, task_id, requested_by, requested_at, request_report,
 				received_by, received_at, completed_report_at, complete_report
 			) VALUES (?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL)
-		`, handoffID, taskID, requestedBy, now)
+			`, handoffID, taskID, requestedBy, now)
 	} else {
 		_, err = s.DB().ExecContext(ctx, `
 			INSERT INTO task_handoffs (
 				id, task_id, requested_by, requested_at, request_report,
 				received_by, received_at, completed_report_at, complete_report
 			) VALUES (?, ?, ?, ?, NULL, ?, ?, NULL, NULL)
-		`, handoffID, taskID, requestedBy, now, receivedBy, now)
+			`, handoffID, taskID, requestedBy, now, receivedBy, now)
 	}
 	if err != nil {
-		t.Fatalf("insert direct task handoff %q failed: %v", handoffID, err)
+		t.Fatalf("insert direct task handoff %v failed: %v", handoffID, err)
 	}
 }
 
@@ -182,28 +180,28 @@ func TestTaskHandoffRoutesOverRPC(t *testing.T) {
 	ctx := context.Background()
 
 	var requested store.TaskHandoff
-	if err := client.Call(ctx, "handoff.request", map[string]string{
-		"handoff_id": "rpc-handoff-1", "task_id": fixture.claimedTaskID, "requested_by": "rpc-handoff-requester",
+	if err := client.Call(ctx, "handoff.request", map[string]any{
+		"handoff_id": "rpc-handoff-1", "task_id": fixture.claimedTaskID, "requested_by": fixture.requesterID,
 		"request_report": "RPC task request report",
 	}, &requested); err != nil {
 		t.Fatalf("handoff.request: %v", err)
 	}
-	if requested.RequestedAt == nil || requested.RequestedBy != "rpc-handoff-requester" || requested.RequestReport != "RPC task request report" {
+	if requested.RequestedAt == nil || requested.RequestedBy != fixture.requesterID || requested.RequestReport != "RPC task request report" {
 		t.Fatalf("requested handoff = %#v, want request timestamp, requester, and report", requested)
 	}
 
 	var received store.TaskHandoff
-	if err := client.Call(ctx, "handoff.receive", map[string]string{
-		"handoff_id": "rpc-handoff-1", "task_id": fixture.claimedTaskID, "received_by": "rpc-handoff-receiver",
+	if err := client.Call(ctx, "handoff.receive", map[string]any{
+		"handoff_id": "rpc-handoff-1", "task_id": fixture.claimedTaskID, "received_by": fixture.receiverID,
 	}, &received); err != nil {
 		t.Fatalf("handoff.receive: %v", err)
 	}
-	if received.ReceivedAt == nil || received.ReceivedBy != "rpc-handoff-receiver" {
+	if received.ReceivedAt == nil || received.ReceivedBy != fixture.receiverID {
 		t.Fatalf("received handoff = %#v, want receipt timestamp and receiver", received)
 	}
 
 	var completed store.TaskHandoff
-	if err := client.Call(ctx, "handoff.complete", map[string]string{
+	if err := client.Call(ctx, "handoff.complete", map[string]any{
 		"handoff_id": "rpc-handoff-1", "task_id": fixture.claimedTaskID, "complete_report": "RPC task completion report",
 	}, &completed); err != nil {
 		t.Fatalf("handoff.complete: %v", err)
@@ -213,25 +211,26 @@ func TestTaskHandoffRoutesOverRPC(t *testing.T) {
 	}
 
 	var claimed domain.Task
+	claimerID := daemonTestSessionID(t, fixture.store, "rpc-claimer")
 	if err := client.Call(ctx, "task.claim", map[string]any{
-		"task_id": fixture.claimableTaskID, "agent_session_id": "rpc-claimer",
+		"task_id": fixture.claimableTaskID, "agent_session_id": claimerID,
 		"include_unapplied_answers": false,
 	}, &claimed); err != nil {
 		t.Fatalf("existing task.claim RPC: %v", err)
 	}
 	if claimed.ID != fixture.claimableTaskID {
-		t.Fatalf("task.claim returned %q, want %q", claimed.ID, fixture.claimableTaskID)
+		t.Fatalf("task.claim returned %v, want %v", claimed.ID, fixture.claimableTaskID)
 	}
 
 	var rejected store.TaskHandoff
-	err := client.Call(ctx, "handoff.request", map[string]string{
-		"handoff_id": "rpc-handoff-unclaimed", "task_id": fixture.unclaimedTaskID, "requested_by": "rpc-handoff-requester",
+	err := client.Call(ctx, "handoff.request", map[string]any{
+		"handoff_id": "rpc-handoff-unclaimed", "task_id": fixture.unclaimedTaskID, "requested_by": fixture.requesterID,
 	}, &rejected)
 	if err == nil {
 		t.Fatalf("unclaimed handoff request succeeded: %#v", rejected)
 	}
 	if !strings.Contains(err.Error(), store.ErrTaskHandoffGoalNotHeld.Error()) {
-		t.Fatalf("unclaimed handoff request error = %q, want %q", err, store.ErrTaskHandoffGoalNotHeld)
+		t.Fatalf("unclaimed handoff request error = %v, want %v", err, store.ErrTaskHandoffGoalNotHeld)
 	}
 }
 
@@ -241,20 +240,20 @@ func TestTaskHandoffCompleteByTaskOverRPC(t *testing.T) {
 	ctx := context.Background()
 
 	var requested store.TaskHandoff
-	if err := client.Call(ctx, "handoff.request", map[string]string{
-		"handoff_id": "rpc-complete-by-task", "task_id": fixture.claimedTaskID, "requested_by": "rpc-handoff-requester",
+	if err := client.Call(ctx, "handoff.request", map[string]any{
+		"handoff_id": "rpc-complete-by-task", "task_id": fixture.claimedTaskID, "requested_by": fixture.requesterID,
 	}, &requested); err != nil {
 		t.Fatalf("handoff.request: %v", err)
 	}
 	var received store.TaskHandoff
-	if err := client.Call(ctx, "handoff.receive", map[string]string{
-		"handoff_id": requested.ID, "task_id": fixture.claimedTaskID, "received_by": "rpc-handoff-receiver",
+	if err := client.Call(ctx, "handoff.receive", map[string]any{
+		"handoff_id": requested.ID, "task_id": fixture.claimedTaskID, "received_by": fixture.receiverID,
 	}, &received); err != nil {
 		t.Fatalf("handoff.receive: %v", err)
 	}
 
 	var completed store.TaskHandoff
-	if err := client.Call(ctx, "handoff.complete", map[string]string{
+	if err := client.Call(ctx, "handoff.complete", map[string]any{
 		"task_id": fixture.claimedTaskID, "complete_report": "RPC task-ID completion report",
 	}, &completed); err != nil {
 		t.Fatalf("handoff.complete by task_id: %v", err)
@@ -270,28 +269,28 @@ func TestTaskHandoffCompleteByTaskOverRPCRejectsAmbiguousPendingRequests(t *test
 	ctx := context.Background()
 
 	var requested store.TaskHandoff
-	if err := client.Call(ctx, "handoff.request", map[string]string{
-		"handoff_id": "rpc-task-complete-ambiguous-1", "task_id": fixture.claimedTaskID, "requested_by": "rpc-handoff-requester",
+	if err := client.Call(ctx, "handoff.request", map[string]any{
+		"handoff_id": "rpc-task-complete-ambiguous-1", "task_id": fixture.claimedTaskID, "requested_by": fixture.requesterID,
 	}, &requested); err != nil {
 		t.Fatalf("handoff.request: %v", err)
 	}
 	var received store.TaskHandoff
-	if err := client.Call(ctx, "handoff.receive", map[string]string{
-		"handoff_id": requested.ID, "task_id": fixture.claimedTaskID, "received_by": "rpc-handoff-receiver",
+	if err := client.Call(ctx, "handoff.receive", map[string]any{
+		"handoff_id": requested.ID, "task_id": fixture.claimedTaskID, "received_by": fixture.receiverID,
 	}, &received); err != nil {
 		t.Fatalf("handoff.receive: %v", err)
 	}
-	addTaskHandoffDirect(t, fixture.store, "rpc-task-complete-ambiguous-2", fixture.claimedTaskID, "rpc-handoff-requester", "rpc-handoff-receiver")
+	addTaskHandoffDirect(t, fixture.store, "rpc-task-complete-ambiguous-2", fixture.claimedTaskID, fixture.requesterID, fixture.receiverID)
 
 	var completed store.TaskHandoff
-	err := client.Call(ctx, "handoff.complete", map[string]string{
+	err := client.Call(ctx, "handoff.complete", map[string]any{
 		"task_id": fixture.claimedTaskID,
 	}, &completed)
 	if err == nil {
 		t.Fatalf("ambiguous task handoff complete succeeded: %#v", completed)
 	}
 	if !strings.Contains(err.Error(), store.ErrTaskHandoffAmbiguous.Error()) {
-		t.Fatalf("ambiguous task handoff complete error = %q, want %q", err, store.ErrTaskHandoffAmbiguous)
+		t.Fatalf("ambiguous task handoff complete error = %v, want %v", err, store.ErrTaskHandoffAmbiguous)
 	}
 }
 
@@ -303,15 +302,15 @@ func TestTaskHandoffYieldedPublishesOnlyForReceivedIncompleteHandoff(t *testing.
 	events, cancel := fixture.store.SubscribeEvents()
 	defer cancel()
 
-	if err := client.Call(ctx, "handoff.yielded", map[string]string{
+	if err := client.Call(ctx, "handoff.yielded", map[string]any{
 		"task_id": fixture.claimedTaskID,
 	}, nil); err != nil {
 		t.Fatalf("handoff.yielded: %v", err)
 	}
 	assertNoTaskHandoffYieldedEvent(t, events, "task without a handoff")
 
-	addTaskHandoffDirect(t, fixture.store, "yielded-open", fixture.claimedTaskID, "rpc-handoff-requester", "rpc-handoff-receiver")
-	if err := client.Call(ctx, "handoff.yielded", map[string]string{
+	addTaskHandoffDirect(t, fixture.store, "yielded-open", fixture.claimedTaskID, fixture.requesterID, fixture.receiverID)
+	if err := client.Call(ctx, "handoff.yielded", map[string]any{
 		"task_id": fixture.claimedTaskID,
 	}, nil); err != nil {
 		t.Fatalf("handoff.yielded with open handoff: %v", err)
@@ -324,7 +323,7 @@ func TestTaskHandoffYieldedPublishesOnlyForReceivedIncompleteHandoff(t *testing.
 		t.Fatal("timed out waiting for handoff_yielded event")
 	}
 	if event.Name != store.EventHandoffYielded {
-		t.Fatalf("event name = %q, want %q", event.Name, store.EventHandoffYielded)
+		t.Fatalf("event name = %v, want %v", event.Name, store.EventHandoffYielded)
 	}
 	detection, ok := event.Data.(store.DetectionEvent)
 	if !ok {
@@ -339,7 +338,7 @@ func TestTaskHandoffYieldedPublishesOnlyForReceivedIncompleteHandoff(t *testing.
 		t.Fatalf("GetGoal: %v", err)
 	}
 	if detection.ProjectID != goal.ProjectID || detection.GoalID != goalID || detection.TaskID != fixture.claimedTaskID || detection.HandoffID != "" || detection.CompleteReport != "" {
-		t.Fatalf("yielded event data = %+v, want project=%s goal=%s task=%s with no handoff/report", detection, goal.ProjectID, goalID, fixture.claimedTaskID)
+		t.Fatalf("yielded event data = %+v, want project=%v goal=%v task=%v with no handoff/report", detection, goal.ProjectID, goalID, fixture.claimedTaskID)
 	}
 
 	handoffs, err := fixture.store.ListTaskHandoffs(ctx, fixture.claimedTaskID)
@@ -356,14 +355,14 @@ func TestTaskHandoffYieldedIgnoresCompletedHandoff(t *testing.T) {
 	client := mcpshim.NewClient(fixture.socketPath)
 	ctx := context.Background()
 
-	addTaskHandoffDirect(t, fixture.store, "yielded-completed", fixture.claimedTaskID, "rpc-handoff-requester", "rpc-handoff-receiver")
+	addTaskHandoffDirect(t, fixture.store, "yielded-completed", fixture.claimedTaskID, fixture.requesterID, fixture.receiverID)
 	if _, err := fixture.store.CompleteTaskHandoff(ctx, "yielded-completed", fixture.claimedTaskID, "already complete"); err != nil {
 		t.Fatalf("CompleteTaskHandoff: %v", err)
 	}
 	events, cancel := fixture.store.SubscribeEvents()
 	defer cancel()
 
-	if err := client.Call(ctx, "handoff.yielded", map[string]string{
+	if err := client.Call(ctx, "handoff.yielded", map[string]any{
 		"task_id": fixture.claimedTaskID,
 	}, nil); err != nil {
 		t.Fatalf("handoff.yielded with completed handoff: %v", err)
@@ -383,7 +382,7 @@ func assertNoTaskHandoffYieldedEvent(t *testing.T, events <-chan store.DecisionE
 	t.Helper()
 	select {
 	case event := <-events:
-		t.Fatalf("%s published unexpected event: %#v", caseName, event)
+		t.Fatalf("%v published unexpected event: %#v", caseName, event)
 	case <-time.After(50 * time.Millisecond):
 	}
 }

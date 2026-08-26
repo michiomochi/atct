@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/michiomochi/atct/internal/domain"
@@ -36,8 +37,16 @@ const (
 	unclaimedDoingMarker           = "Doing tasks without a work lock:"
 )
 
-func currentAgentSessionID() string {
-	return strings.TrimSpace(os.Getenv(atctAgentSessionIDEnv))
+func currentAgentSessionID() int64 {
+	value := strings.TrimSpace(os.Getenv(atctAgentSessionIDEnv))
+	if value == "" {
+		return 0
+	}
+	id, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || id <= 0 {
+		return 0
+	}
+	return id
 }
 
 func pendingCommand(dir, cwd string) (string, int, error) {
@@ -94,25 +103,25 @@ func pendingTextForProject(dir, cwd, projectName string, projectSpecified bool) 
 	if err != nil {
 		return "", fmt.Errorf("list unapplied decisions: %w", err)
 	}
-	projectGoalIDs := make(map[string]struct{}, len(goals))
+	projectGoalIDs := make(map[int64]struct{}, len(goals))
 	for _, goal := range goals {
 		projectGoalIDs[goal.ID] = struct{}{}
 	}
 
 	unfinishedTasks := make([]domain.Task, 0)
 	agentSessionID := currentAgentSessionID()
-	if agentSessionID == "" {
+	if agentSessionID == 0 {
 		agentSessionID, err = s.LatestAgentSessionID(ctx, project.ID)
 		if err != nil {
 			return "", fmt.Errorf("find latest agent session: %w", err)
 		}
 	}
 	openNoDefaultDecisionCount := 0
-	if agentSessionID != "" {
+	if agentSessionID != 0 {
 		for _, goal := range goals {
 			openDecisions, err := s.ListOpenDecisions(ctx, goal.ID)
 			if err != nil {
-				return "", fmt.Errorf("list open decisions for goal %s: %w", goal.ID, err)
+				return "", fmt.Errorf("list open decisions for goal %d: %w", goal.ID, err)
 			}
 			for _, decision := range openDecisions {
 				if decision.Status != "open" || decision.DefaultOption != "" || decision.AgentSessionID != agentSessionID {
@@ -122,14 +131,14 @@ func pendingTextForProject(dir, cwd, projectName string, projectSpecified bool) 
 			}
 		}
 	}
-	if agentSessionID != "" {
+	if agentSessionID != 0 {
 		for _, goal := range goals {
 			if goal.Status != domain.GoalActive {
 				continue
 			}
 			tasks, err := s.ListOpenTasksClaimedBy(ctx, goal.ID, agentSessionID)
 			if err != nil {
-				return "", fmt.Errorf("list claimed tasks for goal %s: %w", goal.ID, err)
+				return "", fmt.Errorf("list claimed tasks for goal %d: %w", goal.ID, err)
 			}
 			unfinishedTasks = append(unfinishedTasks, tasks...)
 		}
@@ -139,14 +148,14 @@ func pendingTextForProject(dir, cwd, projectName string, projectSpecified bool) 
 	if err != nil {
 		return "", fmt.Errorf("check claim liveness: %w", err)
 	}
-	activeGoalIDs := make(map[string]struct{}, len(goals))
-	openTaskHandoffs := make(map[string]*store.TaskHandoff)
+	activeGoalIDs := make(map[int64]struct{}, len(goals))
+	openTaskHandoffs := make(map[int64]*store.TaskHandoff)
 	for _, goal := range goals {
 		if goal.Status == domain.GoalActive {
 			activeGoalIDs[goal.ID] = struct{}{}
 			handoffs, err := s.ListOpenTaskHandoffsForGoal(ctx, goal.ID)
 			if err != nil {
-				return "", fmt.Errorf("list open task handoffs for goal %s: %w", goal.ID, err)
+				return "", fmt.Errorf("list open task handoffs for goal %d: %w", goal.ID, err)
 			}
 			for taskID, handoff := range handoffs {
 				openTaskHandoffs[taskID] = handoff
@@ -158,7 +167,7 @@ func pendingTextForProject(dir, cwd, projectName string, projectSpecified bool) 
 		if _, ok := activeGoalIDs[task.GoalID]; !ok {
 			continue
 		}
-		if contextTaskHandoffOwner(openTaskHandoffs[task.ID]) == strings.TrimSpace(agentSessionID) {
+		if contextTaskHandoffOwner(openTaskHandoffs[task.ID]) == agentSessionID {
 			continue
 		}
 		otherStaleClaimedTasks = append(otherStaleClaimedTasks, task)
@@ -194,7 +203,7 @@ func pendingTextForProject(dir, cwd, projectName string, projectSpecified bool) 
 		output.WriteString(reason)
 		output.WriteString("\n\n")
 		for _, decision := range section {
-			fmt.Fprintf(&output, "- %s (decision_id: %s)\n", oneLine(decision.Question), decision.ID)
+			fmt.Fprintf(&output, "- %s (decision_id: %d)\n", oneLine(decision.Question), decision.ID)
 		}
 	}
 	writeDecisionSection(pendingDecisionReason, humanAnsweredDecisions)
@@ -208,7 +217,7 @@ func pendingTextForProject(dir, cwd, projectName string, projectSpecified bool) 
 		output.WriteString(staleClaimMarker)
 		output.WriteByte('\n')
 		for _, task := range otherStaleClaimedTasks {
-			fmt.Fprintf(&output, "- %s (task_id: %s)\n", oneLine(task.Title), task.ID)
+			fmt.Fprintf(&output, "- %s (task_id: %d)\n", oneLine(task.Title), task.ID)
 		}
 	}
 	if len(wakeupState.UndeclaredGoals) > 0 {
@@ -220,7 +229,7 @@ func pendingTextForProject(dir, cwd, projectName string, projectSpecified bool) 
 		output.WriteString(undeclaredGoalMarker)
 		output.WriteByte('\n')
 		for _, goal := range wakeupState.UndeclaredGoals {
-			fmt.Fprintf(&output, "- %s (goal_id: %s)\n", oneLine(domain.Headline(goal.Content)), goal.ID)
+			fmt.Fprintf(&output, "- %s (goal_id: %d)\n", oneLine(domain.Headline(goal.Content)), goal.ID)
 		}
 	}
 	availableTaskCount := len(wakeupState.Tasks)
@@ -239,7 +248,7 @@ func pendingTextForProject(dir, cwd, projectName string, projectSpecified bool) 
 		output.WriteString("Unstarted tasks:")
 		output.WriteByte('\n')
 		for _, task := range wakeupState.Tasks {
-			fmt.Fprintf(&output, "- %s (task_id: %s)\n", oneLine(task.Title), task.ID)
+			fmt.Fprintf(&output, "- %s (task_id: %d)\n", oneLine(task.Title), task.ID)
 		}
 	}
 	if len(unfinishedTasks) > 0 {
@@ -256,7 +265,7 @@ func pendingTextForProject(dir, cwd, projectName string, projectSpecified bool) 
 		output.WriteString(unfinishedClaimMarker)
 		output.WriteByte('\n')
 		for _, task := range unfinishedTasks {
-			fmt.Fprintf(&output, "- %s (task_id: %s)\n", oneLine(task.Title), task.ID)
+			fmt.Fprintf(&output, "- %s (task_id: %d)\n", oneLine(task.Title), task.ID)
 		}
 	}
 	if len(wakeupState.CompletedGoals) > 0 {
@@ -268,7 +277,7 @@ func pendingTextForProject(dir, cwd, projectName string, projectSpecified bool) 
 		output.WriteString(completedGoalMarker)
 		output.WriteByte('\n')
 		for _, goal := range wakeupState.CompletedGoals {
-			fmt.Fprintf(&output, "- %s (goal_id: %s)\n", oneLine(domain.Headline(goal.Content)), goal.ID)
+			fmt.Fprintf(&output, "- %s (goal_id: %d)\n", oneLine(domain.Headline(goal.Content)), goal.ID)
 		}
 	}
 	if len(wakeupState.CommitlessGoals) > 0 {
@@ -280,7 +289,7 @@ func pendingTextForProject(dir, cwd, projectName string, projectSpecified bool) 
 		output.WriteString(commitlessGoalMarker)
 		output.WriteByte('\n')
 		for _, goal := range wakeupState.CommitlessGoals {
-			fmt.Fprintf(&output, "- %s (goal_id: %s)\n", oneLine(domain.Headline(goal.Content)), goal.ID)
+			fmt.Fprintf(&output, "- %s (goal_id: %d)\n", oneLine(domain.Headline(goal.Content)), goal.ID)
 		}
 	}
 	if len(wakeupState.DroppedGoals) > 0 {
@@ -292,7 +301,7 @@ func pendingTextForProject(dir, cwd, projectName string, projectSpecified bool) 
 		output.WriteString(droppedGoalMarker)
 		output.WriteByte('\n')
 		for _, goal := range wakeupState.DroppedGoals {
-			fmt.Fprintf(&output, "- %s (goal_id: %s)\n", oneLine(domain.Headline(goal.Content)), goal.ID)
+			fmt.Fprintf(&output, "- %s (goal_id: %d)\n", oneLine(domain.Headline(goal.Content)), goal.ID)
 		}
 	}
 	if len(wakeupState.UnclaimedDoingTasks) > 0 {
@@ -304,7 +313,7 @@ func pendingTextForProject(dir, cwd, projectName string, projectSpecified bool) 
 		output.WriteString(unclaimedDoingMarker)
 		output.WriteByte('\n')
 		for _, task := range wakeupState.UnclaimedDoingTasks {
-			fmt.Fprintf(&output, "- %s (task_id: %s)\n", oneLine(task.Title), task.ID)
+			fmt.Fprintf(&output, "- %s (task_id: %d)\n", oneLine(task.Title), task.ID)
 		}
 	}
 	return output.String(), nil

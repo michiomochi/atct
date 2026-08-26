@@ -115,7 +115,7 @@ INSERT INTO projects (id, name, root_path, created_at)
 VALUES ('project-order-migration', 'order migration fixture', '/tmp/order-migration-fixture', '2026-08-17T14:04:00Z')`); err != nil {
 		t.Fatalf("insert project: %v", err)
 	}
-	beforeIDs := make(map[string][]string, len(fixture))
+	beforeTitles := make(map[string][]string, len(fixture))
 	beforeCount := 0
 	for _, goal := range fixture {
 		if _, err := db.Exec(`
@@ -146,17 +146,17 @@ VALUES (?, ?, ?, ?, 'todo', 'legacy-agent', '[]', ?, ?, '', NULL, ?, ?)`,
 				beforeCount++
 			}
 		}
-		rows, err := db.Query(`SELECT id FROM tasks WHERE goal_id = ? ORDER BY created_at, sort_order, id`, goal.id)
+		rows, err := db.Query(`SELECT id, title FROM tasks WHERE goal_id = ? ORDER BY created_at, sort_order, id`, goal.id)
 		if err != nil {
 			t.Fatalf("query pre-migration tasks for %s: %v", goal.id, err)
 		}
 		for rows.Next() {
-			var id string
-			if err := rows.Scan(&id); err != nil {
+			var id, title string
+			if err := rows.Scan(&id, &title); err != nil {
 				rows.Close()
 				t.Fatalf("scan pre-migration task for %s: %v", goal.id, err)
 			}
-			beforeIDs[goal.id] = append(beforeIDs[goal.id], id)
+			beforeTitles[goal.id] = append(beforeTitles[goal.id], title)
 		}
 		if err := rows.Err(); err != nil {
 			rows.Close()
@@ -185,39 +185,39 @@ VALUES (?, ?, ?, ?, 'todo', 'legacy-agent', '[]', ?, ?, '', NULL, ?, ?)`,
 		t.Fatalf("post-migration task count = %d, want %d", gotAfterCount, beforeCount)
 	}
 	for _, goal := range fixture {
+		var goalID int64
+		if err := db.QueryRow(`SELECT id FROM goals WHERE content = ?`, goal.title).Scan(&goalID); err != nil {
+			t.Fatalf("find migrated goal %s: %v", goal.id, err)
+		}
 		rows, err := db.Query(`
-SELECT id, goal_id, sort_order
-FROM tasks
-WHERE goal_id = ?
-ORDER BY sort_order, id`, goal.id)
+SELECT t.title, t.sort_order
+FROM tasks AS t
+WHERE t.goal_id = ?
+ORDER BY t.sort_order, t.id`, goalID)
 		if err != nil {
 			t.Fatalf("query post-migration tasks for %s: %v", goal.id, err)
 		}
-		var gotIDs []string
+		var gotTitles []string
 		for expectedOrder := 0; rows.Next(); expectedOrder++ {
-			var id, gotGoalID string
+			var title string
 			var sortOrder int
-			if err := rows.Scan(&id, &gotGoalID, &sortOrder); err != nil {
+			if err := rows.Scan(&title, &sortOrder); err != nil {
 				rows.Close()
 				t.Fatalf("scan post-migration task for %s: %v", goal.id, err)
 			}
-			if gotGoalID != goal.id {
-				rows.Close()
-				t.Fatalf("task %s moved to goal %s, want %s", id, gotGoalID, goal.id)
-			}
 			if sortOrder != expectedOrder {
 				rows.Close()
-				t.Fatalf("task %s sort_order = %d, want %d", id, sortOrder, expectedOrder)
+				t.Fatalf("task %q sort_order = %d, want %d", title, sortOrder, expectedOrder)
 			}
-			gotIDs = append(gotIDs, id)
+			gotTitles = append(gotTitles, title)
 		}
 		if err := rows.Err(); err != nil {
 			rows.Close()
 			t.Fatalf("read post-migration tasks for %s: %v", goal.id, err)
 		}
 		rows.Close()
-		if !reflect.DeepEqual(gotIDs, beforeIDs[goal.id]) {
-			t.Fatalf("post-migration order for %s = %v, want %v", goal.id, gotIDs, beforeIDs[goal.id])
+		if !reflect.DeepEqual(gotTitles, beforeTitles[goal.id]) {
+			t.Fatalf("post-migration order for %s = %v, want %v", goal.id, gotTitles, beforeTitles[goal.id])
 		}
 	}
 }
@@ -305,15 +305,14 @@ func TestDeclareTasksSerializesConcurrentSortAllocation(t *testing.T) {
 	}
 }
 
-func insertSortOrderConstraintTask(s *Store, goalID, id string, sortOrder int) error {
+func insertSortOrderConstraintTask(s *Store, goalID int64, id string, sortOrder int) error {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	_, err := s.DB().ExecContext(context.Background(), `
-INSERT INTO tasks (
-  id, goal_id, title, description, status, agent, files, sort_order, declare_key,
-  created_at, updated_at
-)
-VALUES (?, ?, ?, ?, 'todo', 'constraint-test', '[]', ?, ?, ?, ?)`,
-		id,
+	INSERT INTO tasks (
+	  goal_id, title, description, status, agent, files, sort_order, declare_key,
+	  created_at, updated_at
+	)
+	VALUES (?, ?, ?, 'todo', 'constraint-test', '[]', ?, ?, ?, ?)`,
 		goalID,
 		"Persist a task for the sort-order constraint",
 		"Confirm the unique sort-order constraint for this fixture task.",

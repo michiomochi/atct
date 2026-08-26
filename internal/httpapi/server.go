@@ -32,11 +32,11 @@ func (s *Server) Handler() http.Handler {
 
 type TaskView struct {
 	domain.Task
-	ClaimedBy      string            `json:"claimed_by"`
+	ClaimedBy      int64             `json:"claimed_by"`
 	ClaimedAt      *time.Time        `json:"claimed_at"`
 	HeldForSeconds int64             `json:"held_for_seconds"`
 	OpenDecisions  []domain.Decision `json:"open_decisions"`
-	ProjectID      string            `json:"project_id"`
+	ProjectID      int64             `json:"project_id"`
 	ProjectName    string            `json:"project_name"`
 }
 
@@ -48,14 +48,14 @@ type goalView struct {
 }
 
 type goalTaskCommitsView struct {
-	TaskID    string           `json:"task_id"`
+	TaskID    int64            `json:"task_id"`
 	TaskTitle string           `json:"task_title"`
 	Commits   []taskCommitView `json:"commits"`
 }
 
 type proposedGoalView struct {
-	ID          string    `json:"id"`
-	ProjectID   string    `json:"project_id"`
+	ID          int64     `json:"id"`
+	ProjectID   int64     `json:"project_id"`
 	Content     string    `json:"content"`
 	CreatedAt   time.Time `json:"created_at"`
 	ProjectName string    `json:"project_name"`
@@ -63,7 +63,7 @@ type proposedGoalView struct {
 
 type decisionView struct {
 	domain.Decision
-	ProjectID        string `json:"project_id"`
+	ProjectID        int64  `json:"project_id"`
 	ProjectName      string `json:"project_name"`
 	GoalHeadline     string `json:"goal_headline"`
 	DefaultOption    string `json:"default_option"`
@@ -93,7 +93,7 @@ type goalResponse struct {
 }
 
 type taskGoalView struct {
-	ID          string `json:"id"`
+	ID          int64  `json:"id"`
 	Headline    string `json:"headline"`
 	ProjectName string `json:"project_name"`
 }
@@ -108,8 +108,8 @@ type taskDetailResponse struct {
 }
 
 type decisionHistoryView struct {
-	DecisionID       string     `json:"decision_id"`
-	TaskID           string     `json:"task_id"`
+	DecisionID       int64      `json:"decision_id"`
+	TaskID           int64      `json:"task_id"`
 	Question         string     `json:"question"`
 	AnswerLabel      string     `json:"answer_label"`
 	AnswerText       string     `json:"answer_text"`
@@ -163,13 +163,31 @@ type updateGoalContentRequest struct {
 }
 
 type setGoalDerivedFromRequest struct {
-	DerivedFromGoalID string `json:"derived_from_goal_id"`
+	DerivedFromGoalID inputID `json:"derived_from_goal_id"`
 }
 
 type createGoalRequest struct {
-	ProjectID string `json:"project_id"`
-	Content   string `json:"content"`
-	Creator   string `json:"creator"`
+	ProjectID inputID `json:"project_id"`
+	Content   string  `json:"content"`
+	Creator   string  `json:"creator"`
+}
+
+// inputID accepts canonical numeric IDs and preserves string input so removed
+// UUID-style IDs can receive migration guidance from the store resolver.
+type inputID string
+
+func (id *inputID) UnmarshalJSON(data []byte) error {
+	var text string
+	if err := json.Unmarshal(data, &text); err == nil {
+		*id = inputID(text)
+		return nil
+	}
+	var number int64
+	if err := json.Unmarshal(data, &number); err != nil {
+		return err
+	}
+	*id = inputID(strconv.FormatInt(number, 10))
+	return nil
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -342,8 +360,7 @@ func (s *Server) handleCreateGoal(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
-	request.ProjectID = strings.TrimSpace(request.ProjectID)
-	if request.ProjectID == "" {
+	if strings.TrimSpace(string(request.ProjectID)) == "" {
 		writeError(w, http.StatusBadRequest, "project_id is required")
 		return
 	}
@@ -352,24 +369,12 @@ func (s *Server) handleCreateGoal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	projects, err := s.store.ListProjects(r.Context())
-	if err != nil {
-		writeStoreError(w, err)
-		return
-	}
-	knownProject := false
-	for _, project := range projects {
-		if project.ID == request.ProjectID {
-			knownProject = true
-			break
-		}
-	}
-	if !knownProject {
-		writeError(w, http.StatusNotFound, "project not found")
+	projectID, ok := s.resolveProjectID(w, r.Context(), string(request.ProjectID))
+	if !ok {
 		return
 	}
 
-	goal, err := s.store.CreateGoal(r.Context(), request.ProjectID, request.Content, request.Creator)
+	goal, err := s.store.CreateGoal(r.Context(), projectID, request.Content, request.Creator)
 	if err != nil {
 		writeStoreError(w, err)
 		return
@@ -399,13 +404,13 @@ func (s *Server) handleInbox(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
-	projectNames := make(map[string]string, len(projects))
+	projectNames := make(map[int64]string, len(projects))
 	for _, project := range projects {
 		projectNames[project.ID] = project.Name
 	}
-	goalProjectIDs := make(map[string]string, len(goals))
-	goalProjectNames := make(map[string]string, len(goals))
-	goalHeadlines := make(map[string]string, len(goals))
+	goalProjectIDs := make(map[int64]int64, len(goals))
+	goalProjectNames := make(map[int64]string, len(goals))
+	goalHeadlines := make(map[int64]string, len(goals))
 	for _, goal := range goals {
 		goalProjectIDs[goal.ID] = goal.ProjectID
 		goalProjectNames[goal.ID] = projectNames[goal.ProjectID]
@@ -413,7 +418,7 @@ func (s *Server) handleInbox(w http.ResponseWriter, r *http.Request) {
 	}
 
 	openByTask := indexDecisions(openDecisions)
-	openByGoal := make(map[string]bool, len(openDecisions))
+	openByGoal := make(map[int64]bool, len(openDecisions))
 	for _, decision := range openDecisions {
 		openByGoal[decision.GoalID] = true
 	}
@@ -511,7 +516,11 @@ func (s *Server) handleInbox(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleGoal(w http.ResponseWriter, r *http.Request, goalID string) {
 	ctx := r.Context()
-	goal, err := s.store.GetGoal(ctx, goalID)
+	canonicalGoalID, ok := s.resolveGoalID(w, ctx, goalID)
+	if !ok {
+		return
+	}
+	goal, err := s.store.GetGoal(ctx, canonicalGoalID)
 	if errors.Is(err, store.ErrGoalNotFound) {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
@@ -527,7 +536,7 @@ func (s *Server) handleGoal(w http.ResponseWriter, r *http.Request, goalID strin
 	}
 	projectName := ""
 	projectRootPath := ""
-	projectNames := make(map[string]string, len(projects))
+	projectNames := make(map[int64]string, len(projects))
 	for _, project := range projects {
 		projectNames[project.ID] = project.Name
 		if project.ID == goal.ProjectID {
@@ -536,7 +545,7 @@ func (s *Server) handleGoal(w http.ResponseWriter, r *http.Request, goalID strin
 		}
 	}
 	var derivedFrom *taskGoalView
-	if goal.DerivedFromGoalID != "" {
+	if goal.DerivedFromGoalID != 0 {
 		parent, err := s.store.GetGoal(ctx, goal.DerivedFromGoalID)
 		if err == nil {
 			view := newGoalLineageView(parent, projectNames[parent.ProjectID])
@@ -555,22 +564,22 @@ func (s *Server) handleGoal(w http.ResponseWriter, r *http.Request, goalID strin
 	for _, derivedGoal := range derivedGoals {
 		derivedGoalViews = append(derivedGoalViews, newGoalLineageView(derivedGoal, projectNames[derivedGoal.ProjectID]))
 	}
-	tasks, err := s.store.ListTasks(ctx, goalID)
+	tasks, err := s.store.ListTasks(ctx, canonicalGoalID)
 	if err != nil {
 		writeStoreError(w, err)
 		return
 	}
-	handoffs, err := s.store.ListOpenTaskHandoffsForGoal(ctx, goalID)
+	handoffs, err := s.store.ListOpenTaskHandoffsForGoal(ctx, canonicalGoalID)
 	if err != nil {
 		writeStoreError(w, err)
 		return
 	}
-	openDecisions, err := s.store.ListOpenDecisions(ctx, goalID)
+	openDecisions, err := s.store.ListOpenDecisions(ctx, canonicalGoalID)
 	if err != nil {
 		writeStoreError(w, err)
 		return
 	}
-	appliedDecisions, decisionHistoryOmitted, err := s.store.ListAppliedDecisions(ctx, goalID)
+	appliedDecisions, decisionHistoryOmitted, err := s.store.ListAppliedDecisions(ctx, canonicalGoalID)
 	if err != nil {
 		writeStoreError(w, err)
 		return
@@ -582,7 +591,7 @@ func (s *Server) handleGoal(w http.ResponseWriter, r *http.Request, goalID strin
 	openByTask := indexDecisions(openDecisions)
 	unattachedDecisions := make([]domain.Decision, 0)
 	for _, decision := range openDecisions {
-		if decision.TaskID == "" {
+		if decision.TaskID == 0 {
 			unattachedDecisions = append(unattachedDecisions, decision)
 		}
 	}
@@ -645,9 +654,13 @@ func (s *Server) handleWithdraw(w http.ResponseWriter, r *http.Request, goalID s
 		return
 	}
 
-	if err := s.store.WithdrawActiveGoal(r.Context(), goalID, request.Reason); err != nil {
+	canonicalGoalID, ok := s.resolveGoalID(w, r.Context(), goalID)
+	if !ok {
+		return
+	}
+	if err := s.store.WithdrawActiveGoal(r.Context(), canonicalGoalID, request.Reason); err != nil {
 		if errors.Is(err, store.ErrGoalNotActive) {
-			goal, goalErr := s.store.GetGoal(r.Context(), goalID)
+			goal, goalErr := s.store.GetGoal(r.Context(), canonicalGoalID)
 			if errors.Is(goalErr, store.ErrGoalNotFound) {
 				writeError(w, http.StatusNotFound, goalErr.Error())
 				return
@@ -663,7 +676,7 @@ func (s *Server) handleWithdraw(w http.ResponseWriter, r *http.Request, goalID s
 		return
 	}
 
-	goal, err := s.store.GetGoal(r.Context(), goalID)
+	goal, err := s.store.GetGoal(r.Context(), canonicalGoalID)
 	if err != nil {
 		writeStoreError(w, err)
 		return
@@ -682,9 +695,13 @@ func (s *Server) handleUpdateGoalContent(w http.ResponseWriter, r *http.Request,
 		return
 	}
 
-	goal, err := s.store.UpdateGoalContent(r.Context(), goalID, request.Content)
+	canonicalGoalID, ok := s.resolveGoalID(w, r.Context(), goalID)
+	if !ok {
+		return
+	}
+	goal, err := s.store.UpdateGoalContent(r.Context(), canonicalGoalID, request.Content)
 	if errors.Is(err, store.ErrGoalNotProposed) {
-		current, goalErr := s.store.GetGoal(r.Context(), goalID)
+		current, goalErr := s.store.GetGoal(r.Context(), canonicalGoalID)
 		if errors.Is(goalErr, store.ErrGoalNotFound) {
 			writeError(w, http.StatusNotFound, goalErr.Error())
 			return
@@ -714,7 +731,15 @@ func (s *Server) handleSetGoalDerivedFrom(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	err := s.store.SetGoalDerivedFrom(r.Context(), goalID, request.DerivedFromGoalID)
+	canonicalGoalID, ok := s.resolveGoalID(w, r.Context(), goalID)
+	if !ok {
+		return
+	}
+	derivedFromID, ok := s.resolveGoalID(w, r.Context(), string(request.DerivedFromGoalID))
+	if !ok {
+		return
+	}
+	err := s.store.SetGoalDerivedFrom(r.Context(), canonicalGoalID, derivedFromID)
 	if errors.Is(err, store.ErrGoalNotFound) {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
@@ -728,7 +753,7 @@ func (s *Server) handleSetGoalDerivedFrom(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	goal, err := s.store.GetGoal(r.Context(), goalID)
+	goal, err := s.store.GetGoal(r.Context(), canonicalGoalID)
 	if errors.Is(err, store.ErrGoalNotFound) {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
@@ -742,7 +767,11 @@ func (s *Server) handleSetGoalDerivedFrom(w http.ResponseWriter, r *http.Request
 
 func (s *Server) handleTask(w http.ResponseWriter, r *http.Request, taskID string) {
 	ctx := r.Context()
-	goalID, err := s.store.GetTaskGoalID(ctx, taskID)
+	canonicalTaskID, ok := s.resolveTaskID(w, ctx, taskID)
+	if !ok {
+		return
+	}
+	goalID, err := s.store.GetTaskGoalID(ctx, canonicalTaskID)
 	if err != nil {
 		if errors.Is(err, store.ErrTaskNotFound) {
 			writeError(w, http.StatusNotFound, err.Error())
@@ -765,7 +794,7 @@ func (s *Server) handleTask(w http.ResponseWriter, r *http.Request, taskID strin
 	}
 	found := false
 	for _, candidateTask := range tasks {
-		if candidateTask.ID != taskID {
+		if candidateTask.ID != canonicalTaskID {
 			continue
 		}
 		task = candidateTask
@@ -840,7 +869,11 @@ func (s *Server) handleTask(w http.ResponseWriter, r *http.Request, taskID strin
 
 func (s *Server) handleTaskCommitDiff(w http.ResponseWriter, r *http.Request, taskID, sha string) {
 	ctx := r.Context()
-	goalID, err := s.store.GetTaskGoalID(ctx, taskID)
+	canonicalTaskID, ok := s.resolveTaskID(w, ctx, taskID)
+	if !ok {
+		return
+	}
+	goalID, err := s.store.GetTaskGoalID(ctx, canonicalTaskID)
 	if errors.Is(err, store.ErrTaskNotFound) {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
@@ -850,7 +883,7 @@ func (s *Server) handleTaskCommitDiff(w http.ResponseWriter, r *http.Request, ta
 		return
 	}
 
-	linkedCommits, err := s.store.ListTaskCommits(ctx, taskID)
+	linkedCommits, err := s.store.ListTaskCommits(ctx, canonicalTaskID)
 	if err != nil {
 		writeStoreError(w, err)
 		return
@@ -993,7 +1026,11 @@ func newTaskCommitView(ctx context.Context, rootPath string, commit domain.TaskC
 }
 
 func (s *Server) handleRelease(w http.ResponseWriter, r *http.Request, taskID string) {
-	task, err := s.store.ReleaseTaskForHuman(r.Context(), taskID)
+	canonicalTaskID, ok := s.resolveTaskID(w, r.Context(), taskID)
+	if !ok {
+		return
+	}
+	task, err := s.store.ReleaseTaskForHuman(r.Context(), canonicalTaskID)
 	if err != nil {
 		if errors.Is(err, store.ErrTaskNotFound) {
 			writeError(w, http.StatusNotFound, err.Error())
@@ -1044,7 +1081,11 @@ func (s *Server) handleAnswer(w http.ResponseWriter, r *http.Request, decisionID
 		writeError(w, http.StatusBadRequest, "an answer label or text is required")
 		return
 	}
-	decision, ok := s.ensureOpenDecision(w, r.Context(), decisionID)
+	canonicalDecisionID, ok := s.resolveDecisionID(w, r.Context(), decisionID)
+	if !ok {
+		return
+	}
+	decision, ok := s.ensureOpenDecision(w, r.Context(), canonicalDecisionID)
 	if !ok {
 		return
 	}
@@ -1053,7 +1094,7 @@ func (s *Server) handleAnswer(w http.ResponseWriter, r *http.Request, decisionID
 		return
 	}
 	decision, err := s.store.AnswerDecision(r.Context(), store.AnswerInput{
-		DecisionID:  decisionID,
+		DecisionID:  canonicalDecisionID,
 		AnswerLabel: request.AnswerLabel,
 		AnswerText:  request.AnswerText,
 	})
@@ -1079,7 +1120,11 @@ func (s *Server) handleRevise(w http.ResponseWriter, r *http.Request, decisionID
 		return
 	}
 
-	original, err := s.store.GetDecision(r.Context(), decisionID)
+	canonicalDecisionID, ok := s.resolveDecisionID(w, r.Context(), decisionID)
+	if !ok {
+		return
+	}
+	original, err := s.store.GetDecision(r.Context(), canonicalDecisionID)
 	if errors.Is(err, store.ErrDecisionNotFound) {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
@@ -1132,7 +1177,11 @@ func (s *Server) handleApprove(w http.ResponseWriter, r *http.Request, decisionI
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
-	decision, ok := s.getOpenDecision(w, r.Context(), decisionID)
+	canonicalDecisionID, ok := s.resolveDecisionID(w, r.Context(), decisionID)
+	if !ok {
+		return
+	}
+	decision, ok := s.getOpenDecision(w, r.Context(), canonicalDecisionID)
 	if !ok {
 		return
 	}
@@ -1166,16 +1215,20 @@ func (s *Server) handleReject(w http.ResponseWriter, r *http.Request, decisionID
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
-	decision, ok := s.getOpenDecision(w, r.Context(), decisionID)
+	canonicalDecisionID, ok := s.resolveDecisionID(w, r.Context(), decisionID)
+	if !ok {
+		return
+	}
+	decision, ok := s.getOpenDecision(w, r.Context(), canonicalDecisionID)
 	if !ok {
 		return
 	}
 	var err error
 	switch decision.Kind {
 	case domain.KindCompletion:
-		err = s.store.RejectCompletion(r.Context(), decisionID, request.Reason)
+		err = s.store.RejectCompletion(r.Context(), canonicalDecisionID, request.Reason)
 	case domain.KindGoalApproval:
-		err = s.store.RejectGoal(r.Context(), decisionID, request.Reason)
+		err = s.store.RejectGoal(r.Context(), canonicalDecisionID, request.Reason)
 	default:
 		writeError(w, http.StatusConflict, store.ErrDecisionNotOpen.Error())
 		return
@@ -1188,7 +1241,7 @@ func (s *Server) handleReject(w http.ResponseWriter, r *http.Request, decisionID
 		writeStoreError(w, err)
 		return
 	}
-	decision, err = s.store.GetDecision(r.Context(), decisionID)
+	decision, err = s.store.GetDecision(r.Context(), canonicalDecisionID)
 	if err != nil {
 		writeStoreError(w, err)
 		return
@@ -1196,7 +1249,7 @@ func (s *Server) handleReject(w http.ResponseWriter, r *http.Request, decisionID
 	writeJSON(w, http.StatusOK, decision)
 }
 
-func (s *Server) ensureOpenDecision(w http.ResponseWriter, ctx context.Context, decisionID string) (domain.Decision, bool) {
+func (s *Server) ensureOpenDecision(w http.ResponseWriter, ctx context.Context, decisionID int64) (domain.Decision, bool) {
 	decision, err := s.store.GetDecision(ctx, decisionID)
 	if errors.Is(err, store.ErrDecisionNotFound) {
 		writeError(w, http.StatusNotFound, err.Error())
@@ -1213,7 +1266,7 @@ func (s *Server) ensureOpenDecision(w http.ResponseWriter, ctx context.Context, 
 	return decision, true
 }
 
-func (s *Server) getOpenDecision(w http.ResponseWriter, ctx context.Context, decisionID string) (domain.Decision, bool) {
+func (s *Server) getOpenDecision(w http.ResponseWriter, ctx context.Context, decisionID int64) (domain.Decision, bool) {
 	decision, err := s.store.GetDecision(ctx, decisionID)
 	if errors.Is(err, store.ErrDecisionNotFound) {
 		writeError(w, http.StatusNotFound, err.Error())
@@ -1238,6 +1291,21 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	}
 	projectID := r.URL.Query().Get("project_id")
 	goalID := r.URL.Query().Get("goal_id")
+	var canonicalProjectID, canonicalGoalID int64
+	if projectID != "" {
+		var ok bool
+		canonicalProjectID, ok = s.resolveProjectID(w, r.Context(), projectID)
+		if !ok {
+			return
+		}
+	}
+	if goalID != "" {
+		var ok bool
+		canonicalGoalID, ok = s.resolveGoalID(w, r.Context(), goalID)
+		if !ok {
+			return
+		}
+	}
 	ch, cancel := s.store.SubscribeEvents()
 	defer cancel()
 
@@ -1254,11 +1322,11 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		case event := <-ch:
 			if projectID != "" {
 				eventProjectID, err := s.eventProjectID(r.Context(), event)
-				if err != nil || (eventProjectID != "" && eventProjectID != projectID) {
+				if err != nil || (eventProjectID != 0 && eventProjectID != canonicalProjectID) {
 					continue
 				}
 			}
-			if goalID != "" && !eventMatchesGoalID(event, goalID) {
+			if goalID != "" && !eventMatchesGoalID(event, canonicalGoalID) {
 				continue
 			}
 			data, err := json.Marshal(event.Data)
@@ -1273,63 +1341,63 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func eventMatchesGoalID(event store.DecisionEvent, goalID string) bool {
+func eventMatchesGoalID(event store.DecisionEvent, goalID int64) bool {
 	switch data := event.Data.(type) {
 	case store.KeepaliveEvent, *store.KeepaliveEvent:
 		return true
 	case domain.Decision:
-		return data.GoalID != "" && data.GoalID == goalID
+		return data.GoalID != 0 && data.GoalID == goalID
 	case *domain.Decision:
-		return data != nil && data.GoalID != "" && data.GoalID == goalID
+		return data != nil && data.GoalID != 0 && data.GoalID == goalID
 	case store.DetectionEvent:
-		return data.GoalID != "" && data.GoalID == goalID
+		return data.GoalID != 0 && data.GoalID == goalID
 	case *store.DetectionEvent:
-		return data != nil && data.GoalID != "" && data.GoalID == goalID
+		return data != nil && data.GoalID != 0 && data.GoalID == goalID
 	default:
 		return false
 	}
 }
 
-func (s *Server) eventProjectID(ctx context.Context, event store.DecisionEvent) (string, error) {
+func (s *Server) eventProjectID(ctx context.Context, event store.DecisionEvent) (int64, error) {
 	switch data := event.Data.(type) {
 	case domain.Decision:
 		goal, err := s.store.GetGoal(ctx, data.GoalID)
 		if err != nil {
-			return "", err
+			return 0, err
 		}
 		return goal.ProjectID, nil
 	case *domain.Decision:
 		if data == nil {
-			return "", nil
+			return 0, nil
 		}
 		goal, err := s.store.GetGoal(ctx, data.GoalID)
 		if err != nil {
-			return "", err
+			return 0, err
 		}
 		return goal.ProjectID, nil
 	case store.DetectionEvent:
 		return data.ProjectID, nil
 	case *store.DetectionEvent:
 		if data == nil {
-			return "", nil
+			return 0, nil
 		}
 		return data.ProjectID, nil
 	case store.WakeupEvent:
 		return data.ProjectID, nil
 	case *store.WakeupEvent:
 		if data == nil {
-			return "", nil
+			return 0, nil
 		}
 		return data.ProjectID, nil
 	case store.WakeupDiscrepancyEvent:
 		return data.ProjectID, nil
 	case *store.WakeupDiscrepancyEvent:
 		if data == nil {
-			return "", nil
+			return 0, nil
 		}
 		return data.ProjectID, nil
 	default:
-		return "", nil
+		return 0, nil
 	}
 }
 
@@ -1351,10 +1419,10 @@ func decodeJSONBody(r *http.Request, dst any) error {
 	return nil
 }
 
-func indexDecisions(decisions []domain.Decision) map[string][]domain.Decision {
-	byTask := make(map[string][]domain.Decision)
+func indexDecisions(decisions []domain.Decision) map[int64][]domain.Decision {
+	byTask := make(map[int64][]domain.Decision)
 	for _, decision := range decisions {
-		if decision.TaskID == "" {
+		if decision.TaskID == 0 {
 			continue
 		}
 		byTask[decision.TaskID] = append(byTask[decision.TaskID], decision)
@@ -1366,11 +1434,11 @@ func newTaskView(task domain.Task, handoff *store.TaskHandoff, decisions []domai
 	if decisions == nil {
 		decisions = make([]domain.Decision, 0)
 	}
-	claimedBy := ""
+	var claimedBy int64
 	var claimedAt *time.Time
 	if handoff != nil {
 		claimedBy = handoff.ReceivedBy
-		if claimedBy == "" {
+		if claimedBy == 0 {
 			claimedBy = handoff.RequestedBy
 		}
 		claimedAt = handoff.ReceivedAt
@@ -1426,6 +1494,46 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 
 func writeError(w http.ResponseWriter, status int, message string) {
 	writeJSON(w, status, map[string]string{"error": message})
+}
+
+func (s *Server) resolveProjectID(w http.ResponseWriter, ctx context.Context, value string) (int64, bool) {
+	id, err := s.store.ResolveProjectID(ctx, value)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return 0, false
+	}
+	return id, true
+}
+
+func (s *Server) resolveGoalID(w http.ResponseWriter, ctx context.Context, value string) (int64, bool) {
+	id, err := s.store.ResolveGoalID(ctx, value)
+	if err != nil {
+		if strings.Contains(err.Error(), " is not found") {
+			writeError(w, http.StatusNotFound, store.ErrGoalNotFound.Error())
+			return 0, false
+		}
+		writeError(w, http.StatusNotFound, err.Error())
+		return 0, false
+	}
+	return id, true
+}
+
+func (s *Server) resolveTaskID(w http.ResponseWriter, ctx context.Context, value string) (int64, bool) {
+	id, err := s.store.ResolveTaskID(ctx, value)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return 0, false
+	}
+	return id, true
+}
+
+func (s *Server) resolveDecisionID(w http.ResponseWriter, ctx context.Context, value string) (int64, bool) {
+	id, err := s.store.ResolveDecisionID(ctx, value)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return 0, false
+	}
+	return id, true
 }
 
 func writeStoreError(w http.ResponseWriter, err error) {

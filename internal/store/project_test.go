@@ -277,12 +277,12 @@ func TestClaimProjectClaimsUnclaimedProject(t *testing.T) {
 		t.Fatalf("CreateProject: %v", err)
 	}
 
-	got, err := s.ClaimProject(ctx, project.ID, "session-one")
+	got, err := s.ClaimProject(ctx, project.ID, testSessionID("session-one"))
 	if err != nil {
 		t.Fatalf("ClaimProject: %v", err)
 	}
-	if got.ClaimedBy != "session-one" {
-		t.Fatalf("ClaimedBy = %q, want %q", got.ClaimedBy, "session-one")
+	if got.ClaimedBy != testSessionID("session-one") {
+		t.Fatalf("ClaimedBy = %d, want %d", got.ClaimedBy, testSessionID("session-one"))
 	}
 	if got.ClaimedAt == nil {
 		t.Fatal("ClaimedAt is nil, want a claim timestamp")
@@ -296,7 +296,7 @@ func TestReleaseProjectClearsClaim(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateProject: %v", err)
 	}
-	if _, err := s.ClaimProject(ctx, project.ID, "session-one"); err != nil {
+	if _, err := s.ClaimProject(ctx, project.ID, testSessionID("session-one")); err != nil {
 		t.Fatalf("ClaimProject: %v", err)
 	}
 
@@ -307,8 +307,8 @@ func TestReleaseProjectClearsClaim(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveProject: %v", err)
 	}
-	if got.ClaimedBy != "" {
-		t.Fatalf("ClaimedBy = %q, want empty", got.ClaimedBy)
+	if got.ClaimedBy != 0 {
+		t.Fatalf("ClaimedBy = %d, want empty", got.ClaimedBy)
 	}
 	if got.ClaimedAt != nil {
 		t.Fatalf("ClaimedAt = %v, want nil", got.ClaimedAt)
@@ -322,19 +322,19 @@ func TestReleasedProjectCanBeClaimedByAnotherSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateProject: %v", err)
 	}
-	if _, err := s.ClaimProject(ctx, project.ID, "session-one"); err != nil {
+	if _, err := s.ClaimProject(ctx, project.ID, testSessionID("session-one")); err != nil {
 		t.Fatalf("first ClaimProject: %v", err)
 	}
 	if err := s.ReleaseProject(ctx, project.ID); err != nil {
 		t.Fatalf("ReleaseProject: %v", err)
 	}
 
-	got, err := s.ClaimProject(ctx, project.ID, "session-two")
+	got, err := s.ClaimProject(ctx, project.ID, testSessionID("session-two"))
 	if err != nil {
 		t.Fatalf("second ClaimProject: %v", err)
 	}
-	if got.ClaimedBy != "session-two" {
-		t.Fatalf("ClaimedBy = %q, want %q", got.ClaimedBy, "session-two")
+	if got.ClaimedBy != testSessionID("session-two") {
+		t.Fatalf("ClaimedBy = %d, want %d", got.ClaimedBy, testSessionID("session-two"))
 	}
 }
 
@@ -345,14 +345,15 @@ func TestClaimProjectRejectsSecondLiveSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateProject: %v", err)
 	}
-	if err := s.RegisterAgentSession(ctx, "live-session", os.Getpid()); err != nil {
+	liveID, err := s.RegisterAgentSession(ctx, os.Getpid())
+	if err != nil {
 		t.Fatalf("RegisterAgentSession: %v", err)
 	}
-	if _, err := s.ClaimProject(ctx, project.ID, "live-session"); err != nil {
+	if _, err := s.ClaimProject(ctx, project.ID, liveID); err != nil {
 		t.Fatalf("first ClaimProject: %v", err)
 	}
 
-	_, err = s.ClaimProject(ctx, project.ID, "other-session")
+	_, err = s.ClaimProject(ctx, project.ID, testSessionID("other-session"))
 	if !errors.Is(err, ErrProjectAlreadyClaimed) {
 		t.Fatalf("second ClaimProject error = %v, want ErrProjectAlreadyClaimed", err)
 	}
@@ -365,7 +366,7 @@ func TestClaimProjectTakesOverDeadSessionClaim(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateProject: %v", err)
 	}
-	if err := s.RegisterAgentSession(ctx, "live-session", os.Getpid()); err != nil {
+	if _, err := s.RegisterAgentSession(ctx, os.Getpid()); err != nil {
 		t.Fatalf("RegisterAgentSession live: %v", err)
 	}
 
@@ -379,7 +380,8 @@ func TestClaimProjectTakesOverDeadSessionClaim(t *testing.T) {
 			_ = deadProcess.Wait()
 		}
 	})
-	if err := s.RegisterAgentSession(ctx, "dead-session", deadProcess.Process.Pid); err != nil {
+	deadID, err := s.RegisterAgentSession(ctx, deadProcess.Process.Pid)
+	if err != nil {
 		t.Fatalf("RegisterAgentSession dead: %v", err)
 	}
 	if err := deadProcess.Process.Kill(); err != nil {
@@ -387,15 +389,15 @@ func TestClaimProjectTakesOverDeadSessionClaim(t *testing.T) {
 	}
 	_ = deadProcess.Wait()
 
-	if _, err := s.ClaimProject(ctx, project.ID, "dead-session"); err != nil {
+	if _, err := s.ClaimProject(ctx, project.ID, deadID); err != nil {
 		t.Fatalf("claim with dead session: %v", err)
 	}
-	got, err := s.ClaimProject(ctx, project.ID, "next-session")
+	got, err := s.ClaimProject(ctx, project.ID, testSessionID("next-session"))
 	if err != nil {
 		t.Fatalf("take over dead claim: %v", err)
 	}
-	if got.ClaimedBy != "next-session" {
-		t.Fatalf("ClaimedBy = %q, want %q", got.ClaimedBy, "next-session")
+	if got.ClaimedBy != testSessionID("next-session") {
+		t.Fatalf("ClaimedBy = %d, want %d", got.ClaimedBy, testSessionID("next-session"))
 	}
 }
 
@@ -414,15 +416,15 @@ func TestUnclaimedProjectIsReadableByListAndResolve(t *testing.T) {
 	if len(listed) != 1 {
 		t.Fatalf("ListProjects returned %d projects, want 1", len(listed))
 	}
-	if listed[0].ID != project.ID || listed[0].ClaimedBy != "" || listed[0].ClaimedAt != nil {
-		t.Fatalf("listed project = %#v, want unclaimed project %q", listed[0], project.ID)
+	if listed[0].ID != project.ID || listed[0].ClaimedBy != 0 || listed[0].ClaimedAt != nil {
+		t.Fatalf("listed project = %#v, want unclaimed project %d", listed[0], project.ID)
 	}
 
 	resolved, err := s.ResolveProject(ctx, project.RootPath)
 	if err != nil {
 		t.Fatalf("ResolveProject: %v", err)
 	}
-	if resolved.ID != project.ID || resolved.ClaimedBy != "" || resolved.ClaimedAt != nil {
-		t.Fatalf("resolved project = %#v, want unclaimed project %q", resolved, project.ID)
+	if resolved.ID != project.ID || resolved.ClaimedBy != 0 || resolved.ClaimedAt != nil {
+		t.Fatalf("resolved project = %#v, want unclaimed project %d", resolved, project.ID)
 	}
 }

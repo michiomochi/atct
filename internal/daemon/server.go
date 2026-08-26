@@ -13,7 +13,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/michiomochi/atct/internal/httpapi"
 	"github.com/michiomochi/atct/internal/mcpshim"
 	"github.com/michiomochi/atct/internal/rpc"
@@ -60,19 +59,20 @@ func (d *Daemon) newTracker() *wakeupTracker {
 func (d *Daemon) HTTPHandler() http.Handler {
 	api := httpapi.New(d.store).Handler()
 	mcpHandler := mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server {
-		agentSessionID := uuid.NewString()
 		client := mcpshim.NewClient(d.socketPath)
+		var registerResponse struct {
+			AgentSessionID int64 `json:"agent_session_id"`
+		}
 		if err := client.Call(r.Context(), "run.register", map[string]any{
-			"agent_session_id": agentSessionID,
-			"pid":              os.Getpid(),
-		}, nil); err != nil {
+			"pid": os.Getpid(),
+		}, &registerResponse); err != nil {
 			return nil
 		}
 
 		server := mcp.NewServer(&mcp.Implementation{Name: "atct", Version: d.version}, &mcp.ServerOptions{
 			Instructions: mcpshim.Instructions,
 		})
-		mcpshim.Register(server, client, agentSessionID)
+		mcpshim.Register(server, client, registerResponse.AgentSessionID)
 		return server
 	}, nil)
 	dist, err := fs.Sub(atctweb.Dist, "dist")

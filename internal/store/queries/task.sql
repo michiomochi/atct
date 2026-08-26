@@ -1,10 +1,11 @@
--- name: CreateTask :exec
+-- name: CreateTask :one
 INSERT INTO tasks (
-  id, goal_id, title, description, status, agent, files, sort_order, declare_key,
+  goal_id, title, description, status, agent, files, sort_order, declare_key,
   snoozed_until, created_at, updated_at
 )
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-ON CONFLICT(goal_id, declare_key) DO NOTHING;
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(goal_id, declare_key) DO UPDATE SET id = tasks.id
+RETURNING id;
 
 -- name: ListTasks :many
 SELECT
@@ -87,9 +88,10 @@ SELECT id
 FROM tasks
 WHERE id = ?;
 
--- name: RegisterAgentSession :exec
-INSERT OR IGNORE INTO agent_sessions (id, project_id, pid, started_at, registered_at)
-VALUES (?, NULL, ?, ?, ?);
+-- name: RegisterAgentSession :one
+INSERT INTO agent_sessions (project_id, pid, started_at, registered_at)
+VALUES (NULL, ?, ?, ?)
+RETURNING id;
 
 -- name: GetAgentSessionIDByKey :one
 SELECT id

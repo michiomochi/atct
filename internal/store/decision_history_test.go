@@ -17,14 +17,14 @@ func TestListAppliedDecisionsReturnsOnlyAppliedDecisionsForGoal(t *testing.T) {
 	applied := createAppliedHistoryDecision(t, s, goalID, "applied", time.Time{})
 	openTaskID := newTestDecisionTask(t, s, goalID, "history-open")
 	open, err := s.AskDecision(ctx, AskInput{
-		GoalID: goalID, TaskID: openTaskID, Kind: domain.KindDecision, Question: "open", AgentSessionID: "open-run",
+		GoalID: goalID, TaskID: openTaskID, Kind: domain.KindDecision, Question: "open", AgentSessionID: testSessionID("open-run"),
 	})
 	if err != nil {
 		t.Fatalf("AskDecision open: %v", err)
 	}
 	answeredTaskID := newTestDecisionTask(t, s, goalID, "history-answered")
 	answered, err := s.AskDecision(ctx, AskInput{
-		GoalID: goalID, TaskID: answeredTaskID, Kind: domain.KindDecision, Question: "answered", AgentSessionID: "answered-run",
+		GoalID: goalID, TaskID: answeredTaskID, Kind: domain.KindDecision, Question: "answered", AgentSessionID: testSessionID("answered-run"),
 	})
 	if err != nil {
 		t.Fatalf("AskDecision answered: %v", err)
@@ -53,11 +53,11 @@ func TestListAppliedDecisionsReturnsOnlyAppliedDecisionsForGoal(t *testing.T) {
 		t.Fatalf("omitted = %d, want 0", omitted)
 	}
 	if len(got) != 1 || got[0].ID != applied.ID {
-		t.Fatalf("applied decisions = %+v, want only %q", got, applied.ID)
+		t.Fatalf("applied decisions = %+v, want only %d", got, applied.ID)
 	}
 	for _, d := range got {
 		if d.ID == open.ID || d.ID == answered.ID {
-			t.Fatalf("non-applied decision %q was returned", d.ID)
+			t.Fatalf("non-applied decision %d was returned", d.ID)
 		}
 	}
 }
@@ -79,13 +79,13 @@ func TestListAppliedDecisionsReturnsNewestFirst(t *testing.T) {
 	if omitted != 0 {
 		t.Fatalf("omitted = %d, want 0", omitted)
 	}
-	wantIDs := []string{newest.ID, middle.ID, oldest.ID}
+	wantIDs := []int64{newest.ID, middle.ID, oldest.ID}
 	if len(got) != len(wantIDs) {
 		t.Fatalf("returned %d decisions, want %d", len(got), len(wantIDs))
 	}
 	for i, wantID := range wantIDs {
 		if got[i].ID != wantID {
-			t.Errorf("decision %d = %q, want %q", i, got[i].ID, wantID)
+			t.Errorf("decision %d = %d, want %d", i, got[i].ID, wantID)
 		}
 	}
 }
@@ -114,18 +114,19 @@ func TestListAppliedDecisionsLimitsToTwentyAndReportsOmittedCount(t *testing.T) 
 		t.Fatalf("omitted = %d, want 1", omitted)
 	}
 	if got[0].ID != created[20].ID {
-		t.Fatalf("first decision = %q, want newest %q", got[0].ID, created[20].ID)
+		t.Fatalf("first decision = %d, want newest %d", got[0].ID, created[20].ID)
 	}
 	if got[19].ID != created[1].ID {
-		t.Fatalf("last decision = %q, want %q", got[19].ID, created[1].ID)
+		t.Fatalf("last decision = %d, want %d", got[19].ID, created[1].ID)
 	}
 }
 
-func createAppliedHistoryDecision(t *testing.T, s *Store, goalID, question string, answeredAt time.Time) domain.Decision {
+func createAppliedHistoryDecision(t *testing.T, s *Store, goalID int64, question string, answeredAt time.Time) domain.Decision {
 	t.Helper()
 	ctx := context.Background()
-	agentSessionID := fmt.Sprintf("history-run-%s", question)
-	taskID := newTestDecisionTask(t, s, goalID, agentSessionID)
+	agentSessionLabel := fmt.Sprintf("history-run-%s", question)
+	agentSessionID := testSessionID(agentSessionLabel)
+	taskID := newTestDecisionTask(t, s, goalID, agentSessionLabel)
 	d, err := s.AskDecision(ctx, AskInput{
 		GoalID: goalID, TaskID: taskID, Kind: domain.KindDecision, Question: question, AgentSessionID: agentSessionID,
 	})
@@ -137,7 +138,7 @@ func createAppliedHistoryDecision(t *testing.T, s *Store, goalID, question strin
 	}); err != nil {
 		t.Fatalf("AnswerDecision %q: %v", question, err)
 	}
-	if _, err := s.PollDecisions(ctx, agentSessionID, ""); err != nil {
+	if _, err := s.PollDecisions(ctx, agentSessionID, 0); err != nil {
 		t.Fatalf("PollDecisions %q: %v", question, err)
 	}
 	if !answeredAt.IsZero() {

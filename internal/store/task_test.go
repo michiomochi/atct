@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -15,7 +16,7 @@ import (
 	"github.com/michiomochi/atct/internal/domain"
 )
 
-func newTestGoal(t *testing.T, s *Store) string {
+func newTestGoal(t *testing.T, s *Store) int64 {
 	t.Helper()
 	ctx := context.Background()
 	ns, err := s.CreateProject(ctx, "atct", "/repos/atct")
@@ -29,7 +30,7 @@ func newTestGoal(t *testing.T, s *Store) string {
 	return g.ID
 }
 
-func newOrderTestGoals(t *testing.T, s *Store) (string, string) {
+func newOrderTestGoals(t *testing.T, s *Store) (int64, int64) {
 	t.Helper()
 	ctx := context.Background()
 	ns, err := s.CreateProject(ctx, "atct-order", "/repos/atct-order")
@@ -47,7 +48,7 @@ func newOrderTestGoals(t *testing.T, s *Store) (string, string) {
 	return first.ID, second.ID
 }
 
-func declareOrderTestBatches(t *testing.T, s *Store, goalID string) {
+func declareOrderTestBatches(t *testing.T, s *Store, goalID int64) {
 	t.Helper()
 	ctx := context.Background()
 	firstTitles := []string{"Collect the requirements", "Implement the store change", "Verify the behavior"}
@@ -172,7 +173,7 @@ func TestListTasksUsesSortOrderAndIDAsTieBreakers(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	goalID := newTestGoal(t, s)
-	insertTask := func(id, title, declareKey string, sortOrder int, createdAt string) {
+	insertTask := func(id int64, title, declareKey string, sortOrder int, createdAt string) {
 		t.Helper()
 		_, err := s.DB().ExecContext(ctx, `
 INSERT INTO tasks (
@@ -182,23 +183,23 @@ INSERT INTO tasks (
 VALUES (?, ?, ?, ?, 'todo', '', '[]', ?, ?, ?, ?)`,
 			id, goalID, title, "Verify the stable sort-order ordering for this fixture.", sortOrder, declareKey, createdAt, createdAt)
 		if err != nil {
-			t.Fatalf("insert task %s: %v", id, err)
+			t.Fatalf("insert task %d: %v", id, err)
 		}
 	}
-	insertTask("task-sort-three", "sort three", "sort-three", 3, "2026-08-20T00:00:01Z")
-	insertTask("task-sort-zero", "sort zero", "sort-zero", 0, "2026-08-20T00:00:04Z")
-	insertTask("task-sort-two", "sort two", "sort-two", 2, "2026-08-20T00:00:03Z")
-	insertTask("task-sort-one", "sort one", "sort-one", 1, "2026-08-20T00:00:02Z")
+	insertTask(3, "sort three", "sort-three", 3, "2026-08-20T00:00:01Z")
+	insertTask(1, "sort zero", "sort-zero", 0, "2026-08-20T00:00:04Z")
+	insertTask(2, "sort two", "sort-two", 2, "2026-08-20T00:00:03Z")
+	insertTask(4, "sort one", "sort-one", 1, "2026-08-20T00:00:02Z")
 
 	tasks, err := s.ListTasks(ctx, goalID)
 	if err != nil {
 		t.Fatalf("ListTasks: %v", err)
 	}
-	got := make([]string, len(tasks))
+	got := make([]int64, len(tasks))
 	for i, task := range tasks {
 		got[i] = task.ID
 	}
-	want := []string{"task-sort-zero", "task-sort-one", "task-sort-two", "task-sort-three"}
+	want := []int64{1, 4, 2, 3}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("task IDs = %v, want %v", got, want)
 	}
@@ -327,7 +328,7 @@ func TestDeclareTasksIsIdempotent(t *testing.T) {
 		t.Fatalf("stored %d tasks after duplicate declare, want 3", len(all))
 	}
 	if all[0].ID != first[0].ID {
-		t.Fatalf("task id changed on re-declare: %s -> %s", first[0].ID, all[0].ID)
+		t.Fatalf("task id changed on re-declare: %d -> %d", first[0].ID, all[0].ID)
 	}
 }
 
@@ -447,7 +448,7 @@ func TestDeclareTasksListTasksJSONOmitsDeclared(t *testing.T) {
 	}
 }
 
-func declareOneTaskWithFiles(t *testing.T, s *Store, goalID, key, title string, files []string) string {
+func declareOneTaskWithFiles(t *testing.T, s *Store, goalID int64, key, title string, files []string) int64 {
 	t.Helper()
 	description := "Complete the task titled " + title + " and verify its declared files."
 	tasks, err := s.DeclareTasks(context.Background(), goalID, "codex", key, []string{title}, []string{description}, [][]string{files})
@@ -460,13 +461,13 @@ func declareOneTaskWithFiles(t *testing.T, s *Store, goalID, key, title string, 
 		}
 	}
 	t.Fatalf("DeclareTasks did not return task for key %q: %+v", key, tasks)
-	return ""
+	return 0
 }
 
-func setTaskContentStatus(t *testing.T, s *Store, taskID string, status domain.TaskStatus) {
+func setTaskContentStatus(t *testing.T, s *Store, taskID int64, status domain.TaskStatus) {
 	t.Helper()
 	if _, err := s.DB().ExecContext(context.Background(), "UPDATE tasks SET status = ? WHERE id = ?", string(status), taskID); err != nil {
-		t.Fatalf("set task %s status to %s: %v", taskID, status, err)
+		t.Fatalf("set task %d status to %s: %v", taskID, status, err)
 	}
 }
 
@@ -476,7 +477,7 @@ func TestUpdateTaskContentAllowsTodo(t *testing.T) {
 	firstID := declareOneTaskWithFiles(t, s, goalID, "content-todo-1", "first todo", nil)
 	secondID := declareOneTaskWithFiles(t, s, goalID, "content-todo-2", "second todo", nil)
 
-	wants := map[string]string{
+	wants := map[int64]string{
 		firstID:  "updated first todo description",
 		secondID: "updated second todo description",
 	}
@@ -484,7 +485,7 @@ func TestUpdateTaskContentAllowsTodo(t *testing.T) {
 		description := want
 		updated, err := s.UpdateTaskContent(context.Background(), taskID, nil, &description, nil)
 		if err != nil {
-			t.Fatalf("UpdateTaskContent(%s): %v", taskID, err)
+			t.Fatalf("UpdateTaskContent(%d): %v", taskID, err)
 		}
 		if updated.Description != want || updated.Status != domain.TaskTodo {
 			t.Fatalf("updated task = %+v, want description %q and status %q", updated, want, domain.TaskTodo)
@@ -500,7 +501,7 @@ func TestUpdateTaskContentAllowsDoing(t *testing.T) {
 	setTaskContentStatus(t, s, firstID, domain.TaskStatus("doing"))
 	setTaskContentStatus(t, s, secondID, domain.TaskStatus("doing"))
 
-	wants := map[string]string{
+	wants := map[int64]string{
 		firstID:  "updated first doing description",
 		secondID: "updated second doing description",
 	}
@@ -508,7 +509,7 @@ func TestUpdateTaskContentAllowsDoing(t *testing.T) {
 		description := want
 		updated, err := s.UpdateTaskContent(context.Background(), taskID, nil, &description, nil)
 		if err != nil {
-			t.Fatalf("UpdateTaskContent(%s): %v", taskID, err)
+			t.Fatalf("UpdateTaskContent(%d): %v", taskID, err)
 		}
 		if updated.Description != want || string(updated.Status) != "doing" {
 			t.Fatalf("updated task = %+v, want description %q and status doing", updated, want)
@@ -588,10 +589,10 @@ func TestUpdateTaskContentRejectsDone(t *testing.T) {
 	setTaskContentStatus(t, s, firstID, domain.TaskDone)
 	setTaskContentStatus(t, s, secondID, domain.TaskDone)
 
-	for _, taskID := range []string{firstID, secondID} {
+	for _, taskID := range []int64{firstID, secondID} {
 		title := "must not update"
 		if _, err := s.UpdateTaskContent(context.Background(), taskID, &title, nil, nil); !errors.Is(err, ErrTaskNotEditable) {
-			t.Fatalf("UpdateTaskContent(%s) error = %v, want ErrTaskNotEditable", taskID, err)
+			t.Fatalf("UpdateTaskContent(%d) error = %v, want ErrTaskNotEditable", taskID, err)
 		}
 	}
 }
@@ -604,10 +605,10 @@ func TestUpdateTaskContentRejectsDropped(t *testing.T) {
 	setTaskContentStatus(t, s, firstID, domain.TaskDropped)
 	setTaskContentStatus(t, s, secondID, domain.TaskDropped)
 
-	for _, taskID := range []string{firstID, secondID} {
+	for _, taskID := range []int64{firstID, secondID} {
 		title := "must not update"
 		if _, err := s.UpdateTaskContent(context.Background(), taskID, &title, nil, nil); !errors.Is(err, ErrTaskNotEditable) {
-			t.Fatalf("UpdateTaskContent(%s) error = %v, want ErrTaskNotEditable", taskID, err)
+			t.Fatalf("UpdateTaskContent(%d) error = %v, want ErrTaskNotEditable", taskID, err)
 		}
 	}
 }
@@ -623,14 +624,14 @@ func TestUpdateTaskContentErrorIncludesStatus(t *testing.T) {
 	if err == nil {
 		t.Fatal("UpdateTaskContent unexpectedly succeeded for done task")
 	}
-	if !strings.Contains(err.Error(), taskID) || !strings.Contains(err.Error(), "done") {
+	if !strings.Contains(err.Error(), fmt.Sprintf("%d", taskID)) || !strings.Contains(err.Error(), "done") {
 		t.Fatalf("UpdateTaskContent error = %q, want task ID and status done", err)
 	}
 }
 
 func TestUpdateTaskContentReturnsNotFound(t *testing.T) {
 	s := newTestStore(t)
-	missingID := "missing-task-id"
+	missingID := int64(0)
 	description := "updated description"
 
 	if _, err := s.UpdateTaskContent(context.Background(), missingID, nil, &description, nil); !errors.Is(err, ErrTaskNotFound) {
@@ -670,7 +671,7 @@ func TestDeclareTasksPersistsFiles(t *testing.T) {
 		t.Fatalf("ListTasks: %v", err)
 	}
 	if len(tasks) != 1 || tasks[0].ID != taskID {
-		t.Fatalf("ListTasks returned %+v, want task %s", tasks, taskID)
+		t.Fatalf("ListTasks returned %+v, want task %d", tasks, taskID)
 	}
 	if !reflect.DeepEqual(tasks[0].Files, want) {
 		t.Fatalf("task files = %#v, want %#v", tasks[0].Files, want)
@@ -685,10 +686,10 @@ func TestClaimTaskRejectsOverlappingFilesAcrossAgentSessions(t *testing.T) {
 	addTestAgentSession(t, s, "run-1")
 	addTestAgentSession(t, s, "run-2")
 
-	if _, err := s.ClaimTask(context.Background(), firstID, "run-1"); err != nil {
+	if _, err := s.ClaimTask(context.Background(), firstID, testSessionID("run-1")); err != nil {
 		t.Fatalf("first ClaimTask: %v", err)
 	}
-	if _, err := s.ClaimTask(context.Background(), secondID, "run-2"); !errors.Is(err, ErrTaskFileConflict) {
+	if _, err := s.ClaimTask(context.Background(), secondID, testSessionID("run-2")); !errors.Is(err, ErrTaskFileConflict) {
 		t.Fatalf("second ClaimTask error = %v, want ErrTaskFileConflict", err)
 	}
 }
@@ -701,10 +702,10 @@ func TestClaimTaskAllowsNonOverlappingFilesAcrossAgentSessions(t *testing.T) {
 	addTestAgentSession(t, s, "run-1")
 	addTestAgentSession(t, s, "run-2")
 
-	if _, err := s.ClaimTask(context.Background(), firstID, "run-1"); err != nil {
+	if _, err := s.ClaimTask(context.Background(), firstID, testSessionID("run-1")); err != nil {
 		t.Fatalf("first ClaimTask: %v", err)
 	}
-	if _, err := s.ClaimTask(context.Background(), secondID, "run-2"); err != nil {
+	if _, err := s.ClaimTask(context.Background(), secondID, testSessionID("run-2")); err != nil {
 		t.Fatalf("second ClaimTask: %v", err)
 	}
 }
@@ -716,10 +717,10 @@ func TestClaimTaskAllowsOverlappingFilesForSameAgentSession(t *testing.T) {
 	secondID := declareOneTaskWithFiles(t, s, goalID, "same-run-2", "second", []string{"internal/store/task.go"})
 	addTestAgentSession(t, s, "run-1")
 
-	if _, err := s.ClaimTask(context.Background(), firstID, "run-1"); err != nil {
+	if _, err := s.ClaimTask(context.Background(), firstID, testSessionID("run-1")); err != nil {
 		t.Fatalf("first ClaimTask: %v", err)
 	}
-	if _, err := s.ClaimTask(context.Background(), secondID, "run-1"); err != nil {
+	if _, err := s.ClaimTask(context.Background(), secondID, testSessionID("run-1")); err != nil {
 		t.Fatalf("same-run ClaimTask: %v", err)
 	}
 }
@@ -732,10 +733,10 @@ func TestClaimTaskIgnoresUndeclaredFiles(t *testing.T) {
 	addTestAgentSession(t, s, "run-1")
 	addTestAgentSession(t, s, "run-2")
 
-	if _, err := s.ClaimTask(context.Background(), firstID, "run-1"); err != nil {
+	if _, err := s.ClaimTask(context.Background(), firstID, testSessionID("run-1")); err != nil {
 		t.Fatalf("first ClaimTask: %v", err)
 	}
-	if _, err := s.ClaimTask(context.Background(), secondID, "run-2"); err != nil {
+	if _, err := s.ClaimTask(context.Background(), secondID, testSessionID("run-2")); err != nil {
 		t.Fatalf("second ClaimTask: %v", err)
 	}
 }
@@ -745,14 +746,10 @@ func TestClaimTaskUsesSelfHandoffWithoutWritingClaimedBy(t *testing.T) {
 	s := newTestStore(t)
 	goalID := newTestGoal(t, s)
 	taskID := declareOneTaskWithFiles(t, s, goalID, "self-handoff", "self handoff", nil)
-	const ownerID = "task-handoff-owner"
-	const nextOwnerID = "task-handoff-next-owner"
-	if err := s.RegisterAgentSession(ctx, ownerID, os.Getpid()); err != nil {
-		t.Fatalf("RegisterAgentSession(%s): %v", ownerID, err)
-	}
-	if err := s.RegisterAgentSession(ctx, nextOwnerID, os.Getpid()); err != nil {
-		t.Fatalf("RegisterAgentSession(%s): %v", nextOwnerID, err)
-	}
+	const ownerLabel = "task-handoff-owner"
+	const nextOwnerLabel = "task-handoff-next-owner"
+	ownerID := registerNamedTestAgentSession(t, s, ownerLabel, os.Getpid())
+	nextOwnerID := registerNamedTestAgentSession(t, s, nextOwnerLabel, os.Getpid())
 
 	if _, err := s.ClaimTask(ctx, taskID, ownerID); err != nil {
 		t.Fatalf("ClaimTask: %v", err)
@@ -765,7 +762,7 @@ func TestClaimTaskUsesSelfHandoffWithoutWritingClaimedBy(t *testing.T) {
 		t.Fatalf("task handoffs after claim = %d, want 1", len(handoffs))
 	}
 	if handoffs[0].RequestedBy != ownerID || handoffs[0].ReceivedBy != ownerID || handoffs[0].RequestedAt == nil || handoffs[0].ReceivedAt == nil || handoffs[0].CompletedReportAt != nil {
-		t.Fatalf("task self handoff = %+v, want received and open for %q", handoffs[0], ownerID)
+		t.Fatalf("task self handoff = %+v, want received and open for %q", handoffs[0], ownerLabel)
 	}
 
 	if _, err := s.ClaimTask(ctx, taskID, nextOwnerID); !errors.Is(err, ErrTaskAlreadyClaimed) {
@@ -802,7 +799,7 @@ func TestClaimTaskUsesSelfHandoffWithoutWritingClaimedBy(t *testing.T) {
 		}
 	}
 	if reclaimed == nil {
-		t.Fatalf("reclaimed task self handoff = %+v, want open for %q", handoffs, nextOwnerID)
+		t.Fatalf("reclaimed task self handoff = %+v, want open for %q", handoffs, nextOwnerLabel)
 	}
 }
 
@@ -810,14 +807,10 @@ func TestClaimGoalUsesSelfHandoffWithoutWritingClaimedBy(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	goalID := newTestGoal(t, s)
-	const ownerID = "goal-handoff-owner"
-	const nextOwnerID = "goal-handoff-next-owner"
-	if err := s.RegisterAgentSession(ctx, ownerID, os.Getpid()); err != nil {
-		t.Fatalf("RegisterAgentSession(%s): %v", ownerID, err)
-	}
-	if err := s.RegisterAgentSession(ctx, nextOwnerID, os.Getpid()); err != nil {
-		t.Fatalf("RegisterAgentSession(%s): %v", nextOwnerID, err)
-	}
+	const ownerLabel = "goal-handoff-owner"
+	const nextOwnerLabel = "goal-handoff-next-owner"
+	ownerID := registerNamedTestAgentSession(t, s, ownerLabel, os.Getpid())
+	nextOwnerID := registerNamedTestAgentSession(t, s, nextOwnerLabel, os.Getpid())
 
 	if _, err := s.ClaimGoal(ctx, goalID, ownerID); err != nil {
 		t.Fatalf("ClaimGoal: %v", err)
@@ -830,7 +823,7 @@ func TestClaimGoalUsesSelfHandoffWithoutWritingClaimedBy(t *testing.T) {
 		t.Fatalf("goal handoffs after claim = %d, want 1", len(handoffs))
 	}
 	if handoffs[0].RequestedBy != ownerID || handoffs[0].ReceivedBy != ownerID || handoffs[0].RequestedAt == nil || handoffs[0].ReceivedAt == nil || handoffs[0].CompletedReportAt != nil {
-		t.Fatalf("goal self handoff = %+v, want received and open for %q", handoffs[0], ownerID)
+		t.Fatalf("goal self handoff = %+v, want received and open for %q", handoffs[0], ownerLabel)
 	}
 
 	if _, err := s.ClaimGoal(ctx, goalID, nextOwnerID); !errors.Is(err, ErrGoalAlreadyClaimed) {
@@ -867,7 +860,7 @@ func TestClaimGoalUsesSelfHandoffWithoutWritingClaimedBy(t *testing.T) {
 		}
 	}
 	if reclaimed == nil {
-		t.Fatalf("reclaimed goal self handoff = %+v, want open for %q", handoffs, nextOwnerID)
+		t.Fatalf("reclaimed goal self handoff = %+v, want open for %q", handoffs, nextOwnerLabel)
 	}
 }
 
@@ -881,13 +874,13 @@ func TestClaimTaskIgnoresTerminalClaims(t *testing.T) {
 			addTestAgentSession(t, s, "run-owner")
 			addTestAgentSession(t, s, "run-candidate")
 
-			if _, err := s.ClaimTask(context.Background(), ownerID, "run-owner"); err != nil {
+			if _, err := s.ClaimTask(context.Background(), ownerID, testSessionID("run-owner")); err != nil {
 				t.Fatalf("owner ClaimTask: %v", err)
 			}
 			if _, err := s.DB().Exec(`UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?`, status, time.Now().UTC().Format(time.RFC3339Nano), ownerID); err != nil {
 				t.Fatalf("mark owner %s: %v", status, err)
 			}
-			if _, err := s.ClaimTask(context.Background(), candidateID, "run-candidate"); err != nil {
+			if _, err := s.ClaimTask(context.Background(), candidateID, testSessionID("run-candidate")); err != nil {
 				t.Fatalf("candidate ClaimTask: %v", err)
 			}
 		})
@@ -902,14 +895,14 @@ func TestClaimTaskConflictErrorNamesTaskAndFile(t *testing.T) {
 	addTestAgentSession(t, s, "run-owner")
 	addTestAgentSession(t, s, "run-candidate")
 
-	if _, err := s.ClaimTask(context.Background(), ownerID, "run-owner"); err != nil {
+	if _, err := s.ClaimTask(context.Background(), ownerID, testSessionID("run-owner")); err != nil {
 		t.Fatalf("owner ClaimTask: %v", err)
 	}
-	_, err := s.ClaimTask(context.Background(), candidateID, "run-candidate")
+	_, err := s.ClaimTask(context.Background(), candidateID, testSessionID("run-candidate"))
 	if !errors.Is(err, ErrTaskFileConflict) {
 		t.Fatalf("ClaimTask error = %v, want ErrTaskFileConflict", err)
 	}
-	for _, want := range []string{ownerID, "owner task", "internal/store/task.go"} {
+	for _, want := range []string{fmt.Sprintf("%d", ownerID), "owner task", "internal/store/task.go"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("ClaimTask error %q does not contain %q", err, want)
 		}
@@ -926,20 +919,20 @@ func TestClaimTaskConflictErrorReturnsClaimableCandidates(t *testing.T) {
 	addTestAgentSession(t, s, "run-owner")
 	addTestAgentSession(t, s, "run-target")
 
-	if _, err := s.ClaimTask(context.Background(), ownerID, "run-owner"); err != nil {
+	if _, err := s.ClaimTask(context.Background(), ownerID, testSessionID("run-owner")); err != nil {
 		t.Fatalf("owner ClaimTask: %v", err)
 	}
-	_, err := s.ClaimTask(context.Background(), targetID, "run-target")
+	_, err := s.ClaimTask(context.Background(), targetID, testSessionID("run-target"))
 	if !errors.Is(err, ErrTaskFileConflict) {
 		t.Fatalf("ClaimTask error = %v, want ErrTaskFileConflict", err)
 	}
-	for _, want := range []string{alternativeID, "safe alternative", "alternatives"} {
+	for _, want := range []string{fmt.Sprintf("%d", alternativeID), "safe alternative", "alternatives"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("ClaimTask error %q does not contain %q", err, want)
 		}
 	}
-	if strings.Contains(err.Error(), blockedID) {
-		t.Fatalf("ClaimTask error %q includes a conflicting alternative %s", err, blockedID)
+	if strings.Contains(err.Error(), fmt.Sprintf("%d", blockedID)) {
+		t.Fatalf("ClaimTask error %q includes a conflicting alternative %d", err, blockedID)
 	}
 }
 
@@ -953,21 +946,21 @@ func TestClaimTaskConflictCandidatesAreClaimable(t *testing.T) {
 	addTestAgentSession(t, s, "run-owner")
 	addTestAgentSession(t, s, "run-target")
 
-	if _, err := s.ClaimTask(context.Background(), ownerID, "run-owner"); err != nil {
+	if _, err := s.ClaimTask(context.Background(), ownerID, testSessionID("run-owner")); err != nil {
 		t.Fatalf("owner ClaimTask: %v", err)
 	}
-	_, err := s.ClaimTask(context.Background(), targetID, "run-target")
+	_, err := s.ClaimTask(context.Background(), targetID, testSessionID("run-target"))
 	if !errors.Is(err, ErrTaskFileConflict) {
 		t.Fatalf("ClaimTask error = %v, want ErrTaskFileConflict", err)
 	}
-	for _, want := range []string{fileAlternativeID, "file alternative", emptyAlternativeID, "empty alternative"} {
+	for _, want := range []string{fmt.Sprintf("%d", fileAlternativeID), "file alternative", fmt.Sprintf("%d", emptyAlternativeID), "empty alternative"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("ClaimTask error %q does not contain candidate %q", err, want)
 		}
 	}
-	for _, taskID := range []string{fileAlternativeID, emptyAlternativeID} {
-		if _, err := s.ClaimTask(context.Background(), taskID, "run-target"); err != nil {
-			t.Fatalf("candidate %s ClaimTask: %v", taskID, err)
+	for _, taskID := range []int64{fileAlternativeID, emptyAlternativeID} {
+		if _, err := s.ClaimTask(context.Background(), taskID, testSessionID("run-target")); err != nil {
+			t.Fatalf("candidate %d ClaimTask: %v", taskID, err)
 		}
 	}
 }
@@ -980,10 +973,10 @@ func TestClaimTaskConflictErrorReportsNoCandidates(t *testing.T) {
 	addTestAgentSession(t, s, "run-owner")
 	addTestAgentSession(t, s, "run-target")
 
-	if _, err := s.ClaimTask(context.Background(), ownerID, "run-owner"); err != nil {
+	if _, err := s.ClaimTask(context.Background(), ownerID, testSessionID("run-owner")); err != nil {
 		t.Fatalf("owner ClaimTask: %v", err)
 	}
-	_, err := s.ClaimTask(context.Background(), targetID, "run-target")
+	_, err := s.ClaimTask(context.Background(), targetID, testSessionID("run-target"))
 	if !errors.Is(err, ErrTaskFileConflict) {
 		t.Fatalf("ClaimTask error = %v, want ErrTaskFileConflict", err)
 	}
@@ -1027,18 +1020,18 @@ func TestOpenMigratesTasksFilesColumnWithoutLosingData(t *testing.T) {
 	}
 	defer s.Close()
 
-	tasks, err := s.ListTasks(context.Background(), "goal-old")
+	tasks, err := s.ListTasks(context.Background(), 1)
 	if err != nil {
 		t.Fatalf("ListTasks after migration: %v", err)
 	}
-	if len(tasks) != 1 || tasks[0].ID != "task-old" || tasks[0].Title != "old task" {
+	if len(tasks) != 1 || tasks[0].ID != 1 || tasks[0].Title != "old task" {
 		t.Fatalf("migrated tasks = %+v, want original task", tasks)
 	}
 	if len(tasks[0].Files) != 0 {
 		t.Fatalf("migrated task files = %#v, want empty", tasks[0].Files)
 	}
 	var storedFiles string
-	if err := s.DB().QueryRow(`SELECT files FROM tasks WHERE id = 'task-old'`).Scan(&storedFiles); err != nil {
+	if err := s.DB().QueryRow(`SELECT files FROM tasks WHERE id = 1`).Scan(&storedFiles); err != nil {
 		t.Fatalf("read migrated files column: %v", err)
 	}
 	if storedFiles != "[]" {
@@ -1049,13 +1042,13 @@ func TestOpenMigratesTasksFilesColumnWithoutLosingData(t *testing.T) {
 type taskStatusClaimFixture struct {
 	store      *Store
 	ctx        context.Context
-	taskID     string
-	goalID     string
-	projectID  string
-	holderID   string
-	otherID    string
-	peerID     string
-	strangerID string
+	taskID     int64
+	goalID     int64
+	projectID  int64
+	holderID   int64
+	otherID    int64
+	peerID     int64
+	strangerID int64
 }
 
 func newTaskStatusClaimFixture(t *testing.T, holderPID, otherPID int) taskStatusClaimFixture {
@@ -1078,31 +1071,34 @@ func newTaskStatusClaimFixture(t *testing.T, holderPID, otherPID int) taskStatus
 	if err != nil {
 		t.Fatalf("DeclareTasks: %v", err)
 	}
-	const holderID = "status-holder"
-	const otherID = "status-other"
-	const peerID = "status-peer"
-	const strangerID = "status-stranger"
+	const holderLabel = "status-holder"
+	const otherLabel = "status-other"
+	const peerLabel = "status-peer"
+	const strangerLabel = "status-stranger"
+	holderID := testSessionID(holderLabel)
+	otherID := testSessionID(otherLabel)
+	peerID := testSessionID(peerLabel)
+	strangerID := testSessionID(strangerLabel)
 	for _, session := range []struct {
-		id  string
-		pid int
+		label string
+		id    int64
+		pid   int
 	}{
-		{id: holderID, pid: holderPID},
-		{id: otherID, pid: otherPID},
-		{id: peerID, pid: os.Getpid()},
-		{id: strangerID, pid: os.Getpid()},
+		{label: holderLabel, id: holderID, pid: holderPID},
+		{label: otherLabel, id: otherID, pid: otherPID},
+		{label: peerLabel, id: peerID, pid: os.Getpid()},
+		{label: strangerLabel, id: strangerID, pid: os.Getpid()},
 	} {
-		if err := s.RegisterAgentSession(ctx, session.id, session.pid); err != nil {
-			t.Fatalf("RegisterAgentSession(%s): %v", session.id, err)
-		}
+		registerNamedTestAgentSession(t, s, session.label, session.pid)
 	}
 	if err := s.AssociateAgentSessionWithProject(ctx, holderID, project.ID); err != nil {
-		t.Fatalf("AssociateAgentSessionWithProject(%s): %v", holderID, err)
+		t.Fatalf("AssociateAgentSessionWithProject(%s): %v", holderLabel, err)
 	}
 	if err := s.AssociateAgentSessionWithProject(ctx, peerID, project.ID); err != nil {
-		t.Fatalf("AssociateAgentSessionWithProject(%s): %v", peerID, err)
+		t.Fatalf("AssociateAgentSessionWithProject(%s): %v", peerLabel, err)
 	}
 	if err := s.AssociateAgentSessionWithProject(ctx, strangerID, strangerProject.ID); err != nil {
-		t.Fatalf("AssociateAgentSessionWithProject(%s): %v", strangerID, err)
+		t.Fatalf("AssociateAgentSessionWithProject(%s): %v", strangerLabel, err)
 	}
 	if _, err := s.ClaimTask(ctx, tasks[0].ID, holderID); err != nil {
 		t.Fatalf("ClaimTask: %v", err)
@@ -1169,9 +1165,9 @@ func TestUpdateTaskErrorIncludesAllOpenDecisionIDs(t *testing.T) {
 	if err == nil {
 		t.Fatal("UpdateTask(done) succeeded with open decisions")
 	}
-	for _, id := range []string{first.ID, second.ID} {
-		if !strings.Contains(err.Error(), id) {
-			t.Fatalf("UpdateTask(done) error %q does not contain decision id %q", err, id)
+	for _, id := range []int64{first.ID, second.ID} {
+		if !strings.Contains(err.Error(), fmt.Sprintf("%d", id)) {
+			t.Fatalf("UpdateTask(done) error %q does not contain decision id %d", err, id)
 		}
 	}
 }
@@ -1221,15 +1217,15 @@ func TestUpdateTaskIgnoresOpenDecisionForOtherTask(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DeclareTasks: %v", err)
 	}
-	var otherTaskID string
+	var otherTaskID int64
 	for _, task := range otherTasks {
 		if task.ID != fixture.taskID {
 			otherTaskID = task.ID
 			break
 		}
 	}
-	if otherTaskID == "" {
-		t.Fatalf("DeclareTasks returned no task other than %s", fixture.taskID)
+	if otherTaskID == 0 {
+		t.Fatalf("DeclareTasks returned no task other than %d", fixture.taskID)
 	}
 	if _, err := fixture.store.AskDecision(fixture.ctx, AskInput{
 		GoalID:         fixture.goalID,
@@ -1371,7 +1367,7 @@ func TestUpdateTaskRejectsDoneForDifferentProjectCaller(t *testing.T) {
 func TestUpdateTaskRejectsTodoForEmptyCaller(t *testing.T) {
 	fixture := newTaskStatusClaimFixture(t, os.Getpid(), os.Getpid())
 
-	if _, err := fixture.store.UpdateTask(fixture.ctx, fixture.taskID, domain.TaskTodo, ""); err == nil {
+	if _, err := fixture.store.UpdateTask(fixture.ctx, fixture.taskID, domain.TaskTodo, 0); err == nil {
 		t.Fatal("UpdateTask(todo) succeeded for an empty agent session")
 	}
 }
@@ -1455,14 +1451,15 @@ func TestUpdateTaskAllowsStatusChangeForUnclaimedTask(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DeclareTasks: %v", err)
 	}
-	if err := s.RegisterAgentSession(ctx, "unclaimed-other", os.Getpid()); err != nil {
+	unclaimedID, err := s.RegisterAgentSession(ctx, os.Getpid())
+	if err != nil {
 		t.Fatalf("RegisterAgentSession: %v", err)
 	}
-	if err := s.AssociateAgentSessionWithProject(ctx, "unclaimed-other", project.ID); err != nil {
+	if err := s.AssociateAgentSessionWithProject(ctx, unclaimedID, project.ID); err != nil {
 		t.Fatalf("AssociateAgentSessionWithProject: %v", err)
 	}
 
-	updated, err := s.UpdateTask(ctx, tasks[0].ID, domain.TaskDone, "unclaimed-other")
+	updated, err := s.UpdateTask(ctx, tasks[0].ID, domain.TaskDone, unclaimedID)
 	if err != nil {
 		t.Fatalf("UpdateTask(done): %v", err)
 	}
@@ -1475,7 +1472,7 @@ func TestUpdateTaskAllowsStatusChangeForUnclaimedTask(t *testing.T) {
 	}
 }
 
-func newTaskCommitTestTask(t *testing.T, s *Store, key string) string {
+func newTaskCommitTestTask(t *testing.T, s *Store, key string) int64 {
 	t.Helper()
 	goalID := newTestGoal(t, s)
 	tasks, err := s.DeclareTasks(context.Background(), goalID, "agent", key, []string{"Task"}, []string{"Task description"})
@@ -1560,7 +1557,7 @@ func TestLinkTaskCommitRejectsMissingTask(t *testing.T) {
 		Subject:   "missing task",
 		CreatedAt: time.Date(2026, 8, 21, 3, 0, 0, 0, time.UTC),
 	}
-	if err := newTestStore(t).LinkTaskCommit(context.Background(), "missing-task", c); err == nil {
+	if err := newTestStore(t).LinkTaskCommit(context.Background(), 0, c); err == nil {
 		t.Fatal("LinkTaskCommit succeeded for a missing task")
 	}
 }

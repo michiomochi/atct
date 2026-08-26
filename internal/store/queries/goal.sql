@@ -1,11 +1,12 @@
--- name: CreateGoal :exec
+-- name: CreateGoal :one
 INSERT INTO goals (
-  id, project_id, derived_from_goal_id, content, status, creator,
+  project_id, derived_from_goal_id, content, status, creator,
   result_summary,
   work_done, now_possible, how_to_verify, surprises, needs_review, next_steps,
   created_at, updated_at
 )
-VALUES (?, ?, ?, ?, ?, ?, '', '', '', '', '', '', '', ?, ?);
+VALUES (?, ?, ?, ?, ?, '', '', '', '', '', '', '', ?, ?)
+RETURNING id;
 
 -- name: GetGoal :one
 SELECT

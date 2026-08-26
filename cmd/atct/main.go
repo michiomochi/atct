@@ -655,7 +655,7 @@ func runHandoff(config cliConfig, dir, exePath string) error {
 	}, &handoff); err != nil {
 		return err
 	}
-	fmt.Fprintf(os.Stderr, "atct handoff: task %s reported complete\n", handoff.TaskID)
+	fmt.Fprintf(os.Stderr, "atct handoff: task %d reported complete\n", handoff.TaskID)
 	return nil
 }
 

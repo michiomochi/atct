@@ -43,19 +43,14 @@ func Open(path string) (*Store, error) {
 	return &Store{db: db, notify: newNotifier()}, nil
 }
 
-func requireAgentSessionID(agentSessionID string) (string, error) {
-	agentSessionID = strings.TrimSpace(agentSessionID)
-	if agentSessionID == "" {
-		return "", fmt.Errorf("agent_session_id is required")
+func requireAgentSessionID(agentSessionID int64) (int64, error) {
+	if agentSessionID <= 0 {
+		return 0, fmt.Errorf("agent_session_id is required")
 	}
 	return agentSessionID, nil
 }
 
-func (s *Store) RegisterAgentSession(ctx context.Context, agentSessionID string, pid int) error {
-	agentSessionID, err := requireAgentSessionID(agentSessionID)
-	if err != nil {
-		return err
-	}
+func (s *Store) RegisterAgentSession(ctx context.Context, pid int) (int64, error) {
 	storedPID := 0
 	startedAt := ""
 	if actualStartedAt, err := processStartedAt(pid); err == nil {
@@ -66,36 +61,36 @@ func (s *Store) RegisterAgentSession(ctx context.Context, agentSessionID string,
 	registeredAt := now.Format(time.RFC3339Nano)
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("begin agent session registration: %w", err)
+		return 0, fmt.Errorf("begin agent session registration: %w", err)
 	}
 	defer tx.Rollback()
 
 	queries := sqlcgen.New(s.db).WithTx(tx)
-	if err := queries.RegisterAgentSession(ctx, sqlcgen.RegisterAgentSessionParams{
-		ID:           agentSessionID,
+	agentSessionID, err := queries.RegisterAgentSession(ctx, sqlcgen.RegisterAgentSessionParams{
 		Pid:          int64(storedPID),
 		StartedAt:    startedAt,
 		RegisteredAt: registeredAt,
-	}); err != nil {
-		return fmt.Errorf("register agent session: %w", err)
+	})
+	if err != nil {
+		return 0, fmt.Errorf("register agent session: %w", err)
 	}
 	if err := queries.DeleteExpiredAgentSessions(ctx, now.Add(-agentSessionRetention).Format(time.RFC3339Nano)); err != nil {
-		return fmt.Errorf("clean up old agent sessions: %w", err)
+		return 0, fmt.Errorf("clean up old agent sessions: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit agent session registration: %w", err)
+		return 0, fmt.Errorf("commit agent session registration: %w", err)
 	}
-	return nil
+	return agentSessionID, nil
 }
 
-func (s *Store) IdentifyAgentSession(ctx context.Context, agentSessionID, sessionKey string) (canonicalID string, reattached bool, err error) {
+func (s *Store) IdentifyAgentSession(ctx context.Context, agentSessionID int64, sessionKey string) (canonicalID int64, reattached bool, err error) {
 	sessionKey = strings.TrimSpace(sessionKey)
 	if sessionKey == "" {
-		return "", false, fmt.Errorf("session_key is required")
+		return 0, false, fmt.Errorf("session_key is required")
 	}
 	agentSessionID, err = requireAgentSessionID(agentSessionID)
 	if err != nil {
-		return "", false, err
+		return 0, false, err
 	}
 
 	storedPID := 0
@@ -108,63 +103,64 @@ func (s *Store) IdentifyAgentSession(ctx context.Context, agentSessionID, sessio
 	registeredAt := now.Format(time.RFC3339Nano)
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return "", false, fmt.Errorf("begin agent session identification: %w", err)
+		return 0, false, fmt.Errorf("begin agent session identification: %w", err)
 	}
 	defer tx.Rollback()
 
 	queries := sqlcgen.New(s.db).WithTx(tx)
-	if err := queries.RegisterAgentSession(ctx, sqlcgen.RegisterAgentSessionParams{
-		ID:           agentSessionID,
-		Pid:          int64(storedPID),
-		StartedAt:    startedAt,
-		RegisteredAt: registeredAt,
-	}); err != nil {
-		return "", false, fmt.Errorf("register agent session for identification: %w", err)
+	if _, err := queries.GetAgentSessionLiveness(ctx, agentSessionID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return 0, false, fmt.Errorf("agent session %d is not registered: %w", agentSessionID, ErrAgentSessionNotRegistered)
+		}
+		return 0, false, fmt.Errorf("find agent session for identification: %w", err)
 	}
 
 	canonicalID = agentSessionID
 	existingID, lookupErr := queries.GetAgentSessionIDByKey(ctx, sessionKey)
-	if lookupErr == nil && existingID != agentSessionID {
+	if lookupErr == nil {
 		canonicalID = existingID
-		reattached = true
+		reattached = existingID != agentSessionID
 		if err := queries.UpdateAgentSessionProcessIdentity(ctx, sqlcgen.UpdateAgentSessionProcessIdentityParams{
 			Pid:          int64(storedPID),
 			StartedAt:    startedAt,
 			RegisteredAt: registeredAt,
 			ID:           canonicalID,
 		}); err != nil {
-			return "", false, fmt.Errorf("update canonical agent session identity: %w", err)
+			return 0, false, fmt.Errorf("update canonical agent session identity: %w", err)
 		}
-	} else if errors.Is(lookupErr, sql.ErrNoRows) || lookupErr == nil {
+	} else if errors.Is(lookupErr, sql.ErrNoRows) {
 		if err := queries.UpdateAgentSessionKey(ctx, sqlcgen.UpdateAgentSessionKeyParams{
 			SessionKey: sessionKey,
 			ID:         agentSessionID,
 		}); err != nil {
-			return "", false, fmt.Errorf("set agent session key: %w", err)
+			return 0, false, fmt.Errorf("set agent session key: %w", err)
+		}
+		if err := queries.UpdateAgentSessionProcessIdentity(ctx, sqlcgen.UpdateAgentSessionProcessIdentityParams{
+			Pid:          int64(storedPID),
+			StartedAt:    startedAt,
+			RegisteredAt: registeredAt,
+			ID:           agentSessionID,
+		}); err != nil {
+			return 0, false, fmt.Errorf("update agent session identity: %w", err)
 		}
 	} else {
-		return "", false, fmt.Errorf("find agent session by key: %w", lookupErr)
+		return 0, false, fmt.Errorf("find agent session by key: %w", lookupErr)
 	}
 
 	if err := tx.Commit(); err != nil {
-		return "", false, fmt.Errorf("commit agent session identification: %w", err)
+		return 0, false, fmt.Errorf("commit agent session identification: %w", err)
 	}
 	return canonicalID, reattached, nil
 }
 
-func (s *Store) AssociateAgentSessionWithProject(ctx context.Context, agentSessionID, projectID string) error {
+func (s *Store) AssociateAgentSessionWithProject(ctx context.Context, agentSessionID int64, projectID int64) error {
 	agentSessionID, err := requireAgentSessionID(agentSessionID)
 	if err != nil {
 		return err
 	}
-	projectID = strings.TrimSpace(projectID)
-	if projectID == "" {
-		return fmt.Errorf("project_id is required")
-	}
-	projectIDValue := sql.NullString{String: projectID, Valid: true}
+	projectIDNullable := sql.NullInt64{Int64: projectID, Valid: true}
 
 	now := time.Now().UTC()
-	registeredAt := now.Format(time.RFC3339Nano)
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin agent session association: %w", err)
@@ -173,7 +169,7 @@ func (s *Store) AssociateAgentSessionWithProject(ctx context.Context, agentSessi
 
 	queries := sqlcgen.New(s.db).WithTx(tx)
 	result, err := queries.UpdateAgentSessionProject(ctx, sqlcgen.UpdateAgentSessionProjectParams{
-		ProjectID: projectIDValue,
+		ProjectID: projectIDNullable,
 		ID:        agentSessionID,
 	})
 	if err != nil {
@@ -184,13 +180,7 @@ func (s *Store) AssociateAgentSessionWithProject(ctx context.Context, agentSessi
 		return fmt.Errorf("inspect agent session association: %w", err)
 	}
 	if affected == 0 {
-		if err := queries.InsertAgentSessionAssociation(ctx, sqlcgen.InsertAgentSessionAssociationParams{
-			ID:           agentSessionID,
-			ProjectID:    projectIDValue,
-			RegisteredAt: registeredAt,
-		}); err != nil {
-			return fmt.Errorf("insert associated agent session: %w", err)
-		}
+		return fmt.Errorf("agent session %d is not registered: %w", agentSessionID, ErrAgentSessionNotRegistered)
 	}
 
 	if err := queries.DeleteExpiredAgentSessionsExcept(ctx, sqlcgen.DeleteExpiredAgentSessionsExceptParams{
@@ -205,20 +195,19 @@ func (s *Store) AssociateAgentSessionWithProject(ctx context.Context, agentSessi
 	return nil
 }
 
-func (s *Store) LatestAgentSessionID(ctx context.Context, projectID string) (string, error) {
-	projectID = strings.TrimSpace(projectID)
-	if projectID == "" {
-		return "", fmt.Errorf("project_id is required")
-	}
+func (s *Store) LatestAgentSessionID(ctx context.Context, projectID int64) (int64, error) {
+	id := projectID
 
-	var agentSessionID string
-	var err error
-	agentSessionID, err = sqlcgen.New(s.db).GetLatestAgentSessionID(ctx, sql.NullString{String: projectID, Valid: true})
+	var (
+		agentSessionID int64
+		err            error
+	)
+	agentSessionID, err = sqlcgen.New(s.db).GetLatestAgentSessionID(ctx, sql.NullInt64{Int64: id, Valid: true})
 	if errors.Is(err, sql.ErrNoRows) {
-		return "", nil
+		return 0, nil
 	}
 	if err != nil {
-		return "", fmt.Errorf("find latest agent session: %w", err)
+		return 0, fmt.Errorf("find latest agent session: %w", err)
 	}
 	return agentSessionID, nil
 }

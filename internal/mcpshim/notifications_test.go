@@ -15,17 +15,17 @@ import (
 
 func TestGoalListResponseIncludesUnappliedDecisions(t *testing.T) {
 	result := callNotificationTestTool(t, "atct_goal_list", map[string]any{"cwd": "/tmp"},
-		`{"data":{"goals":[]},"unapplied_decisions":[{"decision_id":"decision-1","question":"Choose the deployment strategy"}]}`)
+		`{"data":{"goals":[]},"unapplied_decisions":[{"decision_id":1,"question":"Choose the deployment strategy"}]}`)
 
 	var notices []struct {
-		DecisionID string `json:"decision_id"`
+		DecisionID int64  `json:"decision_id"`
 		Question   string `json:"question"`
 	}
 	if err := json.Unmarshal(result["unapplied_decisions"], &notices); err != nil {
 		t.Fatalf("unmarshal unapplied_decisions: %v", err)
 	}
-	if len(notices) != 1 || notices[0].DecisionID != "decision-1" || notices[0].Question != "Choose the deployment strategy" {
-		t.Fatalf("unapplied_decisions = %s, want decision-1 with question", result["unapplied_decisions"])
+	if len(notices) != 1 || notices[0].DecisionID != 1 || notices[0].Question != "Choose the deployment strategy" {
+		t.Fatalf("unapplied_decisions = %s, want decision 1 with question", result["unapplied_decisions"])
 	}
 	if got := string(result["data"]); got != `{"goals":[]}` {
 		t.Fatalf("data = %s, want existing payload unchanged", got)
@@ -34,17 +34,17 @@ func TestGoalListResponseIncludesUnappliedDecisions(t *testing.T) {
 
 func TestTaskClaimResponseIncludesUnappliedDecisions(t *testing.T) {
 	result := callNotificationTestTool(t, "atct_task_claim", map[string]any{"task_id": "task-1"},
-		`{"data":{"id":"task-1","status":"doing"},"unapplied_decisions":[{"decision_id":"decision-2","question":"Which owner should take this task?"}]}`)
+		`{"data":{"id":"task-1","status":"doing"},"unapplied_decisions":[{"decision_id":2,"question":"Which owner should take this task?"}]}`)
 
 	var notices []struct {
-		DecisionID string `json:"decision_id"`
+		DecisionID int64  `json:"decision_id"`
 		Question   string `json:"question"`
 	}
 	if err := json.Unmarshal(result["unapplied_decisions"], &notices); err != nil {
 		t.Fatalf("unmarshal unapplied_decisions: %v", err)
 	}
-	if len(notices) != 1 || notices[0].DecisionID != "decision-2" || notices[0].Question != "Which owner should take this task?" {
-		t.Fatalf("unapplied_decisions = %s, want decision-2 with question", result["unapplied_decisions"])
+	if len(notices) != 1 || notices[0].DecisionID != 2 || notices[0].Question != "Which owner should take this task?" {
+		t.Fatalf("unapplied_decisions = %s, want decision 2 with question", result["unapplied_decisions"])
 	}
 	if got := string(result["data"]); got != `{"id":"task-1","status":"doing"}` {
 		t.Fatalf("data = %s, want existing payload unchanged", got)
@@ -62,17 +62,17 @@ func TestAdditionalToolResponsesIncludeUnappliedDecisions(t *testing.T) {
 		"atct_goal_set_derived_from",
 	} {
 		result := callNotificationTestTool(t, name, notificationTestArgs(name),
-			`{"data":{"ok":true},"unapplied_decisions":[{"decision_id":"decision-3","question":"Which option should be used?"}]}`)
+			`{"data":{"ok":true},"unapplied_decisions":[{"decision_id":3,"question":"Which option should be used?"}]}`)
 
 		var notices []struct {
-			DecisionID string `json:"decision_id"`
+			DecisionID int64  `json:"decision_id"`
 			Question   string `json:"question"`
 		}
 		if err := json.Unmarshal(result["unapplied_decisions"], &notices); err != nil {
 			t.Fatalf("%s: unmarshal unapplied_decisions: %v", name, err)
 		}
-		if len(notices) != 1 || notices[0].DecisionID != "decision-3" || notices[0].Question != "Which option should be used?" {
-			t.Fatalf("%s: unapplied_decisions = %s, want decision-3 with question", name, result["unapplied_decisions"])
+		if len(notices) != 1 || notices[0].DecisionID != 3 || notices[0].Question != "Which option should be used?" {
+			t.Fatalf("%s: unapplied_decisions = %s, want decision 3 with question", name, result["unapplied_decisions"])
 		}
 		if got := string(result["data"]); got != `{"ok":true}` {
 			t.Fatalf("%s: data = %s, want existing payload unchanged", name, got)
@@ -198,7 +198,7 @@ func callNotificationTestToolWithResponses(t *testing.T, name string, args map[s
 	t.Helper()
 	socketPath := startNotificationTestDaemonWithResponses(t, responses...)
 	server := mcp.NewServer(&mcp.Implementation{Name: "atct-test", Version: "test"}, nil)
-	Register(server, NewClient(socketPath), "run-1")
+	Register(server, NewClient(socketPath), 1)
 
 	clientTransport, serverTransport := mcp.NewInMemoryTransports()
 	serverSession, err := server.Connect(context.Background(), serverTransport, nil)

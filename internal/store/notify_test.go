@@ -15,7 +15,7 @@ func TestWaitForAnswerReturnsWhenAnswered(t *testing.T) {
 	taskID := newTestDecisionTask(t, s, goalID, "notify-answer")
 
 	d, err := s.AskDecision(ctx, AskInput{
-		GoalID: goalID, TaskID: taskID, Kind: domain.KindDecision, Question: "What should we do?", AgentSessionID: "run-1",
+		GoalID: goalID, TaskID: taskID, Kind: domain.KindDecision, Question: "What should we do?", AgentSessionID: testSessionID("run-1"),
 	})
 	if err != nil {
 		t.Fatalf("AskDecision: %v", err)
@@ -49,7 +49,7 @@ func TestWaitForAnswerParksOnTimeout(t *testing.T) {
 	taskID := newTestDecisionTask(t, s, goalID, "notify-timeout")
 
 	d, err := s.AskDecision(ctx, AskInput{
-		GoalID: goalID, TaskID: taskID, Kind: domain.KindDecision, Question: "What should we do?", AgentSessionID: "run-1",
+		GoalID: goalID, TaskID: taskID, Kind: domain.KindDecision, Question: "What should we do?", AgentSessionID: testSessionID("run-1"),
 	})
 	if err != nil {
 		t.Fatalf("AskDecision: %v", err)
@@ -90,7 +90,7 @@ func TestCreateGoalPublishesGoalCreatedEventForHuman(t *testing.T) {
 		t.Fatalf("event data type = %T, want domain.Goal", event.Data)
 	}
 	if goal.ID != created.ID {
-		t.Fatalf("event goal id = %q, want %q", goal.ID, created.ID)
+		t.Fatalf("event goal id = %d, want %d", goal.ID, created.ID)
 	}
 	assertNoGoalCreatedEvent(t, events)
 }
@@ -124,7 +124,7 @@ func TestCreateGoalPublishesGoalCreatedEventForAgent(t *testing.T) {
 				t.Fatalf("event data type = %T, want domain.Goal", event.Data)
 			}
 			if goal.ID != created.ID {
-				t.Fatalf("event goal id = %q, want %q", goal.ID, created.ID)
+				t.Fatalf("event goal id = %d, want %d", goal.ID, created.ID)
 			}
 		case "decision.created":
 			decisionEvents++
@@ -151,7 +151,7 @@ func TestAskDecisionDoesNotPublishGoalCreatedEvent(t *testing.T) {
 	defer cancel()
 
 	if _, err := s.AskDecision(ctx, AskInput{
-		GoalID: goalID, TaskID: taskID, Kind: domain.KindDecision, Question: "What should we do?", AgentSessionID: "run-1",
+		GoalID: goalID, TaskID: taskID, Kind: domain.KindDecision, Question: "What should we do?", AgentSessionID: testSessionID("run-1"),
 	}); err != nil {
 		t.Fatalf("AskDecision: %v", err)
 	}

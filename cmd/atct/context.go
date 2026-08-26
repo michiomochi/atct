@@ -15,7 +15,7 @@ import (
 type contextGoal struct {
 	Goal         domain.Goal
 	Tasks        []domain.Task
-	TaskHandoffs map[string]*store.TaskHandoff
+	TaskHandoffs map[int64]*store.TaskHandoff
 }
 
 type contextSnapshot struct {
@@ -93,7 +93,7 @@ func contextBriefTextForProject(dir, cwd, projectName string, projectSpecified b
 		activeGoals++
 		tasks, err := s.ListTasks(ctx, goal.ID)
 		if err != nil {
-			return "", fmt.Errorf("list tasks for goal %s: %w", goal.ID, err)
+			return "", fmt.Errorf("list tasks for goal %d: %w", goal.ID, err)
 		}
 		for _, task := range tasks {
 			if task.Status == domain.TaskTodo {
@@ -102,7 +102,7 @@ func contextBriefTextForProject(dir, cwd, projectName string, projectSpecified b
 		}
 		decisions, err := s.ListOpenDecisions(ctx, goal.ID)
 		if err != nil {
-			return "", fmt.Errorf("list open decisions for goal %s: %w", goal.ID, err)
+			return "", fmt.Errorf("list open decisions for goal %d: %w", goal.ID, err)
 		}
 		waitingAnswers += len(decisions)
 	}
@@ -116,15 +116,10 @@ func contextBriefTextForProject(dir, cwd, projectName string, projectSpecified b
 // briefCommander reports the project claim holder because -brief reads the
 // store directly and has no session identity with which to derive a role.
 func briefCommander(project domain.Project) string {
-	claimedBy := strings.TrimSpace(project.ClaimedBy)
-	if claimedBy == "" {
+	if project.ClaimedBy == 0 {
 		return "absent"
 	}
-	runes := []rune(claimedBy)
-	if len(runes) > 8 {
-		return string(runes[:8]) + "…"
-	}
-	return claimedBy
+	return fmt.Sprintf("%d", project.ClaimedBy)
 }
 
 func loadContextSnapshot(dir, cwd string) (contextSnapshot, error) {
@@ -163,18 +158,18 @@ func loadContextSnapshotForProject(dir, cwd, projectName string, projectSpecifie
 		return contextSnapshot{}, fmt.Errorf("list goals: %w", err)
 	}
 	active := make([]contextGoal, 0, len(goals))
-	activeIDs := make(map[string]bool)
+	activeIDs := make(map[int64]bool)
 	for _, goal := range goals {
 		if goal.Status != domain.GoalActive {
 			continue
 		}
 		tasks, err := s.ListTasks(ctx, goal.ID)
 		if err != nil {
-			return contextSnapshot{}, fmt.Errorf("list tasks for goal %s: %w", goal.ID, err)
+			return contextSnapshot{}, fmt.Errorf("list tasks for goal %d: %w", goal.ID, err)
 		}
 		taskHandoffs, err := s.ListOpenTaskHandoffsForGoal(ctx, goal.ID)
 		if err != nil {
-			return contextSnapshot{}, fmt.Errorf("list open task handoffs for goal %s: %w", goal.ID, err)
+			return contextSnapshot{}, fmt.Errorf("list open task handoffs for goal %d: %w", goal.ID, err)
 		}
 		active = append(active, contextGoal{Goal: goal, Tasks: tasks, TaskHandoffs: taskHandoffs})
 		activeIDs[goal.ID] = true
@@ -245,7 +240,7 @@ func contextNeedsWakeup(snapshot contextSnapshot) bool {
 			return true
 		}
 		for _, task := range item.Tasks {
-			if task.Status == domain.TaskTodo && contextTaskHandoffOwner(item.TaskHandoffs[task.ID]) == "" {
+			if task.Status == domain.TaskTodo && contextTaskHandoffOwner(item.TaskHandoffs[task.ID]) == 0 {
 				return true
 			}
 		}
@@ -253,14 +248,14 @@ func contextNeedsWakeup(snapshot contextSnapshot) bool {
 	return false
 }
 
-func contextTaskHandoffOwner(handoff *store.TaskHandoff) string {
+func contextTaskHandoffOwner(handoff *store.TaskHandoff) int64 {
 	if handoff == nil {
-		return ""
+		return 0
 	}
-	if owner := strings.TrimSpace(handoff.ReceivedBy); owner != "" {
+	if owner := handoff.ReceivedBy; owner != 0 {
 		return owner
 	}
-	return strings.TrimSpace(handoff.RequestedBy)
+	return handoff.RequestedBy
 }
 
 func runContext(dir string) error {
@@ -318,7 +313,7 @@ func runContextCheckForProject(dir, projectName string, projectSpecified bool) e
 
 func renderContextLegacy(goals []contextGoal, decisions []domain.Decision) string {
 	active := make([]contextGoal, 0, len(goals))
-	activeIDs := make(map[string]bool)
+	activeIDs := make(map[int64]bool)
 	for _, goal := range goals {
 		if goal.Goal.Status != domain.GoalActive {
 			continue
@@ -339,14 +334,14 @@ func renderContextLegacy(goals []contextGoal, decisions []domain.Decision) strin
 		if body := oneLine(domain.Body(item.Goal.Content)); body != "" {
 			fmt.Fprintf(&b, "Description: %s\n", body)
 		}
-		fmt.Fprintf(&b, "goal_id: %s\n", oneLine(item.Goal.ID))
+		fmt.Fprintf(&b, "goal_id: %d\n", item.Goal.ID)
 		b.WriteString("Tasks:\n")
 		listed := 0
 		for _, task := range item.Tasks {
 			if task.Status != domain.TaskTodo && task.Status != domain.TaskDoing {
 				continue
 			}
-			fmt.Fprintf(&b, "- [%s] %s (task_id: %s)\n", task.Status, oneLine(task.Title), oneLine(task.ID))
+			fmt.Fprintf(&b, "- [%s] %s (task_id: %d)\n", task.Status, oneLine(task.Title), task.ID)
 			listed++
 			if task.Status == domain.TaskTodo {
 				claimTasks = true
@@ -371,7 +366,7 @@ func renderContextLegacy(goals []contextGoal, decisions []domain.Decision) strin
 	if len(filteredDecisions) > 0 {
 		b.WriteString("Unapplied decisions:\n")
 		for _, decision := range filteredDecisions {
-			fmt.Fprintf(&b, "- %s (decision_id: %s)\n", oneLine(decision.Question), oneLine(decision.ID))
+			fmt.Fprintf(&b, "- %s (decision_id: %d)\n", oneLine(decision.Question), decision.ID)
 			answer := strings.TrimSpace(strings.Join([]string{decision.AnswerLabel, decision.AnswerText}, " - "))
 			if answer != "-" && answer != "" {
 				fmt.Fprintf(&b, "  answer: %s%s\n", oneLine(answer), decisionAnswerMarker(decision))
@@ -399,14 +394,12 @@ func renderContext(goals []contextGoal, decisions []domain.Decision) string {
 	return renderContextForAgentSession(goals, decisions, currentAgentSessionID())
 }
 
-func renderContextForAgentSession(goals []contextGoal, decisions []domain.Decision, agentSessionID string) string {
+func renderContextForAgentSession(goals []contextGoal, decisions []domain.Decision, agentSessionID int64) string {
 	const (
 		maxTasks = 5
 	)
-	agentSessionID = strings.TrimSpace(agentSessionID)
-
 	active := make([]contextGoal, 0, len(goals))
-	activeIDs := make(map[string]struct{}, len(goals))
+	activeIDs := make(map[int64]struct{}, len(goals))
 	for _, item := range goals {
 		if item.Goal.Status != domain.GoalActive {
 			continue
@@ -452,7 +445,7 @@ func renderContextForAgentSession(goals []contextGoal, decisions []domain.Decisi
 		if body != "" {
 			fmt.Fprintf(&b, "Description: %s\n", body)
 		}
-		fmt.Fprintf(&b, "goal_id: %s\n", item.Goal.ID)
+		fmt.Fprintf(&b, "goal_id: %d\n", item.Goal.ID)
 		b.WriteString("Tasks:\n")
 
 		actionable := actionableTasks(item.Tasks)
@@ -462,13 +455,13 @@ func renderContextForAgentSession(goals []contextGoal, decisions []domain.Decisi
 		}
 		for _, task := range actionable[:listed] {
 			status := string(task.Status)
-			if claimedBy := contextTaskHandoffOwner(item.TaskHandoffs[task.ID]); claimedBy != "" {
+			if claimedBy := contextTaskHandoffOwner(item.TaskHandoffs[task.ID]); claimedBy != 0 {
 				status = "claimed"
-				if agentSessionID != "" && claimedBy == agentSessionID && task.Status != domain.TaskDone {
+				if agentSessionID != 0 && claimedBy == agentSessionID && task.Status != domain.TaskDone {
 					status = "claimed by this agent session"
 				}
 			}
-			fmt.Fprintf(&b, "- [%s] %s (task_id: %s)\n", status, oneLine(task.Title), task.ID)
+			fmt.Fprintf(&b, "- [%s] %s (task_id: %d)\n", status, oneLine(task.Title), task.ID)
 		}
 		if len(item.Tasks) == 0 {
 			b.WriteString("- no tasks declared\n")
@@ -492,7 +485,7 @@ func renderContextForAgentSession(goals []contextGoal, decisions []domain.Decisi
 	if len(filteredDecisions) > 0 {
 		b.WriteString("Unapplied decisions:\n")
 		for _, decision := range filteredDecisions {
-			fmt.Fprintf(&b, "- %s (decision_id: %s)\n", oneLine(decision.Question), decision.ID)
+			fmt.Fprintf(&b, "- %s (decision_id: %d)\n", oneLine(decision.Question), decision.ID)
 			fmt.Fprintf(&b, "  answer: %s - %s%s\n", oneLine(decision.AnswerLabel), oneLine(decision.AnswerText), decisionAnswerMarker(decision))
 		}
 	}

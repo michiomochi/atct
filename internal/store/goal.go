@@ -23,16 +23,21 @@ var (
 	ErrGoalDerivationCycle = errors.New("goal derivation would create a cycle")
 )
 
-func (s *Store) CreateGoal(ctx context.Context, projectID, content, creator string, derivedFromGoalID ...string) (domain.Goal, error) {
+func (s *Store) CreateGoal(ctx context.Context, projectID int64, content, creator string, derivedFromGoalID ...int64) (domain.Goal, error) {
 	if strings.TrimSpace(content) == "" {
 		return domain.Goal{}, errors.New("goal content must not be blank")
 	}
 	if len(derivedFromGoalID) > 1 {
 		return domain.Goal{}, errors.New("goal can have at most one derived-from goal")
 	}
-	parentID := ""
+	var parentID int64
 	if len(derivedFromGoalID) == 1 {
-		parentID = strings.TrimSpace(derivedFromGoalID[0])
+		parentID = derivedFromGoalID[0]
+		if parentID != 0 {
+			if _, err := s.GetGoal(ctx, parentID); err != nil {
+				return domain.Goal{}, err
+			}
+		}
 	}
 
 	now := time.Now().UTC()
@@ -42,7 +47,6 @@ func (s *Store) CreateGoal(ctx context.Context, projectID, content, creator stri
 		status = domain.GoalProposed
 	}
 	g := domain.Goal{
-		ID:                uuid.NewString(),
 		ProjectID:         projectID,
 		DerivedFromGoalID: parentID,
 		Content:           content,
@@ -52,8 +56,7 @@ func (s *Store) CreateGoal(ctx context.Context, projectID, content, creator stri
 		UpdatedAt:         now,
 	}
 	q := sqlcgen.New(s.db)
-	err := q.CreateGoal(ctx, sqlcgen.CreateGoalParams{
-		ID:                g.ID,
+	id, err := q.CreateGoal(ctx, sqlcgen.CreateGoalParams{
 		ProjectID:         g.ProjectID,
 		DerivedFromGoalID: nullableGoalID(parentID),
 		Content:           g.Content,
@@ -65,6 +68,7 @@ func (s *Store) CreateGoal(ctx context.Context, projectID, content, creator stri
 	if err != nil {
 		return domain.Goal{}, fmt.Errorf("insert goal: %w", err)
 	}
+	g.ID = id
 	s.notify.publishEvent(Event{Name: "goal.created", Data: g})
 	if creator == "agent" {
 		if _, err := s.AskDecision(ctx, AskInput{
@@ -82,12 +86,11 @@ func (s *Store) CreateGoal(ctx context.Context, projectID, content, creator stri
 	return g, nil
 }
 
-func (s *Store) UpdateGoalContent(ctx context.Context, goalID, content string) (domain.Goal, error) {
+func (s *Store) UpdateGoalContent(ctx context.Context, goalID int64, content string) (domain.Goal, error) {
 	if strings.TrimSpace(content) == "" {
 		return domain.Goal{}, errors.New("goal content must not be blank")
 	}
-	goalID = strings.TrimSpace(goalID)
-	if goalID == "" {
+	if goalID == 0 {
 		return domain.Goal{}, fmt.Errorf("%w: empty id", ErrGoalNotFound)
 	}
 
@@ -107,7 +110,7 @@ func (s *Store) UpdateGoalContent(ctx context.Context, goalID, content string) (
 		if _, err := s.GetGoal(ctx, goalID); err != nil {
 			return domain.Goal{}, err
 		}
-		return domain.Goal{}, fmt.Errorf("%w: %s", ErrGoalNotProposed, goalID)
+		return domain.Goal{}, fmt.Errorf("%w: %d", ErrGoalNotProposed, goalID)
 	}
 	return s.GetGoal(ctx, goalID)
 }
@@ -126,7 +129,7 @@ func goalFromRow(row sqlcgen.Goal) (domain.Goal, error) {
 	g := domain.Goal{
 		ID:                row.ID,
 		ProjectID:         row.ProjectID,
-		DerivedFromGoalID: row.DerivedFromGoalID.String,
+		DerivedFromGoalID: row.DerivedFromGoalID.Int64,
 		Content:           row.Content,
 		Status:            domain.GoalStatus(row.Status),
 		Creator:           row.Creator,
@@ -148,28 +151,29 @@ func goalFromRow(row sqlcgen.Goal) (domain.Goal, error) {
 	return g, nil
 }
 
-func (s *Store) GetGoal(ctx context.Context, id string) (domain.Goal, error) {
+func goalFromFields(id, projectID int64, derivedFromGoalID sql.NullInt64, content, status, creator, resultSummary, workDone, nowPossible, howToVerify, surprises, needsReview, nextSteps, createdAt, updatedAt string) (domain.Goal, error) {
+	return goalFromRow(sqlcgen.Goal{ID: id, ProjectID: projectID, DerivedFromGoalID: derivedFromGoalID, Content: content, Status: status, Creator: creator, ResultSummary: resultSummary, WorkDone: workDone, NowPossible: nowPossible, HowToVerify: howToVerify, Surprises: surprises, NeedsReview: needsReview, NextSteps: nextSteps, CreatedAt: createdAt, UpdatedAt: updatedAt})
+}
+
+func (s *Store) GetGoal(ctx context.Context, id int64) (domain.Goal, error) {
 	row, err := sqlcgen.New(s.db).GetGoal(ctx, id)
 	if errors.Is(err, sql.ErrNoRows) {
-		return domain.Goal{}, fmt.Errorf("%w: %s", ErrGoalNotFound, id)
+		return domain.Goal{}, fmt.Errorf("%w: %d", ErrGoalNotFound, id)
 	}
 	if err != nil {
 		return domain.Goal{}, err
 	}
-	return goalFromRow(row)
+	return goalFromFields(row.ID, row.ProjectID, row.DerivedFromGoalID, row.Content, row.Status, row.Creator, row.ResultSummary, row.WorkDone, row.NowPossible, row.HowToVerify, row.Surprises, row.NeedsReview, row.NextSteps, row.CreatedAt, row.UpdatedAt)
 }
 
 // ClaimGoal records the agent session that owns a goal. An empty session ID
 // clears the claim; callers that only need to release a claim can use
 // ReleaseGoal.
-func (s *Store) ClaimGoal(ctx context.Context, goalID, agentSessionID string) (domain.Goal, error) {
-	goalID = strings.TrimSpace(goalID)
-	if goalID == "" {
+func (s *Store) ClaimGoal(ctx context.Context, goalID int64, agentSessionID int64) (domain.Goal, error) {
+	if goalID == 0 {
 		return domain.Goal{}, fmt.Errorf("%w: empty id", ErrGoalNotFound)
 	}
-	agentSessionID = strings.TrimSpace(agentSessionID)
-
-	if agentSessionID == "" {
+	if agentSessionID == 0 {
 		if err := s.ReleaseGoal(ctx, goalID); err != nil {
 			return domain.Goal{}, err
 		}
@@ -183,9 +187,9 @@ func (s *Store) ClaimGoal(ctx context.Context, goalID, agentSessionID string) (d
 		return domain.Goal{}, fmt.Errorf("find open goal claim: %w", err)
 	}
 	if open != nil {
-		owner := strings.TrimSpace(open.ReceivedBy)
-		if owner == "" {
-			owner = strings.TrimSpace(open.RequestedBy)
+		owner := open.ReceivedBy
+		if owner == 0 {
+			owner = open.RequestedBy
 		}
 		if owner == agentSessionID {
 			return s.GetGoal(ctx, goalID)
@@ -205,17 +209,16 @@ func (s *Store) ClaimGoal(ctx context.Context, goalID, agentSessionID string) (d
 	return s.GetGoal(ctx, goalID)
 }
 
-func mapGoalClaimHandoffError(goalID string, err error) error {
+func mapGoalClaimHandoffError(goalID int64, err error) error {
 	if errors.Is(err, ErrGoalHandoffAlreadyOpen) || strings.Contains(strings.ToLower(err.Error()), "unique constraint failed") {
-		return fmt.Errorf("%w: %s", ErrGoalAlreadyClaimed, goalID)
+		return fmt.Errorf("%w: %d", ErrGoalAlreadyClaimed, goalID)
 	}
 	return err
 }
 
 // ReleaseGoal clears a goal's claim.
-func (s *Store) ReleaseGoal(ctx context.Context, goalID string) error {
-	goalID = strings.TrimSpace(goalID)
-	if goalID == "" {
+func (s *Store) ReleaseGoal(ctx context.Context, goalID int64) error {
+	if goalID == 0 {
 		return fmt.Errorf("%w: empty id", ErrGoalNotFound)
 	}
 	if _, err := s.CompleteGoalHandoffForGoal(ctx, goalID, ""); err != nil {
@@ -224,29 +227,31 @@ func (s *Store) ReleaseGoal(ctx context.Context, goalID string) error {
 	return nil
 }
 
-func nullableGoalID(id string) sql.NullString {
-	return sql.NullString{String: id, Valid: id != ""}
+func nullableGoalID(id int64) sql.NullInt64 {
+	return sql.NullInt64{Int64: id, Valid: id != 0}
 }
 
-func (s *Store) SetGoalDerivedFrom(ctx context.Context, goalID, derivedFromGoalID string) error {
-	goalID = strings.TrimSpace(goalID)
-	parentID := strings.TrimSpace(derivedFromGoalID)
-	if goalID == "" {
+func (s *Store) SetGoalDerivedFrom(ctx context.Context, goalID, derivedFromGoalID int64) error {
+	parentID := derivedFromGoalID
+	if goalID == 0 {
 		return fmt.Errorf("%w: empty id", ErrGoalNotFound)
 	}
-	if parentID != "" && goalID == parentID {
+	if parentID != 0 && goalID == parentID {
 		return ErrGoalSelfReference
 	}
-	if parentID != "" {
+	if parentID != 0 {
+		if _, err := s.GetGoal(ctx, parentID); err != nil {
+			return err
+		}
 		seen := make(map[string]struct{})
-		for currentID := parentID; currentID != ""; {
+		for currentID := parentID; currentID != 0; {
 			if currentID == goalID {
 				return ErrGoalDerivationCycle
 			}
-			if _, ok := seen[currentID]; ok {
+			if _, ok := seen[fmt.Sprint(currentID)]; ok {
 				return ErrGoalDerivationCycle
 			}
-			seen[currentID] = struct{}{}
+			seen[fmt.Sprint(currentID)] = struct{}{}
 
 			parent, err := s.GetGoal(ctx, currentID)
 			if err != nil {
@@ -270,12 +275,12 @@ func (s *Store) SetGoalDerivedFrom(ctx context.Context, goalID, derivedFromGoalI
 		return fmt.Errorf("check updated goal: %w", err)
 	}
 	if affected == 0 {
-		return fmt.Errorf("%w: %s", ErrGoalNotFound, goalID)
+		return fmt.Errorf("%w: %d", ErrGoalNotFound, goalID)
 	}
 	return nil
 }
 
-func (s *Store) ListGoals(ctx context.Context, projectID string) ([]domain.Goal, error) {
+func (s *Store) ListGoals(ctx context.Context, projectID int64) ([]domain.Goal, error) {
 	rows, err := sqlcgen.New(s.db).ListGoals(ctx, projectID)
 	if err != nil {
 		return nil, fmt.Errorf("query goals: %w", err)
@@ -283,7 +288,7 @@ func (s *Store) ListGoals(ctx context.Context, projectID string) ([]domain.Goal,
 
 	var out []domain.Goal
 	for _, row := range rows {
-		g, err := goalFromRow(row)
+		g, err := goalFromFields(row.ID, row.ProjectID, row.DerivedFromGoalID, row.Content, row.Status, row.Creator, row.ResultSummary, row.WorkDone, row.NowPossible, row.HowToVerify, row.Surprises, row.NeedsReview, row.NextSteps, row.CreatedAt, row.UpdatedAt)
 		if err != nil {
 			return nil, err
 		}
@@ -300,7 +305,7 @@ func (s *Store) ListAllGoals(ctx context.Context) ([]domain.Goal, error) {
 
 	var out []domain.Goal
 	for _, row := range rows {
-		g, err := goalFromRow(row)
+		g, err := goalFromFields(row.ID, row.ProjectID, row.DerivedFromGoalID, row.Content, row.Status, row.Creator, row.ResultSummary, row.WorkDone, row.NowPossible, row.HowToVerify, row.Surprises, row.NeedsReview, row.NextSteps, row.CreatedAt, row.UpdatedAt)
 		if err != nil {
 			return nil, err
 		}
@@ -309,7 +314,7 @@ func (s *Store) ListAllGoals(ctx context.Context) ([]domain.Goal, error) {
 	return out, nil
 }
 
-func (s *Store) ListDerivedGoals(ctx context.Context, derivedFromGoalID string) ([]domain.Goal, error) {
+func (s *Store) ListDerivedGoals(ctx context.Context, derivedFromGoalID int64) ([]domain.Goal, error) {
 	rows, err := sqlcgen.New(s.db).ListDerivedGoals(ctx, nullableGoalID(derivedFromGoalID))
 	if err != nil {
 		return nil, fmt.Errorf("query derived goals: %w", err)
@@ -317,7 +322,7 @@ func (s *Store) ListDerivedGoals(ctx context.Context, derivedFromGoalID string) 
 
 	out := make([]domain.Goal, 0, len(rows))
 	for _, row := range rows {
-		g, err := goalFromRow(row)
+		g, err := goalFromFields(row.ID, row.ProjectID, row.DerivedFromGoalID, row.Content, row.Status, row.Creator, row.ResultSummary, row.WorkDone, row.NowPossible, row.HowToVerify, row.Surprises, row.NeedsReview, row.NextSteps, row.CreatedAt, row.UpdatedAt)
 		if err != nil {
 			return nil, err
 		}
@@ -364,7 +369,7 @@ func validateCompletionReport(report domain.CompletionReport) error {
 // CompleteGoal keeps the pre-v6 Go call shape source-compatible for packages
 // that have not adopted the structured report yet. The MCP API uses
 // CompleteGoalWithReport and does not expose this compatibility path.
-func (s *Store) CompleteGoal(ctx context.Context, goalID, resultSummary, agentSessionID string) (domain.Decision, error) {
+func (s *Store) CompleteGoal(ctx context.Context, goalID int64, resultSummary string, agentSessionID int64) (domain.Decision, error) {
 	if strings.TrimSpace(resultSummary) == "" {
 		resultSummary = "なし"
 	}
@@ -380,7 +385,7 @@ func (s *Store) CompleteGoal(ctx context.Context, goalID, resultSummary, agentSe
 
 // CompleteGoalWithReport creates a kind=completion Decision.
 // A Goal cannot close while a child Decision is open (invariant 4).
-func (s *Store) CompleteGoalWithReport(ctx context.Context, goalID string, report domain.CompletionReport, agentSessionID string) (domain.Decision, error) {
+func (s *Store) CompleteGoalWithReport(ctx context.Context, goalID int64, report domain.CompletionReport, agentSessionID int64) (domain.Decision, error) {
 	if err := validateCompletionReport(report); err != nil {
 		return domain.Decision{}, err
 	}
@@ -391,7 +396,7 @@ func (s *Store) CompleteGoalWithReport(ctx context.Context, goalID string, repor
 		return domain.Decision{}, fmt.Errorf("count open decisions: %w", err)
 	}
 	if open > 0 {
-		return domain.Decision{}, fmt.Errorf("%w: %s", ErrGoalHasOpenDecision, goalID)
+		return domain.Decision{}, fmt.Errorf("%w: %d", ErrGoalHasOpenDecision, goalID)
 	}
 
 	if _, err := q.UpdateGoalCompletionReport(ctx, sqlcgen.UpdateGoalCompletionReportParams{
@@ -422,7 +427,7 @@ func (s *Store) CompleteGoalWithReport(ctx context.Context, goalID string, repor
 
 // ApproveCompletion marks the Goal done and the Decision applied atomically.
 // No agent follow-up needs to be applied, so there is no reason to wait for receipt (invariant 3).
-func (s *Store) ApproveCompletion(ctx context.Context, decisionID string) (domain.Goal, error) {
+func (s *Store) ApproveCompletion(ctx context.Context, decisionID int64) (domain.Goal, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return domain.Goal{}, fmt.Errorf("begin tx: %w", err)
@@ -432,7 +437,7 @@ func (s *Store) ApproveCompletion(ctx context.Context, decisionID string) (domai
 	q := sqlcgen.New(tx)
 	goalID, err := q.GetCompletionDecisionGoalID(ctx, decisionID)
 	if errors.Is(err, sql.ErrNoRows) {
-		return domain.Goal{}, fmt.Errorf("%w: %s", ErrDecisionNotOpen, decisionID)
+		return domain.Goal{}, fmt.Errorf("%w: %d", ErrDecisionNotOpen, decisionID)
 	}
 	if err != nil {
 		return domain.Goal{}, fmt.Errorf("lookup completion decision: %w", err)
@@ -464,7 +469,7 @@ func (s *Store) ApproveCompletion(ctx context.Context, decisionID string) (domai
 
 // RejectCompletion leaves the Goal active and the Decision answered.
 // It becomes applied when the agent receives the rejection reason.
-func (s *Store) RejectCompletion(ctx context.Context, decisionID, reason string) error {
+func (s *Store) RejectCompletion(ctx context.Context, decisionID int64, reason string) error {
 	_, err := s.answerDecision(ctx, AnswerInput{
 		DecisionID:  decisionID,
 		AnswerLabel: "reject",
@@ -474,7 +479,7 @@ func (s *Store) RejectCompletion(ctx context.Context, decisionID, reason string)
 }
 
 // ApproveGoal activates a proposed Goal and applies its approval decision atomically.
-func (s *Store) ApproveGoal(ctx context.Context, decisionID string) (domain.Goal, error) {
+func (s *Store) ApproveGoal(ctx context.Context, decisionID int64) (domain.Goal, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return domain.Goal{}, fmt.Errorf("begin goal approval tx: %w", err)
@@ -484,7 +489,7 @@ func (s *Store) ApproveGoal(ctx context.Context, decisionID string) (domain.Goal
 	q := sqlcgen.New(tx)
 	goalID, err := q.GetGoalApprovalDecisionGoalID(ctx, decisionID)
 	if errors.Is(err, sql.ErrNoRows) {
-		return domain.Goal{}, fmt.Errorf("%w: %s", ErrDecisionNotOpen, decisionID)
+		return domain.Goal{}, fmt.Errorf("%w: %d", ErrDecisionNotOpen, decisionID)
 	}
 	if err != nil {
 		return domain.Goal{}, fmt.Errorf("lookup goal approval decision: %w", err)
@@ -502,7 +507,7 @@ func (s *Store) ApproveGoal(ctx context.Context, decisionID string) (domain.Goal
 	if rows, err := result.RowsAffected(); err != nil {
 		return domain.Goal{}, fmt.Errorf("goal approval decision rows affected: %w", err)
 	} else if rows != 1 {
-		return domain.Goal{}, fmt.Errorf("%w: %s", ErrDecisionNotOpen, decisionID)
+		return domain.Goal{}, fmt.Errorf("%w: %d", ErrDecisionNotOpen, decisionID)
 	}
 
 	result, err = q.MarkGoalActive(ctx, sqlcgen.MarkGoalActiveParams{UpdatedAt: now, ID: goalID})
@@ -512,7 +517,7 @@ func (s *Store) ApproveGoal(ctx context.Context, decisionID string) (domain.Goal
 	if rows, err := result.RowsAffected(); err != nil {
 		return domain.Goal{}, fmt.Errorf("activate goal rows affected: %w", err)
 	} else if rows != 1 {
-		return domain.Goal{}, fmt.Errorf("%w: %s", ErrGoalNotProposed, goalID)
+		return domain.Goal{}, fmt.Errorf("%w: %d", ErrGoalNotProposed, goalID)
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -529,7 +534,7 @@ func (s *Store) ApproveGoal(ctx context.Context, decisionID string) (domain.Goal
 }
 
 // RejectGoal drops a proposed Goal and records the human's reason atomically.
-func (s *Store) RejectGoal(ctx context.Context, decisionID, reason string) error {
+func (s *Store) RejectGoal(ctx context.Context, decisionID int64, reason string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin goal rejection tx: %w", err)
@@ -539,7 +544,7 @@ func (s *Store) RejectGoal(ctx context.Context, decisionID, reason string) error
 	q := sqlcgen.New(tx)
 	goalID, err := q.GetGoalApprovalDecisionGoalID(ctx, decisionID)
 	if errors.Is(err, sql.ErrNoRows) {
-		return fmt.Errorf("%w: %s", ErrDecisionNotOpen, decisionID)
+		return fmt.Errorf("%w: %d", ErrDecisionNotOpen, decisionID)
 	}
 	if err != nil {
 		return fmt.Errorf("lookup goal approval decision: %w", err)
@@ -557,7 +562,7 @@ func (s *Store) RejectGoal(ctx context.Context, decisionID, reason string) error
 	if rows, err := result.RowsAffected(); err != nil {
 		return fmt.Errorf("goal rejection decision rows affected: %w", err)
 	} else if rows != 1 {
-		return fmt.Errorf("%w: %s", ErrDecisionNotOpen, decisionID)
+		return fmt.Errorf("%w: %d", ErrDecisionNotOpen, decisionID)
 	}
 
 	result, err = q.MarkGoalDropped(ctx, sqlcgen.MarkGoalDroppedParams{UpdatedAt: now, ID: goalID})
@@ -567,7 +572,7 @@ func (s *Store) RejectGoal(ctx context.Context, decisionID, reason string) error
 	if rows, err := result.RowsAffected(); err != nil {
 		return fmt.Errorf("drop goal rows affected: %w", err)
 	} else if rows != 1 {
-		return fmt.Errorf("%w: %s", ErrGoalNotProposed, goalID)
+		return fmt.Errorf("%w: %d", ErrGoalNotProposed, goalID)
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -584,7 +589,7 @@ func (s *Store) RejectGoal(ctx context.Context, decisionID, reason string) error
 }
 
 // WithdrawActiveGoal drops an active Goal and atomically closes its open work.
-func (s *Store) WithdrawActiveGoal(ctx context.Context, goalID, reason string) error {
+func (s *Store) WithdrawActiveGoal(ctx context.Context, goalID int64, reason string) error {
 	if strings.TrimSpace(reason) == "" {
 		return errors.New("withdrawal reason is required")
 	}
@@ -608,7 +613,7 @@ func (s *Store) WithdrawActiveGoal(ctx context.Context, goalID, reason string) e
 	if rows, err := result.RowsAffected(); err != nil {
 		return fmt.Errorf("withdraw goal rows affected: %w", err)
 	} else if rows != 1 {
-		return fmt.Errorf("%w: %s", ErrGoalNotActive, goalID)
+		return fmt.Errorf("%w: %d", ErrGoalNotActive, goalID)
 	}
 
 	openDecisions, err := q.ListOpenDecisions(ctx, goalID)
@@ -617,7 +622,7 @@ func (s *Store) WithdrawActiveGoal(ctx context.Context, goalID, reason string) e
 	}
 	for _, decision := range openDecisions {
 		if err := withdrawDecisionWith(ctx, q, decision.ID, reason); err != nil {
-			return fmt.Errorf("withdraw decision %s: %w", decision.ID, err)
+			return fmt.Errorf("withdraw decision %d: %w", decision.ID, err)
 		}
 	}
 

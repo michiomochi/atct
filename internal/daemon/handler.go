@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -27,12 +28,30 @@ type responseWithUnappliedDecisions struct {
 	ClaimableTasks     []claimableTaskSummary          `json:"claimable_tasks,omitempty"`
 }
 
-type sessionRoleResponse struct {
+type roleAssignment struct {
+	Role      string
+	ProjectID int64
+	GoalID    int64
+}
+
+type commanderRole struct {
 	Role      string   `json:"role"`
-	ProjectID string   `json:"project_id"`
-	GoalID    string   `json:"goal_id"`
+	ProjectID int64    `json:"project_id"`
 	Does      []string `json:"does"`
 	DoesNot   []string `json:"does_not"`
+}
+
+type subcommanderRole struct {
+	Role    string   `json:"role"`
+	GoalID  int64    `json:"goal_id"`
+	Does    []string `json:"does"`
+	DoesNot []string `json:"does_not"`
+}
+
+type executorRole struct {
+	Role    string   `json:"role"`
+	Does    []string `json:"does"`
+	DoesNot []string `json:"does_not"`
 }
 
 type roleBoundary struct {
@@ -47,16 +66,16 @@ var roleBoundaries = map[string]roleBoundary{
 }
 
 type claimableTaskSummary struct {
-	ID     string `json:"id"`
+	ID     int64  `json:"id"`
 	Title  string `json:"title"`
-	GoalID string `json:"goal_id"`
+	GoalID int64  `json:"goal_id"`
 }
 
-func taskHandoffClaimedBy(handoff *store.TaskHandoff) string {
+func taskHandoffClaimedBy(handoff *store.TaskHandoff) int64 {
 	if handoff == nil {
-		return ""
+		return 0
 	}
-	if handoff.ReceivedBy != "" {
+	if handoff.ReceivedBy != 0 {
 		return handoff.ReceivedBy
 	}
 	return handoff.RequestedBy
@@ -72,11 +91,11 @@ func taskHandoffClaimedAt(handoff *store.TaskHandoff) *time.Time {
 	return handoff.RequestedAt
 }
 
-func goalHandoffClaimedBy(handoff *store.GoalHandoff) string {
+func goalHandoffClaimedBy(handoff *store.GoalHandoff) int64 {
 	if handoff == nil {
-		return ""
+		return 0
 	}
-	if handoff.ReceivedBy != "" {
+	if handoff.ReceivedBy != 0 {
 		return handoff.ReceivedBy
 	}
 	return handoff.RequestedBy
@@ -105,7 +124,7 @@ func summaryLine(content string) string {
 }
 
 type unappliedDecisionNotification struct {
-	DecisionID string `json:"decision_id"`
+	DecisionID int64  `json:"decision_id"`
 	Question   string `json:"question"`
 }
 
@@ -113,11 +132,11 @@ func unappliedDecisionNotifications(decisions []domain.Decision) []unappliedDeci
 	return unappliedDecisionNotificationsExcept(decisions)
 }
 
-func unappliedDecisionNotificationsExcept(decisions []domain.Decision, excludedIDs ...string) []unappliedDecisionNotification {
+func unappliedDecisionNotificationsExcept(decisions []domain.Decision, excludedIDs ...int64) []unappliedDecisionNotification {
 	if len(decisions) == 0 {
 		return nil
 	}
-	excluded := make(map[string]struct{}, len(excludedIDs))
+	excluded := make(map[int64]struct{}, len(excludedIDs))
 	for _, id := range excludedIDs {
 		excluded[id] = struct{}{}
 	}
@@ -134,15 +153,15 @@ func unappliedDecisionNotificationsExcept(decisions []domain.Decision, excludedI
 	return notices
 }
 
-func (d *Daemon) deriveSessionRole(ctx context.Context, agentSessionID string) (sessionRoleResponse, error) {
-	response := sessionRoleResponse{Role: "executor"}
-	if sessionID := strings.TrimSpace(agentSessionID); sessionID != "" {
+func (d *Daemon) deriveSessionRole(ctx context.Context, agentSessionID int64) (roleAssignment, error) {
+	response := roleAssignment{Role: "executor"}
+	if agentSessionID != 0 {
 		projects, err := d.store.ListProjects(ctx)
 		if err != nil {
-			return sessionRoleResponse{}, err
+			return roleAssignment{}, err
 		}
 		for _, project := range projects {
-			if strings.TrimSpace(project.ClaimedBy) == sessionID {
+			if project.ClaimedBy == agentSessionID {
 				response.Role = "commander"
 				response.ProjectID = project.ID
 				break
@@ -151,38 +170,64 @@ func (d *Daemon) deriveSessionRole(ctx context.Context, agentSessionID string) (
 
 		goals, err := d.store.ListAllGoals(ctx)
 		if err != nil {
-			return sessionRoleResponse{}, err
+			return roleAssignment{}, err
 		}
 		goalHandoffs, err := d.store.ListOpenGoalHandoffs(ctx)
 		if err != nil {
-			return sessionRoleResponse{}, err
+			return roleAssignment{}, err
 		}
 		for _, goal := range goals {
 			handoff := goalHandoffs[goal.ID]
-			if handoff != nil && handoff.ReceivedAt != nil && strings.TrimSpace(goalHandoffClaimedBy(handoff)) == sessionID {
+			if handoff != nil && handoff.ReceivedAt != nil && goalHandoffClaimedBy(handoff) == agentSessionID {
 				response.GoalID = goal.ID
 				break
 			}
 		}
-		if response.Role != "commander" && response.GoalID != "" {
+		if response.Role != "commander" && response.GoalID != 0 {
 			response.Role = "subcommander"
 		}
 	}
 	return response, nil
 }
 
-func (d *Daemon) unappliedDecisionsForSessionInProject(ctx context.Context, projectID, agentSessionID string) ([]domain.Decision, error) {
+func roleResponseFor(assignment roleAssignment) any {
+	boundary := roleBoundaries[assignment.Role]
+	switch assignment.Role {
+	case "commander":
+		return commanderRole{
+			Role:      assignment.Role,
+			ProjectID: assignment.ProjectID,
+			Does:      boundary.Does,
+			DoesNot:   boundary.DoesNot,
+		}
+	case "subcommander":
+		return subcommanderRole{
+			Role:    assignment.Role,
+			GoalID:  assignment.GoalID,
+			Does:    boundary.Does,
+			DoesNot: boundary.DoesNot,
+		}
+	default:
+		return executorRole{
+			Role:    "executor",
+			Does:    boundary.Does,
+			DoesNot: boundary.DoesNot,
+		}
+	}
+}
+
+func (d *Daemon) unappliedDecisionsForSessionInProject(ctx context.Context, projectID int64, agentSessionID int64) ([]domain.Decision, error) {
 	role, err := d.deriveSessionRole(ctx, agentSessionID)
 	if err != nil {
 		return nil, err
 	}
-	if role.Role == "subcommander" && role.GoalID != "" {
+	if role.Role == "subcommander" && role.GoalID != 0 {
 		return d.store.ListUnappliedDecisionsForGoal(ctx, role.GoalID)
 	}
 	return d.store.ListUnappliedDecisionsForProject(ctx, projectID)
 }
 
-func (d *Daemon) unappliedDecisionsForSession(ctx context.Context, goalID, agentSessionID string) ([]domain.Decision, error) {
+func (d *Daemon) unappliedDecisionsForSession(ctx context.Context, goalID int64, agentSessionID int64) ([]domain.Decision, error) {
 	goal, err := d.store.GetGoal(ctx, goalID)
 	if err != nil {
 		return nil, err
@@ -190,7 +235,7 @@ func (d *Daemon) unappliedDecisionsForSession(ctx context.Context, goalID, agent
 	return d.unappliedDecisionsForSessionInProject(ctx, goal.ProjectID, agentSessionID)
 }
 
-func (d *Daemon) responseWithScopedUnappliedDecisions(ctx context.Context, data any, goalID, agentSessionID string, excludedIDs ...string) (responseWithUnappliedDecisions, error) {
+func (d *Daemon) responseWithScopedUnappliedDecisions(ctx context.Context, data any, goalID int64, agentSessionID int64, excludedIDs ...int64) (responseWithUnappliedDecisions, error) {
 	unapplied, err := d.unappliedDecisionsForSession(ctx, goalID, agentSessionID)
 	if err != nil {
 		return responseWithUnappliedDecisions{}, err
@@ -201,7 +246,7 @@ func (d *Daemon) responseWithScopedUnappliedDecisions(ctx context.Context, data 
 	}, nil
 }
 
-func (d *Daemon) listClaimableTasks(ctx context.Context, projectID, excludedTaskID string) ([]claimableTaskSummary, error) {
+func (d *Daemon) listClaimableTasks(ctx context.Context, projectID, excludedTaskID int64) ([]claimableTaskSummary, error) {
 	goals, err := d.store.ListGoals(ctx, projectID)
 	if err != nil {
 		return nil, err
@@ -243,18 +288,12 @@ func tasksDeclaredWithIdempotencyKey(tasks []domain.Task, idempotencyKey string)
 	return declared
 }
 
-func (d *Daemon) ensureAgentSessionProject(ctx context.Context, agentSessionID, targetProjectID string) error {
-	if strings.TrimSpace(agentSessionID) == "" {
+func (d *Daemon) ensureAgentSessionProject(ctx context.Context, agentSessionID int64, targetProjectID int64) error {
+	if agentSessionID == 0 {
 		return nil
 	}
 	assignedProjectID, err := d.store.ProjectIDForAgentSession(ctx, agentSessionID)
 	if err != nil {
-		if errors.Is(err, store.ErrAgentSessionNotRegistered) {
-			if err := d.store.RegisterAgentSession(ctx, agentSessionID, 0); err != nil {
-				return err
-			}
-			return d.store.AssociateAgentSessionWithProject(ctx, agentSessionID, targetProjectID)
-		}
 		if errors.Is(err, store.ErrAgentSessionNotAssociated) {
 			return d.store.AssociateAgentSessionWithProject(ctx, agentSessionID, targetProjectID)
 		}
@@ -268,8 +307,8 @@ func (d *Daemon) ensureAgentSessionProject(ctx context.Context, agentSessionID, 
 	if err != nil {
 		return err
 	}
-	assignedProjectName := assignedProjectID
-	targetProjectName := targetProjectID
+	assignedProjectName := fmt.Sprint(assignedProjectID)
+	targetProjectName := fmt.Sprint(targetProjectID)
 	for _, project := range projects {
 		switch project.ID {
 		case assignedProjectID:
@@ -308,24 +347,143 @@ func (d *Daemon) resolveOrRegisterProject(ctx context.Context, cwd string) (doma
 	return d.store.CreateProject(ctx, fallbackName, rootPath)
 }
 
+// normalizeEntityIDs keeps the transport compatible with clients that send
+// numeric IDs as strings while the daemon's internal and response types use
+// canonical integer IDs. Other strings are passed to the resolver so removed
+// UUID-style IDs receive migration guidance. Numeric JSON values are validated
+// here as well so a fractional value cannot be silently truncated later.
+func (d *Daemon) normalizeEntityIDs(ctx context.Context, method string, params json.RawMessage) (json.RawMessage, error) {
+	trimmedParams := strings.TrimSpace(string(params))
+	if trimmedParams == "" || trimmedParams == "null" {
+		return params, nil
+	}
+
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(params, &fields); err != nil {
+		return nil, err
+	}
+	if fields == nil {
+		return params, nil
+	}
+
+	resolvers := map[string]func(context.Context, string) (int64, error){
+		"project_id":           d.store.ResolveProjectID,
+		"goal_id":              d.store.ResolveGoalID,
+		"task_id":              d.store.ResolveTaskID,
+		"decision_id":          d.store.ResolveDecisionID,
+		"derived_from_goal_id": d.store.ResolveGoalID,
+	}
+	for field, resolve := range resolvers {
+		raw, ok := fields[field]
+		if !ok {
+			continue
+		}
+		trimmed := strings.TrimSpace(string(raw))
+		if trimmed == "" || trimmed == "null" {
+			continue
+		}
+
+		if strings.HasPrefix(trimmed, `"`) {
+			var value string
+			if err := json.Unmarshal(raw, &value); err != nil {
+				return nil, fmt.Errorf("%s must be an integer or string: %w", field, err)
+			}
+			if strings.TrimSpace(value) == "" && optionalEntityID(method, field) {
+				fields[field] = json.RawMessage("0")
+				continue
+			}
+			id, err := resolve(ctx, value)
+			if err != nil {
+				return nil, fmt.Errorf("resolve %s: %w", field, err)
+			}
+			fields[field] = json.RawMessage(strconv.FormatInt(id, 10))
+			continue
+		}
+
+		var id int64
+		if err := json.Unmarshal(raw, &id); err != nil {
+			return nil, fmt.Errorf("%s must be an integer or string: %w", field, err)
+		}
+		fields[field] = json.RawMessage(strconv.FormatInt(id, 10))
+	}
+	for _, field := range []string{"agent_session_id", "requested_by", "received_by"} {
+		raw, ok := fields[field]
+		if !ok {
+			continue
+		}
+		id, err := parseAgentSessionID(raw)
+		if err != nil {
+			return nil, fmt.Errorf("%s must be an integer or decimal string: %w", field, err)
+		}
+		fields[field] = json.RawMessage(strconv.FormatInt(id, 10))
+	}
+	return json.Marshal(fields)
+}
+
+func parseAgentSessionID(raw json.RawMessage) (int64, error) {
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" || trimmed == "null" {
+		return 0, nil
+	}
+	if strings.HasPrefix(trimmed, `"`) {
+		var value string
+		if err := json.Unmarshal(raw, &value); err != nil {
+			return 0, err
+		}
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return 0, nil
+		}
+		id, err := strconv.ParseInt(value, 10, 64)
+		if err != nil {
+			return 0, err
+		}
+		return id, nil
+	}
+	var id int64
+	if err := json.Unmarshal(raw, &id); err != nil {
+		return 0, err
+	}
+	return id, nil
+}
+
+func optionalEntityID(method, field string) bool {
+	switch {
+	case method == "decision.ask" && field == "task_id":
+		return true
+	case method == "decision.poll" && field == "decision_id":
+		return true
+	case method == "goal.set_derived_from" && field == "derived_from_goal_id":
+		return true
+	default:
+		return false
+	}
+}
+
 func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage, error) {
+	params, err := d.normalizeEntityIDs(ctx, req.Method, req.Params)
+	if err != nil {
+		return nil, err
+	}
+	req.Params = params
+
 	switch req.Method {
 	case "run.register":
 		var p struct {
-			AgentSessionID string `json:"agent_session_id"`
-			PID            int    `json:"pid"`
+			PID int `json:"pid"`
 		}
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, err
 		}
-		if err := d.store.RegisterAgentSession(ctx, p.AgentSessionID, p.PID); err != nil {
+		agentSessionID, err := d.store.RegisterAgentSession(ctx, p.PID)
+		if err != nil {
 			return nil, err
 		}
-		return marshal(map[string]any{"ok": true}, nil)
+		return marshal(map[string]any{"ok": true, "agent_session_id": agentSessionID}, nil)
 
 	case "session.identify":
 		var p struct {
-			AgentSessionID string `json:"agent_session_id"`
+			AgentSessionID int64  `json:"agent_session_id"`
 			SessionKey     string `json:"session_key"`
 		}
 		if err := json.Unmarshal(req.Params, &p); err != nil {
@@ -342,7 +500,7 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 
 	case "session.role":
 		var p struct {
-			AgentSessionID string `json:"agent_session_id"`
+			AgentSessionID int64 `json:"agent_session_id"`
 		}
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, err
@@ -352,10 +510,7 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		if err != nil {
 			return nil, err
 		}
-		boundary := roleBoundaries[response.Role]
-		response.Does = boundary.Does
-		response.DoesNot = boundary.DoesNot
-		return marshal(response, nil)
+		return marshal(roleResponseFor(response), nil)
 
 	case "project.create":
 		var p struct {
@@ -379,8 +534,8 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 
 	case "project.claim":
 		var p struct {
-			ProjectID      string `json:"project_id"`
-			AgentSessionID string `json:"agent_session_id"`
+			ProjectID      int64 `json:"project_id"`
+			AgentSessionID int64 `json:"agent_session_id"`
 		}
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, err
@@ -396,16 +551,16 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 
 	case "project.release":
 		var p struct {
-			ProjectID      string `json:"project_id"`
-			AgentSessionID string `json:"agent_session_id"`
+			ProjectID      int64 `json:"project_id"`
+			AgentSessionID int64 `json:"agent_session_id"`
 		}
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, err
 		}
-		projectID := strings.TrimSpace(p.ProjectID)
-		agentSessionID := strings.TrimSpace(p.AgentSessionID)
-		if agentSessionID == "" {
-			return nil, fmt.Errorf("project release requires agent_session_id: caller is not bound to project %q", projectID)
+		projectID := p.ProjectID
+		agentSessionID := p.AgentSessionID
+		if agentSessionID == 0 {
+			return nil, fmt.Errorf("project release requires agent_session_id: caller is not bound to project %d", projectID)
 		}
 		projects, err := d.store.ListProjects(ctx)
 		if err != nil {
@@ -414,7 +569,7 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		isHolder := false
 		for _, project := range projects {
 			if project.ID == projectID {
-				isHolder = strings.TrimSpace(project.ClaimedBy) == agentSessionID
+				isHolder = project.ClaimedBy == agentSessionID
 				break
 			}
 		}
@@ -422,9 +577,9 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		isProjectBound := sessionProjectErr == nil && callerProjectID == projectID
 		if !isHolder && !isProjectBound {
 			if sessionProjectErr != nil {
-				return nil, fmt.Errorf("project release denied: caller %q is not the holder and is not bound to project %q: %w", agentSessionID, projectID, sessionProjectErr)
+				return nil, fmt.Errorf("project release denied: caller %d is not the holder and is not bound to project %d: %w", agentSessionID, projectID, sessionProjectErr)
 			}
-			return nil, fmt.Errorf("project release denied: caller %q is bound to project %q, not project %q", agentSessionID, callerProjectID, projectID)
+			return nil, fmt.Errorf("project release denied: caller %d is bound to project %d, not project %d", agentSessionID, callerProjectID, projectID)
 		}
 		err = d.store.ReleaseProject(ctx, projectID)
 		return marshal(nil, err)
@@ -432,7 +587,7 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 	case "goal.list":
 		var p struct {
 			Cwd                     string `json:"cwd"`
-			AgentSessionID          string `json:"agent_session_id"`
+			AgentSessionID          int64  `json:"agent_session_id"`
 			IncludeUnappliedAnswers bool   `json:"include_unapplied_answers"`
 		}
 		if err := json.Unmarshal(req.Params, &p); err != nil {
@@ -442,7 +597,7 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		if err != nil {
 			return nil, err
 		}
-		if strings.TrimSpace(p.AgentSessionID) != "" {
+		if p.AgentSessionID != 0 {
 			if err := d.store.AssociateAgentSessionWithProject(ctx, p.AgentSessionID, ns.ID); err != nil {
 				return nil, err
 			}
@@ -456,22 +611,22 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 			return nil, err
 		}
 		type goalListTask struct {
-			ID          string            `json:"id"`
-			GoalID      string            `json:"goal_id"`
+			ID          int64             `json:"id"`
+			GoalID      int64             `json:"goal_id"`
 			Title       string            `json:"title"`
 			Description string            `json:"description"`
 			Status      domain.TaskStatus `json:"status"`
-			ClaimedBy   string            `json:"claimed_by"`
+			ClaimedBy   int64             `json:"claimed_by"`
 			Order       int               `json:"order"`
 		}
 		type goalListResponse struct {
-			ID                string             `json:"id"`
-			DerivedFromGoalID string             `json:"derived_from_goal_id,omitempty"`
+			ID                int64              `json:"id"`
+			DerivedFromGoalID int64              `json:"derived_from_goal_id,omitempty"`
 			Title             string             `json:"title"`
 			ContentChars      int                `json:"content_chars"`
 			TaskCounts        goalListTaskCounts `json:"task_counts"`
 			Status            domain.GoalStatus  `json:"status"`
-			ClaimedBy         string             `json:"claimed_by,omitempty"`
+			ClaimedBy         int64              `json:"claimed_by,omitempty"`
 			CreatedAt         time.Time          `json:"created_at"`
 			Tasks             []goalListTask     `json:"tasks"`
 		}
@@ -545,7 +700,7 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		// spec section 7: goal.list returns active Goals and unapplied answers together.
 		// This return value lets a new session recover answers (spec section 8, paragraph 3).
 		// Mark matching agent_session_id answers as applied; return others for reference only.
-		mine, err := d.store.PollDecisions(ctx, p.AgentSessionID, "")
+		mine, err := d.store.PollDecisions(ctx, p.AgentSessionID, 0)
 		if err != nil {
 			return nil, err
 		}
@@ -570,7 +725,7 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 
 	case "goal.get":
 		var p struct {
-			GoalID string `json:"goal_id"`
+			GoalID int64 `json:"goal_id"`
 		}
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, err
@@ -590,7 +745,7 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 
 	case "goal.sessions":
 		var p struct {
-			GoalID string `json:"goal_id"`
+			GoalID int64 `json:"goal_id"`
 		}
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, err
@@ -619,9 +774,9 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 
 	case "goal.claim":
 		var p struct {
-			GoalID                  string `json:"goal_id"`
-			AgentSessionID          string `json:"agent_session_id"`
-			IncludeUnappliedAnswers bool   `json:"include_unapplied_answers"`
+			GoalID                  int64 `json:"goal_id"`
+			AgentSessionID          int64 `json:"agent_session_id"`
+			IncludeUnappliedAnswers bool  `json:"include_unapplied_answers"`
 		}
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, err
@@ -651,7 +806,7 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 
 	case "goal.release":
 		var p struct {
-			GoalID string `json:"goal_id"`
+			GoalID int64 `json:"goal_id"`
 		}
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, err
@@ -661,9 +816,9 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 
 	case "goal.update_content":
 		var p struct {
-			GoalID                  string `json:"goal_id"`
+			GoalID                  int64  `json:"goal_id"`
 			Content                 string `json:"content"`
-			AgentSessionID          string `json:"agent_session_id"`
+			AgentSessionID          int64  `json:"agent_session_id"`
 			IncludeUnappliedAnswers bool   `json:"include_unapplied_answers"`
 		}
 		if err := json.Unmarshal(req.Params, &p); err != nil {
@@ -688,11 +843,11 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 
 	case "task.update_content":
 		var p struct {
-			TaskID                  string    `json:"task_id"`
+			TaskID                  int64     `json:"task_id"`
 			Title                   *string   `json:"title"`
 			Description             *string   `json:"description"`
 			Files                   *[]string `json:"files"`
-			AgentSessionID          string    `json:"agent_session_id"`
+			AgentSessionID          int64     `json:"agent_session_id"`
 			IncludeUnappliedAnswers bool      `json:"include_unapplied_answers"`
 		}
 		if err := json.Unmarshal(req.Params, &p); err != nil {
@@ -718,13 +873,13 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 
 	case "task.declare":
 		var p struct {
-			GoalID                  string     `json:"goal_id"`
+			GoalID                  int64      `json:"goal_id"`
 			Agent                   string     `json:"agent"`
 			IdempotencyKey          string     `json:"idempotency_key"`
 			Titles                  []string   `json:"titles"`
 			Descriptions            []string   `json:"descriptions"`
 			Files                   [][]string `json:"files"`
-			AgentSessionID          string     `json:"agent_session_id"`
+			AgentSessionID          int64      `json:"agent_session_id"`
 			IncludeUnappliedAnswers bool       `json:"include_unapplied_answers"`
 		}
 		if err := json.Unmarshal(req.Params, &p); err != nil {
@@ -749,10 +904,10 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 
 	case "task.update":
 		var p struct {
-			TaskID                  string   `json:"task_id"`
+			TaskID                  int64    `json:"task_id"`
 			Status                  string   `json:"status"`
 			Commits                 []string `json:"commits"`
-			AgentSessionID          string   `json:"agent_session_id"`
+			AgentSessionID          int64    `json:"agent_session_id"`
 			IncludeUnappliedAnswers bool     `json:"include_unapplied_answers"`
 		}
 		if err := json.Unmarshal(req.Params, &p); err != nil {
@@ -808,9 +963,9 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 
 	case "task.claim":
 		var p struct {
-			TaskID                  string `json:"task_id"`
-			AgentSessionID          string `json:"agent_session_id"`
-			IncludeUnappliedAnswers bool   `json:"include_unapplied_answers"`
+			TaskID                  int64 `json:"task_id"`
+			AgentSessionID          int64 `json:"agent_session_id"`
+			IncludeUnappliedAnswers bool  `json:"include_unapplied_answers"`
 		}
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, err
@@ -840,8 +995,8 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 
 	case "task.release":
 		var p struct {
-			TaskID         string `json:"task_id"`
-			AgentSessionID string `json:"agent_session_id"`
+			TaskID         int64 `json:"task_id"`
+			AgentSessionID int64 `json:"agent_session_id"`
 		}
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, err
@@ -852,8 +1007,8 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 	case "handoff.request":
 		var p struct {
 			HandoffID     string `json:"handoff_id"`
-			TaskID        string `json:"task_id"`
-			RequestedBy   string `json:"requested_by"`
+			TaskID        int64  `json:"task_id"`
+			RequestedBy   int64  `json:"requested_by"`
 			RequestReport string `json:"request_report"`
 		}
 		if err := json.Unmarshal(req.Params, &p); err != nil {
@@ -865,8 +1020,8 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 	case "handoff.receive":
 		var p struct {
 			HandoffID  string `json:"handoff_id"`
-			TaskID     string `json:"task_id"`
-			ReceivedBy string `json:"received_by"`
+			TaskID     int64  `json:"task_id"`
+			ReceivedBy int64  `json:"received_by"`
 		}
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, err
@@ -883,7 +1038,7 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 	case "handoff.complete":
 		var p struct {
 			HandoffID      string `json:"handoff_id"`
-			TaskID         string `json:"task_id"`
+			TaskID         int64  `json:"task_id"`
 			CompleteReport string `json:"complete_report"`
 		}
 		if err := json.Unmarshal(req.Params, &p); err != nil {
@@ -900,7 +1055,7 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 
 	case "handoff.yielded":
 		var p struct {
-			TaskID string `json:"task_id"`
+			TaskID int64 `json:"task_id"`
 		}
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, err
@@ -936,8 +1091,8 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 	case "goal.handoff.request":
 		var p struct {
 			HandoffID     string `json:"handoff_id"`
-			GoalID        string `json:"goal_id"`
-			RequestedBy   string `json:"requested_by"`
+			GoalID        int64  `json:"goal_id"`
+			RequestedBy   int64  `json:"requested_by"`
 			RequestReport string `json:"request_report"`
 		}
 		if err := json.Unmarshal(req.Params, &p); err != nil {
@@ -949,8 +1104,8 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 	case "goal.handoff.receive":
 		var p struct {
 			HandoffID  string `json:"handoff_id"`
-			GoalID     string `json:"goal_id"`
-			ReceivedBy string `json:"received_by"`
+			GoalID     int64  `json:"goal_id"`
+			ReceivedBy int64  `json:"received_by"`
 		}
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, err
@@ -967,7 +1122,7 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 	case "goal.handoff.complete":
 		var p struct {
 			HandoffID      string `json:"handoff_id"`
-			GoalID         string `json:"goal_id"`
+			GoalID         int64  `json:"goal_id"`
 			CompleteReport string `json:"complete_report"`
 		}
 		if err := json.Unmarshal(req.Params, &p); err != nil {
@@ -984,13 +1139,13 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 
 	case "decision.ask":
 		var p struct {
-			GoalID                  string          `json:"goal_id"`
-			TaskID                  string          `json:"task_id"`
+			GoalID                  int64           `json:"goal_id"`
+			TaskID                  int64           `json:"task_id"`
 			Question                string          `json:"question"`
 			Options                 []domain.Option `json:"options"`
 			DefaultOption           string          `json:"default_option"`
 			DefaultAfterMs          *int64          `json:"default_after_ms"`
-			AgentSessionID          string          `json:"agent_session_id"`
+			AgentSessionID          int64           `json:"agent_session_id"`
 			WaitMs                  *int            `json:"wait_ms"`
 			IncludeUnappliedAnswers bool            `json:"include_unapplied_answers"`
 		}
@@ -1004,7 +1159,7 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		if err := d.ensureAgentSessionProject(ctx, p.AgentSessionID, goal.ProjectID); err != nil {
 			return nil, err
 		}
-		if p.TaskID != "" {
+		if p.TaskID != 0 {
 			targetProjectID, err := d.store.ProjectIDForTask(ctx, p.TaskID)
 			if err != nil {
 				return nil, err
@@ -1077,25 +1232,25 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 
 	case "decision.poll":
 		var p struct {
-			AgentSessionID          string `json:"agent_session_id"`
-			DecisionID              string `json:"decision_id"`
-			IncludeUnappliedAnswers bool   `json:"include_unapplied_answers"`
+			AgentSessionID          int64 `json:"agent_session_id"`
+			DecisionID              int64 `json:"decision_id"`
+			IncludeUnappliedAnswers bool  `json:"include_unapplied_answers"`
 		}
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, err
 		}
-		if strings.TrimSpace(p.DecisionID) != "" {
+		if p.DecisionID != 0 {
 			role, err := d.deriveSessionRole(ctx, p.AgentSessionID)
 			if err != nil {
 				return nil, err
 			}
-			if role.Role == "subcommander" && role.GoalID != "" {
+			if role.Role == "subcommander" && role.GoalID != 0 {
 				decision, err := d.store.GetDecision(ctx, p.DecisionID)
 				if err != nil {
 					return nil, err
 				}
 				if decision.GoalID != role.GoalID {
-					return nil, fmt.Errorf("%w: decision %s belongs to goal %s, not the goal %s you hold; hand it to that goal's owner instead of polling it",
+					return nil, fmt.Errorf("%w: decision %d belongs to goal %d, not the goal %d you hold; hand it to that goal's owner instead of polling it",
 						ErrDecisionOutsideGoal, p.DecisionID, decision.GoalID, role.GoalID)
 				}
 			}
@@ -1104,20 +1259,20 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		if err != nil || !p.IncludeUnappliedAnswers {
 			return marshal(decs, err)
 		}
-		goalID := ""
+		var goalID int64
 		if len(decs) > 0 {
 			goalID = decs[0].GoalID
-		} else if p.DecisionID != "" {
+		} else if p.DecisionID != 0 {
 			decision, err := d.store.GetDecision(ctx, p.DecisionID)
 			if err != nil {
 				return nil, err
 			}
 			goalID = decision.GoalID
 		}
-		if goalID == "" {
+		if goalID == 0 {
 			return marshal(responseWithUnappliedDecisions{Data: decs}, nil)
 		}
-		excludedIDs := make([]string, 0, len(decs))
+		excludedIDs := make([]int64, 0, len(decs))
 		for _, decision := range decs {
 			excludedIDs = append(excludedIDs, decision.ID)
 		}
@@ -1126,7 +1281,7 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 
 	case "decision.withdraw":
 		var p struct {
-			DecisionID              string `json:"decision_id"`
+			DecisionID              int64  `json:"decision_id"`
 			Reason                  string `json:"reason"`
 			IncludeUnappliedAnswers bool   `json:"include_unapplied_answers"`
 		}
@@ -1148,15 +1303,15 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		if !p.IncludeUnappliedAnswers {
 			return marshal(data, nil)
 		}
-		response, err := d.responseWithScopedUnappliedDecisions(ctx, data, decision.GoalID, "", decision.ID)
+		response, err := d.responseWithScopedUnappliedDecisions(ctx, data, decision.GoalID, 0, decision.ID)
 		return marshal(response, err)
 
 	case "goal.set_derived_from":
 		var p struct {
-			GoalID                  string `json:"goal_id"`
-			DerivedFromGoalID       string `json:"derived_from_goal_id"`
-			AgentSessionID          string `json:"agent_session_id"`
-			IncludeUnappliedAnswers bool   `json:"include_unapplied_answers"`
+			GoalID                  int64 `json:"goal_id"`
+			DerivedFromGoalID       int64 `json:"derived_from_goal_id"`
+			AgentSessionID          int64 `json:"agent_session_id"`
+			IncludeUnappliedAnswers bool  `json:"include_unapplied_answers"`
 		}
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, err
@@ -1180,14 +1335,14 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 
 	case "goal.complete":
 		var p struct {
-			GoalID                  string `json:"goal_id"`
+			GoalID                  int64  `json:"goal_id"`
 			WorkDone                string `json:"work_done"`
 			NowPossible             string `json:"now_possible"`
 			HowToVerify             string `json:"how_to_verify"`
 			Surprises               string `json:"surprises"`
 			NeedsReview             string `json:"needs_review"`
 			NextSteps               string `json:"next_steps"`
-			AgentSessionID          string `json:"agent_session_id"`
+			AgentSessionID          int64  `json:"agent_session_id"`
 			IncludeUnappliedAnswers bool   `json:"include_unapplied_answers"`
 		}
 		if err := json.Unmarshal(req.Params, &p); err != nil {

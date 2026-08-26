@@ -143,7 +143,7 @@ func TestApproveGoalActivatesGoalAndAppliesApproval(t *testing.T) {
 		t.Fatalf("DeclareTasks: %v", err)
 	}
 	addTestAgentSession(t, s, "approved-agent-session")
-	claimed, err := s.ClaimTask(ctx, tasks[0].ID, "approved-agent-session")
+	claimed, err := s.ClaimTask(ctx, tasks[0].ID, testSessionID("approved-agent-session"))
 	if err != nil {
 		t.Fatalf("ClaimTask after approval: %v", err)
 	}
@@ -154,8 +154,8 @@ func TestApproveGoalActivatesGoalAndAppliesApproval(t *testing.T) {
 	if handoff == nil {
 		t.Fatal("task handoff is missing after claim")
 	}
-	if handoff.ReceivedBy != "approved-agent-session" {
-		t.Fatalf("task handoff receiver = %q, want approved-agent-session", handoff.ReceivedBy)
+	if handoff.ReceivedBy != testSessionID("approved-agent-session") {
+		t.Fatalf("task handoff receiver = %d, want approved-agent-session (%d)", handoff.ReceivedBy, testSessionID("approved-agent-session"))
 	}
 }
 
@@ -214,11 +214,11 @@ func TestClaimTaskRejectsTaskForProposedGoal(t *testing.T) {
 		t.Fatalf("set goal proposed: %v", err)
 	}
 
-	_, err = s.ClaimTask(ctx, tasks[0].ID, "agent-session")
+	_, err = s.ClaimTask(ctx, tasks[0].ID, testSessionID("agent-session"))
 	if !errors.Is(err, ErrGoalNotActive) {
 		t.Fatalf("ClaimTask error = %v, want ErrGoalNotActive", err)
 	}
-	want := fmt.Sprintf("%s: goal %q is not approved; obtain human approval before claiming its tasks (承認されていないため、先に人間の承認を得てください)", ErrGoalNotActive, goal.ID)
+	want := fmt.Sprintf("%s: goal %d is not approved; obtain human approval before claiming its tasks (承認されていないため、先に人間の承認を得てください)", ErrGoalNotActive, goal.ID)
 	if err.Error() != want {
 		t.Fatalf("ClaimTask error = %q, want %q", err, want)
 	}
@@ -245,11 +245,11 @@ func TestClaimTaskRejectsNonActiveGoalsWithStateSpecificWording(t *testing.T) {
 				t.Fatalf("set goal status: %v", err)
 			}
 
-			_, err = s.ClaimTask(ctx, tasks[0].ID, "agent-session")
+			_, err = s.ClaimTask(ctx, tasks[0].ID, testSessionID("agent-session"))
 			if !errors.Is(err, ErrGoalNotActive) {
 				t.Fatalf("ClaimTask error = %v, want ErrGoalNotActive", err)
 			}
-			want := fmt.Sprintf("%s: goal %q %s; cannot claim its tasks (%s)", ErrGoalNotActive, goal.ID, tt.statePhrase, tt.japanese)
+			want := fmt.Sprintf("%s: goal %d %s; cannot claim its tasks (%s)", ErrGoalNotActive, goal.ID, tt.statePhrase, tt.japanese)
 			if err.Error() != want {
 				t.Fatalf("ClaimTask error = %q, want %q", err, want)
 			}
@@ -273,7 +273,7 @@ func TestDeclareTasksRejectsTaskForProposedGoalWithoutCreatingTasks(t *testing.T
 	if !errors.Is(err, ErrGoalNotActive) {
 		t.Fatalf("DeclareTasks error = %v, want ErrGoalNotActive", err)
 	}
-	want := fmt.Sprintf("%s: goal %q is not approved; obtain human approval before declaring its tasks (承認されていないため、先に人間の承認を得てください)", ErrGoalNotActive, goal.ID)
+	want := fmt.Sprintf("%s: goal %d is not approved; obtain human approval before declaring its tasks (承認されていないため、先に人間の承認を得てください)", ErrGoalNotActive, goal.ID)
 	if err.Error() != want {
 		t.Fatalf("DeclareTasks error = %q, want %q", err, want)
 	}
@@ -307,7 +307,7 @@ func TestDeclareTasksRejectsNonActiveGoalsWithStateSpecificWording(t *testing.T)
 			if !errors.Is(err, ErrGoalNotActive) {
 				t.Fatalf("DeclareTasks error = %v, want ErrGoalNotActive", err)
 			}
-			want := fmt.Sprintf("%s: goal %q %s; cannot declare its tasks (%s)", ErrGoalNotActive, goal.ID, tt.statePhrase, tt.japanese)
+			want := fmt.Sprintf("%s: goal %d %s; cannot declare its tasks (%s)", ErrGoalNotActive, goal.ID, tt.statePhrase, tt.japanese)
 			if err.Error() != want {
 				t.Fatalf("DeclareTasks error = %q, want %q", err, want)
 			}

@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -27,13 +28,15 @@ import (
 const e2eRoot = "/workspace/atct"
 
 type e2eStack struct {
-	dir      string
-	db       *store.Store
-	socket   string
-	agent    *mcpshim.Client
-	server   *httptest.Server
-	cancel   context.CancelFunc
-	serveErr chan error
+	dir       string
+	db        *store.Store
+	socket    string
+	agent     *mcpshim.Client
+	server    *httptest.Server
+	cancel    context.CancelFunc
+	serveErr  chan error
+	sessionMu sync.Mutex
+	sessions  map[string]int64
 }
 
 type e2eGoalList struct {
@@ -58,8 +61,8 @@ type e2eGoalDetail struct {
 }
 
 type parkedDecision struct {
-	Parked     bool   `json:"parked"`
-	DecisionID string `json:"decision_id"`
+	Parked     bool  `json:"parked"`
+	DecisionID int64 `json:"decision_id"`
 }
 
 type sseFrame struct {
@@ -87,6 +90,7 @@ func newE2EStack(t *testing.T) *e2eStack {
 		agent:    mcpshim.NewClient(filepath.Join(dir, "atct.sock")),
 		cancel:   cancel,
 		serveErr: make(chan error, 1),
+		sessions: make(map[string]int64),
 	}
 	go func() {
 		stack.serveErr <- daemon.New(db).Serve(ctx, stack.socket)
@@ -139,6 +143,21 @@ func (s *e2eStack) call(method string, params any, out any) error {
 	return s.agent.Call(ctx, method, params, out)
 }
 
+func (s *e2eStack) session(t *testing.T, label string) int64 {
+	t.Helper()
+	s.sessionMu.Lock()
+	defer s.sessionMu.Unlock()
+	if id, ok := s.sessions[label]; ok {
+		return id
+	}
+	id, err := s.db.RegisterAgentSession(context.Background(), 0)
+	if err != nil {
+		t.Fatalf("register e2e session %q: %v", label, err)
+	}
+	s.sessions[label] = id
+	return id
+}
+
 func callDaemon(t *testing.T, s *e2eStack, method string, params any, out any) {
 	t.Helper()
 	if err := s.call(method, params, out); err != nil {
@@ -158,7 +177,7 @@ func createProjectAt(t *testing.T, s *e2eStack, name, rootPath string) domain.Pr
 		"name":      name,
 		"root_path": rootPath,
 	}, &project)
-	if project.ID == "" || project.RootPath != rootPath {
+	if project.ID == 0 || project.RootPath != rootPath {
 		t.Fatalf("project.create returned %+v", project)
 	}
 	return project
@@ -177,13 +196,13 @@ func createGoalAt(t *testing.T, s *e2eStack, cwd string) domain.Goal {
 		"content": "Complete the end-to-end flow\n\nVerify the daemon and human-facing routes together",
 		"creator": "human",
 	}, &goal)
-	if goal.ID == "" || goal.Status != domain.GoalActive {
+	if goal.ID == 0 || goal.Status != domain.GoalActive {
 		t.Fatalf("goal.create returned %+v", goal)
 	}
 	return goal
 }
 
-func declareTasks(t *testing.T, s *e2eStack, goalID string, titles []string) []domain.Task {
+func declareTasks(t *testing.T, s *e2eStack, goalID int64, titles []string) []domain.Task {
 	t.Helper()
 	var tasks []domain.Task
 	descriptions := make([]string, len(titles))
@@ -203,7 +222,7 @@ func declareTasks(t *testing.T, s *e2eStack, goalID string, titles []string) []d
 	return tasks
 }
 
-func askParked(t *testing.T, s *e2eStack, goalID, taskID, agentSessionID string) parkedDecision {
+func askParked(t *testing.T, s *e2eStack, goalID, taskID int64, agentSessionID string) parkedDecision {
 	t.Helper()
 	var result parkedDecision
 	callDaemon(t, s, "decision.ask", map[string]any{
@@ -213,10 +232,10 @@ func askParked(t *testing.T, s *e2eStack, goalID, taskID, agentSessionID string)
 		"options": []domain.Option{{
 			Label: "continue", Description: "Continue the task", Consequence: "The run proceeds",
 		}},
-		"agent_session_id": agentSessionID,
+		"agent_session_id": s.session(t, agentSessionID),
 		"wait_ms":          0,
 	}, &result)
-	if !result.Parked || result.DecisionID == "" {
+	if !result.Parked || result.DecisionID == 0 {
 		t.Fatalf("decision.ask returned %+v, want parked decision", result)
 	}
 	return result
@@ -320,7 +339,7 @@ func decodeJSON(t *testing.T, raw []byte, dst any) {
 	}
 }
 
-func containsDecision(decisions []domain.Decision, id string) bool {
+func containsDecision(decisions []domain.Decision, id int64) bool {
 	for _, decision := range decisions {
 		if decision.ID == id {
 			return true
@@ -335,19 +354,19 @@ func TestFullFlowThroughDaemonAndHTTP(t *testing.T) {
 	// human として作る。agent の提案と承認の経路は goal_approval_test.go が覆う
 	goal := createGoal(t, stack)
 	if goal.ProjectID != project.ID {
-		t.Fatalf("goal project_id = %q, want %q", goal.ProjectID, project.ID)
+		t.Fatalf("goal project_id = %d, want %d", goal.ProjectID, project.ID)
 	}
 
 	var listed e2eGoalList
 	callDaemon(t, stack, "goal.list", map[string]any{
-		"cwd": e2eRoot, "agent_session_id": "flow-run",
+		"cwd": e2eRoot, "agent_session_id": stack.session(t, "flow-run"),
 	}, &listed)
 	if listed.Project.ID != project.ID || len(listed.Goals) != 1 || listed.Goals[0].ID != goal.ID {
 		t.Fatalf("goal.list returned %+v", listed)
 	}
 
 	tasks := declareTasks(t, stack, goal.ID, []string{"Prepare the run", "Resolve the question", "Finish the goal"})
-	agentSessionID := "flow-run"
+	agentSessionID := stack.session(t, "flow-run")
 	var claimed domain.Task
 	callDaemon(t, stack, "task.claim", map[string]any{
 		"task_id": tasks[0].ID, "agent_session_id": agentSessionID,
@@ -361,7 +380,7 @@ func TestFullFlowThroughDaemonAndHTTP(t *testing.T) {
 		t.Fatalf("task.claim handoff = %+v, task = %+v", claimedHandoff, claimed)
 	}
 
-	parked := askParked(t, stack, goal.ID, tasks[1].ID, agentSessionID)
+	parked := askParked(t, stack, goal.ID, tasks[1].ID, "flow-run")
 	status, raw := httpJSON(t, stack, http.MethodGet, "/api/inbox", nil)
 	if status != http.StatusOK {
 		t.Fatalf("GET /api/inbox status = %d, body %s", status, raw)
@@ -375,7 +394,7 @@ func TestFullFlowThroughDaemonAndHTTP(t *testing.T) {
 		t.Fatalf("active_goals does not contain goal: %+v", inbox.ActiveGoals)
 	}
 
-	status, raw = httpJSON(t, stack, http.MethodPost, "/api/decisions/"+parked.DecisionID+"/answer", map[string]string{
+	status, raw = httpJSON(t, stack, http.MethodPost, "/api/decisions/"+idText(parked.DecisionID)+"/answer", map[string]string{
 		"answer_label": "continue",
 		"answer_text":  "Continue after reviewing the question",
 	})
@@ -437,7 +456,7 @@ func TestFullFlowThroughDaemonAndHTTP(t *testing.T) {
 	response, reader, cancelSSE := openSSE(t, stack)
 	defer response.Body.Close()
 	defer cancelSSE()
-	status, raw = httpJSON(t, stack, http.MethodPost, "/api/decisions/"+completion.ID+"/approve", map[string]string{})
+	status, raw = httpJSON(t, stack, http.MethodPost, "/api/decisions/"+idText(completion.ID)+"/approve", map[string]string{})
 	if status != http.StatusOK {
 		t.Fatalf("POST approve status = %d, body %s", status, raw)
 	}
@@ -459,7 +478,7 @@ func TestFullFlowThroughDaemonAndHTTP(t *testing.T) {
 		t.Fatalf("approval SSE data = %+v", approved)
 	}
 
-	status, raw = httpJSON(t, stack, http.MethodGet, "/api/goals/"+goal.ID, nil)
+	status, raw = httpJSON(t, stack, http.MethodGet, "/api/goals/"+idText(goal.ID), nil)
 	if status != http.StatusOK {
 		t.Fatalf("GET goal detail status = %d, body %s", status, raw)
 	}
@@ -494,7 +513,7 @@ func TestOpenDecisionBlocksTaskDoneThroughDaemon(t *testing.T) {
 		t.Fatalf("task.update with open decision error = %v, want task has an open decision", err)
 	}
 
-	status, raw := httpJSON(t, stack, http.MethodGet, "/api/goals/"+goal.ID, nil)
+	status, raw := httpJSON(t, stack, http.MethodGet, "/api/goals/"+idText(goal.ID), nil)
 	if status != http.StatusOK {
 		t.Fatalf("GET goal detail status = %d, body %s", status, raw)
 	}
@@ -504,7 +523,7 @@ func TestOpenDecisionBlocksTaskDoneThroughDaemon(t *testing.T) {
 		t.Fatalf("goal detail columns = now %d needs_decision %d next %d", len(detail.Now), len(detail.NeedsDecision), len(detail.Next))
 	}
 	if !containsRawID(detail.NeedsDecision, tasks[0].ID) {
-		t.Fatalf("needs_decision does not contain task %s", tasks[0].ID)
+		t.Fatalf("needs_decision does not contain task %d", tasks[0].ID)
 	}
 }
 
@@ -516,7 +535,7 @@ func TestAnsweredDecisionAppearsUnappliedInInbox(t *testing.T) {
 	tasks := declareTasks(t, stack, goal.ID, []string{"Awaiting answer"})
 	decision := askParked(t, stack, goal.ID, tasks[0].ID, "unapplied-run")
 
-	status, raw := httpJSON(t, stack, http.MethodPost, "/api/decisions/"+decision.DecisionID+"/answer", map[string]string{
+	status, raw := httpJSON(t, stack, http.MethodPost, "/api/decisions/"+idText(decision.DecisionID)+"/answer", map[string]string{
 		"answer_label": "continue",
 		"answer_text":  "The answer is ready for the agent",
 	})
@@ -546,15 +565,15 @@ func TestOnlyOneAgentSessionClaimsTaskThroughDaemon(t *testing.T) {
 	tasks := declareTasks(t, stack, goal.ID, []string{"Competing task"})
 
 	type claimResult struct {
-		agentSessionID string
+		agentSessionID int64
 		err            error
 		task           domain.Task
 	}
 	results := make(chan claimResult, 2)
 	var group sync.WaitGroup
-	for _, agentSessionID := range []string{"claim-run-a", "claim-run-b"} {
+	for _, agentSessionID := range []int64{stack.session(t, "claim-run-a"), stack.session(t, "claim-run-b")} {
 		group.Add(1)
-		go func(agentSessionID string) {
+		go func(agentSessionID int64) {
 			defer group.Done()
 			var task domain.Task
 			err := stack.call("task.claim", map[string]any{
@@ -600,7 +619,7 @@ func TestSSEPublishesAnsweredDecision(t *testing.T) {
 	defer response.Body.Close()
 	defer cancelSSE()
 
-	status, raw := httpJSON(t, stack, http.MethodPost, "/api/decisions/"+decision.DecisionID+"/answer", map[string]string{
+	status, raw := httpJSON(t, stack, http.MethodPost, "/api/decisions/"+idText(decision.DecisionID)+"/answer", map[string]string{
 		"answer_label": "continue",
 		"answer_text":  "SSE should carry this answer",
 	})
@@ -628,7 +647,7 @@ func TestSessionCanAdoptAnsweredDecision(t *testing.T) {
 	tasks := declareTasks(t, stack, goal.ID, []string{"Adopt the answered decision"})
 	decision := askParked(t, stack, goal.ID, tasks[0].ID, "run-a")
 
-	status, raw := httpJSON(t, stack, http.MethodPost, "/api/decisions/"+decision.DecisionID+"/answer", map[string]string{
+	status, raw := httpJSON(t, stack, http.MethodPost, "/api/decisions/"+idText(decision.DecisionID)+"/answer", map[string]string{
 		"answer_label": "continue",
 		"answer_text":  "Continue in the new session",
 	})
@@ -643,7 +662,7 @@ func TestSessionCanAdoptAnsweredDecision(t *testing.T) {
 
 	var listed e2eGoalList
 	callDaemon(t, stack, "goal.list", map[string]any{
-		"cwd": e2eRoot, "agent_session_id": "run-b",
+		"cwd": e2eRoot, "agent_session_id": stack.session(t, "run-b"),
 	}, &listed)
 	if !containsDecision(listed.OrphanedDecisions, decision.DecisionID) {
 		t.Fatalf("orphaned_decisions does not contain answered decision: %+v", listed.OrphanedDecisions)
@@ -651,13 +670,13 @@ func TestSessionCanAdoptAnsweredDecision(t *testing.T) {
 
 	var applied []domain.Decision
 	callDaemon(t, stack, "decision.poll", map[string]any{
-		"agent_session_id": "run-b", "decision_id": decision.DecisionID,
+		"agent_session_id": stack.session(t, "run-b"), "decision_id": decision.DecisionID,
 	}, &applied)
 	if len(applied) != 1 || applied[0].ID != decision.DecisionID || applied[0].Status != domain.DecisionApplied {
 		t.Fatalf("decision.poll returned %+v", applied)
 	}
-	if applied[0].AgentSessionID != "run-a" {
-		t.Fatalf("adopted decision agent_session_id = %q, want run-a", applied[0].AgentSessionID)
+	if applied[0].AgentSessionID != stack.session(t, "run-a") {
+		t.Fatalf("adopted decision agent_session_id = %d, want run-a (%d)", applied[0].AgentSessionID, stack.session(t, "run-a"))
 	}
 
 	status, raw = httpJSON(t, stack, http.MethodGet, "/api/inbox", nil)
@@ -678,15 +697,15 @@ func TestGoalListScopesDecisionsToProject(t *testing.T) {
 	goal := createGoal(t, stack)
 	otherGoal := createGoalAt(t, stack, otherProject.RootPath)
 	if goal.ProjectID != project.ID || otherGoal.ProjectID != otherProject.ID {
-		t.Fatalf("goal project IDs = %q and %q, want %q and %q", goal.ProjectID, otherGoal.ProjectID, project.ID, otherProject.ID)
+		t.Fatalf("goal project IDs = %d and %d, want %d and %d", goal.ProjectID, otherGoal.ProjectID, project.ID, otherProject.ID)
 	}
 	tasks := declareTasks(t, stack, goal.ID, []string{"Adopt the answered decision"})
 	otherTasks := declareTasks(t, stack, otherGoal.ID, []string{"Keep the other project isolated"})
 	decision := askParked(t, stack, goal.ID, tasks[0].ID, "scope-run-a")
 	otherDecision := askParked(t, stack, otherGoal.ID, otherTasks[0].ID, "scope-run-b")
 
-	for _, decisionID := range []string{decision.DecisionID, otherDecision.DecisionID} {
-		status, raw := httpJSON(t, stack, http.MethodPost, "/api/decisions/"+decisionID+"/answer", map[string]string{
+	for _, decisionID := range []int64{decision.DecisionID, otherDecision.DecisionID} {
+		status, raw := httpJSON(t, stack, http.MethodPost, "/api/decisions/"+idText(decisionID)+"/answer", map[string]string{
 			"answer_label": "continue",
 			"answer_text":  "Keep the decision scoped to its project",
 		})
@@ -697,28 +716,28 @@ func TestGoalListScopesDecisionsToProject(t *testing.T) {
 
 	var orphaned e2eGoalList
 	callDaemon(t, stack, "goal.list", map[string]any{
-		"cwd": e2eRoot, "agent_session_id": "scope-run-new",
+		"cwd": e2eRoot, "agent_session_id": stack.session(t, "scope-run-new"),
 	}, &orphaned)
 	if !containsDecision(orphaned.OrphanedDecisions, decision.DecisionID) {
 		t.Fatalf("orphaned_decisions does not contain own decision: %+v", orphaned.OrphanedDecisions)
 	}
 	if containsDecision(orphaned.OrphanedDecisions, otherDecision.DecisionID) {
-		t.Fatalf("orphaned_decisions contains other project's decision %s: %+v", otherDecision.DecisionID, orphaned.OrphanedDecisions)
+		t.Fatalf("orphaned_decisions contains other project's decision %d: %+v", otherDecision.DecisionID, orphaned.OrphanedDecisions)
 	}
 
 	var answered e2eGoalList
 	callDaemon(t, stack, "goal.list", map[string]any{
-		"cwd": e2eRoot, "agent_session_id": "scope-run-a",
+		"cwd": e2eRoot, "agent_session_id": stack.session(t, "scope-run-a"),
 	}, &answered)
 	if !containsDecision(answered.AnsweredDecisions, decision.DecisionID) {
 		t.Fatalf("answered_decisions does not contain own decision: %+v", answered.AnsweredDecisions)
 	}
 	if containsDecision(answered.AnsweredDecisions, otherDecision.DecisionID) {
-		t.Fatalf("answered_decisions contains other project's decision %s: %+v", otherDecision.DecisionID, answered.AnsweredDecisions)
+		t.Fatalf("answered_decisions contains other project's decision %d: %+v", otherDecision.DecisionID, answered.AnsweredDecisions)
 	}
 }
 
-func containsGoal(goals []domain.Goal, id string) bool {
+func containsGoal(goals []domain.Goal, id int64) bool {
 	for _, goal := range goals {
 		if goal.ID == id {
 			return true
@@ -727,10 +746,10 @@ func containsGoal(goals []domain.Goal, id string) bool {
 	return false
 }
 
-func containsRawID(values []json.RawMessage, id string) bool {
+func containsRawID(values []json.RawMessage, id int64) bool {
 	for _, value := range values {
 		var task struct {
-			ID string `json:"id"`
+			ID int64 `json:"id"`
 		}
 		if json.Unmarshal(value, &task) == nil && task.ID == id {
 			return true
@@ -738,3 +757,5 @@ func containsRawID(values []json.RawMessage, id string) bool {
 	}
 	return false
 }
+
+func idText(id int64) string { return strconv.FormatInt(id, 10) }

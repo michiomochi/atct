@@ -59,7 +59,7 @@ func claimCheckCommand(dir string, args []string) (int, error) {
 	if err != nil {
 		return 2, fmt.Errorf("claim liveness: %w", err)
 	}
-	live := make(map[string]struct{}, len(running))
+	live := make(map[int64]struct{}, len(running))
 	for _, task := range running {
 		live[task.ID] = struct{}{}
 	}
@@ -74,7 +74,12 @@ func claimCheckCommand(dir string, args []string) (int, error) {
 
 	missing := make([]string, 0, len(taskIDs))
 	for _, id := range taskIDs {
-		if _, ok := live[id]; !ok {
+		canonicalID, err := s.ResolveTaskID(ctx, id)
+		if err != nil {
+			missing = append(missing, id)
+			continue
+		}
+		if _, ok := live[canonicalID]; !ok {
 			missing = append(missing, id)
 		}
 	}

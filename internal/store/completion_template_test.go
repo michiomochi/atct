@@ -190,7 +190,7 @@ func TestCompletionTemplateAllFieldsCanBecomeDone(t *testing.T) {
 	s, ctx, goal := completionTemplateStore(t)
 	report := completionTemplateReport()
 
-	decision, err := s.CompleteGoalWithReport(ctx, goal.ID, report, "completion-template-run")
+	decision, err := s.CompleteGoalWithReport(ctx, goal.ID, report, testSessionID("completion-template-run"))
 	if err != nil {
 		t.Fatalf("complete goal: %v", err)
 	}
@@ -312,7 +312,7 @@ PRAGMA user_version = 5`)
 	if version != 6 {
 		t.Fatalf("schema version = %d, want 6", version)
 	}
-	goal, err := s.GetGoal(context.Background(), "goal-v5-done")
+	goal, err := s.GetGoal(context.Background(), 1)
 	if err != nil {
 		t.Fatalf("read migrated goal: %v", err)
 	}
@@ -326,7 +326,7 @@ PRAGMA user_version = 5`)
 	if goal.ResultSummary != "legacy completion report" {
 		t.Fatalf("migrated result_summary = %q, want legacy report", goal.ResultSummary)
 	}
-	active, err := s.GetGoal(context.Background(), "goal-v5-active")
+	active, err := s.GetGoal(context.Background(), 2)
 	if err != nil {
 		t.Fatalf("read migrated active goal: %v", err)
 	}

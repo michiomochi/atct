@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/michiomochi/atct/internal/store"
@@ -29,9 +30,9 @@ const (
 // a fresh wakeup ID.
 type wakeupTracker struct {
 	startedAt            time.Time
-	activeSince          map[string]time.Time
-	published            map[string]time.Time
-	discrepancySeen      map[string]bool
+	activeSince          map[int64]time.Time
+	published            map[int64]time.Time
+	discrepancySeen      map[int64]bool
 	detectionActiveSince map[string]time.Time
 	detectionPublished   map[string]bool
 }
@@ -39,23 +40,23 @@ type wakeupTracker struct {
 func newWakeupTracker(startedAt time.Time) *wakeupTracker {
 	return &wakeupTracker{
 		startedAt:            startedAt,
-		activeSince:          make(map[string]time.Time),
-		published:            make(map[string]time.Time),
-		discrepancySeen:      make(map[string]bool),
+		activeSince:          make(map[int64]time.Time),
+		published:            make(map[int64]time.Time),
+		discrepancySeen:      make(map[int64]bool),
 		detectionActiveSince: make(map[string]time.Time),
 		detectionPublished:   make(map[string]bool),
 	}
 }
 
-func detectionTrackerKey(name, targetID string) string {
-	return name + "\x00" + targetID
+func detectionTrackerKey(name string, targetID any) string {
+	return name + "\x00" + fmt.Sprint(targetID)
 }
 
-func (t *wakeupTracker) publishDetection(now, startedAt time.Time, after time.Duration, name, targetID, projectID, goalID, taskID, handoffID string) (store.DecisionEvent, bool) {
-	return t.publishDetectionWithDecision(now, startedAt, after, name, targetID, projectID, goalID, taskID, handoffID, "")
+func (t *wakeupTracker) publishDetection(now, startedAt time.Time, after time.Duration, name string, targetID any, projectID, goalID, taskID int64, handoffID string) (store.DecisionEvent, bool) {
+	return t.publishDetectionWithDecision(now, startedAt, after, name, targetID, projectID, goalID, taskID, handoffID, 0)
 }
 
-func (t *wakeupTracker) publishDetectionWithDecision(now, startedAt time.Time, after time.Duration, name, targetID, projectID, goalID, taskID, handoffID, decisionID string) (store.DecisionEvent, bool) {
+func (t *wakeupTracker) publishDetectionWithDecision(now, startedAt time.Time, after time.Duration, name string, targetID any, projectID, goalID, taskID int64, handoffID string, decisionID int64) (store.DecisionEvent, bool) {
 	key := detectionTrackerKey(name, targetID)
 	trackedAt, ok := t.detectionActiveSince[key]
 	if !ok {
@@ -91,7 +92,7 @@ func (t *wakeupTracker) evaluate(ctx context.Context, s *store.Store, now time.T
 	return t.evaluateWith(ctx, s, now, s.DetectWakeup)
 }
 
-func (t *wakeupTracker) evaluateWith(ctx context.Context, s *store.Store, now time.Time, detect func(context.Context, string) (store.WakeupState, error)) ([]store.DecisionEvent, error) {
+func (t *wakeupTracker) evaluateWith(ctx context.Context, s *store.Store, now time.Time, detect func(context.Context, int64) (store.WakeupState, error)) ([]store.DecisionEvent, error) {
 	projects, err := s.ListProjects(ctx)
 	if err != nil {
 		return nil, err
@@ -173,21 +174,21 @@ func (t *wakeupTracker) evaluateWith(ctx context.Context, s *store.Store, now ti
 			}
 		}
 
-		recordDetection := func(name, targetID string, startedAt time.Time, after time.Duration, goalID, taskID, handoffID, decisionID string) {
+		recordDetection := func(name string, targetID any, startedAt time.Time, after time.Duration, goalID, taskID int64, handoffID string, decisionID int64) {
 			currentDetectionKeys[detectionTrackerKey(name, targetID)] = struct{}{}
 			if event, ok := t.publishDetectionWithDecision(now, startedAt, after, name, targetID, project.ID, goalID, taskID, handoffID, decisionID); ok {
 				events = append(events, event)
 			}
 		}
-		openTaskHandoffs := make(map[string]*store.TaskHandoff)
-		goalIDs := make(map[string]struct{})
+		openTaskHandoffs := make(map[int64]*store.TaskHandoff)
+		goalIDs := make(map[int64]struct{})
 		for _, task := range state.UndelegatedClaims {
-			if task.GoalID != "" {
+			if task.GoalID != 0 {
 				goalIDs[task.GoalID] = struct{}{}
 			}
 		}
 		for _, task := range state.StaleClaims {
-			if task.GoalID != "" {
+			if task.GoalID != 0 {
 				goalIDs[task.GoalID] = struct{}{}
 			}
 		}
@@ -201,19 +202,19 @@ func (t *wakeupTracker) evaluateWith(ctx context.Context, s *store.Store, now ti
 			}
 		}
 		for _, goal := range state.CompletedGoals {
-			recordDetection(store.EventDetectionCompletionReportMissing, goal.ID, time.Time{}, wakeupPublishAfter, goal.ID, "", "", "")
+			recordDetection(store.EventDetectionCompletionReportMissing, goal.ID, time.Time{}, wakeupPublishAfter, goal.ID, 0, "", 0)
 		}
 		for _, goal := range state.CommitlessGoals {
-			recordDetection(store.EventDetectionCommitsMissing, goal.ID, time.Time{}, wakeupPublishAfter, goal.ID, "", "", "")
+			recordDetection(store.EventDetectionCommitsMissing, goal.ID, time.Time{}, wakeupPublishAfter, goal.ID, 0, "", 0)
 		}
 		for _, goal := range state.UndeclaredGoals {
-			recordDetection(store.EventDetectionUndeclaredGoal, goal.ID, time.Time{}, wakeupPublishAfter, goal.ID, "", "", "")
+			recordDetection(store.EventDetectionUndeclaredGoal, goal.ID, time.Time{}, wakeupPublishAfter, goal.ID, 0, "", 0)
 		}
 		for _, goal := range state.DroppedGoals {
-			recordDetection(store.EventDetectionAllTasksDropped, goal.ID, time.Time{}, wakeupPublishAfter, goal.ID, "", "", "")
+			recordDetection(store.EventDetectionAllTasksDropped, goal.ID, time.Time{}, wakeupPublishAfter, goal.ID, 0, "", 0)
 		}
 		for _, task := range state.UnclaimedDoingTasks {
-			recordDetection(store.EventDetectionUnclaimedDoing, task.ID, time.Time{}, wakeupPublishAfter, task.GoalID, task.ID, "", "")
+			recordDetection(store.EventDetectionUnclaimedDoing, task.ID, time.Time{}, wakeupPublishAfter, task.GoalID, task.ID, "", 0)
 		}
 		for _, handoff := range state.HandoffsAwaitingReceipt {
 			if handoff.RequestedAt == nil {
@@ -223,7 +224,7 @@ func (t *wakeupTracker) evaluateWith(ctx context.Context, s *store.Store, now ti
 			if err != nil {
 				return nil, err
 			}
-			recordDetection(store.EventDetectionHandoffUnreceived, handoff.ID, *handoff.RequestedAt, detectionHandoffUnreceivedAfter, goalID, handoff.TaskID, handoff.ID, "")
+			recordDetection(store.EventDetectionHandoffUnreceived, handoff.ID, *handoff.RequestedAt, detectionHandoffUnreceivedAfter, goalID, handoff.TaskID, handoff.ID, 0)
 		}
 		for _, handoff := range state.HandoffsAwaitingReport {
 			if handoff.ReceivedAt == nil {
@@ -233,7 +234,7 @@ func (t *wakeupTracker) evaluateWith(ctx context.Context, s *store.Store, now ti
 			if err != nil {
 				return nil, err
 			}
-			recordDetection(store.EventDetectionHandoffUnreported, handoff.ID, *handoff.ReceivedAt, detectionHandoffUnreportedAfter, goalID, handoff.TaskID, handoff.ID, "")
+			recordDetection(store.EventDetectionHandoffUnreported, handoff.ID, *handoff.ReceivedAt, detectionHandoffUnreportedAfter, goalID, handoff.TaskID, handoff.ID, 0)
 		}
 		for _, handoff := range state.HandoffsReported {
 			key := detectionTrackerKey(store.EventHandoffReported, handoff.ID)
@@ -243,7 +244,7 @@ func (t *wakeupTracker) evaluateWith(ctx context.Context, s *store.Store, now ti
 				t.detectionPublished[key] = true
 				continue
 			}
-			event, ok := t.publishDetectionWithDecision(now, time.Time{}, 0, store.EventHandoffReported, handoff.ID, project.ID, handoff.GoalID, handoff.TaskID, handoff.ID, "")
+			event, ok := t.publishDetectionWithDecision(now, time.Time{}, 0, store.EventHandoffReported, handoff.ID, project.ID, handoff.GoalID, handoff.TaskID, handoff.ID, 0)
 			if !ok {
 				continue
 			}
@@ -257,7 +258,7 @@ func (t *wakeupTracker) evaluateWith(ctx context.Context, s *store.Store, now ti
 			if claimedAt == nil {
 				continue
 			}
-			recordDetection(store.EventDetectionClaimUndelegated, task.ID, *claimedAt, detectionClaimUndelegatedAfter, task.GoalID, task.ID, "", "")
+			recordDetection(store.EventDetectionClaimUndelegated, task.ID, *claimedAt, detectionClaimUndelegatedAfter, task.GoalID, task.ID, "", 0)
 		}
 		for _, decision := range state.AnsweredUnappliedDecisions {
 			recordDetection(store.EventDetectionDecisionAnsweredUnapplied, decision.ID, time.Time{}, detectionAnsweredDecisionUnappliedAfter, decision.GoalID, decision.TaskID, "", decision.ID)
@@ -274,7 +275,7 @@ func (t *wakeupTracker) evaluateWith(ctx context.Context, s *store.Store, now ti
 			if claimedAt == nil {
 				continue
 			}
-			recordDetection(store.EventDetectionClaimStale, task.ID, *claimedAt, detectionStaleClaimAfter, task.GoalID, task.ID, "", "")
+			recordDetection(store.EventDetectionClaimStale, task.ID, *claimedAt, detectionStaleClaimAfter, task.GoalID, task.ID, "", 0)
 		}
 	}
 	for key := range t.detectionActiveSince {

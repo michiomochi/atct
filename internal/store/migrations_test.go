@@ -182,7 +182,7 @@ func TestExistingV6DatabaseRecordsBaselineWithoutExecutingIt(t *testing.T) {
 	assertUserVersion(t, db, schemaVersion)
 	assertMigrationRecorded(t, db, "0001_baseline.sql")
 	var count int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM projects WHERE id = 'p1'`).Scan(&count); err != nil {
+	if err := db.QueryRow(`SELECT COUNT(*) FROM projects WHERE name = 'project'`).Scan(&count); err != nil {
 		t.Fatalf("read sentinel row: %v", err)
 	}
 	if count != 1 {
@@ -248,7 +248,7 @@ VALUES ('old-agent-session', NULL, 0, '', '2026-08-24T00:03:00Z');
 	defer migrated.Close()
 	assertMigrationRecorded(t, migrated.DB(), "0017_agent_session_keys.sql")
 	var agentSessionCount int
-	if err := migrated.DB().QueryRow(`SELECT COUNT(*) FROM agent_sessions WHERE id = ?`, "old-agent-session").Scan(&agentSessionCount); err != nil {
+	if err := migrated.DB().QueryRow(`SELECT COUNT(*) FROM agent_sessions`).Scan(&agentSessionCount); err != nil {
 		t.Fatalf("read migrated agent session: %v", err)
 	}
 	if agentSessionCount != 1 {

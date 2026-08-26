@@ -11,7 +11,7 @@ import (
 	"github.com/michiomochi/atct/internal/store/sqlcgen"
 )
 
-func addLiveGoalClaim(t *testing.T, s *Store, goalID, sessionID string) {
+func addLiveGoalClaim(t *testing.T, s *Store, goalID int64, sessionID string) {
 	t.Helper()
 
 	ctx := context.Background()
@@ -19,18 +19,16 @@ func addLiveGoalClaim(t *testing.T, s *Store, goalID, sessionID string) {
 	if err != nil {
 		t.Fatalf("GetGoal failed: %v", err)
 	}
-	if err := s.RegisterAgentSession(ctx, sessionID, os.Getpid()); err != nil {
-		t.Fatalf("RegisterAgentSession failed: %v", err)
-	}
-	if err := s.AssociateAgentSessionWithProject(ctx, sessionID, goal.ProjectID); err != nil {
+	agentSessionID := registerNamedTestAgentSession(t, s, sessionID, os.Getpid())
+	if err := s.AssociateAgentSessionWithProject(ctx, agentSessionID, goal.ProjectID); err != nil {
 		t.Fatalf("AssociateAgentSessionWithProject failed: %v", err)
 	}
-	if _, err := s.ClaimGoal(ctx, goalID, sessionID); err != nil {
+	if _, err := s.ClaimGoal(ctx, goalID, agentSessionID); err != nil {
 		t.Fatalf("ClaimGoal failed: %v", err)
 	}
 }
 
-func addLiveProjectClaim(t *testing.T, s *Store, goalID, sessionID string) {
+func addLiveProjectClaim(t *testing.T, s *Store, goalID int64, sessionID string) {
 	t.Helper()
 
 	ctx := context.Background()
@@ -38,22 +36,20 @@ func addLiveProjectClaim(t *testing.T, s *Store, goalID, sessionID string) {
 	if err != nil {
 		t.Fatalf("GetGoal failed: %v", err)
 	}
-	if err := s.RegisterAgentSession(ctx, sessionID, os.Getpid()); err != nil {
-		t.Fatalf("RegisterAgentSession failed: %v", err)
-	}
-	if _, err := s.ClaimProject(ctx, goal.ProjectID, sessionID); err != nil {
+	agentSessionID := registerNamedTestAgentSession(t, s, sessionID, os.Getpid())
+	if _, err := s.ClaimProject(ctx, goal.ProjectID, agentSessionID); err != nil {
 		t.Fatalf("ClaimProject failed: %v", err)
 	}
 }
 
-func addRequestOnlyGoalHandoff(t *testing.T, s *Store, handoffID, goalID, requestedBy string) {
+func addRequestOnlyGoalHandoff(t *testing.T, s *Store, handoffID string, goalID int64, requestedBy string) {
 	t.Helper()
 
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	err := sqlcgen.New(s.DB()).RequestGoalHandoff(context.Background(), sqlcgen.RequestGoalHandoffParams{
 		ID:            handoffID,
 		GoalID:        goalID,
-		RequestedBy:   sql.NullString{String: requestedBy, Valid: true},
+		RequestedBy:   sql.NullInt64{Int64: testSessionID(requestedBy), Valid: true},
 		RequestedAt:   sql.NullString{String: now, Valid: true},
 		RequestReport: sql.NullString{},
 	})
@@ -62,7 +58,7 @@ func addRequestOnlyGoalHandoff(t *testing.T, s *Store, handoffID, goalID, reques
 	}
 }
 
-func addReceiptOnlyGoalHandoff(t *testing.T, s *Store, handoffID, goalID, receivedBy string) {
+func addReceiptOnlyGoalHandoff(t *testing.T, s *Store, handoffID string, goalID int64, receivedBy string) {
 	t.Helper()
 
 	ctx := context.Background()
@@ -70,7 +66,7 @@ func addReceiptOnlyGoalHandoff(t *testing.T, s *Store, handoffID, goalID, receiv
 	if _, err := s.DB().ExecContext(ctx, `
 		INSERT INTO goal_handoffs (id, goal_id, requested_by, received_by, received_at)
 		VALUES (?, ?, ?, ?, ?)
-	`, handoffID, goalID, receivedBy, receivedBy, now); err != nil {
+	`, handoffID, goalID, testSessionID(receivedBy), testSessionID(receivedBy), now); err != nil {
 		t.Fatalf("insert receipt-only goal handoff failed: %v", err)
 	}
 	t.Cleanup(func() {
@@ -80,7 +76,7 @@ func addReceiptOnlyGoalHandoff(t *testing.T, s *Store, handoffID, goalID, receiv
 	})
 }
 
-func addGoalHandoffDirect(t *testing.T, s *Store, handoffID, goalID, requestedBy, receivedBy string) {
+func addGoalHandoffDirect(t *testing.T, s *Store, handoffID string, goalID int64, requestedBy, receivedBy any) {
 	t.Helper()
 
 	ctx := context.Background()
@@ -108,14 +104,14 @@ func addGoalHandoffDirect(t *testing.T, s *Store, handoffID, goalID, requestedBy
 				id, goal_id, requested_by, requested_at, request_report,
 				received_by, received_at, completed_report_at, complete_report
 			) VALUES (?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL)
-		`, handoffID, goalID, requestedBy, now)
+		`, handoffID, goalID, testSessionRef(requestedBy), now)
 	} else {
 		_, err = s.DB().ExecContext(ctx, `
 			INSERT INTO goal_handoffs (
 				id, goal_id, requested_by, requested_at, request_report,
 				received_by, received_at, completed_report_at, complete_report
 			) VALUES (?, ?, ?, ?, NULL, ?, ?, NULL, NULL)
-		`, handoffID, goalID, requestedBy, now, receivedBy, now)
+		`, handoffID, goalID, testSessionRef(requestedBy), now, testSessionRef(receivedBy), now)
 	}
 	if err != nil {
 		t.Fatalf("insert direct goal handoff %q failed: %v", handoffID, err)
@@ -129,7 +125,7 @@ func TestGoalHandoffRequestReceiveAndComplete(t *testing.T) {
 	addLiveProjectClaim(t, s, goalID, "goal-requester")
 	addTestAgentSession(t, s, "goal-receiver")
 
-	handoff, err := s.RequestGoalHandoff(ctx, "goal-handoff-1", goalID, "goal-requester", "")
+	handoff, err := s.RequestGoalHandoff(ctx, "goal-handoff-1", goalID, testSessionID("goal-requester"), "")
 	if err != nil {
 		t.Fatalf("RequestGoalHandoff failed: %v", err)
 	}
@@ -148,11 +144,11 @@ func TestGoalHandoffRequestReceiveAndComplete(t *testing.T) {
 		t.Fatalf("unreceived handoff has received timestamp: %+v", unreceived)
 	}
 
-	received, err := s.ReceiveGoalHandoff(ctx, handoff.ID, goalID, "goal-receiver")
+	received, err := s.ReceiveGoalHandoff(ctx, handoff.ID, goalID, testSessionID("goal-receiver"))
 	if err != nil {
 		t.Fatalf("ReceiveGoalHandoff failed: %v", err)
 	}
-	if received.ID != handoff.ID || received.ReceivedBy != "goal-receiver" || received.ReceivedAt == nil {
+	if received.ID != handoff.ID || received.ReceivedBy != testSessionID("goal-receiver") || received.ReceivedAt == nil {
 		t.Fatalf("unexpected received handoff: %+v", received)
 	}
 	if received.RequestedAt == nil || received.CompletedReportAt != nil {
@@ -174,7 +170,7 @@ func TestListGoalSessionsIncludesSubcommander(t *testing.T) {
 	goalID := newTestGoal(t, s)
 	addTestAgentSession(t, s, "goal-sessions-subcommander")
 
-	canonicalID, _, err := s.IdentifyAgentSession(ctx, "goal-sessions-subcommander", "atct-goal-sessions-subcommander")
+	canonicalID, _, err := s.IdentifyAgentSession(ctx, testSessionID("goal-sessions-subcommander"), "atct-goal-sessions-subcommander")
 	if err != nil {
 		t.Fatalf("IdentifyAgentSession failed: %v", err)
 	}
@@ -196,13 +192,13 @@ func TestListGoalSessionsDeduplicatesExecutorTaskHandoffs(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 	taskIDs := addTestTasks(t, s, 2)
-	var goalID string
+	var goalID int64
 	if err := s.DB().QueryRowContext(ctx, "SELECT goal_id FROM tasks WHERE id = ?", taskIDs[0]).Scan(&goalID); err != nil {
 		t.Fatalf("find task goal: %v", err)
 	}
 	addTestAgentSession(t, s, "goal-sessions-executor")
 
-	canonicalID, _, err := s.IdentifyAgentSession(ctx, "goal-sessions-executor", "atct-goal-sessions-executor")
+	canonicalID, _, err := s.IdentifyAgentSession(ctx, testSessionID("goal-sessions-executor"), "atct-goal-sessions-executor")
 	if err != nil {
 		t.Fatalf("IdentifyAgentSession failed: %v", err)
 	}
@@ -256,7 +252,7 @@ func TestListGoalSessionsIncludesCompletedHandoffs(t *testing.T) {
 	goalID := newTestGoal(t, s)
 	addTestAgentSession(t, s, "goal-sessions-completed")
 
-	canonicalID, _, err := s.IdentifyAgentSession(ctx, "goal-sessions-completed", "atct-goal-sessions-completed")
+	canonicalID, _, err := s.IdentifyAgentSession(ctx, testSessionID("goal-sessions-completed"), "atct-goal-sessions-completed")
 	if err != nil {
 		t.Fatalf("IdentifyAgentSession failed: %v", err)
 	}
@@ -279,13 +275,13 @@ func TestListGoalSessionsPrefersSubcommanderRole(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 	taskIDs := addTestTasks(t, s, 1)
-	var goalID string
+	var goalID int64
 	if err := s.DB().QueryRowContext(ctx, "SELECT goal_id FROM tasks WHERE id = ?", taskIDs[0]).Scan(&goalID); err != nil {
 		t.Fatalf("find task goal: %v", err)
 	}
 	addTestAgentSession(t, s, "goal-sessions-dual")
 
-	canonicalID, _, err := s.IdentifyAgentSession(ctx, "goal-sessions-dual", "atct-goal-sessions-dual")
+	canonicalID, _, err := s.IdentifyAgentSession(ctx, testSessionID("goal-sessions-dual"), "atct-goal-sessions-dual")
 	if err != nil {
 		t.Fatalf("IdentifyAgentSession failed: %v", err)
 	}
@@ -308,7 +304,7 @@ func TestGoalHandoffReportsAreStored(t *testing.T) {
 	addLiveProjectClaim(t, s, goalID, "goal-report-requester")
 	addTestAgentSession(t, s, "goal-report-receiver")
 
-	requested, err := s.RequestGoalHandoff(ctx, "goal-report-handoff", goalID, "goal-report-requester", "Please take over the goal.")
+	requested, err := s.RequestGoalHandoff(ctx, "goal-report-handoff", goalID, testSessionID("goal-report-requester"), "Please take over the goal.")
 	if err != nil {
 		t.Fatalf("RequestGoalHandoff: %v", err)
 	}
@@ -316,7 +312,7 @@ func TestGoalHandoffReportsAreStored(t *testing.T) {
 		t.Fatalf("request report = %q, want request body", requested.RequestReport)
 	}
 
-	if _, err := s.ReceiveGoalHandoff(ctx, requested.ID, goalID, "goal-report-receiver"); err != nil {
+	if _, err := s.ReceiveGoalHandoff(ctx, requested.ID, goalID, testSessionID("goal-report-receiver")); err != nil {
 		t.Fatalf("ReceiveGoalHandoff: %v", err)
 	}
 	completed, err := s.CompleteGoalHandoff(ctx, requested.ID, goalID, "I completed the goal and verified it.")
@@ -334,7 +330,7 @@ func TestGoalHandoffReportsMayBeOmitted(t *testing.T) {
 	goalID := newTestGoal(t, s)
 	addLiveProjectClaim(t, s, goalID, "goal-empty-report-requester")
 
-	handoff, err := s.RequestGoalHandoff(ctx, "goal-empty-report-handoff", goalID, "goal-empty-report-requester", "")
+	handoff, err := s.RequestGoalHandoff(ctx, "goal-empty-report-handoff", goalID, testSessionID("goal-empty-report-requester"), "")
 	if err != nil {
 		t.Fatalf("RequestGoalHandoff without report: %v", err)
 	}
@@ -359,18 +355,18 @@ func TestGoalHandoffAllowsSecondHandoffForSameGoal(t *testing.T) {
 	addTestAgentSession(t, s, "goal-dead-receiver")
 	if _, err := s.DB().ExecContext(ctx, `
 		UPDATE agent_sessions SET pid = ?, started_at = ? WHERE id = ?
-	`, 999999, "dead", "goal-dead-receiver"); err != nil {
+	`, 999999, "dead", testSessionID("goal-dead-receiver")); err != nil {
 		t.Fatalf("dead receiver session fixture update failed: %v", err)
 	}
 
-	first, err := s.RequestGoalHandoff(ctx, "goal-handoff-1", goalID, "goal-requester", "")
+	first, err := s.RequestGoalHandoff(ctx, "goal-handoff-1", goalID, testSessionID("goal-requester"), "")
 	if err != nil {
 		t.Fatalf("first RequestGoalHandoff failed: %v", err)
 	}
-	if _, err := s.ReceiveGoalHandoff(ctx, first.ID, goalID, "goal-dead-receiver"); err != nil {
+	if _, err := s.ReceiveGoalHandoff(ctx, first.ID, goalID, testSessionID("goal-dead-receiver")); err != nil {
 		t.Fatalf("ReceiveGoalHandoff failed: %v", err)
 	}
-	second, err := s.RequestGoalHandoff(ctx, "goal-handoff-2", goalID, "goal-requester", "")
+	second, err := s.RequestGoalHandoff(ctx, "goal-handoff-2", goalID, testSessionID("goal-requester"), "")
 	if err != nil {
 		t.Fatalf("second RequestGoalHandoff failed: %v", err)
 	}
@@ -399,19 +395,20 @@ func TestGoalHandoffRejectsSecondHandoffForLiveReceiver(t *testing.T) {
 	ctx := context.Background()
 	goalID := newTestGoal(t, s)
 	addLiveProjectClaim(t, s, goalID, "goal-live-receiver-requester")
-	if err := s.RegisterAgentSession(ctx, "goal-live-receiver", os.Getpid()); err != nil {
+	goalLiveReceiverID, err := s.RegisterAgentSession(ctx, os.Getpid())
+	if err != nil {
 		t.Fatalf("RegisterAgentSession failed: %v", err)
 	}
 
-	first, err := s.RequestGoalHandoff(ctx, "goal-live-receiver-handoff-1", goalID, "goal-live-receiver-requester", "")
+	first, err := s.RequestGoalHandoff(ctx, "goal-live-receiver-handoff-1", goalID, testSessionID("goal-live-receiver-requester"), "")
 	if err != nil {
 		t.Fatalf("first RequestGoalHandoff failed: %v", err)
 	}
-	if _, err := s.ReceiveGoalHandoff(ctx, first.ID, goalID, "goal-live-receiver"); err != nil {
+	if _, err := s.ReceiveGoalHandoff(ctx, first.ID, goalID, goalLiveReceiverID); err != nil {
 		t.Fatalf("ReceiveGoalHandoff failed: %v", err)
 	}
 
-	if _, err := s.RequestGoalHandoff(ctx, "goal-live-receiver-handoff-2", goalID, "goal-live-receiver-requester", ""); err == nil {
+	if _, err := s.RequestGoalHandoff(ctx, "goal-live-receiver-handoff-2", goalID, testSessionID("goal-live-receiver-requester"), ""); err == nil {
 		t.Fatal("RequestGoalHandoff should reject takeover from a live receiver")
 	}
 }
@@ -423,16 +420,16 @@ func TestGoalHandoffReceiveByGoal(t *testing.T) {
 	addLiveProjectClaim(t, s, goalID, "goal-requester")
 	addTestAgentSession(t, s, "goal-receiver")
 
-	requested, err := s.RequestGoalHandoff(ctx, "goal-receive-by-goal", goalID, "goal-requester", "")
+	requested, err := s.RequestGoalHandoff(ctx, "goal-receive-by-goal", goalID, testSessionID("goal-requester"), "")
 	if err != nil {
 		t.Fatalf("RequestGoalHandoff failed: %v", err)
 	}
 
-	received, err := s.ReceiveGoalHandoffForGoal(ctx, goalID, "goal-receiver")
+	received, err := s.ReceiveGoalHandoffForGoal(ctx, goalID, testSessionID("goal-receiver"))
 	if err != nil {
 		t.Fatalf("ReceiveGoalHandoffForGoal failed: %v", err)
 	}
-	if received.ID != requested.ID || received.ReceivedBy != "goal-receiver" {
+	if received.ID != requested.ID || received.ReceivedBy != testSessionID("goal-receiver") {
 		t.Fatalf("unexpected received handoff: %+v", received)
 	}
 }
@@ -445,7 +442,7 @@ func TestGoalHandoffReceiveRejectsUnrequestedHandoff(t *testing.T) {
 	addTestAgentSession(t, s, "receiver")
 	addReceiptOnlyGoalHandoff(t, s, handoffID, goalID, "receiver")
 
-	_, err := s.ReceiveGoalHandoff(ctx, handoffID, goalID, "receiver")
+	_, err := s.ReceiveGoalHandoff(ctx, handoffID, goalID, testSessionID("receiver"))
 	if !errors.Is(err, ErrGoalHandoffNotFound) {
 		t.Fatalf("error = %v, want ErrGoalHandoffNotFound", err)
 	}
@@ -456,7 +453,7 @@ func TestGoalHandoffReceiveRejectsUnknownUUIDNotFound(t *testing.T) {
 	goalID := newTestGoal(t, s)
 	unknownHandoffID := "9dfc8983-f430-4c7f-92a0-3882941dd393"
 
-	_, err := s.ReceiveGoalHandoff(context.Background(), unknownHandoffID, goalID, "receiver")
+	_, err := s.ReceiveGoalHandoff(context.Background(), unknownHandoffID, goalID, testSessionID("receiver"))
 	if !errors.Is(err, ErrGoalHandoffNotFound) {
 		t.Fatalf("error = %v, want ErrGoalHandoffNotFound", err)
 	}
@@ -474,7 +471,7 @@ func TestGoalHandoffCompleteByGoal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetGoalHandoff failed: %v", err)
 	}
-	if _, err := s.ReceiveGoalHandoff(ctx, requested.ID, goalID, "complete-by-goal-receiver"); err != nil {
+	if _, err := s.ReceiveGoalHandoff(ctx, requested.ID, goalID, testSessionID("complete-by-goal-receiver")); err != nil {
 		t.Fatalf("ReceiveGoalHandoff failed: %v", err)
 	}
 
@@ -523,7 +520,7 @@ func TestGoalHandoffCompleteByGoalRejectsMultipleReceivedIncomplete(t *testing.T
 	addTestAgentSession(t, s, "complete-goal-ambiguous-receiver")
 
 	addRequestOnlyGoalHandoff(t, s, "complete-goal-ambiguous-1", goalID, "complete-goal-ambiguous-requester")
-	if _, err := s.ReceiveGoalHandoff(ctx, "complete-goal-ambiguous-1", goalID, "complete-goal-ambiguous-receiver"); err != nil {
+	if _, err := s.ReceiveGoalHandoff(ctx, "complete-goal-ambiguous-1", goalID, testSessionID("complete-goal-ambiguous-receiver")); err != nil {
 		t.Fatalf("ReceiveGoalHandoff failed: %v", err)
 	}
 	addGoalHandoffDirect(t, s, "complete-goal-ambiguous-2", goalID, "complete-goal-ambiguous-requester", "complete-goal-ambiguous-receiver")
@@ -541,12 +538,12 @@ func TestGoalHandoffReceiveByGoalRejectsMultipleUnreceived(t *testing.T) {
 	addLiveProjectClaim(t, s, goalID, "goal-requester")
 	addTestAgentSession(t, s, "goal-receiver")
 
-	if _, err := s.RequestGoalHandoff(ctx, "goal-ambiguous-1", goalID, "goal-requester", ""); err != nil {
+	if _, err := s.RequestGoalHandoff(ctx, "goal-ambiguous-1", goalID, testSessionID("goal-requester"), ""); err != nil {
 		t.Fatalf("RequestGoalHandoff failed: %v", err)
 	}
 	addGoalHandoffDirect(t, s, "goal-ambiguous-2", goalID, "goal-requester", "")
 
-	_, err := s.ReceiveGoalHandoffForGoal(ctx, goalID, "goal-receiver")
+	_, err := s.ReceiveGoalHandoffForGoal(ctx, goalID, testSessionID("goal-receiver"))
 	if !errors.Is(err, ErrGoalHandoffAmbiguous) {
 		t.Fatalf("error = %v, want ErrGoalHandoffAmbiguous", err)
 	}
@@ -559,18 +556,18 @@ func TestGoalHandoffAllowsNewHandoffAfterCompletion(t *testing.T) {
 	addLiveProjectClaim(t, s, goalID, "completed-goal-requester")
 	addTestAgentSession(t, s, "completed-goal-receiver")
 
-	first, err := s.RequestGoalHandoff(ctx, "completed-goal-1", goalID, "completed-goal-requester", "")
+	first, err := s.RequestGoalHandoff(ctx, "completed-goal-1", goalID, testSessionID("completed-goal-requester"), "")
 	if err != nil {
 		t.Fatalf("first RequestGoalHandoff failed: %v", err)
 	}
-	if _, err := s.ReceiveGoalHandoff(ctx, first.ID, goalID, "completed-goal-receiver"); err != nil {
+	if _, err := s.ReceiveGoalHandoff(ctx, first.ID, goalID, testSessionID("completed-goal-receiver")); err != nil {
 		t.Fatalf("ReceiveGoalHandoff failed: %v", err)
 	}
 	if _, err := s.CompleteGoalHandoff(ctx, first.ID, goalID, "done"); err != nil {
 		t.Fatalf("CompleteGoalHandoff failed: %v", err)
 	}
 
-	if _, err := s.RequestGoalHandoff(ctx, "completed-goal-2", goalID, "completed-goal-requester", ""); err != nil {
+	if _, err := s.RequestGoalHandoff(ctx, "completed-goal-2", goalID, testSessionID("completed-goal-requester"), ""); err != nil {
 		t.Fatalf("new handoff after completion failed: %v", err)
 	}
 }
@@ -580,14 +577,14 @@ func TestGoalHandoffRejectsMultipleOpenHandoffsInDatabase(t *testing.T) {
 	ctx := context.Background()
 	goalID := newTestGoal(t, s)
 	addLiveProjectClaim(t, s, goalID, "goal-database-requester")
-	if _, err := s.RequestGoalHandoff(ctx, "goal-database-handoff-1", goalID, "goal-database-requester", ""); err != nil {
+	if _, err := s.RequestGoalHandoff(ctx, "goal-database-handoff-1", goalID, testSessionID("goal-database-requester"), ""); err != nil {
 		t.Fatalf("first RequestGoalHandoff failed: %v", err)
 	}
 
 	err := sqlcgen.New(s.DB()).RequestGoalHandoff(ctx, sqlcgen.RequestGoalHandoffParams{
 		ID:            "goal-database-handoff-2",
 		GoalID:        goalID,
-		RequestedBy:   sql.NullString{String: "goal-database-requester", Valid: true},
+		RequestedBy:   sql.NullInt64{Int64: testSessionID("goal-database-requester"), Valid: true},
 		RequestedAt:   sql.NullString{String: time.Now().UTC().Format(time.RFC3339Nano), Valid: true},
 		RequestReport: sql.NullString{},
 	})
@@ -600,7 +597,7 @@ func TestGoalHandoffRejectsMissingGoal(t *testing.T) {
 	s := newTestStore(t)
 	addTestAgentSession(t, s, "goal-requester")
 
-	if _, err := s.RequestGoalHandoff(context.Background(), "goal-handoff-missing", "missing-goal", "goal-requester", ""); err == nil {
+	if _, err := s.RequestGoalHandoff(context.Background(), "goal-handoff-missing", 0, testSessionID("goal-requester"), ""); err == nil {
 		t.Fatal("RequestGoalHandoff should reject a missing goal")
 	}
 }
@@ -613,15 +610,15 @@ func TestGoalHandoffRequiresRequesterProjectClaim(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetGoal failed: %v", err)
 	}
-	requester := "goal-project-owner"
-	if err := s.RegisterAgentSession(ctx, requester, os.Getpid()); err != nil {
+	requesterID, err := s.RegisterAgentSession(ctx, os.Getpid())
+	if err != nil {
 		t.Fatalf("RegisterAgentSession failed: %v", err)
 	}
-	if _, err := s.ClaimProject(ctx, goal.ProjectID, requester); err != nil {
+	if _, err := s.ClaimProject(ctx, goal.ProjectID, requesterID); err != nil {
 		t.Fatalf("ClaimProject failed: %v", err)
 	}
 
-	if _, err := s.RequestGoalHandoff(ctx, "goal-handoff-project-owner", goalID, requester, ""); err != nil {
+	if _, err := s.RequestGoalHandoff(ctx, "goal-handoff-project-owner", goalID, requesterID, ""); err != nil {
 		t.Fatalf("RequestGoalHandoff with requester project claim failed: %v", err)
 	}
 }
@@ -631,7 +628,7 @@ func TestGoalHandoffRejectsUnclaimedGoal(t *testing.T) {
 	goalID := newTestGoal(t, s)
 	addTestAgentSession(t, s, "goal-requester")
 
-	_, err := s.RequestGoalHandoff(context.Background(), "goal-handoff-unclaimed", goalID, "goal-requester", "")
+	_, err := s.RequestGoalHandoff(context.Background(), "goal-handoff-unclaimed", goalID, testSessionID("goal-requester"), "")
 	if !errors.Is(err, ErrGoalHandoffProjectNotHeld) {
 		t.Fatalf("error = %v, want ErrGoalHandoffProjectNotHeld", err)
 	}

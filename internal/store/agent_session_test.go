@@ -13,12 +13,16 @@ func TestIdentifyAgentSessionStoresKey(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	canonicalID, reattached, err := s.IdentifyAgentSession(ctx, "transport-one", " stable-key ")
+	registeredID, err := s.RegisterAgentSession(ctx, 0)
+	if err != nil {
+		t.Fatalf("RegisterAgentSession: %v", err)
+	}
+	canonicalID, reattached, err := s.IdentifyAgentSession(ctx, registeredID, " stable-key ")
 	if err != nil {
 		t.Fatalf("IdentifyAgentSession: %v", err)
 	}
-	if canonicalID != "transport-one" {
-		t.Fatalf("canonical ID = %q, want transport-one", canonicalID)
+	if canonicalID != registeredID {
+		t.Fatalf("canonical ID = %d, want %d", canonicalID, registeredID)
 	}
 	if reattached {
 		t.Fatal("reattached = true, want false for a new key")
@@ -37,18 +41,26 @@ func TestIdentifyAgentSessionReattachesExistingKey(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	if canonicalID, reattached, err := s.IdentifyAgentSession(ctx, "transport-one", "stable-key"); err != nil {
+	firstID, err := s.RegisterAgentSession(ctx, 0)
+	if err != nil {
+		t.Fatalf("RegisterAgentSession(first): %v", err)
+	}
+	if canonicalID, reattached, err := s.IdentifyAgentSession(ctx, firstID, "stable-key"); err != nil {
 		t.Fatalf("IdentifyAgentSession(first): %v", err)
-	} else if canonicalID != "transport-one" || reattached {
-		t.Fatalf("first identify = (%q, %v), want (transport-one, false)", canonicalID, reattached)
+	} else if canonicalID != firstID || reattached {
+		t.Fatalf("first identify = (%d, %v), want (%d, false)", canonicalID, reattached, firstID)
 	}
 
-	canonicalID, reattached, err := s.IdentifyAgentSession(ctx, "transport-two", "stable-key")
+	secondID, err := s.RegisterAgentSession(ctx, 0)
+	if err != nil {
+		t.Fatalf("RegisterAgentSession(second): %v", err)
+	}
+	canonicalID, reattached, err := s.IdentifyAgentSession(ctx, secondID, "stable-key")
 	if err != nil {
 		t.Fatalf("IdentifyAgentSession(second): %v", err)
 	}
-	if canonicalID != "transport-one" {
-		t.Fatalf("canonical ID = %q, want transport-one", canonicalID)
+	if canonicalID != firstID {
+		t.Fatalf("canonical ID = %d, want %d", canonicalID, firstID)
 	}
 	if !reattached {
 		t.Fatal("reattached = false, want true")
@@ -62,7 +74,7 @@ func TestIdentifyAgentSessionReattachesExistingKey(t *testing.T) {
 		t.Fatalf("session key count = %d, want 1", keyCount)
 	}
 	var transportKey string
-	if err := s.DB().QueryRowContext(ctx, `SELECT session_key FROM agent_sessions WHERE id = ?`, "transport-two").Scan(&transportKey); err != nil {
+	if err := s.DB().QueryRowContext(ctx, `SELECT session_key FROM agent_sessions WHERE id = ?`, secondID).Scan(&transportKey); err != nil {
 		t.Fatalf("read transport session key: %v", err)
 	}
 	if transportKey != "" {
@@ -73,13 +85,14 @@ func TestIdentifyAgentSessionReattachesExistingKey(t *testing.T) {
 func TestIdentifyAgentSessionRestoresLivenessAfterReattach(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
-	if err := s.RegisterAgentSession(ctx, "old-transport", 0); err != nil {
+	oldID, err := s.RegisterAgentSession(ctx, 0)
+	if err != nil {
 		t.Fatalf("RegisterAgentSession: %v", err)
 	}
-	if _, _, err := s.IdentifyAgentSession(ctx, "old-transport", "stable-key"); err != nil {
+	if _, _, err := s.IdentifyAgentSession(ctx, oldID, "stable-key"); err != nil {
 		t.Fatalf("IdentifyAgentSession(old): %v", err)
 	}
-	if _, err := s.DB().ExecContext(ctx, `UPDATE agent_sessions SET pid = ?, started_at = ? WHERE id = ?`, 999999, "stale-start", "old-transport"); err != nil {
+	if _, err := s.DB().ExecContext(ctx, `UPDATE agent_sessions SET pid = ?, started_at = ? WHERE id = ?`, 999999, "stale-start", oldID); err != nil {
 		t.Fatalf("age agent session: %v", err)
 	}
 
@@ -87,12 +100,16 @@ func TestIdentifyAgentSessionRestoresLivenessAfterReattach(t *testing.T) {
 	processStartedAt = func(int) (string, error) { return "current-start", nil }
 	t.Cleanup(func() { processStartedAt = originalProcessStartedAt })
 
-	canonicalID, reattached, err := s.IdentifyAgentSession(ctx, "new-transport", "stable-key")
+	newID, err := s.RegisterAgentSession(ctx, 0)
+	if err != nil {
+		t.Fatalf("RegisterAgentSession(new): %v", err)
+	}
+	canonicalID, reattached, err := s.IdentifyAgentSession(ctx, newID, "stable-key")
 	if err != nil {
 		t.Fatalf("IdentifyAgentSession(new): %v", err)
 	}
-	if canonicalID != "old-transport" || !reattached {
-		t.Fatalf("identify = (%q, %v), want (old-transport, true)", canonicalID, reattached)
+	if canonicalID != oldID || !reattached {
+		t.Fatalf("identify = (%d, %v), want (%d, true)", canonicalID, reattached, oldID)
 	}
 	if !claimIsRunning(ctx, s, canonicalID) {
 		t.Fatal("claimIsRunning = false after reattach, want true")
@@ -111,7 +128,8 @@ func TestIdentifyAgentSessionRestoresLivenessAfterReattach(t *testing.T) {
 func TestIdentifyAgentSessionRejectsBlankKeyWithoutWriting(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
-	if err := s.RegisterAgentSession(ctx, "transport-one", 0); err != nil {
+	transportID, err := s.RegisterAgentSession(ctx, 0)
+	if err != nil {
 		t.Fatalf("RegisterAgentSession: %v", err)
 	}
 
@@ -121,12 +139,12 @@ func TestIdentifyAgentSessionRejectsBlankKeyWithoutWriting(t *testing.T) {
 		StartedAt    string
 		SessionKey   string
 	}
-	if err := s.DB().QueryRowContext(ctx, `SELECT registered_at, pid, started_at, session_key FROM agent_sessions WHERE id = ?`, "transport-one").Scan(&before.RegisteredAt, &before.Pid, &before.StartedAt, &before.SessionKey); err != nil {
+	if err := s.DB().QueryRowContext(ctx, `SELECT registered_at, pid, started_at, session_key FROM agent_sessions WHERE id = ?`, transportID).Scan(&before.RegisteredAt, &before.Pid, &before.StartedAt, &before.SessionKey); err != nil {
 		t.Fatalf("read initial session: %v", err)
 	}
 
 	for _, key := range []string{"", "   "} {
-		if _, _, err := s.IdentifyAgentSession(ctx, "transport-one", key); err == nil {
+		if _, _, err := s.IdentifyAgentSession(ctx, transportID, key); err == nil {
 			t.Fatalf("IdentifyAgentSession(%q) succeeded, want error", key)
 		}
 		var after struct {
@@ -135,7 +153,7 @@ func TestIdentifyAgentSessionRejectsBlankKeyWithoutWriting(t *testing.T) {
 			StartedAt    string
 			SessionKey   string
 		}
-		if err := s.DB().QueryRowContext(ctx, `SELECT registered_at, pid, started_at, session_key FROM agent_sessions WHERE id = ?`, "transport-one").Scan(&after.RegisteredAt, &after.Pid, &after.StartedAt, &after.SessionKey); err != nil {
+		if err := s.DB().QueryRowContext(ctx, `SELECT registered_at, pid, started_at, session_key FROM agent_sessions WHERE id = ?`, transportID).Scan(&after.RegisteredAt, &after.Pid, &after.StartedAt, &after.SessionKey); err != nil {
 			t.Fatalf("read unchanged session for %q: %v", key, err)
 		}
 		if after != before {
@@ -151,33 +169,39 @@ func TestIdentifyAgentSessionDoesNotStealDifferentKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateProject: %v", err)
 	}
-	if err := s.RegisterAgentSession(ctx, "owner", 0); err != nil {
+	ownerID, err := s.RegisterAgentSession(ctx, 0)
+	if err != nil {
 		t.Fatalf("RegisterAgentSession(owner): %v", err)
 	}
-	if _, err := s.ClaimProject(ctx, project.ID, "owner"); err != nil {
+	if _, err := s.ClaimProject(ctx, project.ID, ownerID); err != nil {
 		t.Fatalf("ClaimProject: %v", err)
 	}
-	if _, _, err := s.IdentifyAgentSession(ctx, "owner", "owner-key"); err != nil {
+	if _, _, err := s.IdentifyAgentSession(ctx, ownerID, "owner-key"); err != nil {
 		t.Fatalf("IdentifyAgentSession(owner): %v", err)
 	}
 
-	canonicalID, reattached, err := s.IdentifyAgentSession(ctx, "other", "other-key")
+	otherID, err := s.RegisterAgentSession(ctx, 0)
+	if err != nil {
+		t.Fatalf("RegisterAgentSession(other): %v", err)
+	}
+	canonicalID, reattached, err := s.IdentifyAgentSession(ctx, otherID, "other-key")
 	if err != nil {
 		t.Fatalf("IdentifyAgentSession(other): %v", err)
 	}
-	if canonicalID != "other" || reattached {
-		t.Fatalf("identify = (%q, %v), want (other, false)", canonicalID, reattached)
+	if canonicalID != otherID || reattached {
+		t.Fatalf("identify = (%d, %v), want (%d, false)", canonicalID, reattached, otherID)
 	}
 
-	var ownerKey, claimedBy string
-	if err := s.DB().QueryRowContext(ctx, `SELECT session_key FROM agent_sessions WHERE id = ?`, "owner").Scan(&ownerKey); err != nil {
+	var ownerKey string
+	var claimedBy int64
+	if err := s.DB().QueryRowContext(ctx, `SELECT session_key FROM agent_sessions WHERE id = ?`, ownerID).Scan(&ownerKey); err != nil {
 		t.Fatalf("read owner key: %v", err)
 	}
 	if err := s.DB().QueryRowContext(ctx, `SELECT claimed_by FROM projects WHERE id = ?`, project.ID).Scan(&claimedBy); err != nil {
 		t.Fatalf("read project claim: %v", err)
 	}
-	if ownerKey != "owner-key" || claimedBy != "owner" {
-		t.Fatalf("owner state = (key %q, claim %q), want (owner-key, owner)", ownerKey, claimedBy)
+	if ownerKey != "owner-key" || claimedBy != ownerID {
+		t.Fatalf("owner state = (key %q, claim %d), want (owner-key, %d)", ownerKey, claimedBy, ownerID)
 	}
 }
 
@@ -188,28 +212,30 @@ func TestProjectIDForAgentSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateProject: %v", err)
 	}
-	if err := s.RegisterAgentSession(ctx, "run-project", 0); err != nil {
+	runProjectID, err := s.RegisterAgentSession(ctx, 0)
+	if err != nil {
 		t.Fatalf("RegisterAgentSession: %v", err)
 	}
-	if err := s.AssociateAgentSessionWithProject(ctx, "run-project", project.ID); err != nil {
+	if err := s.AssociateAgentSessionWithProject(ctx, runProjectID, project.ID); err != nil {
 		t.Fatalf("AssociateAgentSessionWithProject: %v", err)
 	}
 
-	got, err := s.ProjectIDForAgentSession(ctx, "run-project")
+	got, err := s.ProjectIDForAgentSession(ctx, runProjectID)
 	if err != nil {
 		t.Fatalf("ProjectIDForAgentSession: %v", err)
 	}
 	if got != project.ID {
-		t.Fatalf("ProjectIDForAgentSession = %q, want %q", got, project.ID)
+		t.Fatalf("ProjectIDForAgentSession = %d, want %d", got, project.ID)
 	}
 
-	if err := s.RegisterAgentSession(ctx, "run-unassociated", 0); err != nil {
+	unassociatedID, err := s.RegisterAgentSession(ctx, 0)
+	if err != nil {
 		t.Fatalf("RegisterAgentSession(unassociated): %v", err)
 	}
-	if _, err := s.ProjectIDForAgentSession(ctx, "run-unassociated"); err == nil || !strings.Contains(err.Error(), "not associated") {
+	if _, err := s.ProjectIDForAgentSession(ctx, unassociatedID); err == nil || !strings.Contains(err.Error(), "not associated") {
 		t.Fatalf("ProjectIDForAgentSession(unassociated) error = %v, want not associated error", err)
 	}
-	if _, err := s.ProjectIDForAgentSession(ctx, "run-missing"); err == nil || !strings.Contains(err.Error(), "not registered") {
+	if _, err := s.ProjectIDForAgentSession(ctx, 999999); err == nil || !strings.Contains(err.Error(), "not registered") {
 		t.Fatalf("ProjectIDForAgentSession(missing) error = %v, want not registered error", err)
 	}
 }
@@ -235,9 +261,9 @@ func TestProjectIDForTask(t *testing.T) {
 		t.Fatalf("ProjectIDForTask: %v", err)
 	}
 	if got != project.ID {
-		t.Fatalf("ProjectIDForTask = %q, want %q", got, project.ID)
+		t.Fatalf("ProjectIDForTask = %d, want %d", got, project.ID)
 	}
-	if _, err := s.ProjectIDForTask(ctx, "task-missing"); err == nil || !strings.Contains(err.Error(), "not found") {
+	if _, err := s.ProjectIDForTask(ctx, 0); err == nil || !strings.Contains(err.Error(), "not found") {
 		t.Fatalf("ProjectIDForTask(missing) error = %v, want not found error", err)
 	}
 }
@@ -250,20 +276,22 @@ func TestAgentSessionsCanShareProject(t *testing.T) {
 		t.Fatalf("CreateProject: %v", err)
 	}
 
-	if err := s.RegisterAgentSession(ctx, "run-first", 0); err != nil {
+	firstID, err := s.RegisterAgentSession(ctx, 0)
+	if err != nil {
 		t.Fatalf("RegisterAgentSession(first): %v", err)
 	}
 	old := time.Now().UTC().Add(-time.Hour).Format(time.RFC3339Nano)
-	if _, err := s.DB().ExecContext(ctx, `UPDATE agent_sessions SET registered_at = ? WHERE id = ?`, old, "run-first"); err != nil {
+	if _, err := s.DB().ExecContext(ctx, `UPDATE agent_sessions SET registered_at = ? WHERE id = ?`, old, firstID); err != nil {
 		t.Fatalf("age first agent session: %v", err)
 	}
-	if err := s.AssociateAgentSessionWithProject(ctx, "run-first", project.ID); err != nil {
+	if err := s.AssociateAgentSessionWithProject(ctx, firstID, project.ID); err != nil {
 		t.Fatalf("AssociateAgentSessionWithProject(first): %v", err)
 	}
-	if err := s.RegisterAgentSession(ctx, "run-second", 0); err != nil {
+	secondID, err := s.RegisterAgentSession(ctx, 0)
+	if err != nil {
 		t.Fatalf("RegisterAgentSession(second): %v", err)
 	}
-	if err := s.AssociateAgentSessionWithProject(ctx, "run-second", project.ID); err != nil {
+	if err := s.AssociateAgentSessionWithProject(ctx, secondID, project.ID); err != nil {
 		t.Fatalf("AssociateAgentSessionWithProject(second): %v", err)
 	}
 
@@ -286,13 +314,14 @@ func TestAgentSessionCleanupRemovesOldRecordsWithoutRemovingProjects(t *testing.
 	old := time.Now().UTC().Add(-90 * 24 * time.Hour).Format(time.RFC3339Nano)
 	if _, err := s.DB().ExecContext(ctx, `
 		INSERT INTO agent_sessions (id, project_id, registered_at) VALUES (?, ?, ?), (?, NULL, ?)
-	`, "run-old-project", project.ID, old, "run-old-unbound", old); err != nil {
+	`, 1001, project.ID, old, 1002, old); err != nil {
 		t.Fatalf("insert old agent sessions: %v", err)
 	}
-	if err := s.RegisterAgentSession(ctx, "run-current", 0); err != nil {
+	currentID, err := s.RegisterAgentSession(ctx, 0)
+	if err != nil {
 		t.Fatalf("RegisterAgentSession: %v", err)
 	}
-	if err := s.AssociateAgentSessionWithProject(ctx, "run-current", project.ID); err != nil {
+	if err := s.AssociateAgentSessionWithProject(ctx, currentID, project.ID); err != nil {
 		t.Fatalf("AssociateAgentSessionWithProject: %v", err)
 	}
 
@@ -300,11 +329,11 @@ func TestAgentSessionCleanupRemovesOldRecordsWithoutRemovingProjects(t *testing.
 	if err != nil {
 		t.Fatalf("LatestAgentSessionID: %v", err)
 	}
-	if latest != "run-current" {
-		t.Fatalf("LatestAgentSessionID = %q, want %q", latest, "run-current")
+	if latest != currentID {
+		t.Fatalf("LatestAgentSessionID = %d, want %d", latest, currentID)
 	}
 	var oldCount int
-	if err := s.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM agent_sessions WHERE id IN (?, ?)`, "run-old-project", "run-old-unbound").Scan(&oldCount); err != nil {
+	if err := s.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM agent_sessions WHERE id IN (?, ?)`, 1001, 1002).Scan(&oldCount); err != nil {
 		t.Fatalf("count old agent sessions: %v", err)
 	}
 	if oldCount != 0 {
@@ -330,22 +359,23 @@ func TestAgentSessionAssociationKeepsExpiryCleanup(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateProject(other): %v", err)
 	}
-	if err := s.RegisterAgentSession(ctx, "run-current", 0); err != nil {
+	currentID, err := s.RegisterAgentSession(ctx, 0)
+	if err != nil {
 		t.Fatalf("RegisterAgentSession(current): %v", err)
 	}
 
 	old := time.Now().UTC().Add(-90 * 24 * time.Hour).Format(time.RFC3339Nano)
 	if _, err := s.DB().ExecContext(ctx, `
 		INSERT INTO agent_sessions (id, project_id, registered_at) VALUES (?, ?, ?), (?, NULL, ?)
-	`, "run-old-project", otherProject.ID, old, "run-old-unbound", old); err != nil {
+	`, 1003, otherProject.ID, old, 1004, old); err != nil {
 		t.Fatalf("insert old agent sessions: %v", err)
 	}
-	if err := s.AssociateAgentSessionWithProject(ctx, "run-current", project.ID); err != nil {
+	if err := s.AssociateAgentSessionWithProject(ctx, currentID, project.ID); err != nil {
 		t.Fatalf("AssociateAgentSessionWithProject(current): %v", err)
 	}
 
 	var remaining int
-	if err := s.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM agent_sessions WHERE id IN (?, ?)`, "run-old-project", "run-old-unbound").Scan(&remaining); err != nil {
+	if err := s.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM agent_sessions WHERE id IN (?, ?)`, 1003, 1004).Scan(&remaining); err != nil {
 		t.Fatalf("count expired agent sessions: %v", err)
 	}
 	if remaining != 0 {
@@ -460,16 +490,16 @@ PRAGMA user_version = 4;
 		t.Fatalf("agent_sessions table = %q, want agent_sessions", agentSessionTable)
 	}
 	var projectName, goalContent, taskTitle, taskFiles, decisionQuestion, decisionAnswer string
-	if err := s.DB().QueryRow(`SELECT name FROM projects WHERE id = ?`, "project-human").Scan(&projectName); err != nil {
+	if err := s.DB().QueryRow(`SELECT name FROM projects WHERE id = 1`).Scan(&projectName); err != nil {
 		t.Fatalf("read migrated project: %v", err)
 	}
-	if err := s.DB().QueryRow(`SELECT content FROM goals WHERE id = ?`, "goal-human").Scan(&goalContent); err != nil {
+	if err := s.DB().QueryRow(`SELECT content FROM goals WHERE id = 1`).Scan(&goalContent); err != nil {
 		t.Fatalf("read migrated goal: %v", err)
 	}
-	if err := s.DB().QueryRow(`SELECT title, files FROM tasks WHERE id = ?`, "task-human").Scan(&taskTitle, &taskFiles); err != nil {
+	if err := s.DB().QueryRow(`SELECT title, files FROM tasks WHERE id = 1`).Scan(&taskTitle, &taskFiles); err != nil {
 		t.Fatalf("read migrated task: %v", err)
 	}
-	if err := s.DB().QueryRow(`SELECT question, answer_text FROM decisions WHERE id = ?`, "decision-human").Scan(&decisionQuestion, &decisionAnswer); err != nil {
+	if err := s.DB().QueryRow(`SELECT question, answer_text FROM decisions WHERE id = 1`).Scan(&decisionQuestion, &decisionAnswer); err != nil {
 		t.Fatalf("read migrated decision: %v", err)
 	}
 	if projectName != "human project" || goalContent != "Human goal\n\nKeep this goal" || taskTitle != "Human task" || taskFiles != `["src/main.go"]` || decisionQuestion != "Keep this decision" || decisionAnswer != "Keep it" {

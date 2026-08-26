@@ -29,7 +29,7 @@ func TestClaimTaskAllowsExactlyOneConcurrentWinner(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			task, err := s.ClaimTask(ctx, tasks[0].ID, fmt.Sprintf("run-%d", i))
+			task, err := s.ClaimTask(ctx, tasks[0].ID, testSessionID(fmt.Sprintf("run-%d", i)))
 			results <- err
 			if err == nil {
 				winners <- task
@@ -58,7 +58,7 @@ func TestClaimTaskAllowsExactlyOneConcurrentWinner(t *testing.T) {
 	if err != nil {
 		t.Fatalf("openTaskHandoff: %v", err)
 	}
-	if handoff == nil || handoff.ReceivedBy == "" || handoff.ReceivedAt == nil {
+	if handoff == nil || handoff.ReceivedBy == 0 || handoff.ReceivedAt == nil {
 		t.Fatalf("winner has no open handoff: %#v", handoff)
 	}
 }
@@ -72,11 +72,11 @@ func TestUpdateTaskReleasesClaimWhenTerminal(t *testing.T) {
 		t.Fatalf("DeclareTasks: %v", err)
 	}
 	addTestAgentSession(t, s, "run-1")
-	if _, err := s.ClaimTask(ctx, tasks[0].ID, "run-1"); err != nil {
+	if _, err := s.ClaimTask(ctx, tasks[0].ID, testSessionID("run-1")); err != nil {
 		t.Fatalf("ClaimTask: %v", err)
 	}
 
-	updated, err := s.UpdateTask(ctx, tasks[0].ID, domain.TaskDone, "run-1")
+	updated, err := s.UpdateTask(ctx, tasks[0].ID, domain.TaskDone, testSessionID("run-1"))
 	if err != nil {
 		t.Fatalf("UpdateTask: %v", err)
 	}
@@ -98,14 +98,14 @@ func TestUpdateTaskReleasesClaimWhenTodo(t *testing.T) {
 		t.Fatalf("DeclareTasks: %v", err)
 	}
 	addTestAgentSession(t, s, "run-1")
-	if _, err := s.UpdateTask(ctx, tasks[0].ID, domain.TaskDoing, "run-1"); err != nil {
+	if _, err := s.UpdateTask(ctx, tasks[0].ID, domain.TaskDoing, testSessionID("run-1")); err != nil {
 		t.Fatalf("UpdateTask doing: %v", err)
 	}
-	if _, err := s.ClaimTask(ctx, tasks[0].ID, "run-1"); err != nil {
+	if _, err := s.ClaimTask(ctx, tasks[0].ID, testSessionID("run-1")); err != nil {
 		t.Fatalf("ClaimTask: %v", err)
 	}
 
-	updated, err := s.UpdateTask(ctx, tasks[0].ID, domain.TaskTodo, "run-1")
+	updated, err := s.UpdateTask(ctx, tasks[0].ID, domain.TaskTodo, testSessionID("run-1"))
 	if err != nil {
 		t.Fatalf("UpdateTask todo: %v", err)
 	}
@@ -127,11 +127,11 @@ func TestUpdateTaskKeepsClaimWhenDoing(t *testing.T) {
 		t.Fatalf("DeclareTasks: %v", err)
 	}
 	addTestAgentSession(t, s, "run-1")
-	if _, err := s.ClaimTask(ctx, tasks[0].ID, "run-1"); err != nil {
+	if _, err := s.ClaimTask(ctx, tasks[0].ID, testSessionID("run-1")); err != nil {
 		t.Fatalf("ClaimTask: %v", err)
 	}
 
-	updated, err := s.UpdateTask(ctx, tasks[0].ID, domain.TaskDoing, "run-1")
+	updated, err := s.UpdateTask(ctx, tasks[0].ID, domain.TaskDoing, testSessionID("run-1"))
 	if err != nil {
 		t.Fatalf("UpdateTask doing: %v", err)
 	}
@@ -139,7 +139,7 @@ func TestUpdateTaskKeepsClaimWhenDoing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("openTaskHandoff after doing update: %v", err)
 	}
-	if handoff == nil || handoff.ReceivedBy != "run-1" || handoff.ReceivedAt == nil {
+	if handoff == nil || handoff.ReceivedBy != testSessionID("run-1") || handoff.ReceivedAt == nil {
 		t.Fatalf("doing task lost its open handoff: %#v", handoff)
 	}
 }
@@ -153,7 +153,7 @@ func TestReleaseTaskClearsClaim(t *testing.T) {
 		t.Fatalf("DeclareTasks: %v", err)
 	}
 	addTestAgentSession(t, s, "dead-run")
-	if _, err := s.ClaimTask(ctx, tasks[0].ID, "dead-run"); err != nil {
+	if _, err := s.ClaimTask(ctx, tasks[0].ID, testSessionID("dead-run")); err != nil {
 		t.Fatalf("ClaimTask: %v", err)
 	}
 

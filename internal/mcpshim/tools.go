@@ -1,12 +1,16 @@
 package mcpshim
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 
+	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/michiomochi/atct/internal/domain"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -16,43 +20,43 @@ type GoalListIn struct {
 }
 
 type GoalGetIn struct {
-	GoalID string `json:"goal_id"`
+	GoalID mcpID `json:"goal_id"`
 }
 
 type GoalSessionsIn struct {
-	GoalID string `json:"goal_id"`
+	GoalID mcpID `json:"goal_id"`
 }
 
 type GoalClaimIn struct {
-	GoalID string `json:"goal_id"`
+	GoalID mcpID `json:"goal_id"`
 }
 
 type GoalReleaseIn struct {
-	GoalID string `json:"goal_id"`
+	GoalID mcpID `json:"goal_id"`
 }
 
 type ProjectClaimIn struct {
-	ProjectID string `json:"project_id"`
+	ProjectID mcpID `json:"project_id"`
 }
 
 type ProjectReleaseIn struct {
-	ProjectID string `json:"project_id"`
+	ProjectID mcpID `json:"project_id"`
 }
 
 type GoalUpdateContentIn struct {
-	GoalID  string `json:"goal_id"`
+	GoalID  mcpID  `json:"goal_id"`
 	Content string `json:"content"`
 }
 
 type TaskUpdateContentIn struct {
-	TaskID      string    `json:"task_id"`
+	TaskID      mcpID     `json:"task_id"`
 	Title       *string   `json:"title,omitempty"`
 	Description *string   `json:"description,omitempty"`
 	Files       *[]string `json:"files,omitempty"`
 }
 
 type TaskDeclareIn struct {
-	GoalID         string     `json:"goal_id"`
+	GoalID         mcpID      `json:"goal_id"`
 	Titles         []string   `json:"titles" jsonschema:"task titles decomposed from the goal, in execution order"`
 	Descriptions   []string   `json:"descriptions" jsonschema:"task descriptions explaining the completion criteria and assumptions for each title, in execution order"`
 	Files          [][]string `json:"files,omitempty" jsonschema:"files touched by each title, in the same order; paths are relative to the project root"`
@@ -61,56 +65,56 @@ type TaskDeclareIn struct {
 }
 
 type TaskClaimIn struct {
-	TaskID string `json:"task_id"`
+	TaskID mcpID `json:"task_id"`
 }
 
 type TaskReleaseIn struct {
-	TaskID string `json:"task_id"`
+	TaskID mcpID `json:"task_id"`
 }
 
 type HandoffRequestIn struct {
 	HandoffID     string `json:"handoff_id"`
-	TaskID        string `json:"task_id"`
+	TaskID        mcpID  `json:"task_id"`
 	RequestReport string `json:"request_report,omitempty"`
 }
 
 type HandoffReceiveIn struct {
 	HandoffID string `json:"handoff_id,omitempty"`
-	TaskID    string `json:"task_id"`
+	TaskID    mcpID  `json:"task_id"`
 }
 
 type HandoffCompleteIn struct {
 	HandoffID      string `json:"handoff_id,omitempty"`
-	TaskID         string `json:"task_id"`
+	TaskID         mcpID  `json:"task_id"`
 	CompleteReport string `json:"complete_report,omitempty"`
 }
 
 type GoalHandoffRequestIn struct {
 	HandoffID     string `json:"handoff_id"`
-	GoalID        string `json:"goal_id"`
+	GoalID        mcpID  `json:"goal_id"`
 	RequestReport string `json:"request_report,omitempty"`
 }
 
 type GoalHandoffReceiveIn struct {
 	HandoffID string `json:"handoff_id,omitempty"`
-	GoalID    string `json:"goal_id"`
+	GoalID    mcpID  `json:"goal_id"`
 }
 
 type GoalHandoffCompleteIn struct {
 	HandoffID      string `json:"handoff_id,omitempty"`
-	GoalID         string `json:"goal_id"`
+	GoalID         mcpID  `json:"goal_id"`
 	CompleteReport string `json:"complete_report,omitempty"`
 }
 
 type TaskUpdateIn struct {
-	TaskID  string   `json:"task_id"`
+	TaskID  mcpID    `json:"task_id"`
 	Status  string   `json:"status" jsonschema:"todo | doing | done | dropped"`
 	Commits []string `json:"commits,omitempty" jsonschema:"commit SHAs produced by this task; optional"`
 }
 
 type DecisionAskIn struct {
-	GoalID         string          `json:"goal_id"`
-	TaskID         string          `json:"task_id,omitempty"`
+	GoalID         mcpID           `json:"goal_id"`
+	TaskID         mcpID           `json:"task_id,omitempty"`
 	Question       string          `json:"question" jsonschema:"describe the decision required from the human"`
 	Options        []domain.Option `json:"options" jsonschema:"options; explain the consequence of each choice; may be empty"`
 	DefaultOption  string          `json:"default_option,omitempty" jsonschema:"option label to apply after the timeout; must match one of the option labels"`
@@ -119,16 +123,16 @@ type DecisionAskIn struct {
 }
 
 type DecisionPollIn struct {
-	DecisionID string `json:"decision_id,omitempty"`
+	DecisionID mcpID `json:"decision_id,omitempty"`
 }
 
 type DecisionWithdrawIn struct {
-	DecisionID string `json:"decision_id"`
+	DecisionID mcpID  `json:"decision_id"`
 	Reason     string `json:"reason"`
 }
 
 type GoalCompleteIn struct {
-	GoalID      string `json:"goal_id"`
+	GoalID      mcpID  `json:"goal_id"`
 	WorkDone    string `json:"work_done" jsonschema:"what was completed; write なし when there is nothing to report"`
 	NowPossible string `json:"now_possible" jsonschema:"what is possible now; write なし when there is nothing to report"`
 	HowToVerify string `json:"how_to_verify" jsonschema:"how to verify the result; write なし when there is nothing to report"`
@@ -142,8 +146,56 @@ type GoalCompleteIn struct {
 }
 
 type GoalSetDerivedFromIn struct {
-	GoalID            string `json:"goal_id"`
-	DerivedFromGoalID string `json:"derived_from_goal_id"`
+	GoalID            mcpID `json:"goal_id"`
+	DerivedFromGoalID mcpID `json:"derived_from_goal_id"`
+}
+
+// mcpID accepts canonical integer IDs and numeric strings. It also preserves
+// other strings so the daemon can return the migration guidance for removed
+// UUID-style IDs.
+type mcpID string
+
+func (id *mcpID) UnmarshalJSON(data []byte) error {
+	trimmed := bytes.TrimSpace(data)
+	if bytes.Equal(trimmed, []byte("null")) {
+		return fmt.Errorf("id must be an integer or string")
+	}
+
+	var text string
+	if err := json.Unmarshal(trimmed, &text); err == nil {
+		*id = mcpID(text)
+		return nil
+	}
+
+	var number json.Number
+	if err := json.Unmarshal(trimmed, &number); err != nil {
+		return fmt.Errorf("id must be an integer or string: %w", err)
+	}
+	if _, err := strconv.ParseInt(number.String(), 10, 64); err != nil {
+		return fmt.Errorf("id must be an integer or string: %w", err)
+	}
+	*id = mcpID(number.String())
+	return nil
+}
+
+// mcpInputSchema keeps numeric strings, numeric values, and other strings
+// valid at the MCP validation boundary; the typed handler then normalizes the
+// values through mcpID.UnmarshalJSON.
+func mcpInputSchema[T any]() *jsonschema.Schema {
+	schema, err := jsonschema.For[T](&jsonschema.ForOptions{
+		TypeSchemas: map[reflect.Type]*jsonschema.Schema{
+			reflect.TypeFor[mcpID](): {Types: []string{"string", "integer"}},
+		},
+	})
+	if err != nil {
+		panic(fmt.Sprintf("mcp input schema for %T: %v", *new(T), err))
+	}
+	return schema
+}
+
+func addMCPTool[In, Out any](server *mcp.Server, tool *mcp.Tool, handler mcp.ToolHandlerFor[In, Out]) {
+	tool.InputSchema = mcpInputSchema[In]()
+	mcp.AddTool(server, tool, handler)
 }
 
 type RoleIn struct {
@@ -156,37 +208,61 @@ type SessionIdentifyIn struct {
 
 type agentSessionIDHolder struct {
 	mu sync.RWMutex
-	id string
+	id int64
 }
 
-func (h *agentSessionIDHolder) Get() string {
+func (h *agentSessionIDHolder) Get() int64 {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	return h.id
 }
 
-func (h *agentSessionIDHolder) Set(id string) {
+func (h *agentSessionIDHolder) Set(id int64) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.id = id
 }
 
-type roleResult struct {
+type commanderRole struct {
 	Role         string   `json:"role"`
-	ProjectID    string   `json:"project_id"`
-	GoalID       string   `json:"goal_id"`
+	ProjectID    int64    `json:"project_id"`
 	Does         []string `json:"does"`
 	DoesNot      []string `json:"does_not"`
 	ExpectedRole string   `json:"expected_role,omitempty"`
 	Matches      *bool    `json:"matches,omitempty"`
 }
 
+type subcommanderRole struct {
+	Role         string   `json:"role"`
+	GoalID       int64    `json:"goal_id"`
+	Does         []string `json:"does"`
+	DoesNot      []string `json:"does_not"`
+	ExpectedRole string   `json:"expected_role,omitempty"`
+	Matches      *bool    `json:"matches,omitempty"`
+}
+
+type executorRole struct {
+	Role         string   `json:"role"`
+	Does         []string `json:"does"`
+	DoesNot      []string `json:"does_not"`
+	ExpectedRole string   `json:"expected_role,omitempty"`
+	Matches      *bool    `json:"matches,omitempty"`
+}
+
+type roleResponse interface {
+	roleName() string
+}
+
+func (r commanderRole) roleName() string    { return r.Role }
+func (r subcommanderRole) roleName() string { return r.Role }
+func (r executorRole) roleName() string     { return r.Role }
+
 type Raw struct {
 	Data any `json:"data"`
 }
 
 type UnappliedDecisionNotice struct {
-	DecisionID string `json:"decision_id"`
+	DecisionID int64  `json:"decision_id"`
 	Question   string `json:"question"`
 }
 
@@ -218,7 +294,9 @@ func rawOutputSchemaWithUnappliedDecisions() map[string]any {
 				"items": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						"decision_id": map[string]any{"type": "string"},
+						// Responses expose canonical numeric IDs; string IDs are
+						// accepted only at the input boundary above.
+						"decision_id": map[string]any{"type": "integer"},
 						"question":    map[string]any{"type": "string"},
 					},
 					"required": []string{"decision_id", "question"},
@@ -264,15 +342,65 @@ func callWithUnappliedDecisions(ctx context.Context, c *Client, method string, p
 	return nil, RawWithUnappliedDecisions{Data: out}, nil
 }
 
-func sessionRole(ctx context.Context, c *Client, agentSessionID string) (roleResult, error) {
-	var response roleResult
-	if err := c.Call(ctx, "session.role", map[string]any{"agent_session_id": strings.TrimSpace(agentSessionID)}, &response); err != nil {
-		return roleResult{}, err
+func sessionRole(ctx context.Context, c *Client, agentSessionID int64) (roleResponse, error) {
+	var raw json.RawMessage
+	if err := c.Call(ctx, "session.role", map[string]any{"agent_session_id": agentSessionID}, &raw); err != nil {
+		return nil, err
 	}
-	return response, nil
+	return decodeRoleResponse(raw)
 }
 
-func callClaimWithRole(ctx context.Context, c *Client, method string, params any, agentSessionID string) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
+func decodeRoleResponse(raw json.RawMessage) (roleResponse, error) {
+	var discriminator struct {
+		Role string `json:"role"`
+	}
+	if err := json.Unmarshal(raw, &discriminator); err != nil {
+		return nil, fmt.Errorf("decode session.role discriminator: %w", err)
+	}
+	switch discriminator.Role {
+	case "commander":
+		var response commanderRole
+		if err := json.Unmarshal(raw, &response); err != nil {
+			return nil, fmt.Errorf("decode commander role: %w", err)
+		}
+		return response, nil
+	case "subcommander":
+		var response subcommanderRole
+		if err := json.Unmarshal(raw, &response); err != nil {
+			return nil, fmt.Errorf("decode subcommander role: %w", err)
+		}
+		return response, nil
+	case "executor":
+		var response executorRole
+		if err := json.Unmarshal(raw, &response); err != nil {
+			return nil, fmt.Errorf("decode executor role: %w", err)
+		}
+		return response, nil
+	default:
+		return nil, fmt.Errorf("decode session.role: unknown role %q", discriminator.Role)
+	}
+}
+
+func setRoleExpectation(response roleResponse, expected string, matches bool) (roleResponse, error) {
+	switch response := response.(type) {
+	case commanderRole:
+		response.ExpectedRole = expected
+		response.Matches = &matches
+		return response, nil
+	case subcommanderRole:
+		response.ExpectedRole = expected
+		response.Matches = &matches
+		return response, nil
+	case executorRole:
+		response.ExpectedRole = expected
+		response.Matches = &matches
+		return response, nil
+	default:
+		return nil, fmt.Errorf("set session.role expectation: unknown response type %T", response)
+	}
+}
+
+func callClaimWithRole(ctx context.Context, c *Client, method string, params any, agentSessionID int64) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
 	_, result, err := callWithUnappliedDecisions(ctx, c, method, params)
 	if err != nil {
 		return nil, RawWithUnappliedDecisions{}, err
@@ -281,11 +409,11 @@ func callClaimWithRole(ctx context.Context, c *Client, method string, params any
 	if err != nil {
 		return nil, result, nil
 	}
-	result.Role = response.Role
+	result.Role = response.roleName()
 	return nil, result, nil
 }
 
-func callRole(ctx context.Context, c *Client, in RoleIn, agentSessionID string) (*mcp.CallToolResult, Raw, error) {
+func callRole(ctx context.Context, c *Client, in RoleIn, agentSessionID int64) (*mcp.CallToolResult, Raw, error) {
 	expectedRole := strings.TrimSpace(in.ExpectedRole)
 	if expectedRole != "" && !validRole(expectedRole) {
 		return nil, Raw{}, fmt.Errorf("expected_role must be one of commander, subcommander, executor")
@@ -296,9 +424,10 @@ func callRole(ctx context.Context, c *Client, in RoleIn, agentSessionID string) 
 		return nil, Raw{}, err
 	}
 	if expectedRole != "" {
-		matches := response.Role == expectedRole
-		response.ExpectedRole = expectedRole
-		response.Matches = &matches
+		response, err = setRoleExpectation(response, expectedRole, response.roleName() == expectedRole)
+		if err != nil {
+			return nil, Raw{}, err
+		}
 	}
 	raw, err := json.Marshal(response)
 	if err != nil {
@@ -308,8 +437,8 @@ func callRole(ctx context.Context, c *Client, in RoleIn, agentSessionID string) 
 }
 
 type sessionIdentifyResult struct {
-	AgentSessionID string `json:"agent_session_id"`
-	Reattached     bool   `json:"reattached"`
+	AgentSessionID int64 `json:"agent_session_id"`
+	Reattached     bool  `json:"reattached"`
 }
 
 func callSessionIdentify(ctx context.Context, c *Client, in SessionIdentifyIn, agentSessionID *agentSessionIDHolder) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
@@ -320,8 +449,8 @@ func callSessionIdentify(ctx context.Context, c *Client, in SessionIdentifyIn, a
 	}, &response); err != nil {
 		return nil, RawWithUnappliedDecisions{}, err
 	}
-	if canonicalID := strings.TrimSpace(response.AgentSessionID); canonicalID != "" {
-		agentSessionID.Set(canonicalID)
+	if response.AgentSessionID != 0 {
+		agentSessionID.Set(response.AgentSessionID)
 	}
 	raw, err := json.Marshal(response)
 	if err != nil {
@@ -341,10 +470,10 @@ func validRole(role string) bool {
 
 // Register adds agent-facing tools to the MCP server.
 // Human operations (answer, approve, and reject) belong to the Web UI and are not exposed through MCP.
-func Register(server *mcp.Server, c *Client, agentSessionID string) {
-	sessionID := &agentSessionIDHolder{id: strings.TrimSpace(agentSessionID)}
+func Register(server *mcp.Server, c *Client, agentSessionID int64) {
+	sessionID := &agentSessionIDHolder{id: agentSessionID}
 
-	mcp.AddTool(server, &mcp.Tool{
+	addMCPTool[SessionIdentifyIn, RawWithUnappliedDecisions](server, &mcp.Tool{
 		Name:         "atct_session_identify",
 		Description:  "Associate this transport with a stable caller-owned session key before using other atct tools.",
 		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
@@ -352,7 +481,7 @@ func Register(server *mcp.Server, c *Client, agentSessionID string) {
 		return callSessionIdentify(ctx, c, in, sessionID)
 	})
 
-	mcp.AddTool(server, &mcp.Tool{
+	addMCPTool[RoleIn, Raw](server, &mcp.Tool{
 		Name:         "atct_role",
 		Description:  "Verify the current agent role and its project/goal claim evidence through the daemon. An optional expected_role is reported as matches; a mismatch is returned as structured data.",
 		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
@@ -360,7 +489,7 @@ func Register(server *mcp.Server, c *Client, agentSessionID string) {
 		return callRole(ctx, c, in, sessionID.Get())
 	})
 
-	mcp.AddTool(server, &mcp.Tool{
+	addMCPTool[ProjectClaimIn, RawWithUnappliedDecisions](server, &mcp.Tool{
 		Name:         "atct_project_claim",
 		Description:  "Claim a project for this agent session. A live claim from another session is refused; a dead session's claim is taken over.",
 		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
@@ -370,7 +499,7 @@ func Register(server *mcp.Server, c *Client, agentSessionID string) {
 		}, sessionID.Get())
 	})
 
-	mcp.AddTool(server, &mcp.Tool{
+	addMCPTool[ProjectReleaseIn, RawWithUnappliedDecisions](server, &mcp.Tool{
 		Name:         "atct_project_release",
 		Description:  "Release the claim on a project.",
 		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
@@ -380,7 +509,7 @@ func Register(server *mcp.Server, c *Client, agentSessionID string) {
 		})
 	})
 
-	mcp.AddTool(server, &mcp.Tool{
+	addMCPTool[GoalListIn, RawWithUnappliedDecisions](server, &mcp.Tool{
 		Name:         "atct_goal_list",
 		Description:  "Get active Goals and unapplied answers relevant to the current agent session. Call at startup and resume.",
 		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
@@ -390,7 +519,7 @@ func Register(server *mcp.Server, c *Client, agentSessionID string) {
 		})
 	})
 
-	mcp.AddTool(server, &mcp.Tool{
+	addMCPTool[GoalGetIn, RawWithUnappliedDecisions](server, &mcp.Tool{
 		Name:         "atct_goal_get",
 		Description:  "Get a goal's full content and all tasks, including done and dropped tasks.",
 		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
@@ -400,7 +529,7 @@ func Register(server *mcp.Server, c *Client, agentSessionID string) {
 		})
 	})
 
-	mcp.AddTool(server, &mcp.Tool{
+	addMCPTool[GoalSessionsIn, RawWithUnappliedDecisions](server, &mcp.Tool{
 		Name:         "atct_goal_sessions",
 		Description:  "List the session keys, roles, and handoff state for a goal.",
 		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
@@ -410,7 +539,7 @@ func Register(server *mcp.Server, c *Client, agentSessionID string) {
 		})
 	})
 
-	mcp.AddTool(server, &mcp.Tool{
+	addMCPTool[GoalClaimIn, RawWithUnappliedDecisions](server, &mcp.Tool{
 		Name:         "atct_goal_claim",
 		Description:  "Claim a goal for this agent session. A live claim from another session is refused; a dead session's claim is taken over.",
 		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
@@ -420,7 +549,7 @@ func Register(server *mcp.Server, c *Client, agentSessionID string) {
 		}, sessionID.Get())
 	})
 
-	mcp.AddTool(server, &mcp.Tool{
+	addMCPTool[GoalReleaseIn, RawWithUnappliedDecisions](server, &mcp.Tool{
 		Name:         "atct_goal_release",
 		Description:  "Release the claim on a goal.",
 		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
@@ -430,7 +559,7 @@ func Register(server *mcp.Server, c *Client, agentSessionID string) {
 		})
 	})
 
-	mcp.AddTool(server, &mcp.Tool{
+	addMCPTool[GoalUpdateContentIn, RawWithUnappliedDecisions](server, &mcp.Tool{
 		Name:         "atct_goal_update_content",
 		Description:  "Rewrite a proposed goal's content. Only a proposed goal can be rewritten; an approved goal (active, done, or dropped) is refused.",
 		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
@@ -441,7 +570,7 @@ func Register(server *mcp.Server, c *Client, agentSessionID string) {
 		})
 	})
 
-	mcp.AddTool(server, &mcp.Tool{
+	addMCPTool[TaskDeclareIn, RawWithUnappliedDecisions](server, &mcp.Tool{
 		Name:         "atct_task_declare",
 		Description:  "Declare tasks decomposed from a Goal. Retrying the same idempotency_key does not create duplicates. Existing tasks are not updated and return with declared: false; use atct_task_update_content to fix them.",
 		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
@@ -458,7 +587,7 @@ func Register(server *mcp.Server, c *Client, agentSessionID string) {
 		return callWithUnappliedDecisions(ctx, c, "task.declare", params)
 	})
 
-	mcp.AddTool(server, &mcp.Tool{
+	addMCPTool[TaskClaimIn, RawWithUnappliedDecisions](server, &mcp.Tool{
 		Name:         "atct_task_claim",
 		Description:  "Claim a task for this agent session. Only one concurrent agent session can claim a task.",
 		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
@@ -468,7 +597,7 @@ func Register(server *mcp.Server, c *Client, agentSessionID string) {
 		})
 	})
 
-	mcp.AddTool(server, &mcp.Tool{
+	addMCPTool[TaskReleaseIn, RawWithUnappliedDecisions](server, &mcp.Tool{
 		Name:         "atct_task_release",
 		Description:  "Release the claim on a task.",
 		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
@@ -478,7 +607,7 @@ func Register(server *mcp.Server, c *Client, agentSessionID string) {
 		})
 	})
 
-	mcp.AddTool(server, &mcp.Tool{
+	addMCPTool[HandoffRequestIn, RawWithUnappliedDecisions](server, &mcp.Tool{
 		Name:         "atct_handoff_request",
 		Description:  "Request a task handoff. The task must have a live claim.",
 		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
@@ -489,7 +618,7 @@ func Register(server *mcp.Server, c *Client, agentSessionID string) {
 		})
 	})
 
-	mcp.AddTool(server, &mcp.Tool{
+	addMCPTool[HandoffReceiveIn, RawWithUnappliedDecisions](server, &mcp.Tool{
 		Name:         "atct_handoff_receive",
 		Description:  "Record that a task handoff was received.",
 		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
@@ -503,7 +632,7 @@ func Register(server *mcp.Server, c *Client, agentSessionID string) {
 		return callWithUnappliedDecisions(ctx, c, "handoff.receive", params)
 	})
 
-	mcp.AddTool(server, &mcp.Tool{
+	addMCPTool[HandoffCompleteIn, RawWithUnappliedDecisions](server, &mcp.Tool{
 		Name:         "atct_handoff_complete",
 		Description:  "Report that a task handoff was completed.",
 		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
@@ -517,7 +646,7 @@ func Register(server *mcp.Server, c *Client, agentSessionID string) {
 		return callWithUnappliedDecisions(ctx, c, "handoff.complete", params)
 	})
 
-	mcp.AddTool(server, &mcp.Tool{
+	addMCPTool[GoalHandoffRequestIn, RawWithUnappliedDecisions](server, &mcp.Tool{
 		Name:         "atct_goal_handoff_request",
 		Description:  "Request a goal handoff. The goal must have a live claim.",
 		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
@@ -528,7 +657,7 @@ func Register(server *mcp.Server, c *Client, agentSessionID string) {
 		})
 	})
 
-	mcp.AddTool(server, &mcp.Tool{
+	addMCPTool[GoalHandoffReceiveIn, RawWithUnappliedDecisions](server, &mcp.Tool{
 		Name:         "atct_goal_handoff_receive",
 		Description:  "Record that a goal handoff was received.",
 		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
@@ -542,7 +671,7 @@ func Register(server *mcp.Server, c *Client, agentSessionID string) {
 		return callWithUnappliedDecisions(ctx, c, "goal.handoff.receive", params)
 	})
 
-	mcp.AddTool(server, &mcp.Tool{
+	addMCPTool[GoalHandoffCompleteIn, RawWithUnappliedDecisions](server, &mcp.Tool{
 		Name:         "atct_goal_handoff_complete",
 		Description:  "Report that a goal handoff was completed.",
 		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
@@ -556,7 +685,7 @@ func Register(server *mcp.Server, c *Client, agentSessionID string) {
 		return callWithUnappliedDecisions(ctx, c, "goal.handoff.complete", params)
 	})
 
-	mcp.AddTool(server, &mcp.Tool{
+	addMCPTool[TaskUpdateIn, RawWithUnappliedDecisions](server, &mcp.Tool{
 		Name:         "atct_task_update",
 		Description:  "Change a task status. Setting todo, done, or dropped releases the claim; a task with an open Decision cannot become done. Optionally pass the commit SHAs this task produced.",
 		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
@@ -568,7 +697,7 @@ func Register(server *mcp.Server, c *Client, agentSessionID string) {
 		})
 	})
 
-	mcp.AddTool(server, &mcp.Tool{
+	addMCPTool[TaskUpdateContentIn, RawWithUnappliedDecisions](server, &mcp.Tool{
 		Name:         "atct_task_update_content",
 		Description:  "Rewrite a task's content. Only todo and doing tasks can be updated; done and dropped tasks are refused.",
 		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
@@ -589,7 +718,7 @@ func Register(server *mcp.Server, c *Client, agentSessionID string) {
 		return callWithUnappliedDecisions(ctx, c, "task.update_content", params)
 	})
 
-	mcp.AddTool(server, &mcp.Tool{
+	addMCPTool[DecisionAskIn, RawWithUnappliedDecisions](server, &mcp.Tool{
 		Name: "atct_decision_ask",
 		Description: "Ask the human for a decision. An answer received within wait_ms is returned." +
 			"If parked is returned, continue with another task that does not depend on this decision.",
@@ -611,7 +740,7 @@ func Register(server *mcp.Server, c *Client, agentSessionID string) {
 		return callWithUnappliedDecisions(ctx, c, "decision.ask", params)
 	})
 
-	mcp.AddTool(server, &mcp.Tool{
+	addMCPTool[DecisionPollIn, RawWithUnappliedDecisions](server, &mcp.Tool{
 		Name:         "atct_decision_poll",
 		Description:  "Fetch the answer to a declared decision. Fetching transitions it to applied.",
 		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
@@ -621,7 +750,7 @@ func Register(server *mcp.Server, c *Client, agentSessionID string) {
 		})
 	})
 
-	mcp.AddTool(server, &mcp.Tool{
+	addMCPTool[DecisionWithdrawIn, RawWithUnappliedDecisions](server, &mcp.Tool{
 		Name: "atct_decision_withdraw",
 		Description: "Withdraw a decision that is no longer needed. Always call this after resolving it independently." +
 			"Otherwise stale questions remain in the human inbox.",
@@ -633,7 +762,7 @@ func Register(server *mcp.Server, c *Client, agentSessionID string) {
 		})
 	})
 
-	mcp.AddTool(server, &mcp.Tool{
+	addMCPTool[GoalCompleteIn, RawWithUnappliedDecisions](server, &mcp.Tool{
 		Name:         "atct_goal_complete",
 		Description:  "Report goal completion and request human approval. Fails while an open Decision remains.",
 		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
@@ -646,7 +775,7 @@ func Register(server *mcp.Server, c *Client, agentSessionID string) {
 		})
 	})
 
-	mcp.AddTool(server, &mcp.Tool{
+	addMCPTool[GoalSetDerivedFromIn, RawWithUnappliedDecisions](server, &mcp.Tool{
 		Name:         "atct_goal_set_derived_from",
 		Description:  "Set or clear the goal from which this Goal was derived. Pass an empty derived_from_goal_id to clear it. Self-reference and cycles are rejected.",
 		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),

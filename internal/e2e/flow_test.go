@@ -31,7 +31,7 @@ func TestFullGoalLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DeclareTasks: %v", err)
 	}
-	if _, err := s.UpdateTask(ctx, tasks[0].ID, domain.TaskDoing, ""); err != nil {
+	if _, err := s.UpdateTask(ctx, tasks[0].ID, domain.TaskDoing, 0); err != nil {
 		t.Fatalf("UpdateTask doing: %v", err)
 	}
 
@@ -41,7 +41,7 @@ func TestFullGoalLifecycle(t *testing.T) {
 		Options: []domain.Option{
 			{Label: "sqlite", Description: "SQLite", Consequence: "No external server required"},
 		},
-		AgentSessionID: "run-1",
+		AgentSessionID: 1,
 	})
 	if err != nil {
 		t.Fatalf("AskDecision: %v", err)
@@ -52,7 +52,7 @@ func TestFullGoalLifecycle(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("AnswerDecision: %v", err)
 	}
-	applied, err := s.PollDecisions(ctx, "run-1", "")
+	applied, err := s.PollDecisions(ctx, 1, 0)
 	if err != nil {
 		t.Fatalf("PollDecisions: %v", err)
 	}
@@ -61,7 +61,7 @@ func TestFullGoalLifecycle(t *testing.T) {
 	}
 
 	for _, tk := range tasks {
-		if _, err := s.UpdateTask(ctx, tk.ID, domain.TaskDone, ""); err != nil {
+		if _, err := s.UpdateTask(ctx, tk.ID, domain.TaskDone, 0); err != nil {
 			t.Fatalf("UpdateTask done (%s): %v", tk.Title, err)
 		}
 	}
@@ -73,7 +73,7 @@ func TestFullGoalLifecycle(t *testing.T) {
 		Surprises:   "なし",
 		NeedsReview: "なし",
 		NextSteps:   "なし",
-	}, "run-1")
+	}, 1)
 	if err != nil {
 		t.Fatalf("CompleteGoal: %v", err)
 	}
@@ -104,7 +104,7 @@ func TestAnswerSurvivesSessionChange(t *testing.T) {
 	}
 	d, err := s.AskDecision(ctx, store.AskInput{
 		GoalID: g.ID, TaskID: tasks[0].ID, Kind: domain.KindDecision,
-		Question: "What should we do?", AgentSessionID: "run-1",
+		Question: "What should we do?", AgentSessionID: 1,
 	})
 	if err != nil {
 		t.Fatalf("AskDecision: %v", err)

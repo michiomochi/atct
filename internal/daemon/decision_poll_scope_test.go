@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"encoding/json"
+	"fmt"
 	"net"
 	"strings"
 	"testing"
@@ -14,7 +15,7 @@ type decisionPollRPCResponse struct {
 	Error  json.RawMessage `json:"error"`
 }
 
-func (f unappliedDecisionScopeRPCTestFixture) callDecisionPoll(t *testing.T, agentSessionID, decisionID string) (json.RawMessage, json.RawMessage) {
+func (f unappliedDecisionScopeRPCTestFixture) callDecisionPoll(t *testing.T, agentSessionID int64, decisionID int64) (json.RawMessage, json.RawMessage) {
 	t.Helper()
 	conn, err := net.Dial("unix", f.socketPath)
 	if err != nil {
@@ -52,21 +53,21 @@ func pollResultDecisions(t *testing.T, result json.RawMessage) []map[string]any 
 	return envelope.Data
 }
 
-func assertPollReturnedDecision(t *testing.T, result json.RawMessage, decisionID string) map[string]any {
+func assertPollReturnedDecision(t *testing.T, result json.RawMessage, decisionID int64) map[string]any {
 	t.Helper()
 	for _, decision := range pollResultDecisions(t, result) {
-		if decision["id"] == decisionID {
+		if got, ok := decision["id"].(float64); ok && int64(got) == decisionID {
 			return decision
 		}
 	}
-	t.Fatalf("decision.poll result = %s, want decision %q", result, decisionID)
+	t.Fatalf("decision.poll result = %v, want decision %v", result, decisionID)
 	return nil
 }
 
-func assertPollSucceeded(t *testing.T, result json.RawMessage, rpcError json.RawMessage, decisionID string) map[string]any {
+func assertPollSucceeded(t *testing.T, result json.RawMessage, rpcError json.RawMessage, decisionID int64) map[string]any {
 	t.Helper()
 	if len(rpcError) > 0 && string(rpcError) != "null" {
-		t.Fatalf("decision.poll returned error: %s", rpcError)
+		t.Fatalf("decision.poll returned error: %v", rpcError)
 	}
 	return assertPollReturnedDecision(t, result, decisionID)
 }
@@ -77,8 +78,8 @@ func TestDecisionPollForSubcommanderRefusesOtherGoalDecision(t *testing.T) {
 	if len(rpcError) == 0 || string(rpcError) == "null" {
 		t.Fatal("decision.poll succeeded for a decision outside the held goal")
 	}
-	if !strings.Contains(string(rpcError), f.goalBID) {
-		t.Fatalf("decision.poll error = %s, want goal ID %q", rpcError, f.goalBID)
+	if !strings.Contains(string(rpcError), fmt.Sprint(f.goalBID)) {
+		t.Fatalf("decision.poll error = %v, want goal ID %v", rpcError, f.goalBID)
 	}
 }
 
@@ -94,7 +95,7 @@ func TestDecisionPollRefusalLeavesOtherGoalDecisionAnswered(t *testing.T) {
 		t.Fatalf("GetDecision: %v", err)
 	}
 	if decision.Status != domain.DecisionAnswered {
-		t.Fatalf("decision status = %q, want answered", decision.Status)
+		t.Fatalf("decision status = %v, want answered", decision.Status)
 	}
 	if decision.AppliedAt != nil {
 		t.Fatalf("decision applied_at = %v, want nil", decision.AppliedAt)
@@ -108,7 +109,7 @@ func TestDecisionPollByOwnerSucceedsAfterRefusal(t *testing.T) {
 		t.Fatal("decision.poll succeeded for a decision outside the held goal")
 	}
 
-	result, rpcError := f.callDecisionPoll(t, "decision-scope-answer-b", "")
+	result, rpcError := f.callDecisionPoll(t, daemonTestSessionID(t, f.store, "decision-scope-answer-b"), 0)
 	decision := assertPollSucceeded(t, result, rpcError, f.decisionBID)
 	if decision["status"] != string(domain.DecisionApplied) {
 		t.Fatalf("returned decision status = %#v, want applied", decision["status"])
@@ -136,6 +137,6 @@ func TestDecisionPollForCommanderAcceptsOtherGoalDecision(t *testing.T) {
 
 func TestDecisionPollWithoutSessionAcceptsOtherGoalDecision(t *testing.T) {
 	f := newUnappliedDecisionScopeRPCTestFixture(t)
-	result, rpcError := f.callDecisionPoll(t, "", f.decisionBID)
+	result, rpcError := f.callDecisionPoll(t, 0, f.decisionBID)
 	assertPollSucceeded(t, result, rpcError, f.decisionBID)
 }
