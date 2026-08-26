@@ -1015,6 +1015,94 @@ test_role_contract_matches_implementation() {
   fi
 }
 
+test_worktree_rule_defers_to_superpowers() {
+  local atct_skill="$REPO_ROOT/skills/atct/SKILL.md"
+  local worktree_section
+
+  worktree_section="$(sed -n '/^## One worktree per goal$/,/^## Commit safely$/p' "$atct_skill")"
+  grep -Fq -- 'superpowers:using-git-worktrees' <<<"$worktree_section" ||
+    fail 'worktree rule must refer to superpowers:using-git-worktrees'
+  if grep -Fq -- 'git worktree add' <<<"$worktree_section"; then
+    fail 'worktree rule must not copy the git worktree add procedure'
+  fi
+  if grep -Fq -- 'git check-ignore' <<<"$worktree_section"; then
+    fail 'worktree rule must not copy the git check-ignore procedure'
+  fi
+}
+
+test_worktree_rule_names_who_creates_it() {
+  local atct_skill="$REPO_ROOT/skills/atct/SKILL.md"
+  local worktree_section
+
+  worktree_section="$(sed -n '/^## One worktree per goal$/,/^## Commit safely$/p' "$atct_skill")"
+  for role in commander subcommander executor; do
+    grep -Fq -- "$role" <<<"$worktree_section" ||
+      fail "worktree rule must name $role"
+  done
+  grep -Eiq -- 'executor.*(does not|never|must not) create' <<<"$worktree_section" ||
+    fail 'worktree rule must say that the executor does not create worktrees'
+}
+
+test_worktree_rule_allows_the_primary_checkout() {
+  local atct_skill="$REPO_ROOT/skills/atct/SKILL.md"
+  local worktree_section
+
+  worktree_section="$(sed -n '/^## One worktree per goal$/,/^## Commit safely$/p' "$atct_skill")"
+  grep -Fq -- '### When the primary checkout is right' <<<"$worktree_section" ||
+    fail 'worktree rule must name when the primary checkout is right'
+  grep -Eiq -- 'commander.*review' <<<"$worktree_section" ||
+    fail 'primary checkout exceptions must include commander review'
+  grep -Eiq -- 'commander.*release' <<<"$worktree_section" ||
+    fail 'primary checkout exceptions must include commander release'
+}
+
+test_worktree_rule_chooses_the_setup_script_over_a_native_tool() {
+  local atct_skill="$REPO_ROOT/skills/atct/SKILL.md"
+  local worktree_section
+
+  worktree_section="$(sed -n '/^## One worktree per goal$/,/^## Commit safely$/p' "$atct_skill")"
+  for term in script/worktree-setup.sh EnterWorktree web/node_modules web/dist; do
+    grep -Fq -- "$term" <<<"$worktree_section" ||
+      fail "worktree rule must mention $term"
+  done
+}
+
+test_worktree_rule_lists_what_is_not_separated() {
+  local atct_skill="$REPO_ROOT/skills/atct/SKILL.md"
+  local worktree_section
+
+  worktree_section="$(sed -n '/^## One worktree per goal$/,/^## Commit safely$/p' "$atct_skill")"
+  grep -Fq -- '### What a worktree does not separate' <<<"$worktree_section" ||
+    fail 'worktree rule must name what a worktree does not separate'
+  grep -Fq -- '~/.atct/atct.db' <<<"$worktree_section" ||
+    fail 'worktree rule must mention the shared ATCT database'
+  grep -Fq -- 'daemon' <<<"$worktree_section" ||
+    fail 'worktree rule must mention the shared daemon'
+  grep -Fq -- 'GOCACHE' <<<"$worktree_section" || fail 'worktree rule must mention the shared Go build cache'
+}
+
+test_worktree_paths_match_the_setup_script() {
+  local atct_skill="$REPO_ROOT/skills/atct/SKILL.md"
+  local setup_script="$REPO_ROOT/script/worktree-setup.sh"
+  local worktree_section
+  local setup_worktree
+  local setup_branch
+  local documented_worktree
+  local documented_branch
+
+  worktree_section="$(sed -n '/^## One worktree per goal$/,/^## Commit safely$/p' "$atct_skill")"
+  setup_worktree="$(sed -nE 's/^worktree="\$repo\/(.*)"/\1/p' "$setup_script")"
+  setup_branch="$(sed -nE 's/^branch="(.*)"/\1/p' "$setup_script")"
+  documented_worktree="$(sed 's/\${goal8}/<goal8>/g' <<<"$setup_worktree")"
+  documented_branch="$(sed 's/\${goal8}/<goal8>/g' <<<"$setup_branch")"
+  [[ -n "$documented_worktree" ]] || fail 'setup script worktree path could not be extracted'
+  [[ -n "$documented_branch" ]] || fail 'setup script branch name could not be extracted'
+  grep -Fq -- "$documented_worktree" <<<"$worktree_section" ||
+    fail 'worktree rule must document the setup script worktree path'
+  grep -Fq -- "$documented_branch" <<<"$worktree_section" ||
+    fail 'worktree rule must document the setup script branch name'
+}
+
 test_role_response_does_not_leak_other_boundaries() {
   local handler_go="$REPO_ROOT/internal/daemon/handler.go"
   local selected_role
@@ -1060,6 +1148,12 @@ test_start_does_not_claim_delegate_lacks_claim
 test_role_table_has_no_task_update_procedure
 test_role_contract_matches_implementation
 test_role_response_does_not_leak_other_boundaries
+test_worktree_rule_defers_to_superpowers
+test_worktree_rule_names_who_creates_it
+test_worktree_rule_allows_the_primary_checkout
+test_worktree_rule_chooses_the_setup_script_over_a_native_tool
+test_worktree_rule_lists_what_is_not_separated
+test_worktree_paths_match_the_setup_script
 test_recovery_section_has_role_entry
 test_recovery_section_prioritizes_session_identify
 test_recovery_section_has_project_path

@@ -63,6 +63,69 @@ cannot be received twice.
 Release a task by setting it back to `todo` with `atct_task_update`. There is
 no separate release tool.
 
+## One worktree per goal
+
+ATCT uses `script/worktree-setup.sh <goal-id>` as the canonical way to prepare
+a worktree. Do not use a session-scoped native worktree tool such as
+`EnterWorktree`.
+
+- The script derives the location and branch from the goal id: `.worktrees/<goal8>`
+  and `wt/goal-<goal8>`. A second person working on the same goal enters the
+  same tree. A native tool names worktrees per session, so it creates one per
+  agent instead of one per goal.
+- The script borrows `web/node_modules` from the primary checkout through a
+  symlink and copies `web/dist`. Neither the native tool nor the regular Git
+  worktree mechanism knows about this frontend setup.
+- The script runs only from the primary checkout; when run inside a worktree it
+  exits with status 2.
+
+`script/worktree-setup.sh` is the replacement for Steps 1a and 1b of
+`superpowers:using-git-worktrees`, and it also covers the frontend part of Step
+2 (Project Setup). The `.worktrees/` directory is already in `.gitignore`, so
+the skill's safety check is satisfied. Follow the reference skill instead of
+copying its setup procedure here.
+
+Usually nobody runs the script by hand. A worktree is prepared before an agent
+starts, so the skill's Step 0 reports an already isolated workspace and does
+not proceed to Step 1.
+
+- `commander`: Prepare the worktree before waking anyone for the goal; use the
+  primary checkout for your own work.
+- `subcommander`: Work in the worktree for your own goal; do not create
+  worktrees for other goals.
+- `executor`: Work in the worktree for the handed-off goal; it does not create
+  one itself.
+
+### When the primary checkout is right
+
+The primary checkout is appropriate in these cases:
+
+- `commander` reviews landed changes, publishes a release, resolves conflicts
+  between worktrees, or cleans up a worktree after the goal closes.
+- Running `script/worktree-setup.sh` itself, because it does not run inside a
+  worktree.
+- Working on a goal that changes this rule: the rule cannot apply to the change
+  until it lands. This rule is being written in the primary checkout for that
+  reason.
+
+### What a worktree does not separate
+
+A worktree does not make every resource independent:
+
+- `~/.atct/atct.db` is one shared database for all worktrees; goals, tasks,
+  claims, and decisions are shared. Avoiding two people touching the same file
+  still depends on declaring before you work.
+- The daemon is one per machine, not one per worktree.
+- `web/node_modules` is a symlink to the primary checkout. Running `pnpm
+  install` in a worktree changes the primary checkout's dependencies.
+- Git objects and refs live in one common directory. The same branch can be
+  checked out in only one worktree at a time.
+- If two worktrees edit the same file, the conflict does not disappear; it is
+  merely moved to the merge.
+- `GOCACHE` is shared by default across all worktrees. Sharing is harmless
+  because the cache is content-addressed, but point it outside the repository:
+  if it points inside, generated files can fill `git status`.
+
 ## Commit safely
 
 When committing the goal's work, name the paths explicitly; never use `git add -A`.
