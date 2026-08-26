@@ -29,8 +29,8 @@
 
 ```
 atct-commander                 プロジェクトの space
-atct-c22a6d79-subcommander     作業単位ごとの space（ゴール ID の先頭 8 桁）
-atct-c22a6d79-executor
+atct-goal 84-subcommander     作業単位ごとの space（ゴール ID の先頭 8 桁）
+atct-goal 84-executor
 ```
 
 - 規約は `<space>-<役割>` のまま。**変わるのは space の定義だけ**（プロジェクト単位 → 作業単位）

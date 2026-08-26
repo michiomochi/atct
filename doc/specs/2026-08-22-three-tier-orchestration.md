@@ -99,9 +99,9 @@ commander の判定: **形は正しい。**ただし**先に決めないと壊�
 
 ```
 atct-commander                    ← プロジェクトの space（今の space がそのまま）
-atct-c22a6d79-subcommander        ← ゴールごとの space（ゴール ID の先頭 8 桁）
-atct-c22a6d79-executor
-atct-c22a6d79-executor-2
+atct-goal 84-subcommander        ← ゴールごとの space（ゴール ID の先頭 8 桁）
+atct-goal 84-executor
+atct-goal 84-executor-2
 ```
 
 規約 `<space>-<役割>` は変えない。**変わるのは「space とは何か」の定義だけ** ──
@@ -121,10 +121,10 @@ herdr の名前は `[a-z][a-z0-9_-]{0,31}` で **32 文字まで**。
 ```
  14  atct-commander
  20  stock-data-commander
- 26  atct-c22a6d79-subcommander
- 32  stock-data-c22a6d79-subcommander      ← ぴったり上限
- 30  stock-data-c22a6d79-executor-2
- 34  stock-data-c22a6d79-subcommander-2    ← 溢れる
+ 26  atct-goal 84-subcommander
+ 32  stock-data-goal 84-subcommander      ← ぴったり上限
+ 30  stock-data-goal 84-executor-2
+ 34  stock-data-goal 84-subcommander-2    ← 溢れる
 ```
 
 **制約 1: 1 ゴールに subcommander は 1 台。これは長さの都合ではなく、守るべき規則である**
@@ -138,7 +138,7 @@ herdr の名前は `[a-z][a-z0-9_-]{0,31}` で **32 文字まで**。
 2. **claim が 2 台を区別できない。**claim は「誰かが持っている」までしか答えない
    （B-4 の決定でこれを担当の信号として使うと決めた）。2 台居ると、どちらが持って
    いるのか分からなくなり、信号として機能しなくなる
-3. 名前が溢れる（`stock-data-c22a6d79-subcommander-2` は 34 文字）
+3. 名前が溢れる（`stock-data-goal 84-subcommander-2` は 34 文字）
 
 ### どう守るか
 
@@ -206,7 +206,7 @@ workspace は `w41` のような不透明 ID でアドレスされ、label は�
 
 ## A-2. commander が space を作る手順
 
-space 名はゴール ID の先頭 8 桁を使う（`atct-c22a6d79`）。
+space 名はゴール ID の先頭 8 桁を使う（`atct-goal 84`）。
 
 **作る前に `herdr agent list` を見て、`*-<goal8>-subcommander` が既に居たら作らない**
 （A-1 の制約 1）。`herdr workspace create` の戻り値（`.result.workspace` / `.result.tab` /
@@ -263,7 +263,7 @@ ATCT_SCOPE_GOAL=<フルのゴール ID>
 1. **無効化ではなく絞り込みである。**失敗の症状が「何も起きない」ではなく「見える範囲が
    おかしい」になる。**目に見えて自己修正できる。**無効化の失敗は見えない
 2. **役割名を渡さない。**役割はエージェント名が既に持っている
-   （`atct-c22a6d79-subcommander`）。env にも持たせると**同じ事実の出所が 2 つになり、
+   （`atct-goal 84-subcommander`）。env にも持たせると**同じ事実の出所が 2 つになり、
    誰も突き合わせない。**名前は 8 桁の接頭辞、フックが要るのはフル ID なので、
    **この形なら二重管理にならない**（8 桁は表示用、フル ID は問い合わせ用）
 3. **不正なゴール ID では絞らない。**存在しないゴールに絞ると「何も出ない」となり、
@@ -315,8 +315,8 @@ dotfiles 側には汎用形だけが入った（commit `b66acc5`）。
 **実測（2026-08-25、subcommander を space ごとに分けた直後）でその代償が出た。**
 
 ```
-detection: handoff th-446d87f0-exec1-20260825 has no completion report
-detection: handoff th-e81fadf9-exec2-20260825 has no completion report
+detection: handoff th-task 567-exec1-20260825 has no completion report
+detection: handoff th-task 595-exec2-20260825 has no completion report
 ```
 
 どちらもゴールを持っている subcommander には届かず、**commander が人間の代わりに
@@ -610,7 +610,7 @@ claim を持てばよい」。
 一致で判定し、絶対パス呼び出しと名前より前のフラグを意図的に素通しする）。
 **判定が名前でなくなるので、その穴も消える。**
 
-ゴールとして切り出した（`ba452792`、`f7a8661b` から派生）。**入れ子の扱い**
+ゴールとして切り出した（`goal 95`、`goal 87` から派生）。**入れ子の扱い**
 （ゴールを claim していない者がそのタスクを claim できるか）を先に決める必要がある。
 
 以下は撤回された検討の記録である。**判断の理由に価値があるので残すが、作業の指示では
@@ -627,7 +627,7 @@ commander は「どのゴールに人手が付いていて、どれが空いて�
 **エージェント名にゴール ID が入る。**
 
 ```
-herdr agent list  →  atct-c22a6d79-commander が居るか
+herdr agent list  →  atct-goal 84-commander が居るか
 ```
 
 **atct に聞く必要がない。**そして atct は herdr を知らないままで済む（既存の方針を
@@ -675,7 +675,7 @@ subcommander (goal C) ─┘                              │
                                                    └─▶ 差し戻し or ゴールに切り出す
 ```
 
-**指示ではなく通り道にする。**2026-08-22 の実測（ゴール 44ae6e4e）で、指示で止まった
+**指示ではなく通り道にする。**2026-08-22 の実測（ゴール goal 42）で、指示で止まった
 ことは一度も無く、止まったのは通り道に置いたフックだけだった。**レビューを「やるべき
 こと」として書くと、今日と同じで飛ばされる。**リリースの手順の中に置く。
 この決定により、`script/release.sh` は `--reviewed` がないと非ゼロで終了するリリース関門になった。
@@ -749,14 +749,14 @@ A-1 の穴を 2 か所に書いたのと同じ理由が、ここでは逆向き�
 | 消した行 | 実際は |
 |---|---|
 | `ATCT_SCOPE_GOAL` の実装 | **撤回済み。**241 行の「撤回された案」を見よ。実装しない |
-| `single-subcommander.sh` の apply | **apply しない。**人間の判断（2026-08-22）「防波堤は不要。早く atct 側で対応を進めて」。置き換えは `ba452792`（ゴールに claim を持たせる） |
+| `single-subcommander.sh` の apply | **apply しない。**人間の判断（2026-08-22）「防波堤は不要。早く atct 側で対応を進めて」。置き換えは `goal 95`（ゴールに claim を持たせる） |
 
 **強制されていないものを 2 つ、A-1 に書いた。**フックは絶対パス呼び出しと
 名前より前のフラグを素通しする。**意図的である。**過大に見積もらないこと。
 
 ## 3 層は現在の atct の上に乗らない（2026-08-22 に実測）
 
-`ba452792` の最後のタスク `0b79b6a3`「稼働版で 2 人目が入れないことを実測する」で
+`goal 95` の最後のタスク `task 468`「稼働版で 2 人目が入れないことを実測する」で
 分かったこと。**ゴールの claim は守れない。**そして理由は claim の側ではない。
 
 ### 実測
@@ -793,7 +793,7 @@ DELETE FROM agent_sessions WHERE project_id = ? AND id <> ? AND registered_at < 
 
 この文書が設計している 3 層は、同じプロジェクトに commander 1 台と subcommander 複数台が
 **同時に居る**形である。**いまの atct はその状態を保持できない。**後から来たセッションが
-先に居たセッションの記録を消す。`ba452792` の claim も、`f7a8661b` の 3 層化も、
+先に居たセッションの記録を消す。`goal 95` の claim も、`goal 87` の 3 層化も、
 この削除の上には乗らない。
 
 期限による掃除は同じ関数の中で `DeleteExpiredAgentSessionsExcept`（保持 30 日）が
@@ -809,7 +809,7 @@ DELETE FROM agent_sessions WHERE project_id = ? AND id <> ? AND registered_at < 
 
 ## 通知の受け口はもう commander に寄っている（2026-08-22 に実測）
 
-`f7a8661b` のタスク `9b4b98e1`「通知の受け口を commander に寄せる」の記録。
+`goal 87` のタスク `task 452`「通知の受け口を commander に寄せる」の記録。
 完了条件は「`atct watch` の Monitor と Stop hook が commander の space で動き、
 subcommander の space では動かないことを実測する」だった。
 
@@ -839,7 +839,7 @@ PreToolUse    matcher=AskUserQuestion         チャットで聞くのを止め 
 ```
 
 `session-start` は subcommander も自分のゴールを知る必要がある。
-`pre-ask` はチャットで判断を仰がない規則（`fa888894`）で、subcommander にも
+`pre-ask` はチャットで判断を仰がない規則（`goal 83`）で、subcommander にも
 適用したいものである。**どちらも切る理由がない。**
 
 ### 3 層で守るべきことは 1 つに減った
@@ -855,7 +855,7 @@ PreToolUse    matcher=AskUserQuestion         チャットで聞くのを止め 
 
 **しかし今日それをすり抜けた。**
 
-`9f0af794`（派生元を画面からたどる）と `007c3e78`（画面から本文を書き換える）は
+`task 414`（派生元を画面からたどる）と `task 475`（画面から本文を書き換える）は
 どちらも `web/src/components/GoalDetail.tsx` を `files` に持つ。**両方 claim できた。**
 私が executor-2 に渡す直前に、executor-1 が同じファイルを編集中であることに
 気づいて止めた。**atct は止めなかった。**
@@ -878,9 +878,9 @@ claim している限り、重なりは見えない。
 
 3 層では commander と subcommander が別セッションなので、2 人目の claim で拒まれる。
 **しかし今日の運用では commander が全ゴールの全タスクを claim している**
-（`ba452792` の本文が指摘しているとおり）。**その状態ではこの防御が丸ごと無効である。**
+（`goal 95` の本文が指摘しているとおり）。**その状態ではこの防御が丸ごと無効である。**
 
-これは `ba452792` の「入れ子の扱いをいつ入れるか」と同じ構造の話で、
+これは `goal 95` の「入れ子の扱いをいつ入れるか」と同じ構造の話で、
 **「3 層に移ってから効く仕組み」が、移る前は守ってくれない**という形である。
 
 ### 当面の代償

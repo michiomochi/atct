@@ -34,7 +34,7 @@
 
 ## 5. 測定
 
-測定者は `atct-fa9180a6-subcommander`、時点は `e7871e3` である。次のコマンドで測定済みの値を転記する。
+測定者は `atct-goal 125-subcommander`、時点は `e7871e3` である。次のコマンドで測定済みの値を転記する。
 
 ```text
 $ GOCACHE=… go test ./internal/daemon/ \

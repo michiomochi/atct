@@ -1,6 +1,6 @@
 # worktree の用意を自動にする
 
-2026-08-22。ゴール `44433505`「worktree の用意を手でやっているので、忘れると主
+2026-08-22。ゴール `goal 96`「worktree の用意を手でやっているので、忘れると主
 チェックアウトで壊れる」の設計。
 
 **既存の spec `doc/specs/2026-08-20-worktree-per-goal.md`（211 行）が前提。**
@@ -252,13 +252,13 @@ executor 用の space を主へ作ると**通ってしまう。**同じコマン
 
 ## 稼働中の環境で 5 通りを実測した（2026-08-22）
 
-タスク `0e3eb9d2`。dotfiles のフックを apply したあと、**実際に space を作って**測った。
+タスク `task 489`。dotfiles のフックを apply したあと、**実際に space を作って**測った。
 shim ではなく本物の呼び出しである。
 
 ```
 止める側
   atct 主 + ゴール ID を直書き   exit 2  「worktree を用意した。--cwd を
-                                          .../atct-wt-bacacb8b に向けろ。」
+                                          .../atct-wt-goal 98 に向けろ。」
   atct 主 + ゴール ID 無し       exit 2  「--env ATCT_WORKTREE_GOAL=<goal-id> を
                                           付けろ。主で作業するなら…」
 通す側
@@ -267,7 +267,7 @@ shim ではなく本物の呼び出しである。
   atct 主 + 主チェックアウトの印       exit 0  space w4C ができた
 ```
 
-**1 番目は本物の worktree（`atct-wt-bacacb8b`）を作ったうえで止めている。**
+**1 番目は本物の worktree（`atct-wt-goal 98`）を作ったうえで止めている。**
 止められた側は `--cwd` を差し替えるだけでよい。設計どおりである。
 
 測定後、worktree・ブランチ・space の 3 つとも片付けた。**測定前と同じ 4 worktree /
@@ -282,7 +282,7 @@ shim ではなく本物の呼び出しである。
 **2 回目**: 止める側が `usage:` で失敗した。**私の測り方の誤り。**
 
 ```
-GOAL=bacacb8b-...
+GOAL=goal 98-...
 herdr ... --env ATCT_WORKTREE_GOAL=$GOAL
 ```
 
@@ -332,7 +332,7 @@ echo "... 該当の語 ..."            同上。False
 
 ## 片側だけ数えると、レビューが一方向に見える（2026-08-22）
 
-`bacacb8b` の往復を振り返って「dotfiles から 4 件指摘され、4 件とも自分の誤りだった」と
+`goal 98` の往復を振り返って「dotfiles から 4 件指摘され、4 件とも自分の誤りだった」と
 書いた。**数え方が片側だった。**`dotfiles-commander` の補足で 8 件が出た。
 
 ```

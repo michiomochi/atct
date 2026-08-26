@@ -1,4 +1,4 @@
-# 39fa8e55 の設計（atct-b01a92b8-subcommander、2026-08-26）
+# task 560 の設計（atct-goal 104-subcommander、2026-08-26）
 
 **実装は 0 行。**以下はタスク description に足す想定の本文。
 
@@ -43,7 +43,7 @@
                internal/daemon/wakeup_test.go
                cmd/atct/watch_test.go
 
-**`files` は宣言後に足せない**（d98183b6 の主題）ので、報告に明記する。
+**`files` は宣言後に足せない**（goal 134 の主題）ので、報告に明記する。
 
 ## 完了条件（本文のまま）と、検査の作り方
 

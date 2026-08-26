@@ -67,7 +67,7 @@ B. subcommander は goal claim を持つ（役割の定義）
 
 **自分宛の handoff を作る**（`requested_by == received_by`）。
 
-`db18e025` でこの案を「形式的だ」として却下したが、**claim が無くなるなら形式ではなく
+`task 550` でこの案を「形式的だ」として却下したが、**claim が無くなるなら形式ではなく
 唯一の記録**になる。**却下の理由が消える。**
 
 ## 3. プロジェクトだけ claim が残る。**非対称は欠陥ではない**
@@ -135,11 +135,11 @@ SQL        31 箇所
 web        11 箇所
 ```
 
-**`1e082f2f`（UUID をやめて連番）と同じ箱である。**あちらは 8 表を作り直す。
+**`goal 111`（UUID をやめて連番）と同じ箱である。**あちらは 8 表を作り直す。
 
 ### 順序: **こちらを先にやる**
 
-`1e082f2f` は表を作り直すので、**claim の列が残っていればそれも一緒に運ぶ。**
+`goal 111` は表を作り直すので、**claim の列が残っていればそれも一緒に運ぶ。**
 **落としてから移行するほうが運ぶ量が減る。**
 
 ## 8. 決めたこと（2026-08-24・commander）
@@ -204,14 +204,14 @@ daemon に直接 `session.role` を問うた（自己申告ではなく観測）
 $ printf '{"id":"r","method":"session.role","params":{"agent_session_id":"<id>"}}\n' \
     | nc -U ~/.atct/atct.sock
 
-commander     {"role":"commander",   "project_id":"1ff70f35...","goal_id":"36d5332e..."}
-subcommander  {"role":"subcommander","project_id":"",          "goal_id":"419e0dff..."}
+commander     {"role":"commander",   "project_id":"1ff70f35...","goal_id":"goal 114..."}
+subcommander  {"role":"subcommander","project_id":"",          "goal_id":"goal 115..."}
 executor      {"role":"executor",    "project_id":"",          "goal_id":""}
 ```
 
 **中間層が成立したのはこれが初めてである。**1 節の実測（`{"role":"executor"}`）と比べること。
 
-ゴールは実際に進んだ。subcommander が task `8ec0e09c` を executor に渡し、`1bd6830` が着地した。
+ゴールは実際に進んだ。subcommander が task `task 583` を executor に渡し、`1bd6830` が着地した。
 
 ### 10.1 スキルの委譲手順は 2 か所とも成立しない
 
@@ -221,9 +221,9 @@ executor      {"role":"executor",    "project_id":"",          "goal_id":""}
 handoff を要求すると部分一意索引に当たる。
 
 ```
-atct_goal_claim(419e0dff)      → 成功
+atct_goal_claim(goal 115)      → 成功
 atct_goal_handoff_request(...) → goal handoff already open:
-                                 goal "419e0dff..." has a live handoff owner
+                                 goal "goal 115..." has a live handoff owner
 ```
 
 **渡す側は対象を持たない。親を持つ。**goal を渡す側は project claim を、task を渡す側は
@@ -238,7 +238,7 @@ atct_goal_handoff_request(...) → goal handoff already open:
 ```
 
 **受領を先にする。**`atct_goal_handoff_receive` は開いた未受領の要求があるときしか通らないので、
-**受領の排他が誤配の防止を担い、役割の確認は事後の裏取りになる。**（決定 `96e311f2`）
+**受領の排他が誤配の防止を担い、役割の確認は事後の裏取りになる。**（決定 `decision 257`）
 
 ### 10.2 2 層の経路
 
@@ -246,11 +246,11 @@ commander が task を配るには、**自分宛の goal handoff が要る**（`
 project claim だけでは配れない。**それでも役割は commander のまま**である。
 
 ```
-atct_goal_claim(36d5332e) → {"role":"commander"}
+atct_goal_claim(goal 114) → {"role":"commander"}
 ```
 
 拒否のメッセージが `task handoff task is unclaimed` と、**このゴールで消したはずの概念を
-名乗る。**真の条件は「呼び出し元がその goal の handoff を受領していない」である（task `960c0051`）。
+名乗る。**真の条件は「呼び出し元がその goal の handoff を受領していない」である（task `task 585`）。
 
 ### 10.3 なぜ検査が拾わなかったか
 
@@ -259,4 +259,4 @@ atct_goal_claim(36d5332e) → {"role":"commander"}
 `tests/wrapper_test.bash` はスキルの文言と境界表の一致しか見ない。
 
 **「スキルに書いてある順番どおりに呼ぶと成立するか」を実行する検査が 1 つも無かった。**
-task `58ae6a12` がそれを足す。
+task `task 584` がそれを足す。

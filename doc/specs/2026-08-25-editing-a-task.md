@@ -1,6 +1,6 @@
 # 宣言したタスクを直す
 
-ゴール 577e8da5。実測は 2026-08-22（稼働版 0.42.0）と 2026-08-25（commander の 5 件）。
+ゴール goal 109。実測は 2026-08-22（稼働版 0.42.0）と 2026-08-25（commander の 5 件）。
 
 ## 問題
 
@@ -10,7 +10,7 @@
     RPC      task.update_description      無い
     MCP      atct_task_update_description 無い
 
-`goal.update_content`（141d71dc で入れた）と同じ形の欠陥がタスク側に残っている。
+`goal.update_content`（goal 97 で入れた）と同じ形の欠陥がタスク側に残っている。
 
 そのうえ再宣言は黙って無視される。`internal/store/queries/task.sql` の `CreateTask` が
 
@@ -21,11 +21,11 @@
 
 ## 実測
 
-2026-08-25、commander がこの問題を 5 回踏んだ。446d87f0 / 6d326601 / 8ad49303 /
-340866f0 / 4fa268b2 の `description` が古くなり、毎回 handoff の依頼書で上書きした。
+2026-08-25、commander がこの問題を 5 回踏んだ。task 567 / task 555 / task 602 /
+task 600 / task 604 の `description` が古くなり、毎回 handoff の依頼書で上書きした。
 atct に残る記録は誤ったまま。
 
-**とくに 8ad49303 は因果そのものが誤りだった。**
+**とくに task 602 は因果そのものが誤りだった。**
 
     ps 拒否 → realProcessStartedAt が err → claimIsRunning が false
       → requireProjectClaimForGoal が必ず拒む
@@ -54,7 +54,7 @@ MCP は daemon 側で走るので、executor の sandbox で `ps` が拒まれ�
 `doing` を足すのは、自分で claim して進める経路（`ClaimTask`）のためである。
 実測では 610 件中 1 件しかないが、そこだけ直せないのは説明がつかない。
 
-`done` は拒む。**完了報告の根拠が後から変わるため**で、49ee01d8
+`done` は拒む。**完了報告の根拠が後から変わるため**で、goal 107
 「done のゴールにもう一度完了報告を出せてしまい、承認済みの文章が黙って上書きされる」
 と同じ形の欠陥になる。`dropped` も拒む。落とした理由の記録が動くのは同じ害である。
 
@@ -97,7 +97,7 @@ MCP は daemon 側で走るので、executor の sandbox で `ps` が拒まれ�
 
 エラーに**実際の status を入れる。**
 
-    task 7851d1e3 is done, not todo or doing
+    task task 496 is done, not todo or doing
 
 `goal.update_content` を写すとここで落とす。`internal/daemon/handler.go:643` は
 `store.ErrGoalNotProposed` を daemon 側の sentinel に差し替えていて、**ID も status も

@@ -47,12 +47,12 @@ env_vars      要る（HOME, PATH …）         不要
 課題が同時に片付く。
 
 ```
-c444cf96  Codex で MCP が入らない（${CLAUDE_PLUGIN_ROOT} が展開されない）
-a50b8572  直下の .mcp.json が /bin/atct-mcp という存在しないパスを登録する
-8bf50bd7  手書きの [mcp_servers.atct] と atct-mcp-newest を消せない
+task 537  Codex で MCP が入らない（${CLAUDE_PLUGIN_ROOT} が展開されない）
+task 539  直下の .mcp.json が /bin/atct-mcp という存在しないパスを登録する
+task 531  手書きの [mcp_servers.atct] と atct-mcp-newest を消せない
 ```
 
-`a50b8572` は `b730b691`（プラグインを直下へ移した）が生んだ退行である。プラグイン外では
+`task 539` は `task 534`（プラグインを直下へ移した）が生んだ退行である。プラグイン外では
 `${CLAUDE_PLUGIN_ROOT}` が空になり、`command` が `/bin/atct-mcp` になる。**このリポジトリを
 Claude Code で開いた者に、起動しない MCP サーバーが登録される。**http 型ならこの行自体が無い。
 
@@ -146,7 +146,7 @@ MCP の streamable HTTP は `initialize` の応答でサーバーが `Mcp-Sessio
 仕組みを持つ。**いまの模型にそのまま対応づく**——プロセス 1 つに 1 つ発行していたものを、
 接続 1 つに 1 つ発行するだけである。
 
-**`agent_sessions` を UUID のまま残す判断（`1e082f2f`）と整合する。**
+**`agent_sessions` を UUID のまま残す判断（`goal 111`）と整合する。**
 
 ## 決定 3: stdio を壊さない
 
@@ -170,7 +170,7 @@ MCP の streamable HTTP は `initialize` の応答でサーバーが `Mcp-Sessio
 
 ## 合わせて効くもの
 
-`0f1dbafa`（固定の文言をフックから MCP の `instructions` へ移す）と組み合わせると、
+`task 538`（固定の文言をフックから MCP の `instructions` へ移す）と組み合わせると、
 **フックの役割が `daemon start` だけになる。**
 
 ```
@@ -204,7 +204,7 @@ ATCT warning: daemon is listening at 127.0.0.1:8788;
 MCP endpoint is fixed at http://127.0.0.1:8787/mcp.
 ```
 
-**恒久策は決めていない。**決定 `2fd85a78` で人間に問うている。動的な解決を入れるなら、
+**恒久策は決めていない。**決定 `decision 245` で人間に問うている。動的な解決を入れるなら、
 起動役を挟むか、別の設定機構が要る。
 
 ## 未検証

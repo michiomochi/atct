@@ -6,7 +6,7 @@
 ## なぜ隣をやめたか
 
 隣（`../atct-wt-<goal8>`）に置いていたので、片付け忘れが溜まった。2026-08-22 の時点で
-`atct-wt1` / `atct-wt2` / `atct-wt3` / `atct-wt-05f6fa0e` の 4 つが並び、
+`atct-wt1` / `atct-wt2` / `atct-wt3` / `atct-wt-goal 108` の 4 つが並び、
 **中身が主に取り込み済みかを 1 ファイルずつ突き合わせてから消した。**
 ブランチ 2 本（`wt/executor-1` / `wt/executor-2`）は worktree より長く生き残っていた。
 
@@ -135,7 +135,7 @@ du -sh web/node_modules      # 434M（主が無事）
 ### ブランチを忘れる
 
 2026-08-22 に作業ツリーを 4 つ消したあと、ブランチが 4 本残っていた
-（`wt/executor-1` / `-2` / `-3` / `wt/goal-05f6fa0e`）。
+（`wt/executor-1` / `-2` / `-3` / `wt/goal-goal 108`）。
 **先端が main に含まれることを確認してから消す。**
 
 ```bash

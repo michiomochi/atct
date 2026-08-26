@@ -75,12 +75,12 @@ cmd/atct/watch.go:631
 atct detection: task %s has no handoff request
 ```
 
-**記録する手段が無いまま告発している。**これが `b01a92b8`「テーブルと関数はあるが、
+**記録する手段が無いまま告発している。**これが `goal 104`「テーブルと関数はあるが、
 そこへ届く経路が無い」の実体である。
 
 ## 決定 1: Stop hook を復活させる。ただし役割で分ける
 
-`9c7df582` は 2026-08-22 に Stop hook を廃止した。理由は
+`goal 94` は 2026-08-22 に Stop hook を廃止した。理由は
 **「commander と subcommander の両方で発火するので、3 層に分けられない」。**
 
 **その理由はいま解ける。**`atct_role` が claim から役割を導く（`2f924bd` / `d9c3bce`）。
@@ -93,7 +93,7 @@ Stop hook
   role == executor  → 「このタスクを終えた」を daemon へ伝える
 ```
 
-**廃止の決定を全面的に覆すのではない。**`9c7df582` が消したのは「10 種類の状況を
+**廃止の決定を全面的に覆すのではない。**`goal 94` が消したのは「10 種類の状況を
 Stop のたびに数え直して催促する」振る舞いで、**それは wakeup に統一されたままにする。**
 **新しい Stop は 1 つのことしかしない。**
 
@@ -184,11 +184,11 @@ atct handoff: task <id> reported complete
 **2 が無いと 3 が書けない。**`completed_report_at` は `task_handoffs` の行に載るので、
 **行が無ければ完了も記録できない。**
 
-**`b01a92b8` の承認が要る。**あれが 1 と 2 を持っている。
+**`goal 104` の承認が要る。**あれが 1 と 2 を持っている。
 
 ## 決定 5: 働く側は task_id で引く。cwd で完了する（2026-08-24 追記）
 
-人間の承認: 決定 `af25c691` の A。**ただし A だけでは片方しか解けない。**
+人間の承認: 決定 `decision 249` の A。**ただし A だけでは片方しか解けない。**
 
 ```
 A が解く      Stop hook が「どの handoff を完了させるか」を cwd で引ける
@@ -291,7 +291,7 @@ Stop hook → daemon → 委譲した側の watch へ即座に流す
 Stop hook はこの列を更新せず、受領済み・未完了の handoff が存在する場合だけ、
 その task を指定した `handoff_yielded` イベントを daemon から watch へ流す。
 
-どの task を対象にするかは、人間の決定 `d55c762c`（2026-08-25 適用）により、
+どの task を対象にするかは、人間の決定 `decision 263`（2026-08-25 適用）により、
 pane 作成時に渡される環境変数 `ATCT_TASK_ID` から引くことに決まった。環境変数が
 空なら何もしない。`atct role` は `--agent-session-id` を要求するため、Stop hook
 から役割を引くことはできず、役割の代わりに daemon が task の handoff 状態を確認する。

@@ -43,7 +43,7 @@
 返していた。
 
 ```
-GET /tasks/ab920a80-...  ->  web/dist/index.html（ダッシュボード）
+GET /tasks/task 187-...  ->  web/dist/index.html（ダッシュボード）
 ```
 
 **Go の全テストと web の 109 テストが通ったまま、この状態だった。** 見つけたのは

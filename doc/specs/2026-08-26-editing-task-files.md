@@ -1,6 +1,6 @@
 # 宣言したタスクの files を直す
 
-ゴール d98183b6。実測は 2026-08-25 の 1 日（7 space が 1 つの作業ツリーを共有した日）。
+ゴール goal 134。実測は 2026-08-25 の 1 日（7 space が 1 つの作業ツリーを共有した日）。
 
 ## 問題
 
@@ -13,17 +13,17 @@
 宣言の時点で決まるが、**依頼書を書く段になって範囲が変わる。**2026-08-25 に宣言外の
 編集が 6 件出た。
 
-    7b7d6c8c  task_handoff_test.go / goal_handoff_test.go / goal.go / sqlcgen/task.sql.go
-    fd02f859  internal/domain/model.go
-    845d4eb6  internal/store/decision_test.go
+    task 606  task_handoff_test.go / goal_handoff_test.go / goal.go / sqlcgen/task.sql.go
+    task 614  internal/domain/model.go
+    task 632  internal/store/decision_test.go
 
 **どれも中身としては妥当である。**検査の置き場、`:exec` を `:execresult` に変えた
 呼び出し側の追随、生成物。**依頼書を書く時点で決まることだが、`files` は宣言で固定される。**
 
 結果として **commander が直列化を 2 回誤った。**
 
-    4fa268b2  「SKILL.md を触らない」と判断して待たせた -> 実際は触った
-    e56c6cb9  「tools.go が競合する」と伝えた         -> 実際は競合していなかった
+    task 604  「SKILL.md を触らない」と判断して待たせた -> 実際は触った
+    decision 277  「tools.go が競合する」と伝えた         -> 実際は競合していなかった
 
 ## ゴール本文の前提を 1 つ訂正する
 
@@ -56,8 +56,8 @@
     拒む  それ以外
 
 **「保持者のみ」を字義どおり実装すると、このゴールが直そうとしている場面を塞ぐ。**
-2026-08-25 の実測: ゴール 577e8da5 の 5 タスクは全部 `agent` が
-`atct-577e8da5-subcommander` で、**5 件とも handoff の保持者は executor だった。**
+2026-08-25 の実測: ゴール goal 109 の 5 タスクは全部 `agent` が
+`atct-goal 109-subcommander` で、**5 件とも handoff の保持者は executor だった。**
 `files` を直したかったのは subcommander である。**保持者だけに絞ると、その 5 件すべてで
 拒まれる。**
 
@@ -72,7 +72,7 @@
 「そのタスクのゴールの handoff を保持しているか」を判定しており、`handoff.request` が
 使っている。**`files` の門番はこれと `isHolder` の or である。**
 
-`95905814`（`goal.complete` の門番）の導出は使えない。**いま `goal.complete` に門番は
+`goal 127`（`goal.complete` の門番）の導出は使えない。**いま `goal.complete` に門番は
 無く、`ensureAgentSessionProject` だけである。**逆に、こちらの導出が先に入れば写せる。
 
 ### 2. `request_report` と `complete_report` はまとめない
@@ -106,5 +106,5 @@ prompt で直接渡せたためである。**`files` のずれは commander の�
 ## 範囲外
 
 - `request_report` と `complete_report`（決定 2）
-- `goal.complete` の門番（`95905814`）。導出はこちらが先に置く
+- `goal.complete` の門番（`goal 127`）。導出はこちらが先に置く
 - web UI からの編集経路
