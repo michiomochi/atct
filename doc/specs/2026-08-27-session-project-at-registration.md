@@ -235,3 +235,48 @@ guard がここにしか無い。**
    `ErrProjectNotFound` なら `projectID=0` で登録を成功させる。
    **`resolveOrRegisterProject` を呼ばない**（未登録 cwd に project 行を勝手に作ってしまう）
 5. `cmd/atct-mcp/main.go` — `os.Getwd()` を `run.register` の payload に足す
+
+## 実装後の実測（完了条件(1)(2) の否定側）
+
+隔離した `HOME` と port で daemon を立て、**実際に MCP シムを 3 つの cwd から起動した。**
+テストではなく本物のバイナリでの確認である。
+
+```
+$ HOME=/tmp/atct-172-home /tmp/atct-172/atct daemon start -listen 127.0.0.1:8799
+atct daemon ready: pid 88831, http 127.0.0.1:8799
+
+$ cd /tmp/atct-172-nowhere && HOME=... atct-mcp < /dev/null   # 未登録ディレクトリ
+shim exit: 0    stderr: (空)
+
+$ HOME=... atct project add testproj
+registered project "testproj" at /private/tmp/atct-172-home
+
+$ cd /tmp/atct-172-home && HOME=... atct-mcp < /dev/null      # project の root
+shim exit: 0    stderr: (空)
+
+$ cd /tmp/atct-172-home/sub/deeper && HOME=... atct-mcp < /dev/null  # サブディレクトリ
+shim exit: 0    stderr: (空)
+
+$ sqlite3 -readonly /tmp/atct-172-home/.atct/atct.db \
+    "select id, coalesce(project_id,'NULL') project_id, pid from agent_sessions order by id;"
+id|project_id|pid
+1|NULL|90052      <- 未登録ディレクトリ。NULL のまま、シムは落ちていない
+2|1|90243         <- project の root
+3|1|90246         <- サブディレクトリ。root_path 最長一致が効いた
+```
+
+**完了条件(2) の否定側が確認できた。**未登録ディレクトリでシムは `exit 0` で正常に起動し、
+stderr も空である。**MCP が使えなくなる壊れ方はしていない。**
+
+## テスト（`internal/daemon/run_test.go`）
+
+新しくできるようになること 3 本と、壊れてはいけないこと 3 本を同数で置いた。
+
+| | テスト | 内容 |
+| --- | --- | --- |
+| T1 | `TestDaemonRegistersAgentSessionAndAssociatesItWithGoalProject`（改修） | project の root path で登録すると `project_id` が入る |
+| T2 | `TestRunRegisterResolvesProjectFromSubdirectory` | サブディレクトリでも同じ project に解決される |
+| T3 | `TestRunRegisterUnknownCwdKeepsProjectNull` | 未登録 cwd でも登録は成功し `project_id` は NULL |
+| T4 | `TestRunRegisterWithoutCwdKeepsProjectNull` | `cwd` 無しの登録は従来どおり成功（HTTP 経路の後方互換） |
+| T5 | `TestRunRegisterProjectScopeRejectsGoalFromAnotherProject` | 登録時に project が入っていても越境は拒否される（決定 9 の guard が生きている） |
+| T6 | `TestSessionIdentifyReattachPreservesCanonicalProject` | reattach で canonical row の `project_id` が保持される |
