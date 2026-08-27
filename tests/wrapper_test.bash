@@ -42,6 +42,125 @@ assert_empty_file() {
   [[ ! -s "$file" ]] || fail "<$file> is not empty"
 }
 
+# Headings named here must carry a numbered list in the body of
+# skills/atct/SKILL.md. A section whose steps are ordered but unnumbered cannot
+# be spotted from the text alone, so it is registered here by hand.
+ORDERED_SECTIONS=(
+  '## Declare before you work'
+  '## Claim before you start'
+  '## Delegate a task'
+  '### Two-layer delegation'
+  '## Delegate a goal'
+  '## Fill in a report on a handoff that is already closed'
+  '## Recover when your role comes back wrong'
+  '## Close a task the moment it is finished'
+  '## Report completion in six parts'
+  '## Act on reversible choices, ask about irreversible ones'
+  '## Apply what you were told'
+  '## Finishing'
+)
+
+# Prints one line per broken numbered list, and nothing when every list is
+# sound. Sections are split on `## ` and `### `; within a section the body
+# series (`1. `) and the quoted series (`> 1. `, as transcribed into a request)
+# are counted apart.
+numbering_violations() {
+  local file="$1"
+
+  awk '
+    function report(kind, numbers, message) {
+      printf "%s: %s: %s numbering %s: %s\n", FILENAME, section, kind, message, numbers
+    }
+    function check(kind, numbers, count,   i, parts) {
+      if (count == 0) return
+      if (count == 1) {
+        report(kind, numbers, "has only one item")
+        return
+      }
+      split(numbers, parts, " ")
+      if (parts[1] != 1) {
+        report(kind, numbers, "does not start at 1")
+        return
+      }
+      for (i = 2; i <= count; i++) {
+        if (parts[i] != parts[i - 1] + 1) {
+          report(kind, numbers, "is not contiguous (" parts[i] " follows " parts[i - 1] ")")
+          return
+        }
+      }
+    }
+    function flush() {
+      check("body", body, body_count)
+      check("quote", quote, quote_count)
+      body = ""
+      body_count = 0
+      quote = ""
+      quote_count = 0
+    }
+    BEGIN { section = "(before the first heading)" }
+    /^## |^### / {
+      flush()
+      section = $0
+      next
+    }
+    /^[0-9]+\. / {
+      n = $0
+      sub(/\..*/, "", n)
+      body = (body_count == 0) ? n : body " " n
+      body_count++
+      next
+    }
+    /^[ \t]*> [0-9]+\. / {
+      n = $0
+      sub(/^[ \t]*> /, "", n)
+      sub(/\..*/, "", n)
+      quote = (quote_count == 0) ? n : quote " " n
+      quote_count++
+      next
+    }
+    END { flush() }
+  ' "$file"
+}
+
+# Prints one line per section that numbers its body steps without naming the
+# consequence of running them out of order, and nothing when every such section
+# names it exactly once. A quoted series carries no such requirement; the body
+# of the same section already states it.
+out_of_order_violations() {
+  local file="$1"
+
+  awk '
+    function flush() {
+      if (body_count > 0) {
+        if (marker_count == 0) {
+          printf "%s: %s: numbers its steps but has no line starting with **Out of order:**\n", \
+            FILENAME, section
+        } else if (marker_count > 1) {
+          printf "%s: %s: has %d lines starting with **Out of order:** (expected 1)\n", \
+            FILENAME, section, marker_count
+        }
+      }
+      body_count = 0
+      marker_count = 0
+    }
+    BEGIN { section = "(before the first heading)" }
+    /^## |^### / {
+      flush()
+      section = $0
+      next
+    }
+    /^[0-9]+\. / {
+      body_count++
+      next
+    }
+    /^\*\*Out of order:\*\*/ {
+      marker_count++
+      next
+    }
+    END { flush() }
+  ' "$file"
+}
+
 write_fake_tools() {
   local fake_bin="$1"
   mkdir -p "$fake_bin"
@@ -1487,6 +1606,128 @@ test_role_response_does_not_leak_other_boundaries() {
   done
 }
 
+test_skill_numbering_is_contiguous() {
+  local skill
+  local violations
+
+  for skill in "$REPO_ROOT/skills/atct/SKILL.md" "$REPO_ROOT/skills/start/SKILL.md"; do
+    violations="$(numbering_violations "$skill")"
+    [[ -z "$violations" ]] || fail "numbered lists are broken:"$'\n'"$violations"
+  done
+}
+
+test_ordered_sections_name_the_out_of_order_consequence() {
+  local atct_skill="$REPO_ROOT/skills/atct/SKILL.md"
+  local violations
+
+  violations="$(out_of_order_violations "$atct_skill")"
+  [[ -z "$violations" ]] || fail "numbered sections do not name the cost of running out of order:"$'\n'"$violations"
+}
+
+test_ordered_sections_are_numbered() {
+  local atct_skill="$REPO_ROOT/skills/atct/SKILL.md"
+  local heading
+  local numbered
+
+  for heading in "${ORDERED_SECTIONS[@]}"; do
+    grep -Fxq -- "$heading" "$atct_skill" ||
+      fail "<$atct_skill> has no section titled <$heading>"
+    numbered="$(
+      awk -v want="$heading" '
+        $0 == want { inside = 1; next }
+        /^## |^### / { inside = 0 }
+        inside && /^[0-9]+\. / { found++ }
+        END { print found + 0 }
+      ' "$atct_skill"
+    )"
+    [[ "$numbered" -gt 0 ]] ||
+      fail "<$heading> is an ordered section but numbers none of its steps"
+  done
+}
+
+test_numbering_check_catches_a_broken_list() {
+  local sample_dir="$TEMP_ROOT/numbering-samples"
+  local sample
+  local violations
+
+  mkdir -p "$sample_dir"
+
+  cat >"$sample_dir/gap.md" <<'MARKDOWN'
+## Skips a number
+
+1. Claim the task.
+2. Do the work.
+4. Close the task.
+
+**Out of order:** Nothing lands.
+MARKDOWN
+
+  cat >"$sample_dir/duplicate.md" <<'MARKDOWN'
+## Repeats a number
+
+1. Claim the task.
+1. Do the work.
+2. Close the task.
+
+**Out of order:** Nothing lands.
+MARKDOWN
+
+  cat >"$sample_dir/not-first.md" <<'MARKDOWN'
+## Does not start at 1
+
+2. Do the work.
+3. Close the task.
+
+**Out of order:** Nothing lands.
+MARKDOWN
+
+  cat >"$sample_dir/single.md" <<'MARKDOWN'
+## Numbers a single step
+
+1. Close the task.
+
+**Out of order:** Nothing lands.
+MARKDOWN
+
+  cat >"$sample_dir/quote-gap.md" <<'MARKDOWN'
+## Skips a number inside a quoted request
+
+1. Put these exact instructions at the beginning of the request:
+
+   > 1. commit the work
+   > 3. close every task
+
+2. Wake the worker.
+
+**Out of order:** Nothing lands.
+MARKDOWN
+
+  for sample in gap duplicate not-first single quote-gap; do
+    violations="$(numbering_violations "$sample_dir/$sample.md")"
+    [[ -n "$violations" ]] ||
+      fail "numbering_violations reported nothing for the <$sample> sample"
+  done
+}
+
+test_out_of_order_check_catches_a_missing_consequence() {
+  local sample_dir="$TEMP_ROOT/out-of-order-samples"
+  local violations
+
+  mkdir -p "$sample_dir"
+
+  cat >"$sample_dir/missing.md" <<'MARKDOWN'
+## Numbers its steps and says nothing about their order
+
+1. Claim the task.
+2. Do the work.
+3. Close the task.
+MARKDOWN
+
+  violations="$(out_of_order_violations "$sample_dir/missing.md")"
+  [[ -n "$violations" ]] ||
+    fail 'out_of_order_violations reported nothing for the <missing> sample'
+}
+
 test_static_contract
 test_delegated_claim_contract_is_explicit
 test_declared_task_content_fix_contract_is_explicit
@@ -1576,4 +1817,9 @@ test_session_start_preserves_context_and_silence
 test_mcp_instructions_include_active_goal_permission
 test_mcp_instructions_include_undo_boundary
 test_session_start_is_silent_without_atct_wrapper
+test_skill_numbering_is_contiguous
+test_ordered_sections_name_the_out_of_order_consequence
+test_ordered_sections_are_numbered
+test_numbering_check_catches_a_broken_list
+test_out_of_order_check_catches_a_missing_consequence
 printf 'PASS wrapper tests\n'
