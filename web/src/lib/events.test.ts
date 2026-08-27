@@ -12,6 +12,9 @@ const NON_SCREEN_EVENT_NAMES = [
   // wakeup events are agent signals, not reasons for a human dashboard refresh.
   "wakeup",
   "wakeup.discrepancy",
+  // A failed evaluation changes no stored state, so refetching would redraw the
+  // same screen. The failure reaches the human through atct watch instead.
+  "wakeup.evaluate_failed",
   // handoff_yielded saves no state, so it is not a reason for a human dashboard refresh.
   "handoff_yielded",
 ] as const;
