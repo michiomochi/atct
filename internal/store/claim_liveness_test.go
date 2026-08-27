@@ -6,9 +6,13 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"reflect"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/michiomochi/atct/internal/domain"
 )
 
 func TestMain(m *testing.M) {
@@ -428,6 +432,285 @@ func TestClaimLivenessFiltersClaimsByProject(t *testing.T) {
 	}
 }
 
+func TestClaimLivenessMatchesLegacyOnFixture(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	project, err := s.CreateProject(ctx, "atct", "/repos/atct")
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	goal, err := s.CreateGoal(ctx, project.ID, "Legacy comparison", "human")
+	if err != nil {
+		t.Fatalf("CreateGoal: %v", err)
+	}
+	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "legacy-comparison", []string{
+		"Live claim",
+		"Unknown claim",
+		"Second live claim",
+	}, []string{
+		"Compare a live claim.",
+		"Compare an unverifiable claim.",
+		"Compare another live claim.",
+	})
+	if err != nil {
+		t.Fatalf("DeclareTasks: %v", err)
+	}
+	liveID, err := s.RegisterAgentSession(ctx, os.Getpid())
+	if err != nil {
+		t.Fatalf("RegisterAgentSession: %v", err)
+	}
+	if err := s.AssociateAgentSessionWithProject(ctx, liveID, project.ID); err != nil {
+		t.Fatalf("AssociateAgentSessionWithProject: %v", err)
+	}
+	insertClaimLivenessHandoff(t, s, tasks[0].ID, "legacy-live-handoff", liveID)
+	insertClaimLivenessHandoff(t, s, tasks[1].ID, "legacy-unknown-handoff", nil)
+	insertClaimLivenessHandoff(t, s, tasks[2].ID, "legacy-live-handoff-2", liveID)
+
+	assertClaimLivenessMatchesLegacy(t, ctx, s, project.ID)
+}
+
+func TestGoalClaimLivenessMatchesLegacyOnFixture(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	project, err := s.CreateProject(ctx, "atct", "/repos/atct")
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	goals, err := s.CreateGoal(ctx, project.ID, "Legacy live goal", "human")
+	if err != nil {
+		t.Fatalf("CreateGoal live: %v", err)
+	}
+	staleGoal, err := s.CreateGoal(ctx, project.ID, "Legacy stale goal", "human")
+	if err != nil {
+		t.Fatalf("CreateGoal stale: %v", err)
+	}
+	liveID, err := s.RegisterAgentSession(ctx, os.Getpid())
+	if err != nil {
+		t.Fatalf("RegisterAgentSession: %v", err)
+	}
+	if err := s.AssociateAgentSessionWithProject(ctx, liveID, project.ID); err != nil {
+		t.Fatalf("AssociateAgentSessionWithProject: %v", err)
+	}
+	insertClaimLivenessGoalHandoff(t, s, goals.ID, "legacy-live-goal-handoff", liveID)
+	insertClaimLivenessGoalHandoff(t, s, staleGoal.ID, "legacy-stale-goal-handoff", nil)
+
+	assertGoalClaimLivenessMatchesLegacy(t, ctx, s, project.ID)
+}
+
+func TestClaimLivenessReturnsErrorForInvalidTaskCreatedAt(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	project, err := s.CreateProject(ctx, "atct", "/repos/atct")
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	goal, err := s.CreateGoal(ctx, project.ID, "Invalid task timestamp", "human")
+	if err != nil {
+		t.Fatalf("CreateGoal: %v", err)
+	}
+	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "invalid-task-timestamp", []string{"Invalid timestamp"}, []string{"Reject an invalid task timestamp."})
+	if err != nil {
+		t.Fatalf("DeclareTasks: %v", err)
+	}
+	insertClaimLivenessHandoff(t, s, tasks[0].ID, "invalid-task-timestamp-handoff", nil)
+	if _, err := s.DB().ExecContext(ctx, `UPDATE tasks SET created_at = ? WHERE id = ?`, "not-a-timestamp", tasks[0].ID); err != nil {
+		t.Fatalf("invalidate task created_at: %v", err)
+	}
+
+	if _, _, err := ClaimLiveness(ctx, s, project.ID); err == nil || !strings.Contains(err.Error(), "parse created_at") {
+		t.Fatalf("ClaimLiveness error = %v; want parse created_at error", err)
+	}
+}
+
+func TestGoalClaimLivenessReturnsErrorForInvalidGoalCreatedAt(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	project, err := s.CreateProject(ctx, "atct", "/repos/atct")
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	goal, err := s.CreateGoal(ctx, project.ID, "Invalid goal timestamp", "human")
+	if err != nil {
+		t.Fatalf("CreateGoal: %v", err)
+	}
+	insertClaimLivenessGoalHandoff(t, s, goal.ID, "invalid-goal-timestamp-handoff", nil)
+	if _, err := s.DB().ExecContext(ctx, `UPDATE goals SET created_at = ? WHERE id = ?`, "not-a-timestamp", goal.ID); err != nil {
+		t.Fatalf("invalidate goal created_at: %v", err)
+	}
+
+	if _, _, err := GoalClaimLiveness(ctx, s, project.ID); err == nil || !strings.Contains(err.Error(), "parse created_at") {
+		t.Fatalf("GoalClaimLiveness error = %v; want parse created_at error", err)
+	}
+}
+
+func TestClaimLivenessMatchesLegacyOnRealDatabaseCopy(t *testing.T) {
+	path := os.Getenv("ATCT_REAL_DB")
+	if path == "" {
+		t.Skip("set ATCT_REAL_DB to a copy of a real database")
+	}
+
+	ctx := context.Background()
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	defer s.Close()
+	projectID := claimLivenessAtctProjectID(t, ctx, s)
+
+	assertClaimLivenessMatchesLegacy(t, ctx, s, projectID)
+}
+
+func TestGoalClaimLivenessMatchesLegacyOnRealDatabaseCopy(t *testing.T) {
+	path := os.Getenv("ATCT_REAL_DB")
+	if path == "" {
+		t.Skip("set ATCT_REAL_DB to a copy of a real database")
+	}
+
+	ctx := context.Background()
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	defer s.Close()
+	projectID := claimLivenessAtctProjectID(t, ctx, s)
+
+	assertGoalClaimLivenessMatchesLegacy(t, ctx, s, projectID)
+}
+
+func claimLivenessLegacy(ctx context.Context, s *Store, projectID int64) (running []domain.Task, stale []domain.Task, err error) {
+	if projectID == 0 {
+		return nil, nil, fmt.Errorf("project id is required")
+	}
+
+	goals, err := s.ListGoals(ctx, projectID)
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, goal := range goals {
+		tasks, err := s.ListTasks(ctx, goal.ID)
+		if err != nil {
+			return nil, nil, err
+		}
+		for _, task := range tasks {
+			handoffs, err := s.ListTaskHandoffs(ctx, task.ID)
+			if err != nil {
+				return nil, nil, err
+			}
+			var agentSessionID int64
+			open := false
+			for _, handoff := range handoffs {
+				if handoff.CompletedReportAt != nil {
+					continue
+				}
+				open = true
+				agentSessionID = handoff.ReceivedBy
+				if agentSessionID == 0 {
+					// Until receipt, requested_by is the only session identity available.
+					agentSessionID = handoff.RequestedBy
+				}
+				break
+			}
+			if !open {
+				continue
+			}
+			if claimIsRunning(ctx, s, agentSessionID) {
+				running = append(running, task)
+			} else {
+				stale = append(stale, task)
+			}
+		}
+	}
+	return running, stale, nil
+}
+
+func goalClaimLivenessLegacy(ctx context.Context, s *Store, projectID int64) (running []domain.Goal, stale []domain.Goal, err error) {
+	if projectID == 0 {
+		return nil, nil, fmt.Errorf("project id is required")
+	}
+
+	goals, err := s.ListGoals(ctx, projectID)
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, goal := range goals {
+		handoffs, err := s.ListGoalHandoffs(ctx, goal.ID)
+		if err != nil {
+			return nil, nil, err
+		}
+		var agentSessionID int64
+		open := false
+		for _, handoff := range handoffs {
+			if handoff.CompletedReportAt != nil {
+				continue
+			}
+			open = true
+			agentSessionID = handoff.ReceivedBy
+			if agentSessionID == 0 {
+				// Until receipt, requested_by is the only session identity available.
+				agentSessionID = handoff.RequestedBy
+			}
+			break
+		}
+		if !open {
+			continue
+		}
+		if claimIsRunning(ctx, s, agentSessionID) {
+			running = append(running, goal)
+		} else {
+			stale = append(stale, goal)
+		}
+	}
+	return running, stale, nil
+}
+
+func assertClaimLivenessMatchesLegacy(t *testing.T, ctx context.Context, s *Store, projectID int64) {
+	t.Helper()
+	wantRunning, wantStale, err := claimLivenessLegacy(ctx, s, projectID)
+	if err != nil {
+		t.Fatalf("claimLivenessLegacy: %v", err)
+	}
+	gotRunning, gotStale, err := ClaimLiveness(ctx, s, projectID)
+	if err != nil {
+		t.Fatalf("ClaimLiveness: %v", err)
+	}
+	if !reflect.DeepEqual(gotRunning, wantRunning) || !reflect.DeepEqual(gotStale, wantStale) {
+		t.Fatalf("ClaimLiveness differs from legacy: got running=%#v stale=%#v; want running=%#v stale=%#v", gotRunning, gotStale, wantRunning, wantStale)
+	}
+	t.Logf("ClaimLiveness legacy comparison: running=%d stale=%d; task ID order matches", len(gotRunning), len(gotStale))
+}
+
+func assertGoalClaimLivenessMatchesLegacy(t *testing.T, ctx context.Context, s *Store, projectID int64) {
+	t.Helper()
+	wantRunning, wantStale, err := goalClaimLivenessLegacy(ctx, s, projectID)
+	if err != nil {
+		t.Fatalf("goalClaimLivenessLegacy: %v", err)
+	}
+	gotRunning, gotStale, err := GoalClaimLiveness(ctx, s, projectID)
+	if err != nil {
+		t.Fatalf("GoalClaimLiveness: %v", err)
+	}
+	if !reflect.DeepEqual(gotRunning, wantRunning) || !reflect.DeepEqual(gotStale, wantStale) {
+		t.Fatalf("GoalClaimLiveness differs from legacy: got running=%#v stale=%#v; want running=%#v stale=%#v", gotRunning, gotStale, wantRunning, wantStale)
+	}
+	t.Logf("GoalClaimLiveness legacy comparison: running=%d stale=%d; goal ID order matches", len(gotRunning), len(gotStale))
+}
+
+func claimLivenessAtctProjectID(t *testing.T, ctx context.Context, s *Store) int64 {
+	t.Helper()
+	projects, err := s.ListProjects(ctx)
+	if err != nil {
+		t.Fatalf("ListProjects: %v", err)
+	}
+	for _, project := range projects {
+		root := strings.TrimRight(project.RootPath, string(os.PathSeparator))
+		if strings.HasSuffix(root, string(os.PathSeparator)+"michiomochi"+string(os.PathSeparator)+"atct") {
+			return project.ID
+		}
+	}
+	t.Fatalf("project root ending in /michiomochi/atct not found")
+	return 0
+}
+
 func insertClaimLivenessSession(t *testing.T, s *Store, id string, projectID int64, pid int, startedAt string) {
 	t.Helper()
 	sessionID := testSessionID(id)
@@ -447,5 +730,17 @@ func insertClaimLivenessHandoff(t *testing.T, s *Store, taskID int64, handoffID 
 		INSERT INTO task_handoffs (id, task_id, requested_by, requested_at)
 		VALUES (?, ?, ?, ?)`, handoffID, taskID, requestedBy, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
 		t.Fatalf("insert task handoff %s: %v", handoffID, err)
+	}
+}
+
+func insertClaimLivenessGoalHandoff(t *testing.T, s *Store, goalID int64, handoffID string, requestedBy any) {
+	t.Helper()
+	if label, ok := requestedBy.(string); ok {
+		requestedBy = testSessionID(label)
+	}
+	if _, err := s.DB().ExecContext(context.Background(), `
+		INSERT INTO goal_handoffs (id, goal_id, requested_by, requested_at)
+		VALUES (?, ?, ?, ?)`, handoffID, goalID, requestedBy, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+		t.Fatalf("insert goal handoff %s: %v", handoffID, err)
 	}
 }
