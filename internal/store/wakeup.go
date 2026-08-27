@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"sort"
 	"time"
 
 	"github.com/google/uuid"
@@ -30,14 +31,16 @@ const (
 // WakeupEvent is the visible state that caused a wakeup notification. The
 // counts are part of the event so a consumer can act without a second query.
 type WakeupEvent struct {
-	WakeupID               string `json:"wakeup_id"`
-	ProjectID              int64  `json:"project_id"`
-	ActionableGoalCount    int    `json:"actionable_goal_count"`
-	UnstartedTaskCount     int    `json:"unstarted_task_count"`
-	WaitingAnswerTaskCount int    `json:"waiting_answer_task_count"`
-	UntouchedTaskCount     int    `json:"untouched_task_count"`
-	DelegatedTaskCount     int    `json:"delegated_task_count"`
-	WaitingAnswerCount     int    `json:"waiting_answer_count"`
+	WakeupID               string  `json:"wakeup_id"`
+	ProjectID              int64   `json:"project_id"`
+	ActionableGoalCount    int     `json:"actionable_goal_count"`
+	UnassignedGoalCount    int     `json:"unassigned_goal_count"`
+	UnassignedGoalIDs      []int64 `json:"unassigned_goal_ids"`
+	UnstartedTaskCount     int     `json:"unstarted_task_count"`
+	WaitingAnswerTaskCount int     `json:"waiting_answer_task_count"`
+	UntouchedTaskCount     int     `json:"untouched_task_count"`
+	DelegatedTaskCount     int     `json:"delegated_task_count"`
+	WaitingAnswerCount     int     `json:"waiting_answer_count"`
 }
 
 // WakeupDiscrepancyEvent records a disagreement between the detector and an
@@ -81,6 +84,8 @@ type KeepaliveEvent struct {
 // Tasks contains the actionable task list for pending's human-readable view.
 type WakeupState struct {
 	ActionableGoalCount        int
+	UnassignedGoalCount        int
+	UnassignedGoalIDs          []int64
 	UnstartedTaskCount         int
 	WaitingAnswerTaskCount     int
 	UntouchedTaskCount         int
@@ -174,7 +179,11 @@ func (s *Store) DetectWakeup(ctx context.Context, projectID int64) (WakeupState,
 		if err != nil {
 			return WakeupState{}, err
 		}
+		hasOpenGoalHandoff := false
 		for _, handoff := range goalHandoffs {
+			if handoff.ReceivedAt != nil && handoff.CompletedReportAt == nil {
+				hasOpenGoalHandoff = true
+			}
 			if handoff.RequestedAt != nil && handoff.ReceivedAt != nil && handoff.CompletedReportAt != nil {
 				state.HandoffsReported = append(state.HandoffsReported, ReportedHandoff{
 					ID:                handoff.ID,
@@ -311,6 +320,9 @@ func (s *Store) DetectWakeup(ctx context.Context, projectID int64) (WakeupState,
 			continue
 		}
 		state.ActionableGoalCount++
+		if !hasOpenGoalHandoff {
+			state.UnassignedGoalIDs = append(state.UnassignedGoalIDs, goal.ID)
+		}
 		state.UnstartedTaskCount += len(unstarted)
 		openDecisionTaskIDs := make(map[int64]struct{}, len(openDecisions))
 		for _, decision := range openDecisions {
@@ -327,9 +339,16 @@ func (s *Store) DetectWakeup(ctx context.Context, projectID int64) (WakeupState,
 			state.Tasks = append(state.Tasks, task)
 		}
 	}
+	sort.Slice(state.UnassignedGoalIDs, func(i, j int) bool {
+		return state.UnassignedGoalIDs[i] < state.UnassignedGoalIDs[j]
+	})
+	state.UnassignedGoalCount = len(state.UnassignedGoalIDs)
 	state.DelegatedTaskCount = len(state.HandoffsAwaitingReport)
 	if state.Tasks == nil {
 		state.Tasks = []domain.Task{}
+	}
+	if state.UnassignedGoalIDs == nil {
+		state.UnassignedGoalIDs = []int64{}
 	}
 	if state.CompletedGoals == nil {
 		state.CompletedGoals = []domain.Goal{}
