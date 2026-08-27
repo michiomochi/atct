@@ -305,6 +305,9 @@ projectLoop:
 // handoffWorktreeActivity uses the same goal-derived worktree path and branch
 // as script/worktree-setup.sh. An empty result means the activity is unknown.
 func handoffWorktreeActivity(ctx context.Context, projectRoot string, goalID int64, receivedAt time.Time) string {
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+
 	goal8 := strconv.FormatInt(goalID, 10)
 	if len(goal8) > 8 {
 		goal8 = goal8[:8]
@@ -320,6 +323,9 @@ func handoffWorktreeActivity(ctx context.Context, projectRoot string, goalID int
 		return ""
 	}
 	for _, path := range porcelainPaths(string(status)) {
+		if ctx.Err() != nil {
+			return ""
+		}
 		info, err := os.Stat(filepath.Join(worktree, path))
 		if err == nil && info.ModTime().After(receivedAt) {
 			return "changed"

@@ -1160,12 +1160,14 @@ func TestWakeupTrackerReportsHandoffWorktreeActivity(t *testing.T) {
 	receivedAt := now.Add(-detectionHandoffUnreportedAfter)
 
 	for _, tc := range []struct {
-		name  string
-		setup func(t *testing.T, root, worktree string)
-		want  string
+		name          string
+		validWorktree bool
+		setup         func(t *testing.T, root, worktree string)
+		want          string
 	}{
 		{
-			name: "changed",
+			name:          "changed",
+			validWorktree: true,
 			setup: func(t *testing.T, root, worktree string) {
 				path := filepath.Join(worktree, "worked-on.txt")
 				if err := os.WriteFile(path, []byte("work\n"), 0o644); err != nil {
@@ -1179,21 +1181,31 @@ func TestWakeupTrackerReportsHandoffWorktreeActivity(t *testing.T) {
 			want: "changed",
 		},
 		{
-			name: "changed by commit",
+			name:          "changed by commit",
+			validWorktree: true,
 			setup: func(t *testing.T, root, worktree string) {
 				commitWakeupTestWorktree(t, worktree, receivedAt.Add(time.Second))
 			},
 			want: "changed",
 		},
-		{name: "unchanged", want: "unchanged"},
+		{name: "unchanged", validWorktree: true, want: "unchanged"},
+		{
+			name: "unassessed when git fails",
+			setup: func(t *testing.T, root, worktree string) {
+				if err := os.MkdirAll(worktree, 0o755); err != nil {
+					t.Fatalf("create non-git worktree: %v", err)
+				}
+			},
+			want: "",
+		},
 		{name: "unassessed when worktree is absent", want: ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
 			s := newWakeupTestStore(t)
 			root := t.TempDir()
-			worktree := ""
-			if tc.want != "" {
+			worktree := filepath.Join(root, ".worktrees", strconv.FormatInt(goalID, 10))
+			if tc.validWorktree {
 				worktree = newWakeupTestWorktree(t, root, goalID, receivedAt.Add(-time.Second))
 			}
 			if tc.setup != nil {
@@ -1239,6 +1251,19 @@ func TestWakeupTrackerReportsHandoffWorktreeActivity(t *testing.T) {
 				t.Fatalf("worktree_activity = %q, want %q; payload=%s", got, tc.want, payload)
 			}
 		})
+	}
+}
+
+func TestHandoffWorktreeActivityReturnsUnknownForExpiredContext(t *testing.T) {
+	const goalID int64 = 1
+	root := t.TempDir()
+	receivedAt := time.Date(2026, 8, 27, 9, 0, 0, 0, time.UTC)
+	newWakeupTestWorktree(t, root, goalID, receivedAt.Add(-time.Second))
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if got := handoffWorktreeActivity(ctx, root, goalID, receivedAt); got != "" {
+		t.Fatalf("handoffWorktreeActivity with expired context = %q, want unknown", got)
 	}
 }
 
