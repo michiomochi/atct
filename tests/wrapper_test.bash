@@ -911,35 +911,66 @@ test_recovery_section_explains_why_the_role_drops() {
 
 test_orchestration_skill_has_no_blanket_atct_ban() {
   # The orchestration skill lives in the dotfiles repository, which this one
-  # cannot change, so the check is conditional in three ways. Do not collapse
-  # them: each branch checks the strongest thing available at that moment.
-  local orchestration="$HOME/.claude/skills/orchestration/SKILL.md"
-  local request="$REPO_ROOT/doc/handoffs/2026-08-27-orchestration-atct-allowlist.md"
+  # cannot change, so this check has two states: the file is absent and there is
+  # nothing to inspect, or it is present and every assertion runs.
+  #
+  # There used to be a third state, "present but not updated yet", selected by
+  # grepping the file for `atct_session_identify`. That grep was the hole: when
+  # the allowlist disappears and the blanket ban comes back -- the very
+  # regression this test exists to catch -- the grep goes false, both assertions
+  # are skipped, and the test passes. "Updated" and "regressed" looked alike.
+  # The dotfiles change has since landed, so the "not updated" branch guards
+  # nothing; the assertions now run unconditionally and `atct_session_identify`
+  # is one of them rather than the thing deciding whether to check.
+  #
+  # The path is overridable so a mutation test can point at a throwaway copy.
+  # The real file under ~/.claude is read by every agent, so it must not be
+  # damaged just to prove this check fails when it should.
+  local orchestration="${ORCHESTRATION_SKILL_PATH:-$HOME/.claude/skills/orchestration/SKILL.md}"
 
-  # 1. No dotfiles checkout, as in CI. There is nothing to inspect, and a file
-  #    belonging to another repository being absent is not a failure of this one.
+  # No dotfiles checkout, as in CI. A file belonging to another repository being
+  # absent is not a failure of this one.
   if [[ ! -f "$orchestration" ]]; then
     printf 'skip: %s is absent (it belongs to dotfiles, a separate repository)\n' "$orchestration"
     return 0
   fi
 
-  # 2. The file exists and is already updated, which the named allowlist tools
-  #    reveal. Check the outcome directly: the blanket ban is gone and the
-  #    named prohibition took its place.
-  if grep -Fq -- 'atct_session_identify' "$orchestration"; then
-    assert_file_not_contains '**ATCT ツールの呼び出し**' "$orchestration"
-    assert_file_contains 'atct_goal_handoff_complete' "$orchestration"
-    return 0
-  fi
+  # The blanket ban must be gone.
+  assert_file_not_contains '**ATCT ツールの呼び出し**' "$orchestration"
 
-  # 3. The file exists but is not updated yet. All this repository owns is the
-  #    written request for that change, so check that the request is on disk and
-  #    still names both the blanket ban to remove and the tool that made it
-  #    dangerous.
-  [[ -f "$request" ]] ||
-    fail "<$request> is missing; the dotfiles change was never requested"
-  assert_file_contains 'ATCT ツールの呼び出し' "$request"
-  assert_file_contains 'atct_goal_handoff_complete' "$request"
+  # Named allowlist and prohibition, one tool at a time so a failure says which
+  # one went missing. Backticks keep a short name from matching inside a longer
+  # one, such as `atct_handoff_complete` inside `atct_goal_handoff_complete`.
+  local allowed=(
+    atct_session_identify
+    atct_handoff_receive
+    atct_role
+    atct_handoff_complete
+    atct_task_update
+  )
+  local forbidden=(
+    atct_goal_handoff_complete
+    atct_goal_handoff_receive
+    atct_goal_handoff_request
+    atct_goal_claim
+    atct_goal_release
+    atct_goal_complete
+    atct_goal_update_content
+    atct_project_claim
+    atct_project_release
+    atct_task_claim
+    atct_handoff_request
+    atct_task_declare
+    atct_decision_ask
+  )
+  local tool
+  for tool in "${allowed[@]}" "${forbidden[@]}"; do
+    assert_file_contains "\`$tool\`" "$orchestration"
+  done
+
+  # Both orderings that a wrong sequence silently destroys.
+  assert_file_contains '`atct_handoff_complete` を先に呼び、`atct_task_update(status="done")` を後に呼ぶ' "$orchestration"
+  assert_file_contains '`atct_task_claim` を先に呼ばない' "$orchestration"
 }
 
 test_goal_handoff_completion_keeps_one_normal_path() {
