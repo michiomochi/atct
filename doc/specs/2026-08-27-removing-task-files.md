@@ -124,3 +124,26 @@
 
 - goal 134 の門番の実装（この削除で不要になる）
 - `request_report` / `complete_report` の扱い
+
+## main とのマージで決めたこと（2026-08-27）
+
+ゴール 134 が先に着地し（`f605db4`）、同じ `UpdateTaskContent` に**保持者の門番**と
+`agentSessionID` 引数を足した。**両者は対立しない。門番を残し、`files` だけ落とす。**
+
+    func (s *Store) UpdateTaskContent(ctx, taskID, title, description *string, agentSessionID int64)
+
+`authorizeTaskContentUpdate` は 134 のまま残す。**「タスクの内容を誰が直せるか」は
+`files` の直列化とは独立である。**
+
+門番の検査は `files` を書き換えて通す形だったので、**`description` を書き換える形に移した。**
+検査の意図（保持者 2 経路を通し、他 space の subcommander とプロジェクト所属だけの
+セッションを拒む）は変えていない。
+
+    TestUpdateTaskContentHandoffAuthorization           files -> description
+    TestTaskUpdateContentHandoffAuthorizationRPC        files -> description
+    TestUpdateTaskContentRejectsDoneAndDroppedFilesOnly -> ...DescriptionOnly に改名
+
+**`internal/mcpshim/tools.go` の説明文は自動マージで衝突しない。**134 が
+`Rewrite a task's content, including the files it touches.` と書いており、
+**放置すると嘘の説明文が残る。**`Rewrite a task's title or description.` に直した。
+保持者を述べる 1 文は残す。
