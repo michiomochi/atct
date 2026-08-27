@@ -514,12 +514,103 @@ func (s *Store) ApproveCompletion(ctx context.Context, decisionID int64) (domain
 // RejectCompletion leaves the Goal active and the Decision answered.
 // It becomes applied when the agent receives the rejection reason.
 func (s *Store) RejectCompletion(ctx context.Context, decisionID int64, reason string) error {
-	_, err := s.answerDecision(ctx, AnswerInput{
-		DecisionID:  decisionID,
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin completion rejection tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	q := sqlcgen.New(tx)
+	now := time.Now().UTC().Format(time.RFC3339)
+	result, err := q.AnswerDecision(ctx, sqlcgen.AnswerDecisionParams{
 		AnswerLabel: "reject",
 		AnswerText:  reason,
-	}, "decision.rejected")
-	return err
+		AnsweredAt:  sql.NullString{String: now, Valid: true},
+		ID:          decisionID,
+	})
+	if err != nil {
+		return fmt.Errorf("update decision: %w", err)
+	}
+	if rows, err := result.RowsAffected(); err != nil {
+		return fmt.Errorf("rows affected: %w", err)
+	} else if rows == 0 {
+		return fmt.Errorf("%w: %d", ErrDecisionNotOpen, decisionID)
+	}
+
+	d, err := q.GetDecision(ctx, decisionID)
+	if err != nil {
+		return fmt.Errorf("get decision: %w", err)
+	}
+	if d.Kind == "completion" && d.AgentSessionID != 0 {
+		handoffs, err := q.ListGoalHandoffs(ctx, d.GoalID)
+		if err != nil {
+			return fmt.Errorf("list goal handoffs for completion rejection: %w", err)
+		}
+
+		var selected *GoalHandoff
+		for _, row := range handoffs {
+			handoff, err := goalHandoffFromRow(row)
+			if err != nil {
+				return fmt.Errorf("parse goal handoff for completion rejection: %w", err)
+			}
+			if handoff.CompletedReportAt == nil {
+				selected = nil
+				break
+			}
+			if handoff.ReceivedAt == nil || handoff.ReceivedBy != d.AgentSessionID {
+				continue
+			}
+			if selected == nil || handoff.CompletedReportAt.After(*selected.CompletedReportAt) {
+				candidate := handoff
+				selected = &candidate
+			}
+		}
+
+		if selected != nil {
+			reopenID := fmt.Sprintf("%s-reopen-%d", selected.ID, decisionID)
+			requestReport := "完了報告が却下されたため handoff を再発行した"
+			if reason != "" {
+				requestReport += ": " + reason
+			}
+			handoffNow := time.Now().UTC().Format(time.RFC3339Nano)
+			txq := q.WithTx(tx)
+			if err := txq.RequestGoalHandoff(ctx, sqlcgen.RequestGoalHandoffParams{
+				ID:            reopenID,
+				GoalID:        selected.GoalID,
+				RequestedBy:   sql.NullInt64{Int64: selected.RequestedBy, Valid: selected.RequestedBy != 0},
+				RequestedAt:   sql.NullString{String: handoffNow, Valid: true},
+				RequestReport: sql.NullString{String: requestReport, Valid: true},
+			}); err != nil {
+				return fmt.Errorf("request reopened goal handoff: %w", err)
+			}
+			result, err := txq.ReceiveGoalHandoff(ctx, sqlcgen.ReceiveGoalHandoffParams{
+				ID:         reopenID,
+				GoalID:     selected.GoalID,
+				ReceivedBy: sql.NullInt64{Int64: selected.ReceivedBy, Valid: selected.ReceivedBy != 0},
+				ReceivedAt: sql.NullString{String: handoffNow, Valid: true},
+			})
+			if err != nil {
+				return fmt.Errorf("receive reopened goal handoff: %w", err)
+			}
+			if rows, err := result.RowsAffected(); err != nil {
+				return fmt.Errorf("reopened goal handoff rows affected: %w", err)
+			} else if rows != 1 {
+				return fmt.Errorf("reopened goal handoff was not received: %q", reopenID)
+			}
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit completion rejection: %w", err)
+	}
+	domainDecision, err := s.GetDecision(ctx, decisionID)
+	if err != nil {
+		return err
+	}
+	s.notify.publish(decisionID)
+	s.notify.publishAll()
+	s.notify.publishEvent(Event{Name: "decision.rejected", Data: domainDecision})
+	return nil
 }
 
 // ApproveGoal activates a proposed Goal and applies its approval decision atomically.
