@@ -245,3 +245,37 @@ the Monitor instance was caught by the pkill.
 That is why goal 167 matters and why this goal does not reach it: a signalled
 watch is indistinguishable from a quiet one, and the reap stops live duplicates
 rather than restarting dead watches.
+
+### A watch cannot notice that its session lost its role
+
+A fourth trigger for a silent role drop was measured on 2026-08-28: the goal
+handoff was still open, the session row was still in the database under the same
+id, and the daemon had not restarted. What was lost was the mapping between the
+transport and the session key. The cause is unmeasured and is not claimed here.
+
+Asked whether the watch's grain could carry a signal for it: no, and the reason
+is structural rather than a matter of which events are selected.
+
+A role is derived from a claim held by an **MCP session**. `atct watch` is a
+**CLI process** with no session key at all — it names itself by `(project, goal)`
+taken from flags, which is the same reason goal 184 gave for classifying by
+scope instead of by role. So the watch cannot report whose role dropped, because
+it does not know which session it belongs to. Filtering cannot supply an
+identity that was never in the channel.
+
+The two lifetimes hang off one session and neither can observe the other. Both
+directions were measured here in one afternoon:
+
+- The role dropped to `executor` while the watch ran and said nothing. The
+  failure surfaced as `atct_handoff_request` returning "caller does not hold an
+  open received handoff for goal: 185" — a message about the handoff, while the
+  handoff was open. `atct_session_identify` with the same key restored it.
+- The watch exited with status 0 and printed nothing while the role was intact.
+
+Each failure is silent in the other's channel, so neither can be the detector
+for the other. Correlating them needs the watch registration to carry a session
+key, which means teaching a CLI process which MCP session it serves. That is a
+change to what a watch *is*, not to its grain, and it belongs to whichever goal
+takes the role-drop triggers. If it is ever done, the roster line from this goal
+is where it would surface: naming who is listening rather than only at what
+grain.
