@@ -2228,6 +2228,136 @@ func TestHTTPSnoozeRejectsEmptyTaskID(t *testing.T) {
 	assertErrorObject(t, status, headers, body, http.StatusBadRequest)
 }
 
+func TestHTTPSnoozeControlsWakeupForSnoozedAndUnsnoozedTasks(t *testing.T) {
+	f := newBareFixture(t)
+	tasks := declareWakeupTestTasks(t, f)
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+
+	future := time.Now().UTC().Add(24 * time.Hour).Format(time.RFC3339)
+	status, _, body := doRequest(t, srv.Client(), http.MethodPost,
+		urlID(srv.URL+"/api/tasks/", tasks[0].ID)+"/snooze",
+		mustJSON(t, map[string]string{"snoozed_until": future}))
+	if status != http.StatusOK {
+		t.Fatalf("snooze status = %d; body=%s", status, body)
+	}
+
+	state, err := f.store.DetectWakeup(f.ctx, f.project.ID)
+	if err != nil {
+		t.Fatalf("DetectWakeup: %v", err)
+	}
+	if state.UnstartedTaskCount != 1 || len(state.Tasks) != 1 {
+		t.Fatalf("wakeup state = %+v, want one unstarted task", state)
+	}
+	seen := make(map[int64]bool, len(state.Tasks))
+	for _, task := range state.Tasks {
+		seen[task.ID] = true
+	}
+	if seen[tasks[0].ID] {
+		t.Fatalf("future-snoozed task %d was included in wakeup tasks", tasks[0].ID)
+	}
+	if !seen[tasks[1].ID] {
+		t.Fatalf("unsnoozed task %d was omitted from wakeup tasks", tasks[1].ID)
+	}
+
+	counted, err := f.store.CountUnstartedTasks(f.ctx, f.project.ID)
+	if err != nil {
+		t.Fatalf("CountUnstartedTasks: %v", err)
+	}
+	if counted != 1 {
+		t.Fatalf("counted unstarted tasks = %d, want 1", counted)
+	}
+}
+
+func TestHTTPSnoozeClearingDeadlineRestoresWakeup(t *testing.T) {
+	f := newBareFixture(t)
+	tasks := declareWakeupTestTasks(t, f)
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+
+	future := time.Now().UTC().Add(24 * time.Hour).Format(time.RFC3339)
+	status, _, body := doRequest(t, srv.Client(), http.MethodPost,
+		urlID(srv.URL+"/api/tasks/", tasks[0].ID)+"/snooze",
+		mustJSON(t, map[string]string{"snoozed_until": future}))
+	if status != http.StatusOK {
+		t.Fatalf("snooze status = %d; body=%s", status, body)
+	}
+	status, _, body = doRequest(t, srv.Client(), http.MethodPost,
+		urlID(srv.URL+"/api/tasks/", tasks[0].ID)+"/snooze",
+		mustJSON(t, map[string]any{"snoozed_until": nil}))
+	if status != http.StatusOK {
+		t.Fatalf("clear snooze status = %d; body=%s", status, body)
+	}
+
+	state, err := f.store.DetectWakeup(f.ctx, f.project.ID)
+	if err != nil {
+		t.Fatalf("DetectWakeup: %v", err)
+	}
+	if len(state.Tasks) != 2 || state.UnstartedTaskCount != 2 {
+		t.Fatalf("wakeup state after clear = %+v, want two unstarted tasks", state)
+	}
+	counted, err := f.store.CountUnstartedTasks(f.ctx, f.project.ID)
+	if err != nil {
+		t.Fatalf("CountUnstartedTasks: %v", err)
+	}
+	if counted != 2 {
+		t.Fatalf("counted unstarted tasks after clear = %d, want 2", counted)
+	}
+}
+
+func TestHTTPSnoozeExpiredDeadlineRestoresWakeup(t *testing.T) {
+	f := newBareFixture(t)
+	tasks := declareWakeupTestTasks(t, f)
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+
+	past := time.Now().UTC().Add(-time.Hour).Format(time.RFC3339)
+	status, _, body := doRequest(t, srv.Client(), http.MethodPost,
+		urlID(srv.URL+"/api/tasks/", tasks[0].ID)+"/snooze",
+		mustJSON(t, map[string]string{"snoozed_until": past}))
+	if status != http.StatusOK {
+		t.Fatalf("expired snooze status = %d; body=%s", status, body)
+	}
+
+	state, err := f.store.DetectWakeup(f.ctx, f.project.ID)
+	if err != nil {
+		t.Fatalf("DetectWakeup: %v", err)
+	}
+	if state.UnstartedTaskCount != 2 || len(state.Tasks) != 2 {
+		t.Fatalf("wakeup state after expiry = %+v, want two unstarted tasks", state)
+	}
+	seen := make(map[int64]bool, len(state.Tasks))
+	for _, task := range state.Tasks {
+		seen[task.ID] = true
+	}
+	if !seen[tasks[0].ID] {
+		t.Fatalf("expired task %d was omitted from wakeup tasks", tasks[0].ID)
+	}
+
+	counted, err := f.store.CountUnstartedTasks(f.ctx, f.project.ID)
+	if err != nil {
+		t.Fatalf("CountUnstartedTasks: %v", err)
+	}
+	if counted != 2 {
+		t.Fatalf("counted unstarted tasks after expiry = %d, want 2", counted)
+	}
+}
+
+func declareWakeupTestTasks(t *testing.T, f *fixture) []domain.Task {
+	t.Helper()
+	tasks, err := f.store.DeclareTasks(f.ctx, f.goal.ID, "wakeup-test-agent", "wakeup-http", []string{
+		"Deferred task",
+		"Actionable task",
+	}, []string{
+		"Stay deferred until the HTTP deadline.",
+		"Remain actionable while the other task is deferred.",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return tasks
+}
+
 func TestHTTPAnswerRejectsCompletionDecision(t *testing.T) {
 	f := newFixture(t)
 	completion, err := f.store.AskDecision(f.ctx, store.AskInput{
