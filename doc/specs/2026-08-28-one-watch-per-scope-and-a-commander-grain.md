@@ -94,6 +94,16 @@ covers every name `formatWatchDecision` renders. A new event should be loud
 at test time and harmless at runtime; the reverse — silent suppression of
 something nobody classified — is how a commander misses an approval.
 
+**Superseded, 2026-08-28.** Goal 184 landed this table first, in `b5be398`, as
+`watchScopeFilter` in the same file — same grains, same `task_id` split, same
+"unknown names are delivered" rule, reached independently. The table above is
+kept as the reasoning that produced the classification, not as the code: 184's
+is what ships. What 184 did *not* add is the flag. It gives the commander filter
+to a watch with no `-goal`, so there is no longer any way to see every event.
+This goal's remaining work is therefore only the vessel — `-project` selecting
+184's filter explicitly, and bare `atct watch` returning to pass-through. See
+the addendum, and decision 481 for who merges what.
+
 ### 5. `-goal` is untouched
 
 No filtering is added to the `-goal` path. Conditions 6 and 7 both say so, and
@@ -135,3 +145,103 @@ predicate before emitting.
 
 `skills/start/SKILL.md` — the Monitor section stops describing a check the
 binary now performs, and says which flag each role attaches.
+
+## Addendum: what the day's three swaps changed (2026-08-28)
+
+Three version swaps happened while this goal was being built, and each produced
+a measurement that bears on the design. None of them changed a decision above;
+two added one, and one was rejected.
+
+### The split-subject failure is already answered by decision 1
+
+    01:57:36  the commander pkilled every watch
+    01:57:36  atct watch -goal 183 started      <- each session re-armed, as it
+    01:57:43  atct watch -goal 181 started         had been told to
+    01:57:36  the 0.58.1 daemon was rebuilt
+
+"Stop, then re-arm" fails when the stopper and the starter are different
+parties: the stop is undone before the swap completes. That is not a new
+constraint on this design — it is the reason decision 1 puts the reap inside
+`atct watch`. The arriving watch *is* the stopper, in one process, in the order
+register → reap → connect. There is no window between the stop and the start,
+so nobody has to be told to re-arm.
+
+### A watch cannot report that no watch exists
+
+On the third swap the commander told every subcommander it was safe to re-arm
+and forgot its own. For roughly forty minutes no project-wide watch existed;
+four goals were approved and left undelegated, and a human noticed before any
+agent did.
+
+Three repairs were considered.
+
+- **Record what was stopped, and detect registrations nobody re-armed.**
+  Rejected. A successful reap *removes* the registration, so there is nothing
+  left to detect. Keeping a tombstone only moves the problem: whatever reads the
+  tombstone has to be running, and the thing that is not running is the watch.
+- **Put it in the `wakeup` line.** Impossible, and worth stating plainly because
+  it is the shape of the whole incident: `wakeup` arrives over the watch. A
+  channel cannot announce its own absence.
+- **Make the roster visible at the moment someone attaches.** Taken. Every
+  watch passes through `runWatch`, so that is the one place where the question
+  can be asked at all.
+
+The roster line is not a fix for absence and is not presented as one. It prints
+what is listening on this project and lets the reader draw the conclusion:
+
+    atct watch: 2 watches on this project: project-wide, goal 185
+    atct watch: 1 watch on this project: goal 185 (+11 of unknown project)
+
+The agent that forgot sees nothing, because it ran nothing. The *next* agent to
+attach sees a roster with no project-wide entry — and on the day in question two
+subcommanders re-armed after the commander did. A subcommander may not speak
+upward, so what it does with that is `atct_decision_ask` to the human. The point
+is only that the information now exists somewhere a reader can reach it.
+
+No advisory text is attached to the line. "No project-wide watch" is not the
+concern of an agent attaching `-goal N`, and a warning that fires on every
+attach is noise within a day. The line states a fact.
+
+Legacy registrations are counted separately rather than dropped, because a count
+that hides eleven live listeners is as wrong as one that claims them.
+
+### Detecting absence belongs to another goal
+
+It needs a transport that does not pass through the watch. The two candidates
+are the web dashboard — where the human was working when they noticed — and the
+session-start line, which reaches an agent with no watch attached. Both are
+other subsystems, and neither is reachable from the ten conditions here.
+
+### Removing `Ensure` from `atct watch` belongs with goal 189
+
+The proposal is that a command which only observes should not be able to start a
+daemon. Two symptoms were offered for it: a watch older than the daemon fails to
+connect while reporting only "connection unavailable", and a watch older than an
+absent daemon rebuilds the old one.
+
+Both are version-skew symptoms, and goal 189 is version skew. This goal is watch
+multiplicity and grain. Three further reasons to keep them apart:
+
+- Nothing here depends on it. The reap already tolerates an unreachable daemon by
+  skipping (decision 5), so removing `Ensure` neither helps nor blocks it.
+- It changes who guarantees a daemon exists, which reaches every command that
+  ensures — a blast radius none of the ten conditions ask for.
+- It interacts with the roster line in a way worth stating: with `Ensure` gone,
+  "no daemon and no watch" can persist quietly, and the roster line cannot
+  report it either, because an unresolvable project prints nothing. The roster
+  line is not a substitute for `Ensure`, and reading it as one would be the
+  mistake.
+
+### A watch killed by a signal exits silently with status 0
+
+Observed twice: a watch run in a pane kept retrying for 45 seconds after the
+daemon went away, printing one line; the same binary under a Monitor ended with
+no output and status 0. This was recorded as an unexplained difference between
+two runs of one binary. It is not a difference in the binary. `runWatch` builds
+its context with `signal.NotifyContext`, so SIGTERM cancels the context and the
+loop returns nil — a clean, silent exit. The pane instance was never signalled;
+the Monitor instance was caught by the pkill.
+
+That is why goal 167 matters and why this goal does not reach it: a signalled
+watch is indistinguishable from a quiet one, and the reap stops live duplicates
+rather than restarting dead watches.
