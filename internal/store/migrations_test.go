@@ -4,18 +4,26 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
 
-func TestSchemaSQLCompletionReportCheckMatchesGoLimit(t *testing.T) {
-	contents, err := os.ReadFile(filepath.Join("..", "..", "schema.sql"))
-	if err != nil {
-		t.Fatalf("read schema.sql: %v", err)
+func TestMigratedSchemaCompletionReportCheckMatchesGoLimit(t *testing.T) {
+	db := openMigrationTestDB(t)
+	if err := applyEmbeddedMigrations(db); err != nil {
+		t.Fatalf("apply embedded migrations: %v", err)
 	}
-	schema := string(contents)
+
+	var schema string
+	if err := db.QueryRow(`
+		SELECT sql
+		FROM sqlite_master
+		WHERE type = 'table' AND name = 'goals'
+	`).Scan(&schema); err != nil {
+		t.Fatalf("read migrated goals schema: %v", err)
+	}
+	schema = strings.Join(strings.Fields(schema), " ")
 	for _, field := range []string{
 		"work_done",
 		"now_possible",
@@ -26,7 +34,7 @@ func TestSchemaSQLCompletionReportCheckMatchesGoLimit(t *testing.T) {
 	} {
 		literal := fmt.Sprintf("length(%s) <= %d", field, completionReportMaxLength)
 		if !strings.Contains(schema, literal) {
-			t.Errorf("schema.sql is missing %q", literal)
+			t.Errorf("migrated goals schema is missing %q", literal)
 		}
 	}
 }
