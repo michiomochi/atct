@@ -9,10 +9,9 @@ const DATA_OVERLOAD_LIMIT = 100;
 
 interface Props {
   onCreated?: () => void;
-  onDirtyChange?: (dirty: boolean) => void;
 }
 
-export function GoalCreateForm({ onCreated, onDirtyChange }: Props = {}) {
+export function GoalCreateForm({ onCreated }: Props = {}) {
   const { t } = useTranslation();
   const [projects, setProjects] = useState<Project[]>([]);
   const [projectsLoading, setProjectsLoading] = useState(true);
@@ -44,23 +43,12 @@ export function GoalCreateForm({ onCreated, onDirtyChange }: Props = {}) {
     void loadProjects();
   }, [loadProjects]);
 
-  useEffect(() => {
-    const dirty = [projectID, content].some((value) => value.trim() !== "");
-    onDirtyChange?.(open && dirty);
-  }, [content, onDirtyChange, open, projectID]);
-
-  useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
-
   const closeDialog = () => {
     setOpen(false);
-    onDirtyChange?.(false);
   };
 
   const handleDialogOpenChange = (nextOpen: boolean) => {
     setOpen(nextOpen);
-    if (!nextOpen) {
-      onDirtyChange?.(false);
-    }
   };
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {

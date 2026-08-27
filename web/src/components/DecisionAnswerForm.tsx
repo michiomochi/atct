@@ -1,5 +1,5 @@
 import { Button } from "@cloudflare/kumo/components/button";
-import { useEffect, useState, type FormEvent } from "react";
+import { useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
 import type { Decision } from "../lib/api";
 import { answerDecision, ApiError } from "../lib/api";
@@ -9,10 +9,9 @@ import { decisionAutoSettlementSeconds, decisionRecommendationLabel, validateAns
 interface Props {
   decision: Decision;
   onUpdated: () => void;
-  onInputStateChange?: (hasInput: boolean, decisionID: string) => void;
 }
 
-export function DecisionAnswerForm({ decision, onUpdated, onInputStateChange }: Props) {
+export function DecisionAnswerForm({ decision, onUpdated }: Props) {
   const { t, i18n } = useTranslation();
   const locale = i18n.language.startsWith("ja") ? "ja" : "en";
   const [answerLabel, setAnswerLabel] = useState("");
@@ -21,13 +20,6 @@ export function DecisionAnswerForm({ decision, onUpdated, onInputStateChange }: 
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [conflict, setConflict] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-
-  useEffect(() => {
-    onInputStateChange?.(
-      answerLabel.trim().length > 0 || answerText.trim().length > 0,
-      decision.id,
-    );
-  }, [answerLabel, answerText, decision.id, onInputStateChange]);
 
   const labelId = `answer-label-${decision.id}`;
   const textId = `answer-text-${decision.id}`;

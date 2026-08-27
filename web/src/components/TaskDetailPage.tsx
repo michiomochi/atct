@@ -1,5 +1,5 @@
 import { Button } from "@cloudflare/kumo/components/button";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { formatDateTime } from "../i18n";
 import {
@@ -50,11 +50,9 @@ export function TaskDetailPage({ id }: Props) {
   const [snoozePending, setSnoozePending] = useState(false);
   const [snoozeError, setSnoozeError] = useState<string | null>(null);
   const [snoozeDate, setSnoozeDate] = useState("");
-  const dirtyDecisionIDs = useRef(new Set<string>());
   const locale = i18n.language.startsWith("ja") ? "ja" : "en";
 
   const load = useCallback(async () => {
-    dirtyDecisionIDs.current.clear();
     setUpdatePending(false);
     setState({ kind: "loading" });
     try {
@@ -65,21 +63,7 @@ export function TaskDetailPage({ id }: Props) {
   }, [resolvedID, t]);
 
   const handleDecisionEvent = useCallback(() => {
-    if (dirtyDecisionIDs.current.size > 0) {
-      setUpdatePending(true);
-      return;
-    }
-    void load();
-  }, [load]);
-
-  const handleInputStateChange = useCallback((hasInput: boolean, decisionID: string) => {
-    const next = new Set(dirtyDecisionIDs.current);
-    if (hasInput) {
-      next.add(decisionID);
-    } else {
-      next.delete(decisionID);
-    }
-    dirtyDecisionIDs.current = next;
+    setUpdatePending(true);
   }, []);
 
   useEffect(() => {
@@ -277,7 +261,6 @@ export function TaskDetailPage({ id }: Props) {
                 key={decision.id}
                 decision={decision}
                 onUpdated={retry}
-                onInputStateChange={handleInputStateChange}
               />
             ))}
           </div>

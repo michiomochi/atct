@@ -256,7 +256,7 @@ describe("GoalDetail", () => {
     await waitFor(() => expect(screen.getByText(serverMessage)).not.toBeNull());
   });
 
-  it("defers GoalDetail reload while completion reason is dirty and reloads after explicit refresh", async () => {
+  it("shows an update banner without reloading until explicit refresh", async () => {
     let decisionEvent: Parameters<typeof subscribeToDecisionEvents>[0] | undefined;
     vi.mocked(subscribeToDecisionEvents).mockImplementation((callback) => {
       decisionEvent = callback;
@@ -281,9 +281,6 @@ describe("GoalDetail", () => {
     fireEvent.click(screen.getByRole("button", { name: "state.fetchLatest" }));
     await waitFor(() => expect(fetchGoal).toHaveBeenCalledTimes(2));
     await waitFor(() => expect((completionApproval().getByRole("textbox") as HTMLTextAreaElement).value).toBe(""));
-
-    act(() => decisionEvent?.("decision.created"));
-    await waitFor(() => expect(fetchGoal).toHaveBeenCalledTimes(3));
     expect(screen.queryByText("state.updateAvailable")).toBeNull();
   });
 
