@@ -1,11 +1,17 @@
 CREATE TABLE IF NOT EXISTS projects (
   id         INTEGER PRIMARY KEY,
-  name       TEXT NOT NULL UNIQUE,
-  root_path  TEXT NOT NULL UNIQUE,
+  name       TEXT NOT NULL,
+  root_path  TEXT NOT NULL,
   created_at TEXT NOT NULL,
   claimed_by INTEGER NOT NULL DEFAULT 0,
   claimed_at TEXT
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_name
+  ON projects(name);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_root_path
+  ON projects(root_path);
 
 CREATE TABLE IF NOT EXISTS agent_sessions (
   id            INTEGER PRIMARY KEY,
