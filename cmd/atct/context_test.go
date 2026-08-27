@@ -869,3 +869,49 @@ func TestContextCheckProjectFlagSelectsOnlyRequestedProject(t *testing.T) {
 func ptrTime(t time.Time) *time.Time {
 	return &t
 }
+
+// A completed handoff releases the work, so the brief has to count the task as
+// todo again; otherwise a returned task disappears from the idle count forever.
+func TestContextBriefCountsTaskAgainAfterHandoffCompletes(t *testing.T) {
+	fixture := newContextCheckFixture(t)
+	ctx := context.Background()
+
+	task := fixture.addTask(t, "returned")
+	owner, err := fixture.db.RegisterAgentSession(ctx, os.Getpid())
+	if err != nil {
+		t.Fatalf("RegisterAgentSession: %v", err)
+	}
+	if _, err := fixture.db.ClaimTask(ctx, task.ID, owner); err != nil {
+		t.Fatalf("ClaimTask: %v", err)
+	}
+	if _, err := fixture.db.CompleteTaskHandoffForTask(ctx, task.ID, "handed back"); err != nil {
+		t.Fatalf("CompleteTaskHandoffForTask: %v", err)
+	}
+
+	got, err := contextBriefTextForProject(fixture.dir, fixture.cwd, "", false)
+	if err != nil {
+		t.Fatalf("contextBriefTextForProject: %v", err)
+	}
+	if !strings.Contains(got, "todo tasks 1") {
+		t.Fatalf("brief dropped the released task %d from the todo count: %q", task.ID, got)
+	}
+}
+
+// Dropping atct_task_claim must depend on every todo task being owned, not on
+// any one of them being owned.
+func TestRenderContextOffersClaimToolWhenATodoTaskIsUnowned(t *testing.T) {
+	got := renderContextForAgentSession([]contextGoal{{
+		Goal: domain.Goal{ID: 42, Content: "Mixed goal", Status: domain.GoalActive},
+		Tasks: []domain.Task{
+			{ID: 7, Title: "Owned", Status: domain.TaskTodo},
+			{ID: 8, Title: "Idle", Status: domain.TaskTodo},
+		},
+		TaskHandoffs: map[int64]*store.TaskHandoff{
+			7: {ReceivedBy: 99},
+		},
+	}}, nil, 1)
+
+	if !strings.Contains(got, "Next tools: atct_task_claim") {
+		t.Fatalf("context withheld atct_task_claim while task 8 was unowned:\n%s", got)
+	}
+}
