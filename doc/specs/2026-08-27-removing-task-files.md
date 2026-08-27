@@ -59,6 +59,34 @@
 `schema.sql` は sqlc の入力なので移行と同時に直す。ずれると sqlc が実在しない
 スキーマに対して生成し、誰も気づかない。
 
+**訂正（実装で判明）。**「`migrations.go` を触らない」は誤りだった。`validateV6Schema`
+は「その DB が**いま**持っているべき列」を検査しており、0021 を適用した DB では
+`files` が無いのに要求して落ちる（`e2e` / `migration_integrity` / `migrations_test` の 4 本）。
+
+    table "tasks" is missing v6 columns: files
+
+正しい形は 0016 と同じで、**適用済み移行に応じて期待値を落とす変換**を足すこと。
+
+    if _, ok := state.applied["0021_drop_task_files.sql"]; ok {
+            requiredColumns = withoutTaskFilesColumn(requiredColumns)
+    }
+
+`requiredV6Columns` / `requiredCurrentV6Columns` の `files` は**残したまま**である。
+あれは 0021 より前の DB の姿で、変換で落とすのが正しい。歴史的スキーマの記述を
+書き換えるのと、現在の期待値を導出するのは別の操作である。
+
+### 3. sqlc は再生成しない（この作業ツリー限定の迂回）
+
+`internal/store/sqlcgen/` はコミット済みの内容と `sqlc generate` の出力が一致していない
+（別単位が発見した既知の不整合）。実際に再生成したところ、`files` と無関係な
+`decision.sql.go` / `goal.sql.go` / `project.sql.go` から **589 行が消えた**
+（`LegacyID`・`RequestTaskHandoff`・`ListOpenTaskHandoffsForGoal`）。
+
+**したがって `models.go` と `task.sql.go` を手で直した。**`UpdateTaskContent` は
+番号付きプレースホルダなので、`files = COALESCE(?3, files)` を消したあと `?4` → `?3`、
+`?5` → `?4` の詰めが要る。**詰め忘れは実行時にしか出ない。**
+不整合そのものの解消はこのゴールの範囲外である。
+
 ## 削除範囲
 
 | 層 | 消すもの |
