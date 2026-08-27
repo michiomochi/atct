@@ -2450,6 +2450,31 @@ func TestSSEFiltersDetectionEventsByGoalID(t *testing.T) {
 	}
 }
 
+func TestSSEPublishesEvaluateFailureForGoalSubscription(t *testing.T) {
+	f := newBareFixture(t)
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+	streamCtx, cancel := context.WithTimeout(f.ctx, time.Second)
+	defer cancel()
+	stream, reader := openSSEStream(t, streamCtx, srv.Client(), eventsURLWithGoal(srv.URL, "1"))
+	defer stream.Body.Close()
+
+	want := store.WakeupEvaluateFailedEvent{WakeupID: "failure-1", Reason: "database unavailable"}
+	f.store.PublishEvent(store.DecisionEvent{Name: store.EventWakeupEvaluateFailed, Data: want})
+
+	frame := readSSEFrame(t, reader)
+	if frame.event != store.EventWakeupEvaluateFailed {
+		t.Fatalf("SSE evaluate failure event = %q, want %q", frame.event, store.EventWakeupEvaluateFailed)
+	}
+	var got store.WakeupEvaluateFailedEvent
+	if err := json.Unmarshal([]byte(frame.data), &got); err != nil {
+		t.Fatalf("SSE evaluate failure data is not WakeupEvaluateFailedEvent: %v; data=%q", err, frame.data)
+	}
+	if got != want {
+		t.Fatalf("SSE evaluate failure = %+v, want %+v", got, want)
+	}
+}
+
 func TestSSEPublishesDecisionEventsForGoalID(t *testing.T) {
 	f := newBareFixture(t)
 	srv := newTestServer(t, f.store)

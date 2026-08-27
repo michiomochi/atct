@@ -36,6 +36,7 @@ type watchDecision struct {
 	DefaultAppliedAt           *string `json:"default_applied_at"`
 	SettledByDefault           bool    `json:"settled_by_default"`
 	WakeupID                   string  `json:"wakeup_id"`
+	Reason                     string  `json:"reason"`
 	ActionableGoalCount        int     `json:"actionable_goal_count"`
 	UnstartedTaskCount         int     `json:"unstarted_task_count"`
 	WaitingAnswerTaskCount     int     `json:"waiting_answer_task_count"`
@@ -656,7 +657,7 @@ func emitWatchDecisionWithState(out io.Writer, eventName string, decision watchD
 		detectionDelivered[key] = struct{}{}
 		return nil
 	}
-	if eventName == "wakeup" || eventName == "wakeup.discrepancy" {
+	if eventName == "wakeup" || eventName == "wakeup.discrepancy" || eventName == "wakeup.evaluate_failed" {
 		id := decision.wakeupID()
 		if id == "" {
 			return fmt.Errorf("SSE event %s has no wakeup_id", eventName)
@@ -752,6 +753,8 @@ func formatWatchDecision(eventName string, decision watchDecision) (string, bool
 		return fmt.Sprintf("atct detection: task %s has a stale claim", decision.TaskID), true
 	case "wakeup.discrepancy":
 		return fmt.Sprintf("atct wakeup discrepancy: detector_unstarted_tasks=%d counted_unstarted_tasks=%d", decision.DetectorUnstartedTaskCount, decision.CountedUnstartedTaskCount), true
+	case "wakeup.evaluate_failed":
+		return fmt.Sprintf("atct wakeup evaluate failed: %s", decision.Reason), true
 	default:
 		return "", false
 	}
