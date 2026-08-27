@@ -752,6 +752,31 @@ func (q *Queries) RegisterAgentSession(ctx context.Context, arg RegisterAgentSes
 	return id, err
 }
 
+const registerAgentSessionWithProject = `-- name: RegisterAgentSessionWithProject :one
+INSERT INTO agent_sessions (project_id, pid, started_at, registered_at)
+VALUES (?, ?, ?, ?)
+RETURNING id
+`
+
+type RegisterAgentSessionWithProjectParams struct {
+	ProjectID    sql.NullInt64
+	Pid          int64
+	StartedAt    string
+	RegisteredAt string
+}
+
+func (q *Queries) RegisterAgentSessionWithProject(ctx context.Context, arg RegisterAgentSessionWithProjectParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, registerAgentSessionWithProject,
+		arg.ProjectID,
+		arg.Pid,
+		arg.StartedAt,
+		arg.RegisteredAt,
+	)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
+}
+
 const releaseTask = `-- name: ReleaseTask :execresult
 UPDATE tasks
 SET status = 'todo', updated_at = ?

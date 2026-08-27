@@ -502,12 +502,22 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 	switch req.Method {
 	case "run.register":
 		var p struct {
-			PID int `json:"pid"`
+			PID int    `json:"pid"`
+			CWD string `json:"cwd"`
 		}
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, err
 		}
-		agentSessionID, err := d.store.RegisterAgentSession(ctx, p.PID)
+		projectID := int64(0)
+		if p.CWD != "" {
+			project, err := d.store.ResolveProject(ctx, p.CWD)
+			if err == nil {
+				projectID = project.ID
+			} else if !errors.Is(err, store.ErrProjectNotFound) {
+				return nil, err
+			}
+		}
+		agentSessionID, err := d.store.RegisterAgentSessionInProject(ctx, p.PID, projectID)
 		if err != nil {
 			return nil, err
 		}

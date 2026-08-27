@@ -93,6 +93,11 @@ INSERT INTO agent_sessions (project_id, pid, started_at, registered_at)
 VALUES (NULL, ?, ?, ?)
 RETURNING id;
 
+-- name: RegisterAgentSessionWithProject :one
+INSERT INTO agent_sessions (project_id, pid, started_at, registered_at)
+VALUES (?, ?, ?, ?)
+RETURNING id;
+
 -- name: GetAgentSessionIDByKey :one
 SELECT id
 FROM agent_sessions
