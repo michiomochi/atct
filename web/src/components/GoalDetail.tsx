@@ -17,6 +17,7 @@ import {
 import { formatDateTime } from "../i18n";
 import { body, findOpenCompletion, findOpenGoalApproval, hasCompletionReport, headline, resolveRouteID, statusLabel, type CompletionReportFields } from "../lib/ui";
 import { AreaLoading, ErrorState } from "./StateMessage";
+import { GoalDiff } from "./GoalDiff";
 import { TaskCommitList } from "./TaskCommitList";
 import { TaskTable } from "./TaskTable";
 
@@ -637,6 +638,8 @@ export function GoalDetail({ id }: Props) {
           )}
         </div>
       </section>
+
+      <GoalDiff goalID={resolvedID} />
 
       {taskCommits.length > 0 && (
         <section className="min-w-0 border-t border-line pt-5" aria-labelledby="goal-commits-heading">

@@ -1,7 +1,7 @@
 {
   "name": "atct",
   "description": "Declare tasks, claim work, and ask a human for decisions without leaving the session.",
-  "version": "0.58.0",
+  "version": "0.59.0",
   "dependencies": [
     {
       "name": "superpowers",
