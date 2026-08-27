@@ -699,7 +699,7 @@ func Register(server *mcp.Server, c *Client, agentSessionID int64) {
 
 	addMCPTool[TaskUpdateContentIn, RawWithUnappliedDecisions](server, &mcp.Tool{
 		Name:         "atct_task_update_content",
-		Description:  "Rewrite a task's content. Only todo and doing tasks can be updated; done and dropped tasks are refused.",
+		Description:  "Rewrite a task's content, including the files it touches. Only todo and doing tasks can be updated; done and dropped tasks are refused. Only the session holding the task's handoff or its goal's handoff may rewrite a task that has one.",
 		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in TaskUpdateContentIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
 		params := map[string]any{

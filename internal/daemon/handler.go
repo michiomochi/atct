@@ -864,7 +864,7 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		if err := d.ensureAgentSessionProject(ctx, p.AgentSessionID, goal.ProjectID); err != nil {
 			return nil, err
 		}
-		updated, err := d.store.UpdateTaskContent(ctx, p.TaskID, p.Title, p.Description, p.Files)
+		updated, err := d.store.UpdateTaskContent(ctx, p.TaskID, p.Title, p.Description, p.Files, p.AgentSessionID)
 		if err != nil || !p.IncludeUnappliedAnswers {
 			return marshal(updated, err)
 		}
