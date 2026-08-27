@@ -163,6 +163,44 @@ that worker is started:
    > When the work is complete, record completion by calling `atct_handoff_complete`
    > with the `task_id` provided in this request and a `complete_report`. The
    > `complete_report` must say what was done, what was verified, and paths changed.
+   >
+   > Only then close the task, by calling `atct_task_update` with the `task_id`
+   > provided in this request and `status` set to `done`. This order is required:
+   > a terminal status closes any open task handoff and replaces its
+   > `complete_report`, so the report has to be recorded first. A task nobody
+   > closed still reads as unstarted, so do not stop after reporting.
+
+   Report completion before closing the task. Calling `atct_task_update` first
+   closes the handoff and the completion report is lost: the record keeps a
+   released-the-lock placeholder with no reporter, and the executor is left with
+   nothing to write it back through. This reproduced on 2026-08-27 with two
+   executors, one on Claude and one on Codex.
+
+   Name what the worker may call, and name what it may not. A blanket ban carries
+   no grain, so it is overturned without grain too: an executor that decides atct
+   calls are allowed after all reaches the goal scope in the same step.
+
+   An executor may call only these atct tools:
+   `atct_session_identify`, `atct_handoff_receive`, `atct_role`, `atct_task_update`, `atct_handoff_complete`.
+   Each of them is confined to the `task_id` the executor was given.
+
+   An executor must not call `atct_goal_handoff_complete`, `atct_goal_handoff_receive`,
+   `atct_goal_handoff_request`, `atct_goal_claim`, `atct_goal_release`,
+   `atct_goal_complete`, `atct_goal_update_content`, `atct_project_claim`,
+   `atct_project_release`, `atct_task_claim`, `atct_handoff_request`,
+   `atct_task_declare`, or `atct_decision_ask`. Spell the names out; "anything not
+   listed above" is not read as a prohibition. In a 2026-08-27 measurement, an
+   executor closed a subcommander's goal handoff without knowing it was forbidden.
+
+   An executor that reaches an irreversible operation returns it to the delegator.
+   Apply the test in `## Act on reversible choices, ask about irreversible ones`:
+   can the human get the previous state back? Rewriting history, discarding
+   uncommitted work, deleting a file or directory, and publishing off this machine
+   all fail it. The executor does not perform the operation and does not carry the
+   judgement itself; it stops there and hands it back to whoever sent the request.
+   `atct_decision_ask` is the delegator's call, not the executor's. A design
+   decision travels the same way, which is what `does not: make design decisions`
+   in `## Roles` means in practice.
 
 5. Keep one worker per task. Return a correction, review fix, follow-up
    question, or clarification for the same task to the same worker. Start a
@@ -264,6 +302,13 @@ a non-empty `complete_report`; for a goal handoff call
 ## Recover when your role comes back wrong
 
 If `atct_role` returns `executor` while you still hold work that should be yours, stop working and read this section.
+
+A role is derived from the received, uncompleted goal handoff an agent holds, so
+anything that closes that handoff takes the role with it.
+Closing a subcommander's goal handoff drops that subcommander to `executor`.
+Nothing announces the drop: the subcommander learns of it only the next time it
+calls `atct_role`, and until then the dashboard shows the goal as completed while
+its work is still uncommitted.
 
 The first recovery path is `atct_session_identify`; follow `### Session keys` first.
 
