@@ -162,6 +162,8 @@ func (t *wakeupTracker) evaluateWith(ctx context.Context, s *store.Store, now ti
 							WakeupID:               store.NewWakeupID(),
 							ProjectID:              project.ID,
 							ActionableGoalCount:    state.ActionableGoalCount,
+							UnassignedGoalCount:    state.UnassignedGoalCount,
+							UnassignedGoalIDs:      state.UnassignedGoalIDs,
 							UnstartedTaskCount:     state.UnstartedTaskCount,
 							WaitingAnswerTaskCount: state.WaitingAnswerTaskCount,
 							UntouchedTaskCount:     state.UntouchedTaskCount,
@@ -235,23 +237,6 @@ func (t *wakeupTracker) evaluateWith(ctx context.Context, s *store.Store, now ti
 				return nil, err
 			}
 			recordDetection(store.EventDetectionHandoffUnreported, handoff.ID, *handoff.ReceivedAt, detectionHandoffUnreportedAfter, goalID, handoff.TaskID, handoff.ID, 0)
-		}
-		for _, handoff := range state.HandoffsReported {
-			key := detectionTrackerKey(store.EventHandoffReported, handoff.ID)
-			currentDetectionKeys[key] = struct{}{}
-			if handoff.CompletedReportAt != nil && handoff.CompletedReportAt.Before(t.startedAt) {
-				t.detectionActiveSince[key] = t.startedAt
-				t.detectionPublished[key] = true
-				continue
-			}
-			event, ok := t.publishDetectionWithDecision(now, time.Time{}, 0, store.EventHandoffReported, handoff.ID, project.ID, handoff.GoalID, handoff.TaskID, handoff.ID, 0)
-			if !ok {
-				continue
-			}
-			detection := event.Data.(store.DetectionEvent)
-			detection.CompleteReport = handoff.CompleteReport
-			event.Data = detection
-			events = append(events, event)
 		}
 		for _, task := range state.UndelegatedClaims {
 			claimedAt := taskHandoffClaimedAt(openTaskHandoffs[task.ID])

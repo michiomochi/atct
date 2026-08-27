@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -525,6 +526,7 @@ type goalListFixture struct {
 	taskGoal      domain.Goal
 	emptyTaskGoal domain.Goal
 	doneOnlyGoal  domain.Goal
+	taskHolderID  int64
 	tasks         []domain.Task
 }
 
@@ -695,6 +697,7 @@ func newGoalListFixture(t *testing.T) goalListFixture {
 		taskGoal:      taskGoal,
 		emptyTaskGoal: emptyTaskGoal,
 		doneOnlyGoal:  doneOnlyGoal,
+		taskHolderID:  taskAgentID,
 		tasks:         tasks,
 	}
 }
@@ -1096,9 +1099,14 @@ func updateGoalContentForTest(t *testing.T, fixture goalListFixture, goalID int6
 
 func updateTaskContentForTest(t *testing.T, fixture goalListFixture, taskID int64, fields map[string]any, sessionID string) (json.RawMessage, error) {
 	t.Helper()
+	return updateTaskContentForTestWithAgentSessionID(t, fixture, taskID, fields, daemonTestSessionID(t, fixture.store, sessionID))
+}
+
+func updateTaskContentForTestWithAgentSessionID(t *testing.T, fixture goalListFixture, taskID int64, fields map[string]any, agentSessionID int64) (json.RawMessage, error) {
+	t.Helper()
 	params := map[string]any{
 		"task_id":                   taskID,
-		"agent_session_id":          daemonTestSessionID(t, fixture.store, sessionID),
+		"agent_session_id":          agentSessionID,
 		"include_unapplied_answers": false,
 	}
 	for key, value := range fields {
@@ -1260,17 +1268,18 @@ func TestGoalUpdateContentKeepsRejectedGoalUnchanged(t *testing.T) {
 
 func TestTaskUpdateContentUpdatesTodoAndDoingTasks(t *testing.T) {
 	for _, tc := range []struct {
-		name         string
-		taskIndex    int
-		status       domain.TaskStatus
-		extra        bool
-		updatedTitle string
-		updatedDesc  string
-		updatedFiles []string
+		name          string
+		taskIndex     int
+		status        domain.TaskStatus
+		extra         bool
+		useTaskHolder bool
+		updatedTitle  string
+		updatedDesc   string
+		updatedFiles  []string
 	}{
 		{name: "todo-one", taskIndex: 1, status: domain.TaskTodo, updatedTitle: "updated todo one", updatedDesc: "updated todo one description", updatedFiles: []string{"todo-one.md", "todo-one.go"}},
 		{name: "todo-two", taskIndex: 1, status: domain.TaskTodo, extra: true, updatedTitle: "updated todo two", updatedDesc: "updated todo two description", updatedFiles: []string{"todo-two.md", "todo-two.go"}},
-		{name: "doing-one", taskIndex: 0, status: domain.TaskDoing, updatedTitle: "updated doing one", updatedDesc: "updated doing one description", updatedFiles: []string{"doing-one.md", "doing-one.go"}},
+		{name: "doing-one", taskIndex: 0, status: domain.TaskDoing, useTaskHolder: true, updatedTitle: "updated doing one", updatedDesc: "updated doing one description", updatedFiles: []string{"doing-one.md", "doing-one.go"}},
 		{name: "doing-two", taskIndex: 0, status: domain.TaskDoing, extra: true, updatedTitle: "updated doing two", updatedDesc: "updated doing two description", updatedFiles: []string{"doing-two.md", "doing-two.go"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1286,7 +1295,13 @@ func TestTaskUpdateContentUpdatesTodoAndDoingTasks(t *testing.T) {
 				"description": tc.updatedDesc,
 				"files":       tc.updatedFiles,
 			}
-			result, err := updateTaskContentForTest(t, fixture, task.ID, fields, "task-update-content-run")
+			var result json.RawMessage
+			var err error
+			if tc.useTaskHolder {
+				result, err = updateTaskContentForTestWithAgentSessionID(t, fixture, task.ID, fields, fixture.taskHolderID)
+			} else {
+				result, err = updateTaskContentForTest(t, fixture, task.ID, fields, "task-update-content-run")
+			}
 			if err != nil {
 				t.Fatalf("task.update_content: %v", err)
 			}
@@ -1316,19 +1331,26 @@ func TestTaskUpdateContentUpdatesTodoAndDoingTasks(t *testing.T) {
 
 func TestTaskUpdateContentPreservesOmittedFields(t *testing.T) {
 	for _, tc := range []struct {
-		name      string
-		taskIndex int
-		fields    map[string]any
+		name          string
+		taskIndex     int
+		useTaskHolder bool
+		fields        map[string]any
 	}{
 		{name: "title-only", taskIndex: 1, fields: map[string]any{"title": "title only"}},
-		{name: "files-only", taskIndex: 0, fields: map[string]any{"files": []string{"only.txt"}}},
+		{name: "files-only", taskIndex: 0, useTaskHolder: true, fields: map[string]any{"files": []string{"only.txt"}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			fixture := newGoalListFixture(t)
 			defer fixture.store.Close()
 
 			before := fixture.tasks[tc.taskIndex]
-			result, err := updateTaskContentForTest(t, fixture, before.ID, tc.fields, "task-update-content-partial-run")
+			var result json.RawMessage
+			var err error
+			if tc.useTaskHolder {
+				result, err = updateTaskContentForTestWithAgentSessionID(t, fixture, before.ID, tc.fields, fixture.taskHolderID)
+			} else {
+				result, err = updateTaskContentForTest(t, fixture, before.ID, tc.fields, "task-update-content-partial-run")
+			}
 			if err != nil {
 				t.Fatalf("task.update_content: %v", err)
 			}
@@ -1407,6 +1429,226 @@ func TestTaskUpdateContentRejectsUnknownTaskAndMissingFields(t *testing.T) {
 	}
 	if _, err := updateTaskContentForTest(t, fixture, 999999, map[string]any{"title": "missing"}, "task-update-content-missing-run"); err == nil {
 		t.Fatal("task.update_content succeeded for unknown task")
+	}
+}
+
+func setupDaemonTaskContentTaskHandoff(t *testing.T, fixture goalListFixture, taskID int64, label string) int64 {
+	t.Helper()
+	ctx := context.Background()
+	goalID, err := fixture.store.GetTaskGoalID(ctx, taskID)
+	if err != nil {
+		t.Fatalf("GetTaskGoalID: %v", err)
+	}
+	requesterID := daemonTestSessionID(t, fixture.store, label+"-goal-requester")
+	if err := fixture.store.AssociateAgentSessionWithProject(ctx, requesterID, fixture.project.ID); err != nil {
+		t.Fatalf("AssociateAgentSessionWithProject requester: %v", err)
+	}
+	if _, err := fixture.store.ClaimGoal(ctx, goalID, requesterID); err != nil {
+		t.Fatalf("ClaimGoal: %v", err)
+	}
+	holderID := daemonTestSessionID(t, fixture.store, label+"-task-holder")
+	handoff, err := fixture.store.RequestTaskHandoff(ctx, label+"-task-handoff", taskID, requesterID, "")
+	if err != nil {
+		t.Fatalf("RequestTaskHandoff: %v", err)
+	}
+	if _, err := fixture.store.ReceiveTaskHandoff(ctx, handoff.ID, taskID, holderID); err != nil {
+		t.Fatalf("ReceiveTaskHandoff: %v", err)
+	}
+	return holderID
+}
+
+func setupDaemonTaskContentGoalHandoff(t *testing.T, fixture goalListFixture, goalID int64, label string) int64 {
+	t.Helper()
+	ctx := context.Background()
+	requesterID := daemonTestSessionID(t, fixture.store, label+"-project-requester")
+	if _, err := fixture.store.ClaimProject(ctx, fixture.project.ID, requesterID); err != nil {
+		t.Fatalf("ClaimProject: %v", err)
+	}
+	holderID := daemonTestSessionID(t, fixture.store, label+"-goal-holder")
+	handoff, err := fixture.store.RequestGoalHandoff(ctx, label+"-goal-handoff", goalID, requesterID, "")
+	if err != nil {
+		t.Fatalf("RequestGoalHandoff: %v", err)
+	}
+	if _, err := fixture.store.ReceiveGoalHandoff(ctx, handoff.ID, goalID, holderID); err != nil {
+		t.Fatalf("ReceiveGoalHandoff: %v", err)
+	}
+	return holderID
+}
+
+func setupDaemonTaskContentGoalHolderWithTaskHandoff(t *testing.T, fixture goalListFixture, taskID int64, label string) int64 {
+	t.Helper()
+	ctx := context.Background()
+	goalID, err := fixture.store.GetTaskGoalID(ctx, taskID)
+	if err != nil {
+		t.Fatalf("GetTaskGoalID: %v", err)
+	}
+	setupDaemonTaskContentTaskHandoff(t, fixture, taskID, label)
+	if _, err := fixture.store.CompleteGoalHandoffForGoal(ctx, goalID, ""); err != nil {
+		t.Fatalf("CompleteGoalHandoffForGoal: %v", err)
+	}
+	return setupDaemonTaskContentGoalHandoff(t, fixture, goalID, label)
+}
+
+func setupDaemonTaskContentLiveSession(t *testing.T, fixture goalListFixture, _ int64, label string) int64 {
+	t.Helper()
+	return daemonTestSessionID(t, fixture.store, label)
+}
+
+func setupDaemonTaskContentOtherGoalHandoff(t *testing.T, fixture goalListFixture, targetGoalID int64, label string) int64 {
+	t.Helper()
+	ctx := context.Background()
+	otherGoal, err := fixture.store.CreateGoal(ctx, fixture.project.ID, label+" other goal", "human")
+	if err != nil {
+		t.Fatalf("CreateGoal other: %v", err)
+	}
+	requesterID := daemonTestSessionID(t, fixture.store, label+"-project-requester")
+	if _, err := fixture.store.ClaimProject(ctx, fixture.project.ID, requesterID); err != nil {
+		t.Fatalf("ClaimProject other: %v", err)
+	}
+	targetHolderID := daemonTestSessionID(t, fixture.store, label+"-target-goal-holder")
+	holderID := daemonTestSessionID(t, fixture.store, label+"-other-goal-holder")
+	if err := fixture.store.AssociateAgentSessionWithProject(ctx, holderID, fixture.project.ID); err != nil {
+		t.Fatalf("AssociateAgentSessionWithProject other: %v", err)
+	}
+	targetHandoff, err := fixture.store.RequestGoalHandoff(ctx, label+"-target-goal-handoff", targetGoalID, requesterID, "")
+	if err != nil {
+		t.Fatalf("RequestGoalHandoff target: %v", err)
+	}
+	if _, err := fixture.store.ReceiveGoalHandoff(ctx, targetHandoff.ID, targetGoalID, targetHolderID); err != nil {
+		t.Fatalf("ReceiveGoalHandoff target: %v", err)
+	}
+	handoff, err := fixture.store.RequestGoalHandoff(ctx, label+"-other-goal-handoff", otherGoal.ID, requesterID, "")
+	if err != nil {
+		t.Fatalf("RequestGoalHandoff other: %v", err)
+	}
+	if _, err := fixture.store.ReceiveGoalHandoff(ctx, handoff.ID, otherGoal.ID, holderID); err != nil {
+		t.Fatalf("ReceiveGoalHandoff other: %v", err)
+	}
+	return holderID
+}
+
+func setupDaemonTaskContentProjectOnly(t *testing.T, fixture goalListFixture, taskID int64, label string, taskHandoff bool) int64 {
+	t.Helper()
+	goalID, err := fixture.store.GetTaskGoalID(context.Background(), taskID)
+	if err != nil {
+		t.Fatalf("GetTaskGoalID: %v", err)
+	}
+	if taskHandoff {
+		setupDaemonTaskContentTaskHandoff(t, fixture, taskID, label)
+	} else {
+		setupDaemonTaskContentGoalHandoff(t, fixture, goalID, label)
+	}
+	callerID := daemonTestSessionID(t, fixture.store, label+"-project-only")
+	if err := fixture.store.AssociateAgentSessionWithProject(context.Background(), callerID, fixture.project.ID); err != nil {
+		t.Fatalf("AssociateAgentSessionWithProject project-only: %v", err)
+	}
+	return callerID
+}
+
+func TestTaskUpdateContentHandoffAuthorizationRPC(t *testing.T) {
+	tests := []struct {
+		name                     string
+		sessionSuffix            string
+		setup                    func(t *testing.T, fixture goalListFixture, taskID int64, label string) int64
+		wantDenied               bool
+		assertTaskHolderDistinct bool
+		requireNonZeroSession    bool
+	}{
+		{name: "task-holder-one", sessionSuffix: "-task-holder", setup: setupDaemonTaskContentTaskHandoff},
+		{name: "task-holder-two", sessionSuffix: "-task-holder", setup: setupDaemonTaskContentTaskHandoff},
+		{name: "goal-holder-one", sessionSuffix: "-goal-holder", setup: func(t *testing.T, fixture goalListFixture, taskID int64, label string) int64 {
+			goalID, err := fixture.store.GetTaskGoalID(context.Background(), taskID)
+			if err != nil {
+				t.Fatalf("GetTaskGoalID: %v", err)
+			}
+			return setupDaemonTaskContentGoalHandoff(t, fixture, goalID, label)
+		}},
+		{name: "goal-holder-two", sessionSuffix: "-goal-holder", setup: func(t *testing.T, fixture goalListFixture, taskID int64, label string) int64 {
+			goalID, err := fixture.store.GetTaskGoalID(context.Background(), taskID)
+			if err != nil {
+				t.Fatalf("GetTaskGoalID: %v", err)
+			}
+			return setupDaemonTaskContentGoalHandoff(t, fixture, goalID, label)
+		}},
+		{name: "goal-holder-with-task-handoff-one", sessionSuffix: "-goal-holder", assertTaskHolderDistinct: true, setup: setupDaemonTaskContentGoalHolderWithTaskHandoff},
+		{name: "goal-holder-with-task-handoff-two", sessionSuffix: "-goal-holder", assertTaskHolderDistinct: true, setup: setupDaemonTaskContentGoalHolderWithTaskHandoff},
+		{name: "other-goal-holder-one", sessionSuffix: "-other-goal-holder", wantDenied: true, setup: func(t *testing.T, fixture goalListFixture, taskID int64, label string) int64 {
+			goalID, err := fixture.store.GetTaskGoalID(context.Background(), taskID)
+			if err != nil {
+				t.Fatalf("GetTaskGoalID: %v", err)
+			}
+			return setupDaemonTaskContentOtherGoalHandoff(t, fixture, goalID, label)
+		}},
+		{name: "other-goal-holder-two", sessionSuffix: "-other-goal-holder", wantDenied: true, setup: func(t *testing.T, fixture goalListFixture, taskID int64, label string) int64 {
+			goalID, err := fixture.store.GetTaskGoalID(context.Background(), taskID)
+			if err != nil {
+				t.Fatalf("GetTaskGoalID: %v", err)
+			}
+			return setupDaemonTaskContentOtherGoalHandoff(t, fixture, goalID, label)
+		}},
+		{name: "project-only-with-task-handoff-one", sessionSuffix: "-project-only", wantDenied: true, setup: func(t *testing.T, fixture goalListFixture, taskID int64, label string) int64 {
+			return setupDaemonTaskContentProjectOnly(t, fixture, taskID, label, true)
+		}},
+		{name: "project-only-with-goal-handoff-two", sessionSuffix: "-project-only", wantDenied: true, setup: func(t *testing.T, fixture goalListFixture, taskID int64, label string) int64 {
+			return setupDaemonTaskContentProjectOnly(t, fixture, taskID, label, false)
+		}},
+		{name: "no-handoff-live-session-one", requireNonZeroSession: true, setup: setupDaemonTaskContentLiveSession},
+		{name: "no-handoff-live-session-two", requireNonZeroSession: true, setup: setupDaemonTaskContentLiveSession},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			fixture := newGoalListFixture(t)
+			defer fixture.store.Close()
+			task := fixture.tasks[1]
+			label := "task-content-auth-rpc-" + tc.name
+			callerID := tc.setup(t, fixture, task.ID, label)
+			if tc.requireNonZeroSession && callerID == 0 {
+				t.Fatal("live session has zero ID")
+			}
+			if tc.assertTaskHolderDistinct {
+				taskHandoff := openTaskHandoffForTest(t, fixture, task.GoalID, task.ID)
+				if taskHandoff == nil {
+					t.Fatal("task handoff is missing")
+				}
+				if taskHandoff.ReceivedBy == callerID {
+					t.Fatalf("task handoff holder = caller %d, want a different session", callerID)
+				}
+			}
+			before, err := fixture.store.ListTasks(context.Background(), task.GoalID)
+			if err != nil {
+				t.Fatalf("ListTasks before: %v", err)
+			}
+
+			files := []string{"rpc-after-" + tc.name + ".go"}
+			result, err := updateTaskContentForTest(t, fixture, task.ID, map[string]any{"files": files}, label+tc.sessionSuffix)
+			if tc.wantDenied {
+				if err == nil {
+					t.Fatal("task.update_content unexpectedly succeeded")
+				}
+				if !strings.Contains(err.Error(), "task content") || !strings.Contains(err.Error(), fmt.Sprint(task.ID)) {
+					t.Fatalf("task.update_content error = %q, want reason and task ID %d", err, task.ID)
+				}
+				after, listErr := fixture.store.ListTasks(context.Background(), task.GoalID)
+				if listErr != nil {
+					t.Fatalf("ListTasks after: %v", listErr)
+				}
+				if !reflect.DeepEqual(after, before) {
+					t.Fatalf("task changed after rejected update: before=%+v after=%+v", before, after)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("task.update_content: %v", err)
+			}
+			var updated domain.Task
+			if err := json.Unmarshal(result, &updated); err != nil {
+				t.Fatalf("unmarshal task.update_content result: %v", err)
+			}
+			if !reflect.DeepEqual(updated.Files, files) {
+				t.Fatalf("files = %#v, want %#v", updated.Files, files)
+			}
+		})
 	}
 }
 

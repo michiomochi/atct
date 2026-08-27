@@ -326,6 +326,70 @@ func TestGoalHandoffReportsAreStored(t *testing.T) {
 	}
 }
 
+func TestCompleteGoalHandoffPublishesReportedEvent(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	goalID := newTestGoal(t, s)
+	addTestAgentSession(t, s, "publish-goal-requester")
+	addTestAgentSession(t, s, "publish-goal-receiver")
+	handoffID := "publish-goal-handoff"
+	addRequestOnlyGoalHandoff(t, s, handoffID, goalID, "publish-goal-requester")
+	if _, err := s.ReceiveGoalHandoff(ctx, handoffID, goalID, testSessionID("publish-goal-receiver")); err != nil {
+		t.Fatalf("ReceiveGoalHandoff: %v", err)
+	}
+	goal, err := s.GetGoal(ctx, goalID)
+	if err != nil {
+		t.Fatalf("GetGoal: %v", err)
+	}
+	events, cancel := s.SubscribeEvents()
+	defer cancel()
+
+	const report = "goal completion report"
+	completed, err := s.CompleteGoalHandoff(ctx, handoffID, goalID, report)
+	if err != nil {
+		t.Fatalf("CompleteGoalHandoff: %v", err)
+	}
+	detection := waitForHandoffReported(t, events)
+
+	if completed.ID != handoffID || completed.CompletedReportAt == nil || completed.CompleteReport != report {
+		t.Fatalf("completed handoff = %+v, want report %q", completed, report)
+	}
+	if detection.DetectionID == "" || detection.ProjectID != goal.ProjectID || detection.GoalID != goalID || detection.TaskID != 0 || detection.HandoffID != handoffID || detection.CompleteReport != report {
+		t.Fatalf("reported detection = %+v, want project=%d goal=%d task=0 handoff=%q report=%q", detection, goal.ProjectID, goalID, handoffID, report)
+	}
+}
+
+func TestWithdrawActiveGoalDoesNotPublishReportedTaskHandoff(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	goalID := newTestGoal(t, s)
+	tasks, err := s.DeclareTasks(ctx, goalID, "withdraw-test", "withdraw-goal", []string{"Open task"}, []string{"Task remains open during withdrawal."})
+	if err != nil {
+		t.Fatalf("DeclareTasks: %v", err)
+	}
+	addTestAgentSession(t, s, "withdraw-requester")
+	addTestAgentSession(t, s, "withdraw-receiver")
+	const handoffID = "withdraw-task-handoff"
+	addTaskHandoffDirect(t, s, handoffID, tasks[0].ID, "withdraw-requester", "withdraw-receiver")
+
+	events, cancel := s.SubscribeEvents()
+	defer cancel()
+	if err := s.WithdrawActiveGoal(ctx, goalID, "withdraw the goal"); err != nil {
+		t.Fatalf("WithdrawActiveGoal: %v", err)
+	}
+
+	for {
+		select {
+		case event := <-events:
+			if event.Name == EventHandoffReported {
+				t.Fatalf("withdrawal published handoff_reported event: %#v", event)
+			}
+		default:
+			return
+		}
+	}
+}
+
 func TestGoalHandoffCompletionRejectsEmptyReport(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

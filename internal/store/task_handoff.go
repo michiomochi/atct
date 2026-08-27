@@ -323,7 +323,31 @@ func (s *Store) CompleteTaskHandoff(ctx context.Context, handoffID string, taskI
 		}
 		return TaskHandoff{}, fmt.Errorf("%w: %s", ErrTaskHandoffNotFound, handoffID)
 	}
-	return s.GetTaskHandoff(ctx, handoffID)
+	completed, err := s.GetTaskHandoff(ctx, handoffID)
+	if err != nil {
+		return TaskHandoff{}, err
+	}
+	// Notification is best-effort; do not turn a successful completion into an error.
+	goalID, err := sqlcgen.New(s.db).GetTaskGoalID(ctx, taskID)
+	if err != nil {
+		return completed, nil
+	}
+	goal, err := s.GetGoal(ctx, goalID)
+	if err != nil {
+		return completed, nil
+	}
+	s.notify.publishEvent(Event{
+		Name: EventHandoffReported,
+		Data: DetectionEvent{
+			DetectionID:    NewDetectionID(),
+			ProjectID:      goal.ProjectID,
+			GoalID:         goalID,
+			TaskID:         taskID,
+			HandoffID:      completed.ID,
+			CompleteReport: completed.CompleteReport,
+		},
+	})
+	return completed, nil
 }
 
 // AmendTaskHandoffReport fills in or corrects the report on a handoff that is

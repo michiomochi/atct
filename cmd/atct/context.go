@@ -95,8 +95,12 @@ func contextBriefTextForProject(dir, cwd, projectName string, projectSpecified b
 		if err != nil {
 			return "", fmt.Errorf("list tasks for goal %d: %w", goal.ID, err)
 		}
+		taskHandoffs, err := s.ListOpenTaskHandoffsForGoal(ctx, goal.ID)
+		if err != nil {
+			return "", fmt.Errorf("list open task handoffs for goal %d: %w", goal.ID, err)
+		}
 		for _, task := range tasks {
-			if task.Status == domain.TaskTodo {
+			if contextTaskIsUnowned(task, taskHandoffs[task.ID]) {
 				todoTasks++
 			}
 		}
@@ -240,12 +244,20 @@ func contextNeedsWakeup(snapshot contextSnapshot) bool {
 			return true
 		}
 		for _, task := range item.Tasks {
-			if task.Status == domain.TaskTodo && contextTaskHandoffOwner(item.TaskHandoffs[task.ID]) == 0 {
+			if contextTaskIsUnowned(task, item.TaskHandoffs[task.ID]) {
 				return true
 			}
 		}
 	}
 	return false
+}
+
+// contextTaskIsUnowned reports whether a task is work nobody has taken yet. A
+// delegated task keeps its todo status, so the open handoff is the only record
+// of an owner; both the brief count and the atct_task_claim suggestion read
+// this so they cannot disagree with the [claimed] task lines.
+func contextTaskIsUnowned(task domain.Task, handoff *store.TaskHandoff) bool {
+	return task.Status == domain.TaskTodo && contextTaskHandoffOwner(handoff) == 0
 }
 
 func contextTaskHandoffOwner(handoff *store.TaskHandoff) int64 {
@@ -428,7 +440,7 @@ func renderContextForAgentSession(goals []contextGoal, decisions []domain.Decisi
 			hasNoTasks = true
 		}
 		for _, task := range item.Tasks {
-			if task.Status == domain.TaskTodo {
+			if contextTaskIsUnowned(task, item.TaskHandoffs[task.ID]) {
 				hasTodo = true
 			}
 		}
