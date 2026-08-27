@@ -2,6 +2,42 @@ package main
 
 import "testing"
 
+func TestWatchScopeSnapshotStopsOtherGoalDecision(t *testing.T) {
+	filter := newWatchScopeFilter("goal-1")
+
+	if got := filter.deliversSnapshotDecision(watchDecision{DecisionID: "other", GoalID: "goal-2"}); got {
+		t.Fatal("goal scope delivered another goal's snapshot decision, want false")
+	}
+}
+
+func TestWatchScopeSnapshotDeliversOwnGoalDecision(t *testing.T) {
+	filter := newWatchScopeFilter("goal-1")
+
+	if got := filter.deliversSnapshotDecision(watchDecision{DecisionID: "own", GoalID: "goal-1"}); !got {
+		t.Fatal("goal scope suppressed its own snapshot decision, want true")
+	}
+}
+
+func TestWatchScopeSnapshotStopsUnassignedDecision(t *testing.T) {
+	filter := newWatchScopeFilter("goal-1")
+
+	for _, goalID := range []string{"", "0"} {
+		if got := filter.deliversSnapshotDecision(watchDecision{DecisionID: "unassigned", GoalID: goalID}); got {
+			t.Fatalf("goal scope delivered snapshot decision with goal_id %q, want false", goalID)
+		}
+	}
+}
+
+func TestWatchScopeSnapshotWithoutGoalDeliversEveryGoal(t *testing.T) {
+	filter := newWatchScopeFilter("")
+
+	for _, goalID := range []string{"goal-1", "goal-2", "", "0"} {
+		if got := filter.deliversSnapshotDecision(watchDecision{DecisionID: "decision", GoalID: goalID}); !got {
+			t.Fatalf("unscoped watch suppressed snapshot decision with goal_id %q, want true", goalID)
+		}
+	}
+}
+
 func TestWatchScopeProjectStopsTaskHandoffReported(t *testing.T) {
 	filter := newWatchScopeFilter("")
 

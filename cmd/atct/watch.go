@@ -300,7 +300,7 @@ func watchLoopWithEnsureAndProjectIDAndGoal(ctx context.Context, out io.Writer, 
 			if filterProjectID != "" && decision.ProjectID != "" && decision.ProjectID != filterProjectID {
 				continue
 			}
-			if !scopeFilter.delivers("decision.answered", decision) {
+			if !scopeFilter.deliversSnapshotDecision(decision) {
 				continue
 			}
 			if err := emitWatchDecisionWithState(out, "decision.answered", decision, delivered, &lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered); err != nil {

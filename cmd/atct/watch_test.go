@@ -675,6 +675,86 @@ func TestWatchFiltersOtherProjectFromSnapshot(t *testing.T) {
 	}
 }
 
+func TestWatchFiltersOtherGoalFromSnapshot(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var output cancelOnOutput
+	output.cancel = cancel
+	output.needles = []string{"atct decision answered (decision_id: same-goal)"}
+
+	root := t.TempDir()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/projects":
+			w.Header().Set("Content-Type", "application/json")
+			if err := json.NewEncoder(w).Encode([]watchProject{{ID: "project-1", RootPath: root}}); err != nil {
+				t.Errorf("encode projects: %v", err)
+			}
+		case "/api/inbox":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"unapplied_decisions":[{"id":"other-goal","project_id":"project-1","goal_id":91,"default_applied_at":null},{"id":"same-goal","project_id":"project-1","goal_id":92,"default_applied_at":null},{"id":"no-goal","project_id":"project-1","default_applied_at":null}]}`)
+		case "/api/events":
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			<-r.Context().Done()
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	if err := watchWithURLsAndProjectAndGoal(ctx, []string{server.URL}, &output, server.Client(), time.Millisecond, root, "92"); err != nil {
+		t.Fatalf("watchWithURLsAndProjectAndGoal() error = %v", err)
+	}
+
+	want := "atct decision answered (decision_id: same-goal)\n"
+	if got := output.String(); got != want {
+		t.Fatalf("watch output = %q, want %q", got, want)
+	}
+}
+
+func TestWatchKeepsEveryGoalInSnapshotWithoutGoalFlag(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var output cancelOnOutput
+	output.cancel = cancel
+	output.needles = []string{"atct decision answered (decision_id: no-goal)"}
+
+	root := t.TempDir()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/projects":
+			w.Header().Set("Content-Type", "application/json")
+			if err := json.NewEncoder(w).Encode([]watchProject{{ID: "project-1", RootPath: root}}); err != nil {
+				t.Errorf("encode projects: %v", err)
+			}
+		case "/api/inbox":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"unapplied_decisions":[{"id":"other-goal","project_id":"project-1","goal_id":91,"default_applied_at":null},{"id":"same-goal","project_id":"project-1","goal_id":92,"default_applied_at":null},{"id":"no-goal","project_id":"project-1","default_applied_at":null}]}`)
+		case "/api/events":
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			<-r.Context().Done()
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	if err := watchWithURLsAndProjectAndGoal(ctx, []string{server.URL}, &output, server.Client(), time.Millisecond, root, ""); err != nil {
+		t.Fatalf("watchWithURLsAndProjectAndGoal() error = %v", err)
+	}
+
+	want := "atct decision answered (decision_id: other-goal)\n" +
+		"atct decision answered (decision_id: same-goal)\n" +
+		"atct decision answered (decision_id: no-goal)\n"
+	if got := output.String(); got != want {
+		t.Fatalf("watch output = %q, want %q", got, want)
+	}
+}
+
 func TestWatchEmitsApprovalAfterSnapshotAnswer(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

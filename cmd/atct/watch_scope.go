@@ -18,6 +18,16 @@ func newWatchPassThroughFilter() *watchScopeFilter {
 	return &watchScopeFilter{passThrough: true}
 }
 
+// Snapshot decisions come from /api/inbox, which the daemon does not scope by
+// goal. Keep this separate from delivers because SSE keepalives and
+// wakeup.evaluate_failed events must pass through without a goal ID.
+func (f *watchScopeFilter) deliversSnapshotDecision(decision watchDecision) bool {
+	if f.goalID != "" && decision.GoalID != f.goalID {
+		return false
+	}
+	return f.delivers("decision.answered", decision)
+}
+
 func (f *watchScopeFilter) delivers(eventName string, decision watchDecision) bool {
 	if f.passThrough || f.goalID != "" {
 		return true
