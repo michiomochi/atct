@@ -158,8 +158,8 @@ func TestWatchEmitsWakeupEvents(t *testing.T) {
 		}
 	}
 
-	want := "atct wakeup: actionable_goals=0 unstarted_tasks=0 waiting_answer_tasks=0 untouched_tasks=0 delegated_tasks=0 waiting_answers=0\n" +
-		"atct wakeup: actionable_goals=0 unstarted_tasks=1 waiting_answer_tasks=0 untouched_tasks=0 delegated_tasks=0 waiting_answers=0\n"
+	want := "atct wakeup: actionable_goals=0 unassigned_goals=0 unstarted_tasks=0 waiting_answer_tasks=0 untouched_tasks=0 delegated_tasks=0 waiting_answers=0 unassigned=[]\n" +
+		"atct wakeup: actionable_goals=0 unassigned_goals=0 unstarted_tasks=1 waiting_answer_tasks=0 untouched_tasks=0 delegated_tasks=0 waiting_answers=0 unassigned=[]\n"
 	if strings.Contains(output.String(), "working_tasks=") {
 		t.Fatalf("wakeup output contains removed working-task count: %q", output.String())
 	}
@@ -181,9 +181,89 @@ func TestWatchFormatsActionableGoalCount(t *testing.T) {
 	if strings.Contains(line, "active_goals=") {
 		t.Fatalf("wakeup output uses the old goal label: %q", line)
 	}
-	want := "atct wakeup: actionable_goals=3 unstarted_tasks=0 waiting_answer_tasks=0 untouched_tasks=0 delegated_tasks=0 waiting_answers=0"
+	want := "atct wakeup: actionable_goals=3 unassigned_goals=0 unstarted_tasks=0 waiting_answer_tasks=0 untouched_tasks=0 delegated_tasks=0 waiting_answers=0 unassigned=[]"
 	if line != want {
 		t.Fatalf("wakeup output = %q, want %q", line, want)
+	}
+}
+
+func TestWatchFormatsWakeupWithNoUnassignedGoals(t *testing.T) {
+	line, ok := formatWatchDecision("wakeup", watchDecision{ActionableGoalCount: 6})
+	if !ok {
+		t.Fatal("formatWatchDecision returned false, want true")
+	}
+	const want = "atct wakeup: actionable_goals=6 unassigned_goals=0 unstarted_tasks=0 waiting_answer_tasks=0 untouched_tasks=0 delegated_tasks=0 waiting_answers=0 unassigned=[]"
+	if line != want {
+		t.Fatalf("wakeup output = %q, want %q", line, want)
+	}
+}
+
+func TestWatchFormatsWakeupWithTwoUnassignedGoals(t *testing.T) {
+	line, ok := formatWatchDecision("wakeup", watchDecision{
+		ActionableGoalCount:    6,
+		UnassignedGoalCount:    2,
+		UnassignedGoalIDs:      []int64{136, 140},
+		UnstartedTaskCount:     12,
+		UntouchedTaskCount:     2,
+		WaitingAnswerTaskCount: 0,
+		DelegatedTaskCount:     0,
+		WaitingAnswerCount:     0,
+	})
+	if !ok {
+		t.Fatal("formatWatchDecision returned false, want true")
+	}
+	const want = "atct wakeup: actionable_goals=6 unassigned_goals=2 unstarted_tasks=12 waiting_answer_tasks=0 untouched_tasks=2 delegated_tasks=0 waiting_answers=0 unassigned=[136,140]"
+	if line != want {
+		t.Fatalf("wakeup output = %q, want %q", line, want)
+	}
+}
+
+func TestWatchFormatsExactlyFiveUnassignedGoalsWithoutRemainder(t *testing.T) {
+	line, ok := formatWatchDecision("wakeup", watchDecision{
+		UnassignedGoalCount: 5,
+		UnassignedGoalIDs:   []int64{136, 137, 138, 139, 140},
+	})
+	if !ok {
+		t.Fatal("formatWatchDecision returned false, want true")
+	}
+	const want = "atct wakeup: actionable_goals=0 unassigned_goals=5 unstarted_tasks=0 waiting_answer_tasks=0 untouched_tasks=0 delegated_tasks=0 waiting_answers=0 unassigned=[136,137,138,139,140]"
+	if line != want {
+		t.Fatalf("wakeup output = %q, want %q", line, want)
+	}
+}
+
+func TestWatchFormatsTwentyUnassignedGoalsWithRemainderOnOneLine(t *testing.T) {
+	ids := make([]int64, 20)
+	for i := range ids {
+		ids[i] = 136 + int64(i)
+	}
+
+	line, ok := formatWatchDecision("wakeup", watchDecision{
+		UnassignedGoalCount: 20,
+		UnassignedGoalIDs:   ids,
+	})
+	if !ok {
+		t.Fatal("formatWatchDecision returned false, want true")
+	}
+	if strings.Contains(line, "\n") {
+		t.Fatalf("wakeup output contains a newline: %q", line)
+	}
+	const want = "atct wakeup: actionable_goals=0 unassigned_goals=20 unstarted_tasks=0 waiting_answer_tasks=0 untouched_tasks=0 delegated_tasks=0 waiting_answers=0 unassigned=[136,137,138,139,140,+15]"
+	if line != want {
+		t.Fatalf("wakeup output = %q, want %q", line, want)
+	}
+}
+
+func TestWatchDecodesUnassignedGoalFields(t *testing.T) {
+	var decision watchDecision
+	if err := json.Unmarshal([]byte(`{"wakeup_id":"wakeup-unassigned","unassigned_goal_count":2,"unassigned_goal_ids":[136,140]}`), &decision); err != nil {
+		t.Fatalf("json.Unmarshal: %v", err)
+	}
+	if decision.UnassignedGoalCount != 2 {
+		t.Fatalf("unassigned goal count = %d, want 2", decision.UnassignedGoalCount)
+	}
+	if len(decision.UnassignedGoalIDs) != 2 || decision.UnassignedGoalIDs[0] != 136 || decision.UnassignedGoalIDs[1] != 140 {
+		t.Fatalf("unassigned goal IDs = %#v, want [136 140]", decision.UnassignedGoalIDs)
 	}
 }
 
@@ -236,7 +316,7 @@ func TestWatchEmitsWakeupTaskBreakdownSeparatelyFromDecisionCount(t *testing.T) 
 		t.Fatalf("emitWatchDecision: %v", err)
 	}
 
-	want := "atct wakeup: actionable_goals=3 unstarted_tasks=3 waiting_answer_tasks=1 untouched_tasks=2 delegated_tasks=0 waiting_answers=2\n"
+	want := "atct wakeup: actionable_goals=3 unassigned_goals=0 unstarted_tasks=3 waiting_answer_tasks=1 untouched_tasks=2 delegated_tasks=0 waiting_answers=2 unassigned=[]\n"
 	if got := output.String(); got != want {
 		t.Fatalf("wakeup output = %q, want %q", got, want)
 	}
@@ -254,7 +334,7 @@ func TestWatchFormatsDelegatedTaskCountOutsideUnstartedBreakdown(t *testing.T) {
 	if !ok {
 		t.Fatal("formatWatchDecision returned false, want true")
 	}
-	const want = "atct wakeup: actionable_goals=0 unstarted_tasks=3 waiting_answer_tasks=1 untouched_tasks=2 delegated_tasks=2 waiting_answers=4"
+	const want = "atct wakeup: actionable_goals=0 unassigned_goals=0 unstarted_tasks=3 waiting_answer_tasks=1 untouched_tasks=2 delegated_tasks=2 waiting_answers=4 unassigned=[]"
 	if line != want {
 		t.Fatalf("wakeup output = %q, want %q", line, want)
 	}
@@ -277,9 +357,9 @@ func TestWatchEmitsWakeupAgainAfterStateReturns(t *testing.T) {
 		}
 	}
 
-	want := "atct wakeup: actionable_goals=0 unstarted_tasks=0 waiting_answer_tasks=0 untouched_tasks=0 delegated_tasks=0 waiting_answers=0\n" +
-		"atct wakeup: actionable_goals=0 unstarted_tasks=1 waiting_answer_tasks=0 untouched_tasks=0 delegated_tasks=0 waiting_answers=0\n" +
-		"atct wakeup: actionable_goals=0 unstarted_tasks=0 waiting_answer_tasks=0 untouched_tasks=0 delegated_tasks=0 waiting_answers=0\n"
+	want := "atct wakeup: actionable_goals=0 unassigned_goals=0 unstarted_tasks=0 waiting_answer_tasks=0 untouched_tasks=0 delegated_tasks=0 waiting_answers=0 unassigned=[]\n" +
+		"atct wakeup: actionable_goals=0 unassigned_goals=0 unstarted_tasks=1 waiting_answer_tasks=0 untouched_tasks=0 delegated_tasks=0 waiting_answers=0 unassigned=[]\n" +
+		"atct wakeup: actionable_goals=0 unassigned_goals=0 unstarted_tasks=0 waiting_answer_tasks=0 untouched_tasks=0 delegated_tasks=0 waiting_answers=0 unassigned=[]\n"
 	if got := output.String(); got != want {
 		t.Fatalf("wakeup output = %q, want %q", got, want)
 	}

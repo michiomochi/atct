@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -151,6 +152,8 @@ func TestWakeupTrackerPublishesTaskBreakdown(t *testing.T) {
 
 	state := store.WakeupState{
 		ActionableGoalCount:    1,
+		UnassignedGoalCount:    2,
+		UnassignedGoalIDs:      []int64{136, 140},
 		UnstartedTaskCount:     3,
 		WaitingAnswerTaskCount: 1,
 		UntouchedTaskCount:     2,
@@ -192,6 +195,9 @@ func TestWakeupTrackerPublishesTaskBreakdown(t *testing.T) {
 	}
 	if wakeup.DelegatedTaskCount != state.DelegatedTaskCount {
 		t.Fatalf("published delegated task count = %d, want %d", wakeup.DelegatedTaskCount, state.DelegatedTaskCount)
+	}
+	if wakeup.UnassignedGoalCount != state.UnassignedGoalCount || !slices.Equal(wakeup.UnassignedGoalIDs, state.UnassignedGoalIDs) {
+		t.Fatalf("published unassigned goals = %d %#v, want %d %#v", wakeup.UnassignedGoalCount, wakeup.UnassignedGoalIDs, state.UnassignedGoalCount, state.UnassignedGoalIDs)
 	}
 	if total := wakeup.WaitingAnswerTaskCount + wakeup.UntouchedTaskCount; wakeup.UnstartedTaskCount != total {
 		t.Fatalf("published task total = %d, want breakdown sum %d", wakeup.UnstartedTaskCount, total)

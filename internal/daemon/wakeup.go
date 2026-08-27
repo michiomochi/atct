@@ -162,6 +162,8 @@ func (t *wakeupTracker) evaluateWith(ctx context.Context, s *store.Store, now ti
 							WakeupID:               store.NewWakeupID(),
 							ProjectID:              project.ID,
 							ActionableGoalCount:    state.ActionableGoalCount,
+							UnassignedGoalCount:    state.UnassignedGoalCount,
+							UnassignedGoalIDs:      state.UnassignedGoalIDs,
 							UnstartedTaskCount:     state.UnstartedTaskCount,
 							WaitingAnswerTaskCount: state.WaitingAnswerTaskCount,
 							UntouchedTaskCount:     state.UntouchedTaskCount,
