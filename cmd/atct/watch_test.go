@@ -779,6 +779,33 @@ func (w *cancelOnOutput) String() string {
 	return fmt.Sprint(w.buf.String())
 }
 
+func TestEmitWatchEvaluateFailureDeduplicatesByWakeupID(t *testing.T) {
+	var output bytes.Buffer
+	delivered := make(map[watchDeliveryKey]struct{})
+	wakeupDiscrepancyDelivered := make(map[watchWakeupDeliveryKey]struct{})
+	detectionDelivered := make(map[watchDetectionDeliveryKey]struct{})
+
+	for _, payload := range []string{
+		`{"wakeup_id":"failure-1","reason":"database unavailable"}`,
+		`{"wakeup_id":"failure-1","reason":"database unavailable"}`,
+		`{"wakeup_id":"failure-2","reason":"timeout"}`,
+	} {
+		var decision watchDecision
+		if err := json.Unmarshal([]byte(payload), &decision); err != nil {
+			t.Fatalf("json.Unmarshal: %v", err)
+		}
+		if err := emitWatchDecisionWithState(&output, "wakeup.evaluate_failed", decision, delivered, nil, wakeupDiscrepancyDelivered, detectionDelivered); err != nil {
+			t.Fatalf("emitWatchDecision: %v", err)
+		}
+	}
+
+	want := "atct wakeup evaluate failed: database unavailable\n" +
+		"atct wakeup evaluate failed: timeout\n"
+	if got := output.String(); got != want {
+		t.Fatalf("evaluate failure output = %q, want %q", got, want)
+	}
+}
+
 func TestEmitWatchDetectionWritesOneLinePerCondition(t *testing.T) {
 	cases := []struct {
 		event  string
