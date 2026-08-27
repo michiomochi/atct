@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/michiomochi/atct/internal/domain"
 	"github.com/michiomochi/atct/internal/mcpshim"
 	"github.com/michiomochi/atct/internal/store"
 )
@@ -216,6 +217,85 @@ func TestGoalHandoffRoutesOverRPC(t *testing.T) {
 	if !strings.Contains(err.Error(), store.ErrGoalHandoffProjectNotHeld.Error()) {
 		t.Fatalf("unclaimed goal handoff request error = %v, want %v", err, store.ErrGoalHandoffProjectNotHeld)
 	}
+}
+
+func TestDeriveSessionRoleRestoresSubcommanderAfterCompletionRejection(t *testing.T) {
+	fixture := newGoalHandoffRPCTestFixture(t)
+	completion := prepareCompletedGoalHandoffCompletion(t, fixture, "role-rejection-handoff")
+	ctx := context.Background()
+
+	if err := fixture.store.RejectCompletion(ctx, completion.ID, "Please revise the completion report"); err != nil {
+		t.Fatalf("RejectCompletion: %v", err)
+	}
+
+	assignment, err := New(fixture.store).deriveSessionRole(ctx, fixture.receiverID)
+	if err != nil {
+		t.Fatalf("deriveSessionRole after rejection: %v", err)
+	}
+	if assignment.Role != "subcommander" || assignment.GoalID != fixture.claimedGoalID {
+		t.Fatalf("role assignment after rejection = %+v, want subcommander for goal %d", assignment, fixture.claimedGoalID)
+	}
+}
+
+func TestDeriveSessionRoleRemainsExecutorAfterCompletionApproval(t *testing.T) {
+	fixture := newGoalHandoffRPCTestFixture(t)
+	completion := prepareCompletedGoalHandoffCompletion(t, fixture, "role-approval-handoff")
+	ctx := context.Background()
+
+	if _, err := fixture.store.ApproveCompletion(ctx, completion.ID); err != nil {
+		t.Fatalf("ApproveCompletion: %v", err)
+	}
+
+	assignment, err := New(fixture.store).deriveSessionRole(ctx, fixture.receiverID)
+	if err != nil {
+		t.Fatalf("deriveSessionRole after approval: %v", err)
+	}
+	if assignment.Role != "executor" || assignment.GoalID != 0 {
+		t.Fatalf("role assignment after approval = %+v, want executor without a goal", assignment)
+	}
+}
+
+func prepareCompletedGoalHandoffCompletion(t *testing.T, fixture goalHandoffRPCTestFixture, handoffID string) domain.Decision {
+	t.Helper()
+	client := mcpshim.NewClient(fixture.socketPath)
+	ctx := context.Background()
+
+	var requested store.GoalHandoff
+	if err := client.Call(ctx, "goal.handoff.request", map[string]any{
+		"handoff_id": handoffID, "goal_id": fixture.claimedGoalID, "requested_by": fixture.requesterID,
+	}, &requested); err != nil {
+		t.Fatalf("goal.handoff.request: %v", err)
+	}
+
+	var received store.GoalHandoff
+	if err := client.Call(ctx, "goal.handoff.receive", map[string]any{
+		"handoff_id": requested.ID, "goal_id": fixture.claimedGoalID, "received_by": fixture.receiverID,
+	}, &received); err != nil {
+		t.Fatalf("goal.handoff.receive: %v", err)
+	}
+
+	var completed store.GoalHandoff
+	if err := client.Call(ctx, "goal.handoff.complete", map[string]any{
+		"handoff_id": requested.ID, "goal_id": fixture.claimedGoalID, "complete_report": "Role test handoff completion report",
+	}, &completed); err != nil {
+		t.Fatalf("goal.handoff.complete: %v", err)
+	}
+	if completed.CompletedReportAt == nil {
+		t.Fatalf("completed handoff = %#v, want completion timestamp", completed)
+	}
+
+	completion, err := fixture.store.CompleteGoalWithReport(ctx, fixture.claimedGoalID, domain.CompletionReport{
+		WorkDone:    "Role test completion work",
+		NowPossible: "Role test completion possibility",
+		HowToVerify: "Role test completion verification",
+		Surprises:   "Role test completion surprises",
+		NeedsReview: "Role test completion review",
+		NextSteps:   "Role test completion next steps",
+	}, fixture.receiverID)
+	if err != nil {
+		t.Fatalf("CompleteGoalWithReport: %v", err)
+	}
+	return completion
 }
 
 func TestGoalHandoffCompleteByGoalOverRPC(t *testing.T) {
