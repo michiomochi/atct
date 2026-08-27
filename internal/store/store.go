@@ -51,6 +51,10 @@ func requireAgentSessionID(agentSessionID int64) (int64, error) {
 }
 
 func (s *Store) RegisterAgentSession(ctx context.Context, pid int) (int64, error) {
+	return s.RegisterAgentSessionInProject(ctx, pid, 0)
+}
+
+func (s *Store) RegisterAgentSessionInProject(ctx context.Context, pid int, projectID int64) (int64, error) {
 	storedPID := 0
 	startedAt := ""
 	if actualStartedAt, err := processStartedAt(pid); err == nil {
@@ -66,7 +70,9 @@ func (s *Store) RegisterAgentSession(ctx context.Context, pid int) (int64, error
 	defer tx.Rollback()
 
 	queries := sqlcgen.New(s.db).WithTx(tx)
-	agentSessionID, err := queries.RegisterAgentSession(ctx, sqlcgen.RegisterAgentSessionParams{
+	projectIDValue := sql.NullInt64{Int64: projectID, Valid: projectID != 0}
+	agentSessionID, err := queries.RegisterAgentSessionWithProject(ctx, sqlcgen.RegisterAgentSessionWithProjectParams{
+		ProjectID:    projectIDValue,
 		Pid:          int64(storedPID),
 		StartedAt:    startedAt,
 		RegisteredAt: registeredAt,

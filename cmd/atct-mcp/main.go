@@ -54,8 +54,10 @@ func main() {
 	var registerResponse struct {
 		AgentSessionID int64 `json:"agent_session_id"`
 	}
+	cwd, _ := os.Getwd()
 	if err := client.Call(context.Background(), "run.register", map[string]any{
 		"pid": os.Getpid(),
+		"cwd": cwd,
 	}, &registerResponse); err != nil {
 		log.Fatalf("register agent session: %v", err)
 	}
