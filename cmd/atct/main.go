@@ -47,7 +47,6 @@ type cliConfig struct {
 	goalAction         string
 	goalTitle          string
 	goalDescription    string
-	taskIDs            []string
 	roleExpected       string
 	roleExpectedSet    bool
 	roleAgentSessionID string
@@ -63,7 +62,6 @@ var validSubcommands = map[string]bool{
 	"context":     true,
 	"pending":     true,
 	"watch":       true,
-	"claim-check": true,
 	"role":        true,
 	"handoff":     true,
 }
@@ -86,7 +84,6 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "  context [-brief]      Print the current goal context for an AI session")
 	fmt.Fprintln(os.Stderr, "  pending              Print unanswered human decisions for the current project")
 	fmt.Fprintln(os.Stderr, "  watch [-goal string]  Stream human decision events for a Monitor")
-	fmt.Fprintln(os.Stderr, "  claim-check <ids...>|any  Exit 0 only if the tasks are claimed by a running session")
 	fmt.Fprintln(os.Stderr, "  role                 Report the claim-derived role for an agent session")
 	fmt.Fprintln(os.Stderr, "  handoff complete <handoff-id> <task-id>  Report a handoff complete")
 	fmt.Fprintln(os.Stderr, "  handoff yielded <task-id>  Report that the worker yielded")
@@ -225,9 +222,7 @@ func parseArgs(args []string) (cliConfig, error) {
 		description = flags.String("d", "", "goal description")
 	}
 	flags.Parse(rest)
-	if sub == "claim-check" {
-		cfg.taskIDs = flags.Args()
-	} else if len(flags.Args()) > 0 {
+	if len(flags.Args()) > 0 {
 		fmt.Fprintf(os.Stderr, "unexpected argument %q\n", flags.Args()[0])
 		printUsage()
 		return cliConfig{}, errInvalidArgs
@@ -389,12 +384,6 @@ func main() {
 			log.Fatalf("pending: %v", err)
 		}
 		return
-	case "claim-check":
-		code, err := claimCheckCommand(dir, config.taskIDs)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
-		}
-		os.Exit(code)
 	case "role":
 		code, err := runRole(config, dir, exePath)
 		if err != nil {

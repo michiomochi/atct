@@ -95,3 +95,56 @@ atct は GitHub Releases と homebrew cask で公開している道具で、herd
 `claim-check` が通れば素通りさせる、判定できないときは通す）はこの spec のままで、
 実装は dotfiles 側へ渡した。実測した終了コードも残す。依頼書のパスを含まない返信は 0、
 別ツールの呼び出しは 0、claim 無しの委譲は 2、claim 有りは 0。
+
+## 後日: `claim-check` を消した（2026-08-28・ゴール 164）
+
+**上の設計が使っていた `atct claim-check any` を atct から削除した。**
+`## 決定` と置き場を間違えた記録は、当時の設計としてそのまま残す。行ごと消していないのは、
+後から読む人が「無くなった」のか「初めから無かった」のかを区別できるようにするためである。
+
+消した理由:
+
+- **atct のコードの中から呼んでいる箇所が 0 件だった。**唯一の呼び手は dotfiles の
+  `claim-before-delegate.sh:60` で、そのフック自体の廃止が決まっている（dotfiles ゴール 153）
+- **`store.Open` を通る一発 CLI が 1 つ減る。**`store.Open` は `migrateSchema` を通るので、
+  フックが発火するたびに稼働 DB へ移行が当たっていた
+- **判定の中身は消えていない。**`store.ClaimLiveness` は `cmd/atct/pending.go` と
+  `internal/store/wakeup.go` が使い続ける。消えたのは CLI の口だけである
+
+**削除が先に届いてもフックは壊れない**（実測 2026-08-28）。未知のサブコマンドは `parseArgs` が
+弾いて exit 2 を返し、フックは `case "$?" in 1) ;; *) exit 0` なので 2 は素通りする。
+ただし**素通りする間は委譲ガードが黙って無効**になるため、リリースはフック廃止の後に行う。
+
+### 直すより消すほうが正しかった理由（dotfiles ゴール 153 の実測・2026-08-28）
+
+**この spec の門番は、呼び手が居るうちから 2 つの理由で成立していなかった。**
+消す判断の裏付けとして残す。
+
+**1. 版がずれると検査が黙って消える。**同じマシンの同じ日に測った。
+
+    $ for v in 0.57.0 0.58.1 0.59.0; do "$HOME/.atct/bin/atct-$v" claim-check any; echo "exit=$?"; done
+    0.57.0  exit=2  open store: migrate schema: table "tasks" is missing v6 columns: files
+    0.58.1  exit=0
+    0.59.0  exit=0
+
+`claim-check` は「判定できない」を exit 2 で表したが、**スキーマ移行の失敗も同じ 2 に落ちた。**
+呼び手は 2 を「管轄外」と読んで素通りさせる設計なので、**版がずれた瞬間に検査が消える。**
+文言は stderr にしか出ないため、exit code だけを見る呼び手には版ずれだと分からない。
+実際に dotfiles-commander の PATH は 0.57.0、subcommander の PATH は 0.59.0 で、
+**2 台が同じ検査から逆の結果を受け取っていた。**
+
+**2. `any` は門番の述語として成立しない。**
+
+    17:35  claim 無し   claim-check any -> exit=1   同じ入力 -> 遮断
+    17:37  claim 1 件   claim-check any -> exit=0   同じ入力 -> 素通り
+
+**問い合わせと無関係なタスクを 1 件 claim しただけで反転した。**`claim-check` の実装の欠陥
+ではなく、**「このプロジェクトで何か 1 件でも claim されているか」を委譲の可否に使う設計**が
+成立していない。**いま渡そうとしている依頼が claim されているかを見ていない。**
+
+**1 は exit code の割り方を直せば救えるが、2 は述語そのものの問題で、直すには
+「依頼書からタスク ID を読む」機構が新たに必要になる。**呼び手が消えるいま、
+その機構を作る理由が無い。**だから消した。**
+
+**exit 2 が移行失敗を隠す件は `claim-check` 固有ではない**（`atct pending` / `atct role` /
+`atct context` も `store.Open` を通る）。**ゴール 189 の範囲であり、この spec では扱わない。**
