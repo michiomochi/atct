@@ -51,6 +51,7 @@ type watchDecision struct {
 	GoalID                     string  `json:"goal_id"`
 	TaskID                     string  `json:"task_id"`
 	HandoffID                  string  `json:"handoff_id"`
+	WorktreeActivity           string  `json:"worktree_activity"`
 	CompleteReport             string  `json:"complete_report"`
 }
 
@@ -736,6 +737,12 @@ func formatWatchDecision(eventName string, decision watchDecision) (string, bool
 	case "detection.handoff_unreceived":
 		return fmt.Sprintf("atct detection: handoff %s has no receipt", decision.HandoffID), true
 	case "detection.handoff_unreported":
+		switch decision.WorktreeActivity {
+		case "changed":
+			return fmt.Sprintf("atct detection: handoff %s has no completion report, but the goal's worktree changed after receipt", decision.HandoffID), true
+		case "unchanged":
+			return fmt.Sprintf("atct detection: handoff %s has no completion report and the goal's worktree is unchanged since receipt", decision.HandoffID), true
+		}
 		return fmt.Sprintf("atct detection: handoff %s has no completion report", decision.HandoffID), true
 	case "handoff_reported":
 		target := "goal " + decision.GoalID

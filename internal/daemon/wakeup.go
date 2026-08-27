@@ -4,6 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/michiomochi/atct/internal/store"
@@ -187,6 +192,12 @@ projectLoop:
 		recordDetection := func(name string, targetID any, startedAt time.Time, after time.Duration, goalID, taskID int64, handoffID string, decisionID int64) {
 			currentDetectionKeys[detectionTrackerKey(name, targetID)] = struct{}{}
 			if event, ok := t.publishDetectionWithDecision(now, startedAt, after, name, targetID, project.ID, goalID, taskID, handoffID, decisionID); ok {
+				if name == store.EventDetectionHandoffUnreported {
+					if data, ok := event.Data.(store.DetectionEvent); ok {
+						data.WorktreeActivity = handoffWorktreeActivity(ctx, project.RootPath, goalID, startedAt)
+						event.Data = data
+					}
+				}
 				events = append(events, event)
 			}
 		}
@@ -289,6 +300,76 @@ projectLoop:
 		}
 	}
 	return events, nil
+}
+
+// handoffWorktreeActivity uses the same goal-derived worktree path and branch
+// as script/worktree-setup.sh. An empty result means the activity is unknown.
+func handoffWorktreeActivity(ctx context.Context, projectRoot string, goalID int64, receivedAt time.Time) string {
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+
+	goal8 := strconv.FormatInt(goalID, 10)
+	if len(goal8) > 8 {
+		goal8 = goal8[:8]
+	}
+	worktree := filepath.Join(projectRoot, ".worktrees", goal8)
+	info, err := os.Stat(worktree)
+	if err != nil || !info.IsDir() {
+		return ""
+	}
+
+	status, err := runWakeupGit(ctx, worktree, "status", "--porcelain", "-z")
+	if err != nil {
+		return ""
+	}
+	for _, path := range porcelainPaths(string(status)) {
+		if ctx.Err() != nil {
+			return ""
+		}
+		info, err := os.Stat(filepath.Join(worktree, path))
+		if err == nil && info.ModTime().After(receivedAt) {
+			return "changed"
+		}
+	}
+
+	commits, err := runWakeupGit(ctx, worktree, "log", "--format=%ct", "--after="+receivedAt.Format(time.RFC3339Nano), "wt/goal-"+goal8)
+	if err != nil {
+		return ""
+	}
+	for _, value := range strings.Fields(string(commits)) {
+		seconds, err := strconv.ParseInt(value, 10, 64)
+		if err != nil {
+			continue
+		}
+		if time.Unix(seconds, 0).After(receivedAt) {
+			return "changed"
+		}
+	}
+	return "unchanged"
+}
+
+func runWakeupGit(ctx context.Context, worktree string, args ...string) ([]byte, error) {
+	gitArgs := append([]string{"-C", worktree}, args...)
+	return exec.CommandContext(ctx, "git", gitArgs...).Output()
+}
+
+func porcelainPaths(output string) []string {
+	entries := strings.Split(output, "\x00")
+	paths := make([]string, 0, len(entries))
+	for index := 0; index < len(entries); index++ {
+		entry := entries[index]
+		if len(entry) < 4 {
+			continue
+		}
+		paths = append(paths, entry[3:])
+		if entry[0] == 'R' || entry[0] == 'C' || entry[1] == 'R' || entry[1] == 'C' {
+			index++
+			if index < len(entries) && entries[index] != "" {
+				paths = append(paths, entries[index])
+			}
+		}
+	}
+	return paths
 }
 
 func (d *Daemon) runMaintenance(ctx context.Context, tracker *wakeupTracker, now time.Time) {

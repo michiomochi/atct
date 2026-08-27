@@ -64,13 +64,14 @@ type WakeupEvaluateFailedEvent struct {
 // DetectionEvent identifies the project and object that need attention for a
 // condition-specific detection.
 type DetectionEvent struct {
-	DetectionID    string `json:"detection_id"`
-	DecisionID     int64  `json:"decision_id,omitempty"`
-	ProjectID      int64  `json:"project_id"`
-	GoalID         int64  `json:"goal_id,omitempty"`
-	TaskID         int64  `json:"task_id,omitempty"`
-	HandoffID      string `json:"handoff_id,omitempty"`
-	CompleteReport string `json:"complete_report,omitempty"`
+	DetectionID      string `json:"detection_id"`
+	DecisionID       int64  `json:"decision_id,omitempty"`
+	ProjectID        int64  `json:"project_id"`
+	GoalID           int64  `json:"goal_id,omitempty"`
+	TaskID           int64  `json:"task_id,omitempty"`
+	HandoffID        string `json:"handoff_id,omitempty"`
+	WorktreeActivity string `json:"worktree_activity,omitempty"`
+	CompleteReport   string `json:"complete_report,omitempty"`
 }
 
 // KeepaliveEvent lets a watch process distinguish a quiet daemon from a dead
