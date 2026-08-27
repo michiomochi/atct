@@ -6,7 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strconv"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -14,32 +14,13 @@ import (
 const (
 	stopTimeout        = 10 * time.Second
 	watchRegistryDir   = "watchers"
-	watchActiveWarning = "atct watch is running, so the daemon will start again shortly. To keep it stopped, run /atct:stop first."
+	watchActiveWarning = "atct watch is running"
 )
 
-// RegisterWatch records that this process is consuming the daemon's events.
-// Each process gets its own file so one watch exiting does not unregister
-// another watch. A stale file is intentionally left for Stop to warn about.
+// RegisterWatch records a project-wide watch for compatibility with callers
+// that do not provide a scope.
 func RegisterWatch(dir string) (func(), error) {
-	registryDir := filepath.Join(dir, watchRegistryDir)
-	if err := os.MkdirAll(registryDir, 0o755); err != nil {
-		return nil, fmt.Errorf("create watch registry: %w", err)
-	}
-	path := filepath.Join(registryDir, strconv.Itoa(os.Getpid()))
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
-	if err != nil {
-		return nil, fmt.Errorf("create watch registration: %w", err)
-	}
-	if _, err := fmt.Fprintln(file, os.Getpid()); err != nil {
-		_ = file.Close()
-		_ = os.Remove(path)
-		return nil, fmt.Errorf("write watch registration: %w", err)
-	}
-	if err := file.Close(); err != nil {
-		_ = os.Remove(path)
-		return nil, fmt.Errorf("close watch registration: %w", err)
-	}
-	return func() { _ = os.Remove(path) }, nil
+	return RegisterWatchScoped(dir, WatchScope{})
 }
 
 // HasActiveWatch reports whether a watch registration exists. It deliberately
@@ -64,12 +45,28 @@ func HasActiveWatch(dir string) (bool, error) {
 // StopWithWatchWarning is the user-facing stop operation. The warning is
 // advisory only; the daemon is stopped regardless of whether a watch exists.
 func StopWithWatchWarning(cfg Config, stderr io.Writer) (bool, error) {
-	active, err := HasActiveWatch(cfg.Dir)
+	registrations, err := ListWatches(cfg.Dir)
 	if err != nil {
 		return false, err
 	}
-	if active {
-		if _, err := fmt.Fprintln(stderr, watchActiveWarning); err != nil {
+	activeScopes := make([]string, 0, len(registrations))
+	for _, registration := range registrations {
+		if !ProcessAlive(registration.PID) {
+			continue
+		}
+		if registration.Legacy {
+			activeScopes = append(activeScopes, "unknown")
+			continue
+		}
+		if registration.Scope.GoalID == "" {
+			activeScopes = append(activeScopes, "project-wide")
+		} else {
+			activeScopes = append(activeScopes, "goal "+registration.Scope.GoalID)
+		}
+	}
+	if len(activeScopes) > 0 {
+		warning := fmt.Sprintf("%s (%d: %s), so the daemon will start again shortly. To keep it stopped, run /atct:stop first.", watchActiveWarning, len(activeScopes), strings.Join(activeScopes, ", "))
+		if _, err := fmt.Fprintln(stderr, warning); err != nil {
 			return false, fmt.Errorf("write watch warning: %w", err)
 		}
 	}
