@@ -106,14 +106,14 @@ func addGoalHandoffDirect(t *testing.T, s *Store, handoffID string, goalID int64
 				id, goal_id, requested_by, requested_at, request_report,
 				received_by, received_at, completed_report_at, complete_report
 			) VALUES (?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL)
-		`, handoffID, goalID, testSessionRef(requestedBy), now)
+		`, handoffID, goalID, nullableTestSessionRef(requestedBy), now)
 	} else {
 		_, err = s.DB().ExecContext(ctx, `
 			INSERT INTO goal_handoffs (
 				id, goal_id, requested_by, requested_at, request_report,
 				received_by, received_at, completed_report_at, complete_report
 			) VALUES (?, ?, ?, ?, NULL, ?, ?, NULL, NULL)
-		`, handoffID, goalID, testSessionRef(requestedBy), now, testSessionRef(receivedBy), now)
+		`, handoffID, goalID, nullableTestSessionRef(requestedBy), now, nullableTestSessionRef(receivedBy), now)
 	}
 	if err != nil {
 		t.Fatalf("insert direct goal handoff %q failed: %v", handoffID, err)
@@ -359,6 +359,66 @@ func TestCompleteGoalHandoffPublishesReportedEvent(t *testing.T) {
 	}
 }
 
+func TestCompleteGoalHandoffDoesNotPublishSelfClaimReportedEvent(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	goalID := newTestGoal(t, s)
+	addTestAgentSession(t, s, "self-claim-goal")
+	const handoffID = "self-claim-goal-handoff"
+	addGoalHandoffDirect(t, s, handoffID, goalID, "self-claim-goal", "self-claim-goal")
+
+	events, cancel := s.SubscribeEvents()
+	defer cancel()
+	if _, err := s.CompleteGoalHandoff(ctx, handoffID, goalID, "self claim completed"); err != nil {
+		t.Fatalf("CompleteGoalHandoff: %v", err)
+	}
+	expectNoHandoffReported(t, events)
+}
+
+func TestCompleteGoalHandoffSelfClaimCompletes(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	goalID := newTestGoal(t, s)
+	addTestAgentSession(t, s, "self-claim-completes-goal")
+	const handoffID = "self-claim-completes-goal-handoff"
+	addGoalHandoffDirect(t, s, handoffID, goalID, "self-claim-completes-goal", "self-claim-completes-goal")
+
+	completed, err := s.CompleteGoalHandoff(ctx, handoffID, goalID, "self claim completed")
+	if err != nil {
+		t.Fatalf("CompleteGoalHandoff: %v", err)
+	}
+	if completed.CompletedReportAt == nil {
+		t.Fatalf("completed handoff has no completion time: %+v", completed)
+	}
+}
+
+func TestCompleteGoalHandoffPublishesUnknownIdentityReportedEvent(t *testing.T) {
+	for _, tc := range []struct {
+		name                    string
+		requestedBy, receivedBy any
+	}{
+		{name: "unknown requester", requestedBy: nil, receivedBy: "known-goal-receiver"},
+		{name: "unknown receiver", requestedBy: "known-goal-requester", receivedBy: nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newTestStore(t)
+			ctx := context.Background()
+			goalID := newTestGoal(t, s)
+			addTestAgentSession(t, s, "known-goal-requester")
+			addTestAgentSession(t, s, "known-goal-receiver")
+			const handoffID = "unknown-identity-goal-handoff"
+			addGoalHandoffDirect(t, s, handoffID, goalID, tc.requestedBy, tc.receivedBy)
+
+			events, cancel := s.SubscribeEvents()
+			defer cancel()
+			if _, err := s.CompleteGoalHandoff(ctx, handoffID, goalID, "unknown identity completed"); err != nil {
+				t.Fatalf("CompleteGoalHandoff: %v", err)
+			}
+			waitForHandoffReported(t, events)
+		})
+	}
+}
+
 func TestWithdrawActiveGoalDoesNotPublishReportedTaskHandoff(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
@@ -378,16 +438,7 @@ func TestWithdrawActiveGoalDoesNotPublishReportedTaskHandoff(t *testing.T) {
 		t.Fatalf("WithdrawActiveGoal: %v", err)
 	}
 
-	for {
-		select {
-		case event := <-events:
-			if event.Name == EventHandoffReported {
-				t.Fatalf("withdrawal published handoff_reported event: %#v", event)
-			}
-		default:
-			return
-		}
-	}
+	expectNoHandoffReported(t, events)
 }
 
 func TestGoalHandoffCompletionRejectsEmptyReport(t *testing.T) {
@@ -659,7 +710,7 @@ func TestGoalHandoffCompleteByGoalRejectsMultipleReceivedIncomplete(t *testing.T
 	}
 	addGoalHandoffDirect(t, s, "complete-goal-ambiguous-2", goalID, "complete-goal-ambiguous-requester", "complete-goal-ambiguous-receiver")
 
-	_, err := s.CompleteGoalHandoffForGoal(ctx, goalID, "")
+	_, err := s.CompleteGoalHandoffForGoal(ctx, goalID, "ambiguous goal handoff completion fixture")
 	if !errors.Is(err, ErrGoalHandoffAmbiguous) {
 		t.Fatalf("error = %v, want ErrGoalHandoffAmbiguous", err)
 	}

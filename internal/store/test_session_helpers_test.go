@@ -71,3 +71,10 @@ func testSessionRef(value any) int64 {
 		panic(fmt.Sprintf("unsupported test agent session reference %T", value))
 	}
 }
+
+func nullableTestSessionRef(value any) any {
+	if value == nil {
+		return nil
+	}
+	return testSessionRef(value)
+}

@@ -324,6 +324,10 @@ func (s *Store) CompleteGoalHandoff(ctx context.Context, handoffID string, goalI
 	if err != nil {
 		return GoalHandoff{}, err
 	}
+	// Claim locks have no delegate report, so their completion is not reportable.
+	if !handoffIsDelegation(completed.RequestedBy, completed.ReceivedBy) {
+		return completed, nil
+	}
 	goal, err := s.GetGoal(ctx, goalID)
 	if err != nil {
 		// Notification is best-effort; do not turn a successful completion into an error.

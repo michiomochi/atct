@@ -129,14 +129,14 @@ func addTaskHandoffDirect(t *testing.T, s *Store, handoffID string, taskID int64
 				id, task_id, requested_by, requested_at, request_report,
 				received_by, received_at, completed_report_at, complete_report
 			) VALUES (?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL)
-		`, handoffID, taskID, testSessionRef(requestedBy), now)
+		`, handoffID, taskID, nullableTestSessionRef(requestedBy), now)
 	} else {
 		_, err = s.DB().ExecContext(ctx, `
 			INSERT INTO task_handoffs (
 				id, task_id, requested_by, requested_at, request_report,
 				received_by, received_at, completed_report_at, complete_report
 			) VALUES (?, ?, ?, ?, NULL, ?, ?, NULL, NULL)
-		`, handoffID, taskID, testSessionRef(requestedBy), now, testSessionRef(receivedBy), now)
+		`, handoffID, taskID, nullableTestSessionRef(requestedBy), now, nullableTestSessionRef(receivedBy), now)
 	}
 	if err != nil {
 		t.Fatalf("insert direct task handoff %q failed: %v", handoffID, err)
@@ -162,6 +162,21 @@ func waitForHandoffReported(t *testing.T, events <-chan DecisionEvent) Detection
 		t.Fatal("timed out waiting for handoff_reported event")
 	}
 	return DetectionEvent{}
+}
+
+func expectNoHandoffReported(t *testing.T, events <-chan DecisionEvent) {
+	t.Helper()
+
+	for {
+		select {
+		case event := <-events:
+			if event.Name == EventHandoffReported {
+				t.Fatalf("unexpected handoff_reported event: %#v", event)
+			}
+		default:
+			return
+		}
+	}
 }
 
 func TestTaskHandoffRequestReceiveAndComplete(t *testing.T) {
@@ -275,6 +290,66 @@ func TestCompleteTaskHandoffPublishesReportedEvent(t *testing.T) {
 	}
 	if detection.DetectionID == "" || detection.ProjectID != goal.ProjectID || detection.GoalID != goalID || detection.TaskID != taskID || detection.HandoffID != handoffID || detection.CompleteReport != report {
 		t.Fatalf("reported detection = %+v, want project=%d goal=%d task=%d handoff=%q report=%q", detection, goal.ProjectID, goalID, taskID, handoffID, report)
+	}
+}
+
+func TestCompleteTaskHandoffDoesNotPublishSelfClaimReportedEvent(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	taskID := addTestTasks(t, s, 1)[0]
+	addTestAgentSession(t, s, "self-claim-task")
+	const handoffID = "self-claim-task-handoff"
+	addTaskHandoffDirect(t, s, handoffID, taskID, "self-claim-task", "self-claim-task")
+
+	events, cancel := s.SubscribeEvents()
+	defer cancel()
+	if _, err := s.CompleteTaskHandoff(ctx, handoffID, taskID, "self claim completed"); err != nil {
+		t.Fatalf("CompleteTaskHandoff: %v", err)
+	}
+	expectNoHandoffReported(t, events)
+}
+
+func TestCompleteTaskHandoffSelfClaimCompletes(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	taskID := addTestTasks(t, s, 1)[0]
+	addTestAgentSession(t, s, "self-claim-completes-task")
+	const handoffID = "self-claim-completes-task-handoff"
+	addTaskHandoffDirect(t, s, handoffID, taskID, "self-claim-completes-task", "self-claim-completes-task")
+
+	completed, err := s.CompleteTaskHandoff(ctx, handoffID, taskID, "self claim completed")
+	if err != nil {
+		t.Fatalf("CompleteTaskHandoff: %v", err)
+	}
+	if completed.CompletedReportAt == nil {
+		t.Fatalf("completed handoff has no completion time: %+v", completed)
+	}
+}
+
+func TestCompleteTaskHandoffPublishesUnknownIdentityReportedEvent(t *testing.T) {
+	for _, tc := range []struct {
+		name                    string
+		requestedBy, receivedBy any
+	}{
+		{name: "unknown requester", requestedBy: nil, receivedBy: "known-task-receiver"},
+		{name: "unknown receiver", requestedBy: "known-task-requester", receivedBy: nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newTestStore(t)
+			ctx := context.Background()
+			taskID := addTestTasks(t, s, 1)[0]
+			addTestAgentSession(t, s, "known-task-requester")
+			addTestAgentSession(t, s, "known-task-receiver")
+			const handoffID = "unknown-identity-task-handoff"
+			addTaskHandoffDirect(t, s, handoffID, taskID, tc.requestedBy, tc.receivedBy)
+
+			events, cancel := s.SubscribeEvents()
+			defer cancel()
+			if _, err := s.CompleteTaskHandoff(ctx, handoffID, taskID, "unknown identity completed"); err != nil {
+				t.Fatalf("CompleteTaskHandoff: %v", err)
+			}
+			waitForHandoffReported(t, events)
+		})
 	}
 }
 
@@ -486,7 +561,7 @@ func TestTaskHandoffCompleteByTaskRejectsMultipleReceivedIncomplete(t *testing.T
 	}
 	addTaskHandoffDirect(t, s, "complete-task-ambiguous-2", taskID, "complete-task-ambiguous-requester", "complete-task-ambiguous-receiver")
 
-	_, err := s.CompleteTaskHandoffForTask(ctx, taskID, "")
+	_, err := s.CompleteTaskHandoffForTask(ctx, taskID, "ambiguous task handoff completion fixture")
 	if !errors.Is(err, ErrTaskHandoffAmbiguous) {
 		t.Fatalf("error = %v, want ErrTaskHandoffAmbiguous", err)
 	}

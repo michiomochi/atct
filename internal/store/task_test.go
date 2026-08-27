@@ -756,7 +756,7 @@ func setupTaskContentGoalHandoff(t *testing.T, s *Store, goalID int64, label str
 func setupTaskContentGoalHolderWithTaskHandoff(t *testing.T, s *Store, goalID, taskID int64, label string) int64 {
 	t.Helper()
 	setupTaskContentTaskHandoff(t, s, taskID, label)
-	if _, err := s.CompleteGoalHandoffForGoal(context.Background(), goalID, ""); err != nil {
+	if _, err := s.CompleteGoalHandoffForGoal(context.Background(), goalID, "closing goal handoff to recreate the fixture"); err != nil {
 		t.Fatalf("CompleteGoalHandoffForGoal: %v", err)
 	}
 	return setupTaskContentGoalHandoff(t, s, goalID, label)
