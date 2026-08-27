@@ -77,12 +77,12 @@ func newUnappliedDecisionScopeRPCTestFixture(t *testing.T) unappliedDecisionScop
 		t.Fatalf("ReceiveGoalHandoff: %v", err)
 	}
 
-	taskA, err := s.DeclareTasks(ctx, goalA.ID, "fixture", "decision-scope-task-a", []string{"task A"}, []string{"task A description"}, [][]string{{}})
+	taskA, err := s.DeclareTasks(ctx, goalA.ID, "fixture", "decision-scope-task-a", []string{"task A"}, []string{"task A description"})
 	if err != nil {
 		s.Close()
 		t.Fatalf("DeclareTasks A: %v", err)
 	}
-	taskB, err := s.DeclareTasks(ctx, goalB.ID, "fixture", "decision-scope-task-b", []string{"task B"}, []string{"task B description"}, [][]string{{}})
+	taskB, err := s.DeclareTasks(ctx, goalB.ID, "fixture", "decision-scope-task-b", []string{"task B"}, []string{"task B description"})
 	if err != nil {
 		s.Close()
 		t.Fatalf("DeclareTasks B: %v", err)
@@ -272,7 +272,6 @@ func TestTaskDeclareForSubcommanderExcludesOtherGoalDecisions(t *testing.T) {
 		"idempotency_key":           "rpc-subcommander-task",
 		"titles":                    []string{"subcommander task"},
 		"descriptions":              []string{"subcommander task description"},
-		"files":                     [][]string{{}},
 		"agent_session_id":          f.subcommanderSessionID,
 		"include_unapplied_answers": true,
 	})
@@ -317,7 +316,6 @@ func TestTaskDeclareForCommanderKeepsProjectWideDecisions(t *testing.T) {
 		"idempotency_key":           "rpc-commander-task",
 		"titles":                    []string{"commander task"},
 		"descriptions":              []string{"commander task description"},
-		"files":                     [][]string{{}},
 		"agent_session_id":          f.commanderSessionID,
 		"include_unapplied_answers": true,
 	})
@@ -343,7 +341,6 @@ func TestTaskDeclareWithoutSessionKeepsProjectWideDecisions(t *testing.T) {
 		"idempotency_key":           "rpc-no-session-task",
 		"titles":                    []string{"no-session task"},
 		"descriptions":              []string{"no-session task description"},
-		"files":                     [][]string{{}},
 		"include_unapplied_answers": true,
 	})
 	assertDecisionSet(t, notificationIDs(t, result), f.decisionAID, f.decisionBID)

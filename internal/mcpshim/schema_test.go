@@ -192,11 +192,7 @@ func TestRegisterPublishesTwentyFourToolsWithFlexibleOutputSchema(t *testing.T) 
 			"task_id": "task-1", "title": "updated title",
 		}},
 		{name: "atct_task_update_content", args: map[string]any{
-			"task_id": "task-1", "files": []string{"internal/mcpshim/tools.go"},
-		}},
-		{name: "atct_task_update_content", args: map[string]any{
 			"task_id": "task-1", "title": "updated title", "description": "updated task",
-			"files": []string{"internal/mcpshim/tools.go"},
 		}},
 		{name: "atct_task_declare", args: map[string]any{
 			"goal_id": "goal-1", "titles": []string{"task"},
@@ -370,7 +366,7 @@ func TestTaskUpdateContentOmitsUnspecifiedOptionalParameters(t *testing.T) {
 	if got := call.params["include_unapplied_answers"]; got != true {
 		t.Errorf("include_unapplied_answers = %#v, want true", got)
 	}
-	for _, field := range []string{"title", "files"} {
+	for _, field := range []string{"title"} {
 		if _, ok := call.params[field]; ok {
 			t.Errorf("RPC params unexpectedly included %q", field)
 		}

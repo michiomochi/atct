@@ -177,10 +177,10 @@ func TestListTasksUsesSortOrderAndIDAsTieBreakers(t *testing.T) {
 		t.Helper()
 		_, err := s.DB().ExecContext(ctx, `
 INSERT INTO tasks (
-  id, goal_id, title, description, status, agent, files, sort_order, declare_key,
+  id, goal_id, title, description, status, agent, sort_order, declare_key,
   created_at, updated_at
 )
-VALUES (?, ?, ?, ?, 'todo', '', '[]', ?, ?, ?, ?)`,
+	VALUES (?, ?, ?, ?, 'todo', '', ?, ?, ?, ?)`,
 			id, goalID, title, "Verify the stable sort-order ordering for this fixture.", sortOrder, declareKey, createdAt, createdAt)
 		if err != nil {
 			t.Fatalf("insert task %d: %v", id, err)
@@ -448,10 +448,10 @@ func TestDeclareTasksListTasksJSONOmitsDeclared(t *testing.T) {
 	}
 }
 
-func declareOneTaskWithFiles(t *testing.T, s *Store, goalID int64, key, title string, files []string) int64 {
+func declareOneTask(t *testing.T, s *Store, goalID int64, key, title string) int64 {
 	t.Helper()
-	description := "Complete the task titled " + title + " and verify its declared files."
-	tasks, err := s.DeclareTasks(context.Background(), goalID, "codex", key, []string{title}, []string{description}, [][]string{files})
+	description := "Complete the task titled " + title + "."
+	tasks, err := s.DeclareTasks(context.Background(), goalID, "codex", key, []string{title}, []string{description})
 	if err != nil {
 		t.Fatalf("DeclareTasks: %v", err)
 	}
@@ -474,8 +474,8 @@ func setTaskContentStatus(t *testing.T, s *Store, taskID int64, status domain.Ta
 func TestUpdateTaskContentAllowsTodo(t *testing.T) {
 	s := newTestStore(t)
 	goalID := newTestGoal(t, s)
-	firstID := declareOneTaskWithFiles(t, s, goalID, "content-todo-1", "first todo", nil)
-	secondID := declareOneTaskWithFiles(t, s, goalID, "content-todo-2", "second todo", nil)
+	firstID := declareOneTask(t, s, goalID, "content-todo-1", "first todo")
+	secondID := declareOneTask(t, s, goalID, "content-todo-2", "second todo")
 
 	wants := map[int64]string{
 		firstID:  "updated first todo description",
@@ -483,7 +483,7 @@ func TestUpdateTaskContentAllowsTodo(t *testing.T) {
 	}
 	for taskID, want := range wants {
 		description := want
-		updated, err := s.UpdateTaskContent(context.Background(), taskID, nil, &description, nil)
+		updated, err := s.UpdateTaskContent(context.Background(), taskID, nil, &description)
 		if err != nil {
 			t.Fatalf("UpdateTaskContent(%d): %v", taskID, err)
 		}
@@ -496,8 +496,8 @@ func TestUpdateTaskContentAllowsTodo(t *testing.T) {
 func TestUpdateTaskContentAllowsDoing(t *testing.T) {
 	s := newTestStore(t)
 	goalID := newTestGoal(t, s)
-	firstID := declareOneTaskWithFiles(t, s, goalID, "content-doing-1", "first doing", nil)
-	secondID := declareOneTaskWithFiles(t, s, goalID, "content-doing-2", "second doing", nil)
+	firstID := declareOneTask(t, s, goalID, "content-doing-1", "first doing")
+	secondID := declareOneTask(t, s, goalID, "content-doing-2", "second doing")
 	setTaskContentStatus(t, s, firstID, domain.TaskStatus("doing"))
 	setTaskContentStatus(t, s, secondID, domain.TaskStatus("doing"))
 
@@ -507,7 +507,7 @@ func TestUpdateTaskContentAllowsDoing(t *testing.T) {
 	}
 	for taskID, want := range wants {
 		description := want
-		updated, err := s.UpdateTaskContent(context.Background(), taskID, nil, &description, nil)
+		updated, err := s.UpdateTaskContent(context.Background(), taskID, nil, &description)
 		if err != nil {
 			t.Fatalf("UpdateTaskContent(%d): %v", taskID, err)
 		}
@@ -521,8 +521,7 @@ func TestUpdateTaskContentUpdatesTitleOnly(t *testing.T) {
 	s := newTestStore(t)
 	goalID := newTestGoal(t, s)
 	const originalTitle = "original title"
-	originalFiles := []string{"old.go"}
-	taskID := declareOneTaskWithFiles(t, s, goalID, "content-title-only", originalTitle, originalFiles)
+	taskID := declareOneTask(t, s, goalID, "content-title-only", originalTitle)
 	tasks, err := s.ListTasks(context.Background(), goalID)
 	if err != nil {
 		t.Fatalf("ListTasks: %v", err)
@@ -530,41 +529,19 @@ func TestUpdateTaskContentUpdatesTitleOnly(t *testing.T) {
 	original := tasks[0]
 	newTitle := "updated title"
 
-	updated, err := s.UpdateTaskContent(context.Background(), taskID, &newTitle, nil, nil)
+	updated, err := s.UpdateTaskContent(context.Background(), taskID, &newTitle, nil)
 	if err != nil {
 		t.Fatalf("UpdateTaskContent: %v", err)
 	}
-	if updated.Title != newTitle || updated.Description != original.Description || !reflect.DeepEqual(updated.Files, original.Files) {
+	if updated.Title != newTitle || updated.Description != original.Description {
 		t.Fatalf("updated task = %+v, want only title changed from %+v", updated, original)
-	}
-}
-
-func TestUpdateTaskContentUpdatesFilesOnly(t *testing.T) {
-	s := newTestStore(t)
-	goalID := newTestGoal(t, s)
-	originalFiles := []string{"old.go"}
-	taskID := declareOneTaskWithFiles(t, s, goalID, "content-files-only", "original title", originalFiles)
-	tasks, err := s.ListTasks(context.Background(), goalID)
-	if err != nil {
-		t.Fatalf("ListTasks: %v", err)
-	}
-	original := tasks[0]
-	newFiles := []string{"new.go", "new_test.go"}
-
-	updated, err := s.UpdateTaskContent(context.Background(), taskID, nil, nil, &newFiles)
-	if err != nil {
-		t.Fatalf("UpdateTaskContent: %v", err)
-	}
-	if !reflect.DeepEqual(updated.Files, newFiles) || updated.Title != original.Title || updated.Description != original.Description {
-		t.Fatalf("updated task = %+v, want only files changed from %+v", updated, original)
 	}
 }
 
 func TestUpdateTaskContentPreservesOmittedFields(t *testing.T) {
 	s := newTestStore(t)
 	goalID := newTestGoal(t, s)
-	originalFiles := []string{"old.go"}
-	taskID := declareOneTaskWithFiles(t, s, goalID, "content-partial", "original title", originalFiles)
+	taskID := declareOneTask(t, s, goalID, "content-partial", "original title")
 	tasks, err := s.ListTasks(context.Background(), goalID)
 	if err != nil {
 		t.Fatalf("ListTasks: %v", err)
@@ -572,11 +549,11 @@ func TestUpdateTaskContentPreservesOmittedFields(t *testing.T) {
 	original := tasks[0]
 	newDescription := "updated description only"
 
-	updated, err := s.UpdateTaskContent(context.Background(), taskID, nil, &newDescription, nil)
+	updated, err := s.UpdateTaskContent(context.Background(), taskID, nil, &newDescription)
 	if err != nil {
 		t.Fatalf("UpdateTaskContent: %v", err)
 	}
-	if updated.Description != newDescription || updated.Title != original.Title || !reflect.DeepEqual(updated.Files, original.Files) {
+	if updated.Description != newDescription || updated.Title != original.Title {
 		t.Fatalf("updated task = %+v, want description changed and omitted fields preserved from %+v", updated, original)
 	}
 }
@@ -584,14 +561,14 @@ func TestUpdateTaskContentPreservesOmittedFields(t *testing.T) {
 func TestUpdateTaskContentRejectsDone(t *testing.T) {
 	s := newTestStore(t)
 	goalID := newTestGoal(t, s)
-	firstID := declareOneTaskWithFiles(t, s, goalID, "content-done-1", "first done", nil)
-	secondID := declareOneTaskWithFiles(t, s, goalID, "content-done-2", "second done", nil)
+	firstID := declareOneTask(t, s, goalID, "content-done-1", "first done")
+	secondID := declareOneTask(t, s, goalID, "content-done-2", "second done")
 	setTaskContentStatus(t, s, firstID, domain.TaskDone)
 	setTaskContentStatus(t, s, secondID, domain.TaskDone)
 
 	for _, taskID := range []int64{firstID, secondID} {
 		title := "must not update"
-		if _, err := s.UpdateTaskContent(context.Background(), taskID, &title, nil, nil); !errors.Is(err, ErrTaskNotEditable) {
+		if _, err := s.UpdateTaskContent(context.Background(), taskID, &title, nil); !errors.Is(err, ErrTaskNotEditable) {
 			t.Fatalf("UpdateTaskContent(%d) error = %v, want ErrTaskNotEditable", taskID, err)
 		}
 	}
@@ -600,14 +577,14 @@ func TestUpdateTaskContentRejectsDone(t *testing.T) {
 func TestUpdateTaskContentRejectsDropped(t *testing.T) {
 	s := newTestStore(t)
 	goalID := newTestGoal(t, s)
-	firstID := declareOneTaskWithFiles(t, s, goalID, "content-dropped-1", "first dropped", nil)
-	secondID := declareOneTaskWithFiles(t, s, goalID, "content-dropped-2", "second dropped", nil)
+	firstID := declareOneTask(t, s, goalID, "content-dropped-1", "first dropped")
+	secondID := declareOneTask(t, s, goalID, "content-dropped-2", "second dropped")
 	setTaskContentStatus(t, s, firstID, domain.TaskDropped)
 	setTaskContentStatus(t, s, secondID, domain.TaskDropped)
 
 	for _, taskID := range []int64{firstID, secondID} {
 		title := "must not update"
-		if _, err := s.UpdateTaskContent(context.Background(), taskID, &title, nil, nil); !errors.Is(err, ErrTaskNotEditable) {
+		if _, err := s.UpdateTaskContent(context.Background(), taskID, &title, nil); !errors.Is(err, ErrTaskNotEditable) {
 			t.Fatalf("UpdateTaskContent(%d) error = %v, want ErrTaskNotEditable", taskID, err)
 		}
 	}
@@ -616,11 +593,11 @@ func TestUpdateTaskContentRejectsDropped(t *testing.T) {
 func TestUpdateTaskContentErrorIncludesStatus(t *testing.T) {
 	s := newTestStore(t)
 	goalID := newTestGoal(t, s)
-	taskID := declareOneTaskWithFiles(t, s, goalID, "content-error-status", "done task", nil)
+	taskID := declareOneTask(t, s, goalID, "content-error-status", "done task")
 	setTaskContentStatus(t, s, taskID, domain.TaskDone)
 	title := "must not update"
 
-	_, err := s.UpdateTaskContent(context.Background(), taskID, &title, nil, nil)
+	_, err := s.UpdateTaskContent(context.Background(), taskID, &title, nil)
 	if err == nil {
 		t.Fatal("UpdateTaskContent unexpectedly succeeded for done task")
 	}
@@ -634,7 +611,7 @@ func TestUpdateTaskContentReturnsNotFound(t *testing.T) {
 	missingID := int64(0)
 	description := "updated description"
 
-	if _, err := s.UpdateTaskContent(context.Background(), missingID, nil, &description, nil); !errors.Is(err, ErrTaskNotFound) {
+	if _, err := s.UpdateTaskContent(context.Background(), missingID, nil, &description); !errors.Is(err, ErrTaskNotFound) {
 		t.Fatalf("UpdateTaskContent error = %v, want ErrTaskNotFound", err)
 	}
 }
@@ -642,13 +619,13 @@ func TestUpdateTaskContentReturnsNotFound(t *testing.T) {
 func TestUpdateTaskContentRejectsEmptyUpdate(t *testing.T) {
 	s := newTestStore(t)
 	goalID := newTestGoal(t, s)
-	taskID := declareOneTaskWithFiles(t, s, goalID, "content-empty", "original title", []string{"old.go"})
+	taskID := declareOneTask(t, s, goalID, "content-empty", "original title")
 	before, err := s.ListTasks(context.Background(), goalID)
 	if err != nil {
 		t.Fatalf("ListTasks before: %v", err)
 	}
 
-	if _, err := s.UpdateTaskContent(context.Background(), taskID, nil, nil, nil); err == nil {
+	if _, err := s.UpdateTaskContent(context.Background(), taskID, nil, nil); err == nil {
 		t.Fatal("UpdateTaskContent unexpectedly succeeded without fields")
 	}
 	after, err := s.ListTasks(context.Background(), goalID)
@@ -660,45 +637,11 @@ func TestUpdateTaskContentRejectsEmptyUpdate(t *testing.T) {
 	}
 }
 
-func TestDeclareTasksPersistsFiles(t *testing.T) {
+func TestClaimTaskAllowsFormerlyOverlappingFilesAcrossAgentSessions(t *testing.T) {
 	s := newTestStore(t)
 	goalID := newTestGoal(t, s)
-	want := []string{"internal/store/task.go", "internal/domain/model.go"}
-	taskID := declareOneTaskWithFiles(t, s, goalID, "files-1", "declare files", want)
-
-	tasks, err := s.ListTasks(context.Background(), goalID)
-	if err != nil {
-		t.Fatalf("ListTasks: %v", err)
-	}
-	if len(tasks) != 1 || tasks[0].ID != taskID {
-		t.Fatalf("ListTasks returned %+v, want task %d", tasks, taskID)
-	}
-	if !reflect.DeepEqual(tasks[0].Files, want) {
-		t.Fatalf("task files = %#v, want %#v", tasks[0].Files, want)
-	}
-}
-
-func TestClaimTaskRejectsOverlappingFilesAcrossAgentSessions(t *testing.T) {
-	s := newTestStore(t)
-	goalID := newTestGoal(t, s)
-	firstID := declareOneTaskWithFiles(t, s, goalID, "conflict-1", "first", []string{"internal/store/task.go"})
-	secondID := declareOneTaskWithFiles(t, s, goalID, "conflict-2", "second", []string{"internal/store/task.go"})
-	addTestAgentSession(t, s, "run-1")
-	addTestAgentSession(t, s, "run-2")
-
-	if _, err := s.ClaimTask(context.Background(), firstID, testSessionID("run-1")); err != nil {
-		t.Fatalf("first ClaimTask: %v", err)
-	}
-	if _, err := s.ClaimTask(context.Background(), secondID, testSessionID("run-2")); !errors.Is(err, ErrTaskFileConflict) {
-		t.Fatalf("second ClaimTask error = %v, want ErrTaskFileConflict", err)
-	}
-}
-
-func TestClaimTaskAllowsNonOverlappingFilesAcrossAgentSessions(t *testing.T) {
-	s := newTestStore(t)
-	goalID := newTestGoal(t, s)
-	firstID := declareOneTaskWithFiles(t, s, goalID, "non-overlap-1", "first", []string{"internal/store/task.go"})
-	secondID := declareOneTaskWithFiles(t, s, goalID, "non-overlap-2", "second", []string{"internal/store/schema.go"})
+	firstID := declareOneTask(t, s, goalID, "former-overlap-1", "first")
+	secondID := declareOneTask(t, s, goalID, "former-overlap-2", "second")
 	addTestAgentSession(t, s, "run-1")
 	addTestAgentSession(t, s, "run-2")
 
@@ -709,43 +652,11 @@ func TestClaimTaskAllowsNonOverlappingFilesAcrossAgentSessions(t *testing.T) {
 		t.Fatalf("second ClaimTask: %v", err)
 	}
 }
-
-func TestClaimTaskAllowsOverlappingFilesForSameAgentSession(t *testing.T) {
-	s := newTestStore(t)
-	goalID := newTestGoal(t, s)
-	firstID := declareOneTaskWithFiles(t, s, goalID, "same-run-1", "first", []string{"internal/store/task.go"})
-	secondID := declareOneTaskWithFiles(t, s, goalID, "same-run-2", "second", []string{"internal/store/task.go"})
-	addTestAgentSession(t, s, "run-1")
-
-	if _, err := s.ClaimTask(context.Background(), firstID, testSessionID("run-1")); err != nil {
-		t.Fatalf("first ClaimTask: %v", err)
-	}
-	if _, err := s.ClaimTask(context.Background(), secondID, testSessionID("run-1")); err != nil {
-		t.Fatalf("same-run ClaimTask: %v", err)
-	}
-}
-
-func TestClaimTaskIgnoresUndeclaredFiles(t *testing.T) {
-	s := newTestStore(t)
-	goalID := newTestGoal(t, s)
-	firstID := declareOneTaskWithFiles(t, s, goalID, "empty-files-1", "first", nil)
-	secondID := declareOneTaskWithFiles(t, s, goalID, "empty-files-2", "second", []string{"internal/store/task.go"})
-	addTestAgentSession(t, s, "run-1")
-	addTestAgentSession(t, s, "run-2")
-
-	if _, err := s.ClaimTask(context.Background(), firstID, testSessionID("run-1")); err != nil {
-		t.Fatalf("first ClaimTask: %v", err)
-	}
-	if _, err := s.ClaimTask(context.Background(), secondID, testSessionID("run-2")); err != nil {
-		t.Fatalf("second ClaimTask: %v", err)
-	}
-}
-
 func TestClaimTaskUsesSelfHandoffWithoutWritingClaimedBy(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	goalID := newTestGoal(t, s)
-	taskID := declareOneTaskWithFiles(t, s, goalID, "self-handoff", "self handoff", nil)
+	taskID := declareOneTask(t, s, goalID, "self-handoff", "self handoff")
 	const ownerLabel = "task-handoff-owner"
 	const nextOwnerLabel = "task-handoff-next-owner"
 	ownerID := registerNamedTestAgentSession(t, s, ownerLabel, os.Getpid())
@@ -864,128 +775,7 @@ func TestClaimGoalUsesSelfHandoffWithoutWritingClaimedBy(t *testing.T) {
 	}
 }
 
-func TestClaimTaskIgnoresTerminalClaims(t *testing.T) {
-	for _, status := range []string{"done", "dropped"} {
-		t.Run(status, func(t *testing.T) {
-			s := newTestStore(t)
-			goalID := newTestGoal(t, s)
-			ownerID := declareOneTaskWithFiles(t, s, goalID, "terminal-owner-"+status, "owner", []string{"internal/store/task.go"})
-			candidateID := declareOneTaskWithFiles(t, s, goalID, "terminal-candidate-"+status, "candidate", []string{"internal/store/task.go"})
-			addTestAgentSession(t, s, "run-owner")
-			addTestAgentSession(t, s, "run-candidate")
-
-			if _, err := s.ClaimTask(context.Background(), ownerID, testSessionID("run-owner")); err != nil {
-				t.Fatalf("owner ClaimTask: %v", err)
-			}
-			if _, err := s.DB().Exec(`UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?`, status, time.Now().UTC().Format(time.RFC3339Nano), ownerID); err != nil {
-				t.Fatalf("mark owner %s: %v", status, err)
-			}
-			if _, err := s.ClaimTask(context.Background(), candidateID, testSessionID("run-candidate")); err != nil {
-				t.Fatalf("candidate ClaimTask: %v", err)
-			}
-		})
-	}
-}
-
-func TestClaimTaskConflictErrorNamesTaskAndFile(t *testing.T) {
-	s := newTestStore(t)
-	goalID := newTestGoal(t, s)
-	ownerID := declareOneTaskWithFiles(t, s, goalID, "error-owner", "owner task", []string{"internal/store/task.go"})
-	candidateID := declareOneTaskWithFiles(t, s, goalID, "error-candidate", "candidate task", []string{"internal/store/task.go"})
-	addTestAgentSession(t, s, "run-owner")
-	addTestAgentSession(t, s, "run-candidate")
-
-	if _, err := s.ClaimTask(context.Background(), ownerID, testSessionID("run-owner")); err != nil {
-		t.Fatalf("owner ClaimTask: %v", err)
-	}
-	_, err := s.ClaimTask(context.Background(), candidateID, testSessionID("run-candidate"))
-	if !errors.Is(err, ErrTaskFileConflict) {
-		t.Fatalf("ClaimTask error = %v, want ErrTaskFileConflict", err)
-	}
-	for _, want := range []string{fmt.Sprintf("%d", ownerID), "owner task", "internal/store/task.go"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Fatalf("ClaimTask error %q does not contain %q", err, want)
-		}
-	}
-}
-
-func TestClaimTaskConflictErrorReturnsClaimableCandidates(t *testing.T) {
-	s := newTestStore(t)
-	goalID := newTestGoal(t, s)
-	ownerID := declareOneTaskWithFiles(t, s, goalID, "candidate-owner", "owner task", []string{"internal/store/task.go"})
-	blockedID := declareOneTaskWithFiles(t, s, goalID, "candidate-blocked", "blocked alternative", []string{"internal/store/task.go"})
-	alternativeID := declareOneTaskWithFiles(t, s, goalID, "candidate-safe", "safe alternative", []string{"internal/store/schema.go"})
-	targetID := declareOneTaskWithFiles(t, s, goalID, "candidate-target", "target task", []string{"internal/store/task.go"})
-	addTestAgentSession(t, s, "run-owner")
-	addTestAgentSession(t, s, "run-target")
-
-	if _, err := s.ClaimTask(context.Background(), ownerID, testSessionID("run-owner")); err != nil {
-		t.Fatalf("owner ClaimTask: %v", err)
-	}
-	_, err := s.ClaimTask(context.Background(), targetID, testSessionID("run-target"))
-	if !errors.Is(err, ErrTaskFileConflict) {
-		t.Fatalf("ClaimTask error = %v, want ErrTaskFileConflict", err)
-	}
-	for _, want := range []string{fmt.Sprintf("%d", alternativeID), "safe alternative", "alternatives"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Fatalf("ClaimTask error %q does not contain %q", err, want)
-		}
-	}
-	if strings.Contains(err.Error(), fmt.Sprintf("%d", blockedID)) {
-		t.Fatalf("ClaimTask error %q includes a conflicting alternative %d", err, blockedID)
-	}
-}
-
-func TestClaimTaskConflictCandidatesAreClaimable(t *testing.T) {
-	s := newTestStore(t)
-	goalID := newTestGoal(t, s)
-	ownerID := declareOneTaskWithFiles(t, s, goalID, "claimable-owner", "owner task", []string{"internal/store/task.go"})
-	targetID := declareOneTaskWithFiles(t, s, goalID, "claimable-target", "target task", []string{"internal/store/task.go"})
-	fileAlternativeID := declareOneTaskWithFiles(t, s, goalID, "claimable-file", "file alternative", []string{"internal/store/schema.go"})
-	emptyAlternativeID := declareOneTaskWithFiles(t, s, goalID, "claimable-empty", "empty alternative", nil)
-	addTestAgentSession(t, s, "run-owner")
-	addTestAgentSession(t, s, "run-target")
-
-	if _, err := s.ClaimTask(context.Background(), ownerID, testSessionID("run-owner")); err != nil {
-		t.Fatalf("owner ClaimTask: %v", err)
-	}
-	_, err := s.ClaimTask(context.Background(), targetID, testSessionID("run-target"))
-	if !errors.Is(err, ErrTaskFileConflict) {
-		t.Fatalf("ClaimTask error = %v, want ErrTaskFileConflict", err)
-	}
-	for _, want := range []string{fmt.Sprintf("%d", fileAlternativeID), "file alternative", fmt.Sprintf("%d", emptyAlternativeID), "empty alternative"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Fatalf("ClaimTask error %q does not contain candidate %q", err, want)
-		}
-	}
-	for _, taskID := range []int64{fileAlternativeID, emptyAlternativeID} {
-		if _, err := s.ClaimTask(context.Background(), taskID, testSessionID("run-target")); err != nil {
-			t.Fatalf("candidate %d ClaimTask: %v", taskID, err)
-		}
-	}
-}
-
-func TestClaimTaskConflictErrorReportsNoCandidates(t *testing.T) {
-	s := newTestStore(t)
-	goalID := newTestGoal(t, s)
-	ownerID := declareOneTaskWithFiles(t, s, goalID, "no-candidate-owner", "owner task", []string{"internal/store/task.go"})
-	targetID := declareOneTaskWithFiles(t, s, goalID, "no-candidate-target", "target task", []string{"internal/store/task.go"})
-	addTestAgentSession(t, s, "run-owner")
-	addTestAgentSession(t, s, "run-target")
-
-	if _, err := s.ClaimTask(context.Background(), ownerID, testSessionID("run-owner")); err != nil {
-		t.Fatalf("owner ClaimTask: %v", err)
-	}
-	_, err := s.ClaimTask(context.Background(), targetID, testSessionID("run-target"))
-	if !errors.Is(err, ErrTaskFileConflict) {
-		t.Fatalf("ClaimTask error = %v, want ErrTaskFileConflict", err)
-	}
-	if !strings.Contains(err.Error(), "alternatives: []") {
-		t.Fatalf("ClaimTask error %q does not report that no alternatives are available", err)
-	}
-}
-
-func TestOpenMigratesTasksFilesColumnWithoutLosingData(t *testing.T) {
+func TestMigration0021PreservesTaskTitleAndStatus(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "atct.db")
 	oldDB, err := sql.Open("sqlite", dbPath)
 	if err != nil {
@@ -1019,6 +809,7 @@ func TestOpenMigratesTasksFilesColumnWithoutLosingData(t *testing.T) {
 		t.Fatalf("Open migrated DB: %v", err)
 	}
 	defer s.Close()
+	assertMigrationRecorded(t, s.DB(), "0021_drop_task_files.sql")
 
 	tasks, err := s.ListTasks(context.Background(), 1)
 	if err != nil {
@@ -1027,15 +818,11 @@ func TestOpenMigratesTasksFilesColumnWithoutLosingData(t *testing.T) {
 	if len(tasks) != 1 || tasks[0].ID != 1 || tasks[0].Title != "old task" {
 		t.Fatalf("migrated tasks = %+v, want original task", tasks)
 	}
-	if len(tasks[0].Files) != 0 {
-		t.Fatalf("migrated task files = %#v, want empty", tasks[0].Files)
+	if tasks[0].Status != domain.TaskTodo {
+		t.Fatalf("migrated task status = %q, want %q", tasks[0].Status, domain.TaskTodo)
 	}
-	var storedFiles string
-	if err := s.DB().QueryRow(`SELECT files FROM tasks WHERE id = 1`).Scan(&storedFiles); err != nil {
-		t.Fatalf("read migrated files column: %v", err)
-	}
-	if storedFiles != "[]" {
-		t.Fatalf("migrated files value = %q, want []", storedFiles)
+	if _, ok := migrationTableColumns(t, s.DB(), "tasks")["files"]; ok {
+		t.Fatal("migrated tasks still has files")
 	}
 }
 

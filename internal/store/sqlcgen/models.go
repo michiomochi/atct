@@ -86,7 +86,6 @@ type Task struct {
 	Description  string
 	Status       string
 	Agent        string
-	Files        string
 	SortOrder    int64
 	DeclareKey   string
 	SnoozedUntil sql.NullString

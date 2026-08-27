@@ -1386,7 +1386,6 @@ func TestHTTPTaskDetailReturnsTaskAndDecisionData(t *testing.T) {
 		"task-detail-declare",
 		[]string{"Target task", "Other task"},
 		[]string{"The task shown on the detail page.", "A different task in the same goal."},
-		[][]string{{"src/target.go"}, {"src/other.go"}},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -1476,7 +1475,7 @@ func TestHTTPTaskDetailReturnsTaskAndDecisionData(t *testing.T) {
 	if err := json.Unmarshal(body, &response); err != nil {
 		t.Fatalf("decode task detail: %v; body=%s", err, body)
 	}
-	if response.Task.ID != tasks[0].ID || response.Task.GoalID != f.goal.ID || response.Task.Title != tasks[0].Title || response.Task.Description != tasks[0].Description || len(response.Task.Files) != 1 || response.Task.Files[0] != "src/target.go" {
+	if response.Task.ID != tasks[0].ID || response.Task.GoalID != f.goal.ID || response.Task.Title != tasks[0].Title || response.Task.Description != tasks[0].Description {
 		t.Fatalf("task = %+v, want target task %+v", response.Task, tasks[0])
 	}
 	if response.Goal.ID != f.goal.ID || response.Goal.Headline != domain.Headline(f.goal.Content) || response.Goal.ProjectName != "fixture" {
@@ -1760,7 +1759,6 @@ func TestHTTPTaskDetailReturnsEmptyCommitsArray(t *testing.T) {
 		"task-commits-empty",
 		[]string{"Task without commits"},
 		[]string{"A task without linked commits."},
-		[][]string{{"src/target.go"}},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -1796,7 +1794,6 @@ func TestHTTPTaskDetailMarksMissingCommitOutOfHistory(t *testing.T) {
 		"task-commits-missing",
 		[]string{"Task with missing commit"},
 		[]string{"A task with a commit no longer in history."},
-		[][]string{{"src/target.go"}},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -1851,7 +1848,6 @@ func TestHTTPTaskDetailDoesNotMixCommitsFromOtherTasks(t *testing.T) {
 		"task-commits-isolated",
 		[]string{"Target task", "Other task"},
 		[]string{"The task being requested.", "A different task."},
-		[][]string{{"src/target.go"}, {"src/other.go"}},
 	)
 	if err != nil {
 		t.Fatal(err)

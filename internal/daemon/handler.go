@@ -843,12 +843,11 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 
 	case "task.update_content":
 		var p struct {
-			TaskID                  int64     `json:"task_id"`
-			Title                   *string   `json:"title"`
-			Description             *string   `json:"description"`
-			Files                   *[]string `json:"files"`
-			AgentSessionID          int64     `json:"agent_session_id"`
-			IncludeUnappliedAnswers bool      `json:"include_unapplied_answers"`
+			TaskID                  int64   `json:"task_id"`
+			Title                   *string `json:"title"`
+			Description             *string `json:"description"`
+			AgentSessionID          int64   `json:"agent_session_id"`
+			IncludeUnappliedAnswers bool    `json:"include_unapplied_answers"`
 		}
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, err
@@ -864,7 +863,7 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		if err := d.ensureAgentSessionProject(ctx, p.AgentSessionID, goal.ProjectID); err != nil {
 			return nil, err
 		}
-		updated, err := d.store.UpdateTaskContent(ctx, p.TaskID, p.Title, p.Description, p.Files)
+		updated, err := d.store.UpdateTaskContent(ctx, p.TaskID, p.Title, p.Description)
 		if err != nil || !p.IncludeUnappliedAnswers {
 			return marshal(updated, err)
 		}
@@ -873,14 +872,13 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 
 	case "task.declare":
 		var p struct {
-			GoalID                  int64      `json:"goal_id"`
-			Agent                   string     `json:"agent"`
-			IdempotencyKey          string     `json:"idempotency_key"`
-			Titles                  []string   `json:"titles"`
-			Descriptions            []string   `json:"descriptions"`
-			Files                   [][]string `json:"files"`
-			AgentSessionID          int64      `json:"agent_session_id"`
-			IncludeUnappliedAnswers bool       `json:"include_unapplied_answers"`
+			GoalID                  int64    `json:"goal_id"`
+			Agent                   string   `json:"agent"`
+			IdempotencyKey          string   `json:"idempotency_key"`
+			Titles                  []string `json:"titles"`
+			Descriptions            []string `json:"descriptions"`
+			AgentSessionID          int64    `json:"agent_session_id"`
+			IncludeUnappliedAnswers bool     `json:"include_unapplied_answers"`
 		}
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, err
@@ -892,7 +890,7 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		if err := d.ensureAgentSessionProject(ctx, p.AgentSessionID, goal.ProjectID); err != nil {
 			return nil, err
 		}
-		tasks, err := d.store.DeclareTasks(ctx, p.GoalID, p.Agent, p.IdempotencyKey, p.Titles, p.Descriptions, p.Files)
+		tasks, err := d.store.DeclareTasks(ctx, p.GoalID, p.Agent, p.IdempotencyKey, p.Titles, p.Descriptions)
 		if err == nil {
 			tasks = tasksDeclaredWithIdempotencyKey(tasks, p.IdempotencyKey)
 		}
