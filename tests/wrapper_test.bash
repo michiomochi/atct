@@ -627,7 +627,26 @@ test_handoff_completion_reports_are_explicit() {
   local atct_skill="$REPO_ROOT/skills/atct/SKILL.md"
   assert_file_contains 'with the `task_id` provided in this request and a `complete_report`' "$atct_skill"
   assert_file_contains 'with the `goal_id` provided in this request' "$atct_skill"
-  assert_file_contains 'what was done, what was verified, and paths changed' "$atct_skill"
+  assert_file_contains 'what was done, what was verified, what could not' "$atct_skill"
+  assert_file_contains 'be verified, and paths changed' "$atct_skill"
+}
+
+test_task_delegation_verification_contract_is_explicit() {
+  local task_section
+  task_section="$(sed -n '/^## Delegate a task$/,/^## Delegate a goal$/p' "$REPO_ROOT/skills/atct/SKILL.md" | tr '\n' ' ' | tr -s ' ')"
+
+  grep -Fq -- 'verification commands the worker can run.' <<<"$task_section" ||
+    fail 'SKILL.md Delegate a task must require the delegator to name worker-runnable verification commands'
+  grep -Fq -- '`go test ./...` in the request.' <<<"$task_section" ||
+    fail 'SKILL.md Delegate a task must prohibit broad `go test ./...` requests'
+  grep -Eq -- 'worker sandbox.*delegator sandbox' <<<"$task_section" ||
+    fail 'SKILL.md Delegate a task must explain that worker and delegator sandboxes differ'
+  grep -Fq -- 'The delegator runs every verification not named for the worker and includes it in review.' <<<"$task_section" ||
+    fail 'SKILL.md Delegate a task must make the delegator run unnamed verification and include it in review'
+  grep -Fq -- 'It must say "could not run" in its completion report.' <<<"$task_section" ||
+    fail 'SKILL.md Delegate a task must require workers to report verification they could not run'
+  grep -Fq -- 'Do not use `--version` or `--help` to determine availability:' <<<"$task_section" ||
+    fail 'SKILL.md Delegate a task must prohibit using `--version` or `--help` to determine whether a worker can use a tool'
 }
 
 test_handoff_report_repair_is_explicit() {
@@ -1220,6 +1239,7 @@ test_recovery_section_has_project_path
 test_recovery_section_has_goal_path
 test_recovery_section_has_task_path_and_non_repair_note
 test_handoff_completion_reports_are_explicit
+test_task_delegation_verification_contract_is_explicit
 test_handoff_report_repair_is_explicit
 test_handoff_completion_keeps_one_normal_path
 test_goal_handoff_completion_keeps_one_normal_path

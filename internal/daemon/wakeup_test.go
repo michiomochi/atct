@@ -4,8 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -1147,6 +1150,144 @@ func TestWakeupTrackerPublishesStalledHandoffDetections(t *testing.T) {
 		t.Fatalf("duplicate evaluate: %v", err)
 	} else if len(events) != 0 {
 		t.Fatalf("duplicate events = %#v, want empty", events)
+	}
+}
+
+// Unchanged is stronger evidence: changed only shows that someone used the shared worktree.
+func TestWakeupTrackerReportsHandoffWorktreeActivity(t *testing.T) {
+	const goalID int64 = 1
+	now := time.Date(2026, 8, 27, 9, 0, 0, 0, time.UTC)
+	receivedAt := now.Add(-detectionHandoffUnreportedAfter)
+
+	for _, tc := range []struct {
+		name  string
+		setup func(t *testing.T, root, worktree string)
+		want  string
+	}{
+		{
+			name: "changed",
+			setup: func(t *testing.T, root, worktree string) {
+				path := filepath.Join(worktree, "worked-on.txt")
+				if err := os.WriteFile(path, []byte("work\n"), 0o644); err != nil {
+					t.Fatalf("write changed file: %v", err)
+				}
+				changedAt := receivedAt.Add(time.Second)
+				if err := os.Chtimes(path, changedAt, changedAt); err != nil {
+					t.Fatalf("set changed file mtime: %v", err)
+				}
+			},
+			want: "changed",
+		},
+		{
+			name: "changed by commit",
+			setup: func(t *testing.T, root, worktree string) {
+				commitWakeupTestWorktree(t, worktree, receivedAt.Add(time.Second))
+			},
+			want: "changed",
+		},
+		{name: "unchanged", want: "unchanged"},
+		{name: "unassessed when worktree is absent", want: ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			s := newWakeupTestStore(t)
+			root := t.TempDir()
+			worktree := ""
+			if tc.want != "" {
+				worktree = newWakeupTestWorktree(t, root, goalID, receivedAt.Add(-time.Second))
+			}
+			if tc.setup != nil {
+				tc.setup(t, root, worktree)
+			}
+			project, err := s.CreateProject(ctx, "worktree-activity-"+tc.name, root)
+			if err != nil {
+				t.Fatalf("CreateProject: %v", err)
+			}
+			goal, err := s.CreateGoal(ctx, project.ID, "Resume worktree activity", "human")
+			if err != nil {
+				t.Fatalf("CreateGoal: %v", err)
+			}
+			if goal.ID != goalID {
+				t.Fatalf("goal ID = %d, want %d", goal.ID, goalID)
+			}
+			tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "worktree-activity-"+tc.name, []string{"Worktree activity"}, []string{"Keep the handoff open."})
+			if err != nil {
+				t.Fatalf("DeclareTasks: %v", err)
+			}
+			tracker := newWakeupTracker(time.Time{})
+			events, err := tracker.evaluateWith(ctx, s, now, func(context.Context, int64) (store.WakeupState, error) {
+				return store.WakeupState{HandoffsAwaitingReport: []store.TaskHandoff{{
+					ID: "handoff-worktree-activity", TaskID: tasks[0].ID, ReceivedAt: &receivedAt,
+				}}}, nil
+			})
+			if err != nil {
+				t.Fatalf("evaluate: %v", err)
+			}
+			detection, ok := findDetectionEvent(events, store.EventDetectionHandoffUnreported, goalID)
+			if !ok {
+				t.Fatalf("events = %#v, want handoff detection", events)
+			}
+			payload, err := json.Marshal(detection)
+			if err != nil {
+				t.Fatalf("marshal detection: %v", err)
+			}
+			var data map[string]any
+			if err := json.Unmarshal(payload, &data); err != nil {
+				t.Fatalf("unmarshal detection: %v", err)
+			}
+			if got, _ := data["worktree_activity"].(string); got != tc.want {
+				t.Fatalf("worktree_activity = %q, want %q; payload=%s", got, tc.want, payload)
+			}
+		})
+	}
+}
+
+func newWakeupTestWorktree(t *testing.T, root string, goalID int64, initialCommitAt time.Time) string {
+	t.Helper()
+	git := func(args ...string) {
+		t.Helper()
+		cmd := exec.CommandContext(context.Background(), "git", append([]string{"-C", root}, args...)...)
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %s: %v: %s", strings.Join(args, " "), err, output)
+		}
+	}
+	git("init")
+	git("config", "user.email", "test@example.com")
+	git("config", "user.name", "Test User")
+	cmd := exec.CommandContext(context.Background(), "git", "-C", root, "commit", "--allow-empty", "-m", "initial")
+	initialCommitDate := initialCommitAt.Format(time.RFC3339)
+	cmd.Env = append(os.Environ(), "GIT_AUTHOR_DATE="+initialCommitDate, "GIT_COMMITTER_DATE="+initialCommitDate)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git commit initial: %v: %s", err, output)
+	}
+	goal8 := strconv.FormatInt(goalID, 10)
+	if len(goal8) > 8 {
+		goal8 = goal8[:8]
+	}
+	worktree := filepath.Join(root, ".worktrees", goal8)
+	git("worktree", "add", "-b", "wt/goal-"+goal8, worktree)
+	return worktree
+}
+
+func commitWakeupTestWorktree(t *testing.T, worktree string, committedAt time.Time) {
+	t.Helper()
+	path := filepath.Join(worktree, "committed-work.txt")
+	if err := os.WriteFile(path, []byte("work\n"), 0o644); err != nil {
+		t.Fatalf("write committed file: %v", err)
+	}
+	git := func(args ...string) {
+		t.Helper()
+		cmd := exec.CommandContext(context.Background(), "git", append([]string{"-C", worktree}, args...)...)
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %s: %v: %s", strings.Join(args, " "), err, output)
+		}
+	}
+	git("add", "committed-work.txt")
+	cmd := exec.CommandContext(context.Background(), "git", "-C", worktree, "commit", "-m", "worked")
+	commitDate := committedAt.Format(time.RFC3339)
+	cmd.Env = append(os.Environ(), "GIT_AUTHOR_DATE="+commitDate, "GIT_COMMITTER_DATE="+commitDate)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git commit worked: %v: %s", err, output)
 	}
 }
 
