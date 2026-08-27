@@ -162,10 +162,18 @@ func TestReapWatchesStopsLiveDuplicateProcess(t *testing.T) {
 	}
 	waitDone := make(chan error, 1)
 	go func() { waitDone <- cmd.Wait() }()
+	selfPath := filepath.Join(dir, watchRegistryDir, strconv.Itoa(os.Getpid()))
+	writeWatchRegistrationFile(t, selfPath, WatchRegistration{
+		PID:       os.Getpid(),
+		Scope:     WatchScope{ProjectID: "1", GoalID: "180"},
+		StartedAt: "2026-08-27T02:00:00Z",
+	})
+	defer os.Remove(selfPath)
 	path := filepath.Join(dir, watchRegistryDir, strconv.Itoa(cmd.Process.Pid))
 	writeWatchRegistrationFile(t, path, WatchRegistration{
-		PID:   cmd.Process.Pid,
-		Scope: WatchScope{ProjectID: "1", GoalID: "180"},
+		PID:       cmd.Process.Pid,
+		Scope:     WatchScope{ProjectID: "1", GoalID: "180"},
+		StartedAt: "2026-08-27T01:00:00Z",
 	})
 
 	result, err := ReapWatches(dir, WatchScope{ProjectID: "1", GoalID: "180"}, os.Getpid())
@@ -186,6 +194,166 @@ func TestReapWatchesStopsLiveDuplicateProcess(t *testing.T) {
 	}
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Fatalf("duplicate registration stat error = %v, want not exist", err)
+	}
+}
+
+func TestReapWatchesKeepsNewerLiveDuplicateProcess(t *testing.T) {
+	dir := t.TempDir()
+	cmd, _ := startReapTestProcess(t)
+	writeReapSelfRegistration(t, dir, os.Getpid(), WatchScope{ProjectID: "1", GoalID: "180"}, "2026-08-27T02:00:00Z")
+	path := filepath.Join(dir, watchRegistryDir, strconv.Itoa(cmd.Process.Pid))
+	writeWatchRegistrationFile(t, path, WatchRegistration{
+		PID:       cmd.Process.Pid,
+		Scope:     WatchScope{ProjectID: "1", GoalID: "180"},
+		StartedAt: "2026-08-27T00:30:00-03:00",
+	})
+
+	result, err := ReapWatches(dir, WatchScope{ProjectID: "1", GoalID: "180"}, os.Getpid())
+	if err != nil {
+		t.Fatalf("ReapWatches: %v", err)
+	}
+	if len(result.Stopped) != 0 || len(result.Failed) != 0 {
+		t.Fatalf("reap result = %#v, want no action for newer registration", result)
+	}
+	if !ProcessAlive(cmd.Process.Pid) {
+		t.Fatal("newer duplicate process was stopped")
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("newer duplicate registration was changed: %v", err)
+	}
+}
+
+func TestReapWatchesStopsOlderLiveDuplicateProcess(t *testing.T) {
+	dir := t.TempDir()
+	cmd, waitDone := startReapTestProcess(t)
+	writeReapSelfRegistration(t, dir, os.Getpid(), WatchScope{ProjectID: "1", GoalID: "180"}, "2026-08-27T02:00:00Z")
+	path := filepath.Join(dir, watchRegistryDir, strconv.Itoa(cmd.Process.Pid))
+	writeWatchRegistrationFile(t, path, WatchRegistration{
+		PID:       cmd.Process.Pid,
+		Scope:     WatchScope{ProjectID: "1", GoalID: "180"},
+		StartedAt: "2026-08-27T03:30:00+02:00",
+	})
+
+	result, err := ReapWatches(dir, WatchScope{ProjectID: "1", GoalID: "180"}, os.Getpid())
+	if err != nil {
+		t.Fatalf("ReapWatches: %v", err)
+	}
+	if len(result.Stopped) != 1 || result.Stopped[0].PID != cmd.Process.Pid {
+		t.Fatalf("stopped = %#v, want pid %d", result.Stopped, cmd.Process.Pid)
+	}
+	select {
+	case <-waitDone:
+	case <-time.After(time.Second):
+		t.Fatal("older duplicate process did not exit")
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("older duplicate registration stat error = %v, want not exist", err)
+	}
+}
+
+func TestReapWatchesTieBreaksEqualStartedAtByPID(t *testing.T) {
+	tests := []struct {
+		name           string
+		selfFirst      bool
+		wantSelfToStop bool
+	}{
+		{name: "self pid smaller", selfFirst: true, wantSelfToStop: false},
+		{name: "self pid larger", selfFirst: false, wantSelfToStop: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			var selfProcess, candidateProcess *exec.Cmd
+			var candidateWait <-chan error
+			if tc.selfFirst {
+				selfProcess, _ = startReapTestProcess(t)
+				candidateProcess, candidateWait = startReapTestProcess(t)
+			} else {
+				candidateProcess, candidateWait = startReapTestProcess(t)
+				selfProcess, _ = startReapTestProcess(t)
+			}
+			startedAt := "2026-08-27T02:00:00Z"
+			writeReapSelfRegistration(t, dir, selfProcess.Process.Pid, WatchScope{ProjectID: "1", GoalID: "180"}, startedAt)
+			candidatePath := filepath.Join(dir, watchRegistryDir, strconv.Itoa(candidateProcess.Process.Pid))
+			writeWatchRegistrationFile(t, candidatePath, WatchRegistration{
+				PID:       candidateProcess.Process.Pid,
+				Scope:     WatchScope{ProjectID: "1", GoalID: "180"},
+				StartedAt: startedAt,
+			})
+
+			result, err := ReapWatches(dir, WatchScope{ProjectID: "1", GoalID: "180"}, selfProcess.Process.Pid)
+			if err != nil {
+				t.Fatalf("ReapWatches: %v", err)
+			}
+			if tc.wantSelfToStop {
+				if len(result.Stopped) != 1 || result.Stopped[0].PID != candidateProcess.Process.Pid {
+					t.Fatalf("stopped = %#v, want pid %d", result.Stopped, candidateProcess.Process.Pid)
+				}
+				select {
+				case <-candidateWait:
+				case <-time.After(time.Second):
+					t.Fatal("lower-pid candidate process did not exit")
+				}
+				return
+			}
+			if len(result.Stopped) != 0 || len(result.Failed) != 0 {
+				t.Fatalf("reap result = %#v, want no action for higher-pid candidate", result)
+			}
+			if _, err := os.Stat(candidatePath); err != nil {
+				t.Fatalf("higher-pid candidate registration was changed: %v", err)
+			}
+		})
+	}
+}
+
+func TestReapWatchesKeepsLiveDuplicateWithEmptyStartedAt(t *testing.T) {
+	dir := t.TempDir()
+	cmd, _ := startReapTestProcess(t)
+	writeReapSelfRegistration(t, dir, os.Getpid(), WatchScope{ProjectID: "1", GoalID: "180"}, "2026-08-27T02:00:00Z")
+	path := filepath.Join(dir, watchRegistryDir, strconv.Itoa(cmd.Process.Pid))
+	writeWatchRegistrationFile(t, path, WatchRegistration{
+		PID:       cmd.Process.Pid,
+		Scope:     WatchScope{ProjectID: "1", GoalID: "180"},
+		StartedAt: "",
+	})
+
+	result, err := ReapWatches(dir, WatchScope{ProjectID: "1", GoalID: "180"}, os.Getpid())
+	if err != nil {
+		t.Fatalf("ReapWatches: %v", err)
+	}
+	if len(result.Stopped) != 0 || len(result.Failed) != 0 {
+		t.Fatalf("reap result = %#v, want no action for empty started_at", result)
+	}
+	if !ProcessAlive(cmd.Process.Pid) {
+		t.Fatal("empty-started_at duplicate process was stopped")
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("empty-started_at registration was changed: %v", err)
+	}
+}
+
+func TestReapWatchesKeepsLiveDuplicateWhenSelfRegistrationMissing(t *testing.T) {
+	dir := t.TempDir()
+	cmd, _ := startReapTestProcess(t)
+	path := filepath.Join(dir, watchRegistryDir, strconv.Itoa(cmd.Process.Pid))
+	writeWatchRegistrationFile(t, path, WatchRegistration{
+		PID:       cmd.Process.Pid,
+		Scope:     WatchScope{ProjectID: "1", GoalID: "180"},
+		StartedAt: "2026-08-27T01:00:00Z",
+	})
+
+	result, err := ReapWatches(dir, WatchScope{ProjectID: "1", GoalID: "180"}, os.Getpid())
+	if err != nil {
+		t.Fatalf("ReapWatches: %v", err)
+	}
+	if len(result.Stopped) != 0 || len(result.Failed) != 0 {
+		t.Fatalf("reap result = %#v, want no action when self registration is missing", result)
+	}
+	if !ProcessAlive(cmd.Process.Pid) {
+		t.Fatal("duplicate process was stopped without self registration")
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("duplicate registration was changed: %v", err)
 	}
 }
 
@@ -484,4 +652,45 @@ func writeWatchRegistrationFile(t *testing.T, path string, registration WatchReg
 	if err := os.WriteFile(path, append(raw, '\n'), 0o644); err != nil {
 		t.Fatalf("write watch registration: %v", err)
 	}
+}
+
+func startReapTestProcess(t *testing.T) (*exec.Cmd, <-chan error) {
+	t.Helper()
+	cmd := exec.Command("sleep", "60")
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start sleep: %v", err)
+	}
+	waitDone := make(chan error, 1)
+	done := make(chan struct{})
+	go func() {
+		waitDone <- cmd.Wait()
+		close(done)
+	}()
+	t.Cleanup(func() {
+		select {
+		case <-done:
+			return
+		default:
+		}
+		if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
+			_ = cmd.Process.Signal(syscall.SIGTERM)
+		}
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+			t.Errorf("test process %d did not exit", cmd.Process.Pid)
+		}
+	})
+	return cmd, waitDone
+}
+
+func writeReapSelfRegistration(t *testing.T, dir string, pid int, scope WatchScope, startedAt string) {
+	t.Helper()
+	path := filepath.Join(dir, watchRegistryDir, strconv.Itoa(pid))
+	writeWatchRegistrationFile(t, path, WatchRegistration{
+		PID:       pid,
+		Scope:     scope,
+		StartedAt: startedAt,
+	})
+	t.Cleanup(func() { _ = os.Remove(path) })
 }

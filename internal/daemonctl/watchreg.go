@@ -106,8 +106,8 @@ func ListWatches(dir string) ([]WatchRegistration, error) {
 // ReapWatches removes dead registrations and stops a live watch that owns the
 // same project-and-goal scope. A dead registration is removed whatever its
 // format, because removing a file signals no process. A live watch is stopped
-// only when its scope is known and equal: a legacy registration records no
-// scope, so it is left running rather than killed on a guess.
+// only when its scope and registration order are known: a legacy registration
+// records no scope, so it is left running rather than killed on a guess.
 func ReapWatches(dir string, self WatchScope, selfPID int) (ReapResult, error) {
 	var result ReapResult
 	if self.ProjectID == "" {
@@ -121,6 +121,14 @@ func ReapWatches(dir string, self WatchScope, selfPID int) (ReapResult, error) {
 	}
 	if err != nil {
 		return result, fmt.Errorf("read watch registry: %w", err)
+	}
+
+	selfRegistration, selfErr := readWatchRegistration(filepath.Join(registryDir, strconv.Itoa(selfPID)))
+	var selfStartedAt time.Time
+	canStopLiveWatch := false
+	if selfErr == nil && selfRegistration.StartedAt != "" {
+		selfStartedAt, selfErr = time.Parse(time.RFC3339, selfRegistration.StartedAt)
+		canStopLiveWatch = selfErr == nil
 	}
 
 	for _, entry := range entries {
@@ -143,6 +151,16 @@ func ReapWatches(dir string, self WatchScope, selfPID int) (ReapResult, error) {
 			continue
 		}
 		if registration.PID == selfPID || registration.Scope != self {
+			continue
+		}
+		if !canStopLiveWatch {
+			continue
+		}
+		startedAt, err := time.Parse(time.RFC3339, registration.StartedAt)
+		if err != nil {
+			continue
+		}
+		if startedAt.After(selfStartedAt) || (startedAt.Equal(selfStartedAt) && registration.PID > selfPID) {
 			continue
 		}
 
