@@ -25,6 +25,7 @@ import uiSource from "./ui.ts?raw";
 import type { Goal, TaskView } from "./api";
 import {
   DECISION_EVENT_NAMES,
+  activeSnoozeUntil,
   decisionAutoSettlementSeconds,
   decisionKindLabel,
   decisionRecommendationLabel,
@@ -261,7 +262,6 @@ describe("localized UI labels", () => {
     ["en", "todo", "Not started"],
     ["en", "doing", "In progress"],
     ["en", "done", "Completed"],
-    ["en", "blocked", "Blocked"],
     ["en", "open", "Awaiting answer"],
     ["en", "answered", "Answered"],
     ["en", "applied", "Applied"],
@@ -273,7 +273,6 @@ describe("localized UI labels", () => {
     ["ja", "todo", "\u672a\u7740\u624b"],
     ["ja", "doing", "\u9032\u884c\u4e2d"],
     ["ja", "done", "\u5b8c\u4e86"],
-    ["ja", "blocked", "\u30d6\u30ed\u30c3\u30af"],
     ["ja", "open", "\u56de\u7b54\u5f85\u3061"],
     ["ja", "answered", "\u56de\u7b54\u6e08\u307f"],
     ["ja", "applied", "\u9069\u7528\u6e08\u307f"],
@@ -300,7 +299,6 @@ describe("localized UI labels", () => {
     ["ja", "todo", 0, "atct-42-exec-690", "\u9032\u884c\u4e2d"],
     ["en", "todo", 1, "atct-42-exec-690", "Awaiting decision"],
     ["en", "done", 0, "atct-42-exec-690", "Completed"],
-    ["en", "blocked", 0, "atct-42-exec-690", "Blocked"],
     ["en", "todo", 0, 0, "Not started"],
     ["en", "todo", 0, 2315, "In progress"],
     ["ja", "todo", 0, 2315, "\u9032\u884c\u4e2d"],
@@ -313,6 +311,16 @@ describe("localized UI labels", () => {
       ).toBe(expected);
     },
   );
+
+  it("returns only valid future snooze deadlines", () => {
+    const future = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+    const past = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+
+    expect(activeSnoozeUntil(future)).toBe(future);
+    expect(activeSnoozeUntil(past)).toBeUndefined();
+    expect(activeSnoozeUntil(undefined)).toBeUndefined();
+    expect(activeSnoozeUntil("not-a-date")).toBeUndefined();
+  });
 
   it.each([
     ["en", "decision", "Decision"],

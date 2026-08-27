@@ -55,6 +55,7 @@ export interface Task {
   title: string;
   description: string;
   status: string;
+  snoozed_until?: string;
   agent: string;
   files?: string[];
   order: number;
@@ -354,6 +355,14 @@ export async function updateGoalContent(id: string, content: string): Promise<Go
 export async function releaseTask(id: string): Promise<TaskView> {
   return requestJson<TaskView>(`/api/tasks/${encodeURIComponent(id)}/release`, {
     method: "POST",
+  });
+}
+
+export async function snoozeTask(id: string, until: string | null): Promise<TaskView> {
+  return requestJson<TaskView>(`/api/tasks/${encodeURIComponent(id)}/snooze`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ snoozed_until: until }),
   });
 }
 

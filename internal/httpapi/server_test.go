@@ -2068,6 +2068,296 @@ func TestHTTPDecisionAndReleaseEndpointsValidateAndTransition(t *testing.T) {
 	assertErrorObject(t, status, headers, body, http.StatusBadRequest)
 }
 
+func TestHTTPSnoozeSetsAbsoluteDeadlineWithoutChangingStatus(t *testing.T) {
+	f := newFixture(t)
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+
+	const wantSnoozedUntil = "2026-09-01T00:00:00Z"
+	status, _, body := doRequest(t, srv.Client(), http.MethodPost,
+		urlID(srv.URL+"/api/tasks/", f.tasks[0].ID)+"/snooze",
+		mustJSON(t, map[string]string{"snoozed_until": wantSnoozedUntil}))
+	if status != http.StatusOK {
+		t.Fatalf("snooze status = %d; body=%s", status, body)
+	}
+
+	var response struct {
+		Status       string  `json:"status"`
+		SnoozedUntil *string `json:"snoozed_until"`
+	}
+	if err := json.Unmarshal(body, &response); err != nil {
+		t.Fatalf("decode snooze response: %v; body=%s", err, body)
+	}
+	if response.SnoozedUntil == nil || *response.SnoozedUntil != wantSnoozedUntil {
+		t.Fatalf("snoozed_until = %v, want %q", response.SnoozedUntil, wantSnoozedUntil)
+	}
+	if response.Status != "todo" {
+		t.Fatalf("status = %q, want todo", response.Status)
+	}
+}
+
+func TestHTTPSnoozeNullClearsAbsoluteDeadline(t *testing.T) {
+	f := newFixture(t)
+	until, err := time.Parse(time.RFC3339, "2026-09-01T00:00:00Z")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.store.SnoozeTask(f.ctx, f.tasks[0].ID, &until); err != nil {
+		t.Fatal(err)
+	}
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+
+	status, _, body := doRequest(t, srv.Client(), http.MethodPost,
+		urlID(srv.URL+"/api/tasks/", f.tasks[0].ID)+"/snooze",
+		mustJSON(t, map[string]any{"snoozed_until": nil}))
+	if status != http.StatusOK {
+		t.Fatalf("clear snooze status = %d; body=%s", status, body)
+	}
+	var response map[string]json.RawMessage
+	if err := json.Unmarshal(body, &response); err != nil {
+		t.Fatalf("decode clear snooze response: %v; body=%s", err, body)
+	}
+	if _, ok := response["snoozed_until"]; ok {
+		t.Fatalf("snoozed_until is present after clearing: %s", body)
+	}
+}
+
+func TestHTTPSnoozeEmptyBodyClearsAbsoluteDeadline(t *testing.T) {
+	f := newFixture(t)
+	until, err := time.Parse(time.RFC3339, "2026-09-01T00:00:00Z")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.store.SnoozeTask(f.ctx, f.tasks[0].ID, &until); err != nil {
+		t.Fatal(err)
+	}
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+
+	status, _, body := doRequest(t, srv.Client(), http.MethodPost,
+		urlID(srv.URL+"/api/tasks/", f.tasks[0].ID)+"/snooze", nil)
+	if status != http.StatusOK {
+		t.Fatalf("clear snooze with empty body status = %d; body=%s", status, body)
+	}
+	var response map[string]json.RawMessage
+	if err := json.Unmarshal(body, &response); err != nil {
+		t.Fatalf("decode empty-body snooze response: %v; body=%s", err, body)
+	}
+	if _, ok := response["snoozed_until"]; ok {
+		t.Fatalf("snoozed_until is present after empty-body clear: %s", body)
+	}
+}
+
+func TestHTTPSnoozeRejectsInvalidRFC3339(t *testing.T) {
+	f := newFixture(t)
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+
+	status, headers, body := doRequest(t, srv.Client(), http.MethodPost,
+		urlID(srv.URL+"/api/tasks/", f.tasks[0].ID)+"/snooze",
+		mustJSON(t, map[string]string{"snoozed_until": "tomorrow"}))
+	assertErrorObject(t, status, headers, body, http.StatusBadRequest)
+}
+
+func TestHTTPSnoozeReturnsNotFoundForUnknownTask(t *testing.T) {
+	f := newFixture(t)
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+
+	status, headers, body := doRequest(t, srv.Client(), http.MethodPost, srv.URL+"/api/tasks/missing/snooze", nil)
+	assertErrorObject(t, status, headers, body, http.StatusNotFound)
+}
+
+func TestHTTPSnoozePreservesReleaseEndpoint(t *testing.T) {
+	f := newFixture(t)
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+
+	status, _, body := doRequest(t, srv.Client(), http.MethodPost,
+		urlID(srv.URL+"/api/tasks/", f.tasks[0].ID)+"/release", nil)
+	if status != http.StatusOK {
+		t.Fatalf("release status = %d; body=%s", status, body)
+	}
+	var released httpapi.TaskView
+	if err := json.Unmarshal(body, &released); err != nil {
+		t.Fatal(err)
+	}
+	if released.ClaimedBy != 0 || released.ClaimedAt != nil {
+		t.Fatalf("released task = %+v", released)
+	}
+}
+
+func TestHTTPSnoozePreservesTaskGetEndpoint(t *testing.T) {
+	f := newFixture(t)
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+
+	status, _, body := doRequest(t, srv.Client(), http.MethodGet,
+		urlID(srv.URL+"/api/tasks/", f.tasks[0].ID), nil)
+	if status != http.StatusOK {
+		t.Fatalf("task GET status = %d; body=%s", status, body)
+	}
+	var detail struct {
+		Task httpapi.TaskView `json:"task"`
+	}
+	if err := json.Unmarshal(body, &detail); err != nil {
+		t.Fatal(err)
+	}
+	if detail.Task.ID != f.tasks[0].ID {
+		t.Fatalf("task id = %d, want %d", detail.Task.ID, f.tasks[0].ID)
+	}
+}
+
+func TestHTTPSnoozeRejectsGetMethod(t *testing.T) {
+	f := newFixture(t)
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+
+	status, headers, body := doRequest(t, srv.Client(), http.MethodGet,
+		urlID(srv.URL+"/api/tasks/", f.tasks[0].ID)+"/snooze", nil)
+	assertErrorObject(t, status, headers, body, http.StatusBadRequest)
+}
+
+func TestHTTPSnoozeRejectsEmptyTaskID(t *testing.T) {
+	f := newFixture(t)
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+
+	status, headers, body := doRequest(t, srv.Client(), http.MethodPost, srv.URL+"/api/tasks//snooze", nil)
+	assertErrorObject(t, status, headers, body, http.StatusBadRequest)
+}
+
+func TestHTTPSnoozeControlsWakeupForSnoozedAndUnsnoozedTasks(t *testing.T) {
+	f := newBareFixture(t)
+	tasks := declareWakeupTestTasks(t, f)
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+
+	future := time.Now().UTC().Add(24 * time.Hour).Format(time.RFC3339)
+	status, _, body := doRequest(t, srv.Client(), http.MethodPost,
+		urlID(srv.URL+"/api/tasks/", tasks[0].ID)+"/snooze",
+		mustJSON(t, map[string]string{"snoozed_until": future}))
+	if status != http.StatusOK {
+		t.Fatalf("snooze status = %d; body=%s", status, body)
+	}
+
+	state, err := f.store.DetectWakeup(f.ctx, f.project.ID)
+	if err != nil {
+		t.Fatalf("DetectWakeup: %v", err)
+	}
+	if state.UnstartedTaskCount != 1 || len(state.Tasks) != 1 {
+		t.Fatalf("wakeup state = %+v, want one unstarted task", state)
+	}
+	seen := make(map[int64]bool, len(state.Tasks))
+	for _, task := range state.Tasks {
+		seen[task.ID] = true
+	}
+	if seen[tasks[0].ID] {
+		t.Fatalf("future-snoozed task %d was included in wakeup tasks", tasks[0].ID)
+	}
+	if !seen[tasks[1].ID] {
+		t.Fatalf("unsnoozed task %d was omitted from wakeup tasks", tasks[1].ID)
+	}
+
+	counted, err := f.store.CountUnstartedTasks(f.ctx, f.project.ID)
+	if err != nil {
+		t.Fatalf("CountUnstartedTasks: %v", err)
+	}
+	if counted != 1 {
+		t.Fatalf("counted unstarted tasks = %d, want 1", counted)
+	}
+}
+
+func TestHTTPSnoozeClearingDeadlineRestoresWakeup(t *testing.T) {
+	f := newBareFixture(t)
+	tasks := declareWakeupTestTasks(t, f)
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+
+	future := time.Now().UTC().Add(24 * time.Hour).Format(time.RFC3339)
+	status, _, body := doRequest(t, srv.Client(), http.MethodPost,
+		urlID(srv.URL+"/api/tasks/", tasks[0].ID)+"/snooze",
+		mustJSON(t, map[string]string{"snoozed_until": future}))
+	if status != http.StatusOK {
+		t.Fatalf("snooze status = %d; body=%s", status, body)
+	}
+	status, _, body = doRequest(t, srv.Client(), http.MethodPost,
+		urlID(srv.URL+"/api/tasks/", tasks[0].ID)+"/snooze",
+		mustJSON(t, map[string]any{"snoozed_until": nil}))
+	if status != http.StatusOK {
+		t.Fatalf("clear snooze status = %d; body=%s", status, body)
+	}
+
+	state, err := f.store.DetectWakeup(f.ctx, f.project.ID)
+	if err != nil {
+		t.Fatalf("DetectWakeup: %v", err)
+	}
+	if len(state.Tasks) != 2 || state.UnstartedTaskCount != 2 {
+		t.Fatalf("wakeup state after clear = %+v, want two unstarted tasks", state)
+	}
+	counted, err := f.store.CountUnstartedTasks(f.ctx, f.project.ID)
+	if err != nil {
+		t.Fatalf("CountUnstartedTasks: %v", err)
+	}
+	if counted != 2 {
+		t.Fatalf("counted unstarted tasks after clear = %d, want 2", counted)
+	}
+}
+
+func TestHTTPSnoozeExpiredDeadlineRestoresWakeup(t *testing.T) {
+	f := newBareFixture(t)
+	tasks := declareWakeupTestTasks(t, f)
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+
+	past := time.Now().UTC().Add(-time.Hour).Format(time.RFC3339)
+	status, _, body := doRequest(t, srv.Client(), http.MethodPost,
+		urlID(srv.URL+"/api/tasks/", tasks[0].ID)+"/snooze",
+		mustJSON(t, map[string]string{"snoozed_until": past}))
+	if status != http.StatusOK {
+		t.Fatalf("expired snooze status = %d; body=%s", status, body)
+	}
+
+	state, err := f.store.DetectWakeup(f.ctx, f.project.ID)
+	if err != nil {
+		t.Fatalf("DetectWakeup: %v", err)
+	}
+	if state.UnstartedTaskCount != 2 || len(state.Tasks) != 2 {
+		t.Fatalf("wakeup state after expiry = %+v, want two unstarted tasks", state)
+	}
+	seen := make(map[int64]bool, len(state.Tasks))
+	for _, task := range state.Tasks {
+		seen[task.ID] = true
+	}
+	if !seen[tasks[0].ID] {
+		t.Fatalf("expired task %d was omitted from wakeup tasks", tasks[0].ID)
+	}
+
+	counted, err := f.store.CountUnstartedTasks(f.ctx, f.project.ID)
+	if err != nil {
+		t.Fatalf("CountUnstartedTasks: %v", err)
+	}
+	if counted != 2 {
+		t.Fatalf("counted unstarted tasks after expiry = %d, want 2", counted)
+	}
+}
+
+func declareWakeupTestTasks(t *testing.T, f *fixture) []domain.Task {
+	t.Helper()
+	tasks, err := f.store.DeclareTasks(f.ctx, f.goal.ID, "wakeup-test-agent", "wakeup-http", []string{
+		"Deferred task",
+		"Actionable task",
+	}, []string{
+		"Stay deferred until the HTTP deadline.",
+		"Remain actionable while the other task is deferred.",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return tasks
+}
+
 func TestHTTPAnswerRejectsCompletionDecision(t *testing.T) {
 	f := newFixture(t)
 	completion, err := f.store.AskDecision(f.ctx, store.AskInput{
