@@ -158,6 +158,10 @@ type rejectionRequest struct {
 	Reason string `json:"reason"`
 }
 
+type snoozeRequest struct {
+	SnoozedUntil *string `json:"snoozed_until"`
+}
+
 type updateGoalContentRequest struct {
 	Content string `json:"content"`
 }
@@ -307,6 +311,18 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.handleRelease(w, r, parts[2])
+		return
+	}
+	if len(parts) == 4 && parts[0] == "api" && parts[1] == "tasks" && parts[3] == "snooze" {
+		if parts[2] == "" {
+			writeError(w, http.StatusBadRequest, "task id is missing")
+			return
+		}
+		if r.Method != http.MethodPost {
+			writeError(w, http.StatusBadRequest, "method is not allowed for this endpoint")
+			return
+		}
+		s.handleSnooze(w, r, parts[2])
 		return
 	}
 	if len(parts) == 4 && parts[0] == "api" && parts[1] == "decisions" {
@@ -1031,6 +1047,39 @@ func (s *Server) handleRelease(w http.ResponseWriter, r *http.Request, taskID st
 		return
 	}
 	task, err := s.store.ReleaseTaskForHuman(r.Context(), canonicalTaskID)
+	if err != nil {
+		if errors.Is(err, store.ErrTaskNotFound) {
+			writeError(w, http.StatusNotFound, err.Error())
+			return
+		}
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, task)
+}
+
+func (s *Server) handleSnooze(w http.ResponseWriter, r *http.Request, taskID string) {
+	var request snoozeRequest
+	if err := decodeJSONBody(r, &request); err != nil && !errors.Is(err, io.EOF) {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+
+	var snoozedUntil *time.Time
+	if request.SnoozedUntil != nil && *request.SnoozedUntil != "" {
+		parsed, err := time.Parse(time.RFC3339, *request.SnoozedUntil)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "snoozed_until must be RFC3339")
+			return
+		}
+		snoozedUntil = &parsed
+	}
+
+	canonicalTaskID, ok := s.resolveTaskID(w, r.Context(), taskID)
+	if !ok {
+		return
+	}
+	task, err := s.store.SnoozeTask(r.Context(), canonicalTaskID, snoozedUntil)
 	if err != nil {
 		if errors.Is(err, store.ErrTaskNotFound) {
 			writeError(w, http.StatusNotFound, err.Error())
