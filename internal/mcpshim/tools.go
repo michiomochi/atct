@@ -86,7 +86,13 @@ type HandoffReceiveIn struct {
 type HandoffCompleteIn struct {
 	HandoffID      string `json:"handoff_id,omitempty"`
 	TaskID         mcpID  `json:"task_id"`
-	CompleteReport string `json:"complete_report,omitempty"`
+	CompleteReport string `json:"complete_report"`
+}
+
+type HandoffReportAmendIn struct {
+	HandoffID      string `json:"handoff_id"`
+	TaskID         mcpID  `json:"task_id"`
+	CompleteReport string `json:"complete_report"`
 }
 
 type GoalHandoffRequestIn struct {
@@ -103,7 +109,13 @@ type GoalHandoffReceiveIn struct {
 type GoalHandoffCompleteIn struct {
 	HandoffID      string `json:"handoff_id,omitempty"`
 	GoalID         mcpID  `json:"goal_id"`
-	CompleteReport string `json:"complete_report,omitempty"`
+	CompleteReport string `json:"complete_report"`
+}
+
+type GoalHandoffReportAmendIn struct {
+	HandoffID      string `json:"handoff_id"`
+	GoalID         mcpID  `json:"goal_id"`
+	CompleteReport string `json:"complete_report"`
 }
 
 type TaskUpdateIn struct {
@@ -634,7 +646,7 @@ func Register(server *mcp.Server, c *Client, agentSessionID int64) {
 
 	addMCPTool[HandoffCompleteIn, RawWithUnappliedDecisions](server, &mcp.Tool{
 		Name:         "atct_handoff_complete",
-		Description:  "Report that a task handoff was completed.",
+		Description:  "Report that a task handoff was completed. complete_report must state what was done, what was verified, and paths changed.",
 		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in HandoffCompleteIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
 		params := map[string]any{
@@ -644,6 +656,16 @@ func Register(server *mcp.Server, c *Client, agentSessionID int64) {
 			params["handoff_id"] = in.HandoffID
 		}
 		return callWithUnappliedDecisions(ctx, c, "handoff.complete", params)
+	})
+
+	addMCPTool[HandoffReportAmendIn, RawWithUnappliedDecisions](server, &mcp.Tool{
+		Name:         "atct_handoff_report_amend",
+		Description:  "Fill in a report on an already closed task handoff. Do not use this for normal completion; use atct_handoff_complete instead.",
+		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in HandoffReportAmendIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
+		return callWithUnappliedDecisions(ctx, c, "handoff.report.amend", map[string]any{
+			"handoff_id": in.HandoffID, "task_id": in.TaskID, "complete_report": in.CompleteReport,
+		})
 	})
 
 	addMCPTool[GoalHandoffRequestIn, RawWithUnappliedDecisions](server, &mcp.Tool{
@@ -673,7 +695,7 @@ func Register(server *mcp.Server, c *Client, agentSessionID int64) {
 
 	addMCPTool[GoalHandoffCompleteIn, RawWithUnappliedDecisions](server, &mcp.Tool{
 		Name:         "atct_goal_handoff_complete",
-		Description:  "Report that a goal handoff was completed.",
+		Description:  "Report that a goal handoff was completed. complete_report must state what was done, what was verified, and paths changed.",
 		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in GoalHandoffCompleteIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
 		params := map[string]any{
@@ -683,6 +705,16 @@ func Register(server *mcp.Server, c *Client, agentSessionID int64) {
 			params["handoff_id"] = in.HandoffID
 		}
 		return callWithUnappliedDecisions(ctx, c, "goal.handoff.complete", params)
+	})
+
+	addMCPTool[GoalHandoffReportAmendIn, RawWithUnappliedDecisions](server, &mcp.Tool{
+		Name:         "atct_goal_handoff_report_amend",
+		Description:  "Fill in a report on an already closed goal handoff. Do not use this for normal completion; use atct_goal_handoff_complete instead.",
+		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in GoalHandoffReportAmendIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
+		return callWithUnappliedDecisions(ctx, c, "goal.handoff.report.amend", map[string]any{
+			"handoff_id": in.HandoffID, "goal_id": in.GoalID, "complete_report": in.CompleteReport,
+		})
 	})
 
 	addMCPTool[TaskUpdateIn, RawWithUnappliedDecisions](server, &mcp.Tool{

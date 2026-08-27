@@ -16,6 +16,12 @@ var (
 	ErrGoalHandoffProjectNotHeld = errors.New("goal handoff requires the project claim: caller does not hold a live claim on project")
 	ErrGoalHandoffAlreadyOpen    = errors.New("goal handoff already open")
 	ErrGoalHandoffAmbiguous      = errors.New("multiple goal handoffs pending receipt")
+	ErrGoalHandoffReportEmpty    = errors.New("goal handoff needs a complete_report describing what was done, what was verified, and paths changed; without it, the record cannot distinguish completion from no report")
+)
+
+const (
+	goalHandoffReclaimedReport = "セッションが停止した"
+	goalHandoffReleasedReport  = "ゴールを手放した（報告者なし）"
 )
 
 // GoalHandoff records one delegation between agents. Each event timestamp is
@@ -147,7 +153,7 @@ func (s *Store) reclaimOpenGoalHandoff(ctx context.Context, handoffID string, go
 	if ownerID == 0 || !claimIsDefinitelyDead(ctx, s, ownerID) {
 		return fmt.Errorf("%w: goal %d has a live handoff owner", ErrGoalHandoffAlreadyOpen, goalID)
 	}
-	if _, err := s.CompleteGoalHandoff(ctx, open.ID, goalID, "セッションが停止した"); err != nil {
+	if _, err := s.CompleteGoalHandoff(ctx, open.ID, goalID, goalHandoffReclaimedReport); err != nil {
 		return fmt.Errorf("reclaim goal handoff %q: %w", open.ID, err)
 	}
 	return nil
@@ -287,6 +293,9 @@ func (s *Store) CompleteGoalHandoffForGoal(ctx context.Context, goalID int64, co
 // CompleteGoalHandoff records the completion report side of a handoff. It
 // only writes the completion timestamp and report and therefore preserves partial states.
 func (s *Store) CompleteGoalHandoff(ctx context.Context, handoffID string, goalID int64, completeReport string) (GoalHandoff, error) {
+	if completeReportIsEmpty(completeReport) {
+		return GoalHandoff{}, ErrGoalHandoffReportEmpty
+	}
 	if err := s.ensureGoalHandoffGoal(ctx, handoffID, goalID); err != nil {
 		return GoalHandoff{}, err
 	}
@@ -305,11 +314,19 @@ func (s *Store) CompleteGoalHandoff(ctx context.Context, handoffID string, goalI
 		return GoalHandoff{}, fmt.Errorf("complete goal handoff rows affected: %w", err)
 	}
 	if n == 0 {
+		handoff, lookupErr := s.GetGoalHandoff(ctx, handoffID)
+		if lookupErr == nil && handoff.CompletedReportAt != nil {
+			return GoalHandoff{}, fmt.Errorf("goal handoff %q is already reported; use another path to add a report after completion", handoffID)
+		}
 		return GoalHandoff{}, fmt.Errorf("%w: %s", ErrGoalHandoffNotFound, handoffID)
 	}
 	completed, err := s.GetGoalHandoff(ctx, handoffID)
 	if err != nil {
 		return GoalHandoff{}, err
+	}
+	// Claim locks have no delegate report, so their completion is not reportable.
+	if !handoffIsDelegation(completed.RequestedBy, completed.ReceivedBy) {
+		return completed, nil
 	}
 	goal, err := s.GetGoal(ctx, goalID)
 	if err != nil {
@@ -327,6 +344,31 @@ func (s *Store) CompleteGoalHandoff(ctx context.Context, handoffID string, goalI
 		},
 	})
 	return completed, nil
+}
+
+// AmendGoalHandoffReport fills in or corrects the report on a handoff that is
+// already closed without changing when it was completed.
+func (s *Store) AmendGoalHandoffReport(ctx context.Context, handoffID string, goalID int64, completeReport string) (GoalHandoff, error) {
+	if completeReportIsEmpty(completeReport) {
+		return GoalHandoff{}, ErrGoalHandoffReportEmpty
+	}
+	if err := s.ensureGoalHandoffGoal(ctx, handoffID, goalID); err != nil {
+		return GoalHandoff{}, err
+	}
+	result, err := sqlcgen.New(s.db).AmendGoalHandoffReport(ctx, sqlcgen.AmendGoalHandoffReportParams{
+		ID: handoffID, GoalID: goalID, CompleteReport: sql.NullString{String: completeReport, Valid: true},
+	})
+	if err != nil {
+		return GoalHandoff{}, fmt.Errorf("amend goal handoff report: %w", err)
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return GoalHandoff{}, fmt.Errorf("amend goal handoff report rows affected: %w", err)
+	}
+	if n == 0 {
+		return GoalHandoff{}, fmt.Errorf("goal handoff %q is not yet completed; use atct_goal_handoff_complete", handoffID)
+	}
+	return s.GetGoalHandoff(ctx, handoffID)
 }
 
 // GetGoalHandoff returns one handoff, including NULL timestamps as nil.

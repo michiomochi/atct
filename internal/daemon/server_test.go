@@ -1483,7 +1483,7 @@ func setupDaemonTaskContentGoalHolderWithTaskHandoff(t *testing.T, fixture goalL
 		t.Fatalf("GetTaskGoalID: %v", err)
 	}
 	setupDaemonTaskContentTaskHandoff(t, fixture, taskID, label)
-	if _, err := fixture.store.CompleteGoalHandoffForGoal(ctx, goalID, ""); err != nil {
+	if _, err := fixture.store.CompleteGoalHandoffForGoal(ctx, goalID, "closing goal handoff to recreate the fixture"); err != nil {
 		t.Fatalf("CompleteGoalHandoffForGoal: %v", err)
 	}
 	return setupDaemonTaskContentGoalHandoff(t, fixture, goalID, label)

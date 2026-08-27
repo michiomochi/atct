@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/michiomochi/atct/internal/store/sqlcgen"
@@ -16,6 +17,12 @@ var (
 	ErrTaskHandoffGoalNotHeld  = errors.New("task handoff requires the goal's handoff: caller does not hold an open received handoff for goal")
 	ErrTaskHandoffAlreadyOpen  = errors.New("task handoff already open")
 	ErrTaskHandoffAmbiguous    = errors.New("multiple task handoffs pending receipt")
+	ErrTaskHandoffReportEmpty  = errors.New("task handoff needs a complete_report describing what was done, what was verified, and paths changed; without it, the record cannot distinguish completion from no report")
+)
+
+const (
+	taskHandoffReclaimedReport = "セッションが停止した"
+	taskHandoffReleasedReport  = "作業ロックを手放した（報告者なし）"
 )
 
 // TaskHandoff records one delegation between agents. Each event timestamp is
@@ -59,6 +66,10 @@ func nullableAgentSessionID(value sql.NullInt64) int64 {
 		return 0
 	}
 	return value.Int64
+}
+
+func completeReportIsEmpty(completeReport string) bool {
+	return strings.TrimSpace(completeReport) == ""
 }
 
 func parseTaskHandoffTime(column string, value sql.NullString) (*time.Time, error) {
@@ -145,7 +156,7 @@ func (s *Store) reclaimOpenTaskHandoff(ctx context.Context, handoffID string, ta
 	if ownerID == 0 || !claimIsDefinitelyDead(ctx, s, ownerID) {
 		return fmt.Errorf("%w: task %d has a live handoff owner", ErrTaskHandoffAlreadyOpen, taskID)
 	}
-	if _, err := s.CompleteTaskHandoff(ctx, open.ID, taskID, "セッションが停止した"); err != nil {
+	if _, err := s.CompleteTaskHandoff(ctx, open.ID, taskID, taskHandoffReclaimedReport); err != nil {
 		return fmt.Errorf("reclaim task handoff %q: %w", open.ID, err)
 	}
 	return nil
@@ -285,6 +296,9 @@ func (s *Store) CompleteTaskHandoffForTask(ctx context.Context, taskID int64, co
 // CompleteTaskHandoff records the completion report side of a handoff. It
 // only writes the completion timestamp and report and therefore preserves partial states.
 func (s *Store) CompleteTaskHandoff(ctx context.Context, handoffID string, taskID int64, completeReport string) (TaskHandoff, error) {
+	if completeReportIsEmpty(completeReport) {
+		return TaskHandoff{}, ErrTaskHandoffReportEmpty
+	}
 	if err := s.ensureTaskHandoffTask(ctx, handoffID, taskID); err != nil {
 		return TaskHandoff{}, err
 	}
@@ -303,11 +317,19 @@ func (s *Store) CompleteTaskHandoff(ctx context.Context, handoffID string, taskI
 		return TaskHandoff{}, fmt.Errorf("complete task handoff rows affected: %w", err)
 	}
 	if n == 0 {
+		handoff, lookupErr := s.GetTaskHandoff(ctx, handoffID)
+		if lookupErr == nil && handoff.CompletedReportAt != nil {
+			return TaskHandoff{}, fmt.Errorf("task handoff %q is already reported; use another path to add a report after completion", handoffID)
+		}
 		return TaskHandoff{}, fmt.Errorf("%w: %s", ErrTaskHandoffNotFound, handoffID)
 	}
 	completed, err := s.GetTaskHandoff(ctx, handoffID)
 	if err != nil {
 		return TaskHandoff{}, err
+	}
+	// Claim locks have no delegate report, so their completion is not reportable.
+	if !handoffIsDelegation(completed.RequestedBy, completed.ReceivedBy) {
+		return completed, nil
 	}
 	// Notification is best-effort; do not turn a successful completion into an error.
 	goalID, err := sqlcgen.New(s.db).GetTaskGoalID(ctx, taskID)
@@ -330,6 +352,31 @@ func (s *Store) CompleteTaskHandoff(ctx context.Context, handoffID string, taskI
 		},
 	})
 	return completed, nil
+}
+
+// AmendTaskHandoffReport fills in or corrects the report on a handoff that is
+// already closed without changing when it was completed.
+func (s *Store) AmendTaskHandoffReport(ctx context.Context, handoffID string, taskID int64, completeReport string) (TaskHandoff, error) {
+	if completeReportIsEmpty(completeReport) {
+		return TaskHandoff{}, ErrTaskHandoffReportEmpty
+	}
+	if err := s.ensureTaskHandoffTask(ctx, handoffID, taskID); err != nil {
+		return TaskHandoff{}, err
+	}
+	result, err := sqlcgen.New(s.db).AmendTaskHandoffReport(ctx, sqlcgen.AmendTaskHandoffReportParams{
+		ID: handoffID, TaskID: taskID, CompleteReport: sql.NullString{String: completeReport, Valid: true},
+	})
+	if err != nil {
+		return TaskHandoff{}, fmt.Errorf("amend task handoff report: %w", err)
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return TaskHandoff{}, fmt.Errorf("amend task handoff report rows affected: %w", err)
+	}
+	if n == 0 {
+		return TaskHandoff{}, fmt.Errorf("task handoff %q is not yet completed; use atct_handoff_complete", handoffID)
+	}
+	return s.GetTaskHandoff(ctx, handoffID)
 }
 
 // GetTaskHandoff returns one handoff, including NULL timestamps as nil.

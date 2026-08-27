@@ -562,7 +562,7 @@ func (s *Store) updateTask(ctx context.Context, taskID int64, status domain.Task
 		return domain.Task{}, fmt.Errorf("commit: %w", err)
 	}
 	if releaseHandoff != nil {
-		if _, err := s.CompleteTaskHandoff(ctx, releaseHandoff.ID, taskID, ""); err != nil {
+		if _, err := s.CompleteTaskHandoff(ctx, releaseHandoff.ID, taskID, taskHandoffReleasedReport); err != nil {
 			return domain.Task{}, fmt.Errorf("complete task handoff after release: %w", err)
 		}
 	}
