@@ -1494,6 +1494,26 @@ test_role_contract_matches_implementation() {
   fi
 }
 
+test_task_close_names_the_commits_argument() {
+  local atct_skill="$REPO_ROOT/skills/atct/SKILL.md"
+  local tools_go="$REPO_ROOT/internal/mcpshim/tools.go"
+  local close_section
+  local task_update_input
+  local task_update_call
+
+  close_section="$(sed -n '/^## Close a task the moment it is finished$/,/^## Keep going$/p' "$atct_skill")"
+  grep -Fq -- 'commits=' <<<"$close_section" ||
+    fail 'closing a task must name the commits argument'
+
+  task_update_input="$(sed -n '/^type TaskUpdateIn struct {$/,/^}$/p' "$tools_go")"
+  grep -Fq -- 'json:"commits' <<<"$task_update_input" ||
+    fail 'atct_task_update input must keep a commits field'
+
+  task_update_call="$(sed -n '/callWithUnappliedDecisions(ctx, c, "task.update", map\[string\]any{/,/^\t\t})$/p' "$tools_go")"
+  grep -Fq -- '"commits"' <<<"$task_update_call" ||
+    fail 'atct_task_update must pass commits to task.update'
+}
+
 test_worktree_rule_defers_to_superpowers() {
   local atct_skill="$REPO_ROOT/skills/atct/SKILL.md"
   local worktree_section
@@ -1774,6 +1794,7 @@ test_start_does_not_claim_delegate_cannot_close
 test_start_does_not_claim_delegate_lacks_claim
 test_role_table_has_no_task_update_procedure
 test_role_contract_matches_implementation
+test_task_close_names_the_commits_argument
 test_role_response_does_not_leak_other_boundaries
 test_worktree_rule_defers_to_superpowers
 test_worktree_rule_names_who_creates_it
