@@ -813,34 +813,76 @@ delegate_task_section_contains() {
     fail "delegate task section does not contain <$needle>"
 }
 
+# The two checks below measure the lists themselves, not the surrounding
+# section. Searching the whole section is what let the lists rot: every allowed
+# name and some forbidden ones also appear in the section's prose and quoted
+# blocks, so deleting a name from its list still found it elsewhere and passed.
+# Do not widen these back to `delegate_task_section`.
+delegate_task_allowlist_line() {
+  delegate_task_section |
+    sed -n '/An executor may call only these atct tools:/{n;p;}'
+}
+
+delegate_task_forbidden_block() {
+  delegate_task_section |
+    sed -n '/An executor must not call/,/Spell the names out/p'
+}
+
+# Names are matched with their backticks so a name can never match inside a
+# longer one: `atct_handoff_complete` would otherwise hit
+# `atct_goal_handoff_complete`, which sits on the opposite list.
 test_delegation_names_the_atct_tools_an_executor_may_call() {
-  local section
+  local allowlist
   local tool
 
   delegate_task_section_contains 'An executor may call only these atct tools:'
 
-  section="$(delegate_task_section)"
+  # An empty extraction means the heading moved and every check below would
+  # pass vacuously. A check that always passes is the hole itself.
+  allowlist="$(delegate_task_allowlist_line)"
+  [[ -n "$allowlist" ]] ||
+    fail 'delegate task section has no allowlist line after `An executor may call only these atct tools:`'
+
   for tool in atct_session_identify atct_handoff_receive atct_role \
     atct_task_update atct_handoff_complete; do
-    grep -Fq -- "$tool" <<<"$section" ||
-      fail "delegate task section does not allow <$tool>"
+    grep -Fq -- "\`$tool\`" <<<"$allowlist" ||
+      fail "the allowlist line does not allow <$tool>"
   done
-}
 
-test_delegation_names_the_atct_tools_an_executor_must_not_call() {
-  local section
-  local tool
-
-  delegate_task_section_contains 'An executor must not call `atct_goal_handoff_complete`'
-
-  section="$(delegate_task_section)"
   for tool in atct_goal_handoff_complete atct_goal_handoff_receive \
     atct_goal_handoff_request atct_goal_claim atct_goal_release \
     atct_goal_complete atct_goal_update_content atct_project_claim \
     atct_project_release atct_task_claim atct_handoff_request \
     atct_task_declare atct_decision_ask; do
-    grep -Fq -- "$tool" <<<"$section" ||
-      fail "delegate task section does not forbid <$tool> by name"
+    ! grep -Fq -- "\`$tool\`" <<<"$allowlist" ||
+      fail "the allowlist line must not allow the forbidden <$tool>"
+  done
+}
+
+test_delegation_names_the_atct_tools_an_executor_must_not_call() {
+  local forbidden
+  local tool
+
+  delegate_task_section_contains 'An executor must not call `atct_goal_handoff_complete`'
+
+  # Same reason as above: an empty block would let every name through.
+  forbidden="$(delegate_task_forbidden_block)"
+  [[ -n "$forbidden" ]] ||
+    fail 'delegate task section has no forbidden block from `An executor must not call` to `Spell the names out`'
+
+  for tool in atct_goal_handoff_complete atct_goal_handoff_receive \
+    atct_goal_handoff_request atct_goal_claim atct_goal_release \
+    atct_goal_complete atct_goal_update_content atct_project_claim \
+    atct_project_release atct_task_claim atct_handoff_request \
+    atct_task_declare atct_decision_ask; do
+    grep -Fq -- "\`$tool\`" <<<"$forbidden" ||
+      fail "the forbidden block does not forbid <$tool> by name"
+  done
+
+  for tool in atct_session_identify atct_handoff_receive atct_role \
+    atct_task_update atct_handoff_complete; do
+    ! grep -Fq -- "\`$tool\`" <<<"$forbidden" ||
+      fail "the forbidden block must not forbid the allowed <$tool>"
   done
 }
 
