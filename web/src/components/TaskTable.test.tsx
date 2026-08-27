@@ -36,7 +36,6 @@ function taskView(openDecisionCount = 0): TaskView {
     description: "Task description",
     status: "todo",
     agent: "fixture-agent",
-    files: ["src/task.ts"],
     order: 0,
     declare_key: "fixture-declare",
     claimed_by: "",

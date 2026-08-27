@@ -116,9 +116,9 @@ export function TaskDetailPage({ id }: Props) {
             </h2>
             <dl className="mt-6 grid min-w-0 gap-x-6 gap-y-4 border-t border-line pt-5 sm:grid-cols-2">
               <div className="min-w-0">
-                <dt className="text-base font-semibold uppercase text-ink-700">{t("task.detail.files")}</dt>
+                <dt className="text-base font-semibold uppercase text-ink-700">{t("task.detail.declareKey")}</dt>
                 <dd className="mt-1 break-words text-base text-ink-950">
-                  {displayValue([...data.task.files ?? [], data.task.declare_key].filter(Boolean).join(" · "), noValue)}
+                  {displayValue(data.task.declare_key, noValue)}
                 </dd>
               </div>
               <div className="min-w-0">

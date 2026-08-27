@@ -56,7 +56,6 @@ export interface Task {
   description: string;
   status: string;
   agent: string;
-  files?: string[];
   order: number;
   declare_key: string;
   claimed_by: string;
