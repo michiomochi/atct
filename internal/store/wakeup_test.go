@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"testing"
 	"time"
@@ -723,7 +724,7 @@ func TestDetectWakeupCollectsStalledHandoffCandidates(t *testing.T) {
 	if _, err := s.ReceiveTaskHandoff(ctx, completed.ID, taskIDs[2], stalledHandoffReceiverID); err != nil {
 		t.Fatalf("ReceiveTaskHandoff completed: %v", err)
 	}
-	if _, err := s.CompleteTaskHandoff(ctx, completed.ID, taskIDs[2], ""); err != nil {
+	if _, err := s.CompleteTaskHandoff(ctx, completed.ID, taskIDs[2], "completed for the first stalled-handoff fixture"); err != nil {
 		t.Fatalf("CompleteTaskHandoff completed: %v", err)
 	}
 	secondCompleted, err := s.RequestTaskHandoff(ctx, "handoff-completed-second", taskIDs[7], requesterID, "")
@@ -733,7 +734,7 @@ func TestDetectWakeupCollectsStalledHandoffCandidates(t *testing.T) {
 	if _, err := s.ReceiveTaskHandoff(ctx, secondCompleted.ID, taskIDs[7], stalledHandoffReceiverID); err != nil {
 		t.Fatalf("ReceiveTaskHandoff second completed: %v", err)
 	}
-	if _, err := s.CompleteTaskHandoff(ctx, secondCompleted.ID, taskIDs[7], ""); err != nil {
+	if _, err := s.CompleteTaskHandoff(ctx, secondCompleted.ID, taskIDs[7], "completed for the second stalled-handoff fixture"); err != nil {
 		t.Fatalf("CompleteTaskHandoff second completed: %v", err)
 	}
 	requestedClaim, err := s.RequestTaskHandoff(ctx, "handoff-requested-claim", taskIDs[4], requesterID, "")
@@ -846,6 +847,321 @@ func TestDetectWakeupCollectsReportedTaskAndGoalHandoffs(t *testing.T) {
 	}
 	if len(want) != 0 {
 		t.Fatalf("missing reported handoffs = %#v", want)
+	}
+}
+
+func TestHandoffIsDelegation(t *testing.T) {
+	tests := []struct {
+		name                    string
+		requestedBy, receivedBy int64
+		want                    bool
+	}{
+		{name: "self claim", requestedBy: 101, receivedBy: 101, want: false},
+		{name: "delegation", requestedBy: 101, receivedBy: 102, want: true},
+		{name: "unknown requester", requestedBy: 0, receivedBy: 102, want: true},
+		{name: "unknown receiver", requestedBy: 101, receivedBy: 0, want: true},
+		{name: "unknown requester and receiver", requestedBy: 0, receivedBy: 0, want: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := handoffIsDelegation(tt.requestedBy, tt.receivedBy); got != tt.want {
+				t.Fatalf("handoffIsDelegation(%d, %d) = %t, want %t", tt.requestedBy, tt.receivedBy, got, tt.want)
+			}
+		})
+	}
+}
+
+func addCompletedWakeupTaskHandoff(t *testing.T, s *Store, handoffID string, taskID, requestedBy, receivedBy int64) {
+	t.Helper()
+	addWakeupHandoffSession(t, s, requestedBy)
+	addWakeupHandoffSession(t, s, receivedBy)
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err := s.DB().ExecContext(context.Background(), `
+		INSERT INTO task_handoffs (
+			id, task_id, requested_by, requested_at, received_by, received_at,
+			completed_report_at, complete_report
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	`, handoffID, taskID, nullWakeupHandoffSessionID(requestedBy), now, nullWakeupHandoffSessionID(receivedBy), now, now, "completed task handoff"); err != nil {
+		t.Fatalf("insert completed task handoff %q: %v", handoffID, err)
+	}
+}
+
+func addCompletedWakeupGoalHandoff(t *testing.T, s *Store, handoffID string, goalID, requestedBy, receivedBy int64) {
+	t.Helper()
+	addWakeupHandoffSession(t, s, requestedBy)
+	addWakeupHandoffSession(t, s, receivedBy)
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err := s.DB().ExecContext(context.Background(), `
+		INSERT INTO goal_handoffs (
+			id, goal_id, requested_by, requested_at, received_by, received_at,
+			completed_report_at, complete_report
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	`, handoffID, goalID, nullWakeupHandoffSessionID(requestedBy), now, nullWakeupHandoffSessionID(receivedBy), now, now, "completed goal handoff"); err != nil {
+		t.Fatalf("insert completed goal handoff %q: %v", handoffID, err)
+	}
+}
+
+func addWakeupHandoffSession(t *testing.T, s *Store, sessionID int64) {
+	t.Helper()
+	if sessionID == 0 {
+		return
+	}
+	if _, err := s.DB().ExecContext(context.Background(), `
+		INSERT OR IGNORE INTO agent_sessions (id, registered_at)
+		VALUES (?, ?)
+	`, sessionID, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+		t.Fatalf("insert handoff session %d: %v", sessionID, err)
+	}
+}
+
+func nullWakeupHandoffSessionID(sessionID int64) any {
+	if sessionID == 0 {
+		return nil
+	}
+	return sessionID
+}
+
+func TestDetectWakeupDoesNotReportSelfClaimTaskHandoff(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	project, err := s.CreateProject(ctx, "atct", "/repos/atct")
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	goal, err := s.CreateGoal(ctx, project.ID, "Self claim task handoff", "human")
+	if err != nil {
+		t.Fatalf("CreateGoal: %v", err)
+	}
+	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "self-claim-task", []string{"Task"}, []string{"Task description"})
+	if err != nil {
+		t.Fatalf("DeclareTasks: %v", err)
+	}
+	addCompletedWakeupTaskHandoff(t, s, "self-claim-task-handoff", tasks[0].ID, 101, 101)
+
+	state, err := s.DetectWakeup(ctx, project.ID)
+	if err != nil {
+		t.Fatalf("DetectWakeup: %v", err)
+	}
+	if len(state.HandoffsReported) != 0 {
+		t.Fatalf("reported handoffs = %#v, want self claim excluded", state.HandoffsReported)
+	}
+}
+
+func TestDetectWakeupDoesNotReportSelfClaimGoalHandoff(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	project, err := s.CreateProject(ctx, "atct", "/repos/atct")
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	goal, err := s.CreateGoal(ctx, project.ID, "Self claim goal handoff", "human")
+	if err != nil {
+		t.Fatalf("CreateGoal: %v", err)
+	}
+	addCompletedWakeupGoalHandoff(t, s, "self-claim-goal-handoff", goal.ID, 101, 101)
+
+	state, err := s.DetectWakeup(ctx, project.ID)
+	if err != nil {
+		t.Fatalf("DetectWakeup: %v", err)
+	}
+	if len(state.HandoffsReported) != 0 {
+		t.Fatalf("reported handoffs = %#v, want self claim excluded", state.HandoffsReported)
+	}
+}
+
+func TestDetectWakeupReportsDelegatedTaskAndGoalHandoffs(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	project, err := s.CreateProject(ctx, "atct", "/repos/atct")
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	taskGoal, err := s.CreateGoal(ctx, project.ID, "Delegated task handoff", "human")
+	if err != nil {
+		t.Fatalf("CreateGoal task: %v", err)
+	}
+	tasks, err := s.DeclareTasks(ctx, taskGoal.ID, "agent", "delegated-task", []string{"Task"}, []string{"Task description"})
+	if err != nil {
+		t.Fatalf("DeclareTasks: %v", err)
+	}
+	goalHandoffGoal, err := s.CreateGoal(ctx, project.ID, "Delegated goal handoff", "human")
+	if err != nil {
+		t.Fatalf("CreateGoal goal: %v", err)
+	}
+	addCompletedWakeupTaskHandoff(t, s, "delegated-task-handoff", tasks[0].ID, 101, 102)
+	addCompletedWakeupGoalHandoff(t, s, "delegated-goal-handoff", goalHandoffGoal.ID, 101, 102)
+
+	state, err := s.DetectWakeup(ctx, project.ID)
+	if err != nil {
+		t.Fatalf("DetectWakeup: %v", err)
+	}
+	if len(state.HandoffsReported) != 2 {
+		t.Fatalf("reported handoffs = %#v, want delegated task and goal handoffs", state.HandoffsReported)
+	}
+}
+
+func TestDetectWakeupReportsTaskAndGoalHandoffsWithUnknownIdentity(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	project, err := s.CreateProject(ctx, "atct", "/repos/atct")
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	taskGoal, err := s.CreateGoal(ctx, project.ID, "Unknown task handoff", "human")
+	if err != nil {
+		t.Fatalf("CreateGoal task: %v", err)
+	}
+	tasks, err := s.DeclareTasks(ctx, taskGoal.ID, "agent", "unknown-task", []string{"Task"}, []string{"Task description"})
+	if err != nil {
+		t.Fatalf("DeclareTasks: %v", err)
+	}
+	goalHandoffGoal, err := s.CreateGoal(ctx, project.ID, "Unknown goal handoff", "human")
+	if err != nil {
+		t.Fatalf("CreateGoal goal: %v", err)
+	}
+	addCompletedWakeupTaskHandoff(t, s, "unknown-task-handoff", tasks[0].ID, 0, 102)
+	addCompletedWakeupGoalHandoff(t, s, "unknown-goal-handoff", goalHandoffGoal.ID, 101, 0)
+
+	state, err := s.DetectWakeup(ctx, project.ID)
+	if err != nil {
+		t.Fatalf("DetectWakeup: %v", err)
+	}
+	if len(state.HandoffsReported) != 2 {
+		t.Fatalf("reported handoffs = %#v, want handoffs with unknown identities retained", state.HandoffsReported)
+	}
+}
+
+func TestDetectWakeupReportsOnlyDelegationsInCompletedHandoffBreakdown(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	project, err := s.CreateProject(ctx, "atct", "/repos/atct")
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	goal, err := s.CreateGoal(ctx, project.ID, "Completed handoff breakdown", "human")
+	if err != nil {
+		t.Fatalf("CreateGoal: %v", err)
+	}
+	const selfBefore = 38
+	const delegationBefore = 36
+	titles := make([]string, selfBefore+delegationBefore)
+	descriptions := make([]string, len(titles))
+	for i := range titles {
+		titles[i] = fmt.Sprintf("Task %d", i)
+		descriptions[i] = "Task description"
+	}
+	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "completed-handoff-breakdown", titles, descriptions)
+	if err != nil {
+		t.Fatalf("DeclareTasks: %v", err)
+	}
+	selfIDs := make(map[string]struct{}, selfBefore)
+	delegationIDs := make(map[string]struct{}, delegationBefore)
+	for i, task := range tasks {
+		handoffID := fmt.Sprintf("completed-handoff-%d", i)
+		if i < selfBefore {
+			selfIDs[handoffID] = struct{}{}
+			addCompletedWakeupTaskHandoff(t, s, handoffID, task.ID, 101, 101)
+			continue
+		}
+		delegationIDs[handoffID] = struct{}{}
+		addCompletedWakeupTaskHandoff(t, s, handoffID, task.ID, 101, 102)
+	}
+
+	state, err := s.DetectWakeup(ctx, project.ID)
+	if err != nil {
+		t.Fatalf("DetectWakeup: %v", err)
+	}
+	selfAfter := 0
+	delegationAfter := 0
+	for _, handoff := range state.HandoffsReported {
+		if _, ok := selfIDs[handoff.ID]; ok {
+			selfAfter++
+		}
+		if _, ok := delegationIDs[handoff.ID]; ok {
+			delegationAfter++
+		}
+	}
+	t.Logf("self claim completed: before %d -> after %d", selfBefore, selfAfter)
+	t.Logf("delegation completed: before %d -> after %d", delegationBefore, delegationAfter)
+	if selfAfter != 0 {
+		t.Fatalf("self claim reports = %d, want 0", selfAfter)
+	}
+	if delegationAfter != delegationBefore {
+		t.Fatalf("delegation reports = %d, want %d", delegationAfter, delegationBefore)
+	}
+}
+
+func TestDetectWakeupDoesNotReportCompletedTaskClaim(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	project, err := s.CreateProject(ctx, "atct", "/repos/atct")
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	goal, err := s.CreateGoal(ctx, project.ID, "Completed task claim", "human")
+	if err != nil {
+		t.Fatalf("CreateGoal: %v", err)
+	}
+	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "completed-claim", []string{"Task"}, []string{"Task description"})
+	if err != nil {
+		t.Fatalf("DeclareTasks: %v", err)
+	}
+	sessionID := registerNamedTestAgentSession(t, s, "completed-claim-agent", os.Getpid())
+	if err := s.AssociateAgentSessionWithProject(ctx, sessionID, project.ID); err != nil {
+		t.Fatalf("AssociateAgentSessionWithProject: %v", err)
+	}
+	if _, err := s.ClaimTask(ctx, tasks[0].ID, sessionID); err != nil {
+		t.Fatalf("ClaimTask: %v", err)
+	}
+	if _, err := s.UpdateTask(ctx, tasks[0].ID, domain.TaskDone, sessionID); err != nil {
+		t.Fatalf("UpdateTask done: %v", err)
+	}
+
+	state, err := s.DetectWakeup(ctx, project.ID)
+	if err != nil {
+		t.Fatalf("DetectWakeup: %v", err)
+	}
+	if len(state.HandoffsReported) != 0 {
+		t.Fatalf("reported handoffs = %#v, want completed self claim excluded", state.HandoffsReported)
+	}
+}
+
+func TestDetectWakeupReportsCompletedDelegatedTaskHandoff(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	project, err := s.CreateProject(ctx, "atct", "/repos/atct")
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	goal, err := s.CreateGoal(ctx, project.ID, "Completed delegated task", "human")
+	if err != nil {
+		t.Fatalf("CreateGoal: %v", err)
+	}
+	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "completed-delegation", []string{"Task"}, []string{"Task description"})
+	if err != nil {
+		t.Fatalf("DeclareTasks: %v", err)
+	}
+	const requesterLabel = "completed-delegation-requester"
+	const receiverLabel = "completed-delegation-receiver"
+	addLiveParentGoalClaim(t, s, tasks[0].ID, requesterLabel)
+	addTestAgentSession(t, s, receiverLabel)
+	handoff, err := s.RequestTaskHandoff(ctx, "completed-delegated-task-handoff", tasks[0].ID, testSessionID(requesterLabel), "Implement the task")
+	if err != nil {
+		t.Fatalf("RequestTaskHandoff: %v", err)
+	}
+	if _, err := s.ReceiveTaskHandoff(ctx, handoff.ID, tasks[0].ID, testSessionID(receiverLabel)); err != nil {
+		t.Fatalf("ReceiveTaskHandoff: %v", err)
+	}
+	if _, err := s.CompleteTaskHandoff(ctx, handoff.ID, tasks[0].ID, "Implemented and tested the task"); err != nil {
+		t.Fatalf("CompleteTaskHandoff: %v", err)
+	}
+
+	state, err := s.DetectWakeup(ctx, project.ID)
+	if err != nil {
+		t.Fatalf("DetectWakeup: %v", err)
+	}
+	if len(state.HandoffsReported) != 1 || state.HandoffsReported[0].ID != handoff.ID {
+		t.Fatalf("reported handoffs = %#v, want delegated handoff %q", state.HandoffsReported, handoff.ID)
 	}
 }
 

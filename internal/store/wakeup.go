@@ -175,7 +175,7 @@ func (s *Store) DetectWakeup(ctx context.Context, projectID int64) (WakeupState,
 			return WakeupState{}, err
 		}
 		for _, handoff := range goalHandoffs {
-			if handoff.RequestedAt != nil && handoff.ReceivedAt != nil && handoff.CompletedReportAt != nil {
+			if handoff.RequestedAt != nil && handoff.ReceivedAt != nil && handoff.CompletedReportAt != nil && handoffIsDelegation(handoff.RequestedBy, handoff.ReceivedBy) {
 				state.HandoffsReported = append(state.HandoffsReported, ReportedHandoff{
 					ID:                handoff.ID,
 					GoalID:            handoff.GoalID,
@@ -203,7 +203,7 @@ func (s *Store) DetectWakeup(ctx context.Context, projectID int64) (WakeupState,
 				}
 				taskHandoffs[task.ID] = handoffs
 				for _, handoff := range handoffs {
-					if handoff.RequestedAt != nil && handoff.ReceivedAt != nil && handoff.CompletedReportAt != nil {
+					if handoff.RequestedAt != nil && handoff.ReceivedAt != nil && handoff.CompletedReportAt != nil && handoffIsDelegation(handoff.RequestedBy, handoff.ReceivedBy) {
 						state.HandoffsReported = append(state.HandoffsReported, ReportedHandoff{
 							ID:                handoff.ID,
 							GoalID:            goal.ID,
