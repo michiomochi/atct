@@ -26,7 +26,6 @@ export const en = {
   "status.task.todo": "Not started",
   "status.task.doing": "In progress",
   "status.task.done": "Completed",
-  "status.task.blocked": "Blocked",
   "status.task.dropped": "Dropped",
   "status.task.active": "In progress",
   "status.task.completed": "Completed",

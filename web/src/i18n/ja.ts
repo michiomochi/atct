@@ -27,7 +27,6 @@ export const ja: Record<TranslationKey, string> = {
   "status.task.todo": "未着手",
   "status.task.doing": "進行中",
   "status.task.done": "完了",
-  "status.task.blocked": "ブロック",
   "status.task.dropped": "取り下げ",
   "status.task.active": "進行中",
   "status.task.completed": "完了",
