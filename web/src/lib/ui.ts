@@ -165,9 +165,17 @@ export function statusLabel(locale: Locale, status: string): string {
   return key ? localized(key, locale) : status;
 }
 
-export function taskStatusLabel(locale: Locale, status: string, openDecisionCount: number): string {
+export function taskStatusLabel(
+  locale: Locale,
+  status: string,
+  openDecisionCount: number,
+  claimedBy?: string | number,
+): string {
   if (status === "todo" && openDecisionCount > 0) {
     return localized("status.task.awaitingDecision", locale);
+  }
+  if (status === "todo" && claimedBy) {
+    return localized("status.task.doing", locale);
   }
   return statusLabel(locale, status);
 }

@@ -2,8 +2,11 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -33,6 +36,41 @@ func newWakeupTestGoal(t *testing.T, s *store.Store, key string) (int64, int64) 
 		t.Fatalf("CreateGoal: %v", err)
 	}
 	return project.ID, goal.ID
+}
+
+func callRunMaintenanceWith(t *testing.T, d *Daemon, ctx context.Context, tracker *wakeupTracker, now time.Time, detect func(context.Context, int64) (store.WakeupState, error)) {
+	t.Helper()
+	d.runMaintenanceWith(ctx, tracker, now, detect)
+}
+
+func receiveWakeupEvent(t *testing.T, ch <-chan store.DecisionEvent) store.DecisionEvent {
+	t.Helper()
+	select {
+	case event := <-ch:
+		return event
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for maintenance event")
+		return store.DecisionEvent{}
+	}
+}
+
+func decodeEvaluateFailure(t *testing.T, event store.DecisionEvent) (string, string) {
+	t.Helper()
+	if event.Name != "wakeup.evaluate_failed" {
+		t.Fatalf("event name = %q, want wakeup.evaluate_failed", event.Name)
+	}
+	payload, err := json.Marshal(event.Data)
+	if err != nil {
+		t.Fatalf("marshal evaluate failure: %v", err)
+	}
+	var failure struct {
+		WakeupID string `json:"wakeup_id"`
+		Reason   string `json:"reason"`
+	}
+	if err := json.Unmarshal(payload, &failure); err != nil {
+		t.Fatalf("unmarshal evaluate failure: %v; payload=%s", err, payload)
+	}
+	return failure.WakeupID, failure.Reason
 }
 
 func insertWakeupOpenTaskHandoff(t *testing.T, s *store.Store, handoffID string, taskID int64, requestedAt, receivedAt *time.Time) {
@@ -498,6 +536,328 @@ func TestRunMaintenancePublishesKeepaliveWithInjectedTime(t *testing.T) {
 	}
 }
 
+func TestRunMaintenancePublishesEvaluateFailure(t *testing.T) {
+	ctx := context.Background()
+	s := newWakeupTestStore(t)
+	newWakeupTestGoal(t, s, "evaluate-failure")
+	ch, cancel := s.SubscribeEvents()
+	defer cancel()
+
+	now := time.Date(2026, 8, 20, 14, 30, 0, 0, time.UTC)
+	reason := "injected evaluate failure"
+	callRunMaintenanceWith(t, newDaemonWithClock(s, func() time.Time { return now }), ctx, newWakeupTracker(time.Time{}), now, func(context.Context, int64) (store.WakeupState, error) {
+		return store.WakeupState{}, errors.New(reason)
+	})
+
+	if event := receiveWakeupEvent(t, ch); event.Name != store.EventKeepalive {
+		t.Fatalf("first maintenance event name = %q, want %q", event.Name, store.EventKeepalive)
+	}
+	failure := receiveWakeupEvent(t, ch)
+	if id, gotReason := decodeEvaluateFailure(t, failure); id == "" || !strings.Contains(gotReason, reason) {
+		t.Fatalf("evaluate failure = (id=%q, reason=%q), want non-empty id and reason %q", id, gotReason, reason)
+	}
+}
+
+func TestWakeupTrackerReturnsEventsWhenLaterProjectEvaluationFails(t *testing.T) {
+	ctx := context.Background()
+	s := newWakeupTestStore(t)
+	firstProjectID, firstGoalID := newWakeupTestGoal(t, s, "evaluate-partial-return-first")
+	secondProjectID, _ := newWakeupTestGoal(t, s, "evaluate-partial-return-second")
+	tasks, err := s.DeclareTasks(ctx, firstGoalID, "agent", "evaluate-partial-return", []string{"Completed task"}, []string{"The task is complete."})
+	if err != nil {
+		t.Fatalf("DeclareTasks: %v", err)
+	}
+	if _, err := s.UpdateTask(ctx, tasks[0].ID, domain.TaskDone, 0); err != nil {
+		t.Fatalf("UpdateTask: %v", err)
+	}
+
+	tracker := newWakeupTracker(time.Time{})
+	start := time.Date(2026, 8, 20, 15, 30, 0, 0, time.UTC)
+	if _, err := tracker.evaluate(ctx, s, start); err != nil {
+		t.Fatalf("initial evaluate: %v", err)
+	}
+	now := start.Add(wakeupPublishAfter)
+	events, err := tracker.evaluateWith(ctx, s, now, func(ctx context.Context, projectID int64) (store.WakeupState, error) {
+		if projectID == firstProjectID {
+			return s.DetectWakeup(ctx, projectID)
+		}
+		if projectID == secondProjectID {
+			return store.WakeupState{}, errors.New("later project evaluation failed")
+		}
+		return store.WakeupState{}, errors.New("unexpected project")
+	})
+	if err == nil {
+		t.Fatal("evaluate returned nil error, want injected error")
+	}
+	if len(events) == 0 {
+		t.Fatalf("events = %#v, want partial detection events", events)
+	}
+	detection, ok := events[0].Data.(store.DetectionEvent)
+	if !ok || detection.GoalID != firstGoalID {
+		t.Fatalf("partial event = %#v, want a detection for goal %d", events[0], firstGoalID)
+	}
+}
+
+func TestRunMaintenancePublishesEventsBeforeEvaluateFailure(t *testing.T) {
+	ctx := context.Background()
+	s := newWakeupTestStore(t)
+	firstProjectID, firstGoalID := newWakeupTestGoal(t, s, "evaluate-partial-first")
+	secondProjectID, _ := newWakeupTestGoal(t, s, "evaluate-partial-second")
+	tasks, err := s.DeclareTasks(ctx, firstGoalID, "agent", "evaluate-partial", []string{"Completed task"}, []string{"The task is complete."})
+	if err != nil {
+		t.Fatalf("DeclareTasks: %v", err)
+	}
+	if _, err := s.UpdateTask(ctx, tasks[0].ID, domain.TaskDone, 0); err != nil {
+		t.Fatalf("UpdateTask: %v", err)
+	}
+
+	tracker := newWakeupTracker(time.Time{})
+	start := time.Date(2026, 8, 20, 15, 0, 0, 0, time.UTC)
+	if _, err := tracker.evaluate(ctx, s, start); err != nil {
+		t.Fatalf("initial evaluate: %v", err)
+	}
+	ch, cancel := s.SubscribeEvents()
+	defer cancel()
+
+	reason := "second project evaluation failed"
+	callRunMaintenanceWith(t, newDaemonWithClock(s, func() time.Time { return start.Add(wakeupPublishAfter) }), ctx, tracker, start.Add(wakeupPublishAfter), func(ctx context.Context, projectID int64) (store.WakeupState, error) {
+		if projectID == firstProjectID {
+			return s.DetectWakeup(ctx, projectID)
+		}
+		if projectID == secondProjectID {
+			return store.WakeupState{}, errors.New(reason)
+		}
+		return store.WakeupState{}, errors.New("unexpected project")
+	})
+
+	if event := receiveWakeupEvent(t, ch); event.Name != store.EventKeepalive {
+		t.Fatalf("first maintenance event name = %q, want %q", event.Name, store.EventKeepalive)
+	}
+	for range 2 {
+		detection := receiveWakeupEvent(t, ch)
+		if detection.Name != store.EventDetectionCompletionReportMissing && detection.Name != store.EventDetectionCommitsMissing {
+			t.Fatalf("partial event name = %q, want a first-project detection", detection.Name)
+		}
+		detectionData, ok := detection.Data.(store.DetectionEvent)
+		if !ok {
+			t.Fatalf("partial event data type = %T, want store.DetectionEvent", detection.Data)
+		}
+		if detectionData.GoalID != firstGoalID {
+			t.Fatalf("partial detection goal_id = %d, want %d", detectionData.GoalID, firstGoalID)
+		}
+	}
+	if id, gotReason := decodeEvaluateFailure(t, receiveWakeupEvent(t, ch)); id == "" || !strings.Contains(gotReason, reason) {
+		t.Fatalf("evaluate failure = (id=%q, reason=%q), want non-empty id and reason %q", id, gotReason, reason)
+	}
+}
+
+func TestRunMaintenanceWithSuccessDoesNotPublishEvaluateFailure(t *testing.T) {
+	ctx := context.Background()
+	s := newWakeupTestStore(t)
+	newWakeupTestGoal(t, s, "evaluate-success")
+	ch, cancel := s.SubscribeEvents()
+	defer cancel()
+
+	now := time.Date(2026, 8, 20, 16, 0, 0, 0, time.UTC)
+	callRunMaintenanceWith(t, newDaemonWithClock(s, func() time.Time { return now }), ctx, newWakeupTracker(time.Time{}), now, func(context.Context, int64) (store.WakeupState, error) {
+		return store.WakeupState{}, nil
+	})
+	if event := receiveWakeupEvent(t, ch); event.Name != store.EventKeepalive {
+		t.Fatalf("maintenance event name = %q, want %q", event.Name, store.EventKeepalive)
+	}
+	select {
+	case event := <-ch:
+		t.Fatalf("unexpected event after successful evaluation: %q", event.Name)
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+func TestRunMaintenanceReusesEvaluateFailureIDUntilRecovery(t *testing.T) {
+	ctx := context.Background()
+	s := newWakeupTestStore(t)
+	newWakeupTestGoal(t, s, "evaluate-failure-id")
+	ch, cancel := s.SubscribeEvents()
+	defer cancel()
+
+	tracker := newWakeupTracker(time.Time{})
+	start := time.Date(2026, 8, 20, 17, 0, 0, 0, time.UTC)
+	detectFailure := func(context.Context, int64) (store.WakeupState, error) {
+		return store.WakeupState{}, errors.New("repeated evaluation failure")
+	}
+	readFailureID := func(now time.Time, detect func(context.Context, int64) (store.WakeupState, error)) string {
+		callRunMaintenanceWith(t, newDaemonWithClock(s, func() time.Time { return now }), ctx, tracker, now, detect)
+		if event := receiveWakeupEvent(t, ch); event.Name != store.EventKeepalive {
+			t.Fatalf("first maintenance event name = %q, want %q", event.Name, store.EventKeepalive)
+		}
+		id, _ := decodeEvaluateFailure(t, receiveWakeupEvent(t, ch))
+		return id
+	}
+
+	firstID := readFailureID(start, detectFailure)
+	secondID := readFailureID(start.Add(time.Minute), detectFailure)
+	if secondID != firstID {
+		t.Fatalf("continued failure ID = %q, want reused ID %q", secondID, firstID)
+	}
+
+	successTime := start.Add(2 * time.Minute)
+	callRunMaintenanceWith(t, newDaemonWithClock(s, func() time.Time { return successTime }), ctx, tracker, successTime, func(context.Context, int64) (store.WakeupState, error) {
+		return store.WakeupState{}, nil
+	})
+	if event := receiveWakeupEvent(t, ch); event.Name != store.EventKeepalive {
+		t.Fatalf("recovery maintenance event name = %q, want %q", event.Name, store.EventKeepalive)
+	}
+	thirdID := readFailureID(start.Add(3*time.Minute), detectFailure)
+	if thirdID == firstID {
+		t.Fatalf("failure after recovery reused ID %q", thirdID)
+	}
+}
+
+func TestRunMaintenancePublishesEventsFromProjectsAfterEvaluationFailure(t *testing.T) {
+	ctx := context.Background()
+	s := newWakeupTestStore(t)
+	firstProjectID, firstGoalID := newWakeupTestGoal(t, s, "evaluate-after-first")
+	secondProjectID, _ := newWakeupTestGoal(t, s, "evaluate-after-second")
+	thirdProjectID, thirdGoalID := newWakeupTestGoal(t, s, "evaluate-after-third")
+	for goalID, key := range map[int64]string{firstGoalID: "evaluate-after-first-task", thirdGoalID: "evaluate-after-third-task"} {
+		tasks, err := s.DeclareTasks(ctx, goalID, "agent", key, []string{"Completed task"}, []string{"The task is complete."})
+		if err != nil {
+			t.Fatalf("DeclareTasks: %v", err)
+		}
+		if _, err := s.UpdateTask(ctx, tasks[0].ID, domain.TaskDone, 0); err != nil {
+			t.Fatalf("UpdateTask: %v", err)
+		}
+	}
+
+	tracker := newWakeupTracker(time.Time{})
+	start := time.Date(2026, 8, 20, 18, 0, 0, 0, time.UTC)
+	if _, err := tracker.evaluate(ctx, s, start); err != nil {
+		t.Fatalf("initial evaluate: %v", err)
+	}
+	ch, cancel := s.SubscribeEvents()
+	defer cancel()
+	reason := "middle project evaluation failed"
+	now := start.Add(wakeupPublishAfter)
+	callRunMaintenanceWith(t, newDaemonWithClock(s, func() time.Time { return now }), ctx, tracker, now, func(ctx context.Context, projectID int64) (store.WakeupState, error) {
+		if projectID == secondProjectID {
+			return store.WakeupState{}, errors.New(reason)
+		}
+		if projectID == firstProjectID || projectID == thirdProjectID {
+			return s.DetectWakeup(ctx, projectID)
+		}
+		return store.WakeupState{}, errors.New("unexpected project")
+	})
+
+	if event := receiveWakeupEvent(t, ch); event.Name != store.EventKeepalive {
+		t.Fatalf("first maintenance event name = %q, want %q", event.Name, store.EventKeepalive)
+	}
+	seenGoals := make(map[int64]bool)
+	for range 4 {
+		event := receiveWakeupEvent(t, ch)
+		if event.Name != store.EventDetectionCompletionReportMissing && event.Name != store.EventDetectionCommitsMissing {
+			t.Fatalf("project detection event name = %q, want a project detection", event.Name)
+		}
+		detection, ok := event.Data.(store.DetectionEvent)
+		if !ok {
+			t.Fatalf("project detection data type = %T, want store.DetectionEvent", event.Data)
+		}
+		seenGoals[detection.GoalID] = true
+	}
+	if !seenGoals[firstGoalID] || !seenGoals[thirdGoalID] {
+		t.Fatalf("published detection goals = %v, want %d and %d", seenGoals, firstGoalID, thirdGoalID)
+	}
+	if id, gotReason := decodeEvaluateFailure(t, receiveWakeupEvent(t, ch)); id == "" || !strings.Contains(gotReason, reason) {
+		t.Fatalf("evaluate failure = (id=%q, reason=%q), want non-empty id and reason %q", id, gotReason, reason)
+	}
+}
+
+func TestWakeupTrackerPreservesDetectionGraceAfterProjectEvaluationFailure(t *testing.T) {
+	ctx := context.Background()
+	s := newWakeupTestStore(t)
+	firstProjectID, firstGoalID := newWakeupTestGoal(t, s, "grace-first")
+	secondProjectID, secondGoalID := newWakeupTestGoal(t, s, "grace-second")
+	for goalID, key := range map[int64]string{firstGoalID: "grace-first-task", secondGoalID: "grace-second-task"} {
+		tasks, err := s.DeclareTasks(ctx, goalID, "agent", key, []string{"Completed task"}, []string{"The task is complete."})
+		if err != nil {
+			t.Fatalf("DeclareTasks: %v", err)
+		}
+		if _, err := s.UpdateTask(ctx, tasks[0].ID, domain.TaskDone, 0); err != nil {
+			t.Fatalf("UpdateTask: %v", err)
+		}
+	}
+
+	tracker := newWakeupTracker(time.Time{})
+	start := time.Date(2026, 8, 20, 19, 0, 0, 0, time.UTC)
+	if _, err := tracker.evaluate(ctx, s, start); err != nil {
+		t.Fatalf("initial evaluate: %v", err)
+	}
+	failedTick := start.Add(time.Minute)
+	if _, err := tracker.evaluateWith(ctx, s, failedTick, func(ctx context.Context, projectID int64) (store.WakeupState, error) {
+		if projectID == secondProjectID {
+			return store.WakeupState{}, errors.New("grace project evaluation failed")
+		}
+		if projectID == firstProjectID {
+			return s.DetectWakeup(ctx, projectID)
+		}
+		return store.WakeupState{}, errors.New("unexpected project")
+	}); err == nil {
+		t.Fatal("failed tick returned nil error, want injected error")
+	}
+
+	secondKey := detectionTrackerKey(store.EventDetectionCompletionReportMissing, secondGoalID)
+	if _, ok := tracker.detectionActiveSince[secondKey]; !ok {
+		t.Fatalf("detection grace key %q was removed during failed tick", secondKey)
+	}
+
+	events, err := tracker.evaluate(ctx, s, start.Add(wakeupPublishAfter))
+	if err != nil {
+		t.Fatalf("post-failure evaluate: %v", err)
+	}
+	seenGoals := make(map[int64]bool)
+	for _, event := range events {
+		if event.Name != store.EventDetectionCompletionReportMissing {
+			continue
+		}
+		detection, ok := event.Data.(store.DetectionEvent)
+		if !ok {
+			t.Fatalf("project detection data type = %T, want store.DetectionEvent", event.Data)
+		}
+		seenGoals[detection.GoalID] = true
+	}
+	if !seenGoals[firstGoalID] || !seenGoals[secondGoalID] {
+		t.Fatalf("post-failure detection goals = %v, want %d and %d at original grace deadline", seenGoals, firstGoalID, secondGoalID)
+	}
+}
+
+func TestWakeupTrackerCleansStaleDetectionKeysAfterSuccessfulEvaluation(t *testing.T) {
+	ctx := context.Background()
+	s := newWakeupTestStore(t)
+	projectID, goalID := newWakeupTestGoal(t, s, "stale-cleanup")
+	tasks, err := s.DeclareTasks(ctx, goalID, "agent", "stale-cleanup-task", []string{"Completed task"}, []string{"The task is complete."})
+	if err != nil {
+		t.Fatalf("DeclareTasks: %v", err)
+	}
+	if _, err := s.UpdateTask(ctx, tasks[0].ID, domain.TaskDone, 0); err != nil {
+		t.Fatalf("UpdateTask: %v", err)
+	}
+
+	tracker := newWakeupTracker(time.Time{})
+	start := time.Date(2026, 8, 20, 20, 0, 0, 0, time.UTC)
+	if _, err := tracker.evaluate(ctx, s, start); err != nil {
+		t.Fatalf("initial evaluate: %v", err)
+	}
+	if len(tracker.detectionActiveSince) == 0 {
+		t.Fatal("initial evaluation did not establish a detection grace key")
+	}
+	if _, err := tracker.evaluateWith(ctx, s, start.Add(time.Minute), func(context.Context, int64) (store.WakeupState, error) {
+		return store.WakeupState{}, nil
+	}); err != nil {
+		t.Fatalf("successful cleanup evaluate: %v", err)
+	}
+	if len(tracker.detectionActiveSince) != 0 || len(tracker.detectionPublished) != 0 {
+		t.Fatalf("stale detection keys remain after successful evaluation for project %d: active=%v published=%v", projectID, tracker.detectionActiveSince, tracker.detectionPublished)
+	}
+}
+
 func TestWakeupTrackerPublishesCompletionDetectionWithoutUnstartedTasks(t *testing.T) {
 	ctx := context.Background()
 	s := newWakeupTestStore(t)
@@ -790,68 +1150,6 @@ func TestWakeupTrackerPublishesStalledHandoffDetections(t *testing.T) {
 	}
 }
 
-func TestWakeupTrackerPublishesReportedTaskAndGoalHandoffsImmediately(t *testing.T) {
-	ctx := context.Background()
-	s := newWakeupTestStore(t)
-	projectID, goalID := newWakeupTestGoal(t, s, "reported-handoffs")
-	start := time.Date(2026, 8, 25, 12, 0, 0, 0, time.UTC)
-	tracker := newWakeupTracker(start)
-	taskCompletedAt := start.Add(time.Second)
-	goalCompletedAt := start.Add(2 * time.Second)
-	state := store.WakeupState{
-		HandoffsReported: []store.ReportedHandoff{
-			{ID: "reported-task", TaskID: 1, CompleteReport: "task report", CompletedReportAt: &taskCompletedAt},
-			{ID: "reported-goal", GoalID: goalID, CompleteReport: "goal report", CompletedReportAt: &goalCompletedAt},
-		},
-	}
-	detect := func(context.Context, int64) (store.WakeupState, error) {
-		return state, nil
-	}
-
-	events, err := tracker.evaluateWith(ctx, s, start, detect)
-	if err != nil {
-		t.Fatalf("reported handoff evaluate: %v", err)
-	}
-	if len(events) != 2 {
-		t.Fatalf("reported handoff events = %#v, want task and goal reports", events)
-	}
-	want := map[string]struct {
-		goalID         int64
-		taskID         int64
-		handoffID      string
-		completeReport string
-	}{
-		"reported-task": {taskID: 1, handoffID: "reported-task", completeReport: "task report"},
-		"reported-goal": {goalID: goalID, handoffID: "reported-goal", completeReport: "goal report"},
-	}
-	for _, event := range events {
-		if event.Name != store.EventHandoffReported {
-			t.Fatalf("unexpected event = %#v, want %v", event, store.EventHandoffReported)
-		}
-		detection, ok := event.Data.(store.DetectionEvent)
-		if !ok {
-			t.Fatalf("reported event data type = %T, want store.DetectionEvent", event.Data)
-		}
-		expected, ok := want[detection.HandoffID]
-		if !ok {
-			t.Fatalf("unexpected reported handoff = %+v", detection)
-		}
-		if detection.ProjectID != projectID || detection.GoalID != expected.goalID || detection.TaskID != expected.taskID || detection.HandoffID != expected.handoffID || detection.CompleteReport != expected.completeReport || detection.DetectionID == "" {
-			t.Fatalf("reported detection = %+v, want project=%v goal=%v task=%v handoff=%v report=%v", detection, projectID, expected.goalID, expected.taskID, expected.handoffID, expected.completeReport)
-		}
-		delete(want, detection.HandoffID)
-	}
-	if len(want) != 0 {
-		t.Fatalf("missing reported handoff events = %#v", want)
-	}
-
-	if events, err := tracker.evaluateWith(ctx, s, start.Add(time.Hour), detect); err != nil {
-		t.Fatalf("duplicate reported handoff evaluate: %v", err)
-	} else if len(events) != 0 {
-		t.Fatalf("duplicate reported handoff events = %#v, want empty", events)
-	}
-}
-
 func TestDaemonNewTrackerUsesDaemonClock(t *testing.T) {
 	s := newWakeupTestStore(t)
 	startedAt := time.Date(2026, 8, 25, 15, 0, 0, 0, time.UTC)
@@ -863,99 +1161,36 @@ func TestDaemonNewTrackerUsesDaemonClock(t *testing.T) {
 	}
 }
 
-func TestDaemonNewTrackerSuppressesReportCompletedBeforeDaemonClock(t *testing.T) {
+func TestWakeupTrackerDoesNotPublishCompletedHandoffFromSweep(t *testing.T) {
 	ctx := context.Background()
 	s := newWakeupTestStore(t)
-	_, goalID := newWakeupTestGoal(t, s, "daemon-tracker-reported-before-start")
-	startedAt := time.Date(2026, 8, 25, 16, 0, 0, 0, time.UTC)
-	completedAt := startedAt.Add(-time.Second)
-	d := newDaemonWithClock(s, func() time.Time { return startedAt })
-	tracker := d.newTracker()
-	state := store.WakeupState{
-		HandoffsReported: []store.ReportedHandoff{{
-			ID:                "daemon-tracker-reported-before-start",
-			GoalID:            goalID,
-			CompleteReport:    "old report",
-			CompletedReportAt: &completedAt,
-		}},
-	}
-	detect := func(context.Context, int64) (store.WakeupState, error) {
-		return state, nil
-	}
-
-	events, err := tracker.evaluateWith(ctx, s, startedAt, detect)
+	_, goalID := newWakeupTestGoal(t, s, "reported-sweep")
+	tasks, err := s.DeclareTasks(ctx, goalID, "reported-sweep", "reported-sweep", []string{"Completed handoff task"}, []string{"The completed handoff must not be swept."})
 	if err != nil {
-		t.Fatalf("evaluate: %v", err)
+		t.Fatalf("DeclareTasks: %v", err)
 	}
-	if len(events) != 0 {
-		t.Fatalf("events = %#v, want no events for pre-start report", events)
-	}
-}
-
-func TestWakeupTrackerSuppressesReportedHandoffCompletedBeforeDaemonStart(t *testing.T) {
-	ctx := context.Background()
-	s := newWakeupTestStore(t)
-	_, goalID := newWakeupTestGoal(t, s, "reported-before-start")
-	start := time.Date(2026, 8, 25, 13, 0, 0, 0, time.UTC)
-	completedAt := start.Add(-time.Second)
-	tracker := newWakeupTracker(start)
-	state := store.WakeupState{
-		HandoffsReported: []store.ReportedHandoff{{
-			ID:                "reported-before-start",
-			GoalID:            goalID,
-			CompleteReport:    "old report",
-			CompletedReportAt: &completedAt,
-		}},
-	}
-	detect := func(context.Context, int64) (store.WakeupState, error) {
-		return state, nil
-	}
-
-	for _, now := range []time.Time{start, start.Add(time.Hour)} {
-		events, err := tracker.evaluateWith(ctx, s, now, detect)
-		if err != nil {
-			t.Fatalf("evaluate at %v: %v", now, err)
-		}
-		if len(events) != 0 {
-			t.Fatalf("events at %v = %#v, want no events for pre-start report", now, events)
-		}
-	}
-}
-
-func TestWakeupTrackerPublishesOnlyReportedHandoffCompletedAfterDaemonStart(t *testing.T) {
-	ctx := context.Background()
-	s := newWakeupTestStore(t)
-	_, goalID := newWakeupTestGoal(t, s, "reported-mixed")
 	start := time.Date(2026, 8, 25, 14, 0, 0, 0, time.UTC)
-	oldCompletedAt := start.Add(-time.Second)
-	newCompletedAt := start.Add(time.Second)
-	tracker := newWakeupTracker(start)
-	state := store.WakeupState{
-		HandoffsReported: []store.ReportedHandoff{
-			{ID: "reported-old", GoalID: goalID, CompleteReport: "old report", CompletedReportAt: &oldCompletedAt},
-			{ID: "reported-new", GoalID: goalID, CompleteReport: "new report", CompletedReportAt: &newCompletedAt},
-		},
-	}
-	detect := func(context.Context, int64) (store.WakeupState, error) {
-		return state, nil
+	requestedAt := start.Add(-time.Minute)
+	receivedAt := start.Add(-time.Minute)
+	insertWakeupOpenTaskHandoff(t, s, "reported-sweep-handoff", tasks[0].ID, &requestedAt, &receivedAt)
+	completedAt := start.Add(time.Second)
+	if _, err := s.DB().ExecContext(ctx, `
+		UPDATE task_handoffs
+		SET completed_report_at = ?, complete_report = ?
+		WHERE id = ?
+	`, completedAt.Format(time.RFC3339Nano), "completed report", "reported-sweep-handoff"); err != nil {
+		t.Fatalf("complete task handoff fixture: %v", err)
 	}
 
-	events, err := tracker.evaluateWith(ctx, s, start, detect)
+	tracker := newWakeupTracker(start)
+	events, err := tracker.evaluate(ctx, s, start.Add(2*time.Second))
 	if err != nil {
-		t.Fatalf("mixed reported handoff evaluate: %v", err)
+		t.Fatalf("sweep evaluate: %v", err)
 	}
-	if len(events) != 1 {
-		t.Fatalf("mixed reported handoff events = %#v, want one event", events)
-	}
-	if events[0].Name != store.EventHandoffReported {
-		t.Fatalf("mixed reported handoff event = %#v, want %v", events[0], store.EventHandoffReported)
-	}
-	detection, ok := events[0].Data.(store.DetectionEvent)
-	if !ok {
-		t.Fatalf("mixed reported handoff data type = %T, want store.DetectionEvent", events[0].Data)
-	}
-	if detection.ProjectID == 0 || detection.GoalID != goalID || detection.HandoffID != "reported-new" || detection.CompleteReport != "new report" || detection.DetectionID == "" {
-		t.Fatalf("mixed reported handoff detection = %+v, want only new report", detection)
+	for _, event := range events {
+		if event.Name == store.EventHandoffReported {
+			t.Fatalf("sweep published handoff_reported event: %#v", event)
+		}
 	}
 }
 

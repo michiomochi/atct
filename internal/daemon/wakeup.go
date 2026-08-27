@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -35,6 +36,7 @@ type wakeupTracker struct {
 	discrepancySeen      map[int64]bool
 	detectionActiveSince map[string]time.Time
 	detectionPublished   map[string]bool
+	evaluateFailedID     string
 }
 
 func newWakeupTracker(startedAt time.Time) *wakeupTracker {
@@ -93,32 +95,38 @@ func (t *wakeupTracker) evaluate(ctx context.Context, s *store.Store, now time.T
 }
 
 func (t *wakeupTracker) evaluateWith(ctx context.Context, s *store.Store, now time.Time, detect func(context.Context, int64) (store.WakeupState, error)) ([]store.DecisionEvent, error) {
+	var events []store.DecisionEvent
 	projects, err := s.ListProjects(ctx)
 	if err != nil {
-		return nil, err
+		return events, err
 	}
 
-	var events []store.DecisionEvent
 	currentDetectionKeys := make(map[string]struct{})
+	var projectErrs []error
+projectLoop:
 	for _, project := range projects {
 		state, err := detect(ctx, project.ID)
 		if err != nil {
-			return nil, err
+			projectErrs = append(projectErrs, fmt.Errorf("project %d: %w", project.ID, err))
+			continue projectLoop
 		}
 		counted, err := s.CountUnstartedTasksForWakeup(ctx, project.ID)
 		if err != nil {
-			return nil, err
+			projectErrs = append(projectErrs, fmt.Errorf("project %d: %w", project.ID, err))
+			continue projectLoop
 		}
 
 		mismatch := state.UnstartedTaskCount == 0 && counted > 0
 		if mismatch {
 			state, err = detect(ctx, project.ID)
 			if err != nil {
-				return nil, err
+				projectErrs = append(projectErrs, fmt.Errorf("project %d: %w", project.ID, err))
+				continue projectLoop
 			}
 			counted, err = s.CountUnstartedTasksForWakeup(ctx, project.ID)
 			if err != nil {
-				return nil, err
+				projectErrs = append(projectErrs, fmt.Errorf("project %d: %w", project.ID, err))
+				continue projectLoop
 			}
 			mismatch = state.UnstartedTaskCount == 0 && counted > 0
 		}
@@ -197,7 +205,8 @@ func (t *wakeupTracker) evaluateWith(ctx context.Context, s *store.Store, now ti
 		for goalID := range goalIDs {
 			handoffs, err := s.ListOpenTaskHandoffsForGoal(ctx, goalID)
 			if err != nil {
-				return nil, err
+				projectErrs = append(projectErrs, fmt.Errorf("project %d: %w", project.ID, err))
+				continue projectLoop
 			}
 			for taskID, handoff := range handoffs {
 				openTaskHandoffs[taskID] = handoff
@@ -224,7 +233,8 @@ func (t *wakeupTracker) evaluateWith(ctx context.Context, s *store.Store, now ti
 			}
 			goalID, err := s.GetTaskGoalID(ctx, handoff.TaskID)
 			if err != nil {
-				return nil, err
+				projectErrs = append(projectErrs, fmt.Errorf("project %d: %w", project.ID, err))
+				continue projectLoop
 			}
 			recordDetection(store.EventDetectionHandoffUnreceived, handoff.ID, *handoff.RequestedAt, detectionHandoffUnreceivedAfter, goalID, handoff.TaskID, handoff.ID, 0)
 		}
@@ -234,26 +244,10 @@ func (t *wakeupTracker) evaluateWith(ctx context.Context, s *store.Store, now ti
 			}
 			goalID, err := s.GetTaskGoalID(ctx, handoff.TaskID)
 			if err != nil {
-				return nil, err
+				projectErrs = append(projectErrs, fmt.Errorf("project %d: %w", project.ID, err))
+				continue projectLoop
 			}
 			recordDetection(store.EventDetectionHandoffUnreported, handoff.ID, *handoff.ReceivedAt, detectionHandoffUnreportedAfter, goalID, handoff.TaskID, handoff.ID, 0)
-		}
-		for _, handoff := range state.HandoffsReported {
-			key := detectionTrackerKey(store.EventHandoffReported, handoff.ID)
-			currentDetectionKeys[key] = struct{}{}
-			if handoff.CompletedReportAt != nil && handoff.CompletedReportAt.Before(t.startedAt) {
-				t.detectionActiveSince[key] = t.startedAt
-				t.detectionPublished[key] = true
-				continue
-			}
-			event, ok := t.publishDetectionWithDecision(now, time.Time{}, 0, store.EventHandoffReported, handoff.ID, project.ID, handoff.GoalID, handoff.TaskID, handoff.ID, 0)
-			if !ok {
-				continue
-			}
-			detection := event.Data.(store.DetectionEvent)
-			detection.CompleteReport = handoff.CompleteReport
-			event.Data = detection
-			events = append(events, event)
 		}
 		for _, task := range state.UndelegatedClaims {
 			claimedAt := taskHandoffClaimedAt(openTaskHandoffs[task.ID])
@@ -280,6 +274,9 @@ func (t *wakeupTracker) evaluateWith(ctx context.Context, s *store.Store, now ti
 			recordDetection(store.EventDetectionClaimStale, task.ID, *claimedAt, detectionStaleClaimAfter, task.GoalID, task.ID, "", 0)
 		}
 	}
+	if len(projectErrs) > 0 {
+		return events, errors.Join(projectErrs...)
+	}
 	for key := range t.detectionActiveSince {
 		if _, ok := currentDetectionKeys[key]; !ok {
 			delete(t.detectionActiveSince, key)
@@ -295,17 +292,32 @@ func (t *wakeupTracker) evaluateWith(ctx context.Context, s *store.Store, now ti
 }
 
 func (d *Daemon) runMaintenance(ctx context.Context, tracker *wakeupTracker, now time.Time) {
+	d.runMaintenanceWith(ctx, tracker, now, d.store.DetectWakeup)
+}
+
+func (d *Daemon) runMaintenanceWith(ctx context.Context, tracker *wakeupTracker, now time.Time, detect func(context.Context, int64) (store.WakeupState, error)) {
 	_, _ = d.store.ApplyExpiredDefaults(ctx, now)
 	d.store.PublishEvent(store.DecisionEvent{
 		Name: store.EventKeepalive,
 		Data: store.KeepaliveEvent{At: now},
 	})
 
-	events, err := tracker.evaluate(ctx, d.store, now)
-	if err != nil {
-		return
-	}
+	events, err := tracker.evaluateWith(ctx, d.store, now, detect)
 	for _, event := range events {
 		d.store.PublishEvent(event)
 	}
+	if err != nil {
+		if tracker.evaluateFailedID == "" {
+			tracker.evaluateFailedID = store.NewWakeupID()
+		}
+		d.store.PublishEvent(store.DecisionEvent{
+			Name: store.EventWakeupEvaluateFailed,
+			Data: store.WakeupEvaluateFailedEvent{
+				WakeupID: tracker.evaluateFailedID,
+				Reason:   err.Error(),
+			},
+		})
+		return
+	}
+	tracker.evaluateFailedID = ""
 }

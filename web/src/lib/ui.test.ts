@@ -291,13 +291,26 @@ describe("localized UI labels", () => {
   });
 
   it.each([
-    ["en", "todo", 0, "Not started"],
-    ["en", "todo", 1, "Awaiting decision"],
-    ["en", "doing", 1, "In progress"],
-    ["en", "done", 1, "Completed"],
-  ])("labels task status %s/%s with %s open decisions as %s", (locale, status, openDecisionCount, expected) => {
-    expect(taskStatusLabel(locale as Locale, status, openDecisionCount)).toBe(expected);
-  });
+    ["en", "todo", 0, "", "Not started"],
+    ["en", "todo", 1, "", "Awaiting decision"],
+    ["en", "doing", 1, "", "In progress"],
+    ["en", "done", 1, "", "Completed"],
+    ["en", "todo", 0, "atct-42-exec-690", "In progress"],
+    ["ja", "todo", 0, "atct-42-exec-690", "\u9032\u884c\u4e2d"],
+    ["en", "todo", 1, "atct-42-exec-690", "Awaiting decision"],
+    ["en", "done", 0, "atct-42-exec-690", "Completed"],
+    ["en", "todo", 0, 0, "Not started"],
+    ["en", "todo", 0, 2315, "In progress"],
+    ["ja", "todo", 0, 2315, "\u9032\u884c\u4e2d"],
+    ["en", "todo", 1, 2315, "Awaiting decision"],
+  ])(
+    "labels task status %s/%s with %s open decisions claimed by %s as %s",
+    (locale, status, openDecisionCount, claimedBy, expected) => {
+      expect(
+        taskStatusLabel(locale as Locale, status as string, openDecisionCount as number, claimedBy),
+      ).toBe(expected);
+    },
+  );
 
   it("returns only valid future snooze deadlines", () => {
     const future = new Date(Date.now() + 60 * 60 * 1000).toISOString();

@@ -80,7 +80,7 @@ function StatusCell({ task, locale }: { task: TaskView; locale: "ja" | "en" }) {
   const until = activeSnoozeUntil(task.snoozed_until);
   return (
     <div className="space-y-1">
-      <p>{taskStatusLabel(locale, task.status, task.open_decisions?.length ?? 0)}</p>
+      <p>{taskStatusLabel(locale, task.status, task.open_decisions?.length ?? 0, task.claimed_by)}</p>
       {until && <p className="text-base text-ink-500">{t("task.snooze.active", { until: formatDateTime(locale, until) })}</p>}
     </div>
   );

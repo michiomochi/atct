@@ -18,6 +18,7 @@ var ErrTaskNotFound = errors.New("task not found")
 var ErrTaskAlreadyClaimed = errors.New("task already claimed")
 var ErrTaskFileConflict = errors.New("task file conflict")
 var ErrTaskNotEditable = errors.New("task not editable")
+var ErrTaskContentNotOwned = errors.New("task content not owned")
 
 const maxTaskFileConflictCandidates = 8
 const maxOpenDecisionQuestionLength = 160
@@ -397,12 +398,51 @@ func (s *Store) UpdateTask(ctx context.Context, taskID int64, status domain.Task
 	return s.updateTask(ctx, taskID, status, releaseHandoff)
 }
 
-func (s *Store) UpdateTaskContent(ctx context.Context, taskID int64, title, description *string, files *[]string) (domain.Task, error) {
+func (s *Store) authorizeTaskContentUpdate(ctx context.Context, taskID, agentSessionID int64) error {
+	goalID, err := sqlcgen.New(s.db).GetTaskGoalID(ctx, taskID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("%w: %d", ErrTaskNotFound, taskID)
+	}
+	if err != nil {
+		return fmt.Errorf("find goal for task %d: %w", taskID, err)
+	}
+
+	taskHandoff, err := s.openTaskHandoff(ctx, taskID)
+	if err != nil {
+		return fmt.Errorf("find live task handoff for task %d: %w", taskID, err)
+	}
+	if taskHandoff != nil && taskHandoff.ReceivedBy == agentSessionID && agentSessionID != 0 {
+		return nil
+	}
+
+	goalHandoffErr := s.requireGoalHandoffForTask(ctx, taskID, agentSessionID)
+	if goalHandoffErr == nil {
+		return nil
+	}
+	if !errors.Is(goalHandoffErr, ErrTaskHandoffGoalNotHeld) {
+		return fmt.Errorf("authorize task content update for task %d: %w", taskID, goalHandoffErr)
+	}
+
+	goalHandoff, err := s.openGoalHandoff(ctx, goalID)
+	if err != nil {
+		return fmt.Errorf("find live goal handoff for task %d: %w", taskID, err)
+	}
+	if taskHandoff == nil && goalHandoff == nil {
+		return nil
+	}
+
+	return fmt.Errorf("%w: task %d can only be updated by the task or goal handoff holder", ErrTaskContentNotOwned, taskID)
+}
+
+func (s *Store) UpdateTaskContent(ctx context.Context, taskID int64, title, description *string, files *[]string, agentSessionID int64) (domain.Task, error) {
 	if title == nil && description == nil && files == nil {
 		return domain.Task{}, errors.New("task content update requires at least one field")
 	}
 	if taskID == 0 {
 		return domain.Task{}, fmt.Errorf("%w: empty id", ErrTaskNotFound)
+	}
+	if err := s.authorizeTaskContentUpdate(ctx, taskID, agentSessionID); err != nil {
+		return domain.Task{}, err
 	}
 
 	var titleValue, descriptionValue, filesValue sql.NullString

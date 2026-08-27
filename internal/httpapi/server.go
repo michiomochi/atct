@@ -1394,6 +1394,8 @@ func eventMatchesGoalID(event store.DecisionEvent, goalID int64) bool {
 	switch data := event.Data.(type) {
 	case store.KeepaliveEvent, *store.KeepaliveEvent:
 		return true
+	case store.WakeupEvaluateFailedEvent, *store.WakeupEvaluateFailedEvent:
+		return true
 	case domain.Decision:
 		return data.GoalID != 0 && data.GoalID == goalID
 	case *domain.Decision:
