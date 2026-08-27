@@ -8,7 +8,10 @@
 
 対象ファイルは 1 つだけ。
 
-    ~/.claude/skills/orchestration/SKILL.md      （chezmoi 管理下の実体）
+    ~/ghq/github.com/michiomochi/dotfiles/chezmoi/private_dot_agents/private_skills/orchestration/SKILL.md
+
+**chezmoi のソースを編集して `chezmoi apply` する。実体を直接編集するな**——次の apply で戻る。
+実体（`~/.agents/skills/orchestration/SKILL.md`）は確認にだけ使う。
 
 **atct 側（`skills/atct/SKILL.md` と `tests/wrapper_test.bash`）は既に直っている。**
 この依頼はその対向側である。**片方だけでは矛盾が消えない。**
@@ -165,7 +168,11 @@ executor はその後 `task handoff not found` で落ちる。
 ## 触らないもの
 
 - `~/.claude/skills/orchestration/SKILL.md` の上記 3 箇所以外の節
-- `~/.claude/skills/atct/`・`~/.agents/skills/` 配下（atct リポジトリが正典）
+- `~/.claude/skills/atct/`（atct リポジトリが正典）
+- **`~/.agents/skills/` 配下はここから除く。**`~/.claude/skills/orchestration` は
+  `~/.agents/skills/orchestration` への symlink なので、この依頼の対象そのものである。
+  **`orchestration` の正典は dotfiles の chezmoi ソースであって atct ではない。**
+  atct が正典なのは `skills/atct/` だけ
 - atct リポジトリのファイルすべて
 
 ## 検証
@@ -183,7 +190,11 @@ grep -n 'atct_handoff_complete' "$f"
 grep -n 'atct_task_claim' "$f"
 
 # 順序が書いてあること
-grep -n 'atct_handoff_complete' "$f" | head -1
+# 順序を実際に比べる。行番号を出すだけでは 2b を確かめられない
+complete_line=$(grep -n 'atct_handoff_complete' "$f" | head -1 | cut -d: -f1)
+update_line=$(grep -n 'atct_task_update' "$f" | head -1 | cut -d: -f1)
+[ -n "$complete_line" ] && [ -n "$update_line" ] && [ "$complete_line" -lt "$update_line" ] \
+  || { echo "FAIL: handoff_complete が task_update より後に書かれている"; exit 1; }
 
 # 残っていること（消してはいけない）
 grep -n 'herdr agent prompt <依頼を出した相手>' "$f"
@@ -203,3 +214,24 @@ grep -n 'herdr agent prompt <依頼を出した相手>' "$f"
 2. `## 依頼書の型` の禁止一覧から、ATCT 以外の項目（`chezmoi apply`・コミット・push・
    サブエージェント起動・pane の作成と再委譲・`git add -A`・独断の権限昇格）が消えていない
 3. `## 役割の割り当て（変更するのはここだけ）` に手が入っていない
+
+
+## 訂正（2026-08-28・dotfiles-commander の実測を受けて atct-commander が反映）
+
+**3 点が誤っていた。**dotfiles 側が実測して差し戻してきたものである。
+
+1. **対象ファイルは chezmoi のソースである。**当初「`~/.claude/skills/orchestration/SKILL.md`
+   （chezmoi 管理下の実体）」と書いていた。**chezmoi はソースを編集する。**実体を直接編集すると
+   次の `chezmoi apply` で戻る
+2. **「触らないもの」に `~/.agents/skills/` を挙げていたのが自己矛盾だった。**
+
+       $ ls -la ~/.claude/skills/orchestration
+       ... -> /Users/<user>/.agents/skills/orchestration
+
+   **指定した対象ファイルを開くと、まさに触るなと書いた場所に着く。**
+   `orchestration` の正典は dotfiles であって atct ではない
+3. **検証が順序を確かめていなかった。**`grep -n ... | head -1` は行番号を出すだけである。
+   `handoff_complete` の行番号 < `task_update` の行番号を実際に比べる形に直した
+
+**変更 3 点の内容そのものには dotfiles 側も異論なし。**「禁止側を選ぶと Codex executor の
+報告手段が 0 になる」という結論は、dotfiles 側の実測（ゴール 131 / 168）とも一致している。

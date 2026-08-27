@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION="0.57.0"
+VERSION="0.59.0"
 RELEASE_BASE="https://github.com/michiomochi/atct/releases/download/v${VERSION}"
 
 fail() {

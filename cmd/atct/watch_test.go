@@ -129,13 +129,12 @@ func TestWatchEmitsHumanDecisionEventsOnly(t *testing.T) {
 
 	got := output.String()
 	want := "atct decision answered (decision_id: human)\n" +
-		"atct decision default applied (decision_id: default)\n" +
 		"atct decision rejected (decision_id: rejected)\n" +
 		"atct decision approved (decision_id: approved)\n"
 	if got != want {
 		t.Fatalf("watch output = %q, want %q", got, want)
 	}
-	for _, id := range []string{"created", "applied", "withdrawn"} {
+	for _, id := range []string{"created", "applied", "withdrawn", "default"} {
 		if strings.Contains(got, "decision_id: "+id) {
 			t.Errorf("watch output contains suppressed decision %q: %q", id, got)
 		}
@@ -818,7 +817,9 @@ func TestEmitWatchDetectionWritesOneLinePerCondition(t *testing.T) {
 		{"detection.all_tasks_dropped", watchDecision{GoalID: "goal-4"}, "atct detection: goal goal-4 has all tasks dropped"},
 		{"detection.unclaimed_doing", watchDecision{TaskID: "task-1"}, "atct detection: task task-1 is doing without a work lock"},
 		{"detection.handoff_unreceived", watchDecision{HandoffID: "handoff-1"}, "atct detection: handoff handoff-1 has no receipt"},
-		{"detection.handoff_unreported", watchDecision{HandoffID: "handoff-2"}, "atct detection: handoff handoff-2 has no completion report"},
+		{"detection.handoff_unreported", watchDecision{HandoffID: "handoff-2", WorktreeActivity: "changed"}, "atct detection: handoff handoff-2 has no completion report, but the goal's worktree changed after receipt"},
+		{"detection.handoff_unreported", watchDecision{HandoffID: "handoff-3", WorktreeActivity: "unchanged"}, "atct detection: handoff handoff-3 has no completion report and the goal's worktree is unchanged since receipt"},
+		{"detection.handoff_unreported", watchDecision{HandoffID: "handoff-4"}, "atct detection: handoff handoff-4 has no completion report"},
 		{"handoff_reported", watchDecision{HandoffID: "handoff-3", TaskID: "task-3", CompleteReport: "task report"}, "atct handoff reported: task task-3 (handoff handoff-3): task report"},
 		{"handoff_reported", watchDecision{HandoffID: "handoff-4", GoalID: "goal-4", CompleteReport: "goal report"}, "atct handoff reported: goal goal-4 (handoff handoff-4): goal report"},
 		{"handoff_yielded", watchDecision{TaskID: "task-yielded"}, "atct handoff yielded: task task-yielded"},

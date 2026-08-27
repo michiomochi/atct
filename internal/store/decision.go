@@ -183,6 +183,29 @@ func convertDecisionRows[T any](rows []T, convert func(T) decisionRow) ([]domain
 	return out, nil
 }
 
+// decisionRowFromSQLC maps the generated Decision model onto decisionRow. Every
+// decision query selects the full row, so they all share this mapping.
+func decisionRowFromSQLC(row sqlcgen.Decision) decisionRow {
+	return decisionRow{
+		ID:               row.ID,
+		GoalID:           row.GoalID,
+		TaskID:           row.TaskID,
+		Kind:             row.Kind,
+		Question:         row.Question,
+		Options:          row.Options,
+		Status:           row.Status,
+		DefaultOption:    row.DefaultOption,
+		DefaultAfterMs:   row.DefaultAfterMs,
+		DefaultAppliedAt: row.DefaultAppliedAt,
+		AnswerLabel:      row.AnswerLabel,
+		AnswerText:       row.AnswerText,
+		AnsweredAt:       row.AnsweredAt,
+		AppliedAt:        row.AppliedAt,
+		AgentSessionID:   row.AgentSessionID,
+		CreatedAt:        row.CreatedAt,
+	}
+}
+
 func decisionQueries(s *Store) *sqlcgen.Queries {
 	return sqlcgen.New(s.db)
 }
@@ -220,26 +243,7 @@ func (s *Store) ListOpenDecisions(ctx context.Context, goalID int64) ([]domain.D
 	if err != nil {
 		return nil, fmt.Errorf("query open decisions: %w", err)
 	}
-	return convertDecisionRows(rows, func(row sqlcgen.ListOpenDecisionsRow) decisionRow {
-		return decisionRow{
-			ID:               row.ID,
-			GoalID:           row.GoalID,
-			TaskID:           row.TaskID,
-			Kind:             row.Kind,
-			Question:         row.Question,
-			Options:          row.Options,
-			Status:           row.Status,
-			DefaultOption:    row.DefaultOption,
-			DefaultAfterMs:   row.DefaultAfterMs,
-			DefaultAppliedAt: row.DefaultAppliedAt,
-			AnswerLabel:      row.AnswerLabel,
-			AnswerText:       row.AnswerText,
-			AnsweredAt:       row.AnsweredAt,
-			AppliedAt:        row.AppliedAt,
-			AgentSessionID:   row.AgentSessionID,
-			CreatedAt:        row.CreatedAt,
-		}
-	})
+	return convertDecisionRows(rows, decisionRowFromSQLC)
 }
 
 func (s *Store) ListAllOpenDecisions(ctx context.Context) ([]domain.Decision, error) {
@@ -247,26 +251,7 @@ func (s *Store) ListAllOpenDecisions(ctx context.Context) ([]domain.Decision, er
 	if err != nil {
 		return nil, fmt.Errorf("query all open decisions: %w", err)
 	}
-	return convertDecisionRows(rows, func(row sqlcgen.ListAllOpenDecisionsRow) decisionRow {
-		return decisionRow{
-			ID:               row.ID,
-			GoalID:           row.GoalID,
-			TaskID:           row.TaskID,
-			Kind:             row.Kind,
-			Question:         row.Question,
-			Options:          row.Options,
-			Status:           row.Status,
-			DefaultOption:    row.DefaultOption,
-			DefaultAfterMs:   row.DefaultAfterMs,
-			DefaultAppliedAt: row.DefaultAppliedAt,
-			AnswerLabel:      row.AnswerLabel,
-			AnswerText:       row.AnswerText,
-			AnsweredAt:       row.AnsweredAt,
-			AppliedAt:        row.AppliedAt,
-			AgentSessionID:   row.AgentSessionID,
-			CreatedAt:        row.CreatedAt,
-		}
-	})
+	return convertDecisionRows(rows, decisionRowFromSQLC)
 }
 
 type AnswerInput struct {
@@ -327,26 +312,7 @@ func (s *Store) ApplyExpiredDefaults(ctx context.Context, now time.Time) (int, e
 		return 0, fmt.Errorf("query expired decisions: %w", err)
 	}
 
-	allCandidates, err := convertDecisionRows(rows, func(row sqlcgen.ListExpiredDecisionsRow) decisionRow {
-		return decisionRow{
-			ID:               row.ID,
-			GoalID:           row.GoalID,
-			TaskID:           row.TaskID,
-			Kind:             row.Kind,
-			Question:         row.Question,
-			Options:          row.Options,
-			Status:           row.Status,
-			DefaultOption:    row.DefaultOption,
-			DefaultAfterMs:   row.DefaultAfterMs,
-			DefaultAppliedAt: row.DefaultAppliedAt,
-			AnswerLabel:      row.AnswerLabel,
-			AnswerText:       row.AnswerText,
-			AnsweredAt:       row.AnsweredAt,
-			AppliedAt:        row.AppliedAt,
-			AgentSessionID:   row.AgentSessionID,
-			CreatedAt:        row.CreatedAt,
-		}
-	})
+	allCandidates, err := convertDecisionRows(rows, decisionRowFromSQLC)
 	if err != nil {
 		return 0, err
 	}
@@ -451,51 +417,13 @@ func (s *Store) PollDecisions(ctx context.Context, agentSessionID int64, decisio
 		if queryErr != nil {
 			return nil, fmt.Errorf("query answered decisions: %w", queryErr)
 		}
-		out, conversionErr = convertDecisionRows(rows, func(row sqlcgen.ListAnsweredDecisionsForAgentSessionRow) decisionRow {
-			return decisionRow{
-				ID:               row.ID,
-				GoalID:           row.GoalID,
-				TaskID:           row.TaskID,
-				Kind:             row.Kind,
-				Question:         row.Question,
-				Options:          row.Options,
-				Status:           row.Status,
-				DefaultOption:    row.DefaultOption,
-				DefaultAfterMs:   row.DefaultAfterMs,
-				DefaultAppliedAt: row.DefaultAppliedAt,
-				AnswerLabel:      row.AnswerLabel,
-				AnswerText:       row.AnswerText,
-				AnsweredAt:       row.AnsweredAt,
-				AppliedAt:        row.AppliedAt,
-				AgentSessionID:   row.AgentSessionID,
-				CreatedAt:        row.CreatedAt,
-			}
-		})
+		out, conversionErr = convertDecisionRows(rows, decisionRowFromSQLC)
 	} else {
 		rows, queryErr := q.ListAnsweredDecisionForID(ctx, decisionID)
 		if queryErr != nil {
 			return nil, fmt.Errorf("query answered decisions: %w", queryErr)
 		}
-		out, conversionErr = convertDecisionRows(rows, func(row sqlcgen.ListAnsweredDecisionForIDRow) decisionRow {
-			return decisionRow{
-				ID:               row.ID,
-				GoalID:           row.GoalID,
-				TaskID:           row.TaskID,
-				Kind:             row.Kind,
-				Question:         row.Question,
-				Options:          row.Options,
-				Status:           row.Status,
-				DefaultOption:    row.DefaultOption,
-				DefaultAfterMs:   row.DefaultAfterMs,
-				DefaultAppliedAt: row.DefaultAppliedAt,
-				AnswerLabel:      row.AnswerLabel,
-				AnswerText:       row.AnswerText,
-				AnsweredAt:       row.AnsweredAt,
-				AppliedAt:        row.AppliedAt,
-				AgentSessionID:   row.AgentSessionID,
-				CreatedAt:        row.CreatedAt,
-			}
-		})
+		out, conversionErr = convertDecisionRows(rows, decisionRowFromSQLC)
 	}
 	if conversionErr != nil {
 		return nil, conversionErr
@@ -533,26 +461,7 @@ func (s *Store) ListUnappliedDecisions(ctx context.Context) ([]domain.Decision, 
 	if err != nil {
 		return nil, fmt.Errorf("query unapplied decisions: %w", err)
 	}
-	return convertDecisionRows(rows, func(row sqlcgen.ListUnappliedDecisionsRow) decisionRow {
-		return decisionRow{
-			ID:               row.ID,
-			GoalID:           row.GoalID,
-			TaskID:           row.TaskID,
-			Kind:             row.Kind,
-			Question:         row.Question,
-			Options:          row.Options,
-			Status:           row.Status,
-			DefaultOption:    row.DefaultOption,
-			DefaultAfterMs:   row.DefaultAfterMs,
-			DefaultAppliedAt: row.DefaultAppliedAt,
-			AnswerLabel:      row.AnswerLabel,
-			AnswerText:       row.AnswerText,
-			AnsweredAt:       row.AnsweredAt,
-			AppliedAt:        row.AppliedAt,
-			AgentSessionID:   row.AgentSessionID,
-			CreatedAt:        row.CreatedAt,
-		}
-	})
+	return convertDecisionRows(rows, decisionRowFromSQLC)
 }
 
 // ListUnappliedDecisionsForProject returns answered Decisions not yet received by an agent
@@ -562,26 +471,7 @@ func (s *Store) ListUnappliedDecisionsForProject(ctx context.Context, projectID 
 	if err != nil {
 		return nil, fmt.Errorf("query project unapplied decisions: %w", err)
 	}
-	return convertDecisionRows(rows, func(row sqlcgen.ListUnappliedDecisionsForProjectRow) decisionRow {
-		return decisionRow{
-			ID:               row.ID,
-			GoalID:           row.GoalID,
-			TaskID:           row.TaskID,
-			Kind:             row.Kind,
-			Question:         row.Question,
-			Options:          row.Options,
-			Status:           row.Status,
-			DefaultOption:    row.DefaultOption,
-			DefaultAfterMs:   row.DefaultAfterMs,
-			DefaultAppliedAt: row.DefaultAppliedAt,
-			AnswerLabel:      row.AnswerLabel,
-			AnswerText:       row.AnswerText,
-			AnsweredAt:       row.AnsweredAt,
-			AppliedAt:        row.AppliedAt,
-			AgentSessionID:   row.AgentSessionID,
-			CreatedAt:        row.CreatedAt,
-		}
-	})
+	return convertDecisionRows(rows, decisionRowFromSQLC)
 }
 
 // ListUnappliedDecisionsForGoal returns answered Decisions not yet received by an agent
@@ -591,26 +481,7 @@ func (s *Store) ListUnappliedDecisionsForGoal(ctx context.Context, goalID int64)
 	if err != nil {
 		return nil, fmt.Errorf("query goal unapplied decisions: %w", err)
 	}
-	return convertDecisionRows(rows, func(row sqlcgen.ListUnappliedDecisionsForGoalRow) decisionRow {
-		return decisionRow{
-			ID:               row.ID,
-			GoalID:           row.GoalID,
-			TaskID:           row.TaskID,
-			Kind:             row.Kind,
-			Question:         row.Question,
-			Options:          row.Options,
-			Status:           row.Status,
-			DefaultOption:    row.DefaultOption,
-			DefaultAfterMs:   row.DefaultAfterMs,
-			DefaultAppliedAt: row.DefaultAppliedAt,
-			AnswerLabel:      row.AnswerLabel,
-			AnswerText:       row.AnswerText,
-			AnsweredAt:       row.AnsweredAt,
-			AppliedAt:        row.AppliedAt,
-			AgentSessionID:   row.AgentSessionID,
-			CreatedAt:        row.CreatedAt,
-		}
-	})
+	return convertDecisionRows(rows, decisionRowFromSQLC)
 }
 
 // AppliedDecisionHistoryLimit is the maximum number of applied Decisions returned.
@@ -634,26 +505,7 @@ func (s *Store) ListAppliedDecisions(ctx context.Context, goalID int64) ([]domai
 	}
 
 	limit := min(total, AppliedDecisionHistoryLimit)
-	out, err := convertDecisionRows(rows, func(row sqlcgen.ListAppliedDecisionsRow) decisionRow {
-		return decisionRow{
-			ID:               row.ID,
-			GoalID:           row.GoalID,
-			TaskID:           row.TaskID,
-			Kind:             row.Kind,
-			Question:         row.Question,
-			Options:          row.Options,
-			Status:           row.Status,
-			DefaultOption:    row.DefaultOption,
-			DefaultAfterMs:   row.DefaultAfterMs,
-			DefaultAppliedAt: row.DefaultAppliedAt,
-			AnswerLabel:      row.AnswerLabel,
-			AnswerText:       row.AnswerText,
-			AnsweredAt:       row.AnsweredAt,
-			AppliedAt:        row.AppliedAt,
-			AgentSessionID:   row.AgentSessionID,
-			CreatedAt:        row.CreatedAt,
-		}
-	})
+	out, err := convertDecisionRows(rows, decisionRowFromSQLC)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -690,26 +542,7 @@ func (s *Store) ListAppliedDecisionsForTask(ctx context.Context, goalID, taskID 
 	}
 
 	limit := min(total, AppliedDecisionHistoryLimit)
-	out, err := convertDecisionRows(rows, func(row sqlcgen.ListAppliedDecisionsForTaskRow) decisionRow {
-		return decisionRow{
-			ID:               row.ID,
-			GoalID:           row.GoalID,
-			TaskID:           sql.NullInt64{Int64: row.TaskID, Valid: true},
-			Kind:             row.Kind,
-			Question:         row.Question,
-			Options:          row.Options,
-			Status:           row.Status,
-			DefaultOption:    row.DefaultOption,
-			DefaultAfterMs:   row.DefaultAfterMs,
-			DefaultAppliedAt: row.DefaultAppliedAt,
-			AnswerLabel:      row.AnswerLabel,
-			AnswerText:       row.AnswerText,
-			AnsweredAt:       row.AnsweredAt,
-			AppliedAt:        row.AppliedAt,
-			AgentSessionID:   row.AgentSessionID,
-			CreatedAt:        row.CreatedAt,
-		}
-	})
+	out, err := convertDecisionRows(rows, decisionRowFromSQLC)
 	if err != nil {
 		return nil, 0, err
 	}

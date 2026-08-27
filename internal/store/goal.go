@@ -155,6 +155,17 @@ func goalFromFields(id, projectID int64, derivedFromGoalID sql.NullInt64, conten
 	return goalFromRow(sqlcgen.Goal{ID: id, ProjectID: projectID, DerivedFromGoalID: derivedFromGoalID, Content: content, Status: status, Creator: creator, ResultSummary: resultSummary, WorkDone: workDone, NowPossible: nowPossible, HowToVerify: howToVerify, Surprises: surprises, NeedsReview: needsReview, NextSteps: nextSteps, CreatedAt: createdAt, UpdatedAt: updatedAt})
 }
 
+// derivedFromGoalID narrows the value GetGoal selects. The query casts the
+// column so a dangling reference SQLite could not coerce to INTEGER reads as
+// NULL instead of failing the scan, and sqlc types a computed column as any.
+func derivedFromGoalID(value any) sql.NullInt64 {
+	id, ok := value.(int64)
+	if !ok {
+		return sql.NullInt64{}
+	}
+	return sql.NullInt64{Int64: id, Valid: true}
+}
+
 func (s *Store) GetGoal(ctx context.Context, id int64) (domain.Goal, error) {
 	row, err := sqlcgen.New(s.db).GetGoal(ctx, id)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -163,7 +174,7 @@ func (s *Store) GetGoal(ctx context.Context, id int64) (domain.Goal, error) {
 	if err != nil {
 		return domain.Goal{}, err
 	}
-	return goalFromFields(row.ID, row.ProjectID, row.DerivedFromGoalID, row.Content, row.Status, row.Creator, row.ResultSummary, row.WorkDone, row.NowPossible, row.HowToVerify, row.Surprises, row.NeedsReview, row.NextSteps, row.CreatedAt, row.UpdatedAt)
+	return goalFromFields(row.ID, row.ProjectID, derivedFromGoalID(row.DerivedFromGoalID), row.Content, row.Status, row.Creator, row.ResultSummary, row.WorkDone, row.NowPossible, row.HowToVerify, row.Surprises, row.NeedsReview, row.NextSteps, row.CreatedAt, row.UpdatedAt)
 }
 
 // ClaimGoal records the agent session that owns a goal. An empty session ID

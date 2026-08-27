@@ -9,8 +9,12 @@ VALUES (?, ?, ?, ?, ?, '', '', '', '', '', '', '', ?, ?)
 RETURNING id;
 
 -- name: GetGoal :one
+-- derived_from_goal_id is cast because a dangling reference can hold a value
+-- SQLite could not coerce to INTEGER, and the goal detail view has to render
+-- rather than fail. NULLIF keeps 0 meaning "no parent".
 SELECT
-  id, project_id, derived_from_goal_id, content, status, creator, result_summary,
+  id, project_id, NULLIF(CAST(derived_from_goal_id AS INTEGER), 0) AS derived_from_goal_id,
+  content, status, creator, result_summary,
   work_done, now_possible, how_to_verify, surprises, needs_review, next_steps,
   created_at, updated_at
 FROM goals

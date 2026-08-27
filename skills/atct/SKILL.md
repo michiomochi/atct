@@ -162,7 +162,8 @@ that worker is started:
    >
    > When the work is complete, record completion by calling `atct_handoff_complete`
    > with the `task_id` provided in this request and a `complete_report`. The
-   > `complete_report` must say what was done, what was verified, and paths changed.
+   > `complete_report` must say what was done, what was verified, what could not
+   > be verified, and paths changed.
    >
    > Only then close the task, by calling `atct_task_update` with the `task_id`
    > provided in this request and `status` set to `done`. This order is required:
@@ -202,7 +203,23 @@ that worker is started:
    decision travels the same way, which is what `does not: make design decisions`
    in `## Roles` means in practice.
 
-5. Keep one worker per task. Return a correction, review fix, follow-up
+5. Name the verification boundary in the request. The delegator must name the
+   verification commands the worker can run. Do not put broad commands such as
+   `go test ./...` in the request. List the packages the worker may run instead.
+   The worker sandbox is not the same as the delegator sandbox. In a 2026-08-27
+   measurement, the same `go test` in the same worktree could bind a port for the
+   delegator but failed for the worker with `bind: operation not permitted`.
+   When checking whether a worker can use a tool, run the command the worker will
+   actually run. Do not use `--version` or `--help` to determine availability: the
+   same executable can succeed with an argument that does not touch its resource
+   and fail with a permission error when one does.
+   The delegator runs every verification not named for the worker and includes it
+   in review. This is part of delegation, not an exception to it. The worker must
+   not add verification that the request does not name. The worker must not
+   silently skip verification it could not run. It must say "could not run" in
+   its completion report.
+
+6. Keep one worker per task. Return a correction, review fix, follow-up
    question, or clarification for the same task to the same worker. Start a
    new worker for a different task. When the task is done, end that worker.
    A correction or review fix remains the same task because it is a delta
