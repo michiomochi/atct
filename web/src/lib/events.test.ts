@@ -56,7 +56,7 @@ function readScreenEventNames(): string[] {
   return names;
 }
 
-describe("SSE event names", () => {
+describe("push event names", () => {
   it("finds event names in both server and screen sources", () => {
     expect(readServerEventNames().length).toBeGreaterThanOrEqual(10);
     expect(readScreenEventNames().length).toBeGreaterThan(0);

@@ -212,6 +212,14 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.handleEvents(w, r)
 		return
 	}
+	if len(parts) == 2 && parts[0] == "api" && parts[1] == "ws" {
+		if r.Method != http.MethodGet {
+			writeError(w, http.StatusBadRequest, "method is not allowed for this endpoint")
+			return
+		}
+		s.handleWebSocketEvents(w, r)
+		return
+	}
 	if len(parts) == 2 && parts[0] == "api" && parts[1] == "projects" {
 		if r.Method != http.MethodGet {
 			writeError(w, http.StatusBadRequest, "method is not allowed for this endpoint")
@@ -350,7 +358,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func malformedAPIPath(path string) bool {
-	for _, prefix := range []string{"/api/inbox", "/api/events", "/api/projects", "/api/goals", "/api/tasks", "/api/decisions"} {
+	for _, prefix := range []string{"/api/inbox", "/api/events", "/api/ws", "/api/projects", "/api/goals", "/api/tasks", "/api/decisions"} {
 		if path == prefix || strings.HasPrefix(path, prefix+"/") {
 			return true
 		}
@@ -1332,28 +1340,57 @@ func (s *Server) getOpenDecision(w http.ResponseWriter, ctx context.Context, dec
 	return decision, true
 }
 
+type eventFilter struct {
+	projectID          string
+	goalID             string
+	canonicalProjectID int64
+	canonicalGoalID    int64
+}
+
+func (s *Server) parseEventFilter(w http.ResponseWriter, r *http.Request) (eventFilter, bool) {
+	filter := eventFilter{
+		projectID: r.URL.Query().Get("project_id"),
+		goalID:    r.URL.Query().Get("goal_id"),
+	}
+	if filter.projectID != "" {
+		var ok bool
+		filter.canonicalProjectID, ok = s.resolveProjectID(w, r.Context(), filter.projectID)
+		if !ok {
+			return eventFilter{}, false
+		}
+	}
+	if filter.goalID != "" {
+		var ok bool
+		filter.canonicalGoalID, ok = s.resolveGoalID(w, r.Context(), filter.goalID)
+		if !ok {
+			return eventFilter{}, false
+		}
+	}
+	return filter, true
+}
+
+func (s *Server) eventPasses(ctx context.Context, filter eventFilter, event store.DecisionEvent) bool {
+	if filter.projectID != "" {
+		eventProjectID, err := s.eventProjectID(ctx, event)
+		if err != nil || (eventProjectID != 0 && eventProjectID != filter.canonicalProjectID) {
+			return false
+		}
+	}
+	if filter.goalID != "" && !eventMatchesGoalID(event, filter.canonicalGoalID) {
+		return false
+	}
+	return true
+}
+
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		writeError(w, http.StatusInternalServerError, "streaming is not supported")
 		return
 	}
-	projectID := r.URL.Query().Get("project_id")
-	goalID := r.URL.Query().Get("goal_id")
-	var canonicalProjectID, canonicalGoalID int64
-	if projectID != "" {
-		var ok bool
-		canonicalProjectID, ok = s.resolveProjectID(w, r.Context(), projectID)
-		if !ok {
-			return
-		}
-	}
-	if goalID != "" {
-		var ok bool
-		canonicalGoalID, ok = s.resolveGoalID(w, r.Context(), goalID)
-		if !ok {
-			return
-		}
+	filter, ok := s.parseEventFilter(w, r)
+	if !ok {
+		return
 	}
 	ch, cancel := s.store.SubscribeEvents()
 	defer cancel()
@@ -1369,13 +1406,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		case <-r.Context().Done():
 			return
 		case event := <-ch:
-			if projectID != "" {
-				eventProjectID, err := s.eventProjectID(r.Context(), event)
-				if err != nil || (eventProjectID != 0 && eventProjectID != canonicalProjectID) {
-					continue
-				}
-			}
-			if goalID != "" && !eventMatchesGoalID(event, canonicalGoalID) {
+			if !s.eventPasses(r.Context(), filter, event) {
 				continue
 			}
 			data, err := json.Marshal(event.Data)

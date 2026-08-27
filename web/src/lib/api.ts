@@ -1,5 +1,4 @@
 import {
-  DECISION_EVENT_NAMES,
   isDecisionEventName,
   KEEPALIVE_EVENT_NAME,
   type DecisionEventName,
@@ -367,21 +366,33 @@ export async function snoozeTask(id: string, until: string | null): Promise<Task
 }
 
 export function subscribeToDecisionEvents(onEvent: (name: DecisionEventName) => void): () => void {
-  if (typeof EventSource === "undefined") return () => undefined;
+  if (typeof WebSocket === "undefined") return () => undefined;
 
   const watchKeepaliveTimeout = 90_000;
   const watchKeepaliveInterval = 30_000;
   const refreshDebounce = 100;
-  let source: EventSource | undefined;
+  const reconnectDelay = 5_000;
+  const url = `${location.protocol === "https:" ? "wss:" : "ws:"}//${location.host}/api/ws`;
+  let source: WebSocket | undefined;
   let lastEventAt = Date.now();
   let refreshTimer: ReturnType<typeof setTimeout> | undefined;
   let livenessTimer: ReturnType<typeof setInterval> | undefined;
+  let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
   let closed = false;
 
-  const handler = (event: Event) => {
+  const handler = (event: MessageEvent) => {
     lastEventAt = Date.now();
-    if (event.type === KEEPALIVE_EVENT_NAME) return;
-    const name = event.type;
+
+    let payload: unknown;
+    try {
+      payload = JSON.parse(event.data);
+    } catch {
+      return;
+    }
+    if (typeof payload !== "object" || payload === null || !("name" in payload)) return;
+    const name = payload.name;
+    if (typeof name !== "string") return;
+    if (name === KEEPALIVE_EVENT_NAME) return;
     if (!isDecisionEventName(name)) return;
 
     if (refreshTimer !== undefined) clearTimeout(refreshTimer);
@@ -393,27 +404,40 @@ export function subscribeToDecisionEvents(onEvent: (name: DecisionEventName) => 
 
   const closeSource = () => {
     if (source === undefined) return;
-    DECISION_EVENT_NAMES.forEach((name) => source?.removeEventListener(name, handler));
-    source.removeEventListener(KEEPALIVE_EVENT_NAME, handler);
+    source.removeEventListener("message", handler);
+    source.removeEventListener("close", handleClose);
     source.close();
     source = undefined;
   };
 
   const openSource = () => {
     if (closed) return;
-    source = new EventSource("/api/events");
-    DECISION_EVENT_NAMES.forEach((name) => source?.addEventListener(name, handler));
-    source.addEventListener(KEEPALIVE_EVENT_NAME, handler);
+    source = new WebSocket(url);
+    source.addEventListener("message", handler);
+    source.addEventListener("close", handleClose);
   };
 
   const reconnect = () => {
+    if (reconnectTimer !== undefined) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = undefined;
+    }
     closeSource();
     lastEventAt = Date.now();
     openSource();
   };
 
+  const handleClose = () => {
+    if (closed || reconnectTimer !== undefined) return;
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = undefined;
+      reconnect();
+    }, reconnectDelay);
+  };
+
   openSource();
   livenessTimer = setInterval(() => {
+    if (reconnectTimer !== undefined) return;
     if (Date.now() - lastEventAt >= watchKeepaliveTimeout) reconnect();
   }, watchKeepaliveInterval);
 
@@ -421,6 +445,7 @@ export function subscribeToDecisionEvents(onEvent: (name: DecisionEventName) => 
     closed = true;
     if (refreshTimer !== undefined) clearTimeout(refreshTimer);
     if (livenessTimer !== undefined) clearInterval(livenessTimer);
+    if (reconnectTimer !== undefined) clearTimeout(reconnectTimer);
     closeSource();
   };
 }
