@@ -106,8 +106,9 @@ func (q *Queries) GetCompletionDecisionGoalID(ctx context.Context, id int64) (in
 
 const getGoal = `-- name: GetGoal :one
 SELECT
-	  id, project_id, NULLIF(CAST(derived_from_goal_id AS INTEGER), 0) AS derived_from_goal_id, content, status, creator, result_summary,
-	  work_done, now_possible, how_to_verify, surprises, needs_review, next_steps,
+  id, project_id, NULLIF(CAST(derived_from_goal_id AS INTEGER), 0) AS derived_from_goal_id,
+  content, status, creator, result_summary,
+  work_done, now_possible, how_to_verify, surprises, needs_review, next_steps,
   created_at, updated_at
 FROM goals
 WHERE id = ?
@@ -116,7 +117,7 @@ WHERE id = ?
 type GetGoalRow struct {
 	ID                int64
 	ProjectID         int64
-	DerivedFromGoalID sql.NullInt64
+	DerivedFromGoalID interface{}
 	Content           string
 	Status            string
 	Creator           string
@@ -131,6 +132,9 @@ type GetGoalRow struct {
 	UpdatedAt         string
 }
 
+// derived_from_goal_id is cast because a dangling reference can hold a value
+// SQLite could not coerce to INTEGER, and the goal detail view has to render
+// rather than fail. NULLIF keeps 0 meaning "no parent".
 func (q *Queries) GetGoal(ctx context.Context, id int64) (GetGoalRow, error) {
 	row := q.db.QueryRowContext(ctx, getGoal, id)
 	var i GetGoalRow
@@ -176,33 +180,15 @@ FROM goals
 ORDER BY created_at
 `
 
-type ListAllGoalsRow struct {
-	ID                int64
-	ProjectID         int64
-	DerivedFromGoalID sql.NullInt64
-	Content           string
-	Status            string
-	Creator           string
-	ResultSummary     string
-	WorkDone          string
-	NowPossible       string
-	HowToVerify       string
-	Surprises         string
-	NeedsReview       string
-	NextSteps         string
-	CreatedAt         string
-	UpdatedAt         string
-}
-
-func (q *Queries) ListAllGoals(ctx context.Context) ([]ListAllGoalsRow, error) {
+func (q *Queries) ListAllGoals(ctx context.Context) ([]Goal, error) {
 	rows, err := q.db.QueryContext(ctx, listAllGoals)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ListAllGoalsRow
+	var items []Goal
 	for rows.Next() {
-		var i ListAllGoalsRow
+		var i Goal
 		if err := rows.Scan(
 			&i.ID,
 			&i.ProjectID,
@@ -243,33 +229,15 @@ WHERE derived_from_goal_id = ?
 ORDER BY created_at
 `
 
-type ListDerivedGoalsRow struct {
-	ID                int64
-	ProjectID         int64
-	DerivedFromGoalID sql.NullInt64
-	Content           string
-	Status            string
-	Creator           string
-	ResultSummary     string
-	WorkDone          string
-	NowPossible       string
-	HowToVerify       string
-	Surprises         string
-	NeedsReview       string
-	NextSteps         string
-	CreatedAt         string
-	UpdatedAt         string
-}
-
-func (q *Queries) ListDerivedGoals(ctx context.Context, derivedFromGoalID sql.NullInt64) ([]ListDerivedGoalsRow, error) {
+func (q *Queries) ListDerivedGoals(ctx context.Context, derivedFromGoalID sql.NullInt64) ([]Goal, error) {
 	rows, err := q.db.QueryContext(ctx, listDerivedGoals, derivedFromGoalID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ListDerivedGoalsRow
+	var items []Goal
 	for rows.Next() {
-		var i ListDerivedGoalsRow
+		var i Goal
 		if err := rows.Scan(
 			&i.ID,
 			&i.ProjectID,
@@ -310,33 +278,15 @@ WHERE project_id = ?
 ORDER BY created_at
 `
 
-type ListGoalsRow struct {
-	ID                int64
-	ProjectID         int64
-	DerivedFromGoalID sql.NullInt64
-	Content           string
-	Status            string
-	Creator           string
-	ResultSummary     string
-	WorkDone          string
-	NowPossible       string
-	HowToVerify       string
-	Surprises         string
-	NeedsReview       string
-	NextSteps         string
-	CreatedAt         string
-	UpdatedAt         string
-}
-
-func (q *Queries) ListGoals(ctx context.Context, projectID int64) ([]ListGoalsRow, error) {
+func (q *Queries) ListGoals(ctx context.Context, projectID int64) ([]Goal, error) {
 	rows, err := q.db.QueryContext(ctx, listGoals, projectID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ListGoalsRow
+	var items []Goal
 	for rows.Next() {
-		var i ListGoalsRow
+		var i Goal
 		if err := rows.Scan(
 			&i.ID,
 			&i.ProjectID,
@@ -423,40 +373,6 @@ type RejectGoalApprovalDecisionParams struct {
 
 func (q *Queries) RejectGoalApprovalDecision(ctx context.Context, arg RejectGoalApprovalDecisionParams) (sql.Result, error) {
 	return q.db.ExecContext(ctx, rejectGoalApprovalDecision, arg.AnswerText, arg.AnsweredAt, arg.ID)
-}
-
-const resolveGoalIDByLegacyPrefix = `-- name: ResolveGoalIDByLegacyPrefix :many
-SELECT id FROM goals
-WHERE legacy_id >= ?1 AND legacy_id < ?2
-LIMIT 2
-`
-
-type ResolveGoalIDByLegacyPrefixParams struct {
-	Prefix    sql.NullString
-	PrefixEnd sql.NullString
-}
-
-func (q *Queries) ResolveGoalIDByLegacyPrefix(ctx context.Context, arg ResolveGoalIDByLegacyPrefixParams) ([]int64, error) {
-	rows, err := q.db.QueryContext(ctx, resolveGoalIDByLegacyPrefix, arg.Prefix, arg.PrefixEnd)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []int64
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		items = append(items, id)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
 }
 
 const setGoalDerivedFrom = `-- name: SetGoalDerivedFrom :execresult
