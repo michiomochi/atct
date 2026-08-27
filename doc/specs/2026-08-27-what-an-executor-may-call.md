@@ -64,15 +64,38 @@ aqua の `timestamp.txt を open: operation not permitted` が出ていた。
 | `herdr --help` | **0** | 同上 |
 | `herdr agent get <name>` | **1** | socket |
 | `herdr agent prompt <name> '...'` | **1** | socket |
-| MCP: `atct_session_identify` / `atct_handoff_receive` / `atct_role` | 成功 | MCP。sandbox を通らない |
+| MCP: `atct_session_identify` / `atct_handoff_receive` / `atct_role` | 成功 | MCP。**なぜ通るかは未測定** |
 | 対照: `printf ... > /tmp/...` | 0 | workspace 外の書き込み |
 
 **aqua の警告は致命的ではない。**`--version` と `--help` は同じ警告を出して exit 0 で返る。
 `Error: Os { ... }` は `agent` 系にだけ現れる。
 
-**止めているのは socket である。**`HERDR_SOCKET_PATH` は `~/.config/herdr/herdr.sock` で、
-`workspace-write` はホーム配下への書き込みを許さない。**Unix socket への connect は
-socket ファイルへの書き込み権限を要求するので、`herdr agent` はここで落ちる。**
+**測れているのは、socket に触るコマンドだけが落ちるという対応である。**
+`HERDR_SOCKET_PATH` は `~/.config/herdr/herdr.sock` で、`workspace-write` はホーム配下への
+書き込みを許さない。**ただし「socket ファイルへの書き込み権限を要求するので落ちる」は推論であって、
+syscall を見た者は誰もいない。**
+
+**この節の当初の記述は機構を断定していた。**dotfiles 側（ゴール 132・human 起票・2026-08-26）が
+同じ切り分けを持っており、その `surprises` に逐語でこうある。
+
+> 原因の帰属を双方で 3 巡間違え、最後に「対応表だけ残して原因を書かない」で合意した。
+> **syscall を見た人が誰もいない。**
+
+**したがって書けるのは「設定 -> exit code の対応」までである。**
+
+**`connect` と `bind` を一語で「socket」と書いてはならない。結論が逆になる。**
+
+    connect   設定で通せる。dotfiles ゴール 132 が 3 点セット
+              （proxy 有効 / herdr.sock を allow / network_access）で SOCK_EXIT=0 を実測。
+              **ただし 3 点セットは採用していない**（判断 a45b28bd。境界がカーネルの
+              seatbelt から Codex のユーザ空間 proxy へ移るため）。
+              **よって現行環境では通らないままである**
+    bind      **設定では解けない。**6 条件すべて BIND_FAIL、sandbox 外のみ BIND_OK。
+              これが `internal/httpapi` と `cmd/atct` のテストが executor で panic する理由である
+
+**否定側は dotfiles 側で取れている。**aqua の `timestamp.txt` は WRN で終了コードに影響せず、
+**実バイナリを直に叩いても herdr は同じ `Os { code: 1, kind: PermissionDenied }` を出す**
+（ゴール 168 が 132 の確定として記録）。**aqua は原因ではない。ここは 2 系統で言える。**
 
 **結論は変わらないが、原因は変わる。**
 
@@ -275,3 +298,28 @@ executor 3 台（Claude 2 台・Codex 1 台）に、許可リストと禁止リ�
 | `atct_task_update(done)` が完了報告を黙って消す（`internal/store/task.go:462-466`） | 決定 455。新ゴールの起票を人間に聞いている |
 | `atct_task_claim` が自己 handoff を書き、委譲手順を実行不能にする | ゴール 177（既存）。触っていない |
 | executor の報告経路が物理的に無い（herdr のシム） | ゴール 180（稼働中）。本ゴールは「何を呼ばせるか」だけを決め、経路の修理には触っていない |
+
+
+## 訂正（2026-08-28・dotfiles-commander の指摘を受けて atct-commander が反映）
+
+**2 語を弱めた。**私（commander）が 180 の推論を事実として 181 へ転送し、それがこの spec の
+表と結論に入っていた。
+
+1. **「MCP。sandbox を通らない」-> 「なぜ通るかは未測定」。**
+   観測されたのは「MCP 呼び出しが着地した」ことだけである
+2. **「止めているのは socket である」-> 対応表までに留めた。**
+   あわせて `connect` と `bind` を分けた。**一語にすると結論が逆になる**——
+   connect は設定で通せるが（採用していないので現行では通らない）、bind は設定では解けない
+
+**同じ矛盾が dotfiles 側で 2026-08-26 に独立に見つかっていた**（ゴール 132 の `result_summary`）。
+
+> 私が依頼書で executor に ATCT ツールを丸ごと禁じており、契約が worker に要求する
+> 4 つの呼び出しまで塞いでいたことを見つけて訂正し、稼働中の space に配りました。
+
+**ただし訂正は依頼書に配っただけで、スキル本文には入っていない。**
+`orchestration/SKILL.md` にはいまも一括禁止が残っている。**dotfiles のゴール 186 が要るのはそのため**で、
+このゴールの発見と独立の 2 系統になる。
+
+**数の差 4 と 5 は矛盾ではない。**132 は `## Delegate a task` 手順 4 の引用ブロック（4 つ）を
+数えており、`atct_task_update` はそのブロックではなく `## Close a task the moment it is finished`
+側にある。**このゴールの 5 つは superset である。**
