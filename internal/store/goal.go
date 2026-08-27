@@ -366,6 +366,21 @@ func validateCompletionReport(report domain.CompletionReport) error {
 	return nil
 }
 
+func goalNotActiveForCompletionError(goalID int64, status domain.GoalStatus) error {
+	var stateMessage string
+	switch status {
+	case domain.GoalProposed:
+		stateMessage = fmt.Sprintf("goal %d is proposed, not active; approve it before reporting completion (承認前のゴールには完了報告を出せません)", goalID)
+	case domain.GoalDone:
+		stateMessage = fmt.Sprintf("goal %d is done, not active; the approved completion report was left unchanged (完了済みのゴールには完了報告を出せません。承認済みの文章はそのままです)", goalID)
+	case domain.GoalDropped:
+		stateMessage = fmt.Sprintf("goal %d is dropped, not active; the completion report was left unchanged (取り下げ済みのゴールには完了報告を出せません。完了報告はそのままです)", goalID)
+	default:
+		stateMessage = fmt.Sprintf("goal %d has status %q, not active; the completion report was left unchanged (ゴールの状態 %q はアクティブではないため、完了報告を出せません。完了報告はそのままです)", goalID, status, status)
+	}
+	return fmt.Errorf("%w: %s", ErrGoalNotActive, stateMessage)
+}
+
 // CompleteGoal keeps the pre-v6 Go call shape source-compatible for packages
 // that have not adopted the structured report yet. The MCP API uses
 // CompleteGoalWithReport and does not expose this compatibility path.
@@ -386,6 +401,14 @@ func (s *Store) CompleteGoal(ctx context.Context, goalID int64, resultSummary st
 // CompleteGoalWithReport creates a kind=completion Decision.
 // A Goal cannot close while a child Decision is open (invariant 4).
 func (s *Store) CompleteGoalWithReport(ctx context.Context, goalID int64, report domain.CompletionReport, agentSessionID int64) (domain.Decision, error) {
+	goal, err := s.GetGoal(ctx, goalID)
+	if err != nil {
+		return domain.Decision{}, fmt.Errorf("get goal for completion: %w", err)
+	}
+	if goal.Status != domain.GoalActive {
+		return domain.Decision{}, goalNotActiveForCompletionError(goalID, goal.Status)
+	}
+
 	if err := validateCompletionReport(report); err != nil {
 		return domain.Decision{}, err
 	}
@@ -399,7 +422,7 @@ func (s *Store) CompleteGoalWithReport(ctx context.Context, goalID int64, report
 		return domain.Decision{}, fmt.Errorf("%w: %d", ErrGoalHasOpenDecision, goalID)
 	}
 
-	if _, err := q.UpdateGoalCompletionReport(ctx, sqlcgen.UpdateGoalCompletionReportParams{
+	result, err := q.UpdateGoalCompletionReport(ctx, sqlcgen.UpdateGoalCompletionReportParams{
 		ResultSummary: report.WorkDone,
 		WorkDone:      report.WorkDone,
 		NowPossible:   report.NowPossible,
@@ -409,8 +432,18 @@ func (s *Store) CompleteGoalWithReport(ctx context.Context, goalID int64, report
 		NextSteps:     report.NextSteps,
 		UpdatedAt:     time.Now().UTC().Format(time.RFC3339),
 		ID:            goalID,
-	}); err != nil {
+	})
+	if err != nil {
 		return domain.Decision{}, fmt.Errorf("set completion report: %w", err)
+	}
+	if rows, err := result.RowsAffected(); err != nil {
+		return domain.Decision{}, fmt.Errorf("set completion report rows affected: %w", err)
+	} else if rows != 1 {
+		goal, err := s.GetGoal(ctx, goalID)
+		if err != nil {
+			return domain.Decision{}, fmt.Errorf("get goal after completion report update: %w", err)
+		}
+		return domain.Decision{}, goalNotActiveForCompletionError(goalID, goal.Status)
 	}
 
 	return s.AskDecision(ctx, AskInput{

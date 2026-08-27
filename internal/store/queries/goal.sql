@@ -87,7 +87,7 @@ UPDATE goals SET
   result_summary = ?,
   work_done = ?, now_possible = ?, how_to_verify = ?,
   surprises = ?, needs_review = ?, next_steps = ?, updated_at = ?
-WHERE id = ?;
+WHERE id = ? AND status = 'active';
 
 -- name: GetCompletionDecisionGoalID :one
 SELECT goal_id
