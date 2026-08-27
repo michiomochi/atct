@@ -599,29 +599,15 @@ WHERE goal_id = ?
 ORDER BY sort_order, id
 `
 
-type ListTasksRow struct {
-	ID           int64
-	GoalID       int64
-	Title        string
-	Description  string
-	Status       string
-	Agent        string
-	SortOrder    int64
-	DeclareKey   string
-	SnoozedUntil sql.NullString
-	CreatedAt    string
-	UpdatedAt    string
-}
-
-func (q *Queries) ListTasks(ctx context.Context, goalID int64) ([]ListTasksRow, error) {
+func (q *Queries) ListTasks(ctx context.Context, goalID int64) ([]Task, error) {
 	rows, err := q.db.QueryContext(ctx, listTasks, goalID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ListTasksRow
+	var items []Task
 	for rows.Next() {
-		var i ListTasksRow
+		var i Task
 		if err := rows.Scan(
 			&i.ID,
 			&i.GoalID,
@@ -718,11 +704,7 @@ type RegisterAgentSessionParams struct {
 }
 
 func (q *Queries) RegisterAgentSession(ctx context.Context, arg RegisterAgentSessionParams) (int64, error) {
-	row := q.db.QueryRowContext(ctx, registerAgentSession,
-		arg.Pid,
-		arg.StartedAt,
-		arg.RegisteredAt,
-	)
+	row := q.db.QueryRowContext(ctx, registerAgentSession, arg.Pid, arg.StartedAt, arg.RegisteredAt)
 	var id int64
 	err := row.Scan(&id)
 	return id, err
@@ -797,40 +779,6 @@ func (q *Queries) RequestTaskHandoff(ctx context.Context, arg RequestTaskHandoff
 		arg.RequestReport,
 	)
 	return err
-}
-
-const resolveTaskIDByLegacyPrefix = `-- name: ResolveTaskIDByLegacyPrefix :many
-SELECT id FROM tasks
-WHERE legacy_id >= ?1 AND legacy_id < ?2
-LIMIT 2
-`
-
-type ResolveTaskIDByLegacyPrefixParams struct {
-	Prefix    sql.NullString
-	PrefixEnd sql.NullString
-}
-
-func (q *Queries) ResolveTaskIDByLegacyPrefix(ctx context.Context, arg ResolveTaskIDByLegacyPrefixParams) ([]int64, error) {
-	rows, err := q.db.QueryContext(ctx, resolveTaskIDByLegacyPrefix, arg.Prefix, arg.PrefixEnd)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []int64
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		items = append(items, id)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
 }
 
 const taskExists = `-- name: TaskExists :one

@@ -134,28 +134,9 @@ FROM decisions
 WHERE id = ?
 `
 
-type GetDecisionRow struct {
-	ID               int64
-	GoalID           int64
-	TaskID           sql.NullInt64
-	Kind             string
-	Question         string
-	Options          string
-	Status           string
-	DefaultOption    string
-	DefaultAfterMs   sql.NullInt64
-	DefaultAppliedAt sql.NullString
-	AnswerLabel      string
-	AnswerText       string
-	AnsweredAt       sql.NullString
-	AppliedAt        sql.NullString
-	AgentSessionID   int64
-	CreatedAt        string
-}
-
-func (q *Queries) GetDecision(ctx context.Context, id int64) (GetDecisionRow, error) {
+func (q *Queries) GetDecision(ctx context.Context, id int64) (Decision, error) {
 	row := q.db.QueryRowContext(ctx, getDecision, id)
-	var i GetDecisionRow
+	var i Decision
 	err := row.Scan(
 		&i.ID,
 		&i.GoalID,
@@ -187,34 +168,15 @@ WHERE status = 'open'
 ORDER BY created_at
 `
 
-type ListAllOpenDecisionsRow struct {
-	ID               int64
-	GoalID           int64
-	TaskID           sql.NullInt64
-	Kind             string
-	Question         string
-	Options          string
-	Status           string
-	DefaultOption    string
-	DefaultAfterMs   sql.NullInt64
-	DefaultAppliedAt sql.NullString
-	AnswerLabel      string
-	AnswerText       string
-	AnsweredAt       sql.NullString
-	AppliedAt        sql.NullString
-	AgentSessionID   int64
-	CreatedAt        string
-}
-
-func (q *Queries) ListAllOpenDecisions(ctx context.Context) ([]ListAllOpenDecisionsRow, error) {
+func (q *Queries) ListAllOpenDecisions(ctx context.Context) ([]Decision, error) {
 	rows, err := q.db.QueryContext(ctx, listAllOpenDecisions)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ListAllOpenDecisionsRow
+	var items []Decision
 	for rows.Next() {
-		var i ListAllOpenDecisionsRow
+		var i Decision
 		if err := rows.Scan(
 			&i.ID,
 			&i.GoalID,
@@ -256,34 +218,15 @@ WHERE status = 'answered' AND id = ?
 ORDER BY answered_at
 `
 
-type ListAnsweredDecisionForIDRow struct {
-	ID               int64
-	GoalID           int64
-	TaskID           sql.NullInt64
-	Kind             string
-	Question         string
-	Options          string
-	Status           string
-	DefaultOption    string
-	DefaultAfterMs   sql.NullInt64
-	DefaultAppliedAt sql.NullString
-	AnswerLabel      string
-	AnswerText       string
-	AnsweredAt       sql.NullString
-	AppliedAt        sql.NullString
-	AgentSessionID   int64
-	CreatedAt        string
-}
-
-func (q *Queries) ListAnsweredDecisionForID(ctx context.Context, id int64) ([]ListAnsweredDecisionForIDRow, error) {
+func (q *Queries) ListAnsweredDecisionForID(ctx context.Context, id int64) ([]Decision, error) {
 	rows, err := q.db.QueryContext(ctx, listAnsweredDecisionForID, id)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ListAnsweredDecisionForIDRow
+	var items []Decision
 	for rows.Next() {
-		var i ListAnsweredDecisionForIDRow
+		var i Decision
 		if err := rows.Scan(
 			&i.ID,
 			&i.GoalID,
@@ -325,34 +268,15 @@ WHERE status = 'answered' AND agent_session_id = ?
 ORDER BY answered_at
 `
 
-type ListAnsweredDecisionsForAgentSessionRow struct {
-	ID               int64
-	GoalID           int64
-	TaskID           sql.NullInt64
-	Kind             string
-	Question         string
-	Options          string
-	Status           string
-	DefaultOption    string
-	DefaultAfterMs   sql.NullInt64
-	DefaultAppliedAt sql.NullString
-	AnswerLabel      string
-	AnswerText       string
-	AnsweredAt       sql.NullString
-	AppliedAt        sql.NullString
-	AgentSessionID   int64
-	CreatedAt        string
-}
-
-func (q *Queries) ListAnsweredDecisionsForAgentSession(ctx context.Context, agentSessionID int64) ([]ListAnsweredDecisionsForAgentSessionRow, error) {
+func (q *Queries) ListAnsweredDecisionsForAgentSession(ctx context.Context, agentSessionID int64) ([]Decision, error) {
 	rows, err := q.db.QueryContext(ctx, listAnsweredDecisionsForAgentSession, agentSessionID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ListAnsweredDecisionsForAgentSessionRow
+	var items []Decision
 	for rows.Next() {
-		var i ListAnsweredDecisionsForAgentSessionRow
+		var i Decision
 		if err := rows.Scan(
 			&i.ID,
 			&i.GoalID,
@@ -400,34 +324,15 @@ type ListAppliedDecisionsParams struct {
 	HistoryLimit int64
 }
 
-type ListAppliedDecisionsRow struct {
-	ID               int64
-	GoalID           int64
-	TaskID           sql.NullInt64
-	Kind             string
-	Question         string
-	Options          string
-	Status           string
-	DefaultOption    string
-	DefaultAfterMs   sql.NullInt64
-	DefaultAppliedAt sql.NullString
-	AnswerLabel      string
-	AnswerText       string
-	AnsweredAt       sql.NullString
-	AppliedAt        sql.NullString
-	AgentSessionID   int64
-	CreatedAt        string
-}
-
-func (q *Queries) ListAppliedDecisions(ctx context.Context, arg ListAppliedDecisionsParams) ([]ListAppliedDecisionsRow, error) {
+func (q *Queries) ListAppliedDecisions(ctx context.Context, arg ListAppliedDecisionsParams) ([]Decision, error) {
 	rows, err := q.db.QueryContext(ctx, listAppliedDecisions, arg.GoalID, arg.HistoryLimit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ListAppliedDecisionsRow
+	var items []Decision
 	for rows.Next() {
-		var i ListAppliedDecisionsRow
+		var i Decision
 		if err := rows.Scan(
 			&i.ID,
 			&i.GoalID,
@@ -461,7 +366,7 @@ func (q *Queries) ListAppliedDecisions(ctx context.Context, arg ListAppliedDecis
 
 const listAppliedDecisionsForTask = `-- name: ListAppliedDecisionsForTask :many
 SELECT
-  id, goal_id, COALESCE(task_id, '') AS task_id, kind, question, options, status,
+  id, goal_id, task_id, kind, question, options, status,
   default_option, default_after_ms, default_applied_at,
   answer_label, answer_text, answered_at, applied_at, agent_session_id, created_at
 FROM decisions
@@ -476,34 +381,15 @@ type ListAppliedDecisionsForTaskParams struct {
 	HistoryLimit int64
 }
 
-type ListAppliedDecisionsForTaskRow struct {
-	ID               int64
-	GoalID           int64
-	TaskID           int64
-	Kind             string
-	Question         string
-	Options          string
-	Status           string
-	DefaultOption    string
-	DefaultAfterMs   sql.NullInt64
-	DefaultAppliedAt sql.NullString
-	AnswerLabel      string
-	AnswerText       string
-	AnsweredAt       sql.NullString
-	AppliedAt        sql.NullString
-	AgentSessionID   int64
-	CreatedAt        string
-}
-
-func (q *Queries) ListAppliedDecisionsForTask(ctx context.Context, arg ListAppliedDecisionsForTaskParams) ([]ListAppliedDecisionsForTaskRow, error) {
+func (q *Queries) ListAppliedDecisionsForTask(ctx context.Context, arg ListAppliedDecisionsForTaskParams) ([]Decision, error) {
 	rows, err := q.db.QueryContext(ctx, listAppliedDecisionsForTask, arg.GoalID, arg.TaskID, arg.HistoryLimit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ListAppliedDecisionsForTaskRow
+	var items []Decision
 	for rows.Next() {
-		var i ListAppliedDecisionsForTaskRow
+		var i Decision
 		if err := rows.Scan(
 			&i.ID,
 			&i.GoalID,
@@ -545,34 +431,15 @@ WHERE status = 'open' AND default_after_ms IS NOT NULL AND default_option != ''
 ORDER BY created_at
 `
 
-type ListExpiredDecisionsRow struct {
-	ID               int64
-	GoalID           int64
-	TaskID           sql.NullInt64
-	Kind             string
-	Question         string
-	Options          string
-	Status           string
-	DefaultOption    string
-	DefaultAfterMs   sql.NullInt64
-	DefaultAppliedAt sql.NullString
-	AnswerLabel      string
-	AnswerText       string
-	AnsweredAt       sql.NullString
-	AppliedAt        sql.NullString
-	AgentSessionID   int64
-	CreatedAt        string
-}
-
-func (q *Queries) ListExpiredDecisions(ctx context.Context) ([]ListExpiredDecisionsRow, error) {
+func (q *Queries) ListExpiredDecisions(ctx context.Context) ([]Decision, error) {
 	rows, err := q.db.QueryContext(ctx, listExpiredDecisions)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ListExpiredDecisionsRow
+	var items []Decision
 	for rows.Next() {
-		var i ListExpiredDecisionsRow
+		var i Decision
 		if err := rows.Scan(
 			&i.ID,
 			&i.GoalID,
@@ -614,34 +481,15 @@ WHERE goal_id = ? AND status = 'open'
 ORDER BY created_at
 `
 
-type ListOpenDecisionsRow struct {
-	ID               int64
-	GoalID           int64
-	TaskID           sql.NullInt64
-	Kind             string
-	Question         string
-	Options          string
-	Status           string
-	DefaultOption    string
-	DefaultAfterMs   sql.NullInt64
-	DefaultAppliedAt sql.NullString
-	AnswerLabel      string
-	AnswerText       string
-	AnsweredAt       sql.NullString
-	AppliedAt        sql.NullString
-	AgentSessionID   int64
-	CreatedAt        string
-}
-
-func (q *Queries) ListOpenDecisions(ctx context.Context, goalID int64) ([]ListOpenDecisionsRow, error) {
+func (q *Queries) ListOpenDecisions(ctx context.Context, goalID int64) ([]Decision, error) {
 	rows, err := q.db.QueryContext(ctx, listOpenDecisions, goalID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ListOpenDecisionsRow
+	var items []Decision
 	for rows.Next() {
-		var i ListOpenDecisionsRow
+		var i Decision
 		if err := rows.Scan(
 			&i.ID,
 			&i.GoalID,
@@ -683,34 +531,15 @@ WHERE status = 'answered'
 ORDER BY answered_at
 `
 
-type ListUnappliedDecisionsRow struct {
-	ID               int64
-	GoalID           int64
-	TaskID           sql.NullInt64
-	Kind             string
-	Question         string
-	Options          string
-	Status           string
-	DefaultOption    string
-	DefaultAfterMs   sql.NullInt64
-	DefaultAppliedAt sql.NullString
-	AnswerLabel      string
-	AnswerText       string
-	AnsweredAt       sql.NullString
-	AppliedAt        sql.NullString
-	AgentSessionID   int64
-	CreatedAt        string
-}
-
-func (q *Queries) ListUnappliedDecisions(ctx context.Context) ([]ListUnappliedDecisionsRow, error) {
+func (q *Queries) ListUnappliedDecisions(ctx context.Context) ([]Decision, error) {
 	rows, err := q.db.QueryContext(ctx, listUnappliedDecisions)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ListUnappliedDecisionsRow
+	var items []Decision
 	for rows.Next() {
-		var i ListUnappliedDecisionsRow
+		var i Decision
 		if err := rows.Scan(
 			&i.ID,
 			&i.GoalID,
@@ -753,34 +582,15 @@ WHERE status = 'answered'
 ORDER BY answered_at
 `
 
-type ListUnappliedDecisionsForGoalRow struct {
-	ID               int64
-	GoalID           int64
-	TaskID           sql.NullInt64
-	Kind             string
-	Question         string
-	Options          string
-	Status           string
-	DefaultOption    string
-	DefaultAfterMs   sql.NullInt64
-	DefaultAppliedAt sql.NullString
-	AnswerLabel      string
-	AnswerText       string
-	AnsweredAt       sql.NullString
-	AppliedAt        sql.NullString
-	AgentSessionID   int64
-	CreatedAt        string
-}
-
-func (q *Queries) ListUnappliedDecisionsForGoal(ctx context.Context, goalID int64) ([]ListUnappliedDecisionsForGoalRow, error) {
+func (q *Queries) ListUnappliedDecisionsForGoal(ctx context.Context, goalID int64) ([]Decision, error) {
 	rows, err := q.db.QueryContext(ctx, listUnappliedDecisionsForGoal, goalID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ListUnappliedDecisionsForGoalRow
+	var items []Decision
 	for rows.Next() {
-		var i ListUnappliedDecisionsForGoalRow
+		var i Decision
 		if err := rows.Scan(
 			&i.ID,
 			&i.GoalID,
@@ -823,34 +633,15 @@ WHERE status = 'answered'
 ORDER BY answered_at
 `
 
-type ListUnappliedDecisionsForProjectRow struct {
-	ID               int64
-	GoalID           int64
-	TaskID           sql.NullInt64
-	Kind             string
-	Question         string
-	Options          string
-	Status           string
-	DefaultOption    string
-	DefaultAfterMs   sql.NullInt64
-	DefaultAppliedAt sql.NullString
-	AnswerLabel      string
-	AnswerText       string
-	AnsweredAt       sql.NullString
-	AppliedAt        sql.NullString
-	AgentSessionID   int64
-	CreatedAt        string
-}
-
-func (q *Queries) ListUnappliedDecisionsForProject(ctx context.Context, projectID int64) ([]ListUnappliedDecisionsForProjectRow, error) {
+func (q *Queries) ListUnappliedDecisionsForProject(ctx context.Context, projectID int64) ([]Decision, error) {
 	rows, err := q.db.QueryContext(ctx, listUnappliedDecisionsForProject, projectID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ListUnappliedDecisionsForProjectRow
+	var items []Decision
 	for rows.Next() {
-		var i ListUnappliedDecisionsForProjectRow
+		var i Decision
 		if err := rows.Scan(
 			&i.ID,
 			&i.GoalID,
@@ -896,40 +687,6 @@ type MarkDecisionAppliedParams struct {
 func (q *Queries) MarkDecisionApplied(ctx context.Context, arg MarkDecisionAppliedParams) error {
 	_, err := q.db.ExecContext(ctx, markDecisionApplied, arg.AppliedAt, arg.ID)
 	return err
-}
-
-const resolveDecisionIDByLegacyPrefix = `-- name: ResolveDecisionIDByLegacyPrefix :many
-SELECT id FROM decisions
-WHERE legacy_id >= ?1 AND legacy_id < ?2
-LIMIT 2
-`
-
-type ResolveDecisionIDByLegacyPrefixParams struct {
-	Prefix    sql.NullString
-	PrefixEnd sql.NullString
-}
-
-func (q *Queries) ResolveDecisionIDByLegacyPrefix(ctx context.Context, arg ResolveDecisionIDByLegacyPrefixParams) ([]int64, error) {
-	rows, err := q.db.QueryContext(ctx, resolveDecisionIDByLegacyPrefix, arg.Prefix, arg.PrefixEnd)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []int64
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		items = append(items, id)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
 }
 
 const withdrawDecision = `-- name: WithdrawDecision :execresult

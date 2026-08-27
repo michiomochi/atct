@@ -51,18 +51,9 @@ FROM projects
 WHERE id = ?
 `
 
-type GetProjectRow struct {
-	ID        int64
-	Name      string
-	RootPath  string
-	CreatedAt string
-	ClaimedBy int64
-	ClaimedAt sql.NullString
-}
-
-func (q *Queries) GetProject(ctx context.Context, id int64) (GetProjectRow, error) {
+func (q *Queries) GetProject(ctx context.Context, id int64) (Project, error) {
 	row := q.db.QueryRowContext(ctx, getProject, id)
-	var i GetProjectRow
+	var i Project
 	err := row.Scan(
 		&i.ID,
 		&i.Name,
@@ -80,24 +71,15 @@ FROM projects
 ORDER BY created_at
 `
 
-type ListProjectsRow struct {
-	ID        int64
-	Name      string
-	RootPath  string
-	CreatedAt string
-	ClaimedBy int64
-	ClaimedAt sql.NullString
-}
-
-func (q *Queries) ListProjects(ctx context.Context) ([]ListProjectsRow, error) {
+func (q *Queries) ListProjects(ctx context.Context) ([]Project, error) {
 	rows, err := q.db.QueryContext(ctx, listProjects)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ListProjectsRow
+	var items []Project
 	for rows.Next() {
-		var i ListProjectsRow
+		var i Project
 		if err := rows.Scan(
 			&i.ID,
 			&i.Name,
@@ -142,18 +124,9 @@ type ResolveProjectParams struct {
 	RootPath_2 string
 }
 
-type ResolveProjectRow struct {
-	ID        int64
-	Name      string
-	RootPath  string
-	CreatedAt string
-	ClaimedBy int64
-	ClaimedAt sql.NullString
-}
-
-func (q *Queries) ResolveProject(ctx context.Context, arg ResolveProjectParams) (ResolveProjectRow, error) {
+func (q *Queries) ResolveProject(ctx context.Context, arg ResolveProjectParams) (Project, error) {
 	row := q.db.QueryRowContext(ctx, resolveProject, arg.RootPath, arg.RootPath_2)
-	var i ResolveProjectRow
+	var i Project
 	err := row.Scan(
 		&i.ID,
 		&i.Name,
@@ -163,38 +136,4 @@ func (q *Queries) ResolveProject(ctx context.Context, arg ResolveProjectParams) 
 		&i.ClaimedAt,
 	)
 	return i, err
-}
-
-const resolveProjectIDByLegacyPrefix = `-- name: ResolveProjectIDByLegacyPrefix :many
-SELECT id FROM projects
-WHERE legacy_id >= ?1 AND legacy_id < ?2
-LIMIT 2
-`
-
-type ResolveProjectIDByLegacyPrefixParams struct {
-	Prefix    sql.NullString
-	PrefixEnd sql.NullString
-}
-
-func (q *Queries) ResolveProjectIDByLegacyPrefix(ctx context.Context, arg ResolveProjectIDByLegacyPrefixParams) ([]int64, error) {
-	rows, err := q.db.QueryContext(ctx, resolveProjectIDByLegacyPrefix, arg.Prefix, arg.PrefixEnd)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []int64
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		items = append(items, id)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
 }

@@ -131,19 +131,65 @@ atct は単一バイナリで配布される。実行時に外部 CLI を呼べ�
 baseline に「取り込む」作業は実質ゼロである。atlas は移行ディレクトリを読まず、
 **移行を流した結果の DB を読む。**ファイル名の形式も版番号の付け方も atlas に関係しない。
 
-### D4. `sqlc` の入力は `schema.sql` のまま。`sqlc generate` は走らせない
+### D4. sqlc の入力は移行ディレクトリにする（当初の判断を撤回した）
 
-`schema.sql` が宣言の正本であり続ける。`sqlc.yaml` は無変更。
+**最初はこう決めていた**——「sqlc の入力は `schema.sql` のまま。`sqlc generate` は走らせない」。
+理由は生成物が既にずれていて再生成すると build が壊れるからだった。
 
-**`sqlc generate` を走らせない理由**: `internal/store/sqlcgen/` のコミット済み内容は
-`sqlc generate` の出力と一致していない（`34bbf32` 以降）。再生成すると build が壊れる。
+**人間が却下した（decision 452）。**
 
-    $ go tool sqlc generate && go build ./...
-    internal/store/decision.go:223:52: undefined: sqlcgen.ListOpenDecisionsRow
-    （12 か所以上）
+> sqlc と atlas は https://docs.sqlc.dev/en/latest/howto/ddl.html に従い連携するようになってる？
 
-**本設計は sqlc の入力を一切変えないので、この不整合は本ゴールが作るものでも
-悪化させるものでもない。**別ゴールとして人間に出す。
+**なっていなかった。**sqlc のドキュメントは移行ツール（atlas / dbmate / golang-migrate /
+goose / sql-migrate / tern）を使う場合、`schema` に**移行ディレクトリ**を指すよう明示している。
+既存のファイル名 `%04d_name.sql` はドキュメントが求めるゼロ埋め連番をすでに満たしていた。
+
+**指摘は正しい。**正本を 2 つ残したうえで乖離を検出する仕組みを作るより、正本を 1 つにして
+乖離が起こらないようにするほうがよい。**検査で捕まえるのと、起こらなくするのは別である。**
+
+    sqlc.yaml:  schema: internal/store/migrations
+
+**入力を差し替えても生成結果はほぼ変わらない（実測）。**一時ディレクトリで
+`schema.sql` からと移行ディレクトリからの 2 通りを生成して比べた。
+
+    差は SchemaMigration 構造体 1 つだけ（0001_baseline.sql が schema_migrations を作るため）
+    他は完全に同一
+
+### D4a. 生成物は手で書き換えられていた
+
+**再生成が build を壊した本当の理由は、生成ファイルが手編集されていたことである。**
+クエリ原本を 1 文字も変えずに再生成して SQL 定数を突き合わせると、2 箇所が食い違った。
+
+    getGoal                      NULLIF(CAST(derived_from_goal_id AS INTEGER), 0) AS derived_from_goal_id
+    listAppliedDecisionsForTask  COALESCE(task_id, '') AS task_id
+
+どちらも `internal/store/queries/` には無い。**生成ファイル側だけにあった。**
+加えて `getGoal` は Go の型も手で `sql.NullInt64` に直されていた。
+
+    resolveGoalIDByLegacyPrefix / resolveDecisionIDByLegacyPrefix
+    resolveProjectIDByLegacyPrefix / resolveTaskIDByLegacyPrefix
+
+この 4 つはクエリ原本に既に存在せず、生成ファイルにだけ残っていた。削除して build は通る。
+
+**扱いを分けた。**
+
+`getGoal` の CAST は残す。壊れた参照を持つゴールでも詳細画面が描けることを
+`TestHTTPGoalDetailOmitsMissingDerivedFromGoal` が担保している。**クエリ原本へ移した。**
+sqlc は計算列の型を推論できず `any` にするので、`internal/store/goal.go` の
+`derivedFromGoalID` で明示的に絞る。
+
+`listAppliedDecisionsForTask` の `COALESCE(task_id, '')` は消す。文字列 ID 時代の名残で、
+この query は `task_id = ?` で絞るため NULL は来ない。`Decision.TaskID` が
+`sql.NullInt64` になった今は素の `task_id` が正しい。
+
+### D4b. 再生成に差が出ないことを検査する
+
+**この乖離が残り続けたのは、誰も検査していなかったからである。**
+`script/schema-check.sh` が `go tool sqlc generate` を走らせ、
+`internal/store/sqlcgen` に差分が出たら落ちる。
+
+`*Row` 型が消えて共有モデルに寄ったため、`internal/store/decision.go` の
+10 個の変換クロージャが同一になった。`decisionRowFromSQLC` 1 つに畳んだ。
 
 ### D5. `schema_migrations` は比較から除外する。`schema.sql` には足さない
 

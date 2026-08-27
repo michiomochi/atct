@@ -19,7 +19,6 @@ type AgentSession struct {
 
 type Decision struct {
 	ID               int64
-	LegacyID         sql.NullString
 	GoalID           int64
 	TaskID           sql.NullInt64
 	Kind             string
@@ -39,7 +38,6 @@ type Decision struct {
 
 type Goal struct {
 	ID                int64
-	LegacyID          sql.NullString
 	ProjectID         int64
 	DerivedFromGoalID sql.NullInt64
 	Content           string
@@ -70,7 +68,6 @@ type GoalHandoff struct {
 
 type Project struct {
 	ID        int64
-	LegacyID  sql.NullString
 	Name      string
 	RootPath  string
 	CreatedAt string
@@ -78,9 +75,13 @@ type Project struct {
 	ClaimedAt sql.NullString
 }
 
+type SchemaMigration struct {
+	Filename  string
+	AppliedAt string
+}
+
 type Task struct {
 	ID           int64
-	LegacyID     sql.NullString
 	GoalID       int64
 	Title        string
 	Description  string
