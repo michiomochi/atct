@@ -483,7 +483,7 @@ func TestUpdateTaskContentAllowsTodo(t *testing.T) {
 	}
 	for taskID, want := range wants {
 		description := want
-		updated, err := s.UpdateTaskContent(context.Background(), taskID, nil, &description)
+		updated, err := s.UpdateTaskContent(context.Background(), taskID, nil, &description, 0)
 		if err != nil {
 			t.Fatalf("UpdateTaskContent(%d): %v", taskID, err)
 		}
@@ -507,7 +507,7 @@ func TestUpdateTaskContentAllowsDoing(t *testing.T) {
 	}
 	for taskID, want := range wants {
 		description := want
-		updated, err := s.UpdateTaskContent(context.Background(), taskID, nil, &description)
+		updated, err := s.UpdateTaskContent(context.Background(), taskID, nil, &description, 0)
 		if err != nil {
 			t.Fatalf("UpdateTaskContent(%d): %v", taskID, err)
 		}
@@ -529,7 +529,7 @@ func TestUpdateTaskContentUpdatesTitleOnly(t *testing.T) {
 	original := tasks[0]
 	newTitle := "updated title"
 
-	updated, err := s.UpdateTaskContent(context.Background(), taskID, &newTitle, nil)
+	updated, err := s.UpdateTaskContent(context.Background(), taskID, &newTitle, nil, 0)
 	if err != nil {
 		t.Fatalf("UpdateTaskContent: %v", err)
 	}
@@ -549,7 +549,7 @@ func TestUpdateTaskContentPreservesOmittedFields(t *testing.T) {
 	original := tasks[0]
 	newDescription := "updated description only"
 
-	updated, err := s.UpdateTaskContent(context.Background(), taskID, nil, &newDescription)
+	updated, err := s.UpdateTaskContent(context.Background(), taskID, nil, &newDescription, 0)
 	if err != nil {
 		t.Fatalf("UpdateTaskContent: %v", err)
 	}
@@ -568,7 +568,7 @@ func TestUpdateTaskContentRejectsDone(t *testing.T) {
 
 	for _, taskID := range []int64{firstID, secondID} {
 		title := "must not update"
-		if _, err := s.UpdateTaskContent(context.Background(), taskID, &title, nil); !errors.Is(err, ErrTaskNotEditable) {
+		if _, err := s.UpdateTaskContent(context.Background(), taskID, &title, nil, 0); !errors.Is(err, ErrTaskNotEditable) {
 			t.Fatalf("UpdateTaskContent(%d) error = %v, want ErrTaskNotEditable", taskID, err)
 		}
 	}
@@ -584,9 +584,48 @@ func TestUpdateTaskContentRejectsDropped(t *testing.T) {
 
 	for _, taskID := range []int64{firstID, secondID} {
 		title := "must not update"
-		if _, err := s.UpdateTaskContent(context.Background(), taskID, &title, nil); !errors.Is(err, ErrTaskNotEditable) {
+		if _, err := s.UpdateTaskContent(context.Background(), taskID, &title, nil, 0); !errors.Is(err, ErrTaskNotEditable) {
 			t.Fatalf("UpdateTaskContent(%d) error = %v, want ErrTaskNotEditable", taskID, err)
 		}
+	}
+}
+
+func TestUpdateTaskContentRejectsDoneAndDroppedDescriptionOnly(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		status domain.TaskStatus
+	}{
+		{name: "done-one", status: domain.TaskDone},
+		{name: "done-two", status: domain.TaskDone},
+		{name: "dropped-one", status: domain.TaskDropped},
+		{name: "dropped-two", status: domain.TaskDropped},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newTestStore(t)
+			ctx := context.Background()
+			goalID := newTestGoal(t, s)
+			taskID := declareOneTask(t, s, goalID, "content-description-"+tc.name, "terminal description")
+			declaredDescription := "Complete the task titled terminal description."
+			holderID := setupTaskContentTaskHandoff(t, s, taskID, "content-description-"+tc.name)
+			setTaskContentStatus(t, s, taskID, tc.status)
+
+			replacement := "must not update " + tc.name
+			_, err := s.UpdateTaskContent(ctx, taskID, nil, &replacement, holderID)
+			if !errors.Is(err, ErrTaskNotEditable) {
+				t.Fatalf("UpdateTaskContent error = %v, want ErrTaskNotEditable", err)
+			}
+			if !strings.Contains(err.Error(), string(tc.status)) {
+				t.Fatalf("UpdateTaskContent error = %q, want status %q", err, tc.status)
+			}
+
+			var storedDescription string
+			if err := s.DB().QueryRowContext(ctx, "SELECT description FROM tasks WHERE id = ?", taskID).Scan(&storedDescription); err != nil {
+				t.Fatalf("select task description: %v", err)
+			}
+			if storedDescription != declaredDescription {
+				t.Fatalf("stored description = %q, want declared description %q", storedDescription, declaredDescription)
+			}
+		})
 	}
 }
 
@@ -597,7 +636,7 @@ func TestUpdateTaskContentErrorIncludesStatus(t *testing.T) {
 	setTaskContentStatus(t, s, taskID, domain.TaskDone)
 	title := "must not update"
 
-	_, err := s.UpdateTaskContent(context.Background(), taskID, &title, nil)
+	_, err := s.UpdateTaskContent(context.Background(), taskID, &title, nil, 0)
 	if err == nil {
 		t.Fatal("UpdateTaskContent unexpectedly succeeded for done task")
 	}
@@ -611,8 +650,22 @@ func TestUpdateTaskContentReturnsNotFound(t *testing.T) {
 	missingID := int64(0)
 	description := "updated description"
 
-	if _, err := s.UpdateTaskContent(context.Background(), missingID, nil, &description); !errors.Is(err, ErrTaskNotFound) {
+	if _, err := s.UpdateTaskContent(context.Background(), missingID, nil, &description, 0); !errors.Is(err, ErrTaskNotFound) {
 		t.Fatalf("UpdateTaskContent error = %v, want ErrTaskNotFound", err)
+	}
+}
+
+func TestUpdateTaskContentReturnsNotFoundForMissingNonZeroID(t *testing.T) {
+	s := newTestStore(t)
+	const missingID int64 = 999999
+	description := "updated description"
+
+	_, err := s.UpdateTaskContent(context.Background(), missingID, nil, &description, 0)
+	if !errors.Is(err, ErrTaskNotFound) {
+		t.Fatalf("UpdateTaskContent error = %v, want ErrTaskNotFound", err)
+	}
+	if !strings.Contains(err.Error(), fmt.Sprint(missingID)) {
+		t.Fatalf("UpdateTaskContent error does not include task ID %d", missingID)
 	}
 }
 
@@ -625,7 +678,7 @@ func TestUpdateTaskContentRejectsEmptyUpdate(t *testing.T) {
 		t.Fatalf("ListTasks before: %v", err)
 	}
 
-	if _, err := s.UpdateTaskContent(context.Background(), taskID, nil, nil); err == nil {
+	if _, err := s.UpdateTaskContent(context.Background(), taskID, nil, nil, 0); err == nil {
 		t.Fatal("UpdateTaskContent unexpectedly succeeded without fields")
 	}
 	after, err := s.ListTasks(context.Background(), goalID)
@@ -634,6 +687,211 @@ func TestUpdateTaskContentRejectsEmptyUpdate(t *testing.T) {
 	}
 	if !reflect.DeepEqual(after, before) {
 		t.Fatalf("task changed after empty update: before=%+v after=%+v", before, after)
+	}
+}
+
+func setupTaskContentTaskHandoff(t *testing.T, s *Store, taskID int64, label string) int64 {
+	t.Helper()
+	ctx := context.Background()
+	requesterLabel := label + "-goal-requester"
+	holderLabel := label + "-task-holder"
+	addLiveParentGoalClaim(t, s, taskID, requesterLabel)
+	holderID := registerNamedTestAgentSession(t, s, holderLabel, os.Getpid())
+
+	handoff, err := s.RequestTaskHandoff(ctx, label+"-task-handoff", taskID, testSessionID(requesterLabel), "")
+	if err != nil {
+		t.Fatalf("RequestTaskHandoff: %v", err)
+	}
+	if _, err := s.ReceiveTaskHandoff(ctx, handoff.ID, taskID, holderID); err != nil {
+		t.Fatalf("ReceiveTaskHandoff: %v", err)
+	}
+	return holderID
+}
+
+func setupTaskContentGoalHandoff(t *testing.T, s *Store, goalID int64, label string) int64 {
+	t.Helper()
+	ctx := context.Background()
+	requesterLabel := label + "-project-requester"
+	holderLabel := label + "-goal-holder"
+	addLiveProjectClaim(t, s, goalID, requesterLabel)
+	holderID := registerNamedTestAgentSession(t, s, holderLabel, os.Getpid())
+
+	handoff, err := s.RequestGoalHandoff(ctx, label+"-goal-handoff", goalID, testSessionID(requesterLabel), "")
+	if err != nil {
+		t.Fatalf("RequestGoalHandoff: %v", err)
+	}
+	if _, err := s.ReceiveGoalHandoff(ctx, handoff.ID, goalID, holderID); err != nil {
+		t.Fatalf("ReceiveGoalHandoff: %v", err)
+	}
+	return holderID
+}
+
+func setupTaskContentGoalHolderWithTaskHandoff(t *testing.T, s *Store, goalID, taskID int64, label string) int64 {
+	t.Helper()
+	setupTaskContentTaskHandoff(t, s, taskID, label)
+	if _, err := s.CompleteGoalHandoffForGoal(context.Background(), goalID, ""); err != nil {
+		t.Fatalf("CompleteGoalHandoffForGoal: %v", err)
+	}
+	return setupTaskContentGoalHandoff(t, s, goalID, label)
+}
+
+func setupTaskContentLiveSession(t *testing.T, s *Store, _, _ int64, label string) int64 {
+	t.Helper()
+	return registerNamedTestAgentSession(t, s, label, os.Getpid())
+}
+
+func setupTaskContentOtherGoalHandoff(t *testing.T, s *Store, targetGoalID int64, label string) int64 {
+	t.Helper()
+	ctx := context.Background()
+	targetGoal, err := s.GetGoal(ctx, targetGoalID)
+	if err != nil {
+		t.Fatalf("GetGoal: %v", err)
+	}
+	otherGoal, err := s.CreateGoal(ctx, targetGoal.ProjectID, label+" other goal", "human")
+	if err != nil {
+		t.Fatalf("CreateGoal other: %v", err)
+	}
+	requesterLabel := label + "-project-requester"
+	targetHolderLabel := label + "-target-goal-holder"
+	holderLabel := label + "-other-goal-holder"
+	addLiveProjectClaim(t, s, otherGoal.ID, requesterLabel)
+	targetHolderID := registerNamedTestAgentSession(t, s, targetHolderLabel, os.Getpid())
+	holderID := registerNamedTestAgentSession(t, s, holderLabel, os.Getpid())
+	if err := s.AssociateAgentSessionWithProject(ctx, holderID, targetGoal.ProjectID); err != nil {
+		t.Fatalf("AssociateAgentSessionWithProject: %v", err)
+	}
+
+	targetHandoff, err := s.RequestGoalHandoff(ctx, label+"-target-goal-handoff", targetGoalID, testSessionID(requesterLabel), "")
+	if err != nil {
+		t.Fatalf("RequestGoalHandoff target: %v", err)
+	}
+	if _, err := s.ReceiveGoalHandoff(ctx, targetHandoff.ID, targetGoalID, targetHolderID); err != nil {
+		t.Fatalf("ReceiveGoalHandoff target: %v", err)
+	}
+	handoff, err := s.RequestGoalHandoff(ctx, label+"-other-goal-handoff", otherGoal.ID, testSessionID(requesterLabel), "")
+	if err != nil {
+		t.Fatalf("RequestGoalHandoff other: %v", err)
+	}
+	if _, err := s.ReceiveGoalHandoff(ctx, handoff.ID, otherGoal.ID, holderID); err != nil {
+		t.Fatalf("ReceiveGoalHandoff other: %v", err)
+	}
+	return holderID
+}
+
+func setupTaskContentProjectOnly(t *testing.T, s *Store, goalID, taskID int64, label string, taskHandoff bool) int64 {
+	t.Helper()
+	ctx := context.Background()
+	if taskHandoff {
+		setupTaskContentTaskHandoff(t, s, taskID, label)
+	} else {
+		setupTaskContentGoalHandoff(t, s, goalID, label)
+	}
+	callerID := registerNamedTestAgentSession(t, s, label+"-project-only", os.Getpid())
+	if err := s.AssociateAgentSessionWithProject(ctx, callerID, mustTestGoalProjectID(t, s, goalID)); err != nil {
+		t.Fatalf("AssociateAgentSessionWithProject: %v", err)
+	}
+	return callerID
+}
+
+func mustTestGoalProjectID(t *testing.T, s *Store, goalID int64) int64 {
+	t.Helper()
+	goal, err := s.GetGoal(context.Background(), goalID)
+	if err != nil {
+		t.Fatalf("GetGoal: %v", err)
+	}
+	return goal.ProjectID
+}
+
+func TestUpdateTaskContentHandoffAuthorization(t *testing.T) {
+	tests := []struct {
+		name                     string
+		setup                    func(t *testing.T, s *Store, goalID, taskID int64, label string) int64
+		wantDenied               bool
+		assertTaskHolderDistinct bool
+		requireNonZeroSession    bool
+	}{
+		{name: "task-holder-one", setup: func(t *testing.T, s *Store, _, taskID int64, label string) int64 {
+			return setupTaskContentTaskHandoff(t, s, taskID, label)
+		}},
+		{name: "task-holder-two", setup: func(t *testing.T, s *Store, _, taskID int64, label string) int64 {
+			return setupTaskContentTaskHandoff(t, s, taskID, label)
+		}},
+		{name: "goal-holder-one", setup: func(t *testing.T, s *Store, goalID, _ int64, label string) int64 {
+			return setupTaskContentGoalHandoff(t, s, goalID, label)
+		}},
+		{name: "goal-holder-two", setup: func(t *testing.T, s *Store, goalID, _ int64, label string) int64 {
+			return setupTaskContentGoalHandoff(t, s, goalID, label)
+		}},
+		{name: "goal-holder-with-task-handoff-one", assertTaskHolderDistinct: true, setup: setupTaskContentGoalHolderWithTaskHandoff},
+		{name: "goal-holder-with-task-handoff-two", assertTaskHolderDistinct: true, setup: setupTaskContentGoalHolderWithTaskHandoff},
+		{name: "other-goal-holder-one", wantDenied: true, setup: func(t *testing.T, s *Store, goalID, _ int64, label string) int64 {
+			return setupTaskContentOtherGoalHandoff(t, s, goalID, label)
+		}},
+		{name: "other-goal-holder-two", wantDenied: true, setup: func(t *testing.T, s *Store, goalID, _ int64, label string) int64 {
+			return setupTaskContentOtherGoalHandoff(t, s, goalID, label)
+		}},
+		{name: "project-only-with-task-handoff-one", wantDenied: true, setup: func(t *testing.T, s *Store, goalID, taskID int64, label string) int64 {
+			return setupTaskContentProjectOnly(t, s, goalID, taskID, label, true)
+		}},
+		{name: "project-only-with-goal-handoff-two", wantDenied: true, setup: func(t *testing.T, s *Store, goalID, taskID int64, label string) int64 {
+			return setupTaskContentProjectOnly(t, s, goalID, taskID, label, false)
+		}},
+		{name: "no-handoff-live-session-one", requireNonZeroSession: true, setup: setupTaskContentLiveSession},
+		{name: "no-handoff-live-session-two", requireNonZeroSession: true, setup: setupTaskContentLiveSession},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newTestStore(t)
+			ctx := context.Background()
+			goalID := newTestGoal(t, s)
+			taskID := declareOneTask(t, s, goalID, "content-auth-"+tc.name, "content authorization")
+			callerID := tc.setup(t, s, goalID, taskID, "content-auth-"+tc.name)
+			if tc.requireNonZeroSession && callerID == 0 {
+				t.Fatal("live session has zero ID")
+			}
+			if tc.assertTaskHolderDistinct {
+				taskHandoff, handoffErr := s.openTaskHandoff(ctx, taskID)
+				if handoffErr != nil {
+					t.Fatalf("openTaskHandoff: %v", handoffErr)
+				}
+				if taskHandoff == nil {
+					t.Fatal("task handoff is missing")
+				}
+				if taskHandoff.ReceivedBy == callerID {
+					t.Fatalf("task handoff holder = caller %d, want a different session", callerID)
+				}
+			}
+			before, err := s.ListTasks(ctx, goalID)
+			if err != nil {
+				t.Fatalf("ListTasks before: %v", err)
+			}
+
+			newDescription := "after " + tc.name
+			updated, err := s.UpdateTaskContent(ctx, taskID, nil, &newDescription, callerID)
+			if tc.wantDenied {
+				if !errors.Is(err, ErrTaskContentNotOwned) {
+					t.Fatalf("UpdateTaskContent error = %v, want ErrTaskContentNotOwned", err)
+				}
+				if !strings.Contains(err.Error(), fmt.Sprint(taskID)) {
+					t.Fatalf("UpdateTaskContent error = %q, want task ID %d", err, taskID)
+				}
+				after, listErr := s.ListTasks(ctx, goalID)
+				if listErr != nil {
+					t.Fatalf("ListTasks after: %v", listErr)
+				}
+				if !reflect.DeepEqual(after, before) {
+					t.Fatalf("task changed after rejected update: before=%+v after=%+v", before, after)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("UpdateTaskContent: %v", err)
+			}
+			if updated.Description != newDescription {
+				t.Fatalf("updated description = %q, want %q", updated.Description, newDescription)
+			}
+		})
 	}
 }
 

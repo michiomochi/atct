@@ -307,7 +307,26 @@ func (s *Store) CompleteGoalHandoff(ctx context.Context, handoffID string, goalI
 	if n == 0 {
 		return GoalHandoff{}, fmt.Errorf("%w: %s", ErrGoalHandoffNotFound, handoffID)
 	}
-	return s.GetGoalHandoff(ctx, handoffID)
+	completed, err := s.GetGoalHandoff(ctx, handoffID)
+	if err != nil {
+		return GoalHandoff{}, err
+	}
+	goal, err := s.GetGoal(ctx, goalID)
+	if err != nil {
+		// Notification is best-effort; do not turn a successful completion into an error.
+		return completed, nil
+	}
+	s.notify.publishEvent(Event{
+		Name: EventHandoffReported,
+		Data: DetectionEvent{
+			DetectionID:    NewDetectionID(),
+			ProjectID:      goal.ProjectID,
+			GoalID:         completed.GoalID,
+			HandoffID:      completed.ID,
+			CompleteReport: completed.CompleteReport,
+		},
+	})
+	return completed, nil
 }
 
 // GetGoalHandoff returns one handoff, including NULL timestamps as nil.

@@ -37,6 +37,8 @@ type watchDecision struct {
 	SettledByDefault           bool    `json:"settled_by_default"`
 	WakeupID                   string  `json:"wakeup_id"`
 	ActionableGoalCount        int     `json:"actionable_goal_count"`
+	UnassignedGoalCount        int     `json:"unassigned_goal_count"`
+	UnassignedGoalIDs          []int64 `json:"unassigned_goal_ids"`
 	UnstartedTaskCount         int     `json:"unstarted_task_count"`
 	WaitingAnswerTaskCount     int     `json:"waiting_answer_task_count"`
 	UntouchedTaskCount         int     `json:"untouched_task_count"`
@@ -719,7 +721,7 @@ func formatWatchDecision(eventName string, decision watchDecision) (string, bool
 	case "goal.created":
 		return fmt.Sprintf("atct goal created (goal_id: %s)", decision.GoalID), true
 	case "wakeup":
-		return fmt.Sprintf("atct wakeup: actionable_goals=%d unstarted_tasks=%d waiting_answer_tasks=%d untouched_tasks=%d delegated_tasks=%d waiting_answers=%d", decision.ActionableGoalCount, decision.UnstartedTaskCount, decision.WaitingAnswerTaskCount, decision.UntouchedTaskCount, decision.DelegatedTaskCount, decision.WaitingAnswerCount), true
+		return fmt.Sprintf("atct wakeup: actionable_goals=%d unassigned_goals=%d unstarted_tasks=%d waiting_answer_tasks=%d untouched_tasks=%d delegated_tasks=%d waiting_answers=%d unassigned=%s", decision.ActionableGoalCount, decision.UnassignedGoalCount, decision.UnstartedTaskCount, decision.WaitingAnswerTaskCount, decision.UntouchedTaskCount, decision.DelegatedTaskCount, decision.WaitingAnswerCount, formatUnassignedGoalIDs(decision.UnassignedGoalIDs)), true
 	case "detection.completion_report_missing":
 		return fmt.Sprintf("atct detection: goal %s has all tasks done but no completion report", decision.GoalID), true
 	case "detection.commits_missing":
@@ -755,6 +757,25 @@ func formatWatchDecision(eventName string, decision watchDecision) (string, bool
 	default:
 		return "", false
 	}
+}
+
+func formatUnassignedGoalIDs(ids []int64) string {
+	const maxDisplayedIDs = 5
+	displayed := ids
+	remaining := 0
+	if len(displayed) > maxDisplayedIDs {
+		remaining = len(displayed) - maxDisplayedIDs
+		displayed = displayed[:maxDisplayedIDs]
+	}
+
+	parts := make([]string, 0, len(displayed)+1)
+	for _, id := range displayed {
+		parts = append(parts, strconv.FormatInt(id, 10))
+	}
+	if remaining > 0 {
+		parts = append(parts, "+"+strconv.Itoa(remaining))
+	}
+	return "[" + strings.Join(parts, ",") + "]"
 }
 
 func (d watchDecision) decisionID() string {

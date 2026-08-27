@@ -222,9 +222,10 @@ func TestDecisionAskParkedIncludesClaimableTasks(t *testing.T) {
 func TestProjectScopedWritesRejectOtherProject(t *testing.T) {
 	f := newProjectScopeFixture(t)
 	cases := []struct {
-		name   string
-		method string
-		params map[string]any
+		name         string
+		method       string
+		params       map[string]any
+		wantContains []string
 	}{
 		{
 			name:   "task.claim",
@@ -260,6 +261,7 @@ func TestProjectScopedWritesRejectOtherProject(t *testing.T) {
 				"how_to_verify": "verify", "surprises": "none", "needs_review": "none",
 				"next_steps": "none", "agent_session_id": f.agentSessionID,
 			},
+			wantContains: []string{"goal completion denied", "holds no open goal handoff"},
 		},
 	}
 
@@ -272,11 +274,14 @@ func TestProjectScopedWritesRejectOtherProject(t *testing.T) {
 			if _, err := f.daemon.dispatch(f.ctx, rpc.Request{Method: tc.method, Params: params}); err == nil {
 				t.Fatal("dispatch succeeded, want cross-project error")
 			} else {
-				if !strings.Contains(err.Error(), f.assigned.Name) {
-					t.Fatalf("error = %v, want assigned project %v", err, f.assigned.Name)
+				want := tc.wantContains
+				if want == nil {
+					want = []string{f.assigned.Name, f.target.Name}
 				}
-				if !strings.Contains(err.Error(), f.target.Name) {
-					t.Fatalf("error = %v, want target project %v", err, f.target.Name)
+				for _, s := range want {
+					if !strings.Contains(err.Error(), s) {
+						t.Fatalf("error = %v, want message containing %v", err, s)
+					}
 				}
 			}
 		})
@@ -522,6 +527,13 @@ func TestProjectScopedWritesAllowAssignedProjectAndGoalListReadsOtherProject(t *
 		t.Fatalf("decision.ask: %v", err)
 	}
 
+	params, err = json.Marshal(map[string]any{"goal_id": f.completeGoal.ID, "agent_session_id": f.agentSessionID})
+	if err != nil {
+		t.Fatalf("Marshal goal.claim params: %v", err)
+	}
+	if _, err := f.daemon.dispatch(f.ctx, rpc.Request{Method: "goal.claim", Params: params}); err != nil {
+		t.Fatalf("goal.claim before goal.complete: %v", err)
+	}
 	params, err = json.Marshal(map[string]any{
 		"goal_id": f.completeGoal.ID, "work_done": "done", "now_possible": "now",
 		"how_to_verify": "verify", "surprises": "none", "needs_review": "none",

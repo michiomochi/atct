@@ -588,7 +588,7 @@ func TestWakeupEventMarshalsWakeupCounts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("json.Marshal: %v", err)
 	}
-	const want = `{"wakeup_id":"wakeup-json","project_id":1,"actionable_goal_count":3,"unstarted_task_count":0,"waiting_answer_task_count":0,"untouched_task_count":0,"delegated_task_count":2,"waiting_answer_count":0}`
+	const want = `{"wakeup_id":"wakeup-json","project_id":1,"actionable_goal_count":3,"unassigned_goal_count":0,"unassigned_goal_ids":null,"unstarted_task_count":0,"waiting_answer_task_count":0,"untouched_task_count":0,"delegated_task_count":2,"waiting_answer_count":0}`
 	if string(got) != want {
 		t.Fatalf("wakeup JSON = %s, want %s", got, want)
 	}
@@ -773,82 +773,6 @@ func TestDetectWakeupCollectsStalledHandoffCandidates(t *testing.T) {
 	}
 }
 
-func TestDetectWakeupCollectsReportedTaskAndGoalHandoffs(t *testing.T) {
-	ctx := context.Background()
-	s := newTestStore(t)
-	project, err := s.CreateProject(ctx, "atct", "/repos/atct")
-	if err != nil {
-		t.Fatalf("CreateProject: %v", err)
-	}
-	goal, err := s.CreateGoal(ctx, project.ID, "Reported handoffs", "human")
-	if err != nil {
-		t.Fatalf("CreateGoal: %v", err)
-	}
-	goalForGoalHandoff, err := s.CreateGoal(ctx, project.ID, "Reported goal handoff", "human")
-	if err != nil {
-		t.Fatalf("CreateGoal goal handoff: %v", err)
-	}
-	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "reported-handoffs", []string{"Reported task"}, []string{"Complete the reported task."})
-	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
-	}
-
-	const requesterLabel = "reported-handoff-requester"
-	const receiverLabel = "reported-handoff-receiver"
-	requesterID := testSessionID(requesterLabel)
-	receiverID := testSessionID(receiverLabel)
-	addLiveParentGoalClaim(t, s, tasks[0].ID, requesterLabel)
-	addLiveProjectClaim(t, s, goalForGoalHandoff.ID, requesterLabel)
-	addTestAgentSession(t, s, receiverLabel)
-
-	taskHandoff, err := s.RequestTaskHandoff(ctx, "reported-task-handoff", tasks[0].ID, requesterID, "")
-	if err != nil {
-		t.Fatalf("RequestTaskHandoff: %v", err)
-	}
-	if _, err := s.ReceiveTaskHandoff(ctx, taskHandoff.ID, tasks[0].ID, receiverID); err != nil {
-		t.Fatalf("ReceiveTaskHandoff: %v", err)
-	}
-	if _, err := s.CompleteTaskHandoff(ctx, taskHandoff.ID, tasks[0].ID, "task report"); err != nil {
-		t.Fatalf("CompleteTaskHandoff: %v", err)
-	}
-
-	goalHandoff, err := s.RequestGoalHandoff(ctx, "reported-goal-handoff", goalForGoalHandoff.ID, requesterID, "")
-	if err != nil {
-		t.Fatalf("RequestGoalHandoff: %v", err)
-	}
-	if _, err := s.ReceiveGoalHandoff(ctx, goalHandoff.ID, goalForGoalHandoff.ID, receiverID); err != nil {
-		t.Fatalf("ReceiveGoalHandoff: %v", err)
-	}
-	if _, err := s.CompleteGoalHandoff(ctx, goalHandoff.ID, goalForGoalHandoff.ID, "goal report"); err != nil {
-		t.Fatalf("CompleteGoalHandoff: %v", err)
-	}
-
-	state, err := s.DetectWakeup(ctx, project.ID)
-	if err != nil {
-		t.Fatalf("DetectWakeup: %v", err)
-	}
-	if len(state.HandoffsReported) != 2 {
-		t.Fatalf("reported handoffs = %#v, want task and goal reports", state.HandoffsReported)
-	}
-	want := map[string]ReportedHandoff{
-		taskHandoff.ID: {ID: taskHandoff.ID, GoalID: goal.ID, TaskID: tasks[0].ID, CompleteReport: "task report"},
-		goalHandoff.ID: {ID: goalHandoff.ID, GoalID: goalForGoalHandoff.ID, CompleteReport: "goal report"},
-	}
-	for _, reported := range state.HandoffsReported {
-		expected, ok := want[reported.ID]
-		if !ok {
-			t.Fatalf("unexpected reported handoff = %+v", reported)
-		}
-		if reported.ID != expected.ID || reported.TaskID != expected.TaskID || reported.GoalID != expected.GoalID || reported.CompleteReport != expected.CompleteReport {
-			t.Fatalf("reported handoff = %+v, want %+v", reported, expected)
-		}
-		delete(want, reported.ID)
-	}
-	if len(want) != 0 {
-		t.Fatalf("missing reported handoffs = %#v", want)
-	}
-}
-
 func TestDetectWakeupExcludesCommanderClaimAndKeepsUndelegatedExecutorClaim(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
@@ -997,6 +921,176 @@ func TestDetectWakeupCollectsUnappliedDecisionsAndStaleClaims(t *testing.T) {
 	}
 	if got := len(state.StaleClaims); got != 1 || state.StaleClaims[0].ID != tasks[2].ID {
 		t.Fatalf("stale claims = %#v, want only %d", state.StaleClaims, tasks[2].ID)
+	}
+}
+
+func TestDetectWakeupDoesNotCountAssignedGoalAsUnassigned(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	project, err := s.CreateProject(ctx, "atct", "/repos/atct")
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	goal, err := s.CreateGoal(ctx, project.ID, "Assigned actionable goal", "human")
+	if err != nil {
+		t.Fatalf("CreateGoal: %v", err)
+	}
+	if _, err := s.DeclareTasks(ctx, goal.ID, "agent", "unassigned-goal-assigned", []string{"Actionable task"}, []string{"Complete the actionable task."}); err != nil {
+		t.Fatalf("DeclareTasks: %v", err)
+	}
+
+	const requesterLabel = "unassigned-goal-requester"
+	const receiverLabel = "unassigned-goal-receiver"
+	requesterID := testSessionID(requesterLabel)
+	receiverID := testSessionID(receiverLabel)
+	addLiveProjectClaim(t, s, goal.ID, requesterLabel)
+	addTestAgentSession(t, s, receiverLabel)
+	handoff, err := s.RequestGoalHandoff(ctx, "assigned-actionable-goal", goal.ID, requesterID, "")
+	if err != nil {
+		t.Fatalf("RequestGoalHandoff: %v", err)
+	}
+	if _, err := s.ReceiveGoalHandoff(ctx, handoff.ID, goal.ID, receiverID); err != nil {
+		t.Fatalf("ReceiveGoalHandoff: %v", err)
+	}
+
+	state, err := s.DetectWakeup(ctx, project.ID)
+	if err != nil {
+		t.Fatalf("DetectWakeup: %v", err)
+	}
+	if state.ActionableGoalCount != 1 {
+		t.Fatalf("actionable goal count = %d, want 1", state.ActionableGoalCount)
+	}
+	if state.UnassignedGoalCount != 0 || len(state.UnassignedGoalIDs) != 0 {
+		t.Fatalf("unassigned goals = %d, IDs %#v, want none", state.UnassignedGoalCount, state.UnassignedGoalIDs)
+	}
+}
+
+func TestDetectWakeupCollectsUnassignedActionableGoalIDs(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	project, err := s.CreateProject(ctx, "atct", "/repos/atct")
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	firstGoal, err := s.CreateGoal(ctx, project.ID, "First unassigned actionable goal", "human")
+	if err != nil {
+		t.Fatalf("CreateGoal first: %v", err)
+	}
+	if _, err := s.DeclareTasks(ctx, firstGoal.ID, "agent", "unassigned-goal-first", []string{"First task"}, []string{"Complete the first task."}); err != nil {
+		t.Fatalf("DeclareTasks first: %v", err)
+	}
+	secondGoal, err := s.CreateGoal(ctx, project.ID, "Second unassigned actionable goal", "human")
+	if err != nil {
+		t.Fatalf("CreateGoal second: %v", err)
+	}
+	if _, err := s.DeclareTasks(ctx, secondGoal.ID, "agent", "unassigned-goal-second", []string{"Second task"}, []string{"Complete the second task."}); err != nil {
+		t.Fatalf("DeclareTasks second: %v", err)
+	}
+
+	state, err := s.DetectWakeup(ctx, project.ID)
+	if err != nil {
+		t.Fatalf("DetectWakeup: %v", err)
+	}
+	if state.UnassignedGoalCount != 2 {
+		t.Fatalf("unassigned goal count = %d, want 2", state.UnassignedGoalCount)
+	}
+	if len(state.UnassignedGoalIDs) != 2 || state.UnassignedGoalIDs[0] != firstGoal.ID || state.UnassignedGoalIDs[1] != secondGoal.ID {
+		t.Fatalf("unassigned goal IDs = %#v, want [%d, %d] in ascending order", state.UnassignedGoalIDs, firstGoal.ID, secondGoal.ID)
+	}
+}
+
+func TestDetectWakeupTreatsUnknownReceivedByAsAssignedGoal(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	project, err := s.CreateProject(ctx, "atct", "/repos/atct")
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	goal, err := s.CreateGoal(ctx, project.ID, "Goal with an unknown receiver", "human")
+	if err != nil {
+		t.Fatalf("CreateGoal: %v", err)
+	}
+	if _, err := s.DeclareTasks(ctx, goal.ID, "agent", "unassigned-goal-unknown-receiver", []string{"Actionable task"}, []string{"Complete the actionable task."}); err != nil {
+		t.Fatalf("DeclareTasks: %v", err)
+	}
+
+	const requesterLabel = "unknown-receiver-requester"
+	requesterID := testSessionID(requesterLabel)
+	addLiveProjectClaim(t, s, goal.ID, requesterLabel)
+	handoff, err := s.RequestGoalHandoff(ctx, "unknown-receiver-goal", goal.ID, requesterID, "")
+	if err != nil {
+		t.Fatalf("RequestGoalHandoff: %v", err)
+	}
+	receiverID := testSessionID("unknown-receiver-session")
+	addTestAgentSession(t, s, "unknown-receiver-session")
+	if _, err := s.ReceiveGoalHandoff(ctx, handoff.ID, goal.ID, receiverID); err != nil {
+		t.Fatalf("ReceiveGoalHandoff: %v", err)
+	}
+	unknownReceiverID := testSessionID("missing-goal-receiver-session")
+	conn, err := s.db.Conn(ctx)
+	if err != nil {
+		t.Fatalf("DB.Conn: %v", err)
+	}
+	if _, err := conn.ExecContext(ctx, "PRAGMA foreign_keys = OFF"); err != nil {
+		t.Fatalf("disable foreign keys: %v", err)
+	}
+	if _, err := conn.ExecContext(ctx, "UPDATE goal_handoffs SET received_by = ? WHERE id = ?", unknownReceiverID, handoff.ID); err != nil {
+		t.Fatalf("set unknown received_by: %v", err)
+	}
+	if _, err := conn.ExecContext(ctx, "PRAGMA foreign_keys = ON"); err != nil {
+		t.Fatalf("enable foreign keys: %v", err)
+	}
+	if err := conn.Close(); err != nil {
+		t.Fatalf("DB.Conn.Close: %v", err)
+	}
+
+	state, err := s.DetectWakeup(ctx, project.ID)
+	if err != nil {
+		t.Fatalf("DetectWakeup: %v", err)
+	}
+	if state.UnassignedGoalCount != 0 || len(state.UnassignedGoalIDs) != 0 {
+		t.Fatalf("unassigned goals = %d, IDs %#v, want none for an unknown received_by", state.UnassignedGoalCount, state.UnassignedGoalIDs)
+	}
+}
+
+func TestDetectWakeupExcludesUndeclaredGoalFromUnassignedGoals(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	project, err := s.CreateProject(ctx, "atct", "/repos/atct")
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	if _, err := s.CreateGoal(ctx, project.ID, "Undeclared goal", "human"); err != nil {
+		t.Fatalf("CreateGoal: %v", err)
+	}
+
+	state, err := s.DetectWakeup(ctx, project.ID)
+	if err != nil {
+		t.Fatalf("DetectWakeup: %v", err)
+	}
+	if state.ActionableGoalCount != 0 {
+		t.Fatalf("actionable goal count = %d, want 0", state.ActionableGoalCount)
+	}
+	if state.UnassignedGoalCount != 0 || len(state.UnassignedGoalIDs) != 0 {
+		t.Fatalf("unassigned goals = %d, IDs %#v, want none for an undeclared goal", state.UnassignedGoalCount, state.UnassignedGoalIDs)
+	}
+}
+
+func TestWakeupEventMarshalsUnassignedGoalFields(t *testing.T) {
+	event := WakeupEvent{
+		WakeupID:            "wakeup-unassigned-json",
+		ProjectID:           1,
+		ActionableGoalCount: 3,
+		UnassignedGoalCount: 2,
+		UnassignedGoalIDs:   []int64{136, 140},
+	}
+	got, err := json.Marshal(event)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+	const want = `{"wakeup_id":"wakeup-unassigned-json","project_id":1,"actionable_goal_count":3,"unassigned_goal_count":2,"unassigned_goal_ids":[136,140],"unstarted_task_count":0,"waiting_answer_task_count":0,"untouched_task_count":0,"delegated_task_count":0,"waiting_answer_count":0}`
+	if string(got) != want {
+		t.Fatalf("wakeup JSON = %s, want %s", got, want)
 	}
 }
 

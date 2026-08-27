@@ -205,6 +205,145 @@ func ageAgentSessionForTest(t *testing.T, fixture goalListFixture, sessionID str
 	}
 }
 
+func TestGoalCompleteDeniesSessionWithoutGoalHandoff(t *testing.T) {
+	fixture := newGoalListFixture(t)
+	defer fixture.store.Close()
+
+	goalID := fixture.emptyTaskGoal.ID
+	sessionID := daemonTestSessionID(t, fixture.store, "goal-complete-without-handoff")
+	params, err := json.Marshal(map[string]any{
+		"goal_id":          goalID,
+		"work_done":        "work",
+		"now_possible":     "now",
+		"how_to_verify":    "verify",
+		"surprises":        "none",
+		"needs_review":     "none",
+		"next_steps":       "next",
+		"agent_session_id": sessionID,
+	})
+	if err != nil {
+		t.Fatalf("marshal goal.complete params: %v", err)
+	}
+	if _, err := fixture.daemon.dispatch(context.Background(), rpc.Request{Method: "goal.complete", Params: params}); err == nil {
+		t.Fatal("goal.complete unexpectedly succeeded without a goal handoff")
+	} else if !strings.Contains(err.Error(), fmt.Sprint(sessionID)) || !strings.Contains(err.Error(), fmt.Sprint(goalID)) {
+		t.Fatalf("goal.complete error = %v, want session %v and goal %v", err, sessionID, goalID)
+	}
+
+	goal, err := fixture.store.GetGoal(context.Background(), goalID)
+	if err != nil {
+		t.Fatalf("GetGoal after rejected completion: %v", err)
+	}
+	if goal.Status != domain.GoalActive {
+		t.Fatalf("goal status after rejected completion = %v, want %v", goal.Status, domain.GoalActive)
+	}
+}
+
+func TestGoalCompleteDeniesHolderOfAnotherGoal(t *testing.T) {
+	fixture := newGoalListFixture(t)
+	defer fixture.store.Close()
+
+	goalA := fixture.active[0]
+	goalB := fixture.emptyTaskGoal
+	const (
+		sessionA = "goal-complete-wrong-holder-caller"
+		sessionB = "goal-complete-wrong-holder-owner"
+	)
+	if _, err := claimGoalForTest(t, fixture, goalA.ID, sessionA); err != nil {
+		t.Fatalf("goal.claim for goal A: %v", err)
+	}
+	if _, err := claimGoalForTest(t, fixture, goalB.ID, sessionB); err != nil {
+		t.Fatalf("goal.claim for goal B: %v", err)
+	}
+
+	callerID := daemonTestSessionID(t, fixture.store, sessionA)
+	holderID := daemonTestSessionID(t, fixture.store, sessionB)
+	params, err := json.Marshal(map[string]any{
+		"goal_id":          goalB.ID,
+		"work_done":        "work",
+		"now_possible":     "now",
+		"how_to_verify":    "verify",
+		"surprises":        "none",
+		"needs_review":     "none",
+		"next_steps":       "next",
+		"agent_session_id": callerID,
+	})
+	if err != nil {
+		t.Fatalf("marshal goal.complete params: %v", err)
+	}
+	if _, err := fixture.daemon.dispatch(context.Background(), rpc.Request{Method: "goal.complete", Params: params}); err == nil {
+		t.Fatal("goal.complete unexpectedly succeeded for another goal holder")
+	} else {
+		for _, want := range []string{"is not the holder of", fmt.Sprint(callerID), fmt.Sprint(holderID)} {
+			if !strings.Contains(err.Error(), want) {
+				t.Fatalf("goal.complete error = %v, want %q", err, want)
+			}
+		}
+	}
+
+	got, err := fixture.store.GetGoal(context.Background(), goalB.ID)
+	if err != nil {
+		t.Fatalf("GetGoal after rejected completion: %v", err)
+	}
+	if got.Status != domain.GoalActive {
+		t.Fatalf("goal B status after rejected completion = %v, want %v", got.Status, domain.GoalActive)
+	}
+}
+
+func TestGoalCompleteAllowsGoalHandoffHolder(t *testing.T) {
+	fixture := newGoalListFixture(t)
+	defer fixture.store.Close()
+
+	goalID := fixture.emptyTaskGoal.ID
+	const sessionLabel = "goal-complete-handoff-holder"
+	if _, err := claimGoalForTest(t, fixture, goalID, sessionLabel); err != nil {
+		t.Fatalf("goal.claim: %v", err)
+	}
+	params, err := json.Marshal(map[string]any{
+		"goal_id":          goalID,
+		"work_done":        "work",
+		"now_possible":     "now",
+		"how_to_verify":    "verify",
+		"surprises":        "none",
+		"needs_review":     "none",
+		"next_steps":       "next",
+		"agent_session_id": daemonTestSessionID(t, fixture.store, sessionLabel),
+	})
+	if err != nil {
+		t.Fatalf("marshal goal.complete params: %v", err)
+	}
+	if _, err := fixture.daemon.dispatch(context.Background(), rpc.Request{Method: "goal.complete", Params: params}); err != nil {
+		t.Fatalf("goal.complete for goal handoff holder: %v", err)
+	}
+}
+
+func TestGoalCompleteAllowsProjectClaimHolder(t *testing.T) {
+	fixture := newGoalListFixture(t)
+	defer fixture.store.Close()
+
+	goalID := fixture.emptyTaskGoal.ID
+	const sessionLabel = "goal-complete-project-holder"
+	if _, err := claimProjectForTest(t, fixture, fixture.project.ID, sessionLabel); err != nil {
+		t.Fatalf("project.claim: %v", err)
+	}
+	params, err := json.Marshal(map[string]any{
+		"goal_id":          goalID,
+		"work_done":        "work",
+		"now_possible":     "now",
+		"how_to_verify":    "verify",
+		"surprises":        "none",
+		"needs_review":     "none",
+		"next_steps":       "next",
+		"agent_session_id": daemonTestSessionID(t, fixture.store, sessionLabel),
+	})
+	if err != nil {
+		t.Fatalf("marshal goal.complete params: %v", err)
+	}
+	if _, err := fixture.daemon.dispatch(context.Background(), rpc.Request{Method: "goal.complete", Params: params}); err != nil {
+		t.Fatalf("goal.complete for project claim holder: %v", err)
+	}
+}
+
 func TestDaemonAssociationKeepsFirstSession(t *testing.T) {
 	fixture := newGoalListFixture(t)
 	defer fixture.store.Close()
