@@ -756,6 +756,9 @@ A-1 の穴を 2 か所に書いたのと同じ理由が、ここでは逆向き�
 
 ## 3 層は現在の atct の上に乗らない（2026-08-22 に実測）
 
+> **解消済み（2026-08-27）。この節はもう成立しない。**削除せずに残すのは、何が壊れていて
+> 何で直ったかの記録が要るためである。**現在の測定は末尾の「3 層は乗った」を見よ。**
+
 `goal 95` の最後のタスク `task 468`「稼働版で 2 人目が入れないことを実測する」で
 分かったこと。**ゴールの claim は守れない。**そして理由は claim の側ではない。
 
@@ -850,6 +853,15 @@ PreToolUse    matcher=AskUserQuestion         チャットで聞くのを止め 
 
 ## ファイル衝突の検査は 1 セッション運用では効かない（2026-08-22 に実測）
 
+> **前提ごと消えた（2026-08-27）。この節はもう成立しない。**ここで論じている
+> `rejectTaskFileConflict` と `ListClaimedTasksForConflict` は `goal 139`
+> （`7424fdb`「drop tasks.files and the claim-time file conflict check」）で削除された。
+>
+>     grep -rn 'rejectTaskFileConflict\|ListClaimedTasksForConflict' internal cmd   →  0 件
+>
+> **したがって「3 層に移れば効く」も成立しない。**仕組みそのものが無い。
+> ファイルの衝突はゴールごとの worktree で防ぐ（B-1）。
+
 `rejectTaskFileConflict`（`internal/store/task.go:551`）は、claim しようとしたタスクの
 `files` が既に claim されている別タスクの `files` と重なると拒む。**設計は正しい。**
 
@@ -891,6 +903,8 @@ claim している限り、重なりは見えない。
 
 ## 追記: 消し合いは 1 回では終わらない（2026-08-22・追加の実測）
 
+> **解消済み（2026-08-27）。この節はもう成立しない。**末尾の「3 層は乗った」を見よ。
+
 上で「2 人目が入ると 1 人目の生存記録が消える」と書いたが、**症状はもっと重い。**
 
 `AssociateAgentSessionWithProject` を呼ぶ場所を全部数えたところ、
@@ -916,3 +930,117 @@ case "goal.list":
 
 `dotfiles-commander` の指摘のとおり、**worktree の用意が楽になったぶん subcommander を
 作る回数が増え、この不具合に当たる回数も増える。**3 層を展開する前に直すべきである。
+
+## 3 層は乗った（2026-08-27 に実測）
+
+**「乗らない」と書いた前提は、同じ日の 5 時間 39 分後に消えていた。**
+この文書はそれを 5 日間そのまま載せ続けた。
+
+```
+$ git log -1 --format='%h %ad %s' --date=iso 3bd2414
+3bd2414 2026-08-22 16:53:38 +0900 Record that two sessions cannot share a project
+
+$ git log -1 --format='%h %ad %s' --date=iso f5ef1c9
+f5ef1c9 2026-08-22 22:32:42 +0900 Let a project be claimed, and stop deleting the first session
+```
+
+### 何が直ったか
+
+`f5ef1c9`「Let a project be claimed, and stop deleting the first session」。
+**「乗らない」と書いた `3bd2414` の 5 時間 39 分後、同じ日である。**
+`internal/store/queries/task.sql` から
+プロジェクト単位の削除が消え、残ったのは保持期間だけを見る 1 本になった。
+
+```sql
+-- name: DeleteExpiredAgentSessionsExcept :exec
+DELETE FROM agent_sessions
+WHERE id <> ? AND registered_at < ?;
+```
+
+`project_id` の条件が無い。**新しいセッションが来たというだけでは、もう誰も消えない。**
+
+### 実測（測り方を結果と一緒に貼る）
+
+```
+$ sqlite3 -readonly ~/.atct/atct.db "select count(*) from agent_sessions where project_id = 1;"
+125
+
+$ sqlite3 -readonly ~/.atct/atct.db \
+    "select count(*) from agent_sessions
+     where project_id=1 and date(registered_at)='2026-08-27';"
+29                                    ← 同日・同一プロジェクトの行
+
+$ sqlite3 -readonly ~/.atct/atct.db \
+    "select count(*) from agent_sessions
+     where project_id=1 and date(registered_at)='2026-08-27'
+       and session_key like '%-subcommander';"
+14                                    ← 名前つきの subcommander
+
+$ sqlite3 -readonly ~/.atct/atct.db \
+    "select id, session_key, registered_at from agent_sessions
+     where session_key='atct-commander';"
+1743|atct-commander|2026-08-27T01:15:21.037186Z
+```
+
+**`atct-commander` の行が 01:15 から残っている。**そのあと 14 台の subcommander が
+同じプロジェクトに登録され（ほかに commander 2 件と、名前を持たない行 13 件）、
+それぞれが `goal.list` を何度も呼んだが、**1 行も消えていない。**
+「交互に消し合い続ける」は起きなかった。
+
+### ゴールが実際に通った
+
+```
+$ git log main --since=2026-08-26T20:00 --oneline --merges \
+    | grep '^[0-9a-f]* Merge goal' | sed -E 's/.*Merge goal ([0-9]+).*/\1/' \
+    | sort -n -u | tr '\n' ' '
+42 90 91 92 107 127 134 136 139 141 163 172
+
+$ ... | sort -n -u | wc -l
+12
+```
+
+**12 件。**（`-u` を外すと 13 行出る。`goal 91` だけ follow-up のマージが 1 件多い。
+**数えるのはゴールであってマージではない。**）
+すべて subcommander が設計し、executor が実装し、commander がマージした。
+
+**これが「3 層で動く」の証拠である。**DB の行が残ることではなく、
+**1 日で 12 件のゴールが 3 層を通って着地したこと**が答えになる。
+この文書の冒頭（15 行）が挙げた症状——「commander が詰まる」「投げますと書いて投げない」
+「コンテキスト上限に達して要約から再開」——は、12 件のうち 1 件も起こしていない。
+
+### 何が守っているか
+
+| 層 | 検査 |
+|---|---|
+| store | `TestAgentSessionsCanShareProject`（`internal/store/agent_session_test.go`） |
+| daemon | `goal.list` を A → B → A で叩いても 2 行が残ることの検査（`goal 87` で追加） |
+
+**store の層だけでは足りない。**壊れていたのは `goal.list` の経路であり、
+当時の単体テスト `TestClaimGoalRejectsLiveClaimFromOtherSession` は
+`store` を直接叩いていたので緑のまま通り抜けた（757 行の「測り方の教訓」）。
+**同じ教訓を二度払わないために、daemon の経路にも検査を置いた。**
+
+### 残っている穴（3 層そのものではなく、その運用）
+
+| 穴 | 状態 |
+|---|---|
+| claim 済みのタスクを委譲できない（`atct_task_claim` が自己 handoff を張る） | `goal 177` として起票済み |
+| executor が報告経路を持たない環境がある | `goal 180` として起票済み |
+| 黙って止まった subcommander を commander が自分で見つけるしかない | 未起票。`goal 87` から人間へ決定として出した |
+| マージの衝突が commander に集中する | **設計どおり**（B-6）。2026-08-27 は 12 件中 5 件が衝突し、3 件を subcommander へ差し戻した |
+
+### B-7 の残り表の更新
+
+| 残り | 状態 |
+|---|---|
+| `chezmoi apply`（役割定義） | **着地済み。**`~/.claude/skills/orchestration/SKILL.md` の「役割の割り当て」が commander / subcommander / executor の 3 層になっている |
+
+### 教訓: 文書は自分で古くならないと言えない
+
+**この文書は B-7 で「一覧しか読まない者は古い方を信じる」と書いた。**
+そして本文の末尾 3 節が、5 日間まさにそれをやった。しかも 3 節のうち 1 節
+（ファイル衝突の検査）は、依拠していた関数が削除されたことにすら追随していなかった。
+
+**測定を書いた節には、それが成立する条件を書く。**「2026-08-22 に実測」だけでは、
+読む者は今日も成立していると読む。**何が変われば成立しなくなるかを一緒に書けば、
+その変更を入れた者が気づける。**
