@@ -68,6 +68,10 @@ func nullableAgentSessionID(value sql.NullInt64) int64 {
 	return value.Int64
 }
 
+func completeReportIsEmpty(completeReport string) bool {
+	return strings.TrimSpace(completeReport) == ""
+}
+
 func parseTaskHandoffTime(column string, value sql.NullString) (*time.Time, error) {
 	if !value.Valid || value.String == "" {
 		return nil, nil
@@ -292,7 +296,7 @@ func (s *Store) CompleteTaskHandoffForTask(ctx context.Context, taskID int64, co
 // CompleteTaskHandoff records the completion report side of a handoff. It
 // only writes the completion timestamp and report and therefore preserves partial states.
 func (s *Store) CompleteTaskHandoff(ctx context.Context, handoffID string, taskID int64, completeReport string) (TaskHandoff, error) {
-	if strings.TrimSpace(completeReport) == "" {
+	if completeReportIsEmpty(completeReport) {
 		return TaskHandoff{}, ErrTaskHandoffReportEmpty
 	}
 	if err := s.ensureTaskHandoffTask(ctx, handoffID, taskID); err != nil {
@@ -318,6 +322,31 @@ func (s *Store) CompleteTaskHandoff(ctx context.Context, handoffID string, taskI
 			return TaskHandoff{}, fmt.Errorf("task handoff %q is already reported; use another path to add a report after completion", handoffID)
 		}
 		return TaskHandoff{}, fmt.Errorf("%w: %s", ErrTaskHandoffNotFound, handoffID)
+	}
+	return s.GetTaskHandoff(ctx, handoffID)
+}
+
+// AmendTaskHandoffReport fills in or corrects the report on a handoff that is
+// already closed without changing when it was completed.
+func (s *Store) AmendTaskHandoffReport(ctx context.Context, handoffID string, taskID int64, completeReport string) (TaskHandoff, error) {
+	if completeReportIsEmpty(completeReport) {
+		return TaskHandoff{}, ErrTaskHandoffReportEmpty
+	}
+	if err := s.ensureTaskHandoffTask(ctx, handoffID, taskID); err != nil {
+		return TaskHandoff{}, err
+	}
+	result, err := sqlcgen.New(s.db).AmendTaskHandoffReport(ctx, sqlcgen.AmendTaskHandoffReportParams{
+		ID: handoffID, TaskID: taskID, CompleteReport: sql.NullString{String: completeReport, Valid: true},
+	})
+	if err != nil {
+		return TaskHandoff{}, fmt.Errorf("amend task handoff report: %w", err)
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return TaskHandoff{}, fmt.Errorf("amend task handoff report rows affected: %w", err)
+	}
+	if n == 0 {
+		return TaskHandoff{}, fmt.Errorf("task handoff %q is not yet completed; use atct_handoff_complete", handoffID)
 	}
 	return s.GetTaskHandoff(ctx, handoffID)
 }

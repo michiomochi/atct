@@ -507,6 +507,56 @@ func TestGoalHandoffCompleteByGoal(t *testing.T) {
 	}
 }
 
+func TestGoalHandoffAmendReportUpdatesCompletedHandoffWithoutChangingCompletionTime(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	goalID := newTestGoal(t, s)
+	addLiveProjectClaim(t, s, goalID, "amend-goal-requester")
+	addTestAgentSession(t, s, "amend-goal-receiver")
+	handoff, err := s.RequestGoalHandoff(ctx, "amend-goal-handoff", goalID, testSessionID("amend-goal-requester"), "")
+	if err != nil {
+		t.Fatalf("RequestGoalHandoff: %v", err)
+	}
+	if _, err := s.ReceiveGoalHandoff(ctx, handoff.ID, goalID, testSessionID("amend-goal-receiver")); err != nil {
+		t.Fatalf("ReceiveGoalHandoff: %v", err)
+	}
+	completed, err := s.CompleteGoalHandoff(ctx, handoff.ID, goalID, "original report")
+	if err != nil {
+		t.Fatalf("CompleteGoalHandoff: %v", err)
+	}
+
+	amended, err := s.AmendGoalHandoffReport(ctx, handoff.ID, goalID, "amended report")
+	if err != nil {
+		t.Fatalf("AmendGoalHandoffReport: %v", err)
+	}
+	if amended.CompleteReport != "amended report" {
+		t.Fatalf("complete report = %q, want amended report", amended.CompleteReport)
+	}
+	if amended.CompletedReportAt == nil || !amended.CompletedReportAt.Equal(*completed.CompletedReportAt) {
+		t.Fatalf("completed report timestamp = %v, want %v", amended.CompletedReportAt, completed.CompletedReportAt)
+	}
+}
+
+func TestGoalHandoffAmendReportRejectsIncompleteHandoff(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	goalID := newTestGoal(t, s)
+	addLiveProjectClaim(t, s, goalID, "amend-incomplete-goal-requester")
+	addTestAgentSession(t, s, "amend-incomplete-goal-receiver")
+	handoff, err := s.RequestGoalHandoff(ctx, "amend-incomplete-goal-handoff", goalID, testSessionID("amend-incomplete-goal-requester"), "")
+	if err != nil {
+		t.Fatalf("RequestGoalHandoff: %v", err)
+	}
+	if _, err := s.ReceiveGoalHandoff(ctx, handoff.ID, goalID, testSessionID("amend-incomplete-goal-receiver")); err != nil {
+		t.Fatalf("ReceiveGoalHandoff: %v", err)
+	}
+
+	_, err = s.AmendGoalHandoffReport(ctx, handoff.ID, goalID, "replacement report")
+	if err == nil || !strings.Contains(err.Error(), "handoff_complete") {
+		t.Fatalf("error = %v, want incomplete handoff to name handoff_complete", err)
+	}
+}
+
 func TestGoalHandoffCompleteByGoalRejectsUnreceived(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

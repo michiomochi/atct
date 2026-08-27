@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/michiomochi/atct/internal/store/sqlcgen"
@@ -294,7 +293,7 @@ func (s *Store) CompleteGoalHandoffForGoal(ctx context.Context, goalID int64, co
 // CompleteGoalHandoff records the completion report side of a handoff. It
 // only writes the completion timestamp and report and therefore preserves partial states.
 func (s *Store) CompleteGoalHandoff(ctx context.Context, handoffID string, goalID int64, completeReport string) (GoalHandoff, error) {
-	if strings.TrimSpace(completeReport) == "" {
+	if completeReportIsEmpty(completeReport) {
 		return GoalHandoff{}, ErrGoalHandoffReportEmpty
 	}
 	if err := s.ensureGoalHandoffGoal(ctx, handoffID, goalID); err != nil {
@@ -320,6 +319,31 @@ func (s *Store) CompleteGoalHandoff(ctx context.Context, handoffID string, goalI
 			return GoalHandoff{}, fmt.Errorf("goal handoff %q is already reported; use another path to add a report after completion", handoffID)
 		}
 		return GoalHandoff{}, fmt.Errorf("%w: %s", ErrGoalHandoffNotFound, handoffID)
+	}
+	return s.GetGoalHandoff(ctx, handoffID)
+}
+
+// AmendGoalHandoffReport fills in or corrects the report on a handoff that is
+// already closed without changing when it was completed.
+func (s *Store) AmendGoalHandoffReport(ctx context.Context, handoffID string, goalID int64, completeReport string) (GoalHandoff, error) {
+	if completeReportIsEmpty(completeReport) {
+		return GoalHandoff{}, ErrGoalHandoffReportEmpty
+	}
+	if err := s.ensureGoalHandoffGoal(ctx, handoffID, goalID); err != nil {
+		return GoalHandoff{}, err
+	}
+	result, err := sqlcgen.New(s.db).AmendGoalHandoffReport(ctx, sqlcgen.AmendGoalHandoffReportParams{
+		ID: handoffID, GoalID: goalID, CompleteReport: sql.NullString{String: completeReport, Valid: true},
+	})
+	if err != nil {
+		return GoalHandoff{}, fmt.Errorf("amend goal handoff report: %w", err)
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return GoalHandoff{}, fmt.Errorf("amend goal handoff report rows affected: %w", err)
+	}
+	if n == 0 {
+		return GoalHandoff{}, fmt.Errorf("goal handoff %q is not yet completed; use atct_goal_handoff_complete", handoffID)
 	}
 	return s.GetGoalHandoff(ctx, handoffID)
 }

@@ -169,7 +169,7 @@ func TestHTTPHandlerMCPInitializeReturnsStreamableResponse(t *testing.T) {
 	}
 }
 
-func TestHTTPHandlerMCPListsTwentySixTools(t *testing.T) {
+func TestHTTPHandlerMCPListsTwentyEightTools(t *testing.T) {
 	fixture := newMCPHTTPTestServer(t)
 	client := newMCPHTTPTestClient(fixture.server.URL + "/mcp")
 	client.initialize(t)
@@ -181,19 +181,30 @@ func TestHTTPHandlerMCPListsTwentySixTools(t *testing.T) {
 	if !ok {
 		t.Fatalf("tools/list result.tools = %T, want array", result["tools"])
 	}
-	if len(tools) != 26 {
-		t.Fatalf("tools/list returned %d tools, want 26", len(tools))
+	if len(tools) != 28 {
+		t.Fatalf("tools/list returned %d tools, want 28", len(tools))
+	}
+	wantNames := map[string]bool{
+		"atct_role":                      false,
+		"atct_handoff_report_amend":      false,
+		"atct_goal_handoff_report_amend": false,
 	}
 	for _, rawTool := range tools {
 		tool, ok := rawTool.(map[string]any)
 		if !ok {
 			t.Fatalf("tool = %T, want object", rawTool)
 		}
-		if tool["name"] == "atct_role" {
-			return
+		if name, ok := tool["name"].(string); ok {
+			if _, wanted := wantNames[name]; wanted {
+				wantNames[name] = true
+			}
 		}
 	}
-	t.Fatal("tools/list did not include atct_role")
+	for name, found := range wantNames {
+		if !found {
+			t.Errorf("tools/list did not include %s", name)
+		}
+	}
 }
 
 func TestHTTPHandlerMCPTaskHandoffRoutes(t *testing.T) {
