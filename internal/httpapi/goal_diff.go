@@ -174,12 +174,6 @@ func (s *Server) handleGoalDiff(w http.ResponseWriter, r *http.Request, goalID s
 
 func goalDiffMergeCommitForBranch(ctx context.Context, projectRootPath, branch, baseRevision string) (string, error) {
 	branchRef := "refs/heads/" + branch
-	if _, err := runGoalDiffGit(ctx, projectRootPath, "merge-base", "--is-ancestor", branchRef, baseRevision); err != nil {
-		if ctx.Err() != nil {
-			return "", ctx.Err()
-		}
-		return "", nil
-	}
 
 	tipOutput, err := runGoalDiffGit(ctx, projectRootPath, "rev-parse", branchRef)
 	if err != nil {

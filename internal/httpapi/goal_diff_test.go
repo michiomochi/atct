@@ -170,6 +170,70 @@ func TestHTTPGoalDiffDoesNotTreatUncommittedBranchAsMerged(t *testing.T) {
 	}
 }
 
+func TestHTTPGoalDiffDoesNotTreatCommittedUnmergedBranchAsMerged(t *testing.T) {
+	f := newBareFixture(t)
+	initGoalDiffRepository(t, f.project.RootPath, "main")
+	commitGoalDiffFiles(t, f.project.RootPath, "base", map[string]string{"base.txt": "base\n"})
+	createGoalDiffBranch(t, f.project.RootPath, f.goal.ID)
+	commitGoalDiffFiles(t, f.project.RootPath, "goal", map[string]string{"goal.txt": "goal\n"})
+	runGit(t, f.project.RootPath, "switch", "main")
+	runGit(t, f.project.RootPath, "switch", "-c", "unrelated")
+	commitGoalDiffFiles(t, f.project.RootPath, "unrelated", map[string]string{"unrelated.txt": "unrelated\n"})
+	runGit(t, f.project.RootPath, "switch", "main")
+	runGit(t, f.project.RootPath, "merge", "--no-ff", "-m", "unrelated merge", "unrelated")
+	setGoalDiffRemoteHead(t, f.project.RootPath, "main")
+
+	response := requestGoalDiff(t, f, "")
+	if !response.Available || response.Reason != "" {
+		t.Fatalf("available/reason = %v/%q, want true/empty; response=%+v", response.Available, response.Reason, response)
+	}
+	if response.Source != "branch" || response.MergeCommit != "" {
+		t.Fatalf("source = %q, merge_commit = %q; want branch, empty", response.Source, response.MergeCommit)
+	}
+	paths := make(map[string]bool, len(response.Files))
+	for _, file := range response.Files {
+		paths[file.Path] = true
+	}
+	if !paths["goal.txt"] {
+		t.Fatalf("goal file is missing: %#v", response.Files)
+	}
+	if paths["unrelated.txt"] {
+		t.Fatalf("unrelated merge file was included: %#v", response.Files)
+	}
+	if response.FilesChanged != 1 {
+		t.Fatalf("files_changed = %d, want 1; response=%+v", response.FilesChanged, response)
+	}
+}
+
+func TestHTTPGoalDiffIgnoresUnrelatedMergeForBranchWithoutCommits(t *testing.T) {
+	f := newBareFixture(t)
+	initGoalDiffRepository(t, f.project.RootPath, "main")
+	commitGoalDiffFiles(t, f.project.RootPath, "base", map[string]string{"base.txt": "base\n"})
+	createGoalDiffBranch(t, f.project.RootPath, f.goal.ID)
+	runGit(t, f.project.RootPath, "switch", "main")
+	runGit(t, f.project.RootPath, "switch", "-c", "unrelated")
+	commitGoalDiffFiles(t, f.project.RootPath, "unrelated", map[string]string{"unrelated.txt": "unrelated\n"})
+	runGit(t, f.project.RootPath, "switch", "main")
+	runGit(t, f.project.RootPath, "merge", "--no-ff", "-m", "unrelated merge", "unrelated")
+	setGoalDiffRemoteHead(t, f.project.RootPath, "main")
+
+	response := requestGoalDiff(t, f, "")
+	if !response.Available || response.Reason != "" {
+		t.Fatalf("available/reason = %v/%q, want true/empty; response=%+v", response.Available, response.Reason, response)
+	}
+	if response.Source != "branch" || response.MergeCommit != "" {
+		t.Fatalf("source = %q, merge_commit = %q; want branch, empty", response.Source, response.MergeCommit)
+	}
+	if response.FilesChanged != 0 {
+		t.Fatalf("files_changed = %d, want 0; response=%+v", response.FilesChanged, response)
+	}
+	for _, file := range response.Files {
+		if file.Path == "unrelated.txt" {
+			t.Fatalf("unrelated merge file was included: %#v", response.Files)
+		}
+	}
+}
+
 func TestHTTPGoalDiffUsesCommitMessageOnlyAfterBranchRemoval(t *testing.T) {
 	t.Run("no-ff merge", func(t *testing.T) {
 		f := newBareFixture(t)

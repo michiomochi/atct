@@ -116,6 +116,27 @@ fast-forward で入ったブランチは**先端の形が同じで区別でき�
 既定ブランチの解決（`refs/remotes/origin/HEAD` -> main / master）と 5 秒の期限も
 ゴール 187 のまま残す（完了条件 3）。**否定側はここである。**
 
+### 7. `merge-base --is-ancestor` の門番は置かない
+
+**決定 2 の `M^2 == 先端` が真なら、先端は必ず base の祖先である**（先端は `M` の親で、
+`M` は base の履歴にある）。**祖先かどうかの事前判定は、後段の条件に包含されていて結果を変えない。**
+
+**結果を変えないコードは検査で固定できない。**実測（2026-08-28）: 門番を
+`merge-base --independent`（意味の違うコマンド）に置き換えても、単体検査 15 本も
+実リポジトリ検査（`wt/goal-*` 全 32 本）も**すべて通った。**
+
+    ok  github.com/michiomochi/atct/internal/httpapi   7.890s   （--independent に置き換えた状態）
+    ok  github.com/michiomochi/atct/internal/httpapi   7.581s   （同・ATCT_REAL_REPO あり）
+
+**commander から「門番に検査が無い」と差し戻されたが、足すべきは検査ではなく削除だった。**
+守るべき門番は `M^2 == 先端` のほうで、そちらは
+`TestHTTPGoalDiffIgnoresUnrelatedMergeForBranchWithoutCommits` が固定している
+（比較を `true` に変えると落ちる）。
+
+性能は測った。門番が無くても `rev-list` は速い（main は 690 コミット）。
+
+    wt/goal-183  real 0.08   wt/goal-185  real 0.14   wt/goal-181  real 0.03
+
 ## 検査
 
 `internal/httpapi/goal_diff_test.go` に足す。
@@ -131,3 +152,9 @@ fast-forward で入ったブランチは**先端の形が同じで区別でき�
    `"landed goal <N>"` のような別文言なら `no_branch` -> 完了条件 4・6
 6. マージ前のブランチは `source: "branch"` で従来どおりの差分 -> 完了条件 3
 7. マージ済みのゴールで `?path=` がマージコミットの hunk を返す
+8. **コミット済みだが未マージ**のブランチが `source: "branch"` のままであること
+9. **コミットが 1 つも無いブランチ + その後 base に積まれた無関係なマージ**で
+   `source: "branch"` / `files_changed: 0` になること。**`M^2 == 先端` を壊すと落ちる**のはこの検査である
+10. 実リポジトリ検査 `TestHTTPGoalDiffAgainstRealRepository` は `ATCT_REAL_REPO` が
+    設定されたときだけ走る（`ATCT_REAL_DB` の前例に揃えた）。**期待値は実装の ancestry-path ではなく、
+    base の全マージの第 2 親の集合という別のオラクルで作る**
