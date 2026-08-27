@@ -46,28 +46,48 @@ executor の完了報告は `atct_handoff_complete` で行う。`orchestration` 
 
 ### D1 の裏付け: Codex の executor は shell 経由で報告できない
 
-**ゴール 180 が報告し、私が Codex の executor（task 716）で測り直した。**
+**ゴール 180 が報告し、私が Codex の executor（task 716）で 2 回測り直した。**
 
-    codex-cli 0.148.0-alpha.21
+    codex-cli 0.148.0-alpha.21 / herdr 0.8.2
     ~/.codex/config.toml   sandbox_mode = "workspace-write" / approval_policy = "on-request"
+    HERDR_SOCKET_PATH      ~/.config/herdr/herdr.sock
 
-同じ pane で 2 経路を測った。
+**1 回目**は `herdr agent get` と `herdr agent prompt` が exit 1 で落ち、stderr に
+aqua の `timestamp.txt を open: operation not permitted` が出ていた。
+**そこから「aqua のシムが弾かれている」と読んだ。これは誤りだった。**
 
-| 経路 | 結果 |
-|---|---|
-| MCP: `atct_session_identify` / `atct_handoff_receive` / `atct_role` | **3 つとも成功。**`atct_role` は `matches: true` を返した |
-| shell: `which herdr` | exit 0（PATH にもシムにも問題は無い） |
-| shell: `herdr agent get atct-181-subcommander` | **exit 1.** `aqua WARNING: timestamp.txt を open: operation not permitted` / `PermissionDenied` |
-| shell: `herdr agent prompt atct-181-subcommander '...'` | **exit 1.** 同じ `PermissionDenied` |
-| 対照: `printf ... > /tmp/atct-181-probe-716.txt` | exit 0、読み戻しも成功 |
+**2 回目**にシム起動と socket 接続を分けて測った。
 
-**`/tmp` へは書けて `herdr` は弾かれる。**全面的な sandbox 拒否ではなく、
-**aqua のシムがホーム配下へ `timestamp.txt` を書く段階が `workspace-write` の境界に当たっている。**
-180 の「MCP は sandbox を通らない」は結論として正しく、原因はより具体的に
-「shell 側の aqua シムがホーム配下へ書けない」であった。
+| コマンド | exit | 何に触るか |
+|---|---|---|
+| `herdr --version` | **0**（`herdr 0.8.2` を返す） | シムのみ。socket に触らない |
+| `herdr --help` | **0** | 同上 |
+| `herdr agent get <name>` | **1** | socket |
+| `herdr agent prompt <name> '...'` | **1** | socket |
+| MCP: `atct_session_identify` / `atct_handoff_receive` / `atct_role` | 成功 | MCP。sandbox を通らない |
+| 対照: `printf ... > /tmp/...` | 0 | workspace 外の書き込み |
 
-**したがって pane 報告に統一する案は、Codex の executor に対して実行不能である。**
+**aqua の警告は致命的ではない。**`--version` と `--help` は同じ警告を出して exit 0 で返る。
+`Error: Os { ... }` は `agent` 系にだけ現れる。
+
+**止めているのは socket である。**`HERDR_SOCKET_PATH` は `~/.config/herdr/herdr.sock` で、
+`workspace-write` はホーム配下への書き込みを許さない。**Unix socket への connect は
+socket ファイルへの書き込み権限を要求するので、`herdr agent` はここで落ちる。**
+
+**結論は変わらないが、原因は変わる。**
+
+- **shell 経由の報告コマンドは Codex の executor から実行できない。**これは 2 回とも同じ
+- **原因は aqua のシムではなく herdr の socket の位置である。**
+  したがって `herdr` を `"$HERDR_BIN_PATH"` に置き換える回避策は効かない。
+  シムは元から通っていた
+- **MCP は sandbox を通らないので通る**
+
+**pane 報告に統一する案は、Codex の executor に対して実行不能である。**
 禁止した側を選ぶと、その executor は報告手段を 1 つも持たない。
+
+**ただし D1 はこの実測だけに依存していない。**仮に shell 経由が通ったとしても、
+D1 の理由 1（178 の指示との衝突）と理由 3（ダッシュボードに残る）は成立する。
+**この実測は D1 を決めたのではなく、pane 案が技術的にも不可能であることを足しただけである。**
 
 ### D2. 禁止は一括ではなく、名指しの許可リストと名指しの禁止リストにする
 

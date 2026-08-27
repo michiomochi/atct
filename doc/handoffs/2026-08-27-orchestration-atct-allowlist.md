@@ -113,21 +113,29 @@ executor が「ATCT を呼んでよい」と解釈した瞬間、goal スコー�
 
 ### 実測: Codex の executor は shell 経由で報告できない（2026-08-27）
 
-    codex-cli 0.148.0-alpha.21
+    codex-cli 0.148.0-alpha.21 / herdr 0.8.2
     ~/.codex/config.toml   sandbox_mode = "workspace-write" / approval_policy = "on-request"
+    HERDR_SOCKET_PATH      ~/.config/herdr/herdr.sock
 
-同じ pane で 2 経路を測った。
+同じ pane で、シムの起動と socket 接続を分けて測った。
 
-| 経路 | 結果 |
-|---|---|
-| MCP: `atct_session_identify` / `atct_handoff_receive` / `atct_role` | **3 つとも成功。**`atct_role` は `matches: true` |
-| shell: `which herdr` | exit 0（PATH もシムも在る） |
-| shell: `herdr agent get <相手>` | **exit 1.** `aqua WARNING: timestamp.txt を open: operation not permitted` / `PermissionDenied` |
-| shell: `herdr agent prompt <相手> '...'` | **exit 1.** 同じ `PermissionDenied` |
-| 対照: `printf ... > /tmp/...` | exit 0、読み戻しも成功 |
+| コマンド | exit | 何に触るか |
+|---|---|---|
+| `herdr --version` | **0**（`herdr 0.8.2`） | シムのみ |
+| `herdr --help` | **0** | シムのみ |
+| `herdr agent get <name>` | **1** | socket |
+| `herdr agent prompt <name> '...'` | **1** | socket |
+| MCP: `atct_session_identify` / `atct_handoff_receive` / `atct_role` | 成功 | MCP |
+| 対照: `printf ... > /tmp/...` | 0 | workspace 外 |
 
-**`/tmp` へは書けて `herdr` は弾かれる。**全面的な sandbox 拒否ではなく、
-**aqua のシムがホーム配下へ `timestamp.txt` を書く段階が `workspace-write` の境界に当たっている。**
+**aqua の `timestamp.txt` の警告は致命的ではない。**`--version` も `--help` も同じ警告を出して
+exit 0 で返る。`Error: Os { ... }` は `agent` 系にだけ現れる。
+
+**止めているのは socket である。**`HERDR_SOCKET_PATH` はホーム配下にあり、
+`workspace-write` はそこへの書き込みを許さない。Unix socket への connect は
+socket ファイルへの書き込み権限を要求するため、`herdr agent` はここで落ちる。
+
+**`herdr` を `"$HERDR_BIN_PATH"` に置き換える回避策は効かない。**シムは元から通っている。
 
 **したがって完了報告を pane に統一する案は、Codex の executor に対して実行不能である。**
 禁止した側を選ぶと、その executor は報告手段を 1 つも持たない。
