@@ -129,13 +129,12 @@ func TestWatchEmitsHumanDecisionEventsOnly(t *testing.T) {
 
 	got := output.String()
 	want := "atct decision answered (decision_id: human)\n" +
-		"atct decision default applied (decision_id: default)\n" +
 		"atct decision rejected (decision_id: rejected)\n" +
 		"atct decision approved (decision_id: approved)\n"
 	if got != want {
 		t.Fatalf("watch output = %q, want %q", got, want)
 	}
-	for _, id := range []string{"created", "applied", "withdrawn"} {
+	for _, id := range []string{"created", "applied", "withdrawn", "default"} {
 		if strings.Contains(got, "decision_id: "+id) {
 			t.Errorf("watch output contains suppressed decision %q: %q", id, got)
 		}

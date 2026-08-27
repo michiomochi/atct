@@ -238,6 +238,7 @@ func watchLoopWithEnsureAndProjectIDAndGoal(ctx context.Context, out io.Writer, 
 		retryInterval = watchReconnectInterval
 	}
 	delivered := make(map[watchDeliveryKey]struct{})
+	scopeFilter := newWatchScopeFilter(goalID)
 	// Keep only the last rendered wakeup content in this watch loop. On daemon
 	// restart the daemon forgets its history, but this watch retains its last
 	// content across reconnects and suppresses an unchanged first post-restart
@@ -299,12 +300,15 @@ func watchLoopWithEnsureAndProjectIDAndGoal(ctx context.Context, out io.Writer, 
 			if filterProjectID != "" && decision.ProjectID != "" && decision.ProjectID != filterProjectID {
 				continue
 			}
+			if !scopeFilter.delivers("decision.answered", decision) {
+				continue
+			}
 			if err := emitWatchDecisionWithState(out, "decision.answered", decision, delivered, &lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered); err != nil {
 				return err
 			}
 		}
 
-		if err := consumeWatchEventsWithStateAndGoal(ctx, client, baseURL, filterProjectID, goalID, out, watchKeepaliveTimeout, delivered, &lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered); err != nil && ctx.Err() == nil {
+		if err := consumeWatchEventsWithStateAndGoal(ctx, client, baseURL, filterProjectID, goalID, out, watchKeepaliveTimeout, delivered, &lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered, scopeFilter); err != nil && ctx.Err() == nil {
 			if err := recoverDaemon(); err != nil {
 				return err
 			}
@@ -454,10 +458,10 @@ func consumeWatchEventsWithTimeout(ctx context.Context, client *http.Client, bas
 }
 
 func consumeWatchEventsWithState(ctx context.Context, client *http.Client, baseURL, projectID string, out io.Writer, keepaliveTimeout time.Duration, delivered map[watchDeliveryKey]struct{}, lastWakeupContent *string, wakeupDiscrepancyDelivered map[watchWakeupDeliveryKey]struct{}, detectionDelivered map[watchDetectionDeliveryKey]struct{}) error {
-	return consumeWatchEventsWithStateAndGoal(ctx, client, baseURL, projectID, "", out, keepaliveTimeout, delivered, lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered)
+	return consumeWatchEventsWithStateAndGoal(ctx, client, baseURL, projectID, "", out, keepaliveTimeout, delivered, lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered, newWatchPassThroughFilter())
 }
 
-func consumeWatchEventsWithStateAndGoal(ctx context.Context, client *http.Client, baseURL, projectID, goalID string, out io.Writer, keepaliveTimeout time.Duration, delivered map[watchDeliveryKey]struct{}, lastWakeupContent *string, wakeupDiscrepancyDelivered map[watchWakeupDeliveryKey]struct{}, detectionDelivered map[watchDetectionDeliveryKey]struct{}) error {
+func consumeWatchEventsWithStateAndGoal(ctx context.Context, client *http.Client, baseURL, projectID, goalID string, out io.Writer, keepaliveTimeout time.Duration, delivered map[watchDeliveryKey]struct{}, lastWakeupContent *string, wakeupDiscrepancyDelivered map[watchWakeupDeliveryKey]struct{}, detectionDelivered map[watchDetectionDeliveryKey]struct{}, scopeFilter *watchScopeFilter) error {
 	eventsURL, err := watchEventsURLWithGoal(baseURL, projectID, goalID)
 	if err != nil {
 		return err
@@ -524,6 +528,9 @@ func consumeWatchEventsWithStateAndGoal(ctx context.Context, client *http.Client
 				return fmt.Errorf("decode SSE event %s: %w", frame.name, err)
 			}
 			if projectID != "" && decision.ProjectID != "" && decision.ProjectID != projectID {
+				continue
+			}
+			if !scopeFilter.delivers(frame.name, decision) {
 				continue
 			}
 			if err := emitWatchDecisionWithState(out, frame.name, decision, delivered, lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered); err != nil {
