@@ -56,6 +56,13 @@
 ここを fail-closed にすると、**復帰させたい相手にだけ何も返らなくなる。**
 だから `goal.list` は project 全体を返す。**ただし黙って返さない。**
 
+### ゴール本文が挙げていた `session.identify` は、今は決定を返さない
+
+ゴール本文は呼び手として `handler.go:552 session.identify（orphaned_decisions）` を挙げていたが、
+**現在の `case "session.identify"` は `agent_session_id` と `reattached` の 2 つしか返さない。**
+`orphaned_decisions` を返す経路は `goal.list` に移っている（群 B）。
+**呼び手は 2 群で全部である。**
+
 ## 決定
 
 **群 A は「要求されたゴール」で絞る。群 B は project 全体を保ち、絞れていないことを申告する。**
