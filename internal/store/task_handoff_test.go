@@ -141,6 +141,27 @@ func addTaskHandoffDirect(t *testing.T, s *Store, handoffID string, taskID int64
 	}
 }
 
+func waitForHandoffReported(t *testing.T, events <-chan DecisionEvent) DetectionEvent {
+	t.Helper()
+
+	timer := time.NewTimer(time.Second)
+	defer timer.Stop()
+	select {
+	case event := <-events:
+		if event.Name != EventHandoffReported {
+			t.Fatalf("event name = %q, want %q", event.Name, EventHandoffReported)
+		}
+		detection, ok := event.Data.(DetectionEvent)
+		if !ok {
+			t.Fatalf("event data type = %T, want DetectionEvent", event.Data)
+		}
+		return detection
+	case <-timer.C:
+		t.Fatal("timed out waiting for handoff_reported event")
+	}
+	return DetectionEvent{}
+}
+
 func TestTaskHandoffRequestReceiveAndComplete(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
@@ -217,6 +238,44 @@ func TestTaskHandoffReportsAreStored(t *testing.T) {
 	}
 }
 
+func TestCompleteTaskHandoffPublishesReportedEvent(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	taskID := addTestTasks(t, s, 1)[0]
+	addTestAgentSession(t, s, "publish-task-requester")
+	addTestAgentSession(t, s, "publish-task-receiver")
+	handoffID := "publish-task-handoff"
+	addRequestOnlyTaskHandoff(t, s, handoffID, taskID, "publish-task-requester")
+	if _, err := s.ReceiveTaskHandoff(ctx, handoffID, taskID, testSessionID("publish-task-receiver")); err != nil {
+		t.Fatalf("ReceiveTaskHandoff: %v", err)
+	}
+
+	goalID, err := sqlcgen.New(s.DB()).GetTaskGoalID(ctx, taskID)
+	if err != nil {
+		t.Fatalf("GetTaskGoalID: %v", err)
+	}
+	goal, err := s.GetGoal(ctx, goalID)
+	if err != nil {
+		t.Fatalf("GetGoal: %v", err)
+	}
+	events, cancel := s.SubscribeEvents()
+	defer cancel()
+
+	const report = "task completion report"
+	completed, err := s.CompleteTaskHandoff(ctx, handoffID, taskID, report)
+	if err != nil {
+		t.Fatalf("CompleteTaskHandoff: %v", err)
+	}
+	detection := waitForHandoffReported(t, events)
+
+	if completed.ID != handoffID || completed.CompletedReportAt == nil || completed.CompleteReport != report {
+		t.Fatalf("completed handoff = %+v, want report %q", completed, report)
+	}
+	if detection.DetectionID == "" || detection.ProjectID != goal.ProjectID || detection.GoalID != goalID || detection.TaskID != taskID || detection.HandoffID != handoffID || detection.CompleteReport != report {
+		t.Fatalf("reported detection = %+v, want project=%d goal=%d task=%d handoff=%q report=%q", detection, goal.ProjectID, goalID, taskID, handoffID, report)
+	}
+}
+
 func TestTaskHandoffReportsMayBeOmitted(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
@@ -259,12 +318,26 @@ func TestTaskHandoffAllowsSecondHandoffForSameTask(t *testing.T) {
 	if _, err := s.ReceiveTaskHandoff(ctx, first.ID, taskID, testSessionID("dead-receiver")); err != nil {
 		t.Fatalf("ReceiveTaskHandoff failed: %v", err)
 	}
+	events, cancel := s.SubscribeEvents()
+	defer cancel()
 	second, err := s.RequestTaskHandoff(ctx, "handoff-2", taskID, testSessionID("requester"), "")
 	if err != nil {
 		t.Fatalf("second RequestTaskHandoff failed: %v", err)
 	}
+	detection := waitForHandoffReported(t, events)
 	if first.ID == second.ID {
 		t.Fatalf("same task handoffs must have distinct IDs: %q", first.ID)
+	}
+	goalID, err := sqlcgen.New(s.DB()).GetTaskGoalID(ctx, taskID)
+	if err != nil {
+		t.Fatalf("GetTaskGoalID failed: %v", err)
+	}
+	goal, err := s.GetGoal(ctx, goalID)
+	if err != nil {
+		t.Fatalf("GetGoal failed: %v", err)
+	}
+	if detection.DetectionID == "" || detection.ProjectID != goal.ProjectID || detection.GoalID != goalID || detection.TaskID != taskID || detection.HandoffID != first.ID || detection.CompleteReport != "セッションが停止した" {
+		t.Fatalf("reclaimed handoff detection = %+v, want project=%d goal=%d task=%d handoff=%q", detection, goal.ProjectID, goalID, taskID, first.ID)
 	}
 	first, err = s.GetTaskHandoff(ctx, first.ID)
 	if err != nil {
