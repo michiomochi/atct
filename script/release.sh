@@ -84,6 +84,29 @@ bash tests/wrapper_test.bash >/dev/null
 bash script/schema-check.sh
 ( cd web && pnpm test >/dev/null && pnpm typecheck >/dev/null )
 
+# web/embed.go bakes web/dist into the binary with go:embed all:dist, so the
+# release carries whatever is in dist at this moment. pnpm build only adds, it
+# never removes, so stale chunks pile up and the HTML can end up pointing at an
+# old generation: on 2026-08-28 v0.58.0 shipped 174 files with 20 StateMessage
+# generations and the browser kept using the pre-WebSocket one.
+#
+# Clearing dist before the build is what fixes it. Keep .gitkeep, because
+# go:embed rejects an empty directory (see the comment in web/embed.go).
+#
+# The check below is on the count, not on duplicate names: index.*.js legitimately
+# appears twice because separate pages emit their own chunk, so a name-collision
+# check reports a false failure. A clean build of this app is ~11 files; if dist
+# is far larger, the clear did not happen.
+echo "==> web"
+find web/dist -mindepth 1 -not -name '.gitkeep' -delete
+[[ -f web/dist/.gitkeep ]] || { echo 'web/dist/.gitkeep was removed; go:embed needs it' >&2; exit 1; }
+( cd web && pnpm build >/dev/null )
+asset_count="$(find web/dist -type f -not -name '.gitkeep' | wc -l | tr -d ' ')"
+if (( asset_count > 60 )); then
+  echo "web/dist holds $asset_count files after a clean build; stale generations are still there" >&2
+  exit 1
+fi
+
 echo "==> bump"
 python3 - "$version" <<'PY'
 import json, pathlib, sys
