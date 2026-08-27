@@ -49,19 +49,17 @@ type GoalUpdateContentIn struct {
 }
 
 type TaskUpdateContentIn struct {
-	TaskID      mcpID     `json:"task_id"`
-	Title       *string   `json:"title,omitempty"`
-	Description *string   `json:"description,omitempty"`
-	Files       *[]string `json:"files,omitempty"`
+	TaskID      mcpID   `json:"task_id"`
+	Title       *string `json:"title,omitempty"`
+	Description *string `json:"description,omitempty"`
 }
 
 type TaskDeclareIn struct {
-	GoalID         mcpID      `json:"goal_id"`
-	Titles         []string   `json:"titles" jsonschema:"task titles decomposed from the goal, in execution order"`
-	Descriptions   []string   `json:"descriptions" jsonschema:"task descriptions explaining the completion criteria and assumptions for each title, in execution order"`
-	Files          [][]string `json:"files,omitempty" jsonschema:"files touched by each title, in the same order; paths are relative to the project root"`
-	IdempotencyKey string     `json:"idempotency_key" jsonschema:"key that prevents duplicate tasks when the same declaration is retried"`
-	Agent          string     `json:"agent"`
+	GoalID         mcpID    `json:"goal_id"`
+	Titles         []string `json:"titles" jsonschema:"task titles decomposed from the goal, in execution order"`
+	Descriptions   []string `json:"descriptions" jsonschema:"task descriptions explaining the completion criteria and assumptions for each title, in execution order"`
+	IdempotencyKey string   `json:"idempotency_key" jsonschema:"key that prevents duplicate tasks when the same declaration is retried"`
+	Agent          string   `json:"agent"`
 }
 
 type TaskClaimIn struct {
@@ -593,9 +591,6 @@ func Register(server *mcp.Server, c *Client, agentSessionID int64) {
 			"agent_session_id":          sessionID.Get(),
 			"include_unapplied_answers": true,
 		}
-		if in.Files != nil {
-			params["files"] = in.Files
-		}
 		return callWithUnappliedDecisions(ctx, c, "task.declare", params)
 	})
 
@@ -731,7 +726,7 @@ func Register(server *mcp.Server, c *Client, agentSessionID int64) {
 
 	addMCPTool[TaskUpdateContentIn, RawWithUnappliedDecisions](server, &mcp.Tool{
 		Name:         "atct_task_update_content",
-		Description:  "Rewrite a task's content, including the files it touches. Only todo and doing tasks can be updated; done and dropped tasks are refused. Only the session holding the task's handoff or its goal's handoff may rewrite a task that has one.",
+		Description:  "Rewrite a task's title or description. Only todo and doing tasks can be updated; done and dropped tasks are refused. Only the session holding the task's handoff or its goal's handoff may rewrite a task that has one.",
 		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in TaskUpdateContentIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
 		params := map[string]any{
@@ -743,9 +738,6 @@ func Register(server *mcp.Server, c *Client, agentSessionID int64) {
 		}
 		if in.Description != nil {
 			params["description"] = *in.Description
-		}
-		if in.Files != nil {
-			params["files"] = *in.Files
 		}
 		return callWithUnappliedDecisions(ctx, c, "task.update_content", params)
 	})

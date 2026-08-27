@@ -74,7 +74,6 @@ type Task struct {
 	Description  string     `json:"description"`
 	Status       TaskStatus `json:"status"`
 	Agent        string     `json:"agent"`
-	Files        []string   `json:"files"`
 	Order        int        `json:"order"`
 	DeclareKey   string     `json:"declare_key"`
 	Declared     *bool      `json:"declared,omitempty"`

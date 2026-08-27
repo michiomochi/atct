@@ -22,7 +22,7 @@ func TestTaskClaimNotificationDoesNotApplyDecision(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
-	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "declare-1", []string{"task"}, []string{"Complete the task before applying its pending decision."}, nil)
+	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "declare-1", []string{"task"}, []string{"Complete the task before applying its pending decision."})
 	if err != nil {
 		t.Fatalf("DeclareTasks: %v", err)
 	}
@@ -84,11 +84,11 @@ func TestGoalListNotificationIsProjectScoped(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGoal(other): %v", err)
 	}
-	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "declare-project", []string{"project task"}, []string{"Complete the project task before returning its pending response."}, nil)
+	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "declare-project", []string{"project task"}, []string{"Complete the project task before returning its pending response."})
 	if err != nil {
 		t.Fatalf("DeclareTasks(project): %v", err)
 	}
-	otherTasks, err := s.DeclareTasks(ctx, otherGoal.ID, "agent", "declare-other", []string{"other task"}, []string{"Complete the task in the other project without mixing responses."}, nil)
+	otherTasks, err := s.DeclareTasks(ctx, otherGoal.ID, "agent", "declare-other", []string{"other task"}, []string{"Complete the task in the other project without mixing responses."})
 	if err != nil {
 		t.Fatalf("DeclareTasks(other): %v", err)
 	}
@@ -123,7 +123,7 @@ func TestDecisionPollNotificationExcludesPolledDecision(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
-	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "declare-1", []string{"poll target", "other task"}, []string{"Complete the task whose decision is being polled.", "Complete the other task independently."}, nil)
+	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "declare-1", []string{"poll target", "other task"}, []string{"Complete the task whose decision is being polled.", "Complete the other task independently."})
 	if err != nil {
 		t.Fatalf("DeclareTasks: %v", err)
 	}
@@ -158,7 +158,7 @@ func TestDecisionAskParkedIncludesClaimableTasks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGoal(parked): %v", err)
 	}
-	parked, err := s.DeclareTasks(ctx, parkGoal.ID, "agent", "declare-parked", []string{"parked task"}, []string{"Complete the parked task after the human response arrives."}, nil)
+	parked, err := s.DeclareTasks(ctx, parkGoal.ID, "agent", "declare-parked", []string{"parked task"}, []string{"Complete the parked task after the human response arrives."})
 	if err != nil {
 		t.Fatalf("DeclareTasks(parked): %v", err)
 	}
@@ -174,7 +174,7 @@ func TestDecisionAskParkedIncludesClaimableTasks(t *testing.T) {
 		"Complete the second free candidate task.",
 		"Complete the third free candidate task.",
 		"Complete the fourth free candidate task.",
-	}, nil)
+	})
 	if err != nil {
 		t.Fatalf("DeclareTasks(candidates): %v", err)
 	}
@@ -353,7 +353,7 @@ func TestTaskUpdateWithoutCommitsPreservesExistingBehavior(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
-	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "task-update-no-commits", []string{"task update"}, []string{"Complete the task update."}, nil)
+	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "task-update-no-commits", []string{"task update"}, []string{"Complete the task update."})
 	if err != nil {
 		t.Fatalf("DeclareTasks: %v", err)
 	}
@@ -394,7 +394,7 @@ func TestTaskUpdateWithUnknownCommitKeepsStatusUnchanged(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
-	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "task-update-unknown-commit", []string{"task update"}, []string{"Complete the task update."}, nil)
+	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "task-update-unknown-commit", []string{"task update"}, []string{"Complete the task update."})
 	if err != nil {
 		t.Fatalf("DeclareTasks: %v", err)
 	}
@@ -428,7 +428,7 @@ func TestTaskUpdateWithDuplicateCommitLinksOnce(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
-	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "task-update-duplicate-commit", []string{"task update"}, []string{"Complete the task update."}, nil)
+	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "task-update-duplicate-commit", []string{"task update"}, []string{"Complete the task update."})
 	if err != nil {
 		t.Fatalf("DeclareTasks: %v", err)
 	}
@@ -603,7 +603,7 @@ func newProjectScopeFixture(t *testing.T) projectScopeFixture {
 	if err != nil {
 		t.Fatalf("CreateGoal(complete): %v", err)
 	}
-	targetTasks, err := s.DeclareTasks(ctx, targetGoal.ID, "agent", "target-initial", []string{"target task"}, []string{"Complete the target task after selecting its project."}, nil)
+	targetTasks, err := s.DeclareTasks(ctx, targetGoal.ID, "agent", "target-initial", []string{"target task"}, []string{"Complete the target task after selecting its project."})
 	if err != nil {
 		t.Fatalf("DeclareTasks(target): %v", err)
 	}

@@ -128,7 +128,7 @@ export const ja: Record<TranslationKey, string> = {
   "task.detail.commitDiffOmitted": "他 {{count}} 行は表示していません",
   "task.detail.commitDiffEmpty": "表示できる差分がありません",
   "task.detail.commitDiffBinary": "バイナリ",
-  "task.detail.files": "触るファイル / declare key",
+  "task.detail.declareKey": "declare key",
   "task.detail.agent": "担当",
   "task.detail.claimedRun": "claim した run",
   "task.detail.order": "順序",

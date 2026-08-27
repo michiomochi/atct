@@ -127,7 +127,7 @@ export const en = {
   "task.detail.commitDiffOmitted": "{{count}} more lines not shown",
   "task.detail.commitDiffEmpty": "No diff to show",
   "task.detail.commitDiffBinary": "binary",
-  "task.detail.files": "Files / declare key",
+  "task.detail.declareKey": "Declare key",
   "task.detail.agent": "Agent",
   "task.detail.claimedRun": "Claimed run",
   "task.detail.order": "Order",

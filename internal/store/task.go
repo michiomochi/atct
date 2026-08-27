@@ -3,7 +3,6 @@ package store
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -16,62 +15,15 @@ import (
 
 var ErrTaskNotFound = errors.New("task not found")
 var ErrTaskAlreadyClaimed = errors.New("task already claimed")
-var ErrTaskFileConflict = errors.New("task file conflict")
 var ErrTaskNotEditable = errors.New("task not editable")
 var ErrTaskContentNotOwned = errors.New("task content not owned")
 
-const maxTaskFileConflictCandidates = 8
 const maxOpenDecisionQuestionLength = 160
 
 type openTaskDecision struct {
 	ID       int64
 	Question string
 }
-
-// TaskConflictCandidate identifies a task that can be claimed instead of the
-// task that hit a file conflict.
-type TaskConflictCandidate struct {
-	TaskID int64  `json:"task_id"`
-	Title  string `json:"title"`
-}
-
-// TaskFileConflictError keeps the conflict details and actionable alternatives
-// while preserving errors.Is(err, ErrTaskFileConflict) for existing callers.
-type TaskFileConflictError struct {
-	TaskID                int64
-	Title                 string
-	ConflictTaskID        int64
-	ConflictTaskTitle     string
-	File                  string
-	Candidates            []TaskConflictCandidate
-	OmittedCandidateCount int
-}
-
-func (e *TaskFileConflictError) Error() string {
-	candidates := []byte("[]")
-	if len(e.Candidates) > 0 {
-		encoded, err := json.Marshal(e.Candidates)
-		if err == nil {
-			candidates = encoded
-		}
-	}
-	message := fmt.Sprintf(
-		"%s: task %d (%s) conflicts with task %d (%s) on file %q; alternatives: %s",
-		ErrTaskFileConflict,
-		e.TaskID,
-		e.Title,
-		e.ConflictTaskID,
-		e.ConflictTaskTitle,
-		e.File,
-		candidates,
-	)
-	if e.OmittedCandidateCount > 0 {
-		message += fmt.Sprintf("; omitted_candidates: %d", e.OmittedCandidateCount)
-	}
-	return message
-}
-
-func (e *TaskFileConflictError) Unwrap() error { return ErrTaskFileConflict }
 
 func goalNotActiveError(goalID int64, status domain.GoalStatus, beforeAction, action string) error {
 	var stateMessage string
@@ -91,26 +43,13 @@ func goalNotActiveError(goalID int64, status domain.GoalStatus, beforeAction, ac
 // DeclareTasks derives declare_key from the idempotency key and task position.
 // The unique (goal_id, declare_key) constraint absorbs duplicate declarations.
 // Agents retry and repeat declarations after context compaction, so this prevents task multiplication.
-func (s *Store) DeclareTasks(ctx context.Context, goalID int64, agent, idempotencyKey string, titles []string, descriptions []string, declaredFiles ...[][]string) ([]domain.Task, error) {
+func (s *Store) DeclareTasks(ctx context.Context, goalID int64, agent, idempotencyKey string, titles []string, descriptions []string) ([]domain.Task, error) {
 	if len(descriptions) != len(titles) {
 		return nil, fmt.Errorf("declare tasks: descriptions count %d does not match titles count %d", len(descriptions), len(titles))
 	}
 	for i, description := range descriptions {
 		if strings.TrimSpace(description) == "" {
 			return nil, fmt.Errorf("declare tasks: description %d is empty", i)
-		}
-	}
-
-	filesByTask := make([][]string, len(titles))
-	if len(declaredFiles) > 1 {
-		return nil, fmt.Errorf("declare tasks: expected at most one files list, got %d", len(declaredFiles))
-	}
-	if len(declaredFiles) == 1 {
-		if len(declaredFiles[0]) != 0 && len(declaredFiles[0]) != len(titles) {
-			return nil, fmt.Errorf("declare tasks: files count %d does not match titles count %d", len(declaredFiles[0]), len(titles))
-		}
-		if len(declaredFiles[0]) == len(titles) {
-			filesByTask = declaredFiles[0]
 		}
 	}
 
@@ -145,10 +84,6 @@ func (s *Store) DeclareTasks(ctx context.Context, goalID int64, agent, idempoten
 	}
 	for i, title := range titles {
 		declareKey := fmt.Sprintf("%s#%d", idempotencyKey, i)
-		filesJSON, err := marshalTaskFiles(filesByTask[i])
-		if err != nil {
-			return nil, fmt.Errorf("encode task %d files: %w", i, err)
-		}
 		_, alreadyExists := existingDeclareKeys[declareKey]
 		declaredByKey[declareKey] = !alreadyExists
 		_, err = q.CreateTask(ctx, sqlcgen.CreateTaskParams{
@@ -157,7 +92,6 @@ func (s *Store) DeclareTasks(ctx context.Context, goalID int64, agent, idempoten
 			Description:  descriptions[i],
 			Status:       string(domain.TaskTodo),
 			Agent:        agent,
-			Files:        filesJSON,
 			SortOrder:    maxSortOrder + 1 + int64(i),
 			DeclareKey:   declareKey,
 			SnoozedUntil: sql.NullString{},
@@ -186,31 +120,6 @@ func (s *Store) DeclareTasks(ctx context.Context, goalID int64, agent, idempoten
 	return tasks, nil
 }
 
-func marshalTaskFiles(files []string) (string, error) {
-	if len(files) == 0 {
-		return "[]", nil
-	}
-	b, err := json.Marshal(files)
-	if err != nil {
-		return "", err
-	}
-	return string(b), nil
-}
-
-func unmarshalTaskFiles(filesJSON string) ([]string, error) {
-	if filesJSON == "" {
-		return []string{}, nil
-	}
-	var files []string
-	if err := json.Unmarshal([]byte(filesJSON), &files); err != nil {
-		return nil, err
-	}
-	if files == nil {
-		return []string{}, nil
-	}
-	return files, nil
-}
-
 func (s *Store) ListTasks(ctx context.Context, goalID int64) ([]domain.Task, error) {
 	rows, err := taskQueries(s).ListTasks(ctx, goalID)
 	if err != nil {
@@ -219,7 +128,7 @@ func (s *Store) ListTasks(ctx context.Context, goalID int64) ([]domain.Task, err
 
 	var out []domain.Task
 	for _, row := range rows {
-		tk, err := taskFromFields(row.ID, row.GoalID, row.Title, row.Description, row.Status, row.Agent, row.Files, row.SortOrder, row.DeclareKey, row.SnoozedUntil, row.CreatedAt, row.UpdatedAt)
+		tk, err := taskFromFields(row.ID, row.GoalID, row.Title, row.Description, row.Status, row.Agent, row.SortOrder, row.DeclareKey, row.SnoozedUntil, row.CreatedAt, row.UpdatedAt)
 		if err != nil {
 			return nil, err
 		}
@@ -323,11 +232,6 @@ func taskFromRow(row sqlcgen.Task) (domain.Task, error) {
 		Order:       int(row.SortOrder),
 		DeclareKey:  row.DeclareKey,
 	}
-	files, err := unmarshalTaskFiles(row.Files)
-	if err != nil {
-		return domain.Task{}, fmt.Errorf("parse files: %w", err)
-	}
-	tk.Files = files
 	if row.SnoozedUntil.Valid {
 		t, err := time.Parse(time.RFC3339Nano, row.SnoozedUntil.String)
 		if err != nil {
@@ -335,17 +239,21 @@ func taskFromRow(row sqlcgen.Task) (domain.Task, error) {
 		}
 		tk.SnoozedUntil = &t
 	}
-	if tk.CreatedAt, err = time.Parse(time.RFC3339, row.CreatedAt); err != nil {
+	createdAt, err := time.Parse(time.RFC3339, row.CreatedAt)
+	if err != nil {
 		return domain.Task{}, fmt.Errorf("parse created_at: %w", err)
 	}
-	if tk.UpdatedAt, err = time.Parse(time.RFC3339, row.UpdatedAt); err != nil {
+	tk.CreatedAt = createdAt
+	updatedAt, err := time.Parse(time.RFC3339, row.UpdatedAt)
+	if err != nil {
 		return domain.Task{}, fmt.Errorf("parse updated_at: %w", err)
 	}
+	tk.UpdatedAt = updatedAt
 	return tk, nil
 }
 
-func taskFromFields(id, goalID int64, title, description, status, agent, files string, sortOrder int64, declareKey string, snoozedUntil sql.NullString, createdAt, updatedAt string) (domain.Task, error) {
-	return taskFromRow(sqlcgen.Task{ID: id, GoalID: goalID, Title: title, Description: description, Status: status, Agent: agent, Files: files, SortOrder: sortOrder, DeclareKey: declareKey, SnoozedUntil: snoozedUntil, CreatedAt: createdAt, UpdatedAt: updatedAt})
+func taskFromFields(id, goalID int64, title, description, status, agent string, sortOrder int64, declareKey string, snoozedUntil sql.NullString, createdAt, updatedAt string) (domain.Task, error) {
+	return taskFromRow(sqlcgen.Task{ID: id, GoalID: goalID, Title: title, Description: description, Status: status, Agent: agent, SortOrder: sortOrder, DeclareKey: declareKey, SnoozedUntil: snoozedUntil, CreatedAt: createdAt, UpdatedAt: updatedAt})
 }
 
 func taskQueries(s *Store) *sqlcgen.Queries {
@@ -434,8 +342,8 @@ func (s *Store) authorizeTaskContentUpdate(ctx context.Context, taskID, agentSes
 	return fmt.Errorf("%w: task %d can only be updated by the task or goal handoff holder", ErrTaskContentNotOwned, taskID)
 }
 
-func (s *Store) UpdateTaskContent(ctx context.Context, taskID int64, title, description *string, files *[]string, agentSessionID int64) (domain.Task, error) {
-	if title == nil && description == nil && files == nil {
+func (s *Store) UpdateTaskContent(ctx context.Context, taskID int64, title, description *string, agentSessionID int64) (domain.Task, error) {
+	if title == nil && description == nil {
 		return domain.Task{}, errors.New("task content update requires at least one field")
 	}
 	if taskID == 0 {
@@ -445,25 +353,16 @@ func (s *Store) UpdateTaskContent(ctx context.Context, taskID int64, title, desc
 		return domain.Task{}, err
 	}
 
-	var titleValue, descriptionValue, filesValue sql.NullString
+	var titleValue, descriptionValue sql.NullString
 	if title != nil {
 		titleValue = sql.NullString{String: *title, Valid: true}
 	}
 	if description != nil {
 		descriptionValue = sql.NullString{String: *description, Valid: true}
 	}
-	if files != nil {
-		filesJSON, err := marshalTaskFiles(*files)
-		if err != nil {
-			return domain.Task{}, fmt.Errorf("encode task files: %w", err)
-		}
-		filesValue = sql.NullString{String: filesJSON, Valid: true}
-	}
-
 	result, err := sqlcgen.New(s.db).UpdateTaskContent(ctx, sqlcgen.UpdateTaskContentParams{
 		Title:       titleValue,
 		Description: descriptionValue,
-		Files:       filesValue,
 		UpdatedAt:   time.Now().UTC().Format(time.RFC3339),
 		ID:          taskID,
 	})
@@ -638,16 +537,6 @@ func (s *Store) ClaimTask(ctx context.Context, taskID int64, agentSessionID int6
 		return domain.Task{}, mapTaskClaimHandoffError(taskID, err)
 	}
 
-	files, err := unmarshalTaskFiles(task.Files)
-	if err != nil {
-		return domain.Task{}, fmt.Errorf("parse task files: %w", err)
-	}
-	if len(files) > 0 {
-		if err := rejectTaskFileConflict(ctx, s, q, task.GoalID, taskID, task.Title, files, agentSessionID); err != nil {
-			return domain.Task{}, err
-		}
-	}
-
 	if _, err := s.requestTaskHandoffForClaim(ctx, handoffID, taskID, agentSessionID); err != nil {
 		return domain.Task{}, mapTaskClaimHandoffError(taskID, err)
 	}
@@ -662,120 +551,6 @@ func mapTaskClaimHandoffError(taskID int64, err error) error {
 		return fmt.Errorf("%w: %d", ErrTaskAlreadyClaimed, taskID)
 	}
 	return err
-}
-
-type taskClaimConflictInfo struct {
-	ID    int64
-	Title string
-	Files []string
-}
-
-func rejectTaskFileConflict(ctx context.Context, s *Store, q *sqlcgen.Queries, goalID, taskID int64, title string, files []string, agentSessionID int64) error {
-	tasks, err := s.ListTasks(ctx, goalID)
-	if err != nil {
-		return fmt.Errorf("list tasks: %w", err)
-	}
-	handoffs, err := s.ListOpenTaskHandoffsForGoal(ctx, goalID)
-	if err != nil {
-		return fmt.Errorf("list open task handoffs: %w", err)
-	}
-	var claimedTasks []taskClaimConflictInfo
-	for _, task := range tasks {
-		if task.ID == taskID {
-			continue
-		}
-		if task.Status == domain.TaskDone || task.Status == domain.TaskDropped {
-			continue
-		}
-		handoff := handoffs[task.ID]
-		if handoff == nil || handoff.ReceivedAt == nil {
-			continue
-		}
-		ownerID := handoff.ReceivedBy
-		if ownerID == agentSessionID {
-			continue
-		}
-		claimedTasks = append(claimedTasks, taskClaimConflictInfo{
-			ID: task.ID, Title: task.Title, Files: task.Files,
-		})
-	}
-	for _, other := range claimedTasks {
-		if file, ok := firstOverlappingFile(files, other.Files); ok {
-			candidates, omitted, err := taskFileConflictCandidates(ctx, s, q, goalID, taskID, claimedTasks)
-			if err != nil {
-				return err
-			}
-			return &TaskFileConflictError{
-				TaskID:                taskID,
-				Title:                 title,
-				ConflictTaskID:        other.ID,
-				ConflictTaskTitle:     other.Title,
-				File:                  file,
-				Candidates:            candidates,
-				OmittedCandidateCount: omitted,
-			}
-		}
-	}
-	return nil
-}
-
-func taskFileConflictCandidates(ctx context.Context, s *Store, q *sqlcgen.Queries, goalID, taskID int64, claimedTasks []taskClaimConflictInfo) ([]TaskConflictCandidate, int, error) {
-	rows, err := q.ListTaskAlternatives(ctx, sqlcgen.ListTaskAlternativesParams{
-		GoalID: goalID,
-		ID:     taskID,
-	})
-	if err != nil {
-		return nil, 0, fmt.Errorf("query task alternatives: %w", err)
-	}
-
-	candidates := make([]TaskConflictCandidate, 0, maxTaskFileConflictCandidates)
-	var omitted int
-	for _, row := range rows {
-		if row.Status == string(domain.TaskDone) || row.Status == string(domain.TaskDropped) {
-			continue
-		}
-		handoff, err := s.openTaskHandoff(ctx, row.ID)
-		if err != nil {
-			return nil, 0, fmt.Errorf("lookup task alternative handoff: %w", err)
-		}
-		if handoff != nil {
-			continue
-		}
-		files, err := unmarshalTaskFiles(row.Files)
-		if err != nil {
-			return nil, 0, fmt.Errorf("parse task alternative files: %w", err)
-		}
-		candidate := taskClaimConflictInfo{ID: row.ID, Title: row.Title, Files: files}
-		blocked := false
-		for _, claimed := range claimedTasks {
-			if _, ok := firstOverlappingFile(candidate.Files, claimed.Files); ok {
-				blocked = true
-				break
-			}
-		}
-		if blocked {
-			continue
-		}
-		if len(candidates) >= maxTaskFileConflictCandidates {
-			omitted++
-			continue
-		}
-		candidates = append(candidates, TaskConflictCandidate{TaskID: candidate.ID, Title: candidate.Title})
-	}
-	return candidates, omitted, nil
-}
-
-func firstOverlappingFile(files, otherFiles []string) (string, bool) {
-	otherSet := make(map[string]struct{}, len(otherFiles))
-	for _, file := range otherFiles {
-		otherSet[file] = struct{}{}
-	}
-	for _, file := range files {
-		if _, ok := otherSet[file]; ok {
-			return file, true
-		}
-	}
-	return "", false
 }
 
 // ReleaseTaskForHuman clears a task claim for the human stale-claim release path.

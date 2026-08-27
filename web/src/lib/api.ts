@@ -56,7 +56,6 @@ export interface Task {
   status: string;
   snoozed_until?: string;
   agent: string;
-  files?: string[];
   order: number;
   declare_key: string;
   claimed_by: string;

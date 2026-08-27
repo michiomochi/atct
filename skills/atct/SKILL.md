@@ -42,8 +42,8 @@ it when the task was declared.
 
 ## Fix a declared task
 
-- After declaring a task, use `atct_task_update_content` to fix its `title`,
-  `description`, or `files`.
+- After declaring a task, use `atct_task_update_content` to fix its `title`
+  or `description`.
 - Only `todo` and `doing` tasks can be fixed. `done` and `dropped` tasks are
   rejected because changing them would change the basis for a completion report
   after the fact.

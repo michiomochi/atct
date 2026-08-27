@@ -57,7 +57,6 @@ CREATE TABLE IF NOT EXISTS tasks (
   description TEXT NOT NULL DEFAULT '',
   status     TEXT NOT NULL,
   agent      TEXT NOT NULL DEFAULT '',
-  files      TEXT NOT NULL DEFAULT '[]',
   sort_order INTEGER NOT NULL DEFAULT 0,
   declare_key TEXT NOT NULL,
   snoozed_until TEXT,

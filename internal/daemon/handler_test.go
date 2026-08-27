@@ -971,7 +971,6 @@ func TestDecisionAskClaimableTasksKeepsIdentityFieldsWithoutDescription(t *testi
 	declared, err := fixture.store.DeclareTasks(
 		context.Background(), fixture.emptyTaskGoal.ID, "contract-test", "decision-claimable-key",
 		[]string{"decision task", "claimable task"}, []string{"decision description", "claimable description"},
-		[][]string{{"internal/daemon/handler.go"}, {"internal/daemon/handler_test.go"}},
 	)
 	if err != nil {
 		t.Fatalf("DeclareTasks: %v", err)
@@ -1088,7 +1087,6 @@ func dispatchTaskDeclareForContractTest(t *testing.T, fixture goalListFixture, s
 		"idempotency_key":  idempotencyKey,
 		"titles":           []string{title},
 		"descriptions":     []string{description},
-		"files":            [][]string{{"internal/daemon/handler.go"}},
 		"agent_session_id": daemonTestSessionID(t, fixture.store, sessionID),
 	})
 	if err != nil {

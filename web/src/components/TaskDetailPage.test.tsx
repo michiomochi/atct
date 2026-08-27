@@ -235,7 +235,6 @@ function task(id: string, title: string, description = "", snoozedUntil?: string
     description,
     status: "todo",
     agent: "fixture-agent",
-    files: ["src/task.ts"],
     order: 0,
     declare_key: "fixture-declare",
     claimed_by: "fixture-run",
@@ -295,6 +294,14 @@ async function renderTask(response: TaskDetailResponse) {
 }
 
 describe("TaskDetailPage", () => {
+  it("shows the declare key as the only task file attribute", async () => {
+    const taskData = task("task-declare-key", "Task declare key");
+    await renderTask(detailResponse(taskData));
+
+    expect(screen.getByText("task.detail.declareKey")).not.toBeNull();
+    expect(screen.getByText("fixture-declare")).not.toBeNull();
+  });
+
   it("uses the task ID from the URL when Astro passes the sentinel ID", async () => {
     const taskData = task("task-from-url", "Task from URL");
     window.history.replaceState({}, "", `/tasks/${encodeURIComponent(taskData.id)}`);
