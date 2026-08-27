@@ -571,7 +571,10 @@ one-word decision inside a retrospective makes them ask again.
 
 1. Commit the goal's work.
 2. Close every task the goal declared.
-3. Fill in all six fields and call `atct_goal_complete`.
+3. Fill in all six fields and call `atct_goal_complete`. What a caller supplies
+   is a separate question from what the column stores: all six columns hold
+   non-empty text once the goal is `done`, so even "there was nothing here"
+   arrives as a written value.
 
 **Out of order:** Report first and the goal goes to the human for approval with
 zero commits and its tasks still `todo`. The dashboard says "completed" about work
