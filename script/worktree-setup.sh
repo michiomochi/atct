@@ -11,7 +11,9 @@
 set -euo pipefail
 
 goal_id="${1:-}"
-if [[ $# -ne 1 || ! "$goal_id" =~ ^[0-9a-f]{8,} ]]; then
+# Goal ids are integers since 34bbf32. The 8-hex form is the pre-numbering id
+# and is still accepted so worktrees created under the old scheme keep working.
+if [[ $# -ne 1 || ! "$goal_id" =~ ^([1-9][0-9]*|[0-9a-f]{8,})$ ]]; then
   echo "usage: script/worktree-setup.sh <goal-id>" >&2
   exit 2
 fi
