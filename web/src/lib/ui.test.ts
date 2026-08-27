@@ -25,6 +25,7 @@ import uiSource from "./ui.ts?raw";
 import type { Goal, TaskView } from "./api";
 import {
   DECISION_EVENT_NAMES,
+  activeSnoozeUntil,
   decisionAutoSettlementSeconds,
   decisionKindLabel,
   decisionRecommendationLabel,
@@ -296,6 +297,16 @@ describe("localized UI labels", () => {
     ["en", "done", 1, "Completed"],
   ])("labels task status %s/%s with %s open decisions as %s", (locale, status, openDecisionCount, expected) => {
     expect(taskStatusLabel(locale as Locale, status, openDecisionCount)).toBe(expected);
+  });
+
+  it("returns only valid future snooze deadlines", () => {
+    const future = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+    const past = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+
+    expect(activeSnoozeUntil(future)).toBe(future);
+    expect(activeSnoozeUntil(past)).toBeUndefined();
+    expect(activeSnoozeUntil(undefined)).toBeUndefined();
+    expect(activeSnoozeUntil("not-a-date")).toBeUndefined();
   });
 
   it.each([

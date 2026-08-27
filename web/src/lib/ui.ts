@@ -172,6 +172,12 @@ export function taskStatusLabel(locale: Locale, status: string, openDecisionCoun
   return statusLabel(locale, status);
 }
 
+export function activeSnoozeUntil(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) && timestamp > Date.now() ? value : undefined;
+}
+
 export function decisionKindLabel(locale: Locale, kind: string): string {
   const key = decisionKindKeys[kind];
   return key ? localized(key, locale) : kind;
