@@ -140,7 +140,6 @@ const statusKeys: Record<string, TranslationKey> = {
   todo: "status.task.todo",
   doing: "status.task.doing",
   done: "status.task.done",
-  blocked: "status.task.blocked",
   dropped: "status.task.dropped",
   active: "status.task.active",
   completed: "status.task.completed",
@@ -179,6 +178,12 @@ export function taskStatusLabel(
     return localized("status.task.doing", locale);
   }
   return statusLabel(locale, status);
+}
+
+export function activeSnoozeUntil(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) && timestamp > Date.now() ? value : undefined;
 }
 
 export function decisionKindLabel(locale: Locale, kind: string): string {

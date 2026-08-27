@@ -42,8 +42,8 @@ it when the task was declared.
 
 ## Fix a declared task
 
-- After declaring a task, use `atct_task_update_content` to fix its `title`,
-  `description`, or `files`.
+- After declaring a task, use `atct_task_update_content` to fix its `title`
+  or `description`.
 - Only `todo` and `doing` tasks can be fixed. `done` and `dropped` tasks are
   rejected because changing them would change the basis for a completion report
   after the fact.
@@ -161,7 +161,8 @@ that worker is started:
    > do not start work; return the task.
    >
    > When the work is complete, record completion by calling `atct_handoff_complete`
-   > with only the `task_id` provided in this request.
+   > with the `task_id` provided in this request and a `complete_report`. The
+   > `complete_report` must say what was done, what was verified, and paths changed.
 
 5. Keep one worker per task. Return a correction, review fix, follow-up
    question, or clarification for the same task to the same worker. Start a
@@ -229,8 +230,9 @@ that subcommander is started:
    > skips it.
    >
    > When the work is complete, record completion by calling
-   > `atct_goal_handoff_complete` with only the `goal_id` provided in this
-   > request.
+   > `atct_goal_handoff_complete` with the `goal_id` provided in this request
+   > and a `complete_report`. The `complete_report` must say what was done,
+   > what was verified, and paths changed.
 
    The order matters: the role is derived from a received, uncompleted goal
    handoff, so checking it before receipt always returns `matches: false`.
@@ -250,6 +252,15 @@ session and identify only that caller; the caller's agent name is suitable. If
 a reconnect causes the role to appear wrong, call `atct_session_identify` again
 with the same key to return to the original session row.
 
+## Fill in a report on a handoff that is already closed
+
+Only a subcommander or commander uses this repair path when a closed handoff
+has no report. It is not part of normal executor completion. Call
+`atct_handoff_report_amend` with the specific `handoff_id`, its `task_id`, and
+a non-empty `complete_report`; for a goal handoff call
+`atct_goal_handoff_report_amend` with `handoff_id`, `goal_id`, and
+`complete_report`. The repair does not change the recorded completion time.
+
 ## Recover when your role comes back wrong
 
 If `atct_role` returns `executor` while you still hold work that should be yours, stop working and read this section.
@@ -260,7 +271,7 @@ Only if the session key does not restore your role, recover each layer as follow
 
 - project: `atct_project_release` → `atct_project_claim`
 - goal: `atct_goal_handoff_complete` → `atct_goal_handoff_request` (the commander must issue the handoff again)
-- task: `atct_handoff_complete` (with only `task_id`) → `atct_task_claim`
+- task: `atct_handoff_complete` (with `task_id` and `complete_report`) → `atct_task_claim`
 
 A subcommander cannot restore its own goal; ask the commander to issue the goal handoff again because reissuing it requires a project claim. This is a procedure, not a repair; it becomes unnecessary once the issue is fixed.
 For background, see `doc/specs/2026-08-25-session-id-swap.md`.

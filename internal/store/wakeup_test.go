@@ -723,7 +723,7 @@ func TestDetectWakeupCollectsStalledHandoffCandidates(t *testing.T) {
 	if _, err := s.ReceiveTaskHandoff(ctx, completed.ID, taskIDs[2], stalledHandoffReceiverID); err != nil {
 		t.Fatalf("ReceiveTaskHandoff completed: %v", err)
 	}
-	if _, err := s.CompleteTaskHandoff(ctx, completed.ID, taskIDs[2], ""); err != nil {
+	if _, err := s.CompleteTaskHandoff(ctx, completed.ID, taskIDs[2], "completed for the first stalled-handoff fixture"); err != nil {
 		t.Fatalf("CompleteTaskHandoff completed: %v", err)
 	}
 	secondCompleted, err := s.RequestTaskHandoff(ctx, "handoff-completed-second", taskIDs[7], requesterID, "")
@@ -733,7 +733,7 @@ func TestDetectWakeupCollectsStalledHandoffCandidates(t *testing.T) {
 	if _, err := s.ReceiveTaskHandoff(ctx, secondCompleted.ID, taskIDs[7], stalledHandoffReceiverID); err != nil {
 		t.Fatalf("ReceiveTaskHandoff second completed: %v", err)
 	}
-	if _, err := s.CompleteTaskHandoff(ctx, secondCompleted.ID, taskIDs[7], ""); err != nil {
+	if _, err := s.CompleteTaskHandoff(ctx, secondCompleted.ID, taskIDs[7], "completed for the second stalled-handoff fixture"); err != nil {
 		t.Fatalf("CompleteTaskHandoff second completed: %v", err)
 	}
 	requestedClaim, err := s.RequestTaskHandoff(ctx, "handoff-requested-claim", taskIDs[4], requesterID, "")

@@ -1119,7 +1119,7 @@ func updateTaskContentForTestWithAgentSessionID(t *testing.T, fixture goalListFi
 	return fixture.daemon.dispatch(context.Background(), rpc.Request{Method: "task.update_content", Params: paramsJSON})
 }
 
-func addTaskForUpdateContentTest(t *testing.T, fixture goalListFixture, status domain.TaskStatus, title, description string, files []string) domain.Task {
+func addTaskForUpdateContentTest(t *testing.T, fixture goalListFixture, status domain.TaskStatus, title, description string) domain.Task {
 	t.Helper()
 	ctx := context.Background()
 	tasks, err := fixture.store.DeclareTasks(ctx, fixture.tasks[0].GoalID, "fixture-agent", "task-update-content-extra", []string{title}, []string{description})
@@ -1130,17 +1130,12 @@ func addTaskForUpdateContentTest(t *testing.T, fixture goalListFixture, status d
 		t.Fatal("DeclareTasks extra task returned no tasks")
 	}
 	task := tasks[len(tasks)-1]
-	filesJSON, err := json.Marshal(files)
-	if err != nil {
-		t.Fatalf("marshal extra task files: %v", err)
-	}
-	if _, err := fixture.store.DB().ExecContext(ctx, "UPDATE tasks SET status = ?, title = ?, description = ?, files = ? WHERE id = ?", string(status), title, description, string(filesJSON), task.ID); err != nil {
+	if _, err := fixture.store.DB().ExecContext(ctx, "UPDATE tasks SET status = ?, title = ?, description = ? WHERE id = ?", string(status), title, description, task.ID); err != nil {
 		t.Fatalf("update extra task %v: %v", task.ID, err)
 	}
 	task.Status = status
 	task.Title = title
 	task.Description = description
-	task.Files = files
 	return task
 }
 
@@ -1275,12 +1270,11 @@ func TestTaskUpdateContentUpdatesTodoAndDoingTasks(t *testing.T) {
 		useTaskHolder bool
 		updatedTitle  string
 		updatedDesc   string
-		updatedFiles  []string
 	}{
-		{name: "todo-one", taskIndex: 1, status: domain.TaskTodo, updatedTitle: "updated todo one", updatedDesc: "updated todo one description", updatedFiles: []string{"todo-one.md", "todo-one.go"}},
-		{name: "todo-two", taskIndex: 1, status: domain.TaskTodo, extra: true, updatedTitle: "updated todo two", updatedDesc: "updated todo two description", updatedFiles: []string{"todo-two.md", "todo-two.go"}},
-		{name: "doing-one", taskIndex: 0, status: domain.TaskDoing, useTaskHolder: true, updatedTitle: "updated doing one", updatedDesc: "updated doing one description", updatedFiles: []string{"doing-one.md", "doing-one.go"}},
-		{name: "doing-two", taskIndex: 0, status: domain.TaskDoing, extra: true, updatedTitle: "updated doing two", updatedDesc: "updated doing two description", updatedFiles: []string{"doing-two.md", "doing-two.go"}},
+		{name: "todo-one", taskIndex: 1, status: domain.TaskTodo, updatedTitle: "updated todo one", updatedDesc: "updated todo one description"},
+		{name: "todo-two", taskIndex: 1, status: domain.TaskTodo, extra: true, updatedTitle: "updated todo two", updatedDesc: "updated todo two description"},
+		{name: "doing-one", taskIndex: 0, status: domain.TaskDoing, useTaskHolder: true, updatedTitle: "updated doing one", updatedDesc: "updated doing one description"},
+		{name: "doing-two", taskIndex: 0, status: domain.TaskDoing, extra: true, updatedTitle: "updated doing two", updatedDesc: "updated doing two description"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			fixture := newGoalListFixture(t)
@@ -1288,12 +1282,11 @@ func TestTaskUpdateContentUpdatesTodoAndDoingTasks(t *testing.T) {
 
 			task := fixture.tasks[tc.taskIndex]
 			if tc.extra {
-				task = addTaskForUpdateContentTest(t, fixture, tc.status, "extra "+string(tc.status)+" title", "extra "+string(tc.status)+" description", []string{"extra-" + string(tc.status) + ".md"})
+				task = addTaskForUpdateContentTest(t, fixture, tc.status, "extra "+string(tc.status)+" title", "extra "+string(tc.status)+" description")
 			}
 			fields := map[string]any{
 				"title":       tc.updatedTitle,
 				"description": tc.updatedDesc,
-				"files":       tc.updatedFiles,
 			}
 			var result json.RawMessage
 			var err error
@@ -1322,9 +1315,6 @@ func TestTaskUpdateContentUpdatesTodoAndDoingTasks(t *testing.T) {
 			if updated.Description != tc.updatedDesc {
 				t.Fatalf("description = %v, want %v", updated.Description, tc.updatedDesc)
 			}
-			if strings.Join(updated.Files, "\x00") != strings.Join(tc.updatedFiles, "\x00") {
-				t.Fatalf("files = %#v, want %#v", updated.Files, tc.updatedFiles)
-			}
 		})
 	}
 }
@@ -1337,7 +1327,6 @@ func TestTaskUpdateContentPreservesOmittedFields(t *testing.T) {
 		fields        map[string]any
 	}{
 		{name: "title-only", taskIndex: 1, fields: map[string]any{"title": "title only"}},
-		{name: "files-only", taskIndex: 0, useTaskHolder: true, fields: map[string]any{"files": []string{"only.txt"}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			fixture := newGoalListFixture(t)
@@ -1359,27 +1348,11 @@ func TestTaskUpdateContentPreservesOmittedFields(t *testing.T) {
 				t.Fatalf("unmarshal task.update_content result: %v", err)
 			}
 
-			switch tc.name {
-			case "title-only":
-				if updated.Title != "title only" {
-					t.Fatalf("title = %v, want %v", updated.Title, "title only")
-				}
-				if updated.Description != before.Description {
-					t.Fatalf("description = %v, want unchanged %v", updated.Description, before.Description)
-				}
-				if strings.Join(updated.Files, "\x00") != strings.Join(before.Files, "\x00") {
-					t.Fatalf("files = %#v, want unchanged %#v", updated.Files, before.Files)
-				}
-			case "files-only":
-				if updated.Title != before.Title {
-					t.Fatalf("title = %v, want unchanged %v", updated.Title, before.Title)
-				}
-				if updated.Description != before.Description {
-					t.Fatalf("description = %v, want unchanged %v", updated.Description, before.Description)
-				}
-				if strings.Join(updated.Files, "\x00") != "only.txt" {
-					t.Fatalf("files = %#v, want %#v", updated.Files, []string{"only.txt"})
-				}
+			if updated.Title != "title only" {
+				t.Fatalf("title = %v, want %v", updated.Title, "title only")
+			}
+			if updated.Description != before.Description {
+				t.Fatalf("description = %v, want unchanged %v", updated.Description, before.Description)
 			}
 		})
 	}
@@ -1403,7 +1376,7 @@ func TestTaskUpdateContentRejectsTerminalTasksWithStatus(t *testing.T) {
 
 			task := fixture.tasks[tc.taskIndex]
 			if tc.extra {
-				task = addTaskForUpdateContentTest(t, fixture, tc.status, "extra "+string(tc.status)+" title", "extra "+string(tc.status)+" description", []string{"extra-" + string(tc.status) + ".md"})
+				task = addTaskForUpdateContentTest(t, fixture, tc.status, "extra "+string(tc.status)+" title", "extra "+string(tc.status)+" description")
 			}
 			_, err := updateTaskContentForTest(t, fixture, task.ID, map[string]any{"title": "must be rejected"}, "task-update-content-terminal-run")
 			if err == nil {
@@ -1483,7 +1456,7 @@ func setupDaemonTaskContentGoalHolderWithTaskHandoff(t *testing.T, fixture goalL
 		t.Fatalf("GetTaskGoalID: %v", err)
 	}
 	setupDaemonTaskContentTaskHandoff(t, fixture, taskID, label)
-	if _, err := fixture.store.CompleteGoalHandoffForGoal(ctx, goalID, ""); err != nil {
+	if _, err := fixture.store.CompleteGoalHandoffForGoal(ctx, goalID, "closing goal handoff to recreate the fixture"); err != nil {
 		t.Fatalf("CompleteGoalHandoffForGoal: %v", err)
 	}
 	return setupDaemonTaskContentGoalHandoff(t, fixture, goalID, label)
@@ -1620,8 +1593,8 @@ func TestTaskUpdateContentHandoffAuthorizationRPC(t *testing.T) {
 				t.Fatalf("ListTasks before: %v", err)
 			}
 
-			files := []string{"rpc-after-" + tc.name + ".go"}
-			result, err := updateTaskContentForTest(t, fixture, task.ID, map[string]any{"files": files}, label+tc.sessionSuffix)
+			description := "rpc after " + tc.name
+			result, err := updateTaskContentForTest(t, fixture, task.ID, map[string]any{"description": description}, label+tc.sessionSuffix)
 			if tc.wantDenied {
 				if err == nil {
 					t.Fatal("task.update_content unexpectedly succeeded")
@@ -1645,8 +1618,8 @@ func TestTaskUpdateContentHandoffAuthorizationRPC(t *testing.T) {
 			if err := json.Unmarshal(result, &updated); err != nil {
 				t.Fatalf("unmarshal task.update_content result: %v", err)
 			}
-			if !reflect.DeepEqual(updated.Files, files) {
-				t.Fatalf("files = %#v, want %#v", updated.Files, files)
+			if updated.Description != description {
+				t.Fatalf("description = %q, want %q", updated.Description, description)
 			}
 		})
 	}

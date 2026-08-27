@@ -1,12 +1,15 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Decision, DecisionHistoryEntry, Task, TaskCommitDiff, TaskDetailResponse } from "../lib/api";
-import { fetchTask, fetchTaskCommitDiff, subscribeToDecisionEvents } from "../lib/api";
+import { fetchTask, fetchTaskCommitDiff, snoozeTask, subscribeToDecisionEvents } from "../lib/api";
 import { TaskDetailPage } from "./TaskDetailPage";
 
 const i18nMock = vi.hoisted(() => ({
-  t: (key: string, options?: { count?: number }) =>
-    options?.count === undefined ? key : `${key}:${options.count}`,
+  t: (key: string, options?: { count?: number; until?: string }) => {
+    if (options?.count !== undefined) return `${key}:${options.count}`;
+    if (options?.until !== undefined) return `${key}:${options.until}`;
+    return key;
+  },
   i18n: { language: "en" },
   initReactI18next: { type: "3rdParty", init: () => undefined },
 }));
@@ -16,6 +19,7 @@ const apiMock = vi.hoisted(() => ({
   fetchTask: vi.fn(),
   fetchTaskCommitDiff: vi.fn(),
   reviseDecision: vi.fn(),
+  snoozeTask: vi.fn(),
   subscribeToDecisionEvents: vi.fn(() => () => undefined),
 }));
 
@@ -223,7 +227,7 @@ describe("TaskDetailPage commits", () => {
   });
 });
 
-function task(id: string, title: string, description = ""): Task {
+function task(id: string, title: string, description = "", snoozedUntil?: string): Task {
   return {
     id,
     goal_id: "goal-1",
@@ -231,12 +235,12 @@ function task(id: string, title: string, description = ""): Task {
     description,
     status: "todo",
     agent: "fixture-agent",
-    files: ["src/task.ts"],
     order: 0,
     declare_key: "fixture-declare",
     claimed_by: "fixture-run",
     created_at: "2026-08-20T00:00:00Z",
     updated_at: "2026-08-20T00:00:00Z",
+    snoozed_until: snoozedUntil,
   };
 }
 
@@ -290,6 +294,14 @@ async function renderTask(response: TaskDetailResponse) {
 }
 
 describe("TaskDetailPage", () => {
+  it("shows the declare key as the only task file attribute", async () => {
+    const taskData = task("task-declare-key", "Task declare key");
+    await renderTask(detailResponse(taskData));
+
+    expect(screen.getByText("task.detail.declareKey")).not.toBeNull();
+    expect(screen.getByText("fixture-declare")).not.toBeNull();
+  });
+
   it("uses the task ID from the URL when Astro passes the sentinel ID", async () => {
     const taskData = task("task-from-url", "Task from URL");
     window.history.replaceState({}, "", `/tasks/${encodeURIComponent(taskData.id)}`);
@@ -419,5 +431,83 @@ describe("TaskDetailPage", () => {
     act(() => decisionEvent?.("decision.created"));
     await waitFor(() => expect(fetchTask).toHaveBeenCalledTimes(2));
     expect(screen.queryByText("state.updateAvailable")).toBeNull();
+  });
+
+  it("snoozes for one day from the current time", async () => {
+    const now = Date.parse("2026-08-27T00:00:00Z");
+    const nowSpy = vi.spyOn(Date, "now").mockReturnValue(now);
+    const taskData = task("task-one-day", "Task one day");
+    vi.mocked(snoozeTask).mockResolvedValue(taskData as Awaited<ReturnType<typeof snoozeTask>>);
+    await renderTask(detailResponse(taskData));
+
+    fireEvent.click(screen.getByRole("button", { name: "task.snooze.oneDay" }));
+
+    await waitFor(() => expect(snoozeTask).toHaveBeenCalledTimes(1));
+    const until = vi.mocked(snoozeTask).mock.calls[0]?.[1];
+    expect(until).not.toBeNull();
+    expect(Date.parse(until as string)).toBe(now + 24 * 60 * 60 * 1000);
+    nowSpy.mockRestore();
+  });
+
+  it("snoozes for one week from the current time", async () => {
+    const now = Date.parse("2026-08-27T00:00:00Z");
+    const nowSpy = vi.spyOn(Date, "now").mockReturnValue(now);
+    const taskData = task("task-one-week", "Task one week");
+    vi.mocked(snoozeTask).mockResolvedValue(taskData as Awaited<ReturnType<typeof snoozeTask>>);
+    await renderTask(detailResponse(taskData));
+
+    fireEvent.click(screen.getByRole("button", { name: "task.snooze.oneWeek" }));
+
+    await waitFor(() => expect(snoozeTask).toHaveBeenCalledTimes(1));
+    const until = vi.mocked(snoozeTask).mock.calls[0]?.[1];
+    expect(until).not.toBeNull();
+    expect(Date.parse(until as string)).toBe(now + 7 * 24 * 60 * 60 * 1000);
+    nowSpy.mockRestore();
+  });
+
+  it("snoozes until the local end of a selected date", async () => {
+    const taskData = task("task-date", "Task date");
+    vi.mocked(snoozeTask).mockResolvedValue(taskData as Awaited<ReturnType<typeof snoozeTask>>);
+    await renderTask(detailResponse(taskData));
+
+    fireEvent.change(screen.getByLabelText("task.snooze.date"), { target: { value: "2026-09-03" } });
+    fireEvent.click(screen.getByRole("button", { name: "task.snooze.submit" }));
+
+    const expectedUntil = new Date("2026-09-03T23:59:59.999").toISOString();
+    await waitFor(() => expect(snoozeTask).toHaveBeenCalledWith("task-date", expectedUntil));
+  });
+
+  it("clears snooze when release is pressed", async () => {
+    const taskData = task("task-release-snooze", "Task release snooze");
+    vi.mocked(snoozeTask).mockResolvedValue(taskData as Awaited<ReturnType<typeof snoozeTask>>);
+    await renderTask(detailResponse(taskData));
+
+    fireEvent.click(screen.getByRole("button", { name: "task.snooze.release" }));
+
+    await waitFor(() => expect(snoozeTask).toHaveBeenCalledWith("task-release-snooze", null));
+  });
+
+  it("shows an active snooze with its deadline and hides expired snoozes", async () => {
+    const future = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+    const past = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const activeTask = task("task-active-snooze", "Task active snooze", "", future);
+    const expiredTask = task("task-expired-snooze", "Task expired snooze", "", past);
+
+    await renderTask(detailResponse(activeTask));
+    expect(screen.getByText(/task\.snooze\.active:/)).toBeTruthy();
+
+    cleanup();
+    await renderTask(detailResponse(expiredTask));
+    expect(screen.queryByText(/task\.snooze\.active:/)).toBeNull();
+  });
+
+  it("shows snooze errors in an alert", async () => {
+    const taskData = task("task-snooze-error", "Task snooze error");
+    vi.mocked(snoozeTask).mockRejectedValue(new Error("snooze failed"));
+    await renderTask(detailResponse(taskData));
+
+    fireEvent.click(screen.getByRole("button", { name: "task.snooze.oneDay" }));
+
+    expect((await screen.findByRole("alert")).textContent).toContain("snooze failed");
   });
 });

@@ -7,6 +7,16 @@ import (
 	"testing"
 )
 
+func TestMigration0021RemovesTaskFilesColumn(t *testing.T) {
+	s := newTestStore(t)
+	defer s.Close()
+
+	assertMigrationRecorded(t, s.DB(), "0021_drop_task_files.sql")
+	if _, ok := migrationTableColumns(t, s.DB(), "tasks")["files"]; ok {
+		t.Error("tasks still has files")
+	}
+}
+
 func TestMigration0020RemovesLegacyIDColumnsAndIndexes(t *testing.T) {
 	s := newTestStore(t)
 	defer s.Close()

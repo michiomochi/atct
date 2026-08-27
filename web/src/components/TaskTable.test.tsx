@@ -4,7 +4,7 @@ import type { TaskView } from "../lib/api";
 import { TaskTable } from "./TaskTable";
 
 const i18nMock = vi.hoisted(() => ({
-  t: (key: string) => key,
+  t: (key: string, options?: { until?: string }) => options?.until ? `${key}:${options.until}` : key,
   i18n: { language: "en" },
   initReactI18next: { type: "3rdParty", init: () => undefined },
 }));
@@ -28,7 +28,7 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-function taskView(openDecisionCount = 0): TaskView {
+function taskView(openDecisionCount = 0, snoozedUntil?: string): TaskView {
   return {
     id: "task-1",
     goal_id: "goal-1",
@@ -36,12 +36,12 @@ function taskView(openDecisionCount = 0): TaskView {
     description: "Task description",
     status: "todo",
     agent: "fixture-agent",
-    files: ["src/task.ts"],
     order: 0,
     declare_key: "fixture-declare",
     claimed_by: "",
     created_at: "2026-08-20T00:00:00Z",
     updated_at: "2026-08-20T00:00:00Z",
+    snoozed_until: snoozedUntil,
     held_for_seconds: 0,
     open_decisions: openDecisionCount > 0
       ? ([{ id: "decision-1" }] as NonNullable<TaskView["open_decisions"]>)
@@ -75,5 +75,31 @@ describe("TaskTable", () => {
     render(<TaskTable tasks={[taskView()]} mode="goal" onRefresh={vi.fn()} />);
 
     expect(screen.getByText("Not started")).toBeTruthy();
+  });
+
+  it("shows an active snooze with its deadline in both table modes", () => {
+    const future = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+    render(<TaskTable tasks={[taskView(0, future)]} mode="goal" onRefresh={vi.fn()} />);
+
+    expect(screen.getByText(/task\.snooze\.active:/)).toBeTruthy();
+    expect(screen.getByText("Not started")).toBeTruthy();
+
+    cleanup();
+    render(<TaskTable tasks={[taskView(0, future)]} mode="now" onRefresh={vi.fn()} />);
+
+    expect(screen.getByText(/task\.snooze\.active:/)).toBeTruthy();
+    expect(screen.getByText("Not started")).toBeTruthy();
+  });
+
+  it("does not show missing or expired snoozes", () => {
+    const past = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    render(<TaskTable tasks={[taskView(0, past)]} mode="goal" onRefresh={vi.fn()} />);
+
+    expect(screen.queryByText(/task\.snooze\.active:/)).toBeNull();
+
+    cleanup();
+    render(<TaskTable tasks={[taskView()]} mode="now" onRefresh={vi.fn()} />);
+
+    expect(screen.queryByText(/task\.snooze\.active:/)).toBeNull();
   });
 });

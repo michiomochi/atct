@@ -1,15 +1,15 @@
 -- name: CreateTask :one
 INSERT INTO tasks (
-  goal_id, title, description, status, agent, files, sort_order, declare_key,
+  goal_id, title, description, status, agent, sort_order, declare_key,
   snoozed_until, created_at, updated_at
 )
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(goal_id, declare_key) DO UPDATE SET id = tasks.id
 RETURNING id;
 
 -- name: ListTasks :many
 SELECT
-  id, goal_id, title, description, status, agent, files, sort_order, declare_key,
+  id, goal_id, title, description, status, agent, sort_order, declare_key,
   snoozed_until, created_at, updated_at
 FROM tasks
 WHERE goal_id = ?
@@ -43,7 +43,6 @@ WHERE id = ?;
 UPDATE tasks
 SET title = COALESCE(sqlc.narg('title'), title),
     description = COALESCE(sqlc.narg('description'), description),
-    files = COALESCE(sqlc.narg('files'), files),
     updated_at = sqlc.arg('updated_at')
 WHERE id = sqlc.arg('id') AND status IN ('todo', 'doing');
 
@@ -65,18 +64,11 @@ FROM tasks
 WHERE id = ?;
 
 -- name: GetTaskForClaim :one
-SELECT t.goal_id, t.title, t.description, t.status, t.files,
+SELECT t.goal_id, t.title, t.description, t.status,
        g.status AS goal_status
 FROM tasks AS t
 JOIN goals AS g ON g.id = t.goal_id
 WHERE t.id = ?;
-
--- name: ListTaskAlternatives :many
-SELECT id, title, description, status, files
-FROM tasks
-WHERE goal_id = ?
-  AND id <> ?
-ORDER BY sort_order, id;
 
 -- name: ReleaseTask :execresult
 UPDATE tasks
@@ -199,7 +191,12 @@ WHERE id = ? AND task_id = ? AND requested_at IS NOT NULL;
 -- name: CompleteTaskHandoff :execresult
 UPDATE task_handoffs
 SET completed_report_at = ?, complete_report = ?
-WHERE id = ? AND task_id = ? AND requested_at IS NOT NULL;
+WHERE id = ? AND task_id = ? AND requested_at IS NOT NULL AND completed_report_at IS NULL;
+
+-- name: AmendTaskHandoffReport :execresult
+UPDATE task_handoffs
+SET complete_report = ?
+WHERE id = ? AND task_id = ? AND completed_report_at IS NOT NULL;
 
 -- name: GetGoalHandoff :one
 SELECT id, goal_id, requested_by, received_by,
@@ -237,4 +234,9 @@ WHERE id = ? AND goal_id = ? AND requested_at IS NOT NULL;
 -- name: CompleteGoalHandoff :execresult
 UPDATE goal_handoffs
 SET completed_report_at = ?, complete_report = ?
-WHERE id = ? AND goal_id = ? AND requested_at IS NOT NULL;
+WHERE id = ? AND goal_id = ? AND requested_at IS NOT NULL AND completed_report_at IS NULL;
+
+-- name: AmendGoalHandoffReport :execresult
+UPDATE goal_handoffs
+SET complete_report = ?
+WHERE id = ? AND goal_id = ? AND completed_report_at IS NOT NULL;

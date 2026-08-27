@@ -10,10 +10,42 @@ import (
 	"database/sql"
 )
 
+const amendGoalHandoffReport = `-- name: AmendGoalHandoffReport :execresult
+UPDATE goal_handoffs
+SET complete_report = ?
+WHERE id = ? AND goal_id = ? AND completed_report_at IS NOT NULL
+`
+
+type AmendGoalHandoffReportParams struct {
+	CompleteReport sql.NullString
+	ID             string
+	GoalID         int64
+}
+
+func (q *Queries) AmendGoalHandoffReport(ctx context.Context, arg AmendGoalHandoffReportParams) (sql.Result, error) {
+	return q.db.ExecContext(ctx, amendGoalHandoffReport, arg.CompleteReport, arg.ID, arg.GoalID)
+}
+
+const amendTaskHandoffReport = `-- name: AmendTaskHandoffReport :execresult
+UPDATE task_handoffs
+SET complete_report = ?
+WHERE id = ? AND task_id = ? AND completed_report_at IS NOT NULL
+`
+
+type AmendTaskHandoffReportParams struct {
+	CompleteReport sql.NullString
+	ID             string
+	TaskID         int64
+}
+
+func (q *Queries) AmendTaskHandoffReport(ctx context.Context, arg AmendTaskHandoffReportParams) (sql.Result, error) {
+	return q.db.ExecContext(ctx, amendTaskHandoffReport, arg.CompleteReport, arg.ID, arg.TaskID)
+}
+
 const completeGoalHandoff = `-- name: CompleteGoalHandoff :execresult
 UPDATE goal_handoffs
 SET completed_report_at = ?, complete_report = ?
-WHERE id = ? AND goal_id = ? AND requested_at IS NOT NULL
+WHERE id = ? AND goal_id = ? AND requested_at IS NOT NULL AND completed_report_at IS NULL
 `
 
 type CompleteGoalHandoffParams struct {
@@ -35,7 +67,7 @@ func (q *Queries) CompleteGoalHandoff(ctx context.Context, arg CompleteGoalHando
 const completeTaskHandoff = `-- name: CompleteTaskHandoff :execresult
 UPDATE task_handoffs
 SET completed_report_at = ?, complete_report = ?
-WHERE id = ? AND task_id = ? AND requested_at IS NOT NULL
+WHERE id = ? AND task_id = ? AND requested_at IS NOT NULL AND completed_report_at IS NULL
 `
 
 type CompleteTaskHandoffParams struct {
@@ -69,10 +101,10 @@ func (q *Queries) CountOpenDecisionsForTask(ctx context.Context, taskID sql.Null
 
 const createTask = `-- name: CreateTask :one
 INSERT INTO tasks (
-  goal_id, title, description, status, agent, files, sort_order, declare_key,
+  goal_id, title, description, status, agent, sort_order, declare_key,
   snoozed_until, created_at, updated_at
 )
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(goal_id, declare_key) DO UPDATE SET id = tasks.id
 RETURNING id
 `
@@ -83,7 +115,6 @@ type CreateTaskParams struct {
 	Description  string
 	Status       string
 	Agent        string
-	Files        string
 	SortOrder    int64
 	DeclareKey   string
 	SnoozedUntil sql.NullString
@@ -98,7 +129,6 @@ func (q *Queries) CreateTask(ctx context.Context, arg CreateTaskParams) (int64, 
 		arg.Description,
 		arg.Status,
 		arg.Agent,
-		arg.Files,
 		arg.SortOrder,
 		arg.DeclareKey,
 		arg.SnoozedUntil,
@@ -247,7 +277,7 @@ func (q *Queries) GetLatestAgentSessionID(ctx context.Context, projectID sql.Nul
 }
 
 const getTaskForClaim = `-- name: GetTaskForClaim :one
-SELECT t.goal_id, t.title, t.description, t.status, t.files,
+SELECT t.goal_id, t.title, t.description, t.status,
        g.status AS goal_status
 FROM tasks AS t
 JOIN goals AS g ON g.id = t.goal_id
@@ -259,7 +289,6 @@ type GetTaskForClaimRow struct {
 	Title       string
 	Description string
 	Status      string
-	Files       string
 	GoalStatus  string
 }
 
@@ -271,7 +300,6 @@ func (q *Queries) GetTaskForClaim(ctx context.Context, id int64) (GetTaskForClai
 		&i.Title,
 		&i.Description,
 		&i.Status,
-		&i.Files,
 		&i.GoalStatus,
 	)
 	return i, err
@@ -474,56 +502,6 @@ func (q *Queries) ListOpenTaskHandoffsForGoal(ctx context.Context, goalID int64)
 	return items, nil
 }
 
-const listTaskAlternatives = `-- name: ListTaskAlternatives :many
-SELECT id, title, description, status, files
-FROM tasks
-WHERE goal_id = ?
-  AND id <> ?
-ORDER BY sort_order, id
-`
-
-type ListTaskAlternativesParams struct {
-	GoalID int64
-	ID     int64
-}
-
-type ListTaskAlternativesRow struct {
-	ID          int64
-	Title       string
-	Description string
-	Status      string
-	Files       string
-}
-
-func (q *Queries) ListTaskAlternatives(ctx context.Context, arg ListTaskAlternativesParams) ([]ListTaskAlternativesRow, error) {
-	rows, err := q.db.QueryContext(ctx, listTaskAlternatives, arg.GoalID, arg.ID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ListTaskAlternativesRow
-	for rows.Next() {
-		var i ListTaskAlternativesRow
-		if err := rows.Scan(
-			&i.ID,
-			&i.Title,
-			&i.Description,
-			&i.Status,
-			&i.Files,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const listTaskCommits = `-- name: ListTaskCommits :many
 SELECT sha, subject, files_changed, insertions, deletions, created_at
 FROM task_commits
@@ -614,7 +592,7 @@ func (q *Queries) ListTaskHandoffs(ctx context.Context, taskID int64) ([]TaskHan
 
 const listTasks = `-- name: ListTasks :many
 SELECT
-  id, goal_id, title, description, status, agent, files, sort_order, declare_key,
+  id, goal_id, title, description, status, agent, sort_order, declare_key,
   snoozed_until, created_at, updated_at
 FROM tasks
 WHERE goal_id = ?
@@ -628,7 +606,6 @@ type ListTasksRow struct {
 	Description  string
 	Status       string
 	Agent        string
-	Files        string
 	SortOrder    int64
 	DeclareKey   string
 	SnoozedUntil sql.NullString
@@ -652,7 +629,6 @@ func (q *Queries) ListTasks(ctx context.Context, goalID int64) ([]ListTasksRow, 
 			&i.Description,
 			&i.Status,
 			&i.Agent,
-			&i.Files,
 			&i.SortOrder,
 			&i.DeclareKey,
 			&i.SnoozedUntil,
@@ -953,15 +929,13 @@ const updateTaskContent = `-- name: UpdateTaskContent :execresult
 UPDATE tasks
 SET title = COALESCE(?1, title),
     description = COALESCE(?2, description),
-    files = COALESCE(?3, files),
-    updated_at = ?4
-WHERE id = ?5 AND status IN ('todo', 'doing')
+    updated_at = ?3
+WHERE id = ?4 AND status IN ('todo', 'doing')
 `
 
 type UpdateTaskContentParams struct {
 	Title       sql.NullString
 	Description sql.NullString
-	Files       sql.NullString
 	UpdatedAt   string
 	ID          int64
 }
@@ -970,7 +944,6 @@ func (q *Queries) UpdateTaskContent(ctx context.Context, arg UpdateTaskContentPa
 	return q.db.ExecContext(ctx, updateTaskContent,
 		arg.Title,
 		arg.Description,
-		arg.Files,
 		arg.UpdatedAt,
 		arg.ID,
 	)
