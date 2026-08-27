@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/coder/websocket"
 	"github.com/michiomochi/atct/internal/domain"
 	"github.com/michiomochi/atct/internal/httpapi"
 	"github.com/michiomochi/atct/internal/store"
@@ -2343,6 +2344,49 @@ func urlID(prefix string, id int64) string { return prefix + strconv.FormatInt(i
 
 func idText(id int64) string { return strconv.FormatInt(id, 10) }
 
+type wsTestFrame struct {
+	Name string          `json:"name"`
+	Data json.RawMessage `json:"data"`
+}
+
+func openWebSocket(t *testing.T, endpoint string, options *websocket.DialOptions) *websocket.Conn {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	conn, _, err := websocket.Dial(ctx, endpoint, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = conn.Close(websocket.StatusNormalClosure, "") })
+	return conn
+}
+
+func readWebSocketFrame(t *testing.T, conn *websocket.Conn) wsTestFrame {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	typ, payload, err := conn.Read(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if typ != websocket.MessageText {
+		t.Fatalf("WebSocket message type = %v, want text", typ)
+	}
+	var frame wsTestFrame
+	if err := json.Unmarshal(payload, &frame); err != nil {
+		t.Fatalf("WebSocket frame is not JSON: %v; payload=%q", err, payload)
+	}
+	return frame
+}
+
+func websocketURL(baseURL string) string {
+	return strings.Replace(baseURL, "http://", "ws://", 1) + "/api/ws"
+}
+
+func websocketURLWithQuery(baseURL string, query url.Values) string {
+	return websocketURL(baseURL) + "?" + query.Encode()
+}
+
 func TestSSEFiltersDecisionEventsByProjectID(t *testing.T) {
 	f := newBareFixture(t)
 	otherProject, err := f.store.CreateProject(f.ctx, "other", t.TempDir())
@@ -2499,6 +2543,197 @@ func TestSSEFiltersOtherGoalDecisionEventsByGoalID(t *testing.T) {
 	}
 	if got.ID != current.ID || got.GoalID != current.GoalID {
 		t.Fatalf("SSE decision = %+v, want current goal decision", got)
+	}
+}
+
+func TestWebSocketPublishesDecisionCreated(t *testing.T) {
+	f := newBareFixture(t)
+	goal, err := f.store.CreateGoal(f.ctx, f.project.ID, "WebSocket goal", "human")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+	conn := openWebSocket(t, websocketURL(srv.URL), nil)
+
+	decision, err := f.store.AskDecision(f.ctx, store.AskInput{
+		GoalID:   goal.ID,
+		Kind:     domain.DecisionKind("question"),
+		Question: "WebSocket decision",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	frame := readWebSocketFrame(t, conn)
+	if frame.Name != "decision.created" {
+		t.Fatalf("WebSocket event = %q, want %q", frame.Name, "decision.created")
+	}
+	if got, want := string(frame.Data), string(mustJSON(t, decision)); got != want {
+		t.Fatalf("WebSocket data = %s, want exact %s", got, want)
+	}
+}
+
+func TestWebSocketPublishesKeepalive(t *testing.T) {
+	f := newBareFixture(t)
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+	conn := openWebSocket(t, websocketURL(srv.URL), nil)
+
+	keepalive := store.KeepaliveEvent{At: time.Date(2026, 8, 20, 15, 0, 0, 0, time.UTC)}
+	f.store.PublishEvent(store.DecisionEvent{Name: store.EventKeepalive, Data: keepalive})
+
+	frame := readWebSocketFrame(t, conn)
+	if frame.Name != store.EventKeepalive {
+		t.Fatalf("WebSocket event = %q, want %q", frame.Name, store.EventKeepalive)
+	}
+	if got, want := string(frame.Data), string(mustJSON(t, keepalive)); got != want {
+		t.Fatalf("WebSocket data = %s, want exact %s", got, want)
+	}
+}
+
+func TestWebSocketFiltersByGoalID(t *testing.T) {
+	f := newBareFixture(t)
+	targetGoal, err := f.store.CreateGoal(f.ctx, f.project.ID, "Target goal", "human")
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherGoal, err := f.store.CreateGoal(f.ctx, f.project.ID, "Other goal", "human")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+	query := url.Values{}
+	query.Set("goal_id", idText(targetGoal.ID))
+	conn := openWebSocket(t, websocketURLWithQuery(srv.URL, query), nil)
+
+	other := store.DetectionEvent{DetectionID: "other-goal", GoalID: otherGoal.ID}
+	target := store.DetectionEvent{DetectionID: "target-goal", GoalID: targetGoal.ID}
+	f.store.PublishEvent(store.DecisionEvent{Name: store.EventDetectionCompletionReportMissing, Data: other})
+	f.store.PublishEvent(store.DecisionEvent{Name: store.EventDetectionCompletionReportMissing, Data: target})
+
+	frame := readWebSocketFrame(t, conn)
+	if frame.Name != store.EventDetectionCompletionReportMissing {
+		t.Fatalf("WebSocket event = %q, want %q", frame.Name, store.EventDetectionCompletionReportMissing)
+	}
+	if got, want := string(frame.Data), string(mustJSON(t, target)); got != want {
+		t.Fatalf("WebSocket data = %s, want target %s", got, want)
+	}
+}
+
+func TestWebSocketFiltersByProjectID(t *testing.T) {
+	f := newBareFixture(t)
+	otherProject, err := f.store.CreateProject(f.ctx, "other", t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+	query := url.Values{}
+	query.Set("project_id", idText(f.project.ID))
+	conn := openWebSocket(t, websocketURLWithQuery(srv.URL, query), nil)
+
+	other := store.DetectionEvent{DetectionID: "other-project", ProjectID: otherProject.ID}
+	target := store.DetectionEvent{DetectionID: "target-project", ProjectID: f.project.ID}
+	f.store.PublishEvent(store.DecisionEvent{Name: store.EventDetectionCompletionReportMissing, Data: other})
+	f.store.PublishEvent(store.DecisionEvent{Name: store.EventDetectionCompletionReportMissing, Data: target})
+
+	frame := readWebSocketFrame(t, conn)
+	if frame.Name != store.EventDetectionCompletionReportMissing {
+		t.Fatalf("WebSocket event = %q, want %q", frame.Name, store.EventDetectionCompletionReportMissing)
+	}
+	if got, want := string(frame.Data), string(mustJSON(t, target)); got != want {
+		t.Fatalf("WebSocket data = %s, want target %s", got, want)
+	}
+}
+
+func TestWebSocketInvalidGoalIDReturnsHTTPError(t *testing.T) {
+	f := newBareFixture(t)
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+	// resolveID accepts any positive integer without checking that the row
+	// exists, so a bogus number is a valid filter that simply matches nothing.
+	// An unparseable id is the value that actually reaches the error path.
+	query := url.Values{}
+	query.Set("goal_id", "not-a-number")
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	_, resp, err := websocket.Dial(ctx, websocketURLWithQuery(srv.URL, query), nil)
+	if err == nil {
+		t.Fatal("WebSocket dial unexpectedly succeeded")
+	}
+	if resp == nil {
+		t.Fatal("WebSocket dial returned no HTTP response")
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < http.StatusBadRequest {
+		t.Fatalf("invalid goal status = %d, want HTTP error", resp.StatusCode)
+	}
+}
+
+func TestWebSocketRejectsPost(t *testing.T) {
+	f := newBareFixture(t)
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+	status, _, _ := doRequest(t, srv.Client(), http.MethodPost, srv.URL+"/api/ws", nil)
+	if status != http.StatusBadRequest {
+		t.Fatalf("POST /api/ws status = %d, want %d", status, http.StatusBadRequest)
+	}
+}
+
+func TestWebSocketRejectsMismatchedOrigin(t *testing.T) {
+	f := newBareFixture(t)
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	options := &websocket.DialOptions{
+		HTTPHeader: http.Header{"Origin": []string{"http://evil.example"}},
+	}
+	_, resp, err := websocket.Dial(ctx, websocketURL(srv.URL), options)
+	if err == nil {
+		t.Fatal("WebSocket dial with mismatched Origin unexpectedly succeeded")
+	}
+	if resp == nil {
+		t.Fatal("mismatched Origin returned no HTTP response")
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusSwitchingProtocols {
+		t.Fatalf("mismatched Origin status = %d, must not upgrade", resp.StatusCode)
+	}
+}
+
+func TestWebSocketAndSSEReceiveSameEvent(t *testing.T) {
+	f := newBareFixture(t)
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+	// CreateGoal publishes goal.created, so create it before subscribing or
+	// both streams see that event ahead of the decision this test asserts on.
+	goal, err := f.store.CreateGoal(f.ctx, f.project.ID, "Shared event goal", "human")
+	if err != nil {
+		t.Fatal(err)
+	}
+	streamCtx, cancel := context.WithCancel(f.ctx)
+	defer cancel()
+	stream, reader := openSSEStream(t, streamCtx, srv.Client(), srv.URL+"/api/events")
+	defer stream.Body.Close()
+	conn := openWebSocket(t, websocketURL(srv.URL), nil)
+
+	decision, err := f.store.AskDecision(f.ctx, store.AskInput{
+		GoalID:   goal.ID,
+		Kind:     domain.DecisionKind("question"),
+		Question: "Shared event",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertSSEDecision(t, reader, "decision.created", decision)
+	frame := readWebSocketFrame(t, conn)
+	if frame.Name != "decision.created" {
+		t.Fatalf("WebSocket event = %q, want %q", frame.Name, "decision.created")
+	}
+	if got, want := string(frame.Data), string(mustJSON(t, decision)); got != want {
+		t.Fatalf("WebSocket data = %s, want exact %s", got, want)
 	}
 }
 
