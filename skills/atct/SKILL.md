@@ -475,7 +475,13 @@ For background, see `doc/specs/2026-08-25-session-id-swap.md`.
 
 1. Land the work.
 2. Call `atct_task_update` with `done` as soon as it lands, before you claim
-   anything else.
+   anything else, and pass the commits it produced:
+   `atct_task_update(task_id, status="done", commits=["<sha>"])`. **Paste every
+   SHA from the real output of `git log --oneline`; do not type one from
+   memory** — goal 181 reported four hand-written SHAs on 2026-08-27 and `git
+   cat-file -e` found none of the four. A task you already closed can still be
+   linked: call it again with the same `status="done"` and the `commits` you
+   left out.
 3. Then claim the next task.
 
 Claiming is only half of the pair; a task nobody closed still reads as unstarted.
@@ -483,7 +489,13 @@ Claiming is only half of the pair; a task nobody closed still reads as unstarted
 **Out of order:** Claim the next task first and the finished one is never closed
 at all — the run has moved on, and nothing comes back to write the result. The
 landed work reads as unstarted for the rest of the session, so the queue looks
-longer than it is and the finished task can be handed to somebody else.
+longer than it is and the finished task can be handed to somebody else. Close it
+without `commits` and the loss is quieter but still real:
+`detection.commits_missing` fires, and **the approver can no longer tell which
+change belongs to which task.** The diff view goal 187 added
+(`GET /api/goals/{id}/diff`) reads the branch, so the diff itself is visible with
+no commits linked at all — but the per-task correspondence exists nowhere else.
+On 2026-08-28, eight of eleven units went `done` with `task_commits` empty.
 
 This matters most when the run that did the work is not the run that holds the
 claim — an orchestrator delegating to another agent, for example. The delegate
@@ -583,8 +595,10 @@ cannot find, and the tasks stay open behind a goal that is already closed. Goal
 144 closed with no commits and four tasks still `todo` on 2026-08-27.
 
 `atct_goal_complete` takes six fields, and the database rejects a completion
-with any of them empty. **Where nothing applies, say so** — writing "none" is
-the point, because it separates "there was nothing" from "I did not look."
+with any of them empty. **For the five text fields — `work_done`,
+`now_possible`, `how_to_verify`, `surprises`, `needs_review` — where nothing
+applies, say so** — writing "none" is the point, because it separates "there was
+nothing" from "I did not look."
 
 | Field | What goes in it |
 |---|---|
