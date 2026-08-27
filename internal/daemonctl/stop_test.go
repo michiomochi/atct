@@ -529,6 +529,149 @@ func TestStopWithWatchWarningListsLiveWatchScopes(t *testing.T) {
 	}
 }
 
+func TestWatchRegistrationScopeLabel(t *testing.T) {
+	cases := []struct {
+		name         string
+		registration WatchRegistration
+		want         string
+	}{
+		{name: "project-wide", registration: WatchRegistration{}, want: "project-wide"},
+		{name: "goal", registration: WatchRegistration{Scope: WatchScope{GoalID: "180"}}, want: "goal 180"},
+		{name: "legacy", registration: WatchRegistration{Legacy: true}, want: "unknown"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.registration.ScopeLabel(); got != tc.want {
+				t.Fatalf("ScopeLabel() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestStopWithWatchWarningUsesWatchRegistrationScopeLabel(t *testing.T) {
+	dir := t.TempDir()
+	registrations := []WatchRegistration{
+		{PID: os.Getpid(), Scope: WatchScope{ProjectID: "1"}},
+		{PID: os.Getpid(), Scope: WatchScope{ProjectID: "1", GoalID: "180"}},
+	}
+	for i, registration := range registrations {
+		writeWatchRegistrationFile(t, filepath.Join(dir, watchRegistryDir, strconv.Itoa(1001+i)), registration)
+	}
+	legacyPath := filepath.Join(dir, watchRegistryDir, "1003")
+	if err := os.WriteFile(legacyPath, []byte(strconv.Itoa(os.Getpid())+"\n"), 0o644); err != nil {
+		t.Fatalf("write legacy watch registration: %v", err)
+	}
+
+	var stderr bytes.Buffer
+	if _, err := StopWithWatchWarning(Config{Dir: dir}, &stderr); err != nil {
+		t.Fatalf("StopWithWatchWarning: %v", err)
+	}
+	want := watchActiveWarning + " (3: project-wide, goal 180, unknown), so the daemon will start again shortly. To keep it stopped, run /atct:stop first.\n"
+	if got := stderr.String(); got != want {
+		t.Fatalf("warning = %q, want %q", got, want)
+	}
+}
+
+func TestWatchRosterLineFiltersProject(t *testing.T) {
+	registrations := []WatchRegistration{
+		{Scope: WatchScope{ProjectID: "project-1"}},
+		{Scope: WatchScope{ProjectID: "project-2", GoalID: "186"}},
+		{Scope: WatchScope{ProjectID: "project-1", GoalID: "185"}},
+	}
+
+	want := "atct watch: 2 watches on this project: project-wide, goal 185"
+	if got := WatchRosterLine(registrations, "project-1"); got != want {
+		t.Fatalf("WatchRosterLine() = %q, want %q", got, want)
+	}
+}
+
+func TestWatchRosterLineCountsUnknownProjectRegistrations(t *testing.T) {
+	registrations := []WatchRegistration{
+		{Scope: WatchScope{ProjectID: "project-1", GoalID: "185"}},
+		{Legacy: true},
+		{Legacy: true},
+		{Scope: WatchScope{ProjectID: "project-2"}},
+	}
+
+	want := "atct watch: 1 watch on this project: goal 185 (+2 of unknown project)"
+	if got := WatchRosterLine(registrations, "project-1"); got != want {
+		t.Fatalf("WatchRosterLine() = %q, want %q", got, want)
+	}
+}
+
+func TestWatchRosterLineOmitsUnknownProjectSuffix(t *testing.T) {
+	registrations := []WatchRegistration{
+		{Scope: WatchScope{ProjectID: "project-1", GoalID: "185"}},
+	}
+
+	want := "atct watch: 1 watch on this project: goal 185"
+	if got := WatchRosterLine(registrations, "project-1"); got != want {
+		t.Fatalf("WatchRosterLine() = %q, want %q", got, want)
+	}
+}
+
+func TestStopWithWatchWarningExcludesDeadRegistration(t *testing.T) {
+	dir := t.TempDir()
+	writeWatchRegistrationFile(t, filepath.Join(dir, watchRegistryDir, "1001"), WatchRegistration{
+		PID: os.Getpid(), Scope: WatchScope{ProjectID: "1"},
+	})
+	writeWatchRegistrationFile(t, filepath.Join(dir, watchRegistryDir, "2147483647"), WatchRegistration{
+		PID: 2147483647, Scope: WatchScope{ProjectID: "1", GoalID: "180"},
+	})
+
+	var stderr bytes.Buffer
+	if _, err := StopWithWatchWarning(Config{Dir: dir}, &stderr); err != nil {
+		t.Fatalf("StopWithWatchWarning: %v", err)
+	}
+	got := stderr.String()
+	if !strings.Contains(got, " (1: project-wide),") {
+		t.Fatalf("warning = %q, want one live watch", got)
+	}
+	if strings.Contains(got, "goal 180") {
+		t.Fatalf("warning = %q, includes dead watch", got)
+	}
+}
+
+func TestStopWithWatchWarningFormatsSingleAndMultipleCounts(t *testing.T) {
+	cases := []struct {
+		name          string
+		registrations []WatchRegistration
+		want          string
+	}{
+		{
+			name: "single",
+			registrations: []WatchRegistration{
+				{PID: os.Getpid(), Scope: WatchScope{ProjectID: "1", GoalID: "180"}},
+			},
+			want: " (1: goal 180),",
+		},
+		{
+			name: "multiple",
+			registrations: []WatchRegistration{
+				{PID: os.Getpid(), Scope: WatchScope{ProjectID: "1"}},
+				{PID: os.Getpid(), Scope: WatchScope{ProjectID: "1", GoalID: "180"}},
+			},
+			want: " (2: project-wide, goal 180),",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			for i, registration := range tc.registrations {
+				writeWatchRegistrationFile(t, filepath.Join(dir, watchRegistryDir, strconv.Itoa(1001+i)), registration)
+			}
+
+			var stderr bytes.Buffer
+			if _, err := StopWithWatchWarning(Config{Dir: dir}, &stderr); err != nil {
+				t.Fatalf("StopWithWatchWarning: %v", err)
+			}
+			if !strings.Contains(stderr.String(), tc.want) {
+				t.Fatalf("warning = %q, want %q", stderr.String(), tc.want)
+			}
+		})
+	}
+}
+
 func TestRegisterWatchScopedCleanupRemovesOnlyOwnRegistration(t *testing.T) {
 	dir := t.TempDir()
 	cleanup, err := RegisterWatchScoped(dir, WatchScope{ProjectID: "1", GoalID: "180"})

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -28,6 +29,44 @@ type WatchRegistration struct {
 	Scope     WatchScope
 	StartedAt string
 	Legacy    bool
+}
+
+func (r WatchRegistration) ScopeLabel() string {
+	if r.Legacy {
+		return "unknown"
+	}
+	if r.Scope.GoalID == "" {
+		return "project-wide"
+	}
+	return "goal " + r.Scope.GoalID
+}
+
+// WatchRosterLine formats the live watch registrations for one project.
+// Legacy registrations have no project information, so they are reported as
+// an additional count rather than included in the project's watch count.
+func WatchRosterLine(registrations []WatchRegistration, projectID string) string {
+	activeScopes := make([]string, 0, len(registrations))
+	unknownProjectCount := 0
+	for _, registration := range registrations {
+		if registration.Legacy {
+			unknownProjectCount++
+			continue
+		}
+		if registration.Scope.ProjectID != projectID {
+			continue
+		}
+		activeScopes = append(activeScopes, registration.ScopeLabel())
+	}
+
+	word := "watches"
+	if len(activeScopes) == 1 {
+		word = "watch"
+	}
+	line := fmt.Sprintf("atct watch: %d %s on this project: %s", len(activeScopes), word, strings.Join(activeScopes, ", "))
+	if unknownProjectCount > 0 {
+		line += fmt.Sprintf(" (+%d of unknown project)", unknownProjectCount)
+	}
+	return line
 }
 
 type watchRegistrationJSON struct {

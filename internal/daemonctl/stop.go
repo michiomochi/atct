@@ -54,15 +54,7 @@ func StopWithWatchWarning(cfg Config, stderr io.Writer) (bool, error) {
 		if !ProcessAlive(registration.PID) {
 			continue
 		}
-		if registration.Legacy {
-			activeScopes = append(activeScopes, "unknown")
-			continue
-		}
-		if registration.Scope.GoalID == "" {
-			activeScopes = append(activeScopes, "project-wide")
-		} else {
-			activeScopes = append(activeScopes, "goal "+registration.Scope.GoalID)
-		}
+		activeScopes = append(activeScopes, registration.ScopeLabel())
 	}
 	if len(activeScopes) > 0 {
 		warning := fmt.Sprintf("%s (%d: %s), so the daemon will start again shortly. To keep it stopped, run /atct:stop first.", watchActiveWarning, len(activeScopes), strings.Join(activeScopes, ", "))
