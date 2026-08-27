@@ -186,7 +186,12 @@ WHERE id = ? AND task_id = ? AND requested_at IS NOT NULL;
 -- name: CompleteTaskHandoff :execresult
 UPDATE task_handoffs
 SET completed_report_at = ?, complete_report = ?
-WHERE id = ? AND task_id = ? AND requested_at IS NOT NULL;
+WHERE id = ? AND task_id = ? AND requested_at IS NOT NULL AND completed_report_at IS NULL;
+
+-- name: AmendTaskHandoffReport :execresult
+UPDATE task_handoffs
+SET complete_report = ?
+WHERE id = ? AND task_id = ? AND completed_report_at IS NOT NULL;
 
 -- name: GetGoalHandoff :one
 SELECT id, goal_id, requested_by, received_by,
@@ -224,4 +229,9 @@ WHERE id = ? AND goal_id = ? AND requested_at IS NOT NULL;
 -- name: CompleteGoalHandoff :execresult
 UPDATE goal_handoffs
 SET completed_report_at = ?, complete_report = ?
-WHERE id = ? AND goal_id = ? AND requested_at IS NOT NULL;
+WHERE id = ? AND goal_id = ? AND requested_at IS NOT NULL AND completed_report_at IS NULL;
+
+-- name: AmendGoalHandoffReport :execresult
+UPDATE goal_handoffs
+SET complete_report = ?
+WHERE id = ? AND goal_id = ? AND completed_report_at IS NOT NULL;

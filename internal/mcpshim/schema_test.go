@@ -17,7 +17,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-func TestRegisterPublishesTwentyFourToolsWithFlexibleOutputSchema(t *testing.T) {
+func TestRegisterPublishesTwentyEightToolsWithFlexibleOutputSchema(t *testing.T) {
 	ctx := context.Background()
 	socketPath := startSchemaTestDaemon(t)
 	server := mcp.NewServer(&mcp.Implementation{Name: "atct-test", Version: "test"}, nil)
@@ -42,32 +42,34 @@ func TestRegisterPublishesTwentyFourToolsWithFlexibleOutputSchema(t *testing.T) 
 		t.Fatalf("ListTools: %v", err)
 	}
 	wantNames := map[string]bool{
-		"atct_goal_list":             true,
-		"atct_goal_get":              true,
-		"atct_goal_sessions":         true,
-		"atct_task_declare":          true,
-		"atct_task_claim":            true,
-		"atct_task_release":          true,
-		"atct_task_update":           true,
-		"atct_decision_ask":          true,
-		"atct_decision_poll":         true,
-		"atct_decision_withdraw":     true,
-		"atct_goal_complete":         true,
-		"atct_goal_set_derived_from": true,
-		"atct_goal_claim":            true,
-		"atct_goal_release":          true,
-		"atct_goal_update_content":   true,
-		"atct_task_update_content":   true,
-		"atct_project_claim":         true,
-		"atct_project_release":       true,
-		"atct_role":                  true,
-		"atct_session_identify":      true,
-		"atct_handoff_request":       true,
-		"atct_handoff_receive":       true,
-		"atct_handoff_complete":      true,
-		"atct_goal_handoff_request":  true,
-		"atct_goal_handoff_receive":  true,
-		"atct_goal_handoff_complete": true,
+		"atct_goal_list":                 true,
+		"atct_goal_get":                  true,
+		"atct_goal_sessions":             true,
+		"atct_task_declare":              true,
+		"atct_task_claim":                true,
+		"atct_task_release":              true,
+		"atct_task_update":               true,
+		"atct_decision_ask":              true,
+		"atct_decision_poll":             true,
+		"atct_decision_withdraw":         true,
+		"atct_goal_complete":             true,
+		"atct_goal_set_derived_from":     true,
+		"atct_goal_claim":                true,
+		"atct_goal_release":              true,
+		"atct_goal_update_content":       true,
+		"atct_task_update_content":       true,
+		"atct_project_claim":             true,
+		"atct_project_release":           true,
+		"atct_role":                      true,
+		"atct_session_identify":          true,
+		"atct_handoff_request":           true,
+		"atct_handoff_receive":           true,
+		"atct_handoff_complete":          true,
+		"atct_handoff_report_amend":      true,
+		"atct_goal_handoff_request":      true,
+		"atct_goal_handoff_receive":      true,
+		"atct_goal_handoff_complete":     true,
+		"atct_goal_handoff_report_amend": true,
 	}
 	if len(got.Tools) != len(wantNames) {
 		t.Fatalf("tool count = %d, want %d", len(got.Tools), len(wantNames))
@@ -80,9 +82,9 @@ func TestRegisterPublishesTwentyFourToolsWithFlexibleOutputSchema(t *testing.T) 
 		}
 		seen[tool.Name] = true
 		switch tool.Name {
-		case "atct_handoff_request", "atct_goal_handoff_request", "atct_handoff_receive", "atct_goal_handoff_receive", "atct_handoff_complete", "atct_goal_handoff_complete":
+		case "atct_handoff_request", "atct_goal_handoff_request", "atct_handoff_receive", "atct_goal_handoff_receive", "atct_handoff_complete", "atct_goal_handoff_complete", "atct_handoff_report_amend", "atct_goal_handoff_report_amend":
 			idField := "task_id"
-			if tool.Name == "atct_goal_handoff_request" || tool.Name == "atct_goal_handoff_receive" || tool.Name == "atct_goal_handoff_complete" {
+			if tool.Name == "atct_goal_handoff_request" || tool.Name == "atct_goal_handoff_receive" || tool.Name == "atct_goal_handoff_complete" || tool.Name == "atct_goal_handoff_report_amend" {
 				idField = "goal_id"
 			}
 			inputSchema, ok := tool.InputSchema.(map[string]any)
@@ -99,7 +101,7 @@ func TestRegisterPublishesTwentyFourToolsWithFlexibleOutputSchema(t *testing.T) 
 			case "atct_handoff_request", "atct_goal_handoff_request":
 				wantPropertyCount = 3
 				reportField = "request_report"
-			case "atct_handoff_complete", "atct_goal_handoff_complete":
+			case "atct_handoff_complete", "atct_goal_handoff_complete", "atct_handoff_report_amend", "atct_goal_handoff_report_amend":
 				wantPropertyCount = 3
 				reportField = "complete_report"
 			}
@@ -135,12 +137,20 @@ func TestRegisterPublishesTwentyFourToolsWithFlexibleOutputSchema(t *testing.T) 
 			if !requiredFields[idField] {
 				t.Errorf("%s input schema must require %s", tool.Name, idField)
 			}
-			if reportField != "" && requiredFields[reportField] {
+			if reportField == "complete_report" && !requiredFields[reportField] {
+				t.Errorf("%s input schema must require %s", tool.Name, reportField)
+			}
+			if reportField == "request_report" && requiredFields[reportField] {
 				t.Errorf("%s input schema must allow omitted %s", tool.Name, reportField)
 			}
 			if tool.Name == "atct_handoff_receive" || tool.Name == "atct_goal_handoff_receive" || tool.Name == "atct_handoff_complete" || tool.Name == "atct_goal_handoff_complete" {
 				if requiredFields["handoff_id"] {
 					t.Errorf("%s input schema must allow %s-only calls", tool.Name, idField)
+				}
+			}
+			if tool.Name == "atct_handoff_report_amend" || tool.Name == "atct_goal_handoff_report_amend" {
+				if !requiredFields["handoff_id"] {
+					t.Errorf("%s input schema must require handoff_id", tool.Name)
 				}
 			}
 		}
@@ -208,7 +218,7 @@ func TestRegisterPublishesTwentyFourToolsWithFlexibleOutputSchema(t *testing.T) 
 			"handoff_id": "handoff-1", "task_id": "task-1",
 		}},
 		{name: "atct_handoff_complete", args: map[string]any{
-			"handoff_id": "handoff-1", "task_id": "task-1",
+			"handoff_id": "handoff-1", "task_id": "task-1", "complete_report": "task completion",
 		}},
 		{name: "atct_goal_handoff_request", args: map[string]any{
 			"handoff_id": "goal-handoff-1", "goal_id": "goal-1",
@@ -217,7 +227,7 @@ func TestRegisterPublishesTwentyFourToolsWithFlexibleOutputSchema(t *testing.T) 
 			"goal_id": "goal-1",
 		}},
 		{name: "atct_goal_handoff_complete", args: map[string]any{
-			"handoff_id": "goal-handoff-1", "goal_id": "goal-1",
+			"handoff_id": "goal-handoff-1", "goal_id": "goal-1", "complete_report": "goal completion",
 		}},
 		{name: "atct_decision_ask", args: map[string]any{
 			"goal_id": "goal-1", "question": "question", "options": []any{}, "wait_ms": 0,
@@ -581,6 +591,16 @@ func TestHandoffToolsInjectAgentSessionID(t *testing.T) {
 			name: "atct_goal_handoff_complete", method: "goal.handoff.complete",
 			reportField: "complete_report", reportValue: "goal complete report",
 			args: map[string]any{"goal_id": "goal-1", "complete_report": "goal complete report"},
+		},
+		{
+			name: "atct_handoff_report_amend", method: "handoff.report.amend",
+			reportField: "complete_report", reportValue: "amended task report",
+			args: map[string]any{"handoff_id": "handoff-1", "task_id": "task-1", "complete_report": "amended task report"},
+		},
+		{
+			name: "atct_goal_handoff_report_amend", method: "goal.handoff.report.amend",
+			reportField: "complete_report", reportValue: "amended goal report",
+			args: map[string]any{"handoff_id": "goal-handoff-1", "goal_id": "goal-1", "complete_report": "amended goal report"},
 		},
 	} {
 		result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{

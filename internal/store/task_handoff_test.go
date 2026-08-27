@@ -4,7 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -127,14 +129,14 @@ func addTaskHandoffDirect(t *testing.T, s *Store, handoffID string, taskID int64
 				id, task_id, requested_by, requested_at, request_report,
 				received_by, received_at, completed_report_at, complete_report
 			) VALUES (?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL)
-		`, handoffID, taskID, testSessionRef(requestedBy), now)
+		`, handoffID, taskID, nullableTestSessionRef(requestedBy), now)
 	} else {
 		_, err = s.DB().ExecContext(ctx, `
 			INSERT INTO task_handoffs (
 				id, task_id, requested_by, requested_at, request_report,
 				received_by, received_at, completed_report_at, complete_report
 			) VALUES (?, ?, ?, ?, NULL, ?, ?, NULL, NULL)
-		`, handoffID, taskID, testSessionRef(requestedBy), now, testSessionRef(receivedBy), now)
+		`, handoffID, taskID, nullableTestSessionRef(requestedBy), now, nullableTestSessionRef(receivedBy), now)
 	}
 	if err != nil {
 		t.Fatalf("insert direct task handoff %q failed: %v", handoffID, err)
@@ -160,6 +162,21 @@ func waitForHandoffReported(t *testing.T, events <-chan DecisionEvent) Detection
 		t.Fatal("timed out waiting for handoff_reported event")
 	}
 	return DetectionEvent{}
+}
+
+func expectNoHandoffReported(t *testing.T, events <-chan DecisionEvent) {
+	t.Helper()
+
+	for {
+		select {
+		case event := <-events:
+			if event.Name == EventHandoffReported {
+				t.Fatalf("unexpected handoff_reported event: %#v", event)
+			}
+		default:
+			return
+		}
+	}
 }
 
 func TestTaskHandoffRequestReceiveAndComplete(t *testing.T) {
@@ -202,7 +219,7 @@ func TestTaskHandoffRequestReceiveAndComplete(t *testing.T) {
 		t.Fatalf("receive must preserve request and incomplete state: %+v", received)
 	}
 
-	completed, err := s.CompleteTaskHandoff(ctx, handoff.ID, taskID, "")
+	completed, err := s.CompleteTaskHandoff(ctx, handoff.ID, taskID, "completed after verifying task handoff state")
 	if err != nil {
 		t.Fatalf("CompleteTaskHandoff failed: %v", err)
 	}
@@ -276,7 +293,67 @@ func TestCompleteTaskHandoffPublishesReportedEvent(t *testing.T) {
 	}
 }
 
-func TestTaskHandoffReportsMayBeOmitted(t *testing.T) {
+func TestCompleteTaskHandoffDoesNotPublishSelfClaimReportedEvent(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	taskID := addTestTasks(t, s, 1)[0]
+	addTestAgentSession(t, s, "self-claim-task")
+	const handoffID = "self-claim-task-handoff"
+	addTaskHandoffDirect(t, s, handoffID, taskID, "self-claim-task", "self-claim-task")
+
+	events, cancel := s.SubscribeEvents()
+	defer cancel()
+	if _, err := s.CompleteTaskHandoff(ctx, handoffID, taskID, "self claim completed"); err != nil {
+		t.Fatalf("CompleteTaskHandoff: %v", err)
+	}
+	expectNoHandoffReported(t, events)
+}
+
+func TestCompleteTaskHandoffSelfClaimCompletes(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	taskID := addTestTasks(t, s, 1)[0]
+	addTestAgentSession(t, s, "self-claim-completes-task")
+	const handoffID = "self-claim-completes-task-handoff"
+	addTaskHandoffDirect(t, s, handoffID, taskID, "self-claim-completes-task", "self-claim-completes-task")
+
+	completed, err := s.CompleteTaskHandoff(ctx, handoffID, taskID, "self claim completed")
+	if err != nil {
+		t.Fatalf("CompleteTaskHandoff: %v", err)
+	}
+	if completed.CompletedReportAt == nil {
+		t.Fatalf("completed handoff has no completion time: %+v", completed)
+	}
+}
+
+func TestCompleteTaskHandoffPublishesUnknownIdentityReportedEvent(t *testing.T) {
+	for _, tc := range []struct {
+		name                    string
+		requestedBy, receivedBy any
+	}{
+		{name: "unknown requester", requestedBy: nil, receivedBy: "known-task-receiver"},
+		{name: "unknown receiver", requestedBy: "known-task-requester", receivedBy: nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newTestStore(t)
+			ctx := context.Background()
+			taskID := addTestTasks(t, s, 1)[0]
+			addTestAgentSession(t, s, "known-task-requester")
+			addTestAgentSession(t, s, "known-task-receiver")
+			const handoffID = "unknown-identity-task-handoff"
+			addTaskHandoffDirect(t, s, handoffID, taskID, tc.requestedBy, tc.receivedBy)
+
+			events, cancel := s.SubscribeEvents()
+			defer cancel()
+			if _, err := s.CompleteTaskHandoff(ctx, handoffID, taskID, "unknown identity completed"); err != nil {
+				t.Fatalf("CompleteTaskHandoff: %v", err)
+			}
+			waitForHandoffReported(t, events)
+		})
+	}
+}
+
+func TestTaskHandoffCompletionRejectsEmptyReport(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 	taskID := addTestTasks(t, s, 1)[0]
@@ -290,12 +367,30 @@ func TestTaskHandoffReportsMayBeOmitted(t *testing.T) {
 		t.Fatalf("omitted request report = %q, want empty", handoff.RequestReport)
 	}
 
-	completed, err := s.CompleteTaskHandoff(ctx, handoff.ID, taskID, "")
-	if err != nil {
-		t.Fatalf("CompleteTaskHandoff without report: %v", err)
+	_, err = s.CompleteTaskHandoff(ctx, handoff.ID, taskID, "")
+	if err == nil {
+		t.Fatal("CompleteTaskHandoff unexpectedly accepted an empty complete report")
 	}
-	if completed.CompleteReport != "" {
-		t.Fatalf("omitted complete report = %q, want empty", completed.CompleteReport)
+	if !strings.Contains(err.Error(), "complete_report") {
+		t.Fatalf("empty report error = %q, want complete_report", err)
+	}
+}
+
+func TestTaskHandoffCompletionRejectsWhitespaceOnlyReport(t *testing.T) {
+	for _, report := range []string{" ", "　", "\n", "\t"} {
+		t.Run(fmt.Sprintf("%q", report), func(t *testing.T) {
+			s := newTestStore(t)
+			ctx := context.Background()
+			taskID := addTestTasks(t, s, 1)[0]
+			addLiveParentGoalClaim(t, s, taskID, "task-whitespace-report-requester")
+			handoff, err := s.RequestTaskHandoff(ctx, "task-whitespace-report-handoff", taskID, testSessionID("task-whitespace-report-requester"), "")
+			if err != nil {
+				t.Fatalf("RequestTaskHandoff: %v", err)
+			}
+			if _, err := s.CompleteTaskHandoff(ctx, handoff.ID, taskID, report); err == nil {
+				t.Fatalf("CompleteTaskHandoff unexpectedly accepted whitespace-only report %q", report)
+			}
+		})
 	}
 }
 
@@ -466,7 +561,7 @@ func TestTaskHandoffCompleteByTaskRejectsMultipleReceivedIncomplete(t *testing.T
 	}
 	addTaskHandoffDirect(t, s, "complete-task-ambiguous-2", taskID, "complete-task-ambiguous-requester", "complete-task-ambiguous-receiver")
 
-	_, err := s.CompleteTaskHandoffForTask(ctx, taskID, "")
+	_, err := s.CompleteTaskHandoffForTask(ctx, taskID, "ambiguous task handoff completion fixture")
 	if !errors.Is(err, ErrTaskHandoffAmbiguous) {
 		t.Fatalf("error = %v, want ErrTaskHandoffAmbiguous", err)
 	}
@@ -510,6 +605,84 @@ func TestTaskHandoffAllowsNewHandoffAfterCompletion(t *testing.T) {
 
 	if _, err := s.RequestTaskHandoff(ctx, "completed-task-2", taskID, testSessionID("completed-task-requester"), ""); err != nil {
 		t.Fatalf("new handoff after completion failed: %v", err)
+	}
+}
+
+func TestTaskHandoffCompletionDoesNotOverwriteReportedHandoff(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	taskID := addTestTasks(t, s, 1)[0]
+	addLiveParentGoalClaim(t, s, taskID, "overwrite-task-requester")
+	addTestAgentSession(t, s, "overwrite-task-receiver")
+	handoff, err := s.RequestTaskHandoff(ctx, "overwrite-task-handoff", taskID, testSessionID("overwrite-task-requester"), "")
+	if err != nil {
+		t.Fatalf("RequestTaskHandoff: %v", err)
+	}
+	if _, err := s.ReceiveTaskHandoff(ctx, handoff.ID, taskID, testSessionID("overwrite-task-receiver")); err != nil {
+		t.Fatalf("ReceiveTaskHandoff: %v", err)
+	}
+	if _, err := s.CompleteTaskHandoff(ctx, handoff.ID, taskID, "original report"); err != nil {
+		t.Fatalf("first CompleteTaskHandoff: %v", err)
+	}
+	if _, err := s.CompleteTaskHandoff(ctx, handoff.ID, taskID, "replacement report"); err == nil {
+		t.Fatal("second CompleteTaskHandoff unexpectedly overwrote the completed handoff")
+	}
+	stored, err := s.GetTaskHandoff(ctx, handoff.ID)
+	if err != nil {
+		t.Fatalf("GetTaskHandoff: %v", err)
+	}
+	if stored.CompleteReport != "original report" {
+		t.Fatalf("complete report = %q, want original report", stored.CompleteReport)
+	}
+}
+
+func TestTaskHandoffAmendReportUpdatesCompletedHandoffWithoutChangingCompletionTime(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	taskID := addTestTasks(t, s, 1)[0]
+	addLiveParentGoalClaim(t, s, taskID, "amend-task-requester")
+	addTestAgentSession(t, s, "amend-task-receiver")
+	handoff, err := s.RequestTaskHandoff(ctx, "amend-task-handoff", taskID, testSessionID("amend-task-requester"), "")
+	if err != nil {
+		t.Fatalf("RequestTaskHandoff: %v", err)
+	}
+	if _, err := s.ReceiveTaskHandoff(ctx, handoff.ID, taskID, testSessionID("amend-task-receiver")); err != nil {
+		t.Fatalf("ReceiveTaskHandoff: %v", err)
+	}
+	completed, err := s.CompleteTaskHandoff(ctx, handoff.ID, taskID, "original report")
+	if err != nil {
+		t.Fatalf("CompleteTaskHandoff: %v", err)
+	}
+
+	amended, err := s.AmendTaskHandoffReport(ctx, handoff.ID, taskID, "amended report")
+	if err != nil {
+		t.Fatalf("AmendTaskHandoffReport: %v", err)
+	}
+	if amended.CompleteReport != "amended report" {
+		t.Fatalf("complete report = %q, want amended report", amended.CompleteReport)
+	}
+	if amended.CompletedReportAt == nil || !amended.CompletedReportAt.Equal(*completed.CompletedReportAt) {
+		t.Fatalf("completed report timestamp = %v, want %v", amended.CompletedReportAt, completed.CompletedReportAt)
+	}
+}
+
+func TestTaskHandoffAmendReportRejectsIncompleteHandoff(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	taskID := addTestTasks(t, s, 1)[0]
+	addLiveParentGoalClaim(t, s, taskID, "amend-incomplete-task-requester")
+	addTestAgentSession(t, s, "amend-incomplete-task-receiver")
+	handoff, err := s.RequestTaskHandoff(ctx, "amend-incomplete-task-handoff", taskID, testSessionID("amend-incomplete-task-requester"), "")
+	if err != nil {
+		t.Fatalf("RequestTaskHandoff: %v", err)
+	}
+	if _, err := s.ReceiveTaskHandoff(ctx, handoff.ID, taskID, testSessionID("amend-incomplete-task-receiver")); err != nil {
+		t.Fatalf("ReceiveTaskHandoff: %v", err)
+	}
+
+	_, err = s.AmendTaskHandoffReport(ctx, handoff.ID, taskID, "replacement report")
+	if err == nil || !strings.Contains(err.Error(), "handoff_complete") {
+		t.Fatalf("error = %v, want incomplete handoff to name handoff_complete", err)
 	}
 }
 

@@ -13,6 +13,7 @@ const (
 	EventWakeup                             = "wakeup"
 	EventKeepalive                          = "keepalive"
 	EventWakeupDiscrepancy                  = "wakeup.discrepancy"
+	EventWakeupEvaluateFailed               = "wakeup.evaluate_failed"
 	EventHandoffReported                    = "handoff_reported"
 	EventHandoffYielded                     = "handoff_yielded"
 	EventDetectionCompletionReportMissing   = "detection.completion_report_missing"
@@ -50,6 +51,14 @@ type WakeupDiscrepancyEvent struct {
 	ProjectID                  int64  `json:"project_id"`
 	DetectorUnstartedTaskCount int    `json:"detector_unstarted_task_count"`
 	CountedUnstartedTaskCount  int    `json:"counted_unstarted_task_count"`
+}
+
+// WakeupEvaluateFailedEvent reports that a maintenance evaluation returned
+// an error. Without it the keepalive published just before makes a failed
+// evaluation indistinguishable from "nothing to report".
+type WakeupEvaluateFailedEvent struct {
+	WakeupID string `json:"wakeup_id"`
+	Reason   string `json:"reason"`
 }
 
 // DetectionEvent identifies the project and object that need attention for a

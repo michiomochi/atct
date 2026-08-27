@@ -6,34 +6,37 @@ import {
   rejectDecision,
   subscribeToDecisionEvents,
 } from "./api";
+import { DECISION_EVENT_NAMES } from "./ui";
 
-class FakeEventSource {
-  static instances: FakeEventSource[] = [];
+class FakeWebSocket {
+  static instances: FakeWebSocket[] = [];
 
   private readonly listeners = new Map<string, Set<(event: Event) => void>>();
   readonly close = vi.fn();
 
   constructor(readonly url: string) {
-    FakeEventSource.instances.push(this);
+    FakeWebSocket.instances.push(this);
   }
 
-  addEventListener(name: string, listener: (event: Event) => void) {
-    const listeners = this.listeners.get(name) ?? new Set<(event: Event) => void>();
+  addEventListener(type: string, listener: (event: Event) => void) {
+    const listeners = this.listeners.get(type) ?? new Set<(event: Event) => void>();
     listeners.add(listener);
-    this.listeners.set(name, listeners);
+    this.listeners.set(type, listeners);
   }
 
-  removeEventListener(name: string, listener: (event: Event) => void) {
-    this.listeners.get(name)?.delete(listener);
+  removeEventListener(type: string, listener: (event: Event) => void) {
+    this.listeners.get(type)?.delete(listener);
   }
 
-  registeredNames() {
-    return [...this.listeners.keys()];
+  emitMessage(payload: string) {
+    for (const listener of this.listeners.get("message") ?? []) {
+      listener({ type: "message", data: payload } as MessageEvent<string>);
+    }
   }
 
-  emit(name: string) {
-    for (const listener of this.listeners.get(name) ?? []) {
-      listener(new Event(name));
+  emitClose() {
+    for (const listener of this.listeners.get("close") ?? []) {
+      listener(new Event("close"));
     }
   }
 }
@@ -115,67 +118,136 @@ describe("decision event subscription", () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
-    FakeEventSource.instances = [];
+    FakeWebSocket.instances = [];
   });
 
-  it("registers every event and does not refresh for keepalive", () => {
+  it("connects to the WebSocket push endpoint", () => {
     vi.useFakeTimers();
-    vi.stubGlobal("EventSource", FakeEventSource);
+    vi.stubGlobal("WebSocket", FakeWebSocket);
     const onEvent = vi.fn();
     const unsubscribe = subscribeToDecisionEvents(onEvent);
-    const source = FakeEventSource.instances[0]!;
+    // location.host carries the port, which the daemon's origin check requires.
+    expect(FakeWebSocket.instances[0]?.url).toBe(`ws://${location.host}/api/ws`);
+    unsubscribe();
+  });
 
-    expect(source.registeredNames()).toEqual([
-      "decision.created",
-      "decision.answered",
-      "decision.withdrawn",
-      "decision.applied",
-      "decision.approved",
-      "decision.rejected",
-      "goal.created",
-      "detection.completion_report_missing",
-      "detection.commits_missing",
-      "detection.undeclared_goal",
-      "detection.all_tasks_dropped",
-      "detection.unclaimed_doing",
-      "detection.handoff_unreceived",
-      "detection.handoff_unreported",
-      "handoff_reported",
-      "detection.claim_undelegated",
-      "detection.decision_answered_unapplied",
-      "detection.decision_default_unapplied",
-      "detection.claim_stale",
-      "keepalive",
-    ]);
+  it("notifies once after a decision frame is debounced", () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("WebSocket", FakeWebSocket);
+    const onEvent = vi.fn();
+    const unsubscribe = subscribeToDecisionEvents(onEvent);
+    const source = FakeWebSocket.instances[0]!;
 
-    source.emit("keepalive");
-    source.emit("goal.created");
-    source.emit("detection.commits_missing");
-    source.emit("decision.created");
-
+    source.emitMessage('{"name":"decision.created","data":{}}');
     expect(onEvent).not.toHaveBeenCalled();
     vi.advanceTimersByTime(100);
+
     expect(onEvent).toHaveBeenCalledTimes(1);
     expect(onEvent).toHaveBeenCalledWith("decision.created");
     unsubscribe();
   });
 
-  it("reconnects after 90 seconds since the last event, including keepalive", () => {
+  it("notifies for every decision event name", () => {
     vi.useFakeTimers();
-    vi.stubGlobal("EventSource", FakeEventSource);
+    vi.stubGlobal("WebSocket", FakeWebSocket);
     const onEvent = vi.fn();
     const unsubscribe = subscribeToDecisionEvents(onEvent);
-    const firstSource = FakeEventSource.instances[0];
+    const source = FakeWebSocket.instances[0]!;
 
-    vi.advanceTimersByTime(60_000);
-    firstSource.emit("keepalive");
-    vi.advanceTimersByTime(60_000);
-    expect(FakeEventSource.instances).toHaveLength(1);
-    vi.advanceTimersByTime(30_000);
+    for (const name of DECISION_EVENT_NAMES) {
+      source.emitMessage(JSON.stringify({ name, data: {} }));
+      vi.advanceTimersByTime(100);
+    }
 
-    expect(FakeEventSource.instances).toHaveLength(2);
-    expect(firstSource.close).toHaveBeenCalledTimes(1);
+    expect(onEvent.mock.calls.map(([name]) => name)).toEqual([...DECISION_EVENT_NAMES]);
+    unsubscribe();
+  });
+
+  it("reconnects five seconds after a close event", () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("WebSocket", FakeWebSocket);
+    const onEvent = vi.fn();
+    const unsubscribe = subscribeToDecisionEvents(onEvent);
+    const source = FakeWebSocket.instances[0]!;
+
+    source.emitClose();
+    vi.advanceTimersByTime(4_999);
+    expect(FakeWebSocket.instances).toHaveLength(1);
+    vi.advanceTimersByTime(1);
+
+    expect(FakeWebSocket.instances).toHaveLength(2);
+    unsubscribe();
+  });
+
+  it("does not notify for keepalive frames", () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("WebSocket", FakeWebSocket);
+    const onEvent = vi.fn();
+    const unsubscribe = subscribeToDecisionEvents(onEvent);
+    const source = FakeWebSocket.instances[0]!;
+
+    source.emitMessage('{"name":"keepalive"}');
+    vi.advanceTimersByTime(100);
+
     expect(onEvent).not.toHaveBeenCalled();
     unsubscribe();
+  });
+
+  it("does not reconnect while keepalive frames arrive every 60 seconds", () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("WebSocket", FakeWebSocket);
+    const onEvent = vi.fn();
+    const unsubscribe = subscribeToDecisionEvents(onEvent);
+    const source = FakeWebSocket.instances[0]!;
+
+    vi.advanceTimersByTime(60_000);
+    source.emitMessage('{"name":"keepalive"}');
+    vi.advanceTimersByTime(60_000);
+    source.emitMessage('{"name":"keepalive"}');
+    expect(FakeWebSocket.instances).toHaveLength(1);
+
+    vi.advanceTimersByTime(89_999);
+    expect(FakeWebSocket.instances).toHaveLength(1);
+    vi.advanceTimersByTime(1);
+
+    expect(FakeWebSocket.instances).toHaveLength(2);
+    unsubscribe();
+  });
+
+  it("debounces four consecutive frames into the last event", () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("WebSocket", FakeWebSocket);
+    const onEvent = vi.fn();
+    const unsubscribe = subscribeToDecisionEvents(onEvent);
+    const source = FakeWebSocket.instances[0]!;
+
+    for (const name of [
+      "decision.created",
+      "goal.created",
+      "detection.commits_missing",
+      "decision.created",
+    ]) {
+      source.emitMessage(JSON.stringify({ name, data: {} }));
+    }
+    vi.advanceTimersByTime(100);
+
+    expect(onEvent).toHaveBeenCalledTimes(1);
+    expect(onEvent).toHaveBeenCalledWith("decision.created");
+    unsubscribe();
+  });
+
+  it("does not reconnect after unsubscribe even if close is emitted", () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("WebSocket", FakeWebSocket);
+    const onEvent = vi.fn();
+    const unsubscribe = subscribeToDecisionEvents(onEvent);
+    const source = FakeWebSocket.instances[0]!;
+
+    unsubscribe();
+    expect(source.close).toHaveBeenCalledTimes(1);
+    source.emitClose();
+    vi.advanceTimersByTime(5_000);
+
+    expect(FakeWebSocket.instances).toHaveLength(1);
   });
 });

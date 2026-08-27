@@ -619,8 +619,53 @@ test_recovery_section_has_goal_path() {
 }
 
 test_recovery_section_has_task_path_and_non_repair_note() {
-  recovery_section_contains '- task: `atct_handoff_complete` (with only `task_id`) → `atct_task_claim`'
+  recovery_section_contains 'atct_handoff_complete` (with `task_id` and `complete_report`)'
   recovery_section_contains 'This is a procedure, not a repair; it becomes unnecessary once the issue is fixed.'
+}
+
+test_handoff_completion_reports_are_explicit() {
+  local atct_skill="$REPO_ROOT/skills/atct/SKILL.md"
+  assert_file_contains 'with the `task_id` provided in this request and a `complete_report`' "$atct_skill"
+  assert_file_contains 'with the `goal_id` provided in this request' "$atct_skill"
+  assert_file_contains 'what was done, what was verified, and paths changed' "$atct_skill"
+}
+
+test_handoff_report_repair_is_explicit() {
+  local atct_skill="$REPO_ROOT/skills/atct/SKILL.md"
+  assert_file_contains '## Fill in a report on a handoff that is already closed' "$atct_skill"
+  assert_file_contains '`atct_handoff_report_amend` with the specific `handoff_id`' "$atct_skill"
+  assert_file_contains 'It is not part of normal executor completion.' "$atct_skill"
+}
+
+test_handoff_completion_keeps_one_normal_path() {
+  local normal_section
+  local completion_step
+  normal_section="$(sed -n '/^## Delegate a task$/,/^## Delegate a goal$/p' "$REPO_ROOT/skills/atct/SKILL.md")"
+  completion_step="$(sed -n '/When the work is complete, record completion by calling `atct_handoff_complete`/,/^$/p' <<<"$normal_section")"
+  ! grep -Fq -- 'atct_handoff_report_amend' <<<"$normal_section" || fail 'normal task completion must not name the repair tool'
+  ! grep -Fq -- 'with the specific `handoff_id`' <<<"$normal_section" || fail 'normal task completion must not require handoff_id'
+  ! grep -Fq -- 'with only the `task_id` provided in this request.' <<<"$completion_step" || fail 'task completion must require complete_report'
+}
+
+test_goal_handoff_completion_keeps_one_normal_path() {
+  local goal_section
+  local completion_step
+  goal_section="$(sed -n '/^## Delegate a goal$/,/^### Session keys$/p' "$REPO_ROOT/skills/atct/SKILL.md")"
+  completion_step="$(sed -n '/When the work is complete, record completion by calling/,/^$/p' <<<"$goal_section")"
+  ! grep -Fq -- 'atct_goal_handoff_report_amend' <<<"$goal_section" || fail 'normal goal completion must not name the repair tool'
+  ! grep -Fq -- 'handoff_id' <<<"$completion_step" || fail 'goal completion must not require handoff_id'
+  ! grep -Fq -- 'with only the `goal_id` provided in this request.' <<<"$completion_step" || fail 'goal completion must require complete_report'
+}
+
+test_handoff_report_repair_follows_goal_delegation() {
+  local atct_skill="$REPO_ROOT/skills/atct/SKILL.md"
+  local goal_end
+  local repair
+  local recovery
+  goal_end="$(grep -n '^### Session keys$' "$atct_skill" | cut -d: -f1)"
+  repair="$(grep -n '^## Fill in a report on a handoff that is already closed$' "$atct_skill" | cut -d: -f1)"
+  recovery="$(grep -n '^## Recover when your role comes back wrong$' "$atct_skill" | cut -d: -f1)"
+  (( goal_end < repair && repair < recovery )) || fail 'handoff report repair must follow goal delegation and precede recovery'
 }
 
 test_recovery_section_omits_session_header() {
@@ -680,7 +725,8 @@ test_delegated_claim_contract_is_explicit() {
   assert_file_contains 'the `task_id` provided in this request.' "$atct_skill"
   assert_file_contains 'The delegator must call `atct_goal_handoff_request`' "$atct_skill"
   assert_file_contains 'with only the `goal_id` provided in this request.' "$atct_skill"
-  assert_file_contains '`atct_goal_handoff_complete` with only the `goal_id` provided in this' "$atct_skill"
+  assert_file_contains '`atct_goal_handoff_complete` with the `goal_id` provided in this request' "$atct_skill"
+  assert_file_contains 'and a `complete_report`' "$atct_skill"
   assert_file_contains 'Do this before starting work.' "$atct_skill"
   assert_file_contains 'When the work is complete, record completion by calling `atct_handoff_complete`' "$atct_skill"
   assert_file_contains 'A subcommander must not claim the project' "$atct_skill"
@@ -1173,6 +1219,11 @@ test_recovery_section_prioritizes_session_identify
 test_recovery_section_has_project_path
 test_recovery_section_has_goal_path
 test_recovery_section_has_task_path_and_non_repair_note
+test_handoff_completion_reports_are_explicit
+test_handoff_report_repair_is_explicit
+test_handoff_completion_keeps_one_normal_path
+test_goal_handoff_completion_keeps_one_normal_path
+test_handoff_report_repair_follows_goal_delegation
 test_recovery_section_omits_session_header
 test_recovery_section_omits_agent_sessions
 test_recovery_section_omits_task_release

@@ -1083,6 +1083,18 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		}
 		return marshal(handoff, err)
 
+	case "handoff.report.amend":
+		var p struct {
+			HandoffID      string `json:"handoff_id"`
+			TaskID         int64  `json:"task_id"`
+			CompleteReport string `json:"complete_report"`
+		}
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		handoff, err := d.store.AmendTaskHandoffReport(ctx, p.HandoffID, p.TaskID, p.CompleteReport)
+		return marshal(handoff, err)
+
 	case "handoff.yielded":
 		var p struct {
 			TaskID int64 `json:"task_id"`
@@ -1165,6 +1177,18 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		} else {
 			handoff, err = d.store.CompleteGoalHandoff(ctx, p.HandoffID, p.GoalID, p.CompleteReport)
 		}
+		return marshal(handoff, err)
+
+	case "goal.handoff.report.amend":
+		var p struct {
+			HandoffID      string `json:"handoff_id"`
+			GoalID         int64  `json:"goal_id"`
+			CompleteReport string `json:"complete_report"`
+		}
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		handoff, err := d.store.AmendGoalHandoffReport(ctx, p.HandoffID, p.GoalID, p.CompleteReport)
 		return marshal(handoff, err)
 
 	case "decision.ask":

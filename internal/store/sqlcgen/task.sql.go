@@ -10,10 +10,42 @@ import (
 	"database/sql"
 )
 
+const amendGoalHandoffReport = `-- name: AmendGoalHandoffReport :execresult
+UPDATE goal_handoffs
+SET complete_report = ?
+WHERE id = ? AND goal_id = ? AND completed_report_at IS NOT NULL
+`
+
+type AmendGoalHandoffReportParams struct {
+	CompleteReport sql.NullString
+	ID             string
+	GoalID         int64
+}
+
+func (q *Queries) AmendGoalHandoffReport(ctx context.Context, arg AmendGoalHandoffReportParams) (sql.Result, error) {
+	return q.db.ExecContext(ctx, amendGoalHandoffReport, arg.CompleteReport, arg.ID, arg.GoalID)
+}
+
+const amendTaskHandoffReport = `-- name: AmendTaskHandoffReport :execresult
+UPDATE task_handoffs
+SET complete_report = ?
+WHERE id = ? AND task_id = ? AND completed_report_at IS NOT NULL
+`
+
+type AmendTaskHandoffReportParams struct {
+	CompleteReport sql.NullString
+	ID             string
+	TaskID         int64
+}
+
+func (q *Queries) AmendTaskHandoffReport(ctx context.Context, arg AmendTaskHandoffReportParams) (sql.Result, error) {
+	return q.db.ExecContext(ctx, amendTaskHandoffReport, arg.CompleteReport, arg.ID, arg.TaskID)
+}
+
 const completeGoalHandoff = `-- name: CompleteGoalHandoff :execresult
 UPDATE goal_handoffs
 SET completed_report_at = ?, complete_report = ?
-WHERE id = ? AND goal_id = ? AND requested_at IS NOT NULL
+WHERE id = ? AND goal_id = ? AND requested_at IS NOT NULL AND completed_report_at IS NULL
 `
 
 type CompleteGoalHandoffParams struct {
@@ -35,7 +67,7 @@ func (q *Queries) CompleteGoalHandoff(ctx context.Context, arg CompleteGoalHando
 const completeTaskHandoff = `-- name: CompleteTaskHandoff :execresult
 UPDATE task_handoffs
 SET completed_report_at = ?, complete_report = ?
-WHERE id = ? AND task_id = ? AND requested_at IS NOT NULL
+WHERE id = ? AND task_id = ? AND requested_at IS NOT NULL AND completed_report_at IS NULL
 `
 
 type CompleteTaskHandoffParams struct {
