@@ -320,6 +320,38 @@ func (d *Daemon) ensureAgentSessionProject(ctx context.Context, agentSessionID i
 	return fmt.Errorf("agent session project scope violation: assigned project %q, target project %q", assignedProjectName, targetProjectName)
 }
 
+func (d *Daemon) authorizeGoalCompletion(ctx context.Context, goalID int64, projectID int64, agentSessionID int64) error {
+	if agentSessionID == 0 {
+		return fmt.Errorf("goal completion denied: goal %d requires agent_session_id; identify the session before reporting completion", goalID)
+	}
+
+	projects, err := d.store.ListProjects(ctx)
+	if err != nil {
+		return fmt.Errorf("goal completion authorization: list projects: %w", err)
+	}
+	for _, project := range projects {
+		if project.ID == projectID && project.ClaimedBy == agentSessionID {
+			return nil
+		}
+	}
+
+	handoffs, err := d.store.ListOpenGoalHandoffs(ctx)
+	if err != nil {
+		return fmt.Errorf("goal completion authorization: list open goal handoffs: %w", err)
+	}
+	handoff := handoffs[goalID]
+	if handoff == nil {
+		return fmt.Errorf("goal completion denied: caller %d holds no open goal handoff for goal %d; receive the goal handoff for this goal or claim its project", agentSessionID, goalID)
+	}
+	if handoff.ReceivedAt == nil {
+		return fmt.Errorf("goal completion denied: the goal handoff for goal %d was requested but never received; caller %d must receive it before reporting completion", goalID, agentSessionID)
+	}
+	if handoff.ReceivedBy != agentSessionID {
+		return fmt.Errorf("goal completion denied: caller %d is not the holder of goal %d; actual holder is session %d", agentSessionID, goalID, handoff.ReceivedBy)
+	}
+	return nil
+}
+
 func (d *Daemon) resolveOrRegisterProject(ctx context.Context, cwd string) (domain.Project, error) {
 	project, err := d.store.ResolveProject(ctx, cwd)
 	if err == nil {
@@ -1350,6 +1382,9 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		}
 		goal, err := d.store.GetGoal(ctx, p.GoalID)
 		if err != nil {
+			return nil, err
+		}
+		if err := d.authorizeGoalCompletion(ctx, p.GoalID, goal.ProjectID, p.AgentSessionID); err != nil {
 			return nil, err
 		}
 		if err := d.ensureAgentSessionProject(ctx, p.AgentSessionID, goal.ProjectID); err != nil {

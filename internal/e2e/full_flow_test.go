@@ -432,6 +432,11 @@ func TestFullFlowThroughDaemonAndHTTP(t *testing.T) {
 		t.Fatalf("completed claimed task still held: %+v", openAfterUpdates[claimed.ID])
 	}
 
+	var claimedGoal domain.Goal
+	callDaemon(t, stack, "goal.claim", map[string]any{
+		"goal_id": goal.ID, "agent_session_id": agentSessionID,
+	}, &claimedGoal)
+
 	var completion domain.Decision
 	callDaemon(t, stack, "goal.complete", map[string]any{
 		"goal_id": goal.ID, "work_done": "The flow completed",
