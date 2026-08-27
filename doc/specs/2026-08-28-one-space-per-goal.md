@@ -99,4 +99,8 @@
 | 例外が 1 つで他に無い | `there is no other` と、`commander` の space である旨 |
 | 見え方だけの例外 | `A rejected completion is the same goal` |
 | 手順にも入っている | `## One worktree per goal` の節に `closes that space when the goal is approved` が現れる |
-| 混む節に入っていない | `## Delegate a goal` の節に `space` が現れない |
+
+**「`## Delegate a goal` に `space` の語が現れないこと」は検査にしない。**一度書いたが取り消した。
+あれはマージ時の占有境界であって、規則ではない。`space` は `workspace` にも当たるので
+過検知するうえ、137 が着地したあとに他の単位がその節で space に触れる正当な理由が
+できたときに落ちる。**占有の調停は commander の運用であり、テストで固定するものではない。**
