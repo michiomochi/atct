@@ -246,6 +246,10 @@ that subcommander is started:
    complete the handoff.
 3. Wake the subcommander through the environment. ATCT does not prescribe how
    the subcommander is started or how the role is transmitted.
+   Name in the request every adjacent goal that touches the same files and say
+   which side owns what. The delegator is the only party that can see both
+   goals, and a boundary left unstated becomes a question the subcommander
+   cannot answer for itself.
 4. Put these exact instructions at the very beginning of the request:
 
    > First call `atct_session_identify` with a stable session key that remains unchanged for this session and identifies only you. Your agent name is suitable. Do this before any other atct call.
@@ -267,6 +271,18 @@ that subcommander is started:
    > step applies only in Claude Code; Codex has no Monitor, so a Codex reader
    > skips it.
    >
+   > Decide this goal's design yourself. Do not bring the delegator a design
+   > question, a progress note, a receipt acknowledgement, a discovery, or a
+   > reading of this goal's code. Send the delegator nothing until the completion
+   > report. What you would have said goes into the record instead: a task for
+   > work in flight, `surprises` and `needs_review` for what you found,
+   > `next_steps` for what you left, and `atct_decision_ask` for anything that
+   > needs the human.
+   >
+   > A fact that spans another goal is not an exception. Raise it with
+   > `atct_decision_ask`; the answer reaches you through your own watch, without
+   > passing through the delegator.
+   >
    > When the work is complete, record completion by calling
    > `atct_goal_handoff_complete` with the `goal_id` provided in this request
    > and a `complete_report`. The `complete_report` must say what was done,
@@ -283,12 +299,71 @@ that subcommander is started:
    A subcommander must not claim the project. Claiming the project changes its
    role to commander.
 
+6. Stay out until the completion report. After waking the subcommander, the
+   delegator sends it nothing and answers nothing about the goal's design.
+   What the delegator reads instead are this project's ATCT detections, which
+   arrive from `atct watch` rather than from the subcommander: a goal with no
+   commits, a goal with no declared tasks, a claim nobody delegated, a handoff
+   nobody received. Those are what a stalled subcommander looks like from
+   outside, and they arrive whether or not it speaks. Review the goal when
+   `atct_goal_handoff_complete` lands; that report is the entry point.
+
 ### Session keys
 
 The caller owns the session key. It must remain unchanged for the life of the
 session and identify only that caller; the caller's agent name is suitable. If
 a reconnect causes the role to appear wrong, call `atct_session_identify` again
 with the same key to return to the original session row.
+
+## What the delegator answers
+
+A delegator that answers a question about the inside of a goal is guessing; it
+has not read that goal's code. On 2026-08-27 a commander answered two such
+questions and both answers were wrong: that `tools.go` had to change before a
+tool was reachable from MCP, and that `wakeup.go` read a file it does not read.
+The subcommander that had read the code corrected both.
+
+Four kinds of question belong to the delegator, because only it can see them:
+
+- which of two goals owns a piece of work both could claim
+- which other goal is editing a file this goal needs to edit
+- whether a change is already on the main branch
+- when the work is released
+
+Four kinds look similar and belong to the subcommander, because it has read the
+code and the delegator has not:
+
+- which of two designs this goal takes
+- what a function in this goal's code actually does
+- how this goal's work is split into commits, and in what order
+- how this goal's work is divided among its executors
+
+A subcommander that brings the delegator one of the second four is asking the
+wrong reader. A delegator that answers one of them is inventing the answer.
+
+## Where an unsent report goes
+
+Silence upward is only safe when nothing is lost. Every kind of message a
+subcommander used to speak has a place in the record instead, and the record
+reaches the human without passing through the delegator's context.
+
+| What used to be spoken | Where it goes |
+|---|---|
+| receipt of the goal | the `atct_goal_handoff_receive` record itself |
+| progress on the work | tasks: `atct_task_declare`, then `done` as each one lands |
+| the design and why | a spec committed with the goal's work, and `work_done` |
+| something found inside this goal | `surprises` and `needs_review` |
+| something found that is another goal | `atct_decision_ask`, addressed to the human |
+| what was left undone | `next_steps` |
+| the goal is finished | `atct_goal_handoff_complete`, the one message |
+
+A subcommander that stops working sends nothing at all, and the old habit caught
+that only because a delegator noticed a quiet pane. The record catches it
+instead: a goal with tasks and no commits, or a closed handoff with nothing
+committed, each raises a detection on the delegator's watch. On 2026-08-27 goal
+172 stalled with three tasks still `todo` and eight files uncommitted, and goal
+144 closed its handoff with no commits and four tasks still `todo`. Both
+detections had already fired; nobody had been told to read them.
 
 ## Fill in a report on a handoff that is already closed
 

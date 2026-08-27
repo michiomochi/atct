@@ -579,6 +579,159 @@ test_goal_handoff_watch_contract_has_required_order() {
     fail "goal handoff watch paragraphs are in the wrong order: role=$role watch=$watch completion=$fin"
 }
 
+test_goal_handoff_forbids_upward_design_questions() {
+  delegate_goal_section_contains "Decide this goal's design yourself. Do not bring the delegator a design"
+  delegate_goal_section_contains "reading of this goal's code. Send the delegator nothing until the completion"
+}
+
+test_goal_handoff_names_the_single_upward_message() {
+  delegate_goal_section_contains '`next_steps` for what you left, and `atct_decision_ask` for anything that'
+
+  local section
+  section="$(unsent_report_section)"
+  grep -Fq -- '| the goal is finished | `atct_goal_handoff_complete`, the one message |' <<<"$section" ||
+    fail 'unsent report section must name the single upward completion message'
+}
+
+test_goal_handoff_routes_cross_goal_facts_to_the_human() {
+  delegate_goal_section_contains 'A fact that spans another goal is not an exception. Raise it with'
+  delegate_goal_section_contains 'passing through the delegator.'
+}
+
+test_goal_handoff_silence_has_required_order() {
+  local lineno
+  local watch
+  local silence
+  local fin
+
+  lineno() { delegate_goal_section | grep -n -F -- "$1" | head -1 | cut -d: -f1; }
+  watch="$(lineno 'Then attach `atct watch -goal <goal_id>` to a background stream the way')"
+  silence="$(lineno "Decide this goal's design yourself. Do not bring the delegator a design")"
+  fin="$(lineno 'When the work is complete, record completion by calling')"
+
+  [[ -n "$watch" && -n "$silence" && -n "$fin" ]] ||
+    fail 'goal handoff silence order requires watch, silence, and completion paragraphs'
+  (( watch < silence && silence < fin )) ||
+    fail "goal handoff silence paragraphs are in the wrong order: watch=$watch silence=$silence completion=$fin"
+}
+
+test_goal_handoff_preamble_does_not_invite_upward_reports() {
+  delegate_goal_section_not_contains 'report progress to the delegator'
+  delegate_goal_section_not_contains 'keep the delegator informed'
+  delegate_goal_section_not_contains 'Report to the delegator when'
+  delegate_goal_section_not_contains 'share your design with the delegator'
+}
+
+test_goal_delegation_requires_the_adjacent_goal_boundary() {
+  delegate_goal_section_contains 'Name in the request every adjacent goal that touches the same files and say'
+  delegate_goal_section_contains 'goals, and a boundary left unstated becomes a question the subcommander'
+}
+
+test_goal_delegation_keeps_the_delegator_out_until_completion() {
+  delegate_goal_section_contains '6. Stay out until the completion report. After waking the subcommander, the'
+  delegate_goal_section_contains 'arrive from `atct watch` rather than from the subcommander: a goal with no'
+  delegate_goal_section_contains '`atct_goal_handoff_complete` lands; that report is the entry point.'
+}
+
+test_delegator_answers_are_balanced() {
+  local section
+  local delegator_heading
+  local subcommander_heading
+  local delegator_count
+  local subcommander_count
+
+  section="$(delegator_answers_section)"
+  delegator_heading="$(grep -n -F -- 'Four kinds of question belong to the delegator' <<<"$section" | head -1 | cut -d: -f1)"
+  subcommander_heading="$(grep -n -F -- 'Four kinds look similar and belong to the subcommander' <<<"$section" | head -1 | cut -d: -f1)"
+
+  [[ -n "$delegator_heading" && -n "$subcommander_heading" ]] ||
+    fail 'delegator answer balance requires both question headings'
+
+  delegator_count="$(awk -v start="$delegator_heading" -v end="$subcommander_heading" '
+    NR > start && NR < end && /^- / { count++ }
+    END { print count + 0 }
+  ' <<<"$section")"
+  subcommander_count="$(awk -v start="$subcommander_heading" '
+    NR > start && /^- / { count++ }
+    END { print count + 0 }
+  ' <<<"$section")"
+
+  assert_eq '4' "$delegator_count" 'delegator answers must list four question kinds'
+  assert_eq '4' "$subcommander_count" 'subcommander answers must list four question kinds'
+  assert_eq "$delegator_count" "$subcommander_count" 'delegator and subcommander question counts must match'
+}
+
+test_delegator_answers_names_the_wrong_answers_measurement() {
+  local section
+  section="$(delegator_answers_section)"
+
+  grep -Fq -- 'On 2026-08-27 a commander answered two such' <<<"$section" ||
+    fail 'delegator answers section must name the wrong-answers measurement'
+  grep -Fq -- 'tool was reachable from MCP, and that `wakeup.go` read a file it does not read.' <<<"$section" ||
+    fail 'delegator answers section must name both wrong answers'
+}
+
+test_unsent_report_table_covers_every_spoken_kind() {
+  local section
+  local table_rows
+  section="$(unsent_report_section)"
+
+  for needle in \
+    '| receipt of the goal |' \
+    '| progress on the work |' \
+    '| the design and why |' \
+    '| something found inside this goal |' \
+    '| something found that is another goal |' \
+    '| what was left undone |' \
+    '| the goal is finished |'; do
+    grep -Fq -- "$needle" <<<"$section" ||
+      fail "unsent report table does not cover <$needle>"
+  done
+
+  table_rows="$(awk '
+    /^\| What used to be spoken \| Where it goes \|$/ { in_table=1; next }
+    in_table && /^\| / && /\|$/ { count++ }
+    END { print count + 0 }
+  ' <<<"$section")"
+  assert_eq '7' "$table_rows" 'unsent report table must contain seven data rows'
+}
+
+test_unsent_report_names_the_stall_detection() {
+  local section
+  section="$(unsent_report_section)"
+
+  grep -Fq -- "committed, each raises a detection on the delegator's watch. On 2026-08-27 goal" <<<"$section" ||
+    fail 'unsent report section must name the stall detection'
+  grep -Fq -- '172 stalled with three tasks still `todo` and eight files uncommitted, and goal' <<<"$section" ||
+    fail 'unsent report section must name goal 172'
+  grep -Fq -- 'detections had already fired; nobody had been told to read them.' <<<"$section" ||
+    fail 'unsent report section must name the missed detection read'
+}
+
+test_task_delegation_preamble_is_untouched_by_upward_silence() {
+  local task_section
+  task_section="$(sed -n '/^## Delegate a task$/,/^## Delegate a goal$/p' "$REPO_ROOT/skills/atct/SKILL.md")"
+
+  for needle in \
+    'Send the delegator nothing until the completion' \
+    'Stay out until the completion report' \
+    'Name in the request every adjacent goal'; do
+    if grep -Fq -- "$needle" <<<"$task_section"; then
+      fail "goal 181 owns the task delegation preamble: <$needle>"
+    fi
+  done
+}
+
+delegator_answers_section() {
+  sed -n '/^## What the delegator answers$/,/^## Where an unsent report goes$/p' \
+    "$REPO_ROOT/skills/atct/SKILL.md"
+}
+
+unsent_report_section() {
+  sed -n '/^## Where an unsent report goes$/,/^## Fill in a report on a handoff that is already closed$/p' \
+    "$REPO_ROOT/skills/atct/SKILL.md"
+}
+
 recovery_section() {
   sed -n '/^## Recover when your role comes back wrong$/,/^## Close a task/p' \
     "$REPO_ROOT/skills/atct/SKILL.md"
@@ -1289,6 +1442,18 @@ test_start_keeps_monitor_persistence_requirement
 test_goal_handoff_watch_contract_is_explicit
 test_goal_handoff_watch_contract_omits_unsafe_variants
 test_goal_handoff_watch_contract_has_required_order
+test_goal_handoff_forbids_upward_design_questions
+test_goal_handoff_names_the_single_upward_message
+test_goal_handoff_routes_cross_goal_facts_to_the_human
+test_goal_handoff_silence_has_required_order
+test_goal_handoff_preamble_does_not_invite_upward_reports
+test_goal_delegation_requires_the_adjacent_goal_boundary
+test_goal_delegation_keeps_the_delegator_out_until_completion
+test_delegator_answers_are_balanced
+test_delegator_answers_names_the_wrong_answers_measurement
+test_unsent_report_table_covers_every_spoken_kind
+test_unsent_report_names_the_stall_detection
+test_task_delegation_preamble_is_untouched_by_upward_silence
 test_task_handoff_recreation_cause_is_documented
 test_task_handoff_recreation_uses_new_id
 test_task_handoff_recreation_keeps_worker_identity
