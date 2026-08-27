@@ -43,27 +43,35 @@
 
 ### 2-3. `skills/atct/SKILL.md` を直す
 
+**ゴール 194 が同じ節を並行して書き換えている。境界が引かれている。**
+
+- **194 の担当**: 「どう直すか」の手順（回復手順の番号リストと `Out of order` の注意）
+- **183（あなた）の担当**: **「なぜ落ちるか」の引き金の一覧だけ**
+- **`## Recover when your role comes back wrong` 以外の節に入るな**
+- **「どう直すか」を書くな。**手順は 194 が書いている。**同じことが 2 か所にあると片方が腐る**
+
+書き換えてよいのは、この節の**最後から 2 番目の段落 1 つだけ**である。
+
 `## Recover when your role comes back wrong`（394 行付近）の中の
 
 > A subcommander cannot restore its own goal; ask the commander to issue the goal
 > handoff again because reissuing it requires a project claim. This is a procedure,
 > not a repair; it becomes unnecessary once the issue is fixed.
 
-を次の趣旨に書き換える。**英語のまま・同じ調子で書く。**
+を、**引き金の一覧に置き換える。英語のまま・同じ調子で書く。**
+2026-08-27 から 08-28 の実測が 8 件ある。引き金は 3 つで、**handoff がどうなるかが違う。**
 
-**役割が落ちる引き金は 3 つあり、復旧手段が違う。それを分けて書くのが目的である。**
-2026-08-27 から 08-28 にかけて 8 件の実測がある。
+| 引き金 | handoff |
+|---|---|
+| daemon の再起動（**版が上がったかとは無関係**に起きる） | 開いたまま。落ちたのはセッション記録だけ |
+| 完了報告の却下 | **閉じたまま。自動で元の受領者へ再発行される** |
+| `atct_goal_handoff_complete` の順序誤り / executor の誤呼び出し | **閉じたまま。再発行されない** |
 
-1. **handoff は開いたまま、セッション記録だけが作り直された**（daemon の再起動。
-   **版が上がったかどうかとは無関係**に起きる） -> `atct_session_identify` を同じ
-   `session_key` で呼び直せば戻る。**これが 1 手目で、既にこの節に書いてある**
-2. **完了報告が却下されて handoff が閉じたまま** -> **自動で元の受領者へ再発行される。**
-   `atct_role` を呼び直せば `subcommander` に戻っている。**commander に頼む必要は無い**
-3. **それ以外で handoff が閉じた**（`atct_goal_handoff_complete` を完了報告より先に
-   呼んだ、executor が誤って呼んだ） -> 再発行に project claim が要るので commander に頼む
+**表のあとに 1 文だけ添える**——却下は自動で戻るので、上の手順の goal の行
+（commander に再発行を頼む）が要るのは 3 行目だけである。
 
-**3 つとも「`atct_role` を呼ぶまで気づけない」点は共通である。**役割が要る操作の前に
-`atct_role` を呼べ、と一言添える。
+**手順そのものを書き直すな。**「どう直すか」は 194 が書いている。あなたが足すのは
+**どの引き金がどこへ落ちるか**だけである。
 
 - 参照先に `doc/specs/2026-08-28-reissuing-the-goal-handoff-on-rejection.md` を足す
   （既存の `doc/specs/2026-08-25-session-id-swap.md` の行は残す）
