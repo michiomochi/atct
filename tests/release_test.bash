@@ -3,6 +3,7 @@ set -euo pipefail
 
 REPO_ROOT="${REPO_ROOT:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)}"
 RELEASE_SCRIPT="${RELEASE_SCRIPT:-$REPO_ROOT/script/release.sh}"
+DIST_CHECK_SCRIPT="${DIST_CHECK_SCRIPT:-$REPO_ROOT/script/dist-check.sh}"
 TEMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/atct-release-test.XXXXXX")"
 trap 'rm -rf -- "$TEMP_ROOT"' EXIT
 
@@ -136,6 +137,113 @@ make_gate_only_release() {
   chmod +x "$target"
 }
 
+make_dist_fixture() {
+  local fixture="$1"
+
+  mkdir -p "$fixture/_astro"
+  touch "$fixture/.gitkeep"
+  cat >"$fixture/index.html" <<'EOF'
+<!doctype html>
+<link rel="stylesheet" href="/_astro/app.css">
+<script type="module" src="/_astro/app.js"></script>
+EOF
+  cat >"$fixture/_astro/app.js" <<'EOF'
+import "./shared.js";
+EOF
+  cat >"$fixture/_astro/shared.js" <<'EOF'
+export const ready = true;
+EOF
+  cat >"$fixture/_astro/app.css" <<'EOF'
+body { background: url(./background.svg), url(/_astro/background-absolute.svg); }
+EOF
+  touch "$fixture/_astro/background.svg" "$fixture/_astro/background-absolute.svg"
+}
+
+test_dist_check_accepts_reachable_fixture() {
+  local fixture="$TEMP_ROOT/dist-clean"
+  local stdout="$TEMP_ROOT/dist-clean.stdout"
+  local stderr="$TEMP_ROOT/dist-clean.stderr"
+  local status=0
+
+  make_dist_fixture "$fixture"
+  bash "$DIST_CHECK_SCRIPT" "$fixture" >"$stdout" 2>"$stderr" || status=$?
+
+  assert_eq 0 "$status" 'dist-check must accept a clean fixture'
+}
+
+test_dist_check_rejects_unreachable_asset() {
+  local fixture="$TEMP_ROOT/dist-unreachable"
+  local stdout="$TEMP_ROOT/dist-unreachable.stdout"
+  local stderr="$TEMP_ROOT/dist-unreachable.stderr"
+  local status=0
+
+  make_dist_fixture "$fixture"
+  touch "$fixture/_astro/StateMessage.OldGen00.js"
+  bash "$DIST_CHECK_SCRIPT" "$fixture" >"$stdout" 2>"$stderr" || status=$?
+
+  assert_eq 1 "$status" 'dist-check must reject an unreachable asset'
+  assert_file_contains '_astro/StateMessage.OldGen00.js' "$stderr"
+}
+
+test_dist_check_rejects_missing_gitkeep() {
+  local fixture="$TEMP_ROOT/dist-missing-gitkeep"
+  local stdout="$TEMP_ROOT/dist-missing-gitkeep.stdout"
+  local stderr="$TEMP_ROOT/dist-missing-gitkeep.stderr"
+  local status=0
+
+  make_dist_fixture "$fixture"
+  rm -- "$fixture/.gitkeep"
+  bash "$DIST_CHECK_SCRIPT" "$fixture" >"$stdout" 2>"$stderr" || status=$?
+
+  assert_eq 1 "$status" 'dist-check must reject a missing .gitkeep'
+  assert_file_contains 'go:embed' "$stderr"
+}
+
+test_dist_check_accepts_multiple_index_chunks() {
+  local fixture="$TEMP_ROOT/dist-multiple-index"
+  local stdout="$TEMP_ROOT/dist-multiple-index.stdout"
+  local stderr="$TEMP_ROOT/dist-multiple-index.stderr"
+  local status=0
+
+  make_dist_fixture "$fixture"
+  cat >>"$fixture/index.html" <<'EOF'
+<script type="module" src="/_astro/index.CgxM0nL0.js"></script>
+<script type="module" src="/_astro/index.DxeUZV0I.js"></script>
+EOF
+  touch "$fixture/_astro/index.CgxM0nL0.js" "$fixture/_astro/index.DxeUZV0I.js"
+  bash "$DIST_CHECK_SCRIPT" "$fixture" >"$stdout" 2>"$stderr" || status=$?
+
+  assert_eq 0 "$status" 'dist-check must accept two referenced index chunks'
+}
+
+test_dist_check_accepts_gitkeep_only_fixture() {
+  local fixture="$TEMP_ROOT/dist-gitkeep-only"
+  local stdout="$TEMP_ROOT/dist-gitkeep-only.stdout"
+  local stderr="$TEMP_ROOT/dist-gitkeep-only.stderr"
+  local status=0
+
+  mkdir -p "$fixture"
+  touch "$fixture/.gitkeep"
+  bash "$DIST_CHECK_SCRIPT" "$fixture" >"$stdout" 2>"$stderr" || status=$?
+
+  assert_eq 0 "$status" 'dist-check must accept a .gitkeep-only fixture'
+}
+
+test_dist_check_rejects_assets_without_html_entrypoint() {
+  local fixture="$TEMP_ROOT/dist-no-html"
+  local stdout="$TEMP_ROOT/dist-no-html.stdout"
+  local stderr="$TEMP_ROOT/dist-no-html.stderr"
+  local status=0
+
+  mkdir -p "$fixture/_astro"
+  touch "$fixture/.gitkeep" "$fixture/_astro/orphan.js"
+  bash "$DIST_CHECK_SCRIPT" "$fixture" >"$stdout" 2>"$stderr" || status=$?
+
+  assert_eq 1 "$status" 'dist-check must reject assets without an HTML entrypoint'
+  assert_file_contains 'HTML entrypoint' "$stderr"
+  assert_file_contains 'dist-no-html' "$stderr"
+}
+
 expected_review() {
   cat <<'EOF'
 Cross-goal review, before this release goes out:
@@ -220,4 +328,10 @@ test_review_is_required
 test_reviewed_positions_pass_gate
 test_invalid_version_still_fails
 test_project_claim_reacquisition_is_documented
+test_dist_check_accepts_reachable_fixture
+test_dist_check_rejects_unreachable_asset
+test_dist_check_rejects_missing_gitkeep
+test_dist_check_accepts_multiple_index_chunks
+test_dist_check_accepts_gitkeep_only_fixture
+test_dist_check_rejects_assets_without_html_entrypoint
 printf 'PASS: release review gate\n'

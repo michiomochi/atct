@@ -93,19 +93,13 @@ bash script/schema-check.sh
 # Clearing dist before the build is what fixes it. Keep .gitkeep, because
 # go:embed rejects an empty directory (see the comment in web/embed.go).
 #
-# The check below is on the count, not on duplicate names: index.*.js legitimately
-# appears twice because separate pages emit their own chunk, so a name-collision
-# check reports a false failure. A clean build of this app is ~11 files; if dist
-# is far larger, the clear did not happen.
+# The check below follows every asset reference from every built HTML entrypoint.
+# Any file left behind is an old generation, and any missing target is a dropped
+# asset, so the check remains valid as the number of screens changes.
 echo "==> web"
 find web/dist -mindepth 1 -not -name '.gitkeep' -delete
-[[ -f web/dist/.gitkeep ]] || { echo 'web/dist/.gitkeep was removed; go:embed needs it' >&2; exit 1; }
 ( cd web && pnpm build >/dev/null )
-asset_count="$(find web/dist -type f -not -name '.gitkeep' | wc -l | tr -d ' ')"
-if (( asset_count > 60 )); then
-  echo "web/dist holds $asset_count files after a clean build; stale generations are still there" >&2
-  exit 1
-fi
+bash script/dist-check.sh web/dist
 
 echo "==> bump"
 python3 - "$version" <<'PY'
