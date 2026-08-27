@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/michiomochi/atct/internal/store/sqlcgen"
@@ -16,6 +17,12 @@ var (
 	ErrGoalHandoffProjectNotHeld = errors.New("goal handoff requires the project claim: caller does not hold a live claim on project")
 	ErrGoalHandoffAlreadyOpen    = errors.New("goal handoff already open")
 	ErrGoalHandoffAmbiguous      = errors.New("multiple goal handoffs pending receipt")
+	ErrGoalHandoffReportEmpty    = errors.New("goal handoff needs a complete_report describing what was done, what was verified, and paths changed; without it, the record cannot distinguish completion from no report")
+)
+
+const (
+	goalHandoffReclaimedReport = "セッションが停止した"
+	goalHandoffReleasedReport  = "ゴールを手放した（報告者なし）"
 )
 
 // GoalHandoff records one delegation between agents. Each event timestamp is
@@ -147,7 +154,7 @@ func (s *Store) reclaimOpenGoalHandoff(ctx context.Context, handoffID string, go
 	if ownerID == 0 || !claimIsDefinitelyDead(ctx, s, ownerID) {
 		return fmt.Errorf("%w: goal %d has a live handoff owner", ErrGoalHandoffAlreadyOpen, goalID)
 	}
-	if _, err := s.CompleteGoalHandoff(ctx, open.ID, goalID, "セッションが停止した"); err != nil {
+	if _, err := s.CompleteGoalHandoff(ctx, open.ID, goalID, goalHandoffReclaimedReport); err != nil {
 		return fmt.Errorf("reclaim goal handoff %q: %w", open.ID, err)
 	}
 	return nil
@@ -287,6 +294,9 @@ func (s *Store) CompleteGoalHandoffForGoal(ctx context.Context, goalID int64, co
 // CompleteGoalHandoff records the completion report side of a handoff. It
 // only writes the completion timestamp and report and therefore preserves partial states.
 func (s *Store) CompleteGoalHandoff(ctx context.Context, handoffID string, goalID int64, completeReport string) (GoalHandoff, error) {
+	if strings.TrimSpace(completeReport) == "" {
+		return GoalHandoff{}, ErrGoalHandoffReportEmpty
+	}
 	if err := s.ensureGoalHandoffGoal(ctx, handoffID, goalID); err != nil {
 		return GoalHandoff{}, err
 	}
@@ -305,6 +315,10 @@ func (s *Store) CompleteGoalHandoff(ctx context.Context, handoffID string, goalI
 		return GoalHandoff{}, fmt.Errorf("complete goal handoff rows affected: %w", err)
 	}
 	if n == 0 {
+		handoff, lookupErr := s.GetGoalHandoff(ctx, handoffID)
+		if lookupErr == nil && handoff.CompletedReportAt != nil {
+			return GoalHandoff{}, fmt.Errorf("goal handoff %q is already reported; use another path to add a report after completion", handoffID)
+		}
 		return GoalHandoff{}, fmt.Errorf("%w: %s", ErrGoalHandoffNotFound, handoffID)
 	}
 	return s.GetGoalHandoff(ctx, handoffID)

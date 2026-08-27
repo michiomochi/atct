@@ -278,7 +278,7 @@ func TestHTTPHandlerMCPTaskHandoffRoutes(t *testing.T) {
 	complete := mcpResult(t, client.call(t, "tools/call", map[string]any{
 		"name": "atct_handoff_complete",
 		"arguments": map[string]any{
-			"handoff_id": "mcp-handoff-1", "task_id": tasks[0].ID,
+			"handoff_id": "mcp-handoff-1", "task_id": tasks[0].ID, "complete_report": "Verified task handoff completion through the MCP HTTP route.",
 		},
 	}))
 	if complete["isError"] == true {
@@ -370,7 +370,7 @@ func TestHTTPHandlerMCPGoalHandoffRoutes(t *testing.T) {
 	complete := mcpResult(t, client.call(t, "tools/call", map[string]any{
 		"name": "atct_goal_handoff_complete",
 		"arguments": map[string]any{
-			"handoff_id": "mcp-goal-handoff-1", "goal_id": claimedGoal.ID,
+			"handoff_id": "mcp-goal-handoff-1", "goal_id": claimedGoal.ID, "complete_report": "Verified goal handoff completion through the MCP HTTP route.",
 		},
 	}))
 	if complete["isError"] == true {

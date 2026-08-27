@@ -221,7 +221,7 @@ func (s *Store) ReleaseGoal(ctx context.Context, goalID int64) error {
 	if goalID == 0 {
 		return fmt.Errorf("%w: empty id", ErrGoalNotFound)
 	}
-	if _, err := s.CompleteGoalHandoffForGoal(ctx, goalID, ""); err != nil {
+	if _, err := s.CompleteGoalHandoffForGoal(ctx, goalID, goalHandoffReleasedReport); err != nil {
 		return fmt.Errorf("complete goal handoff after release: %w", err)
 	}
 	return nil

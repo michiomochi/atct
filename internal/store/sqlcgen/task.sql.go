@@ -13,7 +13,7 @@ import (
 const completeGoalHandoff = `-- name: CompleteGoalHandoff :execresult
 UPDATE goal_handoffs
 SET completed_report_at = ?, complete_report = ?
-WHERE id = ? AND goal_id = ? AND requested_at IS NOT NULL
+WHERE id = ? AND goal_id = ? AND requested_at IS NOT NULL AND completed_report_at IS NULL
 `
 
 type CompleteGoalHandoffParams struct {
@@ -35,7 +35,7 @@ func (q *Queries) CompleteGoalHandoff(ctx context.Context, arg CompleteGoalHando
 const completeTaskHandoff = `-- name: CompleteTaskHandoff :execresult
 UPDATE task_handoffs
 SET completed_report_at = ?, complete_report = ?
-WHERE id = ? AND task_id = ? AND requested_at IS NOT NULL
+WHERE id = ? AND task_id = ? AND requested_at IS NOT NULL AND completed_report_at IS NULL
 `
 
 type CompleteTaskHandoffParams struct {
