@@ -216,23 +216,55 @@ func roleResponseFor(assignment roleAssignment) any {
 	}
 }
 
-func (d *Daemon) unappliedDecisionsForSessionInProject(ctx context.Context, projectID int64, agentSessionID int64) ([]domain.Decision, error) {
-	role, err := d.deriveSessionRole(ctx, agentSessionID)
-	if err != nil {
-		return nil, err
-	}
-	if role.Role == "subcommander" && role.GoalID != 0 {
-		return d.store.ListUnappliedDecisionsForGoal(ctx, role.GoalID)
-	}
-	return d.store.ListUnappliedDecisionsForProject(ctx, projectID)
+type decisionScopeNotice struct {
+	Scope  string `json:"scope"`
+	GoalID int64  `json:"goal_id,omitempty"`
+	Role   string `json:"role"`
+	Note   string `json:"note,omitempty"`
 }
 
 func (d *Daemon) unappliedDecisionsForSession(ctx context.Context, goalID int64, agentSessionID int64) ([]domain.Decision, error) {
+	if goalID == 0 {
+		return nil, nil
+	}
 	goal, err := d.store.GetGoal(ctx, goalID)
 	if err != nil {
 		return nil, err
 	}
-	return d.unappliedDecisionsForSessionInProject(ctx, goal.ProjectID, agentSessionID)
+	role, err := d.deriveSessionRole(ctx, agentSessionID)
+	if err != nil {
+		return nil, err
+	}
+	switch {
+	case role.Role == "commander":
+		return d.store.ListUnappliedDecisionsForProject(ctx, goal.ProjectID)
+	case role.Role == "subcommander" && role.GoalID != 0:
+		return d.store.ListUnappliedDecisionsForGoal(ctx, role.GoalID)
+	default:
+		return d.store.ListUnappliedDecisionsForGoal(ctx, goalID)
+	}
+}
+
+func (d *Daemon) unappliedDecisionsForRecovery(ctx context.Context, projectID int64, agentSessionID int64) ([]domain.Decision, decisionScopeNotice, error) {
+	role, err := d.deriveSessionRole(ctx, agentSessionID)
+	if err != nil {
+		return nil, decisionScopeNotice{}, err
+	}
+	switch {
+	case role.Role == "commander":
+		decisions, err := d.store.ListUnappliedDecisionsForProject(ctx, projectID)
+		return decisions, decisionScopeNotice{Scope: "project", Role: "commander"}, err
+	case role.Role == "subcommander" && role.GoalID != 0:
+		decisions, err := d.store.ListUnappliedDecisionsForGoal(ctx, role.GoalID)
+		return decisions, decisionScopeNotice{Scope: "goal", GoalID: role.GoalID, Role: "subcommander"}, err
+	default:
+		decisions, err := d.store.ListUnappliedDecisionsForProject(ctx, projectID)
+		return decisions, decisionScopeNotice{
+			Scope: "project",
+			Role:  role.Role,
+			Note:  "role could not be derived for this session; these answers span the whole project. call atct_session_identify to re-establish the role, then apply only your own goal's answers",
+		}, err
+	}
 }
 
 func (d *Daemon) responseWithScopedUnappliedDecisions(ctx context.Context, data any, goalID int64, agentSessionID int64, excludedIDs ...int64) (responseWithUnappliedDecisions, error) {
@@ -746,16 +778,17 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		if err != nil {
 			return nil, err
 		}
-		orphaned, err := d.unappliedDecisionsForSessionInProject(ctx, ns.ID, p.AgentSessionID)
+		orphaned, orphanedScope, err := d.unappliedDecisionsForRecovery(ctx, ns.ID, p.AgentSessionID)
 		if err != nil {
 			return nil, err
 		}
 		data := map[string]any{
-			"project":                 ns,
-			"goals":                   visibleGoals,
-			"awaiting_approval_count": awaitingApprovalCount,
-			"answered_decisions":      mine,
-			"orphaned_decisions":      orphaned,
+			"project":                  ns,
+			"goals":                    visibleGoals,
+			"awaiting_approval_count":  awaitingApprovalCount,
+			"answered_decisions":       mine,
+			"orphaned_decisions":       orphaned,
+			"orphaned_decisions_scope": orphanedScope,
 		}
 		if !p.IncludeUnappliedAnswers {
 			return marshal(data, nil)
