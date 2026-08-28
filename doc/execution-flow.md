@@ -44,7 +44,7 @@
 |---|---|
 | 手順 3（request）の直後 | commander |
 | 手順 5（receive）の後 | subcommander |
-| 手順 24（commander が handoff complete）の後 | 誰も持たない |
+| 手順 25（commander が handoff complete）の後 | 誰も持たない |
 
 `goal_handoffs` は 1 ゴールに open な行を 1 本だけ許す
 （`idx_goal_handoffs_open_goal_id`）。**したがって委譲側は handoff を request する
@@ -65,10 +65,10 @@ flowchart TD
         CD["10. 設計をレビューする"]
         CD2["11. atct_plan_handoff_complete"]
         C5["22. ゴールの変更をレビューする<br/>atct watch -project の通知で起動"]
-        C6["23. main へマージする<br/>衝突はここで解決する"]
-        C7["24. atct_goal_handoff_complete<br/>→ ゴールの claim が空く"]
-        C8["25. atct_goal_complete（6 部）"]
-        C9["26. 承認されたら subcommander を閉じ<br/>worktree を片付ける"]
+        C8["23. atct_goal_complete（6 部）<br/>人間に承認を求める"]
+        C6["24. main へマージする<br/>衝突はここで解決する"]
+        C7["25. atct_goal_handoff_complete<br/>→ ゴールの claim が空く"]
+        C9["26. subcommander を閉じ<br/>worktree を片付ける"]
     end
 
     subgraph S["subcommander（ゴール 1 つに 1 人）"]
@@ -106,11 +106,12 @@ flowchart TD
     S8 -->|"残りのタスクが全部 done"| S9 --> S10
 
     S10 --> C5
-    C5 -->|受理| C6 --> C7 --> C8
+    C5 -->|受理| C8
     C5 -->|"差し戻し<br/>atct_goal_handoff_review_reject"| S3
-    C8 -.->|承認要求| H2([人間が web で承認/却下])
-    H2 -->|承認| C9
-    H2 -->|却下| S3
+
+    C8 -.-> H2([人間が web で承認/却下])
+    H2 -->|承認| C6 --> C7 --> C9
+    H2 -->|"却下<br/>atct_goal_handoff_review_reject"| S3
 ```
 
 **各 handoff が「レビュー待ち」を持つ。**作業した者が review を出し、
@@ -256,12 +257,14 @@ subcommander が設計の結果として作り、レビューに出す。**そ�
     subcommander   12. 通知を受けて atct_task_create に進む
                        （差し戻しなら 7 に戻る）
 
-    subcommander   19. 次に渡すタスクが無ければその executor を閉じる
+    subcommander   19. 手が空いた executor を閉じる
                    20. コミットする
                    21. atct_goal_handoff_review_request
     commander      22. 通知を受けてレビューする
-                   23a. 受理    -> マージ -> atct_goal_handoff_complete -> atct_goal_complete
+                   23a. 受理    -> atct_goal_complete で人間に承認を求める
                    23b. 差し戻し -> atct_goal_handoff_review_reject -> subcommander が 7 に戻る
+    人間           承認 -> commander が 24 でマージし、25 で handoff を閉じる
+                   却下 -> atct_goal_handoff_review_reject -> subcommander が 7 に戻る
 
 **設計を先にレビューすると、実装が終わってから方針を差し戻す事故が消える。**
 10 で止めれば無駄になるのは設計の成果物だけで、12 以降の実装は始まっていない。
@@ -316,6 +319,28 @@ handoff に `review_report`（作業した側が書く）と `reject_report`（�
 
 - **未コミットの変更が無いこと。**編集途中のファイルを持ったまま閉じると、その作業は失われる
 - **報告を受け取っていること。**手順 18（受理）が済んでいれば満たされている
+
+## 人間の承認がマージの条件である
+
+**main へのマージは手順 24 で、人間が承認した後である。**commander のレビュー（22）は
+承認を求めてよいかの判断であって、マージの判断ではない。
+
+    22. commander がレビューする
+    23. atct_goal_complete   -> 人間に承認を求める
+    人間が承認               -> 24. マージ -> 25. handoff を閉じる -> 26. 片付け
+    人間が却下               -> atct_goal_handoff_review_reject -> subcommander が 7 に戻る
+
+### handoff を閉じるのは承認の後である
+
+**却下されても handoff は開いたままにする。**閉じてしまうと claim が空いて役割が落ち、
+subcommander は自分では受領し直せない。**再発行が要る状態に戻ってしまう。**
+
+**したがって `atct_goal_handoff_complete` は 25、承認の後に置く。**23 で閉じてはいけない。
+
+### main が汚れない
+
+承認前にマージすると、却下されたときに main から取り消す必要がある。
+**worktree に留めておけば、却下は「作業に戻る」だけで済む。**
 
 ## タスクは必ず executor に渡る
 
