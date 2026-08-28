@@ -384,6 +384,7 @@ describe("decision SSE events", () => {
       "decision.approved",
       "decision.rejected",
       "goal.created",
+      "goal.withdrawn",
       "detection.completion_report_missing",
       "detection.commits_missing",
       "detection.undeclared_goal",

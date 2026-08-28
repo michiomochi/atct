@@ -86,8 +86,8 @@ task handoff and replaces its `complete_report`, so the report has to be recorde
    （ヘルパは `server_test.go:2623` にある）
 5. `f.store.WithdrawActiveGoal(f.ctx, f.goal.ID, "<理由>")`
 6. `readSSEFrame`（2517 行）を**繰り返し呼び、`frame.event` が
-   `store.EventGoalWithdrawn` の frame を待つ**。`decision.withdrawn` や
-   `handoff_reported` が先に来るので、1 回読むだけでは足りない。
+   `store.EventGoalWithdrawn` の frame を待つ**。store 側は `goal.withdrawn` を
+   最初に publish するが、`decision.withdrawn` が続くので**順序に依存しない形**にする。
    最大 10 frame まで読んで見つからなければ `t.Fatalf`
 7. `frame.data` を `store.GoalWithdrawnEvent` に `json.Unmarshal` し、
    `GoalID` / `ProjectID` / `Reason` を検査する
