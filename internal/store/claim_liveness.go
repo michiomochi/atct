@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"syscall"
 
@@ -16,42 +17,36 @@ func ClaimLiveness(ctx context.Context, s *Store, projectID int64) (running []do
 		return nil, nil, fmt.Errorf("project id is required")
 	}
 
-	goals, err := s.ListGoals(ctx, projectID)
+	claims, err := sqlcgen.New(s.db).ListOpenTaskHandoffClaims(ctx, projectID)
 	if err != nil {
 		return nil, nil, err
 	}
-	for _, goal := range goals {
-		tasks, err := s.ListTasks(ctx, goal.ID)
+	for _, claim := range claims {
+		task, err := taskFromFields(
+			claim.ID,
+			claim.GoalID,
+			claim.Title,
+			claim.Description,
+			claim.Status,
+			claim.Agent,
+			claim.SortOrder,
+			claim.DeclareKey,
+			claim.SnoozedUntil,
+			claim.CreatedAt,
+			claim.UpdatedAt,
+		)
 		if err != nil {
 			return nil, nil, err
 		}
-		for _, task := range tasks {
-			handoffs, err := s.ListTaskHandoffs(ctx, task.ID)
-			if err != nil {
-				return nil, nil, err
-			}
-			var agentSessionID int64
-			open := false
-			for _, handoff := range handoffs {
-				if handoff.CompletedReportAt != nil {
-					continue
-				}
-				open = true
-				agentSessionID = handoff.ReceivedBy
-				if agentSessionID == 0 {
-					// Until receipt, requested_by is the only session identity available.
-					agentSessionID = handoff.RequestedBy
-				}
-				break
-			}
-			if !open {
-				continue
-			}
-			if claimIsRunning(ctx, s, agentSessionID) {
-				running = append(running, task)
-			} else {
-				stale = append(stale, task)
-			}
+		agentSessionID := nullableClaimInt64(claim.ReceivedBy)
+		if agentSessionID == 0 {
+			// Until receipt, requested_by is the only session identity available.
+			agentSessionID = nullableClaimInt64(claim.RequestedBy)
+		}
+		if claimIsRunning(ctx, s, agentSessionID) {
+			running = append(running, task)
+		} else {
+			stale = append(stale, task)
 		}
 	}
 	return running, stale, nil
@@ -65,31 +60,35 @@ func GoalClaimLiveness(ctx context.Context, s *Store, projectID int64) (running 
 		return nil, nil, fmt.Errorf("project id is required")
 	}
 
-	goals, err := s.ListGoals(ctx, projectID)
+	claims, err := sqlcgen.New(s.db).ListOpenGoalHandoffClaims(ctx, projectID)
 	if err != nil {
 		return nil, nil, err
 	}
-	for _, goal := range goals {
-		handoffs, err := s.ListGoalHandoffs(ctx, goal.ID)
+	for _, claim := range claims {
+		goal, err := goalFromFields(
+			claim.ID,
+			claim.ProjectID,
+			claim.DerivedFromGoalID,
+			claim.Content,
+			claim.Status,
+			claim.Creator,
+			claim.ResultSummary,
+			claim.WorkDone,
+			claim.NowPossible,
+			claim.HowToVerify,
+			claim.Surprises,
+			claim.NeedsReview,
+			claim.NextSteps,
+			claim.CreatedAt,
+			claim.UpdatedAt,
+		)
 		if err != nil {
 			return nil, nil, err
 		}
-		var agentSessionID int64
-		open := false
-		for _, handoff := range handoffs {
-			if handoff.CompletedReportAt != nil {
-				continue
-			}
-			open = true
-			agentSessionID = handoff.ReceivedBy
-			if agentSessionID == 0 {
-				// Until receipt, requested_by is the only session identity available.
-				agentSessionID = handoff.RequestedBy
-			}
-			break
-		}
-		if !open {
-			continue
+		agentSessionID := nullableClaimInt64(claim.ReceivedBy)
+		if agentSessionID == 0 {
+			// Until receipt, requested_by is the only session identity available.
+			agentSessionID = nullableClaimInt64(claim.RequestedBy)
 		}
 		if claimIsRunning(ctx, s, agentSessionID) {
 			running = append(running, goal)
@@ -98,6 +97,13 @@ func GoalClaimLiveness(ctx context.Context, s *Store, projectID int64) (running 
 		}
 	}
 	return running, stale, nil
+}
+
+func nullableClaimInt64(value sql.NullInt64) int64 {
+	if !value.Valid {
+		return 0
+	}
+	return value.Int64
 }
 
 func claimIsRunning(ctx context.Context, s *Store, agentSessionID int64) bool {

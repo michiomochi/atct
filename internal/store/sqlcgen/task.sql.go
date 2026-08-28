@@ -458,6 +458,74 @@ func (q *Queries) ListGoalHandoffs(ctx context.Context, goalID int64) ([]GoalHan
 	return items, nil
 }
 
+const listOpenTaskHandoffClaims = `-- name: ListOpenTaskHandoffClaims :many
+SELECT t.id, t.goal_id, t.title, t.description, t.status, t.agent,
+       t.sort_order, t.declare_key, t.snoozed_until, t.created_at, t.updated_at,
+       th.requested_by, th.received_by
+FROM task_handoffs AS th
+JOIN tasks AS t ON t.id = th.task_id
+JOIN goals AS g ON g.id = t.goal_id
+WHERE g.project_id = ?
+  AND th.completed_report_at IS NULL
+ORDER BY g.created_at, g.id, t.sort_order, t.id
+`
+
+type ListOpenTaskHandoffClaimsRow struct {
+	ID           int64
+	GoalID       int64
+	Title        string
+	Description  string
+	Status       string
+	Agent        string
+	SortOrder    int64
+	DeclareKey   string
+	SnoozedUntil sql.NullString
+	CreatedAt    string
+	UpdatedAt    string
+	RequestedBy  sql.NullInt64
+	ReceivedBy   sql.NullInt64
+}
+
+// The partial unique index idx_task_handoffs_open_task_id guarantees at most
+// one open handoff per task, so filtering completed_report_at is equivalent
+// to selecting the first open handoff in the legacy implementation.
+func (q *Queries) ListOpenTaskHandoffClaims(ctx context.Context, projectID int64) ([]ListOpenTaskHandoffClaimsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listOpenTaskHandoffClaims, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListOpenTaskHandoffClaimsRow
+	for rows.Next() {
+		var i ListOpenTaskHandoffClaimsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.GoalID,
+			&i.Title,
+			&i.Description,
+			&i.Status,
+			&i.Agent,
+			&i.SortOrder,
+			&i.DeclareKey,
+			&i.SnoozedUntil,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.RequestedBy,
+			&i.ReceivedBy,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listOpenTaskHandoffsForGoal = `-- name: ListOpenTaskHandoffsForGoal :many
 SELECT th.id, th.task_id, th.requested_by, th.received_by,
        th.requested_at, th.received_at, th.completed_report_at,

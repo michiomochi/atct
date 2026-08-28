@@ -7,6 +7,7 @@ package sqlcgen
 
 import (
 	"context"
+	"database/sql"
 )
 
 const listGoalSessionKeys = `-- name: ListGoalSessionKeys :many
@@ -50,6 +51,83 @@ func (q *Queries) ListGoalSessionKeys(ctx context.Context, goalID int64) ([]List
 	for rows.Next() {
 		var i ListGoalSessionKeysRow
 		if err := rows.Scan(&i.SessionKey, &i.Role, &i.HandoffOpen); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listOpenGoalHandoffClaims = `-- name: ListOpenGoalHandoffClaims :many
+SELECT g.id, g.project_id, g.derived_from_goal_id, g.content, g.status,
+       g.creator, g.result_summary, g.work_done, g.now_possible,
+       g.how_to_verify, g.surprises, g.needs_review, g.next_steps,
+       g.created_at, g.updated_at,
+       gh.requested_by, gh.received_by
+FROM goal_handoffs AS gh
+JOIN goals AS g ON g.id = gh.goal_id
+WHERE g.project_id = ?
+  AND gh.completed_report_at IS NULL
+ORDER BY g.created_at, g.id
+`
+
+type ListOpenGoalHandoffClaimsRow struct {
+	ID                int64
+	ProjectID         int64
+	DerivedFromGoalID sql.NullInt64
+	Content           string
+	Status            string
+	Creator           string
+	ResultSummary     string
+	WorkDone          string
+	NowPossible       string
+	HowToVerify       string
+	Surprises         string
+	NeedsReview       string
+	NextSteps         string
+	CreatedAt         string
+	UpdatedAt         string
+	RequestedBy       sql.NullInt64
+	ReceivedBy        sql.NullInt64
+}
+
+// The partial unique index idx_goal_handoffs_open_goal_id guarantees at most
+// one open handoff per goal, so filtering completed_report_at is equivalent
+// to selecting the first open handoff in the legacy implementation.
+func (q *Queries) ListOpenGoalHandoffClaims(ctx context.Context, projectID int64) ([]ListOpenGoalHandoffClaimsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listOpenGoalHandoffClaims, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListOpenGoalHandoffClaimsRow
+	for rows.Next() {
+		var i ListOpenGoalHandoffClaimsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.DerivedFromGoalID,
+			&i.Content,
+			&i.Status,
+			&i.Creator,
+			&i.ResultSummary,
+			&i.WorkDone,
+			&i.NowPossible,
+			&i.HowToVerify,
+			&i.Surprises,
+			&i.NeedsReview,
+			&i.NextSteps,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.RequestedBy,
+			&i.ReceivedBy,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
