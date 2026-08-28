@@ -173,17 +173,79 @@ func runWatch(dir, goalID string) error {
 		return fmt.Errorf("resolve current directory: %w", err)
 	}
 
-	cleanup, err := daemonctl.RegisterWatch(dir)
+	client := &http.Client{}
+	baseURLs := watchBaseURLs(dir)
+	projectID := ""
+	for _, baseURL := range baseURLs {
+		projects, err := fetchWatchProjects(ctx, client, baseURL)
+		if err != nil {
+			continue
+		}
+		projectID = resolveWatchProjectID(cwd, projects)
+		break
+	}
+
+	watchRegistrationScope := daemonctl.WatchScope{ProjectID: projectID, GoalID: goalID}
+	cleanup, err := daemonctl.RegisterWatchScoped(dir, watchRegistrationScope)
 	if err != nil {
 		return fmt.Errorf("register watch: %w", err)
 	}
 	defer cleanup()
 
-	client := &http.Client{}
-	snapshot, projectID := watchSnapshotWithProject(client, watchBaseURLs(dir), cwd)
+	if projectID != "" {
+		result, err := daemonctl.ReapWatches(dir, watchRegistrationScope, os.Getpid())
+		if err != nil {
+			return fmt.Errorf("reap watches: %w", err)
+		}
+		if result.RemovedStale > 0 {
+			word := "registrations"
+			if result.RemovedStale == 1 {
+				word = "registration"
+			}
+			if _, err := fmt.Fprintf(os.Stdout, "atct watch: removed %d stale watch %s\n", result.RemovedStale, word); err != nil {
+				return fmt.Errorf("write watch reap report: %w", err)
+			}
+		}
+		if len(result.Stopped) > 0 {
+			word := "watches"
+			if len(result.Stopped) == 1 {
+				word = "watch"
+			}
+			details := make([]string, 0, len(result.Stopped))
+			for _, registration := range result.Stopped {
+				watchScope := "project-wide"
+				if registration.Scope.GoalID != "" {
+					watchScope = "goal " + registration.Scope.GoalID
+				}
+				details = append(details, fmt.Sprintf("pid %d, %s", registration.PID, watchScope))
+			}
+			if _, err := fmt.Fprintf(os.Stdout, "atct watch: stopped %d duplicate %s (%s)\n", len(result.Stopped), word, strings.Join(details, ", ")); err != nil {
+				return fmt.Errorf("write watch reap report: %w", err)
+			}
+		}
+		for _, pid := range result.Failed {
+			if _, err := fmt.Fprintf(os.Stdout, "atct watch: duplicate watch pid %d did not exit within 5s\n", pid); err != nil {
+				return fmt.Errorf("write watch reap report: %w", err)
+			}
+		}
+		registrations, err := daemonctl.ListWatches(dir)
+		if err == nil {
+			liveRegistrations := make([]daemonctl.WatchRegistration, 0, len(registrations))
+			for _, registration := range registrations {
+				if daemonctl.ProcessAlive(registration.PID) {
+					liveRegistrations = append(liveRegistrations, registration)
+				}
+			}
+			if _, err := fmt.Fprintln(os.Stdout, daemonctl.WatchRosterLine(liveRegistrations, projectID)); err != nil {
+				return fmt.Errorf("write watch roster: %w", err)
+			}
+		}
+	}
+
+	snapshot, projectIDGetter := watchSnapshotWithProject(client, baseURLs, cwd)
 	return watchLoopWithEnsureAndProjectIDAndGoal(ctx, os.Stdout, client, watchReconnectInterval, snapshot, func() error {
 		return ensureWatchDaemon(dir)
-	}, projectID, goalID)
+	}, projectIDGetter, goalID)
 }
 
 func ensureWatchDaemon(dir string) error {
