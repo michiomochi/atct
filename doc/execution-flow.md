@@ -1,70 +1,54 @@
 # 実行フロー: commander / subcommander / executor
 
-**現状（2026-08-28、main `d58ba01`）の整理である。**出典は `skills/atct/SKILL.md` の
-`## Roles` / `## Delegate a goal` / `## Delegate a task` / `## Report completion in six parts`。
+**これは目標のフローであり、現状の記述ではない。**現状との差は「## 現状との差」に列挙する。
+**この文書を元に実際のフローを直すゴールを立てる。**
 
-**ゴール 192 がこのフローの変更を検討中である。**変わったらこの文書も更新する。
+**書き方**: 各層がやることだけを書く。やらないことは列挙しない。
 
-## ゴールの claim とは open な goal handoff のことである
+## 設計の原則
 
-**`goals` に claim を保存する列は無い。**
+この 4 つから、以下のすべてが導かれる。
 
-    $ sqlite3 ~/.atct/atct.db "select name from pragma_table_info('goals');"
-    id project_id derived_from_goal_id content status creator result_summary
-    work_done now_possible how_to_verify surprises needs_review next_steps
-    created_at updated_at
+1. **worktree が分離を担う。**ゴールごとに worktree が 1 つあるので、subcommander は
+   自分のゴールだけを見て作業できる。**衝突はマージのときに commander が解決する。**
+2. **順序は状態で守る。**間に合わない呼び出しが失敗し、失敗したら自力で回復できる。
+3. **1 つの事実に 1 つの書き手。**同じことを 2 回呼ばせない。
+4. **報告の宛先は 1 つ。**
 
-**ゴールの claim とは「open な goal handoff の受領者であること」そのものである。**
-`ClaimGoal`（`internal/store/goal.go:183`）は UUID の handoff を作り、自分で request して
-自分で receive するだけである。
+## 層とその責務
 
-    handoffID := uuid.NewString()
-    s.reclaimOpenGoalHandoff(ctx, handoffID, goalID)
-    s.requestGoalHandoffForClaim(ctx, handoffID, goalID, agentSessionID)
-    s.ReceiveGoalHandoff(ctx, handoffID, goalID, agentSessionID)
+| 層 | やること |
+|---|---|
+| `commander` | 受け入れ仕分け / ゴールの分割 / worktree の用意 / subcommander の起動 / **着地した変更のレビュー** / **ゴールの完了報告** / 衝突の解決 / 公開 / 後片付け |
+| `subcommander` | ゴールの設計 / 作業の委譲 / 実装レビュー / コミット / 人間への決定の起票 |
+| `executor` | 実装 / テスト / 渡されたタスクを閉じる |
 
-`ReleaseGoal` も対称で、open な handoff を完了させるだけである。
-
-したがって claim の持ち主はこう推移する。
-
-| 時点 | `requested_by` | `received_by` | claim の持ち主 |
-|---|---|---|---|
-| 手順 3 の直後 | commander | 0 | **commander** |
-| 手順 6 の後 | commander | subcommander | **subcommander** |
-| 手順 21 の後 | commander | subcommander | **誰も持たない**（handoff が閉じた） |
-
-**「claim が移る」のではなく、`received_by` が埋まることが claim の移動である。**
-
-`goal_handoffs` には open な行を 1 ゴールに 1 本しか許さない UNIQUE 制約がある。
-
-    CREATE UNIQUE INDEX idx_goal_handoffs_open_goal_id
-      ON goal_handoffs(goal_id) WHERE completed_report_at IS NULL;
-
-**これが手順 3 の前に claim してはいけない理由である。**先に `atct_goal_claim` を呼ぶと
-自分名義の open handoff ができ、続く `atct_goal_handoff_request` が制約で弾かれる。
+**現状との最大の差は「ゴールの完了報告」が commander に移ることである。**
+理由は「## なぜ完了報告を commander が書くのか」に書く。
 
 ## 役割はどこから決まるか
 
-**役割は宣言ではなく、claim と handoff の保有状態から daemon が導出する。**
-`atct_role` が返す値であり、名乗りではない。
+**役割は claim の保有状態から daemon が導出する。**`atct_role` が返す値である。
 
 | 判定順 | 条件 | 役割 |
 |---|---|---|
-| 1 | プロジェクトの claim を保有している | `commander` |
-| 2 | 受領済みで未完了の goal handoff を持ち、プロジェクト claim を持たない | `subcommander` |
-| 3 | どちらでもない | `executor` |
+| 1 | プロジェクトの claim を保有 | `commander` |
+| 2 | ゴールの claim を保有 | `subcommander` |
+| 3 | タスクの claim を保有 | `executor` |
 
-**この順序が事故を生む。**subcommander が task handoff を受け取ると、
-goal handoff と task handoff の両方を持つ。**判定 2 は「未完了の goal handoff」を見るので
-subcommander のままだが、goal handoff を閉じた瞬間に判定 3 へ落ちて executor になる。**
+**ゴールの claim とは open な goal handoff の受領者であることである。**
+`goals` に claim を保存する列は無い。`atct_goal_claim` は UUID の handoff を作って
+自分で request し自分で receive する。`atct_goal_release` はそれを完了させる。
 
-## やること・やらないこと
+| 時点 | claim の持ち主 |
+|---|---|
+| 手順 3（request）の直後 | commander |
+| 手順 5（receive）の後 | subcommander |
+| 手順 15（handoff complete）の後 | 誰も持たない |
 
-| 層 | やること | やらないこと |
-|---|---|---|
-| `commander` | 受け入れ仕分け / ゴールの分割 / 作業場の用意 / 着地した変更のレビュー / 公開 / 衝突の解決 / 後片付け | ゴールの設計 / ゴールの実装 / executor の成果物の編集 |
-| `subcommander` | ゴールの設計 / ゴールの作業の委譲 / 実装レビュー / **ゴールの完了報告** / 人間への決定の起票 / ゴールの作業のコミット / worker が閉じられないタスクを閉じる | 他のゴールを見る・管理する / 公開 / もう 1 人の subcommander を作る / プロジェクトを claim する |
-| `executor` | 実装 / テスト / 渡されたタスクを閉じる | 設計判断 / 再委譲 / コミット / バージョン管理の内部詳細を書く |
+`goal_handoffs` は 1 ゴールに open な行を 1 本だけ許す
+（`idx_goal_handoffs_open_goal_id`）。**したがって委譲側は handoff を request する
+ことでゴールを押さえる。**
 
 ## 全体フロー
 
@@ -73,173 +57,59 @@ flowchart TD
     H([人間]) -->|ゴールを承認| G[goal: proposed → active]
 
     subgraph C["commander（1 プロセスに 1 人・project claim を保持）"]
-        C1["1. worktree を用意<br/>script/worktree-setup.sh &lt;goal&gt;"]
+        C1["1. worktree を用意"]
         C2["2. ターミナルマルチプレクサを利用の場合は<br/>subcommander の作業場所を用意"]
         C3["3. atct_goal_handoff_request"]
-        C4["4. subcommander を立ち上げ、依頼文を送る<br/>同じファイルを触る別ゴールを名指しし<br/>どちらがどこを持つかを書く"]
-        C6["22. 着地した変更をレビューしてマージ"]
-        C7["23. 却下なら goal handoff を再発行"]
-        C8["24. worktree を片付ける<br/>（作業場を作ったなら、それも）"]
+        C4["4. subcommander を立ち上げ、依頼文を送る"]
+        C5["16. 着地した変更をレビューする"]
+        C6["17. main へマージする<br/>衝突はここで解決する"]
+        C7["18. atct_goal_complete（6 部）"]
+        C8["19. 承認されたら worktree を片付ける"]
+        C9["20. 却下されたら goal handoff を再発行"]
     end
 
     subgraph S["subcommander（ゴール 1 つに 1 人）"]
-        S1["5. atct_session_identify"]
-        S2["6. atct_goal_handoff_receive<br/>→ ここでゴールの claim を得る<br/>→ 役割が subcommander になる"]
-        S3["7. atct_role で expected_role=subcommander を確認"]
-        S4["8. atct watch -goal &lt;goal&gt; を張る"]
-        S5["9. 設計を決める（commander に聞かない）"]
-        S6["10. atct_task_declare でタスクを宣言"]
-        SS["11'. 自分の職務のタスクは自分でやる<br/>spec / レビュー / 決定の起票<br/>handoff は生まれない"]
-        S7["17. 実装レビューとテスト検収"]
-        S8["18. コミット"]
-        S9["19. 全タスクを閉じる<br/>（規約のみ・20 の門番は見ていない）"]
-        S10["20. atct_goal_complete（6 部）<br/>★これが先"]
-        S11["21. atct_goal_handoff_complete<br/>★これが後"]
+        S1["5. atct_goal_handoff_receive<br/>→ ゴールの claim を得て subcommander になる"]
+        S2["6. atct watch を張る"]
+        S3["7. 設計を決める"]
+        S4["8. atct_task_create で<br/>ゴールに必要なタスクを作成"]
+        S5["9. atct_handoff_request<br/>実装タスクを executor へ"]
+        SS["9'. 実装でないタスクは自分でやる<br/>spec / レビュー / 決定の起票"]
+        S6["13. 実装をレビューして検収する"]
+        S7["14. コミットする"]
+        S8["15. atct_goal_handoff_complete<br/>何をやり何を検証したかを書く"]
     end
 
     subgraph E["executor（タスク単位・複数可）"]
-        E1["11. atct_handoff_request<br/>（起票するのは subcommander）"]
-        E2["12. atct_handoff_receive"]
-        E3["13. atct_role で executor を確認"]
-        E4["14. 実装とテスト"]
-        E5["15. atct_task_update done<br/>（規約のみ・16 とは繋がっていない）"]
-        E6["16. atct_handoff_complete"]
+        E1["10. atct_handoff_receive<br/>→ タスクの claim を得て executor になる"]
+        E2["11. 実装とテスト"]
+        E3["12. atct_handoff_complete<br/>→ タスクも done になる"]
     end
 
-    G --> C1 --> C2 --> C3 --> C4
-    C4 --> S1 --> S2 --> S3 --> S4 --> S5 --> S6
+    G --> C1 --> C2 --> C3 --> C4 --> S1
+    S1 --> S2 --> S3 --> S4
 
-    S6 -->|実装のタスク| E1 --> E2 --> E3 --> E4 --> E5 --> E6
-    S6 -->|自分の職務のタスク| SS
+    S4 -->|実装のタスク| S5 --> E1 --> E2 --> E3
+    S4 -->|それ以外| SS
 
-    E6 --> S7
-    SS --> S7
-    S7 --> S8 --> S9 --> S10 --> S11
+    E3 --> S6
+    SS --> S6
+    S6 --> S7 --> S8
 
-    S10 -.->|承認要求| H2([人間が web で承認/却下])
-    H2 -->|承認| C6 --> C8
-    H2 -->|却下| C7 --> S2
+    S8 --> C5 --> C6 --> C7
+    C7 -.->|承認要求| H2([人間が web で承認/却下])
+    H2 -->|承認| C8
+    H2 -->|却下| C9 --> S1
 ```
 
-## レビューとコミットは executor がやらない
+**executor の手順が 6 つから 3 つに減っている。**理由は次節。
 
-**手順 17（実装レビューとテスト検収）と 18（コミット）は subcommander の仕事である。**
-役割表がそう決めている。
+## 1 つの事実に 1 つの書き手
 
-    subcommander の does      review implementation / commit the goal's work
-    executor の does_not      commit / write internal version-control details
+### `atct_handoff_complete` がタスクを閉じる
 
-**executor は実装してテストを通し、タスクを閉じて報告するところまでで終わる。**
-成果をコミットするのは、それをレビューした subcommander である。**executor が
-コミットすると、レビューを通っていない変更がブランチに乗る。**
-
-これは 11' の経路と同じ理由で handoff を持たない。**subcommander が自分でやる仕事なので、
-渡す相手がいない。**
-
-## タスクは必ず executor に渡るわけではない
-
-**subcommander は自分の職務をタスクとして立て、自分で閉じる。**これは違反ではなく、
-役割表の `does` にある仕事である（`review implementation` / `commit the goal's work` /
-`issue decisions to the human`）。**実装ではないので executor に渡らない。**
-
-    $ sqlite3 ~/.atct/atct.db "
-      select t.agent, t.status, substr(t.title,1,40)
-      from (select * from tasks order by id desc limit 100) t
-      where not exists(select 1 from task_handoffs h where h.task_id=t.id);"
-    atct-199-subcommander  done  Spotlight 対策の手順書を doc/ に書く
-    atct-199-subcommander  done  commander の測定を検算する
-    atct-198-subcommander  done  設計を spec に残す
-    atct-178-subcommander  done  全テストを通してレビューし、変更をコミットする
-    atct-188-subcommander  done  到達可能性検査を取り下げ、dist のクリアだけにする
-    dotfiles-claimhk-...   done  フック本体を消すか残すかを人間の決定として出す
-    ...
-
-**直近 100 タスクのうち 24 件は handoff を持たない。**全期間では 803 件中 592 件（74%）。
-
-### これが 15 の自動化に効く
-
-**`atct_handoff_complete` がタスクも閉じるようにしても、この 24% は閉じない。**
-handoff が無いので、閉じる契機が無い。**手順 19（全タスクを閉じる）は消えず、
-「自分でやった分を閉じる」に縮小される。**
-
-24% を 0 にしたいなら `atct_task_claim` も handoff を書く形にする必要がある。
-**ゴール 177 がその領域だが、proposed で着手されていない。**
-
-### 汎用名の混入（少数だが実在する）
-
-    $ sqlite3 ~/.atct/atct.db "select agent, count(*) from tasks
-      where agent in ('executor','subcommander','commander') group by agent;"
-    executor|6      <- うち 3 件は handoff 無しで実装（すべて goal 144）
-    subcommander|2
-
-**セッション鍵はそのセッションだけを指す名前でなければならない**
-（`skills/atct/SKILL.md` の `### Session keys`）。`executor` のような汎用名は
-**複数のプロジェクトで衝突して 1 行に合流する。**
-**handoff 無しの実装は委譲契約の外である。**144 は着地済みで遡れない。
-
-## 隣接ゴールの境界は委譲側しか書けない
-
-**依頼書には、同じファイルを触る別のゴールを名指しして、どちらがどこを持つかを書く**
-（`skills/atct/SKILL.md` の `## Delegate a goal` 手順 3）。
-
-> Name in the request every adjacent goal that touches the same files and say
-> which side owns what. **The delegator is the only party that can see both
-> goals**, and a boundary left unstated becomes a question the subcommander
-> cannot answer for itself.
-
-**subcommander は他のゴールを見てはいけない**（役割表の `does_not` に
-`inspect or manage other goals`）。だから自分では境界を調べられない。
-**書かないと、止まるか、他のゴールの変更を消す。**
-
-### 測り方
-
-**ファイル名では粗すぎる。**同じファイルの別の関数、同じ表の別の行なら同時に進められる。
-
-    $ git diff -U0 $(git merge-base main wt/goal-N) wt/goal-N -- <path> | grep '^@@'
-
-`-U0` を使う。既定の `-U3` はハンク見出しが変更箇所の 3 行前を指すので、
-**占有している関数を読み違える。**
-
-2026-08-28 の実例。3 つのゴールが同じ `internal/store/goal.go` を触っていたが、
-占有する関数は分かれていた。
-
-    @@ -714 @@ WithdrawGoal の publish 門      -> ゴール 179
-    @@ -235 @@ func (s *Store) ReleaseGoal      -> ゴール 192
-    @@ -517,2 +517,9 @@ RejectCompletion    -> ゴール 183
-
-同じ日、`skills/atct/SKILL.md` の 1 つの表を行で分けた。
-
-    ## Where an unsent report goes の表
-      「progress on the work」の行   -> ゴール 200
-      「the goal is finished」の行   -> ゴール 192
-
-**測らずに「同じ節だからだめ」と言うと、片方が不要に待つ。**
-
-## どの手順が強制されていて、どれが散文だけか
-
-**図の手順は 2 種類が混ざっている。**仕組みが拒否するものと、SKILL.md が頼んでいるだけのものである。
-**この区別が無いと「書いてあるから守られている」と読み違える。**
-
-| 手順 | 強制されているか | 実装上の根拠 |
-|---|---|---|
-| 3. 委譲側はゴールを claim しない | **強制** | claim が open handoff を書くので `atct_goal_handoff_request` が拒否される |
-| 6. `atct_goal_handoff_receive` | **強制** | 受領前は `atct_role` が `subcommander` を返さない |
-| 3 が 6 より先 | **強制** | request が無い handoff を receive すると `ErrGoalHandoffNotFound`（`internal/store/goal_handoff.go:14`）。2026-08-28 にゴール 188 が踏んだ |
-| **3 が 4 より先** | **されていない** | 立ち上げは ATCT の外側なので前後関係が見えない。**強制ではなく競合を避けるための順序である** — 立ち上げた subcommander は即座に receive を呼ぶので、request が間に合わないと上の `ErrGoalHandoffNotFound` になる |
-| **15. `atct_task_update done`** | **されていない** | `CompleteTaskHandoff` は `task_handoffs` の 2 列しか書かない。`tasks.status` を触る経路は `UpdateTask`（`handler.go:994`）だけで、handoff の完了はそこを通らない。**実害 2 件**（下記） |
-| **11'. subcommander が自分でやるタスク** | 該当なし | handoff が無いので閉じる経路は `atct_task_update` だけ。**直近 100 件中 24 件**。「## タスクは必ず executor に渡るわけではない」を見よ |
-| 16. `atct_handoff_complete` | **強制** | 未受領・二重完了は SQL の `WHERE` 句が弾く |
-| **19. 全タスクを閉じる** | **されていない** | `CompleteGoalWithReport` の門番は「ゴールが active」「完了報告の 6 部が非空」「未回答の decision が 0」の 3 つだけ。未完了タスクは見ていない。**ただし実害は 0 件**（done なゴール 130 件のうち、未完了タスクを抱えたまま完了したものは 0）。検査が無いのに守られている規約である |
-| 20 が 21 より先 | **強制** | 21 が handoff を閉じると役割が落ち、20 が「open な goal handoff を持たない」で拒否される |
-
-### 15 と 19 は別の問題である
-
-**混ぜて読まないこと。**A を直しても B は残り、B を直しても A は残る。
-
-    問題 A: handoff を閉じてもタスクが閉じない      -> 実害 2 件（task 764 / 788）
-    問題 B: ゴール完了に未完了タスクの門番が無い    -> 実害 0 件（done 130 件中）
-
-#### A の実害
+現状は `CompleteTaskHandoff` が `task_handoffs` の 2 列を書き、`tasks.status` を書くのは
+`atct_task_update` である。**2 つが繋がっていないので片方だけ呼ばれる。**
 
     $ sqlite3 ~/.atct/atct.db "
       select t.id, t.goal_id, t.status, h.completed_report_at
@@ -248,101 +118,143 @@ handoff が無いので、閉じる契機が無い。**手順 19（全タスク�
     764|145|todo|2026-08-27T20:03:19
     788|146|todo|2026-08-28T04:52:21
 
-**handoff は完了しているのにタスクは `todo` である**（2026-08-28 時点で 2 件）。
-ダッシュボードは「まだ誰も着手していない」と表示する。
+handoff は閉じたのにタスクは `todo` で、ダッシュボードは「未着手」と表示する。
+**この乖離を拾う検知は 13 種のうち 1 つも無い。**
 
-**この乖離を拾う検知は無い。**`internal/store/wakeup.go` の 13 種を数えたが、
-`detection.handoff_unreported` は逆（handoff が開いたまま報告が無い）で、
-「handoff は閉じたがタスクが開いている」に当たるものは存在しない。
+**`atct_handoff_complete` が両方を書けば、乖離が表現できなくなる。**
 
-#### B の実害
+### セッション鍵は receive のときに ATCT が確定する
 
-    $ sqlite3 ~/.atct/atct.db "
-      select count(*) from goals g where g.status='done'
-      and exists(select 1 from tasks t where t.goal_id=g.id and t.status in ('todo','doing'));"
-    0
-    （done なゴールの総数は 130）
+現状は各層が最初に `atct_session_identify` を呼ぶ。**呼び忘れが実データに残っている。**
 
-**130 回すべて守られている。**門番が無いことによる実害はまだ 1 件も出ていない。
-**門番を足す価値があるかは、この数字を見て決めること。**
+    $ sqlite3 ~/.atct/atct.db "select count(*) from agent_sessions
+      where session_key='' or session_key is null;"
+    4260
+    $ sqlite3 ~/.atct/atct.db "select count(*) from decisions d
+      join agent_sessions s on s.id=d.agent_session_id
+      where s.session_key='' or s.session_key is null;"
+    160
 
-**ゴール 192 がこのプロセスを再設計中である。**「タスクを閉じる」を誰が保証するかは、
-そこで決まる。上の測定 4 件は 192 に渡してある。
+**receive は誰が呼んだかを知っているので、そこで鍵を紐づける。**手順が 1 つ減る。
 
-## 順序を守らないと壊れるところ
+### receive が役割を返す
 
-### ① 委譲側はゴール／タスクを claim しない
+**receive が成功した時点で役割は確定している。**receive の応答が役割を含めば、
+確認のための呼び出しが要らない。
 
-**claim は open handoff を書き込む。**先に claim すると `atct_goal_handoff_request` が
-「既に open な handoff がある」で必ず拒否される。
+`atct_role` は残す。**役割が壊れたときの診断に使う。**
 
-    commander が atct_goal_claim を呼ぶ
-      -> 役割が subcommander に落ちる
-      -> atct_goal_handoff_request が「project claim を持たない」で拒否される
+## なぜ完了報告を commander が書くのか
 
-**実測（2026-08-28）**: commander がゴール 199 でこれを踏んだ。`atct_goal_release` して
-`atct_session_identify` を呼び直すまで委譲できなかった。
+**人間の指示（2026-08-28）**:
 
-### ② `atct_goal_complete` が `atct_goal_handoff_complete` より先
+> 1. executor が task handoff complete
+> 2. 全ての task handoff が完了したら subcommander が goal handoff complete
+> 3. commander が goal 全体をレビュー後 goal 完了報告を提出
+> 4. web 上でユーザーが承認したら commander が後片付けを行う
 
-```mermaid
-sequenceDiagram
-    participant S as subcommander
-    participant A as ATCT
-    participant C as commander
+### 順序の罠が構造ごと消える
 
-    rect rgb(230, 255, 230)
-    note over S,A: 正しい順序
-    S->>A: 1. atct_goal_complete（6 部）
-    A-->>S: 承認要求を起票（人間へ）
-    S->>A: 2. atct_goal_handoff_complete
-    A-->>C: handoff reported 通知
-    end
+現状は subcommander が `atct_goal_complete` → `atct_goal_handoff_complete` の順で呼ぶ。
+**逆順だと goal handoff が閉じて役割が落ち、`atct_goal_complete` が拒否され、
+閉じた handoff は自分では受領し直せない。**
 
-    rect rgb(255, 230, 230)
-    note over S,A: 逆にすると詰む
-    S->>A: 1. atct_goal_handoff_complete
-    note right of A: goal handoff が閉じる<br/>→ 判定 3 に落ちて executor になる
-    S->>A: 2. atct_goal_complete
-    A-->>S: ✗ caller holds no open goal handoff
-    note right of S: atct_session_identify を呼び直しても戻らない<br/>閉じた handoff は自分では受領し直せない
-    S->>C: commander に再発行を頼むしかない
-    end
-```
+    2026-08-27〜28 の実測
+      goal handoff の完了: 28 件
+      commander による再発行: 約 25 件
+      うち 15 件以上がこの順序違反
 
-**実測（2026-08-27〜28）**: 1 日で goal handoff の完了は 28 件、**再発行は約 25 件**。
-**うち 15 件以上がこの順序違反である。**ゴール 180・184・187・146・188 が同じ形で詰まった。
+**subcommander が `atct_goal_complete` を呼ばない形にすれば、この経路は存在しない。**
 
-**ゴール 194 が `## Delegate a goal` に手順 1〜4（SKILL.md 側の番号）と「Out of order」の代償を書き、
-順序を崩すと `tests/wrapper_test.bash` が落ちるようにした（`d58ba01`）。**
+### レビューした者が報告を書く
 
-### ③ 役割の確認は受領の後
+現状は subcommander が報告を書き、commander がそれを読んでレビューする。
+**書き手とレビュー者が別なので、commander は「報告が実物と合っているか」を
+毎回確かめ直している。**2026-08-28 に landed 後の欠陥を 2 件見つけた
+（ゴール 185 は自分のブランチが赤いまま完了報告を出していた）。
 
-`atct_role` は受領済み handoff から役割を導くので、**受領前に確認すると必ず
-`matches: false` を返す。**
+**レビューした者が報告を書けば、確かめ直しが 1 回で済む。**
 
-## 通知の流れ
+### 増える負担は測ってから決める
 
-**subcommander は commander に何も送らない**（ゴール 178 が塞いだ）。
-両者は別々の watch で ATCT から直接受け取る。
+人間は同日に commander のトークン消費を減らす方向も指示している。
+**「最終レビュー」と「完了報告 6 部を書く」の量が同じかは測っていない。**
+ゴール 192 がこれを判断する。
+
+## 依頼書には自分のゴールのことだけを書く
+
+**worktree が分離を担うので、依頼書は「このゴールの worktree で作業せよ」で足りる。**
+
+### 衝突はマージのときに解決する
+
+    $ git log --oneline --merges main --since='2026-08-28' | wc -l
+    16        <- 本日のマージ
+    衝突を解決したコミット: 1 件（ゴール 185 の cmd/atct/main.go）
+
+**16 回のマージで衝突は 1 件で、commander が数分で解決した**
+（ゴール 164 が消した行を、それより前に分岐した 185 が持っていた）。
+
+境界を事前に書くには、委譲側が全 worktree の diff を測る必要がある。
+**2026-08-28 に commander はこれを 2 回測り違え、194・183・191・146 の 4 者から
+訂正された。**原因は `git diff` の既定 `-U3` がハンク見出しを変更箇所の 3 行前に
+置くことだった。**起きた 1 件をマージ時に解決するほうが安い。**
+
+### subcommander が main を取り込む
+
+- **着手時と完了前に `git merge main` を自分で行う。**main が進んでいることは自分で確かめられる
+- **衝突が自分の権限で解決できない形なら、commander へ返す**
+
+## ゴールの取り下げは必ず届く
+
+現状は、開いた決定を持たないゴールを取り下げるとイベントが流れない。
+
+    // internal/store/goal.go の取り下げ処理
+    if len(openDecisions) > 0 {
+        s.notify.publishAll()
+    }
+
+取り下げの tx はタスクを全部 dropped にし、handoff を全部強制完了させる。
+**担当していた subcommander に何も届かないので、その subcommander が起こした
+executor は働き続ける。**
+
+**取り下げは、開いた決定の有無にかかわらずイベントを流す。**subcommander の watch に
+届き、subcommander が executor を止める。（ゴール 179 が扱っている）
+
+## commander も判断を仰げる
+
+現状の制約はこうである。
+
+    CHECK (kind <> 'decision' OR status NOT IN ('open','answered')
+           OR (task_id IS NOT NULL AND task_id <> ''))
+
+開いている `decision` はタスクに紐づく必要がある。**commander はタスクを持たない
+役割なので、この経路を使えない。**
+
+2026-08-28 に 2 回ぶつかった。**公開の可否**（v0.60.0 をいま出すか）と
+**ゴールの取り下げ可否**。どちらも取り消せない操作である。
+
+**ゴールに紐づく決定を許す。**（ゴール 201 が扱う）
+
+## 通知の宛先
 
 ```mermaid
 flowchart LR
-    A[ATCT daemon] -->|atct watch -project| C[commander]
-    A -->|atct watch -goal N| S1[subcommander N]
-    A -->|atct watch -goal M| S2[subcommander M]
+    A[ATCT daemon] -->|watch -project| C[commander]
+    A -->|watch -goal N| S1[subcommander N]
+    A -->|watch -goal M| S2[subcommander M]
     H([人間 / web]) -->|承認・却下| A
-    S1 -.->|✗ 禁止| C
-    S2 -.->|✗ 禁止| C
     E[executor] -->|報告| S1
 ```
 
-| 粒度 | 誰に届くか | 根拠 |
+**各層は自分の watch から ATCT の通知を直接受ける。**
+
+| 粒度 | 届く先 | 根拠（2026-08-27 の実測） |
 |---|---|---|
-| goal handoff の完了 | commander | 2026-08-27 に 28 件届き、**28 件すべてが行動に繋がった** |
-| 人間の承認・却下 | 誰の watch にも届く | 34 件届き、全件が行動に繋がった |
-| task handoff の完了 | subcommander のみ | commander には 63 件届いていたが、**行動に繋がったのは 0 件**。ゴール 184/185 が `-project` で絞った |
-| 他人の決定の既定適用 | 出した本人のみ | commander に 11 件届いていたが、行動 0 件 |
+| goal handoff の完了 | commander | 28 件届き、**28 件すべてが行動に繋がった** |
+| 人間の承認・却下 | 全層 | 34 件届き、全件が行動に繋がった |
+| **ゴールの取り下げ** | そのゴールの subcommander | 現状は届かない（上記） |
+| task handoff の完了 | そのゴールの subcommander | commander には 63 件届いていたが**行動 0 件** |
+| 決定の既定適用 | その決定を出したセッション | commander に 11 件届いて**行動 0 件** |
 
 ## 作業場の対応関係
 
@@ -354,23 +266,38 @@ flowchart LR
      └─ subcommander 1 人 + そのゴールの executor
 ```
 
-**エージェントをどう立ち上げるかは ATCT の管轄外である。**`skills/atct/SKILL.md` の
-`## Delegate a goal` の手順 3（SKILL.md 側の番号）が「Wake the subcommander through the environment.
-ATCT does not prescribe how the subcommander is started or how the role is
-transmitted.」と書いている。**端末多重化ソフトの使い方は orchestration スキルの側にある。**
+**エージェントをどう立ち上げるかは ATCT の管轄外である。**端末多重化ソフトの
+使い方は orchestration スキルの側にある。
 
-- **worktree を片付けるのは承認のとき**であって、完了報告のときではない。却下されたら
-  同じ worktree に同じゴールが戻る。作業場を作っているなら、それも同じ扱いにする
+- **worktree を片付けるのは承認のとき。**却下されたら同じ worktree に同じゴールが戻る
 - **`.worktrees/N/web/node_modules` は主チェックアウトへの symlink である。**
   pnpm を走らせるなら委譲側が先に `script/worktree-node-modules.sh detach` する
-  （ゴール 191）
 
-## 詰まったときの入口
+## 現状との差
 
-| 症状 | 見るところ | 直し方 |
+**この文書が目標であり、以下はまだ実装されていない。**
+
+| 節 | 差分 | 扱っているゴール |
 |---|---|---|
-| ゴールが `active` のまま完了報告が空 | `select status, length(work_done) from goals where id=N` | commander が goal handoff を再発行 |
-| `caller holds no open goal handoff` | `select completed_report_at from goal_handoffs where goal_id=N` | 同上。閉じた handoff は自分では受領し直せない |
-| 役割が `executor` に落ちた | `atct_role` | 同じ session_key で `atct_session_identify` を呼び直す。**goal handoff を閉じた後は戻らない** |
-| subcommander が黙って止まった | その pane の出力を直接読む | `API Error` / `went to sleep` を探す。**ATCT からは検知できない**（ゴール 182） |
-| 通知が来なくなった | watch の Monitor | daemon 入れ替え後は張り直しが要る |
+| `atct_handoff_complete` がタスクを閉じる | 現状は 2 回呼ぶ。乖離 2 件、検知なし | **未着手** |
+| セッション鍵は receive で確定する | 現状は各層が呼ぶ。空鍵 4,260 行 / 決定 160 件 | **未着手** |
+| receive が役割を返す | 現状は receive 後に `atct_role` を呼ぶ | **未着手** |
+| 完了報告を commander が書く | 現状は subcommander。再発行 25 件の原因 | 192 |
+| 依頼書は自分のゴールだけ | 現状は隣接ゴールを名指しする | **未着手** |
+| 取り下げが必ず届く | 現状は決定 0 件だと無音 | 179 |
+| commander が決定を出せる | 現状は CHECK 制約で不可 | 201（proposed） |
+| `atct_task_create` | 現状は `atct_task_declare` | 200 |
+| 自分でやるタスクにも claim を通す | 現状は handoff を持たない（直近 100 件中 24 件） | 177（proposed） |
+
+### ゴール完了の門番はこのままにする
+
+    $ sqlite3 ~/.atct/atct.db "
+      select count(*) from goals g where g.status='done'
+      and exists(select 1 from tasks t where t.goal_id=g.id
+                 and t.status in ('todo','doing'));"
+    0
+    （done なゴールの総数は 130）
+
+**130 回すべて、未完了タスクを残さずに完了している。**この数字から門番を足す
+理由は出てこない。`atct_handoff_complete` がタスクを閉じるようになれば、
+手で閉じる対象は自分でやったタスクだけに縮む。
