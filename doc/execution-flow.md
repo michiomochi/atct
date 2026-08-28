@@ -73,8 +73,7 @@ flowchart TD
         S2["6. atct watch を張る"]
         S3["7. 設計を決める"]
         S4["8. atct_task_create で<br/>ゴールに必要なタスクを作成"]
-        S5["9. atct_task_handoff_request<br/>実装タスクを executor へ"]
-        SS["9'. 実装でないタスクは自分でやる<br/>spec / レビュー / 決定の起票"]
+        S5["9. atct_task_handoff_request<br/>タスクを executor へ"]
         S6["13. 実装をレビューする"]
         S7["14. atct_task_handoff_complete<br/>→ タスクが done になる"]
         S8["15. コミットする"]
@@ -90,11 +89,9 @@ flowchart TD
     G --> C1 --> C2 --> C3 --> C4 --> S1
     S1 --> S2 --> S3 --> S4
 
-    S4 -->|実装のタスク| S5 --> E1 --> E2 --> E3
-    S4 -->|それ以外| SS
+    S4 --> S5 --> E1 --> E2 --> E3
 
     E3 --> S6
-    SS --> S6
     S6 -->|受理| S7 --> S8 --> S9
     S6 -->|差し戻し| S5
 
@@ -156,6 +153,46 @@ handoff に `review_report`（作業した側が書く）と `reject_report`（�
 置くか、`request_report` を再利用するかは実装で決める。
 
 **executor の呼び出しは 3 つである**（receive / 実装 / review）。
+
+## タスクは必ず executor に渡る
+
+**subcommander はタスクを自分で持たない。**設計は手順 7 であってタスクではない。
+**人間への決定は必要になった時点で `atct_decision_ask` を呼ぶもので、タスクではない。**
+
+### 現状は役割違反の隠れ場所になっている
+
+直近 120 タスクのうち、subcommander が立てて handoff を持たないものを数えた。
+
+    $ sqlite3 ~/.atct/atct.db "
+      select substr(t.title,1,55)
+      from (select * from tasks order by id desc limit 120) t
+      where not exists(select 1 from task_handoffs h where h.task_id=t.id)
+        and t.agent like '%-subcommander';"
+
+26 件あり、中身は 5 つに分かれた。
+
+| 中身 | 件数 | 目標フローでの扱い |
+|---|---|---|
+| spec を書く | 4 | 設計（手順 7）に含む |
+| 調査と実測 | 5 | executor へ渡す |
+| 人間への決定 | 4 | `atct_decision_ask` を呼ぶ |
+| レビュー | 1 | 手順 13 |
+| **実装そのもの** | **12** | **executor へ渡す** |
+
+**12 件は subcommander 自身の実装である。**役割表は subcommander に実装を割り当てて
+いない。**「自分でやるタスク」という枠があったので、そこに紛れていた。**
+
+    run.register に project を渡す経路を実装する
+    JSON に 0 が出る経路を消し、httpapi と web を複数の親に追随させる
+    tests/release_test.bash に .gitkeep 検査を足す
+    自動再取得のために置かれた dirty 追跡を撤去する
+
+**枠を無くせば、実装は executor に渡るしかなくなる。**
+
+### これで全タスクが handoff を通る
+
+差分 1（handoff の状態遷移がタスクの状態を書く）が全タスクに効くようになる。
+**手で `atct_task_update` を呼ぶ経路が要らなくなる。**
 
 ## 1 つの事実に 1 つの書き手
 
@@ -332,7 +369,7 @@ flowchart LR
 | 7 | commander が決定を出せる | 201（proposed） |
 | 8 | `atct_task_create` に改名 | 200 |
 | 9 | タスク側の handoff ツールも粒度を名前に持つ | **未着手** |
-| 10 | 自分でやるタスクにも claim を通す | 177（proposed） |
+| 10 | **全タスクが executor に渡る**（subcommander は自分のタスクを持たない） | **未着手** |
 
 ### 0. handoff に「レビュー待ち」を足す
 
@@ -427,14 +464,14 @@ flowchart LR
 | **放置すると** | 読む側が「どちらの handoff か」を文脈から補う。8 と同じ種類の問題である |
 | **注意** | **短い名前が長い名前の中に一致する。**`atct_handoff_complete` は `atct_goal_handoff_complete` の部分文字列なので、置換と検査はバックティックで囲んで区切る |
 
-### 10. 自分でやるタスクにも claim を通す
+### 10. 全タスクが executor に渡る
 
 | | |
 |---|---|
-| **いま** | `ClaimTask`（`internal/store/task.go:522`）は自己 handoff を書くが、**直近 100 タスクのうち 24 件は handoff を 1 つも持たない**（全期間では 803 件中 592 件）。subcommander が自分の職務としてタスクを立て、`atct_task_update` で閉じている |
-| **目標** | すべてのタスクが claim を通る。1 の自動化が全タスクに効くようになる |
-| **放置すると** | 1 を実装しても 24% は手で閉じ続ける。手順から「自分でやった分を閉じる」が消えない |
-| **未解決** | ゴール 177 が「`atct_task_claim` の自己 handoff がスキルの委譲手順を実行不能にする」を扱う。**177 の結論が出るまでこれは動かせない** |
+| **いま** | 直近 120 タスクのうち subcommander が立てて handoff を持たないものが 26 件あり、**うち 12 件は subcommander 自身の実装である。**役割表は subcommander に実装を割り当てていない |
+| **目標** | subcommander はタスクを持たない。設計は手順 7、人間への決定は `atct_decision_ask`、レビューは手順 13 で、いずれもタスクではない |
+| **放置すると** | 役割違反が「自分でやるタスク」の枠に紛れる。差分 1 も 24% のタスクに効かない |
+| **合わせて** | ゴール 177（`atct_task_claim` の自己 handoff がスキルの委譲手順を実行不能にする）は、**全タスクが handoff を通るなら自己 claim の経路そのものが不要になる。**177 の扱いをここで決める |
 
 ### ゴール完了の門番はこのままにする
 
