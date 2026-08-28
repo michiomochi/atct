@@ -187,6 +187,8 @@ handoff が無いので、閉じる契機が無い。**手順 20（全タスク�
 |---|---|---|
 | 3. 委譲側はゴールを claim しない | **強制** | claim が open handoff を書くので `atct_goal_handoff_request` が拒否される |
 | 7. `atct_goal_handoff_receive` | **強制** | 受領前は `atct_role` が `subcommander` を返さない |
+| 3 が 7 より先 | **強制** | request が無い handoff を receive すると `ErrGoalHandoffNotFound`（`internal/store/goal_handoff.go:14`）。2026-08-28 にゴール 188 が踏んだ |
+| **3 が 4 より先** | **されていない** | 立ち上げは ATCT の外側なので前後関係が見えない。**強制ではなく競合を避けるための順序である** — 立ち上げた subcommander は即座に receive を呼ぶので、request が間に合わないと上の `ErrGoalHandoffNotFound` になる |
 | **16. `atct_task_update done`** | **されていない** | `CompleteTaskHandoff` は `task_handoffs` の 2 列しか書かない。`tasks.status` を触る経路は `UpdateTask`（`handler.go:994`）だけで、handoff の完了はそこを通らない。**実害 2 件**（下記） |
 | **12'. subcommander が自分でやるタスク** | 該当なし | handoff が無いので閉じる経路は `atct_task_update` だけ。**直近 100 件中 24 件**。「## タスクは必ず executor に渡るわけではない」を見よ |
 | 17. `atct_handoff_complete` | **強制** | 未受領・二重完了は SQL の `WHERE` 句が弾く |
