@@ -29,7 +29,7 @@
 
 | 時点 | `requested_by` | `received_by` | claim の持ち主 |
 |---|---|---|---|
-| 手順 4 の直後 | commander | 0 | **commander** |
+| 手順 3 の直後 | commander | 0 | **commander** |
 | 手順 7 の後 | commander | subcommander | **subcommander** |
 | 手順 22 の後 | commander | subcommander | **誰も持たない**（handoff が閉じた） |
 
@@ -40,7 +40,7 @@
     CREATE UNIQUE INDEX idx_goal_handoffs_open_goal_id
       ON goal_handoffs(goal_id) WHERE completed_report_at IS NULL;
 
-**これが手順 4 で claim してはいけない理由である。**先に `atct_goal_claim` を呼ぶと
+**これが手順 3 の前に claim してはいけない理由である。**先に `atct_goal_claim` を呼ぶと
 自分名義の open handoff ができ、続く `atct_goal_handoff_request` が制約で弾かれる。
 
 ## 役割はどこから決まるか
@@ -75,8 +75,8 @@ flowchart TD
     subgraph C["commander（1 プロセスに 1 人・project claim を保持）"]
         C1["1. worktree を用意<br/>script/worktree-setup.sh &lt;goal&gt;"]
         C2["2. ターミナルマルチプレクサを利用の場合は<br/>subcommander の作業場所を用意"]
-        C3["3. subcommander を立ち上げる"]
-        C4["4. atct_goal_handoff_request"]
+        C3["3. atct_goal_handoff_request"]
+        C4["4. subcommander を立ち上げる"]
         C5["5. 依頼文を送る<br/>隣接ゴールの境界を明記"]
         C6["23. 着地した変更をレビューしてマージ"]
         C7["24. 却下なら goal handoff を再発行"]
@@ -185,7 +185,7 @@ handoff が無いので、閉じる契機が無い。**手順 20（全タスク�
 
 | 手順 | 強制されているか | 実装上の根拠 |
 |---|---|---|
-| 4. 委譲側はゴールを claim しない | **強制** | claim が open handoff を書くので `atct_goal_handoff_request` が拒否される |
+| 3. 委譲側はゴールを claim しない | **強制** | claim が open handoff を書くので `atct_goal_handoff_request` が拒否される |
 | 7. `atct_goal_handoff_receive` | **強制** | 受領前は `atct_role` が `subcommander` を返さない |
 | **16. `atct_task_update done`** | **されていない** | `CompleteTaskHandoff` は `task_handoffs` の 2 列しか書かない。`tasks.status` を触る経路は `UpdateTask`（`handler.go:994`）だけで、handoff の完了はそこを通らない。**実害 2 件**（下記） |
 | **12'. subcommander が自分でやるタスク** | 該当なし | handoff が無いので閉じる経路は `atct_task_update` だけ。**直近 100 件中 24 件**。「## タスクは必ず executor に渡るわけではない」を見よ |
@@ -316,7 +316,7 @@ flowchart LR
 ```
 
 **エージェントをどう立ち上げるかは ATCT の管轄外である。**`skills/atct/SKILL.md` の
-`## Delegate a goal` 手順 3 が「Wake the subcommander through the environment.
+`## Delegate a goal` の手順 3（SKILL.md 側の番号）が「Wake the subcommander through the environment.
 ATCT does not prescribe how the subcommander is started or how the role is
 transmitted.」と書いている。**端末多重化ソフトの使い方は orchestration スキルの側にある。**
 
