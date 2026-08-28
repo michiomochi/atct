@@ -80,8 +80,8 @@ flowchart TD
         S5b["13. atct_task_handoff_request<br/>タスクを executor へ"]
         S6["17. 実装をレビューする<br/>atct watch -goal の通知で起動"]
         S7["18. atct_task_handoff_complete<br/>→ タスクが done になる"]
-        S8["19. 次に渡すタスクが無ければ<br/>その executor を閉じる"]
-        S9["20. コミットする"]
+        S8["19. その executor を閉じる"]
+        S9["20. 全タスクが done になったら<br/>コミットする"]
         S10["21. atct_goal_handoff_review_request<br/>superpowers:verification-before-completion"]
     end
 
@@ -98,8 +98,12 @@ flowchart TD
     CD -->|"差し戻し<br/>atct_plan_handoff_review_reject"| S3
 
     E3 --> S6
-    S6 -->|受理| S7 --> S8 --> S9 --> S10
+    S6 -->|受理| S7
     S6 -->|"差し戻し<br/>atct_task_handoff_review_reject"| S5b
+
+    S7 -->|次に渡すタスクがある| S5b
+    S7 -->|この executor への依頼が尽きた| S8
+    S8 -->|"残りのタスクが全部 done"| S9 --> S10
 
     S10 --> C5
     C5 -->|受理| C6 --> C7 --> C8
@@ -210,6 +214,23 @@ subcommander が設計の結果として作り、レビューに出す。**そ�
 **差し戻しは handoff を閉じない。**`*_review_reject` は状態を「受領」に戻すだけで、
 `completed_report_at` を書かない。**claim も役割も維持されるので、
 作業した側はそのまま作業に戻れる。**差し戻しの理由は `*_review_reject` が書く。
+
+### タスクは並列に回る
+
+**図は 1 本の線で描いてあるが、手順 13〜19 は executor ごとに独立して回る。**
+
+    subcommander が 12 で n 個のタスクを作る
+      -> 13 で複数の executor へ同時に出せる
+      -> 各 executor が 14〜16 を自分のペースで回す
+      -> 16 が届くたびに subcommander が 17〜18 を回す
+
+**18 の後に分岐が 2 つある。**
+
+    その executor へ次に渡すタスクがある  -> 13 に戻る（同じ executor を使い回す）
+    その executor への依頼が尽きた        -> 19 で閉じる
+
+**20（コミット）は全タスクが done になってからである。**1 つ受理するたびに
+コミットするのではない。**まだ動いている executor があるうちは 21 に進まない。**
 
 ### タスクの場合
 
