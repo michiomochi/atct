@@ -30,8 +30,8 @@
 | 時点 | `requested_by` | `received_by` | claim の持ち主 |
 |---|---|---|---|
 | 手順 3 の直後 | commander | 0 | **commander** |
-| 手順 7 の後 | commander | subcommander | **subcommander** |
-| 手順 22 の後 | commander | subcommander | **誰も持たない**（handoff が閉じた） |
+| 手順 6 の後 | commander | subcommander | **subcommander** |
+| 手順 21 の後 | commander | subcommander | **誰も持たない**（handoff が閉じた） |
 
 **「claim が移る」のではなく、`received_by` が埋まることが claim の移動である。**
 
@@ -76,39 +76,38 @@ flowchart TD
         C1["1. worktree を用意<br/>script/worktree-setup.sh &lt;goal&gt;"]
         C2["2. ターミナルマルチプレクサを利用の場合は<br/>subcommander の作業場所を用意"]
         C3["3. atct_goal_handoff_request"]
-        C4["4. subcommander を立ち上げる"]
-        C5["5. 依頼文を送る<br/>隣接ゴールの境界を明記"]
-        C6["23. 着地した変更をレビューしてマージ"]
-        C7["24. 却下なら goal handoff を再発行"]
-        C8["25. worktree を片付ける<br/>（作業場を作ったなら、それも）"]
+        C4["4. subcommander を立ち上げ、依頼文を送る<br/>隣接ゴールの境界を明記"]
+        C6["22. 着地した変更をレビューしてマージ"]
+        C7["23. 却下なら goal handoff を再発行"]
+        C8["24. worktree を片付ける<br/>（作業場を作ったなら、それも）"]
     end
 
     subgraph S["subcommander（ゴール 1 つに 1 人）"]
-        S1["6. atct_session_identify"]
-        S2["7. atct_goal_handoff_receive<br/>→ ここでゴールの claim を得る<br/>→ 役割が subcommander になる"]
-        S3["8. atct_role で expected_role=subcommander を確認"]
-        S4["9. atct watch -goal &lt;goal&gt; を張る"]
-        S5["10. 設計を決める（commander に聞かない）"]
-        S6["11. atct_task_declare でタスクを宣言"]
-        SS["12'. 自分の職務のタスクは自分でやる<br/>spec / レビュー / 決定の起票<br/>handoff は生まれない"]
-        S7["18. 実装レビューとテスト検収"]
-        S8["19. コミット"]
-        S9["20. 全タスクを閉じる<br/>（規約のみ・21 の門番は見ていない）"]
-        S10["21. atct_goal_complete（6 部）<br/>★これが先"]
-        S11["22. atct_goal_handoff_complete<br/>★これが後"]
+        S1["5. atct_session_identify"]
+        S2["6. atct_goal_handoff_receive<br/>→ ここでゴールの claim を得る<br/>→ 役割が subcommander になる"]
+        S3["7. atct_role で expected_role=subcommander を確認"]
+        S4["8. atct watch -goal &lt;goal&gt; を張る"]
+        S5["9. 設計を決める（commander に聞かない）"]
+        S6["10. atct_task_declare でタスクを宣言"]
+        SS["11'. 自分の職務のタスクは自分でやる<br/>spec / レビュー / 決定の起票<br/>handoff は生まれない"]
+        S7["17. 実装レビューとテスト検収"]
+        S8["18. コミット"]
+        S9["19. 全タスクを閉じる<br/>（規約のみ・20 の門番は見ていない）"]
+        S10["20. atct_goal_complete（6 部）<br/>★これが先"]
+        S11["21. atct_goal_handoff_complete<br/>★これが後"]
     end
 
     subgraph E["executor（タスク単位・複数可）"]
-        E1["12. atct_handoff_request<br/>（起票するのは subcommander）"]
-        E2["13. atct_handoff_receive"]
-        E3["14. atct_role で executor を確認"]
-        E4["15. 実装とテスト"]
-        E5["16. atct_task_update done<br/>（規約のみ・17 とは繋がっていない）"]
-        E6["17. atct_handoff_complete"]
+        E1["11. atct_handoff_request<br/>（起票するのは subcommander）"]
+        E2["12. atct_handoff_receive"]
+        E3["13. atct_role で executor を確認"]
+        E4["14. 実装とテスト"]
+        E5["15. atct_task_update done<br/>（規約のみ・16 とは繋がっていない）"]
+        E6["16. atct_handoff_complete"]
     end
 
-    G --> C1 --> C2 --> C3 --> C4 --> C5
-    C5 --> S1 --> S2 --> S3 --> S4 --> S5 --> S6
+    G --> C1 --> C2 --> C3 --> C4
+    C4 --> S1 --> S2 --> S3 --> S4 --> S5 --> S6
 
     S6 -->|実装のタスク| E1 --> E2 --> E3 --> E4 --> E5 --> E6
     S6 -->|自分の職務のタスク| SS
@@ -124,7 +123,7 @@ flowchart TD
 
 ## レビューとコミットは executor がやらない
 
-**手順 18（実装レビューとテスト検収）と 19（コミット）は subcommander の仕事である。**
+**手順 17（実装レビューとテスト検収）と 18（コミット）は subcommander の仕事である。**
 役割表がそう決めている。
 
     subcommander の does      review implementation / commit the goal's work
@@ -134,7 +133,7 @@ flowchart TD
 成果をコミットするのは、それをレビューした subcommander である。**executor が
 コミットすると、レビューを通っていない変更がブランチに乗る。**
 
-これは 12' の経路と同じ理由で handoff を持たない。**subcommander が自分でやる仕事なので、
+これは 11' の経路と同じ理由で handoff を持たない。**subcommander が自分でやる仕事なので、
 渡す相手がいない。**
 
 ## タスクは必ず executor に渡るわけではない
@@ -157,10 +156,10 @@ flowchart TD
 
 **直近 100 タスクのうち 24 件は handoff を持たない。**全期間では 803 件中 592 件（74%）。
 
-### これが 16 の自動化に効く
+### これが 15 の自動化に効く
 
 **`atct_handoff_complete` がタスクも閉じるようにしても、この 24% は閉じない。**
-handoff が無いので、閉じる契機が無い。**手順 20（全タスクを閉じる）は消えず、
+handoff が無いので、閉じる契機が無い。**手順 19（全タスクを閉じる）は消えず、
 「自分でやった分を閉じる」に縮小される。**
 
 24% を 0 にしたいなら `atct_task_claim` も handoff を書く形にする必要がある。
@@ -186,16 +185,16 @@ handoff が無いので、閉じる契機が無い。**手順 20（全タスク�
 | 手順 | 強制されているか | 実装上の根拠 |
 |---|---|---|
 | 3. 委譲側はゴールを claim しない | **強制** | claim が open handoff を書くので `atct_goal_handoff_request` が拒否される |
-| 7. `atct_goal_handoff_receive` | **強制** | 受領前は `atct_role` が `subcommander` を返さない |
-| 3 が 7 より先 | **強制** | request が無い handoff を receive すると `ErrGoalHandoffNotFound`（`internal/store/goal_handoff.go:14`）。2026-08-28 にゴール 188 が踏んだ |
+| 6. `atct_goal_handoff_receive` | **強制** | 受領前は `atct_role` が `subcommander` を返さない |
+| 3 が 6 より先 | **強制** | request が無い handoff を receive すると `ErrGoalHandoffNotFound`（`internal/store/goal_handoff.go:14`）。2026-08-28 にゴール 188 が踏んだ |
 | **3 が 4 より先** | **されていない** | 立ち上げは ATCT の外側なので前後関係が見えない。**強制ではなく競合を避けるための順序である** — 立ち上げた subcommander は即座に receive を呼ぶので、request が間に合わないと上の `ErrGoalHandoffNotFound` になる |
-| **16. `atct_task_update done`** | **されていない** | `CompleteTaskHandoff` は `task_handoffs` の 2 列しか書かない。`tasks.status` を触る経路は `UpdateTask`（`handler.go:994`）だけで、handoff の完了はそこを通らない。**実害 2 件**（下記） |
-| **12'. subcommander が自分でやるタスク** | 該当なし | handoff が無いので閉じる経路は `atct_task_update` だけ。**直近 100 件中 24 件**。「## タスクは必ず executor に渡るわけではない」を見よ |
-| 17. `atct_handoff_complete` | **強制** | 未受領・二重完了は SQL の `WHERE` 句が弾く |
-| **20. 全タスクを閉じる** | **されていない** | `CompleteGoalWithReport` の門番は「ゴールが active」「完了報告の 6 部が非空」「未回答の decision が 0」の 3 つだけ。未完了タスクは見ていない。**ただし実害は 0 件**（done なゴール 130 件のうち、未完了タスクを抱えたまま完了したものは 0）。検査が無いのに守られている規約である |
-| 21 が 22 より先 | **強制** | 22 が handoff を閉じると役割が落ち、21 が「open な goal handoff を持たない」で拒否される |
+| **15. `atct_task_update done`** | **されていない** | `CompleteTaskHandoff` は `task_handoffs` の 2 列しか書かない。`tasks.status` を触る経路は `UpdateTask`（`handler.go:994`）だけで、handoff の完了はそこを通らない。**実害 2 件**（下記） |
+| **11'. subcommander が自分でやるタスク** | 該当なし | handoff が無いので閉じる経路は `atct_task_update` だけ。**直近 100 件中 24 件**。「## タスクは必ず executor に渡るわけではない」を見よ |
+| 16. `atct_handoff_complete` | **強制** | 未受領・二重完了は SQL の `WHERE` 句が弾く |
+| **19. 全タスクを閉じる** | **されていない** | `CompleteGoalWithReport` の門番は「ゴールが active」「完了報告の 6 部が非空」「未回答の decision が 0」の 3 つだけ。未完了タスクは見ていない。**ただし実害は 0 件**（done なゴール 130 件のうち、未完了タスクを抱えたまま完了したものは 0）。検査が無いのに守られている規約である |
+| 20 が 21 より先 | **強制** | 21 が handoff を閉じると役割が落ち、20 が「open な goal handoff を持たない」で拒否される |
 
-### 16 と 20 は別の問題である
+### 15 と 19 は別の問題である
 
 **混ぜて読まないこと。**A を直しても B は残り、B を直しても A は残る。
 
@@ -276,7 +275,7 @@ sequenceDiagram
 **実測（2026-08-27〜28）**: 1 日で goal handoff の完了は 28 件、**再発行は約 25 件**。
 **うち 15 件以上がこの順序違反である。**ゴール 180・184・187・146・188 が同じ形で詰まった。
 
-**ゴール 194 が `## Delegate a goal` に手順 1〜4 と「Out of order」の代償を書き、
+**ゴール 194 が `## Delegate a goal` に手順 1〜4（SKILL.md 側の番号）と「Out of order」の代償を書き、
 順序を崩すと `tests/wrapper_test.bash` が落ちるようにした（`d58ba01`）。**
 
 ### ③ 役割の確認は受領の後
