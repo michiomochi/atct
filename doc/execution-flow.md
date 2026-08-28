@@ -76,7 +76,7 @@ flowchart TD
         C1["1. worktree を用意<br/>script/worktree-setup.sh &lt;goal&gt;"]
         C2["2. ターミナルマルチプレクサを利用の場合は<br/>subcommander の作業場所を用意"]
         C3["3. atct_goal_handoff_request"]
-        C4["4. subcommander を立ち上げ、依頼文を送る<br/>隣接ゴールの境界を明記"]
+        C4["4. subcommander を立ち上げ、依頼文を送る<br/>同じファイルを触る別ゴールを名指しし<br/>どちらがどこを持つかを書く"]
         C6["22. 着地した変更をレビューしてマージ"]
         C7["23. 却下なら goal handoff を再発行"]
         C8["24. worktree を片付ける<br/>（作業場を作ったなら、それも）"]
@@ -176,6 +176,44 @@ handoff が無いので、閉じる契機が無い。**手順 19（全タスク�
 （`skills/atct/SKILL.md` の `### Session keys`）。`executor` のような汎用名は
 **複数のプロジェクトで衝突して 1 行に合流する。**
 **handoff 無しの実装は委譲契約の外である。**144 は着地済みで遡れない。
+
+## 隣接ゴールの境界は委譲側しか書けない
+
+**依頼書には、同じファイルを触る別のゴールを名指しして、どちらがどこを持つかを書く**
+（`skills/atct/SKILL.md` の `## Delegate a goal` 手順 3）。
+
+> Name in the request every adjacent goal that touches the same files and say
+> which side owns what. **The delegator is the only party that can see both
+> goals**, and a boundary left unstated becomes a question the subcommander
+> cannot answer for itself.
+
+**subcommander は他のゴールを見てはいけない**（役割表の `does_not` に
+`inspect or manage other goals`）。だから自分では境界を調べられない。
+**書かないと、止まるか、他のゴールの変更を消す。**
+
+### 測り方
+
+**ファイル名では粗すぎる。**同じファイルの別の関数、同じ表の別の行なら同時に進められる。
+
+    $ git diff -U0 $(git merge-base main wt/goal-N) wt/goal-N -- <path> | grep '^@@'
+
+`-U0` を使う。既定の `-U3` はハンク見出しが変更箇所の 3 行前を指すので、
+**占有している関数を読み違える。**
+
+2026-08-28 の実例。3 つのゴールが同じ `internal/store/goal.go` を触っていたが、
+占有する関数は分かれていた。
+
+    @@ -714 @@ WithdrawGoal の publish 門      -> ゴール 179
+    @@ -235 @@ func (s *Store) ReleaseGoal      -> ゴール 192
+    @@ -517,2 +517,9 @@ RejectCompletion    -> ゴール 183
+
+同じ日、`skills/atct/SKILL.md` の 1 つの表を行で分けた。
+
+    ## Where an unsent report goes の表
+      「progress on the work」の行   -> ゴール 200
+      「the goal is finished」の行   -> ゴール 192
+
+**測らずに「同じ節だからだめ」と言うと、片方が不要に待つ。**
 
 ## どの手順が強制されていて、どれが散文だけか
 
