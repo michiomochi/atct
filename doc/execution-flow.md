@@ -65,7 +65,7 @@ flowchart TD
         CD["10. 設計をレビューする<br/>superpowers:requesting-code-review"]
         CD2["11. atct_plan_handoff_complete"]
         C5["22. ゴールの変更をレビューする<br/>atct watch -project の通知で起動<br/>superpowers:requesting-code-review"]
-        C6["23. main へマージする<br/>superpowers:finishing-a-development-branch<br/>衝突はここで解決する"]
+        C6["23. main へマージする<br/>衝突はここで解決する"]
         C7["24. atct_goal_handoff_complete<br/>→ ゴールの claim が空く"]
         C8["25. atct_goal_complete（6 部）"]
         C9["26. 承認されたら subcommander を閉じ<br/>worktree を片付ける"]
@@ -130,7 +130,6 @@ flowchart TD
 | 17. 実装をレビューする | `superpowers:requesting-code-review` |
 | 21. ゴールの review を出す前 | `superpowers:verification-before-completion` |
 | 22. ゴールの変更をレビューする | `superpowers:requesting-code-review` |
-| 23. main へマージする | `superpowers:finishing-a-development-branch` |
 
 ### 7 と 8 が何を生むかは brainstorming の分類で決まる
 
@@ -151,6 +150,19 @@ flowchart TD
 
 **手順 8 は「plan を出す」ではない。**分類の結果として手元にあるものを出す。
 **spike で plan を捏造しない。**
+
+### 使わないもの
+
+**`superpowers:finishing-a-development-branch` は使わない。**説明は
+「implementation is complete, all tests pass, and you need to decide how to
+integrate the work」で位置は合うが、中身が ATCT と噛み合わない。
+
+    Step 1  フルテストを実行     -> 手順 21 の verification-before-completion と重複
+    Step 4  人間に 3 択を出す    -> 統合方法は人間の承認時点で決まっている
+    Step 6  worktree を片付ける  -> 手順 26 と重複
+
+**3 つとも既にフローの別の場所にある。**マージは commander が手順 23 で行い、
+衝突もそこで解決する。
 
 ### 手順に紐づかないもの
 
