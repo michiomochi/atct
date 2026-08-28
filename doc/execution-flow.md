@@ -62,7 +62,7 @@ flowchart TD
         C3["3. atct_goal_handoff_request"]
         C4["4. subcommander を立ち上げ、依頼文を送る"]
         CD["9. 設計をレビューする<br/>atct watch -project の通知で起動<br/>superpowers:requesting-code-review"]
-        CD2["10. atct_goal_handoff_plan_complete<br/>→ 受理。subcommander に通知が飛ぶ"]
+        CD2["10. atct_goal_handoff_plan_complete"]
         C5["21. 着地した変更をレビューする<br/>atct watch -project の通知で起動<br/>superpowers:requesting-code-review"]
         C6["22. main へマージする<br/>superpowers:finishing-a-development-branch<br/>衝突はここで解決する"]
         C7["23. atct_goal_handoff_complete<br/>→ ゴールの claim が空く"]
