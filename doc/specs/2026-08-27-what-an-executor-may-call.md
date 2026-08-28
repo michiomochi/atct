@@ -280,6 +280,47 @@ executor 3 台（Claude 2 台・Codex 1 台）に、許可リストと禁止リ�
 **壊して落ちることを測るときは、「何も壊さない」場合も測る。**片方だけでは、
 常に落ちる検査と区別がつかない。
 
+### 判定に使った grep が、守りたい退行そのもので偽になった
+
+dotfiles 側が未着地のあいだ、`test_orchestration_skill_has_no_blanket_atct_ban` は 3 状態を
+分けていた。**「更新済みか」の判定に許可リストの存在（`atct_session_identify`）を使ったのが誤りだった。**
+
+    if grep -Fq -- 'atct_session_identify' "$orchestration"; then
+      assert_file_not_contains '**ATCT ツールの呼び出し**' "$orchestration"
+      ...
+      return 0
+    fi
+
+**許可リストが消えて一括禁止が戻る——いちばん捕まえたい退行——が起きると、
+条件が偽になって assert が飛び、`return 0` で通る。**「更新済み」と「退行した」が
+同じ外形になっていた。commander が壊して測り、`PASS wrapper tests` を確認した。
+
+**これは 1 つ前の穴と同じ形である。**節を見て通したのも、判定を assert の代わりにしたのも、
+**「見るべきものの代わりに、そばにあるものを見た」**という同じ誤りである。
+
+    1 回目  リストではなく節を見た
+    2 回目  結果ではなく判定を見た
+
+直した形は 2 点。
+
+1. **3 状態を 2 状態にする。**dotfiles は `416d589` で着地したので「未更新」の分岐は
+   守るものが無い。**ファイルが無ければ skip、在れば無条件に assert。**
+   `atct_session_identify` は条件から assert へ移す
+2. **検査対象のパスを `ORCHESTRATION_SKILL_PATH` で差し替え可能にする。**
+   `~/.claude/skills/orchestration/SKILL.md` は全エージェントが読む共有ファイルで、
+   変異試験のために壊すわけにいかない。**一時コピーを指せる形にして、実体に触らずに測る**
+
+### chezmoi のソースではなく apply 済みの実体を見ていることは、直さない
+
+この検査が読むのは `$HOME/.claude/skills/orchestration/SKILL.md`、すなわち symlink 経由の
+**apply 済みの実体**であって dotfiles の chezmoi ソースではない。ソースを編集して apply して
+いない状態では、古い実体に対して通る。
+
+**それでよい。**この検査の目的は「エージェントが読む契約が矛盾していないこと」であり、
+**エージェントが読むのは apply 済みの実体である。**ソースを守るのは dotfiles 側の仕事で、
+そちらに番人を置くゴールが起票される。**このリポジトリは dotfiles のチェックアウトが
+どこにあるかを知らないし、在ることを前提にもできない。**
+
 ## 完了条件との対応
 
 | 条件 | 対応 |
