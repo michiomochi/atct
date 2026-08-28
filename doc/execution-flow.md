@@ -62,9 +62,9 @@ flowchart TD
         C3["3. atct_goal_handoff_request"]
         C4["4. subcommander を立ち上げ、依頼文を送る"]
         CD0["9. atct_plan_handoff_review_receive<br/>atct watch -project の通知で起動"]
-        CD["10. 設計をレビューする<br/>superpowers:requesting-code-review"]
+        CD["10. 設計をレビューする"]
         CD2["11. atct_plan_handoff_complete"]
-        C5["22. ゴールの変更をレビューする<br/>atct watch -project の通知で起動<br/>superpowers:requesting-code-review"]
+        C5["22. ゴールの変更をレビューする<br/>atct watch -project の通知で起動"]
         C6["23. main へマージする<br/>衝突はここで解決する"]
         C7["24. atct_goal_handoff_complete<br/>→ ゴールの claim が空く"]
         C8["25. atct_goal_complete（6 部）"]
@@ -77,8 +77,8 @@ flowchart TD
         S3["7. 設計を決める<br/>superpowers:brainstorming<br/>superpowers:writing-plans"]
         S4["8. 設計の成果物を出す<br/>atct_plan_handoff_review_request"]
         S5["12. atct_task_create でタスクにする<br/>atct watch -goal の通知で起動"]
-        S5b["13. atct_task_handoff_request<br/>タスクを executor へ<br/>superpowers:dispatching-parallel-agents"]
-        S6["17. 実装をレビューする<br/>atct watch -goal の通知で起動<br/>superpowers:requesting-code-review"]
+        S5b["13. atct_task_handoff_request<br/>タスクを executor へ"]
+        S6["17. 実装をレビューする<br/>atct watch -goal の通知で起動"]
         S7["18. atct_task_handoff_complete<br/>→ タスクが done になる"]
         S8["19. 次に渡すタスクが無ければ<br/>その executor を閉じる"]
         S9["20. コミットする"]
@@ -87,7 +87,7 @@ flowchart TD
 
     subgraph E["executor（タスク単位・複数可）"]
         E1["14. atct_task_handoff_receive<br/>→ タスクの claim を得て executor になる"]
-        E2["15. 実装とテスト<br/>superpowers:test-driven-development<br/>superpowers:executing-plans"]
+        E2["15. 実装とテスト<br/>superpowers:test-driven-development"]
         E3["16. atct_task_handoff_review_request<br/>superpowers:verification-before-completion"]
     end
 
@@ -121,15 +121,10 @@ flowchart TD
 |---|---|
 | 1. worktree を用意 | `superpowers:using-git-worktrees` |
 | 7. 設計を決める | `superpowers:brainstorming` → `superpowers:writing-plans` |
-| 8. 設計の成果物を出す | 分類により変わる（下記） |
-| **10. 設計をレビューする（commander）** | `superpowers:requesting-code-review` |
 | 12. タスクを作成 | plan があるならその分解をそのまま渡す。無いなら設計から起こす |
-| 13. タスクを executor へ | 2 つ以上を同時に出すなら `superpowers:dispatching-parallel-agents` |
-| 15. 実装とテスト | `superpowers:test-driven-development`、plan があるなら `superpowers:executing-plans` |
+| 15. 実装とテスト | `superpowers:test-driven-development` |
 | 16. review を出す前 | `superpowers:verification-before-completion` |
-| 17. 実装をレビューする | `superpowers:requesting-code-review` |
 | 21. ゴールの review を出す前 | `superpowers:verification-before-completion` |
-| 22. ゴールの変更をレビューする | `superpowers:requesting-code-review` |
 
 ### 7 と 8 が何を生むかは brainstorming の分類で決まる
 
@@ -153,16 +148,20 @@ flowchart TD
 
 ### 使わないもの
 
-**`superpowers:finishing-a-development-branch` は使わない。**説明は
-「implementation is complete, all tests pass, and you need to decide how to
-integrate the work」で位置は合うが、中身が ATCT と噛み合わない。
+**説明文だけを見ると位置が合って見えるが、中身が ATCT と二重になるものがある。**
+2026-08-29 に中身を読んで 5 種を外した。
 
-    Step 1  フルテストを実行     -> 手順 21 の verification-before-completion と重複
-    Step 4  人間に 3 択を出す    -> 統合方法は人間の承認時点で決まっている
-    Step 6  worktree を片付ける  -> 手順 26 と重複
+| スキル | 中身 | なぜ外すか |
+|---|---|---|
+| `superpowers:finishing-a-development-branch` | フルテスト → 人間に 3 択 → worktree 片付け | 3 つとも別の手順にある。統合方法は人間の承認時点で決まっている |
+| `superpowers:requesting-code-review` | **作った側がレビュアーのサブエージェントを起動する** | **ATCT には上の層というレビュアーがいる。**このスキルはレビュアーがいない場合のもの |
+| `superpowers:dispatching-parallel-agents` | 独立した問題ごとにサブエージェントを並列起動する | **手順 13 が同じことを executor で行う** |
+| `superpowers:executing-plans` | plan 全体を 1 セッションで実行する | **手順 12〜18 が plan を task に割って回す。**本文自身が「サブエージェントがあるなら `superpowers:subagent-driven-development` を使え」と書いている |
+| `superpowers:subagent-driven-development` | plan を task ごとの新しいサブエージェントに配り、各 task 後にレビュー、最後に全体レビュー | **手順 12〜22 と同じ構造である。**ATCT がこの役割を担う |
 
-**3 つとも既にフローの別の場所にある。**マージは commander が手順 23 で行い、
-衝突もそこで解決する。
+**最後の 2 つが重要である。**superpowers は「1 つのセッションが subagent を使って
+plan を回す」ことを想定している。**ATCT は同じことを、寿命もコンテキストも独立した
+セッションで行う。**同時に使うと、どちらが task を持つのかが二重になる。
 
 ### 手順に紐づかないもの
 
