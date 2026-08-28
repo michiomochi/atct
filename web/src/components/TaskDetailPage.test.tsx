@@ -403,7 +403,7 @@ describe("TaskDetailPage", () => {
     expect(screen.getByText("state.updateAvailable")).not.toBeNull();
   });
 
-  it("reloads immediately when an event arrives without answer input", async () => {
+  it("shows an update banner without reloading when an event arrives without answer input", async () => {
     let decisionEvent: Parameters<typeof subscribeToDecisionEvents>[0] | undefined;
     vi.mocked(subscribeToDecisionEvents).mockImplementation((callback) => {
       decisionEvent = callback;
@@ -413,11 +413,11 @@ describe("TaskDetailPage", () => {
     await renderTask(detailResponse(taskData, [openDecision("decision-open", taskData.id)]));
 
     act(() => decisionEvent?.("decision.created"));
-    await waitFor(() => expect(fetchTask).toHaveBeenCalledTimes(2));
-    expect(screen.queryByText("state.updateAvailable")).toBeNull();
+    expect(fetchTask).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("state.updateAvailable")).not.toBeNull();
   });
 
-  it("treats whitespace-only answer input as empty for event reloads", async () => {
+  it("shows an update banner without reloading when answer input contains whitespace", async () => {
     let decisionEvent: Parameters<typeof subscribeToDecisionEvents>[0] | undefined;
     vi.mocked(subscribeToDecisionEvents).mockImplementation((callback) => {
       decisionEvent = callback;
@@ -429,8 +429,8 @@ describe("TaskDetailPage", () => {
     const answer = screen.getByRole("textbox");
     fireEvent.change(answer, { target: { value: " \n\t " } });
     act(() => decisionEvent?.("decision.created"));
-    await waitFor(() => expect(fetchTask).toHaveBeenCalledTimes(2));
-    expect(screen.queryByText("state.updateAvailable")).toBeNull();
+    expect(fetchTask).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("state.updateAvailable")).not.toBeNull();
   });
 
   it("snoozes for one day from the current time", async () => {
