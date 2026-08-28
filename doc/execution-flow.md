@@ -60,7 +60,7 @@ flowchart TD
         E2["13. atct_handoff_receive"]
         E3["14. atct_role で executor を確認"]
         E4["15. 実装とテスト"]
-        E5["16. atct_task_update done"]
+        E5["16. atct_task_update done<br/>（規約のみ・17 とは繋がっていない）"]
         E6["17. atct_handoff_complete"]
     end
 
@@ -68,7 +68,7 @@ flowchart TD
 
     E6 --> S7["18. 実装レビューとテスト検収"]
     S7 --> S8["19. コミット"]
-    S8 --> S9["20. 全タスクを閉じる"]
+    S8 --> S9["20. 全タスクを閉じる<br/>（規約のみ・21 の門番は見ていない）"]
     S9 --> S10["21. atct_goal_complete（6 部）<br/>★これが先"]
     S10 --> S11["22. atct_goal_handoff_complete<br/>★これが後"]
 
@@ -84,6 +84,39 @@ flowchart TD
     style S11 fill:#ffe6e6
     style C4 fill:#e6f0ff
 ```
+
+## どの手順が強制されていて、どれが散文だけか
+
+**図の手順は 2 種類が混ざっている。**仕組みが拒否するものと、SKILL.md が頼んでいるだけのものである。
+**この区別が無いと「書いてあるから守られている」と読み違える。**
+
+| 手順 | 強制されているか | 実装上の根拠 |
+|---|---|---|
+| 4. 委譲側はゴールを claim しない | **強制** | claim が open handoff を書くので `atct_goal_handoff_request` が拒否される |
+| 7. `atct_goal_handoff_receive` | **強制** | 受領前は `atct_role` が `subcommander` を返さない |
+| **16. `atct_task_update done`** | **されていない** | `CompleteTaskHandoff` は `task_handoffs` の 2 列しか書かない。`tasks.status` を触る経路は `UpdateTask`（`handler.go:994`）だけで、handoff の完了はそこを通らない |
+| 17. `atct_handoff_complete` | **強制** | 未受領・二重完了は SQL の `WHERE` 句が弾く |
+| **20. 全タスクを閉じる** | **されていない** | `CompleteGoalWithReport` の門番は「ゴールが active」「完了報告の 6 部が非空」「未回答の decision が 0」の 3 つだけ。未完了タスクは見ていない |
+| 21 が 22 より先 | **強制** | 22 が handoff を閉じると役割が落ち、21 が「open な goal handoff を持たない」で拒否される |
+
+### 16 と 20 が繋がっていない実害
+
+    $ sqlite3 ~/.atct/atct.db "
+      select t.id, t.goal_id, t.status, h.completed_report_at
+      from task_handoffs h join tasks t on t.id=h.task_id
+      where h.completed_report_at is not null and t.status <> 'done';"
+    764|145|todo|2026-08-27T20:03:19
+    788|146|todo|2026-08-28T04:52:21
+
+**handoff は完了しているのにタスクは `todo` である**（2026-08-28 時点で 2 件）。
+ダッシュボードは「まだ誰も着手していない」と表示する。
+
+**この乖離を拾う検知は無い。**`internal/store/wakeup.go` の 13 種を数えたが、
+`detection.handoff_unreported` は逆（handoff が開いたまま報告が無い）で、
+「handoff は閉じたがタスクが開いている」に当たるものは存在しない。
+
+**ゴール 192 がこのプロセスを再設計中である。**「タスクを閉じる」を誰が保証するかは、
+そこで決まる。
 
 ## 順序を守らないと壊れるところ
 
