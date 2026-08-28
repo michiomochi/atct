@@ -76,7 +76,7 @@ flowchart TD
         C1["1. worktree を用意<br/>script/worktree-setup.sh &lt;goal&gt;"]
         C2["2. ターミナルマルチプレクサを利用の場合は<br/>subcommander の作業場所を用意"]
         C3["3. subcommander を立ち上げる"]
-        C4["4. atct_goal_handoff_request<br/>★ゴールを claim してはいけない"]
+        C4["4. atct_goal_handoff_request"]
         C5["5. 依頼文を送る<br/>隣接ゴールの境界を明記"]
         C6["23. 着地した変更をレビューしてマージ"]
         C7["24. 却下なら goal handoff を再発行"]
