@@ -74,7 +74,7 @@ flowchart TD
         S1["5. atct_goal_handoff_receive<br/>→ ゴールの claim を得て subcommander になる"]
         S2["6. atct watch -goal &lt;goal_id&gt; を張る<br/>自分のゴールだけを渡す"]
         S3["7. 設計を決める<br/>superpowers:brainstorming<br/>superpowers:writing-plans"]
-        S4["8. 設計の成果物を出す<br/>atct_goal_handoff_plan_review"]
+        S4["8. 設計の成果物を出す<br/>atct_goal_handoff_plan_review_request"]
         S5["11. atct_task_create でタスクにする<br/>atct watch -goal の通知で起動"]
         S5b["12. atct_task_handoff_request<br/>タスクを executor へ<br/>superpowers:dispatching-parallel-agents"]
         S6["16. 実装をレビューする<br/>atct watch -goal の通知で起動<br/>superpowers:requesting-code-review"]
@@ -173,7 +173,7 @@ subcommander がゴールについて、それぞれ同じことをする。
 |---|---|---|---|
 | 依頼 | 渡す側 | `atct_task_handoff_request` | `atct_goal_handoff_request` |
 | 受領 | 作業する側 | `atct_task_handoff_receive` | `atct_goal_handoff_receive` |
-| **設計のレビュー待ち** | **作業する側** | — | **`atct_goal_handoff_plan_review`** |
+| **設計のレビュー待ち** | **作業する側** | — | **`atct_goal_handoff_plan_review_request`** |
 | **設計の受理** | **渡した側** | — | **`atct_goal_handoff_plan_complete`** |
 | **レビュー待ち** | **作業する側** | **`atct_task_handoff_review`** | **`atct_goal_handoff_review`** |
 | 完了 | **渡した側** | `atct_task_handoff_complete` | `atct_goal_handoff_complete` |
@@ -193,7 +193,7 @@ subcommander がゴールについて、それぞれ同じことをする。
 **設計と実装で別のツール・別の状態にする。**どちらも commander がレビューする。
 
     subcommander    7. 設計を決める
-                    8. 設計の成果物を書き atct_goal_handoff_plan_review で出す
+                    8. 設計の成果物を書き atct_goal_handoff_plan_review_request で出す
     commander       9. atct watch -project の通知でレビューする
                    10a. 受理  -> atct_goal_handoff_plan_complete
                                  -> subcommander の watch に通知が飛ぶ
@@ -494,14 +494,14 @@ flowchart LR
 | | |
 |---|---|
 | **いま** | `task_handoffs` と `goal_handoffs` の列は `requested_at` / `received_at` / `completed_report_at` の 3 つだけ。**作業した者が `completed_report_at` を書いて自分の handoff を閉じる。**閉じると claim が空いて役割が落ちるので、差し戻されても自分では受領し直せない |
-| **目標** | `atct_task_handoff_review` / `atct_goal_handoff_review` / `atct_goal_handoff_plan_review` / `atct_goal_handoff_plan_complete` の 4 つを足す。**作業した者が review を出し、渡した者が受理して complete する。**差し戻しは handoff を閉じないので、claim も役割も維持される |
+| **目標** | `atct_task_handoff_review` / `atct_goal_handoff_review` / `atct_goal_handoff_plan_review_request` / `atct_goal_handoff_plan_complete` の 4 つを足す。**作業した者が review を出し、渡した者が受理して complete する。**差し戻しは handoff を閉じないので、claim も役割も維持される |
 | **放置すると** | 差し戻しごとに commander の再発行が要る。2026-08-27〜28 の実測で goal handoff の完了 28 件に対し**再発行が約 25 件** |
 | **必要な変更** | `task_handoffs` / `goal_handoffs` に review の時刻と報告を持つ列を足す移行（**ゴール側は設計と実装の 2 種**）/ `TaskStatus`（`internal/domain/status.go:14`）に `review` を足す / MCP ツール 4 つを追加 / `internal/store/wakeup.go` に「review のまま動かない」検知 |
 | **通知の要求** | **review はレビューする側の watch に届かなければ意味がない。**`internal/httpapi/server.go` の `eventMatchesGoalID` と `eventProjectID` は通す型を絞っているので、**新しいイベント型を足すなら両方に case が要る。**ゴール 179 が `GoalWithdrawnEvent` で同じ箇所を踏んでいる。**`-goal` と `-project` の両方を、それぞれ独立に落ちる検査で押さえること** |
 | **検査** | plan review を出したら commander の `-project` watch に届き、subcommander の `-goal` watch には自分のゴールの分だけ届くこと。**片方の case を消すと片方だけ落ちること**（179 の `TestSSEGoalScopedStreamDeliversGoalWithdrawn` と `TestSSEProjectScopedStreamFiltersOtherProjectsWithdrawal` が手本） |
 | **未解決** | **差し戻しの理由をどこに書くか。**`complete_report` は受理のときに書かれる。review の報告と差し戻しの理由を別の列にするか、`request_report` を再利用するか |
 | **未解決** | **`goals.status` に `review` を持たせるか。**タスク側は `tasks.status` に持たせると人間に言われている。ゴール側は handoff だけに持たせても、ダッシュボードから見えるかを確かめる必要がある |
-| **決定済み** | **ゴールの handoff は設計と実装で別の状態にする。**設計は `atct_goal_handoff_plan_review` → `atct_goal_handoff_plan_complete`、実装は `atct_goal_handoff_review` → `atct_goal_handoff_complete`。**commander はどちらのレビューかをツールで判別でき、受理も別ツールなので通知も分かれる。**タスクの handoff に設計のレビューは無い |
+| **決定済み** | **ゴールの handoff は設計と実装で別の状態にする。**設計は `atct_goal_handoff_plan_review_request` → `atct_goal_handoff_plan_complete`、実装は `atct_goal_handoff_review` → `atct_goal_handoff_complete`。**commander はどちらのレビューかをツールで判別でき、受理も別ツールなので通知も分かれる。**タスクの handoff に設計のレビューは無い |
 
 ### 1. handoff の状態遷移がタスクの状態を書く
 
