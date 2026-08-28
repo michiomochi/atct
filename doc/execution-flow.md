@@ -36,13 +36,13 @@ flowchart TD
 
     subgraph C["commander（1 プロセスに 1 人・project claim を保持）"]
         C1["1. worktree を用意<br/>script/worktree-setup.sh &lt;goal&gt;"]
-        C2["2. subcommander の作業場を用意<br/>（起こし方は ATCT の管轄外）"]
+        C2["2. ターミナルマルチプレクサを利用の場合は<br/>subcommander の作業場所を用意"]
         C3["3. subcommander を起こす"]
         C4["4. atct_goal_handoff_request<br/>★ゴールを claim してはいけない"]
         C5["5. 依頼文を送る<br/>隣接ゴールの境界を明記"]
         C6["23. 着地した変更をレビューしてマージ"]
         C7["24. 却下なら goal handoff を再発行"]
-        C8["25. worktree と作業場を片付ける"]
+        C8["25. worktree を片付ける<br/>（作業場を作ったなら、それも）"]
     end
 
     subgraph S["subcommander（ゴール 1 つに 1 人）"]
@@ -282,8 +282,8 @@ flowchart LR
 ATCT does not prescribe how the subcommander is started or how the role is
 transmitted.」と書いている。**端末多重化ソフトの使い方は orchestration スキルの側にある。**
 
-- **作業場を片付けるのは承認のとき**であって、完了報告のときではない。却下されたら
-  同じ作業場に同じゴールが戻る
+- **worktree を片付けるのは承認のとき**であって、完了報告のときではない。却下されたら
+  同じ worktree に同じゴールが戻る。作業場を作っているなら、それも同じ扱いにする
 - **`.worktrees/N/web/node_modules` は主チェックアウトへの symlink である。**
   pnpm を走らせるなら委譲側が先に `script/worktree-node-modules.sh detach` する
   （ゴール 191）
