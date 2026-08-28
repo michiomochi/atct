@@ -57,12 +57,12 @@ flowchart TD
     H([人間]) -->|ゴールを承認| G[goal: proposed → active]
 
     subgraph C["commander（1 プロセスに 1 人・project claim を保持）"]
-        C1["1. worktree を用意"]
+        C1["1. worktree を用意<br/>superpowers:using-git-worktrees"]
         C2["2. ターミナルマルチプレクサを利用の場合は<br/>subcommander の作業場所を用意"]
         C3["3. atct_goal_handoff_request"]
         C4["4. subcommander を立ち上げ、依頼文を送る"]
-        C5["17. 着地した変更をレビューする"]
-        C6["18. main へマージする<br/>衝突はここで解決する"]
+        C5["17. 着地した変更をレビューする<br/>superpowers:requesting-code-review"]
+        C6["18. main へマージする<br/>superpowers:finishing-a-development-branch<br/>衝突はここで解決する"]
         C7["19. atct_goal_handoff_complete<br/>→ ゴールの claim が空く"]
         C8["20. atct_goal_complete（6 部）"]
         C9["21. 承認されたら worktree を片付ける"]
@@ -71,19 +71,19 @@ flowchart TD
     subgraph S["subcommander（ゴール 1 つに 1 人）"]
         S1["5. atct_goal_handoff_receive<br/>→ ゴールの claim を得て subcommander になる"]
         S2["6. atct watch を張る"]
-        S3["7. 設計を決める"]
-        S4["8. atct_task_create で<br/>ゴールに必要なタスクを作成"]
-        S5["9. atct_task_handoff_request<br/>タスクを executor へ"]
-        S6["13. 実装をレビューする"]
+        S3["7. 設計を決める<br/>superpowers:brainstorming<br/>superpowers:writing-plans"]
+        S4["8. atct_task_create で<br/>ゴールに必要なタスクを作成<br/>plan の分解をそのまま渡す"]
+        S5["9. atct_task_handoff_request<br/>タスクを executor へ<br/>superpowers:dispatching-parallel-agents"]
+        S6["13. 実装をレビューする<br/>superpowers:requesting-code-review"]
         S7["14. atct_task_handoff_complete<br/>→ タスクが done になる"]
         S8["15. コミットする"]
-        S9["16. atct_goal_handoff_review<br/>→ ゴールがレビュー待ちになる"]
+        S9["16. atct_goal_handoff_review<br/>superpowers:verification-before-completion<br/>→ ゴールがレビュー待ちになる"]
     end
 
     subgraph E["executor（タスク単位・複数可）"]
         E1["10. atct_task_handoff_receive<br/>→ タスクの claim を得て executor になる"]
-        E2["11. 実装とテスト"]
-        E3["12. atct_task_handoff_review<br/>→ タスクがレビュー待ちになる"]
+        E2["11. 実装とテスト<br/>superpowers:test-driven-development<br/>superpowers:executing-plans"]
+        E3["12. atct_task_handoff_review<br/>superpowers:verification-before-completion<br/>→ タスクがレビュー待ちになる"]
     end
 
     G --> C1 --> C2 --> C3 --> C4 --> S1
@@ -105,6 +105,42 @@ flowchart TD
 
 **各 handoff が「レビュー待ち」を持つ。**作業した者が review を出し、
 **渡した者が受理して閉じる。**
+
+## superpowers はどこで使うか
+
+**ATCT は「誰が何を持つか」を決め、superpowers は「その作業をどうやるか」を決める。**
+両者は競合しない。
+
+| 手順 | スキル |
+|---|---|
+| 1. worktree を用意 | `superpowers:using-git-worktrees` |
+| 7. 設計を決める | `superpowers:brainstorming` → `superpowers:writing-plans` |
+| 8. タスクを作成 | 7 で書いた plan の分解をそのまま `atct_task_create` に渡す |
+| 9. タスクを executor へ | 2 つ以上を同時に出すなら `superpowers:dispatching-parallel-agents` |
+| 11. 実装とテスト | `superpowers:test-driven-development`、plan があるなら `superpowers:executing-plans` |
+| 12. review を出す前 | `superpowers:verification-before-completion` |
+| 13. 実装をレビューする | `superpowers:requesting-code-review` |
+| 16. ゴールの review を出す前 | `superpowers:verification-before-completion` |
+| 17. 着地した変更をレビューする | `superpowers:requesting-code-review` |
+| 18. main へマージする | `superpowers:finishing-a-development-branch` |
+
+### 手順に紐づかないもの
+
+- **差し戻しを受けた側**（14b で 9 に戻された executor、18b で 7 に戻された subcommander）は
+  `superpowers:receiving-code-review` を使う
+- **バグ・テスト失敗・想定外の挙動に遭遇したら、修正案を出す前に
+  `superpowers:systematic-debugging` を使う。**これは全層に効く
+- **設計文書は `doc/specs/`、実装計画は `doc/plans/` に置く。**
+  superpowers の既定は `docs/superpowers/` だが、それを上書きする
+
+### 12 と 16 に同じスキルが付く理由
+
+`verification-before-completion` は「完了だと主張する前に検証を走らせる」ものである。
+**review を出す行為が「完了だと主張する」に当たる。**executor がタスクについて、
+subcommander がゴールについて、それぞれ同じことをする。
+
+**2026-08-28 にゴール 185 は自分のブランチが赤いまま完了報告を出した。**
+このスキルが 16 の位置にあれば、報告の前に落ちていた。
 
 ## handoff は 3 状態で動く
 
