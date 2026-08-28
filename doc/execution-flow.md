@@ -66,9 +66,10 @@ flowchart TD
         CD2["11. atct_plan_handoff_complete"]
         C5["22. ゴールの変更をレビューする<br/>atct watch -project の通知で起動"]
         C7["23. atct_goal_handoff_complete<br/>完了報告を出す"]
-        C6["24. main へマージする<br/>衝突はここで解決する"]
-        C8["25. atct_goal_complete（6 部）"]
-        C9["26. subcommander を閉じ<br/>worktree を片付ける"]
+        CH["24. atct_goal_review_request<br/>人間にレビューを求める"]
+        C6["25. main へマージする<br/>衝突はここで解決する"]
+        C8["26. atct_goal_complete（6 部）"]
+        C9["27. subcommander を閉じ<br/>worktree を片付ける"]
         CR["却下なら atct_goal_handoff_request<br/>を新しく作る"]
     end
 
@@ -110,9 +111,9 @@ flowchart TD
     C5 -->|受理| C7
     C5 -->|"差し戻し<br/>atct_goal_handoff_review_reject"| S3
 
-    C7 -.-> H2([人間が web で承認/却下])
-    H2 -->|承認| C6 --> C8 --> C9
-    H2 -->|却下| CR --> S1
+    C7 --> CH -.-> H2([人間が web で判断する])
+    H2 -->|"atct_goal_review_complete"| C6 --> C8 --> C9
+    H2 -->|"atct_goal_review_reject"| CR --> S1
 ```
 
 **各 handoff が「レビュー待ち」を持つ。**作業した者が review を出し、
@@ -263,9 +264,10 @@ subcommander が設計の結果として作り、レビューに出す。**そ�
                    21. atct_goal_handoff_review_request
     commander      22. 通知を受けてレビューする
                    23a. 受理    -> atct_goal_handoff_complete で完了報告を出す
+                                 -> 24. atct_goal_review_request で人間に出す
                    23b. 差し戻し -> atct_goal_handoff_review_reject -> subcommander が 7 に戻る
-    人間           承認 -> commander が 24 でマージし、25 で atct_goal_complete
-                   却下 -> commander が atct_goal_handoff_request を新しく作る
+    人間           atct_goal_review_complete -> commander が 25 でマージし 26 で atct_goal_complete
+                   atct_goal_review_reject   -> commander が atct_goal_handoff_request を新しく作る
 
 **設計を先にレビューすると、実装が終わってから方針を差し戻す事故が消える。**
 10 で止めれば無駄になるのは設計の成果物だけで、12 以降の実装は始まっていない。
@@ -309,7 +311,7 @@ handoff に `review_report`（作業した側が書く）と `reject_report`（�
 | 誰を閉じるか | 閉じる者 | いつ |
 |---|---|---|
 | executor | subcommander | **手順 19。**渡していないタスクが無くなったとき |
-| subcommander | commander | **手順 26。**人間が承認したとき |
+| subcommander | commander | **手順 27。**`atct_goal_review_complete` の後 |
 
 **worktree が分離を担うので、「他のゴールと交差するファイルの都合で待たせる」理由は無い。**
 受理して次が無ければ、その場で閉じる。
@@ -334,32 +336,37 @@ handoff に `review_report`（作業した側が書く）と `reject_report`（�
 - **未コミットの変更が無いこと。**編集途中のファイルを持ったまま閉じると、その作業は失われる
 - **報告を受け取っていること。**手順 18（受理）が済んでいれば満たされている
 
-## 人間の承認がマージの条件である
+## 人間のレビューもレビューである
 
-**main へのマージは手順 24 で、人間が承認した後である。**commander のレビュー（22）は
-完了報告を出してよいかの判断であって、マージの判断ではない。
+**人間の判断は、他の 3 つのレビューと同じ形にする。**求める側が `*_review_request` を
+出し、レビューする側が `*_complete` か `*_review_reject` で答える。
 
     22. commander がレビューする
-    23. atct_goal_handoff_complete   -> 完了報告。人間に承認を求める
-    人間が承認 -> 24. マージ -> 25. atct_goal_complete -> 26. 片付け
-    人間が却下 -> commander が atct_goal_handoff_request を新しく作る
-                  -> subcommander が 5 から受け直す
+    23. atct_goal_handoff_complete   -> 完了報告を出す
+    24. atct_goal_review_request     -> 人間にレビューを求める
+    人間 atct_goal_review_complete   -> 25. マージ -> 26. atct_goal_complete -> 27. 片付け
+    人間 atct_goal_review_reject     -> commander が atct_goal_handoff_request を新しく作る
+                                        -> subcommander が 5 から受け直す
 
-### main が汚れない
+**`atct_goal_review_*` は handoff のレビューではない。**ゴールそのもののレビューなので、
+`handoff` が名前に入らない。
 
-承認前にマージすると、却下されたときに main から取り消す必要がある。
-**worktree に留めておけば、却下は作業に戻るだけで済む。**
+### main へのマージは人間のレビューの後である
 
-### 人間の却下だけは handoff の作り直しになる
+commander のレビュー（22）は完了報告を出してよいかの判断であって、マージの判断ではない。
+**承認前にマージすると、却下されたときに main から取り消す必要がある。**
+worktree に留めておけば、却下は作業に戻るだけで済む。
+
+### 人間の却下だけは handoff を新しく作る
 
 **`atct_goal_handoff_complete` は 23 で handoff を閉じる。**claim が空いて役割が落ちるので、
 **人間が却下したときは commander が `atct_goal_handoff_request` を新しく作る。**
 
-**レビューの差し戻し（10b / 17b / 22b）とは扱いが違う。**あちらは
+**handoff のレビューの差し戻し（10b / 17b / 22b）とは扱いが違う。**あちらは
 `*_review_reject` が handoff を開いたままにするので作り直しが要らない。
 
-    レビューの差し戻し   handoff は開いたまま   -> 作業に戻るだけ
-    人間の却下           handoff は閉じている   -> commander が新しく作る
+    handoff のレビューの差し戻し   handoff は開いたまま   -> 作業に戻るだけ
+    人間の却下                     handoff は閉じている   -> commander が新しく作る
 
 ## タスクは必ず executor に渡る
 
@@ -550,7 +557,7 @@ flowchart LR
 | **goal handoff の review request** | **commander** | **これが手順 22 の引き金である** |
 | **task handoff の review request** | **そのゴールの subcommander** | **これが手順 17 の引き金である** |
 | goal handoff の完了 | commander | 28 件届き、**28 件すべてが行動に繋がった** |
-| 人間の承認・却下 | 全層 | 34 件届き、全件が行動に繋がった |
+| **`atct_goal_review_complete` / `_reject`** | **commander** | **これが手順 25 と、却下時の作り直しの引き金である。**2026-08-27 に 34 件届き、全件が行動に繋がった |
 | **ゴールの取り下げ** | そのゴールの subcommander | 現状は届かない（上記） |
 | task handoff の完了 | そのゴールの subcommander | commander には 63 件届いていたが**行動 0 件** |
 | 決定の既定適用 | その決定を出したセッション | commander に 11 件届いて**行動 0 件** |
@@ -578,7 +585,7 @@ flowchart LR
 
 | # | 差分 | 担当 |
 |---|---|---|
-| 0 | **handoff にレビュー待ちの状態を足す** | **未着手** |
+| 0 | **レビューの状態と、人間のレビューを足す** | **未着手** |
 | 1 | handoff の状態遷移がタスクの状態を書く | **未着手** |
 | 2 | セッション鍵は receive で確定する | **未着手** |
 | 3 | receive が役割を返す | **未着手** |
@@ -590,20 +597,21 @@ flowchart LR
 | 9 | タスク側の handoff ツールも粒度を名前に持つ | **未着手** |
 | 10 | **全タスクが executor に渡る**（subcommander は自分のタスクを持たない） | **未着手** |
 
-### 0. handoff にレビュー待ちの状態を足す
+### 0. レビューの状態と、人間のレビューを足す
 
 **この差分が他のすべての前提になる。**
 
 | | |
 |---|---|
 | **いま** | `task_handoffs` と `goal_handoffs` の列は `requested_at` / `received_at` / `completed_report_at` の 3 つだけ。**作業した者が `completed_report_at` を書いて自分の handoff を閉じる。**閉じると claim が空いて役割が落ちるので、差し戻されても自分では受領し直せない |
-| **目標** | `atct_task_handoff_review_request` / `atct_goal_handoff_review_request` / `atct_plan_handoff_review_request` / `atct_plan_handoff_complete` と、対になる `*_review_reject` 3 つ、`atct_plan_handoff_review_receive` の計 8 つを足す。**作業した者が review を出し、渡した者が受理して complete する。**差し戻しは handoff を閉じないので、claim も役割も維持される |
+| **目標** | `atct_task_handoff_review_request` / `atct_goal_handoff_review_request` / `atct_plan_handoff_review_request` / `atct_plan_handoff_complete` と、対になる `*_review_reject` 3 つ、`atct_plan_handoff_review_receive`、そして人間のレビュー用の `atct_goal_review_request` / `_complete` / `_reject` の計 11 を足す。**作業した者が review を出し、渡した者が受理して complete する。**差し戻しは handoff を閉じないので、claim も役割も維持される |
 | **放置すると** | 差し戻しごとに commander の再発行が要る。2026-08-27〜28 の実測で goal handoff の完了 28 件に対し**再発行が約 25 件** |
-| **必要な変更** | `task_handoffs` / `goal_handoffs` に review の時刻と報告を持つ列を足す移行と、**`plan_handoffs` を新設する移行** / `TaskStatus`（`internal/domain/status.go:14`）に `review` を足す / MCP ツール 8 つを追加 / `internal/store/wakeup.go` に「review のまま動かない」検知 |
+| **必要な変更** | `task_handoffs` / `goal_handoffs` に review の時刻と報告を持つ列を足す移行と、**`plan_handoffs` を新設する移行** / `TaskStatus`（`internal/domain/status.go:14`）に `review` を足す / MCP ツール 11 を追加 / `internal/store/wakeup.go` に「review のまま動かない」検知 |
 | **通知の要求** | **review はレビューする側の watch に届かなければ意味がない。**`internal/httpapi/server.go` の `eventMatchesGoalID` と `eventProjectID` は通す型を絞っているので、**新しいイベント型を足すなら両方に case が要る。**ゴール 179 が `GoalWithdrawnEvent` で同じ箇所を踏んでいる。**`-goal` と `-project` の両方を、それぞれ独立に落ちる検査で押さえること** |
 | **検査** | plan review を出したら commander の `-project` watch に届き、subcommander の `-goal` watch には自分のゴールの分だけ届くこと。**片方の case を消すと片方だけ落ちること**（179 の `TestSSEGoalScopedStreamDeliversGoalWithdrawn` と `TestSSEProjectScopedStreamFiltersOtherProjectsWithdrawal` が手本） |
 | **決定済み** | **差し戻しの理由は `*_review_reject` が書く。**`complete_report` は受理のときに書かれるので、差し戻しには別の列を持たせる。**`*_review_reject` は `completed_report_at` を書かない**ので handoff は開いたままで、claim も役割も維持される |
 | **未解決** | **`goals.status` に `review` を持たせるか。**タスク側は `tasks.status` に持たせると人間に言われている。ゴール側は handoff だけに持たせても、ダッシュボードから見えるかを確かめる必要がある |
+| **未解決** | **人間のレビューを既存の `decisions` に載せるか、別の表にするか。**いまは `kind='completion'` の decision が承認要求である。`atct_goal_review_request` を decision の言い換えにするなら表は増えないが、**`atct_goal_review_reject` が「作業に戻す」ことまで担うので、decision の approve/reject より広い** |
 | **決定済み** | **handoff は `goal` / `plan` / `task` の 3 種類にする。**設計は `plan` handoff で運び、`atct_plan_handoff_review_request` → `atct_plan_handoff_complete`。実装は `goal` handoff で `atct_goal_handoff_review_request` → `atct_goal_handoff_complete`。**commander はツール名でどちらかを判別でき、受理も差し戻しも別ツールなので通知も分かれる。**`plan` に依頼と受領は無い |
 
 ### 1. handoff の状態遷移がタスクの状態を書く
