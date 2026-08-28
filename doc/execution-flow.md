@@ -69,7 +69,7 @@ flowchart TD
         C6["24. main へマージする<br/>衝突はここで解決する"]
         C8["25. atct_goal_complete（6 部）"]
         C9["26. subcommander を閉じ<br/>worktree を片付ける"]
-        CR["却下なら atct_goal_handoff_request<br/>を作り直す"]
+        CR["却下なら atct_goal_handoff_request<br/>を新しく作る"]
     end
 
     subgraph S["subcommander（ゴール 1 つに 1 人）"]
@@ -265,7 +265,7 @@ subcommander が設計の結果として作り、レビューに出す。**そ�
                    23a. 受理    -> atct_goal_handoff_complete で完了報告を出す
                    23b. 差し戻し -> atct_goal_handoff_review_reject -> subcommander が 7 に戻る
     人間           承認 -> commander が 24 でマージし、25 で atct_goal_complete
-                   却下 -> commander が atct_goal_handoff_request を作り直す
+                   却下 -> commander が atct_goal_handoff_request を新しく作る
 
 **設計を先にレビューすると、実装が終わってから方針を差し戻す事故が消える。**
 10 で止めれば無駄になるのは設計の成果物だけで、12 以降の実装は始まっていない。
@@ -285,7 +285,7 @@ claim も役割も維持される。
 
 **残るのは人間の却下だけである。**`atct_goal_handoff_complete`（手順 23）は
 完了報告を出すと同時に handoff を閉じるので、**却下されたら commander が
-`atct_goal_handoff_request` を作り直す。**
+`atct_goal_handoff_request` を新しく作る。**
 
     $ sqlite3 ~/.atct/atct.db "
       select count(*) from decisions
@@ -342,7 +342,7 @@ handoff に `review_report`（作業した側が書く）と `reject_report`（�
     22. commander がレビューする
     23. atct_goal_handoff_complete   -> 完了報告。人間に承認を求める
     人間が承認 -> 24. マージ -> 25. atct_goal_complete -> 26. 片付け
-    人間が却下 -> commander が atct_goal_handoff_request を作り直す
+    人間が却下 -> commander が atct_goal_handoff_request を新しく作る
                   -> subcommander が 5 から受け直す
 
 ### main が汚れない
@@ -353,13 +353,13 @@ handoff に `review_report`（作業した側が書く）と `reject_report`（�
 ### 人間の却下だけは handoff の作り直しになる
 
 **`atct_goal_handoff_complete` は 23 で handoff を閉じる。**claim が空いて役割が落ちるので、
-**人間が却下したときは commander が `atct_goal_handoff_request` を作り直す。**
+**人間が却下したときは commander が `atct_goal_handoff_request` を新しく作る。**
 
 **レビューの差し戻し（10b / 17b / 22b）とは扱いが違う。**あちらは
 `*_review_reject` が handoff を開いたままにするので作り直しが要らない。
 
     レビューの差し戻し   handoff は開いたまま   -> 作業に戻るだけ
-    人間の却下           handoff は閉じている   -> commander が作り直す
+    人間の却下           handoff は閉じている   -> commander が新しく作る
 
 ## タスクは必ず executor に渡る
 
