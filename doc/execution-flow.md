@@ -82,12 +82,6 @@ flowchart TD
     S10 -.->|承認要求| H2([人間が web で承認/却下])
     H2 -->|承認| C6 --> C8
     H2 -->|却下| C7 --> S2
-
-    style S10 fill:#ffe6e6
-    style S11 fill:#ffe6e6
-    style C4 fill:#e6f0ff
-    style S7 fill:#fff4e0
-    style S8 fill:#fff4e0
 ```
 
 ## レビューとコミットは executor がやらない
@@ -262,8 +256,6 @@ flowchart LR
     S1 -.->|✗ 禁止| C
     S2 -.->|✗ 禁止| C
     E[executor] -->|報告| S1
-
-    style C fill:#e6f0ff
 ```
 
 | 粒度 | 誰に届くか | 根拠 |
