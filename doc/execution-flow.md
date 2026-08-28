@@ -36,16 +36,16 @@ flowchart TD
 
     subgraph C["commander（1 プロセスに 1 人・project claim を保持）"]
         C1["1. worktree を用意<br/>script/worktree-setup.sh &lt;goal&gt;"]
-        C2["2. space を作る<br/>herdr workspace create --label atct-&lt;goal&gt;"]
-        C3["3. subcommander を起こす<br/>herdr agent start"]
+        C2["2. subcommander の作業場を用意<br/>（起こし方は ATCT の管轄外）"]
+        C3["3. subcommander を起こす"]
         C4["4. atct_goal_handoff_request<br/>★ゴールを claim してはいけない"]
         C5["5. 依頼文を送る<br/>隣接ゴールの境界を明記"]
         C6["23. 着地した変更をレビューしてマージ"]
         C7["24. 却下なら goal handoff を再発行"]
-        C8["25. worktree と space を片付ける"]
+        C8["25. worktree と作業場を片付ける"]
     end
 
-    subgraph S["subcommander（ゴール 1 つに 1 人・space 1 つ）"]
+    subgraph S["subcommander（ゴール 1 つに 1 人）"]
         S1["6. atct_session_identify"]
         S2["7. atct_goal_handoff_receive<br/>→ 役割が subcommander になる"]
         S3["8. atct_role で expected_role=subcommander を確認"]
@@ -60,7 +60,7 @@ flowchart TD
         S11["22. atct_goal_handoff_complete<br/>★これが後"]
     end
 
-    subgraph E["executor（タスク単位・右カラムに最大 3 台）"]
+    subgraph E["executor（タスク単位・複数可）"]
         E1["12. atct_handoff_request<br/>（起票するのは subcommander）"]
         E2["13. atct_handoff_receive"]
         E3["14. atct_role で executor を確認"]
@@ -135,8 +135,10 @@ handoff が無いので、閉じる契機が無い。**手順 20（全タスク�
     executor|6      <- うち 3 件は handoff 無しで実装（すべて goal 144）
     subcommander|2
 
-**orchestration スキルは `<space>-<unit>-<役割>` の形を要求している。**汎用名は複数 space で
-衝突して誤配を起こす。**handoff 無しの実装は委譲契約の外である。**144 は着地済みで遡れない。
+**セッション鍵はそのセッションだけを指す名前でなければならない**
+（`skills/atct/SKILL.md` の `### Session keys`）。`executor` のような汎用名は
+**複数のプロジェクトで衝突して 1 行に合流する。**
+**handoff 無しの実装は委譲契約の外である。**144 は着地済みで遡れない。
 
 ## どの手順が強制されていて、どれが散文だけか
 
@@ -267,19 +269,21 @@ flowchart LR
 
 ## 作業場の対応関係
 
-**ゴール 1 つに worktree 1 つ、space 1 つ、subcommander 1 人。**
+**ゴール 1 つに worktree 1 つ、subcommander 1 人。**
 
 ```
 ゴール N
- ├─ worktree  .worktrees/N            （ブランチ wt/goal-N）
- └─ space     atct-N
-     ├─ 左 pane   atct-N-subcommander （Claude Code）
-     └─ 右カラム  atct-N-executor     （Codex、最大 3 台）
+ └─ worktree  .worktrees/N   （ブランチ wt/goal-N）
+     └─ subcommander 1 人 + そのゴールの executor
 ```
 
-- **commander は自分の space から動かない。**space を作る側であって、入る側ではない
-- **space を閉じるのは承認のとき**であって、完了報告のときではない。却下されたら
-  同じ space に同じゴールが戻る
+**エージェントをどう起こすかは ATCT の管轄外である。**`skills/atct/SKILL.md` の
+`## Delegate a goal` 手順 3 が「Wake the subcommander through the environment.
+ATCT does not prescribe how the subcommander is started or how the role is
+transmitted.」と書いている。**端末多重化ソフトの使い方は orchestration スキルの側にある。**
+
+- **作業場を片付けるのは承認のとき**であって、完了報告のときではない。却下されたら
+  同じ作業場に同じゴールが戻る
 - **`.worktrees/N/web/node_modules` は主チェックアウトへの symlink である。**
   pnpm を走らせるなら委譲側が先に `script/worktree-node-modules.sh detach` する
   （ゴール 191）
@@ -291,5 +295,5 @@ flowchart LR
 | ゴールが `active` のまま完了報告が空 | `select status, length(work_done) from goals where id=N` | commander が goal handoff を再発行 |
 | `caller holds no open goal handoff` | `select completed_report_at from goal_handoffs where goal_id=N` | 同上。閉じた handoff は自分では受領し直せない |
 | 役割が `executor` に落ちた | `atct_role` | 同じ session_key で `atct_session_identify` を呼び直す。**goal handoff を閉じた後は戻らない** |
-| subcommander が黙って止まった | `herdr agent read <name>` | `API Error` / `went to sleep` を探す。ATCT からは検知できない（ゴール 182） |
+| subcommander が黙って止まった | その pane の出力を直接読む | `API Error` / `went to sleep` を探す。**ATCT からは検知できない**（ゴール 182） |
 | 通知が来なくなった | watch の Monitor | daemon 入れ替え後は張り直しが要る |
