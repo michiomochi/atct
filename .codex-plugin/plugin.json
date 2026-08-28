@@ -7,7 +7,7 @@
       "marketplace": "claude-plugins-official"
     }
   ],
-  "description": "Declare tasks, claim work, and ask a human for decisions without leaving the session.",
+  "description": "Create tasks, claim work, and ask a human for decisions without leaving the session.",
   "author": {
     "name": "michiomochi",
     "url": "https://github.com/michiomochi"
@@ -28,7 +28,7 @@
   "interface": {
     "displayName": "ATCT",
     "shortDescription": "Coordinate tasks and claims across coding-agent sessions",
-    "longDescription": "Declare tasks, claim work, and ask a human for decisions while keeping the coordination state available to the next session.",
+    "longDescription": "Create tasks, claim work, and ask a human for decisions while keeping the coordination state available to the next session.",
     "developerName": "michiomochi",
     "category": "Developer Tools",
     "capabilities": [

@@ -580,31 +580,22 @@ func Register(server *mcp.Server, c *Client, agentSessionID int64) {
 		})
 	})
 
-	createTasks := func(ctx context.Context, req *mcp.CallToolRequest, in TaskCreateIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
+	addMCPTool[TaskCreateIn, RawWithUnappliedDecisions](server, &mcp.Tool{
+		Name:         "atct_task_create",
+		Description:  "Create the tasks a Goal decomposes into. Retrying the same idempotency_key does not create duplicates. Existing tasks are not updated and return with created: false; use atct_task_update_content to fix them.",
+		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in TaskCreateIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
 		params := map[string]any{
 			"goal_id": in.GoalID, "titles": in.Titles, "descriptions": in.Descriptions,
 			"idempotency_key": in.IdempotencyKey, "agent": in.Agent,
 			"agent_session_id":          sessionID.Get(),
 			"include_unapplied_answers": true,
 		}
-		// The daemon method keeps its original name; renaming it would break a
-		// running daemon that has not been restarted after an upgrade.
+		// The daemon method keeps its original name. Renaming it would break a
+		// daemon that has not been restarted after an upgrade, and no agent can
+		// see the difference.
 		return callWithUnappliedDecisions(ctx, c, "task.declare", params)
-	}
-
-	addMCPTool[TaskCreateIn, RawWithUnappliedDecisions](server, &mcp.Tool{
-		Name:         "atct_task_create",
-		Description:  "Create the tasks a Goal decomposes into. Retrying the same idempotency_key does not create duplicates. Existing tasks are not updated and return with created: false; use atct_task_update_content to fix them.",
-		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
-	}, createTasks)
-
-	// Deprecated alias. Skills and running sessions still name the old tool;
-	// remove it once they all call atct_task_create.
-	addMCPTool[TaskCreateIn, RawWithUnappliedDecisions](server, &mcp.Tool{
-		Name:         "atct_task_declare",
-		Description:  "Deprecated alias for atct_task_create. Call atct_task_create instead.",
-		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
-	}, createTasks)
+	})
 
 	addMCPTool[TaskClaimIn, RawWithUnappliedDecisions](server, &mcp.Tool{
 		Name:         "atct_task_claim",

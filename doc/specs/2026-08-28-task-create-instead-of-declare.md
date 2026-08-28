@@ -33,8 +33,49 @@
 | 応答フィールド | `declared` → `created`（`domain.Task.Declared` → `Created`） |
 | MCP サーバー指示 | `internal/mcpshim/instructions.go` |
 | 次ツール提示 | `cmd/atct/context.go`、`cmd/atct/pending.go` |
-| スキル | `skills/start/SKILL.md` |
+| スキル | `skills/atct/SKILL.md`（3 箇所）、`skills/start/SKILL.md` |
+| executor 禁止リスト | `skills/atct/SKILL.md` と `tests/wrapper_test.bash` |
+| プラグイン説明 | `.claude-plugin/*.json`、`.codex-plugin/plugin.json` |
 | 図 | `doc/execution-flow.md` |
+
+## 旧名は残さない
+
+初版では `atct_task_declare` を非推奨エイリアスとして残した。人間がそれを却下した
+（decision 528: 「atct_task_declare は残さないで」）ので削除した。
+
+削除にあたって、**壊れる範囲を推測ではなく測定した。**
+
+### 測定（2026-08-28）
+
+| 測ったもの | 結果 |
+|---|---|
+| MCP の経路 | プラグインの `.mcp.json` は `type: http` / `http://127.0.0.1:8787/mcp` |
+| tools/list を出しているプロセス | `~/.atct/bin/atct-0.59.0 daemon`（1 プロセス、02:00 起動） |
+| 実行中の `atct-mcp` プロセス | **0 個** |
+| `~/.atct/bin/` にある `atct-mcp` バイナリ | 0.48.0 が最後。0.49.0 以降は 1 つも無い |
+| 直近 2 時間に登録された agent session | 583（5 プロジェクト・active goal 18 本） |
+| 現在エージェントに見えているツール名 | `atct_task_declare` のみ（この作業をしたセッション自身で確認） |
+
+**ここから出る結論は、初版で書いた想定と違う。**
+
+初版は「プラグインは版ごとのディレクトリに `skills/` と `bin/` を一緒に持ち、`bin/_resolve`
+が `VERSION` 固定でバイナリを引くので、スキルとツール一覧は版で固定される」と読める構造を
+前提にしていた。**その構造は実在するが、もう使われていない。**stdio の `atct-mcp` は起動して
+おらず、ツール一覧は**全セッションで共有された 1 つのデーモン**が出している。
+
+つまり**スキルとツール一覧は版で固定されない。**セッションが読む SKILL.md は自分のプラグイン
+版のもの、見えるツール一覧は「今動いているデーモンのバイナリ」のものである。
+
+### 残る窓と、その扱い
+
+**壊れるのはコミット時ではなく、新しいバイナリでデーモンを再起動した瞬間である。**その時点で
+旧版の SKILL.md を読んだまま走り続けているセッションは、存在しないツールを呼ぶ。
+
+- **失敗はサイレントではない。**未知のツール名は MCP のエラーになり、エージェントは
+  tools/list を見て `atct_task_create` を見つけられる。データは壊れない
+- **代償は 1 セッションあたり呼び出し 1 回分**である
+- **窓を閉じるのはリリース手順の仕事であり、このゴールの変更ではない。**公開は
+  subcommander の役割の外なので、セッションを空にしてからリリースするかどうかは人間に返した
 
 ## 据え置いた層と、その理由
 
@@ -45,25 +86,24 @@
   エージェントにも人間にも露出しない（web の task 詳細に出るラベルだけは残る）
 - **daemon の RPC メソッド `task.declare`**：`atct` の CLI とデーモンの間だけの名前。
   改名すると、バイナリを更新したがデーモンを再起動していない環境でタスク作成が壊れる。
-  エージェントから見える利得はゼロなので、リスクだけが残る
+  エージェントから見える利得はゼロなので、リスクだけが残る。**上の測定で「デーモンは 1 つ、
+  長く生きている」ことが確かめられたので、この判断は初版より強く支持される**
 - **検知種別 `detection.undeclared_goal`**：`decisions.kind` に保存済みの値であり、
   改名には移行が要る。さらに分類表 `cmd/atct/watch_scope.go` はゴール 192 が保持している
 
-## 非推奨エイリアス
+## 触らなかった `## Declare before you work`
 
-`atct_task_declare` は同じハンドラに登録したまま残し、説明を
-"Deprecated alias for atct_task_create. Call atct_task_create instead." にした。
+節の見出しは残した。**規範としての declare（作業前に人間へ見える形にする）は生きており、
+消したのは名前のほうだけだからである。**見出しはさらに `tests/wrapper_test.bash` が
+`## Roles` からの範囲を切り出す区切りとして 4 箇所で使っており、ゴール 192 の
+`doc/specs/2026-08-28-splitting-the-atct-skill-by-role.md` とゴール 194 の
+`doc/specs/2026-08-28-numbering-the-ordered-steps.md` も名指ししている。**見出しを変えると
+それらと衝突する。**本文の手順 1 に「Creating them is how you declare them」を足して、
+規範と呼び出しの対応だけを明示した。
 
-理由は `skills/atct/SKILL.md` がゴール 146・192 に保持されていて触れないことである。
-このスキルは旧名で呼べと書いており、稼働中のセッションもそれに従っている。エイリアスが
-なければ、SKILL.md が更新されるまでの間、全エージェントのタスク作成が壊れる。
+## このリポジトリの外に残っている旧名
 
-**外してよい条件：**
-
-1. `skills/atct/SKILL.md` が `atct_task_create` を指すようになる
-2. 同 SKILL.md の executor 禁止リストが `atct_task_declare` ではなく `atct_task_create`
-   を名指しする（`tests/wrapper_test.bash` の許可リスト検査もそれに追随する）
-3. 旧名で走り続けているセッションが残っていない
-
-この 3 つが揃うまでは、tools/list に 1 件分（約 40 トークン）を払う。壊れたセッションを
-復旧させる費用より安い。
+`~/.claude/skills/orchestration/SKILL.md`（dotfiles 側）が executor 禁止リストで
+`atct_task_declare` を名指ししている。`tests/wrapper_test.bash` はこれを検査するが、
+**別リポジトリのファイルなので、このゴールでは直していない。**検査行も旧名のままにして
+ある（現実と一致しているので緑）。dotfiles 側を新名にするときに、検査行も一緒に替える。

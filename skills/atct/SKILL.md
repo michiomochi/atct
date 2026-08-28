@@ -27,9 +27,10 @@ The daemon derives the role in this order:
 
 ## Declare before you work
 
-1. Call `atct_task_declare` with the tasks you intend to do. Pass a stable
-   `idempotency_key` for the batch. Re-declaring the same batch does not create
-   duplicates, so it is safe after a retry or a context compaction.
+1. Call `atct_task_create` with the tasks you intend to do. Creating them is
+   how you declare them. Pass a stable `idempotency_key` for the batch. Sending
+   the same batch again does not create duplicates, so it is safe after a retry
+   or a context compaction.
 2. Then start the work, and only the work you declared.
 
 **Out of order:** Work done before it is declared never reaches the dashboard.
@@ -283,7 +284,7 @@ that worker is started:
    `atct_goal_handoff_request`, `atct_goal_claim`, `atct_goal_release`,
    `atct_goal_complete`, `atct_goal_update_content`, `atct_project_claim`,
    `atct_project_release`, `atct_task_claim`, `atct_handoff_request`,
-   `atct_task_declare`, or `atct_decision_ask`. Spell the names out; "anything not
+   `atct_task_create`, or `atct_decision_ask`. Spell the names out; "anything not
    listed above" is not read as a prohibition. In a 2026-08-27 measurement, an
    executor closed a subcommander's goal handoff without knowing it was forbidden.
 
@@ -492,7 +493,7 @@ reaches the human without passing through the delegator's context.
 | What used to be spoken | Where it goes |
 |---|---|
 | receipt of the goal | the `atct_goal_handoff_receive` record itself |
-| progress on the work | tasks: `atct_task_declare`, then `done` as each one lands |
+| progress on the work | tasks: `atct_task_create`, then `done` as each one lands |
 | the design and why | a spec committed with the goal's work, and `work_done` |
 | something found inside this goal | `surprises` and `needs_review` |
 | something found that is another goal | `atct_decision_ask`, addressed to the human |

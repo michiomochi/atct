@@ -46,7 +46,6 @@ func TestRegisterPublishesTwentyEightToolsWithFlexibleOutputSchema(t *testing.T)
 		"atct_goal_get":                  true,
 		"atct_goal_sessions":             true,
 		"atct_task_create":               true,
-		"atct_task_declare":              true,
 		"atct_task_claim":                true,
 		"atct_task_release":              true,
 		"atct_task_update":               true,
@@ -206,11 +205,6 @@ func TestRegisterPublishesTwentyEightToolsWithFlexibleOutputSchema(t *testing.T)
 			"task_id": "task-1", "title": "updated title", "description": "updated task",
 		}},
 		{name: "atct_task_create", args: map[string]any{
-			"goal_id": "goal-1", "titles": []string{"task"},
-			"descriptions":    []string{"Complete the created task and verify its result."},
-			"idempotency_key": "key-1", "agent": "agent-1",
-		}},
-		{name: "atct_task_declare", args: map[string]any{
 			"goal_id": "goal-1", "titles": []string{"task"},
 			"descriptions":    []string{"Complete the created task and verify its result."},
 			"idempotency_key": "key-1", "agent": "agent-1",
