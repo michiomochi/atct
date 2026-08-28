@@ -64,7 +64,10 @@ flowchart TD
         E6["17. atct_handoff_complete"]
     end
 
-    S6 --> E1 --> E2 --> E3 --> E4 --> E5 --> E6
+    S6 -->|実装のタスク| E1 --> E2 --> E3 --> E4 --> E5 --> E6
+
+    S6 -->|自分の職務のタスク<br/>spec / レビュー / コミット / 決定| SS["12'. subcommander が自分でやる<br/>handoff は生まれない<br/>閉じるのは atct_task_update だけ"]
+    SS --> S7
 
     E6 --> S7["18. 実装レビューとテスト検収"]
     S7 --> S8["19. コミット"]
@@ -85,6 +88,45 @@ flowchart TD
     style C4 fill:#e6f0ff
 ```
 
+## タスクは必ず executor に渡るわけではない
+
+**subcommander は自分の職務をタスクとして立て、自分で閉じる。**これは違反ではなく、
+役割表の `does` にある仕事である（`review implementation` / `commit the goal's work` /
+`issue decisions to the human`）。**実装ではないので executor に渡らない。**
+
+    $ sqlite3 ~/.atct/atct.db "
+      select t.agent, t.status, substr(t.title,1,40)
+      from (select * from tasks order by id desc limit 100) t
+      where not exists(select 1 from task_handoffs h where h.task_id=t.id);"
+    atct-199-subcommander  done  Spotlight 対策の手順書を doc/ に書く
+    atct-199-subcommander  done  commander の測定を検算する
+    atct-198-subcommander  done  設計を spec に残す
+    atct-178-subcommander  done  全テストを通してレビューし、変更をコミットする
+    atct-188-subcommander  done  到達可能性検査を取り下げ、dist のクリアだけにする
+    dotfiles-claimhk-...   done  フック本体を消すか残すかを人間の決定として出す
+    ...
+
+**直近 100 タスクのうち 24 件は handoff を持たない。**全期間では 803 件中 592 件（74%）。
+
+### これが 16 の自動化に効く
+
+**`atct_handoff_complete` がタスクも閉じるようにしても、この 24% は閉じない。**
+handoff が無いので、閉じる契機が無い。**手順 20（全タスクを閉じる）は消えず、
+「自分でやった分を閉じる」に縮小される。**
+
+24% を 0 にしたいなら `atct_task_claim` も handoff を書く形にする必要がある。
+**ゴール 177 がその領域だが、proposed で着手されていない。**
+
+### 汎用名の混入（少数だが実在する）
+
+    $ sqlite3 ~/.atct/atct.db "select agent, count(*) from tasks
+      where agent in ('executor','subcommander','commander') group by agent;"
+    executor|6      <- うち 3 件は handoff 無しで実装（すべて goal 144）
+    subcommander|2
+
+**orchestration スキルは `<space>-<unit>-<役割>` の形を要求している。**汎用名は複数 space で
+衝突して誤配を起こす。**handoff 無しの実装は委譲契約の外である。**144 は着地済みで遡れない。
+
 ## どの手順が強制されていて、どれが散文だけか
 
 **図の手順は 2 種類が混ざっている。**仕組みが拒否するものと、SKILL.md が頼んでいるだけのものである。
@@ -94,12 +136,20 @@ flowchart TD
 |---|---|---|
 | 4. 委譲側はゴールを claim しない | **強制** | claim が open handoff を書くので `atct_goal_handoff_request` が拒否される |
 | 7. `atct_goal_handoff_receive` | **強制** | 受領前は `atct_role` が `subcommander` を返さない |
-| **16. `atct_task_update done`** | **されていない** | `CompleteTaskHandoff` は `task_handoffs` の 2 列しか書かない。`tasks.status` を触る経路は `UpdateTask`（`handler.go:994`）だけで、handoff の完了はそこを通らない |
+| **16. `atct_task_update done`** | **されていない** | `CompleteTaskHandoff` は `task_handoffs` の 2 列しか書かない。`tasks.status` を触る経路は `UpdateTask`（`handler.go:994`）だけで、handoff の完了はそこを通らない。**実害 2 件**（下記） |
+| **12'. subcommander が自分でやるタスク** | 該当なし | handoff が無いので閉じる経路は `atct_task_update` だけ。**直近 100 件中 24 件**。「## タスクは必ず executor に渡るわけではない」を見よ |
 | 17. `atct_handoff_complete` | **強制** | 未受領・二重完了は SQL の `WHERE` 句が弾く |
-| **20. 全タスクを閉じる** | **されていない** | `CompleteGoalWithReport` の門番は「ゴールが active」「完了報告の 6 部が非空」「未回答の decision が 0」の 3 つだけ。未完了タスクは見ていない |
+| **20. 全タスクを閉じる** | **されていない** | `CompleteGoalWithReport` の門番は「ゴールが active」「完了報告の 6 部が非空」「未回答の decision が 0」の 3 つだけ。未完了タスクは見ていない。**ただし実害は 0 件**（done なゴール 130 件のうち、未完了タスクを抱えたまま完了したものは 0）。検査が無いのに守られている規約である |
 | 21 が 22 より先 | **強制** | 22 が handoff を閉じると役割が落ち、21 が「open な goal handoff を持たない」で拒否される |
 
-### 16 と 20 が繋がっていない実害
+### 16 と 20 は別の問題である
+
+**混ぜて読まないこと。**A を直しても B は残り、B を直しても A は残る。
+
+    問題 A: handoff を閉じてもタスクが閉じない      -> 実害 2 件（task 764 / 788）
+    問題 B: ゴール完了に未完了タスクの門番が無い    -> 実害 0 件（done 130 件中）
+
+#### A の実害
 
     $ sqlite3 ~/.atct/atct.db "
       select t.id, t.goal_id, t.status, h.completed_report_at
@@ -115,8 +165,19 @@ flowchart TD
 `detection.handoff_unreported` は逆（handoff が開いたまま報告が無い）で、
 「handoff は閉じたがタスクが開いている」に当たるものは存在しない。
 
+#### B の実害
+
+    $ sqlite3 ~/.atct/atct.db "
+      select count(*) from goals g where g.status='done'
+      and exists(select 1 from tasks t where t.goal_id=g.id and t.status in ('todo','doing'));"
+    0
+    （done なゴールの総数は 130）
+
+**130 回すべて守られている。**門番が無いことによる実害はまだ 1 件も出ていない。
+**門番を足す価値があるかは、この数字を見て決めること。**
+
 **ゴール 192 がこのプロセスを再設計中である。**「タスクを閉じる」を誰が保証するかは、
-そこで決まる。
+そこで決まる。上の測定 4 件は 192 に渡してある。
 
 ## 順序を守らないと壊れるところ
 
