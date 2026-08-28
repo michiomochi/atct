@@ -138,6 +138,13 @@ Two rules are absolute:
 - Do not weaken or delete a test to make a build pass. Fix the implementation instead.
 - Do not add a test that passes against a broken implementation. Confirm it fails first.
 
+`tests/wrapper_test.bash` also checks the ordered steps in `skills/atct/SKILL.md`. The numbering
+check and the `**Out of order:**` check scan every section of the file, so adding a section keeps
+them working without any edit here. The one thing the text cannot reveal is a section whose steps
+are ordered but carry no numbers: when you add such a section, add its heading to the
+`ORDERED_SECTIONS` array in `tests/wrapper_test.bash`, or nothing will notice that its order is
+unwritten.
+
 ### Commits and pull requests
 
 - Write commit messages in English.

@@ -1,6 +1,6 @@
 import { Button } from "@cloudflare/kumo/components/button";
 import { Dialog } from "@cloudflare/kumo/components/dialog";
-import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
 import {
   ApiError,
@@ -17,6 +17,7 @@ import {
 import { formatDateTime } from "../i18n";
 import { body, findOpenCompletion, findOpenGoalApproval, hasCompletionReport, headline, resolveRouteID, statusLabel, type CompletionReportFields } from "../lib/ui";
 import { AreaLoading, ErrorState } from "./StateMessage";
+import { GoalDiff } from "./GoalDiff";
 import { TaskCommitList } from "./TaskCommitList";
 import { TaskTable } from "./TaskTable";
 
@@ -451,27 +452,21 @@ export function GoalDetail({ id }: Props) {
   const [completionReason, setCompletionReason] = useState("");
   const [goalApprovalReason, setGoalApprovalReason] = useState("");
   const [updatePending, setUpdatePending] = useState(false);
-  const completionReasonRef = useRef("");
-  const goalApprovalReasonRef = useRef("");
   const { t, i18n } = useTranslation();
   const pathname = id === "_" && typeof window !== "undefined" ? window.location.pathname : "";
   const resolvedID = resolveRouteID(id, pathname, "/goals/");
 
   const handleCompletionReasonChange = useCallback((reason: string) => {
-    completionReasonRef.current = reason;
     setCompletionReason(reason);
   }, []);
 
   const handleGoalApprovalReasonChange = useCallback((reason: string) => {
-    goalApprovalReasonRef.current = reason;
     setGoalApprovalReason(reason);
   }, []);
 
   const load = useCallback(async () => {
     setUpdatePending(false);
-    completionReasonRef.current = "";
     setCompletionReason("");
-    goalApprovalReasonRef.current = "";
     setGoalApprovalReason("");
     setState({ kind: "loading" });
     try {
@@ -485,12 +480,8 @@ export function GoalDetail({ id }: Props) {
   }, [resolvedID, t]);
 
   const handleDecisionEvent = useCallback(() => {
-    if (completionReasonRef.current.trim() !== "" || goalApprovalReasonRef.current.trim() !== "") {
-      setUpdatePending(true);
-      return;
-    }
-    void load();
-  }, [load]);
+    setUpdatePending(true);
+  }, []);
 
   useEffect(() => {
     void load();
@@ -637,6 +628,8 @@ export function GoalDetail({ id }: Props) {
           )}
         </div>
       </section>
+
+      <GoalDiff goalID={resolvedID} />
 
       {taskCommits.length > 0 && (
         <section className="min-w-0 border-t border-line pt-5" aria-labelledby="goal-commits-heading">

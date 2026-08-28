@@ -24,21 +24,6 @@ describe("GoalCreateForm header dialog", () => {
     createGoal.mockReset().mockResolvedValue({});
   });
 
-  it("calls onDirtyChange with false when a dirty dialog is closed", async () => {
-    const handleDirty = vi.fn();
-
-    render(<GoalCreateForm onDirtyChange={handleDirty} />);
-    fireEvent.click(await screen.findByRole("button", { name: "form.goal.action.new" }));
-    fireEvent.change(await screen.findByLabelText("form.goal.content.label"), {
-      target: { value: "Draft goal" },
-    });
-
-    await waitFor(() => expect(handleDirty).toHaveBeenCalledWith(true));
-    fireEvent.click(screen.getByRole("button", { name: "form.goal.cancel" }));
-
-    await waitFor(() => expect(handleDirty).toHaveBeenLastCalledWith(false));
-  });
-
   it("calls onCreated after submitting the dialog form", async () => {
     const onCreated = vi.fn();
 

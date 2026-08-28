@@ -129,13 +129,12 @@ func TestWatchEmitsHumanDecisionEventsOnly(t *testing.T) {
 
 	got := output.String()
 	want := "atct decision answered (decision_id: human)\n" +
-		"atct decision default applied (decision_id: default)\n" +
 		"atct decision rejected (decision_id: rejected)\n" +
 		"atct decision approved (decision_id: approved)\n"
 	if got != want {
 		t.Fatalf("watch output = %q, want %q", got, want)
 	}
-	for _, id := range []string{"created", "applied", "withdrawn"} {
+	for _, id := range []string{"created", "applied", "withdrawn", "default"} {
 		if strings.Contains(got, "decision_id: "+id) {
 			t.Errorf("watch output contains suppressed decision %q: %q", id, got)
 		}
@@ -671,6 +670,86 @@ func TestWatchFiltersOtherProjectFromSnapshot(t *testing.T) {
 
 	want := "atct decision answered (decision_id: assigned)\n" +
 		"atct decision answered (decision_id: unscoped)\n"
+	if got := output.String(); got != want {
+		t.Fatalf("watch output = %q, want %q", got, want)
+	}
+}
+
+func TestWatchFiltersOtherGoalFromSnapshot(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var output cancelOnOutput
+	output.cancel = cancel
+	output.needles = []string{"atct decision answered (decision_id: same-goal)"}
+
+	root := t.TempDir()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/projects":
+			w.Header().Set("Content-Type", "application/json")
+			if err := json.NewEncoder(w).Encode([]watchProject{{ID: "project-1", RootPath: root}}); err != nil {
+				t.Errorf("encode projects: %v", err)
+			}
+		case "/api/inbox":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"unapplied_decisions":[{"id":"other-goal","project_id":"project-1","goal_id":91,"default_applied_at":null},{"id":"same-goal","project_id":"project-1","goal_id":92,"default_applied_at":null},{"id":"no-goal","project_id":"project-1","default_applied_at":null}]}`)
+		case "/api/events":
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			<-r.Context().Done()
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	if err := watchWithURLsAndProjectAndGoal(ctx, []string{server.URL}, &output, server.Client(), time.Millisecond, root, "92"); err != nil {
+		t.Fatalf("watchWithURLsAndProjectAndGoal() error = %v", err)
+	}
+
+	want := "atct decision answered (decision_id: same-goal)\n"
+	if got := output.String(); got != want {
+		t.Fatalf("watch output = %q, want %q", got, want)
+	}
+}
+
+func TestWatchKeepsEveryGoalInSnapshotWithoutGoalFlag(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var output cancelOnOutput
+	output.cancel = cancel
+	output.needles = []string{"atct decision answered (decision_id: no-goal)"}
+
+	root := t.TempDir()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/projects":
+			w.Header().Set("Content-Type", "application/json")
+			if err := json.NewEncoder(w).Encode([]watchProject{{ID: "project-1", RootPath: root}}); err != nil {
+				t.Errorf("encode projects: %v", err)
+			}
+		case "/api/inbox":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"unapplied_decisions":[{"id":"other-goal","project_id":"project-1","goal_id":91,"default_applied_at":null},{"id":"same-goal","project_id":"project-1","goal_id":92,"default_applied_at":null},{"id":"no-goal","project_id":"project-1","default_applied_at":null}]}`)
+		case "/api/events":
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			<-r.Context().Done()
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	if err := watchWithURLsAndProjectAndGoal(ctx, []string{server.URL}, &output, server.Client(), time.Millisecond, root, ""); err != nil {
+		t.Fatalf("watchWithURLsAndProjectAndGoal() error = %v", err)
+	}
+
+	want := "atct decision answered (decision_id: other-goal)\n" +
+		"atct decision answered (decision_id: same-goal)\n" +
+		"atct decision answered (decision_id: no-goal)\n"
 	if got := output.String(); got != want {
 		t.Fatalf("watch output = %q, want %q", got, want)
 	}

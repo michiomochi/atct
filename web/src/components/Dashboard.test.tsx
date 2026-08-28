@@ -2,7 +2,7 @@ import { act, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Dashboard } from "./Dashboard";
 
-const { fetchInbox, subscribeToDecisionEvents, t, i18nMock, goalCreateFormMock } = vi.hoisted(() => {
+const { fetchInbox, subscribeToDecisionEvents, t, i18nMock } = vi.hoisted(() => {
   const t = (key: string) => key;
   return {
     fetchInbox: vi.fn(),
@@ -13,7 +13,6 @@ const { fetchInbox, subscribeToDecisionEvents, t, i18nMock, goalCreateFormMock }
       i18n: { language: "en" },
       initReactI18next: { type: "3rdParty", init: () => undefined },
     },
-    goalCreateFormMock: vi.fn(),
   };
 });
 
@@ -28,14 +27,11 @@ vi.mock("react-i18next", () => ({
 }));
 
 vi.mock("./GoalCreateForm", () => ({
-  GoalCreateForm: (props: { onCreated?: () => void; onDirtyChange?: (dirty: boolean) => void }) => {
-    goalCreateFormMock(props);
-    return (
-      <button type="button" data-testid="goal-create-form">
-        Create goal
-      </button>
-    );
-  },
+  GoalCreateForm: () => (
+    <button type="button" data-testid="goal-create-form">
+      Create goal
+    </button>
+  ),
 }));
 
 vi.mock("./DecisionTable", () => ({
@@ -50,12 +46,11 @@ vi.mock("./ProposedGoalTable", () => ({
   ProposedGoalTable: () => null,
 }));
 
-describe("Dashboard goal creation refresh guard", () => {
+describe("Dashboard", () => {
   let decisionEvent: (() => void) | undefined;
 
   beforeEach(() => {
     fetchInbox.mockReset().mockResolvedValue({ open_decisions: [], active_goals: [] });
-    goalCreateFormMock.mockReset();
     subscribeToDecisionEvents.mockReset().mockImplementation((handler: () => void) => {
       decisionEvent = handler;
       return () => {
@@ -103,34 +98,15 @@ describe("Dashboard goal creation refresh guard", () => {
     expect(proposedHeadingIndex).toBeLessThan(openDecisionsHeadingIndex);
   });
 
-  it("keeps the current data while the goal form is dirty and reloads after it is clean", async () => {
+  it("shows an update banner without reloading when a decision event arrives", async () => {
     render(<Dashboard />);
     await waitFor(() => expect(fetchInbox).toHaveBeenCalledTimes(1));
 
-    const formProps = () => {
-      const calls = goalCreateFormMock.mock.calls;
-      const props = calls[calls.length - 1]?.[0] as {
-        onDirtyChange?: (dirty: boolean) => void;
-      } | undefined;
-      if (!props) {
-        throw new Error("GoalCreateForm props were not captured");
-      }
-      return props;
-    };
-
     act(() => {
-      formProps().onDirtyChange?.(true);
       decisionEvent?.();
     });
 
     expect(fetchInbox).toHaveBeenCalledTimes(1);
     expect(screen.getByRole("status").textContent).toContain("state.updateAvailable");
-
-    act(() => {
-      formProps().onDirtyChange?.(false);
-      decisionEvent?.();
-    });
-
-    await waitFor(() => expect(fetchInbox).toHaveBeenCalledTimes(2));
   });
 });

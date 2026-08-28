@@ -156,6 +156,36 @@ export interface GoalTaskCommits {
   commits: TaskCommit[];
 }
 
+export interface GoalDiffFile {
+  path: string;
+  insertions: number;
+  deletions: number;
+  binary: boolean;
+}
+
+export interface GoalDiff {
+  available: boolean;
+  reason: string;
+  base_ref: string;
+  branch: string;
+  source: string;
+  merge_commit: string;
+  files_changed: number;
+  insertions: number;
+  deletions: number;
+  files: GoalDiffFile[];
+}
+
+export interface GoalDiffPatch {
+  available: boolean;
+  reason: string;
+  base_ref: string;
+  branch: string;
+  path: string;
+  patch: string;
+  omitted_lines: number;
+}
+
 export interface TaskCommitDiffFile {
   path: string;
   insertions: number;
@@ -299,6 +329,16 @@ export async function fetchTask(id: string): Promise<TaskDetailResponse> {
 export async function fetchTaskCommitDiff(taskID: string, sha: string): Promise<TaskCommitDiff> {
   return requestJson<TaskCommitDiff>(
     `/api/tasks/${encodeURIComponent(taskID)}/commits/${encodeURIComponent(sha)}/diff`,
+  );
+}
+
+export async function fetchGoalDiff(id: string): Promise<GoalDiff> {
+  return requestJson<GoalDiff>(`/api/goals/${encodeURIComponent(id)}/diff`);
+}
+
+export async function fetchGoalDiffPatch(id: string, path: string): Promise<GoalDiffPatch> {
+  return requestJson<GoalDiffPatch>(
+    `/api/goals/${encodeURIComponent(id)}/diff?path=${encodeURIComponent(path)}`,
   );
 }
 

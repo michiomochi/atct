@@ -47,25 +47,24 @@ type cliConfig struct {
 	goalAction         string
 	goalTitle          string
 	goalDescription    string
-	taskIDs            []string
 	roleExpected       string
 	roleExpectedSet    bool
 	roleAgentSessionID string
 	watchGoalID        string
+	watchProjectScope  bool
 }
 
 var errInvalidArgs = errors.New("invalid command line")
 
 var validSubcommands = map[string]bool{
-	"daemon":      true,
-	"project":     true,
-	"goal":        true,
-	"context":     true,
-	"pending":     true,
-	"watch":       true,
-	"claim-check": true,
-	"role":        true,
-	"handoff":     true,
+	"daemon":  true,
+	"project": true,
+	"goal":    true,
+	"context": true,
+	"pending": true,
+	"watch":   true,
+	"role":    true,
+	"handoff": true,
 }
 
 var validDaemonActions = map[string]bool{"start": true, "stop": true}
@@ -85,8 +84,7 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "  goal list            List goals for the current project")
 	fmt.Fprintln(os.Stderr, "  context [-brief]      Print the current goal context for an AI session")
 	fmt.Fprintln(os.Stderr, "  pending              Print unanswered human decisions for the current project")
-	fmt.Fprintln(os.Stderr, "  watch [-goal string]  Stream human decision events for a Monitor")
-	fmt.Fprintln(os.Stderr, "  claim-check <ids...>|any  Exit 0 only if the tasks are claimed by a running session")
+	fmt.Fprintln(os.Stderr, "  watch [-goal string] [-project]  Stream human decision events for a Monitor")
 	fmt.Fprintln(os.Stderr, "  role                 Report the claim-derived role for an agent session")
 	fmt.Fprintln(os.Stderr, "  handoff complete <handoff-id> <task-id>  Report a handoff complete")
 	fmt.Fprintln(os.Stderr, "  handoff yielded <task-id>  Report that the worker yielded")
@@ -94,6 +92,7 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "Options:")
 	fmt.Fprintln(os.Stderr, "  -listen string   HTTP listen address (default \"127.0.0.1:8787\")")
 	fmt.Fprintln(os.Stderr, "  -project string  Select a registered project by name (context, pending)")
+	fmt.Fprintln(os.Stderr, "  -project        Filter watch events to what a commander acts on (watch)")
 	fmt.Fprintln(os.Stderr, "  -expect string   Expected role for the role command")
 	fmt.Fprintln(os.Stderr, "  -agent-session-id string  Session identity for the role command")
 }
@@ -219,32 +218,45 @@ func parseArgs(args []string) (cliConfig, error) {
 	}
 	if sub == "watch" {
 		flags.StringVar(&cfg.watchGoalID, "goal", "", "filter watch events to this goal")
+		flags.BoolVar(&cfg.watchProjectScope, "project", false, "filter watch events to what a commander acts on")
 	}
 	var description *string
 	if sub == "goal" && cfg.goalAction == "add" {
 		description = flags.String("d", "", "goal description")
 	}
 	flags.Parse(rest)
-	if sub == "claim-check" {
-		cfg.taskIDs = flags.Args()
-	} else if len(flags.Args()) > 0 {
+	if len(flags.Args()) > 0 {
 		fmt.Fprintf(os.Stderr, "unexpected argument %q\n", flags.Args()[0])
 		printUsage()
 		return cliConfig{}, errInvalidArgs
 	}
 
 	cfg.listenAddr = *listenAddr
+	watchProjectSpecified := false
+	watchGoalSpecified := false
 	flags.Visit(func(f *flag.Flag) {
 		if f.Name == "listen" {
 			cfg.listenExplicit = true
 		}
 		if f.Name == "project" {
-			cfg.projectSpecified = true
+			if sub != "watch" {
+				cfg.projectSpecified = true
+			}
+			if sub == "watch" {
+				watchProjectSpecified = true
+			}
+		}
+		if f.Name == "goal" && sub == "watch" {
+			watchGoalSpecified = true
 		}
 		if f.Name == "expect" {
 			cfg.roleExpectedSet = true
 		}
 	})
+	if sub == "watch" && watchProjectSpecified && watchGoalSpecified {
+		fmt.Fprintln(os.Stderr, "watch: -goal and -project cannot be used together")
+		return cliConfig{}, errInvalidArgs
+	}
 	if sub == "role" && cfg.roleExpectedSet {
 		if err := validateExpectedRole(cfg.roleExpected); err != nil {
 			fmt.Fprintln(os.Stderr, err)
@@ -389,12 +401,6 @@ func main() {
 			log.Fatalf("pending: %v", err)
 		}
 		return
-	case "claim-check":
-		code, err := claimCheckCommand(dir, config.taskIDs)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
-		}
-		os.Exit(code)
 	case "role":
 		code, err := runRole(config, dir, exePath)
 		if err != nil {

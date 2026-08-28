@@ -23,16 +23,17 @@ the tools are available.
 
 ## Attach the Claude Code Monitor
 
-After identifying the session, attach `atct watch` to a Claude Code Monitor task
-and keep that task's id for this session.
+After identifying the session, attach a role-appropriate `atct watch` Monitor
+and keep its id.
 
-- If this session already has an `atct watch` Monitor, keep it; do not attach a
-  second one. Two Monitors emit the same answer twice.
-- Always set `persistent: true` when creating the Monitor. Without it, the
-  default `timeout_ms` of `300000ms` (5 minutes) stops monitoring silently, with
-  no notification that it stopped.
-- Set `description` to `ATCT answer watch` so each notification identifies what
-  the Monitor is watching.
+- Commander: `atct watch -project`; subcommander: `atct watch -goal <goal_id>`.
+- Keep the session's Monitor; do not attach a second. Two Monitors in one
+  session emit the same answer twice.
+- `atct watch` stops an existing watch for the same scope at startup.
+- Always set `persistent: true`; otherwise `timeout_ms` defaults to `300000ms` (5
+  minutes) and monitoring stops silently.
+- Set `description` for the scope: `ATCT answer watch project` or
+  `ATCT answer watch goal <goal_id>`, substituting the number.
 - This step applies only in Claude Code. Codex has no Monitor, so a Codex reader
   must skip it and must not try to call or attach Monitor. The MCP response
   attachment remains the shared foundation for both harnesses.

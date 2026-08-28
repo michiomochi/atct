@@ -1,5 +1,5 @@
 import { Button } from "@cloudflare/kumo/components/button";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { fetchInbox, subscribeToDecisionEvents, type InboxResponse } from "../lib/api";
 import { DecisionTable } from "./DecisionTable";
@@ -22,7 +22,6 @@ function errorMessage(reason: unknown, fallback: string): string {
 export function Dashboard() {
   const [state, setState] = useState<LoadState>({ kind: "loading" });
   const [updatePending, setUpdatePending] = useState(false);
-  const goalCreateDirtyRef = useRef(false);
   const { t } = useTranslation();
 
   const load = useCallback(async () => {
@@ -36,15 +35,7 @@ export function Dashboard() {
   }, [t]);
 
   const handleDecisionEvent = useCallback(() => {
-    if (goalCreateDirtyRef.current) {
-      setUpdatePending(true);
-      return;
-    }
-    void load();
-  }, [load]);
-
-  const handleGoalCreateDirtyChange = useCallback((dirty: boolean) => {
-    goalCreateDirtyRef.current = dirty;
+    setUpdatePending(true);
   }, []);
 
   const handleGoalCreated = useCallback(() => {
@@ -102,7 +93,7 @@ export function Dashboard() {
         id="active-goals"
         title={t("dashboard.goals.title")}
         count={projectGroups?.length}
-        action={<GoalCreateForm onCreated={handleGoalCreated} onDirtyChange={handleGoalCreateDirtyChange} />}
+        action={<GoalCreateForm onCreated={handleGoalCreated} />}
       >
         {state.kind === "loading" && <AreaLoading label={t("dashboard.goals.title")} />}
         {state.kind === "error" && <ErrorState message={state.message} onRetry={retry} />}

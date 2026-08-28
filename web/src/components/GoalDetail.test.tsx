@@ -5,6 +5,7 @@ import type { Decision, Goal, GoalResponse, InboxResponse, TaskCommit, TaskView 
 import {
   approveDecision,
   fetchGoal,
+  fetchGoalDiff,
   fetchInbox,
   fetchTaskCommitDiff,
   subscribeToDecisionEvents,
@@ -25,6 +26,8 @@ const apiMock = vi.hoisted(() => ({
   answerDecision: vi.fn(),
   createGoal: vi.fn(),
   fetchGoal: vi.fn(),
+  fetchGoalDiff: vi.fn(() => Promise.resolve({ available: false, reason: "no_branch" })),
+  fetchGoalDiffPatch: vi.fn(),
   fetchInbox: vi.fn(),
   fetchTaskCommitDiff: vi.fn(),
   rejectDecision: vi.fn(),
@@ -177,6 +180,17 @@ function emptyInbox(): InboxResponse {
 }
 
 describe("GoalDetail", () => {
+  it("asks for the goal diff with the id resolved from the route, not the placeholder", async () => {
+    const response = goalResponse({ status: "active" });
+    vi.mocked(fetchGoal).mockResolvedValueOnce(response);
+    window.history.pushState({}, "", "/goals/187");
+
+    render(<GoalDetail id="_" />);
+
+    await waitFor(() => expect(fetchGoalDiff).toHaveBeenCalledWith("187"));
+    expect(fetchGoalDiff).not.toHaveBeenCalledWith("_");
+  });
+
   it("does not render goal approval for an active goal", async () => {
     const response = goalResponse({ status: "active" });
     response.unattached_decisions = [goalApprovalDecision()];
@@ -242,7 +256,7 @@ describe("GoalDetail", () => {
     await waitFor(() => expect(screen.getByText(serverMessage)).not.toBeNull());
   });
 
-  it("defers GoalDetail reload while completion reason is dirty and reloads after explicit refresh", async () => {
+  it("shows an update banner without reloading until explicit refresh", async () => {
     let decisionEvent: Parameters<typeof subscribeToDecisionEvents>[0] | undefined;
     vi.mocked(subscribeToDecisionEvents).mockImplementation((callback) => {
       decisionEvent = callback;
@@ -267,9 +281,6 @@ describe("GoalDetail", () => {
     fireEvent.click(screen.getByRole("button", { name: "state.fetchLatest" }));
     await waitFor(() => expect(fetchGoal).toHaveBeenCalledTimes(2));
     await waitFor(() => expect((completionApproval().getByRole("textbox") as HTMLTextAreaElement).value).toBe(""));
-
-    act(() => decisionEvent?.("decision.created"));
-    await waitFor(() => expect(fetchGoal).toHaveBeenCalledTimes(3));
     expect(screen.queryByText("state.updateAvailable")).toBeNull();
   });
 

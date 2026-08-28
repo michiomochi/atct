@@ -170,6 +170,20 @@ WHERE t.goal_id = ?
   AND th.completed_report_at IS NULL
 ORDER BY th.id;
 
+-- The partial unique index idx_task_handoffs_open_task_id guarantees at most
+-- one open handoff per task, so filtering completed_report_at is equivalent
+-- to selecting the first open handoff in the legacy implementation.
+-- name: ListOpenTaskHandoffClaims :many
+SELECT t.id, t.goal_id, t.title, t.description, t.status, t.agent,
+       t.sort_order, t.declare_key, t.snoozed_until, t.created_at, t.updated_at,
+       th.requested_by, th.received_by
+FROM task_handoffs AS th
+JOIN tasks AS t ON t.id = th.task_id
+JOIN goals AS g ON g.id = t.goal_id
+WHERE g.project_id = ?
+  AND th.completed_report_at IS NULL
+ORDER BY g.created_at, g.id, t.sort_order, t.id;
+
 -- name: GetTaskHandoffTaskID :one
 SELECT task_id
 FROM task_handoffs
