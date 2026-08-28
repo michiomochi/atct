@@ -80,7 +80,7 @@ flowchart TD
         S5b["13. atct_task_handoff_request<br/>タスクを executor へ"]
         S6["17. 実装をレビューする<br/>atct watch -goal の通知で起動"]
         S7["18. atct_task_handoff_complete<br/>→ タスクが done になる"]
-        S8["19. その executor を閉じる"]
+        S8["19. 手が空いた executor を閉じる"]
         S9["20. 全タスクが done になったら<br/>コミットする"]
         S10["21. atct_goal_handoff_review_request<br/>superpowers:verification-before-completion"]
     end
@@ -101,8 +101,8 @@ flowchart TD
     S6 -->|受理| S7
     S6 -->|"差し戻し<br/>atct_task_handoff_review_reject"| S5b
 
-    S7 -->|次に渡すタスクがある| S5b
-    S7 -->|この executor への依頼が尽きた| S8
+    S7 -->|"渡していないタスクが残っている"| S5b
+    S7 -->|"渡していないタスクが無い"| S8
     S8 -->|"残りのタスクが全部 done"| S9 --> S10
 
     S10 --> C5
@@ -224,10 +224,12 @@ subcommander が設計の結果として作り、レビューに出す。**そ�
       -> 各 executor が 14〜16 を自分のペースで回す
       -> 16 が届くたびに subcommander が 17〜18 を回す
 
-**18 の後に分岐が 2 つある。**
+**18 の後の分岐は、タスクが残っているかで決まる。**executor の側ではない。
 
-    その executor へ次に渡すタスクがある  -> 13 に戻る（同じ executor を使い回す）
-    その executor への依頼が尽きた        -> 19 で閉じる
+    渡していないタスクが残っている  -> 13 に戻り、手が空いた executor に渡す
+    渡していないタスクが無い        -> 19 でその executor を閉じる
+
+**タスクが残っているなら、空いた executor を使い回す。**新しく立ち上げるより安い。
 
 **20（コミット）は全タスクが done になってからである。**1 つ受理するたびに
 コミットするのではない。**まだ動いている executor があるうちは 21 に進まない。**
@@ -289,7 +291,7 @@ handoff に `review_report`（作業した側が書く）と `reject_report`（�
 
 | 誰を閉じるか | 閉じる者 | いつ |
 |---|---|---|
-| executor | subcommander | **手順 19。**その executor へ次に渡すタスクが無いとき |
+| executor | subcommander | **手順 19。**渡していないタスクが無くなったとき |
 | subcommander | commander | **手順 26。**人間が承認したとき |
 
 **worktree が分離を担うので、「他のゴールと交差するファイルの都合で待たせる」理由は無い。**
