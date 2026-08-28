@@ -355,8 +355,8 @@ func TestDeclareTasksReportsWhichTasksWereCreated(t *testing.T) {
 		t.Fatalf("first returned %d tasks, want 2", len(first))
 	}
 	for _, task := range first {
-		if task.Declared == nil || !*task.Declared {
-			t.Fatalf("first declaration task %+v has Declared = %v, want true", task, task.Declared)
+		if task.Created == nil || !*task.Created {
+			t.Fatalf("first declaration task %+v has Created = %v, want true", task, task.Created)
 		}
 	}
 
@@ -365,8 +365,8 @@ func TestDeclareTasksReportsWhichTasksWereCreated(t *testing.T) {
 		t.Fatalf("second returned %d tasks, want 2", len(second))
 	}
 	for _, task := range second {
-		if task.Declared == nil || *task.Declared {
-			t.Fatalf("redeclared task %+v has Declared = %v, want false", task, task.Declared)
+		if task.Created == nil || *task.Created {
+			t.Fatalf("redeclared task %+v has Created = %v, want false", task, task.Created)
 		}
 	}
 
@@ -376,8 +376,8 @@ func TestDeclareTasksReportsWhichTasksWereCreated(t *testing.T) {
 	}
 	for _, task := range third {
 		want := task.DeclareKey == "declared-status#2"
-		if task.Declared == nil || *task.Declared != want {
-			t.Fatalf("partial redeclaration task %+v has Declared = %v, want %t", task, task.Declared, want)
+		if task.Created == nil || *task.Created != want {
+			t.Fatalf("partial redeclaration task %+v has Created = %v, want %t", task, task.Created, want)
 		}
 	}
 
@@ -387,8 +387,8 @@ func TestDeclareTasksReportsWhichTasksWereCreated(t *testing.T) {
 	}
 	for _, task := range fourth {
 		want := task.DeclareKey == "declared-status#3"
-		if task.Declared == nil || *task.Declared != want {
-			t.Fatalf("third redeclaration task %+v has Declared = %v, want %t", task, task.Declared, want)
+		if task.Created == nil || *task.Created != want {
+			t.Fatalf("third redeclaration task %+v has Created = %v, want %t", task, task.Created, want)
 		}
 	}
 }
@@ -419,11 +419,11 @@ func TestDeclareTasksLeavesOtherDeclarationsWithoutDeclaredStatus(t *testing.T) 
 	if other == nil || target == nil {
 		t.Fatalf("DeclareTasks returned tasks = %+v, want both declarations", tasks)
 	}
-	if other.Declared != nil {
-		t.Fatalf("other declaration has Declared = %v, want nil", other.Declared)
+	if other.Created != nil {
+		t.Fatalf("other declaration has Created = %v, want nil", other.Created)
 	}
-	if target.Declared == nil || !*target.Declared {
-		t.Fatalf("target declaration has Declared = %v, want true", target.Declared)
+	if target.Created == nil || !*target.Created {
+		t.Fatalf("target declaration has Created = %v, want true", target.Created)
 	}
 }
 
@@ -443,8 +443,8 @@ func TestDeclareTasksListTasksJSONOmitsDeclared(t *testing.T) {
 	if err != nil {
 		t.Fatalf("json.Marshal: %v", err)
 	}
-	if strings.Contains(string(payload), `"declared"`) {
-		t.Fatalf("ListTasks JSON = %s, must omit declared", payload)
+	if strings.Contains(string(payload), `"created"`) {
+		t.Fatalf("ListTasks JSON = %s, must omit created", payload)
 	}
 }
 

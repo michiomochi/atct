@@ -54,11 +54,11 @@ type TaskUpdateContentIn struct {
 	Description *string `json:"description,omitempty"`
 }
 
-type TaskDeclareIn struct {
+type TaskCreateIn struct {
 	GoalID         mcpID    `json:"goal_id"`
 	Titles         []string `json:"titles" jsonschema:"task titles decomposed from the goal, in execution order"`
 	Descriptions   []string `json:"descriptions" jsonschema:"task descriptions explaining the completion criteria and assumptions for each title, in execution order"`
-	IdempotencyKey string   `json:"idempotency_key" jsonschema:"key that prevents duplicate tasks when the same declaration is retried"`
+	IdempotencyKey string   `json:"idempotency_key" jsonschema:"key that prevents duplicate tasks when the same call is retried"`
 	Agent          string   `json:"agent"`
 }
 
@@ -580,19 +580,31 @@ func Register(server *mcp.Server, c *Client, agentSessionID int64) {
 		})
 	})
 
-	addMCPTool[TaskDeclareIn, RawWithUnappliedDecisions](server, &mcp.Tool{
-		Name:         "atct_task_declare",
-		Description:  "Declare tasks decomposed from a Goal. Retrying the same idempotency_key does not create duplicates. Existing tasks are not updated and return with declared: false; use atct_task_update_content to fix them.",
-		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
-	}, func(ctx context.Context, req *mcp.CallToolRequest, in TaskDeclareIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
+	createTasks := func(ctx context.Context, req *mcp.CallToolRequest, in TaskCreateIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
 		params := map[string]any{
 			"goal_id": in.GoalID, "titles": in.Titles, "descriptions": in.Descriptions,
 			"idempotency_key": in.IdempotencyKey, "agent": in.Agent,
 			"agent_session_id":          sessionID.Get(),
 			"include_unapplied_answers": true,
 		}
+		// The daemon method keeps its original name; renaming it would break a
+		// running daemon that has not been restarted after an upgrade.
 		return callWithUnappliedDecisions(ctx, c, "task.declare", params)
-	})
+	}
+
+	addMCPTool[TaskCreateIn, RawWithUnappliedDecisions](server, &mcp.Tool{
+		Name:         "atct_task_create",
+		Description:  "Create the tasks a Goal decomposes into. Retrying the same idempotency_key does not create duplicates. Existing tasks are not updated and return with created: false; use atct_task_update_content to fix them.",
+		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
+	}, createTasks)
+
+	// Deprecated alias. Skills and running sessions still name the old tool;
+	// remove it once they all call atct_task_create.
+	addMCPTool[TaskCreateIn, RawWithUnappliedDecisions](server, &mcp.Tool{
+		Name:         "atct_task_declare",
+		Description:  "Deprecated alias for atct_task_create. Call atct_task_create instead.",
+		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
+	}, createTasks)
 
 	addMCPTool[TaskClaimIn, RawWithUnappliedDecisions](server, &mcp.Tool{
 		Name:         "atct_task_claim",

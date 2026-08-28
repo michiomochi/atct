@@ -50,7 +50,7 @@ flowchart TD
         S3["8. atct_role で expected_role=subcommander を確認"]
         S4["9. atct watch -goal &lt;goal&gt; を張る"]
         S5["10. 設計を決める（commander に聞かない）"]
-        S6["11. atct_task_declare でタスクを宣言"]
+        S6["11. atct_task_create でタスクを作成"]
     end
 
     C5 --> S1 --> S2 --> S3 --> S4 --> S5 --> S6

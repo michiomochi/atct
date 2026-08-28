@@ -77,7 +77,7 @@ func (s *Store) DeclareTasks(ctx context.Context, goalID int64, agent, idempoten
 	for _, task := range existingTasks {
 		existingDeclareKeys[task.DeclareKey] = struct{}{}
 	}
-	declaredByKey := make(map[string]bool, len(titles))
+	createdByKey := make(map[string]bool, len(titles))
 	maxSortOrder, err := q.MaxTaskSortOrder(ctx, goalID)
 	if err != nil {
 		return nil, fmt.Errorf("get max task sort order: %w", err)
@@ -85,7 +85,7 @@ func (s *Store) DeclareTasks(ctx context.Context, goalID int64, agent, idempoten
 	for i, title := range titles {
 		declareKey := fmt.Sprintf("%s#%d", idempotencyKey, i)
 		_, alreadyExists := existingDeclareKeys[declareKey]
-		declaredByKey[declareKey] = !alreadyExists
+		createdByKey[declareKey] = !alreadyExists
 		_, err = q.CreateTask(ctx, sqlcgen.CreateTaskParams{
 			GoalID:       goalID,
 			Title:        title,
@@ -110,12 +110,12 @@ func (s *Store) DeclareTasks(ctx context.Context, goalID int64, agent, idempoten
 		return nil, err
 	}
 	for i := range tasks {
-		declared, ok := declaredByKey[tasks[i].DeclareKey]
+		created, ok := createdByKey[tasks[i].DeclareKey]
 		if !ok {
 			continue
 		}
-		tasks[i].Declared = new(bool)
-		*tasks[i].Declared = declared
+		tasks[i].Created = new(bool)
+		*tasks[i].Created = created
 	}
 	return tasks, nil
 }

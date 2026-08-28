@@ -388,7 +388,7 @@ func renderContextLegacy(goals []contextGoal, decisions []domain.Decision) strin
 
 	nextTools := make([]string, 0, 3)
 	if declareTasks {
-		nextTools = append(nextTools, "atct_task_declare")
+		nextTools = append(nextTools, "atct_task_create")
 	}
 	if claimTasks {
 		nextTools = append(nextTools, "atct_task_claim")
@@ -504,7 +504,7 @@ func renderContextForAgentSession(goals []contextGoal, decisions []domain.Decisi
 
 	nextTools := make([]string, 0, 3)
 	if hasNoTasks {
-		nextTools = append(nextTools, "atct_task_declare")
+		nextTools = append(nextTools, "atct_task_create")
 	}
 	if hasTodo {
 		nextTools = append(nextTools, "atct_task_claim")

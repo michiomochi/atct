@@ -53,7 +53,7 @@ func TestPendingCommandReportsActiveGoalWithoutTasks(t *testing.T) {
 		t.Fatalf("pendingCommand exit code = %d, want 0", exitCode)
 	}
 	for _, want := range []string{
-		"An active goal has no tasks declared.",
+		"An active goal has no tasks.",
 		"Undeclared active goals:",
 		domain.Headline(goal.Content),
 		"goal_id: " + idText(goal.ID),
@@ -294,7 +294,7 @@ func TestPendingCommandIncludesAllPendingReasons(t *testing.T) {
 	for _, want := range []string{
 		"A human answered a decision you parked.",
 		pendingClaimReason,
-		"An active goal has no tasks declared.",
+		"An active goal has no tasks.",
 		idText(decision.ID),
 		"unfinished claimed work",
 		idText(claimedTasks[0].ID),
@@ -897,7 +897,7 @@ func TestPendingCommandUsesSeparateReasonForAllDroppedGoal(t *testing.T) {
 	if strings.Contains(output, "All tasks are done but the active goal has no completion report.") {
 		t.Fatalf("pendingCommand reported the dropped goal as completed: %q", output)
 	}
-	for _, want := range []string{domain.Headline(goal.Content), idText(goal.ID), "atct_goal_complete", "atct_task_declare"} {
+	for _, want := range []string{domain.Headline(goal.Content), idText(goal.ID), "atct_goal_complete", "atct_task_create"} {
 		if !strings.Contains(strings.ToLower(output), strings.ToLower(want)) {
 			t.Fatalf("pendingCommand output does not contain %q: %q", want, output)
 		}
