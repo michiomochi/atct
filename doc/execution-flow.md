@@ -61,8 +61,8 @@ flowchart TD
         C2["2. ターミナルマルチプレクサを利用の場合は<br/>subcommander の作業場所を用意"]
         C3["3. atct_goal_handoff_request"]
         C4["4. subcommander を立ち上げ、依頼文を送る"]
-        CD["9. 設計をレビューする<br/>superpowers:requesting-code-review"]
-        C5["20. 着地した変更をレビューする<br/>superpowers:requesting-code-review"]
+        CD["9. 設計をレビューする<br/>atct watch -project の通知で起動<br/>superpowers:requesting-code-review"]
+        C5["20. 着地した変更をレビューする<br/>atct watch -project の通知で起動<br/>superpowers:requesting-code-review"]
         C6["21. main へマージする<br/>superpowers:finishing-a-development-branch<br/>衝突はここで解決する"]
         C7["22. atct_goal_handoff_complete<br/>→ ゴールの claim が空く"]
         C8["23. atct_goal_complete（6 部）"]
@@ -76,7 +76,7 @@ flowchart TD
         S4["8. 設計の成果物を出す<br/>atct_goal_handoff_plan_review"]
         S5["10. atct_task_create で<br/>タスクにする"]
         S5b["11. atct_task_handoff_request<br/>タスクを executor へ<br/>superpowers:dispatching-parallel-agents"]
-        S6["15. 実装をレビューする<br/>superpowers:requesting-code-review"]
+        S6["15. 実装をレビューする<br/>atct watch -goal の通知で起動<br/>superpowers:requesting-code-review"]
         S7["16. atct_task_handoff_complete<br/>→ タスクが done になる"]
         S8["17. 次に渡すタスクが無ければ<br/>その executor を閉じる"]
         S9["18. コミットする"]
@@ -428,9 +428,14 @@ flowchart LR
 ```
 
 **各層は自分の watch から ATCT の通知を直接受ける。**
+**レビューは通知で始まる。**渡した側がポーリングするのではなく、
+作業した側が review を出した時点で、渡した側の watch に届く。
 
 | 粒度 | 届く先 | 根拠（2026-08-27 の実測） |
 |---|---|---|
+| **goal handoff の plan review** | **commander** | **これが手順 9 の引き金である** |
+| **goal handoff の review** | **commander** | **これが手順 20 の引き金である** |
+| **task handoff の review** | **そのゴールの subcommander** | **これが手順 15 の引き金である** |
 | goal handoff の完了 | commander | 28 件届き、**28 件すべてが行動に繋がった** |
 | 人間の承認・却下 | 全層 | 34 件届き、全件が行動に繋がった |
 | **ゴールの取り下げ** | そのゴールの subcommander | 現状は届かない（上記） |
@@ -482,6 +487,8 @@ flowchart LR
 | **目標** | `atct_task_handoff_review` / `atct_goal_handoff_review` / `atct_goal_handoff_plan_review` の 3 つを足す。**作業した者が review を出し、渡した者が受理して complete する。**差し戻しは handoff を閉じないので、claim も役割も維持される |
 | **放置すると** | 差し戻しごとに commander の再発行が要る。2026-08-27〜28 の実測で goal handoff の完了 28 件に対し**再発行が約 25 件** |
 | **必要な変更** | `task_handoffs` / `goal_handoffs` に review の時刻と報告を持つ列を足す移行（**ゴール側は設計と実装の 2 種**）/ `TaskStatus`（`internal/domain/status.go:14`）に `review` を足す / MCP ツール 3 つを追加 / `internal/store/wakeup.go` に「review のまま動かない」検知 |
+| **通知の要求** | **review はレビューする側の watch に届かなければ意味がない。**`internal/httpapi/server.go` の `eventMatchesGoalID` と `eventProjectID` は通す型を絞っているので、**新しいイベント型を足すなら両方に case が要る。**ゴール 179 が `GoalWithdrawnEvent` で同じ箇所を踏んでいる。**`-goal` と `-project` の両方を、それぞれ独立に落ちる検査で押さえること** |
+| **検査** | plan review を出したら commander の `-project` watch に届き、subcommander の `-goal` watch には自分のゴールの分だけ届くこと。**片方の case を消すと片方だけ落ちること**（179 の `TestSSEGoalScopedStreamDeliversGoalWithdrawn` と `TestSSEProjectScopedStreamFiltersOtherProjectsWithdrawal` が手本） |
 | **未解決** | **差し戻しの理由をどこに書くか。**`complete_report` は受理のときに書かれる。review の報告と差し戻しの理由を別の列にするか、`request_report` を再利用するか |
 | **未解決** | **`goals.status` に `review` を持たせるか。**タスク側は `tasks.status` に持たせると人間に言われている。ゴール側は handoff だけに持たせても、ダッシュボードから見えるかを確かめる必要がある |
 | **決定済み** | **ゴールの handoff は設計と実装で別の状態にする。**設計は `atct_goal_handoff_plan_review`、実装は `atct_goal_handoff_review`。**commander はどちらのレビューかをツールで判別できる。**タスクの handoff に設計のレビューは無い |
