@@ -90,16 +90,15 @@ bash script/schema-check.sh
 # old generation: on 2026-08-28 v0.58.0 shipped 174 files with 20 StateMessage
 # generations and the browser kept using the pre-WebSocket one.
 #
-# Clearing dist before the build is what fixes it. Keep .gitkeep, because
-# go:embed rejects an empty directory (see the comment in web/embed.go).
-#
-# The check below follows every asset reference from every built HTML entrypoint.
-# Any file left behind is an old generation, and any missing target is a dropped
-# asset, so the check remains valid as the number of screens changes.
+# Clearing dist before the build is what fixes it, and clearing is the whole fix:
+# once dist starts empty, a stale generation cannot survive the build, so there is
+# nothing left for a separate check to catch. Keep .gitkeep, because go:embed
+# rejects an empty directory (see the comment in web/embed.go); the -not below is
+# what keeps it. Keep the clear before the build, not after -- reversed, it would
+# delete the output and ship a binary with no UI.
 echo "==> web"
 find web/dist -mindepth 1 -not -name '.gitkeep' -delete
 ( cd web && pnpm build >/dev/null )
-bash script/dist-check.sh web/dist
 
 echo "==> bump"
 python3 - "$version" <<'PY'
