@@ -70,7 +70,7 @@ flowchart TD
 
     subgraph S["subcommander（ゴール 1 つに 1 人）"]
         S1["5. atct_goal_handoff_receive<br/>→ ゴールの claim を得て subcommander になる"]
-        S2["6. atct watch を張る"]
+        S2["6. atct watch -goal &lt;goal_id&gt; を張る<br/>自分のゴールだけを渡す"]
         S3["7. 設計を決める<br/>superpowers:brainstorming<br/>superpowers:writing-plans"]
         S4["8. atct_task_create で<br/>ゴールに必要なタスクを作成<br/>plan の分解をそのまま渡す"]
         S5["9. atct_task_handoff_request<br/>タスクを executor へ<br/>superpowers:dispatching-parallel-agents"]
@@ -355,9 +355,9 @@ executor は働き続ける。**
 
 ```mermaid
 flowchart LR
-    A[ATCT daemon] -->|watch -project| C[commander]
-    A -->|watch -goal N| S1[subcommander N]
-    A -->|watch -goal M| S2[subcommander M]
+    A[ATCT daemon] -->|atct watch -project| C[commander]
+    A -->|atct watch -goal N| S1[subcommander N]
+    A -->|atct watch -goal M| S2[subcommander M]
     H([人間 / web]) -->|承認・却下| A
     E[executor] -->|報告| S1
 ```
