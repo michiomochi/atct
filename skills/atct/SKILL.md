@@ -111,6 +111,38 @@ The primary checkout is appropriate in these cases:
   until it lands. This rule is being written in the primary checkout for that
   reason.
 
+### Detach node_modules before running pnpm
+
+`web/node_modules` is a symlink to the primary checkout. Reading through it
+works, but **every pnpm command fails** — not just `pnpm install`. Measured
+2026-08-28: `pnpm test` cannot write `node_modules/.vite-temp` and `pnpm build`
+cannot write `node_modules/.vite`, because a `workspace-write` sandbox refuses
+writes that resolve outside the worktree. Full output is in
+`doc/investigations/2026-08-28-worktree-node-modules-sandbox.md`.
+
+Detach the worktree first. It replaces the symlink with real dependencies and
+leaves the primary checkout untouched.
+
+```sh
+script/worktree-node-modules.sh detach          # from inside the worktree
+script/worktree-node-modules.sh detach <goal>   # from the primary checkout
+script/worktree-node-modules.sh status
+script/worktree-node-modules.sh attach --yes    # put the symlink back
+```
+
+- **The delegator detaches, not the worker.** Measured 2026-08-28: a worker
+  running `pnpm install --frozen-lockfile` in a detached worktree fails with
+  `ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY` — pnpm wants to purge
+  `node_modules` and cannot ask without a TTY. Detach before handing the task
+  off. After that the worker needs no pnpm install: `pnpm test` and `pnpm build`
+  both pass (exit 0, 231 tests).
+- Detach only the worktrees that need it. The cost is time, not disk: one
+  `detach` spends 33s in `pnpm install`, and most worktrees never run pnpm.
+  (Disk is nearly free — `du` reports 454M per detached worktree, but the real
+  consumption measured through `df` was 15M, because pnpm clones from its store
+  and APFS shares the blocks.)
+- `detach` and `attach` are both idempotent, so re-running either is safe.
+
 ### What a worktree does not separate
 
 A worktree does not make every resource independent:
@@ -119,8 +151,9 @@ A worktree does not make every resource independent:
   claims, and decisions are shared. Avoiding two people touching the same file
   still depends on declaring before you work.
 - The daemon is one per machine, not one per worktree.
-- `web/node_modules` is a symlink to the primary checkout. Running `pnpm
-  install` in a worktree changes the primary checkout's dependencies.
+- `web/node_modules` is a symlink to the primary checkout, so a worktree does
+  not get its own frontend dependencies until you detach it. See "Detach
+  node_modules before running pnpm" below.
 - Git objects and refs live in one common directory. The same branch can be
   checked out in only one worktree at a time.
 - If two worktrees edit the same file, the conflict does not disappear; it is
