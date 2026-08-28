@@ -81,7 +81,7 @@ flowchart TD
         S6["17. 実装をレビューする<br/>atct watch -goal の通知で起動"]
         S7["18. atct_task_handoff_complete<br/>→ タスクが done になる"]
         S8["19. 手が空いた executor を閉じる"]
-        S9["20. 全タスクが done になったら<br/>コミットする"]
+        S9["20. コミットする"]
         S10["21. atct_goal_handoff_review_request<br/>superpowers:verification-before-completion"]
     end
 
