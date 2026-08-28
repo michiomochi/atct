@@ -73,7 +73,7 @@ flowchart TD
         S2["6. atct watch を張る"]
         S3["7. 設計を決める"]
         S4["8. atct_task_create で<br/>ゴールに必要なタスクを作成"]
-        S5["9. atct_handoff_request<br/>実装タスクを executor へ"]
+        S5["9. atct_task_handoff_request<br/>実装タスクを executor へ"]
         SS["9'. 実装でないタスクは自分でやる<br/>spec / レビュー / 決定の起票"]
         S6["13. 実装をレビューして検収する"]
         S7["14. コミットする"]
@@ -81,9 +81,9 @@ flowchart TD
     end
 
     subgraph E["executor（タスク単位・複数可）"]
-        E1["10. atct_handoff_receive<br/>→ タスクの claim を得て executor になる"]
+        E1["10. atct_task_handoff_receive<br/>→ タスクの claim を得て executor になる"]
         E2["11. 実装とテスト"]
-        E3["12. atct_handoff_complete<br/>→ タスクも done になる"]
+        E3["12. atct_task_handoff_complete<br/>→ タスクも done になる"]
     end
 
     G --> C1 --> C2 --> C3 --> C4 --> S1
@@ -106,7 +106,7 @@ flowchart TD
 
 ## 1 つの事実に 1 つの書き手
 
-### `atct_handoff_complete` がタスクを閉じる
+### `atct_task_handoff_complete` がタスクを閉じる
 
 現状は `CompleteTaskHandoff` が `task_handoffs` の 2 列を書き、`tasks.status` を書くのは
 `atct_task_update` である。**2 つが繋がっていないので片方だけ呼ばれる。**
@@ -121,7 +121,7 @@ flowchart TD
 handoff は閉じたのにタスクは `todo` で、ダッシュボードは「未着手」と表示する。
 **この乖離を拾う検知は 13 種のうち 1 つも無い。**
 
-**`atct_handoff_complete` が両方を書けば、乖離が表現できなくなる。**
+**handoff の完了が両方を書けば、乖離が表現できなくなる。**
 
 ### セッション鍵は receive のときに ATCT が確定する
 
@@ -279,7 +279,7 @@ flowchart LR
 
 | 節 | 差分 | 扱っているゴール |
 |---|---|---|
-| `atct_handoff_complete` がタスクを閉じる | 現状は 2 回呼ぶ。乖離 2 件、検知なし | **未着手** |
+| handoff の完了がタスクを閉じる | 現状は 2 回呼ぶ。乖離 2 件、検知なし | **未着手** |
 | セッション鍵は receive で確定する | 現状は各層が呼ぶ。空鍵 4,260 行 / 決定 160 件 | **未着手** |
 | receive が役割を返す | 現状は receive 後に `atct_role` を呼ぶ | **未着手** |
 | 完了報告を commander が書く | 現状は subcommander。再発行 25 件の原因 | 192 |
@@ -287,6 +287,7 @@ flowchart LR
 | 取り下げが必ず届く | 現状は決定 0 件だと無音 | 179 |
 | commander が決定を出せる | 現状は CHECK 制約で不可 | 201（proposed） |
 | `atct_task_create` | 現状は `atct_task_declare` | 200 |
+| タスク側の handoff ツールも粒度を名前に持つ | 現状は `atct_handoff_*`（ゴール側は `atct_goal_handoff_*`）。名前が対象を表していない | **未着手** |
 | 自分でやるタスクにも claim を通す | 現状は handoff を持たない（直近 100 件中 24 件） | 177（proposed） |
 
 ### ゴール完了の門番はこのままにする
@@ -299,5 +300,5 @@ flowchart LR
     （done なゴールの総数は 130）
 
 **130 回すべて、未完了タスクを残さずに完了している。**この数字から門番を足す
-理由は出てこない。`atct_handoff_complete` がタスクを閉じるようになれば、
+理由は出てこない。handoff の完了がタスクを閉じるようになれば、
 手で閉じる対象は自分でやったタスクだけに縮む。
