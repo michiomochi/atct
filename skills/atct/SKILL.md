@@ -96,6 +96,9 @@ not proceed to Step 1.
 - `executor`: Work in the worktree for the handed-off goal; it does not create
   one itself.
 
+The commander prepares the goal's space at the same time as its worktree, and
+closes that space when the goal is approved; see `## One space per goal`.
+
 ### When the primary checkout is right
 
 The primary checkout is appropriate in these cases:
@@ -125,6 +128,54 @@ A worktree does not make every resource independent:
 - `GOCACHE` is shared by default across all worktrees. Sharing is harmless
   because the cache is content-addressed, but point it outside the repository:
   if it points inside, generated files can fill `git status`.
+
+## One space per goal
+
+A space belongs to one goal from the moment it is created until it is closed.
+When the goal is approved, close the space; do not hand it a second goal.
+
+- **One space, one goal.** The space is created for a goal and works that goal
+  only. A second goal gets a new space, even when it touches the same files.
+- **Approval closes it.** The trigger is the human approving the completion
+  decision `atct_goal_complete` creates, not the completion report. A rejected
+  completion returns the same goal to the same space, so the space stays open
+  until approval.
+- **A closed space is not reopened.** Work that arrives afterwards belongs to a
+  different goal, and a different goal gets a new space.
+- The delegator closes what it woke. The commander closes the subcommander's
+  space when the goal is approved; the subcommander closes its executors' panes
+  when their tasks are done.
+
+### The only exception
+
+The `commander`'s own space is the exception, and there is no other. It holds
+the project rather than one goal, so it outlives every goal and is not closed
+between them.
+
+Three cases look like exceptions and are not:
+
+- A rejected completion is the same goal, not a second one, so the space stays
+  open and the work continues there.
+- A goal derived from another (`derived_from`) is a new goal, and a new goal
+  gets a new space.
+- Two goals that touch the same file still get one space each. Serializing them
+  is the commander's decision about when to delegate, and the conflict, if any,
+  is resolved at the merge.
+
+### Why reuse costs more than it saves
+
+Reuse was how one machine serialized goals that touched the same file, back when
+every agent shared the primary checkout. `## One worktree per goal` removed that
+reason: each goal already edits its own tree. What reuse still costs:
+
+- The space's name stops naming its goal. On 2026-08-26 one space held five
+  goals, so nothing led from the name to the contents.
+- `atct_goal_sessions` resolves a goal to the sessions that worked it through
+  `goal_handoffs.received_by`. One session key spread over five goals resolves
+  to no single space.
+- Context accumulates across goals that have nothing to do with each other.
+- The trigger to close disappears. A space handed the next goal at approval is
+  never closed at all; on 2026-08-26 fifteen spaces were closed by hand.
 
 ## Commit safely
 

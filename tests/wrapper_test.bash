@@ -1018,6 +1018,42 @@ test_recovery_section_names_existing_tools() {
   done
 }
 
+test_one_space_per_goal_section_exists() {
+  assert_file_contains '## One space per goal' "$REPO_ROOT/skills/atct/SKILL.md"
+}
+
+test_one_space_per_goal_binds_a_space_to_one_goal() {
+  assert_file_contains 'A space belongs to one goal' "$REPO_ROOT/skills/atct/SKILL.md"
+}
+
+test_one_space_per_goal_closes_on_approval() {
+  assert_file_contains 'approving the completion' "$REPO_ROOT/skills/atct/SKILL.md"
+}
+
+test_one_space_per_goal_forbids_reuse() {
+  local atct_skill="$REPO_ROOT/skills/atct/SKILL.md"
+  assert_file_contains 'do not hand it a second goal' "$atct_skill"
+  assert_file_contains 'A closed space is not reopened' "$atct_skill"
+}
+
+test_one_space_per_goal_names_the_only_exception() {
+  local atct_skill="$REPO_ROOT/skills/atct/SKILL.md"
+  assert_file_contains "The \`commander\`'s own space is the exception, and there is no other." "$atct_skill"
+  assert_file_contains 'A rejected completion is the same goal' "$atct_skill"
+}
+
+test_one_space_per_goal_sits_between_worktree_and_commit() {
+  local atct_skill="$REPO_ROOT/skills/atct/SKILL.md"
+  local worktree
+  local space
+  local commit
+  worktree="$(grep -n '^## One worktree per goal$' "$atct_skill" | cut -d: -f1)"
+  space="$(grep -n '^## One space per goal$' "$atct_skill" | cut -d: -f1)"
+  commit="$(grep -n '^## Commit safely$' "$atct_skill" | cut -d: -f1)"
+  (( worktree < space && space < commit )) ||
+    fail 'one space per goal must follow the worktree rule and precede commit safely'
+}
+
 test_delegated_claim_contract_is_explicit() {
   local atct_skill="$REPO_ROOT/skills/atct/SKILL.md"
   local start_skill="$REPO_ROOT/skills/start/SKILL.md"
@@ -1562,6 +1598,12 @@ test_recovery_section_omits_task_release
 test_recovery_section_omits_task_update
 test_recovery_section_omits_goal_release
 test_recovery_section_names_existing_tools
+test_one_space_per_goal_section_exists
+test_one_space_per_goal_binds_a_space_to_one_goal
+test_one_space_per_goal_closes_on_approval
+test_one_space_per_goal_forbids_reuse
+test_one_space_per_goal_names_the_only_exception
+test_one_space_per_goal_sits_between_worktree_and_commit
 test_stop_hook_only_reports
 test_hooks_json_keeps_session_start_and_pre_tool_use_sections
 test_stop_hook_file_is_executable_but_other_hooks_remain
