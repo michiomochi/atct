@@ -73,7 +73,7 @@ flowchart TD
         S1["5. atct_goal_handoff_receive<br/>→ ゴールの claim を得て subcommander になる"]
         S2["6. atct watch -goal &lt;goal_id&gt; を張る<br/>自分のゴールだけを渡す"]
         S3["7. 設計を決める<br/>superpowers:brainstorming<br/>superpowers:writing-plans"]
-        S4["8. 設計の成果物を出す<br/>atct_goal_handoff_review"]
+        S4["8. 設計の成果物を出す<br/>atct_goal_handoff_plan_review"]
         S5["10. atct_task_create で<br/>タスクにする"]
         S5b["11. atct_task_handoff_request<br/>タスクを executor へ<br/>superpowers:dispatching-parallel-agents"]
         S6["15. 実装をレビューする<br/>superpowers:requesting-code-review"]
@@ -166,14 +166,15 @@ subcommander がゴールについて、それぞれ同じことをする。
 **2026-08-28 にゴール 185 は自分のブランチが赤いまま完了報告を出した。**
 このスキルが 19 の位置にあれば、報告の前に落ちていた。
 
-## handoff は 3 状態で動く
+## handoff は状態で動く
 
-| 状態 | 誰が遷移させるか | ツール |
-|---|---|---|
-| 依頼 | 渡す側 | `atct_*_handoff_request` |
-| 受領 | 作業する側 | `atct_*_handoff_receive` |
-| **レビュー待ち** | **作業する側** | **`atct_*_handoff_review`** |
-| 完了 | **渡した側** | `atct_*_handoff_complete` |
+| 状態 | 誰が遷移させるか | タスクの handoff | ゴールの handoff |
+|---|---|---|---|
+| 依頼 | 渡す側 | `atct_task_handoff_request` | `atct_goal_handoff_request` |
+| 受領 | 作業する側 | `atct_task_handoff_receive` | `atct_goal_handoff_receive` |
+| **設計のレビュー待ち** | **作業する側** | — | **`atct_goal_handoff_plan_review`** |
+| **レビュー待ち** | **作業する側** | **`atct_task_handoff_review`** | **`atct_goal_handoff_review`** |
+| 完了 | **渡した側** | `atct_task_handoff_complete` | `atct_goal_handoff_complete` |
 
 **作業した者は自分の handoff を閉じない。**閉じるのは受理した者である。
 
@@ -185,18 +186,18 @@ subcommander がゴールについて、それぞれ同じことをする。
                    14a. 受理  -> atct_task_handoff_complete  -> tasks.status = 'done'
                    14b. 差し戻し -> 9 に戻って atct_task_handoff_request
 
-### ゴールの場合（review を 2 回通る）
+### ゴールの場合（レビューが 2 回ある）
 
-**1 回目は設計、2 回目は実装である。**どちらも commander がレビューする。
+**設計と実装で別のツール・別の状態にする。**どちらも commander がレビューする。
 
     subcommander    7. 設計を決める
-                    8. plan を doc/plans/ に書き atct_goal_handoff_review で出す
+                    8. 設計の成果物を書き atct_goal_handoff_plan_review で出す
     commander       9a. 受理  -> subcommander が 10 へ進む
                     9b. 差し戻し -> subcommander が 7 に戻る
 
     subcommander   17. 次に渡すタスクが無ければその executor を閉じる
                    18. コミットする
-                   19. atct_goal_handoff_review     -> 2 回目
+                   19. atct_goal_handoff_review     -> 実装のレビュー待ち
     commander      20a. 受理  -> マージ -> atct_goal_handoff_complete -> atct_goal_complete
                    20b. 差し戻し -> subcommander が 7 に戻る
 
@@ -459,7 +460,7 @@ flowchart LR
 
 | # | 差分 | 担当 |
 |---|---|---|
-| 0 | **handoff に「レビュー待ち」を足す** | **未着手** |
+| 0 | **handoff にレビュー待ちの状態を足す** | **未着手** |
 | 1 | handoff の状態遷移がタスクの状態を書く | **未着手** |
 | 2 | セッション鍵は receive で確定する | **未着手** |
 | 3 | receive が役割を返す | **未着手** |
@@ -471,19 +472,19 @@ flowchart LR
 | 9 | タスク側の handoff ツールも粒度を名前に持つ | **未着手** |
 | 10 | **全タスクが executor に渡る**（subcommander は自分のタスクを持たない） | **未着手** |
 
-### 0. handoff に「レビュー待ち」を足す
+### 0. handoff にレビュー待ちの状態を足す
 
 **この差分が他のすべての前提になる。**
 
 | | |
 |---|---|
 | **いま** | `task_handoffs` と `goal_handoffs` の列は `requested_at` / `received_at` / `completed_report_at` の 3 つだけ。**作業した者が `completed_report_at` を書いて自分の handoff を閉じる。**閉じると claim が空いて役割が落ちるので、差し戻されても自分では受領し直せない |
-| **目標** | `atct_task_handoff_review` と `atct_goal_handoff_review` を足す。**作業した者が review を出し、渡した者が受理して complete する。**差し戻しは handoff を閉じないので、claim も役割も維持される |
+| **目標** | `atct_task_handoff_review` / `atct_goal_handoff_review` / `atct_goal_handoff_plan_review` の 3 つを足す。**作業した者が review を出し、渡した者が受理して complete する。**差し戻しは handoff を閉じないので、claim も役割も維持される |
 | **放置すると** | 差し戻しごとに commander の再発行が要る。2026-08-27〜28 の実測で goal handoff の完了 28 件に対し**再発行が約 25 件** |
-| **必要な変更** | `task_handoffs` / `goal_handoffs` に review の時刻と報告を持つ列を足す移行 / `TaskStatus`（`internal/domain/status.go:14`）に `review` を足す / MCP ツール 2 つを追加 / `internal/store/wakeup.go` に「review のまま動かない」検知 |
+| **必要な変更** | `task_handoffs` / `goal_handoffs` に review の時刻と報告を持つ列を足す移行（**ゴール側は設計と実装の 2 種**）/ `TaskStatus`（`internal/domain/status.go:14`）に `review` を足す / MCP ツール 3 つを追加 / `internal/store/wakeup.go` に「review のまま動かない」検知 |
 | **未解決** | **差し戻しの理由をどこに書くか。**`complete_report` は受理のときに書かれる。review の報告と差し戻しの理由を別の列にするか、`request_report` を再利用するか |
 | **未解決** | **`goals.status` に `review` を持たせるか。**タスク側は `tasks.status` に持たせると人間に言われている。ゴール側は handoff だけに持たせても、ダッシュボードから見えるかを確かめる必要がある |
-| **未解決** | **goal handoff は review を 2 回通る**（手順 9 の設計と手順 20 の実装）。**commander が「どちらの review か」を判別できる形が要る。**コミットの有無で推測するのではなく、review に種別を持たせるか、状態を 2 つに分けるかを決める |
+| **決定済み** | **ゴールの handoff は設計と実装で別の状態にする。**設計は `atct_goal_handoff_plan_review`、実装は `atct_goal_handoff_review`。**commander はどちらのレビューかをツールで判別できる。**タスクの handoff に設計のレビューは無い |
 
 ### 1. handoff の状態遷移がタスクの状態を書く
 
