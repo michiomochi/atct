@@ -19,7 +19,7 @@
 
 | 層 | やること |
 |---|---|
-| `commander` | 受け入れ仕分け / ゴールの分割 / worktree の用意 / subcommander の起動と終了 / **設計のレビュー** / **着地した変更のレビュー** / **ゴールの完了報告** / 衝突の解決 / 公開 / 後片付け |
+| `commander` | 受け入れ仕分け / ゴールの分割 / worktree の用意 / subcommander の起動と終了 / **設計のレビュー** / **ゴールの変更のレビュー** / **ゴールの完了報告** / 衝突の解決 / 公開 / 後片付け |
 | `subcommander` | ゴールの設計 / 作業の委譲 / executor の起動と終了 / 実装レビュー / コミット / 人間への決定の起票 |
 | `executor` | 実装 / テスト / 渡されたタスクを閉じる |
 
@@ -64,7 +64,7 @@ flowchart TD
         CD0["9. atct_plan_handoff_review_receive<br/>atct watch -project の通知で起動"]
         CD["10. 設計をレビューする<br/>superpowers:requesting-code-review"]
         CD2["11. atct_plan_handoff_complete"]
-        C5["22. 着地した変更をレビューする<br/>atct watch -project の通知で起動<br/>superpowers:requesting-code-review"]
+        C5["22. ゴールの変更をレビューする<br/>atct watch -project の通知で起動<br/>superpowers:requesting-code-review"]
         C6["23. main へマージする<br/>superpowers:finishing-a-development-branch<br/>衝突はここで解決する"]
         C7["24. atct_goal_handoff_complete<br/>→ ゴールの claim が空く"]
         C8["25. atct_goal_complete（6 部）"]
@@ -129,7 +129,7 @@ flowchart TD
 | 16. review を出す前 | `superpowers:verification-before-completion` |
 | 17. 実装をレビューする | `superpowers:requesting-code-review` |
 | 21. ゴールの review を出す前 | `superpowers:verification-before-completion` |
-| 22. 着地した変更をレビューする | `superpowers:requesting-code-review` |
+| 22. ゴールの変更をレビューする | `superpowers:requesting-code-review` |
 | 23. main へマージする | `superpowers:finishing-a-development-branch` |
 
 ### 7 と 8 が何を生むかは brainstorming の分類で決まる
