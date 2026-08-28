@@ -28,10 +28,24 @@
 **publish は門を持たない。**決定・タスク・handoff が 0 件でも流す。取り下げの tx は
 ゴールの状態を必ず変えるので、流さない理由が無い。`publishAll()` も同様に無条件にする。
 
-新しい型を足したので `internal/httpapi/server.go` の `eventMatchesGoalID` に case を
-足す。ここを忘れると `goal_id` 指定の watch では落ちる（`default:` が `false` を返す）。
-`eventProjectID` にも足す——`-project` の watch でプロジェクトを引けないと、
-`eventProjectID` が 0 を返して「全プロジェクトに通す」側に倒れる。
+新しい型を足したので `internal/httpapi/server.go` の**switch 2 つ**に case を足す。
+**片方だけでは足りず、しかも欠けた側は既存のテストでは見えない。**
+
+| switch | 忘れると何が起きるか |
+|---|---|
+| `eventMatchesGoalID` | `default:` が `false` を返し、**`goal_id` 指定の watch に 1 件も届かない** |
+| `eventProjectID` | `default:` が 0 を返し、`eventPasses` の `eventProjectID != 0` が偽になる。0 は「どのプロジェクトにも属さない」ではなく**「全プロジェクトに通す」**として読まれ、**他プロジェクトの取り下げが `-project` の watch に漏れる** |
+
+**実測（2026-08-29）**: `eventProjectID` の case を消しても
+`go test ./internal/httpapi/ -run TestSSE` は `ok 0.796s` で全部通った。
+`project_id` を指定した検査が 1 本も無かったためである。
+`TestSSEProjectScopedStreamFiltersOtherProjectsWithdrawal` を足すと漏れが見える。
+
+    SSE event = "goal.withdrawn", want first frame "keepalive";
+    lines=[event: goal.withdrawn data: {"goal_id":2,"project_id":2,"reason":"withdraw the other project goal"}]
+
+**`goal_id` の検査だけでは `project_id` 側の穴が埋まらない。**2 つの switch には
+2 つの検査が要る。
 
 ### 2. 強制完了した task handoff の `handoff_reported` は流さない（一度採って取り消した）
 
