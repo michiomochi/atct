@@ -40,9 +40,10 @@ flowchart TD
         C3["3. subcommander を起こす<br/>herdr agent start"]
         C4["4. atct_goal_handoff_request<br/>★ゴールを claim してはいけない"]
         C5["5. 依頼文を送る<br/>隣接ゴールの境界を明記"]
+        C6["23. 着地した変更をレビューしてマージ"]
+        C7["24. 却下なら goal handoff を再発行"]
+        C8["25. worktree と space を片付ける"]
     end
-
-    G --> C1 --> C2 --> C3 --> C4 --> C5
 
     subgraph S["subcommander（ゴール 1 つに 1 人・space 1 つ）"]
         S1["6. atct_session_identify"]
@@ -51,12 +52,16 @@ flowchart TD
         S4["9. atct watch -goal &lt;goal&gt; を張る"]
         S5["10. 設計を決める（commander に聞かない）"]
         S6["11. atct_task_declare でタスクを宣言"]
+        SS["12'. 自分の職務のタスクは自分でやる<br/>spec / レビュー / 決定の起票<br/>handoff は生まれない"]
+        S7["18. 実装レビューとテスト検収"]
+        S8["19. コミット"]
+        S9["20. 全タスクを閉じる<br/>（規約のみ・21 の門番は見ていない）"]
+        S10["21. atct_goal_complete（6 部）<br/>★これが先"]
+        S11["22. atct_goal_handoff_complete<br/>★これが後"]
     end
 
-    C5 --> S1 --> S2 --> S3 --> S4 --> S5 --> S6
-
     subgraph E["executor（タスク単位・右カラムに最大 3 台）"]
-        E1["12. atct_handoff_request（subcommander が）"]
+        E1["12. atct_handoff_request<br/>（起票するのは subcommander）"]
         E2["13. atct_handoff_receive"]
         E3["14. atct_role で executor を確認"]
         E4["15. 実装とテスト"]
@@ -64,29 +69,41 @@ flowchart TD
         E6["17. atct_handoff_complete"]
     end
 
+    G --> C1 --> C2 --> C3 --> C4 --> C5
+    C5 --> S1 --> S2 --> S3 --> S4 --> S5 --> S6
+
     S6 -->|実装のタスク| E1 --> E2 --> E3 --> E4 --> E5 --> E6
+    S6 -->|自分の職務のタスク| SS
 
-    S6 -->|自分の職務のタスク<br/>spec / レビュー / コミット / 決定| SS["12'. subcommander が自分でやる<br/>handoff は生まれない<br/>閉じるのは atct_task_update だけ"]
+    E6 --> S7
     SS --> S7
-
-    E6 --> S7["18. 実装レビューとテスト検収"]
-    S7 --> S8["19. コミット"]
-    S8 --> S9["20. 全タスクを閉じる<br/>（規約のみ・21 の門番は見ていない）"]
-    S9 --> S10["21. atct_goal_complete（6 部）<br/>★これが先"]
-    S10 --> S11["22. atct_goal_handoff_complete<br/>★これが後"]
+    S7 --> S8 --> S9 --> S10 --> S11
 
     S10 -.->|承認要求| H2([人間が web で承認/却下])
-
-    H2 -->|承認| C6["23. commander がレビューしてマージ"]
-    H2 -->|却下| C7["24. commander が handoff を再発行"]
-    C7 --> S2
-
-    C6 --> C8["25. worktree と space を片付ける"]
+    H2 -->|承認| C6 --> C8
+    H2 -->|却下| C7 --> S2
 
     style S10 fill:#ffe6e6
     style S11 fill:#ffe6e6
     style C4 fill:#e6f0ff
+    style S7 fill:#fff4e0
+    style S8 fill:#fff4e0
 ```
+
+## レビューとコミットは executor がやらない
+
+**手順 18（実装レビューとテスト検収）と 19（コミット）は subcommander の仕事である。**
+役割表がそう決めている。
+
+    subcommander の does      review implementation / commit the goal's work
+    executor の does_not      commit / write internal version-control details
+
+**executor は実装してテストを通し、タスクを閉じて報告するところまでで終わる。**
+成果をコミットするのは、それをレビューした subcommander である。**executor が
+コミットすると、レビューを通っていない変更がブランチに乗る。**
+
+これは 12' の経路と同じ理由で handoff を持たない。**subcommander が自分でやる仕事なので、
+渡す相手がいない。**
 
 ## タスクは必ず executor に渡るわけではない
 
