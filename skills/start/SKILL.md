@@ -30,7 +30,7 @@ and keep its id.
 - Keep the session's Monitor; do not attach a second. Two Monitors in one
   session emit the same answer twice.
 - `atct watch` stops an existing watch for the same scope at startup.
-- Set `persistent: true`; otherwise `timeout_ms` defaults to `300000ms` (5
+- Always set `persistent: true`; otherwise `timeout_ms` defaults to `300000ms` (5
   minutes) and monitoring stops silently.
 - Set `description` for the scope: `ATCT answer watch project` or
   `ATCT answer watch goal <goal_id>`, substituting the number.

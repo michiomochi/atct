@@ -57,14 +57,14 @@ type cliConfig struct {
 var errInvalidArgs = errors.New("invalid command line")
 
 var validSubcommands = map[string]bool{
-	"daemon":      true,
-	"project":     true,
-	"goal":        true,
-	"context":     true,
-	"pending":     true,
-	"watch":       true,
-	"role":        true,
-	"handoff":     true,
+	"daemon":  true,
+	"project": true,
+	"goal":    true,
+	"context": true,
+	"pending": true,
+	"watch":   true,
+	"role":    true,
+	"handoff": true,
 }
 
 var validDaemonActions = map[string]bool{"start": true, "stop": true}
