@@ -5,6 +5,44 @@
 
 **ゴール 192 がこのフローの変更を検討中である。**変わったらこの文書も更新する。
 
+## ゴールの claim とは open な goal handoff のことである
+
+**`goals` に claim を保存する列は無い。**
+
+    $ sqlite3 ~/.atct/atct.db "select name from pragma_table_info('goals');"
+    id project_id derived_from_goal_id content status creator result_summary
+    work_done now_possible how_to_verify surprises needs_review next_steps
+    created_at updated_at
+
+**ゴールの claim とは「open な goal handoff の受領者であること」そのものである。**
+`ClaimGoal`（`internal/store/goal.go:183`）は UUID の handoff を作り、自分で request して
+自分で receive するだけである。
+
+    handoffID := uuid.NewString()
+    s.reclaimOpenGoalHandoff(ctx, handoffID, goalID)
+    s.requestGoalHandoffForClaim(ctx, handoffID, goalID, agentSessionID)
+    s.ReceiveGoalHandoff(ctx, handoffID, goalID, agentSessionID)
+
+`ReleaseGoal` も対称で、open な handoff を完了させるだけである。
+
+したがって claim の持ち主はこう推移する。
+
+| 時点 | `requested_by` | `received_by` | claim の持ち主 |
+|---|---|---|---|
+| 手順 4 の直後 | commander | 0 | **commander** |
+| 手順 7 の後 | commander | subcommander | **subcommander** |
+| 手順 22 の後 | commander | subcommander | **誰も持たない**（handoff が閉じた） |
+
+**「claim が移る」のではなく、`received_by` が埋まることが claim の移動である。**
+
+`goal_handoffs` には open な行を 1 ゴールに 1 本しか許さない UNIQUE 制約がある。
+
+    CREATE UNIQUE INDEX idx_goal_handoffs_open_goal_id
+      ON goal_handoffs(goal_id) WHERE completed_report_at IS NULL;
+
+**これが手順 4 で claim してはいけない理由である。**先に `atct_goal_claim` を呼ぶと
+自分名義の open handoff ができ、続く `atct_goal_handoff_request` が制約で弾かれる。
+
 ## 役割はどこから決まるか
 
 **役割は宣言ではなく、claim と handoff の保有状態から daemon が導出する。**
@@ -37,7 +75,7 @@ flowchart TD
     subgraph C["commander（1 プロセスに 1 人・project claim を保持）"]
         C1["1. worktree を用意<br/>script/worktree-setup.sh &lt;goal&gt;"]
         C2["2. ターミナルマルチプレクサを利用の場合は<br/>subcommander の作業場所を用意"]
-        C3["3. subcommander を起こす"]
+        C3["3. subcommander を立ち上げる"]
         C4["4. atct_goal_handoff_request<br/>★ゴールを claim してはいけない"]
         C5["5. 依頼文を送る<br/>隣接ゴールの境界を明記"]
         C6["23. 着地した変更をレビューしてマージ"]
@@ -47,7 +85,7 @@ flowchart TD
 
     subgraph S["subcommander（ゴール 1 つに 1 人）"]
         S1["6. atct_session_identify"]
-        S2["7. atct_goal_handoff_receive<br/>→ 役割が subcommander になる"]
+        S2["7. atct_goal_handoff_receive<br/>→ ここでゴールの claim を得る<br/>→ 役割が subcommander になる"]
         S3["8. atct_role で expected_role=subcommander を確認"]
         S4["9. atct watch -goal &lt;goal&gt; を張る"]
         S5["10. 設計を決める（commander に聞かない）"]
@@ -277,7 +315,7 @@ flowchart LR
      └─ subcommander 1 人 + そのゴールの executor
 ```
 
-**エージェントをどう起こすかは ATCT の管轄外である。**`skills/atct/SKILL.md` の
+**エージェントをどう立ち上げるかは ATCT の管轄外である。**`skills/atct/SKILL.md` の
 `## Delegate a goal` 手順 3 が「Wake the subcommander through the environment.
 ATCT does not prescribe how the subcommander is started or how the role is
 transmitted.」と書いている。**端末多重化ソフトの使い方は orchestration スキルの側にある。**
