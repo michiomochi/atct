@@ -277,18 +277,107 @@ flowchart LR
 
 **この文書が目標であり、以下はまだ実装されていない。**
 
-| 節 | 差分 | 扱っているゴール |
+| # | 差分 | 担当 |
 |---|---|---|
-| handoff の完了がタスクを閉じる | 現状は 2 回呼ぶ。乖離 2 件、検知なし | **未着手** |
-| セッション鍵は receive で確定する | 現状は各層が呼ぶ。空鍵 4,260 行 / 決定 160 件 | **未着手** |
-| receive が役割を返す | 現状は receive 後に `atct_role` を呼ぶ | **未着手** |
-| 完了報告を commander が書く | 現状は subcommander。再発行 25 件の原因 | 192 |
-| 依頼書は自分のゴールだけ | 現状は隣接ゴールを名指しする | **未着手** |
-| 取り下げが必ず届く | 現状は決定 0 件だと無音 | 179 |
-| commander が決定を出せる | 現状は CHECK 制約で不可 | 201（proposed） |
-| `atct_task_create` | 現状は `atct_task_declare` | 200 |
-| タスク側の handoff ツールも粒度を名前に持つ | 現状は `atct_handoff_*`（ゴール側は `atct_goal_handoff_*`）。名前が対象を表していない | **未着手** |
-| 自分でやるタスクにも claim を通す | 現状は handoff を持たない（直近 100 件中 24 件） | 177（proposed） |
+| 1 | handoff の完了がタスクを閉じる | **未着手** |
+| 2 | セッション鍵は receive で確定する | **未着手** |
+| 3 | receive が役割を返す | **未着手** |
+| 4 | 完了報告を commander が書く | 192 |
+| 5 | 依頼書は自分のゴールだけ | **未着手** |
+| 6 | 取り下げが必ず届く | 179 |
+| 7 | commander が決定を出せる | 201（proposed） |
+| 8 | `atct_task_create` に改名 | 200 |
+| 9 | タスク側の handoff ツールも粒度を名前に持つ | **未着手** |
+| 10 | 自分でやるタスクにも claim を通す | 177（proposed） |
+
+### 1. handoff の完了がタスクを閉じる
+
+| | |
+|---|---|
+| **いま** | `CompleteTaskHandoff`（`internal/store/task_handoff.go:298`、SQL は `internal/store/queries/task.sql:205`）が `task_handoffs` の `completed_report_at` と `complete_report` だけを書く。`tasks.status` を書くのは `UpdateTask` 経由の `task.update`（`internal/daemon/handler.go:994`）のみ |
+| **目標** | handoff の完了が `tasks.status='done'` も書く。executor の呼び出しが 1 つ減る |
+| **放置すると** | 片方だけ呼ばれた行が残る。実測 2 件（task 764 / 788）。**`internal/store/wakeup.go` の検知 13 種にこの乖離を拾うものが無い**ので、誰も気づかない |
+| **検査** | handoff を完了させた直後にタスクが `done` でないなら落ちること。**逆に、`atct_task_update` 単体でも従来どおり閉じられること**（handoff を持たないタスクがあるため） |
+
+### 2. セッション鍵は receive で確定する
+
+| | |
+|---|---|
+| **いま** | 各層が最初に `atct_session_identify` を呼ぶ。`skills/atct/SKILL.md` に 5 か所、`skills/start/SKILL.md` に 2 か所その指示がある |
+| **目標** | `ReceiveGoalHandoff`（`internal/store/goal_handoff.go:222`）と `ReceiveTaskHandoff`（`internal/store/task_handoff.go:225`）が呼び手の鍵を確定する。手順から 1 つ消える |
+| **放置すると** | 空鍵のセッションが積み上がる。`agent_sessions` に 4,260 行、**うち 160 行は決定を出している。**役割が導出できず、commander が 2026-08-28 に 3 回「役割が executor に落ちた」を踏んだ |
+| **未解決** | **鍵の値をどこから取るか。**呼び手のプロセス情報からか、request 側が渡すか。`atct_session_identify` を残すか消すかもここで決まる |
+
+### 3. receive が役割を返す
+
+| | |
+|---|---|
+| **いま** | receive の直後に `atct_role` を `expected_role` 付きで呼ばせる（`skills/atct/SKILL.md:257` と `:390`） |
+| **目標** | receive の応答に役割を含める。確認のための往復が消える |
+| **放置すると** | 手順が 1 つ増えたままで、`matches: false` を見落とすと役割の合わない層が作業を始める |
+| **注意** | **`atct_role` 自体は残す。**役割が壊れたときの診断に要る。手順から外すだけである |
+
+### 4. 完了報告を commander が書く
+
+| | |
+|---|---|
+| **いま** | subcommander が `atct_goal_complete` → `atct_goal_handoff_complete` の順で呼ぶ |
+| **目標** | subcommander は `atct_goal_handoff_complete` だけを呼ぶ。commander がレビュー後に `atct_goal_complete` を出す |
+| **放置すると** | 逆順で詰む経路が残る。2026-08-27〜28 に goal handoff の完了 28 件に対し**再発行が約 25 件、うち 15 件以上がこの順序違反** |
+| **未解決** | **commander の負担が増える量。**人間は同日に commander のトークン消費を減らす方向も指示している。192 が判断する |
+
+### 5. 依頼書は自分のゴールだけ
+
+| | |
+|---|---|
+| **いま** | `skills/atct/SKILL.md:377` が「Name in the request every adjacent goal that touches the same files and say which side owns what」と要求する |
+| **目標** | その要求を落とす。依頼書は「このゴールの worktree で作業せよ」で足りる |
+| **放置すると** | 委譲側が毎回全 worktree の diff を測る。**2026-08-28 に commander は 2 回測り違え、194・183・191・146 の 4 者から訂正された**（原因は `git diff` の既定 `-U3`）。防いでいる衝突は 16 マージに 1 件 |
+| **合わせて** | subcommander が着手時と完了前に `git merge main` を自分で行う手順を書く。**衝突が自分の権限で解決できない形なら commander へ返す** |
+
+### 6. 取り下げが必ず届く
+
+| | |
+|---|---|
+| **いま** | `WithdrawActiveGoal`（`internal/store/goal.go:636`）が `if len(openDecisions) > 0`（`:714`）で publish を門にしている。決定が 0 件なら素通りする |
+| **目標** | 決定の有無にかかわらずイベントを流す。担当 subcommander の watch に届く |
+| **放置すると** | タスクは全部 dropped、handoff は全部強制完了なのに、**subcommander は無音で、その executor は働き続ける** |
+| **注意** | `internal/httpapi/server.go` の `eventMatchesGoalID` は通す型を絞っている。**新しい型を足すならそこに case を足さないと `-goal` 指定の watch では落ちる** |
+
+### 7. commander が決定を出せる
+
+| | |
+|---|---|
+| **いま** | `CHECK (kind <> 'decision' OR status NOT IN ('open','answered') OR (task_id IS NOT NULL AND task_id <> ''))`。`0001_baseline.sql:79` から入り、`0019_integer_agent_session_ids.sql:62` に引き継がれている |
+| **目標** | ゴールに紐づく決定を許す。commander が公開や取り下げの可否を起票できる |
+| **放置すると** | commander は取り消せない操作を会話で聞くしかない。2026-08-28 に 2 回起きた（v0.60.0 の公開可否、ゴール 173 の取り下げ可否） |
+| **未解決** | **baseline がこの制約を置いた理由。**`kind='decision'` だけが縛られ、`completion` と `goal_approval` は task_id 無しで通っている（2026-08-29 時点でそれぞれ 226 件 / 123 件）。**理由を調べてから緩めるか、制約を残して別経路を作るかを決める** |
+
+### 8. `atct_task_create` に改名
+
+| | |
+|---|---|
+| **いま** | `atct_task_declare`。declare は「作業前に人間へ表明する」という規範を名前に背負わせたもので、その規範は `skills/atct/SKILL.md` の `## Declare before you work` 側に残る |
+| **目標** | `atct_task_create`。応答も `created` |
+| **状況** | ゴール 200 が実装済み。人間が「旧名は残さないで」と却下したため、非推奨エイリアスを消す作業が進行中 |
+
+### 9. タスク側の handoff ツールも粒度を名前に持つ
+
+| | |
+|---|---|
+| **いま** | ゴール側は `atct_goal_handoff_request` / `_receive` / `_complete` / `_report_amend`、タスク側は `atct_handoff_*`（`internal/mcpshim/tools.go:618` / `:629` / `:643` / `:657`）。**タスク側だけ粒度が名前に無い** |
+| **目標** | `atct_task_handoff_*` に揃える |
+| **放置すると** | 読む側が「どちらの handoff か」を文脈から補う。8 と同じ種類の問題である |
+| **注意** | **短い名前が長い名前の中に一致する。**`atct_handoff_complete` は `atct_goal_handoff_complete` の部分文字列なので、置換と検査はバックティックで囲んで区切る |
+
+### 10. 自分でやるタスクにも claim を通す
+
+| | |
+|---|---|
+| **いま** | `ClaimTask`（`internal/store/task.go:522`）は自己 handoff を書くが、**直近 100 タスクのうち 24 件は handoff を 1 つも持たない**（全期間では 803 件中 592 件）。subcommander が自分の職務としてタスクを立て、`atct_task_update` で閉じている |
+| **目標** | すべてのタスクが claim を通る。1 の自動化が全タスクに効くようになる |
+| **放置すると** | 1 を実装しても 24% は手で閉じ続ける。手順から「自分でやった分を閉じる」が消えない |
+| **未解決** | ゴール 177 が「`atct_task_claim` の自己 handoff がスキルの委譲手順を実行不能にする」を扱う。**177 の結論が出るまでこれは動かせない** |
 
 ### ゴール完了の門番はこのままにする
 
