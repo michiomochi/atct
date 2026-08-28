@@ -73,8 +73,8 @@ flowchart TD
         S1["5. atct_goal_handoff_receive<br/>→ ゴールの claim を得て subcommander になる"]
         S2["6. atct watch -goal &lt;goal_id&gt; を張る<br/>自分のゴールだけを渡す"]
         S3["7. 設計を決める<br/>superpowers:brainstorming<br/>superpowers:writing-plans"]
-        S4["8. plan を doc/plans/ に書き<br/>atct_goal_handoff_review で出す"]
-        S5["10. atct_task_create で<br/>plan の分解をタスクにする"]
+        S4["8. 設計の成果物を出す<br/>atct_goal_handoff_review"]
+        S5["10. atct_task_create で<br/>タスクにする"]
         S5b["11. atct_task_handoff_request<br/>タスクを executor へ<br/>superpowers:dispatching-parallel-agents"]
         S6["15. 実装をレビューする<br/>superpowers:requesting-code-review"]
         S7["16. atct_task_handoff_complete<br/>→ タスクが done になる"]
@@ -119,9 +119,9 @@ flowchart TD
 |---|---|
 | 1. worktree を用意 | `superpowers:using-git-worktrees` |
 | 7. 設計を決める | `superpowers:brainstorming` → `superpowers:writing-plans` |
-| 8. plan を出す | 7 の成果物を `doc/plans/` に置く |
+| 8. 設計の成果物を出す | 分類により変わる（下記） |
 | **9. 設計をレビューする（commander）** | `superpowers:requesting-code-review` |
-| 10. タスクを作成 | plan の分解をそのまま `atct_task_create` に渡す |
+| 10. タスクを作成 | plan があるならその分解をそのまま渡す。無いなら設計から起こす |
 | 11. タスクを executor へ | 2 つ以上を同時に出すなら `superpowers:dispatching-parallel-agents` |
 | 13. 実装とテスト | `superpowers:test-driven-development`、plan があるなら `superpowers:executing-plans` |
 | 14. review を出す前 | `superpowers:verification-before-completion` |
@@ -130,14 +130,32 @@ flowchart TD
 | 20. 着地した変更をレビューする | `superpowers:requesting-code-review` |
 | 21. main へマージする | `superpowers:finishing-a-development-branch` |
 
+### 7 と 8 が何を生むかは brainstorming の分類で決まる
+
+**`superpowers:brainstorming` は最初に 3 つに分類する。**生まれる成果物が違う。
+
+| 分類 | 生まれるもの | 手順 8 で出すもの |
+|---|---|---|
+| spike（調査） | **無し。**成果は答えである | 調査結果と推奨 |
+| bounded（限定的） | **無し。**チャットで短い設計を出して合意する | その設計 |
+| architectural | **spec →（writing-plans を呼んで）plan** | spec と plan |
+
+    brainstorming/SKILL.md:100   6. Write design doc -> spec を保存
+    brainstorming/SKILL.md:103   9. Transition to implementation -> writing-plans を呼ぶ
+    writing-plans/SKILL.md:18    Save plans to ...
+
+**spec は `doc/specs/`、plan は `doc/plans/` に置く**（superpowers の既定
+`docs/superpowers/` を上書きする）。
+
+**手順 8 は「plan を出す」ではない。**分類の結果として手元にあるものを出す。
+**spike で plan を捏造しない。**
+
 ### 手順に紐づかないもの
 
 - **差し戻しを受けた側**（15b で 11 に戻された executor、9b や 20b で 7 に戻された subcommander）は
   `superpowers:receiving-code-review` を使う
 - **バグ・テスト失敗・想定外の挙動に遭遇したら、修正案を出す前に
   `superpowers:systematic-debugging` を使う。**これは全層に効く
-- **設計文書は `doc/specs/`、実装計画は `doc/plans/` に置く。**
-  superpowers の既定は `docs/superpowers/` だが、それを上書きする
 
 ### 14 と 19 に同じスキルが付く理由
 
