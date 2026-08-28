@@ -33,14 +33,32 @@
 `eventProjectID` にも足す——`-project` の watch でプロジェクトを引けないと、
 `eventProjectID` が 0 を返して「全プロジェクトに通す」側に倒れる。
 
-### 2. 強制完了した task handoff の `handoff_reported`（既存名）
+### 2. 強制完了した task handoff の `handoff_reported` は流さない（一度採って取り消した）
 
 取り下げの tx は `q.CompleteTaskHandoff` を直接呼んで開いた task handoff を全部閉じる
-（`goal.go:683-701`）。**通常の `CompleteTaskHandoff` は閉じた後に `handoff_reported` を
-publish するが、取り下げ経路はそれを飛ばしている。**閉じ方は同じで通知だけが無い、という
-非対称である。ここを揃える。
+（`goal.go:683-701`）。通常の `CompleteTaskHandoff` は閉じた後に `handoff_reported` を
+publish するのに、取り下げ経路はそれを飛ばしている。**この非対称を揃えれば、既存の CLI が
+そのまま行を出す**——ので最初はそう決めた。**取り消した。**
 
-claim ロック（`handoffIsDelegation` が偽）は通常経路でも publish しないので、同じ条件で外す。
+**既存の検査がこの沈黙を意図として固定している。**
+
+    internal/store/goal_handoff_test.go:421
+    func TestWithdrawActiveGoalDoesNotPublishReportedTaskHandoff
+
+このテストは claim ロックではなく**本物の委譲**（`requested_by != received_by`）の handoff で
+検査しており、取り下げでは `handoff_reported` が流れないことを要求する。根拠は
+`c559fe7`「stop calling a claim lock a completion report」にある。
+
+> Nobody delegated it and nobody reports on it, yet its completion was announced
+> all the same. A commander read three such lines as completion reports in one
+> day and diagnosed the tree against work that had not started.
+
+**強制完了した handoff の `complete_report` は取り下げの理由であって、executor の報告ではない。**
+`handoff reported: task N ... <理由>` と出せば、commander が「終わった作業」として読む——
+`c559fe7` が消したのと同じ嘘になる。**CLI に行を出すために、理由のある既存の検査を
+覆さない。**
+
+したがって取り下げが流すイベントは `goal.withdrawn` **だけ**である。
 
 ## executor が dropped を知る経路（完了条件 4）
 
@@ -64,9 +82,8 @@ claim ロック（`handoffIsDelegation` が偽）は通常経路でも publish �
 なしに「どの executor を止めるか」を名指しできる。一覧を持たない通知なら、受け取った
 subcommander が結局 `atct_goal_get` を叩き直すことになる。
 
-さらに、閉じた handoff ごとに `handoff_reported` が流れるので、**executor を抱えている
-ケースでは `atct watch -goal N` が今日そのまま行を出す**
-（`atct handoff reported: task N (handoff X): <理由>`）。
+**ただしこの伝達は、下の「残る欠落」が埋まるまで CLI の行としては届かない。**
+SSE / WebSocket の購読者（ダッシュボード）には届く。
 
 ## 残る欠落
 
@@ -74,17 +91,33 @@ subcommander が結局 `atct_goal_get` を叩き直すことになる。
 名前を完全一致で振り分け、`default:` が `("", false)` を返し、`emitWatchDecisionWithState`
 が `!ok` で何も出さずに戻る。**`goal.withdrawn` に case を足さないと、CLI の行は出ない。**
 
-必要な変更は `cmd/atct/watch.go` の 1 case だけだが、**このファイルはゴール 192 が
-同じ `formatWatchDecision` を書き換え中である**ため、179 では触らない。
+既存の検査がこの落とし方を意図として書いている。
+
+    $ go test ./cmd/atct/ -run 'TestEmitWatchDetectionIgnoresUnknownEvent' -count=1 -v
+    === RUN   TestEmitWatchDetectionIgnoresUnknownEvent
+    --- PASS: TestEmitWatchDetectionIgnoresUnknownEvent (0.00s)
+    ok  	github.com/michiomochi/atct/cmd/atct	0.710s
+
+必要な変更は `formatWatchDecision` に 1 case だけである。**`watchDecision` は
+`GoalID`（`json:"goal_id"`）と `Reason`（`json:"reason"`）を既に持っているので、
+構造体の変更は要らない。**
+
+    case store.EventGoalWithdrawn:  // 定数は使わず "goal.withdrawn" 直書きが既存の作法
+        return fmt.Sprintf("atct goal withdrawn (goal_id: %s): %s", decision.GoalID, decision.Reason), true
+
+**それでも 179 では触らない。**ゴール 192 が同じ `formatWatchDecision` を書き換え中である。
 
     $ mb=$(git merge-base main wt/goal-192); git diff -U0 $mb wt/goal-192 -- cmd/atct/watch.go | grep '^@@'
     @@ -55,0 +56 @@ type watchDecision struct {
     @@ -821 +822,10 @@ func formatWatchDecision(eventName string, decision watchDecision) (string, bool
 
-**この欠落が実害になるのは「タスクも決定も 0 件のゴールを取り下げたとき」だけ**である。
-handoff を抱えているゴールは `handoff_reported` の行が出る。**止めるべき executor が
-居ないケースだけが、CLI で無音のまま残る。**ダッシュボードは
-`web/src/lib/ui.ts` の `DECISION_EVENT_NAMES` に `goal.withdrawn` を足すので更新される。
+**この欠落は取り下げの全ケースに及ぶ。**取り下げると `atct watch -goal N` は今のところ
+無音のままである——`detection.all_tasks_dropped` も助けにならない。検知器は
+`wakeup.go:180` で `goal.Status != domain.GoalActive` を `continue` するので、
+**取り下げ済みのゴールは検知の対象から外れる。**
+
+ダッシュボードは `web/src/lib/ui.ts` の `DECISION_EVENT_NAMES` に `goal.withdrawn` を
+足すので更新される。**192 がマージされた後に、上の 1 case を当てる必要がある。**
 
 ## 検査
 
