@@ -19,8 +19,8 @@
 
 | 層 | やること |
 |---|---|
-| `commander` | 受け入れ仕分け / ゴールの分割 / worktree の用意 / subcommander の起動 / **着地した変更のレビュー** / **ゴールの完了報告** / 衝突の解決 / 公開 / 後片付け |
-| `subcommander` | ゴールの設計 / 作業の委譲 / 実装レビュー / コミット / 人間への決定の起票 |
+| `commander` | 受け入れ仕分け / ゴールの分割 / worktree の用意 / subcommander の起動と終了 / **設計のレビュー** / **着地した変更のレビュー** / **ゴールの完了報告** / 衝突の解決 / 公開 / 後片付け |
+| `subcommander` | ゴールの設計 / 作業の委譲 / executor の起動と終了 / 実装レビュー / コミット / 人間への決定の起票 |
 | `executor` | 実装 / テスト / 渡されたタスクを閉じる |
 
 **現状との最大の差は「ゴールの完了報告」が commander に移ることである。**
@@ -44,7 +44,7 @@
 |---|---|
 | 手順 3（request）の直後 | commander |
 | 手順 5（receive）の後 | subcommander |
-| 手順 19（commander が handoff complete）の後 | 誰も持たない |
+| 手順 22（commander が handoff complete）の後 | 誰も持たない |
 
 `goal_handoffs` は 1 ゴールに open な行を 1 本だけ許す
 （`idx_goal_handoffs_open_goal_id`）。**したがって委譲側は handoff を request する
@@ -61,41 +61,45 @@ flowchart TD
         C2["2. ターミナルマルチプレクサを利用の場合は<br/>subcommander の作業場所を用意"]
         C3["3. atct_goal_handoff_request"]
         C4["4. subcommander を立ち上げ、依頼文を送る"]
-        C5["17. 着地した変更をレビューする<br/>superpowers:requesting-code-review"]
-        C6["18. main へマージする<br/>superpowers:finishing-a-development-branch<br/>衝突はここで解決する"]
-        C7["19. atct_goal_handoff_complete<br/>→ ゴールの claim が空く"]
-        C8["20. atct_goal_complete（6 部）"]
-        C9["21. 承認されたら worktree を片付ける"]
+        CD["9. 設計をレビューする<br/>superpowers:requesting-code-review"]
+        C5["20. 着地した変更をレビューする<br/>superpowers:requesting-code-review"]
+        C6["21. main へマージする<br/>superpowers:finishing-a-development-branch<br/>衝突はここで解決する"]
+        C7["22. atct_goal_handoff_complete<br/>→ ゴールの claim が空く"]
+        C8["23. atct_goal_complete（6 部）"]
+        C9["24. 承認されたら subcommander を閉じ<br/>worktree を片付ける"]
     end
 
     subgraph S["subcommander（ゴール 1 つに 1 人）"]
         S1["5. atct_goal_handoff_receive<br/>→ ゴールの claim を得て subcommander になる"]
         S2["6. atct watch -goal &lt;goal_id&gt; を張る<br/>自分のゴールだけを渡す"]
         S3["7. 設計を決める<br/>superpowers:brainstorming<br/>superpowers:writing-plans"]
-        S4["8. atct_task_create で<br/>ゴールに必要なタスクを作成<br/>plan の分解をそのまま渡す"]
-        S5["9. atct_task_handoff_request<br/>タスクを executor へ<br/>superpowers:dispatching-parallel-agents"]
-        S6["13. 実装をレビューする<br/>superpowers:requesting-code-review"]
-        S7["14. atct_task_handoff_complete<br/>→ タスクが done になる"]
-        S8["15. コミットする"]
-        S9["16. atct_goal_handoff_review<br/>superpowers:verification-before-completion<br/>→ ゴールがレビュー待ちになる"]
+        S4["8. plan を doc/plans/ に書き<br/>atct_goal_handoff_review で出す"]
+        S5["10. atct_task_create で<br/>plan の分解をタスクにする"]
+        S5b["11. atct_task_handoff_request<br/>タスクを executor へ<br/>superpowers:dispatching-parallel-agents"]
+        S6["15. 実装をレビューする<br/>superpowers:requesting-code-review"]
+        S7["16. atct_task_handoff_complete<br/>→ タスクが done になる"]
+        S8["17. 次に渡すタスクが無ければ<br/>その executor を閉じる"]
+        S9["18. コミットする"]
+        S10["19. atct_goal_handoff_review<br/>superpowers:verification-before-completion<br/>→ ゴールがレビュー待ちになる"]
     end
 
     subgraph E["executor（タスク単位・複数可）"]
-        E1["10. atct_task_handoff_receive<br/>→ タスクの claim を得て executor になる"]
-        E2["11. 実装とテスト<br/>superpowers:test-driven-development<br/>superpowers:executing-plans"]
-        E3["12. atct_task_handoff_review<br/>superpowers:verification-before-completion<br/>→ タスクがレビュー待ちになる"]
+        E1["12. atct_task_handoff_receive<br/>→ タスクの claim を得て executor になる"]
+        E2["13. 実装とテスト<br/>superpowers:test-driven-development<br/>superpowers:executing-plans"]
+        E3["14. atct_task_handoff_review<br/>superpowers:verification-before-completion<br/>→ タスクがレビュー待ちになる"]
     end
 
     G --> C1 --> C2 --> C3 --> C4 --> S1
-    S1 --> S2 --> S3 --> S4
+    S1 --> S2 --> S3 --> S4 --> CD
 
-    S4 --> S5 --> E1 --> E2 --> E3
+    CD -->|受理| S5 --> S5b --> E1 --> E2 --> E3
+    CD -->|差し戻し| S3
 
     E3 --> S6
-    S6 -->|受理| S7 --> S8 --> S9
-    S6 -->|差し戻し| S5
+    S6 -->|受理| S7 --> S8 --> S9 --> S10
+    S6 -->|差し戻し| S5b
 
-    S9 --> C5
+    S10 --> C5
     C5 -->|受理| C6 --> C7 --> C8
     C5 -->|差し戻し| S3
     C8 -.->|承認要求| H2([人間が web で承認/却下])
@@ -115,32 +119,34 @@ flowchart TD
 |---|---|
 | 1. worktree を用意 | `superpowers:using-git-worktrees` |
 | 7. 設計を決める | `superpowers:brainstorming` → `superpowers:writing-plans` |
-| 8. タスクを作成 | 7 で書いた plan の分解をそのまま `atct_task_create` に渡す |
-| 9. タスクを executor へ | 2 つ以上を同時に出すなら `superpowers:dispatching-parallel-agents` |
-| 11. 実装とテスト | `superpowers:test-driven-development`、plan があるなら `superpowers:executing-plans` |
-| 12. review を出す前 | `superpowers:verification-before-completion` |
-| 13. 実装をレビューする | `superpowers:requesting-code-review` |
-| 16. ゴールの review を出す前 | `superpowers:verification-before-completion` |
-| 17. 着地した変更をレビューする | `superpowers:requesting-code-review` |
-| 18. main へマージする | `superpowers:finishing-a-development-branch` |
+| 8. plan を出す | 7 の成果物を `doc/plans/` に置く |
+| **9. 設計をレビューする（commander）** | `superpowers:requesting-code-review` |
+| 10. タスクを作成 | plan の分解をそのまま `atct_task_create` に渡す |
+| 11. タスクを executor へ | 2 つ以上を同時に出すなら `superpowers:dispatching-parallel-agents` |
+| 13. 実装とテスト | `superpowers:test-driven-development`、plan があるなら `superpowers:executing-plans` |
+| 14. review を出す前 | `superpowers:verification-before-completion` |
+| 15. 実装をレビューする | `superpowers:requesting-code-review` |
+| 19. ゴールの review を出す前 | `superpowers:verification-before-completion` |
+| 20. 着地した変更をレビューする | `superpowers:requesting-code-review` |
+| 21. main へマージする | `superpowers:finishing-a-development-branch` |
 
 ### 手順に紐づかないもの
 
-- **差し戻しを受けた側**（14b で 9 に戻された executor、18b で 7 に戻された subcommander）は
+- **差し戻しを受けた側**（15b で 11 に戻された executor、9b や 20b で 7 に戻された subcommander）は
   `superpowers:receiving-code-review` を使う
 - **バグ・テスト失敗・想定外の挙動に遭遇したら、修正案を出す前に
   `superpowers:systematic-debugging` を使う。**これは全層に効く
 - **設計文書は `doc/specs/`、実装計画は `doc/plans/` に置く。**
   superpowers の既定は `docs/superpowers/` だが、それを上書きする
 
-### 12 と 16 に同じスキルが付く理由
+### 14 と 19 に同じスキルが付く理由
 
 `verification-before-completion` は「完了だと主張する前に検証を走らせる」ものである。
 **review を出す行為が「完了だと主張する」に当たる。**executor がタスクについて、
 subcommander がゴールについて、それぞれ同じことをする。
 
 **2026-08-28 にゴール 185 は自分のブランチが赤いまま完了報告を出した。**
-このスキルが 16 の位置にあれば、報告の前に落ちていた。
+このスキルが 19 の位置にあれば、報告の前に落ちていた。
 
 ## handoff は 3 状態で動く
 
@@ -161,13 +167,23 @@ subcommander がゴールについて、それぞれ同じことをする。
                    14a. 受理  -> atct_task_handoff_complete  -> tasks.status = 'done'
                    14b. 差し戻し -> 9 に戻って atct_task_handoff_request
 
-### ゴールの場合
+### ゴールの場合（review を 2 回通る）
 
-    subcommander   15. コミットする
-                   16. atct_goal_handoff_review     -> ゴールがレビュー待ち
-    commander      17. 着地した変更をレビューする
-                   18a. 受理  -> マージ -> atct_goal_handoff_complete -> atct_goal_complete
-                   18b. 差し戻し -> subcommander が 7 から続ける
+**1 回目は設計、2 回目は実装である。**どちらも commander がレビューする。
+
+    subcommander    7. 設計を決める
+                    8. plan を doc/plans/ に書き atct_goal_handoff_review で出す
+    commander       9a. 受理  -> subcommander が 10 へ進む
+                    9b. 差し戻し -> subcommander が 7 に戻る
+
+    subcommander   17. 次に渡すタスクが無ければその executor を閉じる
+                   18. コミットする
+                   19. atct_goal_handoff_review     -> 2 回目
+    commander      20a. 受理  -> マージ -> atct_goal_handoff_complete -> atct_goal_complete
+                   20b. 差し戻し -> subcommander が 7 に戻る
+
+**設計を先にレビューすると、実装が終わってから方針を差し戻す事故が消える。**
+9 で止めれば無駄になるのは plan だけで、10 以降の実装は始まっていない。
 
 ### これで再発行が要らなくなる
 
@@ -190,6 +206,36 @@ handoff に `review_report`（作業した側が書く）と `reject_report`（�
 
 **executor の呼び出しは 3 つである**（receive / 実装 / review）。
 
+## 立ち上げた者が閉じる
+
+| 誰を閉じるか | 閉じる者 | いつ |
+|---|---|---|
+| executor | subcommander | **手順 17。**その executor へ次に渡すタスクが無いとき |
+| subcommander | commander | **手順 24。**人間が承認したとき |
+
+**worktree が分離を担うので、「他のゴールと交差するファイルの都合で待たせる」理由は無い。**
+受理して次が無ければ、その場で閉じる。
+
+### 閉じないと何が起きるか
+
+**エージェントは 1 台ごとに常駐コストを持つ。**2026-08-28 の実測では、
+1 セッションあたり MCP サーバが約 5 プロセス起動していた。
+
+    $ ps -Ao rss=,args= | (MCP サーバを分類して合計)
+    playwright-mcp   n=40   RSS=3.80 GB
+    context7         n=40   RSS=3.36 GB
+    その他 MCP        n=20   RSS=0.92 GB
+
+**20 の作業単位で約 100 プロセス・約 8 GB が、1 度も呼ばれないまま常駐していた。**
+
+**閉じ忘れると、上限を避けるために古いエージェントを使い回すことになる。**
+使い回すと前の依頼の履歴が毎回コンテキストに乗るため、読む対象を絞っても減らない。
+
+### 閉じる前に確かめること
+
+- **未コミットの変更が無いこと。**編集途中のファイルを持ったまま閉じると、その作業は失われる
+- **報告を受け取っていること。**手順 16（受理）が済んでいれば満たされている
+
 ## タスクは必ず executor に渡る
 
 **subcommander はタスクを自分で持たない。**設計は手順 7 であってタスクではない。
@@ -209,10 +255,10 @@ handoff に `review_report`（作業した側が書く）と `reject_report`（�
 
 | 中身 | 件数 | 目標フローでの扱い |
 |---|---|---|
-| spec を書く | 4 | 設計（手順 7）に含む |
+| spec を書く | 4 | 設計（手順 7〜8）に含む |
 | 調査と実測 | 5 | executor へ渡す |
 | 人間への決定 | 4 | `atct_decision_ask` を呼ぶ |
-| レビュー | 1 | 手順 13 |
+| レビュー | 1 | 手順 15 |
 | **実装そのもの** | **12** | **executor へ渡す** |
 
 **12 件は subcommander 自身の実装である。**役割表は subcommander に実装を割り当てて
@@ -419,6 +465,7 @@ flowchart LR
 | **必要な変更** | `task_handoffs` / `goal_handoffs` に review の時刻と報告を持つ列を足す移行 / `TaskStatus`（`internal/domain/status.go:14`）に `review` を足す / MCP ツール 2 つを追加 / `internal/store/wakeup.go` に「review のまま動かない」検知 |
 | **未解決** | **差し戻しの理由をどこに書くか。**`complete_report` は受理のときに書かれる。review の報告と差し戻しの理由を別の列にするか、`request_report` を再利用するか |
 | **未解決** | **`goals.status` に `review` を持たせるか。**タスク側は `tasks.status` に持たせると人間に言われている。ゴール側は handoff だけに持たせても、ダッシュボードから見えるかを確かめる必要がある |
+| **未解決** | **goal handoff は review を 2 回通る**（手順 9 の設計と手順 20 の実装）。**commander が「どちらの review か」を判別できる形が要る。**コミットの有無で推測するのではなく、review に種別を持たせるか、状態を 2 つに分けるかを決める |
 
 ### 1. handoff の状態遷移がタスクの状態を書く
 
@@ -505,7 +552,7 @@ flowchart LR
 | | |
 |---|---|
 | **いま** | 直近 120 タスクのうち subcommander が立てて handoff を持たないものが 26 件あり、**うち 12 件は subcommander 自身の実装である。**役割表は subcommander に実装を割り当てていない |
-| **目標** | subcommander はタスクを持たない。設計は手順 7、人間への決定は `atct_decision_ask`、レビューは手順 13 で、いずれもタスクではない |
+| **目標** | subcommander はタスクを持たない。設計は手順 7、人間への決定は `atct_decision_ask`、レビューは手順 15 で、いずれもタスクではない |
 | **放置すると** | 役割違反が「自分でやるタスク」の枠に紛れる。差分 1 も 24% のタスクに効かない |
 | **合わせて** | ゴール 177（`atct_task_claim` の自己 handoff がスキルの委譲手順を実行不能にする）は、**全タスクが handoff を通るなら自己 claim の経路そのものが不要になる。**177 の扱いをここで決める |
 
