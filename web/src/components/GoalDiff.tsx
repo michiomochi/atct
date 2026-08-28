@@ -96,7 +96,12 @@ export function GoalDiff({ goalID }: Props) {
     };
   }, [goalID, t]);
 
-  if (state.kind === "ready" && !state.data.available && state.data.reason !== "timeout") {
+  if (
+    state.kind === "ready" &&
+    !state.data.available &&
+    state.data.reason !== "timeout" &&
+    state.data.reason !== "merged_unresolved"
+  ) {
     return null;
   }
 
@@ -115,6 +120,11 @@ export function GoalDiff({ goalID }: Props) {
       {state.kind === "ready" && !state.data.available && state.data.reason === "timeout" && (
         <p className="mt-4 text-base text-ink-700">{t("goal.diff.unknown")}</p>
       )}
+      {state.kind === "ready" && !state.data.available && state.data.reason === "merged_unresolved" && (
+        <p data-testid="goal-diff-merged-unresolved" className="mt-4 text-base text-ink-700">
+          {t("goal.diff.mergedUnresolved")}
+        </p>
+      )}
       {state.kind === "ready" && state.data.available && (
         <>
           <div className="mt-4 flex flex-wrap gap-x-4 gap-y-1 text-base text-ink-700">
@@ -127,6 +137,11 @@ export function GoalDiff({ goalID }: Props) {
             <span>
               {t("goal.diff.deletions")}: <strong data-testid="goal-diff-deletions">−{state.data.deletions}</strong>
             </span>
+            {state.data.source === "merge_commit" && (
+              <span data-testid="goal-diff-merge-commit">
+                {t("goal.diff.merged", { sha: state.data.merge_commit.slice(0, 7) })}
+              </span>
+            )}
           </div>
 
           {state.data.files.length === 0 ? (

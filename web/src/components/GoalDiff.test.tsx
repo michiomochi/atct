@@ -14,8 +14,14 @@ const apiMock = vi.hoisted(() => ({
 }));
 
 const i18nMock = vi.hoisted(() => ({
-  t: (key: string, options?: { count?: number }) => {
+  t: (key: string, options?: { count?: number; sha?: string }) => {
     if (key === "goal.diff.unknown") return "不明";
+    if (key === "goal.diff.merged" && options?.sha !== undefined) {
+      return `マージ済み（${options.sha}）`;
+    }
+    if (key === "goal.diff.mergedUnresolved") {
+      return "マージ済みですが、マージコミットを特定できませんでした。";
+    }
     if (key === "goal.diff.omitted" && options?.count !== undefined) {
       return `差分が大きいので表示しません（${options.count}行）。`;
     }
@@ -51,6 +57,8 @@ const availableDiff = {
   reason: "",
   base_ref: "main",
   branch: "wt/goal-1",
+  source: "branch",
+  merge_commit: "",
   files_changed: 2,
   insertions: 12,
   deletions: 4,
@@ -82,6 +90,28 @@ describe("GoalDiff", () => {
     expect(screen.getByTestId("goal-diff-insertions").textContent).toBe("+12");
     expect(screen.getByTestId("goal-diff-deletions").textContent).toBe("−4");
     expect(screen.queryByText("src/one.ts")).not.toBeNull();
+  });
+
+  it("shows the merge commit marker with a shortened SHA", async () => {
+    apiMock.fetchGoalDiff.mockResolvedValue({
+      ...availableDiff,
+      source: "merge_commit",
+      merge_commit: "abcdef1234567890abcdef1234567890abcdef12",
+    });
+
+    render(<GoalDiff goalID="goal-1" />);
+
+    const marker = await screen.findByTestId("goal-diff-merge-commit");
+    expect(marker.textContent).toBe("マージ済み（abcdef1）");
+  });
+
+  it("does not show a merge commit marker for a branch diff", async () => {
+    apiMock.fetchGoalDiff.mockResolvedValue(availableDiff);
+
+    render(<GoalDiff goalID="goal-1" />);
+
+    await screen.findByTestId("goal-diff-files-changed");
+    expect(screen.queryByTestId("goal-diff-merge-commit")).toBeNull();
   });
 
   it("fetches and renders a patch when a file is opened", async () => {
@@ -169,6 +199,24 @@ describe("GoalDiff", () => {
     render(<GoalDiff goalID="goal-1" />);
 
     await waitFor(() => expect(screen.queryByRole("heading", { name: "goal.diff.title" })).toBeNull());
+  });
+
+  it("keeps the section and shows a reason when a merged diff is unresolved", async () => {
+    apiMock.fetchGoalDiff.mockResolvedValue({
+      available: false,
+      reason: "merged_unresolved",
+      base_ref: "main",
+      branch: "wt/goal-1",
+      files_changed: 0,
+      insertions: 0,
+      deletions: 0,
+      files: [],
+    });
+
+    render(<GoalDiff goalID="goal-1" />);
+
+    expect(await screen.findByTestId("goal-diff")).not.toBeNull();
+    expect(await screen.findByTestId("goal-diff-merged-unresolved")).not.toBeNull();
   });
 
   it("shows an error inside the section when loading the diff fails", async () => {

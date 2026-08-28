@@ -61,6 +61,8 @@ export const ja: Record<TranslationKey, string> = {
   "goal.diff.empty": "表示できる差分はありません。",
   "goal.diff.error": "ゴールの差分を読み込めませんでした。",
   "goal.diff.omitted": "差分が大きいので表示しません（{{count}}行）。",
+  "goal.diff.merged": "マージ済み（{{sha}}）",
+  "goal.diff.mergedUnresolved": "マージ済みですが、マージコミットを特定できませんでした。",
   "goal.commits.title": "コミット",
   "goal.derivedFrom.title": "派生元",
   "goal.derivedGoals.title": "派生したゴール",

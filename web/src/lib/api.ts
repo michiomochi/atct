@@ -168,6 +168,8 @@ export interface GoalDiff {
   reason: string;
   base_ref: string;
   branch: string;
+  source: string;
+  merge_commit: string;
   files_changed: number;
   insertions: number;
   deletions: number;

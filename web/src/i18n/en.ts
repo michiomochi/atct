@@ -60,6 +60,8 @@ export const en = {
   "goal.diff.empty": "No diff available.",
   "goal.diff.error": "Could not load the goal diff.",
   "goal.diff.omitted": "Diff is too large to display ({{count}} lines).",
+  "goal.diff.merged": "Merged ({{sha}})",
+  "goal.diff.mergedUnresolved": "Merged, but the merge commit could not be identified.",
   "goal.commits.title": "Commits",
   "goal.derivedFrom.title": "Derived from",
   "goal.derivedGoals.title": "Derived goals",

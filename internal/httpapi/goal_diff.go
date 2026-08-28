@@ -16,6 +16,8 @@ type goalDiffView struct {
 	Reason       string               `json:"reason"`
 	BaseRef      string               `json:"base_ref"`
 	Branch       string               `json:"branch"`
+	Source       string               `json:"source"`
+	MergeCommit  string               `json:"merge_commit"`
 	FilesChanged int                  `json:"files_changed"`
 	Insertions   int                  `json:"insertions"`
 	Deletions    int                  `json:"deletions"`
@@ -84,15 +86,49 @@ func (s *Server) handleGoalDiff(w http.ResponseWriter, r *http.Request, goalID s
 	response.BaseRef = baseRef
 	response.Branch = branch
 
+	diffArgs := []string{baseRevision + "..." + branch}
 	if _, err := runGoalDiffGit(gitCtx, projectRootPath, "show-ref", "--verify", "--quiet", "refs/heads/"+branch); err != nil {
-		response.Reason = goalDiffFailureReason(gitCtx, "no_branch")
-		writeJSON(w, http.StatusOK, response)
-		return
+		mergeCommit, parents, resolveErr := goalDiffMergeCommitByMessage(gitCtx, projectRootPath, strconv.FormatInt(canonicalGoalID, 10), baseRevision)
+		if resolveErr != nil {
+			response.Reason = goalDiffFailureReason(gitCtx, "no_branch")
+			writeJSON(w, http.StatusOK, response)
+			return
+		}
+		if mergeCommit == "" {
+			response.Reason = "no_branch"
+			writeJSON(w, http.StatusOK, response)
+			return
+		}
+		if parents < 2 {
+			response.Reason = "merged_unresolved"
+			writeJSON(w, http.StatusOK, response)
+			return
+		}
+		diffArgs = []string{mergeCommit + "^1", mergeCommit}
+		response.Source = "merge_commit"
+		response.MergeCommit = mergeCommit
+	} else {
+		mergeCommit, resolveErr := goalDiffMergeCommitForBranch(gitCtx, projectRootPath, branch, baseRevision)
+		if resolveErr != nil {
+			response.Reason = goalDiffFailureReason(gitCtx, "diff_failed")
+			writeJSON(w, http.StatusOK, response)
+			return
+		}
+		response.Source = "branch"
+		if mergeCommit != "" {
+			diffArgs = []string{mergeCommit + "^1", mergeCommit}
+			response.Source = "merge_commit"
+			response.MergeCommit = mergeCommit
+		}
 	}
 
 	path := r.URL.Query().Get("path")
 	if path != "" {
-		output, err := runGoalDiffGit(gitCtx, projectRootPath, "diff", baseRevision+"..."+branch, "--", path)
+		pathDiffArgs := make([]string, 0, len(diffArgs)+3)
+		pathDiffArgs = append(pathDiffArgs, "diff")
+		pathDiffArgs = append(pathDiffArgs, diffArgs...)
+		pathDiffArgs = append(pathDiffArgs, "--", path)
+		output, err := runGoalDiffGit(gitCtx, projectRootPath, pathDiffArgs...)
 		if err != nil {
 			response.Reason = goalDiffFailureReason(gitCtx, "diff_failed")
 			writeJSON(w, http.StatusOK, response)
@@ -111,7 +147,10 @@ func (s *Server) handleGoalDiff(w http.ResponseWriter, r *http.Request, goalID s
 		return
 	}
 
-	output, err := runGoalDiffGit(gitCtx, projectRootPath, "diff", "--numstat", baseRevision+"..."+branch)
+	numstatDiffArgs := make([]string, 0, len(diffArgs)+2)
+	numstatDiffArgs = append(numstatDiffArgs, "diff", "--numstat")
+	numstatDiffArgs = append(numstatDiffArgs, diffArgs...)
+	output, err := runGoalDiffGit(gitCtx, projectRootPath, numstatDiffArgs...)
 	if err != nil {
 		response.Reason = goalDiffFailureReason(gitCtx, "diff_failed")
 		writeJSON(w, http.StatusOK, response)
@@ -131,6 +170,50 @@ func (s *Server) handleGoalDiff(w http.ResponseWriter, r *http.Request, goalID s
 		response.Deletions += file.Deletions
 	}
 	writeJSON(w, http.StatusOK, response)
+}
+
+func goalDiffMergeCommitForBranch(ctx context.Context, projectRootPath, branch, baseRevision string) (string, error) {
+	branchRef := "refs/heads/" + branch
+
+	tipOutput, err := runGoalDiffGit(ctx, projectRootPath, "rev-parse", branchRef)
+	if err != nil {
+		return "", err
+	}
+	branchTip := strings.TrimSpace(string(tipOutput))
+
+	output, err := runGoalDiffGit(ctx, projectRootPath, "rev-list", "--ancestry-path", "--merges", "--topo-order", "--reverse", branchRef+".."+baseRevision)
+	if err != nil {
+		return "", err
+	}
+	for _, mergeCommit := range strings.Fields(string(output)) {
+		secondParent, err := runGoalDiffGit(ctx, projectRootPath, "rev-parse", mergeCommit+"^2")
+		if err != nil {
+			if ctx.Err() != nil {
+				return "", ctx.Err()
+			}
+			continue
+		}
+		if strings.TrimSpace(string(secondParent)) == branchTip {
+			return mergeCommit, nil
+		}
+	}
+	return "", nil
+}
+
+func goalDiffMergeCommitByMessage(ctx context.Context, projectRootPath, goalID, baseRevision string) (string, int, error) {
+	pattern := "^Merge goal " + goalID + "([: ]|$)"
+	output, err := runGoalDiffGit(ctx, projectRootPath, "log", "-E", "--grep="+pattern, "--format=%H %P", baseRevision)
+	if err != nil {
+		return "", 0, err
+	}
+	for _, line := range strings.Split(string(output), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
+		return fields[0], len(fields) - 1, nil
+	}
+	return "", 0, nil
 }
 
 func goalWorktreeBranch(goalID int64) string {
