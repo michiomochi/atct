@@ -25,6 +25,7 @@ type unappliedDecisionScopeRPCTestFixture struct {
 	decisionBID           int64
 	commanderSessionID    int64
 	subcommanderSessionID int64
+	swappedSessionID      int64
 }
 
 func newUnappliedDecisionScopeRPCTestFixture(t *testing.T) unappliedDecisionScopeRPCTestFixture {
@@ -58,7 +59,8 @@ func newUnappliedDecisionScopeRPCTestFixture(t *testing.T) unappliedDecisionScop
 	}
 	commanderSessionID := daemonTestSessionID(t, s, "decision-scope-commander")
 	subcommanderSessionID := daemonTestSessionID(t, s, "decision-scope-subcommander")
-	for _, sessionID := range []int64{commanderSessionID, subcommanderSessionID} {
+	swappedSessionID := daemonTestSessionID(t, s, "decision-scope-swapped")
+	for _, sessionID := range []int64{commanderSessionID, subcommanderSessionID, swappedSessionID} {
 		if err := s.AssociateAgentSessionWithProject(ctx, sessionID, project.ID); err != nil {
 			s.Close()
 			t.Fatalf("AssociateAgentSessionWithProject(%v): %v", sessionID, err)
@@ -165,6 +167,7 @@ func newUnappliedDecisionScopeRPCTestFixture(t *testing.T) unappliedDecisionScop
 		decisionBID:           decisionB.ID,
 		commanderSessionID:    commanderSessionID,
 		subcommanderSessionID: subcommanderSessionID,
+		swappedSessionID:      swappedSessionID,
 	}
 }
 
@@ -290,6 +293,96 @@ func TestGoalListForSubcommanderExcludesOtherGoalOrphanedDecisions(t *testing.T)
 	assertDecisionSet(t, notificationIDs(t, result), f.decisionAID)
 }
 
+func TestTaskDeclareForSwappedSessionScopesToRequestGoal(t *testing.T) {
+	f := newUnappliedDecisionScopeRPCTestFixture(t)
+	result := f.callRPC(t, "task.declare", map[string]any{
+		"goal_id":                   f.goalAID,
+		"agent":                     "swapped",
+		"idempotency_key":           "rpc-swapped-goal-a-task",
+		"titles":                    []string{"swapped goal A task"},
+		"descriptions":              []string{"swapped goal A task description"},
+		"agent_session_id":          f.swappedSessionID,
+		"include_unapplied_answers": true,
+	})
+	assertDecisionSet(t, notificationIDs(t, result), f.decisionAID)
+}
+
+func TestTaskDeclareForSwappedSessionFollowsTheRequestedGoal(t *testing.T) {
+	f := newUnappliedDecisionScopeRPCTestFixture(t)
+	result := f.callRPC(t, "task.declare", map[string]any{
+		"goal_id":                   f.goalBID,
+		"agent":                     "swapped",
+		"idempotency_key":           "rpc-swapped-goal-b-task",
+		"titles":                    []string{"swapped goal B task"},
+		"descriptions":              []string{"swapped goal B task description"},
+		"agent_session_id":          f.swappedSessionID,
+		"include_unapplied_answers": true,
+	})
+	assertDecisionSet(t, notificationIDs(t, result), f.decisionBID)
+}
+
+func TestGoalListForSwappedSessionDeclaresUnfilteredScope(t *testing.T) {
+	f := newUnappliedDecisionScopeRPCTestFixture(t)
+	result := f.callRPC(t, "goal.list", map[string]any{
+		"cwd":                       f.projectRoot,
+		"agent_session_id":          f.swappedSessionID,
+		"include_unapplied_answers": true,
+	})
+	data := responseData(t, result)
+	assertDecisionSet(t, orphanedDecisionIDs(t, data), f.decisionAID, f.decisionBID)
+	assertDecisionSet(t, notificationIDs(t, result), f.decisionAID, f.decisionBID)
+	scope, ok := data["orphaned_decisions_scope"].(map[string]any)
+	if !ok {
+		t.Fatalf("orphaned_decisions_scope = %#v, want object", data["orphaned_decisions_scope"])
+	}
+	if scope["scope"] != "project" {
+		t.Fatalf("orphaned_decisions_scope.scope = %#v, want project", scope["scope"])
+	}
+	if note, ok := scope["note"].(string); !ok || note == "" {
+		t.Fatalf("orphaned_decisions_scope.note = %#v, want non-empty string", scope["note"])
+	}
+}
+
+func TestGoalListForCommanderDeclaresProjectScopeWithoutNote(t *testing.T) {
+	f := newUnappliedDecisionScopeRPCTestFixture(t)
+	result := f.callRPC(t, "goal.list", map[string]any{
+		"cwd":                       f.projectRoot,
+		"agent_session_id":          f.commanderSessionID,
+		"include_unapplied_answers": true,
+	})
+	data := responseData(t, result)
+	scope, ok := data["orphaned_decisions_scope"].(map[string]any)
+	if !ok {
+		t.Fatalf("orphaned_decisions_scope = %#v, want object", data["orphaned_decisions_scope"])
+	}
+	if scope["scope"] != "project" || scope["role"] != "commander" {
+		t.Fatalf("orphaned_decisions_scope = %#v, want project commander", scope)
+	}
+	if note, ok := scope["note"].(string); ok && note != "" {
+		t.Fatalf("orphaned_decisions_scope.note = %#v, want empty", scope["note"])
+	}
+}
+
+func TestGoalListForSubcommanderDeclaresGoalScope(t *testing.T) {
+	f := newUnappliedDecisionScopeRPCTestFixture(t)
+	result := f.callRPC(t, "goal.list", map[string]any{
+		"cwd":                       f.projectRoot,
+		"agent_session_id":          f.subcommanderSessionID,
+		"include_unapplied_answers": true,
+	})
+	data := responseData(t, result)
+	scope, ok := data["orphaned_decisions_scope"].(map[string]any)
+	if !ok {
+		t.Fatalf("orphaned_decisions_scope = %#v, want object", data["orphaned_decisions_scope"])
+	}
+	if scope["scope"] != "goal" || scope["goal_id"] != float64(f.goalAID) || scope["role"] != "subcommander" {
+		t.Fatalf("orphaned_decisions_scope = %#v, want goal %d subcommander", scope, f.goalAID)
+	}
+	if note, ok := scope["note"].(string); ok && note != "" {
+		t.Fatalf("orphaned_decisions_scope.note = %#v, want empty", scope["note"])
+	}
+}
+
 func TestSessionRoleUnchangedAfterExtractingHelper(t *testing.T) {
 	f := newUnappliedDecisionScopeRPCTestFixture(t)
 	commander := f.callRPC(t, "session.role", map[string]any{"agent_session_id": f.commanderSessionID})
@@ -333,7 +426,7 @@ func TestGoalListForCommanderKeepsProjectWideOrphanedDecisions(t *testing.T) {
 	assertDecisionSet(t, orphanedDecisionIDs(t, data), f.decisionAID, f.decisionBID)
 }
 
-func TestTaskDeclareWithoutSessionKeepsProjectWideDecisions(t *testing.T) {
+func TestTaskDeclareWithoutSessionScopesToRequestGoal(t *testing.T) {
 	f := newUnappliedDecisionScopeRPCTestFixture(t)
 	result := f.callRPC(t, "task.declare", map[string]any{
 		"goal_id":                   f.goalAID,
@@ -343,5 +436,5 @@ func TestTaskDeclareWithoutSessionKeepsProjectWideDecisions(t *testing.T) {
 		"descriptions":              []string{"no-session task description"},
 		"include_unapplied_answers": true,
 	})
-	assertDecisionSet(t, notificationIDs(t, result), f.decisionAID, f.decisionBID)
+	assertDecisionSet(t, notificationIDs(t, result), f.decisionAID)
 }
