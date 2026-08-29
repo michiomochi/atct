@@ -780,8 +780,14 @@ func isCodexMonitorActionLine(line string) bool {
 		return true
 	case strings.HasPrefix(line, "atct detection: goal "):
 		return true
-	case strings.HasPrefix(line, "atct handoff reported: goal "):
+	case strings.HasPrefix(line, "atct handoff reported: goal "), strings.HasPrefix(line, "atct handoff reported: task "):
 		return true
+	case strings.HasPrefix(line, "atct handoff yielded: task "):
+		return true
+	case strings.HasPrefix(line, "atct detection: task "):
+		return strings.HasSuffix(line, " is doing without a work lock") ||
+			strings.HasSuffix(line, " has no handoff request") ||
+			strings.HasSuffix(line, " has a stale claim")
 	case strings.HasPrefix(line, "atct wakeup discrepancy: "):
 		return true
 	case strings.HasPrefix(line, "atct wakeup evaluate failed: "):
@@ -873,6 +879,10 @@ func (b *codexMonitorBridge) Run(ctx context.Context) error {
 }
 
 func runCodexMonitorWatch(ctx context.Context, client *http.Client, urls []string, cwd string, bridge *codexMonitorBridge) error {
+	return runCodexMonitorWatchScoped(ctx, client, urls, cwd, watchScope{}, bridge)
+}
+
+func runCodexMonitorWatchScoped(ctx context.Context, client *http.Client, urls []string, cwd string, scope watchScope, bridge *codexMonitorBridge) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -883,15 +893,20 @@ func runCodexMonitorWatch(ctx context.Context, client *http.Client, urls []strin
 		client = &http.Client{}
 	}
 	snapshot, projectID := watchSnapshotWithProject(client, urls, cwd)
-	return watchLoopWithEnsureAndProjectIDAndGoalAndSink(
+	return watchLoopWithEnsureAndProjectIDAndScopeAndSink(
 		ctx,
 		codexMonitorWatchOutput{},
 		client,
 		watchReconnectInterval,
 		snapshot,
 		nil,
-		projectID,
-		"",
+		func() string {
+			if scope.ProjectID != "" {
+				return scope.ProjectID
+			}
+			return projectID()
+		},
+		scope,
 		bridge.LineSinkWithContext(ctx),
 	)
 }

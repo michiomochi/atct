@@ -87,6 +87,72 @@ func TestParseArgsCodexMonitorPreservesRawArguments(t *testing.T) {
 	}
 }
 
+func TestParseArgsCodexMonitorRejectsScopeBeforePassthroughDelimiter(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{"legacy scope with separate value", []string{"codex", "monitor", "--scope", "task"}},
+		{"legacy scope with equals value", []string{"codex", "monitor", "--scope=task"}},
+		{"scope before explicit executor selectors", []string{"codex", "monitor", "--scope", "task", "--role", "executor", "--task", "846"}},
+		{"scope equals after explicit executor selectors", []string{"codex", "monitor", "--role", "executor", "--task", "846", "--scope=task"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := parseArgs(tt.args); err == nil {
+				t.Fatalf("parseArgs(%q) error = nil, want invalid arguments", tt.args)
+			}
+		})
+	}
+}
+
+func TestParseArgsCodexMonitorPreservesScopeAfterPassthroughDelimiter(t *testing.T) {
+	want := []string{"--scope", "task", "--scope=project"}
+	cfg, err := parseArgs(append([]string{"codex", "monitor", "--"}, want...))
+	if err != nil {
+		t.Fatalf("parseArgs: %v", err)
+	}
+	if !slices.Equal(cfg.codexArgs, want) {
+		t.Fatalf("codexArgs = %#v, want %#v", cfg.codexArgs, want)
+	}
+}
+
+func TestParseArgsCodexMonitorRoleSelectorMatrix(t *testing.T) {
+	tests := []struct {
+		name     string
+		args     []string
+		wantErr  bool
+		wantArgs []string
+	}{
+		{"commander needs no selector", []string{"codex", "monitor", "--role", "commander", "--", "-m", "gpt-5"}, false, []string{"-m", "gpt-5"}},
+		{"subcommander needs goal", []string{"codex", "monitor", "--role", "subcommander", "--goal", "206"}, false, nil},
+		{"executor needs task", []string{"codex", "monitor", "--role", "executor", "--task", "846"}, false, nil},
+		{"unknown role is rejected", []string{"codex", "monitor", "--role", "observer"}, true, nil},
+		{"commander rejects goal", []string{"codex", "monitor", "--role", "commander", "--goal", "206"}, true, nil},
+		{"subcommander rejects missing goal", []string{"codex", "monitor", "--role", "subcommander"}, true, nil},
+		{"subcommander rejects task", []string{"codex", "monitor", "--role", "subcommander", "--goal", "206", "--task", "846"}, true, nil},
+		{"executor rejects missing task", []string{"codex", "monitor", "--role", "executor"}, true, nil},
+		{"executor rejects goal", []string{"codex", "monitor", "--role", "executor", "--task", "846", "--goal", "206"}, true, nil},
+		{"duplicate role is rejected", []string{"codex", "monitor", "--role", "executor", "--role", "executor", "--task", "846"}, true, nil},
+		{"duplicate task is rejected", []string{"codex", "monitor", "--role", "executor", "--task", "846", "--task", "847"}, true, nil},
+		{"unknown monitor option is rejected", []string{"codex", "monitor", "--role", "executor", "--task", "846", "--unexpected"}, true, nil},
+		{"explicit role rejects noninteractive pass through", []string{"codex", "monitor", "--role", "executor", "--task", "846", "--", "exec", "--help"}, true, nil},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg, err := parseArgs(tt.args)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("parseArgs(%q) error = %v, wantErr %v", tt.args, err, tt.wantErr)
+			}
+			if err == nil && !slices.Equal(cfg.codexArgs, tt.wantArgs) {
+				t.Fatalf("codexArgs = %#v, want %#v; monitor role flags must not reach Codex", cfg.codexArgs, tt.wantArgs)
+			}
+		})
+	}
+}
+
 func TestParseArgsCodexMonitorStop(t *testing.T) {
 	cfg, err := parseArgs([]string{"codex", "monitor", "stop"})
 	if err != nil {

@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
@@ -51,6 +53,97 @@ func TestCodexMonitorFallbackUsesOriginalCommandAndArguments(t *testing.T) {
 	wantWarning := "atct codex monitor disabled: codex not found; running normal codex\n"
 	if got := stderr.String(); got != wantWarning {
 		t.Fatalf("fallback warning = %q, want %q", got, wantWarning)
+	}
+}
+
+func TestCodexMonitorExplicitRoleFailureDoesNotLaunchCodexOrAppServer(t *testing.T) {
+	config, err := parseArgs([]string{"codex", "monitor", "--role", "executor", "--task", "999999"})
+	if err != nil {
+		t.Fatalf("parseArgs: %v", err)
+	}
+	var appServerStarts, normalStarts int
+	deps := codexMonitorDeps{
+		projectPath:  func() (string, error) { return "/project", nil },
+		resolveCodex: func() (string, error) { return "/opt/codex", nil },
+		startProcess: func(kind codexMonitorProcessKind, _ string, _ []string) (codexMonitorProcess, error) {
+			if kind == codexMonitorAppServer {
+				appServerStarts++
+			}
+			return nil, errors.New("must not launch")
+		},
+		runNormal: func(_ string, _ []string) (int, error) {
+			normalStarts++
+			return 0, nil
+		},
+		stderr: io.Discard,
+	}
+
+	if _, err := runCodexMonitorWithDeps(config, t.TempDir(), deps); err == nil {
+		t.Fatal("explicit unresolved executor task succeeded")
+	}
+	if appServerStarts != 0 || normalStarts != 0 {
+		t.Fatalf("explicit configuration started app server=%d normal Codex=%d, want neither", appServerStarts, normalStarts)
+	}
+}
+
+func TestCodexMonitorExplicitSetupFailureDoesNotFallBack(t *testing.T) {
+	var normalStarts int
+	deps := codexMonitorDeps{
+		projectPath: func() (string, error) { return "/project", nil },
+		resolveScope: func(context.Context, string, watchScope) (watchScope, error) {
+			return watchScope{Role: "executor", ProjectID: "7", GoalID: "16", TaskID: "46"}, nil
+		},
+		reap: func(string) (daemonctl.CodexMonitorReapResult, error) {
+			return daemonctl.CodexMonitorReapResult{}, errors.New("registry unavailable")
+		},
+		runNormal: func(string, []string) (int, error) {
+			normalStarts++
+			return 0, nil
+		},
+		stderr: io.Discard,
+	}
+	_, err := runCodexMonitorWithDeps(cliConfig{codexMonitorAction: "monitor", codexMonitorExplicit: true, codexMonitorRole: "executor", codexMonitorTaskID: "46"}, t.TempDir(), deps)
+	if err == nil || !strings.Contains(err.Error(), "reap monitor records: registry unavailable") {
+		t.Fatalf("explicit setup failure error = %v, want reap failure", err)
+	}
+	if normalStarts != 0 {
+		t.Fatalf("explicit setup failure started normal Codex %d times, want 0", normalStarts)
+	}
+}
+
+func TestResolveCodexMonitorExecutorScopeUsesTaskAndGoalResponseShapes(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		projectID int64
+		wantErr   bool
+	}{
+		{name: "current project", projectID: 7},
+		{name: "other project", projectID: 8, wantErr: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			client := &http.Client{Transport: watchRoundTripper(func(req *http.Request) (*http.Response, error) {
+				body := ""
+				switch req.URL.Path {
+				case "/api/projects":
+					body = `[{"id":7,"root_path":"/project"}]`
+				case "/api/tasks/46":
+					body = `{"task":{"id":46},"goal":{"id":16,"project_name":"current"}}`
+				case "/api/goals/16":
+					body = fmt.Sprintf(`{"goal":{"id":16,"project_id":%d}}`, tt.projectID)
+				default:
+					t.Fatalf("unexpected request %s", req.URL.Path)
+				}
+				return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
+			})}
+
+			scope, err := resolveCodexMonitorScopeWithClient(context.Background(), client, []string{"http://daemon"}, "/project/worktree", watchScope{Role: "executor", TaskID: "46"})
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("resolveCodexMonitorScopeWithClient() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if !tt.wantErr && (scope.ProjectID != "7" || scope.GoalID != "16" || scope.TaskID != "46") {
+				t.Fatalf("scope = %#v, want resolved current-project task scope", scope)
+			}
+		})
 	}
 }
 

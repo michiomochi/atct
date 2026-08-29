@@ -1357,12 +1357,15 @@ type eventFilter struct {
 	goalID             string
 	canonicalProjectID int64
 	canonicalGoalID    int64
+	canonicalTaskID    int64
+	taskID             string
 }
 
 func (s *Server) parseEventFilter(w http.ResponseWriter, r *http.Request) (eventFilter, bool) {
 	filter := eventFilter{
 		projectID: r.URL.Query().Get("project_id"),
 		goalID:    r.URL.Query().Get("goal_id"),
+		taskID:    r.URL.Query().Get("task_id"),
 	}
 	if filter.projectID != "" {
 		var ok bool
@@ -1374,6 +1377,13 @@ func (s *Server) parseEventFilter(w http.ResponseWriter, r *http.Request) (event
 	if filter.goalID != "" {
 		var ok bool
 		filter.canonicalGoalID, ok = s.resolveGoalID(w, r.Context(), filter.goalID)
+		if !ok {
+			return eventFilter{}, false
+		}
+	}
+	if filter.taskID != "" {
+		var ok bool
+		filter.canonicalTaskID, ok = s.resolveTaskID(w, r.Context(), filter.taskID)
 		if !ok {
 			return eventFilter{}, false
 		}
@@ -1391,7 +1401,23 @@ func (s *Server) eventPasses(ctx context.Context, filter eventFilter, event stor
 	if filter.goalID != "" && !eventMatchesGoalID(event, filter.canonicalGoalID) {
 		return false
 	}
+	if filter.taskID != "" && !eventMatchesTaskID(event, filter.canonicalTaskID) {
+		return false
+	}
 	return true
+}
+
+func eventMatchesTaskID(event store.DecisionEvent, taskID int64) bool {
+	switch data := event.Data.(type) {
+	case store.KeepaliveEvent, *store.KeepaliveEvent:
+		return true
+	case store.DetectionEvent:
+		return data.TaskID != 0 && data.TaskID == taskID
+	case *store.DetectionEvent:
+		return data != nil && data.TaskID != 0 && data.TaskID == taskID
+	default:
+		return false
+	}
 }
 
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {

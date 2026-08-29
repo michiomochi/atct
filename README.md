@@ -57,18 +57,42 @@ does not pay for a ceremony it did not ask for.
 
 `atct daemon start` and `atct daemon stop` are there if you ever need to restart it by hand.
 
-To opt into ATCT notifications inside an interactive Codex session, start it explicitly through
-the monitor:
+To opt into ATCT notifications inside a new interactive Codex session, start it explicitly through
+the monitor with its role:
 
 ```bash
-atct codex monitor -- -m gpt-5
+atct codex monitor --role commander -- <codex args>
+atct codex monitor --role subcommander --goal <goal_id> -- <codex args>
+atct codex monitor --role executor --task <task_id> -- <codex args>
 atct codex monitor stop
 ```
+
+`--scope` is unsupported. The legacy `atct codex monitor -- <codex args>` remains a compatible
+project-scoped monitor. Explicit role configuration fails closed if the role/selector is invalid or
+cannot resolve in the current project: it starts neither Codex nor the App Server. A running normal
+Codex process cannot be retrofitted; use a fresh monitored process.
+
+For a monitored worker, the delegator requests the handoff first, creates a fresh worker pane, then
+runs `herdr pane run <pane> atct codex monitor --role executor --task <task_id> -- <codex args>`
+before the worker process. Plain `herdr agent start` bypasses this monitored launch. The new worker
+then calls `atct_session_identify`, `atct_handoff_receive` with only the task ID, and `atct_role`.
 
 Only `atct codex monitor` starts the local Codex App Server. The ordinary `codex` command and
 `codex exec` are unchanged; `atct codex monitor exec --help` is passed through without monitoring.
 Put a literal Codex argument such as `stop` after `--` so it is not interpreted as the monitor's
 stop command.
+
+Task-scoped monitors currently deliver matching task `handoff_reported`, `handoff_yielded`, and
+task-identified detection events. Review producers, review-state storage, and review MCP/HTTP APIs
+are not implemented by this capability; future review detections may use the existing identity-bearing
+event envelope and will still be task-filtered.
+
+To reproduce the GREEN documentation check, use at least five fresh contexts with the same
+time/sunk-cost/authority pressure scenario. Preserve each complete raw response and provenance, then
+score every response against the exact role commands, no `--scope`, handoff-before-pane ordering,
+`herdr pane run` before the worker, the worker's identify → receive(task only) → role sequence, and
+no retrofit. Read every response manually and retain the per-criterion scores; a valid wrapper command
+is required in every passing response.
 
 ## Setting a goal is the approval
 

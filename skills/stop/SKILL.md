@@ -1,9 +1,13 @@
 ---
 name: stop
-description: Stop the ATCT answer Monitor for the current Claude Code session without stopping the daemon. Use when the human asks to stop the Monitor created by atct:start.
+description: Use when the human asks to stop the ATCT answer Monitor for a Claude Code session or the project-scoped Codex monitor started with atct codex monitor.
 ---
 
 # Stop
+
+Choose the branch for the harness that owns the session.
+
+## Claude Code
 
 This skill stops the answer-delivery Monitor paired with `atct:start`.
 
@@ -13,9 +17,46 @@ This skill stops the answer-delivery Monitor paired with `atct:start`.
    or substitute another task id.
 3. If the task id is available, call `TaskStop` with that task id.
 
-To stop the daemon, use `atct daemon stop`.
+## Codex
 
-`Monitor` and `TaskStop` are Claude Code features and are not available in
-Codex. A Codex reader must not try to invoke them. The MCP response attachment
-is the shared foundation for all harnesses; this skill only controls the
-Claude Code Monitor.
+Stop the explicit Codex monitor with:
+
+```bash
+atct codex monitor stop
+```
+
+Run it from the exact monitored project directory: the implementation obtains
+the project scope from `os.Getwd`. It considers every live monitor record whose
+recorded project path exactly matches that directory, not just one selected
+session. A record is stopped only when its supervisor PID and recorded start
+time still match; a mismatched or failed record remains in the registry and is
+reported as a failure. Any failure makes the command exit nonzero, so do not
+claim that every supervisor was stopped. It does not stop the ATCT daemon.
+If the current terminal is the monitored Codex TUI, use another shell in that
+exact directory.
+
+Only after `atct codex monitor stop` returns status 0 may the user relaunch a
+new process with the required role:
+
+```bash
+atct codex monitor --role commander -- <codex args>
+atct codex monitor --role subcommander --goal <goal_id> -- <codex args>
+atct codex monitor --role executor --task <task_id> -- <codex args>
+```
+
+There is no `--scope` option. The legacy no-role form remains a compatible
+project-scoped monitor, while invalid explicit role configuration fails closed
+before Codex or its App Server starts. Restarting does not retrofit a running
+Codex process.
+
+There is no `start`, `restart`, or `exit` monitor subcommand. A safe restart is
+`atct codex monitor stop`, check that its status is 0, then launch with
+the applicable command above; after a nonzero status
+or reported failure, do not relaunch. A literal Codex argument `stop` goes
+after `--`, for example `atct codex monitor -- stop`.
+
+To stop the daemon separately, use `atct daemon stop`.
+
+`Monitor` and `TaskStop` are Claude Code features; this skill only uses them in
+the Claude Code branch. The MCP response attachment is the shared foundation
+for both harnesses.
