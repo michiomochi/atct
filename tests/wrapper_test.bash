@@ -1294,7 +1294,7 @@ test_start_identifies_before_monitor() {
   local monitor_line
 
   identify_line="$(grep -n '^## First step: identify' "$start_skill" | head -1 | cut -d: -f1)"
-  monitor_line="$(grep -n '^## .*Claude Code Monitor' "$start_skill" | head -1 | cut -d: -f1)"
+  monitor_line="$(grep -n '^## .*Claude Code.*Monitor' "$start_skill" | head -1 | cut -d: -f1)"
   [[ -n "$identify_line" && -n "$monitor_line" ]] ||
     fail 'start order requires identify and monitor headings'
   (( identify_line < monitor_line )) ||
