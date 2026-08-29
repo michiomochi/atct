@@ -1,6 +1,6 @@
 ---
 name: stop
-description: Stop the ATCT answer Monitor for the current Claude Code session without stopping the daemon. Use when the human asks to stop the Monitor created by atct:start.
+description: Use when the human asks to stop the ATCT answer Monitor for a Claude Code session or the project-scoped Codex monitor started with atct codex monitor.
 ---
 
 # Stop

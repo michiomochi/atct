@@ -90,3 +90,37 @@ skills/start/SKILL.md:56:Ordinary `codex` and `codex exec` remain unchanged. The
 ### Not run
 
 No Claude Monitor, real Codex monitor, App Server, remote TUI, signal, live stop, broad test suite, package installation, or final full Go verification was run. The subcommander owns final full Go verification.
+
+## Post-review verification
+
+This review follow-up changed only the `skills/stop/SKILL.md` frontmatter
+description and this evidence file. The historical worker section above remains
+accurate: it did not run lifecycle/final verification. The focused source tests
+below are review follow-up regression checks only; final full Go verification
+remains owned by the parent.
+
+```text
+$ GOCACHE=/private/tmp/atct-206-review-gocache go test ./cmd/atct -run 'TestParseArgsCodexMonitor|TestCodexMonitor' -count=1 -timeout 120s
+exit_code=0
+WRN update the last used datetime ... timestamp.txt: operation not permitted
+ok  \tgithub.com/michiomochi/atct/cmd/atct\t0.567s
+
+$ GOCACHE=/private/tmp/atct-206-review-gocache go test ./internal/daemonctl -run 'TestCodexMonitor' -count=1 -timeout 120s
+exit_code=0
+WRN update the last used datetime ... timestamp.txt: operation not permitted
+ok  \tgithub.com/michiomochi/atct/internal/daemonctl\t0.658s
+
+$ git diff --check
+exit_code=0
+(no output)
+
+$ git status --short --untracked-files=all
+exit_code=0
+ M skills/stop/SKILL.md
+ M doc/investigations/2026-08-29-goal-206-green-pressure.md
+```
+
+The Aqua timestamp warning is an environment permission warning; both test
+commands passed. No live Codex monitor, App Server, TUI, signal, stop action,
+package installation, production-code change, or final full Go verification was
+run in this follow-up.
