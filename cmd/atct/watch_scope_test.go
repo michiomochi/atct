@@ -17,6 +17,14 @@ func TestWatchTaskScopeDeliversOnlyItsTaskHandoffAndDetection(t *testing.T) {
 	}
 }
 
+func TestWatchTaskScopeSuppressesTasklessWakeupEvaluateFailed(t *testing.T) {
+	filter := newWatchTaskScopeFilter("846")
+
+	if filter.delivers("wakeup.evaluate_failed", watchDecision{WakeupID: "wakeup-1", Reason: "database unavailable"}) {
+		t.Fatal("task scope delivered a taskless wakeup.evaluate_failed event")
+	}
+}
+
 func TestWatchScopeSnapshotStopsOtherGoalDecision(t *testing.T) {
 	filter := newWatchScopeFilter("goal-1")
 

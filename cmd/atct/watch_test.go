@@ -482,7 +482,7 @@ func TestWatchLoopTaskScopeUsesSharedDeliverySemantics(t *testing.T) {
 	snapshot := func(context.Context) (string, []watchDecision, error) { return "http://daemon", nil, nil }
 	err := watchLoopWithEnsureAndProjectIDAndScopeAndSink(ctx, io.Discard, client, time.Millisecond, snapshot, nil, func() string { return "7" }, watchScope{ProjectID: "7", GoalID: "16", TaskID: "46"}, func(line string) error {
 		got = append(got, line)
-		if len(got) == 4 {
+		if len(got) == 3 {
 			cancel()
 		}
 		return nil
@@ -494,7 +494,6 @@ func TestWatchLoopTaskScopeUsesSharedDeliverySemantics(t *testing.T) {
 		"atct handoff reported: task 46 (handoff h1): reported",
 		"atct handoff yielded: task 46",
 		"atct detection: task 46 has a stale claim",
-		"atct wakeup evaluate failed: database unavailable",
 	}
 	if !slices.Equal(got, want) {
 		t.Fatalf("task watch actions = %#v, want %#v", got, want)

@@ -1411,8 +1411,6 @@ func eventMatchesTaskID(event store.DecisionEvent, taskID int64) bool {
 	switch data := event.Data.(type) {
 	case store.KeepaliveEvent, *store.KeepaliveEvent:
 		return true
-	case store.WakeupEvaluateFailedEvent, *store.WakeupEvaluateFailedEvent:
-		return true
 	case store.DetectionEvent:
 		return data.TaskID != 0 && data.TaskID == taskID
 	case *store.DetectionEvent:

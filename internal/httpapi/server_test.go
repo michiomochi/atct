@@ -2835,7 +2835,7 @@ func TestSSEFiltersTaskEventsByTaskIDAcrossProjectAndGoal(t *testing.T) {
 	}
 }
 
-func TestSSETaskSubscriptionPublishesKeepaliveAndEvaluateFailure(t *testing.T) {
+func TestSSETaskSubscriptionPublishesKeepaliveButSuppressesEvaluateFailure(t *testing.T) {
 	f := newBareFixture(t)
 	tasks, err := f.store.DeclareTasks(f.ctx, f.goal.ID, "sse-task-diagnostics", "sse-task-diagnostics", []string{"target"}, []string{"The selected task."})
 	if err != nil {
@@ -2851,10 +2851,8 @@ func TestSSETaskSubscriptionPublishesKeepaliveAndEvaluateFailure(t *testing.T) {
 	f.store.PublishEvent(store.DecisionEvent{Name: store.EventKeepalive, Data: store.KeepaliveEvent{At: time.Now()}})
 	f.store.PublishEvent(store.DecisionEvent{Name: store.EventWakeupEvaluateFailed, Data: store.WakeupEvaluateFailedEvent{WakeupID: "failed", Reason: "database unavailable"}})
 
-	for _, want := range []string{store.EventKeepalive, store.EventWakeupEvaluateFailed} {
-		if frame := readSSEFrame(t, reader); frame.event != want {
-			t.Fatalf("SSE task diagnostic event = %q, want %q; lines=%v", frame.event, want, frame.lines)
-		}
+	if frame := readSSEFrame(t, reader); frame.event != store.EventKeepalive {
+		t.Fatalf("SSE task diagnostic event = %q, want %q; lines=%v", frame.event, store.EventKeepalive, frame.lines)
 	}
 }
 

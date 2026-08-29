@@ -40,9 +40,6 @@ func (f *watchScopeFilter) deliversSnapshotDecision(decision watchDecision) bool
 
 func (f *watchScopeFilter) delivers(eventName string, decision watchDecision) bool {
 	if f.taskID != "" {
-		if eventName == "wakeup.evaluate_failed" {
-			return true
-		}
 		return decision.TaskID == f.taskID
 	}
 	if f.passThrough || f.goalID != "" {
