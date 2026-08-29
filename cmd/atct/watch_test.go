@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -459,6 +460,45 @@ type watchRoundTripper func(*http.Request) (*http.Response, error)
 
 func (f watchRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	return f(req)
+}
+
+func TestWatchLoopTaskScopeUsesSharedDeliverySemantics(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var got []string
+	client := &http.Client{Transport: watchRoundTripper(func(req *http.Request) (*http.Response, error) {
+		if req.URL.Path != "/api/events" || req.URL.Query().Get("task_id") != "46" || req.URL.Query().Get("project_id") != "7" || req.URL.Query().Get("goal_id") != "16" {
+			t.Fatalf("watch request = %s, want task-scoped events URL", req.URL.String())
+		}
+		body := strings.Join([]string{
+			"event: keepalive\ndata: {}\n\n",
+			"event: handoff_reported\ndata: {\"handoff_id\":\"h1\",\"task_id\":46,\"complete_report\":\"reported\"}\n\n",
+			"event: handoff_yielded\ndata: {\"task_id\":46}\n\n",
+			"event: detection.claim_stale\ndata: {\"detection_id\":\"d1\",\"task_id\":46}\n\n",
+			"event: wakeup.evaluate_failed\ndata: {\"wakeup_id\":\"w1\",\"reason\":\"database unavailable\"}\n\n",
+		}, "")
+		return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
+	})}
+	snapshot := func(context.Context) (string, []watchDecision, error) { return "http://daemon", nil, nil }
+	err := watchLoopWithEnsureAndProjectIDAndScopeAndSink(ctx, io.Discard, client, time.Millisecond, snapshot, nil, func() string { return "7" }, watchScope{ProjectID: "7", GoalID: "16", TaskID: "46"}, func(line string) error {
+		got = append(got, line)
+		if len(got) == 4 {
+			cancel()
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("watchLoopWithEnsureAndProjectIDAndScopeAndSink: %v", err)
+	}
+	want := []string{
+		"atct handoff reported: task 46 (handoff h1): reported",
+		"atct handoff yielded: task 46",
+		"atct detection: task 46 has a stale claim",
+		"atct wakeup evaluate failed: database unavailable",
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("task watch actions = %#v, want %#v", got, want)
+	}
 }
 
 func runWatchWithProjects(t *testing.T, cwd string, projects []watchProject) (url.Values, int) {

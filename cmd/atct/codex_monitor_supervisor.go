@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -10,6 +11,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -43,6 +45,7 @@ type codexMonitorDeps struct {
 	connectAppServer func(context.Context, string) (codexMonitorApp, error)
 	runWatch         func(context.Context, *codexMonitorBridge) error
 	projectPath      func() (string, error)
+	resolveScope     func(context.Context, string, watchScope) (watchScope, error)
 	reap             func(string) (daemonctl.CodexMonitorReapResult, error)
 	register         func(string, daemonctl.CodexMonitorRecord) (func(), error)
 	stopMonitors     func(string, string) (daemonctl.CodexMonitorStopResult, error)
@@ -87,32 +90,39 @@ func runCodexMonitorWithDeps(config cliConfig, dir string, deps codexMonitorDeps
 
 	projectPath, err := deps.projectPath()
 	if err != nil {
-		return codexMonitorFallback(deps, "resolve project directory: "+err.Error(), "codex", args)
+		return codexMonitorSetupFailure(config, deps, "resolve project directory: "+err.Error(), "codex", args)
+	}
+	scope := watchScope{}
+	if config.codexMonitorExplicit {
+		scope, err = deps.resolveScope(context.Background(), projectPath, watchScope{Role: config.codexMonitorRole, GoalID: config.codexMonitorGoalID, TaskID: config.codexMonitorTaskID})
+		if err != nil {
+			return codexMonitorSetupFailure(config, deps, "resolve explicit monitor scope: "+err.Error(), "codex", args)
+		}
 	}
 	if _, err := deps.reap(dir); err != nil {
-		return codexMonitorFallback(deps, "reap monitor records: "+err.Error(), "codex", args)
+		return codexMonitorSetupFailure(config, deps, "reap monitor records: "+err.Error(), "codex", args)
 	}
 
 	executable, err := deps.resolveCodex()
 	if err != nil {
-		return codexMonitorFallback(deps, err.Error(), "codex", args)
+		return codexMonitorSetupFailure(config, deps, err.Error(), "codex", args)
 	}
 
 	monitorDir := daemonctl.CodexMonitorRegistryDir(dir)
 	socketPath := filepath.Join(monitorDir, fmt.Sprintf("%d.sock", os.Getpid()))
 	if err := os.MkdirAll(monitorDir, 0o700); err != nil {
-		return codexMonitorFallback(deps, "create monitor directory: "+err.Error(), executable, args)
+		return codexMonitorSetupFailure(config, deps, "create monitor directory: "+err.Error(), executable, args)
 	}
 	if err := os.Chmod(monitorDir, 0o700); err != nil {
-		return codexMonitorFallback(deps, "protect monitor directory: "+err.Error(), executable, args)
+		return codexMonitorSetupFailure(config, deps, "protect monitor directory: "+err.Error(), executable, args)
 	}
 	appArgs := []string{"app-server", "--listen", "unix://" + socketPath}
 	if err := os.Remove(socketPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return codexMonitorFallback(deps, "remove stale monitor socket: "+err.Error(), executable, args)
+		return codexMonitorSetupFailure(config, deps, "remove stale monitor socket: "+err.Error(), executable, args)
 	}
 	appProcess, err := deps.startProcess(codexMonitorAppServer, executable, appArgs)
 	if err != nil {
-		return codexMonitorFallback(deps, "start App Server: "+err.Error(), executable, args)
+		return codexMonitorSetupFailure(config, deps, "start App Server: "+err.Error(), executable, args)
 	}
 	appWait := waitCodexMonitorProcess(appProcess)
 
@@ -131,7 +141,7 @@ func runCodexMonitorWithDeps(config cliConfig, dir string, deps codexMonitorDeps
 			fmt.Fprintf(deps.stderr, "atct codex monitor cleanup: %v\n", cleanupErr)
 		}
 		_ = os.Remove(socketPath)
-		return codexMonitorFallback(deps, "connect App Server: "+err.Error(), executable, args)
+		return codexMonitorSetupFailure(config, deps, "connect App Server: "+err.Error(), executable, args)
 	}
 
 	bridge := newCodexMonitorBridge(app, "")
@@ -162,13 +172,19 @@ func runCodexMonitorWithDeps(config cliConfig, dir string, deps codexMonitorDeps
 			fmt.Fprintf(deps.stderr, "atct codex monitor cleanup: %v\n", cleanupErr)
 		}
 		_ = os.Remove(socketPath)
-		return codexMonitorFallback(deps, "register monitor: "+err.Error(), executable, args)
+		return codexMonitorSetupFailure(config, deps, "register monitor: "+err.Error(), executable, args)
 	}
 
 	bridgeDone := make(chan error, 1)
 	go func() { bridgeDone <- bridge.Run(monitorCtx) }()
 	watchDone := make(chan error, 1)
-	go func() { watchDone <- deps.runWatch(watchCtx, bridge) }()
+	go func() {
+		if config.codexMonitorExplicit {
+			watchDone <- runCodexMonitorWatchScoped(watchCtx, &http.Client{}, watchBaseURLs(dir), projectPath, scope, bridge)
+			return
+		}
+		watchDone <- deps.runWatch(watchCtx, bridge)
+	}()
 
 	remoteArgs := make([]string, 0, len(args)+2)
 	remoteArgs = append(remoteArgs, "--remote", "unix://"+socketPath)
@@ -188,7 +204,7 @@ func runCodexMonitorWithDeps(config cliConfig, dir string, deps codexMonitorDeps
 			recordCleanup()
 		}
 		_ = os.Remove(socketPath)
-		return codexMonitorFallback(deps, "start Codex TUI: "+err.Error(), executable, args)
+		return codexMonitorSetupFailure(config, deps, "start Codex TUI: "+err.Error(), executable, args)
 	}
 	tuiDone := waitCodexMonitorProcess(tuiProcess)
 
@@ -285,6 +301,16 @@ func runCodexMonitorWithDeps(config cliConfig, dir string, deps codexMonitorDeps
 	}
 }
 
+// Explicit role launches carry an ATCT scope contract. Starting plain Codex
+// after any monitor setup failure would silently discard that contract, so only
+// the legacy no-role path may use the historical fallback.
+func codexMonitorSetupFailure(config cliConfig, deps codexMonitorDeps, reason, executable string, args []string) (int, error) {
+	if config.codexMonitorExplicit {
+		return 1, errors.New(reason)
+	}
+	return codexMonitorFallback(deps, reason, executable, args)
+}
+
 func codexMonitorFallback(deps codexMonitorDeps, reason, executable string, args []string) (int, error) {
 	fmt.Fprintf(deps.stderr, "atct codex monitor disabled: %s; running normal codex\n", reason)
 	if strings.TrimSpace(executable) == "" {
@@ -332,6 +358,11 @@ func codexMonitorDepsWithDefaults(dir string, deps codexMonitorDeps) codexMonito
 	if deps.projectPath == nil {
 		deps.projectPath = codexMonitorProjectPath
 	}
+	if deps.resolveScope == nil {
+		deps.resolveScope = func(ctx context.Context, cwd string, scope watchScope) (watchScope, error) {
+			return resolveCodexMonitorScope(ctx, dir, cwd, scope)
+		}
+	}
 	if deps.reap == nil {
 		deps.reap = daemonctl.ReapCodexMonitors
 	}
@@ -357,6 +388,76 @@ func codexMonitorDepsWithDefaults(dir string, deps codexMonitorDeps) codexMonito
 		}
 	}
 	return deps
+}
+
+func resolveCodexMonitorScope(ctx context.Context, dir, cwd string, scope watchScope) (watchScope, error) {
+	client := &http.Client{Timeout: codexMonitorSetupTimeout}
+	return resolveCodexMonitorScopeWithClient(ctx, client, watchBaseURLs(dir), cwd, scope)
+}
+
+func resolveCodexMonitorScopeWithClient(ctx context.Context, client *http.Client, bases []string, cwd string, scope watchScope) (watchScope, error) {
+	for _, base := range bases {
+		projects, err := fetchWatchProjects(ctx, client, base)
+		if err != nil {
+			continue
+		}
+		projectID := resolveWatchProjectID(cwd, projects)
+		if projectID == "" {
+			continue
+		}
+		if scope.Role == "commander" {
+			scope.ProjectID = projectID
+			return scope, nil
+		}
+		goalID := scope.GoalID
+		if scope.Role == "executor" {
+			var taskPayload struct {
+				Task struct {
+					ID int64 `json:"id"`
+				} `json:"task"`
+				Goal struct {
+					ID int64 `json:"id"`
+				} `json:"goal"`
+			}
+			if err := fetchCodexMonitorJSON(ctx, client, base, "/api/tasks/"+scope.TaskID, &taskPayload); err != nil || taskPayload.Task.ID == 0 || taskPayload.Goal.ID == 0 {
+				continue
+			}
+			scope.TaskID = strconv.FormatInt(taskPayload.Task.ID, 10)
+			goalID = strconv.FormatInt(taskPayload.Goal.ID, 10)
+		}
+		var goalPayload struct {
+			Goal struct {
+				ID        int64 `json:"id"`
+				ProjectID int64 `json:"project_id"`
+			} `json:"goal"`
+		}
+		if err := fetchCodexMonitorJSON(ctx, client, base, "/api/goals/"+goalID, &goalPayload); err != nil || goalPayload.Goal.ID == 0 || goalPayload.Goal.ProjectID == 0 {
+			continue
+		}
+		if strconv.FormatInt(goalPayload.Goal.ProjectID, 10) != projectID {
+			continue
+		}
+		scope.GoalID = strconv.FormatInt(goalPayload.Goal.ID, 10)
+		scope.ProjectID = projectID
+		return scope, nil
+	}
+	return watchScope{}, errors.New("selector is unresolved in the current project")
+}
+
+func fetchCodexMonitorJSON(ctx context.Context, client *http.Client, base, path string, target any) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(base, "/")+path, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return fmt.Errorf("GET %s: HTTP %s", path, resp.Status)
+	}
+	return json.NewDecoder(resp.Body).Decode(target)
 }
 
 func resolveCodexExecutable() (string, error) {

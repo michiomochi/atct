@@ -244,9 +244,20 @@ that worker is started:
    The delegator must call `atct_handoff_request` with a unique handoff ID and
    the task ID. Wait for the request to succeed before waking the
    worker; this creates the record needed to receive and complete the handoff.
-3. Wake the worker through the environment. A terminal multiplexer can host a
-   working pane, or a sub-agent can perform the work. ATCT does not prescribe
-   how the worker is started or how the role is transmitted.
+3. For a monitored Codex worker, create a fresh worker pane after the request
+   succeeds, then start the wrapper before the worker process:
+
+   ```sh
+   herdr pane run <pane> atct codex monitor --role executor --task <task_id> -- <codex args>
+   ```
+
+   The delegator requests the handoff first; it does not start a worker and add
+   monitoring later. Plain `herdr agent start` bypasses the wrapper and is
+   forbidden for a monitored worker. A normal Codex session cannot be
+   retrofitted. The monitored worker performs `atct_session_identify`, then
+   `atct_handoff_receive` with only its `task_id`, then `atct_role` with
+   `expected_role=executor`; the launch role is metadata, not role proof.
+   Other environments may wake the worker by their own supported path.
 4. Put these exact instructions at the very beginning of the request:
 
    > First call `atct_session_identify` with a stable session key that remains unchanged for this session and identifies only you. Your agent name is suitable. Do this before any other atct call.
@@ -373,8 +384,18 @@ that subcommander is started:
    do not pass `requested_by`; ATCT supplies it. Wait for the request to succeed
    before waking the subcommander; this creates the record needed to receive and
    complete the handoff.
-3. Wake the subcommander through the environment. ATCT does not prescribe how
-   the subcommander is started or how the role is transmitted.
+3. A monitored Codex subcommander is launched only after the request succeeds:
+
+   ```sh
+   atct codex monitor --role subcommander --goal <goal_id> -- <codex args>
+   ```
+
+   A monitored commander uses `atct codex monitor --role commander -- <codex args>`.
+   These explicit configurations fail closed for invalid roles/selectors; the
+   legacy no-role project monitor remains compatible. They do not alter Claude
+   Code's `atct watch -project` / `atct watch -goal` path.
+
+   Do not start a normal Codex process and retrofit it later.
    Name in the request every adjacent goal that touches the same files and say
    which side owns what. The delegator is the only party that can see both
    goals, and a boundary left unstated becomes a question the subcommander

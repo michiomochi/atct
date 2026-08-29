@@ -2780,6 +2780,84 @@ func TestSSEFiltersDetectionEventsByGoalID(t *testing.T) {
 	}
 }
 
+func TestSSEFiltersTaskEventsByTaskIDAcrossProjectAndGoal(t *testing.T) {
+	f := newBareFixture(t)
+	tasks, err := f.store.DeclareTasks(f.ctx, f.goal.ID, "sse-task-filter", "sse-task-filter", []string{"target", "same goal other task"}, []string{"The selected task.", "Another task in the same goal."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherProject, err := f.store.CreateProject(f.ctx, "other task project", t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherGoal, err := f.store.CreateGoal(f.ctx, otherProject.ID, "other task goal", "human")
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherTasks, err := f.store.DeclareTasks(f.ctx, otherGoal.ID, "sse-other-task", "sse-other-task", []string{"other project task"}, []string{"A task from another project."})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+	streamCtx, cancel := context.WithCancel(f.ctx)
+	defer cancel()
+	stream, reader := openSSEStream(t, streamCtx, srv.Client(), srv.URL+"/api/events?task_id="+idText(tasks[0].ID))
+	defer stream.Body.Close()
+
+	for _, event := range []struct {
+		name string
+		data store.DetectionEvent
+	}{
+		{store.EventDetectionCompletionReportMissing, store.DetectionEvent{DetectionID: "same-goal-other-task", ProjectID: f.project.ID, GoalID: f.goal.ID, TaskID: tasks[1].ID}},
+		{store.EventHandoffReported, store.DetectionEvent{DetectionID: "other-project-task", ProjectID: otherProject.ID, GoalID: otherGoal.ID, TaskID: otherTasks[0].ID}},
+		{store.EventDetectionCompletionReportMissing, store.DetectionEvent{DetectionID: "target-task", ProjectID: f.project.ID, GoalID: f.goal.ID, TaskID: tasks[0].ID}},
+		{store.EventHandoffReported, store.DetectionEvent{DetectionID: "target-reported", ProjectID: f.project.ID, GoalID: f.goal.ID, TaskID: tasks[0].ID}},
+		{store.EventHandoffYielded, store.DetectionEvent{DetectionID: "target-yielded", ProjectID: f.project.ID, GoalID: f.goal.ID, TaskID: tasks[0].ID}},
+	} {
+		f.store.PublishEvent(store.DecisionEvent{Name: event.name, Data: event.data})
+	}
+
+	for _, want := range []struct{ name, detectionID string }{
+		{store.EventDetectionCompletionReportMissing, "target-task"},
+		{store.EventHandoffReported, "target-reported"},
+		{store.EventHandoffYielded, "target-yielded"},
+	} {
+		frame := readSSEFrame(t, reader)
+		var got store.DetectionEvent
+		if err := json.Unmarshal([]byte(frame.data), &got); err != nil {
+			t.Fatalf("SSE task event data: %v; data=%q", err, frame.data)
+		}
+		if frame.event != want.name || got.DetectionID != want.detectionID || got.TaskID != tasks[0].ID {
+			t.Fatalf("task-filtered SSE event = %q %+v, want %s/%s for task %d", frame.event, got, want.name, want.detectionID, tasks[0].ID)
+		}
+	}
+}
+
+func TestSSETaskSubscriptionPublishesKeepaliveAndEvaluateFailure(t *testing.T) {
+	f := newBareFixture(t)
+	tasks, err := f.store.DeclareTasks(f.ctx, f.goal.ID, "sse-task-diagnostics", "sse-task-diagnostics", []string{"target"}, []string{"The selected task."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+	streamCtx, cancel := context.WithCancel(f.ctx)
+	defer cancel()
+	stream, reader := openSSEStream(t, streamCtx, srv.Client(), srv.URL+"/api/events?task_id="+idText(tasks[0].ID))
+	defer stream.Body.Close()
+
+	f.store.PublishEvent(store.DecisionEvent{Name: store.EventKeepalive, Data: store.KeepaliveEvent{At: time.Now()}})
+	f.store.PublishEvent(store.DecisionEvent{Name: store.EventWakeupEvaluateFailed, Data: store.WakeupEvaluateFailedEvent{WakeupID: "failed", Reason: "database unavailable"}})
+
+	for _, want := range []string{store.EventKeepalive, store.EventWakeupEvaluateFailed} {
+		if frame := readSSEFrame(t, reader); frame.event != want {
+			t.Fatalf("SSE task diagnostic event = %q, want %q; lines=%v", frame.event, want, frame.lines)
+		}
+	}
+}
+
 func TestSSEPublishesEvaluateFailureForGoalSubscription(t *testing.T) {
 	f := newBareFixture(t)
 	srv := newTestServer(t, f.store)

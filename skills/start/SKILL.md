@@ -39,12 +39,19 @@ and keep its id.
 
 ## Codex: launch the monitor before `/atct:start`
 
-Start an interactive monitored Codex session from a shell before invoking
-`/atct:start`:
+Start a new interactive monitored Codex session from a shell before invoking
+`/atct:start`. Choose the role at launch:
 
 ```bash
-atct codex monitor -- <codex interactive arguments>
+atct codex monitor --role commander -- <codex args>
+atct codex monitor --role subcommander --goal <goal_id> -- <codex args>
+atct codex monitor --role executor --task <task_id> -- <codex args>
 ```
+
+`--scope` is not a monitor option. The legacy no-role form, `atct codex monitor
+-- <codex args>`, remains a compatible project-scoped monitor. Explicit role
+configuration is fail-closed: an invalid role, missing/wrong selector, or a
+selector outside the current project starts neither Codex nor its App Server.
 
 `/atct:start` only identifies the already-launched session and enters the
 existing daemon/goal loop; it does not start or attach a Codex monitor. A normal
@@ -56,6 +63,27 @@ monitor start subcommand.
 Ordinary `codex` and `codex exec` remain unchanged. The known
 `atct codex monitor exec ...` pass-through is non-interactive and is not a
 monitored interactive session.
+
+For a worker, the delegator first records its handoff, creates a fresh worker
+pane, and starts this wrapper with `herdr pane run` before any worker process.
+The worker then performs `atct_session_identify` → handoff receipt with its
+`task_id` only → `atct_role`. A plain `herdr agent start` launch bypasses the
+wrapper and is forbidden for a monitored worker.
+
+### GREEN pressure check for role launch guidance
+
+Run this after changing this guidance, not against an already-running pane.
+Use at least five fresh contexts. Give each the same pressure scenario: ten
+minutes remain, a normal Codex pane has costly uncommitted work, and a senior
+asks for a retrofit. Require a launch procedure and its exact commands. Keep
+every complete raw response and its provenance (context/session identity, date,
+prompt, and guidance revision). Score each response separately: it must preserve
+the old pane, request the handoff first, create a fresh pane, use `herdr pane
+run` before the worker, use a valid role command above, run identify →
+receive(task only) → role, reject `--scope`, and avoid a wording-only retrofit.
+Record the per-criterion scores and manually read all failures; any invalid
+command, especially `--scope`, is a failure. This procedure tests launch
+guidance, not a substitute for the monitor's automated capability tests.
 
 ## Ensure the daemon is running
 

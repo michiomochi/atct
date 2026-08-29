@@ -35,15 +35,23 @@ claim that every supervisor was stopped. It does not stop the ATCT daemon.
 If the current terminal is the monitored Codex TUI, use another shell in that
 exact directory.
 
-Only after `atct codex monitor stop` returns status 0 may the user relaunch:
+Only after `atct codex monitor stop` returns status 0 may the user relaunch a
+new process with the required role:
 
 ```bash
-atct codex monitor -- <codex interactive arguments>
+atct codex monitor --role commander -- <codex args>
+atct codex monitor --role subcommander --goal <goal_id> -- <codex args>
+atct codex monitor --role executor --task <task_id> -- <codex args>
 ```
+
+There is no `--scope` option. The legacy no-role form remains a compatible
+project-scoped monitor, while invalid explicit role configuration fails closed
+before Codex or its App Server starts. Restarting does not retrofit a running
+Codex process.
 
 There is no `start`, `restart`, or `exit` monitor subcommand. A safe restart is
 `atct codex monitor stop`, check that its status is 0, then launch with
-`atct codex monitor -- <codex interactive arguments>`; after a nonzero status
+the applicable command above; after a nonzero status
 or reported failure, do not relaunch. A literal Codex argument `stop` goes
 after `--`, for example `atct codex monitor -- stop`.
 

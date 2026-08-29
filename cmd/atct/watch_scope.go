@@ -2,6 +2,7 @@ package main
 
 type watchScopeFilter struct {
 	goalID      string
+	taskID      string
 	passThrough bool
 
 	hasWakeupState      bool
@@ -10,8 +11,14 @@ type watchScopeFilter struct {
 	unassignedGoalIDs   []int64
 }
 
+type watchScope struct{ ProjectID, GoalID, TaskID, Role string }
+
 func newWatchScopeFilter(goalID string) *watchScopeFilter {
 	return &watchScopeFilter{goalID: goalID}
+}
+
+func newWatchTaskScopeFilter(taskID string) *watchScopeFilter {
+	return &watchScopeFilter{taskID: taskID}
 }
 
 func newWatchPassThroughFilter() *watchScopeFilter {
@@ -22,6 +29,9 @@ func newWatchPassThroughFilter() *watchScopeFilter {
 // goal. Keep this separate from delivers because SSE keepalives and
 // wakeup.evaluate_failed events must pass through without a goal ID.
 func (f *watchScopeFilter) deliversSnapshotDecision(decision watchDecision) bool {
+	if f.taskID != "" && decision.TaskID != f.taskID {
+		return false
+	}
 	if f.goalID != "" && decision.GoalID != f.goalID {
 		return false
 	}
@@ -29,6 +39,12 @@ func (f *watchScopeFilter) deliversSnapshotDecision(decision watchDecision) bool
 }
 
 func (f *watchScopeFilter) delivers(eventName string, decision watchDecision) bool {
+	if f.taskID != "" {
+		if eventName == "wakeup.evaluate_failed" {
+			return true
+		}
+		return decision.TaskID == f.taskID
+	}
 	if f.passThrough || f.goalID != "" {
 		return true
 	}

@@ -7,12 +7,39 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/coder/websocket"
 )
+
+func TestRunCodexMonitorWatchUsesCWDProjectIDForSSE(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var gotProjectID string
+	client := &http.Client{Transport: watchRoundTripper(func(req *http.Request) (*http.Response, error) {
+		body := "[]"
+		switch req.URL.Path {
+		case "/api/inbox":
+			body = `{"unapplied_decisions":[]}`
+		case "/api/projects":
+			body = `[{"id":7,"root_path":"/project"}]`
+		case "/api/events":
+			gotProjectID = req.URL.Query().Get("project_id")
+			cancel()
+		}
+		return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
+	})}
+
+	if err := runCodexMonitorWatch(ctx, client, []string{"http://daemon"}, "/project/worktree", newCodexMonitorBridge(&fakeCodexTurnStarter{}, "")); err != nil {
+		t.Fatalf("runCodexMonitorWatch: %v", err)
+	}
+	if gotProjectID != "7" {
+		t.Fatalf("SSE project_id = %q, want cwd project 7", gotProjectID)
+	}
+}
 
 func TestCodexAppServerRPC(t *testing.T) {
 	const cwd = "/work/project"
@@ -163,6 +190,18 @@ func TestCodexAppServerRPC(t *testing.T) {
 	}
 	if _, ok := turnParams["turn/steer"]; ok {
 		t.Fatal("turn/start params unexpectedly contain turn/steer")
+	}
+}
+
+func TestCodexMonitorActionLineAdmitsFormattedTaskActions(t *testing.T) {
+	for _, line := range []string{
+		"atct handoff reported: task 846 (handoff handoff-846): verified",
+		"atct handoff yielded: task 846",
+		"atct detection: task 846 has a stale claim",
+	} {
+		if !isCodexMonitorActionLine(line) {
+			t.Fatalf("task transition action line rejected: %q", line)
+		}
 	}
 }
 
@@ -556,7 +595,7 @@ func TestCodexMonitorEventSinkOnlyReceivesFormattedLines(t *testing.T) {
 	for _, line := range []string{
 		"atct watch: connection unavailable; reconnecting in 5s",
 		"atct decision default applied (decision_id: d2)",
-		"atct detection: task t1 is doing without a work lock",
+		"atct detection: malformed",
 	} {
 		if err := sink(line); err != nil {
 			t.Fatalf("sink(%q): %v", line, err)

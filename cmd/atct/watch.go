@@ -312,11 +312,18 @@ func watchLoopWithEnsureAndProjectIDAndGoal(ctx context.Context, out io.Writer, 
 }
 
 func watchLoopWithEnsureAndProjectIDAndGoalAndSink(ctx context.Context, out io.Writer, client *http.Client, retryInterval time.Duration, snapshot watchSnapshotFunc, ensure watchEnsureFunc, projectID func() string, goalID string, sink func(string) error) error {
+	return watchLoopWithEnsureAndProjectIDAndScopeAndSink(ctx, out, client, retryInterval, snapshot, ensure, projectID, watchScope{GoalID: goalID}, sink)
+}
+
+func watchLoopWithEnsureAndProjectIDAndScopeAndSink(ctx context.Context, out io.Writer, client *http.Client, retryInterval time.Duration, snapshot watchSnapshotFunc, ensure watchEnsureFunc, projectID func() string, scope watchScope, sink func(string) error) error {
 	if retryInterval <= 0 {
 		retryInterval = watchReconnectInterval
 	}
 	delivered := make(map[watchDeliveryKey]struct{})
-	scopeFilter := newWatchScopeFilter(goalID)
+	scopeFilter := newWatchScopeFilter(scope.GoalID)
+	if scope.TaskID != "" {
+		scopeFilter = newWatchTaskScopeFilter(scope.TaskID)
+	}
 	// Keep only the last rendered wakeup content in this watch loop. On daemon
 	// restart the daemon forgets its history, but this watch retains its last
 	// content across reconnects and suppresses an unchanged first post-restart
@@ -386,7 +393,9 @@ func watchLoopWithEnsureAndProjectIDAndGoalAndSink(ctx context.Context, out io.W
 			}
 		}
 
-		if err := consumeWatchEventsWithStateAndGoalAndSink(ctx, client, baseURL, filterProjectID, goalID, out, watchKeepaliveTimeout, delivered, &lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered, scopeFilter, sink); err != nil && ctx.Err() == nil {
+		streamScope := scope
+		streamScope.ProjectID = filterProjectID
+		if err := consumeWatchEventsWithStateAndScopeAndSink(ctx, client, baseURL, streamScope, out, watchKeepaliveTimeout, delivered, &lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered, scopeFilter, sink); err != nil && ctx.Err() == nil {
 			var sinkErr *watchSinkError
 			if errors.As(err, &sinkErr) {
 				return err
@@ -549,7 +558,11 @@ func consumeWatchEventsWithStateAndGoal(ctx context.Context, client *http.Client
 }
 
 func consumeWatchEventsWithStateAndGoalAndSink(ctx context.Context, client *http.Client, baseURL, projectID, goalID string, out io.Writer, keepaliveTimeout time.Duration, delivered map[watchDeliveryKey]struct{}, lastWakeupContent *string, wakeupDiscrepancyDelivered map[watchWakeupDeliveryKey]struct{}, detectionDelivered map[watchDetectionDeliveryKey]struct{}, scopeFilter *watchScopeFilter, sink func(string) error) error {
-	eventsURL, err := watchEventsURLWithGoal(baseURL, projectID, goalID)
+	return consumeWatchEventsWithStateAndScopeAndSink(ctx, client, baseURL, watchScope{ProjectID: projectID, GoalID: goalID}, out, keepaliveTimeout, delivered, lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered, scopeFilter, sink)
+}
+
+func consumeWatchEventsWithStateAndScopeAndSink(ctx context.Context, client *http.Client, baseURL string, scope watchScope, out io.Writer, keepaliveTimeout time.Duration, delivered map[watchDeliveryKey]struct{}, lastWakeupContent *string, wakeupDiscrepancyDelivered map[watchWakeupDeliveryKey]struct{}, detectionDelivered map[watchDetectionDeliveryKey]struct{}, scopeFilter *watchScopeFilter, sink func(string) error) error {
+	eventsURL, err := watchEventsURLWithScope(baseURL, scope)
 	if err != nil {
 		return err
 	}
@@ -614,7 +627,7 @@ func consumeWatchEventsWithStateAndGoalAndSink(ctx context.Context, client *http
 			if err := json.Unmarshal([]byte(frame.data), &decision); err != nil {
 				return fmt.Errorf("decode SSE event %s: %w", frame.name, err)
 			}
-			if projectID != "" && decision.ProjectID != "" && decision.ProjectID != projectID {
+			if scope.ProjectID != "" && decision.ProjectID != "" && decision.ProjectID != scope.ProjectID {
 				continue
 			}
 			if !scopeFilter.delivers(frame.name, decision) {
@@ -694,8 +707,12 @@ func watchEventsURL(baseURL, projectID string) (string, error) {
 }
 
 func watchEventsURLWithGoal(baseURL, projectID, goalID string) (string, error) {
+	return watchEventsURLWithScope(baseURL, watchScope{ProjectID: projectID, GoalID: goalID})
+}
+
+func watchEventsURLWithScope(baseURL string, scope watchScope) (string, error) {
 	endpoint := strings.TrimRight(baseURL, "/") + "/api/events"
-	if projectID == "" && goalID == "" {
+	if scope.ProjectID == "" && scope.GoalID == "" && scope.TaskID == "" {
 		return endpoint, nil
 	}
 	parsed, err := url.Parse(endpoint)
@@ -703,11 +720,14 @@ func watchEventsURLWithGoal(baseURL, projectID, goalID string) (string, error) {
 		return "", err
 	}
 	query := parsed.Query()
-	if projectID != "" {
-		query.Set("project_id", projectID)
+	if scope.ProjectID != "" {
+		query.Set("project_id", scope.ProjectID)
 	}
-	if goalID != "" {
-		query.Set("goal_id", goalID)
+	if scope.GoalID != "" {
+		query.Set("goal_id", scope.GoalID)
+	}
+	if scope.TaskID != "" {
+		query.Set("task_id", scope.TaskID)
 	}
 	parsed.RawQuery = query.Encode()
 	return parsed.String(), nil
