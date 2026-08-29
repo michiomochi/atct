@@ -165,6 +165,18 @@ type watchDetectionDeliveryKey struct {
 type watchSnapshotFunc func(context.Context) (string, []watchDecision, error)
 type watchEnsureFunc func() error
 
+type watchSinkError struct {
+	err error
+}
+
+func (e *watchSinkError) Error() string {
+	return e.err.Error()
+}
+
+func (e *watchSinkError) Unwrap() error {
+	return e.err
+}
+
 func runWatch(dir, goalID string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -296,6 +308,10 @@ func watchLoopWithEnsureAndProjectID(ctx context.Context, out io.Writer, client 
 }
 
 func watchLoopWithEnsureAndProjectIDAndGoal(ctx context.Context, out io.Writer, client *http.Client, retryInterval time.Duration, snapshot watchSnapshotFunc, ensure watchEnsureFunc, projectID func() string, goalID string) error {
+	return watchLoopWithEnsureAndProjectIDAndGoalAndSink(ctx, out, client, retryInterval, snapshot, ensure, projectID, goalID, nil)
+}
+
+func watchLoopWithEnsureAndProjectIDAndGoalAndSink(ctx context.Context, out io.Writer, client *http.Client, retryInterval time.Duration, snapshot watchSnapshotFunc, ensure watchEnsureFunc, projectID func() string, goalID string, sink func(string) error) error {
 	if retryInterval <= 0 {
 		retryInterval = watchReconnectInterval
 	}
@@ -365,12 +381,16 @@ func watchLoopWithEnsureAndProjectIDAndGoal(ctx context.Context, out io.Writer, 
 			if !scopeFilter.deliversSnapshotDecision(decision) {
 				continue
 			}
-			if err := emitWatchDecisionWithState(out, "decision.answered", decision, delivered, &lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered); err != nil {
+			if err := emitWatchDecisionWithStateAndSink(out, "decision.answered", decision, delivered, &lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered, sink); err != nil {
 				return err
 			}
 		}
 
-		if err := consumeWatchEventsWithStateAndGoal(ctx, client, baseURL, filterProjectID, goalID, out, watchKeepaliveTimeout, delivered, &lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered, scopeFilter); err != nil && ctx.Err() == nil {
+		if err := consumeWatchEventsWithStateAndGoalAndSink(ctx, client, baseURL, filterProjectID, goalID, out, watchKeepaliveTimeout, delivered, &lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered, scopeFilter, sink); err != nil && ctx.Err() == nil {
+			var sinkErr *watchSinkError
+			if errors.As(err, &sinkErr) {
+				return err
+			}
 			if err := recoverDaemon(); err != nil {
 				return err
 			}
@@ -524,6 +544,10 @@ func consumeWatchEventsWithState(ctx context.Context, client *http.Client, baseU
 }
 
 func consumeWatchEventsWithStateAndGoal(ctx context.Context, client *http.Client, baseURL, projectID, goalID string, out io.Writer, keepaliveTimeout time.Duration, delivered map[watchDeliveryKey]struct{}, lastWakeupContent *string, wakeupDiscrepancyDelivered map[watchWakeupDeliveryKey]struct{}, detectionDelivered map[watchDetectionDeliveryKey]struct{}, scopeFilter *watchScopeFilter) error {
+	return consumeWatchEventsWithStateAndGoalAndSink(ctx, client, baseURL, projectID, goalID, out, keepaliveTimeout, delivered, lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered, scopeFilter, nil)
+}
+
+func consumeWatchEventsWithStateAndGoalAndSink(ctx context.Context, client *http.Client, baseURL, projectID, goalID string, out io.Writer, keepaliveTimeout time.Duration, delivered map[watchDeliveryKey]struct{}, lastWakeupContent *string, wakeupDiscrepancyDelivered map[watchWakeupDeliveryKey]struct{}, detectionDelivered map[watchDetectionDeliveryKey]struct{}, scopeFilter *watchScopeFilter, sink func(string) error) error {
 	eventsURL, err := watchEventsURLWithGoal(baseURL, projectID, goalID)
 	if err != nil {
 		return err
@@ -595,7 +619,7 @@ func consumeWatchEventsWithStateAndGoal(ctx context.Context, client *http.Client
 			if !scopeFilter.delivers(frame.name, decision) {
 				continue
 			}
-			if err := emitWatchDecisionWithState(out, frame.name, decision, delivered, lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered); err != nil {
+			if err := emitWatchDecisionWithStateAndSink(out, frame.name, decision, delivered, lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered, sink); err != nil {
 				return err
 			}
 		}
@@ -689,13 +713,27 @@ func watchEventsURLWithGoal(baseURL, projectID, goalID string) (string, error) {
 }
 
 func emitWatchDecisionWithState(out io.Writer, eventName string, decision watchDecision, delivered map[watchDeliveryKey]struct{}, lastWakeupContent *string, wakeupDiscrepancyDelivered map[watchWakeupDeliveryKey]struct{}, detectionDelivered map[watchDetectionDeliveryKey]struct{}) error {
+	return emitWatchDecisionWithStateAndSink(out, eventName, decision, delivered, lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered, nil)
+}
+
+func emitWatchDecisionWithStateAndSink(out io.Writer, eventName string, decision watchDecision, delivered map[watchDeliveryKey]struct{}, lastWakeupContent *string, wakeupDiscrepancyDelivered map[watchWakeupDeliveryKey]struct{}, detectionDelivered map[watchDetectionDeliveryKey]struct{}, sink func(string) error) error {
 	line, ok := formatWatchDecision(eventName, decision)
 	if !ok {
 		return nil
 	}
+	writeLine := func() error {
+		if _, err := fmt.Fprintln(out, line); err != nil {
+			return err
+		}
+		if sink != nil {
+			if err := sink(line); err != nil {
+				return &watchSinkError{err: err}
+			}
+		}
+		return nil
+	}
 	if eventName == "handoff_yielded" {
-		_, err := fmt.Fprintln(out, line)
-		return err
+		return writeLine()
 	}
 	if eventName == "goal.created" || strings.HasPrefix(eventName, "detection.") || eventName == "handoff_reported" {
 		target := decision.GoalID
@@ -723,7 +761,7 @@ func emitWatchDecisionWithState(out io.Writer, eventName string, decision watchD
 		if _, ok := detectionDelivered[key]; ok {
 			return nil
 		}
-		if _, err := fmt.Fprintln(out, line); err != nil {
+		if err := writeLine(); err != nil {
 			return err
 		}
 		detectionDelivered[key] = struct{}{}
@@ -743,7 +781,7 @@ func emitWatchDecisionWithState(out io.Writer, eventName string, decision watchD
 			if *lastWakeupContent == line {
 				return nil
 			}
-			if _, err := fmt.Fprintln(out, line); err != nil {
+			if err := writeLine(); err != nil {
 				return err
 			}
 			*lastWakeupContent = line
@@ -753,7 +791,7 @@ func emitWatchDecisionWithState(out io.Writer, eventName string, decision watchD
 		if _, ok := wakeupDiscrepancyDelivered[key]; ok {
 			return nil
 		}
-		if _, err := fmt.Fprintln(out, line); err != nil {
+		if err := writeLine(); err != nil {
 			return err
 		}
 		wakeupDiscrepancyDelivered[key] = struct{}{}
@@ -771,7 +809,7 @@ func emitWatchDecisionWithState(out io.Writer, eventName string, decision watchD
 	if _, ok := delivered[key]; ok {
 		return nil
 	}
-	if _, err := fmt.Fprintln(out, line); err != nil {
+	if err := writeLine(); err != nil {
 		return err
 	}
 	delivered[key] = struct{}{}

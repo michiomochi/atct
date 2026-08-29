@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -66,6 +67,93 @@ func TestParseArgs(t *testing.T) {
 				t.Fatalf("parseArgs(%q) listenExplicit = %v, want %v", tt.args, got.listenExplicit, tt.wantExplicit)
 			}
 		})
+	}
+}
+
+func TestParseArgsCodexMonitorPreservesRawArguments(t *testing.T) {
+	cfg, err := parseArgs([]string{"codex", "monitor", "--", "-m", "gpt-5", "--config", "a=b"})
+	if err != nil {
+		t.Fatalf("parseArgs: %v", err)
+	}
+	if cfg.subcommand != "codex" {
+		t.Fatalf("subcommand = %q, want codex", cfg.subcommand)
+	}
+	if cfg.codexMonitorAction != "monitor" {
+		t.Fatalf("codexMonitorAction = %q, want monitor", cfg.codexMonitorAction)
+	}
+	want := []string{"-m", "gpt-5", "--config", "a=b"}
+	if !slices.Equal(cfg.codexArgs, want) {
+		t.Fatalf("codexArgs = %#v, want %#v", cfg.codexArgs, want)
+	}
+}
+
+func TestParseArgsCodexMonitorStop(t *testing.T) {
+	cfg, err := parseArgs([]string{"codex", "monitor", "stop"})
+	if err != nil {
+		t.Fatalf("parseArgs: %v", err)
+	}
+	if cfg.codexMonitorAction != "stop" {
+		t.Fatalf("codexMonitorAction = %q, want stop", cfg.codexMonitorAction)
+	}
+	if len(cfg.codexArgs) != 0 {
+		t.Fatalf("codexArgs = %#v, want empty", cfg.codexArgs)
+	}
+}
+
+func TestParseArgsCodexMonitorPassesThroughExec(t *testing.T) {
+	cfg, err := parseArgs([]string{"codex", "monitor", "exec", "--help"})
+	if err != nil {
+		t.Fatalf("parseArgs: %v", err)
+	}
+	if !cfg.codexMonitorPassthrough {
+		t.Fatal("codexMonitorPassthrough = false, want true")
+	}
+	want := []string{"exec", "--help"}
+	if !slices.Equal(cfg.codexArgs, want) {
+		t.Fatalf("codexArgs = %#v, want %#v", cfg.codexArgs, want)
+	}
+}
+
+func TestParseArgsCodexMonitorPassesThroughExecAlias(t *testing.T) {
+	cfg, err := parseArgs([]string{"codex", "monitor", "e", "--help"})
+	if err != nil {
+		t.Fatalf("parseArgs: %v", err)
+	}
+	if !cfg.codexMonitorPassthrough {
+		t.Fatal("codexMonitorPassthrough = false, want true for exec alias")
+	}
+	if want := []string{"e", "--help"}; !slices.Equal(cfg.codexArgs, want) {
+		t.Fatalf("codexArgs = %#v, want %#v", cfg.codexArgs, want)
+	}
+}
+
+func TestParseArgsCodexMonitorPassesThroughNonInteractiveCommands(t *testing.T) {
+	commands := []string{
+		"app-server", "apply", "archive", "cloud", "completion", "debug", "delete", "doctor",
+		"exec-server", "features", "help", "login", "logout", "mcp", "mcp-server", "plugin",
+		"remote-control", "review", "sandbox", "unarchive", "update",
+	}
+	for _, command := range commands {
+		t.Run(command, func(t *testing.T) {
+			cfg, err := parseArgs([]string{"codex", "monitor", command, "--help"})
+			if err != nil {
+				t.Fatalf("parseArgs: %v", err)
+			}
+			if !cfg.codexMonitorPassthrough {
+				t.Fatalf("codexMonitorPassthrough = false for %q, want true", command)
+			}
+		})
+	}
+}
+
+func TestParseArgsCodexMonitorStopRejectsExtraArguments(t *testing.T) {
+	output := captureStderr(t, func() {
+		if _, err := parseArgs([]string{"codex", "monitor", "stop", "extra"}); err == nil {
+			t.Fatal("parseArgs(codex monitor stop extra) returned nil error")
+		}
+	})
+	if !strings.Contains(output, "codex monitor stop") {
+		t.Fatalf("output = %q, want monitor stop usage", output)
 	}
 }
 
