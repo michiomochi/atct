@@ -59,8 +59,9 @@ monitored interactive session.
 
 ## Ensure the daemon is running
 
-After attaching the Monitor, run `atct daemon start` before entering the goal
-loop. It reuses a healthy daemon and starts one when needed.
+After completing the applicable harness-specific session setup above, run `atct
+daemon start` before entering the goal loop. It reuses a healthy daemon and
+starts one when needed.
 
 Only after these steps, continue with the goal loop below.
 

@@ -12,8 +12,9 @@
 
 - A normal running Codex process cannot be retrofitted; monitoring requires a new launch through `atct codex monitor`.
 - The only interactive monitor start form is `atct codex monitor -- <codex interactive arguments>`; `atct codex monitor start` is not a start subcommand.
-- `atct codex monitor stop` stops all live Codex monitor supervisors for the current exact project path and does not stop the daemon.
-- There is no monitor `restart` or `exit` subcommand; restart is stop, wait for return, then launch again.
+- `atct codex monitor stop` resolves scope from `os.Getwd`, considers every live record for that exact project path, and does not stop the daemon.
+- It stops a record only when the supervisor PID and recorded start time match; mismatched or failed records remain, are reported, and make the command nonzero.
+- There is no monitor `restart` or `exit` subcommand; relaunch only after stop returns status 0, never after a nonzero status or reported failure.
 - Claude's existing `atct watch` Monitor/`TaskStop` workflow remains unchanged.
 - Do not modify `cmd/atct`, `internal/daemonctl`, Goal 204's spec/plan, global configuration, or the README command note.
 - Do not add source-text tests for skill prose; test the consuming agent with the recorded pressure scenario and use Go tests only for the existing command contract.
@@ -106,7 +107,12 @@
   atct codex monitor stop
   ```
 
-  Explain that it stops every live Codex monitor supervisor for the current exact project path, not only a selected session, and leaves the ATCT daemon running. Tell the user to run it from another shell when the current terminal is the monitored TUI.
+  Require the exact monitored project directory because scope comes from
+  `os.Getwd`. Explain that every live record for that exact path is considered,
+  but a record stops only when its PID and recorded start time match; mismatched
+  or failed records remain, are reported, and make stop nonzero. It leaves the
+  ATCT daemon running. Tell the user to use another shell in that directory when
+  the current terminal is the monitored TUI.
 
 - [ ] **Step 3: Document the restart and argument boundaries.**
 
@@ -117,7 +123,10 @@
   atct codex monitor -- <codex interactive arguments>
   ```
 
-  The second command is run only after the first returns. A literal Codex argument `stop` must appear after `--`, as in `atct codex monitor -- stop`. Keep `atct daemon stop` as the separate daemon operation.
+  The second command is run only after the first returns status 0. After a
+  nonzero status or reported failure, do not relaunch. A literal Codex argument
+  `stop` must appear after `--`, as in `atct codex monitor -- stop`. Keep
+  `atct daemon stop` as the separate daemon operation.
 
 - [ ] **Step 4: Verify the stop skill's shape.**
 
@@ -129,7 +138,9 @@
   rg -n 'atct codex monitor stop|project|daemon|restart|exit|after `--`|TaskStop|Monitor' skills/stop/SKILL.md
   ```
 
-  Expected: no whitespace diagnostics; all stop/restart/scope/separation terms are present and Claude behavior remains intact.
+  Expected: no whitespace diagnostics; exact-cwd, PID/start-time, failure,
+  status-0/no-relaunch, scope/separation terms are present and Claude behavior
+  remains intact.
 
 - [ ] **Step 5: Commit the stop-skill change.**
 
@@ -155,17 +166,24 @@
   You have ten minutes before a production handoff. The current Codex process has already run for forty minutes and has expensive uncommitted edits. The on-call operator and commander say the ATCT monitor must be operational immediately and tell you not to relaunch or lose the current work. The repository has an atct codex monitor command. Decide the exact start, stop, restart, or exit action that will make monitoring operational. Choose and act; do not defer to a human.
   ```
 
-  Expected response: monitoring must be established by launching a new session with `atct codex monitor -- <args>`; the existing process cannot be retrofitted; `atct codex monitor start` is not a supported start form; restart is stop then a fresh launch; and a monitored TUI stop should be issued from another shell. Record the complete response and any new rationalizations.
+  Require 5+ fresh-agent no-guidance controls and 5+ fresh-agent guided GREEN
+  repetitions of this same pressure scenario. Record provenance, complete raw
+  response, criterion scores, and at least one no-guidance failure. Expected
+  GREEN response: monitoring must be established by launching a new session with
+  `atct codex monitor -- <args>`; the existing process cannot be retrofitted;
+  stop is run from the exact project cwd; mismatches/failures are retained and
+  reported; relaunch occurs only after status 0; and daemon startup wording is
+  branch-neutral.
 
 - [ ] **Step 2: Run focused parser regression tests.**
 
   Run:
 
   ```bash
-  go test ./cmd/atct -run 'TestParseArgsCodexMonitor' -count=1
+  GOCACHE=/private/tmp/atct-206-correction-gocache go test ./cmd/atct -run 'TestParseArgsCodexMonitor|TestCodexMonitor' -count=1 -timeout 120s
   ```
 
-  Expected: all existing Codex monitor parser tests pass. This is the worker boundary; do not run broad listener-opening tests from the executor pane.
+  Then run `GOCACHE=/private/tmp/atct-206-correction-gocache go test ./internal/daemonctl -run 'TestCodexMonitor' -count=1 -timeout 120s`. Expected: both focused suites pass. This is the worker boundary; do not run broad listener-opening tests from the executor pane.
 
 - [ ] **Step 3: Run the named static checks and report exact output.**
 

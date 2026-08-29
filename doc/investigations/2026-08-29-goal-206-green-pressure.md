@@ -124,3 +124,68 @@ The Aqua timestamp warning is an environment permission warning; both test
 commands passed. No live Codex monitor, App Server, TUI, signal, stop action,
 package installation, production-code change, or final full Go verification was
 run in this follow-up.
+
+## Lifecycle-correction evidence requirements (2026-08-29)
+
+This addendum preserves the historical raw RED and GREEN evidence above; it
+does not reinterpret an old response as a new trial. The corrected guidance is
+verified against source: stop obtains project scope from `os.Getwd`, considers
+all live records for that exact path, stops only records whose supervisor PID
+and recorded start time still match, and retains/reports mismatched or failed
+records. Any failure returns nonzero, so relaunch is forbidden unless stop
+returns status 0. Daemon startup is branch-neutral: after the applicable
+harness-specific setup, run `atct daemon start`.
+
+The required auditable micro-test set is 5+ fresh-agent no-guidance controls
+and 5+ fresh-agent guided GREEN repetitions of the identical pressure scenario.
+Every repetition must record provenance, the complete raw response, criterion
+scores, and whether it failed; the control set must contain a no-guidance
+failure. GREEN scoring must cover exact cwd, PID/start-time match semantics,
+retained/reported failures, status-0-only relaunch using `atct codex monitor --
+<codex interactive arguments>`, literal `stop` after `--`, no retrofit, and
+branch-neutral daemon startup. These are requirements for new evidence, not a
+claim that the historical single GREEN response supplied all repetitions.
+
+Post-edit word counts and focused verification output are appended after the
+commands are run. Verification remains limited to the two requested focused Go
+suites, static/diff/status/word-count checks, and source inspection; no live
+Codex monitor, daemon, Claude Monitor, TUI, App Server, signal, stop action,
+or production-code edit is in scope.
+
+### Post-edit focused verification
+
+```text
+$ GOCACHE=/private/tmp/atct-206-correction-gocache go test ./cmd/atct -run 'TestParseArgsCodexMonitor|TestCodexMonitor' -count=1 -timeout 120s
+exit_code=0
+WRN update the last used datetime ... timestamp.txt: operation not permitted
+ok  github.com/michiomochi/atct/cmd/atct  0.588s
+
+$ GOCACHE=/private/tmp/atct-206-correction-gocache go test ./internal/daemonctl -run 'TestCodexMonitor' -count=1 -timeout 120s
+exit_code=0
+WRN update the last used datetime ... timestamp.txt: operation not permitted
+ok  github.com/michiomochi/atct/internal/daemonctl  0.647s
+
+$ git diff --check
+exit_code=0
+(no output)
+
+$ wc -w skills/start/SKILL.md skills/stop/SKILL.md
+exit_code=0
+    1057 skills/start/SKILL.md
+     340 skills/stop/SKILL.md
+    1397 total
+
+$ git status --short --untracked-files=all
+exit_code=0
+ M doc/investigations/2026-08-29-goal-206-green-pressure.md
+ M doc/plans/2026-08-29-codex-monitor-lifecycle-skills.md
+ M doc/specs/2026-08-29-codex-monitor-lifecycle-skills.md
+ M skills/start/SKILL.md
+ M skills/stop/SKILL.md
+```
+
+Focused static checks found the exact-cwd/`os.Getwd`, PID/start-time,
+mismatched-or-failed/nonzero, status-0/no-relaunch, and branch-neutral daemon
+phrases in the corrected skills, spec, and plan. The Aqua warning is an
+environment permission warning; both focused suites passed. No live lifecycle
+operation was run.

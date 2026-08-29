@@ -44,13 +44,19 @@ The implemented stop command is:
 atct codex monitor stop
 ```
 
-It targets every live Codex monitor supervisor registered for the current exact
-project path. It does not stop the ATCT daemon. There is no `restart` or
-`exit` monitor subcommand. To restart, run the project-scoped stop command from
-a separate shell when the current terminal is the monitored TUI, wait for it to
-return, and then launch a new session with `atct codex monitor -- <args>`. A
-literal Codex argument named `stop` goes after `--` so it is not interpreted as
-the monitor stop action.
+It derives that scope from `os.Getwd`, so it must be run from the exact
+monitored project directory. It considers every live record registered for that
+exact project path, but stops a record only if both its supervisor PID and
+recorded start time still match. Mismatched or failed records remain in the
+registry, are reported as failures, and make the command nonzero; therefore the
+skills must not claim every supervisor was stopped. The command does not stop
+the ATCT daemon. There is no `restart` or `exit` monitor subcommand. Relaunch is
+allowed only after stop returns status 0; after a nonzero status or a reported
+failure, do not relaunch. When the monitored TUI occupies the current terminal,
+run the stop command from another shell in that exact directory, then launch
+with `atct codex monitor -- <codex interactive arguments>`. A literal Codex
+argument named `stop` goes after `--` so it is not interpreted as the monitor
+stop action.
 
 ### Claude behavior remains unchanged
 
@@ -80,14 +86,16 @@ goal.
    normal-process handoff/exit guidance, and the `codex exec` pass-through
    boundary.
 2. `skills/stop/SKILL.md` keeps Claude `TaskStop` behavior and adds the Codex
-   stop command, exact-project/project-wide scope, separate-daemon warning,
-   safe restart sequence, no `start`/`restart`/`exit` subcommand claim, and the
+   stop command, exact-cwd/project-wide scope, PID/start-time match semantics,
+   retained and reported failures, separate-daemon warning, status-0-only
+   relaunch sequence, no `start`/`restart`/`exit` subcommand claim, and the
    `--` literal-argument rule.
 3. The neutral pressure scenario that chose `atct codex monitor start` without
    the target skills is corrected by the updated skills: the agent states the
    explicit launch form and refuses retrofit/guessed start behavior.
-4. Existing focused Codex parser/lifecycle tests and the repository's final Go
-   verification pass; no production monitor file changes are introduced.
+4. Existing focused Codex parser/lifecycle tests pass; static checks find the
+   exact-cwd, failure/nonzero, no-relaunch, and branch-neutral daemon wording;
+   no production monitor file changes are introduced.
 5. Skill word counts are measured before and after, and the modified skills
    remain concise enough to be loaded as procedural guidance.
 
@@ -95,6 +103,9 @@ goal.
 
 The consuming-agent pressure scenario is the behavioral test for the skill
 prose. Source tests are regression checks for the already-implemented command
-contract, not source-text tests for the skill. Use the focused parser tests
-while implementing and run the full Go test/build/diff checks from the
-subcommander worktree before completion.
+contract, not source-text tests for the skill. The behavioral evidence must
+include 5+ fresh-agent no-guidance controls and 5+ fresh-agent guided GREEN
+repetitions of the same scenario, each with provenance, raw response, criterion
+scores, and at least one documented no-guidance failure. Run the two focused Go
+commands, `git diff --check`, word counts, status, and focused static wording
+checks; do not run a live monitor, daemon, Claude Monitor, or TUI.

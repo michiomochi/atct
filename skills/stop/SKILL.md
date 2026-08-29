@@ -25,19 +25,27 @@ Stop the explicit Codex monitor with:
 atct codex monitor stop
 ```
 
-This stops every live Codex monitor supervisor for the current exact project
-path, not just one selected session. It does not stop the ATCT daemon. If the
-current terminal is the monitored Codex TUI, run the stop command from another
-shell and wait for it to return before launching again:
+Run it from the exact monitored project directory: the implementation obtains
+the project scope from `os.Getwd`. It considers every live monitor record whose
+recorded project path exactly matches that directory, not just one selected
+session. A record is stopped only when its supervisor PID and recorded start
+time still match; a mismatched or failed record remains in the registry and is
+reported as a failure. Any failure makes the command exit nonzero, so do not
+claim that every supervisor was stopped. It does not stop the ATCT daemon.
+If the current terminal is the monitored Codex TUI, use another shell in that
+exact directory.
+
+Only after `atct codex monitor stop` returns status 0 may the user relaunch:
 
 ```bash
 atct codex monitor -- <codex interactive arguments>
 ```
 
 There is no `start`, `restart`, or `exit` monitor subcommand. A safe restart is
-`atct codex monitor stop`, wait for it to return, then launch with
-`atct codex monitor -- <codex interactive arguments>`. A literal Codex argument
-`stop` goes after `--`, for example `atct codex monitor -- stop`.
+`atct codex monitor stop`, check that its status is 0, then launch with
+`atct codex monitor -- <codex interactive arguments>`; after a nonzero status
+or reported failure, do not relaunch. A literal Codex argument `stop` goes
+after `--`, for example `atct codex monitor -- stop`.
 
 To stop the daemon separately, use `atct daemon stop`.
 
