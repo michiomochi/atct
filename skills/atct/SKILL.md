@@ -553,8 +553,17 @@ handoff is gone, the subcommander cannot reissue it, and the goal waits on the
 commander. Continuing to work before either step spends the whole detour on
 changes nobody can attribute.
 
-A subcommander cannot restore its own goal; ask the commander to issue the goal handoff again because reissuing it requires a project claim. This is a procedure, not a repair; it becomes unnecessary once the issue is fixed.
-For background, see `doc/specs/2026-08-25-session-id-swap.md`.
+There are four triggers for a role to come back wrong, and the handoff state differs between them:
+
+| Trigger | Handoff |
+|---|---|
+| A daemon restart (regardless of whether the version changed) | remains open; only the session record was lost |
+| The correspondence between the transport and the session key is lost (cause not measured) | remains open; the goal handoff and the session row in the database are still alive |
+| Rejection of a completion report | remains closed; it is automatically reissued to the original recipient |
+| An out-of-order `atct_goal_handoff_complete` call or an executor calling it by mistake | remains closed; it is not reissued |
+
+Rejection is automatic, so the goal step above that asks the commander to reissue the handoff is needed only for the last trigger.
+For background, see `doc/specs/2026-08-25-session-id-swap.md` and `doc/specs/2026-08-28-reissuing-the-goal-handoff-on-rejection.md`.
 
 ## Close a task the moment it is finished
 
