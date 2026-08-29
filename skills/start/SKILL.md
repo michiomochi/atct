@@ -21,7 +21,7 @@ been installed and `atct_session_identify` is not yet in the tool list because
 MCP has not reconnected, use the recovery section in `skills/atct/SKILL.md` once
 the tools are available.
 
-## Attach the Claude Code Monitor
+## Claude Code: attach the Monitor
 
 After identifying the session, attach a role-appropriate `atct watch` Monitor
 and keep its id.
@@ -34,9 +34,28 @@ and keep its id.
   minutes) and monitoring stops silently.
 - Set `description` for the scope: `ATCT answer watch project` or
   `ATCT answer watch goal <goal_id>`, substituting the number.
-- This step applies only in Claude Code. Codex has no Monitor, so a Codex reader
-  must skip it and must not try to call or attach Monitor. The MCP response
-  attachment remains the shared foundation for both harnesses.
+- This step applies only in Claude Code. The MCP response attachment remains the
+  shared foundation for both harnesses.
+
+## Codex: launch the monitor before `/atct:start`
+
+Start an interactive monitored Codex session from a shell before invoking
+`/atct:start`:
+
+```bash
+atct codex monitor -- <codex interactive arguments>
+```
+
+`/atct:start` only identifies the already-launched session and enters the
+existing daemon/goal loop; it does not start or attach a Codex monitor. A normal
+Codex process that is already running cannot be retrofitted or attached. To use
+the monitor, preserve or hand off its uncommitted work, exit it normally, and
+relaunch through the explicit entry point. `atct codex monitor start` is not a
+monitor start subcommand.
+
+Ordinary `codex` and `codex exec` remain unchanged. The known
+`atct codex monitor exec ...` pass-through is non-interactive and is not a
+monitored interactive session.
 
 ## Ensure the daemon is running
 
