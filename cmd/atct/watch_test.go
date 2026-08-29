@@ -578,6 +578,96 @@ func TestWatchOmitsProjectIDWhenCWDDoesNotMatch(t *testing.T) {
 	}
 }
 
+func TestWatchDoesNotDeliverProjectEventsUntilProjectLookupRecovers(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var output cancelOnOutput
+	output.cancel = cancel
+	output.needles = []string{"decision_id: leaked-sse", "decision_id: recovered-sse"}
+
+	root := t.TempDir()
+	var mu sync.Mutex
+	inboxCalls := 0
+	projectCalls := 0
+	eventCalls := 0
+	queries := make(chan url.Values, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/inbox":
+			mu.Lock()
+			inboxCalls++
+			call := inboxCalls
+			mu.Unlock()
+			w.Header().Set("Content-Type", "application/json")
+			if call == 1 {
+				_, _ = io.WriteString(w, `{"unapplied_decisions":[{"id":"leaked-inbox","project_id":"other-project","default_applied_at":null}]}`)
+				return
+			}
+			_, _ = io.WriteString(w, `{"unapplied_decisions":[{"id":"recovered-inbox","project_id":"project-1","default_applied_at":null}]}`)
+		case "/api/projects":
+			mu.Lock()
+			projectCalls++
+			call := projectCalls
+			mu.Unlock()
+			if call == 1 {
+				http.Error(w, "temporary project lookup failure", http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			if err := json.NewEncoder(w).Encode([]watchProject{{ID: "project-1", RootPath: root}}); err != nil {
+				t.Errorf("encode projects: %v", err)
+			}
+		case "/api/events":
+			mu.Lock()
+			eventCalls++
+			projectsFetched := projectCalls
+			mu.Unlock()
+			queries <- r.URL.Query()
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			if projectsFetched < 2 {
+				_, _ = io.WriteString(w, "event: decision.answered\ndata: {\"id\":\"leaked-sse\",\"project_id\":\"other-project\",\"default_applied_at\":null}\n\n")
+			} else {
+				_, _ = io.WriteString(w, "event: decision.answered\ndata: {\"id\":\"recovered-sse\",\"project_id\":\"project-1\",\"default_applied_at\":null}\n\n")
+			}
+			if f, ok := w.(http.Flusher); ok {
+				f.Flush()
+			}
+			<-r.Context().Done()
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	if err := watchWithURLsAndProject(ctx, []string{server.URL}, &output, server.Client(), time.Millisecond, root); err != nil {
+		t.Fatalf("watchWithURLsAndProject() error = %v", err)
+	}
+
+	query := <-queries
+	got := output.String()
+	if strings.Contains(got, "leaked-inbox") {
+		t.Fatalf("watch output = %q, want no failed-lookup inbox delivery", got)
+	}
+	if strings.Contains(got, "leaked-sse") {
+		t.Fatalf("watch output = %q, want no failed-lookup SSE delivery", got)
+	}
+	if !strings.Contains(got, "recovered-inbox") || !strings.Contains(got, "recovered-sse") {
+		t.Fatalf("watch output = %q, want both retry deliveries", got)
+	}
+	if got := query.Get("project_id"); got != "project-1" {
+		t.Fatalf("events project_id = %q, want %q", got, "project-1")
+	}
+
+	mu.Lock()
+	gotInboxCalls, gotProjectCalls, gotEventCalls := inboxCalls, projectCalls, eventCalls
+	mu.Unlock()
+	if gotInboxCalls != 2 || gotProjectCalls != 2 || gotEventCalls != 1 {
+		t.Fatalf("requests = inbox %d, projects %d, events %d; want 2, 2, 1", gotInboxCalls, gotProjectCalls, gotEventCalls)
+	}
+}
+
 func TestWatchReadsSnapshotAfterDisconnect(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

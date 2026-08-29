@@ -456,11 +456,12 @@ func watchSnapshotWithProject(client *http.Client, urls []string, cwd string) (w
 			return "", nil, err
 		}
 		if !projectsFetched {
-			projectsFetched = true
 			projects, err := fetchWatchProjects(ctx, client, baseURL)
-			if err == nil {
-				projectID = resolveWatchProjectID(cwd, projects)
+			if err != nil {
+				return "", nil, err
 			}
+			projectsFetched = true
+			projectID = resolveWatchProjectID(cwd, projects)
 		}
 		return baseURL, decisions, nil
 	}

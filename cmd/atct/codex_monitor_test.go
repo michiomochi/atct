@@ -166,6 +166,152 @@ func TestCodexAppServerRPC(t *testing.T) {
 	}
 }
 
+func TestCodexAppServerRespondsToServerApprovalRequest(t *testing.T) {
+	conn := newFakeCodexWebSocket()
+	app := newCodexAppServerWithConn(context.Background(), conn)
+	defer app.Close()
+
+	conn.sendJSON(map[string]any{
+		"id":     "approval-1",
+		"method": "item/commandExecution/requestApproval",
+		"params": map[string]any{"threadId": "thread-1", "turnId": "turn-1"},
+	})
+
+	var response map[string]json.RawMessage
+	deadline := time.Now().Add(time.Second)
+	for {
+		writes := conn.writesSnapshot()
+		if len(writes) > 0 {
+			if err := json.Unmarshal(writes[0], &response); err != nil {
+				t.Fatalf("decode server response: %v", err)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("server request produced no response")
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	if got := string(response["id"]); got != `"approval-1"` {
+		t.Fatalf("server response id = %s, want %s", got, `"approval-1"`)
+	}
+	var result struct {
+		Decision string `json:"decision"`
+	}
+	if err := json.Unmarshal(response["result"], &result); err != nil {
+		t.Fatalf("decode server response result: %v", err)
+	}
+	if result.Decision != "decline" {
+		t.Fatalf("server response decision = %q, want decline", result.Decision)
+	}
+	if len(response["error"]) != 0 {
+		t.Fatalf("server response unexpectedly contains error: %s", response["error"])
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if _, err := app.NextNotification(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("NextNotification() error = %v, want context deadline", err)
+	}
+	if err := app.Err(); err != nil {
+		t.Fatalf("App Server error = %v, want nil", err)
+	}
+}
+
+func TestCodexAppServerCompletesOtherServerRequestsSafely(t *testing.T) {
+	tests := []struct {
+		name          string
+		id            json.RawMessage
+		method        string
+		wantResult    string
+		wantErrorCode int
+	}{
+		{
+			name:       "user input",
+			id:         json.RawMessage(`41`),
+			method:     "item/tool/requestUserInput",
+			wantResult: `{"answers":{}}`,
+		},
+		{
+			name:       "elicitation",
+			id:         json.RawMessage(`"elicitation-1"`),
+			method:     "mcpServer/elicitation/request",
+			wantResult: `{"action":"decline","content":null}`,
+		},
+		{
+			name:          "permissions",
+			id:            json.RawMessage(`"permissions-1"`),
+			method:        "item/permissions/requestApproval",
+			wantErrorCode: -32601,
+		},
+		{
+			name:       "legacy patch approval",
+			id:         json.RawMessage(`"patch-1"`),
+			method:     "applyPatchApproval",
+			wantResult: `{"decision":{"denied":{"rejection":"atct codex monitor does not approve legacy requests"}}}`,
+		},
+		{
+			name:       "legacy command approval",
+			id:         json.RawMessage(`43`),
+			method:     "execCommandApproval",
+			wantResult: `{"decision":{"denied":{"rejection":"atct codex monitor does not approve legacy requests"}}}`,
+		},
+		{
+			name:          "unsupported",
+			id:            json.RawMessage(`42`),
+			method:        "unsupported/serverRequest",
+			wantErrorCode: -32601,
+		},
+	}
+
+	conn := newFakeCodexWebSocket()
+	app := newCodexAppServerWithConn(context.Background(), conn)
+	defer app.Close()
+	for index, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			conn.sendJSON(map[string]any{
+				"id":     test.id,
+				"method": test.method,
+				"params": map[string]any{},
+			})
+			payload := waitForCodexWrite(t, conn, index+1)
+			var response map[string]json.RawMessage
+			if err := json.Unmarshal(payload, &response); err != nil {
+				t.Fatalf("decode server response: %v", err)
+			}
+			if got := string(response["id"]); got != string(test.id) {
+				t.Fatalf("server response id = %s, want %s", got, test.id)
+			}
+			if test.wantResult != "" {
+				if got := string(response["result"]); got != test.wantResult {
+					t.Fatalf("server response result = %s, want %s", got, test.wantResult)
+				}
+				if len(response["error"]) != 0 {
+					t.Fatalf("server response unexpectedly contains error: %s", response["error"])
+				}
+				return
+			}
+			if len(response["result"]) != 0 {
+				t.Fatalf("server response unexpectedly contains result: %s", response["result"])
+			}
+			var rpcErr codexRPCError
+			if err := json.Unmarshal(response["error"], &rpcErr); err != nil {
+				t.Fatalf("decode server response error: %v", err)
+			}
+			if rpcErr.Code != test.wantErrorCode {
+				t.Fatalf("server response error code = %d, want %d", rpcErr.Code, test.wantErrorCode)
+			}
+		})
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if _, err := app.NextNotification(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("NextNotification() error = %v, want context deadline", err)
+	}
+}
+
 func TestCodexAppServerUnixSocketTransport(t *testing.T) {
 	var gotNetwork, gotAddress string
 	client := newCodexAppServerHTTPClientWithDialer("/tmp/codex.sock", func(_ context.Context, network, address string) (net.Conn, error) {
@@ -497,6 +643,21 @@ func assertCodexRequest(t *testing.T, payload []byte, method string, hasID bool)
 	_, gotID := request["id"]
 	if gotID != hasID {
 		t.Fatalf("request %s has id = %v, want %v", method, gotID, hasID)
+	}
+}
+
+func waitForCodexWrite(t *testing.T, conn *fakeCodexWebSocket, count int) []byte {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for {
+		writes := conn.writesSnapshot()
+		if len(writes) >= count {
+			return writes[count-1]
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("WebSocket writes = %d, want at least %d", len(writes), count)
+		}
+		time.Sleep(time.Millisecond)
 	}
 }
 

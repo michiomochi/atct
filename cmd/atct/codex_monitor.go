@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -88,9 +89,9 @@ func dialCodexAppServer(ctx, lifetimeCtx context.Context, socketPath string) (*c
 }
 
 type codexRPCRequest struct {
-	ID     *int64 `json:"id,omitempty"`
-	Method string `json:"method"`
-	Params any    `json:"params,omitempty"`
+	ID     json.RawMessage `json:"id,omitempty"`
+	Method string          `json:"method"`
+	Params any             `json:"params,omitempty"`
 }
 
 type codexRPCError struct {
@@ -117,6 +118,12 @@ type codexRPCResponse struct {
 	Error  *codexRPCError
 }
 
+type codexRPCWireResponse struct {
+	ID     json.RawMessage `json:"id"`
+	Result any             `json:"result,omitempty"`
+	Error  *codexRPCError  `json:"error,omitempty"`
+}
+
 type codexAppServer struct {
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -126,7 +133,7 @@ type codexAppServer struct {
 	nextID  atomic.Int64
 
 	pendingMu sync.Mutex
-	pending   map[int64]chan codexRPCResponse
+	pending   map[string]chan codexRPCResponse
 
 	notifications chan codexAppServerNotification
 	done          chan struct{}
@@ -145,7 +152,7 @@ func newCodexAppServerWithConn(ctx context.Context, conn codexWebSocket) *codexA
 		ctx:           appCtx,
 		cancel:        cancel,
 		conn:          conn,
-		pending:       make(map[int64]chan codexRPCResponse),
+		pending:       make(map[string]chan codexRPCResponse),
 		notifications: make(chan codexAppServerNotification, 128),
 		done:          make(chan struct{}),
 	}
@@ -182,6 +189,13 @@ func (c *codexAppServer) readLoop() {
 			return
 		}
 		if message.Method != "" {
+			if len(message.ID) > 0 && string(message.ID) != "null" {
+				if err := c.respondToServerRequest(message.Method, message.ID); err != nil {
+					c.fail(err)
+					return
+				}
+				continue
+			}
 			select {
 			case c.notifications <- codexAppServerNotification{Method: message.Method, Params: append(json.RawMessage(nil), message.Params...)}:
 			case <-c.ctx.Done():
@@ -194,35 +208,55 @@ func (c *codexAppServer) readLoop() {
 			c.fail(errors.New("app server message has neither method nor id"))
 			return
 		}
-		id, err := decodeCodexRPCID(message.ID)
-		if err != nil {
-			c.fail(err)
-			return
-		}
+		requestID := string(message.ID)
 		c.pendingMu.Lock()
-		response, ok := c.pending[id]
+		response, ok := c.pending[requestID]
 		if ok {
-			delete(c.pending, id)
+			delete(c.pending, requestID)
 		}
 		c.pendingMu.Unlock()
 		if !ok {
-			c.fail(fmt.Errorf("app server response has unknown request id %d", id))
+			c.fail(fmt.Errorf("app server response has unknown request id %s", requestID))
 			return
 		}
 		response <- codexRPCResponse{Result: append(json.RawMessage(nil), message.Result...), Error: message.Error}
 	}
 }
 
-func decodeCodexRPCID(raw json.RawMessage) (int64, error) {
-	var number json.Number
-	if err := json.Unmarshal(raw, &number); err != nil {
-		return 0, fmt.Errorf("decode app server response id: %w", err)
+func (c *codexAppServer) respondToServerRequest(method string, id json.RawMessage) error {
+	var result any
+	var rpcErr *codexRPCError
+	switch method {
+	case "item/commandExecution/requestApproval",
+		"item/fileChange/requestApproval":
+		result = map[string]string{"decision": "decline"}
+	case "applyPatchApproval", "execCommandApproval":
+		result = map[string]any{
+			"decision": map[string]any{
+				"denied": map[string]string{
+					"rejection": "atct codex monitor does not approve legacy requests",
+				},
+			},
+		}
+	case "item/tool/requestUserInput":
+		result = map[string]any{"answers": map[string]any{}}
+	case "mcpServer/elicitation/request":
+		result = map[string]any{"action": "decline", "content": nil}
+	default:
+		rpcErr = &codexRPCError{Code: -32601, Message: "method not found"}
 	}
-	id, err := number.Int64()
+	payload, err := json.Marshal(codexRPCWireResponse{
+		ID:     append(json.RawMessage(nil), id...),
+		Result: result,
+		Error:  rpcErr,
+	})
 	if err != nil {
-		return 0, fmt.Errorf("app server response id is not an integer: %w", err)
+		return fmt.Errorf("encode app server response %s: %w", method, err)
 	}
-	return id, nil
+	if err := c.write(c.ctx, payload); err != nil {
+		return fmt.Errorf("write app server response %s: %w", method, err)
+	}
+	return nil
 }
 
 func (c *codexAppServer) fail(err error) {
@@ -274,18 +308,19 @@ func (c *codexAppServer) call(ctx context.Context, method string, params any, re
 	default:
 	}
 	id := c.nextID.Add(1)
+	requestID := json.RawMessage(strconv.FormatInt(id, 10))
 	response := make(chan codexRPCResponse, 1)
 	c.pendingMu.Lock()
-	c.pending[id] = response
+	c.pending[string(requestID)] = response
 	c.pendingMu.Unlock()
 
-	request, err := json.Marshal(codexRPCRequest{ID: &id, Method: method, Params: params})
+	request, err := json.Marshal(codexRPCRequest{ID: requestID, Method: method, Params: params})
 	if err != nil {
-		c.removePending(id)
+		c.removePending(requestID)
 		return fmt.Errorf("encode app server request %s: %w", method, err)
 	}
 	if err := c.write(ctx, request); err != nil {
-		c.removePending(id)
+		c.removePending(requestID)
 		return fmt.Errorf("write app server request %s: %w", method, err)
 	}
 
@@ -305,10 +340,10 @@ func (c *codexAppServer) call(ctx context.Context, method string, params any, re
 		}
 		return nil
 	case <-ctx.Done():
-		c.removePending(id)
+		c.removePending(requestID)
 		return ctx.Err()
 	case <-c.done:
-		c.removePending(id)
+		c.removePending(requestID)
 		if err := c.Err(); err != nil {
 			return err
 		}
@@ -345,9 +380,9 @@ func (c *codexAppServer) write(ctx context.Context, payload []byte) error {
 	return nil
 }
 
-func (c *codexAppServer) removePending(id int64) {
+func (c *codexAppServer) removePending(id json.RawMessage) {
 	c.pendingMu.Lock()
-	delete(c.pending, id)
+	delete(c.pending, string(id))
 	c.pendingMu.Unlock()
 }
 
