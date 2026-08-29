@@ -201,20 +201,21 @@ subcommander がゴールについて、それぞれ同じことをする。
 | 完了 | **渡した側** | `atct_goal_handoff_complete` | `atct_plan_handoff_complete` | `atct_task_handoff_complete` |
 | **差し戻し** | **渡した側** | `atct_goal_handoff_review_reject` | `atct_plan_handoff_review_reject` | `atct_task_handoff_review_reject` |
 
-**`plan` に依頼と受領が無いのは、plan が割り当てられるものではないからである。**
-subcommander が設計の結果として作り、レビューに出す。**そこから始まる。**
+| handoff | 誰から誰へ | レビューする者 |
+|---|---|---|
+| `goal` | commander → subcommander | commander |
+| `plan` | subcommander → commander | commander |
+| `task` | subcommander → executor | subcommander |
 
-**レビューの受領は 3 種類ともある。**レビューする側が「引き受けた」を書く。
+**`plan` だけ向きが逆である。**goal と task は上の層が下の層へ仕事を渡すが、
+**plan は下の層が上の層へ成果物を出す。**依頼と受領が無いのはそのためで、
+subcommander が設計の結果として作り、レビューに出すところから始まる。
+
+**レビューの受領は 3 種類ともある。**レビューする側が「引き受けた」を書くので、
 **出しただけで放置されているのか、レビュー中なのかが区別できる。**
 人間のレビュー（`atct_goal_review_*`）に受領は無い。**人間は ATCT のツールを呼ばない。**
 
-| handoff | 渡す側 | 作業する側 |
-|---|---|---|
-| `goal` | commander | subcommander |
-| `plan` | subcommander が出し、commander がレビューする | — |
-| `task` | subcommander | executor |
-
-**作業した者は自分の handoff を閉じない。**閉じるのは受理した者である。
+**作業した者は自分の handoff を閉じない。**閉じるのはレビューした者である。
 
 **差し戻しは handoff を閉じない。**`*_review_reject` は状態を「受領」に戻すだけで、
 `completed_report_at` を書かない。**claim も役割も維持されるので、
@@ -308,7 +309,8 @@ claim も役割も維持される。
 handoff に `review_report`（作業した側が書く）と `reject_report`（渡した側が書く）を
 置くか、`request_report` を再利用するかは実装で決める。
 
-**executor の呼び出しは 3 つである**（receive / 実装 / review）。
+**executor が呼ぶ ATCT のツールは 2 つである**（`atct_task_handoff_receive` と
+`atct_task_handoff_review_request`）。
 
 ## 立ち上げた者が閉じる
 
@@ -416,8 +418,15 @@ worktree に留めておけば、却下は作業に戻るだけで済む。
 
 ### handoff の状態遷移がタスクの状態を書く
 
-**`atct_task_handoff_review_request` が `tasks.status='review'` を、
-`atct_task_handoff_complete` が `'done'` を書く。**
+**handoff の遷移がタスクの状態を全部書く。**
+
+| handoff の遷移 | `tasks.status` |
+|---|---|
+| `atct_task_handoff_request` | `todo` |
+| `atct_task_handoff_receive` | `doing` |
+| `atct_task_handoff_review_request` | `review` |
+| `atct_task_handoff_complete` | `done` |
+| `atct_task_handoff_review_reject` | `doing`（受領の状態に戻る） |
 
 現状は `CompleteTaskHandoff` が `task_handoffs` の 2 列を書き、`tasks.status` を書くのは
 `atct_task_update` である。**2 つが繋がっていないので片方だけ呼ばれる。**
@@ -540,8 +549,10 @@ flowchart LR
     A[ATCT daemon] -->|atct watch -project| C[commander]
     A -->|atct watch -goal N| S1[subcommander N]
     A -->|atct watch -goal M| S2[subcommander M]
-    H([人間 / web]) -->|承認・却下| A
-    E[executor] -->|報告| S1
+    A -->|atct watch| E[executor]
+    H([人間 / web]) -->|"atct_goal_review_complete / _reject"| A
+    E -->|"atct_task_handoff_review_request"| A
+    S1 -->|"atct_goal_handoff_review_request"| A
 ```
 
 **各層は自分の watch から ATCT の通知を直接受ける。**
@@ -552,18 +563,28 @@ flowchart LR
     渡した側が *_complete          -> 作業した側の watch に届く -> 次の手順が始まる
     渡した側が *_review_reject     -> 作業した側の watch に届く -> 作業に戻る
 
-| 粒度 | 届く先 | 根拠（2026-08-27 の実測） |
+**通知は呼んだ本人には要らない。**行き先は必ず相手側である。
+
+| イベント | 呼ぶ者 | 届く先 | 何の引き金か |
+|---|---|---|---|
+| `atct_plan_handoff_review_request` | subcommander | **commander** | 手順 9 |
+| `atct_plan_handoff_review_receive` | commander | **subcommander** | レビュー中だと分かる。放置と区別できる |
+| `atct_plan_handoff_complete` | commander | **subcommander** | 手順 12 |
+| `atct_task_handoff_review_request` | executor | **subcommander** | 手順 17 |
+| `atct_task_handoff_review_receive` | subcommander | **executor** | レビュー中だと分かる |
+| `atct_task_handoff_complete` | subcommander | **executor** | タスクが受理されたと分かる |
+| `atct_goal_handoff_review_request` | subcommander | **commander** | 手順 23 |
+| `atct_goal_handoff_review_receive` | commander | **subcommander** | レビュー中だと分かる |
+| `atct_goal_handoff_complete` | commander | **subcommander** | 完了報告が出たと分かる |
+| `*_review_reject` | レビューした側 | **差し戻された側** | 作業に戻る。3 種とも同じ |
+| `atct_goal_review_complete` / `_reject` | 人間 | **commander** | 手順 27 と、却下時の作り直し |
+| ゴールの取り下げ | commander | **そのゴールの subcommander** | executor を止める。現状は届かない（上記） |
+
+**commander に届けないもの**（2026-08-27 の実測で行動に繋がらなかった分）。
+
+| イベント | 届く先 | 実測 |
 |---|---|---|
-| **plan handoff の review request** | **commander** | **これが手順 9 の引き金である** |
-| **plan handoff の review receive** | — | **commander がレビューを引き受けたことを記録する** |
-| **plan handoff の complete** | **そのゴールの subcommander** | **これが手順 12 の引き金である** |
-| **handoff の review reject** | **差し戻された側** | **作業に戻る引き金である。3 階層すべてで同じ** |
-| **goal handoff の review request** | **commander** | **これが手順 23 の引き金である** |
-| **task handoff の review request** | **そのゴールの subcommander** | **これが手順 17 の引き金である** |
-| goal handoff の完了 | commander | 28 件届き、**28 件すべてが行動に繋がった** |
-| **`atct_goal_review_complete` / `_reject`** | **commander** | **これが手順 27 と、却下時の作り直しの引き金である。**2026-08-27 に 34 件届き、全件が行動に繋がった |
-| **ゴールの取り下げ** | そのゴールの subcommander | 現状は届かない（上記） |
-| task handoff の完了 | そのゴールの subcommander | commander には 63 件届いていたが**行動 0 件** |
+| task handoff の一連 | そのゴールの subcommander と executor | commander には 63 件届いて**行動 0 件** |
 | 決定の既定適用 | その決定を出したセッション | commander に 11 件届いて**行動 0 件** |
 
 ## 作業場の対応関係
@@ -623,9 +644,9 @@ flowchart LR
 | | |
 |---|---|
 | **いま** | `CompleteTaskHandoff`（`internal/store/task_handoff.go:298`、SQL は `internal/store/queries/task.sql:205`）が `task_handoffs` の `completed_report_at` と `complete_report` だけを書く。`tasks.status` を書くのは `UpdateTask` 経由の `task.update`（`internal/daemon/handler.go:994`）のみ |
-| **目標** | `atct_task_handoff_review_request` が `'review'` を、`atct_task_handoff_complete` が `'done'` を書く |
+| **目標** | handoff の遷移が `tasks.status` を全部書く。`request`→`todo` / `receive`→`doing` / `review_request`→`review` / `complete`→`done` / `review_reject`→`doing` |
 | **放置すると** | 片方だけ呼ばれた行が残る。実測 2 件（task 764 / 788）。**`internal/store/wakeup.go` の検知 13 種にこの乖離を拾うものが無い**ので、誰も気づかない |
-| **検査** | review を出した直後にタスクが `review` でないなら落ちること。complete の直後に `done` でないなら落ちること。**逆に、`atct_task_update` 単体でも従来どおり閉じられること**（handoff を持たないタスクがあるため） |
+| **検査** | 5 つの遷移それぞれの直後に `tasks.status` が表のとおりでないなら落ちること。**逆に、`atct_task_update` 単体でも従来どおり閉じられること**（handoff を持たないタスクがあるため） |
 
 ### 2. セッション鍵は receive で確定する
 
