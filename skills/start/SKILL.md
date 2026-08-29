@@ -85,9 +85,9 @@ Run this until nothing is left, not until the next natural pause.
    landed.
 
 3. **Fill the gaps.** A goal with no tasks is a goal nobody has broken down yet.
-   Call `atct_task_declare` with the tasks you intend to do. Do not ask whether
-   the breakdown is right: propose it by declaring it, and let the human correct
-   it from the dashboard.
+   Call `atct_task_create` with the tasks you intend to do. Do not ask whether
+   the breakdown is right: propose it by creating the tasks, and let the human
+   correct it from the dashboard.
 
 4. **Take one (self-directed work only).** Call `atct_task_claim`. If the claim
    fails, another run owns it; take a different one. Then do the work and carry

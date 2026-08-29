@@ -991,7 +991,7 @@ test_delegation_names_the_atct_tools_an_executor_may_call() {
     atct_goal_handoff_request atct_goal_claim atct_goal_release \
     atct_goal_complete atct_goal_update_content atct_project_claim \
     atct_project_release atct_task_claim atct_handoff_request \
-    atct_task_declare atct_decision_ask; do
+    atct_task_create atct_decision_ask; do
     ! grep -Fq -- "\`$tool\`" <<<"$allowlist" ||
       fail "the allowlist line must not allow the forbidden <$tool>"
   done
@@ -1012,7 +1012,7 @@ test_delegation_names_the_atct_tools_an_executor_must_not_call() {
     atct_goal_handoff_request atct_goal_claim atct_goal_release \
     atct_goal_complete atct_goal_update_content atct_project_claim \
     atct_project_release atct_task_claim atct_handoff_request \
-    atct_task_declare atct_decision_ask; do
+    atct_task_create atct_decision_ask; do
     grep -Fq -- "\`$tool\`" <<<"$forbidden" ||
       fail "the forbidden block does not forbid <$tool> by name"
   done

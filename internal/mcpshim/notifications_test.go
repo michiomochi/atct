@@ -53,7 +53,7 @@ func TestTaskClaimResponseIncludesUnappliedDecisions(t *testing.T) {
 
 func TestAdditionalToolResponsesIncludeUnappliedDecisions(t *testing.T) {
 	for _, name := range []string{
-		"atct_task_declare",
+		"atct_task_create",
 		"atct_task_update",
 		"atct_decision_ask",
 		"atct_decision_poll",
@@ -167,7 +167,7 @@ func TestRoleBearingClaimResponsePreservesData(t *testing.T) {
 func TestOtherToolResponsesRemainUnchanged(t *testing.T) {
 	want := `{"ok":true}`
 	for _, name := range []string{
-		"atct_task_declare",
+		"atct_task_create",
 		"atct_task_update",
 		"atct_decision_ask",
 		"atct_decision_poll",
@@ -231,10 +231,10 @@ func callNotificationTestToolWithResponses(t *testing.T, name string, args map[s
 
 func notificationTestArgs(name string) map[string]any {
 	switch name {
-	case "atct_task_declare":
+	case "atct_task_create":
 		return map[string]any{
 			"goal_id": "goal-1", "titles": []string{"task"},
-			"descriptions":    []string{"Complete the declared task and verify its result."},
+			"descriptions":    []string{"Complete the created task and verify its result."},
 			"idempotency_key": "key-1", "agent": "agent-1",
 		}
 	case "atct_task_update":

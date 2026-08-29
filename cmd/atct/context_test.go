@@ -128,14 +128,14 @@ func TestRenderContextIncludesUnappliedDecisionsAndPollTool(t *testing.T) {
 	noTasks := renderContext([]contextGoal{{
 		Goal: domain.Goal{ID: 5, Content: "No tasks", Status: domain.GoalActive},
 	}}, nil)
-	if !strings.Contains(noTasks, "atct_task_declare") || strings.Contains(noTasks, "atct_task_claim") {
+	if !strings.Contains(noTasks, "atct_task_create") || strings.Contains(noTasks, "atct_task_claim") {
 		t.Fatalf("no-task state has wrong next tool: %q", noTasks)
 	}
 	withTodo := renderContext([]contextGoal{{
 		Goal:  domain.Goal{ID: 6, Content: "Todo", Status: domain.GoalActive},
 		Tasks: []domain.Task{{ID: 7, Title: "A task", Status: domain.TaskTodo}},
 	}}, nil)
-	if !strings.Contains(withTodo, "atct_task_claim") || strings.Contains(withTodo, "atct_task_declare") {
+	if !strings.Contains(withTodo, "atct_task_claim") || strings.Contains(withTodo, "atct_task_create") {
 		t.Fatalf("todo state has wrong next tool: %q", withTodo)
 	}
 }

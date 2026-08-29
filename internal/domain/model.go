@@ -76,7 +76,7 @@ type Task struct {
 	Agent        string     `json:"agent"`
 	Order        int        `json:"order"`
 	DeclareKey   string     `json:"declare_key"`
-	Declared     *bool      `json:"declared,omitempty"`
+	Created      *bool      `json:"created,omitempty"`
 	SnoozedUntil *time.Time `json:"snoozed_until,omitempty"`
 	CreatedAt    time.Time  `json:"created_at"`
 	UpdatedAt    time.Time  `json:"updated_at"`

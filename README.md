@@ -189,7 +189,7 @@ agents stays your business.
 |---|---|
 | **Project** | A project. Derived from the working directory, so agents never have to name it |
 | **Goal** | What you want, in one field. Active means agents may work on it |
-| **Task** | A unit of work toward the goal. Agents declare and claim these |
+| **Task** | A unit of work toward the goal. Agents create and claim these |
 | **Work lock** | The claim on a task. One agent session holds it, so two never take the same task |
 | **Decision** | A question an agent cannot settle alone, with options it wrote itself |
 
