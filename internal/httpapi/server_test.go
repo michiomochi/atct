@@ -3073,6 +3073,143 @@ func TestSSEGoalIDPublishesKeepaliveButNotWakeup(t *testing.T) {
 	}
 }
 
+func TestSSEGoalScopedStreamDeliversGoalWithdrawn(t *testing.T) {
+	tests := []struct {
+		name              string
+		openDecisionCount int
+		withOpenTask      bool
+	}{
+		{name: "no decisions", openDecisionCount: 0},
+		{name: "no decisions with open task", openDecisionCount: 0, withOpenTask: true},
+		{name: "one decision", openDecisionCount: 1},
+		{name: "two decisions with open task", openDecisionCount: 2, withOpenTask: true},
+	}
+	zeroDecisionCases, nonZeroDecisionCases := 0, 0
+	for _, tc := range tests {
+		if tc.openDecisionCount == 0 {
+			zeroDecisionCases++
+		} else {
+			nonZeroDecisionCases++
+		}
+	}
+	if zeroDecisionCases != nonZeroDecisionCases {
+		t.Fatalf("unbalanced open decision cases: zero=%d, one_or_more=%d", zeroDecisionCases, nonZeroDecisionCases)
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newBareFixture(t)
+			if tc.withOpenTask {
+				if _, err := f.store.DeclareTasks(f.ctx, f.goal.ID, "withdrawal-test-agent", "withdrawal-test-declare", []string{"open task"}, []string{"Keep this task open while withdrawing the goal."}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for i := 0; i < tc.openDecisionCount; i++ {
+				if _, err := f.store.AskDecision(f.ctx, store.AskInput{
+					GoalID:   f.goal.ID,
+					Kind:     domain.DecisionKind("question"),
+					Question: "Withdrawal test decision",
+				}); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			srv := newTestServer(t, f.store)
+			defer srv.Close()
+			streamCtx, cancel := context.WithCancel(f.ctx)
+			defer cancel()
+			stream, reader := openSSEStream(t, streamCtx, srv.Client(), eventsURLWithGoal(srv.URL, idText(f.goal.ID)))
+			defer stream.Body.Close()
+
+			reason := "withdrawal test: " + tc.name
+			if err := f.store.WithdrawActiveGoal(f.ctx, f.goal.ID, reason); err != nil {
+				t.Fatal(err)
+			}
+
+			var frame sseFrame
+			found := false
+			for i := 0; i < 10; i++ {
+				frame = readSSEFrame(t, reader)
+				if frame.event == store.EventGoalWithdrawn {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Fatalf("goal.withdrawn not found within 10 SSE frames; last=%+v", frame)
+			}
+
+			var got store.GoalWithdrawnEvent
+			if err := json.Unmarshal([]byte(frame.data), &got); err != nil {
+				t.Fatalf("SSE data is not a GoalWithdrawnEvent: %v; data=%q", err, frame.data)
+			}
+			if got.GoalID != f.goal.ID || got.ProjectID != f.project.ID || got.Reason != reason {
+				t.Fatalf("withdrawal event = %+v, want goal_id=%d project_id=%d reason=%q", got, f.goal.ID, f.project.ID, reason)
+			}
+		})
+	}
+}
+
+func TestSSEGoalScopedStreamFiltersOtherGoalsWithdrawal(t *testing.T) {
+	f := newBareFixture(t)
+	otherGoal, err := f.store.CreateGoal(f.ctx, f.project.ID, "Other goal", "human")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+	streamCtx, cancel := context.WithCancel(f.ctx)
+	defer cancel()
+	stream, reader := openSSEStream(t, streamCtx, srv.Client(), eventsURLWithGoal(srv.URL, idText(f.goal.ID)))
+	defer stream.Body.Close()
+
+	if err := f.store.WithdrawActiveGoal(f.ctx, otherGoal.ID, "withdraw the other goal"); err != nil {
+		t.Fatal(err)
+	}
+	keepalive := store.KeepaliveEvent{At: time.Date(2026, 8, 20, 15, 0, 0, 0, time.UTC)}
+	f.store.PublishEvent(store.DecisionEvent{Name: store.EventKeepalive, Data: keepalive})
+
+	frame := readSSEFrame(t, reader)
+	if frame.event != store.EventKeepalive {
+		t.Fatalf("SSE event = %q, want first frame %q; lines=%v", frame.event, store.EventKeepalive, frame.lines)
+	}
+	if frame.data != string(mustJSON(t, keepalive)) {
+		t.Fatalf("SSE keepalive data = %s, want exact %s", frame.data, mustJSON(t, keepalive))
+	}
+}
+
+func TestSSEProjectScopedStreamFiltersOtherProjectsWithdrawal(t *testing.T) {
+	f := newBareFixture(t)
+	otherProject, err := f.store.CreateProject(f.ctx, "other", t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherGoal, err := f.store.CreateGoal(f.ctx, otherProject.ID, "Other project goal", "human")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+	streamCtx, cancel := context.WithCancel(f.ctx)
+	defer cancel()
+	stream, reader := openSSEStream(t, streamCtx, srv.Client(), eventsURL(srv.URL, idText(f.project.ID)))
+	defer stream.Body.Close()
+
+	if err := f.store.WithdrawActiveGoal(f.ctx, otherGoal.ID, "withdraw the other project goal"); err != nil {
+		t.Fatal(err)
+	}
+	keepalive := store.KeepaliveEvent{At: time.Date(2026, 8, 20, 15, 0, 0, 0, time.UTC)}
+	f.store.PublishEvent(store.DecisionEvent{Name: store.EventKeepalive, Data: keepalive})
+
+	frame := readSSEFrame(t, reader)
+	if frame.event != store.EventKeepalive {
+		t.Fatalf("SSE event = %q, want first frame %q; lines=%v", frame.event, store.EventKeepalive, frame.lines)
+	}
+	if frame.data != string(mustJSON(t, keepalive)) {
+		t.Fatalf("SSE keepalive data = %s, want exact %s", frame.data, mustJSON(t, keepalive))
+	}
+}
+
 func TestSSENoGoalIDKeepsPublishingDetectionEvents(t *testing.T) {
 	f := newBareFixture(t)
 	srv := newTestServer(t, f.store)

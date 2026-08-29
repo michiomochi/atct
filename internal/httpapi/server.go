@@ -1447,6 +1447,10 @@ func eventMatchesGoalID(event store.DecisionEvent, goalID int64) bool {
 		return data.GoalID != 0 && data.GoalID == goalID
 	case *store.DetectionEvent:
 		return data != nil && data.GoalID != 0 && data.GoalID == goalID
+	case store.GoalWithdrawnEvent:
+		return data.GoalID != 0 && data.GoalID == goalID
+	case *store.GoalWithdrawnEvent:
+		return data != nil && data.GoalID != 0 && data.GoalID == goalID
 	default:
 		return false
 	}
@@ -1472,6 +1476,13 @@ func (s *Server) eventProjectID(ctx context.Context, event store.DecisionEvent) 
 	case store.DetectionEvent:
 		return data.ProjectID, nil
 	case *store.DetectionEvent:
+		if data == nil {
+			return 0, nil
+		}
+		return data.ProjectID, nil
+	case store.GoalWithdrawnEvent:
+		return data.ProjectID, nil
+	case *store.GoalWithdrawnEvent:
 		if data == nil {
 			return 0, nil
 		}

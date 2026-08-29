@@ -27,6 +27,7 @@ const (
 	EventDetectionDecisionAnsweredUnapplied = "detection.decision_answered_unapplied"
 	EventDetectionDecisionDefaultUnapplied  = "detection.decision_default_unapplied"
 	EventDetectionClaimStale                = "detection.claim_stale"
+	EventGoalWithdrawn                      = "goal.withdrawn"
 )
 
 // WakeupEvent is the visible state that caused a wakeup notification. The
@@ -78,6 +79,20 @@ type DetectionEvent struct {
 // or disconnected stream.
 type KeepaliveEvent struct {
 	At time.Time `json:"at"`
+}
+
+// GoalWithdrawnEvent reports that an active goal was withdrawn and what the
+// withdrawal folded up. Withdrawal drops the goal's open tasks and force-closes
+// their handoffs, so the IDs travel with the event: the goal's subcommander is
+// the only watcher scoped to the goal, and it needs to name which executors to
+// stop without a second query.
+type GoalWithdrawnEvent struct {
+	GoalID               int64    `json:"goal_id"`
+	ProjectID            int64    `json:"project_id"`
+	Reason               string   `json:"reason"`
+	DroppedTaskIDs       []int64  `json:"dropped_task_ids,omitempty"`
+	ClosedTaskHandoffIDs []string `json:"closed_task_handoff_ids,omitempty"`
+	WithdrawnDecisionIDs []int64  `json:"withdrawn_decision_ids,omitempty"`
 }
 
 // WakeupState is the detector result used by pending output and the daemon.

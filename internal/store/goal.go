@@ -664,12 +664,24 @@ func (s *Store) WithdrawActiveGoal(ctx context.Context, goalID int64, reason str
 	if err != nil {
 		return fmt.Errorf("list open decisions for withdrawn goal: %w", err)
 	}
+	withdrawnDecisionIDs := make([]int64, 0, len(openDecisions))
 	for _, decision := range openDecisions {
+		withdrawnDecisionIDs = append(withdrawnDecisionIDs, decision.ID)
 		if err := withdrawDecisionWith(ctx, q, decision.ID, reason); err != nil {
 			return fmt.Errorf("withdraw decision %d: %w", decision.ID, err)
 		}
 	}
 
+	tasks, err := q.ListTasks(ctx, goalID)
+	if err != nil {
+		return fmt.Errorf("list tasks for withdrawn goal: %w", err)
+	}
+	droppedTaskIDs := make([]int64, 0, len(tasks))
+	for _, task := range tasks {
+		if task.Status == string(domain.TaskTodo) || task.Status == string(domain.TaskDoing) {
+			droppedTaskIDs = append(droppedTaskIDs, task.ID)
+		}
+	}
 	result, err = q.DropOpenTasksForGoal(ctx, sqlcgen.DropOpenTasksForGoalParams{
 		UpdatedAt: now,
 		GoalID:    goalID,
@@ -684,7 +696,11 @@ func (s *Store) WithdrawActiveGoal(ctx context.Context, goalID int64, reason str
 	if err != nil {
 		return fmt.Errorf("list task handoffs for withdrawn goal: %w", err)
 	}
+	closedHandoffIDs := make([]string, 0, len(openTaskHandoffs))
 	for _, handoff := range openTaskHandoffs {
+		if handoffIsDelegation(handoff.RequestedBy.Int64, handoff.ReceivedBy.Int64) {
+			closedHandoffIDs = append(closedHandoffIDs, handoff.ID)
+		}
 		result, err := q.CompleteTaskHandoff(ctx, sqlcgen.CompleteTaskHandoffParams{
 			ID:                handoff.ID,
 			TaskID:            handoff.TaskID,
@@ -703,6 +719,21 @@ func (s *Store) WithdrawActiveGoal(ctx context.Context, goalID int64, reason str
 		return fmt.Errorf("commit goal withdrawal: %w", err)
 	}
 
+	goal, err := s.GetGoal(ctx, goalID)
+	if err != nil {
+		return err
+	}
+	s.notify.publishEvent(Event{
+		Name: EventGoalWithdrawn,
+		Data: GoalWithdrawnEvent{
+			GoalID:               goalID,
+			ProjectID:            goal.ProjectID,
+			Reason:               reason,
+			DroppedTaskIDs:       droppedTaskIDs,
+			ClosedTaskHandoffIDs: closedHandoffIDs,
+			WithdrawnDecisionIDs: withdrawnDecisionIDs,
+		},
+	})
 	for _, decision := range openDecisions {
 		d, err := s.GetDecision(ctx, decision.ID)
 		if err != nil {
@@ -711,8 +742,6 @@ func (s *Store) WithdrawActiveGoal(ctx context.Context, goalID int64, reason str
 		s.notify.publish(decision.ID)
 		s.notify.publishEvent(Event{Name: "decision.withdrawn", Data: d})
 	}
-	if len(openDecisions) > 0 {
-		s.notify.publishAll()
-	}
+	s.notify.publishAll()
 	return nil
 }

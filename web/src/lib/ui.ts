@@ -11,6 +11,8 @@ export const DECISION_EVENT_NAMES = [
   "decision.approved",
   "decision.rejected",
   "goal.created",
+  // ゴールの取り下げで状態が変わるので、画面を更新する。
+  "goal.withdrawn",
   "detection.completion_report_missing",
   "detection.commits_missing",
   "detection.undeclared_goal",
