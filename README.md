@@ -57,6 +57,19 @@ does not pay for a ceremony it did not ask for.
 
 `atct daemon start` and `atct daemon stop` are there if you ever need to restart it by hand.
 
+To opt into ATCT notifications inside an interactive Codex session, start it explicitly through
+the monitor:
+
+```bash
+atct codex monitor -- -m gpt-5
+atct codex monitor stop
+```
+
+Only `atct codex monitor` starts the local Codex App Server. The ordinary `codex` command and
+`codex exec` are unchanged; `atct codex monitor exec --help` is passed through without monitoring.
+Put a literal Codex argument such as `stop` after `--` so it is not interpreted as the monitor's
+stop command.
+
 ## Setting a goal is the approval
 
 An active goal is permission to work. The agent breaks it into tasks and starts — it does not
@@ -220,7 +233,7 @@ a free-text field for answers that are not on the list.
 ## What ATCT is not
 
 - Not a dependency graph — that is [Beads](https://github.com/gastownhall/beads)' job
-- Not an agent multiplexer or supervisor — that is a terminal multiplexer's job
+- Not a general agent multiplexer — its explicit Codex monitor is only for the command documented above
 - Not token and cost observability — that is Langfuse and AgentOps' job
 - Not a general blocker tracker; the only thing ATCT waits on is a human decision
 

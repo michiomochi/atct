@@ -32,26 +32,29 @@ const (
 var listenTCP = net.Listen
 
 type cliConfig struct {
-	subcommand         string
-	daemonAction       string
-	listenAddr         string
-	listenExplicit     bool
-	contextBrief       bool
-	contextCheck       bool
-	handoffAction      string
-	handoffID          string
-	handoffTaskID      string
-	projectSpecified   bool
-	projectAction      string
-	projectName        string
-	goalAction         string
-	goalTitle          string
-	goalDescription    string
-	roleExpected       string
-	roleExpectedSet    bool
-	roleAgentSessionID string
-	watchGoalID        string
-	watchProjectScope  bool
+	subcommand              string
+	daemonAction            string
+	listenAddr              string
+	listenExplicit          bool
+	contextBrief            bool
+	contextCheck            bool
+	handoffAction           string
+	handoffID               string
+	handoffTaskID           string
+	projectSpecified        bool
+	projectAction           string
+	projectName             string
+	goalAction              string
+	goalTitle               string
+	goalDescription         string
+	roleExpected            string
+	roleExpectedSet         bool
+	roleAgentSessionID      string
+	watchGoalID             string
+	watchProjectScope       bool
+	codexMonitorAction      string
+	codexArgs               []string
+	codexMonitorPassthrough bool
 }
 
 var errInvalidArgs = errors.New("invalid command line")
@@ -65,12 +68,41 @@ var validSubcommands = map[string]bool{
 	"watch":   true,
 	"role":    true,
 	"handoff": true,
+	"codex":   true,
 }
 
 var validDaemonActions = map[string]bool{"start": true, "stop": true}
 var validProjectActions = map[string]bool{"add": true, "list": true}
 var validGoalActions = map[string]bool{"add": true, "list": true}
 var validHandoffActions = map[string]bool{"complete": true, "yielded": true}
+
+var codexMonitorPassthroughCommands = map[string]struct{}{
+	"app-server":       {},
+	"app":              {},
+	"apply":            {},
+	"archive":          {},
+	"cloud":            {},
+	"completion":       {},
+	"debug":            {},
+	"delete":           {},
+	"doctor":           {},
+	"e":                {},
+	"exec":             {},
+	"exec-server":      {},
+	"features":         {},
+	"help":             {},
+	"login":            {},
+	"logout":           {},
+	"mcp":              {},
+	"mcp-server":       {},
+	"migrate-rollouts": {},
+	"plugin":           {},
+	"remote-control":   {},
+	"review":           {},
+	"sandbox":          {},
+	"unarchive":        {},
+	"update":           {},
+}
 
 func printUsage() {
 	fmt.Fprintln(os.Stderr, "Usage: atct <command> [options]")
@@ -88,6 +120,8 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "  role                 Report the claim-derived role for an agent session")
 	fmt.Fprintln(os.Stderr, "  handoff complete <handoff-id> <task-id>  Report a handoff complete")
 	fmt.Fprintln(os.Stderr, "  handoff yielded <task-id>  Report that the worker yielded")
+	fmt.Fprintln(os.Stderr, "  codex monitor [-- <args>]  Run an interactive Codex session with ATCT monitoring")
+	fmt.Fprintln(os.Stderr, "  codex monitor stop     Stop monitors for the current project")
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Options:")
 	fmt.Fprintln(os.Stderr, "  -listen string   HTTP listen address (default \"127.0.0.1:8787\")")
@@ -197,6 +231,32 @@ func parseArgs(args []string) (cliConfig, error) {
 			cfg.handoffTaskID = rest[1]
 			rest = rest[2:]
 		}
+	}
+	if sub == "codex" {
+		if len(rest) < 1 || rest[0] != "monitor" {
+			fmt.Fprintln(os.Stderr, "codex requires the monitor action")
+			printUsage()
+			return cliConfig{}, errInvalidArgs
+		}
+		cfg.codexMonitorAction = "monitor"
+		rest = rest[1:]
+		if len(rest) > 0 && rest[0] == "stop" {
+			if len(rest) != 1 {
+				fmt.Fprintln(os.Stderr, "codex monitor stop does not accept Codex arguments; put a literal stop after --")
+				printUsage()
+				return cliConfig{}, errInvalidArgs
+			}
+			cfg.codexMonitorAction = "stop"
+			return cfg, nil
+		}
+		if len(rest) > 0 && rest[0] == "--" {
+			rest = rest[1:]
+		}
+		cfg.codexArgs = append([]string(nil), rest...)
+		if len(cfg.codexArgs) > 0 {
+			_, cfg.codexMonitorPassthrough = codexMonitorPassthroughCommands[cfg.codexArgs[0]]
+		}
+		return cfg, nil
 	}
 
 	flags := flag.NewFlagSet(sub, flag.ExitOnError)
@@ -373,6 +433,15 @@ func main() {
 			log.Fatalf("handoff %s: %v", config.handoffAction, err)
 		}
 		return
+	case "codex":
+		code, err := runCodexMonitor(config, dir)
+		if err != nil {
+			log.Printf("codex monitor: %v", err)
+			if code == 0 {
+				code = 1
+			}
+		}
+		os.Exit(code)
 	case "context":
 		if config.contextBrief {
 			if err := runContextBriefForProject(dir, config.projectName, config.projectSpecified); err != nil {
