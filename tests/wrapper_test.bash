@@ -887,12 +887,12 @@ test_recovery_section_has_project_path() {
 
 test_recovery_section_has_goal_path() {
   recovery_section_contains '- goal: `atct_goal_handoff_complete` → `atct_goal_handoff_request` (the commander must issue the handoff again)'
-  recovery_section_contains 'A subcommander cannot restore its own goal; ask the commander to issue the goal handoff again'
+  recovery_section_contains 'the subcommander cannot reissue it, and the goal waits on the'
 }
 
 test_recovery_section_has_task_path_and_non_repair_note() {
   recovery_section_contains 'atct_handoff_complete` (with `task_id` and `complete_report`)'
-  recovery_section_contains 'This is a procedure, not a repair; it becomes unnecessary once the issue is fixed.'
+  recovery_section_contains 'Rejection is automatic, so the goal step above that asks the commander to reissue the handoff is needed only for the last trigger.'
 }
 
 test_handoff_completion_reports_are_explicit() {
