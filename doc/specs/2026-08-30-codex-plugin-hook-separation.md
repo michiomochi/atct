@@ -1,74 +1,68 @@
-# Codex Plugin Hook Separation
+# Codex plugin の hook 分離
 
-Date: 2026-08-30
-Status: proposed
+日付: 2026-08-30
+状態: 提案
 
-## Problem
+## 問題
 
-The Codex plugin manifest currently registers `hooks/hooks.json`. That file is a
-Claude Code hook definition: all three commands use `${CLAUDE_PLUGIN_ROOT}`.
-Codex does not set that variable, so its attempt to run the `Stop` command
-resolves to `/hooks/stop` and ends with exit 127. The same registration also
-puts the Claude-only SessionStart and PreToolUse commands in Codex's hook
-surface.
+Codex plugin の manifest は現在 `hooks/hooks.json` を登録している。このファイルは
+Claude Code 用の hook 定義であり、3 つすべての command が
+`${CLAUDE_PLUGIN_ROOT}` を使う。Codex はこの変数を設定しないため、`Stop` command
+の実行先は `/hooks/stop` となり、exit 127 で終わる。同じ登録により、Claude 専用の
+SessionStart と PreToolUse command も Codex の hook 対象に入る。
 
-The repository owns this registration. User-level Codex configuration and
-hooks, dotfiles, homes/profiles, releases, and publishing are outside this
-change.
+この登録を所有するのはリポジトリである。ユーザー単位の Codex 設定・hook、dotfiles、
+ホーム／プロファイル、リリース、publish はこの変更の対象外とする。
 
-## Decision
+## 決定
 
-Remove only the `"hooks": "./hooks/hooks.json"` property from
-`.codex-plugin/plugin.json`.
+`.codex-plugin/plugin.json` から
+`"hooks": "./hooks/hooks.json"` プロパティだけを削除する。
 
-`hooks/hooks.json` and all three executable hook scripts remain unchanged.
-Claude Code continues to consume its existing hook definition, retaining:
+`hooks/hooks.json` と 3 つの実行可能 hook script は変更しない。Claude Code は既存の
+hook 定義を読み続け、次を維持する。
 
-- `SessionStart` for `startup|clear|compact` via `hooks/session-start`;
-- `PreToolUse` for `AskUserQuestion` via `hooks/pre-ask`; and
-- `Stop` via `hooks/stop`.
+- `hooks/session-start` による `startup|clear|compact` の `SessionStart`
+- `hooks/pre-ask` による `AskUserQuestion` の `PreToolUse`
+- `hooks/stop` による `Stop`
 
-With no hook registration in the Codex manifest, Codex has no reason to invoke
-any command containing `${CLAUDE_PLUGIN_ROOT}`. Its MCP, skills, metadata, and
-version remain registered as they are today.
+Codex manifest に hook 登録がなければ、Codex が `${CLAUDE_PLUGIN_ROOT}` を含む
+command を実行する経路はない。MCP、skills、metadata、version の登録は現状のままとする。
 
-## Alternatives considered
+## 検討した案
 
-1. **Remove the hook registration from the Codex manifest (recommended).** It
-   is a one-property boundary change that prevents every Claude-only command
-   from reaching Codex while leaving Claude's shared hook files intact.
-2. Add Codex-specific environment-variable fallback or wrapper logic to the
-   hook commands. This would make Codex execute lifecycle behavior designed for
-   Claude Code, adds a second runtime contract, and leaves the other two Claude
-   hook events incorrectly registered.
-3. Split or delete `Stop` from the shared hook definition. This avoids the
-   observed exit 127 but either preserves the incorrect SessionStart/PreToolUse
-   registration or breaks Claude Code's Stop handoff reporting.
+1. **Codex manifest から hook 登録を外す（推奨）。** 1 プロパティだけを境界として
+   変更するため、Claude 専用 command のすべてを Codex から外しつつ、共有の Claude
+   hook file を保てる。
+2. hook command に Codex 用の環境変数 fallback または wrapper を足す。Codex に
+   Claude Code 用の lifecycle 挙動を実行させることになり、別の runtime contract を
+   増やす。また SessionStart と PreToolUse の誤った登録も残る。
+3. 共有 hook 定義から `Stop` を分離または削除する。観測済みの exit 127 だけは避けられるが、
+   SessionStart／PreToolUse の誤った登録が残るか、Claude Code の Stop handoff 報告を壊す。
 
-## Implementation and tests
+## 実装とテスト
 
-The implementation changes `.codex-plugin/plugin.json` only. It neither edits
-`hooks/hooks.json` nor the scripts beneath `hooks/`.
+実装で変更するのは `.codex-plugin/plugin.json` だけとする。`hooks/hooks.json` と
+`hooks/` 配下の script は編集しない。
 
-Extend the existing plugin static-contract coverage in
-`tests/wrapper_test.bash` to parse `.codex-plugin/plugin.json` and require that
-the manifest has no `hooks` property. Keep its existing assertions that
-`hooks/hooks.json` contains the exact report-only Claude `Stop` command and
-that the SessionStart and PreToolUse sections remain present. Run:
+既存の plugin 静的契約テストである `tests/wrapper_test.bash` を拡張し、
+`.codex-plugin/plugin.json` を JSON として読み、`hooks` プロパティがないことを
+確認する。既存の `hooks/hooks.json` に対する、report-only の Claude `Stop` command が
+正確に登録されていること、SessionStart と PreToolUse section があることの検査は維持する。
+実行するコマンドは次のとおり。
 
 ```sh
 bash tests/wrapper_test.bash
 ```
 
-The test boundary is declarative: the repository cannot emulate Codex's plugin
-host in this test suite, but it can prove the manifest no longer grants Codex a
-path to the Claude hook file and that the Claude hook definition is preserved.
+テスト境界は宣言的である。このテスト群は Codex の plugin host 自体を再現しないが、
+manifest が Claude hook file への経路を Codex に与えなくなったことと、Claude の
+hook 定義が残ることは証明できる。
 
-## Acceptance criteria
+## 受け入れ条件
 
-- `.codex-plugin/plugin.json` does not declare `hooks`.
-- `hooks/hooks.json` still declares the existing Claude Code SessionStart,
-  PreToolUse, and Stop entries with their existing commands.
-- `bash tests/wrapper_test.bash` verifies both boundaries.
-- No user configuration, dotfiles, homes/profiles, release state, or publish
-  operation is changed.
+- `.codex-plugin/plugin.json` が `hooks` を宣言しない。
+- `hooks/hooks.json` が既存の Claude Code 用 SessionStart、PreToolUse、Stop entry と
+  command を維持する。
+- `bash tests/wrapper_test.bash` が両方の境界を検証する。
+- ユーザー設定、dotfiles、ホーム／プロファイル、リリース状態、publish 操作を変更しない。
