@@ -206,7 +206,7 @@ Expected: focused tests pass, automatic setup falls back, explicit worker tests 
 
 - [ ] **Step 1: Write failing boundary tests**
 
-Execute generated shim against temporary fake absolute `atct` and real `codex` executables. Assert it calls exactly:
+Execute generated shim against temporary fake absolute `atct` and real `codex` executables. Assert unregistered cwd and missing local database invoke real Codex with identical arguments and no shim diagnostic; unexpected store/cwd errors still emit one diagnostic before pass-through. Assert it calls exactly:
 
 ```text
 <absolute-atct> codex shim run -- resume test-thread --last
