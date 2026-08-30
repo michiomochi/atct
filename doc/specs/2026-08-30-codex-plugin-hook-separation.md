@@ -61,8 +61,13 @@ command を実行する経路はない。MCP、skills、metadata、version の�
 いること、SessionStart と PreToolUse section があることの検査を移す。実行するコマンドは
 次のとおり。
 
+`tests/pre_ask_test.bash` も `hooks/hooks.json` の直接参照を
+`hooks/claude-hooks.json` へ更新する。このテストは `AskUserQuestion` 用 PreToolUse entry を
+直接確認するため、rename 後も Claude の事前質問 hook を検証する。
+
 ```sh
 bash tests/wrapper_test.bash
+bash tests/pre_ask_test.bash
 ```
 
 テスト境界は宣言的である。このテスト群は Codex の plugin host 自体を再現しないが、
@@ -77,4 +82,5 @@ manifest が Claude hook file への経路を Codex に与えなくなったこ�
 - `hooks/claude-hooks.json` が既存の Claude Code 用 SessionStart、PreToolUse、Stop entry と
   command を維持する。
 - `bash tests/wrapper_test.bash` が両方の境界を検証する。
+- `bash tests/pre_ask_test.bash` が改名後も AskUserQuestion 用 PreToolUse entry を検証する。
 - ユーザー設定、dotfiles、ホーム／プロファイル、リリース状態、publish 操作を変更しない。
