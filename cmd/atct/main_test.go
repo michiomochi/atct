@@ -87,6 +87,55 @@ func TestParseArgsCodexMonitorPreservesRawArguments(t *testing.T) {
 	}
 }
 
+func TestParseArgsCodexShimRunPreservesOpaqueArguments(t *testing.T) {
+	cfg, err := parseArgs([]string{"codex", "shim", "run", "--", "resume", "abc", "--last"})
+	if err != nil {
+		t.Fatalf("parseArgs: %v", err)
+	}
+	if cfg.codexShimAction != "run" {
+		t.Fatalf("codexShimAction = %q, want run", cfg.codexShimAction)
+	}
+	want := []string{"resume", "abc", "--last"}
+	if !slices.Equal(cfg.codexArgs, want) {
+		t.Fatalf("codexArgs = %#v, want %#v", cfg.codexArgs, want)
+	}
+}
+
+func TestParseArgsCodexShimInstallRecordsProfile(t *testing.T) {
+	cfg, err := parseArgs([]string{"codex", "shim", "install", "--profile", "/tmp/profile"})
+	if err != nil {
+		t.Fatalf("parseArgs: %v", err)
+	}
+	if cfg.codexShimAction != "install" {
+		t.Fatalf("codexShimAction = %q, want install", cfg.codexShimAction)
+	}
+	if cfg.codexShimProfile != "/tmp/profile" {
+		t.Fatalf("codexShimProfile = %q, want /tmp/profile", cfg.codexShimProfile)
+	}
+}
+
+func TestParseArgsCodexShimRejectsInvalidGrammar(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{name: "missing run delimiter", args: []string{"codex", "shim", "run", "resume"}},
+		{name: "unknown shim action", args: []string{"codex", "shim", "unknown"}},
+		{name: "trailing install arguments", args: []string{"codex", "shim", "install", "extra"}},
+		{name: "short install profile option", args: []string{"codex", "shim", "install", "-profile", "/tmp/profile"}},
+		{name: "empty install profile path", args: []string{"codex", "shim", "install", "--profile="}},
+		{name: "role selector on shim run", args: []string{"codex", "shim", "run", "--role", "executor", "--", "resume"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := parseArgs(tt.args); !errors.Is(err, errInvalidArgs) {
+				t.Fatalf("parseArgs(%q) error = %v, want errInvalidArgs", tt.args, err)
+			}
+		})
+	}
+}
+
 func TestParseArgsCodexMonitorRejectsScopeBeforePassthroughDelimiter(t *testing.T) {
 	tests := []struct {
 		name string
