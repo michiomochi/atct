@@ -66,6 +66,7 @@ func newCodexAppServer(ctx context.Context, socketPath string) (*codexAppServer,
 	if err != nil {
 		return nil, fmt.Errorf("dial app server socket %q: %w", socketPath, err)
 	}
+	conn.SetReadLimit(int64(codexAppServerMessageMaxBytes))
 	return newCodexAppServerWithLifetime(ctx, ctx, conn), nil
 }
 
@@ -85,6 +86,7 @@ func dialCodexAppServer(ctx, lifetimeCtx context.Context, socketPath string) (*c
 	if err != nil {
 		return nil, fmt.Errorf("dial app server socket %q: %w", socketPath, err)
 	}
+	conn.SetReadLimit(int64(codexAppServerMessageMaxBytes))
 	return newCodexAppServerWithLifetime(ctx, lifetimeCtx, conn), nil
 }
 

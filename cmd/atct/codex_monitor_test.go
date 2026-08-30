@@ -7,6 +7,8 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -190,6 +192,97 @@ func TestCodexAppServerRPC(t *testing.T) {
 	}
 	if _, ok := turnParams["turn/steer"]; ok {
 		t.Fatal("turn/start params unexpectedly contain turn/steer")
+	}
+}
+
+func TestCodexAppServerAcceptsLargeThreadListResponse(t *testing.T) {
+	const cwd = "/work/project"
+	socketDir, err := os.MkdirTemp("/tmp", "atct-codex-")
+	if err != nil {
+		t.Fatalf("os.MkdirTemp: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(socketDir) })
+	socketPath := filepath.Join(socketDir, "codex.sock")
+	listener, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatalf("net.Listen(unix): %v", err)
+	}
+
+	const paddingSize = (32 << 10) + 1
+	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.Close(websocket.StatusNormalClosure, "")
+
+		_, payload, err := conn.Read(context.Background())
+		if err != nil {
+			return
+		}
+		var request struct {
+			ID     json.RawMessage `json:"id"`
+			Method string          `json:"method"`
+		}
+		if err := json.Unmarshal(payload, &request); err != nil || request.Method != "thread/list" {
+			return
+		}
+		response, err := json.Marshal(map[string]any{
+			"id": request.ID,
+			"result": map[string]any{
+				"data": []map[string]any{{
+					"id":     "thread-large",
+					"cwd":    cwd,
+					"source": "cli",
+					"status": map[string]string{"type": "idle"},
+				}},
+				"padding": strings.Repeat("x", paddingSize),
+			},
+		})
+		if err != nil {
+			return
+		}
+		_ = conn.Write(context.Background(), websocket.MessageText, response)
+		_, _, _ = conn.Read(context.Background())
+	})}
+	serveDone := make(chan error, 1)
+	go func() { serveDone <- server.Serve(listener) }()
+	defer func() {
+		if err := server.Shutdown(context.Background()); err != nil {
+			t.Errorf("HTTP server shutdown: %v", err)
+		}
+		if err := <-serveDone; err != nil && !errors.Is(err, http.ErrServerClosed) {
+			t.Errorf("HTTP server: %v", err)
+		}
+	}()
+
+	constructors := []struct {
+		name string
+		new  func(context.Context, string) (*codexAppServer, error)
+	}{
+		{name: "newCodexAppServer", new: newCodexAppServer},
+		{name: "dialCodexAppServer", new: func(ctx context.Context, socketPath string) (*codexAppServer, error) {
+			return dialCodexAppServer(ctx, ctx, socketPath)
+		}},
+	}
+	for _, constructor := range constructors {
+		t.Run(constructor.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			app, err := constructor.new(ctx, socketPath)
+			if err != nil {
+				t.Fatalf("create App Server: %v", err)
+			}
+			defer app.Close()
+
+			threads, err := app.ListThreads(ctx, cwd)
+			if err != nil {
+				t.Fatalf("ListThreads() error = %v", err)
+			}
+			if len(threads) != 1 || threads[0].ID != "thread-large" {
+				t.Fatalf("ListThreads() = %#v, want thread-large", threads)
+			}
+		})
 	}
 }
 
