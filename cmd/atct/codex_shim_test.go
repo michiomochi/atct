@@ -203,154 +203,16 @@ func TestCodexShimPassesThroughNonInteractiveCommands(t *testing.T) {
 		args []string
 		want bool
 	}{
-		{name: "empty", args: nil, want: true},
+		{name: "empty", args: nil, want: false},
 		{name: "help flag", args: []string{"--help"}, want: true},
-		{name: "version flag", args: []string{"--version"}, want: true},
-		{name: "help value spelling", args: []string{"--help=exec"}, want: true},
-		{name: "version value spelling", args: []string{"--version=full"}, want: true},
-		{name: "exec", args: []string{"exec", "--help"}, want: true},
-		{name: "short exec", args: []string{"e", "pwd"}, want: true},
-		{name: "login", args: []string{"login"}, want: true},
-		{name: "config before exec", args: []string{"--config", `model="gpt-5"`, "exec", "--help"}, want: true},
-		{name: "profile before review", args: []string{"--profile", "work", "review", "--help"}, want: true},
-		{name: "boolean before exec", args: []string{"--oss", "exec", "--help"}, want: true},
-		{name: "repeatable values before exec", args: []string{"--enable", "feature-a", "--enable", "feature-b", "exec", "--help"}, want: true},
-		{name: "long value equals before exec", args: []string{`--config=model="gpt-5"`, "exec", "--help"}, want: true},
-		{name: "unknown leading option", args: []string{"--unknown", "exec", "--help"}, want: false},
-		{name: "malformed value option", args: []string{"--config"}, want: false},
-		{name: "interactive resume", args: []string{"resume", "thread-1"}, want: false},
-		{name: "interactive model option", args: []string{"--model", "gpt-5"}, want: false},
+		{name: "resume", args: []string{"resume", "thread-1"}, want: true},
+		{name: "arbitrary option", args: []string{"--not-a-codex-option", "value"}, want: true},
+		{name: "prompt", args: []string{"a prompt with spaces"}, want: true},
+		{name: "multiple images", args: []string{"-i", "first.png", "second.png", "--image", "third.png"}, want: true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := codexShimPassesThrough(tt.args); got != tt.want {
 				t.Fatalf("codexShimPassesThrough(%#v) = %t, want %t", tt.args, got, tt.want)
-			}
-		})
-	}
-}
-
-func TestCodexShimPassesThroughNonInteractiveCommandsWithDocumentedGlobalOptions(t *testing.T) {
-	valueOptions := []struct {
-		name   string
-		option string
-		value  string
-	}{
-		{name: "short config", option: "-c", value: `model="gpt-5"`},
-		{name: "long config", option: "--config", value: `model="gpt-5"`},
-		{name: "enable", option: "--enable", value: "feature-a"},
-		{name: "disable", option: "--disable", value: "feature-b"},
-		{name: "remote", option: "--remote", value: "remote-target"},
-		{name: "remote auth token env", option: "--remote-auth-token-env", value: "CODEX_TOKEN"},
-		{name: "short image", option: "-i", value: "image.png"},
-		{name: "long image", option: "--image", value: "image.png"},
-		{name: "short model", option: "-m", value: "gpt-5"},
-		{name: "long model", option: "--model", value: "gpt-5"},
-		{name: "local provider", option: "--local-provider", value: "local"},
-		{name: "short profile", option: "-p", value: "work"},
-		{name: "long profile", option: "--profile", value: "work"},
-		{name: "short sandbox", option: "-s", value: "workspace-write"},
-		{name: "long sandbox", option: "--sandbox", value: "workspace-write"},
-		{name: "short cd", option: "-C", value: "/project"},
-		{name: "long cd", option: "--cd", value: "/project"},
-		{name: "add dir", option: "--add-dir", value: "/tmp/extra"},
-		{name: "short ask for approval", option: "-a", value: "on-request"},
-		{name: "long ask for approval", option: "--ask-for-approval", value: "on-request"},
-	}
-	for _, tt := range valueOptions {
-		t.Run("value alias "+tt.name, func(t *testing.T) {
-			args := []string{tt.option, tt.value, "exec"}
-			if got := codexShimPassesThrough(args); !got {
-				t.Fatalf("codexShimPassesThrough(%#v) = false, want true", args)
-			}
-		})
-	}
-
-	longEqualsOptions := []struct {
-		name   string
-		option string
-		value  string
-	}{
-		{name: "config", option: "--config", value: `model="gpt-5"`},
-		{name: "enable", option: "--enable", value: "feature-a"},
-		{name: "disable", option: "--disable", value: "feature-b"},
-		{name: "remote", option: "--remote", value: "remote-target"},
-		{name: "remote auth token env", option: "--remote-auth-token-env", value: "CODEX_TOKEN"},
-		{name: "image", option: "--image", value: "image.png"},
-		{name: "model", option: "--model", value: "gpt-5"},
-		{name: "local provider", option: "--local-provider", value: "local"},
-		{name: "profile", option: "--profile", value: "work"},
-		{name: "sandbox", option: "--sandbox", value: "workspace-write"},
-		{name: "cd", option: "--cd", value: "/project"},
-		{name: "add dir", option: "--add-dir", value: "/tmp/extra"},
-		{name: "ask for approval", option: "--ask-for-approval", value: "on-request"},
-	}
-	for _, tt := range longEqualsOptions {
-		t.Run("long equals "+tt.name, func(t *testing.T) {
-			args := []string{tt.option + "=" + tt.value, "exec"}
-			if got := codexShimPassesThrough(args); !got {
-				t.Fatalf("codexShimPassesThrough(%#v) = false, want true", args)
-			}
-		})
-	}
-
-	booleanOptions := []string{
-		"--strict-config",
-		"--oss",
-		"--approve-for-me",
-		"--dangerously-bypass-approvals-and-sandbox",
-		"--dangerously-bypass-hook-trust",
-		"--search",
-		"--no-alt-screen",
-	}
-	for _, option := range booleanOptions {
-		t.Run("boolean "+option, func(t *testing.T) {
-			args := []string{option, "exec"}
-			if got := codexShimPassesThrough(args); !got {
-				t.Fatalf("codexShimPassesThrough(%#v) = false, want true", args)
-			}
-		})
-	}
-
-	for _, tt := range valueOptions {
-		t.Run("repeated value "+tt.name, func(t *testing.T) {
-			args := []string{tt.option, "first", tt.option, "second", "exec"}
-			if got := codexShimPassesThrough(args); !got {
-				t.Fatalf("codexShimPassesThrough(%#v) = false, want true", args)
-			}
-		})
-	}
-
-	for _, command := range []string{
-		"app-server",
-		"app",
-		"apply",
-		"archive",
-		"cloud",
-		"completion",
-		"debug",
-		"delete",
-		"doctor",
-		"e",
-		"exec",
-		"exec-server",
-		"features",
-		"help",
-		"login",
-		"logout",
-		"mcp",
-		"mcp-server",
-		"migrate-rollouts",
-		"plugin",
-		"remote-control",
-		"review",
-		"sandbox",
-		"unarchive",
-		"update",
-	} {
-		t.Run("global option before "+command, func(t *testing.T) {
-			args := []string{"--profile=work", command}
-			if got := codexShimPassesThrough(args); !got {
-				t.Fatalf("codexShimPassesThrough(%#v) = false, want true", args)
 			}
 		})
 	}
@@ -514,7 +376,7 @@ func TestRunCodexShimDispatchesRegisteredInteractiveProject(t *testing.T) {
 		stderr: &bytes.Buffer{},
 	}
 
-	code, err := runCodexShimWithDeps(cliConfig{codexArgs: []string{"resume", "thread-1"}}, dir, deps)
+	code, err := runCodexShimWithDeps(cliConfig{}, dir, deps)
 	if err != nil {
 		t.Fatalf("runCodexShimWithDeps: %v", err)
 	}
@@ -533,7 +395,7 @@ func TestRunCodexShimDispatchesRegisteredInteractiveProject(t *testing.T) {
 	if gotMonitorConfig.codexMonitorProjectID != strconv.FormatInt(project.ID, 10) {
 		t.Fatalf("monitor project ID = %q, want %q", gotMonitorConfig.codexMonitorProjectID, strconv.FormatInt(project.ID, 10))
 	}
-	if got := strings.Join(gotMonitorConfig.codexArgs, "\x00"); got != "resume\x00thread-1" {
+	if len(gotMonitorConfig.codexArgs) != 0 {
 		t.Fatalf("monitor args = %#v, want original args", gotMonitorConfig.codexArgs)
 	}
 }
@@ -546,6 +408,8 @@ func TestRunCodexShimPassesThroughNonInteractiveBeforeStoreLookup(t *testing.T) 
 		{name: "exec", args: []string{"exec", "--help"}},
 		{name: "config before exec", args: []string{"--config", `model="gpt-5"`, "exec", "--help"}},
 		{name: "profile before review", args: []string{"--profile", "work", "review", "--help"}},
+		{name: "long variadic image before exec", args: []string{"--image", "first.png", "second.png", "exec", "--help"}},
+		{name: "short variadic image before review", args: []string{"-i", "first.png", "second.png", "review", "--help"}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			wantArgs := append([]string(nil), tt.args...)
@@ -693,8 +557,8 @@ func TestRunCodexShimFallsBackForUnregisteredOrUnavailableProjects(t *testing.T)
 				stderr: &stderr,
 			}
 
-			wantArgs := []string{"resume", "thread-2", "--last", "value with spaces", "$ATCT", ""}
-			code, err := runCodexShimWithDeps(cliConfig{codexArgs: wantArgs}, dir, deps)
+			var wantArgs []string
+			code, err := runCodexShimWithDeps(cliConfig{}, dir, deps)
 			if err != nil {
 				t.Fatalf("runCodexShimWithDeps: %v", err)
 			}
