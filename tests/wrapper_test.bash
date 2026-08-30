@@ -403,6 +403,9 @@ test_installs_stable_terminal_launcher() {
   local home="$TEMP_ROOT/stable-launcher-home"
   local curl_log="$TEMP_ROOT/stable-launcher-curl.log"
   local launcher="$home/.local/bin/atct"
+  local cached="$home/.atct/bin/atct-$(wrapper_version)"
+  local stale="$home/.atct/bin/atct-0.53.0"
+  local isolated_path
   local output
 
   mkdir -p "$home"
@@ -413,10 +416,29 @@ test_installs_stable_terminal_launcher() {
   output="$(HOME="$home" PATH="$fake_bin:$PATH" FIXTURES_DIR="$fixtures" CURL_LOG="$curl_log" \
     FAKE_OS=Darwin FAKE_ARCH=arm64 "$REPO_ROOT/bin/atct" --version)"
 
-  assert_eq 'fake atct <--version>' "$output" 'stable launcher must forward arguments'
   [[ -x "$launcher" ]] || fail 'stable atct launcher is not executable'
   assert_file_contains 'ATCT_GLOBAL_LAUNCHER_V1' "$launcher"
   assert_file_contains "ATCT_WRAPPER=$REPO_ROOT/bin/atct" "$launcher"
+
+  isolated_path="$home/.local/bin:$fake_bin:$PATH"
+  output="$(HOME="$home" PATH="$isolated_path" FIXTURES_DIR="$fixtures" CURL_LOG="$curl_log" \
+    FAKE_OS=Darwin FAKE_ARCH=arm64 bash -c 'set -euo pipefail
+      [[ "$(command -v atct)" == "$HOME/.local/bin/atct" ]]
+      atct project list "two words" --flag')"
+  assert_eq 'fake atct <project> <list> <two words> <--flag>' "$output" \
+    'stable launcher must forward arguments through PATH'
+
+  printf 'stale cache\n' >"$stale"
+  touch -t 200001010000 "$stale"
+  rm -f -- "$cached"
+  output="$(HOME="$home" PATH="$isolated_path" FIXTURES_DIR="$fixtures" CURL_LOG="$curl_log" \
+    FAKE_OS=Darwin FAKE_ARCH=arm64 bash -c 'set -euo pipefail
+      [[ "$(command -v atct)" == "$HOME/.local/bin/atct" ]]
+      atct after-prune "cache missing"')"
+  assert_eq 'fake atct <after-prune> <cache missing>' "$output" \
+    'stable launcher must survive cache pruning'
+  [[ ! -e "$stale" ]] || fail 'stale cache was not pruned through the stable launcher'
+  [[ -x "$cached" ]] || fail 'cache was not restored through the stable launcher'
 }
 
 test_rejects_unmarked_launcher_collisions() {
@@ -474,6 +496,35 @@ test_rejects_unmarked_launcher_collisions() {
     esac
   done
 
+  assert_empty_file "$curl_log"
+}
+
+test_rejects_foreign_marker_substrings() {
+  local fixtures="$TEMP_ROOT/foreign-marker-fixtures"
+  local fake_bin="$TEMP_ROOT/foreign-marker-fake-bin"
+  local home="$TEMP_ROOT/foreign-marker-home"
+  local target="$home/.local/bin/atct"
+  local curl_log="$TEMP_ROOT/foreign-marker-curl.log"
+  local stdout="$TEMP_ROOT/foreign-marker.stdout"
+  local stderr="$TEMP_ROOT/foreign-marker.stderr"
+  local before
+  local after
+
+  make_archives "$fixtures" good
+  write_fake_tools "$fake_bin"
+  mkdir -p "$(dirname "$target")"
+  printf 'foreign payload ATCT_GLOBAL_LAUNCHER_V1 embedded in content\n' >"$target"
+  before="$(shasum -a 256 "$target" | awk '{print $1}')"
+
+  if HOME="$home" PATH="$fake_bin:$PATH" FIXTURES_DIR="$fixtures" CURL_LOG="$curl_log" \
+    FAKE_OS=Darwin FAKE_ARCH=arm64 "$REPO_ROOT/bin/atct" --version >"$stdout" 2>"$stderr"; then
+    fail 'foreign marker substring was accepted as launcher ownership'
+  fi
+
+  assert_empty_file "$stdout"
+  assert_file_contains "$target" "$stderr"
+  after="$(shasum -a 256 "$target" | awk '{print $1}')"
+  assert_eq "$before" "$after" 'foreign marker substring file was modified'
   assert_empty_file "$curl_log"
 }
 
@@ -2051,6 +2102,7 @@ test_claude_hooks_json_keeps_session_start_and_pre_tool_use_sections
 test_stop_hook_file_is_executable_but_other_hooks_remain
 test_installs_stable_terminal_launcher
 test_rejects_unmarked_launcher_collisions
+test_rejects_foreign_marker_substrings
 test_refreshes_marked_launcher_without_editing_profiles
 test_download_cache_and_mcp_stdout
 test_context_check_preserves_exit_code

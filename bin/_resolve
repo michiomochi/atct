@@ -45,7 +45,7 @@ ensure_terminal_launcher() {
     if [[ ! -f "$GLOBAL_LAUNCHER" ]]; then
       fail "Refusing to replace non-regular file <$GLOBAL_LAUNCHER>. Remove it or choose another launcher path and retry."
     fi
-    if ! grep -Fq -- "$GLOBAL_LAUNCHER_MARKER" "$GLOBAL_LAUNCHER"; then
+    if ! grep -Fxq -- "# $GLOBAL_LAUNCHER_MARKER" "$GLOBAL_LAUNCHER"; then
       fail "Refusing to replace unmarked file <$GLOBAL_LAUNCHER>. Remove it or choose another launcher path and retry."
     fi
   fi
