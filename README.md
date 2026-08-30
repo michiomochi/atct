@@ -24,6 +24,10 @@ That is the supported install. The plugin ships wrappers that fetch the two bina
 time something needs them, verify them against the release checksums, and cache them under
 `~/.atct/bin/`.
 
+The wrapper also installs a stable terminal launcher at `~/.local/bin/atct`. It never edits shell
+profiles. If `~/.local/bin` is not on your `PATH`, add it yourself if you want to type `atct`, or
+continue using the wrapper directly.
+
 Restart Claude Code once — or run `/reload-plugins` — so the new MCP server is picked up.
 
 macOS and Linux, on amd64 and arm64. Windows is not supported: the daemon talks over a Unix

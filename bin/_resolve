@@ -26,6 +26,59 @@ ATCT_WRAPPER="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/atct"
 HOME_DIR="${HOME:-}"
 [[ -n "$HOME_DIR" ]] || fail 'HOME is not set, so the downloaded binary cannot be cached. Set HOME and retry.'
 
+GLOBAL_LAUNCHER_DIR="$HOME_DIR/.local/bin"
+GLOBAL_LAUNCHER="$GLOBAL_LAUNCHER_DIR/atct"
+GLOBAL_LAUNCHER_MARKER='ATCT_GLOBAL_LAUNCHER_V1'
+
+ensure_terminal_launcher() {
+  if ! mkdir -p -- "$GLOBAL_LAUNCHER_DIR"; then
+    fail "Could not create the stable atct launcher directory <$GLOBAL_LAUNCHER_DIR>. Check its permissions and retry."
+  fi
+
+  if [[ -e "$GLOBAL_LAUNCHER" || -L "$GLOBAL_LAUNCHER" ]]; then
+    if [[ -L "$GLOBAL_LAUNCHER" ]]; then
+      fail "Refusing to replace symlink <$GLOBAL_LAUNCHER>. Remove it or choose another launcher path and retry."
+    fi
+    if [[ -d "$GLOBAL_LAUNCHER" ]]; then
+      fail "Refusing to replace directory <$GLOBAL_LAUNCHER>. Remove it or choose another launcher path and retry."
+    fi
+    if [[ ! -f "$GLOBAL_LAUNCHER" ]]; then
+      fail "Refusing to replace non-regular file <$GLOBAL_LAUNCHER>. Remove it or choose another launcher path and retry."
+    fi
+    if ! grep -Fxq -- "# $GLOBAL_LAUNCHER_MARKER" "$GLOBAL_LAUNCHER"; then
+      fail "Refusing to replace unmarked file <$GLOBAL_LAUNCHER>. Remove it or choose another launcher path and retry."
+    fi
+  fi
+
+  local launcher_tmp
+  local wrapper_literal
+  if ! launcher_tmp="$(mktemp "$GLOBAL_LAUNCHER_DIR/.atct-launcher.XXXXXX")"; then
+    fail "Could not create a temporary stable atct launcher in <$GLOBAL_LAUNCHER_DIR>. Check its permissions and retry."
+  fi
+
+  printf -v wrapper_literal '%q' "$ATCT_WRAPPER"
+  if ! {
+    printf '%s\n' '#!/usr/bin/env bash'
+    printf '%s\n' 'set -euo pipefail'
+    printf '%s\n' "# $GLOBAL_LAUNCHER_MARKER"
+    printf 'ATCT_WRAPPER=%s\n' "$wrapper_literal"
+    printf '%s\n' 'exec "$ATCT_WRAPPER" "$@"'
+  } >"$launcher_tmp"; then
+    rm -f -- "$launcher_tmp" 2>/dev/null || true
+    fail "Could not write the stable atct launcher in <$GLOBAL_LAUNCHER_DIR>. Check its permissions and retry."
+  fi
+  if ! chmod 0755 "$launcher_tmp"; then
+    rm -f -- "$launcher_tmp" 2>/dev/null || true
+    fail "Could not make the stable atct launcher executable in <$GLOBAL_LAUNCHER_DIR>. Check its permissions and retry."
+  fi
+  if ! mv -f -- "$launcher_tmp" "$GLOBAL_LAUNCHER"; then
+    rm -f -- "$launcher_tmp" 2>/dev/null || true
+    fail "Could not install the stable atct launcher at <$GLOBAL_LAUNCHER>. Check its permissions and retry."
+  fi
+}
+
+ensure_terminal_launcher
+
 CACHE_DIR="$HOME_DIR/.atct/bin"
 CACHED_BINARY="$CACHE_DIR/${BINARY_NAME}-${VERSION}"
 CACHE_TTL_DAYS=14
