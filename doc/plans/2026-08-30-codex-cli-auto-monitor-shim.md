@@ -115,7 +115,9 @@ Expected: passing focused tests; only listed files committed.
 **Interfaces:**
 - Produces `resolveRealCodex(pathEnv string) (string, error)`, ignoring executable candidates whose contents have `codexShimMarker`.
 - Extends the generated shim to embed the installer-resolved absolute real-Codex fallback and execute it with unchanged arguments when the embedded ATCT launcher is unavailable.
-- Produces `codexShimPassesThrough(args []string) bool`.
+- Produces `codexShimPassesThrough(args []string) bool`, which consumes only
+  documented leading Codex global options to locate a non-interactive command
+  without modifying `args`.
 - Produces `runCodexShimWithDeps(config cliConfig, dir string, deps codexShimDeps) (int, error)`.
 - Adds `cliConfig.codexMonitorAutomatic bool`, `cliConfig.codexMonitorProjectID string`.
 
@@ -126,7 +128,14 @@ Put marked `bin/codex` before real `real/codex` in a temporary PATH:
 ```go
 got, err := resolveRealCodex(pathEnv)
 if err != nil || got != realCodex { t.Fatalf("resolve = %q, %v", got, err) }
-for _, args := range [][]string{{"exec", "--help"}, {"e", "x"}, {"--version"}, {"login"}} {
+for _, args := range [][]string{
+    {"exec", "--help"},
+    {"e", "x"},
+    {"--version"},
+    {"login"},
+    {"--config", `model="gpt-5"`, "exec", "--help"},
+    {"--profile", "work", "review", "--help"},
+} {
     if !codexShimPassesThrough(args) { t.Fatalf("%q must pass through", args) }
 }
 if codexShimPassesThrough([]string{"resume", "abc"}) { t.Fatal("resume must be interactive") }
@@ -146,13 +155,28 @@ Split PATH with `filepath.SplitList`, treating an empty entry as `.`. For each e
 
 During installation, resolve that unmarked executable before writing the shim and pass its absolute path into the script template. The script must test whether its embedded ATCT launcher remains executable: if yes, `exec` it with `codex shim run -- "$@"`; otherwise `exec` the embedded real Codex with the original `"$@"`. If real Codex cannot be resolved at installation, still write the shim only when its fallback branch prints the normal command-not-found diagnostic and exits `127`; do not write a launcher-only shim that can make `codex` unusable after ATCT is removed.
 
-Pass through empty args, help/version flags, and first tokens in existing `codexMonitorPassthroughCommands`; all other vectors remain intact for automatic monitoring.
+Define a table for documented global options accepted before a Codex subcommand.
+It must distinguish options that consume one value (`-c`/`--config`,
+`--enable`, `--disable`, `--remote`, `--remote-auth-token-env`, `-i`/`--image`,
+`-m`/`--model`, `--local-provider`, `-p`/`--profile`, `-s`/`--sandbox`,
+`-C`/`--cd`, `--add-dir`, and `-a`/`--ask-for-approval`) from booleans
+(`--strict-config`, `--oss`, `--approve-for-me`,
+`--dangerously-bypass-approvals-and-sandbox`,
+`--dangerously-bypass-hook-trust`, `--search`, and `--no-alt-screen`). Support
+the `--option=value` form for long value-taking options where Codex accepts it.
+After consuming only these leading options, pass through empty args, help/version
+flags, and the resulting command token when it is in
+`codexMonitorPassthroughCommands`; all other vectors remain intact for automatic
+monitoring. Do not strip, reorder, parse, or otherwise mutate the original
+argument slice. Unknown or malformed leading options do not establish a command
+boundary and remain on the interactive path.
 
 - [ ] **Step 4: Write failing local dispatch tests**
 
 Create a temporary `atct.db`, register a root with `store.CreateProject`, and inject a nested cwd. With counters, assert:
 - registered `resume` calls monitor with unchanged args, automatic true, commander role, and decimal local project ID;
-- registered `exec --help` calls normal Codex with identical args;
+- registered `exec --help`, `--config model=\"gpt-5\" exec --help`, and
+  `--profile work review --help` call normal Codex with identical args;
 - unregistered cwd and absent database call normal Codex;
 - store/cwd error calls normal Codex and emits a diagnostic.
 
@@ -171,7 +195,7 @@ type codexShimDeps struct {
 }
 ```
 
-`runCodexShimWithDeps` resolves real Codex, passes classified calls, opens `<dir>/atct.db`, calls `ResolveProject(context.Background(), cwd)`, and passes through on absent DB, `store.ErrProjectNotFound`, or lookup error. On registered interactive launch it calls monitor with action `monitor`, automatic true, commander role, local decimal project ID, and original args. It never starts a daemon, writes store data, or infers goal/task.
+`runCodexShimWithDeps` resolves real Codex, passes classified calls, opens `<dir>/atct.db`, calls `ResolveProject(context.Background(), cwd)`, and passes through on absent DB, `store.ErrProjectNotFound`, or lookup error. On registered interactive launch it calls monitor with action `monitor`, automatic true, commander role, local decimal project ID, and original args. It never starts a daemon, writes store data, or infers goal/task. The classifier runs before store lookup for every option-prefixed non-interactive invocation.
 
 - [ ] **Step 6: Consume automatic scope in supervisor**
 

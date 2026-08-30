@@ -87,13 +87,25 @@ Other lookup errors also fail open to direct Codex with a diagnostic. The
 check neither starts a daemon nor changes the store, and an inactive project
 with no goals is still registered.
 
-The shim uses a conservative, shared pass-through classification. A first
-Codex token in the existing non-interactive command set (including `exec`,
-`e`, `app-server`, `login`, `logout`, and management commands), plus
-`--help`, `-h`, `--version`, and `-V`, is passed to the real binary. All other
-argument vectors are treated as interactive and forwarded unchanged to the
-automatic monitor path. This keeps the shim from guessing at Codex's option
-grammar while preserving the required `codex exec` boundary.
+The shim uses a conservative, shared pass-through classification. It first
+scans only documented Codex global options that can precede a subcommand,
+consuming each option's documented value(s) without changing the original
+argument vector. It then classifies the first remaining token. A
+non-interactive command in the existing command set (including `exec`, `e`,
+`review`, `app-server`, `login`, `logout`, and management commands), plus
+`--help`, `-h`, `--version`, and `-V`, is passed to the real binary. Thus both
+`codex --config model=\"gpt-5\" exec ...` and `codex --profile work review ...`
+pass through unchanged. Unknown or malformed leading options remain
+interactive rather than being guessed at. All argument vectors retain their
+original ordering and values on either branch.
+
+This deliberately uses a small, versioned table of Codex's documented global
+options rather than parsing or normalizing the opaque command line. The table
+is limited to finding the command boundary; it must support the value-taking,
+boolean, repeatable, and `--option=value` spellings that Codex accepts before a
+subcommand. Tests pin every supported spelling that precedes each
+non-interactive command. Adding a newly documented global option is a table and
+test update, not a reason to forward unknown options to a monitor.
 
 For a registered interactive launch, the run entry point invokes the existing
 supervisor with an internal automatic-commander mode:
@@ -183,8 +195,10 @@ Focused tests must cover:
 - registered project, nested directory, worktree, unregistered directory,
   missing database, and lookup-error dispatch;
 - `codex`, `codex resume`, and argument preservation on the automatic path;
-- `codex exec`, `codex e`, management commands, help/version, and exit-status
-  preservation without App Server or monitor startup;
+- every non-interactive command, including `codex --config model=\"gpt-5\" exec`
+  and `codex --profile work review`, with every supported leading global-option
+  spelling, preserving arguments and exit status without App Server or monitor
+  startup;
 - automatic launches carrying commander/project scope and falling back on
   setup failure, while explicit goal/task role launches remain unchanged;
 - reuse of goal 206's exact-cwd discovery, FIFO/idle delivery, missed
