@@ -197,7 +197,7 @@ func runCodexShimWithDeps(config cliConfig, dir string, deps codexShimDeps) (int
 	dbPath := filepath.Join(dir, "atct.db")
 	if _, err := os.Stat(dbPath); err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return codexShimFallback(deps, "local database is missing", executable, args)
+			return deps.runNormal(executable, args)
 		}
 		return codexShimFallback(deps, "inspect local database: "+err.Error(), executable, args)
 	}
@@ -209,6 +209,9 @@ func runCodexShimWithDeps(config cliConfig, dir string, deps codexShimDeps) (int
 
 	project, err := localStore.ResolveProject(context.Background(), cwd)
 	if err != nil {
+		if errors.Is(err, store.ErrProjectNotFound) {
+			return deps.runNormal(executable, args)
+		}
 		return codexShimFallback(deps, "project lookup: "+err.Error(), executable, args)
 	}
 
@@ -247,7 +250,9 @@ func codexShimDepsWithDefaults(deps codexShimDeps) codexShimDeps {
 }
 
 func codexShimFallback(deps codexShimDeps, reason, executable string, args []string) (int, error) {
-	fmt.Fprintf(deps.stderr, "atct codex shim disabled: %s; running normal codex\n", reason)
+	if reason != "" {
+		fmt.Fprintf(deps.stderr, "atct codex shim disabled: %s; running normal codex\n", reason)
+	}
 	if strings.TrimSpace(executable) == "" {
 		executable = "codex"
 	}

@@ -186,6 +186,88 @@ func TestCodexMonitorPassThroughExecDoesNotStartMonitor(t *testing.T) {
 	}
 }
 
+func TestCodexMonitorDirectResolutionSkipsMarkedShim(t *testing.T) {
+	shimDir := t.TempDir()
+	markedShim := filepath.Join(shimDir, "codex")
+	if err := os.WriteFile(markedShim, []byte("#!/bin/sh\n"+codexShimMarker+"\n"), 0o700); err != nil {
+		t.Fatalf("write marked Codex shim: %v", err)
+	}
+	realDir := t.TempDir()
+	realCodex := filepath.Join(realDir, "codex")
+	if err := os.WriteFile(realCodex, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+		t.Fatalf("write real Codex executable: %v", err)
+	}
+	t.Setenv("PATH", shimDir+string(os.PathListSeparator)+realDir)
+
+	monitorDir := t.TempDir()
+	app := newFakeCodexMonitorApp()
+	tui := newFakeCodexMonitorProcess(0)
+	tui.markStarted()
+	tuiStarted := make(chan struct{})
+	done := make(chan struct{})
+	var (
+		appExecutable string
+		tuiExecutable string
+		code          int
+		runErr        error
+	)
+	deps := codexMonitorDeps{
+		startProcess: func(kind codexMonitorProcessKind, executable string, _ []string) (codexMonitorProcess, error) {
+			switch kind {
+			case codexMonitorAppServer:
+				appExecutable = executable
+				return app, nil
+			case codexMonitorTUI:
+				tuiExecutable = executable
+				close(tuiStarted)
+				return tui, nil
+			default:
+				return nil, errors.New("unexpected process kind")
+			}
+		},
+		connectAppServer: func(context.Context, string) (codexMonitorApp, error) { return app, nil },
+		projectPath:      func() (string, error) { return "/project", nil },
+		reap:             func(string) (daemonctl.CodexMonitorReapResult, error) { return daemonctl.CodexMonitorReapResult{}, nil },
+		register: func(string, daemonctl.CodexMonitorRecord) (func(), error) {
+			return func() {}, nil
+		},
+		runWatch: func(ctx context.Context, _ *codexMonitorBridge) error {
+			<-ctx.Done()
+			return nil
+		},
+		stderr: io.Discard,
+	}
+
+	go func() {
+		code, runErr = runCodexMonitorWithDeps(cliConfig{
+			codexMonitorAction: "monitor",
+			codexArgs:          []string{"resume", "thread-4"},
+		}, monitorDir, deps)
+		close(done)
+	}()
+
+	select {
+	case <-tuiStarted:
+	case <-time.After(time.Second):
+		t.Fatal("direct monitor did not start TUI")
+	}
+	if appExecutable != realCodex || tuiExecutable != realCodex {
+		t.Fatalf("direct monitor executables = (%q, %q), want real Codex %q", appExecutable, tuiExecutable, realCodex)
+	}
+	tui.finish()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("direct monitor did not finish after TUI exit")
+	}
+	if runErr != nil {
+		t.Fatalf("runCodexMonitorWithDeps: %v", runErr)
+	}
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0", code)
+	}
+}
+
 func TestCodexMonitorFallbackWhenAppServerCannotStart(t *testing.T) {
 	var stderr safeCodexMonitorBuffer
 	var gotArgs []string
@@ -339,6 +421,61 @@ func TestCodexMonitorAutomaticSetupFailureFallsBack(t *testing.T) {
 	}
 	if resolveScopes != 0 {
 		t.Fatalf("automatic monitor resolved explicit scopes %d times, want 0", resolveScopes)
+	}
+}
+
+func TestCodexMonitorAutomaticAppServerFailureFallsBackOnce(t *testing.T) {
+	var (
+		appServerStarts int
+		tuiStarts       int
+		normalCalls     int
+		gotArgs         []string
+	)
+	deps := codexMonitorDeps{
+		projectPath: func() (string, error) { return "/project", nil },
+		reap: func(string) (daemonctl.CodexMonitorReapResult, error) {
+			return daemonctl.CodexMonitorReapResult{}, nil
+		},
+		resolveCodex: func() (string, error) { return "/opt/codex", nil },
+		startProcess: func(kind codexMonitorProcessKind, _ string, _ []string) (codexMonitorProcess, error) {
+			switch kind {
+			case codexMonitorAppServer:
+				appServerStarts++
+				return nil, errors.New("App Server unavailable")
+			case codexMonitorTUI:
+				tuiStarts++
+				return nil, errors.New("TUI must not start after App Server failure")
+			default:
+				return nil, errors.New("unexpected process kind")
+			}
+		},
+		runNormal: func(_ string, args []string) (int, error) {
+			normalCalls++
+			gotArgs = append([]string(nil), args...)
+			return 47, nil
+		},
+		stderr: io.Discard,
+	}
+
+	wantArgs := []string{"resume", "thread-3", "--last", "value with spaces"}
+	code, err := runCodexMonitorWithDeps(cliConfig{
+		codexMonitorAction:    "monitor",
+		codexMonitorAutomatic: true,
+		codexMonitorRole:      "commander",
+		codexMonitorProjectID: "42",
+		codexArgs:             wantArgs,
+	}, t.TempDir(), deps)
+	if err != nil {
+		t.Fatalf("runCodexMonitorWithDeps: %v", err)
+	}
+	if code != 47 || normalCalls != 1 {
+		t.Fatalf("automatic setup fallback = (code %d, normal calls %d), want (47, 1)", code, normalCalls)
+	}
+	if appServerStarts != 1 || tuiStarts != 0 {
+		t.Fatalf("monitor child starts = (App Server %d, TUI %d), want (1, 0)", appServerStarts, tuiStarts)
+	}
+	if !slices.Equal(gotArgs, wantArgs) {
+		t.Fatalf("automatic fallback args = %#v, want %#v", gotArgs, wantArgs)
 	}
 }
 

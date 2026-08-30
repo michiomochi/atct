@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -268,6 +269,32 @@ func TestGeneratedCodexShimFallsBackToRealCodexWithOriginalArguments(t *testing.
 	}
 }
 
+func TestInstalledCodexShimFallsBackToEmbeddedRealCodex(t *testing.T) {
+	home := t.TempDir()
+	dir := t.TempDir()
+	atctPath := filepath.Join(dir, "atct")
+	realCodexPath := filepath.Join(dir, "real-codex")
+	realRecord := filepath.Join(dir, "real-args")
+	writeCodexShimTestExecutable(t, atctPath, filepath.Join(dir, "atct-args"), 23)
+	writeCodexShimTestExecutable(t, realCodexPath, realRecord, 37)
+	if err := writeCodexShimWithFallback(home, "", atctPath, realCodexPath); err != nil {
+		t.Fatalf("writeCodexShimWithFallback: %v", err)
+	}
+	if err := os.Chmod(atctPath, 0o600); err != nil {
+		t.Fatalf("disable installed ATCT launcher: %v", err)
+	}
+
+	shimPath := filepath.Join(home, ".atct", "bin", "codex")
+	output, err := exec.Command(shimPath, "resume", "thread-1", "--last", "value with spaces").CombinedOutput()
+	if got := commandExitCode(err); got != 37 {
+		t.Fatalf("installed shim fallback exit code = %d, want 37 (output %q, err %v)", got, output, err)
+	}
+	wantArgs := []string{"resume", "thread-1", "--last", "value with spaces"}
+	if got := readCodexShimTestArgs(t, realRecord); !slices.Equal(got, wantArgs) {
+		t.Fatalf("installed shim fallback args = %#v, want %#v", got, wantArgs)
+	}
+}
+
 func TestGeneratedCodexShimWithoutFallbackReportsCommandNotFound(t *testing.T) {
 	dir := t.TempDir()
 	shimPath := filepath.Join(dir, "shim")
@@ -416,10 +443,11 @@ func TestRunCodexShimPassesThroughNonInteractiveBeforeStoreLookup(t *testing.T) 
 
 func TestRunCodexShimFallsBackForUnregisteredOrUnavailableProjects(t *testing.T) {
 	tests := []struct {
-		name       string
-		setup      func(t *testing.T, dir string) func(string) (*store.Store, error)
-		cwd        func() (string, error)
-		wantReason string
+		name           string
+		setup          func(t *testing.T, dir string) func(string) (*store.Store, error)
+		cwd            func() (string, error)
+		wantDiagnostic bool
+		wantReason     string
 	}{
 		{
 			name: "unregistered",
@@ -433,16 +461,16 @@ func TestRunCodexShimFallsBackForUnregisteredOrUnavailableProjects(t *testing.T)
 				}
 				return store.Open
 			},
-			cwd:        func() (string, error) { return t.TempDir(), nil },
-			wantReason: "project lookup",
+			cwd:            func() (string, error) { return t.TempDir(), nil },
+			wantDiagnostic: false,
 		},
 		{
 			name: "missing database",
 			setup: func(t *testing.T, _ string) func(string) (*store.Store, error) {
 				return store.Open
 			},
-			cwd:        func() (string, error) { return t.TempDir(), nil },
-			wantReason: "database",
+			cwd:            func() (string, error) { return t.TempDir(), nil },
+			wantDiagnostic: false,
 		},
 		{
 			name: "store error",
@@ -452,16 +480,34 @@ func TestRunCodexShimFallsBackForUnregisteredOrUnavailableProjects(t *testing.T)
 				}
 				return func(string) (*store.Store, error) { return nil, errors.New("database unavailable") }
 			},
-			cwd:        func() (string, error) { return t.TempDir(), nil },
-			wantReason: "open local store",
+			cwd:            func() (string, error) { return t.TempDir(), nil },
+			wantDiagnostic: true,
+			wantReason:     "open local store",
+		},
+		{
+			name: "project lookup error",
+			setup: func(t *testing.T, dir string) func(string) (*store.Store, error) {
+				db, err := store.Open(filepath.Join(dir, "atct.db"))
+				if err != nil {
+					t.Fatalf("open test store: %v", err)
+				}
+				if err := db.Close(); err != nil {
+					t.Fatalf("close test store: %v", err)
+				}
+				return func(string) (*store.Store, error) { return db, nil }
+			},
+			cwd:            func() (string, error) { return t.TempDir(), nil },
+			wantDiagnostic: true,
+			wantReason:     "project lookup",
 		},
 		{
 			name: "cwd error",
 			setup: func(_ *testing.T, _ string) func(string) (*store.Store, error) {
 				return store.Open
 			},
-			cwd:        func() (string, error) { return "", errors.New("cwd unavailable") },
-			wantReason: "resolve current directory",
+			cwd:            func() (string, error) { return "", errors.New("cwd unavailable") },
+			wantDiagnostic: true,
+			wantReason:     "resolve current directory",
 		},
 	}
 
@@ -490,21 +536,29 @@ func TestRunCodexShimFallsBackForUnregisteredOrUnavailableProjects(t *testing.T)
 				stderr: &stderr,
 			}
 
-			code, err := runCodexShimWithDeps(cliConfig{codexArgs: []string{"resume", "thread-2"}}, dir, deps)
+			wantArgs := []string{"resume", "thread-2", "--last", "value with spaces", "$ATCT", ""}
+			code, err := runCodexShimWithDeps(cliConfig{codexArgs: wantArgs}, dir, deps)
 			if err != nil {
 				t.Fatalf("runCodexShimWithDeps: %v", err)
 			}
 			if code != 37 || gotExecutable != "/opt/real-codex" {
 				t.Fatalf("fallback result = (%d, %q), want (37, /opt/real-codex)", code, gotExecutable)
 			}
-			if got := strings.Join(gotArgs, "\x00"); got != "resume\x00thread-2" {
-				t.Fatalf("fallback args = %#v, want original args", gotArgs)
+			if !slices.Equal(gotArgs, wantArgs) {
+				t.Fatalf("fallback args = %#v, want original args %#v", gotArgs, wantArgs)
 			}
 			if monitorCalls != 0 {
 				t.Fatalf("monitor calls = %d, want 0", monitorCalls)
 			}
-			if !strings.Contains(stderr.String(), tt.wantReason) {
-				t.Fatalf("fallback diagnostic = %q, want %q", stderr.String(), tt.wantReason)
+			if tt.wantDiagnostic {
+				if got := strings.Count(stderr.String(), "atct codex shim disabled:"); got != 1 {
+					t.Fatalf("fallback diagnostic count = %d, want 1; diagnostic = %q", got, stderr.String())
+				}
+				if !strings.Contains(stderr.String(), tt.wantReason) {
+					t.Fatalf("fallback diagnostic = %q, want %q", stderr.String(), tt.wantReason)
+				}
+			} else if got := stderr.String(); got != "" {
+				t.Fatalf("fallback diagnostic = %q, want silent pass-through", got)
 			}
 			if tt.name == "missing database" {
 				if _, statErr := os.Stat(filepath.Join(dir, "atct.db")); !errors.Is(statErr, os.ErrNotExist) {
