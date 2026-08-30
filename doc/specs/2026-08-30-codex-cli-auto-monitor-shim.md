@@ -4,7 +4,7 @@ Date: 2026-08-30
 
 ## Outcome
 
-After one explicit installation, an interactive `codex` launch in an
+After one explicit installation, a bare, argument-free `codex` launch in an
 ATCT-registered project starts the existing ATCT Codex monitor before the TUI
 starts. The TUI is launched through the local Codex App Server with `--remote`,
 so entering `$atct:start` in that session receives the same project-scoped
@@ -13,8 +13,8 @@ ATCT delivery as the existing monitor path.
 The shim is transparent outside that case:
 
 - an unregistered current directory invokes the real Codex unchanged;
-- known non-interactive Codex commands, especially `codex exec`, invoke the
-  real Codex unchanged even in a registered project;
+- every invocation with one or more arguments invokes the real Codex unchanged
+  even in a registered project;
 - monitor setup failures fall back to the real Codex with the original
   arguments and exit status;
 - an already-running normal TUI is never attached or retrofitted.
@@ -79,35 +79,29 @@ directory is first on `PATH`; neither path may recurse into the shim. If no
 real executable can be resolved, the command returns the normal command-not-
 found failure without starting an App Server.
 
-Before dispatching, it checks the current directory against the local ATCT
-store using the existing canonical project resolution (`Store.ResolveProject`)
-and the current directory/worktree rules. A missing store or
+Before dispatching, it first checks the opaque argument vector. When it has
+one or more arguments, it invokes the resolved real Codex directly with that
+unchanged vector. It does not classify subcommands, parse global options,
+inspect prompts, or open the local ATCT store on this branch. This boundary
+keeps ATCT independent of Codex's evolving CLI grammar, including options with
+repeatable or variadic values such as `--image <FILE>...`.
+
+Only a zero-argument invocation checks the current directory against the local
+ATCT store using the existing canonical project resolution
+(`Store.ResolveProject`) and the current directory/worktree rules. A missing store or
 `ErrProjectNotFound` means "not registered" and selects direct pass-through.
 Other lookup errors also fail open to direct Codex with a diagnostic. The
 check neither starts a daemon nor changes the store, and an inactive project
 with no goals is still registered.
 
-The shim uses a conservative, shared pass-through classification. It first
-scans only documented Codex global options that can precede a subcommand,
-consuming each option's documented value(s) without changing the original
-argument vector. It then classifies the first remaining token. A
-non-interactive command in the existing command set (including `exec`, `e`,
-`review`, `app-server`, `login`, `logout`, and management commands), plus
-`--help`, `-h`, `--version`, and `-V`, is passed to the real binary. Thus both
-`codex --config model=\"gpt-5\" exec ...` and `codex --profile work review ...`
-pass through unchanged. Unknown or malformed leading options remain
-interactive rather than being guessed at. All argument vectors retain their
-original ordering and values on either branch.
+The argument-count boundary is deliberately narrower than an attempt to
+recognize “interactive” Codex syntax. `codex resume`, prompt arguments,
+`exec`, `review`, `--config`, and `--image a.png b.png` all pass through. A
+user who wants monitoring with any Codex argument uses the explicit
+role-aware `atct codex monitor` command; automatic monitoring makes no attempt
+to reinterpret that request.
 
-This deliberately uses a small, versioned table of Codex's documented global
-options rather than parsing or normalizing the opaque command line. The table
-is limited to finding the command boundary; it must support the value-taking,
-boolean, repeatable, and `--option=value` spellings that Codex accepts before a
-subcommand. Tests pin every supported spelling that precedes each
-non-interactive command. Adding a newly documented global option is a table and
-test update, not a reason to forward unknown options to a monitor.
-
-For a registered interactive launch, the run entry point invokes the existing
+For a registered bare launch, the run entry point invokes the existing
 supervisor with an internal automatic-commander mode:
 
 ```text
@@ -149,11 +143,12 @@ required.
 ## Evidence and design choice
 
 The selected design is a global PATH shim plus local registration lookup and
-the existing Go supervisor. The agmsg Codex monitor documentation uses the
-same important lifecycle boundary: intercept interactive launches before the
-TUI, pass non-interactive commands and non-monitor projects through, connect a
-remote TUI to an App Server, serialize injected turns, and use idle/watchdog
-fallbacks because `turn/completed` is not reliable. See
+the existing Go supervisor. The agmsg Codex monitor documentation is a
+lifecycle reference for intercepting a launch before the TUI, connecting a
+remote TUI to an App Server, serializing injected turns, and using
+idle/watchdog fallbacks because `turn/completed` is not reliable. Its
+syntax-oriented dispatch is not adopted: this shim uses the safer
+argument-count boundary. See
 <https://github.com/fujibee/agmsg/blob/main/docs/codex-monitor-beta.md>.
 
 The alternatives were considered explicitly:
@@ -162,9 +157,9 @@ The alternatives were considered explicitly:
    a durable global command and depends on every shell being configured.
 2. A per-project enable/mode flag: makes dispatch easy, but adds the rejected
    project opt-in state and can drift from ATCT's registered-project truth.
-3. A global PATH shim with a local registered-project check (selected): one
-   explicit installation provides the ordinary `codex` experience, while the
-   no-project and non-interactive branches remain transparent. The marked shim
+3. A global PATH shim with a zero-argument local registered-project check
+   (selected): one explicit installation provides the ordinary bare `codex`
+   experience, while every argument-bearing branch is transparent. The marked shim
    resolver and explicit automatic-commander mode address recursion and worker
    scope without changing goal 206's bridge.
 
@@ -194,11 +189,11 @@ Focused tests must cover:
 - real-Codex resolution that skips an installed ATCT shim without recursion;
 - registered project, nested directory, worktree, unregistered directory,
   missing database, and lookup-error dispatch;
-- `codex`, `codex resume`, and argument preservation on the automatic path;
-- every non-interactive command, including `codex --config model=\"gpt-5\" exec`
-  and `codex --profile work review`, with every supported leading global-option
-  spelling, preserving arguments and exit status without App Server or monitor
-  startup;
+- only zero-argument `codex` on the automatic path;
+- representative argument-bearing calls, including `codex resume`,
+  `codex --config model=\"gpt-5\" exec`, `codex --profile work review`, and
+  `codex --image a.png b.png exec`, preserving every argument and exit status
+  without store lookup, App Server, or monitor startup;
 - automatic launches carrying commander/project scope and falling back on
   setup failure, while explicit goal/task role launches remain unchanged;
 - reuse of goal 206's exact-cwd discovery, FIFO/idle delivery, missed

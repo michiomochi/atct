@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Make an explicitly installed `codex` PATH shim automatically launch the existing ATCT monitor for interactive sessions in registered projects, while preserving normal Codex behavior elsewhere.
+**Goal:** Make an explicitly installed `codex` PATH shim automatically launch the existing ATCT monitor only for a zero-argument invocation in a registered project, while preserving every argument-bearing Codex invocation unchanged.
 
-**Architecture:** Add internal `atct codex shim install` and `atct codex shim run -- <args>` actions. The installer writes a marked POSIX launcher; the runner finds a non-shim Codex binary, checks local registration through `Store.ResolveProject`, and either passes through or invokes Goal 206's existing supervisor with internal automatic commander/project scope.
+**Architecture:** Add internal `atct codex shim install` and `atct codex shim run -- <args>` actions. The installer writes a marked POSIX launcher; the runner finds a non-shim Codex binary, passes every nonempty argument vector straight through, and only then checks local registration through `Store.ResolveProject` for a bare invocation.
 
 **Tech Stack:** Go standard library, existing SQLite store, generated POSIX shell, existing Codex App Server supervisor.
 
@@ -16,6 +16,7 @@
 - Only the explicit installer may edit a shell profile. Tests use temporary homes/profiles, never the human's profile.
 - Automatic scope is commander/project only. Subcommander/executor remain explicit `atct codex monitor --role ... --goal/--task ...` calls.
 - Preserve raw arguments and exit status. Unregistered/missing/broken local store and monitor setup failure must leave normal Codex usable.
+- Automatic interception is exactly `len(args) == 0`; do not implement a Codex option, prompt, or subcommand parser.
 - Reuse Goal 206 lifecycle. Explicit role resolution remains fail-closed.
 
 ---
@@ -25,8 +26,8 @@
 | File | Responsibility |
 | --- | --- |
 | `cmd/atct/main.go` | Parse and route shim actions without changing current monitor grammar. |
-| `cmd/atct/codex_shim.go` | Template, installer, resolver, classifier, local registration check, automatic dispatch. |
-| `cmd/atct/codex_shim_test.go` | Installer, resolver, classifier, local-store, and fallback tests. |
+| `cmd/atct/codex_shim.go` | Template, installer, resolver, argument-count dispatcher, local registration check, automatic dispatch. |
+| `cmd/atct/codex_shim_test.go` | Installer, resolver, argument-boundary, local-store, and fallback tests. |
 | `cmd/atct/codex_monitor_supervisor.go` | Consume verified automatic commander scope while retaining explicit scope resolution. |
 | `cmd/atct/codex_monitor_lifecycle_test.go` | Automatic lifecycle/fallback and explicit-scope regression tests. |
 | `cmd/atct/main_test.go` | CLI grammar and opaque argument tests. |
@@ -115,13 +116,12 @@ Expected: passing focused tests; only listed files committed.
 **Interfaces:**
 - Produces `resolveRealCodex(pathEnv string) (string, error)`, ignoring executable candidates whose contents have `codexShimMarker`.
 - Extends the generated shim to embed the installer-resolved absolute real-Codex fallback and execute it with unchanged arguments when the embedded ATCT launcher is unavailable.
-- Produces `codexShimPassesThrough(args []string) bool`, which consumes only
-  documented leading Codex global options to locate a non-interactive command
-  without modifying `args`.
+- Produces `codexShimPassesThrough(args []string) bool`, which returns true
+  exactly when `len(args) > 0` and does not inspect their contents.
 - Produces `runCodexShimWithDeps(config cliConfig, dir string, deps codexShimDeps) (int, error)`.
 - Adds `cliConfig.codexMonitorAutomatic bool`, `cliConfig.codexMonitorProjectID string`.
 
-- [ ] **Step 1: Write failing resolver/classifier tests**
+- [ ] **Step 1: Write failing resolver/argument-boundary tests**
 
 Put marked `bin/codex` before real `real/codex` in a temporary PATH:
 
@@ -129,16 +129,14 @@ Put marked `bin/codex` before real `real/codex` in a temporary PATH:
 got, err := resolveRealCodex(pathEnv)
 if err != nil || got != realCodex { t.Fatalf("resolve = %q, %v", got, err) }
 for _, args := range [][]string{
-    {"exec", "--help"},
-    {"e", "x"},
-    {"--version"},
-    {"login"},
+    {"exec", "--help"}, {"resume", "abc"}, {"--version"},
     {"--config", `model="gpt-5"`, "exec", "--help"},
     {"--profile", "work", "review", "--help"},
+    {"--image", "a.png", "b.png", "exec", "--help"},
 } {
     if !codexShimPassesThrough(args) { t.Fatalf("%q must pass through", args) }
 }
-if codexShimPassesThrough([]string{"resume", "abc"}) { t.Fatal("resume must be interactive") }
+if codexShimPassesThrough(nil) { t.Fatal("bare invocation must be automatic") }
 ```
 
 Cover a marked-only PATH and a non-executable marked file.
@@ -149,34 +147,23 @@ Run: `go test ./cmd/atct -run 'TestResolveRealCodex|TestCodexShimPassesThrough' 
 
 Expected: FAIL because these helpers do not exist.
 
-- [ ] **Step 3: Implement resolution/classification and launcher fallback**
+- [ ] **Step 3: Implement resolution/argument boundary and launcher fallback**
 
 Split PATH with `filepath.SplitList`, treating an empty entry as `.`. For each executable candidate named `codex`, inspect its prefix for `codexShimMarker`; return the first unmarked executable. Make existing `resolveCodexExecutable` delegate to it so direct `atct codex monitor` cannot recurse either.
 
 During installation, resolve that unmarked executable before writing the shim and pass its absolute path into the script template. The script must test whether its embedded ATCT launcher remains executable: if yes, `exec` it with `codex shim run -- "$@"`; otherwise `exec` the embedded real Codex with the original `"$@"`. If real Codex cannot be resolved at installation, still write the shim only when its fallback branch prints the normal command-not-found diagnostic and exits `127`; do not write a launcher-only shim that can make `codex` unusable after ATCT is removed.
 
-Define a table for documented global options accepted before a Codex subcommand.
-It must distinguish options that consume one value (`-c`/`--config`,
-`--enable`, `--disable`, `--remote`, `--remote-auth-token-env`, `-i`/`--image`,
-`-m`/`--model`, `--local-provider`, `-p`/`--profile`, `-s`/`--sandbox`,
-`-C`/`--cd`, `--add-dir`, and `-a`/`--ask-for-approval`) from booleans
-(`--strict-config`, `--oss`, `--approve-for-me`,
-`--dangerously-bypass-approvals-and-sandbox`,
-`--dangerously-bypass-hook-trust`, `--search`, and `--no-alt-screen`). Support
-the `--option=value` form for long value-taking options where Codex accepts it.
-After consuming only these leading options, pass through empty args, help/version
-flags, and the resulting command token when it is in
-`codexMonitorPassthroughCommands`; all other vectors remain intact for automatic
-monitoring. Do not strip, reorder, parse, or otherwise mutate the original
-argument slice. Unknown or malformed leading options do not establish a command
-boundary and remain on the interactive path.
+Do not define a Codex option table or command classifier. Implement
+`codexShimPassesThrough(args)` as the argument-count boundary: `len(args) > 0`.
+Do not strip, reorder, parse, classify, or otherwise mutate the original slice.
 
 - [ ] **Step 4: Write failing local dispatch tests**
 
 Create a temporary `atct.db`, register a root with `store.CreateProject`, and inject a nested cwd. With counters, assert:
-- registered `resume` calls monitor with unchanged args, automatic true, commander role, and decimal local project ID;
-- registered `exec --help`, `--config model=\"gpt-5\" exec --help`, and
-  `--profile work review --help` call normal Codex with identical args;
+- registered bare `codex` calls monitor with empty args, automatic true, commander role, and decimal local project ID;
+- registered `resume`, `exec --help`, `--config model=\"gpt-5\" exec --help`,
+  `--profile work review --help`, and `--image a.png b.png exec --help` call
+  normal Codex with identical args and zero store/monitor calls;
 - unregistered cwd and absent database call normal Codex;
 - store/cwd error calls normal Codex and emits a diagnostic.
 
@@ -195,7 +182,7 @@ type codexShimDeps struct {
 }
 ```
 
-`runCodexShimWithDeps` resolves real Codex, passes classified calls, opens `<dir>/atct.db`, calls `ResolveProject(context.Background(), cwd)`, and passes through on absent DB, `store.ErrProjectNotFound`, or lookup error. On registered interactive launch it calls monitor with action `monitor`, automatic true, commander role, local decimal project ID, and original args. It never starts a daemon, writes store data, or infers goal/task. The classifier runs before store lookup for every option-prefixed non-interactive invocation.
+`runCodexShimWithDeps` resolves real Codex and, for every nonempty argument vector, calls normal Codex before cwd or store lookup. For a bare invocation it opens `<dir>/atct.db`, calls `ResolveProject(context.Background(), cwd)`, and passes through on absent DB, `store.ErrProjectNotFound`, or lookup error. On a registered bare launch it calls monitor with action `monitor`, automatic true, commander role, local decimal project ID, and empty args. It never starts a daemon, writes store data, or infers goal/task.
 
 - [ ] **Step 6: Consume automatic scope in supervisor**
 
@@ -230,7 +217,7 @@ Expected: focused tests pass, automatic setup falls back, explicit worker tests 
 
 - [ ] **Step 1: Write failing boundary tests**
 
-Execute generated shim against temporary fake absolute `atct` and real `codex` executables. Assert unregistered cwd and missing local database invoke real Codex with identical arguments and no shim diagnostic; unexpected store/cwd errors still emit one diagnostic before pass-through. Assert it calls exactly:
+Execute generated shim against temporary fake absolute `atct` and real `codex` executables. Assert a bare invocation in an unregistered cwd or with a missing local database invokes real Codex with identical (empty) arguments and no shim diagnostic; unexpected bare-store/cwd errors still emit one diagnostic before pass-through. Assert an argument-bearing call never performs local lookup and calls exactly:
 
 ```text
 <absolute-atct> codex shim run -- resume test-thread --last
