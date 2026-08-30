@@ -121,8 +121,8 @@ test_managed_ask_is_denied() {
   local expected_cwd
   expected_cwd="$(cd -- "$project" && pwd)"
   assert_eq "$expected_cwd|context" "$(<"$log")" 'atct context must run from hook cwd'
-  assert_file_contains '"PreToolUse"' "$REPO_ROOT/hooks/hooks.json"
-  assert_file_contains '"matcher": "AskUserQuestion"' "$REPO_ROOT/hooks/hooks.json"
+  assert_file_contains '"PreToolUse"' "$REPO_ROOT/hooks/claude-hooks.json"
+  assert_file_contains '"matcher": "AskUserQuestion"' "$REPO_ROOT/hooks/claude-hooks.json"
 }
 
 test_other_tool_is_ignored() {

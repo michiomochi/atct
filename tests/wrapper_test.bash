@@ -259,6 +259,23 @@ test_static_contract() {
   if grep -Fq 'CLAUDE_PLUGIN_ROOT' "$REPO_ROOT/.mcp.json"; then
     fail '.mcp.json must not name CLAUDE_PLUGIN_ROOT'
   fi
+  if ! python3 - "$REPO_ROOT/.claude-plugin/plugin.json" "$REPO_ROOT/.codex-plugin/plugin.json" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as stream:
+    claude = json.load(stream)
+with open(sys.argv[2], encoding="utf-8") as stream:
+    codex = json.load(stream)
+
+if claude.get("hooks") != "./hooks/claude-hooks.json":
+    raise SystemExit(f"Claude hooks path = {claude.get('hooks')!r}")
+if "hooks" in codex:
+    raise SystemExit(f"Codex must not register hooks: {codex['hooks']!r}")
+PY
+  then
+    fail 'plugin manifests must register Claude hooks only'
+  fi
   assert_file_contains '"source": "./"' "$REPO_ROOT/.claude-plugin"/marketplace.json
   # Pin the two version declarations to each other rather than to a literal, so a
   # release does not silently leave this test asserting the previous version.
@@ -279,7 +296,7 @@ test_static_contract() {
 }
 
 test_stop_hook_only_reports() {
-  if python3 - "$REPO_ROOT/hooks/hooks.json" <<'PY'
+  if python3 - "$REPO_ROOT/hooks/claude-hooks.json" <<'PY'
 import json
 import sys
 
@@ -300,7 +317,7 @@ PY
   then
     :
   else
-    fail 'hooks.json must register only the report-only Stop hook'
+    fail 'claude-hooks.json must register only the report-only Stop hook'
   fi
 
   local fixture="$TEMP_ROOT/stop-hook"
@@ -340,8 +357,8 @@ SCRIPT
   assert_empty_file "$log"
 }
 
-test_hooks_json_keeps_session_start_and_pre_tool_use_sections() {
-  if python3 - "$REPO_ROOT/hooks/hooks.json" <<'PY'
+test_claude_hooks_json_keeps_session_start_and_pre_tool_use_sections() {
+  if python3 - "$REPO_ROOT/hooks/claude-hooks.json" <<'PY'
 import json
 import sys
 
@@ -355,7 +372,7 @@ PY
   then
     return
   fi
-  fail 'hooks.json must keep SessionStart and PreToolUse'
+  fail 'claude-hooks.json must keep SessionStart and PreToolUse'
 }
 
 test_stop_hook_file_is_executable_but_other_hooks_remain() {
@@ -1898,7 +1915,7 @@ test_one_space_per_goal_forbids_reuse
 test_one_space_per_goal_names_the_only_exception
 test_one_space_per_goal_sits_between_worktree_and_commit
 test_stop_hook_only_reports
-test_hooks_json_keeps_session_start_and_pre_tool_use_sections
+test_claude_hooks_json_keeps_session_start_and_pre_tool_use_sections
 test_stop_hook_file_is_executable_but_other_hooks_remain
 test_download_cache_and_mcp_stdout
 test_context_check_preserves_exit_code
