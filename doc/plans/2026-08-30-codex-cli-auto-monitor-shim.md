@@ -114,6 +114,7 @@ Expected: passing focused tests; only listed files committed.
 
 **Interfaces:**
 - Produces `resolveRealCodex(pathEnv string) (string, error)`, ignoring executable candidates whose contents have `codexShimMarker`.
+- Extends the generated shim to embed the installer-resolved absolute real-Codex fallback and execute it with unchanged arguments when the embedded ATCT launcher is unavailable.
 - Produces `codexShimPassesThrough(args []string) bool`.
 - Produces `runCodexShimWithDeps(config cliConfig, dir string, deps codexShimDeps) (int, error)`.
 - Adds `cliConfig.codexMonitorAutomatic bool`, `cliConfig.codexMonitorProjectID string`.
@@ -139,9 +140,11 @@ Run: `go test ./cmd/atct -run 'TestResolveRealCodex|TestCodexShimPassesThrough' 
 
 Expected: FAIL because these helpers do not exist.
 
-- [ ] **Step 3: Implement resolution/classification**
+- [ ] **Step 3: Implement resolution/classification and launcher fallback**
 
 Split PATH with `filepath.SplitList`, treating an empty entry as `.`. For each executable candidate named `codex`, inspect its prefix for `codexShimMarker`; return the first unmarked executable. Make existing `resolveCodexExecutable` delegate to it so direct `atct codex monitor` cannot recurse either.
+
+During installation, resolve that unmarked executable before writing the shim and pass its absolute path into the script template. The script must test whether its embedded ATCT launcher remains executable: if yes, `exec` it with `codex shim run -- "$@"`; otherwise `exec` the embedded real Codex with the original `"$@"`. If real Codex cannot be resolved at installation, still write the shim only when its fallback branch prints the normal command-not-found diagnostic and exits `127`; do not write a launcher-only shim that can make `codex` unusable after ATCT is removed.
 
 Pass through empty args, help/version flags, and first tokens in existing `codexMonitorPassthroughCommands`; all other vectors remain intact for automatic monitoring.
 
@@ -209,7 +212,7 @@ Execute generated shim against temporary fake absolute `atct` and real `codex` e
 <absolute-atct> codex shim run -- resume test-thread --last
 ```
 
-and returns the fake launcher's exit status. Add lifecycle tests where automatic reap/App Server startup fails: exactly one normal fallback, unchanged args, no second TUI. Add a direct monitor test with `PATH=<shim-dir>:<real-dir>` that observes the real binary for App Server and TUI.
+and returns the fake launcher's exit status. Remove or make the fake ATCT launcher non-executable and assert the generated shim invokes the embedded real Codex with exactly the original arguments and its exit status. Add lifecycle tests where automatic reap/App Server startup fails: exactly one normal fallback, unchanged args, no second TUI. Add a direct monitor test with `PATH=<shim-dir>:<real-dir>` that observes the real binary for App Server and TUI.
 
 - [ ] **Step 2: Run test to verify failure**
 
