@@ -801,9 +801,8 @@ func isCodexMonitorActionLine(line string) bool {
 
 func (b *codexMonitorBridge) HandleNotification(ctx context.Context, notification codexAppServerNotification) error {
 	var params struct {
-		ThreadID string            `json:"threadId"`
-		Status   codexThreadStatus `json:"status"`
-		Turn     codexTurn         `json:"turn"`
+		ThreadID string    `json:"threadId"`
+		Turn     codexTurn `json:"turn"`
 	}
 	if len(notification.Params) > 0 && string(notification.Params) != "null" {
 		if err := json.Unmarshal(notification.Params, &params); err != nil {
@@ -827,7 +826,15 @@ func (b *codexMonitorBridge) HandleNotification(ctx context.Context, notificatio
 		b.stateMu.Unlock()
 		return b.pumpAfterIdle(ctx)
 	case "thread/status/changed":
-		if !codexThreadStatusIsIdle(params.Status) {
+		var statusParams struct {
+			Status codexThreadStatus `json:"status"`
+		}
+		if len(notification.Params) > 0 && string(notification.Params) != "null" {
+			if err := json.Unmarshal(notification.Params, &statusParams); err != nil {
+				return fmt.Errorf("decode Codex %s notification: %w", notification.Method, err)
+			}
+		}
+		if !codexThreadStatusIsIdle(statusParams.Status) {
 			return nil
 		}
 		b.stateMu.Lock()

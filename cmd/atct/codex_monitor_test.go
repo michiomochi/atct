@@ -529,6 +529,16 @@ func TestCodexMonitorQueueDeliversFIFOAfterIdle(t *testing.T) {
 	}
 
 	if err := bridge.HandleNotification(ctx, codexAppServerNotification{
+		Method: "remoteControl/status/changed",
+		Params: mustJSON(map[string]any{
+			"threadId": "thread-1",
+			"status":   "disabled",
+		}),
+	}); err != nil {
+		t.Fatalf("HandleNotification(remoteControl/status/changed) error = %v", err)
+	}
+
+	if err := bridge.HandleNotification(ctx, codexAppServerNotification{
 		Method: "turn/completed",
 		Params: mustJSON(map[string]any{"threadId": "thread-1"}),
 	}); err != nil {
