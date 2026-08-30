@@ -220,6 +220,189 @@ func TestCodexMonitorFallbackWhenAppServerCannotStart(t *testing.T) {
 	}
 }
 
+func TestCodexMonitorAutomaticUsesCommanderProjectScope(t *testing.T) {
+	monitorDir := t.TempDir()
+	app := newFakeCodexMonitorApp()
+	tui := newFakeCodexMonitorProcess(0)
+	tui.markStarted()
+	scopeSeen := make(chan watchScope, 1)
+	done := make(chan struct{})
+	var (
+		code   int
+		runErr error
+	)
+	deps := codexMonitorDeps{
+		resolveCodex: func() (string, error) { return "/opt/codex", nil },
+		startProcess: func(kind codexMonitorProcessKind, _ string, _ []string) (codexMonitorProcess, error) {
+			if kind == codexMonitorAppServer {
+				return app, nil
+			}
+			return tui, nil
+		},
+		connectAppServer: func(context.Context, string) (codexMonitorApp, error) { return app, nil },
+		projectPath:      func() (string, error) { return "/project", nil },
+		reap:             func(string) (daemonctl.CodexMonitorReapResult, error) { return daemonctl.CodexMonitorReapResult{}, nil },
+		register: func(string, daemonctl.CodexMonitorRecord) (func(), error) {
+			return func() {}, nil
+		},
+		runWatchScoped: func(ctx context.Context, cwd string, scope watchScope, _ *codexMonitorBridge) error {
+			if cwd != "/project" {
+				return fmt.Errorf("watch cwd = %q, want /project", cwd)
+			}
+			scopeSeen <- scope
+			<-ctx.Done()
+			return nil
+		},
+		runWatch: func(context.Context, *codexMonitorBridge) error {
+			return errors.New("unscoped watcher must not run for automatic monitor")
+		},
+		stderr: io.Discard,
+	}
+
+	go func() {
+		code, runErr = runCodexMonitorWithDeps(cliConfig{
+			codexMonitorAction:    "monitor",
+			codexMonitorAutomatic: true,
+			codexMonitorRole:      "commander",
+			codexMonitorProjectID: "42",
+			codexArgs:             []string{"resume", "thread-1"},
+		}, monitorDir, deps)
+		close(done)
+	}()
+
+	var scope watchScope
+	select {
+	case scope = <-scopeSeen:
+	case <-time.After(time.Second):
+		t.Fatal("automatic monitor did not start a scoped watcher")
+	}
+	if scope != (watchScope{Role: "commander", ProjectID: "42"}) {
+		t.Fatalf("automatic watcher scope = %#v, want commander project scope", scope)
+	}
+	tui.finish()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("automatic monitor did not finish after TUI exit")
+	}
+	if runErr != nil {
+		t.Fatalf("runCodexMonitorWithDeps: %v", runErr)
+	}
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0", code)
+	}
+}
+
+func TestCodexMonitorAutomaticSetupFailureFallsBack(t *testing.T) {
+	var (
+		normalCalls   int
+		gotExecutable string
+		gotArgs       []string
+		resolveScopes int
+	)
+	deps := codexMonitorDeps{
+		projectPath: func() (string, error) { return "/project", nil },
+		resolveScope: func(context.Context, string, watchScope) (watchScope, error) {
+			resolveScopes++
+			return watchScope{}, errors.New("automatic monitor must not resolve HTTP scope")
+		},
+		reap: func(string) (daemonctl.CodexMonitorReapResult, error) {
+			return daemonctl.CodexMonitorReapResult{}, errors.New("registry unavailable")
+		},
+		resolveCodex: func() (string, error) {
+			return "/opt/codex", nil
+		},
+		runNormal: func(executable string, args []string) (int, error) {
+			normalCalls++
+			gotExecutable = executable
+			gotArgs = append([]string(nil), args...)
+			return 41, nil
+		},
+		stderr: io.Discard,
+	}
+
+	code, err := runCodexMonitorWithDeps(cliConfig{
+		codexMonitorAction:    "monitor",
+		codexMonitorAutomatic: true,
+		codexMonitorRole:      "commander",
+		codexMonitorProjectID: "42",
+		codexArgs:             []string{"resume", "thread-2"},
+	}, t.TempDir(), deps)
+	if err != nil {
+		t.Fatalf("runCodexMonitorWithDeps: %v", err)
+	}
+	if code != 41 || normalCalls != 1 || gotExecutable != "codex" {
+		t.Fatalf("automatic fallback = (%d, %d, %q), want (41, 1, codex)", code, normalCalls, gotExecutable)
+	}
+	if !slices.Equal(gotArgs, []string{"resume", "thread-2"}) {
+		t.Fatalf("automatic fallback args = %#v, want original args", gotArgs)
+	}
+	if resolveScopes != 0 {
+		t.Fatalf("automatic monitor resolved explicit scopes %d times, want 0", resolveScopes)
+	}
+}
+
+func TestCodexMonitorAutomaticInvalidScopeFallsBack(t *testing.T) {
+	tests := []struct {
+		name   string
+		config cliConfig
+	}{
+		{
+			name: "worker role",
+			config: cliConfig{
+				codexMonitorAutomatic: true,
+				codexMonitorRole:      "executor",
+				codexMonitorProjectID: "42",
+			},
+		},
+		{
+			name: "missing project",
+			config: cliConfig{
+				codexMonitorAutomatic: true,
+				codexMonitorRole:      "commander",
+			},
+		},
+		{
+			name: "goal selector mixed in",
+			config: cliConfig{
+				codexMonitorAutomatic: true,
+				codexMonitorRole:      "commander",
+				codexMonitorProjectID: "42",
+				codexMonitorGoalID:    "16",
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var normalCalls int
+			deps := codexMonitorDeps{
+				projectPath: func() (string, error) { return "/project", nil },
+				reap: func(string) (daemonctl.CodexMonitorReapResult, error) {
+					t.Fatal("invalid automatic scope reached monitor setup")
+					return daemonctl.CodexMonitorReapResult{}, nil
+				},
+				resolveCodex: func() (string, error) {
+					t.Fatal("invalid automatic scope resolved Codex")
+					return "", nil
+				},
+				runNormal: func(string, []string) (int, error) {
+					normalCalls++
+					return 43, nil
+				},
+				stderr: io.Discard,
+			}
+			tt.config.codexMonitorAction = "monitor"
+			code, err := runCodexMonitorWithDeps(tt.config, t.TempDir(), deps)
+			if err != nil {
+				t.Fatalf("runCodexMonitorWithDeps: %v", err)
+			}
+			if code != 43 || normalCalls != 1 {
+				t.Fatalf("invalid automatic fallback = (%d, %d), want (43, 1)", code, normalCalls)
+			}
+		})
+	}
+}
+
 func TestCodexMonitorTUIStartFailureStopsMonitorGoroutines(t *testing.T) {
 	monitorDir := t.TempDir()
 	app := newFakeCodexMonitorApp()

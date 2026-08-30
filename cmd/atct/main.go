@@ -59,6 +59,8 @@ type cliConfig struct {
 	codexArgs               []string
 	codexMonitorPassthrough bool
 	codexMonitorExplicit    bool
+	codexMonitorAutomatic   bool
+	codexMonitorProjectID   string
 	codexMonitorRole        string
 	codexMonitorGoalID      string
 	codexMonitorTaskID      string

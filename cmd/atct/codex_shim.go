@@ -1,13 +1,18 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+
+	"github.com/michiomochi/atct/internal/store"
 )
 
 const (
@@ -147,7 +152,8 @@ func runCodexShimInstall(config cliConfig, atctExecutable string) (int, error) {
 		}
 	}
 
-	if err := writeCodexShim(home, profile, atctExecutable); err != nil {
+	realCodex, _ := resolveRealCodex(os.Getenv("PATH"))
+	if err := writeCodexShimWithFallback(home, profile, atctExecutable, realCodex); err != nil {
 		return 1, err
 	}
 
@@ -159,14 +165,101 @@ func runCodexShimInstall(config cliConfig, atctExecutable string) (int, error) {
 	return 0, nil
 }
 
-// runCodexShim is the dispatch boundary for the generated launcher. The
-// automatic monitor implementation is added after the installer task; keep
-// this boundary fail-closed until that implementation is available.
-func runCodexShim(cliConfig, string) (int, error) {
-	return 1, errors.New("codex shim run is not available")
+type codexShimDeps struct {
+	cwd          func() (string, error)
+	openStore    func(string) (*store.Store, error)
+	resolveCodex func() (string, error)
+	runNormal    func(string, []string) (int, error)
+	runMonitor   func(cliConfig, string) (int, error)
+	stderr       io.Writer
+}
+
+func runCodexShim(config cliConfig, dir string) (int, error) {
+	return runCodexShimWithDeps(config, dir, codexShimDeps{})
+}
+
+func runCodexShimWithDeps(config cliConfig, dir string, deps codexShimDeps) (int, error) {
+	deps = codexShimDepsWithDefaults(deps)
+	args := append([]string(nil), config.codexArgs...)
+
+	executable, err := deps.resolveCodex()
+	if err != nil {
+		return codexShimFallback(deps, "resolve real Codex: "+err.Error(), "codex", args)
+	}
+	if codexShimPassesThrough(args) {
+		return deps.runNormal(executable, args)
+	}
+
+	cwd, err := deps.cwd()
+	if err != nil {
+		return codexShimFallback(deps, "resolve current directory: "+err.Error(), executable, args)
+	}
+	dbPath := filepath.Join(dir, "atct.db")
+	if _, err := os.Stat(dbPath); err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return codexShimFallback(deps, "local database is missing", executable, args)
+		}
+		return codexShimFallback(deps, "inspect local database: "+err.Error(), executable, args)
+	}
+	localStore, err := deps.openStore(dbPath)
+	if err != nil {
+		return codexShimFallback(deps, "open local store: "+err.Error(), executable, args)
+	}
+	defer func() { _ = localStore.Close() }()
+
+	project, err := localStore.ResolveProject(context.Background(), cwd)
+	if err != nil {
+		return codexShimFallback(deps, "project lookup: "+err.Error(), executable, args)
+	}
+
+	monitorConfig := config
+	monitorConfig.codexMonitorAction = "monitor"
+	monitorConfig.codexMonitorPassthrough = false
+	monitorConfig.codexMonitorExplicit = false
+	monitorConfig.codexMonitorAutomatic = true
+	monitorConfig.codexMonitorRole = "commander"
+	monitorConfig.codexMonitorProjectID = strconv.FormatInt(project.ID, 10)
+	monitorConfig.codexMonitorGoalID = ""
+	monitorConfig.codexMonitorTaskID = ""
+	return deps.runMonitor(monitorConfig, dir)
+}
+
+func codexShimDepsWithDefaults(deps codexShimDeps) codexShimDeps {
+	if deps.cwd == nil {
+		deps.cwd = os.Getwd
+	}
+	if deps.openStore == nil {
+		deps.openStore = store.Open
+	}
+	if deps.resolveCodex == nil {
+		deps.resolveCodex = resolveCodexExecutable
+	}
+	if deps.runNormal == nil {
+		deps.runNormal = runCodexProcess
+	}
+	if deps.runMonitor == nil {
+		deps.runMonitor = runCodexMonitor
+	}
+	if deps.stderr == nil {
+		deps.stderr = os.Stderr
+	}
+	return deps
+}
+
+func codexShimFallback(deps codexShimDeps, reason, executable string, args []string) (int, error) {
+	fmt.Fprintf(deps.stderr, "atct codex shim disabled: %s; running normal codex\n", reason)
+	if strings.TrimSpace(executable) == "" {
+		executable = "codex"
+	}
+	return deps.runNormal(executable, args)
 }
 
 func writeCodexShim(home, profile, atctExecutable string) error {
+	realCodex, _ := resolveRealCodex(os.Getenv("PATH"))
+	return writeCodexShimWithFallback(home, profile, atctExecutable, realCodex)
+}
+
+func writeCodexShimWithFallback(home, profile, atctExecutable, realCodex string) error {
 	if strings.TrimSpace(home) == "" {
 		return errors.New("Codex shim home is empty")
 	}
@@ -187,7 +280,7 @@ func writeCodexShim(home, profile, atctExecutable string) error {
 		return err
 	}
 
-	shimContent := []byte(codexShimScript(atctExecutable))
+	shimContent := []byte(codexShimScript(atctExecutable, realCodex))
 	shimTemp, err := stageCodexShimFile(shimDir, filepath.Base(shimPath), shimContent, 0o700)
 	if err != nil {
 		return err
@@ -241,8 +334,23 @@ func ensureCodexShimDestination(path string) error {
 	return nil
 }
 
-func codexShimScript(atctExecutable string) string {
-	return "#!/bin/sh\n" + codexShimMarker + "\nexec " + shellQuote(atctExecutable) + " codex shim run -- \"$@\"\n"
+func codexShimScript(atctExecutable string, realCodex ...string) string {
+	fallback := ""
+	if len(realCodex) > 0 {
+		fallback = realCodex[0]
+	}
+
+	script := "#!/bin/sh\n" + codexShimMarker + "\n"
+	script += "if [ -x " + shellQuote(atctExecutable) + " ]; then\n"
+	script += "exec " + shellQuote(atctExecutable) + " codex shim run -- \"$@\"\n"
+	script += "fi\n"
+	if fallback != "" {
+		script += "if [ -x " + shellQuote(fallback) + " ]; then\n"
+		script += "exec " + shellQuote(fallback) + " \"$@\"\n"
+		script += "fi\n"
+	}
+	script += "echo 'codex: command not found' >&2\nexit 127\n"
+	return script
 }
 
 func appendCodexShimProfileBlock(profile, shimDir string) error {
@@ -316,6 +424,63 @@ func codexShimPathLine(shimDir string) string {
 
 func shellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
+}
+
+// resolveRealCodex searches PATH for an executable named codex while ignoring
+// launchers generated by this package. Returning an absolute path lets the
+// installer embed an escape hatch that is independent of the installed PATH.
+func resolveRealCodex(pathEnv string) (string, error) {
+	entries := filepath.SplitList(pathEnv)
+	if len(entries) == 0 {
+		entries = []string{""}
+	}
+	for _, entry := range entries {
+		if entry == "" {
+			entry = "."
+		}
+		candidate := filepath.Join(entry, "codex")
+		info, err := os.Stat(candidate)
+		if err != nil || info.IsDir() || info.Mode().Perm()&0o111 == 0 {
+			continue
+		}
+
+		file, err := os.Open(candidate)
+		if err != nil {
+			continue
+		}
+		prefix := make([]byte, 4096)
+		read, readErr := file.Read(prefix)
+		closeErr := file.Close()
+		if (readErr != nil && !errors.Is(readErr, io.EOF)) || closeErr != nil {
+			continue
+		}
+		if strings.Contains(string(prefix[:read]), codexShimMarker) {
+			continue
+		}
+
+		absolute, err := filepath.Abs(candidate)
+		if err != nil {
+			return "", fmt.Errorf("resolve codex executable: %w", err)
+		}
+		return absolute, nil
+	}
+	return "", errors.New("resolve codex executable: command not found")
+}
+
+func codexShimPassesThrough(args []string) bool {
+	if len(args) == 0 {
+		return true
+	}
+	first := args[0]
+	switch first {
+	case "-h", "--help", "-V", "--version":
+		return true
+	}
+	if strings.HasPrefix(first, "--help=") || strings.HasPrefix(first, "--version=") {
+		return true
+	}
+	_, ok := codexMonitorPassthroughCommands[first]
+	return ok
 }
 
 func stageCodexShimFile(dir, name string, content []byte, mode fs.FileMode) (string, error) {

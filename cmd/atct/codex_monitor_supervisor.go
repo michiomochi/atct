@@ -44,6 +44,7 @@ type codexMonitorDeps struct {
 	startProcess     func(codexMonitorProcessKind, string, []string) (codexMonitorProcess, error)
 	connectAppServer func(context.Context, string) (codexMonitorApp, error)
 	runWatch         func(context.Context, *codexMonitorBridge) error
+	runWatchScoped   func(context.Context, string, watchScope, *codexMonitorBridge) error
 	projectPath      func() (string, error)
 	resolveScope     func(context.Context, string, watchScope) (watchScope, error)
 	reap             func(string) (daemonctl.CodexMonitorReapResult, error)
@@ -93,7 +94,12 @@ func runCodexMonitorWithDeps(config cliConfig, dir string, deps codexMonitorDeps
 		return codexMonitorSetupFailure(config, deps, "resolve project directory: "+err.Error(), "codex", args)
 	}
 	scope := watchScope{}
-	if config.codexMonitorExplicit {
+	if config.codexMonitorAutomatic {
+		if config.codexMonitorExplicit || config.codexMonitorRole != "commander" || strings.TrimSpace(config.codexMonitorProjectID) == "" || strings.TrimSpace(config.codexMonitorGoalID) != "" || strings.TrimSpace(config.codexMonitorTaskID) != "" {
+			return codexMonitorSetupFailure(config, deps, "invalid automatic monitor scope", "codex", args)
+		}
+		scope = watchScope{Role: "commander", ProjectID: config.codexMonitorProjectID}
+	} else if config.codexMonitorExplicit {
 		scope, err = deps.resolveScope(context.Background(), projectPath, watchScope{Role: config.codexMonitorRole, GoalID: config.codexMonitorGoalID, TaskID: config.codexMonitorTaskID})
 		if err != nil {
 			return codexMonitorSetupFailure(config, deps, "resolve explicit monitor scope: "+err.Error(), "codex", args)
@@ -179,8 +185,8 @@ func runCodexMonitorWithDeps(config cliConfig, dir string, deps codexMonitorDeps
 	go func() { bridgeDone <- bridge.Run(monitorCtx) }()
 	watchDone := make(chan error, 1)
 	go func() {
-		if config.codexMonitorExplicit {
-			watchDone <- runCodexMonitorWatchScoped(watchCtx, &http.Client{}, watchBaseURLs(dir), projectPath, scope, bridge)
+		if config.codexMonitorExplicit || config.codexMonitorAutomatic {
+			watchDone <- deps.runWatchScoped(watchCtx, projectPath, scope, bridge)
 			return
 		}
 		watchDone <- deps.runWatch(watchCtx, bridge)
@@ -387,6 +393,11 @@ func codexMonitorDepsWithDefaults(dir string, deps codexMonitorDeps) codexMonito
 			return runCodexMonitorWatch(ctx, &http.Client{}, watchBaseURLs(dir), projectPath, bridge)
 		}
 	}
+	if deps.runWatchScoped == nil {
+		deps.runWatchScoped = func(ctx context.Context, projectPath string, scope watchScope, bridge *codexMonitorBridge) error {
+			return runCodexMonitorWatchScoped(ctx, &http.Client{}, watchBaseURLs(dir), projectPath, scope, bridge)
+		}
+	}
 	return deps
 }
 
@@ -461,14 +472,18 @@ func fetchCodexMonitorJSON(ctx context.Context, client *http.Client, base, path 
 }
 
 func resolveCodexExecutable() (string, error) {
-	executable, err := exec.LookPath("codex")
-	if err != nil {
-		return "", fmt.Errorf("resolve codex executable: %w", err)
-	}
-	return executable, nil
+	return resolveRealCodex(os.Getenv("PATH"))
 }
 
 func runCodexProcess(executable string, args []string) (int, error) {
+	if executable == "codex" {
+		resolved, err := resolveCodexExecutable()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "codex: command not found")
+			return 127, nil
+		}
+		executable = resolved
+	}
 	cmd := exec.Command(executable, args...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
