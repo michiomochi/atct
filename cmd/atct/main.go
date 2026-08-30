@@ -53,10 +53,14 @@ type cliConfig struct {
 	roleAgentSessionID      string
 	watchGoalID             string
 	watchProjectScope       bool
+	codexShimAction         string
+	codexShimProfile        string
 	codexMonitorAction      string
 	codexArgs               []string
 	codexMonitorPassthrough bool
 	codexMonitorExplicit    bool
+	codexMonitorAutomatic   bool
+	codexMonitorProjectID   string
 	codexMonitorRole        string
 	codexMonitorGoalID      string
 	codexMonitorTaskID      string
@@ -125,6 +129,8 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "  role                 Report the claim-derived role for an agent session")
 	fmt.Fprintln(os.Stderr, "  handoff complete <handoff-id> <task-id>  Report a handoff complete")
 	fmt.Fprintln(os.Stderr, "  handoff yielded <task-id>  Report that the worker yielded")
+	fmt.Fprintln(os.Stderr, "  codex shim install [--profile <path>]  Install the transparent Codex shim")
+	fmt.Fprintln(os.Stderr, "  codex shim run -- <args>  Run Codex through the installed shim")
 	fmt.Fprintln(os.Stderr, "  codex monitor [-- <args>]  Run an interactive Codex session with ATCT monitoring")
 	fmt.Fprintln(os.Stderr, "  codex monitor stop     Stop monitors for the current project")
 	fmt.Fprintln(os.Stderr)
@@ -238,6 +244,9 @@ func parseArgs(args []string) (cliConfig, error) {
 		}
 	}
 	if sub == "codex" {
+		if len(rest) > 0 && rest[0] == "shim" {
+			return parseCodexShimArgs(cfg, rest[1:])
+		}
 		if len(rest) < 1 || rest[0] != "monitor" {
 			fmt.Fprintln(os.Stderr, "codex requires the monitor action")
 			printUsage()
@@ -519,9 +528,21 @@ func main() {
 		}
 		return
 	case "codex":
-		code, err := runCodexMonitor(config, dir)
+		var code int
+		switch config.codexShimAction {
+		case "install":
+			code, err = runCodexShimInstall(config, exePath)
+		case "run":
+			code, err = runCodexShim(config, dir)
+		default:
+			code, err = runCodexMonitor(config, dir)
+		}
 		if err != nil {
-			log.Printf("codex monitor: %v", err)
+			if config.codexShimAction != "" {
+				log.Printf("codex shim: %v", err)
+			} else {
+				log.Printf("codex monitor: %v", err)
+			}
 			if code == 0 {
 				code = 1
 			}
