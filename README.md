@@ -61,13 +61,35 @@ does not pay for a ceremony it did not ask for.
 
 `atct daemon start` and `atct daemon stop` are there if you ever need to restart it by hand.
 
-To opt into ATCT notifications inside a new interactive Codex session, start it explicitly through
-the monitor with its role:
+### Codex startup
+
+Codex startup monitoring is an explicit opt-in. Run this once:
 
 ```bash
-atct codex monitor --role commander -- <codex args>
-atct codex monitor --role subcommander --goal <goal_id> -- <codex args>
-atct codex monitor --role executor --task <task_id> -- <codex args>
+atct codex shim install
+```
+
+This configures `~/.atct/bin/codex` and prepends that directory to the matching shell profile's
+`PATH`. Open a new terminal, or restart the current terminal, so the updated `PATH` is active.
+
+After that, the shim behaves as follows:
+
+- In an ATCT-registered project, running `codex` with no arguments automatically starts a
+  commander-role monitor when Codex itself starts.
+- `codex` with any argument passes through to the real Codex without starting a monitor. This
+  includes `codex exec` and `codex -m ...`.
+- In an unregistered project, Codex passes through to the real Codex without starting a monitor.
+
+Automatic monitoring starts only when Codex itself starts; it cannot be retrofitted onto an
+existing session. `atct:start` is not a monitor-start trigger.
+
+For argument-bearing launches, and for subcommander or executor roles, use the explicit monitor
+commands:
+
+```bash
+atct codex monitor --role commander -- <args>
+atct codex monitor --role subcommander --goal <id> -- <args>
+atct codex monitor --role executor --task <id> -- <args>
 atct codex monitor stop
 ```
 
@@ -81,8 +103,6 @@ runs `herdr pane run <pane> atct codex monitor --role executor --task <task_id> 
 before the worker process. Plain `herdr agent start` bypasses this monitored launch. The new worker
 then calls `atct_session_identify`, `atct_handoff_receive` with only the task ID, and `atct_role`.
 
-Only `atct codex monitor` starts the local Codex App Server. The ordinary `codex` command and
-`codex exec` are unchanged; `atct codex monitor exec --help` is passed through without monitoring.
 Put a literal Codex argument such as `stop` after `--` so it is not interpreted as the monitor's
 stop command.
 
