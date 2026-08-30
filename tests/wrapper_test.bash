@@ -248,6 +248,22 @@ SCRIPT
   printf '%s  %s\n' "$hash" "${atct_archive##*/}" >>"$fixture_dir/checksums.txt"
 }
 
+write_cached_atct() {
+  local home="$1"
+  local cached="$home/.atct/bin/atct-$(wrapper_version)"
+
+  mkdir -p "$(dirname "$cached")"
+  cat >"$cached" <<'SCRIPT'
+#!/usr/bin/env bash
+printf 'cached atct'
+for arg in "$@"; do
+  printf ' <%s>' "$arg"
+done
+printf '\n'
+SCRIPT
+  chmod +x "$cached"
+}
+
 test_static_contract() {
   [[ -x "$REPO_ROOT/bin/atct" ]] || fail 'bin/atct is not executable'
   [[ -x "$REPO_ROOT/bin/atct-mcp" ]] || fail 'bin/atct-mcp is not executable'
@@ -381,6 +397,121 @@ test_stop_hook_file_is_executable_but_other_hooks_remain() {
   [[ -f "$REPO_ROOT/hooks/session-start" ]] || fail 'hooks/session-start must remain'
 }
 
+test_installs_stable_terminal_launcher() {
+  local fixtures="$TEMP_ROOT/stable-launcher-fixtures"
+  local fake_bin="$TEMP_ROOT/stable-launcher-fake-bin"
+  local home="$TEMP_ROOT/stable-launcher-home"
+  local curl_log="$TEMP_ROOT/stable-launcher-curl.log"
+  local launcher="$home/.local/bin/atct"
+  local output
+
+  mkdir -p "$home"
+  : >"$curl_log"
+  make_archives "$fixtures" good
+  write_fake_tools "$fake_bin"
+
+  output="$(HOME="$home" PATH="$fake_bin:$PATH" FIXTURES_DIR="$fixtures" CURL_LOG="$curl_log" \
+    FAKE_OS=Darwin FAKE_ARCH=arm64 "$REPO_ROOT/bin/atct" --version)"
+
+  assert_eq 'fake atct <--version>' "$output" 'stable launcher must forward arguments'
+  [[ -x "$launcher" ]] || fail 'stable atct launcher is not executable'
+  assert_file_contains 'ATCT_GLOBAL_LAUNCHER_V1' "$launcher"
+  assert_file_contains "ATCT_WRAPPER=$REPO_ROOT/bin/atct" "$launcher"
+}
+
+test_rejects_unmarked_launcher_collisions() {
+  local fixtures="$TEMP_ROOT/launcher-collision-fixtures"
+  local fake_bin="$TEMP_ROOT/launcher-collision-fake-bin"
+  local curl_log="$TEMP_ROOT/launcher-collision-curl.log"
+  local kind
+
+  make_archives "$fixtures" good
+  write_fake_tools "$fake_bin"
+  : >"$curl_log"
+
+  for kind in regular symlink directory fifo; do
+    local home="$TEMP_ROOT/launcher-collision-$kind"
+    local target="$home/.local/bin/atct"
+    local stdout="$TEMP_ROOT/launcher-collision-$kind.stdout"
+    local stderr="$TEMP_ROOT/launcher-collision-$kind.stderr"
+    local before=''
+    local after=''
+
+    mkdir -p "$home/.local/bin"
+    case "$kind" in
+      regular)
+        printf 'user-owned sentinel\n' >"$target"
+        before="$(shasum -a 256 "$target" | awk '{print $1}')"
+        ;;
+      symlink)
+        printf 'user-owned symlink target\n' >"$home/sentinel"
+        ln -s "$home/sentinel" "$target"
+        ;;
+      directory)
+        mkdir "$target"
+        printf 'user-owned directory\n' >"$target/content"
+        ;;
+      fifo)
+        mkfifo "$target"
+        ;;
+    esac
+
+    if HOME="$home" PATH="$fake_bin:$PATH" FIXTURES_DIR="$fixtures" CURL_LOG="$curl_log" \
+      FAKE_OS=Darwin FAKE_ARCH=arm64 "$REPO_ROOT/bin/atct" --version >"$stdout" 2>"$stderr"; then
+      fail "unmarked $kind launcher target was accepted"
+    fi
+    assert_empty_file "$stdout"
+    assert_file_contains "$target" "$stderr"
+
+    case "$kind" in
+      regular)
+        after="$(shasum -a 256 "$target" | awk '{print $1}')"
+        assert_eq "$before" "$after" 'unmarked regular target was modified'
+        ;;
+      symlink) [[ -L "$target" ]] || fail 'unmarked symlink target was modified' ;;
+      directory) [[ -d "$target" && -f "$target/content" ]] || fail 'unmarked directory target was modified' ;;
+      fifo) [[ -p "$target" ]] || fail 'unmarked FIFO target was modified' ;;
+    esac
+  done
+
+  assert_empty_file "$curl_log"
+}
+
+test_refreshes_marked_launcher_without_editing_profiles() {
+  local home="$TEMP_ROOT/stable-launcher-refresh-home"
+  local launcher="$home/.local/bin/atct"
+  local zshrc="$home/.zshrc"
+  local bashrc="$home/.bashrc"
+  local zsh_before
+  local bash_before
+  local output
+
+  mkdir -p "$home/.local/bin"
+  cat >"$launcher" <<'SCRIPT'
+#!/usr/bin/env bash
+set -euo pipefail
+# ATCT_GLOBAL_LAUNCHER_V1
+ATCT_WRAPPER=/old/path/bin/atct
+exec "$ATCT_WRAPPER" "$@"
+SCRIPT
+  chmod 0755 "$launcher"
+  printf 'export ZSH_MARKER=1\n' >"$zshrc"
+  printf 'export BASH_MARKER=1\n' >"$bashrc"
+  write_cached_atct "$home"
+  zsh_before="$(shasum -a 256 "$zshrc" | awk '{print $1}')"
+  bash_before="$(shasum -a 256 "$bashrc" | awk '{print $1}')"
+
+  output="$(HOME="$home" "$REPO_ROOT/bin/atct" --version)"
+
+  assert_eq 'cached atct <--version>' "$output" 'marked launcher refresh execution'
+  assert_file_contains 'ATCT_GLOBAL_LAUNCHER_V1' "$launcher"
+  assert_file_contains "ATCT_WRAPPER=$REPO_ROOT/bin/atct" "$launcher"
+  assert_file_not_contains '/old/path/bin/atct' "$launcher"
+  assert_eq "$zsh_before" "$(shasum -a 256 "$zshrc" | awk '{print $1}')" '.zshrc was modified'
+  assert_eq "$bash_before" "$(shasum -a 256 "$bashrc" | awk '{print $1}')" '.bashrc was modified'
+  [[ ! -e "$home/.local/bin/atct-mcp" ]] || fail 'refresh must not create a global atct-mcp command'
+}
+
 test_download_cache_and_mcp_stdout() {
   local fixtures="$TEMP_ROOT/fixtures"
   local fake_bin="$TEMP_ROOT/fake-bin"
@@ -414,6 +545,7 @@ test_download_cache_and_mcp_stdout() {
   assert_file_contains 'fake mcp' "$mcp_stderr"
   assert_eq "$REPO_ROOT/bin/atct" "$(<"$atct_wrapper_log")" 'MCP wrapper must select the matching atct wrapper'
   [[ -x "$home/.atct/bin/atct-mcp-$(wrapper_version)" ]] || fail 'versioned atct-mcp cache is missing'
+  [[ ! -e "$home/.local/bin/atct-mcp" ]] || fail 'wrapper must not create a global atct-mcp command'
 
   mkdir -p "$home/.atct/bin/.download.stale"
   printf 'stale\n' >"$home/.atct/bin/.download.stale/file"
@@ -1917,6 +2049,9 @@ test_one_space_per_goal_sits_between_worktree_and_commit
 test_stop_hook_only_reports
 test_claude_hooks_json_keeps_session_start_and_pre_tool_use_sections
 test_stop_hook_file_is_executable_but_other_hooks_remain
+test_installs_stable_terminal_launcher
+test_rejects_unmarked_launcher_collisions
+test_refreshes_marked_launcher_without_editing_profiles
 test_download_cache_and_mcp_stdout
 test_context_check_preserves_exit_code
 test_cleanup_failure_is_best_effort
