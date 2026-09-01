@@ -55,15 +55,36 @@ type Goal struct {
 }
 
 type GoalHandoff struct {
-	ID                string
-	GoalID            int64
-	RequestedBy       sql.NullInt64
-	ReceivedBy        sql.NullInt64
-	RequestedAt       sql.NullString
-	ReceivedAt        sql.NullString
-	CompletedReportAt sql.NullString
-	RequestReport     sql.NullString
-	CompleteReport    sql.NullString
+	ID                  string
+	GoalID              int64
+	RequestedBy         sql.NullInt64
+	ReceivedBy          sql.NullInt64
+	RequestedAt         sql.NullString
+	ReceivedAt          sql.NullString
+	CompletedReportAt   sql.NullString
+	RequestReport       sql.NullString
+	CompleteReport      sql.NullString
+	ReviewRequestedBy   sql.NullInt64
+	ReviewRequestedAt   sql.NullString
+	ReviewRequestReport sql.NullString
+	ReviewReceivedBy    sql.NullInt64
+	ReviewReceivedAt    sql.NullString
+	ReviewRejectedAt    sql.NullString
+	ReviewRejectReport  sql.NullString
+}
+
+type PlanHandoff struct {
+	ID                  string
+	GoalID              int64
+	ReviewRequestedBy   sql.NullInt64
+	ReviewRequestedAt   sql.NullString
+	ReviewRequestReport sql.NullString
+	ReviewReceivedBy    sql.NullInt64
+	ReviewReceivedAt    sql.NullString
+	ReviewRejectedAt    sql.NullString
+	ReviewRejectReport  sql.NullString
+	CompletedReportAt   sql.NullString
+	CompleteReport      sql.NullString
 }
 
 type Project struct {
@@ -105,13 +126,20 @@ type TaskCommit struct {
 }
 
 type TaskHandoff struct {
-	ID                string
-	TaskID            int64
-	RequestedBy       sql.NullInt64
-	ReceivedBy        sql.NullInt64
-	RequestedAt       sql.NullString
-	ReceivedAt        sql.NullString
-	CompletedReportAt sql.NullString
-	RequestReport     sql.NullString
-	CompleteReport    sql.NullString
+	ID                  string
+	TaskID              int64
+	RequestedBy         sql.NullInt64
+	ReceivedBy          sql.NullInt64
+	RequestedAt         sql.NullString
+	ReceivedAt          sql.NullString
+	CompletedReportAt   sql.NullString
+	RequestReport       sql.NullString
+	CompleteReport      sql.NullString
+	ReviewRequestedBy   sql.NullInt64
+	ReviewRequestedAt   sql.NullString
+	ReviewRequestReport sql.NullString
+	ReviewReceivedBy    sql.NullInt64
+	ReviewReceivedAt    sql.NullString
+	ReviewRejectedAt    sql.NullString
+	ReviewRejectReport  sql.NullString
 }

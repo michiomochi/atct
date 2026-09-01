@@ -16,6 +16,7 @@ type TaskStatus string
 const (
 	TaskTodo    TaskStatus = "todo"
 	TaskDoing   TaskStatus = "doing"
+	TaskReview  TaskStatus = "review"
 	TaskDone    TaskStatus = "done"
 	TaskDropped TaskStatus = "dropped"
 )
@@ -39,7 +40,7 @@ const (
 
 func ParseTaskStatus(s string) (TaskStatus, error) {
 	switch TaskStatus(s) {
-	case TaskTodo, TaskDoing, TaskDone, TaskDropped:
+	case TaskTodo, TaskDoing, TaskReview, TaskDone, TaskDropped:
 		return TaskStatus(s), nil
 	}
 	return "", fmt.Errorf("unknown task status: %q", s)

@@ -167,6 +167,72 @@ func TestGoalHandoffRequestReceiveAndComplete(t *testing.T) {
 	}
 }
 
+func TestGoalHandoffReviewLifecyclePreservesGoalClaim(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	goalID := newTestGoal(t, s)
+	requesterID := testSessionID("goal-review-requester")
+	receiverID := testSessionID("goal-review-receiver")
+	wrongReviewerID := testSessionID("goal-review-wrong-reviewer")
+	addLiveProjectClaim(t, s, goalID, "goal-review-requester")
+	addTestAgentSession(t, s, "goal-review-receiver")
+	addTestAgentSession(t, s, "goal-review-wrong-reviewer")
+
+	handoff, err := s.RequestGoalHandoff(ctx, "goal-review-lifecycle", goalID, requesterID, "take the goal")
+	if err != nil {
+		t.Fatalf("RequestGoalHandoff: %v", err)
+	}
+	if _, err := s.ReceiveGoalHandoff(ctx, handoff.ID, goalID, receiverID); err != nil {
+		t.Fatalf("ReceiveGoalHandoff: %v", err)
+	}
+
+	reviewRequested, err := s.RequestGoalHandoffReview(ctx, handoff.ID, goalID, receiverID, "goal is ready")
+	if err != nil {
+		t.Fatalf("RequestGoalHandoffReview: %v", err)
+	}
+	if reviewRequested.ReviewRequestedBy != receiverID || reviewRequested.ReviewRequestedAt == nil || reviewRequested.ReviewRequestReport != "goal is ready" {
+		t.Fatalf("unexpected goal review request: %+v", reviewRequested)
+	}
+
+	if _, err := s.ReceiveGoalHandoffReview(ctx, handoff.ID, goalID, wrongReviewerID); err == nil {
+		t.Fatal("ReceiveGoalHandoffReview accepted the wrong reviewer")
+	}
+	if _, err := s.ReceiveGoalHandoffReview(ctx, handoff.ID, goalID, requesterID); err != nil {
+		t.Fatalf("ReceiveGoalHandoffReview: %v", err)
+	}
+	if _, err := s.RejectGoalHandoffReview(ctx, handoff.ID, goalID, wrongReviewerID, "wrong reviewer"); err == nil {
+		t.Fatal("RejectGoalHandoffReview accepted the wrong reviewer")
+	}
+
+	rejected, err := s.RejectGoalHandoffReview(ctx, handoff.ID, goalID, requesterID, "revise the goal")
+	if err != nil {
+		t.Fatalf("RejectGoalHandoffReview: %v", err)
+	}
+	if rejected.ReceivedBy != receiverID || rejected.ReviewReceivedBy != 0 || rejected.ReviewReceivedAt != nil || rejected.ReviewRejectReport != "revise the goal" || rejected.ReviewRejectedAt == nil {
+		t.Fatalf("goal review rejection did not preserve claim and clear reviewer state: %+v", rejected)
+	}
+
+	if _, err := s.RequestGoalHandoffReview(ctx, handoff.ID, goalID, receiverID, "revised goal"); err != nil {
+		t.Fatalf("second RequestGoalHandoffReview: %v", err)
+	}
+	if _, err := s.ReceiveGoalHandoffReview(ctx, handoff.ID, goalID, requesterID); err != nil {
+		t.Fatalf("second ReceiveGoalHandoffReview: %v", err)
+	}
+	if _, err := s.CompleteGoalHandoffByReviewer(ctx, handoff.ID, goalID, wrongReviewerID, "approved by wrong reviewer"); err == nil {
+		t.Fatal("CompleteGoalHandoffByReviewer accepted the wrong reviewer")
+	}
+	if _, err := s.CompleteGoalHandoff(ctx, handoff.ID, goalID, "bypassed review"); err == nil {
+		t.Fatal("CompleteGoalHandoff bypassed the recorded reviewer")
+	}
+	completed, err := s.CompleteGoalHandoffByReviewer(ctx, handoff.ID, goalID, requesterID, "approved after review")
+	if err != nil {
+		t.Fatalf("CompleteGoalHandoffByReviewer: %v", err)
+	}
+	if completed.CompletedReportAt == nil || completed.CompleteReport != "approved after review" {
+		t.Fatalf("unexpected completed goal handoff: %+v", completed)
+	}
+}
+
 func TestListGoalSessionsIncludesSubcommander(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

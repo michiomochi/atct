@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/michiomochi/atct/internal/domain"
 	"github.com/michiomochi/atct/internal/store/sqlcgen"
 )
 
@@ -226,6 +227,107 @@ func TestTaskHandoffRequestReceiveAndComplete(t *testing.T) {
 	if completed.CompletedReportAt == nil || completed.RequestedAt == nil || completed.ReceivedAt == nil {
 		t.Fatalf("completion must preserve all prior timestamps: %+v", completed)
 	}
+}
+
+func TestTaskHandoffReviewLifecycleUpdatesTaskStatusAndPreservesClaim(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	taskID := addTestTasks(t, s, 1)[0]
+	requesterID := testSessionID("task-review-requester")
+	receiverID := testSessionID("task-review-receiver")
+	wrongReviewerID := testSessionID("task-review-wrong-reviewer")
+	addLiveParentGoalClaim(t, s, taskID, "task-review-requester")
+	addTestAgentSession(t, s, "task-review-receiver")
+	addTestAgentSession(t, s, "task-review-wrong-reviewer")
+
+	handoff, err := s.RequestTaskHandoff(ctx, "task-review-lifecycle", taskID, requesterID, "take the task")
+	if err != nil {
+		t.Fatalf("RequestTaskHandoff: %v", err)
+	}
+	assertTaskStatus(t, s, taskID, domain.TaskTodo)
+
+	if _, err := s.ReceiveTaskHandoff(ctx, handoff.ID, taskID, receiverID); err != nil {
+		t.Fatalf("ReceiveTaskHandoff: %v", err)
+	}
+	assertTaskStatus(t, s, taskID, domain.TaskDoing)
+
+	reviewRequested, err := s.RequestTaskHandoffReview(ctx, handoff.ID, taskID, receiverID, "implementation is ready")
+	if err != nil {
+		t.Fatalf("RequestTaskHandoffReview: %v", err)
+	}
+	if reviewRequested.ReviewRequestedBy != receiverID || reviewRequested.ReviewRequestedAt == nil || reviewRequested.ReviewRequestReport != "implementation is ready" {
+		t.Fatalf("unexpected task review request: %+v", reviewRequested)
+	}
+	assertTaskStatus(t, s, taskID, domain.TaskReview)
+
+	if _, err := s.ReceiveTaskHandoffReview(ctx, handoff.ID, taskID, wrongReviewerID); err == nil {
+		t.Fatal("ReceiveTaskHandoffReview accepted the wrong reviewer")
+	}
+	reviewReceived, err := s.ReceiveTaskHandoffReview(ctx, handoff.ID, taskID, requesterID)
+	if err != nil {
+		t.Fatalf("ReceiveTaskHandoffReview: %v", err)
+	}
+	if reviewReceived.ReviewReceivedBy != requesterID || reviewReceived.ReviewReceivedAt == nil {
+		t.Fatalf("unexpected task review receipt: %+v", reviewReceived)
+	}
+
+	if _, err := s.RejectTaskHandoffReview(ctx, handoff.ID, taskID, wrongReviewerID, "wrong reviewer"); err == nil {
+		t.Fatal("RejectTaskHandoffReview accepted the wrong reviewer")
+	}
+	rejected, err := s.RejectTaskHandoffReview(ctx, handoff.ID, taskID, requesterID, "add coverage")
+	if err != nil {
+		t.Fatalf("RejectTaskHandoffReview: %v", err)
+	}
+	if rejected.ReceivedBy != receiverID || rejected.ReviewReceivedBy != 0 || rejected.ReviewReceivedAt != nil || rejected.ReviewRejectReport != "add coverage" || rejected.ReviewRejectedAt == nil {
+		t.Fatalf("review rejection did not preserve claim and clear reviewer state: %+v", rejected)
+	}
+	assertTaskStatus(t, s, taskID, domain.TaskDoing)
+
+	if _, err := s.RequestTaskHandoff(ctx, "task-review-second-open", taskID, requesterID, "second handoff"); err == nil {
+		t.Fatal("RequestTaskHandoff opened a second handoff after review rejection")
+	}
+
+	if _, err := s.RequestTaskHandoffReview(ctx, handoff.ID, taskID, receiverID, "coverage added"); err != nil {
+		t.Fatalf("second RequestTaskHandoffReview: %v", err)
+	}
+	if _, err := s.ReceiveTaskHandoffReview(ctx, handoff.ID, taskID, requesterID); err != nil {
+		t.Fatalf("second ReceiveTaskHandoffReview: %v", err)
+	}
+	if _, err := s.CompleteTaskHandoffByReviewer(ctx, handoff.ID, taskID, wrongReviewerID, "approved by wrong reviewer"); err == nil {
+		t.Fatal("CompleteTaskHandoffByReviewer accepted the wrong reviewer")
+	}
+	if _, err := s.CompleteTaskHandoff(ctx, handoff.ID, taskID, "bypassed review"); err == nil {
+		t.Fatal("CompleteTaskHandoff bypassed the recorded reviewer")
+	}
+	completed, err := s.CompleteTaskHandoffByReviewer(ctx, handoff.ID, taskID, requesterID, "approved after review")
+	if err != nil {
+		t.Fatalf("CompleteTaskHandoffByReviewer: %v", err)
+	}
+	if completed.CompletedReportAt == nil || completed.CompleteReport != "approved after review" {
+		t.Fatalf("unexpected completed task handoff: %+v", completed)
+	}
+	assertTaskStatus(t, s, taskID, domain.TaskDone)
+}
+
+func assertTaskStatus(t *testing.T, s *Store, taskID int64, want domain.TaskStatus) {
+	t.Helper()
+	goalID, err := sqlcgen.New(s.DB()).GetTaskGoalID(context.Background(), taskID)
+	if err != nil {
+		t.Fatalf("GetTaskGoalID: %v", err)
+	}
+	tasks, err := s.ListTasks(context.Background(), goalID)
+	if err != nil {
+		t.Fatalf("ListTasks: %v", err)
+	}
+	for _, task := range tasks {
+		if task.ID == taskID {
+			if task.Status != want {
+				t.Fatalf("task %d status = %q, want %q", taskID, task.Status, want)
+			}
+			return
+		}
+	}
+	t.Fatalf("task %d was not listed", taskID)
 }
 
 func TestTaskHandoffReportsAreStored(t *testing.T) {
