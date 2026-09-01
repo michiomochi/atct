@@ -71,33 +71,6 @@ func runCodexMonitor(config cliConfig, dir string) (int, error) {
 	return runCodexMonitorWithDeps(config, dir, codexMonitorDeps{})
 }
 
-func listCodexMonitorBaselinePage(ctx context.Context, app codexMonitorApp, cwd string) (codexThreadListPage, error) {
-	if pager, ok := app.(codexThreadPager); ok {
-		return pager.ListThreadsPage(ctx, cwd, nil)
-	}
-	threads, err := app.ListThreads(ctx, cwd)
-	return codexThreadListPage{Threads: threads}, err
-}
-
-func continueCodexMonitorBaseline(ctx context.Context, app codexMonitorApp, cwd string, baseline []codexThread, cursor *string) ([]codexThread, error) {
-	if cursor == nil || strings.TrimSpace(*cursor) == "" {
-		return baseline, nil
-	}
-	pager, ok := app.(codexThreadPager)
-	if !ok {
-		return nil, errors.New("Codex App Server does not support cursor pagination")
-	}
-	for cursor != nil && strings.TrimSpace(*cursor) != "" {
-		page, err := pager.ListThreadsPage(ctx, cwd, cursor)
-		if err != nil {
-			return nil, err
-		}
-		baseline = append(baseline, page.Threads...)
-		cursor = page.NextCursor
-	}
-	return baseline, nil
-}
-
 func runCodexMonitorWithDeps(config cliConfig, dir string, deps codexMonitorDeps) (int, error) {
 	deps = codexMonitorDepsWithDefaults(dir, deps)
 	args := append([]string(nil), config.codexArgs...)
@@ -161,9 +134,13 @@ func runCodexMonitorWithDeps(config cliConfig, dir string, deps codexMonitorDeps
 
 	setupCtx, cancelSetup := context.WithTimeout(context.Background(), codexMonitorSetupTimeout)
 	app, err := deps.connectAppServer(setupCtx, socketPath)
-	var baselinePage codexThreadListPage
+	connected := err == nil
+	var thread codexThread
 	if err == nil {
-		baselinePage, err = listCodexMonitorBaselinePage(setupCtx, app, projectPath)
+		thread, err = app.StartThread(setupCtx, projectPath)
+		if err == nil && strings.TrimSpace(thread.ID) == "" {
+			err = errors.New("thread/start response has no thread ID")
+		}
 	}
 	cancelSetup()
 	if err != nil {
@@ -174,18 +151,20 @@ func runCodexMonitorWithDeps(config cliConfig, dir string, deps codexMonitorDeps
 			fmt.Fprintf(deps.stderr, "atct codex monitor cleanup: %v\n", cleanupErr)
 		}
 		_ = os.Remove(socketPath)
-		return codexMonitorSetupFailure(config, deps, "connect App Server: "+err.Error(), executable, args)
+		reason := "connect App Server: " + err.Error()
+		if connected {
+			reason = "start thread: " + err.Error()
+		}
+		return codexMonitorSetupFailure(config, deps, reason, executable, args)
 	}
 
-	bridge := newCodexMonitorBridge(app, "")
+	bridge := newCodexMonitorBridge(app, thread.ID)
 	lifecycleCtx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stopSignals()
 	monitorCtx, cancelMonitor := context.WithCancel(lifecycleCtx)
 	watchCtx, cancelWatch := context.WithCancel(monitorCtx)
-	discoveryCtx, cancelDiscovery := context.WithCancel(monitorCtx)
 	defer cancelMonitor()
 	defer cancelWatch()
-	defer cancelDiscovery()
 
 	startedAt := deps.now().UTC().Format(time.RFC3339Nano)
 	if processStartedAt, err := daemonctl.CodexMonitorProcessStartTime(os.Getpid()); err == nil {
@@ -219,13 +198,12 @@ func runCodexMonitorWithDeps(config cliConfig, dir string, deps codexMonitorDeps
 		watchDone <- deps.runWatch(watchCtx, bridge)
 	}()
 
-	remoteArgs := make([]string, 0, len(args)+2)
-	remoteArgs = append(remoteArgs, "--remote", "unix://"+socketPath)
+	remoteArgs := make([]string, 0, len(args)+4)
+	remoteArgs = append(remoteArgs, "--remote", "unix://"+socketPath, "resume", thread.ID)
 	remoteArgs = append(remoteArgs, args...)
 	tuiProcess, err := deps.startProcess(codexMonitorTUI, executable, remoteArgs)
 	if err != nil {
 		cancelWatch()
-		cancelDiscovery()
 		cancelMonitor()
 		_ = app.Close()
 		waitCodexMonitorDone(bridgeDone)
@@ -241,23 +219,6 @@ func runCodexMonitorWithDeps(config cliConfig, dir string, deps codexMonitorDeps
 	}
 	tuiDone := waitCodexMonitorProcess(tuiProcess)
 
-	type baselineResult struct {
-		threads []codexThread
-		err     error
-	}
-	baselineDone := make(chan baselineResult, 1)
-	baselineResultCh := baselineDone
-	go func(resultCh chan baselineResult) {
-		threads, err := continueCodexMonitorBaseline(monitorCtx, app, projectPath, baselinePage.Threads, baselinePage.NextCursor)
-		resultCh <- baselineResult{threads: threads, err: err}
-	}(baselineResultCh)
-
-	type discoveryResult struct {
-		thread codexThread
-		err    error
-	}
-	var discoveryDone chan discoveryResult
-
 	monitorDisabled := false
 	disableMonitor := func(err error) {
 		if monitorDisabled || err == nil {
@@ -266,7 +227,6 @@ func runCodexMonitorWithDeps(config cliConfig, dir string, deps codexMonitorDeps
 		monitorDisabled = true
 		fmt.Fprintf(deps.stderr, "atct codex monitor disabled: %s; Codex session remains active\n", err)
 		cancelWatch()
-		cancelDiscovery()
 	}
 
 	var cleanupOnce bool
@@ -276,27 +236,10 @@ func runCodexMonitorWithDeps(config cliConfig, dir string, deps codexMonitorDeps
 		}
 		cleanupOnce = true
 		cancelWatch()
-		cancelDiscovery()
 		cancelMonitor()
 		_ = app.Close()
 		waitCodexMonitorDone(bridgeDone)
 		waitCodexMonitorDone(watchDone)
-		if baselineDone != nil {
-			timer := time.NewTimer(codexMonitorProcessWait)
-			select {
-			case <-baselineDone:
-				timer.Stop()
-			case <-timer.C:
-			}
-		}
-		if discoveryDone != nil {
-			timer := time.NewTimer(codexMonitorProcessWait)
-			select {
-			case <-discoveryDone:
-				timer.Stop()
-			case <-timer.C:
-			}
-		}
 		if cleanupErr := stopCodexMonitorChild(appProcess, appWait); cleanupErr != nil {
 			fmt.Fprintf(deps.stderr, "atct codex monitor cleanup: %v\n", cleanupErr)
 		}
@@ -329,39 +272,20 @@ func runCodexMonitorWithDeps(config cliConfig, dir string, deps codexMonitorDeps
 				disableMonitor(err)
 			}
 			watchDone = nil
-		case result := <-baselineDone:
-			baselineDone = nil
-			if result.err != nil {
-				disableMonitor(result.err)
-				continue
-			}
-			if monitorDisabled {
-				continue
-			}
-			discoveryDone = make(chan discoveryResult, 1)
-			discoveryResultCh := discoveryDone
-			go func(baseline []codexThread, resultCh chan discoveryResult) {
-				thread, err := app.DiscoverThread(discoveryCtx, projectPath, codexThreadIDs(baseline), codexThreadDiscoveryInterval, codexThreadDiscoveryTimeout)
-				resultCh <- discoveryResult{thread: thread, err: err}
-			}(result.threads, discoveryResultCh)
-		case result := <-discoveryDone:
-			discoveryDone = nil
-			if result.err != nil {
-				disableMonitor(result.err)
-				continue
-			}
-			if monitorDisabled {
-				continue
-			}
-			if err := app.ResumeThread(monitorCtx, result.thread.ID); err != nil {
-				disableMonitor(err)
-				continue
-			}
-			if err := bridge.AttachThread(monitorCtx, result.thread.ID, !codexThreadStatusIsIdle(result.thread.Status)); err != nil {
-				disableMonitor(err)
-			}
 		}
 	}
+}
+
+func codexMonitorThreadMatches(thread codexThread, cwd string) bool {
+	exactCWD, err := codexExactCWD(cwd)
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(thread.ID) != "" &&
+		thread.CWD == exactCWD &&
+		thread.Source == "cli" &&
+		(thread.SourceKind == "" || thread.SourceKind == "cli") &&
+		strings.TrimSpace(thread.Status.Type) != ""
 }
 
 // Explicit role launches carry an ATCT scope contract. Starting plain Codex

@@ -575,6 +575,23 @@ func (c *codexAppServer) DiscoverThread(ctx context.Context, cwd string, before 
 	}
 }
 
+func (c *codexAppServer) StartThread(ctx context.Context, cwd string) (codexThread, error) {
+	exactCWD, err := codexExactCWD(cwd)
+	if err != nil {
+		return codexThread{}, err
+	}
+	var result struct {
+		Thread codexThread `json:"thread"`
+	}
+	if err := c.call(ctx, "thread/start", map[string]string{"cwd": exactCWD}, &result); err != nil {
+		return codexThread{}, err
+	}
+	if strings.TrimSpace(result.Thread.ID) == "" {
+		return codexThread{}, errors.New("thread/start response has no thread ID")
+	}
+	return result.Thread, nil
+}
+
 func (c *codexAppServer) ResumeThread(ctx context.Context, threadID string) error {
 	if strings.TrimSpace(threadID) == "" {
 		return errors.New("Codex thread ID is empty")
@@ -634,6 +651,7 @@ type codexTurnStarter interface {
 type codexMonitorApp interface {
 	codexTurnStarter
 	Initialize(context.Context) error
+	StartThread(context.Context, string) (codexThread, error)
 	ListThreads(context.Context, string) ([]codexThread, error)
 	DiscoverThread(context.Context, string, map[string]struct{}, time.Duration, time.Duration) (codexThread, error)
 	ResumeThread(context.Context, string) error
@@ -817,6 +835,9 @@ func isCodexMonitorActionLine(line string) bool {
 }
 
 func (b *codexMonitorBridge) HandleNotification(ctx context.Context, notification codexAppServerNotification) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	var params struct {
 		ThreadID string    `json:"threadId"`
 		Turn     codexTurn `json:"turn"`

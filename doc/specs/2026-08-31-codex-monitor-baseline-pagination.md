@@ -9,38 +9,31 @@ before the monitored TUI starts.
 
 ## Decision
 
-Split the baseline at the first `thread/list` response.  The first response remains
-on the bounded setup context and establishes the pagination snapshot before the
-monitor starts its TUI.  Its `nextCursor` and first-page IDs are handed to a
-background baseline continuation.  The continuation follows every cursor to
-completion using the monitor lifecycle context; only after it has collected every
-ID may discovery start.
-
-Cursor traversal is a snapshot traversal: pages reached through the cursor returned
-by the first response describe the pre-TUI baseline.  Consequently, a thread created
-by the TUI cannot enter the baseline merely because pagination finishes after the
-TUI starts.  This preserves the existing ID-difference discovery rule without
-accepting a partial baseline.
+Remove baseline listing and ID-difference discovery from monitor startup. Cursor
+semantics are opaque and `thread/started` is broadcast, so neither identifies the
+remote TUI exactly. The monitor connection calls official `thread/start` with the
+project CWD and takes `response.thread.id` as the owned session ID. It then launches
+the remote TUI with `resume <id>`. This request/response association is exact and
+cannot confuse another client's thread.
 
 ## Lifecycle and failure behavior
 
-- Setup succeeds after connection, initialization, and first-page baseline capture;
-  it no longer waits for the remaining pages.
+- Setup succeeds after connection, initialization, and monitor-owned `thread/start`;
+  it performs no `thread/list`.
 - TUI, watch, bridge, record registration, strict thread status decoding, read limit,
   and notification handling retain their existing behavior.
-- Discovery waits for successful full-baseline completion, then invokes the existing
-  `DiscoverThread` with every baseline ID.  It continues to use full pagination per
-  poll.
-- If continuation fails or is cancelled, monitoring is disabled while the already
-  launched Codex session remains active, matching other post-launch monitor failures.
-- App Server absence or connect/initialize/first-page failure remains inside the
-  short setup timeout and keeps the present automatic fallback / explicit failure
-  policy.
+- `thread/started` is ignored for session discovery; the monitor uses only the
+  `thread/start` response ID. Unrelated notifications, including remoteControl,
+  remain no-ops.
+- App Server absence, connect/initialize failure, or `thread/start` failure remains
+  inside the short setup timeout and keeps the present automatic fallback / explicit
+  failure policy.
 
 ## Tests
 
 Use controllable channels in the lifecycle fake, not wall-clock sleeps or a changed
-10-second constant.  Prove that a blocked second page does not prevent TUI launch,
-that discovery does not run until that page is released, and that the baseline passed
-to discovery contains old IDs from both pages while the new TUI thread is excluded.
-Keep existing status-decode, remote-control no-op, and App Server fallback coverage.
+10-second constant. Prove that `thread/start` receives the project CWD and its
+response ID is used by the remote TUI's `resume` arguments. Prove that a broadcast
+`thread/started` is not adopted and that `thread/start` failure does not launch the
+TUI or watcher, while automatic fallback and explicit failure remain intact. Keep
+status-decode and remote-control no-op coverage.
