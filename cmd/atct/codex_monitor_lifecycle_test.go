@@ -715,6 +715,136 @@ func TestCodexMonitorLifecycleCleansChildrenAndPreservesTUIStatus(t *testing.T) 
 	}
 }
 
+func TestCodexMonitorStartsTUIBeforeBaselineContinuationAndWaitsForCompleteBaseline(t *testing.T) {
+	monitorDir := t.TempDir()
+	app := newFakeCodexMonitorApp()
+	tui := newFakeCodexMonitorProcess(0)
+	tuiStarted := make(chan struct{})
+	pageTwoStarted := make(chan struct{})
+	discoveryBefore := make(chan map[string]struct{}, 1)
+	resumedThread := make(chan string, 1)
+	releasePageTwo := make(chan struct{})
+	var (
+		pageTwoOnce  sync.Once
+		releaseOnce  sync.Once
+		tuiStartOnce sync.Once
+	)
+	release := func() { releaseOnce.Do(func() { close(releasePageTwo) }) }
+	defer release()
+
+	nextCursor := "page-2"
+	app.listThreadsPage = func(ctx context.Context, _ string, cursor *string) (codexThreadListPage, error) {
+		if cursor == nil {
+			return codexThreadListPage{Threads: []codexThread{{ID: "thread-old-1", CWD: "/project"}}, NextCursor: &nextCursor}, nil
+		}
+		if *cursor != nextCursor {
+			return codexThreadListPage{}, fmt.Errorf("cursor = %q, want %q", *cursor, nextCursor)
+		}
+		pageTwoOnce.Do(func() { close(pageTwoStarted) })
+		select {
+		case <-releasePageTwo:
+			return codexThreadListPage{Threads: []codexThread{{ID: "thread-old-2", CWD: "/project"}}}, nil
+		case <-ctx.Done():
+			return codexThreadListPage{}, ctx.Err()
+		}
+	}
+	app.thread = codexThread{ID: "thread-new", CWD: "/project", Status: codexThreadStatus{Type: "idle"}}
+	app.onDiscoverBefore = func(before map[string]struct{}) { discoveryBefore <- before }
+	app.onResume = func(threadID string) { resumedThread <- threadID }
+
+	deps := codexMonitorDeps{
+		resolveCodex: func() (string, error) { return "/opt/codex", nil },
+		startProcess: func(kind codexMonitorProcessKind, _ string, _ []string) (codexMonitorProcess, error) {
+			switch kind {
+			case codexMonitorAppServer:
+				return app, nil
+			case codexMonitorTUI:
+				tui.markStarted()
+				tuiStartOnce.Do(func() { close(tuiStarted) })
+				return tui, nil
+			default:
+				return nil, errors.New("unexpected process kind")
+			}
+		},
+		connectAppServer: func(context.Context, string) (codexMonitorApp, error) { return app, nil },
+		projectPath:      func() (string, error) { return "/project", nil },
+		reap:             func(string) (daemonctl.CodexMonitorReapResult, error) { return daemonctl.CodexMonitorReapResult{}, nil },
+		register:         func(string, daemonctl.CodexMonitorRecord) (func(), error) { return func() {}, nil },
+		runWatch: func(ctx context.Context, _ *codexMonitorBridge) error {
+			<-ctx.Done()
+			return nil
+		},
+		stderr: io.Discard,
+	}
+
+	type monitorResult struct {
+		code int
+		err  error
+	}
+	done := make(chan monitorResult, 1)
+	go func() {
+		code, err := runCodexMonitorWithDeps(cliConfig{codexMonitorAction: "monitor"}, monitorDir, deps)
+		done <- monitorResult{code: code, err: err}
+	}()
+
+	select {
+	case <-tuiStarted:
+	case <-time.After(time.Second):
+		t.Fatal("TUI did not start while baseline page two was available to block")
+	}
+	select {
+	case <-pageTwoStarted:
+	case <-time.After(time.Second):
+		t.Fatal("baseline continuation did not reach page two")
+	}
+	select {
+	case before := <-discoveryBefore:
+		t.Fatalf("discovery started with blocked baseline: %#v", before)
+	default:
+	}
+
+	release()
+	var before map[string]struct{}
+	select {
+	case before = <-discoveryBefore:
+	case <-time.After(time.Second):
+		t.Fatal("discovery did not start after baseline continuation completed")
+	}
+	if len(before) != 2 {
+		t.Fatalf("discovery baseline IDs = %#v, want two old threads", before)
+	}
+	if _, ok := before["thread-old-1"]; !ok {
+		t.Fatalf("discovery baseline omitted first-page old thread: %#v", before)
+	}
+	if _, ok := before["thread-old-2"]; !ok {
+		t.Fatalf("discovery baseline omitted second-page old thread: %#v", before)
+	}
+	if _, ok := before["thread-new"]; ok {
+		t.Fatalf("discovery baseline included TUI-created thread: %#v", before)
+	}
+
+	select {
+	case got := <-resumedThread:
+		if got != "thread-new" {
+			t.Fatalf("resumed thread = %q, want TUI-created thread", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("discovery did not select the TUI-created thread")
+	}
+	tui.finish()
+	select {
+	case result := <-done:
+		if result.err != nil {
+			t.Fatalf("runCodexMonitorWithDeps: %v", result.err)
+		}
+		if result.code != 0 {
+			t.Fatalf("exit code = %d, want 0", result.code)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("monitor did not finish after TUI exit")
+	}
+}
+
 func TestCodexMonitorBridgeFailureLeavesTUIAlive(t *testing.T) {
 	monitorDir := t.TempDir()
 	app := newFakeCodexMonitorApp()
@@ -829,10 +959,13 @@ func (p *fakeCodexMonitorProcess) signaled() bool {
 }
 
 type fakeCodexMonitorApp struct {
-	process         *fakeCodexMonitorProcess
-	thread          codexThread
-	notificationErr error
-	onDiscover      func()
+	process          *fakeCodexMonitorProcess
+	thread           codexThread
+	notificationErr  error
+	onDiscover       func()
+	onDiscoverBefore func(map[string]struct{})
+	onResume         func(string)
+	listThreadsPage  func(context.Context, string, *string) (codexThreadListPage, error)
 }
 
 func newFakeCodexMonitorApp() *fakeCodexMonitorApp {
@@ -841,18 +974,48 @@ func newFakeCodexMonitorApp() *fakeCodexMonitorApp {
 
 func (a *fakeCodexMonitorApp) Initialize(context.Context) error { return nil }
 
-func (a *fakeCodexMonitorApp) ListThreads(context.Context, string) ([]codexThread, error) {
-	return []codexThread{{ID: "thread-existing", CWD: "/project"}}, nil
+func (a *fakeCodexMonitorApp) ListThreads(ctx context.Context, cwd string) ([]codexThread, error) {
+	if a.listThreadsPage == nil {
+		return []codexThread{{ID: "thread-existing", CWD: "/project"}}, nil
+	}
+	var all []codexThread
+	var cursor *string
+	for {
+		page, err := a.ListThreadsPage(ctx, cwd, cursor)
+		if err != nil {
+			return nil, err
+		}
+		all = append(all, page.Threads...)
+		if page.NextCursor == nil || strings.TrimSpace(*page.NextCursor) == "" {
+			return all, nil
+		}
+		cursor = page.NextCursor
+	}
 }
 
-func (a *fakeCodexMonitorApp) DiscoverThread(context.Context, string, map[string]struct{}, time.Duration, time.Duration) (codexThread, error) {
+func (a *fakeCodexMonitorApp) ListThreadsPage(ctx context.Context, cwd string, cursor *string) (codexThreadListPage, error) {
+	if a.listThreadsPage != nil {
+		return a.listThreadsPage(ctx, cwd, cursor)
+	}
+	return codexThreadListPage{Threads: []codexThread{{ID: "thread-existing", CWD: "/project"}}}, nil
+}
+
+func (a *fakeCodexMonitorApp) DiscoverThread(_ context.Context, _ string, before map[string]struct{}, _ time.Duration, _ time.Duration) (codexThread, error) {
+	if a.onDiscoverBefore != nil {
+		a.onDiscoverBefore(before)
+	}
 	if a.onDiscover != nil {
 		a.onDiscover()
 	}
 	return a.thread, nil
 }
 
-func (a *fakeCodexMonitorApp) ResumeThread(context.Context, string) error { return nil }
+func (a *fakeCodexMonitorApp) ResumeThread(_ context.Context, threadID string) error {
+	if a.onResume != nil {
+		a.onResume(threadID)
+	}
+	return nil
+}
 
 func (a *fakeCodexMonitorApp) StartTurn(context.Context, string, string) (codexTurn, error) {
 	return codexTurn{ID: "turn-test"}, nil

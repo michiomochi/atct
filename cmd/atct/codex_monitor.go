@@ -445,6 +445,11 @@ type codexThreadListResult struct {
 	NextCursor *string       `json:"nextCursor"`
 }
 
+type codexThreadListPage struct {
+	Threads    []codexThread
+	NextCursor *string
+}
+
 func (r *codexThreadListResult) UnmarshalJSON(data []byte) error {
 	type plain codexThreadListResult
 	var decoded plain
@@ -464,34 +469,42 @@ func (r *codexThreadListResult) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-func (c *codexAppServer) ListThreads(ctx context.Context, cwd string) ([]codexThread, error) {
+func (c *codexAppServer) ListThreadsPage(ctx context.Context, cwd string, cursor *string) (codexThreadListPage, error) {
 	exactCWD, err := codexExactCWD(cwd)
 	if err != nil {
-		return nil, err
+		return codexThreadListPage{}, err
 	}
+	params := map[string]any{
+		"cwd":         []string{exactCWD},
+		"sourceKinds": []string{"cli"},
+	}
+	if cursor != nil {
+		params["cursor"] = *cursor
+	}
+	var result codexThreadListResult
+	if err := c.call(ctx, "thread/list", params, &result); err != nil {
+		return codexThreadListPage{}, err
+	}
+	threads := result.Data
+	if threads == nil {
+		threads = result.Threads
+	}
+	return codexThreadListPage{Threads: threads, NextCursor: result.NextCursor}, nil
+}
+
+func (c *codexAppServer) ListThreads(ctx context.Context, cwd string) ([]codexThread, error) {
 	var all []codexThread
 	var cursor *string
 	for {
-		params := map[string]any{
-			"cwd":         []string{exactCWD},
-			"sourceKinds": []string{"cli"},
-		}
-		if cursor != nil {
-			params["cursor"] = *cursor
-		}
-		var result codexThreadListResult
-		if err := c.call(ctx, "thread/list", params, &result); err != nil {
+		page, err := c.ListThreadsPage(ctx, cwd, cursor)
+		if err != nil {
 			return nil, err
 		}
-		threads := result.Data
-		if threads == nil {
-			threads = result.Threads
-		}
-		all = append(all, threads...)
-		if result.NextCursor == nil || strings.TrimSpace(*result.NextCursor) == "" {
+		all = append(all, page.Threads...)
+		if page.NextCursor == nil || strings.TrimSpace(*page.NextCursor) == "" {
 			return all, nil
 		}
-		cursor = result.NextCursor
+		cursor = page.NextCursor
 	}
 }
 
@@ -627,6 +640,10 @@ type codexMonitorApp interface {
 	NextNotification(context.Context) (codexAppServerNotification, error)
 	Close() error
 	Err() error
+}
+
+type codexThreadPager interface {
+	ListThreadsPage(context.Context, string, *string) (codexThreadListPage, error)
 }
 
 type codexMonitorBridge struct {

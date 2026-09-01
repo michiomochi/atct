@@ -71,6 +71,33 @@ func runCodexMonitor(config cliConfig, dir string) (int, error) {
 	return runCodexMonitorWithDeps(config, dir, codexMonitorDeps{})
 }
 
+func listCodexMonitorBaselinePage(ctx context.Context, app codexMonitorApp, cwd string) (codexThreadListPage, error) {
+	if pager, ok := app.(codexThreadPager); ok {
+		return pager.ListThreadsPage(ctx, cwd, nil)
+	}
+	threads, err := app.ListThreads(ctx, cwd)
+	return codexThreadListPage{Threads: threads}, err
+}
+
+func continueCodexMonitorBaseline(ctx context.Context, app codexMonitorApp, cwd string, baseline []codexThread, cursor *string) ([]codexThread, error) {
+	if cursor == nil || strings.TrimSpace(*cursor) == "" {
+		return baseline, nil
+	}
+	pager, ok := app.(codexThreadPager)
+	if !ok {
+		return nil, errors.New("Codex App Server does not support cursor pagination")
+	}
+	for cursor != nil && strings.TrimSpace(*cursor) != "" {
+		page, err := pager.ListThreadsPage(ctx, cwd, cursor)
+		if err != nil {
+			return nil, err
+		}
+		baseline = append(baseline, page.Threads...)
+		cursor = page.NextCursor
+	}
+	return baseline, nil
+}
+
 func runCodexMonitorWithDeps(config cliConfig, dir string, deps codexMonitorDeps) (int, error) {
 	deps = codexMonitorDepsWithDefaults(dir, deps)
 	args := append([]string(nil), config.codexArgs...)
@@ -134,9 +161,9 @@ func runCodexMonitorWithDeps(config cliConfig, dir string, deps codexMonitorDeps
 
 	setupCtx, cancelSetup := context.WithTimeout(context.Background(), codexMonitorSetupTimeout)
 	app, err := deps.connectAppServer(setupCtx, socketPath)
-	var baseline []codexThread
+	var baselinePage codexThreadListPage
 	if err == nil {
-		baseline, err = app.ListThreads(setupCtx, projectPath)
+		baselinePage, err = listCodexMonitorBaselinePage(setupCtx, app, projectPath)
 	}
 	cancelSetup()
 	if err != nil {
@@ -214,15 +241,22 @@ func runCodexMonitorWithDeps(config cliConfig, dir string, deps codexMonitorDeps
 	}
 	tuiDone := waitCodexMonitorProcess(tuiProcess)
 
+	type baselineResult struct {
+		threads []codexThread
+		err     error
+	}
+	baselineDone := make(chan baselineResult, 1)
+	baselineResultCh := baselineDone
+	go func(resultCh chan baselineResult) {
+		threads, err := continueCodexMonitorBaseline(monitorCtx, app, projectPath, baselinePage.Threads, baselinePage.NextCursor)
+		resultCh <- baselineResult{threads: threads, err: err}
+	}(baselineResultCh)
+
 	type discoveryResult struct {
 		thread codexThread
 		err    error
 	}
-	discoveryDone := make(chan discoveryResult, 1)
-	go func() {
-		thread, err := app.DiscoverThread(discoveryCtx, projectPath, codexThreadIDs(baseline), codexThreadDiscoveryInterval, codexThreadDiscoveryTimeout)
-		discoveryDone <- discoveryResult{thread: thread, err: err}
-	}()
+	var discoveryDone chan discoveryResult
 
 	monitorDisabled := false
 	disableMonitor := func(err error) {
@@ -247,6 +281,14 @@ func runCodexMonitorWithDeps(config cliConfig, dir string, deps codexMonitorDeps
 		_ = app.Close()
 		waitCodexMonitorDone(bridgeDone)
 		waitCodexMonitorDone(watchDone)
+		if baselineDone != nil {
+			timer := time.NewTimer(codexMonitorProcessWait)
+			select {
+			case <-baselineDone:
+				timer.Stop()
+			case <-timer.C:
+			}
+		}
 		if discoveryDone != nil {
 			timer := time.NewTimer(codexMonitorProcessWait)
 			select {
@@ -287,6 +329,21 @@ func runCodexMonitorWithDeps(config cliConfig, dir string, deps codexMonitorDeps
 				disableMonitor(err)
 			}
 			watchDone = nil
+		case result := <-baselineDone:
+			baselineDone = nil
+			if result.err != nil {
+				disableMonitor(result.err)
+				continue
+			}
+			if monitorDisabled {
+				continue
+			}
+			discoveryDone = make(chan discoveryResult, 1)
+			discoveryResultCh := discoveryDone
+			go func(baseline []codexThread, resultCh chan discoveryResult) {
+				thread, err := app.DiscoverThread(discoveryCtx, projectPath, codexThreadIDs(baseline), codexThreadDiscoveryInterval, codexThreadDiscoveryTimeout)
+				resultCh <- discoveryResult{thread: thread, err: err}
+			}(result.threads, discoveryResultCh)
 		case result := <-discoveryDone:
 			discoveryDone = nil
 			if result.err != nil {
