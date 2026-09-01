@@ -140,14 +140,6 @@ func runCodexMonitorWithDeps(config cliConfig, dir string, deps codexMonitorDeps
 
 	setupCtx, cancelSetup := context.WithTimeout(context.Background(), codexMonitorSetupTimeout)
 	app, err := deps.connectAppServer(setupCtx, socketPath)
-	connected := err == nil
-	var thread codexThread
-	if err == nil {
-		thread, err = app.StartThread(setupCtx, projectPath)
-		if err == nil && strings.TrimSpace(thread.ID) == "" {
-			err = errors.New("thread/start response has no thread ID")
-		}
-	}
 	cancelSetup()
 	if err != nil {
 		if app != nil {
@@ -157,14 +149,13 @@ func runCodexMonitorWithDeps(config cliConfig, dir string, deps codexMonitorDeps
 			fmt.Fprintf(deps.stderr, "atct codex monitor cleanup: %v\n", cleanupErr)
 		}
 		_ = os.Remove(socketPath)
-		reason := "connect App Server: " + err.Error()
-		if connected {
-			reason = "start thread: " + err.Error()
-		}
-		return codexMonitorSetupFailure(config, deps, reason, executable, args)
+		return codexMonitorSetupFailure(config, deps, "connect App Server: "+err.Error(), executable, args)
 	}
 
-	bridge := newCodexMonitorBridge(app, thread.ID)
+	// The monitor owns this fresh App Server socket. Let the remote TUI create
+	// its session, then attach to that TUI's thread/started notification. A
+	// thread/start response cannot be resumed by a separate remote TUI client.
+	bridge := newCodexMonitorBridge(app, "")
 	lifecycleCtx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stopSignals()
 	monitorCtx, cancelMonitor := context.WithCancel(lifecycleCtx)
@@ -204,8 +195,8 @@ func runCodexMonitorWithDeps(config cliConfig, dir string, deps codexMonitorDeps
 		watchDone <- deps.runWatch(watchCtx, bridge)
 	}()
 
-	remoteArgs := make([]string, 0, len(args)+4)
-	remoteArgs = append(remoteArgs, "--remote", "unix://"+socketPath, "resume", thread.ID)
+	remoteArgs := make([]string, 0, len(args)+2)
+	remoteArgs = append(remoteArgs, "--remote", "unix://"+socketPath)
 	remoteArgs = append(remoteArgs, args...)
 	tuiProcess, err := deps.startProcess(codexMonitorTUI, executable, remoteArgs)
 	if err != nil {

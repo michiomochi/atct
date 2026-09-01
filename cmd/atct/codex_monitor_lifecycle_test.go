@@ -700,8 +700,8 @@ func TestCodexMonitorLifecycleCleansChildrenAndPreservesTUIStatus(t *testing.T) 
 	if len(appArgs) != 3 || appArgs[0] != "app-server" || appArgs[1] != "--listen" || !strings.HasPrefix(appArgs[2], "unix://"+filepath.Join(monitorDir, "codex-monitors")+string(filepath.Separator)) {
 		t.Fatalf("App Server args = %#v, want app-server --listen unix://<managed-dir>/codex-monitors/<pid>.sock", appArgs)
 	}
-	if len(tuiArgs) != 6 || tuiArgs[0] != "--remote" || !strings.HasPrefix(tuiArgs[1], "unix://"+filepath.Join(monitorDir, "codex-monitors")+string(filepath.Separator)) || !slices.Equal(tuiArgs[2:], []string{"resume", "thread-new", "-m", "gpt-5"}) {
-		t.Fatalf("TUI args = %#v, want --remote socket resume thread-new followed by original args", tuiArgs)
+	if len(tuiArgs) != 4 || tuiArgs[0] != "--remote" || !strings.HasPrefix(tuiArgs[1], "unix://"+filepath.Join(monitorDir, "codex-monitors")+string(filepath.Separator)) || !slices.Equal(tuiArgs[2:], []string{"-m", "gpt-5"}) {
+		t.Fatalf("TUI args = %#v, want --remote socket followed by original args", tuiArgs)
 	}
 	if !app.signaled() {
 		t.Fatal("App Server was not stopped during cleanup")
@@ -716,19 +716,9 @@ func TestCodexMonitorLifecycleCleansChildrenAndPreservesTUIStatus(t *testing.T) 
 	}
 }
 
-func TestCodexMonitorExplicitNonResumeStartsOwnedThreadAndPreservesArgs(t *testing.T) {
+func TestCodexMonitorExplicitNonResumeStartsRemoteTUIAndPreservesArgs(t *testing.T) {
 	monitorDir := t.TempDir()
 	app := newFakeCodexMonitorApp()
-	app.thread = codexThread{
-		ID:     "thread-from-start",
-		CWD:    "/project",
-		Status: codexThreadStatus{Type: "idle"},
-	}
-	startCWD := make(chan string, 1)
-	app.startThread = func(_ context.Context, cwd string) (codexThread, error) {
-		startCWD <- cwd
-		return app.thread, nil
-	}
 	tui := newFakeCodexMonitorProcess(0)
 	tuiStarted := make(chan struct{})
 	var tuiArgs []string
@@ -783,17 +773,8 @@ func TestCodexMonitorExplicitNonResumeStartsOwnedThreadAndPreservesArgs(t *testi
 	case <-time.After(time.Second):
 		t.Fatal("TUI did not start")
 	}
-	select {
-	case got := <-startCWD:
-		if got != "/project" {
-			t.Fatalf("thread/start cwd = %q, want /project", got)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("thread/start was not called")
-	}
-	wantPrefix := []string{"--remote", "unix://"}
-	if len(tuiArgs) != 6 || tuiArgs[0] != wantPrefix[0] || !strings.HasPrefix(tuiArgs[1], wantPrefix[1]) || !slices.Equal(tuiArgs[2:], []string{"resume", "thread-from-start", "-m", "gpt-5"}) {
-		t.Fatalf("TUI args = %#v, want --remote socket resume thread-from-start followed by original args", tuiArgs)
+	if len(tuiArgs) != 4 || tuiArgs[0] != "--remote" || !strings.HasPrefix(tuiArgs[1], "unix://") || !slices.Equal(tuiArgs[2:], []string{"-m", "gpt-5"}) {
+		t.Fatalf("TUI args = %#v, want --remote socket followed by original args", tuiArgs)
 	}
 
 	tui.finish()
@@ -943,13 +924,14 @@ func TestCodexMonitorExplicitLeadingResumeFailsBeforeStartingAnything(t *testing
 	}
 }
 
-func TestCodexMonitorDoesNotAdoptThreadStartedBroadcast(t *testing.T) {
+func TestCodexMonitorAdoptsThreadStartedByItsDedicatedRemoteTUI(t *testing.T) {
 	monitorDir := t.TempDir()
 	app := newFakeCodexMonitorApp()
 	tui := newFakeCodexMonitorProcess(0)
 	tuiStarted := make(chan struct{})
 	notificationDelivered := make(chan struct{})
-	resumedThread := make(chan string, 1)
+	turnStarted := make(chan string, 1)
+	var tuiArgs []string
 
 	notificationThread := codexThread{
 		ID:         "thread-from-notification",
@@ -970,15 +952,19 @@ func TestCodexMonitorDoesNotAdoptThreadStartedBroadcast(t *testing.T) {
 		Method: "thread/started",
 		Params: notificationParams,
 	}
-	app.onResume = func(threadID string) { resumedThread <- threadID }
+	app.startTurn = func(_ context.Context, threadID, _ string) (codexTurn, error) {
+		turnStarted <- threadID
+		return codexTurn{ID: "turn-test"}, nil
+	}
 
 	deps := codexMonitorDeps{
 		resolveCodex: func() (string, error) { return "/opt/codex", nil },
-		startProcess: func(kind codexMonitorProcessKind, _ string, _ []string) (codexMonitorProcess, error) {
+		startProcess: func(kind codexMonitorProcessKind, _ string, args []string) (codexMonitorProcess, error) {
 			switch kind {
 			case codexMonitorAppServer:
 				return app, nil
 			case codexMonitorTUI:
+				tuiArgs = append([]string(nil), args...)
 				tui.markStarted()
 				close(tuiStarted)
 				return tui, nil
@@ -990,7 +976,10 @@ func TestCodexMonitorDoesNotAdoptThreadStartedBroadcast(t *testing.T) {
 		projectPath:      func() (string, error) { return "/project", nil },
 		reap:             func(string) (daemonctl.CodexMonitorReapResult, error) { return daemonctl.CodexMonitorReapResult{}, nil },
 		register:         func(string, daemonctl.CodexMonitorRecord) (func(), error) { return func() {}, nil },
-		runWatch: func(ctx context.Context, _ *codexMonitorBridge) error {
+		runWatch: func(ctx context.Context, bridge *codexMonitorBridge) error {
+			if err := bridge.Enqueue(ctx, "atct goal created (goal_id: 7)"); err != nil {
+				return err
+			}
 			<-ctx.Done()
 			return nil
 		},
@@ -1017,6 +1006,17 @@ func TestCodexMonitorDoesNotAdoptThreadStartedBroadcast(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("thread/started notification was not delivered")
 	}
+	select {
+	case got := <-turnStarted:
+		if got != "thread-from-notification" {
+			t.Fatalf("turn started for thread %q, want thread-from-notification", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("queued monitor event did not start a turn for the TUI thread")
+	}
+	if len(tuiArgs) != 2 || tuiArgs[0] != "--remote" || !strings.HasPrefix(tuiArgs[1], "unix://") {
+		t.Fatalf("TUI args = %#v, want only --remote unix://<socket>", tuiArgs)
+	}
 
 	tui.finish()
 	select {
@@ -1029,70 +1029,6 @@ func TestCodexMonitorDoesNotAdoptThreadStartedBroadcast(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("monitor did not finish after TUI exit")
-	}
-	select {
-	case got := <-resumedThread:
-		t.Fatalf("thread/started broadcast resumed %q", got)
-	default:
-	}
-}
-
-func TestCodexMonitorThreadStartFailureFallsBackBeforeTUI(t *testing.T) {
-	monitorDir := t.TempDir()
-	app := newFakeCodexMonitorApp()
-	app.startThread = func(context.Context, string) (codexThread, error) {
-		return codexThread{}, errors.New("thread/start failed")
-	}
-	var tuiStarts, normalCalls, watchStarts int
-	var gotArgs []string
-
-	deps := codexMonitorDeps{
-		resolveCodex: func() (string, error) { return "/opt/codex", nil },
-		startProcess: func(kind codexMonitorProcessKind, _ string, _ []string) (codexMonitorProcess, error) {
-			if kind == codexMonitorAppServer {
-				return app, nil
-			}
-			tuiStarts++
-			return nil, errors.New("TUI must not start after thread/start failure")
-		},
-		connectAppServer: func(context.Context, string) (codexMonitorApp, error) { return app, nil },
-		projectPath:      func() (string, error) { return "/project", nil },
-		reap:             func(string) (daemonctl.CodexMonitorReapResult, error) { return daemonctl.CodexMonitorReapResult{}, nil },
-		register:         func(string, daemonctl.CodexMonitorRecord) (func(), error) { return func() {}, nil },
-		runWatch: func(ctx context.Context, _ *codexMonitorBridge) error {
-			watchStarts++
-			<-ctx.Done()
-			return nil
-		},
-		runNormal: func(_ string, args []string) (int, error) {
-			normalCalls++
-			gotArgs = append([]string(nil), args...)
-			return 17, nil
-		},
-		stderr: io.Discard,
-	}
-
-	code, runErr := runCodexMonitorWithDeps(cliConfig{
-		codexMonitorAction: "monitor",
-		codexArgs:          []string{"--model", "gpt-5"},
-	}, monitorDir, deps)
-	if runErr != nil {
-		t.Fatalf("runCodexMonitorWithDeps: %v", runErr)
-	}
-	if tuiStarts != 0 {
-		t.Fatalf("TUI starts = %d, want 0", tuiStarts)
-	}
-	if watchStarts != 0 {
-		t.Fatalf("watcher starts = %d, want 0", watchStarts)
-	}
-	if normalCalls != 1 {
-		t.Fatalf("normal fallback calls = %d, want 1", normalCalls)
-	}
-	if !slices.Equal(gotArgs, []string{"--model", "gpt-5"}) {
-		t.Fatalf("fallback args = %#v, want original args", gotArgs)
-	}
-	if code != 17 {
-		t.Fatalf("exit code = %d, want normal fallback exit code 17", code)
 	}
 }
 
@@ -1212,13 +1148,13 @@ func (p *fakeCodexMonitorProcess) signaled() bool {
 type fakeCodexMonitorApp struct {
 	process               *fakeCodexMonitorProcess
 	thread                codexThread
-	startThread           func(context.Context, string) (codexThread, error)
 	notificationErr       error
 	notifications         chan codexAppServerNotification
 	notificationDelivered chan struct{}
 	onDiscover            func()
 	onDiscoverBefore      func(map[string]struct{})
 	onResume              func(string)
+	startTurn             func(context.Context, string, string) (codexTurn, error)
 	listThreadsPage       func(context.Context, string, *string) (codexThreadListPage, error)
 }
 
@@ -1227,13 +1163,6 @@ func newFakeCodexMonitorApp() *fakeCodexMonitorApp {
 }
 
 func (a *fakeCodexMonitorApp) Initialize(context.Context) error { return nil }
-
-func (a *fakeCodexMonitorApp) StartThread(ctx context.Context, cwd string) (codexThread, error) {
-	if a.startThread != nil {
-		return a.startThread(ctx, cwd)
-	}
-	return a.thread, nil
-}
 
 func (a *fakeCodexMonitorApp) ListThreads(ctx context.Context, cwd string) ([]codexThread, error) {
 	if a.listThreadsPage == nil {
@@ -1278,7 +1207,10 @@ func (a *fakeCodexMonitorApp) ResumeThread(_ context.Context, threadID string) e
 	return nil
 }
 
-func (a *fakeCodexMonitorApp) StartTurn(context.Context, string, string) (codexTurn, error) {
+func (a *fakeCodexMonitorApp) StartTurn(ctx context.Context, threadID, input string) (codexTurn, error) {
+	if a.startTurn != nil {
+		return a.startTurn(ctx, threadID, input)
+	}
 	return codexTurn{ID: "turn-test"}, nil
 }
 
