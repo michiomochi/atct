@@ -38,7 +38,11 @@ review request、review receive、review reject、human goal review の各 event
 
 Goal 219 の completion decision #613 は 2026-09-02 17:06 に `rejected -> applied` となったが、subcommander monitor には rejection が届かず、ユーザー会話後の poll で初めて認識された。`internal/store/notify.go` の `publishEvent` は容量16の channel に `default` 送信を行うため、遅い/切断中 subscriber の event を捨てる。既存の再接続 snapshot は `/api/inbox` の `unapplied_decisions` だけなので、即時 applied になった completion rejection を回復できない。
 
-resume は snapshot だけで済ませず、scope 内の最近の状態遷移を cursor/sequence で照合する。SSE/watcher は最後に処理した sequence を保持し、再接続時にその cursor より後の project/goal event を取得する。通常配送と再照合は同じ stable event id で重複抑止する。保持期間を越えた cursor は明示的な full scoped reconciliation を要求する。これにより Goal 222 の health persistence を前提にせず、decision rejection と completed-handoff reopen を含む見えない配送欠落を補償する。durable inbox/outbox は将来の置換候補だが、この goal では cursor-backed transition reconciliation を正本にする。
+resume は snapshot だけで済ませず、state transition と同一 transaction で durable event outbox に書かれた scope 内の遷移を cursor/sequence で照合する。outbox は `(project_id, sequence)` を主キーにし、sequence は project 内で単調増加する。stable event ID は `project_id:sequence`、payload は event type・goal_id・task_id・transition data・occurred_at である。post-commit の `publishEvent` は低遅延の最適化であり、outbox の代替ではない。
+
+watcher は durable delivery cursor を `(watcher_key, project_id, goal_id nullable)` で持つ。render が成功した後だけ cursor を進めるため、crash/restart は同じ event を再表示しうる。従って契約は **durable at-least-once delivery** であり、process restart をまたぐ exactly-once ではない。live event と reconnect backfill の重複は、実行中 process の bounded `project_id:sequence` set で抑止する。reconnect は high-watermark までの outbox を cursor から読み、live stream と event ID で merge する。
+
+outbox は project ごとに直近 10,000 event か30日を保持する。cursor が最古 retained sequence より前なら API は `stale_cursor`（HTTP 410 と最古/current sequence）を返す。watcher は current goal/project state、open/review handoff、open/unapplied decisions を出力する full scoped reconciliation を行い、その出力が成功してから cursor を current sequence へ進める。保持範囲内では #613 型の applied decision rejection と completed-handoff reopen の request/receive を必ず backfill する。Goal 222 の health persistence には依存しない。
 
 ### 6. 設定変更は source と approved diff を分ける
 

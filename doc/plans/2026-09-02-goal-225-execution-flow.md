@@ -126,16 +126,17 @@ Run: `go test ./internal/store ./internal/daemon ./internal/httpapi -run 'Test.*
 ## Task 4: Publish and deliver review-state notifications
 
 **Files:**
-- Modify: `internal/store/wakeup.go`, `internal/store/notify.go`, `internal/httpapi/server.go`, `cmd/atct/watch.go`.
-- Test: `internal/httpapi/server_test.go`, `cmd/atct/watch_scope_test.go`, `cmd/atct/*watch*_test.go`, monitor tests covering Codex and Claude delivery.
+- Create: the next SQLite migration for `workflow_event_outbox`, project sequences, and `watch_delivery_cursors`.
+- Modify: `internal/store/wakeup.go`, `internal/store/notify.go`, `internal/store/queries/task.sql`, regenerated sqlc output, `internal/httpapi/server.go`, `cmd/atct/watch.go`.
+- Test: store outbox/cursor tests, `internal/httpapi/server_test.go`, `cmd/atct/watch_scope_test.go`, `cmd/atct/*watch*_test.go`, monitor tests covering Codex and Claude delivery.
 
 **Interfaces:**
 - Consumes Task 1 transition events and Task 3 human goal-review events.
-- Produces one scope-filtered event for each request/receive/reject transition and an exactly-once cursor-based reconciliation stream for missed events.
+- Produces transactionally persisted project-sequenced events and durable at-least-once cursor-based reconciliation; live/backfill duplicates are suppressed only within one watcher process.
 
 - [ ] **Step 1: Write failing SSE/watch tests**
 
-For task review, plan review, and goal review events, assert delivery to only the owning goal/project watch, no delivery to another goal, and one formatted wake-up per persisted transition. Add the measured regression: drop a live `decision.rejected` notification, apply the decision before reconnect, then prove that cursor reconciliation redelivers it once. Add the equivalent completed-handoff reopen case and a stale-cursor full-scope case.
+For task review, plan review, and goal review events, assert outbox write in the same transaction, project sequence and stable `project_id:sequence` ID, and goal/task filtering. Add the measured regression: drop a live `decision.rejected`, apply it before reconnect, then backfill #613 once inside the same watcher process. Add completed-handoff reopen request/receive, live/backfill race ordering, duplicate live+backfill suppression, watcher restart replay (at-least-once), stale cursor 410, and full scoped reconciliation with cursor advance only after rendering.
 
 - [ ] **Step 2: Run focused notification tests**
 
@@ -143,7 +144,7 @@ Run: `go test ./internal/httpapi ./cmd/atct -run 'Test(SSE|Watch|Codex|Claude).*
 
 - [ ] **Step 3: Add event types and formatter/filter branches**
 
-Publish only inside the successful state-change transaction path. Persist or otherwise expose a monotonic transition sequence with stable event identity, and add a cursor query scoped to project/goal. Extend `eventMatchesGoalID`, `eventProjectID`, and `formatWatchDecision` for each new event. On reconnect, merge the cursor result with live delivery by event identity. Do not alter the withdrawal event until its existing publish gate is separately verified, and do not depend on Goal 222 health persistence.
+Add `workflow_event_outbox` and `watch_delivery_cursors` in a migration; retain 10,000 events or 30 days per project. The state-change transaction allocates its project sequence and inserts the outbox row before commit. `publishEvent` remains post-commit low-latency notification only. Add a cursor endpoint/query scoped to project/goal, high-watermark merge with live SSE, bounded in-process ID deduplication, and `stale_cursor` 410 containing oldest/current sequences. Full reconciliation emits current state/open-review handoffs/open decisions, then advances the durable cursor. Extend `eventMatchesGoalID`, `eventProjectID`, and `formatWatchDecision`; do not depend on Goal 222 health persistence.
 
 - [ ] **Step 4: Make focused notification tests pass and commit**
 
