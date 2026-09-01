@@ -28,6 +28,21 @@ type responseWithUnappliedDecisions struct {
 	ClaimableTasks     []claimableTaskSummary          `json:"claimable_tasks,omitempty"`
 }
 
+type claimEvidence struct {
+	Scope          string `json:"scope"`
+	AgentSessionID int64  `json:"agent_session_id"`
+	ProjectID      int64  `json:"project_id,omitempty"`
+	GoalID         int64  `json:"goal_id,omitempty"`
+	TaskID         int64  `json:"task_id,omitempty"`
+	HandoffID      string `json:"handoff_id,omitempty"`
+}
+
+type responseWithRoleEvidence struct {
+	Data          any           `json:"data"`
+	Role          string        `json:"role"`
+	ClaimEvidence claimEvidence `json:"claim_evidence"`
+}
+
 type roleAssignment struct {
 	Role      string
 	ProjectID int64
@@ -470,7 +485,7 @@ func (d *Daemon) normalizeEntityIDs(ctx context.Context, method string, params j
 		}
 		fields[field] = json.RawMessage(strconv.FormatInt(id, 10))
 	}
-	for _, field := range []string{"agent_session_id", "requested_by", "received_by"} {
+	for _, field := range []string{"agent_session_id", "requested_by", "received_by", "reviewer_id"} {
 		raw, ok := fields[field]
 		if !ok {
 			continue
@@ -522,6 +537,264 @@ func optionalEntityID(method, field string) bool {
 	default:
 		return false
 	}
+}
+
+type taskHandoffRequestParams struct {
+	HandoffID     string `json:"handoff_id"`
+	TaskID        int64  `json:"task_id"`
+	RequestedBy   int64  `json:"requested_by"`
+	RequestReport string `json:"request_report"`
+}
+
+type taskHandoffReceiveParams struct {
+	HandoffID  string `json:"handoff_id"`
+	TaskID     int64  `json:"task_id"`
+	ReceivedBy int64  `json:"received_by"`
+}
+
+type taskHandoffReviewRequestParams struct {
+	HandoffID           string `json:"handoff_id"`
+	TaskID              int64  `json:"task_id"`
+	RequestedBy         int64  `json:"requested_by"`
+	ReviewRequestReport string `json:"review_request_report"`
+}
+
+type taskHandoffReviewReceiveParams struct {
+	HandoffID  string `json:"handoff_id"`
+	TaskID     int64  `json:"task_id"`
+	ReceivedBy int64  `json:"received_by"`
+}
+
+type taskHandoffReviewRejectParams struct {
+	HandoffID    string `json:"handoff_id"`
+	TaskID       int64  `json:"task_id"`
+	ReviewerID   int64  `json:"reviewer_id"`
+	RejectReport string `json:"reject_report"`
+}
+
+type taskHandoffCompleteParams struct {
+	HandoffID      string `json:"handoff_id"`
+	TaskID         int64  `json:"task_id"`
+	AgentSessionID int64  `json:"agent_session_id"`
+	CompleteReport string `json:"complete_report"`
+}
+
+type goalHandoffRequestParams struct {
+	HandoffID     string `json:"handoff_id"`
+	GoalID        int64  `json:"goal_id"`
+	RequestedBy   int64  `json:"requested_by"`
+	RequestReport string `json:"request_report"`
+}
+
+type goalHandoffReceiveParams struct {
+	HandoffID  string `json:"handoff_id"`
+	GoalID     int64  `json:"goal_id"`
+	ReceivedBy int64  `json:"received_by"`
+}
+
+type goalHandoffReviewRequestParams struct {
+	HandoffID           string `json:"handoff_id"`
+	GoalID              int64  `json:"goal_id"`
+	RequestedBy         int64  `json:"requested_by"`
+	ReviewRequestReport string `json:"review_request_report"`
+}
+
+type goalHandoffReviewReceiveParams struct {
+	HandoffID  string `json:"handoff_id"`
+	GoalID     int64  `json:"goal_id"`
+	ReceivedBy int64  `json:"received_by"`
+}
+
+type goalHandoffReviewRejectParams struct {
+	HandoffID    string `json:"handoff_id"`
+	GoalID       int64  `json:"goal_id"`
+	ReviewerID   int64  `json:"reviewer_id"`
+	RejectReport string `json:"reject_report"`
+}
+
+type goalHandoffCompleteParams struct {
+	HandoffID      string `json:"handoff_id"`
+	GoalID         int64  `json:"goal_id"`
+	AgentSessionID int64  `json:"agent_session_id"`
+	CompleteReport string `json:"complete_report"`
+}
+
+type planHandoffReviewRequestParams struct {
+	HandoffID           string `json:"handoff_id"`
+	GoalID              int64  `json:"goal_id"`
+	RequestedBy         int64  `json:"requested_by"`
+	ReviewRequestReport string `json:"review_request_report"`
+}
+
+type planHandoffReviewReceiveParams struct {
+	HandoffID  string `json:"handoff_id"`
+	GoalID     int64  `json:"goal_id"`
+	ReceivedBy int64  `json:"received_by"`
+}
+
+type planHandoffReviewRejectParams struct {
+	HandoffID    string `json:"handoff_id"`
+	GoalID       int64  `json:"goal_id"`
+	ReviewerID   int64  `json:"reviewer_id"`
+	RejectReport string `json:"reject_report"`
+}
+
+type planHandoffCompleteParams struct {
+	HandoffID      string `json:"handoff_id"`
+	GoalID         int64  `json:"goal_id"`
+	AgentSessionID int64  `json:"agent_session_id"`
+	CompleteReport string `json:"complete_report"`
+}
+
+func (d *Daemon) receiveRoleEvidence(ctx context.Context, agentSessionID, projectID, goalID, taskID int64, handoffID string) (string, claimEvidence, error) {
+	if taskID != 0 && goalID == 0 {
+		var err error
+		goalID, err = d.store.GetTaskGoalID(ctx, taskID)
+		if err != nil {
+			return "", claimEvidence{}, err
+		}
+	}
+	if goalID != 0 && projectID == 0 {
+		goal, err := d.store.GetGoal(ctx, goalID)
+		if err != nil {
+			return "", claimEvidence{}, err
+		}
+		projectID = goal.ProjectID
+	}
+	evidence := claimEvidence{
+		AgentSessionID: agentSessionID,
+		ProjectID:      projectID,
+		GoalID:         goalID,
+		TaskID:         taskID,
+		HandoffID:      handoffID,
+	}
+
+	if agentSessionID != 0 {
+		projects, err := d.store.ListProjects(ctx)
+		if err != nil {
+			return "", claimEvidence{}, err
+		}
+		for _, project := range projects {
+			if project.ID == projectID && project.ClaimedBy == agentSessionID {
+				evidence.Scope = "project"
+				return "commander", evidence, nil
+			}
+		}
+
+		goalHandoffs, err := d.store.ListOpenGoalHandoffs(ctx)
+		if err != nil {
+			return "", claimEvidence{}, err
+		}
+		if handoff := goalHandoffs[goalID]; handoff != nil && handoff.ReceivedAt != nil && handoff.ReceivedBy == agentSessionID {
+			evidence.Scope = "goal"
+			return "subcommander", evidence, nil
+		}
+
+		if taskID != 0 {
+			taskHandoffs, err := d.store.ListTaskHandoffs(ctx, taskID)
+			if err != nil {
+				return "", claimEvidence{}, err
+			}
+			for _, handoff := range taskHandoffs {
+				if handoff.ReceivedAt != nil && handoff.CompletedReportAt == nil && handoff.ReceivedBy == agentSessionID {
+					evidence.Scope = "task"
+					return "executor", evidence, nil
+				}
+			}
+		}
+	}
+
+	switch {
+	case taskID != 0:
+		evidence.Scope = "task"
+		return "executor", evidence, nil
+	case goalID != 0:
+		evidence.Scope = "goal"
+		return "subcommander", evidence, nil
+	default:
+		evidence.Scope = "project"
+		return "commander", evidence, nil
+	}
+}
+
+func (d *Daemon) requestTaskHandoff(ctx context.Context, p taskHandoffRequestParams) (store.TaskHandoff, error) {
+	return d.store.RequestTaskHandoff(ctx, p.HandoffID, p.TaskID, p.RequestedBy, p.RequestReport)
+}
+
+func (d *Daemon) receiveTaskHandoff(ctx context.Context, p taskHandoffReceiveParams) (store.TaskHandoff, error) {
+	if p.HandoffID == "" {
+		return d.store.ReceiveTaskHandoffForTask(ctx, p.TaskID, p.ReceivedBy)
+	}
+	return d.store.ReceiveTaskHandoff(ctx, p.HandoffID, p.TaskID, p.ReceivedBy)
+}
+
+func (d *Daemon) receiveTaskHandoffResponse(ctx context.Context, p taskHandoffReceiveParams, handoff store.TaskHandoff) (responseWithRoleEvidence, error) {
+	role, evidence, err := d.receiveRoleEvidence(ctx, p.ReceivedBy, 0, 0, handoff.TaskID, handoff.ID)
+	if err != nil {
+		return responseWithRoleEvidence{}, err
+	}
+	return responseWithRoleEvidence{Data: handoff, Role: role, ClaimEvidence: evidence}, nil
+}
+
+func (d *Daemon) completeTaskHandoff(ctx context.Context, p taskHandoffCompleteParams) (store.TaskHandoff, error) {
+	if p.AgentSessionID != 0 {
+		if p.HandoffID == "" {
+			return store.TaskHandoff{}, fmt.Errorf("task handoff completion by reviewer requires handoff_id")
+		}
+		return d.store.CompleteTaskHandoffByReviewer(ctx, p.HandoffID, p.TaskID, p.AgentSessionID, p.CompleteReport)
+	}
+	if p.HandoffID == "" {
+		return d.store.CompleteTaskHandoffForTask(ctx, p.TaskID, p.CompleteReport)
+	}
+	return d.store.CompleteTaskHandoff(ctx, p.HandoffID, p.TaskID, p.CompleteReport)
+}
+
+func (d *Daemon) requestGoalHandoff(ctx context.Context, p goalHandoffRequestParams) (store.GoalHandoff, error) {
+	return d.store.RequestGoalHandoff(ctx, p.HandoffID, p.GoalID, p.RequestedBy, p.RequestReport)
+}
+
+func (d *Daemon) receiveGoalHandoff(ctx context.Context, p goalHandoffReceiveParams) (store.GoalHandoff, error) {
+	if p.HandoffID == "" {
+		return d.store.ReceiveGoalHandoffForGoal(ctx, p.GoalID, p.ReceivedBy)
+	}
+	return d.store.ReceiveGoalHandoff(ctx, p.HandoffID, p.GoalID, p.ReceivedBy)
+}
+
+func (d *Daemon) receiveGoalHandoffResponse(ctx context.Context, p goalHandoffReceiveParams, handoff store.GoalHandoff) (responseWithRoleEvidence, error) {
+	role, evidence, err := d.receiveRoleEvidence(ctx, p.ReceivedBy, 0, handoff.GoalID, 0, handoff.ID)
+	if err != nil {
+		return responseWithRoleEvidence{}, err
+	}
+	return responseWithRoleEvidence{Data: handoff, Role: role, ClaimEvidence: evidence}, nil
+}
+
+func (d *Daemon) completeGoalHandoff(ctx context.Context, p goalHandoffCompleteParams) (store.GoalHandoff, error) {
+	if p.AgentSessionID != 0 {
+		if p.HandoffID == "" {
+			return store.GoalHandoff{}, fmt.Errorf("goal handoff completion by reviewer requires handoff_id")
+		}
+		return d.store.CompleteGoalHandoffByReviewer(ctx, p.HandoffID, p.GoalID, p.AgentSessionID, p.CompleteReport)
+	}
+	if p.HandoffID == "" {
+		return d.store.CompleteGoalHandoffForGoal(ctx, p.GoalID, p.CompleteReport)
+	}
+	return d.store.CompleteGoalHandoff(ctx, p.HandoffID, p.GoalID, p.CompleteReport)
+}
+
+func (d *Daemon) receiveGoalReviewResponse(ctx context.Context, p goalHandoffReviewReceiveParams, handoff store.GoalHandoff) (responseWithRoleEvidence, error) {
+	role, evidence, err := d.receiveRoleEvidence(ctx, p.ReceivedBy, 0, handoff.GoalID, 0, handoff.ID)
+	if err != nil {
+		return responseWithRoleEvidence{}, err
+	}
+	return responseWithRoleEvidence{Data: handoff, Role: role, ClaimEvidence: evidence}, nil
+}
+
+func (d *Daemon) receivePlanReviewResponse(ctx context.Context, p planHandoffReviewReceiveParams, handoff store.PlanHandoff) (responseWithRoleEvidence, error) {
+	role, evidence, err := d.receiveRoleEvidence(ctx, p.ReceivedBy, 0, handoff.GoalID, 0, handoff.ID)
+	if err != nil {
+		return responseWithRoleEvidence{}, err
+	}
+	return responseWithRoleEvidence{Data: handoff, Role: role, ClaimEvidence: evidence}, nil
 }
 
 func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage, error) {
@@ -1077,53 +1350,71 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		tk, err := d.store.ReleaseTaskAs(ctx, p.TaskID, p.AgentSessionID)
 		return marshal(tk, err)
 
-	case "handoff.request":
-		var p struct {
-			HandoffID     string `json:"handoff_id"`
-			TaskID        int64  `json:"task_id"`
-			RequestedBy   int64  `json:"requested_by"`
-			RequestReport string `json:"request_report"`
-		}
+	case "task.handoff.request", "handoff.request":
+		var p taskHandoffRequestParams
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, err
 		}
-		handoff, err := d.store.RequestTaskHandoff(ctx, p.HandoffID, p.TaskID, p.RequestedBy, p.RequestReport)
+		handoff, err := d.requestTaskHandoff(ctx, p)
 		return marshal(handoff, err)
+
+	case "task.handoff.receive":
+		var p taskHandoffReceiveParams
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		handoff, err := d.receiveTaskHandoff(ctx, p)
+		if err != nil {
+			return nil, err
+		}
+		response, err := d.receiveTaskHandoffResponse(ctx, p, handoff)
+		return marshal(response, err)
 
 	case "handoff.receive":
-		var p struct {
-			HandoffID  string `json:"handoff_id"`
-			TaskID     int64  `json:"task_id"`
-			ReceivedBy int64  `json:"received_by"`
-		}
+		var p taskHandoffReceiveParams
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, err
 		}
-		var handoff store.TaskHandoff
-		var err error
-		if p.HandoffID == "" {
-			handoff, err = d.store.ReceiveTaskHandoffForTask(ctx, p.TaskID, p.ReceivedBy)
-		} else {
-			handoff, err = d.store.ReceiveTaskHandoff(ctx, p.HandoffID, p.TaskID, p.ReceivedBy)
-		}
+		handoff, err := d.receiveTaskHandoff(ctx, p)
 		return marshal(handoff, err)
 
-	case "handoff.complete":
-		var p struct {
-			HandoffID      string `json:"handoff_id"`
-			TaskID         int64  `json:"task_id"`
-			CompleteReport string `json:"complete_report"`
-		}
+	case "task.handoff.review.request":
+		var p taskHandoffReviewRequestParams
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, err
 		}
-		var handoff store.TaskHandoff
-		var err error
-		if p.HandoffID == "" {
-			handoff, err = d.store.CompleteTaskHandoffForTask(ctx, p.TaskID, p.CompleteReport)
-		} else {
-			handoff, err = d.store.CompleteTaskHandoff(ctx, p.HandoffID, p.TaskID, p.CompleteReport)
+		handoff, err := d.store.RequestTaskHandoffReview(ctx, p.HandoffID, p.TaskID, p.RequestedBy, p.ReviewRequestReport)
+		return marshal(handoff, err)
+
+	case "task.handoff.review.receive":
+		var p taskHandoffReviewReceiveParams
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
 		}
+		handoff, err := d.store.ReceiveTaskHandoffReview(ctx, p.HandoffID, p.TaskID, p.ReceivedBy)
+		if err != nil {
+			return nil, err
+		}
+		role, evidence, err := d.receiveRoleEvidence(ctx, p.ReceivedBy, 0, 0, handoff.TaskID, handoff.ID)
+		if err != nil {
+			return nil, err
+		}
+		return marshal(responseWithRoleEvidence{Data: handoff, Role: role, ClaimEvidence: evidence}, nil)
+
+	case "task.handoff.review.reject":
+		var p taskHandoffReviewRejectParams
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		handoff, err := d.store.RejectTaskHandoffReview(ctx, p.HandoffID, p.TaskID, p.ReviewerID, p.RejectReport)
+		return marshal(handoff, err)
+
+	case "task.handoff.complete", "handoff.complete":
+		var p taskHandoffCompleteParams
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		handoff, err := d.completeTaskHandoff(ctx, p)
 		return marshal(handoff, err)
 
 	case "handoff.report.amend":
@@ -1174,52 +1465,59 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		return marshal(nil, nil)
 
 	case "goal.handoff.request":
-		var p struct {
-			HandoffID     string `json:"handoff_id"`
-			GoalID        int64  `json:"goal_id"`
-			RequestedBy   int64  `json:"requested_by"`
-			RequestReport string `json:"request_report"`
-		}
+		var p goalHandoffRequestParams
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, err
 		}
-		handoff, err := d.store.RequestGoalHandoff(ctx, p.HandoffID, p.GoalID, p.RequestedBy, p.RequestReport)
+		handoff, err := d.requestGoalHandoff(ctx, p)
 		return marshal(handoff, err)
 
 	case "goal.handoff.receive":
-		var p struct {
-			HandoffID  string `json:"handoff_id"`
-			GoalID     int64  `json:"goal_id"`
-			ReceivedBy int64  `json:"received_by"`
-		}
+		var p goalHandoffReceiveParams
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, err
 		}
-		var handoff store.GoalHandoff
-		var err error
-		if p.HandoffID == "" {
-			handoff, err = d.store.ReceiveGoalHandoffForGoal(ctx, p.GoalID, p.ReceivedBy)
-		} else {
-			handoff, err = d.store.ReceiveGoalHandoff(ctx, p.HandoffID, p.GoalID, p.ReceivedBy)
+		handoff, err := d.receiveGoalHandoff(ctx, p)
+		if err != nil {
+			return nil, err
 		}
+		response, err := d.receiveGoalHandoffResponse(ctx, p, handoff)
+		return marshal(response, err)
+
+	case "goal.handoff.review.request":
+		var p goalHandoffReviewRequestParams
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		handoff, err := d.store.RequestGoalHandoffReview(ctx, p.HandoffID, p.GoalID, p.RequestedBy, p.ReviewRequestReport)
+		return marshal(handoff, err)
+
+	case "goal.handoff.review.receive":
+		var p goalHandoffReviewReceiveParams
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		handoff, err := d.store.ReceiveGoalHandoffReview(ctx, p.HandoffID, p.GoalID, p.ReceivedBy)
+		if err != nil {
+			return nil, err
+		}
+		response, err := d.receiveGoalReviewResponse(ctx, p, handoff)
+		return marshal(response, err)
+
+	case "goal.handoff.review.reject":
+		var p goalHandoffReviewRejectParams
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		handoff, err := d.store.RejectGoalHandoffReview(ctx, p.HandoffID, p.GoalID, p.ReviewerID, p.RejectReport)
 		return marshal(handoff, err)
 
 	case "goal.handoff.complete":
-		var p struct {
-			HandoffID      string `json:"handoff_id"`
-			GoalID         int64  `json:"goal_id"`
-			CompleteReport string `json:"complete_report"`
-		}
+		var p goalHandoffCompleteParams
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, err
 		}
-		var handoff store.GoalHandoff
-		var err error
-		if p.HandoffID == "" {
-			handoff, err = d.store.CompleteGoalHandoffForGoal(ctx, p.GoalID, p.CompleteReport)
-		} else {
-			handoff, err = d.store.CompleteGoalHandoff(ctx, p.HandoffID, p.GoalID, p.CompleteReport)
-		}
+		handoff, err := d.completeGoalHandoff(ctx, p)
 		return marshal(handoff, err)
 
 	case "goal.handoff.report.amend":
@@ -1232,6 +1530,45 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 			return nil, err
 		}
 		handoff, err := d.store.AmendGoalHandoffReport(ctx, p.HandoffID, p.GoalID, p.CompleteReport)
+		return marshal(handoff, err)
+
+	case "plan.handoff.review.request":
+		var p planHandoffReviewRequestParams
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		handoff, err := d.store.RequestPlanHandoffReview(ctx, p.HandoffID, p.GoalID, p.RequestedBy, p.ReviewRequestReport)
+		return marshal(handoff, err)
+
+	case "plan.handoff.review.receive":
+		var p planHandoffReviewReceiveParams
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		handoff, err := d.store.ReceivePlanHandoffReview(ctx, p.HandoffID, p.GoalID, p.ReceivedBy)
+		if err != nil {
+			return nil, err
+		}
+		response, err := d.receivePlanReviewResponse(ctx, p, handoff)
+		return marshal(response, err)
+
+	case "plan.handoff.review.reject":
+		var p planHandoffReviewRejectParams
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		handoff, err := d.store.RejectPlanHandoffReview(ctx, p.HandoffID, p.GoalID, p.ReviewerID, p.RejectReport)
+		return marshal(handoff, err)
+
+	case "plan.handoff.complete":
+		var p planHandoffCompleteParams
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		if p.AgentSessionID == 0 {
+			return nil, fmt.Errorf("plan handoff completion requires agent_session_id")
+		}
+		handoff, err := d.store.CompletePlanHandoff(ctx, p.HandoffID, p.GoalID, p.AgentSessionID, p.CompleteReport)
 		return marshal(handoff, err)
 
 	case "decision.ask":

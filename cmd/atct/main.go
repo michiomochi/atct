@@ -830,7 +830,7 @@ func runHandoff(config cliConfig, dir, exePath string) error {
 
 	client := mcpshim.NewClient(reg.SocketPath)
 	var handoff store.TaskHandoff
-	if err := client.Call(context.Background(), "handoff.complete", map[string]string{
+	if err := client.Call(context.Background(), "task.handoff.complete", map[string]string{
 		"handoff_id": config.handoffID,
 		"task_id":    config.handoffTaskID,
 	}, &handoff); err != nil {

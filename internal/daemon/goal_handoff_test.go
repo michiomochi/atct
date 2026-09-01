@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net"
 	"os"
@@ -187,14 +188,18 @@ func TestGoalHandoffRoutesOverRPC(t *testing.T) {
 		t.Fatalf("requested handoff = %#v, want goal, timestamp, requester, and report", requested)
 	}
 
-	var received store.GoalHandoff
+	var received handoffReceiveResponse
 	if err := client.Call(ctx, "goal.handoff.receive", map[string]any{
 		"goal_id": fixture.claimedGoalID, "received_by": fixture.receiverID,
 	}, &received); err != nil {
 		t.Fatalf("goal.handoff.receive by goal_id: %v", err)
 	}
-	if received.ID != requested.ID || received.ReceivedAt == nil || received.ReceivedBy != fixture.receiverID {
-		t.Fatalf("received handoff = %#v, want request ID, timestamp, and receiver", received)
+	var receivedData store.GoalHandoff
+	if err := json.Unmarshal(received.Data, &receivedData); err != nil {
+		t.Fatalf("decode goal.handoff.receive data: %v", err)
+	}
+	if receivedData.ID != requested.ID || receivedData.ReceivedAt == nil || receivedData.ReceivedBy != fixture.receiverID {
+		t.Fatalf("received handoff = %#v, want request ID, timestamp, and receiver", receivedData)
 	}
 
 	var completed store.GoalHandoff
@@ -267,7 +272,7 @@ func prepareCompletedGoalHandoffCompletion(t *testing.T, fixture goalHandoffRPCT
 		t.Fatalf("goal.handoff.request: %v", err)
 	}
 
-	var received store.GoalHandoff
+	var received handoffReceiveResponse
 	if err := client.Call(ctx, "goal.handoff.receive", map[string]any{
 		"handoff_id": requested.ID, "goal_id": fixture.claimedGoalID, "received_by": fixture.receiverID,
 	}, &received); err != nil {
@@ -309,7 +314,7 @@ func TestGoalHandoffCompleteByGoalOverRPC(t *testing.T) {
 	}, &requested); err != nil {
 		t.Fatalf("goal.handoff.request: %v", err)
 	}
-	var received store.GoalHandoff
+	var received handoffReceiveResponse
 	if err := client.Call(ctx, "goal.handoff.receive", map[string]any{
 		"handoff_id": requested.ID, "goal_id": fixture.claimedGoalID, "received_by": fixture.receiverID,
 	}, &received); err != nil {
@@ -371,7 +376,7 @@ func TestGoalHandoffReceiveOverRPCRejectsAmbiguousPendingRequests(t *testing.T) 
 	}
 	addGoalHandoffDirect(t, fixture.store, "rpc-goal-ambiguous-2", fixture.claimedGoalID, fixture.requesterID, 0)
 
-	var received store.GoalHandoff
+	var received handoffReceiveResponse
 	err := client.Call(ctx, "goal.handoff.receive", map[string]any{
 		"goal_id": fixture.claimedGoalID, "received_by": fixture.receiverID,
 	}, &received)
@@ -380,5 +385,94 @@ func TestGoalHandoffReceiveOverRPCRejectsAmbiguousPendingRequests(t *testing.T) 
 	}
 	if !strings.Contains(err.Error(), store.ErrGoalHandoffAmbiguous.Error()) {
 		t.Fatalf("ambiguous goal handoff receive error = %v, want %v", err, store.ErrGoalHandoffAmbiguous)
+	}
+}
+
+func TestNamedGoalAndPlanHandoffReviewRoutesReturnRoleEvidence(t *testing.T) {
+	fixture := newGoalHandoffRPCTestFixture(t)
+	client := mcpshim.NewClient(fixture.socketPath)
+	ctx := context.Background()
+
+	const goalHandoffID = "named-goal-review"
+	var requested store.GoalHandoff
+	if err := client.Call(ctx, "goal.handoff.request", map[string]any{
+		"handoff_id": goalHandoffID, "goal_id": fixture.claimedGoalID, "requested_by": fixture.requesterID,
+		"request_report": "named goal request report",
+	}, &requested); err != nil {
+		t.Fatalf("goal.handoff.request: %v", err)
+	}
+	var received handoffReceiveResponse
+	if err := client.Call(ctx, "goal.handoff.receive", map[string]any{
+		"handoff_id": goalHandoffID, "goal_id": fixture.claimedGoalID, "received_by": fixture.receiverID,
+	}, &received); err != nil {
+		t.Fatalf("goal.handoff.receive: %v", err)
+	}
+	if received.Role != "subcommander" || received.ClaimEvidence.Scope != "goal" || received.ClaimEvidence.GoalID != fixture.claimedGoalID || received.ClaimEvidence.HandoffID != goalHandoffID || received.ClaimEvidence.AgentSessionID != fixture.receiverID {
+		t.Fatalf("goal receive role/evidence = %+v, want subcommander goal evidence", received)
+	}
+
+	var goalReviewRequested store.GoalHandoff
+	if err := client.Call(ctx, "goal.handoff.review.request", map[string]any{
+		"handoff_id": goalHandoffID, "goal_id": fixture.claimedGoalID, "requested_by": fixture.receiverID,
+		"review_request_report": "named goal review report",
+	}, &goalReviewRequested); err != nil {
+		t.Fatalf("goal.handoff.review.request: %v", err)
+	}
+	if goalReviewRequested.ReviewRequestedBy != fixture.receiverID || goalReviewRequested.ReviewRequestedAt == nil {
+		t.Fatalf("goal review request = %#v, want review request metadata", goalReviewRequested)
+	}
+
+	var goalReviewReceived handoffReceiveResponse
+	if err := client.Call(ctx, "goal.handoff.review.receive", map[string]any{
+		"handoff_id": goalHandoffID, "goal_id": fixture.claimedGoalID, "received_by": fixture.requesterID,
+	}, &goalReviewReceived); err != nil {
+		t.Fatalf("goal.handoff.review.receive: %v", err)
+	}
+	if goalReviewReceived.Role != "commander" || goalReviewReceived.ClaimEvidence.Scope != "project" || goalReviewReceived.ClaimEvidence.HandoffID != goalHandoffID {
+		t.Fatalf("goal review receive role/evidence = %+v, want commander project evidence", goalReviewReceived)
+	}
+
+	const planHandoffID = "named-plan-review"
+	var planRequested store.PlanHandoff
+	if err := client.Call(ctx, "plan.handoff.review.request", map[string]any{
+		"handoff_id": planHandoffID, "goal_id": fixture.claimedGoalID, "requested_by": fixture.receiverID,
+		"review_request_report": "named plan review report",
+	}, &planRequested); err != nil {
+		t.Fatalf("plan.handoff.review.request: %v", err)
+	}
+	if planRequested.ID != planHandoffID || planRequested.GoalID != fixture.claimedGoalID || planRequested.ReviewRequestedBy != fixture.receiverID {
+		t.Fatalf("plan handoff = %#v, want goal-only review handoff", planRequested)
+	}
+
+	var planReviewReceived handoffReceiveResponse
+	if err := client.Call(ctx, "plan.handoff.review.receive", map[string]any{
+		"handoff_id": planHandoffID, "goal_id": fixture.claimedGoalID, "received_by": fixture.requesterID,
+	}, &planReviewReceived); err != nil {
+		t.Fatalf("plan.handoff.review.receive: %v", err)
+	}
+	if planReviewReceived.Role != "commander" || planReviewReceived.ClaimEvidence.Scope != "project" || planReviewReceived.ClaimEvidence.GoalID != fixture.claimedGoalID || planReviewReceived.ClaimEvidence.TaskID != 0 || planReviewReceived.ClaimEvidence.HandoffID != planHandoffID {
+		t.Fatalf("plan review receive role/evidence = %+v, want commander goal-only evidence", planReviewReceived)
+	}
+
+	var planCompleted store.PlanHandoff
+	if err := client.Call(ctx, "plan.handoff.complete", map[string]any{
+		"handoff_id": planHandoffID, "goal_id": fixture.claimedGoalID, "agent_session_id": fixture.requesterID,
+		"complete_report": "named plan completion report",
+	}, &planCompleted); err != nil {
+		t.Fatalf("plan.handoff.complete: %v", err)
+	}
+	if planCompleted.CompletedReportAt == nil || planCompleted.CompleteReport != "named plan completion report" {
+		t.Fatalf("completed plan handoff = %#v, want reviewer completion", planCompleted)
+	}
+
+	var goalCompleted store.GoalHandoff
+	if err := client.Call(ctx, "goal.handoff.complete", map[string]any{
+		"handoff_id": goalHandoffID, "goal_id": fixture.claimedGoalID, "agent_session_id": fixture.requesterID,
+		"complete_report": "named goal completion report",
+	}, &goalCompleted); err != nil {
+		t.Fatalf("goal.handoff.complete: %v", err)
+	}
+	if goalCompleted.CompletedReportAt == nil || goalCompleted.CompleteReport != "named goal completion report" {
+		t.Fatalf("completed goal handoff = %#v, want reviewer completion", goalCompleted)
 	}
 }
