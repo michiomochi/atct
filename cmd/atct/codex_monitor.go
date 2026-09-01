@@ -445,6 +445,11 @@ type codexThreadListResult struct {
 	NextCursor *string       `json:"nextCursor"`
 }
 
+type codexThreadListPage struct {
+	Threads    []codexThread
+	NextCursor *string
+}
+
 func (r *codexThreadListResult) UnmarshalJSON(data []byte) error {
 	type plain codexThreadListResult
 	var decoded plain
@@ -464,34 +469,42 @@ func (r *codexThreadListResult) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-func (c *codexAppServer) ListThreads(ctx context.Context, cwd string) ([]codexThread, error) {
+func (c *codexAppServer) ListThreadsPage(ctx context.Context, cwd string, cursor *string) (codexThreadListPage, error) {
 	exactCWD, err := codexExactCWD(cwd)
 	if err != nil {
-		return nil, err
+		return codexThreadListPage{}, err
 	}
+	params := map[string]any{
+		"cwd":         []string{exactCWD},
+		"sourceKinds": []string{"cli"},
+	}
+	if cursor != nil {
+		params["cursor"] = *cursor
+	}
+	var result codexThreadListResult
+	if err := c.call(ctx, "thread/list", params, &result); err != nil {
+		return codexThreadListPage{}, err
+	}
+	threads := result.Data
+	if threads == nil {
+		threads = result.Threads
+	}
+	return codexThreadListPage{Threads: threads, NextCursor: result.NextCursor}, nil
+}
+
+func (c *codexAppServer) ListThreads(ctx context.Context, cwd string) ([]codexThread, error) {
 	var all []codexThread
 	var cursor *string
 	for {
-		params := map[string]any{
-			"cwd":         []string{exactCWD},
-			"sourceKinds": []string{"cli"},
-		}
-		if cursor != nil {
-			params["cursor"] = *cursor
-		}
-		var result codexThreadListResult
-		if err := c.call(ctx, "thread/list", params, &result); err != nil {
+		page, err := c.ListThreadsPage(ctx, cwd, cursor)
+		if err != nil {
 			return nil, err
 		}
-		threads := result.Data
-		if threads == nil {
-			threads = result.Threads
-		}
-		all = append(all, threads...)
-		if result.NextCursor == nil || strings.TrimSpace(*result.NextCursor) == "" {
+		all = append(all, page.Threads...)
+		if page.NextCursor == nil || strings.TrimSpace(*page.NextCursor) == "" {
 			return all, nil
 		}
-		cursor = result.NextCursor
+		cursor = page.NextCursor
 	}
 }
 
@@ -562,6 +575,23 @@ func (c *codexAppServer) DiscoverThread(ctx context.Context, cwd string, before 
 	}
 }
 
+func (c *codexAppServer) StartThread(ctx context.Context, cwd string) (codexThread, error) {
+	exactCWD, err := codexExactCWD(cwd)
+	if err != nil {
+		return codexThread{}, err
+	}
+	var result struct {
+		Thread codexThread `json:"thread"`
+	}
+	if err := c.call(ctx, "thread/start", map[string]string{"cwd": exactCWD}, &result); err != nil {
+		return codexThread{}, err
+	}
+	if strings.TrimSpace(result.Thread.ID) == "" {
+		return codexThread{}, errors.New("thread/start response has no thread ID")
+	}
+	return result.Thread, nil
+}
+
 func (c *codexAppServer) ResumeThread(ctx context.Context, threadID string) error {
 	if strings.TrimSpace(threadID) == "" {
 		return errors.New("Codex thread ID is empty")
@@ -621,12 +651,17 @@ type codexTurnStarter interface {
 type codexMonitorApp interface {
 	codexTurnStarter
 	Initialize(context.Context) error
+	StartThread(context.Context, string) (codexThread, error)
 	ListThreads(context.Context, string) ([]codexThread, error)
 	DiscoverThread(context.Context, string, map[string]struct{}, time.Duration, time.Duration) (codexThread, error)
 	ResumeThread(context.Context, string) error
 	NextNotification(context.Context) (codexAppServerNotification, error)
 	Close() error
 	Err() error
+}
+
+type codexThreadPager interface {
+	ListThreadsPage(context.Context, string, *string) (codexThreadListPage, error)
 }
 
 type codexMonitorBridge struct {
@@ -800,6 +835,9 @@ func isCodexMonitorActionLine(line string) bool {
 }
 
 func (b *codexMonitorBridge) HandleNotification(ctx context.Context, notification codexAppServerNotification) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	var params struct {
 		ThreadID string    `json:"threadId"`
 		Turn     codexTurn `json:"turn"`
