@@ -126,16 +126,16 @@ Run: `go test ./internal/store ./internal/daemon ./internal/httpapi -run 'Test.*
 ## Task 4: Publish and deliver review-state notifications
 
 **Files:**
-- Modify: `internal/store/wakeup.go`, `internal/httpapi/server.go`, `cmd/atct/watch.go`.
+- Modify: `internal/store/wakeup.go`, `internal/store/notify.go`, `internal/httpapi/server.go`, `cmd/atct/watch.go`.
 - Test: `internal/httpapi/server_test.go`, `cmd/atct/watch_scope_test.go`, `cmd/atct/*watch*_test.go`, monitor tests covering Codex and Claude delivery.
 
 **Interfaces:**
 - Consumes Task 1 transition events and Task 3 human goal-review events.
-- Produces one scope-filtered event for each request/receive/reject transition.
+- Produces one scope-filtered event for each request/receive/reject transition and an exactly-once cursor-based reconciliation stream for missed events.
 
 - [ ] **Step 1: Write failing SSE/watch tests**
 
-For task review, plan review, and goal review events, assert delivery to only the owning goal/project watch, no delivery to another goal, and one formatted wake-up per persisted transition.
+For task review, plan review, and goal review events, assert delivery to only the owning goal/project watch, no delivery to another goal, and one formatted wake-up per persisted transition. Add the measured regression: drop a live `decision.rejected` notification, apply the decision before reconnect, then prove that cursor reconciliation redelivers it once. Add the equivalent completed-handoff reopen case and a stale-cursor full-scope case.
 
 - [ ] **Step 2: Run focused notification tests**
 
@@ -143,7 +143,7 @@ Run: `go test ./internal/httpapi ./cmd/atct -run 'Test(SSE|Watch|Codex|Claude).*
 
 - [ ] **Step 3: Add event types and formatter/filter branches**
 
-Publish only inside the successful state-change transaction path. Extend `eventMatchesGoalID`, `eventProjectID`, and `formatWatchDecision` for each new event; do not alter the withdrawal event until its existing publish gate is separately verified.
+Publish only inside the successful state-change transaction path. Persist or otherwise expose a monotonic transition sequence with stable event identity, and add a cursor query scoped to project/goal. Extend `eventMatchesGoalID`, `eventProjectID`, and `formatWatchDecision` for each new event. On reconnect, merge the cursor result with live delivery by event identity. Do not alter the withdrawal event until its existing publish gate is separately verified, and do not depend on Goal 222 health persistence.
 
 - [ ] **Step 4: Make focused notification tests pass and commit**
 

@@ -36,6 +36,10 @@ task の外部 API は `task.handoff.*` / `atct_task_handoff_*` とする。gene
 
 review request、review receive、review reject、human goal review の各 event は state transition transaction が publish する。SSE filter、`atct watch`、Codex/Claude monitor は goal / project scope を保った同じ event を配送する。receiver は重複を作らず、通知で起きた role が該当 handoff を受理して次へ進む。
 
+Goal 219 の completion decision #613 は 2026-09-02 17:06 に `rejected -> applied` となったが、subcommander monitor には rejection が届かず、ユーザー会話後の poll で初めて認識された。`internal/store/notify.go` の `publishEvent` は容量16の channel に `default` 送信を行うため、遅い/切断中 subscriber の event を捨てる。既存の再接続 snapshot は `/api/inbox` の `unapplied_decisions` だけなので、即時 applied になった completion rejection を回復できない。
+
+resume は snapshot だけで済ませず、scope 内の最近の状態遷移を cursor/sequence で照合する。SSE/watcher は最後に処理した sequence を保持し、再接続時にその cursor より後の project/goal event を取得する。通常配送と再照合は同じ stable event id で重複抑止する。保持期間を越えた cursor は明示的な full scoped reconciliation を要求する。これにより Goal 222 の health persistence を前提にせず、decision rejection と completed-handoff reopen を含む見えない配送欠落を補償する。durable inbox/outbox は将来の置換候補だが、この goal では cursor-backed transition reconciliation を正本にする。
+
 ### 6. 設定変更は source と approved diff を分ける
 
 ATCT / orchestration の手順変更は管理 source を編集する。chezmoi 管理である場合は `chezmoi diff` を提示して明示承認を待つ。承認前に `chezmoi apply` は呼ばない。実装 task はこの境界を越えない。
@@ -44,7 +48,7 @@ ATCT / orchestration の手順変更は管理 source を編集する。chezmoi �
 
 1. migration と store state machine: plan/review records、status transaction、claim/authorization。
 2. daemon / MCP / CLI contract: named APIs、receive response、commander-only completion、compatibility aliases。
-3. events / watch / monitors: publish、scope filters、wake-up and lifecycle delivery。
+3. events / watch / monitors: publish、scope filters、wake-up、cursor-backed reconciliation、重複抑止。
 4. skills / wrapper contracts: worker reuse conditions、role-specific review flow、approved-diff-only chezmoi operation。
 5. end-to-end regression: commander → subcommander → executor、reject/retry、human approval/rejection、worker reuse/new-worker conditions。
 
@@ -54,7 +58,7 @@ Units 1 and 2 are serial. Unit 3 starts after event types are fixed by unit 1. U
 
 - Store and daemon tests prove every allowed transition, reject invalid ordering, and preserve a received handoff on review reject.
 - MCP/schema and CLI tests prove the named task / goal / plan review contracts and receive role payload.
-- SSE, watch, and both monitor paths deliver only the intended goal/project notifications.
+- SSE, watch, and both monitor paths deliver only the intended goal/project notifications; reconnect reconciliation recovers a dropped decision rejection or completed-handoff reopen exactly once.
 - End-to-end tests prove that a free executor receives a later unassigned task without a new pane, while documented isolation/context/topic conditions create a new one.
 - Role and completion tests prove commander alone closes goal review and writes the final six-part goal report.
 - Skills and wrapper tests agree with the implementation; any chezmoi source change has a reviewed diff and no apply occurs before explicit approval.
