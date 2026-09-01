@@ -81,6 +81,9 @@ func runCodexMonitorWithDeps(config cliConfig, dir string, deps codexMonitorDeps
 	if config.codexMonitorAction != "monitor" {
 		return 1, fmt.Errorf("unsupported Codex monitor action %q", config.codexMonitorAction)
 	}
+	if config.codexMonitorExplicit && len(args) > 0 && args[0] == "resume" {
+		return 1, errors.New("explicit Codex monitor does not accept leading resume arguments")
+	}
 	if !config.codexMonitorExplicit && !config.codexMonitorAutomatic && len(args) > 0 && args[0] == "resume" {
 		return deps.runNormal("codex", args)
 	}
@@ -201,16 +204,9 @@ func runCodexMonitorWithDeps(config cliConfig, dir string, deps codexMonitorDeps
 		watchDone <- deps.runWatch(watchCtx, bridge)
 	}()
 
-	nonResumeArgs := args
-	if len(nonResumeArgs) > 0 && nonResumeArgs[0] == "resume" {
-		nonResumeArgs = nonResumeArgs[1:]
-		if len(nonResumeArgs) > 0 && !strings.HasPrefix(nonResumeArgs[0], "-") {
-			nonResumeArgs = nonResumeArgs[1:]
-		}
-	}
-	remoteArgs := make([]string, 0, len(nonResumeArgs)+4)
+	remoteArgs := make([]string, 0, len(args)+4)
 	remoteArgs = append(remoteArgs, "--remote", "unix://"+socketPath, "resume", thread.ID)
-	remoteArgs = append(remoteArgs, nonResumeArgs...)
+	remoteArgs = append(remoteArgs, args...)
 	tuiProcess, err := deps.startProcess(codexMonitorTUI, executable, remoteArgs)
 	if err != nil {
 		cancelWatch()

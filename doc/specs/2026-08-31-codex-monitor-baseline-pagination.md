@@ -17,12 +17,16 @@ semantics are opaque and `thread/started` is broadcast, so neither identifies th
 remote TUI exactly. The monitor connection calls official `thread/start` with the
 project CWD and takes `response.thread.id` as the owned session ID. It then launches
 the remote TUI with `resume <id>`. This request/response association is exact and
-cannot confuse another client's thread. The legacy no-role path is an exception for
-raw args beginning with `resume`: it calls `runNormal("codex", originalArgs)` without
-starting App Server, `thread/start`, bridge, watcher, or TUI. Explicit monitor mode
-continues to create and resume an owned thread; its TUI args contain the owned
-`resume <id>` followed by non-resume original args. Automatic shim behavior with
-zero args is unchanged.
+cannot confuse another client's thread.
+
+Leading raw `resume` has three explicit boundaries. A legacy no-role monitor calls
+`runNormal("codex", originalArgs)` without starting App Server, `thread/start`,
+bridge, watcher, or TUI. An explicit monitor (role, goal, or task scope) rejects
+leading raw `resume` with an explicit error before any setup, including
+`runNormal`, so its scope contract cannot be silently discarded. For a non-resume
+explicit monitor, the TUI args are exactly `--remote <socket> resume <ownedID>`
+followed by the original args; the supervisor does not strip or reinterpret a
+resume selector. Automatic shim behavior with zero args is unchanged.
 
 ## Lifecycle and failure behavior
 
@@ -36,15 +40,19 @@ zero args is unchanged.
 - App Server absence, connect/initialize failure, or `thread/start` failure remains
   inside the short setup timeout and keeps the present automatic fallback / explicit
   failure policy.
-- Any setup fallback preserves the original raw args unchanged.
+- Explicit leading raw `resume` is rejected before project/scope resolution and
+  cannot fall back to normal Codex. Other setup fallbacks preserve the original raw
+  args unchanged.
 
 ## Tests
 
 Use controllable channels in the lifecycle fake, not wall-clock sleeps or a changed
-10-second constant. Prove that `thread/start` receives the project CWD and its
-response ID is used by the remote TUI's `resume` arguments. Prove that a broadcast
-`thread/started` is not adopted and that `thread/start` failure does not launch the
-TUI or watcher, while automatic fallback and explicit failure remain intact. Keep
-status-decode and remote-control no-op coverage. Prove that a legacy no-role leading
-`resume` bypass calls normal Codex with executable `codex` and the exact original
-argv without starting any monitor process.
+10-second constant. Prove the three leading-argument boundaries: legacy no-role
+leading `resume` calls normal Codex with executable `codex` and the exact original
+argv without starting any monitor process; explicit leading `resume` returns an
+error before project/scope/App Server/bridge/watcher/TUI/normal execution; and
+non-resume explicit args are preserved after the owned `resume <id>` prefix. Also
+prove that `thread/start` receives the project CWD and its response ID is used by
+the remote TUI, that a broadcast `thread/started` is not adopted, and that
+`thread/start` failure does not launch the TUI or watcher. Keep status-decode,
+remote-control no-op, automatic fallback, and explicit scope-failure coverage.

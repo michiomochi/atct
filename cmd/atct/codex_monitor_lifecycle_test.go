@@ -716,7 +716,7 @@ func TestCodexMonitorLifecycleCleansChildrenAndPreservesTUIStatus(t *testing.T) 
 	}
 }
 
-func TestCodexMonitorStartsThreadWithProjectCWDAndResumesExactID(t *testing.T) {
+func TestCodexMonitorExplicitNonResumeStartsOwnedThreadAndPreservesArgs(t *testing.T) {
 	monitorDir := t.TempDir()
 	app := newFakeCodexMonitorApp()
 	app.thread = codexThread{
@@ -750,9 +750,12 @@ func TestCodexMonitorStartsThreadWithProjectCWDAndResumesExactID(t *testing.T) {
 		},
 		connectAppServer: func(context.Context, string) (codexMonitorApp, error) { return app, nil },
 		projectPath:      func() (string, error) { return "/project", nil },
-		reap:             func(string) (daemonctl.CodexMonitorReapResult, error) { return daemonctl.CodexMonitorReapResult{}, nil },
-		register:         func(string, daemonctl.CodexMonitorRecord) (func(), error) { return func() {}, nil },
-		runWatch: func(ctx context.Context, _ *codexMonitorBridge) error {
+		resolveScope: func(context.Context, string, watchScope) (watchScope, error) {
+			return watchScope{Role: "executor", ProjectID: "7", GoalID: "216", TaskID: "920"}, nil
+		},
+		reap:     func(string) (daemonctl.CodexMonitorReapResult, error) { return daemonctl.CodexMonitorReapResult{}, nil },
+		register: func(string, daemonctl.CodexMonitorRecord) (func(), error) { return func() {}, nil },
+		runWatchScoped: func(ctx context.Context, _ string, _ watchScope, _ *codexMonitorBridge) error {
 			<-ctx.Done()
 			return nil
 		},
@@ -766,8 +769,11 @@ func TestCodexMonitorStartsThreadWithProjectCWDAndResumesExactID(t *testing.T) {
 	)
 	go func() {
 		code, runErr = runCodexMonitorWithDeps(cliConfig{
-			codexMonitorAction: "monitor",
-			codexArgs:          []string{"-m", "gpt-5"},
+			codexMonitorAction:   "monitor",
+			codexMonitorExplicit: true,
+			codexMonitorRole:     "executor",
+			codexMonitorTaskID:   "920",
+			codexArgs:            []string{"-m", "gpt-5"},
 		}, monitorDir, deps)
 		close(done)
 	}()
@@ -869,6 +875,71 @@ func TestCodexMonitorLegacyResumePassesThroughWithoutStartingMonitor(t *testing.
 	}
 	if !slices.Equal(gotArgs, args) {
 		t.Fatalf("normal args = %#v, want %#v", gotArgs, args)
+	}
+}
+
+func TestCodexMonitorExplicitLeadingResumeFailsBeforeStartingAnything(t *testing.T) {
+	var (
+		projectPathCalls  int
+		scopeCalls        int
+		reapCalls         int
+		resolveCodexCalls int
+		appStarts         int
+		tuiStarts         int
+		normalCalls       int
+	)
+	deps := codexMonitorDeps{
+		projectPath: func() (string, error) {
+			projectPathCalls++
+			return "/project", nil
+		},
+		resolveScope: func(context.Context, string, watchScope) (watchScope, error) {
+			scopeCalls++
+			return watchScope{Role: "executor", ProjectID: "7", GoalID: "216", TaskID: "920"}, nil
+		},
+		reap: func(string) (daemonctl.CodexMonitorReapResult, error) {
+			reapCalls++
+			return daemonctl.CodexMonitorReapResult{}, nil
+		},
+		resolveCodex: func() (string, error) {
+			resolveCodexCalls++
+			return "/opt/codex", nil
+		},
+		startProcess: func(kind codexMonitorProcessKind, _ string, _ []string) (codexMonitorProcess, error) {
+			switch kind {
+			case codexMonitorAppServer:
+				appStarts++
+			case codexMonitorTUI:
+				tuiStarts++
+			}
+			return nil, errors.New("explicit resume must not start a monitor process")
+		},
+		connectAppServer: func(context.Context, string) (codexMonitorApp, error) {
+			t.Fatal("explicit leading resume connected to App Server")
+			return nil, nil
+		},
+		runNormal: func(string, []string) (int, error) {
+			normalCalls++
+			return 0, nil
+		},
+		stderr: io.Discard,
+	}
+
+	code, err := runCodexMonitorWithDeps(cliConfig{
+		codexMonitorAction:   "monitor",
+		codexMonitorExplicit: true,
+		codexMonitorRole:     "executor",
+		codexMonitorTaskID:   "920",
+		codexArgs:            []string{"resume", "thread-existing", "--last"},
+	}, t.TempDir(), deps)
+	if code != 1 {
+		t.Fatalf("exit code = %d, want explicit failure code 1", code)
+	}
+	if err == nil || !strings.Contains(err.Error(), "leading resume") {
+		t.Fatalf("explicit leading resume error = %v, want leading resume contract error", err)
+	}
+	if projectPathCalls != 0 || scopeCalls != 0 || reapCalls != 0 || resolveCodexCalls != 0 || appStarts != 0 || tuiStarts != 0 || normalCalls != 0 {
+		t.Fatalf("explicit leading resume setup calls = project=%d scope=%d reap=%d resolve=%d app=%d tui=%d normal=%d, want all zero", projectPathCalls, scopeCalls, reapCalls, resolveCodexCalls, appStarts, tuiStarts, normalCalls)
 	}
 }
 
