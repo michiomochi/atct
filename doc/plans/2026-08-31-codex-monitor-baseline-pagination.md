@@ -4,6 +4,9 @@
 
 **Architecture:** Call `thread/start` from the monitor App Server connection and pass
 its response ID to remote Codex `resume`; notifications are not session identity.
+For legacy no-role raw args beginning with `resume`, bypass monitor setup and invoke
+normal Codex with the exact original argv. Explicit monitor mode retains owned
+thread start/resume; automatic zero-args shim behavior is unchanged.
 
 ## Constraints
 
@@ -23,7 +26,11 @@ its response ID to remote Codex `resume`; notifications are not session identity
    adopted for session identity.
 3. Write a failing lifecycle test for pre-launch `thread/start` failure: no TUI or
    watcher starts, and automatic mode uses the original-argument fallback.
-4. Run `go test ./cmd/atct -run TestCodexMonitor -count=1` and observe the test fail
+4. Extend the owned-thread argv test to prove the generated command has exactly
+   `--remote <socket> resume <ownedID>` followed by non-resume original args.
+5. Write a failing lifecycle test proving legacy no-role leading `resume` calls
+   `runNormal("codex", originalArgs)` without starting App Server or TUI.
+6. Run `go test ./cmd/atct -run TestCodexMonitor -count=1` and observe the test fail
    before production changes.
 
 ### Task 2: Replace baseline discovery with monitor-owned thread start
@@ -34,9 +41,12 @@ its response ID to remote Codex `resume`; notifications are not session identity
 2. Add `StartThread(ctx, cwd)` to the monitor App Server interface and implement the
    protocol request/response decode.
 3. Start remote TUI with `resume <thread ID>` while preserving non-monitor passthrough
-   behavior and existing setup fallback.
+   behavior and existing setup fallback; remove any leading raw `resume` selector
+   before appending non-resume original args.
 4. Preserve monitor disable behavior for bridge/watch failures without signalling TUI.
-5. Run the focused lifecycle test, then `go test ./cmd/atct -count=1`.
+5. Bypass all monitor setup for legacy no-role args beginning with `resume`, invoking
+   `runNormal("codex", originalArgs)` exactly; leave automatic zero-args unchanged.
+6. Run the focused lifecycle test, then `go test ./cmd/atct -count=1`.
 
 ### Task 3: Review boundary conditions
 

@@ -242,7 +242,7 @@ func TestCodexMonitorDirectResolutionSkipsMarkedShim(t *testing.T) {
 	go func() {
 		code, runErr = runCodexMonitorWithDeps(cliConfig{
 			codexMonitorAction: "monitor",
-			codexArgs:          []string{"resume", "thread-4"},
+			codexArgs:          []string{"--model", "gpt-5"},
 		}, monitorDir, deps)
 		close(done)
 	}()
@@ -801,6 +801,74 @@ func TestCodexMonitorStartsThreadWithProjectCWDAndResumesExactID(t *testing.T) {
 	}
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0", code)
+	}
+}
+
+func TestCodexMonitorLegacyResumePassesThroughWithoutStartingMonitor(t *testing.T) {
+	var (
+		appStarts     int
+		tuiStarts     int
+		normalCalls   int
+		gotExecutable string
+		gotArgs       []string
+	)
+	args := []string{"resume", "thread-existing", "--last"}
+	app := newFakeCodexMonitorApp()
+	deps := codexMonitorDeps{
+		resolveCodex: func() (string, error) {
+			t.Fatal("legacy resume resolved a monitor Codex executable")
+			return "", nil
+		},
+		startProcess: func(kind codexMonitorProcessKind, _ string, _ []string) (codexMonitorProcess, error) {
+			switch kind {
+			case codexMonitorAppServer:
+				appStarts++
+				return app, nil
+			case codexMonitorTUI:
+				tuiStarts++
+				return nil, errors.New("legacy resume must not start TUI")
+			default:
+				return nil, errors.New("unexpected process kind")
+			}
+		},
+		connectAppServer: func(context.Context, string) (codexMonitorApp, error) {
+			t.Fatal("legacy resume connected to App Server")
+			return nil, nil
+		},
+		projectPath: func() (string, error) {
+			t.Fatal("legacy resume resolved project path")
+			return "", nil
+		},
+		runNormal: func(executable string, got []string) (int, error) {
+			normalCalls++
+			gotExecutable = executable
+			gotArgs = append([]string(nil), got...)
+			return 29, nil
+		},
+		stderr: io.Discard,
+	}
+
+	code, err := runCodexMonitorWithDeps(cliConfig{
+		codexMonitorAction: "monitor",
+		codexArgs:          args,
+	}, t.TempDir(), deps)
+	if err != nil {
+		t.Fatalf("runCodexMonitorWithDeps: %v", err)
+	}
+	if code != 29 {
+		t.Fatalf("exit code = %d, want 29", code)
+	}
+	if appStarts != 0 || tuiStarts != 0 {
+		t.Fatalf("monitor process starts = (App Server %d, TUI %d), want (0, 0)", appStarts, tuiStarts)
+	}
+	if normalCalls != 1 {
+		t.Fatalf("normal calls = %d, want 1", normalCalls)
+	}
+	if gotExecutable != "codex" {
+		t.Fatalf("normal executable = %q, want codex", gotExecutable)
+	}
+	if !slices.Equal(gotArgs, args) {
+		t.Fatalf("normal args = %#v, want %#v", gotArgs, args)
 	}
 }
 
