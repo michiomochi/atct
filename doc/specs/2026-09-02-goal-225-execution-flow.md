@@ -62,7 +62,7 @@ Units 1 and 2 are serial. Unit 3 starts after event types are fixed by unit 1. U
 
 - Store and daemon tests prove every allowed transition, reject invalid ordering, and preserve a received handoff on review reject.
 - MCP/schema and CLI tests prove the named task / goal / plan review contracts and receive role payload.
-- SSE, watch, and both monitor paths deliver only the intended goal/project notifications; reconnect reconciliation recovers a dropped decision rejection or completed-handoff reopen exactly once.
+- SSE, watch, and both monitor paths deliver only the intended goal/project notifications; reconnect reconciliation is durable at-least-once across restart, suppresses live/backfill duplicates only within the running watcher process, and permits replay after a crash/restart for a dropped decision rejection or completed-handoff reopen.
 - End-to-end tests prove that a free executor receives a later unassigned task without a new pane, while documented isolation/context/topic conditions create a new one.
 - Role and completion tests prove commander alone closes goal review and writes the final six-part goal report.
 - Skills and wrapper tests agree with the implementation; any chezmoi source change has a reviewed diff and no apply occurs before explicit approval.
