@@ -69,4 +69,6 @@ Units 1 and 2 are serial. Unit 3 starts after event types are fixed by unit 1. U
 
 ## Non-goals and open validation
 
-This specification does not choose the storage shape for human goal review until the existing HTTP path is read in the implementation design review. It also does not change the existing withdrawal gate without confirming `WithdrawActiveGoal` behavior. Those are explicit plan validation steps, not implicit implementation work.
+The Task 3 implementation design review read the existing HTTP human-review path and its approval tests. The existing `/api/decisions/{id}/approve|reject` endpoints durably persist open/answered/applied decision state and already support goal-scoped records (`KindCompletion` and `KindGoalApproval`) with no task ID. Task 3 therefore reuses the `decisions` table and HTTP decision lifecycle with a distinct goal-review kind, rather than adding a parallel `goal_reviews` table or overloading the final completion report. The commander requests a goal review, human approval/rejection is persisted through the existing HTTP decision endpoint, and only the commander’s later `goal.complete` call writes the final six report fields and closes the goal. Rejection leaves the goal active and does not reopen a handoff automatically; a commander explicitly creates the next handoff.
+
+This specification also does not change the existing withdrawal gate without confirming `WithdrawActiveGoal` behavior. That remains an explicit plan validation step, not implicit implementation work.

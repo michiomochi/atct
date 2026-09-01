@@ -223,6 +223,10 @@ type GoalCompleteIn struct {
 	ResultSummary string `json:"-"`
 }
 
+type GoalReviewRequestIn struct {
+	GoalID mcpID `json:"goal_id"`
+}
+
 type GoalSetDerivedFromIn struct {
 	GoalID            mcpID `json:"goal_id"`
 	DerivedFromGoalID mcpID `json:"derived_from_goal_id"`
@@ -1008,7 +1012,7 @@ func Register(server *mcp.Server, c *Client, agentSessionID int64) {
 
 	addMCPTool[GoalCompleteIn, RawWithUnappliedDecisions](server, &mcp.Tool{
 		Name:         "atct_goal_complete",
-		Description:  "Report goal completion and request human approval. Fails while an open Decision remains.",
+		Description:  "Finalize an active goal with its six-part completion report after human goal review approval.",
 		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in GoalCompleteIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
 		return callWithUnappliedDecisions(ctx, c, "goal.complete", map[string]any{
@@ -1016,6 +1020,16 @@ func Register(server *mcp.Server, c *Client, agentSessionID int64) {
 			"now_possible": in.NowPossible, "how_to_verify": in.HowToVerify,
 			"surprises": in.Surprises, "needs_review": in.NeedsReview,
 			"next_steps": in.NextSteps, "agent_session_id": sessionID.Get(), "include_unapplied_answers": true,
+		})
+	})
+
+	addMCPTool[GoalReviewRequestIn, RawWithUnappliedDecisions](server, &mcp.Tool{
+		Name:         "atct_goal_review_request",
+		Description:  "Request human review of an active goal before the commander finalizes it.",
+		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in GoalReviewRequestIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
+		return callWithUnappliedDecisions(ctx, c, "goal.review.request", map[string]any{
+			"goal_id": in.GoalID, "agent_session_id": sessionID.Get(), "include_unapplied_answers": true,
 		})
 	})
 

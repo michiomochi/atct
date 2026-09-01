@@ -239,7 +239,7 @@ func TestGoalCompleteDeniesSessionWithoutGoalHandoff(t *testing.T) {
 	}
 }
 
-func TestGoalCompleteDeniesHolderOfAnotherGoal(t *testing.T) {
+func TestGoalCompleteDeniesNonCommanderOfAnotherGoal(t *testing.T) {
 	fixture := newGoalListFixture(t)
 	defer fixture.store.Close()
 
@@ -257,7 +257,6 @@ func TestGoalCompleteDeniesHolderOfAnotherGoal(t *testing.T) {
 	}
 
 	callerID := daemonTestSessionID(t, fixture.store, sessionA)
-	holderID := daemonTestSessionID(t, fixture.store, sessionB)
 	params, err := json.Marshal(map[string]any{
 		"goal_id":          goalB.ID,
 		"work_done":        "work",
@@ -274,7 +273,7 @@ func TestGoalCompleteDeniesHolderOfAnotherGoal(t *testing.T) {
 	if _, err := fixture.daemon.dispatch(context.Background(), rpc.Request{Method: "goal.complete", Params: params}); err == nil {
 		t.Fatal("goal.complete unexpectedly succeeded for another goal holder")
 	} else {
-		for _, want := range []string{"is not the holder of", fmt.Sprint(callerID), fmt.Sprint(holderID)} {
+		for _, want := range []string{"not the commander", fmt.Sprint(callerID), fmt.Sprint(goalB.ID)} {
 			if !strings.Contains(err.Error(), want) {
 				t.Fatalf("goal.complete error = %v, want %q", err, want)
 			}
@@ -290,7 +289,7 @@ func TestGoalCompleteDeniesHolderOfAnotherGoal(t *testing.T) {
 	}
 }
 
-func TestGoalCompleteAllowsGoalHandoffHolder(t *testing.T) {
+func TestGoalCompleteDeniesGoalClaimHolder(t *testing.T) {
 	fixture := newGoalListFixture(t)
 	defer fixture.store.Close()
 
@@ -312,8 +311,10 @@ func TestGoalCompleteAllowsGoalHandoffHolder(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal goal.complete params: %v", err)
 	}
-	if _, err := fixture.daemon.dispatch(context.Background(), rpc.Request{Method: "goal.complete", Params: params}); err != nil {
-		t.Fatalf("goal.complete for goal handoff holder: %v", err)
+	if _, err := fixture.daemon.dispatch(context.Background(), rpc.Request{Method: "goal.complete", Params: params}); err == nil {
+		t.Fatal("goal.complete unexpectedly succeeded for a non-commander goal claimant")
+	} else if !strings.Contains(err.Error(), "not the commander") || !strings.Contains(err.Error(), fmt.Sprint(goalID)) {
+		t.Fatalf("goal.complete error = %v, want commander-only denial", err)
 	}
 }
 

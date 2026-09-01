@@ -750,6 +750,17 @@ func doRequest(t *testing.T, client *http.Client, method, url string, body []byt
 	return resp.StatusCode, resp.Header, data
 }
 
+func doHandlerRequest(t *testing.T, handler http.Handler, method, path string, body []byte) (int, http.Header, []byte) {
+	t.Helper()
+	req := httptest.NewRequest(method, path, bytes.NewReader(body))
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+	return recorder.Code, recorder.Header(), recorder.Body.Bytes()
+}
+
 func mustJSON(t *testing.T, value any) []byte {
 	t.Helper()
 	data, err := json.Marshal(value)
@@ -2506,6 +2517,58 @@ func TestHTTPApproveAndRejectCompletionEndpoints(t *testing.T) {
 	}
 	status, headers, body = doRequest(t, client, http.MethodPost, urlID(srv.URL+"/api/decisions/", rejectDecision.ID)+"/reject", mustJSON(t, map[string]string{}))
 	assertErrorObject(t, status, headers, body, http.StatusConflict)
+}
+
+func TestHTTPApproveAndRejectGoalReviewEndpoints(t *testing.T) {
+	f := newBareFixture(t)
+	handler := httpapi.New(f.store).Handler()
+
+	approveGoal, err := f.store.CreateGoal(f.ctx, f.project.ID, "Approve goal review", "human")
+	if err != nil {
+		t.Fatal(err)
+	}
+	approveReview, err := f.store.RequestGoalReview(f.ctx, approveGoal.ID, testSessionID("http-goal-review-approve"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, _, body := doHandlerRequest(t, handler, http.MethodPost, urlID("/api/decisions/", approveReview.ID)+"/approve", mustJSON(t, map[string]string{}))
+	if status != http.StatusOK {
+		t.Fatalf("goal review approve status = %d; body=%s", status, body)
+	}
+	var approvedGoal domain.Goal
+	if err := json.Unmarshal(body, &approvedGoal); err != nil {
+		t.Fatal(err)
+	}
+	if approvedGoal.ID != approveGoal.ID || approvedGoal.Status != domain.GoalActive || approvedGoal.WorkDone != "" {
+		t.Fatalf("approved goal review = %+v, want active goal without final report", approvedGoal)
+	}
+
+	rejectGoal, err := f.store.CreateGoal(f.ctx, f.project.ID, "Reject goal review", "human")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rejectReview, err := f.store.RequestGoalReview(f.ctx, rejectGoal.ID, testSessionID("http-goal-review-reject"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, _, body = doHandlerRequest(t, handler, http.MethodPost, urlID("/api/decisions/", rejectReview.ID)+"/reject", mustJSON(t, map[string]string{"reason": "needs another pass"}))
+	if status != http.StatusOK {
+		t.Fatalf("goal review reject status = %d; body=%s", status, body)
+	}
+	var rejectedReview domain.Decision
+	if err := json.Unmarshal(body, &rejectedReview); err != nil {
+		t.Fatal(err)
+	}
+	if rejectedReview.ID != rejectReview.ID || rejectedReview.Status != domain.DecisionAnswered || rejectedReview.AnswerText != "needs another pass" {
+		t.Fatalf("rejected goal review = %+v", rejectedReview)
+	}
+	gotGoal, err := f.store.GetGoal(f.ctx, rejectGoal.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotGoal.Status != domain.GoalActive || gotGoal.WorkDone != "" {
+		t.Fatalf("goal after review rejection = %+v, want active without final report", gotGoal)
+	}
 }
 
 type sseFrame struct {

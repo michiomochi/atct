@@ -107,7 +107,7 @@ Run the Step 2 command plus `go test ./internal/mcpshim -run 'TestHandoffToolsIn
 
 - [ ] **Step 1: Validate the current HTTP human-review path before changing it**
 
-Read `internal/httpapi/server.go` and its approval tests named in the investigation. Record whether it can persist `atct_goal_review_*`; if it cannot, add a dedicated goal-review record in the same migration family rather than overloading decisions.
+Read `internal/httpapi/server.go` and its approval tests named in the investigation. **Recorded result (2026-09-02):** `/api/decisions/{id}/approve|reject` already persists the human approval lifecycle for goal-scoped `KindCompletion`/`KindGoalApproval` decisions, including taskless records. Reuse the `decisions` table with a distinct goal-review kind and the existing HTTP answer state machine; do not add a parallel goal-review table. Keep the final six-field report separate: only the commander’s later `goal.complete` writes it and closes the goal. A goal-review rejection leaves the goal active and does not auto-reopen a handoff.
 
 - [ ] **Step 2: Write failing authorization and lifecycle tests**
 

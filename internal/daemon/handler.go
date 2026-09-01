@@ -368,35 +368,23 @@ func (d *Daemon) ensureAgentSessionProject(ctx context.Context, agentSessionID i
 }
 
 func (d *Daemon) authorizeGoalCompletion(ctx context.Context, goalID int64, projectID int64, agentSessionID int64) error {
-	if agentSessionID == 0 {
-		return fmt.Errorf("goal completion denied: goal %d requires agent_session_id; identify the session before reporting completion", goalID)
-	}
+	return d.authorizeCommander(ctx, goalID, projectID, agentSessionID, "goal completion")
+}
 
+func (d *Daemon) authorizeCommander(ctx context.Context, goalID, projectID, agentSessionID int64, operation string) error {
+	if agentSessionID == 0 {
+		return fmt.Errorf("%s denied: goal %d requires agent_session_id", operation, goalID)
+	}
 	projects, err := d.store.ListProjects(ctx)
 	if err != nil {
-		return fmt.Errorf("goal completion authorization: list projects: %w", err)
+		return fmt.Errorf("%s authorization: list projects: %w", operation, err)
 	}
 	for _, project := range projects {
 		if project.ID == projectID && project.ClaimedBy == agentSessionID {
 			return nil
 		}
 	}
-
-	handoffs, err := d.store.ListOpenGoalHandoffs(ctx)
-	if err != nil {
-		return fmt.Errorf("goal completion authorization: list open goal handoffs: %w", err)
-	}
-	handoff := handoffs[goalID]
-	if handoff == nil {
-		return fmt.Errorf("goal completion denied: caller %d holds no open goal handoff for goal %d; receive the goal handoff for this goal or claim its project", agentSessionID, goalID)
-	}
-	if handoff.ReceivedAt == nil {
-		return fmt.Errorf("goal completion denied: the goal handoff for goal %d was requested but never received; caller %d must receive it before reporting completion", goalID, agentSessionID)
-	}
-	if handoff.ReceivedBy != agentSessionID {
-		return fmt.Errorf("goal completion denied: caller %d is not the holder of goal %d; actual holder is session %d", agentSessionID, goalID, handoff.ReceivedBy)
-	}
-	return nil
+	return fmt.Errorf("%s denied: caller %d is not the commander for goal %d in project %d", operation, agentSessionID, goalID, projectID)
 }
 
 func (d *Daemon) resolveOrRegisterProject(ctx context.Context, cwd string) (domain.Project, error) {
@@ -619,6 +607,12 @@ type goalHandoffCompleteParams struct {
 	CompleteReport string `json:"complete_report"`
 }
 
+type goalReviewRequestParams struct {
+	GoalID                  int64 `json:"goal_id"`
+	AgentSessionID          int64 `json:"agent_session_id"`
+	IncludeUnappliedAnswers bool  `json:"include_unapplied_answers"`
+}
+
 type planHandoffReviewRequestParams struct {
 	HandoffID           string `json:"handoff_id"`
 	GoalID              int64  `json:"goal_id"`
@@ -772,6 +766,13 @@ func (d *Daemon) completeGoalHandoff(ctx context.Context, p goalHandoffCompleteP
 	if p.AgentSessionID != 0 {
 		if p.HandoffID == "" {
 			return store.GoalHandoff{}, fmt.Errorf("goal handoff completion by reviewer requires handoff_id")
+		}
+		goal, err := d.store.GetGoal(ctx, p.GoalID)
+		if err != nil {
+			return store.GoalHandoff{}, err
+		}
+		if err := d.authorizeCommander(ctx, p.GoalID, goal.ProjectID, p.AgentSessionID, "goal handoff completion"); err != nil {
+			return store.GoalHandoff{}, err
 		}
 		return d.store.CompleteGoalHandoffByReviewer(ctx, p.HandoffID, p.GoalID, p.AgentSessionID, p.CompleteReport)
 	}
@@ -989,7 +990,7 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 			}
 			awaitingApproval := false
 			for _, decision := range openDecisions {
-				if decision.Kind == domain.KindCompletion {
+				if decision.Kind == domain.KindCompletion || decision.Kind == domain.KindGoalReview {
 					awaitingApproval = true
 					break
 				}
@@ -1520,6 +1521,25 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		handoff, err := d.completeGoalHandoff(ctx, p)
 		return marshal(handoff, err)
 
+	case "goal.review.request":
+		var p goalReviewRequestParams
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		goal, err := d.store.GetGoal(ctx, p.GoalID)
+		if err != nil {
+			return nil, err
+		}
+		if err := d.authorizeCommander(ctx, p.GoalID, goal.ProjectID, p.AgentSessionID, "goal review request"); err != nil {
+			return nil, err
+		}
+		review, err := d.store.RequestGoalReview(ctx, p.GoalID, p.AgentSessionID)
+		if err != nil || !p.IncludeUnappliedAnswers {
+			return marshal(review, err)
+		}
+		response, err := d.responseWithScopedUnappliedDecisions(ctx, review, p.GoalID, p.AgentSessionID, review.ID)
+		return marshal(response, err)
+
 	case "goal.handoff.report.amend":
 		var p struct {
 			HandoffID      string `json:"handoff_id"`
@@ -1792,14 +1812,30 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		if err := d.ensureAgentSessionProject(ctx, p.AgentSessionID, goal.ProjectID); err != nil {
 			return nil, err
 		}
-		dec, err := d.store.CompleteGoalWithReport(ctx, p.GoalID, domain.CompletionReport{
+		report := domain.CompletionReport{
 			WorkDone:    p.WorkDone,
 			NowPossible: p.NowPossible,
 			HowToVerify: p.HowToVerify,
 			Surprises:   p.Surprises,
 			NeedsReview: p.NeedsReview,
 			NextSteps:   p.NextSteps,
-		}, p.AgentSessionID)
+		}
+		hasGoalReview, err := d.store.HasGoalReview(ctx, p.GoalID)
+		if err != nil {
+			return nil, err
+		}
+		if hasGoalReview {
+			completed, err := d.store.FinalizeGoalWithReport(ctx, p.GoalID, report, p.AgentSessionID)
+			if err != nil || !p.IncludeUnappliedAnswers {
+				return marshal(completed, err)
+			}
+			response, err := d.responseWithScopedUnappliedDecisions(ctx, completed, p.GoalID, p.AgentSessionID)
+			return marshal(response, err)
+		}
+
+		// Keep the pre-225 completion decision as a compatibility adapter for
+		// callers that have not requested the named human goal review yet.
+		dec, err := d.store.CompleteGoalWithReport(ctx, p.GoalID, report, p.AgentSessionID)
 		if err != nil || !p.IncludeUnappliedAnswers {
 			return marshal(dec, err)
 		}

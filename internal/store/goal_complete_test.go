@@ -229,3 +229,85 @@ func TestRejectCompletionKeepsGoalActiveAndAwaitsAgent(t *testing.T) {
 			got.Status, domain.DecisionAnswered)
 	}
 }
+
+func TestGoalReviewLifecycleDefersFinalReportUntilCommanderCompletion(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	goalID := newTestGoal(t, s)
+	commanderID := testSessionID("goal-review-commander")
+	report := domain.CompletionReport{
+		WorkDone:    "reviewed work",
+		NowPossible: "reviewed result",
+		HowToVerify: "run the focused tests",
+		Surprises:   "none",
+		NeedsReview: "none",
+		NextSteps:   "merge",
+	}
+
+	review, err := s.RequestGoalReview(ctx, goalID, commanderID)
+	if err != nil {
+		t.Fatalf("RequestGoalReview: %v", err)
+	}
+	if review.Kind != domain.KindGoalReview || review.TaskID != 0 || review.Status != domain.DecisionOpen {
+		t.Fatalf("goal review = %+v, want open taskless goal review", review)
+	}
+
+	before, err := s.GetGoal(ctx, goalID)
+	if err != nil {
+		t.Fatalf("GetGoal before approval: %v", err)
+	}
+	if before.Status != domain.GoalActive || before.WorkDone != "" || before.ResultSummary != "" {
+		t.Fatalf("goal before approval = %+v, want active with no final report", before)
+	}
+
+	approvedGoal, err := s.ApproveGoalReview(ctx, review.ID)
+	if err != nil {
+		t.Fatalf("ApproveGoalReview: %v", err)
+	}
+	if approvedGoal.Status != domain.GoalActive {
+		t.Fatalf("goal after human approval = %q, want active until commander completion", approvedGoal.Status)
+	}
+	approvedDecision, err := s.GetDecision(ctx, review.ID)
+	if err != nil {
+		t.Fatalf("GetDecision after approval: %v", err)
+	}
+	if approvedDecision.Status != domain.DecisionApplied || approvedDecision.AnswerLabel != "approve" {
+		t.Fatalf("approved goal review = %+v, want applied approve", approvedDecision)
+	}
+
+	done, err := s.FinalizeGoalWithReport(ctx, goalID, report, commanderID)
+	if err != nil {
+		t.Fatalf("FinalizeGoalWithReport: %v", err)
+	}
+	if done.Status != domain.GoalDone || done.WorkDone != report.WorkDone || done.ResultSummary != report.WorkDone {
+		t.Fatalf("completed goal = %+v, want done with final report", done)
+	}
+}
+
+func TestRejectedGoalReviewLeavesGoalActiveWithoutReopeningHandoff(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	goalID := newTestGoal(t, s)
+	review, err := s.RequestGoalReview(ctx, goalID, testSessionID("goal-review-reject-commander"))
+	if err != nil {
+		t.Fatalf("RequestGoalReview: %v", err)
+	}
+	if err := s.RejectGoalReview(ctx, review.ID, "needs another review"); err != nil {
+		t.Fatalf("RejectGoalReview: %v", err)
+	}
+
+	goal, err := s.GetGoal(ctx, goalID)
+	if err != nil {
+		t.Fatalf("GetGoal after rejection: %v", err)
+	}
+	if goal.Status != domain.GoalActive || goal.WorkDone != "" || goal.ResultSummary != "" {
+		t.Fatalf("goal after rejection = %+v, want active with no final report", goal)
+	}
+	got, err := s.GetDecision(ctx, review.ID)
+	if err != nil {
+		t.Fatalf("GetDecision after rejection: %v", err)
+	}
+	if got.Status != domain.DecisionAnswered || got.AnswerLabel != "reject" || got.AnswerText != "needs another review" {
+		t.Fatalf("rejected goal review = %+v, want answered reject with reason", got)
+	}
+}

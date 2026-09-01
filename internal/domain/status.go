@@ -36,6 +36,7 @@ const (
 	KindDecision     DecisionKind = "decision"
 	KindCompletion   DecisionKind = "completion"
 	KindGoalApproval DecisionKind = "goal_approval"
+	KindGoalReview   DecisionKind = "goal_review"
 )
 
 func ParseTaskStatus(s string) (TaskStatus, error) {

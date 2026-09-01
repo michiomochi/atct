@@ -15,12 +15,15 @@ import (
 )
 
 var (
-	ErrGoalNotFound        = errors.New("goal not found")
-	ErrGoalNotProposed     = errors.New("goal is not proposed")
-	ErrGoalNotActive       = errors.New("goal is not active")
-	ErrGoalAlreadyClaimed  = errors.New("goal already claimed")
-	ErrGoalSelfReference   = errors.New("goal cannot be derived from itself")
-	ErrGoalDerivationCycle = errors.New("goal derivation would create a cycle")
+	ErrGoalNotFound          = errors.New("goal not found")
+	ErrGoalNotProposed       = errors.New("goal is not proposed")
+	ErrGoalNotActive         = errors.New("goal is not active")
+	ErrGoalReviewOpen        = errors.New("goal review is already open")
+	ErrGoalReviewNotFound    = errors.New("goal review not found")
+	ErrGoalReviewNotApproved = errors.New("goal review is not approved")
+	ErrGoalAlreadyClaimed    = errors.New("goal already claimed")
+	ErrGoalSelfReference     = errors.New("goal cannot be derived from itself")
+	ErrGoalDerivationCycle   = errors.New("goal derivation would create a cycle")
 )
 
 func (s *Store) CreateGoal(ctx context.Context, projectID int64, content, creator string, derivedFromGoalID ...int64) (domain.Goal, error) {
@@ -467,6 +470,225 @@ func (s *Store) CompleteGoalWithReport(ctx context.Context, goalID int64, report
 		},
 		AgentSessionID: agentSessionID,
 	})
+}
+
+// HasGoalReview reports whether a goal has entered the human goal-review
+// lifecycle. It is used by the daemon to distinguish the legacy completion
+// request from the explicit review-then-complete flow.
+func (s *Store) HasGoalReview(ctx context.Context, goalID int64) (bool, error) {
+	var exists int
+	if err := s.db.QueryRowContext(ctx, `
+		SELECT EXISTS(
+			SELECT 1 FROM decisions
+			WHERE goal_id = ? AND kind = ?
+		)`, goalID, string(domain.KindGoalReview)).Scan(&exists); err != nil {
+		return false, fmt.Errorf("check goal review: %w", err)
+	}
+	return exists != 0, nil
+}
+
+func (s *Store) latestGoalReview(ctx context.Context, goalID int64) (domain.Decision, bool, error) {
+	var decisionID int64
+	err := s.db.QueryRowContext(ctx, `
+		SELECT id FROM decisions
+		WHERE goal_id = ? AND kind = ?
+		ORDER BY id DESC LIMIT 1`, goalID, string(domain.KindGoalReview)).Scan(&decisionID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.Decision{}, false, nil
+	}
+	if err != nil {
+		return domain.Decision{}, false, fmt.Errorf("find latest goal review: %w", err)
+	}
+	decision, err := s.GetDecision(ctx, decisionID)
+	if err != nil {
+		return domain.Decision{}, false, err
+	}
+	return decision, true, nil
+}
+
+// RequestGoalReview creates the taskless decision that asks the human to
+// review a goal after its goal handoff has been accepted. The final report is
+// intentionally not written here.
+func (s *Store) RequestGoalReview(ctx context.Context, goalID, agentSessionID int64) (domain.Decision, error) {
+	goal, err := s.GetGoal(ctx, goalID)
+	if err != nil {
+		return domain.Decision{}, fmt.Errorf("get goal for review: %w", err)
+	}
+	if goal.Status != domain.GoalActive {
+		return domain.Decision{}, goalNotActiveForCompletionError(goalID, goal.Status)
+	}
+	if previous, ok, err := s.latestGoalReview(ctx, goalID); err != nil {
+		return domain.Decision{}, err
+	} else if ok && previous.Status == domain.DecisionOpen {
+		return domain.Decision{}, fmt.Errorf("%w: %d", ErrGoalReviewOpen, goalID)
+	}
+	open, err := sqlcgen.New(s.db).CountOpenDecisionsForGoal(ctx, goalID)
+	if err != nil {
+		return domain.Decision{}, fmt.Errorf("count open decisions for goal review: %w", err)
+	}
+	if open > 0 {
+		return domain.Decision{}, fmt.Errorf("%w: %d", ErrGoalHasOpenDecision, goalID)
+	}
+
+	return s.AskDecision(ctx, AskInput{
+		GoalID:   goalID,
+		Kind:     domain.KindGoalReview,
+		Question: "Approve this goal review?",
+		Options: []domain.Option{
+			{Label: "approve", Description: "Approve the reviewed goal", Consequence: "The commander may merge and complete the goal"},
+			{Label: "reject", Description: "Reject the reviewed goal", Consequence: "The goal remains active and the commander must reissue the handoff"},
+		},
+		AgentSessionID: agentSessionID,
+	})
+}
+
+// ApproveGoalReview applies the human approval while leaving the goal active.
+// The commander must perform the later finalization separately.
+func (s *Store) ApproveGoalReview(ctx context.Context, decisionID int64) (domain.Goal, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return domain.Goal{}, fmt.Errorf("begin goal review approval tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	var goalID int64
+	if err := tx.QueryRowContext(ctx, `
+		SELECT goal_id FROM decisions
+		WHERE id = ? AND kind = ? AND status = 'open'`, decisionID, string(domain.KindGoalReview)).Scan(&goalID); errors.Is(err, sql.ErrNoRows) {
+		return domain.Goal{}, fmt.Errorf("%w: %d", ErrDecisionNotOpen, decisionID)
+	} else if err != nil {
+		return domain.Goal{}, fmt.Errorf("lookup goal review: %w", err)
+	}
+
+	var status string
+	if err := tx.QueryRowContext(ctx, `SELECT status FROM goals WHERE id = ?`, goalID).Scan(&status); err != nil {
+		return domain.Goal{}, fmt.Errorf("lookup goal for review approval: %w", err)
+	}
+	if domain.GoalStatus(status) != domain.GoalActive {
+		return domain.Goal{}, goalNotActiveForCompletionError(goalID, domain.GoalStatus(status))
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	result, err := tx.ExecContext(ctx, `
+		UPDATE decisions
+		SET status = 'applied', answer_label = 'approve', answered_at = ?, applied_at = ?
+		WHERE id = ? AND kind = ? AND status = 'open'`, now, now, decisionID, string(domain.KindGoalReview))
+	if err != nil {
+		return domain.Goal{}, fmt.Errorf("approve goal review: %w", err)
+	}
+	if affected, err := result.RowsAffected(); err != nil {
+		return domain.Goal{}, fmt.Errorf("approve goal review rows affected: %w", err)
+	} else if affected != 1 {
+		return domain.Goal{}, fmt.Errorf("%w: %d", ErrDecisionNotOpen, decisionID)
+	}
+	if err := tx.Commit(); err != nil {
+		return domain.Goal{}, fmt.Errorf("commit goal review approval: %w", err)
+	}
+
+	d, err := s.GetDecision(ctx, decisionID)
+	if err != nil {
+		return domain.Goal{}, err
+	}
+	s.notify.publish(decisionID)
+	s.notify.publishAll()
+	s.notify.publishEvent(Event{Name: "decision.approved", Data: d})
+	return s.GetGoal(ctx, goalID)
+}
+
+// RejectGoalReview records the human rejection and leaves both the goal and
+// the completed handoff unchanged. A commander explicitly requests a new
+// handoff when the work should resume.
+func (s *Store) RejectGoalReview(ctx context.Context, decisionID int64, reason string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin goal review rejection tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	result, err := tx.ExecContext(ctx, `
+		UPDATE decisions
+		SET status = 'answered', answer_label = 'reject', answer_text = ?, answered_at = ?
+		WHERE id = ? AND kind = ? AND status = 'open'`, reason, now, decisionID, string(domain.KindGoalReview))
+	if err != nil {
+		return fmt.Errorf("reject goal review: %w", err)
+	}
+	if affected, err := result.RowsAffected(); err != nil {
+		return fmt.Errorf("reject goal review rows affected: %w", err)
+	} else if affected != 1 {
+		return fmt.Errorf("%w: %d", ErrDecisionNotOpen, decisionID)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit goal review rejection: %w", err)
+	}
+	d, err := s.GetDecision(ctx, decisionID)
+	if err != nil {
+		return err
+	}
+	s.notify.publish(decisionID)
+	s.notify.publishAll()
+	s.notify.publishEvent(Event{Name: "decision.rejected", Data: d})
+	return nil
+}
+
+// FinalizeGoalWithReport is the commander-only final step after a human goal
+// review has been approved. It writes the six report fields and closes the
+// goal atomically; it does not create another decision.
+func (s *Store) FinalizeGoalWithReport(ctx context.Context, goalID int64, report domain.CompletionReport, _ int64) (domain.Goal, error) {
+	goal, err := s.GetGoal(ctx, goalID)
+	if err != nil {
+		return domain.Goal{}, fmt.Errorf("get goal for finalization: %w", err)
+	}
+	if goal.Status != domain.GoalActive {
+		return domain.Goal{}, goalNotActiveForCompletionError(goalID, goal.Status)
+	}
+	if err := validateCompletionReport(report); err != nil {
+		return domain.Goal{}, err
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return domain.Goal{}, fmt.Errorf("begin goal finalization tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	var open int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM decisions WHERE goal_id = ? AND status = 'open'`, goalID).Scan(&open); err != nil {
+		return domain.Goal{}, fmt.Errorf("count open decisions for finalization: %w", err)
+	}
+	if open > 0 {
+		return domain.Goal{}, fmt.Errorf("%w: %d", ErrGoalHasOpenDecision, goalID)
+	}
+	var approved int
+	if err := tx.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM decisions
+		WHERE goal_id = ? AND kind = ? AND status = 'applied' AND answer_label = 'approve'`, goalID, string(domain.KindGoalReview)).Scan(&approved); err != nil {
+		return domain.Goal{}, fmt.Errorf("check approved goal review: %w", err)
+	}
+	if approved == 0 {
+		return domain.Goal{}, fmt.Errorf("%w: %d", ErrGoalReviewNotApproved, goalID)
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	result, err := tx.ExecContext(ctx, `
+		UPDATE goals
+		SET status = 'done', result_summary = ?, work_done = ?, now_possible = ?,
+		    how_to_verify = ?, surprises = ?, needs_review = ?, next_steps = ?, updated_at = ?
+		WHERE id = ? AND status = 'active'`,
+		report.WorkDone, report.WorkDone, report.NowPossible, report.HowToVerify,
+		report.Surprises, report.NeedsReview, report.NextSteps, now, goalID)
+	if err != nil {
+		return domain.Goal{}, fmt.Errorf("finalize goal: %w", err)
+	}
+	if affected, err := result.RowsAffected(); err != nil {
+		return domain.Goal{}, fmt.Errorf("finalize goal rows affected: %w", err)
+	} else if affected != 1 {
+		return domain.Goal{}, goalNotActiveForCompletionError(goalID, goal.Status)
+	}
+	if err := tx.Commit(); err != nil {
+		return domain.Goal{}, fmt.Errorf("commit goal finalization: %w", err)
+	}
+	return s.GetGoal(ctx, goalID)
 }
 
 // ApproveCompletion marks the Goal done and the Decision applied atomically.

@@ -1158,7 +1158,7 @@ func (s *Server) handleAnswer(w http.ResponseWriter, r *http.Request, decisionID
 	if !ok {
 		return
 	}
-	if decision.Kind == domain.KindCompletion || decision.Kind == domain.KindGoalApproval {
+	if decision.Kind == domain.KindCompletion || decision.Kind == domain.KindGoalApproval || decision.Kind == domain.KindGoalReview {
 		writeError(w, http.StatusBadRequest, "use approve or reject for this decision")
 		return
 	}
@@ -1263,6 +1263,8 @@ func (s *Server) handleApprove(w http.ResponseWriter, r *http.Request, decisionI
 		goal, err = s.store.ApproveCompletion(r.Context(), decision.ID)
 	case domain.KindGoalApproval:
 		goal, err = s.store.ApproveGoal(r.Context(), decision.ID)
+	case domain.KindGoalReview:
+		goal, err = s.store.ApproveGoalReview(r.Context(), decision.ID)
 	default:
 		writeError(w, http.StatusConflict, store.ErrDecisionNotOpen.Error())
 		return
@@ -1298,6 +1300,8 @@ func (s *Server) handleReject(w http.ResponseWriter, r *http.Request, decisionID
 		err = s.store.RejectCompletion(r.Context(), canonicalDecisionID, request.Reason)
 	case domain.KindGoalApproval:
 		err = s.store.RejectGoal(r.Context(), canonicalDecisionID, request.Reason)
+	case domain.KindGoalReview:
+		err = s.store.RejectGoalReview(r.Context(), canonicalDecisionID, request.Reason)
 	default:
 		writeError(w, http.StatusConflict, store.ErrDecisionNotOpen.Error())
 		return
@@ -1345,7 +1349,7 @@ func (s *Server) getOpenDecision(w http.ResponseWriter, ctx context.Context, dec
 		writeStoreError(w, err)
 		return domain.Decision{}, false
 	}
-	if decision.Status != domain.DecisionOpen || (decision.Kind != domain.KindCompletion && decision.Kind != domain.KindGoalApproval) {
+	if decision.Status != domain.DecisionOpen || (decision.Kind != domain.KindCompletion && decision.Kind != domain.KindGoalApproval && decision.Kind != domain.KindGoalReview) {
 		writeError(w, http.StatusConflict, store.ErrDecisionNotOpen.Error())
 		return domain.Decision{}, false
 	}

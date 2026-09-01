@@ -18,7 +18,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-func TestRegisterPublishesFortyOneToolsWithFlexibleOutputSchema(t *testing.T) {
+func TestRegisterPublishesFortyTwoToolsWithFlexibleOutputSchema(t *testing.T) {
 	ctx := context.Background()
 	socketPath := startSchemaTestDaemon(t)
 	server := mcp.NewServer(&mcp.Implementation{Name: "atct-test", Version: "test"}, nil)
@@ -54,6 +54,7 @@ func TestRegisterPublishesFortyOneToolsWithFlexibleOutputSchema(t *testing.T) {
 		"atct_decision_poll":               true,
 		"atct_decision_withdraw":           true,
 		"atct_goal_complete":               true,
+		"atct_goal_review_request":         true,
 		"atct_goal_set_derived_from":       true,
 		"atct_goal_claim":                  true,
 		"atct_goal_release":                true,
@@ -253,6 +254,7 @@ func TestRegisterPublishesFortyOneToolsWithFlexibleOutputSchema(t *testing.T) {
 			"how_to_verify": "check the goal", "surprises": "なし",
 			"needs_review": "なし", "next_steps": "なし",
 		}},
+		{name: "atct_goal_review_request", args: map[string]any{"goal_id": "goal-1"}},
 		{name: "atct_goal_set_derived_from", args: map[string]any{
 			"goal_id": "goal-1", "derived_from_goal_id": "goal-2",
 		}},
