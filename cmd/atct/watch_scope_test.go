@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"net/url"
+	"testing"
+)
 
 func TestWatchTaskScopeDeliversOnlyItsTaskHandoffAndDetection(t *testing.T) {
 	filter := newWatchTaskScopeFilter("846")
@@ -272,5 +275,40 @@ func TestWatchPassThroughFilterDeliversEverything(t *testing.T) {
 		if got := filter.delivers("wakeup", wakeup); !got {
 			t.Fatal("pass-through filter suppressed wakeup, want true")
 		}
+	}
+}
+
+func TestWatchFormatsHandoffReviewEvents(t *testing.T) {
+	cases := []struct {
+		name      string
+		eventName string
+		decision  watchDecision
+		want      string
+	}{
+		{"task request", "task.handoff.review.request", watchDecision{TaskID: "12", HandoffID: "task-handoff"}, "atct task handoff review requested (task_id: 12, handoff_id: task-handoff)"},
+		{"plan request", "plan.handoff.review.request", watchDecision{GoalID: "7", HandoffID: "plan-handoff"}, "atct plan handoff review requested (goal_id: 7, handoff_id: plan-handoff)"},
+		{"goal reject", "goal.handoff.review.reject", watchDecision{GoalID: "7", HandoffID: "goal-handoff"}, "atct goal handoff review rejected (goal_id: 7, handoff_id: goal-handoff)"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := formatWatchDecision(tc.eventName, tc.decision)
+			if !ok || got != tc.want {
+				t.Fatalf("formatWatchDecision(%q) = %q, %v; want %q, true", tc.eventName, got, ok, tc.want)
+			}
+		})
+	}
+}
+
+func TestWatchEventsURLIncludesDurableWatcherKey(t *testing.T) {
+	got, err := watchEventsURLWithScopeAndWatcher("http://daemon", watchScope{ProjectID: "1", GoalID: "2"}, "watcher-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := url.Parse(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed.Query().Get("watcher_key") != "watcher-1" {
+		t.Fatalf("watcher_key = %q, want watcher-1", parsed.Query().Get("watcher_key"))
 	}
 }

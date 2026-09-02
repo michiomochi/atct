@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -53,6 +54,7 @@ type watchDecision struct {
 	HandoffID                  string  `json:"handoff_id"`
 	WorktreeActivity           string  `json:"worktree_activity"`
 	CompleteReport             string  `json:"complete_report"`
+	EventID                    string  `json:"-"`
 }
 
 type watchInbox struct {
@@ -255,9 +257,9 @@ func runWatch(dir, goalID string) error {
 	}
 
 	snapshot, projectIDGetter := watchSnapshotWithProject(client, baseURLs, cwd)
-	return watchLoopWithEnsureAndProjectIDAndGoal(ctx, os.Stdout, client, watchReconnectInterval, snapshot, func() error {
+	return watchLoopWithEnsureAndProjectIDAndScopeAndSinkAndCursor(ctx, os.Stdout, client, watchReconnectInterval, snapshot, func() error {
 		return ensureWatchDaemon(dir)
-	}, projectIDGetter, goalID)
+	}, projectIDGetter, watchScope{GoalID: goalID}, nil, watchKeyForScope(cwd, watchScope{ProjectID: projectID, GoalID: goalID}))
 }
 
 func ensureWatchDaemon(dir string) error {
@@ -292,7 +294,7 @@ func watchWithURLsAndProjectAndGoal(ctx context.Context, urls []string, out io.W
 		client = &http.Client{}
 	}
 	snapshot, projectID := watchSnapshotWithProject(client, urls, cwd)
-	return watchLoopWithEnsureAndProjectIDAndGoal(ctx, out, client, retryInterval, snapshot, nil, projectID, goalID)
+	return watchLoopWithEnsureAndProjectIDAndScopeAndSinkAndCursor(ctx, out, client, retryInterval, snapshot, nil, projectID, watchScope{GoalID: goalID}, nil, watchKeyForScope(cwd, watchScope{GoalID: goalID}))
 }
 
 func watchLoop(ctx context.Context, out io.Writer, client *http.Client, retryInterval time.Duration, snapshot watchSnapshotFunc) error {
@@ -316,10 +318,15 @@ func watchLoopWithEnsureAndProjectIDAndGoalAndSink(ctx context.Context, out io.W
 }
 
 func watchLoopWithEnsureAndProjectIDAndScopeAndSink(ctx context.Context, out io.Writer, client *http.Client, retryInterval time.Duration, snapshot watchSnapshotFunc, ensure watchEnsureFunc, projectID func() string, scope watchScope, sink func(string) error) error {
+	return watchLoopWithEnsureAndProjectIDAndScopeAndSinkAndCursor(ctx, out, client, retryInterval, snapshot, ensure, projectID, scope, sink, "")
+}
+
+func watchLoopWithEnsureAndProjectIDAndScopeAndSinkAndCursor(ctx context.Context, out io.Writer, client *http.Client, retryInterval time.Duration, snapshot watchSnapshotFunc, ensure watchEnsureFunc, projectID func() string, scope watchScope, sink func(string) error, watcherKey string) error {
 	if retryInterval <= 0 {
 		retryInterval = watchReconnectInterval
 	}
 	delivered := make(map[watchDeliveryKey]struct{})
+	workflowEvents := &watchWorkflowEventDeduper{}
 	scopeFilter := newWatchScopeFilter(scope.GoalID)
 	if scope.TaskID != "" {
 		scopeFilter = newWatchTaskScopeFilter(scope.TaskID)
@@ -395,10 +402,23 @@ func watchLoopWithEnsureAndProjectIDAndScopeAndSink(ctx context.Context, out io.
 
 		streamScope := scope
 		streamScope.ProjectID = filterProjectID
-		if err := consumeWatchEventsWithStateAndScopeAndSink(ctx, client, baseURL, streamScope, out, watchKeepaliveTimeout, delivered, &lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered, scopeFilter, sink); err != nil && ctx.Err() == nil {
+		err = consumeWatchEventsWithStateAndScopeAndSinkAndCursor(ctx, client, baseURL, streamScope, out, watchKeepaliveTimeout, delivered, &lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered, scopeFilter, sink, watcherKey, workflowEvents)
+		if err != nil && ctx.Err() == nil {
 			var sinkErr *watchSinkError
 			if errors.As(err, &sinkErr) {
 				return err
+			}
+			var staleErr *watchStaleCursorError
+			if watcherKey != "" && errors.As(err, &staleErr) {
+				if reconcileErr := reconcileWatchScope(ctx, client, baseURL, streamScope, out, delivered, &lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered, scopeFilter, sink, watcherKey, workflowEvents); reconcileErr == nil {
+					continue
+				} else {
+					var reconcileSinkErr *watchSinkError
+					if errors.As(reconcileErr, &reconcileSinkErr) {
+						return reconcileErr
+					}
+					err = reconcileErr
+				}
 			}
 			if err := recoverDaemon(); err != nil {
 				return err
@@ -541,7 +561,48 @@ func consumeWatchEvents(ctx context.Context, client *http.Client, baseURL, proje
 
 type watchSSEFrame struct {
 	name string
+	id   string
 	data string
+}
+
+type watchWorkflowEventDeduper struct {
+	ids   map[string]struct{}
+	order []string
+}
+
+const watchWorkflowEventDedupLimit = 10000
+
+func (d *watchWorkflowEventDeduper) Contains(id string) bool {
+	if id == "" {
+		return false
+	}
+	_, ok := d.ids[id]
+	return ok
+}
+
+func (d *watchWorkflowEventDeduper) Add(id string) {
+	if id == "" || d.Contains(id) {
+		return
+	}
+	if d.ids == nil {
+		d.ids = make(map[string]struct{}, watchWorkflowEventDedupLimit)
+	}
+	d.ids[id] = struct{}{}
+	d.order = append(d.order, id)
+	if len(d.order) <= watchWorkflowEventDedupLimit {
+		return
+	}
+	delete(d.ids, d.order[0])
+	d.order = d.order[1:]
+}
+
+type watchStaleCursorError struct {
+	oldest  int64
+	current int64
+}
+
+func (e *watchStaleCursorError) Error() string {
+	return fmt.Sprintf("workflow cursor is stale (oldest sequence %d, current sequence %d)", e.oldest, e.current)
 }
 
 func consumeWatchEventsWithTimeout(ctx context.Context, client *http.Client, baseURL, projectID string, out io.Writer, keepaliveTimeout time.Duration, delivered map[watchDeliveryKey]struct{}, wakeupDiscrepancyDelivered map[watchWakeupDeliveryKey]struct{}, detectionDelivered map[watchDetectionDeliveryKey]struct{}) error {
@@ -562,7 +623,17 @@ func consumeWatchEventsWithStateAndGoalAndSink(ctx context.Context, client *http
 }
 
 func consumeWatchEventsWithStateAndScopeAndSink(ctx context.Context, client *http.Client, baseURL string, scope watchScope, out io.Writer, keepaliveTimeout time.Duration, delivered map[watchDeliveryKey]struct{}, lastWakeupContent *string, wakeupDiscrepancyDelivered map[watchWakeupDeliveryKey]struct{}, detectionDelivered map[watchDetectionDeliveryKey]struct{}, scopeFilter *watchScopeFilter, sink func(string) error) error {
-	eventsURL, err := watchEventsURLWithScope(baseURL, scope)
+	return consumeWatchEventsWithStateAndScopeAndSinkAndCursor(ctx, client, baseURL, scope, out, keepaliveTimeout, delivered, lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered, scopeFilter, sink, "", nil)
+}
+
+func consumeWatchEventsWithStateAndScopeAndSinkAndCursor(ctx context.Context, client *http.Client, baseURL string, scope watchScope, out io.Writer, keepaliveTimeout time.Duration, delivered map[watchDeliveryKey]struct{}, lastWakeupContent *string, wakeupDiscrepancyDelivered map[watchWakeupDeliveryKey]struct{}, detectionDelivered map[watchDetectionDeliveryKey]struct{}, scopeFilter *watchScopeFilter, sink func(string) error, watcherKey string, workflowEvents *watchWorkflowEventDeduper) error {
+	if client == nil {
+		client = &http.Client{}
+	}
+	if scopeFilter == nil {
+		scopeFilter = newWatchPassThroughFilter()
+	}
+	eventsURL, err := watchEventsURLWithScopeAndWatcher(baseURL, scope, watcherKey)
 	if err != nil {
 		return err
 	}
@@ -576,8 +647,21 @@ func consumeWatchEventsWithStateAndScopeAndSink(ctx context.Context, client *htt
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		if resp.StatusCode == http.StatusGone {
+			var stale struct {
+				OldestSequence  int64 `json:"oldest_sequence"`
+				CurrentSequence int64 `json:"current_sequence"`
+			}
+			decodeErr := json.NewDecoder(resp.Body).Decode(&stale)
+			if decodeErr == nil && stale.OldestSequence > 0 {
+				return &watchStaleCursorError{oldest: stale.OldestSequence, current: stale.CurrentSequence}
+			}
+		}
 		_, _ = io.Copy(io.Discard, resp.Body)
 		return fmt.Errorf("GET %s: HTTP %s", eventsURL, resp.Status)
+	}
+	if workflowEvents == nil {
+		workflowEvents = &watchWorkflowEventDeduper{}
 	}
 
 	frames, readDone := readWatchSSEFrames(ctx, resp.Body)
@@ -623,17 +707,36 @@ func consumeWatchEventsWithStateAndScopeAndSink(ctx context.Context, client *htt
 				resetKeepalive()
 				continue
 			}
+			if workflowEvents.Contains(frame.id) {
+				if err := ackWatchEvent(ctx, client, baseURL, watcherKey, scope, frame.id); err != nil {
+					return err
+				}
+				continue
+			}
 			var decision watchDecision
 			if err := json.Unmarshal([]byte(frame.data), &decision); err != nil {
 				return fmt.Errorf("decode SSE event %s: %w", frame.name, err)
 			}
+			decision.EventID = frame.id
 			if scope.ProjectID != "" && decision.ProjectID != "" && decision.ProjectID != scope.ProjectID {
+				workflowEvents.Add(frame.id)
+				if err := ackWatchEvent(ctx, client, baseURL, watcherKey, scope, frame.id); err != nil {
+					return err
+				}
 				continue
 			}
 			if !scopeFilter.delivers(frame.name, decision) {
+				workflowEvents.Add(frame.id)
+				if err := ackWatchEvent(ctx, client, baseURL, watcherKey, scope, frame.id); err != nil {
+					return err
+				}
 				continue
 			}
 			if err := emitWatchDecisionWithStateAndSink(out, frame.name, decision, delivered, lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered, sink); err != nil {
+				return err
+			}
+			workflowEvents.Add(frame.id)
+			if err := ackWatchEvent(ctx, client, baseURL, watcherKey, scope, frame.id); err != nil {
 				return err
 			}
 		}
@@ -648,20 +751,23 @@ func readWatchSSEFrames(ctx context.Context, body io.Reader) (<-chan watchSSEFra
 		scanner := bufio.NewScanner(body)
 		scanner.Buffer(make([]byte, 4096), 1024*1024)
 		var eventName string
+		var eventID string
 		var data strings.Builder
 		dispatch := func() error {
 			if eventName == "" || data.Len() == 0 {
 				eventName = ""
+				eventID = ""
 				data.Reset()
 				return nil
 			}
-			frame := watchSSEFrame{name: eventName, data: data.String()}
+			frame := watchSSEFrame{name: eventName, id: eventID, data: data.String()}
 			select {
 			case frames <- frame:
 			case <-ctx.Done():
 				return ctx.Err()
 			}
 			eventName = ""
+			eventID = ""
 			data.Reset()
 			return nil
 		}
@@ -680,6 +786,8 @@ func readWatchSSEFrames(ctx context.Context, body io.Reader) (<-chan watchSSEFra
 				}
 			case strings.HasPrefix(line, "event:"):
 				eventName = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
+			case strings.HasPrefix(line, "id:"):
+				eventID = strings.TrimSpace(strings.TrimPrefix(line, "id:"))
 			case strings.HasPrefix(line, "data:"):
 				value := strings.TrimPrefix(line, "data:")
 				if strings.HasPrefix(value, " ") {
@@ -711,8 +819,12 @@ func watchEventsURLWithGoal(baseURL, projectID, goalID string) (string, error) {
 }
 
 func watchEventsURLWithScope(baseURL string, scope watchScope) (string, error) {
+	return watchEventsURLWithScopeAndWatcher(baseURL, scope, "")
+}
+
+func watchEventsURLWithScopeAndWatcher(baseURL string, scope watchScope, watcherKey string) (string, error) {
 	endpoint := strings.TrimRight(baseURL, "/") + "/api/events"
-	if scope.ProjectID == "" && scope.GoalID == "" && scope.TaskID == "" {
+	if scope.ProjectID == "" && scope.GoalID == "" && scope.TaskID == "" && watcherKey == "" {
 		return endpoint, nil
 	}
 	parsed, err := url.Parse(endpoint)
@@ -729,8 +841,288 @@ func watchEventsURLWithScope(baseURL string, scope watchScope) (string, error) {
 	if scope.TaskID != "" {
 		query.Set("task_id", scope.TaskID)
 	}
+	if watcherKey != "" {
+		query.Set("watcher_key", watcherKey)
+	}
 	parsed.RawQuery = query.Encode()
 	return parsed.String(), nil
+}
+
+func watchReconcileURL(baseURL string, scope watchScope) (string, error) {
+	endpoint := strings.TrimRight(baseURL, "/") + "/api/events/reconcile"
+	parsed, err := url.Parse(endpoint)
+	if err != nil {
+		return "", err
+	}
+	query := parsed.Query()
+	if scope.ProjectID != "" {
+		query.Set("project_id", scope.ProjectID)
+	}
+	if scope.GoalID != "" {
+		query.Set("goal_id", scope.GoalID)
+	}
+	if scope.TaskID != "" {
+		query.Set("task_id", scope.TaskID)
+	}
+	parsed.RawQuery = query.Encode()
+	return parsed.String(), nil
+}
+
+func watchKeyForScope(cwd string, scope watchScope) string {
+	cleanCWD := strings.TrimSpace(cwd)
+	if absolute, err := filepath.Abs(filepath.Clean(cleanCWD)); err == nil {
+		cleanCWD = absolute
+	}
+	parts := []string{"atct-watch", cleanCWD}
+	if scope.ProjectID != "" {
+		parts = append(parts, "project="+scope.ProjectID)
+	}
+	if scope.GoalID != "" {
+		parts = append(parts, "goal="+scope.GoalID)
+	}
+	if scope.TaskID != "" {
+		parts = append(parts, "task="+scope.TaskID)
+	}
+	if scope.Role != "" {
+		parts = append(parts, "role="+scope.Role)
+	}
+	return strings.Join(parts, "|")
+}
+
+func ackWatchEvent(ctx context.Context, client *http.Client, baseURL, watcherKey string, scope watchScope, eventID string) error {
+	if strings.TrimSpace(watcherKey) == "" || strings.TrimSpace(scope.ProjectID) == "" || strings.TrimSpace(eventID) == "" {
+		return nil
+	}
+	sequence, err := parseWatchWorkflowSequence(eventID)
+	if err != nil {
+		// Legacy or third-party event streams may use non-sequenced IDs. They
+		// remain deliverable, but cannot advance the durable project cursor.
+		return nil
+	}
+	return ackWatchSequence(ctx, client, baseURL, watcherKey, scope, sequence)
+}
+
+func ackWatchSequence(ctx context.Context, client *http.Client, baseURL, watcherKey string, scope watchScope, sequence int64) error {
+	if strings.TrimSpace(watcherKey) == "" || strings.TrimSpace(scope.ProjectID) == "" || sequence < 0 {
+		return nil
+	}
+	projectID := scope.ProjectID
+	goalID := scope.GoalID
+	payload := struct {
+		WatcherKey string `json:"watcher_key"`
+		ProjectID  string `json:"project_id"`
+		GoalID     string `json:"goal_id,omitempty"`
+		Sequence   int64  `json:"sequence"`
+	}{WatcherKey: watcherKey, ProjectID: projectID, GoalID: goalID, Sequence: sequence}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("encode watch cursor: %w", err)
+	}
+	endpoint := strings.TrimRight(baseURL, "/") + "/api/watch/cursor"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("POST %s: %w", endpoint, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusMethodNotAllowed {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		return nil
+	}
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		return fmt.Errorf("POST %s: HTTP %s", endpoint, resp.Status)
+	}
+	return nil
+}
+
+func parseWatchWorkflowSequence(value string) (int64, error) {
+	value = strings.TrimSpace(value)
+	if separator := strings.LastIndexByte(value, ':'); separator >= 0 {
+		value = value[separator+1:]
+	}
+	sequence, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || sequence < 0 {
+		return 0, fmt.Errorf("invalid workflow event id %q", value)
+	}
+	return sequence, nil
+}
+
+type watchReconciliationEvent struct {
+	ID   string          `json:"id"`
+	Name string          `json:"event_name"`
+	Data json.RawMessage `json:"data"`
+}
+
+type watchReconciliationHandoff struct {
+	ID                string  `json:"ID"`
+	GoalID            int64   `json:"GoalID"`
+	TaskID            int64   `json:"TaskID"`
+	RequestedAt       *string `json:"RequestedAt"`
+	ReceivedAt        *string `json:"ReceivedAt"`
+	CompletedReportAt *string `json:"CompletedReportAt"`
+	ReviewRequestedAt *string `json:"ReviewRequestedAt"`
+	ReviewReceivedAt  *string `json:"ReviewReceivedAt"`
+	ReviewRejectedAt  *string `json:"ReviewRejectedAt"`
+}
+
+type watchReconciliation struct {
+	Events             []watchReconciliationEvent   `json:"events"`
+	CurrentSequence    int64                        `json:"current_sequence"`
+	HighWatermark      int64                        `json:"high_watermark"`
+	UnappliedDecisions []watchDecision              `json:"unapplied_decisions"`
+	OpenDecisions      []watchDecision              `json:"open_decisions"`
+	GoalHandoffs       []watchReconciliationHandoff `json:"goal_handoffs"`
+	PlanHandoffs       []watchReconciliationHandoff `json:"plan_handoffs"`
+	TaskHandoffs       []watchReconciliationHandoff `json:"task_handoffs"`
+}
+
+func reconcileWatchScope(ctx context.Context, client *http.Client, baseURL string, scope watchScope, out io.Writer, delivered map[watchDeliveryKey]struct{}, lastWakeupContent *string, wakeupDiscrepancyDelivered map[watchWakeupDeliveryKey]struct{}, detectionDelivered map[watchDetectionDeliveryKey]struct{}, scopeFilter *watchScopeFilter, sink func(string) error, watcherKey string, workflowEvents *watchWorkflowEventDeduper) error {
+	reconcileURL, err := watchReconcileURL(baseURL, scope)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reconcileURL, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("GET %s: %w", reconcileURL, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		return fmt.Errorf("GET %s: HTTP %s", reconcileURL, resp.Status)
+	}
+	var state watchReconciliation
+	if err := json.NewDecoder(resp.Body).Decode(&state); err != nil {
+		return fmt.Errorf("decode %s: %w", reconcileURL, err)
+	}
+	if scopeFilter == nil {
+		scopeFilter = newWatchPassThroughFilter()
+	}
+	if workflowEvents == nil {
+		workflowEvents = &watchWorkflowEventDeduper{}
+	}
+	for _, event := range state.Events {
+		if event.Name == "" {
+			continue
+		}
+		data := event.Data
+		if len(data) == 0 {
+			data = []byte("{}")
+		}
+		if err := deliverWatchFrame(ctx, client, baseURL, scope, watcherKey, watchSSEFrame{name: event.Name, id: event.ID, data: string(data)}, out, delivered, lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered, scopeFilter, sink, workflowEvents); err != nil {
+			return err
+		}
+	}
+	for _, decision := range state.UnappliedDecisions {
+		if err := emitWatchDecisionWithStateAndSink(out, "decision.answered", decision, delivered, lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered, sink); err != nil {
+			return err
+		}
+	}
+	for _, decision := range state.OpenDecisions {
+		if err := emitWatchDecisionWithStateAndSink(out, "decision.pending", decision, delivered, lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered, sink); err != nil {
+			return err
+		}
+	}
+	for _, handoff := range state.TaskHandoffs {
+		if eventName, decision, ok := watchReconciliationHandoffEvent("task", handoff); ok {
+			if !scopeFilter.delivers(eventName, decision) {
+				continue
+			}
+			if err := emitWatchDecisionWithStateAndSink(out, eventName, decision, delivered, lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered, sink); err != nil {
+				return err
+			}
+		}
+	}
+	for _, handoff := range state.GoalHandoffs {
+		if eventName, decision, ok := watchReconciliationHandoffEvent("goal", handoff); ok {
+			if !scopeFilter.delivers(eventName, decision) {
+				continue
+			}
+			if err := emitWatchDecisionWithStateAndSink(out, eventName, decision, delivered, lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered, sink); err != nil {
+				return err
+			}
+		}
+	}
+	for _, handoff := range state.PlanHandoffs {
+		if eventName, decision, ok := watchReconciliationHandoffEvent("plan", handoff); ok {
+			if !scopeFilter.delivers(eventName, decision) {
+				continue
+			}
+			if err := emitWatchDecisionWithStateAndSink(out, eventName, decision, delivered, lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered, sink); err != nil {
+				return err
+			}
+		}
+	}
+	ackSequence := state.HighWatermark
+	if ackSequence == 0 {
+		ackSequence = state.CurrentSequence
+	}
+	if watcherKey != "" && ackSequence >= 0 {
+		if err := ackWatchSequence(ctx, client, baseURL, watcherKey, scope, ackSequence); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func deliverWatchFrame(ctx context.Context, client *http.Client, baseURL string, scope watchScope, watcherKey string, frame watchSSEFrame, out io.Writer, delivered map[watchDeliveryKey]struct{}, lastWakeupContent *string, wakeupDiscrepancyDelivered map[watchWakeupDeliveryKey]struct{}, detectionDelivered map[watchDetectionDeliveryKey]struct{}, scopeFilter *watchScopeFilter, sink func(string) error, workflowEvents *watchWorkflowEventDeduper) error {
+	if workflowEvents != nil && workflowEvents.Contains(frame.id) {
+		return nil
+	}
+	var decision watchDecision
+	if err := json.Unmarshal([]byte(frame.data), &decision); err != nil {
+		return fmt.Errorf("decode SSE event %s: %w", frame.name, err)
+	}
+	decision.EventID = frame.id
+	if scope.ProjectID != "" && decision.ProjectID != "" && decision.ProjectID != scope.ProjectID {
+		if workflowEvents != nil {
+			workflowEvents.Add(frame.id)
+		}
+		return nil
+	}
+	if scopeFilter != nil && !scopeFilter.delivers(frame.name, decision) {
+		if workflowEvents != nil {
+			workflowEvents.Add(frame.id)
+		}
+		return nil
+	}
+	if err := emitWatchDecisionWithStateAndSink(out, frame.name, decision, delivered, lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered, sink); err != nil {
+		return err
+	}
+	if workflowEvents != nil {
+		workflowEvents.Add(frame.id)
+	}
+	return nil
+}
+
+func watchReconciliationHandoffEvent(kind string, handoff watchReconciliationHandoff) (string, watchDecision, bool) {
+	decision := watchDecision{HandoffID: handoff.ID, GoalID: strconv.FormatInt(handoff.GoalID, 10)}
+	if handoff.TaskID != 0 {
+		decision.TaskID = strconv.FormatInt(handoff.TaskID, 10)
+	}
+	prefix := kind + ".handoff."
+	switch {
+	case handoff.ReviewRejectedAt != nil:
+		return prefix + "review.reject", decision, true
+	case handoff.ReviewReceivedAt != nil:
+		return prefix + "review.receive", decision, true
+	case handoff.ReviewRequestedAt != nil:
+		return prefix + "review.request", decision, true
+	case handoff.ReceivedAt != nil:
+		return prefix + "receive", decision, true
+	case handoff.RequestedAt != nil:
+		return prefix + "request", decision, true
+	default:
+		return "", watchDecision{}, false
+	}
 }
 
 func emitWatchDecisionWithState(out io.Writer, eventName string, decision watchDecision, delivered map[watchDeliveryKey]struct{}, lastWakeupContent *string, wakeupDiscrepancyDelivered map[watchWakeupDeliveryKey]struct{}, detectionDelivered map[watchDetectionDeliveryKey]struct{}) error {
@@ -777,6 +1169,27 @@ func emitWatchDecisionWithStateAndSink(out io.Writer, eventName string, decision
 				return fmt.Errorf("SSE event %s has no goal_id", eventName)
 			}
 			return fmt.Errorf("SSE event %s has neither decision_id, goal_id, handoff_id, nor task_id", eventName)
+		}
+		key := watchDetectionDeliveryKey{eventName: eventName, targetID: target}
+		if _, ok := detectionDelivered[key]; ok {
+			return nil
+		}
+		if err := writeLine(); err != nil {
+			return err
+		}
+		detectionDelivered[key] = struct{}{}
+		return nil
+	}
+	if strings.Contains(eventName, ".handoff.") {
+		target := decision.HandoffID
+		if target == "" {
+			target = decision.TaskID
+		}
+		if target == "" {
+			target = decision.GoalID
+		}
+		if target == "" {
+			return fmt.Errorf("SSE event %s has no handoff_id, task_id, or goal_id", eventName)
 		}
 		key := watchDetectionDeliveryKey{eventName: eventName, targetID: target}
 		if _, ok := detectionDelivered[key]; ok {
@@ -844,12 +1257,50 @@ func formatWatchDecision(eventName string, decision watchDecision) (string, bool
 			return fmt.Sprintf("atct decision default applied (decision_id: %s)", decision.decisionID()), true
 		}
 		return fmt.Sprintf("atct decision answered (decision_id: %s)", decision.decisionID()), true
+	case "decision.pending":
+		return fmt.Sprintf("atct decision pending (decision_id: %s)", decision.decisionID()), true
 	case "decision.approved":
 		return fmt.Sprintf("atct decision approved (decision_id: %s)", decision.decisionID()), true
 	case "decision.rejected":
 		return fmt.Sprintf("atct decision rejected (decision_id: %s)", decision.decisionID()), true
 	case "goal.created":
 		return fmt.Sprintf("atct goal created (goal_id: %s)", decision.GoalID), true
+	case "task.handoff.request":
+		return fmt.Sprintf("atct task handoff requested (task_id: %s, handoff_id: %s)", decision.TaskID, decision.HandoffID), true
+	case "task.handoff.receive":
+		return fmt.Sprintf("atct task handoff received (task_id: %s, handoff_id: %s)", decision.TaskID, decision.HandoffID), true
+	case "task.handoff.review.request":
+		return fmt.Sprintf("atct task handoff review requested (task_id: %s, handoff_id: %s)", decision.TaskID, decision.HandoffID), true
+	case "task.handoff.review.receive":
+		return fmt.Sprintf("atct task handoff review received (task_id: %s, handoff_id: %s)", decision.TaskID, decision.HandoffID), true
+	case "task.handoff.review.reject":
+		return fmt.Sprintf("atct task handoff review rejected (task_id: %s, handoff_id: %s)", decision.TaskID, decision.HandoffID), true
+	case "task.handoff.complete":
+		return fmt.Sprintf("atct task handoff completed (task_id: %s, handoff_id: %s)", decision.TaskID, decision.HandoffID), true
+	case "goal.handoff.request":
+		return fmt.Sprintf("atct goal handoff requested (goal_id: %s, handoff_id: %s)", decision.GoalID, decision.HandoffID), true
+	case "goal.handoff.receive":
+		return fmt.Sprintf("atct goal handoff received (goal_id: %s, handoff_id: %s)", decision.GoalID, decision.HandoffID), true
+	case "goal.handoff.review.request":
+		return fmt.Sprintf("atct goal handoff review requested (goal_id: %s, handoff_id: %s)", decision.GoalID, decision.HandoffID), true
+	case "goal.handoff.review.receive":
+		return fmt.Sprintf("atct goal handoff review received (goal_id: %s, handoff_id: %s)", decision.GoalID, decision.HandoffID), true
+	case "goal.handoff.review.reject":
+		return fmt.Sprintf("atct goal handoff review rejected (goal_id: %s, handoff_id: %s)", decision.GoalID, decision.HandoffID), true
+	case "goal.handoff.complete":
+		return fmt.Sprintf("atct goal handoff completed (goal_id: %s, handoff_id: %s)", decision.GoalID, decision.HandoffID), true
+	case "plan.handoff.request":
+		return fmt.Sprintf("atct plan handoff requested (goal_id: %s, handoff_id: %s)", decision.GoalID, decision.HandoffID), true
+	case "plan.handoff.receive":
+		return fmt.Sprintf("atct plan handoff received (goal_id: %s, handoff_id: %s)", decision.GoalID, decision.HandoffID), true
+	case "plan.handoff.review.request":
+		return fmt.Sprintf("atct plan handoff review requested (goal_id: %s, handoff_id: %s)", decision.GoalID, decision.HandoffID), true
+	case "plan.handoff.review.receive":
+		return fmt.Sprintf("atct plan handoff review received (goal_id: %s, handoff_id: %s)", decision.GoalID, decision.HandoffID), true
+	case "plan.handoff.review.reject":
+		return fmt.Sprintf("atct plan handoff review rejected (goal_id: %s, handoff_id: %s)", decision.GoalID, decision.HandoffID), true
+	case "plan.handoff.complete":
+		return fmt.Sprintf("atct plan handoff completed (goal_id: %s, handoff_id: %s)", decision.GoalID, decision.HandoffID), true
 	case "wakeup":
 		return fmt.Sprintf("atct wakeup: actionable_goals=%d unassigned_goals=%d unstarted_tasks=%d waiting_answer_tasks=%d untouched_tasks=%d delegated_tasks=%d waiting_answers=%d unassigned=%s", decision.ActionableGoalCount, decision.UnassignedGoalCount, decision.UnstartedTaskCount, decision.WaitingAnswerTaskCount, decision.UntouchedTaskCount, decision.DelegatedTaskCount, decision.WaitingAnswerCount, formatUnassignedGoalIDs(decision.UnassignedGoalIDs)), true
 	case "detection.completion_report_missing":

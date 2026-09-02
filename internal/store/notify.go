@@ -20,8 +20,13 @@ type notifier struct {
 // open-ended so the same event bus can carry decisions, wakeups, and daemon
 // keepalives.
 type DecisionEvent struct {
-	Name string
-	Data any
+	Name       string
+	Data       any
+	EventID    string
+	ID         string
+	ProjectID  int64
+	Sequence   int64
+	OccurredAt time.Time
 }
 
 // Event is the generic name for a DecisionEvent. The alias keeps the event
@@ -118,8 +123,8 @@ func (n *notifier) publishEvent(event DecisionEvent) {
 }
 
 // SubscribeEvents subscribes to committed store events. Events are delivered
-// on a buffered channel and slow subscribers may miss events; publishing
-// never blocks the store or other subscribers.
+// on a buffered channel and slow subscribers may miss the low-latency copy;
+// durable workflow events remain available through ListWorkflowEvents.
 func (s *Store) SubscribeEvents() (<-chan DecisionEvent, func()) {
 	return s.notify.subscribeEvents()
 }

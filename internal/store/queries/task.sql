@@ -417,3 +417,65 @@ WHERE id = ? AND goal_id = ?
   AND review_received_by = ?
   AND review_received_at IS NOT NULL
   AND completed_report_at IS NULL;
+
+-- name: AllocateProjectEventSequence :one
+INSERT INTO project_event_sequences (project_id, last_sequence)
+VALUES (?, 1)
+ON CONFLICT(project_id) DO UPDATE SET
+  last_sequence = project_event_sequences.last_sequence + 1
+RETURNING last_sequence;
+
+-- name: GetProjectEventSequence :one
+SELECT COALESCE(last_sequence, 0) AS last_sequence
+FROM project_event_sequences
+WHERE project_id = ?;
+
+-- name: InsertWorkflowEventOutbox :exec
+INSERT INTO workflow_event_outbox (
+  project_id, sequence, event_id, event_name, goal_id, task_id,
+  decision_id, handoff_id, payload, occurred_at
+)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+-- name: ListWorkflowEvents :many
+SELECT project_id, sequence, event_id, event_name, goal_id, task_id,
+       decision_id, handoff_id, payload, occurred_at
+FROM workflow_event_outbox
+WHERE project_id = sqlc.arg('project_id')
+  AND sequence > sqlc.arg('after_sequence')
+  AND (sqlc.arg('before_sequence') = 0 OR sequence <= sqlc.arg('before_sequence'))
+  AND (sqlc.arg('goal_id') = 0 OR goal_id = sqlc.arg('goal_id'))
+  AND (sqlc.arg('task_id') = 0 OR task_id = sqlc.arg('task_id'))
+ORDER BY sequence
+LIMIT sqlc.arg('event_limit');
+
+-- name: GetWorkflowEventBounds :one
+SELECT
+  COALESCE(MIN(sequence), 0) AS oldest_sequence,
+  COALESCE(MAX(sequence), 0) AS current_sequence
+FROM workflow_event_outbox
+WHERE project_id = ?;
+
+-- name: GetWatchDeliveryCursor :one
+SELECT watcher_key, project_id, goal_id, sequence, updated_at
+FROM watch_delivery_cursors
+WHERE watcher_key = ? AND project_id = ? AND goal_id = ?;
+
+-- name: UpsertWatchDeliveryCursor :exec
+INSERT INTO watch_delivery_cursors (watcher_key, project_id, goal_id, sequence, updated_at)
+VALUES (?, ?, ?, ?, ?)
+ON CONFLICT(watcher_key, project_id, goal_id) DO UPDATE SET
+  sequence = CASE
+    WHEN excluded.sequence > watch_delivery_cursors.sequence THEN excluded.sequence
+    ELSE watch_delivery_cursors.sequence
+  END,
+  updated_at = CASE
+    WHEN excluded.sequence > watch_delivery_cursors.sequence THEN excluded.updated_at
+    ELSE watch_delivery_cursors.updated_at
+  END;
+
+-- name: DeleteRetainedWorkflowEvents :exec
+DELETE FROM workflow_event_outbox
+WHERE project_id = ?
+  AND sequence <= ? - 10000
+  AND occurred_at < ?;

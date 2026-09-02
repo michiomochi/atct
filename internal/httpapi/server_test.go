@@ -2573,6 +2573,7 @@ func TestHTTPApproveAndRejectGoalReviewEndpoints(t *testing.T) {
 
 type sseFrame struct {
 	event string
+	id    string
 	data  string
 	lines []string
 }
@@ -2601,6 +2602,8 @@ func readSSEFrame(t *testing.T, reader *bufio.Reader) sseFrame {
 			switch {
 			case strings.HasPrefix(line, "event: "):
 				frame.event = strings.TrimPrefix(line, "event: ")
+			case strings.HasPrefix(line, "id: "):
+				frame.id = strings.TrimPrefix(line, "id: ")
 			case strings.HasPrefix(line, "data: "):
 				frame.data = strings.TrimPrefix(line, "data: ")
 			}
@@ -2623,11 +2626,6 @@ func assertSSEDecision(t *testing.T, reader *bufio.Reader, wantEvent string, wan
 	frame := readSSEFrame(t, reader)
 	if frame.event != wantEvent {
 		t.Fatalf("SSE event = %q, want %q; lines=%v", frame.event, wantEvent, frame.lines)
-	}
-	for _, line := range frame.lines {
-		if strings.HasPrefix(line, "id:") {
-			t.Fatalf("SSE frame unexpectedly has id: %v", frame.lines)
-		}
 	}
 	var got domain.Decision
 	if err := json.Unmarshal([]byte(frame.data), &got); err != nil {
@@ -2895,6 +2893,41 @@ func TestSSEFiltersTaskEventsByTaskIDAcrossProjectAndGoal(t *testing.T) {
 		if frame.event != want.name || got.DetectionID != want.detectionID || got.TaskID != tasks[0].ID {
 			t.Fatalf("task-filtered SSE event = %q %+v, want %s/%s for task %d", frame.event, got, want.name, want.detectionID, tasks[0].ID)
 		}
+	}
+}
+
+func TestSSEFiltersDecisionEventsByTaskID(t *testing.T) {
+	f := newBareFixture(t)
+	tasks, err := f.store.DeclareTasks(f.ctx, f.goal.ID, "sse-decision-task-filter", "sse-decision-task-filter", []string{"target", "other"}, []string{"The selected task.", "Another task."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+	streamCtx, cancel := context.WithCancel(f.ctx)
+	defer cancel()
+	stream, reader := openSSEStream(t, streamCtx, srv.Client(), srv.URL+"/api/events?task_id="+idText(tasks[0].ID))
+	defer stream.Body.Close()
+
+	f.store.PublishEvent(store.DecisionEvent{
+		Name: "decision.created",
+		Data: domain.Decision{ID: 1, GoalID: f.goal.ID, TaskID: tasks[1].ID},
+	})
+	f.store.PublishEvent(store.DecisionEvent{
+		Name: "decision.created",
+		Data: domain.Decision{ID: 2, GoalID: f.goal.ID, TaskID: tasks[0].ID},
+	})
+
+	frame := readSSEFrame(t, reader)
+	if frame.event != "decision.created" {
+		t.Fatalf("task-filtered decision event = %q, want decision.created; lines=%v", frame.event, frame.lines)
+	}
+	var got domain.Decision
+	if err := json.Unmarshal([]byte(frame.data), &got); err != nil {
+		t.Fatalf("task-filtered decision data: %v; data=%q", err, frame.data)
+	}
+	if got.ID != 2 || got.TaskID != tasks[0].ID {
+		t.Fatalf("task-filtered decision = %+v, want target task %d", got, tasks[0].ID)
 	}
 }
 

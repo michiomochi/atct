@@ -20,6 +20,44 @@ SELECT
 FROM goals
 WHERE id = ?;
 
+-- name: GetGoalProjectID :one
+SELECT project_id
+FROM goals
+WHERE id = ?;
+
+-- name: HasGoalReview :one
+SELECT EXISTS(
+  SELECT 1 FROM decisions
+  WHERE goal_id = ? AND kind = 'goal_review'
+);
+
+-- name: GetLatestGoalReviewID :one
+SELECT id
+FROM decisions
+WHERE goal_id = ? AND kind = 'goal_review'
+ORDER BY id DESC
+LIMIT 1;
+
+-- name: GetOpenGoalReviewGoalID :one
+SELECT goal_id
+FROM decisions
+WHERE id = ? AND kind = 'goal_review' AND status = 'open';
+
+-- name: GetGoalStatus :one
+SELECT status
+FROM goals
+WHERE id = ?;
+
+-- name: ApproveGoalReviewDecision :execresult
+UPDATE decisions
+SET status = 'applied', answer_label = 'approve', answered_at = ?, applied_at = ?
+WHERE id = ? AND kind = 'goal_review' AND status = 'open';
+
+-- name: RejectGoalReviewDecision :execresult
+UPDATE decisions
+SET status = 'answered', answer_label = 'reject', answer_text = ?, answered_at = ?
+WHERE id = ? AND kind = 'goal_review' AND status = 'open';
+
 -- name: MarkGoalActive :execresult
 UPDATE goals SET status = 'active', updated_at = ?
 WHERE id = ? AND status = 'proposed';
@@ -85,6 +123,17 @@ WHERE id = ?;
 SELECT COUNT(*)
 FROM decisions
 WHERE goal_id = ? AND status = 'open';
+
+-- name: CountApprovedGoalReviewsForGoal :one
+SELECT COUNT(*)
+FROM decisions
+WHERE goal_id = ? AND kind = 'goal_review' AND status = 'applied' AND answer_label = 'approve';
+
+-- name: FinalizeGoal :execresult
+UPDATE goals
+SET status = 'done', result_summary = ?, work_done = ?, now_possible = ?,
+    how_to_verify = ?, surprises = ?, needs_review = ?, next_steps = ?, updated_at = ?
+WHERE id = ? AND status = 'active';
 
 -- name: UpdateGoalCompletionReport :execresult
 UPDATE goals SET

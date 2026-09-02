@@ -92,8 +92,7 @@ CREATE TABLE IF NOT EXISTS decisions (
   answered_at  TEXT,
   applied_at   TEXT,
   agent_session_id INTEGER NOT NULL DEFAULT 0,
-  created_at   TEXT NOT NULL,
-  CHECK (kind <> 'decision' OR status NOT IN ('open', 'answered') OR (task_id IS NOT NULL AND task_id <> ''))
+  created_at   TEXT NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_decisions_open
@@ -119,7 +118,14 @@ CREATE TABLE IF NOT EXISTS task_handoffs (
   received_at         TEXT,
   completed_report_at TEXT,
   request_report      TEXT,
-  complete_report     TEXT
+  complete_report     TEXT,
+  review_requested_by INTEGER REFERENCES agent_sessions(id),
+  review_requested_at TEXT,
+  review_request_report TEXT,
+  review_received_by  INTEGER REFERENCES agent_sessions(id),
+  review_received_at  TEXT,
+  review_rejected_at  TEXT,
+  review_reject_report TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_task_handoffs_task_id
@@ -138,7 +144,14 @@ CREATE TABLE IF NOT EXISTS goal_handoffs (
   received_at         TEXT,
   completed_report_at TEXT,
   request_report      TEXT,
-  complete_report     TEXT
+  complete_report     TEXT,
+  review_requested_by INTEGER REFERENCES agent_sessions(id),
+  review_requested_at TEXT,
+  review_request_report TEXT,
+  review_received_by  INTEGER REFERENCES agent_sessions(id),
+  review_received_at  TEXT,
+  review_rejected_at  TEXT,
+  review_reject_report TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_goal_handoffs_goal_id
@@ -147,3 +160,64 @@ CREATE INDEX IF NOT EXISTS idx_goal_handoffs_goal_id
 CREATE UNIQUE INDEX IF NOT EXISTS idx_goal_handoffs_open_goal_id
   ON goal_handoffs(goal_id)
   WHERE completed_report_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS plan_handoffs (
+  id                  TEXT PRIMARY KEY,
+  goal_id             INTEGER NOT NULL REFERENCES goals(id),
+  review_requested_by INTEGER REFERENCES agent_sessions(id),
+  review_requested_at TEXT,
+  review_request_report TEXT,
+  review_received_by  INTEGER REFERENCES agent_sessions(id),
+  review_received_at  TEXT,
+  review_rejected_at  TEXT,
+  review_reject_report TEXT,
+  completed_report_at TEXT,
+  complete_report     TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_plan_handoffs_goal_id
+  ON plan_handoffs(goal_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_plan_handoffs_open_goal_id
+  ON plan_handoffs(goal_id)
+  WHERE completed_report_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS project_event_sequences (
+  project_id    INTEGER PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+  last_sequence INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS workflow_event_outbox (
+  project_id  INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  sequence    INTEGER NOT NULL,
+  event_id    TEXT NOT NULL UNIQUE,
+  event_name  TEXT NOT NULL,
+  goal_id     INTEGER REFERENCES goals(id) ON DELETE CASCADE,
+  task_id     INTEGER REFERENCES tasks(id) ON DELETE CASCADE,
+  decision_id INTEGER REFERENCES decisions(id) ON DELETE CASCADE,
+  handoff_id  TEXT,
+  payload     TEXT NOT NULL,
+  occurred_at TEXT NOT NULL,
+  PRIMARY KEY (project_id, sequence)
+);
+
+CREATE INDEX IF NOT EXISTS idx_workflow_event_outbox_project_time
+  ON workflow_event_outbox(project_id, occurred_at, sequence);
+
+CREATE INDEX IF NOT EXISTS idx_workflow_event_outbox_goal_sequence
+  ON workflow_event_outbox(project_id, goal_id, sequence);
+
+CREATE INDEX IF NOT EXISTS idx_workflow_event_outbox_task_sequence
+  ON workflow_event_outbox(project_id, task_id, sequence);
+
+CREATE TABLE IF NOT EXISTS watch_delivery_cursors (
+  watcher_key TEXT NOT NULL,
+  project_id  INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  goal_id     INTEGER NOT NULL DEFAULT 0,
+  sequence    INTEGER NOT NULL DEFAULT 0,
+  updated_at  TEXT NOT NULL,
+  PRIMARY KEY (watcher_key, project_id, goal_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_watch_delivery_cursors_project
+  ON watch_delivery_cursors(project_id, goal_id, sequence);

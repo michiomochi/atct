@@ -161,7 +161,7 @@ INSERT INTO goal_handoffs (id, goal_id, requested_by, received_by, requested_at,
 	}
 
 	assertNoForeignKeyViolations(t, migrated.DB())
-	assertForeignKeyCount(t, migrated.DB(), 13)
+	assertForeignKeySet(t, migrated.DB())
 	assertTableAbsent(t, migrated.DB(), "runs")
 }
 
@@ -202,18 +202,99 @@ func assertNoForeignKeyViolations(t *testing.T, db *sql.DB) {
 	}
 }
 
-func assertForeignKeyCount(t *testing.T, db *sql.DB, want int) {
+func assertForeignKeySet(t *testing.T, db *sql.DB) {
 	t.Helper()
-	var got int
-	for _, table := range []string{"projects", "agent_sessions", "goals", "tasks", "decisions", "task_commits", "task_handoffs", "goal_handoffs"} {
-		var count int
-		if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_foreign_key_list(?)`, table).Scan(&count); err != nil {
-			t.Fatalf("count %s foreign keys: %v", table, err)
-		}
-		got += count
+	want := map[string]map[string]struct{}{
+		"projects": {},
+		"agent_sessions": {
+			"project_id->projects.id": {},
+		},
+		"goals": {
+			"project_id->projects.id":        {},
+			"derived_from_goal_id->goals.id": {},
+		},
+		"tasks": {
+			"goal_id->goals.id": {},
+		},
+		"decisions": {
+			"goal_id->goals.id": {},
+			"task_id->tasks.id": {},
+		},
+		"task_commits": {
+			"task_id->tasks.id": {},
+		},
+		"task_handoffs": {
+			"task_id->tasks.id":                      {},
+			"requested_by->agent_sessions.id":        {},
+			"received_by->agent_sessions.id":         {},
+			"review_requested_by->agent_sessions.id": {},
+			"review_received_by->agent_sessions.id":  {},
+		},
+		"goal_handoffs": {
+			"goal_id->goals.id":                      {},
+			"requested_by->agent_sessions.id":        {},
+			"received_by->agent_sessions.id":         {},
+			"review_requested_by->agent_sessions.id": {},
+			"review_received_by->agent_sessions.id":  {},
+		},
+		"plan_handoffs": {
+			"goal_id->goals.id":                      {},
+			"review_requested_by->agent_sessions.id": {},
+			"review_received_by->agent_sessions.id":  {},
+		},
+		"project_event_sequences": {
+			"project_id->projects.id": {},
+		},
+		"workflow_event_outbox": {
+			"project_id->projects.id":   {},
+			"goal_id->goals.id":         {},
+			"task_id->tasks.id":         {},
+			"decision_id->decisions.id": {},
+		},
+		"watch_delivery_cursors": {
+			"project_id->projects.id": {},
+		},
 	}
-	if got != want {
-		t.Errorf("foreign key count = %d, want %d", got, want)
+
+	var got int
+	for table, expected := range want {
+		rows, err := db.Query(`SELECT "from", "table", "to" FROM pragma_foreign_key_list(?)`, table)
+		if err != nil {
+			t.Fatalf("list %s foreign keys: %v", table, err)
+		}
+		actual := make(map[string]struct{})
+		for rows.Next() {
+			var from, parent, to string
+			if err := rows.Scan(&from, &parent, &to); err != nil {
+				rows.Close()
+				t.Fatalf("read %s foreign key: %v", table, err)
+			}
+			actual[from+"->"+parent+"."+to] = struct{}{}
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			t.Fatalf("read %s foreign keys: %v", table, err)
+		}
+		rows.Close()
+
+		if len(actual) != len(expected) {
+			t.Errorf("%s foreign key count = %d, want %d", table, len(actual), len(expected))
+		}
+		for key := range expected {
+			if _, ok := actual[key]; !ok {
+				t.Errorf("%s missing foreign key %s", table, key)
+			}
+		}
+		for key := range actual {
+			if _, ok := expected[key]; !ok {
+				t.Errorf("%s unexpected foreign key %s", table, key)
+			}
+		}
+		got += len(actual)
+	}
+	const wantCount = 26
+	if got != wantCount {
+		t.Errorf("foreign key count = %d, want %d", got, wantCount)
 	}
 }
 

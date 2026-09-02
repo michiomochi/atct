@@ -57,6 +57,210 @@ func TestWatchEnsuresDaemonAfterConnectionFailure(t *testing.T) {
 	}
 }
 
+func TestReadWatchSSEFramesPreservesStableID(t *testing.T) {
+	ctx := context.Background()
+	frames, done := readWatchSSEFrames(ctx, strings.NewReader("id: 7:12\nevent: goal.handoff.review.request\ndata: {\"goal_id\":7}\n\n"))
+	frame, ok := <-frames
+	if !ok {
+		t.Fatal("readWatchSSEFrames closed before delivering frame")
+	}
+	if frame.id != "7:12" || frame.name != "goal.handoff.review.request" {
+		t.Fatalf("frame = %+v, want stable id and event name", frame)
+	}
+	if err := <-done; err != nil {
+		t.Fatalf("readWatchSSEFrames: %v", err)
+	}
+}
+
+func TestConsumeWatchEventsWithCursorAcknowledgesStableID(t *testing.T) {
+	var mu sync.Mutex
+	var acknowledged struct {
+		watcherKey string
+		projectID  string
+		goalID     string
+		sequence   int64
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/events":
+			if got := r.URL.Query().Get("watcher_key"); got != "watcher-1" {
+				t.Errorf("watcher_key = %q, want watcher-1", got)
+			}
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = io.WriteString(w, "id: 1:12\nevent: goal.handoff.review.request\ndata: {\"project_id\":1,\"goal_id\":2,\"handoff_id\":\"goal-review\"}\n\n")
+		case "/api/watch/cursor":
+			var request struct {
+				WatcherKey string `json:"watcher_key"`
+				ProjectID  string `json:"project_id"`
+				GoalID     string `json:"goal_id"`
+				Sequence   int64  `json:"sequence"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Errorf("decode cursor: %v", err)
+			}
+			mu.Lock()
+			acknowledged.watcherKey = request.WatcherKey
+			acknowledged.projectID = request.ProjectID
+			acknowledged.goalID = request.GoalID
+			acknowledged.sequence = request.Sequence
+			mu.Unlock()
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	var output bytes.Buffer
+	lastWakeupContent := ""
+	err := consumeWatchEventsWithStateAndScopeAndSinkAndCursor(
+		context.Background(), server.Client(), server.URL, watchScope{ProjectID: "1", GoalID: "2"}, &output,
+		time.Second, make(map[watchDeliveryKey]struct{}), &lastWakeupContent,
+		make(map[watchWakeupDeliveryKey]struct{}), make(map[watchDetectionDeliveryKey]struct{}),
+		newWatchScopeFilter("2"), nil, "watcher-1", &watchWorkflowEventDeduper{},
+	)
+	if !errors.Is(err, io.EOF) {
+		t.Fatalf("consumeWatchEventsWithCursor error = %v, want EOF", err)
+	}
+	if got := output.String(); got != "atct goal handoff review requested (goal_id: 2, handoff_id: goal-review)\n" {
+		t.Fatalf("watch output = %q", got)
+	}
+	mu.Lock()
+	got := acknowledged
+	mu.Unlock()
+	if got.watcherKey != "watcher-1" || got.projectID != "1" || got.goalID != "2" || got.sequence != 12 {
+		t.Fatalf("cursor acknowledgement = %+v", got)
+	}
+}
+
+func TestReconcileWatchScopeRendersBeforeCursorAdvance(t *testing.T) {
+	var rendered bool
+	var acknowledgedSequence int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/events/reconcile":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"current_sequence":12,"events":[{"id":"1:12","event_name":"goal.handoff.review.request","data":{"project_id":1,"goal_id":2,"handoff_id":"goal-review"}}]}`)
+		case "/api/watch/cursor":
+			if !rendered {
+				t.Error("cursor advanced before reconciliation rendering completed")
+			}
+			var request struct {
+				Sequence int64 `json:"sequence"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Errorf("decode cursor: %v", err)
+			}
+			acknowledgedSequence = request.Sequence
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	var output bytes.Buffer
+	lastWakeupContent := ""
+	err := reconcileWatchScope(
+		context.Background(), server.Client(), server.URL, watchScope{ProjectID: "1", GoalID: "2"}, &output,
+		make(map[watchDeliveryKey]struct{}), &lastWakeupContent,
+		make(map[watchWakeupDeliveryKey]struct{}), make(map[watchDetectionDeliveryKey]struct{}),
+		newWatchScopeFilter("2"), func(string) error {
+			rendered = true
+			return nil
+		}, "watcher-1", &watchWorkflowEventDeduper{},
+	)
+	if err != nil {
+		t.Fatalf("reconcileWatchScope: %v", err)
+	}
+	if got := output.String(); got != "atct goal handoff review requested (goal_id: 2, handoff_id: goal-review)\n" {
+		t.Fatalf("reconciliation output = %q", got)
+	}
+	if acknowledgedSequence != 12 {
+		t.Fatalf("acknowledged sequence = %d, want 12", acknowledgedSequence)
+	}
+}
+
+func TestReconcileWatchScopeDoesNotAdvanceCursorAfterRenderFailure(t *testing.T) {
+	var cursorCalls int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/events/reconcile":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"current_sequence":12,"events":[{"id":"1:11","event_name":"goal.handoff.review.request","data":{"project_id":1,"goal_id":2,"handoff_id":"goal-review-1"}},{"id":"1:12","event_name":"goal.handoff.review.receive","data":{"project_id":1,"goal_id":2,"handoff_id":"goal-review-2"}}]}`)
+		case "/api/watch/cursor":
+			cursorCalls++
+			http.Error(w, "cursor advanced too early", http.StatusInternalServerError)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	var output bytes.Buffer
+	lastWakeupContent := ""
+	rendered := 0
+	err := reconcileWatchScope(
+		context.Background(), server.Client(), server.URL, watchScope{ProjectID: "1", GoalID: "2"}, &output,
+		make(map[watchDeliveryKey]struct{}), &lastWakeupContent,
+		make(map[watchWakeupDeliveryKey]struct{}), make(map[watchDetectionDeliveryKey]struct{}),
+		newWatchScopeFilter("2"), func(string) error {
+			rendered++
+			if rendered == 2 {
+				return errors.New("render failed")
+			}
+			return nil
+		}, "watcher-1", &watchWorkflowEventDeduper{},
+	)
+	if err == nil {
+		t.Fatal("reconcileWatchScope error = nil, want render failure")
+	}
+	if cursorCalls != 0 {
+		t.Fatalf("cursor calls = %d, want 0 before all rendering succeeds", cursorCalls)
+	}
+}
+
+func TestReconcileWatchScopeAcknowledgesHighWatermark(t *testing.T) {
+	var acknowledgedSequence int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/events/reconcile":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"current_sequence":12,"high_watermark":11,"events":[{"id":"1:11","event_name":"goal.handoff.review.request","data":{"project_id":1,"goal_id":2,"handoff_id":"goal-review"}}]}`)
+		case "/api/watch/cursor":
+			var request struct {
+				Sequence int64 `json:"sequence"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Errorf("decode cursor: %v", err)
+			}
+			acknowledgedSequence = request.Sequence
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	var output bytes.Buffer
+	lastWakeupContent := ""
+	err := reconcileWatchScope(
+		context.Background(), server.Client(), server.URL, watchScope{ProjectID: "1", GoalID: "2"}, &output,
+		make(map[watchDeliveryKey]struct{}), &lastWakeupContent,
+		make(map[watchWakeupDeliveryKey]struct{}), make(map[watchDetectionDeliveryKey]struct{}),
+		newWatchScopeFilter("2"), nil, "watcher-1", &watchWorkflowEventDeduper{},
+	)
+	if err != nil {
+		t.Fatalf("reconcileWatchScope: %v", err)
+	}
+	if acknowledgedSequence != 11 {
+		t.Fatalf("acknowledged sequence = %d, want high watermark 11", acknowledgedSequence)
+	}
+}
+
 func TestWatchStopsEnsuringAfterFiveFailures(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

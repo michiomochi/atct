@@ -803,6 +803,16 @@ func isCodexMonitorActionLine(line string) bool {
 		return true
 	case strings.HasPrefix(line, "atct handoff yielded: task "):
 		return true
+	case strings.HasPrefix(line, "atct task handoff review requested (task_id: "),
+		strings.HasPrefix(line, "atct task handoff review received (task_id: "),
+		strings.HasPrefix(line, "atct task handoff review rejected (task_id: "),
+		strings.HasPrefix(line, "atct goal handoff review requested (goal_id: "),
+		strings.HasPrefix(line, "atct goal handoff review received (goal_id: "),
+		strings.HasPrefix(line, "atct goal handoff review rejected (goal_id: "),
+		strings.HasPrefix(line, "atct plan handoff review requested (goal_id: "),
+		strings.HasPrefix(line, "atct plan handoff review received (goal_id: "),
+		strings.HasPrefix(line, "atct plan handoff review rejected (goal_id: "):
+		return true
 	case strings.HasPrefix(line, "atct detection: task "):
 		return strings.HasSuffix(line, " is doing without a work lock") ||
 			strings.HasSuffix(line, " has no handoff request") ||
@@ -948,7 +958,7 @@ func runCodexMonitorWatchScoped(ctx context.Context, client *http.Client, urls [
 		client = &http.Client{}
 	}
 	snapshot, projectID := watchSnapshotWithProject(client, urls, cwd)
-	return watchLoopWithEnsureAndProjectIDAndScopeAndSink(
+	return watchLoopWithEnsureAndProjectIDAndScopeAndSinkAndCursor(
 		ctx,
 		codexMonitorWatchOutput{},
 		client,
@@ -963,5 +973,6 @@ func runCodexMonitorWatchScoped(ctx context.Context, client *http.Client, urls [
 		},
 		scope,
 		bridge.LineSinkWithContext(ctx),
+		watchKeyForScope(cwd, scope),
 	)
 }

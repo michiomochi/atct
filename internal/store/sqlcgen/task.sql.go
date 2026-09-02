@@ -10,6 +10,21 @@ import (
 	"database/sql"
 )
 
+const allocateProjectEventSequence = `-- name: AllocateProjectEventSequence :one
+INSERT INTO project_event_sequences (project_id, last_sequence)
+VALUES (?, 1)
+ON CONFLICT(project_id) DO UPDATE SET
+  last_sequence = project_event_sequences.last_sequence + 1
+RETURNING last_sequence
+`
+
+func (q *Queries) AllocateProjectEventSequence(ctx context.Context, projectID int64) (int64, error) {
+	row := q.db.QueryRowContext(ctx, allocateProjectEventSequence, projectID)
+	var last_sequence int64
+	err := row.Scan(&last_sequence)
+	return last_sequence, err
+}
+
 const amendGoalHandoffReport = `-- name: AmendGoalHandoffReport :execresult
 UPDATE goal_handoffs
 SET complete_report = ?
@@ -250,6 +265,24 @@ func (q *Queries) DeleteExpiredAgentSessionsExcept(ctx context.Context, arg Dele
 	return err
 }
 
+const deleteRetainedWorkflowEvents = `-- name: DeleteRetainedWorkflowEvents :exec
+DELETE FROM workflow_event_outbox
+WHERE project_id = ?
+  AND sequence <= ? - 10000
+  AND occurred_at < ?
+`
+
+type DeleteRetainedWorkflowEventsParams struct {
+	ProjectID  int64
+	Column2    interface{}
+	OccurredAt string
+}
+
+func (q *Queries) DeleteRetainedWorkflowEvents(ctx context.Context, arg DeleteRetainedWorkflowEventsParams) error {
+	_, err := q.db.ExecContext(ctx, deleteRetainedWorkflowEvents, arg.ProjectID, arg.Column2, arg.OccurredAt)
+	return err
+}
+
 const dropOpenTasksForGoal = `-- name: DropOpenTasksForGoal :execresult
 UPDATE tasks SET status = 'dropped', updated_at = ?
 WHERE goal_id = ? AND status IN ('todo', 'doing')
@@ -400,6 +433,19 @@ func (q *Queries) GetPlanHandoff(ctx context.Context, id string) (PlanHandoff, e
 	return i, err
 }
 
+const getProjectEventSequence = `-- name: GetProjectEventSequence :one
+SELECT COALESCE(last_sequence, 0) AS last_sequence
+FROM project_event_sequences
+WHERE project_id = ?
+`
+
+func (q *Queries) GetProjectEventSequence(ctx context.Context, projectID int64) (int64, error) {
+	row := q.db.QueryRowContext(ctx, getProjectEventSequence, projectID)
+	var last_sequence int64
+	err := row.Scan(&last_sequence)
+	return last_sequence, err
+}
+
 const getTaskForClaim = `-- name: GetTaskForClaim :one
 SELECT t.goal_id, t.title, t.description, t.status,
        g.status AS goal_status
@@ -504,6 +550,51 @@ func (q *Queries) GetTaskProjectID(ctx context.Context, id int64) (int64, error)
 	return project_id, err
 }
 
+const getWatchDeliveryCursor = `-- name: GetWatchDeliveryCursor :one
+SELECT watcher_key, project_id, goal_id, sequence, updated_at
+FROM watch_delivery_cursors
+WHERE watcher_key = ? AND project_id = ? AND goal_id = ?
+`
+
+type GetWatchDeliveryCursorParams struct {
+	WatcherKey string
+	ProjectID  int64
+	GoalID     int64
+}
+
+func (q *Queries) GetWatchDeliveryCursor(ctx context.Context, arg GetWatchDeliveryCursorParams) (WatchDeliveryCursor, error) {
+	row := q.db.QueryRowContext(ctx, getWatchDeliveryCursor, arg.WatcherKey, arg.ProjectID, arg.GoalID)
+	var i WatchDeliveryCursor
+	err := row.Scan(
+		&i.WatcherKey,
+		&i.ProjectID,
+		&i.GoalID,
+		&i.Sequence,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getWorkflowEventBounds = `-- name: GetWorkflowEventBounds :one
+SELECT
+  COALESCE(MIN(sequence), 0) AS oldest_sequence,
+  COALESCE(MAX(sequence), 0) AS current_sequence
+FROM workflow_event_outbox
+WHERE project_id = ?
+`
+
+type GetWorkflowEventBoundsRow struct {
+	OldestSequence  interface{}
+	CurrentSequence interface{}
+}
+
+func (q *Queries) GetWorkflowEventBounds(ctx context.Context, projectID int64) (GetWorkflowEventBoundsRow, error) {
+	row := q.db.QueryRowContext(ctx, getWorkflowEventBounds, projectID)
+	var i GetWorkflowEventBoundsRow
+	err := row.Scan(&i.OldestSequence, &i.CurrentSequence)
+	return i, err
+}
+
 const insertAgentSessionAssociation = `-- name: InsertAgentSessionAssociation :exec
 INSERT INTO agent_sessions (id, project_id, registered_at)
 VALUES (?, ?, ?)
@@ -517,6 +608,43 @@ type InsertAgentSessionAssociationParams struct {
 
 func (q *Queries) InsertAgentSessionAssociation(ctx context.Context, arg InsertAgentSessionAssociationParams) error {
 	_, err := q.db.ExecContext(ctx, insertAgentSessionAssociation, arg.ID, arg.ProjectID, arg.RegisteredAt)
+	return err
+}
+
+const insertWorkflowEventOutbox = `-- name: InsertWorkflowEventOutbox :exec
+INSERT INTO workflow_event_outbox (
+  project_id, sequence, event_id, event_name, goal_id, task_id,
+  decision_id, handoff_id, payload, occurred_at
+)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`
+
+type InsertWorkflowEventOutboxParams struct {
+	ProjectID  int64
+	Sequence   int64
+	EventID    string
+	EventName  string
+	GoalID     sql.NullInt64
+	TaskID     sql.NullInt64
+	DecisionID sql.NullInt64
+	HandoffID  sql.NullString
+	Payload    string
+	OccurredAt string
+}
+
+func (q *Queries) InsertWorkflowEventOutbox(ctx context.Context, arg InsertWorkflowEventOutboxParams) error {
+	_, err := q.db.ExecContext(ctx, insertWorkflowEventOutbox,
+		arg.ProjectID,
+		arg.Sequence,
+		arg.EventID,
+		arg.EventName,
+		arg.GoalID,
+		arg.TaskID,
+		arg.DecisionID,
+		arg.HandoffID,
+		arg.Payload,
+		arg.OccurredAt,
+	)
 	return err
 }
 
@@ -898,6 +1026,69 @@ func (q *Queries) ListTasks(ctx context.Context, goalID int64) ([]Task, error) {
 			&i.SnoozedUntil,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listWorkflowEvents = `-- name: ListWorkflowEvents :many
+SELECT project_id, sequence, event_id, event_name, goal_id, task_id,
+       decision_id, handoff_id, payload, occurred_at
+FROM workflow_event_outbox
+WHERE project_id = ?1
+  AND sequence > ?2
+  AND (?3 = 0 OR sequence <= ?3)
+  AND (?4 = 0 OR goal_id = ?4)
+  AND (?5 = 0 OR task_id = ?5)
+ORDER BY sequence
+LIMIT ?6
+`
+
+type ListWorkflowEventsParams struct {
+	ProjectID      int64
+	AfterSequence  int64
+	BeforeSequence interface{}
+	GoalID         interface{}
+	TaskID         interface{}
+	EventLimit     int64
+}
+
+func (q *Queries) ListWorkflowEvents(ctx context.Context, arg ListWorkflowEventsParams) ([]WorkflowEventOutbox, error) {
+	rows, err := q.db.QueryContext(ctx, listWorkflowEvents,
+		arg.ProjectID,
+		arg.AfterSequence,
+		arg.BeforeSequence,
+		arg.GoalID,
+		arg.TaskID,
+		arg.EventLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []WorkflowEventOutbox
+	for rows.Next() {
+		var i WorkflowEventOutbox
+		if err := rows.Scan(
+			&i.ProjectID,
+			&i.Sequence,
+			&i.EventID,
+			&i.EventName,
+			&i.GoalID,
+			&i.TaskID,
+			&i.DecisionID,
+			&i.HandoffID,
+			&i.Payload,
+			&i.OccurredAt,
 		); err != nil {
 			return nil, err
 		}
@@ -1465,4 +1656,37 @@ type UpdateTaskStatusParams struct {
 
 func (q *Queries) UpdateTaskStatus(ctx context.Context, arg UpdateTaskStatusParams) (sql.Result, error) {
 	return q.db.ExecContext(ctx, updateTaskStatus, arg.Status, arg.UpdatedAt, arg.ID)
+}
+
+const upsertWatchDeliveryCursor = `-- name: UpsertWatchDeliveryCursor :exec
+INSERT INTO watch_delivery_cursors (watcher_key, project_id, goal_id, sequence, updated_at)
+VALUES (?, ?, ?, ?, ?)
+ON CONFLICT(watcher_key, project_id, goal_id) DO UPDATE SET
+  sequence = CASE
+    WHEN excluded.sequence > watch_delivery_cursors.sequence THEN excluded.sequence
+    ELSE watch_delivery_cursors.sequence
+  END,
+  updated_at = CASE
+    WHEN excluded.sequence > watch_delivery_cursors.sequence THEN excluded.updated_at
+    ELSE watch_delivery_cursors.updated_at
+  END
+`
+
+type UpsertWatchDeliveryCursorParams struct {
+	WatcherKey string
+	ProjectID  int64
+	GoalID     int64
+	Sequence   int64
+	UpdatedAt  string
+}
+
+func (q *Queries) UpsertWatchDeliveryCursor(ctx context.Context, arg UpsertWatchDeliveryCursorParams) error {
+	_, err := q.db.ExecContext(ctx, upsertWatchDeliveryCursor,
+		arg.WatcherKey,
+		arg.ProjectID,
+		arg.GoalID,
+		arg.Sequence,
+		arg.UpdatedAt,
+	)
+	return err
 }

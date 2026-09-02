@@ -146,6 +146,25 @@ Run: `go test ./internal/httpapi ./cmd/atct -run 'Test(SSE|Watch|Codex|Claude).*
 
 Add `workflow_event_outbox` and `watch_delivery_cursors` in a migration; retain 10,000 events or 30 days per project. The state-change transaction allocates its project sequence and inserts the outbox row before commit. `publishEvent` remains post-commit low-latency notification only. Add a cursor endpoint/query scoped to project/goal, high-watermark merge with live SSE, bounded in-process ID deduplication, and `stale_cursor` 410 containing oldest/current sequences. Full reconciliation emits current state/open-review handoffs/open decisions, then advances the durable cursor. Extend `eventMatchesGoalID`, `eventProjectID`, and `formatWatchDecision`; do not depend on Goal 222 health persistence.
 
+### Task 4 test matrix
+
+| Behavior | Focused coverage | Required assertion |
+| --- | --- | --- |
+| Transactional outbox and project sequence | `internal/store/workflow_event_test.go` | A task/plan/goal review transition writes its outbox row in the same transaction, sequences are monotonic per project, and the stable ID is `project_id:sequence`. |
+| Scope and regression #613 | `internal/httpapi/workflow_events_test.go`, `internal/httpapi/server_test.go` | Goal/task filters exclude other scopes; a rejected decision applied before reconnect is backfilled once with its original payload. |
+| Review and reopen transitions | `internal/store/*handoff*_test.go`, `cmd/atct/watch_scope_test.go` | Review request/receive/reject/complete plus completed-handoff retry request/receive produce the named events and expected rendered lines. |
+| Live/backfill merge | `internal/httpapi/server_test.go`, `cmd/atct/watch_test.go` | Subscription starts before the high-watermark read, ordering is preserved, and a live event duplicated by backfill is rendered once. |
+| Restart and stale cursor recovery | `cmd/atct/watch_test.go`, `internal/httpapi/workflow_events_test.go` | A fresh watcher may replay retained events (at-least-once); an expired cursor gets 410 with oldest/current sequences, then scoped reconciliation renders before cursor advancement. |
+| Cursor durability and reconciliation | `internal/store/workflow_event_test.go`, `internal/httpapi/workflow_events_test.go` | Cursor updates are monotonic and scoped; full reconciliation includes current state/open handoffs/open decisions and advances only after successful rendering. |
+| Monitor delivery | `cmd/atct/codex_monitor_test.go`, `cmd/atct/codex_monitor_lifecycle_test.go` | Codex monitor accepts the review-state action lines while ordinary task-only project events remain suppressed. |
+
+Run the focused matrix with:
+
+```text
+go test ./internal/store -run 'TestWorkflow|TestWatchDelivery|TestScopedWorkflow|TestNoRawSQLCallsOutsideMigrations|TestSchemaParity' -count=1
+go test ./internal/httpapi ./cmd/atct -run 'Test(SSE|Watch|Codex|Claude).*(Review|Handoff)' -count=1
+```
+
 - [ ] **Step 4: Make focused notification tests pass and commit**
 
 ## Task 5: Align worker reuse and role instructions
