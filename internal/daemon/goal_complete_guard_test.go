@@ -199,13 +199,50 @@ func TestCommanderGoalReviewThenCompleteWritesFinalReport(t *testing.T) {
 		t.Fatalf("CreateGoal: %v", err)
 	}
 
-	requestParams, err := json.Marshal(map[string]any{
+	reviewParams, err := json.Marshal(map[string]any{
 		"goal_id": goal.ID, "agent_session_id": commanderID,
 	})
 	if err != nil {
 		t.Fatalf("Marshal goal.review.request params: %v", err)
 	}
-	raw, err := daemon.dispatch(ctx, rpc.Request{Method: "goal.review.request", Params: requestParams})
+	if _, err := daemon.dispatch(ctx, rpc.Request{Method: "goal.review.request", Params: reviewParams}); err == nil {
+		t.Fatal("goal.review.request without a completed delegated goal handoff unexpectedly succeeded")
+	} else if !errors.Is(err, store.ErrGoalReviewHandoffIncomplete) {
+		t.Fatalf("goal.review.request without a completed delegated goal handoff error = %v, want %v", err, store.ErrGoalReviewHandoffIncomplete)
+	}
+
+	const handoffID = "goal-complete-review-lifecycle-handoff"
+	receiverID := daemonTestSessionID(t, s, "goal-complete-review-lifecycle-receiver")
+	dispatchHandoff := func(method string, params map[string]any) {
+		t.Helper()
+		raw, err := json.Marshal(params)
+		if err != nil {
+			t.Fatalf("Marshal %s params: %v", method, err)
+		}
+		if _, err := daemon.dispatch(ctx, rpc.Request{Method: method, Params: raw}); err != nil {
+			t.Fatalf("%s: %v", method, err)
+		}
+	}
+	dispatchHandoff("goal.handoff.request", map[string]any{
+		"handoff_id": handoffID, "goal_id": goal.ID, "requested_by": commanderID,
+		"request_report": "commander delegated the reviewed goal",
+	})
+	dispatchHandoff("goal.handoff.receive", map[string]any{
+		"handoff_id": handoffID, "goal_id": goal.ID, "received_by": receiverID,
+	})
+	dispatchHandoff("goal.handoff.review.request", map[string]any{
+		"handoff_id": handoffID, "goal_id": goal.ID, "requested_by": receiverID,
+		"review_request_report": "receiver reviewed the delegated goal",
+	})
+	dispatchHandoff("goal.handoff.review.receive", map[string]any{
+		"handoff_id": handoffID, "goal_id": goal.ID, "received_by": commanderID,
+	})
+	dispatchHandoff("goal.handoff.complete", map[string]any{
+		"handoff_id": handoffID, "goal_id": goal.ID, "agent_session_id": commanderID,
+		"complete_report": "commander accepted the reviewed goal handoff",
+	})
+
+	raw, err := daemon.dispatch(ctx, rpc.Request{Method: "goal.review.request", Params: reviewParams})
 	if err != nil {
 		t.Fatalf("goal.review.request: %v", err)
 	}
