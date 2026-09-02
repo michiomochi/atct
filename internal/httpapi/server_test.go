@@ -2077,13 +2077,17 @@ func TestHTTPDecisionAndReleaseEndpointsValidateAndTransition(t *testing.T) {
 }
 
 func TestHTTPSnoozeSetsAbsoluteDeadlineWithoutChangingStatus(t *testing.T) {
-	f := newFixture(t)
+	f := newBareFixture(t)
+	tasks, err := f.store.DeclareTasks(f.ctx, f.goal.ID, "snooze-test-agent", "snooze-http-status", []string{"deferred"}, []string{"Preserve the task status while setting its snooze deadline."})
+	if err != nil {
+		t.Fatal(err)
+	}
 	srv := newTestServer(t, f.store)
 	defer srv.Close()
 
 	const wantSnoozedUntil = "2026-09-01T00:00:00Z"
 	status, _, body := doRequest(t, srv.Client(), http.MethodPost,
-		urlID(srv.URL+"/api/tasks/", f.tasks[0].ID)+"/snooze",
+		urlID(srv.URL+"/api/tasks/", tasks[0].ID)+"/snooze",
 		mustJSON(t, map[string]string{"snoozed_until": wantSnoozedUntil}))
 	if status != http.StatusOK {
 		t.Fatalf("snooze status = %d; body=%s", status, body)
