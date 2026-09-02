@@ -65,8 +65,8 @@ it when the task was declared.
    on it anyway.
 
    A delegated worker owns the task it was given. Receive it with
-   `atct_handoff_receive`, not `atct_task_claim`; receipt is exclusive, so a
-   handoff cannot be received twice.
+   `atct_task_handoff_receive`, not `atct_task_claim`; receipt is exclusive, so
+   a handoff cannot be received twice.
 2. Do the work while you hold it.
 3. Close it with `atct_task_update` and `done` once the work lands. Release a
    task by setting it back to `todo` with `atct_task_update` instead. There is
@@ -241,11 +241,13 @@ that worker is started:
    claim already writes an open handoff.
 
 2. Record the handoff before waking the worker.
-   The delegator must call `atct_handoff_request` with a unique handoff ID and
-   the task ID. Wait for the request to succeed before waking the
+   The delegator must call `atct_task_handoff_request` with a unique handoff ID
+   and the task ID. Wait for the request to succeed before waking the
    worker; this creates the record needed to receive and complete the handoff.
-3. For a monitored Codex worker, create a fresh worker pane after the request
-   succeeds, then start the wrapper before the worker process:
+3. For a monitored Codex worker, use an idle executor pane if one is available.
+   Create a new executor pane only for parallel work, worktree isolation,
+   context exhaustion, or a topic change. After the request succeeds, start the
+   wrapper before the worker process:
 
    ```sh
    herdr pane run <pane> atct codex monitor --role executor --task <task_id> -- <codex args>
@@ -262,39 +264,45 @@ that worker is started:
 
    > First call `atct_session_identify` with a stable session key that remains unchanged for this session and identifies only you. Your agent name is suitable. Do this before any other atct call.
    >
-   > Then record receipt of the handoff by calling `atct_handoff_receive` with only
+   > Then record receipt of the handoff by calling `atct_task_handoff_receive` with only
    > the `task_id` provided in this request. Do this before starting work. Do not
    > pass a handoff ID or session; ATCT supplies them.
    >
-   > Then invoke the `atct_role` MCP tool with `expected_role` set to one of
-   > `commander`, `subcommander`, or `executor`. If it reports `matches: false`,
-   > do not start work; return the task.
+   > Then invoke the `atct_role` MCP tool with `expected_role` set to
+   > `executor`. If it reports `matches: false`, do not start work; return the
+   > task.
    >
-   > When the work is complete, record completion by calling `atct_handoff_complete`
-   > with the `task_id` provided in this request and a `complete_report`. The
-   > `complete_report` must say what was done, what was verified, what could not
-   > be verified, and paths changed.
+   > When the work is complete, record the review request by calling `atct_task_handoff_review_request` with the received `handoff_id`, the
+   > `task_id`, and a non-empty `review_request_report`. The report must say
+   > what was done, what was verified, what could not be verified, and paths changed.
    >
-   > Only then close the task, by calling `atct_task_update` with the `task_id`
-   > provided in this request and `status` set to `done`. This order is required:
-   > a terminal status closes any open task handoff and replaces its
-   > `complete_report`, so the report has to be recorded first. A task nobody
-   > closed still reads as unstarted, so do not stop after reporting.
+   > The subcommander receives that review with `atct_task_handoff_review_receive`.
+   > It reviews the implementation, then calls `atct_task_handoff_complete` with the `handoff_id`, `task_id`, and a `complete_report` on acceptance, or calls
+   > `atct_task_handoff_review_reject` with a `reject_report` on rejection.
 
-   Report completion before closing the task.
+   Report the review request before the reviewer closes the task.
+
+   The task handoff review order is `atct_task_handoff_request` →
+   `atct_task_handoff_receive` → `atct_task_handoff_review_request` →
+   `atct_task_handoff_review_receive` → `atct_task_handoff_complete`; rejection
+   uses `atct_task_handoff_review_reject` and returns the same handoff to the
+   same worker for correction.
 
    Name what the worker may call, and name what it may not. A blanket ban carries
    no grain, so it is overturned without grain too: an executor that decides atct
    calls are allowed after all reaches the goal scope in the same step.
 
    An executor may call only these atct tools:
-   `atct_session_identify`, `atct_handoff_receive`, `atct_role`, `atct_task_update`, `atct_handoff_complete`.
+   `atct_session_identify`, `atct_task_handoff_receive`, `atct_role`, `atct_task_handoff_review_request`.
    Each of them is confined to the `task_id` the executor was given.
 
    An executor must not call `atct_goal_handoff_complete`, `atct_goal_handoff_receive`,
    `atct_goal_handoff_request`, `atct_goal_claim`, `atct_goal_release`,
    `atct_goal_complete`, `atct_goal_update_content`, `atct_project_claim`,
-   `atct_project_release`, `atct_task_claim`, `atct_handoff_request`,
+   `atct_project_release`, `atct_task_claim`, `atct_task_handoff_request`,
+   `atct_task_handoff_review_receive`, `atct_task_handoff_complete`,
+   `atct_task_handoff_review_reject`, `atct_handoff_request`,
+   `atct_handoff_receive`, `atct_handoff_complete`, `atct_task_update`,
    `atct_task_create`, or `atct_decision_ask`. Spell the names out; "anything not
    listed above" is not read as a prohibition. In a 2026-08-27 measurement, an
    executor closed a subcommander's goal handoff without knowing it was forbidden.
@@ -325,23 +333,23 @@ that worker is started:
    silently skip verification it could not run. It must say "could not run" in
    its completion report.
 
-6. Keep one worker per task. Return a correction, review fix, follow-up
-   question, or clarification for the same task to the same worker. Start a
-   new worker for a different task. When the task is done, end that worker.
-   A correction or review fix remains the same task because it is a delta
-   against the immediately preceding implementation; send it back to the same
-   worker. What breaks when you batch is the record, not the context. A handoff
-   points to one task. If three tasks are sent in one message, only one handoff
-   is created; the other two have no owner, receipt, or completion, so the
+6. Keep one handoff per task and one worker for its correction and review
+   cycle. Return a rejection to the same worker; it remains the same task and
+   handoff. When an executor finishes and unassigned tasks remain, reuse an idle executor for the next task.
+   A different task alone is not a reason to create a new executor. Start a new executor pane only for parallel work, worktree isolation, context exhaustion, or a topic change. If no unassigned tasks remain, close the idle executor.
+   What breaks when you batch is the record, not the context. A handoff points
+   to one task. If three tasks are sent in one message, only one handoff is
+   created; the other two have no owner, receipt, or completion, so the
    dashboard says nobody started them. In a 2026-08-24 measurement, sending
    three tasks to executor-33 in one message broke the records for two of the
    three. Task count and compression count are not correlated: in that same
    measurement, the three-task pane compressed twice while the one-task pane
    compressed seven times.
 
-   For a follow-up to the same worker, recreate the `atct_handoff_request` with
-   a new `handoff_id`; a closed `handoff_id` cannot be reused. The new handoff
-   does not mean a different worker; it gives the same worker a new ID.
+   For a follow-up that starts a new task on the same worker, recreate the
+   `atct_task_handoff_request` with a new `handoff_id`; a closed `handoff_id`
+   cannot be reused. The new handoff does not mean a different worker; it gives
+   the same worker a new ID.
 
 The worker must perform both instructions itself before doing any work. The
 delegator must not run either instruction on the worker's behalf or treat a
@@ -350,21 +358,20 @@ check reports a mismatch, the worker returns the task without touching it.
 
 **Out of order:** Claiming the task before requesting the handoff makes the
 request refuse, because the claim has already written an open handoff. Waking the
-worker before the request succeeds leaves it with nothing to receive. And calling
-`atct_task_update` before `atct_handoff_complete` closes the handoff and the
-completion report is lost: the record keeps a released-the-lock placeholder with
-no reporter, and the executor is left with nothing to write it back through. That
-last one reproduced on 2026-08-27 with two executors, one on Claude and one on
-Codex.
+worker before the request succeeds leaves it with nothing to receive. And asking
+for review before the executor has received the handoff, or completing the
+handoff before the reviewer receives the review, leaves the record without the
+report that proves what was reviewed. That last one reproduced on 2026-08-27
+with two executors, one on Claude and one on Codex.
 
 ### Two-layer delegation
 
 Delegating a task requires a received goal handoff, not a project claim.
 
 1. For two-layer delegation, the commander calls `atct_goal_claim` to create a goal handoff addressed to itself. The project claim is checked first by `session.role` in `internal/daemon/handler.go`, so the role remains `commander`.
-2. Then the commander calls `atct_handoff_request` to delegate each task.
+2. Then the commander calls `atct_task_handoff_request` to delegate each task.
 
-**Out of order:** `atct_handoff_request` before `atct_goal_claim` is refused: a
+**Out of order:** `atct_task_handoff_request` before `atct_goal_claim` is refused: a
 delegator with no received goal handoff holds no parent for the task, so no task
 can be handed off at all and every worker woken for the goal arrives with no
 record to receive.
@@ -433,19 +440,20 @@ that subcommander is started:
    > `atct_decision_ask`; the answer reaches you through your own watch, without
    > passing through the delegator.
    >
-   > When the work is complete, record completion by calling
-   > `atct_goal_complete` and then `atct_goal_handoff_complete`, in this order:
+   > When all task handoffs are accepted, record the goal review request by calling
+   > `atct_goal_handoff_review_request` with the received `handoff_id`, the
+   > `goal_id`, and a non-empty `review_request_report`.
    >
-   > 1. commit the goal's work
-   > 2. close every task the goal declared
-   > 3. call `atct_goal_complete` with the six fields (this asks the human to approve)
-   > 4. call `atct_goal_handoff_complete` with the `goal_id` provided in this request and a `complete_report`
-   >
-   > The `complete_report` must say what was done, what was verified, and
-   > paths changed.
+   > The commander receives that review with
+   > `atct_goal_handoff_review_receive` and reviews the goal's implementation.
 
    The order matters: the role is derived from a received, uncompleted goal
    handoff, so checking it before receipt always returns `matches: false`.
+
+   The goal completion order is `atct_goal_handoff_review_request` →
+   `atct_goal_handoff_review_receive` → `atct_goal_handoff_complete` →
+   `atct_goal_review_request` (human approval) → merge → `atct_goal_complete`.
+   The rule is simple: only the commander may call `atct_goal_handoff_complete` with the `goal_id` provided in this request and a `complete_report`; only the commander may call `atct_goal_complete` after the human approves.
 
 5. Keep one subcommander per goal. A subcommander may wake executors for its
    goal, but must not inspect or manage other goals, create another
