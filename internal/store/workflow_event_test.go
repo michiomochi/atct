@@ -67,7 +67,14 @@ func TestWorkflowEventOutboxPersistsGoalReviewWithProjectSequence(t *testing.T) 
 	if err != nil {
 		t.Fatalf("GetGoal: %v", err)
 	}
-	review, err := s.RequestGoalReview(ctx, goalID, testSessionID("workflow-event-goal-review"))
+	requesterID := testSessionID("workflow-event-goal-review-requester")
+	receiverID := testSessionID("workflow-event-goal-review-receiver")
+	addLiveProjectClaim(t, s, goalID, "workflow-event-goal-review-requester")
+	addTestAgentSession(t, s, "workflow-event-goal-review-receiver")
+	if completed := completeGoalHandoffReviewForGoalReviewTest(t, s, ctx, "workflow-event-goal-review-handoff", goalID, requesterID, receiverID); completed.CompletedReportAt == nil {
+		t.Fatalf("goal handoff = %+v, want completed handoff before goal review", completed)
+	}
+	review, err := s.RequestGoalReview(ctx, goalID, requesterID)
 	if err != nil {
 		t.Fatalf("RequestGoalReview: %v", err)
 	}

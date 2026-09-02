@@ -15,15 +15,16 @@ import (
 )
 
 var (
-	ErrGoalNotFound          = errors.New("goal not found")
-	ErrGoalNotProposed       = errors.New("goal is not proposed")
-	ErrGoalNotActive         = errors.New("goal is not active")
-	ErrGoalReviewOpen        = errors.New("goal review is already open")
-	ErrGoalReviewNotFound    = errors.New("goal review not found")
-	ErrGoalReviewNotApproved = errors.New("goal review is not approved")
-	ErrGoalAlreadyClaimed    = errors.New("goal already claimed")
-	ErrGoalSelfReference     = errors.New("goal cannot be derived from itself")
-	ErrGoalDerivationCycle   = errors.New("goal derivation would create a cycle")
+	ErrGoalNotFound                = errors.New("goal not found")
+	ErrGoalNotProposed             = errors.New("goal is not proposed")
+	ErrGoalNotActive               = errors.New("goal is not active")
+	ErrGoalReviewOpen              = errors.New("goal review is already open")
+	ErrGoalReviewNotFound          = errors.New("goal review not found")
+	ErrGoalReviewNotApproved       = errors.New("goal review is not approved")
+	ErrGoalReviewHandoffIncomplete = errors.New("goal review requires a completed delegated goal handoff")
+	ErrGoalAlreadyClaimed          = errors.New("goal already claimed")
+	ErrGoalSelfReference           = errors.New("goal cannot be derived from itself")
+	ErrGoalDerivationCycle         = errors.New("goal derivation would create a cycle")
 )
 
 func (s *Store) CreateGoal(ctx context.Context, projectID int64, content, creator string, derivedFromGoalID ...int64) (domain.Goal, error) {
@@ -512,6 +513,52 @@ func (s *Store) latestGoalReview(ctx context.Context, goalID int64) (domain.Deci
 	return decision, true, nil
 }
 
+func latestDelegatedGoalHandoff(handoffs []GoalHandoff) *GoalHandoff {
+	var latest *GoalHandoff
+	for i := range handoffs {
+		candidate := &handoffs[i]
+		if !handoffIsDelegation(candidate.RequestedBy, candidate.ReceivedBy) {
+			continue
+		}
+		if latest == nil || (candidate.RequestedAt != nil && (latest.RequestedAt == nil || candidate.RequestedAt.After(*latest.RequestedAt))) {
+			latest = candidate
+		}
+	}
+	return latest
+}
+
+func goalHandoffHasCommanderReviewCompletion(handoff *GoalHandoff) bool {
+	return handoff.RequestedAt != nil &&
+		handoff.ReceivedAt != nil &&
+		handoff.ReviewRequestedAt != nil &&
+		handoff.ReviewReceivedAt != nil &&
+		handoff.ReviewRequestedBy != 0 &&
+		handoff.ReviewRequestedBy == handoff.ReceivedBy &&
+		handoff.ReviewReceivedBy != 0 &&
+		handoff.ReviewReceivedBy == handoff.RequestedBy &&
+		handoff.CompletedReportAt != nil &&
+		handoff.CompleteReport != goalHandoffReclaimedReport &&
+		handoff.CompleteReport != goalHandoffReleasedReport
+}
+
+func (s *Store) requireLatestGoalHandoffForReview(ctx context.Context, goalID int64, previous domain.Decision, hasPrevious bool) error {
+	handoffs, err := s.ListGoalHandoffs(ctx, goalID)
+	if err != nil {
+		return fmt.Errorf("find goal handoff for review: %w", err)
+	}
+	latest := latestDelegatedGoalHandoff(handoffs)
+	if latest == nil {
+		return fmt.Errorf("%w: goal %d has no delegated goal handoff", ErrGoalReviewHandoffIncomplete, goalID)
+	}
+	if !goalHandoffHasCommanderReviewCompletion(latest) {
+		return fmt.Errorf("%w: %s", ErrGoalReviewHandoffIncomplete, latest.ID)
+	}
+	if hasPrevious && previous.Status == domain.DecisionAnswered && previous.AnswerLabel == "reject" && (previous.AnsweredAt == nil || latest.RequestedAt == nil || !latest.RequestedAt.After(*previous.AnsweredAt)) {
+		return fmt.Errorf("%w: goal review %d was rejected after handoff %s completed; request a new handoff", ErrGoalReviewHandoffIncomplete, previous.ID, latest.ID)
+	}
+	return nil
+}
+
 // RequestGoalReview creates the taskless decision that asks the human to
 // review a goal after its goal handoff has been accepted. The final report is
 // intentionally not written here.
@@ -523,10 +570,15 @@ func (s *Store) RequestGoalReview(ctx context.Context, goalID, agentSessionID in
 	if goal.Status != domain.GoalActive {
 		return domain.Decision{}, goalNotActiveForCompletionError(goalID, goal.Status)
 	}
-	if previous, ok, err := s.latestGoalReview(ctx, goalID); err != nil {
+	previous, ok, err := s.latestGoalReview(ctx, goalID)
+	if err != nil {
 		return domain.Decision{}, err
-	} else if ok && previous.Status == domain.DecisionOpen {
+	}
+	if ok && previous.Status == domain.DecisionOpen {
 		return domain.Decision{}, fmt.Errorf("%w: %d", ErrGoalReviewOpen, goalID)
+	}
+	if err := s.requireLatestGoalHandoffForReview(ctx, goalID, previous, ok); err != nil {
+		return domain.Decision{}, err
 	}
 	open, err := sqlcgen.New(s.db).CountOpenDecisionsForGoal(ctx, goalID)
 	if err != nil {
@@ -614,7 +666,7 @@ func (s *Store) RejectGoalReview(ctx context.Context, decisionID int64, reason s
 	defer tx.Rollback()
 	q := sqlcgen.New(tx)
 
-	now := time.Now().UTC().Format(time.RFC3339)
+	now := time.Now().UTC().Format(time.RFC3339Nano)
 	result, err := q.RejectGoalReviewDecision(ctx, sqlcgen.RejectGoalReviewDecisionParams{
 		AnswerText: reason, AnsweredAt: sql.NullString{String: now, Valid: true}, ID: decisionID,
 	})
