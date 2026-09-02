@@ -298,6 +298,27 @@ func TestCodexMonitorActionLineAdmitsFormattedTaskActions(t *testing.T) {
 	}
 }
 
+func TestCodexMonitorActionLineAdmitsCanonicalHandoffLifecycle(t *testing.T) {
+	for _, line := range []string{
+		"atct task handoff requested (task_id: 951, handoff_id: task-951)",
+		"atct task handoff received (task_id: 951, handoff_id: task-951)",
+		"atct task handoff review requested (task_id: 951, handoff_id: task-951)",
+		"atct task handoff review received (task_id: 951, handoff_id: task-951)",
+		"atct task handoff review rejected (task_id: 951, handoff_id: task-951)",
+		"atct task handoff completed (task_id: 951, handoff_id: task-951)",
+		"atct goal handoff requested (goal_id: 225, handoff_id: goal-225)",
+		"atct goal handoff received (goal_id: 225, handoff_id: goal-225)",
+		"atct goal handoff review requested (goal_id: 225, handoff_id: goal-225)",
+		"atct goal handoff review received (goal_id: 225, handoff_id: goal-225)",
+		"atct goal handoff review rejected (goal_id: 225, handoff_id: goal-225)",
+		"atct goal handoff completed (goal_id: 225, handoff_id: goal-225)",
+	} {
+		if !isCodexMonitorActionLine(line) {
+			t.Fatalf("canonical handoff lifecycle action line rejected: %q", line)
+		}
+	}
+}
+
 func TestCodexAppServerRespondsToServerApprovalRequest(t *testing.T) {
 	conn := newFakeCodexWebSocket()
 	app := newCodexAppServerWithConn(context.Background(), conn)

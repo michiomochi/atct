@@ -799,6 +799,13 @@ func isCodexMonitorActionLine(line string) bool {
 		return true
 	case strings.HasPrefix(line, "atct detection: goal "):
 		return true
+	case strings.HasPrefix(line, "atct task handoff requested (task_id: "),
+		strings.HasPrefix(line, "atct task handoff received (task_id: "),
+		strings.HasPrefix(line, "atct task handoff completed (task_id: "),
+		strings.HasPrefix(line, "atct goal handoff requested (goal_id: "),
+		strings.HasPrefix(line, "atct goal handoff received (goal_id: "),
+		strings.HasPrefix(line, "atct goal handoff completed (goal_id: "):
+		return true
 	case strings.HasPrefix(line, "atct handoff reported: goal "), strings.HasPrefix(line, "atct handoff reported: task "):
 		return true
 	case strings.HasPrefix(line, "atct handoff yielded: task "):

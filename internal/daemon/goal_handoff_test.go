@@ -476,3 +476,118 @@ func TestNamedGoalAndPlanHandoffReviewRoutesReturnRoleEvidence(t *testing.T) {
 		t.Fatalf("completed goal handoff = %#v, want reviewer completion", goalCompleted)
 	}
 }
+
+func TestNamedGoalReviewRequiresCommanderAndHumanApprovalOrdering(t *testing.T) {
+	fixture := newGoalHandoffRPCTestFixture(t)
+	client := mcpshim.NewClient(fixture.socketPath)
+	ctx := context.Background()
+
+	const handoffID = "named-goal-final-review"
+	var requested store.GoalHandoff
+	if err := client.Call(ctx, "goal.handoff.request", map[string]any{
+		"handoff_id": handoffID, "goal_id": fixture.claimedGoalID, "requested_by": fixture.requesterID,
+	}, &requested); err != nil {
+		t.Fatalf("goal.handoff.request: %v", err)
+	}
+	var received handoffReceiveResponse
+	if err := client.Call(ctx, "goal.handoff.receive", map[string]any{
+		"handoff_id": handoffID, "goal_id": fixture.claimedGoalID, "received_by": fixture.receiverID,
+	}, &received); err != nil {
+		t.Fatalf("goal.handoff.receive: %v", err)
+	}
+	if received.Role != "subcommander" || received.ClaimEvidence.AgentSessionID != fixture.receiverID {
+		t.Fatalf("goal handoff receive = %+v, want subcommander evidence for receiver %d", received, fixture.receiverID)
+	}
+
+	var review domain.Decision
+	if err := client.Call(ctx, "goal.review.request", map[string]any{
+		"goal_id": fixture.claimedGoalID, "agent_session_id": fixture.requesterID,
+	}, &review); err != nil {
+		t.Fatalf("goal.review.request: %v", err)
+	}
+	if review.Kind != domain.KindGoalReview || review.Status != domain.DecisionOpen || review.TaskID != 0 {
+		t.Fatalf("goal review = %+v, want open taskless human review", review)
+	}
+
+	report := domain.CompletionReport{
+		WorkDone:    "commander-approved work",
+		NowPossible: "commander-approved result",
+		HowToVerify: "run focused integration tests",
+		Surprises:   "none",
+		NeedsReview: "none",
+		NextSteps:   "merge",
+	}
+	completeParams := map[string]any{
+		"goal_id":          fixture.claimedGoalID,
+		"work_done":        report.WorkDone,
+		"now_possible":     report.NowPossible,
+		"how_to_verify":    report.HowToVerify,
+		"surprises":        report.Surprises,
+		"needs_review":     report.NeedsReview,
+		"next_steps":       report.NextSteps,
+		"agent_session_id": fixture.requesterID,
+	}
+	var beforeApproval domain.Goal
+	if err := client.Call(ctx, "goal.complete", completeParams, &beforeApproval); err == nil {
+		t.Fatalf("goal.complete before human approval succeeded: %+v", beforeApproval)
+	} else if !strings.Contains(err.Error(), "open decision") {
+		t.Fatalf("goal.complete before human approval error = %v, want open-decision denial", err)
+	}
+	before, err := fixture.store.GetGoal(ctx, fixture.claimedGoalID)
+	if err != nil {
+		t.Fatalf("GetGoal before human approval: %v", err)
+	}
+	if before.Status != domain.GoalActive || before.WorkDone != "" || before.ResultSummary != "" {
+		t.Fatalf("goal before human approval = %+v, want active without final report", before)
+	}
+
+	if err := fixture.store.RejectGoalReview(ctx, review.ID, "needs another review"); err != nil {
+		t.Fatalf("RejectGoalReview: %v", err)
+	}
+	var afterReject domain.Goal
+	if err := client.Call(ctx, "goal.complete", completeParams, &afterReject); err == nil {
+		t.Fatalf("goal.complete after human rejection succeeded: %+v", afterReject)
+	} else if !strings.Contains(err.Error(), "not approved") {
+		t.Fatalf("goal.complete after human rejection error = %v, want not-approved denial", err)
+	}
+
+	var retryReview domain.Decision
+	if err := client.Call(ctx, "goal.review.request", map[string]any{
+		"goal_id": fixture.claimedGoalID, "agent_session_id": fixture.requesterID,
+	}, &retryReview); err != nil {
+		t.Fatalf("retry goal.review.request: %v", err)
+	}
+	if retryReview.ID == review.ID || retryReview.Kind != domain.KindGoalReview || retryReview.Status != domain.DecisionOpen {
+		t.Fatalf("retry goal review = %+v, want a new open goal review", retryReview)
+	}
+	if _, err := fixture.store.ApproveGoalReview(ctx, retryReview.ID); err != nil {
+		t.Fatalf("ApproveGoalReview: %v", err)
+	}
+	approvedGoal, err := fixture.store.GetGoal(ctx, fixture.claimedGoalID)
+	if err != nil {
+		t.Fatalf("GetGoal after human approval: %v", err)
+	}
+	if approvedGoal.Status != domain.GoalActive {
+		t.Fatalf("goal after human approval = %q, want active until commander finalization", approvedGoal.Status)
+	}
+
+	subcommanderParams := make(map[string]any, len(completeParams))
+	for key, value := range completeParams {
+		subcommanderParams[key] = value
+	}
+	subcommanderParams["agent_session_id"] = fixture.receiverID
+	var subcommanderDone domain.Goal
+	if err := client.Call(ctx, "goal.complete", subcommanderParams, &subcommanderDone); err == nil {
+		t.Fatalf("subcommander goal.complete succeeded: %+v", subcommanderDone)
+	} else if !strings.Contains(err.Error(), "commander") {
+		t.Fatalf("subcommander goal.complete error = %v, want commander-only denial", err)
+	}
+
+	var done domain.Goal
+	if err := client.Call(ctx, "goal.complete", completeParams, &done); err != nil {
+		t.Fatalf("commander goal.complete after human approval: %v", err)
+	}
+	if done.Status != domain.GoalDone || done.WorkDone != report.WorkDone || done.NextSteps != report.NextSteps {
+		t.Fatalf("completed goal = %+v, want final report after commander completion", done)
+	}
+}

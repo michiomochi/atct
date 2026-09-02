@@ -1661,6 +1661,33 @@ test_executor_reuse_contract_is_explicit() {
   assert_file_not_contains 'Start a new worker for a different task.' "$REPO_ROOT/skills/atct/SKILL.md"
 }
 
+test_executor_reuse_contract_preserves_idle_worker_and_reason_gated_pane() {
+  local section
+  local idle_rule
+  local reuse_rule
+  local pane_rule
+  local reason
+
+  section="$(delegate_task_section)"
+  idle_rule="$(grep -F -- 'use an idle executor pane if one is available.' <<<"$section" || true)"
+  [[ -n "$idle_rule" ]] || fail 'task delegation section omits the idle executor choice'
+
+  reuse_rule="$(grep -F -- 'When an executor finishes and unassigned tasks remain, reuse an idle executor for the next task.' <<<"$section" || true)"
+  [[ -n "$reuse_rule" ]] || fail 'task delegation section omits reuse for a different unassigned task'
+  grep -Fq -- 'A different task alone is not a reason to create a new executor.' <<<"$section" ||
+    fail 'task delegation section permits a new executor for a different task alone'
+
+  pane_rule="$(grep -F -- 'Start a new executor pane only for ' <<<"$section" | sed -E 's/^.*Start a new executor pane only for /Start a new executor pane only for /; s/[[:space:]]+If no unassigned tasks remain,.*$//' || true)"
+  assert_eq \
+    'Start a new executor pane only for parallel work, worktree isolation, context exhaustion, or a topic change.' \
+    "$pane_rule" \
+    'new executor pane rule must contain only the four permitted reasons'
+  for reason in 'parallel work' 'worktree isolation' 'context exhaustion' 'a topic change'; do
+    grep -Fq -- "$reason" <<<"$pane_rule" ||
+      fail "new executor pane rule omits permitted reason <$reason>"
+  done
+}
+
 test_goal_handoff_cause_is_preserved() {
   local atct_skill="$REPO_ROOT/skills/atct/SKILL.md"
   local goal_section
@@ -2131,6 +2158,7 @@ test_task_handoff_recreation_uses_new_id
 test_task_handoff_recreation_keeps_worker_identity
 test_task_handoff_uses_canonical_review_order
 test_executor_reuse_contract_is_explicit
+test_executor_reuse_contract_preserves_idle_worker_and_reason_gated_pane
 test_goal_handoff_cause_is_preserved
 test_goal_completion_is_commander_owned
 test_task_batch_record_context_reason_is_preserved
