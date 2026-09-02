@@ -170,7 +170,7 @@ go test ./internal/httpapi ./cmd/atct -run 'Test(SSE|Watch|Codex|Claude).*(Revie
 ## Task 5: Align worker reuse and role instructions
 
 **Files:**
-- Modify: source files that generate `skills/atct/SKILL.md` and `.agents/skills/orchestration/SKILL.md`; locate their chezmoi source before edit.
+- Modify: only the source file that generates `skills/atct/SKILL.md`; locate its chezmoi source before edit. Do not modify `.agents/skills/orchestration/SKILL.md`.
 - Modify: `tests/wrapper_test.bash` and any skill-contract tests.
 
 **Interfaces:**

@@ -46,14 +46,14 @@ outbox は project ごとに直近 10,000 event か30日を保持する。cursor
 
 ### 6. 設定変更は source と approved diff を分ける
 
-ATCT / orchestration の手順変更は管理 source を編集する。chezmoi 管理である場合は `chezmoi diff` を提示して明示承認を待つ。承認前に `chezmoi apply` は呼ばない。実装 task はこの境界を越えない。
+ATCT skill の手順変更は管理 source を編集する。orchestration skill の変更は本 goal の範囲外である。chezmoi 管理である場合は `chezmoi diff` を提示して明示承認を待つ。承認前に `chezmoi apply` は呼ばない。実装 task はこの境界を越えない。
 
 ## Work-unit boundaries
 
 1. migration と store state machine: plan/review records、status transaction、claim/authorization。
 2. daemon / MCP / CLI contract: named APIs、receive response、commander-only completion、compatibility aliases。
 3. events / watch / monitors: publish、scope filters、wake-up、cursor-backed reconciliation、重複抑止。
-4. skills / wrapper contracts: worker reuse conditions、role-specific review flow、approved-diff-only chezmoi operation。
+4. ATCT skill / wrapper contracts: worker reuse conditions、approved-diff-only chezmoi operation。orchestration skill は変更しない。
 5. end-to-end regression: commander → subcommander → executor、reject/retry、human approval/rejection、worker reuse/new-worker conditions。
 
 Units 1 and 2 are serial. Unit 3 starts after event types are fixed by unit 1. Unit 4 starts after API names are fixed by unit 2. Unit 5 is last. No executor receives an implementation unit until the commander accepts the accompanying plan.
