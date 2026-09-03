@@ -405,7 +405,8 @@ func (s *Store) RequestGoalHandoffReview(ctx context.Context, handoffID string, 
 }
 
 // ReceiveGoalHandoffReview records the reviewer's receipt. The original goal
-// handoff requester is the only reviewer for a goal handoff.
+// handoff requester remains allowed, while a new current claimant of the goal's
+// project may receive the review after a claim turnover.
 func (s *Store) ReceiveGoalHandoffReview(ctx context.Context, handoffID string, goalID, receivedBy int64) (GoalHandoff, error) {
 	handoff, err := s.GetGoalHandoff(ctx, handoffID)
 	if err != nil {
@@ -418,7 +419,9 @@ func (s *Store) ReceiveGoalHandoffReview(ctx context.Context, handoffID string, 
 		return GoalHandoff{}, ErrGoalHandoffReviewState
 	}
 	if receivedBy == 0 || handoff.RequestedBy != receivedBy {
-		return GoalHandoff{}, fmt.Errorf("%w: goal handoff reviewer %d is not requester %d", ErrGoalHandoffReviewReviewerMismatch, receivedBy, handoff.RequestedBy)
+		if err := s.requireProjectClaimForGoal(ctx, goalID, receivedBy); err != nil {
+			return GoalHandoff{}, fmt.Errorf("%w: goal handoff reviewer %d is not requester %d or current project claimant: %v", ErrGoalHandoffReviewReviewerMismatch, receivedBy, handoff.RequestedBy, err)
+		}
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339Nano)

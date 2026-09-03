@@ -233,6 +233,145 @@ func TestGoalHandoffReviewLifecyclePreservesGoalClaim(t *testing.T) {
 	}
 }
 
+func TestReceiveGoalHandoffReviewAuthorization(t *testing.T) {
+	tests := []struct {
+		name      string
+		requester string
+		caller    string
+		prepare   func(t *testing.T, s *Store, goalID int64, caller string)
+		wantError bool
+	}{
+		{
+			name:      "normal requester success",
+			requester: "receive-review-normal-requester",
+			caller:    "receive-review-normal-requester",
+		},
+		{
+			name:      "live requester rejects another caller",
+			requester: "receive-review-live-requester",
+			caller:    "receive-review-third-party",
+			prepare: func(t *testing.T, s *Store, _ int64, caller string) {
+				addTestAgentSession(t, s, caller)
+			},
+			wantError: true,
+		},
+		{
+			name:      "current commander succeeds after claim turnover",
+			requester: "receive-review-turned-over-requester",
+			caller:    "receive-review-current-commander",
+			prepare: func(t *testing.T, s *Store, goalID int64, caller string) {
+				ctx := context.Background()
+				goal, err := s.GetGoal(ctx, goalID)
+				if err != nil {
+					t.Fatalf("GetGoal: %v", err)
+				}
+				if err := s.ReleaseProject(ctx, goal.ProjectID); err != nil {
+					t.Fatalf("ReleaseProject: %v", err)
+				}
+				addLiveProjectClaim(t, s, goalID, caller)
+			},
+		},
+		{
+			name:      "turnover rejects noncommander",
+			requester: "receive-review-noncommander-requester",
+			caller:    "receive-review-noncommander",
+			prepare: func(t *testing.T, s *Store, goalID int64, caller string) {
+				ctx := context.Background()
+				goal, err := s.GetGoal(ctx, goalID)
+				if err != nil {
+					t.Fatalf("GetGoal: %v", err)
+				}
+				if err := s.ReleaseProject(ctx, goal.ProjectID); err != nil {
+					t.Fatalf("ReleaseProject: %v", err)
+				}
+				addLiveProjectClaim(t, s, goalID, "receive-review-turnover-commander")
+				addTestAgentSession(t, s, caller)
+			},
+			wantError: true,
+		},
+		{
+			name:      "foreign project commander is rejected",
+			requester: "receive-review-foreign-requester",
+			caller:    "receive-review-foreign-commander",
+			prepare: func(t *testing.T, s *Store, _ int64, caller string) {
+				ctx := context.Background()
+				foreignProject, err := s.CreateProject(ctx, "foreign-review", "/repos/foreign-review")
+				if err != nil {
+					t.Fatalf("CreateProject: %v", err)
+				}
+				foreignGoal, err := s.CreateGoal(ctx, foreignProject.ID, "foreign-goal", "human")
+				if err != nil {
+					t.Fatalf("CreateGoal: %v", err)
+				}
+				addLiveProjectClaim(t, s, foreignGoal.ID, caller)
+			},
+			wantError: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newTestStore(t)
+			ctx := context.Background()
+			goalID := newTestGoal(t, s)
+			addLiveProjectClaim(t, s, goalID, tc.requester)
+			addTestAgentSession(t, s, "receive-review-receiver")
+
+			handoff, err := s.RequestGoalHandoff(ctx, "receive-review-"+tc.name, goalID, testSessionID(tc.requester), "delegate for review")
+			if err != nil {
+				t.Fatalf("RequestGoalHandoff: %v", err)
+			}
+			if _, err := s.ReceiveGoalHandoff(ctx, handoff.ID, goalID, testSessionID("receive-review-receiver")); err != nil {
+				t.Fatalf("ReceiveGoalHandoff: %v", err)
+			}
+			if _, err := s.RequestGoalHandoffReview(ctx, handoff.ID, goalID, testSessionID("receive-review-receiver"), "ready for review"); err != nil {
+				t.Fatalf("RequestGoalHandoffReview: %v", err)
+			}
+			if tc.prepare != nil {
+				tc.prepare(t, s, goalID, tc.caller)
+			}
+
+			before, err := s.GetGoalHandoff(ctx, handoff.ID)
+			if err != nil {
+				t.Fatalf("GetGoalHandoff before receive: %v", err)
+			}
+			events, cancel := s.SubscribeEvents()
+			defer cancel()
+
+			received, err := s.ReceiveGoalHandoffReview(ctx, handoff.ID, goalID, testSessionID(tc.caller))
+			if tc.wantError {
+				if !errors.Is(err, ErrGoalHandoffReviewReviewerMismatch) {
+					t.Fatalf("ReceiveGoalHandoffReview error = %v, want ErrGoalHandoffReviewReviewerMismatch", err)
+				}
+				if received != (GoalHandoff{}) {
+					t.Fatalf("failed receive returned handoff = %+v, want zero value", received)
+				}
+				select {
+				case event := <-events:
+					t.Fatalf("rejected receive published workflow event: %+v", event)
+				default:
+				}
+
+				after, err := s.GetGoalHandoff(ctx, handoff.ID)
+				if err != nil {
+					t.Fatalf("GetGoalHandoff after rejected receive: %v", err)
+				}
+				if after.ReviewReceivedBy != before.ReviewReceivedBy || (after.ReviewReceivedAt == nil) != (before.ReviewReceivedAt == nil) {
+					t.Fatalf("rejected receive changed review receipt: before=%+v after=%+v", before, after)
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("ReceiveGoalHandoffReview: %v", err)
+			}
+			if received.ReviewReceivedBy != testSessionID(tc.caller) || received.ReviewReceivedAt == nil {
+				t.Fatalf("successful receive = %+v, want reviewer %d with timestamp", received, testSessionID(tc.caller))
+			}
+		})
+	}
+}
+
 func TestListGoalSessionsIncludesSubcommander(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
