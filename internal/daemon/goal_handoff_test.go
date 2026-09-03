@@ -477,6 +477,178 @@ func TestNamedGoalAndPlanHandoffReviewRoutesReturnRoleEvidence(t *testing.T) {
 	}
 }
 
+func registerGoalHandoffRPCTestSession(t *testing.T, fixture goalHandoffRPCTestFixture) int64 {
+	t.Helper()
+
+	sessionID, err := fixture.store.RegisterAgentSession(context.Background(), os.Getpid())
+	if err != nil {
+		t.Fatalf("RegisterAgentSession: %v", err)
+	}
+	return sessionID
+}
+
+func rotateGoalHandoffRPCTestProjectClaim(t *testing.T, fixture goalHandoffRPCTestFixture) int64 {
+	t.Helper()
+
+	ctx := context.Background()
+	goal, err := fixture.store.GetGoal(ctx, fixture.claimedGoalID)
+	if err != nil {
+		t.Fatalf("GetGoal: %v", err)
+	}
+	if err := fixture.store.ReleaseProject(ctx, goal.ProjectID); err != nil {
+		t.Fatalf("ReleaseProject: %v", err)
+	}
+	currentCommanderID := registerGoalHandoffRPCTestSession(t, fixture)
+	if err := fixture.store.AssociateAgentSessionWithProject(ctx, currentCommanderID, goal.ProjectID); err != nil {
+		t.Fatalf("AssociateAgentSessionWithProject: %v", err)
+	}
+	if _, err := fixture.store.ClaimProject(ctx, goal.ProjectID, currentCommanderID); err != nil {
+		t.Fatalf("ClaimProject: %v", err)
+	}
+	return currentCommanderID
+}
+
+func claimGoalHandoffRPCTestForeignProject(t *testing.T, fixture goalHandoffRPCTestFixture) int64 {
+	t.Helper()
+
+	ctx := context.Background()
+	goal, err := fixture.store.GetGoal(ctx, fixture.unclaimedGoalID)
+	if err != nil {
+		t.Fatalf("GetGoal foreign: %v", err)
+	}
+	foreignCommanderID := registerGoalHandoffRPCTestSession(t, fixture)
+	if err := fixture.store.AssociateAgentSessionWithProject(ctx, foreignCommanderID, goal.ProjectID); err != nil {
+		t.Fatalf("AssociateAgentSessionWithProject foreign: %v", err)
+	}
+	if _, err := fixture.store.ClaimProject(ctx, goal.ProjectID, foreignCommanderID); err != nil {
+		t.Fatalf("ClaimProject foreign: %v", err)
+	}
+	return foreignCommanderID
+}
+
+func TestNamedGoalHandoffReviewReceiveRecoveryRoutesOverRPC(t *testing.T) {
+	tests := []struct {
+		name      string
+		setup     func(t *testing.T, fixture goalHandoffRPCTestFixture) int64
+		wantError bool
+	}{
+		{
+			name: "normal requester success",
+			setup: func(_ *testing.T, fixture goalHandoffRPCTestFixture) int64 {
+				return fixture.requesterID
+			},
+		},
+		{
+			name: "live requester rejects another caller",
+			setup: func(t *testing.T, fixture goalHandoffRPCTestFixture) int64 {
+				return registerGoalHandoffRPCTestSession(t, fixture)
+			},
+			wantError: true,
+		},
+		{
+			name: "current commander succeeds after claim turnover",
+			setup: func(t *testing.T, fixture goalHandoffRPCTestFixture) int64 {
+				return rotateGoalHandoffRPCTestProjectClaim(t, fixture)
+			},
+		},
+		{
+			name: "turnover rejects noncommander",
+			setup: func(t *testing.T, fixture goalHandoffRPCTestFixture) int64 {
+				rotateGoalHandoffRPCTestProjectClaim(t, fixture)
+				return registerGoalHandoffRPCTestSession(t, fixture)
+			},
+			wantError: true,
+		},
+		{
+			name: "foreign project commander is rejected",
+			setup: func(t *testing.T, fixture goalHandoffRPCTestFixture) int64 {
+				return claimGoalHandoffRPCTestForeignProject(t, fixture)
+			},
+			wantError: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			fixture := newGoalHandoffRPCTestFixture(t)
+			client := mcpshim.NewClient(fixture.socketPath)
+			ctx := context.Background()
+			handoffID := "rpc-goal-review-recovery-" + strings.ReplaceAll(tc.name, " ", "-")
+
+			var requested store.GoalHandoff
+			if err := client.Call(ctx, "goal.handoff.request", map[string]any{
+				"handoff_id": handoffID, "goal_id": fixture.claimedGoalID, "requested_by": fixture.requesterID,
+			}, &requested); err != nil {
+				t.Fatalf("goal.handoff.request: %v", err)
+			}
+			var received handoffReceiveResponse
+			if err := client.Call(ctx, "goal.handoff.receive", map[string]any{
+				"handoff_id": handoffID, "goal_id": fixture.claimedGoalID, "received_by": fixture.receiverID,
+			}, &received); err != nil {
+				t.Fatalf("goal.handoff.receive: %v", err)
+			}
+			var reviewRequested store.GoalHandoff
+			if err := client.Call(ctx, "goal.handoff.review.request", map[string]any{
+				"handoff_id": handoffID, "goal_id": fixture.claimedGoalID, "requested_by": fixture.receiverID,
+				"review_request_report": "RPC recovery review request",
+			}, &reviewRequested); err != nil {
+				t.Fatalf("goal.handoff.review.request: %v", err)
+			}
+
+			before, err := fixture.store.GetGoalHandoff(ctx, handoffID)
+			if err != nil {
+				t.Fatalf("GetGoalHandoff before review receive: %v", err)
+			}
+			callerID := tc.setup(t, fixture)
+			var response handoffReceiveResponse
+			err = client.Call(ctx, "goal.handoff.review.receive", map[string]any{
+				"handoff_id": handoffID, "goal_id": fixture.claimedGoalID, "received_by": callerID,
+			}, &response)
+			if tc.wantError {
+				if err == nil {
+					t.Fatalf("goal.handoff.review.receive unexpectedly succeeded: %#v", response)
+				}
+				if !strings.Contains(err.Error(), store.ErrGoalHandoffReviewReviewerMismatch.Error()) {
+					t.Fatalf("goal.handoff.review.receive error = %v, want %v", err, store.ErrGoalHandoffReviewReviewerMismatch)
+				}
+				after, getErr := fixture.store.GetGoalHandoff(ctx, handoffID)
+				if getErr != nil {
+					t.Fatalf("GetGoalHandoff after rejected review receive: %v", getErr)
+				}
+				if after.ReviewRequestedBy != before.ReviewRequestedBy || after.ReviewRequestReport != before.ReviewRequestReport || before.ReviewRequestedAt == nil || after.ReviewRequestedAt == nil || !after.ReviewRequestedAt.Equal(*before.ReviewRequestedAt) || after.ReviewReceivedBy != before.ReviewReceivedBy || after.ReviewReceivedAt != before.ReviewReceivedAt {
+					t.Fatalf("rejected review receive changed review fields: before=%+v after=%+v", before, after)
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("goal.handoff.review.receive: %v", err)
+			}
+			goal, err := fixture.store.GetGoal(ctx, fixture.claimedGoalID)
+			if err != nil {
+				t.Fatalf("GetGoal: %v", err)
+			}
+			if response.Role != "commander" || response.ClaimEvidence.Scope != "project" || response.ClaimEvidence.AgentSessionID != callerID || response.ClaimEvidence.ProjectID != goal.ProjectID || response.ClaimEvidence.GoalID != fixture.claimedGoalID || response.ClaimEvidence.TaskID != 0 || response.ClaimEvidence.HandoffID != handoffID {
+				t.Fatalf("goal review receive role/evidence = %+v, want commander project evidence for project %d", response, goal.ProjectID)
+			}
+			var receivedData store.GoalHandoff
+			if err := json.Unmarshal(response.Data, &receivedData); err != nil {
+				t.Fatalf("decode goal.handoff.review.receive data: %v", err)
+			}
+			if receivedData.ReviewReceivedBy != callerID || receivedData.ReviewReceivedAt == nil {
+				t.Fatalf("goal review receive data = %+v, want persisted reviewer %d", receivedData, callerID)
+			}
+			persisted, err := fixture.store.GetGoalHandoff(ctx, handoffID)
+			if err != nil {
+				t.Fatalf("GetGoalHandoff after review receive: %v", err)
+			}
+			if persisted.ReviewReceivedBy != callerID || persisted.ReviewReceivedAt == nil {
+				t.Fatalf("persisted goal review receive = %+v, want reviewer %d", persisted, callerID)
+			}
+		})
+	}
+}
+
 func TestNamedGoalReviewRequiresCommanderAndHumanApprovalOrdering(t *testing.T) {
 	fixture := newGoalHandoffRPCTestFixture(t)
 	client := mcpshim.NewClient(fixture.socketPath)
