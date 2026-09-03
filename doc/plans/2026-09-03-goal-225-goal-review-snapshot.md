@@ -84,11 +84,11 @@ Run `GOCACHE=/tmp/atct-go-cache-goal-review-snapshot go test ./internal/daemon .
 
 - [ ] **Step 1: Write failing GoalDetail tests**
 
-Supply an open `goal_review` with six snapshot values. Assert every labeled value is visible before approve/reject, request endpoints still use only the decision ID/rejection reason, and the existing completion/proposed-goal cards remain unaffected.
+Supply an open `goal_review` with six snapshot values. Assert every labeled value is visible before approve/reject and, when a backfilled active goal also has the same six canonical completion fields, `completion-report` is absent so the snapshot review card is the sole pre-approval report. Assert request endpoints still use only the decision ID/rejection reason, and completion/proposed-goal cards remain unaffected when no open `goal_review` exists.
 
 - [ ] **Step 2: Extend typed API and render read-only report**
 
-Add an optional typed `goal_review_snapshot` to `Decision`; render it only for `goal_review`, using the existing completion-report labels and accessibility structure. Do not add editable report inputs to the human form.
+Add an optional typed `goal_review_snapshot` to `Decision`; render it only for `goal_review`, using the existing completion-report labels and accessibility structure. Pass the open goal-review state into the legacy completion-report section so it is suppressed only for an active open `goal_review`; do not add editable report inputs to the human form.
 
 - [ ] **Step 3: Verify and commit**
 

@@ -14,7 +14,7 @@ The commander owns the report at request time, after the delegated goal handoff 
 
 1. The existing commander-only ordering guard remains: a latest delegated goal handoff must be received, reviewed, and commander-completed before `goal.review.request`.
 2. The commander sends all six non-empty report fields to `goal.review.request`. Store validation reuses `validateCompletionReport` and atomically creates both the taskless `KindGoalReview` decision and `goal_review_snapshots` row.
-3. GoalDetail reads the snapshot together with the open `goal_review`, renders all six fields before the approve/reject form, and answers only the existing generic decision endpoints.
+3. GoalDetail reads the snapshot together with the open `goal_review`, renders all six fields before the approve/reject form, and answers only the existing generic decision endpoints. While an active goal has an open `goal_review`, this snapshot card is the sole pre-approval six-field report: GoalDetail suppresses the legacy top-level completion report even if backfilled canonical goal columns contain the same values.
 4. Human approval marks the decision approved/applied but leaves the goal active. Commander-only `goal.review.complete` loads the approved decision's stored snapshot, writes those exact fields into `goals`, and marks the goal done. It accepts no replacement report fields.
 5. Human rejection records the reason and leaves the snapshot and completed handoff immutable. The commander explicitly requests a new handoff; after its completed review, a new `goal.review.request` creates a new snapshot. No automatic reissue or snapshot reuse occurs.
 
@@ -41,6 +41,7 @@ Existing `KindGoalReview` rows have no recoverable six-field source by default. 
 ## Acceptance criteria
 
 - A human sees the exact six immutable values before approving an open `KindGoalReview`.
+- An active goal with an open `KindGoalReview` shows that six-field report exactly once, in the snapshot review card, including after legacy backfill.
 - The goal-review finalizer can only write the approved snapshot, never caller-supplied replacements.
 - A rejected review preserves its snapshot and completed handoff; a reissued review receives a distinct snapshot.
 - Legacy `KindCompletion` remains independent and unchanged.
