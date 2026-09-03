@@ -88,6 +88,10 @@ export function findOpenGoalApproval<T extends CompletionLike>(decisions: T[]): 
   return decisions.find((decision) => decision.kind === "goal_approval" && decision.status === "open");
 }
 
+export function findOpenGoalReview<T extends CompletionLike>(decisions: T[]): T | undefined {
+  return decisions.find((decision) => decision.kind === "goal_review" && decision.status === "open");
+}
+
 // A goal's content is one field; these two decide what counts as its first line
 // and what counts as the rest, so seven components do not each decide separately.
 export function headline(content: string): string {

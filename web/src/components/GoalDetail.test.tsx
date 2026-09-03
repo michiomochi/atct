@@ -8,6 +8,7 @@ import {
   fetchGoalDiff,
   fetchInbox,
   fetchTaskCommitDiff,
+  rejectDecision,
   subscribeToDecisionEvents,
   updateGoalContent,
   withdrawGoal,
@@ -169,6 +170,20 @@ function goalApprovalDecision(): Decision {
   };
 }
 
+function goalReviewDecision(): Decision {
+  return {
+    id: "goal-review-1",
+    goal_id: "goal-1",
+    goal_headline: "Fixture goal",
+    kind: "goal_review",
+    question: "Review the completed goal handoff",
+    options: [],
+    status: "open",
+    agent_session_id: "fixture-run",
+    created_at: "2026-08-20T00:00:00Z",
+  };
+}
+
 function emptyInbox(): InboxResponse {
   return {
     open_decisions: [],
@@ -211,6 +226,63 @@ describe("GoalDetail", () => {
 
     await waitFor(() => expect(fetchGoal).toHaveBeenCalledWith("goal-1"));
     expect(screen.queryByTestId("goal-approval")).toBeNull();
+  });
+
+  it("renders an open taskless goal review with accessible actions and requires a rejection reason", async () => {
+    const response = goalResponse();
+    response.unattached_decisions = [goalReviewDecision()];
+    vi.mocked(fetchGoal).mockResolvedValueOnce(response);
+
+    render(<GoalDetail id="goal-1" />);
+
+    const card = await screen.findByTestId("goal-review");
+    expect(within(card).getByRole("heading", { name: "goal.review.title" })).not.toBeNull();
+    expect(within(card).getByText("Review the completed goal handoff")).not.toBeNull();
+    const reason = within(card).getByRole("textbox", { name: /goal\.review\.reason/ });
+    const approve = within(card).getByRole("button", { name: "goal.review.approve" });
+    const reject = within(card).getByRole("button", { name: "goal.review.reject" });
+
+    expect(approve).not.toBeNull();
+    expect((reject as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(reason, { target: { value: "   " } });
+    expect((reject as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.queryByTestId("completion-approval")).toBeNull();
+    expect(screen.queryByTestId("goal-approval")).toBeNull();
+  });
+
+  it("approves an open goal review with the generic decision API and reloads after success", async () => {
+    const response = goalResponse();
+    response.unattached_decisions = [goalReviewDecision()];
+    vi.mocked(fetchGoal).mockResolvedValueOnce(response).mockResolvedValueOnce(goalResponse());
+    vi.mocked(approveDecision).mockResolvedValueOnce(goal());
+
+    render(<GoalDetail id="goal-1" />);
+
+    const card = await screen.findByTestId("goal-review");
+    fireEvent.click(within(card).getByRole("button", { name: "goal.review.approve" }));
+
+    await waitFor(() => expect(approveDecision).toHaveBeenCalledWith("goal-review-1"));
+    await waitFor(() => expect(fetchGoal).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.queryByTestId("goal-review")).toBeNull());
+  });
+
+  it("rejects an open goal review with a trimmed reason and reloads after success", async () => {
+    const response = goalResponse();
+    response.unattached_decisions = [goalReviewDecision()];
+    vi.mocked(fetchGoal).mockResolvedValueOnce(response).mockResolvedValueOnce(goalResponse());
+    vi.mocked(rejectDecision).mockResolvedValueOnce(goalReviewDecision());
+
+    render(<GoalDetail id="goal-1" />);
+
+    const card = await screen.findByTestId("goal-review");
+    fireEvent.change(within(card).getByRole("textbox", { name: /goal\.review\.reason/ }), {
+      target: { value: "  Needs a correction  " },
+    });
+    fireEvent.click(within(card).getByRole("button", { name: "goal.review.reject" }));
+
+    await waitFor(() => expect(rejectDecision).toHaveBeenCalledWith("goal-review-1", "Needs a correction"));
+    await waitFor(() => expect(fetchGoal).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.queryByTestId("goal-review")).toBeNull());
   });
 
   it("disables goal approval rejection while the reason is empty", async () => {
