@@ -475,6 +475,20 @@ func (q *Queries) MarkGoalDone(ctx context.Context, arg MarkGoalDoneParams) (sql
 	return q.db.ExecContext(ctx, markGoalDone, arg.UpdatedAt, arg.ID)
 }
 
+const finalizeGoalReview = `-- name: FinalizeGoalReview :execresult
+UPDATE goals SET status = 'done', updated_at = ?
+WHERE id = ? AND status = 'active'
+`
+
+type FinalizeGoalReviewParams struct {
+	UpdatedAt string
+	ID        int64
+}
+
+func (q *Queries) FinalizeGoalReview(ctx context.Context, arg FinalizeGoalReviewParams) (sql.Result, error) {
+	return q.db.ExecContext(ctx, finalizeGoalReview, arg.UpdatedAt, arg.ID)
+}
+
 const markGoalDropped = `-- name: MarkGoalDropped :execresult
 UPDATE goals SET status = 'dropped', updated_at = ?
 WHERE id = ? AND status = 'proposed'

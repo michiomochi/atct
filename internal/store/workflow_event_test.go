@@ -74,7 +74,14 @@ func TestWorkflowEventOutboxPersistsGoalReviewWithProjectSequence(t *testing.T) 
 	if completed := completeGoalHandoffReviewForGoalReviewTest(t, s, ctx, "workflow-event-goal-review-handoff", goalID, requesterID, receiverID); completed.CompletedReportAt == nil {
 		t.Fatalf("goal handoff = %+v, want completed handoff before goal review", completed)
 	}
-	review, err := s.RequestGoalReview(ctx, goalID, requesterID)
+	review, err := s.RequestGoalReview(ctx, goalID, requesterID, domain.CompletionReport{
+		WorkDone:    "workflow review work",
+		NowPossible: "workflow review result",
+		HowToVerify: "run workflow event tests",
+		Surprises:   "none",
+		NeedsReview: "none",
+		NextSteps:   "merge",
+	})
 	if err != nil {
 		t.Fatalf("RequestGoalReview: %v", err)
 	}

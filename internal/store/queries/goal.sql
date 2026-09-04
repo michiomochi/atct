@@ -155,3 +155,7 @@ WHERE id = ?;
 -- name: MarkGoalDone :execresult
 UPDATE goals SET status = 'done', updated_at = ?
 WHERE id = ?;
+
+-- name: FinalizeGoalReview :execresult
+UPDATE goals SET status = 'done', updated_at = ?
+WHERE id = ? AND status = 'active';

@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -560,9 +561,21 @@ func (s *Store) requireLatestGoalHandoffForReview(ctx context.Context, goalID in
 }
 
 // RequestGoalReview creates the taskless decision that asks the human to
-// review a goal after its goal handoff has been accepted. The final report is
-// intentionally not written here.
-func (s *Store) RequestGoalReview(ctx context.Context, goalID, agentSessionID int64) (domain.Decision, error) {
+// review a goal after its goal handoff has been accepted. The completion report
+// is persisted in the same transaction as the goal-review decision and its
+// creation event.
+func (s *Store) RequestGoalReview(ctx context.Context, goalID, agentSessionID int64, reports ...domain.CompletionReport) (domain.Decision, error) {
+	if len(reports) == 0 {
+		return domain.Decision{}, errors.New("goal review requires a completion report")
+	}
+	if len(reports) > 1 {
+		return domain.Decision{}, errors.New("goal review accepts exactly one completion report")
+	}
+	report := reports[0]
+	if err := validateCompletionReport(report); err != nil {
+		return domain.Decision{}, err
+	}
+
 	goal, err := s.GetGoal(ctx, goalID)
 	if err != nil {
 		return domain.Decision{}, fmt.Errorf("get goal for review: %w", err)
@@ -580,24 +593,86 @@ func (s *Store) RequestGoalReview(ctx context.Context, goalID, agentSessionID in
 	if err := s.requireLatestGoalHandoffForReview(ctx, goalID, previous, ok); err != nil {
 		return domain.Decision{}, err
 	}
-	open, err := sqlcgen.New(s.db).CountOpenDecisionsForGoal(ctx, goalID)
+	options := []domain.Option{
+		{Label: "approve", Description: "Approve the reviewed goal", Consequence: "The commander may merge and complete the goal"},
+		{Label: "reject", Description: "Reject the reviewed goal", Consequence: "The goal remains active and the commander must reissue the handoff"},
+	}
+	rawOptions, err := json.Marshal(options)
+	if err != nil {
+		return domain.Decision{}, fmt.Errorf("marshal goal review options: %w", err)
+	}
+
+	createdAt := time.Now().UTC()
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return domain.Decision{}, fmt.Errorf("begin goal review creation tx: %w", err)
+	}
+	defer tx.Rollback()
+	q := sqlcgen.New(tx)
+	open, err := q.CountOpenDecisionsForGoal(ctx, goalID)
 	if err != nil {
 		return domain.Decision{}, fmt.Errorf("count open decisions for goal review: %w", err)
 	}
 	if open > 0 {
 		return domain.Decision{}, fmt.Errorf("%w: %d", ErrGoalHasOpenDecision, goalID)
 	}
-
-	return s.AskDecision(ctx, AskInput{
-		GoalID:   goalID,
-		Kind:     domain.KindGoalReview,
-		Question: "Approve this goal review?",
-		Options: []domain.Option{
-			{Label: "approve", Description: "Approve the reviewed goal", Consequence: "The commander may merge and complete the goal"},
-			{Label: "reject", Description: "Reject the reviewed goal", Consequence: "The goal remains active and the commander must reissue the handoff"},
-		},
-		AgentSessionID: agentSessionID,
+	updated, err := q.UpdateGoalCompletionReport(ctx, sqlcgen.UpdateGoalCompletionReportParams{
+		ResultSummary: report.WorkDone,
+		WorkDone:      report.WorkDone,
+		NowPossible:   report.NowPossible,
+		HowToVerify:   report.HowToVerify,
+		Surprises:     report.Surprises,
+		NeedsReview:   report.NeedsReview,
+		NextSteps:     report.NextSteps,
+		UpdatedAt:     createdAt.Format(time.RFC3339),
+		ID:            goalID,
 	})
+	if err != nil {
+		return domain.Decision{}, fmt.Errorf("set goal review report: %w", err)
+	}
+	if affected, err := updated.RowsAffected(); err != nil {
+		return domain.Decision{}, fmt.Errorf("set goal review report rows affected: %w", err)
+	} else if affected != 1 {
+		return domain.Decision{}, goalNotActiveForCompletionError(goalID, goal.Status)
+	}
+
+	decisionID, err := q.CreateDecision(ctx, sqlcgen.CreateDecisionParams{
+		GoalID:         goalID,
+		TaskID:         sql.NullInt64{},
+		Kind:           string(domain.KindGoalReview),
+		Question:       "Approve this goal review?",
+		Options:        string(rawOptions),
+		Status:         string(domain.DecisionOpen),
+		DefaultOption:  "",
+		DefaultAfterMs: sql.NullInt64{},
+		AgentSessionID: agentSessionID,
+		CreatedAt:      createdAt.Format(time.RFC3339),
+	})
+	if err != nil {
+		return domain.Decision{}, fmt.Errorf("insert goal review decision: %w", err)
+	}
+
+	row, err := q.GetDecision(ctx, decisionID)
+	if err != nil {
+		return domain.Decision{}, fmt.Errorf("get created goal review decision: %w", err)
+	}
+	decision, err := decisionFromRow(decisionRowFromSQLC(row))
+	if err != nil {
+		return domain.Decision{}, err
+	}
+	event, err := s.persistWorkflowEvent(ctx, tx, DecisionEvent{
+		Name: "decision.created", Data: decision, OccurredAt: decision.CreatedAt,
+	}, workflowEventMetadata{GoalID: decision.GoalID, DecisionID: decision.ID})
+	if err != nil {
+		return domain.Decision{}, fmt.Errorf("persist goal review creation event: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return domain.Decision{}, fmt.Errorf("commit goal review creation: %w", err)
+	}
+	s.notify.publish(decision.ID)
+	s.notify.publishAll()
+	s.publishWorkflowEvents([]DecisionEvent{event})
+	return decision, nil
 }
 
 // ApproveGoalReview applies the human approval while leaving the goal active.
@@ -624,7 +699,6 @@ func (s *Store) ApproveGoalReview(ctx context.Context, decisionID int64) (domain
 	if domain.GoalStatus(status) != domain.GoalActive {
 		return domain.Goal{}, goalNotActiveForCompletionError(goalID, domain.GoalStatus(status))
 	}
-
 	now := time.Now().UTC().Format(time.RFC3339)
 	result, err := q.ApproveGoalReviewDecision(ctx, sqlcgen.ApproveGoalReviewDecisionParams{
 		AnsweredAt: sql.NullString{String: now, Valid: true}, AppliedAt: sql.NullString{String: now, Valid: true}, ID: decisionID,
@@ -695,9 +769,74 @@ func (s *Store) RejectGoalReview(ctx context.Context, decisionID int64, reason s
 	return nil
 }
 
-// FinalizeGoalWithReport is the commander-only final step after a human goal
-// review has been approved. It writes the six report fields and closes the
-// goal atomically; it does not create another decision.
+func completionReportFromGoal(goal domain.Goal) domain.CompletionReport {
+	return domain.CompletionReport{
+		WorkDone:    goal.WorkDone,
+		NowPossible: goal.NowPossible,
+		HowToVerify: goal.HowToVerify,
+		Surprises:   goal.Surprises,
+		NeedsReview: goal.NeedsReview,
+		NextSteps:   goal.NextSteps,
+	}
+}
+
+// FinalizeGoalReview is the commander-only final step after a human goal
+// review has been approved. It closes the active goal using the report already
+// stored when the review was requested and never accepts a replacement report.
+func (s *Store) FinalizeGoalReview(ctx context.Context, goalID, _ int64) (domain.Goal, error) {
+	goal, err := s.GetGoal(ctx, goalID)
+	if err != nil {
+		return domain.Goal{}, fmt.Errorf("get goal for review finalization: %w", err)
+	}
+	if goal.Status != domain.GoalActive {
+		return domain.Goal{}, goalNotActiveForCompletionError(goalID, goal.Status)
+	}
+	if err := validateCompletionReport(completionReportFromGoal(goal)); err != nil {
+		return domain.Goal{}, fmt.Errorf("validate stored goal review report: %w", err)
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return domain.Goal{}, fmt.Errorf("begin goal review finalization tx: %w", err)
+	}
+	defer tx.Rollback()
+	q := sqlcgen.New(tx)
+
+	open, err := q.CountOpenDecisionsForGoal(ctx, goalID)
+	if err != nil {
+		return domain.Goal{}, fmt.Errorf("count open decisions for review finalization: %w", err)
+	}
+	if open > 0 {
+		return domain.Goal{}, fmt.Errorf("%w: %d", ErrGoalHasOpenDecision, goalID)
+	}
+	approved, err := q.CountApprovedGoalReviewsForGoal(ctx, goalID)
+	if err != nil {
+		return domain.Goal{}, fmt.Errorf("check approved goal review: %w", err)
+	}
+	if approved == 0 {
+		return domain.Goal{}, fmt.Errorf("%w: %d", ErrGoalReviewNotApproved, goalID)
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	result, err := q.FinalizeGoalReview(ctx, sqlcgen.FinalizeGoalReviewParams{UpdatedAt: now, ID: goalID})
+	if err != nil {
+		return domain.Goal{}, fmt.Errorf("finalize goal review: %w", err)
+	}
+	if affected, err := result.RowsAffected(); err != nil {
+		return domain.Goal{}, fmt.Errorf("finalize goal review rows affected: %w", err)
+	} else if affected != 1 {
+		return domain.Goal{}, goalNotActiveForCompletionError(goalID, goal.Status)
+	}
+	if err := tx.Commit(); err != nil {
+		return domain.Goal{}, fmt.Errorf("commit goal review finalization: %w", err)
+	}
+	return s.GetGoal(ctx, goalID)
+}
+
+// FinalizeGoalWithReport is retained for source compatibility with callers
+// that have not adopted the no-input goal-review finalizer. This remains the
+// legacy report-bearing completion path; named no-input finalization uses
+// FinalizeGoalReview.
 func (s *Store) FinalizeGoalWithReport(ctx context.Context, goalID int64, report domain.CompletionReport, _ int64) (domain.Goal, error) {
 	goal, err := s.GetGoal(ctx, goalID)
 	if err != nil {
