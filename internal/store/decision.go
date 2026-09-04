@@ -260,6 +260,16 @@ func (s *Store) ListOpenDecisions(ctx context.Context, goalID int64) ([]domain.D
 	return convertDecisionRows(rows, decisionRowFromSQLC)
 }
 
+// ListDecisionsForGoal returns every decision recorded for a goal, regardless
+// of its current status, in stable ID order for canonical reconciliation.
+func (s *Store) ListDecisionsForGoal(ctx context.Context, goalID int64) ([]domain.Decision, error) {
+	rows, err := decisionQueries(s).ListDecisionsForGoal(ctx, goalID)
+	if err != nil {
+		return nil, fmt.Errorf("query decisions for goal: %w", err)
+	}
+	return convertDecisionRows(rows, decisionRowFromSQLC)
+}
+
 func (s *Store) ListAllOpenDecisions(ctx context.Context) ([]domain.Decision, error) {
 	rows, err := decisionQueries(s).ListAllOpenDecisions(ctx)
 	if err != nil {

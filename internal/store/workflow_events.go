@@ -65,21 +65,15 @@ type WatchDeliveryCursor struct {
 	UpdatedAt  time.Time `json:"updated_at"`
 }
 
-// WorkflowReconciliation is a point-in-time recovery payload. It contains
-// retained events plus the current scoped state needed after a cursor is
-// stale, a watcher restarts, or a live stream races with reconnect.
+// WorkflowReconciliation is a point-in-time canonical snapshot. It contains
+// the scoped state needed after a watcher restarts or a live signal is missed.
 type WorkflowReconciliation struct {
-	Events             []WorkflowEvent   `json:"events"`
-	OldestSequence     int64             `json:"oldest_sequence"`
-	CurrentSequence    int64             `json:"current_sequence"`
-	HighWatermark      int64             `json:"high_watermark"`
-	Goals              []domain.Goal     `json:"goals"`
-	Tasks              []domain.Task     `json:"tasks"`
-	OpenDecisions      []domain.Decision `json:"open_decisions"`
-	UnappliedDecisions []domain.Decision `json:"unapplied_decisions"`
-	GoalHandoffs       []GoalHandoff     `json:"goal_handoffs"`
-	PlanHandoffs       []PlanHandoff     `json:"plan_handoffs"`
-	TaskHandoffs       []TaskHandoff     `json:"task_handoffs"`
+	Goals        []domain.Goal     `json:"goals"`
+	Tasks        []domain.Task     `json:"tasks"`
+	Decisions    []domain.Decision `json:"decisions"`
+	GoalHandoffs []GoalHandoff     `json:"goal_handoffs"`
+	PlanHandoffs []PlanHandoff     `json:"plan_handoffs"`
+	TaskHandoffs []TaskHandoff     `json:"task_handoffs"`
 }
 
 func workflowEventShouldPersist(name string) bool {
@@ -517,17 +511,6 @@ func (s *Store) ReconcileWorkflow(ctx context.Context, query WorkflowEventQuery)
 			return WorkflowReconciliation{}, fmt.Errorf("task %d does not belong to goal %d", query.TaskID, query.GoalID)
 		}
 	}
-	page, err := s.ListWorkflowEvents(ctx, WorkflowEventQuery{
-		ProjectID:      query.ProjectIDOr(projectID),
-		GoalID:         query.GoalID,
-		TaskID:         query.TaskID,
-		AfterSequence:  query.AfterSequence,
-		BeforeSequence: query.BeforeSequence,
-		Limit:          query.Limit,
-	})
-	if err != nil {
-		return WorkflowReconciliation{}, err
-	}
 	goals, err := s.ListGoals(ctx, projectID)
 	if err != nil {
 		return WorkflowReconciliation{}, err
@@ -545,11 +528,12 @@ func (s *Store) ReconcileWorkflow(ctx context.Context, query WorkflowEventQuery)
 		return WorkflowReconciliation{}, fmt.Errorf("task %d is outside project %d", query.TaskID, projectID)
 	}
 	reconciliation := WorkflowReconciliation{
-		Events: page.Events, OldestSequence: page.OldestSequence, CurrentSequence: page.CurrentSequence, HighWatermark: page.HighWatermark,
-		Goals:         append([]domain.Goal(nil), goals...),
-		OpenDecisions: make([]domain.Decision, 0), UnappliedDecisions: make([]domain.Decision, 0),
-		GoalHandoffs: make([]GoalHandoff, 0), PlanHandoffs: make([]PlanHandoff, 0), TaskHandoffs: make([]TaskHandoff, 0),
-		Tasks: make([]domain.Task, 0),
+		Goals:        append([]domain.Goal(nil), goals...),
+		Decisions:    make([]domain.Decision, 0),
+		GoalHandoffs: make([]GoalHandoff, 0),
+		PlanHandoffs: make([]PlanHandoff, 0),
+		TaskHandoffs: make([]TaskHandoff, 0),
+		Tasks:        make([]domain.Task, 0),
 	}
 	for _, goal := range goals {
 		tasks, err := s.ListTasks(ctx, goal.ID)
@@ -564,58 +548,29 @@ func (s *Store) ReconcileWorkflow(ctx context.Context, query WorkflowEventQuery)
 					return WorkflowReconciliation{}, err
 				}
 				for _, handoff := range handoffs {
-					if handoff.CompletedReportAt == nil {
-						reconciliation.TaskHandoffs = append(reconciliation.TaskHandoffs, handoff)
-					}
+					reconciliation.TaskHandoffs = append(reconciliation.TaskHandoffs, handoff)
 				}
 			}
 		}
-		if query.TaskID == 0 {
-			goalHandoffs, err := s.ListGoalHandoffs(ctx, goal.ID)
-			if err != nil {
-				return WorkflowReconciliation{}, err
-			}
-			for _, handoff := range goalHandoffs {
-				if handoff.CompletedReportAt == nil {
-					reconciliation.GoalHandoffs = append(reconciliation.GoalHandoffs, handoff)
-				}
-			}
-			planHandoffs, err := s.ListPlanHandoffs(ctx, goal.ID)
-			if err != nil {
-				return WorkflowReconciliation{}, err
-			}
-			for _, handoff := range planHandoffs {
-				if handoff.CompletedReportAt == nil {
-					reconciliation.PlanHandoffs = append(reconciliation.PlanHandoffs, handoff)
-				}
-			}
-		}
-		openDecisions, err := s.ListOpenDecisions(ctx, goal.ID)
+		goalHandoffs, err := s.ListGoalHandoffs(ctx, goal.ID)
 		if err != nil {
 			return WorkflowReconciliation{}, err
 		}
-		reconciliation.OpenDecisions = append(reconciliation.OpenDecisions, openDecisions...)
-		unapplied, err := s.ListUnappliedDecisionsForGoal(ctx, goal.ID)
+		reconciliation.GoalHandoffs = append(reconciliation.GoalHandoffs, goalHandoffs...)
+		planHandoffs, err := s.ListPlanHandoffs(ctx, goal.ID)
 		if err != nil {
 			return WorkflowReconciliation{}, err
 		}
-		reconciliation.UnappliedDecisions = append(reconciliation.UnappliedDecisions, unapplied...)
-	}
-	if query.TaskID != 0 {
-		filteredOpen := reconciliation.OpenDecisions[:0]
-		filteredUnapplied := reconciliation.UnappliedDecisions[:0]
-		for _, decision := range reconciliation.OpenDecisions {
-			if decision.TaskID == query.TaskID {
-				filteredOpen = append(filteredOpen, decision)
+		reconciliation.PlanHandoffs = append(reconciliation.PlanHandoffs, planHandoffs...)
+		decisions, err := s.ListDecisionsForGoal(ctx, goal.ID)
+		if err != nil {
+			return WorkflowReconciliation{}, err
+		}
+		for _, decision := range decisions {
+			if query.TaskID == 0 || decision.TaskID == query.TaskID {
+				reconciliation.Decisions = append(reconciliation.Decisions, decision)
 			}
 		}
-		for _, decision := range reconciliation.UnappliedDecisions {
-			if decision.TaskID == query.TaskID {
-				filteredUnapplied = append(filteredUnapplied, decision)
-			}
-		}
-		reconciliation.OpenDecisions = filteredOpen
-		reconciliation.UnappliedDecisions = filteredUnapplied
 	}
 	return reconciliation, nil
 }

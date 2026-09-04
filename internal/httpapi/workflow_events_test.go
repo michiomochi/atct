@@ -48,7 +48,7 @@ func TestSSEBackfillsDurableDecisionWithStableID(t *testing.T) {
 	}
 }
 
-func TestWorkflowReconcileAndCursorEndpoint(t *testing.T) {
+func TestWorkflowReconcileCanonicalEndpoint(t *testing.T) {
 	f := newBareFixture(t)
 	srv := newTestServer(t, f.store)
 	defer srv.Close()
@@ -57,22 +57,38 @@ func TestWorkflowReconcileAndCursorEndpoint(t *testing.T) {
 	if status != http.StatusOK {
 		t.Fatalf("reconcile status = %d; body=%s", status, body)
 	}
-	var reconciliation struct {
-		CurrentSequence int64         `json:"current_sequence"`
-		Goals           []domain.Goal `json:"goals"`
-	}
-	if err := json.Unmarshal(body, &reconciliation); err != nil {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(body, &fields); err != nil {
 		t.Fatal(err)
 	}
-	if reconciliation.CurrentSequence == 0 || len(reconciliation.Goals) != 1 || reconciliation.Goals[0].ID != f.goal.ID {
-		t.Fatalf("reconciliation = %+v", reconciliation)
+	for _, field := range []string{"events", "oldest_sequence", "current_sequence", "high_watermark", "cursor"} {
+		if _, ok := fields[field]; ok {
+			t.Fatalf("reconciliation contains delivery field %q: %s", field, body)
+		}
 	}
-
+	var goals []domain.Goal
+	if err := json.Unmarshal(fields["goals"], &goals); err != nil {
+		t.Fatalf("decode goals: %v; body=%s", err, body)
+	}
+	if len(goals) != 1 || goals[0].ID != f.goal.ID {
+		t.Fatalf("reconciliation goals = %+v", goals)
+	}
+	var decisions []domain.Decision
+	if err := json.Unmarshal(fields["decisions"], &decisions); err != nil {
+		t.Fatalf("decode decisions: %v; body=%s", err, body)
+	}
+	if len(decisions) != 0 {
+		t.Fatalf("reconciliation decisions = %+v", decisions)
+	}
+	sequence, err := f.store.CurrentProjectEventSequence(f.ctx, f.project.ID)
+	if err != nil {
+		t.Fatalf("current project event sequence: %v", err)
+	}
 	request := mustJSON(t, map[string]any{
 		"watcher_key": "reviewer-1",
 		"project_id":  f.project.ID,
 		"goal_id":     f.goal.ID,
-		"sequence":    reconciliation.CurrentSequence,
+		"sequence":    sequence,
 	})
 	status, _, body = doRequest(t, srv.Client(), http.MethodPost, srv.URL+"/api/watch/cursor", request)
 	if status != http.StatusOK {
@@ -82,7 +98,7 @@ func TestWorkflowReconcileAndCursorEndpoint(t *testing.T) {
 	if err := json.Unmarshal(body, &cursor); err != nil {
 		t.Fatal(err)
 	}
-	if cursor.Sequence != reconciliation.CurrentSequence || cursor.WatcherKey != "reviewer-1" {
+	if cursor.Sequence != sequence || cursor.WatcherKey != "reviewer-1" {
 		t.Fatalf("cursor = %+v", cursor)
 	}
 }

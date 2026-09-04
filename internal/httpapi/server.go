@@ -1698,27 +1698,8 @@ func (s *Server) handleEventReconciliation(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusBadRequest, "project_id is required for workflow reconciliation")
 		return
 	}
-	after, err := parseWorkflowSequence(r.URL.Query().Get("after_sequence"))
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	before, err := parseWorkflowSequence(r.URL.Query().Get("before_sequence"))
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	limit := 0
-	if value := r.URL.Query().Get("limit"); value != "" {
-		limit, err = strconv.Atoi(value)
-		if err != nil || limit < 0 {
-			writeError(w, http.StatusBadRequest, "invalid workflow event limit")
-			return
-		}
-	}
 	reconciliation, err := s.store.ReconcileWorkflow(r.Context(), store.WorkflowEventQuery{
 		ProjectID: projectID, GoalID: goalID, TaskID: taskID,
-		AfterSequence: after, BeforeSequence: before, Limit: limit,
 	})
 	if err != nil {
 		writeStoreError(w, err)
