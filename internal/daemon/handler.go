@@ -608,6 +608,18 @@ type goalHandoffCompleteParams struct {
 }
 
 type goalReviewRequestParams struct {
+	GoalID                  int64  `json:"goal_id"`
+	WorkDone                string `json:"work_done"`
+	NowPossible             string `json:"now_possible"`
+	HowToVerify             string `json:"how_to_verify"`
+	Surprises               string `json:"surprises"`
+	NeedsReview             string `json:"needs_review"`
+	NextSteps               string `json:"next_steps"`
+	AgentSessionID          int64  `json:"agent_session_id"`
+	IncludeUnappliedAnswers bool   `json:"include_unapplied_answers"`
+}
+
+type goalReviewCompleteParams struct {
 	GoalID                  int64 `json:"goal_id"`
 	AgentSessionID          int64 `json:"agent_session_id"`
 	IncludeUnappliedAnswers bool  `json:"include_unapplied_answers"`
@@ -1533,11 +1545,38 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		if err := d.authorizeCommander(ctx, p.GoalID, goal.ProjectID, p.AgentSessionID, "goal review request"); err != nil {
 			return nil, err
 		}
-		review, err := d.store.RequestGoalReview(ctx, p.GoalID, p.AgentSessionID)
+		report := domain.CompletionReport{
+			WorkDone:    p.WorkDone,
+			NowPossible: p.NowPossible,
+			HowToVerify: p.HowToVerify,
+			Surprises:   p.Surprises,
+			NeedsReview: p.NeedsReview,
+			NextSteps:   p.NextSteps,
+		}
+		review, err := d.store.RequestGoalReview(ctx, p.GoalID, p.AgentSessionID, report)
 		if err != nil || !p.IncludeUnappliedAnswers {
 			return marshal(review, err)
 		}
 		response, err := d.responseWithScopedUnappliedDecisions(ctx, review, p.GoalID, p.AgentSessionID, review.ID)
+		return marshal(response, err)
+
+	case "goal.review.complete":
+		var p goalReviewCompleteParams
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		goal, err := d.store.GetGoal(ctx, p.GoalID)
+		if err != nil {
+			return nil, err
+		}
+		if err := d.authorizeCommander(ctx, p.GoalID, goal.ProjectID, p.AgentSessionID, "goal review completion"); err != nil {
+			return nil, err
+		}
+		completed, err := d.store.FinalizeGoalReview(ctx, p.GoalID, p.AgentSessionID)
+		if err != nil || !p.IncludeUnappliedAnswers {
+			return marshal(completed, err)
+		}
+		response, err := d.responseWithScopedUnappliedDecisions(ctx, completed, p.GoalID, p.AgentSessionID)
 		return marshal(response, err)
 
 	case "goal.handoff.report.amend":
@@ -1820,21 +1859,8 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 			NeedsReview: p.NeedsReview,
 			NextSteps:   p.NextSteps,
 		}
-		hasGoalReview, err := d.store.HasGoalReview(ctx, p.GoalID)
-		if err != nil {
-			return nil, err
-		}
-		if hasGoalReview {
-			completed, err := d.store.FinalizeGoalWithReport(ctx, p.GoalID, report, p.AgentSessionID)
-			if err != nil || !p.IncludeUnappliedAnswers {
-				return marshal(completed, err)
-			}
-			response, err := d.responseWithScopedUnappliedDecisions(ctx, completed, p.GoalID, p.AgentSessionID)
-			return marshal(response, err)
-		}
-
-		// Keep the pre-225 completion decision as a compatibility adapter for
-		// callers that have not requested the named human goal review yet.
+		// Keep the legacy completion decision as a compatibility adapter. Named
+		// human goal reviews are finalized through goal.review.complete.
 		dec, err := d.store.CompleteGoalWithReport(ctx, p.GoalID, report, p.AgentSessionID)
 		if err != nil || !p.IncludeUnappliedAnswers {
 			return marshal(dec, err)

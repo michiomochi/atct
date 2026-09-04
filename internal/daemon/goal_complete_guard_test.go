@@ -198,9 +198,13 @@ func TestCommanderGoalReviewThenCompleteWritesFinalReport(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
+	report := approvedGoalReport("review-lifecycle")
 
 	reviewParams, err := json.Marshal(map[string]any{
 		"goal_id": goal.ID, "agent_session_id": commanderID,
+		"work_done": report.WorkDone, "now_possible": report.NowPossible,
+		"how_to_verify": report.HowToVerify, "surprises": report.Surprises,
+		"needs_review": report.NeedsReview, "next_steps": report.NextSteps,
 	})
 	if err != nil {
 		t.Fatalf("Marshal goal.review.request params: %v", err)
@@ -257,17 +261,22 @@ func TestCommanderGoalReviewThenCompleteWritesFinalReport(t *testing.T) {
 	if _, err := s.ApproveGoalReview(ctx, review.ID); err != nil {
 		t.Fatalf("ApproveGoalReview: %v", err)
 	}
-	report := approvedGoalReport("review-lifecycle")
-	raw, err = daemon.dispatch(ctx, rpc.Request{
-		Method: "goal.complete",
-		Params: goalCompleteParams(t, goal.ID, commanderID, report),
+	completeParams, err := json.Marshal(map[string]any{
+		"goal_id": goal.ID, "agent_session_id": commanderID,
 	})
 	if err != nil {
-		t.Fatalf("goal.complete after approval: %v", err)
+		t.Fatalf("Marshal goal.review.complete params: %v", err)
+	}
+	raw, err = daemon.dispatch(ctx, rpc.Request{
+		Method: "goal.review.complete",
+		Params: completeParams,
+	})
+	if err != nil {
+		t.Fatalf("goal.review.complete after approval: %v", err)
 	}
 	var done domain.Goal
 	if err := json.Unmarshal(raw, &done); err != nil {
-		t.Fatalf("decode goal.complete response %s: %v", raw, err)
+		t.Fatalf("decode goal.review.complete response %s: %v", raw, err)
 	}
 	if done.Status != domain.GoalDone || done.WorkDone != report.WorkDone || done.NextSteps != report.NextSteps {
 		t.Fatalf("completed goal = %+v, want final report and done status", done)

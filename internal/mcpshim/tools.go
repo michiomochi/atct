@@ -224,6 +224,16 @@ type GoalCompleteIn struct {
 }
 
 type GoalReviewRequestIn struct {
+	GoalID      mcpID  `json:"goal_id"`
+	WorkDone    string `json:"work_done" jsonschema:"what was completed; write なし when there is nothing to report"`
+	NowPossible string `json:"now_possible" jsonschema:"what is possible now; write なし when there is nothing to report"`
+	HowToVerify string `json:"how_to_verify" jsonschema:"how to verify the result; write なし when there is nothing to report"`
+	Surprises   string `json:"surprises" jsonschema:"what differed from expectations; write なし when there is nothing to report"`
+	NeedsReview string `json:"needs_review" jsonschema:"what still needs confirmation; write なし when there is nothing to report"`
+	NextSteps   string `json:"next_steps" jsonschema:"what should happen next; write なし when there is nothing to report"`
+}
+
+type GoalReviewCompleteIn struct {
 	GoalID mcpID `json:"goal_id"`
 }
 
@@ -1029,6 +1039,20 @@ func Register(server *mcp.Server, c *Client, agentSessionID int64) {
 		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in GoalReviewRequestIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
 		return callWithUnappliedDecisions(ctx, c, "goal.review.request", map[string]any{
+			"goal_id": in.GoalID, "work_done": in.WorkDone,
+			"now_possible": in.NowPossible, "how_to_verify": in.HowToVerify,
+			"surprises": in.Surprises, "needs_review": in.NeedsReview,
+			"next_steps": in.NextSteps, "agent_session_id": sessionID.Get(),
+			"include_unapplied_answers": true,
+		})
+	})
+
+	addMCPTool[GoalReviewCompleteIn, RawWithUnappliedDecisions](server, &mcp.Tool{
+		Name:         "atct_goal_review_complete",
+		Description:  "Finalize a goal after its human review has been approved.",
+		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in GoalReviewCompleteIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
+		return callWithUnappliedDecisions(ctx, c, "goal.review.complete", map[string]any{
 			"goal_id": in.GoalID, "agent_session_id": sessionID.Get(), "include_unapplied_answers": true,
 		})
 	})

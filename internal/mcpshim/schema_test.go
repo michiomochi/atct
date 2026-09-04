@@ -18,7 +18,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-func TestRegisterPublishesFortyTwoToolsWithFlexibleOutputSchema(t *testing.T) {
+func TestRegisterPublishesFortyThreeToolsWithFlexibleOutputSchema(t *testing.T) {
 	ctx := context.Background()
 	socketPath := startSchemaTestDaemon(t)
 	server := mcp.NewServer(&mcp.Implementation{Name: "atct-test", Version: "test"}, nil)
@@ -55,6 +55,7 @@ func TestRegisterPublishesFortyTwoToolsWithFlexibleOutputSchema(t *testing.T) {
 		"atct_decision_withdraw":           true,
 		"atct_goal_complete":               true,
 		"atct_goal_review_request":         true,
+		"atct_goal_review_complete":        true,
 		"atct_goal_set_derived_from":       true,
 		"atct_goal_claim":                  true,
 		"atct_goal_release":                true,
@@ -254,7 +255,12 @@ func TestRegisterPublishesFortyTwoToolsWithFlexibleOutputSchema(t *testing.T) {
 			"how_to_verify": "check the goal", "surprises": "なし",
 			"needs_review": "なし", "next_steps": "なし",
 		}},
-		{name: "atct_goal_review_request", args: map[string]any{"goal_id": "goal-1"}},
+		{name: "atct_goal_review_request", args: map[string]any{
+			"goal_id": "goal-1", "work_done": "done", "now_possible": "ready",
+			"how_to_verify": "check the goal", "surprises": "なし",
+			"needs_review": "なし", "next_steps": "なし",
+		}},
+		{name: "atct_goal_review_complete", args: map[string]any{"goal_id": "goal-1"}},
 		{name: "atct_goal_set_derived_from", args: map[string]any{
 			"goal_id": "goal-1", "derived_from_goal_id": "goal-2",
 		}},
@@ -268,6 +274,91 @@ func TestRegisterPublishesFortyTwoToolsWithFlexibleOutputSchema(t *testing.T) {
 		}
 		if result == nil || result.StructuredContent == nil {
 			t.Errorf("CallTool(%s) returned no structured content", tc.name)
+		}
+	}
+}
+
+func TestGoalReviewToolsExposeCanonicalSchemas(t *testing.T) {
+	ctx := context.Background()
+	socketPath := startSchemaTestDaemon(t)
+	server := mcp.NewServer(&mcp.Implementation{Name: "atct-test", Version: "test"}, nil)
+	mcpshim.Register(server, mcpshim.NewClient(socketPath), 1)
+
+	clientTransport, serverTransport := mcp.NewInMemoryTransports()
+	serverSession, err := server.Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatalf("server.Connect: %v", err)
+	}
+	defer serverSession.Close()
+
+	client := mcp.NewClient(&mcp.Implementation{Name: "schema-test", Version: "test"}, nil)
+	clientSession, err := client.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatalf("client.Connect: %v", err)
+	}
+	defer clientSession.Close()
+
+	got, err := clientSession.ListTools(ctx, nil)
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	want := map[string][]string{
+		"atct_goal_complete": {
+			"goal_id", "work_done", "now_possible", "how_to_verify", "surprises", "needs_review", "next_steps",
+		},
+		"atct_goal_review_request": {
+			"goal_id", "work_done", "now_possible", "how_to_verify", "surprises", "needs_review", "next_steps",
+		},
+		"atct_goal_review_complete": {"goal_id"},
+	}
+	for name, fields := range want {
+		var tool *mcp.Tool
+		for _, candidate := range got.Tools {
+			if candidate.Name == name {
+				tool = candidate
+				break
+			}
+		}
+		if tool == nil {
+			t.Fatalf("missing tool %q", name)
+		}
+		inputSchema, ok := tool.InputSchema.(map[string]any)
+		if !ok {
+			t.Fatalf("%s input schema = %T, want object", name, tool.InputSchema)
+		}
+		properties, ok := inputSchema["properties"].(map[string]any)
+		if !ok {
+			t.Fatalf("%s input properties = %T, want object", name, inputSchema["properties"])
+		}
+		if len(properties) != len(fields) {
+			t.Errorf("%s property count = %d, want %d", name, len(properties), len(fields))
+		}
+		for _, field := range fields {
+			if _, ok := properties[field]; !ok {
+				t.Errorf("%s omitted input field %q", name, field)
+			}
+		}
+		var required []string
+		switch values := inputSchema["required"].(type) {
+		case []string:
+			required = values
+		case []any:
+			for _, value := range values {
+				if field, ok := value.(string); ok {
+					required = append(required, field)
+				}
+			}
+		default:
+			t.Fatalf("%s required = %T, want string array", name, inputSchema["required"])
+		}
+		requiredFields := make(map[string]bool, len(required))
+		for _, field := range required {
+			requiredFields[field] = true
+		}
+		for _, field := range fields {
+			if !requiredFields[field] {
+				t.Errorf("%s must require input field %q", name, field)
+			}
 		}
 	}
 }
@@ -875,6 +966,101 @@ func TestNamedHandoffToolsForwardCanonicalMethods(t *testing.T) {
 			if ownedKey != tc.ownedKey {
 				if _, ok := call.params[ownedKey]; ok {
 					t.Errorf("%s unexpectedly included %s", tc.name, ownedKey)
+				}
+			}
+		}
+	}
+}
+
+func TestGoalReviewToolsForwardCanonicalMethods(t *testing.T) {
+	ctx := context.Background()
+	socketPath, calls := startCapturingSchemaTestDaemon(t)
+	server := mcp.NewServer(&mcp.Implementation{Name: "atct-test", Version: "test"}, nil)
+	const sessionID int64 = 9
+	mcpshim.Register(server, mcpshim.NewClient(socketPath), sessionID)
+
+	clientTransport, serverTransport := mcp.NewInMemoryTransports()
+	serverSession, err := server.Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatalf("server.Connect: %v", err)
+	}
+	defer serverSession.Close()
+
+	client := mcp.NewClient(&mcp.Implementation{Name: "schema-test", Version: "test"}, nil)
+	clientSession, err := client.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatalf("client.Connect: %v", err)
+	}
+	defer clientSession.Close()
+
+	const (
+		workDone    = "review work"
+		nowPossible = "review result"
+		howToVerify = "run review tests"
+		surprises   = "none"
+		needsReview = "なし"
+		nextSteps   = "merge"
+	)
+	cases := []struct {
+		name   string
+		method string
+		args   map[string]any
+	}{
+		{
+			name: "atct_goal_review_request", method: "goal.review.request",
+			args: map[string]any{
+				"goal_id": "2", "work_done": workDone, "now_possible": nowPossible,
+				"how_to_verify": howToVerify, "surprises": surprises,
+				"needs_review": needsReview, "next_steps": nextSteps,
+			},
+		},
+		{
+			name: "atct_goal_review_complete", method: "goal.review.complete",
+			args: map[string]any{"goal_id": "2"},
+		},
+	}
+	for _, tc := range cases {
+		result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{Name: tc.name, Arguments: tc.args})
+		if err != nil {
+			t.Fatalf("CallTool(%s): %v", tc.name, err)
+		}
+		if result == nil || result.IsError {
+			t.Fatalf("CallTool(%s) returned error result: %+v", tc.name, result)
+		}
+
+		var call capturedSchemaDaemonCall
+		select {
+		case call = <-calls:
+		case <-time.After(time.Second):
+			t.Fatalf("timed out waiting for %s RPC", tc.method)
+		}
+		if call.method != tc.method {
+			t.Fatalf("%s RPC method = %q, want %q", tc.name, call.method, tc.method)
+		}
+		if got := call.params["goal_id"]; got != "2" {
+			t.Errorf("%s goal_id = %#v, want 2", tc.name, got)
+		}
+		if got := call.params["agent_session_id"]; got != float64(sessionID) {
+			t.Errorf("%s agent_session_id = %#v, want %d", tc.name, got, sessionID)
+		}
+		if got := call.params["include_unapplied_answers"]; got != true {
+			t.Errorf("%s include_unapplied_answers = %#v, want true", tc.name, got)
+		}
+		if tc.name == "atct_goal_review_request" {
+			want := map[string]string{
+				"work_done": workDone, "now_possible": nowPossible,
+				"how_to_verify": howToVerify, "surprises": surprises,
+				"needs_review": needsReview, "next_steps": nextSteps,
+			}
+			for field, value := range want {
+				if got := call.params[field]; got != value {
+					t.Errorf("%s %s = %#v, want %q", tc.name, field, got, value)
+				}
+			}
+		} else {
+			for _, field := range []string{"work_done", "now_possible", "how_to_verify", "surprises", "needs_review", "next_steps"} {
+				if _, ok := call.params[field]; ok {
+					t.Errorf("%s unexpectedly included %s", tc.name, field)
 				}
 			}
 		}
