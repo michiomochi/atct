@@ -38,8 +38,8 @@ generated SQL churn and migration work isolated to the final unit.
 
 - Modify: `internal/store/workflow_events.go`
 - Modify: `internal/store/decision.go`
-- Modify: `internal/store/queries/task.sql`
-- Regenerate: `internal/store/sqlcgen/task.sql.go`, `internal/store/sqlcgen/models.go`
+- Modify: `internal/store/queries/decision.sql`
+- Regenerate: `internal/store/sqlcgen/decision.sql.go`
 - Modify: `internal/httpapi/server.go`
 - Test: `internal/store/workflow_event_test.go`
 - Test: `internal/httpapi/workflow_events_test.go`

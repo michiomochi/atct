@@ -74,7 +74,9 @@ pagination rather than adding a replay/cursor/ack API.
 
 The initial implementation does not invent tables, recovery state, or a
 separate daemon. It changes the existing store reconciliation read and its
-existing HTTP representation only.
+existing HTTP representation only. The canonical decision-history read belongs
+in `internal/store/queries/decision.sql` and its generated
+`internal/store/sqlcgen/decision.sql.go`, not in the outbox query file.
 
 ## Compatibility and rollout
 
