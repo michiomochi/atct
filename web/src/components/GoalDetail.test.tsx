@@ -250,6 +250,34 @@ describe("GoalDetail", () => {
     expect(screen.queryByTestId("goal-approval")).toBeNull();
   });
 
+  it("renders the existing completion report once inside an active goal review", async () => {
+    const response = goalResponse({
+      work_done: "Completed work",
+      now_possible: "Now possible",
+      how_to_verify: "Verify here",
+      surprises: "No surprises",
+      needs_review: "Review this",
+      next_steps: "Continue monitoring",
+    });
+    response.unattached_decisions = [goalReviewDecision()];
+    vi.mocked(fetchGoal).mockResolvedValueOnce(response);
+
+    render(<GoalDetail id="goal-1" />);
+
+    const card = await screen.findByTestId("goal-review");
+    const report = within(card).getByTestId("completion-report");
+    expect(screen.getAllByTestId("completion-report")).toHaveLength(1);
+    expect(within(report).getByText("Completed work")).not.toBeNull();
+    expect(within(report).getByText("Now possible")).not.toBeNull();
+    expect(within(report).getByText("Verify here")).not.toBeNull();
+    expect(within(report).getByText("No surprises")).not.toBeNull();
+    expect(within(report).getByText("Review this")).not.toBeNull();
+    expect(within(report).getByText("Continue monitoring")).not.toBeNull();
+
+    const approve = within(card).getByRole("button", { name: "goal.review.approve" });
+    expect(report.compareDocumentPosition(approve) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+  });
+
   it("approves an open goal review with the generic decision API and reloads after success", async () => {
     const response = goalResponse();
     response.unattached_decisions = [goalReviewDecision()];
