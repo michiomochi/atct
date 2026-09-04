@@ -20,6 +20,7 @@ import { AreaLoading, ErrorState } from "./StateMessage";
 import { GoalDiff } from "./GoalDiff";
 import { TaskCommitList } from "./TaskCommitList";
 import { TaskTable } from "./TaskTable";
+import { UnattachedDecisionList } from "./UnattachedDecisionList";
 
 interface Props {
   id: string;
@@ -35,6 +36,7 @@ interface GoalDetailData {
   completion?: Decision;
   goalApproval?: Decision;
   goalReview?: Decision;
+  unattachedDecisions: Decision[];
 }
 
 type CompletionAction = "approve" | "reject";
@@ -596,7 +598,10 @@ export function GoalDetail({ id }: Props) {
       const completion = findOpenCompletion(goal.unattached_decisions);
       const goalApproval = findOpenGoalApproval(goal.unattached_decisions);
       const goalReview = findOpenGoalReview(goal.unattached_decisions);
-      setState({ kind: "ready", data: { goal, completion, goalApproval, goalReview } });
+      const unattachedDecisions = goal.unattached_decisions.filter(
+        (decision) => decision.kind === "decision" && decision.status === "open",
+      );
+      setState({ kind: "ready", data: { goal, completion, goalApproval, goalReview, unattachedDecisions } });
     } catch (reason) {
       setState({ kind: "error", message: errorMessage(reason, t("goal.error.load")) });
     }
@@ -697,6 +702,8 @@ export function GoalDetail({ id }: Props) {
           onReasonChange={handleGoalApprovalReasonChange}
         />
       )}
+
+      {data && <UnattachedDecisionList decisions={data.unattachedDecisions} onRefresh={load} />}
 
       {data?.goal.derived_from && (
         <section className="min-w-0 border-t border-line pt-5" aria-labelledby="goal-derived-from-heading">

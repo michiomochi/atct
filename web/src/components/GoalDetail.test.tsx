@@ -184,6 +184,23 @@ function goalReviewDecision(): Decision {
   };
 }
 
+function ordinaryDecision(): Decision {
+  return {
+    id: "ordinary-decision-1",
+    goal_id: "goal-1",
+    goal_headline: "Fixture goal",
+    kind: "decision",
+    question: "Choose the migration handling",
+    options: [
+      { label: "Keep", description: "Keep the migration", consequence: "The migration remains available" },
+      { label: "Remove", description: "Remove the migration", consequence: "The migration is deleted" },
+    ],
+    status: "open",
+    agent_session_id: "fixture-run",
+    created_at: "2026-08-20T00:00:00Z",
+  };
+}
+
 function emptyInbox(): InboxResponse {
   return {
     open_decisions: [],
@@ -248,6 +265,32 @@ describe("GoalDetail", () => {
     expect((reject as HTMLButtonElement).disabled).toBe(true);
     expect(screen.queryByTestId("completion-approval")).toBeNull();
     expect(screen.queryByTestId("goal-approval")).toBeNull();
+  });
+
+  it("renders an open taskless ordinary decision with the existing answer form", async () => {
+    const response = goalResponse({ status: "proposed" });
+    response.unattached_decisions = [
+      ordinaryDecision(),
+      completionDecision(),
+      goalApprovalDecision(),
+      goalReviewDecision(),
+    ];
+    vi.mocked(fetchGoal).mockResolvedValueOnce(response);
+
+    render(<GoalDetail id="goal-1" />);
+
+    const list = await screen.findByTestId("unattached-decision-list");
+    expect(within(list).getByText("Choose the migration handling")).not.toBeNull();
+    expect(within(list).getAllByRole("option")).toHaveLength(3);
+    expect(within(list).getByRole("textbox")).not.toBeNull();
+    expect(within(list).getByRole("button", { name: "form.answer.submit" })).not.toBeNull();
+    expect(within(list).queryByText("Review the completion")).toBeNull();
+    expect(within(list).queryByText("Approve the proposed goal")).toBeNull();
+    expect(within(list).queryByText("Review the completed goal handoff")).toBeNull();
+    expect(within(list).queryAllByRole("button", { name: "form.answer.submit" })).toHaveLength(1);
+    expect(screen.getByTestId("completion-approval")).not.toBeNull();
+    expect(screen.getByTestId("goal-approval")).not.toBeNull();
+    expect(screen.getByTestId("goal-review")).not.toBeNull();
   });
 
   it("renders the existing completion report once inside an active goal review", async () => {
