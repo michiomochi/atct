@@ -34,6 +34,7 @@ type watchDecision struct {
 	ID                         string  `json:"id"`
 	DecisionID                 string  `json:"decision_id"`
 	ProjectID                  string  `json:"project_id"`
+	Kind                       string  `json:"kind"`
 	DefaultAppliedAt           *string `json:"default_applied_at"`
 	SettledByDefault           bool    `json:"settled_by_default"`
 	WakeupID                   string  `json:"wakeup_id"`
@@ -819,7 +820,25 @@ type watchReconciliationHandoff struct {
 	ReviewRejectedAt  *string `json:"ReviewRejectedAt"`
 }
 
+type watchReconciliationGoal struct {
+	ID     string `json:"id"`
+	Status string `json:"status"`
+}
+
+func (g *watchReconciliationGoal) UnmarshalJSON(data []byte) error {
+	type plain watchReconciliationGoal
+	var decoded plain
+	if err := decodeEntityIDObject(data, map[string]*string{
+		"id": &decoded.ID,
+	}, &decoded); err != nil {
+		return err
+	}
+	*g = watchReconciliationGoal(decoded)
+	return nil
+}
+
 type watchReconciliation struct {
+	Goals        []watchReconciliationGoal    `json:"goals"`
 	Decisions    []watchDecision              `json:"decisions"`
 	GoalHandoffs []watchReconciliationHandoff `json:"goal_handoffs"`
 	PlanHandoffs []watchReconciliationHandoff `json:"plan_handoffs"`
@@ -859,6 +878,15 @@ func reconcileWatchScope(ctx context.Context, client *http.Client, baseURL strin
 			continue
 		}
 		if scope.TaskID == "" && scope.GoalID != "" && decision.GoalID != scope.GoalID {
+			continue
+		}
+		if shouldProjectAppliedGoalApproval(scope, state, decision) {
+			// This is a projection of current canonical state, so it must be
+			// rendered on every reconciliation. It intentionally bypasses the
+			// event delivery map, which is for live event delivery only.
+			if err := writeWatchDecisionLine(out, "decision.approved", decision, sink); err != nil {
+				return err
+			}
 			continue
 		}
 		var eventName string
@@ -944,17 +972,7 @@ func emitWatchDecisionWithStateAndSink(out io.Writer, eventName string, decision
 	if !ok {
 		return nil
 	}
-	writeLine := func() error {
-		if _, err := fmt.Fprintln(out, line); err != nil {
-			return err
-		}
-		if sink != nil {
-			if err := sink(line); err != nil {
-				return &watchSinkError{err: err}
-			}
-		}
-		return nil
-	}
+	writeLine := func() error { return writeWatchLine(out, line, sink) }
 	if eventName == "handoff_yielded" {
 		return writeLine()
 	}
@@ -1058,6 +1076,51 @@ func emitWatchDecisionWithStateAndSink(out io.Writer, eventName string, decision
 	}
 	delivered[key] = struct{}{}
 	return nil
+}
+
+func writeWatchDecisionLine(out io.Writer, eventName string, decision watchDecision, sink func(string) error) error {
+	line, ok := formatWatchDecision(eventName, decision)
+	if !ok {
+		return nil
+	}
+	return writeWatchLine(out, line, sink)
+}
+
+func writeWatchLine(out io.Writer, line string, sink func(string) error) error {
+	if _, err := fmt.Fprintln(out, line); err != nil {
+		return err
+	}
+	if sink != nil {
+		if err := sink(line); err != nil {
+			return &watchSinkError{err: err}
+		}
+	}
+	return nil
+}
+
+func shouldProjectAppliedGoalApproval(scope watchScope, state watchReconciliation, decision watchDecision) bool {
+	if scope.ProjectID == "" || scope.GoalID != "" || scope.TaskID != "" {
+		return false
+	}
+	if decision.Kind != "goal_approval" || decision.Status != "applied" || decision.GoalID == "" {
+		return false
+	}
+	activeGoal := false
+	for _, goal := range state.Goals {
+		if goal.ID == decision.GoalID && goal.Status == "active" {
+			activeGoal = true
+			break
+		}
+	}
+	if !activeGoal {
+		return false
+	}
+	for _, handoff := range state.GoalHandoffs {
+		if strconv.FormatInt(handoff.GoalID, 10) == decision.GoalID && handoff.ReceivedAt != nil {
+			return false
+		}
+	}
+	return true
 }
 
 func formatWatchDecision(eventName string, decision watchDecision) (string, bool) {
