@@ -817,6 +817,36 @@ func TestCodexMonitorEventSinkOnlyReceivesFormattedLines(t *testing.T) {
 	}
 }
 
+func TestReconcileWatchScopeSendsAppliedApprovalToCodexMonitorBridge(t *testing.T) {
+	client := &http.Client{Transport: watchRoundTripper(func(req *http.Request) (*http.Response, error) {
+		if req.URL.Path != "/api/events/reconcile" {
+			return nil, errors.New("unexpected request path")
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Status:     "200 OK",
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"goals":[{"id":42,"status":"active"}],"decisions":[{"id":71,"goal_id":42,"kind":"goal_approval","status":"applied","answer_label":"approve"}],"goal_handoffs":[],"plan_handoffs":[],"task_handoffs":[]}`)),
+		}, nil
+	})}
+
+	starter := &fakeCodexTurnStarter{}
+	bridge := newCodexMonitorBridge(starter, "thread-1")
+	lastWakeupContent := ""
+	err := reconcileWatchScope(
+		context.Background(), client, "http://daemon", watchScope{ProjectID: "1"}, io.Discard,
+		make(map[watchDeliveryKey]struct{}), &lastWakeupContent,
+		make(map[watchWakeupDeliveryKey]struct{}), make(map[watchDetectionDeliveryKey]struct{}),
+		newWatchScopeFilter(""), bridge.LineSink(),
+	)
+	if err != nil {
+		t.Fatalf("reconcileWatchScope: %v", err)
+	}
+	if got := starter.callsSnapshot(); len(got) != 1 || got[0] != "atct decision approved (decision_id: 71)" {
+		t.Fatalf("bridge turn starts = %#v, want one approval action line", got)
+	}
+}
+
 type fakeCodexWebSocket struct {
 	mu       sync.Mutex
 	writes   [][]byte
