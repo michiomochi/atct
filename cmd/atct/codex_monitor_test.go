@@ -21,6 +21,7 @@ func TestRunCodexMonitorWatchUsesCWDProjectIDForSSE(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	var gotProjectID string
+	var gotReconcileProjectID string
 	client := &http.Client{Transport: watchRoundTripper(func(req *http.Request) (*http.Response, error) {
 		body := "[]"
 		switch req.URL.Path {
@@ -28,6 +29,9 @@ func TestRunCodexMonitorWatchUsesCWDProjectIDForSSE(t *testing.T) {
 			body = `{"unapplied_decisions":[]}`
 		case "/api/projects":
 			body = `[{"id":7,"root_path":"/project"}]`
+		case "/api/events/reconcile":
+			gotReconcileProjectID = req.URL.Query().Get("project_id")
+			body = `{"decisions":[],"goal_handoffs":[],"plan_handoffs":[],"task_handoffs":[]}`
 		case "/api/events":
 			gotProjectID = req.URL.Query().Get("project_id")
 			cancel()
@@ -40,6 +44,9 @@ func TestRunCodexMonitorWatchUsesCWDProjectIDForSSE(t *testing.T) {
 	}
 	if gotProjectID != "7" {
 		t.Fatalf("SSE project_id = %q, want cwd project 7", gotProjectID)
+	}
+	if gotReconcileProjectID != "7" {
+		t.Fatalf("reconcile project_id = %q, want cwd project 7", gotReconcileProjectID)
 	}
 }
 
