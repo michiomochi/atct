@@ -36,74 +36,66 @@ func (q *Queries) CountTaskHandoffRequestEntries(ctx context.Context, handoffID 
 	return count, err
 }
 
-const createGoalHandoffEntry = `-- name: CreateGoalHandoffEntry :exec
+const createGoalHandoffEntry = `-- name: CreateGoalHandoffEntry :one
 INSERT INTO goal_handoff_entries (
-  entry_id, handoff_id, sequence, kind, body, author_session_id,
-  relates_to, source, created_at
+  handoff_id, kind, body, author_session_id, in_reply_to_id, created_at
 )
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+VALUES (?, ?, ?, ?, ?, ?)
+RETURNING id
 `
 
 type CreateGoalHandoffEntryParams struct {
-	EntryID         string
 	HandoffID       string
-	Sequence        int64
 	Kind            string
 	Body            string
 	AuthorSessionID sql.NullInt64
-	RelatesTo       sql.NullString
-	Source          string
+	InReplyToID     sql.NullInt64
 	CreatedAt       string
 }
 
-func (q *Queries) CreateGoalHandoffEntry(ctx context.Context, arg CreateGoalHandoffEntryParams) error {
-	_, err := q.db.ExecContext(ctx, createGoalHandoffEntry,
-		arg.EntryID,
+func (q *Queries) CreateGoalHandoffEntry(ctx context.Context, arg CreateGoalHandoffEntryParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, createGoalHandoffEntry,
 		arg.HandoffID,
-		arg.Sequence,
 		arg.Kind,
 		arg.Body,
 		arg.AuthorSessionID,
-		arg.RelatesTo,
-		arg.Source,
+		arg.InReplyToID,
 		arg.CreatedAt,
 	)
-	return err
+	var id int64
+	err := row.Scan(&id)
+	return id, err
 }
 
-const createTaskHandoffEntry = `-- name: CreateTaskHandoffEntry :exec
+const createTaskHandoffEntry = `-- name: CreateTaskHandoffEntry :one
 INSERT INTO task_handoff_entries (
-  entry_id, handoff_id, sequence, kind, body, author_session_id,
-  relates_to, source, created_at
+  handoff_id, kind, body, author_session_id, in_reply_to_id, created_at
 )
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+VALUES (?, ?, ?, ?, ?, ?)
+RETURNING id
 `
 
 type CreateTaskHandoffEntryParams struct {
-	EntryID         string
 	HandoffID       string
-	Sequence        int64
 	Kind            string
 	Body            string
 	AuthorSessionID sql.NullInt64
-	RelatesTo       sql.NullString
-	Source          string
+	InReplyToID     sql.NullInt64
 	CreatedAt       string
 }
 
-func (q *Queries) CreateTaskHandoffEntry(ctx context.Context, arg CreateTaskHandoffEntryParams) error {
-	_, err := q.db.ExecContext(ctx, createTaskHandoffEntry,
-		arg.EntryID,
+func (q *Queries) CreateTaskHandoffEntry(ctx context.Context, arg CreateTaskHandoffEntryParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, createTaskHandoffEntry,
 		arg.HandoffID,
-		arg.Sequence,
 		arg.Kind,
 		arg.Body,
 		arg.AuthorSessionID,
-		arg.RelatesTo,
-		arg.Source,
+		arg.InReplyToID,
 		arg.CreatedAt,
 	)
-	return err
+	var id int64
+	err := row.Scan(&id)
+	return id, err
 }
 
 const getGoalHandoffEntryState = `-- name: GetGoalHandoffEntryState :one
@@ -147,27 +139,26 @@ func (q *Queries) GetTaskHandoffEntryState(ctx context.Context, id string) (GetT
 const goalHandoffEntryExists = `-- name: GoalHandoffEntryExists :one
 SELECT COUNT(*)
 FROM goal_handoff_entries
-WHERE handoff_id = ? AND entry_id = ?
+WHERE handoff_id = ? AND id = ?
 `
 
 type GoalHandoffEntryExistsParams struct {
 	HandoffID string
-	EntryID   string
+	ID        int64
 }
 
 func (q *Queries) GoalHandoffEntryExists(ctx context.Context, arg GoalHandoffEntryExistsParams) (int64, error) {
-	row := q.db.QueryRowContext(ctx, goalHandoffEntryExists, arg.HandoffID, arg.EntryID)
+	row := q.db.QueryRowContext(ctx, goalHandoffEntryExists, arg.HandoffID, arg.ID)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
 }
 
 const listGoalHandoffEntries = `-- name: ListGoalHandoffEntries :many
-SELECT entry_id, handoff_id, sequence, kind, body, author_session_id,
-       relates_to, source, created_at
+SELECT id, handoff_id, kind, body, author_session_id, in_reply_to_id, created_at
 FROM goal_handoff_entries
-WHERE handoff_id = ?1 AND sequence > ?2
-ORDER BY sequence ASC
+WHERE handoff_id = ?1 AND id > ?2
+ORDER BY id ASC
 LIMIT ?3
 `
 
@@ -187,14 +178,12 @@ func (q *Queries) ListGoalHandoffEntries(ctx context.Context, arg ListGoalHandof
 	for rows.Next() {
 		var i GoalHandoffEntry
 		if err := rows.Scan(
-			&i.EntryID,
+			&i.ID,
 			&i.HandoffID,
-			&i.Sequence,
 			&i.Kind,
 			&i.Body,
 			&i.AuthorSessionID,
-			&i.RelatesTo,
-			&i.Source,
+			&i.InReplyToID,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -211,11 +200,10 @@ func (q *Queries) ListGoalHandoffEntries(ctx context.Context, arg ListGoalHandof
 }
 
 const listTaskHandoffEntries = `-- name: ListTaskHandoffEntries :many
-SELECT entry_id, handoff_id, sequence, kind, body, author_session_id,
-       relates_to, source, created_at
+SELECT id, handoff_id, kind, body, author_session_id, in_reply_to_id, created_at
 FROM task_handoff_entries
-WHERE handoff_id = ?1 AND sequence > ?2
-ORDER BY sequence ASC
+WHERE handoff_id = ?1 AND id > ?2
+ORDER BY id ASC
 LIMIT ?3
 `
 
@@ -235,14 +223,12 @@ func (q *Queries) ListTaskHandoffEntries(ctx context.Context, arg ListTaskHandof
 	for rows.Next() {
 		var i TaskHandoffEntry
 		if err := rows.Scan(
-			&i.EntryID,
+			&i.ID,
 			&i.HandoffID,
-			&i.Sequence,
 			&i.Kind,
 			&i.Body,
 			&i.AuthorSessionID,
-			&i.RelatesTo,
-			&i.Source,
+			&i.InReplyToID,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -258,45 +244,19 @@ func (q *Queries) ListTaskHandoffEntries(ctx context.Context, arg ListTaskHandof
 	return items, nil
 }
 
-const maxGoalHandoffEntrySequence = `-- name: MaxGoalHandoffEntrySequence :one
-SELECT COALESCE(MAX(sequence), 0) + 1
-FROM goal_handoff_entries
-WHERE handoff_id = ?
-`
-
-func (q *Queries) MaxGoalHandoffEntrySequence(ctx context.Context, handoffID string) (int64, error) {
-	row := q.db.QueryRowContext(ctx, maxGoalHandoffEntrySequence, handoffID)
-	var column_1 int64
-	err := row.Scan(&column_1)
-	return column_1, err
-}
-
-const maxTaskHandoffEntrySequence = `-- name: MaxTaskHandoffEntrySequence :one
-SELECT COALESCE(MAX(sequence), 0) + 1
-FROM task_handoff_entries
-WHERE handoff_id = ?
-`
-
-func (q *Queries) MaxTaskHandoffEntrySequence(ctx context.Context, handoffID string) (int64, error) {
-	row := q.db.QueryRowContext(ctx, maxTaskHandoffEntrySequence, handoffID)
-	var column_1 int64
-	err := row.Scan(&column_1)
-	return column_1, err
-}
-
 const taskHandoffEntryExists = `-- name: TaskHandoffEntryExists :one
 SELECT COUNT(*)
 FROM task_handoff_entries
-WHERE handoff_id = ? AND entry_id = ?
+WHERE handoff_id = ? AND id = ?
 `
 
 type TaskHandoffEntryExistsParams struct {
 	HandoffID string
-	EntryID   string
+	ID        int64
 }
 
 func (q *Queries) TaskHandoffEntryExists(ctx context.Context, arg TaskHandoffEntryExistsParams) (int64, error) {
-	row := q.db.QueryRowContext(ctx, taskHandoffEntryExists, arg.HandoffID, arg.EntryID)
+	row := q.db.QueryRowContext(ctx, taskHandoffEntryExists, arg.HandoffID, arg.ID)
 	var count int64
 	err := row.Scan(&count)
 	return count, err

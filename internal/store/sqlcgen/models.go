@@ -67,14 +67,12 @@ type GoalHandoff struct {
 }
 
 type GoalHandoffEntry struct {
-	EntryID         string
+	ID              int64
 	HandoffID       string
-	Sequence        int64
 	Kind            string
 	Body            string
 	AuthorSessionID sql.NullInt64
-	RelatesTo       sql.NullString
-	Source          string
+	InReplyToID     sql.NullInt64
 	CreatedAt       string
 }
 
@@ -129,13 +127,11 @@ type TaskHandoff struct {
 }
 
 type TaskHandoffEntry struct {
-	EntryID         string
+	ID              int64
 	HandoffID       string
-	Sequence        int64
 	Kind            string
 	Body            string
 	AuthorSessionID sql.NullInt64
-	RelatesTo       sql.NullString
-	Source          string
+	InReplyToID     sql.NullInt64
 	CreatedAt       string
 }

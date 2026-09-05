@@ -10,8 +10,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/google/uuid"
 )
 
 func TestOpenCreatesTaskAndGoalHandoffEntryTables(t *testing.T) {
@@ -47,10 +45,10 @@ func TestTaskHandoffTransitionsAppendEntries(t *testing.T) {
 	}
 
 	rows, err := s.DB().QueryContext(ctx, `
-		SELECT sequence, kind, body, author_session_id
+		SELECT id, kind, body, author_session_id
 		FROM task_handoff_entries
 		WHERE handoff_id = ?
-		ORDER BY sequence
+		ORDER BY id
 	`, handoff.ID)
 	if err != nil {
 		t.Fatalf("query task handoff entries: %v", err)
@@ -58,15 +56,15 @@ func TestTaskHandoffTransitionsAppendEntries(t *testing.T) {
 	defer rows.Close()
 
 	type entry struct {
-		sequence int64
-		kind     string
-		body     string
-		author   sql.NullInt64
+		id     int64
+		kind   string
+		body   string
+		author sql.NullInt64
 	}
 	var got []entry
 	for rows.Next() {
 		var item entry
-		if err := rows.Scan(&item.sequence, &item.kind, &item.body, &item.author); err != nil {
+		if err := rows.Scan(&item.id, &item.kind, &item.body, &item.author); err != nil {
 			t.Fatalf("scan task handoff entry: %v", err)
 		}
 		got = append(got, item)
@@ -75,14 +73,14 @@ func TestTaskHandoffTransitionsAppendEntries(t *testing.T) {
 		t.Fatalf("iterate task handoff entries: %v", err)
 	}
 	if len(got) != 3 {
-		t.Fatalf("task handoff entries = %+v, want request/received/complete", got)
+		t.Fatalf("task handoff entries = %+v, want request/received/completed", got)
 	}
-	wantKinds := []string{"request", "received", "complete"}
+	wantKinds := []string{HandoffEntryKindRequest, HandoffEntryKindReceived, HandoffEntryKindCompleted}
 	wantBodies := []string{"please take this task", "received", "task completed"}
 	wantAuthors := []int64{testSessionID("entry-requester"), testSessionID("entry-receiver"), testSessionID("entry-receiver")}
 	for i, item := range got {
-		if item.sequence != int64(i+1) || item.kind != wantKinds[i] || item.body != wantBodies[i] {
-			t.Fatalf("entry[%d] = %+v, want sequence=%d kind=%q body=%q", i, item, i+1, wantKinds[i], wantBodies[i])
+		if item.id != int64(i+1) || item.kind != wantKinds[i] || item.body != wantBodies[i] {
+			t.Fatalf("entry[%d] = %+v, want id=%d kind=%q body=%q", i, item, i+1, wantKinds[i], wantBodies[i])
 		}
 		if !item.author.Valid || item.author.Int64 != wantAuthors[i] {
 			t.Fatalf("entry[%d] author = %+v, want %d", i, item.author, wantAuthors[i])
@@ -113,10 +111,10 @@ func TestGoalHandoffTransitionsAppendEntries(t *testing.T) {
 	}
 
 	rows, err := s.DB().QueryContext(ctx, `
-		SELECT sequence, kind, body
+		SELECT id, kind, body
 		FROM goal_handoff_entries
 		WHERE handoff_id = ?
-		ORDER BY sequence
+		ORDER BY id
 	`, handoff.ID)
 	if err != nil {
 		t.Fatalf("query goal handoff entries: %v", err)
@@ -124,17 +122,17 @@ func TestGoalHandoffTransitionsAppendEntries(t *testing.T) {
 	defer rows.Close()
 
 	var got []struct {
-		sequence int64
-		kind     string
-		body     string
+		id   int64
+		kind string
+		body string
 	}
 	for rows.Next() {
 		var item struct {
-			sequence int64
-			kind     string
-			body     string
+			id   int64
+			kind string
+			body string
 		}
-		if err := rows.Scan(&item.sequence, &item.kind, &item.body); err != nil {
+		if err := rows.Scan(&item.id, &item.kind, &item.body); err != nil {
 			t.Fatalf("scan goal handoff entry: %v", err)
 		}
 		got = append(got, item)
@@ -143,13 +141,13 @@ func TestGoalHandoffTransitionsAppendEntries(t *testing.T) {
 		t.Fatalf("iterate goal handoff entries: %v", err)
 	}
 	if len(got) != 3 {
-		t.Fatalf("goal handoff entries = %+v, want request/received/complete", got)
+		t.Fatalf("goal handoff entries = %+v, want request/received/completed", got)
 	}
-	wantKinds := []string{"request", "received", "complete"}
+	wantKinds := []string{HandoffEntryKindRequest, HandoffEntryKindReceived, HandoffEntryKindCompleted}
 	wantBodies := []string{"please take this goal", "received", "goal completed"}
 	for i, item := range got {
-		if item.sequence != int64(i+1) || item.kind != wantKinds[i] || item.body != wantBodies[i] {
-			t.Fatalf("entry[%d] = %+v, want sequence=%d kind=%q body=%q", i, item, i+1, wantKinds[i], wantBodies[i])
+		if item.id != int64(i+1) || item.kind != wantKinds[i] || item.body != wantBodies[i] {
+			t.Fatalf("entry[%d] = %+v, want id=%d kind=%q body=%q", i, item, i+1, wantKinds[i], wantBodies[i])
 		}
 	}
 }
@@ -170,38 +168,34 @@ func TestAppendTaskHandoffEntryValidatesParticipantsAndRelations(t *testing.T) {
 		t.Fatalf("ReceiveTaskHandoff: %v", err)
 	}
 
-	first, err := s.AppendTaskHandoffEntry(ctx, handoff.ID, HandoffEntryKindProgress, "  first progress  ", testSessionID("append-receiver"), "")
+	first, err := s.AppendTaskHandoffEntry(ctx, handoff.ID, HandoffEntryKindReviewRequested, "  first review  ", testSessionID("append-receiver"), "")
 	if err != nil {
 		t.Fatalf("AppendTaskHandoffEntry: %v", err)
 	}
-	if first.Body != "first progress" {
+	if first.Body != "first review" {
 		t.Fatalf("entry body = %q, want trimmed body", first.Body)
 	}
-	parsedID, err := uuid.Parse(first.EntryID)
-	if err != nil {
-		t.Fatalf("parse entry id %q: %v", first.EntryID, err)
-	}
-	if parsedID.Version() != 7 {
-		t.Fatalf("entry id version = %d, want UUIDv7", parsedID.Version())
+	if first.ID <= 0 || first.EntryID != fmt.Sprint(first.ID) {
+		t.Fatalf("entry id = %d (compatibility alias %q), want a positive integer id", first.ID, first.EntryID)
 	}
 
-	if _, err := s.AppendTaskHandoffEntry(ctx, handoff.ID, HandoffEntryKindQuestion, "question", testSessionID("append-outsider"), ""); !errors.Is(err, ErrHandoffEntryParticipant) {
+	if _, err := s.AppendTaskHandoffEntry(ctx, handoff.ID, HandoffEntryKindReviewReceived, "review", testSessionID("append-outsider"), ""); !errors.Is(err, ErrHandoffEntryParticipant) {
 		t.Fatalf("outsider append error = %v, want ErrHandoffEntryParticipant", err)
 	}
 	if _, err := s.AppendTaskHandoffEntry(ctx, handoff.ID, HandoffEntryKindRequest, "reserved", testSessionID("append-receiver"), ""); !errors.Is(err, ErrHandoffEntryKindInvalid) {
 		t.Fatalf("reserved append error = %v, want ErrHandoffEntryKindInvalid", err)
 	}
-	if _, err := s.AppendTaskHandoffEntry(ctx, handoff.ID, HandoffEntryKindProgress, "missing relation", testSessionID("append-receiver"), "missing-entry"); !errors.Is(err, ErrHandoffEntryRelatesToInvalid) {
+	if _, err := s.AppendTaskHandoffEntry(ctx, handoff.ID, HandoffEntryKindReviewReceived, "missing relation", testSessionID("append-receiver"), "missing-entry"); !errors.Is(err, ErrHandoffEntryRelatesToInvalid) {
 		t.Fatalf("missing relation error = %v, want ErrHandoffEntryRelatesToInvalid", err)
 	}
-	if _, err := s.AppendTaskHandoffEntry(ctx, handoff.ID, HandoffEntryKindProgress, "self relation", testSessionID("append-receiver"), first.EntryID); err != nil {
+	if _, err := s.AppendTaskHandoffEntry(ctx, handoff.ID, HandoffEntryKindReviewReceived, "reply", testSessionID("append-receiver"), first.EntryID); err != nil {
 		t.Fatalf("valid relation append: %v", err)
 	}
 
-	if _, err := s.AppendTaskHandoffEntry(ctx, handoff.ID, HandoffEntryKindProgress, "\t \n", testSessionID("append-receiver"), ""); !errors.Is(err, ErrHandoffEntryBodyEmpty) {
+	if _, err := s.AppendTaskHandoffEntry(ctx, handoff.ID, HandoffEntryKindReviewReceived, "\t \n", testSessionID("append-receiver"), ""); !errors.Is(err, ErrHandoffEntryBodyEmpty) {
 		t.Fatalf("blank body error = %v, want ErrHandoffEntryBodyEmpty", err)
 	}
-	if _, err := s.AppendTaskHandoffEntry(ctx, handoff.ID, HandoffEntryKindProgress, strings.Repeat("x", HandoffEntryBodyMaxBytes+1), testSessionID("append-receiver"), ""); !errors.Is(err, ErrHandoffEntryBodyTooLarge) {
+	if _, err := s.AppendTaskHandoffEntry(ctx, handoff.ID, HandoffEntryKindReviewReceived, strings.Repeat("x", HandoffEntryBodyMaxBytes+1), testSessionID("append-receiver"), ""); !errors.Is(err, ErrHandoffEntryBodyTooLarge) {
 		t.Fatalf("oversized body error = %v, want ErrHandoffEntryBodyTooLarge", err)
 	}
 }
@@ -232,7 +226,7 @@ func TestReceiveTaskHandoffReturnsInitialHistoryPage(t *testing.T) {
 	}
 
 	for i := 0; i < 3; i++ {
-		if _, err := s.AppendTaskHandoffEntry(ctx, handoff.ID, HandoffEntryKindProgress, "progress", testSessionID("receive-history-receiver"), ""); err != nil {
+		if _, err := s.AppendTaskHandoffEntry(ctx, handoff.ID, HandoffEntryKindReviewReceived, "review", testSessionID("receive-history-receiver"), ""); err != nil {
 			t.Fatalf("AppendTaskHandoffEntry[%d]: %v", i, err)
 		}
 	}
@@ -243,8 +237,8 @@ func TestReceiveTaskHandoffReturnsInitialHistoryPage(t *testing.T) {
 	if len(page.Entries) != 2 || !page.HasMore || page.NextCursor != 4 {
 		t.Fatalf("history page = %+v, want two entries/more/4", page)
 	}
-	if page.Entries[0].Sequence != 3 || page.Entries[1].Sequence != 4 {
-		t.Fatalf("history page sequences = %d,%d, want 3,4", page.Entries[0].Sequence, page.Entries[1].Sequence)
+	if page.Entries[0].ID != 3 || page.Entries[1].ID != 4 {
+		t.Fatalf("history page ids = %d,%d, want 3,4", page.Entries[0].ID, page.Entries[1].ID)
 	}
 	last, err := s.ListTaskHandoffEntries(ctx, handoff.ID, page.NextCursor, 2)
 	if err != nil {
@@ -267,7 +261,7 @@ func TestListHandoffEntriesRejectsUnknownHandoff(t *testing.T) {
 	}
 }
 
-func TestOpenBackfillsLegacyHandoffReportsIntoDeterministicEntries(t *testing.T) {
+func TestOpenBackfillsLegacyHandoffReportsIntoCanonicalEntries(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "legacy-handoffs.db")
 	raw, err := sql.Open("sqlite", dbPath)
 	if err != nil {
@@ -326,7 +320,7 @@ func TestOpenBackfillsLegacyHandoffReportsIntoDeterministicEntries(t *testing.T)
 	defer s.Close()
 
 	var taskKinds []string
-	rows, err := s.DB().QueryContext(context.Background(), `SELECT kind FROM task_handoff_entries WHERE handoff_id = ? ORDER BY sequence`, "legacy-task-handoff")
+	rows, err := s.DB().QueryContext(context.Background(), `SELECT kind FROM task_handoff_entries WHERE handoff_id = ? ORDER BY id`, "legacy-task-handoff")
 	if err != nil {
 		t.Fatalf("query backfilled task entries: %v", err)
 	}
@@ -341,29 +335,29 @@ func TestOpenBackfillsLegacyHandoffReportsIntoDeterministicEntries(t *testing.T)
 	if err := rows.Close(); err != nil {
 		t.Fatalf("close backfilled task entries: %v", err)
 	}
-	if !reflect.DeepEqual(taskKinds, []string{HandoffEntryKindRequest, HandoffEntryKindComplete}) {
-		t.Fatalf("backfilled task kinds = %v, want request/complete", taskKinds)
+	if !reflect.DeepEqual(taskKinds, []string{HandoffEntryKindRequest, HandoffEntryKindCompleted}) {
+		t.Fatalf("backfilled task kinds = %v, want request/completed", taskKinds)
 	}
 
 	var goalBody string
-	if err := s.DB().QueryRowContext(context.Background(), `SELECT body FROM goal_handoff_entries WHERE handoff_id = ? AND kind = 'complete'`, "legacy-goal-handoff").Scan(&goalBody); err != nil {
-		t.Fatalf("query backfilled goal complete entry: %v", err)
+	if err := s.DB().QueryRowContext(context.Background(), `SELECT body FROM goal_handoff_entries WHERE handoff_id = ? AND kind = 'completed'`, "legacy-goal-handoff").Scan(&goalBody); err != nil {
+		t.Fatalf("query backfilled goal completed entry: %v", err)
 	}
 	if goalBody != "legacy goal complete" {
 		t.Fatalf("backfilled goal complete body = %q, want normal legacy body", goalBody)
 	}
 
-	var omissionBody, source string
-	if err := s.DB().QueryRowContext(context.Background(), `SELECT body, source FROM task_handoff_entries WHERE handoff_id = ? AND kind = 'system'`, "legacy-oversized-handoff").Scan(&omissionBody, &source); err != nil {
-		t.Fatalf("query oversized omission entry: %v", err)
+	var oversizedBody string
+	if err := s.DB().QueryRowContext(context.Background(), `SELECT body FROM task_handoff_entries WHERE handoff_id = ? AND kind = 'completed'`, "legacy-oversized-handoff").Scan(&oversizedBody); err != nil {
+		t.Fatalf("query oversized completed entry: %v", err)
 	}
-	if !strings.Contains(omissionBody, "complete_report") || source != oversized {
-		t.Fatalf("oversized omission = body:%q source length:%d", omissionBody, len(source))
+	if oversizedBody != oversized {
+		t.Fatalf("oversized completed body length = %d, want %d", len(oversizedBody), len(oversized))
 	}
 
-	var entryID string
-	if err := s.DB().QueryRowContext(context.Background(), `SELECT entry_id FROM task_handoff_entries WHERE handoff_id = ? AND kind = 'request'`, "legacy-task-handoff").Scan(&entryID); err != nil {
-		t.Fatalf("query deterministic task entry id: %v", err)
+	var entryID int64
+	if err := s.DB().QueryRowContext(context.Background(), `SELECT id FROM task_handoff_entries WHERE handoff_id = ? AND kind = 'request'`, "legacy-task-handoff").Scan(&entryID); err != nil {
+		t.Fatalf("query task entry id: %v", err)
 	}
 	firstID := entryID
 	if err := s.Close(); err != nil {
@@ -374,15 +368,15 @@ func TestOpenBackfillsLegacyHandoffReportsIntoDeterministicEntries(t *testing.T)
 		t.Fatalf("reopen migrated database: %v", err)
 	}
 	defer s.Close()
-	if err := s.DB().QueryRowContext(context.Background(), `SELECT entry_id FROM task_handoff_entries WHERE handoff_id = ? AND kind = 'request'`, "legacy-task-handoff").Scan(&entryID); err != nil {
-		t.Fatalf("query deterministic id after reopen: %v", err)
+	if err := s.DB().QueryRowContext(context.Background(), `SELECT id FROM task_handoff_entries WHERE handoff_id = ? AND kind = 'request'`, "legacy-task-handoff").Scan(&entryID); err != nil {
+		t.Fatalf("query id after reopen: %v", err)
 	}
 	if entryID != firstID {
-		t.Fatalf("backfilled entry id changed from %q to %q", firstID, entryID)
+		t.Fatalf("backfilled entry id changed from %d to %d", firstID, entryID)
 	}
 }
 
-func TestHandoffEntryDatabaseIsAppendOnlyAndRelatesToCannotSelfReference(t *testing.T) {
+func TestHandoffEntryAllowsMutationAndRejectsSelfReference(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 	taskID := addTestTasks(t, s, 1)[0]
@@ -395,16 +389,16 @@ func TestHandoffEntryDatabaseIsAppendOnlyAndRelatesToCannotSelfReference(t *test
 	if _, err := s.ReceiveTaskHandoff(ctx, handoff.ID, taskID, testSessionID("immutable-entry-receiver")); err != nil {
 		t.Fatalf("ReceiveTaskHandoff: %v", err)
 	}
-	entry, err := s.AppendTaskHandoffEntry(ctx, handoff.ID, HandoffEntryKindProgress, "progress", testSessionID("immutable-entry-receiver"), "")
+	entry, err := s.AppendTaskHandoffEntry(ctx, handoff.ID, HandoffEntryKindReviewRequested, "review requested", testSessionID("immutable-entry-receiver"), "")
 	if err != nil {
 		t.Fatalf("AppendTaskHandoffEntry: %v", err)
 	}
 
-	if _, err := s.DB().ExecContext(ctx, `UPDATE task_handoff_entries SET body = 'changed' WHERE entry_id = ?`, entry.EntryID); err == nil {
-		t.Fatal("entry update unexpectedly succeeded")
+	if _, err := s.DB().ExecContext(ctx, `UPDATE task_handoff_entries SET body = 'changed' WHERE id = ?`, entry.ID); err != nil {
+		t.Fatalf("entry update failed: %v", err)
 	}
-	if _, err := s.DB().ExecContext(ctx, `DELETE FROM task_handoff_entries WHERE entry_id = ?`, entry.EntryID); err == nil {
-		t.Fatal("entry delete unexpectedly succeeded")
+	if _, err := s.DB().ExecContext(ctx, `DELETE FROM task_handoff_entries WHERE id = ?`, entry.ID); err != nil {
+		t.Fatalf("entry delete failed: %v", err)
 	}
 	if _, err := s.DB().ExecContext(ctx, `DELETE FROM task_handoffs WHERE id = ?`, handoff.ID); err == nil {
 		t.Fatal("parent handoff delete unexpectedly succeeded while entries exist")
@@ -412,14 +406,14 @@ func TestHandoffEntryDatabaseIsAppendOnlyAndRelatesToCannotSelfReference(t *test
 
 	if _, err := s.DB().ExecContext(ctx, `
 		INSERT INTO task_handoff_entries (
-			entry_id, handoff_id, sequence, kind, body, author_session_id, relates_to, created_at
-		) VALUES ('self-entry', ?, ?, 'progress', 'self', ?, 'self-entry', ?)
-	`, handoff.ID, entry.Sequence+1, testSessionID("immutable-entry-receiver"), time.Now().UTC().Format(time.RFC3339Nano)); err == nil {
+			id, handoff_id, kind, body, author_session_id, in_reply_to_id, created_at
+		) VALUES (999999, ?, 'review_received', 'self', ?, 999999, ?)
+	`, handoff.ID, testSessionID("immutable-entry-receiver"), time.Now().UTC().Format(time.RFC3339Nano)); err == nil {
 		t.Fatal("self-referencing entry unexpectedly succeeded")
 	}
 }
 
-func TestAmendTaskHandoffAppendsAmendEntryAndTerminalThreadRejectsGenericAppend(t *testing.T) {
+func TestAmendTaskHandoffUpdatesReportAndTerminalThreadRejectsGenericAppend(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 	taskID := addTestTasks(t, s, 1)[0]
@@ -442,24 +436,24 @@ func TestAmendTaskHandoffAppendsAmendEntryAndTerminalThreadRejectsGenericAppend(
 	if amended.CompleteReport != "amended" {
 		t.Fatalf("amended complete report = %q, want amended", amended.CompleteReport)
 	}
-	if _, err := s.AppendTaskHandoffEntry(ctx, handoff.ID, HandoffEntryKindProgress, "too late", testSessionID("amend-entry-receiver"), ""); !errors.Is(err, ErrHandoffEntryParticipant) {
-		t.Fatalf("terminal generic append error = %v, want ErrHandoffEntryParticipant", err)
+	if _, err := s.AppendTaskHandoffEntry(ctx, handoff.ID, HandoffEntryKindReviewRequested, "too late", testSessionID("amend-entry-receiver"), ""); !errors.Is(err, ErrHandoffEntryTerminal) {
+		t.Fatalf("terminal generic append error = %v, want ErrHandoffEntryTerminal", err)
 	}
 
-	var kind, body, author string
+	var count int
 	if err := s.DB().QueryRowContext(ctx, `
-		SELECT kind, body, CAST(author_session_id AS TEXT)
+		SELECT COUNT(*)
 		FROM task_handoff_entries
 		WHERE handoff_id = ? AND kind = 'amend'
-	`, handoff.ID).Scan(&kind, &body, &author); err != nil {
-		t.Fatalf("query amend entry: %v", err)
+	`, handoff.ID).Scan(&count); err != nil {
+		t.Fatalf("count amend entries: %v", err)
 	}
-	if kind != HandoffEntryKindAmend || body != "amended" || author != fmt.Sprint(testSessionID("amend-entry-receiver")) {
-		t.Fatalf("amend entry = kind:%q body:%q author:%q", kind, body, author)
+	if count != 0 {
+		t.Fatalf("amend entry count = %d, want 0", count)
 	}
 }
 
-func TestAmendGoalHandoffAppendsAmendEntry(t *testing.T) {
+func TestAmendGoalHandoffUpdatesReportWithoutRemovedEntry(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 	goalID := newTestGoal(t, s)
@@ -486,8 +480,8 @@ func TestAmendGoalHandoffAppendsAmendEntry(t *testing.T) {
 	`, handoff.ID).Scan(&count); err != nil {
 		t.Fatalf("count goal amend entries: %v", err)
 	}
-	if count != 1 {
-		t.Fatalf("goal amend entry count = %d, want 1", count)
+	if count != 0 {
+		t.Fatalf("goal amend entry count = %d, want 0", count)
 	}
 }
 
@@ -792,7 +786,7 @@ func TestTaskReleaseAppendsCompleteEntryWithTaskStateTransition(t *testing.T) {
 	if err := s.DB().QueryRowContext(ctx, `
 		SELECT kind, body FROM task_handoff_entries
 		WHERE handoff_id = (SELECT id FROM task_handoffs WHERE task_id = ? ORDER BY id DESC LIMIT 1)
-		  AND kind = 'complete'
+		  AND kind = 'completed'
 	`, taskID).Scan(&kind, &body); err != nil {
 		t.Fatalf("query released task handoff entry: %v", err)
 	}

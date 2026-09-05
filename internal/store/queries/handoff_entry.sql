@@ -21,49 +21,37 @@ WHERE handoff_id = ? AND kind = 'request';
 -- name: TaskHandoffEntryExists :one
 SELECT COUNT(*)
 FROM task_handoff_entries
-WHERE handoff_id = ? AND entry_id = ?;
+WHERE handoff_id = ? AND id = ?;
 
 -- name: GoalHandoffEntryExists :one
 SELECT COUNT(*)
 FROM goal_handoff_entries
-WHERE handoff_id = ? AND entry_id = ?;
+WHERE handoff_id = ? AND id = ?;
 
--- name: MaxTaskHandoffEntrySequence :one
-SELECT COALESCE(MAX(sequence), 0) + 1
-FROM task_handoff_entries
-WHERE handoff_id = ?;
-
--- name: MaxGoalHandoffEntrySequence :one
-SELECT COALESCE(MAX(sequence), 0) + 1
-FROM goal_handoff_entries
-WHERE handoff_id = ?;
-
--- name: CreateTaskHandoffEntry :exec
+-- name: CreateTaskHandoffEntry :one
 INSERT INTO task_handoff_entries (
-  entry_id, handoff_id, sequence, kind, body, author_session_id,
-  relates_to, source, created_at
+  handoff_id, kind, body, author_session_id, in_reply_to_id, created_at
 )
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+VALUES (?, ?, ?, ?, ?, ?)
+RETURNING id;
 
--- name: CreateGoalHandoffEntry :exec
+-- name: CreateGoalHandoffEntry :one
 INSERT INTO goal_handoff_entries (
-  entry_id, handoff_id, sequence, kind, body, author_session_id,
-  relates_to, source, created_at
+  handoff_id, kind, body, author_session_id, in_reply_to_id, created_at
 )
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+VALUES (?, ?, ?, ?, ?, ?)
+RETURNING id;
 
 -- name: ListTaskHandoffEntries :many
-SELECT entry_id, handoff_id, sequence, kind, body, author_session_id,
-       relates_to, source, created_at
+SELECT id, handoff_id, kind, body, author_session_id, in_reply_to_id, created_at
 FROM task_handoff_entries
-WHERE handoff_id = sqlc.arg('handoff_id') AND sequence > sqlc.arg('cursor')
-ORDER BY sequence ASC
+WHERE handoff_id = sqlc.arg('handoff_id') AND id > sqlc.arg('cursor')
+ORDER BY id ASC
 LIMIT sqlc.arg('limit');
 
 -- name: ListGoalHandoffEntries :many
-SELECT entry_id, handoff_id, sequence, kind, body, author_session_id,
-       relates_to, source, created_at
+SELECT id, handoff_id, kind, body, author_session_id, in_reply_to_id, created_at
 FROM goal_handoff_entries
-WHERE handoff_id = sqlc.arg('handoff_id') AND sequence > sqlc.arg('cursor')
-ORDER BY sequence ASC
+WHERE handoff_id = sqlc.arg('handoff_id') AND id > sqlc.arg('cursor')
+ORDER BY id ASC
 LIMIT sqlc.arg('limit');

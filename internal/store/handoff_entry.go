@@ -5,11 +5,11 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
 
-	"github.com/google/uuid"
 	"github.com/michiomochi/atct/internal/store/sqlcgen"
 )
 
@@ -19,16 +19,25 @@ const (
 )
 
 const (
-	HandoffEntryKindRequest        = "request"
-	HandoffEntryKindReceived       = "received"
-	HandoffEntryKindProgress       = "progress"
-	HandoffEntryKindQuestion       = "question"
-	HandoffEntryKindAnswer         = "answer"
-	HandoffEntryKindReviewRequest  = "review_request"
-	HandoffEntryKindReviewResponse = "review_response"
-	HandoffEntryKindComplete       = "complete"
-	HandoffEntryKindAmend          = "amend"
-	HandoffEntryKindSystem         = "system"
+	HandoffEntryKindRequest         = "request"
+	HandoffEntryKindReceived        = "received"
+	HandoffEntryKindReviewRequested = "review_requested"
+	HandoffEntryKindReviewReceived  = "review_received"
+	HandoffEntryKindReviewRejected  = "review_rejected"
+	HandoffEntryKindCompleted       = "completed"
+
+	// Deprecated names are retained for source compatibility while callers
+	// move to the canonical entry contract. Their values are canonical kinds;
+	// the removed wire kinds remain invalid below.
+	HandoffEntryKindReviewRequest  = HandoffEntryKindReviewRequested
+	HandoffEntryKindReviewResponse = HandoffEntryKindReviewReceived
+	HandoffEntryKindComplete       = HandoffEntryKindCompleted
+
+	HandoffEntryKindProgress = "progress"
+	HandoffEntryKindQuestion = "question"
+	HandoffEntryKindAnswer   = "answer"
+	HandoffEntryKindAmend    = "amend"
+	HandoffEntryKindSystem   = "system"
 )
 
 var (
@@ -44,17 +53,28 @@ var (
 	ErrHandoffHistoryCursorInvalid  = errors.New("handoff history cursor must not be negative")
 )
 
-// HandoffEntry is an immutable entry in one task or goal handoff thread.
+// HandoffEntry is a persisted entry in one task or goal handoff thread.
+//
+// ID, HandoffID, Kind, Body, AuthorSessionID, InReplyToID, and CreatedAt are
+// the canonical fields. The deprecated aliases are populated on reads and
+// writes so older callers can be cut over independently.
 type HandoffEntry struct {
-	EntryID         string    `json:"entry_id"`
+	ID              int64     `json:"id"`
 	HandoffID       string    `json:"handoff_id"`
-	Sequence        int64     `json:"sequence"`
 	Kind            string    `json:"kind"`
 	Body            string    `json:"body"`
 	AuthorSessionID int64     `json:"author_session_id"`
-	RelatesTo       string    `json:"relates_to,omitempty"`
-	Source          string    `json:"source,omitempty"`
+	InReplyToID     *int64    `json:"in_reply_to_id,omitempty"`
 	CreatedAt       time.Time `json:"created_at"`
+
+	// Deprecated: use ID. Kept for downstream caller compatibility.
+	EntryID string `json:"entry_id"`
+	// Deprecated: use ID as the cursor. Kept for downstream caller compatibility.
+	Sequence int64 `json:"sequence"`
+	// Deprecated: use InReplyToID. Kept for downstream caller compatibility.
+	RelatesTo string `json:"relates_to,omitempty"`
+	// Deprecated: entry source is no longer persisted.
+	Source string `json:"source,omitempty"`
 }
 
 // TaskHandoffEntry and GoalHandoffEntry are kept as descriptive aliases for
@@ -89,14 +109,10 @@ func validHandoffEntryKind(kind string) bool {
 	switch kind {
 	case HandoffEntryKindRequest,
 		HandoffEntryKindReceived,
-		HandoffEntryKindProgress,
-		HandoffEntryKindQuestion,
-		HandoffEntryKindAnswer,
-		HandoffEntryKindReviewRequest,
-		HandoffEntryKindReviewResponse,
-		HandoffEntryKindComplete,
-		HandoffEntryKindAmend,
-		HandoffEntryKindSystem:
+		HandoffEntryKindReviewRequested,
+		HandoffEntryKindReviewReceived,
+		HandoffEntryKindReviewRejected,
+		HandoffEntryKindCompleted:
 		return true
 	default:
 		return false
@@ -105,8 +121,7 @@ func validHandoffEntryKind(kind string) bool {
 
 func genericHandoffEntryKind(kind string) bool {
 	switch kind {
-	case HandoffEntryKindProgress, HandoffEntryKindQuestion, HandoffEntryKindAnswer,
-		HandoffEntryKindReviewRequest, HandoffEntryKindReviewResponse:
+	case HandoffEntryKindReviewRequested, HandoffEntryKindReviewReceived, HandoffEntryKindReviewRejected:
 		return true
 	default:
 		return false
@@ -127,9 +142,38 @@ func nullableEntryAuthor(id int64) sql.NullInt64 {
 	return sql.NullInt64{Int64: id, Valid: id > 0}
 }
 
-func nullableEntryRelatesTo(value string) sql.NullString {
+func nullableEntryReply(value string) (sql.NullInt64, error) {
 	value = strings.TrimSpace(value)
-	return sql.NullString{String: value, Valid: value != ""}
+	if value == "" {
+		return sql.NullInt64{}, nil
+	}
+	id, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || id <= 0 {
+		return sql.NullInt64{}, fmt.Errorf("%w: %q is not a positive integer id", ErrHandoffEntryRelatesToInvalid, value)
+	}
+	return sql.NullInt64{Int64: id, Valid: true}, nil
+}
+
+// canonicalInternalHandoffEntryKind adapts state-transition callers that have
+// not yet been cut over. Removed amendment/system entries have no canonical
+// representation and are intentionally ignored; their parent handoff update
+// remains the compatibility record until those callers are migrated.
+func canonicalInternalHandoffEntryKind(kind string) (canonical string, skip bool, err error) {
+	switch kind {
+	case HandoffEntryKindAmend, HandoffEntryKindSystem:
+		return "", true, nil
+	case "complete":
+		return HandoffEntryKindCompleted, false, nil
+	case "review_request":
+		return HandoffEntryKindReviewRequested, false, nil
+	case "review_response":
+		return HandoffEntryKindReviewReceived, false, nil
+	default:
+		if !validHandoffEntryKind(kind) {
+			return "", false, fmt.Errorf("%w: %q", ErrHandoffEntryKindInvalid, kind)
+		}
+		return kind, false, nil
+	}
 }
 
 func appendHandoffEntryTx(
@@ -141,32 +185,38 @@ func appendHandoffEntryTx(
 	allowStateEntry bool,
 	now time.Time,
 ) (HandoffEntry, error) {
-	body, err := normalizeHandoffEntryBody(body)
+	canonicalKind, skip, err := canonicalInternalHandoffEntryKind(kind)
 	if err != nil {
 		return HandoffEntry{}, err
 	}
-	if !validHandoffEntryKind(kind) {
-		return HandoffEntry{}, fmt.Errorf("%w: %q", ErrHandoffEntryKindInvalid, kind)
+	if skip {
+		return HandoffEntry{}, nil
 	}
+	body, err = normalizeHandoffEntryBody(body)
+	if err != nil {
+		return HandoffEntry{}, err
+	}
+	// source is a compatibility parameter. It is no longer persisted.
+	_ = source
 
 	var requestedBy, receivedBy sql.NullInt64
 	var completedAt sql.NullString
 	if table == "goal_handoff_entries" {
-		state, err := q.GetGoalHandoffEntryState(ctx, handoffID)
-		if err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
+		state, stateErr := q.GetGoalHandoffEntryState(ctx, handoffID)
+		if stateErr != nil {
+			if errors.Is(stateErr, sql.ErrNoRows) {
 				return HandoffEntry{}, fmt.Errorf("%w: %s", ErrHandoffEntryNotFound, handoffID)
 			}
-			return HandoffEntry{}, fmt.Errorf("find handoff %q for entry: %w", handoffID, err)
+			return HandoffEntry{}, fmt.Errorf("find handoff %q for entry: %w", handoffID, stateErr)
 		}
 		requestedBy, receivedBy, completedAt = state.RequestedBy, state.ReceivedBy, state.CompletedReportAt
 	} else if table == "task_handoff_entries" {
-		state, err := q.GetTaskHandoffEntryState(ctx, handoffID)
-		if err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
+		state, stateErr := q.GetTaskHandoffEntryState(ctx, handoffID)
+		if stateErr != nil {
+			if errors.Is(stateErr, sql.ErrNoRows) {
 				return HandoffEntry{}, fmt.Errorf("%w: %s", ErrHandoffEntryNotFound, handoffID)
 			}
-			return HandoffEntry{}, fmt.Errorf("find handoff %q for entry: %w", handoffID, err)
+			return HandoffEntry{}, fmt.Errorf("find handoff %q for entry: %w", handoffID, stateErr)
 		}
 		requestedBy, receivedBy, completedAt = state.RequestedBy, state.ReceivedBy, state.CompletedReportAt
 	} else {
@@ -174,93 +224,91 @@ func appendHandoffEntryTx(
 	}
 
 	if !allowStateEntry {
-		if completedAt.Valid && completedAt.String != "" {
-			if kind != HandoffEntryKindAmend || !receivedBy.Valid || receivedBy.Int64 != authorSessionID {
-				return HandoffEntry{}, fmt.Errorf("%w: completed handoff only accepts an amend by received_by", ErrHandoffEntryParticipant)
-			}
-		} else if authorSessionID <= 0 ||
+		if completedAt.Valid && strings.TrimSpace(completedAt.String) != "" {
+			return HandoffEntry{}, ErrHandoffEntryTerminal
+		}
+		if authorSessionID <= 0 ||
 			(!requestedBy.Valid || requestedBy.Int64 != authorSessionID) &&
 				(!receivedBy.Valid || receivedBy.Int64 != authorSessionID) {
 			return HandoffEntry{}, fmt.Errorf("%w: author %d", ErrHandoffEntryParticipant, authorSessionID)
 		}
 	}
 
-	if strings.TrimSpace(relatesTo) != "" {
+	inReplyToID, err := nullableEntryReply(relatesTo)
+	if err != nil {
+		return HandoffEntry{}, err
+	}
+	if inReplyToID.Valid {
 		var count int64
-		var err error
 		if table == "goal_handoff_entries" {
-			count, err = q.GoalHandoffEntryExists(ctx, sqlcgen.GoalHandoffEntryExistsParams{HandoffID: handoffID, EntryID: strings.TrimSpace(relatesTo)})
+			count, err = q.GoalHandoffEntryExists(ctx, sqlcgen.GoalHandoffEntryExistsParams{HandoffID: handoffID, ID: inReplyToID.Int64})
 		} else {
-			count, err = q.TaskHandoffEntryExists(ctx, sqlcgen.TaskHandoffEntryExistsParams{HandoffID: handoffID, EntryID: strings.TrimSpace(relatesTo)})
+			count, err = q.TaskHandoffEntryExists(ctx, sqlcgen.TaskHandoffEntryExistsParams{HandoffID: handoffID, ID: inReplyToID.Int64})
 		}
 		if err != nil {
 			return HandoffEntry{}, fmt.Errorf("validate handoff entry relation: %w", err)
 		}
 		if count == 0 {
-			return HandoffEntry{}, fmt.Errorf("%w: entry %q is not in handoff %q", ErrHandoffEntryRelatesToInvalid, relatesTo, handoffID)
+			return HandoffEntry{}, fmt.Errorf("%w: entry %d is not in handoff %q", ErrHandoffEntryRelatesToInvalid, inReplyToID.Int64, handoffID)
 		}
 	}
 
-	var sequence int64
-	if table == "goal_handoff_entries" {
-		sequence, err = q.MaxGoalHandoffEntrySequence(ctx, handoffID)
-	} else {
-		sequence, err = q.MaxTaskHandoffEntrySequence(ctx, handoffID)
-	}
-	if err != nil {
-		return HandoffEntry{}, fmt.Errorf("allocate handoff entry sequence: %w", err)
-	}
-	entryID, err := uuid.NewV7()
-	if err != nil {
-		return HandoffEntry{}, fmt.Errorf("generate handoff entry id: %w", err)
-	}
 	createdAt := now.UTC().Format(time.RFC3339Nano)
+	var id int64
 	if table == "goal_handoff_entries" {
-		err = q.CreateGoalHandoffEntry(ctx, sqlcgen.CreateGoalHandoffEntryParams{
-			EntryID: entryID.String(), HandoffID: handoffID, Sequence: sequence, Kind: kind,
-			Body: body, AuthorSessionID: nullableEntryAuthor(authorSessionID),
-			RelatesTo: nullableEntryRelatesTo(relatesTo), Source: source, CreatedAt: createdAt,
+		id, err = q.CreateGoalHandoffEntry(ctx, sqlcgen.CreateGoalHandoffEntryParams{
+			HandoffID: handoffID, Kind: canonicalKind, Body: body,
+			AuthorSessionID: nullableEntryAuthor(authorSessionID), InReplyToID: inReplyToID,
+			CreatedAt: createdAt,
 		})
 	} else {
-		err = q.CreateTaskHandoffEntry(ctx, sqlcgen.CreateTaskHandoffEntryParams{
-			EntryID: entryID.String(), HandoffID: handoffID, Sequence: sequence, Kind: kind,
-			Body: body, AuthorSessionID: nullableEntryAuthor(authorSessionID),
-			RelatesTo: nullableEntryRelatesTo(relatesTo), Source: source, CreatedAt: createdAt,
+		id, err = q.CreateTaskHandoffEntry(ctx, sqlcgen.CreateTaskHandoffEntryParams{
+			HandoffID: handoffID, Kind: canonicalKind, Body: body,
+			AuthorSessionID: nullableEntryAuthor(authorSessionID), InReplyToID: inReplyToID,
+			CreatedAt: createdAt,
 		})
 	}
 	if err != nil {
 		return HandoffEntry{}, fmt.Errorf("insert handoff entry: %w", err)
 	}
-	return HandoffEntry{
-		EntryID:         entryID.String(),
+	return newHandoffEntry(id, handoffID, canonicalKind, body, authorSessionID, inReplyToID, now.UTC()), nil
+}
+
+func newHandoffEntry(id int64, handoffID, kind, body string, authorSessionID int64, inReplyToID sql.NullInt64, createdAt time.Time) HandoffEntry {
+	entry := HandoffEntry{
+		ID:              id,
 		HandoffID:       handoffID,
-		Sequence:        sequence,
 		Kind:            kind,
 		Body:            body,
 		AuthorSessionID: authorSessionID,
-		RelatesTo:       strings.TrimSpace(relatesTo),
-		Source:          source,
-		CreatedAt:       now.UTC(),
-	}, nil
+		CreatedAt:       createdAt,
+		EntryID:         strconv.FormatInt(id, 10),
+		Sequence:        id,
+	}
+	if inReplyToID.Valid {
+		replyID := inReplyToID.Int64
+		entry.InReplyToID = &replyID
+		entry.RelatesTo = strconv.FormatInt(replyID, 10)
+	}
+	return entry
 }
 
-func handoffEntryFromFields(entryID, handoffID string, sequence int64, kind, body string, author sql.NullInt64, relatesTo sql.NullString, source, createdAt string) (HandoffEntry, error) {
-	entry := HandoffEntry{EntryID: entryID, HandoffID: handoffID, Sequence: sequence, Kind: kind, Body: body, Source: source}
-	if author.Valid {
-		entry.AuthorSessionID = author.Int64
-	}
-	if relatesTo.Valid {
-		entry.RelatesTo = relatesTo.String
+func handoffEntryFromFields(id int64, handoffID, kind, body string, author, inReplyTo sql.NullInt64, createdAt string) (HandoffEntry, error) {
+	if id <= 0 {
+		return HandoffEntry{}, fmt.Errorf("handoff entry has invalid id %d", id)
 	}
 	if createdAt == "" {
-		return HandoffEntry{}, fmt.Errorf("handoff entry %q has no created_at", entry.EntryID)
+		return HandoffEntry{}, fmt.Errorf("handoff entry %d has no created_at", id)
 	}
 	parsed, err := time.Parse(time.RFC3339Nano, createdAt)
 	if err != nil {
-		return HandoffEntry{}, fmt.Errorf("parse handoff entry %q created_at: %w", entry.EntryID, err)
+		return HandoffEntry{}, fmt.Errorf("parse handoff entry %d created_at: %w", id, err)
 	}
-	entry.CreatedAt = parsed
-	return entry, nil
+	var authorID int64
+	if author.Valid {
+		authorID = author.Int64
+	}
+	return newHandoffEntry(id, handoffID, kind, body, authorID, inReplyTo, parsed), nil
 }
 
 func trimHandoffEntryPage(entries []HandoffEntry, limit int) HandoffEntryPage {
@@ -271,7 +319,7 @@ func trimHandoffEntryPage(entries []HandoffEntry, limit int) HandoffEntryPage {
 	}
 	page.Entries = entries
 	if len(entries) > 0 {
-		page.NextCursor = entries[len(entries)-1].Sequence
+		page.NextCursor = entries[len(entries)-1].ID
 	}
 	return page
 }
@@ -301,6 +349,7 @@ func listHandoffEntries(ctx context.Context, q *sqlcgen.Queries, table, handoffI
 	default:
 		return HandoffEntryPage{}, fmt.Errorf("unknown handoff entry table %q", table)
 	}
+
 	entries := make([]HandoffEntry, 0, limit)
 	if table == "goal_handoff_entries" {
 		rows, err := q.ListGoalHandoffEntries(ctx, sqlcgen.ListGoalHandoffEntriesParams{HandoffID: handoffID, Cursor: cursor, Limit: int64(limit + 1)})
@@ -308,19 +357,19 @@ func listHandoffEntries(ctx context.Context, q *sqlcgen.Queries, table, handoffI
 			return HandoffEntryPage{}, fmt.Errorf("list %s for handoff %q: %w", table, handoffID, err)
 		}
 		for _, row := range rows {
-			entry, err := handoffEntryFromFields(row.EntryID, row.HandoffID, row.Sequence, row.Kind, row.Body, row.AuthorSessionID, row.RelatesTo, row.Source, row.CreatedAt)
+			entry, err := handoffEntryFromFields(row.ID, row.HandoffID, row.Kind, row.Body, row.AuthorSessionID, row.InReplyToID, row.CreatedAt)
 			if err != nil {
 				return HandoffEntryPage{}, fmt.Errorf("scan %s: %w", table, err)
 			}
 			entries = append(entries, entry)
 		}
-	} else if table == "task_handoff_entries" {
+	} else {
 		rows, err := q.ListTaskHandoffEntries(ctx, sqlcgen.ListTaskHandoffEntriesParams{HandoffID: handoffID, Cursor: cursor, Limit: int64(limit + 1)})
 		if err != nil {
 			return HandoffEntryPage{}, fmt.Errorf("list %s for handoff %q: %w", table, handoffID, err)
 		}
 		for _, row := range rows {
-			entry, err := handoffEntryFromFields(row.EntryID, row.HandoffID, row.Sequence, row.Kind, row.Body, row.AuthorSessionID, row.RelatesTo, row.Source, row.CreatedAt)
+			entry, err := handoffEntryFromFields(row.ID, row.HandoffID, row.Kind, row.Body, row.AuthorSessionID, row.InReplyToID, row.CreatedAt)
 			if err != nil {
 				return HandoffEntryPage{}, fmt.Errorf("scan %s: %w", table, err)
 			}
@@ -347,7 +396,6 @@ func (s *Store) AppendTaskHandoffEntry(ctx context.Context, handoffID, kind, bod
 	if err := tx.Commit(); err != nil {
 		return TaskHandoffEntry{}, fmt.Errorf("commit task handoff entry: %w", err)
 	}
-	entry.Body = body
 	return entry, nil
 }
 
@@ -368,7 +416,6 @@ func (s *Store) AppendGoalHandoffEntry(ctx context.Context, handoffID, kind, bod
 	if err := tx.Commit(); err != nil {
 		return GoalHandoffEntry{}, fmt.Errorf("commit goal handoff entry: %w", err)
 	}
-	entry.Body = body
 	return entry, nil
 }
 
