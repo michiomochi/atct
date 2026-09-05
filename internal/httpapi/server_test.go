@@ -935,6 +935,31 @@ func TestHTTPGoalDetailIncludesAllTasksWithoutCrossGoalMixing(t *testing.T) {
 	}
 }
 
+func TestHTTPGoalDetailIncludesRequestReportFields(t *testing.T) {
+	f := newBareFixture(t)
+	if _, err := f.store.UpdateGoalRequestReport(f.ctx, f.goal.ID, "stored spec", "stored plan"); err != nil {
+		t.Fatal(err)
+	}
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+	status, _, body := doRequest(t, srv.Client(), http.MethodGet, urlID(srv.URL+"/api/goals/", f.goal.ID), nil)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d; body=%s", status, body)
+	}
+	var payload struct {
+		Goal struct {
+			Spec string `json:"spec"`
+			Plan string `json:"plan"`
+		} `json:"goal"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Goal.Spec != "stored spec" || payload.Goal.Plan != "stored plan" {
+		t.Fatalf("goal request report = %+v", payload.Goal)
+	}
+}
+
 func TestHTTPGoalDetailIncludesDerivedFromGoal(t *testing.T) {
 	f := newBareFixture(t)
 	parent, err := f.store.CreateGoal(f.ctx, f.project.ID, "Parent goal", "human")

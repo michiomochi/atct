@@ -72,6 +72,8 @@ function goal(overrides: Partial<Goal> = {}): Goal {
     project_id: "project-1",
     project_name: "Fixture project",
     content: "Fixture goal",
+    spec: "",
+    plan: "",
     status: "active",
     awaiting_decision: false,
     result_summary: "",
@@ -212,6 +214,12 @@ function emptyInbox(): InboxResponse {
 }
 
 describe("GoalDetail", () => {
+	 it("renders read-only spec and plan, using unset for empty values", async () => {
+		vi.mocked(fetchGoal).mockResolvedValueOnce(goalResponse({ spec: "Spec text", plan: "" }));
+		render(<GoalDetail id="goal-1" />);
+		await waitFor(() => expect(screen.getByTestId("request-report").textContent).toContain("Spec text"));
+		expect(screen.getByTestId("request-report").textContent).toContain("goal.requestReport.unset");
+	});
   it("asks for the goal diff with the id resolved from the route, not the placeholder", async () => {
     const response = goalResponse({ status: "active" });
     vi.mocked(fetchGoal).mockResolvedValueOnce(response);

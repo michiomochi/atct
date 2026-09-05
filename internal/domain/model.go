@@ -34,6 +34,8 @@ type Goal struct {
 	ProjectID         int64      `json:"project_id"`
 	DerivedFromGoalID int64      `json:"derived_from_goal_id"`
 	Content           string     `json:"content"`
+	Spec              string     `json:"spec"`
+	Plan              string     `json:"plan"`
 	Status            GoalStatus `json:"status"`
 	Creator           string     `json:"creator"`
 	WorkDone          string     `json:"work_done"`

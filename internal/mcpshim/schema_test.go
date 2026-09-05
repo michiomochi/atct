@@ -18,7 +18,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-func TestRegisterPublishesFortyThreeToolsWithFlexibleOutputSchema(t *testing.T) {
+func TestRegisterPublishesFortyFourToolsWithFlexibleOutputSchema(t *testing.T) {
 	ctx := context.Background()
 	socketPath := startSchemaTestDaemon(t)
 	server := mcp.NewServer(&mcp.Implementation{Name: "atct-test", Version: "test"}, nil)
@@ -86,6 +86,7 @@ func TestRegisterPublishesFortyThreeToolsWithFlexibleOutputSchema(t *testing.T) 
 		"atct_plan_handoff_review_receive": true,
 		"atct_plan_handoff_complete":       true,
 		"atct_plan_handoff_review_reject":  true,
+		"atct_goal_update_request_report": true,
 	}
 	if len(got.Tools) != len(wantNames) {
 		t.Fatalf("tool count = %d, want %d", len(got.Tools), len(wantNames))
@@ -210,6 +211,9 @@ func TestRegisterPublishesFortyThreeToolsWithFlexibleOutputSchema(t *testing.T) 
 		{name: "atct_goal_claim", args: map[string]any{"goal_id": "goal-1"}},
 		{name: "atct_goal_update_content", args: map[string]any{
 			"goal_id": "goal-1", "content": "updated goal",
+		}},
+		{name: "atct_goal_update_request_report", args: map[string]any{
+			"goal_id": "goal-1", "spec": "updated spec", "plan": "updated plan",
 		}},
 		{name: "atct_task_update_content", args: map[string]any{
 			"task_id": "task-1", "description": "updated task",

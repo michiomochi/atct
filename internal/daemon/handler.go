@@ -1202,6 +1202,29 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		response, err := d.responseWithScopedUnappliedDecisions(ctx, updated, p.GoalID, p.AgentSessionID)
 		return marshal(response, err)
 
+	case "goal.update_request_report":
+		var p struct {
+			GoalID         int64  `json:"goal_id"`
+			Spec           string `json:"spec"`
+			Plan           string `json:"plan"`
+			AgentSessionID int64  `json:"agent_session_id"`
+		}
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		goal, err := d.store.GetGoal(ctx, p.GoalID)
+		if err != nil {
+			return nil, err
+		}
+		if err := d.ensureAgentSessionProject(ctx, p.AgentSessionID, goal.ProjectID); err != nil {
+			return nil, err
+		}
+		if err := d.authorizeGoalCompletion(ctx, p.GoalID, goal.ProjectID, p.AgentSessionID); err != nil {
+			return nil, err
+		}
+		updated, err := d.store.UpdateGoalRequestReport(ctx, p.GoalID, p.Spec, p.Plan)
+		return marshal(updated, err)
+
 	case "task.update_content":
 		var p struct {
 			TaskID                  int64   `json:"task_id"`
