@@ -685,6 +685,83 @@ func TestCodexMonitorQueueRetriesAfterTransientCompletionFailure(t *testing.T) {
 	}
 }
 
+func TestCodexMonitorIdleThreadStartedRetriesTransientStartFailure(t *testing.T) {
+	starter := &fakeCodexTurnStarter{errs: []error{errors.New("temporary rejection"), nil}}
+	bridge := newCodexMonitorBridge(starter, "")
+	ctx := context.Background()
+
+	if err := bridge.Enqueue(ctx, "retry-after-thread-start"); err != nil {
+		t.Fatalf("Enqueue() error = %v, want queued before thread starts", err)
+	}
+
+	if err := bridge.HandleNotification(ctx, codexAppServerNotification{
+		Method: "thread/started",
+		Params: mustJSON(map[string]any{
+			"thread": map[string]any{
+				"id":     "thread-1",
+				"status": map[string]any{"type": "idle"},
+			},
+		}),
+	}); err != nil {
+		t.Fatalf("HandleNotification(thread/started) error = %v, want transient failure suppressed", err)
+	}
+	if got := bridge.QueueLen(); got != 1 {
+		t.Fatalf("QueueLen() after thread/started failure = %d, want 1", got)
+	}
+	if bridge.Active() {
+		t.Fatal("bridge active after thread/started failure, want idle for retry")
+	}
+
+	if err := bridge.HandleNotification(ctx, codexAppServerNotification{
+		Method: "thread/status/changed",
+		Params: mustJSON(map[string]any{
+			"threadId": "thread-1",
+			"status":   map[string]any{"type": "idle"},
+		}),
+	}); err != nil {
+		t.Fatalf("HandleNotification(idle) error = %v", err)
+	}
+	if got := starter.callsSnapshot(); len(got) != 2 || got[0] != "retry-after-thread-start" || got[1] != "retry-after-thread-start" {
+		t.Fatalf("turn starts after thread/started retry = %#v, want two retry attempts", got)
+	}
+	if got := bridge.QueueLen(); got != 0 {
+		t.Fatalf("QueueLen() after thread/started retry = %d, want 0", got)
+	}
+}
+
+func TestCodexMonitorFatalAppServerFailureRetainsQueuedItem(t *testing.T) {
+	app := newFakeCodexMonitorApp()
+	app.notificationErr = errors.New("App Server connection lost")
+	app.startTurn = func(context.Context, string, string) (codexTurn, error) {
+		return codexTurn{}, errors.New("turn start failed")
+	}
+	bridge := newCodexMonitorBridge(app, "thread-1")
+	ctx := context.Background()
+
+	if err := bridge.Enqueue(ctx, "must-remain-queued"); err == nil {
+		t.Fatal("Enqueue() error = nil, want terminal App Server failure")
+	}
+	if got := bridge.QueueLen(); got != 1 {
+		t.Fatalf("QueueLen() after fatal App Server failure = %d, want 1", got)
+	}
+	if !bridge.disabled {
+		t.Fatal("bridge disabled = false, want terminal monitor state")
+	}
+
+	if err := bridge.HandleNotification(ctx, codexAppServerNotification{
+		Method: "thread/status/changed",
+		Params: mustJSON(map[string]any{
+			"threadId": "thread-1",
+			"status":   map[string]any{"type": "idle"},
+		}),
+	}); err != nil {
+		t.Fatalf("HandleNotification(idle) error = %v, want terminal state to suppress retries", err)
+	}
+	if got := bridge.QueueLen(); got != 1 {
+		t.Fatalf("QueueLen() after terminal idle notification = %d, want 1", got)
+	}
+}
+
 func TestCodexMonitorQueuesBeforeThreadIsAttached(t *testing.T) {
 	starter := &fakeCodexTurnStarter{}
 	bridge := newCodexMonitorBridge(starter, "")
