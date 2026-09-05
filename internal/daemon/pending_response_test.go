@@ -304,7 +304,7 @@ func TestProjectScopedWritesRejectOtherProject(t *testing.T) {
 				"how_to_verify": "verify", "surprises": "none", "needs_review": "none",
 				"next_steps": "none", "agent_session_id": f.agentSessionID,
 			},
-			wantContains: []string{"goal completion denied", "holds no open goal handoff"},
+			wantContains: []string{"goal completion denied", "not the commander"},
 		},
 	}
 
@@ -524,6 +524,9 @@ func TestTaskClaimAssignsUnassociatedRunToTargetProject(t *testing.T) {
 
 func TestProjectScopedWritesAllowAssignedProjectAndGoalListReadsOtherProject(t *testing.T) {
 	f := newProjectScopeFixture(t)
+	if _, err := f.store.ClaimProject(f.ctx, f.assigned.ID, f.agentSessionID); err != nil {
+		t.Fatalf("ClaimProject: %v", err)
+	}
 
 	params, err := json.Marshal(map[string]any{
 		"goal_id": f.assignedGoal.ID, "agent": "agent", "idempotency_key": "assigned-project",

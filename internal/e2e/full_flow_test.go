@@ -370,8 +370,11 @@ func TestFullFlowThroughDaemonAndHTTP(t *testing.T) {
 		t.Fatalf("goal.list returned %+v", listed)
 	}
 
-	tasks := declareTasks(t, stack, goal.ID, []string{"Prepare the run", "Resolve the question", "Finish the goal"})
 	agentSessionID := stack.session(t, "flow-run")
+	if _, err := stack.db.ClaimProject(context.Background(), project.ID, agentSessionID); err != nil {
+		t.Fatalf("ClaimProject: %v", err)
+	}
+	tasks := declareTasks(t, stack, goal.ID, []string{"Prepare the run", "Resolve the question", "Finish the goal"})
 	var claimed domain.Task
 	callDaemon(t, stack, "task.claim", map[string]any{
 		"task_id": tasks[0].ID, "agent_session_id": agentSessionID,
@@ -533,10 +536,13 @@ func TestCompletionRejectionReopensGoalHandoffThroughDaemonAndHTTP(t *testing.T)
 		"handoff_id": "e2e-completion-rejection-handoff", "goal_id": goal.ID,
 		"requested_by": commanderSessionID, "request_report": "Initial goal handoff",
 	}, &requested)
-	var received store.GoalHandoff
+	var receivedResponse struct {
+		Data store.GoalHandoff `json:"data"`
+	}
 	callDaemon(t, stack, "goal.handoff.receive", map[string]any{
 		"handoff_id": requested.ID, "goal_id": goal.ID, "received_by": receiverSessionID,
-	}, &received)
+	}, &receivedResponse)
+	received := receivedResponse.Data
 	if received.ReceivedBy != receiverSessionID || received.ReceivedAt == nil {
 		t.Fatalf("received handoff = %+v, want receiver %d", received, receiverSessionID)
 	}
@@ -547,7 +553,7 @@ func TestCompletionRejectionReopensGoalHandoffThroughDaemonAndHTTP(t *testing.T)
 		"now_possible":  "The goal is ready for review",
 		"how_to_verify": "Review the initial completion report",
 		"surprises":     "None", "needs_review": "The first report needs revision", "next_steps": "Revise the report",
-		"agent_session_id": receiverSessionID,
+		"agent_session_id": commanderSessionID,
 	}, &completion)
 	if completion.Kind != domain.KindCompletion || completion.Status != domain.DecisionOpen {
 		t.Fatalf("initial goal.complete returned %+v", completion)
@@ -593,7 +599,7 @@ func TestCompletionRejectionReopensGoalHandoffThroughDaemonAndHTTP(t *testing.T)
 		"now_possible":  "The revised goal is ready for approval",
 		"how_to_verify": "Review the revised completion report",
 		"surprises":     "None", "needs_review": "None", "next_steps": "None",
-		"agent_session_id": receiverSessionID,
+		"agent_session_id": commanderSessionID,
 	}, &revised)
 	if revised.Kind != domain.KindCompletion || revised.Status != domain.DecisionOpen || revised.ID == completion.ID {
 		t.Fatalf("revised goal.complete returned %+v", revised)

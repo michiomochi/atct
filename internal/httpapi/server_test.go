@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -2526,15 +2527,16 @@ func TestHTTPApproveAndRejectCompletionEndpoints(t *testing.T) {
 func TestHTTPApproveAndRejectGoalReviewEndpoints(t *testing.T) {
 	f := newBareFixture(t)
 	handler := httpapi.New(f.store).Handler()
+	commanderID, err := f.store.RegisterAgentSession(f.ctx, os.Getpid())
+	if err != nil {
+		t.Fatalf("RegisterAgentSession: %v", err)
+	}
 
 	approveGoal, err := f.store.CreateGoal(f.ctx, f.project.ID, "Approve goal review", "human")
 	if err != nil {
 		t.Fatal(err)
 	}
-	approveReview, err := f.store.RequestGoalReview(f.ctx, approveGoal.ID, testSessionID("http-goal-review-approve"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	approveReview := requestHTTPGoalReview(t, f, approveGoal.ID, commanderID, "http-goal-review-approve")
 	status, _, body := doHandlerRequest(t, handler, http.MethodPost, urlID("/api/decisions/", approveReview.ID)+"/approve", mustJSON(t, map[string]string{}))
 	if status != http.StatusOK {
 		t.Fatalf("goal review approve status = %d; body=%s", status, body)
@@ -2543,18 +2545,15 @@ func TestHTTPApproveAndRejectGoalReviewEndpoints(t *testing.T) {
 	if err := json.Unmarshal(body, &approvedGoal); err != nil {
 		t.Fatal(err)
 	}
-	if approvedGoal.ID != approveGoal.ID || approvedGoal.Status != domain.GoalActive || approvedGoal.WorkDone != "" {
-		t.Fatalf("approved goal review = %+v, want active goal without final report", approvedGoal)
+	if approvedGoal.ID != approveGoal.ID || approvedGoal.Status != domain.GoalActive || approvedGoal.WorkDone != "completed http-goal-review-approve" {
+		t.Fatalf("approved goal review = %+v, want active goal with request-time report", approvedGoal)
 	}
 
 	rejectGoal, err := f.store.CreateGoal(f.ctx, f.project.ID, "Reject goal review", "human")
 	if err != nil {
 		t.Fatal(err)
 	}
-	rejectReview, err := f.store.RequestGoalReview(f.ctx, rejectGoal.ID, testSessionID("http-goal-review-reject"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	rejectReview := requestHTTPGoalReview(t, f, rejectGoal.ID, commanderID, "http-goal-review-reject")
 	status, _, body = doHandlerRequest(t, handler, http.MethodPost, urlID("/api/decisions/", rejectReview.ID)+"/reject", mustJSON(t, map[string]string{"reason": "needs another pass"}))
 	if status != http.StatusOK {
 		t.Fatalf("goal review reject status = %d; body=%s", status, body)
@@ -2570,9 +2569,41 @@ func TestHTTPApproveAndRejectGoalReviewEndpoints(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if gotGoal.Status != domain.GoalActive || gotGoal.WorkDone != "" {
-		t.Fatalf("goal after review rejection = %+v, want active without final report", gotGoal)
+	if gotGoal.Status != domain.GoalActive || gotGoal.WorkDone != "completed http-goal-review-reject" {
+		t.Fatalf("goal after review rejection = %+v, want active with request-time report", gotGoal)
 	}
+}
+
+func requestHTTPGoalReview(t *testing.T, f *fixture, goalID, commanderID int64, label string) domain.Decision {
+	t.Helper()
+	receiverID := registerTestSession(t, f.store, label+"-receiver", 0)
+	if _, err := f.store.ClaimProject(f.ctx, f.project.ID, commanderID); err != nil {
+		t.Fatalf("ClaimProject: %v", err)
+	}
+	handoff, err := f.store.RequestGoalHandoff(f.ctx, label+"-handoff", goalID, commanderID, "implement the reviewed goal")
+	if err != nil {
+		t.Fatalf("RequestGoalHandoff: %v", err)
+	}
+	if _, err := f.store.ReceiveGoalHandoff(f.ctx, handoff.ID, goalID, receiverID); err != nil {
+		t.Fatalf("ReceiveGoalHandoff: %v", err)
+	}
+	if _, err := f.store.RequestGoalHandoffReview(f.ctx, handoff.ID, goalID, receiverID, "implementation review request"); err != nil {
+		t.Fatalf("RequestGoalHandoffReview: %v", err)
+	}
+	if _, err := f.store.ReceiveGoalHandoffReview(f.ctx, handoff.ID, goalID, commanderID); err != nil {
+		t.Fatalf("ReceiveGoalHandoffReview: %v", err)
+	}
+	if _, err := f.store.CompleteGoalHandoffByReviewer(f.ctx, handoff.ID, goalID, commanderID, "reviewed implementation complete"); err != nil {
+		t.Fatalf("CompleteGoalHandoffByReviewer: %v", err)
+	}
+	review, err := f.store.RequestGoalReview(f.ctx, goalID, commanderID, domain.CompletionReport{
+		WorkDone: "completed " + label, NowPossible: "reviewable result", HowToVerify: "run the HTTP endpoint test",
+		Surprises: "none", NeedsReview: "approve or reject", NextSteps: "finalize after approval",
+	})
+	if err != nil {
+		t.Fatalf("RequestGoalReview: %v", err)
+	}
+	return review
 }
 
 type sseFrame struct {

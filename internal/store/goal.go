@@ -962,6 +962,15 @@ func (s *Store) RejectCompletion(ctx context.Context, decisionID int64, reason s
 	}
 	events := []DecisionEvent{decisionEvent}
 	if d.Kind == "completion" && d.AgentSessionID != 0 {
+		projectID, err := q.GetGoalProjectID(ctx, d.GoalID)
+		if err != nil {
+			return fmt.Errorf("find project for completion rejection: %w", err)
+		}
+		project, err := q.GetProject(ctx, projectID)
+		if err != nil {
+			return fmt.Errorf("find project claim for completion rejection: %w", err)
+		}
+		commanderSubmitted := project.ClaimedBy != 0 && project.ClaimedBy == d.AgentSessionID
 		handoffs, err := q.ListGoalHandoffs(ctx, d.GoalID)
 		if err != nil {
 			return fmt.Errorf("list goal handoffs for completion rejection: %w", err)
@@ -977,7 +986,13 @@ func (s *Store) RejectCompletion(ctx context.Context, decisionID int64, reason s
 				selected = nil
 				break
 			}
-			if handoff.ReceivedAt == nil || handoff.ReceivedBy != d.AgentSessionID {
+			if handoff.ReceivedAt == nil || handoff.ReceivedBy == 0 {
+				continue
+			}
+			// A commander submits the completion decision, but a delegated
+			// subcommander owns the handoff that must resume after rejection.
+			// A non-commander reporter cannot reopen another session's work.
+			if handoff.ReceivedBy != d.AgentSessionID && !commanderSubmitted {
 				continue
 			}
 			if selected == nil || handoff.CompletedReportAt.After(*selected.CompletedReportAt) {
