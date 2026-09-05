@@ -37,10 +37,10 @@ type GoalHandoff struct {
 	RequestedAt       *time.Time
 	ReceivedAt        *time.Time
 	CompletedReportAt *time.Time
-	Entries           []HandoffEntry
-	HasMore           bool
-	NextCursor        int64
-	History           HandoffEntryPage
+	Entries           []HandoffEntry   `json:"entries,omitempty"`
+	HasMore           bool             `json:"has_more,omitempty"`
+	NextCursor        int64            `json:"next_cursor,omitempty"`
+	History           HandoffEntryPage `json:"history,omitempty"`
 }
 
 // GoalSession identifies an agent session that received a handoff for a goal.

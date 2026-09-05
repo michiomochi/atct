@@ -46,15 +46,15 @@ var (
 
 // HandoffEntry is an immutable entry in one task or goal handoff thread.
 type HandoffEntry struct {
-	EntryID         string
-	HandoffID       string
-	Sequence        int64
-	Kind            string
-	Body            string
-	AuthorSessionID int64
-	RelatesTo       string
-	Source          string
-	CreatedAt       time.Time
+	EntryID         string    `json:"entry_id"`
+	HandoffID       string    `json:"handoff_id"`
+	Sequence        int64     `json:"sequence"`
+	Kind            string    `json:"kind"`
+	Body            string    `json:"body"`
+	AuthorSessionID int64     `json:"author_session_id"`
+	RelatesTo       string    `json:"relates_to,omitempty"`
+	Source          string    `json:"source,omitempty"`
+	CreatedAt       time.Time `json:"created_at"`
 }
 
 // TaskHandoffEntry and GoalHandoffEntry are kept as descriptive aliases for
@@ -64,9 +64,9 @@ type GoalHandoffEntry = HandoffEntry
 
 // HandoffEntryPage is a cursor page ordered from the oldest entry forward.
 type HandoffEntryPage struct {
-	Entries    []HandoffEntry
-	HasMore    bool
-	NextCursor int64
+	Entries    []HandoffEntry `json:"entries"`
+	HasMore    bool           `json:"has_more"`
+	NextCursor int64          `json:"next_cursor"`
 }
 
 type HandoffHistory = HandoffEntryPage

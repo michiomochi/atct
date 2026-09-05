@@ -169,7 +169,7 @@ func TestHTTPHandlerMCPInitializeReturnsStreamableResponse(t *testing.T) {
 	}
 }
 
-func TestHTTPHandlerMCPListsTwentyEightTools(t *testing.T) {
+func TestHTTPHandlerMCPListsThirtyTwoTools(t *testing.T) {
 	fixture := newMCPHTTPTestServer(t)
 	client := newMCPHTTPTestClient(fixture.server.URL + "/mcp")
 	client.initialize(t)
@@ -181,13 +181,17 @@ func TestHTTPHandlerMCPListsTwentyEightTools(t *testing.T) {
 	if !ok {
 		t.Fatalf("tools/list result.tools = %T, want array", result["tools"])
 	}
-	if len(tools) != 28 {
-		t.Fatalf("tools/list returned %d tools, want 28", len(tools))
+	if len(tools) != 32 {
+		t.Fatalf("tools/list returned %d tools, want 32", len(tools))
 	}
 	wantNames := map[string]bool{
-		"atct_role":                      false,
-		"atct_handoff_report_amend":      false,
-		"atct_goal_handoff_report_amend": false,
+		"atct_role":                       false,
+		"atct_handoff_report_amend":       false,
+		"atct_goal_handoff_report_amend":  false,
+		"atct_handoff_entry_append":       false,
+		"atct_handoff_entry_history":      false,
+		"atct_goal_handoff_entry_append":  false,
+		"atct_goal_handoff_entry_history": false,
 	}
 	for _, rawTool := range tools {
 		tool, ok := rawTool.(map[string]any)

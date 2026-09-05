@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -17,7 +18,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-func TestRegisterPublishesTwentyEightToolsWithFlexibleOutputSchema(t *testing.T) {
+func TestRegisterPublishesThirtyTwoToolsWithFlexibleOutputSchema(t *testing.T) {
 	ctx := context.Background()
 	socketPath := startSchemaTestDaemon(t)
 	server := mcp.NewServer(&mcp.Implementation{Name: "atct-test", Version: "test"}, nil)
@@ -70,6 +71,10 @@ func TestRegisterPublishesTwentyEightToolsWithFlexibleOutputSchema(t *testing.T)
 		"atct_goal_handoff_receive":      true,
 		"atct_goal_handoff_complete":     true,
 		"atct_goal_handoff_report_amend": true,
+		"atct_handoff_entry_append":      true,
+		"atct_handoff_entry_history":     true,
+		"atct_goal_handoff_entry_append":  true,
+		"atct_goal_handoff_entry_history": true,
 	}
 	if len(got.Tools) != len(wantNames) {
 		t.Fatalf("tool count = %d, want %d", len(got.Tools), len(wantNames))
@@ -153,6 +158,37 @@ func TestRegisterPublishesTwentyEightToolsWithFlexibleOutputSchema(t *testing.T)
 					t.Errorf("%s input schema must require handoff_id", tool.Name)
 				}
 			}
+		case "atct_handoff_entry_append", "atct_goal_handoff_entry_append", "atct_handoff_entry_history", "atct_goal_handoff_entry_history":
+			inputSchema, ok := tool.InputSchema.(map[string]any)
+			if !ok {
+				t.Fatalf("%s input schema = %T, want object schema", tool.Name, tool.InputSchema)
+			}
+			inputProperties, ok := inputSchema["properties"].(map[string]any)
+			if !ok {
+				t.Fatalf("%s input schema properties = %T, want object", tool.Name, inputSchema["properties"])
+			}
+			idField := "task_id"
+			if strings.HasPrefix(tool.Name, "atct_goal_") {
+				idField = "goal_id"
+			}
+			for _, field := range []string{"handoff_id", idField} {
+				if _, ok := inputProperties[field]; !ok {
+					t.Errorf("%s input schema omitted %q", tool.Name, field)
+				}
+			}
+			if tool.Name == "atct_handoff_entry_append" || tool.Name == "atct_goal_handoff_entry_append" {
+				for _, field := range []string{"kind", "body"} {
+					if _, ok := inputProperties[field]; !ok {
+						t.Errorf("%s input schema omitted %q", tool.Name, field)
+					}
+				}
+			} else {
+				for _, field := range []string{"cursor", "limit"} {
+					if _, ok := inputProperties[field]; !ok {
+						t.Errorf("%s input schema omitted %q", tool.Name, field)
+					}
+				}
+			}
 		}
 		schema, ok := tool.OutputSchema.(map[string]any)
 		if !ok {
@@ -228,6 +264,18 @@ func TestRegisterPublishesTwentyEightToolsWithFlexibleOutputSchema(t *testing.T)
 		}},
 		{name: "atct_goal_handoff_complete", args: map[string]any{
 			"handoff_id": "goal-handoff-1", "goal_id": "goal-1", "complete_report": "goal completion",
+		}},
+		{name: "atct_handoff_entry_append", args: map[string]any{
+			"handoff_id": "handoff-1", "task_id": "task-1", "kind": "progress", "body": "progress",
+		}},
+		{name: "atct_handoff_entry_history", args: map[string]any{
+			"handoff_id": "handoff-1", "task_id": "task-1", "cursor": 0, "limit": 20,
+		}},
+		{name: "atct_goal_handoff_entry_append", args: map[string]any{
+			"handoff_id": "goal-handoff-1", "goal_id": "goal-1", "kind": "question", "body": "question",
+		}},
+		{name: "atct_goal_handoff_entry_history", args: map[string]any{
+			"handoff_id": "goal-handoff-1", "goal_id": "goal-1", "cursor": 0, "limit": 20,
 		}},
 		{name: "atct_decision_ask", args: map[string]any{
 			"goal_id": "goal-1", "question": "question", "options": []any{}, "wait_ms": 0,
@@ -601,6 +649,22 @@ func TestHandoffToolsInjectAgentSessionID(t *testing.T) {
 			name: "atct_goal_handoff_report_amend", method: "goal.handoff.report.amend",
 			reportField: "complete_report", reportValue: "amended goal report",
 			args: map[string]any{"handoff_id": "goal-handoff-1", "goal_id": "goal-1", "complete_report": "amended goal report"},
+		},
+		{
+			name: "atct_handoff_entry_append", method: "handoff.entry.append", ownedBy: "agent_session_id",
+			args: map[string]any{"handoff_id": "handoff-1", "task_id": "task-1", "kind": "progress", "body": "progress"},
+		},
+		{
+			name: "atct_handoff_entry_history", method: "handoff.entry.history", ownedBy: "agent_session_id",
+			args: map[string]any{"handoff_id": "handoff-1", "task_id": "task-1", "cursor": 0, "limit": 20},
+		},
+		{
+			name: "atct_goal_handoff_entry_append", method: "goal.handoff.entry.append", ownedBy: "agent_session_id",
+			args: map[string]any{"handoff_id": "goal-handoff-1", "goal_id": "goal-1", "kind": "question", "body": "question"},
+		},
+		{
+			name: "atct_goal_handoff_entry_history", method: "goal.handoff.entry.history", ownedBy: "agent_session_id",
+			args: map[string]any{"handoff_id": "goal-handoff-1", "goal_id": "goal-1", "cursor": 0, "limit": 20},
 		},
 	} {
 		result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{

@@ -525,6 +525,13 @@ func optionalEntityID(method, field string) bool {
 }
 
 func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage, error) {
+	return d.dispatchWithPeer(ctx, req, 0)
+}
+
+// dispatchWithPeer keeps direct in-process callers compatible while attaching
+// a daemon-assigned identity to requests received over one Unix socket
+// connection. Monitored capabilities are accepted only on that same peer.
+func (d *Daemon) dispatchWithPeer(ctx context.Context, req rpc.Request, peerID uint64) (json.RawMessage, error) {
 	params, err := d.normalizeEntityIDs(ctx, req.Method, req.Params)
 	if err != nil {
 		return nil, err
@@ -534,8 +541,9 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 	switch req.Method {
 	case "run.register":
 		var p struct {
-			PID int    `json:"pid"`
-			CWD string `json:"cwd"`
+			PID       int    `json:"pid"`
+			CWD       string `json:"cwd"`
+			Monitored bool   `json:"monitored"`
 		}
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, err
@@ -553,7 +561,30 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		if err != nil {
 			return nil, err
 		}
-		return marshal(map[string]any{"ok": true, "agent_session_id": agentSessionID}, nil)
+		response := map[string]any{"ok": true, "agent_session_id": agentSessionID}
+		if p.Monitored {
+			capability, err := d.issueMonitoredCallerCapability(agentSessionID, peerID)
+			if err != nil {
+				return nil, err
+			}
+			response["capability"] = capability.Capability
+			response["expires_at"] = capability.ExpiresAt
+		}
+		return marshal(response, nil)
+
+	case "monitor.capability.issue", "session.capability.issue":
+		var p struct {
+			AgentSessionID int64 `json:"agent_session_id"`
+			Monitored      bool  `json:"monitored"`
+		}
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		if !p.Monitored {
+			return nil, ErrMonitoredCallerRequired
+		}
+		capability, err := d.issueMonitoredCallerCapability(p.AgentSessionID, peerID)
+		return marshal(capability, err)
 
 	case "session.identify":
 		var p struct {
@@ -1090,6 +1121,12 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		handoff, err := d.store.RequestTaskHandoff(ctx, p.HandoffID, p.TaskID, p.RequestedBy, p.RequestReport)
 		return marshal(handoff, err)
 
+	case "handoff.entry.append":
+		return d.appendTaskHandoffEntryRPC(ctx, req.Params, peerID)
+
+	case "handoff.entry.history":
+		return d.historyTaskHandoffEntryRPC(ctx, req.Params, peerID)
+
 	case "handoff.receive":
 		var p struct {
 			HandoffID  string `json:"handoff_id"`
@@ -1110,12 +1147,31 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 
 	case "handoff.complete":
 		var p struct {
-			HandoffID      string `json:"handoff_id"`
-			TaskID         int64  `json:"task_id"`
-			CompleteReport string `json:"complete_report"`
+			HandoffID         string `json:"handoff_id"`
+			TaskID            int64  `json:"task_id"`
+			CompleteReport    string `json:"complete_report"`
+			AgentSessionID    int64  `json:"agent_session_id"`
+			Capability        string `json:"capability"`
+			CallerCapability  string `json:"caller_capability"`
+			MonitorCapability string `json:"monitor_capability"`
 		}
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, err
+		}
+		capabilitySessionID, capabilityErr := d.sessionFromCapability(capabilityFields{
+			Capability: p.Capability, CallerCapability: p.CallerCapability, MonitorCapability: p.MonitorCapability,
+		}, p.AgentSessionID, peerID)
+		if capabilityErr != nil {
+			return nil, capabilityErr
+		}
+		if capabilitySessionID != 0 && p.HandoffID != "" {
+			handoff, err := d.store.GetTaskHandoff(ctx, p.HandoffID)
+			if err != nil {
+				return nil, err
+			}
+			if err := requireHandoffParticipant(capabilitySessionID, handoff.RequestedBy, handoff.ReceivedBy); err != nil {
+				return nil, err
+			}
 		}
 		var handoff store.TaskHandoff
 		var err error
@@ -1186,6 +1242,12 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		handoff, err := d.store.RequestGoalHandoff(ctx, p.HandoffID, p.GoalID, p.RequestedBy, p.RequestReport)
 		return marshal(handoff, err)
 
+	case "goal.handoff.entry.append":
+		return d.appendGoalHandoffEntryRPC(ctx, req.Params, peerID)
+
+	case "goal.handoff.entry.history":
+		return d.historyGoalHandoffEntryRPC(ctx, req.Params, peerID)
+
 	case "goal.handoff.receive":
 		var p struct {
 			HandoffID  string `json:"handoff_id"`
@@ -1206,12 +1268,31 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 
 	case "goal.handoff.complete":
 		var p struct {
-			HandoffID      string `json:"handoff_id"`
-			GoalID         int64  `json:"goal_id"`
-			CompleteReport string `json:"complete_report"`
+			HandoffID         string `json:"handoff_id"`
+			GoalID            int64  `json:"goal_id"`
+			CompleteReport    string `json:"complete_report"`
+			AgentSessionID    int64  `json:"agent_session_id"`
+			Capability        string `json:"capability"`
+			CallerCapability  string `json:"caller_capability"`
+			MonitorCapability string `json:"monitor_capability"`
 		}
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, err
+		}
+		capabilitySessionID, capabilityErr := d.sessionFromCapability(capabilityFields{
+			Capability: p.Capability, CallerCapability: p.CallerCapability, MonitorCapability: p.MonitorCapability,
+		}, p.AgentSessionID, peerID)
+		if capabilityErr != nil {
+			return nil, capabilityErr
+		}
+		if capabilitySessionID != 0 && p.HandoffID != "" {
+			handoff, err := d.store.GetGoalHandoff(ctx, p.HandoffID)
+			if err != nil {
+				return nil, err
+			}
+			if err := requireHandoffParticipant(capabilitySessionID, handoff.RequestedBy, handoff.ReceivedBy); err != nil {
+				return nil, err
+			}
 		}
 		var handoff store.GoalHandoff
 		var err error

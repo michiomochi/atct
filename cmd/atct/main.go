@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -40,8 +41,18 @@ type cliConfig struct {
 	contextBrief            bool
 	contextCheck            bool
 	handoffAction           string
+	handoffScope            string
 	handoffID               string
 	handoffTaskID           string
+	handoffGoalID           string
+	handoffEntryKind        string
+	handoffEntryBody        string
+	handoffRelatesTo        string
+	handoffCursor           int64
+	handoffLimit            int
+	handoffCompleteReport   string
+	handoffCapability       string
+	handoffAgentSessionID   string
 	projectSpecified        bool
 	projectAction           string
 	projectName             string
@@ -83,7 +94,7 @@ var validSubcommands = map[string]bool{
 var validDaemonActions = map[string]bool{"start": true, "stop": true}
 var validProjectActions = map[string]bool{"add": true, "list": true}
 var validGoalActions = map[string]bool{"add": true, "list": true}
-var validHandoffActions = map[string]bool{"complete": true, "yielded": true}
+var validHandoffActions = map[string]bool{"append": true, "complete": true, "history": true, "yielded": true}
 
 var codexMonitorPassthroughCommands = map[string]struct{}{
 	"app-server":       {},
@@ -127,8 +138,14 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "  pending              Print unanswered human decisions for the current project")
 	fmt.Fprintln(os.Stderr, "  watch [-goal string] [-project]  Stream human decision events for a Monitor")
 	fmt.Fprintln(os.Stderr, "  role                 Report the claim-derived role for an agent session")
+	fmt.Fprintln(os.Stderr, "  handoff append <handoff-id> <task-id> <kind> <body>  Append a task handoff entry")
+	fmt.Fprintln(os.Stderr, "  handoff history <handoff-id> <task-id>  Read task handoff history")
 	fmt.Fprintln(os.Stderr, "  handoff complete <handoff-id> <task-id>  Report a handoff complete")
+	fmt.Fprintln(os.Stderr, "  handoff goal append <handoff-id> <goal-id> <kind> <body>  Append a goal handoff entry")
+	fmt.Fprintln(os.Stderr, "  handoff goal history <handoff-id> <goal-id>  Read goal handoff history")
+	fmt.Fprintln(os.Stderr, "  handoff goal complete <handoff-id> <goal-id>  Report a goal handoff complete")
 	fmt.Fprintln(os.Stderr, "  handoff yielded <task-id>  Report that the worker yielded")
+	fmt.Fprintln(os.Stderr, "  handoff options: --kind, --body, --relates-to, --cursor, --limit, --report, --capability")
 	fmt.Fprintln(os.Stderr, "  codex shim install [--profile <path>]  Install the transparent Codex shim")
 	fmt.Fprintln(os.Stderr, "  codex shim run -- <args>  Run Codex through the installed shim")
 	fmt.Fprintln(os.Stderr, "  codex monitor [-- <args>]  Run an interactive Codex session with ATCT monitoring")
@@ -210,38 +227,7 @@ func parseArgs(args []string) (cliConfig, error) {
 		}
 	}
 	if sub == "handoff" {
-		if len(rest) < 1 {
-			fmt.Fprintln(os.Stderr, "handoff requires an action: complete")
-			printUsage()
-			return cliConfig{}, errInvalidArgs
-		}
-		action := rest[0]
-		if !validHandoffActions[action] {
-			fmt.Fprintf(os.Stderr, "unknown handoff action %q\n", action)
-			fmt.Fprintln(os.Stderr, "handoff requires an action: complete")
-			printUsage()
-			return cliConfig{}, errInvalidArgs
-		}
-		cfg.handoffAction = action
-		rest = rest[1:]
-		if action == "yielded" {
-			if len(rest) < 1 || strings.HasPrefix(rest[0], "-") {
-				fmt.Fprintln(os.Stderr, "handoff yielded requires a task ID")
-				printUsage()
-				return cliConfig{}, errInvalidArgs
-			}
-			cfg.handoffTaskID = rest[0]
-			rest = rest[1:]
-		} else {
-			if len(rest) < 2 || strings.HasPrefix(rest[0], "-") || strings.HasPrefix(rest[1], "-") {
-				fmt.Fprintln(os.Stderr, "handoff complete requires a handoff ID and task ID")
-				printUsage()
-				return cliConfig{}, errInvalidArgs
-			}
-			cfg.handoffID = rest[0]
-			cfg.handoffTaskID = rest[1]
-			rest = rest[2:]
-		}
+		return parseHandoffArgs(cfg, rest)
 	}
 	if sub == "codex" {
 		if len(rest) > 0 && rest[0] == "shim" {
@@ -397,6 +383,199 @@ func parseArgs(args []string) (cliConfig, error) {
 	cfg.contextBrief = contextBrief
 	cfg.contextCheck = contextCheck
 	return cfg, nil
+}
+
+func parseHandoffArgs(cfg cliConfig, args []string) (cliConfig, error) {
+	cfg.listenAddr = defaultListenAddr
+	cfg.handoffScope = "task"
+
+	if len(args) == 0 {
+		return invalidHandoffArgs("handoff requires an action: append, history, complete, or yielded")
+	}
+	if args[0] == "goal" || args[0] == "task" {
+		cfg.handoffScope = args[0]
+		args = args[1:]
+	}
+	if len(args) > 0 && args[0] == "entry" {
+		args = args[1:]
+	}
+	if len(args) == 0 {
+		return invalidHandoffArgs("handoff %s requires an action", cfg.handoffScope)
+	}
+	action := args[0]
+	if !validHandoffActions[action] {
+		return invalidHandoffArgs("unknown handoff action %q", action)
+	}
+	cfg.handoffAction = action
+	args = args[1:]
+
+	positionals, used, err := parseHandoffOptions(&cfg, args)
+	if err != nil {
+		return invalidHandoffArgs("%v", err)
+	}
+	if err := validateHandoffOptionUse(action, used); err != nil {
+		return invalidHandoffArgs("%v", err)
+	}
+
+	switch action {
+	case "yielded":
+		if cfg.handoffScope != "task" {
+			return invalidHandoffArgs("handoff yielded only supports a task ID")
+		}
+		if len(positionals) != 1 || positionals[0] == "" {
+			return invalidHandoffArgs("handoff yielded requires a task ID")
+		}
+		cfg.handoffTaskID = positionals[0]
+	case "append":
+		if len(positionals) == 4 && !used.kind && !used.body {
+			cfg.handoffEntryKind = positionals[2]
+			cfg.handoffEntryBody = positionals[3]
+			positionals = positionals[:2]
+		} else if len(positionals) != 2 || !used.kind || !used.body {
+			return invalidHandoffArgs("handoff %s append requires a handoff ID, %s ID, kind, and body", cfg.handoffScope, cfg.handoffScope)
+		}
+		if hasEmptyHandoffPositional(positionals) || cfg.handoffEntryKind == "" || cfg.handoffEntryBody == "" {
+			return invalidHandoffArgs("handoff %s append requires non-empty identifiers, kind, and body", cfg.handoffScope)
+		}
+		cfg.handoffID = positionals[0]
+		if cfg.handoffScope == "goal" {
+			cfg.handoffGoalID = positionals[1]
+		} else {
+			cfg.handoffTaskID = positionals[1]
+		}
+	case "history", "complete":
+		if len(positionals) != 2 || hasEmptyHandoffPositional(positionals) {
+			return invalidHandoffArgs("handoff %s %s requires a handoff ID and %s ID", cfg.handoffScope, action, cfg.handoffScope)
+		}
+		cfg.handoffID = positionals[0]
+		if cfg.handoffScope == "goal" {
+			cfg.handoffGoalID = positionals[1]
+		} else {
+			cfg.handoffTaskID = positionals[1]
+		}
+	}
+	return cfg, nil
+}
+
+type handoffOptionUse struct {
+	relatesTo      bool
+	kind           bool
+	body           bool
+	cursor         bool
+	limit          bool
+	report         bool
+	capability     bool
+	agentSessionID bool
+}
+
+func parseHandoffOptions(cfg *cliConfig, args []string) ([]string, handoffOptionUse, error) {
+	var positionals []string
+	var used handoffOptionUse
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "--" {
+			positionals = append(positionals, args[i+1:]...)
+			break
+		}
+		if !strings.HasPrefix(arg, "-") || arg == "-" {
+			positionals = append(positionals, arg)
+			continue
+		}
+
+		name, value, hasValue := splitHandoffOption(arg)
+		if !hasValue {
+			if i+1 >= len(args) {
+				return nil, used, fmt.Errorf("option %s requires a value", name)
+			}
+			i++
+			value = args[i]
+		}
+		if value == "" && name != "--report" && name != "--complete-report" {
+			return nil, used, fmt.Errorf("option %s requires a non-empty value", name)
+		}
+
+		switch name {
+		case "-listen", "--listen":
+			cfg.listenAddr = value
+			cfg.listenExplicit = true
+		case "--relates-to":
+			cfg.handoffRelatesTo = value
+			used.relatesTo = true
+		case "--kind":
+			cfg.handoffEntryKind = value
+			used.kind = true
+		case "--body":
+			cfg.handoffEntryBody = value
+			used.body = true
+		case "--cursor":
+			cursor, err := strconv.ParseInt(value, 10, 64)
+			if err != nil {
+				return nil, used, fmt.Errorf("option --cursor must be an integer: %w", err)
+			}
+			cfg.handoffCursor = cursor
+			used.cursor = true
+		case "--limit":
+			limit, err := strconv.Atoi(value)
+			if err != nil {
+				return nil, used, fmt.Errorf("option --limit must be an integer: %w", err)
+			}
+			cfg.handoffLimit = limit
+			used.limit = true
+		case "--report", "--complete-report":
+			cfg.handoffCompleteReport = value
+			used.report = true
+		case "--capability", "--caller-capability", "--monitor-capability":
+			cfg.handoffCapability = value
+			used.capability = true
+		case "--agent-session-id":
+			cfg.handoffAgentSessionID = value
+			used.agentSessionID = true
+		default:
+			return nil, used, fmt.Errorf("unknown handoff option %q", name)
+		}
+	}
+	return positionals, used, nil
+}
+
+func splitHandoffOption(arg string) (name, value string, hasValue bool) {
+	if index := strings.IndexByte(arg, '='); index >= 0 {
+		return arg[:index], arg[index+1:], true
+	}
+	return arg, "", false
+}
+
+func validateHandoffOptionUse(action string, used handoffOptionUse) error {
+	if used.relatesTo && action != "append" {
+		return errors.New("--relates-to is only valid for handoff append")
+	}
+	if (used.kind || used.body) && action != "append" {
+		return errors.New("--kind and --body are only valid for handoff append")
+	}
+	if (used.cursor || used.limit) && action != "history" {
+		return errors.New("--cursor and --limit are only valid for handoff history")
+	}
+	if used.report && action != "complete" {
+		return errors.New("--report is only valid for handoff complete")
+	}
+	if (used.capability || used.agentSessionID) && action == "yielded" {
+		return errors.New("handoff yielded does not accept caller authorization options")
+	}
+	return nil
+}
+
+func hasEmptyHandoffPositional(positionals []string) bool {
+	for _, positional := range positionals {
+		if positional == "" {
+			return true
+		}
+	}
+	return false
+}
+
+func invalidHandoffArgs(format string, args ...any) (cliConfig, error) {
+	fmt.Fprintf(os.Stderr, format+"\n", args...)
+	printUsage()
+	return cliConfig{}, errInvalidArgs
 }
 
 func validateCodexMonitorRole(cfg cliConfig) error {
@@ -817,6 +996,26 @@ func runHandoff(config cliConfig, dir, exePath string) error {
 		}, nil)
 	}
 
+	capability := strings.TrimSpace(config.handoffCapability)
+	if capability == "" {
+		for _, envName := range []string{
+			"ATCT_MONITOR_CAPABILITY",
+			"ATCT_MONITORED_CALLER_CAPABILITY",
+			"ATCT_CALLER_CAPABILITY",
+		} {
+			if value := strings.TrimSpace(os.Getenv(envName)); value != "" {
+				capability = value
+				break
+			}
+		}
+	}
+	if capability == "" {
+		return daemon.ErrMonitoredCallerRequired
+	}
+	if config.handoffAction == "complete" && strings.TrimSpace(config.handoffCompleteReport) == "" {
+		return errors.New("handoff complete requires a non-empty --report")
+	}
+
 	reg, err := daemonctl.Ensure(daemonctl.Config{
 		Dir:            dir,
 		Version:        version,
@@ -829,15 +1028,77 @@ func runHandoff(config cliConfig, dir, exePath string) error {
 	}
 
 	client := mcpshim.NewClient(reg.SocketPath)
-	var handoff store.TaskHandoff
-	if err := client.Call(context.Background(), "handoff.complete", map[string]string{
+	ctx := context.Background()
+	params := map[string]any{
 		"handoff_id": config.handoffID,
-		"task_id":    config.handoffTaskID,
-	}, &handoff); err != nil {
-		return err
+		"capability": capability,
 	}
-	fmt.Fprintf(os.Stderr, "atct handoff: task %d reported complete\n", handoff.TaskID)
-	return nil
+	if config.handoffScope == "goal" {
+		params["goal_id"] = config.handoffGoalID
+	} else {
+		params["task_id"] = config.handoffTaskID
+	}
+	if config.handoffAgentSessionID != "" {
+		agentSessionID, err := strconv.ParseInt(config.handoffAgentSessionID, 10, 64)
+		if err != nil || agentSessionID <= 0 {
+			return fmt.Errorf("agent session ID must be a positive integer: %q", config.handoffAgentSessionID)
+		}
+		params["agent_session_id"] = agentSessionID
+	}
+
+	switch config.handoffAction {
+	case "append":
+		params["kind"] = config.handoffEntryKind
+		params["body"] = config.handoffEntryBody
+		if config.handoffRelatesTo != "" {
+			params["relates_to"] = config.handoffRelatesTo
+		}
+		method := "handoff.entry.append"
+		var entry store.HandoffEntry
+		if config.handoffScope == "goal" {
+			method = "goal.handoff.entry.append"
+		}
+		if err := client.Call(ctx, method, params, &entry); err != nil {
+			return err
+		}
+		return json.NewEncoder(os.Stdout).Encode(entry)
+
+	case "history":
+		if config.handoffCursor != 0 {
+			params["cursor"] = config.handoffCursor
+		}
+		if config.handoffLimit != 0 {
+			params["limit"] = config.handoffLimit
+		}
+		method := "handoff.entry.history"
+		var page store.HandoffEntryPage
+		if config.handoffScope == "goal" {
+			method = "goal.handoff.entry.history"
+		}
+		if err := client.Call(ctx, method, params, &page); err != nil {
+			return err
+		}
+		return json.NewEncoder(os.Stdout).Encode(page)
+
+	case "complete":
+		params["complete_report"] = config.handoffCompleteReport
+		if config.handoffScope == "goal" {
+			var handoff store.GoalHandoff
+			if err := client.Call(ctx, "goal.handoff.complete", params, &handoff); err != nil {
+				return err
+			}
+			fmt.Fprintf(os.Stderr, "atct handoff: goal %d reported complete\n", handoff.GoalID)
+			return nil
+		}
+		var handoff store.TaskHandoff
+		if err := client.Call(ctx, "handoff.complete", params, &handoff); err != nil {
+			return err
+		}
+		fmt.Fprintf(os.Stderr, "atct handoff: task %d reported complete\n", handoff.TaskID)
+		return nil
+	default:
+		return fmt.Errorf("unsupported handoff action %q", config.handoffAction)
+	}
 }
 
 // addGoal joins the positional argument and --description the same way the

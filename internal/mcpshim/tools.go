@@ -93,6 +93,21 @@ type HandoffReportAmendIn struct {
 	CompleteReport string `json:"complete_report"`
 }
 
+type HandoffEntryAppendIn struct {
+	HandoffID string `json:"handoff_id"`
+	TaskID    mcpID  `json:"task_id"`
+	Kind      string `json:"kind"`
+	Body      string `json:"body"`
+	RelatesTo string `json:"relates_to,omitempty"`
+}
+
+type HandoffEntryHistoryIn struct {
+	HandoffID string `json:"handoff_id"`
+	TaskID    mcpID  `json:"task_id"`
+	Cursor    int64  `json:"cursor,omitempty"`
+	Limit     int    `json:"limit,omitempty"`
+}
+
 type GoalHandoffRequestIn struct {
 	HandoffID     string `json:"handoff_id"`
 	GoalID        mcpID  `json:"goal_id"`
@@ -114,6 +129,21 @@ type GoalHandoffReportAmendIn struct {
 	HandoffID      string `json:"handoff_id"`
 	GoalID         mcpID  `json:"goal_id"`
 	CompleteReport string `json:"complete_report"`
+}
+
+type GoalHandoffEntryAppendIn struct {
+	HandoffID string `json:"handoff_id"`
+	GoalID    mcpID  `json:"goal_id"`
+	Kind      string `json:"kind"`
+	Body      string `json:"body"`
+	RelatesTo string `json:"relates_to,omitempty"`
+}
+
+type GoalHandoffEntryHistoryIn struct {
+	HandoffID string `json:"handoff_id"`
+	GoalID    mcpID  `json:"goal_id"`
+	Cursor    int64  `json:"cursor,omitempty"`
+	Limit     int    `json:"limit,omitempty"`
 }
 
 type TaskUpdateIn struct {
@@ -666,6 +696,38 @@ func Register(server *mcp.Server, c *Client, agentSessionID int64) {
 		})
 	})
 
+	addMCPTool[HandoffEntryAppendIn, RawWithUnappliedDecisions](server, &mcp.Tool{
+		Name:         "atct_handoff_entry_append",
+		Description:  "Append a progress, question, answer, or review entry to a task handoff. The caller must be a handoff participant.",
+		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in HandoffEntryAppendIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
+		params := map[string]any{
+			"handoff_id": in.HandoffID, "task_id": in.TaskID, "kind": in.Kind, "body": in.Body,
+			"agent_session_id": sessionID.Get(),
+		}
+		if in.RelatesTo != "" {
+			params["relates_to"] = in.RelatesTo
+		}
+		return callWithUnappliedDecisions(ctx, c, "handoff.entry.append", params)
+	})
+
+	addMCPTool[HandoffEntryHistoryIn, RawWithUnappliedDecisions](server, &mcp.Tool{
+		Name:         "atct_handoff_entry_history",
+		Description:  "Read a cursor page of a task handoff's immutable conversation history.",
+		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in HandoffEntryHistoryIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
+		params := map[string]any{
+			"handoff_id": in.HandoffID, "task_id": in.TaskID, "agent_session_id": sessionID.Get(),
+		}
+		if in.Cursor != 0 {
+			params["cursor"] = in.Cursor
+		}
+		if in.Limit != 0 {
+			params["limit"] = in.Limit
+		}
+		return callWithUnappliedDecisions(ctx, c, "handoff.entry.history", params)
+	})
+
 	addMCPTool[GoalHandoffRequestIn, RawWithUnappliedDecisions](server, &mcp.Tool{
 		Name:         "atct_goal_handoff_request",
 		Description:  "Request a goal handoff. The goal must have a live claim.",
@@ -713,6 +775,38 @@ func Register(server *mcp.Server, c *Client, agentSessionID int64) {
 		return callWithUnappliedDecisions(ctx, c, "goal.handoff.report.amend", map[string]any{
 			"handoff_id": in.HandoffID, "goal_id": in.GoalID, "complete_report": in.CompleteReport,
 		})
+	})
+
+	addMCPTool[GoalHandoffEntryAppendIn, RawWithUnappliedDecisions](server, &mcp.Tool{
+		Name:         "atct_goal_handoff_entry_append",
+		Description:  "Append a progress, question, answer, or review entry to a goal handoff. The caller must be a handoff participant.",
+		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in GoalHandoffEntryAppendIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
+		params := map[string]any{
+			"handoff_id": in.HandoffID, "goal_id": in.GoalID, "kind": in.Kind, "body": in.Body,
+			"agent_session_id": sessionID.Get(),
+		}
+		if in.RelatesTo != "" {
+			params["relates_to"] = in.RelatesTo
+		}
+		return callWithUnappliedDecisions(ctx, c, "goal.handoff.entry.append", params)
+	})
+
+	addMCPTool[GoalHandoffEntryHistoryIn, RawWithUnappliedDecisions](server, &mcp.Tool{
+		Name:         "atct_goal_handoff_entry_history",
+		Description:  "Read a cursor page of a goal handoff's immutable conversation history.",
+		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in GoalHandoffEntryHistoryIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
+		params := map[string]any{
+			"handoff_id": in.HandoffID, "goal_id": in.GoalID, "agent_session_id": sessionID.Get(),
+		}
+		if in.Cursor != 0 {
+			params["cursor"] = in.Cursor
+		}
+		if in.Limit != 0 {
+			params["limit"] = in.Limit
+		}
+		return callWithUnappliedDecisions(ctx, c, "goal.handoff.entry.history", params)
 	})
 
 	addMCPTool[TaskUpdateIn, RawWithUnappliedDecisions](server, &mcp.Tool{
