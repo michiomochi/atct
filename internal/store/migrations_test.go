@@ -1,7 +1,9 @@
 package store
 
 import (
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -59,6 +61,77 @@ func TestEmptyDatabaseAppliesBaselineMigration(t *testing.T) {
 	}
 }
 
+func TestMigration0026RecoveredSourceHash(t *testing.T) {
+	migrations, err := loadEmbeddedMigrations()
+	if err != nil {
+		t.Fatalf("load embedded migrations: %v", err)
+	}
+
+	const (
+		filename = "0026_goal_review_snapshots.sql"
+		wantHash = "bb1a0df63877b7808bce7a897afe9909968537eb740f752ffabe0e05a3266042"
+		wantSize = 1822
+	)
+	for _, migration := range migrations {
+		if migration.filename != filename {
+			continue
+		}
+		if size := len([]byte(migration.sql)); size != wantSize {
+			t.Fatalf("%s byte length = %d, want %d", filename, size, wantSize)
+		}
+		hash := sha256.Sum256([]byte(migration.sql))
+		if gotHash := hex.EncodeToString(hash[:]); gotHash != wantHash {
+			t.Fatalf("%s sha256 = %s, want %s", filename, gotHash, wantHash)
+		}
+		return
+	}
+	t.Fatalf("embedded migrations do not contain %s", filename)
+}
+
+func TestForwardSnapshotRemovalMigration(t *testing.T) {
+	db := openMigrationTestDB(t)
+	migrations, err := loadEmbeddedMigrations()
+	if err != nil {
+		t.Fatalf("load embedded migrations: %v", err)
+	}
+
+	const (
+		snapshotCreation = "0026_goal_review_snapshots.sql"
+		deliveryRemoval  = "0027_drop_workflow_event_delivery.sql"
+		snapshotRemoval  = "0028_drop_goal_review_snapshots.sql"
+	)
+	found := make(map[string]bool, 3)
+	for _, migration := range migrations {
+		if _, err := db.Exec(migration.sql); err != nil {
+			t.Fatalf("apply migration %s: %v", migration.filename, err)
+		}
+		if _, err := db.Exec(`INSERT INTO schema_migrations (filename, applied_at) VALUES (?, ?)`, migration.filename, "2026-09-05T00:00:00Z"); err != nil {
+			t.Fatalf("record migration %s: %v", migration.filename, err)
+		}
+
+		switch migration.filename {
+		case snapshotCreation:
+			found[snapshotCreation] = true
+			assertTableExists(t, db, "goal_review_snapshots")
+		case deliveryRemoval:
+			found[deliveryRemoval] = true
+			for _, table := range []string{"workflow_event_outbox", "project_event_sequences", "watch_delivery_cursors"} {
+				assertTableAbsent(t, db, table)
+			}
+		case snapshotRemoval:
+			found[snapshotRemoval] = true
+			assertTableAbsent(t, db, "goal_review_snapshots")
+		}
+	}
+
+	for _, filename := range []string{snapshotCreation, deliveryRemoval, snapshotRemoval} {
+		if !found[filename] {
+			t.Fatalf("embedded migrations do not contain %s", filename)
+		}
+		assertMigrationRecorded(t, db, filename)
+	}
+}
+
 func TestForwardDeliveryRemovalMigrationPreservesCanonicalRows(t *testing.T) {
 	db := openMigrationTestDB(t)
 	migrations, err := loadEmbeddedMigrations()
@@ -66,7 +139,7 @@ func TestForwardDeliveryRemovalMigrationPreservesCanonicalRows(t *testing.T) {
 		t.Fatalf("load embedded migrations: %v", err)
 	}
 
-	const deliveryRemoval = "0026_drop_workflow_event_delivery.sql"
+	const deliveryRemoval = "0027_drop_workflow_event_delivery.sql"
 	foundRemoval := false
 	for _, migration := range migrations {
 		if migration.filename == deliveryRemoval {
