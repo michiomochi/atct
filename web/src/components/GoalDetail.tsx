@@ -546,6 +546,17 @@ export function GoalDetail({ id }: Props) {
 
       {data && <CompletionReport goal={data.goal.goal} />}
 
+      {data && (
+        <section className="grid min-w-0 gap-6 border-t border-line pt-5 sm:grid-cols-2" data-testid="request-report">
+          {([{ key: "spec", label: "goal.spec" }, { key: "plan", label: "goal.plan" }] as const).map(({ key, label }) => (
+            <section key={key} className="min-w-0">
+              <h2 className="font-display text-lg font-semibold text-ink-950">{t(label)}</h2>
+              <p className="mt-2 whitespace-pre-wrap break-words text-base leading-6 text-ink-800">{data.goal.goal[key].trim() || t("goal.requestReport.unset")}</p>
+            </section>
+          ))}
+        </section>
+      )}
+
       {data?.completion && (
         <CompletionApproval
           decision={data.completion}
