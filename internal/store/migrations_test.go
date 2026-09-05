@@ -59,6 +59,71 @@ func TestEmptyDatabaseAppliesBaselineMigration(t *testing.T) {
 	}
 }
 
+func TestForwardDeliveryRemovalMigrationPreservesCanonicalRows(t *testing.T) {
+	db := openMigrationTestDB(t)
+	migrations, err := loadEmbeddedMigrations()
+	if err != nil {
+		t.Fatalf("load embedded migrations: %v", err)
+	}
+
+	const deliveryRemoval = "0026_drop_workflow_event_delivery.sql"
+	foundRemoval := false
+	for _, migration := range migrations {
+		if migration.filename == deliveryRemoval {
+			foundRemoval = true
+			break
+		}
+		if _, err := db.Exec(migration.sql); err != nil {
+			t.Fatalf("apply fixture migration %s: %v", migration.filename, err)
+		}
+		if _, err := db.Exec(`INSERT INTO schema_migrations (filename, applied_at) VALUES (?, ?)`, migration.filename, "2026-09-05T00:00:00Z"); err != nil {
+			t.Fatalf("record fixture migration %s: %v", migration.filename, err)
+		}
+	}
+	if !foundRemoval {
+		t.Fatalf("embedded migrations do not contain %s", deliveryRemoval)
+	}
+	if _, err := db.Exec(`PRAGMA user_version = 6`); err != nil {
+		t.Fatalf("set fixture schema version: %v", err)
+	}
+	if _, err := db.Exec(`
+INSERT INTO projects (id, name, root_path, created_at)
+VALUES (1, 'delivery removal project', '/delivery-removal', '2026-09-05T00:00:00Z');
+INSERT INTO goals (id, project_id, content, status, created_at, updated_at)
+VALUES (1, 1, 'delivery removal goal', 'active', '2026-09-05T00:00:00Z', '2026-09-05T00:00:00Z');
+INSERT INTO tasks (id, goal_id, title, status, declare_key, created_at, updated_at)
+VALUES (1, 1, 'delivery removal task', 'todo', 'delivery-removal-task', '2026-09-05T00:00:00Z', '2026-09-05T00:00:00Z');
+INSERT INTO decisions (id, goal_id, task_id, kind, question, options, status, agent_session_id, created_at)
+VALUES (1, 1, 1, 'decision', 'keep the canonical row?', '[{"label":"yes"}]', 'open', 0, '2026-09-05T00:00:00Z');
+INSERT INTO project_event_sequences (project_id, last_sequence)
+VALUES (1, 7);
+INSERT INTO workflow_event_outbox (project_id, sequence, event_id, event_name, goal_id, task_id, decision_id, payload, occurred_at)
+VALUES (1, 7, '1:7', 'decision.created', 1, 1, 1, '{}', '2026-09-05T00:00:00Z');
+INSERT INTO watch_delivery_cursors (watcher_key, project_id, goal_id, sequence, updated_at)
+VALUES ('delivery-removal-watcher', 1, 1, 7, '2026-09-05T00:00:00Z');
+`); err != nil {
+		t.Fatalf("insert migration fixture rows: %v", err)
+	}
+
+	if err := applyEmbeddedMigrations(db); err != nil {
+		t.Fatalf("apply forward delivery removal migration: %v", err)
+	}
+	for _, table := range []string{"workflow_event_outbox", "project_event_sequences", "watch_delivery_cursors"} {
+		assertTableAbsent(t, db, table)
+	}
+	for _, table := range []string{"projects", "goals", "tasks", "decisions"} {
+		assertTableExists(t, db, table)
+		var count int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM ` + table).Scan(&count); err != nil {
+			t.Fatalf("count canonical %s rows: %v", table, err)
+		}
+		if count != 1 {
+			t.Fatalf("canonical %s row count = %d, want 1", table, count)
+		}
+	}
+	assertMigrationRecorded(t, db, deliveryRemoval)
+}
+
 func TestAgentSessionMigrationRenamesLegacySchema(t *testing.T) {
 	db := openMigrationTestDB(t)
 	if _, err := db.Exec(embeddedBaselineSQL(t)); err != nil {

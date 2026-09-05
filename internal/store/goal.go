@@ -79,12 +79,7 @@ func (s *Store) CreateGoal(ctx context.Context, projectID int64, content, creato
 		return domain.Goal{}, fmt.Errorf("insert goal: %w", err)
 	}
 	g.ID = id
-	event, err := s.persistWorkflowEvent(ctx, tx, DecisionEvent{
-		Name: "goal.created", Data: g, OccurredAt: g.CreatedAt,
-	}, workflowEventMetadata{ProjectID: g.ProjectID, GoalID: g.ID})
-	if err != nil {
-		return domain.Goal{}, fmt.Errorf("persist goal creation event: %w", err)
-	}
+	event := DecisionEvent{Name: "goal.created", Data: g, OccurredAt: g.CreatedAt}
 	if err := tx.Commit(); err != nil {
 		return domain.Goal{}, fmt.Errorf("commit goal creation: %w", err)
 	}
@@ -660,12 +655,7 @@ func (s *Store) RequestGoalReview(ctx context.Context, goalID, agentSessionID in
 	if err != nil {
 		return domain.Decision{}, err
 	}
-	event, err := s.persistWorkflowEvent(ctx, tx, DecisionEvent{
-		Name: "decision.created", Data: decision, OccurredAt: decision.CreatedAt,
-	}, workflowEventMetadata{GoalID: decision.GoalID, DecisionID: decision.ID})
-	if err != nil {
-		return domain.Decision{}, fmt.Errorf("persist goal review creation event: %w", err)
-	}
+	event := DecisionEvent{Name: "decision.created", Data: decision, OccurredAt: decision.CreatedAt}
 	if err := tx.Commit(); err != nil {
 		return domain.Decision{}, fmt.Errorf("commit goal review creation: %w", err)
 	}
@@ -715,9 +705,9 @@ func (s *Store) ApproveGoalReview(ctx context.Context, decisionID int64) (domain
 	if err != nil {
 		return domain.Goal{}, fmt.Errorf("get approved goal review decision: %w", err)
 	}
-	event, err := s.persistDecisionEvent(ctx, tx, "decision.approved", row)
+	event, err := workflowDecisionEvent("decision.approved", row)
 	if err != nil {
-		return domain.Goal{}, fmt.Errorf("persist approved goal review event: %w", err)
+		return domain.Goal{}, fmt.Errorf("build approved goal review event: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
 		return domain.Goal{}, fmt.Errorf("commit goal review approval: %w", err)
@@ -756,9 +746,9 @@ func (s *Store) RejectGoalReview(ctx context.Context, decisionID int64, reason s
 	if err != nil {
 		return fmt.Errorf("get rejected goal review decision: %w", err)
 	}
-	event, err := s.persistDecisionEvent(ctx, tx, "decision.rejected", row)
+	event, err := workflowDecisionEvent("decision.rejected", row)
 	if err != nil {
-		return fmt.Errorf("persist rejected goal review event: %w", err)
+		return fmt.Errorf("build rejected goal review event: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit goal review rejection: %w", err)
@@ -923,9 +913,9 @@ func (s *Store) ApproveCompletion(ctx context.Context, decisionID int64) (domain
 	if err != nil {
 		return domain.Goal{}, fmt.Errorf("get approved completion decision: %w", err)
 	}
-	event, err := s.persistDecisionEvent(ctx, tx, "decision.approved", row)
+	event, err := workflowDecisionEvent("decision.approved", row)
 	if err != nil {
-		return domain.Goal{}, fmt.Errorf("persist approved completion event: %w", err)
+		return domain.Goal{}, fmt.Errorf("build approved completion event: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
 		return domain.Goal{}, fmt.Errorf("commit: %w", err)
@@ -966,9 +956,9 @@ func (s *Store) RejectCompletion(ctx context.Context, decisionID int64, reason s
 	if err != nil {
 		return fmt.Errorf("get decision: %w", err)
 	}
-	decisionEvent, err := s.persistDecisionEvent(ctx, tx, "decision.rejected", d)
+	decisionEvent, err := workflowDecisionEvent("decision.rejected", d)
 	if err != nil {
-		return fmt.Errorf("persist completion rejection event: %w", err)
+		return fmt.Errorf("build completion rejection event: %w", err)
 	}
 	events := []DecisionEvent{decisionEvent}
 	if d.Kind == "completion" && d.AgentSessionID != 0 {
@@ -1013,12 +1003,13 @@ func (s *Store) RejectCompletion(ctx context.Context, decisionID int64, reason s
 			}); err != nil {
 				return fmt.Errorf("request reopened goal handoff: %w", err)
 			}
-			requestEvent, err := s.persistWorkflowEvent(ctx, tx, Event{
-				Name: EventGoalHandoffRequest,
-				Data: HandoffEvent{GoalID: selected.GoalID, HandoffID: reopenID, RequestedBy: selected.RequestedBy, RequestReport: requestReport},
-			}, workflowEventMetadata{GoalID: selected.GoalID, HandoffID: reopenID})
+			projectID, err := q.GetGoalProjectID(ctx, selected.GoalID)
 			if err != nil {
-				return fmt.Errorf("persist reopened goal handoff request event: %w", err)
+				return fmt.Errorf("find project for reopened goal handoff: %w", err)
+			}
+			requestEvent := DecisionEvent{
+				Name: EventGoalHandoffRequest,
+				Data: HandoffEvent{ProjectID: projectID, GoalID: selected.GoalID, HandoffID: reopenID, RequestedBy: selected.RequestedBy, RequestReport: requestReport},
 			}
 			events = append(events, requestEvent)
 			result, err := txq.ReceiveGoalHandoff(ctx, sqlcgen.ReceiveGoalHandoffParams{
@@ -1035,12 +1026,9 @@ func (s *Store) RejectCompletion(ctx context.Context, decisionID int64, reason s
 			} else if rows != 1 {
 				return fmt.Errorf("reopened goal handoff was not received: %q", reopenID)
 			}
-			receiveEvent, err := s.persistWorkflowEvent(ctx, tx, Event{
+			receiveEvent := DecisionEvent{
 				Name: EventGoalHandoffReceive,
-				Data: HandoffEvent{GoalID: selected.GoalID, HandoffID: reopenID, ReceivedBy: selected.ReceivedBy},
-			}, workflowEventMetadata{GoalID: selected.GoalID, HandoffID: reopenID})
-			if err != nil {
-				return fmt.Errorf("persist reopened goal handoff receive event: %w", err)
+				Data: HandoffEvent{ProjectID: projectID, GoalID: selected.GoalID, HandoffID: reopenID, ReceivedBy: selected.ReceivedBy},
 			}
 			events = append(events, receiveEvent)
 		}
@@ -1100,9 +1088,9 @@ func (s *Store) ApproveGoal(ctx context.Context, decisionID int64) (domain.Goal,
 	if err != nil {
 		return domain.Goal{}, fmt.Errorf("get approved goal decision: %w", err)
 	}
-	event, err := s.persistDecisionEvent(ctx, tx, "decision.approved", row)
+	event, err := workflowDecisionEvent("decision.approved", row)
 	if err != nil {
-		return domain.Goal{}, fmt.Errorf("persist approved goal event: %w", err)
+		return domain.Goal{}, fmt.Errorf("build approved goal event: %w", err)
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -1159,9 +1147,9 @@ func (s *Store) RejectGoal(ctx context.Context, decisionID int64, reason string)
 	if err != nil {
 		return fmt.Errorf("get rejected goal decision: %w", err)
 	}
-	event, err := s.persistDecisionEvent(ctx, tx, "decision.rejected", row)
+	event, err := workflowDecisionEvent("decision.rejected", row)
 	if err != nil {
-		return fmt.Errorf("persist rejected goal event: %w", err)
+		return fmt.Errorf("build rejected goal event: %w", err)
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -1260,16 +1248,13 @@ func (s *Store) WithdrawActiveGoal(ctx context.Context, goalID int64, reason str
 		}
 	}
 	withdrawnEvents := make([]DecisionEvent, 0, len(openDecisions)+1)
-	goalEvent, err := s.persistWorkflowEvent(ctx, tx, Event{
+	goalEvent := DecisionEvent{
 		Name: EventGoalWithdrawn,
 		Data: GoalWithdrawnEvent{
 			GoalID: goalID, ProjectID: projectID, Reason: reason,
 			DroppedTaskIDs: droppedTaskIDs, ClosedTaskHandoffIDs: closedHandoffIDs,
 			WithdrawnDecisionIDs: withdrawnDecisionIDs,
 		},
-	}, workflowEventMetadata{ProjectID: projectID, GoalID: goalID})
-	if err != nil {
-		return fmt.Errorf("persist goal withdrawal event: %w", err)
 	}
 	withdrawnEvents = append(withdrawnEvents, goalEvent)
 	for _, decision := range openDecisions {
@@ -1277,9 +1262,9 @@ func (s *Store) WithdrawActiveGoal(ctx context.Context, goalID int64, reason str
 		if err != nil {
 			return fmt.Errorf("get withdrawn decision %d: %w", decision.ID, err)
 		}
-		event, err := s.persistDecisionEvent(ctx, tx, "decision.withdrawn", row)
+		event, err := workflowDecisionEvent("decision.withdrawn", row)
 		if err != nil {
-			return fmt.Errorf("persist withdrawn decision %d event: %w", decision.ID, err)
+			return fmt.Errorf("build withdrawn decision %d event: %w", decision.ID, err)
 		}
 		withdrawnEvents = append(withdrawnEvents, event)
 	}

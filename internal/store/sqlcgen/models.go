@@ -96,11 +96,6 @@ type Project struct {
 	ClaimedAt sql.NullString
 }
 
-type ProjectEventSequence struct {
-	ProjectID    int64
-	LastSequence int64
-}
-
 type SchemaMigration struct {
 	Filename  string
 	AppliedAt string
@@ -147,25 +142,4 @@ type TaskHandoff struct {
 	ReviewReceivedAt    sql.NullString
 	ReviewRejectedAt    sql.NullString
 	ReviewRejectReport  sql.NullString
-}
-
-type WatchDeliveryCursor struct {
-	WatcherKey string
-	ProjectID  int64
-	GoalID     int64
-	Sequence   int64
-	UpdatedAt  string
-}
-
-type WorkflowEventOutbox struct {
-	ProjectID  int64
-	Sequence   int64
-	EventID    string
-	EventName  string
-	GoalID     sql.NullInt64
-	TaskID     sql.NullInt64
-	DecisionID sql.NullInt64
-	HandoffID  sql.NullString
-	Payload    string
-	OccurredAt string
 }

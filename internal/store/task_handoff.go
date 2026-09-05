@@ -28,6 +28,18 @@ const (
 	taskHandoffReleasedReport  = "作業ロックを手放した（報告者なし）"
 )
 
+func taskWorkflowEventScope(ctx context.Context, q *sqlcgen.Queries, taskID int64) (projectID, goalID int64, err error) {
+	goalID, err = q.GetTaskGoalID(ctx, taskID)
+	if err != nil {
+		return 0, 0, fmt.Errorf("find goal for task workflow event: %w", err)
+	}
+	projectID, err = q.GetGoalProjectID(ctx, goalID)
+	if err != nil {
+		return 0, 0, fmt.Errorf("find project for task workflow event: %w", err)
+	}
+	return projectID, goalID, nil
+}
+
 // TaskHandoff records one delegation between agents. Each event timestamp is
 // independent so a partial handoff remains observable.
 type TaskHandoff struct {
@@ -260,12 +272,13 @@ func (s *Store) requestTaskHandoff(ctx context.Context, handoffID string, taskID
 	} else if affected == 0 {
 		return TaskHandoff{}, fmt.Errorf("%w: %d", ErrTaskNotFound, taskID)
 	}
-	event, err := s.persistWorkflowEvent(ctx, tx, Event{
-		Name: EventTaskHandoffRequest,
-		Data: HandoffEvent{TaskID: taskID, HandoffID: handoffID, RequestedBy: requestedBy, RequestReport: requestReport},
-	}, workflowEventMetadata{TaskID: taskID, HandoffID: handoffID})
+	projectID, goalID, err := taskWorkflowEventScope(ctx, q, taskID)
 	if err != nil {
-		return TaskHandoff{}, fmt.Errorf("persist task handoff request event: %w", err)
+		return TaskHandoff{}, err
+	}
+	event := DecisionEvent{
+		Name: EventTaskHandoffRequest,
+		Data: HandoffEvent{ProjectID: projectID, GoalID: goalID, TaskID: taskID, HandoffID: handoffID, RequestedBy: requestedBy, RequestReport: requestReport},
 	}
 	if err := tx.Commit(); err != nil {
 		return TaskHandoff{}, fmt.Errorf("commit task handoff request: %w", err)
@@ -315,12 +328,13 @@ func (s *Store) ReceiveTaskHandoff(ctx context.Context, handoffID string, taskID
 	} else if affected == 0 {
 		return TaskHandoff{}, fmt.Errorf("%w: %d", ErrTaskNotFound, taskID)
 	}
-	event, err := s.persistWorkflowEvent(ctx, tx, Event{
-		Name: EventTaskHandoffReceive,
-		Data: HandoffEvent{TaskID: taskID, HandoffID: handoffID, ReceivedBy: receivedBy},
-	}, workflowEventMetadata{TaskID: taskID, HandoffID: handoffID})
+	projectID, goalID, err := taskWorkflowEventScope(ctx, q, taskID)
 	if err != nil {
-		return TaskHandoff{}, fmt.Errorf("persist task handoff receive event: %w", err)
+		return TaskHandoff{}, err
+	}
+	event := DecisionEvent{
+		Name: EventTaskHandoffReceive,
+		Data: HandoffEvent{ProjectID: projectID, GoalID: goalID, TaskID: taskID, HandoffID: handoffID, ReceivedBy: receivedBy},
 	}
 	if err := tx.Commit(); err != nil {
 		return TaskHandoff{}, fmt.Errorf("commit task handoff receive: %w", err)
@@ -387,12 +401,13 @@ func (s *Store) RequestTaskHandoffReview(ctx context.Context, handoffID string, 
 	} else if affected == 0 {
 		return TaskHandoff{}, fmt.Errorf("%w: %d", ErrTaskNotFound, taskID)
 	}
-	event, err := s.persistWorkflowEvent(ctx, tx, Event{
-		Name: EventTaskHandoffReviewRequest,
-		Data: HandoffReviewEvent{TaskID: taskID, HandoffID: handoffID, ReviewerID: requestedBy, ReviewRequestReport: reviewRequestReport},
-	}, workflowEventMetadata{TaskID: taskID, HandoffID: handoffID})
+	projectID, goalID, err := taskWorkflowEventScope(ctx, q, taskID)
 	if err != nil {
-		return TaskHandoff{}, fmt.Errorf("persist task handoff review request event: %w", err)
+		return TaskHandoff{}, err
+	}
+	event := DecisionEvent{
+		Name: EventTaskHandoffReviewRequest,
+		Data: HandoffReviewEvent{ProjectID: projectID, GoalID: goalID, TaskID: taskID, HandoffID: handoffID, ReviewerID: requestedBy, ReviewRequestReport: reviewRequestReport},
 	}
 	if err := tx.Commit(); err != nil {
 		return TaskHandoff{}, fmt.Errorf("commit task handoff review request: %w", err)
@@ -424,7 +439,8 @@ func (s *Store) ReceiveTaskHandoffReview(ctx context.Context, handoffID string, 
 		return TaskHandoff{}, fmt.Errorf("begin task handoff review receive tx: %w", err)
 	}
 	defer tx.Rollback()
-	result, err := sqlcgen.New(tx).ReceiveTaskHandoffReview(ctx, sqlcgen.ReceiveTaskHandoffReviewParams{
+	q := sqlcgen.New(tx)
+	result, err := q.ReceiveTaskHandoffReview(ctx, sqlcgen.ReceiveTaskHandoffReviewParams{
 		ReviewReceivedBy: sql.NullInt64{Int64: receivedBy, Valid: true},
 		ReviewReceivedAt: sql.NullString{String: now, Valid: true},
 		ID:               handoffID,
@@ -438,12 +454,13 @@ func (s *Store) ReceiveTaskHandoffReview(ctx context.Context, handoffID string, 
 	} else if affected == 0 {
 		return TaskHandoff{}, ErrTaskHandoffReviewState
 	}
-	event, err := s.persistWorkflowEvent(ctx, tx, Event{
-		Name: EventTaskHandoffReviewReceive,
-		Data: HandoffReviewEvent{TaskID: taskID, HandoffID: handoffID, ReviewerID: receivedBy},
-	}, workflowEventMetadata{TaskID: taskID, HandoffID: handoffID})
+	projectID, goalID, err := taskWorkflowEventScope(ctx, q, taskID)
 	if err != nil {
-		return TaskHandoff{}, fmt.Errorf("persist task handoff review receive event: %w", err)
+		return TaskHandoff{}, err
+	}
+	event := DecisionEvent{
+		Name: EventTaskHandoffReviewReceive,
+		Data: HandoffReviewEvent{ProjectID: projectID, GoalID: goalID, TaskID: taskID, HandoffID: handoffID, ReviewerID: receivedBy},
 	}
 	if err := tx.Commit(); err != nil {
 		return TaskHandoff{}, fmt.Errorf("commit task handoff review receive: %w", err)
@@ -507,12 +524,13 @@ func (s *Store) RejectTaskHandoffReview(ctx context.Context, handoffID string, t
 	} else if affected == 0 {
 		return TaskHandoff{}, fmt.Errorf("%w: %d", ErrTaskNotFound, taskID)
 	}
-	event, err := s.persistWorkflowEvent(ctx, tx, Event{
-		Name: EventTaskHandoffReviewReject,
-		Data: HandoffReviewEvent{TaskID: taskID, HandoffID: handoffID, ReviewerID: reviewerID, ReviewRejectReport: rejectReport},
-	}, workflowEventMetadata{TaskID: taskID, HandoffID: handoffID})
+	projectID, goalID, err := taskWorkflowEventScope(ctx, q, taskID)
 	if err != nil {
-		return TaskHandoff{}, fmt.Errorf("persist task handoff review rejection event: %w", err)
+		return TaskHandoff{}, err
+	}
+	event := DecisionEvent{
+		Name: EventTaskHandoffReviewReject,
+		Data: HandoffReviewEvent{ProjectID: projectID, GoalID: goalID, TaskID: taskID, HandoffID: handoffID, ReviewerID: reviewerID, ReviewRejectReport: rejectReport},
 	}
 	if err := tx.Commit(); err != nil {
 		return TaskHandoff{}, fmt.Errorf("commit task handoff review rejection: %w", err)
@@ -588,12 +606,13 @@ func (s *Store) CompleteTaskHandoffByReviewer(ctx context.Context, handoffID str
 	} else if affected == 0 {
 		return TaskHandoff{}, fmt.Errorf("%w: %d", ErrTaskNotFound, taskID)
 	}
-	event, err := s.persistWorkflowEvent(ctx, tx, Event{
-		Name: EventHandoffReported,
-		Data: DetectionEvent{DetectionID: NewDetectionID(), TaskID: taskID, HandoffID: handoffID, CompleteReport: completeReport},
-	}, workflowEventMetadata{TaskID: taskID, HandoffID: handoffID})
+	projectID, goalID, err := taskWorkflowEventScope(ctx, q, taskID)
 	if err != nil {
-		return TaskHandoff{}, fmt.Errorf("persist task handoff completion event: %w", err)
+		return TaskHandoff{}, err
+	}
+	event := DecisionEvent{
+		Name: EventHandoffReported,
+		Data: DetectionEvent{DetectionID: NewDetectionID(), ProjectID: projectID, GoalID: goalID, TaskID: taskID, HandoffID: handoffID, CompleteReport: completeReport},
 	}
 	if err := tx.Commit(); err != nil {
 		return TaskHandoff{}, fmt.Errorf("commit task handoff review completion: %w", err)
@@ -671,7 +690,8 @@ func (s *Store) CompleteTaskHandoff(ctx context.Context, handoffID string, taskI
 		return TaskHandoff{}, fmt.Errorf("begin task handoff completion tx: %w", err)
 	}
 	defer tx.Rollback()
-	result, err := sqlcgen.New(tx).CompleteTaskHandoff(ctx, sqlcgen.CompleteTaskHandoffParams{
+	q := sqlcgen.New(tx)
+	result, err := q.CompleteTaskHandoff(ctx, sqlcgen.CompleteTaskHandoffParams{
 		ID:                handoffID,
 		TaskID:            taskID,
 		CompletedReportAt: sql.NullString{String: now, Valid: true},
@@ -693,17 +713,20 @@ func (s *Store) CompleteTaskHandoff(ctx context.Context, handoffID string, taskI
 	var event DecisionEvent
 	// Claim locks have no delegate report, so their completion is not reportable.
 	if handoffIsDelegation(handoff.RequestedBy, handoff.ReceivedBy) {
-		event, err = s.persistWorkflowEvent(ctx, tx, Event{
+		projectID, goalID, scopeErr := taskWorkflowEventScope(ctx, q, taskID)
+		if scopeErr != nil {
+			return TaskHandoff{}, scopeErr
+		}
+		event = DecisionEvent{
 			Name: EventHandoffReported,
 			Data: DetectionEvent{
 				DetectionID:    NewDetectionID(),
+				ProjectID:      projectID,
+				GoalID:         goalID,
 				TaskID:         taskID,
 				HandoffID:      handoffID,
 				CompleteReport: completeReport,
 			},
-		}, workflowEventMetadata{TaskID: taskID, HandoffID: handoffID})
-		if err != nil {
-			return TaskHandoff{}, fmt.Errorf("persist task handoff completion event: %w", err)
 		}
 	}
 	if err := tx.Commit(); err != nil {

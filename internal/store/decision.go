@@ -84,12 +84,7 @@ func (s *Store) AskDecision(ctx context.Context, in AskInput) (domain.Decision, 
 		return domain.Decision{}, fmt.Errorf("insert decision: %w", err)
 	}
 	d.ID = id
-	event, err := s.persistWorkflowEvent(ctx, tx, DecisionEvent{
-		Name: "decision.created", Data: d, OccurredAt: d.CreatedAt,
-	}, workflowEventMetadata{GoalID: d.GoalID, TaskID: d.TaskID, DecisionID: d.ID})
-	if err != nil {
-		return domain.Decision{}, fmt.Errorf("persist decision creation event: %w", err)
-	}
+	event := DecisionEvent{Name: "decision.created", Data: d, OccurredAt: d.CreatedAt}
 	if err := tx.Commit(); err != nil {
 		return domain.Decision{}, fmt.Errorf("commit decision creation: %w", err)
 	}
@@ -324,9 +319,9 @@ func (s *Store) answerDecision(ctx context.Context, in AnswerInput, eventName st
 	if err != nil {
 		return domain.Decision{}, err
 	}
-	event, err := s.persistDecisionEvent(ctx, tx, eventName, row)
+	event, err := workflowDecisionEvent(eventName, row)
 	if err != nil {
-		return domain.Decision{}, fmt.Errorf("persist decision answer event: %w", err)
+		return domain.Decision{}, fmt.Errorf("build decision answer event: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
 		return domain.Decision{}, fmt.Errorf("commit decision answer: %w", err)
@@ -393,12 +388,7 @@ func (s *Store) ApplyExpiredDefaults(ctx context.Context, now time.Time) (int, e
 		defaultAppliedAt := settledAt
 		candidates[i].DefaultAppliedAt = &defaultAppliedAt
 		settledDecisions = append(settledDecisions, candidates[i])
-		event, err := s.persistWorkflowEvent(ctx, tx, DecisionEvent{
-			Name: "decision.answered", Data: candidates[i], OccurredAt: settledAt,
-		}, workflowEventMetadata{GoalID: candidates[i].GoalID, TaskID: candidates[i].TaskID, DecisionID: candidates[i].ID})
-		if err != nil {
-			return 0, fmt.Errorf("persist default decision event: %w", err)
-		}
+		event := DecisionEvent{Name: "decision.answered", Data: candidates[i], OccurredAt: settledAt}
 		settledEvents = append(settledEvents, event)
 	}
 
@@ -430,9 +420,9 @@ func (s *Store) WithdrawDecision(ctx context.Context, decisionID int64, reason s
 	if err != nil {
 		return err
 	}
-	event, err := s.persistDecisionEvent(ctx, tx, "decision.withdrawn", row)
+	event, err := workflowDecisionEvent("decision.withdrawn", row)
 	if err != nil {
-		return fmt.Errorf("persist decision withdrawal event: %w", err)
+		return fmt.Errorf("build decision withdrawal event: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit decision withdrawal: %w", err)
@@ -503,12 +493,7 @@ func (s *Store) PollDecisions(ctx context.Context, agentSessionID int64, decisio
 		out[i].Status = domain.DecisionApplied
 		applied := now
 		out[i].AppliedAt = &applied
-		event, err := s.persistWorkflowEvent(ctx, tx, DecisionEvent{
-			Name: "decision.applied", Data: out[i], OccurredAt: now,
-		}, workflowEventMetadata{GoalID: out[i].GoalID, TaskID: out[i].TaskID, DecisionID: out[i].ID})
-		if err != nil {
-			return nil, fmt.Errorf("persist applied decision event: %w", err)
-		}
+		event := DecisionEvent{Name: "decision.applied", Data: out[i], OccurredAt: now}
 		appliedEvents = append(appliedEvents, event)
 	}
 	if err := tx.Commit(); err != nil {
