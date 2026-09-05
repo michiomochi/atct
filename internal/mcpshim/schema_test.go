@@ -17,7 +17,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-func TestRegisterPublishesTwentyEightToolsWithFlexibleOutputSchema(t *testing.T) {
+func TestRegisterPublishesTwentyNineToolsWithFlexibleOutputSchema(t *testing.T) {
 	ctx := context.Background()
 	socketPath := startSchemaTestDaemon(t)
 	server := mcp.NewServer(&mcp.Implementation{Name: "atct-test", Version: "test"}, nil)
@@ -57,6 +57,7 @@ func TestRegisterPublishesTwentyEightToolsWithFlexibleOutputSchema(t *testing.T)
 		"atct_goal_claim":                true,
 		"atct_goal_release":              true,
 		"atct_goal_update_content":       true,
+		"atct_goal_update_request_report": true,
 		"atct_task_update_content":       true,
 		"atct_project_claim":             true,
 		"atct_project_release":           true,
@@ -194,6 +195,9 @@ func TestRegisterPublishesTwentyEightToolsWithFlexibleOutputSchema(t *testing.T)
 		{name: "atct_goal_claim", args: map[string]any{"goal_id": "goal-1"}},
 		{name: "atct_goal_update_content", args: map[string]any{
 			"goal_id": "goal-1", "content": "updated goal",
+		}},
+		{name: "atct_goal_update_request_report", args: map[string]any{
+			"goal_id": "goal-1", "spec": "updated spec", "plan": "updated plan",
 		}},
 		{name: "atct_task_update_content", args: map[string]any{
 			"task_id": "task-1", "description": "updated task",

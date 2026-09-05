@@ -48,6 +48,12 @@ type GoalUpdateContentIn struct {
 	Content string `json:"content"`
 }
 
+type GoalUpdateRequestReportIn struct {
+	GoalID mcpID  `json:"goal_id"`
+	Spec   string `json:"spec"`
+	Plan   string `json:"plan"`
+}
+
 type TaskUpdateContentIn struct {
 	TaskID      mcpID   `json:"task_id"`
 	Title       *string `json:"title,omitempty"`
@@ -578,6 +584,12 @@ func Register(server *mcp.Server, c *Client, agentSessionID int64) {
 			"goal_id": in.GoalID, "content": in.Content,
 			"agent_session_id": sessionID.Get(), "include_unapplied_answers": true,
 		})
+	})
+
+	addMCPTool[GoalUpdateRequestReportIn, RawWithUnappliedDecisions](server, &mcp.Tool{
+		Name: "atct_goal_update_request_report", Description: "Overwrite a goal's spec and plan when the caller holds its goal handoff.", OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in GoalUpdateRequestReportIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
+		return callWithUnappliedDecisions(ctx, c, "goal.update_request_report", map[string]any{"goal_id": in.GoalID, "spec": in.Spec, "plan": in.Plan, "agent_session_id": sessionID.Get()})
 	})
 
 	addMCPTool[TaskCreateIn, RawWithUnappliedDecisions](server, &mcp.Tool{
