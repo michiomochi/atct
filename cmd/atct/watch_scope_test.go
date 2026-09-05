@@ -299,8 +299,8 @@ func TestWatchFormatsHandoffReviewEvents(t *testing.T) {
 	}
 }
 
-func TestWatchEventsURLIncludesDurableWatcherKey(t *testing.T) {
-	got, err := watchEventsURLWithScopeAndWatcher("http://daemon", watchScope{ProjectID: "1", GoalID: "2"}, "watcher-1")
+func TestWatchEventsURLOmitsDurableWatcherKey(t *testing.T) {
+	got, err := watchEventsURLWithScope("http://daemon", watchScope{ProjectID: "1", GoalID: "2"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -308,7 +308,7 @@ func TestWatchEventsURLIncludesDurableWatcherKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if parsed.Query().Get("watcher_key") != "watcher-1" {
-		t.Fatalf("watcher_key = %q, want watcher-1", parsed.Query().Get("watcher_key"))
+	if parsed.Query().Get("watcher_key") != "" {
+		t.Fatalf("watcher_key = %q, want it omitted", parsed.Query().Get("watcher_key"))
 	}
 }

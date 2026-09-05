@@ -220,14 +220,6 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.handleEventReconciliation(w, r)
 		return
 	}
-	if len(parts) == 3 && parts[0] == "api" && parts[1] == "watch" && parts[2] == "cursor" {
-		if r.Method != http.MethodGet && r.Method != http.MethodPost {
-			writeError(w, http.StatusBadRequest, "method is not allowed for this endpoint")
-			return
-		}
-		s.handleWatchCursor(w, r)
-		return
-	}
 	if len(parts) == 2 && parts[0] == "api" && parts[1] == "ws" {
 		if r.Method != http.MethodGet {
 			writeError(w, http.StatusBadRequest, "method is not allowed for this endpoint")
@@ -1466,62 +1458,26 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	projectID, goalID, taskID, err := s.eventScopeIDs(r.Context(), filter)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	cursor, _, durable, err := s.eventReplayState(r, projectID, goalID)
-	if err != nil {
+	if _, _, _, err := s.eventScopeIDs(r.Context(), filter); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	ch, cancel := s.store.SubscribeEvents()
 	defer cancel()
 
-	var replayed workflowEventDeduper
-	highWatermark := int64(0)
-	var page store.WorkflowEventPage
-	if durable {
-		highWatermark, err = s.store.CurrentProjectEventSequence(r.Context(), projectID)
-		if err != nil {
-			writeStoreError(w, err)
-			return
-		}
-		page, err = s.store.ListWorkflowEvents(r.Context(), store.WorkflowEventQuery{
-			ProjectID: projectID, GoalID: goalID, TaskID: taskID,
-			AfterSequence: cursor, BeforeSequence: highWatermark, Limit: 10000,
-		})
-		if err != nil {
-			writeStoreError(w, err)
-			return
-		}
-		if cursor > 0 && page.OldestSequence > cursor+1 {
-			writeStaleCursor(w, page.OldestSequence, page.CurrentSequence)
-			return
-		}
-	}
-
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	w.WriteHeader(http.StatusOK)
 	flusher.Flush()
-	for _, event := range page.Events {
-		if err := writeWorkflowEventSSE(w, event); err != nil {
-			return
-		}
-		replayed.Add(event.ID)
-		flusher.Flush()
-	}
 
 	for {
 		select {
 		case <-r.Context().Done():
 			return
-		case event := <-ch:
-			if event.EventID != "" && replayed.Contains(event.EventID) {
-				continue
+		case event, ok := <-ch:
+			if !ok {
+				return
 			}
 			if !s.eventPasses(r.Context(), filter, event) {
 				continue
@@ -1529,41 +1485,9 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 			if err := writeDecisionEventSSE(w, event); err != nil {
 				return
 			}
-			replayed.Add(event.EventID)
 			flusher.Flush()
 		}
 	}
-}
-
-type workflowEventDeduper struct {
-	ids   map[string]struct{}
-	order []string
-}
-
-const workflowEventDedupLimit = 10000
-
-func (d *workflowEventDeduper) Contains(id string) bool {
-	if id == "" {
-		return false
-	}
-	_, ok := d.ids[id]
-	return ok
-}
-
-func (d *workflowEventDeduper) Add(id string) {
-	if id == "" || d.Contains(id) {
-		return
-	}
-	if d.ids == nil {
-		d.ids = make(map[string]struct{}, workflowEventDedupLimit)
-	}
-	d.ids[id] = struct{}{}
-	d.order = append(d.order, id)
-	if len(d.order) <= workflowEventDedupLimit {
-		return
-	}
-	delete(d.ids, d.order[0])
-	d.order = d.order[1:]
 }
 
 func (s *Server) eventScopeIDs(ctx context.Context, filter eventFilter) (projectID, goalID, taskID int64, err error) {
@@ -1604,80 +1528,9 @@ func (s *Server) eventScopeIDs(ctx context.Context, filter eventFilter) (project
 	return projectID, goalID, taskID, nil
 }
 
-func parseWorkflowSequence(value string) (int64, error) {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return 0, nil
-	}
-	if separator := strings.LastIndexByte(value, ':'); separator >= 0 {
-		value = value[separator+1:]
-	}
-	sequence, err := strconv.ParseInt(value, 10, 64)
-	if err != nil || sequence < 0 {
-		return 0, fmt.Errorf("invalid workflow cursor %q", value)
-	}
-	return sequence, nil
-}
-
-func (s *Server) eventReplayState(r *http.Request, projectID, goalID int64) (cursor int64, watcherKey string, durable bool, err error) {
-	query := r.URL.Query()
-	watcherKey = strings.TrimSpace(query.Get("watcher_key"))
-	cursorText := query.Get("cursor")
-	if cursorText == "" {
-		cursorText = query.Get("after_sequence")
-	}
-	if cursorText == "" {
-		cursorText = r.Header.Get("Last-Event-ID")
-	}
-	durable = watcherKey != "" || cursorText != ""
-	if !durable {
-		return 0, "", false, nil
-	}
-	if projectID <= 0 {
-		return 0, watcherKey, true, errors.New("project_id is required for durable event delivery")
-	}
-	if cursorText != "" {
-		cursor, err = parseWorkflowSequence(cursorText)
-		if err != nil {
-			return 0, watcherKey, true, err
-		}
-		return cursor, watcherKey, true, nil
-	}
-	stored, getErr := s.store.GetWatchDeliveryCursor(r.Context(), watcherKey, projectID, goalID)
-	if getErr != nil {
-		return 0, watcherKey, true, getErr
-	}
-	return stored.Sequence, watcherKey, true, nil
-}
-
-func writeStaleCursor(w http.ResponseWriter, oldest, current int64) {
-	writeJSON(w, http.StatusGone, map[string]any{
-		"error":            "stale_cursor",
-		"oldest_sequence":  oldest,
-		"current_sequence": current,
-	})
-}
-
-func writeWorkflowEventSSE(w io.Writer, event store.WorkflowEvent) error {
-	data := event.Data
-	if len(data) == 0 {
-		data = []byte("null")
-	}
-	_, err := fmt.Fprintf(w, "id: %s\nevent: %s\ndata: %s\n\n", event.ID, event.Name, data)
-	return err
-}
-
 func writeDecisionEventSSE(w io.Writer, event store.DecisionEvent) error {
 	data, err := json.Marshal(event.Data)
 	if err != nil {
-		return err
-	}
-	if event.EventID != "" || event.ID != "" {
-		id := event.EventID
-		if id == "" {
-			id = event.ID
-		}
-		_, err = fmt.Fprintf(w, "id: %s\nevent: %s\ndata: %s\n\n", id, event.Name, data)
 		return err
 	}
 	_, err = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event.Name, data)
@@ -1706,76 +1559,6 @@ func (s *Server) handleEventReconciliation(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	writeJSON(w, http.StatusOK, reconciliation)
-}
-
-type watchCursorRequest struct {
-	WatcherKey string  `json:"watcher_key"`
-	ProjectID  inputID `json:"project_id"`
-	GoalID     inputID `json:"goal_id"`
-	Sequence   int64   `json:"sequence"`
-}
-
-func (s *Server) handleWatchCursor(w http.ResponseWriter, r *http.Request) {
-	var request watchCursorRequest
-	if r.Method == http.MethodPost {
-		if err := decodeJSONBody(r, &request); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid JSON body")
-			return
-		}
-	} else {
-		query := r.URL.Query()
-		request.WatcherKey = query.Get("watcher_key")
-		request.ProjectID = inputID(query.Get("project_id"))
-		request.GoalID = inputID(query.Get("goal_id"))
-		sequence, err := parseWorkflowSequence(query.Get("sequence"))
-		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		request.Sequence = sequence
-	}
-	if strings.TrimSpace(request.WatcherKey) == "" || strings.TrimSpace(string(request.ProjectID)) == "" {
-		writeError(w, http.StatusBadRequest, "watcher_key and project_id are required")
-		return
-	}
-	if request.Sequence < 0 {
-		writeError(w, http.StatusBadRequest, "sequence must not be negative")
-		return
-	}
-	projectID, ok := s.resolveProjectID(w, r.Context(), string(request.ProjectID))
-	if !ok {
-		return
-	}
-	goalID := int64(0)
-	if strings.TrimSpace(string(request.GoalID)) != "" && string(request.GoalID) != "0" {
-		goalID, ok = s.resolveGoalID(w, r.Context(), string(request.GoalID))
-		if !ok {
-			return
-		}
-		goal, err := s.store.GetGoal(r.Context(), goalID)
-		if err != nil {
-			writeStoreError(w, err)
-			return
-		}
-		if goal.ProjectID != projectID {
-			writeError(w, http.StatusBadRequest, "goal does not belong to project")
-			return
-		}
-	}
-	if err := s.store.AdvanceWatchDeliveryCursor(r.Context(), request.WatcherKey, projectID, goalID, request.Sequence); err != nil {
-		if strings.Contains(err.Error(), "ahead of project sequence") {
-			writeError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		writeStoreError(w, err)
-		return
-	}
-	cursor, err := s.store.GetWatchDeliveryCursor(r.Context(), request.WatcherKey, projectID, goalID)
-	if err != nil {
-		writeStoreError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, cursor)
 }
 
 func eventMatchesGoalID(event store.DecisionEvent, goalID int64) bool {

@@ -122,9 +122,9 @@ func (n *notifier) publishEvent(event DecisionEvent) {
 	}
 }
 
-// SubscribeEvents subscribes to committed store events. Events are delivered
-// on a buffered channel and slow subscribers may miss the low-latency copy;
-// durable workflow events remain available through ListWorkflowEvents.
+// SubscribeEvents subscribes to committed store events as low-latency wake-up
+// signals. Events are delivered on a buffered channel and slow subscribers may
+// miss signals; callers must reconcile canonical state separately.
 func (s *Store) SubscribeEvents() (<-chan DecisionEvent, func()) {
 	return s.notify.subscribeEvents()
 }
