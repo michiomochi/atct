@@ -1119,7 +1119,7 @@ func (d *Daemon) dispatchWithPeer(ctx context.Context, req rpc.Request, peerID u
 			return nil, err
 		}
 		handoff, err := d.store.RequestTaskHandoff(ctx, p.HandoffID, p.TaskID, p.RequestedBy, p.RequestReport)
-		return marshal(handoff, err)
+		return marshalCanonicalHandoff(handoff, err)
 
 	case "handoff.entry.append":
 		return d.appendTaskHandoffEntryRPC(ctx, req.Params, peerID)
@@ -1143,7 +1143,7 @@ func (d *Daemon) dispatchWithPeer(ctx context.Context, req rpc.Request, peerID u
 		} else {
 			handoff, err = d.store.ReceiveTaskHandoff(ctx, p.HandoffID, p.TaskID, p.ReceivedBy)
 		}
-		return marshal(handoff, err)
+		return marshalCanonicalHandoff(handoff, err)
 
 	case "handoff.complete":
 		var p struct {
@@ -1180,7 +1180,7 @@ func (d *Daemon) dispatchWithPeer(ctx context.Context, req rpc.Request, peerID u
 		} else {
 			handoff, err = d.store.CompleteTaskHandoff(ctx, p.HandoffID, p.TaskID, p.CompleteReport)
 		}
-		return marshal(handoff, err)
+		return marshalCanonicalHandoff(handoff, err)
 
 	case "handoff.report.amend":
 		var p struct {
@@ -1192,7 +1192,7 @@ func (d *Daemon) dispatchWithPeer(ctx context.Context, req rpc.Request, peerID u
 			return nil, err
 		}
 		handoff, err := d.store.AmendTaskHandoffReport(ctx, p.HandoffID, p.TaskID, p.CompleteReport)
-		return marshal(handoff, err)
+		return marshalCanonicalHandoff(handoff, err)
 
 	case "handoff.yielded":
 		var p struct {
@@ -1240,7 +1240,7 @@ func (d *Daemon) dispatchWithPeer(ctx context.Context, req rpc.Request, peerID u
 			return nil, err
 		}
 		handoff, err := d.store.RequestGoalHandoff(ctx, p.HandoffID, p.GoalID, p.RequestedBy, p.RequestReport)
-		return marshal(handoff, err)
+		return marshalCanonicalHandoff(handoff, err)
 
 	case "goal.handoff.entry.append":
 		return d.appendGoalHandoffEntryRPC(ctx, req.Params, peerID)
@@ -1264,7 +1264,7 @@ func (d *Daemon) dispatchWithPeer(ctx context.Context, req rpc.Request, peerID u
 		} else {
 			handoff, err = d.store.ReceiveGoalHandoff(ctx, p.HandoffID, p.GoalID, p.ReceivedBy)
 		}
-		return marshal(handoff, err)
+		return marshalCanonicalHandoff(handoff, err)
 
 	case "goal.handoff.complete":
 		var p struct {
@@ -1301,7 +1301,7 @@ func (d *Daemon) dispatchWithPeer(ctx context.Context, req rpc.Request, peerID u
 		} else {
 			handoff, err = d.store.CompleteGoalHandoff(ctx, p.HandoffID, p.GoalID, p.CompleteReport)
 		}
-		return marshal(handoff, err)
+		return marshalCanonicalHandoff(handoff, err)
 
 	case "goal.handoff.report.amend":
 		var p struct {
@@ -1313,7 +1313,7 @@ func (d *Daemon) dispatchWithPeer(ctx context.Context, req rpc.Request, peerID u
 			return nil, err
 		}
 		handoff, err := d.store.AmendGoalHandoffReport(ctx, p.HandoffID, p.GoalID, p.CompleteReport)
-		return marshal(handoff, err)
+		return marshalCanonicalHandoff(handoff, err)
 
 	case "decision.ask":
 		var p struct {

@@ -51,10 +51,10 @@ type watchDecision struct {
 	GoalID                     string  `json:"goal_id"`
 	TaskID                     string  `json:"task_id"`
 	HandoffID                  string  `json:"handoff_id"`
-	EntryID                    string  `json:"entry_id"`
-	Sequence                   int64   `json:"sequence"`
+	HandoffEntryID             int64   `json:"-"`
 	Kind                       string  `json:"kind"`
 	AuthorSessionID            int64   `json:"author_session_id"`
+	InReplyToID                *int64  `json:"in_reply_to_id,omitempty"`
 	BodyPreview                string  `json:"body_preview"`
 	Preview                    string  `json:"preview"`
 	WorktreeActivity           string  `json:"worktree_activity"`
@@ -133,8 +133,36 @@ func (d *watchDecision) UnmarshalJSON(data []byte) error {
 	}, &decoded); err != nil {
 		return err
 	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	if rawEntryID, ok := fields["entry_id"]; ok {
+		entryID, err := decodeEntityID(rawEntryID)
+		if err != nil {
+			return fmt.Errorf("decode entry_id: %w", err)
+		}
+		decoded.HandoffEntryID, err = strconv.ParseInt(entryID, 10, 64)
+		if err != nil || decoded.HandoffEntryID <= 0 {
+			return fmt.Errorf("handoff entry id must be a positive integer: %q", entryID)
+		}
+	}
 	*d = watchDecision(decoded)
 	return nil
+}
+
+func (d watchDecision) handoffEntryID() (int64, error) {
+	if d.HandoffEntryID > 0 {
+		return d.HandoffEntryID, nil
+	}
+	if strings.TrimSpace(d.ID) == "" {
+		return 0, errors.New("handoff entry event has no id")
+	}
+	id, err := strconv.ParseInt(d.ID, 10, 64)
+	if err != nil || id <= 0 {
+		return 0, fmt.Errorf("handoff entry id must be a positive integer: %q", d.ID)
+	}
+	return id, nil
 }
 
 func (p *watchProject) UnmarshalJSON(data []byte) error {
@@ -777,10 +805,11 @@ func emitWatchDecisionWithStateAndSink(out io.Writer, eventName string, decision
 		return nil
 	}
 	if eventName == "handoff_entry_added" {
-		if decision.EntryID == "" {
-			return fmt.Errorf("SSE event %s has no entry_id", eventName)
+		entryID, err := decision.handoffEntryID()
+		if err != nil {
+			return fmt.Errorf("SSE event %s: %w", eventName, err)
 		}
-		key := watchDeliveryKey{eventName: eventName, decisionID: decision.EntryID}
+		key := watchDeliveryKey{eventName: eventName, decisionID: strconv.FormatInt(entryID, 10)}
 		if _, ok := delivered[key]; ok {
 			return nil
 		}
@@ -924,7 +953,8 @@ func formatWatchDecision(eventName string, decision watchDecision) (string, bool
 		if preview == "" {
 			preview = decision.Preview
 		}
-		return fmt.Sprintf("atct handoff entry added: %s (handoff %s, sequence %d, kind %s, author %d): %s", target, decision.HandoffID, decision.Sequence, decision.Kind, decision.AuthorSessionID, watchHandoffEntryPreview(preview)), true
+		entryID, _ := decision.handoffEntryID()
+		return fmt.Sprintf("atct handoff entry added: %s (handoff %s, id %d, kind %s, author %d): %s", target, decision.HandoffID, entryID, decision.Kind, decision.AuthorSessionID, watchHandoffEntryPreview(preview)), true
 	case "handoff_yielded":
 		return fmt.Sprintf("atct handoff yielded: task %s", decision.TaskID), true
 	case "detection.claim_undelegated":

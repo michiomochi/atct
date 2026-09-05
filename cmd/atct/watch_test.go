@@ -381,9 +381,8 @@ func TestWatchFormatsAndDeduplicatesHandoffEntryAdded(t *testing.T) {
 		GoalID:          "goal-1",
 		TaskID:          "task-1",
 		HandoffID:       "handoff-1",
-		EntryID:         "entry-1",
-		Sequence:        3,
-		Kind:            "progress",
+		ID:              "42",
+		Kind:            "review_requested",
 		AuthorSessionID: 42,
 		BodyPreview:     "implemented the HTTP endpoint",
 	}
@@ -392,7 +391,7 @@ func TestWatchFormatsAndDeduplicatesHandoffEntryAdded(t *testing.T) {
 			t.Fatalf("emitWatchDecision: %v", err)
 		}
 	}
-	want := "atct handoff entry added: task task-1 (handoff handoff-1, sequence 3, kind progress, author 42): implemented the HTTP endpoint\n"
+	want := "atct handoff entry added: task task-1 (handoff handoff-1, id 42, kind review_requested, author 42): implemented the HTTP endpoint\n"
 	if got := output.String(); got != want {
 		t.Fatalf("handoff entry output = %q, want %q", got, want)
 	}
@@ -401,13 +400,13 @@ func TestWatchFormatsAndDeduplicatesHandoffEntryAdded(t *testing.T) {
 func TestReadWatchSSEFramesPreservesLastEventID(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	frames, done := readWatchSSEFrames(ctx, strings.NewReader("id: entry-1\nevent: handoff_entry_added\ndata: {\"entry_id\":\"entry-1\"}\n\n"))
+	frames, done := readWatchSSEFrames(ctx, strings.NewReader("id: 42\nevent: handoff_entry_added\ndata: {\"id\":42}\n\n"))
 	frame, ok := <-frames
 	if !ok {
 		t.Fatal("readWatchSSEFrames closed before returning a frame")
 	}
-	if frame.id != "entry-1" {
-		t.Fatalf("SSE frame id = %q, want entry-1", frame.id)
+	if frame.id != "42" {
+		t.Fatalf("SSE frame id = %q, want 42", frame.id)
 	}
 	if frame.name != "handoff_entry_added" {
 		t.Fatalf("SSE frame name = %q, want handoff_entry_added", frame.name)
@@ -417,13 +416,27 @@ func TestReadWatchSSEFramesPreservesLastEventID(t *testing.T) {
 	}
 }
 
+func TestWatchDecodesCanonicalHandoffEntryIDAndReply(t *testing.T) {
+	var decision watchDecision
+	if err := json.Unmarshal([]byte(`{"id":42,"handoff_id":"handoff-1","kind":"review_received","in_reply_to_id":7}`), &decision); err != nil {
+		t.Fatalf("decode canonical handoff entry event: %v", err)
+	}
+	entryID, err := decision.handoffEntryID()
+	if err != nil {
+		t.Fatalf("handoffEntryID: %v", err)
+	}
+	if entryID != 42 || decision.InReplyToID == nil || *decision.InReplyToID != 7 {
+		t.Fatalf("handoff entry decision = %+v, want id 42 replying to 7", decision)
+	}
+}
+
 func TestConsumeWatchEventsSendsLastEventID(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	var gotLastEventID string
 	client := &http.Client{Transport: watchRoundTripper(func(req *http.Request) (*http.Response, error) {
 		gotLastEventID = req.Header.Get("Last-Event-ID")
-		body := "id: e2\nevent: handoff_entry_added\ndata: {\"goal_id\":1,\"task_id\":46,\"handoff_id\":\"h1\",\"entry_id\":\"e2\",\"sequence\":2,\"kind\":\"progress\",\"author_session_id\":7,\"body_preview\":\"next\"}\n\n"
+		body := "id: e2\nevent: handoff_entry_added\ndata: {\"goal_id\":1,\"task_id\":46,\"handoff_id\":\"h1\",\"id\":2,\"kind\":\"review_received\",\"author_session_id\":7,\"body_preview\":\"next\"}\n\n"
 		return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
 	})}
 	var output bytes.Buffer

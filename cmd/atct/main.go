@@ -47,8 +47,8 @@ type cliConfig struct {
 	handoffGoalID           string
 	handoffEntryKind        string
 	handoffEntryBody        string
-	handoffRelatesTo        string
-	handoffCursor           int64
+	handoffInReplyToID      int64
+	handoffAfterID          int64
 	handoffLimit            int
 	handoffCompleteReport   string
 	handoffCapability       string
@@ -75,6 +75,22 @@ type cliConfig struct {
 	codexMonitorRole        string
 	codexMonitorGoalID      string
 	codexMonitorTaskID      string
+}
+
+type cliHandoffEntry struct {
+	ID              int64     `json:"id"`
+	HandoffID       string    `json:"handoff_id"`
+	Kind            string    `json:"kind"`
+	Body            string    `json:"body"`
+	AuthorSessionID int64     `json:"author_session_id"`
+	InReplyToID     *int64    `json:"in_reply_to_id,omitempty"`
+	CreatedAt       time.Time `json:"created_at"`
+}
+
+type cliHandoffEntryPage struct {
+	Entries     []cliHandoffEntry `json:"entries"`
+	HasMore     bool              `json:"has_more"`
+	NextAfterID int64             `json:"next_after_id"`
 }
 
 var errInvalidArgs = errors.New("invalid command line")
@@ -145,7 +161,7 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "  handoff goal history <handoff-id> <goal-id>  Read goal handoff history")
 	fmt.Fprintln(os.Stderr, "  handoff goal complete <handoff-id> <goal-id>  Report a goal handoff complete")
 	fmt.Fprintln(os.Stderr, "  handoff yielded <task-id>  Report that the worker yielded")
-	fmt.Fprintln(os.Stderr, "  handoff options: --kind, --body, --relates-to, --cursor, --limit, --report, --capability")
+	fmt.Fprintln(os.Stderr, "  handoff options: --kind, --body, --in-reply-to-id, --after-id, --limit, --report, --capability")
 	fmt.Fprintln(os.Stderr, "  codex shim install [--profile <path>]  Install the transparent Codex shim")
 	fmt.Fprintln(os.Stderr, "  codex shim run -- <args>  Run Codex through the installed shim")
 	fmt.Fprintln(os.Stderr, "  codex monitor [-- <args>]  Run an interactive Codex session with ATCT monitoring")
@@ -458,10 +474,10 @@ func parseHandoffArgs(cfg cliConfig, args []string) (cliConfig, error) {
 }
 
 type handoffOptionUse struct {
-	relatesTo      bool
+	inReplyToID    bool
 	kind           bool
 	body           bool
-	cursor         bool
+	afterID        bool
 	limit          bool
 	report         bool
 	capability     bool
@@ -498,22 +514,32 @@ func parseHandoffOptions(cfg *cliConfig, args []string) ([]string, handoffOption
 		case "-listen", "--listen":
 			cfg.listenAddr = value
 			cfg.listenExplicit = true
-		case "--relates-to":
-			cfg.handoffRelatesTo = value
-			used.relatesTo = true
+		case "--in-reply-to-id":
+			inReplyToID, err := strconv.ParseInt(value, 10, 64)
+			if err != nil {
+				return nil, used, fmt.Errorf("option --in-reply-to-id must be a positive integer: %w", err)
+			}
+			if inReplyToID <= 0 {
+				return nil, used, errors.New("option --in-reply-to-id must be a positive integer")
+			}
+			cfg.handoffInReplyToID = inReplyToID
+			used.inReplyToID = true
 		case "--kind":
 			cfg.handoffEntryKind = value
 			used.kind = true
 		case "--body":
 			cfg.handoffEntryBody = value
 			used.body = true
-		case "--cursor":
-			cursor, err := strconv.ParseInt(value, 10, 64)
+		case "--after-id":
+			afterID, err := strconv.ParseInt(value, 10, 64)
 			if err != nil {
-				return nil, used, fmt.Errorf("option --cursor must be an integer: %w", err)
+				return nil, used, fmt.Errorf("option --after-id must be a non-negative integer: %w", err)
 			}
-			cfg.handoffCursor = cursor
-			used.cursor = true
+			if afterID < 0 {
+				return nil, used, errors.New("option --after-id must be a non-negative integer")
+			}
+			cfg.handoffAfterID = afterID
+			used.afterID = true
 		case "--limit":
 			limit, err := strconv.Atoi(value)
 			if err != nil {
@@ -545,14 +571,14 @@ func splitHandoffOption(arg string) (name, value string, hasValue bool) {
 }
 
 func validateHandoffOptionUse(action string, used handoffOptionUse) error {
-	if used.relatesTo && action != "append" {
-		return errors.New("--relates-to is only valid for handoff append")
+	if used.inReplyToID && action != "append" {
+		return errors.New("--in-reply-to-id is only valid for handoff append")
 	}
 	if (used.kind || used.body) && action != "append" {
 		return errors.New("--kind and --body are only valid for handoff append")
 	}
-	if (used.cursor || used.limit) && action != "history" {
-		return errors.New("--cursor and --limit are only valid for handoff history")
+	if (used.afterID || used.limit) && action != "history" {
+		return errors.New("--after-id and --limit are only valid for handoff history")
 	}
 	if used.report && action != "complete" {
 		return errors.New("--report is only valid for handoff complete")
@@ -1050,11 +1076,11 @@ func runHandoff(config cliConfig, dir, exePath string) error {
 	case "append":
 		params["kind"] = config.handoffEntryKind
 		params["body"] = config.handoffEntryBody
-		if config.handoffRelatesTo != "" {
-			params["relates_to"] = config.handoffRelatesTo
+		if config.handoffInReplyToID != 0 {
+			params["in_reply_to_id"] = config.handoffInReplyToID
 		}
 		method := "handoff.entry.append"
-		var entry store.HandoffEntry
+		var entry cliHandoffEntry
 		if config.handoffScope == "goal" {
 			method = "goal.handoff.entry.append"
 		}
@@ -1064,14 +1090,14 @@ func runHandoff(config cliConfig, dir, exePath string) error {
 		return json.NewEncoder(os.Stdout).Encode(entry)
 
 	case "history":
-		if config.handoffCursor != 0 {
-			params["cursor"] = config.handoffCursor
+		if config.handoffAfterID != 0 {
+			params["after_id"] = config.handoffAfterID
 		}
 		if config.handoffLimit != 0 {
 			params["limit"] = config.handoffLimit
 		}
 		method := "handoff.entry.history"
-		var page store.HandoffEntryPage
+		var page cliHandoffEntryPage
 		if config.handoffScope == "goal" {
 			method = "goal.handoff.entry.history"
 		}

@@ -43,36 +43,36 @@ func TestRegisterPublishesThirtyTwoToolsWithFlexibleOutputSchema(t *testing.T) {
 		t.Fatalf("ListTools: %v", err)
 	}
 	wantNames := map[string]bool{
-		"atct_goal_list":                 true,
-		"atct_goal_get":                  true,
-		"atct_goal_sessions":             true,
-		"atct_task_create":               true,
-		"atct_task_claim":                true,
-		"atct_task_release":              true,
-		"atct_task_update":               true,
-		"atct_decision_ask":              true,
-		"atct_decision_poll":             true,
-		"atct_decision_withdraw":         true,
-		"atct_goal_complete":             true,
-		"atct_goal_set_derived_from":     true,
-		"atct_goal_claim":                true,
-		"atct_goal_release":              true,
-		"atct_goal_update_content":       true,
-		"atct_task_update_content":       true,
-		"atct_project_claim":             true,
-		"atct_project_release":           true,
-		"atct_role":                      true,
-		"atct_session_identify":          true,
-		"atct_handoff_request":           true,
-		"atct_handoff_receive":           true,
-		"atct_handoff_complete":          true,
-		"atct_handoff_report_amend":      true,
-		"atct_goal_handoff_request":      true,
-		"atct_goal_handoff_receive":      true,
-		"atct_goal_handoff_complete":     true,
-		"atct_goal_handoff_report_amend": true,
-		"atct_handoff_entry_append":      true,
-		"atct_handoff_entry_history":     true,
+		"atct_goal_list":                  true,
+		"atct_goal_get":                   true,
+		"atct_goal_sessions":              true,
+		"atct_task_create":                true,
+		"atct_task_claim":                 true,
+		"atct_task_release":               true,
+		"atct_task_update":                true,
+		"atct_decision_ask":               true,
+		"atct_decision_poll":              true,
+		"atct_decision_withdraw":          true,
+		"atct_goal_complete":              true,
+		"atct_goal_set_derived_from":      true,
+		"atct_goal_claim":                 true,
+		"atct_goal_release":               true,
+		"atct_goal_update_content":        true,
+		"atct_task_update_content":        true,
+		"atct_project_claim":              true,
+		"atct_project_release":            true,
+		"atct_role":                       true,
+		"atct_session_identify":           true,
+		"atct_handoff_request":            true,
+		"atct_handoff_receive":            true,
+		"atct_handoff_complete":           true,
+		"atct_handoff_report_amend":       true,
+		"atct_goal_handoff_request":       true,
+		"atct_goal_handoff_receive":       true,
+		"atct_goal_handoff_complete":      true,
+		"atct_goal_handoff_report_amend":  true,
+		"atct_handoff_entry_append":       true,
+		"atct_handoff_entry_history":      true,
 		"atct_goal_handoff_entry_append":  true,
 		"atct_goal_handoff_entry_history": true,
 	}
@@ -177,16 +177,28 @@ func TestRegisterPublishesThirtyTwoToolsWithFlexibleOutputSchema(t *testing.T) {
 				}
 			}
 			if tool.Name == "atct_handoff_entry_append" || tool.Name == "atct_goal_handoff_entry_append" {
-				for _, field := range []string{"kind", "body"} {
+				for _, field := range []string{"kind", "body", "in_reply_to_id"} {
 					if _, ok := inputProperties[field]; !ok {
 						t.Errorf("%s input schema omitted %q", tool.Name, field)
 					}
 				}
+				if _, ok := inputProperties["relates_to"]; ok {
+					t.Errorf("%s input schema exposes removed field relates_to", tool.Name)
+				}
+				if !strings.Contains(tool.Description, "review_requested") || !strings.Contains(tool.Description, "in_reply_to_id") {
+					t.Errorf("%s description = %q, want canonical kinds and reply field", tool.Name, tool.Description)
+				}
 			} else {
-				for _, field := range []string{"cursor", "limit"} {
+				for _, field := range []string{"after_id", "limit"} {
 					if _, ok := inputProperties[field]; !ok {
 						t.Errorf("%s input schema omitted %q", tool.Name, field)
 					}
+				}
+				if _, ok := inputProperties["cursor"]; ok {
+					t.Errorf("%s input schema exposes removed field cursor", tool.Name)
+				}
+				if !strings.Contains(tool.Description, "after_id") {
+					t.Errorf("%s description = %q, want after_id cursor guidance", tool.Name, tool.Description)
 				}
 			}
 		}
@@ -266,16 +278,16 @@ func TestRegisterPublishesThirtyTwoToolsWithFlexibleOutputSchema(t *testing.T) {
 			"handoff_id": "goal-handoff-1", "goal_id": "goal-1", "complete_report": "goal completion",
 		}},
 		{name: "atct_handoff_entry_append", args: map[string]any{
-			"handoff_id": "handoff-1", "task_id": "task-1", "kind": "progress", "body": "progress",
+			"handoff_id": "handoff-1", "task_id": "task-1", "kind": "review_requested", "body": "review", "in_reply_to_id": 1,
 		}},
 		{name: "atct_handoff_entry_history", args: map[string]any{
-			"handoff_id": "handoff-1", "task_id": "task-1", "cursor": 0, "limit": 20,
+			"handoff_id": "handoff-1", "task_id": "task-1", "after_id": 1, "limit": 20,
 		}},
 		{name: "atct_goal_handoff_entry_append", args: map[string]any{
-			"handoff_id": "goal-handoff-1", "goal_id": "goal-1", "kind": "question", "body": "question",
+			"handoff_id": "goal-handoff-1", "goal_id": "goal-1", "kind": "review_rejected", "body": "rejected",
 		}},
 		{name: "atct_goal_handoff_entry_history", args: map[string]any{
-			"handoff_id": "goal-handoff-1", "goal_id": "goal-1", "cursor": 0, "limit": 20,
+			"handoff_id": "goal-handoff-1", "goal_id": "goal-1", "after_id": 1, "limit": 20,
 		}},
 		{name: "atct_decision_ask", args: map[string]any{
 			"goal_id": "goal-1", "question": "question", "options": []any{}, "wait_ms": 0,
@@ -652,19 +664,19 @@ func TestHandoffToolsInjectAgentSessionID(t *testing.T) {
 		},
 		{
 			name: "atct_handoff_entry_append", method: "handoff.entry.append", ownedBy: "agent_session_id",
-			args: map[string]any{"handoff_id": "handoff-1", "task_id": "task-1", "kind": "progress", "body": "progress"},
+			args: map[string]any{"handoff_id": "handoff-1", "task_id": "task-1", "kind": "review_requested", "body": "review", "in_reply_to_id": 1},
 		},
 		{
 			name: "atct_handoff_entry_history", method: "handoff.entry.history", ownedBy: "agent_session_id",
-			args: map[string]any{"handoff_id": "handoff-1", "task_id": "task-1", "cursor": 0, "limit": 20},
+			args: map[string]any{"handoff_id": "handoff-1", "task_id": "task-1", "after_id": 1, "limit": 20},
 		},
 		{
 			name: "atct_goal_handoff_entry_append", method: "goal.handoff.entry.append", ownedBy: "agent_session_id",
-			args: map[string]any{"handoff_id": "goal-handoff-1", "goal_id": "goal-1", "kind": "question", "body": "question"},
+			args: map[string]any{"handoff_id": "goal-handoff-1", "goal_id": "goal-1", "kind": "review_rejected", "body": "rejected"},
 		},
 		{
 			name: "atct_goal_handoff_entry_history", method: "goal.handoff.entry.history", ownedBy: "agent_session_id",
-			args: map[string]any{"handoff_id": "goal-handoff-1", "goal_id": "goal-1", "cursor": 0, "limit": 20},
+			args: map[string]any{"handoff_id": "goal-handoff-1", "goal_id": "goal-1", "after_id": 1, "limit": 20},
 		},
 	} {
 		result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
