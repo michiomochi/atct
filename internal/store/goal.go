@@ -208,9 +208,6 @@ func (s *Store) ClaimGoal(ctx context.Context, goalID int64, agentSessionID int6
 	}
 
 	handoffID := uuid.NewString()
-	if err := s.reclaimOpenGoalHandoff(ctx, handoffID, goalID); err != nil {
-		return domain.Goal{}, mapGoalClaimHandoffError(goalID, err)
-	}
 	if _, err := s.requestGoalHandoffForClaim(ctx, handoffID, goalID, agentSessionID); err != nil {
 		return domain.Goal{}, mapGoalClaimHandoffError(goalID, err)
 	}
@@ -572,7 +569,8 @@ func (s *Store) RejectCompletion(ctx context.Context, decisionID int64, reason s
 			if reason != "" {
 				requestReport += ": " + reason
 			}
-			handoffNow := time.Now().UTC().Format(time.RFC3339Nano)
+			handoffNowTime := time.Now().UTC()
+			handoffNow := handoffNowTime.Format(time.RFC3339Nano)
 			txq := q.WithTx(tx)
 			if err := txq.RequestGoalHandoff(ctx, sqlcgen.RequestGoalHandoffParams{
 				ID:            reopenID,
@@ -596,6 +594,15 @@ func (s *Store) RejectCompletion(ctx context.Context, decisionID int64, reason s
 				return fmt.Errorf("reopened goal handoff rows affected: %w", err)
 			} else if rows != 1 {
 				return fmt.Errorf("reopened goal handoff was not received: %q", reopenID)
+			}
+			if _, err := appendHandoffEntryTx(ctx, q, "goal_handoff_entries", reopenID, HandoffEntryKindRequest, requestReport, selected.RequestedBy, "", "reopen", true, handoffNowTime); err != nil {
+				return fmt.Errorf("append reopened goal handoff request entry: %w", err)
+			}
+			if _, err := appendHandoffEntryTx(ctx, q, "goal_handoff_entries", reopenID, HandoffEntryKindReceived, "received", selected.ReceivedBy, "", "reopen", true, handoffNowTime); err != nil {
+				return fmt.Errorf("append reopened goal handoff received entry: %w", err)
+			}
+			if _, err := appendHandoffEntryTx(ctx, q, "goal_handoff_entries", selected.ID, HandoffEntryKindSystem, "reopened as "+reopenID, 0, "", "reopen", true, handoffNowTime); err != nil {
+				return fmt.Errorf("append original goal handoff reopen link: %w", err)
 			}
 		}
 	}
@@ -736,7 +743,8 @@ func (s *Store) WithdrawActiveGoal(ctx context.Context, goalID int64, reason str
 	defer tx.Rollback()
 
 	q := sqlcgen.New(tx)
-	now := time.Now().UTC().Format(time.RFC3339)
+	nowTime := time.Now().UTC()
+	now := nowTime.Format(time.RFC3339)
 	result, err := q.WithdrawActiveGoal(ctx, sqlcgen.WithdrawActiveGoalParams{
 		ResultSummary: reason,
 		UpdatedAt:     now,
@@ -803,6 +811,9 @@ func (s *Store) WithdrawActiveGoal(ctx context.Context, goalID int64, reason str
 		}
 		if _, err := result.RowsAffected(); err != nil {
 			return fmt.Errorf("complete task handoff %s rows affected: %w", handoff.ID, err)
+		}
+		if _, err := appendHandoffEntryTx(ctx, q, "task_handoff_entries", handoff.ID, HandoffEntryKindComplete, reason, handoff.ReceivedBy.Int64, "", "", true, nowTime); err != nil {
+			return fmt.Errorf("append task handoff %s withdrawal entry: %w", handoff.ID, err)
 		}
 	}
 

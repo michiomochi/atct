@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -87,8 +88,21 @@ func addGoalHandoffDirect(t *testing.T, s *Store, handoffID string, goalID int64
 		t.Fatalf("drop goal handoff uniqueness index: %v", err)
 	}
 	t.Cleanup(func() {
+		if _, err := s.DB().ExecContext(ctx, `DROP TRIGGER IF EXISTS goal_handoff_entries_no_delete`); err != nil {
+			t.Errorf("drop goal handoff entry delete trigger: %v", err)
+		}
+		if _, err := s.DB().ExecContext(ctx, `DELETE FROM goal_handoff_entries WHERE handoff_id = ?`, handoffID); err != nil {
+			t.Errorf("delete direct goal handoff entries %q: %v", handoffID, err)
+		}
 		if _, err := s.DB().ExecContext(ctx, `DELETE FROM goal_handoffs WHERE id = ?`, handoffID); err != nil {
 			t.Errorf("delete direct goal handoff %q: %v", handoffID, err)
+		}
+		if _, err := s.DB().ExecContext(ctx, `
+			CREATE TRIGGER goal_handoff_entries_no_delete
+			BEFORE DELETE ON goal_handoff_entries
+			BEGIN SELECT RAISE(ABORT, 'goal handoff entries are append-only'); END
+		`); err != nil {
+			t.Errorf("restore goal handoff entry delete trigger: %v", err)
 		}
 		if _, err := s.DB().ExecContext(ctx, `
 			CREATE UNIQUE INDEX idx_goal_handoffs_open_goal_id
@@ -685,6 +699,30 @@ func TestRejectCompletionReopensCompletedGoalHandoff(t *testing.T) {
 	}
 	if open[0].RequestReport != "完了報告が却下されたため handoff を再発行した: "+reason {
 		t.Fatalf("reopened handoff request report = %q", open[0].RequestReport)
+	}
+	reopenedEntries, err := s.ListGoalHandoffEntries(ctx, open[0].ID, 0, 200)
+	if err != nil {
+		t.Fatalf("ListGoalHandoffEntries for reopened handoff: %v", err)
+	}
+	if len(reopenedEntries.Entries) != 2 {
+		t.Fatalf("reopened handoff entries = %+v, want request/received", reopenedEntries.Entries)
+	}
+	if got := []string{reopenedEntries.Entries[0].Kind, reopenedEntries.Entries[1].Kind}; !reflect.DeepEqual(got, []string{HandoffEntryKindRequest, HandoffEntryKindReceived}) {
+		t.Fatalf("reopened handoff entry kinds = %v, want request/received", got)
+	}
+	originalEntries, err := s.ListGoalHandoffEntries(ctx, original.ID, 0, 200)
+	if err != nil {
+		t.Fatalf("ListGoalHandoffEntries for original handoff: %v", err)
+	}
+	var foundReopenLink bool
+	for _, entry := range originalEntries.Entries {
+		if entry.Kind == HandoffEntryKindSystem && strings.Contains(entry.Body, open[0].ID) {
+			foundReopenLink = true
+			break
+		}
+	}
+	if !foundReopenLink {
+		t.Fatalf("original handoff entries = %+v, want a system link to reopened handoff %q", originalEntries.Entries, open[0].ID)
 	}
 }
 

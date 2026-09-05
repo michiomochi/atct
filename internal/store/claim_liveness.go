@@ -146,3 +146,19 @@ func claimIsDefinitelyDead(ctx context.Context, s *Store, agentSessionID int64) 
 	actualStartedAt, err := processStartedAt(pid)
 	return err == nil && actualStartedAt != session.StartedAt
 }
+
+func claimIsDefinitelyDeadWithQuery(ctx context.Context, q *sqlcgen.Queries, agentSessionID int64) bool {
+	if agentSessionID == 0 {
+		return false
+	}
+	session, err := q.GetAgentSessionLiveness(ctx, agentSessionID)
+	if err != nil || session.Pid == 0 || session.StartedAt == "" {
+		return false
+	}
+	processID := int(session.Pid)
+	if err := syscall.Kill(processID, 0); err != nil {
+		return true
+	}
+	actualStartedAt, err := processStartedAt(processID)
+	return err == nil && actualStartedAt != session.StartedAt
+}

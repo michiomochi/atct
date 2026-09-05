@@ -137,8 +137,21 @@ func addGoalHandoffDirect(t *testing.T, s *store.Store, handoffID string, goalID
 		t.Fatalf("drop goal handoff uniqueness index: %v", err)
 	}
 	t.Cleanup(func() {
+		if _, err := s.DB().ExecContext(ctx, `DROP TRIGGER IF EXISTS goal_handoff_entries_no_delete`); err != nil {
+			t.Errorf("drop goal handoff entry delete trigger: %v", err)
+		}
+		if _, err := s.DB().ExecContext(ctx, `DELETE FROM goal_handoff_entries WHERE handoff_id = ?`, handoffID); err != nil {
+			t.Errorf("delete direct goal handoff entries %q: %v", handoffID, err)
+		}
 		if _, err := s.DB().ExecContext(ctx, `DELETE FROM goal_handoffs WHERE id = ?`, handoffID); err != nil {
 			t.Errorf("delete direct goal handoff %v: %v", handoffID, err)
+		}
+		if _, err := s.DB().ExecContext(ctx, `
+			CREATE TRIGGER goal_handoff_entries_no_delete
+			BEFORE DELETE ON goal_handoff_entries
+			BEGIN SELECT RAISE(ABORT, 'goal handoff entries are append-only'); END
+		`); err != nil {
+			t.Errorf("restore goal handoff entry delete trigger: %v", err)
 		}
 		if _, err := s.DB().ExecContext(ctx, `
 			CREATE UNIQUE INDEX idx_goal_handoffs_open_goal_id

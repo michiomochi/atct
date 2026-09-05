@@ -66,6 +66,18 @@ type GoalHandoff struct {
 	CompleteReport    sql.NullString
 }
 
+type GoalHandoffEntry struct {
+	EntryID         string
+	HandoffID       string
+	Sequence        int64
+	Kind            string
+	Body            string
+	AuthorSessionID sql.NullInt64
+	RelatesTo       sql.NullString
+	Source          string
+	CreatedAt       string
+}
+
 type Project struct {
 	ID        int64
 	Name      string
@@ -114,4 +126,16 @@ type TaskHandoff struct {
 	CompletedReportAt sql.NullString
 	RequestReport     sql.NullString
 	CompleteReport    sql.NullString
+}
+
+type TaskHandoffEntry struct {
+	EntryID         string
+	HandoffID       string
+	Sequence        int64
+	Kind            string
+	Body            string
+	AuthorSessionID sql.NullInt64
+	RelatesTo       sql.NullString
+	Source          string
+	CreatedAt       string
 }

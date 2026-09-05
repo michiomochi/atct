@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 //go:embed migrations/*.sql
@@ -992,6 +994,11 @@ func execEmbeddedMigration(ctx context.Context, conn *sql.Conn, migration embedd
 	if _, err := conn.ExecContext(ctx, migration.sql); err != nil {
 		return fmt.Errorf("execute schema migration %s: %w", migration.filename, err)
 	}
+	if migration.filename == "0023_handoff_entries.sql" {
+		if err := backfillLegacyHandoffEntries(ctx, conn); err != nil {
+			return fmt.Errorf("backfill legacy handoff entries: %w", err)
+		}
+	}
 	return nil
 }
 
@@ -1011,4 +1018,111 @@ func setUserVersion(ctx context.Context, conn *sql.Conn) error {
 		return fmt.Errorf("set database schema version to %d: %w", schemaVersion, err)
 	}
 	return nil
+}
+
+var legacyHandoffEntryNamespace = uuid.MustParse("2b3c4d5e-6f70-4891-a2b3-c4d5e6f70819")
+
+type legacyHandoffReport struct {
+	handoffID         string
+	requestedBy       sql.NullInt64
+	receivedBy        sql.NullInt64
+	requestedAt       sql.NullString
+	completedReportAt sql.NullString
+	requestReport     sql.NullString
+	completeReport    sql.NullString
+}
+
+func backfillLegacyHandoffEntries(ctx context.Context, conn *sql.Conn) error {
+	if err := backfillLegacyHandoffEntryTable(ctx, conn, "task_handoffs", "task_handoff_entries"); err != nil {
+		return err
+	}
+	return backfillLegacyHandoffEntryTable(ctx, conn, "goal_handoffs", "goal_handoff_entries")
+}
+
+func backfillLegacyHandoffEntryTable(ctx context.Context, conn *sql.Conn, parentTable, entryTable string) error {
+	rows, err := conn.QueryContext(ctx, `
+		SELECT id, requested_by, received_by, requested_at, completed_report_at,
+		       request_report, complete_report
+		FROM `+parentTable+`
+		ORDER BY id
+	`)
+	if err != nil {
+		return fmt.Errorf("list %s: %w", parentTable, err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var report legacyHandoffReport
+		if err := rows.Scan(
+			&report.handoffID, &report.requestedBy, &report.receivedBy,
+			&report.requestedAt, &report.completedReportAt,
+			&report.requestReport, &report.completeReport,
+		); err != nil {
+			return fmt.Errorf("scan %s: %w", parentTable, err)
+		}
+		sequence := int64(1)
+		if report.requestReport.Valid && strings.TrimSpace(report.requestReport.String) != "" {
+			if err := insertLegacyHandoffEntry(ctx, conn, entryTable, report, HandoffEntryKindRequest, "request_report", report.requestReport.String, sequence, report.requestedAt.String); err != nil {
+				return fmt.Errorf("backfill %s request for %q: %w", parentTable, report.handoffID, err)
+			}
+			sequence++
+		}
+		if report.completeReport.Valid && strings.TrimSpace(report.completeReport.String) != "" {
+			createdAt := report.completedReportAt.String
+			if createdAt == "" {
+				createdAt = report.requestedAt.String
+			}
+			if err := insertLegacyHandoffEntry(ctx, conn, entryTable, report, HandoffEntryKindComplete, "complete_report", report.completeReport.String, sequence, createdAt); err != nil {
+				return fmt.Errorf("backfill %s complete for %q: %w", parentTable, report.handoffID, err)
+			}
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate %s: %w", parentTable, err)
+	}
+	return nil
+}
+
+func insertLegacyHandoffEntry(
+	ctx context.Context,
+	conn *sql.Conn,
+	entryTable string,
+	report legacyHandoffReport,
+	kind, sourceName, sourceBody string,
+	sequence int64,
+	createdAt string,
+) error {
+	body, bodyErr := normalizeHandoffEntryBody(sourceBody)
+	entryKind := kind
+	source := ""
+	if bodyErr != nil {
+		entryKind = HandoffEntryKindSystem
+		source = sourceBody
+		if bodyErr == ErrHandoffEntryBodyTooLarge {
+			body = fmt.Sprintf("legacy %s omitted because it exceeds %d bytes", sourceName, HandoffEntryBodyMaxBytes)
+		} else {
+			body = fmt.Sprintf("legacy %s omitted because it is not valid UTF-8", sourceName)
+		}
+	}
+	if body == "" {
+		return nil
+	}
+	if createdAt == "" {
+		createdAt = time.Unix(0, 0).UTC().Format(time.RFC3339Nano)
+	}
+	entryID := uuid.NewSHA1(legacyHandoffEntryNamespace, []byte(fmt.Sprintf("%s:%s:%s", entryTable, report.handoffID, sourceName))).String()
+	var author any
+	if kind == HandoffEntryKindRequest && report.requestedBy.Valid && report.requestedBy.Int64 > 0 {
+		author = report.requestedBy.Int64
+	}
+	if kind == HandoffEntryKindComplete && report.receivedBy.Valid && report.receivedBy.Int64 > 0 {
+		author = report.receivedBy.Int64
+	}
+	_, err := conn.ExecContext(ctx, `
+		INSERT OR IGNORE INTO `+entryTable+` (
+			entry_id, handoff_id, sequence, kind, body, author_session_id,
+			relates_to, source, created_at
+		) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?)
+	`, entryID, report.handoffID, sequence, entryKind, body, author, source, createdAt)
+	return err
 }
