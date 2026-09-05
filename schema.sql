@@ -33,6 +33,8 @@ CREATE TABLE IF NOT EXISTS goals (
   project_id     INTEGER NOT NULL REFERENCES projects(id),
   derived_from_goal_id INTEGER REFERENCES goals(id),
   content        TEXT NOT NULL,
+  spec           TEXT NOT NULL DEFAULT '',
+  plan           TEXT NOT NULL DEFAULT '',
   status         TEXT NOT NULL,
   creator        TEXT NOT NULL DEFAULT 'human',
   result_summary TEXT NOT NULL DEFAULT '',

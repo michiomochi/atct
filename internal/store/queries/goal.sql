@@ -14,7 +14,7 @@ RETURNING id;
 -- rather than fail. NULLIF keeps 0 meaning "no parent".
 SELECT
   id, project_id, NULLIF(CAST(derived_from_goal_id AS INTEGER), 0) AS derived_from_goal_id,
-  content, status, creator, result_summary,
+  content, spec, plan, status, creator, result_summary,
   work_done, now_possible, how_to_verify, surprises, needs_review, next_steps,
   created_at, updated_at
 FROM goals
@@ -53,7 +53,7 @@ WHERE id = ? AND kind = 'goal_approval' AND status = 'open';
 
 -- name: ListGoals :many
 SELECT
-  id, project_id, derived_from_goal_id, content, status, creator, result_summary,
+  id, project_id, derived_from_goal_id, content, spec, plan, status, creator, result_summary,
   work_done, now_possible, how_to_verify, surprises, needs_review, next_steps,
   created_at, updated_at
 FROM goals
@@ -62,7 +62,7 @@ ORDER BY created_at;
 
 -- name: ListAllGoals :many
 SELECT
-  id, project_id, derived_from_goal_id, content, status, creator, result_summary,
+  id, project_id, derived_from_goal_id, content, spec, plan, status, creator, result_summary,
   work_done, now_possible, how_to_verify, surprises, needs_review, next_steps,
   created_at, updated_at
 FROM goals
@@ -70,7 +70,7 @@ ORDER BY created_at;
 
 -- name: ListDerivedGoals :many
 SELECT
-  id, project_id, derived_from_goal_id, content, status, creator, result_summary,
+  id, project_id, derived_from_goal_id, content, spec, plan, status, creator, result_summary,
   work_done, now_possible, how_to_verify, surprises, needs_review, next_steps,
   created_at, updated_at
 FROM goals
@@ -106,3 +106,6 @@ WHERE id = ?;
 -- name: MarkGoalDone :execresult
 UPDATE goals SET status = 'done', updated_at = ?
 WHERE id = ?;
+
+-- name: UpdateGoalRequestReport :execresult
+UPDATE goals SET spec = ?, plan = ?, updated_at = ? WHERE id = ?;

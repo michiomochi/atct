@@ -107,7 +107,7 @@ func (q *Queries) GetCompletionDecisionGoalID(ctx context.Context, id int64) (in
 const getGoal = `-- name: GetGoal :one
 SELECT
   id, project_id, NULLIF(CAST(derived_from_goal_id AS INTEGER), 0) AS derived_from_goal_id,
-  content, status, creator, result_summary,
+  content, spec, plan, status, creator, result_summary,
   work_done, now_possible, how_to_verify, surprises, needs_review, next_steps,
   created_at, updated_at
 FROM goals
@@ -119,6 +119,8 @@ type GetGoalRow struct {
 	ProjectID         int64
 	DerivedFromGoalID interface{}
 	Content           string
+	Spec              string
+	Plan              string
 	Status            string
 	Creator           string
 	ResultSummary     string
@@ -143,6 +145,8 @@ func (q *Queries) GetGoal(ctx context.Context, id int64) (GetGoalRow, error) {
 		&i.ProjectID,
 		&i.DerivedFromGoalID,
 		&i.Content,
+		&i.Spec,
+		&i.Plan,
 		&i.Status,
 		&i.Creator,
 		&i.ResultSummary,
@@ -173,27 +177,49 @@ func (q *Queries) GetGoalApprovalDecisionGoalID(ctx context.Context, id int64) (
 
 const listAllGoals = `-- name: ListAllGoals :many
 SELECT
-  id, project_id, derived_from_goal_id, content, status, creator, result_summary,
+  id, project_id, derived_from_goal_id, content, spec, plan, status, creator, result_summary,
   work_done, now_possible, how_to_verify, surprises, needs_review, next_steps,
   created_at, updated_at
 FROM goals
 ORDER BY created_at
 `
 
-func (q *Queries) ListAllGoals(ctx context.Context) ([]Goal, error) {
+type ListAllGoalsRow struct {
+	ID                int64
+	ProjectID         int64
+	DerivedFromGoalID sql.NullInt64
+	Content           string
+	Spec              string
+	Plan              string
+	Status            string
+	Creator           string
+	ResultSummary     string
+	WorkDone          string
+	NowPossible       string
+	HowToVerify       string
+	Surprises         string
+	NeedsReview       string
+	NextSteps         string
+	CreatedAt         string
+	UpdatedAt         string
+}
+
+func (q *Queries) ListAllGoals(ctx context.Context) ([]ListAllGoalsRow, error) {
 	rows, err := q.db.QueryContext(ctx, listAllGoals)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Goal
+	var items []ListAllGoalsRow
 	for rows.Next() {
-		var i Goal
+		var i ListAllGoalsRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.ProjectID,
 			&i.DerivedFromGoalID,
 			&i.Content,
+			&i.Spec,
+			&i.Plan,
 			&i.Status,
 			&i.Creator,
 			&i.ResultSummary,
@@ -221,7 +247,7 @@ func (q *Queries) ListAllGoals(ctx context.Context) ([]Goal, error) {
 
 const listDerivedGoals = `-- name: ListDerivedGoals :many
 SELECT
-  id, project_id, derived_from_goal_id, content, status, creator, result_summary,
+  id, project_id, derived_from_goal_id, content, spec, plan, status, creator, result_summary,
   work_done, now_possible, how_to_verify, surprises, needs_review, next_steps,
   created_at, updated_at
 FROM goals
@@ -229,20 +255,42 @@ WHERE derived_from_goal_id = ?
 ORDER BY created_at
 `
 
-func (q *Queries) ListDerivedGoals(ctx context.Context, derivedFromGoalID sql.NullInt64) ([]Goal, error) {
+type ListDerivedGoalsRow struct {
+	ID                int64
+	ProjectID         int64
+	DerivedFromGoalID sql.NullInt64
+	Content           string
+	Spec              string
+	Plan              string
+	Status            string
+	Creator           string
+	ResultSummary     string
+	WorkDone          string
+	NowPossible       string
+	HowToVerify       string
+	Surprises         string
+	NeedsReview       string
+	NextSteps         string
+	CreatedAt         string
+	UpdatedAt         string
+}
+
+func (q *Queries) ListDerivedGoals(ctx context.Context, derivedFromGoalID sql.NullInt64) ([]ListDerivedGoalsRow, error) {
 	rows, err := q.db.QueryContext(ctx, listDerivedGoals, derivedFromGoalID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Goal
+	var items []ListDerivedGoalsRow
 	for rows.Next() {
-		var i Goal
+		var i ListDerivedGoalsRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.ProjectID,
 			&i.DerivedFromGoalID,
 			&i.Content,
+			&i.Spec,
+			&i.Plan,
 			&i.Status,
 			&i.Creator,
 			&i.ResultSummary,
@@ -270,7 +318,7 @@ func (q *Queries) ListDerivedGoals(ctx context.Context, derivedFromGoalID sql.Nu
 
 const listGoals = `-- name: ListGoals :many
 SELECT
-  id, project_id, derived_from_goal_id, content, status, creator, result_summary,
+  id, project_id, derived_from_goal_id, content, spec, plan, status, creator, result_summary,
   work_done, now_possible, how_to_verify, surprises, needs_review, next_steps,
   created_at, updated_at
 FROM goals
@@ -278,20 +326,42 @@ WHERE project_id = ?
 ORDER BY created_at
 `
 
-func (q *Queries) ListGoals(ctx context.Context, projectID int64) ([]Goal, error) {
+type ListGoalsRow struct {
+	ID                int64
+	ProjectID         int64
+	DerivedFromGoalID sql.NullInt64
+	Content           string
+	Spec              string
+	Plan              string
+	Status            string
+	Creator           string
+	ResultSummary     string
+	WorkDone          string
+	NowPossible       string
+	HowToVerify       string
+	Surprises         string
+	NeedsReview       string
+	NextSteps         string
+	CreatedAt         string
+	UpdatedAt         string
+}
+
+func (q *Queries) ListGoals(ctx context.Context, projectID int64) ([]ListGoalsRow, error) {
 	rows, err := q.db.QueryContext(ctx, listGoals, projectID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Goal
+	var items []ListGoalsRow
 	for rows.Next() {
-		var i Goal
+		var i ListGoalsRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.ProjectID,
 			&i.DerivedFromGoalID,
 			&i.Content,
+			&i.Spec,
+			&i.Plan,
 			&i.Status,
 			&i.Creator,
 			&i.ResultSummary,
@@ -437,6 +507,26 @@ type UpdateGoalContentParams struct {
 
 func (q *Queries) UpdateGoalContent(ctx context.Context, arg UpdateGoalContentParams) (sql.Result, error) {
 	return q.db.ExecContext(ctx, updateGoalContent, arg.Content, arg.UpdatedAt, arg.ID)
+}
+
+const updateGoalRequestReport = `-- name: UpdateGoalRequestReport :execresult
+UPDATE goals SET spec = ?, plan = ?, updated_at = ? WHERE id = ?
+`
+
+type UpdateGoalRequestReportParams struct {
+	Spec      string
+	Plan      string
+	UpdatedAt string
+	ID        int64
+}
+
+func (q *Queries) UpdateGoalRequestReport(ctx context.Context, arg UpdateGoalRequestReportParams) (sql.Result, error) {
+	return q.db.ExecContext(ctx, updateGoalRequestReport,
+		arg.Spec,
+		arg.Plan,
+		arg.UpdatedAt,
+		arg.ID,
+	)
 }
 
 const withdrawActiveGoal = `-- name: WithdrawActiveGoal :execresult

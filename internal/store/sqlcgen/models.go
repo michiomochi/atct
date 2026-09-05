@@ -52,6 +52,8 @@ type Goal struct {
 	NextSteps         string
 	CreatedAt         string
 	UpdatedAt         string
+	Spec              string
+	Plan              string
 }
 
 type GoalHandoff struct {
