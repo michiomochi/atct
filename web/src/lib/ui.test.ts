@@ -108,6 +108,8 @@ function fixtureGoal(id: string, projectName: string): Goal {
     project_id: projectName.toLowerCase(),
     project_name: projectName,
     content: id,
+    spec: "",
+    plan: "",
     status: "active",
     awaiting_decision: false,
     result_summary: "",

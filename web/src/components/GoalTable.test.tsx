@@ -45,6 +45,8 @@ function goal(id: string, content: string, tasks: TaskView[]): Goal {
     project_id: "project-1",
     project_name: "Fixture project",
     content,
+    spec: "",
+    plan: "",
     status: "active",
     awaiting_decision: false,
     result_summary: "",
