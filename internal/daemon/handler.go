@@ -371,6 +371,19 @@ func (d *Daemon) authorizeGoalCompletion(ctx context.Context, goalID int64, proj
 	return d.authorizeCommander(ctx, goalID, projectID, agentSessionID, "goal completion")
 }
 
+func (d *Daemon) authorizeGoalHandoffHolder(ctx context.Context, goalID, agentSessionID int64, operation string) error {
+	handoffs, err := d.store.ListGoalHandoffs(ctx, goalID)
+	if err != nil {
+		return fmt.Errorf("%s authorization: list goal handoffs: %w", operation, err)
+	}
+	for _, handoff := range handoffs {
+		if handoff.ReceivedAt != nil && handoff.CompletedReportAt == nil && handoff.ReceivedBy == agentSessionID {
+			return nil
+		}
+	}
+	return fmt.Errorf("%s denied: caller %d is not the received goal-handoff holder for goal %d", operation, agentSessionID, goalID)
+}
+
 func (d *Daemon) authorizeCommander(ctx context.Context, goalID, projectID, agentSessionID int64, operation string) error {
 	if agentSessionID == 0 {
 		return fmt.Errorf("%s denied: goal %d requires agent_session_id", operation, goalID)
@@ -1219,7 +1232,7 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		if err := d.ensureAgentSessionProject(ctx, p.AgentSessionID, goal.ProjectID); err != nil {
 			return nil, err
 		}
-		if err := d.authorizeGoalCompletion(ctx, p.GoalID, goal.ProjectID, p.AgentSessionID); err != nil {
+		if err := d.authorizeGoalHandoffHolder(ctx, p.GoalID, p.AgentSessionID, "goal request report"); err != nil {
 			return nil, err
 		}
 		updated, err := d.store.UpdateGoalRequestReport(ctx, p.GoalID, p.Spec, p.Plan)
