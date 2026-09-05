@@ -713,7 +713,6 @@ func (b *codexMonitorBridge) pump(ctx context.Context) error {
 			b.active = false
 			if b.app != nil && b.app.Err() != nil {
 				b.disabled = true
-				b.queue = nil
 			}
 			b.stateMu.Unlock()
 			return err
@@ -844,7 +843,7 @@ func (b *codexMonitorBridge) HandleNotification(ctx context.Context, notificatio
 		if active {
 			return nil
 		}
-		return b.pump(ctx)
+		return b.pumpAfterIdle(ctx)
 	}
 	var params struct {
 		ThreadID string    `json:"threadId"`
