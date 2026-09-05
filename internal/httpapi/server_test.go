@@ -2633,6 +2633,7 @@ func idText(id int64) string { return strconv.FormatInt(id, 10) }
 type wsTestFrame struct {
 	Name string          `json:"name"`
 	Data json.RawMessage `json:"data"`
+	ID   string          `json:"id"`
 }
 
 func openWebSocket(t *testing.T, endpoint string, options *websocket.DialOptions) *websocket.Conn {

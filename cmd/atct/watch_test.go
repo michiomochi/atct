@@ -372,6 +372,80 @@ func TestWatchDoesNotFormatKeepaliveAsVisibleLine(t *testing.T) {
 	}
 }
 
+func TestWatchFormatsAndDeduplicatesHandoffEntryAdded(t *testing.T) {
+	var output bytes.Buffer
+	delivered := make(map[watchDeliveryKey]struct{})
+	wakeupDiscrepancyDelivered := make(map[watchWakeupDeliveryKey]struct{})
+	detectionDelivered := make(map[watchDetectionDeliveryKey]struct{})
+	entry := watchDecision{
+		GoalID:          "goal-1",
+		TaskID:          "task-1",
+		HandoffID:       "handoff-1",
+		EntryID:         "entry-1",
+		Sequence:        3,
+		Kind:            "progress",
+		AuthorSessionID: 42,
+		BodyPreview:     "implemented the HTTP endpoint",
+	}
+	for range 2 {
+		if err := emitWatchDecisionWithState(&output, "handoff_entry_added", entry, delivered, nil, wakeupDiscrepancyDelivered, detectionDelivered); err != nil {
+			t.Fatalf("emitWatchDecision: %v", err)
+		}
+	}
+	want := "atct handoff entry added: task task-1 (handoff handoff-1, sequence 3, kind progress, author 42): implemented the HTTP endpoint\n"
+	if got := output.String(); got != want {
+		t.Fatalf("handoff entry output = %q, want %q", got, want)
+	}
+}
+
+func TestReadWatchSSEFramesPreservesLastEventID(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	frames, done := readWatchSSEFrames(ctx, strings.NewReader("id: entry-1\nevent: handoff_entry_added\ndata: {\"entry_id\":\"entry-1\"}\n\n"))
+	frame, ok := <-frames
+	if !ok {
+		t.Fatal("readWatchSSEFrames closed before returning a frame")
+	}
+	if frame.id != "entry-1" {
+		t.Fatalf("SSE frame id = %q, want entry-1", frame.id)
+	}
+	if frame.name != "handoff_entry_added" {
+		t.Fatalf("SSE frame name = %q, want handoff_entry_added", frame.name)
+	}
+	if err := <-done; err != nil {
+		t.Fatalf("readWatchSSEFrames done error = %v", err)
+	}
+}
+
+func TestConsumeWatchEventsSendsLastEventID(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var gotLastEventID string
+	client := &http.Client{Transport: watchRoundTripper(func(req *http.Request) (*http.Response, error) {
+		gotLastEventID = req.Header.Get("Last-Event-ID")
+		body := "id: e2\nevent: handoff_entry_added\ndata: {\"goal_id\":1,\"task_id\":46,\"handoff_id\":\"h1\",\"entry_id\":\"e2\",\"sequence\":2,\"kind\":\"progress\",\"author_session_id\":7,\"body_preview\":\"next\"}\n\n"
+		return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
+	})}
+	var output bytes.Buffer
+	lastEventID := "e1"
+	err := consumeWatchEventsWithStateAndScopeAndSinkAndLastEventID(
+		ctx, client, "http://watch.test", watchScope{GoalID: "1", TaskID: "46"}, &output, time.Second,
+		make(map[watchDeliveryKey]struct{}), new(string), make(map[watchWakeupDeliveryKey]struct{}), make(map[watchDetectionDeliveryKey]struct{}), newWatchTaskScopeFilter("46"), nil, &lastEventID,
+	)
+	if !errors.Is(err, io.EOF) {
+		t.Fatalf("consumeWatchEvents error = %v, want io.EOF", err)
+	}
+	if gotLastEventID != "e1" {
+		t.Fatalf("Last-Event-ID = %q, want e1", gotLastEventID)
+	}
+	if !strings.Contains(output.String(), "atct handoff entry added") {
+		t.Fatalf("watch output = %q, want handoff entry line", output.String())
+	}
+	if lastEventID != "e2" {
+		t.Fatalf("last event state = %q, want e2", lastEventID)
+	}
+}
+
 func TestWatchKeepsQuietWhileKeepalivesArriveAndReportsAfterTheyStop(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

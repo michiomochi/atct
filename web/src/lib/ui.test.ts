@@ -393,6 +393,7 @@ describe("decision SSE events", () => {
       "detection.handoff_unreceived",
       "detection.handoff_unreported",
       "handoff_reported",
+      "handoff_entry_added",
       "detection.claim_undelegated",
       "detection.decision_answered_unapplied",
       "detection.decision_default_unapplied",

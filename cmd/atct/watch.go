@@ -51,6 +51,12 @@ type watchDecision struct {
 	GoalID                     string  `json:"goal_id"`
 	TaskID                     string  `json:"task_id"`
 	HandoffID                  string  `json:"handoff_id"`
+	EntryID                    string  `json:"entry_id"`
+	Sequence                   int64   `json:"sequence"`
+	Kind                       string  `json:"kind"`
+	AuthorSessionID            int64   `json:"author_session_id"`
+	BodyPreview                string  `json:"body_preview"`
+	Preview                    string  `json:"preview"`
 	WorktreeActivity           string  `json:"worktree_activity"`
 	CompleteReport             string  `json:"complete_report"`
 }
@@ -331,6 +337,7 @@ func watchLoopWithEnsureAndProjectIDAndScopeAndSink(ctx context.Context, out io.
 	// and sends its first current wakeup. State is per watch loop so a later
 	// watch is not silenced by another watch's delivery.
 	var lastWakeupContent string
+	var lastEventID string
 	wakeupDiscrepancyDelivered := make(map[watchWakeupDeliveryKey]struct{})
 	detectionDelivered := make(map[watchDetectionDeliveryKey]struct{})
 	ensureFailures := 0
@@ -395,7 +402,7 @@ func watchLoopWithEnsureAndProjectIDAndScopeAndSink(ctx context.Context, out io.
 
 		streamScope := scope
 		streamScope.ProjectID = filterProjectID
-		if err := consumeWatchEventsWithStateAndScopeAndSink(ctx, client, baseURL, streamScope, out, watchKeepaliveTimeout, delivered, &lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered, scopeFilter, sink); err != nil && ctx.Err() == nil {
+		if err := consumeWatchEventsWithStateAndScopeAndSinkAndLastEventID(ctx, client, baseURL, streamScope, out, watchKeepaliveTimeout, delivered, &lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered, scopeFilter, sink, &lastEventID); err != nil && ctx.Err() == nil {
 			var sinkErr *watchSinkError
 			if errors.As(err, &sinkErr) {
 				return err
@@ -542,6 +549,7 @@ func consumeWatchEvents(ctx context.Context, client *http.Client, baseURL, proje
 type watchSSEFrame struct {
 	name string
 	data string
+	id   string
 }
 
 func consumeWatchEventsWithTimeout(ctx context.Context, client *http.Client, baseURL, projectID string, out io.Writer, keepaliveTimeout time.Duration, delivered map[watchDeliveryKey]struct{}, wakeupDiscrepancyDelivered map[watchWakeupDeliveryKey]struct{}, detectionDelivered map[watchDetectionDeliveryKey]struct{}) error {
@@ -562,6 +570,10 @@ func consumeWatchEventsWithStateAndGoalAndSink(ctx context.Context, client *http
 }
 
 func consumeWatchEventsWithStateAndScopeAndSink(ctx context.Context, client *http.Client, baseURL string, scope watchScope, out io.Writer, keepaliveTimeout time.Duration, delivered map[watchDeliveryKey]struct{}, lastWakeupContent *string, wakeupDiscrepancyDelivered map[watchWakeupDeliveryKey]struct{}, detectionDelivered map[watchDetectionDeliveryKey]struct{}, scopeFilter *watchScopeFilter, sink func(string) error) error {
+	return consumeWatchEventsWithStateAndScopeAndSinkAndLastEventID(ctx, client, baseURL, scope, out, keepaliveTimeout, delivered, lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered, scopeFilter, sink, nil)
+}
+
+func consumeWatchEventsWithStateAndScopeAndSinkAndLastEventID(ctx context.Context, client *http.Client, baseURL string, scope watchScope, out io.Writer, keepaliveTimeout time.Duration, delivered map[watchDeliveryKey]struct{}, lastWakeupContent *string, wakeupDiscrepancyDelivered map[watchWakeupDeliveryKey]struct{}, detectionDelivered map[watchDetectionDeliveryKey]struct{}, scopeFilter *watchScopeFilter, sink func(string) error, lastEventID *string) error {
 	eventsURL, err := watchEventsURLWithScope(baseURL, scope)
 	if err != nil {
 		return err
@@ -569,6 +581,9 @@ func consumeWatchEventsWithStateAndScopeAndSink(ctx context.Context, client *htt
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, eventsURL, nil)
 	if err != nil {
 		return err
+	}
+	if lastEventID != nil && strings.TrimSpace(*lastEventID) != "" {
+		req.Header.Set("Last-Event-ID", *lastEventID)
 	}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -619,6 +634,9 @@ func consumeWatchEventsWithStateAndScopeAndSink(ctx context.Context, client *htt
 				}
 				return io.EOF
 			}
+			if frame.id != "" && lastEventID != nil {
+				*lastEventID = frame.id
+			}
 			if frame.name == "keepalive" {
 				resetKeepalive()
 				continue
@@ -648,20 +666,23 @@ func readWatchSSEFrames(ctx context.Context, body io.Reader) (<-chan watchSSEFra
 		scanner := bufio.NewScanner(body)
 		scanner.Buffer(make([]byte, 4096), 1024*1024)
 		var eventName string
+		var eventID string
 		var data strings.Builder
 		dispatch := func() error {
 			if eventName == "" || data.Len() == 0 {
 				eventName = ""
+				eventID = ""
 				data.Reset()
 				return nil
 			}
-			frame := watchSSEFrame{name: eventName, data: data.String()}
+			frame := watchSSEFrame{name: eventName, data: data.String(), id: eventID}
 			select {
 			case frames <- frame:
 			case <-ctx.Done():
 				return ctx.Err()
 			}
 			eventName = ""
+			eventID = ""
 			data.Reset()
 			return nil
 		}
@@ -680,6 +701,8 @@ func readWatchSSEFrames(ctx context.Context, body io.Reader) (<-chan watchSSEFra
 				}
 			case strings.HasPrefix(line, "event:"):
 				eventName = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
+			case strings.HasPrefix(line, "id:"):
+				eventID = strings.TrimSpace(strings.TrimPrefix(line, "id:"))
 			case strings.HasPrefix(line, "data:"):
 				value := strings.TrimPrefix(line, "data:")
 				if strings.HasPrefix(value, " ") {
@@ -751,6 +774,20 @@ func emitWatchDecisionWithStateAndSink(out io.Writer, eventName string, decision
 				return &watchSinkError{err: err}
 			}
 		}
+		return nil
+	}
+	if eventName == "handoff_entry_added" {
+		if decision.EntryID == "" {
+			return fmt.Errorf("SSE event %s has no entry_id", eventName)
+		}
+		key := watchDeliveryKey{eventName: eventName, decisionID: decision.EntryID}
+		if _, ok := delivered[key]; ok {
+			return nil
+		}
+		if err := writeLine(); err != nil {
+			return err
+		}
+		delivered[key] = struct{}{}
 		return nil
 	}
 	if eventName == "handoff_yielded" {
@@ -878,6 +915,16 @@ func formatWatchDecision(eventName string, decision watchDecision) (string, bool
 			target = "task " + decision.TaskID
 		}
 		return fmt.Sprintf("atct handoff reported: %s (handoff %s): %s", target, decision.HandoffID, watchHandoffReportPreview(decision.CompleteReport)), true
+	case "handoff_entry_added":
+		target := "goal " + decision.GoalID
+		if decision.TaskID != "" {
+			target = "task " + decision.TaskID
+		}
+		preview := decision.BodyPreview
+		if preview == "" {
+			preview = decision.Preview
+		}
+		return fmt.Sprintf("atct handoff entry added: %s (handoff %s, sequence %d, kind %s, author %d): %s", target, decision.HandoffID, decision.Sequence, decision.Kind, decision.AuthorSessionID, watchHandoffEntryPreview(preview)), true
 	case "handoff_yielded":
 		return fmt.Sprintf("atct handoff yielded: task %s", decision.TaskID), true
 	case "detection.claim_undelegated":
@@ -949,6 +996,23 @@ func watchHandoffReportPreview(report string) string {
 		return report
 	}
 	return string(runes[:maxReportRunes]) + "…"
+}
+
+func watchHandoffEntryPreview(body string) string {
+	body = strings.Join(strings.Fields(body), " ")
+	const maxPreviewBytes = 256
+	if len([]byte(body)) <= maxPreviewBytes {
+		return body
+	}
+	var preview []byte
+	for _, r := range body {
+		runeBytes := []byte(string(r))
+		if len(preview)+len(runeBytes) > maxPreviewBytes {
+			break
+		}
+		preview = append(preview, runeBytes...)
+	}
+	return string(preview)
 }
 
 func waitForWatchReconnect(ctx context.Context, out io.Writer, interval time.Duration) error {

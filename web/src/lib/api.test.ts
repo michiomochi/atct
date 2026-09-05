@@ -2,7 +2,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   approveDecision,
   createGoal,
+  fetchGoalHandoffHistory,
   fetchProjects,
+  normalizeGoal,
   rejectDecision,
   subscribeToDecisionEvents,
 } from "./api";
@@ -111,6 +113,43 @@ describe("goal creation API", () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ project_id: "project-1", content: "Ship it\n\nDetails", creator: "human" }),
     });
+  });
+});
+
+describe("handoff history API", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("fetches a cursor page for a goal handoff", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      text: () => Promise.resolve('{"id":"handoff-1","entries":[],"has_more":false,"next_cursor":4}'),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(fetchGoalHandoffHistory("goal/1", "handoff/1", 2, 20)).resolves.toMatchObject({
+      id: "handoff-1",
+      next_cursor: 4,
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/goals/goal%2F1/handoffs/handoff%2F1?cursor=2&limit=20",
+      undefined,
+    );
+  });
+
+  it("normalizes embedded handoff pages without changing older goal payloads", () => {
+    const response = normalizeGoal({
+      goal: { id: "goal-1" },
+      handoffs: [{ id: "handoff-1", entries: [{ entry_id: "entry-1" }] }],
+    });
+
+    expect(response.handoffs).toHaveLength(1);
+    expect(response.handoffs?.[0]).toMatchObject({
+      id: "handoff-1",
+      entries: [{ entry_id: "entry-1" }],
+    });
+    expect(normalizeGoal({ goal: { id: "goal-2" } }).handoffs).toEqual([]);
   });
 });
 

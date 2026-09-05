@@ -6,6 +6,7 @@ import {
   ApiError,
   approveDecision,
   fetchGoal,
+  fetchGoalHandoffHistory,
   rejectDecision,
   subscribeToDecisionEvents,
   updateGoalContent,
@@ -20,6 +21,7 @@ import { AreaLoading, ErrorState } from "./StateMessage";
 import { GoalDiff } from "./GoalDiff";
 import { TaskCommitList } from "./TaskCommitList";
 import { TaskTable } from "./TaskTable";
+import { HandoffTimeline } from "./HandoffTimeline";
 
 interface Props {
   id: string;
@@ -483,6 +485,11 @@ export function GoalDetail({ id }: Props) {
     setUpdatePending(true);
   }, []);
 
+  const fetchHandoffHistory = useCallback(
+    (handoffID: string, cursor: number) => fetchGoalHandoffHistory(resolvedID, handoffID, cursor),
+    [resolvedID],
+  );
+
   useEffect(() => {
     void load();
     return subscribeToDecisionEvents(handleDecisionEvent);
@@ -543,6 +550,8 @@ export function GoalDetail({ id }: Props) {
           </Button>
         </div>
       )}
+
+      {data && <HandoffTimeline handoffs={data.goal.handoffs ?? []} fetchHistory={fetchHandoffHistory} />}
 
       {data && <CompletionReport goal={data.goal.goal} />}
 

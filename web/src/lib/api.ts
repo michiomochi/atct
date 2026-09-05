@@ -104,6 +104,36 @@ export interface DecisionHistoryEntry {
   applied_at: string;
 }
 
+export interface HandoffEntry {
+  entry_id: string;
+  handoff_id: string;
+  sequence: number;
+  kind: string;
+  body: string;
+  author_session_id: string;
+  relates_to?: string;
+  source?: string;
+  created_at: string;
+}
+
+export interface Handoff {
+  id: string;
+  scope: string;
+  project_id: string;
+  goal_id: string;
+  task_id?: string;
+  requested_by: string;
+  received_by: string;
+  request_report: string;
+  complete_report: string;
+  requested_at?: string;
+  received_at?: string;
+  completed_report_at?: string;
+  entries: HandoffEntry[];
+  has_more: boolean;
+  next_cursor: number;
+}
+
 export interface ProposedGoal {
   id: string;
   project_id: string;
@@ -131,6 +161,7 @@ export interface GoalResponse {
   task_commits: GoalTaskCommits[];
   derived_from: RelatedGoal | null;
   derived_goals: RelatedGoal[];
+  handoffs?: Handoff[];
 }
 
 export interface TaskGoalSummary {
@@ -208,6 +239,7 @@ export interface TaskDetailResponse {
   open_decisions: Decision[];
   decision_history: DecisionHistoryEntry[];
   decision_history_omitted: number;
+  handoffs?: Handoff[];
 }
 
 export interface AnswerPayload {
@@ -235,6 +267,21 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function arrayOrEmpty<T>(value: unknown): T[] {
   return Array.isArray(value) ? value as T[] : [];
+}
+
+function normalizeHandoff(value: unknown): Handoff {
+  const source = isRecord(value) ? value : {};
+  const nextCursor = source.next_cursor;
+  return {
+    ...(source as unknown as Handoff),
+    entries: arrayOrEmpty<HandoffEntry>(source.entries),
+    has_more: source.has_more === true,
+    next_cursor: typeof nextCursor === "number" && Number.isFinite(nextCursor) && nextCursor >= 0 ? Math.floor(nextCursor) : 0,
+  };
+}
+
+function normalizeHandoffs(value: unknown): Handoff[] {
+  return arrayOrEmpty<unknown>(value).map(normalizeHandoff);
 }
 
 async function readResponseBody(response: Response): Promise<unknown> {
@@ -284,6 +331,7 @@ export function normalizeGoal(value: unknown): GoalResponse {
     task_commits: arrayOrEmpty<GoalTaskCommits>(source.task_commits),
     derived_from: isRecord(derivedFrom) ? derivedFrom as unknown as RelatedGoal : null,
     derived_goals: arrayOrEmpty<RelatedGoal>(source.derived_goals),
+    handoffs: normalizeHandoffs(source.handoffs),
   };
   return response;
 }
@@ -298,6 +346,7 @@ export function normalizeTaskDetail(value: unknown): TaskDetailResponse {
     open_decisions: arrayOrEmpty<Decision>(source.open_decisions),
     decision_history: arrayOrEmpty<DecisionHistoryEntry>(source.decision_history),
     decision_history_omitted: typeof omitted === "number" && Number.isFinite(omitted) && omitted > 0 ? Math.floor(omitted) : 0,
+    handoffs: normalizeHandoffs(source.handoffs),
   };
 }
 
@@ -324,6 +373,20 @@ export async function fetchGoal(id: string): Promise<GoalResponse> {
 
 export async function fetchTask(id: string): Promise<TaskDetailResponse> {
   return normalizeTaskDetail(await requestJson<unknown>(`/api/tasks/${encodeURIComponent(id)}`));
+}
+
+export async function fetchGoalHandoffHistory(goalID: string, handoffID: string, cursor = 0, limit = 200): Promise<Handoff> {
+  const query = new URLSearchParams({ cursor: String(cursor), limit: String(limit) });
+  return normalizeHandoff(await requestJson<unknown>(
+    `/api/goals/${encodeURIComponent(goalID)}/handoffs/${encodeURIComponent(handoffID)}?${query.toString()}`,
+  ));
+}
+
+export async function fetchTaskHandoffHistory(taskID: string, handoffID: string, cursor = 0, limit = 200): Promise<Handoff> {
+  const query = new URLSearchParams({ cursor: String(cursor), limit: String(limit) });
+  return normalizeHandoff(await requestJson<unknown>(
+    `/api/tasks/${encodeURIComponent(taskID)}/handoffs/${encodeURIComponent(handoffID)}?${query.toString()}`,
+  ));
 }
 
 export async function fetchTaskCommitDiff(taskID: string, sha: string): Promise<TaskCommitDiff> {
