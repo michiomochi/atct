@@ -109,21 +109,11 @@ func addTaskHandoffDirect(t *testing.T, s *Store, handoffID string, taskID int64
 		t.Fatalf("drop task handoff uniqueness index: %v", err)
 	}
 	t.Cleanup(func() {
-		if _, err := s.DB().ExecContext(ctx, `DROP TRIGGER IF EXISTS task_handoff_entries_no_delete`); err != nil {
-			t.Errorf("drop task handoff entry delete trigger: %v", err)
-		}
 		if _, err := s.DB().ExecContext(ctx, `DELETE FROM task_handoff_entries WHERE handoff_id = ?`, handoffID); err != nil {
 			t.Errorf("delete direct task handoff entries %q: %v", handoffID, err)
 		}
 		if _, err := s.DB().ExecContext(ctx, `DELETE FROM task_handoffs WHERE id = ?`, handoffID); err != nil {
 			t.Errorf("delete direct task handoff %q: %v", handoffID, err)
-		}
-		if _, err := s.DB().ExecContext(ctx, `
-			CREATE TRIGGER task_handoff_entries_no_delete
-			BEFORE DELETE ON task_handoff_entries
-			BEGIN SELECT RAISE(ABORT, 'task handoff entries are append-only'); END
-		`); err != nil {
-			t.Errorf("restore task handoff entry delete trigger: %v", err)
 		}
 		if _, err := s.DB().ExecContext(ctx, `
 			CREATE UNIQUE INDEX idx_task_handoffs_open_task_id
