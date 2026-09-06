@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/michiomochi/atct/internal/domain"
 )
 
 func TestHandoffEntrySchemaUsesCanonicalContract(t *testing.T) {
@@ -99,6 +101,186 @@ func TestHandoffEntryUsesAllowedKindsAndRejectsRemovedKinds(t *testing.T) {
 	}
 }
 
+func TestDecisionContentRemainsInDecisionRecord(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	taskID := addTestTasks(t, s, 1)[0]
+	addLiveParentGoalClaim(t, s, taskID, "decision-boundary-requester")
+	addTestAgentSession(t, s, "decision-boundary-receiver")
+	handoff, err := s.RequestTaskHandoff(ctx, "decision-boundary-handoff", taskID, testSessionID("decision-boundary-requester"), "handoff request")
+	if err != nil {
+		t.Fatalf("RequestTaskHandoff: %v", err)
+	}
+	if _, err := s.ReceiveTaskHandoff(ctx, handoff.ID, taskID, testSessionID("decision-boundary-receiver")); err != nil {
+		t.Fatalf("ReceiveTaskHandoff: %v", err)
+	}
+
+	const question = "Which handoff policy should be recorded?"
+	const answer = "Keep the decision in the decisions record"
+	decision, err := s.AskDecision(ctx, AskInput{
+		GoalID:         handoffTaskGoalID(t, s, taskID),
+		TaskID:         taskID,
+		Kind:           domain.KindDecision,
+		Question:       question,
+		Options:        []domain.Option{{Label: "keep"}},
+		AgentSessionID: testSessionID("decision-boundary-receiver"),
+	})
+	if err != nil {
+		t.Fatalf("AskDecision: %v", err)
+	}
+	answered, err := s.AnswerDecision(ctx, AnswerInput{
+		DecisionID:  decision.ID,
+		AnswerLabel: "keep",
+		AnswerText:  answer,
+	})
+	if err != nil {
+		t.Fatalf("AnswerDecision: %v", err)
+	}
+	if answered.Question != question || answered.AnswerText != answer || answered.Status != domain.DecisionAnswered {
+		t.Fatalf("decision record = %+v, want question/answer in the Decision record", answered)
+	}
+
+	for _, table := range []string{"task_handoff_entries", "goal_handoff_entries"} {
+		var count int
+		if err := s.DB().QueryRowContext(ctx, `
+			SELECT COUNT(*)
+			FROM `+table+`
+			WHERE kind IN ('question', 'answer') OR body IN (?, ?)
+		`, question, answer).Scan(&count); err != nil {
+			t.Fatalf("count Decision content in %s: %v", table, err)
+		}
+		if count != 0 {
+			t.Fatalf("Decision content leaked into %s: %d entries", table, count)
+		}
+	}
+
+	var kinds []string
+	rows, err := s.DB().QueryContext(ctx, `
+		SELECT kind
+		FROM task_handoff_entries
+		WHERE handoff_id = ?
+		ORDER BY id
+	`, handoff.ID)
+	if err != nil {
+		t.Fatalf("query handoff entries after Decision: %v", err)
+	}
+	for rows.Next() {
+		var kind string
+		if err := rows.Scan(&kind); err != nil {
+			rows.Close()
+			t.Fatalf("scan handoff entry after Decision: %v", err)
+		}
+		kinds = append(kinds, kind)
+	}
+	if err := rows.Close(); err != nil {
+		t.Fatalf("close handoff entries after Decision: %v", err)
+	}
+	if !reflect.DeepEqual(kinds, []string{HandoffEntryKindRequest, HandoffEntryKindReceived}) {
+		t.Fatalf("handoff entry kinds after Decision = %v, want request/received only", kinds)
+	}
+}
+
+func TestGoal237HandoffOnlyTaskOwnershipRemainsCompatible(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	taskID := addTestTasks(t, s, 1)[0]
+	goalID := handoffTaskGoalID(t, s, taskID)
+	addLiveParentGoalClaim(t, s, taskID, "goal237-requester")
+	addTestAgentSession(t, s, "goal237-receiver")
+
+	handoff, err := s.RequestTaskHandoff(ctx, "goal237-handoff-only", taskID, testSessionID("goal237-requester"), "take this task")
+	if err != nil {
+		t.Fatalf("RequestTaskHandoff: %v", err)
+	}
+	received, err := s.ReceiveTaskHandoffForTask(ctx, taskID, testSessionID("goal237-receiver"))
+	if err != nil {
+		t.Fatalf("ReceiveTaskHandoffForTask: %v", err)
+	}
+	if received.ID != handoff.ID || received.ReceivedBy != testSessionID("goal237-receiver") {
+		t.Fatalf("received task handoff = %+v, want handoff-only owner", received)
+	}
+
+	open, err := s.ListOpenTaskHandoffsForGoal(ctx, goalID)
+	if err != nil {
+		t.Fatalf("ListOpenTaskHandoffsForGoal: %v", err)
+	}
+	if current := open[taskID]; current == nil || current.ID != handoff.ID || current.ReceivedBy != testSessionID("goal237-receiver") {
+		t.Fatalf("open task handoff = %+v, want received handoff %q", open[taskID], handoff.ID)
+	}
+
+	reviewRequested, err := s.AppendTaskHandoffEntry(ctx, handoff.ID, HandoffEntryKindReviewRequested, "please review", testSessionID("goal237-receiver"), "")
+	if err != nil {
+		t.Fatalf("AppendTaskHandoffEntry review request: %v", err)
+	}
+	if _, err := s.AppendTaskHandoffEntry(ctx, handoff.ID, HandoffEntryKindReviewReceived, "reviewed", testSessionID("goal237-requester"), reviewRequested.EntryID); err != nil {
+		t.Fatalf("AppendTaskHandoffEntry review response: %v", err)
+	}
+
+	completed, err := s.CompleteTaskHandoffForTask(ctx, taskID, "completed through task handoff")
+	if err != nil {
+		t.Fatalf("CompleteTaskHandoffForTask: %v", err)
+	}
+	if completed.ID != handoff.ID || completed.CompletedReportAt == nil || completed.CompleteReport != "completed through task handoff" {
+		t.Fatalf("completed task handoff = %+v, want canonical completion", completed)
+	}
+	open, err = s.ListOpenTaskHandoffsForGoal(ctx, goalID)
+	if err != nil {
+		t.Fatalf("ListOpenTaskHandoffsForGoal after completion: %v", err)
+	}
+	if len(open) != 0 {
+		t.Fatalf("open task handoffs after completion = %+v, want none", open)
+	}
+
+	rows, err := s.DB().QueryContext(ctx, `
+		SELECT id, kind, body
+		FROM task_handoff_entries
+		WHERE handoff_id = ?
+		ORDER BY id
+	`, handoff.ID)
+	if err != nil {
+		t.Fatalf("query Goal237 handoff-only entries: %v", err)
+	}
+	defer rows.Close()
+	var got []struct {
+		id   int64
+		kind string
+		body string
+	}
+	for rows.Next() {
+		var entry struct {
+			id   int64
+			kind string
+			body string
+		}
+		if err := rows.Scan(&entry.id, &entry.kind, &entry.body); err != nil {
+			t.Fatalf("scan Goal237 handoff-only entry: %v", err)
+		}
+		got = append(got, entry)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate Goal237 handoff-only entries: %v", err)
+	}
+	wantKinds := []string{HandoffEntryKindRequest, HandoffEntryKindReceived, HandoffEntryKindReviewRequested, HandoffEntryKindReviewReceived, HandoffEntryKindCompleted}
+	wantBodies := []string{"take this task", "received", "please review", "reviewed", "completed through task handoff"}
+	if len(got) != len(wantKinds) {
+		t.Fatalf("Goal237 handoff-only entries = %+v, want %d canonical entries", got, len(wantKinds))
+	}
+	for i, entry := range got {
+		if entry.id <= 0 || entry.kind != wantKinds[i] || entry.body != wantBodies[i] {
+			t.Fatalf("Goal237 entry[%d] = %+v, want positive id kind=%q body=%q", i, entry, wantKinds[i], wantBodies[i])
+		}
+	}
+}
+
+func handoffTaskGoalID(t *testing.T, s *Store, taskID int64) int64 {
+	t.Helper()
+	var goalID int64
+	if err := s.DB().QueryRowContext(context.Background(), `SELECT goal_id FROM tasks WHERE id = ?`, taskID).Scan(&goalID); err != nil {
+		t.Fatalf("find goal for task %d: %v", taskID, err)
+	}
+	return goalID
+}
+
 func TestHandoffEntryDatabaseAllowsExactlySixCanonicalKinds(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
@@ -185,7 +367,7 @@ func TestHandoffEntryReplyMustReferenceAnEntryInTheSameHandoff(t *testing.T) {
 	}
 }
 
-func TestOpenMigratesLegacyHandoffEntriesByDroppingRemovedKinds(t *testing.T) {
+func TestDecision685DropLegacyHandoffEntryKinds(t *testing.T) {
 	ctx := context.Background()
 	dbPath := filepath.Join(t.TempDir(), "legacy-entry-migration.db")
 	raw, err := sql.Open("sqlite", dbPath)
@@ -279,6 +461,27 @@ func TestOpenMigratesLegacyHandoffEntriesByDroppingRemovedKinds(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("migrated entries = %v, want %v", got, want)
+	}
+
+	var droppedCount int
+	if err := s.DB().QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM task_handoff_entries
+		WHERE handoff_id = ? AND kind IN ('progress', 'question', 'answer', 'amend', 'system')
+	`, "legacy-entry-migration-task").Scan(&droppedCount); err != nil {
+		t.Fatalf("count Decision #685 dropped kinds: %v", err)
+	}
+	if droppedCount != 0 {
+		t.Fatalf("Decision #685 drop_legacy left %d removed entries", droppedCount)
+	}
+	var migrationCount int
+	if err := s.DB().QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM schema_migrations WHERE filename = '0024_canonical_handoff_entries.sql'
+	`).Scan(&migrationCount); err != nil {
+		t.Fatalf("check canonical migration record: %v", err)
+	}
+	if migrationCount != 1 {
+		t.Fatalf("canonical migration record count = %d, want 1", migrationCount)
 	}
 
 	var oldColumnCount int
