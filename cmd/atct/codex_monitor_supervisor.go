@@ -266,11 +266,20 @@ func runCodexMonitorWithDeps(config cliConfig, dir string, deps codexMonitorDeps
 			bridgeDone = nil
 		case err := <-watchDone:
 			if err != nil && !errors.Is(err, context.Canceled) {
-				disableMonitor(err)
+				if codexMonitorWatchErrorIsTerminal(err) {
+					disableMonitor(err)
+				} else {
+					fmt.Fprintf(deps.stderr, "atct codex monitor watcher recovering: %s\n", err)
+				}
 			}
 			watchDone = nil
 		}
 	}
+}
+
+func codexMonitorWatchErrorIsTerminal(err error) bool {
+	var sinkErr *watchSinkError
+	return errors.As(err, &sinkErr)
 }
 
 func codexMonitorThreadMatches(thread codexThread, cwd string) bool {
@@ -368,12 +377,16 @@ func codexMonitorDepsWithDefaults(dir string, deps codexMonitorDeps) codexMonito
 			if err != nil {
 				return fmt.Errorf("resolve project directory: %w", err)
 			}
-			return runCodexMonitorWatch(ctx, &http.Client{}, watchBaseURLs(dir), projectPath, bridge)
+			return runCodexMonitorWatch(ctx, &http.Client{}, watchBaseURLs(dir), projectPath, bridge, func() error {
+				return ensureWatchDaemon(dir)
+			})
 		}
 	}
 	if deps.runWatchScoped == nil {
 		deps.runWatchScoped = func(ctx context.Context, projectPath string, scope watchScope, bridge *codexMonitorBridge) error {
-			return runCodexMonitorWatchScoped(ctx, &http.Client{}, watchBaseURLs(dir), projectPath, scope, bridge)
+			return runCodexMonitorWatchScoped(ctx, &http.Client{}, watchBaseURLs(dir), projectPath, scope, bridge, func() error {
+				return ensureWatchDaemon(dir)
+			})
 		}
 	}
 	return deps

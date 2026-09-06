@@ -1100,6 +1100,18 @@ func TestCodexMonitorBridgeFailureLeavesTUIAlive(t *testing.T) {
 	}
 }
 
+func TestCodexMonitorKeepsTUIAliveDuringRecoverableWatchFailure(t *testing.T) {
+	if codexMonitorWatchErrorIsTerminal(errors.New("temporary SSE disconnect")) {
+		t.Fatal("recoverable watch failure was classified as terminal")
+	}
+}
+
+func TestCodexMonitorDisablesOnlyForTerminalWatchSinkError(t *testing.T) {
+	if !codexMonitorWatchErrorIsTerminal(&watchSinkError{err: errors.New("bridge disabled")}) {
+		t.Fatal("terminal watch sink failure was not classified as terminal")
+	}
+}
+
 type fakeCodexMonitorProcess struct {
 	mu           sync.Mutex
 	waitCh       chan error

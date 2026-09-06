@@ -1546,6 +1546,106 @@ func TestWatchReportsReconnectWhileUnavailable(t *testing.T) {
 	}
 }
 
+func TestWatchRecoveryReportsOnceThenHealthy(t *testing.T) {
+	state := newWatchRecoveryState()
+	var got []string
+	report := func(name string) { got = append(got, name) }
+	state.Failure(report)
+	state.Failure(report)
+	for i := 0; i < watchEnsureMaxFailures; i++ {
+		state.EnsureFailure(report)
+	}
+	state.Reconciled(report)
+	state.Reconciled(report)
+
+	want := []string{"recovering", "degraded", "healthy"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("recovery transitions = %#v, want %#v", got, want)
+	}
+}
+
+func TestNormalWatchReportsHealthyReconciliationAndIgnoresHealthDiagnostics(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var output bytes.Buffer
+	var healthBodies []map[string]any
+	var mu sync.Mutex
+	client := &http.Client{Transport: watchRoundTripper(func(req *http.Request) (*http.Response, error) {
+		switch req.URL.Path {
+		case "/api/events/reconcile":
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Status:     "200 OK",
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       io.NopCloser(strings.NewReader(`{"decisions":[],"goal_handoffs":[],"plan_handoffs":[],"task_handoffs":[]}`)),
+			}, nil
+		case "/api/events":
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Status:     "200 OK",
+				Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+				Body:       io.NopCloser(strings.NewReader("")),
+			}, nil
+		case "/api/monitor-health":
+			var body map[string]any
+			if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+				return nil, err
+			}
+			mu.Lock()
+			healthBodies = append(healthBodies, body)
+			if len(healthBodies) == 3 {
+				cancel()
+			}
+			mu.Unlock()
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Status:     "200 OK",
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader("{}")),
+			}, nil
+		default:
+			return nil, fmt.Errorf("unexpected watch request: %s", req.URL.String())
+		}
+	})}
+	snapshot := func(context.Context) (string, []watchDecision, error) {
+		return "http://daemon", nil, nil
+	}
+	scope := normalWatchScope("7", "249")
+	reporter := newWatchHealthReporter(client, []string{"http://daemon"}, t.TempDir(), scope)
+	if reporter == nil {
+		t.Fatal("newWatchHealthReporter returned nil for eligible normal watch scope")
+	}
+	err := watchLoopWithEnsureAndProjectIDAndScopeAndSinkAndCursor(ctx, &output, client, time.Millisecond, snapshot, nil, func() string {
+		return scope.ProjectID
+	}, scope, nil, "", reporter)
+	if err != nil {
+		t.Fatalf("normal watch loop error = %v", err)
+	}
+
+	mu.Lock()
+	bodies := append([]map[string]any(nil), healthBodies...)
+	mu.Unlock()
+	var healthy []map[string]any
+	for _, body := range bodies {
+		if body["state"] == "healthy" {
+			healthy = append(healthy, body)
+		}
+	}
+	if len(healthy) < 2 {
+		t.Fatalf("healthy health POST count = %d (all bodies: %#v), want at least 2 reconciliation updates", len(healthy), bodies)
+	}
+	if healthy[0]["monitor_id"] != healthy[1]["monitor_id"] {
+		t.Fatalf("monitor IDs changed across updates: %v, %v", healthy[0]["monitor_id"], healthy[1]["monitor_id"])
+	}
+	if healthy[0]["last_seen_at"] == healthy[1]["last_seen_at"] {
+		t.Fatalf("last_seen_at did not update: %v", healthy[0]["last_seen_at"])
+	}
+	if !strings.Contains(output.String(), "atct watch: connection unavailable; reconnecting in 1ms") {
+		t.Fatalf("watch diagnostics = %q, want recoverable reconnect diagnostic", output.String())
+	}
+}
+
 type cancelOnOutput struct {
 	mu      sync.Mutex
 	buf     strings.Builder

@@ -75,6 +75,23 @@ type GoalHandoff struct {
 	ReviewRejectReport  sql.NullString
 }
 
+type MonitorHealth struct {
+	MonitorID        string
+	AgentKey         string
+	Cwd              string
+	Role             string
+	ProjectID        int64
+	GoalID           sql.NullInt64
+	TaskID           sql.NullInt64
+	Pid              int64
+	ProcessStartedAt string
+	State            string
+	Reason           string
+	TransitionedAt   string
+	LastSeenAt       string
+	StoppedAt        sql.NullString
+}
+
 type PlanHandoff struct {
 	ID                  string
 	GoalID              int64

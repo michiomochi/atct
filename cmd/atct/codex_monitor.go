@@ -1007,11 +1007,11 @@ func (b *codexMonitorBridge) Run(ctx context.Context) error {
 	}
 }
 
-func runCodexMonitorWatch(ctx context.Context, client *http.Client, urls []string, cwd string, bridge *codexMonitorBridge) error {
-	return runCodexMonitorWatchScoped(ctx, client, urls, cwd, watchScope{}, bridge)
+func runCodexMonitorWatch(ctx context.Context, client *http.Client, urls []string, cwd string, bridge *codexMonitorBridge, ensure ...watchEnsureFunc) error {
+	return runCodexMonitorWatchScoped(ctx, client, urls, cwd, watchScope{}, bridge, ensure...)
 }
 
-func runCodexMonitorWatchScoped(ctx context.Context, client *http.Client, urls []string, cwd string, scope watchScope, bridge *codexMonitorBridge) error {
+func runCodexMonitorWatchScoped(ctx context.Context, client *http.Client, urls []string, cwd string, scope watchScope, bridge *codexMonitorBridge, ensure ...watchEnsureFunc) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -1022,13 +1022,22 @@ func runCodexMonitorWatchScoped(ctx context.Context, client *http.Client, urls [
 		client = &http.Client{}
 	}
 	snapshot, projectID := watchSnapshotWithProject(client, urls, cwd)
+	var ensureDaemon watchEnsureFunc
+	if len(ensure) > 0 {
+		ensureDaemon = ensure[0]
+	}
+	reporter := newWatchHealthReporter(client, urls, cwd, scope)
+	var reporters []watchHealthSink
+	if reporter != nil {
+		reporters = append(reporters, reporter)
+	}
 	return watchLoopWithEnsureAndProjectIDAndScopeAndActionSink(
 		ctx,
 		codexMonitorWatchOutput{},
 		client,
 		watchReconnectInterval,
 		snapshot,
-		nil,
+		ensureDaemon,
 		func() string {
 			if scope.ProjectID != "" {
 				return scope.ProjectID
@@ -1038,5 +1047,6 @@ func runCodexMonitorWatchScoped(ctx context.Context, client *http.Client, urls [
 		scope,
 		nil,
 		bridge.ActionSinkWithContext(ctx),
+		reporters...,
 	)
 }
