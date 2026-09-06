@@ -1557,6 +1557,23 @@ test_start_keeps_monitor_persistence_requirement() {
   assert_file_contains 'Always set `persistent: true`' "$start_skill"
 }
 
+test_start_documents_liveness_authority_boundary() {
+  local start_skill="$REPO_ROOT/skills/start/SKILL.md"
+
+  assert_file_contains 'A ten-minute liveness line means' "$start_skill"
+  assert_file_contains 'A subcommander accepts the plan first' "$start_skill"
+  assert_file_contains 'runs `herdr pane run <pane> atct codex monitor --role executor' "$start_skill"
+  assert_file_contains 'submits the task for review; it does not commit' "$start_skill"
+}
+
+test_readme_documents_liveness_contract() {
+  local readme="$REPO_ROOT/README.md"
+
+  assert_file_contains '### Monitor liveness and recovery' "$readme"
+  assert_file_contains 'bounded `atct monitor liveness:` recheck line' "$readme"
+  assert_file_contains 'A liveness line is a recheck signal, not authority' "$readme"
+}
+
 test_task_handoff_recreation_cause_is_documented() {
   local atct_skill="$REPO_ROOT/skills/atct/SKILL.md"
   local task_section
@@ -2138,6 +2155,8 @@ test_start_monitor_is_not_first_step
 test_start_does_not_branch_on_session_attachment
 test_start_does_not_duplicate_delegated_worker_preamble
 test_start_keeps_monitor_persistence_requirement
+test_start_documents_liveness_authority_boundary
+test_readme_documents_liveness_contract
 test_goal_handoff_watch_contract_is_explicit
 test_goal_handoff_watch_contract_omits_unsafe_variants
 test_goal_handoff_watch_contract_has_required_order

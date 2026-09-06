@@ -64,11 +64,29 @@ Ordinary `codex` and `codex exec` remain unchanged. The known
 `atct codex monitor exec ...` pass-through is non-interactive and is not a
 monitored interactive session.
 
-For a worker, the delegator first records its handoff, creates a fresh worker
-pane, and starts this wrapper with `herdr pane run` before any worker process.
-The worker then performs `atct_session_identify` → handoff receipt with its
-`task_id` only → `atct_role`. A plain `herdr agent start` launch bypasses the
-wrapper and is forbidden for a monitored worker.
+For a worker, the delegator first records its task handoff, creates a fresh
+worker pane, and runs `herdr pane run <pane> atct codex monitor --role executor
+--task <task_id> -- <codex args>` before any worker process. The worker then
+performs `atct_session_identify` → handoff receipt with its `task_id` only →
+`atct_role`. A plain `herdr agent start` launch bypasses the monitor wrapper and
+is forbidden for a monitored worker.
+
+### Liveness is a recheck, not authority
+
+A ten-minute liveness line means that the last scoped reconciliation should be
+rechecked. It does not approve a human decision, authorize a scope change,
+create work, or authorize a commit.
+
+- A subcommander accepts the plan first. Only then does it request the task
+  handoff, create a fresh worker pane, and run the executor through `herdr pane
+  run ... atct codex monitor`.
+- An executor keeps an open human decision parked and stays within its task. It
+  implements and tests, then submits the task for review; it does not commit or
+  cross the decision because a liveness prompt arrived.
+
+Transient watch or daemon failures recover in the watch loop with bounded
+backoff and reconnect. A prompt is not durable work and does not replace the
+normal handoff or review sequence.
 
 ### GREEN pressure check for role launch guidance
 
