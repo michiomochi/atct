@@ -13,6 +13,38 @@ type watchScopeFilter struct {
 
 type watchScope struct{ ProjectID, GoalID, TaskID, Role string }
 
+func watchLivenessEligible(scope watchScope) bool {
+	if scope.Role == "subcommander" {
+		return scope.ProjectID != "" && scope.GoalID != "" && scope.TaskID == ""
+	}
+	if scope.Role == "executor" {
+		return scope.ProjectID != "" && scope.GoalID != "" && scope.TaskID != ""
+	}
+	return false
+}
+
+func scopedOpenDecision(scope watchScope, state watchReconciliation) bool {
+	for _, decision := range state.Decisions {
+		if decision.Status == "open" && watchScopeMatchesDecision(scope, decision) {
+			return true
+		}
+	}
+	return false
+}
+
+func watchScopeMatchesDecision(scope watchScope, decision watchDecision) bool {
+	if scope.ProjectID != "" && decision.ProjectID != "" && scope.ProjectID != decision.ProjectID {
+		return false
+	}
+	if scope.TaskID != "" {
+		return decision.TaskID == scope.TaskID
+	}
+	if scope.GoalID != "" {
+		return decision.GoalID == scope.GoalID
+	}
+	return true
+}
+
 func newWatchScopeFilter(goalID string) *watchScopeFilter {
 	return &watchScopeFilter{goalID: goalID}
 }

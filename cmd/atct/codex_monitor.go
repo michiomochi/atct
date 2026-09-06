@@ -852,6 +852,8 @@ func isCodexMonitorActionLine(line string) bool {
 		return true
 	case strings.HasPrefix(line, "atct wakeup: "):
 		return true
+	case strings.HasPrefix(line, "atct monitor liveness: "):
+		return true
 	case strings.HasPrefix(line, "atct detection: goal "):
 		return true
 	case strings.HasPrefix(line, "atct task handoff requested (task_id: "),

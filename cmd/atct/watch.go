@@ -22,12 +22,13 @@ import (
 )
 
 const (
-	watchReconnectInterval  = 5 * time.Second
-	watchSnapshotTimeout    = 5 * time.Second
-	watchKeepaliveTimeout   = 90 * time.Second
-	watchReconcileInterval  = 30 * time.Second
-	watchEnsureMaxFailures  = 5
-	watchEnsureLimitMessage = "atct watch: daemon ensure failed 5 consecutive times; continuing connection retries"
+	watchReconnectInterval      = 5 * time.Second
+	watchSnapshotTimeout        = 5 * time.Second
+	watchKeepaliveTimeout       = 90 * time.Second
+	watchReconcileInterval      = 30 * time.Second
+	watchLivenessPromptInterval = 10 * time.Minute
+	watchEnsureMaxFailures      = 5
+	watchEnsureLimitMessage     = "atct watch: daemon ensure failed 5 consecutive times; continuing connection retries"
 )
 
 type watchDecision struct {
@@ -169,6 +170,26 @@ type watchDetectionDeliveryKey struct {
 
 type watchSnapshotFunc func(context.Context) (string, []watchDecision, error)
 type watchEnsureFunc func() error
+
+type watchLivenessState struct {
+	lastPromptAt time.Time
+}
+
+func newWatchLivenessState(start time.Time) *watchLivenessState {
+	return &watchLivenessState{lastPromptAt: start}
+}
+
+func (s *watchLivenessState) PromptDue(now time.Time, scope watchScope, snapshot watchReconciliation) bool {
+	if !watchLivenessEligible(scope) || scopedOpenDecision(scope, snapshot) {
+		s.lastPromptAt = now
+		return false
+	}
+	if now.Sub(s.lastPromptAt) < watchLivenessPromptInterval {
+		return false
+	}
+	s.lastPromptAt = now
+	return true
+}
 
 type watchSinkError struct {
 	err error
@@ -349,6 +370,7 @@ func watchLoopWithEnsureAndProjectIDAndScopeAndActionSink(ctx context.Context, o
 	var lastWakeupContent string
 	wakeupDiscrepancyDelivered := make(map[watchWakeupDeliveryKey]struct{})
 	detectionDelivered := make(map[watchDetectionDeliveryKey]struct{})
+	latestReconciliation := watchReconciliation{}
 	ensureFailures := 0
 	ensureDisabled := false
 	recoverDaemon := func() error {
@@ -399,7 +421,7 @@ func watchLoopWithEnsureAndProjectIDAndScopeAndActionSink(ctx context.Context, o
 		}
 		streamScope := scope
 		streamScope.ProjectID = filterProjectID
-		if err := reconcileWatchScope(ctx, client, baseURL, streamScope, out, delivered, &lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered, scopeFilter, sink, actionSink); err != nil {
+		if err := reconcileWatchScope(ctx, client, baseURL, streamScope, out, delivered, &lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered, scopeFilter, sink, actionSink, &latestReconciliation); err != nil {
 			if ctx.Err() != nil {
 				return nil
 			}
@@ -412,7 +434,7 @@ func watchLoopWithEnsureAndProjectIDAndScopeAndActionSink(ctx context.Context, o
 			continue
 		}
 
-		err = consumeWatchEventsWithStateAndScopeAndSinkAndCursor(ctx, client, baseURL, streamScope, out, watchKeepaliveTimeout, delivered, &lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered, scopeFilter, sink, actionSink)
+		err = consumeWatchEventsWithStateAndScopeAndSinkAndCursor(ctx, client, baseURL, streamScope, out, watchKeepaliveTimeout, delivered, &lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered, scopeFilter, sink, actionSink, &latestReconciliation)
 		if err != nil && ctx.Err() == nil {
 			var sinkErr *watchSinkError
 			if errors.As(err, &sinkErr) {
@@ -588,13 +610,16 @@ func consumeWatchEventsWithStateAndScopeAndSink(ctx context.Context, client *htt
 // for callers outside this file. Any legacy cursor arguments are intentionally
 // ignored.
 func consumeWatchEventsWithStateAndScopeAndSinkAndCursor(ctx context.Context, client *http.Client, baseURL string, scope watchScope, out io.Writer, keepaliveTimeout time.Duration, delivered map[watchDeliveryKey]struct{}, lastWakeupContent *string, wakeupDiscrepancyDelivered map[watchWakeupDeliveryKey]struct{}, detectionDelivered map[watchDetectionDeliveryKey]struct{}, scopeFilter *watchScopeFilter, sink func(string) error, args ...any) error {
-	return consumeWatchEventsWithStateAndScopeAndSinkAndInterval(ctx, client, baseURL, scope, out, keepaliveTimeout, watchReconcileInterval, delivered, lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered, scopeFilter, sink, watchActionSinkFromArgs(args...))
+	return consumeWatchEventsWithStateAndScopeAndSinkAndInterval(ctx, client, baseURL, scope, out, keepaliveTimeout, watchReconcileInterval, delivered, lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered, scopeFilter, sink, args...)
 }
 
-func consumeWatchEventsWithStateAndScopeAndSinkAndInterval(ctx context.Context, client *http.Client, baseURL string, scope watchScope, out io.Writer, keepaliveTimeout, reconcileInterval time.Duration, delivered map[watchDeliveryKey]struct{}, lastWakeupContent *string, wakeupDiscrepancyDelivered map[watchWakeupDeliveryKey]struct{}, detectionDelivered map[watchDetectionDeliveryKey]struct{}, scopeFilter *watchScopeFilter, sink func(string) error, actionSinks ...func(codexMonitorAction) error) error {
-	var actionSink func(codexMonitorAction) error
-	if len(actionSinks) > 0 {
-		actionSink = actionSinks[0]
+func consumeWatchEventsWithStateAndScopeAndSinkAndInterval(ctx context.Context, client *http.Client, baseURL string, scope watchScope, out io.Writer, keepaliveTimeout, reconcileInterval time.Duration, delivered map[watchDeliveryKey]struct{}, lastWakeupContent *string, wakeupDiscrepancyDelivered map[watchWakeupDeliveryKey]struct{}, detectionDelivered map[watchDetectionDeliveryKey]struct{}, scopeFilter *watchScopeFilter, sink func(string) error, args ...any) error {
+	actionSink := watchActionSinkFromArgs(args...)
+	var latestReconciliation *watchReconciliation
+	for _, arg := range args {
+		if state, ok := arg.(*watchReconciliation); ok {
+			latestReconciliation = state
+		}
 	}
 	if client == nil {
 		client = &http.Client{}
@@ -644,14 +669,24 @@ func consumeWatchEventsWithStateAndScopeAndSinkAndInterval(ctx context.Context, 
 	}
 	reconcileTicker := time.NewTicker(reconcileInterval)
 	defer reconcileTicker.Stop()
+	livenessTicker := time.NewTicker(watchLivenessPromptInterval)
+	defer livenessTicker.Stop()
+	livenessState := newWatchLivenessState(time.Now())
 
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-reconcileTicker.C:
-			if err := reconcileWatchScope(ctx, client, baseURL, scope, out, delivered, lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered, scopeFilter, sink, actionSink); err != nil {
+			if err := reconcileWatchScope(ctx, client, baseURL, scope, out, delivered, lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered, scopeFilter, sink, actionSink, latestReconciliation); err != nil {
 				return err
+			}
+		case now := <-livenessTicker.C:
+			if latestReconciliation != nil && livenessState.PromptDue(now, scope, *latestReconciliation) {
+				line := formatWatchLiveness(scope)
+				if err := writeWatchLineWithActionSink(out, line, "monitor.liveness", watchDecision{GoalID: scope.GoalID, TaskID: scope.TaskID}, sink, actionSink); err != nil {
+					return err
+				}
 			}
 		case <-timerC:
 			if !missingReported {
@@ -672,7 +707,7 @@ func consumeWatchEventsWithStateAndScopeAndSinkAndInterval(ctx context.Context, 
 				resetKeepalive()
 				continue
 			}
-			if err := reconcileWatchScope(ctx, client, baseURL, scope, out, delivered, lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered, scopeFilter, sink, actionSink); err != nil {
+			if err := reconcileWatchScope(ctx, client, baseURL, scope, out, delivered, lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered, scopeFilter, sink, actionSink, latestReconciliation); err != nil {
 				return err
 			}
 		}
@@ -866,6 +901,12 @@ func watchActionSinkFromArgs(args ...any) func(codexMonitorAction) error {
 
 func reconcileWatchScope(ctx context.Context, client *http.Client, baseURL string, scope watchScope, out io.Writer, delivered map[watchDeliveryKey]struct{}, lastWakeupContent *string, wakeupDiscrepancyDelivered map[watchWakeupDeliveryKey]struct{}, detectionDelivered map[watchDetectionDeliveryKey]struct{}, scopeFilter *watchScopeFilter, sink func(string) error, args ...any) error {
 	actionSink := watchActionSinkFromArgs(args...)
+	var latestReconciliation *watchReconciliation
+	for _, arg := range args {
+		if state, ok := arg.(*watchReconciliation); ok {
+			latestReconciliation = state
+		}
+	}
 	reconcileURL, err := watchReconcileURL(baseURL, scope)
 	if err != nil {
 		return err
@@ -954,6 +995,9 @@ func reconcileWatchScope(ctx context.Context, client *http.Client, baseURL strin
 				return err
 			}
 		}
+	}
+	if latestReconciliation != nil {
+		*latestReconciliation = state
 	}
 	return nil
 }
@@ -1263,6 +1307,13 @@ func formatWatchDecision(eventName string, decision watchDecision) (string, bool
 	default:
 		return "", false
 	}
+}
+
+func formatWatchLiveness(scope watchScope) string {
+	if scope.TaskID != "" {
+		return fmt.Sprintf("atct monitor liveness: recheck task %s", scope.TaskID)
+	}
+	return fmt.Sprintf("atct monitor liveness: recheck goal %s", scope.GoalID)
 }
 
 func formatUnassignedGoalIDs(ids []int64) string {

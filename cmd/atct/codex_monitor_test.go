@@ -326,6 +326,39 @@ func TestCodexMonitorActionLineAdmitsCanonicalHandoffLifecycle(t *testing.T) {
 	}
 }
 
+func TestCodexMonitorActionLineAdmitsLiveness(t *testing.T) {
+	if !isCodexMonitorActionLine("atct monitor liveness: recheck task 812") {
+		t.Fatal("liveness action line rejected")
+	}
+}
+
+func TestCodexScopedLivenessQueuesUntilThreadIsIdle(t *testing.T) {
+	starter := &fakeCodexTurnStarter{}
+	bridge := newCodexMonitorBridge(starter, "thread-1")
+	bridge.SetActive(true)
+
+	line := "atct monitor liveness: recheck task 812"
+	if err := bridge.LineSinkWithContext(context.Background())(line); err != nil {
+		t.Fatalf("LineSinkWithContext() error = %v", err)
+	}
+	if got := starter.callsSnapshot(); len(got) != 0 {
+		t.Fatalf("turn starts while thread active = %v, want none", got)
+	}
+	if got := bridge.QueueLen(); got != 1 {
+		t.Fatalf("queued liveness actions = %d, want 1", got)
+	}
+
+	if err := bridge.HandleNotification(context.Background(), codexAppServerNotification{
+		Method: "turn/completed",
+		Params: json.RawMessage(`{"threadId":"thread-1","turn":{"status":"completed"}}`),
+	}); err != nil {
+		t.Fatalf("HandleNotification() error = %v", err)
+	}
+	if got := starter.callsSnapshot(); len(got) != 1 || got[0] != line {
+		t.Fatalf("turn starts after idle = %v, want [%q]", got, line)
+	}
+}
+
 func TestCodexAppServerRespondsToServerApprovalRequest(t *testing.T) {
 	conn := newFakeCodexWebSocket()
 	app := newCodexAppServerWithConn(context.Background(), conn)

@@ -799,6 +799,57 @@ func TestWatchEmitsWakeupAgainAfterStateReturns(t *testing.T) {
 	}
 }
 
+func TestWatchLivenessPromptsOnlyEligibleScopedMonitor(t *testing.T) {
+	cases := []struct {
+		name  string
+		scope watchScope
+		want  bool
+	}{
+		{name: "commander", scope: watchScope{Role: "commander", ProjectID: "1", GoalID: "249"}},
+		{name: "unscoped", scope: watchScope{Role: "executor", ProjectID: "1"}},
+		{name: "subcommander", scope: watchScope{Role: "subcommander", ProjectID: "1", GoalID: "249"}, want: true},
+		{name: "subcommander with task", scope: watchScope{Role: "subcommander", ProjectID: "1", GoalID: "249", TaskID: "812"}},
+		{name: "executor", scope: watchScope{Role: "executor", ProjectID: "1", GoalID: "249", TaskID: "812"}, want: true},
+		{name: "executor without goal", scope: watchScope{Role: "executor", ProjectID: "1", TaskID: "812"}},
+		{name: "unknown role", scope: watchScope{Role: "worker", ProjectID: "1", GoalID: "249", TaskID: "812"}},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			state := newWatchLivenessState(time.Unix(0, 0))
+			got := state.PromptDue(time.Unix(600, 0), tt.scope, watchReconciliation{})
+			if got != tt.want {
+				t.Fatalf("PromptDue() = %v, want %v for scope %#v", got, tt.want, tt.scope)
+			}
+		})
+	}
+}
+
+func TestWatchLivenessSuppressesOpenHumanDecision(t *testing.T) {
+	state := newWatchLivenessState(time.Unix(0, 0))
+	blocked := watchReconciliation{Decisions: []watchDecision{{GoalID: "249", Status: "open"}}}
+	scope := watchScope{Role: "subcommander", ProjectID: "1", GoalID: "249"}
+	if got := state.PromptDue(time.Unix(600, 0), scope, blocked); got {
+		t.Fatal("open human decision prompted, want suppression")
+	}
+	if got := state.PromptDue(time.Unix(1200, 0), scope, watchReconciliation{}); !got {
+		t.Fatal("prompt did not resume after open human decision was cleared")
+	}
+}
+
+func TestWatchLivenessRendersExactSelector(t *testing.T) {
+	for _, tt := range []struct {
+		scope watchScope
+		want  string
+	}{
+		{scope: watchScope{Role: "subcommander", ProjectID: "1", GoalID: "249"}, want: "atct monitor liveness: recheck goal 249"},
+		{scope: watchScope{Role: "executor", ProjectID: "1", GoalID: "249", TaskID: "812"}, want: "atct monitor liveness: recheck task 812"},
+	} {
+		if got := formatWatchLiveness(tt.scope); got != tt.want {
+			t.Fatalf("formatWatchLiveness(%#v) = %q, want %q", tt.scope, got, tt.want)
+		}
+	}
+}
+
 func TestWatchDoesNotFormatKeepaliveAsVisibleLine(t *testing.T) {
 	line, ok := formatWatchDecision("keepalive", watchDecision{})
 	if ok || line != "" {
