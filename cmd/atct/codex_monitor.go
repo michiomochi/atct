@@ -642,6 +642,12 @@ type codexMonitorApp interface {
 	Err() error
 }
 
+type codexMonitorAction struct {
+	line      string
+	eventName string
+	goalID    string
+}
+
 type codexThreadPager interface {
 	ListThreadsPage(context.Context, string, *string) (codexThreadListPage, error)
 }
@@ -651,11 +657,12 @@ type codexMonitorBridge struct {
 	app      codexMonitorApp
 	threadID string
 
-	stateMu  sync.Mutex
-	active   bool
-	queue    []string
-	disabled bool
-	submitMu sync.Mutex
+	stateMu      sync.Mutex
+	active       bool
+	queue        []codexMonitorAction
+	activeAction *codexMonitorAction
+	disabled     bool
+	submitMu     sync.Mutex
 }
 
 func newCodexMonitorBridge(starter codexTurnStarter, threadID string) *codexMonitorBridge {
@@ -667,7 +674,11 @@ func newCodexMonitorBridge(starter codexTurnStarter, threadID string) *codexMoni
 }
 
 func (b *codexMonitorBridge) Enqueue(ctx context.Context, line string) error {
-	if strings.TrimSpace(line) == "" {
+	return b.enqueueAction(ctx, codexMonitorAction{line: line})
+}
+
+func (b *codexMonitorBridge) enqueueAction(ctx context.Context, action codexMonitorAction) error {
+	if strings.TrimSpace(action.line) == "" {
 		return nil
 	}
 	b.stateMu.Lock()
@@ -675,9 +686,26 @@ func (b *codexMonitorBridge) Enqueue(ctx context.Context, line string) error {
 		b.stateMu.Unlock()
 		return errCodexAppServerClosed
 	}
-	b.queue = append(b.queue, line)
+	if action.eventName == "goal.handoff.receive" && strings.TrimSpace(action.goalID) != "" {
+		b.pruneQueuedApprovalsLocked(action.goalID)
+	}
+	b.queue = append(b.queue, action)
 	b.stateMu.Unlock()
 	return b.pump(ctx)
+}
+
+func (b *codexMonitorBridge) pruneQueuedApprovalsLocked(goalID string) {
+	start := 0
+	if b.activeAction != nil {
+		start = 1
+	}
+	kept := b.queue[:start]
+	for i, action := range b.queue {
+		if i < start || action.eventName != "decision.approved" || action.goalID != goalID {
+			kept = append(kept, action)
+		}
+	}
+	b.queue = kept
 }
 
 func (b *codexMonitorBridge) pump(ctx context.Context) error {
@@ -693,10 +721,11 @@ func (b *codexMonitorBridge) pump(ctx context.Context) error {
 			b.stateMu.Unlock()
 			return nil
 		}
-		line := b.queue[0]
+		action := b.queue[0]
 		// Reserve the turn before making the request so a fast turn/started
 		// notification cannot race with another queued submission.
 		b.active = true
+		b.activeAction = &action
 		threadID := b.threadID
 		starter := b.starter
 		b.stateMu.Unlock()
@@ -704,13 +733,15 @@ func (b *codexMonitorBridge) pump(ctx context.Context) error {
 		if starter == nil {
 			b.stateMu.Lock()
 			b.active = false
+			b.activeAction = nil
 			b.stateMu.Unlock()
 			return errors.New("Codex monitor bridge has no turn starter")
 		}
-		_, err := starter.StartTurn(ctx, threadID, line)
+		_, err := starter.StartTurn(ctx, threadID, action.line)
 		if err != nil {
 			b.stateMu.Lock()
 			b.active = false
+			b.activeAction = nil
 			if b.app != nil && b.app.Err() != nil {
 				b.disabled = true
 			}
@@ -720,6 +751,7 @@ func (b *codexMonitorBridge) pump(ctx context.Context) error {
 
 		b.stateMu.Lock()
 		b.queue = b.queue[1:]
+		b.activeAction = nil
 		b.stateMu.Unlock()
 		// A completion notification can arrive while StartTurn is waiting for
 		// its response. Loop once more so a queued item is not stranded when
@@ -771,7 +803,31 @@ func (b *codexMonitorBridge) LineSinkWithContext(ctx context.Context) func(strin
 		// A failed turn submission stays in the bridge queue. The watcher must
 		// keep its SSE delivery state and continue consuming events; a later
 		// idle notification retries the queued item.
-		if err := b.Enqueue(ctx, line); err != nil {
+		if err := b.enqueueAction(ctx, codexMonitorAction{line: line}); err != nil {
+			b.stateMu.Lock()
+			disabled := b.disabled
+			b.stateMu.Unlock()
+			if disabled {
+				return err
+			}
+		}
+		return nil
+	}
+}
+
+func (b *codexMonitorBridge) ActionSink() func(codexMonitorAction) error {
+	return b.ActionSinkWithContext(context.Background())
+}
+
+func (b *codexMonitorBridge) ActionSinkWithContext(ctx context.Context) func(codexMonitorAction) error {
+	return func(action codexMonitorAction) error {
+		if !isCodexMonitorActionLine(action.line) {
+			return nil
+		}
+		// A failed turn submission stays in the bridge queue. The watcher must
+		// keep its SSE delivery state and continue consuming events; a later
+		// idle notification retries the queued item.
+		if err := b.enqueueAction(ctx, action); err != nil {
 			b.stateMu.Lock()
 			disabled := b.disabled
 			b.stateMu.Unlock()
@@ -964,7 +1020,7 @@ func runCodexMonitorWatchScoped(ctx context.Context, client *http.Client, urls [
 		client = &http.Client{}
 	}
 	snapshot, projectID := watchSnapshotWithProject(client, urls, cwd)
-	return watchLoopWithEnsureAndProjectIDAndScopeAndSinkAndCursor(
+	return watchLoopWithEnsureAndProjectIDAndScopeAndActionSink(
 		ctx,
 		codexMonitorWatchOutput{},
 		client,
@@ -978,7 +1034,7 @@ func runCodexMonitorWatchScoped(ctx context.Context, client *http.Client, urls [
 			return projectID()
 		},
 		scope,
-		bridge.LineSinkWithContext(ctx),
-		watchKeyForScope(cwd, scope),
+		nil,
+		bridge.ActionSinkWithContext(ctx),
 	)
 }

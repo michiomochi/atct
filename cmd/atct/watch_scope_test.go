@@ -1,7 +1,12 @@
 package main
 
 import (
+	"bytes"
+	"context"
+	"io"
+	"net/http"
 	"net/url"
+	"strings"
 	"testing"
 )
 
@@ -296,6 +301,61 @@ func TestWatchFormatsHandoffReviewEvents(t *testing.T) {
 				t.Fatalf("formatWatchDecision(%q) = %q, %v; want %q, true", tc.eventName, got, ok, tc.want)
 			}
 		})
+	}
+}
+
+func TestWatchPlanReviewDeliveryUsesLifecycleGeneration(t *testing.T) {
+	states := []string{
+		`{"plan_handoffs":[{"ID":"plan-1","GoalID":7,"ReviewRequestedAt":"2026-09-06T00:00:00Z"}]}`,
+		`{"plan_handoffs":[{"ID":"plan-1","GoalID":7,"ReviewRequestedAt":"2026-09-06T00:00:00Z"}]}`,
+		`{"plan_handoffs":[{"ID":"plan-1","GoalID":7,"ReviewReceivedAt":"2026-09-06T00:01:00Z"}]}`,
+		`{"plan_handoffs":[{"ID":"plan-1","GoalID":7,"ReviewReceivedAt":"2026-09-06T00:01:00Z"}]}`,
+		`{"plan_handoffs":[{"ID":"plan-1","GoalID":7,"ReviewRejectedAt":"2026-09-06T00:02:00Z"}]}`,
+		`{"plan_handoffs":[{"ID":"plan-1","GoalID":7,"ReviewRejectedAt":"2026-09-06T00:02:00Z"}]}`,
+		`{"plan_handoffs":[{"ID":"plan-1","GoalID":7,"ReviewRequestedAt":"2026-09-06T00:03:00Z"}]}`,
+		`{"plan_handoffs":[{"ID":"plan-1","GoalID":7,"ReviewRequestedAt":"2026-09-06T00:03:00Z"}]}`,
+	}
+	var calls int
+	client := &http.Client{Transport: watchRoundTripper(func(req *http.Request) (*http.Response, error) {
+		if req.URL.Path != "/api/events/reconcile" {
+			return nil, io.ErrUnexpectedEOF
+		}
+		if calls >= len(states) {
+			return nil, io.ErrUnexpectedEOF
+		}
+		body := states[calls]
+		calls++
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Status:     "200 OK",
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(body)),
+		}, nil
+	})}
+
+	var output bytes.Buffer
+	delivered := make(map[watchDeliveryKey]struct{})
+	lastWakeupContent := ""
+	wakeupDiscrepancyDelivered := make(map[watchWakeupDeliveryKey]struct{})
+	detectionDelivered := make(map[watchDetectionDeliveryKey]struct{})
+	for range states {
+		if err := reconcileWatchScope(
+			context.Background(), client, "http://daemon", watchScope{ProjectID: "project-1"}, &output,
+			delivered, &lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered,
+			newWatchScopeFilter(""), nil,
+		); err != nil {
+			t.Fatalf("reconcileWatchScope: %v", err)
+		}
+	}
+
+	want := strings.Join([]string{
+		"atct plan handoff review requested (goal_id: 7, handoff_id: plan-1)",
+		"atct plan handoff review received (goal_id: 7, handoff_id: plan-1)",
+		"atct plan handoff review rejected (goal_id: 7, handoff_id: plan-1)",
+		"atct plan handoff review requested (goal_id: 7, handoff_id: plan-1)",
+	}, "\n") + "\n"
+	if got := output.String(); got != want {
+		t.Fatalf("plan review lifecycle output = %q, want %q", got, want)
 	}
 }
 
