@@ -784,6 +784,144 @@ func TestCodexMonitorQueuesBeforeThreadIsAttached(t *testing.T) {
 	}
 }
 
+func TestCodexMonitorQueuePrunesQueuedApprovalAfterGoalHandoffReceive(t *testing.T) {
+	starter := &fakeCodexTurnStarter{}
+	bridge := newCodexMonitorBridge(starter, "thread-1")
+	bridge.SetActive(true)
+	ctx := context.Background()
+
+	for _, action := range []codexMonitorAction{
+		{line: "same-goal-approval", eventName: "decision.approved", goalID: "goal-1"},
+		{line: "other-goal-approval", eventName: "decision.approved", goalID: "goal-2"},
+	} {
+		if err := bridge.enqueueAction(ctx, action); err != nil {
+			t.Fatalf("enqueueAction(%q): %v", action.line, err)
+		}
+	}
+	if err := bridge.enqueueAction(ctx, codexMonitorAction{
+		line:      "goal-receive",
+		eventName: "goal.handoff.receive",
+		goalID:    "goal-1",
+	}); err != nil {
+		t.Fatalf("enqueueAction(goal receive): %v", err)
+	}
+	if got := bridge.QueueLen(); got != 2 {
+		t.Fatalf("queue length after goal receive = %d, want other approval and receive", got)
+	}
+
+	if err := bridge.HandleNotification(ctx, codexAppServerNotification{
+		Method: "thread/status/changed",
+		Params: mustJSON(map[string]any{
+			"threadId": "thread-1",
+			"status":   map[string]any{"type": "idle"},
+		}),
+	}); err != nil {
+		t.Fatalf("HandleNotification(idle): %v", err)
+	}
+	if err := bridge.HandleNotification(ctx, codexAppServerNotification{
+		Method: "turn/completed",
+		Params: mustJSON(map[string]any{"threadId": "thread-1"}),
+	}); err != nil {
+		t.Fatalf("HandleNotification(completed): %v", err)
+	}
+
+	if got := starter.callsSnapshot(); len(got) != 2 || got[0] != "other-goal-approval" || got[1] != "goal-receive" {
+		t.Fatalf("turns after queued approval prune = %#v, want [other-goal-approval goal-receive]", got)
+	}
+}
+
+func TestCodexMonitorQueueKeepsActiveApprovalAfterGoalHandoffReceive(t *testing.T) {
+	starter := &fakeCodexTurnStarter{}
+	bridge := newCodexMonitorBridge(starter, "thread-1")
+	ctx := context.Background()
+
+	if err := bridge.enqueueAction(ctx, codexMonitorAction{
+		line:      "active-approval",
+		eventName: "decision.approved",
+		goalID:    "goal-1",
+	}); err != nil {
+		t.Fatalf("enqueueAction(active approval): %v", err)
+	}
+	if !bridge.Active() {
+		t.Fatal("bridge is idle after starting approval, want active")
+	}
+	if err := bridge.enqueueAction(ctx, codexMonitorAction{
+		line:      "goal-receive",
+		eventName: "goal.handoff.receive",
+		goalID:    "goal-1",
+	}); err != nil {
+		t.Fatalf("enqueueAction(goal receive): %v", err)
+	}
+
+	if got := starter.callsSnapshot(); len(got) != 1 || got[0] != "active-approval" {
+		t.Fatalf("turns while approval is active = %#v, want [active-approval]", got)
+	}
+	if err := bridge.HandleNotification(ctx, codexAppServerNotification{
+		Method: "turn/completed",
+		Params: mustJSON(map[string]any{"threadId": "thread-1"}),
+	}); err != nil {
+		t.Fatalf("HandleNotification(completed): %v", err)
+	}
+	if got := starter.callsSnapshot(); len(got) != 2 || got[1] != "goal-receive" {
+		t.Fatalf("turns after active approval completed = %#v, want receive after active approval", got)
+	}
+}
+
+func TestReconcileWatchScopeCodexMonitorPrunesApprovalAfterGoalReceive(t *testing.T) {
+	states := []string{
+		`{"goals":[{"id":42,"status":"active"}],"decisions":[{"id":71,"goal_id":42,"kind":"goal_approval","status":"applied","answer_label":"approve"}],"goal_handoffs":[],"plan_handoffs":[],"task_handoffs":[]}`,
+		`{"goals":[{"id":42,"status":"active"}],"decisions":[{"id":71,"goal_id":42,"kind":"goal_approval","status":"applied","answer_label":"approve"}],"goal_handoffs":[{"ID":"goal-1","GoalID":42,"ReceivedAt":"2026-09-06T00:00:00Z"}],"plan_handoffs":[],"task_handoffs":[]}`,
+	}
+	var calls int
+	client := &http.Client{Transport: watchRoundTripper(func(req *http.Request) (*http.Response, error) {
+		if req.URL.Path != "/api/events/reconcile" || calls >= len(states) {
+			return nil, errors.New("unexpected reconciliation request")
+		}
+		body := states[calls]
+		calls++
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Status:     "200 OK",
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(body)),
+		}, nil
+	})}
+
+	starter := &fakeCodexTurnStarter{}
+	bridge := newCodexMonitorBridge(starter, "thread-1")
+	bridge.SetActive(true)
+	ctx := context.Background()
+	lastWakeupContent := ""
+	delivered := make(map[watchDeliveryKey]struct{})
+	wakeupDiscrepancyDelivered := make(map[watchWakeupDeliveryKey]struct{})
+	detectionDelivered := make(map[watchDetectionDeliveryKey]struct{})
+	for range states {
+		if err := reconcileWatchScope(
+			ctx, client, "http://daemon", watchScope{ProjectID: "project-1"}, io.Discard,
+			delivered, &lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered,
+			newWatchScopeFilter(""), nil, bridge.ActionSinkWithContext(ctx),
+		); err != nil {
+			t.Fatalf("reconcileWatchScope: %v", err)
+		}
+	}
+	if got := bridge.QueueLen(); got != 1 {
+		t.Fatalf("queue length after goal receive = %d, want only receive action", got)
+	}
+
+	if err := bridge.HandleNotification(ctx, codexAppServerNotification{
+		Method: "thread/status/changed",
+		Params: mustJSON(map[string]any{
+			"threadId": "thread-1",
+			"status":   map[string]any{"type": "idle"},
+		}),
+	}); err != nil {
+		t.Fatalf("HandleNotification(idle): %v", err)
+	}
+	if got := starter.callsSnapshot(); len(got) != 1 || got[0] != "atct goal handoff received (goal_id: 42, handoff_id: goal-1)" {
+		t.Fatalf("turn after goal receive = %#v, want only receive action", got)
+	}
+}
+
 func TestCodexMonitorEventSinkOnlyReceivesFormattedLines(t *testing.T) {
 	starter := &fakeCodexTurnStarter{}
 	bridge := newCodexMonitorBridge(starter, "thread-1")

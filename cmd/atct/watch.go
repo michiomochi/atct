@@ -56,6 +56,7 @@ type watchDecision struct {
 	WorktreeActivity           string  `json:"worktree_activity"`
 	CompleteReport             string  `json:"complete_report"`
 	Status                     string  `json:"status"`
+	deliveryGeneration         string
 }
 
 type watchInbox struct {
@@ -161,8 +162,9 @@ type watchWakeupDeliveryKey struct {
 // publish: the point is to say a condition once per goal, handoff, or task, not
 // once per occurrence.
 type watchDetectionDeliveryKey struct {
-	eventName string
-	targetID  string
+	eventName  string
+	targetID   string
+	generation string
 }
 
 type watchSnapshotFunc func(context.Context) (string, []watchDecision, error)
@@ -326,6 +328,10 @@ func watchLoopWithEnsureAndProjectIDAndScopeAndSink(ctx context.Context, out io.
 // call shape for the Codex monitor bridge. The final argument is ignored:
 // watch delivery no longer has a durable cursor.
 func watchLoopWithEnsureAndProjectIDAndScopeAndSinkAndCursor(ctx context.Context, out io.Writer, client *http.Client, retryInterval time.Duration, snapshot watchSnapshotFunc, ensure watchEnsureFunc, projectID func() string, scope watchScope, sink func(string) error, _ string) error {
+	return watchLoopWithEnsureAndProjectIDAndScopeAndActionSink(ctx, out, client, retryInterval, snapshot, ensure, projectID, scope, sink, nil)
+}
+
+func watchLoopWithEnsureAndProjectIDAndScopeAndActionSink(ctx context.Context, out io.Writer, client *http.Client, retryInterval time.Duration, snapshot watchSnapshotFunc, ensure watchEnsureFunc, projectID func() string, scope watchScope, sink func(string) error, actionSink func(codexMonitorAction) error) error {
 	if retryInterval <= 0 {
 		retryInterval = watchReconnectInterval
 	}
@@ -393,7 +399,7 @@ func watchLoopWithEnsureAndProjectIDAndScopeAndSinkAndCursor(ctx context.Context
 		}
 		streamScope := scope
 		streamScope.ProjectID = filterProjectID
-		if err := reconcileWatchScope(ctx, client, baseURL, streamScope, out, delivered, &lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered, scopeFilter, sink); err != nil {
+		if err := reconcileWatchScope(ctx, client, baseURL, streamScope, out, delivered, &lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered, scopeFilter, sink, actionSink); err != nil {
 			if ctx.Err() != nil {
 				return nil
 			}
@@ -406,7 +412,7 @@ func watchLoopWithEnsureAndProjectIDAndScopeAndSinkAndCursor(ctx context.Context
 			continue
 		}
 
-		err = consumeWatchEventsWithStateAndScopeAndSinkAndCursor(ctx, client, baseURL, streamScope, out, watchKeepaliveTimeout, delivered, &lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered, scopeFilter, sink)
+		err = consumeWatchEventsWithStateAndScopeAndSinkAndCursor(ctx, client, baseURL, streamScope, out, watchKeepaliveTimeout, delivered, &lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered, scopeFilter, sink, actionSink)
 		if err != nil && ctx.Err() == nil {
 			var sinkErr *watchSinkError
 			if errors.As(err, &sinkErr) {
@@ -581,11 +587,15 @@ func consumeWatchEventsWithStateAndScopeAndSink(ctx context.Context, client *htt
 // consumeWatchEventsWithStateAndScopeAndSinkAndCursor keeps the old call shape
 // for callers outside this file. Any legacy cursor arguments are intentionally
 // ignored.
-func consumeWatchEventsWithStateAndScopeAndSinkAndCursor(ctx context.Context, client *http.Client, baseURL string, scope watchScope, out io.Writer, keepaliveTimeout time.Duration, delivered map[watchDeliveryKey]struct{}, lastWakeupContent *string, wakeupDiscrepancyDelivered map[watchWakeupDeliveryKey]struct{}, detectionDelivered map[watchDetectionDeliveryKey]struct{}, scopeFilter *watchScopeFilter, sink func(string) error, _ ...any) error {
-	return consumeWatchEventsWithStateAndScopeAndSinkAndInterval(ctx, client, baseURL, scope, out, keepaliveTimeout, watchReconcileInterval, delivered, lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered, scopeFilter, sink)
+func consumeWatchEventsWithStateAndScopeAndSinkAndCursor(ctx context.Context, client *http.Client, baseURL string, scope watchScope, out io.Writer, keepaliveTimeout time.Duration, delivered map[watchDeliveryKey]struct{}, lastWakeupContent *string, wakeupDiscrepancyDelivered map[watchWakeupDeliveryKey]struct{}, detectionDelivered map[watchDetectionDeliveryKey]struct{}, scopeFilter *watchScopeFilter, sink func(string) error, args ...any) error {
+	return consumeWatchEventsWithStateAndScopeAndSinkAndInterval(ctx, client, baseURL, scope, out, keepaliveTimeout, watchReconcileInterval, delivered, lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered, scopeFilter, sink, watchActionSinkFromArgs(args...))
 }
 
-func consumeWatchEventsWithStateAndScopeAndSinkAndInterval(ctx context.Context, client *http.Client, baseURL string, scope watchScope, out io.Writer, keepaliveTimeout, reconcileInterval time.Duration, delivered map[watchDeliveryKey]struct{}, lastWakeupContent *string, wakeupDiscrepancyDelivered map[watchWakeupDeliveryKey]struct{}, detectionDelivered map[watchDetectionDeliveryKey]struct{}, scopeFilter *watchScopeFilter, sink func(string) error) error {
+func consumeWatchEventsWithStateAndScopeAndSinkAndInterval(ctx context.Context, client *http.Client, baseURL string, scope watchScope, out io.Writer, keepaliveTimeout, reconcileInterval time.Duration, delivered map[watchDeliveryKey]struct{}, lastWakeupContent *string, wakeupDiscrepancyDelivered map[watchWakeupDeliveryKey]struct{}, detectionDelivered map[watchDetectionDeliveryKey]struct{}, scopeFilter *watchScopeFilter, sink func(string) error, actionSinks ...func(codexMonitorAction) error) error {
+	var actionSink func(codexMonitorAction) error
+	if len(actionSinks) > 0 {
+		actionSink = actionSinks[0]
+	}
 	if client == nil {
 		client = &http.Client{}
 	}
@@ -640,7 +650,7 @@ func consumeWatchEventsWithStateAndScopeAndSinkAndInterval(ctx context.Context, 
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-reconcileTicker.C:
-			if err := reconcileWatchScope(ctx, client, baseURL, scope, out, delivered, lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered, scopeFilter, sink); err != nil {
+			if err := reconcileWatchScope(ctx, client, baseURL, scope, out, delivered, lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered, scopeFilter, sink, actionSink); err != nil {
 				return err
 			}
 		case <-timerC:
@@ -662,7 +672,7 @@ func consumeWatchEventsWithStateAndScopeAndSinkAndInterval(ctx context.Context, 
 				resetKeepalive()
 				continue
 			}
-			if err := reconcileWatchScope(ctx, client, baseURL, scope, out, delivered, lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered, scopeFilter, sink); err != nil {
+			if err := reconcileWatchScope(ctx, client, baseURL, scope, out, delivered, lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered, scopeFilter, sink, actionSink); err != nil {
 				return err
 			}
 		}
@@ -845,7 +855,17 @@ type watchReconciliation struct {
 	TaskHandoffs []watchReconciliationHandoff `json:"task_handoffs"`
 }
 
-func reconcileWatchScope(ctx context.Context, client *http.Client, baseURL string, scope watchScope, out io.Writer, delivered map[watchDeliveryKey]struct{}, lastWakeupContent *string, wakeupDiscrepancyDelivered map[watchWakeupDeliveryKey]struct{}, detectionDelivered map[watchDetectionDeliveryKey]struct{}, scopeFilter *watchScopeFilter, sink func(string) error, _ ...any) error {
+func watchActionSinkFromArgs(args ...any) func(codexMonitorAction) error {
+	for _, arg := range args {
+		if actionSink, ok := arg.(func(codexMonitorAction) error); ok {
+			return actionSink
+		}
+	}
+	return nil
+}
+
+func reconcileWatchScope(ctx context.Context, client *http.Client, baseURL string, scope watchScope, out io.Writer, delivered map[watchDeliveryKey]struct{}, lastWakeupContent *string, wakeupDiscrepancyDelivered map[watchWakeupDeliveryKey]struct{}, detectionDelivered map[watchDetectionDeliveryKey]struct{}, scopeFilter *watchScopeFilter, sink func(string) error, args ...any) error {
+	actionSink := watchActionSinkFromArgs(args...)
 	reconcileURL, err := watchReconcileURL(baseURL, scope)
 	if err != nil {
 		return err
@@ -884,7 +904,7 @@ func reconcileWatchScope(ctx context.Context, client *http.Client, baseURL strin
 			// This is a projection of current canonical state, so it must be
 			// rendered on every reconciliation. It intentionally bypasses the
 			// event delivery map, which is for live event delivery only.
-			if err := writeWatchDecisionLine(out, "decision.approved", decision, sink); err != nil {
+			if err := writeWatchDecisionLine(out, "decision.approved", decision, sink, actionSink); err != nil {
 				return err
 			}
 			continue
@@ -901,7 +921,7 @@ func reconcileWatchScope(ctx context.Context, client *http.Client, baseURL strin
 		if !scopeFilter.delivers(eventName, decision) {
 			continue
 		}
-		if err := emitWatchDecisionWithStateAndSink(out, eventName, decision, delivered, lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered, sink); err != nil {
+		if err := emitWatchDecisionWithStateAndSinks(out, eventName, decision, delivered, lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered, sink, actionSink); err != nil {
 			return err
 		}
 	}
@@ -910,7 +930,7 @@ func reconcileWatchScope(ctx context.Context, client *http.Client, baseURL strin
 			if !scopeFilter.delivers(eventName, decision) {
 				continue
 			}
-			if err := emitWatchDecisionWithStateAndSink(out, eventName, decision, delivered, lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered, sink); err != nil {
+			if err := emitWatchDecisionWithStateAndSinks(out, eventName, decision, delivered, lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered, sink, actionSink); err != nil {
 				return err
 			}
 		}
@@ -920,7 +940,7 @@ func reconcileWatchScope(ctx context.Context, client *http.Client, baseURL strin
 			if !scopeFilter.delivers(eventName, decision) {
 				continue
 			}
-			if err := emitWatchDecisionWithStateAndSink(out, eventName, decision, delivered, lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered, sink); err != nil {
+			if err := emitWatchDecisionWithStateAndSinks(out, eventName, decision, delivered, lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered, sink, actionSink); err != nil {
 				return err
 			}
 		}
@@ -930,7 +950,7 @@ func reconcileWatchScope(ctx context.Context, client *http.Client, baseURL strin
 			if !scopeFilter.delivers(eventName, decision) {
 				continue
 			}
-			if err := emitWatchDecisionWithStateAndSink(out, eventName, decision, delivered, lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered, sink); err != nil {
+			if err := emitWatchDecisionWithStateAndSinks(out, eventName, decision, delivered, lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered, sink, actionSink); err != nil {
 				return err
 			}
 		}
@@ -949,14 +969,19 @@ func watchReconciliationHandoffEvent(kind string, handoff watchReconciliationHan
 	prefix := kind + ".handoff."
 	switch {
 	case handoff.ReviewRejectedAt != nil:
+		decision.deliveryGeneration = *handoff.ReviewRejectedAt
 		return prefix + "review.reject", decision, true
 	case handoff.ReviewReceivedAt != nil:
+		decision.deliveryGeneration = *handoff.ReviewReceivedAt
 		return prefix + "review.receive", decision, true
 	case handoff.ReviewRequestedAt != nil:
+		decision.deliveryGeneration = *handoff.ReviewRequestedAt
 		return prefix + "review.request", decision, true
 	case handoff.ReceivedAt != nil:
+		decision.deliveryGeneration = *handoff.ReceivedAt
 		return prefix + "receive", decision, true
 	case handoff.RequestedAt != nil:
+		decision.deliveryGeneration = *handoff.RequestedAt
 		return prefix + "request", decision, true
 	default:
 		return "", watchDecision{}, false
@@ -968,11 +993,17 @@ func emitWatchDecisionWithState(out io.Writer, eventName string, decision watchD
 }
 
 func emitWatchDecisionWithStateAndSink(out io.Writer, eventName string, decision watchDecision, delivered map[watchDeliveryKey]struct{}, lastWakeupContent *string, wakeupDiscrepancyDelivered map[watchWakeupDeliveryKey]struct{}, detectionDelivered map[watchDetectionDeliveryKey]struct{}, sink func(string) error) error {
+	return emitWatchDecisionWithStateAndSinks(out, eventName, decision, delivered, lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered, sink, nil)
+}
+
+func emitWatchDecisionWithStateAndSinks(out io.Writer, eventName string, decision watchDecision, delivered map[watchDeliveryKey]struct{}, lastWakeupContent *string, wakeupDiscrepancyDelivered map[watchWakeupDeliveryKey]struct{}, detectionDelivered map[watchDetectionDeliveryKey]struct{}, sink func(string) error, actionSink func(codexMonitorAction) error) error {
 	line, ok := formatWatchDecision(eventName, decision)
 	if !ok {
 		return nil
 	}
-	writeLine := func() error { return writeWatchLine(out, line, sink) }
+	writeLine := func() error {
+		return writeWatchLineWithActionSink(out, line, eventName, decision, sink, actionSink)
+	}
 	if eventName == "handoff_yielded" {
 		return writeLine()
 	}
@@ -998,7 +1029,7 @@ func emitWatchDecisionWithStateAndSink(out io.Writer, eventName string, decision
 			}
 			return fmt.Errorf("SSE event %s has neither decision_id, goal_id, handoff_id, nor task_id", eventName)
 		}
-		key := watchDetectionDeliveryKey{eventName: eventName, targetID: target}
+		key := watchDetectionDeliveryKey{eventName: eventName, targetID: target, generation: decision.deliveryGeneration}
 		if _, ok := detectionDelivered[key]; ok {
 			return nil
 		}
@@ -1019,7 +1050,7 @@ func emitWatchDecisionWithStateAndSink(out io.Writer, eventName string, decision
 		if target == "" {
 			return fmt.Errorf("SSE event %s has no handoff_id, task_id, or goal_id", eventName)
 		}
-		key := watchDetectionDeliveryKey{eventName: eventName, targetID: target}
+		key := watchDetectionDeliveryKey{eventName: eventName, targetID: target, generation: decision.deliveryGeneration}
 		if _, ok := detectionDelivered[key]; ok {
 			return nil
 		}
@@ -1078,20 +1109,33 @@ func emitWatchDecisionWithStateAndSink(out io.Writer, eventName string, decision
 	return nil
 }
 
-func writeWatchDecisionLine(out io.Writer, eventName string, decision watchDecision, sink func(string) error) error {
+func writeWatchDecisionLine(out io.Writer, eventName string, decision watchDecision, sink func(string) error, actionSinks ...func(codexMonitorAction) error) error {
 	line, ok := formatWatchDecision(eventName, decision)
 	if !ok {
 		return nil
 	}
-	return writeWatchLine(out, line, sink)
+	var actionSink func(codexMonitorAction) error
+	if len(actionSinks) > 0 {
+		actionSink = actionSinks[0]
+	}
+	return writeWatchLineWithActionSink(out, line, eventName, decision, sink, actionSink)
 }
 
 func writeWatchLine(out io.Writer, line string, sink func(string) error) error {
+	return writeWatchLineWithActionSink(out, line, "", watchDecision{}, sink, nil)
+}
+
+func writeWatchLineWithActionSink(out io.Writer, line, eventName string, decision watchDecision, sink func(string) error, actionSink func(codexMonitorAction) error) error {
 	if _, err := fmt.Fprintln(out, line); err != nil {
 		return err
 	}
 	if sink != nil {
 		if err := sink(line); err != nil {
+			return &watchSinkError{err: err}
+		}
+	}
+	if actionSink != nil {
+		if err := actionSink(codexMonitorAction{line: line, eventName: eventName, goalID: decision.GoalID}); err != nil {
 			return &watchSinkError{err: err}
 		}
 	}
