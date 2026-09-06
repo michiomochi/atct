@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/coder/websocket"
@@ -52,7 +53,7 @@ func (s *Server) handleWebSocketEvents(w http.ResponseWriter, r *http.Request) {
 					continue
 				}
 				event.Data = data
-				eventID = data.EntryID
+				eventID = strconv.FormatInt(data.ID, 10)
 				if !tracker.mark(data) {
 					continue
 				}
@@ -83,7 +84,7 @@ func (s *Server) handleWebSocketEvents(w http.ResponseWriter, r *http.Request) {
 				if !s.eventPasses(ctx, filter, event) {
 					continue
 				}
-				payload, err := json.Marshal(wsEventFrame{Name: event.Name, Data: event.Data, ID: record.event.EntryID})
+				payload, err := json.Marshal(wsEventFrame{Name: event.Name, Data: event.Data, ID: strconv.FormatInt(record.event.ID, 10)})
 				if err != nil {
 					return
 				}

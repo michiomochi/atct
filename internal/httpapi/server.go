@@ -1595,9 +1595,8 @@ func writeSSEEvent(w http.ResponseWriter, event store.DecisionEvent) error {
 		return err
 	}
 	if event.Name == EventHandoffEntryAdded {
-		if entry, ok := normalizeHandoffEntryEvent(event.Data); ok && entry.EntryID != "" {
-			entryID := strings.NewReplacer("\r", "", "\n", "").Replace(entry.EntryID)
-			if _, err := fmt.Fprintf(w, "id: %s\n", entryID); err != nil {
+		if entry, ok := normalizeHandoffEntryEvent(event.Data); ok {
+			if _, err := fmt.Fprintf(w, "id: %d\n", entry.ID); err != nil {
 				return err
 			}
 		}

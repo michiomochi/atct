@@ -104,15 +104,24 @@ export interface DecisionHistoryEntry {
   applied_at: string;
 }
 
+export const HANDOFF_ENTRY_KINDS = [
+  "request",
+  "received",
+  "review_requested",
+  "review_received",
+  "review_rejected",
+  "completed",
+] as const;
+
+export type HandoffEntryKind = typeof HANDOFF_ENTRY_KINDS[number];
+
 export interface HandoffEntry {
-  entry_id: string;
+  id: number;
   handoff_id: string;
-  sequence: number;
-  kind: string;
+  kind: HandoffEntryKind;
   body: string;
-  author_session_id: string;
-  relates_to?: string;
-  source?: string;
+  author_session_id: number;
+  in_reply_to_id?: number;
   created_at: string;
 }
 
@@ -131,7 +140,7 @@ export interface Handoff {
   completed_report_at?: string;
   entries: HandoffEntry[];
   has_more: boolean;
-  next_cursor: number;
+  next_after_id: number;
 }
 
 export interface ProposedGoal {
@@ -269,15 +278,51 @@ function arrayOrEmpty<T>(value: unknown): T[] {
   return Array.isArray(value) ? value as T[] : [];
 }
 
+function isCanonicalHandoffEntryKind(value: unknown): value is HandoffEntryKind {
+  return typeof value === "string" && (HANDOFF_ENTRY_KINDS as readonly string[]).includes(value);
+}
+
+function normalizeHandoffEntry(value: unknown): HandoffEntry | null {
+  const source = isRecord(value) ? value : {};
+  const id = source.id;
+  const handoffID = source.handoff_id;
+  const kind = source.kind;
+  const body = source.body;
+  const authorSessionID = source.author_session_id;
+  const createdAt = source.created_at;
+  if (
+    typeof id !== "number" || !Number.isSafeInteger(id) || id <= 0 ||
+    typeof handoffID !== "string" || handoffID === "" ||
+    !isCanonicalHandoffEntryKind(kind) ||
+    typeof body !== "string" ||
+    typeof authorSessionID !== "number" || !Number.isSafeInteger(authorSessionID) || authorSessionID <= 0 ||
+    typeof createdAt !== "string"
+  ) {
+    return null;
+  }
+  const inReplyToID = source.in_reply_to_id;
+  return {
+    id,
+    handoff_id: handoffID,
+    kind,
+    body,
+    author_session_id: authorSessionID,
+    ...(typeof inReplyToID === "number" && Number.isSafeInteger(inReplyToID) && inReplyToID > 0 ? { in_reply_to_id: inReplyToID } : {}),
+    created_at: createdAt,
+  };
+}
+
 function normalizeHandoff(value: unknown): Handoff {
   const source = isRecord(value) ? value : {};
-  const nextCursor = source.next_cursor;
-  return {
+  const nextAfterID = source.next_after_id;
+  const normalized = {
     ...(source as unknown as Handoff),
-    entries: arrayOrEmpty<HandoffEntry>(source.entries),
+    entries: arrayOrEmpty<unknown>(source.entries).map(normalizeHandoffEntry).filter((entry): entry is HandoffEntry => entry !== null),
     has_more: source.has_more === true,
-    next_cursor: typeof nextCursor === "number" && Number.isFinite(nextCursor) && nextCursor >= 0 ? Math.floor(nextCursor) : 0,
+    next_after_id: typeof nextAfterID === "number" && Number.isSafeInteger(nextAfterID) && nextAfterID >= 0 ? nextAfterID : 0,
   };
+  delete (normalized as unknown as Record<string, unknown>).next_cursor;
+  return normalized;
 }
 
 function normalizeHandoffs(value: unknown): Handoff[] {
@@ -375,15 +420,15 @@ export async function fetchTask(id: string): Promise<TaskDetailResponse> {
   return normalizeTaskDetail(await requestJson<unknown>(`/api/tasks/${encodeURIComponent(id)}`));
 }
 
-export async function fetchGoalHandoffHistory(goalID: string, handoffID: string, cursor = 0, limit = 200): Promise<Handoff> {
-  const query = new URLSearchParams({ cursor: String(cursor), limit: String(limit) });
+export async function fetchGoalHandoffHistory(goalID: string, handoffID: string, afterID = 0, limit = 200): Promise<Handoff> {
+  const query = new URLSearchParams({ after_id: String(afterID), limit: String(limit) });
   return normalizeHandoff(await requestJson<unknown>(
     `/api/goals/${encodeURIComponent(goalID)}/handoffs/${encodeURIComponent(handoffID)}?${query.toString()}`,
   ));
 }
 
-export async function fetchTaskHandoffHistory(taskID: string, handoffID: string, cursor = 0, limit = 200): Promise<Handoff> {
-  const query = new URLSearchParams({ cursor: String(cursor), limit: String(limit) });
+export async function fetchTaskHandoffHistory(taskID: string, handoffID: string, afterID = 0, limit = 200): Promise<Handoff> {
+  const query = new URLSearchParams({ after_id: String(afterID), limit: String(limit) });
   return normalizeHandoff(await requestJson<unknown>(
     `/api/tasks/${encodeURIComponent(taskID)}/handoffs/${encodeURIComponent(handoffID)}?${query.toString()}`,
   ));

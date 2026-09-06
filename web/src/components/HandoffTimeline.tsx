@@ -7,16 +7,16 @@ import { EmptyState } from "./StateMessage";
 
 interface Props {
   handoffs: Handoff[];
-  fetchHistory: (handoffID: string, cursor: number) => Promise<Handoff>;
+  fetchHistory: (handoffID: string, afterID: number) => Promise<Handoff>;
 }
 
 function mergeHandoff(current: Handoff, next: Handoff): Handoff {
-  const entries = new Map(current.entries.map((entry) => [entry.entry_id, entry]));
-  for (const entry of next.entries) entries.set(entry.entry_id, entry);
+  const entries = new Map(current.entries.map((entry) => [entry.id, entry]));
+  for (const entry of next.entries) entries.set(entry.id, entry);
   return {
     ...current,
     ...next,
-    entries: Array.from(entries.values()).sort((left, right) => left.sequence - right.sequence),
+    entries: Array.from(entries.values()).sort((left, right) => left.id - right.id),
   };
 }
 
@@ -35,7 +35,7 @@ export function HandoffTimeline({ handoffs, fetchHistory }: Props) {
     setLoadingID(handoff.id);
     setError(null);
     try {
-      const page = await fetchHistory(handoff.id, handoff.next_cursor);
+      const page = await fetchHistory(handoff.id, handoff.next_after_id);
       setItems((current) => current.map((item) => item.id === handoff.id ? mergeHandoff(item, page) : item));
     } catch (reason) {
       setError({ handoffID: handoff.id, message: reason instanceof Error ? reason.message : t("handoff.timeline.error") });
@@ -63,16 +63,16 @@ export function HandoffTimeline({ handoffs, fetchHistory }: Props) {
                 </h3>
                 <p className="break-all text-sm text-ink-700">{handoff.id}</p>
               </div>
-              {handoff.request_report && <p className="mt-2 whitespace-pre-wrap break-words text-base text-ink-700">{handoff.request_report}</p>}
               {handoff.entries.length === 0 ? (
                 <p className="mt-4 text-base text-ink-700">{t("handoff.timeline.noEntries")}</p>
               ) : (
                 <ol className="mt-4 space-y-4 border-l-2 border-line pl-4">
                   {handoff.entries.map((entry) => (
-                    <li className="min-w-0" key={entry.entry_id}>
+                    <li className="min-w-0" key={entry.id}>
                       <div className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1 text-sm text-ink-700">
                         <span className="font-semibold text-ink-950">{entry.kind}</span>
-                        <span>{t("handoff.timeline.sequence", { sequence: entry.sequence })}</span>
+                        <span>{t("handoff.timeline.id", { id: entry.id })}</span>
+                        {entry.in_reply_to_id !== undefined && <span>{t("handoff.timeline.reply", { id: entry.in_reply_to_id })}</span>}
                         <span>{t("handoff.timeline.author", { author: entry.author_session_id })}</span>
                         <time dateTime={entry.created_at}>{formatDateTime(locale, entry.created_at)}</time>
                       </div>

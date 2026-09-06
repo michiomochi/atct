@@ -486,7 +486,7 @@ export function GoalDetail({ id }: Props) {
   }, []);
 
   const fetchHandoffHistory = useCallback(
-    (handoffID: string, cursor: number) => fetchGoalHandoffHistory(resolvedID, handoffID, cursor),
+    (handoffID: string, afterID: number) => fetchGoalHandoffHistory(resolvedID, handoffID, afterID),
     [resolvedID],
   );
 

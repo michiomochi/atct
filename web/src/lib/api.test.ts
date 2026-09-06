@@ -121,19 +121,20 @@ describe("handoff history API", () => {
     vi.unstubAllGlobals();
   });
 
-  it("fetches a cursor page for a goal handoff", async () => {
+  it("fetches an after_id page for a goal handoff", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
-      text: () => Promise.resolve('{"id":"handoff-1","entries":[],"has_more":false,"next_cursor":4}'),
+      text: () => Promise.resolve('{"id":"handoff-1","entries":[{"id":4,"handoff_id":"handoff-1","kind":"review_requested","body":"review","author_session_id":8,"in_reply_to_id":2,"created_at":"2026-08-20T00:00:00Z"}],"has_more":false,"next_after_id":4}'),
     });
     vi.stubGlobal("fetch", fetchMock);
 
     await expect(fetchGoalHandoffHistory("goal/1", "handoff/1", 2, 20)).resolves.toMatchObject({
       id: "handoff-1",
-      next_cursor: 4,
+      next_after_id: 4,
+      entries: [{ id: 4, kind: "review_requested", author_session_id: 8, in_reply_to_id: 2 }],
     });
     expect(fetchMock).toHaveBeenCalledWith(
-      "/api/goals/goal%2F1/handoffs/handoff%2F1?cursor=2&limit=20",
+      "/api/goals/goal%2F1/handoffs/handoff%2F1?after_id=2&limit=20",
       undefined,
     );
   });
@@ -141,13 +142,13 @@ describe("handoff history API", () => {
   it("normalizes embedded handoff pages without changing older goal payloads", () => {
     const response = normalizeGoal({
       goal: { id: "goal-1" },
-      handoffs: [{ id: "handoff-1", entries: [{ entry_id: "entry-1" }] }],
+      handoffs: [{ id: "handoff-1", entries: [{ id: 1, handoff_id: "handoff-1", kind: "progress", body: "removed", author_session_id: 8, created_at: "2026-08-20T00:00:00Z" }, { id: 2, handoff_id: "handoff-1", kind: "received", body: "received", author_session_id: 8, created_at: "2026-08-20T00:00:00Z" }] }],
     });
 
     expect(response.handoffs).toHaveLength(1);
     expect(response.handoffs?.[0]).toMatchObject({
       id: "handoff-1",
-      entries: [{ entry_id: "entry-1" }],
+      entries: [{ id: 2, kind: "received" }],
     });
     expect(normalizeGoal({ goal: { id: "goal-2" } }).handoffs).toEqual([]);
   });

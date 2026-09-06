@@ -69,7 +69,7 @@ export function TaskDetailPage({ id }: Props) {
   }, []);
 
   const fetchHandoffHistory = useCallback(
-    (handoffID: string, cursor: number) => fetchTaskHandoffHistory(resolvedID, handoffID, cursor),
+    (handoffID: string, afterID: number) => fetchTaskHandoffHistory(resolvedID, handoffID, afterID),
     [resolvedID],
   );
 

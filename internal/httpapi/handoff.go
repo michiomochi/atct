@@ -32,32 +32,44 @@ type HandoffEntryAddedEvent struct {
 	GoalID          int64  `json:"goal_id"`
 	TaskID          int64  `json:"task_id,omitempty"`
 	HandoffID       string `json:"handoff_id"`
-	EntryID         string `json:"entry_id"`
-	Sequence        int64  `json:"sequence"`
+	ID              int64  `json:"id"`
 	Kind            string `json:"kind"`
 	AuthorSessionID int64  `json:"author_session_id"`
+	InReplyToID     *int64 `json:"in_reply_to_id,omitempty"`
 	BodyPreview     string `json:"body_preview"`
-	Preview         string `json:"preview,omitempty"`
+}
+
+// HandoffEntryView is the canonical HTTP representation of one handoff entry.
+// The store still carries deprecated compatibility aliases, so the transport
+// maps through this type instead of serializing store.HandoffEntry directly.
+type HandoffEntryView struct {
+	ID              int64     `json:"id"`
+	HandoffID       string    `json:"handoff_id"`
+	Kind            string    `json:"kind"`
+	Body            string    `json:"body"`
+	AuthorSessionID int64     `json:"author_session_id"`
+	InReplyToID     *int64    `json:"in_reply_to_id,omitempty"`
+	CreatedAt       time.Time `json:"created_at"`
 }
 
 // HandoffView is the read-only HTTP representation of a goal or task
-// handoff. Entries contain the requested cursor page in oldest-first order.
+// handoff. Entries contain the requested after_id page in oldest-first order.
 type HandoffView struct {
-	ID                string               `json:"id"`
-	Scope             string               `json:"scope"`
-	ProjectID         int64                `json:"project_id"`
-	GoalID            int64                `json:"goal_id"`
-	TaskID            int64                `json:"task_id,omitempty"`
-	RequestedBy       int64                `json:"requested_by"`
-	ReceivedBy        int64                `json:"received_by"`
-	RequestReport     string               `json:"request_report"`
-	CompleteReport    string               `json:"complete_report"`
-	RequestedAt       *time.Time           `json:"requested_at"`
-	ReceivedAt        *time.Time           `json:"received_at"`
-	CompletedReportAt *time.Time           `json:"completed_report_at"`
-	Entries           []store.HandoffEntry `json:"entries"`
-	HasMore           bool                 `json:"has_more"`
-	NextCursor        int64                `json:"next_cursor"`
+	ID                string             `json:"id"`
+	Scope             string             `json:"scope"`
+	ProjectID         int64              `json:"project_id"`
+	GoalID            int64              `json:"goal_id"`
+	TaskID            int64              `json:"task_id,omitempty"`
+	RequestedBy       int64              `json:"requested_by"`
+	ReceivedBy        int64              `json:"received_by"`
+	RequestReport     string             `json:"request_report"`
+	CompleteReport    string             `json:"complete_report"`
+	RequestedAt       *time.Time         `json:"requested_at"`
+	ReceivedAt        *time.Time         `json:"received_at"`
+	CompletedReportAt *time.Time         `json:"completed_report_at"`
+	Entries           []HandoffEntryView `json:"entries"`
+	HasMore           bool               `json:"has_more"`
+	NextAfterID       int64              `json:"next_after_id"`
 }
 
 type handoffEntryRecord struct {
@@ -99,10 +111,6 @@ func normalizeHandoffEntryEvent(data any) (HandoffEntryAddedEvent, bool) {
 			return HandoffEntryAddedEvent{}, false
 		}
 	}
-	if event.BodyPreview == "" {
-		event.BodyPreview = event.Preview
-	}
-	event.Preview = ""
 	event.BodyPreview = truncateHandoffEntryPreview(event.BodyPreview)
 	if event.Scope == "" {
 		switch {
@@ -112,17 +120,31 @@ func normalizeHandoffEntryEvent(data any) (HandoffEntryAddedEvent, bool) {
 			event.Scope = handoffEntryEventScopeGoal
 		}
 	}
-	if event.HandoffID == "" || event.EntryID == "" || event.GoalID == 0 {
+	if event.HandoffID == "" || event.ID <= 0 || event.GoalID == 0 || !canonicalHandoffEntryKind(event.Kind) {
 		return HandoffEntryAddedEvent{}, false
 	}
 	return event, true
 }
 
+func canonicalHandoffEntryKind(kind string) bool {
+	switch kind {
+	case store.HandoffEntryKindRequest,
+		store.HandoffEntryKindReceived,
+		store.HandoffEntryKindReviewRequested,
+		store.HandoffEntryKindReviewReceived,
+		store.HandoffEntryKindReviewRejected,
+		store.HandoffEntryKindCompleted:
+		return true
+	default:
+		return false
+	}
+}
+
 func handoffEventKey(event HandoffEntryAddedEvent) string {
-	if event.EntryID == "" {
+	if event.ID <= 0 {
 		return ""
 	}
-	return event.Scope + ":" + event.HandoffID + ":" + event.EntryID
+	return event.Scope + ":" + event.HandoffID + ":" + strconv.FormatInt(event.ID, 10)
 }
 
 type handoffEntryTracker struct {
@@ -141,6 +163,17 @@ func newHandoffEntryTracker(records []handoffEntryRecord, lastEventID string, ba
 		return tracker
 	}
 
+	lastID, parseErr := strconv.ParseInt(strings.TrimSpace(lastEventID), 10, 64)
+	if parseErr != nil || lastID <= 0 {
+		for _, record := range records {
+			if !baselineAt.IsZero() && !record.createdAt.Before(baselineAt) {
+				continue
+			}
+			tracker.mark(record.event)
+		}
+		return tracker
+	}
+
 	lastFound := false
 	for _, record := range records {
 		if !baselineAt.IsZero() && !record.createdAt.Before(baselineAt) {
@@ -149,7 +182,7 @@ func newHandoffEntryTracker(records []handoffEntryRecord, lastEventID string, ba
 		if !lastFound {
 			tracker.mark(record.event)
 		}
-		if record.event.EntryID == lastEventID {
+		if record.event.ID == lastID {
 			lastFound = true
 		}
 	}
@@ -177,15 +210,15 @@ func (t *handoffEntryTracker) mark(event HandoffEntryAddedEvent) bool {
 }
 
 func parseHandoffPage(w http.ResponseWriter, r *http.Request) (int64, int, bool) {
-	cursor := int64(0)
+	afterID := int64(0)
 	limit := store.HandoffHistoryMaxLimit
-	if raw := r.URL.Query().Get("cursor"); raw != "" {
+	if raw := r.URL.Query().Get("after_id"); raw != "" {
 		parsed, err := strconv.ParseInt(raw, 10, 64)
 		if err != nil || parsed < 0 {
 			writeError(w, http.StatusBadRequest, store.ErrHandoffHistoryCursorInvalid.Error())
 			return 0, 0, false
 		}
-		cursor = parsed
+		afterID = parsed
 	}
 	if raw := r.URL.Query().Get("limit"); raw != "" {
 		parsed, err := strconv.Atoi(raw)
@@ -195,7 +228,7 @@ func parseHandoffPage(w http.ResponseWriter, r *http.Request) (int64, int, bool)
 		}
 		limit = parsed
 	}
-	return cursor, limit, true
+	return afterID, limit, true
 }
 
 func writeHandoffHistoryError(w http.ResponseWriter, err error) {
@@ -210,10 +243,6 @@ func writeHandoffHistoryError(w http.ResponseWriter, err error) {
 }
 
 func newGoalHandoffView(projectID int64, handoff store.GoalHandoff, page store.HandoffEntryPage) HandoffView {
-	entries := page.Entries
-	if entries == nil {
-		entries = []store.HandoffEntry{}
-	}
 	return HandoffView{
 		ID:                handoff.ID,
 		Scope:             handoffEntryEventScopeGoal,
@@ -226,17 +255,13 @@ func newGoalHandoffView(projectID int64, handoff store.GoalHandoff, page store.H
 		RequestedAt:       handoff.RequestedAt,
 		ReceivedAt:        handoff.ReceivedAt,
 		CompletedReportAt: handoff.CompletedReportAt,
-		Entries:           entries,
+		Entries:           canonicalHandoffEntries(page.Entries),
 		HasMore:           page.HasMore,
-		NextCursor:        page.NextCursor,
+		NextAfterID:       page.NextCursor,
 	}
 }
 
 func newTaskHandoffView(projectID, goalID int64, handoff store.TaskHandoff, page store.HandoffEntryPage) HandoffView {
-	entries := page.Entries
-	if entries == nil {
-		entries = []store.HandoffEntry{}
-	}
 	return HandoffView{
 		ID:                handoff.ID,
 		Scope:             handoffEntryEventScopeTask,
@@ -250,20 +275,40 @@ func newTaskHandoffView(projectID, goalID int64, handoff store.TaskHandoff, page
 		RequestedAt:       handoff.RequestedAt,
 		ReceivedAt:        handoff.ReceivedAt,
 		CompletedReportAt: handoff.CompletedReportAt,
-		Entries:           entries,
+		Entries:           canonicalHandoffEntries(page.Entries),
 		HasMore:           page.HasMore,
-		NextCursor:        page.NextCursor,
+		NextAfterID:       page.NextCursor,
 	}
 }
 
-func (s *Server) listGoalHandoffViews(ctx context.Context, goalID, projectID int64, cursor int64, limit int) ([]HandoffView, error) {
+func canonicalHandoffEntry(entry store.HandoffEntry) HandoffEntryView {
+	return HandoffEntryView{
+		ID:              entry.ID,
+		HandoffID:       entry.HandoffID,
+		Kind:            entry.Kind,
+		Body:            entry.Body,
+		AuthorSessionID: entry.AuthorSessionID,
+		InReplyToID:     entry.InReplyToID,
+		CreatedAt:       entry.CreatedAt,
+	}
+}
+
+func canonicalHandoffEntries(entries []store.HandoffEntry) []HandoffEntryView {
+	views := make([]HandoffEntryView, 0, len(entries))
+	for _, entry := range entries {
+		views = append(views, canonicalHandoffEntry(entry))
+	}
+	return views
+}
+
+func (s *Server) listGoalHandoffViews(ctx context.Context, goalID, projectID int64, afterID int64, limit int) ([]HandoffView, error) {
 	handoffs, err := s.store.ListGoalHandoffs(ctx, goalID)
 	if err != nil {
 		return nil, err
 	}
 	views := make([]HandoffView, 0, len(handoffs))
 	for _, handoff := range handoffs {
-		page, err := s.store.ListGoalHandoffEntries(ctx, handoff.ID, cursor, limit)
+		page, err := s.store.ListGoalHandoffEntries(ctx, handoff.ID, afterID, limit)
 		if err != nil {
 			return nil, err
 		}
@@ -272,14 +317,14 @@ func (s *Server) listGoalHandoffViews(ctx context.Context, goalID, projectID int
 	return views, nil
 }
 
-func (s *Server) listTaskHandoffViews(ctx context.Context, taskID, goalID, projectID int64, cursor int64, limit int) ([]HandoffView, error) {
+func (s *Server) listTaskHandoffViews(ctx context.Context, taskID, goalID, projectID int64, afterID int64, limit int) ([]HandoffView, error) {
 	handoffs, err := s.store.ListTaskHandoffs(ctx, taskID)
 	if err != nil {
 		return nil, err
 	}
 	views := make([]HandoffView, 0, len(handoffs))
 	for _, handoff := range handoffs {
-		page, err := s.store.ListTaskHandoffEntries(ctx, handoff.ID, cursor, limit)
+		page, err := s.store.ListTaskHandoffEntries(ctx, handoff.ID, afterID, limit)
 		if err != nil {
 			return nil, err
 		}
@@ -289,7 +334,7 @@ func (s *Server) listTaskHandoffViews(ctx context.Context, taskID, goalID, proje
 }
 
 func (s *Server) handleGoalHandoffs(w http.ResponseWriter, r *http.Request, goalID, handoffID string) {
-	cursor, limit, ok := parseHandoffPage(w, r)
+	afterID, limit, ok := parseHandoffPage(w, r)
 	if !ok {
 		return
 	}
@@ -303,7 +348,7 @@ func (s *Server) handleGoalHandoffs(w http.ResponseWriter, r *http.Request, goal
 		return
 	}
 	if handoffID == "" {
-		views, err := s.listGoalHandoffViews(r.Context(), canonicalGoalID, goal.ProjectID, cursor, limit)
+		views, err := s.listGoalHandoffViews(r.Context(), canonicalGoalID, goal.ProjectID, afterID, limit)
 		if err != nil {
 			writeHandoffHistoryError(w, err)
 			return
@@ -321,7 +366,7 @@ func (s *Server) handleGoalHandoffs(w http.ResponseWriter, r *http.Request, goal
 		writeHandoffHistoryError(w, err)
 		return
 	}
-	page, err := s.store.ListGoalHandoffEntries(r.Context(), handoff.ID, cursor, limit)
+	page, err := s.store.ListGoalHandoffEntries(r.Context(), handoff.ID, afterID, limit)
 	if err != nil {
 		writeHandoffHistoryError(w, err)
 		return
@@ -330,7 +375,7 @@ func (s *Server) handleGoalHandoffs(w http.ResponseWriter, r *http.Request, goal
 }
 
 func (s *Server) handleTaskHandoffs(w http.ResponseWriter, r *http.Request, taskID, handoffID string) {
-	cursor, limit, ok := parseHandoffPage(w, r)
+	afterID, limit, ok := parseHandoffPage(w, r)
 	if !ok {
 		return
 	}
@@ -349,7 +394,7 @@ func (s *Server) handleTaskHandoffs(w http.ResponseWriter, r *http.Request, task
 		return
 	}
 	if handoffID == "" {
-		views, err := s.listTaskHandoffViews(r.Context(), canonicalTaskID, goalID, goal.ProjectID, cursor, limit)
+		views, err := s.listTaskHandoffViews(r.Context(), canonicalTaskID, goalID, goal.ProjectID, afterID, limit)
 		if err != nil {
 			writeHandoffHistoryError(w, err)
 			return
@@ -367,7 +412,7 @@ func (s *Server) handleTaskHandoffs(w http.ResponseWriter, r *http.Request, task
 		writeHandoffHistoryError(w, err)
 		return
 	}
-	page, err := s.store.ListTaskHandoffEntries(r.Context(), handoff.ID, cursor, limit)
+	page, err := s.store.ListTaskHandoffEntries(r.Context(), handoff.ID, afterID, limit)
 	if err != nil {
 		writeHandoffHistoryError(w, err)
 		return
@@ -383,10 +428,10 @@ func handoffEntryRecordForEntry(projectID, goalID, taskID int64, scope, handoffI
 			GoalID:          goalID,
 			TaskID:          taskID,
 			HandoffID:       handoffID,
-			EntryID:         entry.EntryID,
-			Sequence:        entry.Sequence,
+			ID:              entry.ID,
 			Kind:            entry.Kind,
 			AuthorSessionID: entry.AuthorSessionID,
+			InReplyToID:     entry.InReplyToID,
 			BodyPreview:     truncateHandoffEntryPreview(entry.Body),
 		},
 		createdAt: entry.CreatedAt,
@@ -394,21 +439,21 @@ func handoffEntryRecordForEntry(projectID, goalID, taskID int64, scope, handoffI
 }
 
 func (s *Server) appendGoalHandoffEntryRecords(ctx context.Context, records *[]handoffEntryRecord, projectID int64, handoff store.GoalHandoff) error {
-	return s.appendHandoffEntryRecords(ctx, records, projectID, handoff.GoalID, 0, handoffEntryEventScopeGoal, handoff.ID, func(cursor int64) (store.HandoffEntryPage, error) {
-		return s.store.ListGoalHandoffEntries(ctx, handoff.ID, cursor, store.HandoffHistoryMaxLimit)
+	return s.appendHandoffEntryRecords(ctx, records, projectID, handoff.GoalID, 0, handoffEntryEventScopeGoal, handoff.ID, func(afterID int64) (store.HandoffEntryPage, error) {
+		return s.store.ListGoalHandoffEntries(ctx, handoff.ID, afterID, store.HandoffHistoryMaxLimit)
 	})
 }
 
 func (s *Server) appendTaskHandoffEntryRecords(ctx context.Context, records *[]handoffEntryRecord, projectID, goalID int64, handoff store.TaskHandoff) error {
-	return s.appendHandoffEntryRecords(ctx, records, projectID, goalID, handoff.TaskID, handoffEntryEventScopeTask, handoff.ID, func(cursor int64) (store.HandoffEntryPage, error) {
-		return s.store.ListTaskHandoffEntries(ctx, handoff.ID, cursor, store.HandoffHistoryMaxLimit)
+	return s.appendHandoffEntryRecords(ctx, records, projectID, goalID, handoff.TaskID, handoffEntryEventScopeTask, handoff.ID, func(afterID int64) (store.HandoffEntryPage, error) {
+		return s.store.ListTaskHandoffEntries(ctx, handoff.ID, afterID, store.HandoffHistoryMaxLimit)
 	})
 }
 
 func (s *Server) appendHandoffEntryRecords(ctx context.Context, records *[]handoffEntryRecord, projectID, goalID, taskID int64, scope, handoffID string, listPage func(int64) (store.HandoffEntryPage, error)) error {
-	var cursor int64
+	var afterID int64
 	for {
-		page, err := listPage(cursor)
+		page, err := listPage(afterID)
 		if err != nil {
 			return err
 		}
@@ -418,10 +463,10 @@ func (s *Server) appendHandoffEntryRecords(ctx context.Context, records *[]hando
 		if !page.HasMore {
 			return nil
 		}
-		if page.NextCursor <= cursor {
-			return fmt.Errorf("handoff history cursor did not advance for %s", handoffID)
+		if page.NextCursor <= afterID {
+			return fmt.Errorf("handoff history after_id did not advance for %s", handoffID)
 		}
-		cursor = page.NextCursor
+		afterID = page.NextCursor
 	}
 }
 
@@ -490,7 +535,7 @@ func (s *Server) scanHandoffEntryRecords(ctx context.Context, filter eventFilter
 func sortHandoffEntryRecords(records []handoffEntryRecord) []handoffEntryRecord {
 	sort.SliceStable(records, func(i, j int) bool {
 		left, right := records[i].event, records[j].event
-		return left.EntryID < right.EntryID
+		return left.ID < right.ID
 	})
 	return records
 }
