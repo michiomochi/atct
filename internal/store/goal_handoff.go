@@ -1039,7 +1039,7 @@ func (s *Store) CompletePlanHandoff(ctx context.Context, handoffID string, goalI
 	} else if affected == 0 {
 		return PlanHandoff{}, ErrPlanHandoffReviewState
 	}
-	if err := settleOrchestrationReviewWorkTx(ctx, tx, "plan", handoffID, handoff.ReviewRequestedAt, OrchestrationReviewWorkStateCompleted, now, "", "", sql.NullInt64{}, ""); err != nil {
+	if err := settlePlanReviewWorkTx(ctx, tx, goalID, handoff.ReviewRequestedBy, handoffID, handoff.ReviewRequestedAt, OrchestrationReviewWorkStateCompleted, now); err != nil {
 		return PlanHandoff{}, err
 	}
 	projectID, err := sqlcgen.New(tx).GetGoalProjectID(ctx, goalID)

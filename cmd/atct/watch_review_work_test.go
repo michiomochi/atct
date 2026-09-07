@@ -119,6 +119,96 @@ func TestReviewWorkDurableDeliveryParityAcrossRestartIdleReconnect(t *testing.T)
 	}
 }
 
+func TestPlanReviewWorkCompletionDurableDeliveryAcrossReconnectAndUnknown(t *testing.T) {
+	plan := store.OrchestrationReviewWork{
+		ReviewWorkID:              "review_work:plan:plan-handoff-1224:settlement-1",
+		ProjectID:                 3,
+		GoalID:                    5,
+		Kind:                      "plan",
+		HandoffID:                 "plan-handoff-1224",
+		State:                     store.OrchestrationReviewWorkStateCompleted,
+		ReviewRequestedGeneration: "plan-review-generation-1",
+		SettlementGeneration:      "plan-settlement-generation-1",
+		ActionRole:                "subcommander",
+		ActionScopeKey:            "goal:5:subcommander:goal-handoff-1224",
+		ActionInstruction:         "plan handoff plan-handoff-1224 completed; resume the approved plan in the owning subcommander scope; do not auto-complete any task",
+	}
+	decision, ok := watchOrchestrationReviewWorkDecision(plan)
+	if !ok {
+		t.Fatal("completed plan review work should produce a delivery decision")
+	}
+	line, ok := formatWatchDecision("orchestration.recovery", decision)
+	if !ok || line == "" {
+		t.Fatal("completed plan review work should format as recovery")
+	}
+	claudeAction, ok := selectWatchAgentAction(line, "orchestration.recovery", decision)
+	if !ok {
+		t.Fatal("Claude selector should accept completed plan review work")
+	}
+	codexAction, ok := selectWatchAgentAction(line, "orchestration.recovery", decision)
+	if !ok {
+		t.Fatal("Codex selector should accept completed plan review work")
+	}
+	if claudeAction.deliveryKey != codexAction.deliveryKey ||
+		claudeAction.generation != codexAction.generation ||
+		claudeAction.targetRole != codexAction.targetRole ||
+		claudeAction.scopeKey != codexAction.scopeKey {
+		t.Fatalf("plan completion selector identity diverged: claude=%+v codex=%+v", claudeAction, codexAction)
+	}
+
+	scope := watchScope{
+		ProjectID: "3",
+		GoalID:    "5",
+		Role:      "subcommander",
+		ScopeKey:  plan.ActionScopeKey,
+	}
+	claudeAPI := newFakeWatchDeliveryAPI()
+	var claudeDelivered []watchAgentAction
+	collect := func(action watchAgentAction) error {
+		claudeDelivered = append(claudeDelivered, action)
+		return nil
+	}
+	claudeFirst := newWatchDurableActionSink(claudeAPI, newWatchDeliveryTestReporter("plan-claude-a", scope.ScopeKey), scope, collect)
+	claudeSecond := newWatchDurableActionSink(claudeAPI, newWatchDeliveryTestReporter("plan-claude-b", scope.ScopeKey), scope, collect)
+	claudeReconnect := newWatchDurableActionSink(claudeAPI, newWatchDeliveryTestReporter("plan-claude-a", scope.ScopeKey), scope, collect)
+	if err := claudeFirst(claudeAction); err != nil {
+		t.Fatalf("first Claude plan delivery: %v", err)
+	}
+	if err := claudeSecond(claudeAction); err != nil {
+		t.Fatalf("second Claude wrapper plan delivery: %v", err)
+	}
+	if err := claudeReconnect(claudeAction); err != nil {
+		t.Fatalf("reconnected Claude plan delivery: %v", err)
+	}
+	if len(claudeDelivered) != 1 {
+		t.Fatalf("Claude plan completion should deliver once across wrappers/reconnect, got %d", len(claudeDelivered))
+	}
+
+	codexAPI := newFakeWatchDeliveryAPI()
+	codexBridge := newCodexMonitorBridge(&fakeCodexTurnStarter{errs: []error{errCodexTurnSubmitUnknown}}, "plan-codex-thread")
+	codexBridge.SetActive(true)
+	codexSink := newWatchDurableCodexActionSink(codexAPI, newWatchDeliveryTestReporter("plan-codex", scope.ScopeKey), scope, codexBridge)
+	if err := codexSink(codexAction); err != nil {
+		t.Fatalf("queue Codex plan delivery: %v", err)
+	}
+	if err := codexBridge.HandleNotification(context.Background(), codexAppServerNotification{Method: "turn/completed", Params: mustJSON(map[string]any{"threadId": "plan-codex-thread"})}); err != nil {
+		t.Fatalf("unknown Codex plan receipt: %v", err)
+	}
+	codexReconnectBridge := newCodexMonitorBridge(&fakeCodexTurnStarter{}, "plan-codex-thread")
+	codexReconnectBridge.SetActive(true)
+	codexReconnectSink := newWatchDurableCodexActionSink(codexAPI, newWatchDeliveryTestReporter("plan-codex", scope.ScopeKey), scope, codexReconnectBridge)
+	if err := codexReconnectSink(codexAction); err != nil {
+		t.Fatalf("reconnected Codex plan delivery: %v", err)
+	}
+	if codexReconnectBridge.QueueLen() != 0 {
+		t.Fatalf("unknown Codex plan receipt should suppress reconnect duplicate, got queue length %d", codexReconnectBridge.QueueLen())
+	}
+	codexAPI.mu.Lock()
+	defer codexAPI.mu.Unlock()
+	if codexAPI.reserveCall != 2 || codexAPI.acceptCall != 0 || codexAPI.unknownCall != 1 {
+		t.Fatalf("Codex plan receipt calls reserve=%d accept=%d unknown=%d; want 2,0,1", codexAPI.reserveCall, codexAPI.acceptCall, codexAPI.unknownCall)
+	}
+}
 
 func TestWatchReviewWorkDistinguishesReviewerWorkFromCompletionRedelegation(t *testing.T) {
 	nextTaskID := int64(8)

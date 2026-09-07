@@ -351,3 +351,15 @@ func settleTaskReviewWorkTx(ctx context.Context, tx *sql.Tx, goalID, taskID int6
 	}
 	return settleOrchestrationReviewWorkTx(ctx, tx, "task", handoffID, requestedAt, state, settledAt, actionRole, actionScopeKey, actionTaskID, instruction)
 }
+
+func settlePlanReviewWorkTx(ctx context.Context, tx *sql.Tx, goalID, requesterID int64, handoffID string, requestedAt *time.Time, state, settledAt string) error {
+	actionRole := ""
+	actionScopeKey := ""
+	instruction := ""
+	if state == OrchestrationReviewWorkStateCompleted {
+		actionRole = "subcommander"
+		actionScopeKey = goalScopeKeyForSessionTx(ctx, tx, goalID, requesterID)
+		instruction = fmt.Sprintf("plan handoff %s completed; resume the approved plan in the owning subcommander scope; do not auto-complete any task", handoffID)
+	}
+	return settleOrchestrationReviewWorkTx(ctx, tx, "plan", handoffID, requestedAt, state, settledAt, actionRole, actionScopeKey, sql.NullInt64{}, instruction)
+}

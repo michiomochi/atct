@@ -207,5 +207,24 @@ func TestGoalAndPlanReviewWorkPersistsRecipientRolesAndResolves(t *testing.T) {
 	if _, err := s.CompletePlanHandoff(ctx, planHandoffID, goal.ID, commanderID, "plan accepted"); err != nil {
 		t.Fatalf("CompletePlanHandoff: %v", err)
 	}
-	assertReviewWork("plan", planHandoffID, OrchestrationReviewWorkStateCompleted, false, "commander", ProjectOrchestrationScopeKey(project.ID), "", "")
+	planCompletion := assertReviewWork("plan", planHandoffID, OrchestrationReviewWorkStateCompleted, false, "commander", ProjectOrchestrationScopeKey(project.ID), "subcommander", goalScope)
+	if planCompletion.SettlementGeneration == "" || planCompletion.ActionTaskID != nil ||
+		!strings.Contains(planCompletion.ActionInstruction, "resume the approved plan") ||
+		!strings.Contains(planCompletion.ActionInstruction, "do not auto-complete") {
+		t.Fatalf("plan completion action = %#v, want generation-bound plan resumption without task completion", planCompletion)
+	}
+	pending, err := s.ListPendingOrchestrationReviewWork(ctx, project.ID)
+	if err != nil {
+		t.Fatalf("ListPendingOrchestrationReviewWork: %v", err)
+	}
+	foundPlanAction := false
+	for _, item := range pending {
+		if item.Kind == "plan" && item.HandoffID == planHandoffID && item.State == OrchestrationReviewWorkStateCompleted {
+			foundPlanAction = item.ActionRole == "subcommander" && item.ActionScopeKey == goalScope && item.ActionInstruction == planCompletion.ActionInstruction
+			break
+		}
+	}
+	if !foundPlanAction {
+		t.Fatalf("pending review work = %#v, want completed plan resumption action", pending)
+	}
 }
