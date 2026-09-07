@@ -116,9 +116,9 @@ func orchestrationRecoveriesForScopes(scopes []OrchestrationScope, healthByProje
 	return recoveries
 }
 
-// Commander recovery is meaningful for the child wrappers that can publish
-// monitor health. The commander scope is the routing destination itself and
-// has no eligible monitor-health reporter in the existing contract.
+// Commander recovery is meaningful for child wrappers whose missing or
+// mismatched health needs a project-level instruction. The commander scope is
+// the destination for that instruction, not a source of child recovery.
 func orchestrationRecoveryScope(scope OrchestrationScope) bool {
 	if !scope.Active || scope.ProjectID <= 0 || strings.TrimSpace(scope.ScopeKey) == "" {
 		return false

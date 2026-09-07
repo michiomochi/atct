@@ -552,10 +552,17 @@ func writeOrchestrationDeliveryError(w http.ResponseWriter, err error) {
 }
 
 func validateMonitorHealthScope(s *Server, ctx context.Context, health store.MonitorHealth) error {
-	if health.Role != "subcommander" && health.Role != "executor" {
+	if health.Role != "commander" && health.Role != "subcommander" && health.Role != "executor" {
 		return fmt.Errorf("monitor role %q is not eligible", health.Role)
 	}
-	if health.ProjectID <= 0 || health.GoalID == nil {
+	if health.ProjectID <= 0 {
+		return errors.New("project_id is required")
+	}
+	if health.Role == "commander" {
+		if health.GoalID != nil || health.TaskID != nil {
+			return errors.New("commander monitor cannot carry goal or task selector")
+		}
+	} else if health.GoalID == nil {
 		return errors.New("project_id and goal_id are required")
 	}
 	if health.Role == "subcommander" && health.TaskID != nil {
@@ -564,7 +571,10 @@ func validateMonitorHealthScope(s *Server, ctx context.Context, health store.Mon
 	if health.Role == "executor" && health.TaskID == nil {
 		return errors.New("executor monitor requires task selector")
 	}
-	filter := eventFilter{canonicalProjectID: health.ProjectID, canonicalGoalID: *health.GoalID}
+	filter := eventFilter{canonicalProjectID: health.ProjectID}
+	if health.GoalID != nil {
+		filter.canonicalGoalID = *health.GoalID
+	}
 	if health.TaskID != nil {
 		filter.canonicalTaskID = *health.TaskID
 	}
@@ -572,7 +582,7 @@ func validateMonitorHealthScope(s *Server, ctx context.Context, health store.Mon
 	if err != nil {
 		return err
 	}
-	if projectID != health.ProjectID || goalID != *health.GoalID || (health.TaskID != nil && taskID != *health.TaskID) {
+	if projectID != health.ProjectID || (health.GoalID != nil && goalID != *health.GoalID) || (health.TaskID != nil && taskID != *health.TaskID) {
 		return errors.New("monitor selector does not match its canonical scope")
 	}
 	if health.MonitorID != store.MonitorHealthID(health.CWD, health.Role, health.ProjectID, health.GoalID, health.TaskID, health.PID, health.ProcessStartedAt, health.ScopeKey) {

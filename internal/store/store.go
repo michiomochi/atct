@@ -79,11 +79,14 @@ func validateMonitorHealth(health MonitorHealth) error {
 	if strings.TrimSpace(health.MonitorID) == "" || strings.TrimSpace(health.CWD) == "" || strings.TrimSpace(health.Role) == "" {
 		return errors.New("monitor identity is required")
 	}
-	if health.Role != "subcommander" && health.Role != "executor" {
+	if health.Role != "commander" && health.Role != "subcommander" && health.Role != "executor" {
 		return fmt.Errorf("monitor role %q is not eligible", health.Role)
 	}
 	if health.ProjectID <= 0 || health.PID <= 0 || health.ProcessStartedAt.IsZero() {
 		return errors.New("monitor project, pid, and process start are required")
+	}
+	if health.Role == "commander" && (health.GoalID != nil || health.TaskID != nil) {
+		return errors.New("commander monitor cannot carry goal or task selector")
 	}
 	if health.Role == "subcommander" && health.TaskID != nil {
 		return errors.New("subcommander monitor cannot carry task selector")
@@ -91,7 +94,7 @@ func validateMonitorHealth(health MonitorHealth) error {
 	if health.Role == "executor" && health.TaskID == nil {
 		return errors.New("executor monitor requires task selector")
 	}
-	if health.GoalID == nil {
+	if health.Role != "commander" && health.GoalID == nil {
 		return errors.New("monitor goal selector is required")
 	}
 	if expected := MonitorHealthID(health.CWD, health.Role, health.ProjectID, health.GoalID, health.TaskID, health.PID, health.ProcessStartedAt, health.ScopeKey); expected != health.MonitorID {

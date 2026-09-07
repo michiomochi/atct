@@ -360,7 +360,13 @@ func watchActionDeliveryIdentity(eventName, line string, decision watchDecision)
 	subject := ""
 	switch {
 	case eventName == "orchestration.recovery":
-		subject = decision.ScopeKey
+		subject = decision.BlockerID
+		if subject == "" {
+			subject = decision.SourceID
+		}
+		if subject == "" {
+			subject = decision.ScopeKey
+		}
 		if subject == "" {
 			subject = decision.HandoffID
 		}

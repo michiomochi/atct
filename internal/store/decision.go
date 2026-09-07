@@ -84,6 +84,9 @@ func (s *Store) AskDecision(ctx context.Context, in AskInput) (domain.Decision, 
 		return domain.Decision{}, fmt.Errorf("insert decision: %w", err)
 	}
 	d.ID = id
+	if err := upsertHumanDecisionBlockerTx(ctx, q, d); err != nil {
+		return domain.Decision{}, fmt.Errorf("record human decision blocker: %w", err)
+	}
 	event := DecisionEvent{Name: "decision.created", Data: d, OccurredAt: d.CreatedAt}
 	if err := tx.Commit(); err != nil {
 		return domain.Decision{}, fmt.Errorf("commit decision creation: %w", err)
@@ -319,6 +322,9 @@ func (s *Store) answerDecision(ctx context.Context, in AnswerInput, eventName st
 	if err != nil {
 		return domain.Decision{}, err
 	}
+	if err := resolveHumanDecisionBlockerTx(ctx, q, in.DecisionID, time.Now().UTC()); err != nil {
+		return domain.Decision{}, err
+	}
 	event, err := workflowDecisionEvent(eventName, row)
 	if err != nil {
 		return domain.Decision{}, fmt.Errorf("build decision answer event: %w", err)
@@ -387,6 +393,9 @@ func (s *Store) ApplyExpiredDefaults(ctx context.Context, now time.Time) (int, e
 		candidates[i].AnsweredAt = &answeredAt
 		defaultAppliedAt := settledAt
 		candidates[i].DefaultAppliedAt = &defaultAppliedAt
+		if err := resolveHumanDecisionBlockerTx(ctx, q, candidates[i].ID, settledAt); err != nil {
+			return 0, err
+		}
 		settledDecisions = append(settledDecisions, candidates[i])
 		event := DecisionEvent{Name: "decision.answered", Data: candidates[i], OccurredAt: settledAt}
 		settledEvents = append(settledEvents, event)
@@ -414,6 +423,9 @@ func (s *Store) WithdrawDecision(ctx context.Context, decisionID int64, reason s
 	defer tx.Rollback()
 	q := decisionQueries(s).WithTx(tx)
 	if err := withdrawDecisionWith(ctx, q, decisionID, reason); err != nil {
+		return err
+	}
+	if err := resolveHumanDecisionBlockerTx(ctx, q, decisionID, time.Now().UTC()); err != nil {
 		return err
 	}
 	row, err := q.GetDecision(ctx, decisionID)

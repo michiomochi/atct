@@ -665,6 +665,28 @@ type planHandoffCompleteParams struct {
 	CompleteReport string `json:"complete_report"`
 }
 
+type orchestrationBlockerReportParams struct {
+	ProjectID      int64  `json:"project_id"`
+	GoalID         int64  `json:"goal_id"`
+	TaskID         int64  `json:"task_id"`
+	ScopeKey       string `json:"scope_key"`
+	Kind           string `json:"kind"`
+	SourceID       string `json:"source_id"`
+	Generation     string `json:"generation"`
+	OwnerRole      string `json:"owner_role"`
+	Instruction    string `json:"instruction"`
+	AgentSessionID int64  `json:"agent_session_id"`
+}
+
+type orchestrationBlockerResolveParams struct {
+	BlockerID      string `json:"blocker_id"`
+	ScopeKey       string `json:"scope_key"`
+	Kind           string `json:"kind"`
+	SourceID       string `json:"source_id"`
+	Generation     string `json:"generation"`
+	AgentSessionID int64  `json:"agent_session_id"`
+}
+
 func (d *Daemon) receiveRoleEvidence(ctx context.Context, agentSessionID, projectID, goalID, taskID int64, handoffID string) (string, claimEvidence, error) {
 	if taskID != 0 && goalID == 0 {
 		var err error
@@ -1834,6 +1856,29 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		}
 		response, err := d.responseWithScopedUnappliedDecisions(ctx, data, decision.GoalID, 0, decision.ID)
 		return marshal(response, err)
+
+	case "blocker.report":
+		var p orchestrationBlockerReportParams
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		blocker, created, err := d.store.ReportOrchestrationBlocker(ctx, store.OrchestrationBlockerReportInput{
+			ProjectID: p.ProjectID, GoalID: p.GoalID, TaskID: p.TaskID, ScopeKey: p.ScopeKey,
+			Kind: p.Kind, SourceID: p.SourceID, Generation: p.Generation, OwnerRole: p.OwnerRole,
+			Instruction: p.Instruction, AgentSessionID: p.AgentSessionID,
+		})
+		return marshal(map[string]any{"blocker": blocker, "created": created}, err)
+
+	case "blocker.resolve":
+		var p orchestrationBlockerResolveParams
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		blocker, err := d.store.ResolveOrchestrationBlocker(ctx, store.OrchestrationBlockerResolveInput{
+			BlockerID: p.BlockerID, ScopeKey: p.ScopeKey, Kind: p.Kind, SourceID: p.SourceID,
+			Generation: p.Generation, AgentSessionID: p.AgentSessionID,
+		})
+		return marshal(blocker, err)
 
 	case "goal.set_derived_from":
 		var p struct {

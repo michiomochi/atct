@@ -94,6 +94,21 @@ type MonitorHealth struct {
 	AgentSessionID   int64
 }
 
+type OrchestrationBlocker struct {
+	BlockerID   string
+	ProjectID   int64
+	GoalID      sql.NullInt64
+	TaskID      sql.NullInt64
+	ScopeKey    string
+	Kind        string
+	SourceID    string
+	Generation  string
+	OwnerRole   string
+	Instruction string
+	OpenedAt    string
+	ResolvedAt  sql.NullString
+}
+
 type OrchestrationDeliveryLease struct {
 	ScopeKey        string
 	TargetRole      string

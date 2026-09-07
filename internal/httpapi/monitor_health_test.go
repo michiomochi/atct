@@ -105,3 +105,22 @@ func TestMonitorHealthPostRejectsCommanderAndMismatchedScope(t *testing.T) {
 		}
 	}
 }
+
+func TestMonitorHealthPostAcceptsProjectCommanderScope(t *testing.T) {
+	f := newBareFixture(t)
+	commanderID := registerTestSession(t, f.store, "monitor-health-commander", 0)
+	if _, err := f.store.ClaimProject(f.ctx, f.project.ID, commanderID); err != nil {
+		t.Fatalf("ClaimProject: %v", err)
+	}
+	now := time.Now().UTC()
+	health := store.MonitorHealth{
+		CWD: f.project.RootPath, Role: "commander", State: "healthy", ProjectID: f.project.ID,
+		ScopeKey: store.ProjectOrchestrationScopeKey(f.project.ID), AgentSessionID: commanderID,
+		PID: 121, ProcessStartedAt: now, LastSeenAt: now, TransitionedAt: now,
+	}
+	health.MonitorID = store.MonitorHealthID(health.CWD, health.Role, health.ProjectID, nil, nil, health.PID, health.ProcessStartedAt, health.ScopeKey)
+	status, _, body := doHandlerRequest(t, httpapi.New(f.store).Handler(), http.MethodPost, "/api/monitor-health", mustJSON(t, health))
+	if status != http.StatusOK {
+		t.Fatalf("commander health POST status = %d; body=%s", status, body)
+	}
+}

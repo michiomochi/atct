@@ -63,6 +63,9 @@ type watchDecision struct {
 	TargetRole                 string  `json:"target_role"`
 	ScopeKey                   string  `json:"scope_key"`
 	Generation                 string  `json:"generation"`
+	BlockerID                  string  `json:"blocker_id"`
+	BlockerKind                string  `json:"blocker_kind"`
+	SourceID                   string  `json:"source_id"`
 	ExpectedRole               string  `json:"expected_role"`
 	ExpectedAgentSessionID     int64   `json:"expected_agent_session_id"`
 	ExpectedAgentKey           string  `json:"expected_agent_key"`
@@ -223,7 +226,7 @@ type watchHealthReporter struct {
 }
 
 func newWatchHealthReporter(client *http.Client, urls []string, cwd string, scope watchScope) *watchHealthReporter {
-	if scope.Role != "subcommander" && scope.Role != "executor" {
+	if scope.Role != "commander" && scope.Role != "subcommander" && scope.Role != "executor" {
 		return nil
 	}
 	projectID, err := strconv.ParseInt(scope.ProjectID, 10, 64)
@@ -231,7 +234,9 @@ func newWatchHealthReporter(client *http.Client, urls []string, cwd string, scop
 		return nil
 	}
 	goalID, taskID := monitorScopeID(scope.GoalID), monitorScopeID(scope.TaskID)
-	if scope.Role == "subcommander" && goalID == nil || scope.Role == "executor" && (goalID == nil || taskID == nil) {
+	if scope.Role == "commander" && (goalID != nil || taskID != nil) ||
+		scope.Role == "subcommander" && (goalID == nil || taskID != nil) ||
+		scope.Role == "executor" && (goalID == nil || taskID == nil) {
 		return nil
 	}
 	processStartedAt, err := daemonctl.CodexMonitorProcessStartTime(os.Getpid())
@@ -546,6 +551,9 @@ func runWatchWithOptions(dir, goalID string, projectScope, monitor bool) error {
 		goalID = ""
 	}
 	scope := normalWatchScope(projectID, goalID)
+	if monitor && goalID == "" {
+		scope.Role = store.OrchestrationRecoveryCommander
+	}
 	snapshot, projectIDGetter := watchSnapshotWithProject(client, baseURLs, cwd)
 	reporter := newWatchHealthReporter(client, baseURLs, cwd, scope)
 	var reporters []watchHealthSink
@@ -1206,6 +1214,19 @@ type watchOrchestrationRecovery struct {
 	Instruction            string `json:"instruction"`
 }
 
+type watchOrchestrationBlocker struct {
+	BlockerID   string `json:"blocker_id"`
+	ProjectID   int64  `json:"project_id"`
+	GoalID      *int64 `json:"goal_id"`
+	TaskID      *int64 `json:"task_id"`
+	ScopeKey    string `json:"scope_key"`
+	Kind        string `json:"kind"`
+	SourceID    string `json:"source_id"`
+	Generation  string `json:"generation"`
+	OwnerRole   string `json:"owner_role"`
+	Instruction string `json:"instruction"`
+}
+
 func (r watchOrchestrationRecovery) watchDecision() watchDecision {
 	decision := watchDecision{
 		ProjectID:              strconv.FormatInt(r.ProjectID, 10),
@@ -1228,6 +1249,35 @@ func (r watchOrchestrationRecovery) watchDecision() watchDecision {
 	}
 	if r.TaskID != nil {
 		decision.TaskID = strconv.FormatInt(*r.TaskID, 10)
+	}
+	return decision
+}
+
+func (b watchOrchestrationBlocker) watchDecision() watchDecision {
+	condition := ""
+	switch b.Kind {
+	case store.OrchestrationBlockerHumanDecision:
+		condition = "human_decision_wait"
+	case store.OrchestrationBlockerDependencyMerge:
+		condition = "dependency_merge_wait"
+	}
+	decision := watchDecision{
+		ProjectID:          strconv.FormatInt(b.ProjectID, 10),
+		Condition:          condition,
+		TargetRole:         store.OrchestrationRecoveryCommander,
+		ScopeKey:           store.ProjectOrchestrationScopeKey(b.ProjectID),
+		Generation:         b.Generation,
+		BlockerID:          b.BlockerID,
+		BlockerKind:        b.Kind,
+		SourceID:           b.SourceID,
+		Instruction:        b.Instruction,
+		deliveryGeneration: b.Generation,
+	}
+	if b.GoalID != nil {
+		decision.GoalID = strconv.FormatInt(*b.GoalID, 10)
+	}
+	if b.TaskID != nil {
+		decision.TaskID = strconv.FormatInt(*b.TaskID, 10)
 	}
 	return decision
 }
@@ -1258,6 +1308,7 @@ type watchReconciliation struct {
 	ExpectedScopes []watchExpectedMonitorScope  `json:"expected_scopes"`
 	MonitorHealth  []watchMonitorHealth         `json:"monitor_health"`
 	Recoveries     []watchOrchestrationRecovery `json:"recoveries"`
+	Blockers       []watchOrchestrationBlocker  `json:"blockers"`
 }
 
 type watchExpectedMonitorScope struct {
@@ -1350,6 +1401,16 @@ func reconcileWatchScope(ctx context.Context, client *http.Client, baseURL strin
 	}
 	if scopeFilter == nil {
 		scopeFilter = newWatchPassThroughFilter()
+	}
+	for _, blocker := range state.Blockers {
+		if !watchOrchestrationBlockerMatches(blocker, scope) {
+			continue
+		}
+		if err := emitWatchDecisionWithStateAndSinks(out, "orchestration.recovery", blocker.watchDecision(),
+			delivered, lastWakeupContent, wakeupDiscrepancyDelivered,
+			detectionDelivered, sink, actionSink); err != nil {
+			return err
+		}
 	}
 	for _, recovery := range state.Recoveries {
 		if !watchOrchestrationRecoveryMatches(recovery, scope) {
@@ -1450,6 +1511,25 @@ func watchOrchestrationRecoveryMatches(recovery watchOrchestrationRecovery, scop
 	return true
 }
 
+func watchOrchestrationBlockerMatches(blocker watchOrchestrationBlocker, scope watchScope) bool {
+	if scope.Role != store.OrchestrationRecoveryCommander ||
+		blocker.ProjectID <= 0 || strings.TrimSpace(blocker.BlockerID) == "" ||
+		strings.TrimSpace(blocker.ScopeKey) == "" || strings.TrimSpace(blocker.SourceID) == "" ||
+		strings.TrimSpace(blocker.Generation) == "" || strings.TrimSpace(blocker.Instruction) == "" {
+		return false
+	}
+	if blocker.Kind != store.OrchestrationBlockerHumanDecision && blocker.Kind != store.OrchestrationBlockerDependencyMerge {
+		return false
+	}
+	if blocker.OwnerRole != store.OrchestrationBlockerOwnerCommander && blocker.OwnerRole != store.OrchestrationBlockerOwnerSubcommander {
+		return false
+	}
+	if scope.ProjectID != "" && strconv.FormatInt(blocker.ProjectID, 10) != scope.ProjectID {
+		return false
+	}
+	return scope.ScopeKey == "" || scope.ScopeKey == store.ProjectOrchestrationScopeKey(blocker.ProjectID)
+}
+
 func watchExpectedMonitorScopeMatches(expected watchExpectedMonitorScope, scope watchScope) bool {
 	if !expected.Active || strings.TrimSpace(expected.ScopeKey) == "" || expected.Role != scope.Role {
 		return false
@@ -1521,7 +1601,13 @@ func emitWatchDecisionWithStateAndSinks(out io.Writer, eventName string, decisio
 		return writeLine()
 	}
 	if eventName == "orchestration.recovery" {
-		target := decision.ScopeKey
+		target := decision.BlockerID
+		if target == "" {
+			target = decision.SourceID
+		}
+		if target == "" {
+			target = decision.ScopeKey
+		}
 		if target == "" {
 			target = decision.HandoffID
 		}

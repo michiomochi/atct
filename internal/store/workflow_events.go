@@ -29,6 +29,7 @@ type WorkflowReconciliation struct {
 	ExpectedScopes []OrchestrationScope    `json:"expected_scopes"`
 	MonitorHealth  []MonitorHealth         `json:"monitor_health"`
 	Recoveries     []OrchestrationRecovery `json:"recoveries"`
+	Blockers       []OrchestrationBlocker  `json:"blockers"`
 }
 
 func workflowDecisionEvent(name string, row sqlcgen.Decision) (DecisionEvent, error) {
@@ -100,6 +101,7 @@ func (s *Store) ReconcileWorkflow(ctx context.Context, query WorkflowEventQuery)
 		ExpectedScopes: make([]OrchestrationScope, 0),
 		MonitorHealth:  make([]MonitorHealth, 0),
 		Recoveries:     make([]OrchestrationRecovery, 0),
+		Blockers:       make([]OrchestrationBlocker, 0),
 	}
 	for _, goal := range goals {
 		tasks, err := s.ListTasks(ctx, goal.ID)
@@ -160,6 +162,11 @@ func (s *Store) ReconcileWorkflow(ctx context.Context, query WorkflowEventQuery)
 	}
 	reconciliation.MonitorHealth = append(reconciliation.MonitorHealth, matchingMonitorHealthForScopes(reconciliation.ExpectedScopes, healthByProject)...)
 	reconciliation.Recoveries = append(reconciliation.Recoveries, orchestrationRecoveriesForScopes(reconciliation.ExpectedScopes, healthByProject)...)
+	blockers, err := s.ListOpenOrchestrationBlockers(ctx, projectID)
+	if err != nil {
+		return WorkflowReconciliation{}, err
+	}
+	reconciliation.Blockers = append(reconciliation.Blockers, blockers...)
 	return reconciliation, nil
 }
 
