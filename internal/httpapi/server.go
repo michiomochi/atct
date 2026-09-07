@@ -464,7 +464,7 @@ func validateMonitorHealthScope(s *Server, ctx context.Context, health store.Mon
 	if projectID != health.ProjectID || goalID != *health.GoalID || (health.TaskID != nil && taskID != *health.TaskID) {
 		return errors.New("monitor selector does not match its canonical scope")
 	}
-	if health.MonitorID != store.MonitorHealthID(health.CWD, health.Role, health.ProjectID, health.GoalID, health.TaskID, health.PID, health.ProcessStartedAt) {
+	if health.MonitorID != store.MonitorHealthID(health.CWD, health.Role, health.ProjectID, health.GoalID, health.TaskID, health.PID, health.ProcessStartedAt, health.ScopeKey) {
 		return errors.New("monitor identity does not match its process and scope")
 	}
 	if health.PID <= 0 || health.ProcessStartedAt.IsZero() || strings.TrimSpace(health.CWD) == "" {

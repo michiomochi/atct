@@ -5,17 +5,19 @@ WHERE last_seen_at < sqlc.arg('cutoff')
 
 -- name: UpsertMonitorHealth :exec
 INSERT INTO monitor_health (
-  monitor_id, agent_key, cwd, role, project_id, goal_id, task_id, pid,
+  monitor_id, agent_key, scope_key, agent_session_id, cwd, role, project_id, goal_id, task_id, pid,
   process_started_at, state, reason, transitioned_at, last_seen_at, stopped_at
 )
 VALUES (
-  sqlc.arg('monitor_id'), sqlc.arg('agent_key'), sqlc.arg('cwd'), sqlc.arg('role'),
+  sqlc.arg('monitor_id'), sqlc.arg('agent_key'), sqlc.arg('scope_key'), sqlc.arg('agent_session_id'), sqlc.arg('cwd'), sqlc.arg('role'),
   sqlc.arg('project_id'), sqlc.narg('goal_id'), sqlc.narg('task_id'), sqlc.arg('pid'),
   sqlc.arg('process_started_at'), sqlc.arg('state'), sqlc.arg('reason'),
   sqlc.arg('transitioned_at'), sqlc.arg('last_seen_at'), NULL
 )
 ON CONFLICT(monitor_id) DO UPDATE SET
   agent_key = excluded.agent_key,
+  scope_key = excluded.scope_key,
+  agent_session_id = excluded.agent_session_id,
   cwd = excluded.cwd,
   role = excluded.role,
   project_id = excluded.project_id,
@@ -36,7 +38,7 @@ SET state = 'stopped', reason = 'stopped', stopped_at = ?,
 WHERE monitor_id = ?;
 
 -- name: ListMonitorHealth :many
-SELECT monitor_id, agent_key, cwd, role, project_id, goal_id, task_id, pid,
+SELECT monitor_id, agent_key, scope_key, agent_session_id, cwd, role, project_id, goal_id, task_id, pid,
        process_started_at, state, reason, transitioned_at, last_seen_at, stopped_at
 FROM monitor_health
 WHERE project_id = ? AND last_seen_at >= ? AND stopped_at IS NULL

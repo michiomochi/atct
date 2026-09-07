@@ -91,6 +91,13 @@ func (s *Store) ClaimProject(ctx context.Context, projectID int64, agentSessionI
 	if affected == 0 {
 		return domain.Project{}, fmt.Errorf("%w: %d", ErrProjectNotFound, projectID)
 	}
+	if agentSessionID != 0 {
+		if err := upsertOrchestrationScopeTx(ctx, q, ProjectOrchestrationScopeKey(projectID), projectID, nil, nil, "commander", agentSessionID, now, now); err != nil {
+			return domain.Project{}, fmt.Errorf("record project orchestration scope: %w", err)
+		}
+	} else if err := deactivateOrchestrationScopeTx(ctx, q, ProjectOrchestrationScopeKey(projectID), now); err != nil {
+		return domain.Project{}, fmt.Errorf("release project orchestration scope: %w", err)
+	}
 	if err := tx.Commit(); err != nil {
 		return domain.Project{}, fmt.Errorf("commit project claim: %w", err)
 	}
@@ -115,7 +122,8 @@ func (s *Store) ReleaseProject(ctx context.Context, projectID int64) error {
 	}
 	defer tx.Rollback()
 
-	result, err := sqlcgen.New(tx).ReleaseProject(ctx, id)
+	q := sqlcgen.New(tx)
+	result, err := q.ReleaseProject(ctx, id)
 	if err != nil {
 		return fmt.Errorf("release project claim: %w", err)
 	}
@@ -125,6 +133,9 @@ func (s *Store) ReleaseProject(ctx context.Context, projectID int64) error {
 	}
 	if affected == 0 {
 		return fmt.Errorf("%w: %d", ErrProjectNotFound, projectID)
+	}
+	if err := deactivateOrchestrationScopeTx(ctx, q, ProjectOrchestrationScopeKey(projectID), time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+		return fmt.Errorf("release project orchestration scope: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit project claim release: %w", err)

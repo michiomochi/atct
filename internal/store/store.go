@@ -32,6 +32,8 @@ const (
 type MonitorHealth struct {
 	MonitorID        string     `json:"monitor_id"`
 	AgentKey         string     `json:"agent_key,omitempty"`
+	ScopeKey         string     `json:"scope_key,omitempty"`
+	AgentSessionID   int64      `json:"agent_session_id,omitempty"`
 	CWD              string     `json:"cwd"`
 	Role             string     `json:"role"`
 	State            string     `json:"state"`
@@ -46,7 +48,7 @@ type MonitorHealth struct {
 	StoppedAt        *time.Time `json:"stopped_at,omitempty"`
 }
 
-func MonitorHealthID(cwd, role string, projectID int64, goalID, taskID *int64, pid int, processStartedAt time.Time) string {
+func MonitorHealthID(cwd, role string, projectID int64, goalID, taskID *int64, pid int, processStartedAt time.Time, scopeKeys ...string) string {
 	absCWD, err := filepath.Abs(filepath.Clean(strings.TrimSpace(cwd)))
 	if err != nil {
 		return ""
@@ -58,9 +60,19 @@ func MonitorHealthID(cwd, role string, projectID int64, goalID, taskID *int64, p
 	if taskID != nil {
 		selector += fmt.Sprintf("task:%d\x00", *taskID)
 	}
+	if len(scopeKeys) > 0 && strings.TrimSpace(scopeKeys[0]) != "" {
+		selector += fmt.Sprintf("scope:%s\x00", strings.TrimSpace(scopeKeys[0]))
+	}
 	identity := fmt.Sprintf("%s\x00%s\x00%s%d\x00%s", absCWD, selector, "pid:", pid, processStartedAt.UTC().Format(time.RFC3339Nano))
 	digest := sha256.Sum256([]byte(identity))
 	return fmt.Sprintf("monitor-%x", digest[:])
+}
+
+// ScopedMonitorHealthID derives the monitor identity for a lifecycle-owned
+// orchestration scope. The scope generation is part of the identity so a
+// process reusing the same selector cannot refresh an older handoff record.
+func ScopedMonitorHealthID(cwd, role string, projectID int64, goalID, taskID *int64, pid int, processStartedAt time.Time, scopeKey string) string {
+	return MonitorHealthID(cwd, role, projectID, goalID, taskID, pid, processStartedAt, scopeKey)
 }
 
 func validateMonitorHealth(health MonitorHealth) error {
@@ -82,7 +94,7 @@ func validateMonitorHealth(health MonitorHealth) error {
 	if health.GoalID == nil {
 		return errors.New("monitor goal selector is required")
 	}
-	if expected := MonitorHealthID(health.CWD, health.Role, health.ProjectID, health.GoalID, health.TaskID, health.PID, health.ProcessStartedAt); expected != health.MonitorID {
+	if expected := MonitorHealthID(health.CWD, health.Role, health.ProjectID, health.GoalID, health.TaskID, health.PID, health.ProcessStartedAt, health.ScopeKey); expected != health.MonitorID {
 		return errors.New("monitor identity does not match its process and scope")
 	}
 	return nil
@@ -112,6 +124,8 @@ func (s *Store) UpsertMonitorHealth(ctx context.Context, health MonitorHealth) e
 	if err := queries.UpsertMonitorHealth(ctx, sqlcgen.UpsertMonitorHealthParams{
 		MonitorID:        health.MonitorID,
 		AgentKey:         health.AgentKey,
+		ScopeKey:         health.ScopeKey,
+		AgentSessionID:   health.AgentSessionID,
 		Cwd:              health.CWD,
 		Role:             health.Role,
 		ProjectID:        health.ProjectID,
@@ -193,16 +207,18 @@ func (s *Store) ListMonitorHealth(ctx context.Context, projectID int64) ([]Monit
 	return result, nil
 }
 
-func monitorHealthFromRow(row sqlcgen.MonitorHealth) (MonitorHealth, error) {
+func monitorHealthFromRow(row sqlcgen.ListMonitorHealthRow) (MonitorHealth, error) {
 	health := MonitorHealth{
-		MonitorID: row.MonitorID,
-		AgentKey:  row.AgentKey,
-		CWD:       row.Cwd,
-		Role:      row.Role,
-		ProjectID: row.ProjectID,
-		PID:       int(row.Pid),
-		State:     row.State,
-		Reason:    row.Reason,
+		MonitorID:      row.MonitorID,
+		AgentKey:       row.AgentKey,
+		ScopeKey:       row.ScopeKey,
+		AgentSessionID: row.AgentSessionID,
+		CWD:            row.Cwd,
+		Role:           row.Role,
+		ProjectID:      row.ProjectID,
+		PID:            int(row.Pid),
+		State:          row.State,
+		Reason:         row.Reason,
 	}
 	if row.GoalID.Valid {
 		value := row.GoalID.Int64

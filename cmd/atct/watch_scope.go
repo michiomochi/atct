@@ -11,7 +11,7 @@ type watchScopeFilter struct {
 	unassignedGoalIDs   []int64
 }
 
-type watchScope struct{ ProjectID, GoalID, TaskID, Role string }
+type watchScope struct{ ProjectID, GoalID, TaskID, Role, ScopeKey string }
 
 func watchLivenessEligible(scope watchScope) bool {
 	if scope.Role == "subcommander" {

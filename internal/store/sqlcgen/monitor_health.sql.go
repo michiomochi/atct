@@ -11,7 +11,7 @@ import (
 )
 
 const listMonitorHealth = `-- name: ListMonitorHealth :many
-SELECT monitor_id, agent_key, cwd, role, project_id, goal_id, task_id, pid,
+SELECT monitor_id, agent_key, scope_key, agent_session_id, cwd, role, project_id, goal_id, task_id, pid,
        process_started_at, state, reason, transitioned_at, last_seen_at, stopped_at
 FROM monitor_health
 WHERE project_id = ? AND last_seen_at >= ? AND stopped_at IS NULL
@@ -23,18 +23,39 @@ type ListMonitorHealthParams struct {
 	LastSeenAt string
 }
 
-func (q *Queries) ListMonitorHealth(ctx context.Context, arg ListMonitorHealthParams) ([]MonitorHealth, error) {
+type ListMonitorHealthRow struct {
+	MonitorID        string
+	AgentKey         string
+	ScopeKey         string
+	AgentSessionID   int64
+	Cwd              string
+	Role             string
+	ProjectID        int64
+	GoalID           sql.NullInt64
+	TaskID           sql.NullInt64
+	Pid              int64
+	ProcessStartedAt string
+	State            string
+	Reason           string
+	TransitionedAt   string
+	LastSeenAt       string
+	StoppedAt        sql.NullString
+}
+
+func (q *Queries) ListMonitorHealth(ctx context.Context, arg ListMonitorHealthParams) ([]ListMonitorHealthRow, error) {
 	rows, err := q.db.QueryContext(ctx, listMonitorHealth, arg.ProjectID, arg.LastSeenAt)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []MonitorHealth
+	var items []ListMonitorHealthRow
 	for rows.Next() {
-		var i MonitorHealth
+		var i ListMonitorHealthRow
 		if err := rows.Scan(
 			&i.MonitorID,
 			&i.AgentKey,
+			&i.ScopeKey,
+			&i.AgentSessionID,
 			&i.Cwd,
 			&i.Role,
 			&i.ProjectID,
@@ -97,17 +118,19 @@ func (q *Queries) StopMonitorHealth(ctx context.Context, arg StopMonitorHealthPa
 
 const upsertMonitorHealth = `-- name: UpsertMonitorHealth :exec
 INSERT INTO monitor_health (
-  monitor_id, agent_key, cwd, role, project_id, goal_id, task_id, pid,
+  monitor_id, agent_key, scope_key, agent_session_id, cwd, role, project_id, goal_id, task_id, pid,
   process_started_at, state, reason, transitioned_at, last_seen_at, stopped_at
 )
 VALUES (
-  ?1, ?2, ?3, ?4,
-  ?5, ?6, ?7, ?8,
-  ?9, ?10, ?11,
-  ?12, ?13, NULL
+  ?1, ?2, ?3, ?4, ?5, ?6,
+  ?7, ?8, ?9, ?10,
+  ?11, ?12, ?13,
+  ?14, ?15, NULL
 )
 ON CONFLICT(monitor_id) DO UPDATE SET
   agent_key = excluded.agent_key,
+  scope_key = excluded.scope_key,
+  agent_session_id = excluded.agent_session_id,
   cwd = excluded.cwd,
   role = excluded.role,
   project_id = excluded.project_id,
@@ -125,6 +148,8 @@ ON CONFLICT(monitor_id) DO UPDATE SET
 type UpsertMonitorHealthParams struct {
 	MonitorID        string
 	AgentKey         string
+	ScopeKey         string
+	AgentSessionID   int64
 	Cwd              string
 	Role             string
 	ProjectID        int64
@@ -142,6 +167,8 @@ func (q *Queries) UpsertMonitorHealth(ctx context.Context, arg UpsertMonitorHeal
 	_, err := q.db.ExecContext(ctx, upsertMonitorHealth,
 		arg.MonitorID,
 		arg.AgentKey,
+		arg.ScopeKey,
+		arg.AgentSessionID,
 		arg.Cwd,
 		arg.Role,
 		arg.ProjectID,

@@ -90,6 +90,22 @@ type MonitorHealth struct {
 	TransitionedAt   string
 	LastSeenAt       string
 	StoppedAt        sql.NullString
+	ScopeKey         string
+	AgentSessionID   int64
+}
+
+type OrchestrationScope struct {
+	ScopeKey         string
+	ProjectID        int64
+	GoalID           sql.NullInt64
+	TaskID           sql.NullInt64
+	Role             string
+	AgentSessionID   int64
+	AgentKey         string
+	SourceGeneration string
+	Active           int64
+	CreatedAt        string
+	UpdatedAt        string
 }
 
 type PlanHandoff struct {

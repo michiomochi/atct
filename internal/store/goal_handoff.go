@@ -316,7 +316,8 @@ func (s *Store) ReceiveGoalHandoff(ctx context.Context, handoffID string, goalID
 		return GoalHandoff{}, fmt.Errorf("begin goal handoff receive tx: %w", err)
 	}
 	defer tx.Rollback()
-	result, err := sqlcgen.New(tx).ReceiveGoalHandoff(ctx, sqlcgen.ReceiveGoalHandoffParams{
+	q := sqlcgen.New(tx)
+	result, err := q.ReceiveGoalHandoff(ctx, sqlcgen.ReceiveGoalHandoffParams{
 		ID:         handoffID,
 		GoalID:     goalID,
 		ReceivedBy: sql.NullInt64{Int64: receivedBy, Valid: receivedBy != 0},
@@ -332,9 +333,12 @@ func (s *Store) ReceiveGoalHandoff(ctx context.Context, handoffID string, goalID
 	if n == 0 {
 		return GoalHandoff{}, fmt.Errorf("%w: %s", ErrGoalHandoffNotFound, handoffID)
 	}
-	projectID, err := sqlcgen.New(tx).GetGoalProjectID(ctx, goalID)
+	projectID, err := q.GetGoalProjectID(ctx, goalID)
 	if err != nil {
 		return GoalHandoff{}, fmt.Errorf("find project for goal handoff receive: %w", err)
+	}
+	if err := upsertOrchestrationScopeTx(ctx, q, GoalOrchestrationScopeKey(goalID, handoffID), projectID, &goalID, nil, "subcommander", receivedBy, now, now); err != nil {
+		return GoalHandoff{}, fmt.Errorf("record goal orchestration scope: %w", err)
 	}
 	event := DecisionEvent{
 		Name: EventGoalHandoffReceive,
@@ -559,6 +563,9 @@ func (s *Store) CompleteGoalHandoffByReviewer(ctx context.Context, handoffID str
 	} else if affected == 0 {
 		return GoalHandoff{}, ErrGoalHandoffReviewState
 	}
+	if err := deactivateOrchestrationScopeTx(ctx, q, GoalOrchestrationScopeKey(goalID, handoffID), now); err != nil {
+		return GoalHandoff{}, fmt.Errorf("deactivate goal orchestration scope: %w", err)
+	}
 	projectID, err := q.GetGoalProjectID(ctx, goalID)
 	if err != nil {
 		return GoalHandoff{}, fmt.Errorf("find project for goal handoff review completion: %w", err)
@@ -672,6 +679,9 @@ func (s *Store) CompleteGoalHandoff(ctx context.Context, handoffID string, goalI
 			}
 		}
 		return GoalHandoff{}, fmt.Errorf("%w: %s", ErrGoalHandoffNotFound, handoffID)
+	}
+	if err := deactivateOrchestrationScopeTx(ctx, q, GoalOrchestrationScopeKey(goalID, handoffID), now); err != nil {
+		return GoalHandoff{}, fmt.Errorf("deactivate goal orchestration scope: %w", err)
 	}
 	// Claim locks have no delegate report, so their completion is not reportable.
 	var event DecisionEvent

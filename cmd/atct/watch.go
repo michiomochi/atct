@@ -182,6 +182,20 @@ type watchHealthSink interface {
 	Stop()
 }
 
+type watchHealthScopeIdentity struct {
+	ScopeKey       string
+	AgentSessionID int64
+	AgentKey       string
+}
+
+type watchHealthScopeSetter interface {
+	SetExpectedScope(watchHealthScopeIdentity)
+}
+
+type watchHealthScopeClearer interface {
+	ClearExpectedScope()
+}
+
 // watchHealthReporter publishes the health of any eligible watch. It is kept
 // in the watch package boundary because both the normal Claude watch and the
 // Codex bridge use the same reconciliation lifecycle.
@@ -194,6 +208,7 @@ type watchHealthReporter struct {
 	lastBaseURL    string
 	state          string
 	transitionedAt time.Time
+	scopeActive    bool
 }
 
 func newWatchHealthReporter(client *http.Client, urls []string, cwd string, scope watchScope) *watchHealthReporter {
@@ -222,11 +237,13 @@ func newWatchHealthReporter(client *http.Client, urls []string, cwd string, scop
 		ProjectID:        projectID,
 		GoalID:           goalID,
 		TaskID:           taskID,
+		ScopeKey:         strings.TrimSpace(scope.ScopeKey),
+		AgentSessionID:   currentAgentSessionID(),
 		PID:              os.Getpid(),
 		ProcessStartedAt: processStartedAt,
 	}
-	health.MonitorID = store.MonitorHealthID(health.CWD, health.Role, health.ProjectID, health.GoalID, health.TaskID, health.PID, health.ProcessStartedAt)
-	return &watchHealthReporter{client: client, urls: append([]string(nil), urls...), health: health}
+	health.MonitorID = store.MonitorHealthID(health.CWD, health.Role, health.ProjectID, health.GoalID, health.TaskID, health.PID, health.ProcessStartedAt, health.ScopeKey)
+	return &watchHealthReporter{client: client, urls: append([]string(nil), urls...), health: health, scopeActive: true}
 }
 
 func monitorScopeID(value string) *int64 {
@@ -243,6 +260,10 @@ func (r *watchHealthReporter) Report(ctx context.Context, baseURL, state, reason
 	}
 	now := time.Now().UTC()
 	r.mu.Lock()
+	if !r.scopeActive {
+		r.mu.Unlock()
+		return
+	}
 	if baseURL != "" {
 		r.lastBaseURL = strings.TrimRight(baseURL, "/")
 	}
@@ -260,12 +281,33 @@ func (r *watchHealthReporter) Report(ctx context.Context, baseURL, state, reason
 	r.post(ctx, preferred, health)
 }
 
-func (r *watchHealthReporter) Stop() {
+func (r *watchHealthReporter) SetExpectedScope(identity watchHealthScopeIdentity) {
+	if r == nil {
+		return
+	}
+	if strings.TrimSpace(identity.ScopeKey) == "" {
+		r.ClearExpectedScope()
+		return
+	}
+	r.mu.Lock()
+	r.health.ScopeKey = strings.TrimSpace(identity.ScopeKey)
+	r.health.AgentSessionID = identity.AgentSessionID
+	r.health.AgentKey = strings.TrimSpace(identity.AgentKey)
+	r.health.MonitorID = store.MonitorHealthID(r.health.CWD, r.health.Role, r.health.ProjectID, r.health.GoalID, r.health.TaskID, r.health.PID, r.health.ProcessStartedAt, r.health.ScopeKey)
+	r.scopeActive = true
+	r.mu.Unlock()
+}
+
+func (r *watchHealthReporter) ClearExpectedScope() {
 	if r == nil {
 		return
 	}
 	now := time.Now().UTC()
 	r.mu.Lock()
+	if !r.scopeActive {
+		r.mu.Unlock()
+		return
+	}
 	health := r.health
 	health.State = "stopped"
 	health.Reason = "stopped"
@@ -273,8 +315,17 @@ func (r *watchHealthReporter) Stop() {
 	health.LastSeenAt = now
 	health.StoppedAt = &now
 	preferred := r.lastBaseURL
+	r.scopeActive = false
+	r.health.ScopeKey = ""
+	r.health.AgentSessionID = 0
+	r.health.AgentKey = ""
+	r.health.MonitorID = store.MonitorHealthID(r.health.CWD, r.health.Role, r.health.ProjectID, r.health.GoalID, r.health.TaskID, r.health.PID, r.health.ProcessStartedAt, "")
 	r.mu.Unlock()
 	r.post(context.Background(), preferred, health)
+}
+
+func (r *watchHealthReporter) Stop() {
+	r.ClearExpectedScope()
 }
 
 func (r *watchHealthReporter) post(ctx context.Context, preferred string, health store.MonitorHealth) {
@@ -654,7 +705,7 @@ func watchLoopWithEnsureAndProjectIDAndScopeAndActionSink(ctx context.Context, o
 		}
 		streamScope := scope
 		streamScope.ProjectID = filterProjectID
-		if err := reconcileWatchScope(ctx, client, baseURL, streamScope, out, delivered, &lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered, scopeFilter, sink, actionSink, &latestReconciliation); err != nil {
+		if err := reconcileWatchScope(ctx, client, baseURL, streamScope, out, delivered, &lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered, scopeFilter, sink, actionSink, &latestReconciliation, healthReporter); err != nil {
 			if ctx.Err() != nil {
 				return nil
 			}
@@ -1141,11 +1192,37 @@ func (g *watchReconciliationGoal) UnmarshalJSON(data []byte) error {
 }
 
 type watchReconciliation struct {
-	Goals        []watchReconciliationGoal    `json:"goals"`
-	Decisions    []watchDecision              `json:"decisions"`
-	GoalHandoffs []watchReconciliationHandoff `json:"goal_handoffs"`
-	PlanHandoffs []watchReconciliationHandoff `json:"plan_handoffs"`
-	TaskHandoffs []watchReconciliationHandoff `json:"task_handoffs"`
+	Goals          []watchReconciliationGoal    `json:"goals"`
+	Decisions      []watchDecision              `json:"decisions"`
+	GoalHandoffs   []watchReconciliationHandoff `json:"goal_handoffs"`
+	PlanHandoffs   []watchReconciliationHandoff `json:"plan_handoffs"`
+	TaskHandoffs   []watchReconciliationHandoff `json:"task_handoffs"`
+	ExpectedScopes []watchExpectedMonitorScope  `json:"expected_scopes"`
+	MonitorHealth  []watchMonitorHealth         `json:"monitor_health"`
+}
+
+type watchExpectedMonitorScope struct {
+	ScopeKey       string `json:"scope_key"`
+	ProjectID      int64  `json:"project_id"`
+	GoalID         *int64 `json:"goal_id"`
+	TaskID         *int64 `json:"task_id"`
+	Role           string `json:"role"`
+	AgentSessionID int64  `json:"agent_session_id"`
+	AgentKey       string `json:"agent_key"`
+	Active         bool   `json:"active"`
+}
+
+type watchMonitorHealth struct {
+	MonitorID      string     `json:"monitor_id"`
+	AgentKey       string     `json:"agent_key"`
+	ScopeKey       string     `json:"scope_key"`
+	AgentSessionID int64      `json:"agent_session_id"`
+	ProjectID      int64      `json:"project_id"`
+	GoalID         *int64     `json:"goal_id"`
+	TaskID         *int64     `json:"task_id"`
+	Role           string     `json:"role"`
+	State          string     `json:"state"`
+	LastSeenAt     *time.Time `json:"last_seen_at"`
 }
 
 func watchActionSinkFromArgs(args ...any) watchAgentActionSink {
@@ -1188,6 +1265,29 @@ func reconcileWatchScope(ctx context.Context, client *http.Client, baseURL strin
 	var state watchReconciliation
 	if err := json.NewDecoder(resp.Body).Decode(&state); err != nil {
 		return fmt.Errorf("decode %s: %w", reconcileURL, err)
+	}
+	for _, arg := range args {
+		setter, ok := arg.(watchHealthScopeSetter)
+		if !ok {
+			continue
+		}
+		matched := false
+		for _, expected := range state.ExpectedScopes {
+			if watchExpectedMonitorScopeMatches(expected, scope) {
+				setter.SetExpectedScope(watchHealthScopeIdentity{
+					ScopeKey:       expected.ScopeKey,
+					AgentSessionID: expected.AgentSessionID,
+					AgentKey:       expected.AgentKey,
+				})
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			if clearer, ok := setter.(watchHealthScopeClearer); ok {
+				clearer.ClearExpectedScope()
+			}
+		}
 	}
 	if scopeFilter == nil {
 		scopeFilter = newWatchPassThroughFilter()
@@ -1260,6 +1360,27 @@ func reconcileWatchScope(ctx context.Context, client *http.Client, baseURL strin
 		*latestReconciliation = state
 	}
 	return nil
+}
+
+func watchExpectedMonitorScopeMatches(expected watchExpectedMonitorScope, scope watchScope) bool {
+	if !expected.Active || strings.TrimSpace(expected.ScopeKey) == "" || expected.Role != scope.Role {
+		return false
+	}
+	if scope.ProjectID != "" && strconv.FormatInt(expected.ProjectID, 10) != scope.ProjectID {
+		return false
+	}
+	expectedGoalID := ""
+	if expected.GoalID != nil {
+		expectedGoalID = strconv.FormatInt(*expected.GoalID, 10)
+	}
+	if expectedGoalID != scope.GoalID {
+		return false
+	}
+	expectedTaskID := ""
+	if expected.TaskID != nil {
+		expectedTaskID = strconv.FormatInt(*expected.TaskID, 10)
+	}
+	return expectedTaskID == scope.TaskID
 }
 
 func watchReconciliationHandoffEvent(kind string, handoff watchReconciliationHandoff) (string, watchDecision, bool) {

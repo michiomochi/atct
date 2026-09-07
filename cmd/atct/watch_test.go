@@ -1574,6 +1574,7 @@ func TestWatchRecoveryReportsOnceThenHealthy(t *testing.T) {
 }
 
 func TestNormalWatchReportsHealthyReconciliationAndIgnoresHealthDiagnostics(t *testing.T) {
+	t.Setenv(atctAgentSessionIDEnv, "921")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -1587,7 +1588,7 @@ func TestNormalWatchReportsHealthyReconciliationAndIgnoresHealthDiagnostics(t *t
 				StatusCode: http.StatusOK,
 				Status:     "200 OK",
 				Header:     http.Header{"Content-Type": []string{"application/json"}},
-				Body:       io.NopCloser(strings.NewReader(`{"decisions":[],"goal_handoffs":[],"plan_handoffs":[],"task_handoffs":[]}`)),
+				Body:       io.NopCloser(strings.NewReader(`{"decisions":[],"goal_handoffs":[],"plan_handoffs":[],"task_handoffs":[],"expected_scopes":[{"scope_key":"goal:249:subcommander:handoff-1","project_id":7,"goal_id":249,"role":"subcommander","agent_session_id":922,"agent_key":"rightful-subcommander","active":true}]}`)),
 			}, nil
 		case "/api/events":
 			return &http.Response{
@@ -1650,8 +1651,93 @@ func TestNormalWatchReportsHealthyReconciliationAndIgnoresHealthDiagnostics(t *t
 	if healthy[0]["last_seen_at"] == healthy[1]["last_seen_at"] {
 		t.Fatalf("last_seen_at did not update: %v", healthy[0]["last_seen_at"])
 	}
+	if healthy[0]["scope_key"] != "goal:249:subcommander:handoff-1" {
+		t.Fatalf("reported scope_key = %v, want lifecycle scope", healthy[0]["scope_key"])
+	}
+	if healthy[0]["agent_session_id"] != float64(922) {
+		t.Fatalf("reported agent_session_id = %v, want rightful expected session 922", healthy[0]["agent_session_id"])
+	}
+	if healthy[0]["agent_key"] != "rightful-subcommander" {
+		t.Fatalf("reported agent_key = %v, want rightful expected key", healthy[0]["agent_key"])
+	}
 	if !strings.Contains(output.String(), "atct watch: connection unavailable; reconnecting in 1ms") {
 		t.Fatalf("watch diagnostics = %q, want recoverable reconnect diagnostic", output.String())
+	}
+}
+
+func TestReconcileWatchScopeStopsReporterWhenExpectedScopeDisappears(t *testing.T) {
+	t.Setenv(atctAgentSessionIDEnv, "921")
+
+	var output bytes.Buffer
+	var healthBodies []map[string]any
+	var mu sync.Mutex
+	reconcileCalls := 0
+	client := &http.Client{Transport: watchRoundTripper(func(req *http.Request) (*http.Response, error) {
+		switch req.URL.Path {
+		case "/api/events/reconcile":
+			reconcileCalls++
+			body := `{"decisions":[],"goal_handoffs":[],"plan_handoffs":[],"task_handoffs":[]}`
+			if reconcileCalls == 1 {
+				body = `{"decisions":[],"goal_handoffs":[],"plan_handoffs":[],"task_handoffs":[],"expected_scopes":[{"scope_key":"goal:249:subcommander:handoff-1","project_id":7,"goal_id":249,"role":"subcommander","agent_session_id":922,"agent_key":"rightful-subcommander","active":true}]}`
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Status:     "200 OK",
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       io.NopCloser(strings.NewReader(body)),
+			}, nil
+		case "/api/monitor-health":
+			var body map[string]any
+			if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+				return nil, err
+			}
+			mu.Lock()
+			healthBodies = append(healthBodies, body)
+			mu.Unlock()
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Status:     "200 OK",
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader("{}")),
+			}, nil
+		default:
+			return nil, fmt.Errorf("unexpected watch request: %s", req.URL.String())
+		}
+	})}
+	scope := normalWatchScope("7", "249")
+	reporter := newWatchHealthReporter(client, []string{"http://daemon"}, t.TempDir(), scope)
+	if reporter == nil {
+		t.Fatal("newWatchHealthReporter returned nil for eligible normal watch scope")
+	}
+	newReconciliation := func() error {
+		return reconcileWatchScope(
+			context.Background(), client, "http://daemon", scope, &output,
+			make(map[watchDeliveryKey]struct{}), new(string),
+			make(map[watchWakeupDeliveryKey]struct{}), make(map[watchDetectionDeliveryKey]struct{}),
+			newWatchScopeFilter(scope.GoalID), nil, reporter,
+		)
+	}
+	if err := newReconciliation(); err != nil {
+		t.Fatalf("initial reconcileWatchScope: %v", err)
+	}
+	reporter.Report(context.Background(), "http://daemon", "healthy", "initial scope")
+
+	if err := newReconciliation(); err != nil {
+		t.Fatalf("scope-disappeared reconcileWatchScope: %v", err)
+	}
+	reporter.Report(context.Background(), "http://daemon", "healthy", "stale scope must not refresh")
+
+	mu.Lock()
+	bodies := append([]map[string]any(nil), healthBodies...)
+	mu.Unlock()
+	if len(bodies) != 2 {
+		t.Fatalf("health POST count after scope disappearance = %d, want initial healthy plus stopped, bodies=%#v", len(bodies), bodies)
+	}
+	if bodies[0]["state"] != "healthy" || bodies[0]["scope_key"] != "goal:249:subcommander:handoff-1" {
+		t.Fatalf("initial health body = %#v, want healthy old scope", bodies[0])
+	}
+	if bodies[1]["state"] != "stopped" || bodies[1]["scope_key"] != "goal:249:subcommander:handoff-1" {
+		t.Fatalf("scope disappearance health body = %#v, want stopped old scope", bodies[1])
 	}
 }
 

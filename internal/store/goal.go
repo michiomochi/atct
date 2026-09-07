@@ -1058,6 +1058,9 @@ func (s *Store) RejectCompletion(ctx context.Context, decisionID int64, reason s
 			} else if rows != 1 {
 				return fmt.Errorf("reopened goal handoff was not received: %q", reopenID)
 			}
+			if err := upsertOrchestrationScopeTx(ctx, txq, GoalOrchestrationScopeKey(selected.GoalID, reopenID), projectID, &selected.GoalID, nil, "subcommander", selected.ReceivedBy, handoffNow, handoffNow); err != nil {
+				return fmt.Errorf("record reopened goal orchestration scope: %w", err)
+			}
 			receiveEvent := DecisionEvent{
 				Name: EventGoalHandoffReceive,
 				Data: HandoffEvent{ProjectID: projectID, GoalID: selected.GoalID, HandoffID: reopenID, ReceivedBy: selected.ReceivedBy},
@@ -1278,6 +1281,9 @@ func (s *Store) WithdrawActiveGoal(ctx context.Context, goalID int64, reason str
 		if _, err := result.RowsAffected(); err != nil {
 			return fmt.Errorf("complete task handoff %s rows affected: %w", handoff.ID, err)
 		}
+	}
+	if err := deactivateOrchestrationScopesForGoalTx(ctx, q, goalID, now); err != nil {
+		return fmt.Errorf("deactivate orchestration scopes for withdrawn goal: %w", err)
 	}
 	withdrawnEvents := make([]DecisionEvent, 0, len(openDecisions)+1)
 	goalEvent := DecisionEvent{

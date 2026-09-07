@@ -332,6 +332,9 @@ func (s *Store) ReceiveTaskHandoff(ctx context.Context, handoffID string, taskID
 	if err != nil {
 		return TaskHandoff{}, err
 	}
+	if err := upsertOrchestrationScopeTx(ctx, q, TaskOrchestrationScopeKey(taskID, handoffID), projectID, &goalID, &taskID, "executor", receivedBy, now, now); err != nil {
+		return TaskHandoff{}, fmt.Errorf("record task orchestration scope: %w", err)
+	}
 	event := DecisionEvent{
 		Name: EventTaskHandoffReceive,
 		Data: HandoffEvent{ProjectID: projectID, GoalID: goalID, TaskID: taskID, HandoffID: handoffID, ReceivedBy: receivedBy},
@@ -606,6 +609,9 @@ func (s *Store) CompleteTaskHandoffByReviewer(ctx context.Context, handoffID str
 	} else if affected == 0 {
 		return TaskHandoff{}, fmt.Errorf("%w: %d", ErrTaskNotFound, taskID)
 	}
+	if err := deactivateOrchestrationScopeTx(ctx, q, TaskOrchestrationScopeKey(taskID, handoffID), now); err != nil {
+		return TaskHandoff{}, fmt.Errorf("deactivate task orchestration scope: %w", err)
+	}
 	projectID, goalID, err := taskWorkflowEventScope(ctx, q, taskID)
 	if err != nil {
 		return TaskHandoff{}, err
@@ -709,6 +715,9 @@ func (s *Store) CompleteTaskHandoff(ctx context.Context, handoffID string, taskI
 			return TaskHandoff{}, fmt.Errorf("task handoff %q is already reported; use another path to add a report after completion", handoffID)
 		}
 		return TaskHandoff{}, fmt.Errorf("%w: %s", ErrTaskHandoffNotFound, handoffID)
+	}
+	if err := deactivateOrchestrationScopeTx(ctx, q, TaskOrchestrationScopeKey(taskID, handoffID), now); err != nil {
+		return TaskHandoff{}, fmt.Errorf("deactivate task orchestration scope: %w", err)
 	}
 	var event DecisionEvent
 	// Claim locks have no delegate report, so their completion is not reportable.
