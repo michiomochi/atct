@@ -1,6 +1,6 @@
 # Goal 253 — ATCT space liveness audit
 
-Date: 2026-09-08 (JST)  
+Date: 2026-09-08 (JST)
 Scope: every current ATCT Herdr space, its live monitor registration where
 present, and the user-named related goals. This is an observation and design
 boundary document; it makes no production change.
@@ -143,4 +143,3 @@ atct_goal_get / atct_goal_sessions for 182,203,221,227,228,237,240,245,248,252,2
 sqlite3 -readonly ~/.atct/atct.db "SELECT ... FROM decisions WHERE status='open'"
 rg -n 'selectWatchAgentAction|plan.handoff.complete|scopedOpenDecision|shouldProjectAppliedGoalApproval' cmd internal
 ```
-

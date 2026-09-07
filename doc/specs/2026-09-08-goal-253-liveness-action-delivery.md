@@ -171,6 +171,97 @@ remain authoritative.
 | one condition through Claude/Codex | same typed envelope and order on both transports |
 | Decision 700 / received approval | completed Task 1215's one-per-lifecycle behavior remains unchanged |
 
+## Revision 3: implementable durable ownership
+
+Revision 2's global exactly-once wording was not implementable: `watchDeliveryKey`
+is a per-process map, and `CodexMonitorRecord` has no role/goal/task identity.
+This revision replaces those assumptions with the following durable authority.
+
+### Expected scope and live-wrapper identity
+
+The daemon derives an **expected scope** from the lifecycle records it already
+owns, never from Herdr panes or Git state:
+
+| Rightful role | Expected-scope source | Stable scope key |
+| --- | --- | --- |
+| commander | live project claim | `project:<project_id>:commander` |
+| subcommander | received, uncompleted goal handoff | `goal:<goal_id>:subcommander:<handoff_id>` |
+| executor | received, uncompleted task handoff | `task:<task_id>:executor:<handoff_id>` |
+
+The lifecycle transaction creates/updates an `orchestration_scope` row with that
+key, rightful session/role, source handoff/claim generation, and `active` state;
+completion/release/rejection transitions it inactive or creates a new
+generation. This is the canonical expected-scope source.
+
+Both `atct watch` (Claude) and `atct codex monitor` must publish the same
+leased `monitor_health` identity: `agent_session_id`/stable `agent_key`, role,
+project, goal, task, process-start generation, and `scope_key`. The existing
+`monitor_health` role/project/goal/task lease is the starting storage; the
+Codex process registry remains process cleanup metadata and is not used for
+scope matching. A live wrapper is one whose health lease names the active scope
+and whose agent/session matches its rightful receiver. No matching health lease
+at evaluation time yields `monitor_missing` for that scope generation.
+
+### One delivery owner and failure semantics
+
+Add persistent `orchestration_delivery_leases` keyed by `(scope_key,
+target_role)`, containing holder monitor ID, fencing token, and expiry, plus an
+append-only `orchestration_delivery_receipts` key `(scope_key, delivery_key,
+generation)`. A monitor acquires/renews the lease transactionally only while
+its health row matches the active scope. Only the holder can claim a delivery.
+
+Claiming inserts a `reserved` receipt before writing to either transport. A
+successful Claude write or accepted Codex `StartTurn` changes it to `accepted`.
+Failure before acceptance releases the reservation for the same fenced owner;
+lease expiry lets one new healthy monitor take ownership and retry the same
+delivery ID. If the transport result is unknown (crash/timeout after submission),
+the receipt becomes `unknown`: automatic retry is forbidden, and the durable
+commander recovery route names that delivery for explicit inspection. This is
+at-most-once accepted routing across wrappers, with no unbounded reconnect
+replay; it does not falsely claim exactly-once agent execution without a target
+acknowledgement.
+
+### Canonical blockers and producers
+
+Add `orchestration_blockers` with stable `blocker_id`, `scope_key`, kind,
+source ID, generation, owner role, instruction, opened/resolved timestamps, and
+unique `(kind, source_id, generation)`. It is the only source for blocker
+routing.
+
+- The decision store transaction is the producer for `human_decision`: opening
+  a decision inserts/updates its blocker generation; answering, withdrawal, or
+  default settlement resolves it in the same transaction.
+- A new role-checked `blocker.report` daemon/MCP operation is the producer for
+  `dependency_merge`. Commander or the owning subcommander supplies a stable
+  source ID (for example required main commit plus dependent goal/task), owner,
+  and instruction; retries upsert the same generation. The same owner calls
+  `blocker.resolve` only after the prerequisite is actually integrated. It
+  cannot be inferred from pane state or `git status`, and executors cannot
+  create/resolve it.
+
+The reconciliation API joins active scopes, live health, delivery receipt state,
+and open blockers to produce the recovery envelope. Lifecycle completion is
+represented as an `orchestration_scope` generation transition and uses the same
+lease/receipt route to the role table in Revision 2.
+
+### RED acceptance tests before production work
+
+1. A Codex and a Claude health report with the same active scope identity;
+   only the leased owner claims one delivery. Owner expiry fences the old owner;
+   the replacement observes the existing receipt and does not duplicate an
+   accepted action.
+2. Missing, wrong-role, stale, and completed-scope health rows each produce the
+   specified canonical result; only an active expected scope with no matching
+   lease produces one commander `monitor_missing` instruction.
+3. A post-submit timeout stores `unknown` and emits one commander inspection
+   route, never automatic duplicate delivery.
+4. Decision creation/settlement atomically opens/resolves its blocker. Repeated
+   `blocker.report` keeps one merge blocker generation; executor attempts and
+   pane/Git-only observations cannot create one.
+5. Live SSE, reconcile, reconnect, and a second wrapper share the durable
+   receipt result. Claude/Codex output has the same delivery ID, target, and
+   order. Completed Task 1215's received approval regression remains green.
+
 ## Design
 
 ### Canonical approval projection

@@ -307,6 +307,10 @@ commit.
 
 ## Revision 2 implementation sequence (requires new approval)
 
+> **Superseded by Revision 3 below.** Revision 2 did not identify persistent
+> expected-scope identity, a cross-wrapper delivery owner, or a canonical merge
+> blocker producer. It is retained only as review history.
+
 ### Task 2V2: Canonical recovery envelope and shared delivery contract
 
 **Files:** identify the existing watch reconciliation/action types and focused
@@ -362,3 +366,72 @@ actionable recovery envelope.
 by reused Goal 203/221/227 state boundaries. Review for duplicate lease,
 session-key, migration, and lifecycle implementations before each safe-unit
 commit.
+
+---
+
+## Revision 3 implementation sequence (requires new approval)
+
+### Task 2V3: Persist expected scopes and monitor identity
+
+**Files:** Goal 221's monitor-health store/schema/API boundary, both Claude and
+Codex monitor reporters, reconciliation DTOs, generated SQL artifacts, and
+focused store/daemon/monitor tests.
+
+1. RED: show process-only `CodexMonitorRecord` cannot match an active
+subcommander/executor scope, and an unscoped/foreign/stale health lease cannot
+satisfy an expected scope.
+2. Create lifecycle-owned `orchestration_scope` records from project claim,
+received goal handoff, and received task handoff transitions. Include stable
+scope key, rightful session/role, source generation, and active/inactive state.
+3. Extend the common Claude/Codex monitor-health report with the expected scope
+key and stable session identity. Match only live health whose identity equals
+the active rightful scope. Keep the Codex process registry process-only.
+4. Test claim/handoff completion and rejection transitions, stale/foreign rows,
+and an active expected scope without matching health yielding `monitor_missing`.
+
+### Task 3V3: Fence a single delivery owner and persist receipts
+
+**Files:** store migration/query/API, watch reconciliation/action delivery,
+Claude writer and Codex bridge integration, focused store/daemon/cmd tests.
+
+1. RED: two healthy wrappers for one scope each emit the same action because
+their in-memory maps are independent; a replacement after owner crash has no
+durable answer.
+2. Implement transactional `(scope_key,target_role)` delivery leases with
+fencing tokens and expiry, and `reserved` / `accepted` / `unknown` receipts
+unique by scope, delivery key, and generation.
+3. Allow only the current fenced holder to submit. On accepted transport result
+persist `accepted`; on pre-submit failure release/retry under the same owner;
+on unknown post-submit result persist `unknown` and route one commander
+inspection instruction, never automatic retry.
+4. Test owner failover, stale-owner fencing, second-wrapper suppression,
+reconnect, acceptance persistence, and unknown-result non-duplication for both
+Claude and Codex.
+
+### Task 4V3: Produce canonical blockers and route rightful lifecycle recovery
+
+**Files:** decision store transaction, new blocker store/API/MCP surface,
+reconciliation and shared selector, focused store/daemon/cmd tests.
+
+1. RED: a decision can suppress liveness without a durable commander route;
+merge dependency can only be guessed from a pane or Git; plan completion is not
+selected.
+2. Add `orchestration_blockers`. Create/resolve human-decision blockers in the
+same decision transaction. Add commander/owning-subcommander-only idempotent
+`blocker.report` and `blocker.resolve` for dependency/merge source IDs;
+executors are denied.
+3. Join active blockers and lifecycle completion generations into the fenced
+delivery path. Route blockers to commander once; leave workers blocked. Route
+task/plan/goal completion only to their rightful roles. Include plan completion
+in the shared selector.
+4. Test repeats, settlement/resolution, unauthorized producer, live/reconcile
+parity, receipt dedupe, and changed-generation fresh delivery.
+
+### Task 5V3: focused end-to-end verification
+
+1. Run the RED-to-GREEN tests from Tasks 2V3–4V3 with fresh cache, including
+both monitor transports and both owner-failover paths.
+2. Run affected store/daemon/MCP packages and `go test ./cmd/atct -count=1`.
+3. Run `git diff --check`. Review explicitly for Goal 182/203/221/227/228/237/
+240/245/248/252 duplication before each safe-unit commit. Preserve c75013e's
+received-approval guarantee throughout.
