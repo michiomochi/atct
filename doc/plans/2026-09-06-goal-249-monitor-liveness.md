@@ -509,17 +509,18 @@ scenarios for (a) an agent choosing plain watch because stdout is convenient,
 and (b) an agent treating a reconnect diagnostic as an action; add the minimal
 command/boundary text; rerun the same scenarios GREEN and retain raw evidence.
 
-- [ ] **Step 3b: Run required isolated Monitor-output verification**
+- [ ] **Step 3b: Run boundary and attached-Monitor verification separately**
 
-Run a black-box subprocess test of `atct watch --monitor` against an isolated
-fixture, plus the writer-boundary test and fixed Claude/Codex typed parity
-table. Inject a selected allowlist sentinel and reconnect/keepalive diagnostic
-sentinel through the fixture seam; assert monitor stdout has the selected exact
-line once and zero diagnostic bytes. This is the required integration evidence:
-`runWatch` is the sole CLI-to-Monitor boundary and the existing Claude Monitor
-attaches that CLI output. An attached Claude Monitor capture is optional
-supplementary evidence only. It cannot be mandatory because safely injecting a
-diagnostic there would require disrupting the shared daemon/SSE.
+Run Go writer-boundary tests for plain and `--monitor` modes plus the fixed
+Claude/Codex typed parity table. Then, in Claude Code, attach one persistent
+Monitor to `atct watch --monitor -goal <goal_id>` and inject one selected
+baseline sentinel and one reconnect/keepalive diagnostic sentinel through the
+test seam. Record the raw Monitor delivery: the selected sentinel appears once;
+the diagnostic does not appear. This attached-Monitor evidence is mandatory and
+is not replaced by Go tests. If the attachment cannot run or retained raw
+evidence cannot be produced, the executor reports unmet verification; the
+subcommander rejects review and records a human decision for measurement. It
+does not accept, stage, commit, or substitute Go verification.
 
 - [ ] **Step 4: Run selector, bridge, and preservation regressions**
 
@@ -533,7 +534,7 @@ regression.
 - [ ] **Step 5: Submit executor review; subcommander commits explicit paths**
 
 The executor submits an ATCT review request without staging or committing. On
-acceptance, including the isolated subprocess/writer-boundary evidence, the subcommander stages only
+acceptance, including attached-Monitor evidence, the subcommander stages only
 `cmd/atct/main.go`, `cmd/atct/watch.go`, `cmd/atct/watch_action.go`,
 `cmd/atct/watch_action_test.go`, `cmd/atct/watch_test.go`,
 `cmd/atct/codex_monitor.go`, `cmd/atct/codex_monitor_test.go`,

@@ -338,16 +338,14 @@ parameter from `func(codexMonitorAction) error` to that type. The Claude
 `monitorActionWriter` adapter and Codex `ActionSinkWithContext(ctx)
 watchAgentActionSink` implement the identical type. `type watchRawLineSink
 func(string) error` remains diagnostic
-only and `LineSinkWithContext` cannot classify it. The required evidence is a
-black-box `atct watch --monitor` subprocess against an isolated fixture plus a
-writer-boundary integration: inject one selected canonical line and one raw
-diagnostic through the test seam; assert stdout contains the selected line once
-and contains no diagnostic bytes. This is sufficient because the existing
-Claude Monitor contract attaches the CLI output stream, while `runWatch` is the
-sole CLI-to-Monitor boundary. It avoids unsafe shared daemon/SSE disruption.
-An attached Claude Monitor capture is useful supplementary evidence when an
-environment already has one, but is not a gate: diagnostics cannot safely be
-injected there without breaking shared infrastructure.
+only and `LineSinkWithContext` cannot classify it. Go tests prove writer
+boundaries and both typed consumers; a separate Claude attached-Monitor probe
+is mandatory after implementation and records that only a selected sentinel is
+delivered while a diagnostic sentinel is absent. It validates the actual
+harness, not a Go unit-test substitute. If an attached Claude Monitor cannot be
+run or does not produce retained raw evidence, the subcommander must reject the
+delta task review and return the missing measurement as a human decision; it
+must not accept the task, stage/commit it, or substitute Go tests.
 
 For every row in the frozen baseline plus diagnostics, keepalives, and unknown
 raw input, the Claude agent-action adapter and Codex adapter must receive
