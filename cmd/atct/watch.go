@@ -59,6 +59,17 @@ type watchDecision struct {
 	WorktreeActivity           string  `json:"worktree_activity"`
 	CompleteReport             string  `json:"complete_report"`
 	Status                     string  `json:"status"`
+	Condition                  string  `json:"condition"`
+	TargetRole                 string  `json:"target_role"`
+	ScopeKey                   string  `json:"scope_key"`
+	Generation                 string  `json:"generation"`
+	ExpectedRole               string  `json:"expected_role"`
+	ExpectedAgentSessionID     int64   `json:"expected_agent_session_id"`
+	ExpectedAgentKey           string  `json:"expected_agent_key"`
+	ObservedRole               string  `json:"observed_role"`
+	ObservedAgentSessionID     int64   `json:"observed_agent_session_id"`
+	ObservedAgentKey           string  `json:"observed_agent_key"`
+	Instruction                string  `json:"instruction"`
 	deliveryGeneration         string
 }
 
@@ -1174,6 +1185,50 @@ type watchReconciliationHandoff struct {
 	ReviewRejectedAt  *string `json:"ReviewRejectedAt"`
 }
 
+type watchOrchestrationRecovery struct {
+	Condition              string `json:"condition"`
+	TargetRole             string `json:"target_role"`
+	ProjectID              int64  `json:"project_id"`
+	GoalID                 *int64 `json:"goal_id"`
+	TaskID                 *int64 `json:"task_id"`
+	HandoffID              string `json:"handoff_id"`
+	ScopeKey               string `json:"scope_key"`
+	Generation             string `json:"generation"`
+	ExpectedRole           string `json:"expected_role"`
+	ExpectedAgentSessionID int64  `json:"expected_agent_session_id"`
+	ExpectedAgentKey       string `json:"expected_agent_key"`
+	ObservedRole           string `json:"observed_role"`
+	ObservedAgentSessionID int64  `json:"observed_agent_session_id"`
+	ObservedAgentKey       string `json:"observed_agent_key"`
+	Instruction            string `json:"instruction"`
+}
+
+func (r watchOrchestrationRecovery) watchDecision() watchDecision {
+	decision := watchDecision{
+		ProjectID:              strconv.FormatInt(r.ProjectID, 10),
+		HandoffID:              r.HandoffID,
+		Condition:              r.Condition,
+		TargetRole:             r.TargetRole,
+		ScopeKey:               r.ScopeKey,
+		Generation:             r.Generation,
+		ExpectedRole:           r.ExpectedRole,
+		ExpectedAgentSessionID: r.ExpectedAgentSessionID,
+		ExpectedAgentKey:       r.ExpectedAgentKey,
+		ObservedRole:           r.ObservedRole,
+		ObservedAgentSessionID: r.ObservedAgentSessionID,
+		ObservedAgentKey:       r.ObservedAgentKey,
+		Instruction:            r.Instruction,
+		deliveryGeneration:     r.Generation,
+	}
+	if r.GoalID != nil {
+		decision.GoalID = strconv.FormatInt(*r.GoalID, 10)
+	}
+	if r.TaskID != nil {
+		decision.TaskID = strconv.FormatInt(*r.TaskID, 10)
+	}
+	return decision
+}
+
 type watchReconciliationGoal struct {
 	ID     string `json:"id"`
 	Status string `json:"status"`
@@ -1199,6 +1254,7 @@ type watchReconciliation struct {
 	TaskHandoffs   []watchReconciliationHandoff `json:"task_handoffs"`
 	ExpectedScopes []watchExpectedMonitorScope  `json:"expected_scopes"`
 	MonitorHealth  []watchMonitorHealth         `json:"monitor_health"`
+	Recoveries     []watchOrchestrationRecovery `json:"recoveries"`
 }
 
 type watchExpectedMonitorScope struct {
@@ -1292,6 +1348,16 @@ func reconcileWatchScope(ctx context.Context, client *http.Client, baseURL strin
 	if scopeFilter == nil {
 		scopeFilter = newWatchPassThroughFilter()
 	}
+	for _, recovery := range state.Recoveries {
+		if !watchOrchestrationRecoveryMatches(recovery, scope) {
+			continue
+		}
+		if err := emitWatchDecisionWithStateAndSinks(out, "orchestration.recovery", recovery.watchDecision(),
+			delivered, lastWakeupContent, wakeupDiscrepancyDelivered,
+			detectionDelivered, sink, actionSink); err != nil {
+			return err
+		}
+	}
 	for _, decision := range state.Decisions {
 		if scope.ProjectID != "" && decision.ProjectID != "" && decision.ProjectID != scope.ProjectID {
 			continue
@@ -1360,6 +1426,25 @@ func reconcileWatchScope(ctx context.Context, client *http.Client, baseURL strin
 		*latestReconciliation = state
 	}
 	return nil
+}
+
+func watchOrchestrationRecoveryMatches(recovery watchOrchestrationRecovery, scope watchScope) bool {
+	if strings.TrimSpace(recovery.Condition) == "" || recovery.TargetRole != store.OrchestrationRecoveryCommander || recovery.TargetRole != scope.Role {
+		return false
+	}
+	if scope.ProjectID != "" && strconv.FormatInt(recovery.ProjectID, 10) != scope.ProjectID {
+		return false
+	}
+	if scope.ScopeKey != "" && recovery.ScopeKey != scope.ScopeKey {
+		return false
+	}
+	if scope.TaskID != "" {
+		return recovery.TaskID != nil && strconv.FormatInt(*recovery.TaskID, 10) == scope.TaskID
+	}
+	if scope.GoalID != "" {
+		return recovery.GoalID != nil && strconv.FormatInt(*recovery.GoalID, 10) == scope.GoalID
+	}
+	return true
 }
 
 func watchExpectedMonitorScopeMatches(expected watchExpectedMonitorScope, scope watchScope) bool {
@@ -1431,6 +1516,34 @@ func emitWatchDecisionWithStateAndSinks(out io.Writer, eventName string, decisio
 	}
 	if eventName == "handoff_yielded" {
 		return writeLine()
+	}
+	if eventName == "orchestration.recovery" {
+		target := decision.ScopeKey
+		if target == "" {
+			target = decision.HandoffID
+		}
+		if target == "" {
+			target = decision.TaskID
+		}
+		if target == "" {
+			target = decision.GoalID
+		}
+		if target == "" || decision.Condition == "" || decision.TargetRole == "" {
+			return fmt.Errorf("SSE event %s has incomplete recovery identity", eventName)
+		}
+		key := watchDetectionDeliveryKey{
+			eventName:  eventName,
+			targetID:   strings.Join([]string{decision.Condition, decision.TargetRole, target}, "\x00"),
+			generation: decision.recoveryGeneration(),
+		}
+		if _, ok := detectionDelivered[key]; ok {
+			return nil
+		}
+		if err := writeLine(); err != nil {
+			return err
+		}
+		detectionDelivered[key] = struct{}{}
+		return nil
 	}
 	if eventName == "goal.created" || strings.HasPrefix(eventName, "detection.") || eventName == "handoff_reported" {
 		target := decision.GoalID
@@ -1682,6 +1795,11 @@ func formatWatchDecision(eventName string, decision watchDecision) (string, bool
 		return fmt.Sprintf("atct wakeup discrepancy: detector_unstarted_tasks=%d counted_unstarted_tasks=%d", decision.DetectorUnstartedTaskCount, decision.CountedUnstartedTaskCount), true
 	case "wakeup.evaluate_failed":
 		return fmt.Sprintf("atct wakeup evaluate failed: %s", decision.Reason), true
+	case "orchestration.recovery":
+		if strings.TrimSpace(decision.Condition) == "" || strings.TrimSpace(decision.TargetRole) == "" || strings.TrimSpace(decision.ScopeKey) == "" || strings.TrimSpace(decision.Instruction) == "" {
+			return "", false
+		}
+		return fmt.Sprintf("atct orchestration recovery: %s (target_role %s, scope %s): %s", decision.Condition, decision.TargetRole, decision.ScopeKey, decision.Instruction), true
 	default:
 		return "", false
 	}
@@ -1725,6 +1843,13 @@ func (d watchDecision) wakeupID() string {
 		return d.WakeupID
 	}
 	return d.ID
+}
+
+func (d watchDecision) recoveryGeneration() string {
+	if d.deliveryGeneration != "" {
+		return d.deliveryGeneration
+	}
+	return d.Generation
 }
 
 func formatWatchKeepaliveMissing(timeout time.Duration) string {

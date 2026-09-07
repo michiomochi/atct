@@ -20,14 +20,15 @@ type WorkflowEventQuery struct {
 // WorkflowReconciliation is a point-in-time canonical snapshot. It contains
 // the scoped state needed after a watcher restarts or a live signal is missed.
 type WorkflowReconciliation struct {
-	Goals          []domain.Goal        `json:"goals"`
-	Tasks          []domain.Task        `json:"tasks"`
-	Decisions      []domain.Decision    `json:"decisions"`
-	GoalHandoffs   []GoalHandoff        `json:"goal_handoffs"`
-	PlanHandoffs   []PlanHandoff        `json:"plan_handoffs"`
-	TaskHandoffs   []TaskHandoff        `json:"task_handoffs"`
-	ExpectedScopes []OrchestrationScope `json:"expected_scopes"`
-	MonitorHealth  []MonitorHealth      `json:"monitor_health"`
+	Goals          []domain.Goal           `json:"goals"`
+	Tasks          []domain.Task           `json:"tasks"`
+	Decisions      []domain.Decision       `json:"decisions"`
+	GoalHandoffs   []GoalHandoff           `json:"goal_handoffs"`
+	PlanHandoffs   []PlanHandoff           `json:"plan_handoffs"`
+	TaskHandoffs   []TaskHandoff           `json:"task_handoffs"`
+	ExpectedScopes []OrchestrationScope    `json:"expected_scopes"`
+	MonitorHealth  []MonitorHealth         `json:"monitor_health"`
+	Recoveries     []OrchestrationRecovery `json:"recoveries"`
 }
 
 func workflowDecisionEvent(name string, row sqlcgen.Decision) (DecisionEvent, error) {
@@ -98,6 +99,7 @@ func (s *Store) ReconcileWorkflow(ctx context.Context, query WorkflowEventQuery)
 		Tasks:          make([]domain.Task, 0),
 		ExpectedScopes: make([]OrchestrationScope, 0),
 		MonitorHealth:  make([]MonitorHealth, 0),
+		Recoveries:     make([]OrchestrationRecovery, 0),
 	}
 	for _, goal := range goals {
 		tasks, err := s.ListTasks(ctx, goal.ID)
@@ -152,11 +154,12 @@ func (s *Store) ReconcileWorkflow(ctx context.Context, query WorkflowEventQuery)
 		}
 		reconciliation.ExpectedScopes = append(reconciliation.ExpectedScopes, scope)
 	}
-	health, err := s.ListMatchingMonitorHealth(ctx, reconciliation.ExpectedScopes)
+	healthByProject, err := s.listMonitorHealthForScopes(ctx, reconciliation.ExpectedScopes)
 	if err != nil {
 		return WorkflowReconciliation{}, err
 	}
-	reconciliation.MonitorHealth = append(reconciliation.MonitorHealth, health...)
+	reconciliation.MonitorHealth = append(reconciliation.MonitorHealth, matchingMonitorHealthForScopes(reconciliation.ExpectedScopes, healthByProject)...)
+	reconciliation.Recoveries = append(reconciliation.Recoveries, orchestrationRecoveriesForScopes(reconciliation.ExpectedScopes, healthByProject)...)
 	return reconciliation, nil
 }
 

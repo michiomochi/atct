@@ -2,15 +2,176 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/michiomochi/atct/internal/daemonctl"
 	"github.com/michiomochi/atct/internal/domain"
 )
+
+func reconciliationRecoveries(t *testing.T, reconciliation WorkflowReconciliation) []map[string]any {
+	t.Helper()
+	payload, err := json.Marshal(reconciliation)
+	if err != nil {
+		t.Fatalf("marshal reconciliation: %v", err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &fields); err != nil {
+		t.Fatalf("decode reconciliation: %v", err)
+	}
+	raw, ok := fields["recoveries"]
+	if !ok {
+		return nil
+	}
+	var recoveries []map[string]any
+	if err := json.Unmarshal(raw, &recoveries); err != nil {
+		t.Fatalf("decode recoveries: %v; payload=%s", err, payload)
+	}
+	return recoveries
+}
+
+func TestWorkflowReconciliationReportsCommanderRecoveryForMissingMonitor(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	project, err := s.CreateProject(ctx, "missing-monitor-recovery", filepath.Join(t.TempDir(), "project"))
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	goal, err := s.CreateGoal(ctx, project.ID, "missing monitor recovery goal", "human")
+	if err != nil {
+		t.Fatalf("CreateGoal: %v", err)
+	}
+	commanderID := registerNamedTestAgentSession(t, s, "missing-monitor-commander", os.Getpid())
+	receiverID := registerNamedTestAgentSession(t, s, "missing-monitor-receiver", os.Getpid())
+	if _, err := s.ClaimProject(ctx, project.ID, commanderID); err != nil {
+		t.Fatalf("ClaimProject: %v", err)
+	}
+	handoff, err := s.RequestGoalHandoff(ctx, "missing-monitor-handoff", goal.ID, commanderID, "delegate missing monitor recovery")
+	if err != nil {
+		t.Fatalf("RequestGoalHandoff: %v", err)
+	}
+	if _, err := s.ReceiveGoalHandoff(ctx, handoff.ID, goal.ID, receiverID); err != nil {
+		t.Fatalf("ReceiveGoalHandoff: %v", err)
+	}
+
+	reconciliation, err := s.ReconcileWorkflow(ctx, WorkflowEventQuery{ProjectID: project.ID, GoalID: goal.ID})
+	if err != nil {
+		t.Fatalf("ReconcileWorkflow: %v", err)
+	}
+	recoveries := reconciliationRecoveries(t, reconciliation)
+	if len(recoveries) != 1 {
+		t.Fatalf("recoveries = %#v, want one monitor_missing envelope", recoveries)
+	}
+	recovery := recoveries[0]
+	if recovery["condition"] != "monitor_missing" || recovery["target_role"] != "commander" {
+		t.Fatalf("recovery condition/target = %#v, want monitor_missing/commander", recovery)
+	}
+	if recovery["scope_key"] != GoalOrchestrationScopeKey(goal.ID, handoff.ID) {
+		t.Fatalf("recovery scope_key = %#v, want goal scope", recovery["scope_key"])
+	}
+	if recovery["generation"] == "" || recovery["expected_role"] != "subcommander" {
+		t.Fatalf("recovery identity = %#v, want scope generation and expected subcommander", recovery)
+	}
+	instruction, ok := recovery["instruction"].(string)
+	if !ok || instruction == "" || !strings.Contains(instruction, "atct codex monitor --role subcommander --goal ") {
+		t.Fatalf("recovery instruction = %#v, want supported monitored subcommander restart", recovery["instruction"])
+	}
+}
+
+func TestWorkflowReconciliationRoutesRoleMismatchAndClearsWhenReceiverIsLive(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	project, err := s.CreateProject(ctx, "mismatched-monitor-recovery", filepath.Join(t.TempDir(), "project"))
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	goal, err := s.CreateGoal(ctx, project.ID, "mismatched monitor recovery goal", "human")
+	if err != nil {
+		t.Fatalf("CreateGoal: %v", err)
+	}
+	commanderID := registerNamedTestAgentSession(t, s, "mismatched-monitor-commander", os.Getpid())
+	receiverID := registerNamedTestAgentSession(t, s, "mismatched-monitor-receiver", os.Getpid())
+	foreignID := registerNamedTestAgentSession(t, s, "mismatched-monitor-foreign", os.Getpid())
+	if _, err := s.ClaimProject(ctx, project.ID, commanderID); err != nil {
+		t.Fatalf("ClaimProject: %v", err)
+	}
+	handoff, err := s.RequestGoalHandoff(ctx, "mismatched-monitor-handoff", goal.ID, commanderID, "delegate mismatched monitor recovery")
+	if err != nil {
+		t.Fatalf("RequestGoalHandoff: %v", err)
+	}
+	if _, err := s.ReceiveGoalHandoff(ctx, handoff.ID, goal.ID, receiverID); err != nil {
+		t.Fatalf("ReceiveGoalHandoff: %v", err)
+	}
+	scopeKey := GoalOrchestrationScopeKey(goal.ID, handoff.ID)
+	now := time.Now().UTC()
+	_, err = s.DB().ExecContext(ctx, `
+		INSERT INTO monitor_health (
+			monitor_id, agent_key, scope_key, agent_session_id, cwd, role,
+			project_id, goal_id, task_id, pid, process_started_at, state,
+			reason, transitioned_at, last_seen_at, stopped_at
+		) VALUES (?, ?, ?, ?, ?, 'executor', ?, ?, NULL, ?, ?, 'healthy', '', ?, ?, NULL)`,
+		"role-mismatched-health", "foreign-executor", scopeKey, foreignID, project.RootPath,
+		project.ID, goal.ID, os.Getpid(), now.Add(-time.Minute).Format(time.RFC3339Nano),
+		now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano))
+	if err != nil {
+		t.Fatalf("insert role-mismatched health: %v", err)
+	}
+
+	reconciliation, err := s.ReconcileWorkflow(ctx, WorkflowEventQuery{ProjectID: project.ID, GoalID: goal.ID})
+	if err != nil {
+		t.Fatalf("ReconcileWorkflow with mismatch: %v", err)
+	}
+	recoveries := reconciliationRecoveries(t, reconciliation)
+	if len(recoveries) != 1 {
+		t.Fatalf("mismatch recoveries = %#v, want one recipient_mismatch envelope", recoveries)
+	}
+	recovery := recoveries[0]
+	if recovery["condition"] != "recipient_mismatch" || recovery["target_role"] != "commander" {
+		t.Fatalf("mismatch condition/target = %#v, want recipient_mismatch/commander", recovery)
+	}
+	if recovery["expected_role"] != "subcommander" || recovery["observed_role"] != "executor" {
+		t.Fatalf("mismatch roles = %#v, want subcommander/executor", recovery)
+	}
+	if recovery["observed_agent_key"] != "foreign-executor" || recovery["observed_agent_session_id"] != float64(foreignID) {
+		t.Fatalf("mismatch observed identity = %#v, want foreign executor session", recovery)
+	}
+	instruction, ok := recovery["instruction"].(string)
+	if !ok || !strings.Contains(instruction, "reissue or transfer") || !strings.Contains(instruction, handoff.ID) {
+		t.Fatalf("mismatch instruction = %#v, want handoff reissue/transfer", recovery["instruction"])
+	}
+
+	goalID := goal.ID
+	validHealth := MonitorHealth{
+		CWD:              project.RootPath,
+		Role:             "subcommander",
+		ScopeKey:         scopeKey,
+		AgentSessionID:   receiverID,
+		AgentKey:         "mismatched-monitor-receiver",
+		ProjectID:        project.ID,
+		GoalID:           &goalID,
+		PID:              os.Getpid(),
+		ProcessStartedAt: now.Add(-time.Minute),
+		State:            "healthy",
+		LastSeenAt:       now,
+		TransitionedAt:   now,
+	}
+	validHealth.MonitorID = MonitorHealthID(validHealth.CWD, validHealth.Role, validHealth.ProjectID, validHealth.GoalID, validHealth.TaskID, validHealth.PID, validHealth.ProcessStartedAt, validHealth.ScopeKey)
+	if err := s.UpsertMonitorHealth(ctx, validHealth); err != nil {
+		t.Fatalf("UpsertMonitorHealth valid receiver: %v", err)
+	}
+	cleared, err := s.ReconcileWorkflow(ctx, WorkflowEventQuery{ProjectID: project.ID, GoalID: goal.ID})
+	if err != nil {
+		t.Fatalf("ReconcileWorkflow with live receiver: %v", err)
+	}
+	if recoveries := reconciliationRecoveries(t, cleared); len(recoveries) != 0 {
+		t.Fatalf("live receiver recoveries = %#v, want none", recoveries)
+	}
+}
 
 func TestLifecycleOwnsExpectedMonitorScopes(t *testing.T) {
 	s := newTestStore(t)

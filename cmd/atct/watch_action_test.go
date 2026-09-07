@@ -51,6 +51,7 @@ func frozenWatchAgentActionCases() []watchAgentActionCase {
 		{name: "other task detection", eventName: "detection.handoff_unreceived", line: "atct detection: handoff h1 has no receipt", decision: watchDecision{HandoffID: "h1"}, want: false},
 		{name: "wakeup discrepancy", eventName: "wakeup.discrepancy", line: "atct wakeup discrepancy: detector_unstarted_tasks=1 counted_unstarted_tasks=0", want: true},
 		{name: "wakeup evaluation failure", eventName: "wakeup.evaluate_failed", line: "atct wakeup evaluate failed: timeout", want: true},
+		{name: "commander orchestration recovery", eventName: "orchestration.recovery", line: "atct orchestration recovery: monitor_missing (target_role commander, scope task:7:executor:h1): restart monitored executor", decision: watchDecision{Condition: "monitor_missing", TargetRole: "commander", ScopeKey: "task:7:executor:h1", Instruction: "restart monitored executor"}, want: true},
 		{name: "keepalive", eventName: "keepalive", line: "atct watch: keepalive", want: false},
 		{name: "reconnect diagnostic", eventName: "", line: "atct watch: connection unavailable; reconnecting in 5s", want: false},
 		{name: "unknown raw", eventName: "", line: "unknown raw text", want: false},

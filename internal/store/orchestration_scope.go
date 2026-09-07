@@ -237,29 +237,9 @@ func (s *Store) ListMatchingMonitorHealth(ctx context.Context, scopes []Orchestr
 	if len(scopes) == 0 {
 		return []MonitorHealth{}, nil
 	}
-	healthByProject := make(map[int64][]MonitorHealth)
-	loadedProjects := make(map[int64]bool)
-	matched := make([]MonitorHealth, 0)
-	seen := make(map[string]bool)
-	for _, scope := range scopes {
-		if !scope.Active || scope.ProjectID <= 0 {
-			continue
-		}
-		if !loadedProjects[scope.ProjectID] {
-			health, err := s.ListMonitorHealth(ctx, scope.ProjectID)
-			if err != nil {
-				return nil, err
-			}
-			healthByProject[scope.ProjectID] = health
-			loadedProjects[scope.ProjectID] = true
-		}
-		for _, health := range healthByProject[scope.ProjectID] {
-			if !MonitorHealthMatchesScope(health, scope) || seen[health.MonitorID] {
-				continue
-			}
-			seen[health.MonitorID] = true
-			matched = append(matched, health)
-		}
+	healthByProject, err := s.listMonitorHealthForScopes(ctx, scopes)
+	if err != nil {
+		return nil, err
 	}
-	return matched, nil
+	return matchingMonitorHealthForScopes(scopes, healthByProject), nil
 }

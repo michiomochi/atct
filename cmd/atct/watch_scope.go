@@ -82,7 +82,8 @@ func (f *watchScopeFilter) delivers(eventName string, decision watchDecision) bo
 	case "decision.approved", "decision.rejected", "goal.created",
 		"wakeup.discrepancy", "wakeup.evaluate_failed",
 		"detection.completion_report_missing", "detection.commits_missing",
-		"detection.undeclared_goal", "detection.all_tasks_dropped":
+		"detection.undeclared_goal", "detection.all_tasks_dropped",
+		"orchestration.recovery":
 		return true
 	case "task.handoff.request", "task.handoff.receive",
 		"task.handoff.review.request", "task.handoff.review.receive",

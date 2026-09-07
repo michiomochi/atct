@@ -46,6 +46,8 @@ func selectWatchAgentAction(line, eventName string, decision watchDecision) (wat
 		selected = !decision.defaultApplied()
 	case "goal.created", "wakeup", "monitor.liveness", "handoff_reported", "handoff_yielded":
 		selected = true
+	case "orchestration.recovery":
+		selected = true
 	case "detection.completion_report_missing", "detection.commits_missing", "detection.undeclared_goal", "detection.all_tasks_dropped":
 		selected = true
 	case "detection.unclaimed_doing", "detection.claim_undelegated", "detection.claim_stale":
