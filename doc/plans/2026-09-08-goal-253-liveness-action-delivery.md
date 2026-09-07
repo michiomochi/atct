@@ -245,6 +245,10 @@
 
 ## Scope-expanded implementation sequence (requires new approval)
 
+> **Superseded by Revision 2 below.** Tasks 2R–5R are retained as audit
+> history, not delegation authority. Revision 2 replaces diagnostics-only
+> handling with end-to-end rightful-role recovery.
+
 ### Task 2R: Preserve queue order and make plan completion actionable
 
 **Files:** `cmd/atct/codex_monitor.go`, `cmd/atct/codex_monitor_test.go`,
@@ -297,4 +301,64 @@ the diagnostics tests, all with a fresh `GOCACHE`.
 237, 240, 245, 248, and 252. Reject any duplicate health, lease, lifecycle,
 migration, or dependency implementation.
 4. Commit each accepted task as a separate safe unit; no empty verification
+commit.
+
+---
+
+## Revision 2 implementation sequence (requires new approval)
+
+### Task 2V2: Canonical recovery envelope and shared delivery contract
+
+**Files:** identify the existing watch reconciliation/action types and focused
+tests before editing; expected `cmd/atct/watch*.go` and monitor bridge tests.
+
+1. RED: fixture each canonical condition with subject ID, target role, and
+generation; show live plus reconciliation/reconnect currently loses or repeats
+the action.
+2. Add one typed recovery envelope and one shared delivery key containing
+condition, target role, subject, and generation. Keep
+`selectWatchAgentAction` as the sole membership rule for Claude and Codex.
+3. Test that two wrappers and reconnect deliver once per generation, while a
+new handoff/blocker/registration/completion generation delivers once anew.
+
+### Task 3V2: Commander-safe receiver/session and missing-wrapper recovery
+
+**Files:** reuse Goal 203/221 canonical state interfaces and their monitor
+registration/lease paths; add focused integration tests only at that boundary.
+
+1. RED: construct a role-mismatched receiver and an active registered scope
+without a live wrapper. Assert neither receiver obtains elevated authority and
+the commander currently lacks a durable recovery action.
+2. Route canonical mismatch and wrapper-missing states to a commander envelope
+with the expected/observed role, stable scope/handoff ID, generation, and an
+exact supported restart/reissue instruction.
+3. Test valid-live receiver preservation, no executor impersonation, wrapper
+registration clearing the missing condition, and Claude/Codex identical output.
+Do not change Goal 203's key discovery or Goal 221's lease/takeover internals.
+
+### Task 4V2: Exactly-once blocker and rightful-lifecycle routing
+
+**Files:** shared workflow reconciliation/scope/action code and focused tests;
+reuse Goal 227/228/237/240/245/252 canonical records rather than new stores.
+
+1. RED: show an open decision or dependency/merge blocker suppresses liveness
+without a durable commander instruction, and that plan completion is unselected.
+2. Emit one commander-targeted blocker envelope per decision/blocker generation;
+the original agent remains blocked. Select task/plan/goal completion only for
+the role shown in the spec's lifecycle table.
+3. Preserve FIFO prerequisite actions across receipt, use normal delivery
+dedupe, and test live/reconcile/reconnect non-duplication plus a changed
+generation fresh action.
+
+### Task 5V2: Parity and no-silent-stop regression suite
+
+1. Run focused RED-to-GREEN tests for recipient mismatch, no wrapper, human
+decision, dependency/merge blocker, task/plan/goal lifecycle, queued approval,
+and Decision 700 non-duplication.
+2. Assert both Claude and Codex receive the same typed action sequence for
+every scenario. Include a test that liveness suppression does not suppress an
+actionable recovery envelope.
+3. Run `go test ./cmd/atct -count=1` and only the owning package tests required
+by reused Goal 203/221/227 state boundaries. Review for duplicate lease,
+session-key, migration, and lifecycle implementations before each safe-unit
 commit.

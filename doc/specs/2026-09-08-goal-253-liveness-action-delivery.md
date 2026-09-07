@@ -79,6 +79,98 @@ detection. This goal may use their canonical states at the selector/diagnostic
 boundary, but does not duplicate their stores, migrations, or automatic
 recovery.
 
+## Revision 2: end-to-end orchestration recovery
+
+The rejected review correctly identified that observation alone leaves an
+orphaned space stopped. Goal 253 therefore owns the *shared orchestration
+boundary* from a canonical stop condition to one actionable instruction for its
+rightful role. It does not take ownership of the related goals' domain state or
+permit an executor to impersonate a subcommander.
+
+### Canonical recovery envelope
+
+Every newly covered condition is normalized before either transport sees it:
+
+```text
+orchestration.recovery {
+  condition: recipient_mismatch | monitor_missing | human_decision_wait |
+             dependency_merge_wait | lifecycle_complete,
+  target_role: commander | subcommander,
+  goal_id, task_id?, handoff_id?, blocker_id?, generation,
+  instruction
+}
+```
+
+The envelope is selected only by the shared `watchAgentAction` boundary and is
+delivered using `(condition, target_role, stable subject ID, generation)`. A
+live event, reconciliation, reconnect, and a second monitor wrapper therefore
+cannot create a second action for the same condition generation. A changed
+handoff, decision/blocker, monitor-registration generation, or lifecycle
+completion is a new action. Claude and Codex receive the same ordered typed
+envelopes and render the same human-readable instruction.
+
+### Safe recipient/session recovery
+
+When canonical handoff/session data shows that the active receiver's derived
+role cannot perform the next lifecycle operation, the signal targets the
+commander—not the mismatched receiver. Its instruction names the handoff,
+expected role, observed role/session key, and the supported recovery operation:
+reissue/transfer to a freshly role-validated rightful receiver, then have that
+receiver run session identification, receive, and role validation before work.
+An executor never gains subcommander authority through recovery; a live valid
+receiver is never stolen. Goal 203 remains the owner of key discovery and its
+diagnostic wording, while Goal 221 remains owner of live/stale lease and
+takeover rules. Goal 253 only routes their canonical mismatch result to the
+commander exactly once.
+
+### Missing-wrapper recovery
+
+For every registered active scope, the shared monitor state compares the scope
+registration/lease with its live wrapper registration. A missing live wrapper
+creates a durable commander-targeted recovery envelope with a stable scope ID
+and registration generation. Its instruction gives the exact monitored restart
+form for the rightful role and scope; it does not launch a process itself or
+attach a wrapper to a legacy pane. It remains observable until the canonical
+wrapper is live, while delivery stays exactly once per missing generation.
+Goal 221 continues to define whether a lease is live; Goal 253 maps that fact
+to an actionable project-level route.
+
+### Legitimate blocker routing
+
+Open human decisions and dependency/merge blockers do not authorize bypassing
+the decision, merge, migration order, or handoff owner. Instead, their canonical
+state produces a commander-targeted recovery envelope once per blocker
+generation. The instruction identifies the owner and prerequisite; the agent
+whose scope is blocked remains paused. An open decision can still suppress
+periodic liveness noise, but it cannot suppress this one durable commander
+route or an independent handoff/lifecycle action.
+
+### Rightful-role lifecycle restart
+
+Lifecycle completion is actionable only at the next authority boundary:
+
+| Completion | Action target | Instruction boundary |
+| --- | --- | --- |
+| task handoff complete/review transition | owning subcommander | review/close or re-delegate the task; never the executor |
+| plan handoff complete | owning subcommander | continue the approved plan or create its declared task |
+| goal handoff complete/review transition | commander | request/perform the human-goal-review path |
+
+Each row is sourced from the canonical handoff owner and completion generation,
+not from the pane that happened to emit the event. Receipt and completion must
+not remove a pending prerequisite action. Existing Goal 227 authority guards
+remain authoritative.
+
+### Expanded focused acceptance matrix
+
+| Scenario | Required result |
+| --- | --- |
+| wrong recipient / role mismatch | one commander recovery action; executor cannot act as subcommander; valid live receiver is unchanged |
+| active registered scope lacks wrapper | one durable commander restart instruction; registration becoming live clears the condition; reconnect does not duplicate |
+| open decision or merge dependency | one commander blocker route; scoped agent stays blocked; liveness noise remains suppressed |
+| task, plan, goal completion | one action to the table's rightful role; live/reconcile/reconnect are non-duplicating |
+| one condition through Claude/Codex | same typed envelope and order on both transports |
+| Decision 700 / received approval | completed Task 1215's one-per-lifecycle behavior remains unchanged |
+
 ## Design
 
 ### Canonical approval projection
