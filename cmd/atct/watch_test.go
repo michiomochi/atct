@@ -799,6 +799,57 @@ func TestWatchEmitsWakeupAgainAfterStateReturns(t *testing.T) {
 	}
 }
 
+func TestWatchLivenessPromptsOnlyEligibleScopedMonitor(t *testing.T) {
+	cases := []struct {
+		name  string
+		scope watchScope
+		want  bool
+	}{
+		{name: "commander", scope: watchScope{Role: "commander", ProjectID: "1", GoalID: "249"}},
+		{name: "unscoped", scope: watchScope{Role: "executor", ProjectID: "1"}},
+		{name: "subcommander", scope: watchScope{Role: "subcommander", ProjectID: "1", GoalID: "249"}, want: true},
+		{name: "subcommander with task", scope: watchScope{Role: "subcommander", ProjectID: "1", GoalID: "249", TaskID: "812"}},
+		{name: "executor", scope: watchScope{Role: "executor", ProjectID: "1", GoalID: "249", TaskID: "812"}, want: true},
+		{name: "executor without goal", scope: watchScope{Role: "executor", ProjectID: "1", TaskID: "812"}},
+		{name: "unknown role", scope: watchScope{Role: "worker", ProjectID: "1", GoalID: "249", TaskID: "812"}},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			state := newWatchLivenessState(time.Unix(0, 0))
+			got := state.PromptDue(time.Unix(600, 0), tt.scope, watchReconciliation{})
+			if got != tt.want {
+				t.Fatalf("PromptDue() = %v, want %v for scope %#v", got, tt.want, tt.scope)
+			}
+		})
+	}
+}
+
+func TestWatchLivenessSuppressesOpenHumanDecision(t *testing.T) {
+	state := newWatchLivenessState(time.Unix(0, 0))
+	blocked := watchReconciliation{Decisions: []watchDecision{{GoalID: "249", Status: "open"}}}
+	scope := watchScope{Role: "subcommander", ProjectID: "1", GoalID: "249"}
+	if got := state.PromptDue(time.Unix(600, 0), scope, blocked); got {
+		t.Fatal("open human decision prompted, want suppression")
+	}
+	if got := state.PromptDue(time.Unix(1200, 0), scope, watchReconciliation{}); !got {
+		t.Fatal("prompt did not resume after open human decision was cleared")
+	}
+}
+
+func TestWatchLivenessRendersExactSelector(t *testing.T) {
+	for _, tt := range []struct {
+		scope watchScope
+		want  string
+	}{
+		{scope: watchScope{Role: "subcommander", ProjectID: "1", GoalID: "249"}, want: "atct monitor liveness: recheck goal 249"},
+		{scope: watchScope{Role: "executor", ProjectID: "1", GoalID: "249", TaskID: "812"}, want: "atct monitor liveness: recheck task 812"},
+	} {
+		if got := formatWatchLiveness(tt.scope); got != tt.want {
+			t.Fatalf("formatWatchLiveness(%#v) = %q, want %q", tt.scope, got, tt.want)
+		}
+	}
+}
+
 func TestWatchDoesNotFormatKeepaliveAsVisibleLine(t *testing.T) {
 	line, ok := formatWatchDecision("keepalive", watchDecision{})
 	if ok || line != "" {
@@ -1495,6 +1546,106 @@ func TestWatchReportsReconnectWhileUnavailable(t *testing.T) {
 	}
 }
 
+func TestWatchRecoveryReportsOnceThenHealthy(t *testing.T) {
+	state := newWatchRecoveryState()
+	var got []string
+	report := func(name string) { got = append(got, name) }
+	state.Failure(report)
+	state.Failure(report)
+	for i := 0; i < watchEnsureMaxFailures; i++ {
+		state.EnsureFailure(report)
+	}
+	state.Reconciled(report)
+	state.Reconciled(report)
+
+	want := []string{"recovering", "degraded", "healthy"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("recovery transitions = %#v, want %#v", got, want)
+	}
+}
+
+func TestNormalWatchReportsHealthyReconciliationAndIgnoresHealthDiagnostics(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var output bytes.Buffer
+	var healthBodies []map[string]any
+	var mu sync.Mutex
+	client := &http.Client{Transport: watchRoundTripper(func(req *http.Request) (*http.Response, error) {
+		switch req.URL.Path {
+		case "/api/events/reconcile":
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Status:     "200 OK",
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       io.NopCloser(strings.NewReader(`{"decisions":[],"goal_handoffs":[],"plan_handoffs":[],"task_handoffs":[]}`)),
+			}, nil
+		case "/api/events":
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Status:     "200 OK",
+				Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+				Body:       io.NopCloser(strings.NewReader("")),
+			}, nil
+		case "/api/monitor-health":
+			var body map[string]any
+			if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+				return nil, err
+			}
+			mu.Lock()
+			healthBodies = append(healthBodies, body)
+			if len(healthBodies) == 3 {
+				cancel()
+			}
+			mu.Unlock()
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Status:     "200 OK",
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader("{}")),
+			}, nil
+		default:
+			return nil, fmt.Errorf("unexpected watch request: %s", req.URL.String())
+		}
+	})}
+	snapshot := func(context.Context) (string, []watchDecision, error) {
+		return "http://daemon", nil, nil
+	}
+	scope := normalWatchScope("7", "249")
+	reporter := newWatchHealthReporter(client, []string{"http://daemon"}, t.TempDir(), scope)
+	if reporter == nil {
+		t.Fatal("newWatchHealthReporter returned nil for eligible normal watch scope")
+	}
+	err := watchLoopWithEnsureAndProjectIDAndScopeAndSinkAndCursor(ctx, &output, client, time.Millisecond, snapshot, nil, func() string {
+		return scope.ProjectID
+	}, scope, nil, "", reporter)
+	if err != nil {
+		t.Fatalf("normal watch loop error = %v", err)
+	}
+
+	mu.Lock()
+	bodies := append([]map[string]any(nil), healthBodies...)
+	mu.Unlock()
+	var healthy []map[string]any
+	for _, body := range bodies {
+		if body["state"] == "healthy" {
+			healthy = append(healthy, body)
+		}
+	}
+	if len(healthy) < 2 {
+		t.Fatalf("healthy health POST count = %d (all bodies: %#v), want at least 2 reconciliation updates", len(healthy), bodies)
+	}
+	if healthy[0]["monitor_id"] != healthy[1]["monitor_id"] {
+		t.Fatalf("monitor IDs changed across updates: %v, %v", healthy[0]["monitor_id"], healthy[1]["monitor_id"])
+	}
+	if healthy[0]["last_seen_at"] == healthy[1]["last_seen_at"] {
+		t.Fatalf("last_seen_at did not update: %v", healthy[0]["last_seen_at"])
+	}
+	if !strings.Contains(output.String(), "atct watch: connection unavailable; reconnecting in 1ms") {
+		t.Fatalf("watch diagnostics = %q, want recoverable reconnect diagnostic", output.String())
+	}
+}
+
 type cancelOnOutput struct {
 	mu      sync.Mutex
 	buf     strings.Builder
@@ -1831,5 +1982,58 @@ func TestEmitWatchDetectionRejectsMissingTarget(t *testing.T) {
 	}
 	if output.Len() != 0 {
 		t.Fatalf("output = %q, want nothing", output.String())
+	}
+}
+
+func TestParseArgsWatchMonitorRequiresOneExistingSelector(t *testing.T) {
+	tests := []struct {
+		name        string
+		args        []string
+		wantMonitor bool
+		wantProject bool
+		wantGoal    string
+		wantError   bool
+	}{
+		{name: "goal selector", args: []string{"watch", "--monitor", "-goal", "249"}, wantMonitor: true, wantGoal: "249"},
+		{name: "project selector", args: []string{"watch", "--monitor", "-project"}, wantMonitor: true, wantProject: true},
+		{name: "monitor without selector", args: []string{"watch", "--monitor"}, wantError: true},
+		{name: "two selectors", args: []string{"watch", "--monitor", "-goal", "249", "-project"}, wantError: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg, err := parseArgs(tt.args)
+			if (err != nil) != tt.wantError {
+				t.Fatalf("parseArgs(%q) error = %v, wantError %v", tt.args, err, tt.wantError)
+			}
+			if tt.wantError {
+				return
+			}
+			if cfg.watchMonitor != tt.wantMonitor || cfg.watchProjectScope != tt.wantProject || cfg.watchGoalID != tt.wantGoal {
+				t.Fatalf("watch config = monitor %v project %v goal %q", cfg.watchMonitor, cfg.watchProjectScope, cfg.watchGoalID)
+			}
+		})
+	}
+}
+
+func TestClaudeMonitorActionWriterExcludesRawDiagnostics(t *testing.T) {
+	var monitor bytes.Buffer
+	var diagnostics []string
+	writer := monitorActionWriter{writer: &monitor}
+	rawSink := watchRawLineSink(func(line string) error {
+		diagnostics = append(diagnostics, line)
+		return nil
+	})
+	decision := watchDecision{DecisionID: "1"}
+	if err := writeWatchLineWithActionSink(io.Discard, "atct decision approved (decision_id: 1)", "decision.approved", decision, rawSink, writer.Sink); err != nil {
+		t.Fatalf("write selected action: %v", err)
+	}
+	if err := writeWatchLineWithActionSink(io.Discard, "atct watch: connection unavailable; reconnecting in 5s", "", watchDecision{}, rawSink, writer.Sink); err != nil {
+		t.Fatalf("write diagnostic: %v", err)
+	}
+	if got, want := monitor.String(), "atct decision approved (decision_id: 1)\n"; got != want {
+		t.Fatalf("monitor output = %q, want %q", got, want)
+	}
+	if got, want := strings.Join(diagnostics, "\n"), "atct decision approved (decision_id: 1)\natct watch: connection unavailable; reconnecting in 5s"; got != want {
+		t.Fatalf("diagnostics = %q, want %q", got, want)
 	}
 }

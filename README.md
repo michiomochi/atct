@@ -111,12 +111,27 @@ task-identified detection events. Review producers, review-state storage, and re
 are not implemented by this capability; future review detections may use the existing identity-bearing
 event envelope and will still be task-filtered.
 
+### Monitor liveness and recovery
+
+Eligible goal-scoped subcommander and task-scoped executor monitors run an independent ten-minute
+liveness tick. The tick is based on the last successful scoped reconciliation, so it can emit a
+bounded `atct monitor liveness:` recheck line even while an SSE connection is quiet. Project-wide
+commander monitors, malformed or unscoped selectors, and scopes with an open human decision do not
+receive a prompt. A transient snapshot, reconciliation, SSE, or daemon failure stays in the watch
+loop and reconnects with bounded backoff; it is not a task or monitor terminal state.
+
+A liveness line is a recheck signal, not authority: it does not approve a human decision, cross a
+scope boundary, commit work, or create a task. A subcommander accepts the plan before requesting a
+task handoff or starting an executor through the `atct codex monitor` wrapper. An executor keeps an
+open human decision parked, works only within its task, and submits the task for review instead of
+committing.
+
 To reproduce the GREEN documentation check, use at least five fresh contexts with the same
 time/sunk-cost/authority pressure scenario. Preserve each complete raw response and provenance, then
-score every response against the exact role commands, no `--scope`, handoff-before-pane ordering,
-`herdr pane run` before the worker, the worker's identify → receive(task only) → role sequence, and
-no retrofit. Read every response manually and retain the per-criterion scores; a valid wrapper command
-is required in every passing response.
+score every response against the exact role commands, no `--scope`, record-first handoff ordering,
+`herdr pane run <pane> atct codex monitor` before the worker, the worker's identify → receive(task
+only) → role sequence, and no retrofit. Read every response manually and retain the per-criterion
+scores; a valid monitor-wrapper command is required in every passing response.
 
 ## Setting a goal is the approval
 

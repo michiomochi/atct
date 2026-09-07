@@ -53,6 +53,7 @@ type cliConfig struct {
 	roleAgentSessionID      string
 	watchGoalID             string
 	watchProjectScope       bool
+	watchMonitor            bool
 	codexShimAction         string
 	codexShimProfile        string
 	codexMonitorAction      string
@@ -125,7 +126,7 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "  goal list            List goals for the current project")
 	fmt.Fprintln(os.Stderr, "  context [-brief]      Print the current goal context for an AI session")
 	fmt.Fprintln(os.Stderr, "  pending              Print unanswered human decisions for the current project")
-	fmt.Fprintln(os.Stderr, "  watch [-goal string] [-project]  Stream human decision events for a Monitor")
+	fmt.Fprintln(os.Stderr, "  watch [--monitor] [-goal string] [-project]  Stream selected events for a Monitor")
 	fmt.Fprintln(os.Stderr, "  role                 Report the claim-derived role for an agent session")
 	fmt.Fprintln(os.Stderr, "  handoff complete <handoff-id> <task-id>  Report a handoff complete")
 	fmt.Fprintln(os.Stderr, "  handoff yielded <task-id>  Report that the worker yielded")
@@ -347,6 +348,7 @@ func parseArgs(args []string) (cliConfig, error) {
 	if sub == "watch" {
 		flags.StringVar(&cfg.watchGoalID, "goal", "", "filter watch events to this goal")
 		flags.BoolVar(&cfg.watchProjectScope, "project", false, "filter watch events to what a commander acts on")
+		flags.BoolVar(&cfg.watchMonitor, "monitor", false, "emit only selected actions for a Claude Monitor")
 	}
 	var description *string
 	if sub == "goal" && cfg.goalAction == "add" {
@@ -383,6 +385,10 @@ func parseArgs(args []string) (cliConfig, error) {
 	})
 	if sub == "watch" && watchProjectSpecified && watchGoalSpecified {
 		fmt.Fprintln(os.Stderr, "watch: -goal and -project cannot be used together")
+		return cliConfig{}, errInvalidArgs
+	}
+	if sub == "watch" && cfg.watchMonitor && !watchProjectSpecified && !watchGoalSpecified {
+		fmt.Fprintln(os.Stderr, "watch: -monitor requires exactly one selector: -goal or -project")
 		return cliConfig{}, errInvalidArgs
 	}
 	if sub == "role" && cfg.roleExpectedSet {
@@ -586,7 +592,7 @@ func main() {
 		}
 		os.Exit(code)
 	case "watch":
-		if err := runWatch(dir, config.watchGoalID); err != nil {
+		if err := runWatchWithOptions(dir, config.watchGoalID, config.watchProjectScope, config.watchMonitor); err != nil {
 			log.Fatalf("watch: %v", err)
 		}
 		return

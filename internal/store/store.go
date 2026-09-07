@@ -2,10 +2,12 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -21,6 +23,214 @@ type Store struct {
 const schemaVersion = 6
 
 const agentSessionRetention = 30 * 24 * time.Hour
+
+const (
+	monitorHealthLease     = 75 * time.Second
+	monitorHealthRetention = 24 * time.Hour
+)
+
+type MonitorHealth struct {
+	MonitorID        string     `json:"monitor_id"`
+	AgentKey         string     `json:"agent_key,omitempty"`
+	CWD              string     `json:"cwd"`
+	Role             string     `json:"role"`
+	State            string     `json:"state"`
+	Reason           string     `json:"reason,omitempty"`
+	ProjectID        int64      `json:"project_id"`
+	GoalID           *int64     `json:"goal_id,omitempty"`
+	TaskID           *int64     `json:"task_id,omitempty"`
+	PID              int        `json:"pid"`
+	ProcessStartedAt time.Time  `json:"process_started_at"`
+	TransitionedAt   time.Time  `json:"transitioned_at"`
+	LastSeenAt       time.Time  `json:"last_seen_at"`
+	StoppedAt        *time.Time `json:"stopped_at,omitempty"`
+}
+
+func MonitorHealthID(cwd, role string, projectID int64, goalID, taskID *int64, pid int, processStartedAt time.Time) string {
+	absCWD, err := filepath.Abs(filepath.Clean(strings.TrimSpace(cwd)))
+	if err != nil {
+		return ""
+	}
+	selector := fmt.Sprintf("%s\x00%d\x00", role, projectID)
+	if goalID != nil {
+		selector += fmt.Sprintf("goal:%d\x00", *goalID)
+	}
+	if taskID != nil {
+		selector += fmt.Sprintf("task:%d\x00", *taskID)
+	}
+	identity := fmt.Sprintf("%s\x00%s\x00%s%d\x00%s", absCWD, selector, "pid:", pid, processStartedAt.UTC().Format(time.RFC3339Nano))
+	digest := sha256.Sum256([]byte(identity))
+	return fmt.Sprintf("monitor-%x", digest[:])
+}
+
+func validateMonitorHealth(health MonitorHealth) error {
+	if strings.TrimSpace(health.MonitorID) == "" || strings.TrimSpace(health.CWD) == "" || strings.TrimSpace(health.Role) == "" {
+		return errors.New("monitor identity is required")
+	}
+	if health.Role != "subcommander" && health.Role != "executor" {
+		return fmt.Errorf("monitor role %q is not eligible", health.Role)
+	}
+	if health.ProjectID <= 0 || health.PID <= 0 || health.ProcessStartedAt.IsZero() {
+		return errors.New("monitor project, pid, and process start are required")
+	}
+	if health.Role == "subcommander" && health.TaskID != nil {
+		return errors.New("subcommander monitor cannot carry task selector")
+	}
+	if health.Role == "executor" && health.TaskID == nil {
+		return errors.New("executor monitor requires task selector")
+	}
+	if health.GoalID == nil {
+		return errors.New("monitor goal selector is required")
+	}
+	if expected := MonitorHealthID(health.CWD, health.Role, health.ProjectID, health.GoalID, health.TaskID, health.PID, health.ProcessStartedAt); expected != health.MonitorID {
+		return errors.New("monitor identity does not match its process and scope")
+	}
+	return nil
+}
+
+func (s *Store) UpsertMonitorHealth(ctx context.Context, health MonitorHealth) error {
+	if err := validateMonitorHealth(health); err != nil {
+		return err
+	}
+	now := time.Now().UTC()
+	if health.LastSeenAt.IsZero() {
+		health.LastSeenAt = now
+	}
+	if health.TransitionedAt.IsZero() {
+		health.TransitionedAt = now
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin monitor health upsert: %w", err)
+	}
+	defer tx.Rollback()
+	cutoff := now.Add(-monitorHealthRetention).UTC().Format(time.RFC3339Nano)
+	queries := sqlcgen.New(tx)
+	if err := queries.PruneMonitorHealth(ctx, cutoff); err != nil {
+		return fmt.Errorf("prune monitor health: %w", err)
+	}
+	if err := queries.UpsertMonitorHealth(ctx, sqlcgen.UpsertMonitorHealthParams{
+		MonitorID:        health.MonitorID,
+		AgentKey:         health.AgentKey,
+		Cwd:              health.CWD,
+		Role:             health.Role,
+		ProjectID:        health.ProjectID,
+		GoalID:           nullableMonitorID(health.GoalID),
+		TaskID:           nullableMonitorID(health.TaskID),
+		Pid:              int64(health.PID),
+		ProcessStartedAt: health.ProcessStartedAt.UTC().Format(time.RFC3339Nano),
+		State:            health.State,
+		Reason:           health.Reason,
+		TransitionedAt:   health.TransitionedAt.UTC().Format(time.RFC3339Nano),
+		LastSeenAt:       health.LastSeenAt.UTC().Format(time.RFC3339Nano),
+	}); err != nil {
+		return fmt.Errorf("upsert monitor health: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit monitor health upsert: %w", err)
+	}
+	return nil
+}
+
+func nullableMonitorID(value *int64) sql.NullInt64 {
+	if value == nil {
+		return sql.NullInt64{}
+	}
+	return sql.NullInt64{Int64: *value, Valid: true}
+}
+
+func (s *Store) StopMonitorHealth(ctx context.Context, monitorID string, stoppedAt time.Time) error {
+	if strings.TrimSpace(monitorID) == "" || stoppedAt.IsZero() {
+		return errors.New("monitor stop identity and time are required")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin monitor health stop: %w", err)
+	}
+	defer tx.Rollback()
+	when := stoppedAt.UTC().Format(time.RFC3339Nano)
+	result, err := sqlcgen.New(tx).StopMonitorHealth(ctx, sqlcgen.StopMonitorHealthParams{
+		StoppedAt:      sql.NullString{String: when, Valid: true},
+		TransitionedAt: when,
+		LastSeenAt:     when,
+		MonitorID:      monitorID,
+	})
+	if err != nil {
+		return fmt.Errorf("stop monitor health: %w", err)
+	}
+	if affected, err := result.RowsAffected(); err != nil {
+		return fmt.Errorf("inspect monitor health stop: %w", err)
+	} else if affected == 0 {
+		return sql.ErrNoRows
+	}
+	cutoff := time.Now().UTC().Add(-monitorHealthRetention).Format(time.RFC3339Nano)
+	if err := sqlcgen.New(tx).PruneMonitorHealth(ctx, cutoff); err != nil {
+		return fmt.Errorf("prune stopped monitor health: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit monitor health stop: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) ListMonitorHealth(ctx context.Context, projectID int64) ([]MonitorHealth, error) {
+	if projectID <= 0 {
+		return nil, errors.New("project_id is required")
+	}
+	cutoff := time.Now().UTC().Add(-monitorHealthLease).Format(time.RFC3339Nano)
+	rows, err := sqlcgen.New(s.db).ListMonitorHealth(ctx, sqlcgen.ListMonitorHealthParams{ProjectID: projectID, LastSeenAt: cutoff})
+	if err != nil {
+		return nil, fmt.Errorf("list monitor health: %w", err)
+	}
+	result := make([]MonitorHealth, 0)
+	for _, row := range rows {
+		health, err := monitorHealthFromRow(row)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, health)
+	}
+	return result, nil
+}
+
+func monitorHealthFromRow(row sqlcgen.MonitorHealth) (MonitorHealth, error) {
+	health := MonitorHealth{
+		MonitorID: row.MonitorID,
+		AgentKey:  row.AgentKey,
+		CWD:       row.Cwd,
+		Role:      row.Role,
+		ProjectID: row.ProjectID,
+		PID:       int(row.Pid),
+		State:     row.State,
+		Reason:    row.Reason,
+	}
+	if row.GoalID.Valid {
+		value := row.GoalID.Int64
+		health.GoalID = &value
+	}
+	if row.TaskID.Valid {
+		value := row.TaskID.Int64
+		health.TaskID = &value
+	}
+	var err error
+	if health.ProcessStartedAt, err = time.Parse(time.RFC3339Nano, row.ProcessStartedAt); err != nil {
+		return MonitorHealth{}, fmt.Errorf("parse monitor process start: %w", err)
+	}
+	if health.TransitionedAt, err = time.Parse(time.RFC3339Nano, row.TransitionedAt); err != nil {
+		return MonitorHealth{}, fmt.Errorf("parse monitor transition: %w", err)
+	}
+	if health.LastSeenAt, err = time.Parse(time.RFC3339Nano, row.LastSeenAt); err != nil {
+		return MonitorHealth{}, fmt.Errorf("parse monitor last seen: %w", err)
+	}
+	if row.StoppedAt.Valid {
+		value, err := time.Parse(time.RFC3339Nano, row.StoppedAt.String)
+		if err != nil {
+			return MonitorHealth{}, fmt.Errorf("parse monitor stop: %w", err)
+		}
+		health.StoppedAt = &value
+	}
+	return health, nil
+}
 
 func Open(path string) (*Store, error) {
 	db, err := sql.Open("sqlite", path)

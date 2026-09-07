@@ -791,43 +791,28 @@ func (b *codexMonitorBridge) QueueLen() int {
 	return len(b.queue)
 }
 
-func (b *codexMonitorBridge) LineSink() func(string) error {
+func (b *codexMonitorBridge) LineSink() watchRawLineSink {
 	return b.LineSinkWithContext(context.Background())
 }
 
-func (b *codexMonitorBridge) LineSinkWithContext(ctx context.Context) func(string) error {
+func (b *codexMonitorBridge) LineSinkWithContext(ctx context.Context) watchRawLineSink {
 	return func(line string) error {
-		if !isCodexMonitorActionLine(line) {
-			return nil
-		}
-		// A failed turn submission stays in the bridge queue. The watcher must
-		// keep its SSE delivery state and continue consuming events; a later
-		// idle notification retries the queued item.
-		if err := b.enqueueAction(ctx, codexMonitorAction{line: line}); err != nil {
-			b.stateMu.Lock()
-			disabled := b.disabled
-			b.stateMu.Unlock()
-			if disabled {
-				return err
-			}
-		}
+		// Raw lines are diagnostics only. Agent actions cross the bridge through
+		// the typed ActionSinkWithContext boundary below.
 		return nil
 	}
 }
 
-func (b *codexMonitorBridge) ActionSink() func(codexMonitorAction) error {
+func (b *codexMonitorBridge) ActionSink() watchAgentActionSink {
 	return b.ActionSinkWithContext(context.Background())
 }
 
-func (b *codexMonitorBridge) ActionSinkWithContext(ctx context.Context) func(codexMonitorAction) error {
-	return func(action codexMonitorAction) error {
-		if !isCodexMonitorActionLine(action.line) {
-			return nil
-		}
+func (b *codexMonitorBridge) ActionSinkWithContext(ctx context.Context) watchAgentActionSink {
+	return func(action watchAgentAction) error {
 		// A failed turn submission stays in the bridge queue. The watcher must
 		// keep its SSE delivery state and continue consuming events; a later
 		// idle notification retries the queued item.
-		if err := b.enqueueAction(ctx, action); err != nil {
+		if err := b.enqueueAction(ctx, codexMonitorAction{line: action.line, eventName: action.eventName, goalID: action.goalID}); err != nil {
 			b.stateMu.Lock()
 			disabled := b.disabled
 			b.stateMu.Unlock()
@@ -836,55 +821,6 @@ func (b *codexMonitorBridge) ActionSinkWithContext(ctx context.Context) func(cod
 			}
 		}
 		return nil
-	}
-}
-
-func isCodexMonitorActionLine(line string) bool {
-	line = strings.TrimSpace(line)
-	switch {
-	case strings.HasPrefix(line, "atct decision answered (decision_id: "):
-		return true
-	case strings.HasPrefix(line, "atct decision approved (decision_id: "):
-		return true
-	case strings.HasPrefix(line, "atct decision rejected (decision_id: "):
-		return true
-	case strings.HasPrefix(line, "atct goal created (goal_id: "):
-		return true
-	case strings.HasPrefix(line, "atct wakeup: "):
-		return true
-	case strings.HasPrefix(line, "atct detection: goal "):
-		return true
-	case strings.HasPrefix(line, "atct task handoff requested (task_id: "),
-		strings.HasPrefix(line, "atct task handoff received (task_id: "),
-		strings.HasPrefix(line, "atct task handoff completed (task_id: "),
-		strings.HasPrefix(line, "atct goal handoff requested (goal_id: "),
-		strings.HasPrefix(line, "atct goal handoff received (goal_id: "),
-		strings.HasPrefix(line, "atct goal handoff completed (goal_id: "):
-		return true
-	case strings.HasPrefix(line, "atct handoff reported: goal "), strings.HasPrefix(line, "atct handoff reported: task "):
-		return true
-	case strings.HasPrefix(line, "atct handoff yielded: task "):
-		return true
-	case strings.HasPrefix(line, "atct task handoff review requested (task_id: "),
-		strings.HasPrefix(line, "atct task handoff review received (task_id: "),
-		strings.HasPrefix(line, "atct task handoff review rejected (task_id: "),
-		strings.HasPrefix(line, "atct goal handoff review requested (goal_id: "),
-		strings.HasPrefix(line, "atct goal handoff review received (goal_id: "),
-		strings.HasPrefix(line, "atct goal handoff review rejected (goal_id: "),
-		strings.HasPrefix(line, "atct plan handoff review requested (goal_id: "),
-		strings.HasPrefix(line, "atct plan handoff review received (goal_id: "),
-		strings.HasPrefix(line, "atct plan handoff review rejected (goal_id: "):
-		return true
-	case strings.HasPrefix(line, "atct detection: task "):
-		return strings.HasSuffix(line, " is doing without a work lock") ||
-			strings.HasSuffix(line, " has no handoff request") ||
-			strings.HasSuffix(line, " has a stale claim")
-	case strings.HasPrefix(line, "atct wakeup discrepancy: "):
-		return true
-	case strings.HasPrefix(line, "atct wakeup evaluate failed: "):
-		return true
-	default:
-		return false
 	}
 }
 
@@ -1005,11 +941,11 @@ func (b *codexMonitorBridge) Run(ctx context.Context) error {
 	}
 }
 
-func runCodexMonitorWatch(ctx context.Context, client *http.Client, urls []string, cwd string, bridge *codexMonitorBridge) error {
-	return runCodexMonitorWatchScoped(ctx, client, urls, cwd, watchScope{}, bridge)
+func runCodexMonitorWatch(ctx context.Context, client *http.Client, urls []string, cwd string, bridge *codexMonitorBridge, ensure ...watchEnsureFunc) error {
+	return runCodexMonitorWatchScoped(ctx, client, urls, cwd, watchScope{}, bridge, ensure...)
 }
 
-func runCodexMonitorWatchScoped(ctx context.Context, client *http.Client, urls []string, cwd string, scope watchScope, bridge *codexMonitorBridge) error {
+func runCodexMonitorWatchScoped(ctx context.Context, client *http.Client, urls []string, cwd string, scope watchScope, bridge *codexMonitorBridge, ensure ...watchEnsureFunc) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -1020,13 +956,22 @@ func runCodexMonitorWatchScoped(ctx context.Context, client *http.Client, urls [
 		client = &http.Client{}
 	}
 	snapshot, projectID := watchSnapshotWithProject(client, urls, cwd)
+	var ensureDaemon watchEnsureFunc
+	if len(ensure) > 0 {
+		ensureDaemon = ensure[0]
+	}
+	reporter := newWatchHealthReporter(client, urls, cwd, scope)
+	var reporters []watchHealthSink
+	if reporter != nil {
+		reporters = append(reporters, reporter)
+	}
 	return watchLoopWithEnsureAndProjectIDAndScopeAndActionSink(
 		ctx,
 		codexMonitorWatchOutput{},
 		client,
 		watchReconnectInterval,
 		snapshot,
-		nil,
+		ensureDaemon,
 		func() string {
 			if scope.ProjectID != "" {
 				return scope.ProjectID
@@ -1036,5 +981,6 @@ func runCodexMonitorWatchScoped(ctx context.Context, client *http.Client, urls [
 		scope,
 		nil,
 		bridge.ActionSinkWithContext(ctx),
+		reporters...,
 	)
 }
