@@ -8,9 +8,14 @@ import (
 // watchAgentAction is the canonical, already-formatted notification delivered
 // to an agent-facing monitor. Transport adapters must not classify raw lines.
 type watchAgentAction struct {
-	line      string
-	eventName string
-	goalID    string
+	line        string
+	eventName   string
+	goalID      string
+	deliveryKey string
+	generation  string
+	targetRole  string
+	scopeKey    string
+	delivery    watchDeliveryHandle
 }
 
 type watchRawLineSink func(string) error
@@ -63,5 +68,14 @@ func selectWatchAgentAction(line, eventName string, decision watchDecision) (wat
 	if !selected {
 		return watchAgentAction{}, false
 	}
-	return watchAgentAction{line: line, eventName: eventName, goalID: decision.GoalID}, true
+	deliveryKey, generation := watchActionDeliveryIdentity(eventName, line, decision)
+	return watchAgentAction{
+		line:        line,
+		eventName:   eventName,
+		goalID:      decision.GoalID,
+		deliveryKey: deliveryKey,
+		generation:  generation,
+		targetRole:  decision.TargetRole,
+		scopeKey:    decision.ScopeKey,
+	}, true
 }

@@ -94,6 +94,27 @@ type MonitorHealth struct {
 	AgentSessionID   int64
 }
 
+type OrchestrationDeliveryLease struct {
+	ScopeKey        string
+	TargetRole      string
+	HolderMonitorID string
+	FencingToken    int64
+	ExpiresAt       string
+	UpdatedAt       string
+}
+
+type OrchestrationDeliveryReceipt struct {
+	ScopeKey        string
+	DeliveryKey     string
+	Generation      string
+	TargetRole      string
+	HolderMonitorID string
+	FencingToken    int64
+	Status          string
+	CreatedAt       string
+	UpdatedAt       string
+}
+
 type OrchestrationScope struct {
 	ScopeKey         string
 	ProjectID        int64

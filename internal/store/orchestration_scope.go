@@ -203,13 +203,17 @@ func sameOrchestrationSelector(left, right *int64) bool {
 // unscoped rows, foreign sessions, stopped rows, and expired rows therefore
 // cannot satisfy an expected scope.
 func MonitorHealthMatchesScope(health MonitorHealth, scope OrchestrationScope) bool {
+	return monitorHealthMatchesScopeAt(health, scope, time.Now().UTC())
+}
+
+func monitorHealthMatchesScopeAt(health MonitorHealth, scope OrchestrationScope, now time.Time) bool {
 	if !scope.Active || strings.TrimSpace(scope.ScopeKey) == "" || health.ScopeKey != scope.ScopeKey {
 		return false
 	}
 	if health.ProjectID != scope.ProjectID || health.Role != scope.Role || !sameOrchestrationSelector(health.GoalID, scope.GoalID) || !sameOrchestrationSelector(health.TaskID, scope.TaskID) {
 		return false
 	}
-	if health.StoppedAt != nil || health.LastSeenAt.IsZero() || time.Since(health.LastSeenAt) > monitorHealthLease {
+	if health.StoppedAt != nil || health.LastSeenAt.IsZero() || now.Sub(health.LastSeenAt) > monitorHealthLease {
 		return false
 	}
 	if scope.AgentSessionID == 0 && strings.TrimSpace(scope.AgentKey) == "" {

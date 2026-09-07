@@ -552,6 +552,9 @@ func runWatchWithOptions(dir, goalID string, projectScope, monitor bool) error {
 	if reporter != nil {
 		reporters = append(reporters, reporter)
 	}
+	if actionSink != nil {
+		actionSink = newWatchDurableActionSink(newWatchHTTPDeliveryAPI(client, baseURLs), reporter, scope, actionSink)
+	}
 	return watchLoopWithEnsureAndProjectIDAndScopeAndActionSink(ctx, watchOutput, client, watchReconnectInterval, snapshot, func() error {
 		return ensureWatchDaemon(dir)
 	}, projectIDGetter, scope, nil, actionSink, reporters...)

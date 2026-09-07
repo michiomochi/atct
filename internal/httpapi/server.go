@@ -163,6 +163,24 @@ type snoozeRequest struct {
 	SnoozedUntil *string `json:"snoozed_until"`
 }
 
+type orchestrationDeliveryRequest struct {
+	Operation       string `json:"operation"`
+	ScopeKey        string `json:"scope_key"`
+	TargetRole      string `json:"target_role"`
+	HolderMonitorID string `json:"holder_monitor_id"`
+	FencingToken    int64  `json:"fencing_token"`
+	DeliveryKey     string `json:"delivery_key"`
+	Generation      string `json:"generation"`
+}
+
+type orchestrationDeliveryResponse struct {
+	Acquired bool                                `json:"acquired"`
+	Claimed  bool                                `json:"claimed"`
+	Status   string                              `json:"status,omitempty"`
+	Lease    *store.OrchestrationDeliveryLease   `json:"lease,omitempty"`
+	Receipt  *store.OrchestrationDeliveryReceipt `json:"receipt,omitempty"`
+}
+
 type updateGoalContentRequest struct {
 	Content string `json:"content"`
 }
@@ -211,6 +229,14 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.handleMonitorHealth(w, r)
+		return
+	}
+	if len(parts) == 2 && parts[0] == "api" && parts[1] == "orchestration-delivery" {
+		if r.Method != http.MethodPost {
+			writeError(w, http.StatusBadRequest, "method is not allowed for this endpoint")
+			return
+		}
+		s.handleOrchestrationDelivery(w, r)
 		return
 	}
 	if len(parts) == 2 && parts[0] == "api" && parts[1] == "events" {
@@ -387,7 +413,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func malformedAPIPath(path string) bool {
-	for _, prefix := range []string{"/api/inbox", "/api/monitor-health", "/api/events", "/api/ws", "/api/watch", "/api/projects", "/api/goals", "/api/tasks", "/api/decisions"} {
+	for _, prefix := range []string{"/api/inbox", "/api/monitor-health", "/api/orchestration-delivery", "/api/events", "/api/ws", "/api/watch", "/api/projects", "/api/goals", "/api/tasks", "/api/decisions"} {
 		if path == prefix || strings.HasPrefix(path, prefix+"/") {
 			return true
 		}
@@ -438,6 +464,91 @@ func (s *Server) handleMonitorHealth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, health)
+}
+
+func (s *Server) handleOrchestrationDelivery(w http.ResponseWriter, r *http.Request) {
+	var request orchestrationDeliveryRequest
+	if err := decodeJSONBody(r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	now := time.Now().UTC()
+	lease := store.OrchestrationDeliveryLease{
+		ScopeKey:        request.ScopeKey,
+		TargetRole:      request.TargetRole,
+		HolderMonitorID: request.HolderMonitorID,
+		FencingToken:    request.FencingToken,
+	}
+	switch strings.TrimSpace(request.Operation) {
+	case "acquire":
+		acquiredLease, acquired, err := s.store.AcquireOrchestrationDeliveryLease(r.Context(), request.ScopeKey, request.TargetRole, request.HolderMonitorID, now)
+		if err != nil {
+			writeOrchestrationDeliveryError(w, err)
+			return
+		}
+		response := orchestrationDeliveryResponse{Acquired: acquired, Lease: &acquiredLease}
+		if acquiredLease.ScopeKey == "" {
+			response.Lease = nil
+		}
+		writeJSON(w, http.StatusOK, response)
+		return
+	case "reserve":
+		receipt, claimed, err := s.store.ReserveOrchestrationDelivery(r.Context(), lease, request.DeliveryKey, request.Generation, now)
+		if err != nil {
+			writeOrchestrationDeliveryError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, orchestrationDeliveryResponse{Claimed: claimed, Status: receipt.Status, Receipt: &receipt})
+		return
+	case "accepted", "accept":
+		if err := s.store.AcceptOrchestrationDelivery(r.Context(), lease, request.DeliveryKey, request.Generation, now); err != nil {
+			writeOrchestrationDeliveryError(w, err)
+			return
+		}
+		s.writeOrchestrationDeliveryReceipt(w, r, lease.ScopeKey, request.DeliveryKey, request.Generation, store.OrchestrationDeliveryReceiptAccepted)
+		return
+	case "unknown":
+		if err := s.store.MarkOrchestrationDeliveryUnknown(r.Context(), lease, request.DeliveryKey, request.Generation, now); err != nil {
+			writeOrchestrationDeliveryError(w, err)
+			return
+		}
+		s.writeOrchestrationDeliveryReceipt(w, r, lease.ScopeKey, request.DeliveryKey, request.Generation, store.OrchestrationDeliveryReceiptUnknown)
+		return
+	case "release":
+		if err := s.store.ReleaseOrchestrationDelivery(r.Context(), lease, request.DeliveryKey, request.Generation, now); err != nil {
+			writeOrchestrationDeliveryError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, orchestrationDeliveryResponse{Status: "released"})
+		return
+	default:
+		writeError(w, http.StatusBadRequest, "orchestration delivery operation is invalid")
+		return
+	}
+}
+
+func (s *Server) writeOrchestrationDeliveryReceipt(w http.ResponseWriter, r *http.Request, scopeKey, deliveryKey, generation, fallbackStatus string) {
+	receipt, err := s.store.GetOrchestrationDeliveryReceipt(r.Context(), scopeKey, deliveryKey, generation)
+	if errors.Is(err, sql.ErrNoRows) {
+		writeJSON(w, http.StatusOK, orchestrationDeliveryResponse{Status: fallbackStatus})
+		return
+	}
+	if err != nil {
+		writeOrchestrationDeliveryError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, orchestrationDeliveryResponse{Status: receipt.Status, Receipt: &receipt})
+}
+
+func writeOrchestrationDeliveryError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, store.ErrOrchestrationDeliveryLeaseNotHeld):
+		writeError(w, http.StatusConflict, err.Error())
+	case errors.Is(err, store.ErrOrchestrationDeliveryReceiptNotReserved):
+		writeError(w, http.StatusConflict, err.Error())
+	default:
+		writeError(w, http.StatusBadRequest, err.Error())
+	}
 }
 
 func validateMonitorHealthScope(s *Server, ctx context.Context, health store.MonitorHealth) error {

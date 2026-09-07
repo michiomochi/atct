@@ -26,7 +26,10 @@ const (
 	codexAppServerMessageMaxBytes = 128 << 20
 )
 
-var errCodexAppServerClosed = errors.New(codexAppServerClosedMessage)
+var (
+	errCodexAppServerClosed   = errors.New(codexAppServerClosedMessage)
+	errCodexTurnSubmitUnknown = errors.New("Codex turn submission result is unknown")
+)
 
 type codexWebSocket interface {
 	Read(context.Context) (websocket.MessageType, []byte, error)
@@ -301,6 +304,9 @@ func (c *codexAppServer) call(ctx context.Context, method string, params any, re
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	select {
 	case <-c.done:
 		if err := c.Err(); err != nil {
@@ -347,9 +353,9 @@ func (c *codexAppServer) call(ctx context.Context, method string, params any, re
 	case <-c.done:
 		c.removePending(requestID)
 		if err := c.Err(); err != nil {
-			return err
+			return fmt.Errorf("%w: %v", errCodexTurnSubmitUnknown, err)
 		}
-		return errCodexAppServerClosed
+		return fmt.Errorf("%w: %v", errCodexTurnSubmitUnknown, errCodexAppServerClosed)
 	}
 }
 
@@ -622,7 +628,7 @@ func (c *codexAppServer) StartTurn(ctx context.Context, threadID, text string) (
 		return codexTurn{}, err
 	}
 	if result.Turn.ID == "" {
-		return codexTurn{}, errors.New("turn/start response has no turn ID")
+		return codexTurn{}, fmt.Errorf("%w: turn/start response has no turn ID", errCodexTurnSubmitUnknown)
 	}
 	return result.Turn, nil
 }
@@ -646,6 +652,7 @@ type codexMonitorAction struct {
 	line      string
 	eventName string
 	goalID    string
+	delivery  watchDeliveryHandle
 }
 
 type codexThreadPager interface {
@@ -731,22 +738,73 @@ func (b *codexMonitorBridge) pump(ctx context.Context) error {
 		b.stateMu.Unlock()
 
 		if starter == nil {
+			if action.delivery != nil {
+				_ = action.delivery.release(ctx)
+			}
 			b.stateMu.Lock()
 			b.active = false
 			b.activeAction = nil
 			b.stateMu.Unlock()
 			return errors.New("Codex monitor bridge has no turn starter")
 		}
+		if action.delivery != nil {
+			claimed, err := action.delivery.reserve(ctx)
+			if err != nil {
+				b.stateMu.Lock()
+				b.active = false
+				b.activeAction = nil
+				b.stateMu.Unlock()
+				return err
+			}
+			if !claimed {
+				b.stateMu.Lock()
+				if len(b.queue) > 0 {
+					b.queue = b.queue[1:]
+				}
+				b.active = false
+				b.activeAction = nil
+				b.stateMu.Unlock()
+				continue
+			}
+		}
 		_, err := starter.StartTurn(ctx, threadID, action.line)
 		if err != nil {
+			unknown := errors.Is(err, errCodexTurnSubmitUnknown)
+			b.stateMu.Lock()
+			if b.app != nil && b.app.Err() != nil {
+				b.disabled = true
+				unknown = true
+			}
+			b.stateMu.Unlock()
+			if action.delivery != nil {
+				if unknown {
+					_ = action.delivery.unknown(ctx)
+					b.stateMu.Lock()
+					if len(b.queue) > 0 {
+						b.queue = b.queue[1:]
+					}
+					b.stateMu.Unlock()
+				} else {
+					_ = action.delivery.release(ctx)
+				}
+			}
 			b.stateMu.Lock()
 			b.active = false
 			b.activeAction = nil
-			if b.app != nil && b.app.Err() != nil {
-				b.disabled = true
-			}
 			b.stateMu.Unlock()
 			return err
+		}
+		if action.delivery != nil {
+			if err := action.delivery.accept(ctx); err != nil {
+				b.stateMu.Lock()
+				if len(b.queue) > 0 {
+					b.queue = b.queue[1:]
+				}
+				b.active = false
+				b.activeAction = nil
+				b.stateMu.Unlock()
+				return err
+			}
 		}
 
 		b.stateMu.Lock()
@@ -812,7 +870,7 @@ func (b *codexMonitorBridge) ActionSinkWithContext(ctx context.Context) watchAge
 		// A failed turn submission stays in the bridge queue. The watcher must
 		// keep its SSE delivery state and continue consuming events; a later
 		// idle notification retries the queued item.
-		if err := b.enqueueAction(ctx, codexMonitorAction{line: action.line, eventName: action.eventName, goalID: action.goalID}); err != nil {
+		if err := b.enqueueAction(ctx, codexMonitorAction{line: action.line, eventName: action.eventName, goalID: action.goalID, delivery: action.delivery}); err != nil {
 			b.stateMu.Lock()
 			disabled := b.disabled
 			b.stateMu.Unlock()
@@ -965,6 +1023,10 @@ func runCodexMonitorWatchScoped(ctx context.Context, client *http.Client, urls [
 	if reporter != nil {
 		reporters = append(reporters, reporter)
 	}
+	actionSink := bridge.ActionSinkWithContext(ctx)
+	if reporter != nil {
+		actionSink = newWatchDurableCodexActionSink(newWatchHTTPDeliveryAPI(client, urls), reporter, scope, bridge)
+	}
 	return watchLoopWithEnsureAndProjectIDAndScopeAndActionSink(
 		ctx,
 		codexMonitorWatchOutput{},
@@ -980,7 +1042,7 @@ func runCodexMonitorWatchScoped(ctx context.Context, client *http.Client, urls [
 		},
 		scope,
 		nil,
-		bridge.ActionSinkWithContext(ctx),
+		actionSink,
 		reporters...,
 	)
 }

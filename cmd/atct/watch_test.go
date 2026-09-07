@@ -301,6 +301,7 @@ func TestReconcileWatchScopeReprojectsAppliedGoalApprovalForCommander(t *testing
 	}
 	if got, want := actions, []watchAgentAction{{
 		line: "atct decision approved (decision_id: 71)", eventName: "decision.approved", goalID: "42",
+		deliveryKey: "decision.approved\x00\x00atct decision approved (decision_id: 71)", generation: "default:false",
 	}}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("approval actions = %#v, want %#v", got, want)
 	}
@@ -423,6 +424,8 @@ func TestReconcileWatchScopeRoutesRecoveryToCommanderOncePerGeneration(t *testin
 	}
 	wantActions := []watchAgentAction{{
 		line: strings.TrimSuffix(wantLine, "\n"), eventName: "orchestration.recovery", goalID: "42",
+		deliveryKey: "orchestration.recovery\x00commander\x00monitor_missing\x00goal:42:subcommander:h1", generation: "received-1",
+		targetRole: "commander", scopeKey: "goal:42:subcommander:h1",
 	}}
 	if !reflect.DeepEqual(actions, wantActions) {
 		t.Fatalf("commander recovery actions = %#v, want %#v", actions, wantActions)
