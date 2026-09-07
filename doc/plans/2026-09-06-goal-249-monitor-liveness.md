@@ -388,11 +388,15 @@ integrated, so the recovery/health review remains isolated.
 
 - Create: `cmd/atct/watch_action.go`
 - Create: `cmd/atct/watch_action_test.go`
-- Modify: `cmd/atct/watch.go:emitWatchDecisionWithStateAndSinks,writeWatchLineWithActionSink`
+- Modify: `cmd/atct/main.go:cliConfig, watch flag parsing, watch dispatch`
+- Modify: `cmd/atct/watch.go:runWatch, emitWatchDecisionWithStateAndSinks, writeWatchLineWithActionSink`
 - Modify: `cmd/atct/codex_monitor.go:LineSinkWithContext,ActionSinkWithContext,isCodexMonitorActionLine`
 - Modify: `cmd/atct/codex_monitor_supervisor.go:codexMonitorWatchOutput.Write`
+- Modify: `skills/start/SKILL.md:Claude Code Monitor command only`
 - Test: `cmd/atct/watch_action_test.go`
 - Test: `cmd/atct/codex_monitor_test.go`
+- Test: `cmd/atct/watch_test.go`
+- Test: `tests/wrapper_test.bash`
 
 **Interfaces:**
 
@@ -405,16 +409,33 @@ func selectWatchAgentAction(line, eventName string, decision watchDecision) (wat
 
 type watchRawLineSink func(string) error
 type watchAgentActionSink func(watchAgentAction) error
+
+func watchLoopWithEnsureAndProjectIDAndScopeAndActionSink(
+	ctx context.Context, out io.Writer, client *http.Client, retry time.Duration,
+	snapshot watchSnapshotFunc, ensure watchEnsureFunc, projectID func() string,
+	scope watchScope, raw watchRawLineSink, action watchAgentActionSink,
+	reporters ...watchHealthSink,
+) error
 ```
 
 `selectWatchAgentAction` is called only after `formatWatchDecision` and its
 existing state/delivery-generation deduplication have selected one output.
 Neither function mutates delivery maps, queue state, or `watchScopeFilter`.
-`runWatch` and `codexMonitorWatchOutput` keep a `watchRawLineSink` only for
-stdout diagnostics. `ActionSinkWithContext` is a `watchAgentActionSink`: it
+Plain `runWatch` and `codexMonitorWatchOutput` keep a `watchRawLineSink` only
+for stdout diagnostics. `ActionSinkWithContext(ctx) watchAgentActionSink`
 accepts typed selector output and converts it once to `codexMonitorAction`.
 `LineSinkWithContext` remains `watchRawLineSink` and is never a selector or an
 action entrypoint.
+
+Decision 705 selects a dedicated entrypoint, not a guessed stream contract:
+plain `atct watch` preserves human diagnostic stdout; `atct watch --monitor`
+emits only selected `watchAgentAction` lines for the attached Claude Monitor.
+The CLI flag is valid with exactly one existing selector (`-goal` or
+`-project`). `runWatch` constructs a `monitorActionWriter` adapter implementing
+`watchAgentActionSink`; it receives the typed selector result exactly once.
+Reconnect/ensure/keepalive/registration/unknown diagnostics reach neither this
+writer nor Claude's Monitor and remain observable through plain watch output and
+the existing monitor-health API.
 
 - [ ] **Step 1: Add failing membership parity tests**
 
@@ -437,8 +458,14 @@ func TestClaudeAndCodexAgentActionParity(t *testing.T) {
 }
 
 func TestClaudeDiagnosticsStayOnStdoutNotActionSink(t *testing.T) {
-	// Keepalive/reconnect/unknown raw output is observable diagnostic stdout but
-	// reaches neither adapter action sink.
+	// In --monitor mode, selected action writes once to monitorActionWriter;
+	// keepalive/reconnect/unknown raw text writes nowhere in that process. In
+	// plain mode, the same diagnostics preserve existing human stdout behavior.
+}
+
+func TestWatchMonitorModeRejectsUnselectedLines(t *testing.T) {
+	// registration/reconnect/keepalive and ordinary plan handoff lifecycle rows
+	// never reach monitorActionWriter, while the fixed true baseline rows do.
 }
 ```
 
@@ -466,6 +493,30 @@ construct one selector result, and send only that typed result to `runWatch`'s
 Claude action sink and Codex `ActionSinkWithContext`. Do not move or alter
 `watchDeliveryKey`, `watchDetectionDeliveryKey`, wakeup content comparison,
 `deliveryGeneration`, or `pruneQueuedApprovalsLocked`.
+
+- [ ] **Step 3a: Add the Claude Monitor-only entrypoint without altering plain watch**
+
+Add `--monitor` only to the `watch` CLI flags. Thread `monitor bool` into
+`runWatch` and its testable constructor. Plain mode keeps `os.Stdout` as the
+human writer. Monitor mode routes only a true `watchAgentAction` through a
+`monitorActionWriter watchAgentActionSink`; do not invoke the raw sink or print
+diagnostics in this mode. `skills/start/SKILL.md` changes only the Claude
+Monitor commands to `atct watch --monitor -goal <goal_id>` and `--monitor
+-project`. Before editing that skill, use `ai-config`, then
+`superpowers:writing-skills` and its TDD prerequisite: run RED pressure
+scenarios for (a) an agent choosing plain watch because stdout is convenient,
+and (b) an agent treating a reconnect diagnostic as an action; add the minimal
+command/boundary text; rerun the same scenarios GREEN and retain raw evidence.
+
+- [ ] **Step 3b: Run boundary and attached-Monitor verification separately**
+
+Run Go writer-boundary tests for plain and `--monitor` modes plus the fixed
+Claude/Codex typed parity table. Then, in Claude Code, attach one persistent
+Monitor to `atct watch --monitor -goal <goal_id>` and inject one selected
+baseline sentinel and one reconnect/keepalive diagnostic sentinel through the
+test seam. Record the raw Monitor delivery: the selected sentinel appears once;
+the diagnostic does not appear. This attached-Monitor evidence is mandatory and
+is not replaced by Go tests.
 
 - [ ] **Step 4: Run selector, bridge, and preservation regressions**
 

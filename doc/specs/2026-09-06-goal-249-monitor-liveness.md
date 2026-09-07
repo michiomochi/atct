@@ -303,6 +303,46 @@ selector result rather than a local prefix policy. The structured
 `codexMonitorAction` queue, `deliveryGeneration`, and stale queued-approval
 pruning on `goal.handoff.receive` remain unchanged.
 
+### Claude Monitor entrypoint (Decision 705)
+
+Decision 705 deliberately rejects a stdout/stderr capture assumption. The
+Claude-specific entrypoint is therefore `atct watch --monitor` (with the
+existing `-goal` or `-project` selector), while plain `atct watch` retains its
+existing human-readable stdout contract unchanged. `skills/start/SKILL.md` must
+attach Claude's persistent Monitor to `atct watch --monitor -goal <goal_id>` or
+`atct watch --monitor -project`, never to the plain command.
+
+`runWatch` receives two writers: the existing `humanWriter` for plain mode and
+a `monitorActionWriter` for monitor mode. After formatting and all existing
+deduplication, `selectWatchAgentAction` returns one typed value. In monitor
+mode that value is serialized exactly once to `monitorActionWriter`; non-action
+lines—including registration/roster output, reconnect, ensure, keepalive, and
+unknown raw diagnostics—are not written to the Monitor process at all. They
+remain on plain-watch human stdout; health/recovery state remains observable via
+the existing Goal249 monitor-health HTTP read, without manufacturing agent
+actions. There is no stdout-plus-sink duplicate delivery.
+
+```
+watchDecision -> format/dedup -> selectWatchAgentAction
+                                  | true
+             Claude --monitor: monitorActionWriter <- watchAgentAction
+             Codex monitor: ActionSinkWithContext  <- same watchAgentAction
+                                  | false
+             no agent delivery; diagnostics stay plain-watch stdout / health
+```
+
+The exact Go seam is `type watchAgentActionSink func(watchAgentAction) error`;
+`watchLoopWithEnsureAndProjectIDAndScopeAndActionSink` changes its final action
+parameter from `func(codexMonitorAction) error` to that type. The Claude
+`monitorActionWriter` adapter and Codex `ActionSinkWithContext(ctx)
+watchAgentActionSink` implement the identical type. `type watchRawLineSink
+func(string) error` remains diagnostic
+only and `LineSinkWithContext` cannot classify it. Go tests prove writer
+boundaries and both typed consumers; a separate Claude attached-Monitor probe
+is mandatory after implementation and records that only a selected sentinel is
+delivered while a diagnostic sentinel is absent. It validates the actual
+harness, not a Go unit-test substitute.
+
 For every row in the frozen baseline plus diagnostics, keepalives, and unknown
 raw input, the Claude agent-action adapter and Codex adapter must receive
 identical action membership and exact line text. Claude diagnostic stdout is
