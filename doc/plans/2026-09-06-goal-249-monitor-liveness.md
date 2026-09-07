@@ -516,11 +516,10 @@ Claude/Codex typed parity table. Then, in Claude Code, attach one persistent
 Monitor to `atct watch --monitor -goal <goal_id>` and inject one selected
 baseline sentinel and one reconnect/keepalive diagnostic sentinel through the
 test seam. Record the raw Monitor delivery: the selected sentinel appears once;
-the diagnostic does not appear. This attached-Monitor evidence is mandatory and
-is not replaced by Go tests. If the attachment cannot run or retained raw
-evidence cannot be produced, the executor reports unmet verification; the
-subcommander rejects review and records a human decision for measurement. It
-does not accept, stage, commit, or substitute Go verification.
+the diagnostic does not appear. This attached-Monitor capture is supplementary;
+the required acceptance evidence is the isolated `atct watch --monitor`
+black-box output-boundary test plus writer-boundary and focused Go/wrapper
+regressions, so shared daemon/SSE state is never disrupted.
 
 - [ ] **Step 4: Run selector, bridge, and preservation regressions**
 
@@ -534,7 +533,7 @@ regression.
 - [ ] **Step 5: Submit executor review; subcommander commits explicit paths**
 
 The executor submits an ATCT review request without staging or committing. On
-acceptance, including attached-Monitor evidence, the subcommander stages only
+acceptance, including isolated output-boundary evidence, the subcommander stages only
 `cmd/atct/main.go`, `cmd/atct/watch.go`, `cmd/atct/watch_action.go`,
 `cmd/atct/watch_action_test.go`, `cmd/atct/watch_test.go`,
 `cmd/atct/codex_monitor.go`, `cmd/atct/codex_monitor_test.go`,

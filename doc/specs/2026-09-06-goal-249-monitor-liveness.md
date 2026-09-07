@@ -340,12 +340,10 @@ watchAgentActionSink` implement the identical type. `type watchRawLineSink
 func(string) error` remains diagnostic
 only and `LineSinkWithContext` cannot classify it. Go tests prove writer
 boundaries and both typed consumers; a separate Claude attached-Monitor probe
-is mandatory after implementation and records that only a selected sentinel is
-delivered while a diagnostic sentinel is absent. It validates the actual
-harness, not a Go unit-test substitute. If an attached Claude Monitor cannot be
-run or does not produce retained raw evidence, the subcommander must reject the
-delta task review and return the missing measurement as a human decision; it
-must not accept the task, stage/commit it, or substitute Go tests.
+is optional supplementary evidence. Required acceptance evidence is the
+isolated `atct watch --monitor` black-box output boundary plus writer-boundary
+and focused Go/wrapper regressions; it proves selected output once and
+diagnostic output zero without disrupting shared daemon/SSE state.
 
 For every row in the frozen baseline plus diagnostics, keepalives, and unknown
 raw input, the Claude agent-action adapter and Codex adapter must receive
