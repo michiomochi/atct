@@ -23,10 +23,13 @@ the tools are available.
 
 ## Claude Code: attach the Monitor
 
-After identifying the session, attach a role-appropriate `atct watch` Monitor
-and keep its id.
+After identifying the session, attach a role-appropriate Claude Monitor using
+the monitor-only `atct watch` entrypoint and keep its id.
 
-- Commander: `atct watch -project`; subcommander: `atct watch -goal <goal_id>`.
+- Commander: `atct watch --monitor -project`; subcommander: `atct watch --monitor -goal <goal_id>`.
+- Plain `atct watch` is for human diagnostics; it is not the Claude action
+  channel. Reconnect, keepalive, and ensure diagnostics are never agent actions
+  and must not be forwarded to the Monitor.
 - Keep the session's Monitor; do not attach a second. Two Monitors in one
   session emit the same answer twice.
 - `atct watch` stops an existing watch for the same scope at startup.

@@ -1566,6 +1566,15 @@ test_start_documents_liveness_authority_boundary() {
   assert_file_contains 'submits the task for review; it does not commit' "$start_skill"
 }
 
+test_start_uses_monitor_watch_for_claude_actions() {
+  local start_skill="$REPO_ROOT/skills/start/SKILL.md"
+
+  assert_file_contains 'atct watch --monitor -goal <goal_id>' "$start_skill"
+  assert_file_contains 'atct watch --monitor -project' "$start_skill"
+  assert_file_contains 'Plain `atct watch` is for human diagnostics' "$start_skill"
+  assert_file_contains 'Reconnect, keepalive, and ensure diagnostics are never agent actions' "$start_skill"
+}
+
 test_readme_documents_liveness_contract() {
   local readme="$REPO_ROOT/README.md"
 
@@ -2156,6 +2165,7 @@ test_start_does_not_branch_on_session_attachment
 test_start_does_not_duplicate_delegated_worker_preamble
 test_start_keeps_monitor_persistence_requirement
 test_start_documents_liveness_authority_boundary
+test_start_uses_monitor_watch_for_claude_actions
 test_readme_documents_liveness_contract
 test_goal_handoff_watch_contract_is_explicit
 test_goal_handoff_watch_contract_omits_unsafe_variants

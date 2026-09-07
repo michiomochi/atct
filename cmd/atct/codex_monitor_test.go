@@ -294,40 +294,48 @@ func TestCodexAppServerAcceptsLargeThreadListResponse(t *testing.T) {
 }
 
 func TestCodexMonitorActionLineAdmitsFormattedTaskActions(t *testing.T) {
-	for _, line := range []string{
-		"atct handoff reported: task 846 (handoff handoff-846): verified",
-		"atct handoff yielded: task 846",
-		"atct detection: task 846 has a stale claim",
+	for _, tc := range []struct {
+		line      string
+		eventName string
+		decision  watchDecision
+	}{
+		{line: "atct handoff reported: task 846 (handoff handoff-846): verified", eventName: "handoff_reported", decision: watchDecision{TaskID: "846", HandoffID: "handoff-846"}},
+		{line: "atct handoff yielded: task 846", eventName: "handoff_yielded", decision: watchDecision{TaskID: "846"}},
+		{line: "atct detection: task 846 has a stale claim", eventName: "detection.claim_stale", decision: watchDecision{TaskID: "846"}},
 	} {
-		if !isCodexMonitorActionLine(line) {
-			t.Fatalf("task transition action line rejected: %q", line)
+		if _, ok := selectWatchAgentAction(tc.line, tc.eventName, tc.decision); !ok {
+			t.Fatalf("task transition action line rejected: %q", tc.line)
 		}
 	}
 }
 
 func TestCodexMonitorActionLineAdmitsCanonicalHandoffLifecycle(t *testing.T) {
-	for _, line := range []string{
-		"atct task handoff requested (task_id: 951, handoff_id: task-951)",
-		"atct task handoff received (task_id: 951, handoff_id: task-951)",
-		"atct task handoff review requested (task_id: 951, handoff_id: task-951)",
-		"atct task handoff review received (task_id: 951, handoff_id: task-951)",
-		"atct task handoff review rejected (task_id: 951, handoff_id: task-951)",
-		"atct task handoff completed (task_id: 951, handoff_id: task-951)",
-		"atct goal handoff requested (goal_id: 225, handoff_id: goal-225)",
-		"atct goal handoff received (goal_id: 225, handoff_id: goal-225)",
-		"atct goal handoff review requested (goal_id: 225, handoff_id: goal-225)",
-		"atct goal handoff review received (goal_id: 225, handoff_id: goal-225)",
-		"atct goal handoff review rejected (goal_id: 225, handoff_id: goal-225)",
-		"atct goal handoff completed (goal_id: 225, handoff_id: goal-225)",
+	for _, tc := range []struct {
+		line      string
+		eventName string
+		decision  watchDecision
+	}{
+		{line: "atct task handoff requested (task_id: 951, handoff_id: task-951)", eventName: "task.handoff.request", decision: watchDecision{TaskID: "951", HandoffID: "task-951"}},
+		{line: "atct task handoff received (task_id: 951, handoff_id: task-951)", eventName: "task.handoff.receive", decision: watchDecision{TaskID: "951", HandoffID: "task-951"}},
+		{line: "atct task handoff review requested (task_id: 951, handoff_id: task-951)", eventName: "task.handoff.review.request", decision: watchDecision{TaskID: "951", HandoffID: "task-951"}},
+		{line: "atct task handoff review received (task_id: 951, handoff_id: task-951)", eventName: "task.handoff.review.receive", decision: watchDecision{TaskID: "951", HandoffID: "task-951"}},
+		{line: "atct task handoff review rejected (task_id: 951, handoff_id: task-951)", eventName: "task.handoff.review.reject", decision: watchDecision{TaskID: "951", HandoffID: "task-951"}},
+		{line: "atct task handoff completed (task_id: 951, handoff_id: task-951)", eventName: "task.handoff.complete", decision: watchDecision{TaskID: "951", HandoffID: "task-951"}},
+		{line: "atct goal handoff requested (goal_id: 225, handoff_id: goal-225)", eventName: "goal.handoff.request", decision: watchDecision{GoalID: "225", HandoffID: "goal-225"}},
+		{line: "atct goal handoff received (goal_id: 225, handoff_id: goal-225)", eventName: "goal.handoff.receive", decision: watchDecision{GoalID: "225", HandoffID: "goal-225"}},
+		{line: "atct goal handoff review requested (goal_id: 225, handoff_id: goal-225)", eventName: "goal.handoff.review.request", decision: watchDecision{GoalID: "225", HandoffID: "goal-225"}},
+		{line: "atct goal handoff review received (goal_id: 225, handoff_id: goal-225)", eventName: "goal.handoff.review.receive", decision: watchDecision{GoalID: "225", HandoffID: "goal-225"}},
+		{line: "atct goal handoff review rejected (goal_id: 225, handoff_id: goal-225)", eventName: "goal.handoff.review.reject", decision: watchDecision{GoalID: "225", HandoffID: "goal-225"}},
+		{line: "atct goal handoff completed (goal_id: 225, handoff_id: goal-225)", eventName: "goal.handoff.complete", decision: watchDecision{GoalID: "225", HandoffID: "goal-225"}},
 	} {
-		if !isCodexMonitorActionLine(line) {
-			t.Fatalf("canonical handoff lifecycle action line rejected: %q", line)
+		if _, ok := selectWatchAgentAction(tc.line, tc.eventName, tc.decision); !ok {
+			t.Fatalf("canonical handoff lifecycle action line rejected: %q", tc.line)
 		}
 	}
 }
 
 func TestCodexMonitorActionLineAdmitsLiveness(t *testing.T) {
-	if !isCodexMonitorActionLine("atct monitor liveness: recheck task 812") {
+	if _, ok := selectWatchAgentAction("atct monitor liveness: recheck task 812", "monitor.liveness", watchDecision{TaskID: "812"}); !ok {
 		t.Fatal("liveness action line rejected")
 	}
 }
@@ -338,8 +346,8 @@ func TestCodexScopedLivenessQueuesUntilThreadIsIdle(t *testing.T) {
 	bridge.SetActive(true)
 
 	line := "atct monitor liveness: recheck task 812"
-	if err := bridge.LineSinkWithContext(context.Background())(line); err != nil {
-		t.Fatalf("LineSinkWithContext() error = %v", err)
+	if err := bridge.ActionSinkWithContext(context.Background())(watchAgentAction{line: line, eventName: "monitor.liveness"}); err != nil {
+		t.Fatalf("ActionSinkWithContext() error = %v", err)
 	}
 	if got := starter.callsSnapshot(); len(got) != 0 {
 		t.Fatalf("turn starts while thread active = %v, want none", got)
@@ -958,17 +966,18 @@ func TestReconcileWatchScopeCodexMonitorPrunesApprovalAfterGoalReceive(t *testin
 func TestCodexMonitorEventSinkOnlyReceivesFormattedLines(t *testing.T) {
 	starter := &fakeCodexTurnStarter{}
 	bridge := newCodexMonitorBridge(starter, "thread-1")
-	sink := bridge.LineSink()
+	rawSink := bridge.LineSink()
+	actionSink := bridge.ActionSink()
 	filter := newWatchScopeFilter("")
 	state := make(map[watchDeliveryKey]struct{})
 	lastWakeup := ""
-	if err := emitWatchDecisionWithStateAndSink(io.Discard, "decision.approved", watchDecision{DecisionID: "d1"}, state, &lastWakeup, make(map[watchWakeupDeliveryKey]struct{}), make(map[watchDetectionDeliveryKey]struct{}), sink); err != nil {
+	if err := emitWatchDecisionWithStateAndSinks(io.Discard, "decision.approved", watchDecision{DecisionID: "d1"}, state, &lastWakeup, make(map[watchWakeupDeliveryKey]struct{}), make(map[watchDetectionDeliveryKey]struct{}), rawSink, actionSink); err != nil {
 		t.Fatalf("emit approved: %v", err)
 	}
 	if filter.delivers("handoff_yielded", watchDecision{TaskID: "task-1"}) {
 		t.Fatal("project filter delivered task event, want false")
 	}
-	if err := emitWatchDecisionWithStateAndSink(io.Discard, "keepalive", watchDecision{}, state, &lastWakeup, make(map[watchWakeupDeliveryKey]struct{}), make(map[watchDetectionDeliveryKey]struct{}), sink); err != nil {
+	if err := emitWatchDecisionWithStateAndSinks(io.Discard, "keepalive", watchDecision{}, state, &lastWakeup, make(map[watchWakeupDeliveryKey]struct{}), make(map[watchDetectionDeliveryKey]struct{}), rawSink, actionSink); err != nil {
 		t.Fatalf("emit keepalive: %v", err)
 	}
 	for _, line := range []string{
@@ -976,8 +985,8 @@ func TestCodexMonitorEventSinkOnlyReceivesFormattedLines(t *testing.T) {
 		"atct decision default applied (decision_id: d2)",
 		"atct detection: malformed",
 	} {
-		if err := sink(line); err != nil {
-			t.Fatalf("sink(%q): %v", line, err)
+		if err := rawSink(line); err != nil {
+			t.Fatalf("rawSink(%q): %v", line, err)
 		}
 	}
 	if got := bridge.QueueLen(); got != 0 {
@@ -1008,7 +1017,7 @@ func TestReconcileWatchScopeSendsAppliedApprovalToCodexMonitorBridge(t *testing.
 		context.Background(), client, "http://daemon", watchScope{ProjectID: "1"}, io.Discard,
 		make(map[watchDeliveryKey]struct{}), &lastWakeupContent,
 		make(map[watchWakeupDeliveryKey]struct{}), make(map[watchDetectionDeliveryKey]struct{}),
-		newWatchScopeFilter(""), bridge.LineSink(),
+		newWatchScopeFilter(""), bridge.LineSink(), bridge.ActionSink(),
 	)
 	if err != nil {
 		t.Fatalf("reconcileWatchScope: %v", err)

@@ -392,6 +392,10 @@ func normalWatchScope(projectID, goalID string) watchScope {
 }
 
 func runWatch(dir, goalID string) error {
+	return runWatchWithOptions(dir, goalID, false, false)
+}
+
+func runWatchWithOptions(dir, goalID string, projectScope, monitor bool) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	cwd, err := os.Getwd()
@@ -412,6 +416,14 @@ func runWatch(dir, goalID string) error {
 	}
 
 	watchRegistrationScope := daemonctl.WatchScope{ProjectID: projectID, GoalID: goalID}
+	humanOutput := io.Writer(os.Stdout)
+	watchOutput := humanOutput
+	var actionSink watchAgentActionSink
+	if monitor {
+		watchOutput = io.Discard
+		writer := monitorActionWriter{writer: os.Stdout}
+		actionSink = writer.Sink
+	}
 	cleanup, err := daemonctl.RegisterWatchScoped(dir, watchRegistrationScope)
 	if err != nil {
 		return fmt.Errorf("register watch: %w", err)
@@ -428,7 +440,7 @@ func runWatch(dir, goalID string) error {
 			if result.RemovedStale == 1 {
 				word = "registration"
 			}
-			if _, err := fmt.Fprintf(os.Stdout, "atct watch: removed %d stale watch %s\n", result.RemovedStale, word); err != nil {
+			if _, err := fmt.Fprintf(watchOutput, "atct watch: removed %d stale watch %s\n", result.RemovedStale, word); err != nil {
 				return fmt.Errorf("write watch reap report: %w", err)
 			}
 		}
@@ -445,12 +457,12 @@ func runWatch(dir, goalID string) error {
 				}
 				details = append(details, fmt.Sprintf("pid %d, %s", registration.PID, watchScope))
 			}
-			if _, err := fmt.Fprintf(os.Stdout, "atct watch: stopped %d duplicate %s (%s)\n", len(result.Stopped), word, strings.Join(details, ", ")); err != nil {
+			if _, err := fmt.Fprintf(watchOutput, "atct watch: stopped %d duplicate %s (%s)\n", len(result.Stopped), word, strings.Join(details, ", ")); err != nil {
 				return fmt.Errorf("write watch reap report: %w", err)
 			}
 		}
 		for _, pid := range result.Failed {
-			if _, err := fmt.Fprintf(os.Stdout, "atct watch: duplicate watch pid %d did not exit within 5s\n", pid); err != nil {
+			if _, err := fmt.Fprintf(watchOutput, "atct watch: duplicate watch pid %d did not exit within 5s\n", pid); err != nil {
 				return fmt.Errorf("write watch reap report: %w", err)
 			}
 		}
@@ -462,12 +474,15 @@ func runWatch(dir, goalID string) error {
 					liveRegistrations = append(liveRegistrations, registration)
 				}
 			}
-			if _, err := fmt.Fprintln(os.Stdout, daemonctl.WatchRosterLine(liveRegistrations, projectID)); err != nil {
+			if _, err := fmt.Fprintln(watchOutput, daemonctl.WatchRosterLine(liveRegistrations, projectID)); err != nil {
 				return fmt.Errorf("write watch roster: %w", err)
 			}
 		}
 	}
 
+	if projectScope {
+		goalID = ""
+	}
 	scope := normalWatchScope(projectID, goalID)
 	snapshot, projectIDGetter := watchSnapshotWithProject(client, baseURLs, cwd)
 	reporter := newWatchHealthReporter(client, baseURLs, cwd, scope)
@@ -475,9 +490,9 @@ func runWatch(dir, goalID string) error {
 	if reporter != nil {
 		reporters = append(reporters, reporter)
 	}
-	return watchLoopWithEnsureAndProjectIDAndScopeAndSinkAndCursor(ctx, os.Stdout, client, watchReconnectInterval, snapshot, func() error {
+	return watchLoopWithEnsureAndProjectIDAndScopeAndActionSink(ctx, watchOutput, client, watchReconnectInterval, snapshot, func() error {
 		return ensureWatchDaemon(dir)
-	}, projectIDGetter, scope, nil, "", reporters...)
+	}, projectIDGetter, scope, nil, actionSink, reporters...)
 }
 
 func ensureWatchDaemon(dir string) error {
@@ -531,22 +546,22 @@ func watchLoopWithEnsureAndProjectIDAndGoal(ctx context.Context, out io.Writer, 
 	return watchLoopWithEnsureAndProjectIDAndGoalAndSink(ctx, out, client, retryInterval, snapshot, ensure, projectID, goalID, nil)
 }
 
-func watchLoopWithEnsureAndProjectIDAndGoalAndSink(ctx context.Context, out io.Writer, client *http.Client, retryInterval time.Duration, snapshot watchSnapshotFunc, ensure watchEnsureFunc, projectID func() string, goalID string, sink func(string) error) error {
+func watchLoopWithEnsureAndProjectIDAndGoalAndSink(ctx context.Context, out io.Writer, client *http.Client, retryInterval time.Duration, snapshot watchSnapshotFunc, ensure watchEnsureFunc, projectID func() string, goalID string, sink watchRawLineSink) error {
 	return watchLoopWithEnsureAndProjectIDAndScopeAndSink(ctx, out, client, retryInterval, snapshot, ensure, projectID, watchScope{GoalID: goalID}, sink)
 }
 
-func watchLoopWithEnsureAndProjectIDAndScopeAndSink(ctx context.Context, out io.Writer, client *http.Client, retryInterval time.Duration, snapshot watchSnapshotFunc, ensure watchEnsureFunc, projectID func() string, scope watchScope, sink func(string) error) error {
+func watchLoopWithEnsureAndProjectIDAndScopeAndSink(ctx context.Context, out io.Writer, client *http.Client, retryInterval time.Duration, snapshot watchSnapshotFunc, ensure watchEnsureFunc, projectID func() string, scope watchScope, sink watchRawLineSink) error {
 	return watchLoopWithEnsureAndProjectIDAndScopeAndSinkAndCursor(ctx, out, client, retryInterval, snapshot, ensure, projectID, scope, sink, "")
 }
 
 // watchLoopWithEnsureAndProjectIDAndScopeAndSinkAndCursor keeps the old
 // call shape for the Codex monitor bridge. The final argument is ignored:
 // watch delivery no longer has a durable cursor.
-func watchLoopWithEnsureAndProjectIDAndScopeAndSinkAndCursor(ctx context.Context, out io.Writer, client *http.Client, retryInterval time.Duration, snapshot watchSnapshotFunc, ensure watchEnsureFunc, projectID func() string, scope watchScope, sink func(string) error, _ string, reporters ...watchHealthSink) error {
+func watchLoopWithEnsureAndProjectIDAndScopeAndSinkAndCursor(ctx context.Context, out io.Writer, client *http.Client, retryInterval time.Duration, snapshot watchSnapshotFunc, ensure watchEnsureFunc, projectID func() string, scope watchScope, sink watchRawLineSink, _ string, reporters ...watchHealthSink) error {
 	return watchLoopWithEnsureAndProjectIDAndScopeAndActionSink(ctx, out, client, retryInterval, snapshot, ensure, projectID, scope, sink, nil, reporters...)
 }
 
-func watchLoopWithEnsureAndProjectIDAndScopeAndActionSink(ctx context.Context, out io.Writer, client *http.Client, retryInterval time.Duration, snapshot watchSnapshotFunc, ensure watchEnsureFunc, projectID func() string, scope watchScope, sink func(string) error, actionSink func(codexMonitorAction) error, reporters ...watchHealthSink) error {
+func watchLoopWithEnsureAndProjectIDAndScopeAndActionSink(ctx context.Context, out io.Writer, client *http.Client, retryInterval time.Duration, snapshot watchSnapshotFunc, ensure watchEnsureFunc, projectID func() string, scope watchScope, sink watchRawLineSink, actionSink watchAgentActionSink, reporters ...watchHealthSink) error {
 	if retryInterval <= 0 {
 		retryInterval = watchReconnectInterval
 	}
@@ -1133,16 +1148,19 @@ type watchReconciliation struct {
 	TaskHandoffs []watchReconciliationHandoff `json:"task_handoffs"`
 }
 
-func watchActionSinkFromArgs(args ...any) func(codexMonitorAction) error {
+func watchActionSinkFromArgs(args ...any) watchAgentActionSink {
 	for _, arg := range args {
-		if actionSink, ok := arg.(func(codexMonitorAction) error); ok {
+		if actionSink, ok := arg.(watchAgentActionSink); ok {
 			return actionSink
+		}
+		if actionSink, ok := arg.(func(watchAgentAction) error); ok {
+			return watchAgentActionSink(actionSink)
 		}
 	}
 	return nil
 }
 
-func reconcileWatchScope(ctx context.Context, client *http.Client, baseURL string, scope watchScope, out io.Writer, delivered map[watchDeliveryKey]struct{}, lastWakeupContent *string, wakeupDiscrepancyDelivered map[watchWakeupDeliveryKey]struct{}, detectionDelivered map[watchDetectionDeliveryKey]struct{}, scopeFilter *watchScopeFilter, sink func(string) error, args ...any) error {
+func reconcileWatchScope(ctx context.Context, client *http.Client, baseURL string, scope watchScope, out io.Writer, delivered map[watchDeliveryKey]struct{}, lastWakeupContent *string, wakeupDiscrepancyDelivered map[watchWakeupDeliveryKey]struct{}, detectionDelivered map[watchDetectionDeliveryKey]struct{}, scopeFilter *watchScopeFilter, sink watchRawLineSink, args ...any) error {
 	actionSink := watchActionSinkFromArgs(args...)
 	var latestReconciliation *watchReconciliation
 	for _, arg := range args {
@@ -1283,7 +1301,7 @@ func emitWatchDecisionWithStateAndSink(out io.Writer, eventName string, decision
 	return emitWatchDecisionWithStateAndSinks(out, eventName, decision, delivered, lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered, sink, nil)
 }
 
-func emitWatchDecisionWithStateAndSinks(out io.Writer, eventName string, decision watchDecision, delivered map[watchDeliveryKey]struct{}, lastWakeupContent *string, wakeupDiscrepancyDelivered map[watchWakeupDeliveryKey]struct{}, detectionDelivered map[watchDetectionDeliveryKey]struct{}, sink func(string) error, actionSink func(codexMonitorAction) error) error {
+func emitWatchDecisionWithStateAndSinks(out io.Writer, eventName string, decision watchDecision, delivered map[watchDeliveryKey]struct{}, lastWakeupContent *string, wakeupDiscrepancyDelivered map[watchWakeupDeliveryKey]struct{}, detectionDelivered map[watchDetectionDeliveryKey]struct{}, sink watchRawLineSink, actionSink watchAgentActionSink) error {
 	line, ok := formatWatchDecision(eventName, decision)
 	if !ok {
 		return nil
@@ -1396,23 +1414,23 @@ func emitWatchDecisionWithStateAndSinks(out io.Writer, eventName string, decisio
 	return nil
 }
 
-func writeWatchDecisionLine(out io.Writer, eventName string, decision watchDecision, sink func(string) error, actionSinks ...func(codexMonitorAction) error) error {
+func writeWatchDecisionLine(out io.Writer, eventName string, decision watchDecision, sink watchRawLineSink, actionSinks ...watchAgentActionSink) error {
 	line, ok := formatWatchDecision(eventName, decision)
 	if !ok {
 		return nil
 	}
-	var actionSink func(codexMonitorAction) error
+	var actionSink watchAgentActionSink
 	if len(actionSinks) > 0 {
 		actionSink = actionSinks[0]
 	}
 	return writeWatchLineWithActionSink(out, line, eventName, decision, sink, actionSink)
 }
 
-func writeWatchLine(out io.Writer, line string, sink func(string) error) error {
+func writeWatchLine(out io.Writer, line string, sink watchRawLineSink) error {
 	return writeWatchLineWithActionSink(out, line, "", watchDecision{}, sink, nil)
 }
 
-func writeWatchLineWithActionSink(out io.Writer, line, eventName string, decision watchDecision, sink func(string) error, actionSink func(codexMonitorAction) error) error {
+func writeWatchLineWithActionSink(out io.Writer, line, eventName string, decision watchDecision, sink watchRawLineSink, actionSink watchAgentActionSink) error {
 	if _, err := fmt.Fprintln(out, line); err != nil {
 		return err
 	}
@@ -1422,8 +1440,10 @@ func writeWatchLineWithActionSink(out io.Writer, line, eventName string, decisio
 		}
 	}
 	if actionSink != nil {
-		if err := actionSink(codexMonitorAction{line: line, eventName: eventName, goalID: decision.GoalID}); err != nil {
-			return &watchSinkError{err: err}
+		if action, ok := selectWatchAgentAction(line, eventName, decision); ok {
+			if err := actionSink(action); err != nil {
+				return &watchSinkError{err: err}
+			}
 		}
 	}
 	return nil

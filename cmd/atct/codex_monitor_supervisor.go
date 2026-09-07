@@ -54,16 +54,15 @@ type codexMonitorDeps struct {
 	stderr           io.Writer
 }
 
-// codexMonitorWatchOutput discards action lines forwarded through the sink and
-// watcher diagnostics emitted while the watch loop reconnects or recovers the
-// daemon. Those diagnostics are nonfatal to the Codex monitor.
+// codexMonitorWatchOutput discards watcher diagnostics emitted while the watch
+// loop reconnects or recovers the daemon. Agent actions use the typed sink and
+// are not written through this diagnostic output. Diagnostics are nonfatal to
+// the Codex monitor.
 type codexMonitorWatchOutput struct{}
 
 func (codexMonitorWatchOutput) Write(p []byte) (int, error) {
-	line := strings.TrimSpace(string(p))
-	if line == "" || isCodexMonitorActionLine(line) {
-		return len(p), nil
-	}
+	// The watcher sends typed actions through its action sink. This writer is
+	// diagnostics-only and must never classify raw text as an agent action.
 	return len(p), nil
 }
 

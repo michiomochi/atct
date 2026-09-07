@@ -1984,3 +1984,56 @@ func TestEmitWatchDetectionRejectsMissingTarget(t *testing.T) {
 		t.Fatalf("output = %q, want nothing", output.String())
 	}
 }
+
+func TestParseArgsWatchMonitorRequiresOneExistingSelector(t *testing.T) {
+	tests := []struct {
+		name        string
+		args        []string
+		wantMonitor bool
+		wantProject bool
+		wantGoal    string
+		wantError   bool
+	}{
+		{name: "goal selector", args: []string{"watch", "--monitor", "-goal", "249"}, wantMonitor: true, wantGoal: "249"},
+		{name: "project selector", args: []string{"watch", "--monitor", "-project"}, wantMonitor: true, wantProject: true},
+		{name: "monitor without selector", args: []string{"watch", "--monitor"}, wantError: true},
+		{name: "two selectors", args: []string{"watch", "--monitor", "-goal", "249", "-project"}, wantError: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg, err := parseArgs(tt.args)
+			if (err != nil) != tt.wantError {
+				t.Fatalf("parseArgs(%q) error = %v, wantError %v", tt.args, err, tt.wantError)
+			}
+			if tt.wantError {
+				return
+			}
+			if cfg.watchMonitor != tt.wantMonitor || cfg.watchProjectScope != tt.wantProject || cfg.watchGoalID != tt.wantGoal {
+				t.Fatalf("watch config = monitor %v project %v goal %q", cfg.watchMonitor, cfg.watchProjectScope, cfg.watchGoalID)
+			}
+		})
+	}
+}
+
+func TestClaudeMonitorActionWriterExcludesRawDiagnostics(t *testing.T) {
+	var monitor bytes.Buffer
+	var diagnostics []string
+	writer := monitorActionWriter{writer: &monitor}
+	rawSink := watchRawLineSink(func(line string) error {
+		diagnostics = append(diagnostics, line)
+		return nil
+	})
+	decision := watchDecision{DecisionID: "1"}
+	if err := writeWatchLineWithActionSink(io.Discard, "atct decision approved (decision_id: 1)", "decision.approved", decision, rawSink, writer.Sink); err != nil {
+		t.Fatalf("write selected action: %v", err)
+	}
+	if err := writeWatchLineWithActionSink(io.Discard, "atct watch: connection unavailable; reconnecting in 5s", "", watchDecision{}, rawSink, writer.Sink); err != nil {
+		t.Fatalf("write diagnostic: %v", err)
+	}
+	if got, want := monitor.String(), "atct decision approved (decision_id: 1)\n"; got != want {
+		t.Fatalf("monitor output = %q, want %q", got, want)
+	}
+	if got, want := strings.Join(diagnostics, "\n"), "atct decision approved (decision_id: 1)\natct watch: connection unavailable; reconnecting in 5s"; got != want {
+		t.Fatalf("diagnostics = %q, want %q", got, want)
+	}
+}
