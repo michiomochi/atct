@@ -255,32 +255,51 @@ drift; `codexMonitorWatchOutput` repeats the same Codex predicate for output
 suppression.
 
 Introduce a package-local canonical `watchAgentAction` value with the exact
-formatted line, event name, goal ID, and a `deliver` flag. The canonical
-selector takes only the typed canonical notification (`eventName` plus
-`watchDecision`) after `formatWatchDecision`; it is the sole owner of whether
-it is an agent action. Before changing behavior, freeze a complete baseline
-table from every branch of the current `isCodexMonitorActionLine` switch:
-decision answered/approved/rejected; goal created; wakeup; liveness; goal,
-task, and plan handoff request/receive/review request/review receive/review
-reject/complete; handoff reported/yielded; each accepted goal/task detection;
-wakeup discrepancy/evaluate-failed; and every rejected raw case. The new
-selector must have exactly that baseline membership, including the current
-partial task-detection suffix restriction. Additions require a separate
+formatted line, event name, and goal ID. The canonical selector takes only the
+typed canonical notification (`eventName` plus `watchDecision`) after
+`formatWatchDecision`; it is the sole owner of whether it is an agent action.
+Before changing behavior, freeze the current allowlist as an explicit
+event-name/representative-line/membership table, not as prose or a prefix
+switch. Its rows must be exactly these current cases:
+
+| Event/line family | Representative line | Action |
+| --- | --- | --- |
+| Decisions | `atct decision answered (decision_id: 1)`; approved; rejected | yes |
+| Goal creation | `atct goal created (goal_id: 1)` | yes |
+| Wakeup and liveness | `atct wakeup: ...`; `atct monitor liveness: ...` | yes |
+| Goal detection | `atct detection: goal 1 ...` | yes |
+| Task handoff lifecycle | requested; received; completed | yes |
+| Goal handoff lifecycle | requested; received; completed | yes |
+| Report/yield | `atct handoff reported: goal ...`; task; `atct handoff yielded: task ...` | yes |
+| Task/goal/plan *review* lifecycle | review requested; received; rejected | yes |
+| Accepted task detection suffixes | `is doing without a work lock`; `has no handoff request`; `has a stale claim` | yes |
+| Wakeup errors | `atct wakeup discrepancy: ...`; `atct wakeup evaluate failed: ...` | yes |
+| Ordinary plan handoff lifecycle | `atct plan handoff requested`; received; completed | no |
+| Everything else | keepalive, reconnect/ensure diagnostics, unknown raw text, other task-detection suffixes | no |
+
+The table is a frozen compatibility contract: plan request/receive/complete
+lines are explicitly negative rows and must not become actions merely because
+they resemble the admitted plan *review* lines. Additions require a separate
 approved delta. It must preserve `deliveryGeneration` and every pre-selector
 deduplication rule in `emitWatchDecisionWithStateAndSinks`.
 
 The normal watch (Claude) adapter has two deliberately different outputs:
-selected typed actions reach its agent-action sink, while local reconnect,
-ensure, keepalive, and other diagnostics remain diagnostic stdout only. Its
-human-readable stdout behavior is retained; diagnostic stdout must never be
-silently promoted to an agent action. The Codex adapter receives the same typed
-action through `ActionSinkWithContext`; it may queue it while the thread is
-active but must not reimplement classification. `LineSinkWithContext` remains
-only a raw compatibility entrance: it may accept a `watchAgentAction` produced
-by the canonical selector or a trusted canonical event envelope, but it must
-not parse prefixes, classify arbitrary raw strings, or grow its own allowlist.
-Unknown/raw text is diagnostic-only. `codexMonitorWatchOutput` consumes the
-same selector result rather than a local prefix policy. The structured
+`runWatch` supplies a `watchAgentActionSink func(watchAgentAction) error` to
+`watchLoopWithEnsureAndProjectIDAndScopeAndActionSink`; selected typed actions
+reach that sink, while its `watchRawLineSink func(string) error` continues to
+receive human-readable diagnostic stdout. Local reconnect, ensure, keepalive,
+and other diagnostics must never be silently promoted to an agent action.
+
+The Codex adapter receives the same `watchAgentAction` through a typed
+`ActionSinkWithContext(ctx) watchAgentActionSink`; it converts it once to the
+existing structured `codexMonitorAction` queue item and may queue it while the
+thread is active, but must not reimplement classification. By contrast,
+`LineSinkWithContext(ctx) watchRawLineSink` is a legacy raw-compatibility path:
+its `func(string)` input is diagnostic-only and may not classify prefixes or
+enqueue arbitrary strings. A trusted canonical envelope is decoded before this
+boundary into `watchAgentAction`, then sent to `ActionSinkWithContext`; raw text
+never crosses that typed boundary. `codexMonitorWatchOutput` consumes the same
+selector result rather than a local prefix policy. The structured
 `codexMonitorAction` queue, `deliveryGeneration`, and stale queued-approval
 pruning on `goal.handoff.receive` remain unchanged.
 

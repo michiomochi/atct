@@ -402,24 +402,38 @@ type watchAgentAction struct {
 }
 
 func selectWatchAgentAction(line, eventName string, decision watchDecision) (watchAgentAction, bool)
+
+type watchRawLineSink func(string) error
+type watchAgentActionSink func(watchAgentAction) error
 ```
 
 `selectWatchAgentAction` is called only after `formatWatchDecision` and its
 existing state/delivery-generation deduplication have selected one output.
 Neither function mutates delivery maps, queue state, or `watchScopeFilter`.
+`runWatch` and `codexMonitorWatchOutput` keep a `watchRawLineSink` only for
+stdout diagnostics. `ActionSinkWithContext` is a `watchAgentActionSink`: it
+accepts typed selector output and converts it once to `codexMonitorAction`.
+`LineSinkWithContext` remains `watchRawLineSink` and is never a selector or an
+action entrypoint.
 
 - [ ] **Step 1: Add failing membership parity tests**
 
 ```go
 func TestWatchAgentActionSelectorMembership(t *testing.T) {
-	// Exhaustive table copied from every branch of the old Codex prefix switch:
-	// decision states, goal/wakeup/liveness, all goal/task/plan handoff phases,
-	// reported/yielded, accepted detection suffixes, discrepancies, and rejects.
+	// Freeze one table of exact representative event/line rows. True rows are:
+	// decision answered/approved/rejected; goal created; wakeup/liveness; goal
+	// detection; task and goal handoff requested/received/completed;
+	// handoff reported/yielded; task/goal/plan REVIEW requested/received/rejected;
+	// the three admitted task-detection suffixes; wakeup discrepancy/evaluate fail.
+	// False rows include ordinary plan handoff requested/received/completed,
+	// keepalive/reconnect/ensure diagnostics, unknown raw text, and every other
+	// task-detection suffix. Do not add lifecycle names absent from this table.
 }
 
 func TestClaudeAndCodexAgentActionParity(t *testing.T) {
-	// Feed identical typed canonical notifications to the normal watch action
-	// sink and ActionSinkWithContext. Assert equal membership and exact line.
+	// Feed every frozen row's typed canonical notification to runWatch's
+	// watchAgentActionSink and the Codex ActionSinkWithContext. Assert identical
+	// membership and exact line; never feed raw strings to either action sink.
 }
 
 func TestClaudeDiagnosticsStayOnStdoutNotActionSink(t *testing.T) {
@@ -439,13 +453,17 @@ the normal-watch action adapter.
 - [ ] **Step 3: Implement the typed selector and adapters**
 
 Create `watch_action.go` with the typed interface above and one exhaustive
-baseline table copied from the current prefix cases. Replace the Codex prefix
-switch with selector delegation. Change raw `LineSinkWithContext` so it cannot
-classify raw strings: it accepts only a trusted typed canonical action/envelope
-from the watcher and drops unknown raw text. In `writeWatchLineWithActionSink`,
-retain the existing diagnostic stdout write, construct one selector result, and
-send only that typed result to the normal-watch action adapter and Codex
-`ActionSinkWithContext`. Do not move or alter
+event/representative-line/expected-membership baseline table. Copy only the
+current `isCodexMonitorActionLine` true cases into true rows. Ordinary plan
+handoff requested/received/completed are explicit false rows; only plan review
+requested/received/rejected remain true. Replace the Codex prefix switch with
+selector delegation. Keep `LineSinkWithContext(ctx) watchRawLineSink` as raw
+diagnostic compatibility only: it cannot classify, enqueue, or convert raw
+strings. `ActionSinkWithContext(ctx) watchAgentActionSink` alone receives
+selector output and converts it to `codexMonitorAction`. In
+`writeWatchLineWithActionSink`, retain the existing diagnostic stdout write,
+construct one selector result, and send only that typed result to `runWatch`'s
+Claude action sink and Codex `ActionSinkWithContext`. Do not move or alter
 `watchDeliveryKey`, `watchDetectionDeliveryKey`, wakeup content comparison,
 `deliveryGeneration`, or `pruneQueuedApprovalsLocked`.
 
