@@ -1227,6 +1227,91 @@ type watchOrchestrationBlocker struct {
 	Instruction string `json:"instruction"`
 }
 
+type watchOrchestrationReviewWork struct {
+	ReviewWorkID              string `json:"review_work_id"`
+	ProjectID                 int64  `json:"project_id"`
+	GoalID                    int64  `json:"goal_id"`
+	TaskID                    *int64 `json:"task_id"`
+	Kind                      string `json:"kind"`
+	HandoffID                 string `json:"handoff_id"`
+	RequesterSessionID        int64  `json:"requester_session_id"`
+	RequesterScopeKey         string `json:"requester_scope_key"`
+	ExpectedReviewerRole      string `json:"expected_reviewer_role"`
+	ReviewerScopeKey          string `json:"reviewer_scope_key"`
+	ReviewerSessionID         int64  `json:"reviewer_session_id"`
+	State                     string `json:"state"`
+	ReviewRequestedGeneration string `json:"review_requested_generation"`
+	ReviewReceivedGeneration  string `json:"review_received_generation"`
+	SettlementGeneration      string `json:"settlement_generation"`
+	Active                    bool   `json:"active"`
+	ActionRole                string `json:"action_role"`
+	ActionScopeKey            string `json:"action_scope_key"`
+	ActionTaskID              *int64 `json:"action_task_id"`
+	ActionInstruction         string `json:"action_instruction"`
+}
+
+func watchOrchestrationReviewWorkDecision(work store.OrchestrationReviewWork) (watchDecision, bool) {
+	if work.ProjectID <= 0 || work.GoalID <= 0 || strings.TrimSpace(work.ReviewWorkID) == "" || strings.TrimSpace(work.HandoffID) == "" || strings.TrimSpace(work.Kind) == "" {
+		return watchDecision{}, false
+	}
+	decision := watchDecision{
+		ProjectID:  strconv.FormatInt(work.ProjectID, 10),
+		GoalID:     strconv.FormatInt(work.GoalID, 10),
+		HandoffID:  work.HandoffID,
+		SourceID:   work.ReviewWorkID,
+		Condition:  "review_work_" + work.State,
+		Generation: work.ReviewRequestedGeneration,
+	}
+	if work.TaskID != nil {
+		decision.TaskID = strconv.FormatInt(*work.TaskID, 10)
+	}
+	if work.Active {
+		decision.TargetRole = work.ExpectedReviewerRole
+		decision.ScopeKey = work.ReviewerScopeKey
+		switch work.State {
+		case store.OrchestrationReviewWorkStateRequested:
+			decision.Instruction = fmt.Sprintf("%s handoff %s review work is requested; receive it as %s and review it explicitly", work.Kind, work.HandoffID, work.ExpectedReviewerRole)
+		case store.OrchestrationReviewWorkStateReceived:
+			decision.Instruction = fmt.Sprintf("%s handoff %s review work is received; finish the review and explicitly accept or reject it", work.Kind, work.HandoffID)
+		default:
+			return watchDecision{}, false
+		}
+		if work.State == store.OrchestrationReviewWorkStateReceived && work.ReviewReceivedGeneration != "" {
+			decision.Generation = work.ReviewReceivedGeneration
+		}
+	} else {
+		if work.State != store.OrchestrationReviewWorkStateRejected && work.State != store.OrchestrationReviewWorkStateCompleted {
+			return watchDecision{}, false
+		}
+		decision.TargetRole = work.ActionRole
+		decision.ScopeKey = work.ActionScopeKey
+		decision.Instruction = work.ActionInstruction
+		decision.Generation = work.SettlementGeneration
+	}
+	if strings.TrimSpace(decision.TargetRole) == "" || strings.TrimSpace(decision.ScopeKey) == "" || strings.TrimSpace(decision.Generation) == "" || strings.TrimSpace(decision.Instruction) == "" {
+		return watchDecision{}, false
+	}
+	decision.deliveryGeneration = decision.Generation
+	return decision, true
+}
+
+func watchOrchestrationReviewWorkMatches(work store.OrchestrationReviewWork, scope watchScope) bool {
+	decision, ok := watchOrchestrationReviewWorkDecision(work)
+	if !ok || decision.TargetRole != scope.Role || decision.ScopeKey != scope.ScopeKey {
+		return false
+	}
+	if scope.ProjectID != "" && decision.ProjectID != scope.ProjectID {
+		return false
+	}
+	if scope.TaskID != "" {
+		return decision.TaskID == scope.TaskID
+	}
+	if scope.GoalID != "" {
+		return decision.GoalID == scope.GoalID
+	}
+	return scope.Role == "commander"
+}
+
 func (r watchOrchestrationRecovery) watchDecision() watchDecision {
 	decision := watchDecision{
 		ProjectID:              strconv.FormatInt(r.ProjectID, 10),
@@ -1300,15 +1385,16 @@ func (g *watchReconciliationGoal) UnmarshalJSON(data []byte) error {
 }
 
 type watchReconciliation struct {
-	Goals          []watchReconciliationGoal    `json:"goals"`
-	Decisions      []watchDecision              `json:"decisions"`
-	GoalHandoffs   []watchReconciliationHandoff `json:"goal_handoffs"`
-	PlanHandoffs   []watchReconciliationHandoff `json:"plan_handoffs"`
-	TaskHandoffs   []watchReconciliationHandoff `json:"task_handoffs"`
-	ExpectedScopes []watchExpectedMonitorScope  `json:"expected_scopes"`
-	MonitorHealth  []watchMonitorHealth         `json:"monitor_health"`
-	Recoveries     []watchOrchestrationRecovery `json:"recoveries"`
-	Blockers       []watchOrchestrationBlocker  `json:"blockers"`
+	Goals          []watchReconciliationGoal      `json:"goals"`
+	Decisions      []watchDecision                `json:"decisions"`
+	GoalHandoffs   []watchReconciliationHandoff   `json:"goal_handoffs"`
+	PlanHandoffs   []watchReconciliationHandoff   `json:"plan_handoffs"`
+	TaskHandoffs   []watchReconciliationHandoff   `json:"task_handoffs"`
+	ExpectedScopes []watchExpectedMonitorScope    `json:"expected_scopes"`
+	MonitorHealth  []watchMonitorHealth           `json:"monitor_health"`
+	Recoveries     []watchOrchestrationRecovery   `json:"recoveries"`
+	Blockers       []watchOrchestrationBlocker    `json:"blockers"`
+	ReviewWork     []watchOrchestrationReviewWork `json:"review_work"`
 }
 
 type watchExpectedMonitorScope struct {
@@ -1420,6 +1506,40 @@ func reconcileWatchScope(ctx context.Context, client *http.Client, baseURL strin
 			delivered, lastWakeupContent, wakeupDiscrepancyDelivered,
 			detectionDelivered, sink, actionSink); err != nil {
 			return err
+		}
+	}
+	for _, work := range state.ReviewWork {
+		if !watchOrchestrationReviewWorkMatches(store.OrchestrationReviewWork{
+			ReviewWorkID: work.ReviewWorkID, ProjectID: work.ProjectID, GoalID: work.GoalID,
+			TaskID: work.TaskID, Kind: work.Kind, HandoffID: work.HandoffID,
+			RequesterSessionID: work.RequesterSessionID, RequesterScopeKey: work.RequesterScopeKey,
+			ExpectedReviewerRole: work.ExpectedReviewerRole, ReviewerScopeKey: work.ReviewerScopeKey,
+			ReviewerSessionID: work.ReviewerSessionID, State: work.State,
+			ReviewRequestedGeneration: work.ReviewRequestedGeneration,
+			ReviewReceivedGeneration:  work.ReviewReceivedGeneration,
+			SettlementGeneration:      work.SettlementGeneration, Active: work.Active,
+			ActionRole: work.ActionRole, ActionScopeKey: work.ActionScopeKey,
+			ActionTaskID: work.ActionTaskID, ActionInstruction: work.ActionInstruction,
+		}, scope) {
+			continue
+		}
+		if decision, ok := watchOrchestrationReviewWorkDecision(store.OrchestrationReviewWork{
+			ReviewWorkID: work.ReviewWorkID, ProjectID: work.ProjectID, GoalID: work.GoalID,
+			TaskID: work.TaskID, Kind: work.Kind, HandoffID: work.HandoffID,
+			RequesterSessionID: work.RequesterSessionID, RequesterScopeKey: work.RequesterScopeKey,
+			ExpectedReviewerRole: work.ExpectedReviewerRole, ReviewerScopeKey: work.ReviewerScopeKey,
+			ReviewerSessionID: work.ReviewerSessionID, State: work.State,
+			ReviewRequestedGeneration: work.ReviewRequestedGeneration,
+			ReviewReceivedGeneration:  work.ReviewReceivedGeneration,
+			SettlementGeneration:      work.SettlementGeneration, Active: work.Active,
+			ActionRole: work.ActionRole, ActionScopeKey: work.ActionScopeKey,
+			ActionTaskID: work.ActionTaskID, ActionInstruction: work.ActionInstruction,
+		}); ok {
+			if err := emitWatchDecisionWithStateAndSinks(out, "orchestration.recovery", decision,
+				delivered, lastWakeupContent, wakeupDiscrepancyDelivered,
+				detectionDelivered, sink, actionSink); err != nil {
+				return err
+			}
 		}
 	}
 	for _, decision := range state.Decisions {

@@ -130,6 +130,32 @@ type OrchestrationDeliveryReceipt struct {
 	UpdatedAt       string
 }
 
+type OrchestrationReviewWork struct {
+	ReviewWorkID              string
+	ProjectID                 int64
+	GoalID                    int64
+	TaskID                    sql.NullInt64
+	Kind                      string
+	HandoffID                 string
+	RequesterSessionID        int64
+	RequesterScopeKey         string
+	ExpectedReviewerRole      string
+	ReviewerScopeKey          string
+	ReviewerSessionID         sql.NullInt64
+	State                     string
+	ReviewRequestedGeneration string
+	ReviewReceivedGeneration  sql.NullString
+	SettlementGeneration      sql.NullString
+	Active                    int64
+	ActionRole                sql.NullString
+	ActionScopeKey            sql.NullString
+	ActionTaskID              sql.NullInt64
+	ActionInstruction         sql.NullString
+	OpenedAt                  string
+	UpdatedAt                 string
+	ResolvedAt                sql.NullString
+}
+
 type OrchestrationScope struct {
 	ScopeKey         string
 	ProjectID        int64
