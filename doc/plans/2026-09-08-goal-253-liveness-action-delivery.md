@@ -8,9 +8,16 @@
 
 **Tech Stack:** Go; `cmd/atct` watch, scope, and Codex monitor focused tests.
 
+> **Revision gate (2026-09-08):** Task 1 is complete in commit `c75013e`.
+> The remaining tasks are superseded by the scope-expanded plan below and may
+> not be delegated until this revision has a new plan-handoff approval. In
+> particular, Task 1216 remains unclaimed.
+
 ## Global Constraints
 
-- Modify only `cmd/atct/watch.go`, `cmd/atct/codex_monitor.go`, and focused tests under `cmd/atct/`.
+- Before the revision gate, modify only `cmd/atct/watch.go`,
+  `cmd/atct/codex_monitor.go`, and focused tests under `cmd/atct/`. The
+  scope-expanded tasks name their additional selector/status files explicitly.
 - Do not add persistent cursors, acknowledgements, SSE replay, or daemon calls from the bridge.
 - Preserve action selection through `selectWatchAgentAction` for both Claude and Codex.
 - `ReceivedAt` must not suppress an active goal's commander approval action.
@@ -233,3 +240,61 @@
   ```
 
   Otherwise, make no empty commit.
+
+---
+
+## Scope-expanded implementation sequence (requires new approval)
+
+### Task 2R: Preserve queue order and make plan completion actionable
+
+**Files:** `cmd/atct/codex_monitor.go`, `cmd/atct/codex_monitor_test.go`,
+`cmd/atct/watch_action.go`, `cmd/atct/watch_action_test.go`, and only required
+`cmd/atct/watch*_test.go` coverage.
+
+1. RED: prove an approval queued before `goal.handoff.receive` survives until
+   its turn starts; prove `plan.handoff.complete` is selected by the shared
+   selector for both Claude and Codex; prove live plus reconciliation emits one
+   plan-complete action for its handoff/timestamp generation.
+2. GREEN: remove receipt-triggered queue pruning, add plan-complete selector
+   membership, and route only through the existing delivery state. Do not add a
+   second Codex-only rule or persistent acknowledgement.
+3. Verify queue FIFO, retry-on-idle behavior, selector parity, and no duplicate
+   completion action on reconnect.
+
+### Task 3R: Keep actionable recovery independent from decision-suppressed liveness
+
+**Files:** focused `cmd/atct/watch_test.go` and `cmd/atct/watch_action_test.go`;
+production files only if RED demonstrates an actual coupling.
+
+1. Build a goal-scoped snapshot containing an open decision and a fresh
+   `goal.handoff.review.reject` generation.
+2. Assert the rejection is selected/delivered once even while `PromptDue` is
+   false; assert no liveness action is substituted for it.
+3. Feed the same typed sequence to Claude and Codex collectors and assert the
+   exact order is identical.
+
+### Task 4R: Add read-only monitor outcome diagnostics
+
+**Files:** the existing monitor lifecycle/status command and its focused tests,
+identified from fresh source reconnaissance before coding.
+
+1. Record a compact, read-only outcome model: monitor-record coverage,
+selector admission, queued/started state, delivery-key suppression, and
+role/session mismatch diagnostics.
+2. Provide a status surface that reports those facts per scope without adding a
+   monitor to an old worktree, waking an agent, changing handoff ownership, or
+   modifying a decision/claim.
+3. Exercise monitor-present, monitor-absent, selected-and-queued,
+dedupe-suppressed, and role-mismatch fixtures. Reuse Goal 221's lease facts
+rather than reimplementing heartbeat ownership.
+
+### Task 5R: Regression verification and integration review
+
+1. Run the focused Task 1, 2R, and 3R selectors/queue/reconciliation tests and
+the diagnostics tests, all with a fresh `GOCACHE`.
+2. Run `go test ./cmd/atct -count=1`.
+3. Review the final diff specifically against Goals 182, 203, 221, 227, 228,
+237, 240, 245, 248, and 252. Reject any duplicate health, lease, lifecycle,
+migration, or dependency implementation.
+4. Commit each accepted task as a separate safe unit; no empty verification
+commit.

@@ -37,6 +37,48 @@ on every reconciliation, and prunes a queued approval on handoff receipt.
    and task-scoped monitors do not receive the project-commander's approval
    transition.
 
+## Scope expansion: all measured stop paths
+
+The 2026-09-08 space audit is recorded in
+`doc/investigations/2026-09-08-goal-253-atct-space-liveness-audit.md`. It
+extends this goal from the Goal 248 incident to the delivery boundaries that can
+make a commander, subcommander, or executor stop without a next action. It
+does **not** merge ownership from related goals.
+
+1. `plan.handoff.complete` is a lifecycle transition that must be selected as
+   an action after normal scope filtering and delivery deduplication. Its
+   delivery generation is the completed timestamp plus handoff ID, so a live
+   event and reconcile/reconnect yield one action, while a new completion is
+   independently deliverable.
+2. An open human decision may suppress a *liveness prompt* but may never
+   suppress a selected handoff/review/approval action. A focused regression
+   must show an open decision together with a fresh goal-scoped review rejection
+   delivers the rejection once and produces no replacement liveness action.
+3. The shared selector is the sole Claude/Codex policy boundary. The complete
+   matrix for recovered approvals, review rejection, and plan completion must
+   assert identical ordered typed actions for both transports.
+4. Monitor coverage is an observable prerequisite, not an inference from a
+   pane title. Diagnostics must distinguish: no live monitor record; a live
+   monitor with no selected action; a selected action queued for an idle turn;
+   a delivery dedupe suppression; and a session/role mismatch. They must expose
+   facts only and neither attach a monitor to an old space nor mutate claims,
+   handoffs, decisions, or queues.
+5. Receipt/reconcile behavior must remain generation-deduplicated. In
+   particular, reconnect cannot replay Decision 700's already delivered action
+   indefinitely, and receipt cannot discard a queued prerequisite action.
+6. Dependency/merge waits and human-decision waits are represented as such;
+   the monitor must not synthesize execution or reassign ownership for them.
+
+### Ownership boundary
+
+Goal 182 owns health-vs-progress detection; Goal 203 owns session-key recovery;
+Goal 221 owns heartbeat leases and stale takeover; Goal 227 owns goal-handoff
+authority; Goals 228/237/240/245 own their dependency/merge work; Goal 248 owns
+intentional local-response suppression; Goal 252 owns missing goal-review
+detection. This goal may use their canonical states at the selector/diagnostic
+boundary, but does not duplicate their stores, migrations, or automatic
+recovery.
+
 ## Design
 
 ### Canonical approval projection
@@ -107,6 +149,9 @@ as the recovery source.
 | Fresh goal scope, review rejected and liveness due | review reject, then liveness |
 | Codex active queue: approval then handoff receive | approval remains first; receive follows after later idle |
 | Claude/Codex selection | identical ordered typed actions |
+| Plan handoff completes, live then reconcile | one `plan.handoff.complete` action per generation |
+| Open decision + fresh goal review rejection | rejection action once; no liveness replacement |
+| Monitor diagnostic state | coverage, queue/dedupe/role outcome are distinguishable without mutation |
 
 ## Non-goals
 
