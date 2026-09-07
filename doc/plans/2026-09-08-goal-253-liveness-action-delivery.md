@@ -371,6 +371,10 @@ commit.
 
 ## Revision 3 implementation sequence (requires new approval)
 
+> **Extended by Revision 4 below.** Revision 3's scope, lease, receipt, and
+> blocker work remains required; Revision 4 adds review work to that same
+> model, not a second reminder path.
+
 ### Task 2V3: Persist expected scopes and monitor identity
 
 **Files:** Goal 221's monitor-health store/schema/API boundary, both Claude and
@@ -435,3 +439,47 @@ both monitor transports and both owner-failover paths.
 3. Run `git diff --check`. Review explicitly for Goal 182/203/221/227/228/237/
 240/245/248/252 duplication before each safe-unit commit. Preserve c75013e's
 received-approval guarantee throughout.
+
+---
+
+## Revision 4 implementation sequence (requires new approval)
+
+### Task 5V4: Persist review-work state with handoff transitions
+
+**Files:** task/goal/plan handoff store transactions and migrations, workflow
+events/reconciliation DTO, generated SQL, and focused store/daemon tests.
+
+1. RED: requested-but-unreceived and received-but-unsettled task/plan/goal
+reviews have only transient watch events and are lost after reviewer restart.
+2. Add `orchestration_review_work` with kind, handoff ID, requester, expected
+reviewer role/scope, requested/received/settlement generations and active state.
+Update it atomically in every review request/receive/reject/complete handoff
+transaction. Validate table-specific rightful reviewers at the existing
+authority boundary.
+3. Test request, receipt, reject/re-request, completion, foreign reviewer,
+reviewer restart, and no active orphan after final settlement for all three
+handoff kinds.
+
+### Task 6V4: Route review work through fenced delivery
+
+**Files:** Revision 3 reconciliation/action/lease/receipt integration and
+Claude/Codex focused monitor tests.
+
+1. RED: no durable targeted action exists for both active review-work states;
+plan completion does not wake the approved-plan subcommander.
+2. Map active review work to the existing fenced owner and receipt path. Select
+one instruction to the specified reviewer for `requested` and `received`; do
+not add a timer-only or raw-line-only reminder.
+3. On rejection route only the revision owner; on completion route only the
+next rightful role. Join missing reviewer wrapper to the same commander
+monitor-missing route with review-work identity.
+4. Test live/reconcile/reconnect, second wrapper, owner failover, unknown
+receipt, reviewer restart, and no automatic accept/reject for task/plan/goal.
+
+### Task 7V4: complete focused no-silent-stop verification
+
+1. Run all Revision 3 tests plus the review-work matrix, asserting Claude/Codex
+typed action parity and durable non-duplication for every state transition.
+2. Run affected store/daemon/MCP packages and `go test ./cmd/atct -count=1`.
+3. `git diff --check` must pass. Preserve Task 1215's regression and reject any
+parallel delivery/reminder implementation outside the fenced receipt model.

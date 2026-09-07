@@ -262,6 +262,67 @@ lease/receipt route to the role table in Revision 2.
    receipt result. Claude/Codex output has the same delivery ID, target, and
    order. Completed Task 1215's received approval regression remains green.
 
+## Revision 4: durable review-work recovery
+
+Review work is a separate stop condition from ordinary lifecycle completion.
+The current handoff fields already give canonical generations
+(`ReviewRequestedAt`, `ReviewReceivedAt`, `ReviewRejectedAt`), but event
+formatting alone loses the work after a missed event or reviewer restart.
+
+### Canonical review-work record
+
+Add `orchestration_review_work`, keyed by `(kind, handoff_id,
+review_requested_generation)`, with requester session, expected reviewer role,
+reviewer scope key, state, received generation, settlement generation, and
+active/inactive timestamps. The handoff transaction is its only producer:
+
+| Handoff kind | `requested` state targets | `received` state targets | settlement transition |
+| --- | --- | --- | --- |
+| task | owning subcommander reviewer | recorded reviewing subcommander | reject → receiving executor to revise; complete → owning subcommander to close/redelegate |
+| plan | project commander reviewer | recorded commander | reject → requesting subcommander to revise; complete → that subcommander to execute its approved plan |
+| goal | project commander reviewer | recorded commander | reject → receiving subcommander to revise; complete → commander for goal-review path |
+
+`review.request` atomically creates active `requested` work with its timestamp
+as generation. `review.receive` atomically records the validated reviewer and
+changes it to `received`. `review.reject` resolves that generation and creates
+one reject-to-owner action; a re-request creates a new requested generation.
+`handoff.complete` resolves the review work and creates the table's next-role
+action. A completed/rejected handoff cannot leave active review work.
+
+### Delivery and recovery contract
+
+For either active state, reconciliation emits
+`review_work:{kind}:{handoff_id}:{requested_or_received_generation}` through
+the Revision 3 `(scope_key,target_role)` fenced delivery owner and durable
+receipt. The recorded rightful reviewer scope—not an idle pane, generic
+liveness, or the requester—receives exactly one actionable instruction:
+
+- `requested`: receive the named review after role validation;
+- `received`: finish that review by accepting or rejecting; no automatic
+  acceptance/rejection occurs.
+
+A reviewer monitor restart, reconnect, or a second wrapper sees the receipt
+and does not duplicate an accepted action. If no matching reviewer wrapper is
+live, the existing `monitor_missing` action targets the commander with the
+review-work ID and monitored restart instruction. Rejection and completion
+never resend the old review action: their new lifecycle generations route only
+to the owner/next role stated above.
+
+### Review-work RED acceptance tests
+
+1. For task, plan, and goal reviews, a requested-but-unreceived row produces
+one action to the recorded rightful reviewer; a fresh/restarted reviewer uses
+the same durable receipt and sees no duplicate accepted action.
+2. After `review.receive`, the unfinished-review action targets the recorded
+reviewer once; a different session, requester, and executor cannot accept or
+receive it as that reviewer.
+3. `review.reject` resolves the old work, routes one revision action to the
+proper owner, and a re-request gets a new generation. `handoff.complete`
+resolves it and routes exactly one next-role action.
+4. Claude and Codex process the same review-work delivery IDs and ordered
+actions across live event, reconciliation, reconnect, owner failover, and
+missing-wrapper recovery. No test permits automatic review settlement.
+
 ## Design
 
 ### Canonical approval projection
