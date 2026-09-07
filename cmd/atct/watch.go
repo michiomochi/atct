@@ -1203,10 +1203,9 @@ func reconcileWatchScope(ctx context.Context, client *http.Client, baseURL strin
 			continue
 		}
 		if shouldProjectAppliedGoalApproval(scope, state, decision) {
-			// This is a projection of current canonical state, so it must be
-			// rendered on every reconciliation. It intentionally bypasses the
-			// event delivery map, which is for live event delivery only.
-			if err := writeWatchDecisionLine(out, "decision.approved", decision, sink, actionSink); err != nil {
+			if err := emitWatchDecisionWithStateAndSinks(out, "decision.approved", decision,
+				delivered, lastWakeupContent, wakeupDiscrepancyDelivered,
+				detectionDelivered, sink, actionSink); err != nil {
 				return err
 			}
 			continue
@@ -1465,11 +1464,6 @@ func shouldProjectAppliedGoalApproval(scope watchScope, state watchReconciliatio
 	}
 	if !activeGoal {
 		return false
-	}
-	for _, handoff := range state.GoalHandoffs {
-		if strconv.FormatInt(handoff.GoalID, 10) == decision.GoalID && handoff.ReceivedAt != nil {
-			return false
-		}
 	}
 	return true
 }

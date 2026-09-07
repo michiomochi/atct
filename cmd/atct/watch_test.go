@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -270,12 +271,17 @@ func TestReconcileWatchScopeReprojectsAppliedGoalApprovalForCommander(t *testing
 			StatusCode: http.StatusOK,
 			Status:     "200 OK",
 			Header:     http.Header{"Content-Type": []string{"application/json"}},
-			Body:       io.NopCloser(strings.NewReader(`{"goals":[{"id":42,"status":"active"}],"decisions":[{"id":71,"goal_id":42,"kind":"goal_approval","status":"applied","answer_label":"approve"}],"goal_handoffs":[],"plan_handoffs":[],"task_handoffs":[]}`)),
+			Body:       io.NopCloser(strings.NewReader(`{"goals":[{"id":42,"status":"active"}],"decisions":[{"id":71,"goal_id":42,"kind":"goal_approval","status":"applied","answer_label":"approve"}],"goal_handoffs":[{"ID":"h1","GoalID":42,"RequestedAt":"2026-09-05T00:00:00Z","ReceivedAt":"2026-09-05T00:01:00Z","CompletedReportAt":"2026-09-05T00:02:00Z"}],"plan_handoffs":[],"task_handoffs":[]}`)),
 		}, nil
 	})}
 
 	var output bytes.Buffer
 	lastWakeupContent := ""
+	actions := []watchAgentAction{}
+	actionSink := watchAgentActionSink(func(action watchAgentAction) error {
+		actions = append(actions, action)
+		return nil
+	})
 	delivered := make(map[watchDeliveryKey]struct{})
 	wakeupDiscrepancyDelivered := make(map[watchWakeupDeliveryKey]struct{})
 	detectionDelivered := make(map[watchDetectionDeliveryKey]struct{})
@@ -283,21 +289,24 @@ func TestReconcileWatchScopeReprojectsAppliedGoalApprovalForCommander(t *testing
 		err := reconcileWatchScope(
 			context.Background(), client, "http://daemon", watchScope{ProjectID: "1"}, &output,
 			delivered, &lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered,
-			newWatchScopeFilter(""), nil,
+			newWatchScopeFilter(""), nil, actionSink,
 		)
 		if err != nil {
 			t.Fatalf("reconcileWatchScope: %v", err)
 		}
 	}
 
-	want := "atct decision approved (decision_id: 71)\n" +
-		"atct decision approved (decision_id: 71)\n"
-	if got := output.String(); got != want {
-		t.Fatalf("repeated approval projection = %q, want %q", got, want)
+	if got, want := output.String(), "atct decision approved (decision_id: 71)\n"; got != want {
+		t.Fatalf("approval output = %q, want %q", got, want)
+	}
+	if got, want := actions, []watchAgentAction{{
+		line: "atct decision approved (decision_id: 71)", eventName: "decision.approved", goalID: "42",
+	}}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("approval actions = %#v, want %#v", got, want)
 	}
 }
 
-func TestReconcileWatchScopeSuppressesAppliedGoalApprovalAfterReceiptOrGoalClosure(t *testing.T) {
+func TestReconcileWatchScopeProjectsAppliedGoalApprovalForEligibleGoalStates(t *testing.T) {
 	receivedAt := "2026-09-05T00:01:00Z"
 	cases := []struct {
 		name       string
@@ -307,7 +316,7 @@ func TestReconcileWatchScopeSuppressesAppliedGoalApprovalAfterReceiptOrGoalClosu
 	}{
 		{name: "no handoff", goalStatus: "active", want: "atct decision approved (decision_id: 71)\n"},
 		{name: "requested only", goalStatus: "active", handoff: `,"goal_handoffs":[{"ID":"h1","GoalID":42,"RequestedAt":"2026-09-05T00:00:00Z"}]`, want: "atct decision approved (decision_id: 71)\n"},
-		{name: "received", goalStatus: "active", handoff: fmt.Sprintf(`,"goal_handoffs":[{"ID":"h1","GoalID":42,"RequestedAt":"2026-09-05T00:00:00Z","ReceivedAt":%q}]`, receivedAt), want: ""},
+		{name: "received", goalStatus: "active", handoff: fmt.Sprintf(`,"goal_handoffs":[{"ID":"h1","GoalID":42,"RequestedAt":"2026-09-05T00:00:00Z","ReceivedAt":%q}]`, receivedAt), want: "atct decision approved (decision_id: 71)\n"},
 		{name: "done", goalStatus: "done", want: ""},
 		{name: "dropped", goalStatus: "dropped", want: ""},
 	}
