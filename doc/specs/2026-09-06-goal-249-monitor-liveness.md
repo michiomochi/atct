@@ -264,7 +264,8 @@ switch. Its rows must be exactly these current cases:
 
 | Event/line family | Representative line | Action |
 | --- | --- | --- |
-| Decisions | `atct decision answered (decision_id: 1)`; approved; rejected | yes |
+| Decisions (true) | `atct decision answered (decision_id: 1)`; approved; rejected | yes |
+| Decisions (false) | default-applied; pending; opened/asked; expired; unknown decision status | no |
 | Goal creation | `atct goal created (goal_id: 1)` | yes |
 | Wakeup and liveness | `atct wakeup: ...`; `atct monitor liveness: ...` | yes |
 | Goal detection | `atct detection: goal 1 ...` | yes |
@@ -341,7 +342,10 @@ only and `LineSinkWithContext` cannot classify it. Go tests prove writer
 boundaries and both typed consumers; a separate Claude attached-Monitor probe
 is mandatory after implementation and records that only a selected sentinel is
 delivered while a diagnostic sentinel is absent. It validates the actual
-harness, not a Go unit-test substitute.
+harness, not a Go unit-test substitute. If an attached Claude Monitor cannot be
+run or does not produce retained raw evidence, the subcommander must reject the
+delta task review and return the missing measurement as a human decision; it
+must not accept the task, stage/commit it, or substitute Go tests.
 
 For every row in the frozen baseline plus diagnostics, keepalives, and unknown
 raw input, the Claude agent-action adapter and Codex adapter must receive

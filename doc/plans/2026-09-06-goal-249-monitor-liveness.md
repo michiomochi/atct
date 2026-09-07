@@ -446,7 +446,8 @@ func TestWatchAgentActionSelectorMembership(t *testing.T) {
 	// detection; task and goal handoff requested/received/completed;
 	// handoff reported/yielded; task/goal/plan REVIEW requested/received/rejected;
 	// the three admitted task-detection suffixes; wakeup discrepancy/evaluate fail.
-	// False rows include ordinary plan handoff requested/received/completed,
+	// False rows include decision default-applied/pending/opened/expired/unknown,
+	// ordinary plan handoff requested/received/completed,
 	// keepalive/reconnect/ensure diagnostics, unknown raw text, and every other
 	// task-detection suffix. Do not add lifecycle names absent from this table.
 }
@@ -516,7 +517,10 @@ Monitor to `atct watch --monitor -goal <goal_id>` and inject one selected
 baseline sentinel and one reconnect/keepalive diagnostic sentinel through the
 test seam. Record the raw Monitor delivery: the selected sentinel appears once;
 the diagnostic does not appear. This attached-Monitor evidence is mandatory and
-is not replaced by Go tests.
+is not replaced by Go tests. If the attachment cannot run or retained raw
+evidence cannot be produced, the executor reports unmet verification; the
+subcommander rejects review and records a human decision for measurement. It
+does not accept, stage, commit, or substitute Go verification.
 
 - [ ] **Step 4: Run selector, bridge, and preservation regressions**
 
@@ -530,10 +534,12 @@ regression.
 - [ ] **Step 5: Submit executor review; subcommander commits explicit paths**
 
 The executor submits an ATCT review request without staging or committing. On
-acceptance, the subcommander stages only `cmd/atct/watch_action.go`,
-`cmd/atct/watch_action_test.go`, `cmd/atct/watch.go`,
-`cmd/atct/codex_monitor.go`, `cmd/atct/codex_monitor_supervisor.go`, and their
-focused test files, then commits `refactor: share monitor action selection`.
+acceptance, including attached-Monitor evidence, the subcommander stages only
+`cmd/atct/main.go`, `cmd/atct/watch.go`, `cmd/atct/watch_action.go`,
+`cmd/atct/watch_action_test.go`, `cmd/atct/watch_test.go`,
+`cmd/atct/codex_monitor.go`, `cmd/atct/codex_monitor_test.go`,
+`cmd/atct/codex_monitor_supervisor.go`, `skills/start/SKILL.md`, and
+`tests/wrapper_test.bash`, then commits `refactor: share monitor action selection`.
 
 ### Delta self-review
 
