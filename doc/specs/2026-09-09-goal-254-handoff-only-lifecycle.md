@@ -32,8 +32,11 @@ The durable workflow state after this change is limited to:
 - a new task-create handoff, which is itself a handoff rather than delivery
   infrastructure.
 
-The migration destructively removes these tables and all production paths that
-write or query them:
+The final cleanup migration destructively removes these tables and all
+production paths that write or query them. The preceding additive migration
+introduces the task-create and review-rejection receipt schema while retaining
+the legacy tables so the existing lifecycle stays executable during the staged
+cutover:
 
 - `orchestration_scope`;
 - `orchestration_delivery_leases`;
@@ -166,9 +169,10 @@ acknowledgement, lease, or delivery history is persisted.
 
 Tests must establish all of the following.
 
-1. The destructive migration removes every listed `orchestration_*` table and
-   production schema/query/API reference, while preserving existing handoffs
-   and decisions.
+1. The staged migration sequence preserves existing handoffs and decisions:
+   its additive migration introduces the task-create and review-rejection
+   receipt schema, and its final cleanup migration removes every listed
+   `orchestration_*` table and production schema/query/API reference.
 2. Completing a plan handoff atomically creates exactly one task-create request
    for its submitting subcommander; wrong sessions cannot receive, create, or
    complete it.

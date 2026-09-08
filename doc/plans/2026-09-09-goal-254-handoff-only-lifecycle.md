@@ -19,7 +19,7 @@
 
 ---
 
-### Task 1: Prove and apply the destructive schema migration
+### Task 1: Add the schema foundation and review-rejection receipt
 
 **Files:**
 
@@ -32,11 +32,11 @@
 **Interfaces:**
 
 - Consumes: migrations `0031`–`0034` and the current `goal_handoffs`, `task_handoffs`, `plan_handoffs`, and `decisions` rows.
-- Produces: `task_create_handoffs` and `task_create_handoff_tasks`; no `orchestration_*` table remains after migration.
+- Produces: `task_create_handoffs`, `task_create_handoff_tasks`, and review-rejection receipt columns. The legacy `orchestration_*` tables remain until Task 4's cleanup migration, so existing lifecycle code remains executable during this stage.
 
 - [ ] **Step 1: Write migration fixture tests before the migration.**
 
-  In `internal/store/migration_integrity_test.go`, create a fixture database at migration 0034 containing one task, goal, and plan handoff plus one decision, and one row in each removed `orchestration_*` table. Assert that opening it applies 0035, preserves the handoff/decision rows and their IDs, and makes each removed table absent from `sqlite_master`.
+  In `internal/store/migration_integrity_test.go`, create a fixture database at migration 0034 containing one task, goal, and plan handoff plus one decision, and one row in each legacy `orchestration_*` table. Assert that opening it applies 0035, preserves the handoff/decision rows and their IDs, adds the task-create and rejection-receipt schema, and keeps each legacy table present for the staged cutover.
 
   ```go
   for _, table := range []string{
@@ -44,7 +44,7 @@
       "orchestration_delivery_receipts", "orchestration_review_work",
       "orchestration_blockers",
   } {
-      assertTableMissing(t, migratedDB, table)
+      assertTablePresent(t, migratedDB, table)
   }
   assertPlanHandoffAndDecisionPreserved(t, migratedDB, planHandoffID, decisionID)
   ```
@@ -57,15 +57,15 @@
   GOCACHE=/private/tmp/goal254-go-cache go test ./internal/store -run 'TestGoal254Migration' -count=1 -v
   ```
 
-  Expected: FAIL because the obsolete tables still exist and task-create tables do not.
+  Expected: FAIL because task-create tables and rejection-receipt columns do not exist.
 
 - [ ] **Step 3: Add migration 0035 and make `schema.sql` match it.**
 
-  Create `task_create_handoffs` with `id`, `plan_handoff_id`, `goal_id`, request/receipt/completion session IDs and timestamps, request/complete reports, and a unique plan-handoff reference. Create `task_create_handoff_tasks(handoff_id, task_id)` with a composite primary key and foreign keys. Add the review-rejection receipt columns required by Task 3. Drop exactly the five obsolete tables and their indexes after the retained rows have been left untouched. Mirror the final schema in `schema.sql`.
+  Create `task_create_handoffs` with `id`, `plan_handoff_id`, `goal_id`, request/receipt/completion session IDs and timestamps, request/complete reports, and a unique plan-handoff reference. Create `task_create_handoff_tasks(handoff_id, task_id)` with a composite primary key and foreign keys. Add the review-rejection receipt columns required by Task 3. Do not drop legacy tables or indexes in 0035; Task 4 removes their production users before a later cleanup migration drops them. Mirror this intermediate schema in `schema.sql`.
 
 - [ ] **Step 4: Extend schema parity assertions.**
 
-  Update `TestSchemaParityOnMigratedCopiedDatabaseFromEnvironment` so its expected removed-table set includes all five `orchestration_*` tables and its expected added-table set includes both task-create tables. Keep the environment-backed test optional; the new fixture test must be self-contained.
+  Update `TestSchemaParityOnMigratedCopiedDatabaseFromEnvironment` so its expected added-table set includes both task-create tables and its expected review-rejection columns. It must still expect the five legacy tables at the 0035 boundary. Keep the environment-backed test optional; the new fixture test must be self-contained.
 
 - [ ] **Step 5: Regenerate SQL bindings and verify schema parity.**
 
@@ -233,6 +233,10 @@
 - Modify: `cmd/atct/watch_scope.go`
 - Modify: `cmd/atct/watch_test.go`
 - Modify: `cmd/atct/watch_scope_test.go`
+- Create: `internal/store/migrations/0036_remove_legacy_orchestration.sql`
+- Modify: `schema.sql`
+- Modify: `internal/store/migration_integrity_test.go`
+- Modify: `internal/store/schema_parity_test.go`
 - Delete: `internal/store/orchestration_scope.go`
 - Delete: `internal/store/orchestration_delivery.go`
 - Delete: `internal/store/orchestration_blocker.go`
@@ -261,6 +265,10 @@
 - [ ] **Step 3: Remove durable orchestration producers and consumers.**
 
   Delete production calls that create scopes, delivery leases/receipts, blockers, and review-work rows. Remove their reconciliation JSON fields and HTTP/API endpoints. Keep `monitor_health` only where it already reports health; do not derive a missing-monitor action from it.
+
+- [ ] **Step 3a: Drop legacy schema only after its production users are gone.**
+
+  Add migration `0036_remove_legacy_orchestration.sql` after the direct handoff/decision projection is implemented. Its fixture begins at the 0035 schema with representative retained handoff and decision rows plus legacy orchestration rows; applying 0036 preserves the retained rows and removes exactly `orchestration_scope`, `orchestration_delivery_leases`, `orchestration_delivery_receipts`, `orchestration_review_work`, and `orchestration_blockers` and their indexes. Update `schema.sql` and parity expectations to this final schema.
 
 - [ ] **Step 4: Select phases directly from handoff state.**
 
