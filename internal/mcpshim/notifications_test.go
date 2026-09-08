@@ -233,7 +233,7 @@ func notificationTestArgs(name string) map[string]any {
 	switch name {
 	case "atct_task_create":
 		return map[string]any{
-			"goal_id": "goal-1", "titles": []string{"task"},
+			"handoff_id": "task-create-1", "goal_id": "goal-1", "titles": []string{"task"},
 			"descriptions":    []string{"Complete the created task and verify its result."},
 			"idempotency_key": "key-1", "agent": "agent-1",
 		}

@@ -1093,6 +1093,9 @@ func (s *Store) CompletePlanHandoff(ctx context.Context, handoffID string, goalI
 	} else if affected == 0 {
 		return PlanHandoff{}, ErrPlanHandoffReviewState
 	}
+	if err := s.createTaskCreateHandoffTx(ctx, tx, handoff, reviewerID); err != nil {
+		return PlanHandoff{}, fmt.Errorf("create task-create handoff: %w", err)
+	}
 	if err := settlePlanReviewWorkTx(ctx, tx, goalID, handoff.ReviewRequestedBy, handoffID, handoff.ReviewRequestedAt, OrchestrationReviewWorkStateCompleted, now); err != nil {
 		return PlanHandoff{}, err
 	}

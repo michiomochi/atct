@@ -1319,6 +1319,53 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		response, err := d.responseWithScopedUnappliedDecisions(ctx, tasks, p.GoalID, p.AgentSessionID)
 		return marshal(response, err)
 
+	case "task.create":
+		var p struct {
+			HandoffID               string   `json:"handoff_id"`
+			GoalID                  int64    `json:"goal_id"`
+			Agent                   string   `json:"agent"`
+			IdempotencyKey          string   `json:"idempotency_key"`
+			Titles                  []string `json:"titles"`
+			Descriptions            []string `json:"descriptions"`
+			AgentSessionID          int64    `json:"agent_session_id"`
+			IncludeUnappliedAnswers bool     `json:"include_unapplied_answers"`
+		}
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		if p.HandoffID == "" {
+			return nil, store.ErrTaskCreateHandoffState
+		}
+		tasks, err := d.store.CreateTasks(ctx, p.HandoffID, p.AgentSessionID, p.GoalID, p.Agent, p.IdempotencyKey, p.Titles, p.Descriptions)
+		if err != nil || !p.IncludeUnappliedAnswers {
+			return marshal(tasks, err)
+		}
+		response, err := d.responseWithScopedUnappliedDecisions(ctx, tasks, p.GoalID, p.AgentSessionID)
+		return marshal(response, err)
+
+	case "task.create_handoff.receive":
+		var p struct {
+			HandoffID  string `json:"handoff_id"`
+			ReceivedBy int64  `json:"received_by"`
+		}
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		h, err := d.store.ReceiveTaskCreateHandoff(ctx, p.HandoffID, p.ReceivedBy)
+		return marshal(h, err)
+
+	case "task.create_handoff.complete":
+		var p struct {
+			HandoffID      string `json:"handoff_id"`
+			CompletedBy    int64  `json:"completed_by"`
+			CompleteReport string `json:"complete_report"`
+		}
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		h, err := d.store.CompleteTaskCreateHandoff(ctx, p.HandoffID, p.CompletedBy, p.CompleteReport)
+		return marshal(h, err)
+
 	case "task.update":
 		var p struct {
 			TaskID                  int64    `json:"task_id"`

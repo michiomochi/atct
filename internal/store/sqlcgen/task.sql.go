@@ -120,6 +120,27 @@ func (q *Queries) CompletePlanHandoff(ctx context.Context, arg CompletePlanHando
 	)
 }
 
+const completeTaskCreateHandoff = `-- name: CompleteTaskCreateHandoff :exec
+UPDATE task_create_handoffs SET completed_by = ?, completed_at = ?, complete_report = ? WHERE id = ?
+`
+
+type CompleteTaskCreateHandoffParams struct {
+	CompletedBy    sql.NullInt64
+	CompletedAt    sql.NullString
+	CompleteReport sql.NullString
+	ID             string
+}
+
+func (q *Queries) CompleteTaskCreateHandoff(ctx context.Context, arg CompleteTaskCreateHandoffParams) error {
+	_, err := q.db.ExecContext(ctx, completeTaskCreateHandoff,
+		arg.CompletedBy,
+		arg.CompletedAt,
+		arg.CompleteReport,
+		arg.ID,
+	)
+	return err
+}
+
 const completeTaskHandoff = `-- name: CompleteTaskHandoff :execresult
 UPDATE task_handoffs
 SET completed_report_at = ?, complete_report = ?
@@ -184,6 +205,18 @@ func (q *Queries) CountOpenDecisionsForTask(ctx context.Context, taskID sql.Null
 	return count, err
 }
 
+const countUndelegatedTaskCreateHandoffTasks = `-- name: CountUndelegatedTaskCreateHandoffTasks :one
+SELECT COUNT(*) FROM task_create_handoff_tasks m WHERE m.handoff_id = ?
+AND NOT EXISTS (SELECT 1 FROM task_handoffs h WHERE h.task_id = m.task_id AND h.requested_at IS NOT NULL)
+`
+
+func (q *Queries) CountUndelegatedTaskCreateHandoffTasks(ctx context.Context, handoffID string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countUndelegatedTaskCreateHandoffTasks, handoffID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createTask = `-- name: CreateTask :one
 INSERT INTO tasks (
   goal_id, title, description, status, agent, sort_order, declare_key,
@@ -223,6 +256,32 @@ func (q *Queries) CreateTask(ctx context.Context, arg CreateTaskParams) (int64, 
 	var id int64
 	err := row.Scan(&id)
 	return id, err
+}
+
+const createTaskCreateHandoff = `-- name: CreateTaskCreateHandoff :exec
+INSERT INTO task_create_handoffs (id, plan_handoff_id, goal_id, requested_by, requested_at, request_report)
+VALUES (?, ?, ?, ?, ?, ?)
+`
+
+type CreateTaskCreateHandoffParams struct {
+	ID            string
+	PlanHandoffID string
+	GoalID        int64
+	RequestedBy   sql.NullInt64
+	RequestedAt   sql.NullString
+	RequestReport sql.NullString
+}
+
+func (q *Queries) CreateTaskCreateHandoff(ctx context.Context, arg CreateTaskCreateHandoffParams) error {
+	_, err := q.db.ExecContext(ctx, createTaskCreateHandoff,
+		arg.ID,
+		arg.PlanHandoffID,
+		arg.GoalID,
+		arg.RequestedBy,
+		arg.RequestedAt,
+		arg.RequestReport,
+	)
+	return err
 }
 
 const deleteExpiredAgentSessions = `-- name: DeleteExpiredAgentSessions :exec
@@ -400,6 +459,52 @@ func (q *Queries) GetPlanHandoff(ctx context.Context, id string) (PlanHandoff, e
 	return i, err
 }
 
+const getTaskCreateHandoff = `-- name: GetTaskCreateHandoff :one
+SELECT id, plan_handoff_id, goal_id, requested_by, received_by, completed_by, requested_at, received_at, completed_at, request_report, complete_report FROM task_create_handoffs WHERE id = ?
+`
+
+func (q *Queries) GetTaskCreateHandoff(ctx context.Context, id string) (TaskCreateHandoff, error) {
+	row := q.db.QueryRowContext(ctx, getTaskCreateHandoff, id)
+	var i TaskCreateHandoff
+	err := row.Scan(
+		&i.ID,
+		&i.PlanHandoffID,
+		&i.GoalID,
+		&i.RequestedBy,
+		&i.ReceivedBy,
+		&i.CompletedBy,
+		&i.RequestedAt,
+		&i.ReceivedAt,
+		&i.CompletedAt,
+		&i.RequestReport,
+		&i.CompleteReport,
+	)
+	return i, err
+}
+
+const getTaskCreateHandoffForPlan = `-- name: GetTaskCreateHandoffForPlan :one
+SELECT id, plan_handoff_id, goal_id, requested_by, received_by, completed_by, requested_at, received_at, completed_at, request_report, complete_report FROM task_create_handoffs WHERE plan_handoff_id = ?
+`
+
+func (q *Queries) GetTaskCreateHandoffForPlan(ctx context.Context, planHandoffID string) (TaskCreateHandoff, error) {
+	row := q.db.QueryRowContext(ctx, getTaskCreateHandoffForPlan, planHandoffID)
+	var i TaskCreateHandoff
+	err := row.Scan(
+		&i.ID,
+		&i.PlanHandoffID,
+		&i.GoalID,
+		&i.RequestedBy,
+		&i.ReceivedBy,
+		&i.CompletedBy,
+		&i.RequestedAt,
+		&i.ReceivedAt,
+		&i.CompletedAt,
+		&i.RequestReport,
+		&i.CompleteReport,
+	)
+	return i, err
+}
+
 const getTaskForClaim = `-- name: GetTaskForClaim :one
 SELECT t.goal_id, t.title, t.description, t.status,
        g.status AS goal_status
@@ -549,6 +654,20 @@ func (q *Queries) LinkTaskCommit(ctx context.Context, arg LinkTaskCommitParams) 
 		arg.Deletions,
 		arg.CreatedAt,
 	)
+	return err
+}
+
+const linkTaskCreateHandoffTask = `-- name: LinkTaskCreateHandoffTask :exec
+INSERT OR IGNORE INTO task_create_handoff_tasks (handoff_id, task_id) VALUES (?, ?)
+`
+
+type LinkTaskCreateHandoffTaskParams struct {
+	HandoffID string
+	TaskID    int64
+}
+
+func (q *Queries) LinkTaskCreateHandoffTask(ctx context.Context, arg LinkTaskCreateHandoffTaskParams) error {
+	_, err := q.db.ExecContext(ctx, linkTaskCreateHandoffTask, arg.HandoffID, arg.TaskID)
 	return err
 }
 
@@ -820,6 +939,33 @@ func (q *Queries) ListTaskCommits(ctx context.Context, taskID int64) ([]ListTask
 	return items, nil
 }
 
+const listTaskCreateHandoffTaskIDs = `-- name: ListTaskCreateHandoffTaskIDs :many
+SELECT task_id FROM task_create_handoff_tasks WHERE handoff_id = ? ORDER BY task_id
+`
+
+func (q *Queries) ListTaskCreateHandoffTaskIDs(ctx context.Context, handoffID string) ([]int64, error) {
+	rows, err := q.db.QueryContext(ctx, listTaskCreateHandoffTaskIDs, handoffID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []int64
+	for rows.Next() {
+		var task_id int64
+		if err := rows.Scan(&task_id); err != nil {
+			return nil, err
+		}
+		items = append(items, task_id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listTaskHandoffs = `-- name: ListTaskHandoffs :many
 SELECT id, task_id, requested_by, received_by,
        requested_at, received_at, completed_report_at,
@@ -1055,6 +1201,21 @@ func (q *Queries) ReceivePlanHandoffReviewRejection(ctx context.Context, arg Rec
 		arg.GoalID,
 		arg.ReviewRequestedBy,
 	)
+}
+
+const receiveTaskCreateHandoff = `-- name: ReceiveTaskCreateHandoff :execresult
+UPDATE task_create_handoffs SET received_by = ?, received_at = ?
+WHERE id = ? AND received_by IS NULL
+`
+
+type ReceiveTaskCreateHandoffParams struct {
+	ReceivedBy sql.NullInt64
+	ReceivedAt sql.NullString
+	ID         string
+}
+
+func (q *Queries) ReceiveTaskCreateHandoff(ctx context.Context, arg ReceiveTaskCreateHandoffParams) (sql.Result, error) {
+	return q.db.ExecContext(ctx, receiveTaskCreateHandoff, arg.ReceivedBy, arg.ReceivedAt, arg.ID)
 }
 
 const receiveTaskHandoff = `-- name: ReceiveTaskHandoff :execresult

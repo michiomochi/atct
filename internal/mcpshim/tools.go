@@ -61,11 +61,20 @@ type TaskUpdateContentIn struct {
 }
 
 type TaskCreateIn struct {
+	HandoffID      string   `json:"handoff_id"`
 	GoalID         mcpID    `json:"goal_id"`
 	Titles         []string `json:"titles" jsonschema:"task titles decomposed from the goal, in execution order"`
 	Descriptions   []string `json:"descriptions" jsonschema:"task descriptions explaining the completion criteria and assumptions for each title, in execution order"`
 	IdempotencyKey string   `json:"idempotency_key" jsonschema:"key that prevents duplicate tasks when the same call is retried"`
 	Agent          string   `json:"agent"`
+}
+
+type TaskCreateHandoffIn struct {
+	HandoffID string `json:"handoff_id"`
+}
+type TaskCreateHandoffCompleteIn struct {
+	HandoffID      string `json:"handoff_id"`
+	CompleteReport string `json:"complete_report"`
 }
 
 type TaskClaimIn struct {
@@ -708,10 +717,14 @@ func Register(server *mcp.Server, c *Client, agentSessionID int64) {
 			"agent_session_id":          sessionID.Get(),
 			"include_unapplied_answers": true,
 		}
-		// The daemon method keeps its original name. Renaming it would break a
-		// daemon that has not been restarted after an upgrade, and no agent can
-		// see the difference.
-		return callWithUnappliedDecisions(ctx, c, "task.declare", params)
+		params["handoff_id"] = in.HandoffID
+		return callWithUnappliedDecisions(ctx, c, "task.create", params)
+	})
+	addMCPTool[TaskCreateHandoffIn, RawWithUnappliedDecisions](server, &mcp.Tool{Name: "atct_task_create_handoff_receive", Description: "Receive an accepted plan's task-create handoff.", OutputSchema: rawOutputSchemaWithUnappliedDecisions()}, func(ctx context.Context, req *mcp.CallToolRequest, in TaskCreateHandoffIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
+		return callWithUnappliedDecisions(ctx, c, "task.create_handoff.receive", map[string]any{"handoff_id": in.HandoffID, "received_by": sessionID.Get()})
+	})
+	addMCPTool[TaskCreateHandoffCompleteIn, RawWithUnappliedDecisions](server, &mcp.Tool{Name: "atct_task_create_handoff_complete", Description: "Complete a task-create handoff after delegating every created task.", OutputSchema: rawOutputSchemaWithUnappliedDecisions()}, func(ctx context.Context, req *mcp.CallToolRequest, in TaskCreateHandoffCompleteIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
+		return callWithUnappliedDecisions(ctx, c, "task.create_handoff.complete", map[string]any{"handoff_id": in.HandoffID, "completed_by": sessionID.Get(), "complete_report": in.CompleteReport})
 	})
 
 	addMCPTool[TaskClaimIn, RawWithUnappliedDecisions](server, &mcp.Tool{

@@ -7,6 +7,33 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(goal_id, declare_key) DO UPDATE SET id = tasks.id
 RETURNING id;
 
+-- name: GetTaskCreateHandoff :one
+SELECT * FROM task_create_handoffs WHERE id = ?;
+
+-- name: GetTaskCreateHandoffForPlan :one
+SELECT * FROM task_create_handoffs WHERE plan_handoff_id = ?;
+
+-- name: ListTaskCreateHandoffTaskIDs :many
+SELECT task_id FROM task_create_handoff_tasks WHERE handoff_id = ? ORDER BY task_id;
+
+-- name: CreateTaskCreateHandoff :exec
+INSERT INTO task_create_handoffs (id, plan_handoff_id, goal_id, requested_by, requested_at, request_report)
+VALUES (?, ?, ?, ?, ?, ?);
+
+-- name: ReceiveTaskCreateHandoff :execresult
+UPDATE task_create_handoffs SET received_by = ?, received_at = ?
+WHERE id = ? AND received_by IS NULL;
+
+-- name: LinkTaskCreateHandoffTask :exec
+INSERT OR IGNORE INTO task_create_handoff_tasks (handoff_id, task_id) VALUES (?, ?);
+
+-- name: CountUndelegatedTaskCreateHandoffTasks :one
+SELECT COUNT(*) FROM task_create_handoff_tasks m WHERE m.handoff_id = ?
+AND NOT EXISTS (SELECT 1 FROM task_handoffs h WHERE h.task_id = m.task_id AND h.requested_at IS NOT NULL);
+
+-- name: CompleteTaskCreateHandoff :exec
+UPDATE task_create_handoffs SET completed_by = ?, completed_at = ?, complete_report = ? WHERE id = ?;
+
 -- name: ListTasks :many
 SELECT
   id, goal_id, title, description, status, agent, sort_order, declare_key,
