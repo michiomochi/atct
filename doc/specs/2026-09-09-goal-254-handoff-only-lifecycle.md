@@ -11,10 +11,11 @@ up is a repeatable prompt, not a delivery guarantee or a state-changing action.
 
 ## Evidence and current gap
 
-`Store.DeclareTasks` checks only that the goal is active before inserting task
-rows (`internal/store/task.go`). The public `atct_task_create` tool calls that
-legacy `task.declare` path. It does not require a completed plan handoff, a
-subcommander receipt of an approved plan, or any task-creation handoff.
+The current task-creation store path checks only that the goal is active before
+inserting task rows (`internal/store/task.go`). It does not require a completed
+plan handoff, a subcommander receipt of an approved plan, or any task-creation
+handoff. Goal 254 renames this path to `CreateTasks` / `task.create` and removes
+the `task.declare` name rather than retaining it as a compatibility alias.
 
 `CompletePlanHandoff` records only the plan completion and the current
 orchestration review-work settlement (`internal/store/goal_handoff.go`). It
@@ -84,7 +85,7 @@ and reports, and the task IDs it created. It has this canonical path:
 commander:     plan.handoff.complete
                + task-create-handoff.request  (one transaction)
 subcommander:  task-create-handoff.receive
-subcommander:  task-create-handoff.create      (creates implementation tasks)
+subcommander:  task.create (with task-create handoff)  (creates implementation tasks)
 subcommander:  task.handoff.request             (delegates each task)
 subcommander:  task-create-handoff.complete
 executor:      task.handoff.receive
@@ -94,12 +95,13 @@ The request receiver is the subcommander that submitted the plan review. The
 commander creates this request atomically with accepting the plan, so a plan
 cannot be accepted without a recorded next responsibility.
 
-`task-create-handoff.create` is the only public path for creating
-implementation tasks covered by an accepted plan. It requires a received,
-uncompleted task-create handoff belonging to the caller and records the created
-task IDs on that handoff. Direct `atct_task_create` and its legacy
-`task.declare` RPC must reject implementation-task creation with a lifecycle
-error. The new create operation retains idempotency-key semantics.
+`task.create` is the sole public task-creation operation and is the daemon
+method used by `atct_task_create`. It requires a received, uncompleted
+task-create handoff for implementation tasks covered by an accepted plan, and
+records the created task IDs on that handoff. The operation retains
+idempotency-key semantics. `task.declare`, `DeclareTasks`, and any compatibility
+alias are removed; all MCP, daemon, test, and documentation callers use the
+same create terminology.
 
 `task-create-handoff.complete` requires successful task creation and a
 recorded `task.handoff.request` for every created implementation task. A task
@@ -110,17 +112,17 @@ request, receive, create, and complete.
 ### Planning-task boundary
 
 This restriction begins only after a plan handoff for the goal has been
-accepted. Before that transition, `atct_task_create` remains the path for the
-goal's own design, spec, and plan-review task; Goal 254's existing task 1230
-is one such task. A completed plan handoff is the durable boundary, so the
-daemon does not infer a task's kind from its title, agent name, or pane.
+accepted. Before that transition, `task.create` (through `atct_task_create`)
+creates the goal's own design, spec, and plan-review task; Goal 254's existing
+task 1230 is one such task. A completed plan handoff is the durable boundary,
+so the daemon does not infer a task's kind from its title, agent name, or pane.
 
-After a completed plan handoff exists for a goal, direct `atct_task_create`
-and `task.declare` reject every new task for that goal with the lifecycle
-error. The received task-create handoff is then the only creation authority.
-This prevents an accepted plan from being bypassed while retaining the normal
-pre-plan design workflow. The task-create operation itself is idempotent for
-its handoff and records every task ID it created.
+After a completed plan handoff exists for a goal, `task.create` without its
+received task-create handoff rejects every new task for that goal with the
+lifecycle error. The received task-create handoff is then the only creation
+authority. This prevents an accepted plan from being bypassed while retaining
+the normal pre-plan design workflow. The operation is idempotent for its
+handoff and records every task ID it created.
 
 ## Recurring wake-up projection
 
@@ -170,11 +172,13 @@ Tests must establish all of the following.
 2. Completing a plan handoff atomically creates exactly one task-create request
    for its submitting subcommander; wrong sessions cannot receive, create, or
    complete it.
-3. Before plan acceptance, direct `atct_task_create` can create the design
-   task. After plan acceptance, direct `atct_task_create` and the legacy
-   `task.declare` RPC reject every new task for the goal. A received
-   task-create handoff can create idempotently, records its task IDs, and
-   completes only after every created task has a requested task handoff.
+3. `task.create` is the only task-creation name across store, daemon, MCP,
+   tests, and documentation; no `task.declare` endpoint or alias remains.
+   Before plan acceptance it can create the design task. After plan acceptance,
+   it rejects every new task for the goal unless a received task-create handoff
+   authorizes it. The authorized operation creates idempotently, records its
+   task IDs, and completes only after every created task has a requested task
+   handoff.
 4. Task, plan, and goal review rejections require the original submitter's
    explicit receipt before revision; a new review request closes that rejection
    phase. Foreign sessions are rejected at every transition.
