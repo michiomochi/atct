@@ -266,10 +266,6 @@
 
   Delete production calls that create scopes, delivery leases/receipts, blockers, and review-work rows. Remove their reconciliation JSON fields and HTTP/API endpoints. Keep `monitor_health` only where it already reports health; do not derive a missing-monitor action from it.
 
-- [ ] **Step 3a: Drop legacy schema only after its production users are gone.**
-
-  Add migration `0036_remove_legacy_orchestration.sql` after the direct handoff/decision projection is implemented. Its fixture begins at the 0035 schema with representative retained handoff and decision rows plus legacy orchestration rows; applying 0036 preserves the retained rows and removes exactly `orchestration_scope`, `orchestration_delivery_leases`, `orchestration_delivery_receipts`, `orchestration_review_work`, and `orchestration_blockers` and their indexes. Update `schema.sql` and parity expectations to this final schema.
-
 - [ ] **Step 4: Select phases directly from handoff state.**
 
   Extend workflow reconciliation with task-create handoffs, then make `reconcileWatchScope` select action lines from the canonical handoff fields in precedence order. Action selection must be read-only: it cannot receive, complete, reassign, or create any handoff. A one-minute reconciliation repeats an unchanged phase intentionally.
@@ -284,7 +280,11 @@
 
   Expected: PASS; no test or production package references an `Orchestration*` type other than retained monitor health.
 
-- [ ] **Step 6: Commit the direct projection.**
+- [ ] **Step 6: Drop legacy schema only after the direct projection passes.**
+
+  Only after Step 5's focused right-role/stopping tests pass, add migration `0036_remove_legacy_orchestration.sql` in the same change as the final production cleanup. Its fixture begins at the 0035 schema with representative retained handoff and decision rows plus legacy orchestration rows; applying 0036 preserves the retained rows and removes exactly `orchestration_scope`, `orchestration_delivery_leases`, `orchestration_delivery_receipts`, `orchestration_review_work`, and `orchestration_blockers` and their indexes. Update `schema.sql` and parity expectations to this final schema, then rerun the focused migration and direct-projection tests against the final schema.
+
+- [ ] **Step 7: Commit the direct projection and cleanup migration.**
 
   ```sh
   git add internal/store cmd/atct internal/httpapi
