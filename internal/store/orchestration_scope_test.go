@@ -443,6 +443,9 @@ func TestExpectedMonitorScopeTracksReviewRejectionAndCompletionReopen(t *testing
 		t.Fatalf("RejectGoalHandoffReview: %v", err)
 	}
 	assertActiveGoalScope(scopeKey)
+	if _, err := s.ReceiveGoalHandoffReviewRejection(ctx, handoff.ID, goal.ID, receiverID); err != nil {
+		t.Fatalf("ReceiveGoalHandoffReviewRejection: %v", err)
+	}
 
 	if _, err := s.RequestGoalHandoffReview(ctx, handoff.ID, goal.ID, receiverID, "scope coverage added"); err != nil {
 		t.Fatalf("second RequestGoalHandoffReview: %v", err)

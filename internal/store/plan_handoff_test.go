@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestPlanHandoffReviewLifecycle(t *testing.T) {
+func TestPlanHandoffReviewRejectReceiveLifecycle(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 	goalID := newTestGoal(t, s)
@@ -52,6 +52,20 @@ func TestPlanHandoffReviewLifecycle(t *testing.T) {
 	}
 	if rejected.ReviewReceivedBy != 0 || rejected.ReviewReceivedAt != nil || rejected.ReviewRejectReport != "revise the plan" || rejected.ReviewRejectedAt == nil {
 		t.Fatalf("plan review rejection did not clear reviewer state: %+v", rejected)
+	}
+
+	if _, err := s.RequestPlanHandoffReview(ctx, reviewRequested.ID, goalID, subcommanderID, "revised plan"); err == nil {
+		t.Fatal("RequestPlanHandoffReview accepted a rejection that the original submitter has not received")
+	}
+	if _, err := s.ReceivePlanHandoffReviewRejection(ctx, reviewRequested.ID, goalID, wrongReviewerID); err == nil {
+		t.Fatal("ReceivePlanHandoffReviewRejection accepted a foreign session")
+	}
+	rejectionReceived, err := s.ReceivePlanHandoffReviewRejection(ctx, reviewRequested.ID, goalID, subcommanderID)
+	if err != nil {
+		t.Fatalf("ReceivePlanHandoffReviewRejection: %v", err)
+	}
+	if rejectionReceived.ReviewRejectionReceivedBy != subcommanderID || rejectionReceived.ReviewRejectionReceivedAt == nil {
+		t.Fatalf("unexpected plan rejection receipt: %+v", rejectionReceived)
 	}
 
 	if _, err := s.RequestPlanHandoffReview(ctx, reviewRequested.ID, goalID, subcommanderID, "revised plan"); err != nil {

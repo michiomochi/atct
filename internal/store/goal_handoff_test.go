@@ -167,7 +167,7 @@ func TestGoalHandoffRequestReceiveAndComplete(t *testing.T) {
 	}
 }
 
-func TestGoalHandoffReviewLifecyclePreservesGoalClaim(t *testing.T) {
+func TestGoalHandoffReviewRejectReceiveLifecyclePreservesGoalClaim(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 	goalID := newTestGoal(t, s)
@@ -210,6 +210,20 @@ func TestGoalHandoffReviewLifecyclePreservesGoalClaim(t *testing.T) {
 	}
 	if rejected.ReceivedBy != receiverID || rejected.ReviewReceivedBy != 0 || rejected.ReviewReceivedAt != nil || rejected.ReviewRejectReport != "revise the goal" || rejected.ReviewRejectedAt == nil {
 		t.Fatalf("goal review rejection did not preserve claim and clear reviewer state: %+v", rejected)
+	}
+
+	if _, err := s.RequestGoalHandoffReview(ctx, handoff.ID, goalID, receiverID, "revised goal"); err == nil {
+		t.Fatal("RequestGoalHandoffReview accepted a rejection that the original submitter has not received")
+	}
+	if _, err := s.ReceiveGoalHandoffReviewRejection(ctx, handoff.ID, goalID, wrongReviewerID); err == nil {
+		t.Fatal("ReceiveGoalHandoffReviewRejection accepted a foreign session")
+	}
+	rejectionReceived, err := s.ReceiveGoalHandoffReviewRejection(ctx, handoff.ID, goalID, receiverID)
+	if err != nil {
+		t.Fatalf("ReceiveGoalHandoffReviewRejection: %v", err)
+	}
+	if rejectionReceived.ReviewRejectionReceivedBy != receiverID || rejectionReceived.ReviewRejectionReceivedAt == nil {
+		t.Fatalf("unexpected goal rejection receipt: %+v", rejectionReceived)
 	}
 
 	if _, err := s.RequestGoalHandoffReview(ctx, handoff.ID, goalID, receiverID, "revised goal"); err != nil {

@@ -1480,6 +1480,14 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		handoff, err := d.store.RejectTaskHandoffReview(ctx, p.HandoffID, p.TaskID, p.ReviewerID, p.RejectReport)
 		return marshal(handoff, err)
 
+	case "task.handoff.review.reject.receive":
+		var p taskHandoffReviewReceiveParams
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		handoff, err := d.store.ReceiveTaskHandoffReviewRejection(ctx, p.HandoffID, p.TaskID, p.ReceivedBy)
+		return marshal(handoff, err)
+
 	case "task.handoff.complete", "handoff.complete":
 		var p taskHandoffCompleteParams
 		if err := json.Unmarshal(req.Params, &p); err != nil {
@@ -1583,6 +1591,14 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		handoff, err := d.store.RejectGoalHandoffReview(ctx, p.HandoffID, p.GoalID, p.ReviewerID, p.RejectReport)
 		return marshal(handoff, err)
 
+	case "goal.handoff.review.reject.receive":
+		var p goalHandoffReviewReceiveParams
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		handoff, err := d.store.ReceiveGoalHandoffReviewRejection(ctx, p.HandoffID, p.GoalID, p.ReceivedBy)
+		return marshal(handoff, err)
+
 	case "goal.handoff.complete":
 		var p goalHandoffCompleteParams
 		if err := json.Unmarshal(req.Params, &p); err != nil {
@@ -1675,6 +1691,14 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 			return nil, err
 		}
 		handoff, err := d.store.RejectPlanHandoffReview(ctx, p.HandoffID, p.GoalID, p.ReviewerID, p.RejectReport)
+		return marshal(handoff, err)
+
+	case "plan.handoff.review.reject.receive":
+		var p planHandoffReviewReceiveParams
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		handoff, err := d.store.ReceivePlanHandoffReviewRejection(ctx, p.HandoffID, p.GoalID, p.ReceivedBy)
 		return marshal(handoff, err)
 
 	case "plan.handoff.complete":

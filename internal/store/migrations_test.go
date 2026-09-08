@@ -53,6 +53,7 @@ func TestEmptyDatabaseAppliesBaselineMigration(t *testing.T) {
 		"0002_task_description.sql",
 		"0003_unique_task_sort_order.sql",
 		"0004_agent_sessions.sql",
+		"0035_handoff_only_lifecycle.sql",
 	} {
 		assertMigrationRecorded(t, db, filename)
 	}

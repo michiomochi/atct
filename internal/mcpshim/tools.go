@@ -814,6 +814,9 @@ func Register(server *mcp.Server, c *Client, agentSessionID int64) {
 			"handoff_id": in.HandoffID, "task_id": in.TaskID, "received_by": sessionID.Get(),
 		})
 	})
+	addMCPTool[HandoffReviewReceiveIn, RawWithUnappliedDecisions](server, &mcp.Tool{Name: "atct_task_handoff_review_reject_receive", Description: "Receive a task review rejection.", OutputSchema: rawOutputSchemaWithUnappliedDecisions()}, func(ctx context.Context, req *mcp.CallToolRequest, in HandoffReviewReceiveIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
+		return callWithUnappliedDecisions(ctx, c, "task.handoff.review.reject.receive", map[string]any{"handoff_id": in.HandoffID, "task_id": in.TaskID, "received_by": sessionID.Get()})
+	})
 
 	addMCPTool[TaskHandoffCompleteIn, RawWithUnappliedDecisions](server, &mcp.Tool{
 		Name:         "atct_task_handoff_complete",
@@ -906,6 +909,9 @@ func Register(server *mcp.Server, c *Client, agentSessionID int64) {
 			"handoff_id": in.HandoffID, "goal_id": in.GoalID, "received_by": sessionID.Get(),
 		})
 	})
+	addMCPTool[GoalHandoffReviewReceiveIn, RawWithUnappliedDecisions](server, &mcp.Tool{Name: "atct_goal_handoff_review_reject_receive", Description: "Receive a goal review rejection.", OutputSchema: rawOutputSchemaWithUnappliedDecisions()}, func(ctx context.Context, req *mcp.CallToolRequest, in GoalHandoffReviewReceiveIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
+		return callWithUnappliedDecisions(ctx, c, "goal.handoff.review.reject.receive", map[string]any{"handoff_id": in.HandoffID, "goal_id": in.GoalID, "received_by": sessionID.Get()})
+	})
 
 	addMCPTool[GoalHandoffReviewRejectIn, RawWithUnappliedDecisions](server, &mcp.Tool{
 		Name:         "atct_goal_handoff_review_reject",
@@ -947,6 +953,9 @@ func Register(server *mcp.Server, c *Client, agentSessionID int64) {
 		return callWithUnappliedDecisions(ctx, c, "plan.handoff.review.receive", map[string]any{
 			"handoff_id": in.HandoffID, "goal_id": in.GoalID, "received_by": sessionID.Get(),
 		})
+	})
+	addMCPTool[PlanHandoffReviewReceiveIn, RawWithUnappliedDecisions](server, &mcp.Tool{Name: "atct_plan_handoff_review_reject_receive", Description: "Receive a plan review rejection.", OutputSchema: rawOutputSchemaWithUnappliedDecisions()}, func(ctx context.Context, req *mcp.CallToolRequest, in PlanHandoffReviewReceiveIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
+		return callWithUnappliedDecisions(ctx, c, "plan.handoff.review.reject.receive", map[string]any{"handoff_id": in.HandoffID, "goal_id": in.GoalID, "received_by": sessionID.Get()})
 	})
 
 	addMCPTool[PlanHandoffCompleteIn, RawWithUnappliedDecisions](server, &mcp.Tool{

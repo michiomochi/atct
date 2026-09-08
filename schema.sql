@@ -127,7 +127,9 @@ CREATE TABLE IF NOT EXISTS task_handoffs (
   review_received_by  INTEGER REFERENCES agent_sessions(id),
   review_received_at  TEXT,
   review_rejected_at  TEXT,
-  review_reject_report TEXT
+  review_reject_report TEXT,
+  review_rejection_received_by INTEGER REFERENCES agent_sessions(id),
+  review_rejection_received_at TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_task_handoffs_task_id
@@ -153,7 +155,9 @@ CREATE TABLE IF NOT EXISTS goal_handoffs (
   review_received_by  INTEGER REFERENCES agent_sessions(id),
   review_received_at  TEXT,
   review_rejected_at  TEXT,
-  review_reject_report TEXT
+  review_reject_report TEXT,
+  review_rejection_received_by INTEGER REFERENCES agent_sessions(id),
+  review_rejection_received_at TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_goal_handoffs_goal_id
@@ -173,6 +177,8 @@ CREATE TABLE IF NOT EXISTS plan_handoffs (
   review_received_at  TEXT,
   review_rejected_at  TEXT,
   review_reject_report TEXT,
+  review_rejection_received_by INTEGER REFERENCES agent_sessions(id),
+  review_rejection_received_at TEXT,
   completed_report_at TEXT,
   complete_report     TEXT
 );
@@ -209,6 +215,29 @@ CREATE INDEX IF NOT EXISTS monitor_health_project_idx
 CREATE INDEX IF NOT EXISTS monitor_health_last_seen_idx
   ON monitor_health(last_seen_at);
 
+CREATE TABLE IF NOT EXISTS task_create_handoffs (
+  id              TEXT PRIMARY KEY,
+  plan_handoff_id TEXT NOT NULL UNIQUE REFERENCES plan_handoffs(id),
+  goal_id         INTEGER NOT NULL REFERENCES goals(id),
+  requested_by    INTEGER REFERENCES agent_sessions(id),
+  received_by     INTEGER REFERENCES agent_sessions(id),
+  completed_by    INTEGER REFERENCES agent_sessions(id),
+  requested_at    TEXT,
+  received_at     TEXT,
+  completed_at    TEXT,
+  request_report  TEXT,
+  complete_report TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_task_create_handoffs_goal_id
+  ON task_create_handoffs(goal_id);
+
+CREATE TABLE IF NOT EXISTS task_create_handoff_tasks (
+  handoff_id TEXT NOT NULL REFERENCES task_create_handoffs(id),
+  task_id    INTEGER NOT NULL REFERENCES tasks(id),
+  PRIMARY KEY (handoff_id, task_id)
+);
+
 CREATE TABLE IF NOT EXISTS orchestration_scope (
   scope_key         TEXT PRIMARY KEY,
   project_id        INTEGER NOT NULL REFERENCES projects(id),
@@ -223,93 +252,45 @@ CREATE TABLE IF NOT EXISTS orchestration_scope (
   updated_at        TEXT NOT NULL
 );
 
-CREATE INDEX IF NOT EXISTS orchestration_scope_project_active_idx
-  ON orchestration_scope(project_id, active, scope_key);
-
-CREATE INDEX IF NOT EXISTS orchestration_scope_goal_active_idx
-  ON orchestration_scope(goal_id, active, scope_key);
-
-CREATE INDEX IF NOT EXISTS orchestration_scope_task_active_idx
-  ON orchestration_scope(task_id, active, scope_key);
+CREATE INDEX IF NOT EXISTS orchestration_scope_project_active_idx ON orchestration_scope(project_id, active, scope_key);
+CREATE INDEX IF NOT EXISTS orchestration_scope_goal_active_idx ON orchestration_scope(goal_id, active, scope_key);
+CREATE INDEX IF NOT EXISTS orchestration_scope_task_active_idx ON orchestration_scope(task_id, active, scope_key);
 
 CREATE TABLE IF NOT EXISTS orchestration_delivery_leases (
-  scope_key         TEXT NOT NULL REFERENCES orchestration_scope(scope_key),
-  target_role       TEXT NOT NULL,
-  holder_monitor_id TEXT NOT NULL,
-  fencing_token     INTEGER NOT NULL CHECK (fencing_token > 0),
-  expires_at        TEXT NOT NULL,
-  updated_at        TEXT NOT NULL,
-  PRIMARY KEY (scope_key, target_role)
+  scope_key TEXT NOT NULL REFERENCES orchestration_scope(scope_key), target_role TEXT NOT NULL,
+  holder_monitor_id TEXT NOT NULL, fencing_token INTEGER NOT NULL CHECK (fencing_token > 0),
+  expires_at TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY (scope_key, target_role)
 );
-
-CREATE INDEX IF NOT EXISTS orchestration_delivery_leases_holder_idx
-  ON orchestration_delivery_leases(holder_monitor_id);
+CREATE INDEX IF NOT EXISTS orchestration_delivery_leases_holder_idx ON orchestration_delivery_leases(holder_monitor_id);
 
 CREATE TABLE IF NOT EXISTS orchestration_delivery_receipts (
-  scope_key         TEXT NOT NULL REFERENCES orchestration_scope(scope_key),
-  delivery_key      TEXT NOT NULL,
-  generation        TEXT NOT NULL,
-  target_role       TEXT NOT NULL,
-  holder_monitor_id TEXT NOT NULL,
-  fencing_token     INTEGER NOT NULL CHECK (fencing_token > 0),
-  status            TEXT NOT NULL CHECK (status IN ('reserved', 'accepted', 'unknown')),
-  created_at        TEXT NOT NULL,
-  updated_at        TEXT NOT NULL,
-  PRIMARY KEY (scope_key, delivery_key, generation)
+  scope_key TEXT NOT NULL REFERENCES orchestration_scope(scope_key), delivery_key TEXT NOT NULL,
+  generation TEXT NOT NULL, target_role TEXT NOT NULL, holder_monitor_id TEXT NOT NULL,
+  fencing_token INTEGER NOT NULL CHECK (fencing_token > 0),
+  status TEXT NOT NULL CHECK (status IN ('reserved', 'accepted', 'unknown')),
+  created_at TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY (scope_key, delivery_key, generation)
 );
-
-CREATE INDEX IF NOT EXISTS orchestration_delivery_receipts_status_idx
-  ON orchestration_delivery_receipts(status, updated_at);
+CREATE INDEX IF NOT EXISTS orchestration_delivery_receipts_status_idx ON orchestration_delivery_receipts(status, updated_at);
 
 CREATE TABLE IF NOT EXISTS orchestration_blockers (
-  blocker_id  TEXT PRIMARY KEY,
-  project_id  INTEGER NOT NULL REFERENCES projects(id),
-  goal_id     INTEGER REFERENCES goals(id),
-  task_id     INTEGER REFERENCES tasks(id),
-  scope_key   TEXT NOT NULL,
-  kind        TEXT NOT NULL CHECK (kind IN ('human_decision', 'dependency_merge')),
-  source_id   TEXT NOT NULL,
-  generation  TEXT NOT NULL,
-  owner_role  TEXT NOT NULL CHECK (owner_role IN ('commander', 'subcommander')),
-  instruction TEXT NOT NULL,
-  opened_at   TEXT NOT NULL,
-  resolved_at TEXT
+  blocker_id TEXT PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(id), goal_id INTEGER REFERENCES goals(id),
+  task_id INTEGER REFERENCES tasks(id), scope_key TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('human_decision', 'dependency_merge')), source_id TEXT NOT NULL,
+  generation TEXT NOT NULL, owner_role TEXT NOT NULL CHECK (owner_role IN ('commander', 'subcommander')),
+  instruction TEXT NOT NULL, opened_at TEXT NOT NULL, resolved_at TEXT
 );
-
-CREATE UNIQUE INDEX IF NOT EXISTS orchestration_blockers_identity_idx
-  ON orchestration_blockers(kind, source_id, generation);
-
-CREATE INDEX IF NOT EXISTS orchestration_blockers_open_project_idx
-  ON orchestration_blockers(project_id, resolved_at, opened_at, blocker_id);
+CREATE UNIQUE INDEX IF NOT EXISTS orchestration_blockers_identity_idx ON orchestration_blockers(kind, source_id, generation);
+CREATE INDEX IF NOT EXISTS orchestration_blockers_open_project_idx ON orchestration_blockers(project_id, resolved_at, opened_at, blocker_id);
 
 CREATE TABLE IF NOT EXISTS orchestration_review_work (
-  review_work_id              TEXT PRIMARY KEY,
-  project_id                  INTEGER NOT NULL REFERENCES projects(id),
-  goal_id                     INTEGER NOT NULL REFERENCES goals(id),
-  task_id                     INTEGER REFERENCES tasks(id),
-  kind                        TEXT NOT NULL CHECK (kind IN ('task', 'plan', 'goal')),
-  handoff_id                  TEXT NOT NULL,
-  requester_session_id        INTEGER NOT NULL,
-  requester_scope_key         TEXT NOT NULL,
-  expected_reviewer_role      TEXT NOT NULL,
-  reviewer_scope_key          TEXT NOT NULL,
-  reviewer_session_id         INTEGER,
-  state                       TEXT NOT NULL CHECK (state IN ('requested', 'received', 'rejected', 'completed')),
-  review_requested_generation TEXT NOT NULL,
-  review_received_generation  TEXT,
-  settlement_generation       TEXT,
-  active                      INTEGER NOT NULL CHECK (active IN (0, 1)),
-  action_role                 TEXT,
-  action_scope_key            TEXT,
-  action_task_id              INTEGER REFERENCES tasks(id),
-  action_instruction          TEXT,
-  opened_at                   TEXT NOT NULL,
-  updated_at                  TEXT NOT NULL,
-  resolved_at                 TEXT
+  review_work_id TEXT PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(id), goal_id INTEGER NOT NULL REFERENCES goals(id),
+  task_id INTEGER REFERENCES tasks(id), kind TEXT NOT NULL CHECK (kind IN ('task', 'plan', 'goal')), handoff_id TEXT NOT NULL,
+  requester_session_id INTEGER NOT NULL, requester_scope_key TEXT NOT NULL, expected_reviewer_role TEXT NOT NULL,
+  reviewer_scope_key TEXT NOT NULL, reviewer_session_id INTEGER,
+  state TEXT NOT NULL CHECK (state IN ('requested', 'received', 'rejected', 'completed')),
+  review_requested_generation TEXT NOT NULL, review_received_generation TEXT, settlement_generation TEXT,
+  active INTEGER NOT NULL CHECK (active IN (0, 1)), action_role TEXT, action_scope_key TEXT,
+  action_task_id INTEGER REFERENCES tasks(id), action_instruction TEXT, opened_at TEXT NOT NULL, updated_at TEXT NOT NULL, resolved_at TEXT
 );
-
-CREATE UNIQUE INDEX IF NOT EXISTS orchestration_review_work_identity_idx
-  ON orchestration_review_work(kind, handoff_id, review_requested_generation);
-
-CREATE INDEX IF NOT EXISTS orchestration_review_work_project_idx
-  ON orchestration_review_work(project_id, active, updated_at, review_work_id);
+CREATE UNIQUE INDEX IF NOT EXISTS orchestration_review_work_identity_idx ON orchestration_review_work(kind, handoff_id, review_requested_generation);
+CREATE INDEX IF NOT EXISTS orchestration_review_work_project_idx ON orchestration_review_work(project_id, active, updated_at, review_work_id);

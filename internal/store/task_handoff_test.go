@@ -229,7 +229,7 @@ func TestTaskHandoffRequestReceiveAndComplete(t *testing.T) {
 	}
 }
 
-func TestTaskHandoffReviewLifecycleUpdatesTaskStatusAndPreservesClaim(t *testing.T) {
+func TestTaskHandoffReviewRejectReceiveLifecycleUpdatesTaskStatusAndPreservesClaim(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 	taskID := addTestTasks(t, s, 1)[0]
@@ -285,6 +285,20 @@ func TestTaskHandoffReviewLifecycleUpdatesTaskStatusAndPreservesClaim(t *testing
 
 	if _, err := s.RequestTaskHandoff(ctx, "task-review-second-open", taskID, requesterID, "second handoff"); err == nil {
 		t.Fatal("RequestTaskHandoff opened a second handoff after review rejection")
+	}
+
+	if _, err := s.RequestTaskHandoffReview(ctx, handoff.ID, taskID, receiverID, "coverage added"); err == nil {
+		t.Fatal("RequestTaskHandoffReview accepted a rejection that the original submitter has not received")
+	}
+	if _, err := s.ReceiveTaskHandoffReviewRejection(ctx, handoff.ID, taskID, wrongReviewerID); err == nil {
+		t.Fatal("ReceiveTaskHandoffReviewRejection accepted a foreign session")
+	}
+	rejectionReceived, err := s.ReceiveTaskHandoffReviewRejection(ctx, handoff.ID, taskID, receiverID)
+	if err != nil {
+		t.Fatalf("ReceiveTaskHandoffReviewRejection: %v", err)
+	}
+	if rejectionReceived.ReviewRejectionReceivedBy != receiverID || rejectionReceived.ReviewRejectionReceivedAt == nil {
+		t.Fatalf("unexpected task rejection receipt: %+v", rejectionReceived)
 	}
 
 	if _, err := s.RequestTaskHandoffReview(ctx, handoff.ID, taskID, receiverID, "coverage added"); err != nil {

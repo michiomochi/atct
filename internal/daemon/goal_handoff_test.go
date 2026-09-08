@@ -477,6 +477,67 @@ func TestNamedGoalAndPlanHandoffReviewRoutesReturnRoleEvidence(t *testing.T) {
 	}
 }
 
+func TestNamedGoalAndPlanHandoffReviewRejectReceiveRetriesOverRPC(t *testing.T) {
+	fixture := newGoalHandoffRPCTestFixture(t)
+	client := mcpshim.NewClient(fixture.socketPath)
+	ctx := context.Background()
+
+	const goalHandoffID = "named-goal-review-reject-receive"
+	var goal store.GoalHandoff
+	if err := client.Call(ctx, "goal.handoff.request", map[string]any{"handoff_id": goalHandoffID, "goal_id": fixture.claimedGoalID, "requested_by": fixture.requesterID}, &goal); err != nil {
+		t.Fatalf("goal.handoff.request: %v", err)
+	}
+	var received handoffReceiveResponse
+	if err := client.Call(ctx, "goal.handoff.receive", map[string]any{"handoff_id": goalHandoffID, "goal_id": fixture.claimedGoalID, "received_by": fixture.receiverID}, &received); err != nil {
+		t.Fatalf("goal.handoff.receive: %v", err)
+	}
+	if err := client.Call(ctx, "goal.handoff.review.request", map[string]any{"handoff_id": goalHandoffID, "goal_id": fixture.claimedGoalID, "requested_by": fixture.receiverID, "review_request_report": "ready"}, &goal); err != nil {
+		t.Fatalf("goal.handoff.review.request: %v", err)
+	}
+	if err := client.Call(ctx, "goal.handoff.review.receive", map[string]any{"handoff_id": goalHandoffID, "goal_id": fixture.claimedGoalID, "received_by": fixture.requesterID}, &received); err != nil {
+		t.Fatalf("goal.handoff.review.receive: %v", err)
+	}
+	if err := client.Call(ctx, "goal.handoff.review.reject", map[string]any{"handoff_id": goalHandoffID, "goal_id": fixture.claimedGoalID, "reviewer_id": fixture.requesterID, "reject_report": "revise"}, &goal); err != nil {
+		t.Fatalf("goal.handoff.review.reject: %v", err)
+	}
+	if err := client.Call(ctx, "goal.handoff.review.reject.receive", map[string]any{"handoff_id": goalHandoffID, "goal_id": fixture.claimedGoalID, "received_by": fixture.requesterID}, &goal); err == nil {
+		t.Fatal("goal.handoff.review.reject.receive accepted the reviewer")
+	}
+	if err := client.Call(ctx, "goal.handoff.review.reject.receive", map[string]any{"handoff_id": goalHandoffID, "goal_id": fixture.claimedGoalID, "received_by": fixture.receiverID}, &goal); err != nil {
+		t.Fatalf("goal.handoff.review.reject.receive: %v", err)
+	}
+	if goal.ReviewRejectionReceivedBy != fixture.receiverID || goal.ReviewRejectionReceivedAt == nil {
+		t.Fatalf("goal rejection receipt = %+v, want receiver and timestamp", goal)
+	}
+	if err := client.Call(ctx, "goal.handoff.review.request", map[string]any{"handoff_id": goalHandoffID, "goal_id": fixture.claimedGoalID, "requested_by": fixture.receiverID, "review_request_report": "revised"}, &goal); err != nil {
+		t.Fatalf("retry goal.handoff.review.request: %v", err)
+	}
+
+	const planHandoffID = "named-plan-review-reject-receive"
+	var plan store.PlanHandoff
+	if err := client.Call(ctx, "plan.handoff.review.request", map[string]any{"handoff_id": planHandoffID, "goal_id": fixture.claimedGoalID, "requested_by": fixture.receiverID, "review_request_report": "ready"}, &plan); err != nil {
+		t.Fatalf("plan.handoff.review.request: %v", err)
+	}
+	if err := client.Call(ctx, "plan.handoff.review.receive", map[string]any{"handoff_id": planHandoffID, "goal_id": fixture.claimedGoalID, "received_by": fixture.requesterID}, &received); err != nil {
+		t.Fatalf("plan.handoff.review.receive: %v", err)
+	}
+	if err := client.Call(ctx, "plan.handoff.review.reject", map[string]any{"handoff_id": planHandoffID, "goal_id": fixture.claimedGoalID, "reviewer_id": fixture.requesterID, "reject_report": "revise"}, &plan); err != nil {
+		t.Fatalf("plan.handoff.review.reject: %v", err)
+	}
+	if err := client.Call(ctx, "plan.handoff.review.reject.receive", map[string]any{"handoff_id": planHandoffID, "goal_id": fixture.claimedGoalID, "received_by": fixture.requesterID}, &plan); err == nil {
+		t.Fatal("plan.handoff.review.reject.receive accepted the reviewer")
+	}
+	if err := client.Call(ctx, "plan.handoff.review.reject.receive", map[string]any{"handoff_id": planHandoffID, "goal_id": fixture.claimedGoalID, "received_by": fixture.receiverID}, &plan); err != nil {
+		t.Fatalf("plan.handoff.review.reject.receive: %v", err)
+	}
+	if plan.ReviewRejectionReceivedBy != fixture.receiverID || plan.ReviewRejectionReceivedAt == nil {
+		t.Fatalf("plan rejection receipt = %+v, want receiver and timestamp", plan)
+	}
+	if err := client.Call(ctx, "plan.handoff.review.request", map[string]any{"handoff_id": planHandoffID, "goal_id": fixture.claimedGoalID, "requested_by": fixture.receiverID, "review_request_report": "revised"}, &plan); err != nil {
+		t.Fatalf("retry plan.handoff.review.request: %v", err)
+	}
+}
+
 func registerGoalHandoffRPCTestSession(t *testing.T, fixture goalHandoffRPCTestFixture) int64 {
 	t.Helper()
 

@@ -48,6 +48,13 @@ func TestSchemaParityOnMigratedCopiedDatabaseFromEnvironment(t *testing.T) {
 	if !reflect.DeepEqual(report.removedTables, wantRemovedTables) {
 		t.Fatalf("removed tables = %v, want %v", report.removedTables, wantRemovedTables)
 	}
+	wantAddedTables := []string{
+		"task_create_handoff_tasks",
+		"task_create_handoffs",
+	}
+	if !reflect.DeepEqual(report.addedTables, wantAddedTables) {
+		t.Fatalf("added tables = %v, want %v", report.addedTables, wantAddedTables)
+	}
 	t.Logf("migration integrity report: %s", report)
 
 	cloneDB, err := sql.Open("sqlite", clonePath)

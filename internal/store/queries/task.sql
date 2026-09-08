@@ -151,7 +151,7 @@ SELECT id, task_id, requested_by, received_by,
        request_report, complete_report,
        review_requested_by, review_requested_at, review_request_report,
        review_received_by, review_received_at,
-       review_rejected_at, review_reject_report
+       review_rejected_at, review_reject_report, review_rejection_received_by, review_rejection_received_at
 FROM task_handoffs
 WHERE id = ?;
 
@@ -161,7 +161,7 @@ SELECT id, task_id, requested_by, received_by,
        request_report, complete_report,
        review_requested_by, review_requested_at, review_request_report,
        review_received_by, review_received_at,
-       review_rejected_at, review_reject_report
+       review_rejected_at, review_reject_report, review_rejection_received_by, review_rejection_received_at
 FROM task_handoffs
 WHERE task_id = ?
 ORDER BY id;
@@ -172,7 +172,7 @@ SELECT th.id, th.task_id, th.requested_by, th.received_by,
        th.request_report, th.complete_report,
        th.review_requested_by, th.review_requested_at, th.review_request_report,
        th.review_received_by, th.review_received_at,
-       th.review_rejected_at, th.review_reject_report
+       th.review_rejected_at, th.review_reject_report, th.review_rejection_received_by, th.review_rejection_received_at
 FROM task_handoffs AS th
 JOIN tasks AS t ON t.id = th.task_id
 WHERE t.goal_id = ?
@@ -219,12 +219,14 @@ SET review_requested_by = ?,
     review_received_by = NULL,
     review_received_at = NULL,
     review_rejected_at = NULL,
-    review_reject_report = NULL
+    review_reject_report = NULL,
+    review_rejection_received_by = NULL,
+    review_rejection_received_at = NULL
 WHERE id = ? AND task_id = ?
   AND requested_at IS NOT NULL
   AND received_at IS NOT NULL
   AND completed_report_at IS NULL
-  AND (review_requested_at IS NULL OR review_rejected_at IS NOT NULL);
+  AND (review_requested_at IS NULL OR (review_rejected_at IS NOT NULL AND review_rejection_received_at IS NOT NULL));
 
 -- name: ReceiveTaskHandoffReview :execresult
 UPDATE task_handoffs
@@ -243,6 +245,14 @@ SET review_received_by = NULL,
 WHERE id = ? AND task_id = ?
   AND review_received_at IS NOT NULL
   AND completed_report_at IS NULL;
+
+-- name: ReceiveTaskHandoffReviewRejection :execresult
+UPDATE task_handoffs
+SET review_rejection_received_by = ?, review_rejection_received_at = ?
+WHERE id = ? AND task_id = ?
+  AND review_rejected_at IS NOT NULL
+  AND review_rejection_received_at IS NULL
+  AND received_by = ?;
 
 -- name: CompleteTaskHandoffByReviewer :execresult
 UPDATE task_handoffs
@@ -270,7 +280,7 @@ SELECT id, goal_id, requested_by, received_by,
        request_report, complete_report,
        review_requested_by, review_requested_at, review_request_report,
        review_received_by, review_received_at,
-       review_rejected_at, review_reject_report
+       review_rejected_at, review_reject_report, review_rejection_received_by, review_rejection_received_at
 FROM goal_handoffs
 WHERE id = ?;
 
@@ -280,7 +290,7 @@ SELECT id, goal_id, requested_by, received_by,
        request_report, complete_report,
        review_requested_by, review_requested_at, review_request_report,
        review_received_by, review_received_at,
-       review_rejected_at, review_reject_report
+       review_rejected_at, review_reject_report, review_rejection_received_by, review_rejection_received_at
 FROM goal_handoffs
 WHERE goal_id = ?
 ORDER BY id;
@@ -311,12 +321,14 @@ SET review_requested_by = ?,
     review_received_by = NULL,
     review_received_at = NULL,
     review_rejected_at = NULL,
-    review_reject_report = NULL
+    review_reject_report = NULL,
+    review_rejection_received_by = NULL,
+    review_rejection_received_at = NULL
 WHERE id = ? AND goal_id = ?
   AND requested_at IS NOT NULL
   AND received_at IS NOT NULL
   AND completed_report_at IS NULL
-  AND (review_requested_at IS NULL OR review_rejected_at IS NOT NULL);
+  AND (review_requested_at IS NULL OR (review_rejected_at IS NOT NULL AND review_rejection_received_at IS NOT NULL));
 
 -- name: ReceiveGoalHandoffReview :execresult
 UPDATE goal_handoffs
@@ -335,6 +347,14 @@ SET review_received_by = NULL,
 WHERE id = ? AND goal_id = ?
   AND review_received_at IS NOT NULL
   AND completed_report_at IS NULL;
+
+-- name: ReceiveGoalHandoffReviewRejection :execresult
+UPDATE goal_handoffs
+SET review_rejection_received_by = ?, review_rejection_received_at = ?
+WHERE id = ? AND goal_id = ?
+  AND review_rejected_at IS NOT NULL
+  AND review_rejection_received_at IS NULL
+  AND received_by = ?;
 
 -- name: CompleteGoalHandoffByReviewer :execresult
 UPDATE goal_handoffs
@@ -357,20 +377,12 @@ SET complete_report = ?
 WHERE id = ? AND goal_id = ? AND completed_report_at IS NOT NULL;
 
 -- name: GetPlanHandoff :one
-SELECT id, goal_id,
-       review_requested_by, review_requested_at, review_request_report,
-       review_received_by, review_received_at,
-       review_rejected_at, review_reject_report,
-       completed_report_at, complete_report
+SELECT plan_handoffs.*
 FROM plan_handoffs
 WHERE id = ?;
 
 -- name: ListPlanHandoffs :many
-SELECT id, goal_id,
-       review_requested_by, review_requested_at, review_request_report,
-       review_received_by, review_received_at,
-       review_rejected_at, review_reject_report,
-       completed_report_at, complete_report
+SELECT plan_handoffs.*
 FROM plan_handoffs
 WHERE goal_id = ?
 ORDER BY id;
@@ -387,10 +399,13 @@ ON CONFLICT(id) DO UPDATE SET
   review_received_by = NULL,
   review_received_at = NULL,
   review_rejected_at = NULL,
-  review_reject_report = NULL
+  review_reject_report = NULL,
+  review_rejection_received_by = NULL,
+  review_rejection_received_at = NULL
 WHERE plan_handoffs.goal_id = excluded.goal_id
   AND plan_handoffs.completed_report_at IS NULL
-  AND plan_handoffs.review_rejected_at IS NOT NULL;
+  AND plan_handoffs.review_rejected_at IS NOT NULL
+  AND plan_handoffs.review_rejection_received_at IS NOT NULL;
 
 -- name: ReceivePlanHandoffReview :execresult
 UPDATE plan_handoffs
@@ -409,6 +424,14 @@ SET review_received_by = NULL,
 WHERE id = ? AND goal_id = ?
   AND review_received_at IS NOT NULL
   AND completed_report_at IS NULL;
+
+-- name: ReceivePlanHandoffReviewRejection :execresult
+UPDATE plan_handoffs
+SET review_rejection_received_by = ?, review_rejection_received_at = ?
+WHERE id = ? AND goal_id = ?
+  AND review_rejected_at IS NOT NULL
+  AND review_rejection_received_at IS NULL
+  AND review_requested_by = ?;
 
 -- name: CompletePlanHandoff :execresult
 UPDATE plan_handoffs

@@ -314,7 +314,7 @@ SELECT id, goal_id, requested_by, received_by,
        request_report, complete_report,
        review_requested_by, review_requested_at, review_request_report,
        review_received_by, review_received_at,
-       review_rejected_at, review_reject_report
+       review_rejected_at, review_reject_report, review_rejection_received_by, review_rejection_received_at
 FROM goal_handoffs
 WHERE id = ?
 `
@@ -339,6 +339,8 @@ func (q *Queries) GetGoalHandoff(ctx context.Context, id string) (GoalHandoff, e
 		&i.ReviewReceivedAt,
 		&i.ReviewRejectedAt,
 		&i.ReviewRejectReport,
+		&i.ReviewRejectionReceivedBy,
+		&i.ReviewRejectionReceivedAt,
 	)
 	return i, err
 }
@@ -372,11 +374,7 @@ func (q *Queries) GetLatestAgentSessionID(ctx context.Context, projectID sql.Nul
 }
 
 const getPlanHandoff = `-- name: GetPlanHandoff :one
-SELECT id, goal_id,
-       review_requested_by, review_requested_at, review_request_report,
-       review_received_by, review_received_at,
-       review_rejected_at, review_reject_report,
-       completed_report_at, complete_report
+SELECT plan_handoffs.id, plan_handoffs.goal_id, plan_handoffs.review_requested_by, plan_handoffs.review_requested_at, plan_handoffs.review_request_report, plan_handoffs.review_received_by, plan_handoffs.review_received_at, plan_handoffs.review_rejected_at, plan_handoffs.review_reject_report, plan_handoffs.completed_report_at, plan_handoffs.complete_report, plan_handoffs.review_rejection_received_by, plan_handoffs.review_rejection_received_at
 FROM plan_handoffs
 WHERE id = ?
 `
@@ -396,6 +394,8 @@ func (q *Queries) GetPlanHandoff(ctx context.Context, id string) (PlanHandoff, e
 		&i.ReviewRejectReport,
 		&i.CompletedReportAt,
 		&i.CompleteReport,
+		&i.ReviewRejectionReceivedBy,
+		&i.ReviewRejectionReceivedAt,
 	)
 	return i, err
 }
@@ -448,7 +448,7 @@ SELECT id, task_id, requested_by, received_by,
        request_report, complete_report,
        review_requested_by, review_requested_at, review_request_report,
        review_received_by, review_received_at,
-       review_rejected_at, review_reject_report
+       review_rejected_at, review_reject_report, review_rejection_received_by, review_rejection_received_at
 FROM task_handoffs
 WHERE id = ?
 `
@@ -473,6 +473,8 @@ func (q *Queries) GetTaskHandoff(ctx context.Context, id string) (TaskHandoff, e
 		&i.ReviewReceivedAt,
 		&i.ReviewRejectedAt,
 		&i.ReviewRejectReport,
+		&i.ReviewRejectionReceivedBy,
+		&i.ReviewRejectionReceivedAt,
 	)
 	return i, err
 }
@@ -556,7 +558,7 @@ SELECT id, goal_id, requested_by, received_by,
        request_report, complete_report,
        review_requested_by, review_requested_at, review_request_report,
        review_received_by, review_received_at,
-       review_rejected_at, review_reject_report
+       review_rejected_at, review_reject_report, review_rejection_received_by, review_rejection_received_at
 FROM goal_handoffs
 WHERE goal_id = ?
 ORDER BY id
@@ -588,6 +590,8 @@ func (q *Queries) ListGoalHandoffs(ctx context.Context, goalID int64) ([]GoalHan
 			&i.ReviewReceivedAt,
 			&i.ReviewRejectedAt,
 			&i.ReviewRejectReport,
+			&i.ReviewRejectionReceivedBy,
+			&i.ReviewRejectionReceivedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -676,7 +680,7 @@ SELECT th.id, th.task_id, th.requested_by, th.received_by,
        th.request_report, th.complete_report,
        th.review_requested_by, th.review_requested_at, th.review_request_report,
        th.review_received_by, th.review_received_at,
-       th.review_rejected_at, th.review_reject_report
+       th.review_rejected_at, th.review_reject_report, th.review_rejection_received_by, th.review_rejection_received_at
 FROM task_handoffs AS th
 JOIN tasks AS t ON t.id = th.task_id
 WHERE t.goal_id = ?
@@ -710,6 +714,8 @@ func (q *Queries) ListOpenTaskHandoffsForGoal(ctx context.Context, goalID int64)
 			&i.ReviewReceivedAt,
 			&i.ReviewRejectedAt,
 			&i.ReviewRejectReport,
+			&i.ReviewRejectionReceivedBy,
+			&i.ReviewRejectionReceivedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -725,11 +731,7 @@ func (q *Queries) ListOpenTaskHandoffsForGoal(ctx context.Context, goalID int64)
 }
 
 const listPlanHandoffs = `-- name: ListPlanHandoffs :many
-SELECT id, goal_id,
-       review_requested_by, review_requested_at, review_request_report,
-       review_received_by, review_received_at,
-       review_rejected_at, review_reject_report,
-       completed_report_at, complete_report
+SELECT plan_handoffs.id, plan_handoffs.goal_id, plan_handoffs.review_requested_by, plan_handoffs.review_requested_at, plan_handoffs.review_request_report, plan_handoffs.review_received_by, plan_handoffs.review_received_at, plan_handoffs.review_rejected_at, plan_handoffs.review_reject_report, plan_handoffs.completed_report_at, plan_handoffs.complete_report, plan_handoffs.review_rejection_received_by, plan_handoffs.review_rejection_received_at
 FROM plan_handoffs
 WHERE goal_id = ?
 ORDER BY id
@@ -756,6 +758,8 @@ func (q *Queries) ListPlanHandoffs(ctx context.Context, goalID int64) ([]PlanHan
 			&i.ReviewRejectReport,
 			&i.CompletedReportAt,
 			&i.CompleteReport,
+			&i.ReviewRejectionReceivedBy,
+			&i.ReviewRejectionReceivedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -822,7 +826,7 @@ SELECT id, task_id, requested_by, received_by,
        request_report, complete_report,
        review_requested_by, review_requested_at, review_request_report,
        review_received_by, review_received_at,
-       review_rejected_at, review_reject_report
+       review_rejected_at, review_reject_report, review_rejection_received_by, review_rejection_received_at
 FROM task_handoffs
 WHERE task_id = ?
 ORDER BY id
@@ -854,6 +858,8 @@ func (q *Queries) ListTaskHandoffs(ctx context.Context, taskID int64) ([]TaskHan
 			&i.ReviewReceivedAt,
 			&i.ReviewRejectedAt,
 			&i.ReviewRejectReport,
+			&i.ReviewRejectionReceivedBy,
+			&i.ReviewRejectionReceivedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -972,6 +978,33 @@ func (q *Queries) ReceiveGoalHandoffReview(ctx context.Context, arg ReceiveGoalH
 	)
 }
 
+const receiveGoalHandoffReviewRejection = `-- name: ReceiveGoalHandoffReviewRejection :execresult
+UPDATE goal_handoffs
+SET review_rejection_received_by = ?, review_rejection_received_at = ?
+WHERE id = ? AND goal_id = ?
+  AND review_rejected_at IS NOT NULL
+  AND review_rejection_received_at IS NULL
+  AND received_by = ?
+`
+
+type ReceiveGoalHandoffReviewRejectionParams struct {
+	ReviewRejectionReceivedBy sql.NullInt64
+	ReviewRejectionReceivedAt sql.NullString
+	ID                        string
+	GoalID                    int64
+	ReceivedBy                sql.NullInt64
+}
+
+func (q *Queries) ReceiveGoalHandoffReviewRejection(ctx context.Context, arg ReceiveGoalHandoffReviewRejectionParams) (sql.Result, error) {
+	return q.db.ExecContext(ctx, receiveGoalHandoffReviewRejection,
+		arg.ReviewRejectionReceivedBy,
+		arg.ReviewRejectionReceivedAt,
+		arg.ID,
+		arg.GoalID,
+		arg.ReceivedBy,
+	)
+}
+
 const receivePlanHandoffReview = `-- name: ReceivePlanHandoffReview :execresult
 UPDATE plan_handoffs
 SET review_received_by = ?, review_received_at = ?
@@ -994,6 +1027,33 @@ func (q *Queries) ReceivePlanHandoffReview(ctx context.Context, arg ReceivePlanH
 		arg.ReviewReceivedAt,
 		arg.ID,
 		arg.GoalID,
+	)
+}
+
+const receivePlanHandoffReviewRejection = `-- name: ReceivePlanHandoffReviewRejection :execresult
+UPDATE plan_handoffs
+SET review_rejection_received_by = ?, review_rejection_received_at = ?
+WHERE id = ? AND goal_id = ?
+  AND review_rejected_at IS NOT NULL
+  AND review_rejection_received_at IS NULL
+  AND review_requested_by = ?
+`
+
+type ReceivePlanHandoffReviewRejectionParams struct {
+	ReviewRejectionReceivedBy sql.NullInt64
+	ReviewRejectionReceivedAt sql.NullString
+	ID                        string
+	GoalID                    int64
+	ReviewRequestedBy         sql.NullInt64
+}
+
+func (q *Queries) ReceivePlanHandoffReviewRejection(ctx context.Context, arg ReceivePlanHandoffReviewRejectionParams) (sql.Result, error) {
+	return q.db.ExecContext(ctx, receivePlanHandoffReviewRejection,
+		arg.ReviewRejectionReceivedBy,
+		arg.ReviewRejectionReceivedAt,
+		arg.ID,
+		arg.GoalID,
+		arg.ReviewRequestedBy,
 	)
 }
 
@@ -1041,6 +1101,33 @@ func (q *Queries) ReceiveTaskHandoffReview(ctx context.Context, arg ReceiveTaskH
 		arg.ReviewReceivedAt,
 		arg.ID,
 		arg.TaskID,
+	)
+}
+
+const receiveTaskHandoffReviewRejection = `-- name: ReceiveTaskHandoffReviewRejection :execresult
+UPDATE task_handoffs
+SET review_rejection_received_by = ?, review_rejection_received_at = ?
+WHERE id = ? AND task_id = ?
+  AND review_rejected_at IS NOT NULL
+  AND review_rejection_received_at IS NULL
+  AND received_by = ?
+`
+
+type ReceiveTaskHandoffReviewRejectionParams struct {
+	ReviewRejectionReceivedBy sql.NullInt64
+	ReviewRejectionReceivedAt sql.NullString
+	ID                        string
+	TaskID                    int64
+	ReceivedBy                sql.NullInt64
+}
+
+func (q *Queries) ReceiveTaskHandoffReviewRejection(ctx context.Context, arg ReceiveTaskHandoffReviewRejectionParams) (sql.Result, error) {
+	return q.db.ExecContext(ctx, receiveTaskHandoffReviewRejection,
+		arg.ReviewRejectionReceivedBy,
+		arg.ReviewRejectionReceivedAt,
+		arg.ID,
+		arg.TaskID,
+		arg.ReceivedBy,
 	)
 }
 
@@ -1220,12 +1307,14 @@ SET review_requested_by = ?,
     review_received_by = NULL,
     review_received_at = NULL,
     review_rejected_at = NULL,
-    review_reject_report = NULL
+    review_reject_report = NULL,
+    review_rejection_received_by = NULL,
+    review_rejection_received_at = NULL
 WHERE id = ? AND goal_id = ?
   AND requested_at IS NOT NULL
   AND received_at IS NOT NULL
   AND completed_report_at IS NULL
-  AND (review_requested_at IS NULL OR review_rejected_at IS NOT NULL)
+  AND (review_requested_at IS NULL OR (review_rejected_at IS NOT NULL AND review_rejection_received_at IS NOT NULL))
 `
 
 type RequestGoalHandoffReviewParams struct {
@@ -1258,10 +1347,13 @@ ON CONFLICT(id) DO UPDATE SET
   review_received_by = NULL,
   review_received_at = NULL,
   review_rejected_at = NULL,
-  review_reject_report = NULL
+  review_reject_report = NULL,
+  review_rejection_received_by = NULL,
+  review_rejection_received_at = NULL
 WHERE plan_handoffs.goal_id = excluded.goal_id
   AND plan_handoffs.completed_report_at IS NULL
   AND plan_handoffs.review_rejected_at IS NOT NULL
+  AND plan_handoffs.review_rejection_received_at IS NOT NULL
 `
 
 type RequestPlanHandoffReviewParams struct {
@@ -1318,12 +1410,14 @@ SET review_requested_by = ?,
     review_received_by = NULL,
     review_received_at = NULL,
     review_rejected_at = NULL,
-    review_reject_report = NULL
+    review_reject_report = NULL,
+    review_rejection_received_by = NULL,
+    review_rejection_received_at = NULL
 WHERE id = ? AND task_id = ?
   AND requested_at IS NOT NULL
   AND received_at IS NOT NULL
   AND completed_report_at IS NULL
-  AND (review_requested_at IS NULL OR review_rejected_at IS NOT NULL)
+  AND (review_requested_at IS NULL OR (review_rejected_at IS NOT NULL AND review_rejection_received_at IS NOT NULL))
 `
 
 type RequestTaskHandoffReviewParams struct {

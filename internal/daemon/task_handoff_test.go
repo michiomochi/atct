@@ -376,6 +376,16 @@ func TestNamedTaskHandoffReviewRejectsAndRetriesWithSameWorker(t *testing.T) {
 	if rejected.ID != handoffID || rejected.ReceivedBy != fixture.receiverID || rejected.ReviewReceivedBy != 0 || rejected.ReviewReceivedAt != nil || rejected.ReviewRejectedAt == nil || rejected.ReviewRejectReport != "add focused coverage" {
 		t.Fatalf("rejected task handoff = %+v, want same receiver with cleared reviewer receipt", rejected)
 	}
+	if err := client.Call(ctx, "task.handoff.review.reject.receive", map[string]any{
+		"handoff_id": handoffID, "task_id": fixture.claimedTaskID, "received_by": fixture.requesterID,
+	}, &rejected); err == nil {
+		t.Fatal("task.handoff.review.reject.receive accepted the reviewer instead of the original submitter")
+	}
+	if err := client.Call(ctx, "task.handoff.review.reject.receive", map[string]any{
+		"handoff_id": handoffID, "task_id": fixture.claimedTaskID, "received_by": fixture.receiverID,
+	}, &rejected); err != nil {
+		t.Fatalf("task.handoff.review.reject.receive: %v", err)
+	}
 
 	var retried store.TaskHandoff
 	if err := client.Call(ctx, "task.handoff.review.request", map[string]any{

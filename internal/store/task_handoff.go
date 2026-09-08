@@ -43,36 +43,39 @@ func taskWorkflowEventScope(ctx context.Context, q *sqlcgen.Queries, taskID int6
 // TaskHandoff records one delegation between agents. Each event timestamp is
 // independent so a partial handoff remains observable.
 type TaskHandoff struct {
-	ID                  string
-	TaskID              int64
-	RequestedBy         int64
-	ReceivedBy          int64
-	RequestReport       string
-	CompleteReport      string
-	ReviewRequestedBy   int64
-	ReviewRequestedAt   *time.Time
-	ReviewRequestReport string
-	ReviewReceivedBy    int64
-	ReviewReceivedAt    *time.Time
-	ReviewRejectedAt    *time.Time
-	ReviewRejectReport  string
-	RequestedAt         *time.Time
-	ReceivedAt          *time.Time
-	CompletedReportAt   *time.Time
+	ID                        string
+	TaskID                    int64
+	RequestedBy               int64
+	ReceivedBy                int64
+	RequestReport             string
+	CompleteReport            string
+	ReviewRequestedBy         int64
+	ReviewRequestedAt         *time.Time
+	ReviewRequestReport       string
+	ReviewReceivedBy          int64
+	ReviewReceivedAt          *time.Time
+	ReviewRejectedAt          *time.Time
+	ReviewRejectReport        string
+	ReviewRejectionReceivedBy int64
+	ReviewRejectionReceivedAt *time.Time
+	RequestedAt               *time.Time
+	ReceivedAt                *time.Time
+	CompletedReportAt         *time.Time
 }
 
 func taskHandoffFromRow(row sqlcgen.TaskHandoff) (TaskHandoff, error) {
 	handoff := TaskHandoff{
-		ID:                  row.ID,
-		TaskID:              row.TaskID,
-		RequestedBy:         nullableAgentSessionID(row.RequestedBy),
-		ReceivedBy:          nullableAgentSessionID(row.ReceivedBy),
-		RequestReport:       row.RequestReport.String,
-		CompleteReport:      row.CompleteReport.String,
-		ReviewRequestedBy:   nullableAgentSessionID(row.ReviewRequestedBy),
-		ReviewRequestReport: row.ReviewRequestReport.String,
-		ReviewReceivedBy:    nullableAgentSessionID(row.ReviewReceivedBy),
-		ReviewRejectReport:  row.ReviewRejectReport.String,
+		ID:                        row.ID,
+		TaskID:                    row.TaskID,
+		RequestedBy:               nullableAgentSessionID(row.RequestedBy),
+		ReceivedBy:                nullableAgentSessionID(row.ReceivedBy),
+		RequestReport:             row.RequestReport.String,
+		CompleteReport:            row.CompleteReport.String,
+		ReviewRequestedBy:         nullableAgentSessionID(row.ReviewRequestedBy),
+		ReviewRequestReport:       row.ReviewRequestReport.String,
+		ReviewReceivedBy:          nullableAgentSessionID(row.ReviewReceivedBy),
+		ReviewRejectReport:        row.ReviewRejectReport.String,
+		ReviewRejectionReceivedBy: nullableAgentSessionID(row.ReviewRejectionReceivedBy),
 	}
 	var err error
 	if handoff.RequestedAt, err = parseTaskHandoffTime("requested_at", row.RequestedAt); err != nil {
@@ -91,6 +94,9 @@ func taskHandoffFromRow(row sqlcgen.TaskHandoff) (TaskHandoff, error) {
 		return TaskHandoff{}, err
 	}
 	if handoff.ReviewRejectedAt, err = parseTaskHandoffTime("review_rejected_at", row.ReviewRejectedAt); err != nil {
+		return TaskHandoff{}, err
+	}
+	if handoff.ReviewRejectionReceivedAt, err = parseTaskHandoffTime("review_rejection_received_at", row.ReviewRejectionReceivedAt); err != nil {
 		return TaskHandoff{}, err
 	}
 	return handoff, nil
@@ -548,6 +554,28 @@ func (s *Store) RejectTaskHandoffReview(ctx context.Context, handoffID string, t
 		return TaskHandoff{}, fmt.Errorf("commit task handoff review rejection: %w", err)
 	}
 	s.publishWorkflowEvents([]DecisionEvent{event})
+	return s.GetTaskHandoff(ctx, handoffID)
+}
+
+// ReceiveTaskHandoffReviewRejection records that the work submitter received a review rejection.
+func (s *Store) ReceiveTaskHandoffReviewRejection(ctx context.Context, handoffID string, taskID, receivedBy int64) (TaskHandoff, error) {
+	handoff, err := s.GetTaskHandoff(ctx, handoffID)
+	if err != nil {
+		return TaskHandoff{}, err
+	}
+	if handoff.TaskID != taskID {
+		return TaskHandoff{}, fmt.Errorf("%w: %q belongs to task %d, not %d", ErrTaskHandoffTaskMismatch, handoffID, handoff.TaskID, taskID)
+	}
+	if handoff.ReviewRejectedAt == nil || handoff.CompletedReportAt != nil || handoff.ReceivedBy != receivedBy || receivedBy == 0 {
+		return TaskHandoff{}, ErrTaskHandoffReviewState
+	}
+	result, err := sqlcgen.New(s.db).ReceiveTaskHandoffReviewRejection(ctx, sqlcgen.ReceiveTaskHandoffReviewRejectionParams{ReviewRejectionReceivedBy: sql.NullInt64{Int64: receivedBy, Valid: true}, ReviewRejectionReceivedAt: sql.NullString{String: time.Now().UTC().Format(time.RFC3339Nano), Valid: true}, ID: handoffID, TaskID: taskID, ReceivedBy: sql.NullInt64{Int64: receivedBy, Valid: true}})
+	if err != nil {
+		return TaskHandoff{}, fmt.Errorf("receive task handoff review rejection: %w", err)
+	}
+	if affected, err := result.RowsAffected(); err != nil || affected == 0 {
+		return TaskHandoff{}, ErrTaskHandoffReviewState
+	}
 	return s.GetTaskHandoff(ctx, handoffID)
 }
 

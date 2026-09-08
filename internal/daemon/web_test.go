@@ -169,7 +169,7 @@ func TestHTTPHandlerMCPInitializeReturnsStreamableResponse(t *testing.T) {
 	}
 }
 
-func TestHTTPHandlerMCPListsFortySixTools(t *testing.T) {
+func TestHTTPHandlerMCPListsFortyNineTools(t *testing.T) {
 	fixture := newMCPHTTPTestServer(t)
 	client := newMCPHTTPTestClient(fixture.server.URL + "/mcp")
 	client.initialize(t)
@@ -181,17 +181,20 @@ func TestHTTPHandlerMCPListsFortySixTools(t *testing.T) {
 	if !ok {
 		t.Fatalf("tools/list result.tools = %T, want array", result["tools"])
 	}
-	if len(tools) != 46 {
-		t.Fatalf("tools/list returned %d tools, want 46", len(tools))
+	if len(tools) != 49 {
+		t.Fatalf("tools/list returned %d tools, want 49", len(tools))
 	}
 	wantNames := map[string]bool{
-		"atct_role":                       false,
-		"atct_blocker_report":             false,
-		"atct_blocker_resolve":            false,
-		"atct_handoff_report_amend":       false,
-		"atct_goal_handoff_report_amend":  false,
-		"atct_goal_review_request":        false,
-		"atct_goal_update_request_report": false,
+		"atct_role":                               false,
+		"atct_blocker_report":                     false,
+		"atct_blocker_resolve":                    false,
+		"atct_handoff_report_amend":               false,
+		"atct_goal_handoff_report_amend":          false,
+		"atct_goal_review_request":                false,
+		"atct_goal_update_request_report":         false,
+		"atct_task_handoff_review_reject_receive": false,
+		"atct_goal_handoff_review_reject_receive": false,
+		"atct_plan_handoff_review_reject_receive": false,
 	}
 	for _, rawTool := range tools {
 		tool, ok := rawTool.(map[string]any)

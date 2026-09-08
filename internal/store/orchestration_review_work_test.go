@@ -166,6 +166,9 @@ func TestGoalAndPlanReviewWorkPersistsRecipientRolesAndResolves(t *testing.T) {
 		t.Fatalf("RejectGoalHandoffReview: %v", err)
 	}
 	assertReviewWork("goal", goalHandoff.ID, OrchestrationReviewWorkStateRejected, false, "commander", ProjectOrchestrationScopeKey(project.ID), "subcommander", goalScope)
+	if _, err := s.ReceiveGoalHandoffReviewRejection(ctx, goalHandoff.ID, goal.ID, subcommanderID); err != nil {
+		t.Fatalf("ReceiveGoalHandoffReviewRejection: %v", err)
+	}
 	if _, err := s.RequestGoalHandoffReview(ctx, goalHandoff.ID, goal.ID, subcommanderID, "goal revised"); err != nil {
 		t.Fatalf("re-request goal review: %v", err)
 	}
@@ -198,6 +201,9 @@ func TestGoalAndPlanReviewWorkPersistsRecipientRolesAndResolves(t *testing.T) {
 		t.Fatalf("RejectPlanHandoffReview: %v", err)
 	}
 	assertReviewWork("plan", planHandoffID, OrchestrationReviewWorkStateRejected, false, "commander", ProjectOrchestrationScopeKey(project.ID), "subcommander", goalScope)
+	if _, err := s.ReceivePlanHandoffReviewRejection(ctx, planHandoffID, goal.ID, subcommanderID); err != nil {
+		t.Fatalf("ReceivePlanHandoffReviewRejection: %v", err)
+	}
 	if _, err := s.RequestPlanHandoffReview(ctx, planHandoffID, goal.ID, subcommanderID, "plan revised"); err != nil {
 		t.Fatalf("re-request plan review: %v", err)
 	}

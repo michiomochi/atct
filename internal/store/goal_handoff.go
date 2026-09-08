@@ -35,38 +35,42 @@ const (
 // GoalHandoff records one delegation between agents. Each event timestamp is
 // independent so a partial handoff remains observable.
 type GoalHandoff struct {
-	ID                  string
-	GoalID              int64
-	RequestedBy         int64
-	ReceivedBy          int64
-	RequestReport       string
-	CompleteReport      string
-	ReviewRequestedBy   int64
-	ReviewRequestedAt   *time.Time
-	ReviewRequestReport string
-	ReviewReceivedBy    int64
-	ReviewReceivedAt    *time.Time
-	ReviewRejectedAt    *time.Time
-	ReviewRejectReport  string
-	RequestedAt         *time.Time
-	ReceivedAt          *time.Time
-	CompletedReportAt   *time.Time
+	ID                        string
+	GoalID                    int64
+	RequestedBy               int64
+	ReceivedBy                int64
+	RequestReport             string
+	CompleteReport            string
+	ReviewRequestedBy         int64
+	ReviewRequestedAt         *time.Time
+	ReviewRequestReport       string
+	ReviewReceivedBy          int64
+	ReviewReceivedAt          *time.Time
+	ReviewRejectedAt          *time.Time
+	ReviewRejectReport        string
+	ReviewRejectionReceivedBy int64
+	ReviewRejectionReceivedAt *time.Time
+	RequestedAt               *time.Time
+	ReceivedAt                *time.Time
+	CompletedReportAt         *time.Time
 }
 
 // PlanHandoff records a plan review routed from the goal handoff receiver back
 // to the goal handoff requester. A plan has no task claim or task status.
 type PlanHandoff struct {
-	ID                  string
-	GoalID              int64
-	ReviewRequestedBy   int64
-	ReviewRequestedAt   *time.Time
-	ReviewRequestReport string
-	ReviewReceivedBy    int64
-	ReviewReceivedAt    *time.Time
-	ReviewRejectedAt    *time.Time
-	ReviewRejectReport  string
-	CompleteReport      string
-	CompletedReportAt   *time.Time
+	ID                        string
+	GoalID                    int64
+	ReviewRequestedBy         int64
+	ReviewRequestedAt         *time.Time
+	ReviewRequestReport       string
+	ReviewReceivedBy          int64
+	ReviewReceivedAt          *time.Time
+	ReviewRejectedAt          *time.Time
+	ReviewRejectReport        string
+	ReviewRejectionReceivedBy int64
+	ReviewRejectionReceivedAt *time.Time
+	CompleteReport            string
+	CompletedReportAt         *time.Time
 }
 
 // GoalSession identifies an agent session that received a handoff for a goal.
@@ -78,16 +82,17 @@ type GoalSession struct {
 
 func goalHandoffFromRow(row sqlcgen.GoalHandoff) (GoalHandoff, error) {
 	handoff := GoalHandoff{
-		ID:                  row.ID,
-		GoalID:              row.GoalID,
-		RequestedBy:         nullableAgentSessionID(row.RequestedBy),
-		ReceivedBy:          nullableAgentSessionID(row.ReceivedBy),
-		RequestReport:       row.RequestReport.String,
-		CompleteReport:      row.CompleteReport.String,
-		ReviewRequestedBy:   nullableAgentSessionID(row.ReviewRequestedBy),
-		ReviewRequestReport: row.ReviewRequestReport.String,
-		ReviewReceivedBy:    nullableAgentSessionID(row.ReviewReceivedBy),
-		ReviewRejectReport:  row.ReviewRejectReport.String,
+		ID:                        row.ID,
+		GoalID:                    row.GoalID,
+		RequestedBy:               nullableAgentSessionID(row.RequestedBy),
+		ReceivedBy:                nullableAgentSessionID(row.ReceivedBy),
+		RequestReport:             row.RequestReport.String,
+		CompleteReport:            row.CompleteReport.String,
+		ReviewRequestedBy:         nullableAgentSessionID(row.ReviewRequestedBy),
+		ReviewRequestReport:       row.ReviewRequestReport.String,
+		ReviewReceivedBy:          nullableAgentSessionID(row.ReviewReceivedBy),
+		ReviewRejectReport:        row.ReviewRejectReport.String,
+		ReviewRejectionReceivedBy: nullableAgentSessionID(row.ReviewRejectionReceivedBy),
 	}
 	var err error
 	if handoff.RequestedAt, err = parseGoalHandoffTime("requested_at", row.RequestedAt); err != nil {
@@ -108,6 +113,9 @@ func goalHandoffFromRow(row sqlcgen.GoalHandoff) (GoalHandoff, error) {
 	if handoff.ReviewRejectedAt, err = parseGoalHandoffTime("review_rejected_at", row.ReviewRejectedAt); err != nil {
 		return GoalHandoff{}, err
 	}
+	if handoff.ReviewRejectionReceivedAt, err = parseGoalHandoffTime("review_rejection_received_at", row.ReviewRejectionReceivedAt); err != nil {
+		return GoalHandoff{}, err
+	}
 	return handoff, nil
 }
 
@@ -124,13 +132,14 @@ func parseGoalHandoffTime(column string, value sql.NullString) (*time.Time, erro
 
 func planHandoffFromRow(row sqlcgen.PlanHandoff) (PlanHandoff, error) {
 	handoff := PlanHandoff{
-		ID:                  row.ID,
-		GoalID:              row.GoalID,
-		ReviewRequestedBy:   nullableAgentSessionID(row.ReviewRequestedBy),
-		ReviewRequestReport: row.ReviewRequestReport.String,
-		ReviewReceivedBy:    nullableAgentSessionID(row.ReviewReceivedBy),
-		ReviewRejectReport:  row.ReviewRejectReport.String,
-		CompleteReport:      row.CompleteReport.String,
+		ID:                        row.ID,
+		GoalID:                    row.GoalID,
+		ReviewRequestedBy:         nullableAgentSessionID(row.ReviewRequestedBy),
+		ReviewRequestReport:       row.ReviewRequestReport.String,
+		ReviewReceivedBy:          nullableAgentSessionID(row.ReviewReceivedBy),
+		ReviewRejectReport:        row.ReviewRejectReport.String,
+		ReviewRejectionReceivedBy: nullableAgentSessionID(row.ReviewRejectionReceivedBy),
+		CompleteReport:            row.CompleteReport.String,
 	}
 	var err error
 	if handoff.ReviewRequestedAt, err = parseGoalHandoffTime("plan review_requested_at", row.ReviewRequestedAt); err != nil {
@@ -140,6 +149,9 @@ func planHandoffFromRow(row sqlcgen.PlanHandoff) (PlanHandoff, error) {
 		return PlanHandoff{}, err
 	}
 	if handoff.ReviewRejectedAt, err = parseGoalHandoffTime("plan review_rejected_at", row.ReviewRejectedAt); err != nil {
+		return PlanHandoff{}, err
+	}
+	if handoff.ReviewRejectionReceivedAt, err = parseGoalHandoffTime("plan review_rejection_received_at", row.ReviewRejectionReceivedAt); err != nil {
 		return PlanHandoff{}, err
 	}
 	if handoff.CompletedReportAt, err = parseGoalHandoffTime("plan completed_report_at", row.CompletedReportAt); err != nil {
@@ -527,6 +539,27 @@ func (s *Store) RejectGoalHandoffReview(ctx context.Context, handoffID string, g
 		return GoalHandoff{}, fmt.Errorf("commit goal handoff review rejection: %w", err)
 	}
 	s.publishWorkflowEvents([]DecisionEvent{event})
+	return s.GetGoalHandoff(ctx, handoffID)
+}
+
+func (s *Store) ReceiveGoalHandoffReviewRejection(ctx context.Context, handoffID string, goalID, receivedBy int64) (GoalHandoff, error) {
+	handoff, err := s.GetGoalHandoff(ctx, handoffID)
+	if err != nil {
+		return GoalHandoff{}, err
+	}
+	if handoff.GoalID != goalID {
+		return GoalHandoff{}, fmt.Errorf("%w: %q belongs to goal %d, not %d", ErrGoalHandoffGoalMismatch, handoffID, handoff.GoalID, goalID)
+	}
+	if handoff.ReviewRejectedAt == nil || handoff.CompletedReportAt != nil || handoff.ReceivedBy != receivedBy || receivedBy == 0 {
+		return GoalHandoff{}, ErrGoalHandoffReviewState
+	}
+	result, err := sqlcgen.New(s.db).ReceiveGoalHandoffReviewRejection(ctx, sqlcgen.ReceiveGoalHandoffReviewRejectionParams{ReviewRejectionReceivedBy: sql.NullInt64{Int64: receivedBy, Valid: true}, ReviewRejectionReceivedAt: sql.NullString{String: time.Now().UTC().Format(time.RFC3339Nano), Valid: true}, ID: handoffID, GoalID: goalID, ReceivedBy: sql.NullInt64{Int64: receivedBy, Valid: true}})
+	if err != nil {
+		return GoalHandoff{}, fmt.Errorf("receive goal handoff review rejection: %w", err)
+	}
+	if affected, err := result.RowsAffected(); err != nil || affected == 0 {
+		return GoalHandoff{}, ErrGoalHandoffReviewState
+	}
 	return s.GetGoalHandoff(ctx, handoffID)
 }
 
@@ -995,6 +1028,27 @@ func (s *Store) RejectPlanHandoffReview(ctx context.Context, handoffID string, g
 		return PlanHandoff{}, fmt.Errorf("commit plan handoff review rejection: %w", err)
 	}
 	s.publishWorkflowEvents([]DecisionEvent{event})
+	return s.GetPlanHandoff(ctx, handoffID)
+}
+
+func (s *Store) ReceivePlanHandoffReviewRejection(ctx context.Context, handoffID string, goalID, receivedBy int64) (PlanHandoff, error) {
+	handoff, err := s.GetPlanHandoff(ctx, handoffID)
+	if err != nil {
+		return PlanHandoff{}, err
+	}
+	if handoff.GoalID != goalID {
+		return PlanHandoff{}, fmt.Errorf("%w: %q belongs to goal %d, not %d", ErrPlanHandoffGoalMismatch, handoffID, handoff.GoalID, goalID)
+	}
+	if handoff.ReviewRejectedAt == nil || handoff.CompletedReportAt != nil || handoff.ReviewRequestedBy != receivedBy || receivedBy == 0 {
+		return PlanHandoff{}, ErrPlanHandoffReviewState
+	}
+	result, err := sqlcgen.New(s.db).ReceivePlanHandoffReviewRejection(ctx, sqlcgen.ReceivePlanHandoffReviewRejectionParams{ReviewRejectionReceivedBy: sql.NullInt64{Int64: receivedBy, Valid: true}, ReviewRejectionReceivedAt: sql.NullString{String: time.Now().UTC().Format(time.RFC3339Nano), Valid: true}, ID: handoffID, GoalID: goalID, ReviewRequestedBy: sql.NullInt64{Int64: receivedBy, Valid: true}})
+	if err != nil {
+		return PlanHandoff{}, fmt.Errorf("receive plan handoff review rejection: %w", err)
+	}
+	if affected, err := result.RowsAffected(); err != nil || affected == 0 {
+		return PlanHandoff{}, ErrPlanHandoffReviewState
+	}
 	return s.GetPlanHandoff(ctx, handoffID)
 }
 
