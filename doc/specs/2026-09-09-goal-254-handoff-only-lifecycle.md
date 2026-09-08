@@ -107,6 +107,21 @@ cannot be considered the next responsibility merely because a row exists; it
 must be delegated. The handoff therefore preserves all four required proofs:
 request, receive, create, and complete.
 
+### Planning-task boundary
+
+This restriction begins only after a plan handoff for the goal has been
+accepted. Before that transition, `atct_task_create` remains the path for the
+goal's own design, spec, and plan-review task; Goal 254's existing task 1230
+is one such task. A completed plan handoff is the durable boundary, so the
+daemon does not infer a task's kind from its title, agent name, or pane.
+
+After a completed plan handoff exists for a goal, direct `atct_task_create`
+and `task.declare` reject every new task for that goal with the lifecycle
+error. The received task-create handoff is then the only creation authority.
+This prevents an accepted plan from being bypassed while retaining the normal
+pre-plan design workflow. The task-create operation itself is idempotent for
+its handoff and records every task ID it created.
+
 ## Recurring wake-up projection
 
 Every monitor reconciliation, including the periodic one-minute tick, derives
@@ -155,9 +170,10 @@ Tests must establish all of the following.
 2. Completing a plan handoff atomically creates exactly one task-create request
    for its submitting subcommander; wrong sessions cannot receive, create, or
    complete it.
-3. Direct `atct_task_create` and the legacy `task.declare` RPC cannot create
-   implementation tasks. A received task-create handoff can create
-   idempotently, records its task IDs, and
+3. Before plan acceptance, direct `atct_task_create` can create the design
+   task. After plan acceptance, direct `atct_task_create` and the legacy
+   `task.declare` RPC reject every new task for the goal. A received
+   task-create handoff can create idempotently, records its task IDs, and
    completes only after every created task has a requested task handoff.
 4. Task, plan, and goal review rejections require the original submitter's
    explicit receipt before revision; a new review request closes that rejection
