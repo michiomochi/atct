@@ -11,7 +11,7 @@ func newWatchCodexActionSink(bridge *codexMonitorBridge) watchAgentActionSink {
 		return nil
 	}
 	return func(action watchAgentAction) error {
-		return bridge.enqueueAction(context.Background(), codexMonitorAction{line: action.line, eventName: action.eventName, goalID: action.goalID})
+		return bridge.enqueueAction(context.Background(), codexMonitorAction{line: action.line, eventName: action.eventName, goalID: action.goalID, deliveryKey: action.deliveryKey})
 	}
 }
 

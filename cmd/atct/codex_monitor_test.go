@@ -691,6 +691,25 @@ func TestCodexMonitorQueueRetainsFailedSubmission(t *testing.T) {
 	}
 }
 
+func TestCodexMonitorUnknownSubmissionDoesNotRetry(t *testing.T) {
+	starter := &fakeCodexTurnStarter{errs: []error{errCodexTurnSubmitUnknown}}
+	bridge := newCodexMonitorBridge(starter, "thread-1")
+	ctx := context.Background()
+
+	if err := bridge.Enqueue(ctx, "possibly-submitted"); !errors.Is(err, errCodexTurnSubmitUnknown) {
+		t.Fatalf("Enqueue() error = %v, want unknown submission", err)
+	}
+	if got := bridge.QueueLen(); got != 0 {
+		t.Fatalf("QueueLen() after unknown submission = %d, want 0", got)
+	}
+	if err := bridge.HandleNotification(ctx, codexAppServerNotification{Method: "thread/status/changed", Params: mustJSON(map[string]any{"threadId": "thread-1", "status": map[string]any{"type": "idle"}})}); err != nil {
+		t.Fatalf("HandleNotification(idle): %v", err)
+	}
+	if got := starter.callsSnapshot(); len(got) != 1 {
+		t.Fatalf("turn starts = %#v, want one possibly-submitted attempt", got)
+	}
+}
+
 func TestCodexMonitorQueueRetriesAfterTransientCompletionFailure(t *testing.T) {
 	starter := &fakeCodexTurnStarter{errs: []error{errors.New("temporary rejection"), nil}}
 	bridge := newCodexMonitorBridge(starter, "thread-1")
@@ -770,7 +789,7 @@ func TestCodexMonitorIdleThreadStartedRetriesTransientStartFailure(t *testing.T)
 	}
 }
 
-func TestCodexMonitorFatalAppServerFailureRetainsQueuedItem(t *testing.T) {
+func TestCodexMonitorFatalAppServerFailureDropsPossiblySubmittedItem(t *testing.T) {
 	app := newFakeCodexMonitorApp()
 	app.notificationErr = errors.New("App Server connection lost")
 	app.startTurn = func(context.Context, string, string) (codexTurn, error) {
@@ -782,8 +801,8 @@ func TestCodexMonitorFatalAppServerFailureRetainsQueuedItem(t *testing.T) {
 	if err := bridge.Enqueue(ctx, "must-remain-queued"); err == nil {
 		t.Fatal("Enqueue() error = nil, want terminal App Server failure")
 	}
-	if got := bridge.QueueLen(); got != 1 {
-		t.Fatalf("QueueLen() after fatal App Server failure = %d, want 1", got)
+	if got := bridge.QueueLen(); got != 0 {
+		t.Fatalf("QueueLen() after fatal App Server failure = %d, want 0", got)
 	}
 	if !bridge.disabled {
 		t.Fatal("bridge disabled = false, want terminal monitor state")
@@ -798,8 +817,8 @@ func TestCodexMonitorFatalAppServerFailureRetainsQueuedItem(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("HandleNotification(idle) error = %v, want terminal state to suppress retries", err)
 	}
-	if got := bridge.QueueLen(); got != 1 {
-		t.Fatalf("QueueLen() after terminal idle notification = %d, want 1", got)
+	if got := bridge.QueueLen(); got != 0 {
+		t.Fatalf("QueueLen() after terminal idle notification = %d, want 0", got)
 	}
 }
 
@@ -905,6 +924,59 @@ func TestCodexMonitorQueueKeepsActiveApprovalAfterGoalHandoffReceive(t *testing.
 	}
 	if got := starter.callsSnapshot(); len(got) != 2 || got[1] != "goal-receive" {
 		t.Fatalf("turns after active approval completed = %#v, want receive after active approval", got)
+	}
+}
+
+func TestCodexMonitorCoalescesPendingAndActiveActionsByDeliveryKey(t *testing.T) {
+	starter := &fakeCodexTurnStarter{}
+	bridge := newCodexMonitorBridge(starter, "thread-1")
+	ctx := context.Background()
+	active := codexMonitorAction{line: "request", eventName: "task.handoff.request", goalID: "goal-1", deliveryKey: "task.handoff.request\x00handoff-1"}
+	if err := bridge.enqueueAction(ctx, active); err != nil {
+		t.Fatalf("enqueue active: %v", err)
+	}
+	if err := bridge.enqueueAction(ctx, active); err != nil {
+		t.Fatalf("enqueue active duplicate: %v", err)
+	}
+	pending := codexMonitorAction{line: "review", eventName: "task.handoff.review.request", goalID: "goal-1", deliveryKey: "task.handoff.review.request\x00handoff-1"}
+	if err := bridge.enqueueAction(ctx, pending); err != nil {
+		t.Fatalf("enqueue pending: %v", err)
+	}
+	if err := bridge.enqueueAction(ctx, pending); err != nil {
+		t.Fatalf("enqueue pending duplicate: %v", err)
+	}
+	if got := bridge.QueueLen(); got != 1 {
+		t.Fatalf("QueueLen() = %d, want one pending action", got)
+	}
+	if err := bridge.HandleNotification(ctx, codexAppServerNotification{Method: "turn/completed", Params: mustJSON(map[string]any{"threadId": "thread-1"})}); err != nil {
+		t.Fatalf("complete active turn: %v", err)
+	}
+	if got := starter.callsSnapshot(); len(got) != 2 || got[0] != "request" || got[1] != "review" {
+		t.Fatalf("started turns = %#v, want [request review]", got)
+	}
+}
+
+func TestCodexMonitorKeepsDistinctDeliveryPhasesInOrder(t *testing.T) {
+	starter := &fakeCodexTurnStarter{}
+	bridge := newCodexMonitorBridge(starter, "thread-1")
+	ctx := context.Background()
+	for _, action := range []codexMonitorAction{
+		{line: "request", eventName: "task.handoff.request", goalID: "goal-1", deliveryKey: "task.handoff.request\x00handoff-1"},
+		{line: "review", eventName: "task.handoff.review.request", goalID: "goal-1", deliveryKey: "task.handoff.review.request\x00handoff-1"},
+		{line: "reject", eventName: "task.handoff.review.reject", goalID: "goal-1", deliveryKey: "task.handoff.review.reject\x00handoff-1"},
+		{line: "other", eventName: "task.handoff.request", goalID: "goal-1", deliveryKey: "task.handoff.request\x00handoff-2"},
+	} {
+		if err := bridge.enqueueAction(ctx, action); err != nil {
+			t.Fatalf("enqueue %q: %v", action.line, err)
+		}
+	}
+	for range 3 {
+		if err := bridge.HandleNotification(ctx, codexAppServerNotification{Method: "turn/completed", Params: mustJSON(map[string]any{"threadId": "thread-1"})}); err != nil {
+			t.Fatalf("complete turn: %v", err)
+		}
+	}
+	if got := starter.callsSnapshot(); strings.Join(got, ",") != "request,review,reject,other" {
+		t.Fatalf("started turns = %#v, want distinct phases and handoffs in order", got)
 	}
 }
 
