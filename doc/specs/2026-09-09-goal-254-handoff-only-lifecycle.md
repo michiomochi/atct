@@ -80,58 +80,55 @@ operation, not a new self-handoff.
 
 ### Approved plan to implementation task
 
-Add a `task_create_handoffs` lifecycle record with a plan-handoff reference,
-goal ID, requester and receiver sessions, request/receipt/completion timestamps
-and reports, and the task IDs it created. It has this canonical path:
+Add a `task_create_handoffs` lifecycle record with a unique goal ID, requester
+and receiver sessions, and request/receipt/completion timestamps and reports.
+It has this canonical path:
 
 ```text
 commander:     plan.handoff.complete
                + task-create-handoff.request  (one transaction)
 subcommander:  task-create-handoff.receive
-subcommander:  task.create (with task-create handoff)  (creates implementation tasks)
-subcommander:  task.handoff.request             (delegates each task)
-subcommander:  task-create-handoff.complete
+subcommander:  task.create (with task-create handoff)  (creates tasks + completes handoff atomically)
+subcommander:  task.handoff.request             (independent downstream delegation)
 executor:      task.handoff.receive
 ```
 
-The request receiver is the subcommander that submitted the plan review. The
+The existing received goal handoff identifies the request receiver: the
+subcommander that submitted the plan review still holds that goal handoff. The
 commander creates this request atomically with accepting the plan, so a plan
 cannot be accepted without a recorded next responsibility.
 
 `task.create` is the sole public task-creation operation and is the daemon
-method used by `atct_task_create`. It requires a received, uncompleted
-task-create handoff for implementation tasks covered by an accepted plan, and
-records the created task IDs on that handoff. The operation retains
-idempotency-key semantics. `task.declare`, `DeclareTasks`, and any compatibility
+method used by `atct_task_create`. It requires a received task-create handoff
+for implementation tasks covered by an accepted plan. Its first successful
+call creates every requested task and completes that handoff in the same
+transaction. A retry resolves the exact existing
+`declare_key=<key>#<index>` rows; a different key finds no such batch and is
+rejected because the handoff is already complete. `task.declare`, `DeclareTasks`, and any compatibility
 alias are removed; all MCP, daemon, test, and documentation callers use the
 same create terminology.
 
-`task-create-handoff.complete` requires successful task creation and a
-recorded `task.handoff.request` for every created implementation task. A task
-cannot be considered the next responsibility merely because a row exists; it
-must be delegated. The handoff therefore preserves all four required proofs:
-request, receive, create, and complete.
+`task-create-handoff.complete` is the successful task-creation transition, not
+an aggregation of downstream delegation. A created task can be handed off
+later, but its `task.handoff.request` is not a prerequisite for completing the
+task-create handoff. The handoff therefore proves request, receive, and an
+atomic create/complete operation.
 
 #### Task-create persistence boundary (Decision 726 amendment)
 
-`task_create_handoff_tasks` is the durable, request-scoped membership of the
-implementation-task batch. It is not watcher delivery state: reconciliation
-needs only the parent handoff phase, but restart-safe replay and completion
-must identify exactly the tasks created by this invocation. Completion requires
-a nonempty membership set and a requested task handoff for every member; an
-unrelated task in the same goal must not satisfy that proof.
+`task_create_handoff_tasks` is not retained. A task-create handoff covers one
+task-creation process, not the separate handoff lifecycle of every task it
+creates. The existing unique task `declare_key` values (`<key>#<index>`)
+reconstruct a same-key retry without a task-to-handoff membership table.
 
-`task_create_handoffs.plan_handoff_id` is the immutable provenance for the
-accepted plan that generated the request. Its unique foreign key establishes
-one task-create handoff per accepted-plan generation and lets receipt authorize
-only the plan review requester after a restart. `goal_id` and task-create state
-cannot recover that receiver when a goal has multiple plan-review generations.
+`task_create_handoffs.plan_handoff_id` is not retained. A unique `goal_id`
+allows only one task-create handoff at the accepted-plan boundary, while the
+existing received goal handoff authorizes its receiver after restart. The plan
+handoff already remains as the accepted-plan audit record; no duplicate parent
+reference or receiver snapshot is necessary.
 
-Neither structure may be removed merely to reduce table/column count. A future
-replacement must first persist equivalent facts: a request-scoped task-batch
-identity with FK-checked membership, and an immutable accepted-plan generation
-with an authorized receiver snapshot. It must backfill and dual-read those
-facts before a later migration drops either current structure.
+Do not add task counts, a parent idempotency key, JSON task-ID arrays, another
+batch table, or any other replacement state.
 
 ### Planning-task boundary
 
@@ -201,13 +198,13 @@ Tests must establish all of the following.
    tests, and documentation; no `task.declare` endpoint or alias remains.
    Before plan acceptance it can create the design task. After plan acceptance,
    it rejects every new task for the goal unless a received task-create handoff
-   authorizes it. The authorized operation creates idempotently, records its
-   task IDs, and completes only after every created task has a requested task
-   handoff.
-   Its durable batch membership excludes unrelated same-goal tasks, makes replay
-   return the same batch, and makes completion require a requested task handoff
-   for every member. The handoff's unique accepted-plan reference authorizes
-   only that plan review requester to receive it across restart.
+   authorizes it. The authorized operation creates idempotently and completes
+   its task-create handoff in the same transaction.
+   The request key's exact existing `declare_key` rows make a post-commit
+   same-key retry return the same tasks and reject a different key. Creation
+   and task-create completion commit together; later task delegation is
+   independent. The existing received goal handoff authorizes that receiver
+   across restart.
 4. Task, plan, and goal review rejections require the original submitter's
    explicit receipt before revision; a new review request closes that rejection
    phase. Foreign sessions are rejected at every transition.

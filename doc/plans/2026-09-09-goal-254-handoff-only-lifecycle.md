@@ -14,7 +14,8 @@
 - Do not retain a `task.declare` RPC, `DeclareTasks` store method, or compatibility alias.
 - Do not retain `orchestration_scope`, `orchestration_delivery_leases`, `orchestration_delivery_receipts`, `orchestration_review_work`, or `orchestration_blockers` in the schema or production code.
 - Do not add persistent delivery cursors, acknowledgement records, monitor ownership, blocker replacement tables, wrapper restart, or monitor-health recovery.
-- Retain `task_create_handoff_tasks` as the FK-backed request-scoped task batch and retain the unique `task_create_handoffs.plan_handoff_id` accepted-plan provenance. Decision 726 permits a later replacement only after it persists equivalent batch membership plus accepted-plan generation/authorized-receiver facts, backfills them, and dual-reads before a separate destructive migration.
+- Remove `task_create_handoff_tasks` and `task_create_handoffs.plan_handoff_id`. A task-create handoff covers task creation only, not downstream task delegation. Make its existing `goal_id` unique; use the received goal handoff for receiver authorization and existing `tasks.declare_key` rows for replay. Do not add a parent idempotency key, receiver snapshot, task count, JSON task IDs, or another batch table.
+- Task 7 supersedes the task-create membership and all-delegated-completion portions of historical Tasks 1–2; those earlier steps document the already-landed staged cutover.
 - Regenerate committed sqlc output with `go tool sqlc generate`; run `script/schema-check.sh` before the final commit.
 - Run Go tests with `GOCACHE=/private/tmp/goal254-go-cache`. No Ponytail hooks are used.
 
@@ -33,7 +34,7 @@
 **Interfaces:**
 
 - Consumes: migrations `0031`–`0034` and the current `goal_handoffs`, `task_handoffs`, `plan_handoffs`, and `decisions` rows.
-- Produces: `task_create_handoffs`, `task_create_handoff_tasks`, and review-rejection receipt columns. `plan_handoff_id` remains a unique FK to the accepted plan; the junction remains the FK-backed per-request task batch. The legacy `orchestration_*` tables remain until Task 4's cleanup migration, so existing lifecycle code remains executable during this stage.
+- Produces: `task_create_handoffs`, `task_create_handoff_tasks`, and review-rejection receipt columns for the additive stage. `plan_handoff_id` and the junction keep that stage executable until Task 7's post-projection simplification removes them. The legacy `orchestration_*` tables remain until Task 4's cleanup migration, so existing lifecycle code remains executable during this stage.
 
 - [ ] **Step 1: Write migration fixture tests before the migration.**
 
@@ -62,7 +63,7 @@
 
 - [ ] **Step 3: Add migration 0035 and make `schema.sql` match it.**
 
-  Create `task_create_handoffs` with `id`, `plan_handoff_id`, `goal_id`, request/receipt/completion session IDs and timestamps, request/complete reports, and a unique plan-handoff reference. The reference is the accepted-plan generation and receiver-authorization provenance, not redundant goal metadata. Create `task_create_handoff_tasks(handoff_id, task_id)` with a composite primary key and foreign keys; it is the authoritative request-scoped created-task batch for replay and all-delegated completion, not a derivable list of all goal tasks. Add the review-rejection receipt columns required by Task 3. Do not drop either task-create structure in this goal; a future simplification needs equivalent persisted identities, backfill, dual-read, and a later destructive migration. Do not drop legacy tables or indexes in 0035; Task 4 removes their production users before a later cleanup migration drops them. Mirror this intermediate schema in `schema.sql`.
+  Create `task_create_handoffs` with `id`, `plan_handoff_id`, `goal_id`, request/receipt/completion session IDs and timestamps, request/complete reports, and a unique plan-handoff reference. Create `task_create_handoff_tasks(handoff_id, task_id)` with a composite primary key and foreign keys for the additive stage. Add the review-rejection receipt columns required by Task 3. Do not drop either task-create structure in 0035; Task 7 removes both only after direct projection is established. Do not drop legacy tables or indexes in 0035; Task 4 removes their production users before a later cleanup migration drops them. Mirror this intermediate schema in `schema.sql`.
 
 - [ ] **Step 4: Extend schema parity assertions.**
 
@@ -105,7 +106,7 @@
 **Interfaces:**
 
 - Consumes: `CompletePlanHandoff(handoffID, goalID, reviewerID, report)` and a received goal handoff.
-- Produces: `TaskCreateHandoff{ID, PlanHandoffID, GoalID, RequestedBy, ReceivedBy, RequestedAt, ReceivedAt, CompletedAt, CreatedTaskIDs}` and RPCs `task.create`, `task.create_handoff.receive`, and `task.create_handoff.complete`. `PlanHandoffID` is the accepted-plan provenance used to authorize the rightful receiver; `CreatedTaskIDs` is reloaded from the request-scoped junction so restart-safe completion can prove every and only created task was delegated.
+- Produces: the additive-stage `TaskCreateHandoff{ID, PlanHandoffID, GoalID, RequestedBy, ReceivedBy, RequestedAt, ReceivedAt, CompletedAt, CreatedTaskIDs}` and RPCs `task.create`, `task.create_handoff.receive`, and `task.create_handoff.complete`. Task 7 replaces its plan reference, membership reload, and delegation-gated completion with the minimal creation boundary.
 
 - [ ] **Step 1: Write the store lifecycle test.**
 
@@ -405,8 +406,59 @@
 
 ---
 
+### Task 7: Simplify the task-create handoff to the creation boundary
+
+**Files:**
+
+- Create: `internal/store/migrations/0037_simplify_task_create_handoff.sql`
+- Modify: `schema.sql`
+- Modify: `internal/store/queries/task.sql`
+- Modify: `internal/store/task_create_handoff.go`
+- Modify: `internal/store/task_create_handoff_test.go`
+- Modify: `internal/daemon/task_create_handoff_test.go`
+- Modify: `internal/store/workflow_event_test.go`
+- Modify: `internal/store/migration_integrity_test.go`
+- Modify: `internal/store/schema_parity_test.go`
+
+**Interfaces:**
+
+- Consumes: a received `TaskCreateHandoff` and `task.create(handoff_id, idempotency_key, titles, descriptions)`.
+- Produces: one atomic create/complete transition. The existing goal handoff provides receive authorization; exact existing `declare_key` rows permit same-key replay after completion.
+
+- [ ] **Step 1: Write the failing lifecycle and migration tests.**
+
+  Cover a multi-title create that completes without any `task.handoff.request`, a lost-response same-key replay returning the original tasks with `Created=false`, and a different-key retry rejection. Add a migration fixture from the current schema that preserves parent lifecycle rows, makes `goal_id` unique, and removes the membership table and plan-handoff reference.
+
+- [ ] **Step 2: Run the focused RED tests.**
+
+  ```sh
+  GOCACHE=/private/tmp/goal254-go-cache go test ./internal/store ./internal/daemon -run 'Test.*TaskCreateHandoff|Test.*Goal254Migration' -count=1 -v
+  ```
+
+  Expected: FAIL because current completion requires downstream task handoffs and membership rows.
+
+- [ ] **Step 3: Implement one transaction and the minimal schema.**
+
+  Rebuild `task_create_handoffs` only to remove `plan_handoff_id` and make `goal_id` unique. In one transaction, insert `declare_key=<key>#<index>` task rows and complete the parent. On a completed parent, return only an exact same-key set reconstructed from those rows; otherwise reject. Authorize receipt through the existing received goal handoff. Remove membership-link/list/count queries, the plan lookup, and the separate task-create completion operation; do not add a parent key, receiver snapshot, count, JSON list, or replacement table.
+
+- [ ] **Step 4: Run focused and final verification.**
+
+  ```sh
+  go tool sqlc generate
+  GOCACHE=/private/tmp/goal254-go-cache go test ./internal/store ./internal/daemon ./internal/mcpshim ./internal/e2e ./cmd/atct -count=1 -timeout=90s
+  script/schema-check.sh
+  git diff --check
+  ```
+
+- [ ] **Step 5: Commit the simplification.**
+
+  ```sh
+  git add schema.sql internal/store internal/daemon internal/mcpshim internal/e2e cmd/atct
+  git commit -m "feat: simplify task create handoff"
+  ```
+
 ## Plan self-review
 
-- Spec coverage: Tasks 1–3 cover migration, task-create handoff, `task.create` unification, and rejection receipt; Tasks 4–5 cover direct recurring projection and process-local coalescing; Task 6 proves removal and end-to-end behavior.
+- Spec coverage: Tasks 1–3 cover migration, task-create handoff, `task.create` unification, and rejection receipt; Tasks 4–5 cover direct recurring projection and process-local coalescing; Task 6 proves removal and end-to-end behavior; Task 7 makes task-create completion atomic and removes its over-broad membership state.
 - Placeholder scan: no TODO/TBD steps; each task names paths, transition boundary, and verification command.
-- Interface consistency: `CompletePlanHandoff` produces `TaskCreateHandoff`; only its received holder calls `CreateTasks`; every created task must have a requested `TaskHandoff` before task-create completion.
+- Interface consistency: `CompletePlanHandoff` produces `TaskCreateHandoff`; only its received holder calls `CreateTasks`; task creation and task-create completion are one transaction, while every later `TaskHandoff` remains independent.
