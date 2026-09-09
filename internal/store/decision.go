@@ -59,7 +59,12 @@ func (s *Store) AskDecision(ctx context.Context, in AskInput) (domain.Decision, 
 		d.DefaultAfterMs = &after
 	}
 
-	q := decisionQueries(s)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return domain.Decision{}, fmt.Errorf("begin decision creation tx: %w", err)
+	}
+	defer tx.Rollback()
+	q := decisionQueries(s).WithTx(tx)
 	params := sqlcgen.CreateDecisionParams{
 		GoalID:         d.GoalID,
 		TaskID:         sql.NullInt64{Int64: in.TaskID, Valid: in.TaskID != 0},
@@ -79,9 +84,13 @@ func (s *Store) AskDecision(ctx context.Context, in AskInput) (domain.Decision, 
 		return domain.Decision{}, fmt.Errorf("insert decision: %w", err)
 	}
 	d.ID = id
+	event := DecisionEvent{Name: "decision.created", Data: d, OccurredAt: d.CreatedAt}
+	if err := tx.Commit(); err != nil {
+		return domain.Decision{}, fmt.Errorf("commit decision creation: %w", err)
+	}
 	s.notify.publish(d.ID)
 	s.notify.publishAll()
-	s.notify.publishEvent(Event{Name: "decision.created", Data: d})
+	s.publishWorkflowEvents([]DecisionEvent{event})
 	return d, nil
 }
 
@@ -246,6 +255,16 @@ func (s *Store) ListOpenDecisions(ctx context.Context, goalID int64) ([]domain.D
 	return convertDecisionRows(rows, decisionRowFromSQLC)
 }
 
+// ListDecisionsForGoal returns every decision recorded for a goal, regardless
+// of its current status, in stable ID order for canonical reconciliation.
+func (s *Store) ListDecisionsForGoal(ctx context.Context, goalID int64) ([]domain.Decision, error) {
+	rows, err := decisionQueries(s).ListDecisionsForGoal(ctx, goalID)
+	if err != nil {
+		return nil, fmt.Errorf("query decisions for goal: %w", err)
+	}
+	return convertDecisionRows(rows, decisionRowFromSQLC)
+}
+
 func (s *Store) ListAllOpenDecisions(ctx context.Context) ([]domain.Decision, error) {
 	rows, err := decisionQueries(s).ListAllOpenDecisions(ctx)
 	if err != nil {
@@ -270,7 +289,13 @@ func (s *Store) AnswerDecision(ctx context.Context, in AnswerInput) (domain.Deci
 func (s *Store) answerDecision(ctx context.Context, in AnswerInput, eventName string) (domain.Decision, error) {
 	now := time.Now().UTC().Format(time.RFC3339)
 
-	res, err := decisionQueries(s).AnswerDecision(ctx, sqlcgen.AnswerDecisionParams{
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return domain.Decision{}, fmt.Errorf("begin decision answer tx: %w", err)
+	}
+	defer tx.Rollback()
+	q := decisionQueries(s).WithTx(tx)
+	res, err := q.AnswerDecision(ctx, sqlcgen.AnswerDecisionParams{
 		AnswerLabel: in.AnswerLabel,
 		AnswerText:  in.AnswerText,
 		AnsweredAt:  sql.NullString{String: now, Valid: true},
@@ -286,13 +311,24 @@ func (s *Store) answerDecision(ctx context.Context, in AnswerInput, eventName st
 	if n == 0 {
 		return domain.Decision{}, fmt.Errorf("%w: %d", ErrDecisionNotOpen, in.DecisionID)
 	}
-	d, err := s.GetDecision(ctx, in.DecisionID)
+	row, err := q.GetDecision(ctx, in.DecisionID)
 	if err != nil {
 		return domain.Decision{}, err
 	}
+	d, err := decisionFromRow(decisionRowFromSQLC(row))
+	if err != nil {
+		return domain.Decision{}, err
+	}
+	event, err := workflowDecisionEvent(eventName, row)
+	if err != nil {
+		return domain.Decision{}, fmt.Errorf("build decision answer event: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return domain.Decision{}, fmt.Errorf("commit decision answer: %w", err)
+	}
 	s.notify.publish(in.DecisionID)
 	s.notify.publishAll()
-	s.notify.publishEvent(Event{Name: eventName, Data: d})
+	s.publishWorkflowEvents([]DecisionEvent{event})
 	return d, nil
 }
 
@@ -327,6 +363,7 @@ func (s *Store) ApplyExpiredDefaults(ctx context.Context, now time.Time) (int, e
 	settledAt := now.UTC()
 	settledAtText := settledAt.Format(time.RFC3339)
 	var settledDecisions []domain.Decision
+	var settledEvents []DecisionEvent
 	for i := range candidates {
 		result, err := q.ApplyDecisionDefault(ctx, sqlcgen.ApplyDecisionDefaultParams{
 			AnswerLabel:      candidates[i].DefaultOption,
@@ -351,6 +388,8 @@ func (s *Store) ApplyExpiredDefaults(ctx context.Context, now time.Time) (int, e
 		defaultAppliedAt := settledAt
 		candidates[i].DefaultAppliedAt = &defaultAppliedAt
 		settledDecisions = append(settledDecisions, candidates[i])
+		event := DecisionEvent{Name: "decision.answered", Data: candidates[i], OccurredAt: settledAt}
+		settledEvents = append(settledEvents, event)
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -359,8 +398,8 @@ func (s *Store) ApplyExpiredDefaults(ctx context.Context, now time.Time) (int, e
 
 	for _, d := range settledDecisions {
 		s.notify.publish(d.ID)
-		s.notify.publishEvent(Event{Name: "decision.answered", Data: d})
 	}
+	s.publishWorkflowEvents(settledEvents)
 	if len(settledDecisions) > 0 {
 		s.notify.publishAll()
 	}
@@ -368,16 +407,29 @@ func (s *Store) ApplyExpiredDefaults(ctx context.Context, now time.Time) (int, e
 }
 
 func (s *Store) WithdrawDecision(ctx context.Context, decisionID int64, reason string) error {
-	if err := withdrawDecisionWith(ctx, decisionQueries(s), decisionID, reason); err != nil {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin decision withdrawal tx: %w", err)
+	}
+	defer tx.Rollback()
+	q := decisionQueries(s).WithTx(tx)
+	if err := withdrawDecisionWith(ctx, q, decisionID, reason); err != nil {
 		return err
 	}
-	d, err := s.GetDecision(ctx, decisionID)
+	row, err := q.GetDecision(ctx, decisionID)
 	if err != nil {
 		return err
 	}
+	event, err := workflowDecisionEvent("decision.withdrawn", row)
+	if err != nil {
+		return fmt.Errorf("build decision withdrawal event: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit decision withdrawal: %w", err)
+	}
 	s.notify.publish(decisionID)
 	s.notify.publishAll()
-	s.notify.publishEvent(Event{Name: "decision.withdrawn", Data: d})
+	s.publishWorkflowEvents([]DecisionEvent{event})
 	return nil
 }
 
@@ -430,6 +482,7 @@ func (s *Store) PollDecisions(ctx context.Context, agentSessionID int64, decisio
 	}
 
 	now := time.Now().UTC()
+	var appliedEvents []DecisionEvent
 	for i := range out {
 		if err := q.MarkDecisionApplied(ctx, sqlcgen.MarkDecisionAppliedParams{
 			AppliedAt: sql.NullString{String: now.Format(time.RFC3339), Valid: true},
@@ -440,14 +493,16 @@ func (s *Store) PollDecisions(ctx context.Context, agentSessionID int64, decisio
 		out[i].Status = domain.DecisionApplied
 		applied := now
 		out[i].AppliedAt = &applied
+		event := DecisionEvent{Name: "decision.applied", Data: out[i], OccurredAt: now}
+		appliedEvents = append(appliedEvents, event)
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("commit: %w", err)
 	}
 	for _, d := range out {
 		s.notify.publish(d.ID)
-		s.notify.publishEvent(Event{Name: "decision.applied", Data: d})
 	}
+	s.publishWorkflowEvents(appliedEvents)
 	if len(out) > 0 {
 		s.notify.publishAll()
 	}

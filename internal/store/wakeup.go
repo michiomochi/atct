@@ -28,6 +28,36 @@ const (
 	EventDetectionDecisionDefaultUnapplied  = "detection.decision_default_unapplied"
 	EventDetectionClaimStale                = "detection.claim_stale"
 	EventGoalWithdrawn                      = "goal.withdrawn"
+	EventTaskHandoffRequest                 = "task.handoff.request"
+	EventTaskHandoffReceive                 = "task.handoff.receive"
+	EventTaskHandoffReviewRequest           = "task.handoff.review.request"
+	EventTaskHandoffReviewReceive           = "task.handoff.review.receive"
+	EventTaskHandoffReviewReject            = "task.handoff.review.reject"
+	EventTaskHandoffComplete                = "task.handoff.complete"
+	EventGoalHandoffRequest                 = "goal.handoff.request"
+	EventGoalHandoffReceive                 = "goal.handoff.receive"
+	EventGoalHandoffReviewRequest           = "goal.handoff.review.request"
+	EventGoalHandoffReviewReceive           = "goal.handoff.review.receive"
+	EventGoalHandoffReviewReject            = "goal.handoff.review.reject"
+	EventGoalHandoffComplete                = "goal.handoff.complete"
+	EventPlanHandoffReviewRequest           = "plan.handoff.review.request"
+	EventPlanHandoffReviewReceive           = "plan.handoff.review.receive"
+	EventPlanHandoffReviewReject            = "plan.handoff.review.reject"
+	EventPlanHandoffComplete                = "plan.handoff.complete"
+)
+
+// Review event aliases use the transition-oriented names in code that needs
+// to describe the event rather than the RPC method that caused it.
+const (
+	EventTaskHandoffReviewRequested = EventTaskHandoffReviewRequest
+	EventTaskHandoffReviewReceived  = EventTaskHandoffReviewReceive
+	EventTaskHandoffReviewRejected  = EventTaskHandoffReviewReject
+	EventGoalHandoffReviewRequested = EventGoalHandoffReviewRequest
+	EventGoalHandoffReviewReceived  = EventGoalHandoffReviewReceive
+	EventGoalHandoffReviewRejected  = EventGoalHandoffReviewReject
+	EventPlanHandoffReviewRequested = EventPlanHandoffReviewRequest
+	EventPlanHandoffReviewReceived  = EventPlanHandoffReviewReceive
+	EventPlanHandoffReviewRejected  = EventPlanHandoffReviewReject
 )
 
 // WakeupEvent is the visible state that caused a wakeup notification. The
@@ -93,6 +123,34 @@ type GoalWithdrawnEvent struct {
 	DroppedTaskIDs       []int64  `json:"dropped_task_ids,omitempty"`
 	ClosedTaskHandoffIDs []string `json:"closed_task_handoff_ids,omitempty"`
 	WithdrawnDecisionIDs []int64  `json:"withdrawn_decision_ids,omitempty"`
+}
+
+// HandoffReviewEvent carries the stable scope and report for a review
+// transition. It is intentionally shared by task, goal, and plan review
+// events; task_id is zero for goal and plan reviews.
+type HandoffReviewEvent struct {
+	ProjectID           int64  `json:"project_id"`
+	GoalID              int64  `json:"goal_id"`
+	TaskID              int64  `json:"task_id,omitempty"`
+	HandoffID           string `json:"handoff_id"`
+	ReviewerID          int64  `json:"reviewer_id,omitempty"`
+	ReviewRequestReport string `json:"review_request_report,omitempty"`
+	ReviewRejectReport  string `json:"review_reject_report,omitempty"`
+	CompleteReport      string `json:"complete_report,omitempty"`
+}
+
+// HandoffEvent carries a request, receipt, or reopened handoff transition.
+// The same payload is used for goal and task handoffs; task_id is zero for a
+// goal handoff.
+type HandoffEvent struct {
+	ProjectID      int64  `json:"project_id"`
+	GoalID         int64  `json:"goal_id"`
+	TaskID         int64  `json:"task_id,omitempty"`
+	HandoffID      string `json:"handoff_id"`
+	RequestedBy    int64  `json:"requested_by,omitempty"`
+	ReceivedBy     int64  `json:"received_by,omitempty"`
+	RequestReport  string `json:"request_report,omitempty"`
+	CompleteReport string `json:"complete_report,omitempty"`
 }
 
 // WakeupState is the detector result used by pending output and the daemon.

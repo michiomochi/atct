@@ -169,7 +169,7 @@ func TestHTTPHandlerMCPInitializeReturnsStreamableResponse(t *testing.T) {
 	}
 }
 
-func TestHTTPHandlerMCPListsThirtyTwoTools(t *testing.T) {
+func TestHTTPHandlerMCPListsFortyEightTools(t *testing.T) {
 	fixture := newMCPHTTPTestServer(t)
 	client := newMCPHTTPTestClient(fixture.server.URL + "/mcp")
 	client.initialize(t)
@@ -181,8 +181,8 @@ func TestHTTPHandlerMCPListsThirtyTwoTools(t *testing.T) {
 	if !ok {
 		t.Fatalf("tools/list result.tools = %T, want array", result["tools"])
 	}
-	if len(tools) != 32 {
-		t.Fatalf("tools/list returned %d tools, want 32", len(tools))
+	if len(tools) != 48 {
+		t.Fatalf("tools/list returned %d tools, want 48", len(tools))
 	}
 	wantNames := map[string]bool{
 		"atct_role":                       false,
@@ -192,6 +192,8 @@ func TestHTTPHandlerMCPListsThirtyTwoTools(t *testing.T) {
 		"atct_handoff_entry_history":      false,
 		"atct_goal_handoff_entry_append":  false,
 		"atct_goal_handoff_entry_history": false,
+		"atct_goal_review_request":        false,
+		"atct_goal_update_request_report": false,
 	}
 	for _, rawTool := range tools {
 		tool, ok := rawTool.(map[string]any)
@@ -380,6 +382,25 @@ func TestHTTPHandlerMCPGoalHandoffRoutes(t *testing.T) {
 	}
 	if received.ReceivedAt == nil || received.ReceivedBy != requested.RequestedBy {
 		t.Fatalf("received handoff = %#v, want received timestamp and connection session", received)
+	}
+
+	reviewRequest := mcpResult(t, client.call(t, "tools/call", map[string]any{
+		"name": "atct_goal_handoff_review_request",
+		"arguments": map[string]any{
+			"handoff_id": "mcp-goal-handoff-1", "goal_id": claimedGoal.ID, "review_request_report": "Verified goal handoff review request through the MCP HTTP route.",
+		},
+	}))
+	if reviewRequest["isError"] == true {
+		t.Fatalf("goal handoff review request returned an error result: %#v", reviewRequest)
+	}
+	reviewReceive := mcpResult(t, client.call(t, "tools/call", map[string]any{
+		"name": "atct_goal_handoff_review_receive",
+		"arguments": map[string]any{
+			"handoff_id": "mcp-goal-handoff-1", "goal_id": claimedGoal.ID,
+		},
+	}))
+	if reviewReceive["isError"] == true {
+		t.Fatalf("goal handoff review receive returned an error result: %#v", reviewReceive)
 	}
 
 	complete := mcpResult(t, client.call(t, "tools/call", map[string]any{

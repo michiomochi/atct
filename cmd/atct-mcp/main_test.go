@@ -40,6 +40,7 @@ func TestResolveAtctPathPrefersConfiguredWrapper(t *testing.T) {
 }
 
 func TestResolveAtctPathPrefersSiblingBinary(t *testing.T) {
+	t.Setenv("ATCT_ATCT_BIN", "")
 	dir := socketDir(t)
 	sibling := filepath.Join(dir, "atct")
 	writeExecutable(t, sibling)
@@ -77,6 +78,7 @@ func TestResolveAtctPathIgnoresNonExecutableConfiguredWrapper(t *testing.T) {
 }
 
 func TestResolveAtctPathFallsBackToBareName(t *testing.T) {
+	t.Setenv("ATCT_ATCT_BIN", "")
 	got := resolveAtctPath(filepath.Join(t.TempDir(), "atct-mcp"))
 	if got != "atct" {
 		t.Fatalf("resolveAtctPath = %q, want %q for PATH lookup", got, "atct")

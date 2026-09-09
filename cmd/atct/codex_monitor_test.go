@@ -21,6 +21,7 @@ func TestRunCodexMonitorWatchUsesCWDProjectIDForSSE(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	var gotProjectID string
+	var gotReconcileProjectID string
 	client := &http.Client{Transport: watchRoundTripper(func(req *http.Request) (*http.Response, error) {
 		body := "[]"
 		switch req.URL.Path {
@@ -28,6 +29,9 @@ func TestRunCodexMonitorWatchUsesCWDProjectIDForSSE(t *testing.T) {
 			body = `{"unapplied_decisions":[]}`
 		case "/api/projects":
 			body = `[{"id":7,"root_path":"/project"}]`
+		case "/api/events/reconcile":
+			gotReconcileProjectID = req.URL.Query().Get("project_id")
+			body = `{"decisions":[],"goal_handoffs":[],"plan_handoffs":[],"task_handoffs":[]}`
 		case "/api/events":
 			gotProjectID = req.URL.Query().Get("project_id")
 			cancel()
@@ -40,6 +44,9 @@ func TestRunCodexMonitorWatchUsesCWDProjectIDForSSE(t *testing.T) {
 	}
 	if gotProjectID != "7" {
 		t.Fatalf("SSE project_id = %q, want cwd project 7", gotProjectID)
+	}
+	if gotReconcileProjectID != "7" {
+		t.Fatalf("reconcile project_id = %q, want cwd project 7", gotReconcileProjectID)
 	}
 }
 
@@ -294,6 +301,27 @@ func TestCodexMonitorActionLineAdmitsFormattedTaskActions(t *testing.T) {
 	} {
 		if !isCodexMonitorActionLine(line) {
 			t.Fatalf("task transition action line rejected: %q", line)
+		}
+	}
+}
+
+func TestCodexMonitorActionLineAdmitsCanonicalHandoffLifecycle(t *testing.T) {
+	for _, line := range []string{
+		"atct task handoff requested (task_id: 951, handoff_id: task-951)",
+		"atct task handoff received (task_id: 951, handoff_id: task-951)",
+		"atct task handoff review requested (task_id: 951, handoff_id: task-951)",
+		"atct task handoff review received (task_id: 951, handoff_id: task-951)",
+		"atct task handoff review rejected (task_id: 951, handoff_id: task-951)",
+		"atct task handoff completed (task_id: 951, handoff_id: task-951)",
+		"atct goal handoff requested (goal_id: 225, handoff_id: goal-225)",
+		"atct goal handoff received (goal_id: 225, handoff_id: goal-225)",
+		"atct goal handoff review requested (goal_id: 225, handoff_id: goal-225)",
+		"atct goal handoff review received (goal_id: 225, handoff_id: goal-225)",
+		"atct goal handoff review rejected (goal_id: 225, handoff_id: goal-225)",
+		"atct goal handoff completed (goal_id: 225, handoff_id: goal-225)",
+	} {
+		if !isCodexMonitorActionLine(line) {
+			t.Fatalf("canonical handoff lifecycle action line rejected: %q", line)
 		}
 	}
 }
@@ -657,6 +685,83 @@ func TestCodexMonitorQueueRetriesAfterTransientCompletionFailure(t *testing.T) {
 	}
 }
 
+func TestCodexMonitorIdleThreadStartedRetriesTransientStartFailure(t *testing.T) {
+	starter := &fakeCodexTurnStarter{errs: []error{errors.New("temporary rejection"), nil}}
+	bridge := newCodexMonitorBridge(starter, "")
+	ctx := context.Background()
+
+	if err := bridge.Enqueue(ctx, "retry-after-thread-start"); err != nil {
+		t.Fatalf("Enqueue() error = %v, want queued before thread starts", err)
+	}
+
+	if err := bridge.HandleNotification(ctx, codexAppServerNotification{
+		Method: "thread/started",
+		Params: mustJSON(map[string]any{
+			"thread": map[string]any{
+				"id":     "thread-1",
+				"status": map[string]any{"type": "idle"},
+			},
+		}),
+	}); err != nil {
+		t.Fatalf("HandleNotification(thread/started) error = %v, want transient failure suppressed", err)
+	}
+	if got := bridge.QueueLen(); got != 1 {
+		t.Fatalf("QueueLen() after thread/started failure = %d, want 1", got)
+	}
+	if bridge.Active() {
+		t.Fatal("bridge active after thread/started failure, want idle for retry")
+	}
+
+	if err := bridge.HandleNotification(ctx, codexAppServerNotification{
+		Method: "thread/status/changed",
+		Params: mustJSON(map[string]any{
+			"threadId": "thread-1",
+			"status":   map[string]any{"type": "idle"},
+		}),
+	}); err != nil {
+		t.Fatalf("HandleNotification(idle) error = %v", err)
+	}
+	if got := starter.callsSnapshot(); len(got) != 2 || got[0] != "retry-after-thread-start" || got[1] != "retry-after-thread-start" {
+		t.Fatalf("turn starts after thread/started retry = %#v, want two retry attempts", got)
+	}
+	if got := bridge.QueueLen(); got != 0 {
+		t.Fatalf("QueueLen() after thread/started retry = %d, want 0", got)
+	}
+}
+
+func TestCodexMonitorFatalAppServerFailureRetainsQueuedItem(t *testing.T) {
+	app := newFakeCodexMonitorApp()
+	app.notificationErr = errors.New("App Server connection lost")
+	app.startTurn = func(context.Context, string, string) (codexTurn, error) {
+		return codexTurn{}, errors.New("turn start failed")
+	}
+	bridge := newCodexMonitorBridge(app, "thread-1")
+	ctx := context.Background()
+
+	if err := bridge.Enqueue(ctx, "must-remain-queued"); err == nil {
+		t.Fatal("Enqueue() error = nil, want terminal App Server failure")
+	}
+	if got := bridge.QueueLen(); got != 1 {
+		t.Fatalf("QueueLen() after fatal App Server failure = %d, want 1", got)
+	}
+	if !bridge.disabled {
+		t.Fatal("bridge disabled = false, want terminal monitor state")
+	}
+
+	if err := bridge.HandleNotification(ctx, codexAppServerNotification{
+		Method: "thread/status/changed",
+		Params: mustJSON(map[string]any{
+			"threadId": "thread-1",
+			"status":   map[string]any{"type": "idle"},
+		}),
+	}); err != nil {
+		t.Fatalf("HandleNotification(idle) error = %v, want terminal state to suppress retries", err)
+	}
+	if got := bridge.QueueLen(); got != 1 {
+		t.Fatalf("QueueLen() after terminal idle notification = %d, want 1", got)
+	}
+}
+
 func TestCodexMonitorQueuesBeforeThreadIsAttached(t *testing.T) {
 	starter := &fakeCodexTurnStarter{}
 	bridge := newCodexMonitorBridge(starter, "")
@@ -709,6 +814,36 @@ func TestCodexMonitorEventSinkOnlyReceivesFormattedLines(t *testing.T) {
 	}
 	if got := starter.callsSnapshot(); len(got) != 1 || got[0] != "atct decision approved (decision_id: d1)" {
 		t.Fatalf("sink calls = %#v, want only formatted action line", got)
+	}
+}
+
+func TestReconcileWatchScopeSendsAppliedApprovalToCodexMonitorBridge(t *testing.T) {
+	client := &http.Client{Transport: watchRoundTripper(func(req *http.Request) (*http.Response, error) {
+		if req.URL.Path != "/api/events/reconcile" {
+			return nil, errors.New("unexpected request path")
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Status:     "200 OK",
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"goals":[{"id":42,"status":"active"}],"decisions":[{"id":71,"goal_id":42,"kind":"goal_approval","status":"applied","answer_label":"approve"}],"goal_handoffs":[],"plan_handoffs":[],"task_handoffs":[]}`)),
+		}, nil
+	})}
+
+	starter := &fakeCodexTurnStarter{}
+	bridge := newCodexMonitorBridge(starter, "thread-1")
+	lastWakeupContent := ""
+	err := reconcileWatchScope(
+		context.Background(), client, "http://daemon", watchScope{ProjectID: "1"}, io.Discard,
+		make(map[watchDeliveryKey]struct{}), &lastWakeupContent,
+		make(map[watchWakeupDeliveryKey]struct{}), make(map[watchDetectionDeliveryKey]struct{}),
+		newWatchScopeFilter(""), bridge.LineSink(),
+	)
+	if err != nil {
+		t.Fatalf("reconcileWatchScope: %v", err)
+	}
+	if got := starter.callsSnapshot(); len(got) != 1 || got[0] != "atct decision approved (decision_id: 71)" {
+		t.Fatalf("bridge turn starts = %#v, want one approval action line", got)
 	}
 }
 

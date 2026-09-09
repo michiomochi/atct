@@ -214,6 +214,14 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.handleEvents(w, r)
 		return
 	}
+	if len(parts) == 3 && parts[0] == "api" && parts[1] == "events" && parts[2] == "reconcile" {
+		if r.Method != http.MethodGet {
+			writeError(w, http.StatusBadRequest, "method is not allowed for this endpoint")
+			return
+		}
+		s.handleEventReconciliation(w, r)
+		return
+	}
 	if len(parts) == 2 && parts[0] == "api" && parts[1] == "ws" {
 		if r.Method != http.MethodGet {
 			writeError(w, http.StatusBadRequest, "method is not allowed for this endpoint")
@@ -444,7 +452,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func malformedAPIPath(path string) bool {
-	for _, prefix := range []string{"/api/inbox", "/api/events", "/api/ws", "/api/projects", "/api/goals", "/api/tasks", "/api/decisions"} {
+	for _, prefix := range []string{"/api/inbox", "/api/events", "/api/ws", "/api/watch", "/api/projects", "/api/goals", "/api/tasks", "/api/decisions"} {
 		if path == prefix || strings.HasPrefix(path, prefix+"/") {
 			return true
 		}
@@ -1244,7 +1252,7 @@ func (s *Server) handleAnswer(w http.ResponseWriter, r *http.Request, decisionID
 	if !ok {
 		return
 	}
-	if decision.Kind == domain.KindCompletion || decision.Kind == domain.KindGoalApproval {
+	if decision.Kind == domain.KindCompletion || decision.Kind == domain.KindGoalApproval || decision.Kind == domain.KindGoalReview {
 		writeError(w, http.StatusBadRequest, "use approve or reject for this decision")
 		return
 	}
@@ -1349,6 +1357,8 @@ func (s *Server) handleApprove(w http.ResponseWriter, r *http.Request, decisionI
 		goal, err = s.store.ApproveCompletion(r.Context(), decision.ID)
 	case domain.KindGoalApproval:
 		goal, err = s.store.ApproveGoal(r.Context(), decision.ID)
+	case domain.KindGoalReview:
+		goal, err = s.store.ApproveGoalReview(r.Context(), decision.ID)
 	default:
 		writeError(w, http.StatusConflict, store.ErrDecisionNotOpen.Error())
 		return
@@ -1384,6 +1394,8 @@ func (s *Server) handleReject(w http.ResponseWriter, r *http.Request, decisionID
 		err = s.store.RejectCompletion(r.Context(), canonicalDecisionID, request.Reason)
 	case domain.KindGoalApproval:
 		err = s.store.RejectGoal(r.Context(), canonicalDecisionID, request.Reason)
+	case domain.KindGoalReview:
+		err = s.store.RejectGoalReview(r.Context(), canonicalDecisionID, request.Reason)
 	default:
 		writeError(w, http.StatusConflict, store.ErrDecisionNotOpen.Error())
 		return
@@ -1431,7 +1443,7 @@ func (s *Server) getOpenDecision(w http.ResponseWriter, ctx context.Context, dec
 		writeStoreError(w, err)
 		return domain.Decision{}, false
 	}
-	if decision.Status != domain.DecisionOpen || (decision.Kind != domain.KindCompletion && decision.Kind != domain.KindGoalApproval) {
+	if decision.Status != domain.DecisionOpen || (decision.Kind != domain.KindCompletion && decision.Kind != domain.KindGoalApproval && decision.Kind != domain.KindGoalReview) {
 		writeError(w, http.StatusConflict, store.ErrDecisionNotOpen.Error())
 		return domain.Decision{}, false
 	}
@@ -1486,7 +1498,11 @@ func (s *Server) eventPasses(ctx context.Context, filter eventFilter, event stor
 		event.Data = data
 	}
 	if filter.projectID != "" {
-		eventProjectID, err := s.eventProjectID(ctx, event)
+		eventProjectID := event.ProjectID
+		var err error
+		if eventProjectID == 0 {
+			eventProjectID, err = s.eventProjectID(ctx, event)
+		}
 		if err != nil || (eventProjectID != 0 && eventProjectID != filter.canonicalProjectID) {
 			return false
 		}
@@ -1504,6 +1520,10 @@ func eventMatchesTaskID(event store.DecisionEvent, taskID int64) bool {
 	switch data := event.Data.(type) {
 	case store.KeepaliveEvent, *store.KeepaliveEvent:
 		return true
+	case domain.Decision:
+		return data.TaskID != 0 && data.TaskID == taskID
+	case *domain.Decision:
+		return data != nil && data.TaskID != 0 && data.TaskID == taskID
 	case store.DetectionEvent:
 		return data.TaskID != 0 && data.TaskID == taskID
 	case *store.DetectionEvent:
@@ -1511,6 +1531,14 @@ func eventMatchesTaskID(event store.DecisionEvent, taskID int64) bool {
 	case HandoffEntryAddedEvent:
 		return data.TaskID != 0 && data.TaskID == taskID
 	case *HandoffEntryAddedEvent:
+		return data != nil && data.TaskID != 0 && data.TaskID == taskID
+	case store.HandoffEvent:
+		return data.TaskID != 0 && data.TaskID == taskID
+	case *store.HandoffEvent:
+		return data != nil && data.TaskID != 0 && data.TaskID == taskID
+	case store.HandoffReviewEvent:
+		return data.TaskID != 0 && data.TaskID == taskID
+	case *store.HandoffReviewEvent:
 		return data != nil && data.TaskID != 0 && data.TaskID == taskID
 	default:
 		return false
@@ -1528,6 +1556,10 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	baselineAt := time.Now().UTC()
+	if _, _, _, err := s.eventScopeIDs(r.Context(), filter); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	ch, cancel := s.store.SubscribeEvents()
 	defer cancel()
 	records, err := s.scanHandoffEntryRecords(r.Context(), filter)
@@ -1549,7 +1581,10 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		select {
 		case <-r.Context().Done():
 			return
-		case event := <-ch:
+		case event, ok := <-ch:
+			if !ok {
+				return
+			}
 			if event.Name == EventHandoffEntryAdded {
 				data, ok := normalizeHandoffEntryEvent(event.Data)
 				if !ok {
@@ -1605,6 +1640,77 @@ func writeSSEEvent(w http.ResponseWriter, event store.DecisionEvent) error {
 	return err
 }
 
+func (s *Server) eventScopeIDs(ctx context.Context, filter eventFilter) (projectID, goalID, taskID int64, err error) {
+	projectID = filter.canonicalProjectID
+	goalID = filter.canonicalGoalID
+	taskID = filter.canonicalTaskID
+	if goalID != 0 {
+		goal, getErr := s.store.GetGoal(ctx, goalID)
+		if getErr != nil {
+			return 0, 0, 0, getErr
+		}
+		if projectID == 0 {
+			projectID = goal.ProjectID
+		} else if goal.ProjectID != projectID {
+			return 0, 0, 0, fmt.Errorf("goal %d does not belong to project %d", goalID, projectID)
+		}
+	}
+	if taskID != 0 {
+		taskGoalID, getErr := s.store.GetTaskGoalID(ctx, taskID)
+		if getErr != nil {
+			return 0, 0, 0, getErr
+		}
+		if goalID == 0 {
+			goalID = taskGoalID
+		} else if goalID != taskGoalID {
+			return 0, 0, 0, fmt.Errorf("task %d does not belong to goal %d", taskID, goalID)
+		}
+		goal, getErr := s.store.GetGoal(ctx, goalID)
+		if getErr != nil {
+			return 0, 0, 0, getErr
+		}
+		if projectID == 0 {
+			projectID = goal.ProjectID
+		} else if goal.ProjectID != projectID {
+			return 0, 0, 0, fmt.Errorf("task %d does not belong to project %d", taskID, projectID)
+		}
+	}
+	return projectID, goalID, taskID, nil
+}
+
+func writeDecisionEventSSE(w io.Writer, event store.DecisionEvent) error {
+	data, err := json.Marshal(event.Data)
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event.Name, data)
+	return err
+}
+
+func (s *Server) handleEventReconciliation(w http.ResponseWriter, r *http.Request) {
+	filter, ok := s.parseEventFilter(w, r)
+	if !ok {
+		return
+	}
+	projectID, goalID, taskID, err := s.eventScopeIDs(r.Context(), filter)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if projectID <= 0 {
+		writeError(w, http.StatusBadRequest, "project_id is required for workflow reconciliation")
+		return
+	}
+	reconciliation, err := s.store.ReconcileWorkflow(r.Context(), store.WorkflowEventQuery{
+		ProjectID: projectID, GoalID: goalID, TaskID: taskID,
+	})
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, reconciliation)
+}
+
 func eventMatchesGoalID(event store.DecisionEvent, goalID int64) bool {
 	switch data := event.Data.(type) {
 	case store.KeepaliveEvent, *store.KeepaliveEvent:
@@ -1626,6 +1732,14 @@ func eventMatchesGoalID(event store.DecisionEvent, goalID int64) bool {
 	case HandoffEntryAddedEvent:
 		return data.GoalID != 0 && data.GoalID == goalID
 	case *HandoffEntryAddedEvent:
+		return data != nil && data.GoalID != 0 && data.GoalID == goalID
+	case store.HandoffEvent:
+		return data.GoalID != 0 && data.GoalID == goalID
+	case *store.HandoffEvent:
+		return data != nil && data.GoalID != 0 && data.GoalID == goalID
+	case store.HandoffReviewEvent:
+		return data.GoalID != 0 && data.GoalID == goalID
+	case *store.HandoffReviewEvent:
 		return data != nil && data.GoalID != 0 && data.GoalID == goalID
 	default:
 		return false
@@ -1680,6 +1794,20 @@ func (s *Server) eventProjectID(ctx context.Context, event store.DecisionEvent) 
 	case HandoffEntryAddedEvent:
 		return data.ProjectID, nil
 	case *HandoffEntryAddedEvent:
+		if data == nil {
+			return 0, nil
+		}
+		return data.ProjectID, nil
+	case store.HandoffEvent:
+		return data.ProjectID, nil
+	case *store.HandoffEvent:
+		if data == nil {
+			return 0, nil
+		}
+		return data.ProjectID, nil
+	case store.HandoffReviewEvent:
+		return data.ProjectID, nil
+	case *store.HandoffReviewEvent:
 		if data == nil {
 			return 0, nil
 		}

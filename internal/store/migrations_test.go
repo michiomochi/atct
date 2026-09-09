@@ -1,7 +1,9 @@
 package store
 
 import (
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -57,6 +59,232 @@ func TestEmptyDatabaseAppliesBaselineMigration(t *testing.T) {
 	for _, table := range []string{"projects", "agent_sessions", "goals", "tasks", "decisions", "schema_migrations"} {
 		assertTableExists(t, db, table)
 	}
+}
+
+func TestFreshDatabaseAppliesHandoffEntryMigrationsAfter0029(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "fresh-handoff-entry.db")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open fresh database: %v", err)
+	}
+	defer s.Close()
+
+	assertUserVersion(t, s.DB(), schemaVersion)
+	for _, filename := range []string{
+		"0029_goal_request_reports.sql",
+		"0030_monitor_health.sql",
+		"0031_handoff_entries.sql",
+		"0032_canonical_handoff_entries.sql",
+	} {
+		assertMigrationRecorded(t, s.DB(), filename)
+	}
+	assertTableExists(t, s.DB(), "monitor_health")
+	for _, table := range []string{"task_handoff_entries", "goal_handoff_entries"} {
+		assertTableExists(t, s.DB(), table)
+		columns := migrationTableColumns(t, s.DB(), table)
+		for _, column := range []string{"id", "handoff_id", "kind", "body", "author_session_id", "in_reply_to_id", "created_at"} {
+			if _, ok := columns[column]; !ok {
+				t.Errorf("fresh %s schema is missing column %q", table, column)
+			}
+		}
+		for _, column := range []string{"entry_id", "sequence", "relates_to", "source"} {
+			if _, ok := columns[column]; ok {
+				t.Errorf("fresh %s schema still has legacy column %q", table, column)
+			}
+		}
+	}
+}
+
+func TestUpgradeThrough0029AppliesHandoffEntryMigrations(t *testing.T) {
+	db := openMigrationTestDB(t)
+	migrations, err := loadEmbeddedMigrations()
+	if err != nil {
+		t.Fatalf("load embedded migrations: %v", err)
+	}
+
+	for _, migration := range migrations {
+		if migration.filename == "0030_monitor_health.sql" {
+			break
+		}
+		if _, err := db.Exec(migration.sql); err != nil {
+			t.Fatalf("apply pre-entry migration %s: %v", migration.filename, err)
+		}
+		if _, err := db.Exec(`INSERT INTO schema_migrations (filename, applied_at) VALUES (?, ?)`, migration.filename, "2026-09-07T00:00:00Z"); err != nil {
+			t.Fatalf("record pre-entry migration %s: %v", migration.filename, err)
+		}
+	}
+	if _, err := db.Exec(`PRAGMA user_version = 6`); err != nil {
+		t.Fatalf("set pre-entry schema version: %v", err)
+	}
+	assertMigrationRecorded(t, db, "0029_goal_request_reports.sql")
+	for _, table := range []string{"task_handoff_entries", "goal_handoff_entries"} {
+		var count int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&count); err != nil {
+			t.Fatalf("check pre-entry table %q: %v", table, err)
+		}
+		if count != 0 {
+			t.Fatalf("pre-entry table %q exists before upgrade", table)
+		}
+	}
+
+	if err := applyEmbeddedMigrations(db); err != nil {
+		t.Fatalf("upgrade from 0029: %v", err)
+	}
+	assertUserVersion(t, db, schemaVersion)
+	for _, filename := range []string{
+		"0029_goal_request_reports.sql",
+		"0030_monitor_health.sql",
+		"0031_handoff_entries.sql",
+		"0032_canonical_handoff_entries.sql",
+	} {
+		assertMigrationRecorded(t, db, filename)
+	}
+	for _, table := range []string{"task_handoff_entries", "goal_handoff_entries"} {
+		assertTableExists(t, db, table)
+		columns := migrationTableColumns(t, db, table)
+		if _, ok := columns["id"]; !ok {
+			t.Errorf("upgraded %s schema is missing canonical id", table)
+		}
+		if _, ok := columns["in_reply_to_id"]; !ok {
+			t.Errorf("upgraded %s schema is missing canonical in_reply_to_id", table)
+		}
+	}
+}
+
+func TestMigration0026RecoveredSourceHash(t *testing.T) {
+	migrations, err := loadEmbeddedMigrations()
+	if err != nil {
+		t.Fatalf("load embedded migrations: %v", err)
+	}
+
+	const (
+		filename = "0026_goal_review_snapshots.sql"
+		wantHash = "bb1a0df63877b7808bce7a897afe9909968537eb740f752ffabe0e05a3266042"
+		wantSize = 1822
+	)
+	for _, migration := range migrations {
+		if migration.filename != filename {
+			continue
+		}
+		if size := len([]byte(migration.sql)); size != wantSize {
+			t.Fatalf("%s byte length = %d, want %d", filename, size, wantSize)
+		}
+		hash := sha256.Sum256([]byte(migration.sql))
+		if gotHash := hex.EncodeToString(hash[:]); gotHash != wantHash {
+			t.Fatalf("%s sha256 = %s, want %s", filename, gotHash, wantHash)
+		}
+		return
+	}
+	t.Fatalf("embedded migrations do not contain %s", filename)
+}
+
+func TestForwardSnapshotRemovalMigration(t *testing.T) {
+	db := openMigrationTestDB(t)
+	migrations, err := loadEmbeddedMigrations()
+	if err != nil {
+		t.Fatalf("load embedded migrations: %v", err)
+	}
+
+	const (
+		snapshotCreation = "0026_goal_review_snapshots.sql"
+		deliveryRemoval  = "0027_drop_workflow_event_delivery.sql"
+		snapshotRemoval  = "0028_drop_goal_review_snapshots.sql"
+	)
+	found := make(map[string]bool, 3)
+	for _, migration := range migrations {
+		if _, err := db.Exec(migration.sql); err != nil {
+			t.Fatalf("apply migration %s: %v", migration.filename, err)
+		}
+		if _, err := db.Exec(`INSERT INTO schema_migrations (filename, applied_at) VALUES (?, ?)`, migration.filename, "2026-09-05T00:00:00Z"); err != nil {
+			t.Fatalf("record migration %s: %v", migration.filename, err)
+		}
+
+		switch migration.filename {
+		case snapshotCreation:
+			found[snapshotCreation] = true
+			assertTableExists(t, db, "goal_review_snapshots")
+		case deliveryRemoval:
+			found[deliveryRemoval] = true
+			for _, table := range []string{"workflow_event_outbox", "project_event_sequences", "watch_delivery_cursors"} {
+				assertTableAbsent(t, db, table)
+			}
+		case snapshotRemoval:
+			found[snapshotRemoval] = true
+			assertTableAbsent(t, db, "goal_review_snapshots")
+		}
+	}
+
+	for _, filename := range []string{snapshotCreation, deliveryRemoval, snapshotRemoval} {
+		if !found[filename] {
+			t.Fatalf("embedded migrations do not contain %s", filename)
+		}
+		assertMigrationRecorded(t, db, filename)
+	}
+}
+
+func TestForwardDeliveryRemovalMigrationPreservesCanonicalRows(t *testing.T) {
+	db := openMigrationTestDB(t)
+	migrations, err := loadEmbeddedMigrations()
+	if err != nil {
+		t.Fatalf("load embedded migrations: %v", err)
+	}
+
+	const deliveryRemoval = "0027_drop_workflow_event_delivery.sql"
+	foundRemoval := false
+	for _, migration := range migrations {
+		if migration.filename == deliveryRemoval {
+			foundRemoval = true
+			break
+		}
+		if _, err := db.Exec(migration.sql); err != nil {
+			t.Fatalf("apply fixture migration %s: %v", migration.filename, err)
+		}
+		if _, err := db.Exec(`INSERT INTO schema_migrations (filename, applied_at) VALUES (?, ?)`, migration.filename, "2026-09-05T00:00:00Z"); err != nil {
+			t.Fatalf("record fixture migration %s: %v", migration.filename, err)
+		}
+	}
+	if !foundRemoval {
+		t.Fatalf("embedded migrations do not contain %s", deliveryRemoval)
+	}
+	if _, err := db.Exec(`PRAGMA user_version = 6`); err != nil {
+		t.Fatalf("set fixture schema version: %v", err)
+	}
+	if _, err := db.Exec(`
+INSERT INTO projects (id, name, root_path, created_at)
+VALUES (1, 'delivery removal project', '/delivery-removal', '2026-09-05T00:00:00Z');
+INSERT INTO goals (id, project_id, content, status, created_at, updated_at)
+VALUES (1, 1, 'delivery removal goal', 'active', '2026-09-05T00:00:00Z', '2026-09-05T00:00:00Z');
+INSERT INTO tasks (id, goal_id, title, status, declare_key, created_at, updated_at)
+VALUES (1, 1, 'delivery removal task', 'todo', 'delivery-removal-task', '2026-09-05T00:00:00Z', '2026-09-05T00:00:00Z');
+INSERT INTO decisions (id, goal_id, task_id, kind, question, options, status, agent_session_id, created_at)
+VALUES (1, 1, 1, 'decision', 'keep the canonical row?', '[{"label":"yes"}]', 'open', 0, '2026-09-05T00:00:00Z');
+INSERT INTO project_event_sequences (project_id, last_sequence)
+VALUES (1, 7);
+INSERT INTO workflow_event_outbox (project_id, sequence, event_id, event_name, goal_id, task_id, decision_id, payload, occurred_at)
+VALUES (1, 7, '1:7', 'decision.created', 1, 1, 1, '{}', '2026-09-05T00:00:00Z');
+INSERT INTO watch_delivery_cursors (watcher_key, project_id, goal_id, sequence, updated_at)
+VALUES ('delivery-removal-watcher', 1, 1, 7, '2026-09-05T00:00:00Z');
+`); err != nil {
+		t.Fatalf("insert migration fixture rows: %v", err)
+	}
+
+	if err := applyEmbeddedMigrations(db); err != nil {
+		t.Fatalf("apply forward delivery removal migration: %v", err)
+	}
+	for _, table := range []string{"workflow_event_outbox", "project_event_sequences", "watch_delivery_cursors"} {
+		assertTableAbsent(t, db, table)
+	}
+	for _, table := range []string{"projects", "goals", "tasks", "decisions"} {
+		assertTableExists(t, db, table)
+		var count int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM ` + table).Scan(&count); err != nil {
+			t.Fatalf("count canonical %s rows: %v", table, err)
+		}
+		if count != 1 {
+			t.Fatalf("canonical %s row count = %d, want 1", table, count)
+		}
+	}
+	assertMigrationRecorded(t, db, deliveryRemoval)
 }
 
 func TestAgentSessionMigrationRenamesLegacySchema(t *testing.T) {

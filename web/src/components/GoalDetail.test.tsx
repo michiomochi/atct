@@ -8,6 +8,7 @@ import {
   fetchGoalDiff,
   fetchInbox,
   fetchTaskCommitDiff,
+  rejectDecision,
   subscribeToDecisionEvents,
   updateGoalContent,
   withdrawGoal,
@@ -71,6 +72,8 @@ function goal(overrides: Partial<Goal> = {}): Goal {
     project_id: "project-1",
     project_name: "Fixture project",
     content: "Fixture goal",
+    spec: "",
+    plan: "",
     status: "active",
     awaiting_decision: false,
     result_summary: "",
@@ -169,6 +172,37 @@ function goalApprovalDecision(): Decision {
   };
 }
 
+function goalReviewDecision(): Decision {
+  return {
+    id: "goal-review-1",
+    goal_id: "goal-1",
+    goal_headline: "Fixture goal",
+    kind: "goal_review",
+    question: "Review the completed goal handoff",
+    options: [],
+    status: "open",
+    agent_session_id: "fixture-run",
+    created_at: "2026-08-20T00:00:00Z",
+  };
+}
+
+function ordinaryDecision(): Decision {
+  return {
+    id: "ordinary-decision-1",
+    goal_id: "goal-1",
+    goal_headline: "Fixture goal",
+    kind: "decision",
+    question: "Choose the migration handling",
+    options: [
+      { label: "Keep", description: "Keep the migration", consequence: "The migration remains available" },
+      { label: "Remove", description: "Remove the migration", consequence: "The migration is deleted" },
+    ],
+    status: "open",
+    agent_session_id: "fixture-run",
+    created_at: "2026-08-20T00:00:00Z",
+  };
+}
+
 function emptyInbox(): InboxResponse {
   return {
     open_decisions: [],
@@ -180,6 +214,12 @@ function emptyInbox(): InboxResponse {
 }
 
 describe("GoalDetail", () => {
+	 it("renders read-only spec and plan, using unset for empty values", async () => {
+		vi.mocked(fetchGoal).mockResolvedValueOnce(goalResponse({ spec: "Spec text", plan: "" }));
+		render(<GoalDetail id="goal-1" />);
+		await waitFor(() => expect(screen.getByTestId("request-report").textContent).toContain("Spec text"));
+		expect(screen.getByTestId("request-report").textContent).toContain("goal.requestReport.unset");
+	});
   it("asks for the goal diff with the id resolved from the route, not the placeholder", async () => {
     const response = goalResponse({ status: "active" });
     vi.mocked(fetchGoal).mockResolvedValueOnce(response);
@@ -211,6 +251,117 @@ describe("GoalDetail", () => {
 
     await waitFor(() => expect(fetchGoal).toHaveBeenCalledWith("goal-1"));
     expect(screen.queryByTestId("goal-approval")).toBeNull();
+  });
+
+  it("renders an open taskless goal review with accessible actions and requires a rejection reason", async () => {
+    const response = goalResponse();
+    response.unattached_decisions = [goalReviewDecision()];
+    vi.mocked(fetchGoal).mockResolvedValueOnce(response);
+
+    render(<GoalDetail id="goal-1" />);
+
+    const card = await screen.findByTestId("goal-review");
+    expect(within(card).getByRole("heading", { name: "goal.review.title" })).not.toBeNull();
+    expect(within(card).getByText("Review the completed goal handoff")).not.toBeNull();
+    const reason = within(card).getByRole("textbox", { name: /goal\.review\.reason/ });
+    const approve = within(card).getByRole("button", { name: "goal.review.approve" });
+    const reject = within(card).getByRole("button", { name: "goal.review.reject" });
+
+    expect(approve).not.toBeNull();
+    expect((reject as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(reason, { target: { value: "   " } });
+    expect((reject as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.queryByTestId("completion-approval")).toBeNull();
+    expect(screen.queryByTestId("goal-approval")).toBeNull();
+  });
+
+  it("renders an open taskless ordinary decision with the existing answer form", async () => {
+    const response = goalResponse({ status: "proposed" });
+    response.unattached_decisions = [
+      ordinaryDecision(),
+      completionDecision(),
+      goalApprovalDecision(),
+      goalReviewDecision(),
+    ];
+    vi.mocked(fetchGoal).mockResolvedValueOnce(response);
+
+    render(<GoalDetail id="goal-1" />);
+
+    const list = await screen.findByTestId("unattached-decision-list");
+    expect(within(list).getByText("Choose the migration handling")).not.toBeNull();
+    expect(within(list).getAllByRole("option")).toHaveLength(3);
+    expect(within(list).getByRole("textbox")).not.toBeNull();
+    expect(within(list).getByRole("button", { name: "form.answer.submit" })).not.toBeNull();
+    expect(within(list).queryByText("Review the completion")).toBeNull();
+    expect(within(list).queryByText("Approve the proposed goal")).toBeNull();
+    expect(within(list).queryByText("Review the completed goal handoff")).toBeNull();
+    expect(within(list).queryAllByRole("button", { name: "form.answer.submit" })).toHaveLength(1);
+    expect(screen.getByTestId("completion-approval")).not.toBeNull();
+    expect(screen.getByTestId("goal-approval")).not.toBeNull();
+    expect(screen.getByTestId("goal-review")).not.toBeNull();
+  });
+
+  it("renders the existing completion report once inside an active goal review", async () => {
+    const response = goalResponse({
+      work_done: "Completed work",
+      now_possible: "Now possible",
+      how_to_verify: "Verify here",
+      surprises: "No surprises",
+      needs_review: "Review this",
+      next_steps: "Continue monitoring",
+    });
+    response.unattached_decisions = [goalReviewDecision()];
+    vi.mocked(fetchGoal).mockResolvedValueOnce(response);
+
+    render(<GoalDetail id="goal-1" />);
+
+    const card = await screen.findByTestId("goal-review");
+    const report = within(card).getByTestId("completion-report");
+    expect(screen.getAllByTestId("completion-report")).toHaveLength(1);
+    expect(within(report).getByText("Completed work")).not.toBeNull();
+    expect(within(report).getByText("Now possible")).not.toBeNull();
+    expect(within(report).getByText("Verify here")).not.toBeNull();
+    expect(within(report).getByText("No surprises")).not.toBeNull();
+    expect(within(report).getByText("Review this")).not.toBeNull();
+    expect(within(report).getByText("Continue monitoring")).not.toBeNull();
+
+    const approve = within(card).getByRole("button", { name: "goal.review.approve" });
+    expect(report.compareDocumentPosition(approve) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+  });
+
+  it("approves an open goal review with the generic decision API and reloads after success", async () => {
+    const response = goalResponse();
+    response.unattached_decisions = [goalReviewDecision()];
+    vi.mocked(fetchGoal).mockResolvedValueOnce(response).mockResolvedValueOnce(goalResponse());
+    vi.mocked(approveDecision).mockResolvedValueOnce(goal());
+
+    render(<GoalDetail id="goal-1" />);
+
+    const card = await screen.findByTestId("goal-review");
+    fireEvent.click(within(card).getByRole("button", { name: "goal.review.approve" }));
+
+    await waitFor(() => expect(approveDecision).toHaveBeenCalledWith("goal-review-1"));
+    await waitFor(() => expect(fetchGoal).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.queryByTestId("goal-review")).toBeNull());
+  });
+
+  it("rejects an open goal review with a trimmed reason and reloads after success", async () => {
+    const response = goalResponse();
+    response.unattached_decisions = [goalReviewDecision()];
+    vi.mocked(fetchGoal).mockResolvedValueOnce(response).mockResolvedValueOnce(goalResponse());
+    vi.mocked(rejectDecision).mockResolvedValueOnce(goalReviewDecision());
+
+    render(<GoalDetail id="goal-1" />);
+
+    const card = await screen.findByTestId("goal-review");
+    fireEvent.change(within(card).getByRole("textbox", { name: /goal\.review\.reason/ }), {
+      target: { value: "  Needs a correction  " },
+    });
+    fireEvent.click(within(card).getByRole("button", { name: "goal.review.reject" }));
+
+    await waitFor(() => expect(rejectDecision).toHaveBeenCalledWith("goal-review-1", "Needs a correction"));
+    await waitFor(() => expect(fetchGoal).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.queryByTestId("goal-review")).toBeNull());
   });
 
   it("disables goal approval rejection while the reason is empty", async () => {

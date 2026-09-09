@@ -16,12 +16,13 @@ import {
   type GoalResponse,
 } from "../lib/api";
 import { formatDateTime } from "../i18n";
-import { body, findOpenCompletion, findOpenGoalApproval, hasCompletionReport, headline, resolveRouteID, statusLabel, type CompletionReportFields } from "../lib/ui";
+import { body, findOpenCompletion, findOpenGoalApproval, findOpenGoalReview, hasCompletionReport, headline, resolveRouteID, statusLabel, type CompletionReportFields } from "../lib/ui";
 import { AreaLoading, ErrorState } from "./StateMessage";
 import { GoalDiff } from "./GoalDiff";
 import { TaskCommitList } from "./TaskCommitList";
 import { TaskTable } from "./TaskTable";
 import { HandoffTimeline } from "./HandoffTimeline";
+import { UnattachedDecisionList } from "./UnattachedDecisionList";
 
 interface Props {
   id: string;
@@ -36,6 +37,8 @@ interface GoalDetailData {
   goal: GoalResponse;
   completion?: Decision;
   goalApproval?: Decision;
+  goalReview?: Decision;
+  unattachedDecisions: Decision[];
 }
 
 type CompletionAction = "approve" | "reject";
@@ -281,6 +284,121 @@ function GoalApproval({
   );
 }
 
+type GoalReviewAction = "approve" | "reject";
+
+function GoalReview({
+  decision,
+  goal,
+  onUpdated,
+  reason,
+  onReasonChange,
+}: {
+  decision: Decision;
+  goal: Goal;
+  onUpdated: () => void;
+  reason: string;
+  onReasonChange: (reason: string) => void;
+}) {
+  const { t } = useTranslation();
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [conflict, setConflict] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+
+  const reasonID = `goal-review-reason-${decision.id}`;
+
+  async function submit(action: GoalReviewAction) {
+    const trimmedReason = reason.trim();
+    if (submitting || (action === "reject" && trimmedReason === "")) return;
+
+    setSubmitError(null);
+    setConflict(false);
+    setSubmitting(true);
+    try {
+      if (action === "approve") {
+        await approveDecision(decision.id);
+      } else {
+        await rejectDecision(decision.id, trimmedReason);
+      }
+      onUpdated();
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 409) {
+        setConflict(true);
+      } else {
+        setSubmitError(errorMessage(error, t("goal.review.error.update")));
+      }
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const submitter = (event.nativeEvent as SubmitEvent).submitter;
+    const action: GoalReviewAction = submitter instanceof HTMLButtonElement && submitter.value === "reject" ? "reject" : "approve";
+    void submit(action);
+  }
+
+  if (conflict) {
+    return (
+      <section className="min-w-0 border-t border-line pt-5" data-testid="goal-review" aria-labelledby="goal-review-heading">
+        <h2 id="goal-review-heading" className="font-display text-lg font-semibold text-ink-950">{t("goal.review.title")}</h2>
+        <div className="mt-4 border border-notice-800 bg-notice-100 px-4 py-4 text-base text-notice-800" role="alert">
+          <p>{t("goal.review.conflict")}</p>
+          <Button
+            type="button"
+            variant="outline"
+            className="focus-ring mt-3 px-3 py-2 text-base font-medium"
+            onClick={onUpdated}
+          >
+            {t("goal.review.fetchLatest")}
+          </Button>
+        </div>
+      </section>
+    );
+  }
+
+  return (
+    <section className="min-w-0 border-t border-line pt-5" data-testid="goal-review" aria-labelledby="goal-review-heading">
+      <h2 id="goal-review-heading" className="font-display text-lg font-semibold text-ink-950">{t("goal.review.title")}</h2>
+      <p className="mt-2 max-w-3xl text-base leading-6 text-ink-700">{t("goal.review.description")}</p>
+      <p className="mt-4 max-w-3xl whitespace-pre-wrap break-words text-base leading-6 text-ink-950">{decision.question}</p>
+      {goal.status === "active" && <CompletionReport goal={goal} />}
+      <form className="mt-4 min-w-0 max-w-3xl border-l-2 border-accent-600 pl-4" onSubmit={handleSubmit} noValidate>
+        <label className="mb-3 block text-base text-ink-800" htmlFor={reasonID}>
+          {t("goal.review.reason")} <span className="text-ink-500">{t("form.optional")}</span>
+          <textarea
+            className="focus-ring mt-1 block min-h-24 w-full resize-y border border-line bg-surface px-3 py-2 text-base leading-6 text-ink-950"
+            id={reasonID}
+            value={reason}
+            onChange={(event) => onReasonChange(event.target.value)}
+          />
+        </label>
+        {submitError && <p className="mb-3 text-base text-danger-700" role="alert">{submitError}</p>}
+        <div className="flex flex-wrap gap-3">
+          <Button
+            type="submit"
+            value="approve"
+            variant="primary"
+            disabled={submitting}
+            className="focus-ring px-3 py-2 text-base font-medium disabled:cursor-wait disabled:opacity-60"
+          >
+            {submitting ? t("goal.review.submitting") : t("goal.review.approve")}
+          </Button>
+          <Button
+            type="submit"
+            value="reject"
+            variant="secondary-destructive"
+            disabled={submitting || reason.trim() === ""}
+            className="focus-ring px-3 py-2 text-base font-medium disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {t("goal.review.reject")}
+          </Button>
+        </div>
+      </form>
+    </section>
+  );
+}
+
 function GoalWithdrawal({ goal, onUpdated }: { goal: Goal; onUpdated: () => void }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
@@ -453,6 +571,7 @@ export function GoalDetail({ id }: Props) {
   const [state, setState] = useState<LoadState>({ kind: "loading" });
   const [completionReason, setCompletionReason] = useState("");
   const [goalApprovalReason, setGoalApprovalReason] = useState("");
+  const [goalReviewReason, setGoalReviewReason] = useState("");
   const [updatePending, setUpdatePending] = useState(false);
   const { t, i18n } = useTranslation();
   const pathname = id === "_" && typeof window !== "undefined" ? window.location.pathname : "";
@@ -466,16 +585,25 @@ export function GoalDetail({ id }: Props) {
     setGoalApprovalReason(reason);
   }, []);
 
+  const handleGoalReviewReasonChange = useCallback((reason: string) => {
+    setGoalReviewReason(reason);
+  }, []);
+
   const load = useCallback(async () => {
     setUpdatePending(false);
     setCompletionReason("");
     setGoalApprovalReason("");
+    setGoalReviewReason("");
     setState({ kind: "loading" });
     try {
       const goal = await fetchGoal(resolvedID);
       const completion = findOpenCompletion(goal.unattached_decisions);
       const goalApproval = findOpenGoalApproval(goal.unattached_decisions);
-      setState({ kind: "ready", data: { goal, completion, goalApproval } });
+      const goalReview = findOpenGoalReview(goal.unattached_decisions);
+      const unattachedDecisions = goal.unattached_decisions.filter(
+        (decision) => decision.kind === "decision" && decision.status === "open",
+      );
+      setState({ kind: "ready", data: { goal, completion, goalApproval, goalReview, unattachedDecisions } });
     } catch (reason) {
       setState({ kind: "error", message: errorMessage(reason, t("goal.error.load")) });
     }
@@ -500,6 +628,7 @@ export function GoalDetail({ id }: Props) {
   const locale = i18n.language.startsWith("ja") ? "ja" : "en";
   const tasks = data?.goal.goal.tasks ?? [];
   const taskCommits = data?.goal.task_commits ?? [];
+  const hasActiveGoalReview = data?.goal.goal.status === "active" && Boolean(data.goalReview);
 
   return (
     <main className="min-w-0 max-w-full space-y-10 overflow-x-hidden px-0.5">
@@ -553,7 +682,18 @@ export function GoalDetail({ id }: Props) {
 
       {data && <HandoffTimeline handoffs={data.goal.handoffs ?? []} fetchHistory={fetchHandoffHistory} />}
 
-      {data && <CompletionReport goal={data.goal.goal} />}
+      {data && !hasActiveGoalReview && <CompletionReport goal={data.goal.goal} />}
+
+      {data && (
+        <section className="grid min-w-0 gap-6 border-t border-line pt-5 sm:grid-cols-2" data-testid="request-report">
+          {([{ key: "spec", label: "goal.spec" }, { key: "plan", label: "goal.plan" }] as const).map(({ key, label }) => (
+            <section key={key} className="min-w-0">
+              <h2 className="font-display text-lg font-semibold text-ink-950">{t(label)}</h2>
+              <p className="mt-2 whitespace-pre-wrap break-words text-base leading-6 text-ink-800">{data.goal.goal[key].trim() || t("goal.requestReport.unset")}</p>
+            </section>
+          ))}
+        </section>
+      )}
 
       {data?.completion && (
         <CompletionApproval
@@ -561,6 +701,16 @@ export function GoalDetail({ id }: Props) {
           onUpdated={load}
           reason={completionReason}
           onReasonChange={handleCompletionReasonChange}
+        />
+      )}
+
+      {data?.goalReview && (
+        <GoalReview
+          decision={data.goalReview}
+          goal={data.goal.goal}
+          onUpdated={load}
+          reason={goalReviewReason}
+          onReasonChange={handleGoalReviewReasonChange}
         />
       )}
 
@@ -572,6 +722,8 @@ export function GoalDetail({ id }: Props) {
           onReasonChange={handleGoalApprovalReasonChange}
         />
       )}
+
+      {data && <UnattachedDecisionList decisions={data.unattachedDecisions} onRefresh={load} />}
 
       {data?.goal.derived_from && (
         <section className="min-w-0 border-t border-line pt-5" aria-labelledby="goal-derived-from-heading">

@@ -992,7 +992,7 @@ func execEmbeddedMigration(ctx context.Context, conn *sql.Conn, migration embedd
 	if _, err := conn.ExecContext(ctx, migration.sql); err != nil {
 		return fmt.Errorf("execute schema migration %s: %w", migration.filename, err)
 	}
-	if migration.filename == "0024_canonical_handoff_entries.sql" {
+	if migration.filename == "0032_canonical_handoff_entries.sql" {
 		if err := backfillLegacyHandoffEntries(ctx, conn); err != nil {
 			return fmt.Errorf("backfill legacy handoff entries: %w", err)
 		}

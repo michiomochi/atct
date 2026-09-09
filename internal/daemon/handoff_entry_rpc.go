@@ -156,6 +156,29 @@ func marshalCanonicalHandoff(handoff any, err error) (json.RawMessage, error) {
 	return json.Marshal(fields)
 }
 
+func marshalCanonicalHandoffWithRoleEvidence(handoff any, response responseWithRoleEvidence) (json.RawMessage, error) {
+	raw, err := marshalCanonicalHandoff(handoff, nil)
+	if err != nil {
+		return nil, err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return nil, err
+	}
+	fields["data"] = raw
+	role, err := json.Marshal(response.Role)
+	if err != nil {
+		return nil, err
+	}
+	fields["role"] = role
+	evidence, err := json.Marshal(response.ClaimEvidence)
+	if err != nil {
+		return nil, err
+	}
+	fields["claim_evidence"] = evidence
+	return json.Marshal(fields)
+}
+
 func canonicalHandoffEntries(entries []store.HandoffEntry) []handoffEntryRPCOutput {
 	output := make([]handoffEntryRPCOutput, 0, len(entries))
 	for _, entry := range entries {

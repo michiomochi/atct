@@ -13,6 +13,22 @@ export const DECISION_EVENT_NAMES = [
   "goal.created",
   // ゴールの取り下げで状態が変わるので、画面を更新する。
   "goal.withdrawn",
+  "task.handoff.request",
+  "task.handoff.receive",
+  "task.handoff.review.request",
+  "task.handoff.review.receive",
+  "task.handoff.review.reject",
+  "task.handoff.complete",
+  "goal.handoff.request",
+  "goal.handoff.receive",
+  "goal.handoff.review.request",
+  "goal.handoff.review.receive",
+  "goal.handoff.review.reject",
+  "goal.handoff.complete",
+  "plan.handoff.review.request",
+  "plan.handoff.review.receive",
+  "plan.handoff.review.reject",
+  "plan.handoff.complete",
   "detection.completion_report_missing",
   "detection.commits_missing",
   "detection.undeclared_goal",
@@ -88,6 +104,10 @@ export function findOpenCompletion<T extends CompletionLike>(decisions: T[]): T 
 
 export function findOpenGoalApproval<T extends CompletionLike>(decisions: T[]): T | undefined {
   return decisions.find((decision) => decision.kind === "goal_approval" && decision.status === "open");
+}
+
+export function findOpenGoalReview<T extends CompletionLike>(decisions: T[]): T | undefined {
+  return decisions.find((decision) => decision.kind === "goal_review" && decision.status === "open");
 }
 
 // A goal's content is one field; these two decide what counts as its first line

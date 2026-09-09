@@ -421,6 +421,56 @@ func (q *Queries) ListAppliedDecisionsForTask(ctx context.Context, arg ListAppli
 	return items, nil
 }
 
+const listDecisionsForGoal = `-- name: ListDecisionsForGoal :many
+SELECT
+  id, goal_id, task_id, kind, question, options, status,
+  default_option, default_after_ms, default_applied_at,
+  answer_label, answer_text, answered_at, applied_at, agent_session_id, created_at
+FROM decisions
+WHERE goal_id = ?
+ORDER BY id
+`
+
+func (q *Queries) ListDecisionsForGoal(ctx context.Context, goalID int64) ([]Decision, error) {
+	rows, err := q.db.QueryContext(ctx, listDecisionsForGoal, goalID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Decision
+	for rows.Next() {
+		var i Decision
+		if err := rows.Scan(
+			&i.ID,
+			&i.GoalID,
+			&i.TaskID,
+			&i.Kind,
+			&i.Question,
+			&i.Options,
+			&i.Status,
+			&i.DefaultOption,
+			&i.DefaultAfterMs,
+			&i.DefaultAppliedAt,
+			&i.AnswerLabel,
+			&i.AnswerText,
+			&i.AnsweredAt,
+			&i.AppliedAt,
+			&i.AgentSessionID,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listExpiredDecisions = `-- name: ListExpiredDecisions :many
 SELECT
   id, goal_id, task_id, kind, question, options, status,

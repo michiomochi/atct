@@ -713,7 +713,6 @@ func (b *codexMonitorBridge) pump(ctx context.Context) error {
 			b.active = false
 			if b.app != nil && b.app.Err() != nil {
 				b.disabled = true
-				b.queue = nil
 			}
 			b.stateMu.Unlock()
 			return err
@@ -799,9 +798,26 @@ func isCodexMonitorActionLine(line string) bool {
 		return true
 	case strings.HasPrefix(line, "atct detection: goal "):
 		return true
+	case strings.HasPrefix(line, "atct task handoff requested (task_id: "),
+		strings.HasPrefix(line, "atct task handoff received (task_id: "),
+		strings.HasPrefix(line, "atct task handoff completed (task_id: "),
+		strings.HasPrefix(line, "atct goal handoff requested (goal_id: "),
+		strings.HasPrefix(line, "atct goal handoff received (goal_id: "),
+		strings.HasPrefix(line, "atct goal handoff completed (goal_id: "):
+		return true
 	case strings.HasPrefix(line, "atct handoff reported: goal "), strings.HasPrefix(line, "atct handoff reported: task "):
 		return true
 	case strings.HasPrefix(line, "atct handoff yielded: task "):
+		return true
+	case strings.HasPrefix(line, "atct task handoff review requested (task_id: "),
+		strings.HasPrefix(line, "atct task handoff review received (task_id: "),
+		strings.HasPrefix(line, "atct task handoff review rejected (task_id: "),
+		strings.HasPrefix(line, "atct goal handoff review requested (goal_id: "),
+		strings.HasPrefix(line, "atct goal handoff review received (goal_id: "),
+		strings.HasPrefix(line, "atct goal handoff review rejected (goal_id: "),
+		strings.HasPrefix(line, "atct plan handoff review requested (goal_id: "),
+		strings.HasPrefix(line, "atct plan handoff review received (goal_id: "),
+		strings.HasPrefix(line, "atct plan handoff review rejected (goal_id: "):
 		return true
 	case strings.HasPrefix(line, "atct detection: task "):
 		return strings.HasSuffix(line, " is doing without a work lock") ||
@@ -844,7 +860,7 @@ func (b *codexMonitorBridge) HandleNotification(ctx context.Context, notificatio
 		if active {
 			return nil
 		}
-		return b.pump(ctx)
+		return b.pumpAfterIdle(ctx)
 	}
 	var params struct {
 		ThreadID string    `json:"threadId"`
@@ -948,7 +964,7 @@ func runCodexMonitorWatchScoped(ctx context.Context, client *http.Client, urls [
 		client = &http.Client{}
 	}
 	snapshot, projectID := watchSnapshotWithProject(client, urls, cwd)
-	return watchLoopWithEnsureAndProjectIDAndScopeAndSink(
+	return watchLoopWithEnsureAndProjectIDAndScopeAndSinkAndCursor(
 		ctx,
 		codexMonitorWatchOutput{},
 		client,
@@ -963,5 +979,6 @@ func runCodexMonitorWatchScoped(ctx context.Context, client *http.Client, urls [
 		},
 		scope,
 		bridge.LineSinkWithContext(ctx),
+		watchKeyForScope(cwd, scope),
 	)
 }

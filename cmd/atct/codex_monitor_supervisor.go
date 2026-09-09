@@ -54,9 +54,9 @@ type codexMonitorDeps struct {
 	stderr           io.Writer
 }
 
-// codexMonitorWatchOutput discards action lines forwarded through the sink,
-// but turns watcher diagnostics into an error so the supervisor can disable a
-// monitor instead of silently retrying a lost SSE connection forever.
+// codexMonitorWatchOutput discards action lines forwarded through the sink and
+// watcher diagnostics emitted while the watch loop reconnects or recovers the
+// daemon. Those diagnostics are nonfatal to the Codex monitor.
 type codexMonitorWatchOutput struct{}
 
 func (codexMonitorWatchOutput) Write(p []byte) (int, error) {
@@ -64,7 +64,7 @@ func (codexMonitorWatchOutput) Write(p []byte) (int, error) {
 	if line == "" || isCodexMonitorActionLine(line) {
 		return len(p), nil
 	}
-	return 0, fmt.Errorf("Codex monitor watcher failure: %s", line)
+	return len(p), nil
 }
 
 func runCodexMonitor(config cliConfig, dir string) (int, error) {

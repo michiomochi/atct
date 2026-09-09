@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net"
 	"os"
@@ -23,6 +24,19 @@ type taskHandoffRPCTestFixture struct {
 	claimableTaskID int64
 	requesterID     int64
 	receiverID      int64
+}
+
+type handoffReceiveResponse struct {
+	Data          json.RawMessage `json:"data"`
+	Role          string          `json:"role"`
+	ClaimEvidence struct {
+		Scope          string `json:"scope"`
+		AgentSessionID int64  `json:"agent_session_id"`
+		ProjectID      int64  `json:"project_id,omitempty"`
+		GoalID         int64  `json:"goal_id,omitempty"`
+		TaskID         int64  `json:"task_id,omitempty"`
+		HandoffID      string `json:"handoff_id,omitempty"`
+	} `json:"claim_evidence"`
 }
 
 func newTaskHandoffRPCTestFixture(t *testing.T) taskHandoffRPCTestFixture {
@@ -244,6 +258,181 @@ func TestTaskHandoffRoutesOverRPC(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), store.ErrTaskHandoffGoalNotHeld.Error()) {
 		t.Fatalf("unclaimed handoff request error = %v, want %v", err, store.ErrTaskHandoffGoalNotHeld)
+	}
+}
+
+func TestNamedTaskHandoffReviewRoutesReturnRoleEvidence(t *testing.T) {
+	fixture := newTaskHandoffRPCTestFixture(t)
+	client := mcpshim.NewClient(fixture.socketPath)
+	ctx := context.Background()
+
+	const handoffID = "named-task-review"
+	var requested store.TaskHandoff
+	if err := client.Call(ctx, "task.handoff.request", map[string]any{
+		"handoff_id": handoffID, "task_id": fixture.claimedTaskID, "requested_by": fixture.requesterID,
+		"request_report": "named task request report",
+	}, &requested); err != nil {
+		t.Fatalf("task.handoff.request: %v", err)
+	}
+
+	var received handoffReceiveResponse
+	if err := client.Call(ctx, "task.handoff.receive", map[string]any{
+		"handoff_id": handoffID, "task_id": fixture.claimedTaskID, "received_by": fixture.receiverID,
+	}, &received); err != nil {
+		t.Fatalf("task.handoff.receive: %v", err)
+	}
+	var receivedData store.TaskHandoff
+	if err := json.Unmarshal(received.Data, &receivedData); err != nil {
+		t.Fatalf("decode task.handoff.receive data: %v", err)
+	}
+	if receivedData.ID != handoffID || receivedData.ReceivedBy != fixture.receiverID || receivedData.ReceivedAt == nil {
+		t.Fatalf("received data = %#v, want received task handoff", receivedData)
+	}
+	if received.Role != "executor" || received.ClaimEvidence.Scope != "task" || received.ClaimEvidence.TaskID != fixture.claimedTaskID || received.ClaimEvidence.HandoffID != handoffID || received.ClaimEvidence.AgentSessionID != fixture.receiverID {
+		t.Fatalf("receive role/evidence = %+v, want executor task evidence", received)
+	}
+
+	var reviewRequested store.TaskHandoff
+	if err := client.Call(ctx, "task.handoff.review.request", map[string]any{
+		"handoff_id": handoffID, "task_id": fixture.claimedTaskID, "requested_by": fixture.receiverID,
+		"review_request_report": "named task review report",
+	}, &reviewRequested); err != nil {
+		t.Fatalf("task.handoff.review.request: %v", err)
+	}
+	if reviewRequested.ReviewRequestedBy != fixture.receiverID || reviewRequested.ReviewRequestedAt == nil {
+		t.Fatalf("review-requested handoff = %#v, want review request metadata", reviewRequested)
+	}
+
+	var reviewReceived handoffReceiveResponse
+	if err := client.Call(ctx, "task.handoff.review.receive", map[string]any{
+		"handoff_id": handoffID, "task_id": fixture.claimedTaskID, "received_by": fixture.requesterID,
+	}, &reviewReceived); err != nil {
+		t.Fatalf("task.handoff.review.receive: %v", err)
+	}
+	if reviewReceived.Role == "" || reviewReceived.ClaimEvidence.Scope == "" || reviewReceived.ClaimEvidence.HandoffID != handoffID {
+		t.Fatalf("review receive role/evidence = %+v, want role and handoff evidence", reviewReceived)
+	}
+
+	var completed store.TaskHandoff
+	if err := client.Call(ctx, "task.handoff.complete", map[string]any{
+		"handoff_id": handoffID, "task_id": fixture.claimedTaskID, "agent_session_id": fixture.requesterID,
+		"complete_report": "named task completion report",
+	}, &completed); err != nil {
+		t.Fatalf("task.handoff.complete: %v", err)
+	}
+	if completed.CompletedReportAt == nil || completed.CompleteReport != "named task completion report" {
+		t.Fatalf("completed handoff = %#v, want reviewer completion", completed)
+	}
+	goalID, err := fixture.store.GetTaskGoalID(ctx, fixture.claimedTaskID)
+	if err != nil {
+		t.Fatalf("GetTaskGoalID: %v", err)
+	}
+	tasks, err := fixture.store.ListTasks(ctx, goalID)
+	if err != nil {
+		t.Fatalf("ListTasks: %v", err)
+	}
+	for _, task := range tasks {
+		if task.ID == fixture.claimedTaskID && task.Status != "done" {
+			t.Fatalf("task status = %q, want done after named handoff completion", task.Status)
+		}
+	}
+}
+
+func TestNamedTaskHandoffReviewRejectsAndRetriesWithSameWorker(t *testing.T) {
+	fixture := newTaskHandoffRPCTestFixture(t)
+	client := mcpshim.NewClient(fixture.socketPath)
+	ctx := context.Background()
+
+	const handoffID = "named-task-review-retry"
+	var requested store.TaskHandoff
+	if err := client.Call(ctx, "task.handoff.request", map[string]any{
+		"handoff_id": handoffID, "task_id": fixture.claimedTaskID, "requested_by": fixture.requesterID,
+	}, &requested); err != nil {
+		t.Fatalf("task.handoff.request: %v", err)
+	}
+
+	var received handoffReceiveResponse
+	if err := client.Call(ctx, "task.handoff.receive", map[string]any{
+		"handoff_id": handoffID, "task_id": fixture.claimedTaskID, "received_by": fixture.receiverID,
+	}, &received); err != nil {
+		t.Fatalf("task.handoff.receive: %v", err)
+	}
+	if received.Role != "executor" || received.ClaimEvidence.AgentSessionID != fixture.receiverID {
+		t.Fatalf("task handoff receive = %+v, want executor evidence for receiver %d", received, fixture.receiverID)
+	}
+
+	var reviewRequested store.TaskHandoff
+	if err := client.Call(ctx, "task.handoff.review.request", map[string]any{
+		"handoff_id": handoffID, "task_id": fixture.claimedTaskID, "requested_by": fixture.receiverID,
+		"review_request_report": "initial implementation is ready",
+	}, &reviewRequested); err != nil {
+		t.Fatalf("task.handoff.review.request: %v", err)
+	}
+
+	var reviewReceived handoffReceiveResponse
+	if err := client.Call(ctx, "task.handoff.review.receive", map[string]any{
+		"handoff_id": handoffID, "task_id": fixture.claimedTaskID, "received_by": fixture.requesterID,
+	}, &reviewReceived); err != nil {
+		t.Fatalf("task.handoff.review.receive: %v", err)
+	}
+	if reviewReceived.Role == "" || reviewReceived.ClaimEvidence.AgentSessionID != fixture.requesterID {
+		t.Fatalf("task review receive = %+v, want reviewer evidence for requester %d", reviewReceived, fixture.requesterID)
+	}
+
+	var rejected store.TaskHandoff
+	if err := client.Call(ctx, "task.handoff.review.reject", map[string]any{
+		"handoff_id": handoffID, "task_id": fixture.claimedTaskID, "reviewer_id": fixture.requesterID,
+		"reject_report": "add focused coverage",
+	}, &rejected); err != nil {
+		t.Fatalf("task.handoff.review.reject: %v", err)
+	}
+	if rejected.ID != handoffID || rejected.ReceivedBy != fixture.receiverID || rejected.ReviewReceivedBy != 0 || rejected.ReviewReceivedAt != nil || rejected.ReviewRejectedAt == nil || rejected.ReviewRejectReport != "add focused coverage" {
+		t.Fatalf("rejected task handoff = %+v, want same receiver with cleared reviewer receipt", rejected)
+	}
+
+	var retried store.TaskHandoff
+	if err := client.Call(ctx, "task.handoff.review.request", map[string]any{
+		"handoff_id": handoffID, "task_id": fixture.claimedTaskID, "requested_by": fixture.receiverID,
+		"review_request_report": "focused coverage added",
+	}, &retried); err != nil {
+		t.Fatalf("retry task.handoff.review.request: %v", err)
+	}
+	if retried.ID != handoffID || retried.ReceivedBy != fixture.receiverID || retried.ReviewRequestedBy != fixture.receiverID || retried.ReviewRejectedAt != nil || retried.ReviewRejectReport != "" {
+		t.Fatalf("retried task handoff = %+v, want same handoff and same receiver with fresh review state", retried)
+	}
+
+	if err := client.Call(ctx, "task.handoff.review.receive", map[string]any{
+		"handoff_id": handoffID, "task_id": fixture.claimedTaskID, "received_by": fixture.requesterID,
+	}, &reviewReceived); err != nil {
+		t.Fatalf("retry task.handoff.review.receive: %v", err)
+	}
+
+	var completed store.TaskHandoff
+	if err := client.Call(ctx, "task.handoff.complete", map[string]any{
+		"handoff_id": handoffID, "task_id": fixture.claimedTaskID, "agent_session_id": fixture.requesterID,
+		"complete_report": "approved after focused coverage",
+	}, &completed); err != nil {
+		t.Fatalf("task.handoff.complete after retry: %v", err)
+	}
+	if completed.CompletedReportAt == nil || completed.CompleteReport != "approved after focused coverage" {
+		t.Fatalf("completed task handoff = %+v, want completion after same-worker retry", completed)
+	}
+
+	const newTaskHandoffID = "named-task-new-worker"
+	var newTaskRequested store.TaskHandoff
+	if err := client.Call(ctx, "task.handoff.request", map[string]any{
+		"handoff_id": newTaskHandoffID, "task_id": fixture.claimableTaskID, "requested_by": fixture.requesterID,
+	}, &newTaskRequested); err != nil {
+		t.Fatalf("new task.handoff.request: %v", err)
+	}
+	var newTaskReceived handoffReceiveResponse
+	if err := client.Call(ctx, "task.handoff.receive", map[string]any{
+		"handoff_id": newTaskHandoffID, "task_id": fixture.claimableTaskID, "received_by": fixture.receiverID,
+	}, &newTaskReceived); err != nil {
+		t.Fatalf("new task.handoff.receive: %v", err)
+	}
+	if newTaskReceived.Role != "executor" || newTaskReceived.ClaimEvidence.AgentSessionID != fixture.receiverID || newTaskReceived.ClaimEvidence.HandoffID == handoffID {
+		t.Fatalf("new task handoff receive = %+v, want the idle executor to reuse its new handoff", newTaskReceived)
 	}
 }
 

@@ -646,13 +646,23 @@ func TestCodexMonitorStopReportsPartialFailure(t *testing.T) {
 	}
 }
 
-func TestCodexMonitorWatchDiagnosticsReportSSEFailure(t *testing.T) {
+func TestCodexMonitorWatchDiagnosticsAreDiscardedByHealthGate(t *testing.T) {
 	var out codexMonitorWatchOutput
-	if _, err := out.Write([]byte("atct watch: connection unavailable; reconnecting in 5s\n")); err == nil {
-		t.Fatal("watch diagnostic write error = nil, want SSE failure")
+	for _, line := range []string{
+		"atct watch: connection unavailable; reconnecting in 5s\n",
+		"atct watch: daemon keepalive missing for 90s\n",
+		"atct watch: daemon ensure failed 5 consecutive times; continuing connection retries\n",
+	} {
+		if got, err := out.Write([]byte(line)); err != nil {
+			t.Fatalf("watch diagnostic %q write error = %v, want nil", line, err)
+		} else if got != len(line) {
+			t.Fatalf("watch diagnostic %q wrote %d bytes, want %d", line, got, len(line))
+		}
 	}
-	if _, err := out.Write([]byte("atct decision approved (decision_id: d1)\n")); err != nil {
+	if got, err := out.Write([]byte("atct decision approved (decision_id: d1)\n")); err != nil {
 		t.Fatalf("action line write error = %v, want nil", err)
+	} else if got != len("atct decision approved (decision_id: d1)\n") {
+		t.Fatalf("action line wrote %d bytes, want %d", got, len("atct decision approved (decision_id: d1)\n"))
 	}
 }
 

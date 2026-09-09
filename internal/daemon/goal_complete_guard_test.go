@@ -165,6 +165,124 @@ func TestGoalCompleteDispatchAcceptsActiveAndRejectsAfterApproval(t *testing.T) 
 	}
 }
 
+func TestGoalCompleteDeniesSubcommanderEvenWithGoalHandoff(t *testing.T) {
+	ctx, s, daemon, project, commanderID := newGoalCompleteGuardFixture(t, "subcommander")
+	goal, err := s.CreateGoal(ctx, project.ID, "delegated goal\n\ndescription", "human")
+	if err != nil {
+		t.Fatalf("CreateGoal: %v", err)
+	}
+	subcommanderID := daemonTestSessionID(t, s, "goal-complete-subcommander")
+	handoff, err := s.RequestGoalHandoff(ctx, "goal-complete-subcommander-handoff", goal.ID, commanderID, "delegate goal")
+	if err != nil {
+		t.Fatalf("RequestGoalHandoff: %v", err)
+	}
+	if _, err := s.ReceiveGoalHandoff(ctx, handoff.ID, goal.ID, subcommanderID); err != nil {
+		t.Fatalf("ReceiveGoalHandoff: %v", err)
+	}
+
+	_, err = daemon.dispatch(ctx, rpc.Request{
+		Method: "goal.complete",
+		Params: goalCompleteParams(t, goal.ID, subcommanderID, approvedGoalReport("subcommander")),
+	})
+	if err == nil {
+		t.Fatal("subcommander goal.complete unexpectedly succeeded")
+	}
+	if !strings.Contains(err.Error(), "commander") || !strings.Contains(err.Error(), fmt.Sprint(subcommanderID)) {
+		t.Fatalf("goal.complete error = %v, want commander-only denial for session %d", err, subcommanderID)
+	}
+}
+
+func TestCommanderGoalReviewThenCompleteWritesFinalReport(t *testing.T) {
+	ctx, s, daemon, project, commanderID := newGoalCompleteGuardFixture(t, "review-lifecycle")
+	goal, err := s.CreateGoal(ctx, project.ID, "reviewed goal\n\ndescription", "human")
+	if err != nil {
+		t.Fatalf("CreateGoal: %v", err)
+	}
+	report := approvedGoalReport("review-lifecycle")
+
+	reviewParams, err := json.Marshal(map[string]any{
+		"goal_id": goal.ID, "agent_session_id": commanderID,
+		"work_done": report.WorkDone, "now_possible": report.NowPossible,
+		"how_to_verify": report.HowToVerify, "surprises": report.Surprises,
+		"needs_review": report.NeedsReview, "next_steps": report.NextSteps,
+	})
+	if err != nil {
+		t.Fatalf("Marshal goal.review.request params: %v", err)
+	}
+	if _, err := daemon.dispatch(ctx, rpc.Request{Method: "goal.review.request", Params: reviewParams}); err == nil {
+		t.Fatal("goal.review.request without a completed delegated goal handoff unexpectedly succeeded")
+	} else if !errors.Is(err, store.ErrGoalReviewHandoffIncomplete) {
+		t.Fatalf("goal.review.request without a completed delegated goal handoff error = %v, want %v", err, store.ErrGoalReviewHandoffIncomplete)
+	}
+
+	const handoffID = "goal-complete-review-lifecycle-handoff"
+	receiverID := daemonTestSessionID(t, s, "goal-complete-review-lifecycle-receiver")
+	dispatchHandoff := func(method string, params map[string]any) {
+		t.Helper()
+		raw, err := json.Marshal(params)
+		if err != nil {
+			t.Fatalf("Marshal %s params: %v", method, err)
+		}
+		if _, err := daemon.dispatch(ctx, rpc.Request{Method: method, Params: raw}); err != nil {
+			t.Fatalf("%s: %v", method, err)
+		}
+	}
+	dispatchHandoff("goal.handoff.request", map[string]any{
+		"handoff_id": handoffID, "goal_id": goal.ID, "requested_by": commanderID,
+		"request_report": "commander delegated the reviewed goal",
+	})
+	dispatchHandoff("goal.handoff.receive", map[string]any{
+		"handoff_id": handoffID, "goal_id": goal.ID, "received_by": receiverID,
+	})
+	dispatchHandoff("goal.handoff.review.request", map[string]any{
+		"handoff_id": handoffID, "goal_id": goal.ID, "requested_by": receiverID,
+		"review_request_report": "receiver reviewed the delegated goal",
+	})
+	dispatchHandoff("goal.handoff.review.receive", map[string]any{
+		"handoff_id": handoffID, "goal_id": goal.ID, "received_by": commanderID,
+	})
+	dispatchHandoff("goal.handoff.complete", map[string]any{
+		"handoff_id": handoffID, "goal_id": goal.ID, "agent_session_id": commanderID,
+		"complete_report": "commander accepted the reviewed goal handoff",
+	})
+
+	raw, err := daemon.dispatch(ctx, rpc.Request{Method: "goal.review.request", Params: reviewParams})
+	if err != nil {
+		t.Fatalf("goal.review.request: %v", err)
+	}
+	var review domain.Decision
+	if err := json.Unmarshal(raw, &review); err != nil {
+		t.Fatalf("decode goal.review.request response %s: %v", raw, err)
+	}
+	if review.Kind != domain.KindGoalReview || review.Status != domain.DecisionOpen {
+		t.Fatalf("goal review = %+v, want open goal review", review)
+	}
+
+	if _, err := s.ApproveGoalReview(ctx, review.ID); err != nil {
+		t.Fatalf("ApproveGoalReview: %v", err)
+	}
+	completeParams, err := json.Marshal(map[string]any{
+		"goal_id": goal.ID, "agent_session_id": commanderID,
+	})
+	if err != nil {
+		t.Fatalf("Marshal goal.review.complete params: %v", err)
+	}
+	raw, err = daemon.dispatch(ctx, rpc.Request{
+		Method: "goal.review.complete",
+		Params: completeParams,
+	})
+	if err != nil {
+		t.Fatalf("goal.review.complete after approval: %v", err)
+	}
+	var done domain.Goal
+	if err := json.Unmarshal(raw, &done); err != nil {
+		t.Fatalf("decode goal.review.complete response %s: %v", raw, err)
+	}
+	if done.Status != domain.GoalDone || done.WorkDone != report.WorkDone || done.NextSteps != report.NextSteps {
+		t.Fatalf("completed goal = %+v, want final report and done status", done)
+	}
+}
+
 func newGoalCompleteGuardFixture(t *testing.T, label string) (context.Context, *store.Store, *Daemon, domain.Project, int64) {
 	t.Helper()
 	ctx := context.Background()

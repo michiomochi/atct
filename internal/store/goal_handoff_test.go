@@ -171,6 +171,72 @@ func TestGoalHandoffRequestReceiveAndComplete(t *testing.T) {
 	}
 }
 
+func TestGoalHandoffReviewLifecyclePreservesGoalClaim(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	goalID := newTestGoal(t, s)
+	requesterID := testSessionID("goal-review-requester")
+	receiverID := testSessionID("goal-review-receiver")
+	wrongReviewerID := testSessionID("goal-review-wrong-reviewer")
+	addLiveProjectClaim(t, s, goalID, "goal-review-requester")
+	addTestAgentSession(t, s, "goal-review-receiver")
+	addTestAgentSession(t, s, "goal-review-wrong-reviewer")
+
+	handoff, err := s.RequestGoalHandoff(ctx, "goal-review-lifecycle", goalID, requesterID, "take the goal")
+	if err != nil {
+		t.Fatalf("RequestGoalHandoff: %v", err)
+	}
+	if _, err := s.ReceiveGoalHandoff(ctx, handoff.ID, goalID, receiverID); err != nil {
+		t.Fatalf("ReceiveGoalHandoff: %v", err)
+	}
+
+	reviewRequested, err := s.RequestGoalHandoffReview(ctx, handoff.ID, goalID, receiverID, "goal is ready")
+	if err != nil {
+		t.Fatalf("RequestGoalHandoffReview: %v", err)
+	}
+	if reviewRequested.ReviewRequestedBy != receiverID || reviewRequested.ReviewRequestedAt == nil || reviewRequested.ReviewRequestReport != "goal is ready" {
+		t.Fatalf("unexpected goal review request: %+v", reviewRequested)
+	}
+
+	if _, err := s.ReceiveGoalHandoffReview(ctx, handoff.ID, goalID, wrongReviewerID); err == nil {
+		t.Fatal("ReceiveGoalHandoffReview accepted the wrong reviewer")
+	}
+	if _, err := s.ReceiveGoalHandoffReview(ctx, handoff.ID, goalID, requesterID); err != nil {
+		t.Fatalf("ReceiveGoalHandoffReview: %v", err)
+	}
+	if _, err := s.RejectGoalHandoffReview(ctx, handoff.ID, goalID, wrongReviewerID, "wrong reviewer"); err == nil {
+		t.Fatal("RejectGoalHandoffReview accepted the wrong reviewer")
+	}
+
+	rejected, err := s.RejectGoalHandoffReview(ctx, handoff.ID, goalID, requesterID, "revise the goal")
+	if err != nil {
+		t.Fatalf("RejectGoalHandoffReview: %v", err)
+	}
+	if rejected.ReceivedBy != receiverID || rejected.ReviewReceivedBy != 0 || rejected.ReviewReceivedAt != nil || rejected.ReviewRejectReport != "revise the goal" || rejected.ReviewRejectedAt == nil {
+		t.Fatalf("goal review rejection did not preserve claim and clear reviewer state: %+v", rejected)
+	}
+
+	if _, err := s.RequestGoalHandoffReview(ctx, handoff.ID, goalID, receiverID, "revised goal"); err != nil {
+		t.Fatalf("second RequestGoalHandoffReview: %v", err)
+	}
+	if _, err := s.ReceiveGoalHandoffReview(ctx, handoff.ID, goalID, requesterID); err != nil {
+		t.Fatalf("second ReceiveGoalHandoffReview: %v", err)
+	}
+	if _, err := s.CompleteGoalHandoffByReviewer(ctx, handoff.ID, goalID, wrongReviewerID, "approved by wrong reviewer"); err == nil {
+		t.Fatal("CompleteGoalHandoffByReviewer accepted the wrong reviewer")
+	}
+	if _, err := s.CompleteGoalHandoff(ctx, handoff.ID, goalID, "bypassed review"); err == nil {
+		t.Fatal("CompleteGoalHandoff bypassed the recorded reviewer")
+	}
+	completed, err := s.CompleteGoalHandoffByReviewer(ctx, handoff.ID, goalID, requesterID, "approved after review")
+	if err != nil {
+		t.Fatalf("CompleteGoalHandoffByReviewer: %v", err)
+	}
+	if completed.CompletedReportAt == nil || completed.CompleteReport != "approved after review" {
+		t.Fatalf("unexpected completed goal handoff: %+v", completed)
+	}
+}
+
 func TestListGoalSessionsIncludesSubcommander(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
@@ -1116,5 +1182,334 @@ func TestGoalHandoffRejectsUnclaimedGoal(t *testing.T) {
 	_, err := s.RequestGoalHandoff(context.Background(), "goal-handoff-unclaimed", goalID, testSessionID("goal-requester"), "")
 	if !errors.Is(err, ErrGoalHandoffProjectNotHeld) {
 		t.Fatalf("error = %v, want ErrGoalHandoffProjectNotHeld", err)
+	}
+}
+
+func requireGoalReviewHandoffIncomplete(t *testing.T, s *Store, ctx context.Context, goalID, requesterID int64, stage string) {
+	t.Helper()
+	if _, err := s.RequestGoalReview(ctx, goalID, requesterID, goalReviewRequestTestReport()); !errors.Is(err, ErrGoalReviewHandoffIncomplete) {
+		t.Fatalf("RequestGoalReview at %s error = %v, want ErrGoalReviewHandoffIncomplete", stage, err)
+	}
+}
+
+func goalReviewRequestTestReport() domain.CompletionReport {
+	return domain.CompletionReport{
+		WorkDone:    "goal review work",
+		NowPossible: "goal review result",
+		HowToVerify: "run goal review tests",
+		Surprises:   "none",
+		NeedsReview: "none",
+		NextSteps:   "merge",
+	}
+}
+
+func completeGoalHandoffReviewForGoalReviewTest(t *testing.T, s *Store, ctx context.Context, handoffID string, goalID, requesterID, receiverID int64) GoalHandoff {
+	t.Helper()
+	handoff, err := s.RequestGoalHandoff(ctx, handoffID, goalID, requesterID, "delegate goal work")
+	if err != nil {
+		t.Fatalf("RequestGoalHandoff %q: %v", handoffID, err)
+	}
+	if _, err := s.ReceiveGoalHandoff(ctx, handoff.ID, goalID, receiverID); err != nil {
+		t.Fatalf("ReceiveGoalHandoff %q: %v", handoffID, err)
+	}
+	if _, err := s.RequestGoalHandoffReview(ctx, handoff.ID, goalID, receiverID, "goal work is ready for commander review"); err != nil {
+		t.Fatalf("RequestGoalHandoffReview %q: %v", handoffID, err)
+	}
+	if _, err := s.ReceiveGoalHandoffReview(ctx, handoff.ID, goalID, requesterID); err != nil {
+		t.Fatalf("ReceiveGoalHandoffReview %q: %v", handoffID, err)
+	}
+	completed, err := s.CompleteGoalHandoffByReviewer(ctx, handoff.ID, goalID, requesterID, "commander completed the reviewed goal handoff")
+	if err != nil {
+		t.Fatalf("CompleteGoalHandoffByReviewer %q: %v", handoffID, err)
+	}
+	return completed
+}
+
+func TestRequestGoalReviewRejectsWithoutDelegatedGoalHandoff(t *testing.T) {
+	s := newTestStore(t)
+	goalID := newTestGoal(t, s)
+
+	if _, err := s.RequestGoalReview(context.Background(), goalID, testSessionID("goal-review-no-handoff"), goalReviewRequestTestReport()); !errors.Is(err, ErrGoalReviewHandoffIncomplete) {
+		t.Fatalf("RequestGoalReview without delegated handoff error = %v, want ErrGoalReviewHandoffIncomplete", err)
+	}
+}
+
+func TestRequestGoalReviewRequiresCompletedGoalHandoffReview(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	goalID := newTestGoal(t, s)
+	requesterID := testSessionID("goal-review-guard-requester")
+	receiverID := testSessionID("goal-review-guard-receiver")
+	addLiveProjectClaim(t, s, goalID, "goal-review-guard-requester")
+	addTestAgentSession(t, s, "goal-review-guard-receiver")
+
+	handoff, err := s.RequestGoalHandoff(ctx, "goal-review-guard-received", goalID, requesterID, "delegate before review")
+	if err != nil {
+		t.Fatalf("RequestGoalHandoff: %v", err)
+	}
+	if _, err := s.ReceiveGoalHandoff(ctx, handoff.ID, goalID, receiverID); err != nil {
+		t.Fatalf("ReceiveGoalHandoff: %v", err)
+	}
+	requireGoalReviewHandoffIncomplete(t, s, ctx, goalID, requesterID, "received")
+
+	if _, err := s.RequestGoalHandoffReview(ctx, handoff.ID, goalID, receiverID, "goal work is ready for commander review"); err != nil {
+		t.Fatalf("RequestGoalHandoffReview: %v", err)
+	}
+	requireGoalReviewHandoffIncomplete(t, s, ctx, goalID, requesterID, "review requested")
+
+	if _, err := s.ReceiveGoalHandoffReview(ctx, handoff.ID, goalID, requesterID); err != nil {
+		t.Fatalf("ReceiveGoalHandoffReview: %v", err)
+	}
+	requireGoalReviewHandoffIncomplete(t, s, ctx, goalID, requesterID, "review received")
+
+	completed, err := s.CompleteGoalHandoffByReviewer(ctx, handoff.ID, goalID, requesterID, "commander completed the reviewed goal handoff")
+	if err != nil {
+		t.Fatalf("CompleteGoalHandoffByReviewer: %v", err)
+	}
+	if completed.CompletedReportAt == nil || completed.CompleteReport == "" {
+		t.Fatalf("completed goal handoff = %+v, want commander-completed handoff", completed)
+	}
+
+	review, err := s.RequestGoalReview(ctx, goalID, requesterID, goalReviewRequestTestReport())
+	if err != nil {
+		t.Fatalf("RequestGoalReview after commander completion: %v", err)
+	}
+	if review.Kind != domain.KindGoalReview || review.Status != domain.DecisionOpen || review.TaskID != 0 {
+		t.Fatalf("goal review = %+v, want open taskless goal review", review)
+	}
+}
+
+func TestRejectedGoalReviewRequiresExplicitReplacementHandoff(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	goalID := newTestGoal(t, s)
+	requesterID := testSessionID("goal-review-reject-requester")
+	receiverID := testSessionID("goal-review-reject-receiver")
+	addLiveProjectClaim(t, s, goalID, "goal-review-reject-requester")
+	addTestAgentSession(t, s, "goal-review-reject-receiver")
+
+	original := completeGoalHandoffReviewForGoalReviewTest(t, s, ctx, "goal-review-reject-original", goalID, requesterID, receiverID)
+	if original.CompletedReportAt == nil {
+		t.Fatalf("original goal handoff = %+v, want completed handoff", original)
+	}
+	review, err := s.RequestGoalReview(ctx, goalID, requesterID, goalReviewRequestTestReport())
+	if err != nil {
+		t.Fatalf("RequestGoalReview before rejection: %v", err)
+	}
+	if err := s.RejectGoalReview(ctx, review.ID, "needs another review"); err != nil {
+		t.Fatalf("RejectGoalReview: %v", err)
+	}
+
+	goal, err := s.GetGoal(ctx, goalID)
+	if err != nil {
+		t.Fatalf("GetGoal after rejection: %v", err)
+	}
+	wantReport := goalReviewRequestTestReport()
+	if goal.Status != domain.GoalActive || goal.WorkDone != wantReport.WorkDone || goal.NowPossible != wantReport.NowPossible || goal.HowToVerify != wantReport.HowToVerify || goal.Surprises != wantReport.Surprises || goal.NeedsReview != wantReport.NeedsReview || goal.NextSteps != wantReport.NextSteps || goal.ResultSummary != wantReport.WorkDone {
+		t.Fatalf("goal after rejection = %+v, want active with request-time report %+v", goal, wantReport)
+	}
+	originalAfterReject, err := s.GetGoalHandoff(ctx, original.ID)
+	if err != nil {
+		t.Fatalf("GetGoalHandoff after rejection: %v", err)
+	}
+	if originalAfterReject.CompletedReportAt == nil || originalAfterReject.CompleteReport != original.CompleteReport {
+		t.Fatalf("original handoff after rejection = %+v, want unchanged completed handoff", originalAfterReject)
+	}
+	requireGoalReviewHandoffIncomplete(t, s, ctx, goalID, requesterID, "direct retry after human rejection")
+
+	replacement, err := s.RequestGoalHandoff(ctx, "goal-review-reject-replacement", goalID, requesterID, "explicit replacement after human rejection")
+	if err != nil {
+		t.Fatalf("RequestGoalHandoff replacement: %v", err)
+	}
+	if _, err := s.ReceiveGoalHandoff(ctx, replacement.ID, goalID, receiverID); err != nil {
+		t.Fatalf("ReceiveGoalHandoff replacement: %v", err)
+	}
+	requireGoalReviewHandoffIncomplete(t, s, ctx, goalID, requesterID, "replacement received before commander completion")
+
+	if _, err := s.RequestGoalHandoffReview(ctx, replacement.ID, goalID, receiverID, "replacement is ready for commander review"); err != nil {
+		t.Fatalf("RequestGoalHandoffReview replacement: %v", err)
+	}
+	if _, err := s.ReceiveGoalHandoffReview(ctx, replacement.ID, goalID, requesterID); err != nil {
+		t.Fatalf("ReceiveGoalHandoffReview replacement: %v", err)
+	}
+	if _, err := s.CompleteGoalHandoffByReviewer(ctx, replacement.ID, goalID, requesterID, "commander completed the replacement handoff"); err != nil {
+		t.Fatalf("CompleteGoalHandoffByReviewer replacement: %v", err)
+	}
+
+	retry, err := s.RequestGoalReview(ctx, goalID, requesterID, goalReviewRequestTestReport())
+	if err != nil {
+		t.Fatalf("RequestGoalReview after explicit replacement: %v", err)
+	}
+	if retry.ID == review.ID || retry.Kind != domain.KindGoalReview || retry.Status != domain.DecisionOpen {
+		t.Fatalf("retry goal review = %+v, want a new open goal review", retry)
+	}
+}
+
+func TestRequestGoalReviewRejectsPlainCompletedGoalHandoff(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	goalID := newTestGoal(t, s)
+	requesterID := testSessionID("goal-review-plain-completion-requester")
+	receiverID := testSessionID("goal-review-plain-completion-receiver")
+	addLiveProjectClaim(t, s, goalID, "goal-review-plain-completion-requester")
+	addTestAgentSession(t, s, "goal-review-plain-completion-receiver")
+
+	handoff, err := s.RequestGoalHandoff(ctx, "goal-review-plain-completion", goalID, requesterID, "delegate without review")
+	if err != nil {
+		t.Fatalf("RequestGoalHandoff: %v", err)
+	}
+	if _, err := s.ReceiveGoalHandoff(ctx, handoff.ID, goalID, receiverID); err != nil {
+		t.Fatalf("ReceiveGoalHandoff: %v", err)
+	}
+	if _, err := s.CompleteGoalHandoff(ctx, handoff.ID, goalID, "receiver completed without commander review"); err != nil {
+		t.Fatalf("CompleteGoalHandoff: %v", err)
+	}
+
+	requireGoalReviewHandoffIncomplete(t, s, ctx, goalID, requesterID, "plain completion without handoff review")
+}
+
+func TestCompleteGoalWithReportKeepsKindCompletionIndependentOfGoalHandoffReview(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	goalID := newTestGoal(t, s)
+	requesterID := testSessionID("completion-kind-requester")
+	receiverID := testSessionID("completion-kind-receiver")
+	addLiveProjectClaim(t, s, goalID, "completion-kind-requester")
+	addTestAgentSession(t, s, "completion-kind-receiver")
+
+	handoff, err := s.RequestGoalHandoff(ctx, "completion-kind-open-handoff", goalID, requesterID, "delegate before legacy completion")
+	if err != nil {
+		t.Fatalf("RequestGoalHandoff: %v", err)
+	}
+	if _, err := s.ReceiveGoalHandoff(ctx, handoff.ID, goalID, receiverID); err != nil {
+		t.Fatalf("ReceiveGoalHandoff: %v", err)
+	}
+
+	d, err := s.CompleteGoalWithReport(ctx, goalID, domain.CompletionReport{
+		WorkDone:    "legacy completion work",
+		NowPossible: "legacy completion result",
+		HowToVerify: "run the store tests",
+		Surprises:   "none",
+		NeedsReview: "none",
+		NextSteps:   "merge",
+	}, requesterID)
+	if err != nil {
+		t.Fatalf("CompleteGoalWithReport: %v", err)
+	}
+	if d.Kind != domain.KindCompletion || d.TaskID != 0 {
+		t.Fatalf("completion decision = %+v, want taskless KindCompletion", d)
+	}
+	stored, err := s.GetDecision(ctx, d.ID)
+	if err != nil {
+		t.Fatalf("GetDecision: %v", err)
+	}
+	if stored.Kind != domain.KindCompletion {
+		t.Fatalf("stored completion decision kind = %q, want %q", stored.Kind, domain.KindCompletion)
+	}
+}
+
+func TestRejectedGoalReviewReplacesRequestTimeGoalReportOnReplacement(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	goalID := newTestGoal(t, s)
+	requesterID := testSessionID("request-time-reject-requester")
+	receiverID := testSessionID("request-time-reject-receiver")
+	addLiveProjectClaim(t, s, goalID, "request-time-reject-requester")
+	addTestAgentSession(t, s, "request-time-reject-receiver")
+	originalHandoff := completeGoalHandoffReviewForGoalReviewTest(t, s, ctx, "request-time-reject-original-handoff", goalID, requesterID, receiverID)
+	firstReport := domain.CompletionReport{
+		WorkDone:    "first work",
+		NowPossible: "first result",
+		HowToVerify: "first verify",
+		Surprises:   "first surprise",
+		NeedsReview: "first review",
+		NextSteps:   "first next",
+	}
+	first, err := s.RequestGoalReview(ctx, goalID, requesterID, firstReport)
+	if err != nil {
+		t.Fatalf("RequestGoalReview first: %v", err)
+	}
+	if err := s.RejectGoalReview(ctx, first.ID, "revise the work"); err != nil {
+		t.Fatalf("RejectGoalReview: %v", err)
+	}
+	goalAfterReject, err := s.GetGoal(ctx, goalID)
+	if err != nil {
+		t.Fatalf("GetGoal after rejected review: %v", err)
+	}
+	if goalAfterReject.WorkDone != firstReport.WorkDone || goalAfterReject.NowPossible != firstReport.NowPossible || goalAfterReject.HowToVerify != firstReport.HowToVerify || goalAfterReject.Surprises != firstReport.Surprises || goalAfterReject.NeedsReview != firstReport.NeedsReview || goalAfterReject.NextSteps != firstReport.NextSteps || goalAfterReject.ResultSummary != firstReport.WorkDone {
+		t.Fatalf("goal after rejected review = %+v, want request-time report %+v", goalAfterReject, firstReport)
+	}
+	handoffAfterReject, err := s.GetGoalHandoff(ctx, originalHandoff.ID)
+	if err != nil {
+		t.Fatalf("GetGoalHandoff after rejection: %v", err)
+	}
+	if handoffAfterReject.CompleteReport != originalHandoff.CompleteReport || handoffAfterReject.CompletedReportAt == nil {
+		t.Fatalf("completed handoff after rejection = %+v, want unchanged", handoffAfterReject)
+	}
+
+	replacement, err := s.RequestGoalHandoff(ctx, "request-time-reject-replacement-handoff", goalID, requesterID, "explicit replacement")
+	if err != nil {
+		t.Fatalf("RequestGoalHandoff replacement: %v", err)
+	}
+	if _, err := s.ReceiveGoalHandoff(ctx, replacement.ID, goalID, receiverID); err != nil {
+		t.Fatalf("ReceiveGoalHandoff replacement: %v", err)
+	}
+	if _, err := s.RequestGoalHandoffReview(ctx, replacement.ID, goalID, receiverID, "replacement ready"); err != nil {
+		t.Fatalf("RequestGoalHandoffReview replacement: %v", err)
+	}
+	if _, err := s.ReceiveGoalHandoffReview(ctx, replacement.ID, goalID, requesterID); err != nil {
+		t.Fatalf("ReceiveGoalHandoffReview replacement: %v", err)
+	}
+	if _, err := s.CompleteGoalHandoffByReviewer(ctx, replacement.ID, goalID, requesterID, "replacement completed"); err != nil {
+		t.Fatalf("CompleteGoalHandoffByReviewer replacement: %v", err)
+	}
+	secondReport := domain.CompletionReport{
+		WorkDone:    "second work",
+		NowPossible: "second result",
+		HowToVerify: "second verify",
+		Surprises:   "second surprise",
+		NeedsReview: "second review",
+		NextSteps:   "second next",
+	}
+	second, err := s.RequestGoalReview(ctx, goalID, requesterID, secondReport)
+	if err != nil {
+		t.Fatalf("RequestGoalReview replacement: %v", err)
+	}
+	goalAfterReplacement, err := s.GetGoal(ctx, goalID)
+	if err != nil {
+		t.Fatalf("GetGoal after replacement review: %v", err)
+	}
+	if second.ID == first.ID || goalAfterReplacement.WorkDone != secondReport.WorkDone || goalAfterReplacement.NowPossible != secondReport.NowPossible || goalAfterReplacement.HowToVerify != secondReport.HowToVerify || goalAfterReplacement.Surprises != secondReport.Surprises || goalAfterReplacement.NeedsReview != secondReport.NeedsReview || goalAfterReplacement.NextSteps != secondReport.NextSteps || goalAfterReplacement.ResultSummary != secondReport.WorkDone {
+		t.Fatalf("replacement review = %+v, goal = %+v; want distinct review and request-time report %+v", second, goalAfterReplacement, secondReport)
+	}
+}
+
+func TestCompleteGoalWithReportIgnoresHistoricalGoalReview(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	goalID := newTestGoal(t, s)
+	requesterID := testSessionID("legacy-completion-after-review-requester")
+	receiverID := testSessionID("legacy-completion-after-review-receiver")
+	addLiveProjectClaim(t, s, goalID, "legacy-completion-after-review-requester")
+	addTestAgentSession(t, s, "legacy-completion-after-review-receiver")
+	completeGoalHandoffReviewForGoalReviewTest(t, s, ctx, "legacy-completion-after-review-handoff", goalID, requesterID, receiverID)
+	if review, err := s.RequestGoalReview(ctx, goalID, requesterID, domain.CompletionReport{
+		WorkDone: "review work", NowPossible: "review result", HowToVerify: "review verify",
+		Surprises: "review surprise", NeedsReview: "review needs", NextSteps: "review next",
+	}); err != nil {
+		t.Fatalf("RequestGoalReview: %v", err)
+	} else if err := s.RejectGoalReview(ctx, review.ID, "keep legacy completion path"); err != nil {
+		t.Fatalf("RejectGoalReview: %v", err)
+	}
+
+	completion, err := s.CompleteGoalWithReport(ctx, goalID, domain.CompletionReport{
+		WorkDone: "legacy work", NowPossible: "legacy result", HowToVerify: "legacy verify",
+		Surprises: "legacy surprise", NeedsReview: "legacy review", NextSteps: "legacy next",
+	}, requesterID)
+	if err != nil {
+		t.Fatalf("CompleteGoalWithReport: %v", err)
+	}
+	if completion.Kind != domain.KindCompletion {
+		t.Fatalf("completion decision kind = %q, want %q", completion.Kind, domain.KindCompletion)
 	}
 }

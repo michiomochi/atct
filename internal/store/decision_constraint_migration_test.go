@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-func TestDecisionConstraintRejectsMissingTaskID(t *testing.T) {
+func TestDecisionConstraintAllowsMissingTaskID(t *testing.T) {
 	s := newTestStore(t)
 	goalID := newTestGoal(t, s)
 
@@ -18,18 +18,12 @@ func TestDecisionConstraintRejectsMissingTaskID(t *testing.T) {
 		taskID any
 	}{
 		{status: "open", taskID: nil},
-		{status: "open", taskID: ""},
 		{status: "answered", taskID: nil},
-		{status: "answered", taskID: ""},
 	} {
-		_, err := s.DB().Exec(`
+		if _, err := s.DB().Exec(`
 	INSERT INTO decisions (goal_id, task_id, kind, question, status, created_at)
-		VALUES (?, ?, 'decision', 'Choose one', ?, '2026-08-18T00:00:00Z')`, goalID, test.taskID, test.status)
-		if err == nil {
-			t.Fatalf("insert with status=%q and task_id=%#v succeeded, want CHECK constraint failure", test.status, test.taskID)
-		}
-		if !strings.Contains(err.Error(), "CHECK constraint failed") {
-			t.Fatalf("insert with status=%q and task_id=%#v error = %v, want CHECK constraint failure", test.status, test.taskID, err)
+		VALUES (?, ?, 'decision', 'Choose one', ?, '2026-08-18T00:00:00Z')`, goalID, test.taskID, test.status); err != nil {
+			t.Fatalf("insert with status=%q and task_id=%#v: %v", test.status, test.taskID, err)
 		}
 	}
 }

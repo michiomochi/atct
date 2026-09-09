@@ -52,18 +52,27 @@ type Goal struct {
 	NextSteps         string
 	CreatedAt         string
 	UpdatedAt         string
+	Spec              string
+	Plan              string
 }
 
 type GoalHandoff struct {
-	ID                string
-	GoalID            int64
-	RequestedBy       sql.NullInt64
-	ReceivedBy        sql.NullInt64
-	RequestedAt       sql.NullString
-	ReceivedAt        sql.NullString
-	CompletedReportAt sql.NullString
-	RequestReport     sql.NullString
-	CompleteReport    sql.NullString
+	ID                  string
+	GoalID              int64
+	RequestedBy         sql.NullInt64
+	ReceivedBy          sql.NullInt64
+	RequestedAt         sql.NullString
+	ReceivedAt          sql.NullString
+	CompletedReportAt   sql.NullString
+	RequestReport       sql.NullString
+	CompleteReport      sql.NullString
+	ReviewRequestedBy   sql.NullInt64
+	ReviewRequestedAt   sql.NullString
+	ReviewRequestReport sql.NullString
+	ReviewReceivedBy    sql.NullInt64
+	ReviewReceivedAt    sql.NullString
+	ReviewRejectedAt    sql.NullString
+	ReviewRejectReport  sql.NullString
 }
 
 type GoalHandoffEntry struct {
@@ -74,6 +83,37 @@ type GoalHandoffEntry struct {
 	AuthorSessionID sql.NullInt64
 	InReplyToID     sql.NullInt64
 	CreatedAt       string
+}
+
+type MonitorHealth struct {
+	MonitorID        string
+	AgentKey         string
+	Cwd              string
+	Role             string
+	ProjectID        int64
+	GoalID           sql.NullInt64
+	TaskID           sql.NullInt64
+	Pid              int64
+	ProcessStartedAt string
+	State            string
+	Reason           string
+	TransitionedAt   string
+	LastSeenAt       string
+	StoppedAt        sql.NullString
+}
+
+type PlanHandoff struct {
+	ID                  string
+	GoalID              int64
+	ReviewRequestedBy   sql.NullInt64
+	ReviewRequestedAt   sql.NullString
+	ReviewRequestReport sql.NullString
+	ReviewReceivedBy    sql.NullInt64
+	ReviewReceivedAt    sql.NullString
+	ReviewRejectedAt    sql.NullString
+	ReviewRejectReport  sql.NullString
+	CompletedReportAt   sql.NullString
+	CompleteReport      sql.NullString
 }
 
 type Project struct {
@@ -115,15 +155,22 @@ type TaskCommit struct {
 }
 
 type TaskHandoff struct {
-	ID                string
-	TaskID            int64
-	RequestedBy       sql.NullInt64
-	ReceivedBy        sql.NullInt64
-	RequestedAt       sql.NullString
-	ReceivedAt        sql.NullString
-	CompletedReportAt sql.NullString
-	RequestReport     sql.NullString
-	CompleteReport    sql.NullString
+	ID                  string
+	TaskID              int64
+	RequestedBy         sql.NullInt64
+	ReceivedBy          sql.NullInt64
+	RequestedAt         sql.NullString
+	ReceivedAt          sql.NullString
+	CompletedReportAt   sql.NullString
+	RequestReport       sql.NullString
+	CompleteReport      sql.NullString
+	ReviewRequestedBy   sql.NullInt64
+	ReviewRequestedAt   sql.NullString
+	ReviewRequestReport sql.NullString
+	ReviewReceivedBy    sql.NullInt64
+	ReviewReceivedAt    sql.NullString
+	ReviewRejectedAt    sql.NullString
+	ReviewRejectReport  sql.NullString
 }
 
 type TaskHandoffEntry struct {

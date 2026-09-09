@@ -15,6 +15,8 @@ export interface Goal {
   project_id: string;
   project_name?: string;
   content: string;
+  spec: string;
+  plan: string;
   status: string;
   awaiting_decision: boolean;
   result_summary: string;

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -750,6 +751,17 @@ func doRequest(t *testing.T, client *http.Client, method, url string, body []byt
 	return resp.StatusCode, resp.Header, data
 }
 
+func doHandlerRequest(t *testing.T, handler http.Handler, method, path string, body []byte) (int, http.Header, []byte) {
+	t.Helper()
+	req := httptest.NewRequest(method, path, bytes.NewReader(body))
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+	return recorder.Code, recorder.Header(), recorder.Body.Bytes()
+}
+
 func mustJSON(t *testing.T, value any) []byte {
 	t.Helper()
 	data, err := json.Marshal(value)
@@ -920,6 +932,31 @@ func TestHTTPGoalDetailIncludesAllTasksWithoutCrossGoalMixing(t *testing.T) {
 	emptyTasks, ok := emptyPayload.Goal["tasks"]
 	if !ok || !bytes.Equal(bytes.TrimSpace(emptyTasks), []byte("[]")) {
 		t.Fatalf("empty goal.tasks = %s, want []", emptyTasks)
+	}
+}
+
+func TestHTTPGoalDetailIncludesRequestReportFields(t *testing.T) {
+	f := newBareFixture(t)
+	if _, err := f.store.UpdateGoalRequestReport(f.ctx, f.goal.ID, "stored spec", "stored plan"); err != nil {
+		t.Fatal(err)
+	}
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+	status, _, body := doRequest(t, srv.Client(), http.MethodGet, urlID(srv.URL+"/api/goals/", f.goal.ID), nil)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d; body=%s", status, body)
+	}
+	var payload struct {
+		Goal struct {
+			Spec string `json:"spec"`
+			Plan string `json:"plan"`
+		} `json:"goal"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Goal.Spec != "stored spec" || payload.Goal.Plan != "stored plan" {
+		t.Fatalf("goal request report = %+v", payload.Goal)
 	}
 }
 
@@ -2066,13 +2103,17 @@ func TestHTTPDecisionAndReleaseEndpointsValidateAndTransition(t *testing.T) {
 }
 
 func TestHTTPSnoozeSetsAbsoluteDeadlineWithoutChangingStatus(t *testing.T) {
-	f := newFixture(t)
+	f := newBareFixture(t)
+	tasks, err := f.store.DeclareTasks(f.ctx, f.goal.ID, "snooze-test-agent", "snooze-http-status", []string{"deferred"}, []string{"Preserve the task status while setting its snooze deadline."})
+	if err != nil {
+		t.Fatal(err)
+	}
 	srv := newTestServer(t, f.store)
 	defer srv.Close()
 
 	const wantSnoozedUntil = "2026-09-01T00:00:00Z"
 	status, _, body := doRequest(t, srv.Client(), http.MethodPost,
-		urlID(srv.URL+"/api/tasks/", f.tasks[0].ID)+"/snooze",
+		urlID(srv.URL+"/api/tasks/", tasks[0].ID)+"/snooze",
 		mustJSON(t, map[string]string{"snoozed_until": wantSnoozedUntil}))
 	if status != http.StatusOK {
 		t.Fatalf("snooze status = %d; body=%s", status, body)
@@ -2508,8 +2549,91 @@ func TestHTTPApproveAndRejectCompletionEndpoints(t *testing.T) {
 	assertErrorObject(t, status, headers, body, http.StatusConflict)
 }
 
+func TestHTTPApproveAndRejectGoalReviewEndpoints(t *testing.T) {
+	f := newBareFixture(t)
+	handler := httpapi.New(f.store).Handler()
+	commanderID, err := f.store.RegisterAgentSession(f.ctx, os.Getpid())
+	if err != nil {
+		t.Fatalf("RegisterAgentSession: %v", err)
+	}
+
+	approveGoal, err := f.store.CreateGoal(f.ctx, f.project.ID, "Approve goal review", "human")
+	if err != nil {
+		t.Fatal(err)
+	}
+	approveReview := requestHTTPGoalReview(t, f, approveGoal.ID, commanderID, "http-goal-review-approve")
+	status, _, body := doHandlerRequest(t, handler, http.MethodPost, urlID("/api/decisions/", approveReview.ID)+"/approve", mustJSON(t, map[string]string{}))
+	if status != http.StatusOK {
+		t.Fatalf("goal review approve status = %d; body=%s", status, body)
+	}
+	var approvedGoal domain.Goal
+	if err := json.Unmarshal(body, &approvedGoal); err != nil {
+		t.Fatal(err)
+	}
+	if approvedGoal.ID != approveGoal.ID || approvedGoal.Status != domain.GoalActive || approvedGoal.WorkDone != "completed http-goal-review-approve" {
+		t.Fatalf("approved goal review = %+v, want active goal with request-time report", approvedGoal)
+	}
+
+	rejectGoal, err := f.store.CreateGoal(f.ctx, f.project.ID, "Reject goal review", "human")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rejectReview := requestHTTPGoalReview(t, f, rejectGoal.ID, commanderID, "http-goal-review-reject")
+	status, _, body = doHandlerRequest(t, handler, http.MethodPost, urlID("/api/decisions/", rejectReview.ID)+"/reject", mustJSON(t, map[string]string{"reason": "needs another pass"}))
+	if status != http.StatusOK {
+		t.Fatalf("goal review reject status = %d; body=%s", status, body)
+	}
+	var rejectedReview domain.Decision
+	if err := json.Unmarshal(body, &rejectedReview); err != nil {
+		t.Fatal(err)
+	}
+	if rejectedReview.ID != rejectReview.ID || rejectedReview.Status != domain.DecisionAnswered || rejectedReview.AnswerText != "needs another pass" {
+		t.Fatalf("rejected goal review = %+v", rejectedReview)
+	}
+	gotGoal, err := f.store.GetGoal(f.ctx, rejectGoal.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotGoal.Status != domain.GoalActive || gotGoal.WorkDone != "completed http-goal-review-reject" {
+		t.Fatalf("goal after review rejection = %+v, want active with request-time report", gotGoal)
+	}
+}
+
+func requestHTTPGoalReview(t *testing.T, f *fixture, goalID, commanderID int64, label string) domain.Decision {
+	t.Helper()
+	receiverID := registerTestSession(t, f.store, label+"-receiver", 0)
+	if _, err := f.store.ClaimProject(f.ctx, f.project.ID, commanderID); err != nil {
+		t.Fatalf("ClaimProject: %v", err)
+	}
+	handoff, err := f.store.RequestGoalHandoff(f.ctx, label+"-handoff", goalID, commanderID, "implement the reviewed goal")
+	if err != nil {
+		t.Fatalf("RequestGoalHandoff: %v", err)
+	}
+	if _, err := f.store.ReceiveGoalHandoff(f.ctx, handoff.ID, goalID, receiverID); err != nil {
+		t.Fatalf("ReceiveGoalHandoff: %v", err)
+	}
+	if _, err := f.store.RequestGoalHandoffReview(f.ctx, handoff.ID, goalID, receiverID, "implementation review request"); err != nil {
+		t.Fatalf("RequestGoalHandoffReview: %v", err)
+	}
+	if _, err := f.store.ReceiveGoalHandoffReview(f.ctx, handoff.ID, goalID, commanderID); err != nil {
+		t.Fatalf("ReceiveGoalHandoffReview: %v", err)
+	}
+	if _, err := f.store.CompleteGoalHandoffByReviewer(f.ctx, handoff.ID, goalID, commanderID, "reviewed implementation complete"); err != nil {
+		t.Fatalf("CompleteGoalHandoffByReviewer: %v", err)
+	}
+	review, err := f.store.RequestGoalReview(f.ctx, goalID, commanderID, domain.CompletionReport{
+		WorkDone: "completed " + label, NowPossible: "reviewable result", HowToVerify: "run the HTTP endpoint test",
+		Surprises: "none", NeedsReview: "approve or reject", NextSteps: "finalize after approval",
+	})
+	if err != nil {
+		t.Fatalf("RequestGoalReview: %v", err)
+	}
+	return review
+}
+
 type sseFrame struct {
 	event string
+	id    string
 	data  string
 	lines []string
 }
@@ -2538,6 +2662,8 @@ func readSSEFrame(t *testing.T, reader *bufio.Reader) sseFrame {
 			switch {
 			case strings.HasPrefix(line, "event: "):
 				frame.event = strings.TrimPrefix(line, "event: ")
+			case strings.HasPrefix(line, "id: "):
+				frame.id = strings.TrimPrefix(line, "id: ")
 			case strings.HasPrefix(line, "data: "):
 				frame.data = strings.TrimPrefix(line, "data: ")
 			}
@@ -2560,11 +2686,6 @@ func assertSSEDecision(t *testing.T, reader *bufio.Reader, wantEvent string, wan
 	frame := readSSEFrame(t, reader)
 	if frame.event != wantEvent {
 		t.Fatalf("SSE event = %q, want %q; lines=%v", frame.event, wantEvent, frame.lines)
-	}
-	for _, line := range frame.lines {
-		if strings.HasPrefix(line, "id:") {
-			t.Fatalf("SSE frame unexpectedly has id: %v", frame.lines)
-		}
 	}
 	var got domain.Decision
 	if err := json.Unmarshal([]byte(frame.data), &got); err != nil {
@@ -2833,6 +2954,41 @@ func TestSSEFiltersTaskEventsByTaskIDAcrossProjectAndGoal(t *testing.T) {
 		if frame.event != want.name || got.DetectionID != want.detectionID || got.TaskID != tasks[0].ID {
 			t.Fatalf("task-filtered SSE event = %q %+v, want %s/%s for task %d", frame.event, got, want.name, want.detectionID, tasks[0].ID)
 		}
+	}
+}
+
+func TestSSEFiltersDecisionEventsByTaskID(t *testing.T) {
+	f := newBareFixture(t)
+	tasks, err := f.store.DeclareTasks(f.ctx, f.goal.ID, "sse-decision-task-filter", "sse-decision-task-filter", []string{"target", "other"}, []string{"The selected task.", "Another task."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+	streamCtx, cancel := context.WithCancel(f.ctx)
+	defer cancel()
+	stream, reader := openSSEStream(t, streamCtx, srv.Client(), srv.URL+"/api/events?task_id="+idText(tasks[0].ID))
+	defer stream.Body.Close()
+
+	f.store.PublishEvent(store.DecisionEvent{
+		Name: "decision.created",
+		Data: domain.Decision{ID: 1, GoalID: f.goal.ID, TaskID: tasks[1].ID},
+	})
+	f.store.PublishEvent(store.DecisionEvent{
+		Name: "decision.created",
+		Data: domain.Decision{ID: 2, GoalID: f.goal.ID, TaskID: tasks[0].ID},
+	})
+
+	frame := readSSEFrame(t, reader)
+	if frame.event != "decision.created" {
+		t.Fatalf("task-filtered decision event = %q, want decision.created; lines=%v", frame.event, frame.lines)
+	}
+	var got domain.Decision
+	if err := json.Unmarshal([]byte(frame.data), &got); err != nil {
+		t.Fatalf("task-filtered decision data: %v; data=%q", err, frame.data)
+	}
+	if got.ID != 2 || got.TaskID != tasks[0].ID {
+		t.Fatalf("task-filtered decision = %+v, want target task %d", got, tasks[0].ID)
 	}
 }
 

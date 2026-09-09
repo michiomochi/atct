@@ -19,6 +19,25 @@ const NON_SCREEN_EVENT_NAMES = [
   "handoff_yielded",
 ] as const;
 
+const HANDOFF_REFRESH_EVENT_NAMES = [
+  "task.handoff.request",
+  "task.handoff.receive",
+  "task.handoff.review.request",
+  "task.handoff.review.receive",
+  "task.handoff.review.reject",
+  "task.handoff.complete",
+  "goal.handoff.request",
+  "goal.handoff.receive",
+  "goal.handoff.review.request",
+  "goal.handoff.review.receive",
+  "goal.handoff.review.reject",
+  "goal.handoff.complete",
+  "plan.handoff.review.request",
+  "plan.handoff.review.receive",
+  "plan.handoff.review.reject",
+  "plan.handoff.complete",
+] as const;
+
 function readServerEventNames(): string[] {
   const nodeProcess = (globalThis as { process?: { cwd(): string } }).process;
   const repoRoot = nodeProcess?.cwd() ?? "";
@@ -57,6 +76,13 @@ function readScreenEventNames(): string[] {
 }
 
 describe("push event names", () => {
+  it("classifies handoff state transitions as dashboard refreshes", () => {
+    const screenNames = new Set(readScreenEventNames());
+
+    expect(HANDOFF_REFRESH_EVENT_NAMES.filter((name) => !screenNames.has(name))).toEqual([]);
+    expect(NON_SCREEN_EVENT_NAMES.filter((name) => screenNames.has(name))).toEqual([]);
+  });
+
   it("finds event names in both server and screen sources", () => {
     expect(readServerEventNames().length).toBeGreaterThanOrEqual(10);
     expect(readScreenEventNames().length).toBeGreaterThan(0);

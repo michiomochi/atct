@@ -33,6 +33,8 @@ CREATE TABLE IF NOT EXISTS goals (
   project_id     INTEGER NOT NULL REFERENCES projects(id),
   derived_from_goal_id INTEGER REFERENCES goals(id),
   content        TEXT NOT NULL,
+  spec           TEXT NOT NULL DEFAULT '',
+  plan           TEXT NOT NULL DEFAULT '',
   status         TEXT NOT NULL,
   creator        TEXT NOT NULL DEFAULT 'human',
   result_summary TEXT NOT NULL DEFAULT '',
@@ -90,10 +92,9 @@ CREATE TABLE IF NOT EXISTS decisions (
   answer_label TEXT NOT NULL DEFAULT '',
   answer_text  TEXT NOT NULL DEFAULT '',
   answered_at  TEXT,
-  applied_at   TEXT,
-  agent_session_id INTEGER NOT NULL DEFAULT 0,
-  created_at   TEXT NOT NULL,
-  CHECK (kind <> 'decision' OR status NOT IN ('open', 'answered') OR (task_id IS NOT NULL AND task_id <> ''))
+	applied_at   TEXT,
+	agent_session_id INTEGER NOT NULL DEFAULT 0,
+	created_at   TEXT NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_decisions_open
@@ -119,7 +120,14 @@ CREATE TABLE IF NOT EXISTS task_handoffs (
   received_at         TEXT,
   completed_report_at TEXT,
   request_report      TEXT,
-  complete_report     TEXT
+  complete_report     TEXT,
+  review_requested_by INTEGER REFERENCES agent_sessions(id),
+  review_requested_at TEXT,
+  review_request_report TEXT,
+  review_received_by  INTEGER REFERENCES agent_sessions(id),
+  review_received_at  TEXT,
+  review_rejected_at  TEXT,
+  review_reject_report TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_task_handoffs_task_id
@@ -138,7 +146,14 @@ CREATE TABLE IF NOT EXISTS goal_handoffs (
   received_at         TEXT,
   completed_report_at TEXT,
   request_report      TEXT,
-  complete_report     TEXT
+  complete_report     TEXT,
+  review_requested_by INTEGER REFERENCES agent_sessions(id),
+  review_requested_at TEXT,
+  review_request_report TEXT,
+  review_received_by  INTEGER REFERENCES agent_sessions(id),
+  review_received_at  TEXT,
+  review_rejected_at  TEXT,
+  review_reject_report TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_goal_handoffs_goal_id
@@ -187,3 +202,47 @@ CREATE TABLE IF NOT EXISTS goal_handoff_entries (
 
 CREATE INDEX IF NOT EXISTS idx_goal_handoff_entries_handoff_sequence
   ON goal_handoff_entries(handoff_id, id);
+
+CREATE TABLE IF NOT EXISTS plan_handoffs (
+  id                  TEXT PRIMARY KEY,
+  goal_id             INTEGER NOT NULL REFERENCES goals(id),
+  review_requested_by INTEGER REFERENCES agent_sessions(id),
+  review_requested_at TEXT,
+  review_request_report TEXT,
+  review_received_by  INTEGER REFERENCES agent_sessions(id),
+  review_received_at  TEXT,
+  review_rejected_at  TEXT,
+  review_reject_report TEXT,
+  completed_report_at TEXT,
+  complete_report     TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_plan_handoffs_goal_id
+  ON plan_handoffs(goal_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_plan_handoffs_open_goal_id
+  ON plan_handoffs(goal_id)
+  WHERE completed_report_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS monitor_health (
+  monitor_id         TEXT PRIMARY KEY,
+  agent_key          TEXT NOT NULL DEFAULT '',
+  cwd                TEXT NOT NULL,
+  role               TEXT NOT NULL,
+  project_id         INTEGER NOT NULL,
+  goal_id            INTEGER,
+  task_id            INTEGER,
+  pid                INTEGER NOT NULL,
+  process_started_at TEXT NOT NULL,
+  state              TEXT NOT NULL,
+  reason             TEXT NOT NULL DEFAULT '',
+  transitioned_at    TEXT NOT NULL,
+  last_seen_at       TEXT NOT NULL,
+  stopped_at         TEXT
+);
+
+CREATE INDEX IF NOT EXISTS monitor_health_project_idx
+  ON monitor_health(project_id);
+
+CREATE INDEX IF NOT EXISTS monitor_health_last_seen_idx
+  ON monitor_health(last_seen_at);

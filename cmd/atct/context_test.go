@@ -887,6 +887,9 @@ func TestContextBriefCountsTaskAgainAfterHandoffCompletes(t *testing.T) {
 	if _, err := fixture.db.CompleteTaskHandoffForTask(ctx, task.ID, "handed back"); err != nil {
 		t.Fatalf("CompleteTaskHandoffForTask: %v", err)
 	}
+	if _, err := fixture.db.UpdateTask(ctx, task.ID, domain.TaskTodo, owner); err != nil {
+		t.Fatalf("UpdateTask(todo): %v", err)
+	}
 
 	got, err := contextBriefTextForProject(fixture.dir, fixture.cwd, "", false)
 	if err != nil {

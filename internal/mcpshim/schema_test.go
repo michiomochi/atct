@@ -18,7 +18,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-func TestRegisterPublishesThirtyTwoToolsWithFlexibleOutputSchema(t *testing.T) {
+func TestRegisterPublishesFortyEightToolsWithFlexibleOutputSchema(t *testing.T) {
 	ctx := context.Background()
 	socketPath := startSchemaTestDaemon(t)
 	server := mcp.NewServer(&mcp.Implementation{Name: "atct-test", Version: "test"}, nil)
@@ -43,38 +43,54 @@ func TestRegisterPublishesThirtyTwoToolsWithFlexibleOutputSchema(t *testing.T) {
 		t.Fatalf("ListTools: %v", err)
 	}
 	wantNames := map[string]bool{
-		"atct_goal_list":                  true,
-		"atct_goal_get":                   true,
-		"atct_goal_sessions":              true,
-		"atct_task_create":                true,
-		"atct_task_claim":                 true,
-		"atct_task_release":               true,
-		"atct_task_update":                true,
-		"atct_decision_ask":               true,
-		"atct_decision_poll":              true,
-		"atct_decision_withdraw":          true,
-		"atct_goal_complete":              true,
-		"atct_goal_set_derived_from":      true,
-		"atct_goal_claim":                 true,
-		"atct_goal_release":               true,
-		"atct_goal_update_content":        true,
-		"atct_task_update_content":        true,
-		"atct_project_claim":              true,
-		"atct_project_release":            true,
-		"atct_role":                       true,
-		"atct_session_identify":           true,
-		"atct_handoff_request":            true,
-		"atct_handoff_receive":            true,
-		"atct_handoff_complete":           true,
-		"atct_handoff_report_amend":       true,
-		"atct_goal_handoff_request":       true,
-		"atct_goal_handoff_receive":       true,
-		"atct_goal_handoff_complete":      true,
-		"atct_goal_handoff_report_amend":  true,
-		"atct_handoff_entry_append":       true,
-		"atct_handoff_entry_history":      true,
-		"atct_goal_handoff_entry_append":  true,
-		"atct_goal_handoff_entry_history": true,
+		"atct_goal_list":                   true,
+		"atct_goal_get":                    true,
+		"atct_goal_sessions":               true,
+		"atct_task_create":                 true,
+		"atct_task_claim":                  true,
+		"atct_task_release":                true,
+		"atct_task_update":                 true,
+		"atct_decision_ask":                true,
+		"atct_decision_poll":               true,
+		"atct_decision_withdraw":           true,
+		"atct_goal_complete":               true,
+		"atct_goal_review_request":         true,
+		"atct_goal_review_complete":        true,
+		"atct_goal_set_derived_from":       true,
+		"atct_goal_claim":                  true,
+		"atct_goal_release":                true,
+		"atct_goal_update_content":         true,
+		"atct_task_update_content":         true,
+		"atct_project_claim":               true,
+		"atct_project_release":             true,
+		"atct_role":                        true,
+		"atct_session_identify":            true,
+		"atct_handoff_request":             true,
+		"atct_handoff_receive":             true,
+		"atct_handoff_complete":            true,
+		"atct_handoff_report_amend":        true,
+		"atct_handoff_entry_append":        true,
+		"atct_handoff_entry_history":       true,
+		"atct_task_handoff_request":        true,
+		"atct_task_handoff_receive":        true,
+		"atct_task_handoff_review_request": true,
+		"atct_task_handoff_review_receive": true,
+		"atct_task_handoff_complete":       true,
+		"atct_task_handoff_review_reject":  true,
+		"atct_goal_handoff_request":        true,
+		"atct_goal_handoff_receive":        true,
+		"atct_goal_handoff_complete":       true,
+		"atct_goal_handoff_report_amend":   true,
+		"atct_goal_handoff_entry_append":   true,
+		"atct_goal_handoff_entry_history":  true,
+		"atct_goal_handoff_review_request": true,
+		"atct_goal_handoff_review_receive": true,
+		"atct_goal_handoff_review_reject":  true,
+		"atct_plan_handoff_review_request": true,
+		"atct_plan_handoff_review_receive": true,
+		"atct_plan_handoff_complete":       true,
+		"atct_plan_handoff_review_reject":  true,
+		"atct_goal_update_request_report":  true,
 	}
 	if len(got.Tools) != len(wantNames) {
 		t.Fatalf("tool count = %d, want %d", len(got.Tools), len(wantNames))
@@ -243,6 +259,9 @@ func TestRegisterPublishesThirtyTwoToolsWithFlexibleOutputSchema(t *testing.T) {
 		{name: "atct_goal_update_content", args: map[string]any{
 			"goal_id": "goal-1", "content": "updated goal",
 		}},
+		{name: "atct_goal_update_request_report", args: map[string]any{
+			"goal_id": "goal-1", "spec": "updated spec", "plan": "updated plan",
+		}},
 		{name: "atct_task_update_content", args: map[string]any{
 			"task_id": "task-1", "description": "updated task",
 		}},
@@ -299,6 +318,12 @@ func TestRegisterPublishesThirtyTwoToolsWithFlexibleOutputSchema(t *testing.T) {
 			"how_to_verify": "check the goal", "surprises": "なし",
 			"needs_review": "なし", "next_steps": "なし",
 		}},
+		{name: "atct_goal_review_request", args: map[string]any{
+			"goal_id": "goal-1", "work_done": "done", "now_possible": "ready",
+			"how_to_verify": "check the goal", "surprises": "なし",
+			"needs_review": "なし", "next_steps": "なし",
+		}},
+		{name: "atct_goal_review_complete", args: map[string]any{"goal_id": "goal-1"}},
 		{name: "atct_goal_set_derived_from", args: map[string]any{
 			"goal_id": "goal-1", "derived_from_goal_id": "goal-2",
 		}},
@@ -312,6 +337,91 @@ func TestRegisterPublishesThirtyTwoToolsWithFlexibleOutputSchema(t *testing.T) {
 		}
 		if result == nil || result.StructuredContent == nil {
 			t.Errorf("CallTool(%s) returned no structured content", tc.name)
+		}
+	}
+}
+
+func TestGoalReviewToolsExposeCanonicalSchemas(t *testing.T) {
+	ctx := context.Background()
+	socketPath := startSchemaTestDaemon(t)
+	server := mcp.NewServer(&mcp.Implementation{Name: "atct-test", Version: "test"}, nil)
+	mcpshim.Register(server, mcpshim.NewClient(socketPath), 1)
+
+	clientTransport, serverTransport := mcp.NewInMemoryTransports()
+	serverSession, err := server.Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatalf("server.Connect: %v", err)
+	}
+	defer serverSession.Close()
+
+	client := mcp.NewClient(&mcp.Implementation{Name: "schema-test", Version: "test"}, nil)
+	clientSession, err := client.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatalf("client.Connect: %v", err)
+	}
+	defer clientSession.Close()
+
+	got, err := clientSession.ListTools(ctx, nil)
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	want := map[string][]string{
+		"atct_goal_complete": {
+			"goal_id", "work_done", "now_possible", "how_to_verify", "surprises", "needs_review", "next_steps",
+		},
+		"atct_goal_review_request": {
+			"goal_id", "work_done", "now_possible", "how_to_verify", "surprises", "needs_review", "next_steps",
+		},
+		"atct_goal_review_complete": {"goal_id"},
+	}
+	for name, fields := range want {
+		var tool *mcp.Tool
+		for _, candidate := range got.Tools {
+			if candidate.Name == name {
+				tool = candidate
+				break
+			}
+		}
+		if tool == nil {
+			t.Fatalf("missing tool %q", name)
+		}
+		inputSchema, ok := tool.InputSchema.(map[string]any)
+		if !ok {
+			t.Fatalf("%s input schema = %T, want object", name, tool.InputSchema)
+		}
+		properties, ok := inputSchema["properties"].(map[string]any)
+		if !ok {
+			t.Fatalf("%s input properties = %T, want object", name, inputSchema["properties"])
+		}
+		if len(properties) != len(fields) {
+			t.Errorf("%s property count = %d, want %d", name, len(properties), len(fields))
+		}
+		for _, field := range fields {
+			if _, ok := properties[field]; !ok {
+				t.Errorf("%s omitted input field %q", name, field)
+			}
+		}
+		var required []string
+		switch values := inputSchema["required"].(type) {
+		case []string:
+			required = values
+		case []any:
+			for _, value := range values {
+				if field, ok := value.(string); ok {
+					required = append(required, field)
+				}
+			}
+		default:
+			t.Fatalf("%s required = %T, want string array", name, inputSchema["required"])
+		}
+		requiredFields := make(map[string]bool, len(required))
+		for _, field := range required {
+			requiredFields[field] = true
+		}
+		for _, field := range fields {
+			if !requiredFields[field] {
+				t.Errorf("%s must require input field %q", name, field)
+			}
 		}
 	}
 }
@@ -724,6 +834,318 @@ func TestHandoffToolsInjectAgentSessionID(t *testing.T) {
 	}
 }
 
+func TestNamedHandoffReviewToolsExposeCanonicalSchemas(t *testing.T) {
+	ctx := context.Background()
+	socketPath := startSchemaTestDaemon(t)
+	server := mcp.NewServer(&mcp.Implementation{Name: "atct-test", Version: "test"}, nil)
+	mcpshim.Register(server, mcpshim.NewClient(socketPath), 1)
+
+	clientTransport, serverTransport := mcp.NewInMemoryTransports()
+	serverSession, err := server.Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatalf("server.Connect: %v", err)
+	}
+	defer serverSession.Close()
+
+	client := mcp.NewClient(&mcp.Implementation{Name: "schema-test", Version: "test"}, nil)
+	clientSession, err := client.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatalf("client.Connect: %v", err)
+	}
+	defer clientSession.Close()
+
+	want := map[string][]string{
+		"atct_task_handoff_request":        {"handoff_id", "task_id", "request_report"},
+		"atct_task_handoff_receive":        {"handoff_id", "task_id"},
+		"atct_task_handoff_review_request": {"handoff_id", "task_id", "review_request_report"},
+		"atct_task_handoff_review_receive": {"handoff_id", "task_id"},
+		"atct_task_handoff_complete":       {"handoff_id", "task_id", "complete_report"},
+		"atct_task_handoff_review_reject":  {"handoff_id", "task_id", "reject_report"},
+		"atct_goal_handoff_review_request": {"handoff_id", "goal_id", "review_request_report"},
+		"atct_goal_handoff_review_receive": {"handoff_id", "goal_id"},
+		"atct_goal_handoff_review_reject":  {"handoff_id", "goal_id", "reject_report"},
+		"atct_plan_handoff_review_request": {"handoff_id", "goal_id", "review_request_report"},
+		"atct_plan_handoff_review_receive": {"handoff_id", "goal_id"},
+		"atct_plan_handoff_complete":       {"handoff_id", "goal_id", "complete_report"},
+		"atct_plan_handoff_review_reject":  {"handoff_id", "goal_id", "reject_report"},
+	}
+
+	got, err := clientSession.ListTools(ctx, nil)
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	for name, fields := range want {
+		var tool *mcp.Tool
+		for _, candidate := range got.Tools {
+			if candidate.Name == name {
+				tool = candidate
+				break
+			}
+		}
+		if tool == nil {
+			t.Errorf("missing named handoff tool %q", name)
+			continue
+		}
+		inputSchema, ok := tool.InputSchema.(map[string]any)
+		if !ok {
+			t.Errorf("%s input schema = %T, want object", name, tool.InputSchema)
+			continue
+		}
+		properties, ok := inputSchema["properties"].(map[string]any)
+		if !ok {
+			t.Errorf("%s properties = %T, want object", name, inputSchema["properties"])
+			continue
+		}
+		if len(properties) != len(fields) {
+			t.Errorf("%s property count = %d, want %d", name, len(properties), len(fields))
+		}
+		for _, field := range fields {
+			if _, ok := properties[field]; !ok {
+				t.Errorf("%s omitted input field %q", name, field)
+			}
+		}
+		for _, ownedField := range []string{"requested_by", "received_by", "reviewer_id", "agent_session_id"} {
+			if _, ok := properties[ownedField]; ok {
+				t.Errorf("%s exposes shim-owned field %q", name, ownedField)
+			}
+		}
+		outputSchema, ok := tool.OutputSchema.(map[string]any)
+		if !ok {
+			t.Errorf("%s output schema = %T, want object", name, tool.OutputSchema)
+			continue
+		}
+		outputProperties, ok := outputSchema["properties"].(map[string]any)
+		if !ok {
+			t.Errorf("%s output properties = %T, want object", name, outputSchema["properties"])
+			continue
+		}
+		if _, ok := outputProperties["data"]; !ok {
+			t.Errorf("%s output omitted data", name)
+		}
+		if name == "atct_goal_handoff_receive" {
+			var required []string
+			switch values := outputSchema["required"].(type) {
+			case []string:
+				required = values
+			case []any:
+				for _, value := range values {
+					if field, ok := value.(string); ok {
+						required = append(required, field)
+					}
+				}
+			default:
+				t.Errorf("%s output required = %T, want string array", name, outputSchema["required"])
+			}
+			for _, field := range required {
+				if field == "role" || field == "claim_evidence" {
+					t.Errorf("%s output must not require %s", name, field)
+				}
+			}
+		}
+		if strings.HasSuffix(name, "_receive") && name != "atct_goal_handoff_receive" {
+			if _, ok := outputProperties["role"]; !ok {
+				t.Errorf("%s output omitted role", name)
+			}
+			if _, ok := outputProperties["claim_evidence"]; !ok {
+				t.Errorf("%s output omitted claim_evidence", name)
+			}
+			var required []string
+			switch values := outputSchema["required"].(type) {
+			case []string:
+				required = values
+			case []any:
+				for _, value := range values {
+					if field, ok := value.(string); ok {
+						required = append(required, field)
+					}
+				}
+			default:
+				t.Errorf("%s output required = %T, want string array", name, outputSchema["required"])
+			}
+			if len(required) != 3 || required[1] != "role" || required[2] != "claim_evidence" {
+				t.Errorf("%s output required = %#v, want data, role, claim_evidence", name, required)
+			}
+		}
+		if strings.HasPrefix(name, "atct_plan_") {
+			if _, ok := properties["task_id"]; ok {
+				t.Errorf("%s must not expose task_id", name)
+			}
+		}
+	}
+}
+
+func TestNamedHandoffToolsForwardCanonicalMethods(t *testing.T) {
+	ctx := context.Background()
+	socketPath, calls := startCapturingSchemaTestDaemon(t)
+	server := mcp.NewServer(&mcp.Implementation{Name: "atct-test", Version: "test"}, nil)
+	const sessionID int64 = 9
+	mcpshim.Register(server, mcpshim.NewClient(socketPath), sessionID)
+
+	clientTransport, serverTransport := mcp.NewInMemoryTransports()
+	serverSession, err := server.Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatalf("server.Connect: %v", err)
+	}
+	defer serverSession.Close()
+
+	client := mcp.NewClient(&mcp.Implementation{Name: "schema-test", Version: "test"}, nil)
+	clientSession, err := client.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatalf("client.Connect: %v", err)
+	}
+	defer clientSession.Close()
+
+	for _, tc := range []struct {
+		name      string
+		method    string
+		ownedKey  string
+		reportKey string
+		args      map[string]any
+	}{
+		{name: "atct_task_handoff_request", method: "task.handoff.request", ownedKey: "requested_by", reportKey: "request_report", args: map[string]any{"handoff_id": "task-request", "task_id": "1", "request_report": "request"}},
+		{name: "atct_task_handoff_receive", method: "task.handoff.receive", ownedKey: "received_by", args: map[string]any{"handoff_id": "task-receive", "task_id": "1"}},
+		{name: "atct_task_handoff_review_request", method: "task.handoff.review.request", ownedKey: "requested_by", reportKey: "review_request_report", args: map[string]any{"handoff_id": "task-review-request", "task_id": "1", "review_request_report": "review"}},
+		{name: "atct_task_handoff_review_receive", method: "task.handoff.review.receive", ownedKey: "received_by", args: map[string]any{"handoff_id": "task-review-receive", "task_id": "1"}},
+		{name: "atct_task_handoff_complete", method: "task.handoff.complete", ownedKey: "agent_session_id", reportKey: "complete_report", args: map[string]any{"handoff_id": "task-complete", "task_id": "1", "complete_report": "complete"}},
+		{name: "atct_task_handoff_review_reject", method: "task.handoff.review.reject", ownedKey: "reviewer_id", reportKey: "reject_report", args: map[string]any{"handoff_id": "task-review-reject", "task_id": "1", "reject_report": "reject"}},
+		{name: "atct_goal_handoff_review_request", method: "goal.handoff.review.request", ownedKey: "requested_by", reportKey: "review_request_report", args: map[string]any{"handoff_id": "goal-review-request", "goal_id": "2", "review_request_report": "review"}},
+		{name: "atct_goal_handoff_review_receive", method: "goal.handoff.review.receive", ownedKey: "received_by", args: map[string]any{"handoff_id": "goal-review-receive", "goal_id": "2"}},
+		{name: "atct_goal_handoff_review_reject", method: "goal.handoff.review.reject", ownedKey: "reviewer_id", reportKey: "reject_report", args: map[string]any{"handoff_id": "goal-review-reject", "goal_id": "2", "reject_report": "reject"}},
+		{name: "atct_plan_handoff_review_request", method: "plan.handoff.review.request", ownedKey: "requested_by", reportKey: "review_request_report", args: map[string]any{"handoff_id": "plan-review-request", "goal_id": "2", "review_request_report": "review"}},
+		{name: "atct_plan_handoff_review_receive", method: "plan.handoff.review.receive", ownedKey: "received_by", args: map[string]any{"handoff_id": "plan-review-receive", "goal_id": "2"}},
+		{name: "atct_plan_handoff_complete", method: "plan.handoff.complete", ownedKey: "agent_session_id", reportKey: "complete_report", args: map[string]any{"handoff_id": "plan-complete", "goal_id": "2", "complete_report": "complete"}},
+		{name: "atct_plan_handoff_review_reject", method: "plan.handoff.review.reject", ownedKey: "reviewer_id", reportKey: "reject_report", args: map[string]any{"handoff_id": "plan-review-reject", "goal_id": "2", "reject_report": "reject"}},
+	} {
+		result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{Name: tc.name, Arguments: tc.args})
+		if err != nil {
+			t.Fatalf("CallTool(%s): %v", tc.name, err)
+		}
+		if result == nil || result.IsError {
+			t.Fatalf("CallTool(%s) returned error result: %+v", tc.name, result)
+		}
+
+		var call capturedSchemaDaemonCall
+		select {
+		case call = <-calls:
+		case <-time.After(time.Second):
+			t.Fatalf("timed out waiting for %s RPC", tc.method)
+		}
+		if call.method != tc.method {
+			t.Fatalf("%s RPC method = %q, want %q", tc.name, call.method, tc.method)
+		}
+		if got := call.params[tc.ownedKey]; got != float64(sessionID) {
+			t.Errorf("%s = %#v, want injected agent session ID", tc.ownedKey, got)
+		}
+		if tc.reportKey != "" {
+			if _, ok := call.params[tc.reportKey]; !ok {
+				t.Errorf("%s omitted %s", tc.name, tc.reportKey)
+			}
+		}
+		for _, ownedKey := range []string{"requested_by", "received_by", "reviewer_id", "agent_session_id"} {
+			if ownedKey != tc.ownedKey {
+				if _, ok := call.params[ownedKey]; ok {
+					t.Errorf("%s unexpectedly included %s", tc.name, ownedKey)
+				}
+			}
+		}
+	}
+}
+
+func TestGoalReviewToolsForwardCanonicalMethods(t *testing.T) {
+	ctx := context.Background()
+	socketPath, calls := startCapturingSchemaTestDaemon(t)
+	server := mcp.NewServer(&mcp.Implementation{Name: "atct-test", Version: "test"}, nil)
+	const sessionID int64 = 9
+	mcpshim.Register(server, mcpshim.NewClient(socketPath), sessionID)
+
+	clientTransport, serverTransport := mcp.NewInMemoryTransports()
+	serverSession, err := server.Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatalf("server.Connect: %v", err)
+	}
+	defer serverSession.Close()
+
+	client := mcp.NewClient(&mcp.Implementation{Name: "schema-test", Version: "test"}, nil)
+	clientSession, err := client.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatalf("client.Connect: %v", err)
+	}
+	defer clientSession.Close()
+
+	const (
+		workDone    = "review work"
+		nowPossible = "review result"
+		howToVerify = "run review tests"
+		surprises   = "none"
+		needsReview = "なし"
+		nextSteps   = "merge"
+	)
+	cases := []struct {
+		name   string
+		method string
+		args   map[string]any
+	}{
+		{
+			name: "atct_goal_review_request", method: "goal.review.request",
+			args: map[string]any{
+				"goal_id": "2", "work_done": workDone, "now_possible": nowPossible,
+				"how_to_verify": howToVerify, "surprises": surprises,
+				"needs_review": needsReview, "next_steps": nextSteps,
+			},
+		},
+		{
+			name: "atct_goal_review_complete", method: "goal.review.complete",
+			args: map[string]any{"goal_id": "2"},
+		},
+	}
+	for _, tc := range cases {
+		result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{Name: tc.name, Arguments: tc.args})
+		if err != nil {
+			t.Fatalf("CallTool(%s): %v", tc.name, err)
+		}
+		if result == nil || result.IsError {
+			t.Fatalf("CallTool(%s) returned error result: %+v", tc.name, result)
+		}
+
+		var call capturedSchemaDaemonCall
+		select {
+		case call = <-calls:
+		case <-time.After(time.Second):
+			t.Fatalf("timed out waiting for %s RPC", tc.method)
+		}
+		if call.method != tc.method {
+			t.Fatalf("%s RPC method = %q, want %q", tc.name, call.method, tc.method)
+		}
+		if got := call.params["goal_id"]; got != "2" {
+			t.Errorf("%s goal_id = %#v, want 2", tc.name, got)
+		}
+		if got := call.params["agent_session_id"]; got != float64(sessionID) {
+			t.Errorf("%s agent_session_id = %#v, want %d", tc.name, got, sessionID)
+		}
+		if got := call.params["include_unapplied_answers"]; got != true {
+			t.Errorf("%s include_unapplied_answers = %#v, want true", tc.name, got)
+		}
+		if tc.name == "atct_goal_review_request" {
+			want := map[string]string{
+				"work_done": workDone, "now_possible": nowPossible,
+				"how_to_verify": howToVerify, "surprises": surprises,
+				"needs_review": needsReview, "next_steps": nextSteps,
+			}
+			for field, value := range want {
+				if got := call.params[field]; got != value {
+					t.Errorf("%s %s = %#v, want %q", tc.name, field, got, value)
+				}
+			}
+		} else {
+			for _, field := range []string{"work_done", "now_possible", "how_to_verify", "surprises", "needs_review", "next_steps"} {
+				if _, ok := call.params[field]; ok {
+					t.Errorf("%s unexpectedly included %s", tc.name, field)
+				}
+			}
+		}
+	}
+}
+
 func TestRoleToolReturnsAllRolesWithEvidence(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -972,6 +1394,17 @@ func decodeRoleID(t *testing.T, data map[string]json.RawMessage, field string) i
 	return decoded
 }
 
+func schemaTestDaemonResponse(method string) string {
+	switch method {
+	case "task.handoff.receive", "task.handoff.review.receive", "goal.handoff.review.receive", "plan.handoff.review.receive":
+		return `{"result":{"data":{"ok":true},"role":"executor","claim_evidence":{"source":"schema-test"}}}`
+	case "session.role":
+		return `{"result":{"role":"executor","does":[],"does_not":[]}}`
+	default:
+		return `{"result":{"ok":true}}`
+	}
+}
+
 func startSchemaTestDaemon(t *testing.T) string {
 	t.Helper()
 	dir, err := os.MkdirTemp("", "atct")
@@ -1004,10 +1437,7 @@ func startSchemaTestDaemon(t *testing.T) string {
 				if err := json.Unmarshal(line, &request); err != nil {
 					return
 				}
-				response := `{"result":{"ok":true}}`
-				if request.Method == "session.role" {
-					response = `{"result":{"role":"executor","does":[],"does_not":[]}}`
-				}
+				response := schemaTestDaemonResponse(request.Method)
 				_, _ = io.WriteString(conn, response+"\n")
 			}()
 		}
@@ -1064,12 +1494,10 @@ func startCapturingSchemaTestDaemonWithIdentifyResponse(t *testing.T, identifyRe
 					return
 				}
 				calls <- capturedSchemaDaemonCall{method: request.Method, params: request.Params}
-				response := `{"result":{"ok":true}}`
+				response := schemaTestDaemonResponse(request.Method)
 				switch request.Method {
 				case "session.identify":
 					response = identifyResponse
-				case "session.role":
-					response = `{"result":{"role":"executor","does":[],"does_not":[]}}`
 				}
 				_, _ = io.WriteString(conn, response+"\n")
 			}()

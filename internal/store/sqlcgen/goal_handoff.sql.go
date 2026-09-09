@@ -150,15 +150,27 @@ WHERE completed_report_at IS NULL
 ORDER BY id
 `
 
-func (q *Queries) ListOpenGoalHandoffs(ctx context.Context) ([]GoalHandoff, error) {
+type ListOpenGoalHandoffsRow struct {
+	ID                string
+	GoalID            int64
+	RequestedBy       sql.NullInt64
+	ReceivedBy        sql.NullInt64
+	RequestedAt       sql.NullString
+	ReceivedAt        sql.NullString
+	CompletedReportAt sql.NullString
+	RequestReport     sql.NullString
+	CompleteReport    sql.NullString
+}
+
+func (q *Queries) ListOpenGoalHandoffs(ctx context.Context) ([]ListOpenGoalHandoffsRow, error) {
 	rows, err := q.db.QueryContext(ctx, listOpenGoalHandoffs)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []GoalHandoff
+	var items []ListOpenGoalHandoffsRow
 	for rows.Next() {
-		var i GoalHandoff
+		var i ListOpenGoalHandoffsRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.GoalID,

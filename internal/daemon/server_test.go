@@ -1097,6 +1097,61 @@ func updateGoalContentForTest(t *testing.T, fixture goalListFixture, goalID int6
 	return fixture.daemon.dispatch(context.Background(), rpc.Request{Method: "goal.update_content", Params: params})
 }
 
+func TestRequestReportDirectFieldsAuthorizeAndReadBack(t *testing.T) {
+	fixture := newGoalListFixture(t)
+	defer fixture.store.Close()
+	goalID := fixture.active[0].ID
+	ctx := context.Background()
+	requesterID := daemonTestSessionID(t, fixture.store, "request-report-requester")
+	if _, err := fixture.store.ClaimProject(ctx, fixture.project.ID, requesterID); err != nil {
+		t.Fatal(err)
+	}
+	holderID := daemonTestSessionID(t, fixture.store, "request-report-holder")
+	handoff, err := fixture.store.RequestGoalHandoff(ctx, "request-report-goal-handoff", goalID, requesterID, "authorize request report update")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fixture.store.ReceiveGoalHandoff(ctx, handoff.ID, goalID, holderID); err != nil {
+		t.Fatal(err)
+	}
+	call := func(sessionID int64) (json.RawMessage, error) {
+		params, _ := json.Marshal(map[string]any{"goal_id": goalID, "spec": "spec body", "plan": "plan body", "agent_session_id": sessionID})
+		return fixture.daemon.dispatch(ctx, rpc.Request{Method: "goal.update_request_report", Params: params})
+	}
+	if _, err := call(daemonTestSessionID(t, fixture.store, "request-report-non-holder")); err == nil {
+		t.Fatal("non-holder request report update succeeded")
+	}
+	otherProject, err := fixture.store.CreateProject(ctx, "request-report-other-project", t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherProjectID := daemonTestSessionID(t, fixture.store, "request-report-other-project")
+	if err := fixture.store.AssociateAgentSessionWithProject(ctx, otherProjectID, otherProject.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := call(otherProjectID); err == nil {
+		t.Fatal("other-project request report update succeeded")
+	}
+	result, err := call(holderID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var goal domain.Goal
+	if err := json.Unmarshal(result, &goal); err != nil {
+		t.Fatal(err)
+	}
+	if goal.Spec != "spec body" || goal.Plan != "plan body" {
+		t.Fatalf("result = %+v", goal)
+	}
+	persisted, err := fixture.store.GetGoal(context.Background(), goalID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persisted.Spec != "spec body" || persisted.Plan != "plan body" {
+		t.Fatalf("readback = %+v", persisted)
+	}
+}
+
 func updateTaskContentForTest(t *testing.T, fixture goalListFixture, taskID int64, fields map[string]any, sessionID string) (json.RawMessage, error) {
 	t.Helper()
 	return updateTaskContentForTestWithAgentSessionID(t, fixture, taskID, fields, daemonTestSessionID(t, fixture.store, sessionID))

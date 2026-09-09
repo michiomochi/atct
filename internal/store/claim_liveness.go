@@ -70,6 +70,8 @@ func GoalClaimLiveness(ctx context.Context, s *Store, projectID int64) (running 
 			claim.ProjectID,
 			claim.DerivedFromGoalID,
 			claim.Content,
+			"",
+			"",
 			claim.Status,
 			claim.Creator,
 			claim.ResultSummary,

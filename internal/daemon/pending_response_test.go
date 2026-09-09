@@ -219,6 +219,49 @@ func TestDecisionAskParkedIncludesClaimableTasks(t *testing.T) {
 	}
 }
 
+func TestGoalScopedCommanderDecisionAllowsMissingTaskID(t *testing.T) {
+	ctx := context.Background()
+	s := openPendingResponseTestStore(t)
+	project := createPendingResponseProject(t, s, t.TempDir(), "goal-scoped-decision")
+	goal, err := s.CreateGoal(ctx, project.ID, "goal-scoped decision goal\n\ndescription", "human")
+	if err != nil {
+		t.Fatalf("CreateGoal: %v", err)
+	}
+	commanderID := daemonTestSessionID(t, s, "goal-scoped-decision-commander")
+	if err := s.AssociateAgentSessionWithProject(ctx, commanderID, project.ID); err != nil {
+		t.Fatalf("AssociateAgentSessionWithProject: %v", err)
+	}
+	if _, err := s.ClaimProject(ctx, project.ID, commanderID); err != nil {
+		t.Fatalf("ClaimProject: %v", err)
+	}
+
+	params, err := json.Marshal(map[string]any{
+		"goal_id": goal.ID, "question": "May the commander publish now?",
+		"options": []domain.Option{{Label: "yes"}}, "wait_ms": 0,
+		"agent_session_id": commanderID,
+	})
+	if err != nil {
+		t.Fatalf("Marshal decision.ask params: %v", err)
+	}
+	raw, err := New(s).dispatch(ctx, rpc.Request{Method: "decision.ask", Params: params})
+	if err != nil {
+		t.Fatalf("decision.ask: %v", err)
+	}
+	var parked struct {
+		DecisionID int64 `json:"decision_id"`
+	}
+	if err := json.Unmarshal(raw, &parked); err != nil {
+		t.Fatalf("decode decision.ask response %s: %v", raw, err)
+	}
+	decision, err := s.GetDecision(ctx, parked.DecisionID)
+	if err != nil {
+		t.Fatalf("GetDecision: %v", err)
+	}
+	if decision.GoalID != goal.ID || decision.TaskID != 0 || decision.Kind != domain.KindDecision {
+		t.Fatalf("goal-scoped decision = %+v, want taskless commander decision", decision)
+	}
+}
+
 func TestProjectScopedWritesRejectOtherProject(t *testing.T) {
 	f := newProjectScopeFixture(t)
 	cases := []struct {
@@ -261,7 +304,7 @@ func TestProjectScopedWritesRejectOtherProject(t *testing.T) {
 				"how_to_verify": "verify", "surprises": "none", "needs_review": "none",
 				"next_steps": "none", "agent_session_id": f.agentSessionID,
 			},
-			wantContains: []string{"goal completion denied", "holds no open goal handoff"},
+			wantContains: []string{"goal completion denied", "not the commander"},
 		},
 	}
 
@@ -481,6 +524,9 @@ func TestTaskClaimAssignsUnassociatedRunToTargetProject(t *testing.T) {
 
 func TestProjectScopedWritesAllowAssignedProjectAndGoalListReadsOtherProject(t *testing.T) {
 	f := newProjectScopeFixture(t)
+	if _, err := f.store.ClaimProject(f.ctx, f.assigned.ID, f.agentSessionID); err != nil {
+		t.Fatalf("ClaimProject: %v", err)
+	}
 
 	params, err := json.Marshal(map[string]any{
 		"goal_id": f.assignedGoal.ID, "agent": "agent", "idempotency_key": "assigned-project",

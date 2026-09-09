@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
+	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -20,6 +22,43 @@ func TestSchemaParity(t *testing.T) {
 
 	declaredDB := materializeSchemaSQL(t)
 	assertSchemaParity(t, migrationDB, declaredDB)
+}
+
+func TestSchemaParityOnMigratedCopiedDatabaseFromEnvironment(t *testing.T) {
+	sourcePath := os.Getenv("ATCT_MIGRATION_CHECK_DB")
+	if sourcePath == "" {
+		t.Skip("set ATCT_MIGRATION_CHECK_DB to a SQLite database to check a migrated copy")
+	}
+
+	clonePath := filepath.Join(t.TempDir(), "atct.db")
+	if err := copySQLiteDatabase(sourcePath, clonePath); err != nil {
+		t.Fatalf("copy SQLite database: %v", err)
+	}
+
+	report, err := verifyMigrationIntegrity(clonePath)
+	if err != nil {
+		t.Fatalf("verifyMigrationIntegrity(%q) = %v", clonePath, err)
+	}
+	wantRemovedTables := []string{
+		"goal_review_snapshots",
+		"project_event_sequences",
+		"watch_delivery_cursors",
+		"workflow_event_outbox",
+	}
+	if !reflect.DeepEqual(report.removedTables, wantRemovedTables) {
+		t.Fatalf("removed tables = %v, want %v", report.removedTables, wantRemovedTables)
+	}
+	t.Logf("migration integrity report: %s", report)
+
+	cloneDB, err := sql.Open("sqlite", clonePath)
+	if err != nil {
+		t.Fatalf("open migrated clone: %v", err)
+	}
+	cloneDB.SetMaxOpenConns(1)
+	t.Cleanup(func() { _ = cloneDB.Close() })
+
+	expectedDB := materializeRecordedMigrations(t, cloneDB)
+	assertSchemaParity(t, cloneDB, expectedDB)
 }
 
 // TestSchemaParityDrift compares a copy of a live database against the schema

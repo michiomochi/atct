@@ -52,6 +52,17 @@ func (f *watchScopeFilter) delivers(eventName string, decision watchDecision) bo
 		"detection.completion_report_missing", "detection.commits_missing",
 		"detection.undeclared_goal", "detection.all_tasks_dropped":
 		return true
+	case "task.handoff.request", "task.handoff.receive",
+		"task.handoff.review.request", "task.handoff.review.receive",
+		"task.handoff.review.reject", "task.handoff.complete":
+		return false
+	case "goal.handoff.request", "goal.handoff.receive",
+		"goal.handoff.review.request", "goal.handoff.review.receive",
+		"goal.handoff.review.reject", "goal.handoff.complete",
+		"plan.handoff.request", "plan.handoff.receive",
+		"plan.handoff.review.request", "plan.handoff.review.receive",
+		"plan.handoff.review.reject", "plan.handoff.complete":
+		return true
 	case "decision.answered":
 		return !decision.defaultApplied()
 	case "wakeup":

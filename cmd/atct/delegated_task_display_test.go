@@ -10,10 +10,8 @@ import (
 	"github.com/michiomochi/atct/internal/store"
 )
 
-// A delegated task keeps its todo status because neither atct_handoff_request
-// nor atct_task_claim writes tasks.status; the open handoff is the only record
-// that someone owns the work. atct wakeup already reads that record, so these
-// tests pin the two surfaces a human reads directly to the same rule.
+// A claimed task receives a self-handoff and enters doing. The brief must still
+// omit it from the todo count while that handoff owns the work.
 
 // The brief is the count a human reads to decide whether anything is idle, so a
 // task whose work is owned must not be counted as todo.
@@ -43,8 +41,8 @@ func TestContextBriefExcludesHandoffOwnedTasksFromTodoCount(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListTasks after claim: %v", err)
 	}
-	if reloaded[0].Status != domain.TaskTodo {
-		t.Fatalf("owned task status = %s, want todo; this test no longer covers the reported case", reloaded[0].Status)
+	if reloaded[0].Status != domain.TaskDoing {
+		t.Fatalf("owned task status = %s, want doing", reloaded[0].Status)
 	}
 
 	got, err := contextBriefTextForProject(fixture.dir, fixture.cwd, "", false)

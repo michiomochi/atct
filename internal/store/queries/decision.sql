@@ -23,6 +23,15 @@ FROM decisions
 WHERE goal_id = ? AND status = 'open'
 ORDER BY created_at;
 
+-- name: ListDecisionsForGoal :many
+SELECT
+  id, goal_id, task_id, kind, question, options, status,
+  default_option, default_after_ms, default_applied_at,
+  answer_label, answer_text, answered_at, applied_at, agent_session_id, created_at
+FROM decisions
+WHERE goal_id = ?
+ORDER BY id;
+
 -- name: ListAllOpenDecisions :many
 SELECT
   id, goal_id, task_id, kind, question, options, status,

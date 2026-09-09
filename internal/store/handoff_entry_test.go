@@ -275,7 +275,7 @@ func TestOpenBackfillsLegacyHandoffReportsIntoCanonicalEntries(t *testing.T) {
 		t.Fatalf("load embedded migrations: %v", err)
 	}
 	for _, migration := range migrations {
-		if migration.filename == "0023_handoff_entries.sql" {
+		if migration.filename == "0031_handoff_entries.sql" {
 			break
 		}
 		if _, err := raw.Exec(migration.sql); err != nil {
