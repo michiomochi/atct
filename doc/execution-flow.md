@@ -79,7 +79,7 @@ flowchart TD
         S1["5. atct_goal_handoff_receive<br/>→ ゴールの claim を得て subcommander になる"]
         S2["6. atct watch -goal &lt;goal_id&gt; を張る<br/>自分のゴールだけを渡す"]
         S3["7. 設計を決める<br/>superpowers:brainstorming<br/>superpowers:writing-plans"]
-        S4["8. 設計の成果物を出す<br/>atct_plan_handoff_review_request"]
+        S4["8. canonical spec と plan の全文を<br/>atct_goal_update_request_report で書く<br/>atct_plan_handoff_review_request"]
         S5["12. atct_task_create でタスクにする<br/>atct watch -goal の通知で起動"]
         S5b["13. atct_task_handoff_request<br/>タスクを executor へ"]
         S6a["17. atct_task_handoff_review_receive<br/>atct watch -goal の通知で起動"]
@@ -147,16 +147,14 @@ flowchart TD
 |---|---|---|
 | spike（調査） | **無し。**成果は答えである | 調査結果と推奨 |
 | bounded（限定的） | **無し。**チャットで短い設計を出して合意する | その設計 |
-| architectural | **spec →（writing-plans を呼んで）plan** | spec と plan |
+| architectural | **canonical spec と plan の全文** | `atct_goal_update_request_report` で spec と plan の全文を書き、`atct_plan_handoff_review_request` で出す |
 
-    brainstorming/SKILL.md:100   6. Write design doc -> spec を保存
-    brainstorming/SKILL.md:103   9. Transition to implementation -> writing-plans を呼ぶ
-    writing-plans/SKILL.md:18    Save plans to ...
+**architectural の場合は、canonical spec と plan の全文を `atct_goal_update_request_report` で
+goals テーブルの `spec` と `plan` に書き込み、その後 `atct_plan_handoff_review_request` でレビューに出す。**
 
-**spec は `doc/specs/`、plan は `doc/plans/` に置く**（superpowers の既定
-`docs/superpowers/` を上書きする）。
+**`doc/specs/` や `doc/plans/` のパス、またはそれらへの参照は、この payload を満たさない。**
 
-**手順 8 は「plan を出す」ではない。**分類の結果として手元にあるものを出す。
+**手順 8 は、canonical spec と plan の全文を DB に書いてから review request を出す。**
 **spike で plan を捏造しない。**
 
 ### 使わないもの

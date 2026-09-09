@@ -795,6 +795,36 @@ func TestContractN5GoalGetReturnsContentAndAllTaskStatuses(t *testing.T) {
 	fixture := newGoalListFixture(t)
 	defer fixture.store.Close()
 
+	const (
+		wantSpec = "# Canonical spec\n\n- Preserve every line.\n- Keep Markdown intact."
+		wantPlan = "# Canonical plan\n\n1. Write the spec.\n2. Read it back verbatim."
+	)
+	ctx := context.Background()
+	requesterID := daemonTestSessionID(t, fixture.store, "goal-get-spec-plan-requester")
+	if _, err := fixture.store.ClaimProject(ctx, fixture.project.ID, requesterID); err != nil {
+		t.Fatalf("ClaimProject: %v", err)
+	}
+	holderID := daemonTestSessionID(t, fixture.store, "goal-get-spec-plan-holder")
+	handoff, err := fixture.store.RequestGoalHandoff(ctx, "goal-get-spec-plan-handoff", fixture.doneOnlyGoal.ID, requesterID, "write canonical design")
+	if err != nil {
+		t.Fatalf("RequestGoalHandoff: %v", err)
+	}
+	if _, err := fixture.store.ReceiveGoalHandoff(ctx, handoff.ID, fixture.doneOnlyGoal.ID, holderID); err != nil {
+		t.Fatalf("ReceiveGoalHandoff: %v", err)
+	}
+	updateParams, err := json.Marshal(map[string]any{
+		"goal_id":          fixture.doneOnlyGoal.ID,
+		"spec":             wantSpec,
+		"plan":             wantPlan,
+		"agent_session_id": holderID,
+	})
+	if err != nil {
+		t.Fatalf("marshal goal.update_request_report params: %v", err)
+	}
+	if _, err := fixture.daemon.dispatch(ctx, rpc.Request{Method: "goal.update_request_report", Params: updateParams}); err != nil {
+		t.Fatalf("goal.update_request_report: %v", err)
+	}
+
 	wantTasks, err := fixture.store.ListTasks(context.Background(), fixture.doneOnlyGoal.ID)
 	if err != nil {
 		t.Fatalf("ListTasks: %v", err)
@@ -814,6 +844,8 @@ func TestContractN5GoalGetReturnsContentAndAllTaskStatuses(t *testing.T) {
 	var response struct {
 		Goal struct {
 			Content string `json:"content"`
+			Spec    string `json:"spec"`
+			Plan    string `json:"plan"`
 		} `json:"goal"`
 		Tasks []struct {
 			ID     int64  `json:"id"`
@@ -825,6 +857,9 @@ func TestContractN5GoalGetReturnsContentAndAllTaskStatuses(t *testing.T) {
 	}
 	if response.Goal.Content == "" {
 		t.Fatal("goal.get returned empty goal content")
+	}
+	if response.Goal.Spec != wantSpec || response.Goal.Plan != wantPlan {
+		t.Fatalf("goal.get spec/plan = (%q, %q), want (%q, %q)", response.Goal.Spec, response.Goal.Plan, wantSpec, wantPlan)
 	}
 	if len(response.Tasks) != len(wantTasks) {
 		t.Fatalf("goal.get task count = %d, want %d", len(response.Tasks), len(wantTasks))

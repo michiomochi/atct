@@ -937,7 +937,9 @@ func TestHTTPGoalDetailIncludesAllTasksWithoutCrossGoalMixing(t *testing.T) {
 
 func TestHTTPGoalDetailIncludesRequestReportFields(t *testing.T) {
 	f := newBareFixture(t)
-	if _, err := f.store.UpdateGoalRequestReport(f.ctx, f.goal.ID, "stored spec", "stored plan"); err != nil {
+	wantSpec := "# Canonical spec\n\nSpec line one.\nSpec line two."
+	wantPlan := "# Canonical plan\n\nPlan line one.\nPlan line two."
+	if _, err := f.store.UpdateGoalRequestReport(f.ctx, f.goal.ID, wantSpec, wantPlan); err != nil {
 		t.Fatal(err)
 	}
 	srv := newTestServer(t, f.store)
@@ -955,8 +957,11 @@ func TestHTTPGoalDetailIncludesRequestReportFields(t *testing.T) {
 	if err := json.Unmarshal(body, &payload); err != nil {
 		t.Fatal(err)
 	}
-	if payload.Goal.Spec != "stored spec" || payload.Goal.Plan != "stored plan" {
-		t.Fatalf("goal request report = %+v", payload.Goal)
+	if payload.Goal.Spec != wantSpec {
+		t.Fatalf("goal spec = %q, want %q", payload.Goal.Spec, wantSpec)
+	}
+	if payload.Goal.Plan != wantPlan {
+		t.Fatalf("goal plan = %q, want %q", payload.Goal.Plan, wantPlan)
 	}
 }
 
