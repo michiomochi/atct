@@ -112,6 +112,27 @@ cannot be considered the next responsibility merely because a row exists; it
 must be delegated. The handoff therefore preserves all four required proofs:
 request, receive, create, and complete.
 
+#### Task-create persistence boundary (Decision 726 amendment)
+
+`task_create_handoff_tasks` is the durable, request-scoped membership of the
+implementation-task batch. It is not watcher delivery state: reconciliation
+needs only the parent handoff phase, but restart-safe replay and completion
+must identify exactly the tasks created by this invocation. Completion requires
+a nonempty membership set and a requested task handoff for every member; an
+unrelated task in the same goal must not satisfy that proof.
+
+`task_create_handoffs.plan_handoff_id` is the immutable provenance for the
+accepted plan that generated the request. Its unique foreign key establishes
+one task-create handoff per accepted-plan generation and lets receipt authorize
+only the plan review requester after a restart. `goal_id` and task-create state
+cannot recover that receiver when a goal has multiple plan-review generations.
+
+Neither structure may be removed merely to reduce table/column count. A future
+replacement must first persist equivalent facts: a request-scoped task-batch
+identity with FK-checked membership, and an immutable accepted-plan generation
+with an authorized receiver snapshot. It must backfill and dual-read those
+facts before a later migration drops either current structure.
+
 ### Planning-task boundary
 
 This restriction begins only after a plan handoff for the goal has been
@@ -183,6 +204,10 @@ Tests must establish all of the following.
    authorizes it. The authorized operation creates idempotently, records its
    task IDs, and completes only after every created task has a requested task
    handoff.
+   Its durable batch membership excludes unrelated same-goal tasks, makes replay
+   return the same batch, and makes completion require a requested task handoff
+   for every member. The handoff's unique accepted-plan reference authorizes
+   only that plan review requester to receive it across restart.
 4. Task, plan, and goal review rejections require the original submitter's
    explicit receipt before revision; a new review request closes that rejection
    phase. Foreign sessions are rejected at every transition.

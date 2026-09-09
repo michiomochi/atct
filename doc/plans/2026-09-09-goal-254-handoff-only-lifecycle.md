@@ -14,6 +14,7 @@
 - Do not retain a `task.declare` RPC, `DeclareTasks` store method, or compatibility alias.
 - Do not retain `orchestration_scope`, `orchestration_delivery_leases`, `orchestration_delivery_receipts`, `orchestration_review_work`, or `orchestration_blockers` in the schema or production code.
 - Do not add persistent delivery cursors, acknowledgement records, monitor ownership, blocker replacement tables, wrapper restart, or monitor-health recovery.
+- Retain `task_create_handoff_tasks` as the FK-backed request-scoped task batch and retain the unique `task_create_handoffs.plan_handoff_id` accepted-plan provenance. Decision 726 permits a later replacement only after it persists equivalent batch membership plus accepted-plan generation/authorized-receiver facts, backfills them, and dual-reads before a separate destructive migration.
 - Regenerate committed sqlc output with `go tool sqlc generate`; run `script/schema-check.sh` before the final commit.
 - Run Go tests with `GOCACHE=/private/tmp/goal254-go-cache`. No Ponytail hooks are used.
 
@@ -32,7 +33,7 @@
 **Interfaces:**
 
 - Consumes: migrations `0031`–`0034` and the current `goal_handoffs`, `task_handoffs`, `plan_handoffs`, and `decisions` rows.
-- Produces: `task_create_handoffs`, `task_create_handoff_tasks`, and review-rejection receipt columns. The legacy `orchestration_*` tables remain until Task 4's cleanup migration, so existing lifecycle code remains executable during this stage.
+- Produces: `task_create_handoffs`, `task_create_handoff_tasks`, and review-rejection receipt columns. `plan_handoff_id` remains a unique FK to the accepted plan; the junction remains the FK-backed per-request task batch. The legacy `orchestration_*` tables remain until Task 4's cleanup migration, so existing lifecycle code remains executable during this stage.
 
 - [ ] **Step 1: Write migration fixture tests before the migration.**
 
@@ -61,7 +62,7 @@
 
 - [ ] **Step 3: Add migration 0035 and make `schema.sql` match it.**
 
-  Create `task_create_handoffs` with `id`, `plan_handoff_id`, `goal_id`, request/receipt/completion session IDs and timestamps, request/complete reports, and a unique plan-handoff reference. Create `task_create_handoff_tasks(handoff_id, task_id)` with a composite primary key and foreign keys. Add the review-rejection receipt columns required by Task 3. Do not drop legacy tables or indexes in 0035; Task 4 removes their production users before a later cleanup migration drops them. Mirror this intermediate schema in `schema.sql`.
+  Create `task_create_handoffs` with `id`, `plan_handoff_id`, `goal_id`, request/receipt/completion session IDs and timestamps, request/complete reports, and a unique plan-handoff reference. The reference is the accepted-plan generation and receiver-authorization provenance, not redundant goal metadata. Create `task_create_handoff_tasks(handoff_id, task_id)` with a composite primary key and foreign keys; it is the authoritative request-scoped created-task batch for replay and all-delegated completion, not a derivable list of all goal tasks. Add the review-rejection receipt columns required by Task 3. Do not drop either task-create structure in this goal; a future simplification needs equivalent persisted identities, backfill, dual-read, and a later destructive migration. Do not drop legacy tables or indexes in 0035; Task 4 removes their production users before a later cleanup migration drops them. Mirror this intermediate schema in `schema.sql`.
 
 - [ ] **Step 4: Extend schema parity assertions.**
 
@@ -104,7 +105,7 @@
 **Interfaces:**
 
 - Consumes: `CompletePlanHandoff(handoffID, goalID, reviewerID, report)` and a received goal handoff.
-- Produces: `TaskCreateHandoff{ID, PlanHandoffID, GoalID, RequestedBy, ReceivedBy, RequestedAt, ReceivedAt, CompletedAt, CreatedTaskIDs}` and RPCs `task.create`, `task.create_handoff.receive`, and `task.create_handoff.complete`.
+- Produces: `TaskCreateHandoff{ID, PlanHandoffID, GoalID, RequestedBy, ReceivedBy, RequestedAt, ReceivedAt, CompletedAt, CreatedTaskIDs}` and RPCs `task.create`, `task.create_handoff.receive`, and `task.create_handoff.complete`. `PlanHandoffID` is the accepted-plan provenance used to authorize the rightful receiver; `CreatedTaskIDs` is reloaded from the request-scoped junction so restart-safe completion can prove every and only created task was delegated.
 
 - [ ] **Step 1: Write the store lifecycle test.**
 
