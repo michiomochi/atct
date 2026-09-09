@@ -1273,13 +1273,7 @@ func reconcileWatchScope(ctx context.Context, client *http.Client, baseURL strin
 		scopeFilter = newWatchPassThroughFilter()
 	}
 	for _, decision := range state.Decisions {
-		if scope.ProjectID != "" && decision.ProjectID != "" && decision.ProjectID != scope.ProjectID {
-			continue
-		}
-		if scope.TaskID != "" && decision.TaskID != scope.TaskID {
-			continue
-		}
-		if scope.TaskID == "" && scope.GoalID != "" && decision.GoalID != scope.GoalID {
+		if !watchScopeMatchesDecision(scope, decision) {
 			continue
 		}
 		if shouldProjectAppliedGoalApproval(scope, state, decision) {

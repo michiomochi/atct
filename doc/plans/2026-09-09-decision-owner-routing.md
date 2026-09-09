@@ -21,14 +21,12 @@
 
 **Files:**
 
-- Modify: `internal/store/decision.go`
 - Modify: `internal/store/workflow_events.go`
-- Modify: `internal/httpapi/server.go`
 - Modify: `internal/daemon/handler.go`
 - Modify: `cmd/atct/watch.go`
 - Modify: `cmd/atct/watch_scope.go`
-- Test: `internal/store/decision_poll_test.go`
 - Test: `internal/daemon/decision_poll_scope_test.go`
+- Test: `internal/daemon/pending_response_test.go`
 - Test: `cmd/atct/watch_scope_test.go`
 - Test: `cmd/atct/watch_test.go`
 - Test: `cmd/atct/codex_monitor_test.go`
@@ -46,7 +44,9 @@
   first. Exercise direct reconciliation and SSE-triggered reconciliation, and
   assert the Codex bridge action sink receives no suppressed action. Change the
   foreign direct-poll assertion to require refusal/no transition, then assert
-  the owner poll transitions to `applied`.
+  the owner poll transitions to `applied`. Update the existing pending-response
+  fixture so the session polling its decision is that Decision's owner; keep
+  its assertion that the separate answered Decision remains in the response.
 
 - [ ] **Step 2: Run the tests to verify the regression**
 
@@ -75,9 +75,9 @@
 
   Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 5: Subcommander commits accepted work**
 
   ```bash
-  git add internal/store/decision.go internal/store/workflow_events.go internal/httpapi/server.go internal/daemon/handler.go cmd/atct/watch.go cmd/atct/watch_scope.go internal/store/decision_poll_test.go internal/daemon/decision_poll_scope_test.go cmd/atct/watch_scope_test.go cmd/atct/watch_test.go cmd/atct/codex_monitor_test.go
+  git add internal/store/workflow_events.go internal/daemon/handler.go internal/daemon/decision_poll_scope_test.go internal/daemon/pending_response_test.go cmd/atct/watch.go cmd/atct/watch_scope.go cmd/atct/watch_scope_test.go doc/plans/2026-09-09-decision-owner-routing.md
   git commit -m "fix: route decision notifications to their owner"
   ```

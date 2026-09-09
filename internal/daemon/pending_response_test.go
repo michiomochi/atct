@@ -127,9 +127,18 @@ func TestDecisionPollNotificationExcludesPolledDecision(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateTasks: %v", err)
 	}
-	polled := answerPendingResponseDecision(t, s, goal.ID, tasks[0].ID, "polled decision")
-	other := answerPendingResponseDecision(t, s, goal.ID, tasks[1].ID, "other decision")
 	pollSessionID := daemonTestSessionID(t, s, "poll-run")
+	polled, err := s.AskDecision(ctx, store.AskInput{
+		GoalID: goal.ID, TaskID: tasks[0].ID, Kind: domain.KindDecision, Question: "polled decision",
+		Options: []domain.Option{{Label: "yes"}}, AgentSessionID: pollSessionID,
+	})
+	if err != nil {
+		t.Fatalf("AskDecision: %v", err)
+	}
+	if _, err := s.AnswerDecision(ctx, store.AnswerInput{DecisionID: polled.ID, AnswerLabel: "yes", AnswerText: "yes"}); err != nil {
+		t.Fatalf("AnswerDecision: %v", err)
+	}
+	other := answerPendingResponseDecision(t, s, goal.ID, tasks[1].ID, "other decision")
 
 	params, err := json.Marshal(map[string]any{
 		"agent_session_id": pollSessionID, "decision_id": polled.ID, "include_unapplied_answers": true,
