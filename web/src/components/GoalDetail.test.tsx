@@ -214,12 +214,28 @@ function emptyInbox(): InboxResponse {
 }
 
 describe("GoalDetail", () => {
-	 it("renders read-only spec and plan, using unset for empty values", async () => {
-		vi.mocked(fetchGoal).mockResolvedValueOnce(goalResponse({ spec: "Spec text", plan: "" }));
-		render(<GoalDetail id="goal-1" />);
-		await waitFor(() => expect(screen.getByTestId("request-report").textContent).toContain("Spec text"));
-		expect(screen.getByTestId("request-report").textContent).toContain("goal.requestReport.unset");
-	});
+  it("renders multi-line read-only spec and plan", async () => {
+    const spec = "# Canonical spec\n\nSpec line one.\nSpec line two.";
+    const plan = "# Canonical plan\n\nPlan line one.\nPlan line two.";
+    vi.mocked(fetchGoal).mockResolvedValueOnce(goalResponse({ spec, plan }));
+
+    render(<GoalDetail id="goal-1" />);
+
+    const report = await screen.findByTestId("request-report");
+    expect(Array.from(report.querySelectorAll("p"), (paragraph) => paragraph.textContent)).toEqual([spec, plan]);
+  });
+
+  it("uses unset for empty spec and plan values", async () => {
+    vi.mocked(fetchGoal).mockResolvedValueOnce(goalResponse({ spec: "", plan: "" }));
+
+    render(<GoalDetail id="goal-1" />);
+
+    const report = await screen.findByTestId("request-report");
+    expect(Array.from(report.querySelectorAll("p"), (paragraph) => paragraph.textContent)).toEqual([
+      "goal.requestReport.unset",
+      "goal.requestReport.unset",
+    ]);
+  });
   it("asks for the goal diff with the id resolved from the route, not the placeholder", async () => {
     const response = goalResponse({ status: "active" });
     vi.mocked(fetchGoal).mockResolvedValueOnce(response);

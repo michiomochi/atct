@@ -1100,6 +1100,11 @@ func updateGoalContentForTest(t *testing.T, fixture goalListFixture, goalID int6
 func TestRequestReportDirectFieldsAuthorizeAndReadBack(t *testing.T) {
 	fixture := newGoalListFixture(t)
 	defer fixture.store.Close()
+
+	const (
+		wantSpec = "# Canonical spec\n\n- Preserve every line.\n- Keep Markdown intact."
+		wantPlan = "# Canonical plan\n\n1. Write the spec.\n2. Read it back verbatim."
+	)
 	goalID := fixture.active[0].ID
 	ctx := context.Background()
 	requesterID := daemonTestSessionID(t, fixture.store, "request-report-requester")
@@ -1115,7 +1120,7 @@ func TestRequestReportDirectFieldsAuthorizeAndReadBack(t *testing.T) {
 		t.Fatal(err)
 	}
 	call := func(sessionID int64) (json.RawMessage, error) {
-		params, _ := json.Marshal(map[string]any{"goal_id": goalID, "spec": "spec body", "plan": "plan body", "agent_session_id": sessionID})
+		params, _ := json.Marshal(map[string]any{"goal_id": goalID, "spec": wantSpec, "plan": wantPlan, "agent_session_id": sessionID})
 		return fixture.daemon.dispatch(ctx, rpc.Request{Method: "goal.update_request_report", Params: params})
 	}
 	if _, err := call(daemonTestSessionID(t, fixture.store, "request-report-non-holder")); err == nil {
@@ -1140,15 +1145,15 @@ func TestRequestReportDirectFieldsAuthorizeAndReadBack(t *testing.T) {
 	if err := json.Unmarshal(result, &goal); err != nil {
 		t.Fatal(err)
 	}
-	if goal.Spec != "spec body" || goal.Plan != "plan body" {
-		t.Fatalf("result = %+v", goal)
+	if goal.Spec != wantSpec || goal.Plan != wantPlan {
+		t.Fatalf("result spec/plan = (%q, %q), want (%q, %q)", goal.Spec, goal.Plan, wantSpec, wantPlan)
 	}
 	persisted, err := fixture.store.GetGoal(context.Background(), goalID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if persisted.Spec != "spec body" || persisted.Plan != "plan body" {
-		t.Fatalf("readback = %+v", persisted)
+	if persisted.Spec != wantSpec || persisted.Plan != wantPlan {
+		t.Fatalf("readback spec/plan = (%q, %q), want (%q, %q)", persisted.Spec, persisted.Plan, wantSpec, wantPlan)
 	}
 }
 
