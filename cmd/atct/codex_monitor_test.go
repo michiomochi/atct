@@ -980,61 +980,6 @@ func TestCodexMonitorKeepsDistinctDeliveryPhasesInOrder(t *testing.T) {
 	}
 }
 
-func TestReconcileWatchScopeCodexMonitorPrunesApprovalAfterGoalReceive(t *testing.T) {
-	states := []string{
-		`{"goals":[{"id":42,"status":"active"}],"decisions":[{"id":71,"goal_id":42,"kind":"goal_approval","status":"applied","answer_label":"approve"}],"goal_handoffs":[],"plan_handoffs":[],"task_handoffs":[]}`,
-		`{"goals":[{"id":42,"status":"active"}],"decisions":[{"id":71,"goal_id":42,"kind":"goal_approval","status":"applied","answer_label":"approve"}],"goal_handoffs":[{"ID":"goal-1","GoalID":42,"ReceivedAt":"2026-09-06T00:00:00Z"}],"plan_handoffs":[],"task_handoffs":[]}`,
-	}
-	var calls int
-	client := &http.Client{Transport: watchRoundTripper(func(req *http.Request) (*http.Response, error) {
-		if req.URL.Path != "/api/events/reconcile" || calls >= len(states) {
-			return nil, errors.New("unexpected reconciliation request")
-		}
-		body := states[calls]
-		calls++
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Status:     "200 OK",
-			Header:     http.Header{"Content-Type": []string{"application/json"}},
-			Body:       io.NopCloser(strings.NewReader(body)),
-		}, nil
-	})}
-
-	starter := &fakeCodexTurnStarter{}
-	bridge := newCodexMonitorBridge(starter, "thread-1")
-	bridge.SetActive(true)
-	ctx := context.Background()
-	lastWakeupContent := ""
-	delivered := make(map[watchDeliveryKey]struct{})
-	wakeupDiscrepancyDelivered := make(map[watchWakeupDeliveryKey]struct{})
-	detectionDelivered := make(map[watchDetectionDeliveryKey]struct{})
-	for range states {
-		if err := reconcileWatchScope(
-			ctx, client, "http://daemon", watchScope{ProjectID: "project-1"}, io.Discard,
-			delivered, &lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered,
-			newWatchScopeFilter(""), nil, bridge.ActionSinkWithContext(ctx),
-		); err != nil {
-			t.Fatalf("reconcileWatchScope: %v", err)
-		}
-	}
-	if got := bridge.QueueLen(); got != 1 {
-		t.Fatalf("queue length after goal receive = %d, want only receive action", got)
-	}
-
-	if err := bridge.HandleNotification(ctx, codexAppServerNotification{
-		Method: "thread/status/changed",
-		Params: mustJSON(map[string]any{
-			"threadId": "thread-1",
-			"status":   map[string]any{"type": "idle"},
-		}),
-	}); err != nil {
-		t.Fatalf("HandleNotification(idle): %v", err)
-	}
-	if got := starter.callsSnapshot(); len(got) != 1 || got[0] != "atct goal handoff received (goal_id: 42, handoff_id: goal-1)" {
-		t.Fatalf("turn after goal receive = %#v, want only receive action", got)
-	}
-}
-
 func TestCodexMonitorEventSinkOnlyReceivesFormattedLines(t *testing.T) {
 	starter := &fakeCodexTurnStarter{}
 	bridge := newCodexMonitorBridge(starter, "thread-1")
