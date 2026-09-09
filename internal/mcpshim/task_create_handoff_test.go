@@ -15,7 +15,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-func TestTaskCreateLifecycleToolsExecuteAgainstDaemon(t *testing.T) {
+func TestTaskCreateHandoffLifecycleToolsExecuteAgainstDaemon(t *testing.T) {
 	ctx := context.Background()
 	s, socketPath, goalID, handoffID, receiverID := taskCreateMCPFixture(t)
 	server := mcp.NewServer(&mcp.Implementation{Name: "atct-test", Version: "test"}, nil)
@@ -40,9 +40,9 @@ func TestTaskCreateLifecycleToolsExecuteAgainstDaemon(t *testing.T) {
 	if err != nil || result == nil || result.IsError {
 		t.Fatalf("atct_task_create_handoff_receive = %+v, %v", result, err)
 	}
-	handoff, err := s.GetTaskCreateHandoffForPlan(ctx, "mcp-plan")
+	handoff, err := s.GetTaskCreateHandoffForGoal(ctx, goalID)
 	if err != nil {
-		t.Fatalf("GetTaskCreateHandoffForPlan: %v", err)
+		t.Fatalf("GetTaskCreateHandoffForGoal: %v", err)
 	}
 	if handoff.ReceivedBy != receiverID {
 		t.Fatalf("MCP receipt owner = %d, want injected session %d", handoff.ReceivedBy, receiverID)
@@ -53,37 +53,12 @@ func TestTaskCreateLifecycleToolsExecuteAgainstDaemon(t *testing.T) {
 	if err != nil || result == nil || result.IsError {
 		t.Fatalf("atct_task_create = %+v, %v", result, err)
 	}
-	if len(handoff.CreatedTaskIDs) != 0 {
-		t.Fatalf("handoff before reload unexpectedly has task IDs: %+v", handoff)
-	}
-	handoff, err = s.GetTaskCreateHandoffForPlan(ctx, "mcp-plan")
+	handoff, err = s.GetTaskCreateHandoffForGoal(ctx, goalID)
 	if err != nil {
-		t.Fatalf("GetTaskCreateHandoffForPlan after create: %v", err)
-	}
-	if len(handoff.CreatedTaskIDs) != 1 {
-		t.Fatalf("MCP create task IDs = %+v, want one", handoff.CreatedTaskIDs)
-	}
-
-	result, err = clientSession.CallTool(ctx, &mcp.CallToolParams{Name: "atct_task_create_handoff_complete", Arguments: map[string]any{"handoff_id": handoffID, "complete_report": "done"}})
-	if err != nil {
-		t.Fatalf("CallTool(atct_task_create_handoff_complete before delegate): %v", err)
-	}
-	if result == nil || !result.IsError {
-		t.Fatalf("atct_task_create_handoff_complete before delegate = %+v, want error", result)
-	}
-	if _, err := s.RequestTaskHandoff(ctx, "mcp-child", handoff.CreatedTaskIDs[0], receiverID, "delegate"); err != nil {
-		t.Fatalf("RequestTaskHandoff: %v", err)
-	}
-	result, err = clientSession.CallTool(ctx, &mcp.CallToolParams{Name: "atct_task_create_handoff_complete", Arguments: map[string]any{"handoff_id": handoffID, "complete_report": "done"}})
-	if err != nil || result == nil || result.IsError {
-		t.Fatalf("atct_task_create_handoff_complete = %+v, %v", result, err)
-	}
-	handoff, err = s.GetTaskCreateHandoffForPlan(ctx, "mcp-plan")
-	if err != nil {
-		t.Fatalf("GetTaskCreateHandoffForPlan after complete: %v", err)
+		t.Fatalf("GetTaskCreateHandoffForGoal after create: %v", err)
 	}
 	if handoff.CompletedBy != receiverID || handoff.CompletedAt == nil {
-		t.Fatalf("MCP completion = %+v, want injected session %d", handoff, receiverID)
+		t.Fatalf("MCP creation completion = %+v, want injected session %d without task delegation", handoff, receiverID)
 	}
 }
 
@@ -138,9 +113,9 @@ func taskCreateMCPFixture(t *testing.T) (*store.Store, string, int64, string, in
 	if _, err := s.CompletePlanHandoff(ctx, plan.ID, goal.ID, commanderID, "accepted"); err != nil {
 		t.Fatalf("CompletePlanHandoff: %v", err)
 	}
-	handoff, err := s.GetTaskCreateHandoffForPlan(ctx, plan.ID)
+	handoff, err := s.GetTaskCreateHandoffForGoal(ctx, goal.ID)
 	if err != nil {
-		t.Fatalf("GetTaskCreateHandoffForPlan: %v", err)
+		t.Fatalf("GetTaskCreateHandoffForGoal: %v", err)
 	}
 	socketPath := filepath.Join(dir, "daemon.sock")
 	serveCtx, cancel := context.WithCancel(context.Background())

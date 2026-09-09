@@ -124,11 +124,11 @@ func TestWorkflowReconciliationIncludesTaskCreateHandoff(t *testing.T) {
 	if _, err := s.ReceiveGoalHandoff(ctx, goalHandoff.ID, goalID, testSessionID("workflow-task-create-subcommander")); err != nil {
 		t.Fatalf("ReceiveGoalHandoff: %v", err)
 	}
-	plan, err := s.RequestPlanHandoffReview(ctx, "workflow-task-create-plan", goalID, testSessionID("workflow-task-create-subcommander"), "ready")
+	_, err = s.RequestPlanHandoffReview(ctx, "workflow-task-create-plan", goalID, testSessionID("workflow-task-create-subcommander"), "ready")
 	if err != nil {
 		t.Fatalf("RequestPlanHandoffReview: %v", err)
 	}
-	if _, err := s.DB().ExecContext(ctx, `INSERT INTO task_create_handoffs (id, plan_handoff_id, goal_id, requested_at) VALUES (?, ?, ?, ?)`, "workflow-task-create", plan.ID, goalID, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+	if _, err := s.DB().ExecContext(ctx, `INSERT INTO task_create_handoffs (id, goal_id, requested_at) VALUES (?, ?, ?)`, "workflow-task-create", goalID, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
 		t.Fatalf("insert task-create handoff: %v", err)
 	}
 

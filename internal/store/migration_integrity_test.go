@@ -95,7 +95,7 @@ func TestGoal254MigrationPreservesCanonicalRowsAndRemovesOrchestrationState(t *t
 		t.Fatalf("load embedded migrations: %v", err)
 	}
 	for _, migration := range migrations {
-		if migration.filename == "0035_handoff_only_lifecycle.sql" {
+		if migration.filename == "0036_remove_legacy_orchestration.sql" {
 			break
 		}
 		if _, err := raw.Exec(migration.sql); err != nil {
@@ -123,6 +123,10 @@ INSERT INTO goal_handoffs (id, goal_id, requested_by, received_by, requested_at,
 VALUES ('goal-254-goal-handoff', 1, 1, 2, '2026-09-09T00:00:00Z', '2026-09-09T00:01:00Z');
 INSERT INTO plan_handoffs (id, goal_id, review_requested_by, review_requested_at, review_request_report)
 VALUES ('goal-254-plan-handoff', 1, 2, '2026-09-09T00:02:00Z', 'approved plan');
+INSERT INTO task_create_handoffs (id, plan_handoff_id, goal_id, requested_by, received_by, completed_by, requested_at, received_at, completed_at, request_report, complete_report)
+VALUES ('goal-254-task-create', 'goal-254-plan-handoff', 1, 1, 2, 2, '2026-09-09T00:02:00Z', '2026-09-09T00:03:00Z', '2026-09-09T00:04:00Z', 'create tasks', 'created tasks');
+INSERT INTO task_create_handoff_tasks (handoff_id, task_id)
+VALUES ('goal-254-task-create', 1);
 INSERT INTO decisions (id, goal_id, task_id, kind, question, options, status, agent_session_id, created_at)
 VALUES (1, 1, 1, 'implementation', 'keep this decision?', '[{"label":"yes"}]', 'open', 2, '2026-09-09T00:00:00Z');
 INSERT INTO orchestration_scope (scope_key, project_id, goal_id, task_id, role, agent_session_id, source_generation, created_at, updated_at)
@@ -155,8 +159,19 @@ VALUES ('goal-254-review-work', 1, 1, 1, 'task', 'goal-254-task-handoff', 2, 'ta
 
 	assertMigrationRecorded(t, migrated.DB(), "0035_handoff_only_lifecycle.sql")
 	assertMigrationRecorded(t, migrated.DB(), "0036_remove_legacy_orchestration.sql")
-	for _, table := range []string{"task_create_handoffs", "task_create_handoff_tasks"} {
-		assertTableExists(t, migrated.DB(), table)
+	assertMigrationRecorded(t, migrated.DB(), "0037_simplify_task_create_handoff.sql")
+	assertTableExists(t, migrated.DB(), "task_create_handoffs")
+	assertTableAbsent(t, migrated.DB(), "task_create_handoff_tasks")
+	taskCreateColumns := migrationTableColumns(t, migrated.DB(), "task_create_handoffs")
+	if _, ok := taskCreateColumns["plan_handoff_id"]; ok {
+		t.Error("task_create_handoffs still has plan_handoff_id")
+	}
+	var taskCreateGoalID int64
+	if err := migrated.DB().QueryRow(`SELECT goal_id FROM task_create_handoffs WHERE id = ?`, "goal-254-task-create").Scan(&taskCreateGoalID); err != nil || taskCreateGoalID != 1 {
+		t.Fatalf("preserved task-create handoff goal = %d, %v; want 1", taskCreateGoalID, err)
+	}
+	if _, err := migrated.DB().Exec(`INSERT INTO task_create_handoffs (id, goal_id) VALUES (?, ?)`, "duplicate-goal", 1); err == nil {
+		t.Error("task_create_handoffs accepted a duplicate goal_id")
 	}
 	for _, table := range []string{
 		"orchestration_scope", "orchestration_delivery_leases",

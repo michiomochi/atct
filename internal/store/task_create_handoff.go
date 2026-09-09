@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -14,14 +16,13 @@ import (
 var ErrTaskCreateHandoffState = fmt.Errorf("task create handoff is not in the required state")
 
 type TaskCreateHandoff struct {
-	ID, PlanHandoffID                            string
+	ID                                           string
 	GoalID, RequestedBy, ReceivedBy, CompletedBy int64
 	RequestedAt, ReceivedAt, CompletedAt         *time.Time
-	CreatedTaskIDs                               []int64
 }
 
 func taskCreateHandoffFromRow(row sqlcgen.TaskCreateHandoff) (TaskCreateHandoff, error) {
-	h := TaskCreateHandoff{ID: row.ID, PlanHandoffID: row.PlanHandoffID, GoalID: row.GoalID, RequestedBy: nullableAgentSessionID(row.RequestedBy), ReceivedBy: nullableAgentSessionID(row.ReceivedBy), CompletedBy: nullableAgentSessionID(row.CompletedBy)}
+	h := TaskCreateHandoff{ID: row.ID, GoalID: row.GoalID, RequestedBy: nullableAgentSessionID(row.RequestedBy), ReceivedBy: nullableAgentSessionID(row.ReceivedBy), CompletedBy: nullableAgentSessionID(row.CompletedBy)}
 	var err error
 	if h.RequestedAt, err = parseTaskHandoffTime("task create requested_at", row.RequestedAt); err != nil {
 		return h, err
@@ -35,9 +36,12 @@ func taskCreateHandoffFromRow(row sqlcgen.TaskCreateHandoff) (TaskCreateHandoff,
 	return h, nil
 }
 
-func (s *Store) GetTaskCreateHandoffForPlan(ctx context.Context, planHandoffID string) (TaskCreateHandoff, error) {
-	row, err := sqlcgen.New(s.db).GetTaskCreateHandoffForPlan(ctx, planHandoffID)
-	return s.handoffFromGenerated(ctx, row, err)
+func (s *Store) GetTaskCreateHandoffForGoal(ctx context.Context, goalID int64) (TaskCreateHandoff, error) {
+	row, err := sqlcgen.New(s.db).GetTaskCreateHandoffForGoal(ctx, goalID)
+	if err != nil {
+		return TaskCreateHandoff{}, err
+	}
+	return taskCreateHandoffFromRow(row)
 }
 
 func (s *Store) ListTaskCreateHandoffs(ctx context.Context, goalID int64) ([]TaskCreateHandoff, error) {
@@ -47,7 +51,7 @@ func (s *Store) ListTaskCreateHandoffs(ctx context.Context, goalID int64) ([]Tas
 	}
 	handoffs := make([]TaskCreateHandoff, 0, len(rows))
 	for _, row := range rows {
-		handoff, err := s.handoffFromGenerated(ctx, row, nil)
+		handoff, err := taskCreateHandoffFromRow(row)
 		if err != nil {
 			return nil, err
 		}
@@ -56,18 +60,12 @@ func (s *Store) ListTaskCreateHandoffs(ctx context.Context, goalID int64) ([]Tas
 	return handoffs, nil
 }
 
-func (s *Store) handoffFromGenerated(ctx context.Context, row sqlcgen.TaskCreateHandoff, err error) (TaskCreateHandoff, error) {
-	h, err := taskCreateHandoffFromRow(row)
-	if err != nil {
-		return h, err
-	}
-	h.CreatedTaskIDs, err = sqlcgen.New(s.db).ListTaskCreateHandoffTaskIDs(ctx, h.ID)
-	return h, err
-}
-
 func (s *Store) getTaskCreateHandoff(ctx context.Context, id string) (TaskCreateHandoff, error) {
 	row, err := sqlcgen.New(s.db).GetTaskCreateHandoff(ctx, id)
-	return s.handoffFromGenerated(ctx, row, err)
+	if err != nil {
+		return TaskCreateHandoff{}, err
+	}
+	return taskCreateHandoffFromRow(row)
 }
 
 func (s *Store) ReceiveTaskCreateHandoff(ctx context.Context, id string, receivedBy int64) (TaskCreateHandoff, error) {
@@ -78,9 +76,8 @@ func (s *Store) ReceiveTaskCreateHandoff(ctx context.Context, id string, receive
 	if h.ReceivedBy != 0 || h.CompletedAt != nil || h.RequestedBy == receivedBy || receivedBy == 0 {
 		return h, ErrTaskCreateHandoffState
 	}
-	// The plan submitter is the only receiver; its session is recorded on the plan handoff.
-	plan, err := s.GetPlanHandoff(ctx, h.PlanHandoffID)
-	if err != nil || plan.ReviewRequestedBy != receivedBy {
+	goalHandoff, err := s.openGoalHandoff(ctx, h.GoalID)
+	if err != nil || goalHandoff == nil || goalHandoff.ReceivedBy != receivedBy {
 		return h, ErrTaskCreateHandoffState
 	}
 	_, err = sqlcgen.New(s.db).ReceiveTaskCreateHandoff(ctx, sqlcgen.ReceiveTaskCreateHandoffParams{ID: id, ReceivedBy: sql.NullInt64{Int64: receivedBy, Valid: true}, ReceivedAt: sql.NullString{String: time.Now().UTC().Format(time.RFC3339Nano), Valid: true}})
@@ -90,42 +87,26 @@ func (s *Store) ReceiveTaskCreateHandoff(ctx context.Context, id string, receive
 	return s.getTaskCreateHandoff(ctx, id)
 }
 
-func (s *Store) CompleteTaskCreateHandoff(ctx context.Context, id string, completedBy int64, report string) (TaskCreateHandoff, error) {
-	h, err := s.getTaskCreateHandoff(ctx, id)
-	if err != nil {
-		return h, err
-	}
-	if h.ReceivedBy != completedBy || h.CompletedAt != nil || len(h.CreatedTaskIDs) == 0 {
-		return h, ErrTaskCreateHandoffState
-	}
-	missing, err := sqlcgen.New(s.db).CountUndelegatedTaskCreateHandoffTasks(ctx, id)
-	if err != nil || missing != 0 {
-		return h, ErrTaskCreateHandoffState
-	}
-	err = sqlcgen.New(s.db).CompleteTaskCreateHandoff(ctx, sqlcgen.CompleteTaskCreateHandoffParams{ID: id, CompletedBy: sql.NullInt64{Int64: completedBy, Valid: true}, CompletedAt: sql.NullString{String: time.Now().UTC().Format(time.RFC3339Nano), Valid: true}, CompleteReport: sql.NullString{String: report, Valid: true}})
-	if err != nil {
-		return h, err
-	}
-	return s.getTaskCreateHandoff(ctx, id)
-}
-
-func (s *Store) createTaskCreateHandoffTx(ctx context.Context, tx *sql.Tx, plan PlanHandoff, requestedBy int64) error {
-	return sqlcgen.New(tx).CreateTaskCreateHandoff(ctx, sqlcgen.CreateTaskCreateHandoffParams{ID: uuid.NewString(), PlanHandoffID: plan.ID, GoalID: plan.GoalID, RequestedBy: sql.NullInt64{Int64: requestedBy, Valid: true}, RequestedAt: sql.NullString{String: time.Now().UTC().Format(time.RFC3339Nano), Valid: true}, RequestReport: sql.NullString{String: "create implementation tasks for accepted plan", Valid: true}})
+func (s *Store) createTaskCreateHandoffTx(ctx context.Context, tx *sql.Tx, goalID, requestedBy int64) error {
+	return sqlcgen.New(tx).CreateTaskCreateHandoff(ctx, sqlcgen.CreateTaskCreateHandoffParams{ID: uuid.NewString(), GoalID: goalID, RequestedBy: sql.NullInt64{Int64: requestedBy, Valid: true}, RequestedAt: sql.NullString{String: time.Now().UTC().Format(time.RFC3339Nano), Valid: true}, RequestReport: sql.NullString{String: "create implementation tasks for accepted plan", Valid: true}})
 }
 
 func (s *Store) CreateTasksForHandoff(ctx context.Context, handoffID string, sessionID, goalID int64, agent, key string, titles, descriptions []string) ([]domain.Task, error) {
-	if handoffID == "" {
+	if handoffID == "" || key == "" || len(titles) == 0 {
 		return nil, ErrTaskCreateHandoffState
 	}
 	h, err := s.getTaskCreateHandoff(ctx, handoffID)
 	if err != nil {
 		return nil, err
 	}
-	if h.GoalID != goalID || h.ReceivedBy != sessionID || h.CompletedAt != nil {
+	if h.GoalID != goalID || h.ReceivedBy != sessionID {
 		return nil, ErrTaskCreateHandoffState
 	}
 	if len(titles) != len(descriptions) {
 		return nil, fmt.Errorf("create tasks: descriptions count %d does not match titles count %d", len(descriptions), len(titles))
+	}
+	if h.CompletedAt != nil {
+		return s.replayTasksForHandoff(ctx, goalID, key)
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -133,6 +114,20 @@ func (s *Store) CreateTasksForHandoff(ctx context.Context, handoffID string, ses
 	}
 	defer tx.Rollback()
 	q := sqlcgen.New(tx)
+	row, err := q.GetTaskCreateHandoff(ctx, handoffID)
+	if err != nil {
+		return nil, err
+	}
+	h, err = taskCreateHandoffFromRow(row)
+	if err != nil || h.GoalID != goalID || h.ReceivedBy != sessionID {
+		return nil, ErrTaskCreateHandoffState
+	}
+	if h.CompletedAt != nil {
+		if err := tx.Commit(); err != nil {
+			return nil, err
+		}
+		return s.replayTasksForHandoff(ctx, goalID, key)
+	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	existing, err := q.ListTasks(ctx, goalID)
 	if err != nil {
@@ -148,13 +143,17 @@ func (s *Store) CreateTasksForHandoff(ctx context.Context, handoffID string, ses
 	}
 	for i, title := range titles {
 		declareKey := fmt.Sprintf("%s#%d", key, i)
-		id, err := q.CreateTask(ctx, sqlcgen.CreateTaskParams{GoalID: goalID, Title: title, Description: descriptions[i], Status: string(domain.TaskTodo), Agent: agent, SortOrder: max + 1 + int64(i), DeclareKey: declareKey, CreatedAt: now, UpdatedAt: now})
+		_, err := q.CreateTask(ctx, sqlcgen.CreateTaskParams{GoalID: goalID, Title: title, Description: descriptions[i], Status: string(domain.TaskTodo), Agent: agent, SortOrder: max + 1 + int64(i), DeclareKey: declareKey, CreatedAt: now, UpdatedAt: now})
 		if err != nil {
 			return nil, err
 		}
-		if err := q.LinkTaskCreateHandoffTask(ctx, sqlcgen.LinkTaskCreateHandoffTaskParams{HandoffID: handoffID, TaskID: id}); err != nil {
-			return nil, err
-		}
+	}
+	completed, err := q.CompleteTaskCreateHandoff(ctx, sqlcgen.CompleteTaskCreateHandoffParams{ID: handoffID, ReceivedBy: sql.NullInt64{Int64: sessionID, Valid: true}, CompletedBy: sql.NullInt64{Int64: sessionID, Valid: true}, CompletedAt: sql.NullString{String: time.Now().UTC().Format(time.RFC3339Nano), Valid: true}, CompleteReport: sql.NullString{String: "implementation tasks created", Valid: true}})
+	if err != nil {
+		return nil, err
+	}
+	if affected, err := completed.RowsAffected(); err != nil || affected != 1 {
+		return nil, ErrTaskCreateHandoffState
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, err
@@ -172,6 +171,40 @@ func (s *Store) CreateTasksForHandoff(ctx context.Context, handoffID string, ses
 		k := fmt.Sprintf("%s#%d", key, i)
 		task := byKey[k]
 		created := !existed[k]
+		task.Created = &created
+		out = append(out, task)
+	}
+	return out, nil
+}
+
+func (s *Store) replayTasksForHandoff(ctx context.Context, goalID int64, key string) ([]domain.Task, error) {
+	all, err := s.ListTasks(ctx, goalID)
+	if err != nil {
+		return nil, err
+	}
+	prefix := key + "#"
+	byIndex := make(map[int]domain.Task)
+	for _, task := range all {
+		if !strings.HasPrefix(task.DeclareKey, prefix) {
+			continue
+		}
+		suffix := strings.TrimPrefix(task.DeclareKey, prefix)
+		index, err := strconv.Atoi(suffix)
+		if err != nil || index < 0 || strconv.Itoa(index) != suffix {
+			return nil, ErrTaskCreateHandoffState
+		}
+		byIndex[index] = task
+	}
+	if len(byIndex) == 0 {
+		return nil, ErrTaskCreateHandoffState
+	}
+	out := make([]domain.Task, 0, len(byIndex))
+	for index := 0; index < len(byIndex); index++ {
+		task, ok := byIndex[index]
+		if !ok {
+			return nil, ErrTaskCreateHandoffState
+		}
+		created := false
 		task.Created = &created
 		out = append(out, task)
 	}

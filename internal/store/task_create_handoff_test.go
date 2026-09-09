@@ -35,9 +35,9 @@ func TestTaskCreateHandoffFollowsAcceptedPlan(t *testing.T) {
 		t.Fatalf("CompletePlanHandoff: %v", err)
 	}
 
-	handoff, err := s.GetTaskCreateHandoffForPlan(ctx, plan.ID)
+	handoff, err := s.GetTaskCreateHandoffForGoal(ctx, goalID)
 	if err != nil {
-		t.Fatalf("GetTaskCreateHandoffForPlan: %v", err)
+		t.Fatalf("GetTaskCreateHandoffForGoal: %v", err)
 	}
 	if handoff.GoalID != goalID || handoff.ReceivedBy != 0 || handoff.RequestedBy != commanderID {
 		t.Fatalf("task create handoff = %+v, want commander request for goal", handoff)
@@ -55,12 +55,12 @@ func TestTaskCreateHandoffFollowsAcceptedPlan(t *testing.T) {
 	if _, err := s.CreateTasksForHandoff(ctx, handoff.ID, wrongID, goalID, "agent", "implementation", []string{"implement"}, []string{"implement through the received task-create handoff"}); err == nil {
 		t.Fatal("CreateTasks accepted a foreign session")
 	}
-	tasks, err := s.CreateTasksForHandoff(ctx, handoff.ID, subcommanderID, goalID, "agent", "implementation", []string{"implement"}, []string{"implement through the received task-create handoff"})
+	tasks, err := s.CreateTasksForHandoff(ctx, handoff.ID, subcommanderID, goalID, "agent", "implementation", []string{"implement one", "implement two"}, []string{"first implementation task", "second implementation task"})
 	if err != nil {
 		t.Fatalf("CreateTasks: %v", err)
 	}
-	if len(tasks) != 1 {
-		t.Fatalf("created tasks = %+v, want one new task", tasks)
+	if len(tasks) != 2 {
+		t.Fatalf("created tasks = %+v, want two new tasks", tasks)
 	}
 	if tasks[0].Created == nil || !*tasks[0].Created {
 		t.Fatalf("first CreateTasks created = %#v, want true", tasks[0].Created)
@@ -68,23 +68,34 @@ func TestTaskCreateHandoffFollowsAcceptedPlan(t *testing.T) {
 	if tasks[0].ID == unrelated[0].ID {
 		t.Fatalf("CreateTasks returned unrelated task %d", unrelated[0].ID)
 	}
-	retry, err := s.CreateTasksForHandoff(ctx, handoff.ID, subcommanderID, goalID, "agent", "implementation", []string{"implement"}, []string{"implement through the received task-create handoff"})
+	handoff, err = s.GetTaskCreateHandoffForGoal(ctx, goalID)
+	if err != nil {
+		t.Fatalf("GetTaskCreateHandoffForGoal after create: %v", err)
+	}
+	if handoff.CompletedAt == nil || handoff.CompletedBy != subcommanderID {
+		t.Fatalf("task create handoff = %+v, want completed by receiver without task handoffs", handoff)
+	}
+	retry, err := s.CreateTasksForHandoff(ctx, handoff.ID, subcommanderID, goalID, "agent", "implementation", []string{"implement one", "implement two"}, []string{"first implementation task", "second implementation task"})
 	if err != nil {
 		t.Fatalf("CreateTasks retry: %v", err)
 	}
-	if len(retry) != 1 || retry[0].ID != tasks[0].ID {
-		t.Fatalf("CreateTasks retry = %+v, want only request task %+v", retry, tasks[0])
+	if len(retry) != 2 || retry[0].ID != tasks[0].ID || retry[1].ID != tasks[1].ID {
+		t.Fatalf("CreateTasks retry = %+v, want only request tasks %+v", retry, tasks)
 	}
-	if retry[0].Created == nil || *retry[0].Created {
-		t.Fatalf("retry CreateTasks created = %#v, want false", retry[0].Created)
+	if retry[0].Created == nil || *retry[0].Created || retry[1].Created == nil || *retry[1].Created {
+		t.Fatalf("retry CreateTasks created = %#v, %#v; want false", retry[0].Created, retry[1].Created)
 	}
-	if _, err := s.CompleteTaskCreateHandoff(ctx, handoff.ID, subcommanderID, "done"); err == nil {
-		t.Fatal("CompleteTaskCreateHandoff accepted an undelegated task")
+	reducedRetry, err := s.CreateTasksForHandoff(ctx, handoff.ID, subcommanderID, goalID, "agent", "implementation", []string{"implement one"}, []string{"first implementation task"})
+	if err != nil {
+		t.Fatalf("CreateTasks reduced retry: %v", err)
 	}
-	if _, err := s.RequestTaskHandoff(ctx, "task-create-implementation", tasks[0].ID, subcommanderID, "delegate"); err != nil {
-		t.Fatalf("RequestTaskHandoff: %v", err)
+	if len(reducedRetry) != 2 || reducedRetry[0].ID != tasks[0].ID || reducedRetry[1].ID != tasks[1].ID {
+		t.Fatalf("CreateTasks reduced retry = %+v, want original request tasks %+v", reducedRetry, tasks)
 	}
-	if _, err := s.CompleteTaskCreateHandoff(ctx, handoff.ID, subcommanderID, "done"); err != nil {
-		t.Fatalf("CompleteTaskCreateHandoff: %v", err)
+	if reducedRetry[0].Created == nil || *reducedRetry[0].Created || reducedRetry[1].Created == nil || *reducedRetry[1].Created {
+		t.Fatalf("reduced retry created = %#v, %#v; want false", reducedRetry[0].Created, reducedRetry[1].Created)
+	}
+	if _, err := s.CreateTasksForHandoff(ctx, handoff.ID, subcommanderID, goalID, "agent", "other", []string{"other"}, []string{"different retry key"}); err == nil {
+		t.Fatal("CreateTasks accepted a different key after completion")
 	}
 }

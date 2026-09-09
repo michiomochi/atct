@@ -152,7 +152,6 @@ type TaskCommit struct {
 
 type TaskCreateHandoff struct {
 	ID             string
-	PlanHandoffID  string
 	GoalID         int64
 	RequestedBy    sql.NullInt64
 	ReceivedBy     sql.NullInt64
@@ -162,11 +161,6 @@ type TaskCreateHandoff struct {
 	CompletedAt    sql.NullString
 	RequestReport  sql.NullString
 	CompleteReport sql.NullString
-}
-
-type TaskCreateHandoffTask struct {
-	HandoffID string
-	TaskID    int64
 }
 
 type TaskHandoff struct {

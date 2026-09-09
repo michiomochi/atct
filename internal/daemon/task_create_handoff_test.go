@@ -33,9 +33,9 @@ func TestTaskCreateHandoffLifecycleOverRPC(t *testing.T) {
 	if err := client.Call(ctx, "plan.handoff.complete", map[string]any{"handoff_id": plan.ID, "goal_id": fixture.claimedGoalID, "agent_session_id": fixture.requesterID, "complete_report": "accepted"}, &plan); err != nil {
 		t.Fatalf("plan.handoff.complete: %v", err)
 	}
-	handoff, err := fixture.store.GetTaskCreateHandoffForPlan(ctx, plan.ID)
+	handoff, err := fixture.store.GetTaskCreateHandoffForGoal(ctx, fixture.claimedGoalID)
 	if err != nil {
-		t.Fatalf("GetTaskCreateHandoffForPlan: %v", err)
+		t.Fatalf("GetTaskCreateHandoffForGoal: %v", err)
 	}
 	decisionTasks, err := fixture.store.CreateTasks(ctx, fixture.claimedGoalID, "fixture", "task-create-decision", []string{"decision task"}, []string{"holds the decision returned to the task-create receiver"})
 	if err != nil {
@@ -60,7 +60,7 @@ func TestTaskCreateHandoffLifecycleOverRPC(t *testing.T) {
 		t.Fatalf("AnswerDecision foreign task-create decision: %v", err)
 	}
 
-	var tasks []struct{ ID int64 }
+	var tasks []domain.Task
 	if err := client.Call(ctx, "task.create", map[string]any{"goal_id": fixture.claimedGoalID, "agent_session_id": fixture.receiverID, "titles": []string{"implementation"}, "descriptions": []string{"implement"}, "idempotency_key": "task-create"}, &tasks); err == nil {
 		t.Fatal("task.create without a received handoff succeeded")
 	}
@@ -87,6 +87,9 @@ func TestTaskCreateHandoffLifecycleOverRPC(t *testing.T) {
 	if len(tasks) != 1 {
 		t.Fatalf("task.create raw tasks = %#v, want one", tasks)
 	}
+	if tasks[0].Created == nil || !*tasks[0].Created {
+		t.Fatalf("task.create created = %#v, want true", tasks[0].Created)
+	}
 	var createResponse pendingResponseEnvelope
 	if err := client.Call(ctx, "task.create", map[string]any{"handoff_id": handoff.ID, "goal_id": fixture.claimedGoalID, "agent_session_id": fixture.receiverID, "agent": "worker", "titles": []string{"implementation"}, "descriptions": []string{"implement"}, "idempotency_key": "task-create", "include_unapplied_answers": true}, &createResponse); err != nil {
 		t.Fatalf("task.create: %v", err)
@@ -100,17 +103,14 @@ func TestTaskCreateHandoffLifecycleOverRPC(t *testing.T) {
 	if len(tasks) != 1 {
 		t.Fatalf("task.create tasks = %#v, want one", tasks)
 	}
-	var completed store.TaskCreateHandoff
-	if err := client.Call(ctx, "task.create_handoff.complete", map[string]any{"handoff_id": handoff.ID, "completed_by": fixture.receiverID, "complete_report": "done"}, &completed); err == nil {
-		t.Fatal("task.create_handoff.complete accepted an undelegated task")
+	if tasks[0].Created == nil || *tasks[0].Created {
+		t.Fatalf("task.create retry created = %#v, want false", tasks[0].Created)
 	}
-	if _, err := fixture.store.RequestTaskHandoff(ctx, "task-create-child", tasks[0].ID, fixture.receiverID, "delegate"); err != nil {
-		t.Fatalf("RequestTaskHandoff: %v", err)
-	}
-	if err := client.Call(ctx, "task.create_handoff.complete", map[string]any{"handoff_id": handoff.ID, "completed_by": fixture.receiverID, "complete_report": "done"}, &completed); err != nil {
-		t.Fatalf("task.create_handoff.complete: %v", err)
+	completed, err := fixture.store.GetTaskCreateHandoffForGoal(ctx, fixture.claimedGoalID)
+	if err != nil {
+		t.Fatalf("GetTaskCreateHandoffForGoal after create: %v", err)
 	}
 	if completed.CompletedAt == nil || completed.CompletedBy != fixture.receiverID {
-		t.Fatalf("completed handoff = %+v, want completed by %d", completed, fixture.receiverID)
+		t.Fatalf("completed handoff = %+v, want completed by %d without task delegation", completed, fixture.receiverID)
 	}
 }

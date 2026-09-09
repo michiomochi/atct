@@ -181,8 +181,8 @@ func TestHTTPHandlerMCPListsFortyNineTools(t *testing.T) {
 	if !ok {
 		t.Fatalf("tools/list result.tools = %T, want array", result["tools"])
 	}
-	if len(tools) != 49 {
-		t.Fatalf("tools/list returned %d tools, want 49", len(tools))
+	if len(tools) != 48 {
+		t.Fatalf("tools/list returned %d tools, want 48", len(tools))
 	}
 	wantNames := map[string]bool{
 		"atct_role":                               false,
@@ -194,7 +194,6 @@ func TestHTTPHandlerMCPListsFortyNineTools(t *testing.T) {
 		"atct_goal_handoff_review_reject_receive": false,
 		"atct_plan_handoff_review_reject_receive": false,
 		"atct_task_create_handoff_receive":        false,
-		"atct_task_create_handoff_complete":       false,
 	}
 	for _, rawTool := range tools {
 		tool, ok := rawTool.(map[string]any)

@@ -217,8 +217,7 @@ CREATE INDEX IF NOT EXISTS monitor_health_last_seen_idx
 
 CREATE TABLE IF NOT EXISTS task_create_handoffs (
   id              TEXT PRIMARY KEY,
-  plan_handoff_id TEXT NOT NULL UNIQUE REFERENCES plan_handoffs(id),
-  goal_id         INTEGER NOT NULL REFERENCES goals(id),
+  goal_id         INTEGER NOT NULL UNIQUE REFERENCES goals(id),
   requested_by    INTEGER REFERENCES agent_sessions(id),
   received_by     INTEGER REFERENCES agent_sessions(id),
   completed_by    INTEGER REFERENCES agent_sessions(id),
@@ -227,13 +226,4 @@ CREATE TABLE IF NOT EXISTS task_create_handoffs (
   completed_at    TEXT,
   request_report  TEXT,
   complete_report TEXT
-);
-
-CREATE INDEX IF NOT EXISTS idx_task_create_handoffs_goal_id
-  ON task_create_handoffs(goal_id);
-
-CREATE TABLE IF NOT EXISTS task_create_handoff_tasks (
-  handoff_id TEXT NOT NULL REFERENCES task_create_handoffs(id),
-  task_id    INTEGER NOT NULL REFERENCES tasks(id),
-  PRIMARY KEY (handoff_id, task_id)
 );

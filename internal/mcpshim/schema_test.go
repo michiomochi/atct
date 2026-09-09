@@ -91,7 +91,6 @@ func TestRegisterPublishesFortySixToolsWithFlexibleOutputSchema(t *testing.T) {
 		"atct_plan_handoff_review_reject_receive": true,
 		"atct_goal_update_request_report":         true,
 		"atct_task_create_handoff_receive":        true,
-		"atct_task_create_handoff_complete":       true,
 	}
 	if len(got.Tools) != len(wantNames) {
 		t.Fatalf("tool count = %d, want %d", len(got.Tools), len(wantNames))
@@ -959,7 +958,6 @@ func TestNamedHandoffReviewRejectReceiveToolsForwardCanonicalMethods(t *testing.
 		{name: "atct_task_handoff_request", method: "task.handoff.request", ownedKey: "requested_by", reportKey: "request_report", args: map[string]any{"handoff_id": "task-request", "task_id": "1", "request_report": "request"}},
 		{name: "atct_task_create", method: "task.create", ownedKey: "agent_session_id", args: map[string]any{"handoff_id": "create-1", "goal_id": "1", "titles": []string{"task"}, "descriptions": []string{"description"}, "idempotency_key": "create", "agent": "agent"}},
 		{name: "atct_task_create_handoff_receive", method: "task.create_handoff.receive", ownedKey: "received_by", args: map[string]any{"handoff_id": "create-1"}},
-		{name: "atct_task_create_handoff_complete", method: "task.create_handoff.complete", ownedKey: "completed_by", reportKey: "complete_report", args: map[string]any{"handoff_id": "create-1", "complete_report": "done"}},
 		{name: "atct_task_handoff_receive", method: "task.handoff.receive", ownedKey: "received_by", args: map[string]any{"handoff_id": "task-receive", "task_id": "1"}},
 		{name: "atct_task_handoff_review_request", method: "task.handoff.review.request", ownedKey: "requested_by", reportKey: "review_request_report", args: map[string]any{"handoff_id": "task-review-request", "task_id": "1", "review_request_report": "review"}},
 		{name: "atct_task_handoff_review_receive", method: "task.handoff.review.receive", ownedKey: "received_by", args: map[string]any{"handoff_id": "task-review-receive", "task_id": "1"}},

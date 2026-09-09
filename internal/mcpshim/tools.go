@@ -72,10 +72,6 @@ type TaskCreateIn struct {
 type TaskCreateHandoffIn struct {
 	HandoffID string `json:"handoff_id"`
 }
-type TaskCreateHandoffCompleteIn struct {
-	HandoffID      string `json:"handoff_id"`
-	CompleteReport string `json:"complete_report"`
-}
 
 type TaskClaimIn struct {
 	TaskID mcpID `json:"task_id"`
@@ -709,9 +705,6 @@ func Register(server *mcp.Server, c *Client, agentSessionID int64) {
 	})
 	addMCPTool[TaskCreateHandoffIn, RawWithUnappliedDecisions](server, &mcp.Tool{Name: "atct_task_create_handoff_receive", Description: "Receive an accepted plan's task-create handoff.", OutputSchema: rawOutputSchemaWithUnappliedDecisions()}, func(ctx context.Context, req *mcp.CallToolRequest, in TaskCreateHandoffIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
 		return callWithUnappliedDecisions(ctx, c, "task.create_handoff.receive", map[string]any{"handoff_id": in.HandoffID, "received_by": sessionID.Get()})
-	})
-	addMCPTool[TaskCreateHandoffCompleteIn, RawWithUnappliedDecisions](server, &mcp.Tool{Name: "atct_task_create_handoff_complete", Description: "Complete a task-create handoff after delegating every created task.", OutputSchema: rawOutputSchemaWithUnappliedDecisions()}, func(ctx context.Context, req *mcp.CallToolRequest, in TaskCreateHandoffCompleteIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
-		return callWithUnappliedDecisions(ctx, c, "task.create_handoff.complete", map[string]any{"handoff_id": in.HandoffID, "completed_by": sessionID.Get(), "complete_report": in.CompleteReport})
 	})
 
 	addMCPTool[TaskClaimIn, RawWithUnappliedDecisions](server, &mcp.Tool{

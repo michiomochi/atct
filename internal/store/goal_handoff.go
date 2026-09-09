@@ -1063,7 +1063,7 @@ func (s *Store) CompletePlanHandoff(ctx context.Context, handoffID string, goalI
 	} else if affected == 0 {
 		return PlanHandoff{}, ErrPlanHandoffReviewState
 	}
-	if err := s.createTaskCreateHandoffTx(ctx, tx, handoff, reviewerID); err != nil {
+	if err := s.createTaskCreateHandoffTx(ctx, tx, handoff.GoalID, reviewerID); err != nil {
 		return PlanHandoff{}, fmt.Errorf("create task-create handoff: %w", err)
 	}
 	projectID, err := sqlcgen.New(tx).GetGoalProjectID(ctx, goalID)

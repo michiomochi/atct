@@ -1322,18 +1322,6 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		h, err := d.store.ReceiveTaskCreateHandoff(ctx, p.HandoffID, p.ReceivedBy)
 		return marshal(h, err)
 
-	case "task.create_handoff.complete":
-		var p struct {
-			HandoffID      string `json:"handoff_id"`
-			CompletedBy    int64  `json:"completed_by"`
-			CompleteReport string `json:"complete_report"`
-		}
-		if err := json.Unmarshal(req.Params, &p); err != nil {
-			return nil, err
-		}
-		h, err := d.store.CompleteTaskCreateHandoff(ctx, p.HandoffID, p.CompletedBy, p.CompleteReport)
-		return marshal(h, err)
-
 	case "task.update":
 		var p struct {
 			TaskID                  int64    `json:"task_id"`
