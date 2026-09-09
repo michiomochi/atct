@@ -385,6 +385,73 @@ func TestReconcileWatchScopeDoesNotProjectAppliedGoalApprovalForGoalScope(t *tes
 	}
 }
 
+func TestReconcileWatchScopeProjectsTasklessApprovedGoalReviewForCommanderOnly(t *testing.T) {
+	body := `{"goals":[{"id":42,"status":"active"}],"decisions":[{"id":71,"goal_id":42,"kind":"goal_review","status":"applied","answer_label":"approve"}],"goal_handoffs":[],"plan_handoffs":[],"task_handoffs":[]}`
+	cases := []struct {
+		name  string
+		scope watchScope
+		want  bool
+	}{
+		{name: "commander project scope", scope: watchScope{ProjectID: "1", Role: "commander"}, want: true},
+		{name: "goal scope", scope: watchScope{ProjectID: "1", GoalID: "42", Role: "subcommander"}},
+		{name: "task scope", scope: watchScope{ProjectID: "1", GoalID: "42", TaskID: "9", Role: "executor"}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			client := &http.Client{Transport: watchRoundTripper(func(req *http.Request) (*http.Response, error) {
+				if req.URL.Path != "/api/events/reconcile" {
+					return nil, fmt.Errorf("unexpected request path %q", req.URL.Path)
+				}
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Status:     "200 OK",
+					Header:     http.Header{"Content-Type": []string{"application/json"}},
+					Body:       io.NopCloser(strings.NewReader(body)),
+				}, nil
+			})}
+
+			var output bytes.Buffer
+			var actions []watchAgentAction
+			lastWakeupContent := ""
+			scopeFilter := newWatchScopeFilter(tc.scope.GoalID)
+			if tc.scope.TaskID != "" {
+				scopeFilter = newWatchTaskScopeFilter(tc.scope.TaskID)
+			}
+			actionSink := watchAgentActionSink(func(action watchAgentAction) error {
+				actions = append(actions, action)
+				return nil
+			})
+			err := reconcileWatchScope(
+				context.Background(), client, "http://daemon", tc.scope, &output,
+				make(map[watchDeliveryKey]struct{}), &lastWakeupContent,
+				make(map[watchWakeupDeliveryKey]struct{}), make(map[watchDetectionDeliveryKey]struct{}),
+				scopeFilter, nil, actionSink,
+			)
+			if err != nil {
+				t.Fatalf("reconcileWatchScope: %v", err)
+			}
+
+			got := output.String()
+			if tc.want {
+				if !strings.Contains(got, "commander") || !strings.Contains(got, "goal.review.complete") {
+					t.Fatalf("goal review output = %q, want commander goal.review.complete instruction", got)
+				}
+				if strings.Contains(got, "atct decision approved") {
+					t.Fatalf("goal review output = %q, want dedicated action instead of generic decision approval", got)
+				}
+				if len(actions) != 1 || actions[0].eventName != "goal.review.complete" {
+					t.Fatalf("goal review actions = %#v, want one goal.review.complete action", actions)
+				}
+				return
+			}
+			if got != "" || len(actions) != 0 {
+				t.Fatalf("scoped goal review output/actions = %q / %#v, want empty", got, actions)
+			}
+		})
+	}
+}
+
 func TestConsumeWatchEventsReconcilesEverySignalWithoutApplyingPayloadOrAcknowledging(t *testing.T) {
 	var mu sync.Mutex
 	reconcileCalls := 0

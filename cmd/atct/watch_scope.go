@@ -74,6 +74,9 @@ func (f *watchScopeFilter) delivers(eventName string, decision watchDecision) bo
 	if f.taskID != "" {
 		return decision.TaskID == f.taskID
 	}
+	if eventName == "goal.review.complete" {
+		return !f.passThrough && f.goalID == ""
+	}
 	if f.passThrough || f.goalID != "" {
 		return true
 	}

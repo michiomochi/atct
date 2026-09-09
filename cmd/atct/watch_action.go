@@ -48,7 +48,7 @@ func selectWatchAgentAction(line, eventName string, decision watchDecision) (wat
 		selected = true
 	case "decision.answered":
 		selected = !decision.defaultApplied()
-	case "goal.created", "wakeup", "monitor.liveness", "handoff_reported", "handoff_yielded":
+	case "goal.created", "goal.review.complete", "wakeup", "monitor.liveness", "handoff_reported", "handoff_yielded":
 		selected = true
 	case "detection.completion_report_missing", "detection.commits_missing", "detection.undeclared_goal", "detection.all_tasks_dropped":
 		selected = true

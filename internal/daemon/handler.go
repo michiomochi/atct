@@ -143,6 +143,16 @@ type unappliedDecisionNotification struct {
 	Question   string `json:"question"`
 }
 
+type goalReviewProjection struct {
+	DecisionID          int64                 `json:"decision_id"`
+	Status              domain.DecisionStatus `json:"status"`
+	AnswerLabel         string                `json:"answer_label,omitempty"`
+	AnswerText          string                `json:"answer_text,omitempty"`
+	AnsweredAt          *time.Time            `json:"answered_at,omitempty"`
+	AppliedAt           *time.Time            `json:"applied_at,omitempty"`
+	NextCommanderAction string                `json:"next_commander_action,omitempty"`
+}
+
 func unappliedDecisionNotifications(decisions []domain.Decision) []unappliedDecisionNotification {
 	return unappliedDecisionNotificationsExcept(decisions)
 }
@@ -1112,10 +1122,32 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		if err != nil {
 			return nil, err
 		}
-		return marshal(map[string]any{
+		data := map[string]any{
 			"goal":  goal,
 			"tasks": tasks,
-		}, nil)
+		}
+		decisions, err := d.store.ListDecisionsForGoal(ctx, p.GoalID)
+		if err != nil {
+			return nil, err
+		}
+		for _, decision := range decisions {
+			if decision.TaskID != 0 || decision.Kind != domain.KindGoalReview {
+				continue
+			}
+			review := goalReviewProjection{
+				DecisionID:  decision.ID,
+				Status:      decision.Status,
+				AnswerLabel: decision.AnswerLabel,
+				AnswerText:  decision.AnswerText,
+				AnsweredAt:  decision.AnsweredAt,
+				AppliedAt:   decision.AppliedAt,
+			}
+			if goal.Status == domain.GoalActive && decision.Status == domain.DecisionApplied && decision.AnswerLabel == "approve" {
+				review.NextCommanderAction = "goal.review.complete"
+			}
+			data["goal_review"] = review
+		}
+		return marshal(data, nil)
 
 	case "goal.sessions":
 		var p struct {
