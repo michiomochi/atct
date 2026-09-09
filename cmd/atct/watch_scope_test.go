@@ -189,11 +189,12 @@ func TestWatchScopeProjectDeliversDecisionApprovedAndRejected(t *testing.T) {
 	}
 }
 
-func TestWatchScopeProjectDeliversHumanDecisionAnswered(t *testing.T) {
-	filter := newWatchScopeFilter("")
-
-	if got := filter.delivers("decision.answered", watchDecision{DecisionID: "decision-1"}); !got {
-		t.Fatal("project scope suppressed human decision.answered, want true")
+func TestWatchScopeMatchesDecisionOwnerRole(t *testing.T) {
+	if watchScopeMatchesDecision(watchScope{Role: "commander"}, watchDecision{TargetRole: "subcommander"}) {
+		t.Fatal("commander matched a subcommander-owned decision")
+	}
+	if !watchScopeMatchesDecision(watchScope{Role: "subcommander", GoalID: "7"}, watchDecision{TargetRole: "subcommander", GoalID: "7"}) {
+		t.Fatal("matching subcommander scope did not receive its decision")
 	}
 }
 

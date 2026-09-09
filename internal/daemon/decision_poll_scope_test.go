@@ -125,18 +125,33 @@ func TestDecisionPollByOwnerSucceedsAfterRefusal(t *testing.T) {
 
 func TestDecisionPollForSubcommanderAcceptsOwnGoalDecision(t *testing.T) {
 	f := newUnappliedDecisionScopeRPCTestFixture(t)
-	result, rpcError := f.callDecisionPoll(t, f.subcommanderSessionID, f.decisionAID)
+	decision, err := f.store.GetDecision(t.Context(), f.decisionAID)
+	if err != nil {
+		t.Fatalf("GetDecision: %v", err)
+	}
+	result, rpcError := f.callDecisionPoll(t, decision.AgentSessionID, f.decisionAID)
 	assertPollSucceeded(t, result, rpcError, f.decisionAID)
 }
 
-func TestDecisionPollForCommanderAcceptsOtherGoalDecision(t *testing.T) {
+func TestDecisionPollForCommanderRefusesForeignDecision(t *testing.T) {
 	f := newUnappliedDecisionScopeRPCTestFixture(t)
-	result, rpcError := f.callDecisionPoll(t, f.commanderSessionID, f.decisionBID)
-	assertPollSucceeded(t, result, rpcError, f.decisionBID)
+	_, rpcError := f.callDecisionPoll(t, f.commanderSessionID, f.decisionBID)
+	if len(rpcError) == 0 || string(rpcError) == "null" {
+		t.Fatal("decision.poll succeeded for a foreign-owned decision")
+	}
+	stored, err := f.store.GetDecision(t.Context(), f.decisionBID)
+	if err != nil {
+		t.Fatalf("GetDecision: %v", err)
+	}
+	if stored.Status != domain.DecisionAnswered || stored.AppliedAt != nil {
+		t.Fatalf("stored decision = %#v, want answered and unapplied", stored)
+	}
 }
 
-func TestDecisionPollWithoutSessionAcceptsOtherGoalDecision(t *testing.T) {
+func TestDecisionPollWithoutSessionRefusesForeignDecision(t *testing.T) {
 	f := newUnappliedDecisionScopeRPCTestFixture(t)
-	result, rpcError := f.callDecisionPoll(t, 0, f.decisionBID)
-	assertPollSucceeded(t, result, rpcError, f.decisionBID)
+	_, rpcError := f.callDecisionPoll(t, 0, f.decisionBID)
+	if len(rpcError) == 0 || string(rpcError) == "null" {
+		t.Fatal("decision.poll succeeded without the owner session")
+	}
 }

@@ -1850,15 +1850,18 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 			return nil, err
 		}
 		if p.DecisionID != 0 {
+			decision, err := d.store.GetDecision(ctx, p.DecisionID)
+			if err != nil {
+				return nil, err
+			}
+			if decision.AgentSessionID != p.AgentSessionID {
+				return nil, fmt.Errorf("decision %d is owned by another agent session", p.DecisionID)
+			}
 			role, err := d.deriveSessionRole(ctx, p.AgentSessionID)
 			if err != nil {
 				return nil, err
 			}
 			if role.Role == "subcommander" && role.GoalID != 0 {
-				decision, err := d.store.GetDecision(ctx, p.DecisionID)
-				if err != nil {
-					return nil, err
-				}
 				if decision.GoalID != role.GoalID {
 					return nil, fmt.Errorf("%w: decision %d belongs to goal %d, not the goal %d you hold; hand it to that goal's owner instead of polling it",
 						ErrDecisionOutsideGoal, p.DecisionID, decision.GoalID, role.GoalID)

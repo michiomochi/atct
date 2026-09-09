@@ -33,6 +33,9 @@ func scopedOpenDecision(scope watchScope, state watchReconciliation) bool {
 }
 
 func watchScopeMatchesDecision(scope watchScope, decision watchDecision) bool {
+	if decision.TargetRole != "" && decision.TargetRole != scope.Role {
+		return false
+	}
 	if scope.ProjectID != "" && decision.ProjectID != "" && scope.ProjectID != decision.ProjectID {
 		return false
 	}
