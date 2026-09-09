@@ -107,8 +107,8 @@ func TestPendingCommandExcludesProposedGoal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
-	if _, err := s.DeclareTasks(ctx, goal.ID, "agent", "proposed-pending", []string{"task awaiting approval"}, []string{"Wait for approval before claiming this task."}); err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+	if _, err := s.CreateTasks(ctx, goal.ID, "agent", "proposed-pending", []string{"task awaiting approval"}, []string{"Wait for approval before claiming this task."}); err != nil {
+		t.Fatalf("CreateTasks: %v", err)
 	}
 	// This state can only exist in databases created before the declaration gate.
 	db, err := sql.Open("sqlite", filepath.Join(dir, "atct.db"))
@@ -150,9 +150,9 @@ func TestPendingCommandReportsGoalAfterTaskDeclarationUntilTaskDone(t *testing.T
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
-	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "declare-goal", []string{"first task"}, []string{"Complete the first task declared for the goal."})
+	tasks, err := s.CreateTasks(ctx, goal.ID, "agent", "declare-goal", []string{"first task"}, []string{"Complete the first task declared for the goal."})
 	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 	if err := s.Close(); err != nil {
 		t.Fatalf("Store.Close: %v", err)
@@ -205,9 +205,9 @@ func TestPendingCommandExcludesGoalWaitingForHumanAnswerFromWakeup(t *testing.T)
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
-	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "waiting-answer", []string{"blocked task"}, []string{"Continue after the human answers."})
+	tasks, err := s.CreateTasks(ctx, goal.ID, "agent", "waiting-answer", []string{"blocked task"}, []string{"Continue after the human answers."})
 	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 	if _, err := s.AskDecision(ctx, store.AskInput{
 		GoalID: goal.ID, TaskID: tasks[0].ID,
@@ -247,9 +247,9 @@ func TestPendingCommandIncludesAllPendingReasons(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGoal claimed: %v", err)
 	}
-	claimedTasks, err := s.DeclareTasks(ctx, claimedGoal.ID, "agent", "run-all", []string{"unfinished claimed work"}, []string{"Complete the claimed work before selecting another goal."})
+	claimedTasks, err := s.CreateTasks(ctx, claimedGoal.ID, "agent", "run-all", []string{"unfinished claimed work"}, []string{"Complete the claimed work before selecting another goal."})
 	if err != nil {
-		t.Fatalf("DeclareTasks claimed: %v", err)
+		t.Fatalf("CreateTasks claimed: %v", err)
 	}
 	runAllSessionID, err := s.RegisterAgentSession(ctx, 0)
 	if err != nil {
@@ -265,9 +265,9 @@ func TestPendingCommandIncludesAllPendingReasons(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGoal decision: %v", err)
 	}
-	decisionTasks, err := s.DeclareTasks(ctx, decisionGoal.ID, "agent", "run-decision", []string{"blocked decision work"}, []string{"Complete the blocked work after its decision is answered."})
+	decisionTasks, err := s.CreateTasks(ctx, decisionGoal.ID, "agent", "run-decision", []string{"blocked decision work"}, []string{"Complete the blocked work after its decision is answered."})
 	if err != nil {
-		t.Fatalf("DeclareTasks decision: %v", err)
+		t.Fatalf("CreateTasks decision: %v", err)
 	}
 	decision, err := s.AskDecision(ctx, store.AskInput{
 		GoalID: decisionGoal.ID, TaskID: decisionTasks[0].ID, Kind: domain.KindDecision,
@@ -320,9 +320,9 @@ func TestPendingCommandReportsStaleClaimSeparatelyFromOwnClaim(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGoal own: %v", err)
 	}
-	ownTasks, err := s.DeclareTasks(ctx, ownGoal.ID, "agent", "own-claim", []string{"my unfinished task"}, []string{"Continue the task claimed by the current agent session."})
+	ownTasks, err := s.CreateTasks(ctx, ownGoal.ID, "agent", "own-claim", []string{"my unfinished task"}, []string{"Continue the task claimed by the current agent session."})
 	if err != nil {
-		t.Fatalf("DeclareTasks own: %v", err)
+		t.Fatalf("CreateTasks own: %v", err)
 	}
 	ownSessionID, err := s.RegisterAgentSession(ctx, 0)
 	if err != nil {
@@ -336,9 +336,9 @@ func TestPendingCommandReportsStaleClaimSeparatelyFromOwnClaim(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGoal stale: %v", err)
 	}
-	staleTasks, err := s.DeclareTasks(ctx, staleGoal.ID, "agent", "stale-claim", []string{"abandoned task"}, []string{"Recover the task left by an agent session that stopped."})
+	staleTasks, err := s.CreateTasks(ctx, staleGoal.ID, "agent", "stale-claim", []string{"abandoned task"}, []string{"Recover the task left by an agent session that stopped."})
 	if err != nil {
-		t.Fatalf("DeclareTasks stale: %v", err)
+		t.Fatalf("CreateTasks stale: %v", err)
 	}
 	staleSessionID, err := s.RegisterAgentSession(ctx, 0)
 	if err != nil {
@@ -358,9 +358,9 @@ func TestPendingCommandReportsStaleClaimSeparatelyFromOwnClaim(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGoal other: %v", err)
 	}
-	otherTasks, err := s.DeclareTasks(ctx, otherGoal.ID, "agent", "other-stale-claim", []string{"other project task"}, []string{"Do not report this task for the selected project."})
+	otherTasks, err := s.CreateTasks(ctx, otherGoal.ID, "agent", "other-stale-claim", []string{"other project task"}, []string{"Do not report this task for the selected project."})
 	if err != nil {
-		t.Fatalf("DeclareTasks other: %v", err)
+		t.Fatalf("CreateTasks other: %v", err)
 	}
 	otherStaleSessionID, err := s.RegisterAgentSession(ctx, 0)
 	if err != nil {
@@ -415,9 +415,9 @@ func TestPendingCommandReturnsDecisionIDAndQuestion(t *testing.T) {
 		t.Fatalf("CreateGoal: %v", err)
 	}
 	// An active decision has to name the task it is holding up.
-	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "blocked-1", []string{"blocked task"}, []string{"Complete the blocked task after the human chooses a release channel."})
+	tasks, err := s.CreateTasks(ctx, goal.ID, "agent", "blocked-1", []string{"blocked task"}, []string{"Complete the blocked task after the human chooses a release channel."})
 	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 	decision, err := s.AskDecision(ctx, store.AskInput{
 		GoalID: goal.ID, TaskID: tasks[0].ID, Kind: domain.KindDecision, Question: "Which release channel should we use?", AgentSessionID: cliTestSessionID("run-1"),
@@ -569,9 +569,9 @@ func TestPendingCommandFiltersDecisionsFromOtherProject(t *testing.T) {
 		t.Fatalf("CreateGoal: %v", err)
 	}
 	// An active decision has to name the task it is holding up.
-	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "blocked-other", []string{"blocked task"}, []string{"Complete the blocked task in the other project."})
+	tasks, err := s.CreateTasks(ctx, goal.ID, "agent", "blocked-other", []string{"blocked task"}, []string{"Complete the blocked task in the other project."})
 	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 	decision, err := s.AskDecision(ctx, store.AskInput{
 		GoalID: goal.ID, TaskID: tasks[0].ID, Kind: domain.KindDecision, Question: "Question from another project", AgentSessionID: cliTestSessionID("run-other"),
@@ -636,9 +636,9 @@ func TestPendingCommandUsesLatestProjectAgentSessionWithoutEnv(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
-	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "latest-run", []string{"unfinished task"}, []string{"Complete the unfinished task when the latest run resumes."})
+	tasks, err := s.CreateTasks(ctx, goal.ID, "agent", "latest-run", []string{"unfinished task"}, []string{"Complete the unfinished task when the latest run resumes."})
 	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 	runLatestSessionID, err := s.RegisterAgentSession(ctx, os.Getpid())
 	if err != nil {
@@ -679,9 +679,9 @@ func TestPendingCommandPrefersExplicitAgentSessionIDOverLatestProjectAgentSessio
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
-	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "run-selection", []string{"latest task", "explicit task"}, []string{"Complete the latest task selected for the run.", "Complete the explicitly selected task after it."})
+	tasks, err := s.CreateTasks(ctx, goal.ID, "agent", "run-selection", []string{"latest task", "explicit task"}, []string{"Complete the latest task selected for the run.", "Complete the explicitly selected task after it."})
 	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 	runLatestSessionID, err := s.RegisterAgentSession(ctx, os.Getpid())
 	if err != nil {
@@ -732,9 +732,9 @@ func TestPendingCommandDoesNotReportRunningAnotherAgentSessionsClaim(t *testing.
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
-	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "other-run", []string{"other run task"}, []string{"Complete the task owned by the other run without stealing it."})
+	tasks, err := s.CreateTasks(ctx, goal.ID, "agent", "other-run", []string{"other run task"}, []string{"Complete the task owned by the other run without stealing it."})
 	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 	runLatestSessionID, err := s.RegisterAgentSession(ctx, 0)
 	if err != nil {
@@ -782,9 +782,9 @@ func TestPendingCommandReportsActiveGoalAfterAllTasksDone(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
-	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "completed-work", []string{"finished task"}, []string{"Report the finished work."})
+	tasks, err := s.CreateTasks(ctx, goal.ID, "agent", "completed-work", []string{"finished task"}, []string{"Report the finished work."})
 	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 	if _, err := s.UpdateTask(ctx, tasks[0].ID, domain.TaskDone, 0); err != nil {
 		t.Fatalf("UpdateTask: %v", err)
@@ -824,9 +824,9 @@ func TestPendingCommandDoesNotReportGoalWithCompletionReport(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
-	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "reported-completion", []string{"reported task"}, []string{"Report the completed task."})
+	tasks, err := s.CreateTasks(ctx, goal.ID, "agent", "reported-completion", []string{"reported task"}, []string{"Report the completed task."})
 	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 	if _, err := s.UpdateTask(ctx, tasks[0].ID, domain.TaskDone, 0); err != nil {
 		t.Fatalf("UpdateTask: %v", err)
@@ -873,9 +873,9 @@ func TestPendingCommandUsesSeparateReasonForAllDroppedGoal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
-	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "withdrawn-work", []string{"withdrawn task"}, []string{"Close the withdrawn work."})
+	tasks, err := s.CreateTasks(ctx, goal.ID, "agent", "withdrawn-work", []string{"withdrawn task"}, []string{"Close the withdrawn work."})
 	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 	if _, err := s.UpdateTask(ctx, tasks[0].ID, domain.TaskDropped, 0); err != nil {
 		t.Fatalf("UpdateTask: %v", err)
@@ -916,9 +916,9 @@ func TestPendingCommandDoesNotReportCommitlessGoalWhenAnyTaskHasLinkedCommit(t *
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
-	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "linked-work", []string{"linked task", "unlinked task"}, []string{"Record the linked work.", "Record the unlinked work."})
+	tasks, err := s.CreateTasks(ctx, goal.ID, "agent", "linked-work", []string{"linked task", "unlinked task"}, []string{"Record the linked work.", "Record the unlinked work."})
 	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 	for _, task := range tasks {
 		if _, err := s.UpdateTask(ctx, task.ID, domain.TaskDone, 0); err != nil {
@@ -953,8 +953,8 @@ func TestPendingCommandDoesNotReportCommitlessGoalWhenTodoTaskRemains(t *testing
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
-	if _, err := s.DeclareTasks(ctx, goal.ID, "agent", "unfinished-work", []string{"unfinished task"}, []string{"Continue the unfinished work."}); err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+	if _, err := s.CreateTasks(ctx, goal.ID, "agent", "unfinished-work", []string{"unfinished task"}, []string{"Continue the unfinished work."}); err != nil {
+		t.Fatalf("CreateTasks: %v", err)
 	}
 	if err := s.Close(); err != nil {
 		t.Fatalf("Store.Close: %v", err)
@@ -981,9 +981,9 @@ func TestPendingCommandDoesNotReportCommitlessGoalWhenAllTasksDropped(t *testing
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
-	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "withdrawn-work", []string{"withdrawn task"}, []string{"Withdraw the unfinished work."})
+	tasks, err := s.CreateTasks(ctx, goal.ID, "agent", "withdrawn-work", []string{"withdrawn task"}, []string{"Withdraw the unfinished work."})
 	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 	if _, err := s.UpdateTask(ctx, tasks[0].ID, domain.TaskDropped, 0); err != nil {
 		t.Fatalf("UpdateTask: %v", err)
@@ -1037,9 +1037,9 @@ func TestPendingCommandReportsCommitlessGoalWhenAllTasksDoneWithoutLinkedCommit(
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
-	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "completed-unlinked-work", []string{"completed task"}, []string{"Link the completed work."})
+	tasks, err := s.CreateTasks(ctx, goal.ID, "agent", "completed-unlinked-work", []string{"completed task"}, []string{"Link the completed work."})
 	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 	if _, err := s.UpdateTask(ctx, tasks[0].ID, domain.TaskDone, 0); err != nil {
 		t.Fatalf("UpdateTask: %v", err)
@@ -1078,9 +1078,9 @@ func TestPendingCommandDoesNotReportCommitlessGoalWhenOpenCompletionDecisionExis
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
-	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "await-completion-approval", []string{"completed task"}, []string{"Await completion approval."})
+	tasks, err := s.CreateTasks(ctx, goal.ID, "agent", "await-completion-approval", []string{"completed task"}, []string{"Await completion approval."})
 	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 	if _, err := s.UpdateTask(ctx, tasks[0].ID, domain.TaskDone, 0); err != nil {
 		t.Fatalf("UpdateTask: %v", err)
@@ -1124,9 +1124,9 @@ func TestPendingCommandReportsDoingTaskWithoutClaimUntilReturnedToTodo(t *testin
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
-	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "unclaimed-doing", []string{"unclaimed doing task"}, []string{"Return the task to todo."})
+	tasks, err := s.CreateTasks(ctx, goal.ID, "agent", "unclaimed-doing", []string{"unclaimed doing task"}, []string{"Return the task to todo."})
 	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 	if _, err := s.UpdateTask(ctx, tasks[0].ID, domain.TaskDoing, 0); err != nil {
 		t.Fatalf("UpdateTask to doing: %v", err)
@@ -1185,9 +1185,9 @@ func TestPendingCommandFiltersNewConditionsFromOtherProject(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGoal done: %v", err)
 	}
-	doneTasks, err := s.DeclareTasks(ctx, doneGoal.ID, "agent", "other-done", []string{"other done task"}, []string{"Complete the other task."})
+	doneTasks, err := s.CreateTasks(ctx, doneGoal.ID, "agent", "other-done", []string{"other done task"}, []string{"Complete the other task."})
 	if err != nil {
-		t.Fatalf("DeclareTasks done: %v", err)
+		t.Fatalf("CreateTasks done: %v", err)
 	}
 	if _, err := s.UpdateTask(ctx, doneTasks[0].ID, domain.TaskDone, 0); err != nil {
 		t.Fatalf("UpdateTask done: %v", err)
@@ -1197,9 +1197,9 @@ func TestPendingCommandFiltersNewConditionsFromOtherProject(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGoal dropped: %v", err)
 	}
-	droppedTasks, err := s.DeclareTasks(ctx, droppedGoal.ID, "agent", "other-dropped", []string{"other dropped task"}, []string{"Withdraw the other task."})
+	droppedTasks, err := s.CreateTasks(ctx, droppedGoal.ID, "agent", "other-dropped", []string{"other dropped task"}, []string{"Withdraw the other task."})
 	if err != nil {
-		t.Fatalf("DeclareTasks dropped: %v", err)
+		t.Fatalf("CreateTasks dropped: %v", err)
 	}
 	if _, err := s.UpdateTask(ctx, droppedTasks[0].ID, domain.TaskDropped, 0); err != nil {
 		t.Fatalf("UpdateTask dropped: %v", err)
@@ -1209,9 +1209,9 @@ func TestPendingCommandFiltersNewConditionsFromOtherProject(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGoal doing: %v", err)
 	}
-	doingTasks, err := s.DeclareTasks(ctx, doingGoal.ID, "agent", "other-doing", []string{"other doing task"}, []string{"Return the other task to todo."})
+	doingTasks, err := s.CreateTasks(ctx, doingGoal.ID, "agent", "other-doing", []string{"other doing task"}, []string{"Return the other task to todo."})
 	if err != nil {
-		t.Fatalf("DeclareTasks doing: %v", err)
+		t.Fatalf("CreateTasks doing: %v", err)
 	}
 	if _, err := s.UpdateTask(ctx, doingTasks[0].ID, domain.TaskDoing, 0); err != nil {
 		t.Fatalf("UpdateTask doing: %v", err)
@@ -1247,9 +1247,9 @@ func TestReleaseTaskReturnsDoingTaskToTodo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
-	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "release-stale", []string{"stale task"}, []string{"Release the stale task."})
+	tasks, err := s.CreateTasks(ctx, goal.ID, "agent", "release-stale", []string{"stale task"}, []string{"Release the stale task."})
 	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 	staleSessionID, err := s.RegisterAgentSession(ctx, 0)
 	if err != nil {
@@ -1292,9 +1292,9 @@ func TestPendingCommandPutsUnstartedTasksBeforeOwnClaim(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGoal claimed: %v", err)
 	}
-	claimedTasks, err := s.DeclareTasks(ctx, claimedGoal.ID, "agent", "held-work", []string{"held task"}, []string{"Continue the held task."})
+	claimedTasks, err := s.CreateTasks(ctx, claimedGoal.ID, "agent", "held-work", []string{"held task"}, []string{"Continue the held task."})
 	if err != nil {
-		t.Fatalf("DeclareTasks claimed: %v", err)
+		t.Fatalf("CreateTasks claimed: %v", err)
 	}
 	runLockSessionID, err := s.RegisterAgentSession(ctx, 0)
 	if err != nil {
@@ -1307,8 +1307,8 @@ func TestPendingCommandPutsUnstartedTasksBeforeOwnClaim(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGoal available: %v", err)
 	}
-	if _, err := s.DeclareTasks(ctx, availableGoal.ID, "agent", "available-work", []string{"available one", "available two"}, []string{"Take the first available task.", "Take the second available task."}); err != nil {
-		t.Fatalf("DeclareTasks available: %v", err)
+	if _, err := s.CreateTasks(ctx, availableGoal.ID, "agent", "available-work", []string{"available one", "available two"}, []string{"Take the first available task.", "Take the second available task."}); err != nil {
+		t.Fatalf("CreateTasks available: %v", err)
 	}
 	if err := s.Close(); err != nil {
 		t.Fatalf("Store.Close: %v", err)
@@ -1343,9 +1343,9 @@ func TestPendingCommandListsUnstartedSiblingOfClaimedTask(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
-	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "claimed-sibling", []string{"claimed sibling", "available sibling"}, []string{"Continue the claimed sibling.", "Claim the available sibling."})
+	tasks, err := s.CreateTasks(ctx, goal.ID, "agent", "claimed-sibling", []string{"claimed sibling", "available sibling"}, []string{"Continue the claimed sibling.", "Claim the available sibling."})
 	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 	runClaimedSiblingSessionID, err := s.RegisterAgentSession(ctx, os.Getpid())
 	if err != nil {
@@ -1394,9 +1394,9 @@ func TestPendingCommandReportsUnstartedTaskBreakdown(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGoal waiting: %v", err)
 	}
-	waitingTasks, err := s.DeclareTasks(ctx, waitingGoal.ID, "agent", "breakdown-waiting", []string{"waiting task"}, []string{"Continue after the human answers."})
+	waitingTasks, err := s.CreateTasks(ctx, waitingGoal.ID, "agent", "breakdown-waiting", []string{"waiting task"}, []string{"Continue after the human answers."})
 	if err != nil {
-		t.Fatalf("DeclareTasks waiting: %v", err)
+		t.Fatalf("CreateTasks waiting: %v", err)
 	}
 	runBreakdownSessionID, err := s.RegisterAgentSession(ctx, os.Getpid())
 	if err != nil {
@@ -1415,9 +1415,9 @@ func TestPendingCommandReportsUnstartedTaskBreakdown(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGoal working: %v", err)
 	}
-	workingTasks, err := s.DeclareTasks(ctx, workingGoal.ID, "agent", "breakdown-working", []string{"claimed task", "working task"}, []string{"Claim the first task.", "Continue the second task."})
+	workingTasks, err := s.CreateTasks(ctx, workingGoal.ID, "agent", "breakdown-working", []string{"claimed task", "working task"}, []string{"Claim the first task.", "Continue the second task."})
 	if err != nil {
-		t.Fatalf("DeclareTasks working: %v", err)
+		t.Fatalf("CreateTasks working: %v", err)
 	}
 	if err := s.AssociateAgentSessionWithProject(ctx, runBreakdownSessionID, project.ID); err != nil {
 		t.Fatalf("AssociateAgentSessionWithProject: %v", err)
@@ -1430,8 +1430,8 @@ func TestPendingCommandReportsUnstartedTaskBreakdown(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGoal untouched: %v", err)
 	}
-	if _, err := s.DeclareTasks(ctx, untouchedGoal.ID, "agent", "breakdown-untouched", []string{"untouched task"}, []string{"Take the untouched task."}); err != nil {
-		t.Fatalf("DeclareTasks untouched: %v", err)
+	if _, err := s.CreateTasks(ctx, untouchedGoal.ID, "agent", "breakdown-untouched", []string{"untouched task"}, []string{"Take the untouched task."}); err != nil {
+		t.Fatalf("CreateTasks untouched: %v", err)
 	}
 	if err := s.Close(); err != nil {
 		t.Fatalf("Store.Close: %v", err)
@@ -1473,9 +1473,9 @@ func TestPendingCommandOmitsAvailableWorkTailWhenCountIsZero(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
-	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "held-only", []string{"held task"}, []string{"Continue the held task."})
+	tasks, err := s.CreateTasks(ctx, goal.ID, "agent", "held-only", []string{"held task"}, []string{"Continue the held task."})
 	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 	runHeldOnlySessionID, err := s.RegisterAgentSession(ctx, 0)
 	if err != nil {
@@ -1516,9 +1516,9 @@ func TestPendingCommandCombinesOpenNoDefaultDecisionWithUnstartedWork(t *testing
 	if err != nil {
 		t.Fatalf("CreateGoal decision: %v", err)
 	}
-	decisionTasks, err := s.DeclareTasks(ctx, decisionGoal.ID, "agent", "no-default", []string{"waiting task"}, []string{"Continue after the human answers."})
+	decisionTasks, err := s.CreateTasks(ctx, decisionGoal.ID, "agent", "no-default", []string{"waiting task"}, []string{"Continue after the human answers."})
 	if err != nil {
-		t.Fatalf("DeclareTasks decision: %v", err)
+		t.Fatalf("CreateTasks decision: %v", err)
 	}
 	runNoDefaultSessionID := cliTestSessionID("run-no-default")
 	if _, err := s.AskDecision(ctx, store.AskInput{
@@ -1531,8 +1531,8 @@ func TestPendingCommandCombinesOpenNoDefaultDecisionWithUnstartedWork(t *testing
 	if err != nil {
 		t.Fatalf("CreateGoal available: %v", err)
 	}
-	if _, err := s.DeclareTasks(ctx, availableGoal.ID, "agent", "available-while-waiting", []string{"available task"}, []string{"Take the available task."}); err != nil {
-		t.Fatalf("DeclareTasks available: %v", err)
+	if _, err := s.CreateTasks(ctx, availableGoal.ID, "agent", "available-while-waiting", []string{"available task"}, []string{"Take the available task."}); err != nil {
+		t.Fatalf("CreateTasks available: %v", err)
 	}
 	if err := s.Close(); err != nil {
 		t.Fatalf("Store.Close: %v", err)
@@ -1564,9 +1564,9 @@ func TestPendingCommandDoesNotCombineDefaultedDecisionWithUnstartedWork(t *testi
 	if err != nil {
 		t.Fatalf("CreateGoal decision: %v", err)
 	}
-	decisionTasks, err := s.DeclareTasks(ctx, decisionGoal.ID, "agent", "with-default", []string{"defaulted waiting task"}, []string{"Continue after the default."})
+	decisionTasks, err := s.CreateTasks(ctx, decisionGoal.ID, "agent", "with-default", []string{"defaulted waiting task"}, []string{"Continue after the default."})
 	if err != nil {
-		t.Fatalf("DeclareTasks decision: %v", err)
+		t.Fatalf("CreateTasks decision: %v", err)
 	}
 	defaultAfterMs := time.Hour.Milliseconds()
 	runWithDefaultSessionID := cliTestSessionID("run-with-default")
@@ -1581,8 +1581,8 @@ func TestPendingCommandDoesNotCombineDefaultedDecisionWithUnstartedWork(t *testi
 	if err != nil {
 		t.Fatalf("CreateGoal available: %v", err)
 	}
-	if _, err := s.DeclareTasks(ctx, availableGoal.ID, "agent", "available-with-default", []string{"available task"}, []string{"Take the available task."}); err != nil {
-		t.Fatalf("DeclareTasks available: %v", err)
+	if _, err := s.CreateTasks(ctx, availableGoal.ID, "agent", "available-with-default", []string{"available task"}, []string{"Take the available task."}); err != nil {
+		t.Fatalf("CreateTasks available: %v", err)
 	}
 	if err := s.Close(); err != nil {
 		t.Fatalf("Store.Close: %v", err)
@@ -1613,9 +1613,9 @@ func TestPendingCommandDoesNotCombineNoDefaultDecisionWithoutUnstartedWork(t *te
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
-	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "no-default-no-work", []string{"waiting task"}, []string{"Continue after the human answers."})
+	tasks, err := s.CreateTasks(ctx, goal.ID, "agent", "no-default-no-work", []string{"waiting task"}, []string{"Continue after the human answers."})
 	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 	runNoDefaultNoWorkSessionID := cliTestSessionID("run-no-default-no-work")
 	if _, err := s.AskDecision(ctx, store.AskInput{
@@ -1659,9 +1659,9 @@ func TestPendingCommandCountsUnstartedTasksOnlyInSelectedProject(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGoal claimed: %v", err)
 	}
-	claimedTasks, err := s.DeclareTasks(ctx, claimedGoal.ID, "agent", "current-held", []string{"current held task"}, []string{"Continue current held work."})
+	claimedTasks, err := s.CreateTasks(ctx, claimedGoal.ID, "agent", "current-held", []string{"current held task"}, []string{"Continue current held work."})
 	if err != nil {
-		t.Fatalf("DeclareTasks claimed: %v", err)
+		t.Fatalf("CreateTasks claimed: %v", err)
 	}
 	runCurrentSessionID, err := s.RegisterAgentSession(ctx, 0)
 	if err != nil {
@@ -1674,15 +1674,15 @@ func TestPendingCommandCountsUnstartedTasksOnlyInSelectedProject(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGoal current available: %v", err)
 	}
-	if _, err := s.DeclareTasks(ctx, currentAvailableGoal.ID, "agent", "current-available", []string{"current available task"}, []string{"Take current available work."}); err != nil {
-		t.Fatalf("DeclareTasks current available: %v", err)
+	if _, err := s.CreateTasks(ctx, currentAvailableGoal.ID, "agent", "current-available", []string{"current available task"}, []string{"Take current available work."}); err != nil {
+		t.Fatalf("CreateTasks current available: %v", err)
 	}
 	otherGoal, err := s.CreateGoal(ctx, other.ID, "Leave other work alone", "human")
 	if err != nil {
 		t.Fatalf("CreateGoal other: %v", err)
 	}
-	if _, err := s.DeclareTasks(ctx, otherGoal.ID, "agent", "other-available", []string{"other task one", "other task two"}, []string{"Leave the first other task alone.", "Leave the second other task alone."}); err != nil {
-		t.Fatalf("DeclareTasks other: %v", err)
+	if _, err := s.CreateTasks(ctx, otherGoal.ID, "agent", "other-available", []string{"other task one", "other task two"}, []string{"Leave the first other task alone.", "Leave the second other task alone."}); err != nil {
+		t.Fatalf("CreateTasks other: %v", err)
 	}
 	if err := s.Close(); err != nil {
 		t.Fatalf("Store.Close: %v", err)
@@ -1729,9 +1729,9 @@ func openPendingStore(t *testing.T, dir string) *store.Store {
 
 func addPendingTestDecision(t *testing.T, s *store.Store, ctx context.Context, goalID int64, taskKey, question string, applyDefault bool) domain.Decision {
 	t.Helper()
-	tasks, err := s.DeclareTasks(ctx, goalID, "agent", taskKey, []string{"blocked task"}, []string{"Complete the blocked task after its decision is settled."})
+	tasks, err := s.CreateTasks(ctx, goalID, "agent", taskKey, []string{"blocked task"}, []string{"Complete the blocked task after its decision is settled."})
 	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 	input := store.AskInput{
 		GoalID: goalID, TaskID: tasks[0].ID, Kind: domain.KindDecision,

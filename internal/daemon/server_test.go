@@ -494,7 +494,7 @@ func createDecisionFixture(t *testing.T, conn net.Conn) (int64, int64) {
 	if registerResp.Error != "" {
 		t.Fatalf("run.register: %v", registerResp.Error)
 	}
-	taskResp := call(t, conn, "task.declare", map[string]any{
+	taskResp := call(t, conn, "task.create", map[string]any{
 		"goal_id":          goal.ID,
 		"agent":            "test-agent",
 		"idempotency_key":  "wait-semantics",
@@ -503,14 +503,14 @@ func createDecisionFixture(t *testing.T, conn net.Conn) (int64, int64) {
 		"agent_session_id": 1,
 	})
 	if taskResp.Error != "" {
-		t.Fatalf("task.declare: %v", taskResp.Error)
+		t.Fatalf("task.create: %v", taskResp.Error)
 	}
 	var tasks []domain.Task
 	if err := json.Unmarshal(taskResp.Result, &tasks); err != nil {
 		t.Fatalf("unmarshal tasks: %v", err)
 	}
 	if len(tasks) != 1 {
-		t.Fatalf("task.declare returned %d tasks, want 1", len(tasks))
+		t.Fatalf("task.create returned %d tasks, want 1", len(tasks))
 	}
 	return goal.ID, tasks[0].ID
 }
@@ -649,11 +649,11 @@ func newGoalListFixture(t *testing.T) goalListFixture {
 		t.Fatalf("claim goal %v: %v", activeChild.ID, err)
 	}
 
-	tasks, err := s.DeclareTasks(ctx, taskGoal.ID, "fixture-agent", "goal-list-tasks",
+	tasks, err := s.CreateTasks(ctx, taskGoal.ID, "fixture-agent", "goal-list-tasks",
 		[]string{"doing task", "todo task", "done task", "dropped task"},
 		[]string{"doing description", "todo description", "done description", "dropped description"})
 	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 	taskAgentID, err := s.RegisterAgentSession(ctx, os.Getpid())
 	if err != nil {
@@ -671,9 +671,9 @@ func newGoalListFixture(t *testing.T) goalListFixture {
 	if tasks[3], err = s.UpdateTask(ctx, tasks[3].ID, domain.TaskDropped, 0); err != nil {
 		t.Fatalf("UpdateTask dropped: %v", err)
 	}
-	if _, err := s.DeclareTasks(ctx, doneOnlyGoal.ID, "fixture-agent", "goal-list-done-only",
+	if _, err := s.CreateTasks(ctx, doneOnlyGoal.ID, "fixture-agent", "goal-list-done-only",
 		[]string{"completed task"}, []string{"completed description"}); err != nil {
-		t.Fatalf("DeclareTasks done-only: %v", err)
+		t.Fatalf("CreateTasks done-only: %v", err)
 	}
 	doneOnlyTasks, err := s.ListTasks(ctx, doneOnlyGoal.ID)
 	if err != nil {
@@ -1177,12 +1177,12 @@ func updateTaskContentForTestWithAgentSessionID(t *testing.T, fixture goalListFi
 func addTaskForUpdateContentTest(t *testing.T, fixture goalListFixture, status domain.TaskStatus, title, description string) domain.Task {
 	t.Helper()
 	ctx := context.Background()
-	tasks, err := fixture.store.DeclareTasks(ctx, fixture.tasks[0].GoalID, "fixture-agent", "task-update-content-extra", []string{title}, []string{description})
+	tasks, err := fixture.store.CreateTasks(ctx, fixture.tasks[0].GoalID, "fixture-agent", "task-update-content-extra", []string{title}, []string{description})
 	if err != nil {
-		t.Fatalf("DeclareTasks extra task: %v", err)
+		t.Fatalf("CreateTasks extra task: %v", err)
 	}
 	if len(tasks) == 0 {
-		t.Fatal("DeclareTasks extra task returned no tasks")
+		t.Fatal("CreateTasks extra task returned no tasks")
 	}
 	task := tasks[len(tasks)-1]
 	if _, err := fixture.store.DB().ExecContext(ctx, "UPDATE tasks SET status = ?, title = ?, description = ? WHERE id = ?", string(status), title, description, task.ID); err != nil {

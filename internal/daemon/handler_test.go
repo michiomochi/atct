@@ -853,7 +853,25 @@ func TestContractN6GoalGetMissingGoalReturnsError(t *testing.T) {
 	}
 }
 
-func TestTaskDeclareReturnsOnlyTasksDeclaredByThisCall(t *testing.T) {
+func TestTaskDeclareIsNotRegistered(t *testing.T) {
+	fixture := newGoalListFixture(t)
+	defer fixture.store.Close()
+	sessionID := "task-declare-absence-session"
+	registerLiveGoalClaimSession(t, fixture, sessionID)
+	params, err := json.Marshal(map[string]any{
+		"goal_id": fixture.emptyTaskGoal.ID, "agent": "test", "idempotency_key": "absence",
+		"titles": []string{"task"}, "descriptions": []string{"description"},
+		"agent_session_id": daemonTestSessionID(t, fixture.store, sessionID),
+	})
+	if err != nil {
+		t.Fatalf("marshal params: %v", err)
+	}
+	if _, err := fixture.daemon.dispatch(context.Background(), rpc.Request{Method: "task.declare", Params: params}); err == nil {
+		t.Fatal("task.declare remains registered")
+	}
+}
+
+func TestTaskCreateReturnsOnlyTasksDeclaredByThisCall(t *testing.T) {
 	fixture := newGoalListFixture(t)
 	defer fixture.store.Close()
 
@@ -867,24 +885,24 @@ func TestTaskDeclareReturnsOnlyTasksDeclaredByThisCall(t *testing.T) {
 	var responseSize int
 	declaredIDs := make(map[int64]struct{}, 3)
 	for _, key := range []string{"declare-contract-key-1", "declare-contract-key-2", "declare-contract-key-3"} {
-		raw, response := dispatchTaskDeclareForContractTest(t, fixture, sessionID, key, "declared task", "declared description")
+		raw, response := dispatchTaskCreateForContractTest(t, fixture, sessionID, key, "declared task", "declared description")
 		if len(response) != 1 {
-			t.Fatalf("task.declare %v returned %d tasks, want exactly 1; response bytes=%d: %v", key, len(response), len(raw), raw)
+			t.Fatalf("task.create %v returned %d tasks, want exactly 1; response bytes=%d: %v", key, len(response), len(raw), raw)
 		}
 		if response[0].GoalID != fixture.emptyTaskGoal.ID {
-			t.Fatalf("task.declare %v returned goal_id %v, want %v", key, response[0].GoalID, fixture.emptyTaskGoal.ID)
+			t.Fatalf("task.create %v returned goal_id %v, want %v", key, response[0].GoalID, fixture.emptyTaskGoal.ID)
 		}
 		if response[0].Title != "declared task" {
-			t.Fatalf("task.declare %v returned title %v, want declared task", key, response[0].Title)
+			t.Fatalf("task.create %v returned title %v, want declared task", key, response[0].Title)
 		}
 		if _, duplicate := declaredIDs[response[0].ID]; duplicate {
-			t.Fatalf("task.declare %v returned a duplicate task id %v", key, response[0].ID)
+			t.Fatalf("task.create %v returned a duplicate task id %v", key, response[0].ID)
 		}
 		declaredIDs[response[0].ID] = struct{}{}
 		if responseSize == 0 {
 			responseSize = len(raw)
 		} else if len(raw) != responseSize {
-			t.Fatalf("task.declare response grew across repeated declarations: first=%d current=%d; response=%v", responseSize, len(raw), raw)
+			t.Fatalf("task.create response grew across repeated declarations: first=%d current=%d; response=%v", responseSize, len(raw), raw)
 		}
 	}
 
@@ -894,7 +912,7 @@ func TestTaskDeclareReturnsOnlyTasksDeclaredByThisCall(t *testing.T) {
 	}
 	raw, err := fixture.daemon.dispatch(context.Background(), rpc.Request{Method: "goal.get", Params: goalParams})
 	if err != nil {
-		t.Fatalf("goal.get after task.declare: %v", err)
+		t.Fatalf("goal.get after task.create: %v", err)
 	}
 	var goalResponse struct {
 		Tasks []struct {
@@ -915,29 +933,29 @@ func TestTaskDeclareReturnsOnlyTasksDeclaredByThisCall(t *testing.T) {
 	}
 }
 
-func TestTaskDeclareIdempotencyReplayReturnsExistingTask(t *testing.T) {
+func TestTaskCreateIdempotencyReplayReturnsExistingTask(t *testing.T) {
 	fixture := newGoalListFixture(t)
 	defer fixture.store.Close()
 
 	sessionID := "task-declare-idempotency-contract-session"
 	registerLiveGoalClaimSession(t, fixture, sessionID)
-	_, first := dispatchTaskDeclareForContractTest(t, fixture, sessionID, "idempotency-contract-key", "first declaration", "first description")
-	_, replay := dispatchTaskDeclareForContractTest(t, fixture, sessionID, "idempotency-contract-key", "replayed declaration", "replayed description")
+	_, first := dispatchTaskCreateForContractTest(t, fixture, sessionID, "idempotency-contract-key", "first declaration", "first description")
+	_, replay := dispatchTaskCreateForContractTest(t, fixture, sessionID, "idempotency-contract-key", "replayed declaration", "replayed description")
 	if len(first) != 1 {
-		t.Fatalf("first task.declare returned %d tasks, want 1", len(first))
+		t.Fatalf("first task.create returned %d tasks, want 1", len(first))
 	}
 	if len(replay) != 1 {
-		t.Fatalf("idempotent task.declare replay returned %d tasks, want 1 existing task: %+v", len(replay), replay)
+		t.Fatalf("idempotent task.create replay returned %d tasks, want 1 existing task: %+v", len(replay), replay)
 	}
 	if replay[0].ID != first[0].ID || replay[0].Title != first[0].Title {
-		t.Fatalf("idempotent task.declare replay returned %+v, want existing task %+v", replay[0], first[0])
+		t.Fatalf("idempotent task.create replay returned %+v, want existing task %+v", replay[0], first[0])
 	}
 	tasks, err := fixture.store.ListTasks(context.Background(), fixture.emptyTaskGoal.ID)
 	if err != nil {
-		t.Fatalf("ListTasks after idempotent task.declare: %v", err)
+		t.Fatalf("ListTasks after idempotent task.create: %v", err)
 	}
 	if len(tasks) != 1 {
-		t.Fatalf("idempotent task.declare created %d tasks, want 1", len(tasks))
+		t.Fatalf("idempotent task.create created %d tasks, want 1", len(tasks))
 	}
 }
 
@@ -969,15 +987,15 @@ func TestDecisionAskClaimableTasksKeepsIdentityFieldsWithoutDescription(t *testi
 			}
 		}
 	}
-	declared, err := fixture.store.DeclareTasks(
+	declared, err := fixture.store.CreateTasks(
 		context.Background(), fixture.emptyTaskGoal.ID, "contract-test", "decision-claimable-key",
 		[]string{"decision task", "claimable task"}, []string{"decision description", "claimable description"},
 	)
 	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 	if len(declared) != 2 {
-		t.Fatalf("DeclareTasks returned %d tasks, want 2", len(declared))
+		t.Fatalf("CreateTasks returned %d tasks, want 2", len(declared))
 	}
 
 	raw := dispatchDecisionAskForContractTest(t, fixture, sessionID, fixture.emptyTaskGoal.ID, declared[0].ID)
@@ -1031,12 +1049,12 @@ func TestDecisionAskOmitsEmptyClaimableTasks(t *testing.T) {
 		t.Fatalf("ListTasks(%v): %v", fixture.emptyTaskGoal.ID, err)
 	}
 	if len(decisionTasks) == 0 {
-		decisionTasks, err = fixture.store.DeclareTasks(
+		decisionTasks, err = fixture.store.CreateTasks(
 			context.Background(), fixture.emptyTaskGoal.ID, "contract-test", "decision-empty-contract",
 			[]string{"decision task"}, []string{"decision task"},
 		)
 		if err != nil {
-			t.Fatalf("DeclareTasks(%v): %v", fixture.emptyTaskGoal.ID, err)
+			t.Fatalf("CreateTasks(%v): %v", fixture.emptyTaskGoal.ID, err)
 		}
 	}
 	decisionTaskID := decisionTasks[0].ID
@@ -1073,14 +1091,14 @@ func TestDecisionAskOmitsEmptyClaimableTasks(t *testing.T) {
 	}
 }
 
-type taskDeclareResponseForContractTest struct {
+type taskCreateResponseForContractTest struct {
 	ID          int64  `json:"id"`
 	GoalID      int64  `json:"goal_id"`
 	Title       string `json:"title"`
 	Description string `json:"description"`
 }
 
-func dispatchTaskDeclareForContractTest(t *testing.T, fixture goalListFixture, sessionID, idempotencyKey, title, description string) ([]byte, []taskDeclareResponseForContractTest) {
+func dispatchTaskCreateForContractTest(t *testing.T, fixture goalListFixture, sessionID, idempotencyKey, title, description string) ([]byte, []taskCreateResponseForContractTest) {
 	t.Helper()
 	params, err := json.Marshal(map[string]any{
 		"goal_id":          fixture.emptyTaskGoal.ID,
@@ -1091,15 +1109,15 @@ func dispatchTaskDeclareForContractTest(t *testing.T, fixture goalListFixture, s
 		"agent_session_id": daemonTestSessionID(t, fixture.store, sessionID),
 	})
 	if err != nil {
-		t.Fatalf("marshal task.declare params: %v", err)
+		t.Fatalf("marshal task.create params: %v", err)
 	}
-	raw, err := fixture.daemon.dispatch(context.Background(), rpc.Request{Method: "task.declare", Params: params})
+	raw, err := fixture.daemon.dispatch(context.Background(), rpc.Request{Method: "task.create", Params: params})
 	if err != nil {
-		t.Fatalf("task.declare %v: %v", idempotencyKey, err)
+		t.Fatalf("task.create %v: %v", idempotencyKey, err)
 	}
-	var response []taskDeclareResponseForContractTest
+	var response []taskCreateResponseForContractTest
 	if err := json.Unmarshal(raw, &response); err != nil {
-		t.Fatalf("decode task.declare %v response: %v; raw=%v", idempotencyKey, err, raw)
+		t.Fatalf("decode task.create %v response: %v; raw=%v", idempotencyKey, err, raw)
 	}
 	return raw, response
 }
@@ -1194,12 +1212,12 @@ func TestContractN11GoalListTruncatesTaskDescription(t *testing.T) {
 	defer fixture.store.Close()
 
 	fullDescription := strings.Repeat("あ", 300)
-	tasks, err := fixture.store.DeclareTasks(context.Background(), fixture.emptyTaskGoal.ID, "contract-test", "description-contract", []string{"description task"}, []string{fullDescription})
+	tasks, err := fixture.store.CreateTasks(context.Background(), fixture.emptyTaskGoal.ID, "contract-test", "description-contract", []string{"description task"}, []string{fullDescription})
 	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 	if len(tasks) != 1 {
-		t.Fatalf("DeclareTasks returned %d tasks, want 1", len(tasks))
+		t.Fatalf("CreateTasks returned %d tasks, want 1", len(tasks))
 	}
 	goal := findGoalPayloadForContractTest(t, goalListResponseForContractTest(t, fixture).Goals, fixture.emptyTaskGoal.ID)
 	var listed []struct {
@@ -1224,7 +1242,7 @@ func TestContractN12TaskUpdateTruncatesDescription(t *testing.T) {
 	sessionID := "task-update-description-contract-session"
 	registerLiveGoalClaimSession(t, fixture, sessionID)
 	fullDescription := strings.Repeat("あ", 300)
-	tasks, err := fixture.store.DeclareTasks(
+	tasks, err := fixture.store.CreateTasks(
 		context.Background(),
 		fixture.emptyTaskGoal.ID,
 		"contract-test",
@@ -1233,10 +1251,10 @@ func TestContractN12TaskUpdateTruncatesDescription(t *testing.T) {
 		[]string{fullDescription, fullDescription},
 	)
 	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 	if len(tasks) != 2 {
-		t.Fatalf("DeclareTasks returned %d tasks, want 2", len(tasks))
+		t.Fatalf("CreateTasks returned %d tasks, want 2", len(tasks))
 	}
 
 	wantDescription := strings.Repeat("あ", 120) + "…"
@@ -1317,12 +1335,12 @@ func TestContractN13GoalGetResponseSizeBreakdown(t *testing.T) {
 	for i := range descriptions {
 		descriptions[i] = fullDescription
 	}
-	tasks, err := fixture.store.DeclareTasks(context.Background(), fixture.emptyTaskGoal.ID, "contract-test", "goal-get-size-contract", titles, descriptions)
+	tasks, err := fixture.store.CreateTasks(context.Background(), fixture.emptyTaskGoal.ID, "contract-test", "goal-get-size-contract", titles, descriptions)
 	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 	if len(tasks) != len(titles) {
-		t.Fatalf("DeclareTasks returned %d tasks, want %d", len(tasks), len(titles))
+		t.Fatalf("CreateTasks returned %d tasks, want %d", len(tasks), len(titles))
 	}
 
 	measure := func(label string, goalID int64) {
@@ -1374,12 +1392,12 @@ func TestContractN13GoalGetResponseSizeBreakdown(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGoal long-content: %v", err)
 	}
-	longTasks, err := fixture.store.DeclareTasks(context.Background(), longGoal.ID, "contract-test", "goal-get-size-long-contract", titles, descriptions)
+	longTasks, err := fixture.store.CreateTasks(context.Background(), longGoal.ID, "contract-test", "goal-get-size-long-contract", titles, descriptions)
 	if err != nil {
-		t.Fatalf("DeclareTasks long-content: %v", err)
+		t.Fatalf("CreateTasks long-content: %v", err)
 	}
 	if len(longTasks) != len(titles) {
-		t.Fatalf("DeclareTasks long-content returned %d tasks, want %d", len(longTasks), len(titles))
+		t.Fatalf("CreateTasks long-content returned %d tasks, want %d", len(longTasks), len(titles))
 	}
 	measure("long-content", longGoal.ID)
 }
@@ -1391,12 +1409,12 @@ func TestContractB13TaskClaimReturnsFullTaskDescription(t *testing.T) {
 	sessionID := "task-claim-description-contract-session"
 	registerLiveGoalClaimSession(t, fixture, sessionID)
 	fullDescription := strings.Repeat("あ", 300)
-	tasks, err := fixture.store.DeclareTasks(context.Background(), fixture.emptyTaskGoal.ID, "contract-test", "task-claim-description-contract", []string{"full task.claim description"}, []string{fullDescription})
+	tasks, err := fixture.store.CreateTasks(context.Background(), fixture.emptyTaskGoal.ID, "contract-test", "task-claim-description-contract", []string{"full task.claim description"}, []string{fullDescription})
 	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 	if len(tasks) != 1 {
-		t.Fatalf("DeclareTasks returned %d tasks, want 1", len(tasks))
+		t.Fatalf("CreateTasks returned %d tasks, want 1", len(tasks))
 	}
 	params, err := json.Marshal(map[string]any{"task_id": tasks[0].ID, "agent_session_id": daemonTestSessionID(t, fixture.store, sessionID)})
 	if err != nil {
@@ -1650,9 +1668,9 @@ func TestContractB11GoalListKeepsShortTaskDescription(t *testing.T) {
 	defer fixture.store.Close()
 
 	const fullDescription = "first line\nsecond line is not part of the list preview"
-	tasks, err := fixture.store.DeclareTasks(context.Background(), fixture.emptyTaskGoal.ID, "contract-test", "short-description-contract", []string{"short description task"}, []string{fullDescription})
+	tasks, err := fixture.store.CreateTasks(context.Background(), fixture.emptyTaskGoal.ID, "contract-test", "short-description-contract", []string{"short description task"}, []string{fullDescription})
 	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 	goal := findGoalPayloadForContractTest(t, goalListResponseForContractTest(t, fixture).Goals, fixture.emptyTaskGoal.ID)
 	var listed []struct {
@@ -1675,9 +1693,9 @@ func TestContractB12GoalGetReturnsFullTaskDescription(t *testing.T) {
 	defer fixture.store.Close()
 
 	fullDescription := strings.Repeat("あ", 300)
-	tasks, err := fixture.store.DeclareTasks(context.Background(), fixture.emptyTaskGoal.ID, "contract-test", "full-description-contract", []string{"full description task"}, []string{fullDescription})
+	tasks, err := fixture.store.CreateTasks(context.Background(), fixture.emptyTaskGoal.ID, "contract-test", "full-description-contract", []string{"full description task"}, []string{fullDescription})
 	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 	params, err := json.Marshal(map[string]any{"goal_id": fixture.emptyTaskGoal.ID})
 	if err != nil {
@@ -1776,9 +1794,9 @@ func askOpenDecisionForContractTest(t *testing.T, fixture goalListFixture, goalI
 			t.Fatalf("ListTasks(%v): %v", goalID, err)
 		}
 		if len(tasks) == 0 {
-			declared, err := fixture.store.DeclareTasks(context.Background(), goalID, "contract-test", "decision-contract", []string{"decision task"}, []string{"decision task"})
+			declared, err := fixture.store.CreateTasks(context.Background(), goalID, "contract-test", "decision-contract", []string{"decision task"}, []string{"decision task"})
 			if err != nil {
-				t.Fatalf("DeclareTasks(%v): %v", goalID, err)
+				t.Fatalf("CreateTasks(%v): %v", goalID, err)
 			}
 			tasks = declared
 		}

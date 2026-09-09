@@ -37,9 +37,9 @@ func TestTaskCreateHandoffLifecycleOverRPC(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetTaskCreateHandoffForPlan: %v", err)
 	}
-	decisionTasks, err := fixture.store.DeclareTasks(ctx, fixture.claimedGoalID, "fixture", "task-create-decision", []string{"decision task"}, []string{"holds the decision returned to the task-create receiver"})
+	decisionTasks, err := fixture.store.CreateTasks(ctx, fixture.claimedGoalID, "fixture", "task-create-decision", []string{"decision task"}, []string{"holds the decision returned to the task-create receiver"})
 	if err != nil {
-		t.Fatalf("DeclareTasks decision task: %v", err)
+		t.Fatalf("CreateTasks decision task: %v", err)
 	}
 	decision, err := fixture.store.AskDecision(ctx, store.AskInput{GoalID: fixture.claimedGoalID, TaskID: decisionTasks[0].ID, Kind: domain.KindDecision, Question: "task create decision", AgentSessionID: fixture.requesterID})
 	if err != nil {
@@ -48,9 +48,9 @@ func TestTaskCreateHandoffLifecycleOverRPC(t *testing.T) {
 	if _, err := fixture.store.AnswerDecision(ctx, store.AnswerInput{DecisionID: decision.ID, AnswerText: "answer"}); err != nil {
 		t.Fatalf("AnswerDecision task-create decision: %v", err)
 	}
-	foreignTasks, err := fixture.store.DeclareTasks(ctx, fixture.unclaimedGoalID, "fixture", "foreign-task-create-decision", []string{"foreign decision task"}, []string{"must not appear in the task-create response"})
+	foreignTasks, err := fixture.store.CreateTasks(ctx, fixture.unclaimedGoalID, "fixture", "foreign-task-create-decision", []string{"foreign decision task"}, []string{"must not appear in the task-create response"})
 	if err != nil {
-		t.Fatalf("DeclareTasks foreign decision task: %v", err)
+		t.Fatalf("CreateTasks foreign decision task: %v", err)
 	}
 	foreignDecision, err := fixture.store.AskDecision(ctx, store.AskInput{GoalID: fixture.unclaimedGoalID, TaskID: foreignTasks[0].ID, Kind: domain.KindDecision, Question: "foreign task create decision", AgentSessionID: fixture.requesterID})
 	if err != nil {

@@ -48,14 +48,14 @@ func TestTaskCreateHandoffFollowsAcceptedPlan(t *testing.T) {
 	if _, err := s.ReceiveTaskCreateHandoff(ctx, handoff.ID, subcommanderID); err != nil {
 		t.Fatalf("ReceiveTaskCreateHandoff: %v", err)
 	}
-	unrelated, err := s.DeclareTasks(ctx, goalID, "other-agent", "unrelated", []string{"unrelated"}, []string{"outside this task-create request"})
+	unrelated, err := s.CreateTasks(ctx, goalID, "other-agent", "unrelated", []string{"unrelated"}, []string{"outside this task-create request"})
 	if err != nil {
-		t.Fatalf("DeclareTasks unrelated: %v", err)
+		t.Fatalf("CreateTasks unrelated: %v", err)
 	}
-	if _, err := s.CreateTasks(ctx, handoff.ID, wrongID, goalID, "agent", "implementation", []string{"implement"}, []string{"implement through the received task-create handoff"}); err == nil {
+	if _, err := s.CreateTasksForHandoff(ctx, handoff.ID, wrongID, goalID, "agent", "implementation", []string{"implement"}, []string{"implement through the received task-create handoff"}); err == nil {
 		t.Fatal("CreateTasks accepted a foreign session")
 	}
-	tasks, err := s.CreateTasks(ctx, handoff.ID, subcommanderID, goalID, "agent", "implementation", []string{"implement"}, []string{"implement through the received task-create handoff"})
+	tasks, err := s.CreateTasksForHandoff(ctx, handoff.ID, subcommanderID, goalID, "agent", "implementation", []string{"implement"}, []string{"implement through the received task-create handoff"})
 	if err != nil {
 		t.Fatalf("CreateTasks: %v", err)
 	}
@@ -68,7 +68,7 @@ func TestTaskCreateHandoffFollowsAcceptedPlan(t *testing.T) {
 	if tasks[0].ID == unrelated[0].ID {
 		t.Fatalf("CreateTasks returned unrelated task %d", unrelated[0].ID)
 	}
-	retry, err := s.CreateTasks(ctx, handoff.ID, subcommanderID, goalID, "agent", "implementation", []string{"implement"}, []string{"implement through the received task-create handoff"})
+	retry, err := s.CreateTasksForHandoff(ctx, handoff.ID, subcommanderID, goalID, "agent", "implementation", []string{"implement"}, []string{"implement through the received task-create handoff"})
 	if err != nil {
 		t.Fatalf("CreateTasks retry: %v", err)
 	}

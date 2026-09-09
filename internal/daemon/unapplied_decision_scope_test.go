@@ -79,15 +79,15 @@ func newUnappliedDecisionScopeRPCTestFixture(t *testing.T) unappliedDecisionScop
 		t.Fatalf("ReceiveGoalHandoff: %v", err)
 	}
 
-	taskA, err := s.DeclareTasks(ctx, goalA.ID, "fixture", "decision-scope-task-a", []string{"task A"}, []string{"task A description"})
+	taskA, err := s.CreateTasks(ctx, goalA.ID, "fixture", "decision-scope-task-a", []string{"task A"}, []string{"task A description"})
 	if err != nil {
 		s.Close()
-		t.Fatalf("DeclareTasks A: %v", err)
+		t.Fatalf("CreateTasks A: %v", err)
 	}
-	taskB, err := s.DeclareTasks(ctx, goalB.ID, "fixture", "decision-scope-task-b", []string{"task B"}, []string{"task B description"})
+	taskB, err := s.CreateTasks(ctx, goalB.ID, "fixture", "decision-scope-task-b", []string{"task B"}, []string{"task B description"})
 	if err != nil {
 		s.Close()
-		t.Fatalf("DeclareTasks B: %v", err)
+		t.Fatalf("CreateTasks B: %v", err)
 	}
 	decisionA, err := s.AskDecision(ctx, store.AskInput{
 		GoalID: goalA.ID, TaskID: taskA[0].ID, Kind: domain.KindDecision,
@@ -267,9 +267,9 @@ func assertDecisionSet(t *testing.T, got map[int64]bool, want ...int64) {
 	}
 }
 
-func TestTaskDeclareForSubcommanderExcludesOtherGoalDecisions(t *testing.T) {
+func TestTaskCreateForSubcommanderExcludesOtherGoalDecisions(t *testing.T) {
 	f := newUnappliedDecisionScopeRPCTestFixture(t)
-	result := f.callRPC(t, "task.declare", map[string]any{
+	result := f.callRPC(t, "task.create", map[string]any{
 		"goal_id":                   f.goalAID,
 		"agent":                     "subcommander",
 		"idempotency_key":           "rpc-subcommander-task",
@@ -293,9 +293,9 @@ func TestGoalListForSubcommanderExcludesOtherGoalOrphanedDecisions(t *testing.T)
 	assertDecisionSet(t, notificationIDs(t, result), f.decisionAID)
 }
 
-func TestTaskDeclareForSwappedSessionScopesToRequestGoal(t *testing.T) {
+func TestTaskCreateForSwappedSessionScopesToRequestGoal(t *testing.T) {
 	f := newUnappliedDecisionScopeRPCTestFixture(t)
-	result := f.callRPC(t, "task.declare", map[string]any{
+	result := f.callRPC(t, "task.create", map[string]any{
 		"goal_id":                   f.goalAID,
 		"agent":                     "swapped",
 		"idempotency_key":           "rpc-swapped-goal-a-task",
@@ -307,9 +307,9 @@ func TestTaskDeclareForSwappedSessionScopesToRequestGoal(t *testing.T) {
 	assertDecisionSet(t, notificationIDs(t, result), f.decisionAID)
 }
 
-func TestTaskDeclareForSwappedSessionFollowsTheRequestedGoal(t *testing.T) {
+func TestTaskCreateForSwappedSessionFollowsTheRequestedGoal(t *testing.T) {
 	f := newUnappliedDecisionScopeRPCTestFixture(t)
-	result := f.callRPC(t, "task.declare", map[string]any{
+	result := f.callRPC(t, "task.create", map[string]any{
 		"goal_id":                   f.goalBID,
 		"agent":                     "swapped",
 		"idempotency_key":           "rpc-swapped-goal-b-task",
@@ -401,9 +401,9 @@ func TestSessionRoleUnchangedAfterExtractingHelper(t *testing.T) {
 	}
 }
 
-func TestTaskDeclareForCommanderKeepsProjectWideDecisions(t *testing.T) {
+func TestTaskCreateForCommanderKeepsProjectWideDecisions(t *testing.T) {
 	f := newUnappliedDecisionScopeRPCTestFixture(t)
-	result := f.callRPC(t, "task.declare", map[string]any{
+	result := f.callRPC(t, "task.create", map[string]any{
 		"goal_id":                   f.goalAID,
 		"agent":                     "commander",
 		"idempotency_key":           "rpc-commander-task",
@@ -426,9 +426,9 @@ func TestGoalListForCommanderKeepsProjectWideOrphanedDecisions(t *testing.T) {
 	assertDecisionSet(t, orphanedDecisionIDs(t, data), f.decisionAID, f.decisionBID)
 }
 
-func TestTaskDeclareWithoutSessionScopesToRequestGoal(t *testing.T) {
+func TestTaskCreateWithoutSessionScopesToRequestGoal(t *testing.T) {
 	f := newUnappliedDecisionScopeRPCTestFixture(t)
-	result := f.callRPC(t, "task.declare", map[string]any{
+	result := f.callRPC(t, "task.create", map[string]any{
 		"goal_id":                   f.goalAID,
 		"agent":                     "no-session",
 		"idempotency_key":           "rpc-no-session-task",

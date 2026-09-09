@@ -233,9 +233,9 @@ func TestTaskScopedWorkflowReconciliationIncludesParentAuthorityAndIsolatesTask(
 	ctx := context.Background()
 	goalID := newTestGoal(t, s)
 	taskID := newTestDecisionTask(t, s, goalID, "workflow-task-scope")
-	declaredTasks, err := s.DeclareTasks(ctx, goalID, "test-agent", "workflow-task-scope-other", []string{"other decision task"}, []string{"Create an unrelated task for scope isolation."})
+	declaredTasks, err := s.CreateTasks(ctx, goalID, "test-agent", "workflow-task-scope-other", []string{"other decision task"}, []string{"Create an unrelated task for scope isolation."})
 	if err != nil {
-		t.Fatalf("DeclareTasks other: %v", err)
+		t.Fatalf("CreateTasks other: %v", err)
 	}
 	var otherTaskID int64
 	for _, task := range declaredTasks {
@@ -245,7 +245,7 @@ func TestTaskScopedWorkflowReconciliationIncludesParentAuthorityAndIsolatesTask(
 		}
 	}
 	if otherTaskID == 0 {
-		t.Fatalf("DeclareTasks other returned no distinct task: %+v", declaredTasks)
+		t.Fatalf("CreateTasks other returned no distinct task: %+v", declaredTasks)
 	}
 	goal, err := s.GetGoal(ctx, goalID)
 	if err != nil {

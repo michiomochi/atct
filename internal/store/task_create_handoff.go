@@ -113,7 +113,7 @@ func (s *Store) createTaskCreateHandoffTx(ctx context.Context, tx *sql.Tx, plan 
 	return sqlcgen.New(tx).CreateTaskCreateHandoff(ctx, sqlcgen.CreateTaskCreateHandoffParams{ID: uuid.NewString(), PlanHandoffID: plan.ID, GoalID: plan.GoalID, RequestedBy: sql.NullInt64{Int64: requestedBy, Valid: true}, RequestedAt: sql.NullString{String: time.Now().UTC().Format(time.RFC3339Nano), Valid: true}, RequestReport: sql.NullString{String: "create implementation tasks for accepted plan", Valid: true}})
 }
 
-func (s *Store) CreateTasks(ctx context.Context, handoffID string, sessionID, goalID int64, agent, key string, titles, descriptions []string) ([]domain.Task, error) {
+func (s *Store) CreateTasksForHandoff(ctx context.Context, handoffID string, sessionID, goalID int64, agent, key string, titles, descriptions []string) ([]domain.Task, error) {
 	if handoffID == "" {
 		return nil, ErrTaskCreateHandoffState
 	}

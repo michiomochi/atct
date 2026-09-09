@@ -225,22 +225,22 @@ func TestHTTPHandlerMCPTaskHandoffRoutes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
-	tasks, err := fixture.store.DeclareTasks(ctx, goal.ID, "commander", "handoff-mcp", []string{
+	tasks, err := fixture.store.CreateTasks(ctx, goal.ID, "commander", "handoff-mcp", []string{
 		"delegated task", "claimable task",
 	}, []string{
 		"A task delegated by the goal owner.",
 		"A task used to verify the existing task claim tool.",
 	})
 	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 	unclaimedGoal, err := fixture.store.CreateGoal(ctx, project.ID, "unclaimed handoff goal", "human")
 	if err != nil {
 		t.Fatalf("CreateGoal unclaimed: %v", err)
 	}
-	unclaimedTasks, err := fixture.store.DeclareTasks(ctx, unclaimedGoal.ID, "commander", "unclaimed-handoff-mcp", []string{"unclaimed task"}, []string{"A task in a goal without a claim."})
+	unclaimedTasks, err := fixture.store.CreateTasks(ctx, unclaimedGoal.ID, "commander", "unclaimed-handoff-mcp", []string{"unclaimed task"}, []string{"A task in a goal without a claim."})
 	if err != nil {
-		t.Fatalf("DeclareTasks unclaimed: %v", err)
+		t.Fatalf("CreateTasks unclaimed: %v", err)
 	}
 
 	client := newMCPHTTPTestClient(fixture.server.URL + "/mcp")

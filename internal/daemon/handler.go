@@ -323,7 +323,7 @@ func (d *Daemon) listClaimableTasks(ctx context.Context, projectID, excludedTask
 	return claimable, nil
 }
 
-func tasksDeclaredWithIdempotencyKey(tasks []domain.Task, idempotencyKey string) []domain.Task {
+func tasksCreatedWithIdempotencyKey(tasks []domain.Task, idempotencyKey string) []domain.Task {
 	var declared []domain.Task
 	for _, task := range tasks {
 		separator := strings.LastIndex(task.DeclareKey, "#")
@@ -1267,36 +1267,6 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		response, err := d.responseWithScopedUnappliedDecisions(ctx, updated, goalID, p.AgentSessionID)
 		return marshal(response, err)
 
-	case "task.declare":
-		var p struct {
-			GoalID                  int64    `json:"goal_id"`
-			Agent                   string   `json:"agent"`
-			IdempotencyKey          string   `json:"idempotency_key"`
-			Titles                  []string `json:"titles"`
-			Descriptions            []string `json:"descriptions"`
-			AgentSessionID          int64    `json:"agent_session_id"`
-			IncludeUnappliedAnswers bool     `json:"include_unapplied_answers"`
-		}
-		if err := json.Unmarshal(req.Params, &p); err != nil {
-			return nil, err
-		}
-		goal, err := d.store.GetGoal(ctx, p.GoalID)
-		if err != nil {
-			return nil, err
-		}
-		if err := d.ensureAgentSessionProject(ctx, p.AgentSessionID, goal.ProjectID); err != nil {
-			return nil, err
-		}
-		tasks, err := d.store.DeclareTasks(ctx, p.GoalID, p.Agent, p.IdempotencyKey, p.Titles, p.Descriptions)
-		if err == nil {
-			tasks = tasksDeclaredWithIdempotencyKey(tasks, p.IdempotencyKey)
-		}
-		if err != nil || !p.IncludeUnappliedAnswers {
-			return marshal(tasks, err)
-		}
-		response, err := d.responseWithScopedUnappliedDecisions(ctx, tasks, p.GoalID, p.AgentSessionID)
-		return marshal(response, err)
-
 	case "task.create":
 		var p struct {
 			HandoffID               string   `json:"handoff_id"`
@@ -1311,10 +1281,30 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, err
 		}
-		if p.HandoffID == "" {
-			return nil, store.ErrTaskCreateHandoffState
+		var tasks []domain.Task
+		var err error
+		if p.HandoffID != "" {
+			tasks, err = d.store.CreateTasksForHandoff(ctx, p.HandoffID, p.AgentSessionID, p.GoalID, p.Agent, p.IdempotencyKey, p.Titles, p.Descriptions)
+		} else {
+			goal, getErr := d.store.GetGoal(ctx, p.GoalID)
+			if getErr != nil {
+				return nil, getErr
+			}
+			if err = d.ensureAgentSessionProject(ctx, p.AgentSessionID, goal.ProjectID); err == nil {
+				handoffs, listErr := d.store.ListTaskCreateHandoffs(ctx, p.GoalID)
+				if listErr != nil {
+					return nil, listErr
+				}
+				if len(handoffs) != 0 {
+					err = store.ErrTaskCreateHandoffState
+				} else {
+					tasks, err = d.store.CreateTasks(ctx, p.GoalID, p.Agent, p.IdempotencyKey, p.Titles, p.Descriptions)
+					if err == nil {
+						tasks = tasksCreatedWithIdempotencyKey(tasks, p.IdempotencyKey)
+					}
+				}
+			}
 		}
-		tasks, err := d.store.CreateTasks(ctx, p.HandoffID, p.AgentSessionID, p.GoalID, p.Agent, p.IdempotencyKey, p.Titles, p.Descriptions)
 		if err != nil || !p.IncludeUnappliedAnswers {
 			return marshal(tasks, err)
 		}

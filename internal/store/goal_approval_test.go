@@ -138,9 +138,9 @@ func TestApproveGoalActivatesGoalAndAppliesApproval(t *testing.T) {
 	if decision.Status != domain.DecisionApplied || decision.AnswerLabel != "approve" {
 		t.Fatalf("decision = %q/%q, want applied/approve", decision.Status, decision.AnswerLabel)
 	}
-	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "approval-tasks", []string{"work after approval"}, []string{"Run after approval."})
+	tasks, err := s.CreateTasks(ctx, goal.ID, "agent", "approval-tasks", []string{"work after approval"}, []string{"Run after approval."})
 	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 	addTestAgentSession(t, s, "approved-agent-session")
 	claimed, err := s.ClaimTask(ctx, tasks[0].ID, testSessionID("approved-agent-session"))
@@ -206,9 +206,9 @@ func TestClaimTaskRejectsTaskForProposedGoal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
-	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "proposed-task", []string{"work"}, []string{"Work after approval."})
+	tasks, err := s.CreateTasks(ctx, goal.ID, "agent", "proposed-task", []string{"work"}, []string{"Work after approval."})
 	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 	if _, err := s.db.ExecContext(ctx, "UPDATE goals SET status = ? WHERE id = ?", string(domain.GoalProposed), goal.ID); err != nil {
 		t.Fatalf("set goal proposed: %v", err)
@@ -237,9 +237,9 @@ func TestClaimTaskRejectsNonActiveGoalsWithStateSpecificWording(t *testing.T) {
 			if err != nil {
 				t.Fatalf("CreateGoal: %v", err)
 			}
-			tasks, err := s.DeclareTasks(ctx, goal.ID, "human", "non-active-claim", []string{"work"}, []string{"Work."})
+			tasks, err := s.CreateTasks(ctx, goal.ID, "human", "non-active-claim", []string{"work"}, []string{"Work."})
 			if err != nil {
-				t.Fatalf("DeclareTasks: %v", err)
+				t.Fatalf("CreateTasks: %v", err)
 			}
 			if _, err := s.db.ExecContext(ctx, "UPDATE goals SET status = ?, work_done = ?, now_possible = ?, how_to_verify = ?, surprises = ?, needs_review = ?, next_steps = ? WHERE id = ?", string(tt.status), "Work completed.", "Nothing new.", "Run the existing checks.", "None.", "None.", "No further steps.", goal.ID); err != nil {
 				t.Fatalf("set goal status: %v", err)
@@ -257,7 +257,7 @@ func TestClaimTaskRejectsNonActiveGoalsWithStateSpecificWording(t *testing.T) {
 	}
 }
 
-func TestDeclareTasksRejectsTaskForProposedGoalWithoutCreatingTasks(t *testing.T) {
+func TestCreateTasksRejectsTaskForProposedGoalWithoutCreatingTasks(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	project, err := s.CreateProject(ctx, "declare-proposed", t.TempDir())
@@ -269,13 +269,13 @@ func TestDeclareTasksRejectsTaskForProposedGoalWithoutCreatingTasks(t *testing.T
 		t.Fatalf("CreateGoal: %v", err)
 	}
 
-	_, err = s.DeclareTasks(ctx, goal.ID, "agent", "proposed-tasks", []string{"work one", "work two"}, []string{"Work one after approval.", "Work two after approval."})
+	_, err = s.CreateTasks(ctx, goal.ID, "agent", "proposed-tasks", []string{"work one", "work two"}, []string{"Work one after approval.", "Work two after approval."})
 	if !errors.Is(err, ErrGoalNotActive) {
-		t.Fatalf("DeclareTasks error = %v, want ErrGoalNotActive", err)
+		t.Fatalf("CreateTasks error = %v, want ErrGoalNotActive", err)
 	}
-	want := fmt.Sprintf("%s: goal %d is not approved; obtain human approval before declaring its tasks (承認されていないため、先に人間の承認を得てください)", ErrGoalNotActive, goal.ID)
+	want := fmt.Sprintf("%s: goal %d is not approved; obtain human approval before creating its tasks (承認されていないため、先に人間の承認を得てください)", ErrGoalNotActive, goal.ID)
 	if err.Error() != want {
-		t.Fatalf("DeclareTasks error = %q, want %q", err, want)
+		t.Fatalf("CreateTasks error = %q, want %q", err, want)
 	}
 	tasks, err := s.ListTasks(ctx, goal.ID)
 	if err != nil {
@@ -286,7 +286,7 @@ func TestDeclareTasksRejectsTaskForProposedGoalWithoutCreatingTasks(t *testing.T
 	}
 }
 
-func TestDeclareTasksRejectsNonActiveGoalsWithStateSpecificWording(t *testing.T) {
+func TestCreateTasksRejectsNonActiveGoalsWithStateSpecificWording(t *testing.T) {
 	for _, tt := range nonActiveGoalStateCases {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
@@ -303,19 +303,19 @@ func TestDeclareTasksRejectsNonActiveGoalsWithStateSpecificWording(t *testing.T)
 				t.Fatalf("set goal status: %v", err)
 			}
 
-			_, err = s.DeclareTasks(ctx, goal.ID, "human", "non-active-tasks", []string{"work"}, []string{"Work."})
+			_, err = s.CreateTasks(ctx, goal.ID, "human", "non-active-tasks", []string{"work"}, []string{"Work."})
 			if !errors.Is(err, ErrGoalNotActive) {
-				t.Fatalf("DeclareTasks error = %v, want ErrGoalNotActive", err)
+				t.Fatalf("CreateTasks error = %v, want ErrGoalNotActive", err)
 			}
-			want := fmt.Sprintf("%s: goal %d %s; cannot declare its tasks (%s)", ErrGoalNotActive, goal.ID, tt.statePhrase, tt.japanese)
+			want := fmt.Sprintf("%s: goal %d %s; cannot create its tasks (%s)", ErrGoalNotActive, goal.ID, tt.statePhrase, tt.japanese)
 			if err.Error() != want {
-				t.Fatalf("DeclareTasks error = %q, want %q", err, want)
+				t.Fatalf("CreateTasks error = %q, want %q", err, want)
 			}
 		})
 	}
 }
 
-func TestDeclareTasksAllowsActiveGoal(t *testing.T) {
+func TestCreateTasksAllowsActiveGoal(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	project, err := s.CreateProject(ctx, "declare-active", t.TempDir())
@@ -327,9 +327,9 @@ func TestDeclareTasksAllowsActiveGoal(t *testing.T) {
 		t.Fatalf("CreateGoal: %v", err)
 	}
 
-	tasks, err := s.DeclareTasks(ctx, goal.ID, "human", "active-tasks", []string{"work one", "work two"}, []string{"Run work one.", "Run work two."})
+	tasks, err := s.CreateTasks(ctx, goal.ID, "human", "active-tasks", []string{"work one", "work two"}, []string{"Run work one.", "Run work two."})
 	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 	if len(tasks) != 2 {
 		t.Fatalf("tasks = %d, want 2", len(tasks))

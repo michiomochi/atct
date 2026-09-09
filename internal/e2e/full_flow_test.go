@@ -214,7 +214,7 @@ func declareTasks(t *testing.T, s *e2eStack, goalID int64, titles []string) []do
 	for i, title := range titles {
 		descriptions[i] = "Complete the task titled " + title + " and verify its result."
 	}
-	callDaemon(t, s, "task.declare", map[string]any{
+	callDaemon(t, s, "task.create", map[string]any{
 		"goal_id":         goalID,
 		"agent":           "e2e-agent",
 		"idempotency_key": "e2e-declaration",
@@ -222,7 +222,7 @@ func declareTasks(t *testing.T, s *e2eStack, goalID int64, titles []string) []do
 		"descriptions":    descriptions,
 	}, &tasks)
 	if len(tasks) != len(titles) {
-		t.Fatalf("task.declare returned %d tasks, want %d", len(tasks), len(titles))
+		t.Fatalf("task.create returned %d tasks, want %d", len(tasks), len(titles))
 	}
 	return tasks
 }

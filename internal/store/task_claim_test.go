@@ -14,9 +14,9 @@ func TestClaimTaskAllowsExactlyOneConcurrentWinner(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	goalID := newTestGoal(t, s)
-	tasks, err := s.DeclareTasks(ctx, goalID, "codex", "claim-key", []string{"Implement the task"}, []string{"Implement the task and confirm exactly one run can claim it."})
+	tasks, err := s.CreateTasks(ctx, goalID, "codex", "claim-key", []string{"Implement the task"}, []string{"Implement the task and confirm exactly one run can claim it."})
 	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 	addTestAgentSession(t, s, "run-0")
 	addTestAgentSession(t, s, "run-1")
@@ -67,9 +67,9 @@ func TestUpdateTaskReleasesClaimWhenTerminal(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	goalID := newTestGoal(t, s)
-	tasks, err := s.DeclareTasks(ctx, goalID, "codex", "release-key", []string{"Finish the task"}, []string{"Finish the task and ensure terminal status releases its claim."})
+	tasks, err := s.CreateTasks(ctx, goalID, "codex", "release-key", []string{"Finish the task"}, []string{"Finish the task and ensure terminal status releases its claim."})
 	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 	addTestAgentSession(t, s, "run-1")
 	if _, err := s.ClaimTask(ctx, tasks[0].ID, testSessionID("run-1")); err != nil {
@@ -93,9 +93,9 @@ func TestUpdateTaskReleasesClaimWhenTodo(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	goalID := newTestGoal(t, s)
-	tasks, err := s.DeclareTasks(ctx, goalID, "codex", "todo-release-key", []string{"Resume the task later"}, []string{"Resume the task later and verify todo status releases its claim."})
+	tasks, err := s.CreateTasks(ctx, goalID, "codex", "todo-release-key", []string{"Resume the task later"}, []string{"Resume the task later and verify todo status releases its claim."})
 	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 	addTestAgentSession(t, s, "run-1")
 	if _, err := s.UpdateTask(ctx, tasks[0].ID, domain.TaskDoing, testSessionID("run-1")); err != nil {
@@ -122,9 +122,9 @@ func TestUpdateTaskKeepsClaimWhenDoing(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	goalID := newTestGoal(t, s)
-	tasks, err := s.DeclareTasks(ctx, goalID, "codex", "doing-keep-key", []string{"Keep working"}, []string{"Keep working on the task while preserving its active claim."})
+	tasks, err := s.CreateTasks(ctx, goalID, "codex", "doing-keep-key", []string{"Keep working"}, []string{"Keep working on the task while preserving its active claim."})
 	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 	addTestAgentSession(t, s, "run-1")
 	if _, err := s.ClaimTask(ctx, tasks[0].ID, testSessionID("run-1")); err != nil {
@@ -148,9 +148,9 @@ func TestReleaseTaskClearsClaim(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	goalID := newTestGoal(t, s)
-	tasks, err := s.DeclareTasks(ctx, goalID, "codex", "human-release-key", []string{"Release a stale claim"}, []string{"Release the stale claim so another run can continue the task."})
+	tasks, err := s.CreateTasks(ctx, goalID, "codex", "human-release-key", []string{"Release a stale claim"}, []string{"Release the stale claim so another run can continue the task."})
 	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 	addTestAgentSession(t, s, "dead-run")
 	if _, err := s.ClaimTask(ctx, tasks[0].ID, testSessionID("dead-run")); err != nil {

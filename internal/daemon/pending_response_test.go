@@ -22,9 +22,9 @@ func TestTaskClaimNotificationDoesNotApplyDecision(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
-	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "declare-1", []string{"task"}, []string{"Complete the task before applying its pending decision."})
+	tasks, err := s.CreateTasks(ctx, goal.ID, "agent", "declare-1", []string{"task"}, []string{"Complete the task before applying its pending decision."})
 	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 	decision, err := s.AskDecision(ctx, store.AskInput{
 		GoalID: goal.ID, TaskID: tasks[0].ID, Kind: domain.KindDecision,
@@ -84,13 +84,13 @@ func TestGoalListNotificationIsProjectScoped(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGoal(other): %v", err)
 	}
-	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "declare-project", []string{"project task"}, []string{"Complete the project task before returning its pending response."})
+	tasks, err := s.CreateTasks(ctx, goal.ID, "agent", "declare-project", []string{"project task"}, []string{"Complete the project task before returning its pending response."})
 	if err != nil {
-		t.Fatalf("DeclareTasks(project): %v", err)
+		t.Fatalf("CreateTasks(project): %v", err)
 	}
-	otherTasks, err := s.DeclareTasks(ctx, otherGoal.ID, "agent", "declare-other", []string{"other task"}, []string{"Complete the task in the other project without mixing responses."})
+	otherTasks, err := s.CreateTasks(ctx, otherGoal.ID, "agent", "declare-other", []string{"other task"}, []string{"Complete the task in the other project without mixing responses."})
 	if err != nil {
-		t.Fatalf("DeclareTasks(other): %v", err)
+		t.Fatalf("CreateTasks(other): %v", err)
 	}
 	decision := answerPendingResponseDecision(t, s, goal.ID, tasks[0].ID, "project decision")
 	otherDecision := answerPendingResponseDecision(t, s, otherGoal.ID, otherTasks[0].ID, "other project decision")
@@ -123,9 +123,9 @@ func TestDecisionPollNotificationExcludesPolledDecision(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
-	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "declare-1", []string{"poll target", "other task"}, []string{"Complete the task whose decision is being polled.", "Complete the other task independently."})
+	tasks, err := s.CreateTasks(ctx, goal.ID, "agent", "declare-1", []string{"poll target", "other task"}, []string{"Complete the task whose decision is being polled.", "Complete the other task independently."})
 	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 	polled := answerPendingResponseDecision(t, s, goal.ID, tasks[0].ID, "polled decision")
 	other := answerPendingResponseDecision(t, s, goal.ID, tasks[1].ID, "other decision")
@@ -158,15 +158,15 @@ func TestDecisionAskParkedIncludesClaimableTasks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGoal(parked): %v", err)
 	}
-	parked, err := s.DeclareTasks(ctx, parkGoal.ID, "agent", "declare-parked", []string{"parked task"}, []string{"Complete the parked task after the human response arrives."})
+	parked, err := s.CreateTasks(ctx, parkGoal.ID, "agent", "declare-parked", []string{"parked task"}, []string{"Complete the parked task after the human response arrives."})
 	if err != nil {
-		t.Fatalf("DeclareTasks(parked): %v", err)
+		t.Fatalf("CreateTasks(parked): %v", err)
 	}
 	otherGoal, err := s.CreateGoal(ctx, project.ID, "other-goal\n\ndescription", "human")
 	if err != nil {
 		t.Fatalf("CreateGoal(other): %v", err)
 	}
-	candidates, err := s.DeclareTasks(ctx, otherGoal.ID, "agent", "declare-candidates", []string{
+	candidates, err := s.CreateTasks(ctx, otherGoal.ID, "agent", "declare-candidates", []string{
 		"free-1", "claimed", "free-2", "free-3", "free-4",
 	}, []string{
 		"Complete the first free candidate task.",
@@ -176,7 +176,7 @@ func TestDecisionAskParkedIncludesClaimableTasks(t *testing.T) {
 		"Complete the fourth free candidate task.",
 	})
 	if err != nil {
-		t.Fatalf("DeclareTasks(candidates): %v", err)
+		t.Fatalf("CreateTasks(candidates): %v", err)
 	}
 	otherSessionID := daemonTestSessionID(t, s, "other-run")
 	if _, err := s.ClaimTask(ctx, candidates[1].ID, otherSessionID); err != nil {
@@ -281,8 +281,8 @@ func TestProjectScopedWritesRejectOtherProject(t *testing.T) {
 			params: map[string]any{"task_id": f.targetTask.ID, "status": "done", "agent_session_id": f.agentSessionID},
 		},
 		{
-			name:   "task.declare",
-			method: "task.declare",
+			name:   "task.create",
+			method: "task.create",
 			params: map[string]any{
 				"goal_id": f.targetGoal.ID, "agent": "agent", "idempotency_key": "cross-project",
 				"titles": []string{"must be rejected"}, "descriptions": []string{"Complete the task only in the assigned project."}, "agent_session_id": f.agentSessionID,
@@ -354,15 +354,15 @@ func TestTaskWritesWithoutAgentSessionIDSkipProjectGuard(t *testing.T) {
 		"titles": []string{"no run id"}, "descriptions": []string{"Complete the task without requiring a run identifier."},
 	})
 	if err != nil {
-		t.Fatalf("Marshal task.declare params: %v", err)
+		t.Fatalf("Marshal task.create params: %v", err)
 	}
-	raw, err := f.daemon.dispatch(f.ctx, rpc.Request{Method: "task.declare", Params: params})
+	raw, err := f.daemon.dispatch(f.ctx, rpc.Request{Method: "task.create", Params: params})
 	if err != nil {
-		t.Fatalf("task.declare: %v", err)
+		t.Fatalf("task.create: %v", err)
 	}
 	var declared []domain.Task
 	if err := json.Unmarshal(raw, &declared); err != nil {
-		t.Fatalf("unmarshal task.declare response %v: %v", raw, err)
+		t.Fatalf("unmarshal task.create response %v: %v", raw, err)
 	}
 	if len(declared) != 1 {
 		t.Fatalf("declared tasks = %#v, want one task", declared)
@@ -396,9 +396,9 @@ func TestTaskUpdateWithoutCommitsPreservesExistingBehavior(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
-	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "task-update-no-commits", []string{"task update"}, []string{"Complete the task update."})
+	tasks, err := s.CreateTasks(ctx, goal.ID, "agent", "task-update-no-commits", []string{"task update"}, []string{"Complete the task update."})
 	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 	d := New(s)
 
@@ -437,9 +437,9 @@ func TestTaskUpdateWithUnknownCommitKeepsStatusUnchanged(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
-	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "task-update-unknown-commit", []string{"task update"}, []string{"Complete the task update."})
+	tasks, err := s.CreateTasks(ctx, goal.ID, "agent", "task-update-unknown-commit", []string{"task update"}, []string{"Complete the task update."})
 	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 	d := New(s)
 
@@ -471,9 +471,9 @@ func TestTaskUpdateWithDuplicateCommitLinksOnce(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
-	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "task-update-duplicate-commit", []string{"task update"}, []string{"Complete the task update."})
+	tasks, err := s.CreateTasks(ctx, goal.ID, "agent", "task-update-duplicate-commit", []string{"task update"}, []string{"Complete the task update."})
 	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 	d := New(s)
 	params, err := json.Marshal(map[string]any{
@@ -533,15 +533,15 @@ func TestProjectScopedWritesAllowAssignedProjectAndGoalListReadsOtherProject(t *
 		"titles": []string{"assigned declaration"}, "descriptions": []string{"Complete the declaration in the assigned project."}, "agent_session_id": f.agentSessionID,
 	})
 	if err != nil {
-		t.Fatalf("Marshal task.declare params: %v", err)
+		t.Fatalf("Marshal task.create params: %v", err)
 	}
-	raw, err := f.daemon.dispatch(f.ctx, rpc.Request{Method: "task.declare", Params: params})
+	raw, err := f.daemon.dispatch(f.ctx, rpc.Request{Method: "task.create", Params: params})
 	if err != nil {
-		t.Fatalf("task.declare: %v", err)
+		t.Fatalf("task.create: %v", err)
 	}
 	var declared []domain.Task
 	if err := json.Unmarshal(raw, &declared); err != nil {
-		t.Fatalf("unmarshal task.declare response %v: %v", raw, err)
+		t.Fatalf("unmarshal task.create response %v: %v", raw, err)
 	}
 	if len(declared) != 1 {
 		t.Fatalf("declared tasks = %#v, want one task", declared)
@@ -649,9 +649,9 @@ func newProjectScopeFixture(t *testing.T) projectScopeFixture {
 	if err != nil {
 		t.Fatalf("CreateGoal(complete): %v", err)
 	}
-	targetTasks, err := s.DeclareTasks(ctx, targetGoal.ID, "agent", "target-initial", []string{"target task"}, []string{"Complete the target task after selecting its project."})
+	targetTasks, err := s.CreateTasks(ctx, targetGoal.ID, "agent", "target-initial", []string{"target task"}, []string{"Complete the target task after selecting its project."})
 	if err != nil {
-		t.Fatalf("DeclareTasks(target): %v", err)
+		t.Fatalf("CreateTasks(target): %v", err)
 	}
 	agentSessionID := daemonTestSessionID(t, s, "assigned-run")
 	if err := s.AssociateAgentSessionWithProject(ctx, agentSessionID, assigned.ID); err != nil {

@@ -176,9 +176,9 @@ func TestClaimLivenessReportsCurrentProcessAsRunning(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
-	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "live-claim", []string{"Live task"}, []string{"Verify the live process claim."})
+	tasks, err := s.CreateTasks(ctx, goal.ID, "agent", "live-claim", []string{"Live task"}, []string{"Verify the live process claim."})
 	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 	liveID, err := s.RegisterAgentSession(ctx, os.Getpid())
 	if err != nil {
@@ -212,9 +212,9 @@ func TestClaimLivenessTreatsUnknownAndUnverifiableClaimsAsStale(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
-	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "stale-claims", []string{"Unknown", "Zero pid", "Dead pid", "Mismatched start"}, []string{"Unknown session.", "Zero pid session.", "Dead pid session.", "Mismatched process start."})
+	tasks, err := s.CreateTasks(ctx, goal.ID, "agent", "stale-claims", []string{"Unknown", "Zero pid", "Dead pid", "Mismatched start"}, []string{"Unknown session.", "Zero pid session.", "Dead pid session.", "Mismatched process start."})
 	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 	claims := []struct {
 		id        string
@@ -260,7 +260,7 @@ func TestClaimLivenessTreatsSharedDeadPIDClaimsAsStale(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
-	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "shared-dead-pid", []string{
+	tasks, err := s.CreateTasks(ctx, goal.ID, "agent", "shared-dead-pid", []string{
 		"First space claim",
 		"Second space claim",
 		"Third space claim",
@@ -270,7 +270,7 @@ func TestClaimLivenessTreatsSharedDeadPIDClaimsAsStale(t *testing.T) {
 		"Treat the third dead PID claim as stale.",
 	})
 	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 	for i, task := range tasks {
 		sessionID := fmt.Sprintf("shared-dead-run-%d", i)
@@ -302,7 +302,7 @@ func TestClaimLivenessKeepsSharedLivePIDClaimsRunning(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
-	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "shared-live-pid", []string{
+	tasks, err := s.CreateTasks(ctx, goal.ID, "agent", "shared-live-pid", []string{
 		"First live space claim",
 		"Second live space claim",
 		"Third live space claim",
@@ -312,7 +312,7 @@ func TestClaimLivenessKeepsSharedLivePIDClaimsRunning(t *testing.T) {
 		"Keep the third live PID claim running.",
 	})
 	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 	startedAt, err := realProcessStartedAt(os.Getpid())
 	if err != nil {
@@ -353,9 +353,9 @@ func TestClaimLivenessTreatsUnreadableProcessStartAsStale(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
-	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "unreadable-process-start", []string{"Unreadable start"}, []string{"Treat an unreadable process start as stale."})
+	tasks, err := s.CreateTasks(ctx, goal.ID, "agent", "unreadable-process-start", []string{"Unreadable start"}, []string{"Treat an unreadable process start as stale."})
 	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 	insertClaimLivenessSession(t, s, "unreadable-start-run", project.ID, os.Getpid(), "")
 	insertClaimLivenessHandoff(t, s, tasks[0].ID, "unreadable-start-handoff", "unreadable-start-run")
@@ -383,9 +383,9 @@ func TestClaimLivenessTreatsPIDReuseAsStale(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
-	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "pid-reuse", []string{"Reused pid"}, []string{"Do not treat a reused pid as the original process."})
+	tasks, err := s.CreateTasks(ctx, goal.ID, "agent", "pid-reuse", []string{"Reused pid"}, []string{"Do not treat a reused pid as the original process."})
 	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 	insertClaimLivenessSession(t, s, "reused-pid-run", project.ID, os.Getpid(), "not-the-process-start")
 	insertClaimLivenessHandoff(t, s, tasks[0].ID, "reused-pid-handoff", "reused-pid-run")
@@ -417,9 +417,9 @@ func TestClaimLivenessFiltersClaimsByProject(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGoal other: %v", err)
 	}
-	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "other-project-claim", []string{"Other project task"}, []string{"Do not report this in the selected project."})
+	tasks, err := s.CreateTasks(ctx, goal.ID, "agent", "other-project-claim", []string{"Other project task"}, []string{"Do not report this in the selected project."})
 	if err != nil {
-		t.Fatalf("DeclareTasks other: %v", err)
+		t.Fatalf("CreateTasks other: %v", err)
 	}
 	insertClaimLivenessHandoff(t, s, tasks[0].ID, "other-project-handoff", nil)
 
@@ -443,7 +443,7 @@ func TestClaimLivenessMatchesLegacyOnFixture(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
-	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "legacy-comparison", []string{
+	tasks, err := s.CreateTasks(ctx, goal.ID, "agent", "legacy-comparison", []string{
 		"Live claim",
 		"Unknown claim",
 		"Second live claim",
@@ -453,7 +453,7 @@ func TestClaimLivenessMatchesLegacyOnFixture(t *testing.T) {
 		"Compare another live claim.",
 	})
 	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 	liveID, err := s.RegisterAgentSession(ctx, os.Getpid())
 	if err != nil {
@@ -508,9 +508,9 @@ func TestClaimLivenessReturnsErrorForInvalidTaskCreatedAt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
-	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "invalid-task-timestamp", []string{"Invalid timestamp"}, []string{"Reject an invalid task timestamp."})
+	tasks, err := s.CreateTasks(ctx, goal.ID, "agent", "invalid-task-timestamp", []string{"Invalid timestamp"}, []string{"Reject an invalid task timestamp."})
 	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 	insertClaimLivenessHandoff(t, s, tasks[0].ID, "invalid-task-timestamp-handoff", nil)
 	if _, err := s.DB().ExecContext(ctx, `UPDATE tasks SET created_at = ? WHERE id = ?`, "not-a-timestamp", tasks[0].ID); err != nil {

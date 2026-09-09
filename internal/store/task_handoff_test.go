@@ -30,9 +30,9 @@ func addTestTasks(t *testing.T, s *Store, count int) []int64 {
 		descriptions[i] = "handoff task fixture"
 	}
 
-	tasks, err := s.DeclareTasks(context.Background(), goalID, "handoff-test", "handoff-fixture", titles, descriptions)
+	tasks, err := s.CreateTasks(context.Background(), goalID, "handoff-test", "handoff-fixture", titles, descriptions)
 	if err != nil {
-		t.Fatalf("DeclareTasks failed: %v", err)
+		t.Fatalf("CreateTasks failed: %v", err)
 	}
 	ids := make([]int64, len(tasks))
 	for i, task := range tasks {

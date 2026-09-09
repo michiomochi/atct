@@ -470,9 +470,9 @@ func (f contextCheckFixture) addUnappliedAnswer(t *testing.T) {
 	t.Helper()
 
 	// An active decision has to name the task it is holding up.
-	tasks, err := f.db.DeclareTasks(context.Background(), f.goal.ID, "agent", "blocked-batch", []string{"blocked task"}, []string{"Complete the blocked task before applying its answer."})
+	tasks, err := f.db.CreateTasks(context.Background(), f.goal.ID, "agent", "blocked-batch", []string{"blocked task"}, []string{"Complete the blocked task before applying its answer."})
 	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 	decision, err := f.db.AskDecision(context.Background(), store.AskInput{
 		GoalID:         f.goal.ID,
@@ -495,9 +495,9 @@ func (f contextCheckFixture) addUnappliedAnswer(t *testing.T) {
 func (f contextCheckFixture) addTask(t *testing.T, title string) domain.Task {
 	t.Helper()
 
-	tasks, err := f.db.DeclareTasks(context.Background(), f.goal.ID, "agent", "declare-"+title, []string{title}, []string{"Complete the task titled " + title + " and verify its context behavior."})
+	tasks, err := f.db.CreateTasks(context.Background(), f.goal.ID, "agent", "declare-"+title, []string{title}, []string{"Complete the task titled " + title + " and verify its context behavior."})
 	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 	return tasks[0]
 }
@@ -735,9 +735,9 @@ func (f projectSelectionFixture) addPendingDecision(t *testing.T, goalID int64, 
 	t.Helper()
 
 	// An active decision has to name the task it is holding up.
-	tasks, err := f.db.DeclareTasks(context.Background(), goalID, "agent", "blocked-"+agentSessionID, []string{"blocked task"}, []string{"Complete the blocked task after the pending decision is handled."})
+	tasks, err := f.db.CreateTasks(context.Background(), goalID, "agent", "blocked-"+agentSessionID, []string{"blocked task"}, []string{"Complete the blocked task after the pending decision is handled."})
 	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 	decision, err := f.db.AskDecision(context.Background(), store.AskInput{
 		GoalID:         goalID,

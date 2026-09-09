@@ -643,9 +643,9 @@ func TestWithdrawActiveGoalDoesNotPublishReportedTaskHandoff(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 	goalID := newTestGoal(t, s)
-	tasks, err := s.DeclareTasks(ctx, goalID, "withdraw-test", "withdraw-goal", []string{"Open task"}, []string{"Task remains open during withdrawal."})
+	tasks, err := s.CreateTasks(ctx, goalID, "withdraw-test", "withdraw-goal", []string{"Open task"}, []string{"Task remains open during withdrawal."})
 	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 	addTestAgentSession(t, s, "withdraw-requester")
 	addTestAgentSession(t, s, "withdraw-receiver")

@@ -1210,9 +1210,9 @@ func callRoleTool(t *testing.T, claimProject, claimGoal, withTask bool, expected
 		t.Fatalf("CreateGoal: %v", err)
 	}
 	if withTask {
-		if _, err := s.DeclareTasks(ctx, goal.ID, "agent", "role-fixture-task", []string{"role fixture task"}, []string{"Complete the role fixture task."}); err != nil {
+		if _, err := s.CreateTasks(ctx, goal.ID, "agent", "role-fixture-task", []string{"role fixture task"}, []string{"Complete the role fixture task."}); err != nil {
 			s.Close()
-			t.Fatalf("DeclareTasks: %v", err)
+			t.Fatalf("CreateTasks: %v", err)
 		}
 	}
 	sessionID, err := s.RegisterAgentSession(ctx, os.Getpid())
@@ -1567,10 +1567,10 @@ func callDecisionAsk(t *testing.T, args map[string]any) (*mcp.CallToolResult, er
 		t.Fatalf("CreateGoal: %v", err)
 	}
 	// An active decision has to name the task it is holding up.
-	tasks, err := s.DeclareTasks(context.Background(), goal.ID, "agent", "batch-1", []string{"blocked task"}, []string{"Complete the blocked task after the decision is resolved."})
+	tasks, err := s.CreateTasks(context.Background(), goal.ID, "agent", "batch-1", []string{"blocked task"}, []string{"Complete the blocked task after the decision is resolved."})
 	if err != nil {
 		s.Close()
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 	registeredSessionID, err := s.RegisterAgentSession(context.Background(), os.Getpid())
 	if err != nil {

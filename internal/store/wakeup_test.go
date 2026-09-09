@@ -21,7 +21,7 @@ func TestSnoozeTaskUsesDeadlineToControlWakeupWithoutChangingTodo(t *testing.T) 
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
-	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "snooze-tasks", []string{
+	tasks, err := s.CreateTasks(ctx, goal.ID, "agent", "snooze-tasks", []string{
 		"Future task",
 		"Expired task",
 		"Empty deadline task",
@@ -33,7 +33,7 @@ func TestSnoozeTaskUsesDeadlineToControlWakeupWithoutChangingTodo(t *testing.T) 
 		"Return to wakeup after clearing the deadline.",
 	})
 	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 
 	future := time.Now().UTC().Add(time.Hour).Truncate(time.Millisecond)
@@ -116,9 +116,9 @@ func TestDetectWakeupReportsUnstartedTasksWithoutRunningClaim(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
-	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "wakeup-tasks", []string{"First task", "Second task"}, []string{"Complete the first task.", "Complete the second task."})
+	tasks, err := s.CreateTasks(ctx, goal.ID, "agent", "wakeup-tasks", []string{"First task", "Second task"}, []string{"Complete the first task.", "Complete the second task."})
 	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 
 	state, err := s.DetectWakeup(ctx, project.ID)
@@ -152,9 +152,9 @@ func TestDetectWakeupClassifiesUnstartedTasksForGoalWaitingForOpenDecision(t *te
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
-	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "wakeup-decision", []string{"Blocked task"}, []string{"Complete the task after the human answer."})
+	tasks, err := s.CreateTasks(ctx, goal.ID, "agent", "wakeup-decision", []string{"Blocked task"}, []string{"Complete the task after the human answer."})
 	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 	if _, err := s.AskDecision(ctx, AskInput{
 		GoalID: goal.ID, TaskID: tasks[0].ID,
@@ -197,8 +197,8 @@ func TestDetectWakeupExcludesProposedGoal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
-	if _, err := s.DeclareTasks(ctx, goal.ID, "agent", "wakeup-proposed", []string{"Proposed task"}, []string{"Wait for approval before wakeup."}); err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+	if _, err := s.CreateTasks(ctx, goal.ID, "agent", "wakeup-proposed", []string{"Proposed task"}, []string{"Wait for approval before wakeup."}); err != nil {
+		t.Fatalf("CreateTasks: %v", err)
 	}
 	// This state can only exist in databases created before the declaration gate.
 	if _, err := s.db.ExecContext(ctx, "UPDATE goals SET status = ? WHERE id = ?", string(domain.GoalProposed), goal.ID); err != nil {
@@ -225,9 +225,9 @@ func TestDetectWakeupClassifiesUnstartedTasksForGoalWithRunningClaim(t *testing.
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
-	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "wakeup-running", []string{"Running task", "Waiting task"}, []string{"Keep working on the running task.", "Continue with the waiting task later."})
+	tasks, err := s.CreateTasks(ctx, goal.ID, "agent", "wakeup-running", []string{"Running task", "Waiting task"}, []string{"Keep working on the running task.", "Continue with the waiting task later."})
 	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 	runningSessionID, err := s.RegisterAgentSession(ctx, os.Getpid())
 	if err != nil {
@@ -282,9 +282,9 @@ func TestDetectWakeupClassifiesUnstartedTasksByOwnOpenDecision(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
-	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "wakeup-task-level", []string{"Claimed sibling", "Waiting task", "Available sibling"}, []string{"Continue the claimed sibling.", "Continue after its decision is answered.", "Claim the available sibling."})
+	tasks, err := s.CreateTasks(ctx, goal.ID, "agent", "wakeup-task-level", []string{"Claimed sibling", "Waiting task", "Available sibling"}, []string{"Continue the claimed sibling.", "Continue after its decision is answered.", "Claim the available sibling."})
 	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 	taskLevelSessionID, err := s.RegisterAgentSession(ctx, os.Getpid())
 	if err != nil {
@@ -342,9 +342,9 @@ func TestDetectWakeupCountsAndClassifiesAllUnstartedTasks(t *testing.T) {
 		for i := range taskDescriptions {
 			taskDescriptions[i] = "Complete the task."
 		}
-		tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", source, taskTitles, taskDescriptions)
+		tasks, err := s.CreateTasks(ctx, goal.ID, "agent", source, taskTitles, taskDescriptions)
 		if err != nil {
-			t.Fatalf("DeclareTasks %q: %v", title, err)
+			t.Fatalf("CreateTasks %q: %v", title, err)
 		}
 		return goal, tasks
 	}
@@ -442,8 +442,8 @@ func TestDetectWakeupDoesNotReportGoalWithTasksAsUndeclared(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGoal declared: %v", err)
 	}
-	if _, err := s.DeclareTasks(ctx, declaredGoal.ID, "agent", "wakeup-declared", []string{"Declared task"}, []string{"Complete the declared task."}); err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+	if _, err := s.CreateTasks(ctx, declaredGoal.ID, "agent", "wakeup-declared", []string{"Declared task"}, []string{"Complete the declared task."}); err != nil {
+		t.Fatalf("CreateTasks: %v", err)
 	}
 	emptyGoal, err := s.CreateGoal(ctx, project.ID, "Goal without declared tasks", "human")
 	if err != nil {
@@ -470,17 +470,17 @@ func TestDetectWakeupDoesNotReportGoalWithLinkedTaskCommitAsCommitless(t *testin
 	if err != nil {
 		t.Fatalf("CreateGoal commitless: %v", err)
 	}
-	commitlessTasks, err := s.DeclareTasks(ctx, commitlessGoal.ID, "agent", "wakeup-commitless", []string{"Commitless task"}, []string{"Complete the commitless task."})
+	commitlessTasks, err := s.CreateTasks(ctx, commitlessGoal.ID, "agent", "wakeup-commitless", []string{"Commitless task"}, []string{"Complete the commitless task."})
 	if err != nil {
-		t.Fatalf("DeclareTasks commitless: %v", err)
+		t.Fatalf("CreateTasks commitless: %v", err)
 	}
 	linkedGoal, err := s.CreateGoal(ctx, project.ID, "Goal with a linked commit", "human")
 	if err != nil {
 		t.Fatalf("CreateGoal linked: %v", err)
 	}
-	linkedTasks, err := s.DeclareTasks(ctx, linkedGoal.ID, "agent", "wakeup-linked", []string{"Linked task"}, []string{"Complete the linked task."})
+	linkedTasks, err := s.CreateTasks(ctx, linkedGoal.ID, "agent", "wakeup-linked", []string{"Linked task"}, []string{"Complete the linked task."})
 	if err != nil {
-		t.Fatalf("DeclareTasks linked: %v", err)
+		t.Fatalf("CreateTasks linked: %v", err)
 	}
 	updateWakeupTask(t, s, commitlessTasks[0].ID, domain.TaskDone)
 	updateWakeupTask(t, s, linkedTasks[0].ID, domain.TaskDone)
@@ -511,17 +511,17 @@ func TestDetectWakeupDoesNotReportGoalWithOpenCompletionDecisionAsCommitless(t *
 	if err != nil {
 		t.Fatalf("CreateGoal waiting: %v", err)
 	}
-	waitingTasks, err := s.DeclareTasks(ctx, waitingGoal.ID, "agent", "wakeup-completion-open", []string{"Waiting task"}, []string{"Complete the waiting task."})
+	waitingTasks, err := s.CreateTasks(ctx, waitingGoal.ID, "agent", "wakeup-completion-open", []string{"Waiting task"}, []string{"Complete the waiting task."})
 	if err != nil {
-		t.Fatalf("DeclareTasks waiting: %v", err)
+		t.Fatalf("CreateTasks waiting: %v", err)
 	}
 	readyGoal, err := s.CreateGoal(ctx, project.ID, "Goal without completion decision", "human")
 	if err != nil {
 		t.Fatalf("CreateGoal ready: %v", err)
 	}
-	readyTasks, err := s.DeclareTasks(ctx, readyGoal.ID, "agent", "wakeup-completion-ready", []string{"Ready task"}, []string{"Complete the ready task."})
+	readyTasks, err := s.CreateTasks(ctx, readyGoal.ID, "agent", "wakeup-completion-ready", []string{"Ready task"}, []string{"Complete the ready task."})
 	if err != nil {
-		t.Fatalf("DeclareTasks ready: %v", err)
+		t.Fatalf("CreateTasks ready: %v", err)
 	}
 	updateWakeupTask(t, s, waitingTasks[0].ID, domain.TaskDone)
 	updateWakeupTask(t, s, readyTasks[0].ID, domain.TaskDone)
@@ -553,9 +553,9 @@ func TestDetectWakeupCountsActionableGoalsWithoutCompletionApproval(t *testing.T
 	if err != nil {
 		t.Fatalf("CreateGoal waiting: %v", err)
 	}
-	waitingTasks, err := s.DeclareTasks(ctx, waitingGoal.ID, "agent", "wakeup-actionable-completion", []string{"Completed task"}, []string{"Complete the task."})
+	waitingTasks, err := s.CreateTasks(ctx, waitingGoal.ID, "agent", "wakeup-actionable-completion", []string{"Completed task"}, []string{"Complete the task."})
 	if err != nil {
-		t.Fatalf("DeclareTasks waiting: %v", err)
+		t.Fatalf("CreateTasks waiting: %v", err)
 	}
 	updateWakeupTask(t, s, waitingTasks[0].ID, domain.TaskDone)
 	if _, err := s.AskDecision(ctx, AskInput{
@@ -569,8 +569,8 @@ func TestDetectWakeupCountsActionableGoalsWithoutCompletionApproval(t *testing.T
 	if err != nil {
 		t.Fatalf("CreateGoal actionable: %v", err)
 	}
-	if _, err := s.DeclareTasks(ctx, actionableGoal.ID, "agent", "wakeup-actionable-task", []string{"Todo task"}, []string{"Complete the task."}); err != nil {
-		t.Fatalf("DeclareTasks actionable: %v", err)
+	if _, err := s.CreateTasks(ctx, actionableGoal.ID, "agent", "wakeup-actionable-task", []string{"Todo task"}, []string{"Complete the task."}); err != nil {
+		t.Fatalf("CreateTasks actionable: %v", err)
 	}
 
 	state, err := s.DetectWakeup(ctx, project.ID)
@@ -623,17 +623,17 @@ func TestDetectWakeupDoesNotReportAllDroppedGoalAsCommitless(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGoal dropped: %v", err)
 	}
-	droppedTasks, err := s.DeclareTasks(ctx, droppedGoal.ID, "agent", "wakeup-all-dropped", []string{"Dropped task"}, []string{"Withdraw the dropped task."})
+	droppedTasks, err := s.CreateTasks(ctx, droppedGoal.ID, "agent", "wakeup-all-dropped", []string{"Dropped task"}, []string{"Withdraw the dropped task."})
 	if err != nil {
-		t.Fatalf("DeclareTasks dropped: %v", err)
+		t.Fatalf("CreateTasks dropped: %v", err)
 	}
 	mixedGoal, err := s.CreateGoal(ctx, project.ID, "Goal with done and dropped tasks", "human")
 	if err != nil {
 		t.Fatalf("CreateGoal mixed: %v", err)
 	}
-	mixedTasks, err := s.DeclareTasks(ctx, mixedGoal.ID, "agent", "wakeup-done-dropped", []string{"Done task", "Dropped task"}, []string{"Complete the done task.", "Withdraw the dropped task."})
+	mixedTasks, err := s.CreateTasks(ctx, mixedGoal.ID, "agent", "wakeup-done-dropped", []string{"Done task", "Dropped task"}, []string{"Complete the done task.", "Withdraw the dropped task."})
 	if err != nil {
-		t.Fatalf("DeclareTasks mixed: %v", err)
+		t.Fatalf("CreateTasks mixed: %v", err)
 	}
 	updateWakeupTask(t, s, droppedTasks[0].ID, domain.TaskDropped)
 	updateWakeupTask(t, s, mixedTasks[0].ID, domain.TaskDone)
@@ -663,9 +663,9 @@ func TestDetectWakeupDoesNotReportProposedGoalAsUndeclaredOrCommitless(t *testin
 	if err != nil {
 		t.Fatalf("CreateGoal proposed done: %v", err)
 	}
-	proposedTasks, err := s.DeclareTasks(ctx, proposedDoneGoal.ID, "agent", "wakeup-proposed-done", []string{"Proposed done task"}, []string{"Complete the proposed done task."})
+	proposedTasks, err := s.CreateTasks(ctx, proposedDoneGoal.ID, "agent", "wakeup-proposed-done", []string{"Proposed done task"}, []string{"Complete the proposed done task."})
 	if err != nil {
-		t.Fatalf("DeclareTasks proposed: %v", err)
+		t.Fatalf("CreateTasks proposed: %v", err)
 	}
 	// This state can only exist in databases created before the declaration gate.
 	if _, err := s.db.ExecContext(ctx, "UPDATE goals SET status = ? WHERE id = ?", string(domain.GoalProposed), proposedDoneGoal.ID); err != nil {
@@ -850,7 +850,7 @@ func TestDetectWakeupCollectsUnappliedDecisionsAndStaleClaims(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
-	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "wakeup-detections", []string{
+	tasks, err := s.CreateTasks(ctx, goal.ID, "agent", "wakeup-detections", []string{
 		"human decision task",
 		"default decision task",
 		"stale claim task",
@@ -862,7 +862,7 @@ func TestDetectWakeupCollectsUnappliedDecisionsAndStaleClaims(t *testing.T) {
 		"Keep the live claim hidden.",
 	})
 	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 
 	humanDecision, err := s.AskDecision(ctx, AskInput{
@@ -935,8 +935,8 @@ func TestDetectWakeupDoesNotCountAssignedGoalAsUnassigned(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
-	if _, err := s.DeclareTasks(ctx, goal.ID, "agent", "unassigned-goal-assigned", []string{"Actionable task"}, []string{"Complete the actionable task."}); err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+	if _, err := s.CreateTasks(ctx, goal.ID, "agent", "unassigned-goal-assigned", []string{"Actionable task"}, []string{"Complete the actionable task."}); err != nil {
+		t.Fatalf("CreateTasks: %v", err)
 	}
 
 	const requesterLabel = "unassigned-goal-requester"
@@ -976,15 +976,15 @@ func TestDetectWakeupCollectsUnassignedActionableGoalIDs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGoal first: %v", err)
 	}
-	if _, err := s.DeclareTasks(ctx, firstGoal.ID, "agent", "unassigned-goal-first", []string{"First task"}, []string{"Complete the first task."}); err != nil {
-		t.Fatalf("DeclareTasks first: %v", err)
+	if _, err := s.CreateTasks(ctx, firstGoal.ID, "agent", "unassigned-goal-first", []string{"First task"}, []string{"Complete the first task."}); err != nil {
+		t.Fatalf("CreateTasks first: %v", err)
 	}
 	secondGoal, err := s.CreateGoal(ctx, project.ID, "Second unassigned actionable goal", "human")
 	if err != nil {
 		t.Fatalf("CreateGoal second: %v", err)
 	}
-	if _, err := s.DeclareTasks(ctx, secondGoal.ID, "agent", "unassigned-goal-second", []string{"Second task"}, []string{"Complete the second task."}); err != nil {
-		t.Fatalf("DeclareTasks second: %v", err)
+	if _, err := s.CreateTasks(ctx, secondGoal.ID, "agent", "unassigned-goal-second", []string{"Second task"}, []string{"Complete the second task."}); err != nil {
+		t.Fatalf("CreateTasks second: %v", err)
 	}
 
 	state, err := s.DetectWakeup(ctx, project.ID)
@@ -1010,8 +1010,8 @@ func TestDetectWakeupTreatsUnknownReceivedByAsAssignedGoal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
-	if _, err := s.DeclareTasks(ctx, goal.ID, "agent", "unassigned-goal-unknown-receiver", []string{"Actionable task"}, []string{"Complete the actionable task."}); err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+	if _, err := s.CreateTasks(ctx, goal.ID, "agent", "unassigned-goal-unknown-receiver", []string{"Actionable task"}, []string{"Complete the actionable task."}); err != nil {
+		t.Fatalf("CreateTasks: %v", err)
 	}
 
 	const requesterLabel = "unknown-receiver-requester"

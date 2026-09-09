@@ -66,7 +66,7 @@ func newTaskHandoffRPCTestFixture(t *testing.T) taskHandoffRPCTestFixture {
 		s.Close()
 		t.Fatalf("CreateGoal: %v", err)
 	}
-	tasks, err := s.DeclareTasks(ctx, goal.ID, "commander", "handoff-rpc", []string{
+	tasks, err := s.CreateTasks(ctx, goal.ID, "commander", "handoff-rpc", []string{
 		"delegated task", "claimable task",
 	}, []string{
 		"A task delegated by the goal owner.",
@@ -74,7 +74,7 @@ func newTaskHandoffRPCTestFixture(t *testing.T) taskHandoffRPCTestFixture {
 	})
 	if err != nil {
 		s.Close()
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 	requesterID := daemonTestSessionID(t, s, "rpc-handoff-requester")
 	receiverID := daemonTestSessionID(t, s, "rpc-handoff-receiver")
@@ -87,10 +87,10 @@ func newTaskHandoffRPCTestFixture(t *testing.T) taskHandoffRPCTestFixture {
 		s.Close()
 		t.Fatalf("CreateGoal unclaimed: %v", err)
 	}
-	unclaimedTasks, err := s.DeclareTasks(ctx, unclaimedGoal.ID, "commander", "unclaimed-handoff-rpc", []string{"unclaimed task"}, []string{"A task in a goal without a claim."})
+	unclaimedTasks, err := s.CreateTasks(ctx, unclaimedGoal.ID, "commander", "unclaimed-handoff-rpc", []string{"unclaimed task"}, []string{"A task in a goal without a claim."})
 	if err != nil {
 		s.Close()
-		t.Fatalf("DeclareTasks unclaimed: %v", err)
+		t.Fatalf("CreateTasks unclaimed: %v", err)
 	}
 
 	socketPath := filepath.Join(dir, "daemon.sock")

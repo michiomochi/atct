@@ -149,9 +149,9 @@ func TestHTTPTaskCommitDiffKeepsBodyWithinLimit(t *testing.T) {
 
 func declareTask(t *testing.T, f *fixture) domain.Task {
 	t.Helper()
-	tasks, err := f.store.DeclareTasks(f.ctx, f.goal.ID, "diff-fixture-agent", "diff-fixture-session", []string{"task"}, []string{"Prepare a commit for the diff endpoint."})
+	tasks, err := f.store.CreateTasks(f.ctx, f.goal.ID, "diff-fixture-agent", "diff-fixture-session", []string{"task"}, []string{"Prepare a commit for the diff endpoint."})
 	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 	if len(tasks) != 1 {
 		t.Fatalf("len(tasks) = %d, want 1", len(tasks))

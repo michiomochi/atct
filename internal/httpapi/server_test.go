@@ -43,7 +43,7 @@ func TestInboxAttentionTasksIncludeProjectIdentityPerTask(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	otherTasks, err := f.store.DeclareTasks(f.ctx, otherGoal.ID, "other-agent", "other-declare", []string{"needs"}, []string{"Complete the other project's work before answering its decision."})
+	otherTasks, err := f.store.CreateTasks(f.ctx, otherGoal.ID, "other-agent", "other-declare", []string{"needs"}, []string{"Complete the other project's work before answering its decision."})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,7 +175,7 @@ func TestHTTPInboxIncludesGoalTitlePerDecision(t *testing.T) {
 
 func TestHTTPInboxIncludesTasksPerActiveGoalInOrder(t *testing.T) {
 	f := newBareFixture(t)
-	firstTasks, err := f.store.DeclareTasks(f.ctx, f.goal.ID, "first-agent", "first-declare", []string{"first task", "second task"}, []string{"Finish the first task in order.", "Finish the second task after the first task."})
+	firstTasks, err := f.store.CreateTasks(f.ctx, f.goal.ID, "first-agent", "first-declare", []string{"first task", "second task"}, []string{"Finish the first task in order.", "Finish the second task after the first task."})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -186,7 +186,7 @@ func TestHTTPInboxIncludesTasksPerActiveGoalInOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	secondTasks, err := f.store.DeclareTasks(f.ctx, secondGoal.ID, "second-agent", "second-declare", []string{"other task"}, []string{"Finish the task belonging to the second goal."})
+	secondTasks, err := f.store.CreateTasks(f.ctx, secondGoal.ID, "second-agent", "second-declare", []string{"other task"}, []string{"Finish the task belonging to the second goal."})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -353,7 +353,7 @@ func newFixture(t *testing.T) *fixture {
 	f := newBareFixture(t)
 
 	var err error
-	f.tasks, err = f.store.DeclareTasks(f.ctx, f.goal.ID, "fixture-agent", "fixture-declare", []string{"needs", "now", "next"}, []string{"Resolve the prerequisite work.", "Continue the current implementation work.", "Complete the remaining follow-up work."})
+	f.tasks, err = f.store.CreateTasks(f.ctx, f.goal.ID, "fixture-agent", "fixture-declare", []string{"needs", "now", "next"}, []string{"Resolve the prerequisite work.", "Continue the current implementation work.", "Complete the remaining follow-up work."})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -869,7 +869,7 @@ func TestInboxAndGoalDetailUseExclusiveTaskColumns(t *testing.T) {
 
 func TestHTTPGoalDetailIncludesAllTasksWithoutCrossGoalMixing(t *testing.T) {
 	f := newBareFixture(t)
-	targetTasks, err := f.store.DeclareTasks(f.ctx, f.goal.ID, "target-agent", "target-declare", []string{"first task", "second task"}, []string{"Complete the first target task.", "Complete the second target task."})
+	targetTasks, err := f.store.CreateTasks(f.ctx, f.goal.ID, "target-agent", "target-declare", []string{"first task", "second task"}, []string{"Complete the first target task.", "Complete the second target task."})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -877,7 +877,7 @@ func TestHTTPGoalDetailIncludesAllTasksWithoutCrossGoalMixing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	otherTasks, err := f.store.DeclareTasks(f.ctx, otherGoal.ID, "other-agent", "other-declare", []string{"other task"}, []string{"Complete the task from the other goal."})
+	otherTasks, err := f.store.CreateTasks(f.ctx, otherGoal.ID, "other-agent", "other-declare", []string{"other task"}, []string{"Complete the task from the other goal."})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1152,7 +1152,7 @@ func TestHTTPGoalDetailReturnsEmptyDerivedGoalsArray(t *testing.T) {
 
 func TestHTTPGoalDetailIncludesAllTaskCommitsInTaskOrder(t *testing.T) {
 	f := newBareFixture(t)
-	tasks, err := f.store.DeclareTasks(f.ctx, f.goal.ID, "commit-agent", "commit-declare", []string{"first task", "second task"}, []string{"Complete the first task.", "Complete the second task."})
+	tasks, err := f.store.CreateTasks(f.ctx, f.goal.ID, "commit-agent", "commit-declare", []string{"first task", "second task"}, []string{"Complete the first task.", "Complete the second task."})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1218,7 +1218,7 @@ func TestHTTPGoalDetailIncludesAllTaskCommitsInTaskOrder(t *testing.T) {
 
 func TestHTTPGoalDetailReturnsEmptyTaskCommitsArrayWithoutCommits(t *testing.T) {
 	f := newBareFixture(t)
-	if _, err := f.store.DeclareTasks(f.ctx, f.goal.ID, "empty-commit-agent", "empty-commit-declare", []string{"first task", "second task"}, []string{"Complete the first task.", "Complete the second task."}); err != nil {
+	if _, err := f.store.CreateTasks(f.ctx, f.goal.ID, "empty-commit-agent", "empty-commit-declare", []string{"first task", "second task"}, []string{"Complete the first task.", "Complete the second task."}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1244,7 +1244,7 @@ func TestHTTPGoalDetailReturnsEmptyTaskCommitsArrayWithoutCommits(t *testing.T) 
 
 func TestHTTPGoalDetailOmitsTasksWithoutCommits(t *testing.T) {
 	f := newBareFixture(t)
-	tasks, err := f.store.DeclareTasks(f.ctx, f.goal.ID, "mixed-commit-agent", "mixed-commit-declare", []string{"with commits", "without commits"}, []string{"Complete the first task.", "Complete the second task."})
+	tasks, err := f.store.CreateTasks(f.ctx, f.goal.ID, "mixed-commit-agent", "mixed-commit-declare", []string{"with commits", "without commits"}, []string{"Complete the first task.", "Complete the second task."})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1282,7 +1282,7 @@ func TestHTTPGoalDetailOmitsTasksWithoutCommits(t *testing.T) {
 
 func TestHTTPGoalDetailDecisionHistoryIncludesTaskIDs(t *testing.T) {
 	f := newBareFixture(t)
-	tasks, err := f.store.DeclareTasks(f.ctx, f.goal.ID, "history-agent", "history-declare", []string{"first task", "second task"}, []string{"Complete the first task before recording its decision.", "Complete the second task before recording its decision."})
+	tasks, err := f.store.CreateTasks(f.ctx, f.goal.ID, "history-agent", "history-declare", []string{"first task", "second task"}, []string{"Complete the first task before recording its decision.", "Complete the second task before recording its decision."})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1417,7 +1417,7 @@ func TestHTTPGoalDetailDecisionHistoryIncludesTaskIDs(t *testing.T) {
 
 func TestHTTPTaskDetailReturnsTaskAndDecisionData(t *testing.T) {
 	f := newBareFixture(t)
-	tasks, err := f.store.DeclareTasks(
+	tasks, err := f.store.CreateTasks(
 		f.ctx,
 		f.goal.ID,
 		"fixture-agent",
@@ -1539,7 +1539,7 @@ func TestHTTPTaskDetailReturnsTaskAndDecisionData(t *testing.T) {
 
 func TestHTTPTaskDetailDoesNotCapHistoryByAnotherTask(t *testing.T) {
 	f := newBareFixture(t)
-	tasks, err := f.store.DeclareTasks(
+	tasks, err := f.store.CreateTasks(
 		f.ctx,
 		f.goal.ID,
 		"fixture-agent",
@@ -1621,7 +1621,7 @@ func TestHTTPTaskDetailDoesNotCapHistoryByAnotherTask(t *testing.T) {
 
 func TestHTTPTaskDetailReportsOmittedHistoryPerTask(t *testing.T) {
 	f := newBareFixture(t)
-	tasks, err := f.store.DeclareTasks(
+	tasks, err := f.store.CreateTasks(
 		f.ctx,
 		f.goal.ID,
 		"fixture-agent",
@@ -1694,7 +1694,7 @@ func TestHTTPTaskDetailReportsOmittedHistoryPerTask(t *testing.T) {
 
 func TestHTTPTaskDetailExcludesOtherProjectDecisionWithSameTaskID(t *testing.T) {
 	f := newBareFixture(t)
-	tasks, err := f.store.DeclareTasks(
+	tasks, err := f.store.CreateTasks(
 		f.ctx,
 		f.goal.ID,
 		"fixture-agent",
@@ -1790,7 +1790,7 @@ func TestHTTPTaskDetailReturnsNotFoundForUnknownTask(t *testing.T) {
 
 func TestHTTPTaskDetailReturnsEmptyCommitsArray(t *testing.T) {
 	f := newBareFixture(t)
-	tasks, err := f.store.DeclareTasks(
+	tasks, err := f.store.CreateTasks(
 		f.ctx,
 		f.goal.ID,
 		"fixture-agent",
@@ -1825,7 +1825,7 @@ func TestHTTPTaskDetailReturnsEmptyCommitsArray(t *testing.T) {
 
 func TestHTTPTaskDetailMarksMissingCommitOutOfHistory(t *testing.T) {
 	f := newBareFixture(t)
-	tasks, err := f.store.DeclareTasks(
+	tasks, err := f.store.CreateTasks(
 		f.ctx,
 		f.goal.ID,
 		"fixture-agent",
@@ -1879,7 +1879,7 @@ func TestHTTPTaskDetailMarksMissingCommitOutOfHistory(t *testing.T) {
 
 func TestHTTPTaskDetailDoesNotMixCommitsFromOtherTasks(t *testing.T) {
 	f := newBareFixture(t)
-	tasks, err := f.store.DeclareTasks(
+	tasks, err := f.store.CreateTasks(
 		f.ctx,
 		f.goal.ID,
 		"fixture-agent",
@@ -2104,7 +2104,7 @@ func TestHTTPDecisionAndReleaseEndpointsValidateAndTransition(t *testing.T) {
 
 func TestHTTPSnoozeSetsAbsoluteDeadlineWithoutChangingStatus(t *testing.T) {
 	f := newBareFixture(t)
-	tasks, err := f.store.DeclareTasks(f.ctx, f.goal.ID, "snooze-test-agent", "snooze-http-status", []string{"deferred"}, []string{"Preserve the task status while setting its snooze deadline."})
+	tasks, err := f.store.CreateTasks(f.ctx, f.goal.ID, "snooze-test-agent", "snooze-http-status", []string{"deferred"}, []string{"Preserve the task status while setting its snooze deadline."})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2383,7 +2383,7 @@ func TestHTTPSnoozeExpiredDeadlineRestoresWakeup(t *testing.T) {
 
 func declareWakeupTestTasks(t *testing.T, f *fixture) []domain.Task {
 	t.Helper()
-	tasks, err := f.store.DeclareTasks(f.ctx, f.goal.ID, "wakeup-test-agent", "wakeup-http", []string{
+	tasks, err := f.store.CreateTasks(f.ctx, f.goal.ID, "wakeup-test-agent", "wakeup-http", []string{
 		"Deferred task",
 		"Actionable task",
 	}, []string{
@@ -2903,7 +2903,7 @@ func TestSSEFiltersDetectionEventsByGoalID(t *testing.T) {
 
 func TestSSEFiltersTaskEventsByTaskIDAcrossProjectAndGoal(t *testing.T) {
 	f := newBareFixture(t)
-	tasks, err := f.store.DeclareTasks(f.ctx, f.goal.ID, "sse-task-filter", "sse-task-filter", []string{"target", "same goal other task"}, []string{"The selected task.", "Another task in the same goal."})
+	tasks, err := f.store.CreateTasks(f.ctx, f.goal.ID, "sse-task-filter", "sse-task-filter", []string{"target", "same goal other task"}, []string{"The selected task.", "Another task in the same goal."})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2915,7 +2915,7 @@ func TestSSEFiltersTaskEventsByTaskIDAcrossProjectAndGoal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	otherTasks, err := f.store.DeclareTasks(f.ctx, otherGoal.ID, "sse-other-task", "sse-other-task", []string{"other project task"}, []string{"A task from another project."})
+	otherTasks, err := f.store.CreateTasks(f.ctx, otherGoal.ID, "sse-other-task", "sse-other-task", []string{"other project task"}, []string{"A task from another project."})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2958,7 +2958,7 @@ func TestSSEFiltersTaskEventsByTaskIDAcrossProjectAndGoal(t *testing.T) {
 
 func TestSSEFiltersDecisionEventsByTaskID(t *testing.T) {
 	f := newBareFixture(t)
-	tasks, err := f.store.DeclareTasks(f.ctx, f.goal.ID, "sse-decision-task-filter", "sse-decision-task-filter", []string{"target", "other"}, []string{"The selected task.", "Another task."})
+	tasks, err := f.store.CreateTasks(f.ctx, f.goal.ID, "sse-decision-task-filter", "sse-decision-task-filter", []string{"target", "other"}, []string{"The selected task.", "Another task."})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2993,7 +2993,7 @@ func TestSSEFiltersDecisionEventsByTaskID(t *testing.T) {
 
 func TestSSETaskSubscriptionPublishesKeepaliveButSuppressesEvaluateFailure(t *testing.T) {
 	f := newBareFixture(t)
-	tasks, err := f.store.DeclareTasks(f.ctx, f.goal.ID, "sse-task-diagnostics", "sse-task-diagnostics", []string{"target"}, []string{"The selected task."})
+	tasks, err := f.store.CreateTasks(f.ctx, f.goal.ID, "sse-task-diagnostics", "sse-task-diagnostics", []string{"target"}, []string{"The selected task."})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3332,7 +3332,7 @@ func TestSSEGoalScopedStreamDeliversGoalWithdrawn(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newBareFixture(t)
 			if tc.withOpenTask {
-				if _, err := f.store.DeclareTasks(f.ctx, f.goal.ID, "withdrawal-test-agent", "withdrawal-test-declare", []string{"open task"}, []string{"Keep this task open while withdrawing the goal."}); err != nil {
+				if _, err := f.store.CreateTasks(f.ctx, f.goal.ID, "withdrawal-test-agent", "withdrawal-test-declare", []string{"open task"}, []string{"Keep this task open while withdrawing the goal."}); err != nil {
 					t.Fatal(err)
 				}
 			}

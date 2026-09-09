@@ -40,25 +40,25 @@ func goalNotActiveError(goalID int64, status domain.GoalStatus, beforeAction, ac
 	return fmt.Errorf("%w: %s", ErrGoalNotActive, stateMessage)
 }
 
-// DeclareTasks derives declare_key from the idempotency key and task position.
-// The unique (goal_id, declare_key) constraint absorbs duplicate declarations.
-// Agents retry and repeat declarations after context compaction, so this prevents task multiplication.
-func (s *Store) DeclareTasks(ctx context.Context, goalID int64, agent, idempotencyKey string, titles []string, descriptions []string) ([]domain.Task, error) {
+// CreateTasks derives declare_key from the idempotency key and task position.
+// The unique (goal_id, declare_key) constraint absorbs duplicate creates.
+// Agents retry after context compaction, so this prevents task multiplication.
+func (s *Store) CreateTasks(ctx context.Context, goalID int64, agent, idempotencyKey string, titles []string, descriptions []string) ([]domain.Task, error) {
 	if len(descriptions) != len(titles) {
-		return nil, fmt.Errorf("declare tasks: descriptions count %d does not match titles count %d", len(descriptions), len(titles))
+		return nil, fmt.Errorf("create tasks: descriptions count %d does not match titles count %d", len(descriptions), len(titles))
 	}
 	for i, description := range descriptions {
 		if strings.TrimSpace(description) == "" {
-			return nil, fmt.Errorf("declare tasks: description %d is empty", i)
+			return nil, fmt.Errorf("create tasks: description %d is empty", i)
 		}
 	}
 
 	goal, err := s.GetGoal(ctx, goalID)
 	if err != nil {
-		return nil, fmt.Errorf("get goal for declaring tasks: %w", err)
+		return nil, fmt.Errorf("get goal for creating tasks: %w", err)
 	}
 	if goal.Status != domain.GoalActive {
-		return nil, goalNotActiveError(goalID, goal.Status, "declaring", "declare")
+		return nil, goalNotActiveError(goalID, goal.Status, "creating", "create")
 	}
 
 	tx, err := s.db.BeginTx(ctx, nil)

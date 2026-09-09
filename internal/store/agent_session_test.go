@@ -251,9 +251,9 @@ func TestProjectIDForTask(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
-	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "declare-key", []string{"task"}, []string{"Complete the declared task and make its result observable to the run."})
+	tasks, err := s.CreateTasks(ctx, goal.ID, "agent", "declare-key", []string{"task"}, []string{"Complete the declared task and make its result observable to the run."})
 	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 
 	got, err := s.ProjectIDForTask(ctx, tasks[0].ID)

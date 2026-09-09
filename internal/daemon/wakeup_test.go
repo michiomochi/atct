@@ -101,8 +101,8 @@ func TestWakeupTrackerPublishesAfterGracePeriodAndResets(t *testing.T) {
 	ctx := context.Background()
 	s := newWakeupTestStore(t)
 	projectID, goalID := newWakeupTestGoal(t, s, "grace")
-	if _, err := s.DeclareTasks(ctx, goalID, "agent", "grace-first", []string{"First task"}, []string{"Complete the first task."}); err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+	if _, err := s.CreateTasks(ctx, goalID, "agent", "grace-first", []string{"First task"}, []string{"Complete the first task."}); err != nil {
+		t.Fatalf("CreateTasks: %v", err)
 	}
 
 	tracker := newWakeupTracker(time.Time{})
@@ -161,8 +161,8 @@ func TestWakeupTrackerPublishesAfterGracePeriodAndResets(t *testing.T) {
 		t.Fatalf("reset events = %#v, want empty", events)
 	}
 
-	if _, err := s.DeclareTasks(ctx, goalID, "agent", "grace-second", []string{"Second task"}, []string{"Complete the second task."}); err != nil {
-		t.Fatalf("DeclareTasks second: %v", err)
+	if _, err := s.CreateTasks(ctx, goalID, "agent", "grace-second", []string{"Second task"}, []string{"Complete the second task."}); err != nil {
+		t.Fatalf("CreateTasks second: %v", err)
 	}
 	if events, err := tracker.evaluate(ctx, s, start.Add(16*time.Minute+time.Second)); err != nil {
 		t.Fatalf("second start evaluate: %v", err)
@@ -186,9 +186,9 @@ func TestWakeupTrackerPublishesTaskBreakdown(t *testing.T) {
 	ctx := context.Background()
 	s := newWakeupTestStore(t)
 	projectID, goalID := newWakeupTestGoal(t, s, "breakdown")
-	tasks, err := s.DeclareTasks(ctx, goalID, "agent", "breakdown-tasks", []string{"Waiting task", "Untouched task one", "Untouched task two"}, []string{"Answer the first task.", "Start the second task.", "Start the third task."})
+	tasks, err := s.CreateTasks(ctx, goalID, "agent", "breakdown-tasks", []string{"Waiting task", "Untouched task one", "Untouched task two"}, []string{"Answer the first task.", "Start the second task.", "Start the third task."})
 	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 
 	state := store.WakeupState{
@@ -249,8 +249,8 @@ func TestWakeupTrackerDoesNotPublishForWaitingAnswerTasksOnly(t *testing.T) {
 	ctx := context.Background()
 	s := newWakeupTestStore(t)
 	_, goalID := newWakeupTestGoal(t, s, "waiting-only")
-	if _, err := s.DeclareTasks(ctx, goalID, "agent", "waiting-only", []string{"Waiting task"}, []string{"Answer the task."}); err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+	if _, err := s.CreateTasks(ctx, goalID, "agent", "waiting-only", []string{"Waiting task"}, []string{"Answer the task."}); err != nil {
+		t.Fatalf("CreateTasks: %v", err)
 	}
 
 	state := store.WakeupState{
@@ -284,9 +284,9 @@ func TestWakeupTrackerPublishesForActionableTasks(t *testing.T) {
 	ctx := context.Background()
 	s := newWakeupTestStore(t)
 	_, goalID := newWakeupTestGoal(t, s, "actionable")
-	tasks, err := s.DeclareTasks(ctx, goalID, "agent", "actionable", []string{"Actionable task"}, []string{"Start the task."})
+	tasks, err := s.CreateTasks(ctx, goalID, "agent", "actionable", []string{"Actionable task"}, []string{"Start the task."})
 	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 
 	state := store.WakeupState{
@@ -320,9 +320,9 @@ func TestWakeupTrackerRestartsGracePeriodAfterActionableTasksDisappearAndReturn(
 	ctx := context.Background()
 	s := newWakeupTestStore(t)
 	_, goalID := newWakeupTestGoal(t, s, "actionable-reset")
-	tasks, err := s.DeclareTasks(ctx, goalID, "agent", "actionable-reset", []string{"Actionable task"}, []string{"Start the task."})
+	tasks, err := s.CreateTasks(ctx, goalID, "agent", "actionable-reset", []string{"Actionable task"}, []string{"Start the task."})
 	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 
 	state := store.WakeupState{
@@ -382,8 +382,8 @@ func TestWakeupTrackerRepublishesWhileConditionRemainsActive(t *testing.T) {
 	ctx := context.Background()
 	s := newWakeupTestStore(t)
 	_, goalID := newWakeupTestGoal(t, s, "repeat")
-	if _, err := s.DeclareTasks(ctx, goalID, "agent", "repeat-tasks", []string{"Unstarted task"}, []string{"Keep the task unstarted."}); err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+	if _, err := s.CreateTasks(ctx, goalID, "agent", "repeat-tasks", []string{"Unstarted task"}, []string{"Keep the task unstarted."}); err != nil {
+		t.Fatalf("CreateTasks: %v", err)
 	}
 
 	tracker := newWakeupTracker(time.Time{})
@@ -418,8 +418,8 @@ func TestWakeupTrackerReportsDetectorCountDiscrepancyOnce(t *testing.T) {
 	ctx := context.Background()
 	s := newWakeupTestStore(t)
 	projectID, goalID := newWakeupTestGoal(t, s, "discrepancy")
-	if _, err := s.DeclareTasks(ctx, goalID, "agent", "discrepancy-tasks", []string{"Unstarted task"}, []string{"Start the task later."}); err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+	if _, err := s.CreateTasks(ctx, goalID, "agent", "discrepancy-tasks", []string{"Unstarted task"}, []string{"Start the task later."}); err != nil {
+		t.Fatalf("CreateTasks: %v", err)
 	}
 
 	tracker := newWakeupTracker(time.Time{})
@@ -453,9 +453,9 @@ func TestWakeupTrackerIgnoresGoalWithRunningClaimAndUnstartedTask(t *testing.T) 
 	ctx := context.Background()
 	s := newWakeupTestStore(t)
 	projectID, goalID := newWakeupTestGoal(t, s, "running-goal")
-	tasks, err := s.DeclareTasks(ctx, goalID, "agent", "running-goal-tasks", []string{"Running task", "Unstarted task"}, []string{"Keep working on the running task.", "Start the remaining task later."})
+	tasks, err := s.CreateTasks(ctx, goalID, "agent", "running-goal-tasks", []string{"Running task", "Unstarted task"}, []string{"Keep working on the running task.", "Start the remaining task later."})
 	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 	runningSessionID := daemonTestSessionID(t, s, "running-goal-session")
 	if err := s.AssociateAgentSessionWithProject(ctx, runningSessionID, projectID); err != nil {
@@ -487,8 +487,8 @@ func TestWakeupTrackerIgnoresSnapshotDiscrepancyAfterTaskDeclaration(t *testing.
 	events, err := tracker.evaluateWith(ctx, s, now, func(ctx context.Context, detectedProjectID int64) (store.WakeupState, error) {
 		detectCalls++
 		if detectCalls == 1 {
-			if _, err := s.DeclareTasks(ctx, goalID, "agent", "snapshot-tasks", []string{"First task", "Second task"}, []string{"Complete the first task.", "Complete the second task."}); err != nil {
-				t.Fatalf("DeclareTasks: %v", err)
+			if _, err := s.CreateTasks(ctx, goalID, "agent", "snapshot-tasks", []string{"First task", "Second task"}, []string{"Complete the first task.", "Complete the second task."}); err != nil {
+				t.Fatalf("CreateTasks: %v", err)
 			}
 			return store.WakeupState{}, nil
 		}
@@ -566,9 +566,9 @@ func TestWakeupTrackerReturnsEventsWhenLaterProjectEvaluationFails(t *testing.T)
 	s := newWakeupTestStore(t)
 	firstProjectID, firstGoalID := newWakeupTestGoal(t, s, "evaluate-partial-return-first")
 	secondProjectID, _ := newWakeupTestGoal(t, s, "evaluate-partial-return-second")
-	tasks, err := s.DeclareTasks(ctx, firstGoalID, "agent", "evaluate-partial-return", []string{"Completed task"}, []string{"The task is complete."})
+	tasks, err := s.CreateTasks(ctx, firstGoalID, "agent", "evaluate-partial-return", []string{"Completed task"}, []string{"The task is complete."})
 	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 	if _, err := s.UpdateTask(ctx, tasks[0].ID, domain.TaskDone, 0); err != nil {
 		t.Fatalf("UpdateTask: %v", err)
@@ -606,9 +606,9 @@ func TestRunMaintenancePublishesEventsBeforeEvaluateFailure(t *testing.T) {
 	s := newWakeupTestStore(t)
 	firstProjectID, firstGoalID := newWakeupTestGoal(t, s, "evaluate-partial-first")
 	secondProjectID, _ := newWakeupTestGoal(t, s, "evaluate-partial-second")
-	tasks, err := s.DeclareTasks(ctx, firstGoalID, "agent", "evaluate-partial", []string{"Completed task"}, []string{"The task is complete."})
+	tasks, err := s.CreateTasks(ctx, firstGoalID, "agent", "evaluate-partial", []string{"Completed task"}, []string{"The task is complete."})
 	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 	if _, err := s.UpdateTask(ctx, tasks[0].ID, domain.TaskDone, 0); err != nil {
 		t.Fatalf("UpdateTask: %v", err)
@@ -722,9 +722,9 @@ func TestRunMaintenancePublishesEventsFromProjectsAfterEvaluationFailure(t *test
 	secondProjectID, _ := newWakeupTestGoal(t, s, "evaluate-after-second")
 	thirdProjectID, thirdGoalID := newWakeupTestGoal(t, s, "evaluate-after-third")
 	for goalID, key := range map[int64]string{firstGoalID: "evaluate-after-first-task", thirdGoalID: "evaluate-after-third-task"} {
-		tasks, err := s.DeclareTasks(ctx, goalID, "agent", key, []string{"Completed task"}, []string{"The task is complete."})
+		tasks, err := s.CreateTasks(ctx, goalID, "agent", key, []string{"Completed task"}, []string{"The task is complete."})
 		if err != nil {
-			t.Fatalf("DeclareTasks: %v", err)
+			t.Fatalf("CreateTasks: %v", err)
 		}
 		if _, err := s.UpdateTask(ctx, tasks[0].ID, domain.TaskDone, 0); err != nil {
 			t.Fatalf("UpdateTask: %v", err)
@@ -779,9 +779,9 @@ func TestWakeupTrackerPreservesDetectionGraceAfterProjectEvaluationFailure(t *te
 	firstProjectID, firstGoalID := newWakeupTestGoal(t, s, "grace-first")
 	secondProjectID, secondGoalID := newWakeupTestGoal(t, s, "grace-second")
 	for goalID, key := range map[int64]string{firstGoalID: "grace-first-task", secondGoalID: "grace-second-task"} {
-		tasks, err := s.DeclareTasks(ctx, goalID, "agent", key, []string{"Completed task"}, []string{"The task is complete."})
+		tasks, err := s.CreateTasks(ctx, goalID, "agent", key, []string{"Completed task"}, []string{"The task is complete."})
 		if err != nil {
-			t.Fatalf("DeclareTasks: %v", err)
+			t.Fatalf("CreateTasks: %v", err)
 		}
 		if _, err := s.UpdateTask(ctx, tasks[0].ID, domain.TaskDone, 0); err != nil {
 			t.Fatalf("UpdateTask: %v", err)
@@ -835,9 +835,9 @@ func TestWakeupTrackerCleansStaleDetectionKeysAfterSuccessfulEvaluation(t *testi
 	ctx := context.Background()
 	s := newWakeupTestStore(t)
 	projectID, goalID := newWakeupTestGoal(t, s, "stale-cleanup")
-	tasks, err := s.DeclareTasks(ctx, goalID, "agent", "stale-cleanup-task", []string{"Completed task"}, []string{"The task is complete."})
+	tasks, err := s.CreateTasks(ctx, goalID, "agent", "stale-cleanup-task", []string{"Completed task"}, []string{"The task is complete."})
 	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 	if _, err := s.UpdateTask(ctx, tasks[0].ID, domain.TaskDone, 0); err != nil {
 		t.Fatalf("UpdateTask: %v", err)
@@ -865,9 +865,9 @@ func TestWakeupTrackerPublishesCompletionDetectionWithoutUnstartedTasks(t *testi
 	ctx := context.Background()
 	s := newWakeupTestStore(t)
 	projectID, goalID := newWakeupTestGoal(t, s, "completion-no-unstarted")
-	tasks, err := s.DeclareTasks(ctx, goalID, "agent", "completion-no-unstarted", []string{"Completed task"}, []string{"The task is already complete."})
+	tasks, err := s.CreateTasks(ctx, goalID, "agent", "completion-no-unstarted", []string{"Completed task"}, []string{"The task is already complete."})
 	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 	if _, err := s.UpdateTask(ctx, tasks[0].ID, domain.TaskDone, 0); err != nil {
 		t.Fatalf("UpdateTask: %v", err)
@@ -898,9 +898,9 @@ func TestWakeupTrackerDelaysDetectionUntilGracePeriod(t *testing.T) {
 	ctx := context.Background()
 	s := newWakeupTestStore(t)
 	_, goalID := newWakeupTestGoal(t, s, "completion-grace")
-	tasks, err := s.DeclareTasks(ctx, goalID, "agent", "completion-grace", []string{"Completed task"}, []string{"Wait for the grace period."})
+	tasks, err := s.CreateTasks(ctx, goalID, "agent", "completion-grace", []string{"Completed task"}, []string{"Wait for the grace period."})
 	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 	if _, err := s.UpdateTask(ctx, tasks[0].ID, domain.TaskDone, 0); err != nil {
 		t.Fatalf("UpdateTask: %v", err)
@@ -923,9 +923,9 @@ func TestWakeupTrackerDoesNotRepeatDetectionForSameCondition(t *testing.T) {
 	ctx := context.Background()
 	s := newWakeupTestStore(t)
 	_, goalID := newWakeupTestGoal(t, s, "completion-duplicate")
-	tasks, err := s.DeclareTasks(ctx, goalID, "agent", "completion-duplicate", []string{"Completed task"}, []string{"Do not repeat the detection."})
+	tasks, err := s.CreateTasks(ctx, goalID, "agent", "completion-duplicate", []string{"Completed task"}, []string{"Do not repeat the detection."})
 	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 	if _, err := s.UpdateTask(ctx, tasks[0].ID, domain.TaskDone, 0); err != nil {
 		t.Fatalf("UpdateTask: %v", err)
@@ -957,9 +957,9 @@ func TestWakeupTrackerResetsDetectionAfterConditionClears(t *testing.T) {
 	ctx := context.Background()
 	s := newWakeupTestStore(t)
 	_, goalID := newWakeupTestGoal(t, s, "completion-reset")
-	tasks, err := s.DeclareTasks(ctx, goalID, "agent", "completion-reset-first", []string{"First completed task"}, []string{"Complete the first task."})
+	tasks, err := s.CreateTasks(ctx, goalID, "agent", "completion-reset-first", []string{"First completed task"}, []string{"Complete the first task."})
 	if err != nil {
-		t.Fatalf("DeclareTasks first: %v", err)
+		t.Fatalf("CreateTasks first: %v", err)
 	}
 	if _, err := s.UpdateTask(ctx, tasks[0].ID, domain.TaskDone, 0); err != nil {
 		t.Fatalf("UpdateTask first: %v", err)
@@ -1015,9 +1015,9 @@ func TestWakeupTrackerKeepsDetectionGracePerTarget(t *testing.T) {
 	ctx := context.Background()
 	s := newWakeupTestStore(t)
 	projectID, goalAID := newWakeupTestGoal(t, s, "completion-target-a")
-	tasksA, err := s.DeclareTasks(ctx, goalAID, "agent", "completion-target-a", []string{"Goal A task"}, []string{"Complete goal A."})
+	tasksA, err := s.CreateTasks(ctx, goalAID, "agent", "completion-target-a", []string{"Goal A task"}, []string{"Complete goal A."})
 	if err != nil {
-		t.Fatalf("DeclareTasks A: %v", err)
+		t.Fatalf("CreateTasks A: %v", err)
 	}
 	if _, err := s.UpdateTask(ctx, tasksA[0].ID, domain.TaskDone, 0); err != nil {
 		t.Fatalf("UpdateTask A: %v", err)
@@ -1033,9 +1033,9 @@ func TestWakeupTrackerKeepsDetectionGracePerTarget(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGoal B: %v", err)
 	}
-	tasksB, err := s.DeclareTasks(ctx, goalB.ID, "agent", "completion-target-b", []string{"Goal B task"}, []string{"Complete goal B."})
+	tasksB, err := s.CreateTasks(ctx, goalB.ID, "agent", "completion-target-b", []string{"Goal B task"}, []string{"Complete goal B."})
 	if err != nil {
-		t.Fatalf("DeclareTasks B: %v", err)
+		t.Fatalf("CreateTasks B: %v", err)
 	}
 	if _, err := s.UpdateTask(ctx, tasksB[0].ID, domain.TaskDone, 0); err != nil {
 		t.Fatalf("UpdateTask B: %v", err)
@@ -1073,9 +1073,9 @@ func TestWakeupTrackerPublishesStalledHandoffDetections(t *testing.T) {
 	ctx := context.Background()
 	s := newWakeupTestStore(t)
 	projectID, goalID := newWakeupTestGoal(t, s, "stalled-handoff")
-	tasks, err := s.DeclareTasks(ctx, goalID, "agent", "stalled-handoff-task", []string{"Stalled task", "Stale task"}, []string{"Keep the task handoff open.", "Keep the stale claim open."})
+	tasks, err := s.CreateTasks(ctx, goalID, "agent", "stalled-handoff-task", []string{"Stalled task", "Stale task"}, []string{"Keep the task handoff open.", "Keep the stale claim open."})
 	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 	tracker := newWakeupTracker(time.Time{})
 	start := time.Date(2026, 8, 20, 20, 0, 0, 0, time.UTC)
@@ -1222,9 +1222,9 @@ func TestWakeupTrackerReportsHandoffWorktreeActivity(t *testing.T) {
 			if goal.ID != goalID {
 				t.Fatalf("goal ID = %d, want %d", goal.ID, goalID)
 			}
-			tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "worktree-activity-"+tc.name, []string{"Worktree activity"}, []string{"Keep the handoff open."})
+			tasks, err := s.CreateTasks(ctx, goal.ID, "agent", "worktree-activity-"+tc.name, []string{"Worktree activity"}, []string{"Keep the handoff open."})
 			if err != nil {
-				t.Fatalf("DeclareTasks: %v", err)
+				t.Fatalf("CreateTasks: %v", err)
 			}
 			tracker := newWakeupTracker(time.Time{})
 			events, err := tracker.evaluateWith(ctx, s, now, func(context.Context, int64) (store.WakeupState, error) {
@@ -1331,9 +1331,9 @@ func TestWakeupTrackerDoesNotPublishCompletedHandoffFromSweep(t *testing.T) {
 	ctx := context.Background()
 	s := newWakeupTestStore(t)
 	_, goalID := newWakeupTestGoal(t, s, "reported-sweep")
-	tasks, err := s.DeclareTasks(ctx, goalID, "reported-sweep", "reported-sweep", []string{"Completed handoff task"}, []string{"The completed handoff must not be swept."})
+	tasks, err := s.CreateTasks(ctx, goalID, "reported-sweep", "reported-sweep", []string{"Completed handoff task"}, []string{"The completed handoff must not be swept."})
 	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 	start := time.Date(2026, 8, 25, 14, 0, 0, 0, time.UTC)
 	requestedAt := start.Add(-time.Minute)
@@ -1364,9 +1364,9 @@ func TestWakeupTrackerPublishesUnappliedDecisionAndStaleClaimDetections(t *testi
 	ctx := context.Background()
 	s := newWakeupTestStore(t)
 	projectID, goalID := newWakeupTestGoal(t, s, "unapplied-decisions")
-	tasks, err := s.DeclareTasks(ctx, goalID, "agent", "stale-claim-task", []string{"Stale task"}, []string{"Keep the task handoff open."})
+	tasks, err := s.CreateTasks(ctx, goalID, "agent", "stale-claim-task", []string{"Stale task"}, []string{"Keep the task handoff open."})
 	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 	start := time.Date(2026, 8, 20, 20, 0, 0, 0, time.UTC)
 	defaultAppliedAt := start.Add(-detectionDefaultDecisionUnappliedAfter + time.Nanosecond)
