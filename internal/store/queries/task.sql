@@ -13,6 +13,9 @@ SELECT * FROM task_create_handoffs WHERE id = ?;
 -- name: GetTaskCreateHandoffForPlan :one
 SELECT * FROM task_create_handoffs WHERE plan_handoff_id = ?;
 
+-- name: ListTaskCreateHandoffs :many
+SELECT * FROM task_create_handoffs WHERE goal_id = ? ORDER BY requested_at, id;
+
 -- name: ListTaskCreateHandoffTaskIDs :many
 SELECT task_id FROM task_create_handoff_tasks WHERE handoff_id = ? ORDER BY task_id;
 

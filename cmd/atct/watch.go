@@ -552,16 +552,13 @@ func runWatchWithOptions(dir, goalID string, projectScope, monitor bool) error {
 	}
 	scope := normalWatchScope(projectID, goalID)
 	if monitor && goalID == "" {
-		scope.Role = store.OrchestrationRecoveryCommander
+		scope.Role = "commander"
 	}
 	snapshot, projectIDGetter := watchSnapshotWithProject(client, baseURLs, cwd)
 	reporter := newWatchHealthReporter(client, baseURLs, cwd, scope)
 	var reporters []watchHealthSink
 	if reporter != nil {
 		reporters = append(reporters, reporter)
-	}
-	if actionSink != nil {
-		actionSink = newWatchDurableActionSink(newWatchHTTPDeliveryAPI(client, baseURLs), reporter, scope, actionSink)
 	}
 	return watchLoopWithEnsureAndProjectIDAndScopeAndActionSink(ctx, watchOutput, client, watchReconnectInterval, snapshot, func() error {
 		return ensureWatchDaemon(dir)
@@ -1185,186 +1182,16 @@ func watchKeyForScope(cwd string, scope watchScope) string {
 }
 
 type watchReconciliationHandoff struct {
-	ID                string  `json:"ID"`
-	GoalID            int64   `json:"GoalID"`
-	TaskID            int64   `json:"TaskID"`
-	RequestedAt       *string `json:"RequestedAt"`
-	ReceivedAt        *string `json:"ReceivedAt"`
-	CompletedReportAt *string `json:"CompletedReportAt"`
-	ReviewRequestedAt *string `json:"ReviewRequestedAt"`
-	ReviewReceivedAt  *string `json:"ReviewReceivedAt"`
-	ReviewRejectedAt  *string `json:"ReviewRejectedAt"`
-}
-
-type watchOrchestrationRecovery struct {
-	Condition              string `json:"condition"`
-	TargetRole             string `json:"target_role"`
-	ProjectID              int64  `json:"project_id"`
-	GoalID                 *int64 `json:"goal_id"`
-	TaskID                 *int64 `json:"task_id"`
-	HandoffID              string `json:"handoff_id"`
-	ScopeKey               string `json:"scope_key"`
-	Generation             string `json:"generation"`
-	ExpectedRole           string `json:"expected_role"`
-	ExpectedAgentSessionID int64  `json:"expected_agent_session_id"`
-	ExpectedAgentKey       string `json:"expected_agent_key"`
-	ObservedRole           string `json:"observed_role"`
-	ObservedAgentSessionID int64  `json:"observed_agent_session_id"`
-	ObservedAgentKey       string `json:"observed_agent_key"`
-	Instruction            string `json:"instruction"`
-}
-
-type watchOrchestrationBlocker struct {
-	BlockerID   string `json:"blocker_id"`
-	ProjectID   int64  `json:"project_id"`
-	GoalID      *int64 `json:"goal_id"`
-	TaskID      *int64 `json:"task_id"`
-	ScopeKey    string `json:"scope_key"`
-	Kind        string `json:"kind"`
-	SourceID    string `json:"source_id"`
-	Generation  string `json:"generation"`
-	OwnerRole   string `json:"owner_role"`
-	Instruction string `json:"instruction"`
-}
-
-type watchOrchestrationReviewWork struct {
-	ReviewWorkID              string `json:"review_work_id"`
-	ProjectID                 int64  `json:"project_id"`
-	GoalID                    int64  `json:"goal_id"`
-	TaskID                    *int64 `json:"task_id"`
-	Kind                      string `json:"kind"`
-	HandoffID                 string `json:"handoff_id"`
-	RequesterSessionID        int64  `json:"requester_session_id"`
-	RequesterScopeKey         string `json:"requester_scope_key"`
-	ExpectedReviewerRole      string `json:"expected_reviewer_role"`
-	ReviewerScopeKey          string `json:"reviewer_scope_key"`
-	ReviewerSessionID         int64  `json:"reviewer_session_id"`
-	State                     string `json:"state"`
-	ReviewRequestedGeneration string `json:"review_requested_generation"`
-	ReviewReceivedGeneration  string `json:"review_received_generation"`
-	SettlementGeneration      string `json:"settlement_generation"`
-	Active                    bool   `json:"active"`
-	ActionRole                string `json:"action_role"`
-	ActionScopeKey            string `json:"action_scope_key"`
-	ActionTaskID              *int64 `json:"action_task_id"`
-	ActionInstruction         string `json:"action_instruction"`
-}
-
-func watchOrchestrationReviewWorkDecision(work store.OrchestrationReviewWork) (watchDecision, bool) {
-	if work.ProjectID <= 0 || work.GoalID <= 0 || strings.TrimSpace(work.ReviewWorkID) == "" || strings.TrimSpace(work.HandoffID) == "" || strings.TrimSpace(work.Kind) == "" {
-		return watchDecision{}, false
-	}
-	decision := watchDecision{
-		ProjectID:  strconv.FormatInt(work.ProjectID, 10),
-		GoalID:     strconv.FormatInt(work.GoalID, 10),
-		HandoffID:  work.HandoffID,
-		SourceID:   work.ReviewWorkID,
-		Condition:  "review_work_" + work.State,
-		Generation: work.ReviewRequestedGeneration,
-	}
-	if work.TaskID != nil {
-		decision.TaskID = strconv.FormatInt(*work.TaskID, 10)
-	}
-	if work.Active {
-		decision.TargetRole = work.ExpectedReviewerRole
-		decision.ScopeKey = work.ReviewerScopeKey
-		switch work.State {
-		case store.OrchestrationReviewWorkStateRequested:
-			decision.Instruction = fmt.Sprintf("%s handoff %s review work is requested; receive it as %s and review it explicitly", work.Kind, work.HandoffID, work.ExpectedReviewerRole)
-		case store.OrchestrationReviewWorkStateReceived:
-			decision.Instruction = fmt.Sprintf("%s handoff %s review work is received; finish the review and explicitly accept or reject it", work.Kind, work.HandoffID)
-		default:
-			return watchDecision{}, false
-		}
-		if work.State == store.OrchestrationReviewWorkStateReceived && work.ReviewReceivedGeneration != "" {
-			decision.Generation = work.ReviewReceivedGeneration
-		}
-	} else {
-		if work.State != store.OrchestrationReviewWorkStateRejected && work.State != store.OrchestrationReviewWorkStateCompleted {
-			return watchDecision{}, false
-		}
-		decision.TargetRole = work.ActionRole
-		decision.ScopeKey = work.ActionScopeKey
-		decision.Instruction = work.ActionInstruction
-		decision.Generation = work.SettlementGeneration
-	}
-	if strings.TrimSpace(decision.TargetRole) == "" || strings.TrimSpace(decision.ScopeKey) == "" || strings.TrimSpace(decision.Generation) == "" || strings.TrimSpace(decision.Instruction) == "" {
-		return watchDecision{}, false
-	}
-	decision.deliveryGeneration = decision.Generation
-	return decision, true
-}
-
-func watchOrchestrationReviewWorkMatches(work store.OrchestrationReviewWork, scope watchScope) bool {
-	decision, ok := watchOrchestrationReviewWorkDecision(work)
-	if !ok || decision.TargetRole != scope.Role || decision.ScopeKey != scope.ScopeKey {
-		return false
-	}
-	if scope.ProjectID != "" && decision.ProjectID != scope.ProjectID {
-		return false
-	}
-	if scope.TaskID != "" {
-		return decision.TaskID == scope.TaskID
-	}
-	if scope.GoalID != "" {
-		return decision.GoalID == scope.GoalID
-	}
-	return scope.Role == "commander"
-}
-
-func (r watchOrchestrationRecovery) watchDecision() watchDecision {
-	decision := watchDecision{
-		ProjectID:              strconv.FormatInt(r.ProjectID, 10),
-		HandoffID:              r.HandoffID,
-		Condition:              r.Condition,
-		TargetRole:             r.TargetRole,
-		ScopeKey:               r.ScopeKey,
-		Generation:             r.Generation,
-		ExpectedRole:           r.ExpectedRole,
-		ExpectedAgentSessionID: r.ExpectedAgentSessionID,
-		ExpectedAgentKey:       r.ExpectedAgentKey,
-		ObservedRole:           r.ObservedRole,
-		ObservedAgentSessionID: r.ObservedAgentSessionID,
-		ObservedAgentKey:       r.ObservedAgentKey,
-		Instruction:            r.Instruction,
-		deliveryGeneration:     r.Generation,
-	}
-	if r.GoalID != nil {
-		decision.GoalID = strconv.FormatInt(*r.GoalID, 10)
-	}
-	if r.TaskID != nil {
-		decision.TaskID = strconv.FormatInt(*r.TaskID, 10)
-	}
-	return decision
-}
-
-func (b watchOrchestrationBlocker) watchDecision() watchDecision {
-	condition := ""
-	switch b.Kind {
-	case store.OrchestrationBlockerHumanDecision:
-		condition = "human_decision_wait"
-	case store.OrchestrationBlockerDependencyMerge:
-		condition = "dependency_merge_wait"
-	}
-	decision := watchDecision{
-		ProjectID:          strconv.FormatInt(b.ProjectID, 10),
-		Condition:          condition,
-		TargetRole:         store.OrchestrationRecoveryCommander,
-		ScopeKey:           store.ProjectOrchestrationScopeKey(b.ProjectID),
-		Generation:         b.Generation,
-		BlockerID:          b.BlockerID,
-		BlockerKind:        b.Kind,
-		SourceID:           b.SourceID,
-		Instruction:        b.Instruction,
-		deliveryGeneration: b.Generation,
-	}
-	if b.GoalID != nil {
-		decision.GoalID = strconv.FormatInt(*b.GoalID, 10)
-	}
-	if b.TaskID != nil {
-		decision.TaskID = strconv.FormatInt(*b.TaskID, 10)
-	}
-	return decision
+	ID                        string  `json:"ID"`
+	GoalID                    int64   `json:"GoalID"`
+	TaskID                    int64   `json:"TaskID"`
+	RequestedAt               *string `json:"RequestedAt"`
+	ReceivedAt                *string `json:"ReceivedAt"`
+	CompletedReportAt         *string `json:"CompletedReportAt"`
+	ReviewRequestedAt         *string `json:"ReviewRequestedAt"`
+	ReviewReceivedAt          *string `json:"ReviewReceivedAt"`
+	ReviewRejectedAt          *string `json:"ReviewRejectedAt"`
+	ReviewRejectionReceivedAt *string `json:"ReviewRejectionReceivedAt"`
 }
 
 type watchReconciliationGoal struct {
@@ -1385,40 +1212,20 @@ func (g *watchReconciliationGoal) UnmarshalJSON(data []byte) error {
 }
 
 type watchReconciliation struct {
-	Goals          []watchReconciliationGoal      `json:"goals"`
-	Decisions      []watchDecision                `json:"decisions"`
-	GoalHandoffs   []watchReconciliationHandoff   `json:"goal_handoffs"`
-	PlanHandoffs   []watchReconciliationHandoff   `json:"plan_handoffs"`
-	TaskHandoffs   []watchReconciliationHandoff   `json:"task_handoffs"`
-	ExpectedScopes []watchExpectedMonitorScope    `json:"expected_scopes"`
-	MonitorHealth  []watchMonitorHealth           `json:"monitor_health"`
-	Recoveries     []watchOrchestrationRecovery   `json:"recoveries"`
-	Blockers       []watchOrchestrationBlocker    `json:"blockers"`
-	ReviewWork     []watchOrchestrationReviewWork `json:"review_work"`
+	Goals              []watchReconciliationGoal    `json:"goals"`
+	Decisions          []watchDecision              `json:"decisions"`
+	GoalHandoffs       []watchReconciliationHandoff `json:"goal_handoffs"`
+	PlanHandoffs       []watchReconciliationHandoff `json:"plan_handoffs"`
+	TaskHandoffs       []watchReconciliationHandoff `json:"task_handoffs"`
+	TaskCreateHandoffs []watchTaskCreateHandoff     `json:"task_create_handoffs"`
 }
 
-type watchExpectedMonitorScope struct {
-	ScopeKey       string `json:"scope_key"`
-	ProjectID      int64  `json:"project_id"`
-	GoalID         *int64 `json:"goal_id"`
-	TaskID         *int64 `json:"task_id"`
-	Role           string `json:"role"`
-	AgentSessionID int64  `json:"agent_session_id"`
-	AgentKey       string `json:"agent_key"`
-	Active         bool   `json:"active"`
-}
-
-type watchMonitorHealth struct {
-	MonitorID      string     `json:"monitor_id"`
-	AgentKey       string     `json:"agent_key"`
-	ScopeKey       string     `json:"scope_key"`
-	AgentSessionID int64      `json:"agent_session_id"`
-	ProjectID      int64      `json:"project_id"`
-	GoalID         *int64     `json:"goal_id"`
-	TaskID         *int64     `json:"task_id"`
-	Role           string     `json:"role"`
-	State          string     `json:"state"`
-	LastSeenAt     *time.Time `json:"last_seen_at"`
+type watchTaskCreateHandoff struct {
+	ID          string  `json:"ID"`
+	GoalID      int64   `json:"GoalID"`
+	RequestedAt *string `json:"RequestedAt"`
+	ReceivedAt  *string `json:"ReceivedAt"`
+	CompletedAt *string `json:"CompletedAt"`
 }
 
 func watchActionSinkFromArgs(args ...any) watchAgentActionSink {
@@ -1462,85 +1269,8 @@ func reconcileWatchScope(ctx context.Context, client *http.Client, baseURL strin
 	if err := json.NewDecoder(resp.Body).Decode(&state); err != nil {
 		return fmt.Errorf("decode %s: %w", reconcileURL, err)
 	}
-	for _, arg := range args {
-		setter, ok := arg.(watchHealthScopeSetter)
-		if !ok {
-			continue
-		}
-		matched := false
-		for _, expected := range state.ExpectedScopes {
-			if watchExpectedMonitorScopeMatches(expected, scope) {
-				setter.SetExpectedScope(watchHealthScopeIdentity{
-					ScopeKey:       expected.ScopeKey,
-					AgentSessionID: expected.AgentSessionID,
-					AgentKey:       expected.AgentKey,
-				})
-				matched = true
-				break
-			}
-		}
-		if !matched {
-			if clearer, ok := setter.(watchHealthScopeClearer); ok {
-				clearer.ClearExpectedScope()
-			}
-		}
-	}
 	if scopeFilter == nil {
 		scopeFilter = newWatchPassThroughFilter()
-	}
-	for _, blocker := range state.Blockers {
-		if !watchOrchestrationBlockerMatches(blocker, scope) {
-			continue
-		}
-		if err := emitWatchDecisionWithStateAndSinks(out, "orchestration.recovery", blocker.watchDecision(),
-			delivered, lastWakeupContent, wakeupDiscrepancyDelivered,
-			detectionDelivered, sink, actionSink); err != nil {
-			return err
-		}
-	}
-	for _, recovery := range state.Recoveries {
-		if !watchOrchestrationRecoveryMatches(recovery, scope) {
-			continue
-		}
-		if err := emitWatchDecisionWithStateAndSinks(out, "orchestration.recovery", recovery.watchDecision(),
-			delivered, lastWakeupContent, wakeupDiscrepancyDelivered,
-			detectionDelivered, sink, actionSink); err != nil {
-			return err
-		}
-	}
-	for _, work := range state.ReviewWork {
-		if !watchOrchestrationReviewWorkMatches(store.OrchestrationReviewWork{
-			ReviewWorkID: work.ReviewWorkID, ProjectID: work.ProjectID, GoalID: work.GoalID,
-			TaskID: work.TaskID, Kind: work.Kind, HandoffID: work.HandoffID,
-			RequesterSessionID: work.RequesterSessionID, RequesterScopeKey: work.RequesterScopeKey,
-			ExpectedReviewerRole: work.ExpectedReviewerRole, ReviewerScopeKey: work.ReviewerScopeKey,
-			ReviewerSessionID: work.ReviewerSessionID, State: work.State,
-			ReviewRequestedGeneration: work.ReviewRequestedGeneration,
-			ReviewReceivedGeneration:  work.ReviewReceivedGeneration,
-			SettlementGeneration:      work.SettlementGeneration, Active: work.Active,
-			ActionRole: work.ActionRole, ActionScopeKey: work.ActionScopeKey,
-			ActionTaskID: work.ActionTaskID, ActionInstruction: work.ActionInstruction,
-		}, scope) {
-			continue
-		}
-		if decision, ok := watchOrchestrationReviewWorkDecision(store.OrchestrationReviewWork{
-			ReviewWorkID: work.ReviewWorkID, ProjectID: work.ProjectID, GoalID: work.GoalID,
-			TaskID: work.TaskID, Kind: work.Kind, HandoffID: work.HandoffID,
-			RequesterSessionID: work.RequesterSessionID, RequesterScopeKey: work.RequesterScopeKey,
-			ExpectedReviewerRole: work.ExpectedReviewerRole, ReviewerScopeKey: work.ReviewerScopeKey,
-			ReviewerSessionID: work.ReviewerSessionID, State: work.State,
-			ReviewRequestedGeneration: work.ReviewRequestedGeneration,
-			ReviewReceivedGeneration:  work.ReviewReceivedGeneration,
-			SettlementGeneration:      work.SettlementGeneration, Active: work.Active,
-			ActionRole: work.ActionRole, ActionScopeKey: work.ActionScopeKey,
-			ActionTaskID: work.ActionTaskID, ActionInstruction: work.ActionInstruction,
-		}); ok {
-			if err := emitWatchDecisionWithStateAndSinks(out, "orchestration.recovery", decision,
-				delivered, lastWakeupContent, wakeupDiscrepancyDelivered,
-				detectionDelivered, sink, actionSink); err != nil {
-				return err
-			}
-		}
 	}
 	for _, decision := range state.Decisions {
 		if scope.ProjectID != "" && decision.ProjectID != "" && decision.ProjectID != scope.ProjectID {
@@ -1577,7 +1307,7 @@ func reconcileWatchScope(ctx context.Context, client *http.Client, baseURL strin
 		}
 	}
 	for _, handoff := range state.TaskHandoffs {
-		if eventName, decision, ok := watchReconciliationHandoffEvent("task", handoff); ok {
+		if eventName, decision, ok := watchReconciliationHandoffEvent("task", handoff); ok && watchHandoffProjectionMatchesScope(decision, scope) {
 			if !scopeFilter.delivers(eventName, decision) {
 				continue
 			}
@@ -1587,7 +1317,7 @@ func reconcileWatchScope(ctx context.Context, client *http.Client, baseURL strin
 		}
 	}
 	for _, handoff := range state.GoalHandoffs {
-		if eventName, decision, ok := watchReconciliationHandoffEvent("goal", handoff); ok {
+		if eventName, decision, ok := watchReconciliationHandoffEvent("goal", handoff); ok && watchHandoffProjectionMatchesScope(decision, scope) {
 			if !scopeFilter.delivers(eventName, decision) {
 				continue
 			}
@@ -1597,10 +1327,17 @@ func reconcileWatchScope(ctx context.Context, client *http.Client, baseURL strin
 		}
 	}
 	for _, handoff := range state.PlanHandoffs {
-		if eventName, decision, ok := watchReconciliationHandoffEvent("plan", handoff); ok {
+		if eventName, decision, ok := watchReconciliationHandoffEvent("plan", handoff); ok && watchHandoffProjectionMatchesScope(decision, scope) {
 			if !scopeFilter.delivers(eventName, decision) {
 				continue
 			}
+			if err := emitWatchDecisionWithStateAndSinks(out, eventName, decision, delivered, lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered, sink, actionSink); err != nil {
+				return err
+			}
+		}
+	}
+	for _, handoff := range state.TaskCreateHandoffs {
+		if eventName, decision, ok := watchTaskCreateHandoffEvent(handoff); ok && watchHandoffProjectionMatchesScope(decision, scope) {
 			if err := emitWatchDecisionWithStateAndSinks(out, eventName, decision, delivered, lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered, sink, actionSink); err != nil {
 				return err
 			}
@@ -1610,65 +1347,6 @@ func reconcileWatchScope(ctx context.Context, client *http.Client, baseURL strin
 		*latestReconciliation = state
 	}
 	return nil
-}
-
-func watchOrchestrationRecoveryMatches(recovery watchOrchestrationRecovery, scope watchScope) bool {
-	if strings.TrimSpace(recovery.Condition) == "" || recovery.TargetRole != store.OrchestrationRecoveryCommander || recovery.TargetRole != scope.Role {
-		return false
-	}
-	if scope.ProjectID != "" && strconv.FormatInt(recovery.ProjectID, 10) != scope.ProjectID {
-		return false
-	}
-	if scope.ScopeKey != "" && recovery.ScopeKey != scope.ScopeKey {
-		return false
-	}
-	if scope.TaskID != "" {
-		return recovery.TaskID != nil && strconv.FormatInt(*recovery.TaskID, 10) == scope.TaskID
-	}
-	if scope.GoalID != "" {
-		return recovery.GoalID != nil && strconv.FormatInt(*recovery.GoalID, 10) == scope.GoalID
-	}
-	return true
-}
-
-func watchOrchestrationBlockerMatches(blocker watchOrchestrationBlocker, scope watchScope) bool {
-	if scope.Role != store.OrchestrationRecoveryCommander ||
-		blocker.ProjectID <= 0 || strings.TrimSpace(blocker.BlockerID) == "" ||
-		strings.TrimSpace(blocker.ScopeKey) == "" || strings.TrimSpace(blocker.SourceID) == "" ||
-		strings.TrimSpace(blocker.Generation) == "" || strings.TrimSpace(blocker.Instruction) == "" {
-		return false
-	}
-	if blocker.Kind != store.OrchestrationBlockerHumanDecision && blocker.Kind != store.OrchestrationBlockerDependencyMerge {
-		return false
-	}
-	if blocker.OwnerRole != store.OrchestrationBlockerOwnerCommander && blocker.OwnerRole != store.OrchestrationBlockerOwnerSubcommander {
-		return false
-	}
-	if scope.ProjectID != "" && strconv.FormatInt(blocker.ProjectID, 10) != scope.ProjectID {
-		return false
-	}
-	return scope.ScopeKey == "" || scope.ScopeKey == store.ProjectOrchestrationScopeKey(blocker.ProjectID)
-}
-
-func watchExpectedMonitorScopeMatches(expected watchExpectedMonitorScope, scope watchScope) bool {
-	if !expected.Active || strings.TrimSpace(expected.ScopeKey) == "" || expected.Role != scope.Role {
-		return false
-	}
-	if scope.ProjectID != "" && strconv.FormatInt(expected.ProjectID, 10) != scope.ProjectID {
-		return false
-	}
-	expectedGoalID := ""
-	if expected.GoalID != nil {
-		expectedGoalID = strconv.FormatInt(*expected.GoalID, 10)
-	}
-	if expectedGoalID != scope.GoalID {
-		return false
-	}
-	expectedTaskID := ""
-	if expected.TaskID != nil {
-		expectedTaskID = strconv.FormatInt(*expected.TaskID, 10)
-	}
-	return expectedTaskID == scope.TaskID
 }
 
 func watchReconciliationHandoffEvent(kind string, handoff watchReconciliationHandoff) (string, watchDecision, bool) {
@@ -1681,24 +1359,84 @@ func watchReconciliationHandoffEvent(kind string, handoff watchReconciliationHan
 	}
 	prefix := kind + ".handoff."
 	switch {
+	case handoff.ReviewRejectionReceivedAt != nil:
+		decision.deliveryGeneration = *handoff.ReviewRejectionReceivedAt
+		decision.TargetRole = handoffProjectionRole(kind, "review.reject.receive")
+		return prefix + "review.reject.receive", decision, decision.TargetRole != ""
 	case handoff.ReviewRejectedAt != nil:
 		decision.deliveryGeneration = *handoff.ReviewRejectedAt
-		return prefix + "review.reject", decision, true
+		decision.TargetRole = handoffProjectionRole(kind, "review.reject")
+		return prefix + "review.reject", decision, decision.TargetRole != ""
 	case handoff.ReviewReceivedAt != nil:
 		decision.deliveryGeneration = *handoff.ReviewReceivedAt
-		return prefix + "review.receive", decision, true
+		decision.TargetRole = handoffProjectionRole(kind, "review.receive")
+		return prefix + "review.receive", decision, decision.TargetRole != ""
 	case handoff.ReviewRequestedAt != nil:
 		decision.deliveryGeneration = *handoff.ReviewRequestedAt
-		return prefix + "review.request", decision, true
+		decision.TargetRole = handoffProjectionRole(kind, "review.request")
+		return prefix + "review.request", decision, decision.TargetRole != ""
 	case handoff.ReceivedAt != nil:
-		decision.deliveryGeneration = *handoff.ReceivedAt
-		return prefix + "receive", decision, true
+		return "", watchDecision{}, false
 	case handoff.RequestedAt != nil:
 		decision.deliveryGeneration = *handoff.RequestedAt
-		return prefix + "request", decision, true
+		decision.TargetRole = handoffProjectionRole(kind, "request")
+		return prefix + "request", decision, decision.TargetRole != ""
 	default:
 		return "", watchDecision{}, false
 	}
+}
+
+func handoffProjectionRole(kind, phase string) string {
+	switch kind {
+	case "goal":
+		switch phase {
+		case "request", "review.request", "review.receive":
+			return "commander"
+		case "review.reject", "review.reject.receive":
+			return "subcommander"
+		}
+	case "plan":
+		switch phase {
+		case "review.request", "review.receive":
+			return "commander"
+		case "review.reject", "review.reject.receive":
+			return "subcommander"
+		}
+	case "task":
+		switch phase {
+		case "request", "review.request", "review.receive":
+			return "subcommander"
+		case "review.reject", "review.reject.receive":
+			return "executor"
+		}
+	}
+	return ""
+}
+
+func watchTaskCreateHandoffEvent(handoff watchTaskCreateHandoff) (string, watchDecision, bool) {
+	if handoff.CompletedAt != nil {
+		return "", watchDecision{}, false
+	}
+	decision := watchDecision{HandoffID: handoff.ID, GoalID: strconv.FormatInt(handoff.GoalID, 10), TargetRole: "subcommander"}
+	if handoff.ReceivedAt != nil {
+		decision.deliveryGeneration = *handoff.ReceivedAt
+		return "task.create_handoff.receive", decision, true
+	}
+	if handoff.RequestedAt != nil {
+		decision.deliveryGeneration = *handoff.RequestedAt
+		return "task.create_handoff.request", decision, true
+	}
+	return "", watchDecision{}, false
+}
+
+func watchHandoffProjectionMatchesScope(decision watchDecision, scope watchScope) bool {
+	if decision.TargetRole != "" && scope.Role != "" && decision.TargetRole != scope.Role {
+		return false
+	}
+	if scope.TaskID != "" {
+		return decision.TaskID == scope.TaskID
+	}
+	return scope.GoalID == "" || decision.GoalID == scope.GoalID
 }
 
 func emitWatchDecisionWithState(out io.Writer, eventName string, decision watchDecision, delivered map[watchDeliveryKey]struct{}, lastWakeupContent *string, wakeupDiscrepancyDelivered map[watchWakeupDeliveryKey]struct{}, detectionDelivered map[watchDetectionDeliveryKey]struct{}) error {
@@ -1719,40 +1457,6 @@ func emitWatchDecisionWithStateAndSinks(out io.Writer, eventName string, decisio
 	}
 	if eventName == "handoff_yielded" {
 		return writeLine()
-	}
-	if eventName == "orchestration.recovery" {
-		target := decision.BlockerID
-		if target == "" {
-			target = decision.SourceID
-		}
-		if target == "" {
-			target = decision.ScopeKey
-		}
-		if target == "" {
-			target = decision.HandoffID
-		}
-		if target == "" {
-			target = decision.TaskID
-		}
-		if target == "" {
-			target = decision.GoalID
-		}
-		if target == "" || decision.Condition == "" || decision.TargetRole == "" {
-			return fmt.Errorf("SSE event %s has incomplete recovery identity", eventName)
-		}
-		key := watchDetectionDeliveryKey{
-			eventName:  eventName,
-			targetID:   strings.Join([]string{decision.Condition, decision.TargetRole, target}, "\x00"),
-			generation: decision.recoveryGeneration(),
-		}
-		if _, ok := detectionDelivered[key]; ok {
-			return nil
-		}
-		if err := writeLine(); err != nil {
-			return err
-		}
-		detectionDelivered[key] = struct{}{}
-		return nil
 	}
 	if eventName == "goal.created" || strings.HasPrefix(eventName, "detection.") || eventName == "handoff_reported" {
 		target := decision.GoalID
@@ -1786,7 +1490,7 @@ func emitWatchDecisionWithStateAndSinks(out io.Writer, eventName string, decisio
 		detectionDelivered[key] = struct{}{}
 		return nil
 	}
-	if strings.Contains(eventName, ".handoff.") {
+	if strings.Contains(eventName, ".handoff.") || strings.Contains(eventName, "_handoff.") {
 		target := decision.HandoffID
 		if target == "" {
 			target = decision.TaskID
@@ -1936,6 +1640,8 @@ func formatWatchDecision(eventName string, decision watchDecision) (string, bool
 		return fmt.Sprintf("atct task handoff review received (task_id: %s, handoff_id: %s)", decision.TaskID, decision.HandoffID), true
 	case "task.handoff.review.reject":
 		return fmt.Sprintf("atct task handoff review rejected (task_id: %s, handoff_id: %s)", decision.TaskID, decision.HandoffID), true
+	case "task.handoff.review.reject.receive":
+		return fmt.Sprintf("atct task handoff review rejection received (task_id: %s, handoff_id: %s)", decision.TaskID, decision.HandoffID), true
 	case "task.handoff.complete":
 		return fmt.Sprintf("atct task handoff completed (task_id: %s, handoff_id: %s)", decision.TaskID, decision.HandoffID), true
 	case "goal.handoff.request":
@@ -1948,6 +1654,8 @@ func formatWatchDecision(eventName string, decision watchDecision) (string, bool
 		return fmt.Sprintf("atct goal handoff review received (goal_id: %s, handoff_id: %s)", decision.GoalID, decision.HandoffID), true
 	case "goal.handoff.review.reject":
 		return fmt.Sprintf("atct goal handoff review rejected (goal_id: %s, handoff_id: %s)", decision.GoalID, decision.HandoffID), true
+	case "goal.handoff.review.reject.receive":
+		return fmt.Sprintf("atct goal handoff review rejection received (goal_id: %s, handoff_id: %s)", decision.GoalID, decision.HandoffID), true
 	case "goal.handoff.complete":
 		return fmt.Sprintf("atct goal handoff completed (goal_id: %s, handoff_id: %s)", decision.GoalID, decision.HandoffID), true
 	case "plan.handoff.request":
@@ -1960,8 +1668,14 @@ func formatWatchDecision(eventName string, decision watchDecision) (string, bool
 		return fmt.Sprintf("atct plan handoff review received (goal_id: %s, handoff_id: %s)", decision.GoalID, decision.HandoffID), true
 	case "plan.handoff.review.reject":
 		return fmt.Sprintf("atct plan handoff review rejected (goal_id: %s, handoff_id: %s)", decision.GoalID, decision.HandoffID), true
+	case "plan.handoff.review.reject.receive":
+		return fmt.Sprintf("atct plan handoff review rejection received (goal_id: %s, handoff_id: %s)", decision.GoalID, decision.HandoffID), true
 	case "plan.handoff.complete":
 		return fmt.Sprintf("atct plan handoff completed (goal_id: %s, handoff_id: %s)", decision.GoalID, decision.HandoffID), true
+	case "task.create_handoff.request":
+		return fmt.Sprintf("atct task-create handoff requested (goal_id: %s, handoff_id: %s)", decision.GoalID, decision.HandoffID), true
+	case "task.create_handoff.receive":
+		return fmt.Sprintf("atct task-create handoff received (goal_id: %s, handoff_id: %s)", decision.GoalID, decision.HandoffID), true
 	case "wakeup":
 		return fmt.Sprintf("atct wakeup: actionable_goals=%d unassigned_goals=%d unstarted_tasks=%d waiting_answer_tasks=%d untouched_tasks=%d delegated_tasks=%d waiting_answers=%d unassigned=%s", decision.ActionableGoalCount, decision.UnassignedGoalCount, decision.UnstartedTaskCount, decision.WaitingAnswerTaskCount, decision.UntouchedTaskCount, decision.DelegatedTaskCount, decision.WaitingAnswerCount, formatUnassignedGoalIDs(decision.UnassignedGoalIDs)), true
 	case "detection.completion_report_missing":
@@ -2004,11 +1718,6 @@ func formatWatchDecision(eventName string, decision watchDecision) (string, bool
 		return fmt.Sprintf("atct wakeup discrepancy: detector_unstarted_tasks=%d counted_unstarted_tasks=%d", decision.DetectorUnstartedTaskCount, decision.CountedUnstartedTaskCount), true
 	case "wakeup.evaluate_failed":
 		return fmt.Sprintf("atct wakeup evaluate failed: %s", decision.Reason), true
-	case "orchestration.recovery":
-		if strings.TrimSpace(decision.Condition) == "" || strings.TrimSpace(decision.TargetRole) == "" || strings.TrimSpace(decision.ScopeKey) == "" || strings.TrimSpace(decision.Instruction) == "" {
-			return "", false
-		}
-		return fmt.Sprintf("atct orchestration recovery: %s (target_role %s, scope %s): %s", decision.Condition, decision.TargetRole, decision.ScopeKey, decision.Instruction), true
 	default:
 		return "", false
 	}

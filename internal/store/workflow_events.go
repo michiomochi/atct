@@ -20,17 +20,13 @@ type WorkflowEventQuery struct {
 // WorkflowReconciliation is a point-in-time canonical snapshot. It contains
 // the scoped state needed after a watcher restarts or a live signal is missed.
 type WorkflowReconciliation struct {
-	Goals          []domain.Goal             `json:"goals"`
-	Tasks          []domain.Task             `json:"tasks"`
-	Decisions      []domain.Decision         `json:"decisions"`
-	GoalHandoffs   []GoalHandoff             `json:"goal_handoffs"`
-	PlanHandoffs   []PlanHandoff             `json:"plan_handoffs"`
-	TaskHandoffs   []TaskHandoff             `json:"task_handoffs"`
-	ExpectedScopes []OrchestrationScope      `json:"expected_scopes"`
-	MonitorHealth  []MonitorHealth           `json:"monitor_health"`
-	Recoveries     []OrchestrationRecovery   `json:"recoveries"`
-	Blockers       []OrchestrationBlocker    `json:"blockers"`
-	ReviewWork     []OrchestrationReviewWork `json:"review_work"`
+	Goals              []domain.Goal       `json:"goals"`
+	Tasks              []domain.Task       `json:"tasks"`
+	Decisions          []domain.Decision   `json:"decisions"`
+	GoalHandoffs       []GoalHandoff       `json:"goal_handoffs"`
+	PlanHandoffs       []PlanHandoff       `json:"plan_handoffs"`
+	TaskHandoffs       []TaskHandoff       `json:"task_handoffs"`
+	TaskCreateHandoffs []TaskCreateHandoff `json:"task_create_handoffs"`
 }
 
 func workflowDecisionEvent(name string, row sqlcgen.Decision) (DecisionEvent, error) {
@@ -93,17 +89,13 @@ func (s *Store) ReconcileWorkflow(ctx context.Context, query WorkflowEventQuery)
 		return WorkflowReconciliation{}, fmt.Errorf("task %d is outside project %d", query.TaskID, projectID)
 	}
 	reconciliation := WorkflowReconciliation{
-		Goals:          append([]domain.Goal(nil), goals...),
-		Decisions:      make([]domain.Decision, 0),
-		GoalHandoffs:   make([]GoalHandoff, 0),
-		PlanHandoffs:   make([]PlanHandoff, 0),
-		TaskHandoffs:   make([]TaskHandoff, 0),
-		Tasks:          make([]domain.Task, 0),
-		ExpectedScopes: make([]OrchestrationScope, 0),
-		MonitorHealth:  make([]MonitorHealth, 0),
-		Recoveries:     make([]OrchestrationRecovery, 0),
-		Blockers:       make([]OrchestrationBlocker, 0),
-		ReviewWork:     make([]OrchestrationReviewWork, 0),
+		Goals:              append([]domain.Goal(nil), goals...),
+		Decisions:          make([]domain.Decision, 0),
+		GoalHandoffs:       make([]GoalHandoff, 0),
+		PlanHandoffs:       make([]PlanHandoff, 0),
+		TaskHandoffs:       make([]TaskHandoff, 0),
+		TaskCreateHandoffs: make([]TaskCreateHandoff, 0),
+		Tasks:              make([]domain.Task, 0),
 	}
 	for _, goal := range goals {
 		tasks, err := s.ListTasks(ctx, goal.ID)
@@ -132,6 +124,11 @@ func (s *Store) ReconcileWorkflow(ctx context.Context, query WorkflowEventQuery)
 			return WorkflowReconciliation{}, err
 		}
 		reconciliation.PlanHandoffs = append(reconciliation.PlanHandoffs, planHandoffs...)
+		taskCreateHandoffs, err := s.ListTaskCreateHandoffs(ctx, goal.ID)
+		if err != nil {
+			return WorkflowReconciliation{}, err
+		}
+		reconciliation.TaskCreateHandoffs = append(reconciliation.TaskCreateHandoffs, taskCreateHandoffs...)
 		decisions, err := s.ListDecisionsForGoal(ctx, goal.ID)
 		if err != nil {
 			return WorkflowReconciliation{}, err
@@ -141,47 +138,6 @@ func (s *Store) ReconcileWorkflow(ctx context.Context, query WorkflowEventQuery)
 				reconciliation.Decisions = append(reconciliation.Decisions, decision)
 			}
 		}
-	}
-	scopes, err := s.ListActiveOrchestrationScopes(ctx, projectID)
-	if err != nil {
-		return WorkflowReconciliation{}, err
-	}
-	for _, scope := range scopes {
-		if query.TaskID != 0 {
-			if scope.TaskID == nil || *scope.TaskID != query.TaskID {
-				continue
-			}
-		} else if query.GoalID != 0 {
-			if scope.GoalID == nil || *scope.GoalID != query.GoalID || scope.TaskID != nil {
-				continue
-			}
-		}
-		reconciliation.ExpectedScopes = append(reconciliation.ExpectedScopes, scope)
-	}
-	healthByProject, err := s.listMonitorHealthForScopes(ctx, reconciliation.ExpectedScopes)
-	if err != nil {
-		return WorkflowReconciliation{}, err
-	}
-	reconciliation.MonitorHealth = append(reconciliation.MonitorHealth, matchingMonitorHealthForScopes(reconciliation.ExpectedScopes, healthByProject)...)
-	reconciliation.Recoveries = append(reconciliation.Recoveries, orchestrationRecoveriesForScopes(reconciliation.ExpectedScopes, healthByProject)...)
-	blockers, err := s.ListOpenOrchestrationBlockers(ctx, projectID)
-	if err != nil {
-		return WorkflowReconciliation{}, err
-	}
-	reconciliation.Blockers = append(reconciliation.Blockers, blockers...)
-	reviewWork, err := s.ListPendingOrchestrationReviewWork(ctx, projectID)
-	if err != nil {
-		return WorkflowReconciliation{}, err
-	}
-	for _, work := range reviewWork {
-		if query.TaskID != 0 {
-			if work.TaskID == nil || *work.TaskID != query.TaskID {
-				continue
-			}
-		} else if query.GoalID != 0 && work.GoalID != query.GoalID {
-			continue
-		}
-		reconciliation.ReviewWork = append(reconciliation.ReviewWork, work)
 	}
 	return reconciliation, nil
 }

@@ -966,6 +966,45 @@ func (q *Queries) ListTaskCreateHandoffTaskIDs(ctx context.Context, handoffID st
 	return items, nil
 }
 
+const listTaskCreateHandoffs = `-- name: ListTaskCreateHandoffs :many
+SELECT id, plan_handoff_id, goal_id, requested_by, received_by, completed_by, requested_at, received_at, completed_at, request_report, complete_report FROM task_create_handoffs WHERE goal_id = ? ORDER BY requested_at, id
+`
+
+func (q *Queries) ListTaskCreateHandoffs(ctx context.Context, goalID int64) ([]TaskCreateHandoff, error) {
+	rows, err := q.db.QueryContext(ctx, listTaskCreateHandoffs, goalID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []TaskCreateHandoff
+	for rows.Next() {
+		var i TaskCreateHandoff
+		if err := rows.Scan(
+			&i.ID,
+			&i.PlanHandoffID,
+			&i.GoalID,
+			&i.RequestedBy,
+			&i.ReceivedBy,
+			&i.CompletedBy,
+			&i.RequestedAt,
+			&i.ReceivedAt,
+			&i.CompletedAt,
+			&i.RequestReport,
+			&i.CompleteReport,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listTaskHandoffs = `-- name: ListTaskHandoffs :many
 SELECT id, task_id, requested_by, received_by,
        requested_at, received_at, completed_report_at,

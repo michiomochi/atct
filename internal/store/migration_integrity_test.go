@@ -81,7 +81,7 @@ func TestMigrationIntegrityVerifierPreservesFixtureRows(t *testing.T) {
 	t.Logf("migration integrity report: %s", report)
 }
 
-func TestGoal254MigrationPreservesCanonicalRowsAndRetainsOrchestrationState(t *testing.T) {
+func TestGoal254MigrationPreservesCanonicalRowsAndRemovesOrchestrationState(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "goal-254.db")
 	raw, err := sql.Open("sqlite", dbPath)
 	if err != nil {
@@ -154,6 +154,7 @@ VALUES ('goal-254-review-work', 1, 1, 1, 'task', 'goal-254-task-handoff', 2, 'ta
 	defer migrated.Close()
 
 	assertMigrationRecorded(t, migrated.DB(), "0035_handoff_only_lifecycle.sql")
+	assertMigrationRecorded(t, migrated.DB(), "0036_remove_legacy_orchestration.sql")
 	for _, table := range []string{"task_create_handoffs", "task_create_handoff_tasks"} {
 		assertTableExists(t, migrated.DB(), table)
 	}
@@ -162,7 +163,7 @@ VALUES ('goal-254-review-work', 1, 1, 1, 'task', 'goal-254-task-handoff', 2, 'ta
 		"orchestration_delivery_receipts", "orchestration_review_work",
 		"orchestration_blockers",
 	} {
-		assertTableExists(t, migrated.DB(), table)
+		assertTableAbsent(t, migrated.DB(), table)
 	}
 
 	for _, fixture := range []struct {

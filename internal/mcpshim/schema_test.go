@@ -53,8 +53,6 @@ func TestRegisterPublishesFortySixToolsWithFlexibleOutputSchema(t *testing.T) {
 		"atct_decision_ask":                       true,
 		"atct_decision_poll":                      true,
 		"atct_decision_withdraw":                  true,
-		"atct_blocker_report":                     true,
-		"atct_blocker_resolve":                    true,
 		"atct_goal_complete":                      true,
 		"atct_goal_review_request":                true,
 		"atct_goal_review_complete":               true,
@@ -453,75 +451,6 @@ func TestDecisionWithdrawSendsAgentSessionID(t *testing.T) {
 	}
 	if got := call.params["agent_session_id"]; got != float64(9) {
 		t.Errorf("agent_session_id = %#v, want 9", got)
-	}
-}
-
-func TestBlockerReportSendsAgentSessionID(t *testing.T) {
-	ctx := context.Background()
-	socketPath, calls := startCapturingSchemaTestDaemon(t)
-	server := mcp.NewServer(&mcp.Implementation{Name: "atct-test", Version: "test"}, nil)
-	mcpshim.Register(server, mcpshim.NewClient(socketPath), 12)
-
-	clientTransport, serverTransport := mcp.NewInMemoryTransports()
-	serverSession, err := server.Connect(ctx, serverTransport, nil)
-	if err != nil {
-		t.Fatalf("server.Connect: %v", err)
-	}
-	defer serverSession.Close()
-
-	client := mcp.NewClient(&mcp.Implementation{Name: "schema-test", Version: "test"}, nil)
-	clientSession, err := client.Connect(ctx, clientTransport, nil)
-	if err != nil {
-		t.Fatalf("client.Connect: %v", err)
-	}
-	defer clientSession.Close()
-
-	identifyResult, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
-		Name: "atct_session_identify",
-		Arguments: map[string]any{
-			"session_key": "blocker-session",
-		},
-	})
-	if err != nil {
-		t.Fatalf("CallTool(atct_session_identify): %v", err)
-	}
-	if identifyResult == nil || identifyResult.IsError {
-		t.Fatalf("atct_session_identify returned error result: %+v", identifyResult)
-	}
-	select {
-	case <-calls:
-	case <-time.After(time.Second):
-		t.Fatal("timed out waiting for session.identify RPC")
-	}
-
-	result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
-		Name: "atct_blocker_report",
-		Arguments: map[string]any{
-			"scope_key":   "project:1:commander",
-			"kind":        "dependency_merge",
-			"source_id":   "main:commit-1",
-			"generation":  "merge-1",
-			"owner_role":  "commander",
-			"instruction": "integrate commit-1 before resuming",
-		},
-	})
-	if err != nil {
-		t.Fatalf("CallTool(atct_blocker_report): %v", err)
-	}
-	if result == nil || result.IsError {
-		t.Fatalf("atct_blocker_report returned error result: %+v", result)
-	}
-
-	select {
-	case call := <-calls:
-		if call.method != "blocker.report" {
-			t.Fatalf("RPC method = %q, want blocker.report", call.method)
-		}
-		if got := call.params["agent_session_id"]; got != float64(9) {
-			t.Errorf("agent_session_id = %#v, want 9 after session identification", got)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("timed out waiting for blocker.report RPC")
 	}
 }
 

@@ -304,6 +304,69 @@ func TestWatchFormatsHandoffReviewEvents(t *testing.T) {
 	}
 }
 
+func TestHandoffOnlyProjectionRoutesRightRoleAndStops(t *testing.T) {
+	at := func(value string) *string { return &value }
+	cases := []struct {
+		name      string
+		kind      string
+		handoff   watchReconciliationHandoff
+		wantEvent string
+		wantRole  string
+	}{
+		{name: "unreceived goal handoff wakes commander", kind: "goal", handoff: watchReconciliationHandoff{ID: "goal-request", GoalID: 7, RequestedAt: at("request")}, wantEvent: "goal.handoff.request", wantRole: "commander"},
+		{name: "unreceived task handoff wakes subcommander", kind: "task", handoff: watchReconciliationHandoff{ID: "task-request", GoalID: 7, TaskID: 8, RequestedAt: at("request")}, wantEvent: "task.handoff.request", wantRole: "subcommander"},
+		{name: "task review wakes reviewer", kind: "task", handoff: watchReconciliationHandoff{ID: "task-review", GoalID: 7, TaskID: 8, ReviewRequestedAt: at("review-request")}, wantEvent: "task.handoff.review.request", wantRole: "subcommander"},
+		{name: "rejection receipt wakes original task submitter", kind: "task", handoff: watchReconciliationHandoff{ID: "task-reject-received", GoalID: 7, TaskID: 8, ReviewRejectedAt: at("reject"), ReviewRejectionReceivedAt: at("receipt")}, wantEvent: "task.handoff.review.reject.receive", wantRole: "executor"},
+		{name: "plan rejection wakes plan submitter", kind: "plan", handoff: watchReconciliationHandoff{ID: "plan-reject", GoalID: 7, ReviewRejectedAt: at("reject")}, wantEvent: "plan.handoff.review.reject", wantRole: "subcommander"},
+		{name: "goal review request wakes commander", kind: "goal", handoff: watchReconciliationHandoff{ID: "goal-review", GoalID: 7, ReviewRequestedAt: at("review-request")}, wantEvent: "goal.handoff.review.request", wantRole: "commander"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			event, decision, ok := watchReconciliationHandoffEvent(tc.kind, tc.handoff)
+			if !ok || event != tc.wantEvent || decision.TargetRole != tc.wantRole {
+				t.Fatalf("handoff projection = (%q, %+v, %v), want (%q, role=%q, true)", event, decision, ok, tc.wantEvent, tc.wantRole)
+			}
+			completed := tc.handoff
+			completed.CompletedReportAt = at("complete")
+			if event, _, ok := watchReconciliationHandoffEvent(tc.kind, completed); ok {
+				t.Fatalf("completed handoff projected %q, want no action", event)
+			}
+		})
+	}
+}
+
+func TestHandoffOnlyReconciliationProjectsTaskCreateUntilComplete(t *testing.T) {
+	states := []string{
+		`{"task_create_handoffs":[{"ID":"create-1","GoalID":7,"RequestedAt":"request"}]}`,
+		`{"task_create_handoffs":[{"ID":"create-1","GoalID":7,"ReceivedAt":"receipt"}]}`,
+		`{"task_create_handoffs":[{"ID":"create-1","GoalID":7,"CompletedAt":"complete"}]}`,
+	}
+	var calls int
+	client := &http.Client{Transport: watchRoundTripper(func(req *http.Request) (*http.Response, error) {
+		if req.URL.Path != "/api/events/reconcile" || calls >= len(states) {
+			return nil, io.ErrUnexpectedEOF
+		}
+		body := states[calls]
+		calls++
+		return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(body))}, nil
+	})}
+	var output bytes.Buffer
+	delivered := make(map[watchDeliveryKey]struct{})
+	lastWakeupContent := ""
+	wakeupDiscrepancyDelivered := make(map[watchWakeupDeliveryKey]struct{})
+	detectionDelivered := make(map[watchDetectionDeliveryKey]struct{})
+	for range states {
+		if err := reconcileWatchScope(context.Background(), client, "http://daemon", watchScope{ProjectID: "1", GoalID: "7", Role: "subcommander"}, &output, delivered, &lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered, newWatchScopeFilter("7"), nil); err != nil {
+			t.Fatalf("reconcileWatchScope: %v", err)
+		}
+	}
+	want := "atct task-create handoff requested (goal_id: 7, handoff_id: create-1)\n" +
+		"atct task-create handoff received (goal_id: 7, handoff_id: create-1)\n"
+	if got := output.String(); got != want {
+		t.Fatalf("task-create projection = %q, want %q", got, want)
+	}
+}
+
 func TestWatchPlanReviewDeliveryUsesLifecycleGeneration(t *testing.T) {
 	states := []string{
 		`{"plan_handoffs":[{"ID":"plan-1","GoalID":7,"ReviewRequestedAt":"2026-09-06T00:00:00Z"}]}`,

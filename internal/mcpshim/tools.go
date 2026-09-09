@@ -224,19 +224,6 @@ type DecisionWithdrawIn struct {
 	Reason     string `json:"reason"`
 }
 
-type BlockerReportIn struct {
-	ScopeKey    string `json:"scope_key" jsonschema:"the lifecycle scope owned by the reporting commander or subcommander"`
-	Kind        string `json:"kind" jsonschema:"must be dependency_merge"`
-	SourceID    string `json:"source_id" jsonschema:"stable prerequisite identity, such as a required main commit and dependent goal/task"`
-	Generation  string `json:"generation" jsonschema:"stable generation for this prerequisite state; retries reuse it"`
-	OwnerRole   string `json:"owner_role" jsonschema:"commander or subcommander; must match the owned lifecycle scope"`
-	Instruction string `json:"instruction" jsonschema:"actionable prerequisite and owner instruction for the commander"`
-}
-
-type BlockerResolveIn struct {
-	BlockerID string `json:"blocker_id"`
-}
-
 type GoalCompleteIn struct {
 	GoalID      mcpID  `json:"goal_id"`
 	WorkDone    string `json:"work_done" jsonschema:"what was completed; write なし when there is nothing to report"`
@@ -1064,28 +1051,6 @@ func Register(server *mcp.Server, c *Client, agentSessionID int64) {
 		return callWithUnappliedDecisions(ctx, c, "decision.withdraw", map[string]any{
 			"decision_id": in.DecisionID, "reason": in.Reason, "include_unapplied_answers": true,
 			"agent_session_id": sessionID.Get(),
-		})
-	})
-
-	addMCPTool[BlockerReportIn, RawWithUnappliedDecisions](server, &mcp.Tool{
-		Name:         "atct_blocker_report",
-		Description:  "Report an explicit dependency or merge blocker. Only the commander or the owning subcommander for scope_key may report it; executors cannot create blockers. Reuse the same source_id and generation when retrying the report.",
-		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
-	}, func(ctx context.Context, req *mcp.CallToolRequest, in BlockerReportIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
-		return callWithUnappliedDecisions(ctx, c, "blocker.report", map[string]any{
-			"scope_key": in.ScopeKey, "kind": in.Kind, "source_id": in.SourceID,
-			"generation": in.Generation, "owner_role": in.OwnerRole,
-			"instruction": in.Instruction, "agent_session_id": sessionID.Get(),
-		})
-	})
-
-	addMCPTool[BlockerResolveIn, RawWithUnappliedDecisions](server, &mcp.Tool{
-		Name:         "atct_blocker_resolve",
-		Description:  "Resolve a dependency or merge blocker after its prerequisite is actually integrated. Only the same owning commander or subcommander may resolve it; human-decision blockers settle through the decision workflow.",
-		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
-	}, func(ctx context.Context, req *mcp.CallToolRequest, in BlockerResolveIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
-		return callWithUnappliedDecisions(ctx, c, "blocker.resolve", map[string]any{
-			"blocker_id": in.BlockerID, "agent_session_id": sessionID.Get(),
 		})
 	})
 

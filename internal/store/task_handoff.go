@@ -338,9 +338,6 @@ func (s *Store) ReceiveTaskHandoff(ctx context.Context, handoffID string, taskID
 	if err != nil {
 		return TaskHandoff{}, err
 	}
-	if err := upsertOrchestrationScopeTx(ctx, q, TaskOrchestrationScopeKey(taskID, handoffID), projectID, &goalID, &taskID, "executor", receivedBy, now, now); err != nil {
-		return TaskHandoff{}, fmt.Errorf("record task orchestration scope: %w", err)
-	}
 	event := DecisionEvent{
 		Name: EventTaskHandoffReceive,
 		Data: HandoffEvent{ProjectID: projectID, GoalID: goalID, TaskID: taskID, HandoffID: handoffID, ReceivedBy: receivedBy},
@@ -414,9 +411,6 @@ func (s *Store) RequestTaskHandoffReview(ctx context.Context, handoffID string, 
 	if err != nil {
 		return TaskHandoff{}, err
 	}
-	if err := recordTaskReviewWorkTx(ctx, tx, projectID, goalID, taskID, requestedBy, handoff.RequestedBy, handoffID, parseReviewWorkTime(now)); err != nil {
-		return TaskHandoff{}, fmt.Errorf("record task handoff review work: %w", err)
-	}
 	event := DecisionEvent{
 		Name: EventTaskHandoffReviewRequest,
 		Data: HandoffReviewEvent{ProjectID: projectID, GoalID: goalID, TaskID: taskID, HandoffID: handoffID, ReviewerID: requestedBy, ReviewRequestReport: reviewRequestReport},
@@ -465,9 +459,6 @@ func (s *Store) ReceiveTaskHandoffReview(ctx context.Context, handoffID string, 
 		return TaskHandoff{}, fmt.Errorf("receive task handoff review rows affected: %w", err)
 	} else if affected == 0 {
 		return TaskHandoff{}, ErrTaskHandoffReviewState
-	}
-	if err := receiveOrchestrationReviewWorkTx(ctx, tx, "task", handoffID, handoff.ReviewRequestedAt, receivedBy, now); err != nil {
-		return TaskHandoff{}, err
 	}
 	projectID, goalID, err := taskWorkflowEventScope(ctx, q, taskID)
 	if err != nil {
@@ -538,9 +529,6 @@ func (s *Store) RejectTaskHandoffReview(ctx context.Context, handoffID string, t
 		return TaskHandoff{}, fmt.Errorf("set task doing rows affected: %w", err)
 	} else if affected == 0 {
 		return TaskHandoff{}, fmt.Errorf("%w: %d", ErrTaskNotFound, taskID)
-	}
-	if err := settleOrchestrationReviewWorkTx(ctx, tx, "task", handoffID, handoff.ReviewRequestedAt, OrchestrationReviewWorkStateRejected, now, "executor", TaskOrchestrationScopeKey(taskID, handoffID), sql.NullInt64{}, fmt.Sprintf("revise task %d from rejected handoff %s and request review again; do not auto-complete the task", taskID, handoffID)); err != nil {
-		return TaskHandoff{}, err
 	}
 	projectID, goalID, err := taskWorkflowEventScope(ctx, q, taskID)
 	if err != nil {
@@ -646,14 +634,8 @@ func (s *Store) CompleteTaskHandoffByReviewer(ctx context.Context, handoffID str
 	} else if affected == 0 {
 		return TaskHandoff{}, fmt.Errorf("%w: %d", ErrTaskNotFound, taskID)
 	}
-	if err := deactivateOrchestrationScopeTx(ctx, q, TaskOrchestrationScopeKey(taskID, handoffID), now); err != nil {
-		return TaskHandoff{}, fmt.Errorf("deactivate task orchestration scope: %w", err)
-	}
 	projectID, goalID, err := taskWorkflowEventScope(ctx, q, taskID)
 	if err != nil {
-		return TaskHandoff{}, err
-	}
-	if err := settleTaskReviewWorkTx(ctx, tx, goalID, taskID, handoffID, handoff.ReviewRequestedAt, OrchestrationReviewWorkStateCompleted, now); err != nil {
 		return TaskHandoff{}, err
 	}
 	event := DecisionEvent{
@@ -755,9 +737,6 @@ func (s *Store) CompleteTaskHandoff(ctx context.Context, handoffID string, taskI
 			return TaskHandoff{}, fmt.Errorf("task handoff %q is already reported; use another path to add a report after completion", handoffID)
 		}
 		return TaskHandoff{}, fmt.Errorf("%w: %s", ErrTaskHandoffNotFound, handoffID)
-	}
-	if err := deactivateOrchestrationScopeTx(ctx, q, TaskOrchestrationScopeKey(taskID, handoffID), now); err != nil {
-		return TaskHandoff{}, fmt.Errorf("deactivate task orchestration scope: %w", err)
 	}
 	var event DecisionEvent
 	// Claim locks have no delegate report, so their completion is not reportable.

@@ -40,6 +40,22 @@ func (s *Store) GetTaskCreateHandoffForPlan(ctx context.Context, planHandoffID s
 	return s.handoffFromGenerated(ctx, row, err)
 }
 
+func (s *Store) ListTaskCreateHandoffs(ctx context.Context, goalID int64) ([]TaskCreateHandoff, error) {
+	rows, err := sqlcgen.New(s.db).ListTaskCreateHandoffs(ctx, goalID)
+	if err != nil {
+		return nil, err
+	}
+	handoffs := make([]TaskCreateHandoff, 0, len(rows))
+	for _, row := range rows {
+		handoff, err := s.handoffFromGenerated(ctx, row, nil)
+		if err != nil {
+			return nil, err
+		}
+		handoffs = append(handoffs, handoff)
+	}
+	return handoffs, nil
+}
+
 func (s *Store) handoffFromGenerated(ctx context.Context, row sqlcgen.TaskCreateHandoff, err error) (TaskCreateHandoff, error) {
 	h, err := taskCreateHandoffFromRow(row)
 	if err != nil {

@@ -349,9 +349,6 @@ func (s *Store) ReceiveGoalHandoff(ctx context.Context, handoffID string, goalID
 	if err != nil {
 		return GoalHandoff{}, fmt.Errorf("find project for goal handoff receive: %w", err)
 	}
-	if err := upsertOrchestrationScopeTx(ctx, q, GoalOrchestrationScopeKey(goalID, handoffID), projectID, &goalID, nil, "subcommander", receivedBy, now, now); err != nil {
-		return GoalHandoff{}, fmt.Errorf("record goal orchestration scope: %w", err)
-	}
 	event := DecisionEvent{
 		Name: EventGoalHandoffReceive,
 		Data: HandoffEvent{ProjectID: projectID, GoalID: goalID, HandoffID: handoffID, ReceivedBy: receivedBy},
@@ -412,9 +409,6 @@ func (s *Store) RequestGoalHandoffReview(ctx context.Context, handoffID string, 
 	if err != nil {
 		return GoalHandoff{}, fmt.Errorf("find project for goal handoff review request: %w", err)
 	}
-	if err := recordGoalReviewWorkTx(ctx, tx, projectID, goalID, requestedBy, handoffID, parseReviewWorkTime(now)); err != nil {
-		return GoalHandoff{}, fmt.Errorf("record goal handoff review work: %w", err)
-	}
 	event := DecisionEvent{
 		Name: EventGoalHandoffReviewRequest,
 		Data: HandoffReviewEvent{ProjectID: projectID, GoalID: goalID, HandoffID: handoffID, ReviewerID: requestedBy, ReviewRequestReport: reviewRequestReport},
@@ -465,9 +459,6 @@ func (s *Store) ReceiveGoalHandoffReview(ctx context.Context, handoffID string, 
 		return GoalHandoff{}, fmt.Errorf("receive goal handoff review rows affected: %w", err)
 	} else if affected == 0 {
 		return GoalHandoff{}, ErrGoalHandoffReviewState
-	}
-	if err := receiveOrchestrationReviewWorkTx(ctx, tx, "goal", handoffID, handoff.ReviewRequestedAt, receivedBy, now); err != nil {
-		return GoalHandoff{}, err
 	}
 	projectID, err := sqlcgen.New(tx).GetGoalProjectID(ctx, goalID)
 	if err != nil {
@@ -523,9 +514,6 @@ func (s *Store) RejectGoalHandoffReview(ctx context.Context, handoffID string, g
 		return GoalHandoff{}, fmt.Errorf("reject goal handoff review rows affected: %w", err)
 	} else if affected == 0 {
 		return GoalHandoff{}, ErrGoalHandoffReviewState
-	}
-	if err := settleOrchestrationReviewWorkTx(ctx, tx, "goal", handoffID, handoff.ReviewRequestedAt, OrchestrationReviewWorkStateRejected, now, "subcommander", GoalOrchestrationScopeKey(goalID, handoffID), sql.NullInt64{}, fmt.Sprintf("revise goal handoff %s and request review again; do not auto-complete the goal", handoffID)); err != nil {
-		return GoalHandoff{}, err
 	}
 	projectID, err := sqlcgen.New(tx).GetGoalProjectID(ctx, goalID)
 	if err != nil {
@@ -604,12 +592,6 @@ func (s *Store) CompleteGoalHandoffByReviewer(ctx context.Context, handoffID str
 		return GoalHandoff{}, fmt.Errorf("complete goal handoff by reviewer rows affected: %w", err)
 	} else if affected == 0 {
 		return GoalHandoff{}, ErrGoalHandoffReviewState
-	}
-	if err := deactivateOrchestrationScopeTx(ctx, q, GoalOrchestrationScopeKey(goalID, handoffID), now); err != nil {
-		return GoalHandoff{}, fmt.Errorf("deactivate goal orchestration scope: %w", err)
-	}
-	if err := settleOrchestrationReviewWorkTx(ctx, tx, "goal", handoffID, handoff.ReviewRequestedAt, OrchestrationReviewWorkStateCompleted, now, "", "", sql.NullInt64{}, ""); err != nil {
-		return GoalHandoff{}, err
 	}
 	projectID, err := q.GetGoalProjectID(ctx, goalID)
 	if err != nil {
@@ -724,9 +706,6 @@ func (s *Store) CompleteGoalHandoff(ctx context.Context, handoffID string, goalI
 			}
 		}
 		return GoalHandoff{}, fmt.Errorf("%w: %s", ErrGoalHandoffNotFound, handoffID)
-	}
-	if err := deactivateOrchestrationScopeTx(ctx, q, GoalOrchestrationScopeKey(goalID, handoffID), now); err != nil {
-		return GoalHandoff{}, fmt.Errorf("deactivate goal orchestration scope: %w", err)
 	}
 	// Claim locks have no delegate report, so their completion is not reportable.
 	var event DecisionEvent
@@ -904,9 +883,6 @@ func (s *Store) RequestPlanHandoffReview(ctx context.Context, handoffID string, 
 	if err != nil {
 		return PlanHandoff{}, fmt.Errorf("find project for plan handoff review request: %w", err)
 	}
-	if err := recordPlanReviewWorkTx(ctx, tx, projectID, goalID, requestedBy, handoffID, parseReviewWorkTime(now)); err != nil {
-		return PlanHandoff{}, fmt.Errorf("record plan handoff review work: %w", err)
-	}
 	event := DecisionEvent{
 		Name: EventPlanHandoffReviewRequest,
 		Data: HandoffReviewEvent{ProjectID: projectID, GoalID: goalID, HandoffID: handoffID, ReviewerID: requestedBy, ReviewRequestReport: reviewRequestReport},
@@ -954,9 +930,6 @@ func (s *Store) ReceivePlanHandoffReview(ctx context.Context, handoffID string, 
 		return PlanHandoff{}, fmt.Errorf("receive plan handoff review rows affected: %w", err)
 	} else if affected == 0 {
 		return PlanHandoff{}, ErrPlanHandoffReviewState
-	}
-	if err := receiveOrchestrationReviewWorkTx(ctx, tx, "plan", handoffID, handoff.ReviewRequestedAt, receivedBy, now); err != nil {
-		return PlanHandoff{}, err
 	}
 	projectID, err := sqlcgen.New(tx).GetGoalProjectID(ctx, goalID)
 	if err != nil {
@@ -1012,9 +985,6 @@ func (s *Store) RejectPlanHandoffReview(ctx context.Context, handoffID string, g
 		return PlanHandoff{}, fmt.Errorf("reject plan handoff review rows affected: %w", err)
 	} else if affected == 0 {
 		return PlanHandoff{}, ErrPlanHandoffReviewState
-	}
-	if err := settleOrchestrationReviewWorkTx(ctx, tx, "plan", handoffID, handoff.ReviewRequestedAt, OrchestrationReviewWorkStateRejected, now, "subcommander", goalScopeKeyForSessionTx(ctx, tx, goalID, handoff.ReviewRequestedBy), sql.NullInt64{}, fmt.Sprintf("revise plan handoff %s and request review again; do not auto-complete the plan", handoffID)); err != nil {
-		return PlanHandoff{}, err
 	}
 	projectID, err := sqlcgen.New(tx).GetGoalProjectID(ctx, goalID)
 	if err != nil {
@@ -1095,9 +1065,6 @@ func (s *Store) CompletePlanHandoff(ctx context.Context, handoffID string, goalI
 	}
 	if err := s.createTaskCreateHandoffTx(ctx, tx, handoff, reviewerID); err != nil {
 		return PlanHandoff{}, fmt.Errorf("create task-create handoff: %w", err)
-	}
-	if err := settlePlanReviewWorkTx(ctx, tx, goalID, handoff.ReviewRequestedBy, handoffID, handoff.ReviewRequestedAt, OrchestrationReviewWorkStateCompleted, now); err != nil {
-		return PlanHandoff{}, err
 	}
 	projectID, err := sqlcgen.New(tx).GetGoalProjectID(ctx, goalID)
 	if err != nil {

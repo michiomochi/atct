@@ -115,7 +115,7 @@ func TestMonitorHealthPostAcceptsProjectCommanderScope(t *testing.T) {
 	now := time.Now().UTC()
 	health := store.MonitorHealth{
 		CWD: f.project.RootPath, Role: "commander", State: "healthy", ProjectID: f.project.ID,
-		ScopeKey: store.ProjectOrchestrationScopeKey(f.project.ID), AgentSessionID: commanderID,
+		ScopeKey: "project:monitor", AgentSessionID: commanderID,
 		PID: 121, ProcessStartedAt: now, LastSeenAt: now, TransitionedAt: now,
 	}
 	health.MonitorID = store.MonitorHealthID(health.CWD, health.Role, health.ProjectID, nil, nil, health.PID, health.ProcessStartedAt, health.ScopeKey)

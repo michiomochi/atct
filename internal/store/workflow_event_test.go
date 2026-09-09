@@ -107,6 +107,40 @@ func TestScopedWorkflowReconciliationReturnsCanonicalState(t *testing.T) {
 	}
 }
 
+func TestWorkflowReconciliationIncludesTaskCreateHandoff(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	goalID := newTestGoal(t, s)
+	goal, err := s.GetGoal(ctx, goalID)
+	if err != nil {
+		t.Fatalf("GetGoal: %v", err)
+	}
+	addLiveProjectClaim(t, s, goalID, "workflow-task-create-commander")
+	addTestAgentSession(t, s, "workflow-task-create-subcommander")
+	goalHandoff, err := s.RequestGoalHandoff(ctx, "workflow-task-create-goal", goalID, testSessionID("workflow-task-create-commander"), "delegate")
+	if err != nil {
+		t.Fatalf("RequestGoalHandoff: %v", err)
+	}
+	if _, err := s.ReceiveGoalHandoff(ctx, goalHandoff.ID, goalID, testSessionID("workflow-task-create-subcommander")); err != nil {
+		t.Fatalf("ReceiveGoalHandoff: %v", err)
+	}
+	plan, err := s.RequestPlanHandoffReview(ctx, "workflow-task-create-plan", goalID, testSessionID("workflow-task-create-subcommander"), "ready")
+	if err != nil {
+		t.Fatalf("RequestPlanHandoffReview: %v", err)
+	}
+	if _, err := s.DB().ExecContext(ctx, `INSERT INTO task_create_handoffs (id, plan_handoff_id, goal_id, requested_at) VALUES (?, ?, ?, ?)`, "workflow-task-create", plan.ID, goalID, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+		t.Fatalf("insert task-create handoff: %v", err)
+	}
+
+	reconciliation, err := s.ReconcileWorkflow(ctx, WorkflowEventQuery{ProjectID: goal.ProjectID, GoalID: goalID})
+	if err != nil {
+		t.Fatalf("ReconcileWorkflow: %v", err)
+	}
+	if len(reconciliation.TaskCreateHandoffs) != 1 || reconciliation.TaskCreateHandoffs[0].ID != "workflow-task-create" {
+		t.Fatalf("task-create handoffs = %#v, want workflow-task-create", reconciliation.TaskCreateHandoffs)
+	}
+}
+
 func TestGoalScopedWorkflowReconciliationReturnsCompletedReopenedHandoffAndAppliedDecision(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

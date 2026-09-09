@@ -15,7 +15,6 @@ type watchAgentAction struct {
 	generation  string
 	targetRole  string
 	scopeKey    string
-	delivery    watchDeliveryHandle
 }
 
 type watchRawLineSink func(string) error
@@ -51,17 +50,16 @@ func selectWatchAgentAction(line, eventName string, decision watchDecision) (wat
 		selected = !decision.defaultApplied()
 	case "goal.created", "wakeup", "monitor.liveness", "handoff_reported", "handoff_yielded":
 		selected = true
-	case "orchestration.recovery":
-		selected = true
 	case "detection.completion_report_missing", "detection.commits_missing", "detection.undeclared_goal", "detection.all_tasks_dropped":
 		selected = true
 	case "detection.unclaimed_doing", "detection.claim_undelegated", "detection.claim_stale":
 		selected = true
 	case "task.handoff.request", "task.handoff.receive", "task.handoff.complete",
-		"task.handoff.review.request", "task.handoff.review.receive", "task.handoff.review.reject",
+		"task.handoff.review.request", "task.handoff.review.receive", "task.handoff.review.reject", "task.handoff.review.reject.receive",
 		"goal.handoff.request", "goal.handoff.receive", "goal.handoff.complete",
-		"goal.handoff.review.request", "goal.handoff.review.receive", "goal.handoff.review.reject",
-		"plan.handoff.review.request", "plan.handoff.review.receive", "plan.handoff.review.reject",
+		"goal.handoff.review.request", "goal.handoff.review.receive", "goal.handoff.review.reject", "goal.handoff.review.reject.receive",
+		"plan.handoff.review.request", "plan.handoff.review.receive", "plan.handoff.review.reject", "plan.handoff.review.reject.receive",
+		"task.create_handoff.request", "task.create_handoff.receive",
 		"wakeup.discrepancy", "wakeup.evaluate_failed":
 		selected = true
 	}

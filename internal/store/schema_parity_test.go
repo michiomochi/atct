@@ -41,6 +41,11 @@ func TestSchemaParityOnMigratedCopiedDatabaseFromEnvironment(t *testing.T) {
 	}
 	wantRemovedTables := []string{
 		"goal_review_snapshots",
+		"orchestration_blockers",
+		"orchestration_delivery_leases",
+		"orchestration_delivery_receipts",
+		"orchestration_review_work",
+		"orchestration_scope",
 		"project_event_sequences",
 		"watch_delivery_cursors",
 		"workflow_event_outbox",
