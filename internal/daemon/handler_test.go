@@ -853,6 +853,154 @@ func TestContractN6GoalGetMissingGoalReturnsError(t *testing.T) {
 	}
 }
 
+func TestGoalGetGoalReviewLifecycleProjection(t *testing.T) {
+	fixture := newGoalListFixture(t)
+	defer fixture.store.Close()
+	ctx := context.Background()
+
+	type goalReviewPayload struct {
+		DecisionID          int64                 `json:"decision_id"`
+		Status              domain.DecisionStatus `json:"status"`
+		AnswerLabel         string                `json:"answer_label"`
+		AnswerText          string                `json:"answer_text"`
+		AnsweredAt          *time.Time            `json:"answered_at"`
+		AppliedAt           *time.Time            `json:"applied_at"`
+		NextCommanderAction string                `json:"next_commander_action"`
+	}
+	type goalGetResponse struct {
+		GoalReview *goalReviewPayload `json:"goal_review"`
+	}
+
+	get := func(t *testing.T, goalID int64) goalGetResponse {
+		t.Helper()
+		params, err := json.Marshal(map[string]any{"goal_id": goalID})
+		if err != nil {
+			t.Fatalf("marshal goal.get params: %v", err)
+		}
+		raw, err := fixture.daemon.dispatch(ctx, rpc.Request{Method: "goal.get", Params: params})
+		if err != nil {
+			t.Fatalf("goal.get: %v", err)
+		}
+		var response goalGetResponse
+		if err := json.Unmarshal(raw, &response); err != nil {
+			t.Fatalf("decode goal.get response: %v", err)
+		}
+		return response
+	}
+
+	ask := func(t *testing.T, goalID, taskID int64) domain.Decision {
+		t.Helper()
+		decision, err := fixture.store.AskDecision(ctx, store.AskInput{
+			GoalID:   goalID,
+			TaskID:   taskID,
+			Kind:     domain.KindGoalReview,
+			Question: "contract test goal review",
+		})
+		if err != nil {
+			t.Fatalf("AskDecision: %v", err)
+		}
+		return decision
+	}
+
+	noReview := get(t, fixture.proposed[0].ID)
+	if noReview.GoalReview != nil {
+		t.Fatalf("goal.get returned goal_review for a goal without one: %+v", noReview.GoalReview)
+	}
+
+	open := ask(t, fixture.emptyTaskGoal.ID, 0)
+	openResponse := get(t, fixture.emptyTaskGoal.ID)
+	if openResponse.GoalReview == nil {
+		t.Fatal("goal.get omitted open goal_review")
+	}
+	if openResponse.GoalReview.DecisionID != open.ID || openResponse.GoalReview.Status != domain.DecisionOpen {
+		t.Fatalf("open goal_review = %+v, want decision %d with status open", openResponse.GoalReview, open.ID)
+	}
+	if openResponse.GoalReview.AnswerLabel != "" || openResponse.GoalReview.AnswerText != "" || openResponse.GoalReview.AnsweredAt != nil || openResponse.GoalReview.AppliedAt != nil {
+		t.Fatalf("open goal_review answer metadata = %+v, want empty", openResponse.GoalReview)
+	}
+	if openResponse.GoalReview.NextCommanderAction != "" {
+		t.Fatalf("open goal_review next commander action = %q, want empty", openResponse.GoalReview.NextCommanderAction)
+	}
+
+	answered := ask(t, fixture.active[0].ID, 0)
+	if err := fixture.store.RejectGoalReview(ctx, answered.ID, "needs another review"); err != nil {
+		t.Fatalf("RejectGoalReview: %v", err)
+	}
+	answeredResponse := get(t, fixture.active[0].ID)
+	if answeredResponse.GoalReview == nil || answeredResponse.GoalReview.DecisionID != answered.ID || answeredResponse.GoalReview.Status != domain.DecisionAnswered {
+		t.Fatalf("answered goal_review = %+v, want decision %d with status answered", answeredResponse.GoalReview, answered.ID)
+	}
+	if answeredResponse.GoalReview.AnswerLabel != "reject" || answeredResponse.GoalReview.AnswerText != "needs another review" || answeredResponse.GoalReview.AnsweredAt == nil || answeredResponse.GoalReview.AppliedAt != nil {
+		t.Fatalf("answered goal_review answer metadata = %+v, want rejected answer", answeredResponse.GoalReview)
+	}
+	if answeredResponse.GoalReview.NextCommanderAction != "" {
+		t.Fatalf("answered goal_review next commander action = %q, want empty", answeredResponse.GoalReview.NextCommanderAction)
+	}
+
+	applied := ask(t, fixture.active[1].ID, 0)
+	if _, err := fixture.store.ApproveGoalReview(ctx, applied.ID); err != nil {
+		t.Fatalf("ApproveGoalReview: %v", err)
+	}
+	appliedResponse := get(t, fixture.active[1].ID)
+	if appliedResponse.GoalReview == nil || appliedResponse.GoalReview.DecisionID != applied.ID || appliedResponse.GoalReview.Status != domain.DecisionApplied {
+		t.Fatalf("applied goal_review = %+v, want decision %d with status applied", appliedResponse.GoalReview, applied.ID)
+	}
+	if appliedResponse.GoalReview.AnswerLabel != "approve" || appliedResponse.GoalReview.AnswerText != "" || appliedResponse.GoalReview.AnsweredAt == nil || appliedResponse.GoalReview.AppliedAt == nil {
+		t.Fatalf("applied goal_review answer metadata = %+v, want approved answer", appliedResponse.GoalReview)
+	}
+	if appliedResponse.GoalReview.NextCommanderAction != "goal.review.complete" {
+		t.Fatalf("applied goal_review next commander action = %q, want goal.review.complete", appliedResponse.GoalReview.NextCommanderAction)
+	}
+
+	if _, err := fixture.store.DB().ExecContext(ctx, "UPDATE goals SET status = ?, work_done = ?, now_possible = ?, how_to_verify = ?, surprises = ?, needs_review = ?, next_steps = ?, result_summary = ? WHERE id = ?", string(domain.GoalDone), "recorded work", "recorded now", "recorded verification", "recorded surprises", "recorded review", "recorded next steps", "recorded summary", fixture.active[1].ID); err != nil {
+		t.Fatalf("mark goal done: %v", err)
+	}
+	doneResponse := get(t, fixture.active[1].ID)
+	if doneResponse.GoalReview == nil || doneResponse.GoalReview.NextCommanderAction != "" {
+		t.Fatalf("done goal_review = %+v, want no next commander action", doneResponse.GoalReview)
+	}
+
+	rejectedApplied := ask(t, fixture.taskGoal.ID, 0)
+	if _, err := fixture.store.AnswerDecision(ctx, store.AnswerInput{DecisionID: rejectedApplied.ID, AnswerLabel: "reject", AnswerText: "not approved"}); err != nil {
+		t.Fatalf("AnswerDecision: %v", err)
+	}
+	if _, err := fixture.store.PollDecisions(ctx, 0, 0); err != nil {
+		t.Fatalf("PollDecisions: %v", err)
+	}
+	rejectedAppliedResponse := get(t, fixture.taskGoal.ID)
+	if rejectedAppliedResponse.GoalReview == nil || rejectedAppliedResponse.GoalReview.Status != domain.DecisionApplied || rejectedAppliedResponse.GoalReview.AnswerLabel != "reject" {
+		t.Fatalf("applied rejected goal_review = %+v, want applied reject", rejectedAppliedResponse.GoalReview)
+	}
+	if rejectedAppliedResponse.GoalReview.NextCommanderAction != "" {
+		t.Fatalf("applied rejected goal_review next commander action = %q, want empty", rejectedAppliedResponse.GoalReview.NextCommanderAction)
+	}
+
+	latestGoal, err := fixture.store.CreateGoal(ctx, fixture.project.ID, "latest review goal", "contract-test")
+	if err != nil {
+		t.Fatalf("CreateGoal latest review: %v", err)
+	}
+	if _, err := fixture.store.DB().ExecContext(ctx, "UPDATE goals SET status = ? WHERE id = ?", string(domain.GoalActive), latestGoal.ID); err != nil {
+		t.Fatalf("mark latest review goal active: %v", err)
+	}
+	older := ask(t, latestGoal.ID, 0)
+	if _, err := fixture.store.ApproveGoalReview(ctx, older.ID); err != nil {
+		t.Fatalf("ApproveGoalReview older: %v", err)
+	}
+	newer := ask(t, latestGoal.ID, 0)
+	latestTasks, err := fixture.store.CreateTasks(ctx, latestGoal.ID, "contract-test", "latest-review-task", []string{"task-attached review"}, []string{"task-attached review"})
+	if err != nil {
+		t.Fatalf("CreateTasks latest review: %v", err)
+	}
+	taskAttached := ask(t, latestGoal.ID, latestTasks[0].ID)
+	if _, err := fixture.store.ApproveGoalReview(ctx, taskAttached.ID); err != nil {
+		t.Fatalf("ApproveGoalReview task-attached: %v", err)
+	}
+	latestResponse := get(t, latestGoal.ID)
+	if latestResponse.GoalReview == nil || latestResponse.GoalReview.DecisionID != newer.ID || latestResponse.GoalReview.Status != domain.DecisionOpen {
+		t.Fatalf("latest taskless goal_review = %+v, want decision %d with status open", latestResponse.GoalReview, newer.ID)
+	}
+}
+
 func TestTaskDeclareIsNotRegistered(t *testing.T) {
 	fixture := newGoalListFixture(t)
 	defer fixture.store.Close()

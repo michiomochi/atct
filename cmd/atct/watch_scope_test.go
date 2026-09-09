@@ -33,6 +33,19 @@ func TestWatchTaskScopeSuppressesTasklessWakeupEvaluateFailed(t *testing.T) {
 	}
 }
 
+func TestWatchScopeGoalReviewCompletionIsProjectOnly(t *testing.T) {
+	decision := watchDecision{GoalID: "42"}
+	if !newWatchScopeFilter("").delivers("goal.review.complete", decision) {
+		t.Fatal("project scope suppressed goal.review.complete, want true")
+	}
+	if newWatchScopeFilter("42").delivers("goal.review.complete", decision) {
+		t.Fatal("goal scope delivered goal.review.complete, want false")
+	}
+	if newWatchTaskScopeFilter("9").delivers("goal.review.complete", decision) {
+		t.Fatal("task scope delivered goal.review.complete, want false")
+	}
+}
+
 func TestWatchScopeSnapshotStopsOtherGoalDecision(t *testing.T) {
 	filter := newWatchScopeFilter("goal-1")
 
