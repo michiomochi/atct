@@ -1943,12 +1943,12 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 			if err != nil {
 				return nil, err
 			}
-			if decision.AgentSessionID != p.AgentSessionID {
-				return nil, fmt.Errorf("decision %d is owned by another agent session", p.DecisionID)
-			}
 			role, err := d.deriveSessionRole(ctx, p.AgentSessionID)
 			if err != nil {
 				return nil, err
+			}
+			if p.AgentSessionID == 0 || (role.Role == "commander" && decision.AgentSessionID != p.AgentSessionID) {
+				return nil, fmt.Errorf("decision %d is owned by another agent session", p.DecisionID)
 			}
 			if role.Role == "subcommander" && role.GoalID != 0 {
 				if decision.GoalID != role.GoalID {
