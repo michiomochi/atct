@@ -1,12 +1,16 @@
 # Codex Stop hook
 
-Codex plugin installs a report-only `Stop` hook. An executor launched through
-`atct codex monitor --role executor --task <id>` receives `ATCT_TASK_ID` and
-`ATCT_BIN`; each completed Codex turn reports `handoff yielded <task-id>`.
+Codex plugin installs a role-scoped `Stop` hook. A monitor launched with an
+explicit commander, subcommander, or executor scope passes `ATCT_BIN`, role,
+project, and applicable goal/task IDs to the TUI. The hook calls `atct
+stop-check` with exactly that scope.
 
-Non-executor monitors receive neither variable, so the hook exits successfully
-without an ATCT action. Claude's hook remains unchanged.
+When ATCT has unfinished work for the scope, `stop-check` returns Codex's
+`{"decision":"block","reason":"..."}` response and Codex continues with
+that reason as a new prompt. The hook emits nothing after `stop_hook_active`
+is true, so it cannot continue the same stop event indefinitely. It also blocks
+when its monitored scope or `atct` executable is unavailable.
 
-The monitor fails before starting the TUI if it cannot resolve its own ATCT
-executable for an executor launch; starting an executor without its stop-report
-path would silently lose the contract.
+Legacy/unscoped Codex sessions receive no ATCT environment and the hook exits
+successfully without an ATCT action. The hook does not report `handoff yielded`:
+the executor is still continuing. Claude's report-only hook remains unchanged.

@@ -373,27 +373,40 @@ SCRIPT
   assert_empty_file "$log"
 }
 
-test_codex_stop_hook_only_reports() {
-  if python3 - "$REPO_ROOT/hooks/codex-hooks.json" <<'PY'
+test_codex_stop_hook_blocks_scoped_work() {
+  local fixture="$TEMP_ROOT/codex-stop-hook"
+  local atct="$fixture/atct"
+  local log="$fixture/atct.log"
+  local command
+  local output
+
+  mkdir -p "$fixture"
+  cat >"$atct" <<'SCRIPT'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$ATCT_STOP_LOG"
+printf '%s\n' '{"decision":"block","reason":"ATCT work remains: executor task"}'
+SCRIPT
+  chmod +x "$atct"
+  command="$(python3 - "$REPO_ROOT/hooks/codex-hooks.json" <<'PY'
 import json
 import sys
 
 with open(sys.argv[1], encoding="utf-8") as stream:
-    hooks = json.load(stream)["hooks"]
-
-stop = hooks.get("Stop")
-if stop != [{
-    "hooks": [{
-        "type": "command",
-        "command": 'if [ -n "${ATCT_TASK_ID:-}" ] && [ -x "${ATCT_BIN:-}" ]; then "$ATCT_BIN" handoff yielded "$ATCT_TASK_ID" >/dev/null 2>&1; fi; exit 0',
-    }],
-}]:
-    raise SystemExit(f"Codex Stop hook is not report-only: {stop!r}")
+    print(json.load(stream)["hooks"]["Stop"][0]["hooks"][0]["command"])
 PY
-  then
-    return
-  fi
-  fail 'codex-hooks.json must register only the report-only Stop hook'
+)"
+
+  output="$(ATCT_STOP_LOG="$log" ATCT_BIN="$atct" ATCT_ROLE=executor ATCT_PROJECT_ID=7 ATCT_GOAL_ID=16 ATCT_TASK_ID=46 sh -c "$command" <<< '{"stop_hook_active": false}')"
+  assert_eq '{"decision":"block","reason":"ATCT work remains: executor task"}' "$output" 'Codex Stop hook must return the stop-check response'
+  assert_eq 'stop-check --role executor --project 7 --goal 16 --task 46' "$(<"$log")" 'Codex Stop hook must query only its resolved scope'
+
+  : >"$log"
+  output="$(ATCT_STOP_LOG="$log" ATCT_BIN="$atct" ATCT_ROLE=executor ATCT_PROJECT_ID=7 ATCT_GOAL_ID=16 ATCT_TASK_ID=46 sh -c "$command" <<< '{"stop_hook_active": true}')"
+  assert_eq '' "$output" 'active Codex Stop hook must be ignored'
+  assert_empty_file "$log"
+
+  output="$(ATCT_STOP_LOG="$log" sh -c "$command" <<< '{}')"
+  assert_eq '' "$output" 'unscoped Codex Stop hook must be silent'
 }
 
 test_claude_hooks_json_keeps_session_start_and_pre_tool_use_sections() {
@@ -2291,7 +2304,7 @@ test_one_space_per_goal_forbids_reuse
 test_one_space_per_goal_names_the_only_exception
 test_one_space_per_goal_sits_between_worktree_and_commit
 test_stop_hook_only_reports
-test_codex_stop_hook_only_reports
+test_codex_stop_hook_blocks_scoped_work
 test_claude_hooks_json_keeps_session_start_and_pre_tool_use_sections
 test_stop_hook_file_is_executable_but_other_hooks_remain
 test_installs_stable_terminal_launcher

@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "if [ -n \"${ATCT_TASK_ID:-}\" ] && [ -x \"${ATCT_BIN:-}\" ]; then \"$ATCT_BIN\" handoff yielded \"$ATCT_TASK_ID\" >/dev/null 2>&1; fi; exit 0"
+            "command": "input=\"$(cat)\"; if printf '%s' \"$input\" | /usr/bin/grep -Eq '\"stop_hook_active\"[[:space:]]*:[[:space:]]*true'; then exit 0; fi; if [ -z \"${ATCT_ROLE:-}\" ]; then exit 0; fi; if [ ! -x \"${ATCT_BIN:-}\" ] || [ -z \"${ATCT_PROJECT_ID:-}\" ]; then printf '%s\\n' '{\"decision\":\"block\",\"reason\":\"ATCT stop-check failed: monitor scope unavailable\"}'; exit 0; fi; output=\"$(\"$ATCT_BIN\" stop-check --role \"$ATCT_ROLE\" --project \"$ATCT_PROJECT_ID\" --goal \"${ATCT_GOAL_ID:-}\" --task \"${ATCT_TASK_ID:-}\" 2>/dev/null)\" || { printf '%s\\n' '{\"decision\":\"block\",\"reason\":\"ATCT stop-check failed: command unavailable\"}'; exit 0; }; printf '%s' \"$output\""
           }
         ]
       }

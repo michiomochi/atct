@@ -550,8 +550,27 @@ func codexMonitorProjectPath() (string, error) {
 }
 
 func codexMonitorStopHookEnv(scope watchScope, atctExecutable func() (string, error)) ([]string, error) {
-	if scope.Role != "executor" || strings.TrimSpace(scope.TaskID) == "" {
+	if strings.TrimSpace(scope.Role) == "" {
 		return nil, nil
+	}
+	if strings.TrimSpace(scope.ProjectID) == "" {
+		return nil, errors.New("resolve monitor project scope")
+	}
+	switch scope.Role {
+	case "commander":
+		if strings.TrimSpace(scope.GoalID) != "" || strings.TrimSpace(scope.TaskID) != "" {
+			return nil, errors.New("resolve commander monitor scope")
+		}
+	case "subcommander":
+		if strings.TrimSpace(scope.GoalID) == "" || strings.TrimSpace(scope.TaskID) != "" {
+			return nil, errors.New("resolve subcommander monitor scope")
+		}
+	case "executor":
+		if strings.TrimSpace(scope.GoalID) == "" || strings.TrimSpace(scope.TaskID) == "" {
+			return nil, errors.New("resolve executor monitor scope")
+		}
+	default:
+		return nil, fmt.Errorf("unsupported monitor role %q", scope.Role)
 	}
 	if atctExecutable == nil {
 		return nil, errors.New("resolve atct executable")
@@ -563,7 +582,14 @@ func codexMonitorStopHookEnv(scope watchScope, atctExecutable func() (string, er
 	if strings.TrimSpace(executable) == "" {
 		return nil, errors.New("resolve atct executable")
 	}
-	return []string{"ATCT_TASK_ID=" + scope.TaskID, "ATCT_BIN=" + executable}, nil
+	env := []string{"ATCT_BIN=" + executable, "ATCT_ROLE=" + scope.Role, "ATCT_PROJECT_ID=" + scope.ProjectID}
+	if scope.GoalID != "" {
+		env = append(env, "ATCT_GOAL_ID="+scope.GoalID)
+	}
+	if scope.TaskID != "" {
+		env = append(env, "ATCT_TASK_ID="+scope.TaskID)
+	}
+	return env, nil
 }
 
 func startCodexMonitorProcess(kind codexMonitorProcessKind, executable string, args []string, extraEnv []string) (codexMonitorProcess, error) {
