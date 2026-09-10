@@ -51,6 +51,10 @@ type cliConfig struct {
 	roleExpected            string
 	roleExpectedSet         bool
 	roleAgentSessionID      string
+	stopCheckRole           string
+	stopCheckProjectID      string
+	stopCheckGoalID         string
+	stopCheckTaskID         string
 	watchGoalID             string
 	watchProjectScope       bool
 	watchMonitor            bool
@@ -70,15 +74,16 @@ type cliConfig struct {
 var errInvalidArgs = errors.New("invalid command line")
 
 var validSubcommands = map[string]bool{
-	"daemon":  true,
-	"project": true,
-	"goal":    true,
-	"context": true,
-	"pending": true,
-	"watch":   true,
-	"role":    true,
-	"handoff": true,
-	"codex":   true,
+	"daemon":     true,
+	"project":    true,
+	"goal":       true,
+	"context":    true,
+	"pending":    true,
+	"watch":      true,
+	"role":       true,
+	"stop-check": true,
+	"handoff":    true,
+	"codex":      true,
 }
 
 var validDaemonActions = map[string]bool{"start": true, "stop": true}
@@ -128,6 +133,7 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "  pending              Print unanswered human decisions for the current project")
 	fmt.Fprintln(os.Stderr, "  watch [--monitor] [-goal string] [-project]  Stream selected events for a Monitor")
 	fmt.Fprintln(os.Stderr, "  role                 Report the claim-derived role for an agent session")
+	fmt.Fprintln(os.Stderr, "  stop-check           Emit a Codex continuation when scoped role work remains")
 	fmt.Fprintln(os.Stderr, "  handoff complete <handoff-id> <task-id>  Report a handoff complete")
 	fmt.Fprintln(os.Stderr, "  handoff yielded <task-id>  Report that the worker yielded")
 	fmt.Fprintln(os.Stderr, "  codex shim install [--profile <path>]  Install the transparent Codex shim")
@@ -345,6 +351,12 @@ func parseArgs(args []string) (cliConfig, error) {
 		flags.StringVar(&cfg.roleExpected, "expect", "", "require this role: commander, subcommander, or executor")
 		flags.StringVar(&cfg.roleAgentSessionID, "agent-session-id", "", "agent session identity used by session.role")
 	}
+	if sub == "stop-check" {
+		flags.StringVar(&cfg.stopCheckRole, "role", "", "monitor role: commander, subcommander, or executor")
+		flags.StringVar(&cfg.stopCheckProjectID, "project", "", "resolved monitor project ID")
+		flags.StringVar(&cfg.stopCheckGoalID, "goal", "", "resolved monitor goal ID")
+		flags.StringVar(&cfg.stopCheckTaskID, "task", "", "resolved monitor task ID")
+	}
 	if sub == "watch" {
 		flags.StringVar(&cfg.watchGoalID, "goal", "", "filter watch events to this goal")
 		flags.BoolVar(&cfg.watchProjectScope, "project", false, "filter watch events to what a commander acts on")
@@ -393,6 +405,12 @@ func parseArgs(args []string) (cliConfig, error) {
 	}
 	if sub == "role" && cfg.roleExpectedSet {
 		if err := validateExpectedRole(cfg.roleExpected); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return cliConfig{}, errInvalidArgs
+		}
+	}
+	if sub == "stop-check" {
+		if err := validateStopCheckScope(stopCheckScopeFromConfig(cfg)); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			return cliConfig{}, errInvalidArgs
 		}
@@ -591,6 +609,12 @@ func main() {
 			}
 		}
 		os.Exit(code)
+	case "stop-check":
+		if err := runStopCheck(config, dir); err != nil {
+			log.Printf("stop-check: %v", err)
+			os.Exit(1)
+		}
+		return
 	case "watch":
 		if err := runWatchWithOptions(dir, config.watchGoalID, config.watchProjectScope, config.watchMonitor); err != nil {
 			log.Fatalf("watch: %v", err)
