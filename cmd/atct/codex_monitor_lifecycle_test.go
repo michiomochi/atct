@@ -66,7 +66,7 @@ func TestCodexMonitorExplicitRoleFailureDoesNotLaunchCodexOrAppServer(t *testing
 	deps := codexMonitorDeps{
 		projectPath:  func() (string, error) { return "/project", nil },
 		resolveCodex: func() (string, error) { return "/opt/codex", nil },
-		startProcess: func(kind codexMonitorProcessKind, _ string, _ []string) (codexMonitorProcess, error) {
+		startProcess: func(kind codexMonitorProcessKind, _ string, _ []string, _ []string) (codexMonitorProcess, error) {
 			if kind == codexMonitorAppServer {
 				appServerStarts++
 			}
@@ -159,7 +159,7 @@ func TestCodexMonitorPassThroughExecDoesNotStartMonitor(t *testing.T) {
 			gotArgs = append([]string(nil), args...)
 			return 0, nil
 		},
-		startProcess: func(codexMonitorProcessKind, string, []string) (codexMonitorProcess, error) {
+		startProcess: func(codexMonitorProcessKind, string, []string, []string) (codexMonitorProcess, error) {
 			started = true
 			return nil, errors.New("monitor process should not start")
 		},
@@ -213,7 +213,7 @@ func TestCodexMonitorDirectResolutionSkipsMarkedShim(t *testing.T) {
 		runErr        error
 	)
 	deps := codexMonitorDeps{
-		startProcess: func(kind codexMonitorProcessKind, executable string, _ []string) (codexMonitorProcess, error) {
+		startProcess: func(kind codexMonitorProcessKind, executable string, _ []string, _ []string) (codexMonitorProcess, error) {
 			switch kind {
 			case codexMonitorAppServer:
 				appExecutable = executable
@@ -274,7 +274,7 @@ func TestCodexMonitorFallbackWhenAppServerCannotStart(t *testing.T) {
 	var gotArgs []string
 	deps := codexMonitorDeps{
 		resolveCodex: func() (string, error) { return "/opt/codex", nil },
-		startProcess: func(codexMonitorProcessKind, string, []string) (codexMonitorProcess, error) {
+		startProcess: func(codexMonitorProcessKind, string, []string, []string) (codexMonitorProcess, error) {
 			return nil, errors.New("permission denied")
 		},
 		runNormal: func(_ string, args []string) (int, error) {
@@ -316,7 +316,7 @@ func TestCodexMonitorAutomaticUsesCommanderProjectScope(t *testing.T) {
 	)
 	deps := codexMonitorDeps{
 		resolveCodex: func() (string, error) { return "/opt/codex", nil },
-		startProcess: func(kind codexMonitorProcessKind, _ string, _ []string) (codexMonitorProcess, error) {
+		startProcess: func(kind codexMonitorProcessKind, _ string, _ []string, _ []string) (codexMonitorProcess, error) {
 			if kind == codexMonitorAppServer {
 				return app, nil
 			}
@@ -438,7 +438,7 @@ func TestCodexMonitorAutomaticAppServerFailureFallsBackOnce(t *testing.T) {
 			return daemonctl.CodexMonitorReapResult{}, nil
 		},
 		resolveCodex: func() (string, error) { return "/opt/codex", nil },
-		startProcess: func(kind codexMonitorProcessKind, _ string, _ []string) (codexMonitorProcess, error) {
+		startProcess: func(kind codexMonitorProcessKind, _ string, _ []string, _ []string) (codexMonitorProcess, error) {
 			switch kind {
 			case codexMonitorAppServer:
 				appServerStarts++
@@ -548,7 +548,7 @@ func TestCodexMonitorTUIStartFailureStopsMonitorGoroutines(t *testing.T) {
 	var gotArgs []string
 	deps := codexMonitorDeps{
 		resolveCodex: func() (string, error) { return "/opt/codex", nil },
-		startProcess: func(kind codexMonitorProcessKind, _ string, args []string) (codexMonitorProcess, error) {
+		startProcess: func(kind codexMonitorProcessKind, _ string, args []string, _ []string) (codexMonitorProcess, error) {
 			if kind == codexMonitorAppServer {
 				return app, nil
 			}
@@ -675,7 +675,7 @@ func TestCodexMonitorLifecycleCleansChildrenAndPreservesTUIStatus(t *testing.T) 
 	var appArgs, tuiArgs []string
 	deps := codexMonitorDeps{
 		resolveCodex: func() (string, error) { return "/opt/codex", nil },
-		startProcess: func(kind codexMonitorProcessKind, executable string, args []string) (codexMonitorProcess, error) {
+		startProcess: func(kind codexMonitorProcessKind, executable string, args []string, _ []string) (codexMonitorProcess, error) {
 			switch kind {
 			case codexMonitorAppServer:
 				appArgs = append([]string(nil), args...)
@@ -732,15 +732,17 @@ func TestCodexMonitorExplicitNonResumeStartsRemoteTUIAndPreservesArgs(t *testing
 	tui := newFakeCodexMonitorProcess(0)
 	tuiStarted := make(chan struct{})
 	var tuiArgs []string
+	var tuiEnv []string
 
 	deps := codexMonitorDeps{
 		resolveCodex: func() (string, error) { return "/opt/codex", nil },
-		startProcess: func(kind codexMonitorProcessKind, _ string, args []string) (codexMonitorProcess, error) {
+		startProcess: func(kind codexMonitorProcessKind, _ string, args []string, env []string) (codexMonitorProcess, error) {
 			switch kind {
 			case codexMonitorAppServer:
 				return app, nil
 			case codexMonitorTUI:
 				tuiArgs = append([]string(nil), args...)
+				tuiEnv = append([]string(nil), env...)
 				tui.markStarted()
 				close(tuiStarted)
 				return tui, nil
@@ -753,8 +755,9 @@ func TestCodexMonitorExplicitNonResumeStartsRemoteTUIAndPreservesArgs(t *testing
 		resolveScope: func(context.Context, string, watchScope) (watchScope, error) {
 			return watchScope{Role: "executor", ProjectID: "7", GoalID: "216", TaskID: "920"}, nil
 		},
-		reap:     func(string) (daemonctl.CodexMonitorReapResult, error) { return daemonctl.CodexMonitorReapResult{}, nil },
-		register: func(string, daemonctl.CodexMonitorRecord) (func(), error) { return func() {}, nil },
+		atctExecutable: func() (string, error) { return "/opt/atct", nil },
+		reap:           func(string) (daemonctl.CodexMonitorReapResult, error) { return daemonctl.CodexMonitorReapResult{}, nil },
+		register:       func(string, daemonctl.CodexMonitorRecord) (func(), error) { return func() {}, nil },
 		runWatchScoped: func(ctx context.Context, _ string, _ watchScope, _ *codexMonitorBridge) error {
 			<-ctx.Done()
 			return nil
@@ -786,6 +789,9 @@ func TestCodexMonitorExplicitNonResumeStartsRemoteTUIAndPreservesArgs(t *testing
 	if len(tuiArgs) != 4 || tuiArgs[0] != "--remote" || !strings.HasPrefix(tuiArgs[1], "unix://") || !slices.Equal(tuiArgs[2:], []string{"-m", "gpt-5"}) {
 		t.Fatalf("TUI args = %#v, want --remote socket followed by original args", tuiArgs)
 	}
+	if want := []string{"ATCT_TASK_ID=920", "ATCT_BIN=/opt/atct"}; !slices.Equal(tuiEnv, want) {
+		t.Fatalf("TUI Stop hook environment = %#v, want %#v", tuiEnv, want)
+	}
 
 	tui.finish()
 	select {
@@ -816,7 +822,7 @@ func TestCodexMonitorLegacyResumePassesThroughWithoutStartingMonitor(t *testing.
 			t.Fatal("legacy resume resolved a monitor Codex executable")
 			return "", nil
 		},
-		startProcess: func(kind codexMonitorProcessKind, _ string, _ []string) (codexMonitorProcess, error) {
+		startProcess: func(kind codexMonitorProcessKind, _ string, _ []string, _ []string) (codexMonitorProcess, error) {
 			switch kind {
 			case codexMonitorAppServer:
 				appStarts++
@@ -896,7 +902,7 @@ func TestCodexMonitorExplicitLeadingResumeFailsBeforeStartingAnything(t *testing
 			resolveCodexCalls++
 			return "/opt/codex", nil
 		},
-		startProcess: func(kind codexMonitorProcessKind, _ string, _ []string) (codexMonitorProcess, error) {
+		startProcess: func(kind codexMonitorProcessKind, _ string, _ []string, _ []string) (codexMonitorProcess, error) {
 			switch kind {
 			case codexMonitorAppServer:
 				appStarts++
@@ -969,7 +975,7 @@ func TestCodexMonitorAdoptsThreadStartedByItsDedicatedRemoteTUI(t *testing.T) {
 
 	deps := codexMonitorDeps{
 		resolveCodex: func() (string, error) { return "/opt/codex", nil },
-		startProcess: func(kind codexMonitorProcessKind, _ string, args []string) (codexMonitorProcess, error) {
+		startProcess: func(kind codexMonitorProcessKind, _ string, args []string, _ []string) (codexMonitorProcess, error) {
 			switch kind {
 			case codexMonitorAppServer:
 				return app, nil
@@ -1052,7 +1058,7 @@ func TestCodexMonitorBridgeFailureLeavesTUIAlive(t *testing.T) {
 	var stderr safeCodexMonitorBuffer
 	deps := codexMonitorDeps{
 		resolveCodex: func() (string, error) { return "/opt/codex", nil },
-		startProcess: func(kind codexMonitorProcessKind, _ string, _ []string) (codexMonitorProcess, error) {
+		startProcess: func(kind codexMonitorProcessKind, _ string, _ []string, _ []string) (codexMonitorProcess, error) {
 			if kind == codexMonitorAppServer {
 				return app, nil
 			}

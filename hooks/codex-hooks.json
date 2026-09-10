@@ -1,0 +1,14 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if [ -n \"${ATCT_TASK_ID:-}\" ] && [ -x \"${ATCT_BIN:-}\" ]; then \"$ATCT_BIN\" handoff yielded \"$ATCT_TASK_ID\" >/dev/null 2>&1; fi; exit 0"
+          }
+        ]
+      }
+    ]
+  }
+}

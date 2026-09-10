@@ -15,6 +15,7 @@
   "homepage": "https://github.com/michiomochi/atct",
   "repository": "https://github.com/michiomochi/atct",
   "license": "AGPL-3.0-only",
+  "hooks": "./hooks/codex-hooks.json",
   "keywords": [
     "task-coordination",
     "claims",

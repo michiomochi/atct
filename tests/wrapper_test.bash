@@ -286,11 +286,11 @@ with open(sys.argv[2], encoding="utf-8") as stream:
 
 if claude.get("hooks") != "./hooks/claude-hooks.json":
     raise SystemExit(f"Claude hooks path = {claude.get('hooks')!r}")
-if "hooks" in codex:
-    raise SystemExit(f"Codex must not register hooks: {codex['hooks']!r}")
+if codex.get("hooks") != "./hooks/codex-hooks.json":
+    raise SystemExit(f"Codex hooks path = {codex.get('hooks')!r}")
 PY
   then
-    fail 'plugin manifests must register Claude hooks only'
+    fail 'plugin manifests must register their harness-specific hooks'
   fi
   assert_file_contains '"source": "./"' "$REPO_ROOT/.claude-plugin"/marketplace.json
   # Pin the two version declarations to each other rather than to a literal, so a
@@ -371,6 +371,29 @@ SCRIPT
   output="$(ATCT_STOP_LOG="$log" ATCT_TASK_ID= /bin/bash "$hook" <<< '{}')"
   assert_eq '' "$output" 'Stop hook without ATCT_TASK_ID must be silent'
   assert_empty_file "$log"
+}
+
+test_codex_stop_hook_only_reports() {
+  if python3 - "$REPO_ROOT/hooks/codex-hooks.json" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as stream:
+    hooks = json.load(stream)["hooks"]
+
+stop = hooks.get("Stop")
+if stop != [{
+    "hooks": [{
+        "type": "command",
+        "command": 'if [ -n "${ATCT_TASK_ID:-}" ] && [ -x "${ATCT_BIN:-}" ]; then "$ATCT_BIN" handoff yielded "$ATCT_TASK_ID" >/dev/null 2>&1; fi; exit 0',
+    }],
+}]:
+    raise SystemExit(f"Codex Stop hook is not report-only: {stop!r}")
+PY
+  then
+    return
+  fi
+  fail 'codex-hooks.json must register only the report-only Stop hook'
 }
 
 test_claude_hooks_json_keeps_session_start_and_pre_tool_use_sections() {
@@ -1519,6 +1542,30 @@ test_start_session_key_contract_is_explicit() {
   assert_file_contains 'rather than only the role' "$start_skill"
 }
 
+test_start_forces_commander_claim() {
+  local start_skill="$REPO_ROOT/skills/start/SKILL.md"
+
+  assert_file_contains 'atct_project_claim` with `force` set to `true`' "$start_skill"
+  assert_file_contains 'atct_role` with `expected_role` set to `commander`' "$start_skill"
+  assert_file_contains 'atct:commander' "$start_skill"
+}
+
+test_role_skills_are_routed_from_shared_atct() {
+  local atct_skill="$REPO_ROOT/skills/atct/SKILL.md"
+  local role
+
+  for role in commander subcommander executor; do
+    assert_file_contains "name: $role" "$REPO_ROOT/skills/$role/SKILL.md"
+    assert_file_contains "expected_role\` set to \`$role\`" "$REPO_ROOT/skills/$role/SKILL.md"
+    assert_file_contains 'atct:atct' "$REPO_ROOT/skills/$role/SKILL.md"
+    assert_file_contains "atct:$role" "$atct_skill"
+  done
+}
+
+test_atct_skill_requires_execution_flow() {
+  assert_file_contains 'Follow `doc/execution-flow.md` for the ATCT execution flow.' "$REPO_ROOT/skills/atct/SKILL.md"
+}
+
 test_start_explains_claim_recovery_boundary() {
   local start_skill="$REPO_ROOT/skills/start/SKILL.md"
 
@@ -1782,7 +1829,7 @@ test_role_contract_uses_neutral_language() {
   local atct_skill="$REPO_ROOT/skills/atct/SKILL.md"
   local roles_section
 
-  roles_section="$(sed -n '/^## Roles$/,/^## Declare before you work$/p' "$atct_skill")"
+  roles_section="$(sed -n '/^## Roles$/,/^## Role-specific skills$/p' "$atct_skill")"
   if grep -Eiq 'space|worktree|git|harness|multiplexer' <<<"$roles_section"; then
     fail 'role boundary table must use neutral language'
   fi
@@ -2158,6 +2205,9 @@ test_decision_guidance_names_done_guard
 test_irreversible_decision_still_omits_defaults
 test_start_identifies_before_monitor
 test_start_session_key_contract_is_explicit
+test_start_forces_commander_claim
+test_role_skills_are_routed_from_shared_atct
+test_atct_skill_requires_execution_flow
 test_start_explains_claim_recovery_boundary
 test_start_explains_mcp_reconnect_gap
 test_start_monitor_is_not_first_step
@@ -2241,6 +2291,7 @@ test_one_space_per_goal_forbids_reuse
 test_one_space_per_goal_names_the_only_exception
 test_one_space_per_goal_sits_between_worktree_and_commit
 test_stop_hook_only_reports
+test_codex_stop_hook_only_reports
 test_claude_hooks_json_keeps_session_start_and_pre_tool_use_sections
 test_stop_hook_file_is_executable_but_other_hooks_remain
 test_installs_stable_terminal_launcher

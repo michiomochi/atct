@@ -41,7 +41,8 @@ type codexMonitorProcess interface {
 type codexMonitorDeps struct {
 	resolveCodex     func() (string, error)
 	runNormal        func(string, []string) (int, error)
-	startProcess     func(codexMonitorProcessKind, string, []string) (codexMonitorProcess, error)
+	startProcess     func(codexMonitorProcessKind, string, []string, []string) (codexMonitorProcess, error)
+	atctExecutable   func() (string, error)
 	connectAppServer func(context.Context, string) (codexMonitorApp, error)
 	runWatch         func(context.Context, *codexMonitorBridge) error
 	runWatchScoped   func(context.Context, string, watchScope, *codexMonitorBridge) error
@@ -131,7 +132,7 @@ func runCodexMonitorWithDeps(config cliConfig, dir string, deps codexMonitorDeps
 	if err := os.Remove(socketPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return codexMonitorSetupFailure(config, deps, "remove stale monitor socket: "+err.Error(), executable, args)
 	}
-	appProcess, err := deps.startProcess(codexMonitorAppServer, executable, appArgs)
+	appProcess, err := deps.startProcess(codexMonitorAppServer, executable, appArgs, nil)
 	if err != nil {
 		return codexMonitorSetupFailure(config, deps, "start App Server: "+err.Error(), executable, args)
 	}
@@ -197,7 +198,23 @@ func runCodexMonitorWithDeps(config cliConfig, dir string, deps codexMonitorDeps
 	remoteArgs := make([]string, 0, len(args)+2)
 	remoteArgs = append(remoteArgs, "--remote", "unix://"+socketPath)
 	remoteArgs = append(remoteArgs, args...)
-	tuiProcess, err := deps.startProcess(codexMonitorTUI, executable, remoteArgs)
+	tuiEnv, err := codexMonitorStopHookEnv(scope, deps.atctExecutable)
+	if err != nil {
+		cancelWatch()
+		cancelMonitor()
+		_ = app.Close()
+		waitCodexMonitorDone(bridgeDone)
+		waitCodexMonitorDone(watchDone)
+		if cleanupErr := stopCodexMonitorChild(appProcess, appWait); cleanupErr != nil {
+			fmt.Fprintf(deps.stderr, "atct codex monitor cleanup: %v\n", cleanupErr)
+		}
+		if recordCleanup != nil {
+			recordCleanup()
+		}
+		_ = os.Remove(socketPath)
+		return 1, fmt.Errorf("prepare Codex Stop hook: %w", err)
+	}
+	tuiProcess, err := deps.startProcess(codexMonitorTUI, executable, remoteArgs, tuiEnv)
 	if err != nil {
 		cancelWatch()
 		cancelMonitor()
@@ -343,6 +360,9 @@ func codexMonitorDepsWithDefaults(dir string, deps codexMonitorDeps) codexMonito
 	}
 	if deps.startProcess == nil {
 		deps.startProcess = startCodexMonitorProcess
+	}
+	if deps.atctExecutable == nil {
+		deps.atctExecutable = os.Executable
 	}
 	if deps.connectAppServer == nil {
 		deps.connectAppServer = connectCodexAppServer
@@ -529,8 +549,28 @@ func codexMonitorProjectPath() (string, error) {
 	return absolute, nil
 }
 
-func startCodexMonitorProcess(kind codexMonitorProcessKind, executable string, args []string) (codexMonitorProcess, error) {
+func codexMonitorStopHookEnv(scope watchScope, atctExecutable func() (string, error)) ([]string, error) {
+	if scope.Role != "executor" || strings.TrimSpace(scope.TaskID) == "" {
+		return nil, nil
+	}
+	if atctExecutable == nil {
+		return nil, errors.New("resolve atct executable")
+	}
+	executable, err := atctExecutable()
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(executable) == "" {
+		return nil, errors.New("resolve atct executable")
+	}
+	return []string{"ATCT_TASK_ID=" + scope.TaskID, "ATCT_BIN=" + executable}, nil
+}
+
+func startCodexMonitorProcess(kind codexMonitorProcessKind, executable string, args []string, extraEnv []string) (codexMonitorProcess, error) {
 	cmd := exec.Command(executable, args...)
+	if len(extraEnv) > 0 {
+		cmd.Env = append(os.Environ(), extraEnv...)
+	}
 	if kind == codexMonitorAppServer {
 		cmd.Stdout = io.Discard
 		cmd.Stderr = os.Stderr
