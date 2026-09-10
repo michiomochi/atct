@@ -160,18 +160,30 @@ VALUES ('goal-254-review-work', 1, 1, 1, 'task', 'goal-254-task-handoff', 2, 'ta
 	assertMigrationRecorded(t, migrated.DB(), "0035_handoff_only_lifecycle.sql")
 	assertMigrationRecorded(t, migrated.DB(), "0036_remove_legacy_orchestration.sql")
 	assertMigrationRecorded(t, migrated.DB(), "0037_simplify_task_create_handoff.sql")
+	assertMigrationRecorded(t, migrated.DB(), "0039_task_create_handoff_attempts.sql")
 	assertTableExists(t, migrated.DB(), "task_create_handoffs")
 	assertTableAbsent(t, migrated.DB(), "task_create_handoff_tasks")
 	taskCreateColumns := migrationTableColumns(t, migrated.DB(), "task_create_handoffs")
 	if _, ok := taskCreateColumns["plan_handoff_id"]; ok {
 		t.Error("task_create_handoffs still has plan_handoff_id")
 	}
+	for _, column := range []string{"recovered_at", "recovery_report"} {
+		if _, ok := taskCreateColumns[column]; !ok {
+			t.Errorf("task_create_handoffs omitted %s", column)
+		}
+	}
 	var taskCreateGoalID int64
 	if err := migrated.DB().QueryRow(`SELECT goal_id FROM task_create_handoffs WHERE id = ?`, "goal-254-task-create").Scan(&taskCreateGoalID); err != nil || taskCreateGoalID != 1 {
 		t.Fatalf("preserved task-create handoff goal = %d, %v; want 1", taskCreateGoalID, err)
 	}
-	if _, err := migrated.DB().Exec(`INSERT INTO task_create_handoffs (id, goal_id) VALUES (?, ?)`, "duplicate-goal", 1); err == nil {
-		t.Error("task_create_handoffs accepted a duplicate goal_id")
+	if _, err := migrated.DB().Exec(`INSERT INTO task_create_handoffs (id, goal_id, completed_at) VALUES (?, ?, ?)`, "completed-revision", 1, "2026-09-09T00:05:00Z"); err != nil {
+		t.Fatalf("task_create_handoffs rejected a completed revision: %v", err)
+	}
+	if _, err := migrated.DB().Exec(`INSERT INTO task_create_handoffs (id, goal_id) VALUES (?, ?)`, "open-revision", 1); err != nil {
+		t.Fatalf("task_create_handoffs rejected an open revision: %v", err)
+	}
+	if _, err := migrated.DB().Exec(`INSERT INTO task_create_handoffs (id, goal_id) VALUES (?, ?)`, "duplicate-open-goal", 1); err == nil {
+		t.Error("task_create_handoffs accepted a second open goal_id")
 	}
 	for _, table := range []string{
 		"orchestration_scope", "orchestration_delivery_leases",

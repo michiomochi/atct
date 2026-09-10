@@ -9,12 +9,16 @@ import (
 )
 
 type AgentSession struct {
-	ID           int64
-	ProjectID    sql.NullInt64
-	RegisteredAt string
-	Pid          int64
-	StartedAt    string
-	SessionKey   string
+	ID                  int64
+	ProjectID           sql.NullInt64
+	RegisteredAt        string
+	Pid                 int64
+	StartedAt           string
+	SessionKey          string
+	DiscardedAt         sql.NullString
+	DiscardedBy         sql.NullInt64
+	DiscardedDecisionID sql.NullInt64
+	DiscardReason       string
 }
 
 type Decision struct {
@@ -75,6 +79,24 @@ type GoalHandoff struct {
 	ReviewRejectReport        sql.NullString
 	ReviewRejectionReceivedBy sql.NullInt64
 	ReviewRejectionReceivedAt sql.NullString
+	RecoveredAt               sql.NullString
+	RecoveryReport            sql.NullString
+}
+
+type HandoffRecovery struct {
+	ID                int64
+	HandoffKind       string
+	HandoffID         string
+	GoalID            sql.NullInt64
+	TaskID            sql.NullInt64
+	RecoveredPhase    string
+	StaleSessionID    int64
+	ProofKind         string
+	DiscardDecisionID sql.NullInt64
+	RecoveredBy       int64
+	ReplacementID     sql.NullString
+	Reason            string
+	CreatedAt         string
 }
 
 type MonitorHealth struct {
@@ -161,6 +183,8 @@ type TaskCreateHandoff struct {
 	CompletedAt    sql.NullString
 	RequestReport  sql.NullString
 	CompleteReport sql.NullString
+	RecoveredAt    sql.NullString
+	RecoveryReport sql.NullString
 }
 
 type TaskHandoff struct {
@@ -182,4 +206,6 @@ type TaskHandoff struct {
 	ReviewRejectReport        sql.NullString
 	ReviewRejectionReceivedBy sql.NullInt64
 	ReviewRejectionReceivedAt sql.NullString
+	RecoveredAt               sql.NullString
+	RecoveryReport            sql.NullString
 }

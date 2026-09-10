@@ -27,6 +27,7 @@ type WorkflowReconciliation struct {
 	PlanHandoffs       []PlanHandoff       `json:"plan_handoffs"`
 	TaskHandoffs       []TaskHandoff       `json:"task_handoffs"`
 	TaskCreateHandoffs []TaskCreateHandoff `json:"task_create_handoffs"`
+	HandoffRecoveries  []HandoffRecovery   `json:"handoff_recoveries"`
 }
 
 func workflowDecisionEvent(name string, row sqlcgen.Decision) (DecisionEvent, error) {
@@ -95,6 +96,7 @@ func (s *Store) ReconcileWorkflow(ctx context.Context, query WorkflowEventQuery)
 		PlanHandoffs:       make([]PlanHandoff, 0),
 		TaskHandoffs:       make([]TaskHandoff, 0),
 		TaskCreateHandoffs: make([]TaskCreateHandoff, 0),
+		HandoffRecoveries:  make([]HandoffRecovery, 0),
 		Tasks:              make([]domain.Task, 0),
 	}
 	for _, goal := range goals {
@@ -129,6 +131,11 @@ func (s *Store) ReconcileWorkflow(ctx context.Context, query WorkflowEventQuery)
 			return WorkflowReconciliation{}, err
 		}
 		reconciliation.TaskCreateHandoffs = append(reconciliation.TaskCreateHandoffs, taskCreateHandoffs...)
+		recoveries, err := s.ListHandoffRecoveriesForGoal(ctx, goal.ID)
+		if err != nil {
+			return WorkflowReconciliation{}, err
+		}
+		reconciliation.HandoffRecoveries = append(reconciliation.HandoffRecoveries, recoveries...)
 		decisions, err := s.ListDecisionsForGoal(ctx, goal.ID)
 		if err != nil {
 			return WorkflowReconciliation{}, err

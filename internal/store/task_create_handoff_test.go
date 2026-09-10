@@ -98,4 +98,41 @@ func TestTaskCreateHandoffFollowsAcceptedPlan(t *testing.T) {
 	if _, err := s.CreateTasksForHandoff(ctx, handoff.ID, subcommanderID, goalID, "agent", "other", []string{"other"}, []string{"different retry key"}); err == nil {
 		t.Fatal("CreateTasks accepted a different key after completion")
 	}
+
+	// A revised plan creates a new task-create attempt. The completed first
+	// attempt remains history and must not block the current open attempt.
+	revisedPlan, err := s.RequestPlanHandoffReview(ctx, "task-create-plan-revised", goalID, subcommanderID, "revised plan")
+	if err != nil {
+		t.Fatalf("RequestPlanHandoffReview revised: %v", err)
+	}
+	if _, err := s.ReceivePlanHandoffReview(ctx, revisedPlan.ID, goalID, commanderID); err != nil {
+		t.Fatalf("ReceivePlanHandoffReview revised: %v", err)
+	}
+	if _, err := s.CompletePlanHandoff(ctx, revisedPlan.ID, goalID, commanderID, "revised plan accepted"); err != nil {
+		t.Fatalf("CompletePlanHandoff revised: %v", err)
+	}
+	attempts, err := s.ListTaskCreateHandoffs(ctx, goalID)
+	if err != nil {
+		t.Fatalf("ListTaskCreateHandoffs: %v", err)
+	}
+	if len(attempts) != 2 || attempts[0].CompletedAt == nil || attempts[1].CompletedAt != nil {
+		t.Fatalf("task-create attempts = %+v, want completed history plus open replacement", attempts)
+	}
+	current, err := s.GetTaskCreateHandoffForGoal(ctx, goalID)
+	if err != nil {
+		t.Fatalf("GetTaskCreateHandoffForGoal current: %v", err)
+	}
+	if current.ID != attempts[1].ID {
+		t.Fatalf("current task-create attempt = %+v, want open attempt %+v", current, attempts[1])
+	}
+	if _, err := s.ReceiveTaskCreateHandoff(ctx, attempts[1].ID, subcommanderID); err != nil {
+		t.Fatalf("ReceiveTaskCreateHandoff revised: %v", err)
+	}
+	revisedTasks, err := s.CreateTasksForHandoff(ctx, attempts[1].ID, subcommanderID, goalID, "agent", "revised-implementation", []string{"revised implementation"}, []string{"implement the revised plan"})
+	if err != nil {
+		t.Fatalf("CreateTasksForHandoff revised: %v", err)
+	}
+	if len(revisedTasks) != 1 || revisedTasks[0].Created == nil || !*revisedTasks[0].Created {
+		t.Fatalf("revised tasks = %+v, want one newly created task", revisedTasks)
+	}
 }

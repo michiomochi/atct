@@ -540,7 +540,7 @@ func latestDelegatedGoalHandoff(handoffs []GoalHandoff) *GoalHandoff {
 	return latest
 }
 
-func goalHandoffHasCommanderReviewCompletion(handoff *GoalHandoff) bool {
+func goalHandoffHasCommanderReviewCompletion(handoff *GoalHandoff, callerID int64) bool {
 	return handoff.RequestedAt != nil &&
 		handoff.ReceivedAt != nil &&
 		handoff.ReviewRequestedAt != nil &&
@@ -548,13 +548,13 @@ func goalHandoffHasCommanderReviewCompletion(handoff *GoalHandoff) bool {
 		handoff.ReviewRequestedBy != 0 &&
 		handoff.ReviewRequestedBy == handoff.ReceivedBy &&
 		handoff.ReviewReceivedBy != 0 &&
-		handoff.ReviewReceivedBy == handoff.RequestedBy &&
+		handoff.ReviewReceivedBy == callerID &&
 		handoff.CompletedReportAt != nil &&
 		handoff.CompleteReport != goalHandoffReclaimedReport &&
 		handoff.CompleteReport != goalHandoffReleasedReport
 }
 
-func (s *Store) requireLatestGoalHandoffForReview(ctx context.Context, goalID int64, previous domain.Decision, hasPrevious bool) error {
+func (s *Store) requireLatestGoalHandoffForReview(ctx context.Context, goalID, callerID int64, previous domain.Decision, hasPrevious bool) error {
 	handoffs, err := s.ListGoalHandoffs(ctx, goalID)
 	if err != nil {
 		return fmt.Errorf("find goal handoff for review: %w", err)
@@ -563,8 +563,11 @@ func (s *Store) requireLatestGoalHandoffForReview(ctx context.Context, goalID in
 	if latest == nil {
 		return fmt.Errorf("%w: goal %d has no delegated goal handoff", ErrGoalReviewHandoffIncomplete, goalID)
 	}
-	if !goalHandoffHasCommanderReviewCompletion(latest) {
+	if !goalHandoffHasCommanderReviewCompletion(latest, callerID) {
 		return fmt.Errorf("%w: %s", ErrGoalReviewHandoffIncomplete, latest.ID)
+	}
+	if err := s.requireProjectClaimForGoal(ctx, goalID, callerID); err != nil {
+		return fmt.Errorf("%w: goal review caller is not the current commander: %v", ErrGoalReviewHandoffIncomplete, err)
 	}
 	if hasPrevious && previous.Status == domain.DecisionAnswered && previous.AnswerLabel == "reject" && (previous.AnsweredAt == nil || latest.RequestedAt == nil || !latest.RequestedAt.After(*previous.AnsweredAt)) {
 		return fmt.Errorf("%w: goal review %d was rejected after handoff %s completed; request a new handoff", ErrGoalReviewHandoffIncomplete, previous.ID, latest.ID)
@@ -602,7 +605,7 @@ func (s *Store) RequestGoalReview(ctx context.Context, goalID, agentSessionID in
 	if ok && previous.Status == domain.DecisionOpen {
 		return domain.Decision{}, fmt.Errorf("%w: %d", ErrGoalReviewOpen, goalID)
 	}
-	if err := s.requireLatestGoalHandoffForReview(ctx, goalID, previous, ok); err != nil {
+	if err := s.requireLatestGoalHandoffForReview(ctx, goalID, agentSessionID, previous, ok); err != nil {
 		return domain.Decision{}, err
 	}
 	options := []domain.Option{

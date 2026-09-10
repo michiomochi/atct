@@ -349,12 +349,26 @@ func (s *Store) IdentifyAgentSession(ctx context.Context, agentSessionID int64, 
 		}
 		return 0, false, fmt.Errorf("find agent session for identification: %w", err)
 	}
+	transportSession, err := queries.GetAgentSessionRecovery(ctx, agentSessionID)
+	if err != nil {
+		return 0, false, fmt.Errorf("find agent session discard state for identification: %w", err)
+	}
+	if agentSessionHasDiscardMetadata(transportSession) {
+		return 0, false, fmt.Errorf("agent session %d is discarded: %w", agentSessionID, ErrSessionDiscarded)
+	}
 
 	canonicalID = agentSessionID
 	existingID, lookupErr := queries.GetAgentSessionIDByKey(ctx, sessionKey)
 	if lookupErr == nil {
 		canonicalID = existingID
 		reattached = existingID != agentSessionID
+		canonicalSession, err := queries.GetAgentSessionRecovery(ctx, canonicalID)
+		if err != nil {
+			return 0, false, fmt.Errorf("find canonical agent session discard state: %w", err)
+		}
+		if agentSessionHasDiscardMetadata(canonicalSession) {
+			return 0, false, fmt.Errorf("canonical agent session %d is discarded: %w", canonicalID, ErrSessionDiscarded)
+		}
 		if err := queries.UpdateAgentSessionProcessIdentity(ctx, sqlcgen.UpdateAgentSessionProcessIdentityParams{
 			Pid:          int64(storedPID),
 			StartedAt:    startedAt,

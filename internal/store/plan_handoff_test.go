@@ -2,6 +2,8 @@ package store
 
 import (
 	"context"
+	"errors"
+	"os"
 	"testing"
 )
 
@@ -81,4 +83,86 @@ func TestPlanHandoffReviewRejectReceiveLifecycle(t *testing.T) {
 	if completed.CompletedReportAt == nil || completed.CompleteReport != "plan accepted" {
 		t.Fatalf("unexpected completed plan handoff: %+v", completed)
 	}
+}
+
+func TestRecoverPlanHandoffClearsOnlyDefinitelyStaleReviewer(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	goalID := newTestGoal(t, s)
+	staleCommanderID := registerNamedTestAgentSession(t, s, "recover-plan-stale-commander", os.Getpid())
+	freshCommanderID := registerNamedTestAgentSession(t, s, "recover-plan-fresh-commander", os.Getpid())
+	subcommanderID := registerNamedTestAgentSession(t, s, "recover-plan-subcommander", os.Getpid())
+	goal, err := s.GetGoal(ctx, goalID)
+	if err != nil {
+		t.Fatalf("GetGoal: %v", err)
+	}
+	if _, err := s.DB().ExecContext(ctx, `UPDATE projects SET claimed_by = ? WHERE id = ?`, staleCommanderID, goal.ProjectID); err != nil {
+		t.Fatalf("claim project for stale commander: %v", err)
+	}
+	if _, err := s.DB().ExecContext(ctx, `UPDATE agent_sessions SET started_at = 'stale-process-start' WHERE id = ?`, staleCommanderID); err != nil {
+		t.Fatalf("make commander definitely stale: %v", err)
+	}
+	// The stale commander was live when it received the review; only its
+	// process identity is now stale. The current commander must be able to
+	// reopen that receipt without changing the submitting subcommander.
+	handoff, err := s.RequestGoalHandoff(ctx, "recover-plan-goal", goalID, staleCommanderID, "delegate")
+	if err == nil {
+		t.Fatal("RequestGoalHandoff accepted a definitely stale commander")
+	}
+	if _, err := s.DB().ExecContext(ctx, `UPDATE agent_sessions SET started_at = ? WHERE id = ?`, processStartedAtOrFail(t, os.Getpid()), staleCommanderID); err != nil {
+		t.Fatalf("restore commander identity for setup: %v", err)
+	}
+	handoff, err = s.RequestGoalHandoff(ctx, "recover-plan-goal", goalID, staleCommanderID, "delegate")
+	if err != nil {
+		t.Fatalf("RequestGoalHandoff: %v", err)
+	}
+	if _, err := s.ReceiveGoalHandoff(ctx, handoff.ID, goalID, subcommanderID); err != nil {
+		t.Fatalf("ReceiveGoalHandoff: %v", err)
+	}
+	plan, err := s.RequestPlanHandoffReview(ctx, "recover-plan-review", goalID, subcommanderID, "ready")
+	if err != nil {
+		t.Fatalf("RequestPlanHandoffReview: %v", err)
+	}
+	if _, err := s.ReceivePlanHandoffReview(ctx, plan.ID, goalID, staleCommanderID); err != nil {
+		t.Fatalf("ReceivePlanHandoffReview: %v", err)
+	}
+	if _, err := s.DB().ExecContext(ctx, `UPDATE projects SET claimed_by = ? WHERE id = ?`, freshCommanderID, goal.ProjectID); err != nil {
+		t.Fatalf("turn over commander: %v", err)
+	}
+	if _, err := s.RecoverPlanHandoff(ctx, plan.ID, goalID, freshCommanderID, "live reviewer"); !errors.Is(err, ErrSessionRecoveryNotProven) {
+		t.Fatalf("RecoverPlanHandoff with live reviewer error = %v, want ErrSessionRecoveryNotProven", err)
+	}
+	if _, err := s.DB().ExecContext(ctx, `UPDATE agent_sessions SET started_at = 'stale-process-start' WHERE id = ?`, staleCommanderID); err != nil {
+		t.Fatalf("make recorded reviewer stale: %v", err)
+	}
+
+	recovered, err := s.RecoverPlanHandoff(ctx, plan.ID, goalID, freshCommanderID, "reviewer process identity changed")
+	if err != nil {
+		t.Fatalf("RecoverPlanHandoff: %v", err)
+	}
+	if recovered.ReviewReceivedAt != nil || recovered.ReviewReceivedBy != 0 || recovered.ReviewRequestedBy != subcommanderID || recovered.ReviewRequestReport != "ready" {
+		t.Fatalf("recovered plan handoff = %+v, want only reviewer receipt cleared", recovered)
+	}
+	if _, err := s.RecoverPlanHandoff(ctx, plan.ID, goalID, freshCommanderID, "retry"); err != nil {
+		t.Fatalf("RecoverPlanHandoff retry: %v", err)
+	}
+	if _, err := s.ReceivePlanHandoffReview(ctx, plan.ID, goalID, freshCommanderID); err != nil {
+		t.Fatalf("ReceivePlanHandoffReview after recovery: %v", err)
+	}
+	recoveries, err := s.ListHandoffRecoveriesForGoal(ctx, goalID)
+	if err != nil {
+		t.Fatalf("ListHandoffRecoveriesForGoal: %v", err)
+	}
+	if len(recoveries) != 1 || recoveries[0].HandoffKind != "plan" || recoveries[0].HandoffID != plan.ID || recoveries[0].StaleSessionID != staleCommanderID || recoveries[0].RecoveredBy != freshCommanderID {
+		t.Fatalf("plan recovery audit = %+v", recoveries)
+	}
+}
+
+func processStartedAtOrFail(t *testing.T, pid int) string {
+	t.Helper()
+	startedAt, err := processStartedAt(pid)
+	if err != nil {
+		t.Fatalf("processStartedAt(%d): %v", pid, err)
+	}
+	return startedAt
 }

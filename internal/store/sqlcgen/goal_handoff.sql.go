@@ -14,14 +14,14 @@ const listGoalSessionKeys = `-- name: ListGoalSessionKeys :many
 WITH sessions AS (
   SELECT s.session_key AS session_key,
          0 AS role_rank,
-         CASE WHEN gh.completed_report_at IS NULL THEN 1 ELSE 0 END AS handoff_open
+         CASE WHEN gh.completed_report_at IS NULL AND gh.recovered_at IS NULL THEN 1 ELSE 0 END AS handoff_open
   FROM goal_handoffs gh
   JOIN agent_sessions s ON s.id = gh.received_by
   WHERE gh.goal_id = ?1 AND s.session_key <> ''
   UNION ALL
   SELECT s.session_key,
          1,
-         CASE WHEN th.completed_report_at IS NULL THEN 1 ELSE 0 END
+         CASE WHEN th.completed_report_at IS NULL AND th.recovered_at IS NULL THEN 1 ELSE 0 END
   FROM tasks t
   JOIN task_handoffs th ON th.task_id = t.id
   JOIN agent_sessions s ON s.id = th.received_by
@@ -74,6 +74,7 @@ FROM goal_handoffs AS gh
 JOIN goals AS g ON g.id = gh.goal_id
 WHERE g.project_id = ?
   AND gh.completed_report_at IS NULL
+  AND gh.recovered_at IS NULL
 ORDER BY g.created_at, g.id
 `
 
@@ -144,9 +145,10 @@ func (q *Queries) ListOpenGoalHandoffClaims(ctx context.Context, projectID int64
 const listOpenGoalHandoffs = `-- name: ListOpenGoalHandoffs :many
 SELECT id, goal_id, requested_by, received_by,
        requested_at, received_at, completed_report_at,
-       request_report, complete_report
+       request_report, complete_report,
+       recovered_at, recovery_report
 FROM goal_handoffs
-WHERE completed_report_at IS NULL
+WHERE completed_report_at IS NULL AND recovered_at IS NULL
 ORDER BY id
 `
 
@@ -160,6 +162,8 @@ type ListOpenGoalHandoffsRow struct {
 	CompletedReportAt sql.NullString
 	RequestReport     sql.NullString
 	CompleteReport    sql.NullString
+	RecoveredAt       sql.NullString
+	RecoveryReport    sql.NullString
 }
 
 func (q *Queries) ListOpenGoalHandoffs(ctx context.Context) ([]ListOpenGoalHandoffsRow, error) {
@@ -181,6 +185,8 @@ func (q *Queries) ListOpenGoalHandoffs(ctx context.Context) ([]ListOpenGoalHando
 			&i.CompletedReportAt,
 			&i.RequestReport,
 			&i.CompleteReport,
+			&i.RecoveredAt,
+			&i.RecoveryReport,
 		); err != nil {
 			return nil, err
 		}

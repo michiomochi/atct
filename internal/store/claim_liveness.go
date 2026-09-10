@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"syscall"
 
@@ -109,10 +110,14 @@ func nullableClaimInt64(value sql.NullInt64) int64 {
 }
 
 func claimIsRunning(ctx context.Context, s *Store, agentSessionID int64) bool {
+	return claimIsRunningWithQueries(ctx, sqlcgen.New(s.db), agentSessionID)
+}
+
+func claimIsRunningWithQueries(ctx context.Context, q *sqlcgen.Queries, agentSessionID int64) bool {
 	if agentSessionID == 0 {
 		return false
 	}
-	session, err := sqlcgen.New(s.db).GetAgentSessionLiveness(ctx, agentSessionID)
+	session, err := q.GetAgentSessionLiveness(ctx, agentSessionID)
 	if err != nil {
 		return false
 	}
@@ -143,7 +148,7 @@ func claimIsDefinitelyDead(ctx context.Context, s *Store, agentSessionID int64) 
 
 	pid := int(session.Pid)
 	if err := syscall.Kill(pid, 0); err != nil {
-		return true
+		return errors.Is(err, syscall.ESRCH)
 	}
 	actualStartedAt, err := processStartedAt(pid)
 	return err == nil && actualStartedAt != session.StartedAt

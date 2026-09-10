@@ -486,7 +486,7 @@ func (d *Daemon) normalizeEntityIDs(ctx context.Context, method string, params j
 		}
 		fields[field] = json.RawMessage(strconv.FormatInt(id, 10))
 	}
-	for _, field := range []string{"agent_session_id", "requested_by", "received_by", "reviewer_id"} {
+	for _, field := range []string{"agent_session_id", "requested_by", "received_by", "reviewer_id", "target_session_id"} {
 		raw, ok := fields[field]
 		if !ok {
 			continue
@@ -663,6 +663,66 @@ type planHandoffCompleteParams struct {
 	GoalID         int64  `json:"goal_id"`
 	AgentSessionID int64  `json:"agent_session_id"`
 	CompleteReport string `json:"complete_report"`
+}
+
+type handoffRecoverParams struct {
+	HandoffKind    string `json:"handoff_kind"`
+	HandoffID      string `json:"handoff_id"`
+	GoalID         int64  `json:"goal_id"`
+	TaskID         int64  `json:"task_id"`
+	Reason         string `json:"reason"`
+	AgentSessionID int64  `json:"agent_session_id"`
+}
+
+type sessionDiscardRequestParams struct {
+	ProjectID       int64  `json:"project_id"`
+	GoalID          int64  `json:"goal_id"`
+	TargetSessionID int64  `json:"target_session_id"`
+	Reason          string `json:"reason"`
+	AgentSessionID  int64  `json:"agent_session_id"`
+}
+
+type sessionDiscardParams struct {
+	ProjectID       int64 `json:"project_id"`
+	TargetSessionID int64 `json:"target_session_id"`
+	DecisionID      int64 `json:"decision_id"`
+	AgentSessionID  int64 `json:"agent_session_id"`
+}
+
+func (d *Daemon) recoverHandoff(ctx context.Context, p handoffRecoverParams) (any, error) {
+	if p.AgentSessionID <= 0 {
+		return nil, errors.New("handoff recovery requires agent_session_id")
+	}
+	if strings.TrimSpace(p.HandoffKind) == "" || strings.TrimSpace(p.HandoffID) == "" || strings.TrimSpace(p.Reason) == "" {
+		return nil, errors.New("handoff_kind, handoff_id, and reason are required")
+	}
+	if p.GoalID != 0 && p.TaskID != 0 {
+		return nil, errors.New("handoff recovery accepts either goal_id or task_id, not both")
+	}
+	switch p.HandoffKind {
+	case "goal":
+		if p.GoalID <= 0 || p.TaskID != 0 {
+			return nil, errors.New("goal recovery requires goal_id")
+		}
+		return d.store.RecoverGoalHandoff(ctx, p.HandoffID, p.GoalID, p.AgentSessionID, p.Reason)
+	case "plan":
+		if p.GoalID <= 0 || p.TaskID != 0 {
+			return nil, errors.New("plan recovery requires goal_id")
+		}
+		return d.store.RecoverPlanHandoff(ctx, p.HandoffID, p.GoalID, p.AgentSessionID, p.Reason)
+	case "task":
+		if p.TaskID <= 0 || p.GoalID != 0 {
+			return nil, errors.New("task recovery requires task_id")
+		}
+		return d.store.RecoverTaskHandoff(ctx, p.HandoffID, p.TaskID, p.AgentSessionID, p.Reason)
+	case "task_create":
+		if p.GoalID <= 0 || p.TaskID != 0 {
+			return nil, errors.New("task_create recovery requires goal_id")
+		}
+		return d.store.RecoverTaskCreateHandoff(ctx, p.HandoffID, p.GoalID, p.AgentSessionID, p.Reason)
+	default:
+		return nil, fmt.Errorf("unsupported handoff_kind %q", p.HandoffKind)
+	}
 }
 
 func (d *Daemon) receiveRoleEvidence(ctx context.Context, agentSessionID, projectID, goalID, taskID int64, handoffID string) (string, claimEvidence, error) {
@@ -870,6 +930,35 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 			"agent_session_id": canonicalID,
 			"reattached":       reattached,
 		}, nil)
+
+	case "session.discard.request":
+		var p sessionDiscardRequestParams
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		decision, err := d.store.RequestSessionDiscard(ctx, store.SessionDiscardRequest{
+			ProjectID: p.ProjectID, GoalID: p.GoalID, TargetSessionID: p.TargetSessionID,
+			RequestedBy: p.AgentSessionID, Reason: p.Reason,
+		})
+		return marshal(decision, err)
+
+	case "session.discard":
+		var p sessionDiscardParams
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		if err := d.store.DiscardSession(ctx, p.ProjectID, p.TargetSessionID, p.DecisionID, p.AgentSessionID); err != nil {
+			return nil, err
+		}
+		return marshal(map[string]any{"ok": true}, nil)
+
+	case "handoff.recover":
+		var p handoffRecoverParams
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		result, err := d.recoverHandoff(ctx, p)
+		return marshal(result, err)
 
 	case "session.role":
 		var p struct {
