@@ -66,69 +66,6 @@ func TestCanRecoverSessionRejectsIncompleteDiscardRecord(t *testing.T) {
 	}
 }
 
-func TestHandoffRecoveryIsIdempotentAndAppendOnly(t *testing.T) {
-	s := newTestStore(t)
-	ctx := context.Background()
-	project, err := s.CreateProject(ctx, "recovery-audit", "/repos/recovery-audit")
-	if err != nil {
-		t.Fatalf("CreateProject: %v", err)
-	}
-	goal, err := s.CreateGoal(ctx, project.ID, "Recovery audit", "human")
-	if err != nil {
-		t.Fatalf("CreateGoal: %v", err)
-	}
-	recoveredBy, err := s.RegisterAgentSession(ctx, os.Getpid())
-	if err != nil {
-		t.Fatalf("RegisterAgentSession(recoveredBy): %v", err)
-	}
-	staleSession := testSessionID("audit-stale")
-	if _, err := s.DB().ExecContext(ctx, `
-		INSERT INTO agent_sessions (id, pid, started_at, registered_at)
-		VALUES (?, ?, ?, ?)`, staleSession, os.Getpid(), "old-start", time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
-		t.Fatalf("insert stale session: %v", err)
-	}
-
-	in := HandoffRecoveryInput{
-		HandoffKind:    "goal",
-		HandoffID:      "goal-recovery-1",
-		GoalID:         &goal.ID,
-		RecoveredPhase: "received",
-		StaleSessionID: staleSession,
-		Proof:          RecoveryProof{SessionID: staleSession, Kind: RecoveryProofProcessMismatch},
-		RecoveredBy:    recoveredBy,
-		ReplacementID:  "goal-recovery-2",
-		Reason:         "the old session identity no longer matches",
-	}
-	first, err := s.RecordHandoffRecovery(ctx, in)
-	if err != nil {
-		t.Fatalf("RecordHandoffRecovery(first): %v", err)
-	}
-	secondInput := in
-	secondInput.Reason = "a retry must not rewrite the audit"
-	second, err := s.RecordHandoffRecovery(ctx, secondInput)
-	if err != nil {
-		t.Fatalf("RecordHandoffRecovery(retry): %v", err)
-	}
-	if second.ID != first.ID || second.Reason != first.Reason {
-		t.Fatalf("retry audit = %+v, want original %+v", second, first)
-	}
-
-	rows, err := s.ListHandoffRecoveriesForGoal(ctx, goal.ID)
-	if err != nil {
-		t.Fatalf("ListHandoffRecoveriesForGoal: %v", err)
-	}
-	if len(rows) != 1 || rows[0].ID != first.ID {
-		t.Fatalf("goal recovery rows = %+v, want one row %d", rows, first.ID)
-	}
-	var count int
-	if err := s.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM handoff_recoveries`).Scan(&count); err != nil {
-		t.Fatalf("count recovery rows: %v", err)
-	}
-	if count != 1 {
-		t.Fatalf("recovery row count = %d, want 1", count)
-	}
-}
-
 func TestSessionDiscardRequiresApprovedCommanderDecision(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
@@ -394,12 +331,12 @@ func TestRecoverTaskHandoffTerminalizesStaleOwnerAndAllowsReplacement(t *testing
 	if retry.RecoveredAt == nil || retry.RecoveryReport != "executor session disappeared" {
 		t.Fatalf("retry rewrote recovery report: %+v", retry)
 	}
-	recoveries, err := s.ListHandoffRecoveriesForTask(ctx, tasks[0].ID)
-	if err != nil {
-		t.Fatalf("ListHandoffRecoveriesForTask: %v", err)
+	var tableCount int
+	if err := s.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'handoff_recoveries'`).Scan(&tableCount); err != nil {
+		t.Fatalf("check dedicated recovery table: %v", err)
 	}
-	if len(recoveries) != 1 || recoveries[0].RecoveredPhase != "received" || recoveries[0].StaleSessionID != staleID {
-		t.Fatalf("task recoveries = %+v, want one received recovery", recoveries)
+	if tableCount != 0 {
+		t.Fatal("recovery must be recorded only on the terminal handoff")
 	}
 }
 
@@ -534,13 +471,6 @@ func TestRecoverTaskCreateHandoffTerminalizesStaleReceiverAndCreatesReplacement(
 	}
 	if retry.RecoveredAt == nil || retry.RecoveryReport != "task-create receiver disappeared" {
 		t.Fatalf("task-create retry rewrote recovery state: %+v", retry)
-	}
-	recoveries, err := s.ListHandoffRecoveriesForGoal(ctx, goalID)
-	if err != nil {
-		t.Fatalf("ListHandoffRecoveriesForGoal: %v", err)
-	}
-	if len(recoveries) != 1 || recoveries[0].HandoffKind != "task_create" || recoveries[0].RecoveredPhase != "received" || recoveries[0].StaleSessionID != staleID || recoveries[0].ReplacementID != replacement.ID {
-		t.Fatalf("task-create recoveries = %+v, want one received recovery with replacement", recoveries)
 	}
 }
 

@@ -516,17 +516,15 @@ func (s *Store) RecoverTaskHandoff(ctx context.Context, handoffID string, taskID
 	if err := s.requireGoalHandoffForTask(ctx, taskID, callerID); err != nil {
 		return TaskHandoff{}, fmt.Errorf("recover task handoff requires the current goal holder: %w", err)
 	}
-	if existing, err := s.findTaskHandoffRecovery(ctx, handoffID, taskID); err != nil {
-		return TaskHandoff{}, err
-	} else if existing != nil {
-		return s.GetTaskHandoff(ctx, handoffID)
-	}
 	handoff, err := s.GetTaskHandoff(ctx, handoffID)
 	if err != nil {
 		return TaskHandoff{}, err
 	}
-	if handoff.TaskID != taskID || handoff.CompletedReportAt != nil || handoff.RecoveredAt != nil {
+	if handoff.TaskID != taskID || handoff.CompletedReportAt != nil {
 		return TaskHandoff{}, ErrTaskHandoffRecoveryState
+	}
+	if handoff.RecoveredAt != nil {
+		return handoff, nil
 	}
 
 	staleSessionID := int64(0)
@@ -558,21 +556,6 @@ func (s *Store) RecoverTaskHandoff(ctx context.Context, handoffID string, taskID
 	if err != nil {
 		return TaskHandoff{}, err
 	}
-	taskIDValue := taskID
-	in := HandoffRecoveryInput{
-		HandoffKind:    "task",
-		HandoffID:      handoffID,
-		TaskID:         &taskIDValue,
-		RecoveredPhase: phase,
-		StaleSessionID: staleSessionID,
-		Proof:          sessionProof.RecoveryProof,
-		RecoveredBy:    callerID,
-		Reason:         reason,
-	}
-	if err := validateHandoffRecoveryInput(in); err != nil {
-		return TaskHandoff{}, err
-	}
-
 	var result sql.Result
 	recoveredAt := sql.NullString{String: time.Now().UTC().Format(time.RFC3339Nano), Valid: true}
 	recoveryReport := sql.NullString{String: reason, Valid: true}
@@ -599,34 +582,12 @@ func (s *Store) RecoverTaskHandoff(ctx context.Context, handoffID string, taskID
 	if affected, err := result.RowsAffected(); err != nil {
 		return TaskHandoff{}, fmt.Errorf("inspect task handoff recovery: %w", err)
 	} else if affected != 1 {
-		if _, lookupErr := getHandoffRecovery(ctx, q, in); lookupErr == nil {
-			if err := tx.Commit(); err != nil {
-				return TaskHandoff{}, fmt.Errorf("commit task handoff recovery retry: %w", err)
-			}
-			return s.GetTaskHandoff(ctx, handoffID)
-		}
 		return TaskHandoff{}, ErrTaskHandoffRecoveryState
-	}
-	if _, err := q.CreateHandoffRecovery(ctx, handoffRecoveryParams(in, recoveredAt.String)); err != nil {
-		return TaskHandoff{}, fmt.Errorf("record task handoff recovery: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
 		return TaskHandoff{}, fmt.Errorf("commit task handoff recovery: %w", err)
 	}
 	return s.GetTaskHandoff(ctx, handoffID)
-}
-
-func (s *Store) findTaskHandoffRecovery(ctx context.Context, handoffID string, taskID int64) (*HandoffRecovery, error) {
-	recoveries, err := s.ListHandoffRecoveriesForTask(ctx, taskID)
-	if err != nil {
-		return nil, fmt.Errorf("list task handoff recoveries: %w", err)
-	}
-	for i := range recoveries {
-		if recoveries[i].HandoffKind == "task" && recoveries[i].HandoffID == handoffID {
-			return &recoveries[i], nil
-		}
-	}
-	return nil, nil
 }
 
 // RejectTaskHandoffReview returns a task handoff to doing without releasing

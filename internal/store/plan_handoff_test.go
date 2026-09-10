@@ -143,18 +143,8 @@ func TestRecoverPlanHandoffClearsOnlyDefinitelyStaleReviewer(t *testing.T) {
 	if recovered.ReviewReceivedAt != nil || recovered.ReviewReceivedBy != 0 || recovered.ReviewRequestedBy != subcommanderID || recovered.ReviewRequestReport != "ready" {
 		t.Fatalf("recovered plan handoff = %+v, want only reviewer receipt cleared", recovered)
 	}
-	if _, err := s.RecoverPlanHandoff(ctx, plan.ID, goalID, freshCommanderID, "retry"); err != nil {
-		t.Fatalf("RecoverPlanHandoff retry: %v", err)
-	}
 	if _, err := s.ReceivePlanHandoffReview(ctx, plan.ID, goalID, freshCommanderID); err != nil {
 		t.Fatalf("ReceivePlanHandoffReview after recovery: %v", err)
-	}
-	recoveries, err := s.ListHandoffRecoveriesForGoal(ctx, goalID)
-	if err != nil {
-		t.Fatalf("ListHandoffRecoveriesForGoal: %v", err)
-	}
-	if len(recoveries) != 1 || recoveries[0].HandoffKind != "plan" || recoveries[0].HandoffID != plan.ID || recoveries[0].StaleSessionID != staleCommanderID || recoveries[0].RecoveredBy != freshCommanderID {
-		t.Fatalf("plan recovery audit = %+v", recoveries)
 	}
 }
 

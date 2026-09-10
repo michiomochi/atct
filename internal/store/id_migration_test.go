@@ -247,13 +247,6 @@ func assertForeignKeySet(t *testing.T, db *sql.DB) {
 			"review_received_by->agent_sessions.id":           {},
 			"review_rejection_received_by->agent_sessions.id": {},
 		},
-		"handoff_recoveries": {
-			"goal_id->goals.id":                   {},
-			"task_id->tasks.id":                   {},
-			"stale_session_id->agent_sessions.id": {},
-			"discard_decision_id->decisions.id":   {},
-			"recovered_by->agent_sessions.id":     {},
-		},
 	}
 
 	var got int
@@ -292,7 +285,7 @@ func assertForeignKeySet(t *testing.T, db *sql.DB) {
 		}
 		got += len(actual)
 	}
-	const wantCount = 30
+	const wantCount = 25
 	if got != wantCount {
 		t.Errorf("foreign key count = %d, want %d", got, wantCount)
 	}

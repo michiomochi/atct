@@ -83,22 +83,6 @@ type GoalHandoff struct {
 	RecoveryReport            sql.NullString
 }
 
-type HandoffRecovery struct {
-	ID                int64
-	HandoffKind       string
-	HandoffID         string
-	GoalID            sql.NullInt64
-	TaskID            sql.NullInt64
-	RecoveredPhase    string
-	StaleSessionID    int64
-	ProofKind         string
-	DiscardDecisionID sql.NullInt64
-	RecoveredBy       int64
-	ReplacementID     sql.NullString
-	Reason            string
-	CreatedAt         string
-}
-
 type MonitorHealth struct {
 	MonitorID        string
 	AgentKey         string

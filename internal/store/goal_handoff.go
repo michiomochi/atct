@@ -510,17 +510,15 @@ func (s *Store) RecoverGoalHandoff(ctx context.Context, handoffID string, goalID
 	if err := s.requireProjectClaimForGoal(ctx, goalID, callerID); err != nil {
 		return GoalHandoff{}, fmt.Errorf("recover goal handoff requires the current commander: %w", err)
 	}
-	if recovered, err := s.recoveryAlreadyRecorded(ctx, "goal", handoffID, goalID); err != nil {
-		return GoalHandoff{}, err
-	} else if recovered {
-		return s.GetGoalHandoff(ctx, handoffID)
-	}
 	handoff, err := s.GetGoalHandoff(ctx, handoffID)
 	if err != nil {
 		return GoalHandoff{}, err
 	}
-	if handoff.GoalID != goalID || handoff.CompletedReportAt != nil || handoff.RecoveredAt != nil {
+	if handoff.GoalID != goalID || handoff.CompletedReportAt != nil {
 		return GoalHandoff{}, ErrGoalHandoffReviewState
+	}
+	if handoff.RecoveredAt != nil {
+		return handoff, nil
 	}
 	phase := ""
 	staleSessionID := int64(0)
@@ -550,11 +548,6 @@ func (s *Store) RecoverGoalHandoff(ctx context.Context, handoffID string, goalID
 	if err != nil {
 		return GoalHandoff{}, err
 	}
-	proof := sessionProof.RecoveryProof
-	in := HandoffRecoveryInput{HandoffKind: "goal", HandoffID: handoffID, GoalID: &goalID, RecoveredPhase: phase, StaleSessionID: staleSessionID, Proof: proof, RecoveredBy: callerID, Reason: reason}
-	if err := validateHandoffRecoveryInput(in); err != nil {
-		return GoalHandoff{}, err
-	}
 	recoveredAt := time.Now().UTC().Format(time.RFC3339Nano)
 	var result sql.Result
 	switch phase {
@@ -578,9 +571,6 @@ func (s *Store) RecoverGoalHandoff(ctx context.Context, handoffID string, goalID
 	}
 	if affected, err := result.RowsAffected(); err != nil || affected != 1 {
 		return GoalHandoff{}, fmt.Errorf("recover stale goal handoff owner: %w", ErrGoalHandoffReviewState)
-	}
-	if _, err := q.CreateHandoffRecovery(ctx, handoffRecoveryParams(in, time.Now().UTC().Format(time.RFC3339Nano))); err != nil {
-		return GoalHandoff{}, fmt.Errorf("record goal handoff recovery: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
 		return GoalHandoff{}, fmt.Errorf("commit goal handoff recovery: %w", err)
@@ -1086,11 +1076,6 @@ func (s *Store) RecoverPlanHandoff(ctx context.Context, handoffID string, goalID
 	if err := s.requireProjectClaimForGoal(ctx, goalID, callerID); err != nil {
 		return PlanHandoff{}, fmt.Errorf("recover plan handoff requires the current commander: %w", err)
 	}
-	if recovered, err := s.recoveryAlreadyRecorded(ctx, "plan", handoffID, goalID); err != nil {
-		return PlanHandoff{}, err
-	} else if recovered {
-		return s.GetPlanHandoff(ctx, handoffID)
-	}
 	handoff, err := s.GetPlanHandoff(ctx, handoffID)
 	if err != nil {
 		return PlanHandoff{}, err
@@ -1111,11 +1096,6 @@ func (s *Store) RecoverPlanHandoff(ctx context.Context, handoffID string, goalID
 	if err != nil {
 		return PlanHandoff{}, err
 	}
-	proof := sessionProof.RecoveryProof
-	in := HandoffRecoveryInput{HandoffKind: "plan", HandoffID: handoffID, GoalID: &goalID, RecoveredPhase: "review_received", StaleSessionID: handoff.ReviewReceivedBy, Proof: proof, RecoveredBy: callerID, Reason: reason}
-	if err := validateHandoffRecoveryInput(in); err != nil {
-		return PlanHandoff{}, err
-	}
 	result, err := q.RecoverPlanHandoffReview(ctx, sqlcgen.RecoverPlanHandoffReviewParams{
 		ID: handoffID, GoalID: goalID, ReviewReceivedBy: sql.NullInt64{Int64: handoff.ReviewReceivedBy, Valid: true}, Pid: sessionProof.PID, StartedAt: sessionProof.StartedAt,
 	})
@@ -1125,26 +1105,10 @@ func (s *Store) RecoverPlanHandoff(ctx context.Context, handoffID string, goalID
 	if affected, err := result.RowsAffected(); err != nil || affected != 1 {
 		return PlanHandoff{}, ErrPlanHandoffReviewState
 	}
-	if _, err := q.CreateHandoffRecovery(ctx, handoffRecoveryParams(in, time.Now().UTC().Format(time.RFC3339Nano))); err != nil {
-		return PlanHandoff{}, fmt.Errorf("record plan handoff recovery: %w", err)
-	}
 	if err := tx.Commit(); err != nil {
 		return PlanHandoff{}, fmt.Errorf("commit plan handoff recovery: %w", err)
 	}
 	return s.GetPlanHandoff(ctx, handoffID)
-}
-
-func (s *Store) recoveryAlreadyRecorded(ctx context.Context, kind, handoffID string, goalID int64) (bool, error) {
-	recoveries, err := s.ListHandoffRecoveriesForGoal(ctx, goalID)
-	if err != nil {
-		return false, fmt.Errorf("list %s handoff recoveries: %w", kind, err)
-	}
-	for _, recovery := range recoveries {
-		if recovery.HandoffKind == kind && recovery.HandoffID == handoffID {
-			return true, nil
-		}
-	}
-	return false, nil
 }
 
 type recoverySessionProof struct {
