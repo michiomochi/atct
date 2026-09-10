@@ -19,10 +19,12 @@ type TaskCreateHandoff struct {
 	ID                                           string
 	GoalID, RequestedBy, ReceivedBy, CompletedBy int64
 	RequestedAt, ReceivedAt, CompletedAt         *time.Time
+	RecoveredAt                                  *time.Time
+	RecoveryReport                               string
 }
 
 func taskCreateHandoffFromRow(row sqlcgen.TaskCreateHandoff) (TaskCreateHandoff, error) {
-	h := TaskCreateHandoff{ID: row.ID, GoalID: row.GoalID, RequestedBy: nullableAgentSessionID(row.RequestedBy), ReceivedBy: nullableAgentSessionID(row.ReceivedBy), CompletedBy: nullableAgentSessionID(row.CompletedBy)}
+	h := TaskCreateHandoff{ID: row.ID, GoalID: row.GoalID, RequestedBy: nullableAgentSessionID(row.RequestedBy), ReceivedBy: nullableAgentSessionID(row.ReceivedBy), CompletedBy: nullableAgentSessionID(row.CompletedBy), RecoveryReport: row.RecoveryReport.String}
 	var err error
 	if h.RequestedAt, err = parseTaskHandoffTime("task create requested_at", row.RequestedAt); err != nil {
 		return h, err
@@ -31,6 +33,9 @@ func taskCreateHandoffFromRow(row sqlcgen.TaskCreateHandoff) (TaskCreateHandoff,
 		return h, err
 	}
 	if h.CompletedAt, err = parseTaskHandoffTime("task create completed_at", row.CompletedAt); err != nil {
+		return h, err
+	}
+	if h.RecoveredAt, err = parseTaskHandoffTime("task create recovered_at", row.RecoveredAt); err != nil {
 		return h, err
 	}
 	return h, nil
@@ -69,11 +74,14 @@ func (s *Store) getTaskCreateHandoff(ctx context.Context, id string) (TaskCreate
 }
 
 func (s *Store) ReceiveTaskCreateHandoff(ctx context.Context, id string, receivedBy int64) (TaskCreateHandoff, error) {
+	if err := s.requireUndiscardedSession(ctx, receivedBy); err != nil {
+		return TaskCreateHandoff{}, err
+	}
 	h, err := s.getTaskCreateHandoff(ctx, id)
 	if err != nil {
 		return h, err
 	}
-	if h.ReceivedBy != 0 || h.CompletedAt != nil || h.RequestedBy == receivedBy || receivedBy == 0 {
+	if h.ReceivedBy != 0 || h.CompletedAt != nil || h.RecoveredAt != nil || h.RequestedBy == receivedBy || receivedBy == 0 {
 		return h, ErrTaskCreateHandoffState
 	}
 	goalHandoff, err := s.openGoalHandoff(ctx, h.GoalID)
@@ -87,11 +95,106 @@ func (s *Store) ReceiveTaskCreateHandoff(ctx context.Context, id string, receive
 	return s.getTaskCreateHandoff(ctx, id)
 }
 
-func (s *Store) createTaskCreateHandoffTx(ctx context.Context, tx *sql.Tx, goalID, requestedBy int64) error {
-	return sqlcgen.New(tx).CreateTaskCreateHandoff(ctx, sqlcgen.CreateTaskCreateHandoffParams{ID: uuid.NewString(), GoalID: goalID, RequestedBy: sql.NullInt64{Int64: requestedBy, Valid: true}, RequestedAt: sql.NullString{String: time.Now().UTC().Format(time.RFC3339Nano), Valid: true}, RequestReport: sql.NullString{String: "create implementation tasks for accepted plan", Valid: true}})
+// RecoverTaskCreateHandoff terminalizes a definitely stale task-create attempt
+// and creates a normal replacement request for the current project commander.
+// The goal handoff holder remains the sole caller.
+func (s *Store) RecoverTaskCreateHandoff(ctx context.Context, handoffID string, goalID, callerID int64, reason string) (TaskCreateHandoff, error) {
+	if err := s.requireUndiscardedSession(ctx, callerID); err != nil {
+		return TaskCreateHandoff{}, err
+	}
+	if err := s.requireGoalHandoffHolder(ctx, goalID, callerID); err != nil {
+		return TaskCreateHandoff{}, fmt.Errorf("recover task-create handoff requires the current goal holder: %w", err)
+	}
+	handoff, err := s.getTaskCreateHandoff(ctx, handoffID)
+	if err != nil {
+		return TaskCreateHandoff{}, err
+	}
+	if handoff.GoalID != goalID || handoff.CompletedAt != nil {
+		return TaskCreateHandoff{}, ErrTaskCreateHandoffState
+	}
+	if handoff.RecoveredAt != nil {
+		return handoff, nil
+	}
+	phase := "requested"
+	staleSessionID := handoff.RequestedBy
+	if handoff.ReceivedAt != nil {
+		phase = "received"
+		staleSessionID = handoff.ReceivedBy
+	}
+	if staleSessionID == 0 || staleSessionID == callerID {
+		return TaskCreateHandoff{}, ErrTaskCreateHandoffState
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return TaskCreateHandoff{}, fmt.Errorf("begin task-create handoff recovery: %w", err)
+	}
+	defer tx.Rollback()
+	q := sqlcgen.New(tx)
+	sessionProof, err := canRecoverSessionInTx(ctx, q, staleSessionID)
+	if err != nil {
+		return TaskCreateHandoff{}, err
+	}
+	projectID, err := q.GetGoalProjectID(ctx, goalID)
+	if err != nil {
+		return TaskCreateHandoff{}, fmt.Errorf("find task-create replacement project: %w", err)
+	}
+	project, err := q.GetProject(ctx, projectID)
+	if err != nil {
+		return TaskCreateHandoff{}, fmt.Errorf("find task-create replacement commander: %w", err)
+	}
+	replacementBy := project.ClaimedBy
+	if replacementBy <= 0 || replacementBy == staleSessionID || !claimIsRunningWithQueries(ctx, q, replacementBy) {
+		return TaskCreateHandoff{}, ErrTaskCreateHandoffState
+	}
+	replacementSession, err := q.GetAgentSessionRecovery(ctx, replacementBy)
+	if err != nil {
+		return TaskCreateHandoff{}, fmt.Errorf("find task-create replacement session: %w", err)
+	}
+	if agentSessionHasDiscardMetadata(replacementSession) {
+		return TaskCreateHandoff{}, ErrSessionDiscarded
+	}
+	recoveredAt := time.Now().UTC().Format(time.RFC3339Nano)
+	var result sql.Result
+	if phase == "received" {
+		result, err = q.RecoverTaskCreateHandoffReceiver(ctx, sqlcgen.RecoverTaskCreateHandoffReceiverParams{
+			RecoveredAt: sql.NullString{String: recoveredAt, Valid: true}, RecoveryReport: sql.NullString{String: reason, Valid: true},
+			ID: handoffID, GoalID: goalID, ReceivedBy: sql.NullInt64{Int64: staleSessionID, Valid: true}, Pid: sessionProof.PID, StartedAt: sessionProof.StartedAt,
+		})
+	} else {
+		result, err = q.RecoverTaskCreateHandoffRequester(ctx, sqlcgen.RecoverTaskCreateHandoffRequesterParams{
+			RecoveredAt: sql.NullString{String: recoveredAt, Valid: true}, RecoveryReport: sql.NullString{String: reason, Valid: true},
+			ID: handoffID, GoalID: goalID, RequestedBy: sql.NullInt64{Int64: staleSessionID, Valid: true}, Pid: sessionProof.PID, StartedAt: sessionProof.StartedAt,
+		})
+	}
+	if err != nil {
+		return TaskCreateHandoff{}, fmt.Errorf("recover stale task-create handoff: %w", err)
+	}
+	if affected, err := result.RowsAffected(); err != nil {
+		return TaskCreateHandoff{}, fmt.Errorf("inspect task-create handoff recovery: %w", err)
+	} else if affected != 1 {
+		return TaskCreateHandoff{}, ErrTaskCreateHandoffState
+	}
+	_, err = s.createTaskCreateHandoffTx(ctx, tx, goalID, replacementBy)
+	if err != nil {
+		return TaskCreateHandoff{}, fmt.Errorf("create task-create replacement: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return TaskCreateHandoff{}, fmt.Errorf("commit task-create handoff recovery: %w", err)
+	}
+	return s.getTaskCreateHandoff(ctx, handoffID)
+}
+
+func (s *Store) createTaskCreateHandoffTx(ctx context.Context, tx *sql.Tx, goalID, requestedBy int64) (string, error) {
+	id := uuid.NewString()
+	err := sqlcgen.New(tx).CreateTaskCreateHandoff(ctx, sqlcgen.CreateTaskCreateHandoffParams{ID: id, GoalID: goalID, RequestedBy: sql.NullInt64{Int64: requestedBy, Valid: true}, RequestedAt: sql.NullString{String: time.Now().UTC().Format(time.RFC3339Nano), Valid: true}, RequestReport: sql.NullString{String: "create implementation tasks for accepted plan", Valid: true}})
+	return id, err
 }
 
 func (s *Store) CreateTasksForHandoff(ctx context.Context, handoffID string, sessionID, goalID int64, agent, key string, titles, descriptions []string) ([]domain.Task, error) {
+	if err := s.requireUndiscardedSession(ctx, sessionID); err != nil {
+		return nil, err
+	}
 	if handoffID == "" || key == "" || len(titles) == 0 {
 		return nil, ErrTaskCreateHandoffState
 	}
@@ -99,7 +202,7 @@ func (s *Store) CreateTasksForHandoff(ctx context.Context, handoffID string, ses
 	if err != nil {
 		return nil, err
 	}
-	if h.GoalID != goalID || h.ReceivedBy != sessionID {
+	if h.GoalID != goalID || h.ReceivedBy != sessionID || h.RecoveredAt != nil {
 		return nil, ErrTaskCreateHandoffState
 	}
 	if len(titles) != len(descriptions) {
@@ -119,7 +222,7 @@ func (s *Store) CreateTasksForHandoff(ctx context.Context, handoffID string, ses
 		return nil, err
 	}
 	h, err = taskCreateHandoffFromRow(row)
-	if err != nil || h.GoalID != goalID || h.ReceivedBy != sessionID {
+	if err != nil || h.GoalID != goalID || h.ReceivedBy != sessionID || h.RecoveredAt != nil {
 		return nil, ErrTaskCreateHandoffState
 	}
 	if h.CompletedAt != nil {

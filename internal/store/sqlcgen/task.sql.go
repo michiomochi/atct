@@ -13,7 +13,7 @@ import (
 const amendGoalHandoffReport = `-- name: AmendGoalHandoffReport :execresult
 UPDATE goal_handoffs
 SET complete_report = ?
-WHERE id = ? AND goal_id = ? AND completed_report_at IS NOT NULL
+WHERE id = ? AND goal_id = ? AND completed_report_at IS NOT NULL AND recovered_at IS NULL
 `
 
 type AmendGoalHandoffReportParams struct {
@@ -29,7 +29,7 @@ func (q *Queries) AmendGoalHandoffReport(ctx context.Context, arg AmendGoalHando
 const amendTaskHandoffReport = `-- name: AmendTaskHandoffReport :execresult
 UPDATE task_handoffs
 SET complete_report = ?
-WHERE id = ? AND task_id = ? AND completed_report_at IS NOT NULL
+WHERE id = ? AND task_id = ? AND completed_report_at IS NOT NULL AND recovered_at IS NULL
 `
 
 type AmendTaskHandoffReportParams struct {
@@ -45,7 +45,7 @@ func (q *Queries) AmendTaskHandoffReport(ctx context.Context, arg AmendTaskHando
 const completeGoalHandoff = `-- name: CompleteGoalHandoff :execresult
 UPDATE goal_handoffs
 SET completed_report_at = ?, complete_report = ?
-WHERE id = ? AND goal_id = ? AND requested_at IS NOT NULL AND completed_report_at IS NULL
+WHERE id = ? AND goal_id = ? AND requested_at IS NOT NULL AND completed_report_at IS NULL AND recovered_at IS NULL
 `
 
 type CompleteGoalHandoffParams struct {
@@ -73,6 +73,7 @@ WHERE id = ? AND goal_id = ?
   AND review_received_by = ?
   AND review_received_at IS NOT NULL
   AND completed_report_at IS NULL
+  AND recovered_at IS NULL
 `
 
 type CompleteGoalHandoffByReviewerParams struct {
@@ -122,7 +123,7 @@ func (q *Queries) CompletePlanHandoff(ctx context.Context, arg CompletePlanHando
 
 const completeTaskCreateHandoff = `-- name: CompleteTaskCreateHandoff :execresult
 UPDATE task_create_handoffs SET completed_by = ?, completed_at = ?, complete_report = ?
-WHERE id = ? AND received_by = ? AND completed_at IS NULL
+WHERE id = ? AND received_by = ? AND completed_at IS NULL AND recovered_at IS NULL
 `
 
 type CompleteTaskCreateHandoffParams struct {
@@ -146,7 +147,7 @@ func (q *Queries) CompleteTaskCreateHandoff(ctx context.Context, arg CompleteTas
 const completeTaskHandoff = `-- name: CompleteTaskHandoff :execresult
 UPDATE task_handoffs
 SET completed_report_at = ?, complete_report = ?
-WHERE id = ? AND task_id = ? AND requested_at IS NOT NULL AND completed_report_at IS NULL
+WHERE id = ? AND task_id = ? AND requested_at IS NOT NULL AND completed_report_at IS NULL AND recovered_at IS NULL
 `
 
 type CompleteTaskHandoffParams struct {
@@ -174,6 +175,7 @@ WHERE id = ? AND task_id = ?
   AND review_received_by = ?
   AND review_received_at IS NOT NULL
   AND completed_report_at IS NULL
+  AND recovered_at IS NULL
 `
 
 type CompleteTaskHandoffByReviewerParams struct {
@@ -361,7 +363,8 @@ SELECT id, goal_id, requested_by, received_by,
        request_report, complete_report,
        review_requested_by, review_requested_at, review_request_report,
        review_received_by, review_received_at,
-       review_rejected_at, review_reject_report, review_rejection_received_by, review_rejection_received_at
+       review_rejected_at, review_reject_report, review_rejection_received_by, review_rejection_received_at,
+       recovered_at, recovery_report
 FROM goal_handoffs
 WHERE id = ?
 `
@@ -388,6 +391,8 @@ func (q *Queries) GetGoalHandoff(ctx context.Context, id string) (GoalHandoff, e
 		&i.ReviewRejectReport,
 		&i.ReviewRejectionReceivedBy,
 		&i.ReviewRejectionReceivedAt,
+		&i.RecoveredAt,
+		&i.RecoveryReport,
 	)
 	return i, err
 }
@@ -448,7 +453,7 @@ func (q *Queries) GetPlanHandoff(ctx context.Context, id string) (PlanHandoff, e
 }
 
 const getTaskCreateHandoff = `-- name: GetTaskCreateHandoff :one
-SELECT id, goal_id, requested_by, received_by, completed_by, requested_at, received_at, completed_at, request_report, complete_report FROM task_create_handoffs WHERE id = ?
+SELECT id, goal_id, requested_by, received_by, completed_by, requested_at, received_at, completed_at, request_report, complete_report, recovered_at, recovery_report FROM task_create_handoffs WHERE id = ?
 `
 
 func (q *Queries) GetTaskCreateHandoff(ctx context.Context, id string) (TaskCreateHandoff, error) {
@@ -465,12 +470,18 @@ func (q *Queries) GetTaskCreateHandoff(ctx context.Context, id string) (TaskCrea
 		&i.CompletedAt,
 		&i.RequestReport,
 		&i.CompleteReport,
+		&i.RecoveredAt,
+		&i.RecoveryReport,
 	)
 	return i, err
 }
 
 const getTaskCreateHandoffForGoal = `-- name: GetTaskCreateHandoffForGoal :one
-SELECT id, goal_id, requested_by, received_by, completed_by, requested_at, received_at, completed_at, request_report, complete_report FROM task_create_handoffs WHERE goal_id = ?
+SELECT id, goal_id, requested_by, received_by, completed_by, requested_at, received_at, completed_at, request_report, complete_report, recovered_at, recovery_report FROM task_create_handoffs
+WHERE goal_id = ?
+ORDER BY CASE WHEN completed_at IS NULL AND recovered_at IS NULL THEN 0 ELSE 1 END,
+         requested_at DESC, id DESC
+LIMIT 1
 `
 
 func (q *Queries) GetTaskCreateHandoffForGoal(ctx context.Context, goalID int64) (TaskCreateHandoff, error) {
@@ -487,6 +498,8 @@ func (q *Queries) GetTaskCreateHandoffForGoal(ctx context.Context, goalID int64)
 		&i.CompletedAt,
 		&i.RequestReport,
 		&i.CompleteReport,
+		&i.RecoveredAt,
+		&i.RecoveryReport,
 	)
 	return i, err
 }
@@ -539,7 +552,8 @@ SELECT id, task_id, requested_by, received_by,
        request_report, complete_report,
        review_requested_by, review_requested_at, review_request_report,
        review_received_by, review_received_at,
-       review_rejected_at, review_reject_report, review_rejection_received_by, review_rejection_received_at
+       review_rejected_at, review_reject_report, review_rejection_received_by, review_rejection_received_at,
+       recovered_at, recovery_report
 FROM task_handoffs
 WHERE id = ?
 `
@@ -566,6 +580,8 @@ func (q *Queries) GetTaskHandoff(ctx context.Context, id string) (TaskHandoff, e
 		&i.ReviewRejectReport,
 		&i.ReviewRejectionReceivedBy,
 		&i.ReviewRejectionReceivedAt,
+		&i.RecoveredAt,
+		&i.RecoveryReport,
 	)
 	return i, err
 }
@@ -649,7 +665,8 @@ SELECT id, goal_id, requested_by, received_by,
        request_report, complete_report,
        review_requested_by, review_requested_at, review_request_report,
        review_received_by, review_received_at,
-       review_rejected_at, review_reject_report, review_rejection_received_by, review_rejection_received_at
+       review_rejected_at, review_reject_report, review_rejection_received_by, review_rejection_received_at,
+       recovered_at, recovery_report
 FROM goal_handoffs
 WHERE goal_id = ?
 ORDER BY id
@@ -683,6 +700,8 @@ func (q *Queries) ListGoalHandoffs(ctx context.Context, goalID int64) ([]GoalHan
 			&i.ReviewRejectReport,
 			&i.ReviewRejectionReceivedBy,
 			&i.ReviewRejectionReceivedAt,
+			&i.RecoveredAt,
+			&i.RecoveryReport,
 		); err != nil {
 			return nil, err
 		}
@@ -706,6 +725,7 @@ JOIN tasks AS t ON t.id = th.task_id
 JOIN goals AS g ON g.id = t.goal_id
 WHERE g.project_id = ?
   AND th.completed_report_at IS NULL
+  AND th.recovered_at IS NULL
 ORDER BY g.created_at, g.id, t.sort_order, t.id
 `
 
@@ -771,11 +791,13 @@ SELECT th.id, th.task_id, th.requested_by, th.received_by,
        th.request_report, th.complete_report,
        th.review_requested_by, th.review_requested_at, th.review_request_report,
        th.review_received_by, th.review_received_at,
-       th.review_rejected_at, th.review_reject_report, th.review_rejection_received_by, th.review_rejection_received_at
+       th.review_rejected_at, th.review_reject_report, th.review_rejection_received_by, th.review_rejection_received_at,
+       th.recovered_at, th.recovery_report
 FROM task_handoffs AS th
 JOIN tasks AS t ON t.id = th.task_id
 WHERE t.goal_id = ?
   AND th.completed_report_at IS NULL
+  AND th.recovered_at IS NULL
 ORDER BY th.id
 `
 
@@ -807,6 +829,8 @@ func (q *Queries) ListOpenTaskHandoffsForGoal(ctx context.Context, goalID int64)
 			&i.ReviewRejectReport,
 			&i.ReviewRejectionReceivedBy,
 			&i.ReviewRejectionReceivedAt,
+			&i.RecoveredAt,
+			&i.RecoveryReport,
 		); err != nil {
 			return nil, err
 		}
@@ -912,7 +936,7 @@ func (q *Queries) ListTaskCommits(ctx context.Context, taskID int64) ([]ListTask
 }
 
 const listTaskCreateHandoffs = `-- name: ListTaskCreateHandoffs :many
-SELECT id, goal_id, requested_by, received_by, completed_by, requested_at, received_at, completed_at, request_report, complete_report FROM task_create_handoffs WHERE goal_id = ? ORDER BY requested_at, id
+SELECT id, goal_id, requested_by, received_by, completed_by, requested_at, received_at, completed_at, request_report, complete_report, recovered_at, recovery_report FROM task_create_handoffs WHERE goal_id = ? ORDER BY requested_at, id
 `
 
 func (q *Queries) ListTaskCreateHandoffs(ctx context.Context, goalID int64) ([]TaskCreateHandoff, error) {
@@ -935,6 +959,8 @@ func (q *Queries) ListTaskCreateHandoffs(ctx context.Context, goalID int64) ([]T
 			&i.CompletedAt,
 			&i.RequestReport,
 			&i.CompleteReport,
+			&i.RecoveredAt,
+			&i.RecoveryReport,
 		); err != nil {
 			return nil, err
 		}
@@ -955,7 +981,8 @@ SELECT id, task_id, requested_by, received_by,
        request_report, complete_report,
        review_requested_by, review_requested_at, review_request_report,
        review_received_by, review_received_at,
-       review_rejected_at, review_reject_report, review_rejection_received_by, review_rejection_received_at
+       review_rejected_at, review_reject_report, review_rejection_received_by, review_rejection_received_at,
+       recovered_at, recovery_report
 FROM task_handoffs
 WHERE task_id = ?
 ORDER BY id
@@ -989,6 +1016,8 @@ func (q *Queries) ListTaskHandoffs(ctx context.Context, taskID int64) ([]TaskHan
 			&i.ReviewRejectReport,
 			&i.ReviewRejectionReceivedBy,
 			&i.ReviewRejectionReceivedAt,
+			&i.RecoveredAt,
+			&i.RecoveryReport,
 		); err != nil {
 			return nil, err
 		}
@@ -1063,7 +1092,7 @@ func (q *Queries) MaxTaskSortOrder(ctx context.Context, goalID int64) (int64, er
 const receiveGoalHandoff = `-- name: ReceiveGoalHandoff :execresult
 UPDATE goal_handoffs
 SET received_by = ?, received_at = ?
-WHERE id = ? AND goal_id = ? AND requested_at IS NOT NULL
+WHERE id = ? AND goal_id = ? AND requested_at IS NOT NULL AND recovered_at IS NULL
 `
 
 type ReceiveGoalHandoffParams struct {
@@ -1089,6 +1118,7 @@ WHERE id = ? AND goal_id = ?
   AND review_requested_at IS NOT NULL
   AND review_received_at IS NULL
   AND completed_report_at IS NULL
+  AND recovered_at IS NULL
 `
 
 type ReceiveGoalHandoffReviewParams struct {
@@ -1114,6 +1144,7 @@ WHERE id = ? AND goal_id = ?
   AND review_rejected_at IS NOT NULL
   AND review_rejection_received_at IS NULL
   AND received_by = ?
+  AND recovered_at IS NULL
 `
 
 type ReceiveGoalHandoffReviewRejectionParams struct {
@@ -1188,7 +1219,7 @@ func (q *Queries) ReceivePlanHandoffReviewRejection(ctx context.Context, arg Rec
 
 const receiveTaskCreateHandoff = `-- name: ReceiveTaskCreateHandoff :execresult
 UPDATE task_create_handoffs SET received_by = ?, received_at = ?
-WHERE id = ? AND received_by IS NULL
+WHERE id = ? AND received_by IS NULL AND completed_at IS NULL AND recovered_at IS NULL
 `
 
 type ReceiveTaskCreateHandoffParams struct {
@@ -1230,6 +1261,7 @@ WHERE id = ? AND task_id = ?
   AND review_requested_at IS NOT NULL
   AND review_received_at IS NULL
   AND completed_report_at IS NULL
+  AND recovered_at IS NULL
 `
 
 type ReceiveTaskHandoffReviewParams struct {
@@ -1255,6 +1287,7 @@ WHERE id = ? AND task_id = ?
   AND review_rejected_at IS NOT NULL
   AND review_rejection_received_at IS NULL
   AND received_by = ?
+  AND recovered_at IS NULL
 `
 
 type ReceiveTaskHandoffReviewRejectionParams struct {
@@ -1272,6 +1305,283 @@ func (q *Queries) ReceiveTaskHandoffReviewRejection(ctx context.Context, arg Rec
 		arg.ID,
 		arg.TaskID,
 		arg.ReceivedBy,
+	)
+}
+
+const recoverGoalHandoffReceiver = `-- name: RecoverGoalHandoffReceiver :execresult
+UPDATE goal_handoffs
+SET recovered_at = ?, recovery_report = ?
+WHERE goal_handoffs.id = ? AND goal_handoffs.goal_id = ? AND goal_handoffs.received_by = ?
+  AND goal_handoffs.received_at IS NOT NULL
+  AND goal_handoffs.completed_report_at IS NULL
+  AND goal_handoffs.recovered_at IS NULL
+  AND EXISTS (SELECT 1 FROM agent_sessions WHERE agent_sessions.id = goal_handoffs.received_by AND pid = ? AND started_at = ?)
+`
+
+type RecoverGoalHandoffReceiverParams struct {
+	RecoveredAt    sql.NullString
+	RecoveryReport sql.NullString
+	ID             string
+	GoalID         int64
+	ReceivedBy     sql.NullInt64
+	Pid            int64
+	StartedAt      string
+}
+
+func (q *Queries) RecoverGoalHandoffReceiver(ctx context.Context, arg RecoverGoalHandoffReceiverParams) (sql.Result, error) {
+	return q.db.ExecContext(ctx, recoverGoalHandoffReceiver,
+		arg.RecoveredAt,
+		arg.RecoveryReport,
+		arg.ID,
+		arg.GoalID,
+		arg.ReceivedBy,
+		arg.Pid,
+		arg.StartedAt,
+	)
+}
+
+const recoverGoalHandoffRequester = `-- name: RecoverGoalHandoffRequester :execresult
+UPDATE goal_handoffs
+SET recovered_at = ?, recovery_report = ?
+WHERE goal_handoffs.id = ? AND goal_handoffs.goal_id = ? AND goal_handoffs.requested_by = ?
+  AND goal_handoffs.requested_at IS NOT NULL
+  AND goal_handoffs.received_at IS NULL
+  AND goal_handoffs.completed_report_at IS NULL
+  AND goal_handoffs.recovered_at IS NULL
+  AND EXISTS (SELECT 1 FROM agent_sessions WHERE agent_sessions.id = goal_handoffs.requested_by AND pid = ? AND started_at = ?)
+`
+
+type RecoverGoalHandoffRequesterParams struct {
+	RecoveredAt    sql.NullString
+	RecoveryReport sql.NullString
+	ID             string
+	GoalID         int64
+	RequestedBy    sql.NullInt64
+	Pid            int64
+	StartedAt      string
+}
+
+func (q *Queries) RecoverGoalHandoffRequester(ctx context.Context, arg RecoverGoalHandoffRequesterParams) (sql.Result, error) {
+	return q.db.ExecContext(ctx, recoverGoalHandoffRequester,
+		arg.RecoveredAt,
+		arg.RecoveryReport,
+		arg.ID,
+		arg.GoalID,
+		arg.RequestedBy,
+		arg.Pid,
+		arg.StartedAt,
+	)
+}
+
+const recoverGoalHandoffReview = `-- name: RecoverGoalHandoffReview :execresult
+UPDATE goal_handoffs
+SET review_received_by = NULL, review_received_at = NULL
+WHERE goal_handoffs.id = ? AND goal_handoffs.goal_id = ? AND goal_handoffs.review_received_by = ?
+  AND goal_handoffs.review_received_at IS NOT NULL
+  AND EXISTS (SELECT 1 FROM agent_sessions WHERE agent_sessions.id = goal_handoffs.review_received_by AND pid = ? AND started_at = ?)
+  AND goal_handoffs.completed_report_at IS NULL
+  AND goal_handoffs.recovered_at IS NULL
+`
+
+type RecoverGoalHandoffReviewParams struct {
+	ID               string
+	GoalID           int64
+	ReviewReceivedBy sql.NullInt64
+	Pid              int64
+	StartedAt        string
+}
+
+func (q *Queries) RecoverGoalHandoffReview(ctx context.Context, arg RecoverGoalHandoffReviewParams) (sql.Result, error) {
+	return q.db.ExecContext(ctx, recoverGoalHandoffReview,
+		arg.ID,
+		arg.GoalID,
+		arg.ReviewReceivedBy,
+		arg.Pid,
+		arg.StartedAt,
+	)
+}
+
+const recoverPlanHandoffReview = `-- name: RecoverPlanHandoffReview :execresult
+UPDATE plan_handoffs
+SET review_received_by = NULL, review_received_at = NULL
+WHERE plan_handoffs.id = ? AND plan_handoffs.goal_id = ? AND plan_handoffs.review_received_by = ?
+  AND plan_handoffs.review_received_at IS NOT NULL
+  AND EXISTS (SELECT 1 FROM agent_sessions WHERE agent_sessions.id = plan_handoffs.review_received_by AND pid = ? AND started_at = ?)
+  AND plan_handoffs.completed_report_at IS NULL
+`
+
+type RecoverPlanHandoffReviewParams struct {
+	ID               string
+	GoalID           int64
+	ReviewReceivedBy sql.NullInt64
+	Pid              int64
+	StartedAt        string
+}
+
+func (q *Queries) RecoverPlanHandoffReview(ctx context.Context, arg RecoverPlanHandoffReviewParams) (sql.Result, error) {
+	return q.db.ExecContext(ctx, recoverPlanHandoffReview,
+		arg.ID,
+		arg.GoalID,
+		arg.ReviewReceivedBy,
+		arg.Pid,
+		arg.StartedAt,
+	)
+}
+
+const recoverTaskCreateHandoffReceiver = `-- name: RecoverTaskCreateHandoffReceiver :execresult
+UPDATE task_create_handoffs
+SET recovered_at = ?, recovery_report = ?
+WHERE task_create_handoffs.id = ? AND task_create_handoffs.goal_id = ? AND task_create_handoffs.received_by = ?
+  AND received_at IS NOT NULL
+  AND completed_at IS NULL
+  AND recovered_at IS NULL
+  AND EXISTS (SELECT 1 FROM agent_sessions WHERE agent_sessions.id = task_create_handoffs.received_by AND pid = ? AND started_at = ?)
+`
+
+type RecoverTaskCreateHandoffReceiverParams struct {
+	RecoveredAt    sql.NullString
+	RecoveryReport sql.NullString
+	ID             string
+	GoalID         int64
+	ReceivedBy     sql.NullInt64
+	Pid            int64
+	StartedAt      string
+}
+
+func (q *Queries) RecoverTaskCreateHandoffReceiver(ctx context.Context, arg RecoverTaskCreateHandoffReceiverParams) (sql.Result, error) {
+	return q.db.ExecContext(ctx, recoverTaskCreateHandoffReceiver,
+		arg.RecoveredAt,
+		arg.RecoveryReport,
+		arg.ID,
+		arg.GoalID,
+		arg.ReceivedBy,
+		arg.Pid,
+		arg.StartedAt,
+	)
+}
+
+const recoverTaskCreateHandoffRequester = `-- name: RecoverTaskCreateHandoffRequester :execresult
+UPDATE task_create_handoffs
+SET recovered_at = ?, recovery_report = ?
+WHERE task_create_handoffs.id = ? AND task_create_handoffs.goal_id = ? AND task_create_handoffs.requested_by = ?
+  AND received_by IS NULL
+  AND completed_at IS NULL
+  AND recovered_at IS NULL
+  AND EXISTS (SELECT 1 FROM agent_sessions WHERE agent_sessions.id = task_create_handoffs.requested_by AND pid = ? AND started_at = ?)
+`
+
+type RecoverTaskCreateHandoffRequesterParams struct {
+	RecoveredAt    sql.NullString
+	RecoveryReport sql.NullString
+	ID             string
+	GoalID         int64
+	RequestedBy    sql.NullInt64
+	Pid            int64
+	StartedAt      string
+}
+
+func (q *Queries) RecoverTaskCreateHandoffRequester(ctx context.Context, arg RecoverTaskCreateHandoffRequesterParams) (sql.Result, error) {
+	return q.db.ExecContext(ctx, recoverTaskCreateHandoffRequester,
+		arg.RecoveredAt,
+		arg.RecoveryReport,
+		arg.ID,
+		arg.GoalID,
+		arg.RequestedBy,
+		arg.Pid,
+		arg.StartedAt,
+	)
+}
+
+const recoverTaskHandoffReceiver = `-- name: RecoverTaskHandoffReceiver :execresult
+UPDATE task_handoffs
+SET recovered_at = ?, recovery_report = ?
+WHERE task_handoffs.id = ? AND task_handoffs.task_id = ? AND task_handoffs.received_by = ?
+  AND received_at IS NOT NULL
+  AND completed_report_at IS NULL
+  AND recovered_at IS NULL
+  AND EXISTS (SELECT 1 FROM agent_sessions WHERE agent_sessions.id = task_handoffs.received_by AND pid = ? AND started_at = ?)
+`
+
+type RecoverTaskHandoffReceiverParams struct {
+	RecoveredAt    sql.NullString
+	RecoveryReport sql.NullString
+	ID             string
+	TaskID         int64
+	ReceivedBy     sql.NullInt64
+	Pid            int64
+	StartedAt      string
+}
+
+func (q *Queries) RecoverTaskHandoffReceiver(ctx context.Context, arg RecoverTaskHandoffReceiverParams) (sql.Result, error) {
+	return q.db.ExecContext(ctx, recoverTaskHandoffReceiver,
+		arg.RecoveredAt,
+		arg.RecoveryReport,
+		arg.ID,
+		arg.TaskID,
+		arg.ReceivedBy,
+		arg.Pid,
+		arg.StartedAt,
+	)
+}
+
+const recoverTaskHandoffRequester = `-- name: RecoverTaskHandoffRequester :execresult
+UPDATE task_handoffs
+SET recovered_at = ?, recovery_report = ?
+WHERE task_handoffs.id = ? AND task_handoffs.task_id = ? AND task_handoffs.requested_by = ?
+  AND requested_at IS NOT NULL
+  AND received_at IS NULL
+  AND completed_report_at IS NULL
+  AND recovered_at IS NULL
+  AND EXISTS (SELECT 1 FROM agent_sessions WHERE agent_sessions.id = task_handoffs.requested_by AND pid = ? AND started_at = ?)
+`
+
+type RecoverTaskHandoffRequesterParams struct {
+	RecoveredAt    sql.NullString
+	RecoveryReport sql.NullString
+	ID             string
+	TaskID         int64
+	RequestedBy    sql.NullInt64
+	Pid            int64
+	StartedAt      string
+}
+
+func (q *Queries) RecoverTaskHandoffRequester(ctx context.Context, arg RecoverTaskHandoffRequesterParams) (sql.Result, error) {
+	return q.db.ExecContext(ctx, recoverTaskHandoffRequester,
+		arg.RecoveredAt,
+		arg.RecoveryReport,
+		arg.ID,
+		arg.TaskID,
+		arg.RequestedBy,
+		arg.Pid,
+		arg.StartedAt,
+	)
+}
+
+const recoverTaskHandoffReview = `-- name: RecoverTaskHandoffReview :execresult
+UPDATE task_handoffs
+SET review_received_by = NULL, review_received_at = NULL
+WHERE task_handoffs.id = ? AND task_handoffs.task_id = ? AND task_handoffs.review_received_by = ?
+  AND review_received_at IS NOT NULL
+  AND completed_report_at IS NULL
+  AND recovered_at IS NULL
+  AND EXISTS (SELECT 1 FROM agent_sessions WHERE agent_sessions.id = task_handoffs.review_received_by AND pid = ? AND started_at = ?)
+`
+
+type RecoverTaskHandoffReviewParams struct {
+	ID               string
+	TaskID           int64
+	ReviewReceivedBy sql.NullInt64
+	Pid              int64
+	StartedAt        string
+}
+
+func (q *Queries) RecoverTaskHandoffReview(ctx context.Context, arg RecoverTaskHandoffReviewParams) (sql.Result, error) {
+	return q.db.ExecContext(ctx, recoverTaskHandoffReview,
+		arg.ID,
+		arg.TaskID,
+		arg.ReviewReceivedBy,
+		arg.Pid,
+		arg.StartedAt,
 	)
 }
 
@@ -1328,6 +1638,7 @@ SET review_received_by = NULL,
 WHERE id = ? AND goal_id = ?
   AND review_received_at IS NOT NULL
   AND completed_report_at IS NULL
+  AND recovered_at IS NULL
 `
 
 type RejectGoalHandoffReviewParams struct {
@@ -1382,6 +1693,7 @@ SET review_received_by = NULL,
 WHERE id = ? AND task_id = ?
   AND review_received_at IS NOT NULL
   AND completed_report_at IS NULL
+  AND recovered_at IS NULL
 `
 
 type RejectTaskHandoffReviewParams struct {
@@ -1458,6 +1770,7 @@ WHERE id = ? AND goal_id = ?
   AND requested_at IS NOT NULL
   AND received_at IS NOT NULL
   AND completed_report_at IS NULL
+  AND recovered_at IS NULL
   AND (review_requested_at IS NULL OR (review_rejected_at IS NOT NULL AND review_rejection_received_at IS NOT NULL))
 `
 
@@ -1561,6 +1874,7 @@ WHERE id = ? AND task_id = ?
   AND requested_at IS NOT NULL
   AND received_at IS NOT NULL
   AND completed_report_at IS NULL
+  AND recovered_at IS NULL
   AND (review_requested_at IS NULL OR (review_rejected_at IS NOT NULL AND review_rejection_received_at IS NOT NULL))
 `
 

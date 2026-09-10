@@ -11,7 +11,11 @@ RETURNING id;
 SELECT * FROM task_create_handoffs WHERE id = ?;
 
 -- name: GetTaskCreateHandoffForGoal :one
-SELECT * FROM task_create_handoffs WHERE goal_id = ?;
+SELECT * FROM task_create_handoffs
+WHERE goal_id = ?
+ORDER BY CASE WHEN completed_at IS NULL AND recovered_at IS NULL THEN 0 ELSE 1 END,
+         requested_at DESC, id DESC
+LIMIT 1;
 
 -- name: ListTaskCreateHandoffs :many
 SELECT * FROM task_create_handoffs WHERE goal_id = ? ORDER BY requested_at, id;
@@ -22,11 +26,29 @@ VALUES (?, ?, ?, ?, ?);
 
 -- name: ReceiveTaskCreateHandoff :execresult
 UPDATE task_create_handoffs SET received_by = ?, received_at = ?
-WHERE id = ? AND received_by IS NULL;
+WHERE id = ? AND received_by IS NULL AND completed_at IS NULL AND recovered_at IS NULL;
+
+-- name: RecoverTaskCreateHandoffRequester :execresult
+UPDATE task_create_handoffs
+SET recovered_at = ?, recovery_report = ?
+WHERE task_create_handoffs.id = ? AND task_create_handoffs.goal_id = ? AND task_create_handoffs.requested_by = ?
+  AND received_by IS NULL
+  AND completed_at IS NULL
+  AND recovered_at IS NULL
+  AND EXISTS (SELECT 1 FROM agent_sessions WHERE agent_sessions.id = task_create_handoffs.requested_by AND pid = ? AND started_at = ?);
+
+-- name: RecoverTaskCreateHandoffReceiver :execresult
+UPDATE task_create_handoffs
+SET recovered_at = ?, recovery_report = ?
+WHERE task_create_handoffs.id = ? AND task_create_handoffs.goal_id = ? AND task_create_handoffs.received_by = ?
+  AND received_at IS NOT NULL
+  AND completed_at IS NULL
+  AND recovered_at IS NULL
+  AND EXISTS (SELECT 1 FROM agent_sessions WHERE agent_sessions.id = task_create_handoffs.received_by AND pid = ? AND started_at = ?);
 
 -- name: CompleteTaskCreateHandoff :execresult
 UPDATE task_create_handoffs SET completed_by = ?, completed_at = ?, complete_report = ?
-WHERE id = ? AND received_by = ? AND completed_at IS NULL;
+WHERE id = ? AND received_by = ? AND completed_at IS NULL AND recovered_at IS NULL;
 
 -- name: ListTasks :many
 SELECT
@@ -172,7 +194,8 @@ SELECT id, task_id, requested_by, received_by,
        request_report, complete_report,
        review_requested_by, review_requested_at, review_request_report,
        review_received_by, review_received_at,
-       review_rejected_at, review_reject_report, review_rejection_received_by, review_rejection_received_at
+       review_rejected_at, review_reject_report, review_rejection_received_by, review_rejection_received_at,
+       recovered_at, recovery_report
 FROM task_handoffs
 WHERE id = ?;
 
@@ -182,7 +205,8 @@ SELECT id, task_id, requested_by, received_by,
        request_report, complete_report,
        review_requested_by, review_requested_at, review_request_report,
        review_received_by, review_received_at,
-       review_rejected_at, review_reject_report, review_rejection_received_by, review_rejection_received_at
+       review_rejected_at, review_reject_report, review_rejection_received_by, review_rejection_received_at,
+       recovered_at, recovery_report
 FROM task_handoffs
 WHERE task_id = ?
 ORDER BY id;
@@ -193,11 +217,13 @@ SELECT th.id, th.task_id, th.requested_by, th.received_by,
        th.request_report, th.complete_report,
        th.review_requested_by, th.review_requested_at, th.review_request_report,
        th.review_received_by, th.review_received_at,
-       th.review_rejected_at, th.review_reject_report, th.review_rejection_received_by, th.review_rejection_received_at
+       th.review_rejected_at, th.review_reject_report, th.review_rejection_received_by, th.review_rejection_received_at,
+       th.recovered_at, th.recovery_report
 FROM task_handoffs AS th
 JOIN tasks AS t ON t.id = th.task_id
 WHERE t.goal_id = ?
   AND th.completed_report_at IS NULL
+  AND th.recovered_at IS NULL
 ORDER BY th.id;
 
 -- The partial unique index idx_task_handoffs_open_task_id guarantees at most
@@ -212,6 +238,7 @@ JOIN tasks AS t ON t.id = th.task_id
 JOIN goals AS g ON g.id = t.goal_id
 WHERE g.project_id = ?
   AND th.completed_report_at IS NULL
+  AND th.recovered_at IS NULL
 ORDER BY g.created_at, g.id, t.sort_order, t.id;
 
 -- name: GetTaskHandoffTaskID :one
@@ -247,6 +274,7 @@ WHERE id = ? AND task_id = ?
   AND requested_at IS NOT NULL
   AND received_at IS NOT NULL
   AND completed_report_at IS NULL
+  AND recovered_at IS NULL
   AND (review_requested_at IS NULL OR (review_rejected_at IS NOT NULL AND review_rejection_received_at IS NOT NULL));
 
 -- name: ReceiveTaskHandoffReview :execresult
@@ -255,7 +283,36 @@ SET review_received_by = ?, review_received_at = ?
 WHERE id = ? AND task_id = ?
   AND review_requested_at IS NOT NULL
   AND review_received_at IS NULL
-  AND completed_report_at IS NULL;
+  AND completed_report_at IS NULL
+  AND recovered_at IS NULL;
+
+-- name: RecoverTaskHandoffRequester :execresult
+UPDATE task_handoffs
+SET recovered_at = ?, recovery_report = ?
+WHERE task_handoffs.id = ? AND task_handoffs.task_id = ? AND task_handoffs.requested_by = ?
+  AND requested_at IS NOT NULL
+  AND received_at IS NULL
+  AND completed_report_at IS NULL
+  AND recovered_at IS NULL
+  AND EXISTS (SELECT 1 FROM agent_sessions WHERE agent_sessions.id = task_handoffs.requested_by AND pid = ? AND started_at = ?);
+
+-- name: RecoverTaskHandoffReceiver :execresult
+UPDATE task_handoffs
+SET recovered_at = ?, recovery_report = ?
+WHERE task_handoffs.id = ? AND task_handoffs.task_id = ? AND task_handoffs.received_by = ?
+  AND received_at IS NOT NULL
+  AND completed_report_at IS NULL
+  AND recovered_at IS NULL
+  AND EXISTS (SELECT 1 FROM agent_sessions WHERE agent_sessions.id = task_handoffs.received_by AND pid = ? AND started_at = ?);
+
+-- name: RecoverTaskHandoffReview :execresult
+UPDATE task_handoffs
+SET review_received_by = NULL, review_received_at = NULL
+WHERE task_handoffs.id = ? AND task_handoffs.task_id = ? AND task_handoffs.review_received_by = ?
+  AND review_received_at IS NOT NULL
+  AND completed_report_at IS NULL
+  AND recovered_at IS NULL
+  AND EXISTS (SELECT 1 FROM agent_sessions WHERE agent_sessions.id = task_handoffs.review_received_by AND pid = ? AND started_at = ?);
 
 -- name: RejectTaskHandoffReview :execresult
 UPDATE task_handoffs
@@ -265,7 +322,8 @@ SET review_received_by = NULL,
     review_reject_report = ?
 WHERE id = ? AND task_id = ?
   AND review_received_at IS NOT NULL
-  AND completed_report_at IS NULL;
+  AND completed_report_at IS NULL
+  AND recovered_at IS NULL;
 
 -- name: ReceiveTaskHandoffReviewRejection :execresult
 UPDATE task_handoffs
@@ -273,7 +331,8 @@ SET review_rejection_received_by = ?, review_rejection_received_at = ?
 WHERE id = ? AND task_id = ?
   AND review_rejected_at IS NOT NULL
   AND review_rejection_received_at IS NULL
-  AND received_by = ?;
+  AND received_by = ?
+  AND recovered_at IS NULL;
 
 -- name: CompleteTaskHandoffByReviewer :execresult
 UPDATE task_handoffs
@@ -283,17 +342,18 @@ WHERE id = ? AND task_id = ?
   AND received_at IS NOT NULL
   AND review_received_by = ?
   AND review_received_at IS NOT NULL
-  AND completed_report_at IS NULL;
+  AND completed_report_at IS NULL
+  AND recovered_at IS NULL;
 
 -- name: CompleteTaskHandoff :execresult
 UPDATE task_handoffs
 SET completed_report_at = ?, complete_report = ?
-WHERE id = ? AND task_id = ? AND requested_at IS NOT NULL AND completed_report_at IS NULL;
+WHERE id = ? AND task_id = ? AND requested_at IS NOT NULL AND completed_report_at IS NULL AND recovered_at IS NULL;
 
 -- name: AmendTaskHandoffReport :execresult
 UPDATE task_handoffs
 SET complete_report = ?
-WHERE id = ? AND task_id = ? AND completed_report_at IS NOT NULL;
+WHERE id = ? AND task_id = ? AND completed_report_at IS NOT NULL AND recovered_at IS NULL;
 
 -- name: GetGoalHandoff :one
 SELECT id, goal_id, requested_by, received_by,
@@ -301,7 +361,8 @@ SELECT id, goal_id, requested_by, received_by,
        request_report, complete_report,
        review_requested_by, review_requested_at, review_request_report,
        review_received_by, review_received_at,
-       review_rejected_at, review_reject_report, review_rejection_received_by, review_rejection_received_at
+       review_rejected_at, review_reject_report, review_rejection_received_by, review_rejection_received_at,
+       recovered_at, recovery_report
 FROM goal_handoffs
 WHERE id = ?;
 
@@ -311,7 +372,8 @@ SELECT id, goal_id, requested_by, received_by,
        request_report, complete_report,
        review_requested_by, review_requested_at, review_request_report,
        review_received_by, review_received_at,
-       review_rejected_at, review_reject_report, review_rejection_received_by, review_rejection_received_at
+       review_rejected_at, review_reject_report, review_rejection_received_by, review_rejection_received_at,
+       recovered_at, recovery_report
 FROM goal_handoffs
 WHERE goal_id = ?
 ORDER BY id;
@@ -332,7 +394,7 @@ ON CONFLICT(id) DO UPDATE SET
 -- name: ReceiveGoalHandoff :execresult
 UPDATE goal_handoffs
 SET received_by = ?, received_at = ?
-WHERE id = ? AND goal_id = ? AND requested_at IS NOT NULL;
+WHERE id = ? AND goal_id = ? AND requested_at IS NOT NULL AND recovered_at IS NULL;
 
 -- name: RequestGoalHandoffReview :execresult
 UPDATE goal_handoffs
@@ -349,6 +411,7 @@ WHERE id = ? AND goal_id = ?
   AND requested_at IS NOT NULL
   AND received_at IS NOT NULL
   AND completed_report_at IS NULL
+  AND recovered_at IS NULL
   AND (review_requested_at IS NULL OR (review_rejected_at IS NOT NULL AND review_rejection_received_at IS NOT NULL));
 
 -- name: ReceiveGoalHandoffReview :execresult
@@ -357,7 +420,36 @@ SET review_received_by = ?, review_received_at = ?
 WHERE id = ? AND goal_id = ?
   AND review_requested_at IS NOT NULL
   AND review_received_at IS NULL
-  AND completed_report_at IS NULL;
+  AND completed_report_at IS NULL
+  AND recovered_at IS NULL;
+
+-- name: RecoverGoalHandoffReview :execresult
+UPDATE goal_handoffs
+SET review_received_by = NULL, review_received_at = NULL
+WHERE goal_handoffs.id = ? AND goal_handoffs.goal_id = ? AND goal_handoffs.review_received_by = ?
+  AND goal_handoffs.review_received_at IS NOT NULL
+  AND EXISTS (SELECT 1 FROM agent_sessions WHERE agent_sessions.id = goal_handoffs.review_received_by AND pid = ? AND started_at = ?)
+  AND goal_handoffs.completed_report_at IS NULL
+  AND goal_handoffs.recovered_at IS NULL;
+
+-- name: RecoverGoalHandoffRequester :execresult
+UPDATE goal_handoffs
+SET recovered_at = ?, recovery_report = ?
+WHERE goal_handoffs.id = ? AND goal_handoffs.goal_id = ? AND goal_handoffs.requested_by = ?
+  AND goal_handoffs.requested_at IS NOT NULL
+  AND goal_handoffs.received_at IS NULL
+  AND goal_handoffs.completed_report_at IS NULL
+  AND goal_handoffs.recovered_at IS NULL
+  AND EXISTS (SELECT 1 FROM agent_sessions WHERE agent_sessions.id = goal_handoffs.requested_by AND pid = ? AND started_at = ?);
+
+-- name: RecoverGoalHandoffReceiver :execresult
+UPDATE goal_handoffs
+SET recovered_at = ?, recovery_report = ?
+WHERE goal_handoffs.id = ? AND goal_handoffs.goal_id = ? AND goal_handoffs.received_by = ?
+  AND goal_handoffs.received_at IS NOT NULL
+  AND goal_handoffs.completed_report_at IS NULL
+  AND goal_handoffs.recovered_at IS NULL
+  AND EXISTS (SELECT 1 FROM agent_sessions WHERE agent_sessions.id = goal_handoffs.received_by AND pid = ? AND started_at = ?);
 
 -- name: RejectGoalHandoffReview :execresult
 UPDATE goal_handoffs
@@ -367,7 +459,8 @@ SET review_received_by = NULL,
     review_reject_report = ?
 WHERE id = ? AND goal_id = ?
   AND review_received_at IS NOT NULL
-  AND completed_report_at IS NULL;
+  AND completed_report_at IS NULL
+  AND recovered_at IS NULL;
 
 -- name: ReceiveGoalHandoffReviewRejection :execresult
 UPDATE goal_handoffs
@@ -375,7 +468,8 @@ SET review_rejection_received_by = ?, review_rejection_received_at = ?
 WHERE id = ? AND goal_id = ?
   AND review_rejected_at IS NOT NULL
   AND review_rejection_received_at IS NULL
-  AND received_by = ?;
+  AND received_by = ?
+  AND recovered_at IS NULL;
 
 -- name: CompleteGoalHandoffByReviewer :execresult
 UPDATE goal_handoffs
@@ -385,17 +479,18 @@ WHERE id = ? AND goal_id = ?
   AND received_at IS NOT NULL
   AND review_received_by = ?
   AND review_received_at IS NOT NULL
-  AND completed_report_at IS NULL;
+  AND completed_report_at IS NULL
+  AND recovered_at IS NULL;
 
 -- name: CompleteGoalHandoff :execresult
 UPDATE goal_handoffs
 SET completed_report_at = ?, complete_report = ?
-WHERE id = ? AND goal_id = ? AND requested_at IS NOT NULL AND completed_report_at IS NULL;
+WHERE id = ? AND goal_id = ? AND requested_at IS NOT NULL AND completed_report_at IS NULL AND recovered_at IS NULL;
 
 -- name: AmendGoalHandoffReport :execresult
 UPDATE goal_handoffs
 SET complete_report = ?
-WHERE id = ? AND goal_id = ? AND completed_report_at IS NOT NULL;
+WHERE id = ? AND goal_id = ? AND completed_report_at IS NOT NULL AND recovered_at IS NULL;
 
 -- name: GetPlanHandoff :one
 SELECT plan_handoffs.*
@@ -435,6 +530,14 @@ WHERE id = ? AND goal_id = ?
   AND review_requested_at IS NOT NULL
   AND review_received_at IS NULL
   AND completed_report_at IS NULL;
+
+-- name: RecoverPlanHandoffReview :execresult
+UPDATE plan_handoffs
+SET review_received_by = NULL, review_received_at = NULL
+WHERE plan_handoffs.id = ? AND plan_handoffs.goal_id = ? AND plan_handoffs.review_received_by = ?
+  AND plan_handoffs.review_received_at IS NOT NULL
+  AND EXISTS (SELECT 1 FROM agent_sessions WHERE agent_sessions.id = plan_handoffs.review_received_by AND pid = ? AND started_at = ?)
+  AND plan_handoffs.completed_report_at IS NULL;
 
 -- name: RejectPlanHandoffReview :execresult
 UPDATE plan_handoffs

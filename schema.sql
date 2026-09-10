@@ -19,7 +19,11 @@ CREATE TABLE IF NOT EXISTS agent_sessions (
   registered_at TEXT NOT NULL,
   pid           INTEGER NOT NULL DEFAULT 0,
   started_at    TEXT NOT NULL DEFAULT '',
-  session_key   TEXT NOT NULL DEFAULT ''
+  session_key   TEXT NOT NULL DEFAULT '',
+  discarded_at  TEXT,
+  discarded_by  INTEGER REFERENCES agent_sessions(id),
+  discarded_decision_id INTEGER REFERENCES decisions(id),
+  discard_reason TEXT NOT NULL DEFAULT ''
 );
 
 CREATE INDEX IF NOT EXISTS idx_agent_sessions_project_registered_at
@@ -129,7 +133,9 @@ CREATE TABLE IF NOT EXISTS task_handoffs (
   review_rejected_at  TEXT,
   review_reject_report TEXT,
   review_rejection_received_by INTEGER REFERENCES agent_sessions(id),
-  review_rejection_received_at TEXT
+  review_rejection_received_at TEXT,
+  recovered_at        TEXT,
+  recovery_report     TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_task_handoffs_task_id
@@ -137,7 +143,7 @@ CREATE INDEX IF NOT EXISTS idx_task_handoffs_task_id
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_task_handoffs_open_task_id
   ON task_handoffs(task_id)
-  WHERE completed_report_at IS NULL;
+  WHERE completed_report_at IS NULL AND recovered_at IS NULL;
 
 CREATE TABLE IF NOT EXISTS goal_handoffs (
   id                  TEXT PRIMARY KEY,
@@ -157,7 +163,9 @@ CREATE TABLE IF NOT EXISTS goal_handoffs (
   review_rejected_at  TEXT,
   review_reject_report TEXT,
   review_rejection_received_by INTEGER REFERENCES agent_sessions(id),
-  review_rejection_received_at TEXT
+  review_rejection_received_at TEXT,
+  recovered_at        TEXT,
+  recovery_report     TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_goal_handoffs_goal_id
@@ -165,7 +173,7 @@ CREATE INDEX IF NOT EXISTS idx_goal_handoffs_goal_id
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_goal_handoffs_open_goal_id
   ON goal_handoffs(goal_id)
-  WHERE completed_report_at IS NULL;
+  WHERE completed_report_at IS NULL AND recovered_at IS NULL;
 
 CREATE TABLE IF NOT EXISTS plan_handoffs (
   id                  TEXT PRIMARY KEY,
@@ -217,7 +225,7 @@ CREATE INDEX IF NOT EXISTS monitor_health_last_seen_idx
 
 CREATE TABLE IF NOT EXISTS task_create_handoffs (
   id              TEXT PRIMARY KEY,
-  goal_id         INTEGER NOT NULL UNIQUE REFERENCES goals(id),
+  goal_id         INTEGER NOT NULL REFERENCES goals(id),
   requested_by    INTEGER REFERENCES agent_sessions(id),
   received_by     INTEGER REFERENCES agent_sessions(id),
   completed_by    INTEGER REFERENCES agent_sessions(id),
@@ -225,5 +233,14 @@ CREATE TABLE IF NOT EXISTS task_create_handoffs (
   received_at     TEXT,
   completed_at    TEXT,
   request_report  TEXT,
-  complete_report TEXT
+  complete_report TEXT,
+  recovered_at    TEXT,
+  recovery_report TEXT
 );
+
+CREATE INDEX IF NOT EXISTS idx_task_create_handoffs_goal_id
+  ON task_create_handoffs(goal_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_task_create_handoffs_open_goal_id
+  ON task_create_handoffs(goal_id)
+  WHERE completed_at IS NULL AND recovered_at IS NULL;

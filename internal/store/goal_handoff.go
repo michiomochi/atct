@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"syscall"
 	"time"
 
 	"github.com/michiomochi/atct/internal/store/sqlcgen"
@@ -53,6 +54,8 @@ type GoalHandoff struct {
 	RequestedAt               *time.Time
 	ReceivedAt                *time.Time
 	CompletedReportAt         *time.Time
+	RecoveredAt               *time.Time
+	RecoveryReport            string
 }
 
 // PlanHandoff records a plan review routed from the goal handoff receiver back
@@ -93,6 +96,7 @@ func goalHandoffFromRow(row sqlcgen.GoalHandoff) (GoalHandoff, error) {
 		ReviewReceivedBy:          nullableAgentSessionID(row.ReviewReceivedBy),
 		ReviewRejectReport:        row.ReviewRejectReport.String,
 		ReviewRejectionReceivedBy: nullableAgentSessionID(row.ReviewRejectionReceivedBy),
+		RecoveryReport:            row.RecoveryReport.String,
 	}
 	var err error
 	if handoff.RequestedAt, err = parseGoalHandoffTime("requested_at", row.RequestedAt); err != nil {
@@ -114,6 +118,9 @@ func goalHandoffFromRow(row sqlcgen.GoalHandoff) (GoalHandoff, error) {
 		return GoalHandoff{}, err
 	}
 	if handoff.ReviewRejectionReceivedAt, err = parseGoalHandoffTime("review_rejection_received_at", row.ReviewRejectionReceivedAt); err != nil {
+		return GoalHandoff{}, err
+	}
+	if handoff.RecoveredAt, err = parseGoalHandoffTime("recovered_at", row.RecoveredAt); err != nil {
 		return GoalHandoff{}, err
 	}
 	return handoff, nil
@@ -214,7 +221,7 @@ func (s *Store) reclaimOpenGoalHandoff(ctx context.Context, handoffID string, go
 
 	var open *GoalHandoff
 	for i := range handoffs {
-		if handoffs[i].CompletedReportAt != nil || handoffs[i].ID == handoffID {
+		if handoffs[i].CompletedReportAt != nil || handoffs[i].RecoveredAt != nil || handoffs[i].ID == handoffID {
 			continue
 		}
 		if open != nil {
@@ -252,7 +259,7 @@ func (s *Store) openGoalHandoff(ctx context.Context, goalID int64) (*GoalHandoff
 
 	var open *GoalHandoff
 	for i := range handoffs {
-		if handoffs[i].ReceivedAt == nil || handoffs[i].CompletedReportAt != nil {
+		if handoffs[i].ReceivedAt == nil || handoffs[i].CompletedReportAt != nil || handoffs[i].RecoveredAt != nil {
 			continue
 		}
 		if open != nil {
@@ -268,6 +275,9 @@ func (s *Store) openGoalHandoff(ctx context.Context, goalID int64) (*GoalHandoff
 // requester to hold a live claim on the goal's project; receipt and completion
 // are separate calls.
 func (s *Store) RequestGoalHandoff(ctx context.Context, handoffID string, goalID int64, requestedBy int64, requestReport string) (GoalHandoff, error) {
+	if err := s.requireUndiscardedSession(ctx, requestedBy); err != nil {
+		return GoalHandoff{}, err
+	}
 	return s.requestGoalHandoff(ctx, handoffID, goalID, requestedBy, requestReport, true)
 }
 
@@ -277,6 +287,13 @@ func (s *Store) requestGoalHandoffForClaim(ctx context.Context, handoffID string
 
 func (s *Store) requestGoalHandoff(ctx context.Context, handoffID string, goalID int64, requestedBy int64, requestReport string, requireLiveClaim bool) (GoalHandoff, error) {
 	if err := s.ensureGoalHandoffGoalForRequest(ctx, handoffID, goalID); err != nil {
+		return GoalHandoff{}, err
+	}
+	if existing, err := s.GetGoalHandoff(ctx, handoffID); err == nil {
+		if existing.RecoveredAt != nil {
+			return GoalHandoff{}, fmt.Errorf("goal handoff %q was recovered and cannot be reused: %w", handoffID, ErrGoalHandoffReviewState)
+		}
+	} else if !errors.Is(err, ErrGoalHandoffNotFound) {
 		return GoalHandoff{}, err
 	}
 	if requireLiveClaim {
@@ -319,6 +336,9 @@ func (s *Store) requestGoalHandoff(ctx context.Context, handoffID string, goalID
 
 // ReceiveGoalHandoff records the receipt side of a requested handoff.
 func (s *Store) ReceiveGoalHandoff(ctx context.Context, handoffID string, goalID int64, receivedBy int64) (GoalHandoff, error) {
+	if err := s.requireUndiscardedSession(ctx, receivedBy); err != nil {
+		return GoalHandoff{}, err
+	}
 	if err := s.ensureGoalHandoffGoal(ctx, handoffID, goalID); err != nil {
 		return GoalHandoff{}, err
 	}
@@ -364,6 +384,9 @@ func (s *Store) ReceiveGoalHandoff(ctx context.Context, handoffID string, goalID
 // handoff. The goal handoff receiver is the only session allowed to request
 // its review.
 func (s *Store) RequestGoalHandoffReview(ctx context.Context, handoffID string, goalID, requestedBy int64, reviewRequestReport string) (GoalHandoff, error) {
+	if err := s.requireUndiscardedSession(ctx, requestedBy); err != nil {
+		return GoalHandoff{}, err
+	}
 	if completeReportIsEmpty(reviewRequestReport) {
 		return GoalHandoff{}, ErrGoalHandoffReviewReportEmpty
 	}
@@ -424,6 +447,9 @@ func (s *Store) RequestGoalHandoffReview(ctx context.Context, handoffID string, 
 // handoff requester remains allowed, while a new current claimant of the goal's
 // project may receive the review after a claim turnover.
 func (s *Store) ReceiveGoalHandoffReview(ctx context.Context, handoffID string, goalID, receivedBy int64) (GoalHandoff, error) {
+	if err := s.requireUndiscardedSession(ctx, receivedBy); err != nil {
+		return GoalHandoff{}, err
+	}
 	handoff, err := s.GetGoalHandoff(ctx, handoffID)
 	if err != nil {
 		return GoalHandoff{}, err
@@ -475,9 +501,89 @@ func (s *Store) ReceiveGoalHandoffReview(ctx context.Context, handoffID string, 
 	return s.GetGoalHandoff(ctx, handoffID)
 }
 
+// RecoverGoalHandoff clears a definitely stale review receipt or terminalizes
+// a definitely stale requester/receiver so a replacement handoff can be made.
+func (s *Store) RecoverGoalHandoff(ctx context.Context, handoffID string, goalID, callerID int64, reason string) (GoalHandoff, error) {
+	if err := s.requireUndiscardedSession(ctx, callerID); err != nil {
+		return GoalHandoff{}, err
+	}
+	if err := s.requireProjectClaimForGoal(ctx, goalID, callerID); err != nil {
+		return GoalHandoff{}, fmt.Errorf("recover goal handoff requires the current commander: %w", err)
+	}
+	handoff, err := s.GetGoalHandoff(ctx, handoffID)
+	if err != nil {
+		return GoalHandoff{}, err
+	}
+	if handoff.GoalID != goalID || handoff.CompletedReportAt != nil {
+		return GoalHandoff{}, ErrGoalHandoffReviewState
+	}
+	if handoff.RecoveredAt != nil {
+		return handoff, nil
+	}
+	phase := ""
+	staleSessionID := int64(0)
+	switch {
+	case handoff.ReviewReceivedAt != nil:
+		phase = "review_received"
+		staleSessionID = handoff.ReviewReceivedBy
+	case handoff.ReceivedAt != nil:
+		phase = "received"
+		staleSessionID = handoff.ReceivedBy
+	case handoff.RequestedAt != nil:
+		phase = "requested"
+		staleSessionID = handoff.RequestedBy
+	default:
+		return GoalHandoff{}, ErrGoalHandoffReviewState
+	}
+	if staleSessionID == 0 || staleSessionID == callerID {
+		return GoalHandoff{}, fmt.Errorf("recover goal handoff cannot replace its current owner: %w", ErrGoalHandoffReviewReviewerMismatch)
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return GoalHandoff{}, fmt.Errorf("begin goal handoff recovery: %w", err)
+	}
+	defer tx.Rollback()
+	q := sqlcgen.New(tx)
+	sessionProof, err := canRecoverSessionInTx(ctx, q, staleSessionID)
+	if err != nil {
+		return GoalHandoff{}, err
+	}
+	recoveredAt := time.Now().UTC().Format(time.RFC3339Nano)
+	var result sql.Result
+	switch phase {
+	case "review_received":
+		result, err = q.RecoverGoalHandoffReview(ctx, sqlcgen.RecoverGoalHandoffReviewParams{
+			ID: handoffID, GoalID: goalID, ReviewReceivedBy: sql.NullInt64{Int64: staleSessionID, Valid: true}, Pid: sessionProof.PID, StartedAt: sessionProof.StartedAt,
+		})
+	case "received":
+		result, err = q.RecoverGoalHandoffReceiver(ctx, sqlcgen.RecoverGoalHandoffReceiverParams{
+			RecoveredAt: sql.NullString{String: recoveredAt, Valid: true}, RecoveryReport: sql.NullString{String: reason, Valid: true},
+			ID: handoffID, GoalID: goalID, ReceivedBy: sql.NullInt64{Int64: staleSessionID, Valid: true}, Pid: sessionProof.PID, StartedAt: sessionProof.StartedAt,
+		})
+	case "requested":
+		result, err = q.RecoverGoalHandoffRequester(ctx, sqlcgen.RecoverGoalHandoffRequesterParams{
+			RecoveredAt: sql.NullString{String: recoveredAt, Valid: true}, RecoveryReport: sql.NullString{String: reason, Valid: true},
+			ID: handoffID, GoalID: goalID, RequestedBy: sql.NullInt64{Int64: staleSessionID, Valid: true}, Pid: sessionProof.PID, StartedAt: sessionProof.StartedAt,
+		})
+	}
+	if err != nil {
+		return GoalHandoff{}, fmt.Errorf("recover stale goal handoff owner: %w", err)
+	}
+	if affected, err := result.RowsAffected(); err != nil || affected != 1 {
+		return GoalHandoff{}, fmt.Errorf("recover stale goal handoff owner: %w", ErrGoalHandoffReviewState)
+	}
+	if err := tx.Commit(); err != nil {
+		return GoalHandoff{}, fmt.Errorf("commit goal handoff recovery: %w", err)
+	}
+	return s.GetGoalHandoff(ctx, handoffID)
+}
+
 // RejectGoalHandoffReview clears the reviewer receipt while keeping the goal
 // handoff claim open for another review cycle.
 func (s *Store) RejectGoalHandoffReview(ctx context.Context, handoffID string, goalID, reviewerID int64, rejectReport string) (GoalHandoff, error) {
+	if err := s.requireUndiscardedSession(ctx, reviewerID); err != nil {
+		return GoalHandoff{}, err
+	}
 	if completeReportIsEmpty(rejectReport) {
 		return GoalHandoff{}, ErrGoalHandoffReviewReportEmpty
 	}
@@ -531,6 +637,9 @@ func (s *Store) RejectGoalHandoffReview(ctx context.Context, handoffID string, g
 }
 
 func (s *Store) ReceiveGoalHandoffReviewRejection(ctx context.Context, handoffID string, goalID, receivedBy int64) (GoalHandoff, error) {
+	if err := s.requireUndiscardedSession(ctx, receivedBy); err != nil {
+		return GoalHandoff{}, err
+	}
 	handoff, err := s.GetGoalHandoff(ctx, handoffID)
 	if err != nil {
 		return GoalHandoff{}, err
@@ -554,6 +663,9 @@ func (s *Store) ReceiveGoalHandoffReviewRejection(ctx context.Context, handoffID
 // CompleteGoalHandoffByReviewer closes a goal handoff after the recorded
 // reviewer accepts the received work.
 func (s *Store) CompleteGoalHandoffByReviewer(ctx context.Context, handoffID string, goalID, reviewerID int64, completeReport string) (GoalHandoff, error) {
+	if err := s.requireUndiscardedSession(ctx, reviewerID); err != nil {
+		return GoalHandoff{}, err
+	}
 	if completeReportIsEmpty(completeReport) {
 		return GoalHandoff{}, ErrGoalHandoffReportEmpty
 	}
@@ -624,7 +736,7 @@ func (s *Store) ReceiveGoalHandoffForGoal(ctx context.Context, goalID int64, rec
 	}
 	pending := make([]GoalHandoff, 0, len(handoffs))
 	for _, handoff := range handoffs {
-		if handoff.RequestedAt != nil && handoff.ReceivedAt == nil {
+		if handoff.RequestedAt != nil && handoff.ReceivedAt == nil && handoff.RecoveredAt == nil {
 			pending = append(pending, handoff)
 		}
 	}
@@ -648,7 +760,7 @@ func (s *Store) CompleteGoalHandoffForGoal(ctx context.Context, goalID int64, co
 	}
 	pending := make([]GoalHandoff, 0, len(handoffs))
 	for _, handoff := range handoffs {
-		if handoff.RequestedAt != nil && handoff.ReceivedAt != nil && handoff.CompletedReportAt == nil {
+		if handoff.RequestedAt != nil && handoff.ReceivedAt != nil && handoff.CompletedReportAt == nil && handoff.RecoveredAt == nil {
 			pending = append(pending, handoff)
 		}
 	}
@@ -673,6 +785,9 @@ func (s *Store) CompleteGoalHandoff(ctx context.Context, handoffID string, goalI
 	handoff, err := s.GetGoalHandoff(ctx, handoffID)
 	if err != nil {
 		return GoalHandoff{}, err
+	}
+	if handoff.RecoveredAt != nil {
+		return GoalHandoff{}, ErrGoalHandoffReviewState
 	}
 	if handoff.ReviewRequestedAt != nil && completeReport != goalHandoffReclaimedReport && completeReport != goalHandoffReleasedReport {
 		return GoalHandoff{}, fmt.Errorf("%w: complete the goal handoff through its recorded reviewer", ErrGoalHandoffReviewState)
@@ -832,6 +947,9 @@ func (s *Store) ListOpenGoalHandoffs(ctx context.Context) (map[int64]*GoalHandof
 // goal handoff. The open goal handoff remains the authorization for the
 // request, while the plan table owns the review lifecycle.
 func (s *Store) RequestPlanHandoffReview(ctx context.Context, handoffID string, goalID, requestedBy int64, reviewRequestReport string) (PlanHandoff, error) {
+	if err := s.requireUndiscardedSession(ctx, requestedBy); err != nil {
+		return PlanHandoff{}, err
+	}
 	if completeReportIsEmpty(reviewRequestReport) {
 		return PlanHandoff{}, ErrPlanHandoffReviewReportEmpty
 	}
@@ -897,6 +1015,9 @@ func (s *Store) RequestPlanHandoffReview(ctx context.Context, handoffID string, 
 // ReceivePlanHandoffReview records receipt by the project claim holder for the
 // goal. A plan review does not create or change a task claim.
 func (s *Store) ReceivePlanHandoffReview(ctx context.Context, handoffID string, goalID, receivedBy int64) (PlanHandoff, error) {
+	if err := s.requireUndiscardedSession(ctx, receivedBy); err != nil {
+		return PlanHandoff{}, err
+	}
 	handoff, err := s.GetPlanHandoff(ctx, handoffID)
 	if err != nil {
 		return PlanHandoff{}, err
@@ -946,9 +1067,95 @@ func (s *Store) ReceivePlanHandoffReview(ctx context.Context, handoffID string, 
 	return s.GetPlanHandoff(ctx, handoffID)
 }
 
+// RecoverPlanHandoff reopens a review receipt only when its recorded reviewer
+// is definitely stale. The current commander remains the only recovery actor.
+func (s *Store) RecoverPlanHandoff(ctx context.Context, handoffID string, goalID, callerID int64, reason string) (PlanHandoff, error) {
+	if err := s.requireUndiscardedSession(ctx, callerID); err != nil {
+		return PlanHandoff{}, err
+	}
+	if err := s.requireProjectClaimForGoal(ctx, goalID, callerID); err != nil {
+		return PlanHandoff{}, fmt.Errorf("recover plan handoff requires the current commander: %w", err)
+	}
+	handoff, err := s.GetPlanHandoff(ctx, handoffID)
+	if err != nil {
+		return PlanHandoff{}, err
+	}
+	if handoff.GoalID != goalID || handoff.ReviewReceivedAt == nil || handoff.ReviewReceivedBy == 0 || handoff.CompletedReportAt != nil {
+		return PlanHandoff{}, ErrPlanHandoffReviewState
+	}
+	if handoff.ReviewReceivedBy == callerID {
+		return PlanHandoff{}, fmt.Errorf("recover plan handoff cannot replace its current reviewer: %w", ErrPlanHandoffReviewerMismatch)
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return PlanHandoff{}, fmt.Errorf("begin plan handoff recovery: %w", err)
+	}
+	defer tx.Rollback()
+	q := sqlcgen.New(tx)
+	sessionProof, err := canRecoverSessionInTx(ctx, q, handoff.ReviewReceivedBy)
+	if err != nil {
+		return PlanHandoff{}, err
+	}
+	result, err := q.RecoverPlanHandoffReview(ctx, sqlcgen.RecoverPlanHandoffReviewParams{
+		ID: handoffID, GoalID: goalID, ReviewReceivedBy: sql.NullInt64{Int64: handoff.ReviewReceivedBy, Valid: true}, Pid: sessionProof.PID, StartedAt: sessionProof.StartedAt,
+	})
+	if err != nil {
+		return PlanHandoff{}, fmt.Errorf("clear stale plan reviewer receipt: %w", err)
+	}
+	if affected, err := result.RowsAffected(); err != nil || affected != 1 {
+		return PlanHandoff{}, ErrPlanHandoffReviewState
+	}
+	if err := tx.Commit(); err != nil {
+		return PlanHandoff{}, fmt.Errorf("commit plan handoff recovery: %w", err)
+	}
+	return s.GetPlanHandoff(ctx, handoffID)
+}
+
+type recoverySessionProof struct {
+	RecoveryProof
+	PID       int64
+	StartedAt string
+}
+
+func canRecoverSessionInTx(ctx context.Context, q *sqlcgen.Queries, sessionID int64) (recoverySessionProof, error) {
+	if sessionID <= 0 {
+		return recoverySessionProof{}, fmt.Errorf("session id is required: %w", ErrSessionRecoveryNotProven)
+	}
+	row, err := q.GetAgentSessionRecovery(ctx, sessionID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return recoverySessionProof{}, fmt.Errorf("agent session %d is not registered: %w", sessionID, ErrAgentSessionNotRegistered)
+	}
+	if err != nil {
+		return recoverySessionProof{}, fmt.Errorf("find agent session %d for recovery: %w", sessionID, err)
+	}
+	if agentSessionHasDiscardMetadata(row) {
+		if row.DiscardedAt.Valid && row.DiscardedBy.Valid && row.DiscardedBy.Int64 > 0 && row.DiscardedDecisionID.Valid && row.DiscardedDecisionID.Int64 > 0 && row.DiscardReason != "" {
+			return recoverySessionProof{RecoveryProof: RecoveryProof{SessionID: sessionID, Kind: RecoveryProofSessionDiscard, DiscardDecisionID: row.DiscardedDecisionID.Int64}, PID: row.Pid, StartedAt: row.StartedAt}, nil
+		}
+		return recoverySessionProof{}, fmt.Errorf("agent session %d has an incomplete discard record: %w", sessionID, ErrSessionRecoveryNotProven)
+	}
+	if row.Pid == 0 || row.StartedAt == "" {
+		return recoverySessionProof{}, fmt.Errorf("agent session %d is live or its liveness is unknown: %w", sessionID, ErrSessionRecoveryNotProven)
+	}
+	if err := syscall.Kill(int(row.Pid), 0); err != nil {
+		if errors.Is(err, syscall.ESRCH) {
+			return recoverySessionProof{RecoveryProof: RecoveryProof{SessionID: sessionID, Kind: RecoveryProofProcessMismatch}, PID: row.Pid, StartedAt: row.StartedAt}, nil
+		}
+		return recoverySessionProof{}, fmt.Errorf("agent session %d is live or its liveness is unknown: %w", sessionID, ErrSessionRecoveryNotProven)
+	}
+	startedAt, err := processStartedAt(int(row.Pid))
+	if err == nil && startedAt != row.StartedAt {
+		return recoverySessionProof{RecoveryProof: RecoveryProof{SessionID: sessionID, Kind: RecoveryProofProcessMismatch}, PID: row.Pid, StartedAt: row.StartedAt}, nil
+	}
+	return recoverySessionProof{}, fmt.Errorf("agent session %d is live or its liveness is unknown: %w", sessionID, ErrSessionRecoveryNotProven)
+}
+
 // RejectPlanHandoffReview clears the project review receipt while retaining the
 // plan row for another review cycle.
 func (s *Store) RejectPlanHandoffReview(ctx context.Context, handoffID string, goalID, reviewerID int64, rejectReport string) (PlanHandoff, error) {
+	if err := s.requireUndiscardedSession(ctx, reviewerID); err != nil {
+		return PlanHandoff{}, err
+	}
 	if completeReportIsEmpty(rejectReport) {
 		return PlanHandoff{}, ErrPlanHandoffReviewReportEmpty
 	}
@@ -1002,6 +1209,9 @@ func (s *Store) RejectPlanHandoffReview(ctx context.Context, handoffID string, g
 }
 
 func (s *Store) ReceivePlanHandoffReviewRejection(ctx context.Context, handoffID string, goalID, receivedBy int64) (PlanHandoff, error) {
+	if err := s.requireUndiscardedSession(ctx, receivedBy); err != nil {
+		return PlanHandoff{}, err
+	}
 	handoff, err := s.GetPlanHandoff(ctx, handoffID)
 	if err != nil {
 		return PlanHandoff{}, err
@@ -1025,6 +1235,9 @@ func (s *Store) ReceivePlanHandoffReviewRejection(ctx context.Context, handoffID
 // CompletePlanHandoff closes a plan review after the recorded project
 // reviewer accepts it.
 func (s *Store) CompletePlanHandoff(ctx context.Context, handoffID string, goalID, reviewerID int64, completeReport string) (PlanHandoff, error) {
+	if err := s.requireUndiscardedSession(ctx, reviewerID); err != nil {
+		return PlanHandoff{}, err
+	}
 	if completeReportIsEmpty(completeReport) {
 		return PlanHandoff{}, ErrPlanHandoffReviewReportEmpty
 	}
@@ -1063,7 +1276,7 @@ func (s *Store) CompletePlanHandoff(ctx context.Context, handoffID string, goalI
 	} else if affected == 0 {
 		return PlanHandoff{}, ErrPlanHandoffReviewState
 	}
-	if err := s.createTaskCreateHandoffTx(ctx, tx, handoff.GoalID, reviewerID); err != nil {
+	if _, err := s.createTaskCreateHandoffTx(ctx, tx, handoff.GoalID, reviewerID); err != nil {
 		return PlanHandoff{}, fmt.Errorf("create task-create handoff: %w", err)
 	}
 	projectID, err := sqlcgen.New(tx).GetGoalProjectID(ctx, goalID)

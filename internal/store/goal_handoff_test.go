@@ -1409,6 +1409,176 @@ func TestRequestGoalReviewRequiresCompletedGoalHandoffReview(t *testing.T) {
 	}
 }
 
+func TestGoalReviewCompletionUsesRecordedReviewerLineage(t *testing.T) {
+	now := time.Now()
+	handoff := &GoalHandoff{
+		RequestedAt:       &now,
+		ReceivedAt:        &now,
+		ReviewRequestedAt: &now,
+		ReviewReceivedAt:  &now,
+		CompletedReportAt: &now,
+		ReviewRequestedBy: 2,
+		ReceivedBy:        2,
+		RequestedBy:       1,
+		ReviewReceivedBy:  3,
+		CompleteReport:    "accepted",
+	}
+	if !goalHandoffHasCommanderReviewCompletion(handoff, 3) {
+		t.Fatal("recorded reviewer should authorize the completed handoff despite stale requester lineage")
+	}
+}
+
+func TestGoalReviewUsesLiveReviewerAfterRequesterTurnover(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	goalID := newTestGoal(t, s)
+	addLiveProjectClaim(t, s, goalID, "lineage-stale-requester")
+	requesterID := testSessionID("lineage-stale-requester")
+	receiverID := registerNamedTestAgentSession(t, s, "lineage-live-receiver", os.Getpid())
+	reviewerID := registerNamedTestAgentSession(t, s, "lineage-current-reviewer", os.Getpid())
+
+	handoff, err := s.RequestGoalHandoff(ctx, "lineage-turnover", goalID, requesterID, "delegate")
+	if err != nil {
+		t.Fatalf("RequestGoalHandoff: %v", err)
+	}
+	if _, err := s.ReceiveGoalHandoff(ctx, handoff.ID, goalID, receiverID); err != nil {
+		t.Fatalf("ReceiveGoalHandoff: %v", err)
+	}
+	if _, err := s.RequestGoalHandoffReview(ctx, handoff.ID, goalID, receiverID, "ready"); err != nil {
+		t.Fatalf("RequestGoalHandoffReview: %v", err)
+	}
+	goal, err := s.GetGoal(ctx, goalID)
+	if err != nil {
+		t.Fatalf("GetGoal: %v", err)
+	}
+	if _, err := s.DB().ExecContext(ctx, `UPDATE projects SET claimed_by = ? WHERE id = ?`, reviewerID, goal.ProjectID); err != nil {
+		t.Fatalf("turn over commander: %v", err)
+	}
+	if _, err := s.ReceiveGoalHandoffReview(ctx, handoff.ID, goalID, reviewerID); err != nil {
+		t.Fatalf("ReceiveGoalHandoffReview: %v", err)
+	}
+	if _, err := s.CompleteGoalHandoffByReviewer(ctx, handoff.ID, goalID, reviewerID, "accepted"); err != nil {
+		t.Fatalf("CompleteGoalHandoffByReviewer: %v", err)
+	}
+	if _, err := s.RequestGoalReview(ctx, goalID, reviewerID, goalReviewRequestTestReport()); err != nil {
+		t.Fatalf("RequestGoalReview: %v", err)
+	}
+}
+
+func TestRecoverGoalHandoffClearsOnlyDefinitelyStaleReviewer(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	goalID := newTestGoal(t, s)
+	staleCommanderID := registerNamedTestAgentSession(t, s, "recover-goal-stale-commander", os.Getpid())
+	freshCommanderID := registerNamedTestAgentSession(t, s, "recover-goal-fresh-commander", os.Getpid())
+	subcommanderID := registerNamedTestAgentSession(t, s, "recover-goal-subcommander", os.Getpid())
+	goal, err := s.GetGoal(ctx, goalID)
+	if err != nil {
+		t.Fatalf("GetGoal: %v", err)
+	}
+	if _, err := s.DB().ExecContext(ctx, `UPDATE projects SET claimed_by = ? WHERE id = ?`, staleCommanderID, goal.ProjectID); err != nil {
+		t.Fatalf("claim project for stale commander: %v", err)
+	}
+	handoff, err := s.RequestGoalHandoff(ctx, "recover-goal-review", goalID, staleCommanderID, "delegate")
+	if err != nil {
+		t.Fatalf("RequestGoalHandoff: %v", err)
+	}
+	if _, err := s.ReceiveGoalHandoff(ctx, handoff.ID, goalID, subcommanderID); err != nil {
+		t.Fatalf("ReceiveGoalHandoff: %v", err)
+	}
+	if _, err := s.RequestGoalHandoffReview(ctx, handoff.ID, goalID, subcommanderID, "ready"); err != nil {
+		t.Fatalf("RequestGoalHandoffReview: %v", err)
+	}
+	if _, err := s.ReceiveGoalHandoffReview(ctx, handoff.ID, goalID, staleCommanderID); err != nil {
+		t.Fatalf("ReceiveGoalHandoffReview: %v", err)
+	}
+	if _, err := s.DB().ExecContext(ctx, `UPDATE projects SET claimed_by = ? WHERE id = ?`, freshCommanderID, goal.ProjectID); err != nil {
+		t.Fatalf("turn over commander: %v", err)
+	}
+	if _, err := s.RecoverGoalHandoff(ctx, handoff.ID, goalID, freshCommanderID, "live reviewer"); !errors.Is(err, ErrSessionRecoveryNotProven) {
+		t.Fatalf("RecoverGoalHandoff with live reviewer error = %v, want ErrSessionRecoveryNotProven", err)
+	}
+	if _, err := s.DB().ExecContext(ctx, `UPDATE agent_sessions SET started_at = 'stale-process-start' WHERE id = ?`, staleCommanderID); err != nil {
+		t.Fatalf("make recorded reviewer stale: %v", err)
+	}
+
+	recovered, err := s.RecoverGoalHandoff(ctx, handoff.ID, goalID, freshCommanderID, "reviewer process identity changed")
+	if err != nil {
+		t.Fatalf("RecoverGoalHandoff: %v", err)
+	}
+	if recovered.ReviewReceivedAt != nil || recovered.ReviewReceivedBy != 0 || recovered.ReceivedBy != subcommanderID || recovered.ReviewRequestedBy != subcommanderID || recovered.ReviewRequestReport != "ready" {
+		t.Fatalf("recovered goal handoff = %+v, want only reviewer receipt cleared", recovered)
+	}
+	if _, err := s.ReceiveGoalHandoffReview(ctx, handoff.ID, goalID, freshCommanderID); err != nil {
+		t.Fatalf("ReceiveGoalHandoffReview after recovery: %v", err)
+	}
+}
+
+func TestRecoverGoalHandoffTerminalizesStaleReceiverAndAllowsReplacement(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	goalID := newTestGoal(t, s)
+	addLiveProjectClaim(t, s, goalID, "recover-goal-receiver-current")
+	currentCommanderID := testSessionID("recover-goal-receiver-current")
+	staleReceiverID := addStaleRecoverySession(t, s, "recover-goal-receiver-stale")
+
+	handoff, err := s.RequestGoalHandoff(ctx, "recover-goal-receiver-old", goalID, currentCommanderID, "delegate")
+	if err != nil {
+		t.Fatalf("RequestGoalHandoff: %v", err)
+	}
+	if _, err := s.ReceiveGoalHandoff(ctx, handoff.ID, goalID, staleReceiverID); err != nil {
+		t.Fatalf("ReceiveGoalHandoff: %v", err)
+	}
+
+	recovered, err := s.RecoverGoalHandoff(ctx, handoff.ID, goalID, currentCommanderID, "receiver session disappeared")
+	if err != nil {
+		t.Fatalf("RecoverGoalHandoff: %v", err)
+	}
+	if recovered.RecoveredAt == nil || recovered.RecoveryReport != "receiver session disappeared" || recovered.ReceivedBy != staleReceiverID || recovered.CompletedReportAt != nil {
+		t.Fatalf("recovered goal handoff = %+v, want terminal recovery without normal completion", recovered)
+	}
+	open, err := s.ListOpenGoalHandoffs(ctx)
+	if err != nil {
+		t.Fatalf("ListOpenGoalHandoffs: %v", err)
+	}
+	if _, ok := open[goalID]; ok {
+		t.Fatalf("recovered goal handoff remains open: %+v", open[goalID])
+	}
+	replacement, err := s.RequestGoalHandoff(ctx, "recover-goal-receiver-new", goalID, currentCommanderID, "replacement")
+	if err != nil {
+		t.Fatalf("RequestGoalHandoff replacement: %v", err)
+	}
+	if replacement.ID != "recover-goal-receiver-new" {
+		t.Fatalf("replacement goal handoff = %+v", replacement)
+	}
+}
+
+func TestRecoverRequestedGoalHandoffAllowsReplacement(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	goalID := newTestGoal(t, s)
+	addLiveProjectClaim(t, s, goalID, "recover-goal-request-current")
+	currentCommanderID := testSessionID("recover-goal-request-current")
+	staleRequesterID := addStaleRecoverySession(t, s, "recover-goal-request-stale")
+	handoffID := "recover-goal-request-old"
+	if _, err := s.DB().ExecContext(ctx, `
+		INSERT INTO goal_handoffs (id, goal_id, requested_by, requested_at, request_report)
+		VALUES (?, ?, ?, ?, ?)`, handoffID, goalID, staleRequesterID, time.Now().UTC().Format(time.RFC3339Nano), "delegate"); err != nil {
+		t.Fatalf("insert requested goal handoff: %v", err)
+	}
+
+	recovered, err := s.RecoverGoalHandoff(ctx, handoffID, goalID, currentCommanderID, "requester session disappeared")
+	if err != nil {
+		t.Fatalf("RecoverGoalHandoff requested: %v", err)
+	}
+	if recovered.RecoveredAt == nil || recovered.RequestedBy != staleRequesterID || recovered.ReceivedAt != nil {
+		t.Fatalf("requested goal recovery changed request state: %+v", recovered)
+	}
+	if _, err := s.RequestGoalHandoff(ctx, "recover-goal-request-new", goalID, currentCommanderID, "replacement"); err != nil {
+		t.Fatalf("RequestGoalHandoff replacement: %v", err)
+	}
+}
+
 func TestRejectedGoalReviewRequiresExplicitReplacementHandoff(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

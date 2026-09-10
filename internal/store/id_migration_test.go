@@ -207,7 +207,9 @@ func assertForeignKeySet(t *testing.T, db *sql.DB) {
 	want := map[string]map[string]struct{}{
 		"projects": {},
 		"agent_sessions": {
-			"project_id->projects.id": {},
+			"project_id->projects.id":             {},
+			"discarded_by->agent_sessions.id":     {},
+			"discarded_decision_id->decisions.id": {},
 		},
 		"goals": {
 			"project_id->projects.id":        {},
@@ -283,7 +285,7 @@ func assertForeignKeySet(t *testing.T, db *sql.DB) {
 		}
 		got += len(actual)
 	}
-	const wantCount = 23
+	const wantCount = 25
 	if got != wantCount {
 		t.Errorf("foreign key count = %d, want %d", got, wantCount)
 	}

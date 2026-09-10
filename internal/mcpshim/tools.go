@@ -309,6 +309,27 @@ type SessionIdentifyIn struct {
 	SessionKey string `json:"session_key"`
 }
 
+type SessionDiscardRequestIn struct {
+	ProjectID       mcpID  `json:"project_id"`
+	GoalID          mcpID  `json:"goal_id"`
+	TargetSessionID mcpID  `json:"target_session_id"`
+	Reason          string `json:"reason"`
+}
+
+type SessionDiscardIn struct {
+	ProjectID       mcpID `json:"project_id"`
+	TargetSessionID mcpID `json:"target_session_id"`
+	DecisionID      mcpID `json:"decision_id"`
+}
+
+type HandoffRecoverIn struct {
+	HandoffKind string `json:"handoff_kind" jsonschema:"goal | plan | task | task_create"`
+	HandoffID   string `json:"handoff_id"`
+	GoalID      mcpID  `json:"goal_id,omitempty"`
+	TaskID      mcpID  `json:"task_id,omitempty"`
+	Reason      string `json:"reason"`
+}
+
 type agentSessionIDHolder struct {
 	mu sync.RWMutex
 	id int64
@@ -592,6 +613,46 @@ func Register(server *mcp.Server, c *Client, agentSessionID int64) {
 		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in SessionIdentifyIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
 		return callSessionIdentify(ctx, c, in, sessionID)
+	})
+
+	addMCPTool[SessionDiscardRequestIn, RawWithUnappliedDecisions](server, &mcp.Tool{
+		Name:         "atct_session_discard_request",
+		Description:  "Ask the human to approve revoking a session in the current project.",
+		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in SessionDiscardRequestIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
+		return callWithUnappliedDecisions(ctx, c, "session.discard.request", map[string]any{
+			"project_id": in.ProjectID, "goal_id": in.GoalID, "target_session_id": in.TargetSessionID,
+			"reason": in.Reason, "agent_session_id": sessionID.Get(),
+		})
+	})
+
+	addMCPTool[SessionDiscardIn, RawWithUnappliedDecisions](server, &mcp.Tool{
+		Name:         "atct_session_discard",
+		Description:  "Commit an approved human session-discard decision.",
+		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in SessionDiscardIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
+		return callWithUnappliedDecisions(ctx, c, "session.discard", map[string]any{
+			"project_id": in.ProjectID, "target_session_id": in.TargetSessionID,
+			"decision_id": in.DecisionID, "agent_session_id": sessionID.Get(),
+		})
+	})
+
+	addMCPTool[HandoffRecoverIn, RawWithUnappliedDecisions](server, &mcp.Tool{
+		Name:         "atct_handoff_recover",
+		Description:  "Recover a handoff only after the stored owner is proven stale; the caller session is derived from this transport.",
+		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in HandoffRecoverIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
+		params := map[string]any{
+			"handoff_kind": in.HandoffKind, "handoff_id": in.HandoffID,
+			"reason": in.Reason, "agent_session_id": sessionID.Get(),
+		}
+		if in.GoalID != "" {
+			params["goal_id"] = in.GoalID
+		}
+		if in.TaskID != "" {
+			params["task_id"] = in.TaskID
+		}
+		return callWithUnappliedDecisions(ctx, c, "handoff.recover", params)
 	})
 
 	addMCPTool[RoleIn, Raw](server, &mcp.Tool{

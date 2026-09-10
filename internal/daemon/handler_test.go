@@ -37,6 +37,68 @@ func TestDispatchResolvesCanonicalNumericStringEntityIDs(t *testing.T) {
 	}
 }
 
+func TestDispatchHandoffRecoverValidatesKind(t *testing.T) {
+	fixture := newGoalListFixture(t)
+	defer fixture.store.Close()
+
+	params, err := json.Marshal(map[string]any{
+		"handoff_kind":     "unknown",
+		"handoff_id":       "handoff-unknown",
+		"reason":           "test",
+		"agent_session_id": daemonTestSessionID(t, fixture.store, "handoff-recovery-kind"),
+	})
+	if err != nil {
+		t.Fatalf("marshal handoff.recover params: %v", err)
+	}
+	if _, err := fixture.daemon.dispatch(context.Background(), rpc.Request{Method: "handoff.recover", Params: params}); err == nil || !strings.Contains(err.Error(), "unsupported handoff_kind") {
+		t.Fatalf("handoff.recover error = %v, want unsupported handoff_kind", err)
+	}
+}
+
+func TestDispatchHandoffRecoverRoutesToGoalStore(t *testing.T) {
+	fixture := newGoalListFixture(t)
+	defer fixture.store.Close()
+	ctx := context.Background()
+	goalID := fixture.active[0].ID
+	currentID := daemonTestSessionID(t, fixture.store, "handoff-recovery-current")
+	if _, err := fixture.store.ClaimProject(ctx, fixture.project.ID, currentID); err != nil {
+		t.Fatalf("ClaimProject: %v", err)
+	}
+	staleID := daemonTestSessionID(t, fixture.store, "handoff-recovery-stale")
+	handoff, err := fixture.store.RequestGoalHandoff(ctx, "dispatch-goal-recovery", goalID, currentID, "delegate")
+	if err != nil {
+		t.Fatalf("RequestGoalHandoff: %v", err)
+	}
+	if _, err := fixture.store.ReceiveGoalHandoff(ctx, handoff.ID, goalID, staleID); err != nil {
+		t.Fatalf("ReceiveGoalHandoff: %v", err)
+	}
+	if _, err := fixture.store.DB().ExecContext(ctx, `UPDATE agent_sessions SET started_at = ? WHERE id = ?`, "stale-process", staleID); err != nil {
+		t.Fatalf("make stale session: %v", err)
+	}
+
+	params, err := json.Marshal(map[string]any{
+		"handoff_kind":     "goal",
+		"handoff_id":       handoff.ID,
+		"goal_id":          goalID,
+		"reason":           "receiver disappeared",
+		"agent_session_id": currentID,
+	})
+	if err != nil {
+		t.Fatalf("marshal handoff.recover params: %v", err)
+	}
+	raw, err := fixture.daemon.dispatch(ctx, rpc.Request{Method: "handoff.recover", Params: params})
+	if err != nil {
+		t.Fatalf("handoff.recover: %v", err)
+	}
+	var recovered store.GoalHandoff
+	if err := json.Unmarshal(raw, &recovered); err != nil {
+		t.Fatalf("decode handoff.recover: %v", err)
+	}
+	if recovered.RecoveredAt == nil || recovered.RecoveryReport != "receiver disappeared" {
+		t.Fatalf("recovered handoff = %+v, want terminal recovery", recovered)
+	}
+}
+
 func TestDispatchRejectsLegacyEntityIDsWithMigrationGuidance(t *testing.T) {
 	fixture := newGoalListFixture(t)
 	defer fixture.store.Close()

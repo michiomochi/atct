@@ -65,6 +65,9 @@ func TestRegisterPublishesFortySixToolsWithFlexibleOutputSchema(t *testing.T) {
 		"atct_project_release":                    true,
 		"atct_role":                               true,
 		"atct_session_identify":                   true,
+		"atct_session_discard_request":            true,
+		"atct_session_discard":                    true,
+		"atct_handoff_recover":                    true,
 		"atct_handoff_request":                    true,
 		"atct_handoff_receive":                    true,
 		"atct_handoff_complete":                   true,
@@ -922,6 +925,66 @@ func TestNamedHandoffReviewToolsExposeCanonicalSchemas(t *testing.T) {
 		if strings.HasPrefix(name, "atct_plan_") {
 			if _, ok := properties["task_id"]; ok {
 				t.Errorf("%s must not expose task_id", name)
+			}
+		}
+	}
+}
+
+func TestRecoveryToolsDeriveCallerSessionAndHideCallerIDs(t *testing.T) {
+	ctx := context.Background()
+	socketPath, calls := startCapturingSchemaTestDaemon(t)
+	server := mcp.NewServer(&mcp.Implementation{Name: "atct-test", Version: "test"}, nil)
+	const sessionID int64 = 42
+	mcpshim.Register(server, mcpshim.NewClient(socketPath), sessionID)
+
+	clientTransport, serverTransport := mcp.NewInMemoryTransports()
+	serverSession, err := server.Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatalf("server.Connect: %v", err)
+	}
+	defer serverSession.Close()
+	client := mcp.NewClient(&mcp.Implementation{Name: "schema-test", Version: "test"}, nil)
+	clientSession, err := client.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatalf("client.Connect: %v", err)
+	}
+	defer clientSession.Close()
+
+	cases := []struct {
+		name   string
+		method string
+		args   map[string]any
+	}{
+		{name: "atct_handoff_recover", method: "handoff.recover", args: map[string]any{
+			"handoff_kind": "goal", "handoff_id": "goal-1", "goal_id": "1", "reason": "stale",
+		}},
+		{name: "atct_session_discard_request", method: "session.discard.request", args: map[string]any{
+			"project_id": "1", "goal_id": "1", "target_session_id": "7", "reason": "stale",
+		}},
+		{name: "atct_session_discard", method: "session.discard", args: map[string]any{
+			"project_id": "1", "target_session_id": "7", "decision_id": "8",
+		}},
+	}
+	for _, tc := range cases {
+		result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{Name: tc.name, Arguments: tc.args})
+		if err != nil || result == nil || result.IsError {
+			t.Fatalf("CallTool(%s): result=%+v err=%v", tc.name, result, err)
+		}
+		var call capturedSchemaDaemonCall
+		select {
+		case call = <-calls:
+		case <-time.After(time.Second):
+			t.Fatalf("timed out waiting for %s RPC", tc.method)
+		}
+		if call.method != tc.method {
+			t.Fatalf("%s RPC method = %q, want %q", tc.name, call.method, tc.method)
+		}
+		if call.params["agent_session_id"] != float64(sessionID) {
+			t.Errorf("%s agent_session_id = %#v, want %d", tc.name, call.params["agent_session_id"], sessionID)
+		}
+		for _, field := range []string{"requested_by", "received_by", "reviewer_id", "stale_session_id", "recovered_by"} {
+			if _, ok := call.params[field]; ok {
+				t.Errorf("%s exposed shim-owned field %q", tc.name, field)
 			}
 		}
 	}
