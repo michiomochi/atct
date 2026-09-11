@@ -1581,9 +1581,9 @@ func eventMatchesTaskID(event store.DecisionEvent, taskID int64) bool {
 		return data.TaskID != 0 && data.TaskID == taskID
 	case *domain.Decision:
 		return data != nil && data.TaskID != 0 && data.TaskID == taskID
-	case store.DetectionEvent:
+	case store.WakeupEvent:
 		return data.TaskID != 0 && data.TaskID == taskID
-	case *store.DetectionEvent:
+	case *store.WakeupEvent:
 		return data != nil && data.TaskID != 0 && data.TaskID == taskID
 	case store.HandoffEvent:
 		return data.TaskID != 0 && data.TaskID == taskID
@@ -1721,9 +1721,9 @@ func eventMatchesGoalID(event store.DecisionEvent, goalID int64) bool {
 		return data.GoalID != 0 && data.GoalID == goalID
 	case *domain.Decision:
 		return data != nil && data.GoalID != 0 && data.GoalID == goalID
-	case store.DetectionEvent:
+	case store.WakeupEvent:
 		return data.GoalID != 0 && data.GoalID == goalID
-	case *store.DetectionEvent:
+	case *store.WakeupEvent:
 		return data != nil && data.GoalID != 0 && data.GoalID == goalID
 	case store.GoalWithdrawnEvent:
 		return data.GoalID != 0 && data.GoalID == goalID
@@ -1759,9 +1759,9 @@ func (s *Server) eventProjectID(ctx context.Context, event store.DecisionEvent) 
 			return 0, err
 		}
 		return goal.ProjectID, nil
-	case store.DetectionEvent:
+	case store.WakeupEvent:
 		return data.ProjectID, nil
-	case *store.DetectionEvent:
+	case *store.WakeupEvent:
 		if data == nil {
 			return 0, nil
 		}
@@ -1773,9 +1773,9 @@ func (s *Server) eventProjectID(ctx context.Context, event store.DecisionEvent) 
 			return 0, nil
 		}
 		return data.ProjectID, nil
-	case store.WakeupEvent:
+	case store.ActionableWakeupEvent:
 		return data.ProjectID, nil
-	case *store.WakeupEvent:
+	case *store.ActionableWakeupEvent:
 		if data == nil {
 			return 0, nil
 		}

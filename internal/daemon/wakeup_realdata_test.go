@@ -14,7 +14,7 @@ import (
 // unit tests build their own fixtures, and fixtures are what let the original
 // defect through -- a goal with no unstarted tasks never reached the publisher,
 // and no fixture had that shape.
-func TestDetectionAgainstRealDatabaseCopy(t *testing.T) {
+func TestWakeupAgainstRealDatabaseCopy(t *testing.T) {
 	path := os.Getenv("ATCT_REAL_DB")
 	if path == "" {
 		t.Skip("set ATCT_REAL_DB to a copy of a real database")
@@ -45,20 +45,20 @@ func TestDetectionAgainstRealDatabaseCopy(t *testing.T) {
 		t.Fatalf("publish evaluate: %v", err)
 	}
 
-	if _, ok := findDetectionEvent(events, store.EventDetectionCompletionReportMissing, goalID); !ok {
+	if _, ok := findWakeupEvent(events, store.EventWakeupCompletionReportMissing, goalID); !ok {
 		for _, event := range events {
 			t.Logf("published %v %#v", event.Name, event.Data)
 		}
-		t.Fatalf("no completion detection for %v", goalID)
+		t.Fatalf("no completion wakeup for %v", goalID)
 	}
-	t.Logf("published %d events; completion detection present for %v", len(events), goalID)
+	t.Logf("published %d events; completion wakeup present for %v", len(events), goalID)
 
 	// Converges: asking again without the condition changing says nothing new.
 	again, err := tracker.evaluate(ctx, s, start.Add(wakeupPublishAfter+time.Minute))
 	if err != nil {
 		t.Fatalf("second evaluate: %v", err)
 	}
-	if _, ok := findDetectionEvent(again, store.EventDetectionCompletionReportMissing, goalID); ok {
-		t.Fatalf("completion detection repeated for %v", goalID)
+	if _, ok := findWakeupEvent(again, store.EventWakeupCompletionReportMissing, goalID); ok {
+		t.Fatalf("completion wakeup repeated for %v", goalID)
 	}
 }

@@ -24,10 +24,10 @@ func TestEmitWatchDecisionSuppressesUnchangedWakeupAndEmitsChangedContent(t *tes
 	var out strings.Builder
 	delivered := make(map[watchDeliveryKey]struct{})
 	var lastWakeupContent string
-	wakeupDiscrepancyDelivered := make(map[watchWakeupDeliveryKey]struct{})
-	detectionDelivered := make(map[watchDetectionDeliveryKey]struct{})
+	wakeupDiscrepancyDelivered := make(map[watchWakeupDiscrepancyDeliveryKey]struct{})
+	wakeupDelivered := make(map[watchWakeupDeliveryKey]struct{})
 	for _, decision := range []watchDecision{first, sameContent, changedContent} {
-		if err := emitWatchDecisionWithState(&out, "wakeup", decision, delivered, &lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered); err != nil {
+		if err := emitWatchDecisionWithState(&out, "wakeup", decision, delivered, &lastWakeupContent, wakeupDiscrepancyDelivered, wakeupDelivered); err != nil {
 			t.Fatalf("emitWatchDecision: %v", err)
 		}
 	}
@@ -58,17 +58,17 @@ func TestEmitWatchDecisionKeepsWakeupDeliveryPerWatch(t *testing.T) {
 	var firstOut, secondOut strings.Builder
 	firstDelivered := make(map[watchDeliveryKey]struct{})
 	var firstLastWakeupContent string
-	firstWakeupDiscrepancyDelivered := make(map[watchWakeupDeliveryKey]struct{})
-	firstDetectionDelivered := make(map[watchDetectionDeliveryKey]struct{})
+	firstWakeupDiscrepancyDelivered := make(map[watchWakeupDiscrepancyDeliveryKey]struct{})
+	firstWakeupDelivered := make(map[watchWakeupDeliveryKey]struct{})
 	secondDelivered := make(map[watchDeliveryKey]struct{})
 	var secondLastWakeupContent string
-	secondWakeupDiscrepancyDelivered := make(map[watchWakeupDeliveryKey]struct{})
-	secondDetectionDelivered := make(map[watchDetectionDeliveryKey]struct{})
+	secondWakeupDiscrepancyDelivered := make(map[watchWakeupDiscrepancyDeliveryKey]struct{})
+	secondWakeupDelivered := make(map[watchWakeupDeliveryKey]struct{})
 
-	if err := emitWatchDecisionWithState(&firstOut, "wakeup", decision, firstDelivered, &firstLastWakeupContent, firstWakeupDiscrepancyDelivered, firstDetectionDelivered); err != nil {
+	if err := emitWatchDecisionWithState(&firstOut, "wakeup", decision, firstDelivered, &firstLastWakeupContent, firstWakeupDiscrepancyDelivered, firstWakeupDelivered); err != nil {
 		t.Fatalf("first watch emitWatchDecision: %v", err)
 	}
-	if err := emitWatchDecisionWithState(&secondOut, "wakeup", decision, secondDelivered, &secondLastWakeupContent, secondWakeupDiscrepancyDelivered, secondDetectionDelivered); err != nil {
+	if err := emitWatchDecisionWithState(&secondOut, "wakeup", decision, secondDelivered, &secondLastWakeupContent, secondWakeupDiscrepancyDelivered, secondWakeupDelivered); err != nil {
 		t.Fatalf("second watch emitWatchDecision: %v", err)
 	}
 
@@ -98,10 +98,10 @@ func TestEmitWatchDecisionEmitsWakeupWhenContentReturns(t *testing.T) {
 	var out strings.Builder
 	delivered := make(map[watchDeliveryKey]struct{})
 	var lastWakeupContent string
-	wakeupDiscrepancyDelivered := make(map[watchWakeupDeliveryKey]struct{})
-	detectionDelivered := make(map[watchDetectionDeliveryKey]struct{})
+	wakeupDiscrepancyDelivered := make(map[watchWakeupDiscrepancyDeliveryKey]struct{})
+	wakeupDelivered := make(map[watchWakeupDeliveryKey]struct{})
 	for _, decision := range []watchDecision{first, changed, returned} {
-		if err := emitWatchDecisionWithState(&out, "wakeup", decision, delivered, &lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered); err != nil {
+		if err := emitWatchDecisionWithState(&out, "wakeup", decision, delivered, &lastWakeupContent, wakeupDiscrepancyDelivered, wakeupDelivered); err != nil {
 			t.Fatalf("emitWatchDecision: %v", err)
 		}
 	}

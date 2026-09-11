@@ -138,7 +138,7 @@ func (s *Store) ListTasks(ctx context.Context, goalID int64) ([]domain.Task, err
 }
 
 // SnoozeTask sets or clears the absolute deadline that temporarily hides a
-// todo task from wakeup detection. A nil deadline clears the snooze.
+// todo task from wakeup. A nil deadline clears the snooze.
 func (s *Store) SnoozeTask(ctx context.Context, taskID int64, until *time.Time) (domain.Task, error) {
 	var snoozedUntil sql.NullString
 	if until != nil {

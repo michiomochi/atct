@@ -172,9 +172,9 @@ func pendingTextForProject(dir, cwd, projectName string, projectSpecified bool) 
 		}
 		otherStaleClaimedTasks = append(otherStaleClaimedTasks, task)
 	}
-	wakeupState, err := s.DetectWakeup(ctx, project.ID)
+	wakeupState, err := s.EvaluateWakeup(ctx, project.ID)
 	if err != nil {
-		return "", fmt.Errorf("detect wakeup: %w", err)
+		return "", fmt.Errorf("evaluate wakeup: %w", err)
 	}
 
 	var output strings.Builder

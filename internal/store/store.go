@@ -211,7 +211,7 @@ func (s *Store) ListMonitorHealth(ctx context.Context, projectID int64) ([]Monit
 }
 
 // ListMonitorHealthHistory returns retained rows, including stopped and stale
-// monitors, for recovery detection. It is not a liveness view.
+// monitors, for recovery wakeup. It is not a liveness view.
 func (s *Store) ListMonitorHealthHistory(ctx context.Context, projectID int64) ([]MonitorHealth, error) {
 	if projectID <= 0 {
 		return nil, errors.New("project_id is required")

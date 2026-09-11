@@ -8,7 +8,7 @@ session の開始と停止を扱う。この文書では、その三つを発生
 ```mermaid
 flowchart LR
     D[Daemon] --> E[Event]
-    D --> W[Wakeup condition]
+    D --> W[Wakeup]
 
     E --> M[AI Agent Monitor]
     W --> M
@@ -43,35 +43,25 @@ Event は decision または handoff の状態が変わった時点で発行さ�
 
 ## Wakeup
 
-Wakeup condition は「状態が一定時間続いた」ことを追跡し、ポリシーに従って通知する。
-作業を進めるための Wakeup と、問題を知らせる Wakeup があるが、評価・状態保持・発行経路は同じである。
+Wakeup は、作業可能な状態または解消されない問題が一定時間続いた時に通知する。評価・状態保持・
+発行経路は一つであり、通知対象と頻度だけが異なる。
 
-### 作業促進
-
-| 通知 | 発生条件 | 頻度 | 次の行動 |
+| Wakeup | 発生条件 | 頻度 | 次の行動 |
 | --- | --- | --- | --- |
-| actionable wakeup | 実行可能な task が残る | 条件が 3 分継続後、以後 3 分ごとに候補 | scope 内で次に実行できる task を role が進める |
+| actionable wakeup | 実行可能な task が残る | 3 分継続後、以後 3 分ごとに候補 | scope 内で次に実行できる task を role が進める |
+| goal の completion report / commit 欠落、task 未宣言・全 dropped・unclaimed doing | 15 分継続 | 状態を修正するか、意図した状態に必要な記録を補う |
+| handoff 未受領、completion report 欠落、handoff なしの claim | 30 分継続 | receipt、review、completion report、recovery の不足を確認する |
+| stale claim、default answer 未適用 | 3 分継続 | claim または decision の反映状態を確認して進める |
+| human answer 済みで未適用 | 即時 | 回答を apply する |
+| `wakeup.monitor_lost` | monitor health の最終更新から 75 秒 | 親 role が handoff recovery または worker 再作成を選ぶ |
 | keepalive | daemon が正常に評価を続けている | 30 秒ごとに内部発行 | 通常は表示しない |
 | keepalive missing | watch が keepalive を受けない | 90 秒後に一度 | watch / daemon 接続を確認する。業務 task の担当通知ではない |
 
-同じ actionable wakeup の表示内容は抑止される。人間判断待ちだけの task は actionable wakeup
-の対象ではない。
+同じ Wakeup の表示内容は抑止される。人間判断待ちだけの task は actionable wakeup の対象ではない。
+対象状態が消えるまで、問題を知らせる Wakeup は対象ごとに一度だけ通知する。`wakeup.*` は
+すべて Wakeup の event 名であり、別の概念や評価機構ではない。
 
-### 状態検出
-
-状態検出 Wakeup は「不整合が一定時間直らない」ことを知らせる。条件が消えるまで、同じ condition と
-対象の組合せは一度だけ通知する。現在の event 名が `detection.*` であっても、これは Wakeup の
-一種であり、別の評価機構ではない。
-
-| 検出する状態 | 最初に出るまで | 次の行動 |
-| --- | --- | --- |
-| goal の completion report / commit 欠落、task 未宣言・全 dropped・unclaimed doing | 15 分 | 状態を修正するか、意図した状態に必要な記録を補う |
-| handoff 未受領、completion report 欠落、handoff なしの claim | 30 分 | receipt、review、completion report、recovery の不足を確認する |
-| stale claim、default answer 未適用 | 3 分 | claim または decision の反映状態を確認して進める |
-| human answer 済みで未適用 | 即時 | 回答を apply する |
-| `detection.monitor_lost` | monitor health の最終更新から 75 秒 | 親 role が handoff recovery または worker 再作成を選ぶ |
-
-`detection.monitor_lost` は executor の場合は subcommander、subcommander の場合は commander に
+`wakeup.monitor_lost` は executor の場合は subcommander、subcommander の場合は commander に
 届く。Codex process の自動再起動や handoff の自動回復・再割当は行わない。
 
 # AI Agent Monitor
@@ -83,7 +73,7 @@ turn input へ変換する。Monitor は通知経路であり、Session Start / 
 
 ```mermaid
 flowchart LR
-    N[Event / Wakeup condition] --> F{scope 内か?}
+    N[Event / Wakeup] --> F{scope 内か?}
     F -->|いいえ| X[破棄]
     F -->|はい| D{重複か?}
     D -->|はい| X
@@ -198,7 +188,7 @@ Stop hook は fail closed の判定だけを行う。monitor / daemon の停止�
 
 | 責務 | 主な実装 |
 | --- | --- |
-| Event、Wakeup condition、monitor lost | `internal/daemon/wakeup.go`、`internal/store/wakeup.go` |
+| Event、Wakeup、monitor lost | `internal/daemon/wakeup.go`、`internal/store/wakeup.go` |
 | scope filter、重複抑止、liveness | `cmd/atct/watch.go`、`cmd/atct/watch_scope.go` |
 | SSE | `internal/httpapi/server.go` |
 | Codex monitor / Bridge | `cmd/atct/codex_monitor*.go`、`cmd/atct/codex_monitor_supervisor.go` |

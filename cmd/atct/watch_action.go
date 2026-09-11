@@ -48,7 +48,7 @@ func selectWatchAgentAction(line, eventName string, decision watchDecision) (wat
 	switch eventName {
 	case "decision.pending", "decision.opened",
 		"plan.handoff.request", "plan.handoff.receive", "plan.handoff.complete",
-		"detection.handoff_unreceived", "detection.handoff_unreported", "keepalive":
+		"wakeup.handoff_unreceived", "wakeup.handoff_unreported", "keepalive":
 		return watchAgentAction{}, false
 	}
 	deliveryKey, generation := watchActionDeliveryIdentity(eventName, line, decision)

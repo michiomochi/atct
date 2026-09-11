@@ -300,7 +300,7 @@ func TestCodexMonitorActionLineAdmitsFormattedTaskActions(t *testing.T) {
 		decision  watchDecision
 	}{
 		{line: "atct handoff reported: task 846 (handoff handoff-846): verified", eventName: "handoff_reported", decision: watchDecision{TaskID: "846", HandoffID: "handoff-846"}},
-		{line: "atct detection: task 846 has a stale claim", eventName: "detection.claim_stale", decision: watchDecision{TaskID: "846"}},
+		{line: "atct wakeup: task 846 has a stale claim", eventName: "wakeup.claim_stale", decision: watchDecision{TaskID: "846"}},
 	} {
 		if _, ok := selectWatchAgentAction(tc.line, tc.eventName, tc.decision); !ok {
 			t.Fatalf("task transition action line rejected: %q", tc.line)
@@ -986,16 +986,16 @@ func TestCodexMonitorEventSinkOnlyReceivesFormattedLines(t *testing.T) {
 	actionSink := bridge.ActionSink()
 	state := make(map[watchDeliveryKey]struct{})
 	lastWakeup := ""
-	if err := emitWatchDecisionWithStateAndSinks(io.Discard, "decision.approved", watchDecision{DecisionID: "d1"}, state, &lastWakeup, make(map[watchWakeupDeliveryKey]struct{}), make(map[watchDetectionDeliveryKey]struct{}), rawSink, actionSink); err != nil {
+	if err := emitWatchDecisionWithStateAndSinks(io.Discard, "decision.approved", watchDecision{DecisionID: "d1"}, state, &lastWakeup, make(map[watchWakeupDiscrepancyDeliveryKey]struct{}), make(map[watchWakeupDeliveryKey]struct{}), rawSink, actionSink); err != nil {
 		t.Fatalf("emit approved: %v", err)
 	}
-	if err := emitWatchDecisionWithStateAndSinks(io.Discard, "keepalive", watchDecision{}, state, &lastWakeup, make(map[watchWakeupDeliveryKey]struct{}), make(map[watchDetectionDeliveryKey]struct{}), rawSink, actionSink); err != nil {
+	if err := emitWatchDecisionWithStateAndSinks(io.Discard, "keepalive", watchDecision{}, state, &lastWakeup, make(map[watchWakeupDiscrepancyDeliveryKey]struct{}), make(map[watchWakeupDeliveryKey]struct{}), rawSink, actionSink); err != nil {
 		t.Fatalf("emit keepalive: %v", err)
 	}
 	for _, line := range []string{
 		"atct watch: connection unavailable; reconnecting in 5s",
 		"atct decision default applied (decision_id: d2)",
-		"atct detection: malformed",
+		"atct wakeup: malformed",
 	} {
 		if err := rawSink(line); err != nil {
 			t.Fatalf("rawSink(%q): %v", line, err)
@@ -1028,7 +1028,7 @@ func TestReconcileWatchScopeSendsAppliedApprovalToCodexMonitorBridge(t *testing.
 	err := reconcileWatchScope(
 		context.Background(), client, "http://daemon", watchScope{ProjectID: "1"}, io.Discard,
 		make(map[watchDeliveryKey]struct{}), &lastWakeupContent,
-		make(map[watchWakeupDeliveryKey]struct{}), make(map[watchDetectionDeliveryKey]struct{}),
+		make(map[watchWakeupDiscrepancyDeliveryKey]struct{}), make(map[watchWakeupDeliveryKey]struct{}),
 		newWatchScopeFilter(""), bridge.LineSink(), bridge.ActionSink(),
 	)
 	if err != nil {

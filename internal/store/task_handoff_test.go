@@ -144,7 +144,7 @@ func addTaskHandoffDirect(t *testing.T, s *Store, handoffID string, taskID int64
 	}
 }
 
-func waitForHandoffReported(t *testing.T, events <-chan DecisionEvent) DetectionEvent {
+func waitForHandoffReported(t *testing.T, events <-chan DecisionEvent) WakeupEvent {
 	t.Helper()
 
 	timer := time.NewTimer(time.Second)
@@ -154,15 +154,15 @@ func waitForHandoffReported(t *testing.T, events <-chan DecisionEvent) Detection
 		if event.Name != EventHandoffReported {
 			t.Fatalf("event name = %q, want %q", event.Name, EventHandoffReported)
 		}
-		detection, ok := event.Data.(DetectionEvent)
+		wakeup, ok := event.Data.(WakeupEvent)
 		if !ok {
-			t.Fatalf("event data type = %T, want DetectionEvent", event.Data)
+			t.Fatalf("event data type = %T, want WakeupEvent", event.Data)
 		}
-		return detection
+		return wakeup
 	case <-timer.C:
 		t.Fatal("timed out waiting for handoff_reported event")
 	}
-	return DetectionEvent{}
+	return WakeupEvent{}
 }
 
 func expectNoHandoffReported(t *testing.T, events <-chan DecisionEvent) {
@@ -399,13 +399,13 @@ func TestCompleteTaskHandoffPublishesReportedEvent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CompleteTaskHandoff: %v", err)
 	}
-	detection := waitForHandoffReported(t, events)
+	wakeup := waitForHandoffReported(t, events)
 
 	if completed.ID != handoffID || completed.CompletedReportAt == nil || completed.CompleteReport != report {
 		t.Fatalf("completed handoff = %+v, want report %q", completed, report)
 	}
-	if detection.DetectionID == "" || detection.ProjectID != goal.ProjectID || detection.GoalID != goalID || detection.TaskID != taskID || detection.HandoffID != handoffID || detection.CompleteReport != report {
-		t.Fatalf("reported detection = %+v, want project=%d goal=%d task=%d handoff=%q report=%q", detection, goal.ProjectID, goalID, taskID, handoffID, report)
+	if wakeup.WakeupID == "" || wakeup.ProjectID != goal.ProjectID || wakeup.GoalID != goalID || wakeup.TaskID != taskID || wakeup.HandoffID != handoffID || wakeup.CompleteReport != report {
+		t.Fatalf("reported wakeup = %+v, want project=%d goal=%d task=%d handoff=%q report=%q", wakeup, goal.ProjectID, goalID, taskID, handoffID, report)
 	}
 }
 
@@ -535,7 +535,7 @@ func TestTaskHandoffAllowsSecondHandoffForSameTask(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second RequestTaskHandoff failed: %v", err)
 	}
-	detection := waitForHandoffReported(t, events)
+	wakeup := waitForHandoffReported(t, events)
 	if first.ID == second.ID {
 		t.Fatalf("same task handoffs must have distinct IDs: %q", first.ID)
 	}
@@ -547,8 +547,8 @@ func TestTaskHandoffAllowsSecondHandoffForSameTask(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetGoal failed: %v", err)
 	}
-	if detection.DetectionID == "" || detection.ProjectID != goal.ProjectID || detection.GoalID != goalID || detection.TaskID != taskID || detection.HandoffID != first.ID || detection.CompleteReport != "セッションが停止した" {
-		t.Fatalf("reclaimed handoff detection = %+v, want project=%d goal=%d task=%d handoff=%q", detection, goal.ProjectID, goalID, taskID, first.ID)
+	if wakeup.WakeupID == "" || wakeup.ProjectID != goal.ProjectID || wakeup.GoalID != goalID || wakeup.TaskID != taskID || wakeup.HandoffID != first.ID || wakeup.CompleteReport != "セッションが停止した" {
+		t.Fatalf("reclaimed handoff wakeup = %+v, want project=%d goal=%d task=%d handoff=%q", wakeup, goal.ProjectID, goalID, taskID, first.ID)
 	}
 	first, err = s.GetTaskHandoff(ctx, first.ID)
 	if err != nil {

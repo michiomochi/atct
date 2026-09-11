@@ -445,7 +445,7 @@ that subcommander is started:
    >
    > Then attach `atct watch -goal <goal_id>` to a background stream the way
    > your harness watches one, passing only the `goal_id` provided in this
-   > request. The detections for this goal, and the answers to the decisions
+   > request. The Wakeup events for this goal, and the answers to the decisions
    > you raise for it, then reach you without the delegator relaying them.
    > Pass no other goal; a subcommander must not inspect other goals. This
    > step applies only in Claude Code; Codex has no Monitor, so a Codex reader
@@ -488,7 +488,7 @@ that subcommander is started:
 
 6. Stay out until the completion report. After waking the subcommander, the
    delegator sends it nothing and answers nothing about the goal's design.
-   What the delegator reads instead are this project's ATCT detections, which
+   What the delegator reads instead are this project's ATCT Wakeup events, which
    arrive from `atct watch` rather than from the subcommander: a goal with no
    commits, a goal with no declared tasks, a claim nobody delegated, a handoff
    nobody received. Those are what a stalled subcommander looks like from
@@ -557,10 +557,10 @@ reaches the human without passing through the delegator's context.
 A subcommander that stops working sends nothing at all, and the old habit caught
 that only because a delegator noticed a quiet pane. The record catches it
 instead: a goal with tasks and no commits, or a closed handoff with nothing
-committed, each raises a detection on the delegator's watch. On 2026-08-27 goal
+committed, each raises a Wakeup on the delegator's watch. On 2026-08-27 goal
 172 stalled with three tasks still `todo` and eight files uncommitted, and goal
 144 closed its handoff with no commits and four tasks still `todo`. Both
-detections had already fired; nobody had been told to read them.
+Wakeups had already fired; nobody had been told to read them.
 
 ## Fill in a report on a handoff that is already closed
 
@@ -639,7 +639,7 @@ at all — the run has moved on, and nothing comes back to write the result. The
 landed work reads as unstarted for the rest of the session, so the queue looks
 longer than it is and the finished task can be handed to somebody else. Close it
 without `commits` and the loss is quieter but still real:
-`detection.commits_missing` fires, and **the approver can no longer tell which
+`wakeup.commits_missing` fires, and **the approver can no longer tell which
 change belongs to which task.** The diff view goal 187 added
 (`GET /api/goals/{id}/diff`) reads the branch, so the diff itself is visible with
 no commits linked at all — but the per-task correspondence exists nowhere else.

@@ -34,47 +34,46 @@ const (
 )
 
 type watchDecision struct {
-	ID                         string  `json:"id"`
-	DecisionID                 string  `json:"decision_id"`
-	ProjectID                  string  `json:"project_id"`
-	Kind                       string  `json:"kind"`
-	AnswerLabel                string  `json:"answer_label"`
-	DefaultAppliedAt           *string `json:"default_applied_at"`
-	SettledByDefault           bool    `json:"settled_by_default"`
-	WakeupID                   string  `json:"wakeup_id"`
-	Reason                     string  `json:"reason"`
-	ActionableGoalCount        int     `json:"actionable_goal_count"`
-	UnassignedGoalCount        int     `json:"unassigned_goal_count"`
-	UnassignedGoalIDs          []int64 `json:"unassigned_goal_ids"`
-	UnstartedTaskCount         int     `json:"unstarted_task_count"`
-	WaitingAnswerTaskCount     int     `json:"waiting_answer_task_count"`
-	UntouchedTaskCount         int     `json:"untouched_task_count"`
-	DelegatedTaskCount         int     `json:"delegated_task_count"`
-	WaitingAnswerCount         int     `json:"waiting_answer_count"`
-	DetectorUnstartedTaskCount int     `json:"detector_unstarted_task_count"`
-	CountedUnstartedTaskCount  int     `json:"counted_unstarted_task_count"`
-	DetectionID                string  `json:"detection_id"`
-	GoalID                     string  `json:"goal_id"`
-	TaskID                     string  `json:"task_id"`
-	HandoffID                  string  `json:"handoff_id"`
-	WorktreeActivity           string  `json:"worktree_activity"`
-	CompleteReport             string  `json:"complete_report"`
-	Status                     string  `json:"status"`
-	Condition                  string  `json:"condition"`
-	TargetRole                 string  `json:"target_role"`
-	ScopeKey                   string  `json:"scope_key"`
-	Generation                 string  `json:"generation"`
-	BlockerID                  string  `json:"blocker_id"`
-	BlockerKind                string  `json:"blocker_kind"`
-	SourceID                   string  `json:"source_id"`
-	ExpectedRole               string  `json:"expected_role"`
-	ExpectedAgentSessionID     int64   `json:"expected_agent_session_id"`
-	ExpectedAgentKey           string  `json:"expected_agent_key"`
-	ObservedRole               string  `json:"observed_role"`
-	ObservedAgentSessionID     int64   `json:"observed_agent_session_id"`
-	ObservedAgentKey           string  `json:"observed_agent_key"`
-	Instruction                string  `json:"instruction"`
-	deliveryGeneration         string
+	ID                          string  `json:"id"`
+	DecisionID                  string  `json:"decision_id"`
+	ProjectID                   string  `json:"project_id"`
+	Kind                        string  `json:"kind"`
+	AnswerLabel                 string  `json:"answer_label"`
+	DefaultAppliedAt            *string `json:"default_applied_at"`
+	SettledByDefault            bool    `json:"settled_by_default"`
+	WakeupID                    string  `json:"wakeup_id"`
+	Reason                      string  `json:"reason"`
+	ActionableGoalCount         int     `json:"actionable_goal_count"`
+	UnassignedGoalCount         int     `json:"unassigned_goal_count"`
+	UnassignedGoalIDs           []int64 `json:"unassigned_goal_ids"`
+	UnstartedTaskCount          int     `json:"unstarted_task_count"`
+	WaitingAnswerTaskCount      int     `json:"waiting_answer_task_count"`
+	UntouchedTaskCount          int     `json:"untouched_task_count"`
+	DelegatedTaskCount          int     `json:"delegated_task_count"`
+	WaitingAnswerCount          int     `json:"waiting_answer_count"`
+	EvaluatedUnstartedTaskCount int     `json:"evaluated_unstarted_task_count"`
+	CountedUnstartedTaskCount   int     `json:"counted_unstarted_task_count"`
+	GoalID                      string  `json:"goal_id"`
+	TaskID                      string  `json:"task_id"`
+	HandoffID                   string  `json:"handoff_id"`
+	WorktreeActivity            string  `json:"worktree_activity"`
+	CompleteReport              string  `json:"complete_report"`
+	Status                      string  `json:"status"`
+	Condition                   string  `json:"condition"`
+	TargetRole                  string  `json:"target_role"`
+	ScopeKey                    string  `json:"scope_key"`
+	Generation                  string  `json:"generation"`
+	BlockerID                   string  `json:"blocker_id"`
+	BlockerKind                 string  `json:"blocker_kind"`
+	SourceID                    string  `json:"source_id"`
+	ExpectedRole                string  `json:"expected_role"`
+	ExpectedAgentSessionID      int64   `json:"expected_agent_session_id"`
+	ExpectedAgentKey            string  `json:"expected_agent_key"`
+	ObservedRole                string  `json:"observed_role"`
+	ObservedAgentSessionID      int64   `json:"observed_agent_session_id"`
+	ObservedAgentKey            string  `json:"observed_agent_key"`
+	Instruction                 string  `json:"instruction"`
+	deliveryGeneration          string
 }
 
 type watchInbox struct {
@@ -138,14 +137,13 @@ func (d *watchDecision) UnmarshalJSON(data []byte) error {
 	type plain watchDecision
 	var decoded plain
 	if err := decodeEntityIDObject(data, map[string]*string{
-		"id":           &decoded.ID,
-		"decision_id":  &decoded.DecisionID,
-		"project_id":   &decoded.ProjectID,
-		"wakeup_id":    &decoded.WakeupID,
-		"detection_id": &decoded.DetectionID,
-		"goal_id":      &decoded.GoalID,
-		"task_id":      &decoded.TaskID,
-		"handoff_id":   &decoded.HandoffID,
+		"id":          &decoded.ID,
+		"decision_id": &decoded.DecisionID,
+		"project_id":  &decoded.ProjectID,
+		"wakeup_id":   &decoded.WakeupID,
+		"goal_id":     &decoded.GoalID,
+		"task_id":     &decoded.TaskID,
+		"handoff_id":  &decoded.HandoffID,
 	}, &decoded); err != nil {
 		return err
 	}
@@ -171,15 +169,15 @@ type watchDeliveryKey struct {
 	defaultApplied bool
 }
 
-type watchWakeupDeliveryKey struct {
+type watchWakeupDiscrepancyDeliveryKey struct {
 	eventName string
 	wakeupID  string
 }
 
-// Keyed by the target rather than the detection id, which is fresh on every
+// Keyed by the target rather than the wakeup id, which is fresh on every
 // publish: the point is to say a condition once per goal, handoff, or task, not
 // once per occurrence.
-type watchDetectionDeliveryKey struct {
+type watchWakeupDeliveryKey struct {
 	eventName  string
 	targetID   string
 	generation string
@@ -648,8 +646,8 @@ func watchLoopWithEnsureAndProjectIDAndScopeAndActionSink(ctx context.Context, o
 	// and sends its first current wakeup. State is per watch loop so a later
 	// watch is not silenced by another watch's delivery.
 	var lastWakeupContent string
-	wakeupDiscrepancyDelivered := make(map[watchWakeupDeliveryKey]struct{})
-	detectionDelivered := make(map[watchDetectionDeliveryKey]struct{})
+	wakeupDiscrepancyDelivered := make(map[watchWakeupDiscrepancyDeliveryKey]struct{})
+	wakeupDelivered := make(map[watchWakeupDeliveryKey]struct{})
 	latestReconciliation := watchReconciliation{}
 	recoveryState := newWatchRecoveryState()
 	ensureDisabled := false
@@ -725,7 +723,7 @@ func watchLoopWithEnsureAndProjectIDAndScopeAndActionSink(ctx context.Context, o
 		}
 		streamScope := scope
 		streamScope.ProjectID = filterProjectID
-		if err := reconcileWatchScope(ctx, client, baseURL, streamScope, out, delivered, &lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered, scopeFilter, sink, actionSink, &latestReconciliation, healthReporter); err != nil {
+		if err := reconcileWatchScope(ctx, client, baseURL, streamScope, out, delivered, &lastWakeupContent, wakeupDiscrepancyDelivered, wakeupDelivered, scopeFilter, sink, actionSink, &latestReconciliation, healthReporter); err != nil {
 			if ctx.Err() != nil {
 				return nil
 			}
@@ -746,7 +744,7 @@ func watchLoopWithEnsureAndProjectIDAndScopeAndActionSink(ctx context.Context, o
 		}
 		reconcileSucceeded(baseURL)
 
-		err = consumeWatchEventsWithStateAndScopeAndSinkAndCursor(ctx, client, baseURL, streamScope, out, watchKeepaliveTimeout, delivered, &lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered, scopeFilter, sink, actionSink, &latestReconciliation, func() {
+		err = consumeWatchEventsWithStateAndScopeAndSinkAndCursor(ctx, client, baseURL, streamScope, out, watchKeepaliveTimeout, delivered, &lastWakeupContent, wakeupDiscrepancyDelivered, wakeupDelivered, scopeFilter, sink, actionSink, &latestReconciliation, func() {
 			reconcileSucceeded(baseURL)
 		})
 		if err != nil && ctx.Err() == nil {
@@ -893,7 +891,7 @@ func watchPathWithin(root, path string) bool {
 }
 
 func consumeWatchEvents(ctx context.Context, client *http.Client, baseURL, projectID string, out io.Writer, delivered map[watchDeliveryKey]struct{}) error {
-	return consumeWatchEventsWithTimeout(ctx, client, baseURL, projectID, out, watchKeepaliveTimeout, delivered, make(map[watchWakeupDeliveryKey]struct{}), make(map[watchDetectionDeliveryKey]struct{}))
+	return consumeWatchEventsWithTimeout(ctx, client, baseURL, projectID, out, watchKeepaliveTimeout, delivered, make(map[watchWakeupDiscrepancyDeliveryKey]struct{}), make(map[watchWakeupDeliveryKey]struct{}))
 }
 
 type watchSSEFrame struct {
@@ -902,35 +900,35 @@ type watchSSEFrame struct {
 	data string
 }
 
-func consumeWatchEventsWithTimeout(ctx context.Context, client *http.Client, baseURL, projectID string, out io.Writer, keepaliveTimeout time.Duration, delivered map[watchDeliveryKey]struct{}, wakeupDiscrepancyDelivered map[watchWakeupDeliveryKey]struct{}, detectionDelivered map[watchDetectionDeliveryKey]struct{}) error {
+func consumeWatchEventsWithTimeout(ctx context.Context, client *http.Client, baseURL, projectID string, out io.Writer, keepaliveTimeout time.Duration, delivered map[watchDeliveryKey]struct{}, wakeupDiscrepancyDelivered map[watchWakeupDiscrepancyDeliveryKey]struct{}, wakeupDelivered map[watchWakeupDeliveryKey]struct{}) error {
 	var lastWakeupContent string
-	return consumeWatchEventsWithState(ctx, client, baseURL, projectID, out, keepaliveTimeout, delivered, &lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered)
+	return consumeWatchEventsWithState(ctx, client, baseURL, projectID, out, keepaliveTimeout, delivered, &lastWakeupContent, wakeupDiscrepancyDelivered, wakeupDelivered)
 }
 
-func consumeWatchEventsWithState(ctx context.Context, client *http.Client, baseURL, projectID string, out io.Writer, keepaliveTimeout time.Duration, delivered map[watchDeliveryKey]struct{}, lastWakeupContent *string, wakeupDiscrepancyDelivered map[watchWakeupDeliveryKey]struct{}, detectionDelivered map[watchDetectionDeliveryKey]struct{}) error {
-	return consumeWatchEventsWithStateAndGoal(ctx, client, baseURL, projectID, "", out, keepaliveTimeout, delivered, lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered, newWatchPassThroughFilter())
+func consumeWatchEventsWithState(ctx context.Context, client *http.Client, baseURL, projectID string, out io.Writer, keepaliveTimeout time.Duration, delivered map[watchDeliveryKey]struct{}, lastWakeupContent *string, wakeupDiscrepancyDelivered map[watchWakeupDiscrepancyDeliveryKey]struct{}, wakeupDelivered map[watchWakeupDeliveryKey]struct{}) error {
+	return consumeWatchEventsWithStateAndGoal(ctx, client, baseURL, projectID, "", out, keepaliveTimeout, delivered, lastWakeupContent, wakeupDiscrepancyDelivered, wakeupDelivered, newWatchPassThroughFilter())
 }
 
-func consumeWatchEventsWithStateAndGoal(ctx context.Context, client *http.Client, baseURL, projectID, goalID string, out io.Writer, keepaliveTimeout time.Duration, delivered map[watchDeliveryKey]struct{}, lastWakeupContent *string, wakeupDiscrepancyDelivered map[watchWakeupDeliveryKey]struct{}, detectionDelivered map[watchDetectionDeliveryKey]struct{}, scopeFilter *watchScopeFilter) error {
-	return consumeWatchEventsWithStateAndGoalAndSink(ctx, client, baseURL, projectID, goalID, out, keepaliveTimeout, delivered, lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered, scopeFilter, nil)
+func consumeWatchEventsWithStateAndGoal(ctx context.Context, client *http.Client, baseURL, projectID, goalID string, out io.Writer, keepaliveTimeout time.Duration, delivered map[watchDeliveryKey]struct{}, lastWakeupContent *string, wakeupDiscrepancyDelivered map[watchWakeupDiscrepancyDeliveryKey]struct{}, wakeupDelivered map[watchWakeupDeliveryKey]struct{}, scopeFilter *watchScopeFilter) error {
+	return consumeWatchEventsWithStateAndGoalAndSink(ctx, client, baseURL, projectID, goalID, out, keepaliveTimeout, delivered, lastWakeupContent, wakeupDiscrepancyDelivered, wakeupDelivered, scopeFilter, nil)
 }
 
-func consumeWatchEventsWithStateAndGoalAndSink(ctx context.Context, client *http.Client, baseURL, projectID, goalID string, out io.Writer, keepaliveTimeout time.Duration, delivered map[watchDeliveryKey]struct{}, lastWakeupContent *string, wakeupDiscrepancyDelivered map[watchWakeupDeliveryKey]struct{}, detectionDelivered map[watchDetectionDeliveryKey]struct{}, scopeFilter *watchScopeFilter, sink func(string) error) error {
-	return consumeWatchEventsWithStateAndScopeAndSink(ctx, client, baseURL, watchScope{ProjectID: projectID, GoalID: goalID}, out, keepaliveTimeout, delivered, lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered, scopeFilter, sink)
+func consumeWatchEventsWithStateAndGoalAndSink(ctx context.Context, client *http.Client, baseURL, projectID, goalID string, out io.Writer, keepaliveTimeout time.Duration, delivered map[watchDeliveryKey]struct{}, lastWakeupContent *string, wakeupDiscrepancyDelivered map[watchWakeupDiscrepancyDeliveryKey]struct{}, wakeupDelivered map[watchWakeupDeliveryKey]struct{}, scopeFilter *watchScopeFilter, sink func(string) error) error {
+	return consumeWatchEventsWithStateAndScopeAndSink(ctx, client, baseURL, watchScope{ProjectID: projectID, GoalID: goalID}, out, keepaliveTimeout, delivered, lastWakeupContent, wakeupDiscrepancyDelivered, wakeupDelivered, scopeFilter, sink)
 }
 
-func consumeWatchEventsWithStateAndScopeAndSink(ctx context.Context, client *http.Client, baseURL string, scope watchScope, out io.Writer, keepaliveTimeout time.Duration, delivered map[watchDeliveryKey]struct{}, lastWakeupContent *string, wakeupDiscrepancyDelivered map[watchWakeupDeliveryKey]struct{}, detectionDelivered map[watchDetectionDeliveryKey]struct{}, scopeFilter *watchScopeFilter, sink func(string) error) error {
-	return consumeWatchEventsWithStateAndScopeAndSinkAndCursor(ctx, client, baseURL, scope, out, keepaliveTimeout, delivered, lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered, scopeFilter, sink)
+func consumeWatchEventsWithStateAndScopeAndSink(ctx context.Context, client *http.Client, baseURL string, scope watchScope, out io.Writer, keepaliveTimeout time.Duration, delivered map[watchDeliveryKey]struct{}, lastWakeupContent *string, wakeupDiscrepancyDelivered map[watchWakeupDiscrepancyDeliveryKey]struct{}, wakeupDelivered map[watchWakeupDeliveryKey]struct{}, scopeFilter *watchScopeFilter, sink func(string) error) error {
+	return consumeWatchEventsWithStateAndScopeAndSinkAndCursor(ctx, client, baseURL, scope, out, keepaliveTimeout, delivered, lastWakeupContent, wakeupDiscrepancyDelivered, wakeupDelivered, scopeFilter, sink)
 }
 
 // consumeWatchEventsWithStateAndScopeAndSinkAndCursor keeps the old call shape
 // for callers outside this file. Any legacy cursor arguments are intentionally
 // ignored.
-func consumeWatchEventsWithStateAndScopeAndSinkAndCursor(ctx context.Context, client *http.Client, baseURL string, scope watchScope, out io.Writer, keepaliveTimeout time.Duration, delivered map[watchDeliveryKey]struct{}, lastWakeupContent *string, wakeupDiscrepancyDelivered map[watchWakeupDeliveryKey]struct{}, detectionDelivered map[watchDetectionDeliveryKey]struct{}, scopeFilter *watchScopeFilter, sink func(string) error, args ...any) error {
-	return consumeWatchEventsWithStateAndScopeAndSinkAndInterval(ctx, client, baseURL, scope, out, keepaliveTimeout, watchReconcileInterval, delivered, lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered, scopeFilter, sink, args...)
+func consumeWatchEventsWithStateAndScopeAndSinkAndCursor(ctx context.Context, client *http.Client, baseURL string, scope watchScope, out io.Writer, keepaliveTimeout time.Duration, delivered map[watchDeliveryKey]struct{}, lastWakeupContent *string, wakeupDiscrepancyDelivered map[watchWakeupDiscrepancyDeliveryKey]struct{}, wakeupDelivered map[watchWakeupDeliveryKey]struct{}, scopeFilter *watchScopeFilter, sink func(string) error, args ...any) error {
+	return consumeWatchEventsWithStateAndScopeAndSinkAndInterval(ctx, client, baseURL, scope, out, keepaliveTimeout, watchReconcileInterval, delivered, lastWakeupContent, wakeupDiscrepancyDelivered, wakeupDelivered, scopeFilter, sink, args...)
 }
 
-func consumeWatchEventsWithStateAndScopeAndSinkAndInterval(ctx context.Context, client *http.Client, baseURL string, scope watchScope, out io.Writer, keepaliveTimeout, reconcileInterval time.Duration, delivered map[watchDeliveryKey]struct{}, lastWakeupContent *string, wakeupDiscrepancyDelivered map[watchWakeupDeliveryKey]struct{}, detectionDelivered map[watchDetectionDeliveryKey]struct{}, scopeFilter *watchScopeFilter, sink func(string) error, args ...any) error {
+func consumeWatchEventsWithStateAndScopeAndSinkAndInterval(ctx context.Context, client *http.Client, baseURL string, scope watchScope, out io.Writer, keepaliveTimeout, reconcileInterval time.Duration, delivered map[watchDeliveryKey]struct{}, lastWakeupContent *string, wakeupDiscrepancyDelivered map[watchWakeupDiscrepancyDeliveryKey]struct{}, wakeupDelivered map[watchWakeupDeliveryKey]struct{}, scopeFilter *watchScopeFilter, sink func(string) error, args ...any) error {
 	actionSink := watchActionSinkFromArgs(args...)
 	var latestReconciliation *watchReconciliation
 	for _, arg := range args {
@@ -1001,7 +999,7 @@ func consumeWatchEventsWithStateAndScopeAndSinkAndInterval(ctx context.Context, 
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-reconcileTicker.C:
-			if err := reconcileWatchScope(ctx, client, baseURL, scope, out, delivered, lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered, scopeFilter, sink, actionSink, latestReconciliation); err != nil {
+			if err := reconcileWatchScope(ctx, client, baseURL, scope, out, delivered, lastWakeupContent, wakeupDiscrepancyDelivered, wakeupDelivered, scopeFilter, sink, actionSink, latestReconciliation); err != nil {
 				return err
 			}
 			if reconciliationSucceeded != nil {
@@ -1033,7 +1031,7 @@ func consumeWatchEventsWithStateAndScopeAndSinkAndInterval(ctx context.Context, 
 				resetKeepalive()
 				continue
 			}
-			if err := reconcileWatchScope(ctx, client, baseURL, scope, out, delivered, lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered, scopeFilter, sink, actionSink, latestReconciliation); err != nil {
+			if err := reconcileWatchScope(ctx, client, baseURL, scope, out, delivered, lastWakeupContent, wakeupDiscrepancyDelivered, wakeupDelivered, scopeFilter, sink, actionSink, latestReconciliation); err != nil {
 				return err
 			}
 			if reconciliationSucceeded != nil {
@@ -1241,7 +1239,7 @@ func watchActionSinkFromArgs(args ...any) watchAgentActionSink {
 	return nil
 }
 
-func reconcileWatchScope(ctx context.Context, client *http.Client, baseURL string, scope watchScope, out io.Writer, delivered map[watchDeliveryKey]struct{}, lastWakeupContent *string, wakeupDiscrepancyDelivered map[watchWakeupDeliveryKey]struct{}, detectionDelivered map[watchDetectionDeliveryKey]struct{}, scopeFilter *watchScopeFilter, sink watchRawLineSink, args ...any) error {
+func reconcileWatchScope(ctx context.Context, client *http.Client, baseURL string, scope watchScope, out io.Writer, delivered map[watchDeliveryKey]struct{}, lastWakeupContent *string, wakeupDiscrepancyDelivered map[watchWakeupDiscrepancyDeliveryKey]struct{}, wakeupDelivered map[watchWakeupDeliveryKey]struct{}, scopeFilter *watchScopeFilter, sink watchRawLineSink, args ...any) error {
 	actionSink := watchActionSinkFromArgs(args...)
 	var latestReconciliation *watchReconciliation
 	for _, arg := range args {
@@ -1281,7 +1279,7 @@ func reconcileWatchScope(ctx context.Context, client *http.Client, baseURL strin
 			decision.TargetRole = "commander"
 			if err := emitWatchDecisionWithStateAndSinks(out, "goal.review.complete", decision,
 				delivered, lastWakeupContent, wakeupDiscrepancyDelivered,
-				detectionDelivered, sink, actionSink); err != nil {
+				wakeupDelivered, sink, actionSink); err != nil {
 				return err
 			}
 			continue
@@ -1289,7 +1287,7 @@ func reconcileWatchScope(ctx context.Context, client *http.Client, baseURL strin
 		if shouldProjectAppliedGoalApproval(scope, state, decision) {
 			if err := emitWatchDecisionWithStateAndSinks(out, "decision.approved", decision,
 				delivered, lastWakeupContent, wakeupDiscrepancyDelivered,
-				detectionDelivered, sink, actionSink); err != nil {
+				wakeupDelivered, sink, actionSink); err != nil {
 				return err
 			}
 			continue
@@ -1306,7 +1304,7 @@ func reconcileWatchScope(ctx context.Context, client *http.Client, baseURL strin
 		if !scopeFilter.delivers(eventName, decision) {
 			continue
 		}
-		if err := emitWatchDecisionWithStateAndSinks(out, eventName, decision, delivered, lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered, sink, actionSink); err != nil {
+		if err := emitWatchDecisionWithStateAndSinks(out, eventName, decision, delivered, lastWakeupContent, wakeupDiscrepancyDelivered, wakeupDelivered, sink, actionSink); err != nil {
 			return err
 		}
 	}
@@ -1315,7 +1313,7 @@ func reconcileWatchScope(ctx context.Context, client *http.Client, baseURL strin
 			if !scopeFilter.delivers(eventName, decision) {
 				continue
 			}
-			if err := emitWatchDecisionWithStateAndSinks(out, eventName, decision, delivered, lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered, sink, actionSink); err != nil {
+			if err := emitWatchDecisionWithStateAndSinks(out, eventName, decision, delivered, lastWakeupContent, wakeupDiscrepancyDelivered, wakeupDelivered, sink, actionSink); err != nil {
 				return err
 			}
 		}
@@ -1325,7 +1323,7 @@ func reconcileWatchScope(ctx context.Context, client *http.Client, baseURL strin
 			if !scopeFilter.delivers(eventName, decision) {
 				continue
 			}
-			if err := emitWatchDecisionWithStateAndSinks(out, eventName, decision, delivered, lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered, sink, actionSink); err != nil {
+			if err := emitWatchDecisionWithStateAndSinks(out, eventName, decision, delivered, lastWakeupContent, wakeupDiscrepancyDelivered, wakeupDelivered, sink, actionSink); err != nil {
 				return err
 			}
 		}
@@ -1335,14 +1333,14 @@ func reconcileWatchScope(ctx context.Context, client *http.Client, baseURL strin
 			if !scopeFilter.delivers(eventName, decision) {
 				continue
 			}
-			if err := emitWatchDecisionWithStateAndSinks(out, eventName, decision, delivered, lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered, sink, actionSink); err != nil {
+			if err := emitWatchDecisionWithStateAndSinks(out, eventName, decision, delivered, lastWakeupContent, wakeupDiscrepancyDelivered, wakeupDelivered, sink, actionSink); err != nil {
 				return err
 			}
 		}
 	}
 	for _, handoff := range state.TaskCreateHandoffs {
 		if eventName, decision, ok := watchTaskCreateHandoffEvent(handoff); ok && watchHandoffProjectionMatchesScope(decision, scope) {
-			if err := emitWatchDecisionWithStateAndSinks(out, eventName, decision, delivered, lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered, sink, actionSink); err != nil {
+			if err := emitWatchDecisionWithStateAndSinks(out, eventName, decision, delivered, lastWakeupContent, wakeupDiscrepancyDelivered, wakeupDelivered, sink, actionSink); err != nil {
 				return err
 			}
 		}
@@ -1443,15 +1441,15 @@ func watchHandoffProjectionMatchesScope(decision watchDecision, scope watchScope
 	return scope.GoalID == "" || decision.GoalID == scope.GoalID
 }
 
-func emitWatchDecisionWithState(out io.Writer, eventName string, decision watchDecision, delivered map[watchDeliveryKey]struct{}, lastWakeupContent *string, wakeupDiscrepancyDelivered map[watchWakeupDeliveryKey]struct{}, detectionDelivered map[watchDetectionDeliveryKey]struct{}) error {
-	return emitWatchDecisionWithStateAndSink(out, eventName, decision, delivered, lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered, nil)
+func emitWatchDecisionWithState(out io.Writer, eventName string, decision watchDecision, delivered map[watchDeliveryKey]struct{}, lastWakeupContent *string, wakeupDiscrepancyDelivered map[watchWakeupDiscrepancyDeliveryKey]struct{}, wakeupDelivered map[watchWakeupDeliveryKey]struct{}) error {
+	return emitWatchDecisionWithStateAndSink(out, eventName, decision, delivered, lastWakeupContent, wakeupDiscrepancyDelivered, wakeupDelivered, nil)
 }
 
-func emitWatchDecisionWithStateAndSink(out io.Writer, eventName string, decision watchDecision, delivered map[watchDeliveryKey]struct{}, lastWakeupContent *string, wakeupDiscrepancyDelivered map[watchWakeupDeliveryKey]struct{}, detectionDelivered map[watchDetectionDeliveryKey]struct{}, sink func(string) error) error {
-	return emitWatchDecisionWithStateAndSinks(out, eventName, decision, delivered, lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered, sink, nil)
+func emitWatchDecisionWithStateAndSink(out io.Writer, eventName string, decision watchDecision, delivered map[watchDeliveryKey]struct{}, lastWakeupContent *string, wakeupDiscrepancyDelivered map[watchWakeupDiscrepancyDeliveryKey]struct{}, wakeupDelivered map[watchWakeupDeliveryKey]struct{}, sink func(string) error) error {
+	return emitWatchDecisionWithStateAndSinks(out, eventName, decision, delivered, lastWakeupContent, wakeupDiscrepancyDelivered, wakeupDelivered, sink, nil)
 }
 
-func emitWatchDecisionWithStateAndSinks(out io.Writer, eventName string, decision watchDecision, delivered map[watchDeliveryKey]struct{}, lastWakeupContent *string, wakeupDiscrepancyDelivered map[watchWakeupDeliveryKey]struct{}, detectionDelivered map[watchDetectionDeliveryKey]struct{}, sink watchRawLineSink, actionSink watchAgentActionSink) error {
+func emitWatchDecisionWithStateAndSinks(out io.Writer, eventName string, decision watchDecision, delivered map[watchDeliveryKey]struct{}, lastWakeupContent *string, wakeupDiscrepancyDelivered map[watchWakeupDiscrepancyDeliveryKey]struct{}, wakeupDelivered map[watchWakeupDeliveryKey]struct{}, sink watchRawLineSink, actionSink watchAgentActionSink) error {
 	line, ok := formatWatchDecision(eventName, decision)
 	if !ok {
 		return nil
@@ -1459,9 +1457,10 @@ func emitWatchDecisionWithStateAndSinks(out io.Writer, eventName string, decisio
 	writeLine := func() error {
 		return writeWatchLineWithActionSink(out, line, eventName, decision, sink, actionSink)
 	}
-	if eventName == "goal.created" || strings.HasPrefix(eventName, "detection.") || eventName == "handoff_reported" {
+	targetedWakeup := strings.HasPrefix(eventName, "wakeup.") && eventName != "wakeup.discrepancy" && eventName != "wakeup.evaluate_failed"
+	if eventName == "goal.created" || targetedWakeup || eventName == "handoff_reported" {
 		target := decision.GoalID
-		if strings.HasPrefix(eventName, "detection.") {
+		if targetedWakeup {
 			target = decision.DecisionID
 			if target == "" {
 				target = decision.GoalID
@@ -1481,14 +1480,14 @@ func emitWatchDecisionWithStateAndSinks(out io.Writer, eventName string, decisio
 			}
 			return fmt.Errorf("SSE event %s has neither decision_id, goal_id, handoff_id, nor task_id", eventName)
 		}
-		key := watchDetectionDeliveryKey{eventName: eventName, targetID: target, generation: decision.deliveryGeneration}
-		if _, ok := detectionDelivered[key]; ok {
+		key := watchWakeupDeliveryKey{eventName: eventName, targetID: target, generation: decision.deliveryGeneration}
+		if _, ok := wakeupDelivered[key]; ok {
 			return nil
 		}
 		if err := writeLine(); err != nil {
 			return err
 		}
-		detectionDelivered[key] = struct{}{}
+		wakeupDelivered[key] = struct{}{}
 		return nil
 	}
 	if strings.Contains(eventName, ".handoff.") || strings.Contains(eventName, "_handoff.") {
@@ -1502,14 +1501,14 @@ func emitWatchDecisionWithStateAndSinks(out io.Writer, eventName string, decisio
 		if target == "" {
 			return fmt.Errorf("SSE event %s has no handoff_id, task_id, or goal_id", eventName)
 		}
-		key := watchDetectionDeliveryKey{eventName: eventName, targetID: target, generation: decision.deliveryGeneration}
-		if _, ok := detectionDelivered[key]; ok {
+		key := watchWakeupDeliveryKey{eventName: eventName, targetID: target, generation: decision.deliveryGeneration}
+		if _, ok := wakeupDelivered[key]; ok {
 			return nil
 		}
 		if err := writeLine(); err != nil {
 			return err
 		}
-		detectionDelivered[key] = struct{}{}
+		wakeupDelivered[key] = struct{}{}
 		return nil
 	}
 	if eventName == "wakeup" || eventName == "wakeup.discrepancy" || eventName == "wakeup.evaluate_failed" {
@@ -1532,7 +1531,7 @@ func emitWatchDecisionWithStateAndSinks(out io.Writer, eventName string, decisio
 			*lastWakeupContent = line
 			return nil
 		}
-		key := watchWakeupDeliveryKey{eventName: eventName, wakeupID: id}
+		key := watchWakeupDiscrepancyDeliveryKey{eventName: eventName, wakeupID: id}
 		if _, ok := wakeupDiscrepancyDelivered[key]; ok {
 			return nil
 		}
@@ -1690,44 +1689,44 @@ func formatWatchDecision(eventName string, decision watchDecision) (string, bool
 		return fmt.Sprintf("atct task-create handoff received (goal_id: %s, handoff_id: %s)", decision.GoalID, decision.HandoffID), true
 	case "wakeup":
 		return fmt.Sprintf("atct wakeup: actionable_goals=%d unassigned_goals=%d unstarted_tasks=%d waiting_answer_tasks=%d untouched_tasks=%d delegated_tasks=%d waiting_answers=%d unassigned=%s", decision.ActionableGoalCount, decision.UnassignedGoalCount, decision.UnstartedTaskCount, decision.WaitingAnswerTaskCount, decision.UntouchedTaskCount, decision.DelegatedTaskCount, decision.WaitingAnswerCount, formatUnassignedGoalIDs(decision.UnassignedGoalIDs)), true
-	case "detection.completion_report_missing":
-		return fmt.Sprintf("atct detection: goal %s has all tasks done but no completion report", decision.GoalID), true
-	case "detection.commits_missing":
-		return fmt.Sprintf("atct detection: goal %s has no linked commits", decision.GoalID), true
-	case "detection.undeclared_goal":
-		return fmt.Sprintf("atct detection: goal %s has no tasks declared", decision.GoalID), true
-	case "detection.all_tasks_dropped":
-		return fmt.Sprintf("atct detection: goal %s has all tasks dropped", decision.GoalID), true
-	case "detection.unclaimed_doing":
-		return fmt.Sprintf("atct detection: task %s is doing without a work lock", decision.TaskID), true
-	case "detection.handoff_unreceived":
-		return fmt.Sprintf("atct detection: handoff %s has no receipt", decision.HandoffID), true
-	case "detection.handoff_unreported":
+	case "wakeup.completion_report_missing":
+		return fmt.Sprintf("atct wakeup: goal %s has all tasks done but no completion report", decision.GoalID), true
+	case "wakeup.commits_missing":
+		return fmt.Sprintf("atct wakeup: goal %s has no linked commits", decision.GoalID), true
+	case "wakeup.undeclared_goal":
+		return fmt.Sprintf("atct wakeup: goal %s has no tasks declared", decision.GoalID), true
+	case "wakeup.all_tasks_dropped":
+		return fmt.Sprintf("atct wakeup: goal %s has all tasks dropped", decision.GoalID), true
+	case "wakeup.unclaimed_doing":
+		return fmt.Sprintf("atct wakeup: task %s is doing without a work lock", decision.TaskID), true
+	case "wakeup.handoff_unreceived":
+		return fmt.Sprintf("atct wakeup: handoff %s has no receipt", decision.HandoffID), true
+	case "wakeup.handoff_unreported":
 		switch decision.WorktreeActivity {
 		case "changed":
-			return fmt.Sprintf("atct detection: handoff %s has no completion report, but the goal's worktree changed after receipt", decision.HandoffID), true
+			return fmt.Sprintf("atct wakeup: handoff %s has no completion report, but the goal's worktree changed after receipt", decision.HandoffID), true
 		case "unchanged":
-			return fmt.Sprintf("atct detection: handoff %s has no completion report and the goal's worktree is unchanged since receipt", decision.HandoffID), true
+			return fmt.Sprintf("atct wakeup: handoff %s has no completion report and the goal's worktree is unchanged since receipt", decision.HandoffID), true
 		}
-		return fmt.Sprintf("atct detection: handoff %s has no completion report", decision.HandoffID), true
+		return fmt.Sprintf("atct wakeup: handoff %s has no completion report", decision.HandoffID), true
 	case "handoff_reported":
 		target := "goal " + decision.GoalID
 		if decision.TaskID != "" {
 			target = "task " + decision.TaskID
 		}
 		return fmt.Sprintf("atct handoff reported: %s (handoff %s): %s", target, decision.HandoffID, watchHandoffReportPreview(decision.CompleteReport)), true
-	case "detection.claim_undelegated":
-		return fmt.Sprintf("atct detection: task %s has no handoff request", decision.TaskID), true
-	case "detection.decision_answered_unapplied":
-		return fmt.Sprintf("atct detection: decision %s was answered but not applied", decision.DecisionID), true
-	case "detection.decision_default_unapplied":
-		return fmt.Sprintf("atct detection: decision %s was default-applied but not applied", decision.DecisionID), true
-	case "detection.claim_stale":
-		return fmt.Sprintf("atct detection: task %s has a stale claim", decision.TaskID), true
-	case "detection.monitor_lost":
-		return fmt.Sprintf("atct detection: monitor for handoff %s is lost; recover or replace its worker", decision.HandoffID), true
+	case "wakeup.claim_undelegated":
+		return fmt.Sprintf("atct wakeup: task %s has no handoff request", decision.TaskID), true
+	case "wakeup.decision_answered_unapplied":
+		return fmt.Sprintf("atct wakeup: decision %s was answered but not applied", decision.DecisionID), true
+	case "wakeup.decision_default_unapplied":
+		return fmt.Sprintf("atct wakeup: decision %s was default-applied but not applied", decision.DecisionID), true
+	case "wakeup.claim_stale":
+		return fmt.Sprintf("atct wakeup: task %s has a stale claim", decision.TaskID), true
+	case "wakeup.monitor_lost":
+		return fmt.Sprintf("atct wakeup: monitor for handoff %s is lost; recover or replace its worker", decision.HandoffID), true
 	case "wakeup.discrepancy":
-		return fmt.Sprintf("atct wakeup discrepancy: detector_unstarted_tasks=%d counted_unstarted_tasks=%d", decision.DetectorUnstartedTaskCount, decision.CountedUnstartedTaskCount), true
+		return fmt.Sprintf("atct wakeup discrepancy: evaluated_unstarted_tasks=%d counted_unstarted_tasks=%d", decision.EvaluatedUnstartedTaskCount, decision.CountedUnstartedTaskCount), true
 	case "wakeup.evaluate_failed":
 		return fmt.Sprintf("atct wakeup evaluate failed: %s", decision.Reason), true
 	default:

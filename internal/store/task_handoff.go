@@ -764,7 +764,7 @@ func (s *Store) CompleteTaskHandoffByReviewer(ctx context.Context, handoffID str
 	}
 	event := DecisionEvent{
 		Name: EventHandoffReported,
-		Data: DetectionEvent{DetectionID: NewDetectionID(), ProjectID: projectID, GoalID: goalID, TaskID: taskID, HandoffID: handoffID, CompleteReport: completeReport},
+		Data: WakeupEvent{WakeupID: NewWakeupID(), ProjectID: projectID, GoalID: goalID, TaskID: taskID, HandoffID: handoffID, CompleteReport: completeReport},
 	}
 	if err := tx.Commit(); err != nil {
 		return TaskHandoff{}, fmt.Errorf("commit task handoff review completion: %w", err)
@@ -871,8 +871,8 @@ func (s *Store) CompleteTaskHandoff(ctx context.Context, handoffID string, taskI
 		}
 		event = DecisionEvent{
 			Name: EventHandoffReported,
-			Data: DetectionEvent{
-				DetectionID:    NewDetectionID(),
+			Data: WakeupEvent{
+				WakeupID:       NewWakeupID(),
 				ProjectID:      projectID,
 				GoalID:         goalID,
 				TaskID:         taskID,

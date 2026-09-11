@@ -99,11 +99,11 @@ func TestClaimLivenessMeasurements(t *testing.T) {
 		t.Fatalf("GoalClaimLiveness query count = %d; want %d", goalClaimQueries, wantGoalClaimQueries)
 	}
 
-	detectWakeupQueries := measureQueries(t, counter, func() error {
-		_, err := s.DetectWakeup(ctx, projectID)
+	evaluateWakeupQueries := measureQueries(t, counter, func() error {
+		_, err := s.EvaluateWakeup(ctx, projectID)
 		return err
 	})
-	t.Logf("query-count DetectWakeup=%d", detectWakeupQueries)
+	t.Logf("query-count EvaluateWakeup=%d", evaluateWakeupQueries)
 
 	const singleSamples = 10
 	legacyClaimSingle := measureDurations(t, singleSamples, func() error {

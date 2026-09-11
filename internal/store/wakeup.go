@@ -10,40 +10,40 @@ import (
 )
 
 const (
-	EventWakeup                             = "wakeup"
-	EventKeepalive                          = "keepalive"
-	EventWakeupDiscrepancy                  = "wakeup.discrepancy"
-	EventWakeupEvaluateFailed               = "wakeup.evaluate_failed"
-	EventHandoffReported                    = "handoff_reported"
-	EventDetectionCompletionReportMissing   = "detection.completion_report_missing"
-	EventDetectionCommitsMissing            = "detection.commits_missing"
-	EventDetectionUndeclaredGoal            = "detection.undeclared_goal"
-	EventDetectionAllTasksDropped           = "detection.all_tasks_dropped"
-	EventDetectionUnclaimedDoing            = "detection.unclaimed_doing"
-	EventDetectionHandoffUnreceived         = "detection.handoff_unreceived"
-	EventDetectionHandoffUnreported         = "detection.handoff_unreported"
-	EventDetectionClaimUndelegated          = "detection.claim_undelegated"
-	EventDetectionDecisionAnsweredUnapplied = "detection.decision_answered_unapplied"
-	EventDetectionDecisionDefaultUnapplied  = "detection.decision_default_unapplied"
-	EventDetectionClaimStale                = "detection.claim_stale"
-	EventDetectionMonitorLost               = "detection.monitor_lost"
-	EventGoalWithdrawn                      = "goal.withdrawn"
-	EventTaskHandoffRequest                 = "task.handoff.request"
-	EventTaskHandoffReceive                 = "task.handoff.receive"
-	EventTaskHandoffReviewRequest           = "task.handoff.review.request"
-	EventTaskHandoffReviewReceive           = "task.handoff.review.receive"
-	EventTaskHandoffReviewReject            = "task.handoff.review.reject"
-	EventTaskHandoffComplete                = "task.handoff.complete"
-	EventGoalHandoffRequest                 = "goal.handoff.request"
-	EventGoalHandoffReceive                 = "goal.handoff.receive"
-	EventGoalHandoffReviewRequest           = "goal.handoff.review.request"
-	EventGoalHandoffReviewReceive           = "goal.handoff.review.receive"
-	EventGoalHandoffReviewReject            = "goal.handoff.review.reject"
-	EventGoalHandoffComplete                = "goal.handoff.complete"
-	EventPlanHandoffReviewRequest           = "plan.handoff.review.request"
-	EventPlanHandoffReviewReceive           = "plan.handoff.review.receive"
-	EventPlanHandoffReviewReject            = "plan.handoff.review.reject"
-	EventPlanHandoffComplete                = "plan.handoff.complete"
+	EventWakeup                          = "wakeup"
+	EventKeepalive                       = "keepalive"
+	EventWakeupDiscrepancy               = "wakeup.discrepancy"
+	EventWakeupEvaluateFailed            = "wakeup.evaluate_failed"
+	EventHandoffReported                 = "handoff_reported"
+	EventWakeupCompletionReportMissing   = "wakeup.completion_report_missing"
+	EventWakeupCommitsMissing            = "wakeup.commits_missing"
+	EventWakeupUndeclaredGoal            = "wakeup.undeclared_goal"
+	EventWakeupAllTasksDropped           = "wakeup.all_tasks_dropped"
+	EventWakeupUnclaimedDoing            = "wakeup.unclaimed_doing"
+	EventWakeupHandoffUnreceived         = "wakeup.handoff_unreceived"
+	EventWakeupHandoffUnreported         = "wakeup.handoff_unreported"
+	EventWakeupClaimUndelegated          = "wakeup.claim_undelegated"
+	EventWakeupDecisionAnsweredUnapplied = "wakeup.decision_answered_unapplied"
+	EventWakeupDecisionDefaultUnapplied  = "wakeup.decision_default_unapplied"
+	EventWakeupClaimStale                = "wakeup.claim_stale"
+	EventWakeupMonitorLost               = "wakeup.monitor_lost"
+	EventGoalWithdrawn                   = "goal.withdrawn"
+	EventTaskHandoffRequest              = "task.handoff.request"
+	EventTaskHandoffReceive              = "task.handoff.receive"
+	EventTaskHandoffReviewRequest        = "task.handoff.review.request"
+	EventTaskHandoffReviewReceive        = "task.handoff.review.receive"
+	EventTaskHandoffReviewReject         = "task.handoff.review.reject"
+	EventTaskHandoffComplete             = "task.handoff.complete"
+	EventGoalHandoffRequest              = "goal.handoff.request"
+	EventGoalHandoffReceive              = "goal.handoff.receive"
+	EventGoalHandoffReviewRequest        = "goal.handoff.review.request"
+	EventGoalHandoffReviewReceive        = "goal.handoff.review.receive"
+	EventGoalHandoffReviewReject         = "goal.handoff.review.reject"
+	EventGoalHandoffComplete             = "goal.handoff.complete"
+	EventPlanHandoffReviewRequest        = "plan.handoff.review.request"
+	EventPlanHandoffReviewReceive        = "plan.handoff.review.receive"
+	EventPlanHandoffReviewReject         = "plan.handoff.review.reject"
+	EventPlanHandoffComplete             = "plan.handoff.complete"
 )
 
 // Review event aliases use the transition-oriented names in code that needs
@@ -60,9 +60,9 @@ const (
 	EventPlanHandoffReviewRejected  = EventPlanHandoffReviewReject
 )
 
-// WakeupEvent is the visible state that caused a wakeup notification. The
+// ActionableWakeupEvent is the visible state that caused a wakeup notification. The
 // counts are part of the event so a consumer can act without a second query.
-type WakeupEvent struct {
+type ActionableWakeupEvent struct {
 	WakeupID               string  `json:"wakeup_id"`
 	ProjectID              int64   `json:"project_id"`
 	ActionableGoalCount    int     `json:"actionable_goal_count"`
@@ -75,13 +75,13 @@ type WakeupEvent struct {
 	WaitingAnswerCount     int     `json:"waiting_answer_count"`
 }
 
-// WakeupDiscrepancyEvent records a disagreement between the detector and an
+// WakeupDiscrepancyEvent records a disagreement between the Wakeup evaluation and an
 // independent evaluation using the same liveness-aware wakeup rules.
 type WakeupDiscrepancyEvent struct {
-	WakeupID                   string `json:"wakeup_id"`
-	ProjectID                  int64  `json:"project_id"`
-	DetectorUnstartedTaskCount int    `json:"detector_unstarted_task_count"`
-	CountedUnstartedTaskCount  int    `json:"counted_unstarted_task_count"`
+	WakeupID                    string `json:"wakeup_id"`
+	ProjectID                   int64  `json:"project_id"`
+	EvaluatedUnstartedTaskCount int    `json:"evaluated_unstarted_task_count"`
+	CountedUnstartedTaskCount   int    `json:"counted_unstarted_task_count"`
 }
 
 // WakeupEvaluateFailedEvent reports that a maintenance evaluation returned
@@ -92,10 +92,10 @@ type WakeupEvaluateFailedEvent struct {
 	Reason   string `json:"reason"`
 }
 
-// DetectionEvent identifies the project and object that need attention for a
-// condition-specific detection.
-type DetectionEvent struct {
-	DetectionID      string `json:"detection_id"`
+// WakeupEvent identifies the project and object that need attention for a
+// target-specific wakeup.
+type WakeupEvent struct {
+	WakeupID         string `json:"wakeup_id"`
 	DecisionID       int64  `json:"decision_id,omitempty"`
 	ProjectID        int64  `json:"project_id"`
 	GoalID           int64  `json:"goal_id,omitempty"`
@@ -153,7 +153,7 @@ type HandoffEvent struct {
 	CompleteReport string `json:"complete_report,omitempty"`
 }
 
-// WakeupState is the detector result used by pending output and the daemon.
+// WakeupState is the evaluation result used by pending output and the daemon.
 // Tasks contains the actionable task list for pending's human-readable view.
 type WakeupState struct {
 	ActionableGoalCount        int
@@ -195,11 +195,11 @@ func classifyWakeupDecisions(decisions []domain.Decision, projectGoalIDs map[int
 	return humanAnswered, defaultApplied
 }
 
-// DetectWakeup assembles the wakeup state used by pending output and the
-// daemon. It combines goal, task, decision, and commit conditions for active
+// EvaluateWakeup assembles the wakeup state used by pending output and the
+// daemon. It combines goal, task, decision, and commit wakeups for active
 // goals. Unstarted tasks are classified independently so a claim on a sibling
 // task does not hide work that can still be claimed.
-func (s *Store) DetectWakeup(ctx context.Context, projectID int64) (WakeupState, error) {
+func (s *Store) EvaluateWakeup(ctx context.Context, projectID int64) (WakeupState, error) {
 	goals, err := s.ListGoals(ctx, projectID)
 	if err != nil {
 		return WakeupState{}, err
@@ -489,11 +489,11 @@ func (s *Store) CountUnstartedTasks(ctx context.Context, projectID int64) (int, 
 }
 
 // CountUnstartedTasksForWakeup returns the total unstarted count from
-// DetectWakeup, including tasks classified as waiting for an answer or
+// EvaluateWakeup, including tasks classified as waiting for an answer or
 // untouched. CountUnstartedTasks intentionally keeps its independent
 // simple-count definition for callers that rely on it.
 func (s *Store) CountUnstartedTasksForWakeup(ctx context.Context, projectID int64) (int, error) {
-	state, err := s.DetectWakeup(ctx, projectID)
+	state, err := s.EvaluateWakeup(ctx, projectID)
 	if err != nil {
 		return 0, err
 	}
@@ -501,9 +501,5 @@ func (s *Store) CountUnstartedTasksForWakeup(ctx context.Context, projectID int6
 }
 
 func NewWakeupID() string {
-	return uuid.NewString()
-}
-
-func NewDetectionID() string {
 	return uuid.NewString()
 }

@@ -569,13 +569,13 @@ func TestCompleteGoalHandoffPublishesReportedEvent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CompleteGoalHandoff: %v", err)
 	}
-	detection := waitForHandoffReported(t, events)
+	wakeup := waitForHandoffReported(t, events)
 
 	if completed.ID != handoffID || completed.CompletedReportAt == nil || completed.CompleteReport != report {
 		t.Fatalf("completed handoff = %+v, want report %q", completed, report)
 	}
-	if detection.DetectionID == "" || detection.ProjectID != goal.ProjectID || detection.GoalID != goalID || detection.TaskID != 0 || detection.HandoffID != handoffID || detection.CompleteReport != report {
-		t.Fatalf("reported detection = %+v, want project=%d goal=%d task=0 handoff=%q report=%q", detection, goal.ProjectID, goalID, handoffID, report)
+	if wakeup.WakeupID == "" || wakeup.ProjectID != goal.ProjectID || wakeup.GoalID != goalID || wakeup.TaskID != 0 || wakeup.HandoffID != handoffID || wakeup.CompleteReport != report {
+		t.Fatalf("reported wakeup = %+v, want project=%d goal=%d task=0 handoff=%q report=%q", wakeup, goal.ProjectID, goalID, handoffID, report)
 	}
 }
 

@@ -2285,9 +2285,9 @@ func TestHTTPSnoozeControlsWakeupForSnoozedAndUnsnoozedTasks(t *testing.T) {
 		t.Fatalf("snooze status = %d; body=%s", status, body)
 	}
 
-	state, err := f.store.DetectWakeup(f.ctx, f.project.ID)
+	state, err := f.store.EvaluateWakeup(f.ctx, f.project.ID)
 	if err != nil {
-		t.Fatalf("DetectWakeup: %v", err)
+		t.Fatalf("EvaluateWakeup: %v", err)
 	}
 	if state.UnstartedTaskCount != 1 || len(state.Tasks) != 1 {
 		t.Fatalf("wakeup state = %+v, want one unstarted task", state)
@@ -2332,9 +2332,9 @@ func TestHTTPSnoozeClearingDeadlineRestoresWakeup(t *testing.T) {
 		t.Fatalf("clear snooze status = %d; body=%s", status, body)
 	}
 
-	state, err := f.store.DetectWakeup(f.ctx, f.project.ID)
+	state, err := f.store.EvaluateWakeup(f.ctx, f.project.ID)
 	if err != nil {
-		t.Fatalf("DetectWakeup: %v", err)
+		t.Fatalf("EvaluateWakeup: %v", err)
 	}
 	if len(state.Tasks) != 2 || state.UnstartedTaskCount != 2 {
 		t.Fatalf("wakeup state after clear = %+v, want two unstarted tasks", state)
@@ -2362,9 +2362,9 @@ func TestHTTPSnoozeExpiredDeadlineRestoresWakeup(t *testing.T) {
 		t.Fatalf("expired snooze status = %d; body=%s", status, body)
 	}
 
-	state, err := f.store.DetectWakeup(f.ctx, f.project.ID)
+	state, err := f.store.EvaluateWakeup(f.ctx, f.project.ID)
 	if err != nil {
-		t.Fatalf("DetectWakeup: %v", err)
+		t.Fatalf("EvaluateWakeup: %v", err)
 	}
 	if state.UnstartedTaskCount != 2 || len(state.Tasks) != 2 {
 		t.Fatalf("wakeup state after expiry = %+v, want two unstarted tasks", state)
@@ -2840,7 +2840,7 @@ func TestSSEFiltersDecisionEventsByProjectID(t *testing.T) {
 	_ = otherDecision
 }
 
-func TestSSEFiltersDetectionEventsByProjectID(t *testing.T) {
+func TestSSEFiltersWakeupEventsByProjectID(t *testing.T) {
 	f := newBareFixture(t)
 	otherProject, err := f.store.CreateProject(f.ctx, "other", t.TempDir())
 	if err != nil {
@@ -2853,25 +2853,25 @@ func TestSSEFiltersDetectionEventsByProjectID(t *testing.T) {
 	stream, reader := openSSEStream(t, streamCtx, srv.Client(), eventsURL(srv.URL, idText(f.project.ID)))
 	defer stream.Body.Close()
 
-	other := &store.DetectionEvent{DetectionID: "other-detection", ProjectID: otherProject.ID, GoalID: 2}
-	current := store.DetectionEvent{DetectionID: "current-detection", ProjectID: f.project.ID, GoalID: 1}
-	f.store.PublishEvent(store.DecisionEvent{Name: store.EventDetectionCompletionReportMissing, Data: other})
-	f.store.PublishEvent(store.DecisionEvent{Name: store.EventDetectionCompletionReportMissing, Data: current})
+	other := &store.WakeupEvent{WakeupID: "other-wakeup", ProjectID: otherProject.ID, GoalID: 2}
+	current := store.WakeupEvent{WakeupID: "current-wakeup", ProjectID: f.project.ID, GoalID: 1}
+	f.store.PublishEvent(store.DecisionEvent{Name: store.EventWakeupCompletionReportMissing, Data: other})
+	f.store.PublishEvent(store.DecisionEvent{Name: store.EventWakeupCompletionReportMissing, Data: current})
 
 	frame := readSSEFrame(t, reader)
-	if frame.event != store.EventDetectionCompletionReportMissing {
-		t.Fatalf("SSE detection event = %q, want %q; lines=%v", frame.event, store.EventDetectionCompletionReportMissing, frame.lines)
+	if frame.event != store.EventWakeupCompletionReportMissing {
+		t.Fatalf("SSE wakeup event = %q, want %q; lines=%v", frame.event, store.EventWakeupCompletionReportMissing, frame.lines)
 	}
-	var got store.DetectionEvent
+	var got store.WakeupEvent
 	if err := json.Unmarshal([]byte(frame.data), &got); err != nil {
-		t.Fatalf("SSE detection data is not a DetectionEvent: %v; data=%q", err, frame.data)
+		t.Fatalf("SSE wakeup data is not a WakeupEvent: %v; data=%q", err, frame.data)
 	}
-	if got.DetectionID != current.DetectionID {
-		t.Fatalf("SSE detection id = %q, want %q", got.DetectionID, current.DetectionID)
+	if got.WakeupID != current.WakeupID {
+		t.Fatalf("SSE wakeup id = %q, want %q", got.WakeupID, current.WakeupID)
 	}
 }
 
-func TestSSEFiltersDetectionEventsByGoalID(t *testing.T) {
+func TestSSEFiltersWakeupEventsByGoalID(t *testing.T) {
 	f := newBareFixture(t)
 	srv := newTestServer(t, f.store)
 	defer srv.Close()
@@ -2881,28 +2881,28 @@ func TestSSEFiltersDetectionEventsByGoalID(t *testing.T) {
 	defer stream.Body.Close()
 
 	f.store.PublishEvent(store.DecisionEvent{
-		Name: store.EventDetectionCompletionReportMissing,
-		Data: store.DetectionEvent{DetectionID: "other-detection", GoalID: 2},
+		Name: store.EventWakeupCompletionReportMissing,
+		Data: store.WakeupEvent{WakeupID: "other-wakeup", GoalID: 2},
 	})
 	f.store.PublishEvent(store.DecisionEvent{
-		Name: store.EventDetectionCompletionReportMissing,
-		Data: store.DetectionEvent{DetectionID: "goal-less-detection"},
+		Name: store.EventWakeupCompletionReportMissing,
+		Data: store.WakeupEvent{WakeupID: "goal-less-wakeup"},
 	})
 	f.store.PublishEvent(store.DecisionEvent{
-		Name: store.EventDetectionCompletionReportMissing,
-		Data: store.DetectionEvent{DetectionID: "current-detection", GoalID: 1},
+		Name: store.EventWakeupCompletionReportMissing,
+		Data: store.WakeupEvent{WakeupID: "current-wakeup", GoalID: 1},
 	})
 
 	frame := readSSEFrame(t, reader)
-	if frame.event != store.EventDetectionCompletionReportMissing {
-		t.Fatalf("SSE detection event = %q, want %q; lines=%v", frame.event, store.EventDetectionCompletionReportMissing, frame.lines)
+	if frame.event != store.EventWakeupCompletionReportMissing {
+		t.Fatalf("SSE wakeup event = %q, want %q; lines=%v", frame.event, store.EventWakeupCompletionReportMissing, frame.lines)
 	}
-	var got store.DetectionEvent
+	var got store.WakeupEvent
 	if err := json.Unmarshal([]byte(frame.data), &got); err != nil {
-		t.Fatalf("SSE detection data is not a DetectionEvent: %v; data=%q", err, frame.data)
+		t.Fatalf("SSE wakeup data is not a WakeupEvent: %v; data=%q", err, frame.data)
 	}
-	if got.DetectionID != "current-detection" || got.GoalID != 1 {
-		t.Fatalf("SSE detection = %+v, want current goal detection", got)
+	if got.WakeupID != "current-wakeup" || got.GoalID != 1 {
+		t.Fatalf("SSE wakeup = %+v, want current goal wakeup", got)
 	}
 }
 
@@ -2934,27 +2934,27 @@ func TestSSEFiltersTaskEventsByTaskIDAcrossProjectAndGoal(t *testing.T) {
 
 	for _, event := range []struct {
 		name string
-		data store.DetectionEvent
+		data store.WakeupEvent
 	}{
-		{store.EventDetectionCompletionReportMissing, store.DetectionEvent{DetectionID: "same-goal-other-task", ProjectID: f.project.ID, GoalID: f.goal.ID, TaskID: tasks[1].ID}},
-		{store.EventHandoffReported, store.DetectionEvent{DetectionID: "other-project-task", ProjectID: otherProject.ID, GoalID: otherGoal.ID, TaskID: otherTasks[0].ID}},
-		{store.EventDetectionCompletionReportMissing, store.DetectionEvent{DetectionID: "target-task", ProjectID: f.project.ID, GoalID: f.goal.ID, TaskID: tasks[0].ID}},
-		{store.EventHandoffReported, store.DetectionEvent{DetectionID: "target-reported", ProjectID: f.project.ID, GoalID: f.goal.ID, TaskID: tasks[0].ID}},
+		{store.EventWakeupCompletionReportMissing, store.WakeupEvent{WakeupID: "same-goal-other-task", ProjectID: f.project.ID, GoalID: f.goal.ID, TaskID: tasks[1].ID}},
+		{store.EventHandoffReported, store.WakeupEvent{WakeupID: "other-project-task", ProjectID: otherProject.ID, GoalID: otherGoal.ID, TaskID: otherTasks[0].ID}},
+		{store.EventWakeupCompletionReportMissing, store.WakeupEvent{WakeupID: "target-task", ProjectID: f.project.ID, GoalID: f.goal.ID, TaskID: tasks[0].ID}},
+		{store.EventHandoffReported, store.WakeupEvent{WakeupID: "target-reported", ProjectID: f.project.ID, GoalID: f.goal.ID, TaskID: tasks[0].ID}},
 	} {
 		f.store.PublishEvent(store.DecisionEvent{Name: event.name, Data: event.data})
 	}
 
-	for _, want := range []struct{ name, detectionID string }{
-		{store.EventDetectionCompletionReportMissing, "target-task"},
+	for _, want := range []struct{ name, wakeupID string }{
+		{store.EventWakeupCompletionReportMissing, "target-task"},
 		{store.EventHandoffReported, "target-reported"},
 	} {
 		frame := readSSEFrame(t, reader)
-		var got store.DetectionEvent
+		var got store.WakeupEvent
 		if err := json.Unmarshal([]byte(frame.data), &got); err != nil {
 			t.Fatalf("SSE task event data: %v; data=%q", err, frame.data)
 		}
-		if frame.event != want.name || got.DetectionID != want.detectionID || got.TaskID != tasks[0].ID {
-			t.Fatalf("task-filtered SSE event = %q %+v, want %s/%s for task %d", frame.event, got, want.name, want.detectionID, tasks[0].ID)
+		if frame.event != want.name || got.WakeupID != want.wakeupID || got.TaskID != tasks[0].ID {
+			t.Fatalf("task-filtered SSE event = %q %+v, want %s/%s for task %d", frame.event, got, want.name, want.wakeupID, tasks[0].ID)
 		}
 	}
 }
@@ -3153,14 +3153,14 @@ func TestWebSocketFiltersByGoalID(t *testing.T) {
 	query.Set("goal_id", idText(targetGoal.ID))
 	conn := openWebSocket(t, websocketURLWithQuery(srv.URL, query), nil)
 
-	other := store.DetectionEvent{DetectionID: "other-goal", GoalID: otherGoal.ID}
-	target := store.DetectionEvent{DetectionID: "target-goal", GoalID: targetGoal.ID}
-	f.store.PublishEvent(store.DecisionEvent{Name: store.EventDetectionCompletionReportMissing, Data: other})
-	f.store.PublishEvent(store.DecisionEvent{Name: store.EventDetectionCompletionReportMissing, Data: target})
+	other := store.WakeupEvent{WakeupID: "other-goal", GoalID: otherGoal.ID}
+	target := store.WakeupEvent{WakeupID: "target-goal", GoalID: targetGoal.ID}
+	f.store.PublishEvent(store.DecisionEvent{Name: store.EventWakeupCompletionReportMissing, Data: other})
+	f.store.PublishEvent(store.DecisionEvent{Name: store.EventWakeupCompletionReportMissing, Data: target})
 
 	frame := readWebSocketFrame(t, conn)
-	if frame.Name != store.EventDetectionCompletionReportMissing {
-		t.Fatalf("WebSocket event = %q, want %q", frame.Name, store.EventDetectionCompletionReportMissing)
+	if frame.Name != store.EventWakeupCompletionReportMissing {
+		t.Fatalf("WebSocket event = %q, want %q", frame.Name, store.EventWakeupCompletionReportMissing)
 	}
 	if got, want := string(frame.Data), string(mustJSON(t, target)); got != want {
 		t.Fatalf("WebSocket data = %s, want target %s", got, want)
@@ -3179,14 +3179,14 @@ func TestWebSocketFiltersByProjectID(t *testing.T) {
 	query.Set("project_id", idText(f.project.ID))
 	conn := openWebSocket(t, websocketURLWithQuery(srv.URL, query), nil)
 
-	other := store.DetectionEvent{DetectionID: "other-project", ProjectID: otherProject.ID}
-	target := store.DetectionEvent{DetectionID: "target-project", ProjectID: f.project.ID}
-	f.store.PublishEvent(store.DecisionEvent{Name: store.EventDetectionCompletionReportMissing, Data: other})
-	f.store.PublishEvent(store.DecisionEvent{Name: store.EventDetectionCompletionReportMissing, Data: target})
+	other := store.WakeupEvent{WakeupID: "other-project", ProjectID: otherProject.ID}
+	target := store.WakeupEvent{WakeupID: "target-project", ProjectID: f.project.ID}
+	f.store.PublishEvent(store.DecisionEvent{Name: store.EventWakeupCompletionReportMissing, Data: other})
+	f.store.PublishEvent(store.DecisionEvent{Name: store.EventWakeupCompletionReportMissing, Data: target})
 
 	frame := readWebSocketFrame(t, conn)
-	if frame.Name != store.EventDetectionCompletionReportMissing {
-		t.Fatalf("WebSocket event = %q, want %q", frame.Name, store.EventDetectionCompletionReportMissing)
+	if frame.Name != store.EventWakeupCompletionReportMissing {
+		t.Fatalf("WebSocket event = %q, want %q", frame.Name, store.EventWakeupCompletionReportMissing)
 	}
 	if got, want := string(frame.Data), string(mustJSON(t, target)); got != want {
 		t.Fatalf("WebSocket data = %s, want target %s", got, want)
@@ -3294,7 +3294,7 @@ func TestSSEGoalIDPublishesKeepaliveButNotWakeup(t *testing.T) {
 
 	f.store.PublishEvent(store.DecisionEvent{
 		Name: store.EventWakeup,
-		Data: store.WakeupEvent{WakeupID: "wakeup-should-be-filtered", ProjectID: f.project.ID},
+		Data: store.ActionableWakeupEvent{WakeupID: "wakeup-should-be-filtered", ProjectID: f.project.ID},
 	})
 	keepalive := store.KeepaliveEvent{At: time.Date(2026, 8, 20, 15, 0, 0, 0, time.UTC)}
 	f.store.PublishEvent(store.DecisionEvent{Name: store.EventKeepalive, Data: keepalive})
@@ -3445,7 +3445,7 @@ func TestSSEProjectScopedStreamFiltersOtherProjectsWithdrawal(t *testing.T) {
 	}
 }
 
-func TestSSENoGoalIDKeepsPublishingDetectionEvents(t *testing.T) {
+func TestSSENoGoalIDKeepsPublishingWakeupEvents(t *testing.T) {
 	f := newBareFixture(t)
 	srv := newTestServer(t, f.store)
 	defer srv.Close()
@@ -3454,15 +3454,15 @@ func TestSSENoGoalIDKeepsPublishingDetectionEvents(t *testing.T) {
 	stream, reader := openSSEStream(t, streamCtx, srv.Client(), srv.URL+"/api/events")
 	defer stream.Body.Close()
 
-	detection := store.DetectionEvent{DetectionID: "unscoped-detection", GoalID: 2}
-	f.store.PublishEvent(store.DecisionEvent{Name: store.EventDetectionCompletionReportMissing, Data: detection})
+	wakeup := store.WakeupEvent{WakeupID: "unscoped-wakeup", GoalID: 2}
+	f.store.PublishEvent(store.DecisionEvent{Name: store.EventWakeupCompletionReportMissing, Data: wakeup})
 
 	frame := readSSEFrame(t, reader)
-	if frame.event != store.EventDetectionCompletionReportMissing {
-		t.Fatalf("SSE event = %q, want %q; lines=%v", frame.event, store.EventDetectionCompletionReportMissing, frame.lines)
+	if frame.event != store.EventWakeupCompletionReportMissing {
+		t.Fatalf("SSE event = %q, want %q; lines=%v", frame.event, store.EventWakeupCompletionReportMissing, frame.lines)
 	}
-	if frame.data != string(mustJSON(t, detection)) {
-		t.Fatalf("SSE detection data = %s, want exact %s", frame.data, mustJSON(t, detection))
+	if frame.data != string(mustJSON(t, wakeup)) {
+		t.Fatalf("SSE wakeup data = %s, want exact %s", frame.data, mustJSON(t, wakeup))
 	}
 }
 
@@ -3479,14 +3479,14 @@ func TestSSEPublishesGenericWakeupAndKeepaliveEvents(t *testing.T) {
 	stream, reader := openSSEStream(t, streamCtx, srv.Client(), eventsURL(srv.URL, idText(f.project.ID)))
 	defer stream.Body.Close()
 
-	other := store.WakeupEvent{
+	other := store.ActionableWakeupEvent{
 		WakeupID:            "other-wakeup",
 		ProjectID:           otherProject.ID,
 		ActionableGoalCount: 2,
 		UnstartedTaskCount:  3,
 		WaitingAnswerCount:  1,
 	}
-	current := store.WakeupEvent{
+	current := store.ActionableWakeupEvent{
 		WakeupID:            "current-wakeup",
 		ProjectID:           f.project.ID,
 		ActionableGoalCount: 1,

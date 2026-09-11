@@ -10,9 +10,9 @@ import (
 	"testing"
 )
 
-func TestWatchTaskScopeDeliversOnlyItsTaskHandoffAndDetection(t *testing.T) {
+func TestWatchTaskScopeDeliversOnlyItsTaskHandoffAndWakeup(t *testing.T) {
 	filter := newWatchTaskScopeFilter("846")
-	for _, eventName := range []string{"handoff_reported", "detection.claim_stale"} {
+	for _, eventName := range []string{"handoff_reported", "wakeup.claim_stale"} {
 		if !filter.delivers(eventName, watchDecision{TaskID: "846"}) {
 			t.Fatalf("task scope suppressed %s for its task", eventName)
 		}
@@ -20,8 +20,8 @@ func TestWatchTaskScopeDeliversOnlyItsTaskHandoffAndDetection(t *testing.T) {
 			t.Fatalf("task scope delivered %s for another task", eventName)
 		}
 	}
-	if filter.delivers("detection.claim_stale", watchDecision{}) {
-		t.Fatal("task scope delivered a task-less detection")
+	if filter.delivers("wakeup.claim_stale", watchDecision{}) {
+		t.Fatal("task scope delivered a task-less wakeup")
 	}
 }
 
@@ -90,12 +90,12 @@ func TestWatchScopeProjectStopsTaskHandoffReported(t *testing.T) {
 	}
 }
 
-func TestWatchScopeProjectStopsUnappliedDecisionDetection(t *testing.T) {
+func TestWatchScopeProjectStopsUnappliedDecisionWakeup(t *testing.T) {
 	filter := newWatchScopeFilter("")
 
 	for _, eventName := range []string{
-		"detection.decision_answered_unapplied",
-		"detection.decision_default_unapplied",
+		"wakeup.decision_answered_unapplied",
+		"wakeup.decision_default_unapplied",
 	} {
 		if got := filter.delivers(eventName, watchDecision{DecisionID: "decision-1"}); got {
 			t.Fatalf("project scope delivered %s, want false", eventName)
@@ -118,15 +118,15 @@ func TestWatchScopeProjectStopsDefaultDecisionAnswered(t *testing.T) {
 	}
 }
 
-func TestWatchScopeProjectStopsTaskDetections(t *testing.T) {
+func TestWatchScopeProjectStopsTaskWakeups(t *testing.T) {
 	filter := newWatchScopeFilter("")
 	events := []string{
-		"detection.unclaimed_doing",
-		"detection.handoff_unreceived",
-		"detection.handoff_unreported",
-		"detection.claim_undelegated",
-		"detection.monitor_lost",
-		"detection.claim_stale",
+		"wakeup.unclaimed_doing",
+		"wakeup.handoff_unreceived",
+		"wakeup.handoff_unreported",
+		"wakeup.claim_undelegated",
+		"wakeup.monitor_lost",
+		"wakeup.claim_stale",
 	}
 
 	for _, eventName := range events {
@@ -198,15 +198,15 @@ func TestWatchScopeGoalDeliversTaskScopedEvents(t *testing.T) {
 		decision  watchDecision
 	}{
 		{"handoff_reported", watchDecision{TaskID: "task-1"}},
-		{"detection.decision_answered_unapplied", watchDecision{DecisionID: "decision-1"}},
-		{"detection.decision_default_unapplied", watchDecision{DecisionID: "decision-2"}},
+		{"wakeup.decision_answered_unapplied", watchDecision{DecisionID: "decision-1"}},
+		{"wakeup.decision_default_unapplied", watchDecision{DecisionID: "decision-2"}},
 		{"decision.answered", watchDecision{SettledByDefault: true}},
-		{"detection.unclaimed_doing", watchDecision{TaskID: "task-1"}},
-		{"detection.handoff_unreceived", watchDecision{HandoffID: "handoff-1"}},
-		{"detection.handoff_unreported", watchDecision{HandoffID: "handoff-1"}},
-		{"detection.monitor_lost", watchDecision{HandoffID: "handoff-1"}},
-		{"detection.claim_undelegated", watchDecision{TaskID: "task-1"}},
-		{"detection.claim_stale", watchDecision{TaskID: "task-1"}},
+		{"wakeup.unclaimed_doing", watchDecision{TaskID: "task-1"}},
+		{"wakeup.handoff_unreceived", watchDecision{HandoffID: "handoff-1"}},
+		{"wakeup.handoff_unreported", watchDecision{HandoffID: "handoff-1"}},
+		{"wakeup.monitor_lost", watchDecision{HandoffID: "handoff-1"}},
+		{"wakeup.claim_undelegated", watchDecision{TaskID: "task-1"}},
+		{"wakeup.claim_stale", watchDecision{TaskID: "task-1"}},
 		{"wakeup", watchDecision{}},
 	}
 
@@ -217,13 +217,13 @@ func TestWatchScopeGoalDeliversTaskScopedEvents(t *testing.T) {
 	}
 }
 
-func TestWatchScopeProjectDeliversGoalDetectionsAndCreated(t *testing.T) {
+func TestWatchScopeProjectDeliversGoalWakeupsAndCreated(t *testing.T) {
 	filter := newWatchScopeFilter("")
 	events := []string{
-		"detection.completion_report_missing",
-		"detection.commits_missing",
-		"detection.undeclared_goal",
-		"detection.all_tasks_dropped",
+		"wakeup.completion_report_missing",
+		"wakeup.commits_missing",
+		"wakeup.undeclared_goal",
+		"wakeup.all_tasks_dropped",
 		"goal.created",
 		"wakeup.discrepancy",
 		"wakeup.evaluate_failed",
@@ -239,7 +239,7 @@ func TestWatchScopeProjectDeliversGoalDetectionsAndCreated(t *testing.T) {
 func TestWatchScopeProjectDeliversUnknownEvents(t *testing.T) {
 	filter := newWatchScopeFilter("")
 
-	if got := filter.delivers("detection.some_future_condition", watchDecision{}); !got {
+	if got := filter.delivers("wakeup.some_future_state", watchDecision{}); !got {
 		t.Fatal("project scope suppressed unknown event, want true")
 	}
 }
@@ -263,12 +263,12 @@ func TestWatchPassThroughFilterDeliversEverything(t *testing.T) {
 		decision  watchDecision
 	}{
 		{"handoff_reported", watchDecision{TaskID: "task-1"}},
-		{"detection.decision_answered_unapplied", watchDecision{DecisionID: "decision-1"}},
-		{"detection.decision_default_unapplied", watchDecision{DecisionID: "decision-2"}},
-		{"detection.unclaimed_doing", watchDecision{TaskID: "task-1"}},
-		{"detection.handoff_unreceived", watchDecision{HandoffID: "handoff-1"}},
-		{"detection.claim_undelegated", watchDecision{TaskID: "task-1"}},
-		{"detection.claim_stale", watchDecision{TaskID: "task-1"}},
+		{"wakeup.decision_answered_unapplied", watchDecision{DecisionID: "decision-1"}},
+		{"wakeup.decision_default_unapplied", watchDecision{DecisionID: "decision-2"}},
+		{"wakeup.unclaimed_doing", watchDecision{TaskID: "task-1"}},
+		{"wakeup.handoff_unreceived", watchDecision{HandoffID: "handoff-1"}},
+		{"wakeup.claim_undelegated", watchDecision{TaskID: "task-1"}},
+		{"wakeup.claim_stale", watchDecision{TaskID: "task-1"}},
 	}
 
 	for _, tc := range cases {
@@ -359,10 +359,10 @@ func TestHandoffOnlyReconciliationProjectsTaskCreateUntilComplete(t *testing.T) 
 	var output bytes.Buffer
 	delivered := make(map[watchDeliveryKey]struct{})
 	lastWakeupContent := ""
-	wakeupDiscrepancyDelivered := make(map[watchWakeupDeliveryKey]struct{})
-	detectionDelivered := make(map[watchDetectionDeliveryKey]struct{})
+	wakeupDiscrepancyDelivered := make(map[watchWakeupDiscrepancyDeliveryKey]struct{})
+	wakeupDelivered := make(map[watchWakeupDeliveryKey]struct{})
 	for range states {
-		if err := reconcileWatchScope(context.Background(), client, "http://daemon", watchScope{ProjectID: "1", GoalID: "7", Role: "subcommander"}, &output, delivered, &lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered, newWatchScopeFilter("7"), nil); err != nil {
+		if err := reconcileWatchScope(context.Background(), client, "http://daemon", watchScope{ProjectID: "1", GoalID: "7", Role: "subcommander"}, &output, delivered, &lastWakeupContent, wakeupDiscrepancyDelivered, wakeupDelivered, newWatchScopeFilter("7"), nil); err != nil {
 			t.Fatalf("reconcileWatchScope: %v", err)
 		}
 	}
@@ -405,12 +405,12 @@ func TestWatchPlanReviewDeliveryUsesLifecycleGeneration(t *testing.T) {
 	var output bytes.Buffer
 	delivered := make(map[watchDeliveryKey]struct{})
 	lastWakeupContent := ""
-	wakeupDiscrepancyDelivered := make(map[watchWakeupDeliveryKey]struct{})
-	detectionDelivered := make(map[watchDetectionDeliveryKey]struct{})
+	wakeupDiscrepancyDelivered := make(map[watchWakeupDiscrepancyDeliveryKey]struct{})
+	wakeupDelivered := make(map[watchWakeupDeliveryKey]struct{})
 	for range states {
 		if err := reconcileWatchScope(
 			context.Background(), client, "http://daemon", watchScope{ProjectID: "project-1"}, &output,
-			delivered, &lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered,
+			delivered, &lastWakeupContent, wakeupDiscrepancyDelivered, wakeupDelivered,
 			newWatchScopeFilter(""), nil,
 		); err != nil {
 			t.Fatalf("reconcileWatchScope: %v", err)

@@ -712,8 +712,8 @@ func (s *Store) CompleteGoalHandoffByReviewer(ctx context.Context, handoffID str
 	}
 	event := DecisionEvent{
 		Name: EventHandoffReported,
-		Data: DetectionEvent{
-			DetectionID:    NewDetectionID(),
+		Data: WakeupEvent{
+			WakeupID:       NewWakeupID(),
 			ProjectID:      projectID,
 			GoalID:         goalID,
 			HandoffID:      handoffID,
@@ -832,8 +832,8 @@ func (s *Store) CompleteGoalHandoff(ctx context.Context, handoffID string, goalI
 		}
 		event = DecisionEvent{
 			Name: EventHandoffReported,
-			Data: DetectionEvent{
-				DetectionID:    NewDetectionID(),
+			Data: WakeupEvent{
+				WakeupID:       NewWakeupID(),
 				ProjectID:      projectID,
 				GoalID:         goalID,
 				HandoffID:      handoffID,

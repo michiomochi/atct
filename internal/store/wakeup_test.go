@@ -66,9 +66,9 @@ func TestSnoozeTaskUsesDeadlineToControlWakeupWithoutChangingTodo(t *testing.T) 
 		t.Fatalf("cleared snooze result = %+v, want todo without deadline", cleared)
 	}
 
-	state, err := s.DetectWakeup(ctx, project.ID)
+	state, err := s.EvaluateWakeup(ctx, project.ID)
 	if err != nil {
-		t.Fatalf("DetectWakeup: %v", err)
+		t.Fatalf("EvaluateWakeup: %v", err)
 	}
 	if state.UnstartedTaskCount != 3 || len(state.Tasks) != 3 {
 		t.Fatalf("wakeup state = %+v, want three actionable todo tasks", state)
@@ -105,7 +105,7 @@ func TestSnoozeTaskUsesDeadlineToControlWakeupWithoutChangingTodo(t *testing.T) 
 	}
 }
 
-func TestDetectWakeupReportsUnstartedTasksWithoutRunningClaim(t *testing.T) {
+func TestEvaluateWakeupReportsUnstartedTasksWithoutRunningClaim(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	project, err := s.CreateProject(ctx, "atct", "/repos/atct")
@@ -121,9 +121,9 @@ func TestDetectWakeupReportsUnstartedTasksWithoutRunningClaim(t *testing.T) {
 		t.Fatalf("CreateTasks: %v", err)
 	}
 
-	state, err := s.DetectWakeup(ctx, project.ID)
+	state, err := s.EvaluateWakeup(ctx, project.ID)
 	if err != nil {
-		t.Fatalf("DetectWakeup: %v", err)
+		t.Fatalf("EvaluateWakeup: %v", err)
 	}
 	if state.ActionableGoalCount != 1 || state.UnstartedTaskCount != len(tasks) {
 		t.Fatalf("wakeup state counts = %+v, want one active goal and %d tasks", state, len(tasks))
@@ -141,7 +141,7 @@ func TestDetectWakeupReportsUnstartedTasksWithoutRunningClaim(t *testing.T) {
 	}
 }
 
-func TestDetectWakeupClassifiesUnstartedTasksForGoalWaitingForOpenDecision(t *testing.T) {
+func TestEvaluateWakeupClassifiesUnstartedTasksForGoalWaitingForOpenDecision(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	project, err := s.CreateProject(ctx, "atct", "/repos/atct")
@@ -163,9 +163,9 @@ func TestDetectWakeupClassifiesUnstartedTasksForGoalWaitingForOpenDecision(t *te
 		t.Fatalf("AskDecision: %v", err)
 	}
 
-	state, err := s.DetectWakeup(ctx, project.ID)
+	state, err := s.EvaluateWakeup(ctx, project.ID)
 	if err != nil {
-		t.Fatalf("DetectWakeup: %v", err)
+		t.Fatalf("EvaluateWakeup: %v", err)
 	}
 	if state.ActionableGoalCount != 1 || state.UnstartedTaskCount != 1 || len(state.Tasks) != 0 {
 		t.Fatalf("wakeup state = %+v, want one counted but non-actionable task", state)
@@ -186,7 +186,7 @@ func TestDetectWakeupClassifiesUnstartedTasksForGoalWaitingForOpenDecision(t *te
 	}
 }
 
-func TestDetectWakeupExcludesProposedGoal(t *testing.T) {
+func TestEvaluateWakeupExcludesProposedGoal(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	project, err := s.CreateProject(ctx, "atct", "/repos/atct")
@@ -205,16 +205,16 @@ func TestDetectWakeupExcludesProposedGoal(t *testing.T) {
 		t.Fatalf("set goal proposed: %v", err)
 	}
 
-	state, err := s.DetectWakeup(ctx, project.ID)
+	state, err := s.EvaluateWakeup(ctx, project.ID)
 	if err != nil {
-		t.Fatalf("DetectWakeup: %v", err)
+		t.Fatalf("EvaluateWakeup: %v", err)
 	}
 	if state.ActionableGoalCount != 0 || state.UnstartedTaskCount != 0 || len(state.Tasks) != 0 {
 		t.Fatalf("wakeup state = %+v, want proposed goal excluded", state)
 	}
 }
 
-func TestDetectWakeupClassifiesUnstartedTasksForGoalWithRunningClaim(t *testing.T) {
+func TestEvaluateWakeupClassifiesUnstartedTasksForGoalWithRunningClaim(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	project, err := s.CreateProject(ctx, "atct", "/repos/atct")
@@ -240,9 +240,9 @@ func TestDetectWakeupClassifiesUnstartedTasksForGoalWithRunningClaim(t *testing.
 		t.Fatalf("ClaimTask: %v", err)
 	}
 
-	state, err := s.DetectWakeup(ctx, project.ID)
+	state, err := s.EvaluateWakeup(ctx, project.ID)
 	if err != nil {
-		t.Fatalf("DetectWakeup: %v", err)
+		t.Fatalf("EvaluateWakeup: %v", err)
 	}
 	if state.ActionableGoalCount != 1 || state.UnstartedTaskCount != 1 || len(state.Tasks) != 1 || state.Tasks[0].ID != tasks[1].ID {
 		t.Fatalf("wakeup state = %+v, want one counted and actionable sibling task", state)
@@ -271,7 +271,7 @@ func TestDetectWakeupClassifiesUnstartedTasksForGoalWithRunningClaim(t *testing.
 	}
 }
 
-func TestDetectWakeupClassifiesUnstartedTasksByOwnOpenDecision(t *testing.T) {
+func TestEvaluateWakeupClassifiesUnstartedTasksByOwnOpenDecision(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	project, err := s.CreateProject(ctx, "atct", "/repos/atct")
@@ -303,9 +303,9 @@ func TestDetectWakeupClassifiesUnstartedTasksByOwnOpenDecision(t *testing.T) {
 		t.Fatalf("AskDecision: %v", err)
 	}
 
-	state, err := s.DetectWakeup(ctx, project.ID)
+	state, err := s.EvaluateWakeup(ctx, project.ID)
 	if err != nil {
-		t.Fatalf("DetectWakeup: %v", err)
+		t.Fatalf("EvaluateWakeup: %v", err)
 	}
 	if state.UnstartedTaskCount != 2 {
 		t.Fatalf("unstarted task count = %d, want 2", state.UnstartedTaskCount)
@@ -321,7 +321,7 @@ func TestDetectWakeupClassifiesUnstartedTasksByOwnOpenDecision(t *testing.T) {
 	}
 }
 
-func TestDetectWakeupCountsAndClassifiesAllUnstartedTasks(t *testing.T) {
+func TestEvaluateWakeupCountsAndClassifiesAllUnstartedTasks(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	project, err := s.CreateProject(ctx, "atct", "/repos/atct")
@@ -383,9 +383,9 @@ func TestDetectWakeupCountsAndClassifiesAllUnstartedTasks(t *testing.T) {
 	_, untouchedTasks := declareGoal("Untouched goal", "wakeup-breakdown-untouched", "Unstarted task")
 	_, secondUntouchedTasks := declareGoal("Second untouched goal", "wakeup-breakdown-untouched-second", "Unstarted task")
 
-	state, err := s.DetectWakeup(ctx, project.ID)
+	state, err := s.EvaluateWakeup(ctx, project.ID)
 	if err != nil {
-		t.Fatalf("DetectWakeup: %v", err)
+		t.Fatalf("EvaluateWakeup: %v", err)
 	}
 	if state.ActionableGoalCount != 6 {
 		t.Fatalf("actionable goal count = %d, want 6", state.ActionableGoalCount)
@@ -427,11 +427,11 @@ func TestDetectWakeupCountsAndClassifiesAllUnstartedTasks(t *testing.T) {
 		t.Fatalf("CountUnstartedTasksForWakeup: %v", err)
 	}
 	if wakeupCount != state.UnstartedTaskCount {
-		t.Fatalf("wakeup count = %d, DetectWakeup total = %d", wakeupCount, state.UnstartedTaskCount)
+		t.Fatalf("wakeup count = %d, EvaluateWakeup total = %d", wakeupCount, state.UnstartedTaskCount)
 	}
 }
 
-func TestDetectWakeupDoesNotReportGoalWithTasksAsUndeclared(t *testing.T) {
+func TestEvaluateWakeupDoesNotReportGoalWithTasksAsUndeclared(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	project, err := s.CreateProject(ctx, "atct", "/repos/atct")
@@ -450,16 +450,16 @@ func TestDetectWakeupDoesNotReportGoalWithTasksAsUndeclared(t *testing.T) {
 		t.Fatalf("CreateGoal empty: %v", err)
 	}
 
-	state, err := s.DetectWakeup(ctx, project.ID)
+	state, err := s.EvaluateWakeup(ctx, project.ID)
 	if err != nil {
-		t.Fatalf("DetectWakeup: %v", err)
+		t.Fatalf("EvaluateWakeup: %v", err)
 	}
 	if len(state.UndeclaredGoals) != 1 || state.UndeclaredGoals[0].ID != emptyGoal.ID {
 		t.Fatalf("undeclared goals = %#v, want only %d", state.UndeclaredGoals, emptyGoal.ID)
 	}
 }
 
-func TestDetectWakeupDoesNotReportGoalWithLinkedTaskCommitAsCommitless(t *testing.T) {
+func TestEvaluateWakeupDoesNotReportGoalWithLinkedTaskCommitAsCommitless(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	project, err := s.CreateProject(ctx, "atct", "/repos/atct")
@@ -491,16 +491,16 @@ func TestDetectWakeupDoesNotReportGoalWithLinkedTaskCommitAsCommitless(t *testin
 		t.Fatalf("LinkTaskCommit: %v", err)
 	}
 
-	state, err := s.DetectWakeup(ctx, project.ID)
+	state, err := s.EvaluateWakeup(ctx, project.ID)
 	if err != nil {
-		t.Fatalf("DetectWakeup: %v", err)
+		t.Fatalf("EvaluateWakeup: %v", err)
 	}
 	if len(state.CommitlessGoals) != 1 || state.CommitlessGoals[0].ID != commitlessGoal.ID {
 		t.Fatalf("commitless goals = %#v, want only %d", state.CommitlessGoals, commitlessGoal.ID)
 	}
 }
 
-func TestDetectWakeupDoesNotReportGoalWithOpenCompletionDecisionAsCommitless(t *testing.T) {
+func TestEvaluateWakeupDoesNotReportGoalWithOpenCompletionDecisionAsCommitless(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	project, err := s.CreateProject(ctx, "atct", "/repos/atct")
@@ -532,16 +532,16 @@ func TestDetectWakeupDoesNotReportGoalWithOpenCompletionDecisionAsCommitless(t *
 		t.Fatalf("AskDecision: %v", err)
 	}
 
-	state, err := s.DetectWakeup(ctx, project.ID)
+	state, err := s.EvaluateWakeup(ctx, project.ID)
 	if err != nil {
-		t.Fatalf("DetectWakeup: %v", err)
+		t.Fatalf("EvaluateWakeup: %v", err)
 	}
 	if len(state.CommitlessGoals) != 1 || state.CommitlessGoals[0].ID != readyGoal.ID {
 		t.Fatalf("commitless goals = %#v, want only %d", state.CommitlessGoals, readyGoal.ID)
 	}
 }
 
-func TestDetectWakeupCountsActionableGoalsWithoutCompletionApproval(t *testing.T) {
+func TestEvaluateWakeupCountsActionableGoalsWithoutCompletionApproval(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	project, err := s.CreateProject(ctx, "atct", "/repos/atct")
@@ -573,17 +573,17 @@ func TestDetectWakeupCountsActionableGoalsWithoutCompletionApproval(t *testing.T
 		t.Fatalf("CreateTasks actionable: %v", err)
 	}
 
-	state, err := s.DetectWakeup(ctx, project.ID)
+	state, err := s.EvaluateWakeup(ctx, project.ID)
 	if err != nil {
-		t.Fatalf("DetectWakeup: %v", err)
+		t.Fatalf("EvaluateWakeup: %v", err)
 	}
 	if state.ActionableGoalCount != 1 {
 		t.Fatalf("actionable goal count = %d, want 1", state.ActionableGoalCount)
 	}
 }
 
-func TestWakeupEventMarshalsWakeupCounts(t *testing.T) {
-	event := WakeupEvent{WakeupID: "wakeup-json", ProjectID: 1, ActionableGoalCount: 3, DelegatedTaskCount: 2}
+func TestActionableWakeupEventMarshalsWakeupCounts(t *testing.T) {
+	event := ActionableWakeupEvent{WakeupID: "wakeup-json", ProjectID: 1, ActionableGoalCount: 3, DelegatedTaskCount: 2}
 	got, err := json.Marshal(event)
 	if err != nil {
 		t.Fatalf("json.Marshal: %v", err)
@@ -594,9 +594,9 @@ func TestWakeupEventMarshalsWakeupCounts(t *testing.T) {
 	}
 }
 
-func TestDetectionEventJSONIncludesCompletionReport(t *testing.T) {
-	event := DetectionEvent{
-		DetectionID:    "detection-report",
+func TestWakeupEventJSONIncludesCompletionReport(t *testing.T) {
+	event := WakeupEvent{
+		WakeupID:       "wakeup-report",
 		ProjectID:      1,
 		TaskID:         2,
 		HandoffID:      "handoff",
@@ -606,13 +606,13 @@ func TestDetectionEventJSONIncludesCompletionReport(t *testing.T) {
 	if err != nil {
 		t.Fatalf("json.Marshal: %v", err)
 	}
-	const want = `{"detection_id":"detection-report","project_id":1,"task_id":2,"handoff_id":"handoff","complete_report":"task report"}`
+	const want = `{"wakeup_id":"wakeup-report","project_id":1,"task_id":2,"handoff_id":"handoff","complete_report":"task report"}`
 	if string(got) != want {
-		t.Fatalf("detection JSON = %s, want %s", got, want)
+		t.Fatalf("wakeup JSON = %s, want %s", got, want)
 	}
 }
 
-func TestDetectWakeupDoesNotReportAllDroppedGoalAsCommitless(t *testing.T) {
+func TestEvaluateWakeupDoesNotReportAllDroppedGoalAsCommitless(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	project, err := s.CreateProject(ctx, "atct", "/repos/atct")
@@ -639,16 +639,16 @@ func TestDetectWakeupDoesNotReportAllDroppedGoalAsCommitless(t *testing.T) {
 	updateWakeupTask(t, s, mixedTasks[0].ID, domain.TaskDone)
 	updateWakeupTask(t, s, mixedTasks[1].ID, domain.TaskDropped)
 
-	state, err := s.DetectWakeup(ctx, project.ID)
+	state, err := s.EvaluateWakeup(ctx, project.ID)
 	if err != nil {
-		t.Fatalf("DetectWakeup: %v", err)
+		t.Fatalf("EvaluateWakeup: %v", err)
 	}
 	if len(state.CommitlessGoals) != 1 || state.CommitlessGoals[0].ID != mixedGoal.ID {
 		t.Fatalf("commitless goals = %#v, want only %d", state.CommitlessGoals, mixedGoal.ID)
 	}
 }
 
-func TestDetectWakeupDoesNotReportProposedGoalAsUndeclaredOrCommitless(t *testing.T) {
+func TestEvaluateWakeupDoesNotReportProposedGoalAsUndeclaredOrCommitless(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	project, err := s.CreateProject(ctx, "atct", "/repos/atct")
@@ -673,9 +673,9 @@ func TestDetectWakeupDoesNotReportProposedGoalAsUndeclaredOrCommitless(t *testin
 	}
 	updateWakeupTask(t, s, proposedTasks[0].ID, domain.TaskDone)
 
-	state, err := s.DetectWakeup(ctx, project.ID)
+	state, err := s.EvaluateWakeup(ctx, project.ID)
 	if err != nil {
-		t.Fatalf("DetectWakeup: %v", err)
+		t.Fatalf("EvaluateWakeup: %v", err)
 	}
 	if len(state.UndeclaredGoals) != 0 {
 		t.Fatalf("undeclared goals = %#v, want proposed goal %d excluded", state.UndeclaredGoals, proposedEmptyGoal.ID)
@@ -685,7 +685,7 @@ func TestDetectWakeupDoesNotReportProposedGoalAsUndeclaredOrCommitless(t *testin
 	}
 }
 
-func TestDetectWakeupCollectsStalledHandoffCandidates(t *testing.T) {
+func TestEvaluateWakeupCollectsStalledHandoffCandidates(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	taskIDs := addTestTasks(t, s, 8)
@@ -745,9 +745,9 @@ func TestDetectWakeupCollectsStalledHandoffCandidates(t *testing.T) {
 		t.Fatalf("RequestTaskHandoff second unreceived: %v", err)
 	}
 
-	state, err := s.DetectWakeup(ctx, taskIDsProjectID(t, s, taskIDs[0]))
+	state, err := s.EvaluateWakeup(ctx, taskIDsProjectID(t, s, taskIDs[0]))
 	if err != nil {
-		t.Fatalf("DetectWakeup: %v", err)
+		t.Fatalf("EvaluateWakeup: %v", err)
 	}
 	if len(state.HandoffsAwaitingReceipt) != 3 {
 		t.Fatalf("handoffs awaiting receipt = %#v, want %s, %s, and %s", state.HandoffsAwaitingReceipt, unreceived.ID, requestedClaim.ID, secondUnreceived.ID)
@@ -773,7 +773,7 @@ func TestDetectWakeupCollectsStalledHandoffCandidates(t *testing.T) {
 	}
 }
 
-func TestDetectWakeupExcludesCommanderClaimAndKeepsUndelegatedExecutorClaim(t *testing.T) {
+func TestEvaluateWakeupExcludesCommanderClaimAndKeepsUndelegatedExecutorClaim(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	taskIDs := addTestTasks(t, s, 3)
@@ -799,9 +799,9 @@ func TestDetectWakeupExcludesCommanderClaimAndKeepsUndelegatedExecutorClaim(t *t
 		t.Fatalf("RequestTaskHandoff delegated: %v", err)
 	}
 
-	state, err := s.DetectWakeup(ctx, projectID)
+	state, err := s.EvaluateWakeup(ctx, projectID)
 	if err != nil {
-		t.Fatalf("DetectWakeup: %v", err)
+		t.Fatalf("EvaluateWakeup: %v", err)
 	}
 	if len(state.UndelegatedClaims) != 1 || state.UndelegatedClaims[0].ID != taskIDs[1] {
 		t.Fatalf("undelegated claims = %#v, want only executor task %d", state.UndelegatedClaims, taskIDs[1])
@@ -839,7 +839,7 @@ func TestClassifyWakeupDecisionsUsesPendingPredicates(t *testing.T) {
 	}
 }
 
-func TestDetectWakeupCollectsUnappliedDecisionsAndStaleClaims(t *testing.T) {
+func TestEvaluateWakeupCollectsUnappliedDecisionsAndStaleClaims(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	project, err := s.CreateProject(ctx, "atct", "/repos/atct")
@@ -850,7 +850,7 @@ func TestDetectWakeupCollectsUnappliedDecisionsAndStaleClaims(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
-	tasks, err := s.CreateTasks(ctx, goal.ID, "agent", "wakeup-detections", []string{
+	tasks, err := s.CreateTasks(ctx, goal.ID, "agent", "wakeup-notices", []string{
 		"human decision task",
 		"default decision task",
 		"stale claim task",
@@ -909,9 +909,9 @@ func TestDetectWakeupCollectsUnappliedDecisionsAndStaleClaims(t *testing.T) {
 		t.Fatalf("ClaimTask live: %v", err)
 	}
 
-	state, err := s.DetectWakeup(ctx, project.ID)
+	state, err := s.EvaluateWakeup(ctx, project.ID)
 	if err != nil {
-		t.Fatalf("DetectWakeup: %v", err)
+		t.Fatalf("EvaluateWakeup: %v", err)
 	}
 	if got := len(state.AnsweredUnappliedDecisions); got != 1 || state.AnsweredUnappliedDecisions[0].ID != humanDecision.ID {
 		t.Fatalf("answered unapplied decisions = %#v, want %d", state.AnsweredUnappliedDecisions, humanDecision.ID)
@@ -924,7 +924,7 @@ func TestDetectWakeupCollectsUnappliedDecisionsAndStaleClaims(t *testing.T) {
 	}
 }
 
-func TestDetectWakeupDoesNotCountAssignedGoalAsUnassigned(t *testing.T) {
+func TestEvaluateWakeupDoesNotCountAssignedGoalAsUnassigned(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	project, err := s.CreateProject(ctx, "atct", "/repos/atct")
@@ -953,9 +953,9 @@ func TestDetectWakeupDoesNotCountAssignedGoalAsUnassigned(t *testing.T) {
 		t.Fatalf("ReceiveGoalHandoff: %v", err)
 	}
 
-	state, err := s.DetectWakeup(ctx, project.ID)
+	state, err := s.EvaluateWakeup(ctx, project.ID)
 	if err != nil {
-		t.Fatalf("DetectWakeup: %v", err)
+		t.Fatalf("EvaluateWakeup: %v", err)
 	}
 	if state.ActionableGoalCount != 1 {
 		t.Fatalf("actionable goal count = %d, want 1", state.ActionableGoalCount)
@@ -965,7 +965,7 @@ func TestDetectWakeupDoesNotCountAssignedGoalAsUnassigned(t *testing.T) {
 	}
 }
 
-func TestDetectWakeupCollectsUnassignedActionableGoalIDs(t *testing.T) {
+func TestEvaluateWakeupCollectsUnassignedActionableGoalIDs(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	project, err := s.CreateProject(ctx, "atct", "/repos/atct")
@@ -987,9 +987,9 @@ func TestDetectWakeupCollectsUnassignedActionableGoalIDs(t *testing.T) {
 		t.Fatalf("CreateTasks second: %v", err)
 	}
 
-	state, err := s.DetectWakeup(ctx, project.ID)
+	state, err := s.EvaluateWakeup(ctx, project.ID)
 	if err != nil {
-		t.Fatalf("DetectWakeup: %v", err)
+		t.Fatalf("EvaluateWakeup: %v", err)
 	}
 	if state.UnassignedGoalCount != 2 {
 		t.Fatalf("unassigned goal count = %d, want 2", state.UnassignedGoalCount)
@@ -999,7 +999,7 @@ func TestDetectWakeupCollectsUnassignedActionableGoalIDs(t *testing.T) {
 	}
 }
 
-func TestDetectWakeupTreatsUnknownReceivedByAsAssignedGoal(t *testing.T) {
+func TestEvaluateWakeupTreatsUnknownReceivedByAsAssignedGoal(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	project, err := s.CreateProject(ctx, "atct", "/repos/atct")
@@ -1044,16 +1044,16 @@ func TestDetectWakeupTreatsUnknownReceivedByAsAssignedGoal(t *testing.T) {
 		t.Fatalf("DB.Conn.Close: %v", err)
 	}
 
-	state, err := s.DetectWakeup(ctx, project.ID)
+	state, err := s.EvaluateWakeup(ctx, project.ID)
 	if err != nil {
-		t.Fatalf("DetectWakeup: %v", err)
+		t.Fatalf("EvaluateWakeup: %v", err)
 	}
 	if state.UnassignedGoalCount != 0 || len(state.UnassignedGoalIDs) != 0 {
 		t.Fatalf("unassigned goals = %d, IDs %#v, want none for an unknown received_by", state.UnassignedGoalCount, state.UnassignedGoalIDs)
 	}
 }
 
-func TestDetectWakeupExcludesUndeclaredGoalFromUnassignedGoals(t *testing.T) {
+func TestEvaluateWakeupExcludesUndeclaredGoalFromUnassignedGoals(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	project, err := s.CreateProject(ctx, "atct", "/repos/atct")
@@ -1064,9 +1064,9 @@ func TestDetectWakeupExcludesUndeclaredGoalFromUnassignedGoals(t *testing.T) {
 		t.Fatalf("CreateGoal: %v", err)
 	}
 
-	state, err := s.DetectWakeup(ctx, project.ID)
+	state, err := s.EvaluateWakeup(ctx, project.ID)
 	if err != nil {
-		t.Fatalf("DetectWakeup: %v", err)
+		t.Fatalf("EvaluateWakeup: %v", err)
 	}
 	if state.ActionableGoalCount != 0 {
 		t.Fatalf("actionable goal count = %d, want 0", state.ActionableGoalCount)
@@ -1076,8 +1076,8 @@ func TestDetectWakeupExcludesUndeclaredGoalFromUnassignedGoals(t *testing.T) {
 	}
 }
 
-func TestWakeupEventMarshalsUnassignedGoalFields(t *testing.T) {
-	event := WakeupEvent{
+func TestActionableWakeupEventMarshalsUnassignedGoalFields(t *testing.T) {
+	event := ActionableWakeupEvent{
 		WakeupID:            "wakeup-unassigned-json",
 		ProjectID:           1,
 		ActionableGoalCount: 3,

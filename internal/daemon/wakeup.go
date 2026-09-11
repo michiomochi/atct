@@ -21,29 +21,29 @@ const (
 	// writes (0.6 / 3.7 / 13.8 minutes for p50 / p75 / p90 over 708 events), so
 	// it fires during normal work too. That is the price of dropping the Stop
 	// hook, which used to be the only thing that could not be ignored.
-	wakeupInitialWait                       = 3 * time.Minute
-	wakeupResendInterval                    = 3 * time.Minute
-	detectionHandoffUnreceivedAfter         = 30 * time.Minute
-	detectionHandoffUnreportedAfter         = 30 * time.Minute
-	detectionClaimUndelegatedAfter          = 30 * time.Minute
-	detectionAnsweredDecisionUnappliedAfter = 0
-	detectionDefaultDecisionUnappliedAfter  = 3 * time.Minute
-	detectionStaleClaimAfter                = 3 * time.Minute
-	detectionMonitorLostAfter               = store.MonitorHealthLease
+	wakeupInitialWait                    = 3 * time.Minute
+	wakeupResendInterval                 = 3 * time.Minute
+	wakeupHandoffUnreceivedAfter         = 30 * time.Minute
+	wakeupHandoffUnreportedAfter         = 30 * time.Minute
+	wakeupClaimUndelegatedAfter          = 30 * time.Minute
+	wakeupAnsweredDecisionUnappliedAfter = 0
+	wakeupDefaultDecisionUnappliedAfter  = 3 * time.Minute
+	wakeupStaleClaimAfter                = 3 * time.Minute
+	wakeupMonitorLostAfter               = store.MonitorHealthLease
 )
 
 // wakeupTracker keeps the transition state that is intentionally not stored
-// in SQLite. A condition must remain true for the grace period before it is
+// in SQLite. A wakeup must remain true for the grace period before it is
 // published, and becoming false resets that period so a later occurrence gets
 // a fresh wakeup ID.
 type wakeupTracker struct {
 	startedAt        time.Time
-	conditions       map[string]wakeupConditionState
+	wakeups          map[string]wakeupState
 	discrepancySeen  map[int64]bool
 	evaluateFailedID string
 }
 
-type wakeupConditionState struct {
+type wakeupState struct {
 	activeSince   time.Time
 	lastPublished time.Time
 	published     bool
@@ -52,60 +52,60 @@ type wakeupConditionState struct {
 func newWakeupTracker(startedAt time.Time) *wakeupTracker {
 	return &wakeupTracker{
 		startedAt:       startedAt,
-		conditions:      make(map[string]wakeupConditionState),
+		wakeups:         make(map[string]wakeupState),
 		discrepancySeen: make(map[int64]bool),
 	}
 }
 
-func wakeupConditionKey(name string, targetID any) string {
+func wakeupKey(name string, targetID any) string {
 	return name + "\x00" + fmt.Sprint(targetID)
 }
 
-func (t *wakeupTracker) publishCondition(now time.Time, key string, startedAt time.Time, after, resendInterval time.Duration) bool {
-	condition, ok := t.conditions[key]
+func (t *wakeupTracker) publishWakeup(now time.Time, key string, startedAt time.Time, after, resendInterval time.Duration) bool {
+	wakeup, ok := t.wakeups[key]
 	if !ok {
 		if startedAt.IsZero() {
 			startedAt = now
 		}
-		condition.activeSince = startedAt
-	} else if !startedAt.IsZero() && !condition.activeSince.Equal(startedAt) {
-		condition = wakeupConditionState{activeSince: startedAt}
+		wakeup.activeSince = startedAt
+	} else if !startedAt.IsZero() && !wakeup.activeSince.Equal(startedAt) {
+		wakeup = wakeupState{activeSince: startedAt}
 	}
-	if now.Before(condition.activeSince.Add(after)) {
-		t.conditions[key] = condition
+	if now.Before(wakeup.activeSince.Add(after)) {
+		t.wakeups[key] = wakeup
 		return false
 	}
-	if !condition.published {
-		condition.published = true
-		condition.lastPublished = now
-		t.conditions[key] = condition
+	if !wakeup.published {
+		wakeup.published = true
+		wakeup.lastPublished = now
+		t.wakeups[key] = wakeup
 		return true
 	}
-	if resendInterval <= 0 || now.Before(condition.lastPublished.Add(resendInterval)) {
-		t.conditions[key] = condition
+	if resendInterval <= 0 || now.Before(wakeup.lastPublished.Add(resendInterval)) {
+		t.wakeups[key] = wakeup
 		return false
 	}
-	condition.lastPublished = now
-	t.conditions[key] = condition
+	wakeup.lastPublished = now
+	t.wakeups[key] = wakeup
 	return true
 }
 
 func (t *wakeupTracker) evaluate(ctx context.Context, s *store.Store, now time.Time) ([]store.DecisionEvent, error) {
-	return t.evaluateWith(ctx, s, now, s.DetectWakeup)
+	return t.evaluateWith(ctx, s, now, s.EvaluateWakeup)
 }
 
-func (t *wakeupTracker) evaluateWith(ctx context.Context, s *store.Store, now time.Time, detect func(context.Context, int64) (store.WakeupState, error)) ([]store.DecisionEvent, error) {
+func (t *wakeupTracker) evaluateWith(ctx context.Context, s *store.Store, now time.Time, evaluateWakeup func(context.Context, int64) (store.WakeupState, error)) ([]store.DecisionEvent, error) {
 	var events []store.DecisionEvent
 	projects, err := s.ListProjects(ctx)
 	if err != nil {
 		return events, err
 	}
 
-	currentConditionKeys := make(map[string]struct{})
+	currentWakeupKeys := make(map[string]struct{})
 	var projectErrs []error
 projectLoop:
 	for _, project := range projects {
-		state, err := detect(ctx, project.ID)
+		state, err := evaluateWakeup(ctx, project.ID)
 		if err != nil {
 			projectErrs = append(projectErrs, fmt.Errorf("project %d: %w", project.ID, err))
 			continue projectLoop
@@ -118,7 +118,7 @@ projectLoop:
 
 		mismatch := state.UnstartedTaskCount == 0 && counted > 0
 		if mismatch {
-			state, err = detect(ctx, project.ID)
+			state, err = evaluateWakeup(ctx, project.ID)
 			if err != nil {
 				projectErrs = append(projectErrs, fmt.Errorf("project %d: %w", project.ID, err))
 				continue projectLoop
@@ -136,10 +136,10 @@ projectLoop:
 				events = append(events, store.DecisionEvent{
 					Name: store.EventWakeupDiscrepancy,
 					Data: store.WakeupDiscrepancyEvent{
-						WakeupID:                   id,
-						ProjectID:                  project.ID,
-						DetectorUnstartedTaskCount: state.UnstartedTaskCount,
-						CountedUnstartedTaskCount:  counted,
+						WakeupID:                    id,
+						ProjectID:                   project.ID,
+						EvaluatedUnstartedTaskCount: state.UnstartedTaskCount,
+						CountedUnstartedTaskCount:   counted,
 					},
 				})
 				t.discrepancySeen[project.ID] = true
@@ -149,12 +149,12 @@ projectLoop:
 		}
 
 		if len(state.Tasks) > 0 {
-			conditionKey := wakeupConditionKey("actionable", project.ID)
-			currentConditionKeys[conditionKey] = struct{}{}
-			if t.publishCondition(now, conditionKey, time.Time{}, wakeupInitialWait, wakeupResendInterval) {
+			key := wakeupKey("actionable", project.ID)
+			currentWakeupKeys[key] = struct{}{}
+			if t.publishWakeup(now, key, time.Time{}, wakeupInitialWait, wakeupResendInterval) {
 				events = append(events, store.DecisionEvent{
 					Name: store.EventWakeup,
-					Data: store.WakeupEvent{
+					Data: store.ActionableWakeupEvent{
 						WakeupID:               store.NewWakeupID(),
 						ProjectID:              project.ID,
 						ActionableGoalCount:    state.ActionableGoalCount,
@@ -170,16 +170,16 @@ projectLoop:
 			}
 		}
 
-		recordConditionEvent := func(name string, targetID any, startedAt time.Time, after time.Duration, goalID, taskID int64, handoffID string, decisionID int64) {
-			conditionKey := wakeupConditionKey(name, targetID)
-			currentConditionKeys[conditionKey] = struct{}{}
-			if t.publishCondition(now, conditionKey, startedAt, after, 0) {
-				event := store.DecisionEvent{Name: name, Data: store.DetectionEvent{
-					DetectionID: store.NewDetectionID(), DecisionID: decisionID, ProjectID: project.ID,
+		recordWakeupEvent := func(name string, targetID any, startedAt time.Time, after time.Duration, goalID, taskID int64, handoffID string, decisionID int64) {
+			key := wakeupKey(name, targetID)
+			currentWakeupKeys[key] = struct{}{}
+			if t.publishWakeup(now, key, startedAt, after, 0) {
+				event := store.DecisionEvent{Name: name, Data: store.WakeupEvent{
+					WakeupID: store.NewWakeupID(), DecisionID: decisionID, ProjectID: project.ID,
 					GoalID: goalID, TaskID: taskID, HandoffID: handoffID,
 				}}
-				if name == store.EventDetectionHandoffUnreported {
-					if data, ok := event.Data.(store.DetectionEvent); ok {
+				if name == store.EventWakeupHandoffUnreported {
+					if data, ok := event.Data.(store.WakeupEvent); ok {
 						data.WorktreeActivity = handoffWorktreeActivity(ctx, project.RootPath, goalID, startedAt)
 						event.Data = data
 					}
@@ -214,7 +214,7 @@ projectLoop:
 				}
 			}
 			if lostAt, ok := lostMonitorAt(healthHistory, now, "subcommander", goal.ID, 0, goalReceivedAt); ok {
-				recordConditionEvent(store.EventDetectionMonitorLost, "goal:"+strconv.FormatInt(goal.ID, 10), lostAt, detectionMonitorLostAfter, goal.ID, 0, "", 0)
+				recordWakeupEvent(store.EventWakeupMonitorLost, "goal:"+strconv.FormatInt(goal.ID, 10), lostAt, wakeupMonitorLostAfter, goal.ID, 0, "", 0)
 			}
 			handoffs, err := s.ListOpenTaskHandoffsForGoal(ctx, goal.ID)
 			if err != nil {
@@ -223,7 +223,7 @@ projectLoop:
 			}
 			for _, handoff := range handoffs {
 				if lostAt, ok := lostMonitorAt(healthHistory, now, "executor", goal.ID, handoff.TaskID, handoff.ReceivedAt); ok {
-					recordConditionEvent(store.EventDetectionMonitorLost, "task:"+strconv.FormatInt(handoff.TaskID, 10), lostAt, detectionMonitorLostAfter, goal.ID, handoff.TaskID, handoff.ID, 0)
+					recordWakeupEvent(store.EventWakeupMonitorLost, "task:"+strconv.FormatInt(handoff.TaskID, 10), lostAt, wakeupMonitorLostAfter, goal.ID, handoff.TaskID, handoff.ID, 0)
 				}
 			}
 		}
@@ -250,19 +250,19 @@ projectLoop:
 			}
 		}
 		for _, goal := range state.CompletedGoals {
-			recordConditionEvent(store.EventDetectionCompletionReportMissing, goal.ID, time.Time{}, wakeupPublishAfter, goal.ID, 0, "", 0)
+			recordWakeupEvent(store.EventWakeupCompletionReportMissing, goal.ID, time.Time{}, wakeupPublishAfter, goal.ID, 0, "", 0)
 		}
 		for _, goal := range state.CommitlessGoals {
-			recordConditionEvent(store.EventDetectionCommitsMissing, goal.ID, time.Time{}, wakeupPublishAfter, goal.ID, 0, "", 0)
+			recordWakeupEvent(store.EventWakeupCommitsMissing, goal.ID, time.Time{}, wakeupPublishAfter, goal.ID, 0, "", 0)
 		}
 		for _, goal := range state.UndeclaredGoals {
-			recordConditionEvent(store.EventDetectionUndeclaredGoal, goal.ID, time.Time{}, wakeupPublishAfter, goal.ID, 0, "", 0)
+			recordWakeupEvent(store.EventWakeupUndeclaredGoal, goal.ID, time.Time{}, wakeupPublishAfter, goal.ID, 0, "", 0)
 		}
 		for _, goal := range state.DroppedGoals {
-			recordConditionEvent(store.EventDetectionAllTasksDropped, goal.ID, time.Time{}, wakeupPublishAfter, goal.ID, 0, "", 0)
+			recordWakeupEvent(store.EventWakeupAllTasksDropped, goal.ID, time.Time{}, wakeupPublishAfter, goal.ID, 0, "", 0)
 		}
 		for _, task := range state.UnclaimedDoingTasks {
-			recordConditionEvent(store.EventDetectionUnclaimedDoing, task.ID, time.Time{}, wakeupPublishAfter, task.GoalID, task.ID, "", 0)
+			recordWakeupEvent(store.EventWakeupUnclaimedDoing, task.ID, time.Time{}, wakeupPublishAfter, task.GoalID, task.ID, "", 0)
 		}
 		for _, handoff := range state.HandoffsAwaitingReceipt {
 			if handoff.RequestedAt == nil {
@@ -273,7 +273,7 @@ projectLoop:
 				projectErrs = append(projectErrs, fmt.Errorf("project %d: %w", project.ID, err))
 				continue projectLoop
 			}
-			recordConditionEvent(store.EventDetectionHandoffUnreceived, handoff.ID, *handoff.RequestedAt, detectionHandoffUnreceivedAfter, goalID, handoff.TaskID, handoff.ID, 0)
+			recordWakeupEvent(store.EventWakeupHandoffUnreceived, handoff.ID, *handoff.RequestedAt, wakeupHandoffUnreceivedAfter, goalID, handoff.TaskID, handoff.ID, 0)
 		}
 		for _, handoff := range state.HandoffsAwaitingReport {
 			if handoff.ReceivedAt == nil {
@@ -284,39 +284,39 @@ projectLoop:
 				projectErrs = append(projectErrs, fmt.Errorf("project %d: %w", project.ID, err))
 				continue projectLoop
 			}
-			recordConditionEvent(store.EventDetectionHandoffUnreported, handoff.ID, *handoff.ReceivedAt, detectionHandoffUnreportedAfter, goalID, handoff.TaskID, handoff.ID, 0)
+			recordWakeupEvent(store.EventWakeupHandoffUnreported, handoff.ID, *handoff.ReceivedAt, wakeupHandoffUnreportedAfter, goalID, handoff.TaskID, handoff.ID, 0)
 		}
 		for _, task := range state.UndelegatedClaims {
 			claimedAt := taskHandoffClaimedAt(openTaskHandoffs[task.ID])
 			if claimedAt == nil {
 				continue
 			}
-			recordConditionEvent(store.EventDetectionClaimUndelegated, task.ID, *claimedAt, detectionClaimUndelegatedAfter, task.GoalID, task.ID, "", 0)
+			recordWakeupEvent(store.EventWakeupClaimUndelegated, task.ID, *claimedAt, wakeupClaimUndelegatedAfter, task.GoalID, task.ID, "", 0)
 		}
 		for _, decision := range state.AnsweredUnappliedDecisions {
-			recordConditionEvent(store.EventDetectionDecisionAnsweredUnapplied, decision.ID, time.Time{}, detectionAnsweredDecisionUnappliedAfter, decision.GoalID, decision.TaskID, "", decision.ID)
+			recordWakeupEvent(store.EventWakeupDecisionAnsweredUnapplied, decision.ID, time.Time{}, wakeupAnsweredDecisionUnappliedAfter, decision.GoalID, decision.TaskID, "", decision.ID)
 		}
 		for _, decision := range state.DefaultUnappliedDecisions {
 			startedAt := time.Time{}
 			if decision.DefaultAppliedAt != nil {
 				startedAt = *decision.DefaultAppliedAt
 			}
-			recordConditionEvent(store.EventDetectionDecisionDefaultUnapplied, decision.ID, startedAt, detectionDefaultDecisionUnappliedAfter, decision.GoalID, decision.TaskID, "", decision.ID)
+			recordWakeupEvent(store.EventWakeupDecisionDefaultUnapplied, decision.ID, startedAt, wakeupDefaultDecisionUnappliedAfter, decision.GoalID, decision.TaskID, "", decision.ID)
 		}
 		for _, task := range state.StaleClaims {
 			claimedAt := taskHandoffClaimedAt(openTaskHandoffs[task.ID])
 			if claimedAt == nil {
 				continue
 			}
-			recordConditionEvent(store.EventDetectionClaimStale, task.ID, *claimedAt, detectionStaleClaimAfter, task.GoalID, task.ID, "", 0)
+			recordWakeupEvent(store.EventWakeupClaimStale, task.ID, *claimedAt, wakeupStaleClaimAfter, task.GoalID, task.ID, "", 0)
 		}
 	}
 	if len(projectErrs) > 0 {
 		return events, errors.Join(projectErrs...)
 	}
-	for key := range t.conditions {
-		if _, ok := currentConditionKeys[key]; !ok {
-			delete(t.conditions, key)
+	for key := range t.wakeups {
+		if _, ok := currentWakeupKeys[key]; !ok {
+			delete(t.wakeups, key)
 		}
 	}
 	return events, nil
@@ -419,17 +419,17 @@ func porcelainPaths(output string) []string {
 }
 
 func (d *Daemon) runMaintenance(ctx context.Context, tracker *wakeupTracker, now time.Time) {
-	d.runMaintenanceWith(ctx, tracker, now, d.store.DetectWakeup)
+	d.runMaintenanceWith(ctx, tracker, now, d.store.EvaluateWakeup)
 }
 
-func (d *Daemon) runMaintenanceWith(ctx context.Context, tracker *wakeupTracker, now time.Time, detect func(context.Context, int64) (store.WakeupState, error)) {
+func (d *Daemon) runMaintenanceWith(ctx context.Context, tracker *wakeupTracker, now time.Time, evaluateWakeup func(context.Context, int64) (store.WakeupState, error)) {
 	_, _ = d.store.ApplyExpiredDefaults(ctx, now)
 	d.store.PublishEvent(store.DecisionEvent{
 		Name: store.EventKeepalive,
 		Data: store.KeepaliveEvent{At: now},
 	})
 
-	events, err := tracker.evaluateWith(ctx, d.store, now, detect)
+	events, err := tracker.evaluateWith(ctx, d.store, now, evaluateWakeup)
 	for _, event := range events {
 		d.store.PublishEvent(event)
 	}

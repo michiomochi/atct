@@ -22,8 +22,8 @@ func watchActionDeliveryIdentity(eventName, line string, decision watchDecision)
 		subject = decision.DecisionID
 	case strings.Contains(eventName, ".handoff."):
 		subject = decision.HandoffID
-	case strings.HasPrefix(eventName, "detection."):
-		subject = decision.DetectionID
+	case strings.HasPrefix(eventName, "wakeup."):
+		subject = decision.WakeupID
 	case eventName == "goal.created", eventName == "monitor.liveness":
 		subject = decision.GoalID
 	case strings.HasPrefix(eventName, "wakeup"):

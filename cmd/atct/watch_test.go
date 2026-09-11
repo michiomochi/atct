@@ -112,7 +112,7 @@ func TestConsumeWatchEventsIgnoresEventIDAndCursor(t *testing.T) {
 	err := consumeWatchEventsWithStateAndScopeAndSinkAndCursor(
 		context.Background(), server.Client(), server.URL, watchScope{ProjectID: "1", GoalID: "2"}, &output,
 		time.Second, make(map[watchDeliveryKey]struct{}), &lastWakeupContent,
-		make(map[watchWakeupDeliveryKey]struct{}), make(map[watchDetectionDeliveryKey]struct{}),
+		make(map[watchWakeupDiscrepancyDeliveryKey]struct{}), make(map[watchWakeupDeliveryKey]struct{}),
 		newWatchScopeFilter("2"), nil, "watcher-1",
 	)
 	if !errors.Is(err, io.EOF) {
@@ -146,7 +146,7 @@ func TestReconcileWatchScopeDoesNotAdvanceCursor(t *testing.T) {
 	err := reconcileWatchScope(
 		context.Background(), server.Client(), server.URL, watchScope{ProjectID: "1", GoalID: "2"}, &output,
 		make(map[watchDeliveryKey]struct{}), &lastWakeupContent,
-		make(map[watchWakeupDeliveryKey]struct{}), make(map[watchDetectionDeliveryKey]struct{}),
+		make(map[watchWakeupDiscrepancyDeliveryKey]struct{}), make(map[watchWakeupDeliveryKey]struct{}),
 		newWatchScopeFilter("2"), nil, "watcher-1",
 	)
 	if err != nil {
@@ -182,7 +182,7 @@ func TestReconcileWatchScopeDoesNotAdvanceCursorAfterRenderFailure(t *testing.T)
 	err := reconcileWatchScope(
 		context.Background(), server.Client(), server.URL, watchScope{ProjectID: "1", GoalID: "2"}, &output,
 		make(map[watchDeliveryKey]struct{}), &lastWakeupContent,
-		make(map[watchWakeupDeliveryKey]struct{}), make(map[watchDetectionDeliveryKey]struct{}),
+		make(map[watchWakeupDiscrepancyDeliveryKey]struct{}), make(map[watchWakeupDeliveryKey]struct{}),
 		newWatchScopeFilter("2"), func(string) error {
 			rendered++
 			if rendered == 2 {
@@ -219,7 +219,7 @@ func TestReconcileWatchScopeIgnoresDeliveryFields(t *testing.T) {
 	err := reconcileWatchScope(
 		context.Background(), server.Client(), server.URL, watchScope{ProjectID: "1", GoalID: "2"}, &output,
 		make(map[watchDeliveryKey]struct{}), &lastWakeupContent,
-		make(map[watchWakeupDeliveryKey]struct{}), make(map[watchDetectionDeliveryKey]struct{}),
+		make(map[watchWakeupDiscrepancyDeliveryKey]struct{}), make(map[watchWakeupDeliveryKey]struct{}),
 		newWatchScopeFilter("2"), nil, "watcher-1",
 	)
 	if err != nil {
@@ -249,7 +249,7 @@ func TestReconcileWatchScopeRendersCanonicalDecisionState(t *testing.T) {
 	err := reconcileWatchScope(
 		context.Background(), server.Client(), server.URL, watchScope{ProjectID: "1", GoalID: "2"}, &output,
 		make(map[watchDeliveryKey]struct{}), &lastWakeupContent,
-		make(map[watchWakeupDeliveryKey]struct{}), make(map[watchDetectionDeliveryKey]struct{}),
+		make(map[watchWakeupDiscrepancyDeliveryKey]struct{}), make(map[watchWakeupDeliveryKey]struct{}),
 		newWatchScopeFilter("2"), nil, "watcher-1",
 	)
 	if err != nil {
@@ -283,12 +283,12 @@ func TestReconcileWatchScopeReprojectsAppliedGoalApprovalForCommander(t *testing
 		return nil
 	})
 	delivered := make(map[watchDeliveryKey]struct{})
-	wakeupDiscrepancyDelivered := make(map[watchWakeupDeliveryKey]struct{})
-	detectionDelivered := make(map[watchDetectionDeliveryKey]struct{})
+	wakeupDiscrepancyDelivered := make(map[watchWakeupDiscrepancyDeliveryKey]struct{})
+	wakeupDelivered := make(map[watchWakeupDeliveryKey]struct{})
 	for range 2 {
 		err := reconcileWatchScope(
 			context.Background(), client, "http://daemon", watchScope{ProjectID: "1"}, &output,
-			delivered, &lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered,
+			delivered, &lastWakeupContent, wakeupDiscrepancyDelivered, wakeupDelivered,
 			newWatchScopeFilter(""), nil, actionSink,
 		)
 		if err != nil {
@@ -342,7 +342,7 @@ func TestReconcileWatchScopeProjectsAppliedGoalApprovalForEligibleGoalStates(t *
 			err := reconcileWatchScope(
 				context.Background(), client, "http://daemon", watchScope{ProjectID: "1"}, &output,
 				make(map[watchDeliveryKey]struct{}), &lastWakeupContent,
-				make(map[watchWakeupDeliveryKey]struct{}), make(map[watchDetectionDeliveryKey]struct{}),
+				make(map[watchWakeupDiscrepancyDeliveryKey]struct{}), make(map[watchWakeupDeliveryKey]struct{}),
 				newWatchScopeFilter(""), nil,
 			)
 			if err != nil {
@@ -374,7 +374,7 @@ func TestReconcileWatchScopeDoesNotProjectAppliedGoalApprovalForGoalScope(t *tes
 	err := reconcileWatchScope(
 		context.Background(), client, "http://daemon", watchScope{ProjectID: "1", GoalID: "42"}, &output,
 		make(map[watchDeliveryKey]struct{}), &lastWakeupContent,
-		make(map[watchWakeupDeliveryKey]struct{}), make(map[watchDetectionDeliveryKey]struct{}),
+		make(map[watchWakeupDiscrepancyDeliveryKey]struct{}), make(map[watchWakeupDeliveryKey]struct{}),
 		newWatchScopeFilter("42"), nil,
 	)
 	if err != nil {
@@ -425,7 +425,7 @@ func TestReconcileWatchScopeProjectsTasklessApprovedGoalReviewForCommanderOnly(t
 			err := reconcileWatchScope(
 				context.Background(), client, "http://daemon", tc.scope, &output,
 				make(map[watchDeliveryKey]struct{}), &lastWakeupContent,
-				make(map[watchWakeupDeliveryKey]struct{}), make(map[watchDetectionDeliveryKey]struct{}),
+				make(map[watchWakeupDiscrepancyDeliveryKey]struct{}), make(map[watchWakeupDeliveryKey]struct{}),
 				scopeFilter, nil, actionSink,
 			)
 			if err != nil {
@@ -486,7 +486,7 @@ func TestConsumeWatchEventsReconcilesEverySignalWithoutApplyingPayloadOrAcknowle
 	err := consumeWatchEventsWithStateAndScopeAndSinkAndCursor(
 		context.Background(), server.Client(), server.URL, watchScope{ProjectID: "1", GoalID: "2"}, &output,
 		time.Second, make(map[watchDeliveryKey]struct{}), &lastWakeupContent,
-		make(map[watchWakeupDeliveryKey]struct{}), make(map[watchDetectionDeliveryKey]struct{}),
+		make(map[watchWakeupDiscrepancyDeliveryKey]struct{}), make(map[watchWakeupDeliveryKey]struct{}),
 		newWatchScopeFilter("2"), nil, "watcher-1",
 	)
 	if !errors.Is(err, io.EOF) {
@@ -548,7 +548,7 @@ func TestConsumeWatchEventsPerformsPeriodicReconciliation(t *testing.T) {
 		errCh <- consumeWatchEventsWithStateAndScopeAndSinkAndInterval(
 			ctx, server.Client(), server.URL, watchScope{ProjectID: "1"}, &output,
 			time.Second, 5*time.Millisecond, make(map[watchDeliveryKey]struct{}), &lastWakeupContent,
-			make(map[watchWakeupDeliveryKey]struct{}), make(map[watchDetectionDeliveryKey]struct{}),
+			make(map[watchWakeupDiscrepancyDeliveryKey]struct{}), make(map[watchWakeupDeliveryKey]struct{}),
 			newWatchPassThroughFilter(), nil,
 		)
 	}()
@@ -653,18 +653,18 @@ func TestWatchRendersCanonicalDecisionStatuses(t *testing.T) {
 	}
 }
 
-func TestWatchEmitsWakeupEvents(t *testing.T) {
+func TestWatchEmitsActionableWakeupEvents(t *testing.T) {
 	var output strings.Builder
 	delivered := make(map[watchDeliveryKey]struct{})
 	lastWakeupContent := ""
-	wakeupDiscrepancyDelivered := make(map[watchWakeupDeliveryKey]struct{})
-	detectionDelivered := make(map[watchDetectionDeliveryKey]struct{})
+	wakeupDiscrepancyDelivered := make(map[watchWakeupDiscrepancyDeliveryKey]struct{})
+	wakeupDelivered := make(map[watchWakeupDeliveryKey]struct{})
 
 	for _, decision := range []watchDecision{
 		{WakeupID: "wakeup-1"},
 		{WakeupID: "wakeup-2", UnstartedTaskCount: 1},
 	} {
-		if err := emitWatchDecisionWithState(&output, "wakeup", decision, delivered, &lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered); err != nil {
+		if err := emitWatchDecisionWithState(&output, "wakeup", decision, delivered, &lastWakeupContent, wakeupDiscrepancyDelivered, wakeupDelivered); err != nil {
 			t.Fatalf("emitWatchDecision(%s): %v", decision.WakeupID, err)
 		}
 	}
@@ -780,7 +780,7 @@ func TestWatchDecodesUnassignedGoalFields(t *testing.T) {
 
 func TestWatchDecodesNumericEntityIDs(t *testing.T) {
 	var decision watchDecision
-	if err := json.Unmarshal([]byte(`{"id":11,"decision_id":12,"project_id":13,"wakeup_id":14,"detection_id":15,"goal_id":16,"task_id":17,"handoff_id":18}`), &decision); err != nil {
+	if err := json.Unmarshal([]byte(`{"id":11,"decision_id":12,"project_id":13,"wakeup_id":14,"goal_id":16,"task_id":17,"handoff_id":18}`), &decision); err != nil {
 		t.Fatalf("json.Unmarshal decision: %v", err)
 	}
 
@@ -788,14 +788,13 @@ func TestWatchDecodesNumericEntityIDs(t *testing.T) {
 		got  string
 		want string
 	}{
-		"id":           {decision.ID, "11"},
-		"decision_id":  {decision.DecisionID, "12"},
-		"project_id":   {decision.ProjectID, "13"},
-		"wakeup_id":    {decision.WakeupID, "14"},
-		"detection_id": {decision.DetectionID, "15"},
-		"goal_id":      {decision.GoalID, "16"},
-		"task_id":      {decision.TaskID, "17"},
-		"handoff_id":   {decision.HandoffID, "18"},
+		"id":          {decision.ID, "11"},
+		"decision_id": {decision.DecisionID, "12"},
+		"project_id":  {decision.ProjectID, "13"},
+		"wakeup_id":   {decision.WakeupID, "14"},
+		"goal_id":     {decision.GoalID, "16"},
+		"task_id":     {decision.TaskID, "17"},
+		"handoff_id":  {decision.HandoffID, "18"},
 	} {
 		got, want := values.got, values.want
 		if got != want {
@@ -816,14 +815,14 @@ func TestWatchEmitsWakeupTaskBreakdownSeparatelyFromDecisionCount(t *testing.T) 
 	var output strings.Builder
 	delivered := make(map[watchDeliveryKey]struct{})
 	lastWakeupContent := ""
-	wakeupDiscrepancyDelivered := make(map[watchWakeupDeliveryKey]struct{})
-	detectionDelivered := make(map[watchDetectionDeliveryKey]struct{})
+	wakeupDiscrepancyDelivered := make(map[watchWakeupDiscrepancyDeliveryKey]struct{})
+	wakeupDelivered := make(map[watchWakeupDeliveryKey]struct{})
 
 	var decision watchDecision
 	if err := json.Unmarshal([]byte(`{"wakeup_id":"wakeup-breakdown","actionable_goal_count":3,"unstarted_task_count":3,"waiting_answer_task_count":1,"untouched_task_count":2,"waiting_answer_count":2}`), &decision); err != nil {
 		t.Fatalf("json.Unmarshal: %v", err)
 	}
-	if err := emitWatchDecisionWithState(&output, "wakeup", decision, delivered, &lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered); err != nil {
+	if err := emitWatchDecisionWithState(&output, "wakeup", decision, delivered, &lastWakeupContent, wakeupDiscrepancyDelivered, wakeupDelivered); err != nil {
 		t.Fatalf("emitWatchDecision: %v", err)
 	}
 
@@ -855,15 +854,15 @@ func TestWatchEmitsWakeupAgainAfterStateReturns(t *testing.T) {
 	var output strings.Builder
 	delivered := make(map[watchDeliveryKey]struct{})
 	lastWakeupContent := ""
-	wakeupDiscrepancyDelivered := make(map[watchWakeupDeliveryKey]struct{})
-	detectionDelivered := make(map[watchDetectionDeliveryKey]struct{})
+	wakeupDiscrepancyDelivered := make(map[watchWakeupDiscrepancyDeliveryKey]struct{})
+	wakeupDelivered := make(map[watchWakeupDeliveryKey]struct{})
 
 	for _, decision := range []watchDecision{
 		{WakeupID: "wakeup-before"},
 		{WakeupID: "wakeup-during", UnstartedTaskCount: 1},
 		{WakeupID: "wakeup-after"},
 	} {
-		if err := emitWatchDecisionWithState(&output, "wakeup", decision, delivered, &lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered); err != nil {
+		if err := emitWatchDecisionWithState(&output, "wakeup", decision, delivered, &lastWakeupContent, wakeupDiscrepancyDelivered, wakeupDelivered); err != nil {
 			t.Fatalf("emitWatchDecision(%s): %v", decision.WakeupID, err)
 		}
 	}
@@ -1029,7 +1028,7 @@ func TestWatchKeepsQuietWhileKeepalivesArriveAndReportsAfterTheyStop(t *testing.
 	})}
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- consumeWatchEventsWithTimeout(ctx, client, "http://watch.test", "", &output, timeout, make(map[watchDeliveryKey]struct{}), make(map[watchWakeupDeliveryKey]struct{}), make(map[watchDetectionDeliveryKey]struct{}))
+		errCh <- consumeWatchEventsWithTimeout(ctx, client, "http://watch.test", "", &output, timeout, make(map[watchDeliveryKey]struct{}), make(map[watchWakeupDiscrepancyDeliveryKey]struct{}), make(map[watchWakeupDeliveryKey]struct{}))
 	}()
 
 	for i := 0; i < 5; i++ {
@@ -1076,7 +1075,7 @@ func TestWatchReportsOneKeepaliveMissingLine(t *testing.T) {
 	})}
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- consumeWatchEventsWithTimeout(ctx, client, "http://watch.test", "", &output, timeout, make(map[watchDeliveryKey]struct{}), make(map[watchWakeupDeliveryKey]struct{}), make(map[watchDetectionDeliveryKey]struct{}))
+		errCh <- consumeWatchEventsWithTimeout(ctx, client, "http://watch.test", "", &output, timeout, make(map[watchDeliveryKey]struct{}), make(map[watchWakeupDiscrepancyDeliveryKey]struct{}), make(map[watchWakeupDeliveryKey]struct{}))
 	}()
 
 	select {
@@ -1841,8 +1840,8 @@ func (w *cancelOnOutput) String() string {
 func TestEmitWatchEvaluateFailureDeduplicatesByWakeupID(t *testing.T) {
 	var output bytes.Buffer
 	delivered := make(map[watchDeliveryKey]struct{})
-	wakeupDiscrepancyDelivered := make(map[watchWakeupDeliveryKey]struct{})
-	detectionDelivered := make(map[watchDetectionDeliveryKey]struct{})
+	wakeupDiscrepancyDelivered := make(map[watchWakeupDiscrepancyDeliveryKey]struct{})
+	wakeupDelivered := make(map[watchWakeupDeliveryKey]struct{})
 
 	for _, payload := range []string{
 		`{"wakeup_id":"failure-1","reason":"database unavailable"}`,
@@ -1853,7 +1852,7 @@ func TestEmitWatchEvaluateFailureDeduplicatesByWakeupID(t *testing.T) {
 		if err := json.Unmarshal([]byte(payload), &decision); err != nil {
 			t.Fatalf("json.Unmarshal: %v", err)
 		}
-		if err := emitWatchDecisionWithState(&output, "wakeup.evaluate_failed", decision, delivered, nil, wakeupDiscrepancyDelivered, detectionDelivered); err != nil {
+		if err := emitWatchDecisionWithState(&output, "wakeup.evaluate_failed", decision, delivered, nil, wakeupDiscrepancyDelivered, wakeupDelivered); err != nil {
 			t.Fatalf("emitWatchDecision: %v", err)
 		}
 	}
@@ -1865,34 +1864,34 @@ func TestEmitWatchEvaluateFailureDeduplicatesByWakeupID(t *testing.T) {
 	}
 }
 
-func TestEmitWatchDetectionWritesOneLinePerCondition(t *testing.T) {
+func TestEmitWatchWakeupWritesOneLinePerCondition(t *testing.T) {
 	cases := []struct {
 		event  string
 		record watchDecision
 		want   string
 	}{
-		{"detection.completion_report_missing", watchDecision{GoalID: "goal-1"}, "atct detection: goal goal-1 has all tasks done but no completion report"},
-		{"detection.commits_missing", watchDecision{GoalID: "goal-2"}, "atct detection: goal goal-2 has no linked commits"},
-		{"detection.undeclared_goal", watchDecision{GoalID: "goal-3"}, "atct detection: goal goal-3 has no tasks declared"},
-		{"detection.all_tasks_dropped", watchDecision{GoalID: "goal-4"}, "atct detection: goal goal-4 has all tasks dropped"},
-		{"detection.unclaimed_doing", watchDecision{TaskID: "task-1"}, "atct detection: task task-1 is doing without a work lock"},
-		{"detection.handoff_unreceived", watchDecision{HandoffID: "handoff-1"}, "atct detection: handoff handoff-1 has no receipt"},
-		{"detection.handoff_unreported", watchDecision{HandoffID: "handoff-2", WorktreeActivity: "changed"}, "atct detection: handoff handoff-2 has no completion report, but the goal's worktree changed after receipt"},
-		{"detection.handoff_unreported", watchDecision{HandoffID: "handoff-3", WorktreeActivity: "unchanged"}, "atct detection: handoff handoff-3 has no completion report and the goal's worktree is unchanged since receipt"},
-		{"detection.handoff_unreported", watchDecision{HandoffID: "handoff-4"}, "atct detection: handoff handoff-4 has no completion report"},
+		{"wakeup.completion_report_missing", watchDecision{GoalID: "goal-1"}, "atct wakeup: goal goal-1 has all tasks done but no completion report"},
+		{"wakeup.commits_missing", watchDecision{GoalID: "goal-2"}, "atct wakeup: goal goal-2 has no linked commits"},
+		{"wakeup.undeclared_goal", watchDecision{GoalID: "goal-3"}, "atct wakeup: goal goal-3 has no tasks declared"},
+		{"wakeup.all_tasks_dropped", watchDecision{GoalID: "goal-4"}, "atct wakeup: goal goal-4 has all tasks dropped"},
+		{"wakeup.unclaimed_doing", watchDecision{TaskID: "task-1"}, "atct wakeup: task task-1 is doing without a work lock"},
+		{"wakeup.handoff_unreceived", watchDecision{HandoffID: "handoff-1"}, "atct wakeup: handoff handoff-1 has no receipt"},
+		{"wakeup.handoff_unreported", watchDecision{HandoffID: "handoff-2", WorktreeActivity: "changed"}, "atct wakeup: handoff handoff-2 has no completion report, but the goal's worktree changed after receipt"},
+		{"wakeup.handoff_unreported", watchDecision{HandoffID: "handoff-3", WorktreeActivity: "unchanged"}, "atct wakeup: handoff handoff-3 has no completion report and the goal's worktree is unchanged since receipt"},
+		{"wakeup.handoff_unreported", watchDecision{HandoffID: "handoff-4"}, "atct wakeup: handoff handoff-4 has no completion report"},
 		{"handoff_reported", watchDecision{HandoffID: "handoff-3", TaskID: "task-3", CompleteReport: "task report"}, "atct handoff reported: task task-3 (handoff handoff-3): task report"},
 		{"handoff_reported", watchDecision{HandoffID: "handoff-4", GoalID: "goal-4", CompleteReport: "goal report"}, "atct handoff reported: goal goal-4 (handoff handoff-4): goal report"},
-		{"detection.claim_undelegated", watchDecision{TaskID: "task-2"}, "atct detection: task task-2 has no handoff request"},
-		{"detection.decision_answered_unapplied", watchDecision{DecisionID: "decision-1", GoalID: "goal-1"}, "atct detection: decision decision-1 was answered but not applied"},
-		{"detection.decision_default_unapplied", watchDecision{DecisionID: "decision-2", GoalID: "goal-1"}, "atct detection: decision decision-2 was default-applied but not applied"},
-		{"detection.claim_stale", watchDecision{TaskID: "task-3"}, "atct detection: task task-3 has a stale claim"},
+		{"wakeup.claim_undelegated", watchDecision{TaskID: "task-2"}, "atct wakeup: task task-2 has no handoff request"},
+		{"wakeup.decision_answered_unapplied", watchDecision{DecisionID: "decision-1", GoalID: "goal-1"}, "atct wakeup: decision decision-1 was answered but not applied"},
+		{"wakeup.decision_default_unapplied", watchDecision{DecisionID: "decision-2", GoalID: "goal-1"}, "atct wakeup: decision decision-2 was default-applied but not applied"},
+		{"wakeup.claim_stale", watchDecision{TaskID: "task-3"}, "atct wakeup: task task-3 has a stale claim"},
 	}
 	for _, tc := range cases {
 		var output bytes.Buffer
 		delivered := make(map[watchDeliveryKey]struct{})
-		wakeupDiscrepancyDelivered := make(map[watchWakeupDeliveryKey]struct{})
-		detectionDelivered := make(map[watchDetectionDeliveryKey]struct{})
-		if err := emitWatchDecisionWithState(&output, tc.event, tc.record, delivered, nil, wakeupDiscrepancyDelivered, detectionDelivered); err != nil {
+		wakeupDiscrepancyDelivered := make(map[watchWakeupDiscrepancyDeliveryKey]struct{})
+		wakeupDelivered := make(map[watchWakeupDeliveryKey]struct{})
+		if err := emitWatchDecisionWithState(&output, tc.event, tc.record, delivered, nil, wakeupDiscrepancyDelivered, wakeupDelivered); err != nil {
 			t.Fatalf("emitWatchDecision(%s): %v", tc.event, err)
 		}
 		if got := strings.TrimSpace(output.String()); got != tc.want {
@@ -1901,18 +1900,18 @@ func TestEmitWatchDetectionWritesOneLinePerCondition(t *testing.T) {
 	}
 }
 
-func TestEmitWatchDetectionDoesNotRepeatSameTarget(t *testing.T) {
+func TestEmitWatchWakeupDoesNotRepeatSameTarget(t *testing.T) {
 	var output bytes.Buffer
 	delivered := make(map[watchDeliveryKey]struct{})
-	wakeupDiscrepancyDelivered := make(map[watchWakeupDeliveryKey]struct{})
-	detectionDelivered := make(map[watchDetectionDeliveryKey]struct{})
+	wakeupDiscrepancyDelivered := make(map[watchWakeupDiscrepancyDeliveryKey]struct{})
+	wakeupDelivered := make(map[watchWakeupDeliveryKey]struct{})
 
-	// A fresh detection_id on the second delivery must not make it look new;
+	// A fresh wakeup_id on the second delivery must not make it look new;
 	// the key is the target, not the occurrence.
-	first := watchDecision{GoalID: "goal-1", DetectionID: "detection-1"}
-	second := watchDecision{GoalID: "goal-1", DetectionID: "detection-2"}
+	first := watchDecision{GoalID: "goal-1", WakeupID: "wakeup-1"}
+	second := watchDecision{GoalID: "goal-1", WakeupID: "wakeup-2"}
 	for _, record := range []watchDecision{first, second} {
-		if err := emitWatchDecisionWithState(&output, "detection.commits_missing", record, delivered, nil, wakeupDiscrepancyDelivered, detectionDelivered); err != nil {
+		if err := emitWatchDecisionWithState(&output, "wakeup.commits_missing", record, delivered, nil, wakeupDiscrepancyDelivered, wakeupDelivered); err != nil {
 			t.Fatalf("emitWatchDecision: %v", err)
 		}
 	}
@@ -1921,42 +1920,42 @@ func TestEmitWatchDetectionDoesNotRepeatSameTarget(t *testing.T) {
 	}
 }
 
-func TestEmitWatchDetectionDoesNotRepeatSameDecision(t *testing.T) {
+func TestEmitWatchWakeupDoesNotRepeatSameDecision(t *testing.T) {
 	var output bytes.Buffer
 	delivered := make(map[watchDeliveryKey]struct{})
-	wakeupDiscrepancyDelivered := make(map[watchWakeupDeliveryKey]struct{})
-	detectionDelivered := make(map[watchDetectionDeliveryKey]struct{})
+	wakeupDiscrepancyDelivered := make(map[watchWakeupDiscrepancyDeliveryKey]struct{})
+	wakeupDelivered := make(map[watchWakeupDeliveryKey]struct{})
 
 	for _, record := range []watchDecision{
 		{ID: "event-1", DecisionID: "decision-1", GoalID: "goal-1"},
 		{ID: "event-2", DecisionID: "decision-1", GoalID: "goal-2"},
 	} {
-		if err := emitWatchDecisionWithState(&output, "detection.decision_answered_unapplied", record, delivered, nil, wakeupDiscrepancyDelivered, detectionDelivered); err != nil {
+		if err := emitWatchDecisionWithState(&output, "wakeup.decision_answered_unapplied", record, delivered, nil, wakeupDiscrepancyDelivered, wakeupDelivered); err != nil {
 			t.Fatalf("emitWatchDecision: %v", err)
 		}
 	}
 
-	want := "atct detection: decision decision-1 was answered but not applied\n"
+	want := "atct wakeup: decision decision-1 was answered but not applied\n"
 	if got := output.String(); got != want {
 		t.Fatalf("output = %q, want %q", got, want)
 	}
 }
 
-func TestEmitWatchDetectionDoesNotRepeatSameHandoff(t *testing.T) {
+func TestEmitWatchWakeupDoesNotRepeatSameHandoff(t *testing.T) {
 	var output bytes.Buffer
 	delivered := make(map[watchDeliveryKey]struct{})
-	wakeupDiscrepancyDelivered := make(map[watchWakeupDeliveryKey]struct{})
-	detectionDelivered := make(map[watchDetectionDeliveryKey]struct{})
+	wakeupDiscrepancyDelivered := make(map[watchWakeupDiscrepancyDeliveryKey]struct{})
+	wakeupDelivered := make(map[watchWakeupDeliveryKey]struct{})
 
 	for _, record := range []watchDecision{
-		{HandoffID: "handoff-1", DetectionID: "detection-1"},
-		{HandoffID: "handoff-1", DetectionID: "detection-2"},
+		{HandoffID: "handoff-1", WakeupID: "wakeup-1"},
+		{HandoffID: "handoff-1", WakeupID: "wakeup-2"},
 	} {
-		if err := emitWatchDecisionWithState(&output, "detection.handoff_unreceived", record, delivered, nil, wakeupDiscrepancyDelivered, detectionDelivered); err != nil {
+		if err := emitWatchDecisionWithState(&output, "wakeup.handoff_unreceived", record, delivered, nil, wakeupDiscrepancyDelivered, wakeupDelivered); err != nil {
 			t.Fatalf("emitWatchDecision: %v", err)
 		}
 	}
-	want := "atct detection: handoff handoff-1 has no receipt\n"
+	want := "atct wakeup: handoff handoff-1 has no receipt\n"
 	if got := output.String(); got != want {
 		t.Fatalf("output = %q, want %q", got, want)
 	}
@@ -1965,14 +1964,14 @@ func TestEmitWatchDetectionDoesNotRepeatSameHandoff(t *testing.T) {
 func TestEmitWatchHandoffReportedDoesNotRepeatSameHandoff(t *testing.T) {
 	var output bytes.Buffer
 	delivered := make(map[watchDeliveryKey]struct{})
-	wakeupDiscrepancyDelivered := make(map[watchWakeupDeliveryKey]struct{})
-	detectionDelivered := make(map[watchDetectionDeliveryKey]struct{})
+	wakeupDiscrepancyDelivered := make(map[watchWakeupDiscrepancyDeliveryKey]struct{})
+	wakeupDelivered := make(map[watchWakeupDeliveryKey]struct{})
 
 	for _, record := range []watchDecision{
-		{HandoffID: "handoff-1", TaskID: "task-1", CompleteReport: "first report", DetectionID: "detection-1"},
-		{HandoffID: "handoff-1", TaskID: "task-1", CompleteReport: "first report", DetectionID: "detection-2"},
+		{HandoffID: "handoff-1", TaskID: "task-1", CompleteReport: "first report", WakeupID: "wakeup-1"},
+		{HandoffID: "handoff-1", TaskID: "task-1", CompleteReport: "first report", WakeupID: "wakeup-2"},
 	} {
-		if err := emitWatchDecisionWithState(&output, "handoff_reported", record, delivered, nil, wakeupDiscrepancyDelivered, detectionDelivered); err != nil {
+		if err := emitWatchDecisionWithState(&output, "handoff_reported", record, delivered, nil, wakeupDiscrepancyDelivered, wakeupDelivered); err != nil {
 			t.Fatalf("emitWatchDecision: %v", err)
 		}
 	}
@@ -1985,15 +1984,15 @@ func TestEmitWatchHandoffReportedDoesNotRepeatSameHandoff(t *testing.T) {
 func TestEmitWatchHandoffReportedTruncatesLongReport(t *testing.T) {
 	var output bytes.Buffer
 	delivered := make(map[watchDeliveryKey]struct{})
-	wakeupDiscrepancyDelivered := make(map[watchWakeupDeliveryKey]struct{})
-	detectionDelivered := make(map[watchDetectionDeliveryKey]struct{})
+	wakeupDiscrepancyDelivered := make(map[watchWakeupDiscrepancyDeliveryKey]struct{})
+	wakeupDelivered := make(map[watchWakeupDeliveryKey]struct{})
 	report := strings.Repeat("x", 81)
 
 	if err := emitWatchDecisionWithState(&output, "handoff_reported", watchDecision{
 		HandoffID:      "handoff-long",
 		GoalID:         "goal-long",
 		CompleteReport: report,
-	}, delivered, nil, wakeupDiscrepancyDelivered, detectionDelivered); err != nil {
+	}, delivered, nil, wakeupDiscrepancyDelivered, wakeupDelivered); err != nil {
 		t.Fatalf("emitWatchDecision: %v", err)
 	}
 	want := "atct handoff reported: goal goal-long (handoff handoff-long): " + strings.Repeat("x", 80) + "…\n"
@@ -2005,10 +2004,10 @@ func TestEmitWatchHandoffReportedTruncatesLongReport(t *testing.T) {
 func TestEmitWatchHandoffReportedRejectsMissingTarget(t *testing.T) {
 	var output bytes.Buffer
 	delivered := make(map[watchDeliveryKey]struct{})
-	wakeupDiscrepancyDelivered := make(map[watchWakeupDeliveryKey]struct{})
-	detectionDelivered := make(map[watchDetectionDeliveryKey]struct{})
+	wakeupDiscrepancyDelivered := make(map[watchWakeupDiscrepancyDeliveryKey]struct{})
+	wakeupDelivered := make(map[watchWakeupDeliveryKey]struct{})
 
-	err := emitWatchDecisionWithState(&output, "handoff_reported", watchDecision{CompleteReport: "report"}, delivered, nil, wakeupDiscrepancyDelivered, detectionDelivered)
+	err := emitWatchDecisionWithState(&output, "handoff_reported", watchDecision{CompleteReport: "report"}, delivered, nil, wakeupDiscrepancyDelivered, wakeupDelivered)
 	if err == nil {
 		t.Fatal("emitWatchDecision() with no task or goal target = nil, want an error")
 	}
@@ -2017,16 +2016,16 @@ func TestEmitWatchHandoffReportedRejectsMissingTarget(t *testing.T) {
 	}
 }
 
-func TestEmitWatchDetectionSeparatesTargets(t *testing.T) {
+func TestEmitWatchWakeupSeparatesTargets(t *testing.T) {
 	var output bytes.Buffer
 	delivered := make(map[watchDeliveryKey]struct{})
-	wakeupDiscrepancyDelivered := make(map[watchWakeupDeliveryKey]struct{})
-	detectionDelivered := make(map[watchDetectionDeliveryKey]struct{})
+	wakeupDiscrepancyDelivered := make(map[watchWakeupDiscrepancyDeliveryKey]struct{})
+	wakeupDelivered := make(map[watchWakeupDeliveryKey]struct{})
 
 	// Deduplication must not be so broad that a second goal with the same
 	// condition goes unreported.
 	for _, goalID := range []string{"goal-1", "goal-2"} {
-		if err := emitWatchDecisionWithState(&output, "detection.commits_missing", watchDecision{GoalID: goalID}, delivered, nil, wakeupDiscrepancyDelivered, detectionDelivered); err != nil {
+		if err := emitWatchDecisionWithState(&output, "wakeup.commits_missing", watchDecision{GoalID: goalID}, delivered, nil, wakeupDiscrepancyDelivered, wakeupDelivered); err != nil {
 			t.Fatalf("emitWatchDecision(%s): %v", goalID, err)
 		}
 	}
@@ -2040,10 +2039,10 @@ func TestEmitWatchDetectionSeparatesTargets(t *testing.T) {
 func TestEmitWatchGoalCreatedWritesOneLine(t *testing.T) {
 	var output bytes.Buffer
 	delivered := make(map[watchDeliveryKey]struct{})
-	wakeupDiscrepancyDelivered := make(map[watchWakeupDeliveryKey]struct{})
-	detectionDelivered := make(map[watchDetectionDeliveryKey]struct{})
+	wakeupDiscrepancyDelivered := make(map[watchWakeupDiscrepancyDeliveryKey]struct{})
+	wakeupDelivered := make(map[watchWakeupDeliveryKey]struct{})
 
-	if err := emitWatchDecisionWithState(&output, "goal.created", watchDecision{GoalID: "goal-1"}, delivered, nil, wakeupDiscrepancyDelivered, detectionDelivered); err != nil {
+	if err := emitWatchDecisionWithState(&output, "goal.created", watchDecision{GoalID: "goal-1"}, delivered, nil, wakeupDiscrepancyDelivered, wakeupDelivered); err != nil {
 		t.Fatalf("emitWatchDecision: %v", err)
 	}
 
@@ -2056,14 +2055,14 @@ func TestEmitWatchGoalCreatedWritesOneLine(t *testing.T) {
 func TestEmitWatchGoalCreatedDoesNotRepeatSameGoal(t *testing.T) {
 	var output bytes.Buffer
 	delivered := make(map[watchDeliveryKey]struct{})
-	wakeupDiscrepancyDelivered := make(map[watchWakeupDeliveryKey]struct{})
-	detectionDelivered := make(map[watchDetectionDeliveryKey]struct{})
+	wakeupDiscrepancyDelivered := make(map[watchWakeupDiscrepancyDeliveryKey]struct{})
+	wakeupDelivered := make(map[watchWakeupDeliveryKey]struct{})
 
 	for _, decision := range []watchDecision{
 		{ID: "event-1", GoalID: "goal-1"},
 		{ID: "event-2", GoalID: "goal-1"},
 	} {
-		if err := emitWatchDecisionWithState(&output, "goal.created", decision, delivered, nil, wakeupDiscrepancyDelivered, detectionDelivered); err != nil {
+		if err := emitWatchDecisionWithState(&output, "goal.created", decision, delivered, nil, wakeupDiscrepancyDelivered, wakeupDelivered); err != nil {
 			t.Fatalf("emitWatchDecision: %v", err)
 		}
 	}
@@ -2077,11 +2076,11 @@ func TestEmitWatchGoalCreatedDoesNotRepeatSameGoal(t *testing.T) {
 func TestEmitWatchGoalCreatedSeparatesGoals(t *testing.T) {
 	var output bytes.Buffer
 	delivered := make(map[watchDeliveryKey]struct{})
-	wakeupDiscrepancyDelivered := make(map[watchWakeupDeliveryKey]struct{})
-	detectionDelivered := make(map[watchDetectionDeliveryKey]struct{})
+	wakeupDiscrepancyDelivered := make(map[watchWakeupDiscrepancyDeliveryKey]struct{})
+	wakeupDelivered := make(map[watchWakeupDeliveryKey]struct{})
 
 	for _, goalID := range []string{"goal-1", "goal-2"} {
-		if err := emitWatchDecisionWithState(&output, "goal.created", watchDecision{GoalID: goalID}, delivered, nil, wakeupDiscrepancyDelivered, detectionDelivered); err != nil {
+		if err := emitWatchDecisionWithState(&output, "goal.created", watchDecision{GoalID: goalID}, delivered, nil, wakeupDiscrepancyDelivered, wakeupDelivered); err != nil {
 			t.Fatalf("emitWatchDecision(%s): %v", goalID, err)
 		}
 	}
@@ -2093,15 +2092,15 @@ func TestEmitWatchGoalCreatedSeparatesGoals(t *testing.T) {
 	}
 }
 
-func TestEmitWatchDetectionIgnoresUnknownEvent(t *testing.T) {
+func TestEmitWatchWakeupIgnoresUnknownEvent(t *testing.T) {
 	var output bytes.Buffer
 	delivered := make(map[watchDeliveryKey]struct{})
-	wakeupDiscrepancyDelivered := make(map[watchWakeupDeliveryKey]struct{})
-	detectionDelivered := make(map[watchDetectionDeliveryKey]struct{})
+	wakeupDiscrepancyDelivered := make(map[watchWakeupDiscrepancyDeliveryKey]struct{})
+	wakeupDelivered := make(map[watchWakeupDeliveryKey]struct{})
 
-	// A newer daemon may publish conditions this build has never heard of.
+	// A newer daemon may publish wakeups this build has never heard of.
 	// Staying quiet is correct; failing is not.
-	if err := emitWatchDecisionWithState(&output, "detection.something_new", watchDecision{GoalID: "goal-1"}, delivered, nil, wakeupDiscrepancyDelivered, detectionDelivered); err != nil {
+	if err := emitWatchDecisionWithState(&output, "wakeup.something_new", watchDecision{GoalID: "goal-1"}, delivered, nil, wakeupDiscrepancyDelivered, wakeupDelivered); err != nil {
 		t.Fatalf("emitWatchDecision(unknown): %v", err)
 	}
 	if output.Len() != 0 {
@@ -2109,13 +2108,13 @@ func TestEmitWatchDetectionIgnoresUnknownEvent(t *testing.T) {
 	}
 }
 
-func TestEmitWatchDetectionRejectsMissingTarget(t *testing.T) {
+func TestEmitWatchWakeupRejectsMissingTarget(t *testing.T) {
 	var output bytes.Buffer
 	delivered := make(map[watchDeliveryKey]struct{})
-	wakeupDiscrepancyDelivered := make(map[watchWakeupDeliveryKey]struct{})
-	detectionDelivered := make(map[watchDetectionDeliveryKey]struct{})
+	wakeupDiscrepancyDelivered := make(map[watchWakeupDiscrepancyDeliveryKey]struct{})
+	wakeupDelivered := make(map[watchWakeupDeliveryKey]struct{})
 
-	err := emitWatchDecisionWithState(&output, "detection.commits_missing", watchDecision{}, delivered, nil, wakeupDiscrepancyDelivered, detectionDelivered)
+	err := emitWatchDecisionWithState(&output, "wakeup.commits_missing", watchDecision{}, delivered, nil, wakeupDiscrepancyDelivered, wakeupDelivered)
 	if err == nil {
 		t.Fatal("emitWatchDecision() with no target = nil, want an error")
 	}

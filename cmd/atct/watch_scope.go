@@ -197,8 +197,8 @@ func (f *watchScopeFilter) delivers(eventName string, decision watchDecision) bo
 	switch eventName {
 	case "decision.approved", "decision.rejected", "goal.created",
 		"wakeup.discrepancy", "wakeup.evaluate_failed",
-		"detection.completion_report_missing", "detection.commits_missing",
-		"detection.undeclared_goal", "detection.all_tasks_dropped",
+		"wakeup.completion_report_missing", "wakeup.commits_missing",
+		"wakeup.undeclared_goal", "wakeup.all_tasks_dropped",
 		"orchestration.recovery":
 		return true
 	case "task.handoff.request", "task.handoff.receive",
@@ -227,11 +227,11 @@ func (f *watchScopeFilter) delivers(eventName string, decision watchDecision) bo
 		return true
 	case "handoff_reported":
 		return decision.TaskID == ""
-	case "detection.unclaimed_doing", "detection.handoff_unreceived",
-		"detection.handoff_unreported", "detection.claim_undelegated",
-		"detection.monitor_lost",
-		"detection.claim_stale", "detection.decision_answered_unapplied",
-		"detection.decision_default_unapplied":
+	case "wakeup.unclaimed_doing", "wakeup.handoff_unreceived",
+		"wakeup.handoff_unreported", "wakeup.claim_undelegated",
+		"wakeup.monitor_lost",
+		"wakeup.claim_stale", "wakeup.decision_answered_unapplied",
+		"wakeup.decision_default_unapplied":
 		return false
 	default:
 		return true
