@@ -8,12 +8,10 @@ session の開始と停止を扱う。この文書では、その三つを発生
 ```mermaid
 flowchart LR
     D[Daemon] --> E[Event]
-    D --> W[Wakeup]
-    D --> X[Detection]
+    D --> W[Wakeup condition]
 
     E --> M[AI Agent Monitor]
     W --> M
-    X --> M
     M --> C[Claude Watch の通知]
     M --> B[Codex Bridge の turn input]
 
@@ -28,8 +26,8 @@ daemon の 30 秒ごとの wakeup 評価は、30 秒ごとの通知を意味し�
 
 # Daemon通知
 
-daemon は三種類の通知を作る。Event は状態変化、Wakeup は今進められる作業または接続の状態、
-Detection は一定時間続く不整合を表す。
+daemon は二種類の通知を作る。Event は状態変化、Wakeup は一定時間続く作業可能状態・接続状態・
+整合性問題を表す。
 
 ## Event
 
@@ -45,7 +43,10 @@ Event は decision または handoff の状態が変わった時点で発行さ�
 
 ## Wakeup
 
-Wakeup は「いま動けるか」または「接続が生きているか」を知らせる通知である。
+Wakeup condition は「状態が一定時間続いた」ことを追跡し、ポリシーに従って通知する。
+作業を進めるための Wakeup と、問題を知らせる Wakeup があるが、評価・状態保持・発行経路は同じである。
+
+### 作業促進
 
 | 通知 | 発生条件 | 頻度 | 次の行動 |
 | --- | --- | --- | --- |
@@ -56,10 +57,11 @@ Wakeup は「いま動けるか」または「接続が生きているか」を�
 同じ actionable wakeup の表示内容は抑止される。人間判断待ちだけの task は actionable wakeup
 の対象ではない。
 
-## Detection
+### 状態検出
 
-Detection は「不整合が一定時間直らない」ことを知らせる。条件が消えるまで、同じ condition と
-対象の組合せは一度だけ通知する。
+状態検出 Wakeup は「不整合が一定時間直らない」ことを知らせる。条件が消えるまで、同じ condition と
+対象の組合せは一度だけ通知する。現在の event 名が `detection.*` であっても、これは Wakeup の
+一種であり、別の評価機構ではない。
 
 | 検出する状態 | 最初に出るまで | 次の行動 |
 | --- | --- | --- |
@@ -81,7 +83,7 @@ turn input へ変換する。Monitor は通知経路であり、Session Start / 
 
 ```mermaid
 flowchart LR
-    N[Event / Wakeup / Detection] --> F{scope 内か?}
+    N[Event / Wakeup condition] --> F{scope 内か?}
     F -->|いいえ| X[破棄]
     F -->|はい| D{重複か?}
     D -->|はい| X
@@ -96,9 +98,9 @@ scope は届け先の境界であり、Session Stop の role 解決とは別で�
 
 | scope | 主な利用者 | 届くもの | 届かないもの |
 | --- | --- | --- | --- |
-| project | commander | human answer、goal approval / rejection、goal.created、goal-level detection、goal handoff | task-only handoff / detection、default answer、unapplied task decision |
-| goal | subcommander | その goal の Event、Wakeup、Detection、task-level 通知 | 他 goal の通知 |
-| task | executor | その task の handoff と Detection | 他 task / 他 goal の通知 |
+| project | commander | human answer、goal approval / rejection、goal.created、goal-level Wakeup、goal handoff | task-only handoff / Wakeup、default answer、unapplied task decision |
+| goal | subcommander | その goal の Event、Wakeup、task-level 通知 | 他 goal の通知 |
+| task | executor | その task の handoff と Wakeup | 他 task / 他 goal の通知 |
 
 ## Claude Watch
 
@@ -196,7 +198,7 @@ Stop hook は fail closed の判定だけを行う。monitor / daemon の停止�
 
 | 責務 | 主な実装 |
 | --- | --- |
-| Event、Wakeup、Detection、monitor lost | `internal/daemon/wakeup.go`、`internal/store/wakeup.go` |
+| Event、Wakeup condition、monitor lost | `internal/daemon/wakeup.go`、`internal/store/wakeup.go` |
 | scope filter、重複抑止、liveness | `cmd/atct/watch.go`、`cmd/atct/watch_scope.go` |
 | SSE | `internal/httpapi/server.go` |
 | Codex monitor / Bridge | `cmd/atct/codex_monitor*.go`、`cmd/atct/codex_monitor_supervisor.go` |
