@@ -82,6 +82,73 @@ func (q *Queries) ListMonitorHealth(ctx context.Context, arg ListMonitorHealthPa
 	return items, nil
 }
 
+const listMonitorHealthHistory = `-- name: ListMonitorHealthHistory :many
+SELECT monitor_id, agent_key, scope_key, agent_session_id, cwd, role, project_id, goal_id, task_id, pid,
+       process_started_at, state, reason, transitioned_at, last_seen_at, stopped_at
+FROM monitor_health
+WHERE project_id = ?
+ORDER BY last_seen_at DESC, monitor_id
+`
+
+type ListMonitorHealthHistoryRow struct {
+	MonitorID        string
+	AgentKey         string
+	ScopeKey         string
+	AgentSessionID   int64
+	Cwd              string
+	Role             string
+	ProjectID        int64
+	GoalID           sql.NullInt64
+	TaskID           sql.NullInt64
+	Pid              int64
+	ProcessStartedAt string
+	State            string
+	Reason           string
+	TransitionedAt   string
+	LastSeenAt       string
+	StoppedAt        sql.NullString
+}
+
+func (q *Queries) ListMonitorHealthHistory(ctx context.Context, projectID int64) ([]ListMonitorHealthHistoryRow, error) {
+	rows, err := q.db.QueryContext(ctx, listMonitorHealthHistory, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListMonitorHealthHistoryRow
+	for rows.Next() {
+		var i ListMonitorHealthHistoryRow
+		if err := rows.Scan(
+			&i.MonitorID,
+			&i.AgentKey,
+			&i.ScopeKey,
+			&i.AgentSessionID,
+			&i.Cwd,
+			&i.Role,
+			&i.ProjectID,
+			&i.GoalID,
+			&i.TaskID,
+			&i.Pid,
+			&i.ProcessStartedAt,
+			&i.State,
+			&i.Reason,
+			&i.TransitionedAt,
+			&i.LastSeenAt,
+			&i.StoppedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const pruneMonitorHealth = `-- name: PruneMonitorHealth :exec
 DELETE FROM monitor_health
 WHERE last_seen_at < ?1

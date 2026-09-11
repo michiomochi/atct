@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/michiomochi/atct/internal/domain"
 	"github.com/michiomochi/atct/internal/store"
@@ -80,6 +81,38 @@ func TestStopCheckTextBlocksOnlyScopedRoleWork(t *testing.T) {
 				t.Fatalf("output = %q, want Codex block JSON", output)
 			}
 		})
+	}
+}
+
+func TestStopCheckSubcommanderBlocksChildTaskReview(t *testing.T) {
+	dir, projectRoot := newPendingFixture(t)
+	s := openPendingStore(t, dir)
+	ctx := context.Background()
+	project, err := s.ResolveProject(ctx, projectRoot)
+	if err != nil {
+		t.Fatalf("ResolveProject: %v", err)
+	}
+	goal := stopCheckGoal(t, s, ctx, project.ID, "review goal")
+	task := stopCheckTask(t, s, ctx, goal.ID, "review task")
+	delegator := stopCheckSession(t, s, ctx, project.ID)
+	executor := stopCheckSession(t, s, ctx, project.ID)
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err := s.DB().ExecContext(ctx, `
+		INSERT INTO task_handoffs (id, task_id, requested_by, received_by, requested_at, received_at, review_requested_by, review_requested_at)
+		VALUES ('review-awaiting', ?, ?, ?, ?, ?, ?, ?)
+	`, task.ID, delegator, executor, now, now, executor, now); err != nil {
+		t.Fatalf("insert review-awaiting handoff: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	output, err := stopCheckText(dir, stopCheckScope{Role: "subcommander", ProjectID: project.ID, GoalID: goal.ID})
+	if err != nil {
+		t.Fatalf("stopCheckText: %v", err)
+	}
+	if !strings.Contains(output, "review-awaiting") {
+		t.Fatalf("output = %q, want child review handoff", output)
 	}
 }
 

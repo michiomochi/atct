@@ -1729,6 +1729,8 @@ func formatWatchDecision(eventName string, decision watchDecision) (string, bool
 		return fmt.Sprintf("atct detection: decision %s was default-applied but not applied", decision.DecisionID), true
 	case "detection.claim_stale":
 		return fmt.Sprintf("atct detection: task %s has a stale claim", decision.TaskID), true
+	case "detection.monitor_lost":
+		return fmt.Sprintf("atct detection: monitor for handoff %s is lost; recover or replace its worker", decision.HandoffID), true
 	case "wakeup.discrepancy":
 		return fmt.Sprintf("atct wakeup discrepancy: detector_unstarted_tasks=%d counted_unstarted_tasks=%d", decision.DetectorUnstartedTaskCount, decision.CountedUnstartedTaskCount), true
 	case "wakeup.evaluate_failed":

@@ -27,6 +27,7 @@ const (
 	EventDetectionDecisionAnsweredUnapplied = "detection.decision_answered_unapplied"
 	EventDetectionDecisionDefaultUnapplied  = "detection.decision_default_unapplied"
 	EventDetectionClaimStale                = "detection.claim_stale"
+	EventDetectionMonitorLost               = "detection.monitor_lost"
 	EventGoalWithdrawn                      = "goal.withdrawn"
 	EventTaskHandoffRequest                 = "task.handoff.request"
 	EventTaskHandoffReceive                 = "task.handoff.receive"

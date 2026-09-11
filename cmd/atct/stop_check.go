@@ -143,6 +143,21 @@ func stopCheckSubcommander(ctx context.Context, s *store.Store, scope stopCheckS
 			return stopCheckBlock(fmt.Sprintf("subcommander has open task-create handoff %s", handoff.ID))
 		}
 	}
+	tasks, err := s.ListTasks(ctx, scope.GoalID)
+	if err != nil {
+		return "", fmt.Errorf("list scoped goal tasks: %w", err)
+	}
+	for _, task := range tasks {
+		handoffs, err := s.ListTaskHandoffs(ctx, task.ID)
+		if err != nil {
+			return "", fmt.Errorf("list task handoffs for task %d: %w", task.ID, err)
+		}
+		for _, handoff := range handoffs {
+			if handoff.ReviewRequestedAt != nil && handoff.ReviewRejectedAt == nil && handoff.CompletedReportAt == nil && handoff.RecoveredAt == nil {
+				return stopCheckBlock(fmt.Sprintf("subcommander has task review handoff %s for task %d", handoff.ID, task.ID))
+			}
+		}
+	}
 	return "", nil
 }
 

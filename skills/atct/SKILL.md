@@ -333,12 +333,9 @@ that worker is started:
    listed above" is not read as a prohibition. In a 2026-08-27 measurement, an
    executor closed a subcommander's goal handoff without knowing it was forbidden.
 
-   An executor that reaches an irreversible operation returns it to the delegator.
-   Apply the test in `## Act on reversible choices, ask about irreversible ones`:
-   can the human get the previous state back? Rewriting history, discarding
-   uncommitted work, deleting a file or directory, and publishing off this machine
-   all fail it. The executor does not perform the operation and does not carry the
-   judgement itself; it stops there and hands it back to whoever sent the request.
+   An executor that reaches an irreversible or destructive operation returns it to
+   the delegator. The executor does not perform the operation and does not carry
+   the judgement itself; it stops there and hands it back to whoever sent the request.
    `atct_decision_ask` is the delegator's call, not the executor's. A design
    decision travels the same way, which is what `does not: make design decisions`
    in `## Roles` means in practice.
@@ -780,34 +777,9 @@ approved**, and six short fields beat one long one.
 human saw.** They set the goal from the symptom; they will look for it by the
 same words.
 
-## Act on reversible choices, ask about irreversible ones
+## Ask the human only before irreversible operations
 
-1. Classify the decision before you act on it. The test is whether the human can
-   get the previous state back. A commit is undoable. A force push over work that
-   exists nowhere else is not.
-2. For a reversible choice, execute the recommendation first, then record it with
-   `atct_decision_ask` using `wait_ms=0` and `default_after_ms=0`. Do not stop to
-   wait for an answer. If the human chooses differently, create a new decision
-   to correct it; never overturn a settled decision.
-3. For an irreversible choice, ask before acting: omit `default_option` and
-   `default_after_ms`, and wait for the human's approval. Use `wait_ms=0` to park
-   it while doing unrelated work.
-
-**Out of order:** Act first and classify afterwards and the irreversible
-operation has already run; the question that follows can only report it, and the
-human is asked to approve a state they can no longer decline. Recording an
-irreversible choice in the reversible form has the same effect, because a
-decision with `default_option` and `default_after_ms=0` applies immediately.
-
-As of 2026-08-25, a decision used as a record sets `default_option` and
-`default_after_ms=0`; it is applied immediately and does not block `done`. A
-human-waiting question omits both; it blocks `done` until answered. This is the
-form for an irreversible choice.
-
-**A deadline on an irreversible choice is not a safeguard with a timer on it; it
-is the thing happening anyway, with a delay.** That is why those get no default
-at all. And if every remaining task depends on that one answer, say so and stop —
-that is a real block, and it is worth the human knowing about.
+**Human judgment is requested only immediately before an irreversible or destructive operation.**
 
 ## Apply what you were told
 

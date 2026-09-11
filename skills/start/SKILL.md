@@ -86,7 +86,7 @@ is forbidden for a monitored worker.
 
 ### Liveness is a recheck, not authority
 
-A ten-minute liveness line means that the last scoped reconciliation should be
+A one-minute liveness line means that the last scoped reconciliation should be
 rechecked. It does not approve a human decision, authorize a scope change,
 create work, or authorize a commit.
 

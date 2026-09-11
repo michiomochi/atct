@@ -185,15 +185,18 @@ Codex monitor は解決済み scope を `ATCT_BIN`、`ATCT_ROLE`、`ATCT_PROJECT
 `cmd/atct/codex_monitor_supervisor.go:552-593`、`cmd/atct/stop_check.go:43-170`）。
 
 判定対象は commander なら project の active goal、subcommander なら受領済み goal handoff・
-plan review・task-create handoff、executor なら受領済み task handoff である。これは Codex の
+plan review・task-create handoff・子 task の review 待ち、executor なら受領済み task handoff である。これは Codex の
 turn を継続させるだけであり、daemon の停止・monitor の再起動・handoff の完了報告は行わない。
 
-### monitor health は観測のみ
+### monitor health の親 role 検知
 
 scoped watch は `recovering` / `degraded` / `healthy` を monitor-health API に記録する。
-正常に停止できなかった process の row は last-seen から 75 秒で読取り対象から消えるが、
-この lease は観測用であり、monitor の再起動、handoff の回復、別の agent への再割当は行わない
-（`internal/store/store.go:106-211`、`internal/httpapi/server.go:398-531`）。
+正常に停止できなかった process の row は last-seen から 75 秒で通常の読取り対象から消える。
+ただし、現在の open handoff の受領時点に同じ monitor が記録され、その monitor が
+停止または lease 切れになった場合は `detection.monitor_lost` を出す。executor の喪失は
+goal-scoped subcommander、subcommander の喪失は project-scoped commander に届く。検知は
+`atct_handoff_recover` または worker の再作成を促すだけで、Codex を自動再起動せず、handoff
+の回復・再割当も自動では行わない（`internal/daemon/wakeup.go`、`internal/store/store.go`）。
 
 ### role-aware liveness prompt
 

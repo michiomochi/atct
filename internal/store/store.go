@@ -25,7 +25,7 @@ const schemaVersion = 6
 const agentSessionRetention = 30 * 24 * time.Hour
 
 const (
-	monitorHealthLease     = 75 * time.Second
+	MonitorHealthLease     = 75 * time.Second
 	monitorHealthRetention = 24 * time.Hour
 )
 
@@ -194,7 +194,7 @@ func (s *Store) ListMonitorHealth(ctx context.Context, projectID int64) ([]Monit
 	if projectID <= 0 {
 		return nil, errors.New("project_id is required")
 	}
-	cutoff := time.Now().UTC().Add(-monitorHealthLease).Format(time.RFC3339Nano)
+	cutoff := time.Now().UTC().Add(-MonitorHealthLease).Format(time.RFC3339Nano)
 	rows, err := sqlcgen.New(s.db).ListMonitorHealth(ctx, sqlcgen.ListMonitorHealthParams{ProjectID: projectID, LastSeenAt: cutoff})
 	if err != nil {
 		return nil, fmt.Errorf("list monitor health: %w", err)
@@ -210,39 +210,64 @@ func (s *Store) ListMonitorHealth(ctx context.Context, projectID int64) ([]Monit
 	return result, nil
 }
 
-func monitorHealthFromRow(row sqlcgen.ListMonitorHealthRow) (MonitorHealth, error) {
-	health := MonitorHealth{
-		MonitorID:      row.MonitorID,
-		AgentKey:       row.AgentKey,
-		ScopeKey:       row.ScopeKey,
-		AgentSessionID: row.AgentSessionID,
-		CWD:            row.Cwd,
-		Role:           row.Role,
-		ProjectID:      row.ProjectID,
-		PID:            int(row.Pid),
-		State:          row.State,
-		Reason:         row.Reason,
+// ListMonitorHealthHistory returns retained rows, including stopped and stale
+// monitors, for recovery detection. It is not a liveness view.
+func (s *Store) ListMonitorHealthHistory(ctx context.Context, projectID int64) ([]MonitorHealth, error) {
+	if projectID <= 0 {
+		return nil, errors.New("project_id is required")
 	}
-	if row.GoalID.Valid {
-		value := row.GoalID.Int64
+	rows, err := sqlcgen.New(s.db).ListMonitorHealthHistory(ctx, projectID)
+	if err != nil {
+		return nil, fmt.Errorf("list monitor health history: %w", err)
+	}
+	result := make([]MonitorHealth, 0, len(rows))
+	for _, row := range rows {
+		health, err := monitorHealthFromFields(row.MonitorID, row.AgentKey, row.ScopeKey, row.AgentSessionID, row.Cwd, row.Role, row.ProjectID, row.GoalID, row.TaskID, row.Pid, row.ProcessStartedAt, row.State, row.Reason, row.TransitionedAt, row.LastSeenAt, row.StoppedAt)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, health)
+	}
+	return result, nil
+}
+
+func monitorHealthFromRow(row sqlcgen.ListMonitorHealthRow) (MonitorHealth, error) {
+	return monitorHealthFromFields(row.MonitorID, row.AgentKey, row.ScopeKey, row.AgentSessionID, row.Cwd, row.Role, row.ProjectID, row.GoalID, row.TaskID, row.Pid, row.ProcessStartedAt, row.State, row.Reason, row.TransitionedAt, row.LastSeenAt, row.StoppedAt)
+}
+
+func monitorHealthFromFields(monitorID, agentKey, scopeKey string, agentSessionID int64, cwd, role string, projectID int64, goalID, taskID sql.NullInt64, pid int64, processStartedAt, state, reason, transitionedAt, lastSeenAt string, stoppedAt sql.NullString) (MonitorHealth, error) {
+	health := MonitorHealth{
+		MonitorID:      monitorID,
+		AgentKey:       agentKey,
+		ScopeKey:       scopeKey,
+		AgentSessionID: agentSessionID,
+		CWD:            cwd,
+		Role:           role,
+		ProjectID:      projectID,
+		PID:            int(pid),
+		State:          state,
+		Reason:         reason,
+	}
+	if goalID.Valid {
+		value := goalID.Int64
 		health.GoalID = &value
 	}
-	if row.TaskID.Valid {
-		value := row.TaskID.Int64
+	if taskID.Valid {
+		value := taskID.Int64
 		health.TaskID = &value
 	}
 	var err error
-	if health.ProcessStartedAt, err = time.Parse(time.RFC3339Nano, row.ProcessStartedAt); err != nil {
+	if health.ProcessStartedAt, err = time.Parse(time.RFC3339Nano, processStartedAt); err != nil {
 		return MonitorHealth{}, fmt.Errorf("parse monitor process start: %w", err)
 	}
-	if health.TransitionedAt, err = time.Parse(time.RFC3339Nano, row.TransitionedAt); err != nil {
+	if health.TransitionedAt, err = time.Parse(time.RFC3339Nano, transitionedAt); err != nil {
 		return MonitorHealth{}, fmt.Errorf("parse monitor transition: %w", err)
 	}
-	if health.LastSeenAt, err = time.Parse(time.RFC3339Nano, row.LastSeenAt); err != nil {
+	if health.LastSeenAt, err = time.Parse(time.RFC3339Nano, lastSeenAt); err != nil {
 		return MonitorHealth{}, fmt.Errorf("parse monitor last seen: %w", err)
 	}
-	if row.StoppedAt.Valid {
-		value, err := time.Parse(time.RFC3339Nano, row.StoppedAt.String)
+	if stoppedAt.Valid {
+		value, err := time.Parse(time.RFC3339Nano, stoppedAt.String)
 		if err != nil {
 			return MonitorHealth{}, fmt.Errorf("parse monitor stop: %w", err)
 		}

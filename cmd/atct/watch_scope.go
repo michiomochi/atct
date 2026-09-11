@@ -230,6 +230,7 @@ func (f *watchScopeFilter) delivers(eventName string, decision watchDecision) bo
 	case "handoff_yielded",
 		"detection.unclaimed_doing", "detection.handoff_unreceived",
 		"detection.handoff_unreported", "detection.claim_undelegated",
+		"detection.monitor_lost",
 		"detection.claim_stale", "detection.decision_answered_unapplied",
 		"detection.decision_default_unapplied":
 		return false

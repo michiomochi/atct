@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/michiomochi/atct/internal/domain"
 	"github.com/michiomochi/atct/internal/store"
 )
 
@@ -28,6 +29,7 @@ const (
 	detectionAnsweredDecisionUnappliedAfter = 0
 	detectionDefaultDecisionUnappliedAfter  = 3 * time.Minute
 	detectionStaleClaimAfter                = 3 * time.Minute
+	detectionMonitorLostAfter               = store.MonitorHealthLease
 )
 
 // wakeupTracker keeps the transition state that is intentionally not stored
@@ -201,6 +203,46 @@ projectLoop:
 				events = append(events, event)
 			}
 		}
+		healthHistory, err := s.ListMonitorHealthHistory(ctx, project.ID)
+		if err != nil {
+			projectErrs = append(projectErrs, fmt.Errorf("project %d: %w", project.ID, err))
+			continue projectLoop
+		}
+		goals, err := s.ListGoals(ctx, project.ID)
+		if err != nil {
+			projectErrs = append(projectErrs, fmt.Errorf("project %d: %w", project.ID, err))
+			continue projectLoop
+		}
+		for _, goal := range goals {
+			if goal.Status != domain.GoalActive {
+				continue
+			}
+			goalHandoffs, err := s.ListGoalHandoffs(ctx, goal.ID)
+			if err != nil {
+				projectErrs = append(projectErrs, fmt.Errorf("project %d: %w", project.ID, err))
+				continue projectLoop
+			}
+			var goalReceivedAt *time.Time
+			for _, handoff := range goalHandoffs {
+				if handoff.ReceivedAt != nil && handoff.CompletedReportAt == nil && handoff.RecoveredAt == nil {
+					goalReceivedAt = handoff.ReceivedAt
+					break
+				}
+			}
+			if lostAt, ok := lostMonitorAt(healthHistory, now, "subcommander", goal.ID, 0, goalReceivedAt); ok {
+				recordDetection(store.EventDetectionMonitorLost, "goal:"+strconv.FormatInt(goal.ID, 10), lostAt, detectionMonitorLostAfter, goal.ID, 0, "", 0)
+			}
+			handoffs, err := s.ListOpenTaskHandoffsForGoal(ctx, goal.ID)
+			if err != nil {
+				projectErrs = append(projectErrs, fmt.Errorf("project %d: %w", project.ID, err))
+				continue projectLoop
+			}
+			for _, handoff := range handoffs {
+				if lostAt, ok := lostMonitorAt(healthHistory, now, "executor", goal.ID, handoff.TaskID, handoff.ReceivedAt); ok {
+					recordDetection(store.EventDetectionMonitorLost, "task:"+strconv.FormatInt(handoff.TaskID, 10), lostAt, detectionMonitorLostAfter, goal.ID, handoff.TaskID, handoff.ID, 0)
+				}
+			}
+		}
 		openTaskHandoffs := make(map[int64]*store.TaskHandoff)
 		goalIDs := make(map[int64]struct{})
 		for _, task := range state.UndelegatedClaims {
@@ -300,6 +342,32 @@ projectLoop:
 		}
 	}
 	return events, nil
+}
+
+func lostMonitorAt(history []store.MonitorHealth, now time.Time, role string, goalID, taskID int64, receivedAt *time.Time) (time.Time, bool) {
+	if receivedAt == nil {
+		return time.Time{}, false
+	}
+	var lastSeen time.Time
+	for _, health := range history {
+		if health.Role != role || health.GoalID == nil || *health.GoalID != goalID || health.LastSeenAt.Before(receivedAt.Add(-store.MonitorHealthLease)) {
+			continue
+		}
+		if taskID == 0 {
+			if health.TaskID != nil {
+				continue
+			}
+		} else if health.TaskID == nil || *health.TaskID != taskID {
+			continue
+		}
+		if health.StoppedAt == nil && !health.LastSeenAt.Before(now.Add(-store.MonitorHealthLease)) {
+			return time.Time{}, false
+		}
+		if health.LastSeenAt.After(lastSeen) {
+			lastSeen = health.LastSeenAt
+		}
+	}
+	return lastSeen, !lastSeen.IsZero()
 }
 
 // handoffWorktreeActivity uses the same goal-derived worktree path and branch

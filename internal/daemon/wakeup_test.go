@@ -97,6 +97,57 @@ func insertWakeupOpenTaskHandoff(t *testing.T, s *store.Store, handoffID string,
 	}
 }
 
+func TestWakeupTrackerDetectsLostExecutorMonitorForParent(t *testing.T) {
+	ctx := context.Background()
+	s := newWakeupTestStore(t)
+	projectID, goalID := newWakeupTestGoal(t, s, "lost-monitor")
+	tasks, err := s.CreateTasks(ctx, goalID, "agent", "monitor task", []string{"monitor task"}, []string{"finish monitor task"})
+	if err != nil {
+		t.Fatalf("CreateTasks: %v", err)
+	}
+	start := time.Now().UTC().Truncate(time.Second)
+	receivedAt := start.Add(-time.Minute)
+	insertWakeupOpenTaskHandoff(t, s, "lost-monitor-handoff", tasks[0].ID, &receivedAt, &receivedAt)
+	health := store.MonitorHealth{
+		CWD:              t.TempDir(),
+		Role:             "executor",
+		State:            "healthy",
+		ProjectID:        projectID,
+		GoalID:           &goalID,
+		TaskID:           &tasks[0].ID,
+		PID:              1234,
+		ProcessStartedAt: start.Add(-2 * time.Minute),
+		TransitionedAt:   start,
+		LastSeenAt:       start,
+	}
+	health.MonitorID = store.MonitorHealthID(health.CWD, health.Role, health.ProjectID, health.GoalID, health.TaskID, health.PID, health.ProcessStartedAt)
+	if err := s.UpsertMonitorHealth(ctx, health); err != nil {
+		t.Fatalf("UpsertMonitorHealth: %v", err)
+	}
+	if err := s.StopMonitorHealth(ctx, health.MonitorID, start); err != nil {
+		t.Fatalf("StopMonitorHealth: %v", err)
+	}
+
+	events, err := newWakeupTracker(time.Time{}).evaluate(ctx, s, start.Add(detectionMonitorLostAfter))
+	if err != nil {
+		t.Fatalf("evaluate: %v", err)
+	}
+	detection, ok := findDetectionEvent(events, store.EventDetectionMonitorLost, goalID)
+	if !ok {
+		t.Fatalf("events = %#v, want monitor loss detection", events)
+	}
+	if detection.TaskID != tasks[0].ID || detection.HandoffID != "lost-monitor-handoff" {
+		t.Fatalf("detection = %+v, want task %d / handoff", detection, tasks[0].ID)
+	}
+}
+
+func TestLostMonitorAtIgnoresNeverStartedMonitor(t *testing.T) {
+	receivedAt := time.Now().UTC()
+	if _, ok := lostMonitorAt(nil, receivedAt.Add(store.MonitorHealthLease), "executor", 1, 2, &receivedAt); ok {
+		t.Fatal("never-started monitor was reported lost")
+	}
+}
+
 func TestWakeupTrackerPublishesAfterGracePeriodAndResets(t *testing.T) {
 	ctx := context.Background()
 	s := newWakeupTestStore(t)

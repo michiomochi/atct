@@ -133,6 +133,7 @@ func TestWatchScopeProjectStopsTaskDetections(t *testing.T) {
 		"detection.handoff_unreceived",
 		"detection.handoff_unreported",
 		"detection.claim_undelegated",
+		"detection.monitor_lost",
 		"detection.claim_stale",
 	}
 
@@ -212,6 +213,7 @@ func TestWatchScopeGoalDeliversTaskScopedEvents(t *testing.T) {
 		{"detection.unclaimed_doing", watchDecision{TaskID: "task-1"}},
 		{"detection.handoff_unreceived", watchDecision{HandoffID: "handoff-1"}},
 		{"detection.handoff_unreported", watchDecision{HandoffID: "handoff-1"}},
+		{"detection.monitor_lost", watchDecision{HandoffID: "handoff-1"}},
 		{"detection.claim_undelegated", watchDecision{TaskID: "task-1"}},
 		{"detection.claim_stale", watchDecision{TaskID: "task-1"}},
 		{"wakeup", watchDecision{}},
