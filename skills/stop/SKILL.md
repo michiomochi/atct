@@ -7,6 +7,11 @@ description: Use when the human asks to stop the ATCT answer Monitor for a Claud
 
 Choose the branch for the harness that owns the session.
 
+The harness Stop hook is separate from this monitor-stop procedure. Claude and
+Codex both send the harness `session_id` to the shared server-resolved check;
+when the session still owns work, it blocks the turn. It does not stop a
+monitor or daemon.
+
 ## Claude Code
 
 This skill stops the answer-delivery Monitor paired with `atct:start`.

@@ -10,10 +10,12 @@ human reaches for when they want progress rather than a plan.
 
 ## First step: identify the session
 
-Before entering the goal loop, call `atct_session_identify` with `session_key`
-set to this pane's agent name in the `<project>-<unit>-<role>` form. Use the
-full agent name rather than only the role, such as `commander`: a role-only key
-can collide across projects and merge their sessions into one row.
+Before entering the goal loop, call `atct_session_identify`. If SessionStart
+emitted `ATCT session key: <session_id>`, pass that exact `<session_id>` as
+`session_key`; do not substitute an agent name. Only when no SessionStart key
+was emitted, use this pane's full `<project>-<unit>-<role>` agent name. Do not
+use only a role such as `commander`: it can collide across projects and merge
+their sessions into one row.
 
 A claim taken before the key was registered is not restored after a reconnect;
 only a claim retaken after identification can return. If a new version has just

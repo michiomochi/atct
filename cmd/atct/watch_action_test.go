@@ -44,7 +44,6 @@ func frozenWatchAgentActionCases() []watchAgentActionCase {
 		{name: "ordinary plan received", eventName: "plan.handoff.receive", line: "atct plan handoff received (goal_id: 1, handoff_id: h1)", decision: watchDecision{GoalID: "1", HandoffID: "h1"}, want: false},
 		{name: "ordinary plan completed", eventName: "plan.handoff.complete", line: "atct plan handoff completed (goal_id: 1, handoff_id: h1)", decision: watchDecision{GoalID: "1", HandoffID: "h1"}, want: false},
 		{name: "reported", eventName: "handoff_reported", line: "atct handoff reported: task 1 (handoff h1): verified", decision: watchDecision{TaskID: "1", HandoffID: "h1"}, want: true},
-		{name: "yielded", eventName: "handoff_yielded", line: "atct handoff yielded: task 1", decision: watchDecision{TaskID: "1"}, want: true},
 		{name: "accepted task detection", eventName: "detection.unclaimed_doing", line: "atct detection: task 1 is doing without a work lock", decision: watchDecision{TaskID: "1"}, want: true},
 		{name: "accepted task detection without handoff", eventName: "detection.claim_undelegated", line: "atct detection: task 1 has no handoff request", decision: watchDecision{TaskID: "1"}, want: true},
 		{name: "accepted stale claim", eventName: "detection.claim_stale", line: "atct detection: task 1 has a stale claim", decision: watchDecision{TaskID: "1"}, want: true},

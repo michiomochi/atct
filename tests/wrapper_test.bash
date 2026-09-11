@@ -311,7 +311,7 @@ PY
   fi
 }
 
-test_stop_hook_only_reports() {
+test_stop_hooks_share_server_check() {
   if python3 - "$REPO_ROOT/hooks/claude-hooks.json" <<'PY'
 import json
 import sys
@@ -328,65 +328,41 @@ if stop != [{
         "async": False,
     }],
 }]:
-    raise SystemExit(f"Stop hook registration is not report-only: {stop!r}")
+    raise SystemExit(f"Stop hook registration is not the shared command: {stop!r}")
 PY
   then
     :
   else
-    fail 'claude-hooks.json must register only the report-only Stop hook'
+    fail 'claude-hooks.json must register the shared Stop hook'
   fi
 
   local fixture="$TEMP_ROOT/stop-hook"
   local hook="$fixture/hooks/stop"
   local adjacent="$fixture/bin/atct"
   local log="$fixture/atct.log"
-  local output
+  local output input='{"session_id":"hook-session-1","stop_hook_active":false}'
 
   mkdir -p "$(dirname "$hook")" "$(dirname "$adjacent")"
   cp "$REPO_ROOT/hooks/stop" "$hook"
   cat >"$adjacent" <<'SCRIPT'
 #!/usr/bin/env bash
-printf '%s\n' "$*" >>"$ATCT_STOP_LOG"
-if [[ "${ATCT_STOP_FAIL:-0}" == 1 ]]; then
-  exit 1
-fi
+input="$(cat)"
+printf '%s\n%s\n' "$*" "$input" >>"$ATCT_STOP_LOG"
+if [[ "$input" == *'"stop_hook_active":true'* ]]; then exit 0; fi
+printf '%s' '{"decision":"block","reason":"ATCT work remains: shared session"}'
 SCRIPT
   chmod +x "$hook" "$adjacent"
 
-  output="$(ATCT_STOP_LOG="$log" ATCT_TASK_ID=task-1 /bin/bash "$hook" <<< '{"stop_hook_active": false}')"
-  assert_eq '' "$output" 'Stop hook must not print the yielded event'
-  assert_eq 'handoff yielded task-1' "$(<"$log")" 'Stop hook must only yield the task'
+  output="$(ATCT_STOP_LOG="$log" /bin/bash "$hook" <<< "$input")"
+  assert_eq '{"decision":"block","reason":"ATCT work remains: shared session"}' "$output" 'Claude Stop hook must return the shared stop-check response'
+  assert_eq $'stop-check --hook-input\n{"session_id":"hook-session-1","stop_hook_active":false}' "$(<"$log")" 'Claude Stop hook must pass raw hook input to shared stop-check'
 
   : >"$log"
-  output="$(ATCT_STOP_LOG="$log" ATCT_TASK_ID=task-1 ATCT_STOP_FAIL=1 /bin/bash "$hook" <<< '{"stop_hook_active": false}')"
-  assert_eq '' "$output" 'Stop hook must stay silent when the CLI fails'
-  assert_eq 'handoff yielded task-1' "$(<"$log")" 'Stop hook must not run other commands on CLI failure'
-
-  : >"$log"
-  output="$(ATCT_STOP_LOG="$log" ATCT_TASK_ID=task-1 /bin/bash "$hook" <<< '{"stop_hook_active": true}')"
-  assert_eq '' "$output" 'active Stop hook must be ignored'
-  assert_empty_file "$log"
-
-  : >"$log"
-  output="$(ATCT_STOP_LOG="$log" ATCT_TASK_ID= /bin/bash "$hook" <<< '{}')"
-  assert_eq '' "$output" 'Stop hook without ATCT_TASK_ID must be silent'
-  assert_empty_file "$log"
-}
-
-test_codex_stop_hook_blocks_scoped_work() {
-  local fixture="$TEMP_ROOT/codex-stop-hook"
-  local atct="$fixture/atct"
-  local log="$fixture/atct.log"
+  local codex_fixture="$TEMP_ROOT/codex-stop-hook"
+  local codex_atct="$codex_fixture/atct"
   local command
-  local output
-
-  mkdir -p "$fixture"
-  cat >"$atct" <<'SCRIPT'
-#!/usr/bin/env bash
-printf '%s\n' "$*" >>"$ATCT_STOP_LOG"
-printf '%s\n' '{"decision":"block","reason":"ATCT work remains: executor task"}'
-SCRIPT
-  chmod +x "$atct"
+  mkdir -p "$codex_fixture"
+  cp "$adjacent" "$codex_atct"
   command="$(python3 - "$REPO_ROOT/hooks/codex-hooks.json" <<'PY'
 import json
 import sys
@@ -396,17 +372,20 @@ with open(sys.argv[1], encoding="utf-8") as stream:
 PY
 )"
 
-  output="$(ATCT_STOP_LOG="$log" ATCT_BIN="$atct" ATCT_ROLE=executor ATCT_PROJECT_ID=7 ATCT_GOAL_ID=16 ATCT_TASK_ID=46 sh -c "$command" <<< '{"stop_hook_active": false}')"
-  assert_eq '{"decision":"block","reason":"ATCT work remains: executor task"}' "$output" 'Codex Stop hook must return the stop-check response'
-  assert_eq 'stop-check --role executor --project 7 --goal 16 --task 46' "$(<"$log")" 'Codex Stop hook must query only its resolved scope'
+  : >"$log"
+  output="$(ATCT_STOP_LOG="$log" ATCT_BIN="$codex_atct" sh -c "$command" <<< "$input")"
+  assert_eq '{"decision":"block","reason":"ATCT work remains: shared session"}' "$output" 'Codex Stop hook must return the shared stop-check response'
+  assert_eq $'stop-check --hook-input\n{"session_id":"hook-session-1","stop_hook_active":false}' "$(<"$log")" 'Codex Stop hook must pass raw hook input to shared stop-check'
 
   : >"$log"
-  output="$(ATCT_STOP_LOG="$log" ATCT_BIN="$atct" ATCT_ROLE=executor ATCT_PROJECT_ID=7 ATCT_GOAL_ID=16 ATCT_TASK_ID=46 sh -c "$command" <<< '{"stop_hook_active": true}')"
-  assert_eq '' "$output" 'active Codex Stop hook must be ignored'
-  assert_empty_file "$log"
+  output="$(ATCT_STOP_LOG="$log" /bin/bash "$hook" <<< '{"session_id":"hook-session-1","stop_hook_active":true}')"
+  assert_eq '' "$output" 'active Claude Stop hook must be silent'
+  assert_eq $'stop-check --hook-input\n{"session_id":"hook-session-1","stop_hook_active":true}' "$(<"$log")" 'Claude Stop hook must preserve active input for shared CLI'
 
-  output="$(ATCT_STOP_LOG="$log" sh -c "$command" <<< '{}')"
-  assert_eq '' "$output" 'unscoped Codex Stop hook must be silent'
+  : >"$log"
+  output="$(ATCT_STOP_LOG="$log" ATCT_BIN="$codex_atct" sh -c "$command" <<< '{"session_id":"hook-session-1","stop_hook_active":true}')"
+  assert_eq '' "$output" 'active Codex Stop hook must be silent'
+  assert_eq $'stop-check --hook-input\n{"session_id":"hook-session-1","stop_hook_active":true}' "$(<"$log")" 'Codex Stop hook must preserve active input for shared CLI'
 }
 
 test_claude_hooks_json_keeps_session_start_and_pre_tool_use_sections() {
@@ -2303,8 +2282,7 @@ test_one_space_per_goal_closes_on_approval
 test_one_space_per_goal_forbids_reuse
 test_one_space_per_goal_names_the_only_exception
 test_one_space_per_goal_sits_between_worktree_and_commit
-test_stop_hook_only_reports
-test_codex_stop_hook_blocks_scoped_work
+test_stop_hooks_share_server_check
 test_claude_hooks_json_keeps_session_start_and_pre_tool_use_sections
 test_stop_hook_file_is_executable_but_other_hooks_remain
 test_installs_stable_terminal_launcher

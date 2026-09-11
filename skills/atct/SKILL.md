@@ -288,7 +288,7 @@ that worker is started:
    Other environments may wake the worker by their own supported path.
 4. Put these exact instructions at the very beginning of the request:
 
-   > First call `atct_session_identify` with a stable session key that remains unchanged for this session and identifies only you. Your agent name is suitable. Do this before any other atct call.
+   > First call `atct_session_identify` before any other atct call. If SessionStart emitted `ATCT session key: <session_id>`, pass that exact `<session_id>` as `session_key`; do not substitute your agent name. Only if no SessionStart key was emitted, use your stable full agent name.
    >
    > Then record receipt of the handoff by calling `atct_task_handoff_receive` with only
    > the `task_id` provided in this request. Do this before starting work. Do not
@@ -432,7 +432,7 @@ that subcommander is started:
    cannot answer for itself.
 4. Put these exact instructions at the very beginning of the request:
 
-   > First call `atct_session_identify` with a stable session key that remains unchanged for this session and identifies only you. Your agent name is suitable. Do this before any other atct call.
+   > First call `atct_session_identify` before any other atct call. If SessionStart emitted `ATCT session key: <session_id>`, pass that exact `<session_id>` as `session_key`; do not substitute your agent name. Only if no SessionStart key was emitted, use your stable full agent name.
    >
    > Then record receipt of the goal handoff by calling
    > `atct_goal_handoff_receive` with only the `goal_id` provided in this request.
@@ -505,10 +505,12 @@ handoff. Goals 180 and 187 both stalled this way on 2026-08-27 and 2026-08-28.
 
 ### Session keys
 
-The caller owns the session key. It must remain unchanged for the life of the
-session and identify only that caller; the caller's agent name is suitable. If
-a reconnect causes the role to appear wrong, call `atct_session_identify` again
-with the same key to return to the original session row.
+The caller uses the exact key emitted by SessionStart when one is present; it
+must remain unchanged for the session. Do not replace it with an agent name.
+Only when SessionStart emitted no key, the caller's stable full agent name is
+suitable. If a reconnect causes the role to appear wrong, call
+`atct_session_identify` again with the same key to return to the original
+session row.
 
 ## What the delegator answers
 

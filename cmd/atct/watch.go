@@ -1459,9 +1459,6 @@ func emitWatchDecisionWithStateAndSinks(out io.Writer, eventName string, decisio
 	writeLine := func() error {
 		return writeWatchLineWithActionSink(out, line, eventName, decision, sink, actionSink)
 	}
-	if eventName == "handoff_yielded" {
-		return writeLine()
-	}
 	if eventName == "goal.created" || strings.HasPrefix(eventName, "detection.") || eventName == "handoff_reported" {
 		target := decision.GoalID
 		if strings.HasPrefix(eventName, "detection.") {
@@ -1719,8 +1716,6 @@ func formatWatchDecision(eventName string, decision watchDecision) (string, bool
 			target = "task " + decision.TaskID
 		}
 		return fmt.Sprintf("atct handoff reported: %s (handoff %s): %s", target, decision.HandoffID, watchHandoffReportPreview(decision.CompleteReport)), true
-	case "handoff_yielded":
-		return fmt.Sprintf("atct handoff yielded: task %s", decision.TaskID), true
 	case "detection.claim_undelegated":
 		return fmt.Sprintf("atct detection: task %s has no handoff request", decision.TaskID), true
 	case "detection.decision_answered_unapplied":

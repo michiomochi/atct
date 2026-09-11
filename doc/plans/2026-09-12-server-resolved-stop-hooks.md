@@ -31,13 +31,13 @@
 - Consumes: `session.stop_check` RPC params `{ "session_key": "<harness-session-id>" }`.
 - Produces: either an empty RPC payload or `{ "decision": "block", "reason": "ATCT work remains: ..." }`; an unknown key is an RPC error whose CLI rendering is fail-closed.
 
-- [ ] **Step 1: Write daemon regressions for canonical session ownership.**
+- [x] **Step 1: Write daemon regressions for canonical session ownership.**
 
   Create a fixture with three identified agent sessions whose `session_key` values are literal harness IDs. Cover commander with an active project goal, subcommander with its received goal handoff, executor with its received unfinished task handoff, an unrelated session with the same project, and an executor with two unfinished received task handoffs. Assert the first three and the inconsistent executor return a block response; assert the unrelated session returns empty.
 
   Name the production break each case catches: using the latest session instead of the key, inspecting another role's work, or checking only one executor handoff.
 
-- [ ] **Step 2: Run the new daemon test and verify RED.**
+- [x] **Step 2: Run the new daemon test and verify RED.**
 
   Run:
 
@@ -47,13 +47,13 @@
 
   Expected: FAIL because `session.stop_check` is not dispatched.
 
-- [ ] **Step 3: Add a key lookup and read-only daemon evaluator.**
+- [x] **Step 3: Add a key lookup and read-only daemon evaluator.**
 
   Add a narrow exported store method that delegates to the existing `GetAgentSessionIDByKey` query. In `Daemon.dispatch`, add `session.stop_check`; look up the exact session key, call `deriveSessionRole`, and reuse the current open-work predicates for commander and subcommander.
 
   For the executor path, enumerate current goals, their tasks, and task handoffs. A handoff belongs to this session only when `ReceivedBy` equals the resolved agent session ID and it has `ReceivedAt != nil`, `CompletedReportAt == nil`, and `RecoveredAt == nil`. Return one block response when any such handoff exists. Keep all paths read-only.
 
-- [ ] **Step 4: Run the daemon regression and role preservation tests.**
+- [x] **Step 4: Run the daemon regression and role preservation tests.**
 
   Run:
 
@@ -81,13 +81,13 @@
 - Consumes: raw Stop hook JSON on stdin containing `session_id` and `stop_hook_active`.
 - Produces: the daemon's exact block JSON, or empty stdout for an active hook/no remaining work.
 
-- [ ] **Step 1: Replace scope-based CLI tests with hook-input tests.**
+- [x] **Step 1: Replace scope-based CLI tests with hook-input tests.**
 
   In `cmd/atct/stop_check_test.go`, add table cases that pass raw JSON to a testable stop-check renderer: active hook yields `""`; missing session ID and an unavailable daemon yield JSON with `decision == "block"` and an `ATCT stop-check failed:` reason; a daemon response is copied without changing its line or reason. Remove tests that construct `stopCheckScope` directly.
 
   In `tests/wrapper_test.bash`, replace `test_stop_hook_only_reports` and the role-environment Codex test with one fixture input such as `{"session_id":"hook-session-1","stop_hook_active":false}`. Assert both harness hook commands invoke `stop-check --hook-input`, pass the same stdin, and return the fake CLI's identical JSON. Assert active input invokes neither binary.
 
-- [ ] **Step 2: Run the focused CLI and wrapper tests and verify RED.**
+- [x] **Step 2: Run the focused CLI and wrapper tests and verify RED.**
 
   Run:
 
@@ -98,17 +98,17 @@
 
   Expected: FAIL because the CLI requires role/project/goal/task and the Claude hook emits `handoff yielded`.
 
-- [ ] **Step 3: Implement `stop-check --hook-input`.**
+- [x] **Step 3: Implement `stop-check --hook-input`.**
 
   Replace `--role`, `--project`, `--goal`, and `--task` with `--hook-input`. Parse stdin with Go's JSON decoder. On `stop_hook_active`, return no output. Otherwise require a non-empty `session_id`, ensure the daemon without changing ATCT work state, and call `session.stop_check` with that exact value. Convert malformed input, daemon failure, unknown key, and RPC failure into the existing fail-closed JSON response.
 
   The Claude script resolves its adjacent `bin/atct` and executes `stop-check --hook-input`. The Codex command executes `"$ATCT_BIN" stop-check --hook-input`; if `ATCT_BIN` is absent or not executable, it writes the same fail-closed JSON. Neither script parses role, scope, or `stop_hook_active` itself.
 
-- [ ] **Step 4: Remove Codex role environment from the hook contract.**
+- [x] **Step 4: Remove Codex role environment from the hook contract.**
 
   Change the monitor environment helper to export only `ATCT_BIN=<absolute wrapper>`. Keep it only for explicit monitored Codex sessions; no `ATCT_ROLE`, project, goal, or task variables remain. Update lifecycle assertions to require the one-element environment slice.
 
-- [ ] **Step 5: Run focused tests and verify GREEN.**
+- [x] **Step 5: Run focused tests and verify GREEN.**
 
   Run:
 
@@ -135,11 +135,11 @@
 - Consumes: SessionStart raw JSON with `session_id` and the current project directory.
 - Produces: an instruction to call `atct_session_identify(session_key=<exact session_id>)`, or no text outside a registered ATCT project.
 
-- [ ] **Step 1: Write a failing CLI test for SessionStart context.**
+- [x] **Step 1: Write a failing CLI test for SessionStart context.**
 
   Add a table test for a `session-key --hook-input` command: a registered project and `{"session_id":"claude-session-1"}` renders one instruction containing that exact value; missing/blank ID and an unregistered project render nothing. The test catches accidentally accepting an agent name, cwd, or generated replacement key.
 
-- [ ] **Step 2: Run the test and verify RED.**
+- [x] **Step 2: Run the test and verify RED.**
 
   Run:
 
@@ -149,7 +149,7 @@
 
   Expected: FAIL because the subcommand does not exist.
 
-- [ ] **Step 3: Add the common SessionStart context command and registrations.**
+- [x] **Step 3: Add the common SessionStart context command and registrations.**
 
   Add `session-key --hook-input` to the CLI. It JSON-decodes stdin, resolves the current registered project using the same no-start lookup as `roleProjectRegistered`, and prints exactly:
 
@@ -159,13 +159,13 @@
 
   Keep `hooks/session-start`'s existing context/daemon behavior, then forward its captured input to this command. Add a Codex `SessionStart` command that pipes its stdin to `"$ATCT_BIN" session-key --hook-input` only when the wrapper binary is executable.
 
-- [ ] **Step 4: Update the two skills with TDD pressure checks.**
+- [x] **Step 4: Update the two skills with TDD pressure checks.**
 
   Before editing, run one fresh-context pressure scenario without the revised text: tell an agent it sees the SessionStart line `ATCT session key: hook-123` and ask which key it will pass to `atct_session_identify`; record its raw answer. Update `skills/start/SKILL.md` and every worker/delegation instruction in `skills/atct/SKILL.md` that says an agent name is suitable to require the exact SessionStart key, with the agent name only when no SessionStart key was emitted.
 
   Run the same scenario after the edit. It passes only if the agent selects `hook-123` and does not substitute its agent name. Keep this guidance test evidence in the task report; do not add a reference directory.
 
-- [ ] **Step 5: Run the command and wrapper tests.**
+- [x] **Step 5: Run the command and wrapper tests.**
 
   Run:
 
@@ -195,11 +195,11 @@
 - Removes: `atct handoff yielded <task-id>`, `handoff.yielded`, `EventHandoffYielded`, and `handoff_yielded` watch actions.
 - Preserves: handoff completion/review, `detection.monitor_lost`, and monitor stop commands.
 
-- [ ] **Step 1: Delete yielded cases from tests first.**
+- [x] **Step 1: Delete yielded cases from tests first.**
 
   Remove parser, daemon-event, formatter, scope-filter, selector, and HTTP event fixtures that expect `handoff_yielded`. Add a parser assertion that `atct handoff yielded 1` is rejected and a daemon-dispatch assertion that `handoff.yielded` is unsupported.
 
-- [ ] **Step 2: Run the focused deleted-contract tests and verify RED.**
+- [x] **Step 2: Run the focused deleted-contract tests and verify RED.**
 
   Run:
 
@@ -209,11 +209,11 @@
 
   Expected: FAIL because the command, RPC, and event remain.
 
-- [ ] **Step 3: Remove the command, RPC, event, formatter, and selector paths.**
+- [x] **Step 3: Remove the command, RPC, event, formatter, and selector paths.**
 
   Delete the yielded handoff parser branch and `runHandoff` special case, the daemon `handoff.yielded` dispatch case, the store event constant, and all watch-specific event formatting/dedup/filter/action handling. Retain `handoff complete` unchanged. Update continuous execution and stop-skill prose to describe the shared server-resolved check and `detection.monitor_lost` as the recovery signal.
 
-- [ ] **Step 4: Run focused removal checks.**
+- [x] **Step 4: Run focused removal checks.**
 
   Run:
 
@@ -230,7 +230,7 @@
 
 - Modify: none unless verification identifies a directly related defect.
 
-- [ ] **Step 1: Run all verification.**
+- [x] **Step 1: Run all verification.**
 
   ```sh
   GOCACHE=/private/tmp/atct-go-cache go test ./... -count=1

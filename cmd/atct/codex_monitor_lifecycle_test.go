@@ -789,7 +789,7 @@ func TestCodexMonitorExplicitNonResumeStartsRemoteTUIAndPreservesArgs(t *testing
 	if len(tuiArgs) != 4 || tuiArgs[0] != "--remote" || !strings.HasPrefix(tuiArgs[1], "unix://") || !slices.Equal(tuiArgs[2:], []string{"-m", "gpt-5"}) {
 		t.Fatalf("TUI args = %#v, want --remote socket followed by original args", tuiArgs)
 	}
-	if want := []string{"ATCT_BIN=/opt/atct", "ATCT_ROLE=executor", "ATCT_PROJECT_ID=7", "ATCT_GOAL_ID=216", "ATCT_TASK_ID=920"}; !slices.Equal(tuiEnv, want) {
+	if want := []string{"ATCT_BIN=/opt/atct"}; !slices.Equal(tuiEnv, want) {
 		t.Fatalf("TUI Stop hook environment = %#v, want %#v", tuiEnv, want)
 	}
 
@@ -807,16 +807,16 @@ func TestCodexMonitorExplicitNonResumeStartsRemoteTUIAndPreservesArgs(t *testing
 	}
 }
 
-func TestCodexMonitorStopHookEnvIncludesOnlyResolvedScope(t *testing.T) {
+func TestCodexMonitorStopHookEnvIncludesOnlyBinary(t *testing.T) {
 	for _, tt := range []struct {
 		name  string
 		scope watchScope
 		want  []string
 	}{
 		{name: "unscoped", scope: watchScope{}, want: nil},
-		{name: "commander", scope: watchScope{Role: "commander", ProjectID: "7"}, want: []string{"ATCT_BIN=/opt/atct", "ATCT_ROLE=commander", "ATCT_PROJECT_ID=7"}},
-		{name: "subcommander", scope: watchScope{Role: "subcommander", ProjectID: "7", GoalID: "16"}, want: []string{"ATCT_BIN=/opt/atct", "ATCT_ROLE=subcommander", "ATCT_PROJECT_ID=7", "ATCT_GOAL_ID=16"}},
-		{name: "executor", scope: watchScope{Role: "executor", ProjectID: "7", GoalID: "16", TaskID: "46"}, want: []string{"ATCT_BIN=/opt/atct", "ATCT_ROLE=executor", "ATCT_PROJECT_ID=7", "ATCT_GOAL_ID=16", "ATCT_TASK_ID=46"}},
+		{name: "commander", scope: watchScope{Role: "commander", ProjectID: "7"}, want: []string{"ATCT_BIN=/opt/atct"}},
+		{name: "subcommander", scope: watchScope{Role: "subcommander", ProjectID: "7", GoalID: "16"}, want: []string{"ATCT_BIN=/opt/atct"}},
+		{name: "executor", scope: watchScope{Role: "executor", ProjectID: "7", GoalID: "16", TaskID: "46"}, want: []string{"ATCT_BIN=/opt/atct"}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			got, err := codexMonitorStopHookEnv(tt.scope, func() (string, error) { return "/opt/atct", nil })

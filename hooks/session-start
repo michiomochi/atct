@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 
+INPUT="$(/bin/cat)"
+
 HOOK_DIR="${BASH_SOURCE[0]%/*}"
 if [[ "$HOOK_DIR" == "${BASH_SOURCE[0]}" ]]; then
   HOOK_DIR='.'
@@ -15,15 +17,22 @@ if [[ "$CONTEXT_STATUS" -eq 3 ]]; then
   exit 0
 fi
 [[ "$CONTEXT_STATUS" -eq 0 ]] || exit 0
-[[ -n "$CONTEXT_OUTPUT" ]] || exit 0
 
-if DAEMON_START_OUTPUT="$($ATCT_BIN daemon start 2>&1)"; then
-  if [[ "$DAEMON_START_OUTPUT" =~ http[[:space:]]+([^[:space:]]+) ]]; then
-    DAEMON_HTTP_ADDR="${BASH_REMATCH[1]}"
-    if [[ "$DAEMON_HTTP_ADDR" != "127.0.0.1:8787" ]]; then
-      printf 'ATCT warning: daemon is listening at %s; MCP endpoint is fixed at http://127.0.0.1:8787/mcp.\n' "$DAEMON_HTTP_ADDR" >&2
+if [[ -n "$CONTEXT_OUTPUT" ]]; then
+  if DAEMON_START_OUTPUT="$($ATCT_BIN daemon start 2>&1)"; then
+    if [[ "$DAEMON_START_OUTPUT" =~ http[[:space:]]+([^[:space:]]+) ]]; then
+      DAEMON_HTTP_ADDR="${BASH_REMATCH[1]}"
+      if [[ "$DAEMON_HTTP_ADDR" != "127.0.0.1:8787" ]]; then
+        printf 'ATCT warning: daemon is listening at %s; MCP endpoint is fixed at http://127.0.0.1:8787/mcp.\n' "$DAEMON_HTTP_ADDR" >&2
+      fi
     fi
   fi
-fi
 
-printf '%s\n' "$CONTEXT_OUTPUT"
+  printf '%s\n' "$CONTEXT_OUTPUT"
+fi
+if SESSION_KEY_OUTPUT="$(printf '%s' "$INPUT" | "$ATCT_BIN" session-key --hook-input 2>/dev/null)"; then
+  if [[ "$SESSION_KEY_OUTPUT" == 'ATCT session key: '* ]]; then
+    printf '%s\n' "$SESSION_KEY_OUTPUT"
+  fi
+fi
+exit 0

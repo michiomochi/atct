@@ -51,10 +51,8 @@ type cliConfig struct {
 	roleExpected            string
 	roleExpectedSet         bool
 	roleAgentSessionID      string
-	stopCheckRole           string
-	stopCheckProjectID      string
-	stopCheckGoalID         string
-	stopCheckTaskID         string
+	stopCheckHookInput      bool
+	sessionKeyHookInput     bool
 	watchGoalID             string
 	watchProjectScope       bool
 	watchMonitor            bool
@@ -74,22 +72,23 @@ type cliConfig struct {
 var errInvalidArgs = errors.New("invalid command line")
 
 var validSubcommands = map[string]bool{
-	"daemon":     true,
-	"project":    true,
-	"goal":       true,
-	"context":    true,
-	"pending":    true,
-	"watch":      true,
-	"role":       true,
-	"stop-check": true,
-	"handoff":    true,
-	"codex":      true,
+	"daemon":      true,
+	"project":     true,
+	"goal":        true,
+	"context":     true,
+	"pending":     true,
+	"watch":       true,
+	"role":        true,
+	"stop-check":  true,
+	"session-key": true,
+	"handoff":     true,
+	"codex":       true,
 }
 
 var validDaemonActions = map[string]bool{"start": true, "stop": true}
 var validProjectActions = map[string]bool{"add": true, "list": true}
 var validGoalActions = map[string]bool{"add": true, "list": true}
-var validHandoffActions = map[string]bool{"complete": true, "yielded": true}
+var validHandoffActions = map[string]bool{"complete": true}
 
 var codexMonitorPassthroughCommands = map[string]struct{}{
 	"app-server":       {},
@@ -134,8 +133,8 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "  watch [--monitor] [-goal string] [-project]  Stream selected events for a Monitor")
 	fmt.Fprintln(os.Stderr, "  role                 Report the claim-derived role for an agent session")
 	fmt.Fprintln(os.Stderr, "  stop-check           Emit a Codex continuation when scoped role work remains")
+	fmt.Fprintln(os.Stderr, "  session-key          Print the SessionStart key for atct_session_identify")
 	fmt.Fprintln(os.Stderr, "  handoff complete <handoff-id> <task-id>  Report a handoff complete")
-	fmt.Fprintln(os.Stderr, "  handoff yielded <task-id>  Report that the worker yielded")
 	fmt.Fprintln(os.Stderr, "  codex shim install [--profile <path>]  Install the transparent Codex shim")
 	fmt.Fprintln(os.Stderr, "  codex shim run -- <args>  Run Codex through the installed shim")
 	fmt.Fprintln(os.Stderr, "  codex monitor [-- <args>]  Run an interactive Codex session with ATCT monitoring")
@@ -231,24 +230,14 @@ func parseArgs(args []string) (cliConfig, error) {
 		}
 		cfg.handoffAction = action
 		rest = rest[1:]
-		if action == "yielded" {
-			if len(rest) < 1 || strings.HasPrefix(rest[0], "-") {
-				fmt.Fprintln(os.Stderr, "handoff yielded requires a task ID")
-				printUsage()
-				return cliConfig{}, errInvalidArgs
-			}
-			cfg.handoffTaskID = rest[0]
-			rest = rest[1:]
-		} else {
-			if len(rest) < 2 || strings.HasPrefix(rest[0], "-") || strings.HasPrefix(rest[1], "-") {
-				fmt.Fprintln(os.Stderr, "handoff complete requires a handoff ID and task ID")
-				printUsage()
-				return cliConfig{}, errInvalidArgs
-			}
-			cfg.handoffID = rest[0]
-			cfg.handoffTaskID = rest[1]
-			rest = rest[2:]
+		if len(rest) < 2 || strings.HasPrefix(rest[0], "-") || strings.HasPrefix(rest[1], "-") {
+			fmt.Fprintln(os.Stderr, "handoff complete requires a handoff ID and task ID")
+			printUsage()
+			return cliConfig{}, errInvalidArgs
 		}
+		cfg.handoffID = rest[0]
+		cfg.handoffTaskID = rest[1]
+		rest = rest[2:]
 	}
 	if sub == "codex" {
 		if len(rest) > 0 && rest[0] == "shim" {
@@ -352,10 +341,10 @@ func parseArgs(args []string) (cliConfig, error) {
 		flags.StringVar(&cfg.roleAgentSessionID, "agent-session-id", "", "agent session identity used by session.role")
 	}
 	if sub == "stop-check" {
-		flags.StringVar(&cfg.stopCheckRole, "role", "", "monitor role: commander, subcommander, or executor")
-		flags.StringVar(&cfg.stopCheckProjectID, "project", "", "resolved monitor project ID")
-		flags.StringVar(&cfg.stopCheckGoalID, "goal", "", "resolved monitor goal ID")
-		flags.StringVar(&cfg.stopCheckTaskID, "task", "", "resolved monitor task ID")
+		flags.BoolVar(&cfg.stopCheckHookInput, "hook-input", false, "read hook JSON from stdin")
+	}
+	if sub == "session-key" {
+		flags.BoolVar(&cfg.sessionKeyHookInput, "hook-input", false, "read hook JSON from stdin")
 	}
 	if sub == "watch" {
 		flags.StringVar(&cfg.watchGoalID, "goal", "", "filter watch events to this goal")
@@ -409,11 +398,13 @@ func parseArgs(args []string) (cliConfig, error) {
 			return cliConfig{}, errInvalidArgs
 		}
 	}
-	if sub == "stop-check" {
-		if err := validateStopCheckScope(stopCheckScopeFromConfig(cfg)); err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			return cliConfig{}, errInvalidArgs
-		}
+	if sub == "stop-check" && !cfg.stopCheckHookInput {
+		fmt.Fprintln(os.Stderr, "stop-check requires --hook-input")
+		return cliConfig{}, errInvalidArgs
+	}
+	if sub == "session-key" && !cfg.sessionKeyHookInput {
+		fmt.Fprintln(os.Stderr, "session-key requires --hook-input")
+		return cliConfig{}, errInvalidArgs
 	}
 	if description != nil {
 		cfg.goalDescription = *description
@@ -610,8 +601,14 @@ func main() {
 		}
 		os.Exit(code)
 	case "stop-check":
-		if err := runStopCheck(config, dir); err != nil {
+		if err := runStopCheck(config, dir, exePath); err != nil {
 			log.Printf("stop-check: %v", err)
+			os.Exit(1)
+		}
+		return
+	case "session-key":
+		if err := runSessionKey(config, dir); err != nil {
+			log.Printf("session-key: %v", err)
 			os.Exit(1)
 		}
 		return
@@ -829,24 +826,6 @@ func runGoal(config cliConfig, dir, exePath string) error {
 }
 
 func runHandoff(config cliConfig, dir, exePath string) error {
-	if config.handoffAction == "yielded" {
-		reg, err := daemonctl.ReadRegistry(dir)
-		if err != nil {
-			if errors.Is(err, daemonctl.ErrNoRegistry) {
-				return nil
-			}
-			return err
-		}
-		if !reg.Healthy() {
-			return nil
-		}
-
-		client := mcpshim.NewClient(reg.SocketPath)
-		return client.Call(context.Background(), "handoff.yielded", map[string]string{
-			"task_id": config.handoffTaskID,
-		}, nil)
-	}
-
 	reg, err := daemonctl.Ensure(daemonctl.Config{
 		Dir:            dir,
 		Version:        version,

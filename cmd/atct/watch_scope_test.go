@@ -12,7 +12,7 @@ import (
 
 func TestWatchTaskScopeDeliversOnlyItsTaskHandoffAndDetection(t *testing.T) {
 	filter := newWatchTaskScopeFilter("846")
-	for _, eventName := range []string{"handoff_reported", "handoff_yielded", "detection.claim_stale"} {
+	for _, eventName := range []string{"handoff_reported", "detection.claim_stale"} {
 		if !filter.delivers(eventName, watchDecision{TaskID: "846"}) {
 			t.Fatalf("task scope suppressed %s for its task", eventName)
 		}
@@ -87,14 +87,6 @@ func TestWatchScopeProjectStopsTaskHandoffReported(t *testing.T) {
 
 	if got := filter.delivers("handoff_reported", watchDecision{TaskID: "task-1"}); got {
 		t.Fatal("project scope delivered task handoff_reported, want false")
-	}
-}
-
-func TestWatchScopeProjectStopsHandoffYielded(t *testing.T) {
-	filter := newWatchScopeFilter("")
-
-	if got := filter.delivers("handoff_yielded", watchDecision{TaskID: "task-1"}); got {
-		t.Fatal("project scope delivered handoff_yielded, want false")
 	}
 }
 
@@ -206,7 +198,6 @@ func TestWatchScopeGoalDeliversTaskScopedEvents(t *testing.T) {
 		decision  watchDecision
 	}{
 		{"handoff_reported", watchDecision{TaskID: "task-1"}},
-		{"handoff_yielded", watchDecision{TaskID: "task-1"}},
 		{"detection.decision_answered_unapplied", watchDecision{DecisionID: "decision-1"}},
 		{"detection.decision_default_unapplied", watchDecision{DecisionID: "decision-2"}},
 		{"decision.answered", watchDecision{SettledByDefault: true}},
@@ -272,7 +263,6 @@ func TestWatchPassThroughFilterDeliversEverything(t *testing.T) {
 		decision  watchDecision
 	}{
 		{"handoff_reported", watchDecision{TaskID: "task-1"}},
-		{"handoff_yielded", watchDecision{TaskID: "task-1"}},
 		{"detection.decision_answered_unapplied", watchDecision{DecisionID: "decision-1"}},
 		{"detection.decision_default_unapplied", watchDecision{DecisionID: "decision-2"}},
 		{"detection.unclaimed_doing", watchDecision{TaskID: "task-1"}},

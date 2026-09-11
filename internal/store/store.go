@@ -427,6 +427,16 @@ func (s *Store) IdentifyAgentSession(ctx context.Context, agentSessionID int64, 
 	return canonicalID, reattached, nil
 }
 
+// AgentSessionIDByKey resolves the stable harness session identity recorded by
+// session.identify to ATCT's canonical agent session.
+func (s *Store) AgentSessionIDByKey(ctx context.Context, sessionKey string) (int64, error) {
+	sessionKey = strings.TrimSpace(sessionKey)
+	if sessionKey == "" {
+		return 0, fmt.Errorf("session_key is required")
+	}
+	return sqlcgen.New(s.db).GetAgentSessionIDByKey(ctx, sessionKey)
+}
+
 func (s *Store) AssociateAgentSessionWithProject(ctx context.Context, agentSessionID int64, projectID int64) error {
 	agentSessionID, err := requireAgentSessionID(agentSessionID)
 	if err != nil {

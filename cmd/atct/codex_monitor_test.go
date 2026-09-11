@@ -300,7 +300,6 @@ func TestCodexMonitorActionLineAdmitsFormattedTaskActions(t *testing.T) {
 		decision  watchDecision
 	}{
 		{line: "atct handoff reported: task 846 (handoff handoff-846): verified", eventName: "handoff_reported", decision: watchDecision{TaskID: "846", HandoffID: "handoff-846"}},
-		{line: "atct handoff yielded: task 846", eventName: "handoff_yielded", decision: watchDecision{TaskID: "846"}},
 		{line: "atct detection: task 846 has a stale claim", eventName: "detection.claim_stale", decision: watchDecision{TaskID: "846"}},
 	} {
 		if _, ok := selectWatchAgentAction(tc.line, tc.eventName, tc.decision); !ok {
@@ -985,14 +984,10 @@ func TestCodexMonitorEventSinkOnlyReceivesFormattedLines(t *testing.T) {
 	bridge := newCodexMonitorBridge(starter, "thread-1")
 	rawSink := bridge.LineSink()
 	actionSink := bridge.ActionSink()
-	filter := newWatchScopeFilter("")
 	state := make(map[watchDeliveryKey]struct{})
 	lastWakeup := ""
 	if err := emitWatchDecisionWithStateAndSinks(io.Discard, "decision.approved", watchDecision{DecisionID: "d1"}, state, &lastWakeup, make(map[watchWakeupDeliveryKey]struct{}), make(map[watchDetectionDeliveryKey]struct{}), rawSink, actionSink); err != nil {
 		t.Fatalf("emit approved: %v", err)
-	}
-	if filter.delivers("handoff_yielded", watchDecision{TaskID: "task-1"}) {
-		t.Fatal("project filter delivered task event, want false")
 	}
 	if err := emitWatchDecisionWithStateAndSinks(io.Discard, "keepalive", watchDecision{}, state, &lastWakeup, make(map[watchWakeupDeliveryKey]struct{}), make(map[watchDetectionDeliveryKey]struct{}), rawSink, actionSink); err != nil {
 		t.Fatalf("emit keepalive: %v", err)

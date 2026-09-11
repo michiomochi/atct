@@ -39,7 +39,7 @@ wakeup/detection を評価する（`internal/daemon/wakeup.go:375-404`）。
 | keepalive | 各 maintenance で発行（`internal/daemon/wakeup.go:379-384`） | 30 秒ごと | 通常は表示しない。90 秒来なければ `daemon keepalive missing` を 1 行出す（`cmd/atct/watch.go:583-625,933-938`） |
 | actionable wakeup | `state.Tasks` が空でない状態を検出し、最初の検出から 3 分後に発行（`internal/daemon/wakeup.go:156-168`） | 最後の発行から 3 分ごと（`internal/daemon/wakeup.go:166-187`） | rendered content が同じなら抑止する（`cmd/atct/watch.go:791-809`） |
 | detection | 条件ごとの別タイマー。下表を参照（`internal/daemon/wakeup.go:192-285`） | 同じ detection condition/target は一度だけ。条件が消えると追跡状態を消す（`internal/daemon/wakeup.go:62-96,291-300`） | detection ID ではなく target 単位で抑止する（`cmd/atct/watch.go:759-789`） |
-| decision / handoff | decision または handoff の状態変化時 | event と対象に応じて抑止。`handoff_yielded` は例外 | scope filter 後に人間向け行または Codex action line になる（`cmd/atct/watch.go:736-838,840-898`） |
+| decision / handoff | decision または handoff の状態変化時 | event と対象に応じて抑止 | scope filter 後に人間向け行または Codex action line になる（`cmd/atct/watch.go:736-838,840-898`） |
 
 ### actionable wakeup の条件
 
@@ -210,7 +210,6 @@ flowchart LR
 | handoff_reported | event name + handoff target | 同じ handoff の再報告は抑止（`cmd/atct/watch.go:772-789`） |
 | discrepancy / evaluate failure | event name + wakeup ID | 評価失敗は回復まで daemon 側でも同じ ID を再利用する（`internal/daemon/wakeup.go:390-403`） |
 | 通常 decision | event name + decision ID + default-applied 状態 | 同じ decision の再配送を抑止（`cmd/atct/watch.go:821-837`） |
-| handoff_yielded | 抑止しない | 作業停止・handoff の各発生を毎回送る（`cmd/atct/watch.go:756-757`） |
 
 抑止 state は watch loop ごとに保持され、別の watch の通知がこの watch を抑止しない。
 daemon restart 後も watch が保持する最後の wakeup content と一致する場合、再起動直後の
@@ -232,17 +231,11 @@ delegated worker は handoff を receive し、自分で task claim をせず、
 または goal に進む（`skills/start/SKILL.md:1-9,112-149`）。active goal が作業の許可であり、
 task 完了は停止 checkpoint ではない（`skills/atct/SKILL.md:621-634`）。
 
-### Claude の Stop hook
+### 共通 Stop hook
 
-Claude の Stop hook は、入力の `stop_hook_active` を見て再帰を防ぎ、
-`ATCT_TASK_ID` がある場合だけ `atct handoff yielded "$ATCT_TASK_ID"` を呼ぶ
-（`hooks/stop:1-20`）。この hook は monitor の停止、daemon の停止、Codex の再開を行わない。
-Stop hook は Claude の task-level handoff 通知であり、keepalive 欠落や monitor 停止の成功を
-意味しない。
-
-### Codex の Stop hook
-
-Codex plugin の Stop hook は Claude の yielded 通知とは別である。role を指定して起動した
+Claude と Codex の Stop hook は harness の `session_id` を共有の server-resolved check へ渡す。
+未完了作業があれば停止を拒否し、`stop_hook_active` は空出力で許可する。この hook は monitor、
+daemon、Codex の再開を行わない。
 Codex monitor は解決済み scope を `ATCT_BIN`、`ATCT_ROLE`、`ATCT_PROJECT_ID` と、必要なら
 `ATCT_GOAL_ID` / `ATCT_TASK_ID` として TUI に渡す。hook はその scope で `atct stop-check` を
 呼び、未処理の役割作業がある時、または scope や command の解決に失敗した時にだけ
@@ -350,9 +343,8 @@ atct codex monitor stop
 
 4. **Stop hook**
 
-   Claude の `handoff yielded` は task-level の停止・handoff 通知であり、Codex monitor や
-   daemon が停止したという意味ではない。Codex の Stop hook は role scope に未処理作業が
-   あれば turn の停止を拒否する。どちらも monitor を止める操作ではない。monitor を止める
+   共通 Stop hook は server 側で解決した role に未処理作業があれば turn の停止を拒否する。
+   monitor を止める操作ではない。monitor を止める
    必要がある場合は、別途 exact project cwd で `atct codex monitor stop` を実行し、status 0 を
    確認してから role-specific monitor を再起動する（`hooks/stop:9-20`、
    `hooks/codex-hooks.json:3-13`、`skills/stop/SKILL.md:20-56`）。

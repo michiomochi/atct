@@ -582,14 +582,7 @@ func codexMonitorStopHookEnv(scope watchScope, atctExecutable func() (string, er
 	if strings.TrimSpace(executable) == "" {
 		return nil, errors.New("resolve atct executable")
 	}
-	env := []string{"ATCT_BIN=" + executable, "ATCT_ROLE=" + scope.Role, "ATCT_PROJECT_ID=" + scope.ProjectID}
-	if scope.GoalID != "" {
-		env = append(env, "ATCT_GOAL_ID="+scope.GoalID)
-	}
-	if scope.TaskID != "" {
-		env = append(env, "ATCT_TASK_ID="+scope.TaskID)
-	}
-	return env, nil
+	return []string{"ATCT_BIN=" + executable}, nil
 }
 
 func startCodexMonitorProcess(kind codexMonitorProcessKind, executable string, args []string, extraEnv []string) (codexMonitorProcess, error) {
