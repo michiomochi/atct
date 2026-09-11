@@ -76,6 +76,24 @@ func decodeEvaluateFailure(t *testing.T, event store.DecisionEvent) (string, str
 	return failure.WakeupID, failure.Reason
 }
 
+func TestWakeupConditionPublishesOnceOrResendsByPolicy(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	tracker := newWakeupTracker(now)
+
+	if !tracker.publishCondition(now.Add(3*time.Minute), "once", now, 3*time.Minute, 0) {
+		t.Fatal("one-shot condition did not publish after its wait")
+	}
+	if tracker.publishCondition(now.Add(6*time.Minute), "once", now, 3*time.Minute, 0) {
+		t.Fatal("one-shot condition published twice")
+	}
+	if !tracker.publishCondition(now.Add(3*time.Minute), "repeat", now, 3*time.Minute, 3*time.Minute) {
+		t.Fatal("repeating condition did not publish after its wait")
+	}
+	if !tracker.publishCondition(now.Add(6*time.Minute), "repeat", now, 3*time.Minute, 3*time.Minute) {
+		t.Fatal("repeating condition did not resend")
+	}
+}
+
 func insertWakeupOpenTaskHandoff(t *testing.T, s *store.Store, handoffID string, taskID int64, requestedAt, receivedAt *time.Time) {
 	t.Helper()
 	sessionID := daemonTestSessionID(t, s, "wakeup-handoff-agent")
@@ -857,9 +875,9 @@ func TestWakeupTrackerPreservesDetectionGraceAfterProjectEvaluationFailure(t *te
 		t.Fatal("failed tick returned nil error, want injected error")
 	}
 
-	secondKey := detectionTrackerKey(store.EventDetectionCompletionReportMissing, secondGoalID)
-	if _, ok := tracker.detectionActiveSince[secondKey]; !ok {
-		t.Fatalf("detection grace key %q was removed during failed tick", secondKey)
+	secondKey := wakeupConditionKey(store.EventDetectionCompletionReportMissing, secondGoalID)
+	if _, ok := tracker.conditions[secondKey]; !ok {
+		t.Fatalf("wakeup condition key %q was removed during failed tick", secondKey)
 	}
 
 	events, err := tracker.evaluate(ctx, s, start.Add(wakeupPublishAfter))
@@ -899,16 +917,16 @@ func TestWakeupTrackerCleansStaleDetectionKeysAfterSuccessfulEvaluation(t *testi
 	if _, err := tracker.evaluate(ctx, s, start); err != nil {
 		t.Fatalf("initial evaluate: %v", err)
 	}
-	if len(tracker.detectionActiveSince) == 0 {
-		t.Fatal("initial evaluation did not establish a detection grace key")
+	if len(tracker.conditions) == 0 {
+		t.Fatal("initial evaluation did not establish a wakeup condition")
 	}
 	if _, err := tracker.evaluateWith(ctx, s, start.Add(time.Minute), func(context.Context, int64) (store.WakeupState, error) {
 		return store.WakeupState{}, nil
 	}); err != nil {
 		t.Fatalf("successful cleanup evaluate: %v", err)
 	}
-	if len(tracker.detectionActiveSince) != 0 || len(tracker.detectionPublished) != 0 {
-		t.Fatalf("stale detection keys remain after successful evaluation for project %d: active=%v published=%v", projectID, tracker.detectionActiveSince, tracker.detectionPublished)
+	if len(tracker.conditions) != 0 {
+		t.Fatalf("stale wakeup conditions remain after successful evaluation for project %d: %v", projectID, tracker.conditions)
 	}
 }
 
