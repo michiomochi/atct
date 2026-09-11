@@ -94,7 +94,7 @@ client の scope は次のように分かれる。
 
 | scope | 通知対象 |
 | --- | --- |
-| project | human answer、approval/rejection、goal.created、goal-level detection、goal handoff。task handoff/yield、task detection、default answer、unapplied task decision は除外 |
+| project | human answer、approval/rejection、goal.created、goal-level detection、goal handoff。task handoff、task detection、default answer、unapplied task decision は除外 |
 | goal | その goal の decision/detection/handoff。task-level 通知も含む |
 | task | その task の handoff と detection |
 
@@ -231,20 +231,32 @@ delegated worker は handoff を receive し、自分で task claim をせず、
 または goal に進む（`skills/start/SKILL.md:1-9,112-149`）。active goal が作業の許可であり、
 task 完了は停止 checkpoint ではない（`skills/atct/SKILL.md:621-634`）。
 
-### 共通 Stop hook
+### 共通 Stop hook と session identity
 
-Claude と Codex の Stop hook は harness の `session_id` を共有の server-resolved check へ渡す。
-未完了作業があれば停止を拒否し、`stop_hook_active` は空出力で許可する。この hook は monitor、
-daemon、Codex の再開を行わない。
-Codex monitor は解決済み scope を `ATCT_BIN`、`ATCT_ROLE`、`ATCT_PROJECT_ID` と、必要なら
-`ATCT_GOAL_ID` / `ATCT_TASK_ID` として TUI に渡す。hook はその scope で `atct stop-check` を
-呼び、未処理の役割作業がある時、または scope や command の解決に失敗した時にだけ
-`{"decision":"block", ...}` を返す（`hooks/codex-hooks.json:3-13`、
-`cmd/atct/codex_monitor_supervisor.go:552-593`、`cmd/atct/stop_check.go:43-170`）。
+Claude と Codex は SessionStart / Stop input の harness `session_id` を同じ session key として
+使う。登録済み project の SessionStart は `ATCT session key: <session_id>` を表示し、agent は
+他の ATCT 操作より前に、その**完全一致の値**で `atct_session_identify` を呼ぶ。SessionStart key
+が無い場合だけ stable な agent 名を fallback にできる（`hooks/session-start`、
+`hooks/codex-hooks.json`、`cmd/atct/session_key.go`、`skills/start/SKILL.md`）。
 
-判定対象は commander なら project の active goal、subcommander なら受領済み goal handoff・
-plan review・task-create handoff・子 task の review 待ち、executor なら受領済み task handoff である。これは Codex の
-turn を継続させるだけであり、daemon の停止・monitor の再起動・handoff の完了報告は行わない。
+Stop hook は生の JSON を `atct stop-check --hook-input` に渡す。CLI は `stop_hook_active: true`
+なら空出力、そうでなければ `session_id` を daemon の `session.stop_check` へ渡す。daemon は
+session key から canonical agent session と role を解決するため、Stop hook は cwd、PID、
+`ATCT_ROLE`、project / goal / task 環境変数から scope を推測しない。Codex monitor が TUI に
+渡す Stop-hook 用の環境変数は binary の場所である `ATCT_BIN` だけである
+（`cmd/atct/stop_check.go`、`internal/daemon/stop_check.go`、
+`cmd/atct/codex_monitor_supervisor.go`）。
+
+未識別 session、入力不正、daemon RPC / state 読取り失敗は
+`{"decision":"block","reason":"ATCT stop-check failed: ..."}` として fail closed になる。作業が
+ない identified session は空出力、未完了作業がある session は
+`{"decision":"block","reason":"ATCT work remains: ..."}` を返す。この hook は monitor、daemon、
+Codex の再開、handoff の完了・回復を行わない。
+
+判定対象は commander なら claim 済み project の active goal、subcommander なら自身が受領した
+open goal handoff・自身に戻った plan rejection・自身が受領した task-create handoff・その goal の
+task review、executor なら自身が受領した全 open task handoff である。複数 task handoff が残る
+不整合でも一つでも open なら block する。
 
 ### monitor health の親 role 検知
 
@@ -258,7 +270,10 @@ goal-scoped subcommander、subcommander の喪失は project-scoped commander �
 
 ```mermaid
 flowchart TD
-    S[Codex が停止を試みる] --> C{stop-check に未処理作業?}
+    SS[Claude / Codex SessionStart] --> K[session_id を exact session key として identify]
+    CS[Claude Stop] --> I[raw hook JSON]
+    DS[Codex Stop] --> I
+    I --> C{daemon が session key から未処理作業を解決?}
     C -->|はい| B[停止を拒否し role の作業を続行]
     C -->|いいえ| E[停止を許可]
 
@@ -281,9 +296,9 @@ queue する。executor は実装または差し戻し対応、subcommander は 
 scope、完了済み handoff、人間判断待ちには送らない（`cmd/atct/watch.go:426-440`、
 `cmd/atct/watch_scope.go:16-134`）。
 
-SessionStart hook は context を確認して daemon を start するだけである
-（`hooks/session-start:11-29`、登録は `hooks/claude-hooks.json:3-14`）。keepalive は通常
-画面に表示されず、90 秒欠落時の一度の警告だけが watch の接続健全性を示す
+SessionStart は context を確認し、context がある場合は daemon を start する。加えて登録済み
+project では harness の `session_id` を識別用 key として出力する。keepalive は通常画面に
+表示されず、90 秒欠落時の一度の警告だけが watch の接続健全性を示す
 （`cmd/atct/watch.go:583-625,933-938`）。
 
 ### Claude TaskStop と Codex monitor stop
@@ -343,8 +358,8 @@ atct codex monitor stop
 
 4. **Stop hook**
 
-   共通 Stop hook は server 側で解決した role に未処理作業があれば turn の停止を拒否する。
-   monitor を止める操作ではない。monitor を止める
+   共通 Stop hook は exact `session_id` から server 側で解決した role に未処理作業があれば
+   turn の停止を拒否する。monitor を止める操作ではない。monitor を止める
    必要がある場合は、別途 exact project cwd で `atct codex monitor stop` を実行し、status 0 を
    確認してから role-specific monitor を再起動する（`hooks/stop:9-20`、
    `hooks/codex-hooks.json:3-13`、`skills/stop/SKILL.md:20-56`）。
