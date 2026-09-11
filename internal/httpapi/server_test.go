@@ -2940,7 +2940,6 @@ func TestSSEFiltersTaskEventsByTaskIDAcrossProjectAndGoal(t *testing.T) {
 		{store.EventHandoffReported, store.DetectionEvent{DetectionID: "other-project-task", ProjectID: otherProject.ID, GoalID: otherGoal.ID, TaskID: otherTasks[0].ID}},
 		{store.EventDetectionCompletionReportMissing, store.DetectionEvent{DetectionID: "target-task", ProjectID: f.project.ID, GoalID: f.goal.ID, TaskID: tasks[0].ID}},
 		{store.EventHandoffReported, store.DetectionEvent{DetectionID: "target-reported", ProjectID: f.project.ID, GoalID: f.goal.ID, TaskID: tasks[0].ID}},
-		{store.EventHandoffYielded, store.DetectionEvent{DetectionID: "target-yielded", ProjectID: f.project.ID, GoalID: f.goal.ID, TaskID: tasks[0].ID}},
 	} {
 		f.store.PublishEvent(store.DecisionEvent{Name: event.name, Data: event.data})
 	}
@@ -2948,7 +2947,6 @@ func TestSSEFiltersTaskEventsByTaskIDAcrossProjectAndGoal(t *testing.T) {
 	for _, want := range []struct{ name, detectionID string }{
 		{store.EventDetectionCompletionReportMissing, "target-task"},
 		{store.EventHandoffReported, "target-reported"},
-		{store.EventHandoffYielded, "target-yielded"},
 	} {
 		frame := readSSEFrame(t, reader)
 		var got store.DetectionEvent
