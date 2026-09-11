@@ -139,23 +139,25 @@ flowchart TD
 | 16. review を出す前 | `superpowers:verification-before-completion` |
 | 22. ゴールの review を出す前 | `superpowers:verification-before-completion` |
 
-### 7 と 8 が何を生むかは brainstorming の分類で決まる
+### 7 と 8 は分類に応じた canonical spec と plan を必ず生む
 
-**`superpowers:brainstorming` は最初に 3 つに分類する。**生まれる成果物が違う。
+**`superpowers:brainstorming` は最初に 3 つに分類する。**分類は成果物の有無ではなく、
+必要な詳しさを決める。**すべての Goal は canonical spec と plan を持つ。**
 
-| 分類 | 生まれるもの | 手順 8 で出すもの |
+| 分類 | canonical spec | canonical plan |
 |---|---|---|
-| spike（調査） | **無し。**成果は答えである | 調査結果と推奨 |
-| bounded（限定的） | **無し。**チャットで短い設計を出して合意する | その設計 |
-| architectural | **canonical spec と plan の全文** | `atct_goal_update_request_report` で spec と plan の全文を書き、`atct_plan_handoff_review_request` で出す |
+| spike（調査） | 問い・scope・証拠/判断基準 | 調査手順・集める証拠・推奨の出力 |
+| bounded（限定的） | 目的・変更面・完了条件 | 実装・検証・完了の手順 |
+| architectural | 設計・制約・代替案・完了条件 | 順序立てた実装・検証 task |
 
-**architectural の場合は、canonical spec と plan の全文を `atct_goal_update_request_report` で
-goals テーブルの `spec` と `plan` に書き込み、その後 `atct_plan_handoff_review_request` でレビューに出す。**
+**手順 8 では、分類に合う canonical spec と plan の Markdown 全文を
+`atct_goal_update_request_report` で goals テーブルの `spec` と `plan` に書き込み、その後
+`atct_plan_handoff_review_request` でレビューに出す。**
 
 **`doc/specs/` や `doc/plans/` のパス、またはそれらへの参照は、この payload を満たさない。**
 
-**手順 8 は、canonical spec と plan の全文を DB に書いてから review request を出す。**
-**spike で plan を捏造しない。**
+spike の plan は調査を再現できる手順であり、実装 task を捏造しない。推奨後に実装するなら、
+別 Goal がその bounded または architectural な spec と plan を持つ。
 
 ### 使わないもの
 

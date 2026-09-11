@@ -124,6 +124,7 @@ func TestWorkflowReconciliationIncludesTaskCreateHandoff(t *testing.T) {
 	if _, err := s.ReceiveGoalHandoff(ctx, goalHandoff.ID, goalID, testSessionID("workflow-task-create-subcommander")); err != nil {
 		t.Fatalf("ReceiveGoalHandoff: %v", err)
 	}
+	setPlanReviewGoalArtifacts(t, s, goalID)
 	_, err = s.RequestPlanHandoffReview(ctx, "workflow-task-create-plan", goalID, testSessionID("workflow-task-create-subcommander"), "ready")
 	if err != nil {
 		t.Fatalf("RequestPlanHandoffReview: %v", err)

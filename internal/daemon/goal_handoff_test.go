@@ -48,6 +48,10 @@ func newGoalHandoffRPCTestFixture(t *testing.T) goalHandoffRPCTestFixture {
 		s.Close()
 		t.Fatalf("CreateGoal claimed: %v", err)
 	}
+	if _, err := s.UpdateGoalRequestReport(ctx, claimedGoal.ID, "# Spec", "# Plan"); err != nil {
+		s.Close()
+		t.Fatalf("UpdateGoalRequestReport claimed: %v", err)
+	}
 	unclaimedProject, err := s.CreateProject(ctx, "other", filepath.Join(dir, "other-repo"))
 	if err != nil {
 		s.Close()

@@ -24,6 +24,7 @@ func TestTaskCreateHandoffFollowsAcceptedPlan(t *testing.T) {
 	if _, err := s.ReceiveGoalHandoff(ctx, goalHandoff.ID, goalID, subcommanderID); err != nil {
 		t.Fatalf("ReceiveGoalHandoff: %v", err)
 	}
+	setPlanReviewGoalArtifacts(t, s, goalID)
 	plan, err := s.RequestPlanHandoffReview(ctx, "task-create-plan", goalID, subcommanderID, "plan")
 	if err != nil {
 		t.Fatalf("RequestPlanHandoffReview: %v", err)

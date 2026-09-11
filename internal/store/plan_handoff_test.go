@@ -7,6 +7,39 @@ import (
 	"testing"
 )
 
+func setPlanReviewGoalArtifacts(t *testing.T, s *Store, goalID int64) {
+	t.Helper()
+	if _, err := s.UpdateGoalRequestReport(context.Background(), goalID, "# Spec", "# Plan"); err != nil {
+		t.Fatalf("UpdateGoalRequestReport: %v", err)
+	}
+}
+
+func TestPlanHandoffReviewRequiresGoalSpecAndPlan(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	goalID := newTestGoal(t, s)
+	commanderID := testSessionID("plan-artifacts-commander")
+	subcommanderID := testSessionID("plan-artifacts-subcommander")
+	addLiveProjectClaim(t, s, goalID, "plan-artifacts-commander")
+	addTestAgentSession(t, s, "plan-artifacts-subcommander")
+
+	goalHandoff, err := s.RequestGoalHandoff(ctx, "plan-artifacts-goal", goalID, commanderID, "delegate")
+	if err != nil {
+		t.Fatalf("RequestGoalHandoff: %v", err)
+	}
+	if _, err := s.ReceiveGoalHandoff(ctx, goalHandoff.ID, goalID, subcommanderID); err != nil {
+		t.Fatalf("ReceiveGoalHandoff: %v", err)
+	}
+	if _, err := s.RequestPlanHandoffReview(ctx, "plan-artifacts-review", goalID, subcommanderID, "ready"); !errors.Is(err, ErrPlanHandoffGoalArtifactsEmpty) {
+		t.Fatalf("RequestPlanHandoffReview without artifacts error = %v, want ErrPlanHandoffGoalArtifactsEmpty", err)
+	}
+
+	setPlanReviewGoalArtifacts(t, s, goalID)
+	if _, err := s.RequestPlanHandoffReview(ctx, "plan-artifacts-review", goalID, subcommanderID, "ready"); err != nil {
+		t.Fatalf("RequestPlanHandoffReview with artifacts: %v", err)
+	}
+}
+
 func TestPlanHandoffReviewRejectReceiveLifecycle(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
@@ -25,6 +58,7 @@ func TestPlanHandoffReviewRejectReceiveLifecycle(t *testing.T) {
 	if _, err := s.ReceiveGoalHandoff(ctx, goalHandoff.ID, goalID, subcommanderID); err != nil {
 		t.Fatalf("ReceiveGoalHandoff: %v", err)
 	}
+	setPlanReviewGoalArtifacts(t, s, goalID)
 
 	reviewRequested, err := s.RequestPlanHandoffReview(ctx, "plan-review-lifecycle", goalID, subcommanderID, "plan is ready")
 	if err != nil {
@@ -119,6 +153,7 @@ func TestRecoverPlanHandoffClearsOnlyDefinitelyStaleReviewer(t *testing.T) {
 	if _, err := s.ReceiveGoalHandoff(ctx, handoff.ID, goalID, subcommanderID); err != nil {
 		t.Fatalf("ReceiveGoalHandoff: %v", err)
 	}
+	setPlanReviewGoalArtifacts(t, s, goalID)
 	plan, err := s.RequestPlanHandoffReview(ctx, "recover-plan-review", goalID, subcommanderID, "ready")
 	if err != nil {
 		t.Fatalf("RequestPlanHandoffReview: %v", err)

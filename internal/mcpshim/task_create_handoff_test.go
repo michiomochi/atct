@@ -82,6 +82,9 @@ func taskCreateMCPFixture(t *testing.T) (*store.Store, string, int64, string, in
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
+	if _, err := s.UpdateGoalRequestReport(ctx, goal.ID, "# Spec", "# Plan"); err != nil {
+		t.Fatalf("UpdateGoalRequestReport: %v", err)
+	}
 	commanderID, err := s.RegisterAgentSession(ctx, os.Getpid())
 	if err != nil {
 		t.Fatalf("RegisterAgentSession(commander): %v", err)

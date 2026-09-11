@@ -26,6 +26,7 @@ var (
 	ErrPlanHandoffReviewState            = errors.New("plan handoff review is not in the required state")
 	ErrPlanHandoffReviewerMismatch       = errors.New("plan handoff review reviewer mismatch")
 	ErrPlanHandoffReviewReportEmpty      = errors.New("plan handoff review needs a non-empty report")
+	ErrPlanHandoffGoalArtifactsEmpty     = errors.New("plan handoff review requires a non-empty canonical spec and plan")
 )
 
 const (
@@ -959,6 +960,13 @@ func (s *Store) RequestPlanHandoffReview(ctx context.Context, handoffID string, 
 	}
 	if goalHandoff == nil || goalHandoff.ReceivedBy == 0 || goalHandoff.ReceivedBy != requestedBy {
 		return PlanHandoff{}, fmt.Errorf("%w: plan review requester %d does not hold the goal handoff", ErrPlanHandoffReviewerMismatch, requestedBy)
+	}
+	goal, err := s.GetGoal(ctx, goalID)
+	if err != nil {
+		return PlanHandoff{}, fmt.Errorf("get goal for plan review: %w", err)
+	}
+	if completeReportIsEmpty(goal.Spec) || completeReportIsEmpty(goal.Plan) {
+		return PlanHandoff{}, ErrPlanHandoffGoalArtifactsEmpty
 	}
 
 	existing, err := s.GetPlanHandoff(ctx, handoffID)
