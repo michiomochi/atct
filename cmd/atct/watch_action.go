@@ -39,31 +39,16 @@ func (w monitorActionWriter) Sink(action watchAgentAction) error {
 // selectWatchAgentAction owns the notification membership contract. Callers
 // invoke it only after formatWatchDecision and delivery-state deduplication.
 func selectWatchAgentAction(line, eventName string, decision watchDecision) (watchAgentAction, bool) {
-	if strings.TrimSpace(line) == "" {
+	if strings.TrimSpace(line) == "" || eventName == "" {
 		return watchAgentAction{}, false
 	}
-	selected := false
-	switch eventName {
-	case "decision.approved", "decision.rejected":
-		selected = true
-	case "decision.answered":
-		selected = !decision.defaultApplied()
-	case "goal.created", "goal.review.complete", "wakeup", "monitor.liveness", "handoff_reported", "handoff_yielded":
-		selected = true
-	case "detection.completion_report_missing", "detection.commits_missing", "detection.undeclared_goal", "detection.all_tasks_dropped":
-		selected = true
-	case "detection.unclaimed_doing", "detection.claim_undelegated", "detection.claim_stale":
-		selected = true
-	case "task.handoff.request", "task.handoff.receive", "task.handoff.complete",
-		"task.handoff.review.request", "task.handoff.review.receive", "task.handoff.review.reject", "task.handoff.review.reject.receive",
-		"goal.handoff.request", "goal.handoff.receive", "goal.handoff.complete",
-		"goal.handoff.review.request", "goal.handoff.review.receive", "goal.handoff.review.reject", "goal.handoff.review.reject.receive",
-		"plan.handoff.review.request", "plan.handoff.review.receive", "plan.handoff.review.reject", "plan.handoff.review.reject.receive",
-		"task.create_handoff.request", "task.create_handoff.receive",
-		"wakeup.discrepancy", "wakeup.evaluate_failed":
-		selected = true
+	if eventName == "decision.answered" && decision.defaultApplied() {
+		return watchAgentAction{}, false
 	}
-	if !selected {
+	switch eventName {
+	case "decision.pending", "decision.opened",
+		"plan.handoff.request", "plan.handoff.receive", "plan.handoff.complete",
+		"detection.handoff_unreceived", "detection.handoff_unreported", "keepalive":
 		return watchAgentAction{}, false
 	}
 	deliveryKey, generation := watchActionDeliveryIdentity(eventName, line, decision)

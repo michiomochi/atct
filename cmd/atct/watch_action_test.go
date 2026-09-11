@@ -48,6 +48,7 @@ func frozenWatchAgentActionCases() []watchAgentActionCase {
 		{name: "accepted task detection", eventName: "detection.unclaimed_doing", line: "atct detection: task 1 is doing without a work lock", decision: watchDecision{TaskID: "1"}, want: true},
 		{name: "accepted task detection without handoff", eventName: "detection.claim_undelegated", line: "atct detection: task 1 has no handoff request", decision: watchDecision{TaskID: "1"}, want: true},
 		{name: "accepted stale claim", eventName: "detection.claim_stale", line: "atct detection: task 1 has a stale claim", decision: watchDecision{TaskID: "1"}, want: true},
+		{name: "lost monitor detection", eventName: "detection.monitor_lost", line: "atct detection: monitor for handoff h1 is lost; recover or replace its worker", decision: watchDecision{GoalID: "1", TaskID: "2", HandoffID: "h1"}, want: true},
 		{name: "other task detection", eventName: "detection.handoff_unreceived", line: "atct detection: handoff h1 has no receipt", decision: watchDecision{HandoffID: "h1"}, want: false},
 		{name: "wakeup discrepancy", eventName: "wakeup.discrepancy", line: "atct wakeup discrepancy: detector_unstarted_tasks=1 counted_unstarted_tasks=0", want: true},
 		{name: "wakeup evaluation failure", eventName: "wakeup.evaluate_failed", line: "atct wakeup evaluate failed: timeout", want: true},

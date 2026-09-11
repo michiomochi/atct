@@ -29,7 +29,7 @@
 - Consumes: a non-empty formatted `line`, `eventName`, and `watchDecision` after scope and deduplication.
 - Produces: a `watchAgentAction` for all actionable events, or no action for the explicit non-actionable observations.
 
-- [ ] **Step 1: Add the regression to the frozen action matrix.**
+- [x] **Step 1: Add the regression to the frozen action matrix.**
 
   In `frozenWatchAgentActionCases`, add the literal case:
 
@@ -45,7 +45,7 @@
 
   This test catches a missing selector entry: deleting the default action path or adding this event to an exclusion makes the shared selector return `ok == false`.
 
-- [ ] **Step 2: Run the regression before implementation.**
+- [x] **Step 2: Run the regression before implementation.**
 
   Run:
 
@@ -55,7 +55,7 @@
 
   Expected: FAIL for `lost_monitor_detection`, because the current whitelist omits `detection.monitor_lost`.
 
-- [ ] **Step 3: Replace the positive whitelist with explicit exclusions.**
+- [x] **Step 3: Replace the positive whitelist with explicit exclusions.**
 
   In `selectWatchAgentAction`, return no action for an empty line, `decision.pending`, `decision.opened`, default-applied `decision.answered`, ordinary `plan.handoff.request` / `.receive` / `.complete`, `detection.handoff_unreceived`, `detection.handoff_unreported`, `keepalive`, and an empty event name. Return the existing `watchAgentAction` for every other formatted event.
 
@@ -78,7 +78,7 @@
 
   Keep `watchActionDeliveryIdentity` and the returned action fields unchanged.
 
-- [ ] **Step 4: Run the focused selector and transport-parity tests.**
+- [x] **Step 4: Run the focused selector and transport-parity tests.**
 
   Run:
 
@@ -88,7 +88,7 @@
 
   Expected: PASS. The existing parity test feeds every selected frozen action to both adapters and proves equal event, line, and order; the new case proves `detection.monitor_lost` reaches both.
 
-- [ ] **Step 5: Commit the implementation.**
+- [x] **Step 5: Commit the implementation.**
 
   ```sh
   git add cmd/atct/watch_action.go cmd/atct/watch_action_test.go
@@ -106,7 +106,7 @@
 - Consumes: the shared selection contract from Task 1.
 - Produces: evidence that the `cmd/atct` package and all repository packages retain their contracts.
 
-- [ ] **Step 1: Run the package test suite.**
+- [x] **Step 1: Run the package test suite.**
 
   ```sh
   GOCACHE=/private/tmp/atct-go-cache go test ./cmd/atct -count=1
@@ -114,7 +114,7 @@
 
   Expected: PASS.
 
-- [ ] **Step 2: Run all tests.**
+- [x] **Step 2: Run all tests.**
 
   ```sh
   GOCACHE=/private/tmp/atct-go-cache go test ./... -count=1
@@ -122,7 +122,7 @@
 
   Expected: PASS.
 
-- [ ] **Step 3: Check the final diff.**
+- [x] **Step 3: Check the final diff.**
 
   ```sh
   git diff --check HEAD~1..HEAD
