@@ -15,6 +15,17 @@ daemon maintenance
   -> 人間の通知行、または Codex monitor の turn input
 ```
 
+```mermaid
+flowchart LR
+    M[daemon maintenance<br/>30秒ごと] --> E[keepalive / wakeup / detection]
+    E --> S[/api/events SSE/]
+    S --> W[scoped watch<br/>filter + dedup]
+    W --> H[人間向け通知]
+    W --> A[Codex action 判定]
+    A --> B[bridge queue]
+    B --> C[Codex turn input]
+```
+
 30 秒は daemon が評価を試みる周期であり、actionable wakeup が 30 秒ごとに表示される
 という意味ではない。`Daemon.Serve` は 30 秒 ticker ごとに `runMaintenance` を呼び出す
 （`internal/daemon/server.go:146-169`）。maintenance は keepalive を発行してから
@@ -42,6 +53,20 @@ wakeup の対象ではない。
 初回 3 分・状態リセット・fresh ID は
 `internal/daemon/wakeup_test.go:100-183,319-379`、3 分再送は
 `internal/daemon/wakeup_test.go:381-415` で確認されている。
+
+```mermaid
+stateDiagram-v2
+    [*] --> Idle
+    Idle --> Waiting: actionable task を検出
+    Waiting --> Wakeup: 3分継続
+    Wakeup --> Wakeup: 3分ごとに再評価・再送候補
+    Waiting --> Idle: actionable task が消える
+    Wakeup --> Idle: actionable task が消える
+    note right of Wakeup
+      同じ rendered content は
+      watch が抑止する
+    end note
+```
 
 ### detection の別タイマー
 
@@ -80,6 +105,15 @@ project scope の wakeup は actionable goal 数、unassigned goal 数、unassig
 変化を通知条件にする。task 内訳だけの変化は project scope では抑止される
 （`cmd/atct/watch_scope.go:57-67`）。
 
+```mermaid
+flowchart TB
+    P[project scope<br/>commander] -->|goal-level のみ| G[goal scope<br/>subcommander]
+    G -->|goal内の task 通知を含む| T[task scope<br/>executor]
+    P -.->|task-only handoff / detection は除外| T
+    G -->|goalの decision / handoff / detection| G
+    T -->|その task の handoff / detection| T
+```
+
 ### Codex monitor
 
 Codex monitor は `/atct:start` の後付けではない。新しい interactive process を、次の role
@@ -114,6 +148,24 @@ initialize、monitor record、scoped SSE watcher、bridge、remote TUI の順で
 `/atct:start` は既存 session の goal loop に入り、monitor を start/attach しない
 （`skills/start/SKILL.md:56-61`）。
 
+```mermaid
+sequenceDiagram
+    participant Shell
+    participant Supervisor as monitor supervisor
+    participant App as Codex App Server
+    participant Watch as scoped watch
+    participant TUI as Codex TUI
+
+    Shell->>Supervisor: atct codex monitor --role ...
+    Supervisor->>Supervisor: scope を検証・古い record を整理
+    Supervisor->>App: socket / initialize
+    Supervisor->>Watch: scoped SSE watch を開始
+    Supervisor->>TUI: remote TUI を起動
+    Watch-->>Supervisor: action line
+    Supervisor->>App: bridge queue から turn を開始
+    App-->>TUI: turn input
+```
+
 ## SSE から Codex への配送境界
 
 SSE server は filter を通った event を `event` と JSON `data` の frame として送る
@@ -133,6 +185,19 @@ session 自体は終了しない（`cmd/atct/watch.go:703-770,1583-1599`、
 
 したがって、daemon は状態を発行し、SSE watch は scope/filter/dedup と人間向け表示を行い、
 Codex monitor はそのうち action と判定された行を TUI の turn input に変換する。
+
+```mermaid
+flowchart LR
+    D[daemon event] --> F{scope filter}
+    F -->|対象外| X[破棄]
+    F -->|対象| U{重複?}
+    U -->|はい| X
+    U -->|いいえ| L[formatted line]
+    L --> Q{Codex action?}
+    Q -->|いいえ| N[人間に表示]
+    Q -->|はい| B[bridge queue]
+    B --> I[Codex が idle 時に turn input]
+```
 
 ## 同じ内容の抑止
 
@@ -197,6 +262,21 @@ scoped watch は `recovering` / `degraded` / `healthy` を monitor-health API �
 goal-scoped subcommander、subcommander の喪失は project-scoped commander に届く。検知は
 `atct_handoff_recover` または worker の再作成を促すだけで、Codex を自動再起動せず、handoff
 の回復・再割当も自動では行わない（`internal/daemon/wakeup.go`、`internal/store/store.go`）。
+
+```mermaid
+flowchart TD
+    S[Codex が停止を試みる] --> C{stop-check に未処理作業?}
+    C -->|はい| B[停止を拒否し role の作業を続行]
+    C -->|いいえ| E[停止を許可]
+
+    M[open handoff の monitor] --> H{75秒以内に health?}
+    H -->|はい| M
+    H -->|停止 / lease切れ| L[detection.monitor_lost]
+    L -->|executor| SC[subcommander が recover または worker 再作成]
+    L -->|subcommander| CO[commander が recover または worker 再作成]
+    SC -.->|自動再起動しない| R[明示的な復旧判断]
+    CO -.->|自動再起動しない| R
+```
 
 ### role-aware liveness prompt
 
