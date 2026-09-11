@@ -121,11 +121,14 @@ SSE server は filter を通った event を `event` と JSON `data` の frame �
 SSE を読み、切断時には daemon ensure と再接続を行う
 （`cmd/atct/watch.go:318-414`）。
 
-Codex monitor は同じ scoped watch loop を使う（`cmd/atct/codex_monitor.go:936-966`）。
-ただし、watch の全出力を TUI に送るわけではない。`codexMonitorWatchOutput` は formatted
-action line を捨てて bridge sink に任せ、reconnect などの診断 line は monitor failure と
-して扱う（`cmd/atct/codex_monitor_supervisor.go:57-68`）。bridge は action line を queue
-し、Codex の thread が idle になった時に FIFO で turn を開始する
+Codex monitor は同じ scoped watch loop を使う（`cmd/atct/codex_monitor.go:973-1009`）。
+ただし、watch の全出力を TUI に送るわけではない。`codexMonitorWatchOutput` は通常の
+formatted line を捨て、選択された action だけを bridge sink に渡す。snapshot・SSE・daemon
+ensure の一時的な失敗は watch loop 内で再接続し、TUI と bridge は維持する。
+bridge 自体または action sink の失敗だけが monitor を無効化するが、その場合も Codex の
+session 自体は終了しない（`cmd/atct/watch.go:703-770,1583-1599`、
+`cmd/atct/codex_monitor_supervisor.go:235-293`）。bridge は action line を queue し、Codex
+の thread が idle になった時に FIFO で turn を開始する
 （`cmd/atct/codex_monitor.go:669-729,763-817,819-933`）。
 
 したがって、daemon は状態を発行し、SSE watch は scope/filter/dedup と人間向け表示を行い、
@@ -164,13 +167,33 @@ delegated worker は handoff を receive し、自分で task claim をせず、
 または goal に進む（`skills/start/SKILL.md:1-9,112-149`）。active goal が作業の許可であり、
 task 完了は停止 checkpoint ではない（`skills/atct/SKILL.md:621-634`）。
 
-### Stop hook と通知
+### Claude の Stop hook
 
 Claude の Stop hook は、入力の `stop_hook_active` を見て再帰を防ぎ、
 `ATCT_TASK_ID` がある場合だけ `atct handoff yielded "$ATCT_TASK_ID"` を呼ぶ
 （`hooks/stop:1-20`）。この hook は monitor の停止、daemon の停止、Codex の再開を行わない。
 Stop hook は Claude の task-level handoff 通知であり、keepalive 欠落や monitor 停止の成功を
 意味しない。
+
+### Codex の Stop hook
+
+Codex plugin の Stop hook は Claude の yielded 通知とは別である。role を指定して起動した
+Codex monitor は解決済み scope を `ATCT_BIN`、`ATCT_ROLE`、`ATCT_PROJECT_ID` と、必要なら
+`ATCT_GOAL_ID` / `ATCT_TASK_ID` として TUI に渡す。hook はその scope で `atct stop-check` を
+呼び、未処理の役割作業がある時、または scope や command の解決に失敗した時にだけ
+`{"decision":"block", ...}` を返す（`hooks/codex-hooks.json:3-13`、
+`cmd/atct/codex_monitor_supervisor.go:552-593`、`cmd/atct/stop_check.go:43-170`）。
+
+判定対象は commander なら project の active goal、subcommander なら受領済み goal handoff・
+plan review・task-create handoff、executor なら受領済み task handoff である。これは Codex の
+turn を継続させるだけであり、daemon の停止・monitor の再起動・handoff の完了報告は行わない。
+
+### monitor health は観測のみ
+
+scoped watch は `recovering` / `degraded` / `healthy` を monitor-health API に記録する。
+正常に停止できなかった process の row は last-seen から 75 秒で読取り対象から消えるが、
+この lease は観測用であり、monitor の再起動、handoff の回復、別の agent への再割当は行わない
+（`internal/store/store.go:106-211`、`internal/httpapi/server.go:398-531`）。
 
 SessionStart hook は context を確認して daemon を start するだけである
 （`hooks/session-start:11-29`、登録は `hooks/claude-hooks.json:3-14`）。keepalive は通常
@@ -232,15 +255,17 @@ atct codex monitor stop
    健全性警告である。watch は一度警告して以後の同じ timer 状態を繰り返し表示しない
    （`cmd/atct/watch.go:607-614`）。
 
-4. **Stop hook の yielded**
+4. **Stop hook**
 
-   `handoff yielded` は task-level の停止・handoff 通知であり、Codex monitor や daemon が
-   停止したという意味ではない。monitor を止める必要がある場合は、別途 exact project cwd
-   で `atct codex monitor stop` を実行し、status 0 を確認してから role-specific monitor を
-   再起動する（`hooks/stop:9-20`、`skills/stop/SKILL.md:20-56`）。
+   Claude の `handoff yielded` は task-level の停止・handoff 通知であり、Codex monitor や
+   daemon が停止したという意味ではない。Codex の Stop hook は role scope に未処理作業が
+   あれば turn の停止を拒否する。どちらも monitor を止める操作ではない。monitor を止める
+   必要がある場合は、別途 exact project cwd で `atct codex monitor stop` を実行し、status 0 を
+   確認してから role-specific monitor を再起動する（`hooks/stop:9-20`、
+   `hooks/codex-hooks.json:3-13`、`skills/stop/SKILL.md:20-56`）。
 
 ## 検証範囲
 
 数値・条件・role の根拠は本文中の repository source path と line reference に示した。
 直接テストは本文各節に記載したが、実時間の 30 秒 ticker、実 daemon、実 SSE 接続、実 Codex
-process の接続・再接続は未検証である。
+process の接続・再接続、および plugin による実際の Stop hook 起動は未検証である。
