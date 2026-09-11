@@ -1,123 +1,133 @@
-# 継続実行の通知と担当
+# 継続実行
 
-この文書は、daemon の定期評価から利用者または Codex への通知までを、
-「評価の周期」「通知として見える周期」「誰が反応するか」に分けて説明する。
+この文書は、ATCT が「作業を続けるべき session」に何を届け、誰が次に何をするかを説明する。
+実装上のイベント名やタイマーは手段であり、本文ではまず運用上の意味を示す。最新の厳密な
+条件は daemon / watch の実装を正とする。
 
 ## 全体像
 
-処理の境界は次のとおりである。
+継続実行は三つの経路で成り立つ。
 
-```text
-daemon maintenance
-  -> keepalive / wakeup / detection を発行
-  -> /api/events の SSE
-  -> watch の scope filter と重複抑止
-  -> 人間の通知行、または Codex monitor の turn input
-```
+1. daemon が作業停止・状態変化・健全性低下を検出する。
+2. watch が scope と重複を処理して、関係する人または agent だけに届ける。
+3. Stop hook が session 自身の未完了作業を確認し、作業が残る限り停止を拒否する。
 
 ```mermaid
 flowchart LR
-    M[daemon maintenance<br/>30秒ごと] --> E[keepalive / wakeup / detection]
-    E --> S[/api/events SSE/]
-    S --> W[scoped watch<br/>filter + dedup]
-    W --> H[人間向け通知]
-    W --> A[Codex action 判定]
-    A --> B[bridge queue]
+    D[daemon: 状態を評価] --> E[event / wakeup / detection]
+    E --> W[watch: scope filter + dedup]
+    W --> H[Claude または人間への通知]
+    W --> B[Codex bridge queue]
     B --> C[Codex turn input]
+
+    SS[SessionStart] --> I[exact session_id で identify]
+    CS[Stop hook] --> S[daemon: session.stop_check]
+    S -->|作業あり| K[停止を拒否]
+    S -->|作業なし| X[停止を許可]
 ```
 
-30 秒は daemon が評価を試みる周期であり、actionable wakeup が 30 秒ごとに表示される
-という意味ではない。`Daemon.Serve` は 30 秒 ticker ごとに `runMaintenance` を呼び出す
-（`internal/daemon/server.go:146-169`）。maintenance は keepalive を発行してから
-wakeup/detection を評価する（`internal/daemon/wakeup.go:375-404`）。
+30 秒ごとに走る daemon maintenance は、通知を必ず 30 秒ごとに出すものではない。各通知には
+別の発生条件と待ち時間があり、watch も重複を抑止する。
 
-## 周期と可視性
+## 1. session を開始し、停止を判定する
 
-| 信号 | 発行条件・初回待ち | 再送 | watch での扱い |
-| --- | --- | --- | --- |
-| maintenance 評価 | daemon 起動後、30 秒 ticker ごとに評価（`internal/daemon/server.go:146-169`） | 30 秒ごとに評価を試みる | 評価そのものは通知行ではない |
-| keepalive | 各 maintenance で発行（`internal/daemon/wakeup.go:379-384`） | 30 秒ごと | 通常は表示しない。90 秒来なければ `daemon keepalive missing` を 1 行出す（`cmd/atct/watch.go:583-625,933-938`） |
-| actionable wakeup | `state.Tasks` が空でない状態を検出し、最初の検出から 3 分後に発行（`internal/daemon/wakeup.go:156-168`） | 最後の発行から 3 分ごと（`internal/daemon/wakeup.go:166-187`） | rendered content が同じなら抑止する（`cmd/atct/watch.go:791-809`） |
-| detection | 条件ごとの別タイマー。下表を参照（`internal/daemon/wakeup.go:192-285`） | 同じ detection condition/target は一度だけ。条件が消えると追跡状態を消す（`internal/daemon/wakeup.go:62-96,291-300`） | detection ID ではなく target 単位で抑止する（`cmd/atct/watch.go:759-789`） |
-| decision / handoff | decision または handoff の状態変化時 | event と対象に応じて抑止 | scope filter 後に人間向け行または Codex action line になる（`cmd/atct/watch.go:736-838,840-898`） |
+### SessionStart
 
-### actionable wakeup の条件
+登録済み project では、Claude / Codex の SessionStart hook が harness の `session_id` を受ける。
+hook は次の案内を出す。
 
-tracker は actionable task の一覧 `state.Tasks` を条件にする。条件が消えると
-`activeSince` と `published` を削除し、再び現れた時は新しい 3 分待ちを始める
-（`internal/daemon/wakeup.go:156-170`）。未開始 task の総数は別に数えられるが、open
-decision に紐づく task は `WaitingAnswerTaskCount` にだけ入り、`state.Tasks` には入らない
-（`internal/store/wakeup.go:310-337`）。従って、待ち回答 task だけの状態は actionable
-wakeup の対象ではない。
-
-初回 3 分・状態リセット・fresh ID は
-`internal/daemon/wakeup_test.go:100-183,319-379`、3 分再送は
-`internal/daemon/wakeup_test.go:381-415` で確認されている。
-
-```mermaid
-stateDiagram-v2
-    [*] --> Idle
-    Idle --> Waiting: actionable task を検出
-    Waiting --> Wakeup: 3分継続
-    Wakeup --> Wakeup: 3分ごとに再評価・再送候補
-    Waiting --> Idle: actionable task が消える
-    Wakeup --> Idle: actionable task が消える
-    note right of Wakeup
-      同じ rendered content は
-      watch が抑止する
-    end note
+```text
+ATCT session key: <session_id>. Before any other ATCT operation, call atct_session_identify with this exact session_key.
 ```
 
-### detection の別タイマー
+agent は最初の ATCT 操作として、表示された値を一文字も変えずに
+`atct_session_identify(session_key=<session_id>)` へ渡す。これにより transport の session と
+ATCT の canonical agent session が結び付く。SessionStart key が出なかった場合だけ、stable な
+full agent name を fallback にできる。
 
-下記は actionable wakeup の 3 分とは別の detection 条件である。
+Claude の SessionStart は context を表示し、context がある時は daemon も開始する。Codex の
+explicit monitor session も同じ key 案内を受ける。session key は cwd、PID、role 名から推測しない。
 
-| detection | 初回待ち | 根拠 |
-| --- | --- | --- |
-| completed goal の completion report 欠落、commit 欠落、task 未宣言、全 task dropped、unclaimed doing | 15 分 | 定数 `wakeupPublishAfter`（`internal/daemon/wakeup.go:17-24`）と発行対象（`internal/daemon/wakeup.go:226-240`） |
-| handoff 未受領、handoff completion report 欠落、handoff なしの claim | 30 分 | `internal/daemon/wakeup.go:25-27,241-268` |
-| human answer 済みだが未適用 | 即時（0） | `internal/daemon/wakeup.go:28,270-272` |
-| default answer 未適用、stale claim | 3 分 | `internal/daemon/wakeup.go:29-30,273-285` |
+### Stop hook
 
-## watch の開始と scope
+Claude と Codex の Stop hook は、生の hook JSON を同じコマンドへ渡す。
 
-### Claude の watch
+```text
+atct stop-check --hook-input
+```
 
-Claude の `start` は session を識別した後、role に応じた一つの persistent watch を付ける。
-commander は `atct watch -project`、subcommander は `atct watch -goal <goal_id>` を
-使う。同じ session に二つの monitor を付けず、同一 scope の既存 watch は起動時に停止する
-（`skills/start/SKILL.md:24-38`）。`runWatch` は cwd から project を解決し、watch を
-登録・重複整理してから snapshot と SSE loop を始める
-（`cmd/atct/watch.go:180-261`）。
+CLI は `session_id` を daemon の `session.stop_check` へ渡す。daemon は key から canonical
+session と role を解決するため、Stop hook が role、project、goal、task を環境変数から受け取る
+必要はない。Codex monitor が Stop hook 用に渡す環境変数は `ATCT_BIN` だけである。
 
-client の scope は次のように分かれる。
-
-| scope | 通知対象 |
+| 状態 | Stop hook の結果 |
 | --- | --- |
-| project | human answer、approval/rejection、goal.created、goal-level detection、goal handoff。task handoff、task detection、default answer、unapplied task decision は除外 |
-| goal | その goal の decision/detection/handoff。task-level 通知も含む |
-| task | その task の handoff と detection |
+| `stop_hook_active: true` | 空出力で許可（再帰を防ぐ） |
+| identified session に作業がない | 空出力で許可 |
+| identified session に作業が残る | `{"decision":"block","reason":"ATCT work remains: ..."}` |
+| session 未識別、入力不正、RPC / state 読取り失敗 | `{"decision":"block","reason":"ATCT stop-check failed: ..."}` |
 
-この分類は `cmd/atct/watch_scope.go:28-79` にあり、HTTP server 側の `project_id`、
-`goal_id`、`task_id` filter は `internal/httpapi/server.go:1355-1408,1410-1483` にある。
+これは fail closed の判定であり、monitor の停止・daemon の停止・handoff の完了や回復は行わない。
 
-project scope の wakeup は actionable goal 数、unassigned goal 数、unassigned goal ID の
-変化を通知条件にする。task 内訳だけの変化は project scope では抑止される
-（`cmd/atct/watch_scope.go:57-67`）。
+| role | 停止を拒否する未完了作業 |
+| --- | --- |
+| commander | claim 済み project の active goal |
+| subcommander | 自身が受領した open goal handoff、自身に戻った plan rejection、自身が受領した task-create handoff、その goal の task review |
+| executor | 自身が受領した全 open task handoff |
 
-```mermaid
-flowchart TB
-    P[project scope<br/>commander] -->|goal-level のみ| G[goal scope<br/>subcommander]
-    G -->|goal内の task 通知を含む| T[task scope<br/>executor]
-    P -.->|task-only handoff / detection は除外| T
-    G -->|goalの decision / handoff / detection| G
-    T -->|その task の handoff / detection| T
-```
+複数の executor handoff が不整合に残っていても、一つでも open なら停止を拒否する。
 
-### Codex monitor
+## 2. どんな通知が出るか
 
-Codex monitor は `/atct:start` の後付けではない。新しい interactive process を、次の role
-指定で shell から起動する（`skills/start/SKILL.md:40-65`）。
+通知は「今すぐ作業を進められる」「状態を確認・復旧する」「状態が変わった」の三種類に分ける。
+この分類を先に読むと、個々の待ち時間を暗記する必要がない。
+
+### 作業を進められる通知
+
+| 通知 | 発生条件 | 待ち時間 / 再送 | 受け手の次の行動 |
+| --- | --- | --- | --- |
+| actionable wakeup | 実行可能な task が残る | 条件が 3 分継続後。以後は 3 分ごとに候補になる | scope 内で次に実行できる task を選び、担当 role が進める |
+| liveness prompt | explicit Codex monitor の role に、今すぐ実行できる ATCT 操作がある | 1 分ごと | role の未完了作業を再確認して進める |
+
+同じ actionable wakeup の表示内容は watch が抑止する。人間判断待ちだけの task は、actionable
+wakeup の対象ではない。liveness prompt も、人間回答待ち・完了済み handoff・他者が作業中な
+だけの scope には送らない。
+
+### 状態を確認・復旧する通知
+
+| 通知 | 発生条件 | 最初に出るまで | 受け手の次の行動 |
+| --- | --- | --- | --- |
+| goal の完了報告 / commit 欠落、task 未宣言・全 dropped・unclaimed doing | goal または task の整合性が崩れている | 15 分 | 状態を修正するか、意図した状態なら必要な記録を補う |
+| handoff 未受領、completion report 欠落、handoff なしの claim | handoff 契約が途中で止まっている | 30 分 | 受領・review・completion report・recovery のどれが不足しているか確認する |
+| stale claim、default answer が未適用 | claim または既定判断の反映が止まっている | 3 分 | claim / decision の反映状態を確認して進める |
+| human answer 済みで未適用 | 人間回答を記録したが workflow へ反映していない | 即時 | 回答を apply する |
+| keepalive missing | watch が 90 秒間 daemon keepalive を受けない | 90 秒後に一度 | watch / daemon 接続を確認する。業務 task の担当通知ではない |
+| `detection.monitor_lost` | open handoff の monitor が停止、または health lease を失う | health の最終更新から 75 秒後 | 親 role が handoff recovery または worker 再作成を選ぶ |
+
+同じ detection condition と対象の組合せは、一度通知した後、条件が消えるまで再送しない。
+`detection.monitor_lost` は executor なら subcommander、subcommander なら commander に届く。
+Codex process の自動再起動や handoff の自動回復・再割当はしない。
+
+### 状態が変わった通知
+
+decision の回答・適用、goal / plan / task handoff の request・receipt・review・completion などは
+状態変化時に event として出る。wait 時間を待つ detection と違い、状態変化そのものを届ける。
+同じ対象への同じ event は watch が抑止する。`handoff yielded` という別の通知は存在しない。
+
+## 3. 誰に届くか
+
+watch の scope は delivery の境界であり、Stop hook の role 解決とは別である。
+
+| scope | 主な利用者 | 届くもの | 届かないもの |
+| --- | --- | --- | --- |
+| project | commander | human answer、goal approval / rejection、goal.created、goal-level detection、goal handoff | task-only handoff / detection、default answer、unapplied task decision |
+| goal | subcommander | その goal の decision、handoff、detection、task-level 通知 | 他 goal の通知 |
+| task | executor | その task の handoff と detection | 他 task / 他 goal の通知 |
+
+Claude は role に応じて persistent watch を一つだけ付ける。commander は project scope、
+subcommander は goal scope を使う。同一 scope の既存 watch は起動時に整理される。
+
+Codex は新しい interactive process を monitor wrapper で起動する。
 
 ```sh
 atct codex monitor --role commander -- <codex args>
@@ -125,247 +135,56 @@ atct codex monitor --role subcommander --goal <goal_id> -- <codex args>
 atct codex monitor --role executor --task <task_id> -- <codex args>
 ```
 
-role と selector の関係は次のとおりである。
+通常の Codex process を、後から monitor に変えることはできない。`/atct:start` も monitor の
+start / attach は行わない。
 
-| role | scope | selector |
-| --- | --- | --- |
-| commander | project | selector なし |
-| subcommander | goal | `--goal <goal_id>` 必須 |
-| executor | task | `--task <task_id>` 必須 |
+## 4. Codex への配送
 
-CLI は `--scope` を拒否し、role ごとの selector の不足・混在を拒否する
-（`cmd/atct/main.go:276-325,402-425`）。explicit scope は cwd の project と照合され、
-executor は task から goal を解決して同じ project であることを確認する
-（`cmd/atct/codex_monitor_supervisor.go:382-434`）。
-
-monitor lifecycle は、scope 解決、古い record の整理、managed Unix socket の App Server、
-initialize、monitor record、scoped SSE watcher、bridge、remote TUI の順である
-（`cmd/atct/codex_monitor_supervisor.go:74-217`）。登録済み project で通常の interactive
-`codex` を shim 経由で起動した場合は、automatic commander/project scope に変換される
-（`cmd/atct/codex_shim.go:181-227`）。
-
-通常の `codex` process を起動後に monitor へ retrofit することはできない。
-`/atct:start` は既存 session の goal loop に入り、monitor を start/attach しない
-（`skills/start/SKILL.md:56-61`）。
-
-```mermaid
-sequenceDiagram
-    participant Shell
-    participant Supervisor as monitor supervisor
-    participant App as Codex App Server
-    participant Watch as scoped watch
-    participant TUI as Codex TUI
-
-    Shell->>Supervisor: atct codex monitor --role ...
-    Supervisor->>Supervisor: scope を検証・古い record を整理
-    Supervisor->>App: socket / initialize
-    Supervisor->>Watch: scoped SSE watch を開始
-    Supervisor->>TUI: remote TUI を起動
-    Watch-->>Supervisor: action line
-    Supervisor->>App: bridge queue から turn を開始
-    App-->>TUI: turn input
-```
-
-## SSE から Codex への配送境界
-
-SSE server は filter を通った event を `event` と JSON `data` の frame として送る
-（`internal/httpapi/server.go:1423-1460`）。watch client は snapshot を先に処理し、その後
-SSE を読み、切断時には daemon ensure と再接続を行う
-（`cmd/atct/watch.go:318-414`）。
-
-Codex monitor は同じ scoped watch loop を使う（`cmd/atct/codex_monitor.go:973-1009`）。
-ただし、watch の全出力を TUI に送るわけではない。`codexMonitorWatchOutput` は通常の
-formatted line を捨て、選択された action だけを bridge sink に渡す。snapshot・SSE・daemon
-ensure の一時的な失敗は watch loop 内で再接続し、TUI と bridge は維持する。
-bridge 自体または action sink の失敗だけが monitor を無効化するが、その場合も Codex の
-session 自体は終了しない（`cmd/atct/watch.go:703-770,1583-1599`、
-`cmd/atct/codex_monitor_supervisor.go:235-293`）。bridge は action line を queue し、Codex
-の thread が idle になった時に FIFO で turn を開始する
-（`cmd/atct/codex_monitor.go:669-729,763-817,819-933`）。
-
-したがって、daemon は状態を発行し、SSE watch は scope/filter/dedup と人間向け表示を行い、
-Codex monitor はそのうち action と判定された行を TUI の turn input に変換する。
+daemon event は SSE に出た後、watch の scope filter と重複抑止を通る。人間向けに表示される
+line のすべてが Codex へ送られるわけではない。action と判定された line だけが bridge queue
+へ入り、Codex thread が idle になった時に FIFO で turn input になる。
 
 ```mermaid
 flowchart LR
-    D[daemon event] --> F{scope filter}
-    F -->|対象外| X[破棄]
-    F -->|対象| U{重複?}
-    U -->|はい| X
-    U -->|いいえ| L[formatted line]
-    L --> Q{Codex action?}
-    Q -->|いいえ| N[人間に表示]
-    Q -->|はい| B[bridge queue]
-    B --> I[Codex が idle 時に turn input]
+    E[daemon event] --> F{scope 内か?}
+    F -->|いいえ| X[破棄]
+    F -->|はい| D{重複か?}
+    D -->|はい| X
+    D -->|いいえ| L[通知 line]
+    L --> A{Codex action か?}
+    A -->|いいえ| H[人間向け表示のみ]
+    A -->|はい| Q[bridge queue]
+    Q --> T[Codex が idle 時に turn input]
 ```
 
-## 同じ内容の抑止
+snapshot・SSE・daemon ensure の一時的な失敗は watch が再接続して吸収する。bridge 自体または
+action sink が失敗すると monitor は無効化されるが、Codex session 自体を終了させない。
 
-重複抑止の単位は通知種別ごとに異なる。
+## 5. 停止、復旧、再開
 
-| 通知 | 抑止単位 | 例外・注意 |
-| --- | --- | --- |
-| wakeup | watch loop ごとの最後の rendered content | daemon は再送ごとに fresh `wakeup_id` を作るが、同じ表示内容は抑止。A→B→A は最後の A を送る（`cmd/atct/watch.go:327-335,791-809`） |
-| detection / goal.created | event name + goal/task/handoff/decision の target | fresh detection ID は新規通知の根拠にならない（`cmd/atct/watch.go:759-789`） |
-| handoff_reported | event name + handoff target | 同じ handoff の再報告は抑止（`cmd/atct/watch.go:772-789`） |
-| discrepancy / evaluate failure | event name + wakeup ID | 評価失敗は回復まで daemon 側でも同じ ID を再利用する（`internal/daemon/wakeup.go:390-403`） |
-| 通常 decision | event name + decision ID + default-applied 状態 | 同じ decision の再配送を抑止（`cmd/atct/watch.go:821-837`） |
+Stop hook は「agent の turn を止めてよいか」の判定である。monitor を止める操作ではない。
 
-抑止 state は watch loop ごとに保持され、別の watch の通知がこの watch を抑止しない。
-daemon restart 後も watch が保持する最後の wakeup content と一致する場合、再起動直後の
-同一内容だけは表示しない（`cmd/atct/watch.go:327-335`）。project scope の task-only
-wakeup 変化は、content 比較より前の scope filter でも抑止される
-（`cmd/atct/watch_scope.go:57-67`）。
+- Claude の monitor を止める時は、この session に attach された task ID が分かる場合だけ
+  `TaskStop` を使う。ID を推測しない。
+- Codex monitor を止める時は、監視対象と同じ project directory で
+  `atct codex monitor stop` を実行する。この操作は該当 project の live supervisor だけを対象とし、
+  daemon は停止しない。
+- Codex monitor を再開するのは、stop が status 0 で成功した後だけである。explicit role command
+  で新しい process を起動する。`start`、`restart`、`exit` の monitor subcommand はない。
 
-この挙動は `cmd/atct/wakeup_delivery_test.go:8-117`、
-`cmd/atct/watch_scope_test.go:125-151`、
-`cmd/atct/watch_test.go:990-1153,1210-1264` で確認されている。Codex bridge が
-action line だけを受け取る境界は `cmd/atct/codex_monitor_test.go:682-713` で確認されている。
+`resume` は通常 Codex の引数としては pass-through できるが、explicit role monitor の先頭引数
+としては使えない。未コミット作業がある通常 Codex を monitor 化したい場合は、作業を保存または
+handoff して終了し、新しい explicit monitor process を起動する。
 
-## keep-working、Stop、再開
+## 実装との対応
 
-### keep-working
+| 責務 | 主な実装 |
+| --- | --- |
+| maintenance、wakeup、detection、monitor lost | `internal/daemon/wakeup.go`、`internal/store/wakeup.go` |
+| SSE と scope filter、重複抑止、liveness | `cmd/atct/watch.go`、`cmd/atct/watch_scope.go`、`internal/httpapi/server.go` |
+| Codex monitor / bridge | `cmd/atct/codex_monitor*.go`、`cmd/atct/codex_monitor_supervisor.go` |
+| SessionStart / Stop hook | `hooks/session-start`、`hooks/stop`、`hooks/codex-hooks.json` |
+| session key と Stop 判定 | `cmd/atct/session_key.go`、`cmd/atct/stop_check.go`、`internal/daemon/stop_check.go` |
 
-`start` は「計画を提示して待つ」入口ではなく、active goal の loop を開始する入口である。
-delegated worker は handoff を receive し、自分で task claim をせず、task 完了後も次の task
-または goal に進む（`skills/start/SKILL.md:1-9,112-149`）。active goal が作業の許可であり、
-task 完了は停止 checkpoint ではない（`skills/atct/SKILL.md:621-634`）。
-
-### 共通 Stop hook と session identity
-
-Claude と Codex は SessionStart / Stop input の harness `session_id` を同じ session key として
-使う。登録済み project の SessionStart は `ATCT session key: <session_id>` を表示し、agent は
-他の ATCT 操作より前に、その**完全一致の値**で `atct_session_identify` を呼ぶ。SessionStart key
-が無い場合だけ stable な agent 名を fallback にできる（`hooks/session-start`、
-`hooks/codex-hooks.json`、`cmd/atct/session_key.go`、`skills/start/SKILL.md`）。
-
-Stop hook は生の JSON を `atct stop-check --hook-input` に渡す。CLI は `stop_hook_active: true`
-なら空出力、そうでなければ `session_id` を daemon の `session.stop_check` へ渡す。daemon は
-session key から canonical agent session と role を解決するため、Stop hook は cwd、PID、
-`ATCT_ROLE`、project / goal / task 環境変数から scope を推測しない。Codex monitor が TUI に
-渡す Stop-hook 用の環境変数は binary の場所である `ATCT_BIN` だけである
-（`cmd/atct/stop_check.go`、`internal/daemon/stop_check.go`、
-`cmd/atct/codex_monitor_supervisor.go`）。
-
-未識別 session、入力不正、daemon RPC / state 読取り失敗は
-`{"decision":"block","reason":"ATCT stop-check failed: ..."}` として fail closed になる。作業が
-ない identified session は空出力、未完了作業がある session は
-`{"decision":"block","reason":"ATCT work remains: ..."}` を返す。この hook は monitor、daemon、
-Codex の再開、handoff の完了・回復を行わない。
-
-判定対象は commander なら claim 済み project の active goal、subcommander なら自身が受領した
-open goal handoff・自身に戻った plan rejection・自身が受領した task-create handoff・その goal の
-task review、executor なら自身が受領した全 open task handoff である。複数 task handoff が残る
-不整合でも一つでも open なら block する。
-
-### monitor health の親 role 検知
-
-scoped watch は `recovering` / `degraded` / `healthy` を monitor-health API に記録する。
-正常に停止できなかった process の row は last-seen から 75 秒で通常の読取り対象から消える。
-ただし、現在の open handoff の受領時点に同じ monitor が記録され、その monitor が
-停止または lease 切れになった場合は `detection.monitor_lost` を出す。executor の喪失は
-goal-scoped subcommander、subcommander の喪失は project-scoped commander に届く。検知は
-`atct_handoff_recover` または worker の再作成を促すだけで、Codex を自動再起動せず、handoff
-の回復・再割当も自動では行わない（`internal/daemon/wakeup.go`、`internal/store/store.go`）。
-
-```mermaid
-flowchart TD
-    SS[Claude / Codex SessionStart] --> K[session_id を exact session key として identify]
-    CS[Claude Stop] --> I[raw hook JSON]
-    DS[Codex Stop] --> I
-    I --> C{daemon が session key から未処理作業を解決?}
-    C -->|はい| B[停止を拒否し role の作業を続行]
-    C -->|いいえ| E[停止を許可]
-
-    M[open handoff の monitor] --> H{75秒以内に health?}
-    H -->|はい| M
-    H -->|停止 / lease切れ| L[detection.monitor_lost]
-    L -->|executor| SC[subcommander が recover または worker 再作成]
-    L -->|subcommander| CO[commander が recover または worker 再作成]
-    SC -.->|自動再起動しない| R[明示的な復旧判断]
-    CO -.->|自動再起動しない| R
-```
-
-### role-aware liveness prompt
-
-explicit role Codex monitor は、scope に人間回答待ちがなく、**その role が次に実行できる
-ATCT 操作がある時だけ** 1 分ごとに `atct monitor liveness: recheck ...` を turn input へ
-queue する。executor は実装または差し戻し対応、subcommander は task-create / task review /
-自身への review rejection / executor が動いていない設計段階、commander は plan・goal review
-または承認済み goal review の完了処理が対象である。reviewer や delegate が作業中なだけの
-scope、完了済み handoff、人間判断待ちには送らない（`cmd/atct/watch.go:426-440`、
-`cmd/atct/watch_scope.go:16-134`）。
-
-SessionStart は context を確認し、context がある場合は daemon を start する。加えて登録済み
-project では harness の `session_id` を識別用 key として出力する。keepalive は通常画面に
-表示されず、90 秒欠落時の一度の警告だけが watch の接続健全性を示す
-（`cmd/atct/watch.go:583-625,933-938`）。
-
-### Claude TaskStop と Codex monitor stop
-
-Claude で monitor を止める時は、この session に attach された monitor の task ID が取得
-できる場合だけ TaskStop を呼ぶ。ID が不明なら推測しない
-（`skills/stop/SKILL.md:10-18`）。
-
-Codex monitor は、監視対象と同じ project directory で次を実行する。
-
-```sh
-atct codex monitor stop
-```
-
-この操作は exact project path の live supervisor だけを対象とし、記録済み PID と start time
-が一致しない process は止めず、失敗 record を残す。ATCT daemon 自体は止めない
-（`skills/stop/SKILL.md:20-36`、`internal/daemonctl/codexmonitor.go:212-259`）。
-
-### 安全な monitor 再開
-
-再開は `atct codex monitor stop` が status 0 を返した後に限り、role-specific command を
-使う。stop が nonzero または一部失敗なら再起動しない
-（`skills/stop/SKILL.md:38-56`）。`start`、`restart`、`exit` という monitor subcommand は
-ない。
-
-`resume` という語には二つの意味がある。
-
-- `/atct:start` は monitor を開始・attach しない。通常 Codex に未コミット作業がある場合は、
-  作業を保存または handoff してから正常終了し、explicit monitor command で起動する
-  （`skills/start/SKILL.md:56-61`）。
-- legacy no-role の `atct codex monitor -- resume ...` は通常 Codex へ pass-through できるが、
-  explicit role monitor の leading `resume` は拒否される（`cmd/atct/codex_monitor_supervisor.go:84-95`）。
-  monitor は新 remote TUI が作成した `thread/started` を採用する
-  （`cmd/atct/codex_monitor.go:819-847`）。
-
-## 判断例
-
-1. **task を放置した場合**
-
-   actionable task が検出されてから 3 分未満なら、30 秒評価は走っていても actionable
-   wakeup はまだ発行されない。3 分以上続けば、commander の project scope では project-level
-   wakeup として判断する。根拠は初回条件（`internal/daemon/wakeup.go:156-187`）と Claude
-   commander の project scope（`skills/start/SKILL.md:24-36`）である。
-
-2. **task-specific handoff / stale claim**
-
-   handoff 未受領・未報告は 30 分、stale claim は 3 分の detection である
-   （`internal/daemon/wakeup.go:25-30,241-285`）。task-specific に判断するなら Codex
-   executor の task scope、goal 全体を管理するなら subcommander の goal scope を選ぶ
-   （`cmd/atct/main.go:409-424`、`cmd/atct/watch_scope.go:41-79`）。
-
-3. **keepalive 欠落**
-
-   90 秒 keepalive が来ない時の行は、業務 task の担当通知ではなく watch/daemon 接続の
-   健全性警告である。watch は一度警告して以後の同じ timer 状態を繰り返し表示しない
-   （`cmd/atct/watch.go:607-614`）。
-
-4. **Stop hook**
-
-   共通 Stop hook は exact `session_id` から server 側で解決した role に未処理作業があれば
-   turn の停止を拒否する。monitor を止める操作ではない。monitor を止める
-   必要がある場合は、別途 exact project cwd で `atct codex monitor stop` を実行し、status 0 を
-   確認してから role-specific monitor を再起動する（`hooks/stop:9-20`、
-   `hooks/codex-hooks.json:3-13`、`skills/stop/SKILL.md:20-56`）。
-
-## 検証範囲
-
-数値・条件・role の根拠は本文中の repository source path と line reference に示した。
-直接テストは本文各節に記載したが、実時間の 30 秒 ticker、実 daemon、実 SSE 接続、実 Codex
-process の接続・再接続、および plugin による実際の Stop hook 起動は未検証である。
+単体・結合テストは各実装の `*_test.go` に置かれている。実時間の ticker、実 daemon / SSE 接続、
+実 Codex process、harness が発火する plugin hook 自体は自動テストの対象外である。
