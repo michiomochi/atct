@@ -28,7 +28,7 @@ const (
 	watchSnapshotTimeout        = 5 * time.Second
 	watchKeepaliveTimeout       = 90 * time.Second
 	watchReconcileInterval      = 30 * time.Second
-	watchLivenessPromptInterval = 10 * time.Minute
+	watchLivenessPromptInterval = time.Minute
 	watchEnsureMaxFailures      = 5
 	watchEnsureLimitMessage     = "atct watch: daemon ensure failed 5 consecutive times; continuing connection retries"
 )
@@ -428,7 +428,7 @@ func newWatchLivenessState(start time.Time) *watchLivenessState {
 }
 
 func (s *watchLivenessState) PromptDue(now time.Time, scope watchScope, snapshot watchReconciliation) bool {
-	if !watchLivenessEligible(scope) || scopedOpenDecision(scope, snapshot) {
+	if !watchLivenessActionable(scope, snapshot) || scopedOpenDecision(scope, snapshot) {
 		s.lastPromptAt = now
 		return false
 	}

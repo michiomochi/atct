@@ -195,6 +195,16 @@ scoped watch は `recovering` / `degraded` / `healthy` を monitor-health API �
 この lease は観測用であり、monitor の再起動、handoff の回復、別の agent への再割当は行わない
 （`internal/store/store.go:106-211`、`internal/httpapi/server.go:398-531`）。
 
+### role-aware liveness prompt
+
+explicit role Codex monitor は、scope に人間回答待ちがなく、**その role が次に実行できる
+ATCT 操作がある時だけ** 1 分ごとに `atct monitor liveness: recheck ...` を turn input へ
+queue する。executor は実装または差し戻し対応、subcommander は task-create / task review /
+自身への review rejection / executor が動いていない設計段階、commander は plan・goal review
+または承認済み goal review の完了処理が対象である。reviewer や delegate が作業中なだけの
+scope、完了済み handoff、人間判断待ちには送らない（`cmd/atct/watch.go:426-440`、
+`cmd/atct/watch_scope.go:16-134`）。
+
 SessionStart hook は context を確認して daemon を start するだけである
 （`hooks/session-start:11-29`、登録は `hooks/claude-hooks.json:3-14`）。keepalive は通常
 画面に表示されず、90 秒欠落時の一度の警告だけが watch の接続健全性を示す

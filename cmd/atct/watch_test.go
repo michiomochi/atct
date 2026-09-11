@@ -892,23 +892,97 @@ func TestWatchLivenessPromptsOnlyEligibleScopedMonitor(t *testing.T) {
 	}
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
-			state := newWatchLivenessState(time.Unix(0, 0))
-			got := state.PromptDue(time.Unix(600, 0), tt.scope, watchReconciliation{})
+			got := watchLivenessEligible(tt.scope)
 			if got != tt.want {
-				t.Fatalf("PromptDue() = %v, want %v for scope %#v", got, tt.want, tt.scope)
+				t.Fatalf("watchLivenessEligible() = %v, want %v for scope %#v", got, tt.want, tt.scope)
+			}
+		})
+	}
+}
+
+func TestWatchLivenessPromptsOnlyForImmediateRoleAction(t *testing.T) {
+	at := func(value string) *string { return &value }
+	executorScope := watchScope{Role: "executor", ProjectID: "1", GoalID: "249", TaskID: "812"}
+	subcommanderScope := watchScope{Role: "subcommander", ProjectID: "1", GoalID: "249"}
+	commanderScope := watchScope{Role: "commander", ProjectID: "1"}
+
+	cases := []struct {
+		name           string
+		scope          watchScope
+		reconciliation watchReconciliation
+		want           bool
+	}{
+		{
+			name:  "executor has implementation work",
+			scope: executorScope,
+			reconciliation: watchReconciliation{TaskHandoffs: []watchReconciliationHandoff{{
+				GoalID: 249, TaskID: 812, ReceivedAt: at("received"),
+			}}},
+			want: true,
+		},
+		{
+			name:  "executor awaits reviewer",
+			scope: executorScope,
+			reconciliation: watchReconciliation{TaskHandoffs: []watchReconciliationHandoff{{
+				GoalID: 249, TaskID: 812, ReceivedAt: at("received"), ReviewRequestedAt: at("review"),
+			}}},
+		},
+		{
+			name:  "subcommander has task review",
+			scope: subcommanderScope,
+			reconciliation: watchReconciliation{TaskHandoffs: []watchReconciliationHandoff{{
+				GoalID: 249, TaskID: 812, ReviewRequestedAt: at("review"),
+			}}},
+			want: true,
+		},
+		{
+			name:  "subcommander awaits executor",
+			scope: subcommanderScope,
+			reconciliation: watchReconciliation{
+				GoalHandoffs: []watchReconciliationHandoff{{GoalID: 249, ReceivedAt: at("received")}},
+				TaskHandoffs: []watchReconciliationHandoff{{GoalID: 249, TaskID: 812, ReceivedAt: at("received")}},
+			},
+		},
+		{
+			name:  "commander has goal review",
+			scope: commanderScope,
+			reconciliation: watchReconciliation{GoalHandoffs: []watchReconciliationHandoff{{
+				GoalID: 249, ReviewRequestedAt: at("review"),
+			}}},
+			want: true,
+		},
+		{
+			name:  "open human decision suppresses executor prompt",
+			scope: executorScope,
+			reconciliation: watchReconciliation{
+				Decisions:    []watchDecision{{GoalID: "249", TaskID: "812", Status: "open"}},
+				TaskHandoffs: []watchReconciliationHandoff{{GoalID: 249, TaskID: 812, ReceivedAt: at("received")}},
+			},
+		},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			state := newWatchLivenessState(time.Unix(0, 0))
+			if got := state.PromptDue(time.Unix(60, 0), tt.scope, tt.reconciliation); got != tt.want {
+				t.Fatalf("PromptDue() = %v, want %v", got, tt.want)
 			}
 		})
 	}
 }
 
 func TestWatchLivenessSuppressesOpenHumanDecision(t *testing.T) {
+	at := func(value string) *string { return &value }
 	state := newWatchLivenessState(time.Unix(0, 0))
-	blocked := watchReconciliation{Decisions: []watchDecision{{GoalID: "249", Status: "open"}}}
+	blocked := watchReconciliation{
+		Decisions:    []watchDecision{{GoalID: "249", Status: "open"}},
+		GoalHandoffs: []watchReconciliationHandoff{{GoalID: 249, ReceivedAt: at("received")}},
+	}
 	scope := watchScope{Role: "subcommander", ProjectID: "1", GoalID: "249"}
 	if got := state.PromptDue(time.Unix(600, 0), scope, blocked); got {
 		t.Fatal("open human decision prompted, want suppression")
 	}
-	if got := state.PromptDue(time.Unix(1200, 0), scope, watchReconciliation{}); !got {
+	if got := state.PromptDue(time.Unix(660, 0), scope, watchReconciliation{GoalHandoffs: []watchReconciliationHandoff{{GoalID: 249, ReceivedAt: at("received")}}}); !got {
 		t.Fatal("prompt did not resume after open human decision was cleared")
 	}
 }

@@ -1,5 +1,7 @@
 package main
 
+import "strconv"
+
 type watchScopeFilter struct {
 	goalID      string
 	taskID      string
@@ -14,6 +16,9 @@ type watchScopeFilter struct {
 type watchScope struct{ ProjectID, GoalID, TaskID, Role, ScopeKey string }
 
 func watchLivenessEligible(scope watchScope) bool {
+	if scope.Role == "commander" {
+		return scope.ProjectID != "" && scope.GoalID == "" && scope.TaskID == ""
+	}
 	if scope.Role == "subcommander" {
 		return scope.ProjectID != "" && scope.GoalID != "" && scope.TaskID == ""
 	}
@@ -21,6 +26,111 @@ func watchLivenessEligible(scope watchScope) bool {
 		return scope.ProjectID != "" && scope.GoalID != "" && scope.TaskID != ""
 	}
 	return false
+}
+
+func watchLivenessActionable(scope watchScope, state watchReconciliation) bool {
+	if !watchLivenessEligible(scope) {
+		return false
+	}
+	switch scope.Role {
+	case "commander":
+		return watchCommanderLivenessActionable(state)
+	case "subcommander":
+		return watchSubcommanderLivenessActionable(scope, state)
+	case "executor":
+		return watchExecutorLivenessActionable(scope, state)
+	default:
+		return false
+	}
+}
+
+func watchCommanderLivenessActionable(state watchReconciliation) bool {
+	for _, handoffs := range [][]watchReconciliationHandoff{state.GoalHandoffs, state.PlanHandoffs} {
+		for _, handoff := range handoffs {
+			if watchHandoffOpen(handoff) && handoff.ReviewRequestedAt != nil && handoff.ReviewRejectedAt == nil {
+				return true
+			}
+		}
+	}
+	for _, decision := range state.Decisions {
+		if decision.Kind == "goal_review" && decision.Status == "applied" && decision.AnswerLabel == "approve" && watchReconciliationHasActiveGoal(state, decision.GoalID) {
+			return true
+		}
+	}
+	return false
+}
+
+func watchSubcommanderLivenessActionable(scope watchScope, state watchReconciliation) bool {
+	for _, handoff := range state.TaskCreateHandoffs {
+		if watchTaskCreateHandoffMatchesGoal(scope, handoff) && handoff.CompletedAt == nil {
+			return true
+		}
+	}
+	for _, handoff := range state.TaskHandoffs {
+		if !watchHandoffMatchesGoal(scope, handoff) || !watchHandoffOpen(handoff) {
+			continue
+		}
+		if handoff.ReviewRequestedAt != nil || handoff.ReviewRejectedAt != nil {
+			return true
+		}
+	}
+	if watchGoalHasOpenTaskHandoff(scope, state) {
+		return false
+	}
+	for _, handoffs := range [][]watchReconciliationHandoff{state.GoalHandoffs, state.PlanHandoffs} {
+		for _, handoff := range handoffs {
+			if !watchHandoffMatchesGoal(scope, handoff) || !watchHandoffOpen(handoff) {
+				continue
+			}
+			if handoff.ReviewRejectedAt != nil {
+				return true
+			}
+			if handoff.ReviewRequestedAt != nil {
+				return false
+			}
+			if handoff.ReceivedAt != nil {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func watchExecutorLivenessActionable(scope watchScope, state watchReconciliation) bool {
+	for _, handoff := range state.TaskHandoffs {
+		if !watchHandoffMatchesTask(scope, handoff) || !watchHandoffOpen(handoff) || handoff.ReceivedAt == nil {
+			continue
+		}
+		if handoff.ReviewRequestedAt == nil || handoff.ReviewRejectedAt != nil {
+			return true
+		}
+	}
+	return false
+}
+
+func watchGoalHasOpenTaskHandoff(scope watchScope, state watchReconciliation) bool {
+	for _, handoff := range state.TaskHandoffs {
+		if watchHandoffMatchesGoal(scope, handoff) && watchHandoffOpen(handoff) {
+			return true
+		}
+	}
+	return false
+}
+
+func watchHandoffOpen(handoff watchReconciliationHandoff) bool {
+	return handoff.CompletedReportAt == nil
+}
+
+func watchHandoffMatchesGoal(scope watchScope, handoff watchReconciliationHandoff) bool {
+	return scope.GoalID == strconv.FormatInt(handoff.GoalID, 10)
+}
+
+func watchHandoffMatchesTask(scope watchScope, handoff watchReconciliationHandoff) bool {
+	return watchHandoffMatchesGoal(scope, handoff) && scope.TaskID == strconv.FormatInt(handoff.TaskID, 10)
+}
+
+func watchTaskCreateHandoffMatchesGoal(scope watchScope, handoff watchTaskCreateHandoff) bool {
+	return scope.GoalID == strconv.FormatInt(handoff.GoalID, 10)
 }
 
 func scopedOpenDecision(scope watchScope, state watchReconciliation) bool {
