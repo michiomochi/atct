@@ -26,7 +26,7 @@ flowchart LR
     S -->|作業なし| X[停止を許可]
 ```
 
-30 秒ごとに走る daemon maintenance は、通知を必ず 30 秒ごとに出すものではない。各通知には
+30 秒ごとに走る wakeup 評価は、通知を必ず 30 秒ごとに出すものではない。各通知には
 別の発生条件と待ち時間があり、watch も重複を抑止する。
 
 ## 1. session を開始し、停止を判定する
@@ -180,7 +180,7 @@ handoff して終了し、新しい explicit monitor process を起動する。
 
 | 責務 | 主な実装 |
 | --- | --- |
-| maintenance、wakeup、detection、monitor lost | `internal/daemon/wakeup.go`、`internal/store/wakeup.go` |
+| wakeup、detection、monitor lost | `internal/daemon/wakeup.go`、`internal/store/wakeup.go` |
 | SSE と scope filter、重複抑止、liveness | `cmd/atct/watch.go`、`cmd/atct/watch_scope.go`、`internal/httpapi/server.go` |
 | Codex monitor / bridge | `cmd/atct/codex_monitor*.go`、`cmd/atct/codex_monitor_supervisor.go` |
 | SessionStart / Stop hook | `hooks/session-start`、`hooks/stop`、`hooks/codex-hooks.json` |
