@@ -23,7 +23,8 @@ CREATE TABLE IF NOT EXISTS agent_sessions (
   discarded_at  TEXT,
   discarded_by  INTEGER REFERENCES agent_sessions(id),
   discarded_decision_id INTEGER REFERENCES decisions(id),
-  discard_reason TEXT NOT NULL DEFAULT ''
+  discard_reason TEXT NOT NULL DEFAULT '',
+  development_mode INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS idx_agent_sessions_project_registered_at

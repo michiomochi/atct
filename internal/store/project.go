@@ -39,6 +39,15 @@ func (s *Store) CreateProject(ctx context.Context, name, rootPath string) (domai
 }
 
 func (s *Store) ClaimProject(ctx context.Context, projectID int64, agentSessionID int64) (domain.Project, error) {
+	return s.claimProject(ctx, projectID, agentSessionID, false)
+}
+
+// ForceClaimProject transfers a project claim even when the current holder is live.
+func (s *Store) ForceClaimProject(ctx context.Context, projectID int64, agentSessionID int64) (domain.Project, error) {
+	return s.claimProject(ctx, projectID, agentSessionID, true)
+}
+
+func (s *Store) claimProject(ctx context.Context, projectID int64, agentSessionID int64, force bool) (domain.Project, error) {
 	id := projectID
 
 	currentRow, err := sqlcgen.New(s.db).GetProject(ctx, id)
@@ -49,7 +58,7 @@ func (s *Store) ClaimProject(ctx context.Context, projectID int64, agentSessionI
 		return domain.Project{}, fmt.Errorf("lookup project claim: %w", err)
 	}
 	currentClaim := currentRow.ClaimedBy
-	if agentSessionID != 0 && currentClaim != 0 && currentClaim != agentSessionID && claimIsRunning(ctx, s, currentClaim) {
+	if !force && agentSessionID != 0 && currentClaim != 0 && currentClaim != agentSessionID && claimIsRunning(ctx, s, currentClaim) {
 		return domain.Project{}, fmt.Errorf("%w: %d", ErrProjectAlreadyClaimed, projectID)
 	}
 
@@ -67,7 +76,7 @@ func (s *Store) ClaimProject(ctx context.Context, projectID int64, agentSessionI
 		}
 		return domain.Project{}, fmt.Errorf("lookup project claim: %w", err)
 	}
-	if agentSessionID != 0 && project.ClaimedBy != currentClaim && project.ClaimedBy != 0 {
+	if !force && agentSessionID != 0 && project.ClaimedBy != currentClaim && project.ClaimedBy != 0 {
 		return domain.Project{}, fmt.Errorf("%w: %d", ErrProjectAlreadyClaimed, projectID)
 	}
 

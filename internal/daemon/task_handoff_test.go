@@ -243,8 +243,8 @@ func TestTaskHandoffRoutesOverRPC(t *testing.T) {
 	if err == nil {
 		t.Fatalf("unclaimed handoff request succeeded: %#v", rejected)
 	}
-	if !strings.Contains(err.Error(), store.ErrTaskHandoffGoalNotHeld.Error()) {
-		t.Fatalf("unclaimed handoff request error = %v, want %v", err, store.ErrTaskHandoffGoalNotHeld)
+	if !strings.Contains(err.Error(), ErrRoleUnauthorized.Error()) {
+		t.Fatalf("unclaimed handoff request error = %v, want role authorization denial", err)
 	}
 }
 

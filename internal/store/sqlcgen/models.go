@@ -19,6 +19,7 @@ type AgentSession struct {
 	DiscardedBy         sql.NullInt64
 	DiscardedDecisionID sql.NullInt64
 	DiscardReason       string
+	DevelopmentMode     int64
 }
 
 type Decision struct {

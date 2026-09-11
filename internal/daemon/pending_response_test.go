@@ -313,7 +313,7 @@ func TestProjectScopedWritesRejectOtherProject(t *testing.T) {
 				"how_to_verify": "verify", "surprises": "none", "needs_review": "none",
 				"next_steps": "none", "agent_session_id": f.agentSessionID,
 			},
-			wantContains: []string{"goal completion denied", "not the commander"},
+			wantContains: []string{ErrRoleUnauthorized.Error()},
 		},
 	}
 

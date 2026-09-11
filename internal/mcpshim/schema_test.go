@@ -18,7 +18,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-func TestRegisterPublishesFortySixToolsWithFlexibleOutputSchema(t *testing.T) {
+func TestRegisterPublishesRoleAndLifecycleToolsWithFlexibleOutputSchema(t *testing.T) {
 	ctx := context.Background()
 	socketPath := startSchemaTestDaemon(t)
 	server := mcp.NewServer(&mcp.Implementation{Name: "atct-test", Version: "test"}, nil)
@@ -64,6 +64,7 @@ func TestRegisterPublishesFortySixToolsWithFlexibleOutputSchema(t *testing.T) {
 		"atct_project_claim":                      true,
 		"atct_project_release":                    true,
 		"atct_role":                               true,
+		"atct_development_start":                  true,
 		"atct_session_identify":                   true,
 		"atct_session_discard_request":            true,
 		"atct_session_discard":                    true,

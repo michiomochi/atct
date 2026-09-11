@@ -223,8 +223,8 @@ func TestGoalHandoffRoutesOverRPC(t *testing.T) {
 	if err == nil {
 		t.Fatalf("unclaimed goal handoff request succeeded: %#v", rejected)
 	}
-	if !strings.Contains(err.Error(), store.ErrGoalHandoffProjectNotHeld.Error()) {
-		t.Fatalf("unclaimed goal handoff request error = %v, want %v", err, store.ErrGoalHandoffProjectNotHeld)
+	if !strings.Contains(err.Error(), ErrRoleUnauthorized.Error()) {
+		t.Fatalf("unclaimed goal handoff request error = %v, want role authorization denial", err)
 	}
 }
 
@@ -673,8 +673,8 @@ func TestNamedGoalHandoffReviewReceiveRecoveryRoutesOverRPC(t *testing.T) {
 				if err == nil {
 					t.Fatalf("goal.handoff.review.receive unexpectedly succeeded: %#v", response)
 				}
-				if !strings.Contains(err.Error(), store.ErrGoalHandoffReviewReviewerMismatch.Error()) {
-					t.Fatalf("goal.handoff.review.receive error = %v, want %v", err, store.ErrGoalHandoffReviewReviewerMismatch)
+				if !strings.Contains(err.Error(), ErrRoleUnauthorized.Error()) && !strings.Contains(err.Error(), store.ErrGoalHandoffReviewReviewerMismatch.Error()) {
+					t.Fatalf("goal.handoff.review.receive error = %v, want role authorization or reviewer mismatch", err)
 				}
 				after, getErr := fixture.store.GetGoalHandoff(ctx, handoffID)
 				if getErr != nil {
@@ -869,8 +869,8 @@ func TestNamedGoalReviewRequiresCommanderAndHumanApprovalOrdering(t *testing.T) 
 	var subcommanderDone domain.Goal
 	if err := client.Call(ctx, "goal.review.complete", subcommanderParams, &subcommanderDone); err == nil {
 		t.Fatalf("subcommander goal.review.complete succeeded: %+v", subcommanderDone)
-	} else if !strings.Contains(err.Error(), "commander") {
-		t.Fatalf("subcommander goal.review.complete error = %v, want commander-only denial", err)
+	} else if !strings.Contains(err.Error(), ErrRoleUnauthorized.Error()) {
+		t.Fatalf("subcommander goal.review.complete error = %v, want role authorization denial", err)
 	}
 
 	var done domain.Goal

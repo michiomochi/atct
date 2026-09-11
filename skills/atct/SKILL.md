@@ -9,7 +9,19 @@ ATCT records what you are working on and routes your questions to a human's
 inbox. Registering tools is not enough; the value comes from calling them at
 the right moments.
 
+Follow `doc/execution-flow.md` for the ATCT execution flow.
+
 ## Roles
+
+### Development escalation
+
+Only `atct:dev:start` may call `atct_development_start`; this marks the current
+agent session as development mode. An executor escalates to its subcommander,
+and a subcommander escalates to its commander. In that mode only, a
+subcommander may resolve executor work in its Goal and a commander may resolve
+subcommander work in its Project; a commander never performs executor work.
+After resolution, create a remediation Goal with the cause, resolution, and
+verification, then return to the normal spec → plan → review flow.
 
 Role values for `expected_role`: `commander`, `subcommander`, `executor`.
 
@@ -24,6 +36,20 @@ The daemon derives the role in this order:
 | `commander` | triage incoming work / split goals / prepare a working area / review landed changes / publish / resolve conflicts / clean up | design the goal / implement the goal / edit executor deliverables |
 | `subcommander` | design the goal / delegate the goal's work / review implementation / report completion for the goal / issue decisions to the human / commit the goal's work / close a task its worker cannot | inspect or manage other goals / publish / create another subcommander / claim the project |
 | `executor` | implement / test / close the task it was given | make design decisions / re-delegate / commit / write internal version-control details |
+
+## Role-specific skills
+
+After identifying the session, call `atct_role` before role-specific work. If
+the result does not match, do not work: return the handoff or let the caller
+recover its claim. If it matches, invoke exactly one skill:
+
+- `commander` → `atct:commander`
+- `subcommander` → `atct:subcommander`
+- `executor` → `atct:executor`
+
+This skill is the SSOT for role derivation, claims, handoffs, worktrees,
+decisions, irreversible operations, and completion records. Role skills own
+only their role's operations and must not restate or override these rules.
 
 ## Declare before you work
 

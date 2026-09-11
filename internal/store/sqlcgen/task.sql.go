@@ -299,6 +299,17 @@ func (q *Queries) DeleteExpiredAgentSessionsExcept(ctx context.Context, arg Dele
 	return err
 }
 
+const developmentModeEnabled = `-- name: DevelopmentModeEnabled :one
+SELECT development_mode FROM agent_sessions WHERE id = ?
+`
+
+func (q *Queries) DevelopmentModeEnabled(ctx context.Context, id int64) (int64, error) {
+	row := q.db.QueryRowContext(ctx, developmentModeEnabled, id)
+	var development_mode int64
+	err := row.Scan(&development_mode)
+	return development_mode, err
+}
+
 const dropOpenTasksForGoal = `-- name: DropOpenTasksForGoal :execresult
 UPDATE tasks SET status = 'dropped', updated_at = ?
 WHERE goal_id = ? AND status IN ('todo', 'doing')
@@ -311,6 +322,14 @@ type DropOpenTasksForGoalParams struct {
 
 func (q *Queries) DropOpenTasksForGoal(ctx context.Context, arg DropOpenTasksForGoalParams) (sql.Result, error) {
 	return q.db.ExecContext(ctx, dropOpenTasksForGoal, arg.UpdatedAt, arg.GoalID)
+}
+
+const enableDevelopmentMode = `-- name: EnableDevelopmentMode :execresult
+UPDATE agent_sessions SET development_mode = 1 WHERE id = ?
+`
+
+func (q *Queries) EnableDevelopmentMode(ctx context.Context, id int64) (sql.Result, error) {
+	return q.db.ExecContext(ctx, enableDevelopmentMode, id)
 }
 
 const getAgentSessionIDByKey = `-- name: GetAgentSessionIDByKey :one

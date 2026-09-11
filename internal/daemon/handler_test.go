@@ -259,6 +259,50 @@ func TestSessionRoleDerivesFromClaims(t *testing.T) {
 	}
 }
 
+func TestDispatchProjectClaimForceTakesOverLiveClaim(t *testing.T) {
+	fixture := newGoalListFixture(t)
+	defer fixture.store.Close()
+
+	const (
+		current = "force-project-claim-current"
+		next    = "force-project-claim-next"
+	)
+	registerLiveGoalClaimSession(t, fixture, current)
+	registerLiveGoalClaimSession(t, fixture, next)
+	if _, err := claimProjectForTest(t, fixture, fixture.project.ID, current); err != nil {
+		t.Fatalf("initial project.claim: %v", err)
+	}
+
+	params, err := json.Marshal(map[string]any{
+		"project_id":       fixture.project.ID,
+		"agent_session_id": daemonTestSessionID(t, fixture.store, next),
+		"force":            true,
+	})
+	if err != nil {
+		t.Fatalf("marshal forced project.claim: %v", err)
+	}
+	if _, err := fixture.daemon.dispatch(context.Background(), rpc.Request{Method: "project.claim", Params: params}); err != nil {
+		t.Fatalf("forced project.claim: %v", err)
+	}
+	params, err = json.Marshal(map[string]any{"agent_session_id": daemonTestSessionID(t, fixture.store, next)})
+	if err != nil {
+		t.Fatalf("marshal session.role: %v", err)
+	}
+	raw, err := fixture.daemon.dispatch(context.Background(), rpc.Request{Method: "session.role", Params: params})
+	if err != nil {
+		t.Fatalf("session.role: %v", err)
+	}
+	var role struct {
+		Role string `json:"role"`
+	}
+	if err := json.Unmarshal(raw, &role); err != nil {
+		t.Fatalf("decode session.role: %v", err)
+	}
+	if role.Role != "commander" {
+		t.Fatalf("forced claimant role = %q, want commander", role.Role)
+	}
+}
+
 func ageAgentSessionForTest(t *testing.T, fixture goalListFixture, sessionID string) {
 	t.Helper()
 	old := time.Now().UTC().Add(-time.Hour).Format(time.RFC3339Nano)
@@ -288,8 +332,8 @@ func TestGoalCompleteDeniesSessionWithoutGoalHandoff(t *testing.T) {
 	}
 	if _, err := fixture.daemon.dispatch(context.Background(), rpc.Request{Method: "goal.complete", Params: params}); err == nil {
 		t.Fatal("goal.complete unexpectedly succeeded without a goal handoff")
-	} else if !strings.Contains(err.Error(), fmt.Sprint(sessionID)) || !strings.Contains(err.Error(), fmt.Sprint(goalID)) {
-		t.Fatalf("goal.complete error = %v, want session %v and goal %v", err, sessionID, goalID)
+	} else if !errors.Is(err, ErrRoleUnauthorized) {
+		t.Fatalf("goal.complete error = %v, want ErrRoleUnauthorized", err)
 	}
 
 	goal, err := fixture.store.GetGoal(context.Background(), goalID)
@@ -335,10 +379,8 @@ func TestGoalCompleteDeniesNonCommanderOfAnotherGoal(t *testing.T) {
 	if _, err := fixture.daemon.dispatch(context.Background(), rpc.Request{Method: "goal.complete", Params: params}); err == nil {
 		t.Fatal("goal.complete unexpectedly succeeded for another goal holder")
 	} else {
-		for _, want := range []string{"not the commander", fmt.Sprint(callerID), fmt.Sprint(goalB.ID)} {
-			if !strings.Contains(err.Error(), want) {
-				t.Fatalf("goal.complete error = %v, want %q", err, want)
-			}
+		if !errors.Is(err, ErrRoleUnauthorized) {
+			t.Fatalf("goal.complete error = %v, want ErrRoleUnauthorized", err)
 		}
 	}
 
@@ -375,8 +417,8 @@ func TestGoalCompleteDeniesGoalClaimHolder(t *testing.T) {
 	}
 	if _, err := fixture.daemon.dispatch(context.Background(), rpc.Request{Method: "goal.complete", Params: params}); err == nil {
 		t.Fatal("goal.complete unexpectedly succeeded for a non-commander goal claimant")
-	} else if !strings.Contains(err.Error(), "not the commander") || !strings.Contains(err.Error(), fmt.Sprint(goalID)) {
-		t.Fatalf("goal.complete error = %v, want commander-only denial", err)
+	} else if !errors.Is(err, ErrRoleUnauthorized) {
+		t.Fatalf("goal.complete error = %v, want ErrRoleUnauthorized", err)
 	}
 }
 
@@ -2251,7 +2293,7 @@ func TestHandoffSequenceRequiresReceiveBeforeRole(t *testing.T) {
 			"handoff_id":   "handoff-sequence-n3-goal",
 			"goal_id":      fixture.taskGoal.ID,
 			"requested_by": daemonTestSessionID(t, fixture.store, sessionID),
-		}, "caller does not hold a live claim on project")
+		}, ErrRoleUnauthorized.Error())
 	})
 
 	t.Run("n4-unclaimed-task-handoff-request", func(t *testing.T) {
@@ -2264,6 +2306,6 @@ func TestHandoffSequenceRequiresReceiveBeforeRole(t *testing.T) {
 			"handoff_id":   "handoff-sequence-n4-task",
 			"task_id":      fixture.tasks[1].ID,
 			"requested_by": daemonTestSessionID(t, fixture.store, sessionID),
-		}, "caller does not hold an open received handoff for goal")
+		}, ErrRoleUnauthorized.Error())
 	})
 }

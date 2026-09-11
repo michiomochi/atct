@@ -21,6 +21,16 @@ been installed and `atct_session_identify` is not yet in the tool list because
 MCP has not reconnected, use the recovery section in `skills/atct/SKILL.md` once
 the tools are available.
 
+## Claim the project as commander
+
+Call `atct_goal_list` with the current directory and take `data.project.id` from
+its response. Then call `atct_project_claim` with `force` set to `true` and that
+project ID. Finally call `atct_role` with `expected_role` set to `commander`.
+Do all three before attaching a monitor or touching a Goal. The forced claim
+replaces a live project claim, and the resulting project claim makes this
+`/atct:start` session the commander even when it already holds a goal handoff.
+Then invoke `atct:commander` before continuing.
+
 ## Claude Code: attach the Monitor
 
 After identifying the session, attach a role-appropriate Claude Monitor using

@@ -19,6 +19,8 @@ type GoalListIn struct {
 	Cwd string `json:"cwd" jsonschema:"agent working directory; used to derive the project automatically"`
 }
 
+type DevelopmentStartIn struct{}
+
 type GoalGetIn struct {
 	GoalID mcpID `json:"goal_id"`
 }
@@ -37,6 +39,7 @@ type GoalReleaseIn struct {
 
 type ProjectClaimIn struct {
 	ProjectID mcpID `json:"project_id"`
+	Force     bool  `json:"force,omitempty" jsonschema:"replace a live project claim with this session"`
 }
 
 type ProjectReleaseIn struct {
@@ -614,6 +617,13 @@ func Register(server *mcp.Server, c *Client, agentSessionID int64) {
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in SessionIdentifyIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
 		return callSessionIdentify(ctx, c, in, sessionID)
 	})
+	addMCPTool[DevelopmentStartIn, RawWithUnappliedDecisions](server, &mcp.Tool{
+		Name:         "atct_development_start",
+		Description:  "Enable the recorded development escalation capability for this identified session.",
+		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in DevelopmentStartIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
+		return callWithUnappliedDecisions(ctx, c, "development.start", map[string]any{"agent_session_id": sessionID.Get()})
+	})
 
 	addMCPTool[SessionDiscardRequestIn, RawWithUnappliedDecisions](server, &mcp.Tool{
 		Name:         "atct_session_discard_request",
@@ -665,11 +675,11 @@ func Register(server *mcp.Server, c *Client, agentSessionID int64) {
 
 	addMCPTool[ProjectClaimIn, RawWithUnappliedDecisions](server, &mcp.Tool{
 		Name:         "atct_project_claim",
-		Description:  "Claim a project for this agent session. A live claim from another session is refused; a dead session's claim is taken over.",
+		Description:  "Claim a project for this agent session. Set force only when this session must replace a live project claim.",
 		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in ProjectClaimIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
 		return callClaimWithRole(ctx, c, "project.claim", map[string]any{
-			"project_id": in.ProjectID, "agent_session_id": sessionID.Get(), "include_unapplied_answers": true,
+			"project_id": in.ProjectID, "force": in.Force, "agent_session_id": sessionID.Get(), "include_unapplied_answers": true,
 		}, sessionID.Get())
 	})
 

@@ -187,8 +187,8 @@ func TestGoalCompleteDeniesSubcommanderEvenWithGoalHandoff(t *testing.T) {
 	if err == nil {
 		t.Fatal("subcommander goal.complete unexpectedly succeeded")
 	}
-	if !strings.Contains(err.Error(), "commander") || !strings.Contains(err.Error(), fmt.Sprint(subcommanderID)) {
-		t.Fatalf("goal.complete error = %v, want commander-only denial for session %d", err, subcommanderID)
+	if !errors.Is(err, ErrRoleUnauthorized) {
+		t.Fatalf("goal.complete error = %v, want ErrRoleUnauthorized", err)
 	}
 }
 

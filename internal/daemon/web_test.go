@@ -169,7 +169,7 @@ func TestHTTPHandlerMCPInitializeReturnsStreamableResponse(t *testing.T) {
 	}
 }
 
-func TestHTTPHandlerMCPListsFiftyOneTools(t *testing.T) {
+func TestHTTPHandlerMCPListsFiftyTwoTools(t *testing.T) {
 	fixture := newMCPHTTPTestServer(t)
 	client := newMCPHTTPTestClient(fixture.server.URL + "/mcp")
 	client.initialize(t)
@@ -181,11 +181,12 @@ func TestHTTPHandlerMCPListsFiftyOneTools(t *testing.T) {
 	if !ok {
 		t.Fatalf("tools/list result.tools = %T, want array", result["tools"])
 	}
-	if len(tools) != 51 {
-		t.Fatalf("tools/list returned %d tools, want 51", len(tools))
+	if len(tools) != 52 {
+		t.Fatalf("tools/list returned %d tools, want 52", len(tools))
 	}
 	wantNames := map[string]bool{
 		"atct_role":                               false,
+		"atct_development_start":                  false,
 		"atct_session_discard_request":            false,
 		"atct_session_discard":                    false,
 		"atct_handoff_recover":                    false,
@@ -393,34 +394,8 @@ func TestHTTPHandlerMCPGoalHandoffRoutes(t *testing.T) {
 			"handoff_id": "mcp-goal-handoff-1", "goal_id": claimedGoal.ID, "review_request_report": "Verified goal handoff review request through the MCP HTTP route.",
 		},
 	}))
-	if reviewRequest["isError"] == true {
-		t.Fatalf("goal handoff review request returned an error result: %#v", reviewRequest)
-	}
-	reviewReceive := mcpResult(t, client.call(t, "tools/call", map[string]any{
-		"name": "atct_goal_handoff_review_receive",
-		"arguments": map[string]any{
-			"handoff_id": "mcp-goal-handoff-1", "goal_id": claimedGoal.ID,
-		},
-	}))
-	if reviewReceive["isError"] == true {
-		t.Fatalf("goal handoff review receive returned an error result: %#v", reviewReceive)
-	}
-
-	complete := mcpResult(t, client.call(t, "tools/call", map[string]any{
-		"name": "atct_goal_handoff_complete",
-		"arguments": map[string]any{
-			"handoff_id": "mcp-goal-handoff-1", "goal_id": claimedGoal.ID, "complete_report": "Verified goal handoff completion through the MCP HTTP route.",
-		},
-	}))
-	if complete["isError"] == true {
-		t.Fatalf("goal handoff complete returned an error result: %#v", complete)
-	}
-	completed, err := fixture.store.GetGoalHandoff(ctx, "mcp-goal-handoff-1")
-	if err != nil {
-		t.Fatalf("GetGoalHandoff after complete: %v", err)
-	}
-	if completed.CompletedReportAt == nil {
-		t.Fatalf("completed handoff = %#v, want completion timestamp", completed)
+	if reviewRequest["isError"] != true {
+		t.Fatalf("single commander session unexpectedly submitted a subcommander review: %#v", reviewRequest)
 	}
 
 	rejected := mcpResult(t, client.call(t, "tools/call", map[string]any{

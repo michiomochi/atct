@@ -188,6 +188,12 @@ SELECT pid, started_at
 FROM agent_sessions
 WHERE id = ?;
 
+-- name: EnableDevelopmentMode :execresult
+UPDATE agent_sessions SET development_mode = 1 WHERE id = ?;
+
+-- name: DevelopmentModeEnabled :one
+SELECT development_mode FROM agent_sessions WHERE id = ?;
+
 -- name: GetTaskHandoff :one
 SELECT id, task_id, requested_by, received_by,
        requested_at, received_at, completed_report_at,
