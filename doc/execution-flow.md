@@ -90,7 +90,7 @@ flowchart TD
         C2[2. subcommander の作業場所を用意]
         C3[3. atct_goal_handoff_request<br/>goal handoff を作成]
         C4[4. subcommander を起動]
-        C5[9-11. plan をレビューして完了]
+        C5[9. atct_plan_handoff_review_receive<br/>10-11. レビューして atct_plan_handoff_complete]
         C6[24-26. goal をレビューして handoff を閉じる]
         C7[27. atct_goal_review_request]
         C8[28-30. 承認後にマージ、完成報告、後片付け]
@@ -100,6 +100,7 @@ flowchart TD
         S1[5. atct_goal_handoff_receive]
         S2[6. atct watch -goal]
         S3[7-8. atct_plan_handoff_review_request<br/>plan handoff を作成]
+        S3R[atct_plan_handoff_review_reject_receive]
         S4[12. atct_task_create_handoff_receive<br/>task-create handoff を受領]
         S5[13. atct_task_create<br/>task-create handoff を完了]
         S6[14. atct_task_handoff_request<br/>task handoff を作成]
@@ -117,7 +118,7 @@ flowchart TD
     G --> C1 --> C2 --> C3 --> C4 --> S1 --> S2 --> S3 --> C5 --> TC --> S4 --> S5 --> S6 --> E1 --> E2 --> E3 --> S7
     S7 -->|未委譲の task がある| S6
     S7 -->|全 task が done| S8 --> C6 --> C7 --> C8
-    C5 -->|差し戻し| S3
+    C5 -->|atct_plan_handoff_review_reject| S3R --> S3
     S7 -->|差し戻し| E2
 ```
 
@@ -125,7 +126,10 @@ flowchart TD
 
 1. ゴールごとの worktree を用意する。
 2. subcommander の作業場所を用意し、`atct_goal_handoff_request` を記録してから起動する。
-3. plan review と goal review を通知から受領し、設計・実装成果物をレビューする。
+3. plan review の通知を受けたら `atct_plan_handoff_review_receive` で受領して設計を
+   レビューし、受理なら `atct_plan_handoff_complete`、差し戻しなら
+   `atct_plan_handoff_review_reject` を呼ぶ。goal review も通知から受領して実装成果物を
+   レビューする。
 4. goal handoff を受理して閉じた要約を記録する。
 5. 人間に `atct_goal_review_request` を出す。承認後に main へマージし、
    `atct_goal_complete` へ唯一の 6 部完成報告を書き、worktree と subcommander を片付ける。
@@ -140,6 +144,8 @@ flowchart TD
 3. `superpowers:brainstorming` と `superpowers:writing-plans` で設計し、
    canonical spec と plan を `atct_goal_update_request_report` へ保存して
    `atct_plan_handoff_review_request` で plan handoff を作成する。
+   差し戻しを受けた場合は `atct_plan_handoff_review_reject_receive` を呼んでから、
+   修正した plan の review request を作成する。
 4. plan handoff の完了で生成された task-create handoff を
    `atct_task_create_handoff_receive` で受領し、その `handoff_id` を渡して
    `atct_task_create` で task を作る。
