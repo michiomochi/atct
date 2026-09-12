@@ -49,6 +49,7 @@ canonical な agent session を確定し、receive は role と claim evidence �
 | レビュー受領 | レビューする側 | `atct_goal_handoff_review_receive` | `atct_plan_handoff_review_receive` | `atct_task_handoff_review_receive` |
 | 完了 | 渡した側 | `atct_goal_handoff_complete` | `atct_plan_handoff_complete` | `atct_task_handoff_complete` |
 | 差し戻し | 渡した側 | `atct_goal_handoff_review_reject` | `atct_plan_handoff_review_reject` | `atct_task_handoff_review_reject` |
+| 差し戻し受領 | 作業する側 | `atct_goal_handoff_review_reject_receive` | `atct_plan_handoff_review_reject_receive` | `atct_task_handoff_review_reject_receive` |
 
 | handoff | 誰から誰へ | レビューする者 |
 |---|---|---|
@@ -112,6 +113,7 @@ flowchart TD
         E1[15. atct_task_handoff_receive]
         E2[16. 実装とテスト]
         E3[17. atct_task_handoff_review_request]
+        E4[atct_task_handoff_review_reject_receive]
     end
 
     TC[task.create_handoff.request<br/>task-create handoff を作成<br/>plan 完了時に daemon が自動生成]
@@ -119,7 +121,7 @@ flowchart TD
     S7 -->|未委譲の task がある| S6
     S7 -->|全 task が done| S8 --> C6 --> C7 --> C8
     C5 -->|atct_plan_handoff_review_reject| S3R --> S3
-    S7 -->|差し戻し| E2
+    S7 -->|atct_task_handoff_review_reject| E4 --> E2
 ```
 
 ### commander
@@ -163,7 +165,8 @@ flowchart TD
 2. `superpowers:test-driven-development` に従って実装とテストを行う。
 3. `superpowers:verification-before-completion` の検証後、
    `atct_task_handoff_review_request` を出す。
-4. 差し戻された場合は同じ task handoff で修正し、再び review request を出す。
+4. 差し戻された場合は `atct_task_handoff_review_reject_receive` を呼び、同じ task
+   handoff で修正して再び review request を出す。
 
 ## 人間のレビュー
 
