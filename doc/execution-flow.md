@@ -145,7 +145,8 @@ flowchart TD
    canonical spec と plan を `atct_goal_update_request_report` へ保存して
    `atct_plan_handoff_review_request` で plan handoff を作成する。
    差し戻しを受けた場合は `atct_plan_handoff_review_reject_receive` を呼んでから、
-   修正した plan の review request を作成する。
+   同じ `handoff_id` で `atct_plan_handoff_review_request` を呼び、修正した plan の
+   review を再開する。この遷移は既存の plan handoff を再利用し、新しい handoff は作らない。
 4. plan handoff の完了で生成された task-create handoff を
    `atct_task_create_handoff_receive` で受領し、その `handoff_id` を渡して
    `atct_task_create` で task を作る。
