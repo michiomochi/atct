@@ -640,6 +640,66 @@ func TestSessionIdentifyKeepsTransportIDWhenDaemonReturnsEmpty(t *testing.T) {
 	}
 }
 
+func TestCanonicalHandoffReceiveIdentifiesStableSession(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name string
+		args map[string]any
+	}{
+		{
+			name: "atct_task_handoff_receive",
+			args: map[string]any{"handoff_id": "task-handoff-1", "task_id": "task-1", "session_key": "receiver-key", "monitor_token": "token-1"},
+		},
+		{
+			name: "atct_goal_handoff_receive",
+			args: map[string]any{"handoff_id": "goal-handoff-1", "goal_id": "goal-1", "session_key": "receiver-key", "monitor_token": "token-1"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			socketPath, calls := startCapturingSchemaTestDaemon(t)
+			server := mcp.NewServer(&mcp.Implementation{Name: "atct-test", Version: "test"}, nil)
+			mcpshim.Register(server, mcpshim.NewClient(socketPath), 4)
+
+			clientTransport, serverTransport := mcp.NewInMemoryTransports()
+			serverSession, err := server.Connect(ctx, serverTransport, nil)
+			if err != nil {
+				t.Fatalf("server.Connect: %v", err)
+			}
+			defer serverSession.Close()
+			client := mcp.NewClient(&mcp.Implementation{Name: "schema-test", Version: "test"}, nil)
+			clientSession, err := client.Connect(ctx, clientTransport, nil)
+			if err != nil {
+				t.Fatalf("client.Connect: %v", err)
+			}
+			defer clientSession.Close()
+
+			result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{Name: tc.name, Arguments: tc.args})
+			if err != nil {
+				t.Fatalf("CallTool(%s): %v", tc.name, err)
+			}
+			if result == nil || result.IsError {
+				t.Fatalf("CallTool(%s) returned error result: %+v", tc.name, result)
+			}
+
+			identifyCall := <-calls
+			if identifyCall.method != "session.identify" {
+				t.Fatalf("first RPC method = %q, want session.identify", identifyCall.method)
+			}
+			if got := identifyCall.params["session_key"]; got != "receiver-key" {
+				t.Errorf("session.identify session_key = %#v, want receiver-key", got)
+			}
+			if got := identifyCall.params["monitor_token"]; got != "token-1" {
+				t.Errorf("session.identify monitor_token = %#v, want token-1", got)
+			}
+
+			receiveCall := <-calls
+			if got := receiveCall.params["received_by"]; got != float64(9) {
+				t.Errorf("receive received_by = %#v, want canonical session 9", got)
+			}
+		})
+	}
+}
+
 func TestTaskReleaseInjectsAgentSessionID(t *testing.T) {
 	ctx := context.Background()
 	socketPath, calls := startCapturingSchemaTestDaemon(t)
@@ -817,12 +877,13 @@ func TestNamedHandoffReviewToolsExposeCanonicalSchemas(t *testing.T) {
 
 	want := map[string][]string{
 		"atct_task_handoff_request":               {"handoff_id", "task_id", "request_report"},
-		"atct_task_handoff_receive":               {"handoff_id", "task_id"},
+		"atct_task_handoff_receive":               {"handoff_id", "task_id", "session_key", "monitor_token"},
 		"atct_task_handoff_review_request":        {"handoff_id", "task_id", "review_request_report"},
 		"atct_task_handoff_review_receive":        {"handoff_id", "task_id"},
 		"atct_task_handoff_complete":              {"handoff_id", "task_id", "complete_report"},
 		"atct_task_handoff_review_reject":         {"handoff_id", "task_id", "reject_report"},
 		"atct_task_handoff_review_reject_receive": {"handoff_id", "task_id"},
+		"atct_goal_handoff_receive":               {"handoff_id", "goal_id", "session_key", "monitor_token"},
 		"atct_goal_handoff_review_request":        {"handoff_id", "goal_id", "review_request_report"},
 		"atct_goal_handoff_review_receive":        {"handoff_id", "goal_id"},
 		"atct_goal_handoff_review_reject":         {"handoff_id", "goal_id", "reject_report"},
@@ -866,6 +927,25 @@ func TestNamedHandoffReviewToolsExposeCanonicalSchemas(t *testing.T) {
 		for _, field := range fields {
 			if _, ok := properties[field]; !ok {
 				t.Errorf("%s omitted input field %q", name, field)
+			}
+		}
+		if name == "atct_task_handoff_receive" || name == "atct_goal_handoff_receive" {
+			required, ok := inputSchema["required"].([]any)
+			if !ok {
+				t.Errorf("%s input required = %T, want array", name, inputSchema["required"])
+				continue
+			}
+			requiredFields := make(map[string]bool, len(required))
+			for _, field := range required {
+				if field, ok := field.(string); ok {
+					requiredFields[field] = true
+				}
+			}
+			if !requiredFields["session_key"] {
+				t.Errorf("%s must require session_key", name)
+			}
+			if requiredFields["monitor_token"] {
+				t.Errorf("%s must allow an omitted monitor_token", name)
 			}
 		}
 		for _, ownedField := range []string{"requested_by", "received_by", "reviewer_id", "agent_session_id"} {

@@ -4,7 +4,15 @@ import "testing"
 
 func TestSessionKeyMessageIncludesMonitorToken(t *testing.T) {
 	got := sessionKeyMessageWithMonitorToken("codex-session-1", "token-1")
-	want := "ATCT session key: codex-session-1. Before any other ATCT operation, call atct_session_identify with this exact session_key and monitor_token token-1.\n"
+	want := "ATCT session key: codex-session-1. When receiving a task or goal handoff, pass this exact session_key and monitor_token token-1 to its receive tool. Otherwise, call atct_session_identify with them before other ATCT operations.\n"
+	if got != want {
+		t.Fatalf("sessionKeyMessageWithMonitorToken = %q, want %q", got, want)
+	}
+}
+
+func TestSessionKeyMessageDirectsReceiveWithoutMonitorToken(t *testing.T) {
+	got := sessionKeyMessageWithMonitorToken("codex-session-1", "")
+	want := "ATCT session key: codex-session-1. When receiving a task or goal handoff, pass this exact session_key to its receive tool. Otherwise, call atct_session_identify with it before other ATCT operations.\n"
 	if got != want {
 		t.Fatalf("sessionKeyMessageWithMonitorToken = %q, want %q", got, want)
 	}

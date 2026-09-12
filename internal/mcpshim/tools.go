@@ -97,8 +97,10 @@ type HandoffReceiveIn struct {
 }
 
 type TaskHandoffReceiveIn struct {
-	HandoffID string `json:"handoff_id"`
-	TaskID    mcpID  `json:"task_id"`
+	HandoffID    string `json:"handoff_id"`
+	TaskID       mcpID  `json:"task_id"`
+	SessionKey   string `json:"session_key"`
+	MonitorToken string `json:"monitor_token,omitempty"`
 }
 
 type HandoffCompleteIn struct {
@@ -143,8 +145,10 @@ type GoalHandoffRequestIn struct {
 }
 
 type GoalHandoffReceiveIn struct {
-	HandoffID string `json:"handoff_id,omitempty"`
-	GoalID    mcpID  `json:"goal_id"`
+	HandoffID    string `json:"handoff_id,omitempty"`
+	GoalID       mcpID  `json:"goal_id"`
+	SessionKey   string `json:"session_key"`
+	MonitorToken string `json:"monitor_token,omitempty"`
 }
 
 type GoalHandoffCompleteIn struct {
@@ -600,6 +604,14 @@ func callSessionIdentify(ctx context.Context, c *Client, in SessionIdentifyIn, a
 	return nil, RawWithUnappliedDecisions{Data: json.RawMessage(raw)}, nil
 }
 
+func identifyHandoffReceiver(ctx context.Context, c *Client, sessionID *agentSessionIDHolder, sessionKey, monitorToken string) error {
+	_, _, err := callSessionIdentify(ctx, c, SessionIdentifyIn{
+		SessionKey:   sessionKey,
+		MonitorToken: monitorToken,
+	}, sessionID)
+	return err
+}
+
 func validRole(role string) bool {
 	switch role {
 	case "commander", "subcommander", "executor":
@@ -857,6 +869,9 @@ func Register(server *mcp.Server, c *Client, agentSessionID int64) {
 		Description:  "Receive a task handoff and return the derived role and claim evidence.",
 		OutputSchema: rawOutputSchemaWithRoleEvidence(),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in TaskHandoffReceiveIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
+		if err := identifyHandoffReceiver(ctx, c, sessionID, in.SessionKey, in.MonitorToken); err != nil {
+			return nil, RawWithUnappliedDecisions{}, err
+		}
 		return callWithUnappliedDecisions(ctx, c, "task.handoff.receive", map[string]any{
 			"handoff_id": in.HandoffID, "task_id": in.TaskID, "received_by": sessionID.Get(),
 		})
@@ -934,6 +949,9 @@ func Register(server *mcp.Server, c *Client, agentSessionID int64) {
 		Description:  "Record that a goal handoff was received.",
 		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in GoalHandoffReceiveIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
+		if err := identifyHandoffReceiver(ctx, c, sessionID, in.SessionKey, in.MonitorToken); err != nil {
+			return nil, RawWithUnappliedDecisions{}, err
+		}
 		params := map[string]any{
 			"goal_id": in.GoalID, "received_by": sessionID.Get(),
 		}

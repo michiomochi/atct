@@ -46,7 +46,7 @@ func sessionKeyMessageWithMonitorToken(sessionID, monitorToken string) string {
 	}
 	monitorToken = strings.TrimSpace(monitorToken)
 	if monitorToken != "" {
-		return fmt.Sprintf("ATCT session key: %s. Before any other ATCT operation, call atct_session_identify with this exact session_key and monitor_token %s.\n", sessionID, monitorToken)
+		return fmt.Sprintf("ATCT session key: %s. When receiving a task or goal handoff, pass this exact session_key and monitor_token %s to its receive tool. Otherwise, call atct_session_identify with them before other ATCT operations.\n", sessionID, monitorToken)
 	}
-	return fmt.Sprintf("ATCT session key: %s. Before any other ATCT operation, call atct_session_identify with this exact session_key.\n", sessionID)
+	return fmt.Sprintf("ATCT session key: %s. When receiving a task or goal handoff, pass this exact session_key to its receive tool. Otherwise, call atct_session_identify with it before other ATCT operations.\n", sessionID)
 }
