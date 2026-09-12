@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -21,6 +22,7 @@ var (
 	ErrVersionMismatch = errors.New("a daemon of a different version is already running")
 	ErrStartTimeout    = errors.New("the daemon did not become ready in time")
 	ErrUnresponsive    = errors.New("the recorded daemon process is alive but not answering")
+	ErrTestExecutable  = errors.New("refusing to start a Go test executable as daemon")
 )
 
 type Config struct {
@@ -83,6 +85,9 @@ func clearStale(dir string) error {
 }
 
 func start(cfg Config) (Registry, error) {
+	if strings.HasSuffix(filepath.Base(cfg.Executable), ".test") && os.Getenv("ATCT_TEST_STUB_DAEMON") == "" {
+		return Registry{}, fmt.Errorf("%w: %s", ErrTestExecutable, cfg.Executable)
+	}
 	log, err := os.OpenFile(LogPath(cfg.Dir), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
 		return Registry{}, fmt.Errorf("open daemon log: %w", err)

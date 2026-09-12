@@ -107,6 +107,22 @@ func TestEnsureStartsDaemonWhenAbsent(t *testing.T) {
 	}
 }
 
+func TestEnsureRejectsGoTestExecutable(t *testing.T) {
+	dir := socketDir(t)
+	_, err := Ensure(Config{
+		Dir:        dir,
+		Version:    "v-test",
+		Executable: filepath.Join(dir, "atct.test"),
+		ListenAddr: "127.0.0.1:8787",
+	})
+	if !errors.Is(err, ErrTestExecutable) {
+		t.Fatalf("Ensure() error = %v, want ErrTestExecutable", err)
+	}
+	if _, err := os.Stat(LogPath(dir)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("daemon log stat error = %v, want absent", err)
+	}
+}
+
 func TestEnsureReusesHealthyDaemon(t *testing.T) {
 	dir := socketDir(t)
 	cfg := stubConfig(t, dir)
