@@ -40,7 +40,7 @@ sequenceDiagram
         S->>S: subcommander assignment を導出
         S-->>M: monitor.bind(goal scope)
     else task handoff を受ける executor
-        A->>S: task.handoff.receive(task_id)
+        A->>S: task.handoff.receive(handoff_id, task_id)
         S->>S: executor assignment を導出
         S-->>M: monitor.bind(task scope 群)
     end
@@ -59,7 +59,7 @@ monitor session を起動し、受領者に対象 ID を渡す。monitor の rol
 | --- | --- | --- | --- |
 | commander | — | `/atct:start`: `atct_goal_list` で project ID を得て、`atct_project_claim(project_id, force=true)` | project scope |
 | subcommander | commander が `atct_goal_handoff_request` し、goal ID を渡す | `atct_goal_handoff_receive(goal_id)` | goal scope |
-| executor | subcommander が `atct_task_handoff_request` し、task ID を渡す | `atct_task_handoff_receive(task_id)` | 受領済み task handoff ごとの scope |
+| executor | subcommander が `atct_task_handoff_request` し、handoff ID と task ID を渡す | `atct_task_handoff_receive(handoff_id, task_id)` | 受領済み task handoff ごとの scope |
 
 project claim は commander を作る。goal / task handoff の request は受領者の assignment をまだ変えず、
 受領者が receive したときにだけ変える。executor が後から別の task handoff を receive した場合も、server は
@@ -134,9 +134,16 @@ event / wakeup の条件と内容は Agent 共通であり、Claude Watch と異
 
 # 現状との差
 
-現状の `session.identify` は canonical session の関連付けだけを返し、role / scope を返さない。agent は
-続けて `atct_role` を呼ぶ。Codex monitor は role と scope を起動引数で解決し、未指定の monitor は
-unscoped watch になる。
+この文書は目標仕様であり、現状とは次の差がある。
 
-この文書の bootstrap は未実装の目標仕様である。実装後は `doc/continuous-execution.md` と
-`skills/atct/SKILL.md` の旧起動形式をこの仕様へ更新する。
+| 範囲 | 現状 | 目標仕様への変更 |
+| --- | --- | --- |
+| Agent 共通 | `session.identify` は canonical session ID と再接続の有無だけを返す。assignment は `atct_role` または claim / receive の応答で別に確認する。 | identify 後の claim / receive を契機に server が assignment を再計算し、紐付いた monitor を bind する。 |
+| Agent 共通 | monitor と canonical session を結ぶ server API、`monitor.bind`、bind 後の snapshot はない。 | monitor 登録・session との関連付け・bind 更新を server の責務として追加する。 |
+| Claude | `atct watch --monitor -project` または `-goal` を agent が scope 指定して attach する。 | Watch は server 導出 assignment に attach し、scope の変更を server から受ける。 |
+| Codex | 起動時に `--role` と `--project` / `--goal` / `--task` を解決して scope を固定する。指定しない場合は空の watch scope で開始する。 | 常に `atct codex monitor -- <codex args>` で起動し、wrapper が token を注入して server の bind を待つ。 |
+| Codex | monitor token と agent への自動注入はない。 | token を `atct_session_identify` の入力に加え、起動済み monitor と canonical session を対応付ける。 |
+
+移行時は `doc/continuous-execution.md`、`skills/atct/SKILL.md`、Claude Watch と Codex Bridge の実装を同じ
+server bind 契約へ更新する。Stop hook は既に session key を server へ渡して role を解決しており、この移行で
+role / scope の環境変数を追加しない。
