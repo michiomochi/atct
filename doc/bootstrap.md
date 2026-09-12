@@ -4,6 +4,8 @@ ATCT の role は起動引数や agent の自己申告で選ばない。server �
 claim と handoff から導出する。起動時に必要なのは session と monitor を結び、導出済みの scope
 だけを monitor へ渡すことである。
 
+# Agent 共通
+
 ## 用語
 
 | 用語 | 意味 |
@@ -11,31 +13,23 @@ claim と handoff から導出する。起動時に必要なのは session と m
 | session key | harness の SessionStart が出す不透明な `session_id`。agent は変更せず identify に渡す。 |
 | canonical session | session key に結び付いた ATCT の agent session。claim と handoff の所有者である。 |
 | assignment | canonical session から導出した role と scope の組。role は commander / subcommander / executor。 |
-| monitor token | `atct codex monitor` が起動時に作る不透明な識別子。monitor と canonical session を結ぶ。 |
 | scope | commander の project、subcommander の goal、executor の task handoff。executor は複数 scope を持ち得る。 |
-
-## 原則
-
-- role は server が導出する。CLI の `--role`、`--project`、`--goal`、`--task` で指定しない。
-- authorization は server が canonical session から毎回判定する。monitor の scope は通知・health・liveness
-  の配送先を決めるだけで、権限を与えない。
-- executor に「一つの task」は仮定しない。open かつ受領済みの task handoff ごとに scope を持つ。
-- `atct_role` は agent が role を診断する API として残す。通常の monitor bind の入力にはしない。
 
 ## 起動フロー
 
+role を作るのは `session.identify` ではなく、project claim または handoff の受領である。monitor の接続方法は
+harness ごとに異なるが、bind 後に監視を始める流れは共通である。
+
 ```mermaid
 sequenceDiagram
-    participant M as atct codex monitor
     participant H as SessionStart hook
     participant A as Agent / MCP
     participant S as ATCT server
+    participant M as Harness Monitor
 
-    M->>S: monitor token を登録（未 bind）
-    M->>A: Codex を起動
     H->>A: session key を表示
-    A->>S: session.identify(session key, monitor token)
-    S->>S: canonical session と monitor token を結ぶ
+    A->>S: session.identify(session key)
+    S->>S: canonical session を確定
     S-->>A: canonical session
     alt /atct:start の commander
         A->>S: project.claim(project_id, force=true)
@@ -56,9 +50,6 @@ sequenceDiagram
 `session.identify` は identity を結ぶだけで role を作らない。claim または handoff の受領が成功した応答で
 assignment が更新され、server は monitor を再 bind する。agent は必要なら `atct_role` で導出結果を診断できる。
 
-monitor は session key を推測しない。起動時に作った monitor token を SessionStart / MCP 経路で
-`session.identify` へ渡し、server が token と canonical session を結ぶ。
-
 ## assignment を作る起動操作
 
 session を identify した直後に、起動元と受領者が次の操作を行う。handoff を作る側は新しい generic
@@ -73,6 +64,14 @@ monitor session を起動し、受領者に対象 ID を渡す。monitor の rol
 project claim は commander を作る。goal / task handoff の request は受領者の assignment をまだ変えず、
 受領者が receive したときにだけ変える。executor が後から別の task handoff を receive した場合も、server は
 scope を追加して monitor を再 bind する。
+
+## 原則
+
+- role は server が導出する。CLI の `--role`、`--project`、`--goal`、`--task` で指定しない。
+- authorization は server が canonical session から毎回判定する。monitor の scope は通知・health・liveness
+  の配送先を決めるだけで、権限を与えない。
+- executor に「一つの task」は仮定しない。open かつ受領済みの task handoff ごとに scope を持つ。
+- `atct_role` は agent が role を診断する API として残す。通常の monitor bind の入力にはしない。
 
 ## assignment の導出
 
@@ -97,7 +96,27 @@ monitor は bind 前には agent action を配送せず、project 全体を仮�
 bind 後に scope ごとの snapshot を取得してから event を処理するため、識別中の通知を取りこぼさない。
 assignment が空になった monitor は health と liveness を停止し、次の bind 更新を待つ。
 
-## Codex の起動
+# Claude
+
+Claude は通常の session として開始する。SessionStart hook が session key を表示し、agent は共通フローに従って
+identify と assignment を確立する。
+
+Claude Watch は assignment の scope に attach でき、通知を表示する。既に起動した session に後から attach
+できる。server が assignment を更新したら Watch の scope も更新する。Claude 固有の接続方法は session key
+だけで足り、monitor token は使わない。
+
+# Codex
+
+Codex は、monitor wrapper が新しい interactive process を起動する。通常の Codex process を後から monitor に
+変えることはできない。
+
+## monitor token
+
+`atct codex monitor` は monitor token を生成し、子の Codex process に自動注入する。agent は token を表示・
+判断せず、最初の `atct_session_identify` で session key とともに server へ渡す。server は token を使って、
+session key だけでは特定できない起動済み monitor process と canonical session を結ぶ。
+
+## 起動
 
 Codex は常に次で起動する。
 
@@ -106,9 +125,14 @@ atct codex monitor -- <codex args>
 ```
 
 `--role`、`--project`、`--goal`、`--task` は bootstrap 完了前に scope を固定してしまうため廃止する。
-通常の Codex process を後から monitor に変えることはできない。新しい session をこの入口から起動する。
+新しい session をこの入口から起動する。
 
-## 現状との差
+## 通知
+
+Codex Bridge は bind 済み scope の通知を queue へ入れ、Codex thread が idle になった時に turn input として渡す。
+event / wakeup の条件と内容は Agent 共通であり、Claude Watch と異なるのは配送方法だけである。
+
+# 現状との差
 
 現状の `session.identify` は canonical session の関連付けだけを返し、role / scope を返さない。agent は
 続けて `atct_role` を呼ぶ。Codex monitor は role と scope を起動引数で解決し、未指定の monitor は
