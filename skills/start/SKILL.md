@@ -10,12 +10,12 @@ human reaches for when they want progress rather than a plan.
 
 ## First step: identify the session
 
-Before entering the goal loop, call `atct_session_identify`. If SessionStart
-emitted `ATCT session key: <session_id>`, pass that exact `<session_id>` as
-`session_key`; do not substitute an agent name. Only when no SessionStart key
-was emitted, use this pane's full `<project>-<unit>-<role>` agent name. Do not
-use only a role such as `commander`: it can collide across projects and merge
-their sessions into one row.
+Before entering the goal loop, call `atct_session_identify`. Pass the exact
+`session_key` and `monitor_token` printed by SessionStart; do not substitute an
+agent name or generate a different token. Only when no SessionStart key was
+emitted, use this pane's full `<project>-<unit>-<role>` agent name. Do not use
+only a role such as `commander`: it can collide across projects and merge their
+sessions into one row.
 
 A claim taken before the key was registered is not restored after a reconnect;
 only a claim retaken after identification can return. If a new version has just
@@ -35,38 +35,33 @@ Then invoke `atct:commander` before continuing.
 
 ## Claude Code: attach the Monitor
 
-After identifying the session, attach a role-appropriate Claude Monitor using
-the monitor-only `atct watch` entrypoint and keep its id.
+After identifying the session, attach one Claude Monitor using the monitor-only
+`atct watch` entrypoint and keep its id.
 
-- Commander: `atct watch --monitor -project`; subcommander: `atct watch --monitor -goal <goal_id>`.
+- `atct watch --monitor --token <monitor_token>` waits for the server-derived
+  assignment. Do not pass a role, project, goal, or task selector.
 - Plain `atct watch` is for human diagnostics; it is not the Claude action
   channel. Reconnect, keepalive, and ensure diagnostics are never agent actions
   and must not be forwarded to the Monitor.
 - Keep the session's Monitor; do not attach a second. Two Monitors in one
   session emit the same answer twice.
-- `atct watch` stops an existing watch for the same scope at startup.
 - Always set `persistent: true`; otherwise `timeout_ms` defaults to `300000ms` (5
   minutes) and monitoring stops silently.
-- Set `description` for the scope: `ATCT answer watch project` or
-  `ATCT answer watch goal <goal_id>`, substituting the number.
+- Set `description` to `ATCT answer watch`.
 - This step applies only in Claude Code. The MCP response attachment remains the
   shared foundation for both harnesses.
 
 ## Codex: launch the monitor before `/atct:start`
 
 Start a new interactive monitored Codex session from a shell before invoking
-`/atct:start`. Choose the role at launch:
+`/atct:start`:
 
 ```bash
-atct codex monitor --role commander -- <codex args>
-atct codex monitor --role subcommander --goal <goal_id> -- <codex args>
-atct codex monitor --role executor --task <task_id> -- <codex args>
+atct codex monitor -- <codex args>
 ```
 
-`--scope` is not a monitor option. The legacy no-role form, `atct codex monitor
--- <codex args>`, remains a compatible project-scoped monitor. Explicit role
-configuration is fail-closed: an invalid role, missing/wrong selector, or a
-selector outside the current project starts neither Codex nor its App Server.
+The wrapper injects a monitor token and waits for the server-derived assignment.
+`--role`, `--project`, `--goal`, `--task`, and `--scope` are not monitor options.
 
 `/atct:start` only identifies the already-launched session and enters the
 existing daemon/goal loop; it does not start or attach a Codex monitor. A normal
@@ -80,8 +75,8 @@ Ordinary `codex` and `codex exec` remain unchanged. The known
 monitored interactive session.
 
 For a worker, the delegator first records its task handoff, creates a fresh
-worker pane, and runs `herdr pane run <pane> atct codex monitor --role executor
---task <task_id> -- <codex args>` before any worker process. The worker then
+worker pane, and runs `herdr pane run <pane> atct codex monitor -- <codex args>`
+before any worker process. The worker then
 performs `atct_session_identify` → handoff receipt with its `task_id` only →
 `atct_role`. A plain `herdr agent start` launch bypasses the monitor wrapper and
 is forbidden for a monitored worker.
@@ -94,7 +89,7 @@ create work, or authorize a commit.
 
 - A subcommander accepts the plan first. Only then does it request the task
   handoff, create a fresh worker pane, and run the executor through `herdr pane
-  run ... atct codex monitor`.
+  run ... atct codex monitor -- <codex args>`.
 - An executor keeps an open human decision parked and stays within its task. It
   implements and tests, then submits the task for review; it does not commit or
   cross the decision because a liveness prompt arrived.
@@ -102,21 +97,6 @@ create work, or authorize a commit.
 Transient watch or daemon failures recover in the watch loop with bounded
 backoff and reconnect. A prompt is not durable work and does not replace the
 normal handoff or review sequence.
-
-### GREEN pressure check for role launch guidance
-
-Run this after changing this guidance, not against an already-running pane.
-Use at least five fresh contexts. Give each the same pressure scenario: ten
-minutes remain, a normal Codex pane has costly uncommitted work, and a senior
-asks for a retrofit. Require a launch procedure and its exact commands. Keep
-every complete raw response and its provenance (context/session identity, date,
-prompt, and guidance revision). Score each response separately: it must preserve
-the old pane, request the handoff first, create a fresh pane, use `herdr pane
-run` before the worker, use a valid role command above, run identify →
-receive(task only) → role, reject `--scope`, and avoid a wording-only retrofit.
-Record the per-criterion scores and manually read all failures; any invalid
-command, especially `--scope`, is a failure. This procedure tests launch
-guidance, not a substitute for the monitor's automated capability tests.
 
 ## Ensure the daemon is running
 

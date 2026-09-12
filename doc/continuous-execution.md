@@ -94,8 +94,10 @@ scope は届け先の境界であり、Session Stop の role 解決とは別で�
 
 ## Claude Watch
 
-Claude は role に応じた persistent watch を一つだけ使う。commander は project scope、
-subcommander は goal scope を使う。同一 scope の既存 watch は起動時に整理される。
+Claude は SessionStart の monitor token で起動した persistent watch を一つだけ使う。
+`atct watch --monitor --token <monitor_token>` は token に結び付いた canonical session の
+assignment を server から取得し、claim / handoff に伴う scope の変更も追従する。role や scope を
+起動引数で指定しない。
 
 Claude Watch は通知を表示する。Session を停止するには、この session に attach された monitor の
 task ID が分かる時だけ `TaskStop` を使う。ID は推測しない。
@@ -105,9 +107,7 @@ task ID が分かる時だけ `TaskStop` を使う。ID は推測しない。
 Codex monitor は、新しい interactive process を wrapper で起動する。
 
 ```sh
-atct codex monitor --role commander -- <codex args>
-atct codex monitor --role subcommander --goal <goal_id> -- <codex args>
-atct codex monitor --role executor --task <task_id> -- <codex args>
+atct codex monitor -- <codex args>
 ```
 
 Bridge は action と判定された通知 line だけを queue に入れ、Codex thread が idle になった時に
@@ -115,7 +115,7 @@ FIFO で turn input を開始する。snapshot・SSE・daemon ensure の一時�
 して吸収する。Bridge 自体または action sink が失敗すると monitor は無効化されるが、Codex
 session 自体は終了させない。
 
-explicit role monitor は、scope に人間回答待ちがなく、その role が次に実行できる ATCT 操作が
+assignment-bound monitor は、scope に人間回答待ちがなく、その role が次に実行できる ATCT 操作が
 ある場合だけ、1 分ごとに liveness prompt を queue する。これは Wakeup を agent が見落とした
 まま止まらないための再確認であり、権限や人間判断を与えるものではない。
 
@@ -128,11 +128,11 @@ atct codex monitor stop
 ```
 
 これは該当 project の live supervisor だけを対象とし、daemon は停止しない。stop が status 0 で
-成功した後だけ、explicit role command で新しい monitor を起動できる。`start`、`restart`、`exit`
+成功した後だけ、新しい monitor を起動できる。`start`、`restart`、`exit`
 という monitor subcommand はない。
 
 通常の Codex process を後から monitor に変えることはできない。未コミット作業がある場合は保存
-または handoff して終了し、新しい explicit monitor process を起動する。`/atct:start` も monitor
+または handoff して終了し、新しい monitor process を起動する。`/atct:start` も monitor
 の start / attach は行わない。
 
 # AI Agent Hooks
@@ -145,7 +145,7 @@ Hook は harness の session lifecycle を ATCT へつなぐ。Monitor の通知
 key として使う。hook は次の案内を出す。
 
 ```text
-ATCT session key: <session_id>. Before any other ATCT operation, call atct_session_identify with this exact session_key.
+ATCT session key: <session_id>. Before any other ATCT operation, call atct_session_identify with this exact session_key and monitor_token <monitor_token>.
 ```
 
 agent は最初の ATCT 操作として、その値を一文字も変えずに

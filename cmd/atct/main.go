@@ -125,7 +125,7 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "  goal list            List goals for the current project")
 	fmt.Fprintln(os.Stderr, "  context [-brief]      Print the current goal context for an AI session")
 	fmt.Fprintln(os.Stderr, "  pending              Print unanswered human decisions for the current project")
-	fmt.Fprintln(os.Stderr, "  watch [--monitor] [-goal string] [-project]  Stream selected events for a Monitor")
+	fmt.Fprintln(os.Stderr, "  watch [--monitor --token string] [-goal string] [-project]  Stream selected events")
 	fmt.Fprintln(os.Stderr, "  role                 Report the claim-derived role for an agent session")
 	fmt.Fprintln(os.Stderr, "  stop-check           Emit a Codex continuation when scoped role work remains")
 	fmt.Fprintln(os.Stderr, "  session-key          Print the SessionStart key for atct_session_identify")
@@ -309,8 +309,8 @@ func parseArgs(args []string) (cliConfig, error) {
 	if sub == "watch" {
 		flags.StringVar(&cfg.watchGoalID, "goal", "", "filter watch events to this goal")
 		flags.BoolVar(&cfg.watchProjectScope, "project", false, "filter watch events to what a commander acts on")
-		flags.BoolVar(&cfg.watchMonitor, "monitor", false, "emit only selected actions for a Claude Monitor")
-		flags.StringVar(&cfg.watchMonitorToken, "token", "", "bind a monitor to the SessionStart token")
+		flags.BoolVar(&cfg.watchMonitor, "monitor", false, "emit only assignment-bound actions for a Claude Monitor")
+		flags.StringVar(&cfg.watchMonitorToken, "token", "", "bind the monitor to its SessionStart token")
 	}
 	var description *string
 	if sub == "goal" && cfg.goalAction == "add" {
@@ -349,12 +349,12 @@ func parseArgs(args []string) (cliConfig, error) {
 		fmt.Fprintln(os.Stderr, "watch: -goal and -project cannot be used together")
 		return cliConfig{}, errInvalidArgs
 	}
-	if sub == "watch" && cfg.watchMonitor && strings.TrimSpace(cfg.watchMonitorToken) != "" && (watchProjectSpecified || watchGoalSpecified) {
-		fmt.Fprintln(os.Stderr, "watch: --monitor --token does not accept -goal or -project")
+	if sub == "watch" && cfg.watchMonitor && (watchProjectSpecified || watchGoalSpecified) {
+		fmt.Fprintln(os.Stderr, "watch: --monitor does not accept -goal or -project")
 		return cliConfig{}, errInvalidArgs
 	}
-	if sub == "watch" && cfg.watchMonitor && strings.TrimSpace(cfg.watchMonitorToken) == "" && !watchProjectSpecified && !watchGoalSpecified {
-		fmt.Fprintln(os.Stderr, "watch: -monitor requires exactly one selector or --token")
+	if sub == "watch" && cfg.watchMonitor && strings.TrimSpace(cfg.watchMonitorToken) == "" {
+		fmt.Fprintln(os.Stderr, "watch: --monitor requires --token")
 		return cliConfig{}, errInvalidArgs
 	}
 	if sub == "role" && cfg.roleExpectedSet {

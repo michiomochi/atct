@@ -276,7 +276,7 @@ that worker is started:
    wrapper before the worker process:
 
    ```sh
-   herdr pane run <pane> atct codex monitor --role executor --task <task_id> -- <codex args>
+   herdr pane run <pane> atct codex monitor -- <codex args>
    ```
 
    The delegator requests the handoff first; it does not start a worker and add
@@ -417,13 +417,13 @@ that subcommander is started:
 3. A monitored Codex subcommander is launched only after the request succeeds:
 
    ```sh
-   atct codex monitor --role subcommander --goal <goal_id> -- <codex args>
+   atct codex monitor -- <codex args>
    ```
 
-   A monitored commander uses `atct codex monitor --role commander -- <codex args>`.
-   These explicit configurations fail closed for invalid roles/selectors; the
-   legacy no-role project monitor remains compatible. They do not alter Claude
-   Code's `atct watch -project` / `atct watch -goal` path.
+   A monitored commander uses the same command. The wrapper waits for the
+   SessionStart token to bind to the server-derived assignment; it does not take
+   a role or scope selector. Claude Code uses the same binding contract through
+   `atct watch --monitor --token <monitor_token>`.
 
    Do not start a normal Codex process and retrofit it later.
    Name in the request every adjacent goal that touches the same files and say
@@ -443,13 +443,10 @@ that subcommander is started:
    > `subcommander`. If it reports `matches: false`, do not start work; return
    > the goal.
    >
-   > Then attach `atct watch -goal <goal_id>` to a background stream the way
-   > your harness watches one, passing only the `goal_id` provided in this
-   > request. The Wakeup events for this goal, and the answers to the decisions
-   > you raise for it, then reach you without the delegator relaying them.
-   > Pass no other goal; a subcommander must not inspect other goals. This
-   > step applies only in Claude Code; Codex has no Monitor, so a Codex reader
-   > skips it.
+   > Then, in Claude Code only, attach `atct watch --monitor --token
+   > <monitor_token>` to a persistent background stream. Use the token printed by
+   > SessionStart and passed to `atct_session_identify`; do not pass a goal.
+   > The server-derived assignment limits this Watch to the received goal.
    >
    > Decide this goal's design yourself. Do not bring the delegator a design
    > question, a progress note, a receipt acknowledgement, a discovery, or a

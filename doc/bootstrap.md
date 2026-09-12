@@ -13,6 +13,7 @@ claim と handoff から導出する。起動時に必要なのは session と m
 | session key | harness の SessionStart が出す不透明な `session_id`。agent は変更せず identify に渡す。 |
 | canonical session | session key に結び付いた ATCT の agent session。claim と handoff の所有者である。 |
 | assignment | canonical session から導出した role と scope の組。role は commander / subcommander / executor。 |
+| monitor token | monitor process と canonical session を結ぶ不透明な識別子。agent は SessionStart で受け取り、identify と monitor attach にそのまま渡す。 |
 | scope | commander の project、subcommander の goal、executor の task handoff。executor は複数 scope を持ち得る。 |
 
 ## 起動フロー
@@ -27,9 +28,9 @@ sequenceDiagram
     participant S as ATCT server
     participant M as Harness Monitor
 
-    H->>A: session key を表示
-    A->>S: session.identify(session key)
-    S->>S: canonical session を確定
+    H->>A: session key と monitor token を表示
+    A->>S: session.identify(session key, monitor token)
+    S->>S: canonical session を確定し token を bind
     S-->>A: canonical session
     alt /atct:start の commander
         A->>S: project.claim(project_id, force=true)
@@ -59,7 +60,7 @@ monitor session を起動し、受領者に対象 ID を渡す。monitor の rol
 | --- | --- | --- | --- |
 | commander | — | `/atct:start`: `atct_goal_list` で project ID を得て、`atct_project_claim(project_id, force=true)` | project scope |
 | subcommander | commander が `atct_goal_handoff_request` し、goal ID を渡す | `atct_goal_handoff_receive(goal_id)` | goal scope |
-| executor | subcommander が `atct_task_handoff_request` し、handoff ID と task ID を渡す | `atct_task_handoff_receive(handoff_id, task_id)` | 受領済み task handoff ごとの scope |
+| executor | subcommander が `atct_task_handoff_request` し、handoff ID と task ID を渡す | `atct_task_handoff_receive(task_id)` | 受領済み task handoff ごとの scope |
 
 project claim は commander を作る。goal / task handoff の request は受領者の assignment をまだ変えず、
 受領者が receive したときにだけ変える。executor が後から別の task handoff を receive した場合も、server は
@@ -101,20 +102,17 @@ assignment が空になった monitor は health と liveness を停止し、次
 Claude は通常の session として開始する。SessionStart hook が session key を表示し、agent は共通フローに従って
 identify と assignment を確立する。
 
-Claude Watch は assignment の scope に attach でき、通知を表示する。既に起動した session に後から attach
-できる。server が assignment を更新したら Watch の scope も更新する。Claude 固有の接続方法は session key
-だけで足り、monitor token は使わない。
+Claude Watch は既に起動した session に後から attach できる。SessionStart の token を identify と
+`atct watch --monitor --token <monitor_token>` に渡す。Watch は server が assignment を更新すると scope も
+更新する。
 
 # Codex
 
 Codex は、monitor wrapper が新しい interactive process を起動する。通常の Codex process を後から monitor に
 変えることはできない。
 
-## monitor token
-
-`atct codex monitor` は monitor token を生成し、子の Codex process に自動注入する。agent は token を表示・
-判断せず、最初の `atct_session_identify` で session key とともに server へ渡す。server は token を使って、
-session key だけでは特定できない起動済み monitor process と canonical session を結ぶ。
+`atct codex monitor` は共通の monitor token を生成し、子の Codex process に注入する。SessionStart がその値を
+agent に渡し、最初の `atct_session_identify` が session key とともに server へ送る。
 
 ## 起動
 
@@ -131,19 +129,3 @@ atct codex monitor -- <codex args>
 
 Codex Bridge は bind 済み scope の通知を queue へ入れ、Codex thread が idle になった時に turn input として渡す。
 event / wakeup の条件と内容は Agent 共通であり、Claude Watch と異なるのは配送方法だけである。
-
-# 現状との差
-
-この文書は目標仕様であり、現状とは次の差がある。
-
-| 範囲 | 現状 | 目標仕様への変更 |
-| --- | --- | --- |
-| Agent 共通 | `session.identify` は canonical session ID と再接続の有無だけを返す。assignment は `atct_role` または claim / receive の応答で別に確認する。 | identify 後の claim / receive を契機に server が assignment を再計算し、紐付いた monitor を bind する。 |
-| Agent 共通 | monitor と canonical session を結ぶ server API、`monitor.bind`、bind 後の snapshot はない。 | monitor 登録・session との関連付け・bind 更新を server の責務として追加する。 |
-| Claude | `atct watch --monitor -project` または `-goal` を agent が scope 指定して attach する。 | Watch は server 導出 assignment に attach し、scope の変更を server から受ける。 |
-| Codex | 起動時に `--role` と `--project` / `--goal` / `--task` を解決して scope を固定する。指定しない場合は空の watch scope で開始する。 | 常に `atct codex monitor -- <codex args>` で起動し、wrapper が token を注入して server の bind を待つ。 |
-| Codex | monitor token と agent への自動注入はない。 | token を `atct_session_identify` の入力に加え、起動済み monitor と canonical session を対応付ける。 |
-
-移行時は `doc/continuous-execution.md`、`skills/atct/SKILL.md`、Claude Watch と Codex Bridge の実装を同じ
-server bind 契約へ更新する。Stop hook は既に session key を server へ渡して role を解決しており、この移行で
-role / scope の環境変数を追加しない。

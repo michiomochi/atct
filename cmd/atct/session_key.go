@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -23,13 +24,19 @@ func runSessionKey(config cliConfig, dir string) error {
 	if err != nil || !registered {
 		return err
 	}
-	monitorToken := strings.TrimSpace(os.Getenv("ATCT_MONITOR_TOKEN"))
+	monitorToken := sessionStartMonitorToken(input.SessionID, os.Getenv("ATCT_MONITOR_TOKEN"))
 	_, err = io.WriteString(os.Stdout, sessionKeyMessageWithMonitorToken(input.SessionID, monitorToken))
 	return err
 }
 
-func sessionKeyMessage(sessionID string) string {
-	return sessionKeyMessageWithMonitorToken(sessionID, "")
+func sessionStartMonitorToken(sessionID, token string) string {
+	token = strings.TrimSpace(token)
+	if token != "" {
+		return token
+	}
+	// SessionStart also runs after compact; the same session must keep its bind token.
+	sum := sha256.Sum256([]byte("atct-monitor:" + strings.TrimSpace(sessionID)))
+	return fmt.Sprintf("%x", sum)
 }
 
 func sessionKeyMessageWithMonitorToken(sessionID, monitorToken string) string {

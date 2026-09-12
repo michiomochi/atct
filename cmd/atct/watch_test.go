@@ -2123,19 +2123,18 @@ func TestEmitWatchWakeupRejectsMissingTarget(t *testing.T) {
 	}
 }
 
-func TestParseArgsWatchMonitorRequiresOneExistingSelector(t *testing.T) {
+func TestParseArgsWatchMonitorRequiresBindingToken(t *testing.T) {
 	tests := []struct {
-		name        string
-		args        []string
-		wantMonitor bool
-		wantProject bool
-		wantGoal    string
-		wantError   bool
+		name      string
+		args      []string
+		wantToken string
+		wantError bool
 	}{
-		{name: "goal selector", args: []string{"watch", "--monitor", "-goal", "249"}, wantMonitor: true, wantGoal: "249"},
-		{name: "project selector", args: []string{"watch", "--monitor", "-project"}, wantMonitor: true, wantProject: true},
-		{name: "monitor without selector", args: []string{"watch", "--monitor"}, wantError: true},
-		{name: "two selectors", args: []string{"watch", "--monitor", "-goal", "249", "-project"}, wantError: true},
+		{name: "binding token", args: []string{"watch", "--monitor", "--token", "token-1"}, wantToken: "token-1"},
+		{name: "monitor without token", args: []string{"watch", "--monitor"}, wantError: true},
+		{name: "goal selector", args: []string{"watch", "--monitor", "-goal", "249"}, wantError: true},
+		{name: "project selector", args: []string{"watch", "--monitor", "-project"}, wantError: true},
+		{name: "token and selector", args: []string{"watch", "--monitor", "--token", "token-1", "-goal", "249"}, wantError: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -2146,20 +2145,10 @@ func TestParseArgsWatchMonitorRequiresOneExistingSelector(t *testing.T) {
 			if tt.wantError {
 				return
 			}
-			if cfg.watchMonitor != tt.wantMonitor || cfg.watchProjectScope != tt.wantProject || cfg.watchGoalID != tt.wantGoal {
-				t.Fatalf("watch config = monitor %v project %v goal %q", cfg.watchMonitor, cfg.watchProjectScope, cfg.watchGoalID)
+			if !cfg.watchMonitor || cfg.watchMonitorToken != tt.wantToken || cfg.watchProjectScope || cfg.watchGoalID != "" {
+				t.Fatalf("watch config = %#v, want token-bound unscoped monitor", cfg)
 			}
 		})
-	}
-}
-
-func TestParseArgsWatchMonitorAcceptsBindingTokenWithoutScope(t *testing.T) {
-	cfg, err := parseArgs([]string{"watch", "--monitor", "--token", "token-1"})
-	if err != nil {
-		t.Fatalf("parseArgs: %v", err)
-	}
-	if !cfg.watchMonitor || cfg.watchMonitorToken != "token-1" || cfg.watchGoalID != "" || cfg.watchProjectScope {
-		t.Fatalf("watch config = %#v, want token-bound unscoped monitor", cfg)
 	}
 }
 
