@@ -35,17 +35,44 @@ sequenceDiagram
     M->>A: Codex を起動
     H->>A: session key を表示
     A->>S: session.identify(session key, monitor token)
-    S->>S: canonical session を確定し assignment を導出
-    S-->>A: canonical session と assignment
-    S-->>M: monitor.bind(token, scope 群)
-    M->>S: scope 群で watch / health / liveness を開始
+    S->>S: canonical session と monitor token を結ぶ
+    S-->>A: canonical session
+    alt /atct:start の commander
+        A->>S: project.claim(project_id, force=true)
+        S->>S: commander assignment を導出
+        S-->>M: monitor.bind(project scope)
+    else goal handoff を受ける subcommander
+        A->>S: goal.handoff.receive(goal_id)
+        S->>S: subcommander assignment を導出
+        S-->>M: monitor.bind(goal scope)
+    else task handoff を受ける executor
+        A->>S: task.handoff.receive(task_id)
+        S->>S: executor assignment を導出
+        S-->>M: monitor.bind(task scope 群)
+    end
+    M->>S: bind 済み scope 群で watch / health / liveness を開始
 ```
 
-agent が role を知る時点は `session.identify` の成功応答時である。server はその応答に assignment を
-含める。agent は必要なら `atct_role` で同じ導出結果を診断できる。
+`session.identify` は identity を結ぶだけで role を作らない。claim または handoff の受領が成功した応答で
+assignment が更新され、server は monitor を再 bind する。agent は必要なら `atct_role` で導出結果を診断できる。
 
 monitor は session key を推測しない。起動時に作った monitor token を SessionStart / MCP 経路で
 `session.identify` へ渡し、server が token と canonical session を結ぶ。
+
+## assignment を作る起動操作
+
+session を identify した直後に、起動元と受領者が次の操作を行う。handoff を作る側は新しい generic
+monitor session を起動し、受領者に対象 ID を渡す。monitor の role / scope は渡さない。
+
+| 起動する role | 起動元が先に行うこと | 起動した session が行うこと | bind 結果 |
+| --- | --- | --- | --- |
+| commander | — | `/atct:start`: `atct_goal_list` で project ID を得て、`atct_project_claim(project_id, force=true)` | project scope |
+| subcommander | commander が `atct_goal_handoff_request` し、goal ID を渡す | `atct_goal_handoff_receive(goal_id)` | goal scope |
+| executor | subcommander が `atct_task_handoff_request` し、task ID を渡す | `atct_task_handoff_receive(task_id)` | 受領済み task handoff ごとの scope |
+
+project claim は commander を作る。goal / task handoff の request は受領者の assignment をまだ変えず、
+受領者が receive したときにだけ変える。executor が後から別の task handoff を receive した場合も、server は
+scope を追加して monitor を再 bind する。
 
 ## assignment の導出
 
