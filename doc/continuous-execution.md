@@ -148,10 +148,10 @@ key として使う。hook は次の案内を出す。
 ATCT session key: <session_id>. Before any other ATCT operation, call atct_session_identify with this exact session_key and monitor_token <monitor_token>.
 ```
 
-agent は最初の ATCT 操作として、その値を一文字も変えずに
-`atct_session_identify(session_key=<session_id>)` へ渡す。これで transport の session と ATCT の
-canonical agent session が結び付く。SessionStart key が出なかった場合だけ stable な full agent
-name を fallback にできる。
+agent は最初の ATCT 操作として、その二つの値を一文字も変えずに
+`atct_session_identify(session_key=<session_id>, monitor_token=<monitor_token>)` へ渡す。これで
+transport の session、canonical agent session、monitor が結び付く。SessionStart key が出なかった
+場合だけ stable な full agent name を fallback にできる。
 
 Claude の SessionStart は context を表示し、context がある時は daemon も開始する。session key は
 cwd、PID、role 名から推測しない。

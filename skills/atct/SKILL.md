@@ -288,7 +288,7 @@ that worker is started:
    Other environments may wake the worker by their own supported path.
 4. Put these exact instructions at the very beginning of the request:
 
-   > First call `atct_session_identify` before any other atct call. If SessionStart emitted `ATCT session key: <session_id>`, pass that exact `<session_id>` as `session_key`; do not substitute your agent name. Only if no SessionStart key was emitted, use your stable full agent name.
+   > First call `atct_session_identify` before any other atct call. If SessionStart emitted `ATCT session key: <session_id> ... monitor_token <monitor_token>`, pass those exact values as `session_key` and `monitor_token`; do not substitute your agent name or token. Only if no SessionStart key was emitted, use your stable full agent name and omit `monitor_token`.
    >
    > Then record receipt of the handoff by calling `atct_task_handoff_receive` with only
    > the `task_id` provided in this request. Do this before starting work. Do not
@@ -432,7 +432,7 @@ that subcommander is started:
    cannot answer for itself.
 4. Put these exact instructions at the very beginning of the request:
 
-   > First call `atct_session_identify` before any other atct call. If SessionStart emitted `ATCT session key: <session_id>`, pass that exact `<session_id>` as `session_key`; do not substitute your agent name. Only if no SessionStart key was emitted, use your stable full agent name.
+   > First call `atct_session_identify` before any other atct call. If SessionStart emitted `ATCT session key: <session_id> ... monitor_token <monitor_token>`, pass those exact values as `session_key` and `monitor_token`; do not substitute your agent name or token. Only if no SessionStart key was emitted, use your stable full agent name and omit `monitor_token`.
    >
    > Then record receipt of the goal handoff by calling
    > `atct_goal_handoff_receive` with only the `goal_id` provided in this request.
@@ -444,8 +444,8 @@ that subcommander is started:
    > the goal.
    >
    > Then, in Claude Code only, attach `atct watch --monitor --token
-   > <monitor_token>` to a persistent background stream. Use the token printed by
-   > SessionStart and passed to `atct_session_identify`; do not pass a goal.
+   > <monitor_token>` to a persistent background stream. Use the exact token
+   > already passed to `atct_session_identify`; do not pass a goal.
    > The server-derived assignment limits this Watch to the received goal.
    >
    > Decide this goal's design yourself. Do not bring the delegator a design

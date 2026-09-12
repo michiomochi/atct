@@ -125,7 +125,7 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "  goal list            List goals for the current project")
 	fmt.Fprintln(os.Stderr, "  context [-brief]      Print the current goal context for an AI session")
 	fmt.Fprintln(os.Stderr, "  pending              Print unanswered human decisions for the current project")
-	fmt.Fprintln(os.Stderr, "  watch [--monitor --token string] [-goal string] [-project]  Stream selected events")
+	fmt.Fprintln(os.Stderr, "  watch [--monitor --token string | -goal string | -project]  Stream monitor actions or diagnostic events")
 	fmt.Fprintln(os.Stderr, "  role                 Report the claim-derived role for an agent session")
 	fmt.Fprintln(os.Stderr, "  stop-check           Emit a Codex continuation when scoped role work remains")
 	fmt.Fprintln(os.Stderr, "  session-key          Print the SessionStart key for atct_session_identify")

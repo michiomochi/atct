@@ -311,7 +311,7 @@ type RoleIn struct {
 
 type SessionIdentifyIn struct {
 	SessionKey   string `json:"session_key"`
-	MonitorToken string `json:"monitor_token,omitempty" jsonschema:"optional monitor token injected by atct codex monitor"`
+	MonitorToken string `json:"monitor_token,omitempty" jsonschema:"optional monitor token from SessionStart in Claude or injected by atct codex monitor"`
 }
 
 type SessionDiscardRequestIn struct {
