@@ -88,7 +88,7 @@ flowchart TD
     subgraph C[commander]
         C1[1. worktree を用意]
         C2[2. subcommander の作業場所を用意]
-        C3[3. atct_goal_handoff_request]
+        C3[3. atct_goal_handoff_request<br/>goal handoff を作成]
         C4[4. subcommander を起動]
         C5[9-11. plan をレビューして完了]
         C6[24-26. goal をレビューして handoff を閉じる]
@@ -99,10 +99,10 @@ flowchart TD
     subgraph S[subcommander]
         S1[5. atct_goal_handoff_receive]
         S2[6. atct watch -goal]
-        S3[7-8. 設計し plan review を依頼]
-        S4[12. atct_task_create_handoff_receive]
-        S5[13. atct_task_create]
-        S6[14. atct_task_handoff_request]
+        S3[7-8. atct_plan_handoff_review_request<br/>plan handoff を作成]
+        S4[12. atct_task_create_handoff_receive<br/>task-create handoff を受領]
+        S5[13. atct_task_create<br/>task-create handoff を完了]
+        S6[14. atct_task_handoff_request<br/>task handoff を作成]
         S7[18-20. task review を受領・レビュー・完了]
         S8[21-23. executor を閉じ、コミットし、goal review を依頼]
     end
@@ -113,7 +113,7 @@ flowchart TD
         E3[17. atct_task_handoff_review_request]
     end
 
-    TC[task.create_handoff.request<br/>plan 完了時に daemon が自動生成]
+    TC[task.create_handoff.request<br/>task-create handoff を作成<br/>plan 完了時に daemon が自動生成]
     G --> C1 --> C2 --> C3 --> C4 --> S1 --> S2 --> S3 --> C5 --> TC --> S4 --> S5 --> S6 --> E1 --> E2 --> E3 --> S7
     S7 -->|未委譲の task がある| S6
     S7 -->|全 task が done| S8 --> C6 --> C7 --> C8
@@ -139,7 +139,7 @@ flowchart TD
 2. `atct watch -goal <goal_id>` を開始する。
 3. `superpowers:brainstorming` と `superpowers:writing-plans` で設計し、
    canonical spec と plan を `atct_goal_update_request_report` へ保存して
-   `atct_plan_handoff_review_request` を出す。
+   `atct_plan_handoff_review_request` で plan handoff を作成する。
 4. plan handoff の完了で生成された task-create handoff を
    `atct_task_create_handoff_receive` で受領し、その `handoff_id` を渡して
    `atct_task_create` で task を作る。
