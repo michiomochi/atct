@@ -223,12 +223,14 @@ func TestCodexMonitorGenericLifecycleInjectsTokenAndStartsBoundWatch(t *testing.
 		runErr     error
 		watchPath  string
 		watchToken string
+		appEnv     []string
 		tuiEnv     []string
 	)
 	deps := codexMonitorDeps{
 		resolveCodex: func() (string, error) { return "/opt/codex", nil },
 		startProcess: func(kind codexMonitorProcessKind, _ string, _ []string, env []string) (codexMonitorProcess, error) {
 			if kind == codexMonitorAppServer {
+				appEnv = append([]string(nil), env...)
 				return app, nil
 			}
 			tuiEnv = append([]string(nil), env...)
@@ -274,8 +276,12 @@ func TestCodexMonitorGenericLifecycleInjectsTokenAndStartsBoundWatch(t *testing.
 	if watchPath != "/project" || watchToken != "token-1" {
 		t.Fatalf("bound watch = (%q, %q), want (/project, token-1)", watchPath, watchToken)
 	}
-	if want := []string{"ATCT_BIN=/opt/atct", "ATCT_MONITOR_TOKEN=token-1"}; !slices.Equal(tuiEnv, want) {
-		t.Fatalf("TUI environment = %#v, want %#v", tuiEnv, want)
+	wantEnv := []string{"ATCT_BIN=/opt/atct", "ATCT_MONITOR_TOKEN=token-1"}
+	if !slices.Equal(appEnv, wantEnv) {
+		t.Fatalf("App Server environment = %#v, want %#v", appEnv, wantEnv)
+	}
+	if !slices.Equal(tuiEnv, wantEnv) {
+		t.Fatalf("TUI environment = %#v, want %#v", tuiEnv, wantEnv)
 	}
 	tui.finish()
 	select {

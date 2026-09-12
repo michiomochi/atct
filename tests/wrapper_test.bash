@@ -884,14 +884,16 @@ delegate_goal_section_not_contains() {
 }
 
 test_goal_handoff_watch_contract_is_explicit() {
-  delegate_goal_section_contains 'Then attach `atct watch -goal <goal_id>` to a background stream the way'
-  delegate_goal_section_contains 'Pass no other goal; a subcommander must not inspect other goals.'
-  delegate_goal_section_contains 'Codex has no Monitor, so a Codex reader'
+  delegate_goal_section_contains 'Then, in Claude Code only, attach `atct watch --monitor --token'
+  delegate_goal_section_contains 'Use the exact token'
+  delegate_goal_section_contains 'The server-derived assignment limits this Watch to the received goal.'
 }
 
 test_goal_handoff_watch_contract_omits_unsafe_variants() {
-  delegate_goal_section_not_contains 'Then attach `atct watch` to a background stream'
-  delegate_goal_section_not_contains 'attach `atct watch` for the whole project'
+	delegate_goal_section_not_contains 'Then attach `atct watch` to a background stream'
+	delegate_goal_section_not_contains 'atct watch -goal'
+	delegate_goal_section_not_contains 'atct watch -project'
+	delegate_goal_section_not_contains 'attach `atct watch` for the whole project'
   delegate_goal_section_not_contains 'Invoke the `start` skill'
   delegate_goal_section_not_contains 'The delegator relays the detections for this goal'
 }
@@ -904,7 +906,7 @@ test_goal_handoff_watch_contract_has_required_order() {
 
   lineno() { delegate_goal_section | grep -n -F -- "$1" | head -1 | cut -d: -f1; }
   role="$(lineno 'Then invoke the `atct_role` MCP tool with `expected_role` set to')"
-  watch="$(lineno 'Then attach `atct watch -goal <goal_id>` to a background stream the way')"
+	watch="$(lineno 'Then, in Claude Code only, attach `atct watch --monitor --token')"
   fin="$(lineno 'When all task handoffs are accepted, record the goal review request by calling')"
 
   [[ -n "$role" && -n "$watch" && -n "$fin" ]] ||
@@ -939,7 +941,7 @@ test_goal_handoff_silence_has_required_order() {
   local fin
 
   lineno() { delegate_goal_section | grep -n -F -- "$1" | head -1 | cut -d: -f1; }
-  watch="$(lineno 'Then attach `atct watch -goal <goal_id>` to a background stream the way')"
+	watch="$(lineno 'Then, in Claude Code only, attach `atct watch --monitor --token')"
   silence="$(lineno "Decide this goal's design yourself. Do not bring the delegator a design")"
   fin="$(lineno 'When all task handoffs are accepted, record the goal review request by calling')"
 
@@ -1601,15 +1603,16 @@ test_start_documents_liveness_authority_boundary() {
 
   assert_file_contains 'A ten-minute liveness line means' "$start_skill"
   assert_file_contains 'A subcommander accepts the plan first' "$start_skill"
-  assert_file_contains 'runs `herdr pane run <pane> atct codex monitor --role executor' "$start_skill"
+  assert_file_contains 'run ... atct codex monitor -- <codex args>' "$start_skill"
   assert_file_contains 'submits the task for review; it does not commit' "$start_skill"
 }
 
 test_start_uses_monitor_watch_for_claude_actions() {
   local start_skill="$REPO_ROOT/skills/start/SKILL.md"
 
-  assert_file_contains 'atct watch --monitor -goal <goal_id>' "$start_skill"
-  assert_file_contains 'atct watch --monitor -project' "$start_skill"
+  assert_file_contains 'atct watch --monitor --token <monitor_token>' "$start_skill"
+  assert_file_not_contains 'atct watch --monitor -goal' "$start_skill"
+  assert_file_not_contains 'atct watch --monitor -project' "$start_skill"
   assert_file_contains 'Plain `atct watch` is for human diagnostics' "$start_skill"
   assert_file_contains 'Reconnect, keepalive, and ensure diagnostics are never agent actions' "$start_skill"
 }

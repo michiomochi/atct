@@ -105,6 +105,10 @@ func runCodexMonitorWithDeps(config cliConfig, dir string, deps codexMonitorDeps
 	if err != nil {
 		return codexMonitorSetupFailure(deps, err.Error(), "codex", args)
 	}
+	childEnv, err := codexMonitorEnvironment(monitorToken, deps.atctExecutable)
+	if err != nil {
+		return 1, fmt.Errorf("prepare Codex hooks: %w", err)
+	}
 
 	monitorDir := daemonctl.CodexMonitorRegistryDir(dir)
 	socketPath := filepath.Join(monitorDir, fmt.Sprintf("%d.sock", os.Getpid()))
@@ -118,7 +122,7 @@ func runCodexMonitorWithDeps(config cliConfig, dir string, deps codexMonitorDeps
 	if err := os.Remove(socketPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return codexMonitorSetupFailure(deps, "remove stale monitor socket: "+err.Error(), executable, args)
 	}
-	appProcess, err := deps.startProcess(codexMonitorAppServer, executable, appArgs, nil)
+	appProcess, err := deps.startProcess(codexMonitorAppServer, executable, appArgs, childEnv)
 	if err != nil {
 		return codexMonitorSetupFailure(deps, "start App Server: "+err.Error(), executable, args)
 	}
@@ -180,23 +184,7 @@ func runCodexMonitorWithDeps(config cliConfig, dir string, deps codexMonitorDeps
 	remoteArgs := make([]string, 0, len(args)+2)
 	remoteArgs = append(remoteArgs, "--remote", "unix://"+socketPath)
 	remoteArgs = append(remoteArgs, args...)
-	tuiEnv, err := codexMonitorEnvironment(monitorToken, deps.atctExecutable)
-	if err != nil {
-		cancelWatch()
-		cancelMonitor()
-		_ = app.Close()
-		waitCodexMonitorDone(bridgeDone)
-		waitCodexMonitorDone(watchDone)
-		if cleanupErr := stopCodexMonitorChild(appProcess, appWait); cleanupErr != nil {
-			fmt.Fprintf(deps.stderr, "atct codex monitor cleanup: %v\n", cleanupErr)
-		}
-		if recordCleanup != nil {
-			recordCleanup()
-		}
-		_ = os.Remove(socketPath)
-		return 1, fmt.Errorf("prepare Codex Stop hook: %w", err)
-	}
-	tuiProcess, err := deps.startProcess(codexMonitorTUI, executable, remoteArgs, tuiEnv)
+	tuiProcess, err := deps.startProcess(codexMonitorTUI, executable, remoteArgs, childEnv)
 	if err != nil {
 		cancelWatch()
 		cancelMonitor()

@@ -35,15 +35,16 @@ sequenceDiagram
     alt /atct:start の commander
         A->>S: project.claim(project_id, force=true)
         S->>S: commander assignment を導出
-        S-->>M: monitor.bind(project scope)
     else goal handoff を受ける subcommander
         A->>S: goal.handoff.receive(goal_id)
         S->>S: subcommander assignment を導出
-        S-->>M: monitor.bind(goal scope)
     else task handoff を受ける executor
         A->>S: task.handoff.receive(handoff_id, task_id)
         S->>S: executor assignment を導出
-        S-->>M: monitor.bind(task scope 群)
+    end
+    loop 定期 polling
+        M->>S: monitor token の binding を取得
+        S-->>M: pending または現在の assignment
     end
     M->>S: bind 済み scope 群で watch / health / liveness を開始
 ```
@@ -90,8 +91,8 @@ server は状態を次の順で評価する。
 ## scope の更新
 
 assignment は起動時だけの固定値ではない。project claim、goal / task handoff の receive・review・complete・
-recovery で変化する。server は該当 canonical session の assignment を再計算し、紐付いた monitor へ
-`monitor.bind` 更新を送る。
+recovery で変化する。server は該当 canonical session の assignment を再計算し、monitor は token の binding
+endpoint を定期 polling して更新を取得する。server から monitor への push は行わない。
 
 monitor は bind 前には agent action を配送せず、project 全体を仮の executor scope として監視しない。
 bind 後に scope ごとの snapshot を取得してから event を処理するため、識別中の通知を取りこぼさない。

@@ -572,6 +572,15 @@ func runWatchWithOptionsAndToken(dir, goalID string, projectScope, monitor bool,
 }
 
 func runBoundClaudeWatch(ctx context.Context, dir, cwd string, client *http.Client, baseURLs []string, monitorToken string) error {
+	registrationScope := daemonctl.WatchScope{MonitorToken: monitorToken}
+	cleanup, err := daemonctl.RegisterWatchScoped(dir, registrationScope)
+	if err != nil {
+		return fmt.Errorf("register bound watch: %w", err)
+	}
+	defer cleanup()
+	if _, err := daemonctl.ReapWatches(dir, registrationScope, os.Getpid()); err != nil {
+		return fmt.Errorf("reap bound watches: %w", err)
+	}
 	writer := monitorActionWriter{writer: os.Stdout}
 	snapshot, projectIDGetter := watchSnapshotWithProject(client, baseURLs, cwd)
 	return runMonitorBindingLoop(ctx, client, baseURLs, monitorToken, func(scopeCtx context.Context, scope watchScope) error {
@@ -739,12 +748,10 @@ func watchLoopWithEnsureAndProjectIDAndScopeAndActionSink(ctx context.Context, o
 		}
 		resetEnsureFailures()
 
-		filterProjectID := ""
-		if projectID != nil {
-			filterProjectID = projectID()
-		}
 		streamScope := scope
-		streamScope.ProjectID = filterProjectID
+		if streamScope.ProjectID == "" && projectID != nil {
+			streamScope.ProjectID = projectID()
+		}
 		if err := reconcileWatchScope(ctx, client, baseURL, streamScope, out, delivered, &lastWakeupContent, wakeupDiscrepancyDelivered, wakeupDelivered, scopeFilter, sink, actionSink, &latestReconciliation, healthReporter); err != nil {
 			if ctx.Err() != nil {
 				return nil

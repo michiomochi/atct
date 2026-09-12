@@ -17,6 +17,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/michiomochi/atct/internal/daemonctl"
 )
 
 func TestWatchEnsuresDaemonAfterConnectionFailure(t *testing.T) {
@@ -1097,7 +1099,7 @@ func (f watchRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) 
 	return f(req)
 }
 
-func TestWatchLoopTaskScopeUsesCanonicalHandoffState(t *testing.T) {
+func TestWatchLoopTaskScopePreservesCanonicalProjectAcrossCWD(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	var got []string
@@ -1116,7 +1118,7 @@ func TestWatchLoopTaskScopeUsesCanonicalHandoffState(t *testing.T) {
 		return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
 	})}
 	snapshot := func(context.Context) (string, []watchDecision, error) { return "http://daemon", nil, nil }
-	err := watchLoopWithEnsureAndProjectIDAndScopeAndSink(ctx, io.Discard, client, time.Millisecond, snapshot, nil, func() string { return "7" }, watchScope{ProjectID: "7", GoalID: "16", TaskID: "46"}, func(line string) error {
+	err := watchLoopWithEnsureAndProjectIDAndScopeAndSink(ctx, io.Discard, client, time.Millisecond, snapshot, nil, func() string { return "8" }, watchScope{ProjectID: "7", GoalID: "16", TaskID: "46"}, func(line string) error {
 		got = append(got, line)
 		if len(got) == 2 {
 			cancel()
@@ -1132,6 +1134,51 @@ func TestWatchLoopTaskScopeUsesCanonicalHandoffState(t *testing.T) {
 	}
 	if !slices.Equal(got, want) {
 		t.Fatalf("task watch actions = %#v, want %#v", got, want)
+	}
+}
+
+func TestBoundClaudeWatchRegistersAndCleansUpMonitorToken(t *testing.T) {
+	dir := t.TempDir()
+	requestStarted := make(chan struct{})
+	var once sync.Once
+	client := &http.Client{Transport: watchRoundTripper(func(*http.Request) (*http.Response, error) {
+		once.Do(func() { close(requestStarted) })
+		return &http.Response{StatusCode: http.StatusNotFound, Body: io.NopCloser(strings.NewReader("")), Header: make(http.Header)}, nil
+	})}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- runBoundClaudeWatch(ctx, dir, t.TempDir(), client, []string{"http://daemon"}, "token-1")
+	}()
+
+	select {
+	case <-requestStarted:
+	case <-time.After(time.Second):
+		t.Fatal("bound watch did not poll its binding")
+	}
+	registrations, err := daemonctl.ListWatches(dir)
+	if err != nil {
+		t.Fatalf("ListWatches: %v", err)
+	}
+	if len(registrations) != 1 || registrations[0].Scope.MonitorToken != "token-1" {
+		t.Fatalf("bound watch registrations = %#v, want token-1", registrations)
+	}
+
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("runBoundClaudeWatch: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("bound watch did not stop with its context")
+	}
+	registrations, err = daemonctl.ListWatches(dir)
+	if err != nil {
+		t.Fatalf("ListWatches after cleanup: %v", err)
+	}
+	if len(registrations) != 0 {
+		t.Fatalf("bound watch registrations after cleanup = %#v, want none", registrations)
 	}
 }
 

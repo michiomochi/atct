@@ -15,10 +15,12 @@ import (
 
 const watchReapTimeout = 5 * time.Second
 
-// WatchScope identifies the daemon events consumed by a watch process.
+// WatchScope identifies either a fixed event scope or an assignment-bound
+// monitor token owned by a watch process.
 type WatchScope struct {
-	ProjectID string
-	GoalID    string
+	ProjectID    string
+	GoalID       string
+	MonitorToken string
 }
 
 // WatchRegistration records one watch process in the per-process registry.
@@ -70,18 +72,20 @@ func WatchRosterLine(registrations []WatchRegistration, projectID string) string
 }
 
 type watchRegistrationJSON struct {
-	PID       int    `json:"pid"`
-	ProjectID string `json:"project_id"`
-	GoalID    string `json:"goal_id"`
-	StartedAt string `json:"started_at"`
+	PID          int    `json:"pid"`
+	ProjectID    string `json:"project_id"`
+	GoalID       string `json:"goal_id"`
+	MonitorToken string `json:"monitor_token,omitempty"`
+	StartedAt    string `json:"started_at"`
 }
 
 func (r WatchRegistration) MarshalJSON() ([]byte, error) {
 	return json.Marshal(watchRegistrationJSON{
-		PID:       r.PID,
-		ProjectID: r.Scope.ProjectID,
-		GoalID:    r.Scope.GoalID,
-		StartedAt: r.StartedAt,
+		PID:          r.PID,
+		ProjectID:    r.Scope.ProjectID,
+		GoalID:       r.Scope.GoalID,
+		MonitorToken: r.Scope.MonitorToken,
+		StartedAt:    r.StartedAt,
 	})
 }
 
@@ -149,7 +153,7 @@ func ListWatches(dir string) ([]WatchRegistration, error) {
 // records no scope, so it is left running rather than killed on a guess.
 func ReapWatches(dir string, self WatchScope, selfPID int) (ReapResult, error) {
 	var result ReapResult
-	if self.ProjectID == "" {
+	if self.ProjectID == "" && self.MonitorToken == "" {
 		return result, nil
 	}
 
@@ -238,7 +242,7 @@ func readWatchRegistration(path string) (WatchRegistration, error) {
 	if err := json.Unmarshal(raw, &record); err == nil {
 		return WatchRegistration{
 			PID:       record.PID,
-			Scope:     WatchScope{ProjectID: record.ProjectID, GoalID: record.GoalID},
+			Scope:     WatchScope{ProjectID: record.ProjectID, GoalID: record.GoalID, MonitorToken: record.MonitorToken},
 			StartedAt: record.StartedAt,
 		}, nil
 	}

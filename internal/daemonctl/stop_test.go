@@ -705,6 +705,47 @@ func TestReapWatchesHandlesMissingRegistryDirectory(t *testing.T) {
 	}
 }
 
+func TestReapWatchesStopsOlderWatchWithSameMonitorToken(t *testing.T) {
+	dir := t.TempDir()
+	oldProcess, _ := startReapTestProcess(t)
+	otherProcess, otherDone := startReapTestProcess(t)
+	defer func() {
+		_ = otherProcess.Process.Signal(syscall.SIGTERM)
+		<-otherDone
+	}()
+	scope := WatchScope{MonitorToken: "token-1"}
+	cleanup, err := RegisterWatchScoped(dir, scope)
+	if err != nil {
+		t.Fatalf("RegisterWatchScoped: %v", err)
+	}
+	defer cleanup()
+	writeWatchRegistrationFile(t, filepath.Join(dir, watchRegistryDir, strconv.Itoa(oldProcess.Process.Pid)), WatchRegistration{
+		PID:       oldProcess.Process.Pid,
+		Scope:     scope,
+		StartedAt: "2026-09-12T00:00:00Z",
+	})
+	otherPath := filepath.Join(dir, watchRegistryDir, strconv.Itoa(otherProcess.Process.Pid))
+	writeWatchRegistrationFile(t, otherPath, WatchRegistration{
+		PID:       otherProcess.Process.Pid,
+		Scope:     WatchScope{MonitorToken: "token-2"},
+		StartedAt: "2026-09-12T00:00:00Z",
+	})
+
+	result, err := ReapWatches(dir, scope, os.Getpid())
+	if err != nil {
+		t.Fatalf("ReapWatches: %v", err)
+	}
+	if len(result.Stopped) != 1 || result.Stopped[0].PID != oldProcess.Process.Pid {
+		t.Fatalf("stopped watches = %#v, want pid %d", result.Stopped, oldProcess.Process.Pid)
+	}
+	if !ProcessAlive(otherProcess.Process.Pid) {
+		t.Fatal("watch with another monitor token was stopped")
+	}
+	if _, err := os.Stat(otherPath); err != nil {
+		t.Fatalf("watch with another monitor token was removed: %v", err)
+	}
+}
+
 func TestListWatchesSkipsUnreadableRegistration(t *testing.T) {
 	dir := t.TempDir()
 	badPath := filepath.Join(dir, watchRegistryDir, "999999")
