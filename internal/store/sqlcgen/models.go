@@ -84,6 +84,12 @@ type GoalHandoff struct {
 	RecoveryReport            sql.NullString
 }
 
+type MonitorBinding struct {
+	Token          string
+	AgentSessionID int64
+	CreatedAt      string
+}
+
 type MonitorHealth struct {
 	MonitorID        string
 	AgentKey         string

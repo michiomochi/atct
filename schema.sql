@@ -224,6 +224,15 @@ CREATE INDEX IF NOT EXISTS monitor_health_project_idx
 CREATE INDEX IF NOT EXISTS monitor_health_last_seen_idx
   ON monitor_health(last_seen_at);
 
+CREATE TABLE IF NOT EXISTS monitor_bindings (
+  token            TEXT PRIMARY KEY,
+  agent_session_id INTEGER NOT NULL REFERENCES agent_sessions(id),
+  created_at       TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_monitor_bindings_agent_session_id
+  ON monitor_bindings(agent_session_id);
+
 CREATE TABLE IF NOT EXISTS task_create_handoffs (
   id              TEXT PRIMARY KEY,
   goal_id         INTEGER NOT NULL REFERENCES goals(id),
