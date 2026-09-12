@@ -14,61 +14,6 @@ import (
 	"github.com/michiomochi/atct/internal/store"
 )
 
-func TestTaskClaimNotificationDoesNotApplyDecision(t *testing.T) {
-	ctx := context.Background()
-	s := openPendingResponseTestStore(t)
-	project := createPendingResponseProject(t, s, t.TempDir(), "project")
-	goal, err := s.CreateGoal(ctx, project.ID, "goal\n\ndescription", "human")
-	if err != nil {
-		t.Fatalf("CreateGoal: %v", err)
-	}
-	tasks, err := s.CreateTasks(ctx, goal.ID, "agent", "declare-1", []string{"task"}, []string{"Complete the task before applying its pending decision."})
-	if err != nil {
-		t.Fatalf("CreateTasks: %v", err)
-	}
-	decision, err := s.AskDecision(ctx, store.AskInput{
-		GoalID: goal.ID, TaskID: tasks[0].ID, Kind: domain.KindDecision,
-		Question: "Which implementation should be used?",
-		Options:  []domain.Option{{Label: "A"}}, AgentSessionID: daemonTestSessionID(t, s, "answer-run"),
-	})
-	if err != nil {
-		t.Fatalf("AskDecision: %v", err)
-	}
-	if _, err := s.AnswerDecision(ctx, store.AnswerInput{DecisionID: decision.ID, AnswerLabel: "A", AnswerText: "Use A"}); err != nil {
-		t.Fatalf("AnswerDecision: %v", err)
-	}
-	claimSessionID := daemonTestSessionID(t, s, "claim-run")
-	if err := s.AssociateAgentSessionWithProject(ctx, claimSessionID, project.ID); err != nil {
-		t.Fatalf("AssociateAgentSessionWithProject: %v", err)
-	}
-
-	params, err := json.Marshal(map[string]any{
-		"task_id": tasks[0].ID, "agent_session_id": claimSessionID, "include_unapplied_answers": true,
-	})
-	if err != nil {
-		t.Fatalf("Marshal params: %v", err)
-	}
-	raw, err := New(s).dispatch(ctx, rpc.Request{Method: "task.claim", Params: params})
-	if err != nil {
-		t.Fatalf("task.claim: %v", err)
-	}
-	var response pendingResponseEnvelope
-	if err := json.Unmarshal(raw, &response); err != nil {
-		t.Fatalf("unmarshal task.claim response %v: %v", raw, err)
-	}
-	if len(response.UnappliedDecisions) != 1 || response.UnappliedDecisions[0].DecisionID != decision.ID {
-		t.Fatalf("unapplied_decisions = %#v, want %v", response.UnappliedDecisions, decision.ID)
-	}
-
-	got, err := s.GetDecision(ctx, decision.ID)
-	if err != nil {
-		t.Fatalf("GetDecision: %v", err)
-	}
-	if got.Status != domain.DecisionAnswered || got.AppliedAt != nil {
-		t.Fatalf("decision after notification = status %v applied_at %v, want answered and unapplied", got.Status, got.AppliedAt)
-	}
-}
-
 func TestGoalListNotificationIsProjectScoped(t *testing.T) {
 	ctx := context.Background()
 	s := openPendingResponseTestStore(t)
@@ -279,11 +224,6 @@ func TestProjectScopedWritesRejectOtherProject(t *testing.T) {
 		params       map[string]any
 		wantContains []string
 	}{
-		{
-			name:   "task.claim",
-			method: "task.claim",
-			params: map[string]any{"task_id": f.targetTask.ID, "agent_session_id": f.agentSessionID},
-		},
 		{
 			name:   "task.update",
 			method: "task.update",
@@ -507,30 +447,6 @@ func TestTaskUpdateWithDuplicateCommitLinksOnce(t *testing.T) {
 	}
 }
 
-func TestTaskClaimAssignsUnassociatedRunToTargetProject(t *testing.T) {
-	f := newProjectScopeFixture(t)
-	agentSessionID := daemonTestSessionID(t, f.store, "first-write-run")
-
-	params, err := json.Marshal(map[string]any{
-		"task_id":          f.targetTask.ID,
-		"agent_session_id": agentSessionID,
-	})
-	if err != nil {
-		t.Fatalf("Marshal task.claim params: %v", err)
-	}
-	if _, err := f.daemon.dispatch(f.ctx, rpc.Request{Method: "task.claim", Params: params}); err != nil {
-		t.Fatalf("task.claim: %v", err)
-	}
-
-	projectID, err := f.store.ProjectIDForAgentSession(f.ctx, agentSessionID)
-	if err != nil {
-		t.Fatalf("ProjectIDForAgentSession: %v", err)
-	}
-	if projectID != f.target.ID {
-		t.Fatalf("run project_id = %v, want target project %v", projectID, f.target.ID)
-	}
-}
-
 func TestProjectScopedWritesAllowAssignedProjectAndGoalListReadsOtherProject(t *testing.T) {
 	f := newProjectScopeFixture(t)
 	if _, err := f.store.ClaimProject(f.ctx, f.assigned.ID, f.agentSessionID); err != nil {
@@ -556,13 +472,6 @@ func TestProjectScopedWritesAllowAssignedProjectAndGoalListReadsOtherProject(t *
 		t.Fatalf("declared tasks = %#v, want one task", declared)
 	}
 
-	params, err = json.Marshal(map[string]any{"task_id": declared[0].ID, "agent_session_id": f.agentSessionID})
-	if err != nil {
-		t.Fatalf("Marshal task.claim params: %v", err)
-	}
-	if _, err := f.daemon.dispatch(f.ctx, rpc.Request{Method: "task.claim", Params: params}); err != nil {
-		t.Fatalf("task.claim: %v", err)
-	}
 	params, err = json.Marshal(map[string]any{"task_id": declared[0].ID, "status": "done", "agent_session_id": f.agentSessionID})
 	if err != nil {
 		t.Fatalf("Marshal task.update params: %v", err)

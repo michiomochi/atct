@@ -54,7 +54,7 @@ func TestContextBriefExcludesHandoffOwnedTasksFromTodoCount(t *testing.T) {
 	}
 }
 
-// Next tools tells the reader what to do next. Suggesting atct_task_claim when
+// Next tools tells the reader what to do next. Suggesting a task handoff when
 // every remaining task already has an owner sends the reader at work that is
 // not theirs to take.
 func TestRenderContextOmitsClaimToolWhenEveryTodoTaskIsOwned(t *testing.T) {
@@ -68,7 +68,7 @@ func TestRenderContextOmitsClaimToolWhenEveryTodoTaskIsOwned(t *testing.T) {
 		},
 	}}, nil, 1)
 
-	if strings.Contains(got, "atct_task_claim") {
-		t.Fatalf("context offered atct_task_claim for an owned task:\n%s", got)
+	if strings.Contains(got, "atct_task_handoff_request") {
+		t.Fatalf("context offered atct_task_handoff_request for an owned task:\n%s", got)
 	}
 }

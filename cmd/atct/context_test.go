@@ -79,7 +79,7 @@ func TestRenderContextIncludesActionableTasksAndIDs(t *testing.T) {
 	for _, want := range []string{
 		"[todo] Declare tests (task_id: 1)",
 		"[doing] Implement command (task_id: 2)",
-		"atct_task_claim",
+		"atct_task_handoff_request",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("context does not contain %q: %q", want, got)
@@ -128,14 +128,14 @@ func TestRenderContextIncludesUnappliedDecisionsAndPollTool(t *testing.T) {
 	noTasks := renderContext([]contextGoal{{
 		Goal: domain.Goal{ID: 5, Content: "No tasks", Status: domain.GoalActive},
 	}}, nil)
-	if !strings.Contains(noTasks, "atct_task_create") || strings.Contains(noTasks, "atct_task_claim") {
+	if !strings.Contains(noTasks, "atct_task_create") || strings.Contains(noTasks, "atct_task_handoff_request") {
 		t.Fatalf("no-task state has wrong next tool: %q", noTasks)
 	}
 	withTodo := renderContext([]contextGoal{{
 		Goal:  domain.Goal{ID: 6, Content: "Todo", Status: domain.GoalActive},
 		Tasks: []domain.Task{{ID: 7, Title: "A task", Status: domain.TaskTodo}},
 	}}, nil)
-	if !strings.Contains(withTodo, "atct_task_claim") || strings.Contains(withTodo, "atct_task_create") {
+	if !strings.Contains(withTodo, "atct_task_handoff_request") || strings.Contains(withTodo, "atct_task_create") {
 		t.Fatalf("todo state has wrong next tool: %q", withTodo)
 	}
 }
@@ -900,9 +900,9 @@ func TestContextBriefCountsTaskAgainAfterHandoffCompletes(t *testing.T) {
 	}
 }
 
-// Dropping atct_task_claim must depend on every todo task being owned, not on
+// Offering a task handoff must depend on at least one todo task being unowned,
 // any one of them being owned.
-func TestRenderContextOffersClaimToolWhenATodoTaskIsUnowned(t *testing.T) {
+func TestRenderContextOffersHandoffToolWhenATodoTaskIsUnowned(t *testing.T) {
 	got := renderContextForAgentSession([]contextGoal{{
 		Goal: domain.Goal{ID: 42, Content: "Mixed goal", Status: domain.GoalActive},
 		Tasks: []domain.Task{
@@ -914,7 +914,7 @@ func TestRenderContextOffersClaimToolWhenATodoTaskIsUnowned(t *testing.T) {
 		},
 	}}, nil, 1)
 
-	if !strings.Contains(got, "Next tools: atct_task_claim") {
-		t.Fatalf("context withheld atct_task_claim while task 8 was unowned:\n%s", got)
+	if !strings.Contains(got, "Next tools: atct_task_handoff_request") {
+		t.Fatalf("context withheld atct_task_handoff_request while task 8 was unowned:\n%s", got)
 	}
 }

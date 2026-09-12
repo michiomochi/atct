@@ -47,8 +47,6 @@ func TestRegisterPublishesRoleAndLifecycleToolsWithFlexibleOutputSchema(t *testi
 		"atct_goal_get":                           true,
 		"atct_goal_sessions":                      true,
 		"atct_task_create":                        true,
-		"atct_task_claim":                         true,
-		"atct_task_release":                       true,
 		"atct_task_update":                        true,
 		"atct_decision_ask":                       true,
 		"atct_decision_poll":                      true,
@@ -253,7 +251,6 @@ func TestRegisterPublishesRoleAndLifecycleToolsWithFlexibleOutputSchema(t *testi
 			"descriptions":    []string{"Complete the created task and verify its result."},
 			"idempotency_key": "key-1", "agent": "agent-1",
 		}},
-		{name: "atct_task_claim", args: map[string]any{"task_id": "task-1"}},
 		{name: "atct_task_update", args: map[string]any{"task_id": "task-1", "status": "doing"}},
 		{name: "atct_task_handoff_request", args: map[string]any{
 			"handoff_id": "handoff-1", "task_id": "task-1",
@@ -699,47 +696,6 @@ func TestCanonicalHandoffReceiveIdentifiesStableSession(t *testing.T) {
 				t.Errorf("receive received_by = %#v, want canonical session 9", got)
 			}
 		})
-	}
-}
-
-func TestTaskReleaseInjectsAgentSessionID(t *testing.T) {
-	ctx := context.Background()
-	socketPath, calls := startCapturingSchemaTestDaemon(t)
-	server := mcp.NewServer(&mcp.Implementation{Name: "atct-test", Version: "test"}, nil)
-	const sessionID int64 = 5
-	mcpshim.Register(server, mcpshim.NewClient(socketPath), sessionID)
-
-	clientTransport, serverTransport := mcp.NewInMemoryTransports()
-	serverSession, err := server.Connect(ctx, serverTransport, nil)
-	if err != nil {
-		t.Fatalf("server.Connect: %v", err)
-	}
-	defer serverSession.Close()
-
-	client := mcp.NewClient(&mcp.Implementation{Name: "schema-test", Version: "test"}, nil)
-	clientSession, err := client.Connect(ctx, clientTransport, nil)
-	if err != nil {
-		t.Fatalf("client.Connect: %v", err)
-	}
-	defer clientSession.Close()
-
-	result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
-		Name:      "atct_task_release",
-		Arguments: map[string]any{"task_id": "task-1"},
-	})
-	if err != nil {
-		t.Fatalf("CallTool(atct_task_release): %v", err)
-	}
-	if result == nil || result.IsError {
-		t.Fatalf("atct_task_release returned error result: %+v", result)
-	}
-
-	call := <-calls
-	if call.method != "task.release" {
-		t.Fatalf("RPC method = %q, want task.release", call.method)
-	}
-	if got := call.params["agent_session_id"]; got != float64(sessionID) {
-		t.Fatalf("task.release agent_session_id = %#v, want %d", got, sessionID)
 	}
 }
 

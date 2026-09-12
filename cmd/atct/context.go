@@ -254,7 +254,7 @@ func contextNeedsWakeup(snapshot contextSnapshot) bool {
 
 // contextTaskIsUnowned reports whether a task is work nobody has taken yet. A
 // delegated task keeps its todo status, so the open handoff is the only record
-// of an owner; both the brief count and the atct_task_claim suggestion read
+// of an owner; both the brief count and the handoff suggestion read
 // this so they cannot disagree with the [claimed] task lines.
 func contextTaskIsUnowned(task domain.Task, handoff *store.TaskHandoff) bool {
 	return task.Status == domain.TaskTodo && contextTaskHandoffOwner(handoff) == 0
@@ -391,7 +391,7 @@ func renderContextLegacy(goals []contextGoal, decisions []domain.Decision) strin
 		nextTools = append(nextTools, "atct_task_create")
 	}
 	if claimTasks {
-		nextTools = append(nextTools, "atct_task_claim")
+		nextTools = append(nextTools, "atct_task_handoff_request")
 	}
 	if len(filteredDecisions) > 0 {
 		nextTools = append(nextTools, "atct_decision_poll")
@@ -507,7 +507,7 @@ func renderContextForAgentSession(goals []contextGoal, decisions []domain.Decisi
 		nextTools = append(nextTools, "atct_task_create")
 	}
 	if hasTodo {
-		nextTools = append(nextTools, "atct_task_claim")
+		nextTools = append(nextTools, "atct_task_handoff_request")
 	}
 	if len(filteredDecisions) > 0 {
 		nextTools = append(nextTools, "atct_decision_poll")

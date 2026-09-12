@@ -375,19 +375,6 @@ func TestFullFlowThroughDaemonAndHTTP(t *testing.T) {
 		t.Fatalf("ClaimProject: %v", err)
 	}
 	tasks := declareTasks(t, stack, goal.ID, []string{"Prepare the run", "Resolve the question", "Finish the goal"})
-	var claimed domain.Task
-	callDaemon(t, stack, "task.claim", map[string]any{
-		"task_id": tasks[0].ID, "agent_session_id": agentSessionID,
-	}, &claimed)
-	claimedHandoffs, err := stack.db.ListOpenTaskHandoffsForGoal(context.Background(), goal.ID)
-	if err != nil {
-		t.Fatalf("ListOpenTaskHandoffsForGoal after claim: %v", err)
-	}
-	claimedHandoff := claimedHandoffs[claimed.ID]
-	if claimedHandoff == nil || claimedHandoff.ReceivedBy != agentSessionID || claimedHandoff.ReceivedAt == nil {
-		t.Fatalf("task.claim handoff = %+v, task = %+v", claimedHandoff, claimed)
-	}
-
 	parked := askParked(t, stack, goal.ID, tasks[1].ID, "flow-run")
 	status, raw := httpJSON(t, stack, http.MethodGet, "/api/inbox", nil)
 	if status != http.StatusOK {
@@ -432,14 +419,6 @@ func TestFullFlowThroughDaemonAndHTTP(t *testing.T) {
 			t.Fatalf("task.update returned %+v", updated)
 		}
 	}
-	openAfterUpdates, err := stack.db.ListOpenTaskHandoffsForGoal(context.Background(), goal.ID)
-	if err != nil {
-		t.Fatalf("ListOpenTaskHandoffsForGoal after updates: %v", err)
-	}
-	if openAfterUpdates[claimed.ID] != nil {
-		t.Fatalf("completed claimed task still held: %+v", openAfterUpdates[claimed.ID])
-	}
-
 	var claimedGoal domain.Goal
 	callDaemon(t, stack, "goal.claim", map[string]any{
 		"goal_id": goal.ID, "agent_session_id": agentSessionID,
@@ -682,58 +661,6 @@ func TestAnsweredDecisionAppearsUnappliedInInbox(t *testing.T) {
 	}
 	if containsDecision(inbox.OpenDecisions, decision.DecisionID) {
 		t.Fatalf("answered decision still appears open: %+v", inbox.OpenDecisions)
-	}
-}
-
-func TestOnlyOneAgentSessionClaimsTaskThroughDaemon(t *testing.T) {
-	stack := newE2EStack(t)
-	createProject(t, stack)
-	// human として作る。agent の提案と承認の経路は goal_approval_test.go が覆う
-	goal := createGoal(t, stack)
-	tasks := declareTasks(t, stack, goal.ID, []string{"Competing task"})
-
-	type claimResult struct {
-		agentSessionID int64
-		err            error
-		task           domain.Task
-	}
-	results := make(chan claimResult, 2)
-	var group sync.WaitGroup
-	for _, agentSessionID := range []int64{stack.session(t, "claim-run-a"), stack.session(t, "claim-run-b")} {
-		group.Add(1)
-		go func(agentSessionID int64) {
-			defer group.Done()
-			var task domain.Task
-			err := stack.call("task.claim", map[string]any{
-				"task_id": tasks[0].ID, "agent_session_id": agentSessionID,
-			}, &task)
-			results <- claimResult{agentSessionID: agentSessionID, err: err, task: task}
-		}(agentSessionID)
-	}
-	group.Wait()
-	close(results)
-
-	winners := 0
-	losers := 0
-	var winner claimResult
-	for result := range results {
-		if result.err == nil {
-			winners++
-			winner = result
-		} else {
-			losers++
-		}
-	}
-	if winners != 1 || losers != 1 {
-		t.Fatalf("claim results: winners=%d losers=%d, want one each", winners, losers)
-	}
-	handoffs, err := stack.db.ListOpenTaskHandoffsForGoal(context.Background(), goal.ID)
-	if err != nil {
-		t.Fatalf("ListOpenTaskHandoffsForGoal after concurrent claims: %v", err)
-	}
-	winnerHandoff := handoffs[tasks[0].ID]
-	if winnerHandoff == nil || winnerHandoff.ReceivedBy != winner.agentSessionID {
-		t.Fatalf("winning claim handoff = %+v, task = %+v", winnerHandoff, winner.task)
 	}
 }
 

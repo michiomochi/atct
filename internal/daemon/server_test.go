@@ -2018,67 +2018,6 @@ func TestGoalClaimRejectsLiveOtherSessionAfterProjectClaim(t *testing.T) {
 	}
 }
 
-func TestTaskClaimStillClaimsTask(t *testing.T) {
-	fixture := newGoalListFixture(t)
-	defer fixture.store.Close()
-
-	const sessionID = "task-claim-regression-run"
-	result, err := func() (json.RawMessage, error) {
-		params, err := json.Marshal(map[string]any{
-			"task_id":          fixture.tasks[1].ID,
-			"agent_session_id": daemonTestSessionID(t, fixture.store, sessionID),
-		})
-		if err != nil {
-			t.Fatalf("marshal task.claim params: %v", err)
-		}
-		return fixture.daemon.dispatch(context.Background(), rpc.Request{Method: "task.claim", Params: params})
-	}()
-	if err != nil {
-		t.Fatalf("task.claim: %v", err)
-	}
-	var claimed domain.Task
-	if err := json.Unmarshal(result, &claimed); err != nil {
-		t.Fatalf("unmarshal task.claim result: %v", err)
-	}
-	handoff := openTaskHandoffForTest(t, fixture, fixture.tasks[1].GoalID, fixture.tasks[1].ID)
-	if handoff == nil || handoff.ReceivedBy != daemonTestSessionID(t, fixture.store, sessionID) {
-		t.Fatalf("task handoff = %+v, want received_by %v", handoff, sessionID)
-	}
-}
-
-func TestTaskClaimAndReleaseStillWork(t *testing.T) {
-	fixture := newGoalListFixture(t)
-	defer fixture.store.Close()
-
-	const sessionID = "task-claim-release-regression-run"
-	claimParams, err := json.Marshal(map[string]any{
-		"task_id":          fixture.tasks[1].ID,
-		"agent_session_id": daemonTestSessionID(t, fixture.store, sessionID),
-	})
-	if err != nil {
-		t.Fatalf("marshal task.claim params: %v", err)
-	}
-	if _, err := fixture.daemon.dispatch(context.Background(), rpc.Request{Method: "task.claim", Params: claimParams}); err != nil {
-		t.Fatalf("task.claim: %v", err)
-	}
-
-	releaseParams, err := json.Marshal(map[string]any{"task_id": fixture.tasks[1].ID, "agent_session_id": daemonTestSessionID(t, fixture.store, sessionID)})
-	if err != nil {
-		t.Fatalf("marshal task.release params: %v", err)
-	}
-	result, err := fixture.daemon.dispatch(context.Background(), rpc.Request{Method: "task.release", Params: releaseParams})
-	if err != nil {
-		t.Fatalf("task.release: %v", err)
-	}
-	var released domain.Task
-	if err := json.Unmarshal(result, &released); err != nil {
-		t.Fatalf("unmarshal task.release result: %v", err)
-	}
-	if handoff := openTaskHandoffForTest(t, fixture, fixture.tasks[1].GoalID, fixture.tasks[1].ID); handoff != nil {
-		t.Fatalf("task handoff after release = %+v, want none", handoff)
-	}
-}
-
 func TestReleaseMissingIDsReturnErrorsViaRPC(t *testing.T) {
 	fixture := newGoalListFixture(t)
 	defer fixture.store.Close()
@@ -2096,7 +2035,6 @@ func TestReleaseMissingIDsReturnErrorsViaRPC(t *testing.T) {
 	}{
 		{method: "project.release", key: "project_id", agentSessionID: projectReleaseSessionID},
 		{method: "goal.release", key: "goal_id"},
-		{method: "task.release", key: "task_id"},
 	} {
 		paramValues := map[string]any{tc.key: "missing-" + tc.key}
 		if tc.agentSessionID != "" {

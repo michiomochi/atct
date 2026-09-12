@@ -11,7 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/michiomochi/atct/internal/domain"
 	"github.com/michiomochi/atct/internal/mcpshim"
 	"github.com/michiomochi/atct/internal/store"
 )
@@ -226,18 +225,6 @@ func TestTaskHandoffRoutesOverRPC(t *testing.T) {
 	}
 	if completed.CompletedReportAt == nil || completed.CompleteReport != "RPC task completion report" {
 		t.Fatalf("completed handoff = %#v, want completion timestamp and report", completed)
-	}
-
-	var claimed domain.Task
-	claimerID := daemonTestSessionID(t, fixture.store, "rpc-claimer")
-	if err := client.Call(ctx, "task.claim", map[string]any{
-		"task_id": fixture.claimableTaskID, "agent_session_id": claimerID,
-		"include_unapplied_answers": false,
-	}, &claimed); err != nil {
-		t.Fatalf("existing task.claim RPC: %v", err)
-	}
-	if claimed.ID != fixture.claimableTaskID {
-		t.Fatalf("task.claim returned %v, want %v", claimed.ID, fixture.claimableTaskID)
 	}
 
 	var rejected store.TaskHandoff

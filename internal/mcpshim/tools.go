@@ -77,14 +77,6 @@ type TaskCreateHandoffIn struct {
 	HandoffID string `json:"handoff_id"`
 }
 
-type TaskClaimIn struct {
-	TaskID mcpID `json:"task_id"`
-}
-
-type TaskReleaseIn struct {
-	TaskID mcpID `json:"task_id"`
-}
-
 type HandoffRequestIn struct {
 	HandoffID     string `json:"handoff_id"`
 	TaskID        mcpID  `json:"task_id"`
@@ -792,26 +784,6 @@ func Register(server *mcp.Server, c *Client, agentSessionID int64) {
 	})
 	addMCPTool[TaskCreateHandoffIn, RawWithUnappliedDecisions](server, &mcp.Tool{Name: "atct_task_create_handoff_receive", Description: "Receive an accepted plan's task-create handoff.", OutputSchema: rawOutputSchemaWithUnappliedDecisions()}, func(ctx context.Context, req *mcp.CallToolRequest, in TaskCreateHandoffIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
 		return callWithUnappliedDecisions(ctx, c, "task.create_handoff.receive", map[string]any{"handoff_id": in.HandoffID, "received_by": sessionID.Get()})
-	})
-
-	addMCPTool[TaskClaimIn, RawWithUnappliedDecisions](server, &mcp.Tool{
-		Name:         "atct_task_claim",
-		Description:  "Claim a task for this agent session. Only one concurrent agent session can claim a task.",
-		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
-	}, func(ctx context.Context, req *mcp.CallToolRequest, in TaskClaimIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
-		return callWithUnappliedDecisions(ctx, c, "task.claim", map[string]any{
-			"task_id": in.TaskID, "agent_session_id": sessionID.Get(), "include_unapplied_answers": true,
-		})
-	})
-
-	addMCPTool[TaskReleaseIn, RawWithUnappliedDecisions](server, &mcp.Tool{
-		Name:         "atct_task_release",
-		Description:  "Release the claim on a task.",
-		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
-	}, func(ctx context.Context, req *mcp.CallToolRequest, in TaskReleaseIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
-		return callWithUnappliedDecisions(ctx, c, "task.release", map[string]any{
-			"task_id": in.TaskID, "agent_session_id": sessionID.Get(),
-		})
 	})
 
 	addMCPTool[HandoffRequestIn, RawWithUnappliedDecisions](server, &mcp.Tool{

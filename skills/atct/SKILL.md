@@ -83,26 +83,19 @@ it when the task was declared.
 - Re-declaring with the same `idempotency_key` does not update the task;
   re-declaration is not a way to fix it.
 
-## Claim before you start
+## Receive before you start
 
-1. Take the task before you touch its work. For self-directed work—when you find
-   a task yourself—call `atct_task_claim`. Exactly one run wins a claim. If the
-   claim fails the task is already owned, so pick another one rather than working
-   on it anyway.
+Every implementation task is delegated.
 
-   A delegated worker owns the task it was given. Receive it with
-   `atct_task_handoff_receive`, not `atct_task_claim`; receipt is exclusive, so
-   a handoff cannot be received twice.
-2. Do the work while you hold it.
-3. Close it with `atct_task_update` and `done` once the work lands. Release a
-   task by setting it back to `todo` with `atct_task_update` instead. There is
-   no separate release tool.
+1. The subcommander requests the task handoff, and the executor receives it with
+   `atct_task_handoff_receive` before touching the work. Receipt is exclusive,
+   so a handoff cannot be received twice.
+2. The executor requests review when the work is ready; the subcommander accepts
+   it with `atct_task_handoff_complete`, which closes the task.
 
-**Out of order:** Working before the claim or the receipt lets a second run take
-the same task, because exclusivity comes from the claim and from nothing else;
-two runs then edit the same files and one overwrites the other. Stopping before
-the closing status is the mirror failure: the work landed, but the task still
-reads as unstarted.
+**Out of order:** Working before receipt lets a second executor receive the same
+task. Stopping before requesting review leaves the task open even when the work
+landed.
 
 ## One worktree per goal
 
@@ -262,9 +255,7 @@ When handing a task to another worker, keep the contract independent of how
 that worker is started:
 
 1. Hold the parent, not the task. The delegator does not hold the task; it must
-   have received the handoff for that task's goal before handing it off. Claiming
-   the task first always causes the handoff request to be refused because the
-   claim already writes an open handoff.
+   have received the handoff for that task's goal before handing it off.
 
 2. Record the handoff before waking the worker.
    The delegator must call `atct_task_handoff_request` with a unique handoff ID
@@ -324,7 +315,7 @@ that worker is started:
    An executor must not call `atct_goal_handoff_complete`, `atct_goal_handoff_receive`,
    `atct_goal_handoff_request`, `atct_goal_claim`, `atct_goal_release`,
    `atct_goal_complete`, `atct_goal_update_content`, `atct_project_claim`,
-   `atct_project_release`, `atct_task_claim`, `atct_task_handoff_request`,
+   `atct_project_release`, `atct_task_handoff_request`,
    `atct_task_handoff_review_receive`, `atct_task_handoff_complete`,
    `atct_task_handoff_review_reject`, `atct_task_update`,
    `atct_task_create`, or `atct_decision_ask`. Spell the names out; "anything not
@@ -377,9 +368,8 @@ delegator must not run either instruction on the worker's behalf or treat a
 worker name, pane title, or launch context as proof of the role. If the role
 check reports a mismatch, the worker returns the task without touching it.
 
-**Out of order:** Claiming the task before requesting the handoff makes the
-request refuse, because the claim has already written an open handoff. Waking the
-worker before the request succeeds leaves it with nothing to receive. And asking
+**Out of order:** Waking the worker before the request succeeds leaves it with
+nothing to receive. Asking
 for review before the executor has received the handoff, or completing the
 handoff before the reviewer receives the review, leaves the record without the
 report that proves what was reviewed. That last one reproduced on 2026-08-27
@@ -593,7 +583,7 @@ its work is still uncommitted.
 
    - project: `atct_project_release` → `atct_project_claim`
    - goal: `atct_goal_handoff_complete` → `atct_goal_handoff_request` (the commander must issue the handoff again)
-   - task: `atct_task_handoff_complete` (with `task_id` and `complete_report`) → `atct_task_claim`
+   - task: after the stale lock is released, have the subcommander request a fresh `atct_task_handoff_request`
 
 **Out of order:** Reaching for the layer repair before the session key closes a
 handoff that did not need closing, and closing it is exactly what drops the role.
@@ -616,47 +606,39 @@ For background, see `doc/specs/2026-08-25-session-id-swap.md` and `doc/specs/202
 
 ## Close a task the moment it is finished
 
-1. Land the work.
-2. Call `atct_task_update` with `done` as soon as it lands, before you claim
-   anything else, and pass the commits it produced:
-   `atct_task_update(task_id, status="done", commits=["<sha>"])`. **Paste every
-   SHA from the real output of `git log --oneline`; do not type one from
-   memory** — goal 181 reported four hand-written SHAs on 2026-08-27 and `git
-   cat-file -e` found none of the four. A task you already closed can still be
-   linked: call it again with the same `status="done"` and the `commits` you
-   left out.
-3. Then claim the next task.
+1. Land the work in the executor's worktree.
+2. The executor requests review. The subcommander receives it, checks the work,
+   and calls `atct_task_handoff_complete` with the completion report.
+3. Delegate the next task.
 
-Claiming is only half of the pair; a task nobody closed still reads as unstarted.
+A task nobody closes still reads as unstarted.
 
-**Out of order:** Claim the next task first and the finished one is never closed
-at all — the run has moved on, and nothing comes back to write the result. The
-landed work reads as unstarted for the rest of the session, so the queue looks
-longer than it is and the finished task can be handed to somebody else. Close it
-without `commits` and the loss is quieter but still real:
+**Out of order:** Delegating the next task first can leave the finished one open
+after the worker moves on. The landed work reads as unstarted for the rest of the
+session, so the queue looks longer than it is and the finished task can be handed
+to somebody else. Close it without linked commits and the loss is quieter but still real:
 `wakeup.commits_missing` fires, and **the approver can no longer tell which
 change belongs to which task.** The diff view goal 187 added
 (`GET /api/goals/{id}/diff`) reads the branch, so the diff itself is visible with
 no commits linked at all — but the per-task correspondence exists nowhere else.
 On 2026-08-28, eight of eleven units went `done` with `task_commits` empty.
 
-This matters most when the run that did the work is not the run that holds the
-claim — an orchestrator delegating to another agent, for example. The delegate
-finishes, the orchestrator moves on, and nothing writes the result back. **Then
-the dashboard says the work has not begun, and the human plans around that.**
-If you delegated, close the task when the delegate reports, not later.
+This matters most when the run that did the work is not the reviewer. The
+executor finishes, the subcommander moves on, and nothing writes the result
+back. **Then the dashboard says the work has not begun, and the human plans
+around that.** Close the task when the executor reports, not later.
 
 ## Keep going
 
-An active goal is permission to work, not a request for a plan. When
-`atct_goal_list` or the session context shows one, declare the tasks and start.
+An active goal is permission to coordinate work, not a request for a plan. When
+`atct_goal_list` or the session context shows one, declare the tasks and delegate them.
 Do not wait for the human to approve the plan first: they set the goal, and that
 was the approval.
 
 Carry each task through to a commit. The human's attention is for decisions and
 for the final approval, not for granting permission at every step.
 
-Finishing a task is not a checkpoint. Claim the next one and keep going. When a
+Finishing a task is not a checkpoint. Review it, delegate the next one, and keep going. When a
 goal has no unclaimed tasks left, move to another active goal instead of
 reporting back. Announcing what you will do next and then stopping to be told to
 do it wastes the turn that ends the sentence.

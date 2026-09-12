@@ -632,132 +632,14 @@ func TestProjectReleaseRejectsSessionBoundToAnotherProject(t *testing.T) {
 	}
 }
 
-func TestTaskReleaseAllowsHolderSession(t *testing.T) {
+func TestTaskClaimAndReleaseRoutesAreUnavailable(t *testing.T) {
 	fixture := newGoalListFixture(t)
 	defer fixture.store.Close()
 
-	const holderSession = "daemon-task-release-holder-run"
-	registerLiveGoalClaimSession(t, fixture, holderSession)
-	if _, err := fixture.store.ClaimTask(context.Background(), fixture.tasks[1].ID, daemonTestSessionID(t, fixture.store, holderSession)); err != nil {
-		t.Fatalf("task.claim: %v", err)
-	}
-
-	params, err := json.Marshal(map[string]any{
-		"task_id":          fixture.tasks[1].ID,
-		"agent_session_id": daemonTestSessionID(t, fixture.store, holderSession),
-	})
-	if err != nil {
-		t.Fatalf("marshal task.release params: %v", err)
-	}
-	result, err := fixture.daemon.dispatch(context.Background(), rpc.Request{Method: "task.release", Params: params})
-	if err != nil {
-		t.Fatalf("task.release: %v", err)
-	}
-	var released domain.Task
-	if err := json.Unmarshal(result, &released); err != nil {
-		t.Fatalf("unmarshal task.release result: %v", err)
-	}
-	if released.Status != domain.TaskTodo {
-		t.Fatalf("released task status = %v, want %v", released.Status, domain.TaskTodo)
-	}
-	if handoff := openTaskHandoffForTest(t, fixture, fixture.tasks[1].GoalID, fixture.tasks[1].ID); handoff != nil {
-		t.Fatalf("task handoff after release = %+v, want none", handoff)
-	}
-}
-
-func TestTaskReleaseAllowsSessionBoundToProject(t *testing.T) {
-	fixture := newGoalListFixture(t)
-	defer fixture.store.Close()
-
-	const (
-		holderSession = "daemon-task-release-bound-holder-run"
-		callerSession = "daemon-task-release-bound-caller-run"
-	)
-	registerLiveGoalClaimSession(t, fixture, holderSession)
-	registerLiveGoalClaimSession(t, fixture, callerSession)
-	if err := fixture.store.AssociateAgentSessionWithProject(context.Background(), daemonTestSessionID(t, fixture.store, callerSession), fixture.project.ID); err != nil {
-		t.Fatalf("associate caller session with project: %v", err)
-	}
-	if _, err := fixture.store.ClaimTask(context.Background(), fixture.tasks[1].ID, daemonTestSessionID(t, fixture.store, holderSession)); err != nil {
-		t.Fatalf("task.claim: %v", err)
-	}
-
-	params, err := json.Marshal(map[string]any{
-		"task_id":          fixture.tasks[1].ID,
-		"agent_session_id": daemonTestSessionID(t, fixture.store, callerSession),
-	})
-	if err != nil {
-		t.Fatalf("marshal task.release params: %v", err)
-	}
-	result, err := fixture.daemon.dispatch(context.Background(), rpc.Request{Method: "task.release", Params: params})
-	if err != nil {
-		t.Fatalf("task.release: %v", err)
-	}
-	var released domain.Task
-	if err := json.Unmarshal(result, &released); err != nil {
-		t.Fatalf("unmarshal task.release result: %v", err)
-	}
-	if released.Status != domain.TaskTodo {
-		t.Fatalf("released task status = %v, want %v", released.Status, domain.TaskTodo)
-	}
-	if handoff := openTaskHandoffForTest(t, fixture, fixture.tasks[1].GoalID, fixture.tasks[1].ID); handoff != nil {
-		t.Fatalf("task handoff after release = %+v, want none", handoff)
-	}
-}
-
-func TestTaskReleaseRejectsEmptyAgentSession(t *testing.T) {
-	fixture := newGoalListFixture(t)
-	defer fixture.store.Close()
-
-	const holderSession = "daemon-task-release-empty-holder-run"
-	registerLiveGoalClaimSession(t, fixture, holderSession)
-	if _, err := fixture.store.ClaimTask(context.Background(), fixture.tasks[1].ID, daemonTestSessionID(t, fixture.store, holderSession)); err != nil {
-		t.Fatalf("task.claim: %v", err)
-	}
-
-	params, err := json.Marshal(map[string]any{
-		"task_id":          fixture.tasks[1].ID,
-		"agent_session_id": "",
-	})
-	if err != nil {
-		t.Fatalf("marshal task.release params: %v", err)
-	}
-	if _, err := fixture.daemon.dispatch(context.Background(), rpc.Request{Method: "task.release", Params: params}); err == nil {
-		t.Fatal("task.release succeeded without agent_session_id")
-	}
-}
-
-func TestTaskReleaseRejectsSessionBoundToAnotherProject(t *testing.T) {
-	fixture := newGoalListFixture(t)
-	defer fixture.store.Close()
-
-	const (
-		holderSession  = "daemon-task-release-foreign-holder-run"
-		foreignSession = "daemon-task-release-foreign-caller-run"
-	)
-	registerLiveGoalClaimSession(t, fixture, holderSession)
-	registerLiveGoalClaimSession(t, fixture, foreignSession)
-	foreignProject, err := fixture.store.CreateProject(context.Background(), "foreign-task-release-project", t.TempDir())
-	if err != nil {
-		t.Fatalf("create foreign project: %v", err)
-	}
-	if err := fixture.store.AssociateAgentSessionWithProject(context.Background(), daemonTestSessionID(t, fixture.store, foreignSession), foreignProject.ID); err != nil {
-		t.Fatalf("associate foreign session with project: %v", err)
-	}
-	if _, err := fixture.store.ClaimTask(context.Background(), fixture.tasks[1].ID, daemonTestSessionID(t, fixture.store, holderSession)); err != nil {
-		t.Fatalf("task.claim: %v", err)
-	}
-
-	params, err := json.Marshal(map[string]any{
-		"task_id":          fixture.tasks[1].ID,
-		"agent_session_id": daemonTestSessionID(t, fixture.store, foreignSession),
-	})
-	if err != nil {
-		t.Fatalf("marshal task.release params: %v", err)
-	}
-	_, err = fixture.daemon.dispatch(context.Background(), rpc.Request{Method: "task.release", Params: params})
-	if err == nil {
-		t.Fatal("task.release succeeded for a session bound to another project")
+	for _, method := range []string{"task.claim", "task.release"} {
+		if _, err := fixture.daemon.dispatch(context.Background(), rpc.Request{Method: method}); err == nil || !strings.Contains(err.Error(), "unknown method") {
+			t.Errorf("%s error = %v, want unknown method", method, err)
+		}
 	}
 }
 
@@ -1689,39 +1571,6 @@ func TestContractN13GoalGetResponseSizeBreakdown(t *testing.T) {
 	measure("long-content", longGoal.ID)
 }
 
-func TestContractB13TaskClaimReturnsFullTaskDescription(t *testing.T) {
-	fixture := newGoalListFixture(t)
-	defer fixture.store.Close()
-
-	sessionID := "task-claim-description-contract-session"
-	registerLiveGoalClaimSession(t, fixture, sessionID)
-	fullDescription := strings.Repeat("あ", 300)
-	tasks, err := fixture.store.CreateTasks(context.Background(), fixture.emptyTaskGoal.ID, "contract-test", "task-claim-description-contract", []string{"full task.claim description"}, []string{fullDescription})
-	if err != nil {
-		t.Fatalf("CreateTasks: %v", err)
-	}
-	if len(tasks) != 1 {
-		t.Fatalf("CreateTasks returned %d tasks, want 1", len(tasks))
-	}
-	params, err := json.Marshal(map[string]any{"task_id": tasks[0].ID, "agent_session_id": daemonTestSessionID(t, fixture.store, sessionID)})
-	if err != nil {
-		t.Fatalf("marshal task.claim params: %v", err)
-	}
-	raw, err := fixture.daemon.dispatch(context.Background(), rpc.Request{Method: "task.claim", Params: params})
-	if err != nil {
-		t.Fatalf("task.claim: %v", err)
-	}
-	var response struct {
-		Description string `json:"description"`
-	}
-	if err := json.Unmarshal(raw, &response); err != nil {
-		t.Fatalf("decode task.claim response: %v", err)
-	}
-	if response.Description != fullDescription {
-		t.Fatalf("task.claim description rune count = %d, want %d", len([]rune(response.Description)), len([]rune(fullDescription)))
-	}
-}
-
 func TestContractB1GoalListKeepsActiveAndProposedGoals(t *testing.T) {
 	fixture := newGoalListFixture(t)
 	defer fixture.store.Close()
@@ -1870,7 +1719,7 @@ esac
 	}
 	for _, marker := range []string{
 		"This repository is registered with ATCT.",
-		"An active goal is permission to work.",
+		"An active goal is permission to coordinate work.",
 		"See the `atct` skill for details.",
 	} {
 		if !strings.Contains(instructions, marker) {

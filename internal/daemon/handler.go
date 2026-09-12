@@ -16,7 +16,6 @@ import (
 	"github.com/michiomochi/atct/internal/store"
 )
 
-var ErrTaskAlreadyClaimed = errors.New("task already claimed")
 var ErrGoalAlreadyClaimed = errors.New("goal already claimed")
 var ErrProjectAlreadyClaimed = errors.New("project already claimed")
 var ErrGoalNotProposed = errors.New("goal is not proposed")
@@ -1552,49 +1551,6 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		}
 		response, err := d.responseWithScopedUnappliedDecisions(ctx, tk, tk.GoalID, p.AgentSessionID)
 		return marshal(response, err)
-
-	case "task.claim":
-		var p struct {
-			TaskID                  int64 `json:"task_id"`
-			AgentSessionID          int64 `json:"agent_session_id"`
-			IncludeUnappliedAnswers bool  `json:"include_unapplied_answers"`
-		}
-		if err := json.Unmarshal(req.Params, &p); err != nil {
-			return nil, err
-		}
-		targetProjectID, err := d.store.ProjectIDForTask(ctx, p.TaskID)
-		if err != nil {
-			return nil, err
-		}
-		if err := d.ensureAgentSessionProject(ctx, p.AgentSessionID, targetProjectID); err != nil {
-			return nil, err
-		}
-		tk, err := d.store.ClaimTask(ctx, p.TaskID, p.AgentSessionID)
-		if errors.Is(err, store.ErrTaskAlreadyClaimed) {
-			return nil, ErrTaskAlreadyClaimed
-		}
-		if err != nil || !p.IncludeUnappliedAnswers {
-			return marshal(tk, err)
-		}
-		unapplied, err := d.unappliedDecisionsForSession(ctx, tk.GoalID, p.AgentSessionID)
-		if err != nil {
-			return nil, err
-		}
-		return marshal(responseWithUnappliedDecisions{
-			Data:               tk,
-			UnappliedDecisions: unappliedDecisionNotifications(unapplied),
-		}, nil)
-
-	case "task.release":
-		var p struct {
-			TaskID         int64 `json:"task_id"`
-			AgentSessionID int64 `json:"agent_session_id"`
-		}
-		if err := json.Unmarshal(req.Params, &p); err != nil {
-			return nil, err
-		}
-		tk, err := d.store.ReleaseTaskAs(ctx, p.TaskID, p.AgentSessionID)
-		return marshal(tk, err)
 
 	case "task.handoff.request":
 		var p taskHandoffRequestParams

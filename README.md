@@ -134,7 +134,7 @@ scores; a valid monitor-wrapper command is required in every passing response.
 
 ## Setting a goal is the approval
 
-An active goal is permission to work. The agent breaks it into tasks and starts — it does not
+An active goal is permission to coordinate work. The agent breaks it into tasks and delegates them — it does not
 come back for sign-off on the plan, and it does not stop between tasks. Your attention goes to
 the decisions it parks and to the final approval, not to granting permission at every step.
 

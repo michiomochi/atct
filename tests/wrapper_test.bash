@@ -47,7 +47,7 @@ assert_empty_file() {
 # be spotted from the text alone, so it is registered here by hand.
 ORDERED_SECTIONS=(
   '## Declare before you work'
-  '## Claim before you start'
+  '## Receive before you start'
   '## Delegate a task'
   '### Two-layer delegation'
   '## Delegate a goal'
@@ -826,10 +826,10 @@ SCRIPT
 
   output="$(FAKE_CONTEXT='hook context' PATH="/usr/bin:/bin" bash "$hook")"
   [[ "$output" == hook\ context* ]] || fail 'context was not printed before the boilerplate'
-  [[ "$output" != *'An active goal is permission to work.'* ]] || fail 'fixed instructions leaked into the session-start hook'
+  [[ "$output" != *'An active goal is permission to coordinate work.'* ]] || fail 'fixed instructions leaked into the session-start hook'
   [[ "$output" != *'For the human-decision rule, see the `atct` skill.'* ]] || fail 'fixed instructions leaked into the session-start hook'
   [[ "$output" != *'See the `atct` skill for details.'* ]] || fail 'fixed instructions leaked into the session-start hook'
-  assert_file_contains 'An active goal is permission to work.' "$REPO_ROOT/internal/mcpshim/instructions.go"
+  assert_file_contains 'An active goal is permission to coordinate work.' "$REPO_ROOT/internal/mcpshim/instructions.go"
   assert_file_contains 'For the human-decision rule, see the `atct` skill.' "$REPO_ROOT/internal/mcpshim/instructions.go"
   assert_file_contains 'See the `atct` skill for details.' "$REPO_ROOT/internal/mcpshim/instructions.go"
 
@@ -841,7 +841,7 @@ SCRIPT
 }
 
 test_mcp_instructions_include_active_goal_permission() {
-  assert_file_contains 'An active goal is permission to work.' "$REPO_ROOT/internal/mcpshim/instructions.go"
+  assert_file_contains 'An active goal is permission to coordinate work.' "$REPO_ROOT/internal/mcpshim/instructions.go"
 }
 
 test_mcp_instructions_delegate_human_decisions_to_the_skill() {
@@ -1107,7 +1107,7 @@ test_recovery_section_has_goal_path() {
 }
 
 test_recovery_section_has_task_path_and_non_repair_note() {
-  recovery_section_contains 'atct_task_handoff_complete` (with `task_id` and `complete_report`)'
+  recovery_section_contains 'have the subcommander request a fresh `atct_task_handoff_request`'
   recovery_section_contains 'Rejection is automatic, so the goal step above that asks the commander to reissue the handoff is needed only for the last trigger.'
 }
 
@@ -1206,7 +1206,7 @@ test_delegation_names_the_atct_tools_an_executor_may_call() {
   for tool in atct_goal_handoff_complete atct_goal_handoff_receive \
     atct_goal_handoff_request atct_goal_claim atct_goal_release \
     atct_goal_complete atct_goal_update_content atct_project_claim \
-    atct_project_release atct_task_claim atct_task_handoff_request \
+    atct_project_release atct_task_handoff_request \
     atct_task_handoff_review_receive atct_task_handoff_complete \
     atct_task_handoff_review_reject atct_task_update \
     atct_task_create atct_decision_ask; do
@@ -1229,7 +1229,7 @@ test_delegation_names_the_atct_tools_an_executor_must_not_call() {
   for tool in atct_goal_handoff_complete atct_goal_handoff_receive \
     atct_goal_handoff_request atct_goal_claim atct_goal_release \
     atct_goal_complete atct_goal_update_content atct_project_claim \
-    atct_project_release atct_task_claim atct_task_handoff_request \
+    atct_project_release atct_task_handoff_request \
     atct_task_handoff_review_receive atct_task_handoff_complete \
     atct_task_handoff_review_reject atct_task_update \
     atct_task_create atct_decision_ask; do
@@ -1438,12 +1438,12 @@ test_delegated_claim_contract_is_explicit() {
   assert_file_contains '## Delegate a goal' "$atct_skill"
   assert_file_contains 'First record receipt of the handoff by calling `atct_task_handoff_receive`' "$atct_skill"
   assert_file_contains 'Then record receipt of the goal handoff by calling' "$atct_skill"
-  assert_file_contains 'A delegated worker owns the task it was given.' "$atct_skill"
+  assert_file_contains 'Every implementation task is delegated.' "$atct_skill"
   assert_file_contains 'Delegating a task requires a received goal handoff, not a project claim.' "$atct_skill"
   assert_file_contains 'For two-layer delegation, the commander calls `atct_goal_claim` to create a goal handoff addressed to itself.' "$atct_skill"
   assert_file_contains 'a received, uncompleted goal handoff' "$atct_skill"
-  assert_file_contains 'A delegated worker receives the task with `atct_task_handoff_receive`' "$start_skill"
-  assert_file_contains 'The following loop is for self-directed work: find and take a task yourself.' "$start_skill"
+  assert_file_contains 'with `atct_task_handoff_receive` before starting it.' "$start_skill"
+  assert_file_contains 'The loop coordinates delegated work.' "$start_skill"
   assert_file_contains 'Record the handoff before waking the worker.' "$atct_skill"
   assert_file_contains 'The delegator must call `atct_task_handoff_request`' "$atct_skill"
   assert_file_contains 'the `task_id` provided in this request and the exact `session_key`' "$atct_skill"
@@ -1484,7 +1484,7 @@ test_declared_task_content_fix_contract_is_explicit() {
   local atct_skill="$REPO_ROOT/skills/atct/SKILL.md"
   local task_section
 
-  task_section="$(sed -n '/^## Fix a declared task$/,/^## Claim before you start$/p' "$atct_skill")"
+  task_section="$(sed -n '/^## Fix a declared task$/,/^## Receive before you start$/p' "$atct_skill")"
   grep -Fq -- 'atct_task_update_content' <<<"$task_section" ||
     fail 'declared task content fix section omits atct_task_update_content'
   grep -Fq -- 'todo' <<<"$task_section" ||
@@ -1612,12 +1612,10 @@ test_task_handoff_recreation_cause_is_documented() {
   local task_section
 
   task_section="$(sed -n '/^## Delegate a task$/,/^## Delegate a goal$/p' "$atct_skill")"
-  grep -Fq -- 'Claiming' <<<"$task_section" ||
-    fail 'task delegation section omits the claim-to-handoff refusal cause'
-  grep -Fq -- 'task first always' <<<"$task_section" ||
-    fail 'task delegation section omits the claim-to-handoff refusal cause'
-  grep -Fq -- 'already writes an open handoff' <<<"$task_section" ||
-    fail 'task delegation section omits the open handoff cause'
+  grep -Fq -- 'Hold the parent, not the task.' <<<"$task_section" ||
+    fail 'task delegation section omits the parent-handoff requirement'
+  ! grep -Fq -- 'atct_task_claim' <<<"$task_section" ||
+    fail 'task delegation section retains the removed claim API'
 }
 
 test_task_handoff_recreation_uses_new_id() {
@@ -1921,24 +1919,13 @@ test_role_contract_matches_implementation() {
   fi
 }
 
-test_task_close_names_the_commits_argument() {
+test_task_close_uses_handoff_review() {
   local atct_skill="$REPO_ROOT/skills/atct/SKILL.md"
-  local tools_go="$REPO_ROOT/internal/mcpshim/tools.go"
   local close_section
-  local task_update_input
-  local task_update_call
 
   close_section="$(sed -n '/^## Close a task the moment it is finished$/,/^## Keep going$/p' "$atct_skill")"
-  grep -Fq -- 'commits=' <<<"$close_section" ||
-    fail 'closing a task must name the commits argument'
-
-  task_update_input="$(sed -n '/^type TaskUpdateIn struct {$/,/^}$/p' "$tools_go")"
-  grep -Fq -- 'json:"commits' <<<"$task_update_input" ||
-    fail 'atct_task_update input must keep a commits field'
-
-  task_update_call="$(sed -n '/callWithUnappliedDecisions(ctx, c, "task.update", map\[string\]any{/,/^\t\t})$/p' "$tools_go")"
-  grep -Fq -- '"commits"' <<<"$task_update_call" ||
-    fail 'atct_task_update must pass commits to task.update'
+  grep -Fq -- 'atct_task_handoff_complete' <<<"$close_section" ||
+    fail 'closing a task must use handoff review'
 }
 
 test_worktree_rule_defers_to_superpowers() {
@@ -2229,7 +2216,7 @@ test_start_does_not_claim_delegate_cannot_close
 test_start_does_not_claim_delegate_lacks_claim
 test_role_table_has_no_task_update_procedure
 test_role_contract_matches_implementation
-test_task_close_names_the_commits_argument
+test_task_close_uses_handoff_review
 test_role_response_does_not_leak_other_boundaries
 test_worktree_rule_defers_to_superpowers
 test_worktree_rule_names_who_creates_it

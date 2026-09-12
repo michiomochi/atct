@@ -507,10 +507,10 @@ func (s *Store) authorizeTaskStatusRelease(ctx context.Context, taskID int64, st
 			return "", nil
 		}
 		if status == domain.TaskDone || status == domain.TaskDropped {
-			return "", fmt.Errorf("task %d has a work lock held by another agent session; only the lock holder or a caller bound to the task's project can set it to %s; if that session is no longer running, return it to todo with atct_task_update, then acquire the work lock with atct_task_claim before retrying", taskID, status)
+			return "", fmt.Errorf("task %d has a work lock held by another agent session; only the lock holder or a caller bound to the task's project can set it to %s; if that session is no longer running, return it to todo with atct_task_update, then request a fresh task handoff before retrying", taskID, status)
 		}
 		if ownerID == 0 || claimIsRunning(ctx, s, ownerID) {
-			return "", fmt.Errorf("task %d has a work lock held by another agent session that is still running; only the lock holder or a caller bound to the task's project can release it; wait for it to finish or stop, then return it to todo with atct_task_update and acquire the work lock with atct_task_claim", taskID)
+			return "", fmt.Errorf("task %d has a work lock held by another agent session that is still running; only the lock holder or a caller bound to the task's project can release it; wait for it to finish or stop, then return it to todo with atct_task_update and request a fresh task handoff", taskID)
 		}
 		return "", nil
 	}
