@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/michiomochi/atct/internal/domain"
+	"github.com/michiomochi/atct/internal/store"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -309,7 +310,8 @@ type RoleIn struct {
 }
 
 type SessionIdentifyIn struct {
-	SessionKey string `json:"session_key"`
+	SessionKey   string `json:"session_key"`
+	MonitorToken string `json:"monitor_token,omitempty" jsonschema:"optional monitor token injected by atct codex monitor"`
 }
 
 type SessionDiscardRequestIn struct {
@@ -574,8 +576,9 @@ func callRole(ctx context.Context, c *Client, in RoleIn, agentSessionID int64) (
 }
 
 type sessionIdentifyResult struct {
-	AgentSessionID int64 `json:"agent_session_id"`
-	Reattached     bool  `json:"reattached"`
+	AgentSessionID int64                   `json:"agent_session_id"`
+	Reattached     bool                    `json:"reattached"`
+	Assignment     store.MonitorAssignment `json:"assignment"`
 }
 
 func callSessionIdentify(ctx context.Context, c *Client, in SessionIdentifyIn, agentSessionID *agentSessionIDHolder) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
@@ -583,6 +586,7 @@ func callSessionIdentify(ctx context.Context, c *Client, in SessionIdentifyIn, a
 	if err := c.Call(ctx, "session.identify", map[string]any{
 		"agent_session_id": agentSessionID.Get(),
 		"session_key":      strings.TrimSpace(in.SessionKey),
+		"monitor_token":    strings.TrimSpace(in.MonitorToken),
 	}, &response); err != nil {
 		return nil, RawWithUnappliedDecisions{}, err
 	}

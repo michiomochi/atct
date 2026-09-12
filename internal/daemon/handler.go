@@ -180,40 +180,11 @@ func unappliedDecisionNotificationsExcept(decisions []domain.Decision, excludedI
 }
 
 func (d *Daemon) deriveSessionRole(ctx context.Context, agentSessionID int64) (roleAssignment, error) {
-	response := roleAssignment{Role: "executor"}
-	if agentSessionID != 0 {
-		projects, err := d.store.ListProjects(ctx)
-		if err != nil {
-			return roleAssignment{}, err
-		}
-		for _, project := range projects {
-			if project.ClaimedBy == agentSessionID {
-				response.Role = "commander"
-				response.ProjectID = project.ID
-				break
-			}
-		}
-
-		goals, err := d.store.ListAllGoals(ctx)
-		if err != nil {
-			return roleAssignment{}, err
-		}
-		goalHandoffs, err := d.store.ListOpenGoalHandoffs(ctx)
-		if err != nil {
-			return roleAssignment{}, err
-		}
-		for _, goal := range goals {
-			handoff := goalHandoffs[goal.ID]
-			if handoff != nil && handoff.ReceivedAt != nil && goalHandoffClaimedBy(handoff) == agentSessionID {
-				response.GoalID = goal.ID
-				break
-			}
-		}
-		if response.Role != "commander" && response.GoalID != 0 {
-			response.Role = "subcommander"
-		}
+	assignment, err := d.store.MonitorAssignment(ctx, agentSessionID)
+	if err != nil {
+		return roleAssignment{}, err
 	}
-	return response, nil
+	return roleAssignment{Role: assignment.Role, ProjectID: assignment.ProjectID, GoalID: assignment.GoalID}, nil
 }
 
 func roleResponseFor(assignment roleAssignment) any {
@@ -992,6 +963,7 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		var p struct {
 			AgentSessionID int64  `json:"agent_session_id"`
 			SessionKey     string `json:"session_key"`
+			MonitorToken   string `json:"monitor_token"`
 		}
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, err
@@ -1000,9 +972,19 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		if err != nil {
 			return nil, err
 		}
+		if strings.TrimSpace(p.MonitorToken) != "" {
+			if err := d.store.BindMonitorToken(ctx, p.MonitorToken, canonicalID); err != nil {
+				return nil, err
+			}
+		}
+		assignment, err := d.store.MonitorAssignment(ctx, canonicalID)
+		if err != nil {
+			return nil, err
+		}
 		return marshal(map[string]any{
 			"agent_session_id": canonicalID,
 			"reattached":       reattached,
+			"assignment":       assignment,
 		}, nil)
 
 	case "development.start":

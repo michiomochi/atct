@@ -521,7 +521,7 @@ func TestTaskUpdateContentOmitsUnspecifiedOptionalParameters(t *testing.T) {
 
 func TestSessionIdentifyUpdatesAgentSessionIDForFollowingTool(t *testing.T) {
 	ctx := context.Background()
-	socketPath, calls := startCapturingSchemaTestDaemon(t)
+	socketPath, calls := startCapturingSchemaTestDaemonWithIdentifyResponse(t, `{"result":{"agent_session_id":9,"reattached":true,"assignment":{"role":"commander","project_id":7}}}`)
 	server := mcp.NewServer(&mcp.Implementation{Name: "atct-test", Version: "test"}, nil)
 	const transportSessionID int64 = 4
 	mcpshim.Register(server, mcpshim.NewClient(socketPath), transportSessionID)
@@ -542,7 +542,7 @@ func TestSessionIdentifyUpdatesAgentSessionIDForFollowingTool(t *testing.T) {
 
 	identifyResult, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
 		Name:      "atct_session_identify",
-		Arguments: map[string]any{"session_key": "stable-key"},
+		Arguments: map[string]any{"session_key": "stable-key", "monitor_token": "monitor-token"},
 	})
 	if err != nil {
 		t.Fatalf("CallTool(atct_session_identify): %v", err)
@@ -550,12 +550,23 @@ func TestSessionIdentifyUpdatesAgentSessionIDForFollowingTool(t *testing.T) {
 	if identifyResult == nil || identifyResult.IsError {
 		t.Fatalf("atct_session_identify returned error result: %+v", identifyResult)
 	}
+	identifyData := decodeRoleResult(t, identifyResult)
+	var assignment store.MonitorAssignment
+	if err := json.Unmarshal(identifyData["assignment"], &assignment); err != nil {
+		t.Fatalf("decode identify assignment: %v", err)
+	}
+	if assignment.Role != "commander" || assignment.ProjectID != 7 {
+		t.Fatalf("identify assignment = %+v, want commander project 7", assignment)
+	}
 	identifyCall := <-calls
 	if identifyCall.method != "session.identify" {
 		t.Fatalf("identify RPC method = %q, want session.identify", identifyCall.method)
 	}
 	if got := identifyCall.params["agent_session_id"]; got != float64(transportSessionID) {
 		t.Fatalf("identify agent_session_id = %#v, want %d", got, transportSessionID)
+	}
+	if got := identifyCall.params["monitor_token"]; got != "monitor-token" {
+		t.Fatalf("identify monitor_token = %#v, want monitor-token", got)
 	}
 
 	roleResult, err := clientSession.CallTool(ctx, &mcp.CallToolParams{

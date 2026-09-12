@@ -213,6 +213,14 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.handleMonitorHealth(w, r)
 		return
 	}
+	if len(parts) == 3 && parts[0] == "api" && parts[1] == "monitor-bindings" {
+		if r.Method != http.MethodGet {
+			writeError(w, http.StatusBadRequest, "method is not allowed for this endpoint")
+			return
+		}
+		s.handleMonitorBinding(w, r, parts[2])
+		return
+	}
 	if len(parts) == 2 && parts[0] == "api" && parts[1] == "events" {
 		if r.Method != http.MethodGet {
 			writeError(w, http.StatusBadRequest, "method is not allowed for this endpoint")
@@ -438,6 +446,19 @@ func (s *Server) handleMonitorHealth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, health)
+}
+
+func (s *Server) handleMonitorBinding(w http.ResponseWriter, r *http.Request, token string) {
+	binding, err := s.store.MonitorBinding(r.Context(), token)
+	if errors.Is(err, store.ErrMonitorBindingNotFound) {
+		writeJSON(w, http.StatusOK, store.MonitorBinding{Pending: true})
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, binding)
 }
 
 func validateMonitorHealthScope(s *Server, ctx context.Context, health store.MonitorHealth) error {

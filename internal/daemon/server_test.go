@@ -569,6 +569,7 @@ func TestSessionIdentifyReattachesProjectClaimForRole(t *testing.T) {
 	identifyParams, err := json.Marshal(map[string]any{
 		"agent_session_id": newSessionID,
 		"session_key":      sessionKey,
+		"monitor_token":    "monitor-token",
 	})
 	if err != nil {
 		t.Fatalf("marshal session.identify params: %v", err)
@@ -578,14 +579,23 @@ func TestSessionIdentifyReattachesProjectClaimForRole(t *testing.T) {
 		t.Fatalf("session.identify: %v", err)
 	}
 	var identifyResponse struct {
-		AgentSessionID int64 `json:"agent_session_id"`
-		Reattached     bool  `json:"reattached"`
+		AgentSessionID int64                   `json:"agent_session_id"`
+		Reattached     bool                    `json:"reattached"`
+		Assignment     store.MonitorAssignment `json:"assignment"`
 	}
 	if err := json.Unmarshal(identifyResult, &identifyResponse); err != nil {
 		t.Fatalf("unmarshal session.identify response: %v", err)
 	}
 	if identifyResponse.AgentSessionID != oldSessionID || !identifyResponse.Reattached {
 		t.Fatalf("session.identify response = (%v, %v), want (%v, true)", identifyResponse.AgentSessionID, identifyResponse.Reattached, oldSessionID)
+	}
+	wantAssignment := store.MonitorAssignment{Role: "commander", ProjectID: fixture.project.ID}
+	if !reflect.DeepEqual(identifyResponse.Assignment, wantAssignment) {
+		t.Fatalf("session.identify assignment = %+v, want %+v", identifyResponse.Assignment, wantAssignment)
+	}
+	binding, err := fixture.store.MonitorBinding(ctx, "monitor-token")
+	if err != nil || binding.Assignment.Role != "commander" || binding.Assignment.ProjectID != fixture.project.ID {
+		t.Fatalf("monitor binding = %+v, %v; want commander for project %d", binding, err, fixture.project.ID)
 	}
 
 	roleParams, err := json.Marshal(map[string]any{"agent_session_id": identifyResponse.AgentSessionID})
