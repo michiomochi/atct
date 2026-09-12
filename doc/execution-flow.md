@@ -47,7 +47,7 @@ canonical な agent session を確定し、receive は role と claim evidence �
 | 受領 | 作業する側 | `atct_goal_handoff_receive` | — | `atct_task_handoff_receive` |
 | レビュー依頼 | 作業する側 | `atct_goal_handoff_review_request` | `atct_plan_handoff_review_request` | `atct_task_handoff_review_request` |
 | レビュー受領 | レビューする側 | `atct_goal_handoff_review_receive` | `atct_plan_handoff_review_receive` | `atct_task_handoff_review_receive` |
-| 完了 | 渡した側 | `atct_goal_handoff_complete` | `atct_plan_handoff_complete` | `atct_task_handoff_complete` |
+| 完了 | 渡した側 | `atct_goal_review_complete`（人間承認後） | `atct_plan_handoff_complete` | `atct_task_handoff_complete` |
 | 差し戻し | 渡した側 | `atct_goal_handoff_review_reject` | `atct_plan_handoff_review_reject` | `atct_task_handoff_review_reject` |
 | 差し戻し受領 | 作業する側 | `atct_goal_handoff_review_reject_receive` | `atct_plan_handoff_review_reject_receive` | `atct_task_handoff_review_reject_receive` |
 
@@ -92,9 +92,10 @@ flowchart TD
         C3[atct_goal_handoff_request<br/>goal handoff を作成]
         C4[subcommander を起動]
         C5[atct_plan_handoff_review_receive<br/>レビューして atct_plan_handoff_complete]
-        C6[atct_goal_handoff_review_receive<br/>レビューして atct_goal_handoff_complete]
-        C7[atct_goal_review_request<br/>人間の承認を依頼（handoff ではない）]
-        C8[承認後にマージ、完成報告、後片付け]
+        C6[atct_goal_handoff_review_receive<br/>レビュー]
+        C7[atct_goal_review_request<br/>人間の承認を依頼（handoff は開いたまま）]
+        C8[承認後にマージし atct_goal_review_complete<br/>handoff と goal を同時に完了]
+        C9[atct_goal_handoff_review_reject<br/>人間の差し戻しを subcommander へ渡す]
     end
 
     subgraph S[subcommander]
@@ -107,6 +108,7 @@ flowchart TD
         S6[atct_task_handoff_request<br/>task handoff を作成]
         S7[task review を受領・レビュー・完了]
         S8[executor を閉じ、コミットし<br/>atct_goal_handoff_review_request]
+        S9[atct_goal_handoff_review_reject_receive<br/>修正して同じ handoff で再 review request]
     end
 
     subgraph E[executor]
@@ -119,9 +121,13 @@ flowchart TD
     TC[task.create_handoff.request<br/>task-create handoff を作成<br/>plan 完了時に daemon が自動生成]
     G --> C1 --> C2 --> C3 --> C4 --> S1 --> S2 --> S3 --> C5 --> TC --> S4 --> S5 --> S6 --> E1 --> E2 --> E3 --> S7
     S7 -->|未委譲の task がある| S6
-    S7 -->|全 task が done| S8 --> C6 --> C7 --> C8
+    S7 -->|全 task が done| S8 --> C6
     C5 -->|atct_plan_handoff_review_reject| S3R --> S3
     S7 -->|atct_task_handoff_review_reject| E4 --> E2
+    C6 -->|受理| C7 --> HR{人間の goal review}
+    C6 -->|atct_goal_handoff_review_reject| S9
+    HR -->|承認| C8
+    HR -->|却下| C9 --> S9 --> S8
 ```
 
 ### commander
@@ -131,13 +137,14 @@ flowchart TD
 3. plan review の通知を受けたら `atct_plan_handoff_review_receive` で受領して設計を
    レビューし、受理なら `atct_plan_handoff_complete`、差し戻しなら
    `atct_plan_handoff_review_reject` を呼ぶ。
-4. goal review の通知を受けたら `atct_goal_handoff_review_receive` で受領してレビューし、
-   受理なら `atct_goal_handoff_complete`、差し戻しなら
-   `atct_goal_handoff_review_reject` を呼ぶ。
-5. 人間に `atct_goal_review_request` を出す。承認後に main へマージし、
-   `atct_goal_complete` へ唯一の 6 部完成報告を書き、worktree と subcommander を片付ける。
-6. 人間が却下した場合は、新しい `atct_goal_handoff_request` を作成し、同じ worktree で
-   subcommander に再開させる。
+4. goal review の通知を受けたら `atct_goal_handoff_review_receive` で受領してレビューする。
+   差し戻す場合は `atct_goal_handoff_review_reject` を呼ぶ。受理した handoff は開いたままにし、
+   人間の review へ進める。
+5. `atct_goal_review_request` で人間の review を依頼する。承認後に main へマージして
+   `atct_goal_review_complete` を呼ぶ。この操作は goal handoff と goal を同じ transaction で
+   完了し、worktree と subcommander を片付ける。
+6. 人間が却下した場合は、通知を受けた commander がフィードバックを添えて
+   `atct_goal_handoff_review_reject` を呼ぶ。新しい handoff は作らない。
 
 ### subcommander
 
@@ -158,6 +165,9 @@ flowchart TD
    `atct_task_handoff_complete`、差し戻しなら `atct_task_handoff_review_reject` を呼ぶ。
 7. 全 task が done になったら executor を閉じ、変更をコミットし、
    `atct_goal_handoff_review_request` を出す。
+8. goal handoff が差し戻された場合は
+   `atct_goal_handoff_review_reject_receive` を呼び、修正後に同じ `handoff_id` で
+   `atct_goal_handoff_review_request` を出す。
 
 ### executor
 
@@ -172,7 +182,9 @@ flowchart TD
 ## 人間のレビュー
 
 `atct_goal_review_*` は handoff のレビューではなく、ゴールそのもののレビューである。
-commander が human review を依頼し、承認後だけ main へのマージと完成報告を行う。
+commander は goal handoff の review を受領してから human review を依頼する。その間 handoff は
+開いたままであり、承認後の `atct_goal_review_complete` が main へのマージ後に handoff と goal を
+同時に完了する。人間の却下は handoff の差し戻しへ変換され、同じ handoff で作業を再開する。
 
 ## 通知
 
@@ -186,8 +198,10 @@ commander が human review を依頼し、承認後だけ main へのマージ�
 | `atct_task_handoff_review_request` | executor | subcommander |
 | `atct_task_handoff_complete` / `_review_reject` | subcommander | executor |
 | `atct_goal_handoff_review_request` | subcommander | commander |
-| `atct_goal_handoff_complete` / `_review_reject` | commander | subcommander |
-| `atct_goal_review_complete` / `_reject` | 人間 | commander |
+| `goal.handoff.complete` | daemon（`atct_goal_review_complete` 時） | subcommander |
+| `atct_goal_handoff_review_reject` | commander | subcommander |
+| `atct_goal_review_reject` | 人間 | commander（`goal.review.reject` 通知） |
+| `atct_goal_review_complete` | commander（人間の承認後） | — |
 | ゴールの取り下げ | commander | そのゴールの subcommander |
 
 ## worktree とコミット
