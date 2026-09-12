@@ -540,7 +540,7 @@ func latestDelegatedGoalHandoff(handoffs []GoalHandoff) *GoalHandoff {
 	return latest
 }
 
-func goalHandoffHasCommanderReviewCompletion(handoff *GoalHandoff, callerID int64) bool {
+func goalHandoffHasCommanderReviewReceipt(handoff *GoalHandoff, callerID int64) bool {
 	return handoff.RequestedAt != nil &&
 		handoff.ReceivedAt != nil &&
 		handoff.ReviewRequestedAt != nil &&
@@ -548,29 +548,41 @@ func goalHandoffHasCommanderReviewCompletion(handoff *GoalHandoff, callerID int6
 		handoff.ReviewRequestedBy != 0 &&
 		handoff.ReviewRequestedBy == handoff.ReceivedBy &&
 		handoff.ReviewReceivedBy != 0 &&
-		handoff.ReviewReceivedBy == callerID &&
+		handoff.ReviewReceivedBy == callerID
+}
+
+func goalHandoffHasCommanderReviewCompletion(handoff *GoalHandoff, callerID int64) bool {
+	return goalHandoffHasCommanderReviewReceipt(handoff, callerID) &&
 		handoff.CompletedReportAt != nil &&
 		handoff.CompleteReport != goalHandoffReclaimedReport &&
 		handoff.CompleteReport != goalHandoffReleasedReport
 }
 
-func (s *Store) requireLatestGoalHandoffForReview(ctx context.Context, goalID, callerID int64, previous domain.Decision, hasPrevious bool) error {
+func (s *Store) latestGoalHandoffForReview(ctx context.Context, goalID, callerID int64) (GoalHandoff, error) {
 	handoffs, err := s.ListGoalHandoffs(ctx, goalID)
 	if err != nil {
-		return fmt.Errorf("find goal handoff for review: %w", err)
+		return GoalHandoff{}, fmt.Errorf("find goal handoff for review: %w", err)
 	}
 	latest := latestDelegatedGoalHandoff(handoffs)
 	if latest == nil {
-		return fmt.Errorf("%w: goal %d has no delegated goal handoff", ErrGoalReviewHandoffIncomplete, goalID)
+		return GoalHandoff{}, fmt.Errorf("%w: goal %d has no delegated goal handoff", ErrGoalReviewHandoffIncomplete, goalID)
 	}
-	if !goalHandoffHasCommanderReviewCompletion(latest, callerID) {
-		return fmt.Errorf("%w: %s", ErrGoalReviewHandoffIncomplete, latest.ID)
+	if !goalHandoffHasCommanderReviewReceipt(latest, callerID) || latest.CompletedReportAt != nil {
+		return GoalHandoff{}, fmt.Errorf("%w: %s", ErrGoalReviewHandoffIncomplete, latest.ID)
 	}
 	if err := s.requireProjectClaimForGoal(ctx, goalID, callerID); err != nil {
-		return fmt.Errorf("%w: goal review caller is not the current commander: %v", ErrGoalReviewHandoffIncomplete, err)
+		return GoalHandoff{}, fmt.Errorf("%w: goal review caller is not the current commander: %v", ErrGoalReviewHandoffIncomplete, err)
 	}
-	if hasPrevious && previous.Status == domain.DecisionAnswered && previous.AnswerLabel == "reject" && (previous.AnsweredAt == nil || latest.RequestedAt == nil || !latest.RequestedAt.After(*previous.AnsweredAt)) {
-		return fmt.Errorf("%w: goal review %d was rejected after handoff %s completed; request a new handoff", ErrGoalReviewHandoffIncomplete, previous.ID, latest.ID)
+	return *latest, nil
+}
+
+func (s *Store) requireLatestGoalHandoffForReview(ctx context.Context, goalID, callerID int64, previous domain.Decision, hasPrevious bool) error {
+	latest, err := s.latestGoalHandoffForReview(ctx, goalID, callerID)
+	if err != nil {
+		return err
+	}
+	if hasPrevious && previous.Status == domain.DecisionAnswered && previous.AnswerLabel == "reject" && (previous.AnsweredAt == nil || latest.ReviewRequestedAt == nil || !latest.ReviewRequestedAt.After(*previous.AnsweredAt)) {
+		return fmt.Errorf("%w: goal review %d was rejected before handoff %s was resubmitted", ErrGoalReviewHandoffIncomplete, previous.ID, latest.ID)
 	}
 	return nil
 }
@@ -610,7 +622,7 @@ func (s *Store) RequestGoalReview(ctx context.Context, goalID, agentSessionID in
 	}
 	options := []domain.Option{
 		{Label: "approve", Description: "Approve the reviewed goal", Consequence: "The commander may merge and complete the goal"},
-		{Label: "reject", Description: "Reject the reviewed goal", Consequence: "The goal remains active and the commander must reissue the handoff"},
+		{Label: "reject", Description: "Reject the reviewed goal", Consequence: "The goal remains active and the commander returns the handoff for revision"},
 	}
 	rawOptions, err := json.Marshal(options)
 	if err != nil {
@@ -791,9 +803,9 @@ func completionReportFromGoal(goal domain.Goal) domain.CompletionReport {
 }
 
 // FinalizeGoalReview is the commander-only final step after a human goal
-// review has been approved. It closes the active goal using the report already
-// stored when the review was requested and never accepts a replacement report.
-func (s *Store) FinalizeGoalReview(ctx context.Context, goalID, _ int64) (domain.Goal, error) {
+// review has been approved. It completes the reviewed goal handoff and closes
+// the active goal in one transaction using the reports already stored.
+func (s *Store) FinalizeGoalReview(ctx context.Context, goalID, commanderID int64) (domain.Goal, error) {
 	goal, err := s.GetGoal(ctx, goalID)
 	if err != nil {
 		return domain.Goal{}, fmt.Errorf("get goal for review finalization: %w", err)
@@ -803,6 +815,13 @@ func (s *Store) FinalizeGoalReview(ctx context.Context, goalID, _ int64) (domain
 	}
 	if err := validateCompletionReport(completionReportFromGoal(goal)); err != nil {
 		return domain.Goal{}, fmt.Errorf("validate stored goal review report: %w", err)
+	}
+	handoff, err := s.latestGoalHandoffForReview(ctx, goalID, commanderID)
+	if err != nil {
+		return domain.Goal{}, err
+	}
+	if completeReportIsEmpty(handoff.ReviewRequestReport) {
+		return domain.Goal{}, ErrGoalHandoffReportEmpty
 	}
 
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -827,8 +846,24 @@ func (s *Store) FinalizeGoalReview(ctx context.Context, goalID, _ int64) (domain
 		return domain.Goal{}, fmt.Errorf("%w: %d", ErrGoalReviewNotApproved, goalID)
 	}
 
-	now := time.Now().UTC().Format(time.RFC3339)
-	result, err := q.FinalizeGoalReview(ctx, sqlcgen.FinalizeGoalReviewParams{UpdatedAt: now, ID: goalID})
+	now := time.Now().UTC()
+	completed, err := q.CompleteGoalHandoffByReviewer(ctx, sqlcgen.CompleteGoalHandoffByReviewerParams{
+		CompletedReportAt: sql.NullString{String: now.Format(time.RFC3339Nano), Valid: true},
+		CompleteReport:    sql.NullString{String: handoff.ReviewRequestReport, Valid: true},
+		ID:                handoff.ID,
+		GoalID:            goalID,
+		ReviewReceivedBy:  sql.NullInt64{Int64: commanderID, Valid: true},
+	})
+	if err != nil {
+		return domain.Goal{}, fmt.Errorf("complete goal handoff for review finalization: %w", err)
+	}
+	if affected, err := completed.RowsAffected(); err != nil {
+		return domain.Goal{}, fmt.Errorf("complete goal handoff rows affected for review finalization: %w", err)
+	} else if affected != 1 {
+		return domain.Goal{}, ErrGoalHandoffReviewState
+	}
+
+	result, err := q.FinalizeGoalReview(ctx, sqlcgen.FinalizeGoalReviewParams{UpdatedAt: now.Format(time.RFC3339), ID: goalID})
 	if err != nil {
 		return domain.Goal{}, fmt.Errorf("finalize goal review: %w", err)
 	}
