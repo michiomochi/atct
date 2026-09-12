@@ -92,8 +92,8 @@ flowchart TD
         C3[atct_goal_handoff_request<br/>goal handoff を作成]
         C4[subcommander を起動]
         C5[atct_plan_handoff_review_receive<br/>レビューして atct_plan_handoff_complete]
-        C6[goal をレビューして handoff を閉じる]
-        C7[atct_goal_review_request]
+        C6[atct_goal_handoff_review_receive<br/>レビューして atct_goal_handoff_complete]
+        C7[atct_goal_review_request<br/>人間の承認を依頼（handoff ではない）]
         C8[承認後にマージ、完成報告、後片付け]
     end
 
@@ -106,7 +106,7 @@ flowchart TD
         S5[atct_task_create<br/>task-create handoff を完了]
         S6[atct_task_handoff_request<br/>task handoff を作成]
         S7[task review を受領・レビュー・完了]
-        S8[executor を閉じ、コミットし、goal review を依頼]
+        S8[executor を閉じ、コミットし<br/>atct_goal_handoff_review_request]
     end
 
     subgraph E[executor]
@@ -130,9 +130,10 @@ flowchart TD
 2. subcommander の作業場所を用意し、`atct_goal_handoff_request` を記録してから起動する。
 3. plan review の通知を受けたら `atct_plan_handoff_review_receive` で受領して設計を
    レビューし、受理なら `atct_plan_handoff_complete`、差し戻しなら
-   `atct_plan_handoff_review_reject` を呼ぶ。goal review も通知から受領して実装成果物を
-   レビューする。
-4. goal handoff を受理して閉じた要約を記録する。
+   `atct_plan_handoff_review_reject` を呼ぶ。
+4. goal review の通知を受けたら `atct_goal_handoff_review_receive` で受領してレビューし、
+   受理なら `atct_goal_handoff_complete`、差し戻しなら
+   `atct_goal_handoff_review_reject` を呼ぶ。
 5. 人間に `atct_goal_review_request` を出す。承認後に main へマージし、
    `atct_goal_complete` へ唯一の 6 部完成報告を書き、worktree と subcommander を片付ける。
 6. 人間が却下した場合は、新しい `atct_goal_handoff_request` を作成し、同じ worktree で
