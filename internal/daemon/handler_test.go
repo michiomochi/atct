@@ -2207,7 +2207,7 @@ func TestHandoffSequenceRequiresReceiveBeforeRole(t *testing.T) {
 			t.Fatalf("subcommander role = %v, want %v", got, "subcommander")
 		}
 
-		if _, err := dispatch(t, fixture, "handoff.request", map[string]any{
+		if _, err := dispatch(t, fixture, "task.handoff.request", map[string]any{
 			"handoff_id":     "handoff-sequence-task",
 			"task_id":        fixture.tasks[1].ID,
 			"requested_by":   daemonTestSessionID(t, fixture.store, subcommander),
@@ -2215,7 +2215,7 @@ func TestHandoffSequenceRequiresReceiveBeforeRole(t *testing.T) {
 		}); err != nil {
 			t.Fatalf("handoff.request: %v", err)
 		}
-		if _, err := dispatch(t, fixture, "handoff.receive", map[string]any{
+		if _, err := dispatch(t, fixture, "task.handoff.receive", map[string]any{
 			"task_id":     fixture.tasks[1].ID,
 			"received_by": daemonTestSessionID(t, fixture.store, executor),
 		}); err != nil {
@@ -2302,7 +2302,7 @@ func TestHandoffSequenceRequiresReceiveBeforeRole(t *testing.T) {
 
 		sessionID := "handoff-sequence-n4-d"
 		register(t, fixture, sessionID)
-		expectError(t, fixture, "handoff.request", map[string]any{
+		expectError(t, fixture, "task.handoff.request", map[string]any{
 			"handoff_id":   "handoff-sequence-n4-task",
 			"task_id":      fixture.tasks[1].ID,
 			"requested_by": daemonTestSessionID(t, fixture.store, sessionID),

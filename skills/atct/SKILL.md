@@ -282,17 +282,16 @@ that worker is started:
    The delegator requests the handoff first; it does not start a worker and add
    monitoring later. Plain `herdr agent start` bypasses the wrapper and is
    forbidden for a monitored worker. A normal Codex session cannot be
-   retrofitted. The monitored worker performs `atct_session_identify`, then
-   `atct_handoff_receive` with only its `task_id`, then `atct_role` with
+   retrofitted. The monitored worker performs `atct_task_handoff_receive` with
+   its SessionStart `session_key` and `monitor_token`, then `atct_role` with
    `expected_role=executor`; the launch role is metadata, not role proof.
    Other environments may wake the worker by their own supported path.
 4. Put these exact instructions at the very beginning of the request:
 
-   > First call `atct_session_identify` before any other atct call. If SessionStart emitted `ATCT session key: <session_id> ... monitor_token <monitor_token>`, pass those exact values as `session_key` and `monitor_token`; do not substitute your agent name or token. Only if no SessionStart key was emitted, use your stable full agent name and omit `monitor_token`.
-   >
-   > Then record receipt of the handoff by calling `atct_task_handoff_receive` with only
-   > the `task_id` provided in this request. Do this before starting work. Do not
-   > pass a handoff ID or session; ATCT supplies them.
+   > First record receipt of the handoff by calling `atct_task_handoff_receive`
+   > with the `task_id` provided in this request and the exact `session_key`
+   > (plus `monitor_token`, when emitted) from SessionStart. Do this before
+   > starting work. Do not substitute your agent name or token.
    >
    > Then invoke the `atct_role` MCP tool with `expected_role` set to
    > `executor`. If it reports `matches: false`, do not start work; return the
@@ -327,8 +326,7 @@ that worker is started:
    `atct_goal_complete`, `atct_goal_update_content`, `atct_project_claim`,
    `atct_project_release`, `atct_task_claim`, `atct_task_handoff_request`,
    `atct_task_handoff_review_receive`, `atct_task_handoff_complete`,
-   `atct_task_handoff_review_reject`, `atct_handoff_request`,
-   `atct_handoff_receive`, `atct_handoff_complete`, `atct_task_update`,
+   `atct_task_handoff_review_reject`, `atct_task_update`,
    `atct_task_create`, or `atct_decision_ask`. Spell the names out; "anything not
    listed above" is not read as a prohibition. In a 2026-08-27 measurement, an
    executor closed a subcommander's goal handoff without knowing it was forbidden.
@@ -566,14 +564,14 @@ has no report. It is not part of normal executor completion.
 
 1. Confirm the handoff is already closed and carries no report. A handoff that is
    still open belongs to the normal completion path, not to this one.
-2. Call `atct_handoff_report_amend` with the specific `handoff_id`, its
+2. Call `atct_task_handoff_report_amend` with the specific `handoff_id`, its
    `task_id`, and a non-empty `complete_report`; for a goal handoff call
    `atct_goal_handoff_report_amend` with `handoff_id`, `goal_id`, and
    `complete_report`. The repair does not change the recorded completion time.
 
 **Out of order:** Amending first, without checking, writes the report through the
 repair tool while the normal one was still available. The worker that owed
-`atct_handoff_complete` never learns it owed anything, the amended report hides
+`atct_task_handoff_complete` never learns it owed anything, the amended report hides
 the missing completion instead of exposing it, and the single normal path stops
 being the path anybody follows.
 
@@ -595,7 +593,7 @@ its work is still uncommitted.
 
    - project: `atct_project_release` → `atct_project_claim`
    - goal: `atct_goal_handoff_complete` → `atct_goal_handoff_request` (the commander must issue the handoff again)
-   - task: `atct_handoff_complete` (with `task_id` and `complete_report`) → `atct_task_claim`
+   - task: `atct_task_handoff_complete` (with `task_id` and `complete_report`) → `atct_task_claim`
 
 **Out of order:** Reaching for the layer repair before the session key closes a
 handoff that did not need closing, and closing it is exactly what drops the role.

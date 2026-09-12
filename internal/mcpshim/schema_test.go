@@ -69,12 +69,9 @@ func TestRegisterPublishesRoleAndLifecycleToolsWithFlexibleOutputSchema(t *testi
 		"atct_session_discard_request":            true,
 		"atct_session_discard":                    true,
 		"atct_handoff_recover":                    true,
-		"atct_handoff_request":                    true,
-		"atct_handoff_receive":                    true,
-		"atct_handoff_complete":                   true,
-		"atct_handoff_report_amend":               true,
 		"atct_task_handoff_request":               true,
 		"atct_task_handoff_receive":               true,
+		"atct_task_handoff_report_amend":          true,
 		"atct_task_handoff_review_request":        true,
 		"atct_task_handoff_review_receive":        true,
 		"atct_task_handoff_complete":              true,
@@ -107,7 +104,7 @@ func TestRegisterPublishesRoleAndLifecycleToolsWithFlexibleOutputSchema(t *testi
 		}
 		seen[tool.Name] = true
 		switch tool.Name {
-		case "atct_handoff_request", "atct_goal_handoff_request", "atct_handoff_receive", "atct_goal_handoff_receive", "atct_handoff_complete", "atct_goal_handoff_complete", "atct_handoff_report_amend", "atct_goal_handoff_report_amend":
+		case "atct_task_handoff_request", "atct_goal_handoff_request", "atct_task_handoff_receive", "atct_goal_handoff_receive", "atct_task_handoff_complete", "atct_goal_handoff_complete", "atct_task_handoff_report_amend", "atct_goal_handoff_report_amend":
 			idField := "task_id"
 			if tool.Name == "atct_goal_handoff_request" || tool.Name == "atct_goal_handoff_receive" || tool.Name == "atct_goal_handoff_complete" || tool.Name == "atct_goal_handoff_report_amend" {
 				idField = "goal_id"
@@ -123,10 +120,12 @@ func TestRegisterPublishesRoleAndLifecycleToolsWithFlexibleOutputSchema(t *testi
 			wantPropertyCount := 2
 			reportField := ""
 			switch tool.Name {
-			case "atct_handoff_request", "atct_goal_handoff_request":
+			case "atct_task_handoff_request", "atct_goal_handoff_request":
 				wantPropertyCount = 3
 				reportField = "request_report"
-			case "atct_handoff_complete", "atct_goal_handoff_complete", "atct_handoff_report_amend", "atct_goal_handoff_report_amend":
+			case "atct_task_handoff_receive", "atct_goal_handoff_receive":
+				wantPropertyCount = 4
+			case "atct_task_handoff_complete", "atct_goal_handoff_complete", "atct_task_handoff_report_amend", "atct_goal_handoff_report_amend":
 				wantPropertyCount = 3
 				reportField = "complete_report"
 			}
@@ -168,12 +167,12 @@ func TestRegisterPublishesRoleAndLifecycleToolsWithFlexibleOutputSchema(t *testi
 			if reportField == "request_report" && requiredFields[reportField] {
 				t.Errorf("%s input schema must allow omitted %s", tool.Name, reportField)
 			}
-			if tool.Name == "atct_handoff_receive" || tool.Name == "atct_goal_handoff_receive" || tool.Name == "atct_handoff_complete" || tool.Name == "atct_goal_handoff_complete" {
+			if tool.Name == "atct_goal_handoff_receive" || tool.Name == "atct_goal_handoff_complete" {
 				if requiredFields["handoff_id"] {
 					t.Errorf("%s input schema must allow %s-only calls", tool.Name, idField)
 				}
 			}
-			if tool.Name == "atct_handoff_report_amend" || tool.Name == "atct_goal_handoff_report_amend" {
+			if tool.Name == "atct_task_handoff_report_amend" || tool.Name == "atct_goal_handoff_report_amend" {
 				if !requiredFields["handoff_id"] {
 					t.Errorf("%s input schema must require handoff_id", tool.Name)
 				}
@@ -256,20 +255,23 @@ func TestRegisterPublishesRoleAndLifecycleToolsWithFlexibleOutputSchema(t *testi
 		}},
 		{name: "atct_task_claim", args: map[string]any{"task_id": "task-1"}},
 		{name: "atct_task_update", args: map[string]any{"task_id": "task-1", "status": "doing"}},
-		{name: "atct_handoff_request", args: map[string]any{
+		{name: "atct_task_handoff_request", args: map[string]any{
 			"handoff_id": "handoff-1", "task_id": "task-1",
 		}},
-		{name: "atct_handoff_receive", args: map[string]any{
-			"handoff_id": "handoff-1", "task_id": "task-1",
+		{name: "atct_task_handoff_receive", args: map[string]any{
+			"handoff_id": "handoff-1", "task_id": "task-1", "session_key": "receiver-key",
 		}},
-		{name: "atct_handoff_complete", args: map[string]any{
+		{name: "atct_task_handoff_complete", args: map[string]any{
+			"handoff_id": "handoff-1", "task_id": "task-1", "complete_report": "task completion",
+		}},
+		{name: "atct_task_handoff_report_amend", args: map[string]any{
 			"handoff_id": "handoff-1", "task_id": "task-1", "complete_report": "task completion",
 		}},
 		{name: "atct_goal_handoff_request", args: map[string]any{
 			"handoff_id": "goal-handoff-1", "goal_id": "goal-1",
 		}},
 		{name: "atct_goal_handoff_receive", args: map[string]any{
-			"goal_id": "goal-1",
+			"goal_id": "goal-1", "session_key": "receiver-key",
 		}},
 		{name: "atct_goal_handoff_complete", args: map[string]any{
 			"handoff_id": "goal-handoff-1", "goal_id": "goal-1", "complete_report": "goal completion",
@@ -772,13 +774,9 @@ func TestHandoffToolsInjectAgentSessionID(t *testing.T) {
 		args        map[string]any
 	}{
 		{
-			name: "atct_handoff_request", method: "handoff.request", ownedBy: "requested_by", otherOwned: "received_by",
+			name: "atct_task_handoff_request", method: "task.handoff.request", ownedBy: "requested_by", otherOwned: "received_by",
 			reportField: "request_report", reportValue: "task request report",
 			args: map[string]any{"handoff_id": "handoff-1", "task_id": "task-1", "request_report": "task request report"},
-		},
-		{
-			name: "atct_handoff_receive", method: "handoff.receive", ownedBy: "received_by", otherOwned: "requested_by",
-			args: map[string]any{"task_id": "task-1"},
 		},
 		{
 			name: "atct_goal_handoff_request", method: "goal.handoff.request", ownedBy: "requested_by", otherOwned: "received_by",
@@ -786,13 +784,9 @@ func TestHandoffToolsInjectAgentSessionID(t *testing.T) {
 			args: map[string]any{"handoff_id": "goal-handoff-1", "goal_id": "goal-1", "request_report": "goal request report"},
 		},
 		{
-			name: "atct_goal_handoff_receive", method: "goal.handoff.receive", ownedBy: "received_by", otherOwned: "requested_by",
-			args: map[string]any{"goal_id": "goal-1"},
-		},
-		{
-			name: "atct_handoff_complete", method: "handoff.complete",
+			name: "atct_task_handoff_complete", method: "task.handoff.complete",
 			reportField: "complete_report", reportValue: "task complete report",
-			args: map[string]any{"task_id": "task-1", "complete_report": "task complete report"},
+			args: map[string]any{"handoff_id": "handoff-1", "task_id": "task-1", "complete_report": "task complete report"},
 		},
 		{
 			name: "atct_goal_handoff_complete", method: "goal.handoff.complete",
@@ -800,7 +794,7 @@ func TestHandoffToolsInjectAgentSessionID(t *testing.T) {
 			args: map[string]any{"goal_id": "goal-1", "complete_report": "goal complete report"},
 		},
 		{
-			name: "atct_handoff_report_amend", method: "handoff.report.amend",
+			name: "atct_task_handoff_report_amend", method: "task.handoff.report.amend",
 			reportField: "complete_report", reportValue: "amended task report",
 			args: map[string]any{"handoff_id": "handoff-1", "task_id": "task-1", "complete_report": "amended task report"},
 		},
@@ -1113,7 +1107,6 @@ func TestNamedHandoffReviewRejectReceiveToolsForwardCanonicalMethods(t *testing.
 		{name: "atct_task_handoff_request", method: "task.handoff.request", ownedKey: "requested_by", reportKey: "request_report", args: map[string]any{"handoff_id": "task-request", "task_id": "1", "request_report": "request"}},
 		{name: "atct_task_create", method: "task.create", ownedKey: "agent_session_id", args: map[string]any{"handoff_id": "create-1", "goal_id": "1", "titles": []string{"task"}, "descriptions": []string{"description"}, "idempotency_key": "create", "agent": "agent"}},
 		{name: "atct_task_create_handoff_receive", method: "task.create_handoff.receive", ownedKey: "received_by", args: map[string]any{"handoff_id": "create-1"}},
-		{name: "atct_task_handoff_receive", method: "task.handoff.receive", ownedKey: "received_by", args: map[string]any{"handoff_id": "task-receive", "task_id": "1"}},
 		{name: "atct_task_handoff_review_request", method: "task.handoff.review.request", ownedKey: "requested_by", reportKey: "review_request_report", args: map[string]any{"handoff_id": "task-review-request", "task_id": "1", "review_request_report": "review"}},
 		{name: "atct_task_handoff_review_receive", method: "task.handoff.review.receive", ownedKey: "received_by", args: map[string]any{"handoff_id": "task-review-receive", "task_id": "1"}},
 		{name: "atct_task_handoff_complete", method: "task.handoff.complete", ownedKey: "agent_session_id", reportKey: "complete_report", args: map[string]any{"handoff_id": "task-complete", "task_id": "1", "complete_report": "complete"}},

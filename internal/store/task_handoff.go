@@ -912,7 +912,7 @@ func (s *Store) AmendTaskHandoffReport(ctx context.Context, handoffID string, ta
 		return TaskHandoff{}, fmt.Errorf("amend task handoff report rows affected: %w", err)
 	}
 	if n == 0 {
-		return TaskHandoff{}, fmt.Errorf("task handoff %q is not yet completed; use atct_handoff_complete", handoffID)
+		return TaskHandoff{}, fmt.Errorf("task handoff %q is not yet completed; use atct_task_handoff_complete", handoffID)
 	}
 	return s.GetTaskHandoff(ctx, handoffID)
 }

@@ -98,7 +98,8 @@ process.
 For a monitored worker, the delegator requests the handoff first, creates a fresh worker pane, then
 runs `herdr pane run <pane> atct codex monitor -- <codex args>`
 before the worker process. Plain `herdr agent start` bypasses this monitored launch. The new worker
-then calls `atct_session_identify`, `atct_handoff_receive` with only the task ID, and `atct_role`.
+then calls `atct_task_handoff_receive` with its SessionStart `session_key` (and
+`monitor_token`, when emitted), and `atct_role`.
 
 Put a literal Codex argument such as `stop` after `--` so it is not interpreted as the monitor's
 stop command.

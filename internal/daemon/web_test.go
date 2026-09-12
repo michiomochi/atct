@@ -169,7 +169,7 @@ func TestHTTPHandlerMCPInitializeReturnsStreamableResponse(t *testing.T) {
 	}
 }
 
-func TestHTTPHandlerMCPListsFiftyTwoTools(t *testing.T) {
+func TestHTTPHandlerMCPListsFortyNineTools(t *testing.T) {
 	fixture := newMCPHTTPTestServer(t)
 	client := newMCPHTTPTestClient(fixture.server.URL + "/mcp")
 	client.initialize(t)
@@ -181,8 +181,8 @@ func TestHTTPHandlerMCPListsFiftyTwoTools(t *testing.T) {
 	if !ok {
 		t.Fatalf("tools/list result.tools = %T, want array", result["tools"])
 	}
-	if len(tools) != 52 {
-		t.Fatalf("tools/list returned %d tools, want 52", len(tools))
+	if len(tools) != 49 {
+		t.Fatalf("tools/list returned %d tools, want 49", len(tools))
 	}
 	wantNames := map[string]bool{
 		"atct_role":                               false,
@@ -190,7 +190,7 @@ func TestHTTPHandlerMCPListsFiftyTwoTools(t *testing.T) {
 		"atct_session_discard_request":            false,
 		"atct_session_discard":                    false,
 		"atct_handoff_recover":                    false,
-		"atct_handoff_report_amend":               false,
+		"atct_task_handoff_report_amend":          false,
 		"atct_goal_handoff_report_amend":          false,
 		"atct_goal_review_request":                false,
 		"atct_goal_update_request_report":         false,
@@ -258,7 +258,7 @@ func TestHTTPHandlerMCPTaskHandoffRoutes(t *testing.T) {
 	}
 
 	request := mcpResult(t, client.call(t, "tools/call", map[string]any{
-		"name": "atct_handoff_request",
+		"name": "atct_task_handoff_request",
 		"arguments": map[string]any{
 			"handoff_id": "mcp-handoff-1", "task_id": tasks[0].ID,
 		},
@@ -277,9 +277,9 @@ func TestHTTPHandlerMCPTaskHandoffRoutes(t *testing.T) {
 	}
 
 	receive := mcpResult(t, client.call(t, "tools/call", map[string]any{
-		"name": "atct_handoff_receive",
+		"name": "atct_task_handoff_receive",
 		"arguments": map[string]any{
-			"handoff_id": "mcp-handoff-1", "task_id": tasks[0].ID,
+			"handoff_id": "mcp-handoff-1", "task_id": tasks[0].ID, "session_key": "mcp-task-receiver",
 		},
 	}))
 	if receive["isError"] == true {
@@ -296,25 +296,8 @@ func TestHTTPHandlerMCPTaskHandoffRoutes(t *testing.T) {
 		t.Fatalf("received handoff = %#v, want received timestamp and receiver", received)
 	}
 
-	complete := mcpResult(t, client.call(t, "tools/call", map[string]any{
-		"name": "atct_handoff_complete",
-		"arguments": map[string]any{
-			"handoff_id": "mcp-handoff-1", "task_id": tasks[0].ID, "complete_report": "Verified task handoff completion through the MCP HTTP route.",
-		},
-	}))
-	if complete["isError"] == true {
-		t.Fatalf("handoff complete returned an error result: %#v", complete)
-	}
-	completed, err := fixture.store.GetTaskHandoff(ctx, "mcp-handoff-1")
-	if err != nil {
-		t.Fatalf("GetTaskHandoff after complete: %v", err)
-	}
-	if completed.CompletedReportAt == nil {
-		t.Fatalf("completed handoff = %#v, want completion timestamp", completed)
-	}
-
 	rejected := mcpResult(t, client.call(t, "tools/call", map[string]any{
-		"name": "atct_handoff_request",
+		"name": "atct_task_handoff_request",
 		"arguments": map[string]any{
 			"handoff_id": "mcp-handoff-unclaimed", "task_id": unclaimedTasks[0].ID,
 		},
@@ -374,7 +357,7 @@ func TestHTTPHandlerMCPGoalHandoffRoutes(t *testing.T) {
 	receive := mcpResult(t, client.call(t, "tools/call", map[string]any{
 		"name": "atct_goal_handoff_receive",
 		"arguments": map[string]any{
-			"goal_id": claimedGoal.ID,
+			"goal_id": claimedGoal.ID, "session_key": "mcp-goal-receiver",
 		},
 	}))
 	if receive["isError"] == true {

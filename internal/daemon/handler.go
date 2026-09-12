@@ -1596,7 +1596,7 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		tk, err := d.store.ReleaseTaskAs(ctx, p.TaskID, p.AgentSessionID)
 		return marshal(tk, err)
 
-	case "task.handoff.request", "handoff.request":
+	case "task.handoff.request":
 		var p taskHandoffRequestParams
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, err
@@ -1615,14 +1615,6 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		}
 		response, err := d.receiveTaskHandoffResponse(ctx, p, handoff)
 		return marshal(response, err)
-
-	case "handoff.receive":
-		var p taskHandoffReceiveParams
-		if err := json.Unmarshal(req.Params, &p); err != nil {
-			return nil, err
-		}
-		handoff, err := d.receiveTaskHandoff(ctx, p)
-		return marshal(handoff, err)
 
 	case "task.handoff.review.request":
 		var p taskHandoffReviewRequestParams
@@ -1672,7 +1664,7 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		handoff, err := d.store.ReceiveTaskHandoffReviewRejection(ctx, p.HandoffID, p.TaskID, p.ReceivedBy)
 		return marshal(handoff, err)
 
-	case "task.handoff.complete", "handoff.complete":
+	case "task.handoff.complete":
 		var p taskHandoffCompleteParams
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, err
@@ -1685,7 +1677,7 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		handoff, err := d.completeTaskHandoff(ctx, p)
 		return marshal(handoff, err)
 
-	case "handoff.report.amend":
+	case "task.handoff.report.amend":
 		var p struct {
 			HandoffID      string `json:"handoff_id"`
 			TaskID         int64  `json:"task_id"`

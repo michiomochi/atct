@@ -1107,7 +1107,7 @@ test_recovery_section_has_goal_path() {
 }
 
 test_recovery_section_has_task_path_and_non_repair_note() {
-  recovery_section_contains 'atct_handoff_complete` (with `task_id` and `complete_report`)'
+  recovery_section_contains 'atct_task_handoff_complete` (with `task_id` and `complete_report`)'
   recovery_section_contains 'Rejection is automatic, so the goal step above that asks the commander to reissue the handoff is needed only for the last trigger.'
 }
 
@@ -1140,7 +1140,7 @@ test_task_delegation_verification_contract_is_explicit() {
 test_handoff_report_repair_is_explicit() {
   local atct_skill="$REPO_ROOT/skills/atct/SKILL.md"
   assert_file_contains '## Fill in a report on a handoff that is already closed' "$atct_skill"
-  assert_file_contains '`atct_handoff_report_amend` with the specific `handoff_id`' "$atct_skill"
+  assert_file_contains '`atct_task_handoff_report_amend` with the specific `handoff_id`' "$atct_skill"
   assert_file_contains 'It is not part of normal executor completion.' "$atct_skill"
 }
 
@@ -1149,7 +1149,7 @@ test_handoff_completion_keeps_one_normal_path() {
   local completion_step
   normal_section="$(sed -n '/^## Delegate a task$/,/^## Delegate a goal$/p' "$REPO_ROOT/skills/atct/SKILL.md")"
   completion_step="$(sed -n '/The task handoff review order is/,/^$/p' <<<"$normal_section")"
-  ! grep -Fq -- 'atct_handoff_report_amend' <<<"$normal_section" || fail 'normal task completion must not name the repair tool'
+  ! grep -Fq -- 'atct_task_handoff_report_amend' <<<"$normal_section" || fail 'normal task completion must not name the repair tool'
   grep -Fq -- '`atct_task_handoff_complete`' <<<"$completion_step" || fail 'task review order must name reviewer completion'
   grep -Fq -- '`complete_report`' <<<"$normal_section" || fail 'task completion must require complete_report'
 }
@@ -1183,7 +1183,7 @@ delegate_task_forbidden_block() {
 }
 
 # Names are matched with their backticks so a name can never match inside a
-# longer one: `atct_handoff_complete` would otherwise hit
+# longer one: `atct_task_handoff_complete` would otherwise hit
 # `atct_goal_handoff_complete`, which sits on the opposite list.
 test_delegation_names_the_atct_tools_an_executor_may_call() {
   local allowlist
@@ -1208,8 +1208,7 @@ test_delegation_names_the_atct_tools_an_executor_may_call() {
     atct_goal_complete atct_goal_update_content atct_project_claim \
     atct_project_release atct_task_claim atct_task_handoff_request \
     atct_task_handoff_review_receive atct_task_handoff_complete \
-    atct_task_handoff_review_reject atct_handoff_request \
-    atct_handoff_receive atct_handoff_complete atct_task_update \
+    atct_task_handoff_review_reject atct_task_update \
     atct_task_create atct_decision_ask; do
     ! grep -Fq -- "\`$tool\`" <<<"$allowlist" ||
       fail "the allowlist line must not allow the forbidden <$tool>"
@@ -1232,8 +1231,7 @@ test_delegation_names_the_atct_tools_an_executor_must_not_call() {
     atct_goal_complete atct_goal_update_content atct_project_claim \
     atct_project_release atct_task_claim atct_task_handoff_request \
     atct_task_handoff_review_receive atct_task_handoff_complete \
-    atct_task_handoff_review_reject atct_handoff_request \
-    atct_handoff_receive atct_handoff_complete atct_task_update \
+    atct_task_handoff_review_reject atct_task_update \
     atct_task_create atct_decision_ask; do
     grep -Fq -- "\`$tool\`" <<<"$forbidden" ||
       fail "the forbidden block does not forbid <$tool> by name"
@@ -1438,17 +1436,18 @@ test_delegated_claim_contract_is_explicit() {
   assert_file_contains 'Hold the parent, not the goal.' "$atct_skill"
   assert_file_contains '## Delegate a task' "$atct_skill"
   assert_file_contains '## Delegate a goal' "$atct_skill"
-  assert_file_contains 'Then record receipt of the handoff by calling `atct_task_handoff_receive` with only' "$atct_skill"
+  assert_file_contains 'First record receipt of the handoff by calling `atct_task_handoff_receive`' "$atct_skill"
   assert_file_contains 'Then record receipt of the goal handoff by calling' "$atct_skill"
   assert_file_contains 'A delegated worker owns the task it was given.' "$atct_skill"
   assert_file_contains 'Delegating a task requires a received goal handoff, not a project claim.' "$atct_skill"
   assert_file_contains 'For two-layer delegation, the commander calls `atct_goal_claim` to create a goal handoff addressed to itself.' "$atct_skill"
   assert_file_contains 'a received, uncompleted goal handoff' "$atct_skill"
-  assert_file_contains 'A delegated worker receives the task with `atct_handoff_receive`' "$start_skill"
+  assert_file_contains 'A delegated worker receives the task with `atct_task_handoff_receive`' "$start_skill"
   assert_file_contains 'The following loop is for self-directed work: find and take a task yourself.' "$start_skill"
   assert_file_contains 'Record the handoff before waking the worker.' "$atct_skill"
   assert_file_contains 'The delegator must call `atct_task_handoff_request`' "$atct_skill"
-  assert_file_contains 'the `task_id` provided in this request.' "$atct_skill"
+  assert_file_contains 'the `task_id` provided in this request and the exact `session_key`' "$atct_skill"
+  assert_file_contains 'the exact `session_key`' "$atct_skill"
   assert_file_contains 'The delegator must call `atct_goal_handoff_request`' "$atct_skill"
   assert_file_contains 'with only the `goal_id` provided in this request.' "$atct_skill"
   assert_file_contains '`atct_goal_handoff_complete` with the `goal_id` provided in this request' "$atct_skill"

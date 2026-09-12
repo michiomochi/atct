@@ -815,45 +815,6 @@ func Register(server *mcp.Server, c *Client, agentSessionID int64) {
 	})
 
 	addMCPTool[HandoffRequestIn, RawWithUnappliedDecisions](server, &mcp.Tool{
-		Name:         "atct_handoff_request",
-		Description:  "Legacy compatibility alias for atct_task_handoff_request. The task must have a live claim.",
-		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
-	}, func(ctx context.Context, req *mcp.CallToolRequest, in HandoffRequestIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
-		return callWithUnappliedDecisions(ctx, c, "handoff.request", map[string]any{
-			"handoff_id": in.HandoffID, "task_id": in.TaskID, "requested_by": sessionID.Get(),
-			"request_report": in.RequestReport,
-		})
-	})
-
-	addMCPTool[HandoffReceiveIn, RawWithUnappliedDecisions](server, &mcp.Tool{
-		Name:         "atct_handoff_receive",
-		Description:  "Legacy compatibility alias for atct_task_handoff_receive.",
-		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
-	}, func(ctx context.Context, req *mcp.CallToolRequest, in HandoffReceiveIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
-		params := map[string]any{
-			"task_id": in.TaskID, "received_by": sessionID.Get(),
-		}
-		if in.HandoffID != "" {
-			params["handoff_id"] = in.HandoffID
-		}
-		return callWithUnappliedDecisions(ctx, c, "handoff.receive", params)
-	})
-
-	addMCPTool[HandoffCompleteIn, RawWithUnappliedDecisions](server, &mcp.Tool{
-		Name:         "atct_handoff_complete",
-		Description:  "Legacy compatibility alias for atct_task_handoff_complete. complete_report must state what was done, what was verified, and paths changed.",
-		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
-	}, func(ctx context.Context, req *mcp.CallToolRequest, in HandoffCompleteIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
-		params := map[string]any{
-			"task_id": in.TaskID, "complete_report": in.CompleteReport,
-		}
-		if in.HandoffID != "" {
-			params["handoff_id"] = in.HandoffID
-		}
-		return callWithUnappliedDecisions(ctx, c, "handoff.complete", params)
-	})
-
-	addMCPTool[HandoffRequestIn, RawWithUnappliedDecisions](server, &mcp.Tool{
 		Name:         "atct_task_handoff_request",
 		Description:  "Request a task handoff using the canonical task-specific contract.",
 		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
@@ -924,11 +885,11 @@ func Register(server *mcp.Server, c *Client, agentSessionID int64) {
 	})
 
 	addMCPTool[HandoffReportAmendIn, RawWithUnappliedDecisions](server, &mcp.Tool{
-		Name:         "atct_handoff_report_amend",
-		Description:  "Fill in a report on an already closed task handoff. Do not use this for normal completion; use atct_handoff_complete instead.",
+		Name:         "atct_task_handoff_report_amend",
+		Description:  "Fill in a report on an already closed task handoff. Do not use this for normal completion; use atct_task_handoff_complete instead.",
 		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in HandoffReportAmendIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
-		return callWithUnappliedDecisions(ctx, c, "handoff.report.amend", map[string]any{
+		return callWithUnappliedDecisions(ctx, c, "task.handoff.report.amend", map[string]any{
 			"handoff_id": in.HandoffID, "task_id": in.TaskID, "complete_report": in.CompleteReport,
 		})
 	})

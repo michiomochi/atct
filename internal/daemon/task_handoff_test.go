@@ -194,7 +194,7 @@ func TestTaskHandoffRoutesOverRPC(t *testing.T) {
 	ctx := context.Background()
 
 	var requested store.TaskHandoff
-	if err := client.Call(ctx, "handoff.request", map[string]any{
+	if err := client.Call(ctx, "task.handoff.request", map[string]any{
 		"handoff_id": "rpc-handoff-1", "task_id": fixture.claimedTaskID, "requested_by": fixture.requesterID,
 		"request_report": "RPC task request report",
 	}, &requested); err != nil {
@@ -204,18 +204,22 @@ func TestTaskHandoffRoutesOverRPC(t *testing.T) {
 		t.Fatalf("requested handoff = %#v, want request timestamp, requester, and report", requested)
 	}
 
-	var received store.TaskHandoff
-	if err := client.Call(ctx, "handoff.receive", map[string]any{
+	var receive handoffReceiveResponse
+	if err := client.Call(ctx, "task.handoff.receive", map[string]any{
 		"handoff_id": "rpc-handoff-1", "task_id": fixture.claimedTaskID, "received_by": fixture.receiverID,
-	}, &received); err != nil {
+	}, &receive); err != nil {
 		t.Fatalf("handoff.receive: %v", err)
+	}
+	var received store.TaskHandoff
+	if err := json.Unmarshal(receive.Data, &received); err != nil {
+		t.Fatalf("decode task.handoff.receive data: %v", err)
 	}
 	if received.ReceivedAt == nil || received.ReceivedBy != fixture.receiverID {
 		t.Fatalf("received handoff = %#v, want receipt timestamp and receiver", received)
 	}
 
 	var completed store.TaskHandoff
-	if err := client.Call(ctx, "handoff.complete", map[string]any{
+	if err := client.Call(ctx, "task.handoff.complete", map[string]any{
 		"handoff_id": "rpc-handoff-1", "task_id": fixture.claimedTaskID, "complete_report": "RPC task completion report",
 	}, &completed); err != nil {
 		t.Fatalf("handoff.complete: %v", err)
@@ -237,7 +241,7 @@ func TestTaskHandoffRoutesOverRPC(t *testing.T) {
 	}
 
 	var rejected store.TaskHandoff
-	err := client.Call(ctx, "handoff.request", map[string]any{
+	err := client.Call(ctx, "task.handoff.request", map[string]any{
 		"handoff_id": "rpc-handoff-unclaimed", "task_id": fixture.unclaimedTaskID, "requested_by": fixture.requesterID,
 	}, &rejected)
 	if err == nil {
@@ -439,20 +443,20 @@ func TestTaskHandoffCompleteByTaskOverRPC(t *testing.T) {
 	ctx := context.Background()
 
 	var requested store.TaskHandoff
-	if err := client.Call(ctx, "handoff.request", map[string]any{
+	if err := client.Call(ctx, "task.handoff.request", map[string]any{
 		"handoff_id": "rpc-complete-by-task", "task_id": fixture.claimedTaskID, "requested_by": fixture.requesterID,
 	}, &requested); err != nil {
 		t.Fatalf("handoff.request: %v", err)
 	}
 	var received store.TaskHandoff
-	if err := client.Call(ctx, "handoff.receive", map[string]any{
+	if err := client.Call(ctx, "task.handoff.receive", map[string]any{
 		"handoff_id": requested.ID, "task_id": fixture.claimedTaskID, "received_by": fixture.receiverID,
 	}, &received); err != nil {
 		t.Fatalf("handoff.receive: %v", err)
 	}
 
 	var completed store.TaskHandoff
-	if err := client.Call(ctx, "handoff.complete", map[string]any{
+	if err := client.Call(ctx, "task.handoff.complete", map[string]any{
 		"task_id": fixture.claimedTaskID, "complete_report": "RPC task-ID completion report",
 	}, &completed); err != nil {
 		t.Fatalf("handoff.complete by task_id: %v", err)
@@ -468,13 +472,13 @@ func TestTaskHandoffCompleteByTaskOverRPCRejectsAmbiguousPendingRequests(t *test
 	ctx := context.Background()
 
 	var requested store.TaskHandoff
-	if err := client.Call(ctx, "handoff.request", map[string]any{
+	if err := client.Call(ctx, "task.handoff.request", map[string]any{
 		"handoff_id": "rpc-task-complete-ambiguous-1", "task_id": fixture.claimedTaskID, "requested_by": fixture.requesterID,
 	}, &requested); err != nil {
 		t.Fatalf("handoff.request: %v", err)
 	}
 	var received store.TaskHandoff
-	if err := client.Call(ctx, "handoff.receive", map[string]any{
+	if err := client.Call(ctx, "task.handoff.receive", map[string]any{
 		"handoff_id": requested.ID, "task_id": fixture.claimedTaskID, "received_by": fixture.receiverID,
 	}, &received); err != nil {
 		t.Fatalf("handoff.receive: %v", err)
@@ -482,7 +486,7 @@ func TestTaskHandoffCompleteByTaskOverRPCRejectsAmbiguousPendingRequests(t *test
 	addTaskHandoffDirect(t, fixture.store, "rpc-task-complete-ambiguous-2", fixture.claimedTaskID, fixture.requesterID, fixture.receiverID)
 
 	var completed store.TaskHandoff
-	err := client.Call(ctx, "handoff.complete", map[string]any{
+	err := client.Call(ctx, "task.handoff.complete", map[string]any{
 		"task_id": fixture.claimedTaskID,
 	}, &completed)
 	if err == nil {

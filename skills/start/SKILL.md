@@ -125,7 +125,7 @@ found it before the agent did.
 ## The loop
 
 The following loop is for self-directed work: find and take a task yourself.
-A delegated worker receives the task with `atct_handoff_receive` and owns the
+A delegated worker receives the task with `atct_task_handoff_receive` and owns the
 delegated task; the claim step applies only to self-directed work.
 
 Run this until nothing is left, not until the next natural pause.
