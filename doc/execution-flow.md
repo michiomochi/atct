@@ -60,6 +60,13 @@ canonical な agent session を確定し、receive は role と claim evidence �
 作業した側は自身の handoff を閉じない。差し戻しは handoff を閉じず、受領済みの状態へ
 戻すため、作業者は同じ handoff で修正と再レビューを行う。
 
+### task-create handoff
+
+plan handoff の完了時に、daemon は `task.create_handoff.request` を自動生成する。
+agent が呼ぶ `atct_task_handoff_create_request` は存在しない。goal handoff を受領している
+subcommander が `atct_task_create_handoff_receive` でこの handoff を受領し、同じ
+`handoff_id` を渡した `atct_task_create` で task を作成して handoff を完了する。
+
 ## タスクの状態遷移
 
 通常の実装フローでは handoff 遷移が task status を更新する。
@@ -83,33 +90,35 @@ flowchart TD
         C2[2. subcommander の作業場所を用意]
         C3[3. atct_goal_handoff_request]
         C4[4. subcommander を起動]
-        C5[9-11. plan をレビュー]
-        C6[23-25. goal をレビューして handoff を閉じる]
-        C7[26. atct_goal_review_request]
-        C8[27-29. 承認後にマージ、完成報告、後片付け]
+        C5[9-11. plan をレビューして完了]
+        C6[24-26. goal をレビューして handoff を閉じる]
+        C7[27. atct_goal_review_request]
+        C8[28-30. 承認後にマージ、完成報告、後片付け]
     end
 
     subgraph S[subcommander]
         S1[5. atct_goal_handoff_receive]
         S2[6. atct watch -goal]
         S3[7-8. 設計し plan review を依頼]
-        S4[12. atct_task_create]
-        S5[13. atct_task_handoff_request]
-        S6[17-19. task review を受領・レビュー・完了]
-        S7[20-22. executor を閉じ、コミットし、goal review を依頼]
+        S4[12. atct_task_create_handoff_receive]
+        S5[13. atct_task_create]
+        S6[14. atct_task_handoff_request]
+        S7[18-20. task review を受領・レビュー・完了]
+        S8[21-23. executor を閉じ、コミットし、goal review を依頼]
     end
 
     subgraph E[executor]
-        E1[14. atct_task_handoff_receive]
-        E2[15. 実装とテスト]
-        E3[16. atct_task_handoff_review_request]
+        E1[15. atct_task_handoff_receive]
+        E2[16. 実装とテスト]
+        E3[17. atct_task_handoff_review_request]
     end
 
-    G --> C1 --> C2 --> C3 --> C4 --> S1 --> S2 --> S3 --> C5 --> S4 --> S5 --> E1 --> E2 --> E3 --> S6
-    S6 -->|未委譲の task がある| S5
-    S6 -->|全 task が done| S7 --> C6 --> C7 --> C8
+    TC[task.create_handoff.request<br/>plan 完了時に daemon が自動生成]
+    G --> C1 --> C2 --> C3 --> C4 --> S1 --> S2 --> S3 --> C5 --> TC --> S4 --> S5 --> S6 --> E1 --> E2 --> E3 --> S7
+    S7 -->|未委譲の task がある| S6
+    S7 -->|全 task が done| S8 --> C6 --> C7 --> C8
     C5 -->|差し戻し| S3
-    S6 -->|差し戻し| E2
+    S7 -->|差し戻し| E2
 ```
 
 ### commander
@@ -131,7 +140,9 @@ flowchart TD
 3. `superpowers:brainstorming` と `superpowers:writing-plans` で設計し、
    canonical spec と plan を `atct_goal_update_request_report` へ保存して
    `atct_plan_handoff_review_request` を出す。
-4. plan が受理されたら `atct_task_create` で task を作る。
+4. plan handoff の完了で生成された task-create handoff を
+   `atct_task_create_handoff_receive` で受領し、その `handoff_id` を渡して
+   `atct_task_create` で task を作る。
 5. task ごとに `atct_task_handoff_request` を記録してから executor を起動する。
 6. executor の review request を受領してレビューし、受理なら
    `atct_task_handoff_complete`、差し戻しなら `atct_task_handoff_review_reject` を呼ぶ。
@@ -160,6 +171,7 @@ commander が human review を依頼し、承認後だけ main へのマージ�
 |---|---|---|
 | `atct_plan_handoff_review_request` | subcommander | commander |
 | `atct_plan_handoff_complete` / `_review_reject` | commander | subcommander |
+| `task.create_handoff.request` | daemon（plan handoff 完了時） | subcommander |
 | `atct_task_handoff_review_request` | executor | subcommander |
 | `atct_task_handoff_complete` / `_review_reject` | subcommander | executor |
 | `atct_goal_handoff_review_request` | subcommander | commander |
