@@ -96,6 +96,9 @@ func RegisterWatchScoped(dir string, scope WatchScope) (func(), error) {
 	if err := os.MkdirAll(registryDir, 0o755); err != nil {
 		return nil, fmt.Errorf("create watch registry: %w", err)
 	}
+	if err := os.Chmod(registryDir, 0o700); err != nil {
+		return nil, fmt.Errorf("protect watch registry: %w", err)
+	}
 	path := filepath.Join(registryDir, strconv.Itoa(os.Getpid()))
 	registration := WatchRegistration{
 		PID:       os.Getpid(),
@@ -108,6 +111,9 @@ func RegisterWatchScoped(dir string, scope WatchScope) (func(), error) {
 	}
 	if err := os.WriteFile(path, append(raw, '\n'), 0o644); err != nil {
 		return nil, fmt.Errorf("write watch registration: %w", err)
+	}
+	if err := os.Chmod(path, 0o600); err != nil {
+		return nil, fmt.Errorf("protect watch registration: %w", err)
 	}
 	return func() { _ = os.Remove(path) }, nil
 }
@@ -229,6 +235,9 @@ func ReapWatches(dir string, self WatchScope, selfPID int) (ReapResult, error) {
 			return result, fmt.Errorf("remove stopped watch registration %s: %w", entry.Name(), err)
 		}
 		result.Stopped = append(result.Stopped, registration)
+	}
+	if len(result.Failed) > 0 {
+		return result, fmt.Errorf("stop duplicate watches: %v", result.Failed)
 	}
 	return result, nil
 }

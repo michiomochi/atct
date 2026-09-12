@@ -50,7 +50,7 @@ sequenceDiagram
 ```
 
 `session.identify` は identity を結ぶだけで role を作らない。claim または handoff の受領が成功した応答で
-assignment が更新され、server は monitor を再 bind する。agent は必要なら `atct_role` で導出結果を診断できる。
+assignment が更新され、monitor は次の polling でその binding を観測する。agent は必要なら `atct_role` で導出結果を診断できる。
 
 ## assignment を作る起動操作
 
@@ -64,8 +64,8 @@ monitor session を起動し、受領者に対象 ID を渡す。monitor の rol
 | executor | subcommander が `atct_task_handoff_request` し、handoff ID と task ID を渡す | `atct_task_handoff_receive(task_id)` | 受領済み task handoff ごとの scope |
 
 project claim は commander を作る。goal / task handoff の request は受領者の assignment をまだ変えず、
-受領者が receive したときにだけ変える。executor が後から別の task handoff を receive した場合も、server は
-scope を追加して monitor を再 bind する。
+受領者が receive したときにだけ変える。executor が後から別の task handoff を receive した場合も、server が
+scope を追加し、monitor は次の polling で更新を取得する。
 
 ## 原則
 

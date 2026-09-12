@@ -134,6 +134,32 @@ func TestRegisterWatchWritesScopedJSON(t *testing.T) {
 	}
 }
 
+func TestRegisterWatchScopedProtectsMonitorToken(t *testing.T) {
+	dir := t.TempDir()
+	registryDir := filepath.Join(dir, watchRegistryDir)
+	if err := os.MkdirAll(registryDir, 0o755); err != nil {
+		t.Fatalf("create registry: %v", err)
+	}
+	cleanup, err := RegisterWatchScoped(dir, WatchScope{MonitorToken: "token-1"})
+	if err != nil {
+		t.Fatalf("RegisterWatchScoped: %v", err)
+	}
+	defer cleanup()
+
+	for path, want := range map[string]os.FileMode{
+		registryDir: 0o700,
+		filepath.Join(registryDir, strconv.Itoa(os.Getpid())): 0o600,
+	} {
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatalf("stat %s: %v", path, err)
+		}
+		if got := info.Mode().Perm(); got != want {
+			t.Fatalf("mode for %s = %o, want %o", path, got, want)
+		}
+	}
+}
+
 func TestReapWatchesRemovesDeadRegistration(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, watchRegistryDir, "2147483647")
@@ -743,6 +769,33 @@ func TestReapWatchesStopsOlderWatchWithSameMonitorToken(t *testing.T) {
 	}
 	if _, err := os.Stat(otherPath); err != nil {
 		t.Fatalf("watch with another monitor token was removed: %v", err)
+	}
+}
+
+func TestReapWatchesReturnsErrorWhenDuplicateWatchDoesNotStop(t *testing.T) {
+	dir := t.TempDir()
+	cmd := exec.Command("sh", "-c", "trap '' TERM; while :; do sleep 1; done")
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start stubborn watch: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+	})
+	scope := WatchScope{MonitorToken: "token-1"}
+	writeReapSelfRegistration(t, dir, os.Getpid(), scope, "2026-09-12T00:00:01Z")
+	writeWatchRegistrationFile(t, filepath.Join(dir, watchRegistryDir, strconv.Itoa(cmd.Process.Pid)), WatchRegistration{
+		PID:       cmd.Process.Pid,
+		Scope:     scope,
+		StartedAt: "2026-09-12T00:00:00Z",
+	})
+
+	result, err := ReapWatches(dir, scope, os.Getpid())
+	if err == nil {
+		t.Fatal("ReapWatches() error = nil, want failure for live duplicate")
+	}
+	if len(result.Failed) != 1 || result.Failed[0] != cmd.Process.Pid {
+		t.Fatalf("failed pids = %#v, want %d", result.Failed, cmd.Process.Pid)
 	}
 }
 

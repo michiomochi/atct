@@ -110,7 +110,7 @@ event envelope and will still be task-filtered.
 
 ### Monitor liveness and recovery
 
-Eligible goal-scoped subcommander and task-scoped executor monitors run an independent ten-minute
+Eligible goal-scoped subcommander and task-scoped executor monitors run an independent one-minute
 liveness tick. The tick is based on the last successful scoped reconciliation, so it can emit a
 bounded `atct monitor liveness:` recheck line even while an SSE connection is quiet. Project-wide
 commander monitors, malformed or unscoped selectors, and scopes with an open human decision do not

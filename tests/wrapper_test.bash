@@ -55,7 +55,6 @@ ORDERED_SECTIONS=(
   '## Recover when your role comes back wrong'
   '## Close a task the moment it is finished'
   '## Report completion in six parts'
-  '## Act on reversible choices, ask about irreversible ones'
   '## Apply what you were told'
   '## Finishing'
 )
@@ -828,10 +827,10 @@ SCRIPT
   output="$(FAKE_CONTEXT='hook context' PATH="/usr/bin:/bin" bash "$hook")"
   [[ "$output" == hook\ context* ]] || fail 'context was not printed before the boilerplate'
   [[ "$output" != *'An active goal is permission to work.'* ]] || fail 'fixed instructions leaked into the session-start hook'
-  [[ "$output" != *'Stop only before what cannot be undone:'* ]] || fail 'fixed instructions leaked into the session-start hook'
+  [[ "$output" != *'For the human-decision rule, see the `atct` skill.'* ]] || fail 'fixed instructions leaked into the session-start hook'
   [[ "$output" != *'See the `atct` skill for details.'* ]] || fail 'fixed instructions leaked into the session-start hook'
   assert_file_contains 'An active goal is permission to work.' "$REPO_ROOT/internal/mcpshim/instructions.go"
-  assert_file_contains 'Stop only before what cannot be undone:' "$REPO_ROOT/internal/mcpshim/instructions.go"
+  assert_file_contains 'For the human-decision rule, see the `atct` skill.' "$REPO_ROOT/internal/mcpshim/instructions.go"
   assert_file_contains 'See the `atct` skill for details.' "$REPO_ROOT/internal/mcpshim/instructions.go"
 
   output="$(PATH="/usr/bin:/bin" bash "$hook")"
@@ -845,8 +844,8 @@ test_mcp_instructions_include_active_goal_permission() {
   assert_file_contains 'An active goal is permission to work.' "$REPO_ROOT/internal/mcpshim/instructions.go"
 }
 
-test_mcp_instructions_include_undo_boundary() {
-  assert_file_contains 'Stop only before what cannot be undone:' "$REPO_ROOT/internal/mcpshim/instructions.go"
+test_mcp_instructions_delegate_human_decisions_to_the_skill() {
+  assert_file_contains 'For the human-decision rule, see the `atct` skill.' "$REPO_ROOT/internal/mcpshim/instructions.go"
 }
 
 test_session_start_is_silent_without_atct_wrapper() {
@@ -1036,11 +1035,11 @@ test_unsent_report_names_the_stall_detection() {
   local section
   section="$(unsent_report_section)"
 
-  grep -Fq -- "committed, each raises a detection on the delegator's watch. On 2026-08-27 goal" <<<"$section" ||
+  grep -Fq -- "committed, each raises a Wakeup on the delegator's watch. On 2026-08-27 goal" <<<"$section" ||
     fail 'unsent report section must name the stall detection'
   grep -Fq -- '172 stalled with three tasks still `todo` and eight files uncommitted, and goal' <<<"$section" ||
     fail 'unsent report section must name goal 172'
-  grep -Fq -- 'detections had already fired; nobody had been told to read them.' <<<"$section" ||
+  grep -Fq -- 'Wakeups had already fired; nobody had been told to read them.' <<<"$section" ||
     fail 'unsent report section must name the missed detection read'
 }
 
@@ -1497,24 +1496,6 @@ test_declared_task_content_fix_contract_is_explicit() {
     fail 'declared task content fix section omits idempotency_key'
 }
 
-test_decision_guidance_names_done_guard() {
-  local atct_skill="$REPO_ROOT/skills/atct/SKILL.md"
-  local decision_section
-
-  decision_section="$(sed -n '/^## Act on reversible choices, ask about irreversible ones$/,/^## Apply what you were told$/p' "$atct_skill")"
-  grep -Fq -- 'default_after_ms=0' <<<"$decision_section" ||
-    fail 'decision guidance omits immediate record defaults'
-  grep -Fq -- 'blocks `done`' <<<"$decision_section" ||
-    fail 'decision guidance omits the done guard for human-waiting questions'
-}
-
-test_irreversible_decision_still_omits_defaults() {
-  local atct_skill="$REPO_ROOT/skills/atct/SKILL.md"
-
-  grep -Fq -- 'omit `default_option`' "$atct_skill" ||
-    fail 'irreversible decision guidance no longer omits default_option'
-}
-
 test_start_identifies_before_monitor() {
   local start_skill="$REPO_ROOT/skills/start/SKILL.md"
   local identify_line
@@ -1531,9 +1512,10 @@ test_start_identifies_before_monitor() {
 test_start_session_key_contract_is_explicit() {
   local start_skill="$REPO_ROOT/skills/start/SKILL.md"
 
-  assert_file_contains 'atct_session_identify` with `session_key`' "$start_skill"
+  assert_file_contains 'call `atct_session_identify`' "$start_skill"
+  assert_file_contains '`session_key` and `monitor_token`' "$start_skill"
   assert_file_contains '<project>-<unit>-<role>' "$start_skill"
-  assert_file_contains 'rather than only the role' "$start_skill"
+  assert_file_contains 'sessions into one row.' "$start_skill"
 }
 
 test_start_forces_commander_claim() {
@@ -1601,7 +1583,7 @@ test_start_keeps_monitor_persistence_requirement() {
 test_start_documents_liveness_authority_boundary() {
   local start_skill="$REPO_ROOT/skills/start/SKILL.md"
 
-  assert_file_contains 'A ten-minute liveness line means' "$start_skill"
+  assert_file_contains 'A one-minute liveness line means' "$start_skill"
   assert_file_contains 'A subcommander accepts the plan first' "$start_skill"
   assert_file_contains 'run ... atct codex monitor -- <codex args>' "$start_skill"
   assert_file_contains 'submits the task for review; it does not commit' "$start_skill"
@@ -1621,6 +1603,7 @@ test_readme_documents_liveness_contract() {
   local readme="$REPO_ROOT/README.md"
 
   assert_file_contains '### Monitor liveness and recovery' "$readme"
+  assert_file_contains 'independent one-minute' "$readme"
   assert_file_contains 'bounded `atct monitor liveness:` recheck line' "$readme"
   assert_file_contains 'A liveness line is a recheck signal, not authority' "$readme"
 }
@@ -2196,8 +2179,6 @@ MARKDOWN
 test_static_contract
 test_delegated_claim_contract_is_explicit
 test_declared_task_content_fix_contract_is_explicit
-test_decision_guidance_names_done_guard
-test_irreversible_decision_still_omits_defaults
 test_start_identifies_before_monitor
 test_start_session_key_contract_is_explicit
 test_start_forces_commander_claim
@@ -2301,7 +2282,7 @@ test_unsupported_platform_fails
 test_session_start_uses_adjacent_context_wrapper
 test_session_start_preserves_context_and_silence
 test_mcp_instructions_include_active_goal_permission
-test_mcp_instructions_include_undo_boundary
+test_mcp_instructions_delegate_human_decisions_to_the_skill
 test_session_start_is_silent_without_atct_wrapper
 test_skill_numbering_is_contiguous
 test_ordered_sections_name_the_out_of_order_consequence
