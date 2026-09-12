@@ -27,25 +27,31 @@ func newMonitorToken() (string, error) {
 
 func fetchMonitorBinding(ctx context.Context, client *http.Client, bases []string, token string) (store.MonitorBinding, bool, error) {
 	for _, base := range bases {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(base, "/")+"/api/monitor-bindings/"+token, nil)
+		requestCtx, cancel := context.WithTimeout(ctx, watchSnapshotTimeout)
+		req, err := http.NewRequestWithContext(requestCtx, http.MethodGet, strings.TrimRight(base, "/")+"/api/monitor-bindings/"+token, nil)
 		if err != nil {
+			cancel()
 			return store.MonitorBinding{}, false, err
 		}
 		response, err := client.Do(req)
 		if err != nil {
+			cancel()
 			continue
 		}
 		if response.StatusCode == http.StatusNotFound {
 			response.Body.Close()
+			cancel()
 			continue
 		}
 		if response.StatusCode != http.StatusOK {
 			response.Body.Close()
+			cancel()
 			continue
 		}
 		var binding store.MonitorBinding
 		err = json.NewDecoder(response.Body).Decode(&binding)
 		response.Body.Close()
+		cancel()
 		if err != nil {
 			return store.MonitorBinding{}, false, fmt.Errorf("decode monitor binding: %w", err)
 		}
@@ -92,23 +98,28 @@ func runMonitorBindingLoop(ctx context.Context, client *http.Client, urls []stri
 	type scopeWatch struct {
 		cancel context.CancelFunc
 		done   chan error
-		wait   chan struct{}
 	}
 	var active *scopeWatch
-	stopActive := func() {
+	stopActive := func() error {
 		if active == nil {
-			return
+			return nil
 		}
-		active.cancel()
-		<-active.wait
+		watch := active
 		active = nil
+		watch.cancel()
+		var failure error
+		for err := range watch.done {
+			if err != nil && !errors.Is(err, context.Canceled) && failure == nil {
+				failure = err
+			}
+		}
+		return failure
 	}
 	startScopes := func(scopes []watchScope) {
 		watchCtx, cancel := context.WithCancel(ctx)
 		watch := &scopeWatch{
 			cancel: cancel,
 			done:   make(chan error, len(scopes)),
-			wait:   make(chan struct{}),
 		}
 		var group sync.WaitGroup
 		group.Add(len(scopes))
@@ -121,14 +132,14 @@ func runMonitorBindingLoop(ctx context.Context, client *http.Client, urls []stri
 		}
 		go func() {
 			group.Wait()
-			close(watch.wait)
+			close(watch.done)
 		}()
 		active = watch
 	}
 	current := ""
 	ticker := time.NewTicker(monitorBindPollInterval)
 	defer ticker.Stop()
-	defer stopActive()
+	defer func() { _ = stopActive() }()
 
 	for {
 		binding, found, err := fetchMonitorBinding(ctx, client, urls, token)
@@ -137,7 +148,9 @@ func runMonitorBindingLoop(ctx context.Context, client *http.Client, urls []stri
 			encoded, _ := json.Marshal(scopes)
 			next := string(encoded)
 			if next != current {
-				stopActive()
+				if err := stopActive(); err != nil {
+					return err
+				}
 				current = next
 				if len(scopes) > 0 {
 					startScopes(scopes)
@@ -152,14 +165,17 @@ func runMonitorBindingLoop(ctx context.Context, client *http.Client, urls []stri
 		case <-ctx.Done():
 			return nil
 		case err := <-scopeDone:
-			stopActive()
+			stopErr := stopActive()
 			if ctx.Err() != nil {
 				return nil
 			}
-			if err == nil {
-				return errors.New("monitor scope watch stopped")
+			if err != nil && !errors.Is(err, context.Canceled) {
+				return err
 			}
-			return err
+			if stopErr != nil {
+				return stopErr
+			}
+			return errors.New("monitor scope watch stopped")
 		case <-ticker.C:
 		}
 	}

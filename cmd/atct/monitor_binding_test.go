@@ -30,6 +30,21 @@ func TestMonitorBindingScopesIncludesEveryExecutorTask(t *testing.T) {
 	}
 }
 
+func TestFetchMonitorBindingBoundsEachRequest(t *testing.T) {
+	hadDeadline := false
+	client := &http.Client{Transport: watchRoundTripper(func(req *http.Request) (*http.Response, error) {
+		_, hadDeadline = req.Context().Deadline()
+		return nil, errors.New("daemon unavailable")
+	})}
+
+	if _, found, err := fetchMonitorBinding(context.Background(), client, []string{"http://daemon"}, "token-1"); err != nil || found {
+		t.Fatalf("fetchMonitorBinding = (found %v, error %v), want retryable miss", found, err)
+	}
+	if !hadDeadline {
+		t.Fatal("binding request had no deadline")
+	}
+}
+
 func TestMonitorBindingLoopWaitsForBindingAndReplacesChangedScope(t *testing.T) {
 	var (
 		mu       sync.Mutex
@@ -77,7 +92,7 @@ func TestMonitorBindingLoopWaitsForBindingAndReplacesChangedScope(t *testing.T) 
 		} else {
 			close(subcommanderStopped)
 		}
-		return nil
+		return ctx.Err()
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -137,6 +152,53 @@ func TestMonitorBindingLoopWaitsForBindingAndReplacesChangedScope(t *testing.T) 
 	case <-subcommanderStopped:
 	case <-time.After(time.Second):
 		t.Fatal("active scope watch was not stopped")
+	}
+}
+
+func TestMonitorBindingLoopReturnsScopeFailureDuringAssignmentChange(t *testing.T) {
+	want := errors.New("old watcher failed")
+	secondFetchStarted := make(chan struct{})
+	watcherReturning := make(chan struct{})
+	var requests int
+	client := &http.Client{Transport: watchRoundTripper(func(*http.Request) (*http.Response, error) {
+		requests++
+		body := `{"assignment":{"role":"commander","project_id":7}}`
+		if requests == 2 {
+			close(secondFetchStarted)
+			<-watcherReturning
+			body = `{"assignment":{"role":"subcommander","project_id":7,"goal_id":16}}`
+		}
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
+	})}
+
+	newScopeStarted := make(chan struct{}, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		done <- runMonitorBindingLoop(ctx, client, []string{"http://daemon"}, "token-1", func(ctx context.Context, scope watchScope) error {
+			if scope.Role == "commander" {
+				<-secondFetchStarted
+				close(watcherReturning)
+				return want
+			}
+			newScopeStarted <- struct{}{}
+			<-ctx.Done()
+			return ctx.Err()
+		})
+	}()
+
+	select {
+	case err := <-done:
+		if !errors.Is(err, want) {
+			t.Fatalf("runMonitorBindingLoop error = %v, want %v", err, want)
+		}
+	case <-newScopeStarted:
+		cancel()
+		err := <-done
+		t.Fatalf("replacement scope started after old watcher failure; loop error = %v", err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("binding loop did not observe assignment change")
 	}
 }
 
