@@ -2153,6 +2153,16 @@ func TestParseArgsWatchMonitorRequiresOneExistingSelector(t *testing.T) {
 	}
 }
 
+func TestParseArgsWatchMonitorAcceptsBindingTokenWithoutScope(t *testing.T) {
+	cfg, err := parseArgs([]string{"watch", "--monitor", "--token", "token-1"})
+	if err != nil {
+		t.Fatalf("parseArgs: %v", err)
+	}
+	if !cfg.watchMonitor || cfg.watchMonitorToken != "token-1" || cfg.watchGoalID != "" || cfg.watchProjectScope {
+		t.Fatalf("watch config = %#v, want token-bound unscoped monitor", cfg)
+	}
+}
+
 func TestClaudeMonitorActionWriterExcludesRawDiagnostics(t *testing.T) {
 	var monitor bytes.Buffer
 	var diagnostics []string

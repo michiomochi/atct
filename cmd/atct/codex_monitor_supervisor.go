@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -11,7 +10,6 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -44,14 +42,13 @@ type codexMonitorDeps struct {
 	startProcess     func(codexMonitorProcessKind, string, []string, []string) (codexMonitorProcess, error)
 	atctExecutable   func() (string, error)
 	connectAppServer func(context.Context, string) (codexMonitorApp, error)
-	runWatch         func(context.Context, *codexMonitorBridge) error
-	runWatchScoped   func(context.Context, string, watchScope, *codexMonitorBridge) error
+	runBoundWatch    func(context.Context, string, string, *codexMonitorBridge) error
 	projectPath      func() (string, error)
-	resolveScope     func(context.Context, string, watchScope) (watchScope, error)
 	reap             func(string) (daemonctl.CodexMonitorReapResult, error)
 	register         func(string, daemonctl.CodexMonitorRecord) (func(), error)
 	stopMonitors     func(string, string) (daemonctl.CodexMonitorStopResult, error)
 	now              func() time.Time
+	newMonitorToken  func() (string, error)
 	stderr           io.Writer
 }
 
@@ -81,10 +78,7 @@ func runCodexMonitorWithDeps(config cliConfig, dir string, deps codexMonitorDeps
 	if config.codexMonitorAction != "monitor" {
 		return 1, fmt.Errorf("unsupported Codex monitor action %q", config.codexMonitorAction)
 	}
-	if config.codexMonitorExplicit && len(args) > 0 && args[0] == "resume" {
-		return 1, errors.New("explicit Codex monitor does not accept leading resume arguments")
-	}
-	if !config.codexMonitorExplicit && !config.codexMonitorAutomatic && len(args) > 0 && args[0] == "resume" {
+	if !config.codexMonitorAutomatic && len(args) > 0 && args[0] == "resume" {
 		return deps.runNormal("codex", args)
 	}
 	if config.codexMonitorPassthrough {
@@ -97,44 +91,36 @@ func runCodexMonitorWithDeps(config cliConfig, dir string, deps codexMonitorDeps
 
 	projectPath, err := deps.projectPath()
 	if err != nil {
-		return codexMonitorSetupFailure(config, deps, "resolve project directory: "+err.Error(), "codex", args)
-	}
-	scope := watchScope{}
-	if config.codexMonitorAutomatic {
-		if config.codexMonitorExplicit || config.codexMonitorRole != "commander" || strings.TrimSpace(config.codexMonitorProjectID) == "" || strings.TrimSpace(config.codexMonitorGoalID) != "" || strings.TrimSpace(config.codexMonitorTaskID) != "" {
-			return codexMonitorSetupFailure(config, deps, "invalid automatic monitor scope", "codex", args)
-		}
-		scope = watchScope{Role: "commander", ProjectID: config.codexMonitorProjectID}
-	} else if config.codexMonitorExplicit {
-		scope, err = deps.resolveScope(context.Background(), projectPath, watchScope{Role: config.codexMonitorRole, GoalID: config.codexMonitorGoalID, TaskID: config.codexMonitorTaskID})
-		if err != nil {
-			return codexMonitorSetupFailure(config, deps, "resolve explicit monitor scope: "+err.Error(), "codex", args)
-		}
+		return codexMonitorSetupFailure(deps, "resolve project directory: "+err.Error(), "codex", args)
 	}
 	if _, err := deps.reap(dir); err != nil {
-		return codexMonitorSetupFailure(config, deps, "reap monitor records: "+err.Error(), "codex", args)
+		return codexMonitorSetupFailure(deps, "reap monitor records: "+err.Error(), "codex", args)
+	}
+	monitorToken, err := deps.newMonitorToken()
+	if err != nil {
+		return codexMonitorSetupFailure(deps, "generate monitor token: "+err.Error(), "codex", args)
 	}
 
 	executable, err := deps.resolveCodex()
 	if err != nil {
-		return codexMonitorSetupFailure(config, deps, err.Error(), "codex", args)
+		return codexMonitorSetupFailure(deps, err.Error(), "codex", args)
 	}
 
 	monitorDir := daemonctl.CodexMonitorRegistryDir(dir)
 	socketPath := filepath.Join(monitorDir, fmt.Sprintf("%d.sock", os.Getpid()))
 	if err := os.MkdirAll(monitorDir, 0o700); err != nil {
-		return codexMonitorSetupFailure(config, deps, "create monitor directory: "+err.Error(), executable, args)
+		return codexMonitorSetupFailure(deps, "create monitor directory: "+err.Error(), executable, args)
 	}
 	if err := os.Chmod(monitorDir, 0o700); err != nil {
-		return codexMonitorSetupFailure(config, deps, "protect monitor directory: "+err.Error(), executable, args)
+		return codexMonitorSetupFailure(deps, "protect monitor directory: "+err.Error(), executable, args)
 	}
 	appArgs := []string{"app-server", "--listen", "unix://" + socketPath}
 	if err := os.Remove(socketPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return codexMonitorSetupFailure(config, deps, "remove stale monitor socket: "+err.Error(), executable, args)
+		return codexMonitorSetupFailure(deps, "remove stale monitor socket: "+err.Error(), executable, args)
 	}
 	appProcess, err := deps.startProcess(codexMonitorAppServer, executable, appArgs, nil)
 	if err != nil {
-		return codexMonitorSetupFailure(config, deps, "start App Server: "+err.Error(), executable, args)
+		return codexMonitorSetupFailure(deps, "start App Server: "+err.Error(), executable, args)
 	}
 	appWait := waitCodexMonitorProcess(appProcess)
 
@@ -149,7 +135,7 @@ func runCodexMonitorWithDeps(config cliConfig, dir string, deps codexMonitorDeps
 			fmt.Fprintf(deps.stderr, "atct codex monitor cleanup: %v\n", cleanupErr)
 		}
 		_ = os.Remove(socketPath)
-		return codexMonitorSetupFailure(config, deps, "connect App Server: "+err.Error(), executable, args)
+		return codexMonitorSetupFailure(deps, "connect App Server: "+err.Error(), executable, args)
 	}
 
 	// The monitor owns this fresh App Server socket. Let the remote TUI create
@@ -181,24 +167,20 @@ func runCodexMonitorWithDeps(config cliConfig, dir string, deps codexMonitorDeps
 			fmt.Fprintf(deps.stderr, "atct codex monitor cleanup: %v\n", cleanupErr)
 		}
 		_ = os.Remove(socketPath)
-		return codexMonitorSetupFailure(config, deps, "register monitor: "+err.Error(), executable, args)
+		return codexMonitorSetupFailure(deps, "register monitor: "+err.Error(), executable, args)
 	}
 
 	bridgeDone := make(chan error, 1)
 	go func() { bridgeDone <- bridge.Run(monitorCtx) }()
 	watchDone := make(chan error, 1)
 	go func() {
-		if config.codexMonitorExplicit || config.codexMonitorAutomatic {
-			watchDone <- deps.runWatchScoped(watchCtx, projectPath, scope, bridge)
-			return
-		}
-		watchDone <- deps.runWatch(watchCtx, bridge)
+		watchDone <- deps.runBoundWatch(watchCtx, projectPath, monitorToken, bridge)
 	}()
 
 	remoteArgs := make([]string, 0, len(args)+2)
 	remoteArgs = append(remoteArgs, "--remote", "unix://"+socketPath)
 	remoteArgs = append(remoteArgs, args...)
-	tuiEnv, err := codexMonitorStopHookEnv(scope, deps.atctExecutable)
+	tuiEnv, err := codexMonitorEnvironment(monitorToken, deps.atctExecutable)
 	if err != nil {
 		cancelWatch()
 		cancelMonitor()
@@ -228,7 +210,7 @@ func runCodexMonitorWithDeps(config cliConfig, dir string, deps codexMonitorDeps
 			recordCleanup()
 		}
 		_ = os.Remove(socketPath)
-		return codexMonitorSetupFailure(config, deps, "start Codex TUI: "+err.Error(), executable, args)
+		return codexMonitorSetupFailure(deps, "start Codex TUI: "+err.Error(), executable, args)
 	}
 	tuiDone := waitCodexMonitorProcess(tuiProcess)
 
@@ -310,13 +292,7 @@ func codexMonitorThreadMatches(thread codexThread, cwd string) bool {
 		strings.TrimSpace(thread.Status.Type) != ""
 }
 
-// Explicit role launches carry an ATCT scope contract. Starting plain Codex
-// after any monitor setup failure would silently discard that contract, so only
-// the legacy no-role path may use the historical fallback.
-func codexMonitorSetupFailure(config cliConfig, deps codexMonitorDeps, reason, executable string, args []string) (int, error) {
-	if config.codexMonitorExplicit {
-		return 1, errors.New(reason)
-	}
+func codexMonitorSetupFailure(deps codexMonitorDeps, reason, executable string, args []string) (int, error) {
 	return codexMonitorFallback(deps, reason, executable, args)
 }
 
@@ -370,11 +346,6 @@ func codexMonitorDepsWithDefaults(dir string, deps codexMonitorDeps) codexMonito
 	if deps.projectPath == nil {
 		deps.projectPath = codexMonitorProjectPath
 	}
-	if deps.resolveScope == nil {
-		deps.resolveScope = func(ctx context.Context, cwd string, scope watchScope) (watchScope, error) {
-			return resolveCodexMonitorScope(ctx, dir, cwd, scope)
-		}
-	}
 	if deps.reap == nil {
 		deps.reap = daemonctl.ReapCodexMonitors
 	}
@@ -387,98 +358,27 @@ func codexMonitorDepsWithDefaults(dir string, deps codexMonitorDeps) codexMonito
 	if deps.now == nil {
 		deps.now = time.Now
 	}
+	if deps.newMonitorToken == nil {
+		deps.newMonitorToken = newMonitorToken
+	}
 	if deps.stderr == nil {
 		deps.stderr = os.Stderr
 	}
-	if deps.runWatch == nil {
-		deps.runWatch = func(ctx context.Context, bridge *codexMonitorBridge) error {
-			projectPath, err := deps.projectPath()
-			if err != nil {
-				return fmt.Errorf("resolve project directory: %w", err)
+	if deps.runBoundWatch == nil {
+		deps.runBoundWatch = func(ctx context.Context, projectPath, token string, bridge *codexMonitorBridge) error {
+			if err := ensureWatchDaemon(dir); err != nil {
+				return err
 			}
-			return runCodexMonitorWatch(ctx, &http.Client{}, watchBaseURLs(dir), projectPath, bridge, func() error {
-				return ensureWatchDaemon(dir)
-			})
-		}
-	}
-	if deps.runWatchScoped == nil {
-		deps.runWatchScoped = func(ctx context.Context, projectPath string, scope watchScope, bridge *codexMonitorBridge) error {
-			return runCodexMonitorWatchScoped(ctx, &http.Client{}, watchBaseURLs(dir), projectPath, scope, bridge, func() error {
-				return ensureWatchDaemon(dir)
+			client := &http.Client{}
+			urls := watchBaseURLs(dir)
+			return runMonitorBindingLoop(ctx, client, urls, token, func(scopeCtx context.Context, scope watchScope) error {
+				return runCodexMonitorWatchScoped(scopeCtx, client, urls, projectPath, scope, bridge, func() error {
+					return ensureWatchDaemon(dir)
+				})
 			})
 		}
 	}
 	return deps
-}
-
-func resolveCodexMonitorScope(ctx context.Context, dir, cwd string, scope watchScope) (watchScope, error) {
-	client := &http.Client{Timeout: codexMonitorSetupTimeout}
-	return resolveCodexMonitorScopeWithClient(ctx, client, watchBaseURLs(dir), cwd, scope)
-}
-
-func resolveCodexMonitorScopeWithClient(ctx context.Context, client *http.Client, bases []string, cwd string, scope watchScope) (watchScope, error) {
-	for _, base := range bases {
-		projects, err := fetchWatchProjects(ctx, client, base)
-		if err != nil {
-			continue
-		}
-		projectID := resolveWatchProjectID(cwd, projects)
-		if projectID == "" {
-			continue
-		}
-		if scope.Role == "commander" {
-			scope.ProjectID = projectID
-			return scope, nil
-		}
-		goalID := scope.GoalID
-		if scope.Role == "executor" {
-			var taskPayload struct {
-				Task struct {
-					ID int64 `json:"id"`
-				} `json:"task"`
-				Goal struct {
-					ID int64 `json:"id"`
-				} `json:"goal"`
-			}
-			if err := fetchCodexMonitorJSON(ctx, client, base, "/api/tasks/"+scope.TaskID, &taskPayload); err != nil || taskPayload.Task.ID == 0 || taskPayload.Goal.ID == 0 {
-				continue
-			}
-			scope.TaskID = strconv.FormatInt(taskPayload.Task.ID, 10)
-			goalID = strconv.FormatInt(taskPayload.Goal.ID, 10)
-		}
-		var goalPayload struct {
-			Goal struct {
-				ID        int64 `json:"id"`
-				ProjectID int64 `json:"project_id"`
-			} `json:"goal"`
-		}
-		if err := fetchCodexMonitorJSON(ctx, client, base, "/api/goals/"+goalID, &goalPayload); err != nil || goalPayload.Goal.ID == 0 || goalPayload.Goal.ProjectID == 0 {
-			continue
-		}
-		if strconv.FormatInt(goalPayload.Goal.ProjectID, 10) != projectID {
-			continue
-		}
-		scope.GoalID = strconv.FormatInt(goalPayload.Goal.ID, 10)
-		scope.ProjectID = projectID
-		return scope, nil
-	}
-	return watchScope{}, errors.New("selector is unresolved in the current project")
-}
-
-func fetchCodexMonitorJSON(ctx context.Context, client *http.Client, base, path string, target any) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(base, "/")+path, nil)
-	if err != nil {
-		return err
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return fmt.Errorf("GET %s: HTTP %s", path, resp.Status)
-	}
-	return json.NewDecoder(resp.Body).Decode(target)
 }
 
 func resolveCodexExecutable() (string, error) {
@@ -549,29 +449,7 @@ func codexMonitorProjectPath() (string, error) {
 	return absolute, nil
 }
 
-func codexMonitorStopHookEnv(scope watchScope, atctExecutable func() (string, error)) ([]string, error) {
-	if strings.TrimSpace(scope.Role) == "" {
-		return nil, nil
-	}
-	if strings.TrimSpace(scope.ProjectID) == "" {
-		return nil, errors.New("resolve monitor project scope")
-	}
-	switch scope.Role {
-	case "commander":
-		if strings.TrimSpace(scope.GoalID) != "" || strings.TrimSpace(scope.TaskID) != "" {
-			return nil, errors.New("resolve commander monitor scope")
-		}
-	case "subcommander":
-		if strings.TrimSpace(scope.GoalID) == "" || strings.TrimSpace(scope.TaskID) != "" {
-			return nil, errors.New("resolve subcommander monitor scope")
-		}
-	case "executor":
-		if strings.TrimSpace(scope.GoalID) == "" || strings.TrimSpace(scope.TaskID) == "" {
-			return nil, errors.New("resolve executor monitor scope")
-		}
-	default:
-		return nil, fmt.Errorf("unsupported monitor role %q", scope.Role)
-	}
+func codexMonitorEnvironment(monitorToken string, atctExecutable func() (string, error)) ([]string, error) {
 	if atctExecutable == nil {
 		return nil, errors.New("resolve atct executable")
 	}
@@ -582,7 +460,10 @@ func codexMonitorStopHookEnv(scope watchScope, atctExecutable func() (string, er
 	if strings.TrimSpace(executable) == "" {
 		return nil, errors.New("resolve atct executable")
 	}
-	return []string{"ATCT_BIN=" + executable}, nil
+	if strings.TrimSpace(monitorToken) == "" {
+		return nil, errors.New("monitor token is empty")
+	}
+	return []string{"ATCT_BIN=" + executable, "ATCT_MONITOR_TOKEN=" + monitorToken}, nil
 }
 
 func startCodexMonitorProcess(kind codexMonitorProcessKind, executable string, args []string, extraEnv []string) (codexMonitorProcess, error) {

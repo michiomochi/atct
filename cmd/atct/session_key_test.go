@@ -10,6 +10,14 @@ func TestSessionKeyMessageUsesExactHarnessSessionID(t *testing.T) {
 	}
 }
 
+func TestSessionKeyMessageIncludesMonitorToken(t *testing.T) {
+	got := sessionKeyMessageWithMonitorToken("codex-session-1", "token-1")
+	want := "ATCT session key: codex-session-1. Before any other ATCT operation, call atct_session_identify with this exact session_key and monitor_token token-1.\n"
+	if got != want {
+		t.Fatalf("sessionKeyMessageWithMonitorToken = %q, want %q", got, want)
+	}
+}
+
 func TestParseSessionKey(t *testing.T) {
 	cfg, err := parseArgs([]string{"session-key", "--hook-input"})
 	if err != nil {

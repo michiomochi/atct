@@ -348,7 +348,7 @@ func TestRunCodexShimDispatchesRegisteredInteractiveProject(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open test store: %v", err)
 	}
-	project, err := db.CreateProject(context.Background(), "registered", root)
+	_, err = db.CreateProject(context.Background(), "registered", root)
 	if closeErr := db.Close(); err != nil {
 		t.Fatalf("register test project: %v", err)
 	} else if closeErr != nil {
@@ -388,12 +388,6 @@ func TestRunCodexShimDispatchesRegisteredInteractiveProject(t *testing.T) {
 	}
 	if gotMonitorConfig.codexMonitorAction != "monitor" || !gotMonitorConfig.codexMonitorAutomatic {
 		t.Fatalf("monitor config = %#v, want automatic monitor action", gotMonitorConfig)
-	}
-	if gotMonitorConfig.codexMonitorExplicit || gotMonitorConfig.codexMonitorRole != "commander" {
-		t.Fatalf("monitor config = %#v, want non-explicit commander scope", gotMonitorConfig)
-	}
-	if gotMonitorConfig.codexMonitorProjectID != strconv.FormatInt(project.ID, 10) {
-		t.Fatalf("monitor project ID = %q, want %q", gotMonitorConfig.codexMonitorProjectID, strconv.FormatInt(project.ID, 10))
 	}
 	if len(gotMonitorConfig.codexArgs) != 0 {
 		t.Fatalf("monitor args = %#v, want original args", gotMonitorConfig.codexArgs)

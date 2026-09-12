@@ -5,9 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
@@ -54,97 +52,6 @@ func TestCodexMonitorFallbackUsesOriginalCommandAndArguments(t *testing.T) {
 	wantWarning := "atct codex monitor disabled: codex not found; running normal codex\n"
 	if got := stderr.String(); got != wantWarning {
 		t.Fatalf("fallback warning = %q, want %q", got, wantWarning)
-	}
-}
-
-func TestCodexMonitorExplicitRoleFailureDoesNotLaunchCodexOrAppServer(t *testing.T) {
-	config, err := parseArgs([]string{"codex", "monitor", "--role", "executor", "--task", "999999"})
-	if err != nil {
-		t.Fatalf("parseArgs: %v", err)
-	}
-	var appServerStarts, normalStarts int
-	deps := codexMonitorDeps{
-		projectPath:  func() (string, error) { return "/project", nil },
-		resolveCodex: func() (string, error) { return "/opt/codex", nil },
-		startProcess: func(kind codexMonitorProcessKind, _ string, _ []string, _ []string) (codexMonitorProcess, error) {
-			if kind == codexMonitorAppServer {
-				appServerStarts++
-			}
-			return nil, errors.New("must not launch")
-		},
-		runNormal: func(_ string, _ []string) (int, error) {
-			normalStarts++
-			return 0, nil
-		},
-		stderr: io.Discard,
-	}
-
-	if _, err := runCodexMonitorWithDeps(config, t.TempDir(), deps); err == nil {
-		t.Fatal("explicit unresolved executor task succeeded")
-	}
-	if appServerStarts != 0 || normalStarts != 0 {
-		t.Fatalf("explicit configuration started app server=%d normal Codex=%d, want neither", appServerStarts, normalStarts)
-	}
-}
-
-func TestCodexMonitorExplicitSetupFailureDoesNotFallBack(t *testing.T) {
-	var normalStarts int
-	deps := codexMonitorDeps{
-		projectPath: func() (string, error) { return "/project", nil },
-		resolveScope: func(context.Context, string, watchScope) (watchScope, error) {
-			return watchScope{Role: "executor", ProjectID: "7", GoalID: "16", TaskID: "46"}, nil
-		},
-		reap: func(string) (daemonctl.CodexMonitorReapResult, error) {
-			return daemonctl.CodexMonitorReapResult{}, errors.New("registry unavailable")
-		},
-		runNormal: func(string, []string) (int, error) {
-			normalStarts++
-			return 0, nil
-		},
-		stderr: io.Discard,
-	}
-	_, err := runCodexMonitorWithDeps(cliConfig{codexMonitorAction: "monitor", codexMonitorExplicit: true, codexMonitorRole: "executor", codexMonitorTaskID: "46"}, t.TempDir(), deps)
-	if err == nil || !strings.Contains(err.Error(), "reap monitor records: registry unavailable") {
-		t.Fatalf("explicit setup failure error = %v, want reap failure", err)
-	}
-	if normalStarts != 0 {
-		t.Fatalf("explicit setup failure started normal Codex %d times, want 0", normalStarts)
-	}
-}
-
-func TestResolveCodexMonitorExecutorScopeUsesTaskAndGoalResponseShapes(t *testing.T) {
-	for _, tt := range []struct {
-		name      string
-		projectID int64
-		wantErr   bool
-	}{
-		{name: "current project", projectID: 7},
-		{name: "other project", projectID: 8, wantErr: true},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			client := &http.Client{Transport: watchRoundTripper(func(req *http.Request) (*http.Response, error) {
-				body := ""
-				switch req.URL.Path {
-				case "/api/projects":
-					body = `[{"id":7,"root_path":"/project"}]`
-				case "/api/tasks/46":
-					body = `{"task":{"id":46},"goal":{"id":16,"project_name":"current"}}`
-				case "/api/goals/16":
-					body = fmt.Sprintf(`{"goal":{"id":16,"project_id":%d}}`, tt.projectID)
-				default:
-					t.Fatalf("unexpected request %s", req.URL.Path)
-				}
-				return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
-			})}
-
-			scope, err := resolveCodexMonitorScopeWithClient(context.Background(), client, []string{"http://daemon"}, "/project/worktree", watchScope{Role: "executor", TaskID: "46"})
-			if (err != nil) != tt.wantErr {
-				t.Fatalf("resolveCodexMonitorScopeWithClient() error = %v, wantErr %v", err, tt.wantErr)
-			}
-			if !tt.wantErr && (scope.ProjectID != "7" || scope.GoalID != "16" || scope.TaskID != "46") {
-				t.Fatalf("scope = %#v, want resolved current-project task scope", scope)
-			}
-		})
 	}
 }
 
@@ -232,7 +139,7 @@ func TestCodexMonitorDirectResolutionSkipsMarkedShim(t *testing.T) {
 		register: func(string, daemonctl.CodexMonitorRecord) (func(), error) {
 			return func() {}, nil
 		},
-		runWatch: func(ctx context.Context, _ *codexMonitorBridge) error {
+		runBoundWatch: func(ctx context.Context, _ string, _ string, _ *codexMonitorBridge) error {
 			<-ctx.Done()
 			return nil
 		},
@@ -303,64 +210,72 @@ func TestCodexMonitorFallbackWhenAppServerCannotStart(t *testing.T) {
 	}
 }
 
-func TestCodexMonitorAutomaticUsesCommanderProjectScope(t *testing.T) {
+func TestCodexMonitorGenericLifecycleInjectsTokenAndStartsBoundWatch(t *testing.T) {
 	monitorDir := t.TempDir()
 	app := newFakeCodexMonitorApp()
 	tui := newFakeCodexMonitorProcess(0)
 	tui.markStarted()
-	scopeSeen := make(chan watchScope, 1)
+	watchStarted := make(chan struct{})
+	tuiStarted := make(chan struct{})
 	done := make(chan struct{})
 	var (
-		code   int
-		runErr error
+		code       int
+		runErr     error
+		watchPath  string
+		watchToken string
+		tuiEnv     []string
 	)
 	deps := codexMonitorDeps{
 		resolveCodex: func() (string, error) { return "/opt/codex", nil },
-		startProcess: func(kind codexMonitorProcessKind, _ string, _ []string, _ []string) (codexMonitorProcess, error) {
+		startProcess: func(kind codexMonitorProcessKind, _ string, _ []string, env []string) (codexMonitorProcess, error) {
 			if kind == codexMonitorAppServer {
 				return app, nil
 			}
+			tuiEnv = append([]string(nil), env...)
+			close(tuiStarted)
 			return tui, nil
 		},
 		connectAppServer: func(context.Context, string) (codexMonitorApp, error) { return app, nil },
 		projectPath:      func() (string, error) { return "/project", nil },
+		atctExecutable:   func() (string, error) { return "/opt/atct", nil },
+		newMonitorToken:  func() (string, error) { return "token-1", nil },
 		reap:             func(string) (daemonctl.CodexMonitorReapResult, error) { return daemonctl.CodexMonitorReapResult{}, nil },
 		register: func(string, daemonctl.CodexMonitorRecord) (func(), error) {
 			return func() {}, nil
 		},
-		runWatchScoped: func(ctx context.Context, cwd string, scope watchScope, _ *codexMonitorBridge) error {
-			if cwd != "/project" {
-				return fmt.Errorf("watch cwd = %q, want /project", cwd)
-			}
-			scopeSeen <- scope
+		runBoundWatch: func(ctx context.Context, projectPath, token string, _ *codexMonitorBridge) error {
+			watchPath = projectPath
+			watchToken = token
+			close(watchStarted)
 			<-ctx.Done()
 			return nil
-		},
-		runWatch: func(context.Context, *codexMonitorBridge) error {
-			return errors.New("unscoped watcher must not run for automatic monitor")
 		},
 		stderr: io.Discard,
 	}
 
 	go func() {
 		code, runErr = runCodexMonitorWithDeps(cliConfig{
-			codexMonitorAction:    "monitor",
-			codexMonitorAutomatic: true,
-			codexMonitorRole:      "commander",
-			codexMonitorProjectID: "42",
-			codexArgs:             []string{"resume", "thread-1"},
+			codexMonitorAction: "monitor",
+			codexArgs:          []string{"-m", "gpt-5"},
 		}, monitorDir, deps)
 		close(done)
 	}()
 
-	var scope watchScope
 	select {
-	case scope = <-scopeSeen:
+	case <-watchStarted:
 	case <-time.After(time.Second):
-		t.Fatal("automatic monitor did not start a scoped watcher")
+		t.Fatal("generic monitor did not start a bound watcher")
 	}
-	if scope != (watchScope{Role: "commander", ProjectID: "42"}) {
-		t.Fatalf("automatic watcher scope = %#v, want commander project scope", scope)
+	select {
+	case <-tuiStarted:
+	case <-time.After(time.Second):
+		t.Fatal("generic monitor did not start its TUI")
+	}
+	if watchPath != "/project" || watchToken != "token-1" {
+		t.Fatalf("bound watch = (%q, %q), want (/project, token-1)", watchPath, watchToken)
+	}
+	if want := []string{"ATCT_BIN=/opt/atct", "ATCT_MONITOR_TOKEN=token-1"}; !slices.Equal(tuiEnv, want) {
+		t.Fatalf("TUI environment = %#v, want %#v", tuiEnv, want)
 	}
 	tui.finish()
 	select {
@@ -381,14 +296,9 @@ func TestCodexMonitorAutomaticSetupFailureFallsBack(t *testing.T) {
 		normalCalls   int
 		gotExecutable string
 		gotArgs       []string
-		resolveScopes int
 	)
 	deps := codexMonitorDeps{
 		projectPath: func() (string, error) { return "/project", nil },
-		resolveScope: func(context.Context, string, watchScope) (watchScope, error) {
-			resolveScopes++
-			return watchScope{}, errors.New("automatic monitor must not resolve HTTP scope")
-		},
 		reap: func(string) (daemonctl.CodexMonitorReapResult, error) {
 			return daemonctl.CodexMonitorReapResult{}, errors.New("registry unavailable")
 		},
@@ -407,8 +317,6 @@ func TestCodexMonitorAutomaticSetupFailureFallsBack(t *testing.T) {
 	code, err := runCodexMonitorWithDeps(cliConfig{
 		codexMonitorAction:    "monitor",
 		codexMonitorAutomatic: true,
-		codexMonitorRole:      "commander",
-		codexMonitorProjectID: "42",
 		codexArgs:             []string{"resume", "thread-2"},
 	}, t.TempDir(), deps)
 	if err != nil {
@@ -419,9 +327,6 @@ func TestCodexMonitorAutomaticSetupFailureFallsBack(t *testing.T) {
 	}
 	if !slices.Equal(gotArgs, []string{"resume", "thread-2"}) {
 		t.Fatalf("automatic fallback args = %#v, want original args", gotArgs)
-	}
-	if resolveScopes != 0 {
-		t.Fatalf("automatic monitor resolved explicit scopes %d times, want 0", resolveScopes)
 	}
 }
 
@@ -462,8 +367,6 @@ func TestCodexMonitorAutomaticAppServerFailureFallsBackOnce(t *testing.T) {
 	code, err := runCodexMonitorWithDeps(cliConfig{
 		codexMonitorAction:    "monitor",
 		codexMonitorAutomatic: true,
-		codexMonitorRole:      "commander",
-		codexMonitorProjectID: "42",
 		codexArgs:             wantArgs,
 	}, t.TempDir(), deps)
 	if err != nil {
@@ -477,67 +380,6 @@ func TestCodexMonitorAutomaticAppServerFailureFallsBackOnce(t *testing.T) {
 	}
 	if !slices.Equal(gotArgs, wantArgs) {
 		t.Fatalf("automatic fallback args = %#v, want %#v", gotArgs, wantArgs)
-	}
-}
-
-func TestCodexMonitorAutomaticInvalidScopeFallsBack(t *testing.T) {
-	tests := []struct {
-		name   string
-		config cliConfig
-	}{
-		{
-			name: "worker role",
-			config: cliConfig{
-				codexMonitorAutomatic: true,
-				codexMonitorRole:      "executor",
-				codexMonitorProjectID: "42",
-			},
-		},
-		{
-			name: "missing project",
-			config: cliConfig{
-				codexMonitorAutomatic: true,
-				codexMonitorRole:      "commander",
-			},
-		},
-		{
-			name: "goal selector mixed in",
-			config: cliConfig{
-				codexMonitorAutomatic: true,
-				codexMonitorRole:      "commander",
-				codexMonitorProjectID: "42",
-				codexMonitorGoalID:    "16",
-			},
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var normalCalls int
-			deps := codexMonitorDeps{
-				projectPath: func() (string, error) { return "/project", nil },
-				reap: func(string) (daemonctl.CodexMonitorReapResult, error) {
-					t.Fatal("invalid automatic scope reached monitor setup")
-					return daemonctl.CodexMonitorReapResult{}, nil
-				},
-				resolveCodex: func() (string, error) {
-					t.Fatal("invalid automatic scope resolved Codex")
-					return "", nil
-				},
-				runNormal: func(string, []string) (int, error) {
-					normalCalls++
-					return 43, nil
-				},
-				stderr: io.Discard,
-			}
-			tt.config.codexMonitorAction = "monitor"
-			code, err := runCodexMonitorWithDeps(tt.config, t.TempDir(), deps)
-			if err != nil {
-				t.Fatalf("runCodexMonitorWithDeps: %v", err)
-			}
-			if code != 43 || normalCalls != 1 {
-				t.Fatalf("invalid automatic fallback = (%d, %d), want (43, 1)", code, normalCalls)
-			}
-		})
 	}
 }
 
@@ -557,7 +399,7 @@ func TestCodexMonitorTUIStartFailureStopsMonitorGoroutines(t *testing.T) {
 		},
 		connectAppServer: func(context.Context, string) (codexMonitorApp, error) { return app, nil },
 		projectPath:      func() (string, error) { return "/project", nil },
-		runWatch: func(ctx context.Context, _ *codexMonitorBridge) error {
+		runBoundWatch: func(ctx context.Context, _ string, _ string, _ *codexMonitorBridge) error {
 			<-ctx.Done()
 			close(watchStopped)
 			return nil
@@ -690,7 +532,7 @@ func TestCodexMonitorLifecycleCleansChildrenAndPreservesTUIStatus(t *testing.T) 
 		},
 		connectAppServer: func(context.Context, string) (codexMonitorApp, error) { return app, nil },
 		projectPath:      func() (string, error) { return "/project", nil },
-		runWatch: func(ctx context.Context, _ *codexMonitorBridge) error {
+		runBoundWatch: func(ctx context.Context, _ string, _ string, _ *codexMonitorBridge) error {
 			<-ctx.Done()
 			return nil
 		},
@@ -726,107 +568,16 @@ func TestCodexMonitorLifecycleCleansChildrenAndPreservesTUIStatus(t *testing.T) 
 	}
 }
 
-func TestCodexMonitorExplicitNonResumeStartsRemoteTUIAndPreservesArgs(t *testing.T) {
-	monitorDir := t.TempDir()
-	app := newFakeCodexMonitorApp()
-	tui := newFakeCodexMonitorProcess(0)
-	tuiStarted := make(chan struct{})
-	var tuiArgs []string
-	var tuiEnv []string
-
-	deps := codexMonitorDeps{
-		resolveCodex: func() (string, error) { return "/opt/codex", nil },
-		startProcess: func(kind codexMonitorProcessKind, _ string, args []string, env []string) (codexMonitorProcess, error) {
-			switch kind {
-			case codexMonitorAppServer:
-				return app, nil
-			case codexMonitorTUI:
-				tuiArgs = append([]string(nil), args...)
-				tuiEnv = append([]string(nil), env...)
-				tui.markStarted()
-				close(tuiStarted)
-				return tui, nil
-			default:
-				return nil, errors.New("unexpected process kind")
-			}
-		},
-		connectAppServer: func(context.Context, string) (codexMonitorApp, error) { return app, nil },
-		projectPath:      func() (string, error) { return "/project", nil },
-		resolveScope: func(context.Context, string, watchScope) (watchScope, error) {
-			return watchScope{Role: "executor", ProjectID: "7", GoalID: "216", TaskID: "920"}, nil
-		},
-		atctExecutable: func() (string, error) { return "/opt/atct", nil },
-		reap:           func(string) (daemonctl.CodexMonitorReapResult, error) { return daemonctl.CodexMonitorReapResult{}, nil },
-		register:       func(string, daemonctl.CodexMonitorRecord) (func(), error) { return func() {}, nil },
-		runWatchScoped: func(ctx context.Context, _ string, _ watchScope, _ *codexMonitorBridge) error {
-			<-ctx.Done()
-			return nil
-		},
-		stderr: io.Discard,
+func TestCodexMonitorEnvironmentRequiresAndInjectsToken(t *testing.T) {
+	got, err := codexMonitorEnvironment("token-1", func() (string, error) { return "/opt/atct", nil })
+	if err != nil {
+		t.Fatalf("codexMonitorEnvironment: %v", err)
 	}
-
-	done := make(chan struct{})
-	var (
-		code   int
-		runErr error
-	)
-	go func() {
-		code, runErr = runCodexMonitorWithDeps(cliConfig{
-			codexMonitorAction:   "monitor",
-			codexMonitorExplicit: true,
-			codexMonitorRole:     "executor",
-			codexMonitorTaskID:   "920",
-			codexArgs:            []string{"-m", "gpt-5"},
-		}, monitorDir, deps)
-		close(done)
-	}()
-
-	select {
-	case <-tuiStarted:
-	case <-time.After(time.Second):
-		t.Fatal("TUI did not start")
+	if want := []string{"ATCT_BIN=/opt/atct", "ATCT_MONITOR_TOKEN=token-1"}; !slices.Equal(got, want) {
+		t.Fatalf("environment = %#v, want %#v", got, want)
 	}
-	if len(tuiArgs) != 4 || tuiArgs[0] != "--remote" || !strings.HasPrefix(tuiArgs[1], "unix://") || !slices.Equal(tuiArgs[2:], []string{"-m", "gpt-5"}) {
-		t.Fatalf("TUI args = %#v, want --remote socket followed by original args", tuiArgs)
-	}
-	if want := []string{"ATCT_BIN=/opt/atct"}; !slices.Equal(tuiEnv, want) {
-		t.Fatalf("TUI Stop hook environment = %#v, want %#v", tuiEnv, want)
-	}
-
-	tui.finish()
-	select {
-	case <-done:
-	case <-time.After(time.Second):
-		t.Fatal("monitor did not finish after TUI exit")
-	}
-	if runErr != nil {
-		t.Fatalf("runCodexMonitorWithDeps: %v", runErr)
-	}
-	if code != 0 {
-		t.Fatalf("exit code = %d, want 0", code)
-	}
-}
-
-func TestCodexMonitorStopHookEnvIncludesOnlyBinary(t *testing.T) {
-	for _, tt := range []struct {
-		name  string
-		scope watchScope
-		want  []string
-	}{
-		{name: "unscoped", scope: watchScope{}, want: nil},
-		{name: "commander", scope: watchScope{Role: "commander", ProjectID: "7"}, want: []string{"ATCT_BIN=/opt/atct"}},
-		{name: "subcommander", scope: watchScope{Role: "subcommander", ProjectID: "7", GoalID: "16"}, want: []string{"ATCT_BIN=/opt/atct"}},
-		{name: "executor", scope: watchScope{Role: "executor", ProjectID: "7", GoalID: "16", TaskID: "46"}, want: []string{"ATCT_BIN=/opt/atct"}},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			got, err := codexMonitorStopHookEnv(tt.scope, func() (string, error) { return "/opt/atct", nil })
-			if err != nil {
-				t.Fatalf("codexMonitorStopHookEnv: %v", err)
-			}
-			if !slices.Equal(got, tt.want) {
-				t.Fatalf("environment = %#v, want %#v", got, tt.want)
-			}
-		})
+	if _, err := codexMonitorEnvironment("", func() (string, error) { return "/opt/atct", nil }); err == nil {
+		t.Fatal("empty monitor token succeeded")
 	}
 }
 
@@ -898,71 +649,6 @@ func TestCodexMonitorLegacyResumePassesThroughWithoutStartingMonitor(t *testing.
 	}
 }
 
-func TestCodexMonitorExplicitLeadingResumeFailsBeforeStartingAnything(t *testing.T) {
-	var (
-		projectPathCalls  int
-		scopeCalls        int
-		reapCalls         int
-		resolveCodexCalls int
-		appStarts         int
-		tuiStarts         int
-		normalCalls       int
-	)
-	deps := codexMonitorDeps{
-		projectPath: func() (string, error) {
-			projectPathCalls++
-			return "/project", nil
-		},
-		resolveScope: func(context.Context, string, watchScope) (watchScope, error) {
-			scopeCalls++
-			return watchScope{Role: "executor", ProjectID: "7", GoalID: "216", TaskID: "920"}, nil
-		},
-		reap: func(string) (daemonctl.CodexMonitorReapResult, error) {
-			reapCalls++
-			return daemonctl.CodexMonitorReapResult{}, nil
-		},
-		resolveCodex: func() (string, error) {
-			resolveCodexCalls++
-			return "/opt/codex", nil
-		},
-		startProcess: func(kind codexMonitorProcessKind, _ string, _ []string, _ []string) (codexMonitorProcess, error) {
-			switch kind {
-			case codexMonitorAppServer:
-				appStarts++
-			case codexMonitorTUI:
-				tuiStarts++
-			}
-			return nil, errors.New("explicit resume must not start a monitor process")
-		},
-		connectAppServer: func(context.Context, string) (codexMonitorApp, error) {
-			t.Fatal("explicit leading resume connected to App Server")
-			return nil, nil
-		},
-		runNormal: func(string, []string) (int, error) {
-			normalCalls++
-			return 0, nil
-		},
-		stderr: io.Discard,
-	}
-
-	code, err := runCodexMonitorWithDeps(cliConfig{
-		codexMonitorAction:   "monitor",
-		codexMonitorExplicit: true,
-		codexMonitorRole:     "executor",
-		codexMonitorTaskID:   "920",
-		codexArgs:            []string{"resume", "thread-existing", "--last"},
-	}, t.TempDir(), deps)
-	if code != 1 {
-		t.Fatalf("exit code = %d, want explicit failure code 1", code)
-	}
-	if err == nil || !strings.Contains(err.Error(), "leading resume") {
-		t.Fatalf("explicit leading resume error = %v, want leading resume contract error", err)
-	}
-	if projectPathCalls != 0 || scopeCalls != 0 || reapCalls != 0 || resolveCodexCalls != 0 || appStarts != 0 || tuiStarts != 0 || normalCalls != 0 {
-		t.Fatalf("explicit leading resume setup calls = project=%d scope=%d reap=%d resolve=%d app=%d tui=%d normal=%d, want all zero", projectPathCalls, scopeCalls, reapCalls, resolveCodexCalls, appStarts, tuiStarts, normalCalls)
-	}
-}
-
 func TestCodexMonitorAdoptsThreadStartedByItsDedicatedRemoteTUI(t *testing.T) {
 	monitorDir := t.TempDir()
 	app := newFakeCodexMonitorApp()
@@ -1015,7 +701,7 @@ func TestCodexMonitorAdoptsThreadStartedByItsDedicatedRemoteTUI(t *testing.T) {
 		projectPath:      func() (string, error) { return "/project", nil },
 		reap:             func(string) (daemonctl.CodexMonitorReapResult, error) { return daemonctl.CodexMonitorReapResult{}, nil },
 		register:         func(string, daemonctl.CodexMonitorRecord) (func(), error) { return func() {}, nil },
-		runWatch: func(ctx context.Context, bridge *codexMonitorBridge) error {
+		runBoundWatch: func(ctx context.Context, _ string, _ string, bridge *codexMonitorBridge) error {
 			if err := bridge.Enqueue(ctx, "atct goal created (goal_id: 7)"); err != nil {
 				return err
 			}
@@ -1089,7 +775,7 @@ func TestCodexMonitorBridgeFailureLeavesTUIAlive(t *testing.T) {
 		},
 		connectAppServer: func(context.Context, string) (codexMonitorApp, error) { return app, nil },
 		projectPath:      func() (string, error) { return "/project", nil },
-		runWatch: func(ctx context.Context, _ *codexMonitorBridge) error {
+		runBoundWatch: func(ctx context.Context, _ string, _ string, _ *codexMonitorBridge) error {
 			<-ctx.Done()
 			close(watchStopped)
 			return nil

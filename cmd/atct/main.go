@@ -11,7 +11,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -56,17 +55,13 @@ type cliConfig struct {
 	watchGoalID             string
 	watchProjectScope       bool
 	watchMonitor            bool
+	watchMonitorToken       string
 	codexShimAction         string
 	codexShimProfile        string
 	codexMonitorAction      string
 	codexArgs               []string
 	codexMonitorPassthrough bool
-	codexMonitorExplicit    bool
 	codexMonitorAutomatic   bool
-	codexMonitorProjectID   string
-	codexMonitorRole        string
-	codexMonitorGoalID      string
-	codexMonitorTaskID      string
 }
 
 var errInvalidArgs = errors.New("invalid command line")
@@ -270,55 +265,20 @@ func parseArgs(args []string) (cliConfig, error) {
 			}
 		}
 		for _, arg := range monitorArgs {
-			if arg == "--scope" || strings.HasPrefix(arg, "--scope=") {
+			if arg == "--scope" || strings.HasPrefix(arg, "--scope=") ||
+				arg == "--role" || strings.HasPrefix(arg, "--role=") ||
+				arg == "--project" || strings.HasPrefix(arg, "--project=") ||
+				arg == "--goal" || strings.HasPrefix(arg, "--goal=") ||
+				arg == "--task" || strings.HasPrefix(arg, "--task=") {
 				return cliConfig{}, errInvalidArgs
 			}
 		}
-		for len(monitorArgs) > 0 {
-			switch monitorArgs[0] {
-			case "--role", "--goal", "--task":
-				if len(monitorArgs) < 2 || monitorArgs[1] == "" {
-					return cliConfig{}, errInvalidArgs
-				}
-				if (monitorArgs[0] == "--role" && cfg.codexMonitorRole != "") ||
-					(monitorArgs[0] == "--goal" && cfg.codexMonitorGoalID != "") ||
-					(monitorArgs[0] == "--task" && cfg.codexMonitorTaskID != "") {
-					return cliConfig{}, errInvalidArgs
-				}
-				cfg.codexMonitorExplicit = true
-				switch monitorArgs[0] {
-				case "--role":
-					cfg.codexMonitorRole = monitorArgs[1]
-				case "--goal":
-					cfg.codexMonitorGoalID = monitorArgs[1]
-				case "--task":
-					cfg.codexMonitorTaskID = monitorArgs[1]
-				}
-				monitorArgs = monitorArgs[2:]
-			default:
-				// Legacy monitor arguments remain raw Codex arguments when no role was requested.
-				if !cfg.codexMonitorExplicit {
-					monitorArgs = nil
-					rest = append(rest[:0], args[2:]...)
-					break
-				}
-				return cliConfig{}, errInvalidArgs
-			}
-		}
-		if cfg.codexMonitorExplicit {
-			if err := validateCodexMonitorRole(cfg); err != nil {
-				return cliConfig{}, err
-			}
-			rest = passthroughArgs
-		} else if hasPassthroughDelimiter {
+		if hasPassthroughDelimiter {
 			rest = passthroughArgs
 		}
 		cfg.codexArgs = append([]string(nil), rest...)
 		if len(cfg.codexArgs) > 0 {
 			_, cfg.codexMonitorPassthrough = codexMonitorPassthroughCommands[cfg.codexArgs[0]]
-			if cfg.codexMonitorExplicit && cfg.codexMonitorPassthrough {
-				return cliConfig{}, errInvalidArgs
-			}
 		}
 		return cfg, nil
 	}
@@ -350,6 +310,7 @@ func parseArgs(args []string) (cliConfig, error) {
 		flags.StringVar(&cfg.watchGoalID, "goal", "", "filter watch events to this goal")
 		flags.BoolVar(&cfg.watchProjectScope, "project", false, "filter watch events to what a commander acts on")
 		flags.BoolVar(&cfg.watchMonitor, "monitor", false, "emit only selected actions for a Claude Monitor")
+		flags.StringVar(&cfg.watchMonitorToken, "token", "", "bind a monitor to the SessionStart token")
 	}
 	var description *string
 	if sub == "goal" && cfg.goalAction == "add" {
@@ -388,8 +349,12 @@ func parseArgs(args []string) (cliConfig, error) {
 		fmt.Fprintln(os.Stderr, "watch: -goal and -project cannot be used together")
 		return cliConfig{}, errInvalidArgs
 	}
-	if sub == "watch" && cfg.watchMonitor && !watchProjectSpecified && !watchGoalSpecified {
-		fmt.Fprintln(os.Stderr, "watch: -monitor requires exactly one selector: -goal or -project")
+	if sub == "watch" && cfg.watchMonitor && strings.TrimSpace(cfg.watchMonitorToken) != "" && (watchProjectSpecified || watchGoalSpecified) {
+		fmt.Fprintln(os.Stderr, "watch: --monitor --token does not accept -goal or -project")
+		return cliConfig{}, errInvalidArgs
+	}
+	if sub == "watch" && cfg.watchMonitor && strings.TrimSpace(cfg.watchMonitorToken) == "" && !watchProjectSpecified && !watchGoalSpecified {
+		fmt.Fprintln(os.Stderr, "watch: -monitor requires exactly one selector or --token")
 		return cliConfig{}, errInvalidArgs
 	}
 	if sub == "role" && cfg.roleExpectedSet {
@@ -412,32 +377,6 @@ func parseArgs(args []string) (cliConfig, error) {
 	cfg.contextBrief = contextBrief
 	cfg.contextCheck = contextCheck
 	return cfg, nil
-}
-
-func validateCodexMonitorRole(cfg cliConfig) error {
-	if _, err := strconv.ParseInt(cfg.codexMonitorGoalID, 10, 64); cfg.codexMonitorGoalID != "" && err != nil {
-		return errInvalidArgs
-	}
-	if _, err := strconv.ParseInt(cfg.codexMonitorTaskID, 10, 64); cfg.codexMonitorTaskID != "" && err != nil {
-		return errInvalidArgs
-	}
-	switch cfg.codexMonitorRole {
-	case "commander":
-		if cfg.codexMonitorGoalID != "" || cfg.codexMonitorTaskID != "" {
-			return errInvalidArgs
-		}
-	case "subcommander":
-		if cfg.codexMonitorGoalID == "" || cfg.codexMonitorTaskID != "" {
-			return errInvalidArgs
-		}
-	case "executor":
-		if cfg.codexMonitorTaskID == "" || cfg.codexMonitorGoalID != "" {
-			return errInvalidArgs
-		}
-	default:
-		return errInvalidArgs
-	}
-	return nil
 }
 
 // version is overridden at build time with -ldflags "-X main.version=...".
@@ -613,7 +552,7 @@ func main() {
 		}
 		return
 	case "watch":
-		if err := runWatchWithOptions(dir, config.watchGoalID, config.watchProjectScope, config.watchMonitor); err != nil {
+		if err := runWatchWithOptionsAndToken(dir, config.watchGoalID, config.watchProjectScope, config.watchMonitor, config.watchMonitorToken); err != nil {
 			log.Fatalf("watch: %v", err)
 		}
 		return

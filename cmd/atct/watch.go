@@ -462,6 +462,10 @@ func runWatch(dir, goalID string) error {
 }
 
 func runWatchWithOptions(dir, goalID string, projectScope, monitor bool) error {
+	return runWatchWithOptionsAndToken(dir, goalID, projectScope, monitor, "")
+}
+
+func runWatchWithOptionsAndToken(dir, goalID string, projectScope, monitor bool, monitorToken string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	cwd, err := os.Getwd()
@@ -471,6 +475,9 @@ func runWatchWithOptions(dir, goalID string, projectScope, monitor bool) error {
 
 	client := &http.Client{}
 	baseURLs := watchBaseURLs(dir)
+	if monitor && strings.TrimSpace(monitorToken) != "" {
+		return runBoundClaudeWatch(ctx, dir, cwd, client, baseURLs, monitorToken)
+	}
 	projectID := ""
 	for _, baseURL := range baseURLs {
 		projects, err := fetchWatchProjects(ctx, client, baseURL)
@@ -562,6 +569,21 @@ func runWatchWithOptions(dir, goalID string, projectScope, monitor bool) error {
 	return watchLoopWithEnsureAndProjectIDAndScopeAndActionSink(ctx, watchOutput, client, watchReconnectInterval, snapshot, func() error {
 		return ensureWatchDaemon(dir)
 	}, projectIDGetter, scope, nil, actionSink, reporters...)
+}
+
+func runBoundClaudeWatch(ctx context.Context, dir, cwd string, client *http.Client, baseURLs []string, monitorToken string) error {
+	writer := monitorActionWriter{writer: os.Stdout}
+	snapshot, projectIDGetter := watchSnapshotWithProject(client, baseURLs, cwd)
+	return runMonitorBindingLoop(ctx, client, baseURLs, monitorToken, func(scopeCtx context.Context, scope watchScope) error {
+		reporter := newWatchHealthReporter(client, baseURLs, cwd, scope)
+		var reporters []watchHealthSink
+		if reporter != nil {
+			reporters = append(reporters, reporter)
+		}
+		return watchLoopWithEnsureAndProjectIDAndScopeAndActionSink(scopeCtx, io.Discard, client, watchReconnectInterval, snapshot, func() error {
+			return ensureWatchDaemon(dir)
+		}, projectIDGetter, scope, nil, writer.Sink, reporters...)
+	})
 }
 
 func ensureWatchDaemon(dir string) error {

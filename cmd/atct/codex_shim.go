@@ -9,7 +9,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 
 	"github.com/michiomochi/atct/internal/store"
@@ -207,7 +206,7 @@ func runCodexShimWithDeps(config cliConfig, dir string, deps codexShimDeps) (int
 	}
 	defer func() { _ = localStore.Close() }()
 
-	project, err := localStore.ResolveProject(context.Background(), cwd)
+	_, err = localStore.ResolveProject(context.Background(), cwd)
 	if err != nil {
 		if errors.Is(err, store.ErrProjectNotFound) {
 			return deps.runNormal(executable, args)
@@ -218,12 +217,7 @@ func runCodexShimWithDeps(config cliConfig, dir string, deps codexShimDeps) (int
 	monitorConfig := config
 	monitorConfig.codexMonitorAction = "monitor"
 	monitorConfig.codexMonitorPassthrough = false
-	monitorConfig.codexMonitorExplicit = false
 	monitorConfig.codexMonitorAutomatic = true
-	monitorConfig.codexMonitorRole = "commander"
-	monitorConfig.codexMonitorProjectID = strconv.FormatInt(project.ID, 10)
-	monitorConfig.codexMonitorGoalID = ""
-	monitorConfig.codexMonitorTaskID = ""
 	return deps.runMonitor(monitorConfig, dir)
 }
 
