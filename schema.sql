@@ -226,12 +226,23 @@ CREATE INDEX IF NOT EXISTS monitor_health_last_seen_idx
 
 CREATE TABLE IF NOT EXISTS monitor_bindings (
   token            TEXT PRIMARY KEY,
-  agent_session_id INTEGER NOT NULL REFERENCES agent_sessions(id),
+  agent_session_id INTEGER NOT NULL REFERENCES agent_sessions(id) ON DELETE CASCADE,
   created_at       TEXT NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_monitor_bindings_agent_session_id
   ON monitor_bindings(agent_session_id);
+
+CREATE INDEX IF NOT EXISTS idx_projects_claimed_by
+  ON projects(claimed_by) WHERE claimed_by <> 0;
+
+CREATE INDEX IF NOT EXISTS idx_goal_handoffs_open_receiver
+  ON goal_handoffs(received_by, goal_id)
+  WHERE received_at IS NOT NULL AND completed_report_at IS NULL AND recovered_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_task_handoffs_open_receiver
+  ON task_handoffs(received_by, task_id)
+  WHERE received_at IS NOT NULL AND completed_report_at IS NULL AND recovered_at IS NULL;
 
 CREATE TABLE IF NOT EXISTS task_create_handoffs (
   id              TEXT PRIMARY KEY,

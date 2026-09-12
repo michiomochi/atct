@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 
@@ -79,42 +78,29 @@ func (s *Store) MonitorAssignment(ctx context.Context, agentSessionID int64) (Mo
 	if agentSessionID == 0 {
 		return assignment, nil
 	}
-	projects, err := s.ListProjects(ctx)
+	queries := sqlcgen.New(s.db)
+	projectID, err := queries.GetMonitorCommanderProjectID(ctx, agentSessionID)
+	if err == nil {
+		return MonitorAssignment{Role: "commander", ProjectID: projectID}, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return MonitorAssignment{}, fmt.Errorf("find commander assignment: %w", err)
+	}
+	sessionID := sql.NullInt64{Int64: agentSessionID, Valid: true}
+	subcommander, err := queries.GetMonitorSubcommanderAssignment(ctx, sessionID)
+	if err == nil {
+		return MonitorAssignment{Role: "subcommander", ProjectID: subcommander.ProjectID, GoalID: subcommander.GoalID}, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return MonitorAssignment{}, fmt.Errorf("find subcommander assignment: %w", err)
+	}
+	tasks, err := queries.ListMonitorExecutorAssignments(ctx, sessionID)
 	if err != nil {
-		return MonitorAssignment{}, err
+		return MonitorAssignment{}, fmt.Errorf("find executor assignments: %w", err)
 	}
-	for _, project := range projects {
-		if project.ClaimedBy == agentSessionID {
-			return MonitorAssignment{Role: "commander", ProjectID: project.ID}, nil
-		}
+	for _, task := range tasks {
+		assignment.Tasks = append(assignment.Tasks, MonitorScope{ProjectID: task.ProjectID, GoalID: task.GoalID, TaskID: task.TaskID})
 	}
-	goals, err := s.ListAllGoals(ctx)
-	if err != nil {
-		return MonitorAssignment{}, err
-	}
-	goalHandoffs, err := s.ListOpenGoalHandoffs(ctx)
-	if err != nil {
-		return MonitorAssignment{}, err
-	}
-	for _, goal := range goals {
-		handoff := goalHandoffs[goal.ID]
-		if handoff != nil && handoff.ReceivedAt != nil && handoff.ReceivedBy == agentSessionID {
-			return MonitorAssignment{Role: "subcommander", ProjectID: goal.ProjectID, GoalID: goal.ID}, nil
-		}
-	}
-	for _, goal := range goals {
-		handoffs, err := s.ListOpenTaskHandoffsForGoal(ctx, goal.ID)
-		if err != nil {
-			return MonitorAssignment{}, err
-		}
-		for taskID, handoff := range handoffs {
-			if handoff.ReceivedAt == nil || handoff.ReceivedBy != agentSessionID {
-				continue
-			}
-			assignment.Tasks = append(assignment.Tasks, MonitorScope{ProjectID: goal.ProjectID, GoalID: goal.ID, TaskID: taskID})
-		}
-	}
-	sort.Slice(assignment.Tasks, func(i, j int) bool { return assignment.Tasks[i].TaskID < assignment.Tasks[j].TaskID })
 	if len(assignment.Tasks) > 0 {
 		assignment.ProjectID = assignment.Tasks[0].ProjectID
 	}
