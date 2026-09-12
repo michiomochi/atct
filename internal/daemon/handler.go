@@ -779,6 +779,10 @@ func (d *Daemon) receiveRoleEvidence(ctx context.Context, agentSessionID, projec
 		}
 		projectID = goal.ProjectID
 	}
+	assignment, err := d.store.MonitorAssignment(ctx, agentSessionID)
+	if err != nil {
+		return "", claimEvidence{}, err
+	}
 	evidence := claimEvidence{
 		AgentSessionID: agentSessionID,
 		ProjectID:      projectID,
@@ -786,53 +790,20 @@ func (d *Daemon) receiveRoleEvidence(ctx context.Context, agentSessionID, projec
 		TaskID:         taskID,
 		HandoffID:      handoffID,
 	}
-
-	if agentSessionID != 0 {
-		projects, err := d.store.ListProjects(ctx)
-		if err != nil {
-			return "", claimEvidence{}, err
-		}
-		for _, project := range projects {
-			if project.ID == projectID && project.ClaimedBy == agentSessionID {
-				evidence.Scope = "project"
-				return "commander", evidence, nil
-			}
-		}
-
-		goalHandoffs, err := d.store.ListOpenGoalHandoffs(ctx)
-		if err != nil {
-			return "", claimEvidence{}, err
-		}
-		if handoff := goalHandoffs[goalID]; handoff != nil && handoff.ReceivedAt != nil && handoff.ReceivedBy == agentSessionID {
-			evidence.Scope = "goal"
-			return "subcommander", evidence, nil
-		}
-
-		if taskID != 0 {
-			taskHandoffs, err := d.store.ListTaskHandoffs(ctx, taskID)
-			if err != nil {
-				return "", claimEvidence{}, err
-			}
-			for _, handoff := range taskHandoffs {
-				if handoff.ReceivedAt != nil && handoff.CompletedReportAt == nil && handoff.ReceivedBy == agentSessionID {
-					evidence.Scope = "task"
-					return "executor", evidence, nil
-				}
-			}
-		}
-	}
-
-	switch {
-	case taskID != 0:
-		evidence.Scope = "task"
-		return "executor", evidence, nil
-	case goalID != 0:
-		evidence.Scope = "goal"
-		return "subcommander", evidence, nil
-	default:
+	switch assignment.Role {
+	case "commander":
 		evidence.Scope = "project"
-		return "commander", evidence, nil
+		evidence.ProjectID = assignment.ProjectID
+	case "subcommander":
+		evidence.Scope = "goal"
+		evidence.ProjectID = assignment.ProjectID
+		evidence.GoalID = assignment.GoalID
+	case "executor":
+		if taskID != 0 {
+			evidence.Scope = "task"
+		}
 	}
+	return assignment.Role, evidence, nil
 }
 
 func (d *Daemon) requestTaskHandoff(ctx context.Context, p taskHandoffRequestParams) (store.TaskHandoff, error) {

@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -613,6 +615,112 @@ func TestSessionIdentifyReattachesProjectClaimForRole(t *testing.T) {
 	if roleResponse.Role != "commander" {
 		t.Fatalf("session.role = %v, want commander", roleResponse.Role)
 	}
+}
+
+func TestMonitorBindingLifecycleMatchesDaemonAssignments(t *testing.T) {
+	ctx := context.Background()
+	s, err := store.Open(filepath.Join(t.TempDir(), "atct.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	projectA, err := s.CreateProject(ctx, "project-a", t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	projectB, err := s.CreateProject(ctx, "project-b", t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	goalB, err := s.CreateGoal(ctx, projectB.ID, "goal B", "human")
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := New(s)
+	target := runRegisterForTest(t, d, os.Getpid(), projectA.RootPath)
+	commanderB := runRegisterForTest(t, d, os.Getpid(), projectB.RootPath)
+
+	dispatch := func(method string, params map[string]any) json.RawMessage {
+		t.Helper()
+		rawParams, err := json.Marshal(params)
+		if err != nil {
+			t.Fatalf("marshal %s params: %v", method, err)
+		}
+		result, err := d.dispatch(ctx, rpc.Request{Method: method, Params: rawParams})
+		if err != nil {
+			t.Fatalf("%s: %v", method, err)
+		}
+		return result
+	}
+	const token = "lifecycle-monitor-token"
+	binding := func() store.MonitorBinding {
+		t.Helper()
+		request := httptest.NewRequest(http.MethodGet, "/api/monitor-bindings/"+token, nil)
+		response := httptest.NewRecorder()
+		d.HTTPHandler().ServeHTTP(response, request)
+		if response.Code != http.StatusOK {
+			t.Fatalf("monitor binding status = %d, body = %s", response.Code, response.Body.String())
+		}
+		var got store.MonitorBinding
+		if err := json.Unmarshal(response.Body.Bytes(), &got); err != nil {
+			t.Fatalf("decode monitor binding: %v", err)
+		}
+		return got
+	}
+	assertAssignment := func(want store.MonitorAssignment) {
+		t.Helper()
+		got := binding()
+		if got.Pending || !reflect.DeepEqual(got.Assignment, want) {
+			t.Fatalf("monitor binding = %+v, want assignment %+v", got, want)
+		}
+	}
+
+	identifyResult := dispatch("session.identify", map[string]any{
+		"agent_session_id": target,
+		"session_key":      "lifecycle-session-key",
+		"monitor_token":    token,
+	})
+	var identified struct {
+		Assignment store.MonitorAssignment `json:"assignment"`
+	}
+	if err := json.Unmarshal(identifyResult, &identified); err != nil {
+		t.Fatal(err)
+	}
+	want := store.MonitorAssignment{Role: "executor"}
+	if !reflect.DeepEqual(identified.Assignment, want) {
+		t.Fatalf("identify assignment = %+v, want %+v", identified.Assignment, want)
+	}
+	assertAssignment(want)
+
+	dispatch("project.claim", map[string]any{"project_id": projectA.ID, "agent_session_id": target})
+	want = store.MonitorAssignment{Role: "commander", ProjectID: projectA.ID}
+	assertAssignment(want)
+	dispatch("project.claim", map[string]any{"project_id": projectB.ID, "agent_session_id": commanderB})
+	dispatch("goal.handoff.request", map[string]any{
+		"handoff_id": "lifecycle-goal-handoff", "goal_id": goalB.ID,
+		"requested_by": commanderB, "request_report": "delegate",
+	})
+	receiveResult := dispatch("goal.handoff.receive", map[string]any{
+		"handoff_id": "lifecycle-goal-handoff", "goal_id": goalB.ID, "received_by": target,
+	})
+	var received struct {
+		Role          string        `json:"role"`
+		ClaimEvidence claimEvidence `json:"claim_evidence"`
+	}
+	if err := json.Unmarshal(receiveResult, &received); err != nil {
+		t.Fatal(err)
+	}
+	if got := binding(); received.Role != got.Assignment.Role || received.ClaimEvidence.Scope != "project" || received.ClaimEvidence.ProjectID != projectA.ID {
+		t.Fatalf("receive role/evidence = %+v, monitor assignment = %+v; want commander project %d", received, got.Assignment, projectA.ID)
+	}
+
+	dispatch("project.release", map[string]any{"project_id": projectA.ID, "agent_session_id": target})
+	want = store.MonitorAssignment{Role: "subcommander", ProjectID: projectB.ID, GoalID: goalB.ID}
+	assertAssignment(want)
+	dispatch("goal.handoff.complete", map[string]any{
+		"handoff_id": "lifecycle-goal-handoff", "goal_id": goalB.ID, "complete_report": "done",
+	})
+	assertAssignment(store.MonitorAssignment{Role: "executor"})
 }
 
 func newGoalListFixture(t *testing.T) goalListFixture {
