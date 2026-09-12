@@ -210,9 +210,9 @@ func TestCommanderGoalReviewThenCompleteWritesFinalReport(t *testing.T) {
 		t.Fatalf("Marshal goal.review.request params: %v", err)
 	}
 	if _, err := daemon.dispatch(ctx, rpc.Request{Method: "goal.review.request", Params: reviewParams}); err == nil {
-		t.Fatal("goal.review.request without a completed delegated goal handoff unexpectedly succeeded")
+		t.Fatal("goal.review.request without a commander-received delegated goal handoff unexpectedly succeeded")
 	} else if !errors.Is(err, store.ErrGoalReviewHandoffIncomplete) {
-		t.Fatalf("goal.review.request without a completed delegated goal handoff error = %v, want %v", err, store.ErrGoalReviewHandoffIncomplete)
+		t.Fatalf("goal.review.request without a commander-received delegated goal handoff error = %v, want %v", err, store.ErrGoalReviewHandoffIncomplete)
 	}
 
 	const handoffID = "goal-complete-review-lifecycle-handoff"
@@ -241,11 +241,6 @@ func TestCommanderGoalReviewThenCompleteWritesFinalReport(t *testing.T) {
 	dispatchHandoff("goal.handoff.review.receive", map[string]any{
 		"handoff_id": handoffID, "goal_id": goal.ID, "received_by": commanderID,
 	})
-	dispatchHandoff("goal.handoff.complete", map[string]any{
-		"handoff_id": handoffID, "goal_id": goal.ID, "agent_session_id": commanderID,
-		"complete_report": "commander accepted the reviewed goal handoff",
-	})
-
 	raw, err := daemon.dispatch(ctx, rpc.Request{Method: "goal.review.request", Params: reviewParams})
 	if err != nil {
 		t.Fatalf("goal.review.request: %v", err)
@@ -280,6 +275,13 @@ func TestCommanderGoalReviewThenCompleteWritesFinalReport(t *testing.T) {
 	}
 	if done.Status != domain.GoalDone || done.WorkDone != report.WorkDone || done.NextSteps != report.NextSteps {
 		t.Fatalf("completed goal = %+v, want final report and done status", done)
+	}
+	handoff, err := s.GetGoalHandoff(ctx, handoffID)
+	if err != nil {
+		t.Fatalf("GetGoalHandoff after goal completion: %v", err)
+	}
+	if handoff.CompletedReportAt == nil || handoff.CompleteReport != "receiver reviewed the delegated goal" {
+		t.Fatalf("completed goal handoff = %+v, want commander finalization with review report", handoff)
 	}
 }
 

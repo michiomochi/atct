@@ -388,8 +388,17 @@ func TestReconcileWatchScopeDoesNotProjectAppliedGoalApprovalForGoalScope(t *tes
 }
 
 func TestReconcileWatchScopeProjectsTasklessApprovedGoalReviewForCommanderOnly(t *testing.T) {
-	body := `{"goals":[{"id":42,"status":"active"}],"decisions":[{"id":71,"goal_id":42,"kind":"goal_review","status":"applied","answer_label":"approve"}],"goal_handoffs":[],"plan_handoffs":[],"task_handoffs":[]}`
-	cases := []struct {
+	transitions := []struct {
+		name          string
+		decision      string
+		eventName     string
+		instruction   string
+		genericOutput string
+	}{
+		{name: "approval", decision: `"status":"applied","answer_label":"approve"`, eventName: "goal.review.complete", instruction: "goal.review.complete", genericOutput: "atct decision approved"},
+		{name: "rejection", decision: `"status":"answered","answer_label":"reject"`, eventName: "goal.review.reject", instruction: "goal.handoff.review.reject", genericOutput: "atct decision rejected"},
+	}
+	scopes := []struct {
 		name  string
 		scope watchScope
 		want  bool
@@ -399,56 +408,61 @@ func TestReconcileWatchScopeProjectsTasklessApprovedGoalReviewForCommanderOnly(t
 		{name: "task scope", scope: watchScope{ProjectID: "1", GoalID: "42", TaskID: "9", Role: "executor"}},
 	}
 
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			client := &http.Client{Transport: watchRoundTripper(func(req *http.Request) (*http.Response, error) {
-				if req.URL.Path != "/api/events/reconcile" {
-					return nil, fmt.Errorf("unexpected request path %q", req.URL.Path)
-				}
-				return &http.Response{
-					StatusCode: http.StatusOK,
-					Status:     "200 OK",
-					Header:     http.Header{"Content-Type": []string{"application/json"}},
-					Body:       io.NopCloser(strings.NewReader(body)),
-				}, nil
-			})}
+	for _, transition := range transitions {
+		t.Run(transition.name, func(t *testing.T) {
+			body := `{"goals":[{"id":42,"status":"active"}],"decisions":[{"id":71,"goal_id":42,"kind":"goal_review",` + transition.decision + `}],"goal_handoffs":[],"plan_handoffs":[],"task_handoffs":[]}`
+			for _, tc := range scopes {
+				t.Run(tc.name, func(t *testing.T) {
+					client := &http.Client{Transport: watchRoundTripper(func(req *http.Request) (*http.Response, error) {
+						if req.URL.Path != "/api/events/reconcile" {
+							return nil, fmt.Errorf("unexpected request path %q", req.URL.Path)
+						}
+						return &http.Response{
+							StatusCode: http.StatusOK,
+							Status:     "200 OK",
+							Header:     http.Header{"Content-Type": []string{"application/json"}},
+							Body:       io.NopCloser(strings.NewReader(body)),
+						}, nil
+					})}
 
-			var output bytes.Buffer
-			var actions []watchAgentAction
-			lastWakeupContent := ""
-			scopeFilter := newWatchScopeFilter(tc.scope.GoalID)
-			if tc.scope.TaskID != "" {
-				scopeFilter = newWatchTaskScopeFilter(tc.scope.TaskID)
-			}
-			actionSink := watchAgentActionSink(func(action watchAgentAction) error {
-				actions = append(actions, action)
-				return nil
-			})
-			err := reconcileWatchScope(
-				context.Background(), client, "http://daemon", tc.scope, &output,
-				make(map[watchDeliveryKey]struct{}), &lastWakeupContent,
-				make(map[watchWakeupDiscrepancyDeliveryKey]struct{}), make(map[watchWakeupDeliveryKey]struct{}),
-				scopeFilter, nil, actionSink,
-			)
-			if err != nil {
-				t.Fatalf("reconcileWatchScope: %v", err)
-			}
+					var output bytes.Buffer
+					var actions []watchAgentAction
+					lastWakeupContent := ""
+					scopeFilter := newWatchScopeFilter(tc.scope.GoalID)
+					if tc.scope.TaskID != "" {
+						scopeFilter = newWatchTaskScopeFilter(tc.scope.TaskID)
+					}
+					actionSink := watchAgentActionSink(func(action watchAgentAction) error {
+						actions = append(actions, action)
+						return nil
+					})
+					err := reconcileWatchScope(
+						context.Background(), client, "http://daemon", tc.scope, &output,
+						make(map[watchDeliveryKey]struct{}), &lastWakeupContent,
+						make(map[watchWakeupDiscrepancyDeliveryKey]struct{}), make(map[watchWakeupDeliveryKey]struct{}),
+						scopeFilter, nil, actionSink,
+					)
+					if err != nil {
+						t.Fatalf("reconcileWatchScope: %v", err)
+					}
 
-			got := output.String()
-			if tc.want {
-				if !strings.Contains(got, "commander") || !strings.Contains(got, "goal.review.complete") {
-					t.Fatalf("goal review output = %q, want commander goal.review.complete instruction", got)
-				}
-				if strings.Contains(got, "atct decision approved") {
-					t.Fatalf("goal review output = %q, want dedicated action instead of generic decision approval", got)
-				}
-				if len(actions) != 1 || actions[0].eventName != "goal.review.complete" {
-					t.Fatalf("goal review actions = %#v, want one goal.review.complete action", actions)
-				}
-				return
-			}
-			if got != "" || len(actions) != 0 {
-				t.Fatalf("scoped goal review output/actions = %q / %#v, want empty", got, actions)
+					got := output.String()
+					if tc.want {
+						if !strings.Contains(got, "commander") || !strings.Contains(got, transition.instruction) {
+							t.Fatalf("goal review output = %q, want commander %s instruction", got, transition.instruction)
+						}
+						if strings.Contains(got, transition.genericOutput) {
+							t.Fatalf("goal review output = %q, want dedicated action instead of generic decision approval", got)
+						}
+						if len(actions) != 1 || actions[0].eventName != transition.eventName {
+							t.Fatalf("goal review actions = %#v, want one %s action", actions, transition.eventName)
+						}
+						return
+					}
+					if got != "" || len(actions) != 0 {
+						t.Fatalf("scoped goal review output/actions = %q / %#v, want empty", got, actions)
+					}
+				})
 			}
 		})
 	}

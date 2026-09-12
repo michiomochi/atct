@@ -1304,12 +1304,25 @@ func reconcileWatchScope(ctx context.Context, client *http.Client, baseURL strin
 		if !watchScopeMatchesDecision(scope, decision) {
 			continue
 		}
-		if shouldProjectAppliedGoalReview(scope, state, decision) {
-			decision.TargetRole = "commander"
-			if err := emitWatchDecisionWithStateAndSinks(out, "goal.review.complete", decision,
-				delivered, lastWakeupContent, wakeupDiscrepancyDelivered,
-				wakeupDelivered, sink, actionSink); err != nil {
-				return err
+		if isGoalReviewTransition(state, decision, "applied", "approve") {
+			if shouldProjectGoalReviewTransition(scope) {
+				decision.TargetRole = "commander"
+				if err := emitWatchDecisionWithStateAndSinks(out, "goal.review.complete", decision,
+					delivered, lastWakeupContent, wakeupDiscrepancyDelivered,
+					wakeupDelivered, sink, actionSink); err != nil {
+					return err
+				}
+			}
+			continue
+		}
+		if isGoalReviewTransition(state, decision, "answered", "reject") {
+			if shouldProjectGoalReviewTransition(scope) {
+				decision.TargetRole = "commander"
+				if err := emitWatchDecisionWithStateAndSinks(out, "goal.review.reject", decision,
+					delivered, lastWakeupContent, wakeupDiscrepancyDelivered,
+					wakeupDelivered, sink, actionSink); err != nil {
+					return err
+				}
 			}
 			continue
 		}
@@ -1634,11 +1647,12 @@ func shouldProjectAppliedGoalApproval(scope watchScope, state watchReconciliatio
 	return watchReconciliationHasActiveGoal(state, decision.GoalID)
 }
 
-func shouldProjectAppliedGoalReview(scope watchScope, state watchReconciliation, decision watchDecision) bool {
-	if scope.ProjectID == "" || scope.GoalID != "" || scope.TaskID != "" {
-		return false
-	}
-	if decision.Kind != "goal_review" || decision.Status != "applied" || decision.AnswerLabel != "approve" || decision.GoalID == "" || decision.TaskID != "" {
+func shouldProjectGoalReviewTransition(scope watchScope) bool {
+	return scope.ProjectID != "" && scope.GoalID == "" && scope.TaskID == ""
+}
+
+func isGoalReviewTransition(state watchReconciliation, decision watchDecision, status, answerLabel string) bool {
+	if decision.Kind != "goal_review" || decision.Status != status || decision.AnswerLabel != answerLabel || decision.GoalID == "" || decision.TaskID != "" {
 		return false
 	}
 	return watchReconciliationHasActiveGoal(state, decision.GoalID)
@@ -1668,6 +1682,8 @@ func formatWatchDecision(eventName string, decision watchDecision) (string, bool
 		return fmt.Sprintf("atct decision rejected (decision_id: %s)", decision.decisionID()), true
 	case "goal.review.complete":
 		return fmt.Sprintf("atct goal review approved (goal_id: %s, decision_id: %s): commander should call goal.review.complete", decision.GoalID, decision.decisionID()), true
+	case "goal.review.reject":
+		return fmt.Sprintf("atct goal review rejected (goal_id: %s, decision_id: %s): commander should call goal.handoff.review.reject", decision.GoalID, decision.decisionID()), true
 	case "goal.created":
 		return fmt.Sprintf("atct goal created (goal_id: %s)", decision.GoalID), true
 	case "task.handoff.request":

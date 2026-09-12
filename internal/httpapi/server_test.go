@@ -2623,9 +2623,6 @@ func requestHTTPGoalReview(t *testing.T, f *fixture, goalID, commanderID int64, 
 	if _, err := f.store.ReceiveGoalHandoffReview(f.ctx, handoff.ID, goalID, commanderID); err != nil {
 		t.Fatalf("ReceiveGoalHandoffReview: %v", err)
 	}
-	if _, err := f.store.CompleteGoalHandoffByReviewer(f.ctx, handoff.ID, goalID, commanderID, "reviewed implementation complete"); err != nil {
-		t.Fatalf("CompleteGoalHandoffByReviewer: %v", err)
-	}
 	review, err := f.store.RequestGoalReview(f.ctx, goalID, commanderID, domain.CompletionReport{
 		WorkDone: "completed " + label, NowPossible: "reviewable result", HowToVerify: "run the HTTP endpoint test",
 		Surprises: "none", NeedsReview: "approve or reject", NextSteps: "finalize after approval",

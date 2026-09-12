@@ -18,6 +18,7 @@ func frozenWatchAgentActionCases() []watchAgentActionCase {
 		{name: "decision answered", eventName: "decision.answered", line: "atct decision answered (decision_id: 1)", decision: watchDecision{DecisionID: "1"}, want: true},
 		{name: "decision approved", eventName: "decision.approved", line: "atct decision approved (decision_id: 1)", decision: watchDecision{DecisionID: "1"}, want: true},
 		{name: "decision rejected", eventName: "decision.rejected", line: "atct decision rejected (decision_id: 1)", decision: watchDecision{DecisionID: "1"}, want: true},
+		{name: "goal review rejected", eventName: "goal.review.reject", line: "atct goal review rejected (goal_id: 1, decision_id: 1): commander should call goal.handoff.review.reject", decision: watchDecision{GoalID: "1", DecisionID: "1"}, want: true},
 		{name: "decision default applied", eventName: "decision.answered", line: "atct decision default applied (decision_id: 1)", decision: watchDecision{DecisionID: "1", DefaultAppliedAt: stringPtr("2026-09-07T00:00:00Z")}, want: false},
 		{name: "decision pending", eventName: "decision.pending", line: "atct decision pending (decision_id: 1)", decision: watchDecision{DecisionID: "1"}, want: false},
 		{name: "decision opened", eventName: "decision.opened", line: "atct decision opened (decision_id: 1)", decision: watchDecision{DecisionID: "1"}, want: false},

@@ -33,16 +33,18 @@ func TestWatchTaskScopeSuppressesTasklessWakeupEvaluateFailed(t *testing.T) {
 	}
 }
 
-func TestWatchScopeGoalReviewCompletionIsProjectOnly(t *testing.T) {
+func TestWatchScopeGoalReviewTransitionsAreProjectOnly(t *testing.T) {
 	decision := watchDecision{GoalID: "42"}
-	if !newWatchScopeFilter("").delivers("goal.review.complete", decision) {
-		t.Fatal("project scope suppressed goal.review.complete, want true")
-	}
-	if newWatchScopeFilter("42").delivers("goal.review.complete", decision) {
-		t.Fatal("goal scope delivered goal.review.complete, want false")
-	}
-	if newWatchTaskScopeFilter("9").delivers("goal.review.complete", decision) {
-		t.Fatal("task scope delivered goal.review.complete, want false")
+	for _, eventName := range []string{"goal.review.complete", "goal.review.reject"} {
+		if !newWatchScopeFilter("").delivers(eventName, decision) {
+			t.Fatalf("project scope suppressed %s, want true", eventName)
+		}
+		if newWatchScopeFilter("42").delivers(eventName, decision) {
+			t.Fatalf("goal scope delivered %s, want false", eventName)
+		}
+		if newWatchTaskScopeFilter("9").delivers(eventName, decision) {
+			t.Fatalf("task scope delivered %s, want false", eventName)
+		}
 	}
 }
 

@@ -326,6 +326,7 @@ func TestCodexMonitorActionLineAdmitsCanonicalHandoffLifecycle(t *testing.T) {
 		{line: "atct goal handoff review received (goal_id: 225, handoff_id: goal-225)", eventName: "goal.handoff.review.receive", decision: watchDecision{GoalID: "225", HandoffID: "goal-225"}},
 		{line: "atct goal handoff review rejected (goal_id: 225, handoff_id: goal-225)", eventName: "goal.handoff.review.reject", decision: watchDecision{GoalID: "225", HandoffID: "goal-225"}},
 		{line: "atct goal handoff completed (goal_id: 225, handoff_id: goal-225)", eventName: "goal.handoff.complete", decision: watchDecision{GoalID: "225", HandoffID: "goal-225"}},
+		{line: "atct goal review rejected (goal_id: 225, decision_id: 71): commander should call goal.handoff.review.reject", eventName: "goal.review.reject", decision: watchDecision{GoalID: "225", DecisionID: "71"}},
 	} {
 		if _, ok := selectWatchAgentAction(tc.line, tc.eventName, tc.decision); !ok {
 			t.Fatalf("canonical handoff lifecycle action line rejected: %q", tc.line)

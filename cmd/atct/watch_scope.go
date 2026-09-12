@@ -187,7 +187,7 @@ func (f *watchScopeFilter) delivers(eventName string, decision watchDecision) bo
 	if f.taskID != "" {
 		return decision.TaskID == f.taskID
 	}
-	if eventName == "goal.review.complete" {
+	if eventName == "goal.review.complete" || eventName == "goal.review.reject" {
 		return !f.passThrough && f.goalID == ""
 	}
 	if f.passThrough || f.goalID != "" {
