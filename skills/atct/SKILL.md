@@ -459,9 +459,13 @@ that subcommander is started:
    handoff, so checking it before receipt always returns `matches: false`.
 
    The goal completion order is `atct_goal_handoff_review_request` →
-   `atct_goal_handoff_review_receive` → `atct_goal_handoff_complete` →
-   `atct_goal_review_request` (human approval) → merge → `atct_goal_complete`.
-   The rule is simple: only the commander may call `atct_goal_handoff_complete` with the `goal_id` provided in this request and a `complete_report`; only the commander may call `atct_goal_complete` after the human approves.
+   `atct_goal_handoff_review_receive` → `atct_goal_review_request` (recording
+   the completion report while the handoff remains open) → human approval → merge → `atct_goal_review_complete`
+   (which atomically completes the reviewed handoff and the goal).
+   The rule is simple: only the commander may call `atct_goal_review_request`;
+   after human approval and merge, only the commander may call `atct_goal_review_complete` with the `goal_id` provided in this request.
+   `atct_goal_handoff_complete` is reserved for legacy/out-of-order recovery,
+   not the normal goal-review path.
 
 5. Keep one subcommander per goal. A subcommander may wake executors for its
    goal, but must not inspect or manage other goals, create another
@@ -478,15 +482,15 @@ that subcommander is started:
    commits, a goal with no declared tasks, a claim nobody delegated, a handoff
    nobody received. Those are what a stalled subcommander looks like from
    outside, and they arrive whether or not it speaks. Review the goal when
-   `atct_goal_handoff_complete` lands; that report is the entry point.
+   `atct_goal_handoff_review_request` lands; that report is the entry point.
 
 **Out of order:** Calling `atct_goal_handoff_complete` before
-`atct_goal_complete` closes the goal handoff, and the role is derived from a
+`atct_goal_review_request` closes the goal handoff, and the role is derived from a
 received, uncompleted goal handoff, so the role drops from `subcommander` to
 `executor` the moment it closes. Only the goal's holder may call
-`atct_goal_complete` (the gate added by goal 127), so the completion report can
-no longer be filed at all. Recovery takes the commander reissuing the goal
-handoff. Goals 180 and 187 both stalled this way on 2026-08-27 and 2026-08-28.
+`atct_goal_review_request`, so the human review request can no longer be filed
+at all. Recovery takes the commander reissuing the goal handoff. Goals 180 and
+187 both stalled this way on 2026-08-27 and 2026-08-28.
 
 ### Session keys
 
@@ -537,7 +541,7 @@ reaches the human without passing through the delegator's context.
 | something found inside this goal | `surprises` and `needs_review` |
 | something found that is another goal | `atct_decision_ask`, addressed to the human |
 | what was left undone | `next_steps` |
-| the goal is finished | `atct_goal_handoff_complete`, the one message |
+| the goal is ready for commander review | `atct_goal_handoff_review_request`, the one message |
 
 A subcommander that stops working sends nothing at all, and the old habit caught
 that only because a delegator noticed a quiet pane. The record catches it
@@ -582,7 +586,7 @@ its work is still uncommitted.
 3. Only if the session key does not restore your role, recover each layer as follows:
 
    - project: `atct_project_release` → `atct_project_claim`
-   - goal: `atct_goal_handoff_complete` → `atct_goal_handoff_request` (the commander must issue the handoff again)
+   - goal: `atct_goal_handoff_complete` → `atct_goal_handoff_request` (legacy/out-of-order recovery; the commander must issue the handoff again)
    - task: after the stale lock is released, have the subcommander request a fresh `atct_task_handoff_request`
 
 **Out of order:** Reaching for the layer repair before the session key closes a
