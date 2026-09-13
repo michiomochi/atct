@@ -5,14 +5,13 @@ if [[ "$HOOK_DIR" == "${BASH_SOURCE[0]}" ]]; then
   HOOK_DIR='.'
 fi
 HOOK_DIR="$(cd -- "$HOOK_DIR" && pwd -P)" || exit 0
-ATCT_BIN="$(command -v atct || true)"
-if [[ -z "$ATCT_BIN" ]]; then
+if ! command -v atct >/dev/null 2>&1; then
   printf '%s\n' '{"decision":"block","reason":"ATCT: install or upgrade the CLI with: brew install --cask michiomochi/tap/atct"}'
   exit 0
 fi
 
 PLUGIN_VERSION="$(awk -F '"' '/"version"[[:space:]]*:/ { print $4; exit }' "$HOOK_DIR/../.claude-plugin/plugin.json" 2>/dev/null)"
-INSTALLED_VERSION="$("$ATCT_BIN" version 2>/dev/null || true)"
+INSTALLED_VERSION="$(atct version 2>/dev/null || true)"
 if [[ -z "$PLUGIN_VERSION" || -z "$INSTALLED_VERSION" ]] || ! awk -v installed="$INSTALLED_VERSION" -v required="$PLUGIN_VERSION" '
   BEGIN {
     split(installed, have, ".")
@@ -28,5 +27,5 @@ if [[ -z "$PLUGIN_VERSION" || -z "$INSTALLED_VERSION" ]] || ! awk -v installed="
   exit 0
 fi
 
-"$ATCT_BIN" stop-check --hook-input
+atct stop-check --hook-input
 exit 0

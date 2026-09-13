@@ -102,11 +102,11 @@
 
   Replace `--role`, `--project`, `--goal`, and `--task` with `--hook-input`. Parse stdin with Go's JSON decoder. On `stop_hook_active`, return no output. Otherwise require a non-empty `session_id`, ensure the daemon without changing ATCT work state, and call `session.stop_check` with that exact value. Convert malformed input, daemon failure, unknown key, and RPC failure into the existing fail-closed JSON response.
 
-  The Claude script resolves its adjacent `bin/atct` and executes `stop-check --hook-input`. The Codex command executes `"$ATCT_BIN" stop-check --hook-input`; if `ATCT_BIN` is absent or not executable, it writes the same fail-closed JSON. Neither script parses role, scope, or `stop_hook_active` itself.
+  Claude と Codex の hook はともに `PATH` 上の `atct stop-check --hook-input` を実行する。CLI が無い、または plugin より古い場合は Homebrew の install / upgrade 指示を返す。どちらの script も role、scope、`stop_hook_active` を自前で解析しない。
 
 - [x] **Step 4: Remove Codex role environment from the hook contract.**
 
-  Change the monitor environment helper to export only `ATCT_BIN=<absolute wrapper>`. Keep it only for explicit monitored Codex sessions; no `ATCT_ROLE`, project, goal, or task variables remain. Update lifecycle assertions to require the one-element environment slice.
+  Change the monitor environment helper to export only `ATCT_MONITOR_TOKEN`. No `ATCT_ROLE`、project、goal、task、binary-path variables remain. Update lifecycle assertions to require the one-element environment slice.
 
 - [x] **Step 5: Run focused tests and verify GREEN.**
 
@@ -157,7 +157,7 @@
   ATCT session key: <session_id>. Before any other ATCT operation, call atct_session_identify with this exact session_key.
   ```
 
-  Keep `hooks/session-start`'s existing context/daemon behavior, then forward its captured input to this command. Add a Codex `SessionStart` command that pipes its stdin to `"$ATCT_BIN" session-key --hook-input` only when the wrapper binary is executable.
+  Keep `hooks/session-start`'s existing context/daemon behavior, then forward its captured input to this command. Add a Codex `SessionStart` command that pipes its stdin to `atct session-key --hook-input` after the same plugin-version compatibility guard.
 
 - [x] **Step 4: Update the two skills with TDD pressure checks.**
 

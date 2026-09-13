@@ -7,14 +7,13 @@ if [[ "$HOOK_DIR" == "${BASH_SOURCE[0]}" ]]; then
   HOOK_DIR='.'
 fi
 HOOK_DIR="$(cd -- "$HOOK_DIR" && pwd -P)" || exit 0
-ATCT_BIN="$(command -v atct || true)"
-if [[ -z "$ATCT_BIN" ]]; then
+if ! command -v atct >/dev/null 2>&1; then
   printf '%s\n' 'ATCT: install or upgrade the CLI with: brew install --cask michiomochi/tap/atct' >&2
   exit 0
 fi
 
 PLUGIN_VERSION="$(awk -F '"' '/"version"[[:space:]]*:/ { print $4; exit }' "$HOOK_DIR/../.claude-plugin/plugin.json" 2>/dev/null)"
-INSTALLED_VERSION="$("$ATCT_BIN" version 2>/dev/null || true)"
+INSTALLED_VERSION="$(atct version 2>/dev/null || true)"
 if [[ -z "$PLUGIN_VERSION" || -z "$INSTALLED_VERSION" ]] || ! awk -v installed="$INSTALLED_VERSION" -v required="$PLUGIN_VERSION" '
   BEGIN {
     split(installed, have, ".")
@@ -30,7 +29,7 @@ if [[ -z "$PLUGIN_VERSION" || -z "$INSTALLED_VERSION" ]] || ! awk -v installed="
   exit 0
 fi
 
-CONTEXT_OUTPUT="$($ATCT_BIN context -brief 2>/dev/null)"
+CONTEXT_OUTPUT="$(atct context -brief 2>/dev/null)"
 CONTEXT_STATUS=$?
 if [[ "$CONTEXT_STATUS" -eq 3 ]]; then
   printf '%s\n' "ATCT: this session's atct cannot open the database (it predates a release). Restart the session." >&2
@@ -39,7 +38,7 @@ fi
 [[ "$CONTEXT_STATUS" -eq 0 ]] || exit 0
 
 if [[ -n "$CONTEXT_OUTPUT" ]]; then
-  if DAEMON_START_OUTPUT="$($ATCT_BIN daemon start 2>&1)"; then
+  if DAEMON_START_OUTPUT="$(atct daemon start 2>&1)"; then
     if [[ "$DAEMON_START_OUTPUT" =~ http[[:space:]]+([^[:space:]]+) ]]; then
       DAEMON_HTTP_ADDR="${BASH_REMATCH[1]}"
       if [[ "$DAEMON_HTTP_ADDR" != "127.0.0.1:8787" ]]; then
@@ -50,7 +49,7 @@ if [[ -n "$CONTEXT_OUTPUT" ]]; then
 
   printf '%s\n' "$CONTEXT_OUTPUT"
 fi
-if SESSION_KEY_OUTPUT="$(printf '%s' "$INPUT" | "$ATCT_BIN" session-key --hook-input 2>/dev/null)"; then
+if SESSION_KEY_OUTPUT="$(printf '%s' "$INPUT" | atct session-key --hook-input 2>/dev/null)"; then
   if [[ "$SESSION_KEY_OUTPUT" == 'ATCT session key: '* ]]; then
     printf '%s\n' "$SESSION_KEY_OUTPUT"
   fi

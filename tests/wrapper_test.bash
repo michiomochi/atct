@@ -192,6 +192,8 @@ PY
   codex_version="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["version"])' "$REPO_ROOT/.codex-plugin"/plugin.json)"
   [[ -n "$plugin_version" ]] || fail 'plugin.json has no version'
   assert_eq "$plugin_version" "$codex_version" 'plugin manifests must declare the same version'
+  assert_file_not_contains 'ATCT_BIN' "$REPO_ROOT/hooks/codex-hooks.json"
+  assert_file_contains "$codex_version" "$REPO_ROOT/hooks/codex-hooks.json"
   assert_file_contains 'homebrew_casks:' "$REPO_ROOT/.goreleaser.yaml"
   assert_file_contains 'name: atct' "$REPO_ROOT/.goreleaser.yaml"
   assert_file_contains 'name: homebrew-tap' "$REPO_ROOT/.goreleaser.yaml"
@@ -241,6 +243,10 @@ if [[ "${1:-}" == version ]]; then
 fi
 input="$(cat)"
 printf '%s\n%s\n' "$*" "$input" >>"$ATCT_STOP_LOG"
+if [[ "${1:-}" == session-key ]]; then
+  printf '%s' 'ATCT session key: hook-session-1'
+  exit 0
+fi
 if [[ "$input" == *'"stop_hook_active":true'* ]]; then exit 0; fi
 printf '%s' '{"decision":"block","reason":"ATCT work remains: shared session"}'
 SCRIPT
@@ -266,7 +272,7 @@ PY
 )"
 
   : >"$log"
-  output="$(ATCT_STOP_LOG="$log" ATCT_BIN="$codex_atct" sh -c "$command" <<< "$input")"
+  output="$(PATH="$codex_fixture:/usr/bin:/bin" ATCT_STOP_LOG="$log" sh -c "$command" <<< "$input")"
   assert_eq '{"decision":"block","reason":"ATCT work remains: shared session"}' "$output" 'Codex Stop hook must return the shared stop-check response'
   assert_eq $'stop-check --hook-input\n{"session_id":"hook-session-1","stop_hook_active":false}' "$(<"$log")" 'Codex Stop hook must pass raw hook input to shared stop-check'
 
@@ -276,12 +282,41 @@ PY
   assert_eq $'stop-check --hook-input\n{"session_id":"hook-session-1","stop_hook_active":true}' "$(<"$log")" 'Claude Stop hook must preserve active input for shared CLI'
 
   : >"$log"
-  output="$(ATCT_STOP_LOG="$log" ATCT_BIN="$codex_atct" sh -c "$command" <<< '{"session_id":"hook-session-1","stop_hook_active":true}')"
+  output="$(PATH="$codex_fixture:/usr/bin:/bin" ATCT_STOP_LOG="$log" sh -c "$command" <<< '{"session_id":"hook-session-1","stop_hook_active":true}')"
   assert_eq '' "$output" 'active Codex Stop hook must be silent'
   assert_eq $'stop-check --hook-input\n{"session_id":"hook-session-1","stop_hook_active":true}' "$(<"$log")" 'Codex Stop hook must preserve active input for shared CLI'
 
-  output="$(ATCT_BIN='' sh -c "$command" <<< "$input")"
+  output="$(PATH="/usr/bin:/bin" sh -c "$command" <<< "$input")"
   assert_eq '{"decision":"block","reason":"ATCT: install or upgrade the CLI with: brew install --cask michiomochi/tap/atct"}' "$output" 'missing Codex Stop hook must block with Homebrew installation instruction'
+
+  local older_codex_fixture="$TEMP_ROOT/older-codex-stop-hook"
+  local older_codex_atct="$older_codex_fixture/atct"
+  mkdir -p "$older_codex_fixture"
+  cat >"$older_codex_atct" <<'SCRIPT'
+#!/usr/bin/env bash
+if [[ "${1:-}" == version ]]; then
+  printf '0.62.0\n'
+fi
+SCRIPT
+  chmod +x "$older_codex_atct"
+  output="$(PATH="$older_codex_fixture:/usr/bin:/bin" sh -c "$command" <<< "$input")"
+  assert_eq '{"decision":"block","reason":"ATCT: upgrade the CLI with: brew upgrade --cask michiomochi/tap/atct"}' "$output" 'older Codex Stop hook must block with Homebrew upgrade instruction'
+
+  local session_command
+  session_command="$(python3 - "$REPO_ROOT/hooks/codex-hooks.json" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as stream:
+    print(json.load(stream)["hooks"]["SessionStart"][0]["hooks"][0]["command"])
+PY
+)"
+  : >"$log"
+  output="$(PATH="$codex_fixture:/usr/bin:/bin" ATCT_STOP_LOG="$log" sh -c "$session_command" <<< "$input")"
+  assert_eq 'ATCT session key: hook-session-1' "$output" 'Codex SessionStart hook must use the PATH CLI'
+  assert_eq $'session-key --hook-input\n{"session_id":"hook-session-1","stop_hook_active":false}' "$(<"$log")" 'Codex SessionStart hook must pass raw hook input to shared CLI'
+  output="$(PATH="$older_codex_fixture:/usr/bin:/bin" sh -c "$session_command" <<< "$input")"
+  assert_eq 'ATCT: upgrade the CLI with: brew upgrade --cask michiomochi/tap/atct' "$output" 'older Codex SessionStart hook must print Homebrew upgrade instruction'
 
   local missing_fixture="$TEMP_ROOT/missing-stop-hook"
   local missing_hook="$missing_fixture/hooks/stop"

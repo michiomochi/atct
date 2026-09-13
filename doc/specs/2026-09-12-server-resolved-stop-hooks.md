@@ -25,9 +25,8 @@ Claude Code と Codex の Stop hook を、harness の `session_id` から ATCT s
 - 作業がない identified session は空出力で許可する。
 - 作業が残る session は `{"decision":"block","reason":"ATCT work remains: ..."}` を返す。
 
-Claude と Codex はともにこの JSON を native Stop response として扱う。binary の場所だけは
-harness ごとに異なってよい。Claude は plugin 内の binary を、role-scoped Codex monitor は
-その wrapper が渡す `ATCT_BIN` を使う。
+Claude と Codex はともにこの JSON を native Stop response として扱う。両 harness の hook は
+`PATH` 上の `atct` を使う。
 
 ## Server resolution
 
@@ -50,7 +49,7 @@ session key は role を推測せず、識別を求める block response とす�
 `detection.monitor_lost` と server-resolved stop check に置き換えられる。
 
 Codex の `ATCT_ROLE`、`ATCT_PROJECT_ID`、`ATCT_GOAL_ID`、`ATCT_TASK_ID` は Stop hook 用には
-不要になる。explicit monitor は binary 解決のため `ATCT_BIN` だけを渡す。
+不要になる。explicit monitor は monitor binding 用の `ATCT_MONITOR_TOKEN` だけを渡す。
 
 ## Verification
 

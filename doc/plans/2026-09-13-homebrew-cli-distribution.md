@@ -4,7 +4,7 @@
 
 **Goal:** Distribute `atct` and `atct-mcp` through the existing Homebrew Cask, while the Claude and Codex plugins retain only MCP, hooks, and skills.
 
-**Architecture:** GoReleaser publishes the release archive and updates `michiomochi/homebrew-tap`'s `atct` Cask. Claude hooks call the `atct` installed on `PATH` and compare its version with their manifest; Codex monitors retain the direct CLI path injected by the command that launched them. No plugin code downloads, caches, extracts, or installs a CLI launcher.
+**Architecture:** GoReleaser publishes the release archive and updates `michiomochi/homebrew-tap`'s `atct` Cask. All hooks call the `atct` installed on `PATH` and compare its version with the plugin release. No plugin code downloads, caches, extracts, or installs a CLI launcher.
 
 **Tech Stack:** Go, Bash, GoReleaser, Homebrew Cask, existing Bash regression tests.
 
@@ -105,8 +105,8 @@ filesystem write.
 
 Keep each hook's present fail-closed/open behavior: session start does not
 start a daemon; pre-ask does not return a decision; stop returns its existing
-block envelope. Codex monitor hooks retain their `ATCT_BIN` path because the
-Homebrew-installed command that starts the monitor injects it directly.
+block envelope. Codex monitor hooks use the same PATH command and version
+guard as the Claude hooks.
 
 - [ ] **Step 4: Re-run focused hook tests**
 

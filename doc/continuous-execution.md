@@ -166,7 +166,7 @@ atct stop-check --hook-input
 
 CLI は `session_id` を daemon の `session.stop_check` へ渡す。daemon は key から canonical session
 と role を解決するため、Stop hook が role、project、goal、task を環境変数から受け取る必要はない。
-Codex monitor が Stop hook 用に渡す環境変数は `ATCT_BIN` だけである。
+Codex monitor が Stop hook 用に渡す環境変数は `ATCT_MONITOR_TOKEN` だけである。
 
 | 状態 | Stop hook の結果 |
 | --- | --- |

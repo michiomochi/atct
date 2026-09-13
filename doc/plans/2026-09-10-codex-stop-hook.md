@@ -4,8 +4,8 @@
 
 **Goal:** Report a yielded executor task when Codex stops after a turn.
 
-**Architecture:** Register a Codex-only plugin hook and pass task-scoped ATCT
-environment variables only to executor TUIs.
+**Architecture:** Register a Codex-only plugin hook that calls the compatible
+`atct` command from `PATH`; the server resolves scope from hook input.
 
 **Tech Stack:** Codex plugin JSON, Go monitor supervisor, Go and Bash tests.
 
@@ -15,8 +15,8 @@ environment variables only to executor TUIs.
 `cmd/atct/codex_monitor_supervisor.go`
 
 - [x] Add the report-only Stop hook.
-- [x] Pass `ATCT_TASK_ID` and an absolute `ATCT_BIN` only to executor TUIs.
-- [x] Fail closed if that binary path cannot be resolved.
+- [x] Pass only the monitor binding token to the monitored Codex processes.
+- [x] Fail closed with Homebrew guidance when `atct` is unavailable or stale.
 
 ### Task 2: Verify the contract
 

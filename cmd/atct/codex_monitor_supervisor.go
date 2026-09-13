@@ -40,7 +40,6 @@ type codexMonitorDeps struct {
 	resolveCodex     func() (string, error)
 	runNormal        func(string, []string) (int, error)
 	startProcess     func(codexMonitorProcessKind, string, []string, []string) (codexMonitorProcess, error)
-	atctExecutable   func() (string, error)
 	connectAppServer func(context.Context, string) (codexMonitorApp, error)
 	runBoundWatch    func(context.Context, string, string, *codexMonitorBridge) error
 	projectPath      func() (string, error)
@@ -105,7 +104,7 @@ func runCodexMonitorWithDeps(config cliConfig, dir string, deps codexMonitorDeps
 	if err != nil {
 		return codexMonitorSetupFailure(deps, err.Error(), "codex", args)
 	}
-	childEnv, err := codexMonitorEnvironment(monitorToken, deps.atctExecutable)
+	childEnv, err := codexMonitorEnvironment(monitorToken)
 	if err != nil {
 		return 1, fmt.Errorf("prepare Codex hooks: %w", err)
 	}
@@ -325,9 +324,6 @@ func codexMonitorDepsWithDefaults(dir string, deps codexMonitorDeps) codexMonito
 	if deps.startProcess == nil {
 		deps.startProcess = startCodexMonitorProcess
 	}
-	if deps.atctExecutable == nil {
-		deps.atctExecutable = os.Executable
-	}
 	if deps.connectAppServer == nil {
 		deps.connectAppServer = connectCodexAppServer
 	}
@@ -437,21 +433,11 @@ func codexMonitorProjectPath() (string, error) {
 	return absolute, nil
 }
 
-func codexMonitorEnvironment(monitorToken string, atctExecutable func() (string, error)) ([]string, error) {
-	if atctExecutable == nil {
-		return nil, errors.New("resolve atct executable")
-	}
-	executable, err := atctExecutable()
-	if err != nil {
-		return nil, err
-	}
-	if strings.TrimSpace(executable) == "" {
-		return nil, errors.New("resolve atct executable")
-	}
+func codexMonitorEnvironment(monitorToken string) ([]string, error) {
 	if strings.TrimSpace(monitorToken) == "" {
 		return nil, errors.New("monitor token is empty")
 	}
-	return []string{"ATCT_BIN=" + executable, "ATCT_MONITOR_TOKEN=" + monitorToken}, nil
+	return []string{"ATCT_MONITOR_TOKEN=" + monitorToken}, nil
 }
 
 func startCodexMonitorProcess(kind codexMonitorProcessKind, executable string, args []string, extraEnv []string) (codexMonitorProcess, error) {

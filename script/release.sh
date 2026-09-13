@@ -118,12 +118,19 @@ for path, data in manifest_data:
     data["version"] = version
     path.write_text(json.dumps(data, indent=2) + "\n")
 
+codex_hooks_path = pathlib.Path("hooks") / "codex-hooks.json"
+codex_hooks = codex_hooks_path.read_text()
+marker = "required=" + previous
+if codex_hooks.count(marker) != 2:
+    raise SystemExit(f"Codex hook version marker count is not 2: {codex_hooks.count(marker)}")
+codex_hooks_path.write_text(codex_hooks.replace(marker, "required=" + version))
+
 PY
 go build ./...
 bash tests/wrapper_test.bash >/dev/null
 
 echo "==> commit and tag"
-git add ".claude-plugin"/plugin.json ".codex-plugin"/plugin.json
+git add ".claude-plugin"/plugin.json ".codex-plugin"/plugin.json hooks/codex-hooks.json
 git -c commit.gpgsign=false commit -q -m "chore: bump to $version"
 git -c commit.gpgsign=false tag -a "v$version" -m "v$version"
 

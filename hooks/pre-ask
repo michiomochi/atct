@@ -15,14 +15,13 @@ if [[ "$HOOK_DIR" == "${BASH_SOURCE[0]}" ]]; then
 fi
 HOOK_DIR="$(cd -- "$HOOK_DIR" && pwd -P)" || exit 0
 
-ATCT_BIN="$(command -v atct || true)"
-if [[ -z "$ATCT_BIN" ]]; then
+if ! command -v atct >/dev/null 2>&1; then
   printf '%s\n' 'ATCT: install or upgrade the CLI with: brew install --cask michiomochi/tap/atct' >&2
   exit 0
 fi
 
 PLUGIN_VERSION="$(awk -F '"' '/"version"[[:space:]]*:/ { print $4; exit }' "$HOOK_DIR/../.claude-plugin/plugin.json" 2>/dev/null)"
-INSTALLED_VERSION="$("$ATCT_BIN" version 2>/dev/null || true)"
+INSTALLED_VERSION="$(atct version 2>/dev/null || true)"
 if [[ -z "$PLUGIN_VERSION" || -z "$INSTALLED_VERSION" ]] || ! awk -v installed="$INSTALLED_VERSION" -v required="$PLUGIN_VERSION" '
   BEGIN {
     split(installed, have, ".")
@@ -42,7 +41,7 @@ fi
 
 (
   cd -- "$CWD" || exit 0
-  CONTEXT_OUTPUT="$($ATCT_BIN context 2>/dev/null)" || exit 0
+  CONTEXT_OUTPUT="$(atct context 2>/dev/null)" || exit 0
   [[ -n "$CONTEXT_OUTPUT" ]] || exit 0
   printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"atct_decision_ask: include at least two options and state the consequence of each (option A: continue with the first path; option B: continue with the second path). For reversible choices, execute first, record wait_ms=0, and do not wait. For irreversible choices, omit default_option and wait."}}'
 )

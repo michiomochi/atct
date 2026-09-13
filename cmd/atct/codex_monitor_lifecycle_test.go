@@ -239,7 +239,6 @@ func TestCodexMonitorGenericLifecycleInjectsTokenAndStartsBoundWatch(t *testing.
 		},
 		connectAppServer: func(context.Context, string) (codexMonitorApp, error) { return app, nil },
 		projectPath:      func() (string, error) { return "/project", nil },
-		atctExecutable:   func() (string, error) { return "/opt/atct", nil },
 		newMonitorToken:  func() (string, error) { return "token-1", nil },
 		reap:             func(string) (daemonctl.CodexMonitorReapResult, error) { return daemonctl.CodexMonitorReapResult{}, nil },
 		register: func(string, daemonctl.CodexMonitorRecord) (func(), error) {
@@ -276,7 +275,7 @@ func TestCodexMonitorGenericLifecycleInjectsTokenAndStartsBoundWatch(t *testing.
 	if watchPath != "/project" || watchToken != "token-1" {
 		t.Fatalf("bound watch = (%q, %q), want (/project, token-1)", watchPath, watchToken)
 	}
-	wantEnv := []string{"ATCT_BIN=/opt/atct", "ATCT_MONITOR_TOKEN=token-1"}
+	wantEnv := []string{"ATCT_MONITOR_TOKEN=token-1"}
 	if !slices.Equal(appEnv, wantEnv) {
 		t.Fatalf("App Server environment = %#v, want %#v", appEnv, wantEnv)
 	}
@@ -575,14 +574,14 @@ func TestCodexMonitorLifecycleCleansChildrenAndPreservesTUIStatus(t *testing.T) 
 }
 
 func TestCodexMonitorEnvironmentRequiresAndInjectsToken(t *testing.T) {
-	got, err := codexMonitorEnvironment("token-1", func() (string, error) { return "/opt/atct", nil })
+	got, err := codexMonitorEnvironment("token-1")
 	if err != nil {
 		t.Fatalf("codexMonitorEnvironment: %v", err)
 	}
-	if want := []string{"ATCT_BIN=/opt/atct", "ATCT_MONITOR_TOKEN=token-1"}; !slices.Equal(got, want) {
+	if want := []string{"ATCT_MONITOR_TOKEN=token-1"}; !slices.Equal(got, want) {
 		t.Fatalf("environment = %#v, want %#v", got, want)
 	}
-	if _, err := codexMonitorEnvironment("", func() (string, error) { return "/opt/atct", nil }); err == nil {
+	if _, err := codexMonitorEnvironment(""); err == nil {
 		t.Fatal("empty monitor token succeeded")
 	}
 }
