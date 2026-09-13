@@ -653,6 +653,8 @@ type codexMonitorAction struct {
 	eventName   string
 	goalID      string
 	deliveryKey string
+	handoffID   string
+	generation  string
 }
 
 type codexThreadPager interface {
@@ -693,16 +695,67 @@ func (b *codexMonitorBridge) enqueueAction(ctx context.Context, action codexMoni
 		b.stateMu.Unlock()
 		return errCodexAppServerClosed
 	}
-	if b.hasDeliveryKeyLocked(action.deliveryKey) {
-		b.stateMu.Unlock()
-		return nil
+	if generation, ok := codexReviewActionGeneration(action); ok {
+		b.enqueueReviewActionLocked(action, generation)
+	} else {
+		if b.hasDeliveryKeyLocked(action.deliveryKey) {
+			b.stateMu.Unlock()
+			return nil
+		}
+		if action.eventName == "goal.handoff.receive" && strings.TrimSpace(action.goalID) != "" {
+			b.pruneQueuedApprovalsLocked(action.goalID)
+		}
+		b.queue = append(b.queue, action)
 	}
-	if action.eventName == "goal.handoff.receive" && strings.TrimSpace(action.goalID) != "" {
-		b.pruneQueuedApprovalsLocked(action.goalID)
-	}
-	b.queue = append(b.queue, action)
 	b.stateMu.Unlock()
 	return b.pump(ctx)
+}
+
+func codexReviewActionGeneration(action codexMonitorAction) (time.Time, bool) {
+	if !strings.Contains(action.eventName, ".handoff.review.") || strings.TrimSpace(action.handoffID) == "" {
+		return time.Time{}, false
+	}
+	generation, err := time.Parse(time.RFC3339Nano, action.generation)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return generation, true
+}
+
+func (b *codexMonitorBridge) enqueueReviewActionLocked(action codexMonitorAction, generation time.Time) {
+	if active := b.activeAction; active != nil && active.handoffID == action.handoffID {
+		if activeGeneration, ok := codexReviewActionGeneration(*active); ok && !generation.After(activeGeneration) {
+			return
+		}
+	}
+
+	for _, queued := range b.queue {
+		if queued.handoffID != action.handoffID {
+			continue
+		}
+		if queuedGeneration, ok := codexReviewActionGeneration(queued); ok && !generation.After(queuedGeneration) {
+			return
+		}
+	}
+
+	kept := b.queue[:0]
+	replaced := false
+	for _, queued := range b.queue {
+		if queued.handoffID == action.handoffID {
+			if _, ok := codexReviewActionGeneration(queued); ok {
+				if !replaced {
+					kept = append(kept, action)
+					replaced = true
+				}
+				continue
+			}
+		}
+		kept = append(kept, queued)
+	}
+	if !replaced {
+		kept = append(kept, action)
+	}
+	b.queue = kept
 }
 
 func (b *codexMonitorBridge) hasDeliveryKeyLocked(deliveryKey string) bool {
@@ -839,7 +892,7 @@ func (b *codexMonitorBridge) ActionSinkWithContext(ctx context.Context) watchAge
 		// A failed turn submission stays in the bridge queue. The watcher must
 		// keep its SSE delivery state and continue consuming events; a later
 		// idle notification retries the queued item.
-		if err := b.enqueueAction(ctx, codexMonitorAction{line: action.line, eventName: action.eventName, goalID: action.goalID, deliveryKey: action.deliveryKey}); err != nil {
+		if err := b.enqueueAction(ctx, codexMonitorActionFromWatchAction(action)); err != nil {
 			b.stateMu.Lock()
 			disabled := b.disabled
 			b.stateMu.Unlock()
@@ -848,6 +901,24 @@ func (b *codexMonitorBridge) ActionSinkWithContext(ctx context.Context) watchAge
 			}
 		}
 		return nil
+	}
+}
+
+func codexMonitorActionFromWatchAction(action watchAgentAction) codexMonitorAction {
+	var handoffID string
+	if strings.Contains(action.eventName, ".handoff.") {
+		parts := strings.Split(action.deliveryKey, "\x00")
+		if len(parts) == 3 && parts[0] == action.eventName {
+			handoffID = parts[2]
+		}
+	}
+	return codexMonitorAction{
+		line:        action.line,
+		eventName:   action.eventName,
+		goalID:      action.goalID,
+		deliveryKey: action.deliveryKey,
+		handoffID:   handoffID,
+		generation:  action.generation,
 	}
 }
 
@@ -995,9 +1066,6 @@ func runCodexMonitorWatchScoped(ctx context.Context, client *http.Client, urls [
 		reporters = append(reporters, reporter)
 	}
 	actionSink := bridge.ActionSinkWithContext(ctx)
-	if reporter != nil {
-		actionSink = newWatchCodexActionSink(bridge)
-	}
 	return watchLoopWithEnsureAndProjectIDAndScopeAndActionSink(
 		ctx,
 		codexMonitorWatchOutput{},
