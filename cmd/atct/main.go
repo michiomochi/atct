@@ -78,6 +78,7 @@ var validSubcommands = map[string]bool{
 	"session-key": true,
 	"handoff":     true,
 	"codex":       true,
+	"version":     true,
 }
 
 var validDaemonActions = map[string]bool{"start": true, "stop": true}
@@ -130,6 +131,7 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "  stop-check           Emit a Codex continuation when scoped role work remains")
 	fmt.Fprintln(os.Stderr, "  session-key          Print the SessionStart key for atct_session_identify")
 	fmt.Fprintln(os.Stderr, "  handoff complete <handoff-id> <task-id>  Report a handoff complete")
+	fmt.Fprintln(os.Stderr, "  version              Print the installed CLI version")
 	fmt.Fprintln(os.Stderr, "  codex shim install [--profile <path>]  Install the transparent Codex shim")
 	fmt.Fprintln(os.Stderr, "  codex shim run -- <args>  Run Codex through the installed shim")
 	fmt.Fprintln(os.Stderr, "  codex monitor [-- <args>]  Run an interactive Codex session with ATCT monitoring")
@@ -419,6 +421,10 @@ func main() {
 	config, err := parseArgs(os.Args[1:])
 	if err != nil {
 		os.Exit(2)
+	}
+	if config.subcommand == "version" {
+		fmt.Println(version)
+		return
 	}
 
 	home, err := os.UserHomeDir()

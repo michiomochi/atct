@@ -78,7 +78,6 @@ fi
 echo "==> tests"
 go build ./...
 go test -count=1 -timeout 600s ./... >/dev/null
-bash tests/cache_prune_test.bash >/dev/null
 bash tests/session_start_test.bash >/dev/null
 bash tests/wrapper_test.bash >/dev/null
 bash script/schema-check.sh
@@ -119,17 +118,12 @@ for path, data in manifest_data:
     data["version"] = version
     path.write_text(json.dumps(data, indent=2) + "\n")
 
-resolve = pathlib.Path("bin/_resolve")
-text = resolve.read_text()
-if previous not in text:
-    raise SystemExit(f"{resolve} does not mention {previous}")
-resolve.write_text(text.replace(previous, version))
 PY
 go build ./...
 bash tests/wrapper_test.bash >/dev/null
 
 echo "==> commit and tag"
-git add ".claude-plugin"/plugin.json ".codex-plugin"/plugin.json bin/_resolve
+git add ".claude-plugin"/plugin.json ".codex-plugin"/plugin.json
 git -c commit.gpgsign=false commit -q -m "chore: bump to $version"
 git -c commit.gpgsign=false tag -a "v$version" -m "v$version"
 

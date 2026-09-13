@@ -67,6 +67,22 @@ func TestParseArgs(t *testing.T) {
 	}
 }
 
+func TestVersionCommandPrintsBuildVersionWithoutCreatingATCTHome(t *testing.T) {
+	binary := buildAtctTestBinary(t)
+	home := t.TempDir()
+
+	output, err := runAtctCommand(binary, home, "version")
+	if err != nil {
+		t.Fatalf("atct version: %v\noutput:\n%s", err, output)
+	}
+	if got, want := string(output), "dev\n"; got != want {
+		t.Fatalf("atct version output = %q, want %q", got, want)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".atct")); !os.IsNotExist(err) {
+		t.Fatalf("atct version created %s: stat error = %v", filepath.Join(home, ".atct"), err)
+	}
+}
+
 func TestParseArgsCodexMonitorPreservesRawArguments(t *testing.T) {
 	cfg, err := parseArgs([]string{"codex", "monitor", "--", "-m", "gpt-5", "--config", "a=b"})
 	if err != nil {

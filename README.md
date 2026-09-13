@@ -16,17 +16,14 @@ When the goal is met, it comes back to you for sign-off.
 ## Install
 
 ```bash
+brew install --cask michiomochi/tap/atct
+
 claude plugin marketplace add michiomochi/atct
 claude plugin install atct@atct
 ```
 
-That is the supported install. The plugin ships wrappers that fetch the two binaries the first
-time something needs them, verify them against the release checksums, and cache them under
-`~/.atct/bin/`.
-
-The wrapper also installs a stable terminal launcher at `~/.local/bin/atct`. It never edits shell
-profiles. If `~/.local/bin` is not on your `PATH`, add it yourself if you want to type `atct`, or
-continue using the wrapper directly.
+The Homebrew Cask installs both `atct` and `atct-mcp`. The plugin supplies the MCP connection,
+hooks, and skills; it does not install or update the CLI.
 
 Restart Claude Code once — or run `/reload-plugins` — so the new MCP server is picked up.
 

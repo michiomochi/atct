@@ -7,8 +7,10 @@ trap 'rm -rf -- "$TEMP_ROOT"' EXIT
 
 ORIGINAL_PATH="$PATH"
 RUN_OUTPUT=''
+RUN_ERROR=''
 RUN_STATUS=0
 FAKE_BIN=''
+FAKE_VERSION='0.63.1'
 
 fail() {
   printf 'FAIL: %s\n' "$*" >&2
@@ -42,13 +44,23 @@ assert_file_contains() {
 make_fake_atct() {
   local fake_bin="$1"
   local home="$2"
-  mkdir -p "$fake_bin" "$home/.atct/bin"
+  mkdir -p "$fake_bin"
 
   cat >"$fake_bin/atct" <<'SCRIPT'
 #!/usr/bin/env bash
 set -euo pipefail
 
-[[ "${1:-}" == context ]] || exit 90
+case "${1:-}" in
+  version)
+    printf '%s\n' "${FAKE_ATCT_VERSION:-0.63.1}"
+    exit 0
+    ;;
+  context)
+    ;;
+  *)
+    exit 90
+    ;;
+esac
 printf '%s|%s\n' "$PWD" "${1:-}" >"$FAKE_ATCT_LOG"
 
 case "${FAKE_ATCT_MODE:-}" in
@@ -67,13 +79,13 @@ case "${FAKE_ATCT_MODE:-}" in
 esac
 SCRIPT
   chmod +x "$fake_bin/atct"
-  cp "$fake_bin/atct" "$home/.atct/bin/atct-1.0.0"
 }
 
 make_hook_without_wrapper() {
   local hook_root="$1"
-  mkdir -p "$hook_root/hooks"
+  mkdir -p "$hook_root/hooks" "$hook_root/.claude-plugin"
   cp "$REPO_ROOT/hooks/pre-ask" "$hook_root/hooks/pre-ask"
+  cp "$REPO_ROOT/.claude-plugin/plugin.json" "$hook_root/.claude-plugin/plugin.json"
   chmod +x "$hook_root/hooks/pre-ask"
 }
 
@@ -83,18 +95,21 @@ run_hook() {
   local input="$3"
   local mode="$4"
   local log="$5"
+  local error_file="$log.stderr"
 
   if RUN_OUTPUT="$(
     HOME="$home" \
       PATH="$FAKE_BIN:$ORIGINAL_PATH" \
       FAKE_ATCT_MODE="$mode" \
+      FAKE_ATCT_VERSION="$FAKE_VERSION" \
       FAKE_ATCT_LOG="$log" \
-      "$hook" <<<"$input"
+      "$hook" <<<"$input" 2>"$error_file"
   )"; then
     RUN_STATUS=0
   else
     RUN_STATUS=$?
   fi
+  RUN_ERROR="$(<"$error_file")"
 }
 
 test_managed_ask_is_denied() {
@@ -143,7 +158,7 @@ test_other_tool_is_ignored() {
   [[ ! -e "$log" ]] || fail 'non-AskUserQuestion must not invoke atct context'
 }
 
-test_missing_atct_is_ignored() {
+test_missing_atct_prints_homebrew_install_instruction_without_decision() {
   local home="$TEMP_ROOT/missing-atct-home"
   local fake_bin="$TEMP_ROOT/missing-atct-fake-bin"
   local hook_root="$TEMP_ROOT/missing-atct-plugin"
@@ -152,14 +167,40 @@ test_missing_atct_is_ignored() {
   mkdir -p "$home" "$project"
   make_fake_atct "$fake_bin" "$home"
   make_hook_without_wrapper "$hook_root"
-  FAKE_BIN="$fake_bin"
 
   local input
   input="$(printf '{"tool_name":"AskUserQuestion","cwd":"%s"}' "$project")"
-  run_hook "$hook_root/hooks/pre-ask" "$home" "$input" managed "$log"
+  local error_file="$log.stderr"
+  if RUN_OUTPUT="$(HOME="$home" PATH="/usr/bin:/bin" "$hook_root/hooks/pre-ask" <<<"$input" 2>"$error_file")"; then
+    RUN_STATUS=0
+  else
+    RUN_STATUS=$?
+  fi
+  RUN_ERROR="$(<"$error_file")"
 
   assert_eq 0 "$RUN_STATUS" 'missing atct hook status'
   assert_empty "$RUN_OUTPUT"
+  assert_eq 'ATCT: install or upgrade the CLI with: brew install --cask michiomochi/tap/atct' "$RUN_ERROR" 'missing atct stderr'
+}
+
+test_older_atct_prints_homebrew_upgrade_instruction_without_decision() {
+  local home="$TEMP_ROOT/older-atct-home"
+  local fake_bin="$TEMP_ROOT/older-atct-fake-bin"
+  local log="$TEMP_ROOT/older-atct.log"
+  local project="$TEMP_ROOT/older-atct-project"
+  mkdir -p "$home" "$project"
+  make_fake_atct "$fake_bin" "$home"
+  FAKE_BIN="$fake_bin"
+  FAKE_VERSION='0.62.0'
+
+  local input
+  input="$(printf '{"tool_name":"AskUserQuestion","cwd":"%s"}' "$project")"
+  run_hook "$REPO_ROOT/hooks/pre-ask" "$home" "$input" managed "$log"
+
+  assert_eq 0 "$RUN_STATUS" 'older atct hook status'
+  assert_empty "$RUN_OUTPUT"
+  assert_eq 'ATCT: upgrade the CLI with: brew upgrade --cask michiomochi/tap/atct' "$RUN_ERROR" 'older atct stderr'
+  FAKE_VERSION='0.63.1'
 }
 
 test_context_failure_is_ignored() {
@@ -205,7 +246,8 @@ test_empty_context_is_ignored() {
 [[ -f "$REPO_ROOT/hooks/pre-ask" ]] || fail 'pre-ask hook is missing'
 test_managed_ask_is_denied
 test_other_tool_is_ignored
-test_missing_atct_is_ignored
+test_missing_atct_prints_homebrew_install_instruction_without_decision
+test_older_atct_prints_homebrew_upgrade_instruction_without_decision
 test_context_failure_is_ignored
 test_empty_context_is_ignored
-printf 'PASS: pre-ask hook 5 behavior cases\n'
+printf 'PASS: pre-ask hook 6 behavior cases\n'

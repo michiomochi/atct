@@ -4,7 +4,7 @@
 
 **Goal:** Distribute `atct` and `atct-mcp` through the existing Homebrew Cask, while the Claude and Codex plugins retain only MCP, hooks, and skills.
 
-**Architecture:** GoReleaser publishes the release archive and updates `michiomochi/homebrew-tap`'s `atct` Cask.  Plugin hooks call the `atct` installed on `PATH`; they compare its `atct version` result with their manifest version before workflow work.  No plugin code downloads, caches, extracts, or installs a CLI launcher.
+**Architecture:** GoReleaser publishes the release archive and updates `michiomochi/homebrew-tap`'s `atct` Cask. Claude hooks call the `atct` installed on `PATH` and compare its version with their manifest; Codex monitors retain the direct CLI path injected by the command that launched them. No plugin code downloads, caches, extracts, or installs a CLI launcher.
 
 **Tech Stack:** Go, Bash, GoReleaser, Homebrew Cask, existing Bash regression tests.
 
@@ -59,14 +59,13 @@ Run the command in Step 2. Expected: PASS.
 - Modify: `hooks/session-start`
 - Modify: `hooks/pre-ask`
 - Modify: `hooks/stop`
-- Modify: `hooks/codex-hooks.json`
 - Modify: `tests/session_start_test.bash`
 - Modify: `tests/pre_ask_test.bash`
 - Modify: `tests/wrapper_test.bash`
 
 **Interfaces:**
-- Consumes: `atct` resolved by `command -v`, `atct version`, and the plugin's
-  adjacent manifest version.
+- Consumes: `atct` resolved by `command -v`, `atct version`, and the Claude
+  plugin's adjacent manifest version.
 - Produces: the existing normal hook actions for a current-or-newer CLI; an
   actionable Homebrew install/upgrade message for a missing or stale CLI.
 
@@ -81,9 +80,8 @@ ATCT: install or upgrade the CLI with: brew install --cask michiomochi/tap/atct
 ATCT: upgrade the CLI with: brew upgrade --cask michiomochi/tap/atct
 ```
 
-For the stop hooks, preserve the blocking JSON response around the actionable
-reason.  Update the Codex fixture to put a fake `atct` on `PATH`, rather than
-providing `ATCT_BIN`.  Keep the existing managed-context, ordinary-error, and
+For the Claude stop hook, preserve the blocking JSON response around the
+actionable reason. Keep the existing managed-context, ordinary-error, and
 active-stop assertions.
 
 - [ ] **Step 2: Run focused hook tests to verify failure**
@@ -94,8 +92,8 @@ bash tests/pre_ask_test.bash
 bash tests/wrapper_test.bash
 ```
 
-Expected: FAIL because hooks still require the plugin-local resolver/wrapper
-and Codex hooks require `ATCT_BIN`.
+Expected: FAIL because Claude hooks still require the plugin-local
+resolver/wrapper.
 
 - [ ] **Step 3: Replace local resolution with a small, local guard**
 
@@ -107,9 +105,8 @@ filesystem write.
 
 Keep each hook's present fail-closed/open behavior: session start does not
 start a daemon; pre-ask does not return a decision; stop returns its existing
-block envelope.  Change Codex's command hooks to invoke `atct` from `PATH` and
-apply the same version guard inline, since its JSON hook command has no
-plugin-root variable.
+block envelope. Codex monitor hooks retain their `ATCT_BIN` path because the
+Homebrew-installed command that starts the monitor injects it directly.
 
 - [ ] **Step 4: Re-run focused hook tests**
 
@@ -138,8 +135,8 @@ missing CLI, stale CLI, and the existing normal hook paths.
 - [ ] **Step 1: Change regression tests before deleting implementation**
 
 Replace the static wrapper contract with assertions that the three `bin/`
-resolver files and `ATCT_BIN` dependence are absent, the plugin manifests
-remain in sync, and hook registrations remain present.  Remove only the
+resolver files are absent, the plugin manifests remain in sync, and hook
+registrations remain present. Remove only the
 resolver-oriented fixture helpers, test functions, and invocation lines from
 `tests/wrapper_test.bash`; retain its role, handoff, skill, and hook-registry
 checks.  Remove the resolver fixture and version assertion from

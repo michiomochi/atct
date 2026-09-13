@@ -65,7 +65,6 @@ make_bump_fixture() {
   mkdir -p "$fixture/.claude-plugin" "$fixture/.codex-plugin" "$fixture/bin"
   cp "$REPO_ROOT/.claude-plugin"/plugin.json "$fixture/.claude-plugin"/plugin.json
   cp "$REPO_ROOT/.codex-plugin"/plugin.json "$fixture/.codex-plugin"/plugin.json
-  cp "$REPO_ROOT/bin/_resolve" "$fixture/bin/_resolve"
 }
 
 test_plugin_manifests_are_in_sync() {
@@ -91,7 +90,6 @@ test_release_bumps_both_plugin_manifests() {
     'Claude plugin version after release bump'
   assert_eq "$version" "$(manifest_version "$fixture/.codex-plugin"/plugin.json)" \
     'Codex plugin version after release bump'
-  assert_file_contains "$version" "$fixture/bin/_resolve"
 }
 
 test_release_rejects_mismatched_plugin_versions() {

@@ -13,46 +13,31 @@ HOOK_DIR="${BASH_SOURCE[0]%/*}"
 if [[ "$HOOK_DIR" == "${BASH_SOURCE[0]}" ]]; then
   HOOK_DIR='.'
 fi
+HOOK_DIR="$(cd -- "$HOOK_DIR" && pwd -P)" || exit 0
 
-version_gt() {
-  local a b i
-  local IFS=.
-  local -a av=($1) bv=($2)
-  for ((i = 0; i < ${#av[@]} || i < ${#bv[@]}; i++)); do
-    a=${av[i]:-0}; b=${bv[i]:-0}
-    ((10#$a > 10#$b)) && return 0
-    ((10#$a < 10#$b)) && return 1
-  done
-  return 1
-}
+ATCT_BIN="$(command -v atct || true)"
+if [[ -z "$ATCT_BIN" ]]; then
+  printf '%s\n' 'ATCT: install or upgrade the CLI with: brew install --cask michiomochi/tap/atct' >&2
+  exit 0
+fi
 
-resolve_atct_bin() {
-  local wrapper="$HOOK_DIR/../bin/atct"
-  [[ -e "$wrapper" ]] || return 1
+PLUGIN_VERSION="$(awk -F '"' '/"version"[[:space:]]*:/ { print $4; exit }' "$HOOK_DIR/../.claude-plugin/plugin.json" 2>/dev/null)"
+INSTALLED_VERSION="$("$ATCT_BIN" version 2>/dev/null || true)"
+if [[ -z "$PLUGIN_VERSION" || -z "$INSTALLED_VERSION" ]] || ! awk -v installed="$INSTALLED_VERSION" -v required="$PLUGIN_VERSION" '
+  BEGIN {
+    split(installed, have, ".")
+    split(required, need, ".")
+    for (i = 1; i <= 3; i++) {
+      if (have[i] + 0 > need[i] + 0) exit 0
+      if (have[i] + 0 < need[i] + 0) exit 1
+    }
+    exit 0
+  }
+'; then
+  printf '%s\n' 'ATCT: upgrade the CLI with: brew upgrade --cask michiomochi/tap/atct' >&2
+  exit 0
+fi
 
-  local atct_bin_dir="${HOME:-}/.atct/bin"
-  local candidate candidate_name version best="" best_version=""
-
-  for candidate in "$atct_bin_dir"/atct-*; do
-    [[ -x "$candidate" ]] || continue
-    candidate_name="${candidate##*/}"
-    [[ "$candidate_name" =~ ^atct-([0-9]+([.][0-9]+)+)$ ]] || continue
-    version="${BASH_REMATCH[1]}"
-    if [[ -z "$best" ]] || version_gt "$version" "$best_version"; then
-      best="$candidate"; best_version="$version"
-    fi
-  done
-
-  if [[ -n "$best" ]]; then
-    printf '%s\n' "$best"
-    return 0
-  fi
-
-  printf '%s\n' "$HOOK_DIR/../bin/atct"
-}
-
-ATCT_BIN="$(resolve_atct_bin)" || exit 0
-[[ -x "$ATCT_BIN" ]] || exit 0
 [[ -d "$CWD" ]] || exit 0
 
 (

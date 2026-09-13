@@ -15,7 +15,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "if [ ! -x \"${ATCT_BIN:-}\" ]; then printf '%s\\n' '{\"decision\":\"block\",\"reason\":\"ATCT stop-check failed: command unavailable\"}'; exit 0; fi; \"$ATCT_BIN\" stop-check --hook-input"
+            "command": "if [ ! -x \"${ATCT_BIN:-}\" ]; then printf '%s\\n' '{\"decision\":\"block\",\"reason\":\"ATCT: install or upgrade the CLI with: brew install --cask michiomochi/tap/atct\"}'; exit 0; fi; \"$ATCT_BIN\" stop-check --hook-input"
           }
         ]
       }

@@ -34,3 +34,22 @@ checksum:
 
 release:
   draft: true
+
+homebrew_casks:
+  - name: atct
+    repository:
+      owner: michiomochi
+      name: homebrew-tap
+    homepage: "https://github.com/michiomochi/atct"
+    description: "The air traffic control tower for your coding agents"
+    license: "AGPL-3.0"
+    binaries: [atct, atct-mcp]
+    url:
+      verified: github.com/michiomochi/atct
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/atct"]
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/atct-mcp"]
+          end

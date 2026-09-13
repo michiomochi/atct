@@ -7,8 +7,28 @@ if [[ "$HOOK_DIR" == "${BASH_SOURCE[0]}" ]]; then
   HOOK_DIR='.'
 fi
 HOOK_DIR="$(cd -- "$HOOK_DIR" && pwd -P)" || exit 0
-ATCT_BIN="$HOOK_DIR/../bin/atct"
-[[ -x "$ATCT_BIN" ]] || exit 0
+ATCT_BIN="$(command -v atct || true)"
+if [[ -z "$ATCT_BIN" ]]; then
+  printf '%s\n' 'ATCT: install or upgrade the CLI with: brew install --cask michiomochi/tap/atct' >&2
+  exit 0
+fi
+
+PLUGIN_VERSION="$(awk -F '"' '/"version"[[:space:]]*:/ { print $4; exit }' "$HOOK_DIR/../.claude-plugin/plugin.json" 2>/dev/null)"
+INSTALLED_VERSION="$("$ATCT_BIN" version 2>/dev/null || true)"
+if [[ -z "$PLUGIN_VERSION" || -z "$INSTALLED_VERSION" ]] || ! awk -v installed="$INSTALLED_VERSION" -v required="$PLUGIN_VERSION" '
+  BEGIN {
+    split(installed, have, ".")
+    split(required, need, ".")
+    for (i = 1; i <= 3; i++) {
+      if (have[i] + 0 > need[i] + 0) exit 0
+      if (have[i] + 0 < need[i] + 0) exit 1
+    }
+    exit 0
+  }
+'; then
+  printf '%s\n' 'ATCT: upgrade the CLI with: brew upgrade --cask michiomochi/tap/atct' >&2
+  exit 0
+fi
 
 CONTEXT_OUTPUT="$($ATCT_BIN context -brief 2>/dev/null)"
 CONTEXT_STATUS=$?

@@ -1949,11 +1949,15 @@ func runSessionStartHookForContractTest(t *testing.T, atctScript string) (string
 	dir := t.TempDir()
 	hookDir := filepath.Join(dir, "hooks")
 	binDir := filepath.Join(dir, "bin")
+	pluginDir := filepath.Join(dir, ".claude-plugin")
 	if err := os.MkdirAll(hookDir, 0o755); err != nil {
 		t.Fatalf("MkdirAll hooks: %v", err)
 	}
 	if err := os.MkdirAll(binDir, 0o755); err != nil {
 		t.Fatalf("MkdirAll bin: %v", err)
+	}
+	if err := os.MkdirAll(pluginDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll plugin: %v", err)
 	}
 	_, sourceFile, _, ok := runtime.Caller(0)
 	if !ok {
@@ -1968,11 +1972,24 @@ func runSessionStartHookForContractTest(t *testing.T, atctScript string) (string
 	if err := os.WriteFile(hookPath, source, 0o755); err != nil {
 		t.Fatalf("write session-start hook: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(binDir, "atct"), []byte(atctScript), 0o755); err != nil {
+	manifest, err := os.ReadFile(filepath.Join(repoRoot, ".claude-plugin", "plugin.json"))
+	if err != nil {
+		t.Fatalf("read plugin manifest: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(pluginDir, "plugin.json"), manifest, 0o644); err != nil {
+		t.Fatalf("write plugin manifest: %v", err)
+	}
+	bodyPath := filepath.Join(binDir, "atct-body")
+	if err := os.WriteFile(bodyPath, []byte(atctScript), 0o755); err != nil {
+		t.Fatalf("write fake atct body: %v", err)
+	}
+	fakeAtct := "#!/usr/bin/env bash\nif [[ \"${1:-}\" == version ]]; then printf '0.63.1\\n'; exit 0; fi\nexec \"$(dirname \"$0\")/atct-body\" \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(binDir, "atct"), []byte(fakeAtct), 0o755); err != nil {
 		t.Fatalf("write fake atct: %v", err)
 	}
 	cmd := exec.Command("bash", hookPath)
 	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "PATH="+binDir+":"+os.Getenv("PATH"))
 	output, err := cmd.CombinedOutput()
 	return string(output), err
 }
