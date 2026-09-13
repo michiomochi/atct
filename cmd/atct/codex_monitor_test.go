@@ -999,6 +999,7 @@ func TestCodexMonitorReviewQueueUsesHandoffGeneration(t *testing.T) {
 			eventName:   eventName,
 			deliveryKey: strings.Join([]string{eventName, targetRole, handoffID}, "\x00"),
 			generation:  generation,
+			controlOnly: eventName == "task.handoff.review.receive",
 		}
 		if err := bridge.ActionSinkWithContext(ctx)(action); err != nil {
 			t.Fatalf("enqueue %q: %v", line, err)
@@ -1019,8 +1020,8 @@ func TestCodexMonitorReviewQueueUsesHandoffGeneration(t *testing.T) {
 		t.Fatalf("queued request = %q, want request", got)
 	}
 	enqueue("task.handoff.review.receive", "receipt", receiptGeneration)
-	if got := queuedLine(); got != "receipt" {
-		t.Fatalf("queued receipt = %q, want newer receipt to replace request", got)
+	if got := bridge.QueueLen(); got != 0 {
+		t.Fatalf("queue after receipt = %d, want stale request removed and receipt omitted", got)
 	}
 	enqueue("task.handoff.review.request", "later retry", retryGeneration)
 	if got := queuedLine(); got != "later retry" {
@@ -1063,6 +1064,7 @@ func TestCodexMonitorReviewQueueKeepsActiveActionAndScopesCoalescing(t *testing.
 		eventName:   "task.handoff.review.receive",
 		deliveryKey: "task.handoff.review.receive\x00executor\x00handoff-active",
 		generation:  "2026-09-14T00:00:02.000000000Z",
+		controlOnly: true,
 	}
 	if err := bridge.ActionSinkWithContext(ctx)(newer); err != nil {
 		t.Fatalf("enqueue newer review: %v", err)
@@ -1080,8 +1082,8 @@ func TestCodexMonitorReviewQueueKeepsActiveActionAndScopesCoalescing(t *testing.
 	if bridge.activeAction == nil || bridge.activeAction.line != "active review" {
 		t.Fatalf("active action = %#v, want active review", bridge.activeAction)
 	}
-	if len(bridge.queue) != 1 || bridge.queue[0].line != "newer queued review" {
-		t.Fatalf("active handoff queue = %#v, want only newer queued review", bridge.queue)
+	if len(bridge.queue) != 0 {
+		t.Fatalf("active handoff queue = %#v, want no receipt turn", bridge.queue)
 	}
 	bridge.stateMu.Unlock()
 
@@ -1108,8 +1110,8 @@ func TestCodexMonitorReviewQueueKeepsActiveActionAndScopesCoalescing(t *testing.
 	if bridge.activeAction == nil || bridge.activeAction.line != "active review" {
 		t.Fatalf("active action after scoped actions = %#v, want active review", bridge.activeAction)
 	}
-	if len(bridge.queue) != 3 || bridge.queue[0].line != "newer queued review" || bridge.queue[1].line != "other handoff old review" || bridge.queue[2].line != "non-review lifecycle" {
-		t.Fatalf("scoped review queue = %#v, want newer review, other handoff, lifecycle", bridge.queue)
+	if len(bridge.queue) != 2 || bridge.queue[0].line != "other handoff old review" || bridge.queue[1].line != "non-review lifecycle" {
+		t.Fatalf("scoped review queue = %#v, want other handoff and lifecycle", bridge.queue)
 	}
 	bridge.stateMu.Unlock()
 }
@@ -1117,8 +1119,6 @@ func TestCodexMonitorReviewQueueKeepsActiveActionAndScopesCoalescing(t *testing.
 func TestCodexMonitorReconciliationReviewQueueUsesGeneration(t *testing.T) {
 	const requestState = `{"goals":[],"decisions":[],"goal_handoffs":[],"plan_handoffs":[],"task_handoffs":[{"ID":"handoff-246","GoalID":246,"TaskID":1273,"ReviewRequestedAt":"2026-09-14T00:00:01.000000000Z"}]}`
 	const receiptState = `{"goals":[],"decisions":[],"goal_handoffs":[],"plan_handoffs":[],"task_handoffs":[{"ID":"handoff-246","GoalID":246,"TaskID":1273,"ReviewReceivedAt":"2026-09-14T00:00:02.000000000Z"}]}`
-	const receiptLine = "atct task handoff review received (task_id: 1273, handoff_id: handoff-246)"
-
 	responses := []string{requestState, receiptState, requestState, receiptState, receiptState}
 	responseIndex := 0
 	client := &http.Client{Transport: watchRoundTripper(func(req *http.Request) (*http.Response, error) {
@@ -1161,24 +1161,20 @@ func TestCodexMonitorReconciliationReviewQueueUsesGeneration(t *testing.T) {
 	}
 
 	reconcile(delivered, lastWakeupContent, discrepancyDelivered, wakeupDelivered)
-	bridge.stateMu.Lock()
-	if len(bridge.queue) != 1 || bridge.queue[0].line != receiptLine {
-		t.Fatalf("queue after review receipt reconciliation = %#v, want one receipt", bridge.queue)
+	if got := bridge.QueueLen(); got != 0 {
+		t.Fatalf("queue after review receipt reconciliation = %d, want no receipt turn", got)
 	}
-	bridge.stateMu.Unlock()
 
 	oldDelivered, oldLastWakeupContent, oldDiscrepancyDelivered, oldWakeupDelivered := newState()
 	reconcile(oldDelivered, oldLastWakeupContent, oldDiscrepancyDelivered, oldWakeupDelivered)
 	reconcile(oldDelivered, oldLastWakeupContent, oldDiscrepancyDelivered, oldWakeupDelivered)
 	reconcile(oldDelivered, oldLastWakeupContent, oldDiscrepancyDelivered, oldWakeupDelivered)
 
-	bridge.stateMu.Lock()
-	if len(bridge.queue) != 1 || bridge.queue[0].line != receiptLine {
-		t.Fatalf("queue after delayed request and repeated receipt = %#v, want one receipt", bridge.queue)
+	if got := bridge.QueueLen(); got != 0 {
+		t.Fatalf("queue after delayed request and repeated receipt = %d, want no stale request or receipt", got)
 	}
-	bridge.stateMu.Unlock()
-	if got := bridge.QueueLen(); got != 1 {
-		t.Fatalf("queue after repeated receipt reconciliation = %d, want 1", got)
+	if got := bridge.QueueLen(); got != 0 {
+		t.Fatalf("queue after repeated receipt reconciliation = %d, want 0", got)
 	}
 	if err := bridge.HandleNotification(context.Background(), codexAppServerNotification{
 		Method: "turn/completed",
@@ -1186,11 +1182,11 @@ func TestCodexMonitorReconciliationReviewQueueUsesGeneration(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("HandleNotification(completed): %v", err)
 	}
-	if got := starter.callsSnapshot(); len(got) != 1 || got[0] != receiptLine {
-		t.Fatalf("started reconciliation actions = %#v, want one receipt", got)
+	if got := starter.callsSnapshot(); len(got) != 0 {
+		t.Fatalf("started reconciliation actions = %#v, want no receipt turn", got)
 	}
 	if got := bridge.QueueLen(); got != 0 {
-		t.Fatalf("queue after receipt delivery = %d, want 0", got)
+		t.Fatalf("queue after idle notification = %d, want 0", got)
 	}
 }
 

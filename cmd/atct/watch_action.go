@@ -15,6 +15,7 @@ type watchAgentAction struct {
 	generation  string
 	targetRole  string
 	scopeKey    string
+	controlOnly bool
 }
 
 type watchRawLineSink func(string) error
@@ -25,7 +26,7 @@ type monitorActionWriter struct {
 }
 
 func (w monitorActionWriter) WriteAction(action watchAgentAction) error {
-	if w.writer == nil {
+	if w.writer == nil || action.controlOnly {
 		return nil
 	}
 	_, err := io.WriteString(w.writer, action.line+"\n")
@@ -60,5 +61,6 @@ func selectWatchAgentAction(line, eventName string, decision watchDecision) (wat
 		generation:  generation,
 		targetRole:  decision.TargetRole,
 		scopeKey:    decision.ScopeKey,
+		controlOnly: strings.HasSuffix(eventName, ".handoff.review.receive"),
 	}, true
 }

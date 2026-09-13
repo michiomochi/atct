@@ -655,6 +655,7 @@ type codexMonitorAction struct {
 	deliveryKey string
 	handoffID   string
 	generation  string
+	controlOnly bool
 }
 
 type codexThreadPager interface {
@@ -666,16 +667,21 @@ type codexMonitorBridge struct {
 	app      codexMonitorApp
 	threadID string
 
-	stateMu      sync.Mutex
-	active       bool
-	queue        []codexMonitorAction
-	activeAction *codexMonitorAction
-	disabled     bool
-	submitMu     sync.Mutex
+	stateMu                  sync.Mutex
+	active                   bool
+	queue                    []codexMonitorAction
+	activeAction             *codexMonitorAction
+	reviewControlGenerations map[string]time.Time
+	disabled                 bool
+	submitMu                 sync.Mutex
 }
 
 func newCodexMonitorBridge(starter codexTurnStarter, threadID string) *codexMonitorBridge {
-	bridge := &codexMonitorBridge{starter: starter, threadID: threadID}
+	bridge := &codexMonitorBridge{
+		starter:                  starter,
+		threadID:                 threadID,
+		reviewControlGenerations: make(map[string]time.Time),
+	}
 	if app, ok := starter.(codexMonitorApp); ok {
 		bridge.app = app
 	}
@@ -694,6 +700,14 @@ func (b *codexMonitorBridge) enqueueAction(ctx context.Context, action codexMoni
 	if b.disabled {
 		b.stateMu.Unlock()
 		return errCodexAppServerClosed
+	}
+	if action.controlOnly {
+		if generation, ok := codexReviewActionGeneration(action); ok {
+			b.pruneQueuedReviewActionsLocked(action.handoffID, generation)
+			b.rememberReviewControlGenerationLocked(action.handoffID, generation)
+		}
+		b.stateMu.Unlock()
+		return b.pump(ctx)
 	}
 	if generation, ok := codexReviewActionGeneration(action); ok {
 		b.enqueueReviewActionLocked(action, generation)
@@ -723,6 +737,9 @@ func codexReviewActionGeneration(action codexMonitorAction) (time.Time, bool) {
 }
 
 func (b *codexMonitorBridge) enqueueReviewActionLocked(action codexMonitorAction, generation time.Time) {
+	if controlGeneration, ok := b.reviewControlGenerations[action.handoffID]; ok && !generation.After(controlGeneration) {
+		return
+	}
 	if active := b.activeAction; active != nil && active.handoffID == action.handoffID {
 		if activeGeneration, ok := codexReviewActionGeneration(*active); ok && !generation.After(activeGeneration) {
 			return
@@ -756,6 +773,35 @@ func (b *codexMonitorBridge) enqueueReviewActionLocked(action codexMonitorAction
 		kept = append(kept, action)
 	}
 	b.queue = kept
+}
+
+func (b *codexMonitorBridge) pruneQueuedReviewActionsLocked(handoffID string, generation time.Time) {
+	if handoffID == "" {
+		return
+	}
+	kept := b.queue[:0]
+	for _, queued := range b.queue {
+		if queued.handoffID == handoffID {
+			if queuedGeneration, ok := codexReviewActionGeneration(queued); ok && queuedGeneration.Before(generation) {
+				continue
+			}
+		}
+		kept = append(kept, queued)
+	}
+	b.queue = kept
+}
+
+func (b *codexMonitorBridge) rememberReviewControlGenerationLocked(handoffID string, generation time.Time) {
+	if handoffID == "" {
+		return
+	}
+	if b.reviewControlGenerations == nil {
+		b.reviewControlGenerations = make(map[string]time.Time)
+	}
+	if previous, ok := b.reviewControlGenerations[handoffID]; ok && !generation.After(previous) {
+		return
+	}
+	b.reviewControlGenerations[handoffID] = generation
 }
 
 func (b *codexMonitorBridge) hasDeliveryKeyLocked(deliveryKey string) bool {
@@ -919,6 +965,7 @@ func codexMonitorActionFromWatchAction(action watchAgentAction) codexMonitorActi
 		deliveryKey: action.deliveryKey,
 		handoffID:   handoffID,
 		generation:  action.generation,
+		controlOnly: action.controlOnly,
 	}
 }
 
