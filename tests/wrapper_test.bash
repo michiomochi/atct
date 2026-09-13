@@ -454,8 +454,8 @@ test_goal_handoff_names_the_single_upward_message() {
 
   local section
   section="$(unsent_report_section)"
-  grep -Fq -- '| the goal is finished | `atct_goal_handoff_complete`, the one message |' <<<"$section" ||
-    fail 'unsent report section must name the single upward completion message'
+  grep -Fq -- '| the goal is ready for commander review | `atct_goal_handoff_review_request`, the one message |' <<<"$section" ||
+    fail 'unsent report section must name the single upward review message'
 }
 
 test_goal_handoff_routes_cross_goal_facts_to_the_human() {
@@ -495,7 +495,7 @@ test_goal_delegation_requires_the_adjacent_goal_boundary() {
 test_goal_delegation_keeps_the_delegator_out_until_completion() {
   delegate_goal_section_contains '6. Stay out until the completion report. After waking the subcommander, the'
   delegate_goal_section_contains 'arrive from `atct watch` rather than from the subcommander: a goal with no'
-  delegate_goal_section_contains '`atct_goal_handoff_complete` lands; that report is the entry point.'
+  delegate_goal_section_contains '`atct_goal_handoff_review_request` lands; that report is the entry point.'
 }
 
 test_delegator_answers_are_balanced() {
@@ -548,7 +548,7 @@ test_unsent_report_table_covers_every_spoken_kind() {
     '| something found inside this goal |' \
     '| something found that is another goal |' \
     '| what was left undone |' \
-    '| the goal is finished |'; do
+    '| the goal is ready for commander review |'; do
     grep -Fq -- "$needle" <<<"$section" ||
       fail "unsent report table does not cover <$needle>"
   done
@@ -632,7 +632,7 @@ test_recovery_section_has_project_path() {
 }
 
 test_recovery_section_has_goal_path() {
-  recovery_section_contains '- goal: `atct_goal_handoff_complete` → `atct_goal_handoff_request` (the commander must issue the handoff again)'
+  recovery_section_contains '- goal: `atct_goal_handoff_complete` → `atct_goal_handoff_request` (legacy/out-of-order recovery; the commander must issue the handoff again)'
   recovery_section_contains 'the subcommander cannot reissue it, and the goal waits on the'
 }
 
@@ -872,7 +872,7 @@ test_goal_handoff_completion_keeps_one_normal_path() {
   completion_step="$(sed -n '/When all task handoffs are accepted, record the goal review request by calling/,/^$/p' <<<"$goal_section")"
   ! grep -Fq -- 'atct_goal_handoff_report_amend' <<<"$goal_section" || fail 'normal goal completion must not name the repair tool'
   grep -Fq -- '`atct_goal_handoff_review_request`' <<<"$completion_step" || fail 'goal completion must start with a review request'
-  grep -Fq -- '`complete_report`' <<<"$goal_section" || fail 'goal completion must require complete_report'
+  grep -Fq -- 'the completion report while the handoff remains open' <<<"$goal_section" || fail 'goal review request must record the completion report while the handoff remains open'
 }
 
 test_handoff_report_repair_follows_goal_delegation() {
@@ -983,7 +983,8 @@ test_delegated_claim_contract_is_explicit() {
   assert_file_contains '`handoff_id` and `monitor_token` are optional' "$atct_skill"
   assert_file_contains 'passing only the `goal_id` and `handoff_id`' "$atct_skill"
   assert_file_contains 'never pass `session_key` or `monitor_token`' "$atct_skill"
-  assert_file_contains '`atct_goal_handoff_complete` with the `goal_id` provided in this request' "$atct_skill"
+  assert_file_contains '`atct_goal_review_complete` with the `goal_id` provided in this request.' "$atct_skill"
+  assert_file_not_contains '`atct_goal_review_complete` with the `goal_id` provided in this request and a `complete_report`' "$atct_skill"
   assert_file_contains 'and a `complete_report`' "$atct_skill"
   assert_file_contains 'Do this before starting work.' "$atct_skill"
   assert_file_contains 'When the work is complete, record the review request by calling `atct_task_handoff_review_request`' "$atct_skill"
@@ -1240,17 +1241,17 @@ test_goal_completion_is_commander_owned() {
   [[ -n "$flow" ]] || fail 'goal delegation section omits the goal completion order'
   [[ "$flow" == *'atct_goal_handoff_review_request`'*'atct_goal_handoff_review_receive`'* ]] ||
     fail 'goal handoff review request must precede commander review receive'
-  [[ "$flow" == *'atct_goal_handoff_review_receive`'*'atct_goal_handoff_complete`'* ]] ||
-    fail 'commander review receive must precede goal handoff completion'
-  [[ "$flow" == *'atct_goal_handoff_complete`'*'atct_goal_review_request`'* ]] ||
-    fail 'goal handoff completion must precede human goal review'
-  [[ "$flow" == *'atct_goal_review_request`'*'atct_goal_complete`'* ]] ||
-    fail 'commander final goal completion must follow human review'
+  [[ "$flow" == *'atct_goal_handoff_review_receive`'*'atct_goal_review_request`'* ]] ||
+    fail 'commander review receipt must precede human goal review'
+  [[ "$flow" == *'atct_goal_review_request`'*'atct_goal_review_complete`'* ]] ||
+    fail 'human goal review must precede atomic finalization'
+  ! grep -Fq -- 'atct_goal_handoff_complete` → `atct_goal_review_request`' <<<"$flow" ||
+    fail 'normal lifecycle must not close the handoff before human review'
 
-  grep -Fq -- 'only the commander may call `atct_goal_handoff_complete`' <<<"$section" ||
-    fail 'goal delegation section must assign goal handoff completion to commander'
-  grep -Fq -- 'only the commander may call `atct_goal_complete`' <<<"$section" ||
-    fail 'goal delegation section must assign final goal completion to commander'
+  grep -Fq -- 'only the commander may call `atct_goal_review_request`' <<<"$section" ||
+    fail 'goal delegation section must assign human goal review request to commander'
+  grep -Fq -- 'only the commander may call `atct_goal_review_complete`' <<<"$section" ||
+    fail 'goal delegation section must assign atomic goal review completion to commander'
   assert_file_not_contains 'record completion by calling `atct_goal_complete` and then `atct_goal_handoff_complete`' "$REPO_ROOT/skills/atct/SKILL.md"
 }
 
