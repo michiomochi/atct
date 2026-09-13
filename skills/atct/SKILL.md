@@ -280,8 +280,8 @@ that worker is started:
 4. Put these exact instructions at the very beginning of the request:
 
    > First record receipt of the handoff by calling `atct_task_handoff_receive`
-   > with the `task_id` provided in this request and the exact `session_key`
-   > (plus `monitor_token`, when emitted) from SessionStart. Do this before
+   > with the `task_id` and `handoff_id` provided in this request, and the exact
+   > `session_key` (plus the optional `monitor_token`, when emitted) from SessionStart. Do this before
    > starting work. Do not substitute your agent name or token.
    >
    > Then invoke the `atct_role` MCP tool with `expected_role` set to
@@ -423,9 +423,9 @@ that subcommander is started:
    > First call `atct_session_identify` before any other atct call. If SessionStart emitted `ATCT session key: <session_id> ... monitor_token <monitor_token>`, pass those exact values as `session_key` and `monitor_token`; do not substitute your agent name or token. Only if no SessionStart key was emitted, use your stable full agent name and omit `monitor_token`.
    >
    > Then record receipt of the goal handoff by calling
-   > `atct_goal_handoff_receive` with only the `goal_id` provided in this request.
-   > Do this before starting work. Do not pass a handoff ID or session; ATCT
-   > supplies them.
+   > `atct_goal_handoff_receive` with the `goal_id` provided in this request and the exact `session_key` from SessionStart.
+   > `handoff_id` and `monitor_token` are optional; pass them when available.
+   > Do this before starting work. Do not substitute your agent name or token.
    >
    > Then invoke the `atct_role` MCP tool with `expected_role` set to
    > `subcommander`. If it reports `matches: false`, do not start work; return
@@ -453,7 +453,8 @@ that subcommander is started:
    > `goal_id`, and a non-empty `review_request_report`.
    >
    > The commander receives that review with
-   > `atct_goal_handoff_review_receive` and reviews the goal's implementation.
+   > `atct_goal_handoff_review_receive`, passing only the `goal_id` and `handoff_id`;
+   > never pass `session_key` or `monitor_token`.
 
    The order matters: the role is derived from a received, uncompleted goal
    handoff, so checking it before receipt always returns `matches: false`.
