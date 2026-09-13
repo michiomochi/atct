@@ -976,10 +976,13 @@ test_delegated_claim_contract_is_explicit() {
   assert_file_contains 'The loop coordinates delegated work.' "$start_skill"
   assert_file_contains 'Record the handoff before waking the worker.' "$atct_skill"
   assert_file_contains 'The delegator must call `atct_task_handoff_request`' "$atct_skill"
-  assert_file_contains 'the `task_id` provided in this request and the exact `session_key`' "$atct_skill"
-  assert_file_contains 'the exact `session_key`' "$atct_skill"
+  assert_file_contains 'the `task_id` and `handoff_id` provided in this request' "$atct_skill"
+  assert_file_contains '`session_key` (plus the optional `monitor_token`, when emitted) from SessionStart.' "$atct_skill"
   assert_file_contains 'The delegator must call `atct_goal_handoff_request`' "$atct_skill"
-  assert_file_contains 'with only the `goal_id` provided in this request.' "$atct_skill"
+  assert_file_contains 'with the `goal_id` provided in this request and the exact `session_key` from SessionStart.' "$atct_skill"
+  assert_file_contains '`handoff_id` and `monitor_token` are optional' "$atct_skill"
+  assert_file_contains 'passing only the `goal_id` and `handoff_id`' "$atct_skill"
+  assert_file_contains 'never pass `session_key` or `monitor_token`' "$atct_skill"
   assert_file_contains '`atct_goal_handoff_complete` with the `goal_id` provided in this request' "$atct_skill"
   assert_file_contains 'and a `complete_report`' "$atct_skill"
   assert_file_contains 'Do this before starting work.' "$atct_skill"
@@ -1007,7 +1010,8 @@ test_delegated_claim_contract_is_explicit() {
   assert_file_not_contains 'The worker must run this check itself before doing any work.' "$atct_skill"
   assert_file_not_contains "the delegator's identity" "$atct_skill"
   assert_file_not_contains 'Do this whenever convenient.' "$atct_skill"
-  assert_file_not_contains 'atct_goal_handoff_receive` with only the `handoff_id` provided in this request.' "$atct_skill"
+  assert_file_not_contains 'atct_goal_handoff_receive` with only the `goal_id` provided in this request.' "$atct_skill"
+  assert_file_not_contains 'Do not pass a handoff ID or session; ATCT' "$atct_skill"
 }
 
 test_declared_task_content_fix_contract_is_explicit() {
@@ -1043,6 +1047,11 @@ test_start_session_key_contract_is_explicit() {
 
   assert_file_contains 'call `atct_session_identify`' "$start_skill"
   assert_file_contains '`session_key` and `monitor_token`' "$start_skill"
+  assert_file_contains 'atct_task_handoff_receive` with its `task_id`' "$start_skill"
+  assert_file_contains 'and `handoff_id`, using the exact' "$start_skill"
+  assert_file_contains 'using the exact `session_key` and optional `monitor_token` from' "$start_skill"
+  assert_file_contains 'SessionStart → `atct_role`' "$start_skill"
+  assert_file_not_contains 'handoff receipt with its `task_id` only' "$start_skill"
   assert_file_contains '<project>-<unit>-<role>' "$start_skill"
   assert_file_contains 'sessions into one row.' "$start_skill"
 }
@@ -1065,6 +1074,31 @@ test_role_skills_are_routed_from_shared_atct() {
     assert_file_contains 'atct:atct' "$REPO_ROOT/skills/$role/SKILL.md"
     assert_file_contains "atct:$role" "$atct_skill"
   done
+}
+
+test_role_entry_receives_with_credentials_before_role_check() {
+  local skill receipt_line role_line
+
+  skill="$REPO_ROOT/skills/subcommander/SKILL.md"
+  assert_file_contains 'atct_goal_handoff_receive`' "$skill"
+  assert_file_contains 'exact `session_key` from SessionStart' "$skill"
+  assert_file_contains 'optional `handoff_id` and' "$skill"
+  assert_file_contains '`monitor_token` may be included' "$skill"
+  receipt_line="$(grep -nF 'atct_goal_handoff_receive`' "$skill" | head -1 | cut -d: -f1)"
+  role_line="$(grep -nF 'atct_role` with `expected_role' "$skill" | head -1 | cut -d: -f1)"
+  [[ -n "$receipt_line" && -n "$role_line" ]] || fail 'subcommander entry must name receipt and role check'
+  (( receipt_line < role_line )) || fail 'subcommander must receive the goal handoff before checking its role'
+
+  skill="$REPO_ROOT/skills/executor/SKILL.md"
+  assert_file_contains 'atct_task_handoff_receive`' "$skill"
+  assert_file_contains 'the `task_id` and `handoff_id` provided' "$skill"
+  assert_file_contains 'exact `session_key` from SessionStart' "$skill"
+  assert_file_contains 'and optional' "$skill"
+  assert_file_contains '`monitor_token`' "$skill"
+  receipt_line="$(grep -nF 'atct_task_handoff_receive`' "$skill" | head -1 | cut -d: -f1)"
+  role_line="$(grep -nF 'atct_role` with `expected_role' "$skill" | head -1 | cut -d: -f1)"
+  [[ -n "$receipt_line" && -n "$role_line" ]] || fail 'executor entry must name receipt and role check'
+  (( receipt_line < role_line )) || fail 'executor must receive the task handoff before checking its role'
 }
 
 test_atct_skill_requires_execution_flow() {
@@ -1699,6 +1733,7 @@ test_start_identifies_before_monitor
 test_start_session_key_contract_is_explicit
 test_start_forces_commander_claim
 test_role_skills_are_routed_from_shared_atct
+test_role_entry_receives_with_credentials_before_role_check
 test_atct_skill_requires_execution_flow
 test_start_explains_claim_recovery_boundary
 test_start_explains_mcp_reconnect_gap

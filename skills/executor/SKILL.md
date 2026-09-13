@@ -5,8 +5,11 @@ description: Use when atct_role reports executor for a received task handoff and
 
 # ATCT executor
 
-`atct:atct` is the SSOT for shared ATCT rules. First call `atct_role` with
-`expected_role` set to `executor`; on a mismatch, stop.
+`atct:atct` is the SSOT for shared ATCT rules. First record the task handoff by
+calling `atct_task_handoff_receive` with the `task_id` and `handoff_id` provided
+in the handoff, the exact `session_key` from SessionStart, and optional
+`monitor_token`. Then call `atct_role` with `expected_role` set to `executor`; on
+a mismatch, stop.
 
 - Implement and run only the verification named in the task handoff.
 - Use only `atct_session_identify`, `atct_task_handoff_receive`, `atct_role`,

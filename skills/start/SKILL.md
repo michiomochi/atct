@@ -77,8 +77,9 @@ monitored interactive session.
 For a worker, the delegator first records its task handoff, creates a fresh
 worker pane, and runs `herdr pane run <pane> atct codex monitor -- <codex args>`
 before any worker process. The worker then
-performs `atct_session_identify` → handoff receipt with its `task_id` only →
-`atct_role`. A plain `herdr agent start` launch bypasses the monitor wrapper and
+performs `atct_session_identify` → `atct_task_handoff_receive` with its `task_id`
+and `handoff_id`, using the exact `session_key` and optional `monitor_token` from
+SessionStart → `atct_role`. A plain `herdr agent start` launch bypasses the monitor wrapper and
 is forbidden for a monitored worker.
 
 ### Liveness is a recheck, not authority
