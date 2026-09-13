@@ -10,7 +10,8 @@ RUN_OUTPUT=''
 RUN_ERROR=''
 RUN_STATUS=0
 FAKE_BIN=''
-FAKE_VERSION='0.63.1'
+PLUGIN_VERSION="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["version"])' "$REPO_ROOT/.claude-plugin/plugin.json")"
+FAKE_VERSION="$PLUGIN_VERSION"
 
 fail() {
   printf 'FAIL: %s\n' "$*" >&2
@@ -200,7 +201,7 @@ test_older_atct_prints_homebrew_upgrade_instruction_without_decision() {
   assert_eq 0 "$RUN_STATUS" 'older atct hook status'
   assert_empty "$RUN_OUTPUT"
   assert_eq 'ATCT: upgrade the CLI with: brew upgrade --cask michiomochi/tap/atct' "$RUN_ERROR" 'older atct stderr'
-  FAKE_VERSION='0.63.1'
+  FAKE_VERSION="$PLUGIN_VERSION"
 }
 
 test_context_failure_is_ignored() {

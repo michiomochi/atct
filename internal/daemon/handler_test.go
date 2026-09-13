@@ -1976,6 +1976,12 @@ func runSessionStartHookForContractTest(t *testing.T, atctScript string) (string
 	if err != nil {
 		t.Fatalf("read plugin manifest: %v", err)
 	}
+	var plugin struct {
+		Version string `json:"version"`
+	}
+	if err := json.Unmarshal(manifest, &plugin); err != nil || plugin.Version == "" {
+		t.Fatalf("decode plugin manifest version: %v", err)
+	}
 	if err := os.WriteFile(filepath.Join(pluginDir, "plugin.json"), manifest, 0o644); err != nil {
 		t.Fatalf("write plugin manifest: %v", err)
 	}
@@ -1983,7 +1989,7 @@ func runSessionStartHookForContractTest(t *testing.T, atctScript string) (string
 	if err := os.WriteFile(bodyPath, []byte(atctScript), 0o755); err != nil {
 		t.Fatalf("write fake atct body: %v", err)
 	}
-	fakeAtct := "#!/usr/bin/env bash\nif [[ \"${1:-}\" == version ]]; then printf '0.63.1\\n'; exit 0; fi\nexec \"$(dirname \"$0\")/atct-body\" \"$@\"\n"
+	fakeAtct := fmt.Sprintf("#!/usr/bin/env bash\nif [[ \"${1:-}\" == version ]]; then printf '%%s\\n' %q; exit 0; fi\nexec \"$(dirname \"$0\")/atct-body\" \"$@\"\n", plugin.Version)
 	if err := os.WriteFile(filepath.Join(binDir, "atct"), []byte(fakeAtct), 0o755); err != nil {
 		t.Fatalf("write fake atct: %v", err)
 	}

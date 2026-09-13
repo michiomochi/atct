@@ -202,6 +202,8 @@ PY
 }
 
 test_stop_hooks_share_server_check() {
+  local plugin_version
+  plugin_version="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["version"])' "$REPO_ROOT/.codex-plugin/plugin.json")"
   if python3 - "$REPO_ROOT/hooks/claude-hooks.json" <<'PY'
 import json
 import sys
@@ -234,11 +236,11 @@ PY
 
   mkdir -p "$(dirname "$hook")" "$(dirname "$adjacent")" "$fixture/.claude-plugin"
   cp "$REPO_ROOT/hooks/stop" "$hook"
-  printf '{"version":"0.63.1"}\n' >"$fixture/.claude-plugin/plugin.json"
+  printf '{"version":"%s"}\n' "$plugin_version" >"$fixture/.claude-plugin/plugin.json"
   cat >"$adjacent" <<'SCRIPT'
 #!/usr/bin/env bash
 if [[ "${1:-}" == version ]]; then
-  printf '0.63.1\n'
+  printf '%s\n' "$ATCT_TEST_VERSION"
   exit 0
 fi
 input="$(cat)"
@@ -251,6 +253,7 @@ if [[ "$input" == *'"stop_hook_active":true'* ]]; then exit 0; fi
 printf '%s' '{"decision":"block","reason":"ATCT work remains: shared session"}'
 SCRIPT
   chmod +x "$hook" "$adjacent"
+  export ATCT_TEST_VERSION="$plugin_version"
 
   output="$(PATH="$(dirname "$adjacent"):$PATH" ATCT_STOP_LOG="$log" /bin/bash "$hook" <<< "$input")"
   assert_eq '{"decision":"block","reason":"ATCT work remains: shared session"}' "$output" 'Claude Stop hook must return the shared stop-check response'
@@ -322,7 +325,7 @@ PY
   local missing_hook="$missing_fixture/hooks/stop"
   mkdir -p "$(dirname "$missing_hook")" "$missing_fixture/.claude-plugin"
   cp "$REPO_ROOT/hooks/stop" "$missing_hook"
-  printf '{"version":"0.63.1"}\n' >"$missing_fixture/.claude-plugin/plugin.json"
+  printf '{"version":"%s"}\n' "$plugin_version" >"$missing_fixture/.claude-plugin/plugin.json"
   output="$(PATH="/usr/bin:/bin" /bin/bash "$missing_hook" <<< "$input")"
   assert_eq '{"decision":"block","reason":"ATCT: install or upgrade the CLI with: brew install --cask michiomochi/tap/atct"}' "$output" 'missing Claude Stop hook must block with Homebrew installation instruction'
 
@@ -331,7 +334,7 @@ PY
   local older_atct="$older_fixture/bin/atct"
   mkdir -p "$(dirname "$older_hook")" "$(dirname "$older_atct")" "$older_fixture/.claude-plugin"
   cp "$REPO_ROOT/hooks/stop" "$older_hook"
-  printf '{"version":"0.63.1"}\n' >"$older_fixture/.claude-plugin/plugin.json"
+  printf '{"version":"%s"}\n' "$plugin_version" >"$older_fixture/.claude-plugin/plugin.json"
   cat >"$older_atct" <<'SCRIPT'
 #!/usr/bin/env bash
 if [[ "${1:-}" == version ]]; then
