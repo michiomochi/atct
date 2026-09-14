@@ -2235,3 +2235,17 @@ func TestClaudeMonitorActionWriterExcludesRawDiagnostics(t *testing.T) {
 		t.Fatalf("diagnostics = %q, want %q", got, want)
 	}
 }
+
+func TestClaudeMonitorActionWriterSkipsReviewReceipt(t *testing.T) {
+	var monitor bytes.Buffer
+	writer := monitorActionWriter{writer: &monitor}
+	if err := writer.Sink(watchAgentAction{line: "review request"}); err != nil {
+		t.Fatalf("write request: %v", err)
+	}
+	if err := writer.Sink(watchAgentAction{line: "review receipt", controlOnly: true}); err != nil {
+		t.Fatalf("write receipt: %v", err)
+	}
+	if got, want := monitor.String(), "review request\n"; got != want {
+		t.Fatalf("monitor output = %q, want %q", got, want)
+	}
+}

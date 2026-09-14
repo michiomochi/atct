@@ -77,6 +77,34 @@ func TestWatchAgentActionSelectorMembership(t *testing.T) {
 	}
 }
 
+func TestWatchAgentActionSelectorMarksOnlyReviewReceiptControlOnly(t *testing.T) {
+	cases := []struct {
+		eventName   string
+		controlOnly bool
+	}{
+		{eventName: "task.handoff.review.request"},
+		{eventName: "task.handoff.review.receive", controlOnly: true},
+		{eventName: "task.handoff.review.reject"},
+		{eventName: "task.handoff.review.reject.receive"},
+		{eventName: "goal.handoff.review.receive", controlOnly: true},
+		{eventName: "plan.handoff.review.receive", controlOnly: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.eventName, func(t *testing.T) {
+			action, ok := selectWatchAgentAction(
+				"review", tc.eventName,
+				watchDecision{HandoffID: "handoff-1"},
+			)
+			if !ok {
+				t.Fatalf("selectWatchAgentAction(%q) rejected action", tc.eventName)
+			}
+			if action.controlOnly != tc.controlOnly {
+				t.Fatalf("controlOnly = %v, want %v", action.controlOnly, tc.controlOnly)
+			}
+		})
+	}
+}
+
 func TestClaudeAndCodexAgentActionParity(t *testing.T) {
 	starter := &fakeCodexTurnStarter{}
 	bridge := newCodexMonitorBridge(starter, "thread-1")
@@ -91,8 +119,10 @@ func TestClaudeAndCodexAgentActionParity(t *testing.T) {
 	for _, tc := range frozenWatchAgentActionCases() {
 		action, ok := selectWatchAgentAction(tc.line, tc.eventName, tc.decision)
 		if ok {
-			if err := claudeSink(action); err != nil {
-				t.Fatalf("Claude sink(%s): %v", tc.name, err)
+			if !action.controlOnly {
+				if err := claudeSink(action); err != nil {
+					t.Fatalf("Claude sink(%s): %v", tc.name, err)
+				}
 			}
 			if err := codexSink(action); err != nil {
 				t.Fatalf("Codex sink(%s): %v", tc.name, err)
