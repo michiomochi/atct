@@ -289,6 +289,7 @@ SET review_received_by = ?, review_received_at = ?
 WHERE id = ? AND task_id = ?
   AND review_requested_at IS NOT NULL
   AND review_received_at IS NULL
+  AND review_rejected_at IS NULL
   AND completed_report_at IS NULL
   AND recovered_at IS NULL;
 
@@ -426,6 +427,7 @@ SET review_received_by = ?, review_received_at = ?
 WHERE id = ? AND goal_id = ?
   AND review_requested_at IS NOT NULL
   AND review_received_at IS NULL
+  AND review_rejected_at IS NULL
   AND completed_report_at IS NULL
   AND recovered_at IS NULL;
 
@@ -535,6 +537,7 @@ SET review_received_by = ?, review_received_at = ?
 WHERE id = ? AND goal_id = ?
   AND review_requested_at IS NOT NULL
   AND review_received_at IS NULL
+  AND review_rejected_at IS NULL
   AND completed_report_at IS NULL;
 
 -- name: RecoverPlanHandoffReview :execresult
