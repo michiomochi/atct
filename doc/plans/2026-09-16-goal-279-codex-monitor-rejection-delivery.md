@@ -4,7 +4,7 @@
 
 **Goal:** Prevent Codex from silently dropping one unreceived plan, goal, or task review-rejection action when `turn/start` has an unknown result, without falsely acknowledging another thread turn or automatically duplicating a possibly accepted turn.
 
-**Architecture:** Keep watcher lifecycle deduplication and review-receipt control actions unchanged.  A `turn/started` has no request correlation and is never used as an acknowledgement.  A successful `turn/start` response is the only dequeue proof.  An unknown result terminates the bridge/watch as delivery-uncertain; a later, explicitly started monitor reconciles the durable unreceived lifecycle state once.
+**Architecture:** Keep watcher lifecycle deduplication and review-receipt control actions unchanged.  A `turn/started` has no request correlation and is never used as an acknowledgement.  A successful `turn/start` response is the only dequeue proof.  An unknown result or App Server-close before the response terminates the bridge/watch as delivery-uncertain; a later, explicitly started monitor reconciles the durable unreceived lifecycle state once. Ordinary known transient failures retain their retry behavior.
 
 **Tech Stack:** Go; existing `cmd/atct` Codex monitor, monitor-binding, and watch tests.
 
@@ -77,11 +77,13 @@
 
   Do not add acknowledgement state to `HandleNotification`; `turn/started`
   lacks a correlation key.  In `pump`, retain normal dequeue after a successful
-  non-empty response.  For `errCodexTurnSubmitUnknown`, set `disabled = true`,
-  clear the active reservation, and return the error without treating a queued
+  non-empty response.  For `errCodexTurnSubmitUnknown` and the existing App
+  Server-close terminal branch, set `disabled = true`, clear the active
+  reservation, and return the error without treating or removing the queued
   action as delivered.  In `ActionSinkWithContext`, return that terminal error
   so `watchLoop` exits through `watchSinkError` and the supervisor emits its
-  existing disabled-monitor report.  Keep App Server closed behavior intact.
+  existing disabled-monitor report.  Keep ordinary transient retry behavior
+  intact.
 
 - [ ] **Step 4: Run the focused bridge tests.**
 

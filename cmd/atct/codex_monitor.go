@@ -863,9 +863,6 @@ func (b *codexMonitorBridge) pump(ctx context.Context) error {
 			b.stateMu.Lock()
 			if b.app != nil && b.app.Err() != nil {
 				b.disabled = true
-				if len(b.queue) > 0 {
-					b.queue = b.queue[1:]
-				}
 			} else if errors.Is(err, errCodexTurnSubmitUnknown) {
 				b.disabled = true
 			}

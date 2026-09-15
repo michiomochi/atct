@@ -6,7 +6,8 @@ An unreceived `plan|goal|task.handoff.review.reject` action can disappear
 between the Codex bridge queue and `turn/start`.  The watcher has already put
 the action in its per-lifecycle `wakeupDelivered` map, so reconciliation will
 not offer that generation again.  The bridge currently removes the queue head
-when `StartTurn` returns `errCodexTurnSubmitUnknown`, even though no
+when `StartTurn` returns `errCodexTurnSubmitUnknown`, or when the App Server
+connection closes before a response is known, even though no
 `turn/started` notification has confirmed that Codex accepted it.  A later
 liveness turn can therefore arrive while the rejection action never did.
 
@@ -43,9 +44,11 @@ Choose safe at-most-once submission over an unprovable retry:
 
 1. Only a successful `turn/start` response with its non-empty `turn.id` may
    dequeue the reserved head.
-2. On `errCodexTurnSubmitUnknown`, do not use `turn/started` as a proxy and do
-   not retry the head.  Mark the bridge terminal, propagate a `watchSinkError`,
-   and let the supervisor print its existing disabled-monitor diagnostic.
+2. On `errCodexTurnSubmitUnknown` or an App Server-close error, do not use
+   `turn/started` as a proxy and do not retry or dequeue the head.  Mark the
+   bridge terminal, propagate a `watchSinkError`, and let the supervisor print
+   its existing disabled-monitor diagnostic. Ordinary known transient failures
+   retain their existing retry behavior.
 3. The durable unreceived rejection remains in the handoff table.  Recovery is
    an explicit fresh monitor lifecycle: its reconciliation selects the current
    rejection generation once.  That restart is operator-authorized because it
@@ -78,6 +81,8 @@ Add bridge tests for plan, goal, and task rejection actions that simulate:
 - an unknown `turn/start`: the watcher terminates with a delivery-uncertain
   error, the supervisor disables the monitor, and no automatic retry creates a
   duplicate turn;
+- an App Server-close error during `turn/start`: the reserved head remains
+  queued and a later idle notification does not submit it again;
 - a fresh monitor reconciliation after that failure selects the durable,
   unreceived rejection generation once;
 - a control-only review receipt followed by a newer rejection: the stale

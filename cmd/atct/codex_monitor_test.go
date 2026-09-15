@@ -820,10 +820,12 @@ func TestCodexMonitorIdleThreadStartedRetriesTransientStartFailure(t *testing.T)
 	}
 }
 
-func TestCodexMonitorAppServerClosedDropsPossiblySubmittedItem(t *testing.T) {
+func TestCodexMonitorAppServerClosedRetainsPossiblySubmittedItem(t *testing.T) {
 	app := newFakeCodexMonitorApp()
 	app.notificationErr = errors.New("App Server connection lost")
+	startCalls := 0
 	app.startTurn = func(context.Context, string, string) (codexTurn, error) {
+		startCalls++
 		return codexTurn{}, errors.New("turn start failed")
 	}
 	bridge := newCodexMonitorBridge(app, "thread-1")
@@ -832,8 +834,8 @@ func TestCodexMonitorAppServerClosedDropsPossiblySubmittedItem(t *testing.T) {
 	if err := bridge.Enqueue(ctx, "must-remain-queued"); err == nil {
 		t.Fatal("Enqueue() error = nil, want terminal App Server failure")
 	}
-	if got := bridge.QueueLen(); got != 0 {
-		t.Fatalf("QueueLen() after fatal App Server failure = %d, want 0", got)
+	if got := bridge.QueueLen(); got != 1 {
+		t.Fatalf("QueueLen() after fatal App Server failure = %d, want 1", got)
 	}
 	if !bridge.disabled {
 		t.Fatal("bridge disabled = false, want terminal monitor state")
@@ -848,8 +850,11 @@ func TestCodexMonitorAppServerClosedDropsPossiblySubmittedItem(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("HandleNotification(idle) error = %v, want terminal state to suppress retries", err)
 	}
-	if got := bridge.QueueLen(); got != 0 {
-		t.Fatalf("QueueLen() after terminal idle notification = %d, want 0", got)
+	if got := bridge.QueueLen(); got != 1 {
+		t.Fatalf("QueueLen() after terminal idle notification = %d, want 1", got)
+	}
+	if got := startCalls; got != 1 {
+		t.Fatalf("turn starts after terminal idle notification = %d, want 1", got)
 	}
 }
 
