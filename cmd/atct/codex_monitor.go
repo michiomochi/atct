@@ -858,19 +858,23 @@ func (b *codexMonitorBridge) pump(ctx context.Context) error {
 			b.stateMu.Unlock()
 			return errors.New("Codex monitor bridge has no turn starter")
 		}
-		_, err := starter.StartTurn(ctx, threadID, action.line)
+		turn, err := starter.StartTurn(ctx, threadID, action.line)
 		if err != nil {
-			unknown := errors.Is(err, errCodexTurnSubmitUnknown)
 			b.stateMu.Lock()
 			if b.app != nil && b.app.Err() != nil {
 				b.disabled = true
-				unknown = true
+			} else if errors.Is(err, errCodexTurnSubmitUnknown) {
+				b.disabled = true
 			}
-			if unknown && len(b.queue) > 0 {
-				b.queue = b.queue[1:]
-			}
+			b.active = false
+			b.activeAction = nil
 			b.stateMu.Unlock()
+			return err
+		}
+		if strings.TrimSpace(turn.ID) == "" {
+			err = fmt.Errorf("%w: turn/start response has no turn ID", errCodexTurnSubmitUnknown)
 			b.stateMu.Lock()
+			b.disabled = true
 			b.active = false
 			b.activeAction = nil
 			b.stateMu.Unlock()
@@ -935,9 +939,8 @@ func (b *codexMonitorBridge) ActionSink() watchAgentActionSink {
 
 func (b *codexMonitorBridge) ActionSinkWithContext(ctx context.Context) watchAgentActionSink {
 	return func(action watchAgentAction) error {
-		// A failed turn submission stays in the bridge queue. The watcher must
-		// keep its SSE delivery state and continue consuming events; a later
-		// idle notification retries the queued item.
+		// Transient turn submission failures stay in the bridge queue. Terminal
+		// bridge failures return through the watcher as watchSinkError.
 		if err := b.enqueueAction(ctx, codexMonitorActionFromWatchAction(action)); err != nil {
 			b.stateMu.Lock()
 			disabled := b.disabled
