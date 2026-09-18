@@ -50,7 +50,7 @@ homebrew_casks:
     custom_block: |
       postflight_steps do
         on_macos do
-          run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/atct"]
-          run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/atct-mcp"]
+          run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "atct"], base: :staged_path
+          run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "atct-mcp"], base: :staged_path
         end
       end
