@@ -44,12 +44,13 @@ homebrew_casks:
     description: "The air traffic control tower for your coding agents"
     license: "AGPL-3.0"
     binaries: [atct, atct-mcp]
-    url:
-      verified: github.com/michiomochi/atct
-    hooks:
-      post:
-        install: |
-          if OS.mac?
-            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/atct"]
-            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/atct-mcp"]
-          end
+    # `url.verified` and `postflight` are both deprecated in Homebrew.
+    # postflight_steps takes a restricted step DSL, which goreleaser cannot
+    # emit from `hooks`, so it is written through custom_block.
+    custom_block: |
+      postflight_steps do
+        on_macos do
+          run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/atct"]
+          run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/atct-mcp"]
+        end
+      end
