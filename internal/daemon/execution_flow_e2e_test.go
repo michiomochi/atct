@@ -1,0 +1,575 @@
+package daemon
+
+import (
+	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/michiomochi/atct/internal/domain"
+	"github.com/michiomochi/atct/internal/rpc"
+	"github.com/michiomochi/atct/internal/store"
+)
+
+// flowFixture drives the documented execution flow through the same dispatch
+// entry point every agent reaches over MCP. See doc/execution-flow.md.
+type flowFixture struct {
+	t              *testing.T
+	ctx            context.Context
+	store          *store.Store
+	daemon         *Daemon
+	project        domain.Project
+	commanderID    int64
+	subcommanderID int64
+	executorID     int64
+}
+
+func newFlowFixture(t *testing.T) *flowFixture {
+	t.Helper()
+	dir := t.TempDir()
+	s, err := store.Open(filepath.Join(dir, "atct.db"))
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	t.Cleanup(func() { s.Close() })
+
+	ctx := context.Background()
+	project, err := s.CreateProject(ctx, "atct", filepath.Join(dir, "repo"))
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+
+	f := &flowFixture{t: t, ctx: ctx, store: s, daemon: New(s), project: project}
+	f.commanderID = f.newSession()
+	f.subcommanderID = f.newSession()
+	f.executorID = f.newSession()
+	if _, err := s.ClaimProject(ctx, project.ID, f.commanderID); err != nil {
+		t.Fatalf("ClaimProject: %v", err)
+	}
+	return f
+}
+
+func (f *flowFixture) newSession() int64 {
+	f.t.Helper()
+	id, err := f.store.RegisterAgentSession(f.ctx, os.Getpid())
+	if err != nil {
+		f.t.Fatalf("RegisterAgentSession: %v", err)
+	}
+	if err := f.store.AssociateAgentSessionWithProject(f.ctx, id, f.project.ID); err != nil {
+		f.t.Fatalf("AssociateAgentSessionWithProject: %v", err)
+	}
+	return id
+}
+
+// call dispatches one RPC and fails the test when it errors.
+func (f *flowFixture) call(method string, params any) json.RawMessage {
+	f.t.Helper()
+	raw, err := f.callErr(method, params)
+	if err != nil {
+		f.t.Fatalf("%s: %v", method, err)
+	}
+	return raw
+}
+
+func (f *flowFixture) callErr(method string, params any) (json.RawMessage, error) {
+	f.t.Helper()
+	encoded, err := json.Marshal(params)
+	if err != nil {
+		f.t.Fatalf("marshal %s params: %v", method, err)
+	}
+	return f.daemon.dispatch(f.ctx, rpc.Request{Method: method, Params: encoded})
+}
+
+func (f *flowFixture) newGoal(content string) domain.Goal {
+	f.t.Helper()
+	goal, err := f.store.CreateGoal(f.ctx, f.project.ID, content, "human")
+	if err != nil {
+		f.t.Fatalf("CreateGoal: %v", err)
+	}
+	if goal.Status != domain.GoalActive {
+		f.t.Fatalf("CreateGoal status = %q, want %q", goal.Status, domain.GoalActive)
+	}
+	return goal
+}
+
+func (f *flowFixture) task(goalID, taskID int64) domain.Task {
+	f.t.Helper()
+	tasks, err := f.store.ListTasks(f.ctx, goalID)
+	if err != nil {
+		f.t.Fatalf("ListTasks: %v", err)
+	}
+	for _, task := range tasks {
+		if task.ID == taskID {
+			return task
+		}
+	}
+	f.t.Fatalf("task %d not found under goal %d", taskID, goalID)
+	return domain.Task{}
+}
+
+func (f *flowFixture) goal(goalID int64) domain.Goal {
+	f.t.Helper()
+	goal, err := f.store.GetGoal(f.ctx, goalID)
+	if err != nil {
+		f.t.Fatalf("GetGoal(%d): %v", goalID, err)
+	}
+	return goal
+}
+
+// --- documented flow steps, in the order doc/execution-flow.md lists them ---
+
+func (f *flowFixture) goalHandoffRequest(id string, goalID int64) {
+	f.call("goal.handoff.request", goalHandoffRequestParams{
+		HandoffID: id, GoalID: goalID, RequestedBy: f.commanderID,
+		RequestReport: "deliver the goal",
+	})
+}
+
+func (f *flowFixture) goalHandoffReceive(id string, goalID int64) {
+	f.call("goal.handoff.receive", goalHandoffReceiveParams{
+		HandoffID: id, GoalID: goalID, ReceivedBy: f.subcommanderID,
+	})
+}
+
+func (f *flowFixture) planReviewRequest(id string, goalID int64) {
+	if _, err := f.store.UpdateGoalRequestReport(f.ctx, goalID, "# Spec", "# Plan"); err != nil {
+		f.t.Fatalf("UpdateGoalRequestReport: %v", err)
+	}
+	f.call("plan.handoff.review.request", planHandoffReviewRequestParams{
+		HandoffID: id, GoalID: goalID, RequestedBy: f.subcommanderID,
+		ReviewRequestReport: "review the plan",
+	})
+}
+
+func (f *flowFixture) planReviewReceive(id string, goalID int64) {
+	f.call("plan.handoff.review.receive", planHandoffReviewReceiveParams{
+		HandoffID: id, GoalID: goalID, ReceivedBy: f.commanderID,
+	})
+}
+
+func (f *flowFixture) planComplete(id string, goalID int64) {
+	f.call("plan.handoff.complete", planHandoffCompleteParams{
+		HandoffID: id, GoalID: goalID, AgentSessionID: f.commanderID,
+		CompleteReport: "plan accepted",
+	})
+}
+
+// taskCreateHandoffID returns the handoff the daemon generates when the plan
+// handoff completes. doc/execution-flow.md: "plan 完了時に daemon が自動生成".
+func (f *flowFixture) taskCreateHandoffID(goalID int64) string {
+	f.t.Helper()
+	handoffs, err := f.store.ListTaskCreateHandoffs(f.ctx, goalID)
+	if err != nil {
+		f.t.Fatalf("ListTaskCreateHandoffs: %v", err)
+	}
+	if len(handoffs) != 1 {
+		f.t.Fatalf("task-create handoffs = %d, want 1 generated by plan completion", len(handoffs))
+	}
+	return handoffs[0].ID
+}
+
+func (f *flowFixture) createTasks(goalID int64, titles ...string) []domain.Task {
+	f.t.Helper()
+	handoffID := f.taskCreateHandoffID(goalID)
+	f.call("task.create_handoff.receive", map[string]any{
+		"handoff_id": handoffID, "received_by": f.subcommanderID,
+	})
+	descriptions := make([]string, len(titles))
+	for i := range titles {
+		descriptions[i] = titles[i] + " description"
+	}
+	raw := f.call("task.create", map[string]any{
+		"handoff_id": handoffID, "goal_id": goalID, "agent": "codex",
+		"idempotency_key": "e2e", "titles": titles, "descriptions": descriptions,
+		"agent_session_id": f.subcommanderID,
+	})
+	var envelope struct {
+		Data []domain.Task `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &envelope); err != nil || len(envelope.Data) == 0 {
+		tasks, listErr := f.store.ListTasks(f.ctx, goalID)
+		if listErr != nil {
+			f.t.Fatalf("ListTasks: %v", listErr)
+		}
+		return tasks
+	}
+	return envelope.Data
+}
+
+func (f *flowFixture) runTask(handoffID string, taskID int64) {
+	f.call("task.handoff.request", taskHandoffRequestParams{
+		HandoffID: handoffID, TaskID: taskID, RequestedBy: f.subcommanderID,
+		RequestReport: "implement it",
+	})
+	f.call("task.handoff.receive", taskHandoffReceiveParams{
+		HandoffID: handoffID, TaskID: taskID, ReceivedBy: f.executorID,
+	})
+	f.call("task.handoff.review.request", taskHandoffReviewRequestParams{
+		HandoffID: handoffID, TaskID: taskID, RequestedBy: f.executorID,
+		ReviewRequestReport: "implemented and tested",
+	})
+	f.call("task.handoff.review.receive", taskHandoffReviewReceiveParams{
+		HandoffID: handoffID, TaskID: taskID, ReceivedBy: f.subcommanderID,
+	})
+	f.call("task.handoff.complete", taskHandoffCompleteParams{
+		HandoffID: handoffID, TaskID: taskID, AgentSessionID: f.subcommanderID,
+		CompleteReport: "task accepted",
+	})
+}
+
+func (f *flowFixture) goalReviewRequestToCommander(id string, goalID int64) {
+	f.call("goal.handoff.review.request", goalHandoffReviewRequestParams{
+		HandoffID: id, GoalID: goalID, RequestedBy: f.subcommanderID,
+		ReviewRequestReport: "goal is done",
+	})
+	f.call("goal.handoff.review.receive", goalHandoffReviewReceiveParams{
+		HandoffID: id, GoalID: goalID, ReceivedBy: f.commanderID,
+	})
+}
+
+func (f *flowFixture) requestHumanReview(goalID int64) domain.Decision {
+	f.t.Helper()
+	f.call("goal.review.request", goalReviewRequestParams{
+		GoalID: goalID, AgentSessionID: f.commanderID,
+		WorkDone: "work", NowPossible: "possible", HowToVerify: "verify",
+		Surprises: "none", NeedsReview: "none", NextSteps: "none",
+	})
+	decisions, err := f.store.ListDecisionsForGoal(f.ctx, goalID)
+	if err != nil {
+		f.t.Fatalf("ListDecisionsForGoal: %v", err)
+	}
+	for i := len(decisions) - 1; i >= 0; i-- {
+		if decisions[i].Kind == domain.KindGoalReview {
+			return decisions[i]
+		}
+	}
+	f.t.Fatal("goal.review.request left no goal review decision")
+	return domain.Decision{}
+}
+
+// TestExecutionFlowHappyPath walks the whole chart in doc/execution-flow.md:
+// goal handoff, plan review, task creation, one task through the executor,
+// goal review, human approval, and completion.
+func TestExecutionFlowHappyPath(t *testing.T) {
+	f := newFlowFixture(t)
+	goal := f.newGoal("ship the documented flow")
+
+	f.goalHandoffRequest("gh-1", goal.ID)
+	f.goalHandoffReceive("gh-1", goal.ID)
+
+	f.planReviewRequest("gh-1", goal.ID)
+	f.planReviewReceive("gh-1", goal.ID)
+	f.planComplete("gh-1", goal.ID)
+
+	tasks := f.createTasks(goal.ID, "first task")
+	if len(tasks) != 1 {
+		t.Fatalf("created tasks = %d, want 1", len(tasks))
+	}
+	f.runTask("th-1", tasks[0].ID)
+
+	if got := f.task(goal.ID, tasks[0].ID).Status; got != domain.TaskDone {
+		t.Fatalf("task status = %q, want %q after review completion", got, domain.TaskDone)
+	}
+
+	f.goalReviewRequestToCommander("gh-1", goal.ID)
+
+	// The accepted goal handoff stays open until the human approves.
+	if got := f.goal(goal.ID).Status; got != domain.GoalActive {
+		t.Fatalf("goal status = %q, want %q while the human review is pending", got, domain.GoalActive)
+	}
+
+	decision := f.requestHumanReview(goal.ID)
+	if _, err := f.store.ApproveGoalReview(f.ctx, decision.ID); err != nil {
+		t.Fatalf("ApproveGoalReview: %v", err)
+	}
+
+	f.call("goal.review.complete", goalReviewCompleteParams{
+		GoalID: goal.ID, AgentSessionID: f.commanderID,
+	})
+
+	if got := f.goal(goal.ID).Status; got != domain.GoalDone {
+		t.Fatalf("goal status = %q, want %q after goal.review.complete", got, domain.GoalDone)
+	}
+	handoffs, err := f.store.ListGoalHandoffs(f.ctx, goal.ID)
+	if err != nil {
+		t.Fatalf("ListGoalHandoffs: %v", err)
+	}
+	for _, handoff := range handoffs {
+		if handoff.CompletedReportAt == nil {
+			t.Fatalf("goal handoff %s still open after goal.review.complete", handoff.ID)
+		}
+	}
+}
+
+// TestExecutionFlowPlanRejectReusesHandoff covers C5 → S3R → S3: a rejected
+// plan is corrected and re-reviewed on the same handoff, never a new one.
+func TestExecutionFlowPlanRejectReusesHandoff(t *testing.T) {
+	f := newFlowFixture(t)
+	goal := f.newGoal("plan gets rejected once")
+
+	f.goalHandoffRequest("gh-1", goal.ID)
+	f.goalHandoffReceive("gh-1", goal.ID)
+	f.planReviewRequest("gh-1", goal.ID)
+	f.planReviewReceive("gh-1", goal.ID)
+
+	f.call("plan.handoff.review.reject", planHandoffReviewRejectParams{
+		HandoffID: "gh-1", GoalID: goal.ID, ReviewerID: f.commanderID,
+		RejectReport: "the plan misses the failure path",
+	})
+	f.call("plan.handoff.review.reject.receive", planHandoffReviewReceiveParams{
+		HandoffID: "gh-1", GoalID: goal.ID, ReceivedBy: f.subcommanderID,
+	})
+
+	before := f.planHandoffIDs(goal.ID)
+
+	f.planReviewRequest("gh-1", goal.ID)
+	f.planReviewReceive("gh-1", goal.ID)
+	f.planComplete("gh-1", goal.ID)
+
+	after := f.planHandoffIDs(goal.ID)
+	if len(after) != len(before) {
+		t.Fatalf("plan handoffs = %d after the retry, want %d; the retry must reuse the handoff", len(after), len(before))
+	}
+	if _, err := f.store.ListTaskCreateHandoffs(f.ctx, goal.ID); err != nil {
+		t.Fatalf("ListTaskCreateHandoffs: %v", err)
+	}
+	f.taskCreateHandoffID(goal.ID) // plan completion still generates exactly one
+}
+
+// TestExecutionFlowTaskRejectReusesHandoff covers S7 → E4 → E2: a rejected task
+// review is redone on the same task handoff.
+func TestExecutionFlowTaskRejectReusesHandoff(t *testing.T) {
+	f := newFlowFixture(t)
+	goal := f.newGoal("task gets rejected once")
+	f.throughPlan("gh-1", goal.ID)
+	tasks := f.createTasks(goal.ID, "only task")
+
+	f.call("task.handoff.request", taskHandoffRequestParams{
+		HandoffID: "th-1", TaskID: tasks[0].ID, RequestedBy: f.subcommanderID,
+		RequestReport: "implement it",
+	})
+	f.call("task.handoff.receive", taskHandoffReceiveParams{
+		HandoffID: "th-1", TaskID: tasks[0].ID, ReceivedBy: f.executorID,
+	})
+	f.call("task.handoff.review.request", taskHandoffReviewRequestParams{
+		HandoffID: "th-1", TaskID: tasks[0].ID, RequestedBy: f.executorID,
+		ReviewRequestReport: "first attempt",
+	})
+	f.call("task.handoff.review.receive", taskHandoffReviewReceiveParams{
+		HandoffID: "th-1", TaskID: tasks[0].ID, ReceivedBy: f.subcommanderID,
+	})
+	f.call("task.handoff.review.reject", taskHandoffReviewRejectParams{
+		HandoffID: "th-1", TaskID: tasks[0].ID, ReviewerID: f.subcommanderID,
+		RejectReport: "no test covers the new branch",
+	})
+	f.call("task.handoff.review.reject.receive", taskHandoffReviewReceiveParams{
+		HandoffID: "th-1", TaskID: tasks[0].ID, ReceivedBy: f.executorID,
+	})
+
+	if got := f.task(goal.ID, tasks[0].ID).Status; got == domain.TaskDone {
+		t.Fatalf("task status = %q after a rejection, want it still open", got)
+	}
+
+	f.call("task.handoff.review.request", taskHandoffReviewRequestParams{
+		HandoffID: "th-1", TaskID: tasks[0].ID, RequestedBy: f.executorID,
+		ReviewRequestReport: "second attempt, test added",
+	})
+	f.call("task.handoff.review.receive", taskHandoffReviewReceiveParams{
+		HandoffID: "th-1", TaskID: tasks[0].ID, ReceivedBy: f.subcommanderID,
+	})
+	f.call("task.handoff.complete", taskHandoffCompleteParams{
+		HandoffID: "th-1", TaskID: tasks[0].ID, AgentSessionID: f.subcommanderID,
+		CompleteReport: "accepted on the retry",
+	})
+
+	handoffs, err := f.store.ListTaskHandoffs(f.ctx, tasks[0].ID)
+	if err != nil {
+		t.Fatalf("ListTaskHandoffs: %v", err)
+	}
+	if len(handoffs) != 1 {
+		t.Fatalf("task handoffs = %d, want 1 reused across the rejection", len(handoffs))
+	}
+	if got := f.task(goal.ID, tasks[0].ID).Status; got != domain.TaskDone {
+		t.Fatalf("task status = %q, want %q", got, domain.TaskDone)
+	}
+}
+
+func (f *flowFixture) throughPlan(handoffID string, goalID int64) {
+	f.t.Helper()
+	f.goalHandoffRequest(handoffID, goalID)
+	f.goalHandoffReceive(handoffID, goalID)
+	f.planReviewRequest(handoffID, goalID)
+	f.planReviewReceive(handoffID, goalID)
+	f.planComplete(handoffID, goalID)
+}
+
+func (f *flowFixture) planHandoffIDs(goalID int64) []string {
+	f.t.Helper()
+	handoffs, err := f.store.ListPlanHandoffs(f.ctx, goalID)
+	if err != nil {
+		f.t.Fatalf("ListPlanHandoffs: %v", err)
+	}
+	ids := make([]string, 0, len(handoffs))
+	for _, handoff := range handoffs {
+		ids = append(ids, handoff.ID)
+	}
+	return ids
+}
+
+// TestExecutionFlowGoalRejectReusesHandoff covers C6 → S9 → S8: the commander
+// rejects the goal handoff and the subcommander re-requests on the same one.
+func TestExecutionFlowGoalRejectReusesHandoff(t *testing.T) {
+	f := newFlowFixture(t)
+	goal := f.newGoal("goal handoff gets rejected once")
+	f.throughPlan("gh-1", goal.ID)
+	tasks := f.createTasks(goal.ID, "only task")
+	f.runTask("th-1", tasks[0].ID)
+
+	f.goalReviewRequestToCommander("gh-1", goal.ID)
+	f.call("goal.handoff.review.reject", goalHandoffReviewRejectParams{
+		HandoffID: "gh-1", GoalID: goal.ID, ReviewerID: f.commanderID,
+		RejectReport: "the report does not name how to verify",
+	})
+	f.call("goal.handoff.review.reject.receive", goalHandoffReviewReceiveParams{
+		HandoffID: "gh-1", GoalID: goal.ID, ReceivedBy: f.subcommanderID,
+	})
+
+	f.goalReviewRequestToCommander("gh-1", goal.ID)
+
+	handoffs, err := f.store.ListGoalHandoffs(f.ctx, goal.ID)
+	if err != nil {
+		t.Fatalf("ListGoalHandoffs: %v", err)
+	}
+	if len(handoffs) != 1 {
+		t.Fatalf("goal handoffs = %d, want 1 reused across the rejection", len(handoffs))
+	}
+
+	decision := f.requestHumanReview(goal.ID)
+	if _, err := f.store.ApproveGoalReview(f.ctx, decision.ID); err != nil {
+		t.Fatalf("ApproveGoalReview: %v", err)
+	}
+	f.call("goal.review.complete", goalReviewCompleteParams{
+		GoalID: goal.ID, AgentSessionID: f.commanderID,
+	})
+	if got := f.goal(goal.ID).Status; got != domain.GoalDone {
+		t.Fatalf("goal status = %q, want %q", got, domain.GoalDone)
+	}
+}
+
+// TestExecutionFlowHumanRejectionReturnsToSubcommander covers HR → C9 → S9:
+// a human rejection is carried back on the existing handoff, and the goal is
+// not completed.
+func TestExecutionFlowHumanRejectionReturnsToSubcommander(t *testing.T) {
+	f := newFlowFixture(t)
+	goal := f.newGoal("human rejects the first submission")
+	f.throughPlan("gh-1", goal.ID)
+	tasks := f.createTasks(goal.ID, "only task")
+	f.runTask("th-1", tasks[0].ID)
+	f.goalReviewRequestToCommander("gh-1", goal.ID)
+
+	decision := f.requestHumanReview(goal.ID)
+	if err := f.store.RejectGoalReview(f.ctx, decision.ID, "make the diff smaller"); err != nil {
+		t.Fatalf("RejectGoalReview: %v", err)
+	}
+
+	if _, err := f.callErr("goal.review.complete", goalReviewCompleteParams{
+		GoalID: goal.ID, AgentSessionID: f.commanderID,
+	}); err == nil {
+		t.Fatal("goal.review.complete succeeded after a human rejection, want it refused")
+	}
+
+	f.call("goal.handoff.review.reject", goalHandoffReviewRejectParams{
+		HandoffID: "gh-1", GoalID: goal.ID, ReviewerID: f.commanderID,
+		RejectReport: "human asked for a smaller diff",
+	})
+	f.call("goal.handoff.review.reject.receive", goalHandoffReviewReceiveParams{
+		HandoffID: "gh-1", GoalID: goal.ID, ReceivedBy: f.subcommanderID,
+	})
+
+	handoffs, err := f.store.ListGoalHandoffs(f.ctx, goal.ID)
+	if err != nil {
+		t.Fatalf("ListGoalHandoffs: %v", err)
+	}
+	if len(handoffs) != 1 {
+		t.Fatalf("goal handoffs = %d, want the rejection to reuse the existing one", len(handoffs))
+	}
+	if got := f.goal(goal.ID).Status; got != domain.GoalActive {
+		t.Fatalf("goal status = %q, want %q after a human rejection", got, domain.GoalActive)
+	}
+}
+
+// TestExecutionFlowMultipleTasksLoopBackToDelegation covers the S7 → S6 edge:
+// while an undelegated task remains, the subcommander keeps delegating instead
+// of requesting the goal review.
+func TestExecutionFlowMultipleTasksLoopBackToDelegation(t *testing.T) {
+	f := newFlowFixture(t)
+	goal := f.newGoal("three tasks in one goal")
+	f.throughPlan("gh-1", goal.ID)
+	tasks := f.createTasks(goal.ID, "first", "second", "third")
+	if len(tasks) != 3 {
+		t.Fatalf("created tasks = %d, want 3", len(tasks))
+	}
+
+	for i, task := range tasks {
+		f.runTask(fmtHandoff("th", i), task.ID)
+	}
+	for _, task := range tasks {
+		if got := f.task(goal.ID, task.ID).Status; got != domain.TaskDone {
+			t.Fatalf("task %d status = %q, want %q", task.ID, got, domain.TaskDone)
+		}
+	}
+
+	f.goalReviewRequestToCommander("gh-1", goal.ID)
+	decision := f.requestHumanReview(goal.ID)
+	if _, err := f.store.ApproveGoalReview(f.ctx, decision.ID); err != nil {
+		t.Fatalf("ApproveGoalReview: %v", err)
+	}
+	f.call("goal.review.complete", goalReviewCompleteParams{
+		GoalID: goal.ID, AgentSessionID: f.commanderID,
+	})
+	if got := f.goal(goal.ID).Status; got != domain.GoalDone {
+		t.Fatalf("goal status = %q, want %q", got, domain.GoalDone)
+	}
+}
+
+// TestExecutionFlowConsecutiveGoals is the reason ATCT exists: finishing one
+// goal must leave the project able to start the next one with the same
+// sessions, with no leftover open handoff blocking it.
+func TestExecutionFlowConsecutiveGoals(t *testing.T) {
+	f := newFlowFixture(t)
+
+	for round, content := range []string{"first goal", "second goal", "third goal"} {
+		goal := f.newGoal(content)
+		goalHandoff := fmtHandoff("gh", round)
+		f.throughPlan(goalHandoff, goal.ID)
+		tasks := f.createTasks(goal.ID, "only task")
+		f.runTask(fmtHandoff("th", round), tasks[0].ID)
+		f.goalReviewRequestToCommander(goalHandoff, goal.ID)
+
+		decision := f.requestHumanReview(goal.ID)
+		if _, err := f.store.ApproveGoalReview(f.ctx, decision.ID); err != nil {
+			t.Fatalf("round %d ApproveGoalReview: %v", round, err)
+		}
+		f.call("goal.review.complete", goalReviewCompleteParams{
+			GoalID: goal.ID, AgentSessionID: f.commanderID,
+		})
+
+		if got := f.goal(goal.ID).Status; got != domain.GoalDone {
+			t.Fatalf("round %d goal status = %q, want %q", round, got, domain.GoalDone)
+		}
+		handoffs, err := f.store.ListGoalHandoffs(f.ctx, goal.ID)
+		if err != nil {
+			t.Fatalf("round %d ListGoalHandoffs: %v", round, err)
+		}
+		for _, handoff := range handoffs {
+			if handoff.CompletedReportAt == nil {
+				t.Fatalf("round %d left goal handoff %s open; the next goal would be blocked", round, handoff.ID)
+			}
+		}
+	}
+}
+
+func fmtHandoff(prefix string, i int) string {
+	return prefix + "-" + string(rune('a'+i))
+}
