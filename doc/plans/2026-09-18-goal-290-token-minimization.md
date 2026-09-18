@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Cut repeated stop-hook and static ATCT context while retaining human approval, actionable notifications, audit data, and recovery.
+**Goal:** Cut non-actionable commander stop-hook context and repeated static ATCT context while retaining human approval, actionable notifications, audit data, and recovery.
 
-**Architecture:** Keep persisted events and monitor delivery intact. Add a daemon-epoch, per-session stop-notice key so only a new actionable target/phase/generation blocks a stop; retain restart re-emission for recovery. Then replace repeated static guidance with concise invariant-only text and measure each boundary in bytes.
+**Architecture:** Keep persisted events and monitor delivery intact. Derive commander stop blocking from existing goal, handoff, and decision state every time: block only when the commander has an immediate operation, not merely because an active goal exists. Then replace repeated static guidance with concise invariant-only text and measure each boundary in bytes.
 
 **Tech Stack:** Go, MCP Go SDK, repository Markdown skills, `go test`.
 
@@ -17,51 +17,61 @@
 
 ---
 
-### Task 1: Deduplicate repeated stop-hook continuations by actionable state
+### Task 1: Classify commander stop-hook actionability from persisted state
 
 **Files:**
-- Modify: `internal/daemon/server.go:Daemon` and constructor
 - Modify: `internal/daemon/stop_check.go`
 - Modify: `internal/daemon/stop_check_test.go`
 - Test: `cmd/atct/stop_check_test.go`
+- Test: `cmd/atct/watch_scope_test.go`, `cmd/atct/watch_test.go`
 
 **Interfaces:**
-- Consumes: the identified `agent_session_id`, existing handoff fields, and
-  current stop-check role lookup.
-- Produces: at most one `{"decision":"block"}` response per daemon epoch and
-  `(session, target, phase, persisted generation)`; empty output for an equal
-  subsequent state.
+- Consumes: the project claim, active goals, existing goal/plan/task handoffs,
+  and goal decisions; no new persistence.
+- Produces: a block only for current commander-owned setup, unreceived review,
+  goal-review rejection return, or approved merge/conflict-cleanup work.
 
-- [ ] **Step 1: Write failing daemon tests for repeated and changed state**
+- [ ] **Step 1: Write failing actionability-transition tests**
 
-Add focused tests that invoke `session.stop_check` twice for one received goal
-handoff and assert first `block`, second empty. Then update the fixture to a
-new actionable phase (for example, a received plan-review rejection) and
-assert exactly one new `block` with that phase's detail. Add a new daemon over
-the same store and assert it blocks once again.
+Add table-driven `stopCheckCommander` tests for: an active goal without a
+nonterminal delegated goal handoff (block for setup); a requested-but-not-yet-
+received goal handoff (empty: delegated, with existing liveness recovery); a
+goal handoff received by a subcommander (empty);
+a plan or goal review requested but not received by the commander (block); an
+open human decision (empty); an executor-owned task handoff (empty); an
+answered rejected goal review (block for return); and an applied approved goal
+review whose goal remains active (block for merge/conflict cleanup).
 
 - [ ] **Step 2: Run the failing test**
 
 Run: `go test ./internal/daemon -run 'TestSessionStopCheck' -count=1`
 
-Expected: FAIL because current `stopCheck` returns the same block for every
-call while the handoff remains open.
+Expected: FAIL because current `stopCheckCommander` blocks for every active
+goal, including received subcommander work and human-wait state.
 
-- [ ] **Step 3: Add the minimal daemon-epoch delivery state**
+- [ ] **Step 3: Add the minimal classifier**
 
-Add a mutex-protected `map[int64]string` to `Daemon`. Compute a key from the
-identified session plus the highest-priority actionable handoff phase and its
-persisted timestamp/generation. After deriving a non-empty detail, return the
-block only when the key differs from the last key for that session; otherwise
-return the existing empty response. Do not write the map to SQLite.
+Replace `stopCheckCommander`'s first-active-goal loop with a pure classifier
+over existing rows. Query each active goal's handoffs and decisions. Keep
+returning a block for the same immediate commander action; return empty only
+when ownership is the subcommander, executor, or human. Do not add a map, a
+table, a cache, or a new lifecycle.
 
 - [ ] **Step 4: Verify safety boundaries**
 
 Run: `go test ./internal/daemon -run 'TestSessionStopCheck' -count=1 && go test ./cmd/atct -run 'Test.*StopCheck' -count=1`
 
-Expected: PASS; `stop_hook_active` still suppresses a recursive cycle, an equal
-state is silent, a newer actionable phase emits once, and daemon restart emits
-once for recovery.
+Expected: PASS; `stop_hook_active` still suppresses a recursive cycle; equal
+commander work continues to block; received/human/executor work does not; each
+persisted commander action does.
+
+- [ ] **Step 5: Prove new actionable state wakes the commander monitor**
+
+Run: `go test ./cmd/atct -run 'Test.*(GoalReviewTransitions|Handoff.*Review.*Commander|GoalCreated)' -count=1`
+
+Expected: PASS; `goal.created`, plan/goal review requests, and goal-review
+approval/rejection remain commander-targeted monitor actions. This is the
+re-wakeup boundary after a non-actionable stop returned empty.
 
 ### Task 2: Cap MCP fixed instruction context
 

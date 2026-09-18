@@ -2,12 +2,11 @@
 
 ## Decision
 
-Reduce repeated stop-hook continuations first, then repeated static
-instructions. Do not change persisted lifecycle events, the reconciliation
-endpoint, or agent-facing action membership. The current monitor already
-suppresses review receipts as control-only actions and uses persisted
-generations to discard superseded queued review work; replacing that mechanism
-would trade a small theoretical saving for lost recovery.
+Classify stop-hook work by the commander's immediate persisted action, rather
+than suppressing equal responses. Do not change persisted lifecycle events,
+the reconciliation endpoint, or agent-facing action membership. The current
+monitor already suppresses review receipts as control-only actions and uses
+persisted generations to discard superseded queued review work.
 
 Decision 787 selected a plan before executor research.  This document is
 therefore based on the repository's read-only evidence, not a production token
@@ -17,7 +16,7 @@ trace.
 
 | Rank | Source | Evidence | Expected reduction | Decision |
 | --- | --- | --- | --- | --- |
-| 1 | Repeated stop-hook continuation | `hooks/stop:30` directly calls `atct stop-check --hook-input`; `cmd/atct/stop_check.go:25-75` calls daemon RPC `session.stop_check`; `internal/daemon/stop_check.go:15-40` returns a block on every matching open state. Two consecutive real calls for this session returned the same 129-byte JSON prompt; `stop_hook_active=true` returned 0 bytes. | In the measured two-call sample, suppressing the second equal state saves 129 bytes (50%; `(2-1)*129`). Savings are linear: `(repeated calls - 1) * prompt bytes` within one daemon epoch. | Implement state-keyed, in-memory dedup. |
+| 1 | Commander stop-hook overclassification | `internal/daemon/stop_check.go:43-55` blocks the commander on the first `goals.status=active` row, without reading goal/plan handoffs, decisions, or task ownership. Thus received subcommander work and human-wait state generate the same repeated 129-byte stop response although the commander has no immediate operation. | Omit the prompt whenever no persisted commander action exists, while retaining repeated blocks when an immediate action remains. Exact savings depend on the observed number of non-actionable stops; the two-call 129-byte measurement remains the per-response proxy. | Implement a persisted-state actionability classifier; do not deduplicate equal active work. |
 | 2 | Re-read skill/prompt text after compaction | `skills/atct/SKILL.md` is 42,442 bytes; `skills/start/SKILL.md` is 8,582 bytes. Orchestration records that compaction re-reads skills and can itself trigger another compaction. | Shrinking the active ATCT skill to a concise operational contract is the only durable way to reduce this harness-controlled repeat. A 6 KiB target saves about 36 KiB (85%) per re-read of the current ATCT skill. | Implement after proving the full invariant checklist with the skill-writing workflow; rationale remains in `doc/execution-flow.md`. |
 | 3 | MCP initialize instructions | `internal/mcpshim/instructions.go` is 1,009 bytes and is installed by both `cmd/atct-mcp/main.go:65-68` and `internal/daemon/server.go:72-75`. Tool catalogs expose this shared instruction text with the ATCT tools. | Cap at 350 bytes: save at least 659 bytes (65%) per MCP initialization/catalog exposure. | Implement a concise invariant-only instruction. |
 | 4 | Handoff/review reconciliation | `cmd/atct/watch.go:1403-1427` projects one latest lifecycle state; `watch_action.go:40-66` marks `*.handoff.review.receive` control-only; `codex_monitor.go:695-737` prunes older queued review work by RFC3339Nano generation. | No safe additional reduction is demonstrated. | Retain unchanged. |
@@ -62,7 +61,7 @@ SSE/reconciliation/action-sink path; the stop hook returns the RPC JSON
 directly to the harness. Its generation dedup is useful precedent but not
 evidence that stop-check is already deduplicated.
 
-## State and safety contract
+## Commander actionability and safety contract
 
 - Human final approval remains exclusively in the goal-review lifecycle; no
   notification reduction may auto-apply or auto-complete a decision.
@@ -77,31 +76,43 @@ evidence that stop-check is already deduplicated.
 - Compact skill text retains: role derivation; receive-before-work; review
   ordering; task-create-after-plan; human decision routing; stale-owner-only
   recovery; and the prohibition on self-closing a received handoff.
-- A stop notice key is `(agent_session_id, actionable target, phase,
-  persisted generation)`. The daemon emits a block only if that key differs
-  from the last emitted key for the session. A received goal, plan rejection,
-  task-create receipt, task-review request, and goal-review rejection are
-  distinct phases. Repeated stops in the same phase are silent.
-- The key is in daemon memory, not a database migration. Daemon restart and a
-  new receiver session intentionally emit once again, preserving recovery;
-  no audit record or persisted lifecycle state is removed. The existing
-  `stop_hook_active` guard remains the narrower same-cycle recursion guard.
+- The classifier has no delivery ledger and no new migration. It reads existing
+  `goals`, `goal_handoffs`, `plan_handoffs`, `task_create_handoffs`,
+  `task_handoffs`, and `decisions` on every stop check. Equal actionable work
+  continues to block: this is the guard that keeps the commander available.
+- It blocks only for, in priority order: an approved goal-review decision whose
+  goal still needs commander merge/finalization/conflict cleanup; an answered
+  rejected goal review requiring `goal.handoff.review.reject`; an unreceived
+  goal or plan review request for the commander; or an active goal with no
+  nonterminal delegated goal handoff, requiring worktree/space/handoff
+  preparation. A requested-but-not-yet-received goal handoff is delegated, not
+  unassigned; existing liveness/recovery handling remains responsible for a
+  stale receiver.
+- It does not block for an active goal whose subcommander received the goal
+  handoff and is working, an executor-owned task handoff, or an open human
+  decision. Those facts are owned by their receiver or the human, not by the
+  commander. A new persisted review request, human approval/rejection, or
+  unassigned goal is still delivered through the existing monitor/watch action
+  path and makes the commander actionable again.
+- `stop_hook_active` remains same-cycle recursion prevention. No audit record,
+  persisted lifecycle state, human final approval, actionable decision, or
+  recovery path is removed.
 
 ## Implementation boundary
 
-Touch `internal/daemon/server.go` and `internal/daemon/stop_check.go` for the
-in-memory notice key, focused daemon/CLI tests, `internal/mcpshim/instructions.go`
-and its initialization contract tests, and the canonical `skills/atct/SKILL.md`
+Touch `internal/daemon/stop_check.go` and focused daemon/CLI/watch tests for
+the persisted-state classifier, `internal/mcpshim/instructions.go` and its
+initialization contract tests, and the canonical `skills/atct/SKILL.md`
 (with the skill-writing workflow). Do not alter `cmd/atct/watch*.go`,
 `cmd/atct/codex_monitor.go`, event schemas, hook execution cadence, or database
 state.
 
 ## Regression observation
 
-The implementation must record before/after byte counts and repeated-call
-counts for stop-check, MCP instruction, and active skill. Tests must prove the
-same action phase blocks once, a newer phase blocks once, daemon restart
-re-emits for recovery, and `stop_hook_active` remains silent. Existing focused
-watch/Codex tests must keep proving review-receipt control delivery, generation
-ordering, queued-action pruning, reconnect reconciliation, and human-decision
-visibility.
+The implementation must record before/after byte counts and stop-call counts
+by actionability class. Tests must prove the received, review-request,
+human-wait, approved-merge/cleanup, rejected-return, and unassigned-goal
+transitions; a new actionable persisted event must reach the commander monitor.
+Existing focused watch/Codex tests must keep proving review-receipt control
+delivery, generation ordering, queued-action pruning, reconnect reconciliation,
+and human-decision visibility.
