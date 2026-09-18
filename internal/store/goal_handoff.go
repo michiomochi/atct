@@ -790,7 +790,7 @@ func (s *Store) CompleteGoalHandoff(ctx context.Context, handoffID string, goalI
 	if handoff.RecoveredAt != nil {
 		return GoalHandoff{}, ErrGoalHandoffReviewState
 	}
-	if handoff.ReviewRequestedAt != nil && completeReport != goalHandoffReclaimedReport && completeReport != goalHandoffReleasedReport {
+	if handoffIsDelegation(handoff.RequestedBy, handoff.ReceivedBy) && completeReport != goalHandoffReclaimedReport && completeReport != goalHandoffReleasedReport {
 		return GoalHandoff{}, fmt.Errorf("%w: complete the goal handoff through its recorded reviewer", ErrGoalHandoffReviewState)
 	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
