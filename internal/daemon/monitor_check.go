@@ -24,17 +24,21 @@ func (d *Daemon) monitorCheck(ctx context.Context, sessionKey string) (monitorCh
 	if err != nil {
 		return monitorCheckResponse{}, fmt.Errorf("derive session role: %w", err)
 	}
-	scope := store.MonitorLiveScope{ProjectID: role.ProjectID, Role: role.Role}
-	if role.GoalID != 0 {
-		goalID := role.GoalID
-		scope.GoalID = &goalID
-	}
-	live, err := d.store.HasLiveMonitorForScope(ctx, scope)
-	if err != nil {
-		return monitorCheckResponse{}, err
-	}
-	if live {
-		return monitorCheckResponse{}, nil
+	// No project or role means no Monitor can be attached to this session.
+	// Report that, not the scope validation error.
+	if role.ProjectID > 0 && role.Role != "" {
+		scope := store.MonitorLiveScope{ProjectID: role.ProjectID, Role: role.Role}
+		if role.GoalID != 0 {
+			goalID := role.GoalID
+			scope.GoalID = &goalID
+		}
+		live, err := d.store.HasLiveMonitorForScope(ctx, scope)
+		if err != nil {
+			return monitorCheckResponse{}, err
+		}
+		if live {
+			return monitorCheckResponse{}, nil
+		}
 	}
 	return monitorCheckResponse{
 		Decision: "block",
