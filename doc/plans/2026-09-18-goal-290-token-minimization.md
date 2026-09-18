@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Cut repeated static ATCT context while retaining human approval, actionable notifications, audit data, and recovery.
+**Goal:** Cut repeated stop-hook and static ATCT context while retaining human approval, actionable notifications, audit data, and recovery.
 
-**Architecture:** Keep the persisted event and monitor-delivery model intact.  Replace only repeated static guidance with a concise invariant contract, and make its size and initializer delivery observable in focused tests.
+**Architecture:** Keep persisted events and monitor delivery intact. Add a daemon-epoch, per-session stop-notice key so only a new actionable target/phase/generation blocks a stop; retain restart re-emission for recovery. Then replace repeated static guidance with concise invariant-only text and measure each boundary in bytes.
 
 **Tech Stack:** Go, MCP Go SDK, repository Markdown skills, `go test`.
 
@@ -17,7 +17,53 @@
 
 ---
 
-### Task 1: Cap MCP fixed instruction context
+### Task 1: Deduplicate repeated stop-hook continuations by actionable state
+
+**Files:**
+- Modify: `internal/daemon/server.go:Daemon` and constructor
+- Modify: `internal/daemon/stop_check.go`
+- Modify: `internal/daemon/stop_check_test.go`
+- Test: `cmd/atct/stop_check_test.go`
+
+**Interfaces:**
+- Consumes: the identified `agent_session_id`, existing handoff fields, and
+  current stop-check role lookup.
+- Produces: at most one `{"decision":"block"}` response per daemon epoch and
+  `(session, target, phase, persisted generation)`; empty output for an equal
+  subsequent state.
+
+- [ ] **Step 1: Write failing daemon tests for repeated and changed state**
+
+Add focused tests that invoke `session.stop_check` twice for one received goal
+handoff and assert first `block`, second empty. Then update the fixture to a
+new actionable phase (for example, a received plan-review rejection) and
+assert exactly one new `block` with that phase's detail. Add a new daemon over
+the same store and assert it blocks once again.
+
+- [ ] **Step 2: Run the failing test**
+
+Run: `go test ./internal/daemon -run 'TestSessionStopCheck' -count=1`
+
+Expected: FAIL because current `stopCheck` returns the same block for every
+call while the handoff remains open.
+
+- [ ] **Step 3: Add the minimal daemon-epoch delivery state**
+
+Add a mutex-protected `map[int64]string` to `Daemon`. Compute a key from the
+identified session plus the highest-priority actionable handoff phase and its
+persisted timestamp/generation. After deriving a non-empty detail, return the
+block only when the key differs from the last key for that session; otherwise
+return the existing empty response. Do not write the map to SQLite.
+
+- [ ] **Step 4: Verify safety boundaries**
+
+Run: `go test ./internal/daemon -run 'TestSessionStopCheck' -count=1 && go test ./cmd/atct -run 'Test.*StopCheck' -count=1`
+
+Expected: PASS; `stop_hook_active` still suppresses a recursive cycle, an equal
+state is silent, a newer actionable phase emits once, and daemon restart emits
+once for recovery.
+
+### Task 2: Cap MCP fixed instruction context
 
 **Files:**
 - Modify: `internal/mcpshim/instructions.go`
@@ -64,7 +110,7 @@ Run: `go test ./internal/daemon -run TestContractB6SessionStartHookMovesFixedIns
 Expected: PASS; the initialize response equals `mcpshim.Instructions`, the
 session-start hook does not duplicate it, and the 350-byte cap holds.
 
-### Task 2: Compact the active ATCT skill without changing its contract
+### Task 3: Compact the active ATCT skill without changing its contract
 
 **Files:**
 - Modify: `skills/atct/SKILL.md`
@@ -100,13 +146,15 @@ Keep only operational, non-negotiable rules and one link to
 verbatim in meaning, omit historical anecdotes and duplicated rationale, and
 do not create a `reference/` directory.  Target at most 6,144 bytes.
 
-- [ ] **Step 4: Verify size and contract**
+- [ ] **Step 4: Verify size and contract through the skill-writing workflow**
 
 Run: `wc -c skills/atct/SKILL.md && rg -n 'role|receive|review|decision|stale|recover|task-create|plan' skills/atct/SKILL.md`
 
-Expected: at most 6,144 bytes and each checklist concept visibly present.
+Expected: at most 6,144 bytes and each checklist concept visibly present. The
+task report must include the `superpowers:writing-skills` validation result;
+the byte cap alone is not acceptance evidence.
 
-### Task 3: Prove notification and recovery behavior stayed intact
+### Task 4: Prove notification and recovery behavior stayed intact
 
 **Files:**
 - Test: `cmd/atct/watch_action_test.go`
@@ -134,16 +182,18 @@ Run: `go test ./cmd/atct ./internal/mcpshim -run 'Test.*(Reconcile|Reconnect|Una
 Expected: PASS; reconnect reconciliation remains available and an unapplied
 decision still includes both `decision_id` and `question`.
 
-- [ ] **Step 3: Run the affected packages and record before/after bytes**
+- [ ] **Step 3: Run the affected packages and record before/after measurements**
 
-Run: `go test ./internal/daemon ./internal/mcpshim ./cmd/atct -count=1 && wc -c internal/mcpshim/instructions.go skills/atct/SKILL.md`
+Run: `go test ./internal/daemon ./internal/mcpshim ./cmd/atct -count=1 && wc -c internal/mcpshim/instructions.go skills/atct/SKILL.md && printf '%s' '{"session_id":"<test-session>","stop_hook_active":false}' | atct stop-check --hook-input | wc -c`
 
-Expected: PASS; report the two final byte counts and percentage reduction
-against 1,009 and 42,442 bytes respectively.
+Expected: PASS; report repeated stop-check calls, exact raw prompt bytes, and
+the two final static byte counts. State that bytes are a transport proxy when
+model-specific tokenization is unavailable; do not report them as tokens.
 
 ## Plan self-review
 
-- Coverage: Tasks 1-2 cover the only measured repeated static sources; Task 3
-  verifies the retained notification, audit, recovery, and decision contract.
+- Coverage: Task 1 covers the measured repeated stop prompt; Tasks 2-3 cover
+  repeated static context; Task 4 verifies retained notification, audit,
+  recovery, and decision behavior.
 - No placeholders: every task names files, checks, and expected results.
 - Scope: no task adds telemetry, a cache, a lifecycle, or a new dependency.
