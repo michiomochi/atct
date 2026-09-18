@@ -97,3 +97,13 @@ func SocketAnswers(path string) bool {
 func (r Registry) Healthy() bool {
 	return ProcessAlive(r.PID) && SocketAnswers(r.SocketPath)
 }
+
+// RegistryOwnedBy reports whether the recorded daemon is this process. Cleanup
+// paths use it so a departing daemon only removes files it still owns.
+func RegistryOwnedBy(dir string, pid int) bool {
+	reg, err := ReadRegistry(dir)
+	if err != nil {
+		return false
+	}
+	return reg.PID == pid
+}

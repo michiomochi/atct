@@ -1022,6 +1022,16 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		response, err := d.stopCheck(ctx, p.SessionKey)
 		return marshal(response, err)
 
+	case "session.monitor_check":
+		var p struct {
+			SessionKey string `json:"session_key"`
+		}
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		response, err := d.monitorCheck(ctx, p.SessionKey)
+		return marshal(response, err)
+
 	case "project.create":
 		var p struct {
 			Name     string `json:"name"`
