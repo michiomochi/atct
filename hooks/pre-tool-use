@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+
+HOOK_DIR="${BASH_SOURCE[0]%/*}"
+if [[ "$HOOK_DIR" == "${BASH_SOURCE[0]}" ]]; then
+  HOOK_DIR='.'
+fi
+HOOK_DIR="$(cd -- "$HOOK_DIR" && pwd -P)" || exit 0
+if ! command -v atct >/dev/null 2>&1; then
+  printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"ATCT: install or upgrade the CLI with: brew install --cask michiomochi/tap/atct"}}'
+  exit 0
+fi
+
+PLUGIN_VERSION="$(awk -F '"' '/"version"[[:space:]]*:/ { print $4; exit }' "$HOOK_DIR/../.claude-plugin/plugin.json" 2>/dev/null)"
+INSTALLED_VERSION="$(atct version 2>/dev/null || true)"
+if [[ -z "$PLUGIN_VERSION" || -z "$INSTALLED_VERSION" ]] || ! awk -v installed="$INSTALLED_VERSION" -v required="$PLUGIN_VERSION" '
+  BEGIN {
+    split(installed, have, ".")
+    split(required, need, ".")
+    for (i = 1; i <= 3; i++) {
+      if (have[i] + 0 > need[i] + 0) exit 0
+      if (have[i] + 0 < need[i] + 0) exit 1
+    }
+    exit 0
+  }
+'; then
+  printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"ATCT: upgrade the CLI with: brew upgrade --cask michiomochi/tap/atct"}}'
+  exit 0
+fi
+
+atct monitor-check --hook-input
+exit 0
