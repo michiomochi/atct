@@ -386,6 +386,14 @@ type Raw struct {
 	Data any `json:"data"`
 }
 
+// NextStepOption is one operation the flow can continue with. More than one
+// means the caller chooses, and each carries the condition that selects it.
+type NextStepOption struct {
+	When string `json:"when,omitempty"`
+	Call string `json:"call"`
+	Note string `json:"note,omitempty"`
+}
+
 type UnappliedDecisionNotice struct {
 	DecisionID int64  `json:"decision_id"`
 	Question   string `json:"question"`
@@ -393,6 +401,7 @@ type UnappliedDecisionNotice struct {
 
 type RawWithUnappliedDecisions struct {
 	Data               any                       `json:"data"`
+	NextStep           []NextStepOption          `json:"next_step,omitempty"`
 	Role               string                    `json:"role,omitempty"`
 	ClaimEvidence      json.RawMessage           `json:"claim_evidence,omitempty"`
 	UnappliedDecisions []UnappliedDecisionNotice `json:"unapplied_decisions,omitempty"`
@@ -413,7 +422,22 @@ func rawOutputSchemaWithUnappliedDecisions() map[string]any {
 	return map[string]any{
 		"type": "object",
 		"properties": map[string]any{
-			"data":           map[string]any{},
+			"data": map[string]any{},
+			// next_step lists what follows this transition, so the caller does
+			// not have to look the flow up. More than one entry means it
+			// chooses, and each states the condition that selects it.
+			"next_step": map[string]any{
+				"type": "array",
+				"items": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"when": map[string]any{"type": "string"},
+						"call": map[string]any{"type": "string"},
+						"note": map[string]any{"type": "string"},
+					},
+					"required": []string{"call"},
+				},
+			},
 			"role":           map[string]any{"type": "string"},
 			"claim_evidence": map[string]any{},
 			"unapplied_decisions": map[string]any{
@@ -460,6 +484,7 @@ func callWithUnappliedDecisions(ctx context.Context, c *Client, method string, p
 
 	var envelope struct {
 		Data               json.RawMessage           `json:"data"`
+		NextStep           []NextStepOption          `json:"next_step"`
 		Role               string                    `json:"role"`
 		ClaimEvidence      json.RawMessage           `json:"claim_evidence"`
 		UnappliedDecisions []UnappliedDecisionNotice `json:"unapplied_decisions"`
@@ -468,6 +493,7 @@ func callWithUnappliedDecisions(ctx context.Context, c *Client, method string, p
 	if err := json.Unmarshal(out, &envelope); err == nil && envelope.Data != nil {
 		return nil, RawWithUnappliedDecisions{
 			Data:               envelope.Data,
+			NextStep:           envelope.NextStep,
 			Role:               envelope.Role,
 			ClaimEvidence:      envelope.ClaimEvidence,
 			UnappliedDecisions: envelope.UnappliedDecisions,

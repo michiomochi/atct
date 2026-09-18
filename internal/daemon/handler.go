@@ -898,7 +898,43 @@ func (d *Daemon) receivePlanReviewResponse(ctx context.Context, p planHandoffRev
 	return responseWithRoleEvidence{Data: handoff, Role: role, ClaimEvidence: evidence}, nil
 }
 
+// dispatch answers one RPC and, for a transition the execution flow continues
+// from, names the operation that follows. Carrying it on the response is what
+// keeps an agent from re-reading doc/execution-flow.md to find its next call.
 func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage, error) {
+	raw, err := d.dispatchMethod(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return withNextStep(raw, nextStepAfter[req.Method]), nil
+}
+
+// withNextStep adds next_step to an object response. A response that is not a
+// JSON object, or already carries the key, is returned untouched.
+func withNextStep(raw json.RawMessage, next []nextStepOption) json.RawMessage {
+	if len(next) == 0 || len(raw) == 0 || raw[0] != '{' {
+		return raw
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return raw
+	}
+	if _, taken := fields["next_step"]; taken {
+		return raw
+	}
+	encoded, err := json.Marshal(next)
+	if err != nil {
+		return raw
+	}
+	fields["next_step"] = encoded
+	merged, err := json.Marshal(fields)
+	if err != nil {
+		return raw
+	}
+	return merged
+}
+
+func (d *Daemon) dispatchMethod(ctx context.Context, req rpc.Request) (json.RawMessage, error) {
 	params, err := d.normalizeEntityIDs(ctx, req.Method, req.Params)
 	if err != nil {
 		return nil, err
