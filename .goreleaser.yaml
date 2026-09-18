@@ -44,13 +44,15 @@ homebrew_casks:
     description: "The air traffic control tower for your coding agents"
     license: "AGPL-3.0"
     binaries: [atct, atct-mcp]
-    # `url.verified` and `postflight` are both deprecated in Homebrew.
-    # postflight_steps takes a restricted step DSL, which goreleaser cannot
-    # emit from `hooks`, so it is written through custom_block.
-    custom_block: |
-      postflight_steps do
-        on_macos do
-          run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "atct"], base: :staged_path
-          run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "atct-mcp"], base: :staged_path
-        end
-      end
+    # `postflight` is deprecated, but postflight_steps runs a restricted DSL
+    # whose `base:` selects the command path only, leaving `args` relative:
+    # 0.63.5 failed to install with `xattr: No such file: atct`. Keep the
+    # working hook and take the deprecation warning until goreleaser emits
+    # postflight_steps itself.
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/atct"]
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/atct-mcp"]
+          end
