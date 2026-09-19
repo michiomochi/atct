@@ -217,6 +217,9 @@ func (f *watchScopeFilter) delivers(eventName string, decision watchDecision) bo
 		return true
 	case "decision.answered":
 		return !decision.defaultApplied()
+	case "decision.withdrawn":
+		// Scoped like an answer, because it ends the same wait.
+		return true
 	case "wakeup":
 		if f.hasWakeupState && f.actionableGoalCount == decision.ActionableGoalCount &&
 			f.unassignedGoalCount == decision.UnassignedGoalCount &&

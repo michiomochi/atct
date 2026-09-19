@@ -1680,6 +1680,11 @@ func formatWatchDecision(eventName string, decision watchDecision) (string, bool
 		return fmt.Sprintf("atct decision answered (decision_id: %s)", decision.decisionID()), true
 	case "decision.pending":
 		return fmt.Sprintf("atct decision pending (decision_id: %s)", decision.decisionID()), true
+	case "decision.withdrawn":
+		// The session that asked it is waiting for an answer. Say that none is
+		// coming, or it waits for good: goal 260 sat idle on a withdrawn
+		// decision with all five of its tasks already done.
+		return fmt.Sprintf("atct decision withdrawn, no answer is coming (decision_id: %s)", decision.decisionID()), true
 	case "decision.approved":
 		return fmt.Sprintf("atct decision approved (decision_id: %s)", decision.decisionID()), true
 	case "decision.rejected":
