@@ -458,7 +458,7 @@ func (s *Store) ReceiveGoalHandoffReview(ctx context.Context, handoffID string, 
 	if handoff.GoalID != goalID {
 		return GoalHandoff{}, fmt.Errorf("%w: %q belongs to goal %d, not %d", ErrGoalHandoffGoalMismatch, handoffID, handoff.GoalID, goalID)
 	}
-	if handoff.ReviewRequestedAt == nil || handoff.CompletedReportAt != nil || handoff.ReviewReceivedAt != nil {
+	if handoff.ReviewRequestedAt == nil || handoff.CompletedReportAt != nil || handoff.ReviewReceivedAt != nil || handoff.ReviewRejectedAt != nil || handoff.ReviewRejectionReceivedAt != nil {
 		return GoalHandoff{}, ErrGoalHandoffReviewState
 	}
 	if receivedBy == 0 || handoff.RequestedBy != receivedBy {

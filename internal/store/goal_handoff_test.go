@@ -211,6 +211,16 @@ func TestGoalHandoffReviewRejectReceiveLifecyclePreservesGoalClaim(t *testing.T)
 	if rejected.ReceivedBy != receiverID || rejected.ReviewReceivedBy != 0 || rejected.ReviewReceivedAt != nil || rejected.ReviewRejectReport != "revise the goal" || rejected.ReviewRejectedAt == nil {
 		t.Fatalf("goal review rejection did not preserve claim and clear reviewer state: %+v", rejected)
 	}
+	if _, err := s.ReceiveGoalHandoffReview(ctx, handoff.ID, goalID, requesterID); !errors.Is(err, ErrGoalHandoffReviewState) {
+		t.Fatalf("ReceiveGoalHandoffReview after rejection error = %v, want ErrGoalHandoffReviewState", err)
+	}
+	rejectedAfterReceive, err := s.GetGoalHandoff(ctx, handoff.ID)
+	if err != nil {
+		t.Fatalf("GetGoalHandoff after rejected review receive: %v", err)
+	}
+	if rejectedAfterReceive.ReviewRejectReport != rejected.ReviewRejectReport || rejectedAfterReceive.ReviewRejectedAt == nil || !rejectedAfterReceive.ReviewRejectedAt.Equal(*rejected.ReviewRejectedAt) {
+		t.Fatalf("rejected review evidence changed after receive: before=%+v after=%+v", rejected, rejectedAfterReceive)
+	}
 
 	if _, err := s.RequestGoalHandoffReview(ctx, handoff.ID, goalID, receiverID, "revised goal"); err == nil {
 		t.Fatal("RequestGoalHandoffReview accepted a rejection that the original submitter has not received")
@@ -224,6 +234,16 @@ func TestGoalHandoffReviewRejectReceiveLifecyclePreservesGoalClaim(t *testing.T)
 	}
 	if rejectionReceived.ReviewRejectionReceivedBy != receiverID || rejectionReceived.ReviewRejectionReceivedAt == nil {
 		t.Fatalf("unexpected goal rejection receipt: %+v", rejectionReceived)
+	}
+	if _, err := s.ReceiveGoalHandoffReview(ctx, handoff.ID, goalID, requesterID); !errors.Is(err, ErrGoalHandoffReviewState) {
+		t.Fatalf("ReceiveGoalHandoffReview after rejection receipt error = %v, want ErrGoalHandoffReviewState", err)
+	}
+	rejectionReceivedAfterReceive, err := s.GetGoalHandoff(ctx, handoff.ID)
+	if err != nil {
+		t.Fatalf("GetGoalHandoff after rejection receipt review receive: %v", err)
+	}
+	if rejectionReceivedAfterReceive.ReviewRejectionReceivedBy != rejectionReceived.ReviewRejectionReceivedBy || rejectionReceivedAfterReceive.ReviewRejectionReceivedAt == nil || !rejectionReceivedAfterReceive.ReviewRejectionReceivedAt.Equal(*rejectionReceived.ReviewRejectionReceivedAt) {
+		t.Fatalf("rejection receipt evidence changed after review receive: before=%+v after=%+v", rejectionReceived, rejectionReceivedAfterReceive)
 	}
 
 	if _, err := s.RequestGoalHandoffReview(ctx, handoff.ID, goalID, receiverID, "revised goal"); err != nil {
@@ -244,6 +264,42 @@ func TestGoalHandoffReviewRejectReceiveLifecyclePreservesGoalClaim(t *testing.T)
 	}
 	if completed.CompletedReportAt == nil || completed.CompleteReport != "approved after review" {
 		t.Fatalf("unexpected completed goal handoff: %+v", completed)
+	}
+}
+
+func TestReceiveGoalHandoffReviewRejectsSecondReceipt(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	goalID := newTestGoal(t, s)
+	requesterID := testSessionID("goal-review-second-receipt-requester")
+	receiverID := testSessionID("goal-review-second-receipt-receiver")
+	addLiveProjectClaim(t, s, goalID, "goal-review-second-receipt-requester")
+	addTestAgentSession(t, s, "goal-review-second-receipt-receiver")
+
+	handoff, err := s.RequestGoalHandoff(ctx, "goal-review-second-receipt", goalID, requesterID, "take the goal")
+	if err != nil {
+		t.Fatalf("RequestGoalHandoff: %v", err)
+	}
+	if _, err := s.ReceiveGoalHandoff(ctx, handoff.ID, goalID, receiverID); err != nil {
+		t.Fatalf("ReceiveGoalHandoff: %v", err)
+	}
+	if _, err := s.RequestGoalHandoffReview(ctx, handoff.ID, goalID, receiverID, "goal is ready"); err != nil {
+		t.Fatalf("RequestGoalHandoffReview: %v", err)
+	}
+
+	received, err := s.ReceiveGoalHandoffReview(ctx, handoff.ID, goalID, requesterID)
+	if err != nil {
+		t.Fatalf("ReceiveGoalHandoffReview: %v", err)
+	}
+	if _, err := s.ReceiveGoalHandoffReview(ctx, handoff.ID, goalID, requesterID); !errors.Is(err, ErrGoalHandoffReviewState) {
+		t.Fatalf("second ReceiveGoalHandoffReview error = %v, want ErrGoalHandoffReviewState", err)
+	}
+	after, err := s.GetGoalHandoff(ctx, handoff.ID)
+	if err != nil {
+		t.Fatalf("GetGoalHandoff after second review receive: %v", err)
+	}
+	if after.ReviewReceivedBy != received.ReviewReceivedBy || after.ReviewReceivedAt == nil || !after.ReviewReceivedAt.Equal(*received.ReviewReceivedAt) {
+		t.Fatalf("review receipt evidence changed after second receive: before=%+v after=%+v", received, after)
 	}
 }
 

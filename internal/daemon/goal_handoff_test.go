@@ -504,6 +504,23 @@ func TestNamedGoalAndPlanHandoffReviewRejectReceiveRetriesOverRPC(t *testing.T) 
 	if err := client.Call(ctx, "goal.handoff.review.reject", map[string]any{"handoff_id": goalHandoffID, "goal_id": fixture.claimedGoalID, "reviewer_id": fixture.requesterID, "reject_report": "revise"}, &goal); err != nil {
 		t.Fatalf("goal.handoff.review.reject: %v", err)
 	}
+	rejectedBeforeReceive, err := fixture.store.GetGoalHandoff(ctx, goalHandoffID)
+	if err != nil {
+		t.Fatalf("GetGoalHandoff after review rejection: %v", err)
+	}
+	var reviewReceived handoffReceiveResponse
+	if err := client.Call(ctx, "goal.handoff.review.receive", map[string]any{"handoff_id": goalHandoffID, "goal_id": fixture.claimedGoalID, "received_by": fixture.requesterID}, &reviewReceived); err == nil {
+		t.Fatal("goal.handoff.review.receive accepted a rejected review")
+	} else if !strings.Contains(err.Error(), store.ErrGoalHandoffReviewState.Error()) {
+		t.Fatalf("goal.handoff.review.receive after rejection error = %v, want %v", err, store.ErrGoalHandoffReviewState)
+	}
+	rejectedAfterReceive, err := fixture.store.GetGoalHandoff(ctx, goalHandoffID)
+	if err != nil {
+		t.Fatalf("GetGoalHandoff after rejected review receive: %v", err)
+	}
+	if rejectedAfterReceive.ReviewRejectReport != rejectedBeforeReceive.ReviewRejectReport || rejectedAfterReceive.ReviewRejectedAt == nil || !rejectedAfterReceive.ReviewRejectedAt.Equal(*rejectedBeforeReceive.ReviewRejectedAt) {
+		t.Fatalf("rejected review evidence changed after receive: before=%+v after=%+v", rejectedBeforeReceive, rejectedAfterReceive)
+	}
 	if err := client.Call(ctx, "goal.handoff.review.reject.receive", map[string]any{"handoff_id": goalHandoffID, "goal_id": fixture.claimedGoalID, "received_by": fixture.requesterID}, &goal); err == nil {
 		t.Fatal("goal.handoff.review.reject.receive accepted the reviewer")
 	}
@@ -512,6 +529,22 @@ func TestNamedGoalAndPlanHandoffReviewRejectReceiveRetriesOverRPC(t *testing.T) 
 	}
 	if goal.ReviewRejectionReceivedBy != fixture.receiverID || goal.ReviewRejectionReceivedAt == nil {
 		t.Fatalf("goal rejection receipt = %+v, want receiver and timestamp", goal)
+	}
+	rejectionReceivedBeforeReceive, err := fixture.store.GetGoalHandoff(ctx, goalHandoffID)
+	if err != nil {
+		t.Fatalf("GetGoalHandoff after rejection receipt: %v", err)
+	}
+	if err := client.Call(ctx, "goal.handoff.review.receive", map[string]any{"handoff_id": goalHandoffID, "goal_id": fixture.claimedGoalID, "received_by": fixture.requesterID}, &reviewReceived); err == nil {
+		t.Fatal("goal.handoff.review.receive accepted a rejection-received review")
+	} else if !strings.Contains(err.Error(), store.ErrGoalHandoffReviewState.Error()) {
+		t.Fatalf("goal.handoff.review.receive after rejection receipt error = %v, want %v", err, store.ErrGoalHandoffReviewState)
+	}
+	rejectionReceivedAfterReceive, err := fixture.store.GetGoalHandoff(ctx, goalHandoffID)
+	if err != nil {
+		t.Fatalf("GetGoalHandoff after rejection receipt review receive: %v", err)
+	}
+	if rejectionReceivedAfterReceive.ReviewRejectionReceivedBy != rejectionReceivedBeforeReceive.ReviewRejectionReceivedBy || rejectionReceivedAfterReceive.ReviewRejectionReceivedAt == nil || !rejectionReceivedAfterReceive.ReviewRejectionReceivedAt.Equal(*rejectionReceivedBeforeReceive.ReviewRejectionReceivedAt) {
+		t.Fatalf("rejection receipt evidence changed after review receive: before=%+v after=%+v", rejectionReceivedBeforeReceive, rejectionReceivedAfterReceive)
 	}
 	if err := client.Call(ctx, "goal.handoff.review.request", map[string]any{"handoff_id": goalHandoffID, "goal_id": fixture.claimedGoalID, "requested_by": fixture.receiverID, "review_request_report": "revised"}, &goal); err != nil {
 		t.Fatalf("retry goal.handoff.review.request: %v", err)
