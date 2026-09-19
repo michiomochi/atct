@@ -30,7 +30,7 @@ func (s *Store) HasLiveMonitorForScope(ctx context.Context, scope MonitorLiveSco
 	if scope.Role == "" {
 		return false, errors.New("role is required")
 	}
-	cutoff := time.Now().UTC().Add(-MonitorHealthLease).Format(time.RFC3339Nano)
+	cutoff := formatTimestamp(time.Now().Add(-MonitorHealthLease))
 	count, err := sqlcgen.New(s.db).CountLiveMonitorsForScope(ctx, sqlcgen.CountLiveMonitorsForScopeParams{
 		ProjectID:  scope.ProjectID,
 		Role:       scope.Role,

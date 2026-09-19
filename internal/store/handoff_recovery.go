@@ -260,7 +260,7 @@ func (s *Store) DiscardSession(ctx context.Context, projectID, targetSessionID, 
 	if agentSessionHasDiscardMetadata(target) {
 		return fmt.Errorf("target session %d is already discarded: %w", targetSessionID, ErrSessionDiscarded)
 	}
-	now := time.Now().UTC().Format(time.RFC3339Nano)
+	now := formatTimestamp(time.Now())
 	result, err := q.DiscardAgentSession(ctx, sqlcgen.DiscardAgentSessionParams{
 		DiscardedAt:         sql.NullString{String: now, Valid: true},
 		DiscardedBy:         sql.NullInt64{Int64: commanderID, Valid: true},

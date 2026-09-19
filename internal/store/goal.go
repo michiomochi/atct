@@ -762,7 +762,7 @@ func (s *Store) RejectGoalReview(ctx context.Context, decisionID int64, reason s
 	defer tx.Rollback()
 	q := sqlcgen.New(tx)
 
-	now := time.Now().UTC().Format(time.RFC3339Nano)
+	now := formatTimestamp(time.Now())
 	result, err := q.RejectGoalReviewDecision(ctx, sqlcgen.RejectGoalReviewDecisionParams{
 		AnswerText: reason, AnsweredAt: sql.NullString{String: now, Valid: true}, ID: decisionID,
 	})
@@ -848,7 +848,7 @@ func (s *Store) FinalizeGoalReview(ctx context.Context, goalID, commanderID int6
 
 	now := time.Now().UTC()
 	completed, err := q.CompleteGoalHandoffByReviewer(ctx, sqlcgen.CompleteGoalHandoffByReviewerParams{
-		CompletedReportAt: sql.NullString{String: now.Format(time.RFC3339Nano), Valid: true},
+		CompletedReportAt: sql.NullString{String: formatTimestamp(now), Valid: true},
 		CompleteReport:    sql.NullString{String: handoff.ReviewRequestReport, Valid: true},
 		ID:                handoff.ID,
 		GoalID:            goalID,
@@ -1062,7 +1062,7 @@ func (s *Store) RejectCompletion(ctx context.Context, decisionID int64, reason s
 			if reason != "" {
 				requestReport += ": " + reason
 			}
-			handoffNow := time.Now().UTC().Format(time.RFC3339Nano)
+			handoffNow := formatTimestamp(time.Now())
 			txq := q.WithTx(tx)
 			if err := txq.RequestGoalHandoff(ctx, sqlcgen.RequestGoalHandoffParams{
 				ID:            reopenID,

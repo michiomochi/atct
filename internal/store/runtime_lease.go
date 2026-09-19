@@ -26,7 +26,7 @@ func (s *Store) HeartbeatAgentSession(ctx context.Context, agentSessionID int64,
 		now = time.Now()
 	}
 	result, err := sqlcgen.New(s.db).HeartbeatAgentSession(ctx, sqlcgen.HeartbeatAgentSessionParams{
-		LastHeartbeatAt: sql.NullString{String: now.UTC().Format(time.RFC3339Nano), Valid: true},
+		LastHeartbeatAt: sql.NullString{String: formatTimestamp(now), Valid: true},
 		ID:              agentSessionID,
 	})
 	if err != nil {
@@ -90,9 +90,9 @@ func (s *Store) RenewMonitorLease(ctx context.Context, token string) error {
 		return err
 	}
 	now := time.Now().UTC()
-	threshold := now.Add(-RuntimeLeaseDuration / 3).Format(time.RFC3339Nano)
+	threshold := formatTimestamp(now.Add(-RuntimeLeaseDuration / 3))
 	if _, err := sqlcgen.New(s.db).RenewAgentSessionLease(ctx, sqlcgen.RenewAgentSessionLeaseParams{
-		LastHeartbeatAt:  sql.NullString{String: now.Format(time.RFC3339Nano), Valid: true},
+		LastHeartbeatAt:  sql.NullString{String: formatTimestamp(now), Valid: true},
 		ID:               agentSessionID,
 		LastHeartbeatAt2: sql.NullString{String: threshold, Valid: true},
 	}); err != nil {
@@ -105,7 +105,7 @@ func (s *Store) RenewMonitorLease(ctx context.Context, token string) error {
 // queries that decide whether a receiver is still there.
 func leaseCutoff() sql.NullString {
 	return sql.NullString{
-		String: time.Now().UTC().Add(-RuntimeLeaseDuration).Format(time.RFC3339Nano),
+		String: formatTimestamp(time.Now().Add(-RuntimeLeaseDuration)),
 		Valid:  true,
 	}
 }
@@ -113,7 +113,7 @@ func leaseCutoff() sql.NullString {
 // hasLiveExecutorMonitor reports whether the executor scope still has a
 // monitor inside the health lease.
 func (s *Store) hasLiveExecutorMonitor(ctx context.Context, projectID, goalID, taskID int64) (bool, error) {
-	cutoff := time.Now().UTC().Add(-MonitorHealthLease).Format(time.RFC3339Nano)
+	cutoff := formatTimestamp(time.Now().Add(-MonitorHealthLease))
 	count, err := sqlcgen.New(s.db).CountLiveMonitorsForTaskScope(ctx, sqlcgen.CountLiveMonitorsForTaskScopeParams{
 		ProjectID:  projectID,
 		GoalID:     sql.NullInt64{Int64: goalID, Valid: true},

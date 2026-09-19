@@ -292,7 +292,7 @@ func (s *Store) requestTaskHandoff(ctx context.Context, handoffID string, taskID
 	if err := s.reclaimOpenTaskHandoff(ctx, handoffID, taskID); err != nil {
 		return TaskHandoff{}, err
 	}
-	now := time.Now().UTC().Format(time.RFC3339Nano)
+	now := formatTimestamp(time.Now())
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return TaskHandoff{}, fmt.Errorf("begin task handoff request tx: %w", err)
@@ -344,7 +344,7 @@ func (s *Store) ReceiveTaskHandoff(ctx context.Context, handoffID string, taskID
 	if err := s.ensureTaskHandoffTask(ctx, handoffID, taskID); err != nil {
 		return TaskHandoff{}, err
 	}
-	now := time.Now().UTC().Format(time.RFC3339Nano)
+	now := formatTimestamp(time.Now())
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return TaskHandoff{}, fmt.Errorf("begin task handoff receive tx: %w", err)
@@ -426,7 +426,7 @@ func (s *Store) RequestTaskHandoffReview(ctx context.Context, handoffID string, 
 		return TaskHandoff{}, fmt.Errorf("%w: task handoff review is already open", ErrTaskHandoffReviewState)
 	}
 
-	now := time.Now().UTC().Format(time.RFC3339Nano)
+	now := formatTimestamp(time.Now())
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return TaskHandoff{}, fmt.Errorf("begin task handoff review request tx: %w", err)
@@ -498,7 +498,7 @@ func (s *Store) ReceiveTaskHandoffReview(ctx context.Context, handoffID string, 
 		}
 	}
 
-	now := time.Now().UTC().Format(time.RFC3339Nano)
+	now := formatTimestamp(time.Now())
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return TaskHandoff{}, fmt.Errorf("begin task handoff review receive tx: %w", err)
@@ -585,7 +585,7 @@ func (s *Store) RecoverTaskHandoff(ctx context.Context, handoffID string, taskID
 		return TaskHandoff{}, err
 	}
 	var result sql.Result
-	recoveredAt := sql.NullString{String: time.Now().UTC().Format(time.RFC3339Nano), Valid: true}
+	recoveredAt := sql.NullString{String: formatTimestamp(time.Now()), Valid: true}
 	recoveryReport := sql.NullString{String: reason, Valid: true}
 	switch phase {
 	case "requested":
@@ -642,7 +642,7 @@ func (s *Store) RejectTaskHandoffReview(ctx context.Context, handoffID string, t
 		return TaskHandoff{}, fmt.Errorf("%w: task handoff reviewer %d is not recorded reviewer %d", ErrTaskHandoffReviewReviewerMismatch, reviewerID, handoff.ReviewReceivedBy)
 	}
 
-	now := time.Now().UTC().Format(time.RFC3339Nano)
+	now := formatTimestamp(time.Now())
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return TaskHandoff{}, fmt.Errorf("begin task handoff review rejection tx: %w", err)
@@ -706,7 +706,7 @@ func (s *Store) ReceiveTaskHandoffReviewRejection(ctx context.Context, handoffID
 	if handoff.ReviewRejectedAt == nil || handoff.CompletedReportAt != nil || handoff.RecoveredAt != nil || handoff.ReceivedBy != receivedBy || receivedBy == 0 {
 		return TaskHandoff{}, ErrTaskHandoffReviewState
 	}
-	result, err := sqlcgen.New(s.db).ReceiveTaskHandoffReviewRejection(ctx, sqlcgen.ReceiveTaskHandoffReviewRejectionParams{ReviewRejectionReceivedBy: sql.NullInt64{Int64: receivedBy, Valid: true}, ReviewRejectionReceivedAt: sql.NullString{String: time.Now().UTC().Format(time.RFC3339Nano), Valid: true}, ID: handoffID, TaskID: taskID, ReceivedBy: sql.NullInt64{Int64: receivedBy, Valid: true}})
+	result, err := sqlcgen.New(s.db).ReceiveTaskHandoffReviewRejection(ctx, sqlcgen.ReceiveTaskHandoffReviewRejectionParams{ReviewRejectionReceivedBy: sql.NullInt64{Int64: receivedBy, Valid: true}, ReviewRejectionReceivedAt: sql.NullString{String: formatTimestamp(time.Now()), Valid: true}, ID: handoffID, TaskID: taskID, ReceivedBy: sql.NullInt64{Int64: receivedBy, Valid: true}})
 	if err != nil {
 		return TaskHandoff{}, fmt.Errorf("receive task handoff review rejection: %w", err)
 	}
@@ -757,7 +757,7 @@ func (s *Store) CompleteTaskHandoffByReviewer(ctx context.Context, handoffID str
 		return TaskHandoff{}, taskHasOpenDecisionsError(taskID, decisions)
 	}
 
-	now := time.Now().UTC().Format(time.RFC3339Nano)
+	now := formatTimestamp(time.Now())
 	result, err := q.CompleteTaskHandoffByReviewer(ctx, sqlcgen.CompleteTaskHandoffByReviewerParams{
 		CompletedReportAt: sql.NullString{String: now, Valid: true},
 		CompleteReport:    sql.NullString{String: completeReport, Valid: true},
@@ -864,7 +864,7 @@ func (s *Store) CompleteTaskHandoff(ctx context.Context, handoffID string, taskI
 	if handoff.ReviewRequestedAt != nil && completeReport != taskHandoffReclaimedReport && completeReport != taskHandoffReleasedReport {
 		return TaskHandoff{}, fmt.Errorf("%w: complete the task handoff through its recorded reviewer", ErrTaskHandoffReviewState)
 	}
-	now := time.Now().UTC().Format(time.RFC3339Nano)
+	now := formatTimestamp(time.Now())
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return TaskHandoff{}, fmt.Errorf("begin task handoff completion tx: %w", err)

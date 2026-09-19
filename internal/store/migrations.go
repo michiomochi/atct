@@ -308,7 +308,7 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 		if _, err := tx.Exec(
 			`INSERT OR IGNORE INTO schema_migrations(filename, applied_at) VALUES (?, ?)`,
 			migration.filename,
-			time.Now().UTC().Format(time.RFC3339Nano),
+			formatTimestamp(time.Now()),
 		); err != nil {
 			return fmt.Errorf("record %s during historical bridge: %w", migration.filename, err)
 		}
@@ -999,7 +999,7 @@ func recordMigration(ctx context.Context, conn *sql.Conn, filename string) error
 	if _, err := conn.ExecContext(ctx,
 		"INSERT INTO schema_migrations (filename, applied_at) VALUES (?, ?)",
 		filename,
-		time.Now().UTC().Format(time.RFC3339Nano),
+		formatTimestamp(time.Now()),
 	); err != nil {
 		return fmt.Errorf("record schema migration %s: %w", filename, err)
 	}

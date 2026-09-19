@@ -319,7 +319,7 @@ func (s *Store) requestGoalHandoff(ctx context.Context, handoffID string, goalID
 	if err := s.reclaimOpenGoalHandoff(ctx, handoffID, goalID); err != nil {
 		return GoalHandoff{}, err
 	}
-	now := time.Now().UTC().Format(time.RFC3339Nano)
+	now := formatTimestamp(time.Now())
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return GoalHandoff{}, fmt.Errorf("begin goal handoff request tx: %w", err)
@@ -357,7 +357,7 @@ func (s *Store) ReceiveGoalHandoff(ctx context.Context, handoffID string, goalID
 	if err := s.ensureGoalHandoffGoal(ctx, handoffID, goalID); err != nil {
 		return GoalHandoff{}, err
 	}
-	now := time.Now().UTC().Format(time.RFC3339Nano)
+	now := formatTimestamp(time.Now())
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return GoalHandoff{}, fmt.Errorf("begin goal handoff receive tx: %w", err)
@@ -430,7 +430,7 @@ func (s *Store) RequestGoalHandoffReview(ctx context.Context, handoffID string, 
 		return GoalHandoff{}, fmt.Errorf("%w: goal handoff review is already open", ErrGoalHandoffReviewState)
 	}
 
-	now := time.Now().UTC().Format(time.RFC3339Nano)
+	now := formatTimestamp(time.Now())
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return GoalHandoff{}, fmt.Errorf("begin goal handoff review request tx: %w", err)
@@ -489,7 +489,7 @@ func (s *Store) ReceiveGoalHandoffReview(ctx context.Context, handoffID string, 
 		}
 	}
 
-	now := time.Now().UTC().Format(time.RFC3339Nano)
+	now := formatTimestamp(time.Now())
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return GoalHandoff{}, fmt.Errorf("begin goal handoff review receive tx: %w", err)
@@ -571,7 +571,7 @@ func (s *Store) RecoverGoalHandoff(ctx context.Context, handoffID string, goalID
 	if err != nil {
 		return GoalHandoff{}, err
 	}
-	recoveredAt := time.Now().UTC().Format(time.RFC3339Nano)
+	recoveredAt := formatTimestamp(time.Now())
 	var result sql.Result
 	switch phase {
 	case "review_received":
@@ -624,7 +624,7 @@ func (s *Store) RejectGoalHandoffReview(ctx context.Context, handoffID string, g
 		return GoalHandoff{}, fmt.Errorf("%w: goal handoff reviewer %d is not recorded reviewer %d", ErrGoalHandoffReviewReviewerMismatch, reviewerID, handoff.ReviewReceivedBy)
 	}
 
-	now := time.Now().UTC().Format(time.RFC3339Nano)
+	now := formatTimestamp(time.Now())
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return GoalHandoff{}, fmt.Errorf("begin goal handoff review rejection tx: %w", err)
@@ -673,7 +673,7 @@ func (s *Store) ReceiveGoalHandoffReviewRejection(ctx context.Context, handoffID
 	if handoff.ReviewRejectedAt == nil || handoff.CompletedReportAt != nil || handoff.ReceivedBy != receivedBy || receivedBy == 0 {
 		return GoalHandoff{}, ErrGoalHandoffReviewState
 	}
-	result, err := sqlcgen.New(s.db).ReceiveGoalHandoffReviewRejection(ctx, sqlcgen.ReceiveGoalHandoffReviewRejectionParams{ReviewRejectionReceivedBy: sql.NullInt64{Int64: receivedBy, Valid: true}, ReviewRejectionReceivedAt: sql.NullString{String: time.Now().UTC().Format(time.RFC3339Nano), Valid: true}, ID: handoffID, GoalID: goalID, ReceivedBy: sql.NullInt64{Int64: receivedBy, Valid: true}})
+	result, err := sqlcgen.New(s.db).ReceiveGoalHandoffReviewRejection(ctx, sqlcgen.ReceiveGoalHandoffReviewRejectionParams{ReviewRejectionReceivedBy: sql.NullInt64{Int64: receivedBy, Valid: true}, ReviewRejectionReceivedAt: sql.NullString{String: formatTimestamp(time.Now()), Valid: true}, ID: handoffID, GoalID: goalID, ReceivedBy: sql.NullInt64{Int64: receivedBy, Valid: true}})
 	if err != nil {
 		return GoalHandoff{}, fmt.Errorf("receive goal handoff review rejection: %w", err)
 	}
@@ -706,7 +706,7 @@ func (s *Store) CompleteGoalHandoffByReviewer(ctx context.Context, handoffID str
 		return GoalHandoff{}, fmt.Errorf("%w: goal handoff reviewer %d is not recorded reviewer %d", ErrGoalHandoffReviewReviewerMismatch, reviewerID, handoff.ReviewReceivedBy)
 	}
 
-	now := time.Now().UTC().Format(time.RFC3339Nano)
+	now := formatTimestamp(time.Now())
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return GoalHandoff{}, fmt.Errorf("begin goal handoff review completion tx: %w", err)
@@ -815,7 +815,7 @@ func (s *Store) CompleteGoalHandoff(ctx context.Context, handoffID string, goalI
 	if handoffIsDelegation(handoff.RequestedBy, handoff.ReceivedBy) && completeReport != goalHandoffReclaimedReport && completeReport != goalHandoffReleasedReport {
 		return GoalHandoff{}, fmt.Errorf("%w: complete the goal handoff through its recorded reviewer", ErrGoalHandoffReviewState)
 	}
-	now := time.Now().UTC().Format(time.RFC3339Nano)
+	now := formatTimestamp(time.Now())
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return GoalHandoff{}, fmt.Errorf("begin goal handoff completion tx: %w", err)
@@ -1006,7 +1006,7 @@ func (s *Store) RequestPlanHandoffReview(ctx context.Context, handoffID string, 
 		return PlanHandoff{}, err
 	}
 
-	now := time.Now().UTC().Format(time.RFC3339Nano)
+	now := formatTimestamp(time.Now())
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return PlanHandoff{}, fmt.Errorf("begin plan handoff review request tx: %w", err)
@@ -1062,7 +1062,7 @@ func (s *Store) ReceivePlanHandoffReview(ctx context.Context, handoffID string, 
 		return PlanHandoff{}, fmt.Errorf("%w: %v", ErrPlanHandoffReviewerMismatch, err)
 	}
 
-	now := time.Now().UTC().Format(time.RFC3339Nano)
+	now := formatTimestamp(time.Now())
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return PlanHandoff{}, fmt.Errorf("begin plan handoff review receive tx: %w", err)
@@ -1203,7 +1203,7 @@ func (s *Store) RejectPlanHandoffReview(ctx context.Context, handoffID string, g
 		return PlanHandoff{}, fmt.Errorf("%w: plan handoff reviewer %d is not recorded reviewer %d", ErrPlanHandoffReviewerMismatch, reviewerID, handoff.ReviewReceivedBy)
 	}
 
-	now := time.Now().UTC().Format(time.RFC3339Nano)
+	now := formatTimestamp(time.Now())
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return PlanHandoff{}, fmt.Errorf("begin plan handoff review rejection tx: %w", err)
@@ -1255,7 +1255,7 @@ func (s *Store) ReceivePlanHandoffReviewRejection(ctx context.Context, handoffID
 	if handoff.ReviewRejectedAt == nil || handoff.CompletedReportAt != nil || receivedBy == 0 {
 		return PlanHandoff{}, ErrPlanHandoffReviewState
 	}
-	result, err := sqlcgen.New(s.db).ReceivePlanHandoffReviewRejection(ctx, sqlcgen.ReceivePlanHandoffReviewRejectionParams{ReviewRejectionReceivedBy: sql.NullInt64{Int64: receivedBy, Valid: true}, ReviewRejectionReceivedAt: sql.NullString{String: time.Now().UTC().Format(time.RFC3339Nano), Valid: true}, ID: handoffID, GoalID: goalID})
+	result, err := sqlcgen.New(s.db).ReceivePlanHandoffReviewRejection(ctx, sqlcgen.ReceivePlanHandoffReviewRejectionParams{ReviewRejectionReceivedBy: sql.NullInt64{Int64: receivedBy, Valid: true}, ReviewRejectionReceivedAt: sql.NullString{String: formatTimestamp(time.Now()), Valid: true}, ID: handoffID, GoalID: goalID})
 	if err != nil {
 		return PlanHandoff{}, fmt.Errorf("receive plan handoff review rejection: %w", err)
 	}
@@ -1288,7 +1288,7 @@ func (s *Store) CompletePlanHandoff(ctx context.Context, handoffID string, goalI
 		return PlanHandoff{}, fmt.Errorf("%w: plan handoff reviewer %d is not recorded reviewer %d", ErrPlanHandoffReviewerMismatch, reviewerID, handoff.ReviewReceivedBy)
 	}
 
-	now := time.Now().UTC().Format(time.RFC3339Nano)
+	now := formatTimestamp(time.Now())
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return PlanHandoff{}, fmt.Errorf("begin plan handoff review completion tx: %w", err)

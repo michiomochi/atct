@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestOpenMigratesClaimColumnsOnlyForExistingSessions(t *testing.T) {
@@ -64,8 +65,22 @@ VALUES
 		t.Fatalf("Open pre-claim-columns database: %v", err)
 	}
 	defer migrated.Close()
+
+	// The fixtures are written the way old rows look: a whole second, so
+	// RFC3339Nano printed no fraction at all. Migrating pads them to the fixed
+	// width every timestamp now uses, so the expectations have to be the same
+	// instant rendered that way rather than the literal that went in.
+	fixedWidth := func(literal string) string {
+		t.Helper()
+		parsed, err := time.Parse(time.RFC3339Nano, literal)
+		if err != nil {
+			t.Fatalf("parse fixture timestamp %q: %v", literal, err)
+		}
+		return formatTimestamp(parsed)
+	}
+
 	var liveSessionID int64
-	if err := migrated.DB().QueryRow(`SELECT id FROM agent_sessions WHERE registered_at = ?`, "2026-08-24T00:01:00Z").Scan(&liveSessionID); err != nil {
+	if err := migrated.DB().QueryRow(`SELECT id FROM agent_sessions WHERE registered_at = ?`, fixedWidth("2026-08-24T00:01:00Z")).Scan(&liveSessionID); err != nil {
 		t.Fatalf("read migrated live agent session: %v", err)
 	}
 
@@ -89,8 +104,8 @@ VALUES
 		if requestedBy != liveSessionID || receivedBy != liveSessionID {
 			t.Errorf("%s session IDs = (%d, %d), want (%d, %d)", table, requestedBy, receivedBy, liveSessionID, liveSessionID)
 		}
-		if receivedAt != claimedAt {
-			t.Errorf("%s received_at = %q, want %q", table, receivedAt, claimedAt)
+		if receivedAt != fixedWidth(claimedAt) {
+			t.Errorf("%s received_at = %q, want %q", table, receivedAt, fixedWidth(claimedAt))
 		}
 	}
 	assertLiveHandoff("task_handoffs", "tasks", "task_id", 1, "2026-08-24T00:20:00Z")
