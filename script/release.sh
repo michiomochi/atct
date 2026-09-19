@@ -76,13 +76,29 @@ if [[ -n "$(git status --porcelain --untracked-files=no)" ]]; then
   exit 1
 fi
 
+# Each check is quiet while it passes and prints everything when it does not.
+# Discarding the output unconditionally cost two debugging sessions on
+# 2026-09-19: the release stopped at "==> tests" with no record of which test
+# had failed, and every one of them passed when run again by hand.
+run_check() {
+  local label="$1"
+  shift
+  local output
+  if ! output="$("$@" 2>&1)"; then
+    printf '%s\n' "$output" >&2
+    echo "release check failed: $label" >&2
+    return 1
+  fi
+}
+
 echo "==> tests"
 go build ./...
-go test -count=1 -timeout 600s ./... >/dev/null
-bash tests/session_start_test.bash >/dev/null
-bash tests/wrapper_test.bash >/dev/null
-bash script/schema-check.sh
-( cd web && pnpm test >/dev/null && pnpm typecheck >/dev/null )
+run_check "go test" go test -count=1 -timeout 600s ./...
+run_check "session_start_test.bash" bash tests/session_start_test.bash
+run_check "wrapper_test.bash" bash tests/wrapper_test.bash
+run_check "schema-check.sh" bash script/schema-check.sh
+run_check "web tests" sh -c 'cd web && pnpm test'
+run_check "web typecheck" sh -c 'cd web && pnpm typecheck' 
 
 # web/embed.go bakes web/dist into the binary with go:embed all:dist, so the
 # release carries whatever is in dist at this moment. pnpm build only adds, it
