@@ -42,7 +42,7 @@ MCP shim の holder は identify 前には 0 を返す（`internal/mcpshim/tools
 
 ## データ migration
 
-`internal/store/migrations/0043_runtime_heartbeat_lease.sql` が現在の末尾。新しい embedded migration `0044_retire_legacy_completion.sql` は次を transaction 内で行う。
+main の `0044_fixed_width_timestamps.sql` が現在の末尾。新しい embedded migration `0045_retire_legacy_completion.sql` は次を transaction 内で行う。
 
 ```sql
 UPDATE decisions
@@ -57,5 +57,5 @@ WHERE kind = 'completion' AND status = 'open';
 ## 推奨する実装境界
 
 1. Store/domain/daemon と live Go consumer: legacy kind と adapters、session-0 completion fallback、HTTP/CLI/wakeup/E2E の legacy branches を一つの compile unit として削除する。RPC/MCP の旧 entry point は stable diagnostic を返す。
-2. Migration: `0044` で open legacy row を withdraw し、fresh `schema.sql` は変更しない。
+2. Migration: `0045` で open legacy row を withdraw し、fresh `schema.sql` は変更しない。
 3. UI/docs: completion UI action と stale guidance を除き、named flow と migration behavior を記載する。

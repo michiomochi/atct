@@ -26,12 +26,12 @@
 - `decisions.kind` の historical string は audit history として保持する。open row だけを migration で `withdrawn` にし、closed row・goal status・goal report は変更しない。
 - generic HTTP decision endpoint と historical decision の read-only 表示は維持する。ただし withdrawn/closed の legacy completion に action を表示しない。
 - task/goal handoff completion は nonzero `agent_session_id`、reviewer role、handoff ownership を必須にする。session 0 は Store fallback を呼ばず、`atct_session_identify` と named handoff review を案内する。
-- migration は data-only のため fresh schema `schema.sql` は変更しない。現行 suffix `0043` の次に `0044_retire_legacy_completion.sql` を追加する。
+- migration は data-only のため fresh schema `schema.sql` は変更しない。main の `0044_fixed_width_timestamps.sql` に続けて `0045_retire_legacy_completion.sql` を追加する。
 
 ## 受入条件
 
 - `KindCompletion` を作成・approve・reject して goal を完了する live code path がない。
-- pre-upgrade の open `completion` decision は `0044` 適用後に `withdrawn` となり、理由と `answered_at` が保存される。answered/applied/closed row は変更されない。
+- pre-upgrade の open `completion` decision は `0045` 適用後に `withdrawn` となり、理由と `answered_at` が保存される。answered/applied/closed row は変更されない。
 - `atct_goal_complete` / `goal.complete` は mutation せず、named goal-review の二段階を示す stable diagnostic を返す。
 - session 0 の task/goal handoff completion は mutation せず、identity-required diagnostic を返す。nonzero reviewer completion は維持される。
 - goal-review の request、human approve、merge 後 finalize、reject、same-handoff resubmission が通る。

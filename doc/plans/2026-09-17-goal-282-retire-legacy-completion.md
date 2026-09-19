@@ -11,7 +11,7 @@
 ## Global Constraints
 
 - The worktree is already rebased onto current `main` / `v0.63.11` at `5c726f9`. Do not merge, push, or run daemon operations.
-- Use migration suffix `0044_retire_legacy_completion.sql`; `0043_runtime_heartbeat_lease.sql` is the current integrated suffix.
+- Use migration suffix `0045_retire_legacy_completion.sql`; main's current integrated suffix is `0044_fixed_width_timestamps.sql`.
 - Do not edit `schema.sql` for the data-only migration. Run `script/schema-check.sh` after query/migration changes and regenerate sqlc output with the repository command.
 - Preserve the named `goal_review` request → human approval → merge → finalize lifecycle and same-handoff rejection recovery.
 - Keep `CompletionReport` and report fields required by named goal-review. Remove only the legacy completion authority and its consumers.
@@ -70,10 +70,10 @@
   git commit -m "feat: retire legacy completion authority"
   ```
 
-### Task 2: Withdraw open legacy decisions with migration 0044
+### Task 2: Withdraw open legacy decisions with migration 0045
 
 **Files:**
-- Create: `internal/store/migrations/0044_retire_legacy_completion.sql`
+- Create: `internal/store/migrations/0045_retire_legacy_completion.sql`
 - Create: `internal/store/legacy_completion_migration_test.go`
 - Verify: `schema.sql` remains unchanged
 - Verify: `internal/store/sqlcgen/` remains generated and clean after `script/schema-check.sh`
@@ -100,7 +100,7 @@
 - [ ] **Step 5: Commit the migration.**
 
   ```sh
-  git add internal/store/migrations/0044_retire_legacy_completion.sql internal/store/legacy_completion_migration_test.go
+  git add internal/store/migrations/0045_retire_legacy_completion.sql internal/store/legacy_completion_migration_test.go
   git commit -m "feat: withdraw open legacy completions"
   ```
 
@@ -153,7 +153,7 @@
 
 **Interfaces:**
 - Maintained instructions describe only named goal-review as the completion lifecycle.
-- Historical investigation, current spec, and current plan record the widened deletion and migration 0044.
+- Historical investigation, current spec, and current plan record the widened deletion and migration 0045.
 
 - [ ] **Step 1: Replace stale completion instructions.** Change current operational guidance from `atct_goal_complete` to the named request/approval/finalize sequence while retaining historical notes where they are explicitly records. Use the repository's AI-configuration and skill-writing procedures for edits under `skills/`.
 - [ ] **Step 2: Run documentation/configuration checks.** Verify with repository search that no maintained instruction tells an operator to call `atct_goal_complete` for normal completion; the prohibition in `skills/subcommander/SKILL.md` may remain.

@@ -12,7 +12,7 @@ func TestLegacyCompletionMigrationWithdrawsOnlyOpenRows(t *testing.T) {
 		t.Fatalf("load embedded migrations: %v", err)
 	}
 
-	const targetMigration = "0044_retire_legacy_completion.sql"
+	const targetMigration = "0045_retire_legacy_completion.sql"
 	for _, migration := range migrations {
 		if migration.filename == targetMigration {
 			break
