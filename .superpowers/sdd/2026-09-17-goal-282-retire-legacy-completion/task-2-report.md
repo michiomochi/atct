@@ -40,9 +40,12 @@ were blocked by the PreToolUse hook with:
 `Tool call blocked by PreToolUse hook: ATCT: this session has no live Monitor, so a wakeup would never reach it.`
 
 Neither call was retried. The received handoff was used as implementation
-authorization, as instructed. The review request remains to be submitted once
-the implementation is committed; a monitor-hook refusal, if returned, will
-not be retried.
+authorization, as instructed. The single review-request attempt after the
+commit was blocked by the PreToolUse hook with:
+
+`Tool call blocked by PreToolUse hook: ATCT: this session has no live Monitor, so a wakeup would never reach it.`
+
+It was not retried.
 
 ## Paths
 
