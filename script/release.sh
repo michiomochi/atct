@@ -8,8 +8,9 @@
 #   2. script/release.sh <version>
 #   3. atct daemon stop && atct daemon start   (with the new binary)
 #   4. Monitor the new watch
-#   5. After the replacement, each space must reacquire its project claim:
-#      call atct_project_release first (the old daemon PID still owns the claim), then atct_project_claim
+#   5. After the replacement, each space calls atct_project_claim. Releasing
+#      first is no longer needed: the claim of a session whose monitor stopped
+#      renewing its lease is stale on its own, and claiming takes it over.
 #
 # Everything between 2 and 3 used to be ten separate commands, which left ten
 # places to stop and write a summary instead of continuing.
@@ -159,4 +160,4 @@ echo "==> plugin"
 claude plugin update atct@atct
 
 echo "==> done. now: atct daemon stop && atct daemon start, then re-arm the watch"
-echo "==> After the replacement, each space must reacquire its project claim: call atct_project_release first (the old daemon PID still owns the claim), then atct_project_claim"
+echo "==> After the replacement, each space calls atct_project_claim. No release first: a claim whose lease stopped being renewed is stale and is taken over by the claim itself."
