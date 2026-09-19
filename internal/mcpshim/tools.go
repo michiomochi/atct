@@ -38,6 +38,11 @@ type GoalReleaseIn struct {
 	GoalID mcpID `json:"goal_id"`
 }
 
+type GoalWithdrawIn struct {
+	GoalID mcpID  `json:"goal_id"`
+	Reason string `json:"reason" jsonschema:"why the goal is being abandoned; recorded as its result summary"`
+}
+
 type ProjectClaimIn struct {
 	ProjectID mcpID `json:"project_id"`
 	Force     bool  `json:"force,omitempty" jsonschema:"replace a live project claim with this session"`
@@ -776,6 +781,17 @@ func Register(server *mcp.Server, c *Client, agentSessionID int64) {
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in GoalReleaseIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
 		return callWithUnappliedDecisions(ctx, c, "goal.release", map[string]any{
 			"goal_id": in.GoalID,
+		})
+	})
+
+	addMCPTool[GoalWithdrawIn, RawWithUnappliedDecisions](server, &mcp.Tool{
+		Name:         "atct_goal_withdraw",
+		Description:  "Abandon an active goal, dropping its open tasks and withdrawing its open decisions. Only the project commander may do this, and only for work that is being given up rather than finished: a goal that was completed goes through atct_goal_complete instead.",
+		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in GoalWithdrawIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
+		return callWithUnappliedDecisions(ctx, c, "goal.withdraw", map[string]any{
+			"goal_id": in.GoalID, "reason": in.Reason,
+			"agent_session_id": sessionID.Get(), "include_unapplied_answers": true,
 		})
 	})
 

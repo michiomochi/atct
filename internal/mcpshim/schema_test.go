@@ -57,6 +57,7 @@ func TestRegisterPublishesRoleAndLifecycleToolsWithFlexibleOutputSchema(t *testi
 		"atct_goal_set_derived_from":              true,
 		"atct_goal_claim":                         true,
 		"atct_goal_release":                       true,
+		"atct_goal_withdraw":                      true,
 		"atct_goal_update_content":                true,
 		"atct_task_update_content":                true,
 		"atct_project_claim":                      true,

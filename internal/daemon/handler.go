@@ -1416,6 +1416,27 @@ func (d *Daemon) dispatchMethod(ctx context.Context, req rpc.Request) (json.RawM
 		err := d.store.ReleaseGoal(ctx, p.GoalID)
 		return marshal(nil, err)
 
+	case "goal.withdraw":
+		var p struct {
+			GoalID         int64  `json:"goal_id"`
+			AgentSessionID int64  `json:"agent_session_id"`
+			Reason         string `json:"reason"`
+		}
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		// Withdrawing throws away work other sessions may be doing, so it
+		// belongs to the role that owns the project rather than to whoever
+		// happens to hold the goal.
+		if err := d.authorizeRole(ctx, []string{"commander"}, 0, p.GoalID, 0, p.AgentSessionID, "goal withdrawal"); err != nil {
+			return nil, err
+		}
+		if err := d.store.WithdrawActiveGoal(ctx, p.GoalID, p.Reason); err != nil {
+			return nil, err
+		}
+		goal, err := d.store.GetGoal(ctx, p.GoalID)
+		return marshal(goal, err)
+
 	case "goal.update_content":
 		var p struct {
 			GoalID                  int64  `json:"goal_id"`
