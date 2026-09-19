@@ -126,12 +126,8 @@ func TestUpdateGoalContentRejectsDoneAndDroppedGoals(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					decision, completeErr := s.CompleteGoal(ctx, goal.ID, "done summary", testSessionID("done-run"))
-					if completeErr != nil {
-						t.Fatal(completeErr)
-					}
-					if _, approveErr := s.ApproveCompletion(ctx, decision.ID); approveErr != nil {
-						t.Fatal(approveErr)
+					if _, err := s.DB().ExecContext(ctx, `UPDATE goals SET status = ? WHERE id = ?`, domain.GoalDone, goal.ID); err != nil {
+						t.Fatal(err)
 					}
 				case domain.GoalDropped:
 					goal, err = s.CreateGoal(ctx, project.ID, "dropped content", "agent")

@@ -1967,40 +1967,29 @@ func TestHTTPGoalDetailDoesNotDuplicateTaskDecision(t *testing.T) {
 
 func TestHTTPGoalDetailIncludesCompletionDecision(t *testing.T) {
 	f := newBareFixture(t)
-	decision, err := f.store.CompleteGoalWithReport(f.ctx, f.goal.ID, domain.CompletionReport{
-		WorkDone:    "The work is ready",
-		NowPossible: "The goal can be approved",
-		HowToVerify: "Review the completion report",
-		Surprises:   "なし",
-		NeedsReview: "なし",
-		NextSteps:   "なし",
-	}, testSessionID("completion-run"))
+	commanderID, err := f.store.RegisterAgentSession(f.ctx, os.Getpid())
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("RegisterAgentSession: %v", err)
 	}
+	decision := requestHTTPGoalReview(t, f, f.goal.ID, commanderID, "goal-detail-review")
 
 	detail := fetchGoalDetail(t, f)
 	if len(detail.UnattachedDecisions) != 1 {
 		t.Fatalf("unattached_decisions = %+v", detail.UnattachedDecisions)
 	}
 	got := detail.UnattachedDecisions[0]
-	if got.ID != decision.ID || got.Kind != domain.DecisionKind("completion") || got.TaskID != 0 {
-		t.Fatalf("completion decision = %+v", got)
+	if got.ID != decision.ID || got.Kind != domain.KindGoalReview || got.TaskID != 0 {
+		t.Fatalf("goal review decision = %+v", got)
 	}
 }
 
 func TestHTTPGoalDetailIncludesCompletionReportFields(t *testing.T) {
 	f := newBareFixture(t)
-	if _, err := f.store.CompleteGoalWithReport(f.ctx, f.goal.ID, domain.CompletionReport{
-		WorkDone:    "The work is ready",
-		NowPossible: "The goal can be approved",
-		HowToVerify: "Review the completion report",
-		Surprises:   "なし",
-		NeedsReview: "なし",
-		NextSteps:   "なし",
-	}, testSessionID("completion-run")); err != nil {
-		t.Fatal(err)
+	commanderID, err := f.store.RegisterAgentSession(f.ctx, os.Getpid())
+	if err != nil {
+		t.Fatalf("RegisterAgentSession: %v", err)
 	}
+	requestHTTPGoalReview(t, f, f.goal.ID, commanderID, "goal-detail-report")
 
 	srv := newTestServer(t, f.store)
 	defer srv.Close()
@@ -2401,40 +2390,6 @@ func declareWakeupTestTasks(t *testing.T, f *fixture) []domain.Task {
 	return tasks
 }
 
-func TestHTTPAnswerRejectsCompletionDecision(t *testing.T) {
-	f := newFixture(t)
-	completion, err := f.store.AskDecision(f.ctx, store.AskInput{
-		GoalID:   f.goal.ID,
-		TaskID:   f.tasks[0].ID,
-		Kind:     domain.KindCompletion,
-		Question: "May this task be completed?",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	srv := newTestServer(t, f.store)
-	defer srv.Close()
-
-	status, headers, body := doRequest(t, srv.Client(), http.MethodPost, urlID(srv.URL+"/api/decisions/", completion.ID)+"/answer", mustJSON(t, map[string]string{
-		"answer_text": "yes",
-	}))
-	assertErrorObject(t, status, headers, body, http.StatusBadRequest)
-	var response map[string]string
-	if err := json.Unmarshal(body, &response); err != nil {
-		t.Fatal(err)
-	}
-	if response["error"] != "use approve or reject for this decision" {
-		t.Fatalf("unexpected answer guard error = %q", response["error"])
-	}
-	got, err := f.store.GetDecision(f.ctx, completion.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.Status != domain.DecisionOpen {
-		t.Fatalf("completion decision status = %q, want open", got.Status)
-	}
-}
-
 func TestHTTPAnswerRejectsGoalApprovalDecision(t *testing.T) {
 	f := newFixture(t)
 	approval, err := f.store.AskDecision(f.ctx, store.AskInput{
@@ -2489,69 +2444,6 @@ func TestHTTPAnswerAllowsDecisionKind(t *testing.T) {
 	if got.Status != domain.DecisionStatus("answered") || got.AnswerText != "yes" {
 		t.Fatalf("answered decision = %+v", got)
 	}
-}
-
-func TestHTTPApproveAndRejectCompletionEndpoints(t *testing.T) {
-	f := newBareFixture(t)
-	srv := newTestServer(t, f.store)
-	defer srv.Close()
-	client := srv.Client()
-
-	approveGoal, err := f.store.CreateGoal(f.ctx, f.project.ID, "Approve me", "human")
-	if err != nil {
-		t.Fatal(err)
-	}
-	approveDecision, err := f.store.CompleteGoalWithReport(f.ctx, approveGoal.ID, domain.CompletionReport{
-		WorkDone:    "finished",
-		NowPossible: "The goal is ready for approval",
-		HowToVerify: "Inspect the approved goal",
-		Surprises:   "なし",
-		NeedsReview: "なし",
-		NextSteps:   "なし",
-	}, testSessionID("approve-run"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	status, headers, body := doRequest(t, client, http.MethodPost, urlID(srv.URL+"/api/decisions/", approveDecision.ID)+"/approve", mustJSON(t, map[string]string{}))
-	if status != http.StatusOK {
-		t.Fatalf("approve status = %d; body=%s", status, body)
-	}
-	var approvedGoal domain.Goal
-	if err := json.Unmarshal(body, &approvedGoal); err != nil {
-		t.Fatal(err)
-	}
-	if approvedGoal.ID != approveGoal.ID || approvedGoal.Status != domain.GoalStatus("done") {
-		t.Fatalf("approved goal = %+v", approvedGoal)
-	}
-
-	rejectGoal, err := f.store.CreateGoal(f.ctx, f.project.ID, "Reject me", "human")
-	if err != nil {
-		t.Fatal(err)
-	}
-	rejectDecision, err := f.store.CompleteGoalWithReport(f.ctx, rejectGoal.ID, domain.CompletionReport{
-		WorkDone:    "try again",
-		NowPossible: "Rework can continue",
-		HowToVerify: "Review the rejection reason",
-		Surprises:   "なし",
-		NeedsReview: "needs work",
-		NextSteps:   "Revise the goal",
-	}, testSessionID("reject-run"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	status, _, body = doRequest(t, client, http.MethodPost, urlID(srv.URL+"/api/decisions/", rejectDecision.ID)+"/reject", mustJSON(t, map[string]string{"reason": "needs work"}))
-	if status != http.StatusOK {
-		t.Fatalf("reject status = %d; body=%s", status, body)
-	}
-	var rejected domain.Decision
-	if err := json.Unmarshal(body, &rejected); err != nil {
-		t.Fatal(err)
-	}
-	if rejected.ID != rejectDecision.ID || rejected.Status != domain.DecisionStatus("answered") {
-		t.Fatalf("rejected decision = %+v", rejected)
-	}
-	status, headers, body = doRequest(t, client, http.MethodPost, urlID(srv.URL+"/api/decisions/", rejectDecision.ID)+"/reject", mustJSON(t, map[string]string{}))
-	assertErrorObject(t, status, headers, body, http.StatusConflict)
 }
 
 func TestHTTPApproveAndRejectGoalReviewEndpoints(t *testing.T) {
@@ -3642,47 +3534,6 @@ func TestSSEPublishesAllDecisionTransitionsWithExactPayloads(t *testing.T) {
 	}
 	assertSSEDecision(t, reader, "decision.withdrawn", withdrawn)
 
-	approveDecision, err := f.store.CompleteGoalWithReport(f.ctx, goals[0].ID, domain.CompletionReport{
-		WorkDone:    "done",
-		NowPossible: "The goal is approved",
-		HowToVerify: "Check the approval event",
-		Surprises:   "なし",
-		NeedsReview: "なし",
-		NextSteps:   "なし",
-	}, testSessionID("approve-run"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	assertSSEDecision(t, reader, "decision.created", approveDecision)
-	if _, err := f.store.ApproveCompletion(f.ctx, approveDecision.ID); err != nil {
-		t.Fatal(err)
-	}
-	approveDecision, err = f.store.GetDecision(f.ctx, approveDecision.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	assertSSEDecision(t, reader, "decision.approved", approveDecision)
-
-	rejectDecision, err := f.store.CompleteGoalWithReport(f.ctx, goals[1].ID, domain.CompletionReport{
-		WorkDone:    "not yet",
-		NowPossible: "Rework can continue",
-		HowToVerify: "Check the rejection event",
-		Surprises:   "なし",
-		NeedsReview: "needs work",
-		NextSteps:   "Revise and retry",
-	}, testSessionID("reject-run"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	assertSSEDecision(t, reader, "decision.created", rejectDecision)
-	if err := f.store.RejectCompletion(f.ctx, rejectDecision.ID, "needs work"); err != nil {
-		t.Fatal(err)
-	}
-	rejectDecision, err = f.store.GetDecision(f.ctx, rejectDecision.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	assertSSEDecision(t, reader, "decision.rejected", rejectDecision)
 }
 
 func TestHTTPUnknownGoalAndDecisionReturnJSONNotFound(t *testing.T) {
@@ -3991,19 +3842,8 @@ func TestHTTPGoalContentRejectsDoneAndDroppedGoals(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	completion, err := f.store.CompleteGoalWithReport(f.ctx, done.ID, domain.CompletionReport{
-		WorkDone:    "done",
-		NowPossible: "none",
-		HowToVerify: "verify",
-		Surprises:   "none",
-		NeedsReview: "none",
-		NextSteps:   "none",
-	}, testSessionID("done-run"))
-	if err != nil {
-		t.Fatalf("complete done goal: %v", err)
-	}
-	if _, err := f.store.ApproveCompletion(f.ctx, completion.ID); err != nil {
-		t.Fatalf("approve done goal: %v", err)
+	if _, err := f.store.DB().ExecContext(f.ctx, `UPDATE goals SET status = ? WHERE id = ?`, domain.GoalDone, done.ID); err != nil {
+		t.Fatalf("mark done goal: %v", err)
 	}
 
 	dropped, err := f.store.CreateGoal(f.ctx, f.project.ID, "Dropped goal", "agent")
