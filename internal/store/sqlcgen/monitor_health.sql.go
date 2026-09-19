@@ -10,6 +10,26 @@ import (
 	"database/sql"
 )
 
+const countLiveMonitorsForAgentSession = `-- name: CountLiveMonitorsForAgentSession :one
+SELECT COUNT(*)
+FROM monitor_health
+WHERE agent_session_id = ?
+  AND last_seen_at >= ?
+  AND stopped_at IS NULL
+`
+
+type CountLiveMonitorsForAgentSessionParams struct {
+	AgentSessionID int64
+	LastSeenAt     string
+}
+
+func (q *Queries) CountLiveMonitorsForAgentSession(ctx context.Context, arg CountLiveMonitorsForAgentSessionParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countLiveMonitorsForAgentSession, arg.AgentSessionID, arg.LastSeenAt)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countLiveMonitorsForScope = `-- name: CountLiveMonitorsForScope :one
 SELECT COUNT(*)
 FROM monitor_health
@@ -34,6 +54,19 @@ func (q *Queries) CountLiveMonitorsForScope(ctx context.Context, arg CountLiveMo
 		arg.GoalID,
 		arg.LastSeenAt,
 	)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countMonitorsForAgentSession = `-- name: CountMonitorsForAgentSession :one
+SELECT COUNT(*)
+FROM monitor_health
+WHERE agent_session_id = ?
+`
+
+func (q *Queries) CountMonitorsForAgentSession(ctx context.Context, agentSessionID int64) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countMonitorsForAgentSession, agentSessionID)
 	var count int64
 	err := row.Scan(&count)
 	return count, err

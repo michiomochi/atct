@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"syscall"
+	"time"
 
 	"github.com/michiomochi/atct/internal/domain"
 	"github.com/michiomochi/atct/internal/store/sqlcgen"
@@ -113,9 +114,39 @@ func claimIsRunning(ctx context.Context, s *Store, agentSessionID int64) bool {
 	return claimIsRunningWithQueries(ctx, sqlcgen.New(s.db), agentSessionID)
 }
 
+// monitorLiveness reports the session's liveness through its Monitor, and
+// whether a Monitor is the right thing to ask.
+//
+// Over the HTTP MCP transport the session has no process of its own: the
+// daemon serves every session, so agent_sessions.pid names the daemon, which
+// is always alive and can never be disproven. The Monitor does have a process
+// of its own, one per session, and it dies with the pane. Its heartbeat is
+// already the liveness signal everywhere else, so use it here too.
+//
+// A session that never reported a Monitor keeps the old rule; only a session
+// that has one is judged by it.
+func monitorLiveness(ctx context.Context, q *sqlcgen.Queries, agentSessionID int64) (live bool, monitored bool) {
+	monitors, err := q.CountMonitorsForAgentSession(ctx, agentSessionID)
+	if err != nil || monitors == 0 {
+		return false, false
+	}
+	cutoff := time.Now().UTC().Add(-MonitorHealthLease).Format(time.RFC3339Nano)
+	liveCount, err := q.CountLiveMonitorsForAgentSession(ctx, sqlcgen.CountLiveMonitorsForAgentSessionParams{
+		AgentSessionID: agentSessionID,
+		LastSeenAt:     cutoff,
+	})
+	if err != nil {
+		return false, false
+	}
+	return liveCount > 0, true
+}
+
 func claimIsRunningWithQueries(ctx context.Context, q *sqlcgen.Queries, agentSessionID int64) bool {
 	if agentSessionID == 0 {
 		return false
+	}
+	if live, monitored := monitorLiveness(ctx, q, agentSessionID); monitored {
+		return live
 	}
 	session, err := q.GetAgentSessionLiveness(ctx, agentSessionID)
 	if err != nil {
@@ -141,7 +172,11 @@ func claimIsDefinitelyDead(ctx context.Context, s *Store, agentSessionID int64) 
 	if agentSessionID == 0 {
 		return false
 	}
-	session, err := sqlcgen.New(s.db).GetAgentSessionLiveness(ctx, agentSessionID)
+	queries := sqlcgen.New(s.db)
+	if live, monitored := monitorLiveness(ctx, queries, agentSessionID); monitored {
+		return !live
+	}
+	session, err := queries.GetAgentSessionLiveness(ctx, agentSessionID)
 	if err != nil || session.Pid == 0 || session.StartedAt == "" {
 		return false
 	}
