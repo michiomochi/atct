@@ -43,9 +43,14 @@ type TaskView struct {
 
 type goalView struct {
 	domain.Goal
-	AwaitingDecision bool       `json:"awaiting_decision"`
-	ProjectName      string     `json:"project_name"`
-	Tasks            []TaskView `json:"tasks"`
+	AwaitingDecision bool `json:"awaiting_decision"`
+	// AwaitingReview is a goal whose handoff review has been submitted and not
+	// yet received. There is nothing for a human to answer, so it carries no
+	// open decision, and without this the goal looked the same as one nobody
+	// had picked up.
+	AwaitingReview bool       `json:"awaiting_review"`
+	ProjectName    string     `json:"project_name"`
+	Tasks          []TaskView `json:"tasks"`
 }
 
 type goalTaskCommitsView struct {
@@ -709,9 +714,15 @@ func (s *Server) handleInbox(w http.ResponseWriter, r *http.Request) {
 			for _, task := range goalTasks {
 				taskViews = append(taskViews, newTaskView(task, handoffs[task.ID], openByTask[task.ID]))
 			}
+			awaitingReview, err := s.goalAwaitsHandoffReview(ctx, goal.ID)
+			if err != nil {
+				writeStoreError(w, err)
+				return
+			}
 			activeGoals = append(activeGoals, goalView{
 				Goal:             goal,
 				AwaitingDecision: openByGoal[goal.ID],
+				AwaitingReview:   awaitingReview,
 				ProjectName:      projectNames[goal.ProjectID],
 				Tasks:            taskViews,
 			})
@@ -864,6 +875,32 @@ func (s *Server) handleGoal(w http.ResponseWriter, r *http.Request, goalID strin
 	response.Goal.Tasks = nonNilTaskViews(allTaskViews)
 
 	writeJSON(w, http.StatusOK, response)
+}
+
+// goalAwaitsHandoffReview reports a submitted review that nobody has received
+// yet, for the goal's own handoff or for its plan.
+func (s *Server) goalAwaitsHandoffReview(ctx context.Context, goalID int64) (bool, error) {
+	goalHandoffs, err := s.store.ListGoalHandoffs(ctx, goalID)
+	if err != nil {
+		return false, err
+	}
+	for _, handoff := range goalHandoffs {
+		if handoff.ReviewRequestedAt != nil && handoff.ReviewReceivedAt == nil &&
+			handoff.ReviewRejectedAt == nil && handoff.CompletedReportAt == nil && handoff.RecoveredAt == nil {
+			return true, nil
+		}
+	}
+	planHandoffs, err := s.store.ListPlanHandoffs(ctx, goalID)
+	if err != nil {
+		return false, err
+	}
+	for _, handoff := range planHandoffs {
+		if handoff.ReviewRequestedAt != nil && handoff.ReviewReceivedAt == nil &&
+			handoff.ReviewRejectedAt == nil && handoff.CompletedReportAt == nil {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (s *Server) handleWithdraw(w http.ResponseWriter, r *http.Request, goalID string) {
