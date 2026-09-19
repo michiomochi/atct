@@ -140,9 +140,9 @@ flowchart TD
 4. goal review の通知を受けたら `atct_goal_handoff_review_receive` で受領してレビューする。
    差し戻す場合は `atct_goal_handoff_review_reject` を呼ぶ。受理した handoff は開いたままにし、
    人間の review へ進める。
-5. `atct_goal_review_request` で人間の review を依頼する。承認後に main へマージして
-   `atct_goal_review_complete` を呼ぶ。この操作は goal handoff と goal を同じ transaction で
-   完了し、worktree と subcommander を片付ける。
+5. `atct_goal_review_request` で人間の review を依頼する。**人間が承認するまで main へは
+   マージしない。**承認後にマージして `atct_goal_review_complete` を呼ぶ。この操作は
+   goal handoff と goal を同じ transaction で完了し、worktree と subcommander を片付ける。
 6. 人間が却下した場合は、通知を受けた commander がフィードバックを添えて
    `atct_goal_handoff_review_reject` を呼ぶ。新しい handoff は作らない。
 
@@ -189,6 +189,9 @@ commander は goal handoff の review を受領してから human review を依�
 開いたままであり、承認後の `atct_goal_review_complete` が main へのマージ後に handoff と goal を
 同時に完了する。人間の却下は handoff の差し戻しへ変換され、同じ handoff で作業を再開する。
 
+**この承認が main へマージしてよい唯一の条件である。**「main へのマージは人間の承認が
+唯一の条件である」を参照。
+
 ## 通知
 
 各層は自身の watch から通知を直接受ける。レビューと再開は通知で始める。
@@ -211,7 +214,24 @@ commander は goal handoff の review を受領してから human review を依�
 
 - ゴール 1 つに worktree 1 つ、subcommander 1 人を対応させる。
 - subcommander は着手時と goal review の前に `git merge main` を行う。権限内で
-  解決できない衝突は commander へ返す。
+  解決できない衝突は commander へ返す。**これは main から worktree への向きだけである。**
 - executor を閉じる前に、未コミットの変更がなく、task review の結果が記録済みであることを
   確認する。
-- 人間の承認後に commander が main へマージし、worktree を片付ける。
+
+### main へのマージは人間の承認が唯一の条件である
+
+**worktree を main へマージしてよいのは、そのゴールの `atct_goal_review_request` に
+人間が approve で答えた後だけである。**他に代わる条件は無い。
+
+- commander review を受理しただけでは足りない。受理は人間へ回す前段であり、許可ではない
+- タスクが全部 done でも、テストが全部通っても、急いでいても、許可にはならない
+- 人間の却下・保留・未応答は、いずれも「マージしてはならない」である
+- 承認は goal ごとである。あるゴールの承認は別のゴールのマージを許さない
+
+**この条件を確かめずに `git merge` / `git push` / `git cherry-pick` で main を進めない。**
+確かめ方は `atct_decision_poll` か `atct pending` で、そのゴールの `goal_review` decision が
+`approve` で applied になっていること。
+
+マージ後は `atct_goal_review_complete` を呼ぶ。これは記録であって許可ではないので、
+先に呼んでマージの根拠にしてはならない。承認後の後片付け（worktree と branch の回収）は
+commander が行う。
