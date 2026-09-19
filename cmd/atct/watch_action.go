@@ -11,6 +11,8 @@ type watchAgentAction struct {
 	line        string
 	eventName   string
 	goalID      string
+	taskID      string
+	handoffID   string
 	deliveryKey string
 	generation  string
 	targetRole  string
@@ -57,6 +59,8 @@ func selectWatchAgentAction(line, eventName string, decision watchDecision) (wat
 		line:        line,
 		eventName:   eventName,
 		goalID:      decision.GoalID,
+		taskID:      decision.TaskID,
+		handoffID:   decision.HandoffID,
 		deliveryKey: deliveryKey,
 		generation:  generation,
 		targetRole:  decision.TargetRole,

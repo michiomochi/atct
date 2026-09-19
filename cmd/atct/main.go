@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -63,6 +64,10 @@ type cliConfig struct {
 	codexArgs               []string
 	codexMonitorPassthrough bool
 	codexMonitorAutomatic   bool
+	codexMonitorExplicit    bool
+	codexMonitorRole        string
+	codexMonitorGoalID      string
+	codexMonitorHandoffID   string
 }
 
 var errInvalidArgs = errors.New("invalid command line")
@@ -269,16 +274,54 @@ func parseArgs(args []string) (cliConfig, error) {
 				break
 			}
 		}
-		for _, arg := range monitorArgs {
-			if arg == "--scope" || strings.HasPrefix(arg, "--scope=") ||
-				arg == "--role" || strings.HasPrefix(arg, "--role=") ||
-				arg == "--project" || strings.HasPrefix(arg, "--project=") ||
-				arg == "--goal" || strings.HasPrefix(arg, "--goal=") ||
-				arg == "--task" || strings.HasPrefix(arg, "--task=") {
-				return cliConfig{}, errInvalidArgs
+		for len(monitorArgs) > 0 {
+			name, value, inline := codexMonitorOption(monitorArgs[0])
+			if name == "" {
+				if codexMonitorRejectedOption(monitorArgs[0]) {
+					return cliConfig{}, errInvalidArgs
+				}
+				break
+			}
+			if !inline {
+				if len(monitorArgs) < 2 || strings.TrimSpace(monitorArgs[1]) == "" || strings.HasPrefix(monitorArgs[1], "-") {
+					return cliConfig{}, errInvalidArgs
+				}
+				value = monitorArgs[1]
+				monitorArgs = monitorArgs[2:]
+			} else {
+				if strings.TrimSpace(value) == "" {
+					return cliConfig{}, errInvalidArgs
+				}
+				monitorArgs = monitorArgs[1:]
+			}
+			cfg.codexMonitorExplicit = true
+			switch name {
+			case "--role":
+				if cfg.codexMonitorRole != "" {
+					return cliConfig{}, errInvalidArgs
+				}
+				cfg.codexMonitorRole = value
+			case "--goal":
+				if cfg.codexMonitorGoalID != "" {
+					return cliConfig{}, errInvalidArgs
+				}
+				cfg.codexMonitorGoalID = value
+			case "--handoff":
+				if cfg.codexMonitorHandoffID != "" {
+					return cliConfig{}, errInvalidArgs
+				}
+				cfg.codexMonitorHandoffID = value
 			}
 		}
-		if hasPassthroughDelimiter {
+		if cfg.codexMonitorExplicit {
+			if len(monitorArgs) > 0 {
+				return cliConfig{}, errInvalidArgs
+			}
+			if err := validateCodexMonitorConfig(cfg); err != nil {
+				return cliConfig{}, err
+			}
+			rest = passthroughArgs
+		} else if hasPassthroughDelimiter {
 			rest = passthroughArgs
 		}
 		cfg.codexArgs = append([]string(nil), rest...)
@@ -389,6 +432,56 @@ func parseArgs(args []string) (cliConfig, error) {
 	cfg.contextBrief = contextBrief
 	cfg.contextCheck = contextCheck
 	return cfg, nil
+}
+
+func codexMonitorOption(arg string) (name, value string, inline bool) {
+	for _, candidate := range []string{"--role", "--goal", "--handoff"} {
+		if arg == candidate {
+			return candidate, "", false
+		}
+		prefix := candidate + "="
+		if strings.HasPrefix(arg, prefix) {
+			return candidate, strings.TrimPrefix(arg, prefix), true
+		}
+	}
+	return "", "", false
+}
+
+func codexMonitorRejectedOption(arg string) bool {
+	for _, option := range []string{"--scope", "--project", "--task"} {
+		if arg == option || strings.HasPrefix(arg, option+"=") {
+			return true
+		}
+	}
+	return false
+}
+
+func validateCodexMonitorConfig(cfg cliConfig) error {
+	if !cfg.codexMonitorExplicit {
+		return nil
+	}
+	if cfg.codexMonitorRole == "" {
+		return errInvalidArgs
+	}
+	if cfg.codexMonitorGoalID != "" {
+		goalID, err := strconv.ParseInt(cfg.codexMonitorGoalID, 10, 64)
+		if err != nil || goalID <= 0 {
+			return errInvalidArgs
+		}
+	}
+	switch cfg.codexMonitorRole {
+	case "commander":
+		if cfg.codexMonitorGoalID != "" || cfg.codexMonitorHandoffID != "" {
+			return errInvalidArgs
+		}
+	case "subcommander":
+		if cfg.codexMonitorGoalID == "" || cfg.codexMonitorHandoffID == "" {
+			return errInvalidArgs
+		}
+	default:
+		return errInvalidArgs
+	}
+	return nil
 }
 
 // version is overridden at build time with -ldflags "-X main.version=...".
