@@ -2,6 +2,9 @@ package store
 
 import (
 	"context"
+	"errors"
+	"os"
+	"strings"
 	"testing"
 )
 
@@ -110,5 +113,64 @@ func TestTaskHandoffReceiverCanReceiveAgain(t *testing.T) {
 	}
 	if _, err := s.ReceiveTaskHandoff(ctx, handoffID, taskID, receiver); err != nil {
 		t.Fatalf("ReceiveTaskHandoff(same receiver again): %v", err)
+	}
+}
+
+// Holding the project's claim is what makes a session its commander. Requiring
+// the session's own project column to agree was a second copy of the same
+// fact, and it refused the holder whenever that column was not filled in.
+func TestSessionDiscardAcceptsTheClaimHolder(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	goalID := newTestGoal(t, s)
+	goal, err := s.GetGoal(ctx, goalID)
+	if err != nil {
+		t.Fatalf("GetGoal: %v", err)
+	}
+	commander := registerNamedTestAgentSession(t, s, "discard-commander", os.Getpid())
+	if err := s.AssociateAgentSessionWithProject(ctx, commander, goal.ProjectID); err != nil {
+		t.Fatalf("AssociateAgentSessionWithProject: %v", err)
+	}
+	if _, err := s.ClaimProject(ctx, goal.ProjectID, commander); err != nil {
+		t.Fatalf("ClaimProject: %v", err)
+	}
+	target := registerNamedTestAgentSession(t, s, "discard-target", os.Getpid())
+	if err := s.AssociateAgentSessionWithProject(ctx, target, goal.ProjectID); err != nil {
+		t.Fatalf("AssociateAgentSessionWithProject(target): %v", err)
+	}
+
+	if _, err := s.RequestSessionDiscard(ctx, SessionDiscardRequest{
+		ProjectID: goal.ProjectID, GoalID: goalID, TargetSessionID: target,
+		RequestedBy: commander, Reason: "the pane is gone",
+	}); err != nil {
+		t.Fatalf("RequestSessionDiscard by the claim holder: %v", err)
+	}
+}
+
+// A session with no project never identified from inside one, so it is in no
+// position to revoke another.
+func TestSessionDiscardRefusesASessionWithNoProject(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	goalID := newTestGoal(t, s)
+	goal, err := s.GetGoal(ctx, goalID)
+	if err != nil {
+		t.Fatalf("GetGoal: %v", err)
+	}
+	unbound := registerNamedTestAgentSession(t, s, "discard-unbound", os.Getpid())
+	if _, err := s.ClaimProject(ctx, goal.ProjectID, unbound); err != nil {
+		t.Fatalf("ClaimProject: %v", err)
+	}
+	target := registerNamedTestAgentSession(t, s, "discard-unbound-target", os.Getpid())
+
+	_, err = s.RequestSessionDiscard(ctx, SessionDiscardRequest{
+		ProjectID: goal.ProjectID, GoalID: goalID, TargetSessionID: target,
+		RequestedBy: unbound, Reason: "no project",
+	})
+	if !errors.Is(err, ErrSessionDiscardForbidden) {
+		t.Fatalf("RequestSessionDiscard error = %v, want ErrSessionDiscardForbidden", err)
+	}
+	if !strings.Contains(err.Error(), "has no project") {
+		t.Fatalf("error %q does not say the session has no project", err)
 	}
 }

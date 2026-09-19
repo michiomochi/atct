@@ -1093,6 +1093,13 @@ test_atct_skill_requires_execution_flow() {
   assert_file_contains 'Read `doc/execution-flow.md` only when `next_step` does not answer the' "$REPO_ROOT/skills/atct/SKILL.md"
 }
 
+# The tool takes cwd, but nothing fills it unless a skill says to. An optional
+# field nobody passes is how ATCT_AGENT_SESSION_ID stayed dead for months.
+test_identify_is_told_to_pass_its_cwd() {
+  assert_file_contains 'Pass the current directory as `cwd` in the same call.' "$REPO_ROOT/skills/start/SKILL.md"
+  assert_file_contains 'passing your current directory as `cwd`' "$REPO_ROOT/skills/commander/SKILL.md"
+}
+
 test_start_explains_claim_recovery_boundary() {
   local start_skill="$REPO_ROOT/skills/start/SKILL.md"
 
@@ -1729,6 +1736,7 @@ test_start_forces_commander_claim
 test_role_skills_are_routed_from_shared_atct
 test_role_entry_receives_with_credentials_before_role_check
 test_atct_skill_requires_execution_flow
+test_identify_is_told_to_pass_its_cwd
 test_start_explains_claim_recovery_boundary
 test_start_explains_mcp_reconnect_gap
 test_start_monitor_is_not_first_step

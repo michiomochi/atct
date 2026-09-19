@@ -130,8 +130,12 @@ func (s *Store) requireProjectCommander(ctx context.Context, q *sqlcgen.Queries,
 	if agentSessionHasDiscardMetadata(commander) {
 		return fmt.Errorf("commander session %d is discarded: %w", sessionID, ErrSessionDiscardForbidden)
 	}
-	if !commander.ProjectID.Valid || commander.ProjectID.Int64 != projectID {
-		return fmt.Errorf("commander session %d is outside project %d: %w", sessionID, projectID, ErrSessionDiscardForbidden)
+	// Holding the project's claim already says which project this is, so
+	// comparing it again only adds a way to fail. Having no project at all is
+	// different: identify binds one, so a session without one never identified
+	// from inside a registered project and has no business discarding another.
+	if !commander.ProjectID.Valid {
+		return fmt.Errorf("commander session %d has no project: it never identified from inside one: %w", sessionID, ErrSessionDiscardForbidden)
 	}
 	return nil
 }
@@ -192,8 +196,15 @@ func (s *Store) RequestSessionDiscard(ctx context.Context, in SessionDiscardRequ
 	if err != nil {
 		return domain.Decision{}, fmt.Errorf("find target session %d: %w", in.TargetSessionID, err)
 	}
-	if !target.ProjectID.Valid || target.ProjectID.Int64 != in.ProjectID {
-		return domain.Decision{}, fmt.Errorf("target session %d is outside project %d: %w", in.TargetSessionID, in.ProjectID, ErrSessionDiscardForbidden)
+	// Two different refusals, so the answer says which one it is. A session in
+	// another project is out of this commander's reach; a session with no
+	// project never identified from inside one, and revoking it would be a
+	// guess about what it belongs to.
+	if !target.ProjectID.Valid {
+		return domain.Decision{}, fmt.Errorf("target session %d has no project: it never identified from inside one: %w", in.TargetSessionID, ErrSessionDiscardForbidden)
+	}
+	if target.ProjectID.Int64 != in.ProjectID {
+		return domain.Decision{}, fmt.Errorf("target session %d is in project %d, not %d: %w", in.TargetSessionID, target.ProjectID.Int64, in.ProjectID, ErrSessionDiscardForbidden)
 	}
 	if agentSessionHasDiscardMetadata(target) {
 		return domain.Decision{}, fmt.Errorf("target session %d is already discarded: %w", in.TargetSessionID, ErrSessionDiscarded)

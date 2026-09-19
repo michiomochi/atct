@@ -308,6 +308,7 @@ type RoleIn struct {
 type SessionIdentifyIn struct {
 	SessionKey   string `json:"session_key"`
 	MonitorToken string `json:"monitor_token,omitempty" jsonschema:"optional monitor token from SessionStart in Claude or injected by atct codex monitor"`
+	Cwd          string `json:"cwd,omitempty" jsonschema:"agent working directory; used to derive the project automatically"`
 }
 
 type SessionDiscardRequestIn struct {
@@ -609,6 +610,7 @@ func callSessionIdentify(ctx context.Context, c *Client, in SessionIdentifyIn, a
 		"agent_session_id": agentSessionID.Get(),
 		"session_key":      strings.TrimSpace(in.SessionKey),
 		"monitor_token":    strings.TrimSpace(in.MonitorToken),
+		"cwd":              strings.TrimSpace(in.Cwd),
 	}, &response); err != nil {
 		return nil, RawWithUnappliedDecisions{}, err
 	}
