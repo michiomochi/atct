@@ -106,7 +106,7 @@ flowchart TD
         S4[atct_task_create_handoff_receive<br/>task-create handoff を受領]
         S5[atct_task_create<br/>task-create handoff を完了]
         S6[atct_task_handoff_request<br/>task handoff を作成]
-        S7[task review を受領・レビュー・完了]
+        S7[atct_task_handoff_review_receive<br/>レビューして atct_task_handoff_complete]
         S8[executor を閉じ、コミットし<br/>atct_goal_handoff_review_request]
         S9[atct_goal_handoff_review_reject_receive<br/>修正して同じ handoff で再 review request]
     end
