@@ -77,7 +77,17 @@ func Ensure(cfg Config) (Registry, error) {
 	return start(cfg)
 }
 
+// clearStale drops the socket and registry left by a dead daemon.
+//
+// A missing registry does not prove the daemon is gone: the file can be
+// removed while the process keeps serving. Deleting a socket that still
+// answers strands that daemon holding the HTTP port, so every later start
+// fails to bind and the socket is never recreated. Ask the socket first.
 func clearStale(dir string) error {
+	if SocketAnswers(SocketPath(dir)) {
+		return fmt.Errorf("%w: %s still answers with no registry entry; run `atct daemon stop` or terminate it",
+			ErrUnresponsive, SocketPath(dir))
+	}
 	if err := os.Remove(SocketPath(dir)); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("remove stale socket: %w", err)
 	}

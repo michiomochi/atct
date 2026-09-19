@@ -44,8 +44,11 @@ homebrew_casks:
     description: "The air traffic control tower for your coding agents"
     license: "AGPL-3.0"
     binaries: [atct, atct-mcp]
-    url:
-      verified: github.com/michiomochi/atct
+    # `postflight` is deprecated, but postflight_steps runs a restricted DSL
+    # whose `base:` selects the command path only, leaving `args` relative:
+    # 0.63.5 failed to install with `xattr: No such file: atct`. Keep the
+    # working hook and take the deprecation warning until goreleaser emits
+    # postflight_steps itself.
     hooks:
       post:
         install: |

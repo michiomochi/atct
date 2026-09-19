@@ -51,6 +51,7 @@ type cliConfig struct {
 	roleExpectedSet         bool
 	roleAgentSessionID      string
 	stopCheckHookInput      bool
+	monitorCheckHookInput   bool
 	sessionKeyHookInput     bool
 	watchGoalID             string
 	watchProjectScope       bool
@@ -67,18 +68,19 @@ type cliConfig struct {
 var errInvalidArgs = errors.New("invalid command line")
 
 var validSubcommands = map[string]bool{
-	"daemon":      true,
-	"project":     true,
-	"goal":        true,
-	"context":     true,
-	"pending":     true,
-	"watch":       true,
-	"role":        true,
-	"stop-check":  true,
-	"session-key": true,
-	"handoff":     true,
-	"codex":       true,
-	"version":     true,
+	"daemon":        true,
+	"project":       true,
+	"goal":          true,
+	"context":       true,
+	"pending":       true,
+	"watch":         true,
+	"role":          true,
+	"stop-check":    true,
+	"monitor-check": true,
+	"session-key":   true,
+	"handoff":       true,
+	"codex":         true,
+	"version":       true,
 }
 
 var validDaemonActions = map[string]bool{"start": true, "stop": true}
@@ -129,6 +131,7 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "  watch [--monitor --token string | -goal string | -project]  Stream monitor actions or diagnostic events")
 	fmt.Fprintln(os.Stderr, "  role                 Report the claim-derived role for an agent session")
 	fmt.Fprintln(os.Stderr, "  stop-check           Emit a Codex continuation when scoped role work remains")
+	fmt.Fprintln(os.Stderr, "  monitor-check        Deny an ATCT tool call when the session has no live Monitor")
 	fmt.Fprintln(os.Stderr, "  session-key          Print the SessionStart key for atct_session_identify")
 	fmt.Fprintln(os.Stderr, "  handoff complete <handoff-id> <task-id>  Report a handoff complete")
 	fmt.Fprintln(os.Stderr, "  version              Print the installed CLI version")
@@ -305,6 +308,9 @@ func parseArgs(args []string) (cliConfig, error) {
 	if sub == "stop-check" {
 		flags.BoolVar(&cfg.stopCheckHookInput, "hook-input", false, "read hook JSON from stdin")
 	}
+	if sub == "monitor-check" {
+		flags.BoolVar(&cfg.monitorCheckHookInput, "hook-input", false, "read hook JSON from stdin")
+	}
 	if sub == "session-key" {
 		flags.BoolVar(&cfg.sessionKeyHookInput, "hook-input", false, "read hook JSON from stdin")
 	}
@@ -367,6 +373,10 @@ func parseArgs(args []string) (cliConfig, error) {
 	}
 	if sub == "stop-check" && !cfg.stopCheckHookInput {
 		fmt.Fprintln(os.Stderr, "stop-check requires --hook-input")
+		return cliConfig{}, errInvalidArgs
+	}
+	if sub == "monitor-check" && !cfg.monitorCheckHookInput {
+		fmt.Fprintln(os.Stderr, "monitor-check requires --hook-input")
 		return cliConfig{}, errInvalidArgs
 	}
 	if sub == "session-key" && !cfg.sessionKeyHookInput {
@@ -551,6 +561,12 @@ func main() {
 			os.Exit(1)
 		}
 		return
+	case "monitor-check":
+		if err := runMonitorCheck(config, dir, exePath); err != nil {
+			log.Printf("monitor-check: %v", err)
+			os.Exit(1)
+		}
+		return
 	case "session-key":
 		if err := runSessionKey(config, dir); err != nil {
 			log.Printf("session-key: %v", err)
@@ -597,8 +613,14 @@ func runDaemon(config cliConfig, dir string) error {
 			_ = httpServer.Close()
 		}
 		_ = httpListener.Close()
-		_ = daemonctl.RemoveRegistry(dir)
-		_ = os.Remove(sock)
+		// The registry and socket are shared paths. A daemon that outlived a
+		// newer one must not delete the newer one's files on the way out:
+		// that strands the survivor holding the HTTP port with no socket,
+		// and every later start then fails to bind.
+		if daemonctl.RegistryOwnedBy(dir, os.Getpid()) {
+			_ = daemonctl.RemoveRegistry(dir)
+			_ = os.Remove(sock)
+		}
 	}()
 
 	rpcErr := make(chan error, 1)

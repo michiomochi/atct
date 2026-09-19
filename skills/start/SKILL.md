@@ -74,13 +74,13 @@ Ordinary `codex` and `codex exec` remain unchanged. The known
 `atct codex monitor exec ...` pass-through is non-interactive and is not a
 monitored interactive session.
 
-For a worker, the delegator first records its task handoff, creates a fresh
-worker pane, and runs `herdr pane run <pane> atct codex monitor -- <codex args>`
-before any worker process. The worker then
+For a worker, the delegator first records its task handoff, then starts the
+worker process through `atct codex monitor -- <codex args>`. Placing that
+command in a workspace is the terminal multiplexer's concern. The worker then
 performs `atct_session_identify` → `atct_task_handoff_receive` with its `task_id`
 and `handoff_id`, using the exact `session_key` and optional `monitor_token` from
-SessionStart → `atct_role`. A plain `herdr agent start` launch bypasses the monitor wrapper and
-is forbidden for a monitored worker.
+SessionStart → `atct_role`. Starting Codex directly bypasses the monitor wrapper
+and is forbidden for a monitored worker.
 
 ### Liveness is a recheck, not authority
 
@@ -89,8 +89,7 @@ rechecked. It does not approve a human decision, authorize a scope change,
 create work, or authorize a commit.
 
 - A subcommander accepts the plan first. Only then does it request the task
-  handoff, create a fresh worker pane, and run the executor through `herdr pane
-  run ... atct codex monitor -- <codex args>`.
+  handoff and start the executor through `atct codex monitor -- <codex args>`.
 - An executor keeps an open human decision parked and stays within its task. It
   implements and tests, then submits the task for review; it does not commit or
   cross the decision because a liveness prompt arrived.
