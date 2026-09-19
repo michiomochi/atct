@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 
@@ -67,7 +68,10 @@ func TestSchemaParityOnMigratedCopiedDatabaseFromEnvironment(t *testing.T) {
 	cloneDB.SetMaxOpenConns(1)
 	t.Cleanup(func() { _ = cloneDB.Close() })
 
-	expectedDB := materializeRecordedMigrations(t, cloneDB)
+	expectedDB, unknown := materializeRecordedMigrations(t, cloneDB)
+	for _, filename := range unknown {
+		t.Errorf("database records %s, which is not an embedded migration", filename)
+	}
 	assertSchemaParity(t, cloneDB, expectedDB)
 }
 
@@ -90,14 +94,22 @@ func TestSchemaParityDrift(t *testing.T) {
 	driftDB.SetMaxOpenConns(1)
 	t.Cleanup(func() { _ = driftDB.Close() })
 
-	expectedDB := materializeRecordedMigrations(t, driftDB)
+	expectedDB, unknown := materializeRecordedMigrations(t, driftDB)
+	if len(unknown) > 0 {
+		// The database is ahead of this working tree, not drifted. One daemon
+		// serves every worktree, so a migration merged to main is applied to
+		// the shared database while a branch cut before it still cannot
+		// describe the result. There is no expected schema to compare against,
+		// and failing here would block every older branch's commit gate.
+		t.Skipf("database has applied %v, which this working tree does not carry; merge main to check drift", unknown)
+	}
 	assertSchemaParity(t, driftDB, expectedDB)
 }
 
 // materializeRecordedMigrations builds the schema the given database claims to
 // have, by applying exactly the embedded migrations its schema_migrations table
 // records as applied.
-func materializeRecordedMigrations(t *testing.T, db *sql.DB) *sql.DB {
+func materializeRecordedMigrations(t *testing.T, db *sql.DB) (*sql.DB, []string) {
 	t.Helper()
 
 	rows, err := db.Query(`SELECT filename FROM ` + schemaMigrationsTable)
@@ -132,10 +144,12 @@ func materializeRecordedMigrations(t *testing.T, db *sql.DB) *sql.DB {
 		}
 		delete(applied, migration.filename)
 	}
+	unknown := make([]string, 0, len(applied))
 	for filename := range applied {
-		t.Errorf("database records %s, which is not an embedded migration", filename)
+		unknown = append(unknown, filename)
 	}
-	return expected
+	sort.Strings(unknown)
+	return expected, unknown
 }
 
 func materializeSchemaSQL(t *testing.T) *sql.DB {
