@@ -46,7 +46,95 @@ func (d *Daemon) stopCheckCommander(ctx context.Context, projectID int64) (strin
 		return "", fmt.Errorf("list project goals: %w", err)
 	}
 	for _, goal := range goals {
-		if goal.Status == domain.GoalActive {
+		if goal.Status != domain.GoalActive {
+			continue
+		}
+
+		goalHandoffs, err := d.store.ListGoalHandoffs(ctx, goal.ID)
+		if err != nil {
+			return "", fmt.Errorf("list goal handoffs for goal %d: %w", goal.ID, err)
+		}
+		planHandoffs, err := d.store.ListPlanHandoffs(ctx, goal.ID)
+		if err != nil {
+			return "", fmt.Errorf("list plan handoffs for goal %d: %w", goal.ID, err)
+		}
+		decisions, err := d.store.ListDecisionsForGoal(ctx, goal.ID)
+		if err != nil {
+			return "", fmt.Errorf("list decisions for goal %d: %w", goal.ID, err)
+		}
+
+		var latestGoalReview domain.Decision
+		hasGoalReview := false
+		hasOpenDecision := false
+		hasApprovedGoalReview := false
+		for _, decision := range decisions {
+			if decision.Status == domain.DecisionOpen {
+				hasOpenDecision = true
+			}
+			if decision.Kind == domain.KindGoalReview {
+				if decision.Status == domain.DecisionApplied && decision.AnswerLabel == "approve" {
+					hasApprovedGoalReview = true
+				}
+				latestGoalReview = decision
+				hasGoalReview = true
+			}
+		}
+		if hasApprovedGoalReview {
+			return fmt.Sprintf("commander has approved goal review for active goal %d: %s", goal.ID, domain.Headline(goal.Content)), nil
+		}
+		if hasGoalReview && latestGoalReview.Status == domain.DecisionAnswered && latestGoalReview.AnswerLabel == "reject" {
+			for _, handoff := range goalHandoffs {
+				if handoff.RequestedAt != nil && handoff.ReceivedAt != nil && handoff.ReviewRequestedAt != nil && handoff.ReviewReceivedAt != nil && handoff.ReviewRejectedAt == nil && handoff.CompletedReportAt == nil && handoff.RecoveredAt == nil {
+					return fmt.Sprintf("commander must return rejected goal review for active goal %d: %s", goal.ID, domain.Headline(goal.Content)), nil
+				}
+			}
+		}
+		for _, handoff := range goalHandoffs {
+			if handoff.RequestedAt != nil && handoff.ReviewRequestedAt != nil && handoff.ReviewReceivedAt == nil && handoff.ReviewRejectedAt == nil && handoff.CompletedReportAt == nil && handoff.RecoveredAt == nil {
+				return fmt.Sprintf("commander has unreceived goal review for active goal %d: %s", goal.ID, domain.Headline(goal.Content)), nil
+			}
+		}
+		for _, handoff := range planHandoffs {
+			if handoff.ReviewRequestedAt != nil && handoff.ReviewReceivedAt == nil && handoff.ReviewRejectedAt == nil && handoff.CompletedReportAt == nil {
+				return fmt.Sprintf("commander has unreceived plan review for active goal %d: %s", goal.ID, domain.Headline(goal.Content)), nil
+			}
+		}
+		if hasOpenDecision {
+			continue
+		}
+
+		tasks, err := d.store.ListTasks(ctx, goal.ID)
+		if err != nil {
+			return "", fmt.Errorf("list tasks for goal %d: %w", goal.ID, err)
+		}
+		hasExecutorWork := false
+		for _, task := range tasks {
+			handoffs, err := d.store.ListTaskHandoffs(ctx, task.ID)
+			if err != nil {
+				return "", fmt.Errorf("list task handoffs for task %d: %w", task.ID, err)
+			}
+			for _, handoff := range handoffs {
+				if handoff.RequestedAt != nil && handoff.ReceivedAt != nil && handoff.CompletedReportAt == nil && handoff.RecoveredAt == nil {
+					hasExecutorWork = true
+					break
+				}
+			}
+			if hasExecutorWork {
+				break
+			}
+		}
+		if hasExecutorWork {
+			continue
+		}
+
+		hasDelegatedGoalHandoff := false
+		for _, handoff := range goalHandoffs {
+			if handoff.RequestedAt != nil && handoff.RequestedBy != handoff.ReceivedBy && handoff.CompletedReportAt == nil && handoff.RecoveredAt == nil {
+				hasDelegatedGoalHandoff = true
+				break
+			}
+		}
+		if !hasDelegatedGoalHandoff {
 			return fmt.Sprintf("commander has active goal %d: %s", goal.ID, domain.Headline(goal.Content)), nil
 		}
 	}

@@ -1717,12 +1717,19 @@ esac
 	if instructions != mcpshim.Instructions {
 		t.Fatalf("MCP initialize instructions = %v, want shared instructions", instructions)
 	}
+	if got := len(mcpshim.Instructions); got > 350 {
+		t.Fatalf("MCP instructions are %d bytes, want <= 350", got)
+	}
 	for _, marker := range []string{
-		"This repository is registered with ATCT.",
-		"An active goal is permission to coordinate work.",
-		"See the `atct` skill for details.",
+		"daemon-derived role and handoff state",
+		"receive before work",
+		"request review before completion",
+		"human decisions through ATCT",
+		"human approval",
+		"never auto-apply",
+		"`atct` skill",
 	} {
-		if !strings.Contains(instructions, marker) {
+		if !strings.Contains(strings.ToLower(instructions), strings.ToLower(marker)) {
 			t.Errorf("MCP initialize instructions missing fixed instruction %v", marker)
 		}
 	}
