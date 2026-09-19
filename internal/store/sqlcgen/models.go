@@ -201,3 +201,8 @@ type TaskHandoff struct {
 	RecoveredAt               sql.NullString
 	RecoveryReport            sql.NullString
 }
+
+type UiSetting struct {
+	ID     int64
+	Locale string
+}

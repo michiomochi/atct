@@ -182,6 +182,10 @@ type createGoalRequest struct {
 	Creator   string  `json:"creator"`
 }
 
+type uiSettingsResponse struct {
+	Locale string `json:"locale"`
+}
+
 // inputID accepts canonical numeric IDs and preserves string input so removed
 // UUID-style IDs can receive migration guidance from the store resolver.
 type inputID string
@@ -202,6 +206,22 @@ func (id *inputID) UnmarshalJSON(data []byte) error {
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/"), "/")
+	if len(parts) == 2 && parts[0] == "api" && parts[1] == "ui-settings" {
+		if r.Method != http.MethodGet {
+			writeError(w, http.StatusBadRequest, "method is not allowed for this endpoint")
+			return
+		}
+		s.handleUISettings(w, r)
+		return
+	}
+	if len(parts) == 3 && parts[0] == "api" && parts[1] == "ui-settings" && parts[2] == "locale" {
+		if r.Method != http.MethodPut {
+			writeError(w, http.StatusBadRequest, "method is not allowed for this endpoint")
+			return
+		}
+		s.handleUILocale(w, r)
+		return
+	}
 	if len(parts) == 2 && parts[0] == "api" && parts[1] == "inbox" {
 		if r.Method != http.MethodGet {
 			writeError(w, http.StatusBadRequest, "method is not allowed for this endpoint")
@@ -400,12 +420,42 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func malformedAPIPath(path string) bool {
-	for _, prefix := range []string{"/api/inbox", "/api/monitor-health", "/api/events", "/api/ws", "/api/watch", "/api/projects", "/api/goals", "/api/tasks", "/api/decisions"} {
+	for _, prefix := range []string{"/api/inbox", "/api/ui-settings", "/api/monitor-health", "/api/events", "/api/ws", "/api/watch", "/api/projects", "/api/goals", "/api/tasks", "/api/decisions"} {
 		if path == prefix || strings.HasPrefix(path, prefix+"/") {
 			return true
 		}
 	}
 	return false
+}
+
+func (s *Server) handleUISettings(w http.ResponseWriter, r *http.Request) {
+	locale, err := s.store.GetUILocale(r.Context())
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, uiSettingsResponse{Locale: locale})
+}
+
+func (s *Server) handleUILocale(w http.ResponseWriter, r *http.Request) {
+	var request uiSettingsResponse
+	if err := decodeJSONBody(r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if request.Locale == "" {
+		writeError(w, http.StatusBadRequest, "locale is required")
+		return
+	}
+	if err := s.store.SetUILocale(r.Context(), request.Locale); err != nil {
+		if errors.Is(err, store.ErrUnsupportedUILocale) {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, uiSettingsResponse{Locale: request.Locale})
 }
 
 func (s *Server) handleMonitorHealth(w http.ResponseWriter, r *http.Request) {
