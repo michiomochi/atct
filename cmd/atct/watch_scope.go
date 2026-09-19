@@ -108,9 +108,12 @@ func watchExecutorLivenessActionable(scope watchScope, state watchReconciliation
 	return false
 }
 
+// watchGoalHasOpenTaskHandoff answers whether someone else is working on this
+// goal's tasks. A handoff whose monitor is gone is nobody working: the
+// subcommander has to hear about that one rather than be told to stand down.
 func watchGoalHasOpenTaskHandoff(scope watchScope, state watchReconciliation) bool {
 	for _, handoff := range state.TaskHandoffs {
-		if watchHandoffMatchesGoal(scope, handoff) && watchHandoffOpen(handoff) {
+		if watchHandoffMatchesGoal(scope, handoff) && watchHandoffOpen(handoff) && !handoff.MonitorLost {
 			return true
 		}
 	}

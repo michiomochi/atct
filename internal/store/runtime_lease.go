@@ -109,3 +109,19 @@ func leaseCutoff() sql.NullString {
 		Valid:  true,
 	}
 }
+
+// hasLiveExecutorMonitor reports whether the executor scope still has a
+// monitor inside the health lease.
+func (s *Store) hasLiveExecutorMonitor(ctx context.Context, projectID, goalID, taskID int64) (bool, error) {
+	cutoff := time.Now().UTC().Add(-MonitorHealthLease).Format(time.RFC3339Nano)
+	count, err := sqlcgen.New(s.db).CountLiveMonitorsForTaskScope(ctx, sqlcgen.CountLiveMonitorsForTaskScopeParams{
+		ProjectID:  projectID,
+		GoalID:     sql.NullInt64{Int64: goalID, Valid: true},
+		TaskID:     sql.NullInt64{Int64: taskID, Valid: true},
+		LastSeenAt: cutoff,
+	})
+	if err != nil {
+		return false, fmt.Errorf("count live executor monitors: %w", err)
+	}
+	return count > 0, nil
+}

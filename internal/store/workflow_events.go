@@ -142,6 +142,14 @@ func (s *Store) ReconcileWorkflow(ctx context.Context, query WorkflowEventQuery)
 					return WorkflowReconciliation{}, err
 				}
 				for _, handoff := range handoffs {
+					// Only a handoff someone took can have lost its monitor.
+					if handoff.ReceivedAt != nil && handoff.CompletedReportAt == nil && handoff.RecoveredAt == nil {
+						live, err := s.hasLiveExecutorMonitor(ctx, goal.ProjectID, goal.ID, task.ID)
+						if err != nil {
+							return WorkflowReconciliation{}, err
+						}
+						handoff.MonitorLost = !live
+					}
 					reconciliation.TaskHandoffs = append(reconciliation.TaskHandoffs, handoff)
 				}
 			}

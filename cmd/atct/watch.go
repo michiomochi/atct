@@ -1220,6 +1220,10 @@ type watchReconciliationHandoff struct {
 	ReviewReceivedAt          *string `json:"ReviewReceivedAt"`
 	ReviewRejectedAt          *string `json:"ReviewRejectedAt"`
 	ReviewRejectionReceivedAt *string `json:"ReviewRejectionReceivedAt"`
+	// MonitorLost marks a handoff whose worker has no monitor left. An open
+	// handoff otherwise reads as "somebody else is on it", which is only true
+	// while that somebody is still there.
+	MonitorLost bool `json:"MonitorLost"`
 }
 
 type watchReconciliationGoal struct {

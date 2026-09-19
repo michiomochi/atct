@@ -60,3 +60,13 @@ WHERE project_id = ?
   AND last_seen_at >= ?
   AND stopped_at IS NULL;
 
+
+-- name: CountLiveMonitorsForTaskScope :one
+SELECT COUNT(*)
+FROM monitor_health
+WHERE project_id = ?
+  AND role = 'executor'
+  AND goal_id IS ?
+  AND task_id IS ?
+  AND last_seen_at >= ?
+  AND stopped_at IS NULL;

@@ -46,6 +46,10 @@ func taskWorkflowEventScope(ctx context.Context, q *sqlcgen.Queries, taskID int6
 // independent so a partial handoff remains observable.
 type TaskHandoff struct {
 	ID string
+	// MonitorLost says the worker holding this handoff has no monitor left.
+	// An open handoff otherwise reads as work in progress, which stops being
+	// true the moment the pane behind it is gone.
+	MonitorLost bool
 	// GoalID is the task's goal. The watch scopes a subcommander by goal and
 	// asks every handoff which goal it belongs to; a task handoff that cannot
 	// answer is invisible to that scope, and an executor holding it stops
