@@ -18,10 +18,11 @@
 - Do not change Goal 272 stale-approval withdrawal or any recovery behavior.
 - Reuse `ErrGoalHandoffReviewState`; add no tool, schema, configuration flag, or new abstraction.
 - Keep the `skills/atct/SKILL.md` edit minimal and self-contained; record its Goal 290 overlap in the final `needs_review` report.
+- Task 1 and Task 2 remain behind the Goal 274 main-integration gate; do not declare either task until that gate is verified. Task 2 is intentionally separate and starts only after the rejected-review receive guard is accepted.
 
 ---
 
-### Task 1: Reject receipt of a rejected goal-handoff review
+### Task 1: Reject receipt of a rejected goal-handoff review (Goal 221 regression)
 
 **Files:**
 
@@ -33,16 +34,18 @@
 
 - A rejected or rejection-received review cannot be received again.
 - The ordinary requested-but-not-yet-received review can still be received once.
+- The Goal 221 observation (`goal.handoff.review.receive` re-receiving a rejected review) is covered at the store layer and through the named route.
 
 - [ ] **Step 1: Add failing store and RPC regressions**
 
-Extend the existing reject/receive lifecycle coverage:
+Extend the existing reject/receive lifecycle coverage with the Goal 221 regression:
 
 1. After `RejectGoalHandoffReview`, `ReceiveGoalHandoffReview` returns `ErrGoalHandoffReviewState` and leaves `ReviewRejectReport`/`ReviewRejectedAt` unchanged.
-2. After `ReceiveGoalHandoffReviewRejection`, another `ReceiveGoalHandoffReview` returns the same error and leaves `ReviewRejectionReceivedAt` unchanged.
-3. The named daemon/MCP route has the same rejected-state refusal and unchanged rejection evidence.
+2. After `ReceiveGoalHandoffReviewRejection`, another `ReceiveGoalHandoffReview` returns the same error and leaves `ReviewRejectionReceivedBy`/`ReviewRejectionReceivedAt` unchanged.
+3. A requested-but-not-yet-received review can be received once; a second receive is rejected without changing the received evidence.
+4. The named daemon/MCP route has the same rejected-state refusal and unchanged rejection evidence.
 
-Retain the positive assertion that an ordinary requested review can be received once. Run the focused tests before implementation and confirm the new rejected-state assertions fail against the current code.
+Run the focused tests before implementation and confirm the new rejected-state assertions fail against the current code.
 
 - [ ] **Step 2: Add the minimal store guard**
 
@@ -52,7 +55,7 @@ Run the focused store and daemon tests for Task 1.
 
 ---
 
-### Task 2: Enforce the terminal direct-close lifecycle
+### Task 2: Enforce the terminal direct-close lifecycle (after Goal 274 gate)
 
 **Files:**
 
@@ -66,6 +69,8 @@ Run the focused store and daemon tests for Task 1.
 - Direct public completion after commander review receipt returns `ErrGoalHandoffReviewState` and leaves the handoff open.
 - `RequestGoalReview` still accepts that open handoff.
 - `FinalizeGoalReview` remains the only normal completion route after human approval.
+
+**Gate:** Start this task only after the Goal 274 direct-close integration is verified on `main` and Task 1's rejected-review receive guard has been accepted. Do not create or delegate this task before both conditions hold.
 
 - [ ] **Step 1: Add failing store and RPC regressions**
 
@@ -127,7 +132,9 @@ Review each task's diff for unrelated ownership changes, stage only its files, a
 ## Plan self-review
 
 - Rejected review re-receipt is a separate state task and is sequenced before the direct-close task, as required by the rejection report.
+- Goal 221's observed rejected-review re-receipt is covered by store and named-route regressions, including unchanged rejection evidence.
 - The Goal 274 main-integration gate precedes all store/test task creation; the Goal 284/283 integration gate precedes guidance changes.
+- The direct reviewer close guard is a separate post-Goal-274 task and does not weaken the finalizer path.
 - Root cause is fixed at shared store methods rather than at one RPC caller.
 - The finalizer's intentional SQL bypass is preserved and tested through the approved lifecycle.
 - The plan names the blocked-work channel and makes the terminal review request unambiguous.
