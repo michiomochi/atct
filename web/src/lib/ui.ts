@@ -84,7 +84,6 @@ export interface CompletionReportFields {
   how_to_verify: string;
   surprises: string;
   needs_review: string;
-  next_steps: string;
 }
 
 export function hasCompletionReport(report: CompletionReportFields): boolean {

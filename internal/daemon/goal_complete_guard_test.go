@@ -204,7 +204,7 @@ func TestCommanderGoalReviewThenCompleteWritesFinalReport(t *testing.T) {
 		"goal_id": goal.ID, "agent_session_id": commanderID,
 		"work_done": report.WorkDone, "now_possible": report.NowPossible,
 		"how_to_verify": report.HowToVerify, "surprises": report.Surprises,
-		"needs_review": report.NeedsReview, "next_steps": report.NextSteps,
+		"needs_review": report.NeedsReview, "next_goal_ids": report.NextGoalIDs,
 	})
 	if err != nil {
 		t.Fatalf("Marshal goal.review.request params: %v", err)
@@ -273,7 +273,7 @@ func TestCommanderGoalReviewThenCompleteWritesFinalReport(t *testing.T) {
 	if err := json.Unmarshal(raw, &done); err != nil {
 		t.Fatalf("decode goal.review.complete response %s: %v", raw, err)
 	}
-	if done.Status != domain.GoalDone || done.WorkDone != report.WorkDone || done.NextSteps != report.NextSteps {
+	if done.Status != domain.GoalDone || done.WorkDone != report.WorkDone || len(done.NextGoals) != len(report.NextGoalIDs) {
 		t.Fatalf("completed goal = %+v, want final report and done status", done)
 	}
 	handoff, err := s.GetGoalHandoff(ctx, handoffID)
@@ -365,7 +365,7 @@ func goalCompleteParams(t *testing.T, goalID, sessionID int64, report domain.Com
 		"how_to_verify":    report.HowToVerify,
 		"surprises":        report.Surprises,
 		"needs_review":     report.NeedsReview,
-		"next_steps":       report.NextSteps,
+		"next_goal_ids":    report.NextGoalIDs,
 		"agent_session_id": sessionID,
 	})
 	if err != nil {
@@ -381,7 +381,7 @@ func approvedGoalReport(label string) domain.CompletionReport {
 		HowToVerify: "AAA-" + label + "-approved-how-to-verify",
 		Surprises:   "AAA-" + label + "-approved-surprises",
 		NeedsReview: "AAA-" + label + "-approved-needs-review",
-		NextSteps:   "AAA-" + label + "-approved-next-steps",
+		NextGoalIDs: []int64{},
 	}
 }
 
@@ -392,7 +392,7 @@ func lateGoalReport(label string) domain.CompletionReport {
 		HowToVerify: "BBB-" + label + "-late-draft-how-to-verify",
 		Surprises:   "BBB-" + label + "-late-draft-surprises",
 		NeedsReview: "BBB-" + label + "-late-draft-needs-review",
-		NextSteps:   "BBB-" + label + "-late-draft-next-steps",
+		NextGoalIDs: []int64{},
 	}
 }
 
@@ -400,10 +400,10 @@ func seedGoalCompletionReport(t *testing.T, ctx context.Context, s *store.Store,
 	t.Helper()
 	_, err := s.DB().ExecContext(ctx, `
 		UPDATE goals SET result_summary = ?, work_done = ?, now_possible = ?,
-		  how_to_verify = ?, surprises = ?, needs_review = ?, next_steps = ?
+		  how_to_verify = ?, surprises = ?, needs_review = ?
 		WHERE id = ?`,
 		report.WorkDone, report.WorkDone, report.NowPossible, report.HowToVerify,
-		report.Surprises, report.NeedsReview, report.NextSteps, goalID)
+		report.Surprises, report.NeedsReview, goalID)
 	if err != nil {
 		t.Fatalf("seed goal completion report: %v", err)
 	}
@@ -431,7 +431,6 @@ func assertGoalCompletionReport(t *testing.T, goal domain.Goal, want domain.Comp
 		{name: "how_to_verify", value: want.HowToVerify},
 		{name: "surprises", value: want.Surprises},
 		{name: "needs_review", value: want.NeedsReview},
-		{name: "next_steps", value: want.NextSteps},
 		{name: "result_summary", value: want.WorkDone},
 	}
 	gotValues := goalCompletionReportValues(goal)
@@ -469,7 +468,6 @@ func goalCompletionReportValues(goal domain.Goal) []struct {
 		{name: "how_to_verify", value: goal.HowToVerify},
 		{name: "surprises", value: goal.Surprises},
 		{name: "needs_review", value: goal.NeedsReview},
-		{name: "next_steps", value: goal.NextSteps},
 		{name: "result_summary", value: goal.ResultSummary},
 	}
 }

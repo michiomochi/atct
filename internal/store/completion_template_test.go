@@ -44,7 +44,6 @@ func completionTemplateReport() domain.CompletionReport {
 		HowToVerify: "how to verify",
 		Surprises:   "なし",
 		NeedsReview: "needs review",
-		NextSteps:   "next steps",
 	}
 }
 
@@ -55,7 +54,6 @@ func completionTemplateReportValues(report domain.CompletionReport) []any {
 		report.HowToVerify,
 		report.Surprises,
 		report.NeedsReview,
-		report.NextSteps,
 	}
 }
 
@@ -65,14 +63,14 @@ type completionTemplateLegacyGoal struct {
 }
 
 type completionTemplateMigratedGoal struct {
-	status        string
-	resultSummary string
-	workDone      string
-	nowPossible   string
-	howToVerify   string
-	surprises     string
-	needsReview   string
-	nextSteps     string
+	status          string
+	resultSummary   string
+	workDone        string
+	nowPossible     string
+	howToVerify     string
+	surprises       string
+	needsReview     string
+	legacyNextSteps string
 }
 
 func completionTemplateMeasureRealCopy(t *testing.T, dbPath string) {
@@ -127,7 +125,7 @@ func completionTemplateMeasureRealCopy(t *testing.T, dbPath string) {
 	defer s.Close()
 	rows, err = s.DB().Query(`
 SELECT id, status, result_summary, work_done, now_possible, how_to_verify,
-       surprises, needs_review, next_steps
+       surprises, needs_review, legacy_next_steps
 FROM goals ORDER BY id`)
 	if err != nil {
 		t.Fatalf("read migrated copied reports: %v", err)
@@ -137,7 +135,7 @@ FROM goals ORDER BY id`)
 		var id string
 		var goal completionTemplateMigratedGoal
 		if err := rows.Scan(&id, &goal.status, &goal.resultSummary, &goal.workDone,
-			&goal.nowPossible, &goal.howToVerify, &goal.surprises, &goal.needsReview, &goal.nextSteps); err != nil {
+			&goal.nowPossible, &goal.howToVerify, &goal.surprises, &goal.needsReview, &goal.legacyNextSteps); err != nil {
 			rows.Close()
 			t.Fatalf("scan migrated copied report: %v", err)
 		}
@@ -164,7 +162,7 @@ FROM goals ORDER BY id`)
 		switch wantGoal.status {
 		case "active":
 			if gotGoal.workDone != "" || gotGoal.nowPossible != "" || gotGoal.howToVerify != "" ||
-				gotGoal.surprises != "" || gotGoal.needsReview != "" || gotGoal.nextSteps != "" {
+				gotGoal.surprises != "" || gotGoal.needsReview != "" || gotGoal.legacyNextSteps != "" {
 				t.Fatalf("active goal %s has a migrated completion report: %+v", id, gotGoal)
 			}
 		case "done":
@@ -176,7 +174,7 @@ FROM goals ORDER BY id`)
 				t.Fatalf("done goal %s work_done = %q, want %q", id, gotGoal.workDone, wantWorkDone)
 			}
 			if gotGoal.nowPossible != "なし" || gotGoal.howToVerify != "なし" || gotGoal.surprises != "なし" ||
-				gotGoal.needsReview != "なし" || gotGoal.nextSteps != "なし" {
+				gotGoal.needsReview != "なし" || gotGoal.legacyNextSteps != "なし" {
 				t.Fatalf("done goal %s placeholders = %+v", id, gotGoal)
 			}
 		default:
@@ -203,7 +201,7 @@ func TestCompletionTemplateAllFieldsCanBecomeDone(t *testing.T) {
 	}
 	if done.WorkDone != report.WorkDone || done.NowPossible != report.NowPossible ||
 		done.HowToVerify != report.HowToVerify || done.Surprises != report.Surprises ||
-		done.NeedsReview != report.NeedsReview || done.NextSteps != report.NextSteps {
+		done.NeedsReview != report.NeedsReview {
 		t.Fatalf("completion report = %+v, want %+v", done, report)
 	}
 }
@@ -218,7 +216,6 @@ func TestCompletionTemplateRejectsEmptyFields(t *testing.T) {
 		{name: "how_to_verify", index: 2},
 		{name: "surprises", index: 3},
 		{name: "needs_review", index: 4},
-		{name: "next_steps", index: 5},
 	}
 	for _, field := range fields {
 		t.Run(field.name, func(t *testing.T) {
@@ -228,7 +225,7 @@ func TestCompletionTemplateRejectsEmptyFields(t *testing.T) {
 			_, err := s.DB().Exec(`
 UPDATE goals SET status = 'done',
   work_done = ?, now_possible = ?, how_to_verify = ?,
-  surprises = ?, needs_review = ?, next_steps = ?
+  surprises = ?, needs_review = ?
 WHERE id = ?`, append(values, goal.ID)...)
 			if err == nil {
 				t.Fatalf("updating done goal with empty %s succeeded", field.name)
@@ -243,7 +240,7 @@ func TestCompletionTemplateAllowsEmptyActiveGoal(t *testing.T) {
 		t.Fatalf("goal status = %q, want %q", goal.Status, domain.GoalActive)
 	}
 	if goal.WorkDone != "" || goal.NowPossible != "" || goal.HowToVerify != "" ||
-		goal.Surprises != "" || goal.NeedsReview != "" || goal.NextSteps != "" {
+		goal.Surprises != "" || goal.NeedsReview != "" {
 		t.Fatalf("new active goal has a non-empty completion report: %+v", goal)
 	}
 	var count int
@@ -309,8 +306,8 @@ PRAGMA user_version = 5`)
 	if err := s.DB().QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
 		t.Fatalf("read schema version: %v", err)
 	}
-	if version != 6 {
-		t.Fatalf("schema version = %d, want 6", version)
+	if version != schemaVersion {
+		t.Fatalf("schema version = %d, want %d", version, schemaVersion)
 	}
 	goal, err := s.GetGoal(context.Background(), 1)
 	if err != nil {
@@ -320,7 +317,7 @@ PRAGMA user_version = 5`)
 		t.Fatalf("work_done = %q, want legacy report", goal.WorkDone)
 	}
 	if goal.NowPossible != "なし" || goal.HowToVerify != "なし" || goal.Surprises != "なし" ||
-		goal.NeedsReview != "なし" || goal.NextSteps != "なし" {
+		goal.NeedsReview != "なし" {
 		t.Fatalf("migrated placeholders = %+v", goal)
 	}
 	if goal.ResultSummary != "legacy completion report" {
@@ -331,7 +328,7 @@ PRAGMA user_version = 5`)
 		t.Fatalf("read migrated active goal: %v", err)
 	}
 	if active.WorkDone != "" || active.NowPossible != "" || active.HowToVerify != "" ||
-		active.Surprises != "" || active.NeedsReview != "" || active.NextSteps != "" {
+		active.Surprises != "" || active.NeedsReview != "" {
 		t.Fatalf("migrated active goal has a completion report: %+v", active)
 	}
 	if active.ResultSummary != "legacy active note" {

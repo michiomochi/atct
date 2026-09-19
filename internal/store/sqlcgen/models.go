@@ -47,6 +47,8 @@ type Goal struct {
 	ProjectID         int64
 	DerivedFromGoalID sql.NullInt64
 	Content           string
+	Spec              string
+	Plan              string
 	Status            string
 	Creator           string
 	ResultSummary     string
@@ -55,11 +57,9 @@ type Goal struct {
 	HowToVerify       string
 	Surprises         string
 	NeedsReview       string
-	NextSteps         string
+	LegacyNextSteps   string
 	CreatedAt         string
 	UpdatedAt         string
-	Spec              string
-	Plan              string
 }
 
 type GoalHandoff struct {
@@ -85,6 +85,19 @@ type GoalHandoff struct {
 	RecoveryReport            sql.NullString
 }
 
+type GoalReviewStateSnapshot struct {
+	DecisionID    int64
+	GoalID        int64
+	ResultSummary string
+	WorkDone      string
+	NowPossible   string
+	HowToVerify   string
+	Surprises     string
+	NeedsReview   string
+	NextGoalIds   string
+	CreatedAt     string
+}
+
 type MonitorBinding struct {
 	Token          string
 	AgentSessionID int64
@@ -108,6 +121,13 @@ type MonitorHealth struct {
 	StoppedAt        sql.NullString
 	ScopeKey         string
 	AgentSessionID   int64
+}
+
+type NextGoal struct {
+	GoalID     int64
+	NextGoalID int64
+	SortOrder  int64
+	CreatedAt  string
 }
 
 type PlanHandoff struct {

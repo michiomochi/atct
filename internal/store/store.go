@@ -20,7 +20,7 @@ type Store struct {
 	notify *notifier
 }
 
-const schemaVersion = 6
+const schemaVersion = 8
 
 const agentSessionRetention = 30 * 24 * time.Hour
 

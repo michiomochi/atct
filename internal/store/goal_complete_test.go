@@ -49,14 +49,13 @@ func TestCompleteGoalWithReportRejectsNonActiveGoalsWithoutChangingReport(t *tes
 				howToVerify   = "approved verification"
 				surprises     = "approved surprises"
 				needsReview   = "approved review"
-				nextSteps     = "approved next steps"
 			)
 			if _, err := s.db.ExecContext(ctx, `
 				UPDATE goals SET status = ?, result_summary = ?, work_done = ?, now_possible = ?,
-				  how_to_verify = ?, surprises = ?, needs_review = ?, next_steps = ?
+				  how_to_verify = ?, surprises = ?, needs_review = ?
 				WHERE id = ?`,
 				string(tt.status), resultSummary, workDone, nowPossible, howToVerify, surprises,
-				needsReview, nextSteps, goalID); err != nil {
+				needsReview, goalID); err != nil {
 				t.Fatalf("set goal state: %v", err)
 			}
 
@@ -77,7 +76,6 @@ func TestCompleteGoalWithReportRejectsNonActiveGoalsWithoutChangingReport(t *tes
 				HowToVerify: "new verification",
 				Surprises:   "new surprises",
 				NeedsReview: "new review",
-				NextSteps:   "new next steps",
 			}, testSessionID("non-active-completion"))
 			if !errors.Is(err, ErrGoalNotActive) {
 				t.Fatalf("CompleteGoalWithReport error = %v, want ErrGoalNotActive", err)
@@ -90,8 +88,8 @@ func TestCompleteGoalWithReportRejectsNonActiveGoalsWithoutChangingReport(t *tes
 			if err != nil {
 				t.Fatalf("GetGoal after completion: %v", err)
 			}
-			beforeReport := []string{before.WorkDone, before.NowPossible, before.HowToVerify, before.Surprises, before.NeedsReview, before.NextSteps, before.ResultSummary}
-			afterReport := []string{after.WorkDone, after.NowPossible, after.HowToVerify, after.Surprises, after.NeedsReview, after.NextSteps, after.ResultSummary}
+			beforeReport := []string{before.WorkDone, before.NowPossible, before.HowToVerify, before.Surprises, before.NeedsReview, before.ResultSummary}
+			afterReport := []string{after.WorkDone, after.NowPossible, after.HowToVerify, after.Surprises, after.NeedsReview, after.ResultSummary}
 			for i := range beforeReport {
 				if afterReport[i] != beforeReport[i] {
 					t.Fatalf("completion report field %d = %q, want unchanged %q", i, afterReport[i], beforeReport[i])
@@ -120,7 +118,6 @@ func TestCompleteGoalWithReportUpdatesActiveGoal(t *testing.T) {
 		HowToVerify: "run the store tests",
 		Surprises:   "none",
 		NeedsReview: "the SQL guard",
-		NextSteps:   "merge the change",
 	}
 
 	d, err := s.CompleteGoalWithReport(ctx, goalID, report, testSessionID("active-completion"))
@@ -138,8 +135,8 @@ func TestCompleteGoalWithReportUpdatesActiveGoal(t *testing.T) {
 	if g.Status != domain.GoalActive {
 		t.Fatalf("goal status = %q, want %q", g.Status, domain.GoalActive)
 	}
-	gotReport := []string{g.WorkDone, g.NowPossible, g.HowToVerify, g.Surprises, g.NeedsReview, g.NextSteps, g.ResultSummary}
-	wantReport := []string{report.WorkDone, report.NowPossible, report.HowToVerify, report.Surprises, report.NeedsReview, report.NextSteps, report.WorkDone}
+	gotReport := []string{g.WorkDone, g.NowPossible, g.HowToVerify, g.Surprises, g.NeedsReview, g.ResultSummary}
+	wantReport := []string{report.WorkDone, report.NowPossible, report.HowToVerify, report.Surprises, report.NeedsReview, report.WorkDone}
 	for i := range wantReport {
 		if gotReport[i] != wantReport[i] {
 			t.Fatalf("completion report field %d = %q, want %q", i, gotReport[i], wantReport[i])
@@ -248,7 +245,6 @@ func TestGoalReviewLifecycleDefersFinalReportUntilCommanderCompletion(t *testing
 		HowToVerify: "run the focused tests",
 		Surprises:   "none",
 		NeedsReview: "none",
-		NextSteps:   "merge",
 	}
 
 	review, err := s.RequestGoalReview(ctx, goalID, commanderID, report)
@@ -263,7 +259,7 @@ func TestGoalReviewLifecycleDefersFinalReportUntilCommanderCompletion(t *testing
 	if err != nil {
 		t.Fatalf("GetGoal before approval: %v", err)
 	}
-	if before.Status != domain.GoalActive || before.WorkDone != report.WorkDone || before.NowPossible != report.NowPossible || before.HowToVerify != report.HowToVerify || before.Surprises != report.Surprises || before.NeedsReview != report.NeedsReview || before.NextSteps != report.NextSteps || before.ResultSummary != report.WorkDone {
+	if before.Status != domain.GoalActive || before.WorkDone != report.WorkDone || before.NowPossible != report.NowPossible || before.HowToVerify != report.HowToVerify || before.Surprises != report.Surprises || before.NeedsReview != report.NeedsReview || before.ResultSummary != report.WorkDone {
 		t.Fatalf("goal before approval = %+v, want active with request-time report", before)
 	}
 
@@ -311,7 +307,7 @@ func TestRejectedGoalReviewLeavesGoalActiveWithoutReopeningHandoff(t *testing.T)
 	}
 	review, err := s.RequestGoalReview(ctx, goalID, commanderID, domain.CompletionReport{
 		WorkDone: "rejected work", NowPossible: "rejected result", HowToVerify: "rejected verify",
-		Surprises: "rejected surprise", NeedsReview: "rejected review", NextSteps: "rejected next",
+		Surprises: "rejected surprise", NeedsReview: "rejected review",
 	})
 	if err != nil {
 		t.Fatalf("RequestGoalReview: %v", err)
@@ -353,7 +349,6 @@ func TestRequestGoalReviewPersistsReportInGoalAndFinalizesWithoutInput(t *testin
 		HowToVerify: "run the request-time tests",
 		Surprises:   "request-time surprise",
 		NeedsReview: "request-time review",
-		NextSteps:   "request-time next step",
 	}
 
 	review, err := s.RequestGoalReview(ctx, goalID, commanderID, report)
@@ -364,7 +359,7 @@ func TestRequestGoalReviewPersistsReportInGoalAndFinalizesWithoutInput(t *testin
 	if err != nil {
 		t.Fatalf("GetGoal: %v", err)
 	}
-	if storedGoal.Status != domain.GoalActive || storedGoal.WorkDone != report.WorkDone || storedGoal.NowPossible != report.NowPossible || storedGoal.HowToVerify != report.HowToVerify || storedGoal.Surprises != report.Surprises || storedGoal.NeedsReview != report.NeedsReview || storedGoal.NextSteps != report.NextSteps || storedGoal.ResultSummary != report.WorkDone {
+	if storedGoal.Status != domain.GoalActive || storedGoal.WorkDone != report.WorkDone || storedGoal.NowPossible != report.NowPossible || storedGoal.HowToVerify != report.HowToVerify || storedGoal.Surprises != report.Surprises || storedGoal.NeedsReview != report.NeedsReview || storedGoal.ResultSummary != report.WorkDone {
 		t.Fatalf("stored goal = %+v, want request-time report %+v", storedGoal, report)
 	}
 	stored, err := s.GetDecision(ctx, review.ID)
@@ -387,7 +382,7 @@ func TestRequestGoalReviewPersistsReportInGoalAndFinalizesWithoutInput(t *testin
 	if err != nil {
 		t.Fatalf("FinalizeGoalReview: %v", err)
 	}
-	if done.Status != domain.GoalDone || done.WorkDone != "request-time work" || done.NowPossible != "request-time result" || done.HowToVerify != "run the request-time tests" || done.Surprises != "request-time surprise" || done.NeedsReview != "request-time review" || done.NextSteps != "request-time next step" || done.ResultSummary != "request-time work" {
+	if done.Status != domain.GoalDone || done.WorkDone != "request-time work" || done.NowPossible != "request-time result" || done.HowToVerify != "run the request-time tests" || done.Surprises != "request-time surprise" || done.NeedsReview != "request-time review" || done.ResultSummary != "request-time work" {
 		t.Fatalf("finalized goal = %+v, want stored request-time report", done)
 	}
 }
@@ -402,7 +397,6 @@ func TestRequestGoalReviewRejectsIncompleteReport(t *testing.T) {
 		{name: "how_to_verify", edit: func(report *domain.CompletionReport) { report.HowToVerify = "" }},
 		{name: "surprises", edit: func(report *domain.CompletionReport) { report.Surprises = "" }},
 		{name: "needs_review", edit: func(report *domain.CompletionReport) { report.NeedsReview = "" }},
-		{name: "next_steps", edit: func(report *domain.CompletionReport) { report.NextSteps = "" }},
 	}
 
 	for _, field := range fields {
@@ -421,7 +415,6 @@ func TestRequestGoalReviewRejectsIncompleteReport(t *testing.T) {
 				HowToVerify: "verify",
 				Surprises:   "surprise",
 				NeedsReview: "review",
-				NextSteps:   "next",
 			}
 			field.edit(&report)
 
@@ -450,7 +443,7 @@ func TestFinalizeGoalReviewRequiresApprovedReview(t *testing.T) {
 	receiveGoalHandoffReviewForGoalReviewTest(t, s, ctx, "goal-review-unapproved-handoff", goalID, commanderID, receiverID)
 	if _, err := s.RequestGoalReview(ctx, goalID, commanderID, domain.CompletionReport{
 		WorkDone: "work", NowPossible: "result", HowToVerify: "verify",
-		Surprises: "surprise", NeedsReview: "review", NextSteps: "next",
+		Surprises: "surprise", NeedsReview: "review",
 	}); err != nil {
 		t.Fatalf("RequestGoalReview: %v", err)
 	}

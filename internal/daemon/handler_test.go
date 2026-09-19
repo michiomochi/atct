@@ -324,7 +324,7 @@ func TestGoalCompleteDeniesSessionWithoutGoalHandoff(t *testing.T) {
 		"how_to_verify":    "verify",
 		"surprises":        "none",
 		"needs_review":     "none",
-		"next_steps":       "next",
+		"next_goal_ids":    []int64{},
 		"agent_session_id": sessionID,
 	})
 	if err != nil {
@@ -370,7 +370,7 @@ func TestGoalCompleteDeniesNonCommanderOfAnotherGoal(t *testing.T) {
 		"how_to_verify":    "verify",
 		"surprises":        "none",
 		"needs_review":     "none",
-		"next_steps":       "next",
+		"next_goal_ids":    []int64{},
 		"agent_session_id": callerID,
 	})
 	if err != nil {
@@ -409,7 +409,7 @@ func TestGoalCompleteDeniesGoalClaimHolder(t *testing.T) {
 		"how_to_verify":    "verify",
 		"surprises":        "none",
 		"needs_review":     "none",
-		"next_steps":       "next",
+		"next_goal_ids":    []int64{},
 		"agent_session_id": daemonTestSessionID(t, fixture.store, sessionLabel),
 	})
 	if err != nil {
@@ -438,7 +438,7 @@ func TestGoalCompleteAllowsProjectClaimHolder(t *testing.T) {
 		"how_to_verify":    "verify",
 		"surprises":        "none",
 		"needs_review":     "none",
-		"next_steps":       "next",
+		"next_goal_ids":    []int64{},
 		"agent_session_id": daemonTestSessionID(t, fixture.store, sessionLabel),
 	})
 	if err != nil {
@@ -978,7 +978,7 @@ func TestGoalGetGoalReviewLifecycleProjection(t *testing.T) {
 		t.Fatalf("applied goal_review next commander action = %q, want goal.review.complete", appliedResponse.GoalReview.NextCommanderAction)
 	}
 
-	if _, err := fixture.store.DB().ExecContext(ctx, "UPDATE goals SET status = ?, work_done = ?, now_possible = ?, how_to_verify = ?, surprises = ?, needs_review = ?, next_steps = ?, result_summary = ? WHERE id = ?", string(domain.GoalDone), "recorded work", "recorded now", "recorded verification", "recorded surprises", "recorded review", "recorded next steps", "recorded summary", fixture.active[1].ID); err != nil {
+	if _, err := fixture.store.DB().ExecContext(ctx, "UPDATE goals SET status = ?, work_done = ?, now_possible = ?, how_to_verify = ?, surprises = ?, needs_review = ?, legacy_next_steps = ?, result_summary = ? WHERE id = ?", string(domain.GoalDone), "recorded work", "recorded now", "recorded verification", "recorded surprises", "recorded review", "recorded next steps", "recorded summary", fixture.active[1].ID); err != nil {
 		t.Fatalf("mark goal done: %v", err)
 	}
 	doneResponse := get(t, fixture.active[1].ID)

@@ -51,7 +51,6 @@ const completionReportFields = [
   { key: "how_to_verify", label: "goal.completion.report.howToVerify" },
   { key: "surprises", label: "goal.completion.report.surprises" },
   { key: "needs_review", label: "goal.completion.report.needsReview" },
-  { key: "next_steps", label: "goal.completion.report.nextSteps" },
 ] as const;
 
 function CompletionReport({ goal }: { goal: Goal }) {
@@ -62,7 +61,6 @@ function CompletionReport({ goal }: { goal: Goal }) {
     how_to_verify: goal.how_to_verify,
     surprises: goal.surprises,
     needs_review: goal.needs_review,
-    next_steps: goal.next_steps,
   };
   const report = !hasCompletionReport(structuredReport) && goal.result_summary.trim() !== ""
     ? { ...structuredReport, work_done: goal.result_summary }
@@ -758,6 +756,35 @@ export function GoalDetail({ id }: Props) {
               </h3>
             ))}
           </div>
+        </section>
+      )}
+
+      {data && (
+        <section className="min-w-0 border-t border-line pt-5" data-testid="next-goals" aria-labelledby="goal-next-goals-heading">
+          <h2 id="goal-next-goals-heading" className="font-display text-lg font-semibold text-ink-950">
+            {t("goal.nextGoals.title")}
+          </h2>
+          {data.goal.goal.next_goals.length === 0 ? (
+            <p className="mt-4 text-base text-ink-700">{t("goal.nextGoals.empty")}</p>
+          ) : (
+            <ul className="mt-6 space-y-4">
+              {data.goal.goal.next_goals.map(({ id, headline, status }) => (
+                <li key={id} className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+                  <a
+                    className="focus-ring inline-block w-fit max-w-full text-left text-accent-700 underline decoration-accent-100 underline-offset-4 hover:decoration-accent-700"
+                    href={`/goals/${encodeURIComponent(id)}`}
+                  >
+                    <span className="text-clamp-2 block max-w-[32rem] break-words font-medium" title={headline}>
+                      {headline}
+                    </span>
+                  </a>
+                  <span className="text-base text-ink-700">
+                    {t("goal.column.status")}: {statusLabel(locale, status)}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
         </section>
       )}
 

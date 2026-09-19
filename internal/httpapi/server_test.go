@@ -1973,7 +1973,7 @@ func TestHTTPGoalDetailIncludesCompletionDecision(t *testing.T) {
 		HowToVerify: "Review the completion report",
 		Surprises:   "なし",
 		NeedsReview: "なし",
-		NextSteps:   "なし",
+		NextGoalIDs: []int64{},
 	}, testSessionID("completion-run"))
 	if err != nil {
 		t.Fatal(err)
@@ -1997,7 +1997,7 @@ func TestHTTPGoalDetailIncludesCompletionReportFields(t *testing.T) {
 		HowToVerify: "Review the completion report",
 		Surprises:   "なし",
 		NeedsReview: "なし",
-		NextSteps:   "なし",
+		NextGoalIDs: []int64{},
 	}, testSessionID("completion-run")); err != nil {
 		t.Fatal(err)
 	}
@@ -2022,10 +2022,90 @@ func TestHTTPGoalDetailIncludesCompletionReportFields(t *testing.T) {
 		"how_to_verify",
 		"surprises",
 		"needs_review",
-		"next_steps",
+		"next_goals",
 	} {
 		if _, ok := payload.Goal[field]; !ok {
 			t.Errorf("goal JSON missing %q", field)
+		}
+	}
+	if _, ok := payload.Goal["next_steps"]; ok {
+		t.Error("goal JSON still exposes legacy next_steps")
+	}
+	if got := string(bytes.TrimSpace(payload.Goal["next_goals"])); got != "[]" {
+		t.Fatalf("goal.next_goals = %s, want []", got)
+	}
+}
+
+func TestHTTPGoalDetailIncludesOrderedShallowNextGoals(t *testing.T) {
+	f := newBareFixture(t)
+	first, err := f.store.CreateGoal(f.ctx, f.project.ID, "First successor", "human")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := f.store.CreateGoal(f.ctx, f.project.ID, "Second successor", "human")
+	if err != nil {
+		t.Fatal(err)
+	}
+	grandchild, err := f.store.CreateGoal(f.ctx, f.project.ID, "Grandchild successor", "human")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.store.CompleteGoalWithReport(f.ctx, first.ID, domain.CompletionReport{
+		WorkDone:    "The first successor is ready",
+		NextGoalIDs: []int64{grandchild.ID},
+	}, testSessionID("first-successor-run")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.store.CompleteGoalWithReport(f.ctx, f.goal.ID, domain.CompletionReport{
+		WorkDone:    "The source goal is ready",
+		NextGoalIDs: []int64{second.ID, first.ID},
+	}, testSessionID("source-goal-run")); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+	status, _, body := doRequest(t, srv.Client(), http.MethodGet, urlID(srv.URL+"/api/goals/", f.goal.ID), nil)
+	if status != http.StatusOK {
+		t.Fatalf("goal status = %d; body=%s", status, body)
+	}
+	var payload struct {
+		Goal struct {
+			NextGoals []json.RawMessage `json:"next_goals"`
+		} `json:"goal"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatalf("decode goal detail: %v; body=%s", err, body)
+	}
+	if len(payload.Goal.NextGoals) != 2 {
+		t.Fatalf("goal.next_goals = %s, want 2 entries", body)
+	}
+	want := []struct {
+		id       int64
+		headline string
+		status   domain.GoalStatus
+	}{
+		{second.ID, "Second successor", domain.GoalActive},
+		{first.ID, "First successor", domain.GoalActive},
+	}
+	for i, raw := range payload.Goal.NextGoals {
+		var got struct {
+			ID       int64             `json:"id"`
+			Headline string            `json:"headline"`
+			Status   domain.GoalStatus `json:"status"`
+		}
+		if err := json.Unmarshal(raw, &got); err != nil {
+			t.Fatalf("decode next_goals[%d]: %v", i, err)
+		}
+		if got.ID != want[i].id || got.Headline != want[i].headline || got.Status != want[i].status {
+			t.Fatalf("next_goals[%d] = %+v, want %+v", i, got, want[i])
+		}
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &fields); err != nil {
+			t.Fatalf("decode next_goals[%d] fields: %v", i, err)
+		}
+		if _, ok := fields["next_goals"]; ok {
+			t.Fatalf("next_goals[%d] unexpectedly contains nested next_goals", i)
 		}
 	}
 }
@@ -2507,7 +2587,7 @@ func TestHTTPApproveAndRejectCompletionEndpoints(t *testing.T) {
 		HowToVerify: "Inspect the approved goal",
 		Surprises:   "なし",
 		NeedsReview: "なし",
-		NextSteps:   "なし",
+		NextGoalIDs: []int64{},
 	}, testSessionID("approve-run"))
 	if err != nil {
 		t.Fatal(err)
@@ -2534,7 +2614,7 @@ func TestHTTPApproveAndRejectCompletionEndpoints(t *testing.T) {
 		HowToVerify: "Review the rejection reason",
 		Surprises:   "なし",
 		NeedsReview: "needs work",
-		NextSteps:   "Revise the goal",
+		NextGoalIDs: []int64{},
 	}, testSessionID("reject-run"))
 	if err != nil {
 		t.Fatal(err)
@@ -2625,7 +2705,7 @@ func requestHTTPGoalReview(t *testing.T, f *fixture, goalID, commanderID int64, 
 	}
 	review, err := f.store.RequestGoalReview(f.ctx, goalID, commanderID, domain.CompletionReport{
 		WorkDone: "completed " + label, NowPossible: "reviewable result", HowToVerify: "run the HTTP endpoint test",
-		Surprises: "none", NeedsReview: "approve or reject", NextSteps: "finalize after approval",
+		Surprises: "none", NeedsReview: "approve or reject", NextGoalIDs: []int64{},
 	})
 	if err != nil {
 		t.Fatalf("RequestGoalReview: %v", err)
@@ -3648,7 +3728,7 @@ func TestSSEPublishesAllDecisionTransitionsWithExactPayloads(t *testing.T) {
 		HowToVerify: "Check the approval event",
 		Surprises:   "なし",
 		NeedsReview: "なし",
-		NextSteps:   "なし",
+		NextGoalIDs: []int64{},
 	}, testSessionID("approve-run"))
 	if err != nil {
 		t.Fatal(err)
@@ -3669,7 +3749,7 @@ func TestSSEPublishesAllDecisionTransitionsWithExactPayloads(t *testing.T) {
 		HowToVerify: "Check the rejection event",
 		Surprises:   "なし",
 		NeedsReview: "needs work",
-		NextSteps:   "Revise and retry",
+		NextGoalIDs: []int64{},
 	}, testSessionID("reject-run"))
 	if err != nil {
 		t.Fatal(err)
@@ -3997,7 +4077,7 @@ func TestHTTPGoalContentRejectsDoneAndDroppedGoals(t *testing.T) {
 		HowToVerify: "verify",
 		Surprises:   "none",
 		NeedsReview: "none",
-		NextSteps:   "none",
+		NextGoalIDs: []int64{},
 	}, testSessionID("done-run"))
 	if err != nil {
 		t.Fatalf("complete done goal: %v", err)

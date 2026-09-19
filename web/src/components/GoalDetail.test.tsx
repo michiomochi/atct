@@ -82,7 +82,7 @@ function goal(overrides: Partial<Goal> = {}): Goal {
     how_to_verify: "",
     surprises: "",
     needs_review: "",
-    next_steps: "",
+    next_goals: [],
     created_at: "2026-08-20T00:00:00Z",
     updated_at: "2026-08-20T00:00:00Z",
     tasks: [],
@@ -324,7 +324,6 @@ describe("GoalDetail", () => {
       how_to_verify: "Verify here",
       surprises: "No surprises",
       needs_review: "Review this",
-      next_steps: "Continue monitoring",
     });
     response.unattached_decisions = [goalReviewDecision()];
     vi.mocked(fetchGoal).mockResolvedValueOnce(response);
@@ -339,10 +338,46 @@ describe("GoalDetail", () => {
     expect(within(report).getByText("Verify here")).not.toBeNull();
     expect(within(report).getByText("No surprises")).not.toBeNull();
     expect(within(report).getByText("Review this")).not.toBeNull();
-    expect(within(report).getByText("Continue monitoring")).not.toBeNull();
 
     const approve = within(card).getByRole("button", { name: "goal.review.approve" });
     expect(report.compareDocumentPosition(approve) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+  });
+
+  it("renders ordered successor links with target statuses", async () => {
+    const response = goalResponse() as GoalResponseFixture & {
+      goal: Goal & { next_goals: Array<{ id: string; headline: string; status: string }> };
+    };
+    response.goal.next_goals = [
+      { id: "goal-next-2", headline: "Second successor", status: "done" },
+      { id: "goal-next-1", headline: "First successor", status: "active" },
+    ];
+    vi.mocked(fetchGoal).mockResolvedValueOnce(response);
+
+    render(<GoalDetail id="goal-1" />);
+
+    const section = await screen.findByTestId("next-goals");
+    const links = within(section).getAllByRole("link");
+    expect(links.map((link) => link.textContent)).toEqual(["Second successor", "First successor"]);
+    expect(links.map((link) => link.getAttribute("href"))).toEqual([
+      "/goals/goal-next-2",
+      "/goals/goal-next-1",
+    ]);
+    expect(within(section).getByText(/Completed/)).not.toBeNull();
+    expect(within(section).getByText(/In progress/)).not.toBeNull();
+  });
+
+  it("renders a concise empty successor state", async () => {
+    const response = goalResponse() as GoalResponseFixture & {
+      goal: Goal & { next_goals: Array<{ id: string; headline: string; status: string }> };
+    };
+    response.goal.next_goals = [];
+    vi.mocked(fetchGoal).mockResolvedValueOnce(response);
+
+    render(<GoalDetail id="goal-1" />);
+
+    const section = await screen.findByTestId("next-goals");
+    expect(within(section).getByText("goal.nextGoals.empty")).not.toBeNull();
+    expect(within(section).queryByRole("link")).toBeNull();
   });
 
   it("approves an open goal review with the generic decision API and reloads after success", async () => {
@@ -471,7 +506,7 @@ describe("GoalDetail", () => {
     expect(screen.queryByTestId("completion-report")).toBeNull();
 
     cleanup();
-    vi.mocked(fetchGoal).mockResolvedValueOnce(goalResponse({ next_steps: "Continue monitoring." }));
+    vi.mocked(fetchGoal).mockResolvedValueOnce(goalResponse({ needs_review: "Continue monitoring." }));
     render(<GoalDetail id="goal-1" />);
 
     await waitFor(() => expect(screen.getByTestId("completion-report")).not.toBeNull());

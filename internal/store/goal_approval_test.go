@@ -241,7 +241,7 @@ func TestClaimTaskRejectsNonActiveGoalsWithStateSpecificWording(t *testing.T) {
 			if err != nil {
 				t.Fatalf("CreateTasks: %v", err)
 			}
-			if _, err := s.db.ExecContext(ctx, "UPDATE goals SET status = ?, work_done = ?, now_possible = ?, how_to_verify = ?, surprises = ?, needs_review = ?, next_steps = ? WHERE id = ?", string(tt.status), "Work completed.", "Nothing new.", "Run the existing checks.", "None.", "None.", "No further steps.", goal.ID); err != nil {
+			if _, err := s.db.ExecContext(ctx, "UPDATE goals SET status = ?, work_done = ?, now_possible = ?, how_to_verify = ?, surprises = ?, needs_review = ? WHERE id = ?", string(tt.status), "Work completed.", "Nothing new.", "Run the existing checks.", "None.", "None.", goal.ID); err != nil {
 				t.Fatalf("set goal status: %v", err)
 			}
 
@@ -299,7 +299,7 @@ func TestCreateTasksRejectsNonActiveGoalsWithStateSpecificWording(t *testing.T) 
 			if err != nil {
 				t.Fatalf("CreateGoal: %v", err)
 			}
-			if _, err := s.db.ExecContext(ctx, "UPDATE goals SET status = ?, work_done = ?, now_possible = ?, how_to_verify = ?, surprises = ?, needs_review = ?, next_steps = ? WHERE id = ?", string(tt.status), "Work completed.", "Nothing new.", "Run the existing checks.", "None.", "None.", "No further steps.", goal.ID); err != nil {
+			if _, err := s.db.ExecContext(ctx, "UPDATE goals SET status = ?, work_done = ?, now_possible = ?, how_to_verify = ?, surprises = ?, needs_review = ? WHERE id = ?", string(tt.status), "Work completed.", "Nothing new.", "Run the existing checks.", "None.", "None.", goal.ID); err != nil {
 				t.Fatalf("set goal status: %v", err)
 			}
 
