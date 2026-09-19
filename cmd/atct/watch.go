@@ -254,7 +254,6 @@ func newWatchHealthReporter(client *http.Client, urls []string, cwd string, scop
 		TaskID:           taskID,
 		ScopeKey:         strings.TrimSpace(scope.ScopeKey),
 		MonitorToken:     strings.TrimSpace(scope.MonitorToken),
-		AgentSessionID:   currentAgentSessionID(),
 		PID:              os.Getpid(),
 		ProcessStartedAt: processStartedAt,
 	}

@@ -1775,7 +1775,6 @@ func TestWatchRecoveryReportsOnceThenHealthy(t *testing.T) {
 }
 
 func TestNormalWatchReportsHealthyReconciliationAndIgnoresHealthDiagnostics(t *testing.T) {
-	t.Setenv(atctAgentSessionIDEnv, "921")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -1855,8 +1854,11 @@ func TestNormalWatchReportsHealthyReconciliationAndIgnoresHealthDiagnostics(t *t
 	if healthy[0]["scope_key"] != nil {
 		t.Fatalf("reported scope_key = %v, want normal watch scope without lifecycle identity", healthy[0]["scope_key"])
 	}
-	if healthy[0]["agent_session_id"] != float64(921) {
-		t.Fatalf("reported agent_session_id = %v, want current normal-watch session 921", healthy[0]["agent_session_id"])
+	// A watch without a monitor token is a human's diagnostic view, not any
+	// session's Monitor, so it must not claim a session: doing so would make
+	// that session look alive for as long as somebody kept the view open.
+	if healthy[0]["agent_session_id"] != nil {
+		t.Fatalf("reported agent_session_id = %v, want a plain watch to name no session", healthy[0]["agent_session_id"])
 	}
 	if healthy[0]["agent_key"] != nil {
 		t.Fatalf("reported agent_key = %v, want no expected-scope agent key", healthy[0]["agent_key"])
