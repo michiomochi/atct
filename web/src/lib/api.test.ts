@@ -1,10 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  approveDecision,
-  createGoal,
-  fetchProjects,
-  rejectDecision,
-  subscribeToDecisionEvents,
+	ApiError,
+	approveDecision,
+	createGoal,
+	fetchProjects,
+	rejectDecision,
+	subscribeToDecisionEvents,
+	updateUILocale,
 } from "./api";
 import { DECISION_EVENT_NAMES } from "./ui";
 
@@ -111,6 +113,38 @@ describe("goal creation API", () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ project_id: "project-1", content: "Ship it\n\nDetails", creator: "human" }),
     });
+  });
+});
+
+describe("locale API", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("puts the selected locale using the exact JSON contract", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      text: () => Promise.resolve('{"locale":"ja"}'),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(updateUILocale("ja")).resolves.toEqual({ locale: "ja" });
+    expect(fetchMock).toHaveBeenCalledWith("/api/ui-settings/locale", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ locale: "ja" }),
+    });
+  });
+
+  it("keeps non-2xx responses as ApiError", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 503,
+      text: () => Promise.resolve('{"error":"locale service unavailable"}'),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(updateUILocale("ja")).rejects.toBeInstanceOf(ApiError);
   });
 });
 

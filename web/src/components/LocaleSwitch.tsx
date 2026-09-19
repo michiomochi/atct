@@ -1,7 +1,8 @@
 import { Button } from "@cloudflare/kumo/components/button";
-import { useEffect } from "react";
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { readStoredLocale, resolveLocale, storeLocale, type Locale } from "../i18n";
+import { updateUILocale } from "../lib/api";
+import type { Locale } from "../i18n";
 
 const locales: Locale[] = ["en", "ja"];
 
@@ -9,35 +10,20 @@ export function LocaleSwitch() {
   const { i18n, t } = useTranslation();
   const active = i18n.language === "ja" ? "ja" : "en";
 
-  useEffect(() => {
-    let timer: number | undefined;
-    const apply = () => {
-      const nav = typeof navigator === "undefined" ? null : navigator.language;
-      const next = resolveLocale(readStoredLocale(), nav);
-      if (i18n.language !== next) void i18n.changeLanguage(next);
-    };
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-    if (document.readyState === "complete") {
-      timer = window.setTimeout(apply, 0);
-    } else {
-      const onLoad = () => {
-        timer = window.setTimeout(apply, 0);
-      };
-      window.addEventListener("load", onLoad, { once: true });
-      return () => {
-        window.removeEventListener("load", onLoad);
-        if (timer !== undefined) window.clearTimeout(timer);
-      };
+  async function select(next: Locale) {
+    setError(null);
+    setPending(true);
+    try {
+      await updateUILocale(next);
+    } catch {
+      setError(t("locale.error.update"));
+      setPending(false);
+      return;
     }
-
-    return () => {
-      if (timer !== undefined) window.clearTimeout(timer);
-    };
-  }, [i18n]);
-
-  function select(next: Locale) {
-    storeLocale(next);
-    void i18n.changeLanguage(next);
+    window.location.reload();
   }
 
   return (
@@ -48,6 +34,7 @@ export function LocaleSwitch() {
             key={locale}
             type="button"
             aria-pressed={active === locale}
+            disabled={pending}
             variant="ghost"
             className="focus-ring px-2 py-1 text-base font-medium"
             onClick={() => select(locale)}
@@ -56,6 +43,7 @@ export function LocaleSwitch() {
           </Button>
         ))}
       </div>
+      {error && <p className="text-base text-danger-700" role="alert">{error}</p>}
     </div>
   );
 }
