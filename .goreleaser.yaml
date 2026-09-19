@@ -44,15 +44,29 @@ homebrew_casks:
     description: "The air traffic control tower for your coding agents"
     license: "AGPL-3.0"
     binaries: [atct, atct-mcp]
-    # `postflight` is deprecated, but postflight_steps runs a restricted DSL
-    # whose `base:` selects the command path only, leaving `args` relative:
-    # 0.63.5 failed to install with `xattr: No such file: atct`. Keep the
-    # working hook and take the deprecation warning until goreleaser emits
-    # postflight_steps itself.
-    hooks:
-      post:
-        install: |
-          if OS.mac?
-            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/atct"]
-            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/atct-mcp"]
-          end
+    # Strip the quarantine bit, since the binaries are not notarized.
+    #
+    # This is not `hooks.post.install`: goreleaser 2.17.1 renders that as
+    # `postflight`, which Homebrew has deprecated, and there is no option to
+    # make it emit `postflight_steps` instead. custom_block writes the stanza
+    # directly.
+    #
+    # Inside postflight_steps the Ruby DSL is restricted, so `#{staged_path}`
+    # is not a method to call: it is the literal template token
+    # `{{staged_path}}`, expanded when the step runs. 0.63.5 shipped an
+    # absolute-path attempt through `base:`, which resolves the command path
+    # only and left the args relative, and the install failed with
+    # `xattr: No such file: atct`.
+    #
+    # Verified on 0.63.8 before release: install emits no deprecation warning,
+    # and re-adding com.apple.quarantine by hand and reinstalling clears it
+    # again, so the step really runs.
+    # `{{ "{{staged_path}}" }}` emits the literal `{{staged_path}}`: goreleaser
+    # runs the finished cask through its own Go template, where an unescaped
+    # `{{staged_path}}` is a function call and fails the release with
+    # `function "staged_path" not defined`.
+    custom_block: |
+      postflight_steps do
+        run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{ "{{staged_path}}" }}/atct"]
+        run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{ "{{staged_path}}" }}/atct-mcp"]
+      end
