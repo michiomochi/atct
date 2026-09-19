@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"syscall"
 	"time"
 
 	"github.com/michiomochi/atct/internal/store/sqlcgen"
@@ -1164,20 +1163,16 @@ func canRecoverSessionInTx(ctx context.Context, q *sqlcgen.Queries, sessionID in
 		}
 		return recoverySessionProof{}, fmt.Errorf("agent session %d has an incomplete discard record: %w", sessionID, ErrSessionRecoveryNotProven)
 	}
-	if row.Pid == 0 || row.StartedAt == "" {
-		return recoverySessionProof{}, fmt.Errorf("agent session %d is live or its liveness is unknown: %w", sessionID, ErrSessionRecoveryNotProven)
+	// The heartbeat is the only liveness signal. The recorded pid stopped being
+	// evidence when the daemon began serving every session over HTTP: the pid it
+	// writes is its own, so the operating system answers "alive" for as long as
+	// ATCT runs, and a session registered that way could never be proven stale
+	// however long ago it stopped. A session with no heartbeat at all predates
+	// the lease; registration has written one ever since.
+	if agentSessionLease(ctx, q, sessionID, time.Now()) == leaseHeld {
+		return recoverySessionProof{}, fmt.Errorf("agent session %d is still holding its heartbeat lease: %w", sessionID, ErrSessionRecoveryNotProven)
 	}
-	if err := syscall.Kill(int(row.Pid), 0); err != nil {
-		if errors.Is(err, syscall.ESRCH) {
-			return recoverySessionProof{RecoveryProof: RecoveryProof{SessionID: sessionID, Kind: RecoveryProofProcessMismatch}, PID: row.Pid, StartedAt: row.StartedAt}, nil
-		}
-		return recoverySessionProof{}, fmt.Errorf("agent session %d is live or its liveness is unknown: %w", sessionID, ErrSessionRecoveryNotProven)
-	}
-	startedAt, err := processStartedAt(int(row.Pid))
-	if err == nil && startedAt != row.StartedAt {
-		return recoverySessionProof{RecoveryProof: RecoveryProof{SessionID: sessionID, Kind: RecoveryProofProcessMismatch}, PID: row.Pid, StartedAt: row.StartedAt}, nil
-	}
-	return recoverySessionProof{}, fmt.Errorf("agent session %d is live or its liveness is unknown: %w", sessionID, ErrSessionRecoveryNotProven)
+	return recoverySessionProof{RecoveryProof: RecoveryProof{SessionID: sessionID, Kind: RecoveryProofLeaseLapsed}, PID: row.Pid, StartedAt: row.StartedAt}, nil
 }
 
 // RejectPlanHandoffReview clears the project review receipt while retaining the

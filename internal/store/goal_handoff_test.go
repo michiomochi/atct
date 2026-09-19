@@ -1536,11 +1536,9 @@ func TestRecoverGoalHandoffClearsOnlyDefinitelyStaleReviewer(t *testing.T) {
 	if _, err := s.RecoverGoalHandoff(ctx, handoff.ID, goalID, freshCommanderID, "live reviewer"); !errors.Is(err, ErrSessionRecoveryNotProven) {
 		t.Fatalf("RecoverGoalHandoff with live reviewer error = %v, want ErrSessionRecoveryNotProven", err)
 	}
-	if _, err := s.DB().ExecContext(ctx, `UPDATE agent_sessions SET started_at = 'stale-process-start' WHERE id = ?`, staleCommanderID); err != nil {
-		t.Fatalf("make recorded reviewer stale: %v", err)
-	}
+	expireTestSessionLease(t, s, staleCommanderID)
 
-	recovered, err := s.RecoverGoalHandoff(ctx, handoff.ID, goalID, freshCommanderID, "reviewer process identity changed")
+	recovered, err := s.RecoverGoalHandoff(ctx, handoff.ID, goalID, freshCommanderID, "reviewer stopped heartbeating")
 	if err != nil {
 		t.Fatalf("RecoverGoalHandoff: %v", err)
 	}

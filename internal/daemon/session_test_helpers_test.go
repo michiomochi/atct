@@ -5,6 +5,7 @@ import (
 	"os"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/michiomochi/atct/internal/store"
 )
@@ -50,4 +51,16 @@ func daemonTestSessionIDWithPID(t *testing.T, s *store.Store, label string, pid 
 	byStore[label] = id
 	daemonTestSessionRegistry.Unlock()
 	return id
+}
+
+// expireDaemonTestSessionLease says "this session is gone" the way the code
+// now reads it: the heartbeat stopped. Its pid stays live and recorded, which
+// is exactly the shape the daemon writes for every session it serves.
+func expireDaemonTestSessionLease(t *testing.T, s *store.Store, agentSessionID int64) {
+	t.Helper()
+	lapsed := time.Now().UTC().Add(-2 * store.RuntimeLeaseDuration).Format("2006-01-02T15:04:05.000000000Z07:00")
+	if _, err := s.DB().ExecContext(context.Background(),
+		`UPDATE agent_sessions SET last_heartbeat_at = ? WHERE id = ?`, lapsed, agentSessionID); err != nil {
+		t.Fatalf("expire lease for session %d: %v", agentSessionID, err)
+	}
 }
