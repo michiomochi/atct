@@ -39,7 +39,7 @@ func runMonitorCheck(config cliConfig, dir, exePath string) error {
 		_, writeErr := fmt.Fprint(os.Stdout, monitorCheckDeny(err.Error()))
 		return writeErr
 	}
-	if !isATCTTool(input.ToolName) {
+	if !isATCTTool(input.ToolName) || isSessionIdentifyTool(input.ToolName) {
 		return nil
 	}
 	_, err = fmt.Fprint(os.Stdout, monitorCheckResult(config, dir, exePath, input.SessionID))
@@ -51,6 +51,13 @@ func runMonitorCheck(config cliConfig, dir, exePath string) error {
 func isATCTTool(name string) bool {
 	name = strings.TrimSpace(name)
 	return strings.HasPrefix(name, "mcp__atct__") || strings.HasPrefix(name, "atct__")
+}
+
+// isSessionIdentifyTool exempts the one tool that registers the session. Gating
+// it deadlocks a session whose key is not in the database yet: the monitor check
+// fails to resolve the key, denies the call, and nothing can ever register it.
+func isSessionIdentifyTool(name string) bool {
+	return strings.HasSuffix(strings.TrimSpace(name), "atct_session_identify")
 }
 
 func decodeMonitorHookInput(r io.Reader) (monitorHookInput, error) {

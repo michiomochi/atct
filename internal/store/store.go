@@ -434,7 +434,13 @@ func (s *Store) AgentSessionIDByKey(ctx context.Context, sessionKey string) (int
 	if sessionKey == "" {
 		return 0, fmt.Errorf("session_key is required")
 	}
-	return sqlcgen.New(s.db).GetAgentSessionIDByKey(ctx, sessionKey)
+	id, err := sqlcgen.New(s.db).GetAgentSessionIDByKey(ctx, sessionKey)
+	if errors.Is(err, sql.ErrNoRows) {
+		// "sql: no rows in result set" names the query, not the cause. The
+		// cause is always the same: nothing ever registered this key.
+		return 0, fmt.Errorf("session_key %q is not registered: this session never ran atct_session_identify (or the ATCT database was reset since it did). Call atct_session_identify with the session_key and monitor_token from SessionStart, then retry", sessionKey)
+	}
+	return id, err
 }
 
 func (s *Store) AssociateAgentSessionWithProject(ctx context.Context, agentSessionID int64, projectID int64) error {

@@ -35,3 +35,17 @@ func TestMonitorCheckRejectsHookInputWithoutSession(t *testing.T) {
 		t.Fatal("decodeMonitorHookInput accepted input without session_id")
 	}
 }
+
+func TestMonitorCheckExemptsSessionIdentify(t *testing.T) {
+	for _, name := range []string{"mcp__atct__atct_session_identify", "atct__atct_session_identify"} {
+		if !isATCTTool(name) {
+			t.Fatalf("isATCTTool(%q) = false, want true", name)
+		}
+		if !isSessionIdentifyTool(name) {
+			t.Errorf("isSessionIdentifyTool(%q) = false; gating it deadlocks an unregistered session", name)
+		}
+	}
+	if isSessionIdentifyTool("mcp__atct__atct_goal_claim") {
+		t.Error("isSessionIdentifyTool(atct_goal_claim) = true, want false")
+	}
+}

@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -504,5 +505,22 @@ PRAGMA user_version = 4;
 	}
 	if projectName != "human project" || goalContent != "Human goal\n\nKeep this goal" || taskTitle != "Human task" || decisionQuestion != "Keep this decision" || decisionAnswer != "Keep it" {
 		t.Fatalf("migrated human data changed: project=%q goal=%q task=%q decision=%q answer=%q", projectName, goalContent, taskTitle, decisionQuestion, decisionAnswer)
+	}
+}
+
+func TestAgentSessionIDByKeyUnknownKeyExplainsCause(t *testing.T) {
+	s := newTestStore(t)
+
+	_, err := s.AgentSessionIDByKey(context.Background(), "never-identified")
+	if err == nil {
+		t.Fatal("AgentSessionIDByKey(unknown) = nil error, want failure")
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("error leaks sql.ErrNoRows: %v", err)
+	}
+	for _, want := range []string{"never-identified", "atct_session_identify"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error %q does not mention %q", err, want)
+		}
 	}
 }
