@@ -91,6 +91,9 @@ func (d *Daemon) stopCheckSubcommander(ctx context.Context, agentSessionID, goal
 			return "", fmt.Errorf("list task handoffs for task %d: %w", task.ID, err)
 		}
 		for _, handoff := range handoffs {
+			if handoff.RequestedAt != nil && handoff.ReceivedAt == nil && handoff.CompletedReportAt == nil && handoff.RecoveredAt == nil {
+				return fmt.Sprintf("subcommander has unreceived task handoff %s for task %d", handoff.ID, task.ID), nil
+			}
 			if handoff.ReviewRequestedAt != nil && handoff.ReviewRejectedAt == nil && handoff.CompletedReportAt == nil && handoff.RecoveredAt == nil {
 				return fmt.Sprintf("subcommander has task review handoff %s for task %d", handoff.ID, task.ID), nil
 			}

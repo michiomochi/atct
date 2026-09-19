@@ -41,3 +41,48 @@ func TestSessionStopCheckUsesIdentifiedSession(t *testing.T) {
 		t.Fatalf("session.stop_check response = %+v, want blocking work", response)
 	}
 }
+
+func TestStopCheckSubcommander(t *testing.T) {
+	fixture := newGoalListFixture(t)
+	t.Cleanup(func() {
+		if err := fixture.store.Close(); err != nil {
+			t.Errorf("store.Close: %v", err)
+		}
+	})
+
+	ctx := context.Background()
+	const handoffID = "stop-check-subcommander-task-handoff"
+	subcommanderID := daemonTestSessionID(t, fixture.store, "stop-check-subcommander")
+	executorID := daemonTestSessionID(t, fixture.store, "stop-check-subcommander-executor")
+	addTaskHandoffDirect(t, fixture.store, handoffID, fixture.tasks[0].ID, subcommanderID, 0)
+
+	detail, err := fixture.daemon.stopCheckSubcommander(ctx, subcommanderID, fixture.taskGoal.ID)
+	if err != nil {
+		t.Fatalf("stopCheckSubcommander(request-only): %v", err)
+	}
+	if detail == "" {
+		t.Fatal("stopCheckSubcommander(request-only) returned no blocking detail")
+	}
+
+	if _, err := fixture.store.ReceiveTaskHandoff(ctx, handoffID, fixture.tasks[0].ID, executorID); err != nil {
+		t.Fatalf("ReceiveTaskHandoff: %v", err)
+	}
+	detail, err = fixture.daemon.stopCheckSubcommander(ctx, subcommanderID, fixture.taskGoal.ID)
+	if err != nil {
+		t.Fatalf("stopCheckSubcommander(received): %v", err)
+	}
+	if detail != "" {
+		t.Fatalf("stopCheckSubcommander(received) = %q, want no block", detail)
+	}
+
+	if _, err := fixture.store.RequestTaskHandoffReview(ctx, handoffID, fixture.tasks[0].ID, executorID, "ready"); err != nil {
+		t.Fatalf("RequestTaskHandoffReview: %v", err)
+	}
+	detail, err = fixture.daemon.stopCheckSubcommander(ctx, subcommanderID, fixture.taskGoal.ID)
+	if err != nil {
+		t.Fatalf("stopCheckSubcommander(review): %v", err)
+	}
+	if detail == "" {
+		t.Fatal("stopCheckSubcommander(review) returned no blocking detail")
+	}
+}

@@ -70,6 +70,9 @@ func watchSubcommanderLivenessActionable(scope watchScope, state watchReconcilia
 		if !watchHandoffMatchesGoal(scope, handoff) || !watchHandoffOpen(handoff) {
 			continue
 		}
+		if handoff.RequestedAt != nil && handoff.ReceivedAt == nil {
+			return true
+		}
 		if handoff.ReviewRequestedAt != nil || handoff.ReviewRejectedAt != nil {
 			return true
 		}
