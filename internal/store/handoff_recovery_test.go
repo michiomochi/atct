@@ -491,7 +491,7 @@ func TestRecoverRequestedTaskCreateHandoffCreatesReplacement(t *testing.T) {
 	handoffID := "task-create-requested-recovery-old"
 	if _, err := s.DB().ExecContext(ctx, `
 		INSERT INTO task_create_handoffs (id, goal_id, requested_by, requested_at, request_report)
-		VALUES (?, ?, ?, ?, ?)`, handoffID, goalID, staleID, time.Now().UTC().Format(time.RFC3339Nano), "create implementation tasks"); err != nil {
+		VALUES (?, ?, ?, ?, ?)`, handoffID, goalID, staleID, olderRequestedAt(), "create implementation tasks"); err != nil {
 		t.Fatalf("insert requested task-create handoff: %v", err)
 	}
 
@@ -509,4 +509,13 @@ func TestRecoverRequestedTaskCreateHandoffCreatesReplacement(t *testing.T) {
 	if len(attempts) != 2 || attempts[1].RecoveredAt != nil || attempts[1].RequestedBy != testSessionID("task-create-requested-recovery-commander") {
 		t.Fatalf("requested task-create attempts = %+v, want recovered history plus replacement", attempts)
 	}
+}
+
+// olderRequestedAt is a minute back, so the attempt this test recovers really
+// is the older of the two. Stamping it with time.Now made the order depend on
+// how many digits RFC3339Nano happened to print: it trims trailing zeros, so
+// ".657" and ".657337" can land in the same second, and comparing those as
+// text puts the shorter one last because 'Z' outranks a digit.
+func olderRequestedAt() string {
+	return time.Now().UTC().Add(-time.Minute).Format(time.RFC3339Nano)
 }
