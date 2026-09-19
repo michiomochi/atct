@@ -348,6 +348,11 @@ func TestPendingCommandReportsStaleClaimSeparatelyFromOwnClaim(t *testing.T) {
 	if _, err := s.ClaimTask(ctx, staleTasks[0].ID, staleSessionID); err != nil {
 		t.Fatalf("ClaimTask stale: %v", err)
 	}
+	// It held the lock while it ran; the session then stopped and its lease
+	// stopped being renewed, which is what makes the claim stale.
+	if err := s.HeartbeatAgentSession(ctx, staleSessionID, time.Now().UTC().Add(-store.RuntimeLeaseDuration-time.Second)); err != nil {
+		t.Fatalf("expire the stale session lease: %v", err)
+	}
 	otherProject, err := s.CreateProject(ctx, "other", filepath.Join(t.TempDir(), "other-project"))
 	if err != nil {
 		t.Fatalf("CreateProject other: %v", err)

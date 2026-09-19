@@ -60,14 +60,3 @@ WHERE project_id = ?
   AND last_seen_at >= ?
   AND stopped_at IS NULL;
 
--- name: CountMonitorsForAgentSession :one
-SELECT COUNT(*)
-FROM monitor_health
-WHERE agent_session_id = ?;
-
--- name: CountLiveMonitorsForAgentSession :one
-SELECT COUNT(*)
-FROM monitor_health
-WHERE agent_session_id = ?
-  AND last_seen_at >= ?
-  AND stopped_at IS NULL;

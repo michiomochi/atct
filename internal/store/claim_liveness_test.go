@@ -228,7 +228,7 @@ func TestClaimLivenessTreatsUnknownAndUnverifiableClaimsAsStale(t *testing.T) {
 	}
 	for i, claim := range claims {
 		if claim.id != "missing-run" {
-			insertClaimLivenessSession(t, s, claim.id, project.ID, claim.pid, claim.startedAt)
+			insertClaimLivenessSession(t, s, claim.id, project.ID, claim.pid, claim.startedAt, false)
 		}
 		requestedBy := any(nil)
 		if claim.id != "missing-run" {
@@ -274,7 +274,7 @@ func TestClaimLivenessTreatsSharedDeadPIDClaimsAsStale(t *testing.T) {
 	}
 	for i, task := range tasks {
 		sessionID := fmt.Sprintf("shared-dead-run-%d", i)
-		insertClaimLivenessSession(t, s, sessionID, project.ID, 999999, "daemon-before-restart")
+		insertClaimLivenessSession(t, s, sessionID, project.ID, 999999, "daemon-before-restart", false)
 		insertClaimLivenessHandoff(t, s, task.ID, fmt.Sprintf("shared-dead-handoff-%d", i), sessionID)
 	}
 
@@ -320,7 +320,7 @@ func TestClaimLivenessKeepsSharedLivePIDClaimsRunning(t *testing.T) {
 	}
 	for i, task := range tasks {
 		sessionID := fmt.Sprintf("shared-live-run-%d", i)
-		insertClaimLivenessSession(t, s, sessionID, project.ID, os.Getpid(), startedAt)
+		insertClaimLivenessSession(t, s, sessionID, project.ID, os.Getpid(), startedAt, true)
 		insertClaimLivenessHandoff(t, s, task.ID, fmt.Sprintf("shared-live-handoff-%d", i), sessionID)
 	}
 
@@ -357,7 +357,7 @@ func TestClaimLivenessTreatsUnreadableProcessStartAsStale(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateTasks: %v", err)
 	}
-	insertClaimLivenessSession(t, s, "unreadable-start-run", project.ID, os.Getpid(), "")
+	insertClaimLivenessSession(t, s, "unreadable-start-run", project.ID, os.Getpid(), "", false)
 	insertClaimLivenessHandoff(t, s, tasks[0].ID, "unreadable-start-handoff", "unreadable-start-run")
 
 	running, stale, err := ClaimLiveness(ctx, s, project.ID)
@@ -387,7 +387,7 @@ func TestClaimLivenessTreatsPIDReuseAsStale(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateTasks: %v", err)
 	}
-	insertClaimLivenessSession(t, s, "reused-pid-run", project.ID, os.Getpid(), "not-the-process-start")
+	insertClaimLivenessSession(t, s, "reused-pid-run", project.ID, os.Getpid(), "not-the-process-start", false)
 	insertClaimLivenessHandoff(t, s, tasks[0].ID, "reused-pid-handoff", "reused-pid-run")
 
 	running, stale, err := ClaimLiveness(ctx, s, project.ID)
@@ -711,13 +711,21 @@ func claimLivenessAtctProjectID(t *testing.T, ctx context.Context, s *Store) int
 	return 0
 }
 
-func insertClaimLivenessSession(t *testing.T, s *Store, id string, projectID int64, pid int, startedAt string) {
+// leased says whether this session's monitor is renewing its lease. The pid
+// and startedAt are still written because the rows carry them, but nothing
+// reads them for liveness any more.
+func insertClaimLivenessSession(t *testing.T, s *Store, id string, projectID int64, pid int, startedAt string, leased bool) {
 	t.Helper()
 	sessionID := testSessionID(id)
 	if _, err := s.DB().ExecContext(context.Background(), `
 		INSERT INTO agent_sessions (id, project_id, pid, started_at, registered_at)
 		VALUES (?, ?, ?, ?, ?)`, sessionID, projectID, pid, startedAt, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
 		t.Fatalf("insert agent session %s: %v", id, err)
+	}
+	if leased {
+		if err := s.HeartbeatAgentSession(context.Background(), sessionID, time.Now().UTC()); err != nil {
+			t.Fatalf("lease agent session %s: %v", id, err)
+		}
 	}
 }
 

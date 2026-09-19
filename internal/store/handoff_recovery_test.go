@@ -13,24 +13,33 @@ func TestCanRecoverSessionRequiresDefiniteStaleProof(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
+	// These cases used to enumerate kinds of process identity: a live pid, a
+	// missing one, a mismatched start time, a dead process. The lease replaced
+	// all of that, and the only axis left is whether the session still holds
+	// one. A pid is written anyway, a live one, to show it no longer decides.
 	tests := []struct {
 		name      string
-		pid       int
-		startedAt string
+		heartbeat time.Duration // age of the last heartbeat
+		leased    bool
 		wantProof bool
 	}{
-		{name: "live identity", pid: os.Getpid(), startedAt: "fake-start-" + strconv.Itoa(os.Getpid())},
-		{name: "unknown identity", pid: 0, startedAt: ""},
-		{name: "mismatched identity", pid: os.Getpid(), startedAt: "stale-start", wantProof: true},
-		{name: "dead process", pid: 999999, startedAt: "dead-start", wantProof: true},
+		{name: "lease just renewed", leased: true},
+		{name: "lease renewed within the window", leased: true, heartbeat: RuntimeLeaseDuration / 2},
+		{name: "lease lapsed", leased: true, heartbeat: RuntimeLeaseDuration + time.Second, wantProof: true},
+		{name: "never held a lease", wantProof: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			id := testSessionID("recovery-" + tt.name)
 			if _, err := s.DB().ExecContext(ctx, `
 				INSERT INTO agent_sessions (id, pid, started_at, registered_at)
-				VALUES (?, ?, ?, ?)`, id, tt.pid, tt.startedAt, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+				VALUES (?, ?, ?, ?)`, id, os.Getpid(), "fake-start-"+strconv.Itoa(os.Getpid()), time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
 				t.Fatalf("insert session: %v", err)
+			}
+			if tt.leased {
+				if err := s.HeartbeatAgentSession(ctx, id, time.Now().UTC().Add(-tt.heartbeat)); err != nil {
+					t.Fatalf("heartbeat session: %v", err)
+				}
 			}
 
 			proof, err := s.CanRecoverSession(ctx, id)

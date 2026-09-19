@@ -786,6 +786,7 @@ func TestGoalHandoffAllowsSecondHandoffForSameGoal(t *testing.T) {
 	`, 999999, "dead", testSessionID("goal-dead-receiver")); err != nil {
 		t.Fatalf("dead receiver session fixture update failed: %v", err)
 	}
+	expireTestAgentSessionLease(t, s, testSessionID("goal-dead-receiver"))
 
 	first, err := s.RequestGoalHandoff(ctx, "goal-handoff-1", goalID, testSessionID("goal-requester"), "")
 	if err != nil {

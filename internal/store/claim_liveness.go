@@ -3,9 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
-	"syscall"
 	"time"
 
 	"github.com/michiomochi/atct/internal/domain"
@@ -114,77 +112,13 @@ func claimIsRunning(ctx context.Context, s *Store, agentSessionID int64) bool {
 	return claimIsRunningWithQueries(ctx, sqlcgen.New(s.db), agentSessionID)
 }
 
-// monitorLiveness reports the session's liveness through its Monitor, and
-// whether a Monitor is the right thing to ask.
-//
-// Over the HTTP MCP transport the session has no process of its own: the
-// daemon serves every session, so agent_sessions.pid names the daemon, which
-// is always alive and can never be disproven. The Monitor does have a process
-// of its own, one per session, and it dies with the pane. Its heartbeat is
-// already the liveness signal everywhere else, so use it here too.
-//
-// A session that never reported a Monitor keeps the old rule; only a session
-// that has one is judged by it.
-func monitorLiveness(ctx context.Context, q *sqlcgen.Queries, agentSessionID int64) (live bool, monitored bool) {
-	monitors, err := q.CountMonitorsForAgentSession(ctx, agentSessionID)
-	if err != nil || monitors == 0 {
-		return false, false
-	}
-	cutoff := time.Now().UTC().Add(-MonitorHealthLease).Format(time.RFC3339Nano)
-	liveCount, err := q.CountLiveMonitorsForAgentSession(ctx, sqlcgen.CountLiveMonitorsForAgentSessionParams{
-		AgentSessionID: agentSessionID,
-		LastSeenAt:     cutoff,
-	})
-	if err != nil {
-		return false, false
-	}
-	return liveCount > 0, true
-}
-
 func claimIsRunningWithQueries(ctx context.Context, q *sqlcgen.Queries, agentSessionID int64) bool {
-	if agentSessionID == 0 {
-		return false
-	}
-	if live, monitored := monitorLiveness(ctx, q, agentSessionID); monitored {
-		return live
-	}
-	session, err := q.GetAgentSessionLiveness(ctx, agentSessionID)
-	if err != nil {
-		return false
-	}
-	pid := int(session.Pid)
-	startedAt := session.StartedAt
-	if pid == 0 {
-		return false
-	}
-	if err := syscall.Kill(pid, 0); err != nil {
-		return false
-	}
-
-	actualStartedAt, err := processStartedAt(pid)
-	return err == nil && actualStartedAt == startedAt
+	return agentSessionLiveInQueries(ctx, q, agentSessionID, time.Now())
 }
 
-// claimIsDefinitelyDead is intentionally stricter than claimIsRunning. A
-// session registered without process identity cannot be proven dead, so an
-// open handoff owned by it must not be reclaimed by a concurrent claimant.
+// claimIsDefinitelyDead is the lease read the other way round. There is no
+// longer a weaker and a stronger answer: a lapsed lease is proof on its own,
+// where a missing pid only ever meant "cannot tell".
 func claimIsDefinitelyDead(ctx context.Context, s *Store, agentSessionID int64) bool {
-	if agentSessionID == 0 {
-		return false
-	}
-	queries := sqlcgen.New(s.db)
-	if live, monitored := monitorLiveness(ctx, queries, agentSessionID); monitored {
-		return !live
-	}
-	session, err := queries.GetAgentSessionLiveness(ctx, agentSessionID)
-	if err != nil || session.Pid == 0 || session.StartedAt == "" {
-		return false
-	}
-
-	pid := int(session.Pid)
-	if err := syscall.Kill(pid, 0); err != nil {
-		return errors.Is(err, syscall.ESRCH)
-	}
-	actualStartedAt, err := processStartedAt(pid)
-	return err == nil && actualStartedAt != session.StartedAt
+	return !s.AgentSessionLive(ctx, agentSessionID, time.Now())
 }

@@ -71,6 +71,23 @@ func (s *Store) MonitorBinding(ctx context.Context, token string) (MonitorBindin
 	return MonitorBinding{Assignment: assignment}, nil
 }
 
+// MonitorBindingAgentSessionID resolves a monitor token to the session it
+// serves. The token is the only identity a monitor is given.
+func (s *Store) MonitorBindingAgentSessionID(ctx context.Context, token string) (int64, error) {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return 0, fmt.Errorf("monitor token is required")
+	}
+	agentSessionID, err := sqlcgen.New(s.db).GetMonitorBindingAgentSessionID(ctx, token)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return 0, ErrMonitorBindingNotFound
+		}
+		return 0, fmt.Errorf("find monitor binding: %w", err)
+	}
+	return agentSessionID, nil
+}
+
 // MonitorAssignment derives the same role precedence used for authorization.
 // An executor retains every received, incomplete task handoff as a scope.
 func (s *Store) MonitorAssignment(ctx context.Context, agentSessionID int64) (MonitorAssignment, error) {

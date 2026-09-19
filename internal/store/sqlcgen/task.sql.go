@@ -346,20 +346,21 @@ func (q *Queries) GetAgentSessionIDByKey(ctx context.Context, sessionKey string)
 }
 
 const getAgentSessionLiveness = `-- name: GetAgentSessionLiveness :one
-SELECT pid, started_at
+SELECT pid, started_at, last_heartbeat_at
 FROM agent_sessions
 WHERE id = ?
 `
 
 type GetAgentSessionLivenessRow struct {
-	Pid       int64
-	StartedAt string
+	Pid             int64
+	StartedAt       string
+	LastHeartbeatAt sql.NullString
 }
 
 func (q *Queries) GetAgentSessionLiveness(ctx context.Context, id int64) (GetAgentSessionLivenessRow, error) {
 	row := q.db.QueryRowContext(ctx, getAgentSessionLiveness, id)
 	var i GetAgentSessionLivenessRow
-	err := row.Scan(&i.Pid, &i.StartedAt)
+	err := row.Scan(&i.Pid, &i.StartedAt, &i.LastHeartbeatAt)
 	return i, err
 }
 
@@ -630,6 +631,19 @@ func (q *Queries) GetTaskProjectID(ctx context.Context, id int64) (int64, error)
 	var project_id int64
 	err := row.Scan(&project_id)
 	return project_id, err
+}
+
+const heartbeatAgentSession = `-- name: HeartbeatAgentSession :execresult
+UPDATE agent_sessions SET last_heartbeat_at = ? WHERE id = ?
+`
+
+type HeartbeatAgentSessionParams struct {
+	LastHeartbeatAt sql.NullString
+	ID              int64
+}
+
+func (q *Queries) HeartbeatAgentSession(ctx context.Context, arg HeartbeatAgentSessionParams) (sql.Result, error) {
+	return q.db.ExecContext(ctx, heartbeatAgentSession, arg.LastHeartbeatAt, arg.ID)
 }
 
 const insertAgentSessionAssociation = `-- name: InsertAgentSessionAssociation :exec
@@ -1750,6 +1764,22 @@ type ReleaseTaskParams struct {
 
 func (q *Queries) ReleaseTask(ctx context.Context, arg ReleaseTaskParams) (sql.Result, error) {
 	return q.db.ExecContext(ctx, releaseTask, arg.UpdatedAt, arg.ID)
+}
+
+const renewAgentSessionLease = `-- name: RenewAgentSessionLease :execresult
+UPDATE agent_sessions SET last_heartbeat_at = ?1
+WHERE id = ?2
+  AND (last_heartbeat_at IS NULL OR last_heartbeat_at < ?3)
+`
+
+type RenewAgentSessionLeaseParams struct {
+	LastHeartbeatAt  sql.NullString
+	ID               int64
+	LastHeartbeatAt2 sql.NullString
+}
+
+func (q *Queries) RenewAgentSessionLease(ctx context.Context, arg RenewAgentSessionLeaseParams) (sql.Result, error) {
+	return q.db.ExecContext(ctx, renewAgentSessionLease, arg.LastHeartbeatAt, arg.ID, arg.LastHeartbeatAt2)
 }
 
 const requestGoalHandoff = `-- name: RequestGoalHandoff :exec

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"testing"
+	"time"
 )
 
 func setPlanReviewGoalArtifacts(t *testing.T, s *Store, goalID int64) {
@@ -133,15 +134,16 @@ func TestRecoverPlanHandoffClearsOnlyDefinitelyStaleReviewer(t *testing.T) {
 	if _, err := s.DB().ExecContext(ctx, `UPDATE projects SET claimed_by = ? WHERE id = ?`, staleCommanderID, goal.ProjectID); err != nil {
 		t.Fatalf("claim project for stale commander: %v", err)
 	}
-	if _, err := s.DB().ExecContext(ctx, `UPDATE agent_sessions SET started_at = 'stale-process-start' WHERE id = ?`, staleCommanderID); err != nil {
-		t.Fatalf("make commander definitely stale: %v", err)
-	}
+	expireTestAgentSessionLease(t, s, staleCommanderID)
 	// The stale commander was live when it received the review; only its
 	// process identity is now stale. The current commander must be able to
 	// reopen that receipt without changing the submitting subcommander.
 	handoff, err := s.RequestGoalHandoff(ctx, "recover-plan-goal", goalID, staleCommanderID, "delegate")
 	if err == nil {
 		t.Fatal("RequestGoalHandoff accepted a definitely stale commander")
+	}
+	if err := s.HeartbeatAgentSession(ctx, staleCommanderID, time.Now().UTC()); err != nil {
+		t.Fatalf("renew the commander lease: %v", err)
 	}
 	if _, err := s.DB().ExecContext(ctx, `UPDATE agent_sessions SET started_at = ? WHERE id = ?`, processStartedAtOrFail(t, os.Getpid()), staleCommanderID); err != nil {
 		t.Fatalf("restore commander identity for setup: %v", err)

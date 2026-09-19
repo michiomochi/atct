@@ -898,6 +898,8 @@ func TestEvaluateWakeupCollectsUnappliedDecisionsAndStaleClaims(t *testing.T) {
 	if _, err := s.ClaimTask(ctx, tasks[2].ID, testSessionID("missing-session")); err != nil {
 		t.Fatalf("ClaimTask stale: %v", err)
 	}
+	// The name says it: this session is gone, so its lease is not being renewed.
+	expireTestAgentSessionLease(t, s, testSessionID("missing-session"))
 	liveSessionID, err := s.RegisterAgentSession(ctx, os.Getpid())
 	if err != nil {
 		t.Fatalf("RegisterAgentSession: %v", err)

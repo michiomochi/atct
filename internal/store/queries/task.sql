@@ -184,9 +184,17 @@ JOIN goals AS g ON g.id = t.goal_id
 WHERE t.id = ?;
 
 -- name: GetAgentSessionLiveness :one
-SELECT pid, started_at
+SELECT pid, started_at, last_heartbeat_at
 FROM agent_sessions
 WHERE id = ?;
+
+-- name: HeartbeatAgentSession :execresult
+UPDATE agent_sessions SET last_heartbeat_at = ? WHERE id = ?;
+
+-- name: RenewAgentSessionLease :execresult
+UPDATE agent_sessions SET last_heartbeat_at = sqlc.arg('last_heartbeat_at')
+WHERE id = sqlc.arg('id')
+  AND (last_heartbeat_at IS NULL OR last_heartbeat_at < sqlc.arg('last_heartbeat_at_2'));
 
 -- name: EnableDevelopmentMode :execresult
 UPDATE agent_sessions SET development_mode = 1 WHERE id = ?;

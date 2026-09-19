@@ -41,6 +41,14 @@ func registerNamedTestAgentSession(t *testing.T, s *Store, label string, pid int
 	`, id, storedPID, startedAt, registeredAt); err != nil {
 		t.Fatalf("register test agent session %q: %v", label, err)
 	}
+	// These tests say "this session is running" by handing in a live pid, and
+	// "this one is gone" by handing in a dead one or none. Liveness is a lease
+	// now, so say the same thing in the terms the code reads.
+	if storedPID != 0 {
+		if err := s.HeartbeatAgentSession(context.Background(), id, time.Now().UTC()); err != nil {
+			t.Fatalf("lease test agent session %q: %v", label, err)
+		}
+	}
 	return id
 }
 
@@ -77,4 +85,16 @@ func nullableTestSessionRef(value any) any {
 		return nil
 	}
 	return testSessionRef(value)
+}
+
+// expireTestAgentSessionLease makes a session stale. Tests used to do this by
+// killing the process they had registered, back when liveness asked the
+// operating system about a pid; the lease is what answers now, so let it
+// lapse instead.
+func expireTestAgentSessionLease(t *testing.T, s *Store, agentSessionID int64) {
+	t.Helper()
+	lapsed := time.Now().UTC().Add(-RuntimeLeaseDuration - time.Second)
+	if err := s.HeartbeatAgentSession(context.Background(), agentSessionID, lapsed); err != nil {
+		t.Fatalf("expire lease for agent session %d: %v", agentSessionID, err)
+	}
 }

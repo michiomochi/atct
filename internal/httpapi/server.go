@@ -449,6 +449,14 @@ func (s *Server) handleMonitorHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleMonitorBinding(w http.ResponseWriter, r *http.Request, token string) {
+	// The monitor polls this every second and cannot do its job without it, so
+	// the poll is the heartbeat: there is no separate call to forget to make.
+	// A lapsed lease then means the monitor process is gone, which is the one
+	// thing a session's liveness ever meant.
+	if err := s.store.RenewMonitorLease(r.Context(), token); err != nil && !errors.Is(err, store.ErrMonitorBindingNotFound) {
+		writeStoreError(w, err)
+		return
+	}
 	binding, err := s.store.MonitorBinding(r.Context(), token)
 	if errors.Is(err, store.ErrMonitorBindingNotFound) {
 		writeJSON(w, http.StatusOK, store.MonitorBinding{Pending: true})

@@ -354,6 +354,15 @@ func (s *Store) RegisterAgentSessionInProject(ctx context.Context, pid int, proj
 	if err := queries.DeleteExpiredAgentSessions(ctx, now.Add(-agentSessionRetention).Format(time.RFC3339Nano)); err != nil {
 		return 0, fmt.Errorf("clean up old agent sessions: %w", err)
 	}
+	// A session is alive the moment it registers: its transport is open. The
+	// lease says so, and from here the monitor is what keeps it saying so.
+	if _, err := queries.HeartbeatAgentSession(ctx, sqlcgen.HeartbeatAgentSessionParams{
+		LastHeartbeatAt: sql.NullString{String: now.Format(time.RFC3339Nano), Valid: true},
+		ID:              agentSessionID,
+	}); err != nil {
+		return 0, fmt.Errorf("start agent session lease: %w", err)
+	}
+
 	if err := tx.Commit(); err != nil {
 		return 0, fmt.Errorf("commit agent session registration: %w", err)
 	}
