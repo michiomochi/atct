@@ -951,6 +951,14 @@ func TestWatchLivenessPromptsOnlyForImmediateRoleAction(t *testing.T) {
 			want: true,
 		},
 		{
+			name:  "subcommander has unreceived task handoff",
+			scope: subcommanderScope,
+			reconciliation: watchReconciliation{TaskHandoffs: []watchReconciliationHandoff{{
+				GoalID: 249, TaskID: 812, RequestedAt: at("requested"),
+			}}},
+			want: true,
+		},
+		{
 			name:  "subcommander awaits executor",
 			scope: subcommanderScope,
 			reconciliation: watchReconciliation{
