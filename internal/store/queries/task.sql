@@ -270,12 +270,23 @@ ON CONFLICT(id) DO UPDATE SET
 
 -- name: ReceiveTaskHandoff :execresult
 -- Receiving is what gives a session its executor scope, so a second receiver
--- would silently strip the first of its role. The receiver may say it again,
--- which is how an agent that lost its context gets back to its own work.
+-- would silently strip the first of its role. Three receivers are allowed: the
+-- first one, the same one again (which is how an agent that lost its context
+-- gets back to its own work), and a successor to one whose lease lapsed, since
+-- otherwise a stopped pane holds the task until a commander recovers it.
 UPDATE task_handoffs
 SET received_by = sqlc.arg('received_by'), received_at = sqlc.arg('received_at')
-WHERE id = sqlc.arg('id') AND task_id = sqlc.arg('task_id') AND requested_at IS NOT NULL
-  AND (received_at IS NULL OR received_by = sqlc.arg('received_by'));
+WHERE task_handoffs.id = sqlc.arg('id') AND task_id = sqlc.arg('task_id') AND requested_at IS NOT NULL
+  AND (
+    received_at IS NULL
+    OR received_by = sqlc.arg('received_by')
+    OR NOT EXISTS (
+      SELECT 1 FROM agent_sessions
+      WHERE agent_sessions.id = task_handoffs.received_by
+        AND agent_sessions.last_heartbeat_at IS NOT NULL
+        AND agent_sessions.last_heartbeat_at >= sqlc.arg('lease_cutoff')
+    )
+  );
 
 -- name: RequestTaskHandoffReview :execresult
 UPDATE task_handoffs
@@ -413,8 +424,17 @@ ON CONFLICT(id) DO UPDATE SET
 -- Same rule as ReceiveTaskHandoff, for the subcommander scope.
 UPDATE goal_handoffs
 SET received_by = sqlc.arg('received_by'), received_at = sqlc.arg('received_at')
-WHERE id = sqlc.arg('id') AND goal_id = sqlc.arg('goal_id') AND requested_at IS NOT NULL AND recovered_at IS NULL
-  AND (received_at IS NULL OR received_by = sqlc.arg('received_by'));
+WHERE goal_handoffs.id = sqlc.arg('id') AND goal_id = sqlc.arg('goal_id') AND requested_at IS NOT NULL AND recovered_at IS NULL
+  AND (
+    received_at IS NULL
+    OR received_by = sqlc.arg('received_by')
+    OR NOT EXISTS (
+      SELECT 1 FROM agent_sessions
+      WHERE agent_sessions.id = goal_handoffs.received_by
+        AND agent_sessions.last_heartbeat_at IS NOT NULL
+        AND agent_sessions.last_heartbeat_at >= sqlc.arg('lease_cutoff')
+    )
+  );
 
 -- name: RequestGoalHandoffReview :execresult
 UPDATE goal_handoffs

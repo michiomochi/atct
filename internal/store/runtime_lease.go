@@ -100,3 +100,12 @@ func (s *Store) RenewMonitorLease(ctx context.Context, token string) error {
 	}
 	return nil
 }
+
+// leaseCutoff is the oldest heartbeat that still counts as held, for the
+// queries that decide whether a receiver is still there.
+func leaseCutoff() sql.NullString {
+	return sql.NullString{
+		String: time.Now().UTC().Add(-RuntimeLeaseDuration).Format(time.RFC3339Nano),
+		Valid:  true,
+	}
+}

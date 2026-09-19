@@ -13,6 +13,7 @@ import (
 
 var (
 	ErrTaskHandoffNotFound               = errors.New("task handoff not found")
+	ErrTaskHandoffLiveReceiver           = errors.New("task handoff is held by a live receiver")
 	ErrTaskHandoffTaskMismatch           = errors.New("task handoff task mismatch")
 	ErrTaskHandoffGoalNotHeld            = errors.New("task handoff requires the goal's handoff: caller does not hold an open received handoff for goal")
 	ErrTaskHandoffAlreadyOpen            = errors.New("task handoff already open")
@@ -129,6 +130,19 @@ func parseTaskHandoffTime(column string, value sql.NullString) (*time.Time, erro
 		return nil, fmt.Errorf("parse task handoff %s: %w", column, err)
 	}
 	return &parsed, nil
+}
+
+// taskHandoffReceiverID is for an error message, so an unreadable row answers
+// zero rather than replacing the refusal with a lookup failure.
+func taskHandoffRefusal(ctx context.Context, q *sqlcgen.Queries, handoffID string) (requested bool, receiver int64) {
+	handoff, err := q.GetTaskHandoff(ctx, handoffID)
+	if err != nil {
+		return false, 0
+	}
+	if handoff.ReceivedBy.Valid {
+		receiver = handoff.ReceivedBy.Int64
+	}
+	return handoff.RequestedAt.Valid, receiver
 }
 
 func (s *Store) ensureTaskHandoffTask(ctx context.Context, handoffID string, taskID int64) error {
@@ -329,10 +343,11 @@ func (s *Store) ReceiveTaskHandoff(ctx context.Context, handoffID string, taskID
 	defer tx.Rollback()
 	q := sqlcgen.New(tx)
 	result, err := q.ReceiveTaskHandoff(ctx, sqlcgen.ReceiveTaskHandoffParams{
-		ID:         handoffID,
-		TaskID:     taskID,
-		ReceivedBy: sql.NullInt64{Int64: receivedBy, Valid: receivedBy != 0},
-		ReceivedAt: sql.NullString{String: now, Valid: true},
+		ID:          handoffID,
+		TaskID:      taskID,
+		ReceivedBy:  sql.NullInt64{Int64: receivedBy, Valid: receivedBy != 0},
+		ReceivedAt:  sql.NullString{String: now, Valid: true},
+		LeaseCutoff: leaseCutoff(),
 	})
 	if err != nil {
 		return TaskHandoff{}, fmt.Errorf("receive task handoff: %w", err)
@@ -342,6 +357,10 @@ func (s *Store) ReceiveTaskHandoff(ctx context.Context, handoffID string, taskID
 		return TaskHandoff{}, fmt.Errorf("receive task handoff rows affected: %w", err)
 	}
 	if n == 0 {
+		if requested, receiver := taskHandoffRefusal(ctx, q, handoffID); requested && receiver != 0 {
+			return TaskHandoff{}, fmt.Errorf("task handoff %s is held by session %d, whose lease is still being renewed: %w",
+				handoffID, receiver, ErrTaskHandoffLiveReceiver)
+		}
 		return TaskHandoff{}, fmt.Errorf("%w: %s", ErrTaskHandoffNotFound, handoffID)
 	}
 	statusResult, err := q.UpdateTaskStatus(ctx, sqlcgen.UpdateTaskStatusParams{

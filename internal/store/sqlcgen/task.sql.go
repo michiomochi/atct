@@ -1125,15 +1125,25 @@ func (q *Queries) MaxTaskSortOrder(ctx context.Context, goalID int64) (int64, er
 const receiveGoalHandoff = `-- name: ReceiveGoalHandoff :execresult
 UPDATE goal_handoffs
 SET received_by = ?1, received_at = ?2
-WHERE id = ?3 AND goal_id = ?4 AND requested_at IS NOT NULL AND recovered_at IS NULL
-  AND (received_at IS NULL OR received_by = ?1)
+WHERE goal_handoffs.id = ?3 AND goal_id = ?4 AND requested_at IS NOT NULL AND recovered_at IS NULL
+  AND (
+    received_at IS NULL
+    OR received_by = ?1
+    OR NOT EXISTS (
+      SELECT 1 FROM agent_sessions
+      WHERE agent_sessions.id = goal_handoffs.received_by
+        AND agent_sessions.last_heartbeat_at IS NOT NULL
+        AND agent_sessions.last_heartbeat_at >= ?5
+    )
+  )
 `
 
 type ReceiveGoalHandoffParams struct {
-	ReceivedBy sql.NullInt64
-	ReceivedAt sql.NullString
-	ID         string
-	GoalID     int64
+	ReceivedBy  sql.NullInt64
+	ReceivedAt  sql.NullString
+	ID          string
+	GoalID      int64
+	LeaseCutoff sql.NullString
 }
 
 // Same rule as ReceiveTaskHandoff, for the subcommander scope.
@@ -1143,6 +1153,7 @@ func (q *Queries) ReceiveGoalHandoff(ctx context.Context, arg ReceiveGoalHandoff
 		arg.ReceivedAt,
 		arg.ID,
 		arg.GoalID,
+		arg.LeaseCutoff,
 	)
 }
 
@@ -1270,26 +1281,39 @@ func (q *Queries) ReceiveTaskCreateHandoff(ctx context.Context, arg ReceiveTaskC
 const receiveTaskHandoff = `-- name: ReceiveTaskHandoff :execresult
 UPDATE task_handoffs
 SET received_by = ?1, received_at = ?2
-WHERE id = ?3 AND task_id = ?4 AND requested_at IS NOT NULL
-  AND (received_at IS NULL OR received_by = ?1)
+WHERE task_handoffs.id = ?3 AND task_id = ?4 AND requested_at IS NOT NULL
+  AND (
+    received_at IS NULL
+    OR received_by = ?1
+    OR NOT EXISTS (
+      SELECT 1 FROM agent_sessions
+      WHERE agent_sessions.id = task_handoffs.received_by
+        AND agent_sessions.last_heartbeat_at IS NOT NULL
+        AND agent_sessions.last_heartbeat_at >= ?5
+    )
+  )
 `
 
 type ReceiveTaskHandoffParams struct {
-	ReceivedBy sql.NullInt64
-	ReceivedAt sql.NullString
-	ID         string
-	TaskID     int64
+	ReceivedBy  sql.NullInt64
+	ReceivedAt  sql.NullString
+	ID          string
+	TaskID      int64
+	LeaseCutoff sql.NullString
 }
 
 // Receiving is what gives a session its executor scope, so a second receiver
-// would silently strip the first of its role. The receiver may say it again,
-// which is how an agent that lost its context gets back to its own work.
+// would silently strip the first of its role. Three receivers are allowed: the
+// first one, the same one again (which is how an agent that lost its context
+// gets back to its own work), and a successor to one whose lease lapsed, since
+// otherwise a stopped pane holds the task until a commander recovers it.
 func (q *Queries) ReceiveTaskHandoff(ctx context.Context, arg ReceiveTaskHandoffParams) (sql.Result, error) {
 	return q.db.ExecContext(ctx, receiveTaskHandoff,
 		arg.ReceivedBy,
 		arg.ReceivedAt,
 		arg.ID,
 		arg.TaskID,
+		arg.LeaseCutoff,
 	)
 }
 

@@ -13,6 +13,7 @@ import (
 
 var (
 	ErrGoalHandoffNotFound               = errors.New("goal handoff not found")
+	ErrGoalHandoffLiveReceiver           = errors.New("goal handoff is held by a live receiver")
 	ErrGoalHandoffGoalMismatch           = errors.New("goal handoff goal mismatch")
 	ErrGoalHandoffProjectNotHeld         = errors.New("goal handoff requires the project claim: caller does not hold a live claim on project")
 	ErrGoalHandoffAlreadyOpen            = errors.New("goal handoff already open")
@@ -166,6 +167,19 @@ func planHandoffFromRow(row sqlcgen.PlanHandoff) (PlanHandoff, error) {
 		return PlanHandoff{}, err
 	}
 	return handoff, nil
+}
+
+// goalHandoffReceiverID is for an error message, so an unreadable row answers
+// zero rather than replacing the refusal with a lookup failure.
+func goalHandoffRefusal(ctx context.Context, q *sqlcgen.Queries, handoffID string) (requested bool, receiver int64) {
+	handoff, err := q.GetGoalHandoff(ctx, handoffID)
+	if err != nil {
+		return false, 0
+	}
+	if handoff.ReceivedBy.Valid {
+		receiver = handoff.ReceivedBy.Int64
+	}
+	return handoff.RequestedAt.Valid, receiver
 }
 
 func (s *Store) ensureGoalHandoffGoal(ctx context.Context, handoffID string, goalID int64) error {
@@ -351,10 +365,11 @@ func (s *Store) ReceiveGoalHandoff(ctx context.Context, handoffID string, goalID
 	defer tx.Rollback()
 	q := sqlcgen.New(tx)
 	result, err := q.ReceiveGoalHandoff(ctx, sqlcgen.ReceiveGoalHandoffParams{
-		ID:         handoffID,
-		GoalID:     goalID,
-		ReceivedBy: sql.NullInt64{Int64: receivedBy, Valid: receivedBy != 0},
-		ReceivedAt: sql.NullString{String: now, Valid: true},
+		ID:          handoffID,
+		GoalID:      goalID,
+		ReceivedBy:  sql.NullInt64{Int64: receivedBy, Valid: receivedBy != 0},
+		ReceivedAt:  sql.NullString{String: now, Valid: true},
+		LeaseCutoff: leaseCutoff(),
 	})
 	if err != nil {
 		return GoalHandoff{}, fmt.Errorf("receive goal handoff: %w", err)
@@ -364,6 +379,13 @@ func (s *Store) ReceiveGoalHandoff(ctx context.Context, handoffID string, goalID
 		return GoalHandoff{}, fmt.Errorf("receive goal handoff rows affected: %w", err)
 	}
 	if n == 0 {
+		// The row exists, or ensureGoalHandoffGoal would have said so, so the
+		// guard refused. Say which guard: an unrequested handoff and one held
+		// by a session that is still there need different answers.
+		if requested, receiver := goalHandoffRefusal(ctx, q, handoffID); requested && receiver != 0 {
+			return GoalHandoff{}, fmt.Errorf("goal handoff %s is held by session %d, whose lease is still being renewed: %w",
+				handoffID, receiver, ErrGoalHandoffLiveReceiver)
+		}
 		return GoalHandoff{}, fmt.Errorf("%w: %s", ErrGoalHandoffNotFound, handoffID)
 	}
 	projectID, err := q.GetGoalProjectID(ctx, goalID)
