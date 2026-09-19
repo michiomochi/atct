@@ -68,10 +68,20 @@ modify web code.
 
 ## ATCT availability
 
-`atct_session_identify`, `atct_task_handoff_receive`, `atct_role`, and the
-review request (`atct_task_handoff_review_request`) could not run. The ATCT
-PreToolUse monitor-check rejected the session before any ATCT tool call because
-the session had never run `atct_session_identify`, matching the known Goal 295
+During implementation, `atct_session_identify`, `atct_task_handoff_receive`,
+`atct_role`, and the review request could not run because the ATCT PreToolUse
+monitor-check rejected the unregistered session, matching the known Goal 295
 infrastructure defect. The received task handoff was therefore used as the
-implementation authorization, as instructed. After Goal 295 lands, the ATCT
-record is expected to be repaired.
+implementation authorization.
+
+For final bookkeeping, `atct_session_identify` later succeeded as agent session
+6742 and `atct_role(expected_role=executor)` matched. The recovery
+`atct_task_handoff_receive` for task 1284 and handoff
+`task-1284-widened-go-20260919` then succeeded. A prior review request had
+been denied because the handoff was not yet received. The subsequent single
+review-request attempt was blocked by the PreToolUse hook with:
+
+`ATCT: this session has no live Monitor, so a wakeup would never reach it.`
+
+It was not retried, as instructed. After a live ATCT Monitor is available, the
+review request can be resubmitted.
