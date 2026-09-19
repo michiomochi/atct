@@ -111,15 +111,17 @@ func (s *Store) UpsertMonitorHealth(ctx context.Context, health MonitorHealth) e
 	if err := validateMonitorHealth(health); err != nil {
 		return err
 	}
-	if health.AgentSessionID == 0 {
-		if token := strings.TrimSpace(health.MonitorToken); token != "" {
-			// A missing binding is not an error: the monitor can report health
-			// before the session it serves has identified itself.
-			if agentSessionID, err := sqlcgen.New(s.db).GetMonitorBindingAgentSessionID(ctx, token); err == nil {
-				health.AgentSessionID = agentSessionID
-			} else if !errors.Is(err, sql.ErrNoRows) {
-				return fmt.Errorf("resolve monitor binding for health: %w", err)
-			}
+	// The binding wins over whatever the client reported. A bound monitor is
+	// told its token, never the id of the session behind it, so a value it
+	// supplies can only be a guess from the environment, and a stale one would
+	// otherwise outrank the record that actually joins the two.
+	if token := strings.TrimSpace(health.MonitorToken); token != "" {
+		// A missing binding is not an error: the monitor can report health
+		// before the session it serves has identified itself.
+		if agentSessionID, err := sqlcgen.New(s.db).GetMonitorBindingAgentSessionID(ctx, token); err == nil {
+			health.AgentSessionID = agentSessionID
+		} else if !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("resolve monitor binding for health: %w", err)
 		}
 	}
 	now := time.Now().UTC()

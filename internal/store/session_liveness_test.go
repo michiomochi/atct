@@ -166,3 +166,52 @@ func TestMonitorHealthResolvesItsSessionFromTheBoundToken(t *testing.T) {
 		t.Error("claimIsRunning = false though the bound Monitor is heartbeating")
 	}
 }
+
+// A bound monitor is told its token, never the id of the session behind it, so
+// any id it reports is a guess read out of the environment. The binding is the
+// record that actually joins the two and must outrank that guess.
+func TestMonitorHealthPrefersTheBindingOverAReportedSession(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	bound, err := s.RegisterAgentSession(ctx, 999000)
+	if err != nil {
+		t.Fatalf("RegisterAgentSession(bound): %v", err)
+	}
+	stale, err := s.RegisterAgentSession(ctx, 999001)
+	if err != nil {
+		t.Fatalf("RegisterAgentSession(stale): %v", err)
+	}
+	const token = "monitor-token-outranks-report"
+	if err := s.BindMonitorToken(ctx, token, bound); err != nil {
+		t.Fatalf("BindMonitorToken: %v", err)
+	}
+
+	now := time.Now().UTC()
+	goalID := int64(11)
+	health := MonitorHealth{
+		CWD:              "/tmp/monitor-project/worktree",
+		Role:             "subcommander",
+		State:            "healthy",
+		ProjectID:        7,
+		GoalID:           &goalID,
+		MonitorToken:     token,
+		AgentSessionID:   stale,
+		PID:              os.Getpid(),
+		ProcessStartedAt: now.Add(-time.Minute),
+		TransitionedAt:   now,
+		LastSeenAt:       now,
+	}
+	health.MonitorID = MonitorHealthID(health.CWD, health.Role, health.ProjectID, health.GoalID, health.TaskID, health.PID, health.ProcessStartedAt)
+	if err := s.UpsertMonitorHealth(ctx, health); err != nil {
+		t.Fatalf("UpsertMonitorHealth: %v", err)
+	}
+
+	var stored int64
+	if err := s.DB().QueryRowContext(ctx, `SELECT agent_session_id FROM monitor_health WHERE monitor_id = ?`, health.MonitorID).Scan(&stored); err != nil {
+		t.Fatalf("read stored agent_session_id: %v", err)
+	}
+	if stored != bound {
+		t.Fatalf("stored agent_session_id = %d, want the bound %d rather than the reported %d", stored, bound, stale)
+	}
+}
