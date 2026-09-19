@@ -22,7 +22,7 @@
 
 - cmd/atct/session_key.go: formats the single SessionStart message consumed by both harnesses.
 - cmd/atct/session_key_test.go: unit-tests the message with and without a monitor token.
-- tests/wrapper_test.bash: verifies both installed SessionStart routes keep routing through the shared CLI and that the emitted output includes the directive.
+- tests/wrapper_test.bash: verifies both installed SessionStart routes execute through the shared CLI, pass raw hook input through, and emit the directive.
 
 ### Task 1: Add and verify the shared SessionStart directive
 
@@ -53,12 +53,14 @@ In tests/wrapper_test.bash, make the existing fake session-key command emit:
 ATCT session key: hook-session-1. Before any ATCT work, read `doc/execution-flow.md` and follow its procedure.
 ~~~
 
-Update the Codex SessionStart assertion to that exact output. Add a separate test_session_start_hook_uses_shared_session_key_message function after test_session_start_is_silent_without_atct_wrapper that copies hooks/session-start into a temporary fixture. Its fake atct must return the fixture plugin version for version, exit successfully with no output for context -brief, and emit the same exact directive for session-key --hook-input. Assert:
+Update the Codex SessionStart assertion to that exact output. Add a separate test_session_start_hook_uses_shared_session_key_message function after test_session_start_is_silent_without_atct_wrapper that copies hooks/session-start into a temporary fixture and executes that Claude hook with raw input such as `{"session_id":"hook-session-1"}`. Its fake atct must return the fixture plugin version for version, exit successfully with no output for context -brief, and, for session-key --hook-input, record both the command and the stdin it received before emitting the same exact directive. Assert the hook's output and the exact invocation log:
 
 ~~~bash
 assert_eq 'ATCT session key: hook-session-1. Before any ATCT work, read `doc/execution-flow.md` and follow its procedure.' "$output" 'Claude SessionStart hook must use the shared session-key output'
-assert_eq $'version\ncontext -brief\nsession-key --hook-input' "$(<"$log")" 'Claude SessionStart hook must pass through the shared CLI'
+assert_eq $'version\ncontext -brief\nsession-key --hook-input\n{"session_id":"hook-session-1"}' "$(<"$log")" 'Claude SessionStart hook must pass raw input through the shared CLI'
 ~~~
+
+The fixture test must execute `hooks/session-start` itself; checking only the Claude hook registration or the shared formatter is insufficient. Keep the existing missing-CLI and old-CLI compatibility assertions unchanged.
 
 Register the new function in the test runner's function list at the bottom of the file.
 
@@ -126,7 +128,7 @@ Call atct_task_handoff_review_request with a non-empty report stating:
 
 ## Plan Self-Review
 
-- Spec coverage: Task 1 implements the one shared message, covers both token variants, verifies both installed routes, and leaves all stated exclusions untouched.
+- Spec coverage: Task 1 implements the one shared message, covers both token variants, executes and verifies both installed routes—including Claude raw-input forwarding—and leaves all stated exclusions untouched.
 - Placeholder scan: no TBD/TODO markers or unspecified test behavior remain.
-- Interface consistency: every step uses the existing sessionKeyMessageWithMonitorToken formatter; no new interface or dependency is introduced.
+- Interface consistency: every step uses the existing sessionKeyMessageWithMonitorToken formatter and the existing hook commands; no new interface or dependency is introduced.
 - ATCT boundary: the executor owns implementation, tests, and review request; the subcommander owns review and the later goal commit.
