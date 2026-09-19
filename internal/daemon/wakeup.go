@@ -424,15 +424,17 @@ func (d *Daemon) runMaintenance(ctx context.Context, tracker *wakeupTracker, now
 
 func (d *Daemon) runMaintenanceWith(ctx context.Context, tracker *wakeupTracker, now time.Time, evaluateWakeup func(context.Context, int64) (store.WakeupState, error)) {
 	_, _ = d.store.ApplyExpiredDefaults(ctx, now)
+	_, reconcileErr := d.store.ReconcileStaleGoalApprovals(ctx, now)
 	d.store.PublishEvent(store.DecisionEvent{
 		Name: store.EventKeepalive,
 		Data: store.KeepaliveEvent{At: now},
 	})
 
-	events, err := tracker.evaluateWith(ctx, d.store, now, evaluateWakeup)
+	events, evaluateErr := tracker.evaluateWith(ctx, d.store, now, evaluateWakeup)
 	for _, event := range events {
 		d.store.PublishEvent(event)
 	}
+	err := errors.Join(reconcileErr, evaluateErr)
 	if err != nil {
 		if tracker.evaluateFailedID == "" {
 			tracker.evaluateFailedID = store.NewWakeupID()

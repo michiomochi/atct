@@ -41,6 +41,35 @@ func newWakeupTestGoal(t *testing.T, s *store.Store, key string) (int64, int64) 
 	return project.ID, goal.ID
 }
 
+func newWakeupStaleGoalApproval(t *testing.T, s *store.Store, key string, now time.Time) (domain.Goal, domain.Decision) {
+	t.Helper()
+	ctx := context.Background()
+	project, err := s.CreateProject(ctx, "atct-stale-approval-"+key, filepath.Join(t.TempDir(), key))
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	goal, err := s.CreateGoal(ctx, project.ID, "Stale approval "+key, "agent")
+	if err != nil {
+		t.Fatalf("CreateGoal: %v", err)
+	}
+	decisions, err := s.ListOpenDecisions(ctx, goal.ID)
+	if err != nil {
+		t.Fatalf("ListOpenDecisions: %v", err)
+	}
+	if len(decisions) != 1 || decisions[0].Kind != domain.KindGoalApproval {
+		t.Fatalf("open goal approvals = %+v, want one goal approval", decisions)
+	}
+
+	old := now.Add(-14*24*time.Hour - time.Hour).Format(time.RFC3339Nano)
+	if _, err := s.DB().ExecContext(ctx, `UPDATE goals SET created_at = ?, updated_at = ? WHERE id = ?`, old, old, goal.ID); err != nil {
+		t.Fatalf("age goal: %v", err)
+	}
+	if _, err := s.DB().ExecContext(ctx, `UPDATE decisions SET created_at = ? WHERE id = ?`, old, decisions[0].ID); err != nil {
+		t.Fatalf("age approval: %v", err)
+	}
+	return goal, decisions[0]
+}
+
 func callRunMaintenanceWith(t *testing.T, d *Daemon, ctx context.Context, tracker *wakeupTracker, now time.Time, evaluateWakeup func(context.Context, int64) (store.WakeupState, error)) {
 	t.Helper()
 	d.runMaintenanceWith(ctx, tracker, now, evaluateWakeup)
@@ -54,6 +83,18 @@ func receiveActionableWakeupEvent(t *testing.T, ch <-chan store.DecisionEvent) s
 	case <-time.After(time.Second):
 		t.Fatal("timed out waiting for maintenance event")
 		return store.DecisionEvent{}
+	}
+}
+
+func receiveMaintenanceEventsThroughKeepalive(t *testing.T, ch <-chan store.DecisionEvent) []store.DecisionEvent {
+	t.Helper()
+	var events []store.DecisionEvent
+	for {
+		event := receiveActionableWakeupEvent(t, ch)
+		events = append(events, event)
+		if event.Name == store.EventKeepalive {
+			return events
+		}
 	}
 }
 
@@ -605,6 +646,177 @@ func TestRunMaintenancePublishesKeepaliveWithInjectedTime(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("timed out waiting for keepalive event")
+	}
+}
+
+func TestRunMaintenanceReconcilesStaleGoalApprovalBeforeKeepalive(t *testing.T) {
+	ctx := context.Background()
+	s := newWakeupTestStore(t)
+	now := time.Date(2026, 9, 20, 14, 0, 0, 0, time.UTC)
+	goal, approval := newWakeupStaleGoalApproval(t, s, "cleanup", now)
+	ch, cancel := s.SubscribeEvents()
+	defer cancel()
+
+	callRunMaintenanceWith(t, newDaemonWithClock(s, func() time.Time { return now }), ctx, newWakeupTracker(time.Time{}), now, func(context.Context, int64) (store.WakeupState, error) {
+		return store.WakeupState{}, nil
+	})
+
+	events := receiveMaintenanceEventsThroughKeepalive(t, ch)
+	if len(events) < 2 || events[0].Name != store.EventGoalWithdrawn {
+		t.Fatalf("maintenance events = %#v, want goal withdrawal before keepalive", events)
+	}
+	if events[len(events)-1].Name != store.EventKeepalive {
+		t.Fatalf("last maintenance event = %q, want %q", events[len(events)-1].Name, store.EventKeepalive)
+	}
+
+	gotGoal, err := s.GetGoal(ctx, goal.ID)
+	if err != nil {
+		t.Fatalf("GetGoal: %v", err)
+	}
+	gotApproval, err := s.GetDecision(ctx, approval.ID)
+	if err != nil {
+		t.Fatalf("GetDecision: %v", err)
+	}
+	if gotGoal.Status != domain.GoalDropped || gotApproval.Status != domain.DecisionWithdrawn {
+		t.Fatalf("statuses = (%q, %q), want (dropped, withdrawn)", gotGoal.Status, gotApproval.Status)
+	}
+}
+
+func TestRunMaintenancePreservesStaleGoalApprovalWithTaskOrHandoff(t *testing.T) {
+	ctx := context.Background()
+	s := newWakeupTestStore(t)
+	now := time.Date(2026, 9, 20, 14, 30, 0, 0, time.UTC)
+	taskGoal, taskApproval := newWakeupStaleGoalApproval(t, s, "task", now)
+	old := now.Add(-15 * 24 * time.Hour).Format(time.RFC3339Nano)
+	if _, err := s.DB().ExecContext(ctx, `
+		INSERT INTO tasks (goal_id, title, description, status, agent, sort_order, declare_key, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, taskGoal.ID, "Recorded task", "Keep the proposal protected.", string(domain.TaskTodo), "agent", 0, "stale-approval-task", old, old); err != nil {
+		t.Fatalf("insert task: %v", err)
+	}
+	handoffGoal, handoffApproval := newWakeupStaleGoalApproval(t, s, "handoff", now)
+	if _, err := s.DB().ExecContext(ctx, `
+		INSERT INTO goal_handoffs (id, goal_id, requested_at, completed_report_at, complete_report)
+		VALUES (?, ?, ?, ?, ?)
+	`, "stale-approval-goal-handoff", handoffGoal.ID, now.Add(-15*24*time.Hour).Format(time.RFC3339Nano), now.Add(-15*24*time.Hour).Format(time.RFC3339Nano), "completed work"); err != nil {
+		t.Fatalf("insert goal handoff: %v", err)
+	}
+	ch, cancel := s.SubscribeEvents()
+	defer cancel()
+
+	callRunMaintenanceWith(t, newDaemonWithClock(s, func() time.Time { return now }), ctx, newWakeupTracker(time.Time{}), now, func(context.Context, int64) (store.WakeupState, error) {
+		return store.WakeupState{}, nil
+	})
+	events := receiveMaintenanceEventsThroughKeepalive(t, ch)
+	for _, event := range events {
+		if event.Name == store.EventGoalWithdrawn || event.Name == store.EventWakeupEvaluateFailed {
+			t.Fatalf("protected records produced unexpected maintenance event: %#v", event)
+		}
+	}
+
+	for _, fixture := range []struct {
+		name     string
+		goalID   int64
+		approval int64
+	}{
+		{name: "task", goalID: taskGoal.ID, approval: taskApproval.ID},
+		{name: "handoff", goalID: handoffGoal.ID, approval: handoffApproval.ID},
+	} {
+		t.Run(fixture.name, func(t *testing.T) {
+			goal, err := s.GetGoal(ctx, fixture.goalID)
+			if err != nil {
+				t.Fatalf("GetGoal: %v", err)
+			}
+			approval, err := s.GetDecision(ctx, fixture.approval)
+			if err != nil {
+				t.Fatalf("GetDecision: %v", err)
+			}
+			if goal.Status != domain.GoalProposed || approval.Status != domain.DecisionOpen {
+				t.Fatalf("statuses = (%q, %q), want (proposed, open)", goal.Status, approval.Status)
+			}
+		})
+	}
+	tasks, err := s.ListTasks(ctx, taskGoal.ID)
+	if err != nil {
+		t.Fatalf("ListTasks: %v", err)
+	}
+	if len(tasks) != 1 || tasks[0].Status != domain.TaskTodo {
+		t.Fatalf("protected tasks = %+v, want one todo task", tasks)
+	}
+	var handoffCount int
+	if err := s.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM goal_handoffs WHERE id = ?`, "stale-approval-goal-handoff").Scan(&handoffCount); err != nil {
+		t.Fatalf("count goal handoff: %v", err)
+	}
+	if handoffCount != 1 {
+		t.Fatalf("goal handoff count = %d, want 1", handoffCount)
+	}
+}
+
+func TestRunMaintenanceStaleGoalApprovalReconciliationIsIdempotent(t *testing.T) {
+	ctx := context.Background()
+	s := newWakeupTestStore(t)
+	now := time.Date(2026, 9, 20, 15, 0, 0, 0, time.UTC)
+	goal, approval := newWakeupStaleGoalApproval(t, s, "idempotent", now)
+	ch, cancel := s.SubscribeEvents()
+	defer cancel()
+	d := newDaemonWithClock(s, func() time.Time { return now })
+	evaluateWakeup := func(context.Context, int64) (store.WakeupState, error) {
+		return store.WakeupState{}, nil
+	}
+
+	callRunMaintenanceWith(t, d, ctx, newWakeupTracker(time.Time{}), now, evaluateWakeup)
+	firstEvents := receiveMaintenanceEventsThroughKeepalive(t, ch)
+	withdrawals := 0
+	for _, event := range firstEvents {
+		if event.Name == store.EventGoalWithdrawn {
+			withdrawals++
+		}
+	}
+	if withdrawals != 1 {
+		t.Fatalf("first maintenance withdrawals = %d, want 1", withdrawals)
+	}
+
+	callRunMaintenanceWith(t, d, ctx, newWakeupTracker(time.Time{}), now.Add(time.Minute), evaluateWakeup)
+	secondEvents := receiveMaintenanceEventsThroughKeepalive(t, ch)
+	for _, event := range secondEvents {
+		if event.Name == store.EventGoalWithdrawn || event.Name == store.EventWakeupEvaluateFailed {
+			t.Fatalf("second maintenance event = %#v, want keepalive only", event)
+		}
+	}
+	gotGoal, err := s.GetGoal(ctx, goal.ID)
+	if err != nil {
+		t.Fatalf("GetGoal: %v", err)
+	}
+	gotApproval, err := s.GetDecision(ctx, approval.ID)
+	if err != nil {
+		t.Fatalf("GetDecision: %v", err)
+	}
+	if gotGoal.Status != domain.GoalDropped || gotApproval.Status != domain.DecisionWithdrawn {
+		t.Fatalf("second maintenance statuses = (%q, %q), want (dropped, withdrawn)", gotGoal.Status, gotApproval.Status)
+	}
+}
+
+func TestRunMaintenanceReportsCombinedStaleGoalApprovalFailure(t *testing.T) {
+	ctx := context.Background()
+	s := newWakeupTestStore(t)
+	now := time.Date(2026, 9, 20, 15, 30, 0, 0, time.UTC)
+	goal, _ := newWakeupStaleGoalApproval(t, s, "failure", now)
+	if _, err := s.DB().ExecContext(ctx, `UPDATE goals SET updated_at = ? WHERE id = ?`, "not-a-time", goal.ID); err != nil {
+		t.Fatalf("corrupt goal timestamp: %v", err)
+	}
+	ch, cancel := s.SubscribeEvents()
+	defer cancel()
+	evaluateReason := "injected evaluate failure"
+	callRunMaintenanceWith(t, newDaemonWithClock(s, func() time.Time { return now }), ctx, newWakeupTracker(time.Time{}), now, func(context.Context, int64) (store.WakeupState, error) {
+		return store.WakeupState{}, errors.New(evaluateReason)
+	})
+
+	if event := receiveActionableWakeupEvent(t, ch); event.Name != store.EventKeepalive {
+		t.Fatalf("first maintenance event name = %q, want %q", event.Name, store.EventKeepalive)
+	}
+	_, reason := decodeEvaluateFailure(t, receiveActionableWakeupEvent(t, ch))
+	if !strings.Contains(reason, "load stale goal approval") || !strings.Contains(reason, evaluateReason) {
+		t.Fatalf("combined failure reason = %q, want stale approval and evaluator errors", reason)
 	}
 }
 
