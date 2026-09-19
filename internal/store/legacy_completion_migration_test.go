@@ -48,7 +48,8 @@ VALUES
     (1, 1, 'completion', 'open completion', '[]', 'open', 'old open answer', NULL, NULL, 0, '2026-09-19T00:01:00Z'),
     (2, 1, 'completion', 'answered completion', '[]', 'answered', 'old answered answer', '2026-09-19T00:02:00Z', NULL, 0, '2026-09-19T00:01:00Z'),
     (3, 1, 'completion', 'applied completion', '[]', 'applied', 'old applied answer', '2026-09-19T00:02:00Z', '2026-09-19T00:03:00Z', 0, '2026-09-19T00:01:00Z'),
-    (4, 1, 'completion', 'closed completion', '[]', 'closed', 'old closed answer', '2026-09-19T00:02:00Z', '2026-09-19T00:03:00Z', 0, '2026-09-19T00:01:00Z');
+    (4, 1, 'completion', 'closed completion', '[]', 'closed', 'old closed answer', '2026-09-19T00:02:00Z', '2026-09-19T00:03:00Z', 0, '2026-09-19T00:01:00Z'),
+    (5, 1, 'goal_review', 'open goal review', '[{"label":"approve"}]', 'open', '', NULL, NULL, 0, '2026-09-19T00:01:00Z');
 `); err != nil {
 		t.Fatalf("insert migration fixture rows: %v", err)
 	}
@@ -78,6 +79,17 @@ VALUES
 		if afterDecisions[id] != beforeDecisions[id] {
 			t.Fatalf("legacy completion decision %d changed: before=%+v after=%+v", id, beforeDecisions[id], afterDecisions[id])
 		}
+	}
+	nonCompletionBefore, ok := beforeDecisions[5]
+	if !ok {
+		t.Fatal("non-completion sentinel is missing before migration")
+	}
+	nonCompletionAfter, ok := afterDecisions[5]
+	if !ok {
+		t.Fatal("non-completion sentinel is missing after migration")
+	}
+	if nonCompletionAfter != nonCompletionBefore {
+		t.Fatalf("non-completion decision changed: before=%+v after=%+v", nonCompletionBefore, nonCompletionAfter)
 	}
 	assertMigrationRecorded(t, db, targetMigration)
 }
@@ -112,16 +124,30 @@ WHERE id = 1
 }
 
 type legacyCompletionDecisionSnapshot struct {
-	status     string
-	answerText string
-	answeredAt string
-	appliedAt  string
+	goalID           int64
+	taskID           int64
+	kind             string
+	question         string
+	options          string
+	status           string
+	defaultOption    string
+	defaultAfterMS   int64
+	defaultAppliedAt string
+	answerLabel      string
+	answerText       string
+	answeredAt       string
+	appliedAt        string
+	agentSessionID   int64
+	createdAt        string
 }
 
 func readLegacyCompletionDecisionSnapshots(t *testing.T, db *sql.DB) map[int]legacyCompletionDecisionSnapshot {
 	t.Helper()
 	rows, err := db.Query(`
-SELECT id, status, answer_text, COALESCE(answered_at, ''), COALESCE(applied_at, '')
+	SELECT id, goal_id, COALESCE(task_id, 0), kind, question, options, status,
+	       default_option, COALESCE(default_after_ms, -1), COALESCE(default_applied_at, ''),
+	       answer_label, answer_text, COALESCE(answered_at, ''), COALESCE(applied_at, ''),
+	       agent_session_id, created_at
 FROM decisions
 WHERE goal_id = 1
 ORDER BY id
@@ -135,7 +161,12 @@ ORDER BY id
 	for rows.Next() {
 		var id int
 		var snapshot legacyCompletionDecisionSnapshot
-		if err := rows.Scan(&id, &snapshot.status, &snapshot.answerText, &snapshot.answeredAt, &snapshot.appliedAt); err != nil {
+		if err := rows.Scan(
+			&id, &snapshot.goalID, &snapshot.taskID, &snapshot.kind, &snapshot.question,
+			&snapshot.options, &snapshot.status, &snapshot.defaultOption, &snapshot.defaultAfterMS,
+			&snapshot.defaultAppliedAt, &snapshot.answerLabel, &snapshot.answerText,
+			&snapshot.answeredAt, &snapshot.appliedAt, &snapshot.agentSessionID, &snapshot.createdAt,
+		); err != nil {
 			t.Fatalf("scan decision snapshot: %v", err)
 		}
 		snapshots[id] = snapshot

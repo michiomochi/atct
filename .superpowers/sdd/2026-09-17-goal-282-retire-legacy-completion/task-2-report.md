@@ -14,7 +14,9 @@ the goal and its completion report, unchanged.
   `legacy completion retired; request a named goal review`, and get an
   `answered_at` value through `COALESCE`.
 - Added focused coverage for open, answered, applied, and closed legacy rows,
-  including unchanged goal status/report fields and unchanged non-open rows.
+  plus an open `goal_review` sentinel. The test snapshots each decision's full
+  relevant state and asserts the non-completion sentinel and goal status/report
+  fields remain unchanged.
 - Did not edit `schema.sql`, Task 1 code/report, or unrelated code.
 
 ## Verification
@@ -27,7 +29,8 @@ GOCACHE=/private/tmp/atct-go-cache go test ./internal/store -run 'Test.*(LegacyC
 git diff --check
 ```
 
-The store migration test passed. The schema check passed after rerunning the
+The store migration test passed with the non-completion sentinel coverage. The
+schema check passed after rerunning the
 same script with elevated filesystem access because the sandbox could not open
 the default Go cache under `~/Library/Caches`.
 
