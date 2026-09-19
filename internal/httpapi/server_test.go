@@ -2446,6 +2446,102 @@ func TestHTTPAnswerAllowsDecisionKind(t *testing.T) {
 	}
 }
 
+func TestHTTPAnswerRejectsRetiredCompletionDecision(t *testing.T) {
+	f := newBareFixture(t)
+	completion, err := f.store.AskDecision(f.ctx, store.AskInput{
+		GoalID:         f.goal.ID,
+		Kind:           domain.DecisionKind("completion"),
+		Question:       "May this goal be completed?",
+		AgentSessionID: testSessionID("http-retired-completion-answer"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+
+	status, headers, body := doRequest(t, srv.Client(), http.MethodPost, urlID(srv.URL+"/api/decisions/", completion.ID)+"/answer", mustJSON(t, map[string]string{
+		"answer_text": "yes",
+	}))
+	assertErrorObject(t, status, headers, body, http.StatusBadRequest)
+	var response map[string]string
+	if err := json.Unmarshal(body, &response); err != nil {
+		t.Fatal(err)
+	}
+	if response["error"] != "use approve or reject for this decision" {
+		t.Fatalf("unexpected retired completion answer error = %q", response["error"])
+	}
+	got, err := f.store.GetDecision(f.ctx, completion.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != domain.DecisionOpen {
+		t.Fatalf("completion decision status = %q, want open", got.Status)
+	}
+}
+
+func TestHTTPRevisionRejectsSettledRetiredCompletionDecision(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		settle func(*fixture, int64) error
+	}{
+		{
+			name: "answered",
+			settle: func(f *fixture, decisionID int64) error {
+				_, err := f.store.AnswerDecision(f.ctx, store.AnswerInput{DecisionID: decisionID, AnswerText: "yes"})
+				return err
+			},
+		},
+		{
+			name: "withdrawn",
+			settle: func(f *fixture, decisionID int64) error {
+				return f.store.WithdrawDecision(f.ctx, decisionID, "legacy completion retired")
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newBareFixture(t)
+			completion, err := f.store.AskDecision(f.ctx, store.AskInput{
+				GoalID:         f.goal.ID,
+				Kind:           domain.DecisionKind("completion"),
+				Question:       "May this goal be completed?",
+				AgentSessionID: testSessionID("http-retired-completion-" + tc.name),
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := tc.settle(f, completion.ID); err != nil {
+				t.Fatalf("settle completion decision: %v", err)
+			}
+			before, err := f.store.ListDecisionsForGoal(f.ctx, f.goal.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			srv := newTestServer(t, f.store)
+			defer srv.Close()
+			status, headers, body := doRequest(t, srv.Client(), http.MethodPost, urlID(srv.URL+"/api/decisions/", completion.ID)+"/revise", mustJSON(t, map[string]any{
+				"options": []map[string]string{{"label": "new"}},
+			}))
+			assertErrorObject(t, status, headers, body, http.StatusConflict)
+			var response map[string]string
+			if err := json.Unmarshal(body, &response); err != nil {
+				t.Fatal(err)
+			}
+			if response["error"] != "decision is not open" {
+				t.Fatalf("unexpected retired completion revision error = %q", response["error"])
+			}
+			after, err := f.store.ListDecisionsForGoal(f.ctx, f.goal.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(after) != len(before) {
+				t.Fatalf("decision count after retired completion revision = %d, want %d", len(after), len(before))
+			}
+		})
+	}
+}
+
 func TestHTTPApproveAndRejectGoalReviewEndpoints(t *testing.T) {
 	f := newBareFixture(t)
 	handler := httpapi.New(f.store).Handler()
@@ -3842,8 +3938,16 @@ func TestHTTPGoalContentRejectsDoneAndDroppedGoals(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.store.DB().ExecContext(f.ctx, `UPDATE goals SET status = ? WHERE id = ?`, domain.GoalDone, done.ID); err != nil {
-		t.Fatalf("mark done goal: %v", err)
+	commanderID, err := f.store.RegisterAgentSession(f.ctx, os.Getpid())
+	if err != nil {
+		t.Fatalf("RegisterAgentSession: %v", err)
+	}
+	doneReview := requestHTTPGoalReview(t, f, done.ID, commanderID, "http-content-done")
+	if _, err := f.store.ApproveGoalReview(f.ctx, doneReview.ID); err != nil {
+		t.Fatalf("ApproveGoalReview: %v", err)
+	}
+	if _, err := f.store.FinalizeGoalReview(f.ctx, done.ID, commanderID); err != nil {
+		t.Fatalf("FinalizeGoalReview: %v", err)
 	}
 
 	dropped, err := f.store.CreateGoal(f.ctx, f.project.ID, "Dropped goal", "agent")

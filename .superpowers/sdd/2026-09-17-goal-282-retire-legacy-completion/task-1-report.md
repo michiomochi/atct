@@ -29,6 +29,16 @@ It returns that diagnostic before Store lookup or goal/decision mutation.
 - Reworked focused Go tests and E2E fixtures to cover retired completion
   diagnostics, named goal review, session identity guards, and nonzero
   reviewer completion.
+- Added the HTTP boundary guard for persisted legacy `completion` decisions:
+  `/answer` returns HTTP 400 with `use approve or reject for this decision`
+  without changing an open row, while `/revise` returns HTTP 409 with
+  `decision is not open` for answered or withdrawn rows without recreating a
+  decision.
+- Replaced the remaining raw `goals.status = done` test setup with
+  `RequestGoalReview`, `ApproveGoalReview`, and `FinalizeGoalReview`.
+- Added an MCP integration test that calls `atct_goal_complete` through the
+  in-memory MCP transport and daemon, checks the stable retirement diagnostic,
+  and verifies the goal and decision state are unchanged.
 
 The persisted wakeup transport contract was preserved. The constant and event
 name `wakeup.completion_report_missing` remain in Store, daemon emission,
@@ -47,6 +57,10 @@ GOCACHE=/private/tmp/atct-go-cache go test ./internal/store ./internal/daemon ./
 ```
 
 All six packages passed. `git diff --check` also passed.
+
+The command above was rerun after the review fixes. The focused HTTP tests
+cover open and answered/withdrawn persisted legacy completion rows, and the
+MCP package test covers an actual `atct_goal_complete` call.
 
 The full unfiltered repository test suite and web-specific verification were
 not run because the brief specifies the focused command and this task does not

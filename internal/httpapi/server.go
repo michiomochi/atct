@@ -1382,7 +1382,7 @@ func (s *Server) handleAnswer(w http.ResponseWriter, r *http.Request, decisionID
 	if !ok {
 		return
 	}
-	if decision.Kind == domain.KindGoalApproval || decision.Kind == domain.KindGoalReview {
+	if decision.Kind == domain.DecisionKind("completion") || decision.Kind == domain.KindGoalApproval || decision.Kind == domain.KindGoalReview {
 		writeError(w, http.StatusBadRequest, "use approve or reject for this decision")
 		return
 	}
@@ -1424,6 +1424,10 @@ func (s *Server) handleRevise(w http.ResponseWriter, r *http.Request, decisionID
 	}
 	if err != nil {
 		writeStoreError(w, err)
+		return
+	}
+	if original.Kind == domain.DecisionKind("completion") {
+		writeError(w, http.StatusConflict, store.ErrDecisionNotOpen.Error())
 		return
 	}
 	if original.DefaultAppliedAt == nil && original.AnsweredAt == nil {
