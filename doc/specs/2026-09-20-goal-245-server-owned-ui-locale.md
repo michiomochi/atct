@@ -16,11 +16,18 @@ implementation; the current client still reads `localStorage` and
 `navigator.language`, and applies the choice after a load-time delay. No prior
 Goal 245 task produced a commit that can be linked without misattribution.
 
+Before implementation, `main` advanced to
+`d3817ade631b56a153a5304eebf74b658643b15c`, which adds
+`0044_fixed_width_timestamps.sql`. The implementation worktree must merge that
+current main normally and remeasure the sequence immediately before creating
+the locale migration; the next available number is therefore
+`0045_ui_settings.sql`.
+
 ## Data and HTTP contract
 
 - Supported values are exactly `en` and `ja`.
 - `ui_settings` is a singleton row (`id = 1`) constrained to those values and
-  seeded with `en` by migration `0044_ui_settings.sql`.
+  seeded with `en` by migration `0045_ui_settings.sql`.
 - Store reads return `en` when the row is missing or contains an unsupported
   value. Store writes validate before changing the row.
 - `GET /api/ui-settings` returns `{ "locale": "en" | "ja" }`.
