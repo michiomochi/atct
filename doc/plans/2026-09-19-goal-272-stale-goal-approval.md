@@ -11,11 +11,13 @@
 ## Global Constraints
 
 - Withdraw automatically only when the approval and goal have both been inactive for 14 days and no task or handoff record exists.
+- Restrict automatic withdrawal and candidate selection to proposed goals with creator = 'agent'; human-created proposed goals are never automatic candidates.
 - Treat every task and handoff row, including terminal rows, as evidence that work started; do not withdraw those goals automatically.
 - Preserve the original goal_approval as the only human decision for ambiguous cases; do not add a second decision kind.
 - Keep active-goal withdrawal behavior and commander authorization unchanged.
 - Do not add a migration, configuration, MCP tool, UI, worktree scanner, or daemon worker.
 - Executor verification is limited to the focused internal/store and internal/daemon tests named below; the subcommander runs broader verification after review.
+- Record in the final goal needs_review that this cleanup does not infer externally resolved or obsolete goals; Goal 293 decision 789 remains a human rejection case even though commit 7148a18 fixed its reported deadlock.
 
 ---
 
@@ -43,6 +45,9 @@ Use these cases: `TestReconcileStaleGoalApprovalsWithdrawsUntouchedOldProposal`,
 `TestReconcileStaleGoalApprovalsKeepsProposalWithCompletedHandoff`,
 `TestReconcileStaleGoalApprovalsKeepsProposalWithAdditionalDecision`, and
 `TestReconcileStaleGoalApprovalsKeepsRecentlyUpdatedProposal`.
+Also add `TestReconcileStaleGoalApprovalsKeepsHumanCreatedProposal`, which
+changes an otherwise untouched proposal's creator to `human` and verifies that
+the goal and its open approval remain unchanged.
 
 Assert the dropped case stores a non-empty reason in both result_summary and
 answer_text, changes statuses to dropped/withdrawn, publishes exactly one
@@ -79,17 +84,29 @@ In internal/store/queries/goal.sql, add:
 ~~~
 -- name: HasGoalWork :one
 SELECT EXISTS(
-  SELECT 1 FROM tasks WHERE goal_id = ?
-  UNION ALL SELECT 1 FROM goal_handoffs WHERE goal_id = ?
-  UNION ALL SELECT 1 FROM plan_handoffs WHERE goal_id = ?
-  UNION ALL SELECT 1 FROM task_create_handoffs WHERE goal_id = ?
-  UNION ALL SELECT 1 FROM decisions
-    WHERE goal_id = ? AND kind <> 'goal_approval'
+  SELECT 1
+  FROM goals AS g
+  WHERE g.id = ? AND g.creator = 'agent'
+    AND (
+      EXISTS (SELECT 1 FROM tasks WHERE goal_id = g.id)
+      OR EXISTS (SELECT 1 FROM goal_handoffs WHERE goal_id = g.id)
+      OR EXISTS (SELECT 1 FROM plan_handoffs WHERE goal_id = g.id)
+      OR EXISTS (SELECT 1 FROM task_create_handoffs WHERE goal_id = g.id)
+      OR EXISTS (SELECT 1 FROM decisions WHERE goal_id = g.id AND kind <> 'goal_approval')
+    )
 );
+
+-- name: ListOpenAgentGoalApprovals :many
+SELECT d.id, d.goal_id, d.created_at, g.updated_at
+FROM decisions AS d
+JOIN goals AS g ON g.id = d.goal_id
+WHERE g.status = 'proposed' AND g.creator = 'agent'
+  AND d.kind = 'goal_approval' AND d.status = 'open'
+ORDER BY d.id;
 
 -- name: WithdrawProposedGoal :execresult
 UPDATE goals SET status = 'dropped', result_summary = ?, updated_at = ?
-WHERE id = ? AND status = 'proposed'
+WHERE id = ? AND status = 'proposed' AND creator = 'agent'
   AND NOT EXISTS (SELECT 1 FROM tasks WHERE goal_id = ?)
   AND NOT EXISTS (SELECT 1 FROM goal_handoffs WHERE goal_id = ?)
   AND NOT EXISTS (SELECT 1 FROM plan_handoffs WHERE goal_id = ?)
@@ -128,11 +145,13 @@ in the goal result and decision answer text.
 - [ ] **Step 4: Implement the stale approval scan**
 
 Add const staleGoalApprovalAfter = 14 * 24 * time.Hour and
-ReconcileStaleGoalApprovals(ctx, now). Iterate proposed goals and their open
-decisions using existing store readers. For each open KindGoalApproval, use
-the later of decision.CreatedAt and goal.UpdatedAt as the last activity; skip
-it when now is before that time plus the threshold. Call the shared withdrawal
-method with this exact reason:
+ReconcileStaleGoalApprovals(ctx, now). Iterate the new
+ListOpenAgentGoalApprovals result; its `creator = 'agent'` and
+`status/kind = proposed/open/goal_approval` predicates are the candidate
+boundary. Load each goal and decision with the existing readers, use the later
+of decision.CreatedAt and goal.UpdatedAt as the last activity, and skip it when
+now is before that time plus the threshold. Call the shared withdrawal method
+with this exact reason:
 
 ~~~
 automatic withdrawal: goal approval was stale for 14 days with no recorded task or handoff activity

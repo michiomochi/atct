@@ -31,15 +31,16 @@ goal_approval を daemon の maintenance で自動的に取り下げる。承認
 
 ### 候補の選択
 
-既存の open な goal_approval と proposed goal を対象に、approval の作成時刻と
-goal の最終更新時刻の新しい方から 14 日経過した候補だけを maintenance ごとに
-調べる。人間が回答した、承認された、または goal が別の状態になった候補は
+既存の open な goal_approval と、creator が `agent` の proposed goal だけを対象に、
+approval の作成時刻と goal の最終更新時刻の新しい方から 14 日経過した候補だけを
+maintenance ごとに調べる。人間が作成した goal は、期限を過ぎてもこの自動処理の
+対象にしない。人間が回答した、承認された、または goal が別の状態になった候補は
 conditional update で自然に対象外になる。
 
 ### 自動取り下げ
 
-候補に実行記録がなければ、既存の goal withdrawal の store 経路を使って 1 つの
-transaction で次を行う。
+agent-created の候補に実行記録がなければ、既存の goal withdrawal の store 経路を
+使って 1 つの transaction で次を行う。
 
 1. goal を proposed から dropped にする。
 2. result_summary に自動取り下げの理由を保存する。
@@ -63,6 +64,15 @@ task、handoff、追加 decision、または最近の goal 更新がある候補
 canonical record に現れない作業を推測して撤回しないことも、この仕様の安全側の
 制限とする。
 
+### 自動判定の範囲と needs_review
+
+このゴールで実装する自動判定は「14 日間更新がなく、canonical record 上の進行が
+ない agent-created proposed goal」までであり、別経路ですでに修正済み・時代遅れに
+なったかどうかは判定しない。この種の判定は誤検知の害が大きいため、人間の却下を
+必要とする。具体的には Goal 293 の decision 789 は 14 日条件にまだ達していない
+うえ、報告された deadlock が commit `7148a18` で解消済みでも、この仕組みでは自動
+処理せず、人間が却下する対象として `needs_review` に残す。
+
 ## 実行場所
 
 新しい worker や設定値は追加せず、既存 daemon の 30 秒 maintenance loop から
@@ -83,10 +93,10 @@ store の reconciliation を呼ぶ。候補がない tick は何もしない。r
    dropped になり、approval が withdrawn になる。
 2. goal と approval の理由、withdrawn events が記録される。
 3. 14 日未満の候補は残る。
-4. task が todo/doing/done/dropped のいずれでも存在する候補は残る。
-5. goal/task/plan/task-create handoff、追加 decision、最近の goal 更新がある候補は
+4. human-created の proposed goal は期限を過ぎても自動取り下げされない。
+5. task が todo/doing/done/dropped のいずれでも存在する候補は残る。
+6. goal/task/plan/task-create handoff、追加 decision、最近の goal 更新がある候補は
    残り、既存 approval 以外の decision を自動生成しない。
-6. commander の goal.withdraw は未着手 proposed goal に使えるが、記録ありの
+7. commander の goal.withdraw は未着手 agent-created proposed goal に使えるが、記録ありの
    proposed goalには拒否を返す。
-7. active goal の既存 withdrawal 回帰テストが変わらず通る。
-
+8. active goal の既存 withdrawal 回帰テストが変わらず通る。
