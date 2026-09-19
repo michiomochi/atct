@@ -30,7 +30,11 @@ const (
 )
 
 type MonitorHealth struct {
-	MonitorID        string     `json:"monitor_id"`
+	MonitorID string `json:"monitor_id"`
+	// MonitorToken is not stored. It names the binding the monitor already
+	// holds, which is the only record of the session it serves, and the server
+	// resolves it into AgentSessionID on the way in.
+	MonitorToken     string     `json:"monitor_token,omitempty"`
 	AgentKey         string     `json:"agent_key,omitempty"`
 	ScopeKey         string     `json:"scope_key,omitempty"`
 	AgentSessionID   int64      `json:"agent_session_id,omitempty"`
@@ -106,6 +110,17 @@ func validateMonitorHealth(health MonitorHealth) error {
 func (s *Store) UpsertMonitorHealth(ctx context.Context, health MonitorHealth) error {
 	if err := validateMonitorHealth(health); err != nil {
 		return err
+	}
+	if health.AgentSessionID == 0 {
+		if token := strings.TrimSpace(health.MonitorToken); token != "" {
+			// A missing binding is not an error: the monitor can report health
+			// before the session it serves has identified itself.
+			if agentSessionID, err := sqlcgen.New(s.db).GetMonitorBindingAgentSessionID(ctx, token); err == nil {
+				health.AgentSessionID = agentSessionID
+			} else if !errors.Is(err, sql.ErrNoRows) {
+				return fmt.Errorf("resolve monitor binding for health: %w", err)
+			}
+		}
 	}
 	now := time.Now().UTC()
 	if health.LastSeenAt.IsZero() {

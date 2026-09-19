@@ -118,3 +118,51 @@ func TestSessionLivenessFallsBackToTheSessionProcess(t *testing.T) {
 		t.Error("claimIsRunning = true for a session whose own process is gone")
 	}
 }
+
+// The monitor knows the token it was launched with, not the id of the session
+// it serves. monitor_bindings is the only record linking the two, so the
+// server resolves it: without this the agent_session_id column stays 0 and
+// session liveness never sees a Monitor at all.
+func TestMonitorHealthResolvesItsSessionFromTheBoundToken(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	sessionID, err := s.RegisterAgentSession(ctx, 999000)
+	if err != nil {
+		t.Fatalf("RegisterAgentSession: %v", err)
+	}
+	const token = "monitor-token-for-liveness"
+	if err := s.BindMonitorToken(ctx, token, sessionID); err != nil {
+		t.Fatalf("BindMonitorToken: %v", err)
+	}
+
+	now := time.Now().UTC()
+	goalID := int64(11)
+	health := MonitorHealth{
+		CWD:              "/tmp/monitor-project/worktree",
+		Role:             "subcommander",
+		State:            "healthy",
+		ProjectID:        7,
+		GoalID:           &goalID,
+		MonitorToken:     token,
+		PID:              os.Getpid(),
+		ProcessStartedAt: now.Add(-time.Minute),
+		TransitionedAt:   now,
+		LastSeenAt:       now,
+	}
+	health.MonitorID = MonitorHealthID(health.CWD, health.Role, health.ProjectID, health.GoalID, health.TaskID, health.PID, health.ProcessStartedAt)
+	if err := s.UpsertMonitorHealth(ctx, health); err != nil {
+		t.Fatalf("UpsertMonitorHealth: %v", err)
+	}
+
+	var stored int64
+	if err := s.DB().QueryRowContext(ctx, `SELECT agent_session_id FROM monitor_health WHERE monitor_id = ?`, health.MonitorID).Scan(&stored); err != nil {
+		t.Fatalf("read stored agent_session_id: %v", err)
+	}
+	if stored != sessionID {
+		t.Fatalf("stored agent_session_id = %d, want %d", stored, sessionID)
+	}
+	if !claimIsRunning(ctx, s, sessionID) {
+		t.Error("claimIsRunning = false though the bound Monitor is heartbeating")
+	}
+}

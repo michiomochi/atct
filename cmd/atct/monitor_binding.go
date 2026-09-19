@@ -145,6 +145,9 @@ func runMonitorBindingLoop(ctx context.Context, client *http.Client, urls []stri
 		binding, found, err := fetchMonitorBinding(ctx, client, urls, token)
 		if err == nil && found {
 			scopes := monitorBindingScopes(binding)
+			for i := range scopes {
+				scopes[i].MonitorToken = token
+			}
 			encoded, _ := json.Marshal(scopes)
 			next := string(encoded)
 			if next != current {
