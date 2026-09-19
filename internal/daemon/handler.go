@@ -16,11 +16,11 @@ import (
 	"github.com/michiomochi/atct/internal/store"
 )
 
-var ErrTaskAlreadyClaimed = errors.New("task already claimed")
 var ErrGoalAlreadyClaimed = errors.New("goal already claimed")
 var ErrProjectAlreadyClaimed = errors.New("project already claimed")
 var ErrGoalNotProposed = errors.New("goal is not proposed")
 var ErrDecisionOutsideGoal = errors.New("decision belongs to another goal")
+var ErrRoleUnauthorized = errors.New("role is not authorized for this operation")
 
 type responseWithUnappliedDecisions struct {
 	Data               any                             `json:"data"`
@@ -143,6 +143,16 @@ type unappliedDecisionNotification struct {
 	Question   string `json:"question"`
 }
 
+type goalReviewProjection struct {
+	DecisionID          int64                 `json:"decision_id"`
+	Status              domain.DecisionStatus `json:"status"`
+	AnswerLabel         string                `json:"answer_label,omitempty"`
+	AnswerText          string                `json:"answer_text,omitempty"`
+	AnsweredAt          *time.Time            `json:"answered_at,omitempty"`
+	AppliedAt           *time.Time            `json:"applied_at,omitempty"`
+	NextCommanderAction string                `json:"next_commander_action,omitempty"`
+}
+
 func unappliedDecisionNotifications(decisions []domain.Decision) []unappliedDecisionNotification {
 	return unappliedDecisionNotificationsExcept(decisions)
 }
@@ -169,40 +179,11 @@ func unappliedDecisionNotificationsExcept(decisions []domain.Decision, excludedI
 }
 
 func (d *Daemon) deriveSessionRole(ctx context.Context, agentSessionID int64) (roleAssignment, error) {
-	response := roleAssignment{Role: "executor"}
-	if agentSessionID != 0 {
-		projects, err := d.store.ListProjects(ctx)
-		if err != nil {
-			return roleAssignment{}, err
-		}
-		for _, project := range projects {
-			if project.ClaimedBy == agentSessionID {
-				response.Role = "commander"
-				response.ProjectID = project.ID
-				break
-			}
-		}
-
-		goals, err := d.store.ListAllGoals(ctx)
-		if err != nil {
-			return roleAssignment{}, err
-		}
-		goalHandoffs, err := d.store.ListOpenGoalHandoffs(ctx)
-		if err != nil {
-			return roleAssignment{}, err
-		}
-		for _, goal := range goals {
-			handoff := goalHandoffs[goal.ID]
-			if handoff != nil && handoff.ReceivedAt != nil && goalHandoffClaimedBy(handoff) == agentSessionID {
-				response.GoalID = goal.ID
-				break
-			}
-		}
-		if response.Role != "commander" && response.GoalID != 0 {
-			response.Role = "subcommander"
-		}
+	assignment, err := d.store.MonitorAssignment(ctx, agentSessionID)
+	if err != nil {
+		return roleAssignment{}, err
 	}
-	return response, nil
+	return roleAssignment{Role: assignment.Role, ProjectID: assignment.ProjectID, GoalID: assignment.GoalID}, nil
 }
 
 func roleResponseFor(assignment roleAssignment) any {
@@ -323,7 +304,7 @@ func (d *Daemon) listClaimableTasks(ctx context.Context, projectID, excludedTask
 	return claimable, nil
 }
 
-func tasksDeclaredWithIdempotencyKey(tasks []domain.Task, idempotencyKey string) []domain.Task {
+func tasksCreatedWithIdempotencyKey(tasks []domain.Task, idempotencyKey string) []domain.Task {
 	var declared []domain.Task
 	for _, task := range tasks {
 		separator := strings.LastIndex(task.DeclareKey, "#")
@@ -372,6 +353,9 @@ func (d *Daemon) authorizeGoalCompletion(ctx context.Context, goalID int64, proj
 }
 
 func (d *Daemon) authorizeGoalHandoffHolder(ctx context.Context, goalID, agentSessionID int64, operation string) error {
+	if err := d.authorizeRole(ctx, []string{"subcommander"}, 0, goalID, 0, agentSessionID, operation); err != nil {
+		return err
+	}
 	handoffs, err := d.store.ListGoalHandoffs(ctx, goalID)
 	if err != nil {
 		return fmt.Errorf("%s authorization: list goal handoffs: %w", operation, err)
@@ -385,19 +369,73 @@ func (d *Daemon) authorizeGoalHandoffHolder(ctx context.Context, goalID, agentSe
 }
 
 func (d *Daemon) authorizeCommander(ctx context.Context, goalID, projectID, agentSessionID int64, operation string) error {
+	return d.authorizeRole(ctx, []string{"commander"}, projectID, goalID, 0, agentSessionID, operation)
+}
+
+// authorizeRole is the RPC role boundary. Store methods keep their existing
+// handoff and claim checks; this check makes the role allowed by the API
+// explicit before the store is called.
+func (d *Daemon) authorizeRole(ctx context.Context, allowed []string, projectID, goalID, taskID, agentSessionID int64, operation string) error {
 	if agentSessionID == 0 {
-		return fmt.Errorf("%s denied: goal %d requires agent_session_id", operation, goalID)
+		return fmt.Errorf("%w: %s requires agent_session_id", ErrRoleUnauthorized, operation)
 	}
-	projects, err := d.store.ListProjects(ctx)
-	if err != nil {
-		return fmt.Errorf("%s authorization: list projects: %w", operation, err)
-	}
-	for _, project := range projects {
-		if project.ID == projectID && project.ClaimedBy == agentSessionID {
-			return nil
+	if taskID != 0 && goalID == 0 {
+		var err error
+		goalID, err = d.store.GetTaskGoalID(ctx, taskID)
+		if err != nil {
+			return err
 		}
 	}
-	return fmt.Errorf("%s denied: caller %d is not the commander for goal %d in project %d", operation, agentSessionID, goalID, projectID)
+	if goalID != 0 && projectID == 0 {
+		goal, err := d.store.GetGoal(ctx, goalID)
+		if err != nil {
+			return err
+		}
+		projectID = goal.ProjectID
+	}
+	assignment, err := d.deriveSessionRole(ctx, agentSessionID)
+	if err != nil {
+		return err
+	}
+	developmentMode, err := d.store.DevelopmentModeEnabled(ctx, agentSessionID)
+	if err != nil {
+		return err
+	}
+	for _, role := range allowed {
+		if developmentMode && assignment.Role == "commander" && role == "subcommander" && assignment.ProjectID == projectID {
+			return nil
+		}
+		if developmentMode && assignment.Role == "subcommander" && role == "executor" && assignment.GoalID == goalID {
+			return nil
+		}
+		if assignment.Role != role {
+			continue
+		}
+		switch role {
+		case "commander":
+			if assignment.ProjectID == projectID {
+				return nil
+			}
+		case "subcommander":
+			if assignment.GoalID == goalID {
+				return nil
+			}
+		case "executor":
+			if taskID == 0 {
+				continue
+			}
+			handoffs, err := d.store.ListTaskHandoffs(ctx, taskID)
+			if err != nil {
+				return err
+			}
+			for _, handoff := range handoffs {
+				if handoff.ReceivedBy == agentSessionID && handoff.ReceivedAt != nil && handoff.CompletedReportAt == nil {
+					return nil
+				}
+			}
+		}
+	}
+	return fmt.Errorf("%w: %s denied for %s on project %d, goal %d, task %d", ErrRoleUnauthorized, operation, assignment.Role, projectID, goalID, taskID)
 }
 
 func (d *Daemon) resolveOrRegisterProject(ctx context.Context, cwd string) (domain.Project, error) {
@@ -486,7 +524,7 @@ func (d *Daemon) normalizeEntityIDs(ctx context.Context, method string, params j
 		}
 		fields[field] = json.RawMessage(strconv.FormatInt(id, 10))
 	}
-	for _, field := range []string{"agent_session_id", "requested_by", "received_by", "reviewer_id"} {
+	for _, field := range []string{"agent_session_id", "requested_by", "received_by", "reviewer_id", "target_session_id"} {
 		raw, ok := fields[field]
 		if !ok {
 			continue
@@ -665,6 +703,66 @@ type planHandoffCompleteParams struct {
 	CompleteReport string `json:"complete_report"`
 }
 
+type handoffRecoverParams struct {
+	HandoffKind    string `json:"handoff_kind"`
+	HandoffID      string `json:"handoff_id"`
+	GoalID         int64  `json:"goal_id"`
+	TaskID         int64  `json:"task_id"`
+	Reason         string `json:"reason"`
+	AgentSessionID int64  `json:"agent_session_id"`
+}
+
+type sessionDiscardRequestParams struct {
+	ProjectID       int64  `json:"project_id"`
+	GoalID          int64  `json:"goal_id"`
+	TargetSessionID int64  `json:"target_session_id"`
+	Reason          string `json:"reason"`
+	AgentSessionID  int64  `json:"agent_session_id"`
+}
+
+type sessionDiscardParams struct {
+	ProjectID       int64 `json:"project_id"`
+	TargetSessionID int64 `json:"target_session_id"`
+	DecisionID      int64 `json:"decision_id"`
+	AgentSessionID  int64 `json:"agent_session_id"`
+}
+
+func (d *Daemon) recoverHandoff(ctx context.Context, p handoffRecoverParams) (any, error) {
+	if p.AgentSessionID <= 0 {
+		return nil, errors.New("handoff recovery requires agent_session_id")
+	}
+	if strings.TrimSpace(p.HandoffKind) == "" || strings.TrimSpace(p.HandoffID) == "" || strings.TrimSpace(p.Reason) == "" {
+		return nil, errors.New("handoff_kind, handoff_id, and reason are required")
+	}
+	if p.GoalID != 0 && p.TaskID != 0 {
+		return nil, errors.New("handoff recovery accepts either goal_id or task_id, not both")
+	}
+	switch p.HandoffKind {
+	case "goal":
+		if p.GoalID <= 0 || p.TaskID != 0 {
+			return nil, errors.New("goal recovery requires goal_id")
+		}
+		return d.store.RecoverGoalHandoff(ctx, p.HandoffID, p.GoalID, p.AgentSessionID, p.Reason)
+	case "plan":
+		if p.GoalID <= 0 || p.TaskID != 0 {
+			return nil, errors.New("plan recovery requires goal_id")
+		}
+		return d.store.RecoverPlanHandoff(ctx, p.HandoffID, p.GoalID, p.AgentSessionID, p.Reason)
+	case "task":
+		if p.TaskID <= 0 || p.GoalID != 0 {
+			return nil, errors.New("task recovery requires task_id")
+		}
+		return d.store.RecoverTaskHandoff(ctx, p.HandoffID, p.TaskID, p.AgentSessionID, p.Reason)
+	case "task_create":
+		if p.GoalID <= 0 || p.TaskID != 0 {
+			return nil, errors.New("task_create recovery requires goal_id")
+		}
+		return d.store.RecoverTaskCreateHandoff(ctx, p.HandoffID, p.GoalID, p.AgentSessionID, p.Reason)
+	default:
+		return nil, fmt.Errorf("unsupported handoff_kind %q", p.HandoffKind)
+	}
+}
+
 func (d *Daemon) receiveRoleEvidence(ctx context.Context, agentSessionID, projectID, goalID, taskID int64, handoffID string) (string, claimEvidence, error) {
 	if taskID != 0 && goalID == 0 {
 		var err error
@@ -680,6 +778,10 @@ func (d *Daemon) receiveRoleEvidence(ctx context.Context, agentSessionID, projec
 		}
 		projectID = goal.ProjectID
 	}
+	assignment, err := d.store.MonitorAssignment(ctx, agentSessionID)
+	if err != nil {
+		return "", claimEvidence{}, err
+	}
 	evidence := claimEvidence{
 		AgentSessionID: agentSessionID,
 		ProjectID:      projectID,
@@ -687,56 +789,26 @@ func (d *Daemon) receiveRoleEvidence(ctx context.Context, agentSessionID, projec
 		TaskID:         taskID,
 		HandoffID:      handoffID,
 	}
-
-	if agentSessionID != 0 {
-		projects, err := d.store.ListProjects(ctx)
-		if err != nil {
-			return "", claimEvidence{}, err
-		}
-		for _, project := range projects {
-			if project.ID == projectID && project.ClaimedBy == agentSessionID {
-				evidence.Scope = "project"
-				return "commander", evidence, nil
-			}
-		}
-
-		goalHandoffs, err := d.store.ListOpenGoalHandoffs(ctx)
-		if err != nil {
-			return "", claimEvidence{}, err
-		}
-		if handoff := goalHandoffs[goalID]; handoff != nil && handoff.ReceivedAt != nil && handoff.ReceivedBy == agentSessionID {
-			evidence.Scope = "goal"
-			return "subcommander", evidence, nil
-		}
-
-		if taskID != 0 {
-			taskHandoffs, err := d.store.ListTaskHandoffs(ctx, taskID)
-			if err != nil {
-				return "", claimEvidence{}, err
-			}
-			for _, handoff := range taskHandoffs {
-				if handoff.ReceivedAt != nil && handoff.CompletedReportAt == nil && handoff.ReceivedBy == agentSessionID {
-					evidence.Scope = "task"
-					return "executor", evidence, nil
-				}
-			}
-		}
-	}
-
-	switch {
-	case taskID != 0:
-		evidence.Scope = "task"
-		return "executor", evidence, nil
-	case goalID != 0:
-		evidence.Scope = "goal"
-		return "subcommander", evidence, nil
-	default:
+	switch assignment.Role {
+	case "commander":
 		evidence.Scope = "project"
-		return "commander", evidence, nil
+		evidence.ProjectID = assignment.ProjectID
+	case "subcommander":
+		evidence.Scope = "goal"
+		evidence.ProjectID = assignment.ProjectID
+		evidence.GoalID = assignment.GoalID
+	case "executor":
+		if taskID != 0 {
+			evidence.Scope = "task"
+		}
 	}
+	return assignment.Role, evidence, nil
 }
 
 func (d *Daemon) requestTaskHandoff(ctx context.Context, p taskHandoffRequestParams) (store.TaskHandoff, error) {
+	if err := d.authorizeRole(ctx, []string{"subcommander"}, 0, 0, p.TaskID, p.RequestedBy, "task handoff request"); err != nil {
+		return store.TaskHandoff{}, err
+	}
 	return d.store.RequestTaskHandoff(ctx, p.HandoffID, p.TaskID, p.RequestedBy, p.RequestReport)
 }
 
@@ -769,6 +841,9 @@ func (d *Daemon) completeTaskHandoff(ctx context.Context, p taskHandoffCompleteP
 }
 
 func (d *Daemon) requestGoalHandoff(ctx context.Context, p goalHandoffRequestParams) (store.GoalHandoff, error) {
+	if err := d.authorizeRole(ctx, []string{"commander"}, 0, p.GoalID, 0, p.RequestedBy, "goal handoff request"); err != nil {
+		return store.GoalHandoff{}, err
+	}
 	return d.store.RequestGoalHandoff(ctx, p.HandoffID, p.GoalID, p.RequestedBy, p.RequestReport)
 }
 
@@ -823,7 +898,43 @@ func (d *Daemon) receivePlanReviewResponse(ctx context.Context, p planHandoffRev
 	return responseWithRoleEvidence{Data: handoff, Role: role, ClaimEvidence: evidence}, nil
 }
 
+// dispatch answers one RPC and, for a transition the execution flow continues
+// from, names the operation that follows. Carrying it on the response is what
+// keeps an agent from re-reading doc/execution-flow.md to find its next call.
 func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage, error) {
+	raw, err := d.dispatchMethod(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return withNextStep(raw, nextStepAfter[req.Method]), nil
+}
+
+// withNextStep adds next_step to an object response. A response that is not a
+// JSON object, or already carries the key, is returned untouched.
+func withNextStep(raw json.RawMessage, next []nextStepOption) json.RawMessage {
+	if len(next) == 0 || len(raw) == 0 || raw[0] != '{' {
+		return raw
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return raw
+	}
+	if _, taken := fields["next_step"]; taken {
+		return raw
+	}
+	encoded, err := json.Marshal(next)
+	if err != nil {
+		return raw
+	}
+	fields["next_step"] = encoded
+	merged, err := json.Marshal(fields)
+	if err != nil {
+		return raw
+	}
+	return merged
+}
+
+func (d *Daemon) dispatchMethod(ctx context.Context, req rpc.Request) (json.RawMessage, error) {
 	params, err := d.normalizeEntityIDs(ctx, req.Method, req.Params)
 	if err != nil {
 		return nil, err
@@ -858,6 +969,8 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		var p struct {
 			AgentSessionID int64  `json:"agent_session_id"`
 			SessionKey     string `json:"session_key"`
+			MonitorToken   string `json:"monitor_token"`
+			CWD            string `json:"cwd"`
 		}
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, err
@@ -866,10 +979,78 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		if err != nil {
 			return nil, err
 		}
+		if strings.TrimSpace(p.MonitorToken) != "" {
+			if err := d.store.BindMonitorToken(ctx, p.MonitorToken, canonicalID); err != nil {
+				return nil, err
+			}
+		}
+		// Identify is the one call every session makes before anything else,
+		// so it is where the project belongs. Waiting for whichever later
+		// operation happens to pass through ensureAgentSessionProject left a
+		// session that never got that far with no project at all.
+		//
+		// A cwd outside any registered project is not an error: the session is
+		// simply not in one, and the later path still applies.
+		if cwd := strings.TrimSpace(p.CWD); cwd != "" {
+			project, projectErr := d.store.ResolveProject(ctx, cwd)
+			if projectErr == nil {
+				if err := d.ensureAgentSessionProject(ctx, canonicalID, project.ID); err != nil {
+					return nil, err
+				}
+			} else if !errors.Is(projectErr, store.ErrProjectNotFound) {
+				return nil, projectErr
+			}
+		}
+		assignment, err := d.store.MonitorAssignment(ctx, canonicalID)
+		if err != nil {
+			return nil, err
+		}
 		return marshal(map[string]any{
 			"agent_session_id": canonicalID,
 			"reattached":       reattached,
+			"assignment":       assignment,
 		}, nil)
+
+	case "development.start":
+		var p struct {
+			AgentSessionID int64 `json:"agent_session_id"`
+		}
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		if err := d.store.EnableDevelopmentMode(ctx, p.AgentSessionID); err != nil {
+			return nil, err
+		}
+		return marshal(map[string]any{"ok": true}, nil)
+
+	case "session.discard.request":
+		var p sessionDiscardRequestParams
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		decision, err := d.store.RequestSessionDiscard(ctx, store.SessionDiscardRequest{
+			ProjectID: p.ProjectID, GoalID: p.GoalID, TargetSessionID: p.TargetSessionID,
+			RequestedBy: p.AgentSessionID, Reason: p.Reason,
+		})
+		return marshal(decision, err)
+
+	case "session.discard":
+		var p sessionDiscardParams
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		if err := d.store.DiscardSession(ctx, p.ProjectID, p.TargetSessionID, p.DecisionID, p.AgentSessionID); err != nil {
+			return nil, err
+		}
+		return marshal(map[string]any{"ok": true}, nil)
+
+	case "handoff.recover":
+		var p handoffRecoverParams
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		result, err := d.recoverHandoff(ctx, p)
+		return marshal(result, err)
 
 	case "session.role":
 		var p struct {
@@ -884,6 +1065,26 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 			return nil, err
 		}
 		return marshal(roleResponseFor(response), nil)
+
+	case "session.stop_check":
+		var p struct {
+			SessionKey string `json:"session_key"`
+		}
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		response, err := d.stopCheck(ctx, p.SessionKey)
+		return marshal(response, err)
+
+	case "session.monitor_check":
+		var p struct {
+			SessionKey string `json:"session_key"`
+		}
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		response, err := d.monitorCheck(ctx, p.SessionKey)
+		return marshal(response, err)
 
 	case "project.create":
 		var p struct {
@@ -909,6 +1110,7 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		var p struct {
 			ProjectID      int64 `json:"project_id"`
 			AgentSessionID int64 `json:"agent_session_id"`
+			Force          bool  `json:"force"`
 		}
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, err
@@ -916,7 +1118,11 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		if err := d.ensureAgentSessionProject(ctx, p.AgentSessionID, p.ProjectID); err != nil {
 			return nil, err
 		}
-		claimed, err := d.store.ClaimProject(ctx, p.ProjectID, p.AgentSessionID)
+		claim := d.store.ClaimProject
+		if p.Force {
+			claim = d.store.ForceClaimProject
+		}
+		claimed, err := claim(ctx, p.ProjectID, p.AgentSessionID)
 		if errors.Is(err, store.ErrProjectAlreadyClaimed) {
 			return nil, ErrProjectAlreadyClaimed
 		}
@@ -1112,10 +1318,32 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		if err != nil {
 			return nil, err
 		}
-		return marshal(map[string]any{
+		data := map[string]any{
 			"goal":  goal,
 			"tasks": tasks,
-		}, nil)
+		}
+		decisions, err := d.store.ListDecisionsForGoal(ctx, p.GoalID)
+		if err != nil {
+			return nil, err
+		}
+		for _, decision := range decisions {
+			if decision.TaskID != 0 || decision.Kind != domain.KindGoalReview {
+				continue
+			}
+			review := goalReviewProjection{
+				DecisionID:  decision.ID,
+				Status:      decision.Status,
+				AnswerLabel: decision.AnswerLabel,
+				AnswerText:  decision.AnswerText,
+				AnsweredAt:  decision.AnsweredAt,
+				AppliedAt:   decision.AppliedAt,
+			}
+			if goal.Status == domain.GoalActive && decision.Status == domain.DecisionApplied && decision.AnswerLabel == "approve" {
+				review.NextCommanderAction = "goal.review.complete"
+			}
+			data["goal_review"] = review
+		}
+		return marshal(data, nil)
 
 	case "goal.sessions":
 		var p struct {
@@ -1187,6 +1415,27 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		}
 		err := d.store.ReleaseGoal(ctx, p.GoalID)
 		return marshal(nil, err)
+
+	case "goal.withdraw":
+		var p struct {
+			GoalID         int64  `json:"goal_id"`
+			AgentSessionID int64  `json:"agent_session_id"`
+			Reason         string `json:"reason"`
+		}
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		// Withdrawing throws away work other sessions may be doing, so it
+		// belongs to the role that owns the project rather than to whoever
+		// happens to hold the goal.
+		if err := d.authorizeRole(ctx, []string{"commander"}, 0, p.GoalID, 0, p.AgentSessionID, "goal withdrawal"); err != nil {
+			return nil, err
+		}
+		if err := d.store.WithdrawActiveGoal(ctx, p.GoalID, p.Reason); err != nil {
+			return nil, err
+		}
+		goal, err := d.store.GetGoal(ctx, p.GoalID)
+		return marshal(goal, err)
 
 	case "goal.update_content":
 		var p struct {
@@ -1267,8 +1516,9 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		response, err := d.responseWithScopedUnappliedDecisions(ctx, updated, goalID, p.AgentSessionID)
 		return marshal(response, err)
 
-	case "task.declare":
+	case "task.create":
 		var p struct {
+			HandoffID               string   `json:"handoff_id"`
 			GoalID                  int64    `json:"goal_id"`
 			Agent                   string   `json:"agent"`
 			IdempotencyKey          string   `json:"idempotency_key"`
@@ -1280,22 +1530,53 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, err
 		}
-		goal, err := d.store.GetGoal(ctx, p.GoalID)
-		if err != nil {
-			return nil, err
+		// The MCP contract always supplies handoff_id. Keep the historical raw
+		// RPC fallback usable for migration, but enforce the role-scoped path.
+		if p.HandoffID != "" {
+			if err := d.authorizeRole(ctx, []string{"subcommander"}, 0, p.GoalID, 0, p.AgentSessionID, "task creation"); err != nil {
+				return nil, err
+			}
 		}
-		if err := d.ensureAgentSessionProject(ctx, p.AgentSessionID, goal.ProjectID); err != nil {
-			return nil, err
-		}
-		tasks, err := d.store.DeclareTasks(ctx, p.GoalID, p.Agent, p.IdempotencyKey, p.Titles, p.Descriptions)
-		if err == nil {
-			tasks = tasksDeclaredWithIdempotencyKey(tasks, p.IdempotencyKey)
+		var tasks []domain.Task
+		var err error
+		if p.HandoffID != "" {
+			tasks, err = d.store.CreateTasksForHandoff(ctx, p.HandoffID, p.AgentSessionID, p.GoalID, p.Agent, p.IdempotencyKey, p.Titles, p.Descriptions)
+		} else {
+			goal, getErr := d.store.GetGoal(ctx, p.GoalID)
+			if getErr != nil {
+				return nil, getErr
+			}
+			if err = d.ensureAgentSessionProject(ctx, p.AgentSessionID, goal.ProjectID); err == nil {
+				handoffs, listErr := d.store.ListTaskCreateHandoffs(ctx, p.GoalID)
+				if listErr != nil {
+					return nil, listErr
+				}
+				if len(handoffs) != 0 {
+					err = store.ErrTaskCreateHandoffState
+				} else {
+					tasks, err = d.store.CreateTasks(ctx, p.GoalID, p.Agent, p.IdempotencyKey, p.Titles, p.Descriptions)
+					if err == nil {
+						tasks = tasksCreatedWithIdempotencyKey(tasks, p.IdempotencyKey)
+					}
+				}
+			}
 		}
 		if err != nil || !p.IncludeUnappliedAnswers {
 			return marshal(tasks, err)
 		}
 		response, err := d.responseWithScopedUnappliedDecisions(ctx, tasks, p.GoalID, p.AgentSessionID)
 		return marshal(response, err)
+
+	case "task.create_handoff.receive":
+		var p struct {
+			HandoffID  string `json:"handoff_id"`
+			ReceivedBy int64  `json:"received_by"`
+		}
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		h, err := d.store.ReceiveTaskCreateHandoff(ctx, p.HandoffID, p.ReceivedBy)
+		return marshal(h, err)
 
 	case "task.update":
 		var p struct {
@@ -1356,50 +1637,7 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		response, err := d.responseWithScopedUnappliedDecisions(ctx, tk, tk.GoalID, p.AgentSessionID)
 		return marshal(response, err)
 
-	case "task.claim":
-		var p struct {
-			TaskID                  int64 `json:"task_id"`
-			AgentSessionID          int64 `json:"agent_session_id"`
-			IncludeUnappliedAnswers bool  `json:"include_unapplied_answers"`
-		}
-		if err := json.Unmarshal(req.Params, &p); err != nil {
-			return nil, err
-		}
-		targetProjectID, err := d.store.ProjectIDForTask(ctx, p.TaskID)
-		if err != nil {
-			return nil, err
-		}
-		if err := d.ensureAgentSessionProject(ctx, p.AgentSessionID, targetProjectID); err != nil {
-			return nil, err
-		}
-		tk, err := d.store.ClaimTask(ctx, p.TaskID, p.AgentSessionID)
-		if errors.Is(err, store.ErrTaskAlreadyClaimed) {
-			return nil, ErrTaskAlreadyClaimed
-		}
-		if err != nil || !p.IncludeUnappliedAnswers {
-			return marshal(tk, err)
-		}
-		unapplied, err := d.unappliedDecisionsForSession(ctx, tk.GoalID, p.AgentSessionID)
-		if err != nil {
-			return nil, err
-		}
-		return marshal(responseWithUnappliedDecisions{
-			Data:               tk,
-			UnappliedDecisions: unappliedDecisionNotifications(unapplied),
-		}, nil)
-
-	case "task.release":
-		var p struct {
-			TaskID         int64 `json:"task_id"`
-			AgentSessionID int64 `json:"agent_session_id"`
-		}
-		if err := json.Unmarshal(req.Params, &p); err != nil {
-			return nil, err
-		}
-		tk, err := d.store.ReleaseTaskAs(ctx, p.TaskID, p.AgentSessionID)
-		return marshal(tk, err)
-
-	case "task.handoff.request", "handoff.request":
+	case "task.handoff.request":
 		var p taskHandoffRequestParams
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, err
@@ -1419,17 +1657,12 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		response, err := d.receiveTaskHandoffResponse(ctx, p, handoff)
 		return marshal(response, err)
 
-	case "handoff.receive":
-		var p taskHandoffReceiveParams
-		if err := json.Unmarshal(req.Params, &p); err != nil {
-			return nil, err
-		}
-		handoff, err := d.receiveTaskHandoff(ctx, p)
-		return marshal(handoff, err)
-
 	case "task.handoff.review.request":
 		var p taskHandoffReviewRequestParams
 		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		if err := d.authorizeRole(ctx, []string{"executor"}, 0, 0, p.TaskID, p.RequestedBy, "task handoff review request"); err != nil {
 			return nil, err
 		}
 		handoff, err := d.store.RequestTaskHandoffReview(ctx, p.HandoffID, p.TaskID, p.RequestedBy, p.ReviewRequestReport)
@@ -1438,6 +1671,9 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 	case "task.handoff.review.receive":
 		var p taskHandoffReviewReceiveParams
 		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		if err := d.authorizeRole(ctx, []string{"subcommander"}, 0, 0, p.TaskID, p.ReceivedBy, "task handoff review receipt"); err != nil {
 			return nil, err
 		}
 		handoff, err := d.store.ReceiveTaskHandoffReview(ctx, p.HandoffID, p.TaskID, p.ReceivedBy)
@@ -1455,18 +1691,34 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, err
 		}
+		if err := d.authorizeRole(ctx, []string{"subcommander"}, 0, 0, p.TaskID, p.ReviewerID, "task handoff review rejection"); err != nil {
+			return nil, err
+		}
 		handoff, err := d.store.RejectTaskHandoffReview(ctx, p.HandoffID, p.TaskID, p.ReviewerID, p.RejectReport)
 		return marshal(handoff, err)
 
-	case "task.handoff.complete", "handoff.complete":
+	case "task.handoff.review.reject.receive":
+		var p taskHandoffReviewReceiveParams
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		handoff, err := d.store.ReceiveTaskHandoffReviewRejection(ctx, p.HandoffID, p.TaskID, p.ReceivedBy)
+		return marshal(handoff, err)
+
+	case "task.handoff.complete":
 		var p taskHandoffCompleteParams
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, err
 		}
+		if p.AgentSessionID != 0 {
+			if err := d.authorizeRole(ctx, []string{"subcommander"}, 0, 0, p.TaskID, p.AgentSessionID, "task handoff completion"); err != nil {
+				return nil, err
+			}
+		}
 		handoff, err := d.completeTaskHandoff(ctx, p)
 		return marshal(handoff, err)
 
-	case "handoff.report.amend":
+	case "task.handoff.report.amend":
 		var p struct {
 			HandoffID      string `json:"handoff_id"`
 			TaskID         int64  `json:"task_id"`
@@ -1477,41 +1729,6 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		}
 		handoff, err := d.store.AmendTaskHandoffReport(ctx, p.HandoffID, p.TaskID, p.CompleteReport)
 		return marshal(handoff, err)
-
-	case "handoff.yielded":
-		var p struct {
-			TaskID int64 `json:"task_id"`
-		}
-		if err := json.Unmarshal(req.Params, &p); err != nil {
-			return nil, err
-		}
-		handoffs, err := d.store.ListTaskHandoffs(ctx, p.TaskID)
-		if err != nil {
-			return nil, err
-		}
-		for _, handoff := range handoffs {
-			if handoff.ReceivedAt == nil || handoff.CompletedReportAt != nil {
-				continue
-			}
-			goalID, err := d.store.GetTaskGoalID(ctx, p.TaskID)
-			if err != nil {
-				return nil, err
-			}
-			goal, err := d.store.GetGoal(ctx, goalID)
-			if err != nil {
-				return nil, err
-			}
-			d.store.PublishEvent(store.DecisionEvent{
-				Name: store.EventHandoffYielded,
-				Data: store.DetectionEvent{
-					ProjectID: goal.ProjectID,
-					GoalID:    goalID,
-					TaskID:    p.TaskID,
-				},
-			})
-			break
-		}
-		return marshal(nil, nil)
 
 	case "goal.handoff.request":
 		var p goalHandoffRequestParams
@@ -1538,12 +1755,18 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, err
 		}
+		if err := d.authorizeRole(ctx, []string{"subcommander"}, 0, p.GoalID, 0, p.RequestedBy, "goal handoff review request"); err != nil {
+			return nil, err
+		}
 		handoff, err := d.store.RequestGoalHandoffReview(ctx, p.HandoffID, p.GoalID, p.RequestedBy, p.ReviewRequestReport)
 		return marshal(handoff, err)
 
 	case "goal.handoff.review.receive":
 		var p goalHandoffReviewReceiveParams
 		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		if err := d.authorizeRole(ctx, []string{"commander"}, 0, p.GoalID, 0, p.ReceivedBy, "goal handoff review receipt"); err != nil {
 			return nil, err
 		}
 		handoff, err := d.store.ReceiveGoalHandoffReview(ctx, p.HandoffID, p.GoalID, p.ReceivedBy)
@@ -1558,13 +1781,29 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, err
 		}
+		if err := d.authorizeRole(ctx, []string{"commander"}, 0, p.GoalID, 0, p.ReviewerID, "goal handoff review rejection"); err != nil {
+			return nil, err
+		}
 		handoff, err := d.store.RejectGoalHandoffReview(ctx, p.HandoffID, p.GoalID, p.ReviewerID, p.RejectReport)
+		return marshal(handoff, err)
+
+	case "goal.handoff.review.reject.receive":
+		var p goalHandoffReviewReceiveParams
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		handoff, err := d.store.ReceiveGoalHandoffReviewRejection(ctx, p.HandoffID, p.GoalID, p.ReceivedBy)
 		return marshal(handoff, err)
 
 	case "goal.handoff.complete":
 		var p goalHandoffCompleteParams
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, err
+		}
+		if p.AgentSessionID != 0 {
+			if err := d.authorizeRole(ctx, []string{"commander"}, 0, p.GoalID, 0, p.AgentSessionID, "goal handoff completion"); err != nil {
+				return nil, err
+			}
 		}
 		handoff, err := d.completeGoalHandoff(ctx, p)
 		return marshal(handoff, err)
@@ -1632,12 +1871,18 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, err
 		}
+		if err := d.authorizeRole(ctx, []string{"subcommander"}, 0, p.GoalID, 0, p.RequestedBy, "plan handoff review request"); err != nil {
+			return nil, err
+		}
 		handoff, err := d.store.RequestPlanHandoffReview(ctx, p.HandoffID, p.GoalID, p.RequestedBy, p.ReviewRequestReport)
 		return marshal(handoff, err)
 
 	case "plan.handoff.review.receive":
 		var p planHandoffReviewReceiveParams
 		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		if err := d.authorizeRole(ctx, []string{"commander"}, 0, p.GoalID, 0, p.ReceivedBy, "plan handoff review receipt"); err != nil {
 			return nil, err
 		}
 		handoff, err := d.store.ReceivePlanHandoffReview(ctx, p.HandoffID, p.GoalID, p.ReceivedBy)
@@ -1652,7 +1897,18 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, err
 		}
+		if err := d.authorizeRole(ctx, []string{"commander"}, 0, p.GoalID, 0, p.ReviewerID, "plan handoff review rejection"); err != nil {
+			return nil, err
+		}
 		handoff, err := d.store.RejectPlanHandoffReview(ctx, p.HandoffID, p.GoalID, p.ReviewerID, p.RejectReport)
+		return marshal(handoff, err)
+
+	case "plan.handoff.review.reject.receive":
+		var p planHandoffReviewReceiveParams
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		handoff, err := d.store.ReceivePlanHandoffReviewRejection(ctx, p.HandoffID, p.GoalID, p.ReceivedBy)
 		return marshal(handoff, err)
 
 	case "plan.handoff.complete":
@@ -1662,6 +1918,9 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 		}
 		if p.AgentSessionID == 0 {
 			return nil, fmt.Errorf("plan handoff completion requires agent_session_id")
+		}
+		if err := d.authorizeRole(ctx, []string{"commander"}, 0, p.GoalID, 0, p.AgentSessionID, "plan handoff completion"); err != nil {
+			return nil, err
 		}
 		handoff, err := d.store.CompletePlanHandoff(ctx, p.HandoffID, p.GoalID, p.AgentSessionID, p.CompleteReport)
 		return marshal(handoff, err)
@@ -1769,15 +2028,18 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 			return nil, err
 		}
 		if p.DecisionID != 0 {
+			decision, err := d.store.GetDecision(ctx, p.DecisionID)
+			if err != nil {
+				return nil, err
+			}
 			role, err := d.deriveSessionRole(ctx, p.AgentSessionID)
 			if err != nil {
 				return nil, err
 			}
+			if p.AgentSessionID == 0 || (role.Role == "commander" && decision.AgentSessionID != p.AgentSessionID) {
+				return nil, fmt.Errorf("decision %d is owned by another agent session", p.DecisionID)
+			}
 			if role.Role == "subcommander" && role.GoalID != 0 {
-				decision, err := d.store.GetDecision(ctx, p.DecisionID)
-				if err != nil {
-					return nil, err
-				}
 				if decision.GoalID != role.GoalID {
 					return nil, fmt.Errorf("%w: decision %d belongs to goal %d, not the goal %d you hold; hand it to that goal's owner instead of polling it",
 						ErrDecisionOutsideGoal, p.DecisionID, decision.GoalID, role.GoalID)

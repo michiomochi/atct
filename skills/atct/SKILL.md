@@ -9,7 +9,24 @@ ATCT records what you are working on and routes your questions to a human's
 inbox. Registering tools is not enough; the value comes from calling them at
 the right moments.
 
+Every ATCT response that continues the flow carries `next_step`, naming the
+operation that follows it. Read that field and do what it says; it is derived
+from the same chart and is always current.
+
+Read `doc/execution-flow.md` only when `next_step` does not answer the
+question: to see the whole chart at once, or to settle who owns a step.
+
 ## Roles
+
+### Development escalation
+
+Only `atct:dev:start` may call `atct_development_start`; this marks the current
+agent session as development mode. An executor escalates to its subcommander,
+and a subcommander escalates to its commander. In that mode only, a
+subcommander may resolve executor work in its Goal and a commander may resolve
+subcommander work in its Project; a commander never performs executor work.
+After resolution, create a remediation Goal with the cause, resolution, and
+verification, then return to the normal spec → plan → review flow.
 
 Role values for `expected_role`: `commander`, `subcommander`, `executor`.
 
@@ -24,7 +41,27 @@ The daemon derives the role in this order:
 | `commander` | triage incoming work / split goals / prepare a working area / review landed changes / publish / resolve conflicts / clean up | design the goal / implement the goal / edit executor deliverables |
 | `subcommander` | design the goal / delegate the goal's work / review implementation / report completion for the goal / issue decisions to the human / commit the goal's work / close a task its worker cannot | inspect or manage other goals / publish / create another subcommander / claim the project |
 | `executor` | implement / test / close the task it was given | make design decisions / re-delegate / commit / write internal version-control details |
+## Role-specific skills
 
+After identifying the session, call `atct_role` before role-specific work. If
+the result does not match, do not work: return the handoff or let the caller
+recover its claim. If it matches, invoke exactly one skill:
+
+- `commander` → `atct:commander`
+- `subcommander` → `atct:subcommander`
+- `executor` → `atct:executor`
+
+This skill is the SSOT for role derivation, claims, handoffs, decisions,
+irreversible operations, and completion records. Role skills own only their
+role's operations and must not restate or override these rules.
+
+Operations only one role performs live in that role's skill, so no role loads
+another's. Moved out of this skill on 2026-09-19:
+
+| Section | Now in |
+| --- | --- |
+| `## One worktree per goal`, `## One space per goal`, `## Delegate a goal` | `atct:commander` |
+| `## Delegate a task`, `## Close a task the moment it is finished` | `atct:subcommander` |
 ## Declare before you work
 
 1. Call `atct_task_create` with the tasks you intend to do. Creating them is
@@ -46,7 +83,6 @@ On 2026-08-20, a task to verify whether a decision is rolled back to open on
 approval failure was withdrawn because its assumption was wrong. If that
 assumption had been written in the description, a human could have corrected
 it when the task was declared.
-
 ## Fix a declared task
 
 - After declaring a task, use `atct_task_update_content` to fix its `title`
@@ -56,437 +92,23 @@ it when the task was declared.
   after the fact.
 - Re-declaring with the same `idempotency_key` does not update the task;
   re-declaration is not a way to fix it.
+## Receive before you start
 
-## Claim before you start
+Every implementation task is delegated.
 
-1. Take the task before you touch its work. For self-directed work—when you find
-   a task yourself—call `atct_task_claim`. Exactly one run wins a claim. If the
-   claim fails the task is already owned, so pick another one rather than working
-   on it anyway.
+1. The subcommander requests the task handoff, and the executor receives it with
+   `atct_task_handoff_receive` before touching the work. Receipt is exclusive,
+   so a handoff cannot be received twice.
+2. The executor requests review when the work is ready; the subcommander accepts
+   it with `atct_task_handoff_complete`, which closes the task.
 
-   A delegated worker owns the task it was given. Receive it with
-   `atct_task_handoff_receive`, not `atct_task_claim`; receipt is exclusive, so
-   a handoff cannot be received twice.
-2. Do the work while you hold it.
-3. Close it with `atct_task_update` and `done` once the work lands. Release a
-   task by setting it back to `todo` with `atct_task_update` instead. There is
-   no separate release tool.
-
-**Out of order:** Working before the claim or the receipt lets a second run take
-the same task, because exclusivity comes from the claim and from nothing else;
-two runs then edit the same files and one overwrites the other. Stopping before
-the closing status is the mirror failure: the work landed, but the task still
-reads as unstarted.
-
-## One worktree per goal
-
-ATCT uses `script/worktree-setup.sh <goal-id>` as the canonical way to prepare
-a worktree. Do not use a session-scoped native worktree tool such as
-`EnterWorktree`.
-
-- The script derives the location and branch from the goal id: `.worktrees/<goal8>`
-  and `wt/goal-<goal8>`. A second person working on the same goal enters the
-  same tree. A native tool names worktrees per session, so it creates one per
-  agent instead of one per goal.
-- The script borrows `web/node_modules` from the primary checkout through a
-  symlink and copies `web/dist`. Neither the native tool nor the regular Git
-  worktree mechanism knows about this frontend setup.
-- The script runs only from the primary checkout; when run inside a worktree it
-  exits with status 2.
-
-`script/worktree-setup.sh` is the replacement for Steps 1a and 1b of
-`superpowers:using-git-worktrees`, and it also covers the frontend part of Step
-2 (Project Setup). The `.worktrees/` directory is already in `.gitignore`, so
-the skill's safety check is satisfied. Follow the reference skill instead of
-copying its setup procedure here.
-
-Usually nobody runs the script by hand. A worktree is prepared before an agent
-starts, so the skill's Step 0 reports an already isolated workspace and does
-not proceed to Step 1.
-
-- `commander`: Prepare the worktree before waking anyone for the goal; use the
-  primary checkout for your own work.
-- `subcommander`: Work in the worktree for your own goal; do not create
-  worktrees for other goals.
-- `executor`: Work in the worktree for the handed-off goal; it does not create
-  one itself.
-
-The commander prepares the goal's space at the same time as its worktree, and
-closes that space when the goal is approved; see `## One space per goal`.
-
-### When the primary checkout is right
-
-The primary checkout is appropriate in these cases:
-
-- `commander` reviews landed changes, publishes a release, resolves conflicts
-  between worktrees, or cleans up a worktree after the goal closes.
-- Running `script/worktree-setup.sh` itself, because it does not run inside a
-  worktree.
-- Working on a goal that changes this rule: the rule cannot apply to the change
-  until it lands. This rule is being written in the primary checkout for that
-  reason.
-
-### Detach node_modules before running pnpm
-
-`web/node_modules` is a symlink to the primary checkout. Reading through it
-works, but **every pnpm command fails** — not just `pnpm install`. Measured
-2026-08-28: `pnpm test` cannot write `node_modules/.vite-temp` and `pnpm build`
-cannot write `node_modules/.vite`, because a `workspace-write` sandbox refuses
-writes that resolve outside the worktree. Full output is in
-`doc/investigations/2026-08-28-worktree-node-modules-sandbox.md`.
-
-Detach the worktree first. It replaces the symlink with real dependencies and
-leaves the primary checkout untouched.
-
-```sh
-script/worktree-node-modules.sh detach          # from inside the worktree
-script/worktree-node-modules.sh detach <goal>   # from the primary checkout
-script/worktree-node-modules.sh status
-script/worktree-node-modules.sh attach --yes    # put the symlink back
-```
-
-- **The delegator detaches, not the worker.** Measured 2026-08-28: a worker
-  running `pnpm install --frozen-lockfile` in a detached worktree fails with
-  `ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY` — pnpm wants to purge
-  `node_modules` and cannot ask without a TTY. Detach before handing the task
-  off. After that the worker needs no pnpm install: `pnpm test` and `pnpm build`
-  both pass (exit 0, 231 tests).
-- Detach only the worktrees that need it. The cost is time, not disk: one
-  `detach` spends 33s in `pnpm install`, and most worktrees never run pnpm.
-  (Disk is nearly free — `du` reports 454M per detached worktree, but the real
-  consumption measured through `df` was 15M, because pnpm clones from its store
-  and APFS shares the blocks.)
-- `detach` and `attach` are both idempotent, so re-running either is safe.
-
-### What a worktree does not separate
-
-A worktree does not make every resource independent:
-
-- `~/.atct/atct.db` is one shared database for all worktrees; goals, tasks,
-  claims, and decisions are shared. Avoiding two people touching the same file
-  still depends on declaring before you work.
-- The daemon is one per machine, not one per worktree.
-- `web/node_modules` is a symlink to the primary checkout, so a worktree does
-  not get its own frontend dependencies until you detach it. See "Detach
-  node_modules before running pnpm" below.
-- Git objects and refs live in one common directory. The same branch can be
-  checked out in only one worktree at a time.
-- If two worktrees edit the same file, the conflict does not disappear; it is
-  merely moved to the merge.
-- `GOCACHE` is shared by default across all worktrees. Sharing is harmless
-  because the cache is content-addressed, but point it outside the repository:
-  if it points inside, generated files can fill `git status`.
-
-## One space per goal
-
-A space belongs to one goal from the moment it is created until it is closed.
-When the goal is approved, close the space; do not hand it a second goal.
-
-- **One space, one goal.** The space is created for a goal and works that goal
-  only. A second goal gets a new space, even when it touches the same files.
-- **Approval closes it.** The trigger is the human approving the completion
-  decision `atct_goal_complete` creates, not the completion report. A rejected
-  completion returns the same goal to the same space, so the space stays open
-  until approval.
-- **A closed space is not reopened.** Work that arrives afterwards belongs to a
-  different goal, and a different goal gets a new space.
-- The delegator closes what it woke. The commander closes the subcommander's
-  space when the goal is approved; the subcommander closes its executors' panes
-  when their tasks are done.
-
-### The only exception
-
-The `commander`'s own space is the exception, and there is no other. It holds
-the project rather than one goal, so it outlives every goal and is not closed
-between them.
-
-Three cases look like exceptions and are not:
-
-- A rejected completion is the same goal, not a second one, so the space stays
-  open and the work continues there.
-- A goal derived from another (`derived_from`) is a new goal, and a new goal
-  gets a new space.
-- Two goals that touch the same file still get one space each. Serializing them
-  is the commander's decision about when to delegate, and the conflict, if any,
-  is resolved at the merge.
-
-### Why reuse costs more than it saves
-
-Reuse was how one machine serialized goals that touched the same file, back when
-every agent shared the primary checkout. `## One worktree per goal` removed that
-reason: each goal already edits its own tree. What reuse still costs:
-
-- The space's name stops naming its goal. On 2026-08-26 one space held five
-  goals, so nothing led from the name to the contents.
-- `atct_goal_sessions` resolves a goal to the sessions that worked it through
-  `goal_handoffs.received_by`. One session key spread over five goals resolves
-  to no single space.
-- Context accumulates across goals that have nothing to do with each other.
-- The trigger to close disappears. A space handed the next goal at approval is
-  never closed at all; on 2026-08-26 fifteen spaces were closed by hand.
-
+**Out of order:** Working before receipt lets a second executor receive the same
+task. Stopping before requesting review leaves the task open even when the work
+landed.
 ## Commit safely
 
 When committing the goal's work, name the paths explicitly; never use `git add -A`.
 If another worker's uncommitted changes share a file, stage only your hunks with `git apply --cached`.
-
-## Delegate a task
-
-When handing a task to another worker, keep the contract independent of how
-that worker is started:
-
-1. Hold the parent, not the task. The delegator does not hold the task; it must
-   have received the handoff for that task's goal before handing it off. Claiming
-   the task first always causes the handoff request to be refused because the
-   claim already writes an open handoff.
-
-2. Record the handoff before waking the worker.
-   The delegator must call `atct_task_handoff_request` with a unique handoff ID
-   and the task ID. Wait for the request to succeed before waking the
-   worker; this creates the record needed to receive and complete the handoff.
-3. For a monitored Codex worker, use an idle executor pane if one is available.
-   Create a new executor pane only for parallel work, worktree isolation,
-   context exhaustion, or a topic change. After the request succeeds, start the
-   wrapper before the worker process:
-
-   ```sh
-   herdr pane run <pane> atct codex monitor --role executor --task <task_id> -- <codex args>
-   ```
-
-   The delegator requests the handoff first; it does not start a worker and add
-   monitoring later. Plain `herdr agent start` bypasses the wrapper and is
-   forbidden for a monitored worker. A normal Codex session cannot be
-   retrofitted. The monitored worker performs `atct_session_identify`, then
-   `atct_handoff_receive` with only its `task_id`, then `atct_role` with
-   `expected_role=executor`; the launch role is metadata, not role proof.
-   Other environments may wake the worker by their own supported path.
-4. Put these exact instructions at the very beginning of the request:
-
-   > First call `atct_session_identify` with a stable session key that remains unchanged for this session and identifies only you. Your agent name is suitable. Do this before any other atct call.
-   >
-   > Then record receipt of the handoff by calling `atct_task_handoff_receive` with only
-   > the `task_id` provided in this request. Do this before starting work. Do not
-   > pass a handoff ID or session; ATCT supplies them.
-   >
-   > Then invoke the `atct_role` MCP tool with `expected_role` set to
-   > `executor`. If it reports `matches: false`, do not start work; return the
-   > task.
-   >
-   > When the work is complete, record the review request by calling `atct_task_handoff_review_request` with the received `handoff_id`, the
-   > `task_id`, and a non-empty `review_request_report`. The report must say
-   > what was done, what was verified, what could not be verified, and paths changed.
-   >
-   > The subcommander receives that review with `atct_task_handoff_review_receive`.
-   > It reviews the implementation, then calls `atct_task_handoff_complete` with the `handoff_id`, `task_id`, and a `complete_report` on acceptance, or calls
-   > `atct_task_handoff_review_reject` with a `reject_report` on rejection.
-
-   Report the review request before the reviewer closes the task.
-
-   The task handoff review order is `atct_task_handoff_request` →
-   `atct_task_handoff_receive` → `atct_task_handoff_review_request` →
-   `atct_task_handoff_review_receive` → `atct_task_handoff_complete`; rejection
-   uses `atct_task_handoff_review_reject` and returns the same handoff to the
-   same worker for correction.
-
-   Name what the worker may call, and name what it may not. A blanket ban carries
-   no grain, so it is overturned without grain too: an executor that decides atct
-   calls are allowed after all reaches the goal scope in the same step.
-
-   An executor may call only these atct tools:
-   `atct_session_identify`, `atct_task_handoff_receive`, `atct_role`, `atct_task_handoff_review_request`.
-   Each of them is confined to the `task_id` the executor was given.
-
-   An executor must not call `atct_goal_handoff_complete`, `atct_goal_handoff_receive`,
-   `atct_goal_handoff_request`, `atct_goal_claim`, `atct_goal_release`,
-   `atct_goal_complete`, `atct_goal_update_content`, `atct_project_claim`,
-   `atct_project_release`, `atct_task_claim`, `atct_task_handoff_request`,
-   `atct_task_handoff_review_receive`, `atct_task_handoff_complete`,
-   `atct_task_handoff_review_reject`, `atct_handoff_request`,
-   `atct_handoff_receive`, `atct_handoff_complete`, `atct_task_update`,
-   `atct_task_create`, or `atct_decision_ask`. Spell the names out; "anything not
-   listed above" is not read as a prohibition. In a 2026-08-27 measurement, an
-   executor closed a subcommander's goal handoff without knowing it was forbidden.
-
-   An executor that reaches an irreversible operation returns it to the delegator.
-   Apply the test in `## Act on reversible choices, ask about irreversible ones`:
-   can the human get the previous state back? Rewriting history, discarding
-   uncommitted work, deleting a file or directory, and publishing off this machine
-   all fail it. The executor does not perform the operation and does not carry the
-   judgement itself; it stops there and hands it back to whoever sent the request.
-   `atct_decision_ask` is the delegator's call, not the executor's. A design
-   decision travels the same way, which is what `does not: make design decisions`
-   in `## Roles` means in practice.
-
-5. Name the verification boundary in the request. The delegator must name the
-   verification commands the worker can run. Do not put broad commands such as
-   `go test ./...` in the request. List the packages the worker may run instead.
-   The worker sandbox is not the same as the delegator sandbox. In a 2026-08-27
-   measurement, the same `go test` in the same worktree could bind a port for the
-   delegator but failed for the worker with `bind: operation not permitted`.
-   When checking whether a worker can use a tool, run the command the worker will
-   actually run. Do not use `--version` or `--help` to determine availability: the
-   same executable can succeed with an argument that does not touch its resource
-   and fail with a permission error when one does.
-   The delegator runs every verification not named for the worker and includes it
-   in review. This is part of delegation, not an exception to it. The worker must
-   not add verification that the request does not name. The worker must not
-   silently skip verification it could not run. It must say "could not run" in
-   its completion report.
-
-6. Keep one handoff per task and one worker for its correction and review
-   cycle. Return a rejection to the same worker; it remains the same task and
-   handoff. When an executor finishes and unassigned tasks remain, reuse an idle executor for the next task.
-   A different task alone is not a reason to create a new executor. Start a new executor pane only for parallel work, worktree isolation, context exhaustion, or a topic change. If no unassigned tasks remain, close the idle executor.
-   What breaks when you batch is the record, not the context. A handoff points
-   to one task. If three tasks are sent in one message, only one handoff is
-   created; the other two have no owner, receipt, or completion, so the
-   dashboard says nobody started them. In a 2026-08-24 measurement, sending
-   three tasks to executor-33 in one message broke the records for two of the
-   three. Task count and compression count are not correlated: in that same
-   measurement, the three-task pane compressed twice while the one-task pane
-   compressed seven times.
-
-   For a follow-up that starts a new task on the same worker, recreate the
-   `atct_task_handoff_request` with a new `handoff_id`; a closed `handoff_id`
-   cannot be reused. The new handoff does not mean a different worker; it gives
-   the same worker a new ID.
-
-The worker must perform both instructions itself before doing any work. The
-delegator must not run either instruction on the worker's behalf or treat a
-worker name, pane title, or launch context as proof of the role. If the role
-check reports a mismatch, the worker returns the task without touching it.
-
-**Out of order:** Claiming the task before requesting the handoff makes the
-request refuse, because the claim has already written an open handoff. Waking the
-worker before the request succeeds leaves it with nothing to receive. And asking
-for review before the executor has received the handoff, or completing the
-handoff before the reviewer receives the review, leaves the record without the
-report that proves what was reviewed. That last one reproduced on 2026-08-27
-with two executors, one on Claude and one on Codex.
-
-### Two-layer delegation
-
-Delegating a task requires a received goal handoff, not a project claim.
-
-1. For two-layer delegation, the commander calls `atct_goal_claim` to create a goal handoff addressed to itself. The project claim is checked first by `session.role` in `internal/daemon/handler.go`, so the role remains `commander`.
-2. Then the commander calls `atct_task_handoff_request` to delegate each task.
-
-**Out of order:** `atct_task_handoff_request` before `atct_goal_claim` is refused: a
-delegator with no received goal handoff holds no parent for the task, so no task
-can be handed off at all and every worker woken for the goal arrives with no
-record to receive.
-
-## Delegate a goal
-
-When handing a goal to a subcommander, keep the contract independent of how
-that subcommander is started:
-
-1. Hold the parent, not the goal. The delegator does not hold the goal; it must
-   have a project claim before handing it off. Claiming the goal first always
-   causes the handoff request to be refused because the claim already writes an
-   open handoff.
-2. Record the handoff before waking the subcommander.
-   The delegator must call `atct_goal_handoff_request` with a unique `handoff_id`
-   and the `goal_id`. The request takes only `handoff_id` and `goal_id`;
-   do not pass `requested_by`; ATCT supplies it. Wait for the request to succeed
-   before waking the subcommander; this creates the record needed to receive and
-   complete the handoff.
-3. A monitored Codex subcommander is launched only after the request succeeds:
-
-   ```sh
-   atct codex monitor --role subcommander --goal <goal_id> -- <codex args>
-   ```
-
-   A monitored commander uses `atct codex monitor --role commander -- <codex args>`.
-   These explicit configurations fail closed for invalid roles/selectors; the
-   legacy no-role project monitor remains compatible. They do not alter Claude
-   Code's `atct watch -project` / `atct watch -goal` path.
-
-   Do not start a normal Codex process and retrofit it later.
-   Name in the request every adjacent goal that touches the same files and say
-   which side owns what. The delegator is the only party that can see both
-   goals, and a boundary left unstated becomes a question the subcommander
-   cannot answer for itself.
-4. Put these exact instructions at the very beginning of the request:
-
-   > First call `atct_session_identify` with a stable session key that remains unchanged for this session and identifies only you. Your agent name is suitable. Do this before any other atct call.
-   >
-   > Then record receipt of the goal handoff by calling
-   > `atct_goal_handoff_receive` with only the `goal_id` provided in this request.
-   > Do this before starting work. Do not pass a handoff ID or session; ATCT
-   > supplies them.
-   >
-   > Then invoke the `atct_role` MCP tool with `expected_role` set to
-   > `subcommander`. If it reports `matches: false`, do not start work; return
-   > the goal.
-   >
-   > Then attach `atct watch -goal <goal_id>` to a background stream the way
-   > your harness watches one, passing only the `goal_id` provided in this
-   > request. The detections for this goal, and the answers to the decisions
-   > you raise for it, then reach you without the delegator relaying them.
-   > Pass no other goal; a subcommander must not inspect other goals. This
-   > step applies only in Claude Code; Codex has no Monitor, so a Codex reader
-   > skips it.
-   >
-   > Decide this goal's design yourself. Do not bring the delegator a design
-   > question, a progress note, a receipt acknowledgement, a discovery, or a
-   > reading of this goal's code. Send the delegator nothing until the completion
-   > report. What you would have said goes into the record instead: a task for
-   > work in flight, `surprises` and `needs_review` for what you found,
-   > `next_steps` for what you left, and `atct_decision_ask` for anything that
-   > needs the human.
-   >
-   > A fact that spans another goal is not an exception. Raise it with
-   > `atct_decision_ask`; the answer reaches you through your own watch, without
-   > passing through the delegator.
-   >
-   > When all task handoffs are accepted, record the goal review request by calling
-   > `atct_goal_handoff_review_request` with the received `handoff_id`, the
-   > `goal_id`, and a non-empty `review_request_report`.
-   >
-   > The commander receives that review with
-   > `atct_goal_handoff_review_receive` and reviews the goal's implementation.
-
-   The order matters: the role is derived from a received, uncompleted goal
-   handoff, so checking it before receipt always returns `matches: false`.
-
-   The goal completion order is `atct_goal_handoff_review_request` →
-   `atct_goal_handoff_review_receive` → `atct_goal_handoff_complete` →
-   `atct_goal_review_request` (human approval) → merge → `atct_goal_complete`.
-   The rule is simple: only the commander may call `atct_goal_handoff_complete` with the `goal_id` provided in this request and a `complete_report`; only the commander may call `atct_goal_complete` after the human approves.
-
-5. Keep one subcommander per goal. A subcommander may wake executors for its
-   goal, but must not inspect or manage other goals, create another
-   subcommander, or release the goal.
-   A subcommander must not call `atct_goal_release`; releasing the goal is the
-   commander's job.
-   A subcommander must not claim the project. Claiming the project changes its
-   role to commander.
-
-6. Stay out until the completion report. After waking the subcommander, the
-   delegator sends it nothing and answers nothing about the goal's design.
-   What the delegator reads instead are this project's ATCT detections, which
-   arrive from `atct watch` rather than from the subcommander: a goal with no
-   commits, a goal with no declared tasks, a claim nobody delegated, a handoff
-   nobody received. Those are what a stalled subcommander looks like from
-   outside, and they arrive whether or not it speaks. Review the goal when
-   `atct_goal_handoff_complete` lands; that report is the entry point.
-
-**Out of order:** Calling `atct_goal_handoff_complete` before
-`atct_goal_complete` closes the goal handoff, and the role is derived from a
-received, uncompleted goal handoff, so the role drops from `subcommander` to
-`executor` the moment it closes. Only the goal's holder may call
-`atct_goal_complete` (the gate added by goal 127), so the completion report can
-no longer be filed at all. Recovery takes the commander reissuing the goal
-handoff. Goals 180 and 187 both stalled this way on 2026-08-27 and 2026-08-28.
-
-### Session keys
-
-The caller owns the session key. It must remain unchanged for the life of the
-session and identify only that caller; the caller's agent name is suitable. If
-a reconnect causes the role to appear wrong, call `atct_session_identify` again
-with the same key to return to the original session row.
-
 ## What the delegator answers
 
 A delegator that answers a question about the inside of a goal is guessing; it
@@ -512,7 +134,6 @@ code and the delegator has not:
 
 A subcommander that brings the delegator one of the second four is asking the
 wrong reader. A delegator that answers one of them is inventing the answer.
-
 ## Where an unsent report goes
 
 Silence upward is only safe when nothing is lost. Every kind of message a
@@ -527,16 +148,15 @@ reaches the human without passing through the delegator's context.
 | something found inside this goal | `surprises` and `needs_review` |
 | something found that is another goal | `atct_decision_ask`, addressed to the human |
 | what was left undone | `next_steps` |
-| the goal is finished | `atct_goal_handoff_complete`, the one message |
+| the goal is ready for commander review | `atct_goal_handoff_review_request`, the one message |
 
 A subcommander that stops working sends nothing at all, and the old habit caught
 that only because a delegator noticed a quiet pane. The record catches it
 instead: a goal with tasks and no commits, or a closed handoff with nothing
-committed, each raises a detection on the delegator's watch. On 2026-08-27 goal
+committed, each raises a Wakeup on the delegator's watch. On 2026-08-27 goal
 172 stalled with three tasks still `todo` and eight files uncommitted, and goal
 144 closed its handoff with no commits and four tasks still `todo`. Both
-detections had already fired; nobody had been told to read them.
-
+Wakeups had already fired; nobody had been told to read them.
 ## Fill in a report on a handoff that is already closed
 
 Only a subcommander or commander uses this repair path when a closed handoff
@@ -544,17 +164,16 @@ has no report. It is not part of normal executor completion.
 
 1. Confirm the handoff is already closed and carries no report. A handoff that is
    still open belongs to the normal completion path, not to this one.
-2. Call `atct_handoff_report_amend` with the specific `handoff_id`, its
+2. Call `atct_task_handoff_report_amend` with the specific `handoff_id`, its
    `task_id`, and a non-empty `complete_report`; for a goal handoff call
    `atct_goal_handoff_report_amend` with `handoff_id`, `goal_id`, and
    `complete_report`. The repair does not change the recorded completion time.
 
 **Out of order:** Amending first, without checking, writes the report through the
 repair tool while the normal one was still available. The worker that owed
-`atct_handoff_complete` never learns it owed anything, the amended report hides
+`atct_task_handoff_complete` never learns it owed anything, the amended report hides
 the missing completion instead of exposing it, and the single normal path stops
 being the path anybody follows.
-
 ## Recover when your role comes back wrong
 
 If `atct_role` returns `executor` while you still hold work that should be yours, stop working and read this section.
@@ -572,8 +191,8 @@ its work is still uncommitted.
 3. Only if the session key does not restore your role, recover each layer as follows:
 
    - project: `atct_project_release` → `atct_project_claim`
-   - goal: `atct_goal_handoff_complete` → `atct_goal_handoff_request` (the commander must issue the handoff again)
-   - task: `atct_handoff_complete` (with `task_id` and `complete_report`) → `atct_task_claim`
+   - goal: `atct_goal_handoff_complete` → `atct_goal_handoff_request` (legacy/out-of-order recovery; the commander must issue the handoff again)
+   - task: after the stale lock is released, have the subcommander request a fresh `atct_task_handoff_request`
 
 **Out of order:** Reaching for the layer repair before the session key closes a
 handoff that did not need closing, and closing it is exactly what drops the role.
@@ -593,50 +212,17 @@ There are four triggers for a role to come back wrong, and the handoff state dif
 
 Rejection is automatic, so the goal step above that asks the commander to reissue the handoff is needed only for the last trigger.
 For background, see `doc/specs/2026-08-25-session-id-swap.md` and `doc/specs/2026-08-28-reissuing-the-goal-handoff-on-rejection.md`.
-
-## Close a task the moment it is finished
-
-1. Land the work.
-2. Call `atct_task_update` with `done` as soon as it lands, before you claim
-   anything else, and pass the commits it produced:
-   `atct_task_update(task_id, status="done", commits=["<sha>"])`. **Paste every
-   SHA from the real output of `git log --oneline`; do not type one from
-   memory** — goal 181 reported four hand-written SHAs on 2026-08-27 and `git
-   cat-file -e` found none of the four. A task you already closed can still be
-   linked: call it again with the same `status="done"` and the `commits` you
-   left out.
-3. Then claim the next task.
-
-Claiming is only half of the pair; a task nobody closed still reads as unstarted.
-
-**Out of order:** Claim the next task first and the finished one is never closed
-at all — the run has moved on, and nothing comes back to write the result. The
-landed work reads as unstarted for the rest of the session, so the queue looks
-longer than it is and the finished task can be handed to somebody else. Close it
-without `commits` and the loss is quieter but still real:
-`detection.commits_missing` fires, and **the approver can no longer tell which
-change belongs to which task.** The diff view goal 187 added
-(`GET /api/goals/{id}/diff`) reads the branch, so the diff itself is visible with
-no commits linked at all — but the per-task correspondence exists nowhere else.
-On 2026-08-28, eight of eleven units went `done` with `task_commits` empty.
-
-This matters most when the run that did the work is not the run that holds the
-claim — an orchestrator delegating to another agent, for example. The delegate
-finishes, the orchestrator moves on, and nothing writes the result back. **Then
-the dashboard says the work has not begun, and the human plans around that.**
-If you delegated, close the task when the delegate reports, not later.
-
 ## Keep going
 
-An active goal is permission to work, not a request for a plan. When
-`atct_goal_list` or the session context shows one, declare the tasks and start.
+An active goal is permission to coordinate work, not a request for a plan. When
+`atct_goal_list` or the session context shows one, declare the tasks and delegate them.
 Do not wait for the human to approve the plan first: they set the goal, and that
 was the approval.
 
 Carry each task through to a commit. The human's attention is for decisions and
 for the final approval, not for granting permission at every step.
 
-Finishing a task is not a checkpoint. Claim the next one and keep going. When a
+Finishing a task is not a checkpoint. Review it, delegate the next one, and keep going. When a
 goal has no unclaimed tasks left, move to another active goal instead of
 reporting back. Announcing what you will do next and then stopping to be told to
 do it wastes the turn that ends the sentence.
@@ -652,7 +238,6 @@ For those, use `atct_decision_ask` and park.
 
 The test is whether the human can get the previous state back. A commit is
 undoable. A force push over work that exists nowhere else is not.
-
 ## Ask instead of guessing
 
 Call `atct_decision_ask` when a choice would change the shape of the work and
@@ -662,7 +247,6 @@ when none arrives, so asking does not force you to stall.
 
 Do not ask about things you can determine yourself. An inbox full of trivia
 stops being read.
-
 ## Ask here, not in conversation
 
 `atct_decision_ask` is the only place a question belongs. Saying "let me know how
@@ -674,7 +258,6 @@ default, and holds every other task hostage until someone happens to reply.
 is not a decision to make; it is work you have not finished. Find out what the
 real alternatives are, what each one costs, and put them in the call. If you
 cannot yet name two concrete options, you are not ready to ask — go find out.
-
 ## Write so the answer takes ten seconds
 
 **Open with the choice, not the history.** The human is deciding, not reviewing
@@ -701,7 +284,6 @@ sentence, cut it.
 is blocked on your answer — a person, another agent — reply with the answer
 first. Your account of how you got it wrong belongs after, or nowhere. Burying a
 one-word decision inside a retrospective makes them ask again.
-
 ## Report completion in six parts
 
 1. Commit the goal's work.
@@ -746,43 +328,15 @@ in a way they did not ask for, that belongs here, not buried in `work_done`.
 
 Each field has a length limit. **A report nobody finishes reading cannot be
 approved**, and six short fields beat one long one.
-
 ## Name goals after the symptom, not the mechanism
 
 "Attach unattached decisions to the goal detail response" describes the fix.
 **"Decisions waiting on you do not show up on the goal page" describes what the
 human saw.** They set the goal from the symptom; they will look for it by the
 same words.
+## Ask the human only before irreversible operations
 
-## Act on reversible choices, ask about irreversible ones
-
-1. Classify the decision before you act on it. The test is whether the human can
-   get the previous state back. A commit is undoable. A force push over work that
-   exists nowhere else is not.
-2. For a reversible choice, execute the recommendation first, then record it with
-   `atct_decision_ask` using `wait_ms=0` and `default_after_ms=0`. Do not stop to
-   wait for an answer. If the human chooses differently, create a new decision
-   to correct it; never overturn a settled decision.
-3. For an irreversible choice, ask before acting: omit `default_option` and
-   `default_after_ms`, and wait for the human's approval. Use `wait_ms=0` to park
-   it while doing unrelated work.
-
-**Out of order:** Act first and classify afterwards and the irreversible
-operation has already run; the question that follows can only report it, and the
-human is asked to approve a state they can no longer decline. Recording an
-irreversible choice in the reversible form has the same effect, because a
-decision with `default_option` and `default_after_ms=0` applies immediately.
-
-As of 2026-08-25, a decision used as a record sets `default_option` and
-`default_after_ms=0`; it is applied immediately and does not block `done`. A
-human-waiting question omits both; it blocks `done` until answered. This is the
-form for an irreversible choice.
-
-**A deadline on an irreversible choice is not a safeguard with a timer on it; it
-is the thing happening anyway, with a delay.** That is why those get no default
-at all. And if every remaining task depends on that one answer, say so and stop —
-that is a real block, and it is worth the human knowing about.
-
+**Human judgment is requested only immediately before an irreversible or destructive operation.**
 ## Apply what you were told
 
 Answers reach you through `atct_decision_poll`.
@@ -799,7 +353,6 @@ leaving it open.
 sits unread — and because nothing marked it applied, the human's side still shows
 the question hanging, so they cannot tell whether their answer reached you or
 whether you are still blocked on it.
-
 ## Finishing
 
 1. Answer or withdraw every decision still open on the goal's tasks. A task

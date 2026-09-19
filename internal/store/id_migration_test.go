@@ -207,7 +207,9 @@ func assertForeignKeySet(t *testing.T, db *sql.DB) {
 	want := map[string]map[string]struct{}{
 		"projects": {},
 		"agent_sessions": {
-			"project_id->projects.id": {},
+			"project_id->projects.id":             {},
+			"discarded_by->agent_sessions.id":     {},
+			"discarded_decision_id->decisions.id": {},
 		},
 		"goals": {
 			"project_id->projects.id":        {},
@@ -224,23 +226,26 @@ func assertForeignKeySet(t *testing.T, db *sql.DB) {
 			"task_id->tasks.id": {},
 		},
 		"task_handoffs": {
-			"task_id->tasks.id":                      {},
-			"requested_by->agent_sessions.id":        {},
-			"received_by->agent_sessions.id":         {},
-			"review_requested_by->agent_sessions.id": {},
-			"review_received_by->agent_sessions.id":  {},
+			"task_id->tasks.id":                               {},
+			"requested_by->agent_sessions.id":                 {},
+			"received_by->agent_sessions.id":                  {},
+			"review_requested_by->agent_sessions.id":          {},
+			"review_received_by->agent_sessions.id":           {},
+			"review_rejection_received_by->agent_sessions.id": {},
 		},
 		"goal_handoffs": {
-			"goal_id->goals.id":                      {},
-			"requested_by->agent_sessions.id":        {},
-			"received_by->agent_sessions.id":         {},
-			"review_requested_by->agent_sessions.id": {},
-			"review_received_by->agent_sessions.id":  {},
+			"goal_id->goals.id":                               {},
+			"requested_by->agent_sessions.id":                 {},
+			"received_by->agent_sessions.id":                  {},
+			"review_requested_by->agent_sessions.id":          {},
+			"review_received_by->agent_sessions.id":           {},
+			"review_rejection_received_by->agent_sessions.id": {},
 		},
 		"plan_handoffs": {
-			"goal_id->goals.id":                      {},
-			"review_requested_by->agent_sessions.id": {},
-			"review_received_by->agent_sessions.id":  {},
+			"goal_id->goals.id":                               {},
+			"review_requested_by->agent_sessions.id":          {},
+			"review_received_by->agent_sessions.id":           {},
+			"review_rejection_received_by->agent_sessions.id": {},
 		},
 	}
 
@@ -280,7 +285,7 @@ func assertForeignKeySet(t *testing.T, db *sql.DB) {
 		}
 		got += len(actual)
 	}
-	const wantCount = 20
+	const wantCount = 25
 	if got != wantCount {
 		t.Errorf("foreign key count = %d, want %d", got, wantCount)
 	}

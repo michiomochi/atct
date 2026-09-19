@@ -8,8 +8,9 @@
 #   2. script/release.sh <version>
 #   3. atct daemon stop && atct daemon start   (with the new binary)
 #   4. Monitor the new watch
-#   5. After the replacement, each space must reacquire its project claim:
-#      call atct_project_release first (the old daemon PID still owns the claim), then atct_project_claim
+#   5. After the replacement, each space calls atct_project_claim. Releasing
+#      first is no longer needed: the claim of a session whose monitor stopped
+#      renewing its lease is stale on its own, and claiming takes it over.
 #
 # Everything between 2 and 3 used to be ten separate commands, which left ten
 # places to stop and write a summary instead of continuing.
@@ -78,7 +79,6 @@ fi
 echo "==> tests"
 go build ./...
 go test -count=1 -timeout 600s ./... >/dev/null
-bash tests/cache_prune_test.bash >/dev/null
 bash tests/session_start_test.bash >/dev/null
 bash tests/wrapper_test.bash >/dev/null
 bash script/schema-check.sh
@@ -115,21 +115,34 @@ if len(previous_versions) != 1:
         f"plugin manifests have different versions: {sorted(previous_versions)}"
     )
 previous = next(iter(previous_versions))
+
+# Check before writing anything. This used to bump the manifests first, so a
+# failure here left them on the new version while the hooks kept the old one,
+# and the next run stopped on a dirty tree instead of on the real problem.
+codex_hooks_path = pathlib.Path("hooks") / "codex-hooks.json"
+codex_hooks = codex_hooks_path.read_text()
+marker = "required=" + previous
+# One marker per hook command. The count used to be hardcoded at 2; 468509d
+# added a third hook without touching it, and every release since then stopped
+# here.
+expected = codex_hooks.count('"type": "command"')
+found = codex_hooks.count(marker)
+if found != expected:
+    raise SystemExit(
+        f"Codex hooks carry {found} `{marker}` markers, expected one per hook command ({expected})"
+    )
+
 for path, data in manifest_data:
     data["version"] = version
     path.write_text(json.dumps(data, indent=2) + "\n")
+codex_hooks_path.write_text(codex_hooks.replace(marker, "required=" + version))
 
-resolve = pathlib.Path("bin/_resolve")
-text = resolve.read_text()
-if previous not in text:
-    raise SystemExit(f"{resolve} does not mention {previous}")
-resolve.write_text(text.replace(previous, version))
 PY
 go build ./...
 bash tests/wrapper_test.bash >/dev/null
 
 echo "==> commit and tag"
-git add ".claude-plugin"/plugin.json ".codex-plugin"/plugin.json bin/_resolve
+git add ".claude-plugin"/plugin.json ".codex-plugin"/plugin.json hooks/codex-hooks.json
 git -c commit.gpgsign=false commit -q -m "chore: bump to $version"
 git -c commit.gpgsign=false tag -a "v$version" -m "v$version"
 
@@ -147,4 +160,4 @@ echo "==> plugin"
 claude plugin update atct@atct
 
 echo "==> done. now: atct daemon stop && atct daemon start, then re-arm the watch"
-echo "==> After the replacement, each space must reacquire its project claim: call atct_project_release first (the old daemon PID still owns the claim), then atct_project_claim"
+echo "==> After the replacement, each space calls atct_project_claim. No release first: a claim whose lease stopped being renewed is stale and is taken over by the claim itself."

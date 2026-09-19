@@ -294,35 +294,76 @@ func TestCodexAppServerAcceptsLargeThreadListResponse(t *testing.T) {
 }
 
 func TestCodexMonitorActionLineAdmitsFormattedTaskActions(t *testing.T) {
-	for _, line := range []string{
-		"atct handoff reported: task 846 (handoff handoff-846): verified",
-		"atct handoff yielded: task 846",
-		"atct detection: task 846 has a stale claim",
+	for _, tc := range []struct {
+		line      string
+		eventName string
+		decision  watchDecision
+	}{
+		{line: "atct handoff reported: task 846 (handoff handoff-846): verified", eventName: "handoff_reported", decision: watchDecision{TaskID: "846", HandoffID: "handoff-846"}},
+		{line: "atct wakeup: task 846 has a stale claim", eventName: "wakeup.claim_stale", decision: watchDecision{TaskID: "846"}},
 	} {
-		if !isCodexMonitorActionLine(line) {
-			t.Fatalf("task transition action line rejected: %q", line)
+		if _, ok := selectWatchAgentAction(tc.line, tc.eventName, tc.decision); !ok {
+			t.Fatalf("task transition action line rejected: %q", tc.line)
 		}
 	}
 }
 
 func TestCodexMonitorActionLineAdmitsCanonicalHandoffLifecycle(t *testing.T) {
-	for _, line := range []string{
-		"atct task handoff requested (task_id: 951, handoff_id: task-951)",
-		"atct task handoff received (task_id: 951, handoff_id: task-951)",
-		"atct task handoff review requested (task_id: 951, handoff_id: task-951)",
-		"atct task handoff review received (task_id: 951, handoff_id: task-951)",
-		"atct task handoff review rejected (task_id: 951, handoff_id: task-951)",
-		"atct task handoff completed (task_id: 951, handoff_id: task-951)",
-		"atct goal handoff requested (goal_id: 225, handoff_id: goal-225)",
-		"atct goal handoff received (goal_id: 225, handoff_id: goal-225)",
-		"atct goal handoff review requested (goal_id: 225, handoff_id: goal-225)",
-		"atct goal handoff review received (goal_id: 225, handoff_id: goal-225)",
-		"atct goal handoff review rejected (goal_id: 225, handoff_id: goal-225)",
-		"atct goal handoff completed (goal_id: 225, handoff_id: goal-225)",
+	for _, tc := range []struct {
+		line      string
+		eventName string
+		decision  watchDecision
+	}{
+		{line: "atct task handoff requested (task_id: 951, handoff_id: task-951)", eventName: "task.handoff.request", decision: watchDecision{TaskID: "951", HandoffID: "task-951"}},
+		{line: "atct task handoff received (task_id: 951, handoff_id: task-951)", eventName: "task.handoff.receive", decision: watchDecision{TaskID: "951", HandoffID: "task-951"}},
+		{line: "atct task handoff review requested (task_id: 951, handoff_id: task-951)", eventName: "task.handoff.review.request", decision: watchDecision{TaskID: "951", HandoffID: "task-951"}},
+		{line: "atct task handoff review received (task_id: 951, handoff_id: task-951)", eventName: "task.handoff.review.receive", decision: watchDecision{TaskID: "951", HandoffID: "task-951"}},
+		{line: "atct task handoff review rejected (task_id: 951, handoff_id: task-951)", eventName: "task.handoff.review.reject", decision: watchDecision{TaskID: "951", HandoffID: "task-951"}},
+		{line: "atct task handoff completed (task_id: 951, handoff_id: task-951)", eventName: "task.handoff.complete", decision: watchDecision{TaskID: "951", HandoffID: "task-951"}},
+		{line: "atct goal handoff requested (goal_id: 225, handoff_id: goal-225)", eventName: "goal.handoff.request", decision: watchDecision{GoalID: "225", HandoffID: "goal-225"}},
+		{line: "atct goal handoff received (goal_id: 225, handoff_id: goal-225)", eventName: "goal.handoff.receive", decision: watchDecision{GoalID: "225", HandoffID: "goal-225"}},
+		{line: "atct goal handoff review requested (goal_id: 225, handoff_id: goal-225)", eventName: "goal.handoff.review.request", decision: watchDecision{GoalID: "225", HandoffID: "goal-225"}},
+		{line: "atct goal handoff review received (goal_id: 225, handoff_id: goal-225)", eventName: "goal.handoff.review.receive", decision: watchDecision{GoalID: "225", HandoffID: "goal-225"}},
+		{line: "atct goal handoff review rejected (goal_id: 225, handoff_id: goal-225)", eventName: "goal.handoff.review.reject", decision: watchDecision{GoalID: "225", HandoffID: "goal-225"}},
+		{line: "atct goal handoff completed (goal_id: 225, handoff_id: goal-225)", eventName: "goal.handoff.complete", decision: watchDecision{GoalID: "225", HandoffID: "goal-225"}},
+		{line: "atct goal review rejected (goal_id: 225, decision_id: 71): commander should call goal.handoff.review.reject", eventName: "goal.review.reject", decision: watchDecision{GoalID: "225", DecisionID: "71"}},
 	} {
-		if !isCodexMonitorActionLine(line) {
-			t.Fatalf("canonical handoff lifecycle action line rejected: %q", line)
+		if _, ok := selectWatchAgentAction(tc.line, tc.eventName, tc.decision); !ok {
+			t.Fatalf("canonical handoff lifecycle action line rejected: %q", tc.line)
 		}
+	}
+}
+
+func TestCodexMonitorActionLineAdmitsLiveness(t *testing.T) {
+	if _, ok := selectWatchAgentAction("atct monitor liveness: recheck task 812", "monitor.liveness", watchDecision{TaskID: "812"}); !ok {
+		t.Fatal("liveness action line rejected")
+	}
+}
+
+func TestCodexScopedLivenessQueuesUntilThreadIsIdle(t *testing.T) {
+	starter := &fakeCodexTurnStarter{}
+	bridge := newCodexMonitorBridge(starter, "thread-1")
+	bridge.SetActive(true)
+
+	line := "atct monitor liveness: recheck task 812"
+	if err := bridge.ActionSinkWithContext(context.Background())(watchAgentAction{line: line, eventName: "monitor.liveness"}); err != nil {
+		t.Fatalf("ActionSinkWithContext() error = %v", err)
+	}
+	if got := starter.callsSnapshot(); len(got) != 0 {
+		t.Fatalf("turn starts while thread active = %v, want none", got)
+	}
+	if got := bridge.QueueLen(); got != 1 {
+		t.Fatalf("queued liveness actions = %d, want 1", got)
+	}
+
+	if err := bridge.HandleNotification(context.Background(), codexAppServerNotification{
+		Method: "turn/completed",
+		Params: json.RawMessage(`{"threadId":"thread-1","turn":{"status":"completed"}}`),
+	}); err != nil {
+		t.Fatalf("HandleNotification() error = %v", err)
+	}
+	if got := starter.callsSnapshot(); len(got) != 1 || got[0] != line {
+		t.Fatalf("turn starts after idle = %v, want [%q]", got, line)
 	}
 }
 
@@ -650,6 +691,56 @@ func TestCodexMonitorQueueRetainsFailedSubmission(t *testing.T) {
 	}
 }
 
+func TestCodexMonitorUnknownSubmissionStopsActionSink(t *testing.T) {
+	starter := &fakeCodexTurnStarter{errs: []error{errCodexTurnSubmitUnknown}}
+	bridge := newCodexMonitorBridge(starter, "thread-1")
+	ctx := context.Background()
+
+	action := watchAgentAction{line: "possibly-submitted", eventName: "task.handoff.review.reject"}
+	if err := bridge.ActionSinkWithContext(ctx)(action); !errors.Is(err, errCodexTurnSubmitUnknown) {
+		t.Fatalf("ActionSinkWithContext() error = %v, want unknown submission", err)
+	}
+	if got := bridge.QueueLen(); got != 1 {
+		t.Fatalf("QueueLen() after unknown submission = %d, want reserved action retained", got)
+	}
+	if !bridge.disabled {
+		t.Fatal("bridge disabled = false, want terminal monitor state")
+	}
+	if err := bridge.HandleNotification(ctx, codexAppServerNotification{Method: "thread/status/changed", Params: mustJSON(map[string]any{"threadId": "thread-1", "status": map[string]any{"type": "idle"}})}); err != nil {
+		t.Fatalf("HandleNotification(idle): %v", err)
+	}
+	if got := starter.callsSnapshot(); len(got) != 1 {
+		t.Fatalf("turn starts = %#v, want one possibly-submitted attempt", got)
+	}
+}
+
+func TestCodexMonitorUnknownSubmissionIgnoresObservedTurnStarted(t *testing.T) {
+	starter := &fakeCodexTurnStarter{errs: []error{errCodexTurnSubmitUnknown}}
+	bridge := newCodexMonitorBridge(starter, "thread-1")
+	ctx := context.Background()
+	starter.onStart = func() {
+		if err := bridge.HandleNotification(ctx, codexAppServerNotification{
+			Method: "turn/started",
+			Params: mustJSON(map[string]any{
+				"threadId": "thread-1",
+				"turn":     map[string]any{"id": "foreign-turn"},
+			}),
+		}); err != nil {
+			t.Errorf("HandleNotification(turn/started): %v", err)
+		}
+	}
+
+	if err := bridge.Enqueue(ctx, "possibly-submitted"); !errors.Is(err, errCodexTurnSubmitUnknown) {
+		t.Fatalf("Enqueue() error = %v, want unknown submission", err)
+	}
+	if got := bridge.QueueLen(); got != 1 {
+		t.Fatalf("QueueLen() after foreign turn/started = %d, want reserved action retained", got)
+	}
+	if got := starter.callsSnapshot(); len(got) != 1 {
+		t.Fatalf("turn starts = %#v, want one possibly-submitted attempt", got)
+	}
+}
+
 func TestCodexMonitorQueueRetriesAfterTransientCompletionFailure(t *testing.T) {
 	starter := &fakeCodexTurnStarter{errs: []error{errors.New("temporary rejection"), nil}}
 	bridge := newCodexMonitorBridge(starter, "thread-1")
@@ -729,10 +820,12 @@ func TestCodexMonitorIdleThreadStartedRetriesTransientStartFailure(t *testing.T)
 	}
 }
 
-func TestCodexMonitorFatalAppServerFailureRetainsQueuedItem(t *testing.T) {
+func TestCodexMonitorAppServerClosedRetainsPossiblySubmittedItem(t *testing.T) {
 	app := newFakeCodexMonitorApp()
 	app.notificationErr = errors.New("App Server connection lost")
+	startCalls := 0
 	app.startTurn = func(context.Context, string, string) (codexTurn, error) {
+		startCalls++
 		return codexTurn{}, errors.New("turn start failed")
 	}
 	bridge := newCodexMonitorBridge(app, "thread-1")
@@ -760,6 +853,9 @@ func TestCodexMonitorFatalAppServerFailureRetainsQueuedItem(t *testing.T) {
 	if got := bridge.QueueLen(); got != 1 {
 		t.Fatalf("QueueLen() after terminal idle notification = %d, want 1", got)
 	}
+	if got := startCalls; got != 1 {
+		t.Fatalf("turn starts after terminal idle notification = %d, want 1", got)
+	}
 }
 
 func TestCodexMonitorQueuesBeforeThreadIsAttached(t *testing.T) {
@@ -784,29 +880,588 @@ func TestCodexMonitorQueuesBeforeThreadIsAttached(t *testing.T) {
 	}
 }
 
+func TestCodexMonitorQueuePrunesQueuedApprovalAfterGoalHandoffReceive(t *testing.T) {
+	starter := &fakeCodexTurnStarter{}
+	bridge := newCodexMonitorBridge(starter, "thread-1")
+	bridge.SetActive(true)
+	ctx := context.Background()
+
+	for _, action := range []codexMonitorAction{
+		{line: "same-goal-approval", eventName: "decision.approved", goalID: "goal-1"},
+		{line: "other-goal-approval", eventName: "decision.approved", goalID: "goal-2"},
+	} {
+		if err := bridge.enqueueAction(ctx, action); err != nil {
+			t.Fatalf("enqueueAction(%q): %v", action.line, err)
+		}
+	}
+	if err := bridge.enqueueAction(ctx, codexMonitorAction{
+		line:      "goal-receive",
+		eventName: "goal.handoff.receive",
+		goalID:    "goal-1",
+	}); err != nil {
+		t.Fatalf("enqueueAction(goal receive): %v", err)
+	}
+	if got := bridge.QueueLen(); got != 2 {
+		t.Fatalf("queue length after goal receive = %d, want other approval and receive", got)
+	}
+
+	if err := bridge.HandleNotification(ctx, codexAppServerNotification{
+		Method: "thread/status/changed",
+		Params: mustJSON(map[string]any{
+			"threadId": "thread-1",
+			"status":   map[string]any{"type": "idle"},
+		}),
+	}); err != nil {
+		t.Fatalf("HandleNotification(idle): %v", err)
+	}
+	if err := bridge.HandleNotification(ctx, codexAppServerNotification{
+		Method: "turn/completed",
+		Params: mustJSON(map[string]any{"threadId": "thread-1"}),
+	}); err != nil {
+		t.Fatalf("HandleNotification(completed): %v", err)
+	}
+
+	if got := starter.callsSnapshot(); len(got) != 2 || got[0] != "other-goal-approval" || got[1] != "goal-receive" {
+		t.Fatalf("turns after queued approval prune = %#v, want [other-goal-approval goal-receive]", got)
+	}
+}
+
+func TestCodexMonitorQueueKeepsActiveApprovalAfterGoalHandoffReceive(t *testing.T) {
+	starter := &fakeCodexTurnStarter{}
+	bridge := newCodexMonitorBridge(starter, "thread-1")
+	ctx := context.Background()
+
+	if err := bridge.enqueueAction(ctx, codexMonitorAction{
+		line:      "active-approval",
+		eventName: "decision.approved",
+		goalID:    "goal-1",
+	}); err != nil {
+		t.Fatalf("enqueueAction(active approval): %v", err)
+	}
+	if !bridge.Active() {
+		t.Fatal("bridge is idle after starting approval, want active")
+	}
+	if err := bridge.enqueueAction(ctx, codexMonitorAction{
+		line:      "goal-receive",
+		eventName: "goal.handoff.receive",
+		goalID:    "goal-1",
+	}); err != nil {
+		t.Fatalf("enqueueAction(goal receive): %v", err)
+	}
+
+	if got := starter.callsSnapshot(); len(got) != 1 || got[0] != "active-approval" {
+		t.Fatalf("turns while approval is active = %#v, want [active-approval]", got)
+	}
+	if err := bridge.HandleNotification(ctx, codexAppServerNotification{
+		Method: "turn/completed",
+		Params: mustJSON(map[string]any{"threadId": "thread-1"}),
+	}); err != nil {
+		t.Fatalf("HandleNotification(completed): %v", err)
+	}
+	if got := starter.callsSnapshot(); len(got) != 2 || got[1] != "goal-receive" {
+		t.Fatalf("turns after active approval completed = %#v, want receive after active approval", got)
+	}
+}
+
+func TestCodexMonitorCoalescesPendingAndActiveActionsByDeliveryKey(t *testing.T) {
+	starter := &fakeCodexTurnStarter{}
+	bridge := newCodexMonitorBridge(starter, "thread-1")
+	ctx := context.Background()
+	active := codexMonitorAction{line: "request", eventName: "task.handoff.request", goalID: "goal-1", deliveryKey: "task.handoff.request\x00handoff-1"}
+	if err := bridge.enqueueAction(ctx, active); err != nil {
+		t.Fatalf("enqueue active: %v", err)
+	}
+	if err := bridge.enqueueAction(ctx, active); err != nil {
+		t.Fatalf("enqueue active duplicate: %v", err)
+	}
+	pending := codexMonitorAction{line: "review", eventName: "task.handoff.review.request", goalID: "goal-1", deliveryKey: "task.handoff.review.request\x00handoff-1"}
+	if err := bridge.enqueueAction(ctx, pending); err != nil {
+		t.Fatalf("enqueue pending: %v", err)
+	}
+	if err := bridge.enqueueAction(ctx, pending); err != nil {
+		t.Fatalf("enqueue pending duplicate: %v", err)
+	}
+	if got := bridge.QueueLen(); got != 1 {
+		t.Fatalf("QueueLen() = %d, want one pending action", got)
+	}
+	if err := bridge.HandleNotification(ctx, codexAppServerNotification{Method: "turn/completed", Params: mustJSON(map[string]any{"threadId": "thread-1"})}); err != nil {
+		t.Fatalf("complete active turn: %v", err)
+	}
+	if got := starter.callsSnapshot(); len(got) != 2 || got[0] != "request" || got[1] != "review" {
+		t.Fatalf("started turns = %#v, want [request review]", got)
+	}
+}
+
+func TestCodexMonitorKeepsDistinctDeliveryPhasesInOrder(t *testing.T) {
+	starter := &fakeCodexTurnStarter{}
+	bridge := newCodexMonitorBridge(starter, "thread-1")
+	ctx := context.Background()
+	for _, action := range []codexMonitorAction{
+		{line: "request", eventName: "task.handoff.request", goalID: "goal-1", deliveryKey: "task.handoff.request\x00handoff-1"},
+		{line: "review", eventName: "task.handoff.review.request", goalID: "goal-1", deliveryKey: "task.handoff.review.request\x00handoff-1"},
+		{line: "reject", eventName: "task.handoff.review.reject", goalID: "goal-1", deliveryKey: "task.handoff.review.reject\x00handoff-1"},
+		{line: "other", eventName: "task.handoff.request", goalID: "goal-1", deliveryKey: "task.handoff.request\x00handoff-2"},
+	} {
+		if err := bridge.enqueueAction(ctx, action); err != nil {
+			t.Fatalf("enqueue %q: %v", action.line, err)
+		}
+	}
+	for range 3 {
+		if err := bridge.HandleNotification(ctx, codexAppServerNotification{Method: "turn/completed", Params: mustJSON(map[string]any{"threadId": "thread-1"})}); err != nil {
+			t.Fatalf("complete turn: %v", err)
+		}
+	}
+	if got := starter.callsSnapshot(); strings.Join(got, ",") != "request,review,reject,other" {
+		t.Fatalf("started turns = %#v, want distinct phases and handoffs in order", got)
+	}
+}
+
+func TestCodexMonitorReviewQueueUsesHandoffGeneration(t *testing.T) {
+	starter := &fakeCodexTurnStarter{}
+	bridge := newCodexMonitorBridge(starter, "thread-1")
+	bridge.SetActive(true)
+	ctx := context.Background()
+	const handoffID = "handoff-246"
+	const targetRole = "executor"
+	const requestGeneration = "2026-09-14T00:00:01.000000000Z"
+	const receiptGeneration = "2026-09-14T00:00:02.000000000Z"
+	const retryGeneration = "2026-09-14T00:00:03.000000000Z"
+	const rejectionReceiptGeneration = "2026-09-14T00:00:04.000000000Z"
+
+	enqueue := func(eventName, line, generation string) {
+		t.Helper()
+		action := watchAgentAction{
+			line:        line,
+			eventName:   eventName,
+			deliveryKey: strings.Join([]string{eventName, targetRole, handoffID}, "\x00"),
+			generation:  generation,
+			controlOnly: eventName == "task.handoff.review.receive",
+		}
+		if err := bridge.ActionSinkWithContext(ctx)(action); err != nil {
+			t.Fatalf("enqueue %q: %v", line, err)
+		}
+	}
+	queuedLine := func() string {
+		t.Helper()
+		bridge.stateMu.Lock()
+		defer bridge.stateMu.Unlock()
+		if len(bridge.queue) != 1 {
+			t.Fatalf("queued actions = %#v, want one action", bridge.queue)
+		}
+		return bridge.queue[0].line
+	}
+
+	enqueue("task.handoff.review.request", "request", requestGeneration)
+	if got := queuedLine(); got != "request" {
+		t.Fatalf("queued request = %q, want request", got)
+	}
+	enqueue("task.handoff.review.receive", "receipt", receiptGeneration)
+	if got := bridge.QueueLen(); got != 0 {
+		t.Fatalf("queue after receipt = %d, want stale request removed and receipt omitted", got)
+	}
+	enqueue("task.handoff.review.request", "later retry", retryGeneration)
+	if got := queuedLine(); got != "later retry" {
+		t.Fatalf("queued retry = %q, want newer retry to replace receipt", got)
+	}
+	enqueue("task.handoff.review.reject.receive", "rejection receipt", rejectionReceiptGeneration)
+	if got := queuedLine(); got != "rejection receipt" {
+		t.Fatalf("queued rejection receipt = %q, want newest review action", got)
+	}
+	enqueue("task.handoff.review.request", "delayed old request", requestGeneration)
+	if got := queuedLine(); got != "rejection receipt" {
+		t.Fatalf("queued delayed request = %q, want old request discarded", got)
+	}
+	enqueue("task.handoff.review.reject", "same-generation rejection", rejectionReceiptGeneration)
+	if got := queuedLine(); got != "rejection receipt" {
+		t.Fatalf("queued same-generation action = %q, want duplicate discarded", got)
+	}
+}
+
+func TestCodexMonitorReviewQueueKeepsActiveActionAndScopesCoalescing(t *testing.T) {
+	starter := &fakeCodexTurnStarter{}
+	bridge := newCodexMonitorBridge(starter, "thread-1")
+	ctx := context.Background()
+
+	active := watchAgentAction{
+		line:        "active review",
+		eventName:   "task.handoff.review.request",
+		deliveryKey: "task.handoff.review.request\x00executor\x00handoff-active",
+		generation:  "2026-09-14T00:00:01.000000000Z",
+	}
+	if err := bridge.ActionSinkWithContext(ctx)(active); err != nil {
+		t.Fatalf("enqueue active review: %v", err)
+	}
+	if got := starter.callsSnapshot(); len(got) != 1 || got[0] != "active review" {
+		t.Fatalf("started active review = %#v, want active review", got)
+	}
+
+	newer := watchAgentAction{
+		line:        "newer queued review",
+		eventName:   "task.handoff.review.receive",
+		deliveryKey: "task.handoff.review.receive\x00executor\x00handoff-active",
+		generation:  "2026-09-14T00:00:02.000000000Z",
+		controlOnly: true,
+	}
+	if err := bridge.ActionSinkWithContext(ctx)(newer); err != nil {
+		t.Fatalf("enqueue newer review: %v", err)
+	}
+	if err := bridge.ActionSinkWithContext(ctx)(watchAgentAction{
+		line:        "delayed active review",
+		eventName:   "task.handoff.review.request",
+		deliveryKey: "task.handoff.review.request\x00executor\x00handoff-active",
+		generation:  "2026-09-14T00:00:00.000000000Z",
+	}); err != nil {
+		t.Fatalf("enqueue delayed active review: %v", err)
+	}
+
+	bridge.stateMu.Lock()
+	if bridge.activeAction == nil || bridge.activeAction.line != "active review" {
+		t.Fatalf("active action = %#v, want active review", bridge.activeAction)
+	}
+	if len(bridge.queue) != 0 {
+		t.Fatalf("active handoff queue = %#v, want no receipt turn", bridge.queue)
+	}
+	bridge.stateMu.Unlock()
+
+	for _, action := range []watchAgentAction{
+		{
+			line:        "other handoff old review",
+			eventName:   "task.handoff.review.request",
+			deliveryKey: "task.handoff.review.request\x00executor\x00handoff-other",
+			generation:  "2026-09-14T00:00:00.000000000Z",
+		},
+		{
+			line:        "non-review lifecycle",
+			eventName:   "task.handoff.request",
+			deliveryKey: "task.handoff.request\x00subcommander\x00handoff-active",
+			generation:  "2026-09-14T00:00:00.000000000Z",
+		},
+	} {
+		if err := bridge.ActionSinkWithContext(ctx)(action); err != nil {
+			t.Fatalf("enqueue scoped action %q: %v", action.line, err)
+		}
+	}
+
+	bridge.stateMu.Lock()
+	if bridge.activeAction == nil || bridge.activeAction.line != "active review" {
+		t.Fatalf("active action after scoped actions = %#v, want active review", bridge.activeAction)
+	}
+	if len(bridge.queue) != 2 || bridge.queue[0].line != "other handoff old review" || bridge.queue[1].line != "non-review lifecycle" {
+		t.Fatalf("scoped review queue = %#v, want other handoff and lifecycle", bridge.queue)
+	}
+	bridge.stateMu.Unlock()
+}
+
+func TestCodexMonitorReconciliationReviewQueueUsesGeneration(t *testing.T) {
+	const requestState = `{"goals":[],"decisions":[],"goal_handoffs":[],"plan_handoffs":[],"task_handoffs":[{"ID":"handoff-246","GoalID":246,"TaskID":1273,"ReviewRequestedAt":"2026-09-14T00:00:01.000000000Z"}]}`
+	const receiptState = `{"goals":[],"decisions":[],"goal_handoffs":[],"plan_handoffs":[],"task_handoffs":[{"ID":"handoff-246","GoalID":246,"TaskID":1273,"ReviewReceivedAt":"2026-09-14T00:00:02.000000000Z"}]}`
+	responses := []string{requestState, receiptState, requestState, receiptState, receiptState}
+	responseIndex := 0
+	client := &http.Client{Transport: watchRoundTripper(func(req *http.Request) (*http.Response, error) {
+		if req.URL.Path != "/api/events/reconcile" {
+			return nil, errors.New("unexpected request path")
+		}
+		body := responses[responseIndex]
+		responseIndex++
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Status:     "200 OK",
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(body)),
+		}, nil
+	})}
+
+	starter := &fakeCodexTurnStarter{}
+	bridge := newCodexMonitorBridge(starter, "thread-1")
+	bridge.SetActive(true)
+	scope := watchScope{ProjectID: "1"}
+	newState := func() (map[watchDeliveryKey]struct{}, *string, map[watchWakeupDiscrepancyDeliveryKey]struct{}, map[watchWakeupDeliveryKey]struct{}) {
+		return make(map[watchDeliveryKey]struct{}), new(string), make(map[watchWakeupDiscrepancyDeliveryKey]struct{}), make(map[watchWakeupDeliveryKey]struct{})
+	}
+	delivered, lastWakeupContent, discrepancyDelivered, wakeupDelivered := newState()
+
+	reconcile := func(stateDelivered map[watchDeliveryKey]struct{}, stateLastWakeupContent *string, stateDiscrepancyDelivered map[watchWakeupDiscrepancyDeliveryKey]struct{}, stateWakeupDelivered map[watchWakeupDeliveryKey]struct{}) {
+		t.Helper()
+		if err := reconcileWatchScope(
+			context.Background(), client, "http://daemon", scope, io.Discard,
+			stateDelivered, stateLastWakeupContent, stateDiscrepancyDelivered, stateWakeupDelivered,
+			newWatchPassThroughFilter(), bridge.LineSink(), bridge.ActionSink(),
+		); err != nil {
+			t.Fatalf("reconcileWatchScope: %v", err)
+		}
+	}
+
+	reconcile(delivered, lastWakeupContent, discrepancyDelivered, wakeupDelivered)
+	if got := bridge.QueueLen(); got != 1 {
+		t.Fatalf("queue after review request reconciliation = %d, want 1", got)
+	}
+
+	reconcile(delivered, lastWakeupContent, discrepancyDelivered, wakeupDelivered)
+	if got := bridge.QueueLen(); got != 0 {
+		t.Fatalf("queue after review receipt reconciliation = %d, want no receipt turn", got)
+	}
+
+	oldDelivered, oldLastWakeupContent, oldDiscrepancyDelivered, oldWakeupDelivered := newState()
+	reconcile(oldDelivered, oldLastWakeupContent, oldDiscrepancyDelivered, oldWakeupDelivered)
+	reconcile(oldDelivered, oldLastWakeupContent, oldDiscrepancyDelivered, oldWakeupDelivered)
+	reconcile(oldDelivered, oldLastWakeupContent, oldDiscrepancyDelivered, oldWakeupDelivered)
+
+	if got := bridge.QueueLen(); got != 0 {
+		t.Fatalf("queue after delayed request and repeated receipt = %d, want no stale request or receipt", got)
+	}
+	if got := bridge.QueueLen(); got != 0 {
+		t.Fatalf("queue after repeated receipt reconciliation = %d, want 0", got)
+	}
+	if err := bridge.HandleNotification(context.Background(), codexAppServerNotification{
+		Method: "turn/completed",
+		Params: mustJSON(map[string]any{"threadId": "thread-1"}),
+	}); err != nil {
+		t.Fatalf("HandleNotification(completed): %v", err)
+	}
+	if got := starter.callsSnapshot(); len(got) != 0 {
+		t.Fatalf("started reconciliation actions = %#v, want no receipt turn", got)
+	}
+	if got := bridge.QueueLen(); got != 0 {
+		t.Fatalf("queue after idle notification = %d, want 0", got)
+	}
+}
+
+func TestCodexMonitorRejectionDeliveryAcrossHandoffKinds(t *testing.T) {
+	const (
+		goalID              = "246"
+		taskID              = "1281"
+		handoffRequestAt    = "2026-09-16T00:00:01.000000000Z"
+		handoffReceivedAt   = "2026-09-16T00:00:02.000000000Z"
+		handoffRejectedAt   = "2026-09-16T00:00:03.000000000Z"
+		handoffRequestEvent = ".handoff.review.request"
+		handoffReceiveEvent = ".handoff.review.receive"
+		handoffRejectEvent  = ".handoff.review.reject"
+		livenessEvent       = "monitor.liveness"
+	)
+	cases := []struct {
+		name      string
+		kind      string
+		handoffID string
+		role      string
+		task      bool
+	}{
+		{name: "plan", kind: "plan", handoffID: "plan-handoff-246", role: "subcommander"},
+		{name: "goal", kind: "goal", handoffID: "goal-handoff-246", role: "subcommander"},
+		{name: "task", kind: "task", handoffID: "task-handoff-1281", role: "executor", task: true},
+	}
+	stringPtr := func(value string) *string { return &value }
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			scope := watchScope{ProjectID: "1", GoalID: goalID, Role: tc.role}
+			if tc.task {
+				scope.TaskID = taskID
+			}
+			actionFor := func(eventName, generation string) watchAgentAction {
+				t.Helper()
+				decision := watchDecision{
+					GoalID:             goalID,
+					HandoffID:          tc.handoffID,
+					TargetRole:         tc.role,
+					deliveryGeneration: generation,
+				}
+				if tc.task {
+					decision.TaskID = taskID
+				}
+				var line string
+				var ok bool
+				if eventName == livenessEvent {
+					line = formatWatchLiveness(scope)
+					ok = true
+				} else {
+					line, ok = formatWatchDecision(eventName, decision)
+				}
+				if !ok {
+					t.Fatalf("formatWatchDecision(%q) rejected test action", eventName)
+				}
+				action, ok := selectWatchAgentAction(line, eventName, decision)
+				if !ok {
+					t.Fatalf("selectWatchAgentAction(%q) rejected test action", eventName)
+				}
+				wantControlOnly := strings.HasSuffix(eventName, ".handoff.review.receive")
+				if action.controlOnly != wantControlOnly {
+					t.Fatalf("action %q controlOnly = %v, want %v", eventName, action.controlOnly, wantControlOnly)
+				}
+				return action
+			}
+
+			t.Run("confirmed rejection precedes liveness", func(t *testing.T) {
+				starter := &fakeCodexTurnStarter{}
+				bridge := newCodexMonitorBridge(starter, "thread-1")
+				bridge.SetActive(true)
+				ctx := context.Background()
+				enqueue := func(action watchAgentAction) {
+					t.Helper()
+					if err := bridge.ActionSinkWithContext(ctx)(action); err != nil {
+						t.Fatalf("enqueue %q: %v", action.line, err)
+					}
+				}
+
+				enqueue(actionFor(tc.kind+handoffRequestEvent, handoffRequestAt))
+				enqueue(actionFor(tc.kind+handoffReceiveEvent, handoffReceivedAt))
+				if got := bridge.QueueLen(); got != 0 {
+					t.Fatalf("queue after control-only receipt = %d, want older request removed", got)
+				}
+				if got := starter.callsSnapshot(); len(got) != 0 {
+					t.Fatalf("turns after control-only receipt = %#v, want none", got)
+				}
+
+				rejection := actionFor(tc.kind+handoffRejectEvent, handoffRejectedAt)
+				liveness := actionFor(livenessEvent, "")
+				enqueue(rejection)
+				enqueue(liveness)
+				bridge.stateMu.Lock()
+				if len(bridge.queue) != 2 || bridge.queue[0].line != rejection.line || bridge.queue[1].line != liveness.line {
+					t.Fatalf("queued actions = %#v, want rejection then liveness", bridge.queue)
+				}
+				if bridge.queue[0].controlOnly {
+					t.Fatal("rejection action is control-only")
+				}
+				bridge.stateMu.Unlock()
+
+				for range 2 {
+					if err := bridge.HandleNotification(ctx, codexAppServerNotification{
+						Method: "turn/completed",
+						Params: mustJSON(map[string]any{"threadId": "thread-1"}),
+					}); err != nil {
+						t.Fatalf("HandleNotification(completed): %v", err)
+					}
+				}
+				if got := starter.callsSnapshot(); len(got) != 2 || got[0] != rejection.line || got[1] != liveness.line {
+					t.Fatalf("confirmed turns = %#v, want [%q %q]", got, rejection.line, liveness.line)
+				}
+
+				handoff := watchReconciliationHandoff{
+					ID:                tc.handoffID,
+					GoalID:            246,
+					RequestedAt:       stringPtr(handoffRequestAt),
+					ReviewRequestedAt: stringPtr(handoffRequestAt),
+					ReviewReceivedAt:  stringPtr(handoffReceivedAt),
+					ReviewRejectedAt:  stringPtr(handoffRejectedAt),
+				}
+				state := watchReconciliation{}
+				switch tc.kind {
+				case "plan":
+					state.PlanHandoffs = []watchReconciliationHandoff{handoff}
+				case "goal":
+					state.GoalHandoffs = []watchReconciliationHandoff{handoff}
+				case "task":
+					handoff.TaskID = 1281
+					state.TaskHandoffs = []watchReconciliationHandoff{handoff}
+				}
+				payload := string(mustJSON(state))
+				var reconcileCalls int
+				client := &http.Client{Transport: watchRoundTripper(func(req *http.Request) (*http.Response, error) {
+					if req.URL.Path != "/api/events/reconcile" {
+						return nil, errors.New("unexpected request path")
+					}
+					reconcileCalls++
+					return &http.Response{
+						StatusCode: http.StatusOK,
+						Status:     "200 OK",
+						Header:     http.Header{"Content-Type": []string{"application/json"}},
+						Body:       io.NopCloser(strings.NewReader(payload)),
+					}, nil
+				})}
+				freshStarter := &fakeCodexTurnStarter{}
+				freshBridge := newCodexMonitorBridge(freshStarter, "thread-fresh")
+				delivered := make(map[watchDeliveryKey]struct{})
+				lastWakeupContent := ""
+				wakeupDiscrepancyDelivered := make(map[watchWakeupDiscrepancyDeliveryKey]struct{})
+				wakeupDelivered := make(map[watchWakeupDeliveryKey]struct{})
+				scopeFilter := newWatchScopeFilter(goalID)
+				if tc.task {
+					scopeFilter = newWatchTaskScopeFilter(taskID)
+				}
+				for range 2 {
+					if err := reconcileWatchScope(
+						ctx, client, "http://daemon", scope, io.Discard,
+						delivered, &lastWakeupContent, wakeupDiscrepancyDelivered, wakeupDelivered,
+						scopeFilter, freshBridge.LineSink(), freshBridge.ActionSink(),
+					); err != nil {
+						t.Fatalf("fresh reconcileWatchScope: %v", err)
+					}
+				}
+				if reconcileCalls != 2 {
+					t.Fatalf("fresh reconciliation calls = %d, want 2", reconcileCalls)
+				}
+				if got := freshStarter.callsSnapshot(); len(got) != 1 || got[0] != rejection.line {
+					t.Fatalf("fresh watcher turns = %#v, want one %q", got, rejection.line)
+				}
+			})
+
+			t.Run("unknown rejection stops liveness", func(t *testing.T) {
+				starter := &fakeCodexTurnStarter{errs: []error{errCodexTurnSubmitUnknown}}
+				bridge := newCodexMonitorBridge(starter, "thread-1")
+				bridge.SetActive(true)
+				ctx := context.Background()
+				enqueue := func(action watchAgentAction) {
+					t.Helper()
+					if err := bridge.ActionSinkWithContext(ctx)(action); err != nil {
+						t.Fatalf("enqueue %q: %v", action.line, err)
+					}
+				}
+				enqueue(actionFor(tc.kind+handoffRequestEvent, handoffRequestAt))
+				enqueue(actionFor(tc.kind+handoffReceiveEvent, handoffReceivedAt))
+				bridge.SetActive(false)
+				rejection := actionFor(tc.kind+handoffRejectEvent, handoffRejectedAt)
+				if err := bridge.ActionSinkWithContext(ctx)(rejection); !errors.Is(err, errCodexTurnSubmitUnknown) {
+					t.Fatalf("rejection sink error = %v, want unknown submission", err)
+				}
+				if got := starter.callsSnapshot(); len(got) != 1 || got[0] != rejection.line {
+					t.Fatalf("unknown turns = %#v, want one %q", got, rejection.line)
+				}
+				if got := bridge.QueueLen(); got != 1 {
+					t.Fatalf("queue after unknown rejection = %d, want retained rejection", got)
+				}
+				if !bridge.disabled {
+					t.Fatal("bridge disabled = false, want terminal monitor state")
+				}
+				if err := bridge.ActionSinkWithContext(ctx)(actionFor(livenessEvent, "")); err == nil {
+					t.Fatal("liveness sink error = nil, want terminal bridge error")
+				}
+				if err := bridge.HandleNotification(ctx, codexAppServerNotification{
+					Method: "thread/status/changed",
+					Params: mustJSON(map[string]any{
+						"threadId": "thread-1",
+						"status":   map[string]any{"type": "idle"},
+					}),
+				}); err != nil {
+					t.Fatalf("HandleNotification(idle): %v", err)
+				}
+				if got := starter.callsSnapshot(); len(got) != 1 {
+					t.Fatalf("turns after liveness/idle = %#v, want one attempt", got)
+				}
+			})
+		})
+	}
+}
+
 func TestCodexMonitorEventSinkOnlyReceivesFormattedLines(t *testing.T) {
 	starter := &fakeCodexTurnStarter{}
 	bridge := newCodexMonitorBridge(starter, "thread-1")
-	sink := bridge.LineSink()
-	filter := newWatchScopeFilter("")
+	rawSink := bridge.LineSink()
+	actionSink := bridge.ActionSink()
 	state := make(map[watchDeliveryKey]struct{})
 	lastWakeup := ""
-	if err := emitWatchDecisionWithStateAndSink(io.Discard, "decision.approved", watchDecision{DecisionID: "d1"}, state, &lastWakeup, make(map[watchWakeupDeliveryKey]struct{}), make(map[watchDetectionDeliveryKey]struct{}), sink); err != nil {
+	if err := emitWatchDecisionWithStateAndSinks(io.Discard, "decision.approved", watchDecision{DecisionID: "d1"}, state, &lastWakeup, make(map[watchWakeupDiscrepancyDeliveryKey]struct{}), make(map[watchWakeupDeliveryKey]struct{}), rawSink, actionSink); err != nil {
 		t.Fatalf("emit approved: %v", err)
 	}
-	if filter.delivers("handoff_yielded", watchDecision{TaskID: "task-1"}) {
-		t.Fatal("project filter delivered task event, want false")
-	}
-	if err := emitWatchDecisionWithStateAndSink(io.Discard, "keepalive", watchDecision{}, state, &lastWakeup, make(map[watchWakeupDeliveryKey]struct{}), make(map[watchDetectionDeliveryKey]struct{}), sink); err != nil {
+	if err := emitWatchDecisionWithStateAndSinks(io.Discard, "keepalive", watchDecision{}, state, &lastWakeup, make(map[watchWakeupDiscrepancyDeliveryKey]struct{}), make(map[watchWakeupDeliveryKey]struct{}), rawSink, actionSink); err != nil {
 		t.Fatalf("emit keepalive: %v", err)
 	}
 	for _, line := range []string{
 		"atct watch: connection unavailable; reconnecting in 5s",
 		"atct decision default applied (decision_id: d2)",
-		"atct detection: malformed",
+		"atct wakeup: malformed",
 	} {
-		if err := sink(line); err != nil {
-			t.Fatalf("sink(%q): %v", line, err)
+		if err := rawSink(line); err != nil {
+			t.Fatalf("rawSink(%q): %v", line, err)
 		}
 	}
 	if got := bridge.QueueLen(); got != 0 {
@@ -836,8 +1491,8 @@ func TestReconcileWatchScopeSendsAppliedApprovalToCodexMonitorBridge(t *testing.
 	err := reconcileWatchScope(
 		context.Background(), client, "http://daemon", watchScope{ProjectID: "1"}, io.Discard,
 		make(map[watchDeliveryKey]struct{}), &lastWakeupContent,
-		make(map[watchWakeupDeliveryKey]struct{}), make(map[watchDetectionDeliveryKey]struct{}),
-		newWatchScopeFilter(""), bridge.LineSink(),
+		make(map[watchWakeupDiscrepancyDeliveryKey]struct{}), make(map[watchWakeupDeliveryKey]struct{}),
+		newWatchScopeFilter(""), bridge.LineSink(), bridge.ActionSink(),
 	)
 	if err != nil {
 		t.Fatalf("reconcileWatchScope: %v", err)

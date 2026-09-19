@@ -32,25 +32,6 @@ func TestGoalListResponseIncludesUnappliedDecisions(t *testing.T) {
 	}
 }
 
-func TestTaskClaimResponseIncludesUnappliedDecisions(t *testing.T) {
-	result := callNotificationTestTool(t, "atct_task_claim", map[string]any{"task_id": "task-1"},
-		`{"data":{"id":"task-1","status":"doing"},"unapplied_decisions":[{"decision_id":2,"question":"Which owner should take this task?"}]}`)
-
-	var notices []struct {
-		DecisionID int64  `json:"decision_id"`
-		Question   string `json:"question"`
-	}
-	if err := json.Unmarshal(result["unapplied_decisions"], &notices); err != nil {
-		t.Fatalf("unmarshal unapplied_decisions: %v", err)
-	}
-	if len(notices) != 1 || notices[0].DecisionID != 2 || notices[0].Question != "Which owner should take this task?" {
-		t.Fatalf("unapplied_decisions = %s, want decision 2 with question", result["unapplied_decisions"])
-	}
-	if got := string(result["data"]); got != `{"id":"task-1","status":"doing"}` {
-		t.Fatalf("data = %s, want existing payload unchanged", got)
-	}
-}
-
 func TestAdditionalToolResponsesIncludeUnappliedDecisions(t *testing.T) {
 	for _, name := range []string{
 		"atct_task_create",
@@ -233,7 +214,7 @@ func notificationTestArgs(name string) map[string]any {
 	switch name {
 	case "atct_task_create":
 		return map[string]any{
-			"goal_id": "goal-1", "titles": []string{"task"},
+			"handoff_id": "task-create-1", "goal_id": "goal-1", "titles": []string{"task"},
 			"descriptions":    []string{"Complete the created task and verify its result."},
 			"idempotency_key": "key-1", "agent": "agent-1",
 		}

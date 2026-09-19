@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -21,6 +22,7 @@ var (
 	ErrVersionMismatch = errors.New("a daemon of a different version is already running")
 	ErrStartTimeout    = errors.New("the daemon did not become ready in time")
 	ErrUnresponsive    = errors.New("the recorded daemon process is alive but not answering")
+	ErrTestExecutable  = errors.New("refusing to start a Go test executable as daemon")
 )
 
 type Config struct {
@@ -75,7 +77,17 @@ func Ensure(cfg Config) (Registry, error) {
 	return start(cfg)
 }
 
+// clearStale drops the socket and registry left by a dead daemon.
+//
+// A missing registry does not prove the daemon is gone: the file can be
+// removed while the process keeps serving. Deleting a socket that still
+// answers strands that daemon holding the HTTP port, so every later start
+// fails to bind and the socket is never recreated. Ask the socket first.
 func clearStale(dir string) error {
+	if SocketAnswers(SocketPath(dir)) {
+		return fmt.Errorf("%w: %s still answers with no registry entry; run `atct daemon stop` or terminate it",
+			ErrUnresponsive, SocketPath(dir))
+	}
 	if err := os.Remove(SocketPath(dir)); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("remove stale socket: %w", err)
 	}
@@ -83,6 +95,9 @@ func clearStale(dir string) error {
 }
 
 func start(cfg Config) (Registry, error) {
+	if strings.HasSuffix(filepath.Base(cfg.Executable), ".test") && os.Getenv("ATCT_TEST_STUB_DAEMON") == "" {
+		return Registry{}, fmt.Errorf("%w: %s", ErrTestExecutable, cfg.Executable)
+	}
 	log, err := os.OpenFile(LogPath(cfg.Dir), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
 		return Registry{}, fmt.Errorf("open daemon log: %w", err)

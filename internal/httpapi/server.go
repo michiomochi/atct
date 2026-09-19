@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -204,6 +205,22 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.handleInbox(w, r)
 		return
 	}
+	if len(parts) == 2 && parts[0] == "api" && parts[1] == "monitor-health" {
+		if r.Method != http.MethodGet && r.Method != http.MethodPost {
+			writeError(w, http.StatusBadRequest, "method is not allowed for this endpoint")
+			return
+		}
+		s.handleMonitorHealth(w, r)
+		return
+	}
+	if len(parts) == 3 && parts[0] == "api" && parts[1] == "monitor-bindings" {
+		if r.Method != http.MethodGet {
+			writeError(w, http.StatusBadRequest, "method is not allowed for this endpoint")
+			return
+		}
+		s.handleMonitorBinding(w, r, parts[2])
+		return
+	}
 	if len(parts) == 2 && parts[0] == "api" && parts[1] == "events" {
 		if r.Method != http.MethodGet {
 			writeError(w, http.StatusBadRequest, "method is not allowed for this endpoint")
@@ -378,12 +395,174 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func malformedAPIPath(path string) bool {
-	for _, prefix := range []string{"/api/inbox", "/api/events", "/api/ws", "/api/watch", "/api/projects", "/api/goals", "/api/tasks", "/api/decisions"} {
+	for _, prefix := range []string{"/api/inbox", "/api/monitor-health", "/api/events", "/api/ws", "/api/watch", "/api/projects", "/api/goals", "/api/tasks", "/api/decisions"} {
 		if path == prefix || strings.HasPrefix(path, prefix+"/") {
 			return true
 		}
 	}
 	return false
+}
+
+func (s *Server) handleMonitorHealth(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet {
+		s.handleMonitorHealthList(w, r)
+		return
+	}
+
+	var health store.MonitorHealth
+	if err := decodeJSONBody(r, &health); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if err := validateMonitorHealthScope(s, r.Context(), health); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if health.State == "stopped" {
+		when := time.Now().UTC()
+		if health.StoppedAt != nil {
+			when = health.StoppedAt.UTC()
+		}
+		if err := s.store.StopMonitorHealth(r.Context(), health.MonitorID, when); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				writeError(w, http.StatusBadRequest, "monitor health row does not exist")
+				return
+			}
+			writeStoreError(w, err)
+			return
+		}
+		health.StoppedAt = &when
+		health.TransitionedAt = when
+		health.LastSeenAt = when
+		writeJSON(w, http.StatusOK, health)
+		return
+	}
+	if health.State != "healthy" && health.State != "recovering" && health.State != "degraded" {
+		writeError(w, http.StatusBadRequest, "monitor state is invalid")
+		return
+	}
+	if err := s.store.UpsertMonitorHealth(r.Context(), health); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, health)
+}
+
+func (s *Server) handleMonitorBinding(w http.ResponseWriter, r *http.Request, token string) {
+	// The monitor polls this every second and cannot do its job without it, so
+	// the poll is the heartbeat: there is no separate call to forget to make.
+	// A lapsed lease then means the monitor process is gone, which is the one
+	// thing a session's liveness ever meant.
+	if err := s.store.RenewMonitorLease(r.Context(), token); err != nil && !errors.Is(err, store.ErrMonitorBindingNotFound) {
+		writeStoreError(w, err)
+		return
+	}
+	binding, err := s.store.MonitorBinding(r.Context(), token)
+	if errors.Is(err, store.ErrMonitorBindingNotFound) {
+		writeJSON(w, http.StatusOK, store.MonitorBinding{Pending: true})
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, binding)
+}
+
+func validateMonitorHealthScope(s *Server, ctx context.Context, health store.MonitorHealth) error {
+	if health.Role != "commander" && health.Role != "subcommander" && health.Role != "executor" {
+		return fmt.Errorf("monitor role %q is not eligible", health.Role)
+	}
+	if health.ProjectID <= 0 {
+		return errors.New("project_id is required")
+	}
+	if health.Role == "commander" {
+		if health.GoalID != nil || health.TaskID != nil {
+			return errors.New("commander monitor cannot carry goal or task selector")
+		}
+	} else if health.GoalID == nil {
+		return errors.New("project_id and goal_id are required")
+	}
+	if health.Role == "subcommander" && health.TaskID != nil {
+		return errors.New("subcommander monitor cannot carry task selector")
+	}
+	if health.Role == "executor" && health.TaskID == nil {
+		return errors.New("executor monitor requires task selector")
+	}
+	filter := eventFilter{canonicalProjectID: health.ProjectID}
+	if health.GoalID != nil {
+		filter.canonicalGoalID = *health.GoalID
+	}
+	if health.TaskID != nil {
+		filter.canonicalTaskID = *health.TaskID
+	}
+	projectID, goalID, taskID, err := s.eventScopeIDs(ctx, filter)
+	if err != nil {
+		return err
+	}
+	if projectID != health.ProjectID || (health.GoalID != nil && goalID != *health.GoalID) || (health.TaskID != nil && taskID != *health.TaskID) {
+		return errors.New("monitor selector does not match its canonical scope")
+	}
+	if health.MonitorID != store.MonitorHealthID(health.CWD, health.Role, health.ProjectID, health.GoalID, health.TaskID, health.PID, health.ProcessStartedAt, health.ScopeKey) {
+		return errors.New("monitor identity does not match its process and scope")
+	}
+	if health.PID <= 0 || health.ProcessStartedAt.IsZero() || strings.TrimSpace(health.CWD) == "" {
+		return errors.New("monitor cwd, pid, and process start are required")
+	}
+	return nil
+}
+
+func (s *Server) handleMonitorHealthList(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query()
+	projectID, err := parsePositiveMonitorHealthID(query.Get("project_id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "project_id is required")
+		return
+	}
+	filter := eventFilter{canonicalProjectID: projectID}
+	if value := query.Get("goal_id"); value != "" {
+		filter.canonicalGoalID, err = parsePositiveMonitorHealthID(value)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "goal_id is invalid")
+			return
+		}
+	}
+	if value := query.Get("task_id"); value != "" {
+		filter.canonicalTaskID, err = parsePositiveMonitorHealthID(value)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "task_id is invalid")
+			return
+		}
+	}
+	resolvedProjectID, goalID, taskID, err := s.eventScopeIDs(r.Context(), filter)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	rows, err := s.store.ListMonitorHealth(r.Context(), resolvedProjectID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	filtered := make([]store.MonitorHealth, 0, len(rows))
+	for _, row := range rows {
+		if filter.canonicalGoalID != 0 && (row.GoalID == nil || *row.GoalID != goalID) {
+			continue
+		}
+		if filter.canonicalTaskID != 0 && (row.TaskID == nil || *row.TaskID != taskID) {
+			continue
+		}
+		filtered = append(filtered, row)
+	}
+	writeJSON(w, http.StatusOK, filtered)
+}
+
+func parsePositiveMonitorHealthID(value string) (int64, error) {
+	id, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
+	if err != nil || id <= 0 {
+		return 0, errors.New("id must be positive")
+	}
+	return id, nil
 }
 
 func (s *Server) handleProjects(w http.ResponseWriter, r *http.Request) {
@@ -1431,9 +1610,9 @@ func eventMatchesTaskID(event store.DecisionEvent, taskID int64) bool {
 		return data.TaskID != 0 && data.TaskID == taskID
 	case *domain.Decision:
 		return data != nil && data.TaskID != 0 && data.TaskID == taskID
-	case store.DetectionEvent:
+	case store.WakeupEvent:
 		return data.TaskID != 0 && data.TaskID == taskID
-	case *store.DetectionEvent:
+	case *store.WakeupEvent:
 		return data != nil && data.TaskID != 0 && data.TaskID == taskID
 	case store.HandoffEvent:
 		return data.TaskID != 0 && data.TaskID == taskID
@@ -1571,9 +1750,9 @@ func eventMatchesGoalID(event store.DecisionEvent, goalID int64) bool {
 		return data.GoalID != 0 && data.GoalID == goalID
 	case *domain.Decision:
 		return data != nil && data.GoalID != 0 && data.GoalID == goalID
-	case store.DetectionEvent:
+	case store.WakeupEvent:
 		return data.GoalID != 0 && data.GoalID == goalID
-	case *store.DetectionEvent:
+	case *store.WakeupEvent:
 		return data != nil && data.GoalID != 0 && data.GoalID == goalID
 	case store.GoalWithdrawnEvent:
 		return data.GoalID != 0 && data.GoalID == goalID
@@ -1609,9 +1788,9 @@ func (s *Server) eventProjectID(ctx context.Context, event store.DecisionEvent) 
 			return 0, err
 		}
 		return goal.ProjectID, nil
-	case store.DetectionEvent:
+	case store.WakeupEvent:
 		return data.ProjectID, nil
-	case *store.DetectionEvent:
+	case *store.WakeupEvent:
 		if data == nil {
 			return 0, nil
 		}
@@ -1623,9 +1802,9 @@ func (s *Server) eventProjectID(ctx context.Context, event store.DecisionEvent) 
 			return 0, nil
 		}
 		return data.ProjectID, nil
-	case store.WakeupEvent:
+	case store.ActionableWakeupEvent:
 		return data.ProjectID, nil
-	case *store.WakeupEvent:
+	case *store.ActionableWakeupEvent:
 		if data == nil {
 			return 0, nil
 		}

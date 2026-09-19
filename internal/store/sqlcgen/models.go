@@ -9,12 +9,18 @@ import (
 )
 
 type AgentSession struct {
-	ID           int64
-	ProjectID    sql.NullInt64
-	RegisteredAt string
-	Pid          int64
-	StartedAt    string
-	SessionKey   string
+	ID                  int64
+	ProjectID           sql.NullInt64
+	RegisteredAt        string
+	Pid                 int64
+	StartedAt           string
+	SessionKey          string
+	DiscardedAt         sql.NullString
+	DiscardedBy         sql.NullInt64
+	DiscardedDecisionID sql.NullInt64
+	DiscardReason       string
+	DevelopmentMode     int64
+	LastHeartbeatAt     sql.NullString
 }
 
 type Decision struct {
@@ -57,36 +63,67 @@ type Goal struct {
 }
 
 type GoalHandoff struct {
-	ID                  string
-	GoalID              int64
-	RequestedBy         sql.NullInt64
-	ReceivedBy          sql.NullInt64
-	RequestedAt         sql.NullString
-	ReceivedAt          sql.NullString
-	CompletedReportAt   sql.NullString
-	RequestReport       sql.NullString
-	CompleteReport      sql.NullString
-	ReviewRequestedBy   sql.NullInt64
-	ReviewRequestedAt   sql.NullString
-	ReviewRequestReport sql.NullString
-	ReviewReceivedBy    sql.NullInt64
-	ReviewReceivedAt    sql.NullString
-	ReviewRejectedAt    sql.NullString
-	ReviewRejectReport  sql.NullString
+	ID                        string
+	GoalID                    int64
+	RequestedBy               sql.NullInt64
+	ReceivedBy                sql.NullInt64
+	RequestedAt               sql.NullString
+	ReceivedAt                sql.NullString
+	CompletedReportAt         sql.NullString
+	RequestReport             sql.NullString
+	CompleteReport            sql.NullString
+	ReviewRequestedBy         sql.NullInt64
+	ReviewRequestedAt         sql.NullString
+	ReviewRequestReport       sql.NullString
+	ReviewReceivedBy          sql.NullInt64
+	ReviewReceivedAt          sql.NullString
+	ReviewRejectedAt          sql.NullString
+	ReviewRejectReport        sql.NullString
+	ReviewRejectionReceivedBy sql.NullInt64
+	ReviewRejectionReceivedAt sql.NullString
+	RecoveredAt               sql.NullString
+	RecoveryReport            sql.NullString
+}
+
+type MonitorBinding struct {
+	Token          string
+	AgentSessionID int64
+	CreatedAt      string
+}
+
+type MonitorHealth struct {
+	MonitorID        string
+	AgentKey         string
+	Cwd              string
+	Role             string
+	ProjectID        int64
+	GoalID           sql.NullInt64
+	TaskID           sql.NullInt64
+	Pid              int64
+	ProcessStartedAt string
+	State            string
+	Reason           string
+	TransitionedAt   string
+	LastSeenAt       string
+	StoppedAt        sql.NullString
+	ScopeKey         string
+	AgentSessionID   int64
 }
 
 type PlanHandoff struct {
-	ID                  string
-	GoalID              int64
-	ReviewRequestedBy   sql.NullInt64
-	ReviewRequestedAt   sql.NullString
-	ReviewRequestReport sql.NullString
-	ReviewReceivedBy    sql.NullInt64
-	ReviewReceivedAt    sql.NullString
-	ReviewRejectedAt    sql.NullString
-	ReviewRejectReport  sql.NullString
-	CompletedReportAt   sql.NullString
-	CompleteReport      sql.NullString
+	ID                        string
+	GoalID                    int64
+	ReviewRequestedBy         sql.NullInt64
+	ReviewRequestedAt         sql.NullString
+	ReviewRequestReport       sql.NullString
+	ReviewReceivedBy          sql.NullInt64
+	ReviewReceivedAt          sql.NullString
+	ReviewRejectedAt          sql.NullString
+	ReviewRejectReport        sql.NullString
+	CompletedReportAt         sql.NullString
+	CompleteReport            sql.NullString
+	ReviewRejectionReceivedBy sql.NullInt64
+	ReviewRejectionReceivedAt sql.NullString
 }
 
 type Project struct {
@@ -127,21 +164,40 @@ type TaskCommit struct {
 	CreatedAt    string
 }
 
+type TaskCreateHandoff struct {
+	ID             string
+	GoalID         int64
+	RequestedBy    sql.NullInt64
+	ReceivedBy     sql.NullInt64
+	CompletedBy    sql.NullInt64
+	RequestedAt    sql.NullString
+	ReceivedAt     sql.NullString
+	CompletedAt    sql.NullString
+	RequestReport  sql.NullString
+	CompleteReport sql.NullString
+	RecoveredAt    sql.NullString
+	RecoveryReport sql.NullString
+}
+
 type TaskHandoff struct {
-	ID                  string
-	TaskID              int64
-	RequestedBy         sql.NullInt64
-	ReceivedBy          sql.NullInt64
-	RequestedAt         sql.NullString
-	ReceivedAt          sql.NullString
-	CompletedReportAt   sql.NullString
-	RequestReport       sql.NullString
-	CompleteReport      sql.NullString
-	ReviewRequestedBy   sql.NullInt64
-	ReviewRequestedAt   sql.NullString
-	ReviewRequestReport sql.NullString
-	ReviewReceivedBy    sql.NullInt64
-	ReviewReceivedAt    sql.NullString
-	ReviewRejectedAt    sql.NullString
-	ReviewRejectReport  sql.NullString
+	ID                        string
+	TaskID                    int64
+	RequestedBy               sql.NullInt64
+	ReceivedBy                sql.NullInt64
+	RequestedAt               sql.NullString
+	ReceivedAt                sql.NullString
+	CompletedReportAt         sql.NullString
+	RequestReport             sql.NullString
+	CompleteReport            sql.NullString
+	ReviewRequestedBy         sql.NullInt64
+	ReviewRequestedAt         sql.NullString
+	ReviewRequestReport       sql.NullString
+	ReviewReceivedBy          sql.NullInt64
+	ReviewReceivedAt          sql.NullString
+	ReviewRejectedAt          sql.NullString
+	ReviewRejectReport        sql.NullString
+	ReviewRejectionReceivedBy sql.NullInt64
+	ReviewRejectionReceivedAt sql.NullString
+	RecoveredAt               sql.NullString
+	RecoveryReport            sql.NullString
 }

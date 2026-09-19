@@ -62,15 +62,15 @@ func declareOrderTestBatches(t *testing.T, s *Store, goalID int64) {
 		"Summarize the final ordering behavior for the implementation handoff.",
 		"Run the build, tests, and wrapper checks before reporting completion.",
 	}
-	if _, err := s.DeclareTasks(ctx, goalID, "codex", "order-batch-1", firstTitles, firstDescriptions); err != nil {
-		t.Fatalf("first DeclareTasks: %v", err)
+	if _, err := s.CreateTasks(ctx, goalID, "codex", "order-batch-1", firstTitles, firstDescriptions); err != nil {
+		t.Fatalf("first CreateTasks: %v", err)
 	}
-	if _, err := s.DeclareTasks(ctx, goalID, "codex", "order-batch-2", secondTitles, secondDescriptions); err != nil {
-		t.Fatalf("second DeclareTasks: %v", err)
+	if _, err := s.CreateTasks(ctx, goalID, "codex", "order-batch-2", secondTitles, secondDescriptions); err != nil {
+		t.Fatalf("second CreateTasks: %v", err)
 	}
 }
 
-func TestDeclareTasksContinuesSortOrderAcrossBatches(t *testing.T) {
+func TestCreateTasksContinuesSortOrderAcrossBatches(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	goalID, otherGoalID := newOrderTestGoals(t, s)
@@ -78,8 +78,8 @@ func TestDeclareTasksContinuesSortOrderAcrossBatches(t *testing.T) {
 
 	otherTitles := []string{"Start the independent goal"}
 	otherDescriptions := []string{"Begin the other goal at its own first task order."}
-	if _, err := s.DeclareTasks(ctx, otherGoalID, "codex", "other-goal", otherTitles, otherDescriptions); err != nil {
-		t.Fatalf("other goal DeclareTasks: %v", err)
+	if _, err := s.CreateTasks(ctx, otherGoalID, "codex", "other-goal", otherTitles, otherDescriptions); err != nil {
+		t.Fatalf("other goal CreateTasks: %v", err)
 	}
 
 	tasks, err := s.ListTasks(ctx, goalID)
@@ -95,7 +95,7 @@ func TestDeclareTasksContinuesSortOrderAcrossBatches(t *testing.T) {
 	}
 }
 
-func TestDeclareTasksDoesNotDuplicateSortOrderWithinGoal(t *testing.T) {
+func TestCreateTasksDoesNotDuplicateSortOrderWithinGoal(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	goalID, _ := newOrderTestGoals(t, s)
@@ -114,7 +114,7 @@ func TestDeclareTasksDoesNotDuplicateSortOrderWithinGoal(t *testing.T) {
 	}
 }
 
-func TestDeclareTasksDoesNotResetSortOrderOnRedeclare(t *testing.T) {
+func TestCreateTasksDoesNotResetSortOrderOnRedeclare(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	goalID, _ := newOrderTestGoals(t, s)
@@ -129,7 +129,7 @@ func TestDeclareTasksDoesNotResetSortOrderOnRedeclare(t *testing.T) {
 		"This changed input must not replace the original stored documentation task.",
 		"This changed input must not replace the original stored verification task.",
 	}
-	if _, err := s.DeclareTasks(ctx, goalID, "codex", "order-batch-2", changedTitles, changedDescriptions); err != nil {
+	if _, err := s.CreateTasks(ctx, goalID, "codex", "order-batch-2", changedTitles, changedDescriptions); err != nil {
 		t.Fatalf("re-declare: %v", err)
 	}
 	after, err := s.ListTasks(ctx, goalID)
@@ -146,7 +146,7 @@ func TestDeclareTasksDoesNotResetSortOrderOnRedeclare(t *testing.T) {
 	}
 }
 
-func TestDeclareTasksKeepsSortOrderIndependentAcrossGoals(t *testing.T) {
+func TestCreateTasksKeepsSortOrderIndependentAcrossGoals(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	goalID, otherGoalID := newOrderTestGoals(t, s)
@@ -157,8 +157,8 @@ func TestDeclareTasksKeepsSortOrderIndependentAcrossGoals(t *testing.T) {
 		"Create the first task in the independent goal.",
 		"Create the second task in the independent goal.",
 	}
-	if _, err := s.DeclareTasks(ctx, otherGoalID, "codex", "independent-goal", titles, descriptions); err != nil {
-		t.Fatalf("independent goal DeclareTasks: %v", err)
+	if _, err := s.CreateTasks(ctx, otherGoalID, "codex", "independent-goal", titles, descriptions); err != nil {
+		t.Fatalf("independent goal CreateTasks: %v", err)
 	}
 	otherTasks, err := s.ListTasks(ctx, otherGoalID)
 	if err != nil {
@@ -205,37 +205,37 @@ INSERT INTO tasks (
 	}
 }
 
-func TestDeclareTasksRejectsEmptyDescription(t *testing.T) {
+func TestCreateTasksRejectsEmptyDescription(t *testing.T) {
 	s := newTestStore(t)
 	goalID := newTestGoal(t, s)
 
-	_, err := s.DeclareTasks(context.Background(), goalID, "codex", "empty-description", []string{"Implement the task"}, []string{""})
-	if err == nil || !strings.HasPrefix(err.Error(), "declare tasks:") {
-		t.Fatalf("DeclareTasks error = %v, want declare tasks error for empty description", err)
+	_, err := s.CreateTasks(context.Background(), goalID, "codex", "empty-description", []string{"Implement the task"}, []string{""})
+	if err == nil || !strings.HasPrefix(err.Error(), "create tasks:") {
+		t.Fatalf("CreateTasks error = %v, want create tasks error for empty description", err)
 	}
 }
 
-func TestDeclareTasksRejectsWhitespaceOnlyDescription(t *testing.T) {
+func TestCreateTasksRejectsWhitespaceOnlyDescription(t *testing.T) {
 	s := newTestStore(t)
 	goalID := newTestGoal(t, s)
 
-	_, err := s.DeclareTasks(context.Background(), goalID, "codex", "whitespace-description", []string{"Implement the task"}, []string{" \t\n"})
-	if err == nil || !strings.HasPrefix(err.Error(), "declare tasks:") {
-		t.Fatalf("DeclareTasks error = %v, want declare tasks error for whitespace-only description", err)
+	_, err := s.CreateTasks(context.Background(), goalID, "codex", "whitespace-description", []string{"Implement the task"}, []string{" \t\n"})
+	if err == nil || !strings.HasPrefix(err.Error(), "create tasks:") {
+		t.Fatalf("CreateTasks error = %v, want create tasks error for whitespace-only description", err)
 	}
 }
 
-func TestDeclareTasksRejectsDescriptionTitleLengthMismatch(t *testing.T) {
+func TestCreateTasksRejectsDescriptionTitleLengthMismatch(t *testing.T) {
 	s := newTestStore(t)
 	goalID := newTestGoal(t, s)
 
-	_, err := s.DeclareTasks(context.Background(), goalID, "codex", "description-length", []string{"Design the change", "Implement the change"}, []string{"Describe the schema change"})
-	if err == nil || !strings.HasPrefix(err.Error(), "declare tasks:") {
-		t.Fatalf("DeclareTasks error = %v, want declare tasks error for mismatched descriptions", err)
+	_, err := s.CreateTasks(context.Background(), goalID, "codex", "description-length", []string{"Design the change", "Implement the change"}, []string{"Describe the schema change"})
+	if err == nil || !strings.HasPrefix(err.Error(), "create tasks:") {
+		t.Fatalf("CreateTasks error = %v, want create tasks error for mismatched descriptions", err)
 	}
 }
 
-func TestDeclareTasksKeepsOriginalDescriptionOnRedeclare(t *testing.T) {
+func TestCreateTasksKeepsOriginalDescriptionOnRedeclare(t *testing.T) {
 	s := newTestStore(t)
 	goalID := newTestGoal(t, s)
 	titles := []string{"Add the task column", "Validate task declarations"}
@@ -248,16 +248,16 @@ func TestDeclareTasksKeepsOriginalDescriptionOnRedeclare(t *testing.T) {
 		"A second declaration keeps the first explanation for each task.",
 	}
 
-	first, err := s.DeclareTasks(context.Background(), goalID, "codex", "description-idempotency", titles, original)
+	first, err := s.CreateTasks(context.Background(), goalID, "codex", "description-idempotency", titles, original)
 	if err != nil {
-		t.Fatalf("first DeclareTasks: %v", err)
+		t.Fatalf("first CreateTasks: %v", err)
 	}
-	second, err := s.DeclareTasks(context.Background(), goalID, "codex", "description-idempotency", titles, changed)
+	second, err := s.CreateTasks(context.Background(), goalID, "codex", "description-idempotency", titles, changed)
 	if err != nil {
-		t.Fatalf("second DeclareTasks: %v", err)
+		t.Fatalf("second CreateTasks: %v", err)
 	}
 	if len(first) != len(original) || len(second) != len(original) {
-		t.Fatalf("DeclareTasks returned %d and %d tasks, want %d", len(first), len(second), len(original))
+		t.Fatalf("CreateTasks returned %d and %d tasks, want %d", len(first), len(second), len(original))
 	}
 	for i, want := range original {
 		if second[i].Description != want {
@@ -266,7 +266,7 @@ func TestDeclareTasksKeepsOriginalDescriptionOnRedeclare(t *testing.T) {
 	}
 }
 
-func TestDeclareTasksPersistsDescriptions(t *testing.T) {
+func TestCreateTasksPersistsDescriptions(t *testing.T) {
 	s := newTestStore(t)
 	goalID := newTestGoal(t, s)
 	titles := []string{"Add the migration", "Read descriptions from the store"}
@@ -275,8 +275,8 @@ func TestDeclareTasksPersistsDescriptions(t *testing.T) {
 		"Return each stored explanation when tasks are listed.",
 	}
 
-	if _, err := s.DeclareTasks(context.Background(), goalID, "codex", "description-persistence", titles, want); err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+	if _, err := s.CreateTasks(context.Background(), goalID, "codex", "description-persistence", titles, want); err != nil {
+		t.Fatalf("CreateTasks: %v", err)
 	}
 	tasks, err := s.ListTasks(context.Background(), goalID)
 	if err != nil {
@@ -292,7 +292,7 @@ func TestDeclareTasksPersistsDescriptions(t *testing.T) {
 	}
 }
 
-func TestDeclareTasksIsIdempotent(t *testing.T) {
+func TestCreateTasksIsIdempotent(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	goalID := newTestGoal(t, s)
@@ -304,17 +304,17 @@ func TestDeclareTasksIsIdempotent(t *testing.T) {
 		"Verify the behavior with focused and full tests.",
 	}
 
-	first, err := s.DeclareTasks(ctx, goalID, "codex", "key-1", titles, descriptions)
+	first, err := s.CreateTasks(ctx, goalID, "codex", "key-1", titles, descriptions)
 	if err != nil {
-		t.Fatalf("first DeclareTasks: %v", err)
+		t.Fatalf("first CreateTasks: %v", err)
 	}
 	if len(first) != 3 {
 		t.Fatalf("first returned %d tasks, want 3", len(first))
 	}
 
-	second, err := s.DeclareTasks(ctx, goalID, "codex", "key-1", titles, descriptions)
+	second, err := s.CreateTasks(ctx, goalID, "codex", "key-1", titles, descriptions)
 	if err != nil {
-		t.Fatalf("second DeclareTasks: %v", err)
+		t.Fatalf("second CreateTasks: %v", err)
 	}
 	if len(second) != 3 {
 		t.Fatalf("second returned %d tasks, want 3", len(second))
@@ -332,7 +332,7 @@ func TestDeclareTasksIsIdempotent(t *testing.T) {
 	}
 }
 
-func TestDeclareTasksReportsWhichTasksWereCreated(t *testing.T) {
+func TestCreateTasksReportsWhichTasksWereCreated(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	goalID := newTestGoal(t, s)
@@ -343,9 +343,9 @@ func TestDeclareTasksReportsWhichTasksWereCreated(t *testing.T) {
 		for i, title := range titles {
 			descriptions[i] = "Complete the task titled " + title + "."
 		}
-		tasks, err := s.DeclareTasks(ctx, goalID, "codex", "declared-status", titles, descriptions)
+		tasks, err := s.CreateTasks(ctx, goalID, "codex", "declared-status", titles, descriptions)
 		if err != nil {
-			t.Fatalf("DeclareTasks(%v): %v", titles, err)
+			t.Fatalf("CreateTasks(%v): %v", titles, err)
 		}
 		return tasks
 	}
@@ -393,17 +393,17 @@ func TestDeclareTasksReportsWhichTasksWereCreated(t *testing.T) {
 	}
 }
 
-func TestDeclareTasksLeavesOtherDeclarationsWithoutDeclaredStatus(t *testing.T) {
+func TestCreateTasksLeavesOtherDeclarationsWithoutDeclaredStatus(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	goalID := newTestGoal(t, s)
 
-	if _, err := s.DeclareTasks(ctx, goalID, "codex", "other-declaration", []string{"Other"}, []string{"Complete the other task."}); err != nil {
-		t.Fatalf("other DeclareTasks: %v", err)
+	if _, err := s.CreateTasks(ctx, goalID, "codex", "other-declaration", []string{"Other"}, []string{"Complete the other task."}); err != nil {
+		t.Fatalf("other CreateTasks: %v", err)
 	}
-	tasks, err := s.DeclareTasks(ctx, goalID, "codex", "target-declaration", []string{"Target"}, []string{"Complete the target task."})
+	tasks, err := s.CreateTasks(ctx, goalID, "codex", "target-declaration", []string{"Target"}, []string{"Complete the target task."})
 	if err != nil {
-		t.Fatalf("target DeclareTasks: %v", err)
+		t.Fatalf("target CreateTasks: %v", err)
 	}
 
 	var other, target *domain.Task
@@ -417,7 +417,7 @@ func TestDeclareTasksLeavesOtherDeclarationsWithoutDeclaredStatus(t *testing.T) 
 		}
 	}
 	if other == nil || target == nil {
-		t.Fatalf("DeclareTasks returned tasks = %+v, want both declarations", tasks)
+		t.Fatalf("CreateTasks returned tasks = %+v, want both declarations", tasks)
 	}
 	if other.Created != nil {
 		t.Fatalf("other declaration has Created = %v, want nil", other.Created)
@@ -427,12 +427,12 @@ func TestDeclareTasksLeavesOtherDeclarationsWithoutDeclaredStatus(t *testing.T) 
 	}
 }
 
-func TestDeclareTasksListTasksJSONOmitsDeclared(t *testing.T) {
+func TestCreateTasksListTasksJSONOmitsDeclared(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	goalID := newTestGoal(t, s)
-	if _, err := s.DeclareTasks(ctx, goalID, "codex", "json-declared", []string{"Task"}, []string{"Complete the task."}); err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+	if _, err := s.CreateTasks(ctx, goalID, "codex", "json-declared", []string{"Task"}, []string{"Complete the task."}); err != nil {
+		t.Fatalf("CreateTasks: %v", err)
 	}
 
 	tasks, err := s.ListTasks(ctx, goalID)
@@ -451,16 +451,16 @@ func TestDeclareTasksListTasksJSONOmitsDeclared(t *testing.T) {
 func declareOneTask(t *testing.T, s *Store, goalID int64, key, title string) int64 {
 	t.Helper()
 	description := "Complete the task titled " + title + "."
-	tasks, err := s.DeclareTasks(context.Background(), goalID, "codex", key, []string{title}, []string{description})
+	tasks, err := s.CreateTasks(context.Background(), goalID, "codex", key, []string{title}, []string{description})
 	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 	for _, task := range tasks {
 		if task.DeclareKey == key+"#0" {
 			return task.ID
 		}
 	}
-	t.Fatalf("DeclareTasks did not return task for key %q: %+v", key, tasks)
+	t.Fatalf("CreateTasks did not return task for key %q: %+v", key, tasks)
 	return 0
 }
 
@@ -1112,9 +1112,9 @@ func newTaskStatusClaimFixture(t *testing.T, holderPID, otherPID int) taskStatus
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
-	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "status-claim-guard", []string{"Guard the status update"}, []string{"Ensure status updates respect the task claim owner and liveness."})
+	tasks, err := s.CreateTasks(ctx, goal.ID, "agent", "status-claim-guard", []string{"Guard the status update"}, []string{"Ensure status updates respect the task claim owner and liveness."})
 	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 	const holderLabel = "status-holder"
 	const otherLabel = "status-other"
@@ -1258,9 +1258,9 @@ func TestUpdateTaskStillRejectsOpenDecision(t *testing.T) {
 
 func TestUpdateTaskIgnoresOpenDecisionForOtherTask(t *testing.T) {
 	fixture := newTaskStatusClaimFixture(t, os.Getpid(), os.Getpid())
-	otherTasks, err := fixture.store.DeclareTasks(fixture.ctx, fixture.goalID, "agent", "other-task", []string{"Other task"}, []string{"A task with an independent decision."})
+	otherTasks, err := fixture.store.CreateTasks(fixture.ctx, fixture.goalID, "agent", "other-task", []string{"Other task"}, []string{"A task with an independent decision."})
 	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 	var otherTaskID int64
 	for _, task := range otherTasks {
@@ -1270,7 +1270,7 @@ func TestUpdateTaskIgnoresOpenDecisionForOtherTask(t *testing.T) {
 		}
 	}
 	if otherTaskID == 0 {
-		t.Fatalf("DeclareTasks returned no task other than %d", fixture.taskID)
+		t.Fatalf("CreateTasks returned no task other than %d", fixture.taskID)
 	}
 	if _, err := fixture.store.AskDecision(fixture.ctx, AskInput{
 		GoalID:         fixture.goalID,
@@ -1492,9 +1492,9 @@ func TestUpdateTaskAllowsStatusChangeForUnclaimedTask(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
-	tasks, err := s.DeclareTasks(ctx, goal.ID, "agent", "unclaimed-status", []string{"Update an unclaimed task"}, []string{"Allow a session without a claim to update an unclaimed task."})
+	tasks, err := s.CreateTasks(ctx, goal.ID, "agent", "unclaimed-status", []string{"Update an unclaimed task"}, []string{"Allow a session without a claim to update an unclaimed task."})
 	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 	unclaimedID, err := s.RegisterAgentSession(ctx, os.Getpid())
 	if err != nil {
@@ -1520,9 +1520,9 @@ func TestUpdateTaskAllowsStatusChangeForUnclaimedTask(t *testing.T) {
 func newTaskCommitTestTask(t *testing.T, s *Store, key string) int64 {
 	t.Helper()
 	goalID := newTestGoal(t, s)
-	tasks, err := s.DeclareTasks(context.Background(), goalID, "agent", key, []string{"Task"}, []string{"Task description"})
+	tasks, err := s.CreateTasks(context.Background(), goalID, "agent", key, []string{"Task"}, []string{"Task description"})
 	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 	return tasks[0].ID
 }
@@ -1567,9 +1567,9 @@ func TestListTaskCommitsDoesNotMixTasks(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	goalID := newTestGoal(t, s)
-	tasks, err := s.DeclareTasks(ctx, goalID, "agent", "different-tasks", []string{"First", "Second"}, []string{"First description", "Second description"})
+	tasks, err := s.CreateTasks(ctx, goalID, "agent", "different-tasks", []string{"First", "Second"}, []string{"First description", "Second description"})
 	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 	first := domain.TaskCommit{SHA: "first-sha", Subject: "first", CreatedAt: time.Date(2026, 8, 21, 1, 0, 0, 0, time.UTC)}
 	second := domain.TaskCommit{SHA: "second-sha", Subject: "second", CreatedAt: time.Date(2026, 8, 21, 2, 0, 0, 0, time.UTC)}

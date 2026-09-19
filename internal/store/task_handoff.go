@@ -13,6 +13,7 @@ import (
 
 var (
 	ErrTaskHandoffNotFound               = errors.New("task handoff not found")
+	ErrTaskHandoffLiveReceiver           = errors.New("task handoff is held by a live receiver")
 	ErrTaskHandoffTaskMismatch           = errors.New("task handoff task mismatch")
 	ErrTaskHandoffGoalNotHeld            = errors.New("task handoff requires the goal's handoff: caller does not hold an open received handoff for goal")
 	ErrTaskHandoffAlreadyOpen            = errors.New("task handoff already open")
@@ -21,6 +22,7 @@ var (
 	ErrTaskHandoffReviewState            = errors.New("task handoff review is not in the required state")
 	ErrTaskHandoffReviewReviewerMismatch = errors.New("task handoff review reviewer mismatch")
 	ErrTaskHandoffReviewReportEmpty      = errors.New("task handoff review needs a non-empty report")
+	ErrTaskHandoffRecoveryState          = errors.New("task handoff recovery is not in the required state")
 )
 
 const (
@@ -43,36 +45,42 @@ func taskWorkflowEventScope(ctx context.Context, q *sqlcgen.Queries, taskID int6
 // TaskHandoff records one delegation between agents. Each event timestamp is
 // independent so a partial handoff remains observable.
 type TaskHandoff struct {
-	ID                  string
-	TaskID              int64
-	RequestedBy         int64
-	ReceivedBy          int64
-	RequestReport       string
-	CompleteReport      string
-	ReviewRequestedBy   int64
-	ReviewRequestedAt   *time.Time
-	ReviewRequestReport string
-	ReviewReceivedBy    int64
-	ReviewReceivedAt    *time.Time
-	ReviewRejectedAt    *time.Time
-	ReviewRejectReport  string
-	RequestedAt         *time.Time
-	ReceivedAt          *time.Time
-	CompletedReportAt   *time.Time
+	ID                        string
+	TaskID                    int64
+	RequestedBy               int64
+	ReceivedBy                int64
+	RequestReport             string
+	CompleteReport            string
+	ReviewRequestedBy         int64
+	ReviewRequestedAt         *time.Time
+	ReviewRequestReport       string
+	ReviewReceivedBy          int64
+	ReviewReceivedAt          *time.Time
+	ReviewRejectedAt          *time.Time
+	ReviewRejectReport        string
+	ReviewRejectionReceivedBy int64
+	ReviewRejectionReceivedAt *time.Time
+	RecoveredAt               *time.Time
+	RecoveryReport            string
+	RequestedAt               *time.Time
+	ReceivedAt                *time.Time
+	CompletedReportAt         *time.Time
 }
 
 func taskHandoffFromRow(row sqlcgen.TaskHandoff) (TaskHandoff, error) {
 	handoff := TaskHandoff{
-		ID:                  row.ID,
-		TaskID:              row.TaskID,
-		RequestedBy:         nullableAgentSessionID(row.RequestedBy),
-		ReceivedBy:          nullableAgentSessionID(row.ReceivedBy),
-		RequestReport:       row.RequestReport.String,
-		CompleteReport:      row.CompleteReport.String,
-		ReviewRequestedBy:   nullableAgentSessionID(row.ReviewRequestedBy),
-		ReviewRequestReport: row.ReviewRequestReport.String,
-		ReviewReceivedBy:    nullableAgentSessionID(row.ReviewReceivedBy),
-		ReviewRejectReport:  row.ReviewRejectReport.String,
+		ID:                        row.ID,
+		TaskID:                    row.TaskID,
+		RequestedBy:               nullableAgentSessionID(row.RequestedBy),
+		ReceivedBy:                nullableAgentSessionID(row.ReceivedBy),
+		RequestReport:             row.RequestReport.String,
+		CompleteReport:            row.CompleteReport.String,
+		ReviewRequestedBy:         nullableAgentSessionID(row.ReviewRequestedBy),
+		ReviewRequestReport:       row.ReviewRequestReport.String,
+		ReviewReceivedBy:          nullableAgentSessionID(row.ReviewReceivedBy),
+		ReviewRejectReport:        row.ReviewRejectReport.String,
+		ReviewRejectionReceivedBy: nullableAgentSessionID(row.ReviewRejectionReceivedBy),
+		RecoveryReport:            row.RecoveryReport.String,
 	}
 	var err error
 	if handoff.RequestedAt, err = parseTaskHandoffTime("requested_at", row.RequestedAt); err != nil {
@@ -91,6 +99,12 @@ func taskHandoffFromRow(row sqlcgen.TaskHandoff) (TaskHandoff, error) {
 		return TaskHandoff{}, err
 	}
 	if handoff.ReviewRejectedAt, err = parseTaskHandoffTime("review_rejected_at", row.ReviewRejectedAt); err != nil {
+		return TaskHandoff{}, err
+	}
+	if handoff.ReviewRejectionReceivedAt, err = parseTaskHandoffTime("review_rejection_received_at", row.ReviewRejectionReceivedAt); err != nil {
+		return TaskHandoff{}, err
+	}
+	if handoff.RecoveredAt, err = parseTaskHandoffTime("recovered_at", row.RecoveredAt); err != nil {
 		return TaskHandoff{}, err
 	}
 	return handoff, nil
@@ -116,6 +130,19 @@ func parseTaskHandoffTime(column string, value sql.NullString) (*time.Time, erro
 		return nil, fmt.Errorf("parse task handoff %s: %w", column, err)
 	}
 	return &parsed, nil
+}
+
+// taskHandoffReceiverID is for an error message, so an unreadable row answers
+// zero rather than replacing the refusal with a lookup failure.
+func taskHandoffRefusal(ctx context.Context, q *sqlcgen.Queries, handoffID string) (requested bool, receiver int64) {
+	handoff, err := q.GetTaskHandoff(ctx, handoffID)
+	if err != nil {
+		return false, 0
+	}
+	if handoff.ReceivedBy.Valid {
+		receiver = handoff.ReceivedBy.Int64
+	}
+	return handoff.RequestedAt.Valid, receiver
 }
 
 func (s *Store) ensureTaskHandoffTask(ctx context.Context, handoffID string, taskID int64) error {
@@ -145,12 +172,15 @@ func (s *Store) requireGoalHandoffForTask(ctx context.Context, taskID int64, req
 	if err != nil {
 		return fmt.Errorf("find goal for task %d: %w", taskID, err)
 	}
+	return s.requireGoalHandoffHolder(ctx, goalID, requestedBy)
+}
 
+func (s *Store) requireGoalHandoffHolder(ctx context.Context, goalID, holderID int64) error {
 	goalHandoff, err := s.openGoalHandoff(ctx, goalID)
 	if err != nil {
-		return fmt.Errorf("find live goal handoff for task %d: %w", taskID, err)
+		return fmt.Errorf("find live goal handoff for goal %d: %w", goalID, err)
 	}
-	if goalHandoff != nil && goalHandoff.ReceivedBy == requestedBy && requestedBy != 0 && claimIsRunning(ctx, s, requestedBy) {
+	if goalHandoff != nil && goalHandoff.ReceivedBy == holderID && holderID != 0 && claimIsRunning(ctx, s, holderID) {
 		return nil
 	}
 
@@ -170,7 +200,7 @@ func (s *Store) reclaimOpenTaskHandoff(ctx context.Context, handoffID string, ta
 
 	var open *TaskHandoff
 	for i := range handoffs {
-		if handoffs[i].CompletedReportAt != nil || handoffs[i].ID == handoffID {
+		if handoffs[i].CompletedReportAt != nil || handoffs[i].RecoveredAt != nil || handoffs[i].ID == handoffID {
 			continue
 		}
 		if open != nil {
@@ -209,7 +239,7 @@ func (s *Store) openTaskHandoff(ctx context.Context, taskID int64) (*TaskHandoff
 
 	var open *TaskHandoff
 	for i := range handoffs {
-		if handoffs[i].ReceivedAt == nil || handoffs[i].CompletedReportAt != nil {
+		if handoffs[i].ReceivedAt == nil || handoffs[i].CompletedReportAt != nil || handoffs[i].RecoveredAt != nil {
 			continue
 		}
 		if open != nil {
@@ -232,7 +262,17 @@ func (s *Store) requestTaskHandoffForClaim(ctx context.Context, handoffID string
 }
 
 func (s *Store) requestTaskHandoff(ctx context.Context, handoffID string, taskID int64, requestedBy int64, requestReport string, requireLiveClaim bool) (TaskHandoff, error) {
+	if err := s.requireUndiscardedSession(ctx, requestedBy); err != nil {
+		return TaskHandoff{}, err
+	}
 	if err := s.ensureTaskHandoffTaskForRequest(ctx, handoffID, taskID); err != nil {
+		return TaskHandoff{}, err
+	}
+	if existing, err := s.GetTaskHandoff(ctx, handoffID); err == nil {
+		if existing.RecoveredAt != nil {
+			return TaskHandoff{}, fmt.Errorf("task handoff %q was recovered and cannot be reused: %w", handoffID, ErrTaskHandoffRecoveryState)
+		}
+	} else if !errors.Is(err, ErrTaskHandoffNotFound) {
 		return TaskHandoff{}, err
 	}
 	if requireLiveClaim {
@@ -289,6 +329,9 @@ func (s *Store) requestTaskHandoff(ctx context.Context, handoffID string, taskID
 
 // ReceiveTaskHandoff records the receipt side of a requested handoff.
 func (s *Store) ReceiveTaskHandoff(ctx context.Context, handoffID string, taskID int64, receivedBy int64) (TaskHandoff, error) {
+	if err := s.requireUndiscardedSession(ctx, receivedBy); err != nil {
+		return TaskHandoff{}, err
+	}
 	if err := s.ensureTaskHandoffTask(ctx, handoffID, taskID); err != nil {
 		return TaskHandoff{}, err
 	}
@@ -300,10 +343,11 @@ func (s *Store) ReceiveTaskHandoff(ctx context.Context, handoffID string, taskID
 	defer tx.Rollback()
 	q := sqlcgen.New(tx)
 	result, err := q.ReceiveTaskHandoff(ctx, sqlcgen.ReceiveTaskHandoffParams{
-		ID:         handoffID,
-		TaskID:     taskID,
-		ReceivedBy: sql.NullInt64{Int64: receivedBy, Valid: receivedBy != 0},
-		ReceivedAt: sql.NullString{String: now, Valid: true},
+		ID:          handoffID,
+		TaskID:      taskID,
+		ReceivedBy:  sql.NullInt64{Int64: receivedBy, Valid: receivedBy != 0},
+		ReceivedAt:  sql.NullString{String: now, Valid: true},
+		LeaseCutoff: leaseCutoff(),
 	})
 	if err != nil {
 		return TaskHandoff{}, fmt.Errorf("receive task handoff: %w", err)
@@ -313,6 +357,10 @@ func (s *Store) ReceiveTaskHandoff(ctx context.Context, handoffID string, taskID
 		return TaskHandoff{}, fmt.Errorf("receive task handoff rows affected: %w", err)
 	}
 	if n == 0 {
+		if requested, receiver := taskHandoffRefusal(ctx, q, handoffID); requested && receiver != 0 {
+			return TaskHandoff{}, fmt.Errorf("task handoff %s is held by session %d, whose lease is still being renewed: %w",
+				handoffID, receiver, ErrTaskHandoffLiveReceiver)
+		}
 		return TaskHandoff{}, fmt.Errorf("%w: %s", ErrTaskHandoffNotFound, handoffID)
 	}
 	statusResult, err := q.UpdateTaskStatus(ctx, sqlcgen.UpdateTaskStatusParams{
@@ -346,6 +394,9 @@ func (s *Store) ReceiveTaskHandoff(ctx context.Context, handoffID string, taskID
 // RequestTaskHandoffReview starts the review state for a received task handoff.
 // The task receiver is the only session allowed to submit the work for review.
 func (s *Store) RequestTaskHandoffReview(ctx context.Context, handoffID string, taskID, requestedBy int64, reviewRequestReport string) (TaskHandoff, error) {
+	if err := s.requireUndiscardedSession(ctx, requestedBy); err != nil {
+		return TaskHandoff{}, err
+	}
 	if completeReportIsEmpty(reviewRequestReport) {
 		return TaskHandoff{}, ErrTaskHandoffReviewReportEmpty
 	}
@@ -356,7 +407,7 @@ func (s *Store) RequestTaskHandoffReview(ctx context.Context, handoffID string, 
 	if handoff.TaskID != taskID {
 		return TaskHandoff{}, fmt.Errorf("%w: %q belongs to task %d, not %d", ErrTaskHandoffTaskMismatch, handoffID, handoff.TaskID, taskID)
 	}
-	if handoff.RequestedAt == nil || handoff.ReceivedAt == nil || handoff.CompletedReportAt != nil {
+	if handoff.RequestedAt == nil || handoff.ReceivedAt == nil || handoff.CompletedReportAt != nil || handoff.RecoveredAt != nil {
 		return TaskHandoff{}, ErrTaskHandoffReviewState
 	}
 	if handoff.ReceivedBy == 0 || handoff.ReceivedBy != requestedBy {
@@ -419,6 +470,9 @@ func (s *Store) RequestTaskHandoffReview(ctx context.Context, handoffID string, 
 // ReceiveTaskHandoffReview records the reviewer's receipt. The original
 // requester is the only reviewer for a task handoff.
 func (s *Store) ReceiveTaskHandoffReview(ctx context.Context, handoffID string, taskID, receivedBy int64) (TaskHandoff, error) {
+	if err := s.requireUndiscardedSession(ctx, receivedBy); err != nil {
+		return TaskHandoff{}, err
+	}
 	handoff, err := s.GetTaskHandoff(ctx, handoffID)
 	if err != nil {
 		return TaskHandoff{}, err
@@ -426,11 +480,13 @@ func (s *Store) ReceiveTaskHandoffReview(ctx context.Context, handoffID string, 
 	if handoff.TaskID != taskID {
 		return TaskHandoff{}, fmt.Errorf("%w: %q belongs to task %d, not %d", ErrTaskHandoffTaskMismatch, handoffID, handoff.TaskID, taskID)
 	}
-	if handoff.ReviewRequestedAt == nil || handoff.CompletedReportAt != nil || handoff.ReviewReceivedAt != nil {
+	if handoff.ReviewRequestedAt == nil || handoff.CompletedReportAt != nil || handoff.RecoveredAt != nil || handoff.ReviewReceivedAt != nil {
 		return TaskHandoff{}, ErrTaskHandoffReviewState
 	}
 	if receivedBy == 0 || handoff.RequestedBy != receivedBy {
-		return TaskHandoff{}, fmt.Errorf("%w: task handoff reviewer %d is not requester %d", ErrTaskHandoffReviewReviewerMismatch, receivedBy, handoff.RequestedBy)
+		if err := s.requireGoalHandoffForTask(ctx, taskID, receivedBy); err != nil {
+			return TaskHandoff{}, fmt.Errorf("%w: task handoff reviewer %d is not requester %d or current goal holder: %v", ErrTaskHandoffReviewReviewerMismatch, receivedBy, handoff.RequestedBy, err)
+		}
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339Nano)
@@ -469,10 +525,97 @@ func (s *Store) ReceiveTaskHandoffReview(ctx context.Context, handoffID string, 
 	return s.GetTaskHandoff(ctx, handoffID)
 }
 
+// RecoverTaskHandoff replaces a definitely stale task requester/receiver or
+// reopens a review receipt held by a definitely stale reviewer. The current
+// goal handoff holder is the only caller allowed to recover task work.
+func (s *Store) RecoverTaskHandoff(ctx context.Context, handoffID string, taskID, callerID int64, reason string) (TaskHandoff, error) {
+	if err := s.requireUndiscardedSession(ctx, callerID); err != nil {
+		return TaskHandoff{}, err
+	}
+	if err := s.requireGoalHandoffForTask(ctx, taskID, callerID); err != nil {
+		return TaskHandoff{}, fmt.Errorf("recover task handoff requires the current goal holder: %w", err)
+	}
+	handoff, err := s.GetTaskHandoff(ctx, handoffID)
+	if err != nil {
+		return TaskHandoff{}, err
+	}
+	if handoff.TaskID != taskID || handoff.CompletedReportAt != nil {
+		return TaskHandoff{}, ErrTaskHandoffRecoveryState
+	}
+	if handoff.RecoveredAt != nil {
+		return handoff, nil
+	}
+
+	staleSessionID := int64(0)
+	phase := ""
+	switch {
+	case handoff.ReviewReceivedAt != nil:
+		staleSessionID = handoff.ReviewReceivedBy
+		phase = "review_received"
+	case handoff.ReceivedAt != nil:
+		staleSessionID = handoff.ReceivedBy
+		phase = "received"
+	case handoff.RequestedAt != nil:
+		staleSessionID = handoff.RequestedBy
+		phase = "requested"
+	default:
+		return TaskHandoff{}, ErrTaskHandoffRecoveryState
+	}
+	if staleSessionID == 0 || staleSessionID == callerID {
+		return TaskHandoff{}, fmt.Errorf("task handoff recovery caller cannot replace session %d: %w", staleSessionID, ErrTaskHandoffReviewReviewerMismatch)
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return TaskHandoff{}, fmt.Errorf("begin task handoff recovery: %w", err)
+	}
+	defer tx.Rollback()
+	q := sqlcgen.New(tx)
+	sessionProof, err := canRecoverSessionInTx(ctx, q, staleSessionID)
+	if err != nil {
+		return TaskHandoff{}, err
+	}
+	var result sql.Result
+	recoveredAt := sql.NullString{String: time.Now().UTC().Format(time.RFC3339Nano), Valid: true}
+	recoveryReport := sql.NullString{String: reason, Valid: true}
+	switch phase {
+	case "requested":
+		result, err = q.RecoverTaskHandoffRequester(ctx, sqlcgen.RecoverTaskHandoffRequesterParams{
+			RecoveredAt: recoveredAt, RecoveryReport: recoveryReport, ID: handoffID, TaskID: taskID,
+			RequestedBy: sql.NullInt64{Int64: staleSessionID, Valid: true}, Pid: sessionProof.PID, StartedAt: sessionProof.StartedAt,
+		})
+	case "received":
+		result, err = q.RecoverTaskHandoffReceiver(ctx, sqlcgen.RecoverTaskHandoffReceiverParams{
+			RecoveredAt: recoveredAt, RecoveryReport: recoveryReport, ID: handoffID, TaskID: taskID,
+			ReceivedBy: sql.NullInt64{Int64: staleSessionID, Valid: true}, Pid: sessionProof.PID, StartedAt: sessionProof.StartedAt,
+		})
+	case "review_received":
+		result, err = q.RecoverTaskHandoffReview(ctx, sqlcgen.RecoverTaskHandoffReviewParams{
+			ID: handoffID, TaskID: taskID, ReviewReceivedBy: sql.NullInt64{Int64: staleSessionID, Valid: true},
+			Pid: sessionProof.PID, StartedAt: sessionProof.StartedAt,
+		})
+	}
+	if err != nil {
+		return TaskHandoff{}, fmt.Errorf("recover task handoff %s: %w", phase, err)
+	}
+	if affected, err := result.RowsAffected(); err != nil {
+		return TaskHandoff{}, fmt.Errorf("inspect task handoff recovery: %w", err)
+	} else if affected != 1 {
+		return TaskHandoff{}, ErrTaskHandoffRecoveryState
+	}
+	if err := tx.Commit(); err != nil {
+		return TaskHandoff{}, fmt.Errorf("commit task handoff recovery: %w", err)
+	}
+	return s.GetTaskHandoff(ctx, handoffID)
+}
+
 // RejectTaskHandoffReview returns a task handoff to doing without releasing
 // its work claim. The reviewer receipt is cleared so a later review request
 // can start a fresh review cycle.
 func (s *Store) RejectTaskHandoffReview(ctx context.Context, handoffID string, taskID, reviewerID int64, rejectReport string) (TaskHandoff, error) {
+	if err := s.requireUndiscardedSession(ctx, reviewerID); err != nil {
+		return TaskHandoff{}, err
+	}
 	if completeReportIsEmpty(rejectReport) {
 		return TaskHandoff{}, ErrTaskHandoffReviewReportEmpty
 	}
@@ -483,7 +626,7 @@ func (s *Store) RejectTaskHandoffReview(ctx context.Context, handoffID string, t
 	if handoff.TaskID != taskID {
 		return TaskHandoff{}, fmt.Errorf("%w: %q belongs to task %d, not %d", ErrTaskHandoffTaskMismatch, handoffID, handoff.TaskID, taskID)
 	}
-	if handoff.ReviewReceivedAt == nil || handoff.CompletedReportAt != nil {
+	if handoff.ReviewReceivedAt == nil || handoff.CompletedReportAt != nil || handoff.RecoveredAt != nil {
 		return TaskHandoff{}, ErrTaskHandoffReviewState
 	}
 	if handoff.ReviewReceivedBy != reviewerID {
@@ -539,9 +682,37 @@ func (s *Store) RejectTaskHandoffReview(ctx context.Context, handoffID string, t
 	return s.GetTaskHandoff(ctx, handoffID)
 }
 
+// ReceiveTaskHandoffReviewRejection records that the work submitter received a review rejection.
+func (s *Store) ReceiveTaskHandoffReviewRejection(ctx context.Context, handoffID string, taskID, receivedBy int64) (TaskHandoff, error) {
+	if err := s.requireUndiscardedSession(ctx, receivedBy); err != nil {
+		return TaskHandoff{}, err
+	}
+	handoff, err := s.GetTaskHandoff(ctx, handoffID)
+	if err != nil {
+		return TaskHandoff{}, err
+	}
+	if handoff.TaskID != taskID {
+		return TaskHandoff{}, fmt.Errorf("%w: %q belongs to task %d, not %d", ErrTaskHandoffTaskMismatch, handoffID, handoff.TaskID, taskID)
+	}
+	if handoff.ReviewRejectedAt == nil || handoff.CompletedReportAt != nil || handoff.RecoveredAt != nil || handoff.ReceivedBy != receivedBy || receivedBy == 0 {
+		return TaskHandoff{}, ErrTaskHandoffReviewState
+	}
+	result, err := sqlcgen.New(s.db).ReceiveTaskHandoffReviewRejection(ctx, sqlcgen.ReceiveTaskHandoffReviewRejectionParams{ReviewRejectionReceivedBy: sql.NullInt64{Int64: receivedBy, Valid: true}, ReviewRejectionReceivedAt: sql.NullString{String: time.Now().UTC().Format(time.RFC3339Nano), Valid: true}, ID: handoffID, TaskID: taskID, ReceivedBy: sql.NullInt64{Int64: receivedBy, Valid: true}})
+	if err != nil {
+		return TaskHandoff{}, fmt.Errorf("receive task handoff review rejection: %w", err)
+	}
+	if affected, err := result.RowsAffected(); err != nil || affected == 0 {
+		return TaskHandoff{}, ErrTaskHandoffReviewState
+	}
+	return s.GetTaskHandoff(ctx, handoffID)
+}
+
 // CompleteTaskHandoffByReviewer closes a task handoff and transitions its task
 // to done atomically after the recorded reviewer has accepted it.
 func (s *Store) CompleteTaskHandoffByReviewer(ctx context.Context, handoffID string, taskID, reviewerID int64, completeReport string) (TaskHandoff, error) {
+	if err := s.requireUndiscardedSession(ctx, reviewerID); err != nil {
+		return TaskHandoff{}, err
+	}
 	if completeReportIsEmpty(completeReport) {
 		return TaskHandoff{}, ErrTaskHandoffReportEmpty
 	}
@@ -552,7 +723,7 @@ func (s *Store) CompleteTaskHandoffByReviewer(ctx context.Context, handoffID str
 	if handoff.TaskID != taskID {
 		return TaskHandoff{}, fmt.Errorf("%w: %q belongs to task %d, not %d", ErrTaskHandoffTaskMismatch, handoffID, handoff.TaskID, taskID)
 	}
-	if handoff.ReviewReceivedAt == nil || handoff.CompletedReportAt != nil {
+	if handoff.ReviewReceivedAt == nil || handoff.CompletedReportAt != nil || handoff.RecoveredAt != nil {
 		return TaskHandoff{}, ErrTaskHandoffReviewState
 	}
 	if handoff.ReviewReceivedBy != reviewerID {
@@ -612,7 +783,7 @@ func (s *Store) CompleteTaskHandoffByReviewer(ctx context.Context, handoffID str
 	}
 	event := DecisionEvent{
 		Name: EventHandoffReported,
-		Data: DetectionEvent{DetectionID: NewDetectionID(), ProjectID: projectID, GoalID: goalID, TaskID: taskID, HandoffID: handoffID, CompleteReport: completeReport},
+		Data: WakeupEvent{WakeupID: NewWakeupID(), ProjectID: projectID, GoalID: goalID, TaskID: taskID, HandoffID: handoffID, CompleteReport: completeReport},
 	}
 	if err := tx.Commit(); err != nil {
 		return TaskHandoff{}, fmt.Errorf("commit task handoff review completion: %w", err)
@@ -631,7 +802,7 @@ func (s *Store) ReceiveTaskHandoffForTask(ctx context.Context, taskID int64, rec
 	}
 	pending := make([]TaskHandoff, 0, len(handoffs))
 	for _, handoff := range handoffs {
-		if handoff.RequestedAt != nil && handoff.ReceivedAt == nil {
+		if handoff.RequestedAt != nil && handoff.ReceivedAt == nil && handoff.RecoveredAt == nil {
 			pending = append(pending, handoff)
 		}
 	}
@@ -655,7 +826,7 @@ func (s *Store) CompleteTaskHandoffForTask(ctx context.Context, taskID int64, co
 	}
 	pending := make([]TaskHandoff, 0, len(handoffs))
 	for _, handoff := range handoffs {
-		if handoff.RequestedAt != nil && handoff.ReceivedAt != nil && handoff.CompletedReportAt == nil {
+		if handoff.RequestedAt != nil && handoff.ReceivedAt != nil && handoff.CompletedReportAt == nil && handoff.RecoveredAt == nil {
 			pending = append(pending, handoff)
 		}
 	}
@@ -719,8 +890,8 @@ func (s *Store) CompleteTaskHandoff(ctx context.Context, handoffID string, taskI
 		}
 		event = DecisionEvent{
 			Name: EventHandoffReported,
-			Data: DetectionEvent{
-				DetectionID:    NewDetectionID(),
+			Data: WakeupEvent{
+				WakeupID:       NewWakeupID(),
 				ProjectID:      projectID,
 				GoalID:         goalID,
 				TaskID:         taskID,
@@ -760,7 +931,7 @@ func (s *Store) AmendTaskHandoffReport(ctx context.Context, handoffID string, ta
 		return TaskHandoff{}, fmt.Errorf("amend task handoff report rows affected: %w", err)
 	}
 	if n == 0 {
-		return TaskHandoff{}, fmt.Errorf("task handoff %q is not yet completed; use atct_handoff_complete", handoffID)
+		return TaskHandoff{}, fmt.Errorf("task handoff %q is not yet completed; use atct_task_handoff_complete", handoffID)
 	}
 	return s.GetTaskHandoff(ctx, handoffID)
 }

@@ -20,12 +20,45 @@ type WorkflowEventQuery struct {
 // WorkflowReconciliation is a point-in-time canonical snapshot. It contains
 // the scoped state needed after a watcher restarts or a live signal is missed.
 type WorkflowReconciliation struct {
-	Goals        []domain.Goal     `json:"goals"`
-	Tasks        []domain.Task     `json:"tasks"`
-	Decisions    []domain.Decision `json:"decisions"`
-	GoalHandoffs []GoalHandoff     `json:"goal_handoffs"`
-	PlanHandoffs []PlanHandoff     `json:"plan_handoffs"`
-	TaskHandoffs []TaskHandoff     `json:"task_handoffs"`
+	Goals              []domain.Goal       `json:"goals"`
+	Tasks              []domain.Task       `json:"tasks"`
+	Decisions          []WorkflowDecision  `json:"decisions"`
+	GoalHandoffs       []GoalHandoff       `json:"goal_handoffs"`
+	PlanHandoffs       []PlanHandoff       `json:"plan_handoffs"`
+	TaskHandoffs       []TaskHandoff       `json:"task_handoffs"`
+	TaskCreateHandoffs []TaskCreateHandoff `json:"task_create_handoffs"`
+}
+
+// WorkflowDecision carries the live delivery role of the session that owns a Decision.
+type WorkflowDecision struct {
+	domain.Decision
+	TargetRole string `json:"target_role"`
+}
+
+func (s *Store) decisionTargetRole(ctx context.Context, agentSessionID int64) (string, error) {
+	projects, err := s.ListProjects(ctx)
+	if err != nil {
+		return "", err
+	}
+	for _, project := range projects {
+		if agentSessionID != 0 && project.ClaimedBy == agentSessionID {
+			return "commander", nil
+		}
+	}
+	goals, err := s.ListAllGoals(ctx)
+	if err != nil {
+		return "", err
+	}
+	handoffs, err := s.ListOpenGoalHandoffs(ctx)
+	if err != nil {
+		return "", err
+	}
+	for _, goal := range goals {
+		if handoff := handoffs[goal.ID]; handoff != nil && handoff.ReceivedAt != nil && handoff.ReceivedBy == agentSessionID {
+			return "subcommander", nil
+		}
+	}
+	return "executor", nil
 }
 
 func workflowDecisionEvent(name string, row sqlcgen.Decision) (DecisionEvent, error) {
@@ -88,12 +121,13 @@ func (s *Store) ReconcileWorkflow(ctx context.Context, query WorkflowEventQuery)
 		return WorkflowReconciliation{}, fmt.Errorf("task %d is outside project %d", query.TaskID, projectID)
 	}
 	reconciliation := WorkflowReconciliation{
-		Goals:        append([]domain.Goal(nil), goals...),
-		Decisions:    make([]domain.Decision, 0),
-		GoalHandoffs: make([]GoalHandoff, 0),
-		PlanHandoffs: make([]PlanHandoff, 0),
-		TaskHandoffs: make([]TaskHandoff, 0),
-		Tasks:        make([]domain.Task, 0),
+		Goals:              append([]domain.Goal(nil), goals...),
+		Decisions:          make([]WorkflowDecision, 0),
+		GoalHandoffs:       make([]GoalHandoff, 0),
+		PlanHandoffs:       make([]PlanHandoff, 0),
+		TaskHandoffs:       make([]TaskHandoff, 0),
+		TaskCreateHandoffs: make([]TaskCreateHandoff, 0),
+		Tasks:              make([]domain.Task, 0),
 	}
 	for _, goal := range goals {
 		tasks, err := s.ListTasks(ctx, goal.ID)
@@ -122,13 +156,22 @@ func (s *Store) ReconcileWorkflow(ctx context.Context, query WorkflowEventQuery)
 			return WorkflowReconciliation{}, err
 		}
 		reconciliation.PlanHandoffs = append(reconciliation.PlanHandoffs, planHandoffs...)
+		taskCreateHandoffs, err := s.ListTaskCreateHandoffs(ctx, goal.ID)
+		if err != nil {
+			return WorkflowReconciliation{}, err
+		}
+		reconciliation.TaskCreateHandoffs = append(reconciliation.TaskCreateHandoffs, taskCreateHandoffs...)
 		decisions, err := s.ListDecisionsForGoal(ctx, goal.ID)
 		if err != nil {
 			return WorkflowReconciliation{}, err
 		}
 		for _, decision := range decisions {
 			if query.TaskID == 0 || decision.TaskID == query.TaskID {
-				reconciliation.Decisions = append(reconciliation.Decisions, decision)
+				targetRole, err := s.decisionTargetRole(ctx, decision.AgentSessionID)
+				if err != nil {
+					return WorkflowReconciliation{}, err
+				}
+				reconciliation.Decisions = append(reconciliation.Decisions, WorkflowDecision{Decision: decision, TargetRole: targetRole})
 			}
 		}
 	}

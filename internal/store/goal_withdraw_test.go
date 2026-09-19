@@ -67,9 +67,9 @@ func TestWithdrawActiveGoalKeepsDoneTasks(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	goalID := newTestGoal(t, s)
-	tasks, err := s.DeclareTasks(ctx, goalID, "agent", "withdraw-done", []string{"done", "open"}, []string{"Already done.", "Still open."})
+	tasks, err := s.CreateTasks(ctx, goalID, "agent", "withdraw-done", []string{"done", "open"}, []string{"Already done.", "Still open."})
 	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 	if _, err := s.UpdateTask(ctx, tasks[0].ID, domain.TaskDone, 0); err != nil {
 		t.Fatalf("UpdateTask done: %v", err)
@@ -94,9 +94,9 @@ func TestWithdrawActiveGoalDropsOpenTasksAndReleasesClaims(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	goalID := newTestGoal(t, s)
-	tasks, err := s.DeclareTasks(ctx, goalID, "agent", "withdraw-open", []string{"todo", "doing"}, []string{"Todo work.", "Doing work."})
+	tasks, err := s.CreateTasks(ctx, goalID, "agent", "withdraw-open", []string{"todo", "doing"}, []string{"Todo work.", "Doing work."})
 	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 	addTestAgentSession(t, s, "agent-run")
 	for _, task := range tasks {
@@ -197,9 +197,9 @@ func TestWithdrawActiveGoalPublishesGoalWithdrawn(t *testing.T) {
 			openDecisions: nil,
 			setupTasks: func(t *testing.T, s *Store, goalID int64) withdrawalExpectation {
 				t.Helper()
-				tasks, err := s.DeclareTasks(context.Background(), goalID, "agent", "withdraw-event", []string{"delegated todo"}, []string{"Still open."})
+				tasks, err := s.CreateTasks(context.Background(), goalID, "agent", "withdraw-event", []string{"delegated todo"}, []string{"Still open."})
 				if err != nil {
-					t.Fatalf("DeclareTasks: %v", err)
+					t.Fatalf("CreateTasks: %v", err)
 				}
 				addTestAgentSession(t, s, "withdraw-requester")
 				addTestAgentSession(t, s, "withdraw-receiver")
@@ -221,9 +221,9 @@ func TestWithdrawActiveGoalPublishesGoalWithdrawn(t *testing.T) {
 			setupTasks: func(t *testing.T, s *Store, goalID int64) withdrawalExpectation {
 				t.Helper()
 				ctx := context.Background()
-				tasks, err := s.DeclareTasks(ctx, goalID, "agent", "withdraw-event", []string{"doing task", "already done"}, []string{"Doing work.", "Already done."})
+				tasks, err := s.CreateTasks(ctx, goalID, "agent", "withdraw-event", []string{"doing task", "already done"}, []string{"Doing work.", "Already done."})
 				if err != nil {
-					t.Fatalf("DeclareTasks: %v", err)
+					t.Fatalf("CreateTasks: %v", err)
 				}
 				if _, err := s.UpdateTask(ctx, tasks[0].ID, domain.TaskDoing, 0); err != nil {
 					t.Fatalf("UpdateTask doing: %v", err)
@@ -380,9 +380,9 @@ func TestWithdrawActiveGoalDoesNotPublishHandoffReported(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	goalID := newTestGoal(t, s)
-	tasks, err := s.DeclareTasks(ctx, goalID, "agent", "withdraw-no-handoff-event", []string{"open task"}, []string{"Still open."})
+	tasks, err := s.CreateTasks(ctx, goalID, "agent", "withdraw-no-handoff-event", []string{"open task"}, []string{"Still open."})
 	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 	addTestAgentSession(t, s, "withdraw-no-event-requester")
 	addTestAgentSession(t, s, "withdraw-no-event-receiver")

@@ -12,6 +12,18 @@ const NON_SCREEN_EVENT_NAMES = [
   // wakeup events are agent signals, not reasons for a human dashboard refresh.
   "wakeup",
   "wakeup.discrepancy",
+  "wakeup.completion_report_missing",
+  "wakeup.commits_missing",
+  "wakeup.undeclared_goal",
+  "wakeup.all_tasks_dropped",
+  "wakeup.unclaimed_doing",
+  "wakeup.handoff_unreceived",
+  "wakeup.handoff_unreported",
+  "wakeup.claim_undelegated",
+  "wakeup.decision_answered_unapplied",
+  "wakeup.decision_default_unapplied",
+  "wakeup.claim_stale",
+  "wakeup.monitor_lost",
   // A failed evaluation changes no stored state, so refetching would redraw the
   // same screen. The failure reaches the human through atct watch instead.
   "wakeup.evaluate_failed",

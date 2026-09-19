@@ -41,12 +41,22 @@ func TestSchemaParityOnMigratedCopiedDatabaseFromEnvironment(t *testing.T) {
 	}
 	wantRemovedTables := []string{
 		"goal_review_snapshots",
+		"orchestration_blockers",
+		"orchestration_delivery_leases",
+		"orchestration_delivery_receipts",
+		"orchestration_review_work",
+		"orchestration_scope",
 		"project_event_sequences",
 		"watch_delivery_cursors",
 		"workflow_event_outbox",
+		"task_create_handoff_tasks",
 	}
 	if !reflect.DeepEqual(report.removedTables, wantRemovedTables) {
 		t.Fatalf("removed tables = %v, want %v", report.removedTables, wantRemovedTables)
+	}
+	wantAddedTables := []string{"task_create_handoffs"}
+	if !reflect.DeepEqual(report.addedTables, wantAddedTables) {
+		t.Fatalf("added tables = %v, want %v", report.addedTables, wantAddedTables)
 	}
 	t.Logf("migration integrity report: %s", report)
 

@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -494,7 +496,7 @@ func createDecisionFixture(t *testing.T, conn net.Conn) (int64, int64) {
 	if registerResp.Error != "" {
 		t.Fatalf("run.register: %v", registerResp.Error)
 	}
-	taskResp := call(t, conn, "task.declare", map[string]any{
+	taskResp := call(t, conn, "task.create", map[string]any{
 		"goal_id":          goal.ID,
 		"agent":            "test-agent",
 		"idempotency_key":  "wait-semantics",
@@ -503,14 +505,14 @@ func createDecisionFixture(t *testing.T, conn net.Conn) (int64, int64) {
 		"agent_session_id": 1,
 	})
 	if taskResp.Error != "" {
-		t.Fatalf("task.declare: %v", taskResp.Error)
+		t.Fatalf("task.create: %v", taskResp.Error)
 	}
 	var tasks []domain.Task
 	if err := json.Unmarshal(taskResp.Result, &tasks); err != nil {
 		t.Fatalf("unmarshal tasks: %v", err)
 	}
 	if len(tasks) != 1 {
-		t.Fatalf("task.declare returned %d tasks, want 1", len(tasks))
+		t.Fatalf("task.create returned %d tasks, want 1", len(tasks))
 	}
 	return goal.ID, tasks[0].ID
 }
@@ -569,6 +571,7 @@ func TestSessionIdentifyReattachesProjectClaimForRole(t *testing.T) {
 	identifyParams, err := json.Marshal(map[string]any{
 		"agent_session_id": newSessionID,
 		"session_key":      sessionKey,
+		"monitor_token":    "monitor-token",
 	})
 	if err != nil {
 		t.Fatalf("marshal session.identify params: %v", err)
@@ -578,14 +581,23 @@ func TestSessionIdentifyReattachesProjectClaimForRole(t *testing.T) {
 		t.Fatalf("session.identify: %v", err)
 	}
 	var identifyResponse struct {
-		AgentSessionID int64 `json:"agent_session_id"`
-		Reattached     bool  `json:"reattached"`
+		AgentSessionID int64                   `json:"agent_session_id"`
+		Reattached     bool                    `json:"reattached"`
+		Assignment     store.MonitorAssignment `json:"assignment"`
 	}
 	if err := json.Unmarshal(identifyResult, &identifyResponse); err != nil {
 		t.Fatalf("unmarshal session.identify response: %v", err)
 	}
 	if identifyResponse.AgentSessionID != oldSessionID || !identifyResponse.Reattached {
 		t.Fatalf("session.identify response = (%v, %v), want (%v, true)", identifyResponse.AgentSessionID, identifyResponse.Reattached, oldSessionID)
+	}
+	wantAssignment := store.MonitorAssignment{Role: "commander", ProjectID: fixture.project.ID}
+	if !reflect.DeepEqual(identifyResponse.Assignment, wantAssignment) {
+		t.Fatalf("session.identify assignment = %+v, want %+v", identifyResponse.Assignment, wantAssignment)
+	}
+	binding, err := fixture.store.MonitorBinding(ctx, "monitor-token")
+	if err != nil || binding.Assignment.Role != "commander" || binding.Assignment.ProjectID != fixture.project.ID {
+		t.Fatalf("monitor binding = %+v, %v; want commander for project %d", binding, err, fixture.project.ID)
 	}
 
 	roleParams, err := json.Marshal(map[string]any{"agent_session_id": identifyResponse.AgentSessionID})
@@ -603,6 +615,119 @@ func TestSessionIdentifyReattachesProjectClaimForRole(t *testing.T) {
 	if roleResponse.Role != "commander" {
 		t.Fatalf("session.role = %v, want commander", roleResponse.Role)
 	}
+}
+
+func TestMonitorBindingLifecycleMatchesDaemonAssignments(t *testing.T) {
+	ctx := context.Background()
+	s, err := store.Open(filepath.Join(t.TempDir(), "atct.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	projectA, err := s.CreateProject(ctx, "project-a", t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	projectB, err := s.CreateProject(ctx, "project-b", t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	goalB, err := s.CreateGoal(ctx, projectB.ID, "goal B", "human")
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := New(s)
+	target := runRegisterForTest(t, d, os.Getpid(), projectA.RootPath)
+	commanderB := runRegisterForTest(t, d, os.Getpid(), projectB.RootPath)
+
+	dispatch := func(method string, params map[string]any) json.RawMessage {
+		t.Helper()
+		rawParams, err := json.Marshal(params)
+		if err != nil {
+			t.Fatalf("marshal %s params: %v", method, err)
+		}
+		result, err := d.dispatch(ctx, rpc.Request{Method: method, Params: rawParams})
+		if err != nil {
+			t.Fatalf("%s: %v", method, err)
+		}
+		return result
+	}
+	const token = "lifecycle-monitor-token"
+	binding := func() store.MonitorBinding {
+		t.Helper()
+		request := httptest.NewRequest(http.MethodGet, "/api/monitor-bindings/"+token, nil)
+		response := httptest.NewRecorder()
+		d.HTTPHandler().ServeHTTP(response, request)
+		if response.Code != http.StatusOK {
+			t.Fatalf("monitor binding status = %d, body = %s", response.Code, response.Body.String())
+		}
+		var got store.MonitorBinding
+		if err := json.Unmarshal(response.Body.Bytes(), &got); err != nil {
+			t.Fatalf("decode monitor binding: %v", err)
+		}
+		return got
+	}
+	assertAssignment := func(want store.MonitorAssignment) {
+		t.Helper()
+		got := binding()
+		if got.Pending || !reflect.DeepEqual(got.Assignment, want) {
+			t.Fatalf("monitor binding = %+v, want assignment %+v", got, want)
+		}
+	}
+
+	identifyResult := dispatch("session.identify", map[string]any{
+		"agent_session_id": target,
+		"session_key":      "lifecycle-session-key",
+		"monitor_token":    token,
+	})
+	var identified struct {
+		Assignment store.MonitorAssignment `json:"assignment"`
+	}
+	if err := json.Unmarshal(identifyResult, &identified); err != nil {
+		t.Fatal(err)
+	}
+	want := store.MonitorAssignment{Role: "executor"}
+	if !reflect.DeepEqual(identified.Assignment, want) {
+		t.Fatalf("identify assignment = %+v, want %+v", identified.Assignment, want)
+	}
+	assertAssignment(want)
+
+	dispatch("project.claim", map[string]any{"project_id": projectA.ID, "agent_session_id": target})
+	want = store.MonitorAssignment{Role: "commander", ProjectID: projectA.ID}
+	assertAssignment(want)
+	dispatch("project.claim", map[string]any{"project_id": projectB.ID, "agent_session_id": commanderB})
+	dispatch("goal.handoff.request", map[string]any{
+		"handoff_id": "lifecycle-goal-handoff", "goal_id": goalB.ID,
+		"requested_by": commanderB, "request_report": "delegate",
+	})
+	receiveResult := dispatch("goal.handoff.receive", map[string]any{
+		"handoff_id": "lifecycle-goal-handoff", "goal_id": goalB.ID, "received_by": target,
+	})
+	var received struct {
+		Role          string        `json:"role"`
+		ClaimEvidence claimEvidence `json:"claim_evidence"`
+	}
+	if err := json.Unmarshal(receiveResult, &received); err != nil {
+		t.Fatal(err)
+	}
+	if got := binding(); received.Role != got.Assignment.Role || received.ClaimEvidence.Scope != "project" || received.ClaimEvidence.ProjectID != projectA.ID {
+		t.Fatalf("receive role/evidence = %+v, monitor assignment = %+v; want commander project %d", received, got.Assignment, projectA.ID)
+	}
+
+	dispatch("project.release", map[string]any{"project_id": projectA.ID, "agent_session_id": target})
+	want = store.MonitorAssignment{Role: "subcommander", ProjectID: projectB.ID, GoalID: goalB.ID}
+	assertAssignment(want)
+	dispatch("goal.handoff.review.request", map[string]any{
+		"handoff_id": "lifecycle-goal-handoff", "goal_id": goalB.ID,
+		"requested_by": target, "review_request_report": "ready for review",
+	})
+	dispatch("goal.handoff.review.receive", map[string]any{
+		"handoff_id": "lifecycle-goal-handoff", "goal_id": goalB.ID, "received_by": commanderB,
+	})
+	dispatch("goal.handoff.complete", map[string]any{
+		"handoff_id": "lifecycle-goal-handoff", "goal_id": goalB.ID, "agent_session_id": commanderB, "complete_report": "done",
+	})
+	assertAssignment(store.MonitorAssignment{Role: "executor"})
 }
 
 func newGoalListFixture(t *testing.T) goalListFixture {
@@ -649,11 +774,11 @@ func newGoalListFixture(t *testing.T) goalListFixture {
 		t.Fatalf("claim goal %v: %v", activeChild.ID, err)
 	}
 
-	tasks, err := s.DeclareTasks(ctx, taskGoal.ID, "fixture-agent", "goal-list-tasks",
+	tasks, err := s.CreateTasks(ctx, taskGoal.ID, "fixture-agent", "goal-list-tasks",
 		[]string{"doing task", "todo task", "done task", "dropped task"},
 		[]string{"doing description", "todo description", "done description", "dropped description"})
 	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 	taskAgentID, err := s.RegisterAgentSession(ctx, os.Getpid())
 	if err != nil {
@@ -671,9 +796,9 @@ func newGoalListFixture(t *testing.T) goalListFixture {
 	if tasks[3], err = s.UpdateTask(ctx, tasks[3].ID, domain.TaskDropped, 0); err != nil {
 		t.Fatalf("UpdateTask dropped: %v", err)
 	}
-	if _, err := s.DeclareTasks(ctx, doneOnlyGoal.ID, "fixture-agent", "goal-list-done-only",
+	if _, err := s.CreateTasks(ctx, doneOnlyGoal.ID, "fixture-agent", "goal-list-done-only",
 		[]string{"completed task"}, []string{"completed description"}); err != nil {
-		t.Fatalf("DeclareTasks done-only: %v", err)
+		t.Fatalf("CreateTasks done-only: %v", err)
 	}
 	doneOnlyTasks, err := s.ListTasks(ctx, doneOnlyGoal.ID)
 	if err != nil {
@@ -1100,6 +1225,11 @@ func updateGoalContentForTest(t *testing.T, fixture goalListFixture, goalID int6
 func TestRequestReportDirectFieldsAuthorizeAndReadBack(t *testing.T) {
 	fixture := newGoalListFixture(t)
 	defer fixture.store.Close()
+
+	const (
+		wantSpec = "# Canonical spec\n\n- Preserve every line.\n- Keep Markdown intact."
+		wantPlan = "# Canonical plan\n\n1. Write the spec.\n2. Read it back verbatim."
+	)
 	goalID := fixture.active[0].ID
 	ctx := context.Background()
 	requesterID := daemonTestSessionID(t, fixture.store, "request-report-requester")
@@ -1115,7 +1245,7 @@ func TestRequestReportDirectFieldsAuthorizeAndReadBack(t *testing.T) {
 		t.Fatal(err)
 	}
 	call := func(sessionID int64) (json.RawMessage, error) {
-		params, _ := json.Marshal(map[string]any{"goal_id": goalID, "spec": "spec body", "plan": "plan body", "agent_session_id": sessionID})
+		params, _ := json.Marshal(map[string]any{"goal_id": goalID, "spec": wantSpec, "plan": wantPlan, "agent_session_id": sessionID})
 		return fixture.daemon.dispatch(ctx, rpc.Request{Method: "goal.update_request_report", Params: params})
 	}
 	if _, err := call(daemonTestSessionID(t, fixture.store, "request-report-non-holder")); err == nil {
@@ -1140,15 +1270,15 @@ func TestRequestReportDirectFieldsAuthorizeAndReadBack(t *testing.T) {
 	if err := json.Unmarshal(result, &goal); err != nil {
 		t.Fatal(err)
 	}
-	if goal.Spec != "spec body" || goal.Plan != "plan body" {
-		t.Fatalf("result = %+v", goal)
+	if goal.Spec != wantSpec || goal.Plan != wantPlan {
+		t.Fatalf("result spec/plan = (%q, %q), want (%q, %q)", goal.Spec, goal.Plan, wantSpec, wantPlan)
 	}
 	persisted, err := fixture.store.GetGoal(context.Background(), goalID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if persisted.Spec != "spec body" || persisted.Plan != "plan body" {
-		t.Fatalf("readback = %+v", persisted)
+	if persisted.Spec != wantSpec || persisted.Plan != wantPlan {
+		t.Fatalf("readback spec/plan = (%q, %q), want (%q, %q)", persisted.Spec, persisted.Plan, wantSpec, wantPlan)
 	}
 }
 
@@ -1177,12 +1307,12 @@ func updateTaskContentForTestWithAgentSessionID(t *testing.T, fixture goalListFi
 func addTaskForUpdateContentTest(t *testing.T, fixture goalListFixture, status domain.TaskStatus, title, description string) domain.Task {
 	t.Helper()
 	ctx := context.Background()
-	tasks, err := fixture.store.DeclareTasks(ctx, fixture.tasks[0].GoalID, "fixture-agent", "task-update-content-extra", []string{title}, []string{description})
+	tasks, err := fixture.store.CreateTasks(ctx, fixture.tasks[0].GoalID, "fixture-agent", "task-update-content-extra", []string{title}, []string{description})
 	if err != nil {
-		t.Fatalf("DeclareTasks extra task: %v", err)
+		t.Fatalf("CreateTasks extra task: %v", err)
 	}
 	if len(tasks) == 0 {
-		t.Fatal("DeclareTasks extra task returned no tasks")
+		t.Fatal("CreateTasks extra task returned no tasks")
 	}
 	task := tasks[len(tasks)-1]
 	if _, err := fixture.store.DB().ExecContext(ctx, "UPDATE tasks SET status = ?, title = ?, description = ? WHERE id = ?", string(status), title, description, task.ID); err != nil {
@@ -1895,67 +2025,6 @@ func TestGoalClaimRejectsLiveOtherSessionAfterProjectClaim(t *testing.T) {
 	}
 }
 
-func TestTaskClaimStillClaimsTask(t *testing.T) {
-	fixture := newGoalListFixture(t)
-	defer fixture.store.Close()
-
-	const sessionID = "task-claim-regression-run"
-	result, err := func() (json.RawMessage, error) {
-		params, err := json.Marshal(map[string]any{
-			"task_id":          fixture.tasks[1].ID,
-			"agent_session_id": daemonTestSessionID(t, fixture.store, sessionID),
-		})
-		if err != nil {
-			t.Fatalf("marshal task.claim params: %v", err)
-		}
-		return fixture.daemon.dispatch(context.Background(), rpc.Request{Method: "task.claim", Params: params})
-	}()
-	if err != nil {
-		t.Fatalf("task.claim: %v", err)
-	}
-	var claimed domain.Task
-	if err := json.Unmarshal(result, &claimed); err != nil {
-		t.Fatalf("unmarshal task.claim result: %v", err)
-	}
-	handoff := openTaskHandoffForTest(t, fixture, fixture.tasks[1].GoalID, fixture.tasks[1].ID)
-	if handoff == nil || handoff.ReceivedBy != daemonTestSessionID(t, fixture.store, sessionID) {
-		t.Fatalf("task handoff = %+v, want received_by %v", handoff, sessionID)
-	}
-}
-
-func TestTaskClaimAndReleaseStillWork(t *testing.T) {
-	fixture := newGoalListFixture(t)
-	defer fixture.store.Close()
-
-	const sessionID = "task-claim-release-regression-run"
-	claimParams, err := json.Marshal(map[string]any{
-		"task_id":          fixture.tasks[1].ID,
-		"agent_session_id": daemonTestSessionID(t, fixture.store, sessionID),
-	})
-	if err != nil {
-		t.Fatalf("marshal task.claim params: %v", err)
-	}
-	if _, err := fixture.daemon.dispatch(context.Background(), rpc.Request{Method: "task.claim", Params: claimParams}); err != nil {
-		t.Fatalf("task.claim: %v", err)
-	}
-
-	releaseParams, err := json.Marshal(map[string]any{"task_id": fixture.tasks[1].ID, "agent_session_id": daemonTestSessionID(t, fixture.store, sessionID)})
-	if err != nil {
-		t.Fatalf("marshal task.release params: %v", err)
-	}
-	result, err := fixture.daemon.dispatch(context.Background(), rpc.Request{Method: "task.release", Params: releaseParams})
-	if err != nil {
-		t.Fatalf("task.release: %v", err)
-	}
-	var released domain.Task
-	if err := json.Unmarshal(result, &released); err != nil {
-		t.Fatalf("unmarshal task.release result: %v", err)
-	}
-	if handoff := openTaskHandoffForTest(t, fixture, fixture.tasks[1].GoalID, fixture.tasks[1].ID); handoff != nil {
-		t.Fatalf("task handoff after release = %+v, want none", handoff)
-	}
-}
-
 func TestReleaseMissingIDsReturnErrorsViaRPC(t *testing.T) {
 	fixture := newGoalListFixture(t)
 	defer fixture.store.Close()
@@ -1973,7 +2042,6 @@ func TestReleaseMissingIDsReturnErrorsViaRPC(t *testing.T) {
 	}{
 		{method: "project.release", key: "project_id", agentSessionID: projectReleaseSessionID},
 		{method: "goal.release", key: "goal_id"},
-		{method: "task.release", key: "task_id"},
 	} {
 		paramValues := map[string]any{tc.key: "missing-" + tc.key}
 		if tc.agentSessionID != "" {

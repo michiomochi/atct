@@ -107,6 +107,41 @@ func TestScopedWorkflowReconciliationReturnsCanonicalState(t *testing.T) {
 	}
 }
 
+func TestWorkflowReconciliationIncludesTaskCreateHandoff(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	goalID := newTestGoal(t, s)
+	goal, err := s.GetGoal(ctx, goalID)
+	if err != nil {
+		t.Fatalf("GetGoal: %v", err)
+	}
+	addLiveProjectClaim(t, s, goalID, "workflow-task-create-commander")
+	addTestAgentSession(t, s, "workflow-task-create-subcommander")
+	goalHandoff, err := s.RequestGoalHandoff(ctx, "workflow-task-create-goal", goalID, testSessionID("workflow-task-create-commander"), "delegate")
+	if err != nil {
+		t.Fatalf("RequestGoalHandoff: %v", err)
+	}
+	if _, err := s.ReceiveGoalHandoff(ctx, goalHandoff.ID, goalID, testSessionID("workflow-task-create-subcommander")); err != nil {
+		t.Fatalf("ReceiveGoalHandoff: %v", err)
+	}
+	setPlanReviewGoalArtifacts(t, s, goalID)
+	_, err = s.RequestPlanHandoffReview(ctx, "workflow-task-create-plan", goalID, testSessionID("workflow-task-create-subcommander"), "ready")
+	if err != nil {
+		t.Fatalf("RequestPlanHandoffReview: %v", err)
+	}
+	if _, err := s.DB().ExecContext(ctx, `INSERT INTO task_create_handoffs (id, goal_id, requested_at) VALUES (?, ?, ?)`, "workflow-task-create", goalID, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+		t.Fatalf("insert task-create handoff: %v", err)
+	}
+
+	reconciliation, err := s.ReconcileWorkflow(ctx, WorkflowEventQuery{ProjectID: goal.ProjectID, GoalID: goalID})
+	if err != nil {
+		t.Fatalf("ReconcileWorkflow: %v", err)
+	}
+	if len(reconciliation.TaskCreateHandoffs) != 1 || reconciliation.TaskCreateHandoffs[0].ID != "workflow-task-create" {
+		t.Fatalf("task-create handoffs = %#v, want workflow-task-create", reconciliation.TaskCreateHandoffs)
+	}
+}
+
 func TestGoalScopedWorkflowReconciliationReturnsCompletedReopenedHandoffAndAppliedDecision(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
@@ -127,8 +162,14 @@ func TestGoalScopedWorkflowReconciliationReturnsCompletedReopenedHandoffAndAppli
 	if _, err := s.ReceiveGoalHandoff(ctx, handoff.ID, goalID, testSessionID(receiverKey)); err != nil {
 		t.Fatalf("ReceiveGoalHandoff historical: %v", err)
 	}
-	if _, err := s.CompleteGoalHandoff(ctx, handoff.ID, goalID, "historical completion"); err != nil {
-		t.Fatalf("CompleteGoalHandoff historical: %v", err)
+	if _, err := s.RequestGoalHandoffReview(ctx, handoff.ID, goalID, testSessionID(receiverKey), "historical handoff ready for review"); err != nil {
+		t.Fatalf("RequestGoalHandoffReview historical: %v", err)
+	}
+	if _, err := s.ReceiveGoalHandoffReview(ctx, handoff.ID, goalID, testSessionID(requesterKey)); err != nil {
+		t.Fatalf("ReceiveGoalHandoffReview historical: %v", err)
+	}
+	if _, err := s.CompleteGoalHandoffByReviewer(ctx, handoff.ID, goalID, testSessionID(requesterKey), "historical completion"); err != nil {
+		t.Fatalf("CompleteGoalHandoffByReviewer historical: %v", err)
 	}
 	reopenedID := "workflow-canonical-history-reopened"
 	reopened, err := s.RequestGoalHandoff(ctx, reopenedID, goalID, testSessionID(requesterKey), "reopened handoff")
@@ -199,9 +240,9 @@ func TestTaskScopedWorkflowReconciliationIncludesParentAuthorityAndIsolatesTask(
 	ctx := context.Background()
 	goalID := newTestGoal(t, s)
 	taskID := newTestDecisionTask(t, s, goalID, "workflow-task-scope")
-	declaredTasks, err := s.DeclareTasks(ctx, goalID, "test-agent", "workflow-task-scope-other", []string{"other decision task"}, []string{"Create an unrelated task for scope isolation."})
+	declaredTasks, err := s.CreateTasks(ctx, goalID, "test-agent", "workflow-task-scope-other", []string{"other decision task"}, []string{"Create an unrelated task for scope isolation."})
 	if err != nil {
-		t.Fatalf("DeclareTasks other: %v", err)
+		t.Fatalf("CreateTasks other: %v", err)
 	}
 	var otherTaskID int64
 	for _, task := range declaredTasks {
@@ -211,7 +252,7 @@ func TestTaskScopedWorkflowReconciliationIncludesParentAuthorityAndIsolatesTask(
 		}
 	}
 	if otherTaskID == 0 {
-		t.Fatalf("DeclareTasks other returned no distinct task: %+v", declaredTasks)
+		t.Fatalf("CreateTasks other returned no distinct task: %+v", declaredTasks)
 	}
 	goal, err := s.GetGoal(ctx, goalID)
 	if err != nil {

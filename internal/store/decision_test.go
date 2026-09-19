@@ -42,9 +42,9 @@ func TestUpdateTaskRejectsDoneWhileDecisionOpen(t *testing.T) {
 	s := newTestStore(t)
 	goalID := newTestGoal(t, s)
 
-	tasks, err := s.DeclareTasks(ctx, goalID, "codex", "k", []string{"Implement the task"}, []string{"Implement the task and verify its behavior through the decision flow."})
+	tasks, err := s.CreateTasks(ctx, goalID, "codex", "k", []string{"Implement the task"}, []string{"Implement the task and verify its behavior through the decision flow."})
 	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 	if _, err := s.AskDecision(ctx, AskInput{
 		GoalID: goalID, TaskID: tasks[0].ID, Kind: domain.KindDecision,

@@ -16,17 +16,14 @@ When the goal is met, it comes back to you for sign-off.
 ## Install
 
 ```bash
+brew install --cask michiomochi/tap/atct
+
 claude plugin marketplace add michiomochi/atct
 claude plugin install atct@atct
 ```
 
-That is the supported install. The plugin ships wrappers that fetch the two binaries the first
-time something needs them, verify them against the release checksums, and cache them under
-`~/.atct/bin/`.
-
-The wrapper also installs a stable terminal launcher at `~/.local/bin/atct`. It never edits shell
-profiles. If `~/.local/bin` is not on your `PATH`, add it yourself if you want to type `atct`, or
-continue using the wrapper directly.
+The Homebrew Cask installs both `atct` and `atct-mcp`. The plugin supplies the MCP connection,
+hooks, and skills; it does not install or update the CLI.
 
 Restart Claude Code once — or run `/reload-plugins` — so the new MCP server is picked up.
 
@@ -83,25 +80,23 @@ After that, the shim behaves as follows:
 Automatic monitoring starts only when Codex itself starts; it cannot be retrofitted onto an
 existing session. `atct:start` is not a monitor-start trigger.
 
-For argument-bearing launches, and for subcommander or executor roles, use the explicit monitor
-commands:
+For any monitored interactive launch, use the generic token-bound command:
 
 ```bash
-atct codex monitor --role commander -- <args>
-atct codex monitor --role subcommander --goal <id> -- <args>
-atct codex monitor --role executor --task <id> -- <args>
+atct codex monitor -- <args>
 atct codex monitor stop
 ```
 
-`--scope` is unsupported. The legacy `atct codex monitor -- <codex args>` remains a compatible
-project-scoped monitor. Explicit role configuration fails closed if the role/selector is invalid or
-cannot resolve in the current project: it starts neither Codex nor the App Server. A running normal
-Codex process cannot be retrofitted; use a fresh monitored process.
+The wrapper creates a monitor token and follows the assignment derived by the server after session
+identification and claim or handoff receipt. `--role`, `--project`, `--goal`, `--task`, and `--scope`
+are not monitor options. A running normal Codex process cannot be retrofitted; use a fresh monitored
+process.
 
 For a monitored worker, the delegator requests the handoff first, creates a fresh worker pane, then
-runs `herdr pane run <pane> atct codex monitor --role executor --task <task_id> -- <codex args>`
+runs `herdr pane run <pane> atct codex monitor -- <codex args>`
 before the worker process. Plain `herdr agent start` bypasses this monitored launch. The new worker
-then calls `atct_session_identify`, `atct_handoff_receive` with only the task ID, and `atct_role`.
+then calls `atct_task_handoff_receive` with its SessionStart `session_key` (and
+`monitor_token`, when emitted), and `atct_role`.
 
 Put a literal Codex argument such as `stop` after `--` so it is not interpreted as the monitor's
 stop command.
@@ -111,16 +106,32 @@ task-identified detection events. Review producers, review-state storage, and re
 are not implemented by this capability; future review detections may use the existing identity-bearing
 event envelope and will still be task-filtered.
 
+### Monitor liveness and recovery
+
+Eligible goal-scoped subcommander and task-scoped executor monitors run an independent one-minute
+liveness tick. The tick is based on the last successful scoped reconciliation, so it can emit a
+bounded `atct monitor liveness:` recheck line even while an SSE connection is quiet. Project-wide
+commander monitors, malformed or unscoped selectors, and scopes with an open human decision do not
+receive a prompt. A transient snapshot, reconciliation, SSE, or daemon failure stays in the watch
+loop and reconnects with bounded backoff; it is not a task or monitor terminal state.
+
+A liveness line is a recheck signal, not authority: it does not approve a human decision, cross a
+scope boundary, commit work, or create a task. A subcommander accepts the plan before requesting a
+task handoff or starting an executor through the `atct codex monitor` wrapper. An executor keeps an
+open human decision parked, works only within its task, and submits the task for review instead of
+committing.
+
 To reproduce the GREEN documentation check, use at least five fresh contexts with the same
 time/sunk-cost/authority pressure scenario. Preserve each complete raw response and provenance, then
-score every response against the exact role commands, no `--scope`, handoff-before-pane ordering,
-`herdr pane run` before the worker, the worker's identify → receive(task only) → role sequence, and
-no retrofit. Read every response manually and retain the per-criterion scores; a valid wrapper command
-is required in every passing response.
+score every response against the generic token-bound command with no role or scope selectors,
+record-first handoff ordering,
+`herdr pane run <pane> atct codex monitor` before the worker, the worker's identify → receive(task
+only) → role sequence, and no retrofit. Read every response manually and retain the per-criterion
+scores; a valid monitor-wrapper command is required in every passing response.
 
 ## Setting a goal is the approval
 
-An active goal is permission to work. The agent breaks it into tasks and starts — it does not
+An active goal is permission to coordinate work. The agent breaks it into tasks and delegates them — it does not
 come back for sign-off on the plan, and it does not stop between tasks. Your attention goes to
 the decisions it parks and to the final approval, not to granting permission at every step.
 
