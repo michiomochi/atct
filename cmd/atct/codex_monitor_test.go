@@ -1442,6 +1442,119 @@ func TestCodexMonitorRejectionDeliveryAcrossHandoffKinds(t *testing.T) {
 	}
 }
 
+func TestCodexMonitorTaskCreateHandoffReconciliationLifecycle(t *testing.T) {
+	const (
+		requestState  = `{"task_create_handoffs":[{"ID":"create-1","GoalID":7,"RequestedAt":"2026-09-19T00:00:01.000000000Z"}]}`
+		receiveState  = `{"task_create_handoffs":[{"ID":"create-1","GoalID":7,"ReceivedAt":"2026-09-19T00:00:02.000000000Z"}]}`
+		completeState = `{"task_create_handoffs":[{"ID":"create-1","GoalID":7,"CompletedAt":"2026-09-19T00:00:03.000000000Z"}]}`
+	)
+	responses := []string{requestState, requestState, receiveState, completeState}
+	responseIndex := 0
+	client := &http.Client{Transport: watchRoundTripper(func(req *http.Request) (*http.Response, error) {
+		if req.URL.Path != "/api/events/reconcile" {
+			return nil, errors.New("unexpected request path")
+		}
+		body := responses[responseIndex]
+		responseIndex++
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Status:     "200 OK",
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(body)),
+		}, nil
+	})}
+
+	starter := &fakeCodexTurnStarter{}
+	bridge := newCodexMonitorBridge(starter, "thread-1")
+	bridge.SetActive(true)
+	scope := watchScope{ProjectID: "1", GoalID: "7", Role: "subcommander"}
+	delivered := make(map[watchDeliveryKey]struct{})
+	lastWakeupContent := ""
+	wakeupDiscrepancyDelivered := make(map[watchWakeupDiscrepancyDeliveryKey]struct{})
+	wakeupDelivered := make(map[watchWakeupDeliveryKey]struct{})
+	for range responses {
+		if err := reconcileWatchScope(
+			context.Background(), client, "http://daemon", scope, io.Discard,
+			delivered, &lastWakeupContent, wakeupDiscrepancyDelivered, wakeupDelivered,
+			newWatchScopeFilter("7"), bridge.LineSink(), bridge.ActionSink(),
+		); err != nil {
+			t.Fatalf("reconcileWatchScope: %v", err)
+		}
+	}
+
+	bridge.stateMu.Lock()
+	if len(bridge.queue) != 2 {
+		t.Fatalf("queued task-create actions = %#v, want request and receive", bridge.queue)
+	}
+	if bridge.queue[0].eventName != "task.create_handoff.request" || bridge.queue[0].handoffID != "create-1" {
+		t.Fatalf("queued request = %#v, want durable handoff identity", bridge.queue[0])
+	}
+	if bridge.queue[1].eventName != "task.create_handoff.receive" || bridge.queue[1].handoffID != "create-1" {
+		t.Fatalf("queued receive = %#v, want distinct agent-facing durable action", bridge.queue[1])
+	}
+	if bridge.queue[1].controlOnly {
+		t.Fatal("task-create receive action is control-only, want agent-facing")
+	}
+	bridge.stateMu.Unlock()
+	if got := starter.callsSnapshot(); len(got) != 0 {
+		t.Fatalf("turns while monitor active = %#v, want queued actions", got)
+	}
+}
+
+func TestCodexMonitorTaskCreateHandoffUnknownSubmissionRecoversFresh(t *testing.T) {
+	const requestState = `{"task_create_handoffs":[{"ID":"create-1","GoalID":7,"RequestedAt":"2026-09-19T00:00:01.000000000Z"}]}`
+	client := &http.Client{Transport: watchRoundTripper(func(req *http.Request) (*http.Response, error) {
+		if req.URL.Path != "/api/events/reconcile" {
+			return nil, errors.New("unexpected request path")
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Status:     "200 OK",
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(requestState)),
+		}, nil
+	})}
+	scope := watchScope{ProjectID: "1", GoalID: "7", Role: "subcommander"}
+	reconcile := func(t *testing.T, bridge *codexMonitorBridge, delivered map[watchDeliveryKey]struct{}) error {
+		t.Helper()
+		lastWakeupContent := ""
+		return reconcileWatchScope(
+			context.Background(), client, "http://daemon", scope, io.Discard,
+			delivered, &lastWakeupContent,
+			make(map[watchWakeupDiscrepancyDeliveryKey]struct{}),
+			make(map[watchWakeupDeliveryKey]struct{}),
+			newWatchScopeFilter("7"), bridge.LineSink(), bridge.ActionSink(),
+		)
+	}
+
+	failedStarter := &fakeCodexTurnStarter{errs: []error{errCodexTurnSubmitUnknown}}
+	failedBridge := newCodexMonitorBridge(failedStarter, "thread-1")
+	err := reconcile(t, failedBridge, make(map[watchDeliveryKey]struct{}))
+	if !errors.Is(err, errCodexTurnSubmitUnknown) {
+		t.Fatalf("unknown task-create submission error = %v, want unknown submission", err)
+	}
+	failedBridge.stateMu.Lock()
+	if len(failedBridge.queue) != 1 || failedBridge.queue[0].handoffID != "create-1" {
+		t.Fatalf("retained task-create request = %#v, want durable queued request", failedBridge.queue)
+	}
+	failedBridge.stateMu.Unlock()
+	if !failedBridge.disabled {
+		t.Fatal("bridge disabled = false, want terminal monitor state")
+	}
+	if got := failedStarter.callsSnapshot(); len(got) != 1 || !strings.Contains(got[0], "handoff_id: create-1") {
+		t.Fatalf("unknown submission turns = %#v, want one task-create request", got)
+	}
+
+	freshStarter := &fakeCodexTurnStarter{}
+	freshBridge := newCodexMonitorBridge(freshStarter, "thread-fresh")
+	if err := reconcile(t, freshBridge, make(map[watchDeliveryKey]struct{})); err != nil {
+		t.Fatalf("fresh reconciliation: %v", err)
+	}
+	if got := freshStarter.callsSnapshot(); len(got) != 1 || !strings.Contains(got[0], "handoff_id: create-1") {
+		t.Fatalf("fresh recovery turns = %#v, want one recovered task-create request", got)
+	}
+}
+
 func TestCodexMonitorEventSinkOnlyReceivesFormattedLines(t *testing.T) {
 	starter := &fakeCodexTurnStarter{}
 	bridge := newCodexMonitorBridge(starter, "thread-1")
