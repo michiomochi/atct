@@ -1036,7 +1036,7 @@ func consumeWatchEventsWithStateAndScopeAndSinkAndInterval(ctx context.Context, 
 			}
 		case now := <-livenessTicker.C:
 			if latestReconciliation != nil && livenessState.PromptDue(now, scope, *latestReconciliation) {
-				line := formatWatchLiveness(scope)
+				line := formatWatchLiveness(scope, *latestReconciliation)
 				if err := writeWatchLineWithActionSink(out, line, "monitor.liveness", watchDecision{GoalID: scope.GoalID, TaskID: scope.TaskID}, sink, actionSink); err != nil {
 					return err
 				}
@@ -1788,11 +1788,36 @@ func formatWatchDecision(eventName string, decision watchDecision) (string, bool
 	}
 }
 
-func formatWatchLiveness(scope watchScope) string {
+// formatWatchLiveness names what to act on. "recheck goal 287" named nothing,
+// so its subcommander rechecked, read an open goal handoff, and reported that
+// no transition was available while a rejected plan handoff waited.
+func formatWatchLiveness(scope watchScope, state watchReconciliation) string {
 	if scope.TaskID != "" {
 		return fmt.Sprintf("atct monitor liveness: recheck task %s", scope.TaskID)
 	}
+	if rejected, kind := watchRejectedHandoff(scope, state); rejected != "" {
+		return fmt.Sprintf("atct monitor liveness: %s handoff %s was rejected and is waiting to be received (goal %s)",
+			kind, rejected, scope.GoalID)
+	}
 	return fmt.Sprintf("atct monitor liveness: recheck goal %s", scope.GoalID)
+}
+
+// watchRejectedHandoff returns the first rejected handoff nobody has received.
+func watchRejectedHandoff(scope watchScope, state watchReconciliation) (string, string) {
+	for _, group := range []struct {
+		kind     string
+		handoffs []watchReconciliationHandoff
+	}{{"goal", state.GoalHandoffs}, {"plan", state.PlanHandoffs}, {"task", state.TaskHandoffs}} {
+		for _, handoff := range group.handoffs {
+			if !watchHandoffMatchesGoal(scope, handoff) || !watchHandoffOpen(handoff) {
+				continue
+			}
+			if handoff.ReviewRejectedAt != nil {
+				return handoff.ID, group.kind
+			}
+		}
+	}
+	return "", ""
 }
 
 func formatUnassignedGoalIDs(ids []int64) string {

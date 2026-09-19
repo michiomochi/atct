@@ -1271,7 +1271,7 @@ func TestCodexMonitorRejectionDeliveryAcrossHandoffKinds(t *testing.T) {
 				var line string
 				var ok bool
 				if eventName == livenessEvent {
-					line = formatWatchLiveness(scope)
+					line = formatWatchLiveness(scope, watchReconciliation{})
 					ok = true
 				} else {
 					line, ok = formatWatchDecision(eventName, decision)

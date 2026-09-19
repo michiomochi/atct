@@ -77,6 +77,11 @@ func watchSubcommanderLivenessActionable(scope watchScope, state watchReconcilia
 	if watchGoalHasOpenTaskHandoff(scope, state) {
 		return false
 	}
+	// A rejection is work wherever it sits, so look for one across every
+	// handoff before anything else decides. Answering from the first open
+	// handoff met let a goal handoff still under review say "nothing to do"
+	// while a rejected plan handoff waited behind it, which is how goal 260
+	// stood idle with a rejection to pick up.
 	for _, handoffs := range [][]watchReconciliationHandoff{state.GoalHandoffs, state.PlanHandoffs} {
 		for _, handoff := range handoffs {
 			if !watchHandoffMatchesGoal(scope, handoff) || !watchHandoffOpen(handoff) {
@@ -84,6 +89,13 @@ func watchSubcommanderLivenessActionable(scope watchScope, state watchReconcilia
 			}
 			if handoff.ReviewRejectedAt != nil {
 				return true
+			}
+		}
+	}
+	for _, handoffs := range [][]watchReconciliationHandoff{state.GoalHandoffs, state.PlanHandoffs} {
+		for _, handoff := range handoffs {
+			if !watchHandoffMatchesGoal(scope, handoff) || !watchHandoffOpen(handoff) {
+				continue
 			}
 			if handoff.ReviewRequestedAt != nil {
 				return false
