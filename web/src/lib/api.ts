@@ -19,6 +19,7 @@ export interface Goal {
   plan: string;
   status: string;
   awaiting_decision: boolean;
+  awaiting_review?: boolean;
   result_summary: string;
   work_done: string;
   now_possible: string;

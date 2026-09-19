@@ -590,12 +590,27 @@ WHERE id = ? AND goal_id = ?
   AND completed_report_at IS NULL;
 
 -- name: ReceivePlanHandoffReviewRejection :execresult
+-- The submitter takes its own rejection back, and so does whoever holds the
+-- goal now. Keyed to the submitter alone, a rejection was stranded the moment
+-- that session ended: no successor could pick it up and no other role could
+-- either, which stopped goals 260 and 287 outright.
 UPDATE plan_handoffs
-SET review_rejection_received_by = ?, review_rejection_received_at = ?
-WHERE id = ? AND goal_id = ?
+SET review_rejection_received_by = sqlc.arg('review_rejection_received_by'),
+    review_rejection_received_at = sqlc.arg('review_rejection_received_at')
+WHERE plan_handoffs.id = sqlc.arg('id') AND plan_handoffs.goal_id = sqlc.arg('goal_id')
   AND review_rejected_at IS NOT NULL
   AND review_rejection_received_at IS NULL
-  AND review_requested_by = ?;
+  AND (
+    review_requested_by = sqlc.arg('review_rejection_received_by')
+    OR EXISTS (
+      SELECT 1 FROM goal_handoffs
+      WHERE goal_handoffs.goal_id = plan_handoffs.goal_id
+        AND goal_handoffs.received_by = sqlc.arg('review_rejection_received_by')
+        AND goal_handoffs.received_at IS NOT NULL
+        AND goal_handoffs.completed_report_at IS NULL
+        AND goal_handoffs.recovered_at IS NULL
+    )
+  );
 
 -- name: CompletePlanHandoff :execresult
 UPDATE plan_handoffs

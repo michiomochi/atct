@@ -67,7 +67,7 @@ func MonitorHealthID(cwd, role string, projectID int64, goalID, taskID *int64, p
 	if len(scopeKeys) > 0 && strings.TrimSpace(scopeKeys[0]) != "" {
 		selector += fmt.Sprintf("scope:%s\x00", strings.TrimSpace(scopeKeys[0]))
 	}
-	identity := fmt.Sprintf("%s\x00%s\x00%s%d\x00%s", absCWD, selector, "pid:", pid, processStartedAt.UTC().Format(time.RFC3339Nano))
+	identity := fmt.Sprintf("%s\x00%s\x00%s%d\x00%s", absCWD, selector, "pid:", pid, formatTimestamp(processStartedAt))
 	digest := sha256.Sum256([]byte(identity))
 	return fmt.Sprintf("monitor-%x", digest[:])
 }
@@ -136,7 +136,7 @@ func (s *Store) UpsertMonitorHealth(ctx context.Context, health MonitorHealth) e
 		return fmt.Errorf("begin monitor health upsert: %w", err)
 	}
 	defer tx.Rollback()
-	cutoff := now.Add(-monitorHealthRetention).UTC().Format(time.RFC3339Nano)
+	cutoff := formatTimestamp(now.Add(-monitorHealthRetention))
 	queries := sqlcgen.New(tx)
 	if err := queries.PruneMonitorHealth(ctx, cutoff); err != nil {
 		return fmt.Errorf("prune monitor health: %w", err)
@@ -152,11 +152,11 @@ func (s *Store) UpsertMonitorHealth(ctx context.Context, health MonitorHealth) e
 		GoalID:           nullableMonitorID(health.GoalID),
 		TaskID:           nullableMonitorID(health.TaskID),
 		Pid:              int64(health.PID),
-		ProcessStartedAt: health.ProcessStartedAt.UTC().Format(time.RFC3339Nano),
+		ProcessStartedAt: formatTimestamp(health.ProcessStartedAt),
 		State:            health.State,
 		Reason:           health.Reason,
-		TransitionedAt:   health.TransitionedAt.UTC().Format(time.RFC3339Nano),
-		LastSeenAt:       health.LastSeenAt.UTC().Format(time.RFC3339Nano),
+		TransitionedAt:   formatTimestamp(health.TransitionedAt),
+		LastSeenAt:       formatTimestamp(health.LastSeenAt),
 	}); err != nil {
 		return fmt.Errorf("upsert monitor health: %w", err)
 	}
@@ -182,7 +182,7 @@ func (s *Store) StopMonitorHealth(ctx context.Context, monitorID string, stopped
 		return fmt.Errorf("begin monitor health stop: %w", err)
 	}
 	defer tx.Rollback()
-	when := stoppedAt.UTC().Format(time.RFC3339Nano)
+	when := formatTimestamp(stoppedAt)
 	result, err := sqlcgen.New(tx).StopMonitorHealth(ctx, sqlcgen.StopMonitorHealthParams{
 		StoppedAt:      sql.NullString{String: when, Valid: true},
 		TransitionedAt: when,
@@ -197,7 +197,7 @@ func (s *Store) StopMonitorHealth(ctx context.Context, monitorID string, stopped
 	} else if affected == 0 {
 		return sql.ErrNoRows
 	}
-	cutoff := time.Now().UTC().Add(-monitorHealthRetention).Format(time.RFC3339Nano)
+	cutoff := formatTimestamp(time.Now().Add(-monitorHealthRetention))
 	if err := sqlcgen.New(tx).PruneMonitorHealth(ctx, cutoff); err != nil {
 		return fmt.Errorf("prune stopped monitor health: %w", err)
 	}
@@ -211,7 +211,7 @@ func (s *Store) ListMonitorHealth(ctx context.Context, projectID int64) ([]Monit
 	if projectID <= 0 {
 		return nil, errors.New("project_id is required")
 	}
-	cutoff := time.Now().UTC().Add(-MonitorHealthLease).Format(time.RFC3339Nano)
+	cutoff := formatTimestamp(time.Now().Add(-MonitorHealthLease))
 	rows, err := sqlcgen.New(s.db).ListMonitorHealth(ctx, sqlcgen.ListMonitorHealthParams{ProjectID: projectID, LastSeenAt: cutoff})
 	if err != nil {
 		return nil, fmt.Errorf("list monitor health: %w", err)
@@ -333,7 +333,7 @@ func (s *Store) RegisterAgentSessionInProject(ctx context.Context, pid int, proj
 		startedAt = actualStartedAt
 	}
 	now := time.Now().UTC()
-	registeredAt := now.Format(time.RFC3339Nano)
+	registeredAt := formatTimestamp(now)
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, fmt.Errorf("begin agent session registration: %w", err)
@@ -351,13 +351,13 @@ func (s *Store) RegisterAgentSessionInProject(ctx context.Context, pid int, proj
 	if err != nil {
 		return 0, fmt.Errorf("register agent session: %w", err)
 	}
-	if err := queries.DeleteExpiredAgentSessions(ctx, now.Add(-agentSessionRetention).Format(time.RFC3339Nano)); err != nil {
+	if err := queries.DeleteExpiredAgentSessions(ctx, formatTimestamp(now.Add(-agentSessionRetention))); err != nil {
 		return 0, fmt.Errorf("clean up old agent sessions: %w", err)
 	}
 	// A session is alive the moment it registers: its transport is open. The
 	// lease says so, and from here the monitor is what keeps it saying so.
 	if _, err := queries.HeartbeatAgentSession(ctx, sqlcgen.HeartbeatAgentSessionParams{
-		LastHeartbeatAt: sql.NullString{String: now.Format(time.RFC3339Nano), Valid: true},
+		LastHeartbeatAt: sql.NullString{String: formatTimestamp(now), Valid: true},
 		ID:              agentSessionID,
 	}); err != nil {
 		return 0, fmt.Errorf("start agent session lease: %w", err)
@@ -386,7 +386,7 @@ func (s *Store) IdentifyAgentSession(ctx context.Context, agentSessionID int64, 
 		startedAt = actualStartedAt
 	}
 	now := time.Now().UTC()
-	registeredAt := now.Format(time.RFC3339Nano)
+	registeredAt := formatTimestamp(now)
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, false, fmt.Errorf("begin agent session identification: %w", err)
@@ -501,7 +501,7 @@ func (s *Store) AssociateAgentSessionWithProject(ctx context.Context, agentSessi
 
 	if err := queries.DeleteExpiredAgentSessionsExcept(ctx, sqlcgen.DeleteExpiredAgentSessionsExceptParams{
 		ID:           agentSessionID,
-		RegisteredAt: now.Add(-agentSessionRetention).Format(time.RFC3339Nano),
+		RegisteredAt: formatTimestamp(now.Add(-agentSessionRetention)),
 	}); err != nil {
 		return fmt.Errorf("clean up old agent sessions: %w", err)
 	}

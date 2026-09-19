@@ -39,6 +39,36 @@ func (q *Queries) CountLiveMonitorsForScope(ctx context.Context, arg CountLiveMo
 	return count, err
 }
 
+const countLiveMonitorsForTaskScope = `-- name: CountLiveMonitorsForTaskScope :one
+SELECT COUNT(*)
+FROM monitor_health
+WHERE project_id = ?
+  AND role = 'executor'
+  AND goal_id IS ?
+  AND task_id IS ?
+  AND last_seen_at >= ?
+  AND stopped_at IS NULL
+`
+
+type CountLiveMonitorsForTaskScopeParams struct {
+	ProjectID  int64
+	GoalID     sql.NullInt64
+	TaskID     sql.NullInt64
+	LastSeenAt string
+}
+
+func (q *Queries) CountLiveMonitorsForTaskScope(ctx context.Context, arg CountLiveMonitorsForTaskScopeParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countLiveMonitorsForTaskScope,
+		arg.ProjectID,
+		arg.GoalID,
+		arg.TaskID,
+		arg.LastSeenAt,
+	)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const listMonitorHealth = `-- name: ListMonitorHealth :many
 SELECT monitor_id, agent_key, scope_key, agent_session_id, cwd, role, project_id, goal_id, task_id, pid,
        process_started_at, state, reason, transitioned_at, last_seen_at, stopped_at
