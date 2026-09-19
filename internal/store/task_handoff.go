@@ -45,7 +45,12 @@ func taskWorkflowEventScope(ctx context.Context, q *sqlcgen.Queries, taskID int6
 // TaskHandoff records one delegation between agents. Each event timestamp is
 // independent so a partial handoff remains observable.
 type TaskHandoff struct {
-	ID                        string
+	ID string
+	// GoalID is the task's goal. The watch scopes a subcommander by goal and
+	// asks every handoff which goal it belongs to; a task handoff that cannot
+	// answer is invisible to that scope, and an executor holding it stops
+	// counting as work in progress.
+	GoalID                    int64
 	TaskID                    int64
 	RequestedBy               int64
 	ReceivedBy                int64
@@ -945,14 +950,30 @@ func (s *Store) GetTaskHandoff(ctx context.Context, handoffID string) (TaskHando
 	if err != nil {
 		return TaskHandoff{}, fmt.Errorf("get task handoff %q: %w", handoffID, err)
 	}
-	return taskHandoffFromRow(row)
+	handoff, err := taskHandoffFromRow(row)
+	if err != nil {
+		return TaskHandoff{}, err
+	}
+	// Filled on every read, so nothing downstream has to know which of them
+	// happens to populate it.
+	goalID, err := sqlcgen.New(s.db).GetTaskGoalID(ctx, handoff.TaskID)
+	if err != nil {
+		return TaskHandoff{}, fmt.Errorf("find goal for task handoff %q: %w", handoffID, err)
+	}
+	handoff.GoalID = goalID
+	return handoff, nil
 }
 
 // ListTaskHandoffs returns all handoffs for a task, including partial rows.
 func (s *Store) ListTaskHandoffs(ctx context.Context, taskID int64) ([]TaskHandoff, error) {
-	rows, err := sqlcgen.New(s.db).ListTaskHandoffs(ctx, taskID)
+	queries := sqlcgen.New(s.db)
+	rows, err := queries.ListTaskHandoffs(ctx, taskID)
 	if err != nil {
 		return nil, fmt.Errorf("list task handoffs: %w", err)
+	}
+	goalID, err := queries.GetTaskGoalID(ctx, taskID)
+	if err != nil {
+		return nil, fmt.Errorf("find goal for task %d handoffs: %w", taskID, err)
 	}
 
 	handoffs := make([]TaskHandoff, 0, len(rows))
@@ -961,6 +982,7 @@ func (s *Store) ListTaskHandoffs(ctx context.Context, taskID int64) ([]TaskHando
 		if err != nil {
 			return nil, fmt.Errorf("parse task handoff: %w", err)
 		}
+		handoff.GoalID = goalID
 		handoffs = append(handoffs, handoff)
 	}
 	return handoffs, nil
