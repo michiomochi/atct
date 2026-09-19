@@ -1110,8 +1110,9 @@ func (q *Queries) MaxTaskSortOrder(ctx context.Context, goalID int64) (int64, er
 
 const receiveGoalHandoff = `-- name: ReceiveGoalHandoff :execresult
 UPDATE goal_handoffs
-SET received_by = ?, received_at = ?
-WHERE id = ? AND goal_id = ? AND requested_at IS NOT NULL AND recovered_at IS NULL
+SET received_by = ?1, received_at = ?2
+WHERE id = ?3 AND goal_id = ?4 AND requested_at IS NOT NULL AND recovered_at IS NULL
+  AND (received_at IS NULL OR received_by = ?1)
 `
 
 type ReceiveGoalHandoffParams struct {
@@ -1121,6 +1122,7 @@ type ReceiveGoalHandoffParams struct {
 	GoalID     int64
 }
 
+// Same rule as ReceiveTaskHandoff, for the subcommander scope.
 func (q *Queries) ReceiveGoalHandoff(ctx context.Context, arg ReceiveGoalHandoffParams) (sql.Result, error) {
 	return q.db.ExecContext(ctx, receiveGoalHandoff,
 		arg.ReceivedBy,
@@ -1253,8 +1255,9 @@ func (q *Queries) ReceiveTaskCreateHandoff(ctx context.Context, arg ReceiveTaskC
 
 const receiveTaskHandoff = `-- name: ReceiveTaskHandoff :execresult
 UPDATE task_handoffs
-SET received_by = ?, received_at = ?
-WHERE id = ? AND task_id = ? AND requested_at IS NOT NULL
+SET received_by = ?1, received_at = ?2
+WHERE id = ?3 AND task_id = ?4 AND requested_at IS NOT NULL
+  AND (received_at IS NULL OR received_by = ?1)
 `
 
 type ReceiveTaskHandoffParams struct {
@@ -1264,6 +1267,9 @@ type ReceiveTaskHandoffParams struct {
 	TaskID     int64
 }
 
+// Receiving is what gives a session its executor scope, so a second receiver
+// would silently strip the first of its role. The receiver may say it again,
+// which is how an agent that lost its context gets back to its own work.
 func (q *Queries) ReceiveTaskHandoff(ctx context.Context, arg ReceiveTaskHandoffParams) (sql.Result, error) {
 	return q.db.ExecContext(ctx, receiveTaskHandoff,
 		arg.ReceivedBy,

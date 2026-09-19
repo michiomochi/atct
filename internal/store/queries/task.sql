@@ -261,9 +261,13 @@ ON CONFLICT(id) DO UPDATE SET
   request_report = COALESCE(task_handoffs.request_report, excluded.request_report);
 
 -- name: ReceiveTaskHandoff :execresult
+-- Receiving is what gives a session its executor scope, so a second receiver
+-- would silently strip the first of its role. The receiver may say it again,
+-- which is how an agent that lost its context gets back to its own work.
 UPDATE task_handoffs
-SET received_by = ?, received_at = ?
-WHERE id = ? AND task_id = ? AND requested_at IS NOT NULL;
+SET received_by = sqlc.arg('received_by'), received_at = sqlc.arg('received_at')
+WHERE id = sqlc.arg('id') AND task_id = sqlc.arg('task_id') AND requested_at IS NOT NULL
+  AND (received_at IS NULL OR received_by = sqlc.arg('received_by'));
 
 -- name: RequestTaskHandoffReview :execresult
 UPDATE task_handoffs
@@ -398,9 +402,11 @@ ON CONFLICT(id) DO UPDATE SET
   request_report = COALESCE(goal_handoffs.request_report, excluded.request_report);
 
 -- name: ReceiveGoalHandoff :execresult
+-- Same rule as ReceiveTaskHandoff, for the subcommander scope.
 UPDATE goal_handoffs
-SET received_by = ?, received_at = ?
-WHERE id = ? AND goal_id = ? AND requested_at IS NOT NULL AND recovered_at IS NULL;
+SET received_by = sqlc.arg('received_by'), received_at = sqlc.arg('received_at')
+WHERE id = sqlc.arg('id') AND goal_id = sqlc.arg('goal_id') AND requested_at IS NOT NULL AND recovered_at IS NULL
+  AND (received_at IS NULL OR received_by = sqlc.arg('received_by'));
 
 -- name: RequestGoalHandoffReview :execresult
 UPDATE goal_handoffs
