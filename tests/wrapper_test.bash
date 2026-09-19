@@ -45,19 +45,29 @@ assert_empty_file() {
 # Headings named here must carry a numbered list in the body of
 # skills/atct/SKILL.md. A section whose steps are ordered but unnumbered cannot
 # be spotted from the text alone, so it is registered here by hand.
+# skill|heading. 6979a33 moved four of these into the role skills, so the file
+# is part of the entry: a heading checked against the wrong skill finds nothing
+# and the section silently stops being checked at all.
 ORDERED_SECTIONS=(
-  '## Declare before you work'
-  '## Receive before you start'
-  '## Delegate a task'
-  '### Two-layer delegation'
-  '## Delegate a goal'
-  '## Fill in a report on a handoff that is already closed'
-  '## Recover when your role comes back wrong'
-  '## Close a task the moment it is finished'
-  '## Report completion in six parts'
-  '## Apply what you were told'
-  '## Finishing'
+  'atct|## Declare before you work'
+  'atct|## Receive before you start'
+  'subcommander|## Delegate a task'
+  'subcommander|### Two-layer delegation'
+  'commander|## Delegate a goal'
+  'atct|## Fill in a report on a handoff that is already closed'
+  'atct|## Recover when your role comes back wrong'
+  'subcommander|## Close a task the moment it is finished'
+  'atct|## Report completion in six parts'
+  'atct|## Apply what you were told'
+  'atct|## Finishing'
 )
+
+# Every skill whose numbered lists are checked for contiguity.
+NUMBERED_SKILLS=(atct start commander subcommander executor)
+
+# Skills whose numbered sections must also name the cost of running out of
+# order. `start` is not one: it never carried the marker.
+ORDERED_SECTION_SKILLS=(atct commander subcommander executor)
 
 # Prints one line per broken numbered list, and nothing when every list is
 # sound. Sections are split on `## ` and `### `; within a section the body
@@ -843,13 +853,16 @@ test_goal_handoff_completion_keeps_one_normal_path() {
 
 test_handoff_report_repair_follows_goal_delegation() {
   local atct_skill="$REPO_ROOT/skills/atct/SKILL.md"
-  local goal_end
+  local reporting
   local repair
   local recovery
-  goal_end="$(grep -n '^### Session keys$' "$atct_skill" | cut -d: -f1)"
+  # Goal delegation left this skill in 6979a33, so the section the repair used
+  # to follow is no longer here. What the order has to keep is the reading path:
+  # send a report, then repair one that is already closed, then recovery.
+  reporting="$(grep -n '^## Where an unsent report goes$' "$atct_skill" | cut -d: -f1)"
   repair="$(grep -n '^## Fill in a report on a handoff that is already closed$' "$atct_skill" | cut -d: -f1)"
   recovery="$(grep -n '^## Recover when your role comes back wrong$' "$atct_skill" | cut -d: -f1)"
-  (( goal_end < repair && repair < recovery )) || fail 'handoff report repair must follow goal delegation and precede recovery'
+  (( reporting < repair && repair < recovery )) || fail 'handoff report repair must follow the reporting section and precede recovery'
 }
 
 test_recovery_section_omits_session_header() {
@@ -889,15 +902,17 @@ test_recovery_section_names_existing_tools() {
 }
 
 test_one_space_per_goal_section_exists() {
-  assert_file_contains '## One space per goal' "$REPO_ROOT/skills/atct/SKILL.md"
+  # The shared skill only names where the section went; the rule itself, and so
+  # this assertion, belongs to commander.
+  assert_file_contains '## One space per goal' "$REPO_ROOT/skills/commander/SKILL.md"
 }
 
 test_one_space_per_goal_binds_a_space_to_one_goal() {
-  assert_file_contains 'A space belongs to one goal' "$REPO_ROOT/skills/atct/SKILL.md"
+  assert_file_contains 'A space belongs to one goal' "$REPO_ROOT/skills/commander/SKILL.md"
 }
 
 test_one_space_per_goal_closes_on_approval() {
-  assert_file_contains 'approving the completion' "$REPO_ROOT/skills/atct/SKILL.md"
+  assert_file_contains 'approving the completion' "$REPO_ROOT/skills/commander/SKILL.md"
 }
 
 test_one_space_per_goal_forbids_reuse() {
@@ -913,15 +928,17 @@ test_one_space_per_goal_names_the_only_exception() {
 }
 
 test_one_space_per_goal_sits_between_worktree_and_commit() {
-  local atct_skill="$REPO_ROOT/skills/atct/SKILL.md"
+  local commander_skill="$REPO_ROOT/skills/commander/SKILL.md"
   local worktree
   local space
-  local commit
-  worktree="$(grep -n '^## One worktree per goal$' "$atct_skill" | cut -d: -f1)"
-  space="$(grep -n '^## One space per goal$' "$atct_skill" | cut -d: -f1)"
-  commit="$(grep -n '^## Commit safely$' "$atct_skill" | cut -d: -f1)"
-  (( worktree < space && space < commit )) ||
-    fail 'one space per goal must follow the worktree rule and precede commit safely'
+  local delegate
+  # Both rules moved to commander in 6979a33; `## Commit safely` stayed in the
+  # shared skill, so the trailing bound is the section that now follows them.
+  worktree="$(grep -n '^## One worktree per goal$' "$commander_skill" | cut -d: -f1)"
+  space="$(grep -n '^## One space per goal$' "$commander_skill" | cut -d: -f1)"
+  delegate="$(grep -n '^## Delegate a goal$' "$commander_skill" | cut -d: -f1)"
+  (( worktree < space && space < delegate )) ||
+    fail 'one space per goal must follow the worktree rule and precede goal delegation'
 }
 
 test_delegated_claim_contract_is_explicit() {
@@ -1579,35 +1596,41 @@ test_skill_numbering_is_contiguous() {
   local skill
   local violations
 
-  for skill in "$REPO_ROOT/skills/atct/SKILL.md" "$REPO_ROOT/skills/start/SKILL.md"; do
+  for skill in "${NUMBERED_SKILLS[@]/#/$REPO_ROOT/skills/}"; do
+    skill="$skill/SKILL.md"
     violations="$(numbering_violations "$skill")"
     [[ -z "$violations" ]] || fail "numbered lists are broken:"$'\n'"$violations"
   done
 }
 
 test_ordered_sections_name_the_out_of_order_consequence() {
-  local atct_skill="$REPO_ROOT/skills/atct/SKILL.md"
+  local skill
   local violations
 
-  violations="$(out_of_order_violations "$atct_skill")"
-  [[ -z "$violations" ]] || fail "numbered sections do not name the cost of running out of order:"$'\n'"$violations"
+  for skill in "${ORDERED_SECTION_SKILLS[@]/#/$REPO_ROOT/skills/}"; do
+    violations="$(out_of_order_violations "$skill/SKILL.md")"
+    [[ -z "$violations" ]] || fail "numbered sections do not name the cost of running out of order:"$'\n'"$violations"
+  done
 }
 
 test_ordered_sections_are_numbered() {
-  local atct_skill="$REPO_ROOT/skills/atct/SKILL.md"
+  local entry
+  local skill
   local heading
   local numbered
 
-  for heading in "${ORDERED_SECTIONS[@]}"; do
-    grep -Fxq -- "$heading" "$atct_skill" ||
-      fail "<$atct_skill> has no section titled <$heading>"
+  for entry in "${ORDERED_SECTIONS[@]}"; do
+    skill="$REPO_ROOT/skills/${entry%%|*}/SKILL.md"
+    heading="${entry#*|}"
+    grep -Fxq -- "$heading" "$skill" ||
+      fail "<$skill> has no section titled <$heading>"
     numbered="$(
       awk -v want="$heading" '
         $0 == want { inside = 1; next }
         /^## |^### / { inside = 0 }
         inside && /^[0-9]+\. / { found++ }
         END { print found + 0 }
-      ' "$atct_skill"
+      ' "$skill"
     )"
     [[ "$numbered" -gt 0 ]] ||
       fail "<$heading> is an ordered section but numbers none of its steps"
