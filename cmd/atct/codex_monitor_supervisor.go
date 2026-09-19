@@ -176,9 +176,12 @@ func runCodexMonitorWithDeps(config cliConfig, dir string, deps codexMonitorDeps
 	bridgeDone := make(chan error, 1)
 	go func() { bridgeDone <- bridge.Run(monitorCtx) }()
 	watchDone := make(chan error, 1)
-	go func() {
-		watchDone <- deps.runBoundWatch(watchCtx, projectPath, monitorToken, bridge)
-	}()
+	startWatch := func() {
+		go func() {
+			watchDone <- deps.runBoundWatch(watchCtx, projectPath, monitorToken, bridge)
+		}()
+	}
+	startWatch()
 
 	remoteArgs := make([]string, 0, len(args)+2)
 	remoteArgs = append(remoteArgs, "--remote", "unix://"+socketPath)
@@ -253,10 +256,19 @@ func runCodexMonitorWithDeps(config cliConfig, dir string, deps codexMonitorDeps
 			if err != nil && !errors.Is(err, context.Canceled) {
 				if codexMonitorWatchErrorIsTerminal(err) {
 					disableMonitor(err)
-				} else {
-					fmt.Fprintf(deps.stderr, "atct codex monitor watcher recovering: %s\n", err)
+					watchDone = nil
+					continue
 				}
+				// This used to print "recovering" and then stop listening,
+				// which left the Codex session running with no monitor. Its
+				// next ATCT call is refused by the gate for having none, and
+				// nothing restarts the watch, so the pane is finished.
+				fmt.Fprintf(deps.stderr, "atct codex monitor watcher restarting: %s\n", err)
+				startWatch()
+				continue
 			}
+			// A watch that returned without an error is done on purpose, and
+			// the monitor goes with it.
 			watchDone = nil
 		}
 	}

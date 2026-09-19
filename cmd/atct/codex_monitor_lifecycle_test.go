@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1016,4 +1017,66 @@ func (b *safeCodexMonitorBuffer) waitFor(want string, timeout time.Duration) boo
 		time.Sleep(time.Millisecond)
 	}
 	return strings.Contains(b.String(), want)
+}
+
+// A watch that fails recoverably used to print "recovering" and then never be
+// listened for again. The Codex session kept running with no monitor, so the
+// gate refused its next ATCT call for having none, and nothing brought the
+// watch back. Goal 272 lost four executors that way.
+func TestCodexMonitorRestartsAWatchThatFailedRecoverably(t *testing.T) {
+	monitorDir := t.TempDir()
+	app := newFakeCodexMonitorApp()
+	tui := newFakeCodexMonitorProcess(0)
+	tui.markStarted()
+	done := make(chan struct{})
+	restarted := make(chan struct{})
+	var starts atomic.Int32
+
+	deps := codexMonitorDeps{
+		resolveCodex: func() (string, error) { return "/opt/codex", nil },
+		startProcess: func(kind codexMonitorProcessKind, _ string, _ []string, _ []string) (codexMonitorProcess, error) {
+			if kind == codexMonitorAppServer {
+				return app, nil
+			}
+			return tui, nil
+		},
+		connectAppServer: func(context.Context, string) (codexMonitorApp, error) { return app, nil },
+		projectPath:      func() (string, error) { return "/project", nil },
+		newMonitorToken:  func() (string, error) { return "token-1", nil },
+		reap:             func(string) (daemonctl.CodexMonitorReapResult, error) { return daemonctl.CodexMonitorReapResult{}, nil },
+		register: func(string, daemonctl.CodexMonitorRecord) (func(), error) {
+			return func() {}, nil
+		},
+		runBoundWatch: func(ctx context.Context, _ string, _ string, _ *codexMonitorBridge) error {
+			if starts.Add(1) == 1 {
+				// Recoverable: a reconnect, not a reason to give up.
+				return errors.New("connection reset")
+			}
+			close(restarted)
+			<-ctx.Done()
+			return nil
+		},
+		stderr: io.Discard,
+	}
+
+	go func() {
+		_, _ = runCodexMonitorWithDeps(cliConfig{
+			codexMonitorAction: "monitor",
+			codexArgs:          []string{"-m", "gpt-5"},
+		}, monitorDir, deps)
+		close(done)
+	}()
+
+	select {
+	case <-restarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the watch was never restarted; the session is left with no monitor")
+	}
+
+	tui.finish()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("supervisor did not finish")
+	}
 }
