@@ -81,6 +81,145 @@ func TestMigrationIntegrityVerifierPreservesFixtureRows(t *testing.T) {
 	t.Logf("migration integrity report: %s", report)
 }
 
+func TestGoal254MigrationPreservesCanonicalRowsAndRemovesOrchestrationState(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "goal-254.db")
+	raw, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open fixture database: %v", err)
+	}
+	raw.SetMaxOpenConns(1)
+
+	migrations, err := loadEmbeddedMigrations()
+	if err != nil {
+		raw.Close()
+		t.Fatalf("load embedded migrations: %v", err)
+	}
+	for _, migration := range migrations {
+		if migration.filename == "0036_remove_legacy_orchestration.sql" {
+			break
+		}
+		if _, err := raw.Exec(migration.sql); err != nil {
+			raw.Close()
+			t.Fatalf("apply fixture migration %s: %v", migration.filename, err)
+		}
+		if _, err := raw.Exec(`INSERT INTO schema_migrations (filename, applied_at) VALUES (?, ?)`, migration.filename, "2026-09-09T00:00:00Z"); err != nil {
+			raw.Close()
+			t.Fatalf("record fixture migration %s: %v", migration.filename, err)
+		}
+	}
+	if _, err := raw.Exec(`
+INSERT INTO projects (id, name, root_path, created_at)
+VALUES (1, 'goal 254 fixture', '/goal-254', '2026-09-09T00:00:00Z');
+INSERT INTO agent_sessions (id, project_id, session_key, registered_at, pid, started_at)
+VALUES (1, 1, 'goal-254-requester', '2026-09-09T00:00:00Z', 1, '2026-09-09T00:00:00Z'),
+       (2, 1, 'goal-254-receiver', '2026-09-09T00:00:00Z', 2, '2026-09-09T00:00:00Z');
+INSERT INTO goals (id, project_id, content, status, created_at, updated_at)
+VALUES (1, 1, 'migrate handoff lifecycle', 'active', '2026-09-09T00:00:00Z', '2026-09-09T00:00:00Z');
+INSERT INTO tasks (id, goal_id, title, status, declare_key, created_at, updated_at)
+VALUES (1, 1, 'preserve canonical rows', 'todo', 'goal-254-fixture-task', '2026-09-09T00:00:00Z', '2026-09-09T00:00:00Z');
+INSERT INTO task_handoffs (id, task_id, requested_by, received_by, requested_at, received_at)
+VALUES ('goal-254-task-handoff', 1, 1, 2, '2026-09-09T00:00:00Z', '2026-09-09T00:01:00Z');
+INSERT INTO goal_handoffs (id, goal_id, requested_by, received_by, requested_at, received_at)
+VALUES ('goal-254-goal-handoff', 1, 1, 2, '2026-09-09T00:00:00Z', '2026-09-09T00:01:00Z');
+INSERT INTO plan_handoffs (id, goal_id, review_requested_by, review_requested_at, review_request_report)
+VALUES ('goal-254-plan-handoff', 1, 2, '2026-09-09T00:02:00Z', 'approved plan');
+INSERT INTO task_create_handoffs (id, plan_handoff_id, goal_id, requested_by, received_by, completed_by, requested_at, received_at, completed_at, request_report, complete_report)
+VALUES ('goal-254-task-create', 'goal-254-plan-handoff', 1, 1, 2, 2, '2026-09-09T00:02:00Z', '2026-09-09T00:03:00Z', '2026-09-09T00:04:00Z', 'create tasks', 'created tasks');
+INSERT INTO task_create_handoff_tasks (handoff_id, task_id)
+VALUES ('goal-254-task-create', 1);
+INSERT INTO decisions (id, goal_id, task_id, kind, question, options, status, agent_session_id, created_at)
+VALUES (1, 1, 1, 'implementation', 'keep this decision?', '[{"label":"yes"}]', 'open', 2, '2026-09-09T00:00:00Z');
+INSERT INTO orchestration_scope (scope_key, project_id, goal_id, task_id, role, agent_session_id, source_generation, created_at, updated_at)
+VALUES ('task:1:goal-254-task-handoff', 1, 1, 1, 'executor', 2, '2026-09-09T00:01:00Z', '2026-09-09T00:01:00Z', '2026-09-09T00:01:00Z');
+INSERT INTO orchestration_delivery_leases (scope_key, target_role, holder_monitor_id, fencing_token, expires_at, updated_at)
+VALUES ('task:1:goal-254-task-handoff', 'executor', 'goal-254-monitor', 1, '2026-09-09T00:02:00Z', '2026-09-09T00:01:00Z');
+INSERT INTO orchestration_delivery_receipts (scope_key, delivery_key, generation, target_role, holder_monitor_id, fencing_token, status, created_at, updated_at)
+VALUES ('task:1:goal-254-task-handoff', 'review', '2026-09-09T00:01:00Z', 'executor', 'goal-254-monitor', 1, 'accepted', '2026-09-09T00:01:00Z', '2026-09-09T00:01:00Z');
+INSERT INTO orchestration_blockers (blocker_id, project_id, goal_id, task_id, scope_key, kind, source_id, generation, owner_role, instruction, opened_at)
+VALUES ('goal-254-blocker', 1, 1, 1, 'task:1:goal-254-task-handoff', 'human_decision', 'decision:1', '2026-09-09T00:01:00Z', 'subcommander', 'wait', '2026-09-09T00:01:00Z');
+INSERT INTO orchestration_review_work (review_work_id, project_id, goal_id, task_id, kind, handoff_id, requester_session_id, requester_scope_key, expected_reviewer_role, reviewer_scope_key, state, review_requested_generation, active, opened_at, updated_at)
+VALUES ('goal-254-review-work', 1, 1, 1, 'task', 'goal-254-task-handoff', 2, 'task:1:goal-254-task-handoff', 'subcommander', 'goal:1:goal-254-goal-handoff', 'requested', '2026-09-09T00:01:00Z', 1, '2026-09-09T00:01:00Z', '2026-09-09T00:01:00Z');
+`); err != nil {
+		raw.Close()
+		t.Fatalf("insert goal 254 migration fixture: %v", err)
+	}
+	if _, err := raw.Exec(`PRAGMA user_version = 6`); err != nil {
+		raw.Close()
+		t.Fatalf("set fixture schema version: %v", err)
+	}
+	if err := raw.Close(); err != nil {
+		t.Fatalf("close fixture database: %v", err)
+	}
+
+	migrated, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("open migrated fixture: %v", err)
+	}
+	defer migrated.Close()
+
+	assertMigrationRecorded(t, migrated.DB(), "0035_handoff_only_lifecycle.sql")
+	assertMigrationRecorded(t, migrated.DB(), "0036_remove_legacy_orchestration.sql")
+	assertMigrationRecorded(t, migrated.DB(), "0037_simplify_task_create_handoff.sql")
+	assertMigrationRecorded(t, migrated.DB(), "0039_task_create_handoff_attempts.sql")
+	assertTableExists(t, migrated.DB(), "task_create_handoffs")
+	assertTableAbsent(t, migrated.DB(), "task_create_handoff_tasks")
+	taskCreateColumns := migrationTableColumns(t, migrated.DB(), "task_create_handoffs")
+	if _, ok := taskCreateColumns["plan_handoff_id"]; ok {
+		t.Error("task_create_handoffs still has plan_handoff_id")
+	}
+	for _, column := range []string{"recovered_at", "recovery_report"} {
+		if _, ok := taskCreateColumns[column]; !ok {
+			t.Errorf("task_create_handoffs omitted %s", column)
+		}
+	}
+	var taskCreateGoalID int64
+	if err := migrated.DB().QueryRow(`SELECT goal_id FROM task_create_handoffs WHERE id = ?`, "goal-254-task-create").Scan(&taskCreateGoalID); err != nil || taskCreateGoalID != 1 {
+		t.Fatalf("preserved task-create handoff goal = %d, %v; want 1", taskCreateGoalID, err)
+	}
+	if _, err := migrated.DB().Exec(`INSERT INTO task_create_handoffs (id, goal_id, completed_at) VALUES (?, ?, ?)`, "completed-revision", 1, "2026-09-09T00:05:00Z"); err != nil {
+		t.Fatalf("task_create_handoffs rejected a completed revision: %v", err)
+	}
+	if _, err := migrated.DB().Exec(`INSERT INTO task_create_handoffs (id, goal_id) VALUES (?, ?)`, "open-revision", 1); err != nil {
+		t.Fatalf("task_create_handoffs rejected an open revision: %v", err)
+	}
+	if _, err := migrated.DB().Exec(`INSERT INTO task_create_handoffs (id, goal_id) VALUES (?, ?)`, "duplicate-open-goal", 1); err == nil {
+		t.Error("task_create_handoffs accepted a second open goal_id")
+	}
+	for _, table := range []string{
+		"orchestration_scope", "orchestration_delivery_leases",
+		"orchestration_delivery_receipts", "orchestration_review_work",
+		"orchestration_blockers",
+	} {
+		assertTableAbsent(t, migrated.DB(), table)
+	}
+
+	for _, fixture := range []struct {
+		table string
+		id    any
+	}{
+		{"task_handoffs", "goal-254-task-handoff"},
+		{"goal_handoffs", "goal-254-goal-handoff"},
+		{"plan_handoffs", "goal-254-plan-handoff"},
+		{"decisions", 1},
+	} {
+		var count int
+		if err := migrated.DB().QueryRow(`SELECT COUNT(*) FROM `+fixture.table+` WHERE id = ?`, fixture.id).Scan(&count); err != nil {
+			t.Fatalf("read preserved %s row: %v", fixture.table, err)
+		}
+		if count != 1 {
+			t.Errorf("preserved %s rows = %d, want 1", fixture.table, count)
+		}
+	}
+	for _, table := range []string{"task_handoffs", "goal_handoffs", "plan_handoffs"} {
+		columns := migrationTableColumns(t, migrated.DB(), table)
+		for _, column := range []string{"review_rejection_received_by", "review_rejection_received_at"} {
+			if _, ok := columns[column]; !ok {
+				t.Errorf("%s is missing %s", table, column)
+			}
+		}
+	}
+}
+
 func TestMigrationIntegrityVerifierOnCopiedDatabaseFromEnvironment(t *testing.T) {
 	sourcePath := os.Getenv("ATCT_MIGRATION_CHECK_DB")
 	if sourcePath == "" {

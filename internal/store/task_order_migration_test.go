@@ -244,7 +244,7 @@ func TestUniqueTaskSortOrderAllowsSamePositionInAnotherGoal(t *testing.T) {
 	}
 }
 
-func TestDeclareTasksSerializesConcurrentSortAllocation(t *testing.T) {
+func TestCreateTasksSerializesConcurrentSortAllocation(t *testing.T) {
 	s := newTestStore(t)
 	goalID := newTestGoal(t, s)
 	if got := s.DB().Stats().MaxOpenConnections; got != 1 {
@@ -255,7 +255,7 @@ func TestDeclareTasksSerializesConcurrentSortAllocation(t *testing.T) {
 	errs := make(chan error, 2)
 	go func() {
 		<-start
-		_, err := s.DeclareTasks(
+		_, err := s.CreateTasks(
 			context.Background(),
 			goalID,
 			"agent-one",
@@ -271,7 +271,7 @@ func TestDeclareTasksSerializesConcurrentSortAllocation(t *testing.T) {
 	}()
 	go func() {
 		<-start
-		_, err := s.DeclareTasks(
+		_, err := s.CreateTasks(
 			context.Background(),
 			goalID,
 			"agent-two",
@@ -287,7 +287,7 @@ func TestDeclareTasksSerializesConcurrentSortAllocation(t *testing.T) {
 	close(start)
 	for i := 0; i < 2; i++ {
 		if err := <-errs; err != nil {
-			t.Fatalf("concurrent DeclareTasks %d: %v", i, err)
+			t.Fatalf("concurrent CreateTasks %d: %v", i, err)
 		}
 	}
 

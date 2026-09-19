@@ -1,5 +1,7 @@
 package main
 
+import "strconv"
+
 type watchScopeFilter struct {
 	goalID      string
 	taskID      string
@@ -11,7 +13,165 @@ type watchScopeFilter struct {
 	unassignedGoalIDs   []int64
 }
 
-type watchScope struct{ ProjectID, GoalID, TaskID, Role string }
+type watchScope struct{ ProjectID, GoalID, TaskID, Role, ScopeKey, MonitorToken string }
+
+func watchLivenessEligible(scope watchScope) bool {
+	if scope.Role == "commander" {
+		return scope.ProjectID != "" && scope.GoalID == "" && scope.TaskID == ""
+	}
+	if scope.Role == "subcommander" {
+		return scope.ProjectID != "" && scope.GoalID != "" && scope.TaskID == ""
+	}
+	if scope.Role == "executor" {
+		return scope.ProjectID != "" && scope.GoalID != "" && scope.TaskID != ""
+	}
+	return false
+}
+
+func watchLivenessActionable(scope watchScope, state watchReconciliation) bool {
+	if !watchLivenessEligible(scope) {
+		return false
+	}
+	switch scope.Role {
+	case "commander":
+		return watchCommanderLivenessActionable(state)
+	case "subcommander":
+		return watchSubcommanderLivenessActionable(scope, state)
+	case "executor":
+		return watchExecutorLivenessActionable(scope, state)
+	default:
+		return false
+	}
+}
+
+func watchCommanderLivenessActionable(state watchReconciliation) bool {
+	for _, handoffs := range [][]watchReconciliationHandoff{state.GoalHandoffs, state.PlanHandoffs} {
+		for _, handoff := range handoffs {
+			if watchHandoffOpen(handoff) && handoff.ReviewRequestedAt != nil && handoff.ReviewRejectedAt == nil {
+				return true
+			}
+		}
+	}
+	for _, decision := range state.Decisions {
+		if decision.Kind == "goal_review" && decision.Status == "applied" && decision.AnswerLabel == "approve" && watchReconciliationHasActiveGoal(state, decision.GoalID) {
+			return true
+		}
+	}
+	return false
+}
+
+func watchSubcommanderLivenessActionable(scope watchScope, state watchReconciliation) bool {
+	for _, handoff := range state.TaskCreateHandoffs {
+		if watchTaskCreateHandoffMatchesGoal(scope, handoff) && handoff.CompletedAt == nil {
+			return true
+		}
+	}
+	for _, handoff := range state.TaskHandoffs {
+		if !watchHandoffMatchesGoal(scope, handoff) || !watchHandoffOpen(handoff) {
+			continue
+		}
+		if handoff.ReviewRequestedAt != nil || handoff.ReviewRejectedAt != nil {
+			return true
+		}
+	}
+	if watchGoalHasOpenTaskHandoff(scope, state) {
+		return false
+	}
+	// A rejection is work wherever it sits, so look for one across every
+	// handoff before anything else decides. Answering from the first open
+	// handoff met let a goal handoff still under review say "nothing to do"
+	// while a rejected plan handoff waited behind it, which is how goal 260
+	// stood idle with a rejection to pick up.
+	for _, handoffs := range [][]watchReconciliationHandoff{state.GoalHandoffs, state.PlanHandoffs} {
+		for _, handoff := range handoffs {
+			if !watchHandoffMatchesGoal(scope, handoff) || !watchHandoffOpen(handoff) {
+				continue
+			}
+			if handoff.ReviewRejectedAt != nil {
+				return true
+			}
+		}
+	}
+	for _, handoffs := range [][]watchReconciliationHandoff{state.GoalHandoffs, state.PlanHandoffs} {
+		for _, handoff := range handoffs {
+			if !watchHandoffMatchesGoal(scope, handoff) || !watchHandoffOpen(handoff) {
+				continue
+			}
+			if handoff.ReviewRequestedAt != nil {
+				return false
+			}
+			if handoff.ReceivedAt != nil {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func watchExecutorLivenessActionable(scope watchScope, state watchReconciliation) bool {
+	for _, handoff := range state.TaskHandoffs {
+		if !watchHandoffMatchesTask(scope, handoff) || !watchHandoffOpen(handoff) || handoff.ReceivedAt == nil {
+			continue
+		}
+		if handoff.ReviewRequestedAt == nil || handoff.ReviewRejectedAt != nil {
+			return true
+		}
+	}
+	return false
+}
+
+// watchGoalHasOpenTaskHandoff answers whether someone else is working on this
+// goal's tasks. A handoff whose monitor is gone is nobody working: the
+// subcommander has to hear about that one rather than be told to stand down.
+func watchGoalHasOpenTaskHandoff(scope watchScope, state watchReconciliation) bool {
+	for _, handoff := range state.TaskHandoffs {
+		if watchHandoffMatchesGoal(scope, handoff) && watchHandoffOpen(handoff) && !handoff.MonitorLost {
+			return true
+		}
+	}
+	return false
+}
+
+func watchHandoffOpen(handoff watchReconciliationHandoff) bool {
+	return handoff.CompletedReportAt == nil
+}
+
+func watchHandoffMatchesGoal(scope watchScope, handoff watchReconciliationHandoff) bool {
+	return scope.GoalID == strconv.FormatInt(handoff.GoalID, 10)
+}
+
+func watchHandoffMatchesTask(scope watchScope, handoff watchReconciliationHandoff) bool {
+	return watchHandoffMatchesGoal(scope, handoff) && scope.TaskID == strconv.FormatInt(handoff.TaskID, 10)
+}
+
+func watchTaskCreateHandoffMatchesGoal(scope watchScope, handoff watchTaskCreateHandoff) bool {
+	return scope.GoalID == strconv.FormatInt(handoff.GoalID, 10)
+}
+
+func scopedOpenDecision(scope watchScope, state watchReconciliation) bool {
+	for _, decision := range state.Decisions {
+		if decision.Status == "open" && watchScopeMatchesDecision(scope, decision) {
+			return true
+		}
+	}
+	return false
+}
+
+func watchScopeMatchesDecision(scope watchScope, decision watchDecision) bool {
+	if decision.TargetRole != "" && decision.TargetRole != scope.Role {
+		return false
+	}
+	if scope.ProjectID != "" && decision.ProjectID != "" && scope.ProjectID != decision.ProjectID {
+		return false
+	}
+	if scope.TaskID != "" {
+		return decision.TaskID == scope.TaskID
+	}
+	if scope.GoalID != "" {
+		return decision.GoalID == scope.GoalID
+	}
+	return true
+}
 
 func newWatchScopeFilter(goalID string) *watchScopeFilter {
 	return &watchScopeFilter{goalID: goalID}
@@ -42,6 +202,9 @@ func (f *watchScopeFilter) delivers(eventName string, decision watchDecision) bo
 	if f.taskID != "" {
 		return decision.TaskID == f.taskID
 	}
+	if eventName == "goal.review.complete" || eventName == "goal.review.reject" {
+		return !f.passThrough && f.goalID == ""
+	}
 	if f.passThrough || f.goalID != "" {
 		return true
 	}
@@ -49,8 +212,9 @@ func (f *watchScopeFilter) delivers(eventName string, decision watchDecision) bo
 	switch eventName {
 	case "decision.approved", "decision.rejected", "goal.created",
 		"wakeup.discrepancy", "wakeup.evaluate_failed",
-		"detection.completion_report_missing", "detection.commits_missing",
-		"detection.undeclared_goal", "detection.all_tasks_dropped":
+		"wakeup.completion_report_missing", "wakeup.commits_missing",
+		"wakeup.undeclared_goal", "wakeup.all_tasks_dropped",
+		"orchestration.recovery":
 		return true
 	case "task.handoff.request", "task.handoff.receive",
 		"task.handoff.review.request", "task.handoff.review.receive",
@@ -65,6 +229,9 @@ func (f *watchScopeFilter) delivers(eventName string, decision watchDecision) bo
 		return true
 	case "decision.answered":
 		return !decision.defaultApplied()
+	case "decision.withdrawn":
+		// Scoped like an answer, because it ends the same wait.
+		return true
 	case "wakeup":
 		if f.hasWakeupState && f.actionableGoalCount == decision.ActionableGoalCount &&
 			f.unassignedGoalCount == decision.UnassignedGoalCount &&
@@ -78,11 +245,11 @@ func (f *watchScopeFilter) delivers(eventName string, decision watchDecision) bo
 		return true
 	case "handoff_reported":
 		return decision.TaskID == ""
-	case "handoff_yielded",
-		"detection.unclaimed_doing", "detection.handoff_unreceived",
-		"detection.handoff_unreported", "detection.claim_undelegated",
-		"detection.claim_stale", "detection.decision_answered_unapplied",
-		"detection.decision_default_unapplied":
+	case "wakeup.unclaimed_doing", "wakeup.handoff_unreceived",
+		"wakeup.handoff_unreported", "wakeup.claim_undelegated",
+		"wakeup.monitor_lost",
+		"wakeup.claim_stale", "wakeup.decision_answered_unapplied",
+		"wakeup.decision_default_unapplied":
 		return false
 	default:
 		return true

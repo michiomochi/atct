@@ -106,8 +106,14 @@ func TestGoalHandoffTransitionsAppendEntries(t *testing.T) {
 	if len(received.Entries) != 2 || received.HasMore || received.NextCursor != 2 {
 		t.Fatalf("received goal history = entries:%d has_more:%t next_cursor:%d, want 2/false/2", len(received.Entries), received.HasMore, received.NextCursor)
 	}
-	if _, err := s.CompleteGoalHandoff(ctx, handoff.ID, goalID, "goal completed"); err != nil {
-		t.Fatalf("CompleteGoalHandoff: %v", err)
+	if _, err := s.RequestGoalHandoffReview(ctx, handoff.ID, goalID, testSessionID("goal-entry-receiver"), "ready for review"); err != nil {
+		t.Fatalf("RequestGoalHandoffReview: %v", err)
+	}
+	if _, err := s.ReceiveGoalHandoffReview(ctx, handoff.ID, goalID, testSessionID("goal-entry-requester")); err != nil {
+		t.Fatalf("ReceiveGoalHandoffReview: %v", err)
+	}
+	if _, err := s.CompleteGoalHandoffByReviewer(ctx, handoff.ID, goalID, testSessionID("goal-entry-requester"), "goal completed"); err != nil {
+		t.Fatalf("CompleteGoalHandoffByReviewer: %v", err)
 	}
 
 	rows, err := s.DB().QueryContext(ctx, `
@@ -275,7 +281,7 @@ func TestOpenBackfillsLegacyHandoffReportsIntoCanonicalEntries(t *testing.T) {
 		t.Fatalf("load embedded migrations: %v", err)
 	}
 	for _, migration := range migrations {
-		if migration.filename == "0031_handoff_entries.sql" {
+		if migration.filename == "0045_handoff_entries.sql" {
 			break
 		}
 		if _, err := raw.Exec(migration.sql); err != nil {
@@ -466,8 +472,14 @@ func TestAmendGoalHandoffUpdatesReportWithoutRemovedEntry(t *testing.T) {
 	if _, err := s.ReceiveGoalHandoff(ctx, handoff.ID, goalID, testSessionID("amend-goal-receiver")); err != nil {
 		t.Fatalf("ReceiveGoalHandoff: %v", err)
 	}
-	if _, err := s.CompleteGoalHandoff(ctx, handoff.ID, goalID, "complete"); err != nil {
-		t.Fatalf("CompleteGoalHandoff: %v", err)
+	if _, err := s.RequestGoalHandoffReview(ctx, handoff.ID, goalID, testSessionID("amend-goal-receiver"), "ready for review"); err != nil {
+		t.Fatalf("RequestGoalHandoffReview: %v", err)
+	}
+	if _, err := s.ReceiveGoalHandoffReview(ctx, handoff.ID, goalID, testSessionID("amend-goal-requester")); err != nil {
+		t.Fatalf("ReceiveGoalHandoffReview: %v", err)
+	}
+	if _, err := s.CompleteGoalHandoffByReviewer(ctx, handoff.ID, goalID, testSessionID("amend-goal-requester"), "complete"); err != nil {
+		t.Fatalf("CompleteGoalHandoffByReviewer: %v", err)
 	}
 	if _, err := s.AmendGoalHandoffReport(ctx, handoff.ID, goalID, "amended"); err != nil {
 		t.Fatalf("AmendGoalHandoffReport: %v", err)
@@ -583,8 +595,14 @@ func TestTerminalHandoffRejectsRequestRetry(t *testing.T) {
 		if _, err := s.ReceiveGoalHandoff(ctx, handoffID, goalID, testSessionID("terminal-request-goal-receiver")); err != nil {
 			t.Fatalf("ReceiveGoalHandoff: %v", err)
 		}
-		if _, err := s.CompleteGoalHandoff(ctx, handoffID, goalID, "complete"); err != nil {
-			t.Fatalf("CompleteGoalHandoff: %v", err)
+		if _, err := s.RequestGoalHandoffReview(ctx, handoffID, goalID, testSessionID("terminal-request-goal-receiver"), "ready for review"); err != nil {
+			t.Fatalf("RequestGoalHandoffReview: %v", err)
+		}
+		if _, err := s.ReceiveGoalHandoffReview(ctx, handoffID, goalID, testSessionID("terminal-request-goal-requester")); err != nil {
+			t.Fatalf("ReceiveGoalHandoffReview: %v", err)
+		}
+		if _, err := s.CompleteGoalHandoffByReviewer(ctx, handoffID, goalID, testSessionID("terminal-request-goal-requester"), "complete"); err != nil {
+			t.Fatalf("CompleteGoalHandoffByReviewer: %v", err)
 		}
 
 		if _, err := s.RequestGoalHandoff(ctx, handoffID, goalID, testSessionID("terminal-request-goal-requester"), "replacement request"); !errors.Is(err, ErrHandoffEntryTerminal) {

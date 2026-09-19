@@ -24,6 +24,14 @@ assert_file_contains() {
   grep -Fq -- "$needle" "$file" || fail "<$file> does not contain <$needle>"
 }
 
+assert_file_not_contains() {
+  local needle="$1"
+  local file="$2"
+  if grep -Fq -- "$needle" "$file"; then
+    fail "<$file> still contains <$needle>"
+  fi
+}
+
 assert_empty_file() {
   local file="$1"
   [[ ! -s "$file" ]] || fail "<$file> is not empty"
@@ -62,10 +70,10 @@ make_bump_only() {
 make_bump_fixture() {
   local fixture="$1"
 
-  mkdir -p "$fixture/.claude-plugin" "$fixture/.codex-plugin" "$fixture/bin"
+  mkdir -p "$fixture/.claude-plugin" "$fixture/.codex-plugin" "$fixture/hooks" "$fixture/bin"
   cp "$REPO_ROOT/.claude-plugin"/plugin.json "$fixture/.claude-plugin"/plugin.json
   cp "$REPO_ROOT/.codex-plugin"/plugin.json "$fixture/.codex-plugin"/plugin.json
-  cp "$REPO_ROOT/bin/_resolve" "$fixture/bin/_resolve"
+  cp "$REPO_ROOT/hooks/codex-hooks.json" "$fixture/hooks/codex-hooks.json"
 }
 
 test_plugin_manifests_are_in_sync() {
@@ -91,7 +99,7 @@ test_release_bumps_both_plugin_manifests() {
     'Claude plugin version after release bump'
   assert_eq "$version" "$(manifest_version "$fixture/.codex-plugin"/plugin.json)" \
     'Codex plugin version after release bump'
-  assert_file_contains "$version" "$fixture/bin/_resolve"
+  assert_file_contains "$version" "$fixture/hooks/codex-hooks.json"
 }
 
 test_release_rejects_mismatched_plugin_versions() {
@@ -207,10 +215,14 @@ test_project_claim_reacquisition_is_documented() {
   sed -n '1,20p' "$RELEASE_SCRIPT" >"$release_header"
   awk '/^echo "==> done\./ { capture = 1 } capture { print }' "$RELEASE_SCRIPT" >"$release_done"
 
-  assert_file_contains 'After the replacement, each space must reacquire its project claim' "$release_header"
-  assert_file_contains 'After the replacement, each space must reacquire its project claim' "$release_done"
-  assert_file_contains 'call atct_project_release first' "$release_done"
-  assert_file_contains 'then atct_project_claim' "$release_done"
+  # The instruction used to be "release first, then claim", because the claim
+  # named a daemon pid that outlived the session and never looked stale. The
+  # lease made the release step unnecessary, so what is pinned now is that both
+  # places still say how to reacquire, and that they say the same thing.
+  assert_file_contains 'each space calls atct_project_claim' "$release_header"
+  assert_file_contains 'each space calls atct_project_claim' "$release_done"
+  assert_file_not_contains 'atct_project_release' "$release_header"
+  assert_file_not_contains 'atct_project_release' "$release_done"
 }
 
 test_plugin_manifests_are_in_sync

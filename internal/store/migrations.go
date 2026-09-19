@@ -308,7 +308,7 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 		if _, err := tx.Exec(
 			`INSERT OR IGNORE INTO schema_migrations(filename, applied_at) VALUES (?, ?)`,
 			migration.filename,
-			time.Now().UTC().Format(time.RFC3339Nano),
+			formatTimestamp(time.Now()),
 		); err != nil {
 			return fmt.Errorf("record %s during historical bridge: %w", migration.filename, err)
 		}
@@ -992,7 +992,7 @@ func execEmbeddedMigration(ctx context.Context, conn *sql.Conn, migration embedd
 	if _, err := conn.ExecContext(ctx, migration.sql); err != nil {
 		return fmt.Errorf("execute schema migration %s: %w", migration.filename, err)
 	}
-	if migration.filename == "0032_canonical_handoff_entries.sql" {
+	if migration.filename == "0046_canonical_handoff_entries.sql" {
 		if err := backfillLegacyHandoffEntries(ctx, conn); err != nil {
 			return fmt.Errorf("backfill legacy handoff entries: %w", err)
 		}
@@ -1004,7 +1004,7 @@ func recordMigration(ctx context.Context, conn *sql.Conn, filename string) error
 	if _, err := conn.ExecContext(ctx,
 		"INSERT INTO schema_migrations (filename, applied_at) VALUES (?, ?)",
 		filename,
-		time.Now().UTC().Format(time.RFC3339Nano),
+		formatTimestamp(time.Now()),
 	); err != nil {
 		return fmt.Errorf("record schema migration %s: %w", filename, err)
 	}

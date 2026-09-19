@@ -43,7 +43,7 @@ func TestInboxAttentionTasksIncludeProjectIdentityPerTask(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	otherTasks, err := f.store.DeclareTasks(f.ctx, otherGoal.ID, "other-agent", "other-declare", []string{"needs"}, []string{"Complete the other project's work before answering its decision."})
+	otherTasks, err := f.store.CreateTasks(f.ctx, otherGoal.ID, "other-agent", "other-declare", []string{"needs"}, []string{"Complete the other project's work before answering its decision."})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,7 +175,7 @@ func TestHTTPInboxIncludesGoalTitlePerDecision(t *testing.T) {
 
 func TestHTTPInboxIncludesTasksPerActiveGoalInOrder(t *testing.T) {
 	f := newBareFixture(t)
-	firstTasks, err := f.store.DeclareTasks(f.ctx, f.goal.ID, "first-agent", "first-declare", []string{"first task", "second task"}, []string{"Finish the first task in order.", "Finish the second task after the first task."})
+	firstTasks, err := f.store.CreateTasks(f.ctx, f.goal.ID, "first-agent", "first-declare", []string{"first task", "second task"}, []string{"Finish the first task in order.", "Finish the second task after the first task."})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -186,7 +186,7 @@ func TestHTTPInboxIncludesTasksPerActiveGoalInOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	secondTasks, err := f.store.DeclareTasks(f.ctx, secondGoal.ID, "second-agent", "second-declare", []string{"other task"}, []string{"Finish the task belonging to the second goal."})
+	secondTasks, err := f.store.CreateTasks(f.ctx, secondGoal.ID, "second-agent", "second-declare", []string{"other task"}, []string{"Finish the task belonging to the second goal."})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -353,7 +353,7 @@ func newFixture(t *testing.T) *fixture {
 	f := newBareFixture(t)
 
 	var err error
-	f.tasks, err = f.store.DeclareTasks(f.ctx, f.goal.ID, "fixture-agent", "fixture-declare", []string{"needs", "now", "next"}, []string{"Resolve the prerequisite work.", "Continue the current implementation work.", "Complete the remaining follow-up work."})
+	f.tasks, err = f.store.CreateTasks(f.ctx, f.goal.ID, "fixture-agent", "fixture-declare", []string{"needs", "now", "next"}, []string{"Resolve the prerequisite work.", "Continue the current implementation work.", "Complete the remaining follow-up work."})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -869,7 +869,7 @@ func TestInboxAndGoalDetailUseExclusiveTaskColumns(t *testing.T) {
 
 func TestHTTPGoalDetailIncludesAllTasksWithoutCrossGoalMixing(t *testing.T) {
 	f := newBareFixture(t)
-	targetTasks, err := f.store.DeclareTasks(f.ctx, f.goal.ID, "target-agent", "target-declare", []string{"first task", "second task"}, []string{"Complete the first target task.", "Complete the second target task."})
+	targetTasks, err := f.store.CreateTasks(f.ctx, f.goal.ID, "target-agent", "target-declare", []string{"first task", "second task"}, []string{"Complete the first target task.", "Complete the second target task."})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -877,7 +877,7 @@ func TestHTTPGoalDetailIncludesAllTasksWithoutCrossGoalMixing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	otherTasks, err := f.store.DeclareTasks(f.ctx, otherGoal.ID, "other-agent", "other-declare", []string{"other task"}, []string{"Complete the task from the other goal."})
+	otherTasks, err := f.store.CreateTasks(f.ctx, otherGoal.ID, "other-agent", "other-declare", []string{"other task"}, []string{"Complete the task from the other goal."})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -937,7 +937,9 @@ func TestHTTPGoalDetailIncludesAllTasksWithoutCrossGoalMixing(t *testing.T) {
 
 func TestHTTPGoalDetailIncludesRequestReportFields(t *testing.T) {
 	f := newBareFixture(t)
-	if _, err := f.store.UpdateGoalRequestReport(f.ctx, f.goal.ID, "stored spec", "stored plan"); err != nil {
+	wantSpec := "# Canonical spec\n\nSpec line one.\nSpec line two."
+	wantPlan := "# Canonical plan\n\nPlan line one.\nPlan line two."
+	if _, err := f.store.UpdateGoalRequestReport(f.ctx, f.goal.ID, wantSpec, wantPlan); err != nil {
 		t.Fatal(err)
 	}
 	srv := newTestServer(t, f.store)
@@ -955,8 +957,11 @@ func TestHTTPGoalDetailIncludesRequestReportFields(t *testing.T) {
 	if err := json.Unmarshal(body, &payload); err != nil {
 		t.Fatal(err)
 	}
-	if payload.Goal.Spec != "stored spec" || payload.Goal.Plan != "stored plan" {
-		t.Fatalf("goal request report = %+v", payload.Goal)
+	if payload.Goal.Spec != wantSpec {
+		t.Fatalf("goal spec = %q, want %q", payload.Goal.Spec, wantSpec)
+	}
+	if payload.Goal.Plan != wantPlan {
+		t.Fatalf("goal plan = %q, want %q", payload.Goal.Plan, wantPlan)
 	}
 }
 
@@ -1152,7 +1157,7 @@ func TestHTTPGoalDetailReturnsEmptyDerivedGoalsArray(t *testing.T) {
 
 func TestHTTPGoalDetailIncludesAllTaskCommitsInTaskOrder(t *testing.T) {
 	f := newBareFixture(t)
-	tasks, err := f.store.DeclareTasks(f.ctx, f.goal.ID, "commit-agent", "commit-declare", []string{"first task", "second task"}, []string{"Complete the first task.", "Complete the second task."})
+	tasks, err := f.store.CreateTasks(f.ctx, f.goal.ID, "commit-agent", "commit-declare", []string{"first task", "second task"}, []string{"Complete the first task.", "Complete the second task."})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1218,7 +1223,7 @@ func TestHTTPGoalDetailIncludesAllTaskCommitsInTaskOrder(t *testing.T) {
 
 func TestHTTPGoalDetailReturnsEmptyTaskCommitsArrayWithoutCommits(t *testing.T) {
 	f := newBareFixture(t)
-	if _, err := f.store.DeclareTasks(f.ctx, f.goal.ID, "empty-commit-agent", "empty-commit-declare", []string{"first task", "second task"}, []string{"Complete the first task.", "Complete the second task."}); err != nil {
+	if _, err := f.store.CreateTasks(f.ctx, f.goal.ID, "empty-commit-agent", "empty-commit-declare", []string{"first task", "second task"}, []string{"Complete the first task.", "Complete the second task."}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1244,7 +1249,7 @@ func TestHTTPGoalDetailReturnsEmptyTaskCommitsArrayWithoutCommits(t *testing.T) 
 
 func TestHTTPGoalDetailOmitsTasksWithoutCommits(t *testing.T) {
 	f := newBareFixture(t)
-	tasks, err := f.store.DeclareTasks(f.ctx, f.goal.ID, "mixed-commit-agent", "mixed-commit-declare", []string{"with commits", "without commits"}, []string{"Complete the first task.", "Complete the second task."})
+	tasks, err := f.store.CreateTasks(f.ctx, f.goal.ID, "mixed-commit-agent", "mixed-commit-declare", []string{"with commits", "without commits"}, []string{"Complete the first task.", "Complete the second task."})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1282,7 +1287,7 @@ func TestHTTPGoalDetailOmitsTasksWithoutCommits(t *testing.T) {
 
 func TestHTTPGoalDetailDecisionHistoryIncludesTaskIDs(t *testing.T) {
 	f := newBareFixture(t)
-	tasks, err := f.store.DeclareTasks(f.ctx, f.goal.ID, "history-agent", "history-declare", []string{"first task", "second task"}, []string{"Complete the first task before recording its decision.", "Complete the second task before recording its decision."})
+	tasks, err := f.store.CreateTasks(f.ctx, f.goal.ID, "history-agent", "history-declare", []string{"first task", "second task"}, []string{"Complete the first task before recording its decision.", "Complete the second task before recording its decision."})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1417,7 +1422,7 @@ func TestHTTPGoalDetailDecisionHistoryIncludesTaskIDs(t *testing.T) {
 
 func TestHTTPTaskDetailReturnsTaskAndDecisionData(t *testing.T) {
 	f := newBareFixture(t)
-	tasks, err := f.store.DeclareTasks(
+	tasks, err := f.store.CreateTasks(
 		f.ctx,
 		f.goal.ID,
 		"fixture-agent",
@@ -1539,7 +1544,7 @@ func TestHTTPTaskDetailReturnsTaskAndDecisionData(t *testing.T) {
 
 func TestHTTPTaskDetailDoesNotCapHistoryByAnotherTask(t *testing.T) {
 	f := newBareFixture(t)
-	tasks, err := f.store.DeclareTasks(
+	tasks, err := f.store.CreateTasks(
 		f.ctx,
 		f.goal.ID,
 		"fixture-agent",
@@ -1621,7 +1626,7 @@ func TestHTTPTaskDetailDoesNotCapHistoryByAnotherTask(t *testing.T) {
 
 func TestHTTPTaskDetailReportsOmittedHistoryPerTask(t *testing.T) {
 	f := newBareFixture(t)
-	tasks, err := f.store.DeclareTasks(
+	tasks, err := f.store.CreateTasks(
 		f.ctx,
 		f.goal.ID,
 		"fixture-agent",
@@ -1694,7 +1699,7 @@ func TestHTTPTaskDetailReportsOmittedHistoryPerTask(t *testing.T) {
 
 func TestHTTPTaskDetailExcludesOtherProjectDecisionWithSameTaskID(t *testing.T) {
 	f := newBareFixture(t)
-	tasks, err := f.store.DeclareTasks(
+	tasks, err := f.store.CreateTasks(
 		f.ctx,
 		f.goal.ID,
 		"fixture-agent",
@@ -1790,7 +1795,7 @@ func TestHTTPTaskDetailReturnsNotFoundForUnknownTask(t *testing.T) {
 
 func TestHTTPTaskDetailReturnsEmptyCommitsArray(t *testing.T) {
 	f := newBareFixture(t)
-	tasks, err := f.store.DeclareTasks(
+	tasks, err := f.store.CreateTasks(
 		f.ctx,
 		f.goal.ID,
 		"fixture-agent",
@@ -1825,7 +1830,7 @@ func TestHTTPTaskDetailReturnsEmptyCommitsArray(t *testing.T) {
 
 func TestHTTPTaskDetailMarksMissingCommitOutOfHistory(t *testing.T) {
 	f := newBareFixture(t)
-	tasks, err := f.store.DeclareTasks(
+	tasks, err := f.store.CreateTasks(
 		f.ctx,
 		f.goal.ID,
 		"fixture-agent",
@@ -1879,7 +1884,7 @@ func TestHTTPTaskDetailMarksMissingCommitOutOfHistory(t *testing.T) {
 
 func TestHTTPTaskDetailDoesNotMixCommitsFromOtherTasks(t *testing.T) {
 	f := newBareFixture(t)
-	tasks, err := f.store.DeclareTasks(
+	tasks, err := f.store.CreateTasks(
 		f.ctx,
 		f.goal.ID,
 		"fixture-agent",
@@ -2104,7 +2109,7 @@ func TestHTTPDecisionAndReleaseEndpointsValidateAndTransition(t *testing.T) {
 
 func TestHTTPSnoozeSetsAbsoluteDeadlineWithoutChangingStatus(t *testing.T) {
 	f := newBareFixture(t)
-	tasks, err := f.store.DeclareTasks(f.ctx, f.goal.ID, "snooze-test-agent", "snooze-http-status", []string{"deferred"}, []string{"Preserve the task status while setting its snooze deadline."})
+	tasks, err := f.store.CreateTasks(f.ctx, f.goal.ID, "snooze-test-agent", "snooze-http-status", []string{"deferred"}, []string{"Preserve the task status while setting its snooze deadline."})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2280,9 +2285,9 @@ func TestHTTPSnoozeControlsWakeupForSnoozedAndUnsnoozedTasks(t *testing.T) {
 		t.Fatalf("snooze status = %d; body=%s", status, body)
 	}
 
-	state, err := f.store.DetectWakeup(f.ctx, f.project.ID)
+	state, err := f.store.EvaluateWakeup(f.ctx, f.project.ID)
 	if err != nil {
-		t.Fatalf("DetectWakeup: %v", err)
+		t.Fatalf("EvaluateWakeup: %v", err)
 	}
 	if state.UnstartedTaskCount != 1 || len(state.Tasks) != 1 {
 		t.Fatalf("wakeup state = %+v, want one unstarted task", state)
@@ -2327,9 +2332,9 @@ func TestHTTPSnoozeClearingDeadlineRestoresWakeup(t *testing.T) {
 		t.Fatalf("clear snooze status = %d; body=%s", status, body)
 	}
 
-	state, err := f.store.DetectWakeup(f.ctx, f.project.ID)
+	state, err := f.store.EvaluateWakeup(f.ctx, f.project.ID)
 	if err != nil {
-		t.Fatalf("DetectWakeup: %v", err)
+		t.Fatalf("EvaluateWakeup: %v", err)
 	}
 	if len(state.Tasks) != 2 || state.UnstartedTaskCount != 2 {
 		t.Fatalf("wakeup state after clear = %+v, want two unstarted tasks", state)
@@ -2357,9 +2362,9 @@ func TestHTTPSnoozeExpiredDeadlineRestoresWakeup(t *testing.T) {
 		t.Fatalf("expired snooze status = %d; body=%s", status, body)
 	}
 
-	state, err := f.store.DetectWakeup(f.ctx, f.project.ID)
+	state, err := f.store.EvaluateWakeup(f.ctx, f.project.ID)
 	if err != nil {
-		t.Fatalf("DetectWakeup: %v", err)
+		t.Fatalf("EvaluateWakeup: %v", err)
 	}
 	if state.UnstartedTaskCount != 2 || len(state.Tasks) != 2 {
 		t.Fatalf("wakeup state after expiry = %+v, want two unstarted tasks", state)
@@ -2383,7 +2388,7 @@ func TestHTTPSnoozeExpiredDeadlineRestoresWakeup(t *testing.T) {
 
 func declareWakeupTestTasks(t *testing.T, f *fixture) []domain.Task {
 	t.Helper()
-	tasks, err := f.store.DeclareTasks(f.ctx, f.goal.ID, "wakeup-test-agent", "wakeup-http", []string{
+	tasks, err := f.store.CreateTasks(f.ctx, f.goal.ID, "wakeup-test-agent", "wakeup-http", []string{
 		"Deferred task",
 		"Actionable task",
 	}, []string{
@@ -2618,9 +2623,6 @@ func requestHTTPGoalReview(t *testing.T, f *fixture, goalID, commanderID int64, 
 	if _, err := f.store.ReceiveGoalHandoffReview(f.ctx, handoff.ID, goalID, commanderID); err != nil {
 		t.Fatalf("ReceiveGoalHandoffReview: %v", err)
 	}
-	if _, err := f.store.CompleteGoalHandoffByReviewer(f.ctx, handoff.ID, goalID, commanderID, "reviewed implementation complete"); err != nil {
-		t.Fatalf("CompleteGoalHandoffByReviewer: %v", err)
-	}
 	review, err := f.store.RequestGoalReview(f.ctx, goalID, commanderID, domain.CompletionReport{
 		WorkDone: "completed " + label, NowPossible: "reviewable result", HowToVerify: "run the HTTP endpoint test",
 		Surprises: "none", NeedsReview: "approve or reject", NextSteps: "finalize after approval",
@@ -2836,7 +2838,7 @@ func TestSSEFiltersDecisionEventsByProjectID(t *testing.T) {
 	_ = otherDecision
 }
 
-func TestSSEFiltersDetectionEventsByProjectID(t *testing.T) {
+func TestSSEFiltersWakeupEventsByProjectID(t *testing.T) {
 	f := newBareFixture(t)
 	otherProject, err := f.store.CreateProject(f.ctx, "other", t.TempDir())
 	if err != nil {
@@ -2849,25 +2851,25 @@ func TestSSEFiltersDetectionEventsByProjectID(t *testing.T) {
 	stream, reader := openSSEStream(t, streamCtx, srv.Client(), eventsURL(srv.URL, idText(f.project.ID)))
 	defer stream.Body.Close()
 
-	other := &store.DetectionEvent{DetectionID: "other-detection", ProjectID: otherProject.ID, GoalID: 2}
-	current := store.DetectionEvent{DetectionID: "current-detection", ProjectID: f.project.ID, GoalID: 1}
-	f.store.PublishEvent(store.DecisionEvent{Name: store.EventDetectionCompletionReportMissing, Data: other})
-	f.store.PublishEvent(store.DecisionEvent{Name: store.EventDetectionCompletionReportMissing, Data: current})
+	other := &store.WakeupEvent{WakeupID: "other-wakeup", ProjectID: otherProject.ID, GoalID: 2}
+	current := store.WakeupEvent{WakeupID: "current-wakeup", ProjectID: f.project.ID, GoalID: 1}
+	f.store.PublishEvent(store.DecisionEvent{Name: store.EventWakeupCompletionReportMissing, Data: other})
+	f.store.PublishEvent(store.DecisionEvent{Name: store.EventWakeupCompletionReportMissing, Data: current})
 
 	frame := readSSEFrame(t, reader)
-	if frame.event != store.EventDetectionCompletionReportMissing {
-		t.Fatalf("SSE detection event = %q, want %q; lines=%v", frame.event, store.EventDetectionCompletionReportMissing, frame.lines)
+	if frame.event != store.EventWakeupCompletionReportMissing {
+		t.Fatalf("SSE wakeup event = %q, want %q; lines=%v", frame.event, store.EventWakeupCompletionReportMissing, frame.lines)
 	}
-	var got store.DetectionEvent
+	var got store.WakeupEvent
 	if err := json.Unmarshal([]byte(frame.data), &got); err != nil {
-		t.Fatalf("SSE detection data is not a DetectionEvent: %v; data=%q", err, frame.data)
+		t.Fatalf("SSE wakeup data is not a WakeupEvent: %v; data=%q", err, frame.data)
 	}
-	if got.DetectionID != current.DetectionID {
-		t.Fatalf("SSE detection id = %q, want %q", got.DetectionID, current.DetectionID)
+	if got.WakeupID != current.WakeupID {
+		t.Fatalf("SSE wakeup id = %q, want %q", got.WakeupID, current.WakeupID)
 	}
 }
 
-func TestSSEFiltersDetectionEventsByGoalID(t *testing.T) {
+func TestSSEFiltersWakeupEventsByGoalID(t *testing.T) {
 	f := newBareFixture(t)
 	srv := newTestServer(t, f.store)
 	defer srv.Close()
@@ -2877,34 +2879,34 @@ func TestSSEFiltersDetectionEventsByGoalID(t *testing.T) {
 	defer stream.Body.Close()
 
 	f.store.PublishEvent(store.DecisionEvent{
-		Name: store.EventDetectionCompletionReportMissing,
-		Data: store.DetectionEvent{DetectionID: "other-detection", GoalID: 2},
+		Name: store.EventWakeupCompletionReportMissing,
+		Data: store.WakeupEvent{WakeupID: "other-wakeup", GoalID: 2},
 	})
 	f.store.PublishEvent(store.DecisionEvent{
-		Name: store.EventDetectionCompletionReportMissing,
-		Data: store.DetectionEvent{DetectionID: "goal-less-detection"},
+		Name: store.EventWakeupCompletionReportMissing,
+		Data: store.WakeupEvent{WakeupID: "goal-less-wakeup"},
 	})
 	f.store.PublishEvent(store.DecisionEvent{
-		Name: store.EventDetectionCompletionReportMissing,
-		Data: store.DetectionEvent{DetectionID: "current-detection", GoalID: 1},
+		Name: store.EventWakeupCompletionReportMissing,
+		Data: store.WakeupEvent{WakeupID: "current-wakeup", GoalID: 1},
 	})
 
 	frame := readSSEFrame(t, reader)
-	if frame.event != store.EventDetectionCompletionReportMissing {
-		t.Fatalf("SSE detection event = %q, want %q; lines=%v", frame.event, store.EventDetectionCompletionReportMissing, frame.lines)
+	if frame.event != store.EventWakeupCompletionReportMissing {
+		t.Fatalf("SSE wakeup event = %q, want %q; lines=%v", frame.event, store.EventWakeupCompletionReportMissing, frame.lines)
 	}
-	var got store.DetectionEvent
+	var got store.WakeupEvent
 	if err := json.Unmarshal([]byte(frame.data), &got); err != nil {
-		t.Fatalf("SSE detection data is not a DetectionEvent: %v; data=%q", err, frame.data)
+		t.Fatalf("SSE wakeup data is not a WakeupEvent: %v; data=%q", err, frame.data)
 	}
-	if got.DetectionID != "current-detection" || got.GoalID != 1 {
-		t.Fatalf("SSE detection = %+v, want current goal detection", got)
+	if got.WakeupID != "current-wakeup" || got.GoalID != 1 {
+		t.Fatalf("SSE wakeup = %+v, want current goal wakeup", got)
 	}
 }
 
 func TestSSEFiltersTaskEventsByTaskIDAcrossProjectAndGoal(t *testing.T) {
 	f := newBareFixture(t)
-	tasks, err := f.store.DeclareTasks(f.ctx, f.goal.ID, "sse-task-filter", "sse-task-filter", []string{"target", "same goal other task"}, []string{"The selected task.", "Another task in the same goal."})
+	tasks, err := f.store.CreateTasks(f.ctx, f.goal.ID, "sse-task-filter", "sse-task-filter", []string{"target", "same goal other task"}, []string{"The selected task.", "Another task in the same goal."})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2916,7 +2918,7 @@ func TestSSEFiltersTaskEventsByTaskIDAcrossProjectAndGoal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	otherTasks, err := f.store.DeclareTasks(f.ctx, otherGoal.ID, "sse-other-task", "sse-other-task", []string{"other project task"}, []string{"A task from another project."})
+	otherTasks, err := f.store.CreateTasks(f.ctx, otherGoal.ID, "sse-other-task", "sse-other-task", []string{"other project task"}, []string{"A task from another project."})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2930,36 +2932,34 @@ func TestSSEFiltersTaskEventsByTaskIDAcrossProjectAndGoal(t *testing.T) {
 
 	for _, event := range []struct {
 		name string
-		data store.DetectionEvent
+		data store.WakeupEvent
 	}{
-		{store.EventDetectionCompletionReportMissing, store.DetectionEvent{DetectionID: "same-goal-other-task", ProjectID: f.project.ID, GoalID: f.goal.ID, TaskID: tasks[1].ID}},
-		{store.EventHandoffReported, store.DetectionEvent{DetectionID: "other-project-task", ProjectID: otherProject.ID, GoalID: otherGoal.ID, TaskID: otherTasks[0].ID}},
-		{store.EventDetectionCompletionReportMissing, store.DetectionEvent{DetectionID: "target-task", ProjectID: f.project.ID, GoalID: f.goal.ID, TaskID: tasks[0].ID}},
-		{store.EventHandoffReported, store.DetectionEvent{DetectionID: "target-reported", ProjectID: f.project.ID, GoalID: f.goal.ID, TaskID: tasks[0].ID}},
-		{store.EventHandoffYielded, store.DetectionEvent{DetectionID: "target-yielded", ProjectID: f.project.ID, GoalID: f.goal.ID, TaskID: tasks[0].ID}},
+		{store.EventWakeupCompletionReportMissing, store.WakeupEvent{WakeupID: "same-goal-other-task", ProjectID: f.project.ID, GoalID: f.goal.ID, TaskID: tasks[1].ID}},
+		{store.EventHandoffReported, store.WakeupEvent{WakeupID: "other-project-task", ProjectID: otherProject.ID, GoalID: otherGoal.ID, TaskID: otherTasks[0].ID}},
+		{store.EventWakeupCompletionReportMissing, store.WakeupEvent{WakeupID: "target-task", ProjectID: f.project.ID, GoalID: f.goal.ID, TaskID: tasks[0].ID}},
+		{store.EventHandoffReported, store.WakeupEvent{WakeupID: "target-reported", ProjectID: f.project.ID, GoalID: f.goal.ID, TaskID: tasks[0].ID}},
 	} {
 		f.store.PublishEvent(store.DecisionEvent{Name: event.name, Data: event.data})
 	}
 
-	for _, want := range []struct{ name, detectionID string }{
-		{store.EventDetectionCompletionReportMissing, "target-task"},
+	for _, want := range []struct{ name, wakeupID string }{
+		{store.EventWakeupCompletionReportMissing, "target-task"},
 		{store.EventHandoffReported, "target-reported"},
-		{store.EventHandoffYielded, "target-yielded"},
 	} {
 		frame := readSSEFrame(t, reader)
-		var got store.DetectionEvent
+		var got store.WakeupEvent
 		if err := json.Unmarshal([]byte(frame.data), &got); err != nil {
 			t.Fatalf("SSE task event data: %v; data=%q", err, frame.data)
 		}
-		if frame.event != want.name || got.DetectionID != want.detectionID || got.TaskID != tasks[0].ID {
-			t.Fatalf("task-filtered SSE event = %q %+v, want %s/%s for task %d", frame.event, got, want.name, want.detectionID, tasks[0].ID)
+		if frame.event != want.name || got.WakeupID != want.wakeupID || got.TaskID != tasks[0].ID {
+			t.Fatalf("task-filtered SSE event = %q %+v, want %s/%s for task %d", frame.event, got, want.name, want.wakeupID, tasks[0].ID)
 		}
 	}
 }
 
 func TestSSEFiltersDecisionEventsByTaskID(t *testing.T) {
 	f := newBareFixture(t)
-	tasks, err := f.store.DeclareTasks(f.ctx, f.goal.ID, "sse-decision-task-filter", "sse-decision-task-filter", []string{"target", "other"}, []string{"The selected task.", "Another task."})
+	tasks, err := f.store.CreateTasks(f.ctx, f.goal.ID, "sse-decision-task-filter", "sse-decision-task-filter", []string{"target", "other"}, []string{"The selected task.", "Another task."})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2994,7 +2994,7 @@ func TestSSEFiltersDecisionEventsByTaskID(t *testing.T) {
 
 func TestSSETaskSubscriptionPublishesKeepaliveButSuppressesEvaluateFailure(t *testing.T) {
 	f := newBareFixture(t)
-	tasks, err := f.store.DeclareTasks(f.ctx, f.goal.ID, "sse-task-diagnostics", "sse-task-diagnostics", []string{"target"}, []string{"The selected task."})
+	tasks, err := f.store.CreateTasks(f.ctx, f.goal.ID, "sse-task-diagnostics", "sse-task-diagnostics", []string{"target"}, []string{"The selected task."})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3151,14 +3151,14 @@ func TestWebSocketFiltersByGoalID(t *testing.T) {
 	query.Set("goal_id", idText(targetGoal.ID))
 	conn := openWebSocket(t, websocketURLWithQuery(srv.URL, query), nil)
 
-	other := store.DetectionEvent{DetectionID: "other-goal", GoalID: otherGoal.ID}
-	target := store.DetectionEvent{DetectionID: "target-goal", GoalID: targetGoal.ID}
-	f.store.PublishEvent(store.DecisionEvent{Name: store.EventDetectionCompletionReportMissing, Data: other})
-	f.store.PublishEvent(store.DecisionEvent{Name: store.EventDetectionCompletionReportMissing, Data: target})
+	other := store.WakeupEvent{WakeupID: "other-goal", GoalID: otherGoal.ID}
+	target := store.WakeupEvent{WakeupID: "target-goal", GoalID: targetGoal.ID}
+	f.store.PublishEvent(store.DecisionEvent{Name: store.EventWakeupCompletionReportMissing, Data: other})
+	f.store.PublishEvent(store.DecisionEvent{Name: store.EventWakeupCompletionReportMissing, Data: target})
 
 	frame := readWebSocketFrame(t, conn)
-	if frame.Name != store.EventDetectionCompletionReportMissing {
-		t.Fatalf("WebSocket event = %q, want %q", frame.Name, store.EventDetectionCompletionReportMissing)
+	if frame.Name != store.EventWakeupCompletionReportMissing {
+		t.Fatalf("WebSocket event = %q, want %q", frame.Name, store.EventWakeupCompletionReportMissing)
 	}
 	if got, want := string(frame.Data), string(mustJSON(t, target)); got != want {
 		t.Fatalf("WebSocket data = %s, want target %s", got, want)
@@ -3177,14 +3177,14 @@ func TestWebSocketFiltersByProjectID(t *testing.T) {
 	query.Set("project_id", idText(f.project.ID))
 	conn := openWebSocket(t, websocketURLWithQuery(srv.URL, query), nil)
 
-	other := store.DetectionEvent{DetectionID: "other-project", ProjectID: otherProject.ID}
-	target := store.DetectionEvent{DetectionID: "target-project", ProjectID: f.project.ID}
-	f.store.PublishEvent(store.DecisionEvent{Name: store.EventDetectionCompletionReportMissing, Data: other})
-	f.store.PublishEvent(store.DecisionEvent{Name: store.EventDetectionCompletionReportMissing, Data: target})
+	other := store.WakeupEvent{WakeupID: "other-project", ProjectID: otherProject.ID}
+	target := store.WakeupEvent{WakeupID: "target-project", ProjectID: f.project.ID}
+	f.store.PublishEvent(store.DecisionEvent{Name: store.EventWakeupCompletionReportMissing, Data: other})
+	f.store.PublishEvent(store.DecisionEvent{Name: store.EventWakeupCompletionReportMissing, Data: target})
 
 	frame := readWebSocketFrame(t, conn)
-	if frame.Name != store.EventDetectionCompletionReportMissing {
-		t.Fatalf("WebSocket event = %q, want %q", frame.Name, store.EventDetectionCompletionReportMissing)
+	if frame.Name != store.EventWakeupCompletionReportMissing {
+		t.Fatalf("WebSocket event = %q, want %q", frame.Name, store.EventWakeupCompletionReportMissing)
 	}
 	if got, want := string(frame.Data), string(mustJSON(t, target)); got != want {
 		t.Fatalf("WebSocket data = %s, want target %s", got, want)
@@ -3292,7 +3292,7 @@ func TestSSEGoalIDPublishesKeepaliveButNotWakeup(t *testing.T) {
 
 	f.store.PublishEvent(store.DecisionEvent{
 		Name: store.EventWakeup,
-		Data: store.WakeupEvent{WakeupID: "wakeup-should-be-filtered", ProjectID: f.project.ID},
+		Data: store.ActionableWakeupEvent{WakeupID: "wakeup-should-be-filtered", ProjectID: f.project.ID},
 	})
 	keepalive := store.KeepaliveEvent{At: time.Date(2026, 8, 20, 15, 0, 0, 0, time.UTC)}
 	f.store.PublishEvent(store.DecisionEvent{Name: store.EventKeepalive, Data: keepalive})
@@ -3333,7 +3333,7 @@ func TestSSEGoalScopedStreamDeliversGoalWithdrawn(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newBareFixture(t)
 			if tc.withOpenTask {
-				if _, err := f.store.DeclareTasks(f.ctx, f.goal.ID, "withdrawal-test-agent", "withdrawal-test-declare", []string{"open task"}, []string{"Keep this task open while withdrawing the goal."}); err != nil {
+				if _, err := f.store.CreateTasks(f.ctx, f.goal.ID, "withdrawal-test-agent", "withdrawal-test-declare", []string{"open task"}, []string{"Keep this task open while withdrawing the goal."}); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -3443,7 +3443,7 @@ func TestSSEProjectScopedStreamFiltersOtherProjectsWithdrawal(t *testing.T) {
 	}
 }
 
-func TestSSENoGoalIDKeepsPublishingDetectionEvents(t *testing.T) {
+func TestSSENoGoalIDKeepsPublishingWakeupEvents(t *testing.T) {
 	f := newBareFixture(t)
 	srv := newTestServer(t, f.store)
 	defer srv.Close()
@@ -3452,15 +3452,15 @@ func TestSSENoGoalIDKeepsPublishingDetectionEvents(t *testing.T) {
 	stream, reader := openSSEStream(t, streamCtx, srv.Client(), srv.URL+"/api/events")
 	defer stream.Body.Close()
 
-	detection := store.DetectionEvent{DetectionID: "unscoped-detection", GoalID: 2}
-	f.store.PublishEvent(store.DecisionEvent{Name: store.EventDetectionCompletionReportMissing, Data: detection})
+	wakeup := store.WakeupEvent{WakeupID: "unscoped-wakeup", GoalID: 2}
+	f.store.PublishEvent(store.DecisionEvent{Name: store.EventWakeupCompletionReportMissing, Data: wakeup})
 
 	frame := readSSEFrame(t, reader)
-	if frame.event != store.EventDetectionCompletionReportMissing {
-		t.Fatalf("SSE event = %q, want %q; lines=%v", frame.event, store.EventDetectionCompletionReportMissing, frame.lines)
+	if frame.event != store.EventWakeupCompletionReportMissing {
+		t.Fatalf("SSE event = %q, want %q; lines=%v", frame.event, store.EventWakeupCompletionReportMissing, frame.lines)
 	}
-	if frame.data != string(mustJSON(t, detection)) {
-		t.Fatalf("SSE detection data = %s, want exact %s", frame.data, mustJSON(t, detection))
+	if frame.data != string(mustJSON(t, wakeup)) {
+		t.Fatalf("SSE wakeup data = %s, want exact %s", frame.data, mustJSON(t, wakeup))
 	}
 }
 
@@ -3477,14 +3477,14 @@ func TestSSEPublishesGenericWakeupAndKeepaliveEvents(t *testing.T) {
 	stream, reader := openSSEStream(t, streamCtx, srv.Client(), eventsURL(srv.URL, idText(f.project.ID)))
 	defer stream.Body.Close()
 
-	other := store.WakeupEvent{
+	other := store.ActionableWakeupEvent{
 		WakeupID:            "other-wakeup",
 		ProjectID:           otherProject.ID,
 		ActionableGoalCount: 2,
 		UnstartedTaskCount:  3,
 		WaitingAnswerCount:  1,
 	}
-	current := store.WakeupEvent{
+	current := store.ActionableWakeupEvent{
 		WakeupID:            "current-wakeup",
 		ProjectID:           f.project.ID,
 		ActionableGoalCount: 1,

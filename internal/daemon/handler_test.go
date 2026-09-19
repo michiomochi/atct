@@ -37,6 +37,68 @@ func TestDispatchResolvesCanonicalNumericStringEntityIDs(t *testing.T) {
 	}
 }
 
+func TestDispatchHandoffRecoverValidatesKind(t *testing.T) {
+	fixture := newGoalListFixture(t)
+	defer fixture.store.Close()
+
+	params, err := json.Marshal(map[string]any{
+		"handoff_kind":     "unknown",
+		"handoff_id":       "handoff-unknown",
+		"reason":           "test",
+		"agent_session_id": daemonTestSessionID(t, fixture.store, "handoff-recovery-kind"),
+	})
+	if err != nil {
+		t.Fatalf("marshal handoff.recover params: %v", err)
+	}
+	if _, err := fixture.daemon.dispatch(context.Background(), rpc.Request{Method: "handoff.recover", Params: params}); err == nil || !strings.Contains(err.Error(), "unsupported handoff_kind") {
+		t.Fatalf("handoff.recover error = %v, want unsupported handoff_kind", err)
+	}
+}
+
+func TestDispatchHandoffRecoverRoutesToGoalStore(t *testing.T) {
+	fixture := newGoalListFixture(t)
+	defer fixture.store.Close()
+	ctx := context.Background()
+	goalID := fixture.active[0].ID
+	currentID := daemonTestSessionID(t, fixture.store, "handoff-recovery-current")
+	if _, err := fixture.store.ClaimProject(ctx, fixture.project.ID, currentID); err != nil {
+		t.Fatalf("ClaimProject: %v", err)
+	}
+	staleID := daemonTestSessionID(t, fixture.store, "handoff-recovery-stale")
+	handoff, err := fixture.store.RequestGoalHandoff(ctx, "dispatch-goal-recovery", goalID, currentID, "delegate")
+	if err != nil {
+		t.Fatalf("RequestGoalHandoff: %v", err)
+	}
+	if _, err := fixture.store.ReceiveGoalHandoff(ctx, handoff.ID, goalID, staleID); err != nil {
+		t.Fatalf("ReceiveGoalHandoff: %v", err)
+	}
+	if _, err := fixture.store.DB().ExecContext(ctx, `UPDATE agent_sessions SET started_at = ? WHERE id = ?`, "stale-process", staleID); err != nil {
+		t.Fatalf("make stale session: %v", err)
+	}
+
+	params, err := json.Marshal(map[string]any{
+		"handoff_kind":     "goal",
+		"handoff_id":       handoff.ID,
+		"goal_id":          goalID,
+		"reason":           "receiver disappeared",
+		"agent_session_id": currentID,
+	})
+	if err != nil {
+		t.Fatalf("marshal handoff.recover params: %v", err)
+	}
+	raw, err := fixture.daemon.dispatch(ctx, rpc.Request{Method: "handoff.recover", Params: params})
+	if err != nil {
+		t.Fatalf("handoff.recover: %v", err)
+	}
+	var recovered store.GoalHandoff
+	if err := json.Unmarshal(raw, &recovered); err != nil {
+		t.Fatalf("decode handoff.recover: %v", err)
+	}
+	if recovered.RecoveredAt == nil || recovered.RecoveryReport != "receiver disappeared" {
+		t.Fatalf("recovered handoff = %+v, want terminal recovery", recovered)
+	}
+}
+
 func TestDispatchRejectsLegacyEntityIDsWithMigrationGuidance(t *testing.T) {
 	fixture := newGoalListFixture(t)
 	defer fixture.store.Close()
@@ -197,6 +259,50 @@ func TestSessionRoleDerivesFromClaims(t *testing.T) {
 	}
 }
 
+func TestDispatchProjectClaimForceTakesOverLiveClaim(t *testing.T) {
+	fixture := newGoalListFixture(t)
+	defer fixture.store.Close()
+
+	const (
+		current = "force-project-claim-current"
+		next    = "force-project-claim-next"
+	)
+	registerLiveGoalClaimSession(t, fixture, current)
+	registerLiveGoalClaimSession(t, fixture, next)
+	if _, err := claimProjectForTest(t, fixture, fixture.project.ID, current); err != nil {
+		t.Fatalf("initial project.claim: %v", err)
+	}
+
+	params, err := json.Marshal(map[string]any{
+		"project_id":       fixture.project.ID,
+		"agent_session_id": daemonTestSessionID(t, fixture.store, next),
+		"force":            true,
+	})
+	if err != nil {
+		t.Fatalf("marshal forced project.claim: %v", err)
+	}
+	if _, err := fixture.daemon.dispatch(context.Background(), rpc.Request{Method: "project.claim", Params: params}); err != nil {
+		t.Fatalf("forced project.claim: %v", err)
+	}
+	params, err = json.Marshal(map[string]any{"agent_session_id": daemonTestSessionID(t, fixture.store, next)})
+	if err != nil {
+		t.Fatalf("marshal session.role: %v", err)
+	}
+	raw, err := fixture.daemon.dispatch(context.Background(), rpc.Request{Method: "session.role", Params: params})
+	if err != nil {
+		t.Fatalf("session.role: %v", err)
+	}
+	var role struct {
+		Role string `json:"role"`
+	}
+	if err := json.Unmarshal(raw, &role); err != nil {
+		t.Fatalf("decode session.role: %v", err)
+	}
+	if role.Role != "commander" {
+		t.Fatalf("forced claimant role = %q, want commander", role.Role)
+	}
+}
+
 func ageAgentSessionForTest(t *testing.T, fixture goalListFixture, sessionID string) {
 	t.Helper()
 	old := time.Now().UTC().Add(-time.Hour).Format(time.RFC3339Nano)
@@ -226,8 +332,8 @@ func TestGoalCompleteDeniesSessionWithoutGoalHandoff(t *testing.T) {
 	}
 	if _, err := fixture.daemon.dispatch(context.Background(), rpc.Request{Method: "goal.complete", Params: params}); err == nil {
 		t.Fatal("goal.complete unexpectedly succeeded without a goal handoff")
-	} else if !strings.Contains(err.Error(), fmt.Sprint(sessionID)) || !strings.Contains(err.Error(), fmt.Sprint(goalID)) {
-		t.Fatalf("goal.complete error = %v, want session %v and goal %v", err, sessionID, goalID)
+	} else if !errors.Is(err, ErrRoleUnauthorized) {
+		t.Fatalf("goal.complete error = %v, want ErrRoleUnauthorized", err)
 	}
 
 	goal, err := fixture.store.GetGoal(context.Background(), goalID)
@@ -273,10 +379,8 @@ func TestGoalCompleteDeniesNonCommanderOfAnotherGoal(t *testing.T) {
 	if _, err := fixture.daemon.dispatch(context.Background(), rpc.Request{Method: "goal.complete", Params: params}); err == nil {
 		t.Fatal("goal.complete unexpectedly succeeded for another goal holder")
 	} else {
-		for _, want := range []string{"not the commander", fmt.Sprint(callerID), fmt.Sprint(goalB.ID)} {
-			if !strings.Contains(err.Error(), want) {
-				t.Fatalf("goal.complete error = %v, want %q", err, want)
-			}
+		if !errors.Is(err, ErrRoleUnauthorized) {
+			t.Fatalf("goal.complete error = %v, want ErrRoleUnauthorized", err)
 		}
 	}
 
@@ -313,8 +417,8 @@ func TestGoalCompleteDeniesGoalClaimHolder(t *testing.T) {
 	}
 	if _, err := fixture.daemon.dispatch(context.Background(), rpc.Request{Method: "goal.complete", Params: params}); err == nil {
 		t.Fatal("goal.complete unexpectedly succeeded for a non-commander goal claimant")
-	} else if !strings.Contains(err.Error(), "not the commander") || !strings.Contains(err.Error(), fmt.Sprint(goalID)) {
-		t.Fatalf("goal.complete error = %v, want commander-only denial", err)
+	} else if !errors.Is(err, ErrRoleUnauthorized) {
+		t.Fatalf("goal.complete error = %v, want ErrRoleUnauthorized", err)
 	}
 }
 
@@ -528,132 +632,14 @@ func TestProjectReleaseRejectsSessionBoundToAnotherProject(t *testing.T) {
 	}
 }
 
-func TestTaskReleaseAllowsHolderSession(t *testing.T) {
+func TestTaskClaimAndReleaseRoutesAreUnavailable(t *testing.T) {
 	fixture := newGoalListFixture(t)
 	defer fixture.store.Close()
 
-	const holderSession = "daemon-task-release-holder-run"
-	registerLiveGoalClaimSession(t, fixture, holderSession)
-	if _, err := fixture.store.ClaimTask(context.Background(), fixture.tasks[1].ID, daemonTestSessionID(t, fixture.store, holderSession)); err != nil {
-		t.Fatalf("task.claim: %v", err)
-	}
-
-	params, err := json.Marshal(map[string]any{
-		"task_id":          fixture.tasks[1].ID,
-		"agent_session_id": daemonTestSessionID(t, fixture.store, holderSession),
-	})
-	if err != nil {
-		t.Fatalf("marshal task.release params: %v", err)
-	}
-	result, err := fixture.daemon.dispatch(context.Background(), rpc.Request{Method: "task.release", Params: params})
-	if err != nil {
-		t.Fatalf("task.release: %v", err)
-	}
-	var released domain.Task
-	if err := json.Unmarshal(result, &released); err != nil {
-		t.Fatalf("unmarshal task.release result: %v", err)
-	}
-	if released.Status != domain.TaskTodo {
-		t.Fatalf("released task status = %v, want %v", released.Status, domain.TaskTodo)
-	}
-	if handoff := openTaskHandoffForTest(t, fixture, fixture.tasks[1].GoalID, fixture.tasks[1].ID); handoff != nil {
-		t.Fatalf("task handoff after release = %+v, want none", handoff)
-	}
-}
-
-func TestTaskReleaseAllowsSessionBoundToProject(t *testing.T) {
-	fixture := newGoalListFixture(t)
-	defer fixture.store.Close()
-
-	const (
-		holderSession = "daemon-task-release-bound-holder-run"
-		callerSession = "daemon-task-release-bound-caller-run"
-	)
-	registerLiveGoalClaimSession(t, fixture, holderSession)
-	registerLiveGoalClaimSession(t, fixture, callerSession)
-	if err := fixture.store.AssociateAgentSessionWithProject(context.Background(), daemonTestSessionID(t, fixture.store, callerSession), fixture.project.ID); err != nil {
-		t.Fatalf("associate caller session with project: %v", err)
-	}
-	if _, err := fixture.store.ClaimTask(context.Background(), fixture.tasks[1].ID, daemonTestSessionID(t, fixture.store, holderSession)); err != nil {
-		t.Fatalf("task.claim: %v", err)
-	}
-
-	params, err := json.Marshal(map[string]any{
-		"task_id":          fixture.tasks[1].ID,
-		"agent_session_id": daemonTestSessionID(t, fixture.store, callerSession),
-	})
-	if err != nil {
-		t.Fatalf("marshal task.release params: %v", err)
-	}
-	result, err := fixture.daemon.dispatch(context.Background(), rpc.Request{Method: "task.release", Params: params})
-	if err != nil {
-		t.Fatalf("task.release: %v", err)
-	}
-	var released domain.Task
-	if err := json.Unmarshal(result, &released); err != nil {
-		t.Fatalf("unmarshal task.release result: %v", err)
-	}
-	if released.Status != domain.TaskTodo {
-		t.Fatalf("released task status = %v, want %v", released.Status, domain.TaskTodo)
-	}
-	if handoff := openTaskHandoffForTest(t, fixture, fixture.tasks[1].GoalID, fixture.tasks[1].ID); handoff != nil {
-		t.Fatalf("task handoff after release = %+v, want none", handoff)
-	}
-}
-
-func TestTaskReleaseRejectsEmptyAgentSession(t *testing.T) {
-	fixture := newGoalListFixture(t)
-	defer fixture.store.Close()
-
-	const holderSession = "daemon-task-release-empty-holder-run"
-	registerLiveGoalClaimSession(t, fixture, holderSession)
-	if _, err := fixture.store.ClaimTask(context.Background(), fixture.tasks[1].ID, daemonTestSessionID(t, fixture.store, holderSession)); err != nil {
-		t.Fatalf("task.claim: %v", err)
-	}
-
-	params, err := json.Marshal(map[string]any{
-		"task_id":          fixture.tasks[1].ID,
-		"agent_session_id": "",
-	})
-	if err != nil {
-		t.Fatalf("marshal task.release params: %v", err)
-	}
-	if _, err := fixture.daemon.dispatch(context.Background(), rpc.Request{Method: "task.release", Params: params}); err == nil {
-		t.Fatal("task.release succeeded without agent_session_id")
-	}
-}
-
-func TestTaskReleaseRejectsSessionBoundToAnotherProject(t *testing.T) {
-	fixture := newGoalListFixture(t)
-	defer fixture.store.Close()
-
-	const (
-		holderSession  = "daemon-task-release-foreign-holder-run"
-		foreignSession = "daemon-task-release-foreign-caller-run"
-	)
-	registerLiveGoalClaimSession(t, fixture, holderSession)
-	registerLiveGoalClaimSession(t, fixture, foreignSession)
-	foreignProject, err := fixture.store.CreateProject(context.Background(), "foreign-task-release-project", t.TempDir())
-	if err != nil {
-		t.Fatalf("create foreign project: %v", err)
-	}
-	if err := fixture.store.AssociateAgentSessionWithProject(context.Background(), daemonTestSessionID(t, fixture.store, foreignSession), foreignProject.ID); err != nil {
-		t.Fatalf("associate foreign session with project: %v", err)
-	}
-	if _, err := fixture.store.ClaimTask(context.Background(), fixture.tasks[1].ID, daemonTestSessionID(t, fixture.store, holderSession)); err != nil {
-		t.Fatalf("task.claim: %v", err)
-	}
-
-	params, err := json.Marshal(map[string]any{
-		"task_id":          fixture.tasks[1].ID,
-		"agent_session_id": daemonTestSessionID(t, fixture.store, foreignSession),
-	})
-	if err != nil {
-		t.Fatalf("marshal task.release params: %v", err)
-	}
-	_, err = fixture.daemon.dispatch(context.Background(), rpc.Request{Method: "task.release", Params: params})
-	if err == nil {
-		t.Fatal("task.release succeeded for a session bound to another project")
+	for _, method := range []string{"task.claim", "task.release"} {
+		if _, err := fixture.daemon.dispatch(context.Background(), rpc.Request{Method: method}); err == nil || !strings.Contains(err.Error(), "unknown method") {
+			t.Errorf("%s error = %v, want unknown method", method, err)
+		}
 	}
 }
 
@@ -680,6 +666,11 @@ func TestProjectClaimTakesOverDeadDaemonSession(t *testing.T) {
 
 	if _, err := claimProjectForTest(t, fixture, fixture.project.ID, "daemon-dead-run"); err != nil {
 		t.Fatalf("initial dead project.claim: %v", err)
+	}
+	// The process is gone, so nothing renews its lease any more.
+	if err := fixture.store.HeartbeatAgentSession(context.Background(), daemonTestSessionID(t, fixture.store, "daemon-dead-run"),
+		time.Now().UTC().Add(-store.RuntimeLeaseDuration-time.Second)); err != nil {
+		t.Fatalf("expire the dead session lease: %v", err)
 	}
 	if _, err := claimProjectForTest(t, fixture, fixture.project.ID, "daemon-live-run"); err != nil {
 		t.Fatalf("take over dead project.claim: %v", err)
@@ -795,6 +786,36 @@ func TestContractN5GoalGetReturnsContentAndAllTaskStatuses(t *testing.T) {
 	fixture := newGoalListFixture(t)
 	defer fixture.store.Close()
 
+	const (
+		wantSpec = "# Canonical spec\n\n- Preserve every line.\n- Keep Markdown intact."
+		wantPlan = "# Canonical plan\n\n1. Write the spec.\n2. Read it back verbatim."
+	)
+	ctx := context.Background()
+	requesterID := daemonTestSessionID(t, fixture.store, "goal-get-spec-plan-requester")
+	if _, err := fixture.store.ClaimProject(ctx, fixture.project.ID, requesterID); err != nil {
+		t.Fatalf("ClaimProject: %v", err)
+	}
+	holderID := daemonTestSessionID(t, fixture.store, "goal-get-spec-plan-holder")
+	handoff, err := fixture.store.RequestGoalHandoff(ctx, "goal-get-spec-plan-handoff", fixture.doneOnlyGoal.ID, requesterID, "write canonical design")
+	if err != nil {
+		t.Fatalf("RequestGoalHandoff: %v", err)
+	}
+	if _, err := fixture.store.ReceiveGoalHandoff(ctx, handoff.ID, fixture.doneOnlyGoal.ID, holderID); err != nil {
+		t.Fatalf("ReceiveGoalHandoff: %v", err)
+	}
+	updateParams, err := json.Marshal(map[string]any{
+		"goal_id":          fixture.doneOnlyGoal.ID,
+		"spec":             wantSpec,
+		"plan":             wantPlan,
+		"agent_session_id": holderID,
+	})
+	if err != nil {
+		t.Fatalf("marshal goal.update_request_report params: %v", err)
+	}
+	if _, err := fixture.daemon.dispatch(ctx, rpc.Request{Method: "goal.update_request_report", Params: updateParams}); err != nil {
+		t.Fatalf("goal.update_request_report: %v", err)
+	}
+
 	wantTasks, err := fixture.store.ListTasks(context.Background(), fixture.doneOnlyGoal.ID)
 	if err != nil {
 		t.Fatalf("ListTasks: %v", err)
@@ -814,6 +835,8 @@ func TestContractN5GoalGetReturnsContentAndAllTaskStatuses(t *testing.T) {
 	var response struct {
 		Goal struct {
 			Content string `json:"content"`
+			Spec    string `json:"spec"`
+			Plan    string `json:"plan"`
 		} `json:"goal"`
 		Tasks []struct {
 			ID     int64  `json:"id"`
@@ -825,6 +848,9 @@ func TestContractN5GoalGetReturnsContentAndAllTaskStatuses(t *testing.T) {
 	}
 	if response.Goal.Content == "" {
 		t.Fatal("goal.get returned empty goal content")
+	}
+	if response.Goal.Spec != wantSpec || response.Goal.Plan != wantPlan {
+		t.Fatalf("goal.get spec/plan = (%q, %q), want (%q, %q)", response.Goal.Spec, response.Goal.Plan, wantSpec, wantPlan)
 	}
 	if len(response.Tasks) != len(wantTasks) {
 		t.Fatalf("goal.get task count = %d, want %d", len(response.Tasks), len(wantTasks))
@@ -853,7 +879,173 @@ func TestContractN6GoalGetMissingGoalReturnsError(t *testing.T) {
 	}
 }
 
-func TestTaskDeclareReturnsOnlyTasksDeclaredByThisCall(t *testing.T) {
+func TestGoalGetGoalReviewLifecycleProjection(t *testing.T) {
+	fixture := newGoalListFixture(t)
+	defer fixture.store.Close()
+	ctx := context.Background()
+
+	type goalReviewPayload struct {
+		DecisionID          int64                 `json:"decision_id"`
+		Status              domain.DecisionStatus `json:"status"`
+		AnswerLabel         string                `json:"answer_label"`
+		AnswerText          string                `json:"answer_text"`
+		AnsweredAt          *time.Time            `json:"answered_at"`
+		AppliedAt           *time.Time            `json:"applied_at"`
+		NextCommanderAction string                `json:"next_commander_action"`
+	}
+	type goalGetResponse struct {
+		GoalReview *goalReviewPayload `json:"goal_review"`
+	}
+
+	get := func(t *testing.T, goalID int64) goalGetResponse {
+		t.Helper()
+		params, err := json.Marshal(map[string]any{"goal_id": goalID})
+		if err != nil {
+			t.Fatalf("marshal goal.get params: %v", err)
+		}
+		raw, err := fixture.daemon.dispatch(ctx, rpc.Request{Method: "goal.get", Params: params})
+		if err != nil {
+			t.Fatalf("goal.get: %v", err)
+		}
+		var response goalGetResponse
+		if err := json.Unmarshal(raw, &response); err != nil {
+			t.Fatalf("decode goal.get response: %v", err)
+		}
+		return response
+	}
+
+	ask := func(t *testing.T, goalID, taskID int64) domain.Decision {
+		t.Helper()
+		decision, err := fixture.store.AskDecision(ctx, store.AskInput{
+			GoalID:   goalID,
+			TaskID:   taskID,
+			Kind:     domain.KindGoalReview,
+			Question: "contract test goal review",
+		})
+		if err != nil {
+			t.Fatalf("AskDecision: %v", err)
+		}
+		return decision
+	}
+
+	noReview := get(t, fixture.proposed[0].ID)
+	if noReview.GoalReview != nil {
+		t.Fatalf("goal.get returned goal_review for a goal without one: %+v", noReview.GoalReview)
+	}
+
+	open := ask(t, fixture.emptyTaskGoal.ID, 0)
+	openResponse := get(t, fixture.emptyTaskGoal.ID)
+	if openResponse.GoalReview == nil {
+		t.Fatal("goal.get omitted open goal_review")
+	}
+	if openResponse.GoalReview.DecisionID != open.ID || openResponse.GoalReview.Status != domain.DecisionOpen {
+		t.Fatalf("open goal_review = %+v, want decision %d with status open", openResponse.GoalReview, open.ID)
+	}
+	if openResponse.GoalReview.AnswerLabel != "" || openResponse.GoalReview.AnswerText != "" || openResponse.GoalReview.AnsweredAt != nil || openResponse.GoalReview.AppliedAt != nil {
+		t.Fatalf("open goal_review answer metadata = %+v, want empty", openResponse.GoalReview)
+	}
+	if openResponse.GoalReview.NextCommanderAction != "" {
+		t.Fatalf("open goal_review next commander action = %q, want empty", openResponse.GoalReview.NextCommanderAction)
+	}
+
+	answered := ask(t, fixture.active[0].ID, 0)
+	if err := fixture.store.RejectGoalReview(ctx, answered.ID, "needs another review"); err != nil {
+		t.Fatalf("RejectGoalReview: %v", err)
+	}
+	answeredResponse := get(t, fixture.active[0].ID)
+	if answeredResponse.GoalReview == nil || answeredResponse.GoalReview.DecisionID != answered.ID || answeredResponse.GoalReview.Status != domain.DecisionAnswered {
+		t.Fatalf("answered goal_review = %+v, want decision %d with status answered", answeredResponse.GoalReview, answered.ID)
+	}
+	if answeredResponse.GoalReview.AnswerLabel != "reject" || answeredResponse.GoalReview.AnswerText != "needs another review" || answeredResponse.GoalReview.AnsweredAt == nil || answeredResponse.GoalReview.AppliedAt != nil {
+		t.Fatalf("answered goal_review answer metadata = %+v, want rejected answer", answeredResponse.GoalReview)
+	}
+	if answeredResponse.GoalReview.NextCommanderAction != "" {
+		t.Fatalf("answered goal_review next commander action = %q, want empty", answeredResponse.GoalReview.NextCommanderAction)
+	}
+
+	applied := ask(t, fixture.active[1].ID, 0)
+	if _, err := fixture.store.ApproveGoalReview(ctx, applied.ID); err != nil {
+		t.Fatalf("ApproveGoalReview: %v", err)
+	}
+	appliedResponse := get(t, fixture.active[1].ID)
+	if appliedResponse.GoalReview == nil || appliedResponse.GoalReview.DecisionID != applied.ID || appliedResponse.GoalReview.Status != domain.DecisionApplied {
+		t.Fatalf("applied goal_review = %+v, want decision %d with status applied", appliedResponse.GoalReview, applied.ID)
+	}
+	if appliedResponse.GoalReview.AnswerLabel != "approve" || appliedResponse.GoalReview.AnswerText != "" || appliedResponse.GoalReview.AnsweredAt == nil || appliedResponse.GoalReview.AppliedAt == nil {
+		t.Fatalf("applied goal_review answer metadata = %+v, want approved answer", appliedResponse.GoalReview)
+	}
+	if appliedResponse.GoalReview.NextCommanderAction != "goal.review.complete" {
+		t.Fatalf("applied goal_review next commander action = %q, want goal.review.complete", appliedResponse.GoalReview.NextCommanderAction)
+	}
+
+	if _, err := fixture.store.DB().ExecContext(ctx, "UPDATE goals SET status = ?, work_done = ?, now_possible = ?, how_to_verify = ?, surprises = ?, needs_review = ?, next_steps = ?, result_summary = ? WHERE id = ?", string(domain.GoalDone), "recorded work", "recorded now", "recorded verification", "recorded surprises", "recorded review", "recorded next steps", "recorded summary", fixture.active[1].ID); err != nil {
+		t.Fatalf("mark goal done: %v", err)
+	}
+	doneResponse := get(t, fixture.active[1].ID)
+	if doneResponse.GoalReview == nil || doneResponse.GoalReview.NextCommanderAction != "" {
+		t.Fatalf("done goal_review = %+v, want no next commander action", doneResponse.GoalReview)
+	}
+
+	rejectedApplied := ask(t, fixture.taskGoal.ID, 0)
+	if _, err := fixture.store.AnswerDecision(ctx, store.AnswerInput{DecisionID: rejectedApplied.ID, AnswerLabel: "reject", AnswerText: "not approved"}); err != nil {
+		t.Fatalf("AnswerDecision: %v", err)
+	}
+	if _, err := fixture.store.PollDecisions(ctx, 0, 0); err != nil {
+		t.Fatalf("PollDecisions: %v", err)
+	}
+	rejectedAppliedResponse := get(t, fixture.taskGoal.ID)
+	if rejectedAppliedResponse.GoalReview == nil || rejectedAppliedResponse.GoalReview.Status != domain.DecisionApplied || rejectedAppliedResponse.GoalReview.AnswerLabel != "reject" {
+		t.Fatalf("applied rejected goal_review = %+v, want applied reject", rejectedAppliedResponse.GoalReview)
+	}
+	if rejectedAppliedResponse.GoalReview.NextCommanderAction != "" {
+		t.Fatalf("applied rejected goal_review next commander action = %q, want empty", rejectedAppliedResponse.GoalReview.NextCommanderAction)
+	}
+
+	latestGoal, err := fixture.store.CreateGoal(ctx, fixture.project.ID, "latest review goal", "contract-test")
+	if err != nil {
+		t.Fatalf("CreateGoal latest review: %v", err)
+	}
+	if _, err := fixture.store.DB().ExecContext(ctx, "UPDATE goals SET status = ? WHERE id = ?", string(domain.GoalActive), latestGoal.ID); err != nil {
+		t.Fatalf("mark latest review goal active: %v", err)
+	}
+	older := ask(t, latestGoal.ID, 0)
+	if _, err := fixture.store.ApproveGoalReview(ctx, older.ID); err != nil {
+		t.Fatalf("ApproveGoalReview older: %v", err)
+	}
+	newer := ask(t, latestGoal.ID, 0)
+	latestTasks, err := fixture.store.CreateTasks(ctx, latestGoal.ID, "contract-test", "latest-review-task", []string{"task-attached review"}, []string{"task-attached review"})
+	if err != nil {
+		t.Fatalf("CreateTasks latest review: %v", err)
+	}
+	taskAttached := ask(t, latestGoal.ID, latestTasks[0].ID)
+	if _, err := fixture.store.ApproveGoalReview(ctx, taskAttached.ID); err != nil {
+		t.Fatalf("ApproveGoalReview task-attached: %v", err)
+	}
+	latestResponse := get(t, latestGoal.ID)
+	if latestResponse.GoalReview == nil || latestResponse.GoalReview.DecisionID != newer.ID || latestResponse.GoalReview.Status != domain.DecisionOpen {
+		t.Fatalf("latest taskless goal_review = %+v, want decision %d with status open", latestResponse.GoalReview, newer.ID)
+	}
+}
+
+func TestTaskDeclareIsNotRegistered(t *testing.T) {
+	fixture := newGoalListFixture(t)
+	defer fixture.store.Close()
+	sessionID := "task-declare-absence-session"
+	registerLiveGoalClaimSession(t, fixture, sessionID)
+	params, err := json.Marshal(map[string]any{
+		"goal_id": fixture.emptyTaskGoal.ID, "agent": "test", "idempotency_key": "absence",
+		"titles": []string{"task"}, "descriptions": []string{"description"},
+		"agent_session_id": daemonTestSessionID(t, fixture.store, sessionID),
+	})
+	if err != nil {
+		t.Fatalf("marshal params: %v", err)
+	}
+	if _, err := fixture.daemon.dispatch(context.Background(), rpc.Request{Method: "task.declare", Params: params}); err == nil {
+		t.Fatal("task.declare remains registered")
+	}
+}
+
+func TestTaskCreateReturnsOnlyTasksDeclaredByThisCall(t *testing.T) {
 	fixture := newGoalListFixture(t)
 	defer fixture.store.Close()
 
@@ -867,24 +1059,24 @@ func TestTaskDeclareReturnsOnlyTasksDeclaredByThisCall(t *testing.T) {
 	var responseSize int
 	declaredIDs := make(map[int64]struct{}, 3)
 	for _, key := range []string{"declare-contract-key-1", "declare-contract-key-2", "declare-contract-key-3"} {
-		raw, response := dispatchTaskDeclareForContractTest(t, fixture, sessionID, key, "declared task", "declared description")
+		raw, response := dispatchTaskCreateForContractTest(t, fixture, sessionID, key, "declared task", "declared description")
 		if len(response) != 1 {
-			t.Fatalf("task.declare %v returned %d tasks, want exactly 1; response bytes=%d: %v", key, len(response), len(raw), raw)
+			t.Fatalf("task.create %v returned %d tasks, want exactly 1; response bytes=%d: %v", key, len(response), len(raw), raw)
 		}
 		if response[0].GoalID != fixture.emptyTaskGoal.ID {
-			t.Fatalf("task.declare %v returned goal_id %v, want %v", key, response[0].GoalID, fixture.emptyTaskGoal.ID)
+			t.Fatalf("task.create %v returned goal_id %v, want %v", key, response[0].GoalID, fixture.emptyTaskGoal.ID)
 		}
 		if response[0].Title != "declared task" {
-			t.Fatalf("task.declare %v returned title %v, want declared task", key, response[0].Title)
+			t.Fatalf("task.create %v returned title %v, want declared task", key, response[0].Title)
 		}
 		if _, duplicate := declaredIDs[response[0].ID]; duplicate {
-			t.Fatalf("task.declare %v returned a duplicate task id %v", key, response[0].ID)
+			t.Fatalf("task.create %v returned a duplicate task id %v", key, response[0].ID)
 		}
 		declaredIDs[response[0].ID] = struct{}{}
 		if responseSize == 0 {
 			responseSize = len(raw)
 		} else if len(raw) != responseSize {
-			t.Fatalf("task.declare response grew across repeated declarations: first=%d current=%d; response=%v", responseSize, len(raw), raw)
+			t.Fatalf("task.create response grew across repeated declarations: first=%d current=%d; response=%v", responseSize, len(raw), raw)
 		}
 	}
 
@@ -894,7 +1086,7 @@ func TestTaskDeclareReturnsOnlyTasksDeclaredByThisCall(t *testing.T) {
 	}
 	raw, err := fixture.daemon.dispatch(context.Background(), rpc.Request{Method: "goal.get", Params: goalParams})
 	if err != nil {
-		t.Fatalf("goal.get after task.declare: %v", err)
+		t.Fatalf("goal.get after task.create: %v", err)
 	}
 	var goalResponse struct {
 		Tasks []struct {
@@ -915,29 +1107,29 @@ func TestTaskDeclareReturnsOnlyTasksDeclaredByThisCall(t *testing.T) {
 	}
 }
 
-func TestTaskDeclareIdempotencyReplayReturnsExistingTask(t *testing.T) {
+func TestTaskCreateIdempotencyReplayReturnsExistingTask(t *testing.T) {
 	fixture := newGoalListFixture(t)
 	defer fixture.store.Close()
 
 	sessionID := "task-declare-idempotency-contract-session"
 	registerLiveGoalClaimSession(t, fixture, sessionID)
-	_, first := dispatchTaskDeclareForContractTest(t, fixture, sessionID, "idempotency-contract-key", "first declaration", "first description")
-	_, replay := dispatchTaskDeclareForContractTest(t, fixture, sessionID, "idempotency-contract-key", "replayed declaration", "replayed description")
+	_, first := dispatchTaskCreateForContractTest(t, fixture, sessionID, "idempotency-contract-key", "first declaration", "first description")
+	_, replay := dispatchTaskCreateForContractTest(t, fixture, sessionID, "idempotency-contract-key", "replayed declaration", "replayed description")
 	if len(first) != 1 {
-		t.Fatalf("first task.declare returned %d tasks, want 1", len(first))
+		t.Fatalf("first task.create returned %d tasks, want 1", len(first))
 	}
 	if len(replay) != 1 {
-		t.Fatalf("idempotent task.declare replay returned %d tasks, want 1 existing task: %+v", len(replay), replay)
+		t.Fatalf("idempotent task.create replay returned %d tasks, want 1 existing task: %+v", len(replay), replay)
 	}
 	if replay[0].ID != first[0].ID || replay[0].Title != first[0].Title {
-		t.Fatalf("idempotent task.declare replay returned %+v, want existing task %+v", replay[0], first[0])
+		t.Fatalf("idempotent task.create replay returned %+v, want existing task %+v", replay[0], first[0])
 	}
 	tasks, err := fixture.store.ListTasks(context.Background(), fixture.emptyTaskGoal.ID)
 	if err != nil {
-		t.Fatalf("ListTasks after idempotent task.declare: %v", err)
+		t.Fatalf("ListTasks after idempotent task.create: %v", err)
 	}
 	if len(tasks) != 1 {
-		t.Fatalf("idempotent task.declare created %d tasks, want 1", len(tasks))
+		t.Fatalf("idempotent task.create created %d tasks, want 1", len(tasks))
 	}
 }
 
@@ -969,15 +1161,15 @@ func TestDecisionAskClaimableTasksKeepsIdentityFieldsWithoutDescription(t *testi
 			}
 		}
 	}
-	declared, err := fixture.store.DeclareTasks(
+	declared, err := fixture.store.CreateTasks(
 		context.Background(), fixture.emptyTaskGoal.ID, "contract-test", "decision-claimable-key",
 		[]string{"decision task", "claimable task"}, []string{"decision description", "claimable description"},
 	)
 	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 	if len(declared) != 2 {
-		t.Fatalf("DeclareTasks returned %d tasks, want 2", len(declared))
+		t.Fatalf("CreateTasks returned %d tasks, want 2", len(declared))
 	}
 
 	raw := dispatchDecisionAskForContractTest(t, fixture, sessionID, fixture.emptyTaskGoal.ID, declared[0].ID)
@@ -1031,12 +1223,12 @@ func TestDecisionAskOmitsEmptyClaimableTasks(t *testing.T) {
 		t.Fatalf("ListTasks(%v): %v", fixture.emptyTaskGoal.ID, err)
 	}
 	if len(decisionTasks) == 0 {
-		decisionTasks, err = fixture.store.DeclareTasks(
+		decisionTasks, err = fixture.store.CreateTasks(
 			context.Background(), fixture.emptyTaskGoal.ID, "contract-test", "decision-empty-contract",
 			[]string{"decision task"}, []string{"decision task"},
 		)
 		if err != nil {
-			t.Fatalf("DeclareTasks(%v): %v", fixture.emptyTaskGoal.ID, err)
+			t.Fatalf("CreateTasks(%v): %v", fixture.emptyTaskGoal.ID, err)
 		}
 	}
 	decisionTaskID := decisionTasks[0].ID
@@ -1073,14 +1265,14 @@ func TestDecisionAskOmitsEmptyClaimableTasks(t *testing.T) {
 	}
 }
 
-type taskDeclareResponseForContractTest struct {
+type taskCreateResponseForContractTest struct {
 	ID          int64  `json:"id"`
 	GoalID      int64  `json:"goal_id"`
 	Title       string `json:"title"`
 	Description string `json:"description"`
 }
 
-func dispatchTaskDeclareForContractTest(t *testing.T, fixture goalListFixture, sessionID, idempotencyKey, title, description string) ([]byte, []taskDeclareResponseForContractTest) {
+func dispatchTaskCreateForContractTest(t *testing.T, fixture goalListFixture, sessionID, idempotencyKey, title, description string) ([]byte, []taskCreateResponseForContractTest) {
 	t.Helper()
 	params, err := json.Marshal(map[string]any{
 		"goal_id":          fixture.emptyTaskGoal.ID,
@@ -1091,15 +1283,15 @@ func dispatchTaskDeclareForContractTest(t *testing.T, fixture goalListFixture, s
 		"agent_session_id": daemonTestSessionID(t, fixture.store, sessionID),
 	})
 	if err != nil {
-		t.Fatalf("marshal task.declare params: %v", err)
+		t.Fatalf("marshal task.create params: %v", err)
 	}
-	raw, err := fixture.daemon.dispatch(context.Background(), rpc.Request{Method: "task.declare", Params: params})
+	raw, err := fixture.daemon.dispatch(context.Background(), rpc.Request{Method: "task.create", Params: params})
 	if err != nil {
-		t.Fatalf("task.declare %v: %v", idempotencyKey, err)
+		t.Fatalf("task.create %v: %v", idempotencyKey, err)
 	}
-	var response []taskDeclareResponseForContractTest
+	var response []taskCreateResponseForContractTest
 	if err := json.Unmarshal(raw, &response); err != nil {
-		t.Fatalf("decode task.declare %v response: %v; raw=%v", idempotencyKey, err, raw)
+		t.Fatalf("decode task.create %v response: %v; raw=%v", idempotencyKey, err, raw)
 	}
 	return raw, response
 }
@@ -1194,12 +1386,12 @@ func TestContractN11GoalListTruncatesTaskDescription(t *testing.T) {
 	defer fixture.store.Close()
 
 	fullDescription := strings.Repeat("あ", 300)
-	tasks, err := fixture.store.DeclareTasks(context.Background(), fixture.emptyTaskGoal.ID, "contract-test", "description-contract", []string{"description task"}, []string{fullDescription})
+	tasks, err := fixture.store.CreateTasks(context.Background(), fixture.emptyTaskGoal.ID, "contract-test", "description-contract", []string{"description task"}, []string{fullDescription})
 	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 	if len(tasks) != 1 {
-		t.Fatalf("DeclareTasks returned %d tasks, want 1", len(tasks))
+		t.Fatalf("CreateTasks returned %d tasks, want 1", len(tasks))
 	}
 	goal := findGoalPayloadForContractTest(t, goalListResponseForContractTest(t, fixture).Goals, fixture.emptyTaskGoal.ID)
 	var listed []struct {
@@ -1224,7 +1416,7 @@ func TestContractN12TaskUpdateTruncatesDescription(t *testing.T) {
 	sessionID := "task-update-description-contract-session"
 	registerLiveGoalClaimSession(t, fixture, sessionID)
 	fullDescription := strings.Repeat("あ", 300)
-	tasks, err := fixture.store.DeclareTasks(
+	tasks, err := fixture.store.CreateTasks(
 		context.Background(),
 		fixture.emptyTaskGoal.ID,
 		"contract-test",
@@ -1233,10 +1425,10 @@ func TestContractN12TaskUpdateTruncatesDescription(t *testing.T) {
 		[]string{fullDescription, fullDescription},
 	)
 	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 	if len(tasks) != 2 {
-		t.Fatalf("DeclareTasks returned %d tasks, want 2", len(tasks))
+		t.Fatalf("CreateTasks returned %d tasks, want 2", len(tasks))
 	}
 
 	wantDescription := strings.Repeat("あ", 120) + "…"
@@ -1317,12 +1509,12 @@ func TestContractN13GoalGetResponseSizeBreakdown(t *testing.T) {
 	for i := range descriptions {
 		descriptions[i] = fullDescription
 	}
-	tasks, err := fixture.store.DeclareTasks(context.Background(), fixture.emptyTaskGoal.ID, "contract-test", "goal-get-size-contract", titles, descriptions)
+	tasks, err := fixture.store.CreateTasks(context.Background(), fixture.emptyTaskGoal.ID, "contract-test", "goal-get-size-contract", titles, descriptions)
 	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 	if len(tasks) != len(titles) {
-		t.Fatalf("DeclareTasks returned %d tasks, want %d", len(tasks), len(titles))
+		t.Fatalf("CreateTasks returned %d tasks, want %d", len(tasks), len(titles))
 	}
 
 	measure := func(label string, goalID int64) {
@@ -1374,47 +1566,14 @@ func TestContractN13GoalGetResponseSizeBreakdown(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGoal long-content: %v", err)
 	}
-	longTasks, err := fixture.store.DeclareTasks(context.Background(), longGoal.ID, "contract-test", "goal-get-size-long-contract", titles, descriptions)
+	longTasks, err := fixture.store.CreateTasks(context.Background(), longGoal.ID, "contract-test", "goal-get-size-long-contract", titles, descriptions)
 	if err != nil {
-		t.Fatalf("DeclareTasks long-content: %v", err)
+		t.Fatalf("CreateTasks long-content: %v", err)
 	}
 	if len(longTasks) != len(titles) {
-		t.Fatalf("DeclareTasks long-content returned %d tasks, want %d", len(longTasks), len(titles))
+		t.Fatalf("CreateTasks long-content returned %d tasks, want %d", len(longTasks), len(titles))
 	}
 	measure("long-content", longGoal.ID)
-}
-
-func TestContractB13TaskClaimReturnsFullTaskDescription(t *testing.T) {
-	fixture := newGoalListFixture(t)
-	defer fixture.store.Close()
-
-	sessionID := "task-claim-description-contract-session"
-	registerLiveGoalClaimSession(t, fixture, sessionID)
-	fullDescription := strings.Repeat("あ", 300)
-	tasks, err := fixture.store.DeclareTasks(context.Background(), fixture.emptyTaskGoal.ID, "contract-test", "task-claim-description-contract", []string{"full task.claim description"}, []string{fullDescription})
-	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
-	}
-	if len(tasks) != 1 {
-		t.Fatalf("DeclareTasks returned %d tasks, want 1", len(tasks))
-	}
-	params, err := json.Marshal(map[string]any{"task_id": tasks[0].ID, "agent_session_id": daemonTestSessionID(t, fixture.store, sessionID)})
-	if err != nil {
-		t.Fatalf("marshal task.claim params: %v", err)
-	}
-	raw, err := fixture.daemon.dispatch(context.Background(), rpc.Request{Method: "task.claim", Params: params})
-	if err != nil {
-		t.Fatalf("task.claim: %v", err)
-	}
-	var response struct {
-		Description string `json:"description"`
-	}
-	if err := json.Unmarshal(raw, &response); err != nil {
-		t.Fatalf("decode task.claim response: %v", err)
-	}
-	if response.Description != fullDescription {
-		t.Fatalf("task.claim description rune count = %d, want %d", len([]rune(response.Description)), len([]rune(fullDescription)))
-	}
 }
 
 func TestContractB1GoalListKeepsActiveAndProposedGoals(t *testing.T) {
@@ -1565,7 +1724,7 @@ esac
 	}
 	for _, marker := range []string{
 		"This repository is registered with ATCT.",
-		"An active goal is permission to work.",
+		"An active goal is permission to coordinate work.",
 		"See the `atct` skill for details.",
 	} {
 		if !strings.Contains(instructions, marker) {
@@ -1650,9 +1809,9 @@ func TestContractB11GoalListKeepsShortTaskDescription(t *testing.T) {
 	defer fixture.store.Close()
 
 	const fullDescription = "first line\nsecond line is not part of the list preview"
-	tasks, err := fixture.store.DeclareTasks(context.Background(), fixture.emptyTaskGoal.ID, "contract-test", "short-description-contract", []string{"short description task"}, []string{fullDescription})
+	tasks, err := fixture.store.CreateTasks(context.Background(), fixture.emptyTaskGoal.ID, "contract-test", "short-description-contract", []string{"short description task"}, []string{fullDescription})
 	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 	goal := findGoalPayloadForContractTest(t, goalListResponseForContractTest(t, fixture).Goals, fixture.emptyTaskGoal.ID)
 	var listed []struct {
@@ -1675,9 +1834,9 @@ func TestContractB12GoalGetReturnsFullTaskDescription(t *testing.T) {
 	defer fixture.store.Close()
 
 	fullDescription := strings.Repeat("あ", 300)
-	tasks, err := fixture.store.DeclareTasks(context.Background(), fixture.emptyTaskGoal.ID, "contract-test", "full-description-contract", []string{"full description task"}, []string{fullDescription})
+	tasks, err := fixture.store.CreateTasks(context.Background(), fixture.emptyTaskGoal.ID, "contract-test", "full-description-contract", []string{"full description task"}, []string{fullDescription})
 	if err != nil {
-		t.Fatalf("DeclareTasks: %v", err)
+		t.Fatalf("CreateTasks: %v", err)
 	}
 	params, err := json.Marshal(map[string]any{"goal_id": fixture.emptyTaskGoal.ID})
 	if err != nil {
@@ -1776,9 +1935,9 @@ func askOpenDecisionForContractTest(t *testing.T, fixture goalListFixture, goalI
 			t.Fatalf("ListTasks(%v): %v", goalID, err)
 		}
 		if len(tasks) == 0 {
-			declared, err := fixture.store.DeclareTasks(context.Background(), goalID, "contract-test", "decision-contract", []string{"decision task"}, []string{"decision task"})
+			declared, err := fixture.store.CreateTasks(context.Background(), goalID, "contract-test", "decision-contract", []string{"decision task"}, []string{"decision task"})
 			if err != nil {
-				t.Fatalf("DeclareTasks(%v): %v", goalID, err)
+				t.Fatalf("CreateTasks(%v): %v", goalID, err)
 			}
 			tasks = declared
 		}
@@ -1795,11 +1954,15 @@ func runSessionStartHookForContractTest(t *testing.T, atctScript string) (string
 	dir := t.TempDir()
 	hookDir := filepath.Join(dir, "hooks")
 	binDir := filepath.Join(dir, "bin")
+	pluginDir := filepath.Join(dir, ".claude-plugin")
 	if err := os.MkdirAll(hookDir, 0o755); err != nil {
 		t.Fatalf("MkdirAll hooks: %v", err)
 	}
 	if err := os.MkdirAll(binDir, 0o755); err != nil {
 		t.Fatalf("MkdirAll bin: %v", err)
+	}
+	if err := os.MkdirAll(pluginDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll plugin: %v", err)
 	}
 	_, sourceFile, _, ok := runtime.Caller(0)
 	if !ok {
@@ -1814,11 +1977,30 @@ func runSessionStartHookForContractTest(t *testing.T, atctScript string) (string
 	if err := os.WriteFile(hookPath, source, 0o755); err != nil {
 		t.Fatalf("write session-start hook: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(binDir, "atct"), []byte(atctScript), 0o755); err != nil {
+	manifest, err := os.ReadFile(filepath.Join(repoRoot, ".claude-plugin", "plugin.json"))
+	if err != nil {
+		t.Fatalf("read plugin manifest: %v", err)
+	}
+	var plugin struct {
+		Version string `json:"version"`
+	}
+	if err := json.Unmarshal(manifest, &plugin); err != nil || plugin.Version == "" {
+		t.Fatalf("decode plugin manifest version: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(pluginDir, "plugin.json"), manifest, 0o644); err != nil {
+		t.Fatalf("write plugin manifest: %v", err)
+	}
+	bodyPath := filepath.Join(binDir, "atct-body")
+	if err := os.WriteFile(bodyPath, []byte(atctScript), 0o755); err != nil {
+		t.Fatalf("write fake atct body: %v", err)
+	}
+	fakeAtct := fmt.Sprintf("#!/usr/bin/env bash\nif [[ \"${1:-}\" == version ]]; then printf '%%s\\n' %q; exit 0; fi\nexec \"$(dirname \"$0\")/atct-body\" \"$@\"\n", plugin.Version)
+	if err := os.WriteFile(filepath.Join(binDir, "atct"), []byte(fakeAtct), 0o755); err != nil {
 		t.Fatalf("write fake atct: %v", err)
 	}
 	cmd := exec.Command("bash", hookPath)
 	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "PATH="+binDir+":"+os.Getenv("PATH"))
 	output, err := cmd.CombinedOutput()
 	return string(output), err
 }
@@ -1902,7 +2084,7 @@ func TestHandoffSequenceRequiresReceiveBeforeRole(t *testing.T) {
 			t.Fatalf("subcommander role = %v, want %v", got, "subcommander")
 		}
 
-		if _, err := dispatch(t, fixture, "handoff.request", map[string]any{
+		if _, err := dispatch(t, fixture, "task.handoff.request", map[string]any{
 			"handoff_id":     "handoff-sequence-task",
 			"task_id":        fixture.tasks[1].ID,
 			"requested_by":   daemonTestSessionID(t, fixture.store, subcommander),
@@ -1910,7 +2092,7 @@ func TestHandoffSequenceRequiresReceiveBeforeRole(t *testing.T) {
 		}); err != nil {
 			t.Fatalf("handoff.request: %v", err)
 		}
-		if _, err := dispatch(t, fixture, "handoff.receive", map[string]any{
+		if _, err := dispatch(t, fixture, "task.handoff.receive", map[string]any{
 			"task_id":     fixture.tasks[1].ID,
 			"received_by": daemonTestSessionID(t, fixture.store, executor),
 		}); err != nil {
@@ -1988,7 +2170,7 @@ func TestHandoffSequenceRequiresReceiveBeforeRole(t *testing.T) {
 			"handoff_id":   "handoff-sequence-n3-goal",
 			"goal_id":      fixture.taskGoal.ID,
 			"requested_by": daemonTestSessionID(t, fixture.store, sessionID),
-		}, "caller does not hold a live claim on project")
+		}, ErrRoleUnauthorized.Error())
 	})
 
 	t.Run("n4-unclaimed-task-handoff-request", func(t *testing.T) {
@@ -1997,10 +2179,10 @@ func TestHandoffSequenceRequiresReceiveBeforeRole(t *testing.T) {
 
 		sessionID := "handoff-sequence-n4-d"
 		register(t, fixture, sessionID)
-		expectError(t, fixture, "handoff.request", map[string]any{
+		expectError(t, fixture, "task.handoff.request", map[string]any{
 			"handoff_id":   "handoff-sequence-n4-task",
 			"task_id":      fixture.tasks[1].ID,
 			"requested_by": daemonTestSessionID(t, fixture.store, sessionID),
-		}, "caller does not hold an open received handoff for goal")
+		}, ErrRoleUnauthorized.Error())
 	})
 }

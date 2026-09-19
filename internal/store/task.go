@@ -40,25 +40,25 @@ func goalNotActiveError(goalID int64, status domain.GoalStatus, beforeAction, ac
 	return fmt.Errorf("%w: %s", ErrGoalNotActive, stateMessage)
 }
 
-// DeclareTasks derives declare_key from the idempotency key and task position.
-// The unique (goal_id, declare_key) constraint absorbs duplicate declarations.
-// Agents retry and repeat declarations after context compaction, so this prevents task multiplication.
-func (s *Store) DeclareTasks(ctx context.Context, goalID int64, agent, idempotencyKey string, titles []string, descriptions []string) ([]domain.Task, error) {
+// CreateTasks derives declare_key from the idempotency key and task position.
+// The unique (goal_id, declare_key) constraint absorbs duplicate creates.
+// Agents retry after context compaction, so this prevents task multiplication.
+func (s *Store) CreateTasks(ctx context.Context, goalID int64, agent, idempotencyKey string, titles []string, descriptions []string) ([]domain.Task, error) {
 	if len(descriptions) != len(titles) {
-		return nil, fmt.Errorf("declare tasks: descriptions count %d does not match titles count %d", len(descriptions), len(titles))
+		return nil, fmt.Errorf("create tasks: descriptions count %d does not match titles count %d", len(descriptions), len(titles))
 	}
 	for i, description := range descriptions {
 		if strings.TrimSpace(description) == "" {
-			return nil, fmt.Errorf("declare tasks: description %d is empty", i)
+			return nil, fmt.Errorf("create tasks: description %d is empty", i)
 		}
 	}
 
 	goal, err := s.GetGoal(ctx, goalID)
 	if err != nil {
-		return nil, fmt.Errorf("get goal for declaring tasks: %w", err)
+		return nil, fmt.Errorf("get goal for creating tasks: %w", err)
 	}
 	if goal.Status != domain.GoalActive {
-		return nil, goalNotActiveError(goalID, goal.Status, "declaring", "declare")
+		return nil, goalNotActiveError(goalID, goal.Status, "creating", "create")
 	}
 
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -120,6 +120,11 @@ func (s *Store) DeclareTasks(ctx context.Context, goalID int64, agent, idempoten
 	return tasks, nil
 }
 
+// DeclareTasks preserves the pre-rename API for callers that still use it.
+func (s *Store) DeclareTasks(ctx context.Context, goalID int64, agent, idempotencyKey string, titles []string, descriptions []string) ([]domain.Task, error) {
+	return s.CreateTasks(ctx, goalID, agent, idempotencyKey, titles, descriptions)
+}
+
 func (s *Store) ListTasks(ctx context.Context, goalID int64) ([]domain.Task, error) {
 	rows, err := taskQueries(s).ListTasks(ctx, goalID)
 	if err != nil {
@@ -138,11 +143,11 @@ func (s *Store) ListTasks(ctx context.Context, goalID int64) ([]domain.Task, err
 }
 
 // SnoozeTask sets or clears the absolute deadline that temporarily hides a
-// todo task from wakeup detection. A nil deadline clears the snooze.
+// todo task from wakeup. A nil deadline clears the snooze.
 func (s *Store) SnoozeTask(ctx context.Context, taskID int64, until *time.Time) (domain.Task, error) {
 	var snoozedUntil sql.NullString
 	if until != nil {
-		snoozedUntil = sql.NullString{String: until.UTC().Format(time.RFC3339Nano), Valid: true}
+		snoozedUntil = sql.NullString{String: formatTimestamp(*until), Valid: true}
 	}
 
 	res, err := taskQueries(s).UpdateTaskSnooze(ctx, sqlcgen.UpdateTaskSnoozeParams{
@@ -178,7 +183,7 @@ func (s *Store) LinkTaskCommit(ctx context.Context, taskID int64, c domain.TaskC
 		FilesChanged: int64(c.FilesChanged),
 		Insertions:   int64(c.Insertions),
 		Deletions:    int64(c.Deletions),
-		CreatedAt:    c.CreatedAt.UTC().Format(time.RFC3339Nano),
+		CreatedAt:    formatTimestamp(c.CreatedAt),
 	})
 	if err != nil {
 		return fmt.Errorf("link task commit: %w", err)
@@ -531,10 +536,10 @@ func (s *Store) authorizeTaskStatusRelease(ctx context.Context, taskID int64, st
 			return "", nil
 		}
 		if status == domain.TaskDone || status == domain.TaskDropped {
-			return "", fmt.Errorf("task %d has a work lock held by another agent session; only the lock holder or a caller bound to the task's project can set it to %s; if that session is no longer running, return it to todo with atct_task_update, then acquire the work lock with atct_task_claim before retrying", taskID, status)
+			return "", fmt.Errorf("task %d has a work lock held by another agent session; only the lock holder or a caller bound to the task's project can set it to %s; if that session is no longer running, return it to todo with atct_task_update, then request a fresh task handoff before retrying", taskID, status)
 		}
 		if ownerID == 0 || claimIsRunning(ctx, s, ownerID) {
-			return "", fmt.Errorf("task %d has a work lock held by another agent session that is still running; only the lock holder or a caller bound to the task's project can release it; wait for it to finish or stop, then return it to todo with atct_task_update and acquire the work lock with atct_task_claim", taskID)
+			return "", fmt.Errorf("task %d has a work lock held by another agent session that is still running; only the lock holder or a caller bound to the task's project can release it; wait for it to finish or stop, then return it to todo with atct_task_update and request a fresh task handoff", taskID)
 		}
 		return "", nil
 	}

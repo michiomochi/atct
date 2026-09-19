@@ -1,8 +1,6 @@
 package main
 
 import (
-	"bufio"
-	"encoding/json"
 	"errors"
 	"io"
 	"net"
@@ -17,7 +15,6 @@ import (
 	"time"
 
 	"github.com/michiomochi/atct/internal/daemonctl"
-	"github.com/michiomochi/atct/internal/rpc"
 )
 
 func TestParseArgs(t *testing.T) {
@@ -67,6 +64,22 @@ func TestParseArgs(t *testing.T) {
 				t.Fatalf("parseArgs(%q) listenExplicit = %v, want %v", tt.args, got.listenExplicit, tt.wantExplicit)
 			}
 		})
+	}
+}
+
+func TestVersionCommandPrintsBuildVersionWithoutCreatingATCTHome(t *testing.T) {
+	binary := buildAtctTestBinary(t)
+	home := t.TempDir()
+
+	output, err := runAtctCommand(binary, home, "version")
+	if err != nil {
+		t.Fatalf("atct version: %v\noutput:\n%s", err, output)
+	}
+	if got, want := string(output), "dev\n"; got != want {
+		t.Fatalf("atct version output = %q, want %q", got, want)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".atct")); !os.IsNotExist(err) {
+		t.Fatalf("atct version created %s: stat error = %v", filepath.Join(home, ".atct"), err)
 	}
 }
 
@@ -167,38 +180,16 @@ func TestParseArgsCodexMonitorPreservesScopeAfterPassthroughDelimiter(t *testing
 	}
 }
 
-func TestParseArgsCodexMonitorRoleSelectorMatrix(t *testing.T) {
-	tests := []struct {
-		name     string
-		args     []string
-		wantErr  bool
-		wantArgs []string
-	}{
-		{"commander needs no selector", []string{"codex", "monitor", "--role", "commander", "--", "-m", "gpt-5"}, false, []string{"-m", "gpt-5"}},
-		{"subcommander needs goal", []string{"codex", "monitor", "--role", "subcommander", "--goal", "206"}, false, nil},
-		{"executor needs task", []string{"codex", "monitor", "--role", "executor", "--task", "846"}, false, nil},
-		{"unknown role is rejected", []string{"codex", "monitor", "--role", "observer"}, true, nil},
-		{"commander rejects goal", []string{"codex", "monitor", "--role", "commander", "--goal", "206"}, true, nil},
-		{"subcommander rejects missing goal", []string{"codex", "monitor", "--role", "subcommander"}, true, nil},
-		{"subcommander rejects task", []string{"codex", "monitor", "--role", "subcommander", "--goal", "206", "--task", "846"}, true, nil},
-		{"executor rejects missing task", []string{"codex", "monitor", "--role", "executor"}, true, nil},
-		{"executor rejects goal", []string{"codex", "monitor", "--role", "executor", "--task", "846", "--goal", "206"}, true, nil},
-		{"duplicate role is rejected", []string{"codex", "monitor", "--role", "executor", "--role", "executor", "--task", "846"}, true, nil},
-		{"duplicate task is rejected", []string{"codex", "monitor", "--role", "executor", "--task", "846", "--task", "847"}, true, nil},
-		{"unknown monitor option is rejected", []string{"codex", "monitor", "--role", "executor", "--task", "846", "--unexpected"}, true, nil},
-		{"explicit role rejects noninteractive pass through", []string{"codex", "monitor", "--role", "executor", "--task", "846", "--", "exec", "--help"}, true, nil},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cfg, err := parseArgs(tt.args)
-			if (err != nil) != tt.wantErr {
-				t.Fatalf("parseArgs(%q) error = %v, wantErr %v", tt.args, err, tt.wantErr)
-			}
-			if err == nil && !slices.Equal(cfg.codexArgs, tt.wantArgs) {
-				t.Fatalf("codexArgs = %#v, want %#v; monitor role flags must not reach Codex", cfg.codexArgs, tt.wantArgs)
-			}
-		})
+func TestParseArgsCodexMonitorRejectsRemovedSelectors(t *testing.T) {
+	for _, args := range [][]string{
+		{"codex", "monitor", "--role", "commander"},
+		{"codex", "monitor", "--project", "7"},
+		{"codex", "monitor", "--goal", "206"},
+		{"codex", "monitor", "--task", "846"},
+	} {
+		if _, err := parseArgs(args); !errors.Is(err, errInvalidArgs) {
+			t.Fatalf("parseArgs(%q) error = %v, want errInvalidArgs", args, err)
+		}
 	}
 }
 
@@ -799,81 +790,8 @@ func TestParseHandoffComplete(t *testing.T) {
 	}
 }
 
-func TestParseHandoffYielded(t *testing.T) {
-	cfg, err := parseArgs([]string{"handoff", "yielded", "task-1"})
-	if err != nil {
-		t.Fatalf("parseArgs: %v", err)
-	}
-	if cfg.subcommand != "handoff" || cfg.handoffAction != "yielded" {
-		t.Fatalf("handoff command = %#v, want yielded", cfg)
-	}
-	if cfg.handoffID != "" || cfg.handoffTaskID != "task-1" {
-		t.Fatalf("handoff identifiers = %q, %q; want empty handoff ID and task-1", cfg.handoffID, cfg.handoffTaskID)
-	}
-}
-
-func TestRunHandoffYieldedUsesExistingDaemonWithoutStartingOne(t *testing.T) {
-	dir := shortDaemonTestDir(t)
-	var err error
-	listener, err := net.Listen("unix", filepath.Join(dir, "atct.sock"))
-	if err != nil {
-		t.Fatalf("net.Listen: %v", err)
-	}
-	t.Cleanup(func() { _ = listener.Close() })
-	if err := daemonctl.WriteRegistry(dir, daemonctl.Registry{
-		PID:        os.Getpid(),
-		SocketPath: listener.Addr().String(),
-		Version:    version,
-	}); err != nil {
-		t.Fatalf("WriteRegistry: %v", err)
-	}
-
-	requests := make(chan rpc.Request, 1)
-	go func() {
-		for {
-			conn, acceptErr := listener.Accept()
-			if acceptErr != nil {
-				return
-			}
-			go func() {
-				defer conn.Close()
-				scanner := bufio.NewScanner(conn)
-				if !scanner.Scan() {
-					return
-				}
-				var req rpc.Request
-				if err := json.Unmarshal(scanner.Bytes(), &req); err != nil {
-					return
-				}
-				requests <- req
-				_, _ = conn.Write([]byte(`{"result":null}` + "\n"))
-			}()
-		}
-	}()
-
-	if err := runHandoff(cliConfig{handoffAction: "yielded", handoffTaskID: "task-1"}, dir, filepath.Join(dir, "atct-not-started")); err != nil {
-		t.Fatalf("runHandoff: %v", err)
-	}
-	select {
-	case req := <-requests:
-		if req.Method != "handoff.yielded" {
-			t.Fatalf("RPC method = %q, want handoff.yielded", req.Method)
-		}
-		var params map[string]string
-		if err := json.Unmarshal(req.Params, &params); err != nil {
-			t.Fatalf("RPC params: %v", err)
-		}
-		if params["task_id"] != "task-1" || len(params) != 1 {
-			t.Fatalf("RPC params = %#v, want only task_id=task-1", params)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("timed out waiting for handoff.yielded RPC")
-	}
-}
-
-func TestRunHandoffYieldedIsSilentWhenDaemonIsAbsent(t *testing.T) {
-	dir := shortDaemonTestDir(t)
-	if err := runHandoff(cliConfig{handoffAction: "yielded", handoffTaskID: "task-1"}, dir, filepath.Join(dir, "atct-not-started")); err != nil {
-		t.Fatalf("runHandoff without daemon: %v", err)
+func TestParseHandoffRejectsUnknownAction(t *testing.T) {
+	if _, err := parseArgs([]string{"handoff", "unknown", "task-1"}); err == nil {
+		t.Fatal("parseArgs accepted unknown handoff action")
 	}
 }

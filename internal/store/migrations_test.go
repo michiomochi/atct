@@ -53,6 +53,7 @@ func TestEmptyDatabaseAppliesBaselineMigration(t *testing.T) {
 		"0002_task_description.sql",
 		"0003_unique_task_sort_order.sql",
 		"0004_agent_sessions.sql",
+		"0035_handoff_only_lifecycle.sql",
 	} {
 		assertMigrationRecorded(t, db, filename)
 	}
@@ -73,8 +74,8 @@ func TestFreshDatabaseAppliesHandoffEntryMigrationsAfter0029(t *testing.T) {
 	for _, filename := range []string{
 		"0029_goal_request_reports.sql",
 		"0030_monitor_health.sql",
-		"0031_handoff_entries.sql",
-		"0032_canonical_handoff_entries.sql",
+		"0045_handoff_entries.sql",
+		"0046_canonical_handoff_entries.sql",
 	} {
 		assertMigrationRecorded(t, s.DB(), filename)
 	}
@@ -134,8 +135,8 @@ func TestUpgradeThrough0029AppliesHandoffEntryMigrations(t *testing.T) {
 	for _, filename := range []string{
 		"0029_goal_request_reports.sql",
 		"0030_monitor_health.sql",
-		"0031_handoff_entries.sql",
-		"0032_canonical_handoff_entries.sql",
+		"0045_handoff_entries.sql",
+		"0046_canonical_handoff_entries.sql",
 	} {
 		assertMigrationRecorded(t, db, filename)
 	}

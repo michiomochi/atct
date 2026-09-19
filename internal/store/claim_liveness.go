@@ -4,7 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"syscall"
+	"time"
 
 	"github.com/michiomochi/atct/internal/domain"
 	"github.com/michiomochi/atct/internal/store/sqlcgen"
@@ -109,58 +109,16 @@ func nullableClaimInt64(value sql.NullInt64) int64 {
 }
 
 func claimIsRunning(ctx context.Context, s *Store, agentSessionID int64) bool {
-	if agentSessionID == 0 {
-		return false
-	}
-	session, err := sqlcgen.New(s.db).GetAgentSessionLiveness(ctx, agentSessionID)
-	if err != nil {
-		return false
-	}
-	pid := int(session.Pid)
-	startedAt := session.StartedAt
-	if pid == 0 {
-		return false
-	}
-	if err := syscall.Kill(pid, 0); err != nil {
-		return false
-	}
-
-	actualStartedAt, err := processStartedAt(pid)
-	return err == nil && actualStartedAt == startedAt
+	return claimIsRunningWithQueries(ctx, sqlcgen.New(s.db), agentSessionID)
 }
 
-// claimIsDefinitelyDead is intentionally stricter than claimIsRunning. A
-// session registered without process identity cannot be proven dead, so an
-// open handoff owned by it must not be reclaimed by a concurrent claimant.
+func claimIsRunningWithQueries(ctx context.Context, q *sqlcgen.Queries, agentSessionID int64) bool {
+	return agentSessionLiveInQueries(ctx, q, agentSessionID, time.Now())
+}
+
+// claimIsDefinitelyDead is the lease read the other way round. There is no
+// longer a weaker and a stronger answer: a lapsed lease is proof on its own,
+// where a missing pid only ever meant "cannot tell".
 func claimIsDefinitelyDead(ctx context.Context, s *Store, agentSessionID int64) bool {
-	if agentSessionID == 0 {
-		return false
-	}
-	session, err := sqlcgen.New(s.db).GetAgentSessionLiveness(ctx, agentSessionID)
-	if err != nil || session.Pid == 0 || session.StartedAt == "" {
-		return false
-	}
-
-	pid := int(session.Pid)
-	if err := syscall.Kill(pid, 0); err != nil {
-		return true
-	}
-	actualStartedAt, err := processStartedAt(pid)
-	return err == nil && actualStartedAt != session.StartedAt
-}
-
-func claimIsDefinitelyDeadWithQuery(ctx context.Context, q *sqlcgen.Queries, agentSessionID int64) bool {
-	if agentSessionID == 0 {
-		return false
-	}
-	session, err := q.GetAgentSessionLiveness(ctx, agentSessionID)
-	if err != nil || session.Pid == 0 || session.StartedAt == "" {
-		return false
-	}
-	processID := int(session.Pid)
-	if err := syscall.Kill(processID, 0); err != nil {
-		return true
-	}
-	actualStartedAt, err := processStartedAt(processID)
-	return err == nil && actualStartedAt != session.StartedAt
+	return !s.AgentSessionLive(ctx, agentSessionID, time.Now())
 }

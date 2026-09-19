@@ -1,13 +1,18 @@
 package main
 
 import (
+	"bytes"
+	"context"
+	"io"
+	"net/http"
 	"net/url"
+	"strings"
 	"testing"
 )
 
-func TestWatchTaskScopeDeliversOnlyItsTaskHandoffAndDetection(t *testing.T) {
+func TestWatchTaskScopeDeliversOnlyItsTaskHandoffAndWakeup(t *testing.T) {
 	filter := newWatchTaskScopeFilter("846")
-	for _, eventName := range []string{"handoff_reported", "handoff_yielded", "detection.claim_stale"} {
+	for _, eventName := range []string{"handoff_reported", "wakeup.claim_stale"} {
 		if !filter.delivers(eventName, watchDecision{TaskID: "846"}) {
 			t.Fatalf("task scope suppressed %s for its task", eventName)
 		}
@@ -15,8 +20,8 @@ func TestWatchTaskScopeDeliversOnlyItsTaskHandoffAndDetection(t *testing.T) {
 			t.Fatalf("task scope delivered %s for another task", eventName)
 		}
 	}
-	if filter.delivers("detection.claim_stale", watchDecision{}) {
-		t.Fatal("task scope delivered a task-less detection")
+	if filter.delivers("wakeup.claim_stale", watchDecision{}) {
+		t.Fatal("task scope delivered a task-less wakeup")
 	}
 }
 
@@ -25,6 +30,21 @@ func TestWatchTaskScopeSuppressesTasklessWakeupEvaluateFailed(t *testing.T) {
 
 	if filter.delivers("wakeup.evaluate_failed", watchDecision{WakeupID: "wakeup-1", Reason: "database unavailable"}) {
 		t.Fatal("task scope delivered a taskless wakeup.evaluate_failed event")
+	}
+}
+
+func TestWatchScopeGoalReviewTransitionsAreProjectOnly(t *testing.T) {
+	decision := watchDecision{GoalID: "42"}
+	for _, eventName := range []string{"goal.review.complete", "goal.review.reject"} {
+		if !newWatchScopeFilter("").delivers(eventName, decision) {
+			t.Fatalf("project scope suppressed %s, want true", eventName)
+		}
+		if newWatchScopeFilter("42").delivers(eventName, decision) {
+			t.Fatalf("goal scope delivered %s, want false", eventName)
+		}
+		if newWatchTaskScopeFilter("9").delivers(eventName, decision) {
+			t.Fatalf("task scope delivered %s, want false", eventName)
+		}
 	}
 }
 
@@ -72,20 +92,12 @@ func TestWatchScopeProjectStopsTaskHandoffReported(t *testing.T) {
 	}
 }
 
-func TestWatchScopeProjectStopsHandoffYielded(t *testing.T) {
-	filter := newWatchScopeFilter("")
-
-	if got := filter.delivers("handoff_yielded", watchDecision{TaskID: "task-1"}); got {
-		t.Fatal("project scope delivered handoff_yielded, want false")
-	}
-}
-
-func TestWatchScopeProjectStopsUnappliedDecisionDetection(t *testing.T) {
+func TestWatchScopeProjectStopsUnappliedDecisionWakeup(t *testing.T) {
 	filter := newWatchScopeFilter("")
 
 	for _, eventName := range []string{
-		"detection.decision_answered_unapplied",
-		"detection.decision_default_unapplied",
+		"wakeup.decision_answered_unapplied",
+		"wakeup.decision_default_unapplied",
 	} {
 		if got := filter.delivers(eventName, watchDecision{DecisionID: "decision-1"}); got {
 			t.Fatalf("project scope delivered %s, want false", eventName)
@@ -108,14 +120,15 @@ func TestWatchScopeProjectStopsDefaultDecisionAnswered(t *testing.T) {
 	}
 }
 
-func TestWatchScopeProjectStopsTaskDetections(t *testing.T) {
+func TestWatchScopeProjectStopsTaskWakeups(t *testing.T) {
 	filter := newWatchScopeFilter("")
 	events := []string{
-		"detection.unclaimed_doing",
-		"detection.handoff_unreceived",
-		"detection.handoff_unreported",
-		"detection.claim_undelegated",
-		"detection.claim_stale",
+		"wakeup.unclaimed_doing",
+		"wakeup.handoff_unreceived",
+		"wakeup.handoff_unreported",
+		"wakeup.claim_undelegated",
+		"wakeup.monitor_lost",
+		"wakeup.claim_stale",
 	}
 
 	for _, eventName := range events {
@@ -171,11 +184,12 @@ func TestWatchScopeProjectDeliversDecisionApprovedAndRejected(t *testing.T) {
 	}
 }
 
-func TestWatchScopeProjectDeliversHumanDecisionAnswered(t *testing.T) {
-	filter := newWatchScopeFilter("")
-
-	if got := filter.delivers("decision.answered", watchDecision{DecisionID: "decision-1"}); !got {
-		t.Fatal("project scope suppressed human decision.answered, want true")
+func TestWatchScopeMatchesDecisionOwnerRole(t *testing.T) {
+	if watchScopeMatchesDecision(watchScope{Role: "commander"}, watchDecision{TargetRole: "subcommander"}) {
+		t.Fatal("commander matched a subcommander-owned decision")
+	}
+	if !watchScopeMatchesDecision(watchScope{Role: "subcommander", GoalID: "7"}, watchDecision{TargetRole: "subcommander", GoalID: "7"}) {
+		t.Fatal("matching subcommander scope did not receive its decision")
 	}
 }
 
@@ -186,15 +200,15 @@ func TestWatchScopeGoalDeliversTaskScopedEvents(t *testing.T) {
 		decision  watchDecision
 	}{
 		{"handoff_reported", watchDecision{TaskID: "task-1"}},
-		{"handoff_yielded", watchDecision{TaskID: "task-1"}},
-		{"detection.decision_answered_unapplied", watchDecision{DecisionID: "decision-1"}},
-		{"detection.decision_default_unapplied", watchDecision{DecisionID: "decision-2"}},
+		{"wakeup.decision_answered_unapplied", watchDecision{DecisionID: "decision-1"}},
+		{"wakeup.decision_default_unapplied", watchDecision{DecisionID: "decision-2"}},
 		{"decision.answered", watchDecision{SettledByDefault: true}},
-		{"detection.unclaimed_doing", watchDecision{TaskID: "task-1"}},
-		{"detection.handoff_unreceived", watchDecision{HandoffID: "handoff-1"}},
-		{"detection.handoff_unreported", watchDecision{HandoffID: "handoff-1"}},
-		{"detection.claim_undelegated", watchDecision{TaskID: "task-1"}},
-		{"detection.claim_stale", watchDecision{TaskID: "task-1"}},
+		{"wakeup.unclaimed_doing", watchDecision{TaskID: "task-1"}},
+		{"wakeup.handoff_unreceived", watchDecision{HandoffID: "handoff-1"}},
+		{"wakeup.handoff_unreported", watchDecision{HandoffID: "handoff-1"}},
+		{"wakeup.monitor_lost", watchDecision{HandoffID: "handoff-1"}},
+		{"wakeup.claim_undelegated", watchDecision{TaskID: "task-1"}},
+		{"wakeup.claim_stale", watchDecision{TaskID: "task-1"}},
 		{"wakeup", watchDecision{}},
 	}
 
@@ -205,13 +219,13 @@ func TestWatchScopeGoalDeliversTaskScopedEvents(t *testing.T) {
 	}
 }
 
-func TestWatchScopeProjectDeliversGoalDetectionsAndCreated(t *testing.T) {
+func TestWatchScopeProjectDeliversGoalWakeupsAndCreated(t *testing.T) {
 	filter := newWatchScopeFilter("")
 	events := []string{
-		"detection.completion_report_missing",
-		"detection.commits_missing",
-		"detection.undeclared_goal",
-		"detection.all_tasks_dropped",
+		"wakeup.completion_report_missing",
+		"wakeup.commits_missing",
+		"wakeup.undeclared_goal",
+		"wakeup.all_tasks_dropped",
 		"goal.created",
 		"wakeup.discrepancy",
 		"wakeup.evaluate_failed",
@@ -227,7 +241,7 @@ func TestWatchScopeProjectDeliversGoalDetectionsAndCreated(t *testing.T) {
 func TestWatchScopeProjectDeliversUnknownEvents(t *testing.T) {
 	filter := newWatchScopeFilter("")
 
-	if got := filter.delivers("detection.some_future_condition", watchDecision{}); !got {
+	if got := filter.delivers("wakeup.some_future_state", watchDecision{}); !got {
 		t.Fatal("project scope suppressed unknown event, want true")
 	}
 }
@@ -251,13 +265,12 @@ func TestWatchPassThroughFilterDeliversEverything(t *testing.T) {
 		decision  watchDecision
 	}{
 		{"handoff_reported", watchDecision{TaskID: "task-1"}},
-		{"handoff_yielded", watchDecision{TaskID: "task-1"}},
-		{"detection.decision_answered_unapplied", watchDecision{DecisionID: "decision-1"}},
-		{"detection.decision_default_unapplied", watchDecision{DecisionID: "decision-2"}},
-		{"detection.unclaimed_doing", watchDecision{TaskID: "task-1"}},
-		{"detection.handoff_unreceived", watchDecision{HandoffID: "handoff-1"}},
-		{"detection.claim_undelegated", watchDecision{TaskID: "task-1"}},
-		{"detection.claim_stale", watchDecision{TaskID: "task-1"}},
+		{"wakeup.decision_answered_unapplied", watchDecision{DecisionID: "decision-1"}},
+		{"wakeup.decision_default_unapplied", watchDecision{DecisionID: "decision-2"}},
+		{"wakeup.unclaimed_doing", watchDecision{TaskID: "task-1"}},
+		{"wakeup.handoff_unreceived", watchDecision{HandoffID: "handoff-1"}},
+		{"wakeup.claim_undelegated", watchDecision{TaskID: "task-1"}},
+		{"wakeup.claim_stale", watchDecision{TaskID: "task-1"}},
 	}
 
 	for _, tc := range cases {
@@ -296,6 +309,124 @@ func TestWatchFormatsHandoffReviewEvents(t *testing.T) {
 				t.Fatalf("formatWatchDecision(%q) = %q, %v; want %q, true", tc.eventName, got, ok, tc.want)
 			}
 		})
+	}
+}
+
+func TestHandoffOnlyProjectionRoutesRightRoleAndStops(t *testing.T) {
+	at := func(value string) *string { return &value }
+	cases := []struct {
+		name      string
+		kind      string
+		handoff   watchReconciliationHandoff
+		wantEvent string
+		wantRole  string
+	}{
+		{name: "unreceived goal handoff wakes commander", kind: "goal", handoff: watchReconciliationHandoff{ID: "goal-request", GoalID: 7, RequestedAt: at("request")}, wantEvent: "goal.handoff.request", wantRole: "commander"},
+		{name: "unreceived task handoff wakes subcommander", kind: "task", handoff: watchReconciliationHandoff{ID: "task-request", GoalID: 7, TaskID: 8, RequestedAt: at("request")}, wantEvent: "task.handoff.request", wantRole: "subcommander"},
+		{name: "task review wakes reviewer", kind: "task", handoff: watchReconciliationHandoff{ID: "task-review", GoalID: 7, TaskID: 8, ReviewRequestedAt: at("review-request")}, wantEvent: "task.handoff.review.request", wantRole: "subcommander"},
+		{name: "rejection receipt wakes original task submitter", kind: "task", handoff: watchReconciliationHandoff{ID: "task-reject-received", GoalID: 7, TaskID: 8, ReviewRejectedAt: at("reject"), ReviewRejectionReceivedAt: at("receipt")}, wantEvent: "task.handoff.review.reject.receive", wantRole: "executor"},
+		{name: "plan rejection wakes plan submitter", kind: "plan", handoff: watchReconciliationHandoff{ID: "plan-reject", GoalID: 7, ReviewRejectedAt: at("reject")}, wantEvent: "plan.handoff.review.reject", wantRole: "subcommander"},
+		{name: "goal review request wakes commander", kind: "goal", handoff: watchReconciliationHandoff{ID: "goal-review", GoalID: 7, ReviewRequestedAt: at("review-request")}, wantEvent: "goal.handoff.review.request", wantRole: "commander"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			event, decision, ok := watchReconciliationHandoffEvent(tc.kind, tc.handoff)
+			if !ok || event != tc.wantEvent || decision.TargetRole != tc.wantRole {
+				t.Fatalf("handoff projection = (%q, %+v, %v), want (%q, role=%q, true)", event, decision, ok, tc.wantEvent, tc.wantRole)
+			}
+			completed := tc.handoff
+			completed.CompletedReportAt = at("complete")
+			if event, _, ok := watchReconciliationHandoffEvent(tc.kind, completed); ok {
+				t.Fatalf("completed handoff projected %q, want no action", event)
+			}
+		})
+	}
+}
+
+func TestHandoffOnlyReconciliationProjectsTaskCreateUntilComplete(t *testing.T) {
+	states := []string{
+		`{"task_create_handoffs":[{"ID":"create-1","GoalID":7,"RequestedAt":"request"}]}`,
+		`{"task_create_handoffs":[{"ID":"create-1","GoalID":7,"ReceivedAt":"receipt"}]}`,
+		`{"task_create_handoffs":[{"ID":"create-1","GoalID":7,"CompletedAt":"complete"}]}`,
+	}
+	var calls int
+	client := &http.Client{Transport: watchRoundTripper(func(req *http.Request) (*http.Response, error) {
+		if req.URL.Path != "/api/events/reconcile" || calls >= len(states) {
+			return nil, io.ErrUnexpectedEOF
+		}
+		body := states[calls]
+		calls++
+		return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(body))}, nil
+	})}
+	var output bytes.Buffer
+	delivered := make(map[watchDeliveryKey]struct{})
+	lastWakeupContent := ""
+	wakeupDiscrepancyDelivered := make(map[watchWakeupDiscrepancyDeliveryKey]struct{})
+	wakeupDelivered := make(map[watchWakeupDeliveryKey]struct{})
+	for range states {
+		if err := reconcileWatchScope(context.Background(), client, "http://daemon", watchScope{ProjectID: "1", GoalID: "7", Role: "subcommander"}, &output, delivered, &lastWakeupContent, wakeupDiscrepancyDelivered, wakeupDelivered, newWatchScopeFilter("7"), nil); err != nil {
+			t.Fatalf("reconcileWatchScope: %v", err)
+		}
+	}
+	want := "atct task-create handoff requested (goal_id: 7, handoff_id: create-1)\n" +
+		"atct task-create handoff received (goal_id: 7, handoff_id: create-1)\n"
+	if got := output.String(); got != want {
+		t.Fatalf("task-create projection = %q, want %q", got, want)
+	}
+}
+
+func TestWatchPlanReviewDeliveryUsesLifecycleGeneration(t *testing.T) {
+	states := []string{
+		`{"plan_handoffs":[{"ID":"plan-1","GoalID":7,"ReviewRequestedAt":"2026-09-06T00:00:00Z"}]}`,
+		`{"plan_handoffs":[{"ID":"plan-1","GoalID":7,"ReviewRequestedAt":"2026-09-06T00:00:00Z"}]}`,
+		`{"plan_handoffs":[{"ID":"plan-1","GoalID":7,"ReviewReceivedAt":"2026-09-06T00:01:00Z"}]}`,
+		`{"plan_handoffs":[{"ID":"plan-1","GoalID":7,"ReviewReceivedAt":"2026-09-06T00:01:00Z"}]}`,
+		`{"plan_handoffs":[{"ID":"plan-1","GoalID":7,"ReviewRejectedAt":"2026-09-06T00:02:00Z"}]}`,
+		`{"plan_handoffs":[{"ID":"plan-1","GoalID":7,"ReviewRejectedAt":"2026-09-06T00:02:00Z"}]}`,
+		`{"plan_handoffs":[{"ID":"plan-1","GoalID":7,"ReviewRequestedAt":"2026-09-06T00:03:00Z"}]}`,
+		`{"plan_handoffs":[{"ID":"plan-1","GoalID":7,"ReviewRequestedAt":"2026-09-06T00:03:00Z"}]}`,
+	}
+	var calls int
+	client := &http.Client{Transport: watchRoundTripper(func(req *http.Request) (*http.Response, error) {
+		if req.URL.Path != "/api/events/reconcile" {
+			return nil, io.ErrUnexpectedEOF
+		}
+		if calls >= len(states) {
+			return nil, io.ErrUnexpectedEOF
+		}
+		body := states[calls]
+		calls++
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Status:     "200 OK",
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(body)),
+		}, nil
+	})}
+
+	var output bytes.Buffer
+	delivered := make(map[watchDeliveryKey]struct{})
+	lastWakeupContent := ""
+	wakeupDiscrepancyDelivered := make(map[watchWakeupDiscrepancyDeliveryKey]struct{})
+	wakeupDelivered := make(map[watchWakeupDeliveryKey]struct{})
+	for range states {
+		if err := reconcileWatchScope(
+			context.Background(), client, "http://daemon", watchScope{ProjectID: "project-1"}, &output,
+			delivered, &lastWakeupContent, wakeupDiscrepancyDelivered, wakeupDelivered,
+			newWatchScopeFilter(""), nil,
+		); err != nil {
+			t.Fatalf("reconcileWatchScope: %v", err)
+		}
+	}
+
+	want := strings.Join([]string{
+		"atct plan handoff review requested (goal_id: 7, handoff_id: plan-1)",
+		"atct plan handoff review received (goal_id: 7, handoff_id: plan-1)",
+		"atct plan handoff review rejected (goal_id: 7, handoff_id: plan-1)",
+		"atct plan handoff review requested (goal_id: 7, handoff_id: plan-1)",
+	}, "\n") + "\n"
+	if got := output.String(); got != want {
+		t.Fatalf("plan review lifecycle output = %q, want %q", got, want)
 	}
 }
 

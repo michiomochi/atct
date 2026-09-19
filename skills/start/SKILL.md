@@ -10,10 +10,16 @@ human reaches for when they want progress rather than a plan.
 
 ## First step: identify the session
 
-Before entering the goal loop, call `atct_session_identify` with `session_key`
-set to this pane's agent name in the `<project>-<unit>-<role>` form. Use the
-full agent name rather than only the role, such as `commander`: a role-only key
-can collide across projects and merge their sessions into one row.
+Before entering the goal loop, call `atct_session_identify`. Pass the exact
+`session_key` and `monitor_token` printed by SessionStart; do not substitute an
+agent name or generate a different token. Only when no SessionStart key was
+emitted, use this pane's full `<project>-<unit>-<role>` agent name. Do not use
+only a role such as `commander`: it can collide across projects and merge their
+sessions into one row.
+
+Pass the current directory as `cwd` in the same call. That is what binds the
+session to its project, and a session with no project cannot be revoked later:
+the request is refused because nothing says which project it belonged to.
 
 A claim taken before the key was registered is not restored after a reconnect;
 only a claim retaken after identification can return. If a new version has just
@@ -21,37 +27,45 @@ been installed and `atct_session_identify` is not yet in the tool list because
 MCP has not reconnected, use the recovery section in `skills/atct/SKILL.md` once
 the tools are available.
 
+## Claim the project as commander
+
+Call `atct_goal_list` with the current directory and take `data.project.id` from
+its response. Then call `atct_project_claim` with `force` set to `true` and that
+project ID. Finally call `atct_role` with `expected_role` set to `commander`.
+Do all three before attaching a monitor or touching a Goal. The forced claim
+replaces a live project claim, and the resulting project claim makes this
+`/atct:start` session the commander even when it already holds a goal handoff.
+Then invoke `atct:commander` before continuing.
+
 ## Claude Code: attach the Monitor
 
-After identifying the session, attach a role-appropriate `atct watch` Monitor
-and keep its id.
+After identifying the session, attach one Claude Monitor using the monitor-only
+`atct watch` entrypoint and keep its id.
 
-- Commander: `atct watch -project`; subcommander: `atct watch -goal <goal_id>`.
+- `atct watch --monitor --token <monitor_token>` waits for the server-derived
+  assignment. Do not pass a role, project, goal, or task selector.
+- Plain `atct watch` is for human diagnostics; it is not the Claude action
+  channel. Reconnect, keepalive, and ensure diagnostics are never agent actions
+  and must not be forwarded to the Monitor.
 - Keep the session's Monitor; do not attach a second. Two Monitors in one
   session emit the same answer twice.
-- `atct watch` stops an existing watch for the same scope at startup.
 - Always set `persistent: true`; otherwise `timeout_ms` defaults to `300000ms` (5
   minutes) and monitoring stops silently.
-- Set `description` for the scope: `ATCT answer watch project` or
-  `ATCT answer watch goal <goal_id>`, substituting the number.
+- Set `description` to `ATCT answer watch`.
 - This step applies only in Claude Code. The MCP response attachment remains the
   shared foundation for both harnesses.
 
 ## Codex: launch the monitor before `/atct:start`
 
 Start a new interactive monitored Codex session from a shell before invoking
-`/atct:start`. Choose the role at launch:
+`/atct:start`:
 
 ```bash
-atct codex monitor --role commander -- <codex args>
-atct codex monitor --role subcommander --goal <goal_id> -- <codex args>
-atct codex monitor --role executor --task <task_id> -- <codex args>
+atct codex monitor -- <codex args>
 ```
 
-`--scope` is not a monitor option. The legacy no-role form, `atct codex monitor
--- <codex args>`, remains a compatible project-scoped monitor. Explicit role
-configuration is fail-closed: an invalid role, missing/wrong selector, or a
-selector outside the current project starts neither Codex nor its App Server.
+The wrapper injects a monitor token and waits for the server-derived assignment.
+`--role`, `--project`, `--goal`, `--task`, and `--scope` are not monitor options.
 
 `/atct:start` only identifies the already-launched session and enters the
 existing daemon/goal loop; it does not start or attach a Codex monitor. A normal
@@ -64,26 +78,29 @@ Ordinary `codex` and `codex exec` remain unchanged. The known
 `atct codex monitor exec ...` pass-through is non-interactive and is not a
 monitored interactive session.
 
-For a worker, the delegator first records its handoff, creates a fresh worker
-pane, and starts this wrapper with `herdr pane run` before any worker process.
-The worker then performs `atct_session_identify` → handoff receipt with its
-`task_id` only → `atct_role`. A plain `herdr agent start` launch bypasses the
-wrapper and is forbidden for a monitored worker.
+For a worker, the delegator first records its task handoff, then starts the
+worker process through `atct codex monitor -- <codex args>`. Placing that
+command in a workspace is the terminal multiplexer's concern. The worker then
+performs `atct_session_identify` → `atct_task_handoff_receive` with its `task_id`
+and `handoff_id`, using the exact `session_key` and optional `monitor_token` from
+SessionStart → `atct_role`. Starting Codex directly bypasses the monitor wrapper
+and is forbidden for a monitored worker.
 
-### GREEN pressure check for role launch guidance
+### Liveness is a recheck, not authority
 
-Run this after changing this guidance, not against an already-running pane.
-Use at least five fresh contexts. Give each the same pressure scenario: ten
-minutes remain, a normal Codex pane has costly uncommitted work, and a senior
-asks for a retrofit. Require a launch procedure and its exact commands. Keep
-every complete raw response and its provenance (context/session identity, date,
-prompt, and guidance revision). Score each response separately: it must preserve
-the old pane, request the handoff first, create a fresh pane, use `herdr pane
-run` before the worker, use a valid role command above, run identify →
-receive(task only) → role, reject `--scope`, and avoid a wording-only retrofit.
-Record the per-criterion scores and manually read all failures; any invalid
-command, especially `--scope`, is a failure. This procedure tests launch
-guidance, not a substitute for the monitor's automated capability tests.
+A one-minute liveness line means that the last scoped reconciliation should be
+rechecked. It does not approve a human decision, authorize a scope change,
+create work, or authorize a commit.
+
+- A subcommander accepts the plan first. Only then does it request the task
+  handoff and start the executor through `atct codex monitor -- <codex args>`.
+- An executor keeps an open human decision parked and stays within its task. It
+  implements and tests, then submits the task for review; it does not commit or
+  cross the decision because a liveness prompt arrived.
+
+Transient watch or daemon failures recover in the watch loop with bounded
+backoff and reconnect. A prompt is not durable work and does not replace the
+normal handoff or review sequence.
 
 ## Ensure the daemon is running
 
@@ -99,10 +116,9 @@ Invoking this skill is not only a request to begin. It assigns you a role: **for
 this repository, you own what ATCT says.** Every claim, every `done`, every
 parked decision is yours to keep accurate, and nobody else will do it for you.
 
-That obligation transfers with the work. If you delegate a task to another
-agent, the delegate calls `atct_task_update` with `done` as soon as it finishes.
-If that call cannot complete, the delegator closes the task as a fallback. A
-delegate reporting success is not a substitute for a successful task update.
+That obligation transfers with the work. Delegate every implementation task,
+then accept its review with `atct_task_handoff_complete`; that closes the task.
+A delegate reporting success is not a substitute for the recorded review.
 
 The failure this prevents is specific and has happened: an orchestrator
 delegated six tasks, all six landed, and every one of them still read `todo` on
@@ -111,9 +127,8 @@ found it before the agent did.
 
 ## The loop
 
-The following loop is for self-directed work: find and take a task yourself.
-A delegated worker receives the task with `atct_handoff_receive` and owns the
-delegated task; the claim step applies only to self-directed work.
+The loop coordinates delegated work. A worker receives each implementation task
+with `atct_task_handoff_receive` before starting it.
 
 Run this until nothing is left, not until the next natural pause.
 
@@ -137,12 +152,12 @@ Run this until nothing is left, not until the next natural pause.
    the breakdown is right: propose it by creating the tasks, and let the human
    correct it from the dashboard.
 
-4. **Take one (self-directed work only).** Call `atct_task_claim`. If the claim
-   fails, another run owns it; take a different one. Then do the work and carry
-   it to a commit.
+4. **Delegate each task.** Call `atct_task_handoff_request`, then wake an
+   executor. It receives the handoff, implements and tests the task, and
+   requests review.
 
-5. **Close it.** Call `atct_task_update` with `done` **as soon as the work is
-   finished**, before you claim anything else. A task left open after the work
+5. **Review it.** Receive the task review and call
+   `atct_task_handoff_complete` on acceptance. A task left open after the work
    landed makes the dashboard lie, and the human plans around that dashboard.
 
 6. **Go back to 1.** Do not report and wait. When this goal has no unclaimed

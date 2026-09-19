@@ -15,10 +15,12 @@ import (
 
 const watchReapTimeout = 5 * time.Second
 
-// WatchScope identifies the daemon events consumed by a watch process.
+// WatchScope identifies either a fixed event scope or an assignment-bound
+// monitor token owned by a watch process.
 type WatchScope struct {
-	ProjectID string
-	GoalID    string
+	ProjectID    string
+	GoalID       string
+	MonitorToken string
 }
 
 // WatchRegistration records one watch process in the per-process registry.
@@ -70,18 +72,20 @@ func WatchRosterLine(registrations []WatchRegistration, projectID string) string
 }
 
 type watchRegistrationJSON struct {
-	PID       int    `json:"pid"`
-	ProjectID string `json:"project_id"`
-	GoalID    string `json:"goal_id"`
-	StartedAt string `json:"started_at"`
+	PID          int    `json:"pid"`
+	ProjectID    string `json:"project_id"`
+	GoalID       string `json:"goal_id"`
+	MonitorToken string `json:"monitor_token,omitempty"`
+	StartedAt    string `json:"started_at"`
 }
 
 func (r WatchRegistration) MarshalJSON() ([]byte, error) {
 	return json.Marshal(watchRegistrationJSON{
-		PID:       r.PID,
-		ProjectID: r.Scope.ProjectID,
-		GoalID:    r.Scope.GoalID,
-		StartedAt: r.StartedAt,
+		PID:          r.PID,
+		ProjectID:    r.Scope.ProjectID,
+		GoalID:       r.Scope.GoalID,
+		MonitorToken: r.Scope.MonitorToken,
+		StartedAt:    r.StartedAt,
 	})
 }
 
@@ -91,6 +95,9 @@ func RegisterWatchScoped(dir string, scope WatchScope) (func(), error) {
 	registryDir := filepath.Join(dir, watchRegistryDir)
 	if err := os.MkdirAll(registryDir, 0o755); err != nil {
 		return nil, fmt.Errorf("create watch registry: %w", err)
+	}
+	if err := os.Chmod(registryDir, 0o700); err != nil {
+		return nil, fmt.Errorf("protect watch registry: %w", err)
 	}
 	path := filepath.Join(registryDir, strconv.Itoa(os.Getpid()))
 	registration := WatchRegistration{
@@ -104,6 +111,9 @@ func RegisterWatchScoped(dir string, scope WatchScope) (func(), error) {
 	}
 	if err := os.WriteFile(path, append(raw, '\n'), 0o644); err != nil {
 		return nil, fmt.Errorf("write watch registration: %w", err)
+	}
+	if err := os.Chmod(path, 0o600); err != nil {
+		return nil, fmt.Errorf("protect watch registration: %w", err)
 	}
 	return func() { _ = os.Remove(path) }, nil
 }
@@ -149,7 +159,7 @@ func ListWatches(dir string) ([]WatchRegistration, error) {
 // records no scope, so it is left running rather than killed on a guess.
 func ReapWatches(dir string, self WatchScope, selfPID int) (ReapResult, error) {
 	var result ReapResult
-	if self.ProjectID == "" {
+	if self.ProjectID == "" && self.MonitorToken == "" {
 		return result, nil
 	}
 
@@ -226,6 +236,9 @@ func ReapWatches(dir string, self WatchScope, selfPID int) (ReapResult, error) {
 		}
 		result.Stopped = append(result.Stopped, registration)
 	}
+	if len(result.Failed) > 0 {
+		return result, fmt.Errorf("stop duplicate watches: %v", result.Failed)
+	}
 	return result, nil
 }
 
@@ -238,7 +251,7 @@ func readWatchRegistration(path string) (WatchRegistration, error) {
 	if err := json.Unmarshal(raw, &record); err == nil {
 		return WatchRegistration{
 			PID:       record.PID,
-			Scope:     WatchScope{ProjectID: record.ProjectID, GoalID: record.GoalID},
+			Scope:     WatchScope{ProjectID: record.ProjectID, GoalID: record.GoalID, MonitorToken: record.MonitorToken},
 			StartedAt: record.StartedAt,
 		}, nil
 	}

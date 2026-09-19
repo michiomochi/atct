@@ -26,7 +26,10 @@ const (
 	codexAppServerMessageMaxBytes = 128 << 20
 )
 
-var errCodexAppServerClosed = errors.New(codexAppServerClosedMessage)
+var (
+	errCodexAppServerClosed   = errors.New(codexAppServerClosedMessage)
+	errCodexTurnSubmitUnknown = errors.New("Codex turn submission result is unknown")
+)
 
 type codexWebSocket interface {
 	Read(context.Context) (websocket.MessageType, []byte, error)
@@ -301,6 +304,9 @@ func (c *codexAppServer) call(ctx context.Context, method string, params any, re
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	select {
 	case <-c.done:
 		if err := c.Err(); err != nil {
@@ -347,9 +353,9 @@ func (c *codexAppServer) call(ctx context.Context, method string, params any, re
 	case <-c.done:
 		c.removePending(requestID)
 		if err := c.Err(); err != nil {
-			return err
+			return fmt.Errorf("%w: %v", errCodexTurnSubmitUnknown, err)
 		}
-		return errCodexAppServerClosed
+		return fmt.Errorf("%w: %v", errCodexTurnSubmitUnknown, errCodexAppServerClosed)
 	}
 }
 
@@ -622,7 +628,7 @@ func (c *codexAppServer) StartTurn(ctx context.Context, threadID, text string) (
 		return codexTurn{}, err
 	}
 	if result.Turn.ID == "" {
-		return codexTurn{}, errors.New("turn/start response has no turn ID")
+		return codexTurn{}, fmt.Errorf("%w: turn/start response has no turn ID", errCodexTurnSubmitUnknown)
 	}
 	return result.Turn, nil
 }
@@ -642,6 +648,16 @@ type codexMonitorApp interface {
 	Err() error
 }
 
+type codexMonitorAction struct {
+	line        string
+	eventName   string
+	goalID      string
+	deliveryKey string
+	handoffID   string
+	generation  string
+	controlOnly bool
+}
+
 type codexThreadPager interface {
 	ListThreadsPage(context.Context, string, *string) (codexThreadListPage, error)
 }
@@ -651,15 +667,21 @@ type codexMonitorBridge struct {
 	app      codexMonitorApp
 	threadID string
 
-	stateMu  sync.Mutex
-	active   bool
-	queue    []string
-	disabled bool
-	submitMu sync.Mutex
+	stateMu                  sync.Mutex
+	active                   bool
+	queue                    []codexMonitorAction
+	activeAction             *codexMonitorAction
+	reviewControlGenerations map[string]time.Time
+	disabled                 bool
+	submitMu                 sync.Mutex
 }
 
 func newCodexMonitorBridge(starter codexTurnStarter, threadID string) *codexMonitorBridge {
-	bridge := &codexMonitorBridge{starter: starter, threadID: threadID}
+	bridge := &codexMonitorBridge{
+		starter:                  starter,
+		threadID:                 threadID,
+		reviewControlGenerations: make(map[string]time.Time),
+	}
 	if app, ok := starter.(codexMonitorApp); ok {
 		bridge.app = app
 	}
@@ -667,7 +689,11 @@ func newCodexMonitorBridge(starter codexTurnStarter, threadID string) *codexMoni
 }
 
 func (b *codexMonitorBridge) Enqueue(ctx context.Context, line string) error {
-	if strings.TrimSpace(line) == "" {
+	return b.enqueueAction(ctx, codexMonitorAction{line: line})
+}
+
+func (b *codexMonitorBridge) enqueueAction(ctx context.Context, action codexMonitorAction) error {
+	if strings.TrimSpace(action.line) == "" {
 		return nil
 	}
 	b.stateMu.Lock()
@@ -675,9 +701,132 @@ func (b *codexMonitorBridge) Enqueue(ctx context.Context, line string) error {
 		b.stateMu.Unlock()
 		return errCodexAppServerClosed
 	}
-	b.queue = append(b.queue, line)
+	if action.controlOnly {
+		if generation, ok := codexReviewActionGeneration(action); ok {
+			b.pruneQueuedReviewActionsLocked(action.handoffID, generation)
+			b.rememberReviewControlGenerationLocked(action.handoffID, generation)
+		}
+		b.stateMu.Unlock()
+		return b.pump(ctx)
+	}
+	if generation, ok := codexReviewActionGeneration(action); ok {
+		b.enqueueReviewActionLocked(action, generation)
+	} else {
+		if b.hasDeliveryKeyLocked(action.deliveryKey) {
+			b.stateMu.Unlock()
+			return nil
+		}
+		if action.eventName == "goal.handoff.receive" && strings.TrimSpace(action.goalID) != "" {
+			b.pruneQueuedApprovalsLocked(action.goalID)
+		}
+		b.queue = append(b.queue, action)
+	}
 	b.stateMu.Unlock()
 	return b.pump(ctx)
+}
+
+func codexReviewActionGeneration(action codexMonitorAction) (time.Time, bool) {
+	if !strings.Contains(action.eventName, ".handoff.review.") || strings.TrimSpace(action.handoffID) == "" {
+		return time.Time{}, false
+	}
+	generation, err := time.Parse(time.RFC3339Nano, action.generation)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return generation, true
+}
+
+func (b *codexMonitorBridge) enqueueReviewActionLocked(action codexMonitorAction, generation time.Time) {
+	if controlGeneration, ok := b.reviewControlGenerations[action.handoffID]; ok && !generation.After(controlGeneration) {
+		return
+	}
+	if active := b.activeAction; active != nil && active.handoffID == action.handoffID {
+		if activeGeneration, ok := codexReviewActionGeneration(*active); ok && !generation.After(activeGeneration) {
+			return
+		}
+	}
+
+	for _, queued := range b.queue {
+		if queued.handoffID != action.handoffID {
+			continue
+		}
+		if queuedGeneration, ok := codexReviewActionGeneration(queued); ok && !generation.After(queuedGeneration) {
+			return
+		}
+	}
+
+	kept := b.queue[:0]
+	replaced := false
+	for _, queued := range b.queue {
+		if queued.handoffID == action.handoffID {
+			if _, ok := codexReviewActionGeneration(queued); ok {
+				if !replaced {
+					kept = append(kept, action)
+					replaced = true
+				}
+				continue
+			}
+		}
+		kept = append(kept, queued)
+	}
+	if !replaced {
+		kept = append(kept, action)
+	}
+	b.queue = kept
+}
+
+func (b *codexMonitorBridge) pruneQueuedReviewActionsLocked(handoffID string, generation time.Time) {
+	if handoffID == "" {
+		return
+	}
+	kept := b.queue[:0]
+	for _, queued := range b.queue {
+		if queued.handoffID == handoffID {
+			if queuedGeneration, ok := codexReviewActionGeneration(queued); ok && queuedGeneration.Before(generation) {
+				continue
+			}
+		}
+		kept = append(kept, queued)
+	}
+	b.queue = kept
+}
+
+func (b *codexMonitorBridge) rememberReviewControlGenerationLocked(handoffID string, generation time.Time) {
+	if handoffID == "" {
+		return
+	}
+	if b.reviewControlGenerations == nil {
+		b.reviewControlGenerations = make(map[string]time.Time)
+	}
+	if previous, ok := b.reviewControlGenerations[handoffID]; ok && !generation.After(previous) {
+		return
+	}
+	b.reviewControlGenerations[handoffID] = generation
+}
+
+func (b *codexMonitorBridge) hasDeliveryKeyLocked(deliveryKey string) bool {
+	if deliveryKey == "" {
+		return false
+	}
+	if b.activeAction != nil && b.activeAction.deliveryKey == deliveryKey {
+		return true
+	}
+	for _, queued := range b.queue {
+		if queued.deliveryKey == deliveryKey {
+			return true
+		}
+	}
+	return false
+}
+
+func (b *codexMonitorBridge) pruneQueuedApprovalsLocked(goalID string) {
+	kept := b.queue[:0]
+	for _, action := range b.queue {
+		if action.eventName != "decision.approved" || action.goalID != goalID {
+			kept = append(kept, action)
+		}
+	}
+	b.queue = kept
 }
 
 func (b *codexMonitorBridge) pump(ctx context.Context) error {
@@ -693,10 +842,11 @@ func (b *codexMonitorBridge) pump(ctx context.Context) error {
 			b.stateMu.Unlock()
 			return nil
 		}
-		line := b.queue[0]
+		action := b.queue[0]
 		// Reserve the turn before making the request so a fast turn/started
 		// notification cannot race with another queued submission.
 		b.active = true
+		b.activeAction = &action
 		threadID := b.threadID
 		starter := b.starter
 		b.stateMu.Unlock()
@@ -704,20 +854,32 @@ func (b *codexMonitorBridge) pump(ctx context.Context) error {
 		if starter == nil {
 			b.stateMu.Lock()
 			b.active = false
+			b.activeAction = nil
 			b.stateMu.Unlock()
 			return errors.New("Codex monitor bridge has no turn starter")
 		}
-		_, err := starter.StartTurn(ctx, threadID, line)
+		turn, err := starter.StartTurn(ctx, threadID, action.line)
 		if err != nil {
 			b.stateMu.Lock()
-			b.active = false
 			if b.app != nil && b.app.Err() != nil {
 				b.disabled = true
+			} else if errors.Is(err, errCodexTurnSubmitUnknown) {
+				b.disabled = true
 			}
+			b.active = false
+			b.activeAction = nil
 			b.stateMu.Unlock()
 			return err
 		}
-
+		if strings.TrimSpace(turn.ID) == "" {
+			err = fmt.Errorf("%w: turn/start response has no turn ID", errCodexTurnSubmitUnknown)
+			b.stateMu.Lock()
+			b.disabled = true
+			b.active = false
+			b.activeAction = nil
+			b.stateMu.Unlock()
+			return err
+		}
 		b.stateMu.Lock()
 		b.queue = b.queue[1:]
 		b.stateMu.Unlock()
@@ -759,19 +921,27 @@ func (b *codexMonitorBridge) QueueLen() int {
 	return len(b.queue)
 }
 
-func (b *codexMonitorBridge) LineSink() func(string) error {
+func (b *codexMonitorBridge) LineSink() watchRawLineSink {
 	return b.LineSinkWithContext(context.Background())
 }
 
-func (b *codexMonitorBridge) LineSinkWithContext(ctx context.Context) func(string) error {
+func (b *codexMonitorBridge) LineSinkWithContext(ctx context.Context) watchRawLineSink {
 	return func(line string) error {
-		if !isCodexMonitorActionLine(line) {
-			return nil
-		}
-		// A failed turn submission stays in the bridge queue. The watcher must
-		// keep its SSE delivery state and continue consuming events; a later
-		// idle notification retries the queued item.
-		if err := b.Enqueue(ctx, line); err != nil {
+		// Raw lines are diagnostics only. Agent actions cross the bridge through
+		// the typed ActionSinkWithContext boundary below.
+		return nil
+	}
+}
+
+func (b *codexMonitorBridge) ActionSink() watchAgentActionSink {
+	return b.ActionSinkWithContext(context.Background())
+}
+
+func (b *codexMonitorBridge) ActionSinkWithContext(ctx context.Context) watchAgentActionSink {
+	return func(action watchAgentAction) error {
+		// Transient turn submission failures stay in the bridge queue. Terminal
+		// bridge failures return through the watcher as watchSinkError.
+		if err := b.enqueueAction(ctx, codexMonitorActionFromWatchAction(action)); err != nil {
 			b.stateMu.Lock()
 			disabled := b.disabled
 			b.stateMu.Unlock()
@@ -783,52 +953,22 @@ func (b *codexMonitorBridge) LineSinkWithContext(ctx context.Context) func(strin
 	}
 }
 
-func isCodexMonitorActionLine(line string) bool {
-	line = strings.TrimSpace(line)
-	switch {
-	case strings.HasPrefix(line, "atct decision answered (decision_id: "):
-		return true
-	case strings.HasPrefix(line, "atct decision approved (decision_id: "):
-		return true
-	case strings.HasPrefix(line, "atct decision rejected (decision_id: "):
-		return true
-	case strings.HasPrefix(line, "atct goal created (goal_id: "):
-		return true
-	case strings.HasPrefix(line, "atct wakeup: "):
-		return true
-	case strings.HasPrefix(line, "atct detection: goal "):
-		return true
-	case strings.HasPrefix(line, "atct task handoff requested (task_id: "),
-		strings.HasPrefix(line, "atct task handoff received (task_id: "),
-		strings.HasPrefix(line, "atct task handoff completed (task_id: "),
-		strings.HasPrefix(line, "atct goal handoff requested (goal_id: "),
-		strings.HasPrefix(line, "atct goal handoff received (goal_id: "),
-		strings.HasPrefix(line, "atct goal handoff completed (goal_id: "):
-		return true
-	case strings.HasPrefix(line, "atct handoff reported: goal "), strings.HasPrefix(line, "atct handoff reported: task "):
-		return true
-	case strings.HasPrefix(line, "atct handoff yielded: task "):
-		return true
-	case strings.HasPrefix(line, "atct task handoff review requested (task_id: "),
-		strings.HasPrefix(line, "atct task handoff review received (task_id: "),
-		strings.HasPrefix(line, "atct task handoff review rejected (task_id: "),
-		strings.HasPrefix(line, "atct goal handoff review requested (goal_id: "),
-		strings.HasPrefix(line, "atct goal handoff review received (goal_id: "),
-		strings.HasPrefix(line, "atct goal handoff review rejected (goal_id: "),
-		strings.HasPrefix(line, "atct plan handoff review requested (goal_id: "),
-		strings.HasPrefix(line, "atct plan handoff review received (goal_id: "),
-		strings.HasPrefix(line, "atct plan handoff review rejected (goal_id: "):
-		return true
-	case strings.HasPrefix(line, "atct detection: task "):
-		return strings.HasSuffix(line, " is doing without a work lock") ||
-			strings.HasSuffix(line, " has no handoff request") ||
-			strings.HasSuffix(line, " has a stale claim")
-	case strings.HasPrefix(line, "atct wakeup discrepancy: "):
-		return true
-	case strings.HasPrefix(line, "atct wakeup evaluate failed: "):
-		return true
-	default:
-		return false
+func codexMonitorActionFromWatchAction(action watchAgentAction) codexMonitorAction {
+	var handoffID string
+	if strings.Contains(action.eventName, ".handoff.") {
+		parts := strings.Split(action.deliveryKey, "\x00")
+		if len(parts) == 3 && parts[0] == action.eventName {
+			handoffID = parts[2]
+		}
+	}
+	return codexMonitorAction{
+		line:        action.line,
+		eventName:   action.eventName,
+		goalID:      action.goalID,
+		deliveryKey: action.deliveryKey,
+		handoffID:   handoffID,
+		generation:  action.generation,
+		controlOnly: action.controlOnly,
 	}
 }
 
@@ -885,6 +1025,7 @@ func (b *codexMonitorBridge) HandleNotification(ctx context.Context, notificatio
 	case "turn/completed":
 		b.stateMu.Lock()
 		b.active = false
+		b.activeAction = nil
 		b.stateMu.Unlock()
 		return b.pumpAfterIdle(ctx)
 	case "thread/status/changed":
@@ -901,6 +1042,7 @@ func (b *codexMonitorBridge) HandleNotification(ctx context.Context, notificatio
 		}
 		b.stateMu.Lock()
 		b.active = false
+		b.activeAction = nil
 		b.stateMu.Unlock()
 		return b.pumpAfterIdle(ctx)
 	}
@@ -949,11 +1091,11 @@ func (b *codexMonitorBridge) Run(ctx context.Context) error {
 	}
 }
 
-func runCodexMonitorWatch(ctx context.Context, client *http.Client, urls []string, cwd string, bridge *codexMonitorBridge) error {
-	return runCodexMonitorWatchScoped(ctx, client, urls, cwd, watchScope{}, bridge)
+func runCodexMonitorWatch(ctx context.Context, client *http.Client, urls []string, cwd string, bridge *codexMonitorBridge, ensure ...watchEnsureFunc) error {
+	return runCodexMonitorWatchScoped(ctx, client, urls, cwd, watchScope{}, bridge, ensure...)
 }
 
-func runCodexMonitorWatchScoped(ctx context.Context, client *http.Client, urls []string, cwd string, scope watchScope, bridge *codexMonitorBridge) error {
+func runCodexMonitorWatchScoped(ctx context.Context, client *http.Client, urls []string, cwd string, scope watchScope, bridge *codexMonitorBridge, ensure ...watchEnsureFunc) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -964,13 +1106,23 @@ func runCodexMonitorWatchScoped(ctx context.Context, client *http.Client, urls [
 		client = &http.Client{}
 	}
 	snapshot, projectID := watchSnapshotWithProject(client, urls, cwd)
-	return watchLoopWithEnsureAndProjectIDAndScopeAndSinkAndCursor(
+	var ensureDaemon watchEnsureFunc
+	if len(ensure) > 0 {
+		ensureDaemon = ensure[0]
+	}
+	reporter := newWatchHealthReporter(client, urls, cwd, scope)
+	var reporters []watchHealthSink
+	if reporter != nil {
+		reporters = append(reporters, reporter)
+	}
+	actionSink := bridge.ActionSinkWithContext(ctx)
+	return watchLoopWithEnsureAndProjectIDAndScopeAndActionSink(
 		ctx,
 		codexMonitorWatchOutput{},
 		client,
 		watchReconnectInterval,
 		snapshot,
-		nil,
+		ensureDaemon,
 		func() string {
 			if scope.ProjectID != "" {
 				return scope.ProjectID
@@ -978,7 +1130,8 @@ func runCodexMonitorWatchScoped(ctx context.Context, client *http.Client, urls [
 			return projectID()
 		},
 		scope,
-		bridge.LineSinkWithContext(ctx),
-		watchKeyForScope(cwd, scope),
+		nil,
+		actionSink,
+		reporters...,
 	)
 }

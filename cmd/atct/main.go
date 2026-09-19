@@ -62,8 +62,13 @@ type cliConfig struct {
 	roleExpected            string
 	roleExpectedSet         bool
 	roleAgentSessionID      string
+	stopCheckHookInput      bool
+	monitorCheckHookInput   bool
+	sessionKeyHookInput     bool
 	watchGoalID             string
 	watchProjectScope       bool
+	watchMonitor            bool
+	watchMonitorToken       string
 	codexShimAction         string
 	codexShimProfile        string
 	codexMonitorAction      string
@@ -96,15 +101,19 @@ type cliHandoffEntryPage struct {
 var errInvalidArgs = errors.New("invalid command line")
 
 var validSubcommands = map[string]bool{
-	"daemon":  true,
-	"project": true,
-	"goal":    true,
-	"context": true,
-	"pending": true,
-	"watch":   true,
-	"role":    true,
-	"handoff": true,
-	"codex":   true,
+	"daemon":        true,
+	"project":       true,
+	"goal":          true,
+	"context":       true,
+	"pending":       true,
+	"watch":         true,
+	"role":          true,
+	"stop-check":    true,
+	"monitor-check": true,
+	"session-key":   true,
+	"handoff":       true,
+	"codex":         true,
+	"version":       true,
 }
 
 var validDaemonActions = map[string]bool{"start": true, "stop": true}
@@ -152,7 +161,7 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "  goal list            List goals for the current project")
 	fmt.Fprintln(os.Stderr, "  context [-brief]      Print the current goal context for an AI session")
 	fmt.Fprintln(os.Stderr, "  pending              Print unanswered human decisions for the current project")
-	fmt.Fprintln(os.Stderr, "  watch [-goal string] [-project]  Stream human decision events for a Monitor")
+	fmt.Fprintln(os.Stderr, "  watch [--monitor --token string | -goal string | -project]  Stream monitor actions or diagnostic events")
 	fmt.Fprintln(os.Stderr, "  role                 Report the claim-derived role for an agent session")
 	fmt.Fprintln(os.Stderr, "  handoff append <handoff-id> <task-id> <kind> <body>  Append a task handoff entry")
 	fmt.Fprintln(os.Stderr, "  handoff history <handoff-id> <task-id>  Read task handoff history")
@@ -162,6 +171,10 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "  handoff goal complete <handoff-id> <goal-id>  Report a goal handoff complete")
 	fmt.Fprintln(os.Stderr, "  handoff yielded <task-id>  Report that the worker yielded")
 	fmt.Fprintln(os.Stderr, "  handoff options: --kind, --body, --in-reply-to-id, --after-id, --limit, --report, --capability")
+	fmt.Fprintln(os.Stderr, "  stop-check           Emit a Codex continuation when scoped role work remains")
+	fmt.Fprintln(os.Stderr, "  monitor-check        Deny an ATCT tool call when the session has no live Monitor")
+	fmt.Fprintln(os.Stderr, "  session-key          Print the SessionStart key for atct_session_identify")
+	fmt.Fprintln(os.Stderr, "  version              Print the installed CLI version")
 	fmt.Fprintln(os.Stderr, "  codex shim install [--profile <path>]  Install the transparent Codex shim")
 	fmt.Fprintln(os.Stderr, "  codex shim run -- <args>  Run Codex through the installed shim")
 	fmt.Fprintln(os.Stderr, "  codex monitor [-- <args>]  Run an interactive Codex session with ATCT monitoring")
@@ -276,55 +289,20 @@ func parseArgs(args []string) (cliConfig, error) {
 			}
 		}
 		for _, arg := range monitorArgs {
-			if arg == "--scope" || strings.HasPrefix(arg, "--scope=") {
+			if arg == "--scope" || strings.HasPrefix(arg, "--scope=") ||
+				arg == "--role" || strings.HasPrefix(arg, "--role=") ||
+				arg == "--project" || strings.HasPrefix(arg, "--project=") ||
+				arg == "--goal" || strings.HasPrefix(arg, "--goal=") ||
+				arg == "--task" || strings.HasPrefix(arg, "--task=") {
 				return cliConfig{}, errInvalidArgs
 			}
 		}
-		for len(monitorArgs) > 0 {
-			switch monitorArgs[0] {
-			case "--role", "--goal", "--task":
-				if len(monitorArgs) < 2 || monitorArgs[1] == "" {
-					return cliConfig{}, errInvalidArgs
-				}
-				if (monitorArgs[0] == "--role" && cfg.codexMonitorRole != "") ||
-					(monitorArgs[0] == "--goal" && cfg.codexMonitorGoalID != "") ||
-					(monitorArgs[0] == "--task" && cfg.codexMonitorTaskID != "") {
-					return cliConfig{}, errInvalidArgs
-				}
-				cfg.codexMonitorExplicit = true
-				switch monitorArgs[0] {
-				case "--role":
-					cfg.codexMonitorRole = monitorArgs[1]
-				case "--goal":
-					cfg.codexMonitorGoalID = monitorArgs[1]
-				case "--task":
-					cfg.codexMonitorTaskID = monitorArgs[1]
-				}
-				monitorArgs = monitorArgs[2:]
-			default:
-				// Legacy monitor arguments remain raw Codex arguments when no role was requested.
-				if !cfg.codexMonitorExplicit {
-					monitorArgs = nil
-					rest = append(rest[:0], args[2:]...)
-					break
-				}
-				return cliConfig{}, errInvalidArgs
-			}
-		}
-		if cfg.codexMonitorExplicit {
-			if err := validateCodexMonitorRole(cfg); err != nil {
-				return cliConfig{}, err
-			}
-			rest = passthroughArgs
-		} else if hasPassthroughDelimiter {
+		if hasPassthroughDelimiter {
 			rest = passthroughArgs
 		}
 		cfg.codexArgs = append([]string(nil), rest...)
 		if len(cfg.codexArgs) > 0 {
 			_, cfg.codexMonitorPassthrough = codexMonitorPassthroughCommands[cfg.codexArgs[0]]
-			if cfg.codexMonitorExplicit && cfg.codexMonitorPassthrough {
-				return cliConfig{}, errInvalidArgs
-			}
 		}
 		return cfg, nil
 	}
@@ -346,9 +324,20 @@ func parseArgs(args []string) (cliConfig, error) {
 		flags.StringVar(&cfg.roleExpected, "expect", "", "require this role: commander, subcommander, or executor")
 		flags.StringVar(&cfg.roleAgentSessionID, "agent-session-id", "", "agent session identity used by session.role")
 	}
+	if sub == "stop-check" {
+		flags.BoolVar(&cfg.stopCheckHookInput, "hook-input", false, "read hook JSON from stdin")
+	}
+	if sub == "monitor-check" {
+		flags.BoolVar(&cfg.monitorCheckHookInput, "hook-input", false, "read hook JSON from stdin")
+	}
+	if sub == "session-key" {
+		flags.BoolVar(&cfg.sessionKeyHookInput, "hook-input", false, "read hook JSON from stdin")
+	}
 	if sub == "watch" {
 		flags.StringVar(&cfg.watchGoalID, "goal", "", "filter watch events to this goal")
 		flags.BoolVar(&cfg.watchProjectScope, "project", false, "filter watch events to what a commander acts on")
+		flags.BoolVar(&cfg.watchMonitor, "monitor", false, "emit only assignment-bound actions for a Claude Monitor")
+		flags.StringVar(&cfg.watchMonitorToken, "token", "", "bind the monitor to its SessionStart token")
 	}
 	var description *string
 	if sub == "goal" && cfg.goalAction == "add" {
@@ -387,11 +376,31 @@ func parseArgs(args []string) (cliConfig, error) {
 		fmt.Fprintln(os.Stderr, "watch: -goal and -project cannot be used together")
 		return cliConfig{}, errInvalidArgs
 	}
+	if sub == "watch" && cfg.watchMonitor && (watchProjectSpecified || watchGoalSpecified) {
+		fmt.Fprintln(os.Stderr, "watch: --monitor does not accept -goal or -project")
+		return cliConfig{}, errInvalidArgs
+	}
+	if sub == "watch" && cfg.watchMonitor && strings.TrimSpace(cfg.watchMonitorToken) == "" {
+		fmt.Fprintln(os.Stderr, "watch: --monitor requires --token")
+		return cliConfig{}, errInvalidArgs
+	}
 	if sub == "role" && cfg.roleExpectedSet {
 		if err := validateExpectedRole(cfg.roleExpected); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			return cliConfig{}, errInvalidArgs
 		}
+	}
+	if sub == "stop-check" && !cfg.stopCheckHookInput {
+		fmt.Fprintln(os.Stderr, "stop-check requires --hook-input")
+		return cliConfig{}, errInvalidArgs
+	}
+	if sub == "monitor-check" && !cfg.monitorCheckHookInput {
+		fmt.Fprintln(os.Stderr, "monitor-check requires --hook-input")
+		return cliConfig{}, errInvalidArgs
+	}
+	if sub == "session-key" && !cfg.sessionKeyHookInput {
+		fmt.Fprintln(os.Stderr, "session-key requires --hook-input")
+		return cliConfig{}, errInvalidArgs
 	}
 	if description != nil {
 		cfg.goalDescription = *description
@@ -671,6 +680,10 @@ func main() {
 	if err != nil {
 		os.Exit(2)
 	}
+	if config.subcommand == "version" {
+		fmt.Println(version)
+		return
+	}
 
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -790,8 +803,26 @@ func main() {
 			}
 		}
 		os.Exit(code)
+	case "stop-check":
+		if err := runStopCheck(config, dir, exePath); err != nil {
+			log.Printf("stop-check: %v", err)
+			os.Exit(1)
+		}
+		return
+	case "monitor-check":
+		if err := runMonitorCheck(config, dir, exePath); err != nil {
+			log.Printf("monitor-check: %v", err)
+			os.Exit(1)
+		}
+		return
+	case "session-key":
+		if err := runSessionKey(config, dir); err != nil {
+			log.Printf("session-key: %v", err)
+			os.Exit(1)
+		}
+		return
 	case "watch":
-		if err := runWatch(dir, config.watchGoalID); err != nil {
+		if err := runWatchWithOptionsAndToken(dir, config.watchGoalID, config.watchProjectScope, config.watchMonitor, config.watchMonitorToken); err != nil {
 			log.Fatalf("watch: %v", err)
 		}
 		return
@@ -830,8 +861,14 @@ func runDaemon(config cliConfig, dir string) error {
 			_ = httpServer.Close()
 		}
 		_ = httpListener.Close()
-		_ = daemonctl.RemoveRegistry(dir)
-		_ = os.Remove(sock)
+		// The registry and socket are shared paths. A daemon that outlived a
+		// newer one must not delete the newer one's files on the way out:
+		// that strands the survivor holding the HTTP port with no socket,
+		// and every later start then fails to bind.
+		if daemonctl.RegistryOwnedBy(dir, os.Getpid()) {
+			_ = daemonctl.RemoveRegistry(dir)
+			_ = os.Remove(sock)
+		}
 	}()
 
 	rpcErr := make(chan error, 1)

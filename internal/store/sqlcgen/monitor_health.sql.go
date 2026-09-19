@@ -10,8 +10,67 @@ import (
 	"database/sql"
 )
 
+const countLiveMonitorsForScope = `-- name: CountLiveMonitorsForScope :one
+SELECT COUNT(*)
+FROM monitor_health
+WHERE project_id = ?
+  AND role = ?
+  AND goal_id IS ?
+  AND last_seen_at >= ?
+  AND stopped_at IS NULL
+`
+
+type CountLiveMonitorsForScopeParams struct {
+	ProjectID  int64
+	Role       string
+	GoalID     sql.NullInt64
+	LastSeenAt string
+}
+
+func (q *Queries) CountLiveMonitorsForScope(ctx context.Context, arg CountLiveMonitorsForScopeParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countLiveMonitorsForScope,
+		arg.ProjectID,
+		arg.Role,
+		arg.GoalID,
+		arg.LastSeenAt,
+	)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countLiveMonitorsForTaskScope = `-- name: CountLiveMonitorsForTaskScope :one
+SELECT COUNT(*)
+FROM monitor_health
+WHERE project_id = ?
+  AND role = 'executor'
+  AND goal_id IS ?
+  AND task_id IS ?
+  AND last_seen_at >= ?
+  AND stopped_at IS NULL
+`
+
+type CountLiveMonitorsForTaskScopeParams struct {
+	ProjectID  int64
+	GoalID     sql.NullInt64
+	TaskID     sql.NullInt64
+	LastSeenAt string
+}
+
+func (q *Queries) CountLiveMonitorsForTaskScope(ctx context.Context, arg CountLiveMonitorsForTaskScopeParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countLiveMonitorsForTaskScope,
+		arg.ProjectID,
+		arg.GoalID,
+		arg.TaskID,
+		arg.LastSeenAt,
+	)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const listMonitorHealth = `-- name: ListMonitorHealth :many
-SELECT monitor_id, agent_key, cwd, role, project_id, goal_id, task_id, pid,
+SELECT monitor_id, agent_key, scope_key, agent_session_id, cwd, role, project_id, goal_id, task_id, pid,
        process_started_at, state, reason, transitioned_at, last_seen_at, stopped_at
 FROM monitor_health
 WHERE project_id = ? AND last_seen_at >= ? AND stopped_at IS NULL
@@ -23,18 +82,106 @@ type ListMonitorHealthParams struct {
 	LastSeenAt string
 }
 
-func (q *Queries) ListMonitorHealth(ctx context.Context, arg ListMonitorHealthParams) ([]MonitorHealth, error) {
+type ListMonitorHealthRow struct {
+	MonitorID        string
+	AgentKey         string
+	ScopeKey         string
+	AgentSessionID   int64
+	Cwd              string
+	Role             string
+	ProjectID        int64
+	GoalID           sql.NullInt64
+	TaskID           sql.NullInt64
+	Pid              int64
+	ProcessStartedAt string
+	State            string
+	Reason           string
+	TransitionedAt   string
+	LastSeenAt       string
+	StoppedAt        sql.NullString
+}
+
+func (q *Queries) ListMonitorHealth(ctx context.Context, arg ListMonitorHealthParams) ([]ListMonitorHealthRow, error) {
 	rows, err := q.db.QueryContext(ctx, listMonitorHealth, arg.ProjectID, arg.LastSeenAt)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []MonitorHealth
+	var items []ListMonitorHealthRow
 	for rows.Next() {
-		var i MonitorHealth
+		var i ListMonitorHealthRow
 		if err := rows.Scan(
 			&i.MonitorID,
 			&i.AgentKey,
+			&i.ScopeKey,
+			&i.AgentSessionID,
+			&i.Cwd,
+			&i.Role,
+			&i.ProjectID,
+			&i.GoalID,
+			&i.TaskID,
+			&i.Pid,
+			&i.ProcessStartedAt,
+			&i.State,
+			&i.Reason,
+			&i.TransitionedAt,
+			&i.LastSeenAt,
+			&i.StoppedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listMonitorHealthHistory = `-- name: ListMonitorHealthHistory :many
+SELECT monitor_id, agent_key, scope_key, agent_session_id, cwd, role, project_id, goal_id, task_id, pid,
+       process_started_at, state, reason, transitioned_at, last_seen_at, stopped_at
+FROM monitor_health
+WHERE project_id = ?
+ORDER BY last_seen_at DESC, monitor_id
+`
+
+type ListMonitorHealthHistoryRow struct {
+	MonitorID        string
+	AgentKey         string
+	ScopeKey         string
+	AgentSessionID   int64
+	Cwd              string
+	Role             string
+	ProjectID        int64
+	GoalID           sql.NullInt64
+	TaskID           sql.NullInt64
+	Pid              int64
+	ProcessStartedAt string
+	State            string
+	Reason           string
+	TransitionedAt   string
+	LastSeenAt       string
+	StoppedAt        sql.NullString
+}
+
+func (q *Queries) ListMonitorHealthHistory(ctx context.Context, projectID int64) ([]ListMonitorHealthHistoryRow, error) {
+	rows, err := q.db.QueryContext(ctx, listMonitorHealthHistory, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListMonitorHealthHistoryRow
+	for rows.Next() {
+		var i ListMonitorHealthHistoryRow
+		if err := rows.Scan(
+			&i.MonitorID,
+			&i.AgentKey,
+			&i.ScopeKey,
+			&i.AgentSessionID,
 			&i.Cwd,
 			&i.Role,
 			&i.ProjectID,
@@ -97,17 +244,19 @@ func (q *Queries) StopMonitorHealth(ctx context.Context, arg StopMonitorHealthPa
 
 const upsertMonitorHealth = `-- name: UpsertMonitorHealth :exec
 INSERT INTO monitor_health (
-  monitor_id, agent_key, cwd, role, project_id, goal_id, task_id, pid,
+  monitor_id, agent_key, scope_key, agent_session_id, cwd, role, project_id, goal_id, task_id, pid,
   process_started_at, state, reason, transitioned_at, last_seen_at, stopped_at
 )
 VALUES (
-  ?1, ?2, ?3, ?4,
-  ?5, ?6, ?7, ?8,
-  ?9, ?10, ?11,
-  ?12, ?13, NULL
+  ?1, ?2, ?3, ?4, ?5, ?6,
+  ?7, ?8, ?9, ?10,
+  ?11, ?12, ?13,
+  ?14, ?15, NULL
 )
-ON CONFLICT(monitor_id) DO UPDATE SET
+  ON CONFLICT(monitor_id) DO UPDATE SET
   agent_key = excluded.agent_key,
+  scope_key = excluded.scope_key,
+  agent_session_id = excluded.agent_session_id,
   cwd = excluded.cwd,
   role = excluded.role,
   project_id = excluded.project_id,
@@ -125,6 +274,8 @@ ON CONFLICT(monitor_id) DO UPDATE SET
 type UpsertMonitorHealthParams struct {
 	MonitorID        string
 	AgentKey         string
+	ScopeKey         string
+	AgentSessionID   int64
 	Cwd              string
 	Role             string
 	ProjectID        int64
@@ -142,6 +293,8 @@ func (q *Queries) UpsertMonitorHealth(ctx context.Context, arg UpsertMonitorHeal
 	_, err := q.db.ExecContext(ctx, upsertMonitorHealth,
 		arg.MonitorID,
 		arg.AgentKey,
+		arg.ScopeKey,
+		arg.AgentSessionID,
 		arg.Cwd,
 		arg.Role,
 		arg.ProjectID,

@@ -238,8 +238,9 @@ func TestGoalReviewLifecycleDefersFinalReportUntilCommanderCompletion(t *testing
 	receiverID := testSessionID("goal-review-commander-receiver")
 	addLiveProjectClaim(t, s, goalID, "goal-review-commander")
 	addTestAgentSession(t, s, "goal-review-commander-receiver")
-	if completed := completeGoalHandoffReviewForGoalReviewTest(t, s, ctx, "goal-review-commander-handoff", goalID, commanderID, receiverID); completed.CompletedReportAt == nil {
-		t.Fatalf("goal handoff = %+v, want completed handoff before goal review", completed)
+	handoff := receiveGoalHandoffReviewForGoalReviewTest(t, s, ctx, "goal-review-commander-handoff", goalID, commanderID, receiverID)
+	if handoff.CompletedReportAt != nil {
+		t.Fatalf("goal handoff = %+v, want open handoff before human review", handoff)
 	}
 	report := domain.CompletionReport{
 		WorkDone:    "reviewed work",
@@ -288,6 +289,13 @@ func TestGoalReviewLifecycleDefersFinalReportUntilCommanderCompletion(t *testing
 	if done.Status != domain.GoalDone || done.WorkDone != report.WorkDone || done.ResultSummary != report.WorkDone {
 		t.Fatalf("completed goal = %+v, want done with final report", done)
 	}
+	completed, err := s.GetGoalHandoff(ctx, handoff.ID)
+	if err != nil {
+		t.Fatalf("GetGoalHandoff after finalization: %v", err)
+	}
+	if completed.CompletedReportAt == nil || completed.CompleteReport != "goal work is ready for commander review" {
+		t.Fatalf("completed handoff = %+v, want stored review report", completed)
+	}
 }
 
 func TestRejectedGoalReviewLeavesGoalActiveWithoutReopeningHandoff(t *testing.T) {
@@ -298,8 +306,8 @@ func TestRejectedGoalReviewLeavesGoalActiveWithoutReopeningHandoff(t *testing.T)
 	receiverID := testSessionID("goal-review-reject-receiver")
 	addLiveProjectClaim(t, s, goalID, "goal-review-reject-commander")
 	addTestAgentSession(t, s, "goal-review-reject-receiver")
-	if completed := completeGoalHandoffReviewForGoalReviewTest(t, s, ctx, "goal-review-reject-handoff", goalID, commanderID, receiverID); completed.CompletedReportAt == nil {
-		t.Fatalf("goal handoff = %+v, want completed handoff before goal review", completed)
+	if handoff := receiveGoalHandoffReviewForGoalReviewTest(t, s, ctx, "goal-review-reject-handoff", goalID, commanderID, receiverID); handoff.CompletedReportAt != nil {
+		t.Fatalf("goal handoff = %+v, want open handoff before goal review", handoff)
 	}
 	review, err := s.RequestGoalReview(ctx, goalID, commanderID, domain.CompletionReport{
 		WorkDone: "rejected work", NowPossible: "rejected result", HowToVerify: "rejected verify",
@@ -336,8 +344,8 @@ func TestRequestGoalReviewPersistsReportInGoalAndFinalizesWithoutInput(t *testin
 	receiverID := testSessionID("goal-review-request-time-receiver")
 	addLiveProjectClaim(t, s, goalID, "goal-review-request-time-commander")
 	addTestAgentSession(t, s, "goal-review-request-time-receiver")
-	if completed := completeGoalHandoffReviewForGoalReviewTest(t, s, ctx, "goal-review-request-time-handoff", goalID, commanderID, receiverID); completed.CompletedReportAt == nil {
-		t.Fatalf("goal handoff = %+v, want completed handoff before goal review", completed)
+	if handoff := receiveGoalHandoffReviewForGoalReviewTest(t, s, ctx, "goal-review-request-time-handoff", goalID, commanderID, receiverID); handoff.CompletedReportAt != nil {
+		t.Fatalf("goal handoff = %+v, want open handoff before goal review", handoff)
 	}
 	report := domain.CompletionReport{
 		WorkDone:    "request-time work",
@@ -406,7 +414,7 @@ func TestRequestGoalReviewRejectsIncompleteReport(t *testing.T) {
 			receiverID := testSessionID("goal-review-incomplete-receiver-" + field.name)
 			addLiveProjectClaim(t, s, goalID, "goal-review-incomplete-"+field.name)
 			addTestAgentSession(t, s, "goal-review-incomplete-receiver-"+field.name)
-			completeGoalHandoffReviewForGoalReviewTest(t, s, ctx, "goal-review-incomplete-handoff-"+field.name, goalID, commanderID, receiverID)
+			receiveGoalHandoffReviewForGoalReviewTest(t, s, ctx, "goal-review-incomplete-handoff-"+field.name, goalID, commanderID, receiverID)
 			report := domain.CompletionReport{
 				WorkDone:    "work",
 				NowPossible: "result",
@@ -439,7 +447,7 @@ func TestFinalizeGoalReviewRequiresApprovedReview(t *testing.T) {
 	receiverID := testSessionID("goal-review-unapproved-receiver")
 	addLiveProjectClaim(t, s, goalID, "goal-review-unapproved")
 	addTestAgentSession(t, s, "goal-review-unapproved-receiver")
-	completeGoalHandoffReviewForGoalReviewTest(t, s, ctx, "goal-review-unapproved-handoff", goalID, commanderID, receiverID)
+	receiveGoalHandoffReviewForGoalReviewTest(t, s, ctx, "goal-review-unapproved-handoff", goalID, commanderID, receiverID)
 	if _, err := s.RequestGoalReview(ctx, goalID, commanderID, domain.CompletionReport{
 		WorkDone: "work", NowPossible: "result", HowToVerify: "verify",
 		Surprises: "surprise", NeedsReview: "review", NextSteps: "next",
