@@ -1249,10 +1249,13 @@ func (s *Store) ReceivePlanHandoffReviewRejection(ctx context.Context, handoffID
 	if handoff.GoalID != goalID {
 		return PlanHandoff{}, fmt.Errorf("%w: %q belongs to goal %d, not %d", ErrPlanHandoffGoalMismatch, handoffID, handoff.GoalID, goalID)
 	}
-	if handoff.ReviewRejectedAt == nil || handoff.CompletedReportAt != nil || handoff.ReviewRequestedBy != receivedBy || receivedBy == 0 {
+	// Who may take it is decided by the statement below, which accepts the
+	// submitter or whoever holds the goal now. Repeating the submitter check
+	// here would put the old rule back and strand the rejection again.
+	if handoff.ReviewRejectedAt == nil || handoff.CompletedReportAt != nil || receivedBy == 0 {
 		return PlanHandoff{}, ErrPlanHandoffReviewState
 	}
-	result, err := sqlcgen.New(s.db).ReceivePlanHandoffReviewRejection(ctx, sqlcgen.ReceivePlanHandoffReviewRejectionParams{ReviewRejectionReceivedBy: sql.NullInt64{Int64: receivedBy, Valid: true}, ReviewRejectionReceivedAt: sql.NullString{String: time.Now().UTC().Format(time.RFC3339Nano), Valid: true}, ID: handoffID, GoalID: goalID, ReviewRequestedBy: sql.NullInt64{Int64: receivedBy, Valid: true}})
+	result, err := sqlcgen.New(s.db).ReceivePlanHandoffReviewRejection(ctx, sqlcgen.ReceivePlanHandoffReviewRejectionParams{ReviewRejectionReceivedBy: sql.NullInt64{Int64: receivedBy, Valid: true}, ReviewRejectionReceivedAt: sql.NullString{String: time.Now().UTC().Format(time.RFC3339Nano), Valid: true}, ID: handoffID, GoalID: goalID})
 	if err != nil {
 		return PlanHandoff{}, fmt.Errorf("receive plan handoff review rejection: %w", err)
 	}
