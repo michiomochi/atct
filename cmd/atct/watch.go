@@ -1036,7 +1036,7 @@ func consumeWatchEventsWithStateAndScopeAndSinkAndInterval(ctx context.Context, 
 			}
 		case now := <-livenessTicker.C:
 			if latestReconciliation != nil && livenessState.PromptDue(now, scope, *latestReconciliation) {
-				line := formatWatchLiveness(scope)
+				line := formatWatchLiveness(scope, *latestReconciliation)
 				if err := writeWatchLineWithActionSink(out, line, "monitor.liveness", watchDecision{GoalID: scope.GoalID, TaskID: scope.TaskID}, sink, actionSink); err != nil {
 					return err
 				}
@@ -1220,6 +1220,10 @@ type watchReconciliationHandoff struct {
 	ReviewReceivedAt          *string `json:"ReviewReceivedAt"`
 	ReviewRejectedAt          *string `json:"ReviewRejectedAt"`
 	ReviewRejectionReceivedAt *string `json:"ReviewRejectionReceivedAt"`
+	// MonitorLost marks a handoff whose worker has no monitor left. An open
+	// handoff otherwise reads as "somebody else is on it", which is only true
+	// while that somebody is still there.
+	MonitorLost bool `json:"MonitorLost"`
 }
 
 type watchReconciliationGoal struct {
@@ -1676,6 +1680,11 @@ func formatWatchDecision(eventName string, decision watchDecision) (string, bool
 		return fmt.Sprintf("atct decision answered (decision_id: %s)", decision.decisionID()), true
 	case "decision.pending":
 		return fmt.Sprintf("atct decision pending (decision_id: %s)", decision.decisionID()), true
+	case "decision.withdrawn":
+		// The session that asked it is waiting for an answer. Say that none is
+		// coming, or it waits for good: goal 260 sat idle on a withdrawn
+		// decision with all five of its tasks already done.
+		return fmt.Sprintf("atct decision withdrawn, no answer is coming (decision_id: %s)", decision.decisionID()), true
 	case "decision.approved":
 		return fmt.Sprintf("atct decision approved (decision_id: %s)", decision.decisionID()), true
 	case "decision.rejected":
@@ -1779,11 +1788,56 @@ func formatWatchDecision(eventName string, decision watchDecision) (string, bool
 	}
 }
 
-func formatWatchLiveness(scope watchScope) string {
+// formatWatchLiveness names what to act on. "recheck goal 287" named nothing,
+// so its subcommander rechecked, read an open goal handoff, and reported that
+// no transition was available while a rejected plan handoff waited.
+func formatWatchLiveness(scope watchScope, state watchReconciliation) string {
+	// A rejection comes first whatever the scope. An executor used to be told
+	// only "recheck task 1307", so the one agent allowed to receive the
+	// rejection was never told one was waiting, and the task sat rejected.
+	if rejected, kind := watchRejectedHandoff(scope, state); rejected != "" {
+		return fmt.Sprintf("atct monitor liveness: %s handoff %s was rejected and is waiting to be received (%s)",
+			kind, rejected, watchScopeSubject(scope))
+	}
 	if scope.TaskID != "" {
 		return fmt.Sprintf("atct monitor liveness: recheck task %s", scope.TaskID)
 	}
 	return fmt.Sprintf("atct monitor liveness: recheck goal %s", scope.GoalID)
+}
+
+func watchScopeSubject(scope watchScope) string {
+	if scope.TaskID != "" {
+		return "task " + scope.TaskID
+	}
+	return "goal " + scope.GoalID
+}
+
+// watchRejectedHandoff returns the first rejected handoff nobody has received.
+//
+// A task-scoped monitor speaks only for its own task: putting a sibling task's
+// rejection in front of it would name work it cannot receive.
+func watchRejectedHandoff(scope watchScope, state watchReconciliation) (string, string) {
+	for _, group := range []struct {
+		kind     string
+		handoffs []watchReconciliationHandoff
+	}{{"goal", state.GoalHandoffs}, {"plan", state.PlanHandoffs}, {"task", state.TaskHandoffs}} {
+		for _, handoff := range group.handoffs {
+			if !watchHandoffOpen(handoff) {
+				continue
+			}
+			if scope.TaskID != "" {
+				if group.kind != "task" || !watchHandoffMatchesTask(scope, handoff) {
+					continue
+				}
+			} else if !watchHandoffMatchesGoal(scope, handoff) {
+				continue
+			}
+			if handoff.ReviewRejectedAt != nil && handoff.ReviewRejectionReceivedAt == nil {
+				return handoff.ID, group.kind
+			}
+		}
+	}
+	return "", ""
 }
 
 func formatUnassignedGoalIDs(ids []int64) string {

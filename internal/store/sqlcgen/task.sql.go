@@ -1238,11 +1238,22 @@ func (q *Queries) ReceivePlanHandoffReview(ctx context.Context, arg ReceivePlanH
 
 const receivePlanHandoffReviewRejection = `-- name: ReceivePlanHandoffReviewRejection :execresult
 UPDATE plan_handoffs
-SET review_rejection_received_by = ?, review_rejection_received_at = ?
-WHERE id = ? AND goal_id = ?
+SET review_rejection_received_by = ?1,
+    review_rejection_received_at = ?2
+WHERE plan_handoffs.id = ?3 AND plan_handoffs.goal_id = ?4
   AND review_rejected_at IS NOT NULL
   AND review_rejection_received_at IS NULL
-  AND review_requested_by = ?
+  AND (
+    review_requested_by = ?1
+    OR EXISTS (
+      SELECT 1 FROM goal_handoffs
+      WHERE goal_handoffs.goal_id = plan_handoffs.goal_id
+        AND goal_handoffs.received_by = ?1
+        AND goal_handoffs.received_at IS NOT NULL
+        AND goal_handoffs.completed_report_at IS NULL
+        AND goal_handoffs.recovered_at IS NULL
+    )
+  )
 `
 
 type ReceivePlanHandoffReviewRejectionParams struct {
@@ -1250,16 +1261,18 @@ type ReceivePlanHandoffReviewRejectionParams struct {
 	ReviewRejectionReceivedAt sql.NullString
 	ID                        string
 	GoalID                    int64
-	ReviewRequestedBy         sql.NullInt64
 }
 
+// The submitter takes its own rejection back, and so does whoever holds the
+// goal now. Keyed to the submitter alone, a rejection was stranded the moment
+// that session ended: no successor could pick it up and no other role could
+// either, which stopped goals 260 and 287 outright.
 func (q *Queries) ReceivePlanHandoffReviewRejection(ctx context.Context, arg ReceivePlanHandoffReviewRejectionParams) (sql.Result, error) {
 	return q.db.ExecContext(ctx, receivePlanHandoffReviewRejection,
 		arg.ReviewRejectionReceivedBy,
 		arg.ReviewRejectionReceivedAt,
 		arg.ID,
 		arg.GoalID,
-		arg.ReviewRequestedBy,
 	)
 }
 

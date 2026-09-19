@@ -43,7 +43,7 @@ func (s *Store) BindMonitorToken(ctx context.Context, token string, agentSession
 	err := sqlcgen.New(s.db).BindMonitorToken(ctx, sqlcgen.BindMonitorTokenParams{
 		Token:          token,
 		AgentSessionID: agentSessionID,
-		CreatedAt:      time.Now().UTC().Format(time.RFC3339Nano),
+		CreatedAt:      formatTimestamp(time.Now()),
 	})
 	if err != nil {
 		return fmt.Errorf("bind monitor token: %w", err)

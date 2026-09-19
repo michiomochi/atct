@@ -70,6 +70,9 @@ func watchSubcommanderLivenessActionable(scope watchScope, state watchReconcilia
 		if !watchHandoffMatchesGoal(scope, handoff) || !watchHandoffOpen(handoff) {
 			continue
 		}
+		if handoff.RequestedAt != nil && handoff.ReceivedAt == nil {
+			return true
+		}
 		if handoff.ReviewRequestedAt != nil || handoff.ReviewRejectedAt != nil {
 			return true
 		}
@@ -77,6 +80,11 @@ func watchSubcommanderLivenessActionable(scope watchScope, state watchReconcilia
 	if watchGoalHasOpenTaskHandoff(scope, state) {
 		return false
 	}
+	// A rejection is work wherever it sits, so look for one across every
+	// handoff before anything else decides. Answering from the first open
+	// handoff met let a goal handoff still under review say "nothing to do"
+	// while a rejected plan handoff waited behind it, which is how goal 260
+	// stood idle with a rejection to pick up.
 	for _, handoffs := range [][]watchReconciliationHandoff{state.GoalHandoffs, state.PlanHandoffs} {
 		for _, handoff := range handoffs {
 			if !watchHandoffMatchesGoal(scope, handoff) || !watchHandoffOpen(handoff) {
@@ -84,6 +92,13 @@ func watchSubcommanderLivenessActionable(scope watchScope, state watchReconcilia
 			}
 			if handoff.ReviewRejectedAt != nil {
 				return true
+			}
+		}
+	}
+	for _, handoffs := range [][]watchReconciliationHandoff{state.GoalHandoffs, state.PlanHandoffs} {
+		for _, handoff := range handoffs {
+			if !watchHandoffMatchesGoal(scope, handoff) || !watchHandoffOpen(handoff) {
+				continue
 			}
 			if handoff.ReviewRequestedAt != nil {
 				return false
@@ -108,9 +123,12 @@ func watchExecutorLivenessActionable(scope watchScope, state watchReconciliation
 	return false
 }
 
+// watchGoalHasOpenTaskHandoff answers whether someone else is working on this
+// goal's tasks. A handoff whose monitor is gone is nobody working: the
+// subcommander has to hear about that one rather than be told to stand down.
 func watchGoalHasOpenTaskHandoff(scope watchScope, state watchReconciliation) bool {
 	for _, handoff := range state.TaskHandoffs {
-		if watchHandoffMatchesGoal(scope, handoff) && watchHandoffOpen(handoff) {
+		if watchHandoffMatchesGoal(scope, handoff) && watchHandoffOpen(handoff) && !handoff.MonitorLost {
 			return true
 		}
 	}
@@ -214,6 +232,9 @@ func (f *watchScopeFilter) delivers(eventName string, decision watchDecision) bo
 		return true
 	case "decision.answered":
 		return !decision.defaultApplied()
+	case "decision.withdrawn":
+		// Scoped like an answer, because it ends the same wait.
+		return true
 	case "wakeup":
 		if f.hasWakeupState && f.actionableGoalCount == decision.ActionableGoalCount &&
 			f.unassignedGoalCount == decision.UnassignedGoalCount &&

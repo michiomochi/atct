@@ -951,6 +951,14 @@ func TestWatchLivenessPromptsOnlyForImmediateRoleAction(t *testing.T) {
 			want: true,
 		},
 		{
+			name:  "subcommander has unreceived task handoff",
+			scope: subcommanderScope,
+			reconciliation: watchReconciliation{TaskHandoffs: []watchReconciliationHandoff{{
+				GoalID: 249, TaskID: 812, RequestedAt: at("requested"),
+			}}},
+			want: true,
+		},
+		{
 			name:  "subcommander awaits executor",
 			scope: subcommanderScope,
 			reconciliation: watchReconciliation{
@@ -1010,7 +1018,7 @@ func TestWatchLivenessRendersExactSelector(t *testing.T) {
 		{scope: watchScope{Role: "subcommander", ProjectID: "1", GoalID: "249"}, want: "atct monitor liveness: recheck goal 249"},
 		{scope: watchScope{Role: "executor", ProjectID: "1", GoalID: "249", TaskID: "812"}, want: "atct monitor liveness: recheck task 812"},
 	} {
-		if got := formatWatchLiveness(tt.scope); got != tt.want {
+		if got := formatWatchLiveness(tt.scope, watchReconciliation{}); got != tt.want {
 			t.Fatalf("formatWatchLiveness(%#v) = %q, want %q", tt.scope, got, tt.want)
 		}
 	}
