@@ -114,15 +114,26 @@ if len(previous_versions) != 1:
         f"plugin manifests have different versions: {sorted(previous_versions)}"
     )
 previous = next(iter(previous_versions))
-for path, data in manifest_data:
-    data["version"] = version
-    path.write_text(json.dumps(data, indent=2) + "\n")
 
+# Check before writing anything. This used to bump the manifests first, so a
+# failure here left them on the new version while the hooks kept the old one,
+# and the next run stopped on a dirty tree instead of on the real problem.
 codex_hooks_path = pathlib.Path("hooks") / "codex-hooks.json"
 codex_hooks = codex_hooks_path.read_text()
 marker = "required=" + previous
-if codex_hooks.count(marker) != 2:
-    raise SystemExit(f"Codex hook version marker count is not 2: {codex_hooks.count(marker)}")
+# One marker per hook command. The count used to be hardcoded at 2; 468509d
+# added a third hook without touching it, and every release since then stopped
+# here.
+expected = codex_hooks.count('"type": "command"')
+found = codex_hooks.count(marker)
+if found != expected:
+    raise SystemExit(
+        f"Codex hooks carry {found} `{marker}` markers, expected one per hook command ({expected})"
+    )
+
+for path, data in manifest_data:
+    data["version"] = version
+    path.write_text(json.dumps(data, indent=2) + "\n")
 codex_hooks_path.write_text(codex_hooks.replace(marker, "required=" + version))
 
 PY
