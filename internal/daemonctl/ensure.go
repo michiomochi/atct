@@ -21,8 +21,14 @@ const (
 var (
 	ErrVersionMismatch = errors.New("a daemon of a different version is already running")
 	ErrStartTimeout    = errors.New("the daemon did not become ready in time")
-	ErrUnresponsive    = errors.New("the recorded daemon process is alive but not answering")
-	ErrTestExecutable  = errors.New("refusing to start a Go test executable as daemon")
+	// ErrUnresponsive is for a recorded daemon that holds no socket. The
+	// opposite case, a socket with nothing recorded behind it, is
+	// ErrUnrecorded: saying a process "is alive but not answering" about a
+	// socket that just answered sends the reader hunting for a process that
+	// is not the problem.
+	ErrUnresponsive   = errors.New("the recorded daemon process is alive but not answering")
+	ErrUnrecorded     = errors.New("a daemon is answering that this machine has no record of")
+	ErrTestExecutable = errors.New("refusing to start a Go test executable as daemon")
 )
 
 type Config struct {
@@ -85,8 +91,10 @@ func Ensure(cfg Config) (Registry, error) {
 // fails to bind and the socket is never recreated. Ask the socket first.
 func clearStale(dir string) error {
 	if SocketAnswers(SocketPath(dir)) {
-		return fmt.Errorf("%w: %s still answers with no registry entry; run `atct daemon stop` or terminate it",
-			ErrUnresponsive, SocketPath(dir))
+		return fmt.Errorf(
+			"%w: %s answers, but %s records no daemon. Another daemon is serving this directory; "+
+				"leave it alone unless you started it, and do not go looking for processes to kill",
+			ErrUnrecorded, SocketPath(dir), RegistryPath(dir))
 	}
 	if err := os.Remove(SocketPath(dir)); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("remove stale socket: %w", err)

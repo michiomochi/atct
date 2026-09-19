@@ -41,8 +41,12 @@ func TestClearStaleKeepsAnsweringSocket(t *testing.T) {
 	}()
 
 	err = clearStale(dir)
-	if !errors.Is(err, ErrUnresponsive) {
-		t.Fatalf("clearStale() error = %v, want ErrUnresponsive", err)
+	// A socket that answers with nothing recorded behind it is ErrUnrecorded.
+	// ErrUnresponsive is the opposite case, a recorded process holding no
+	// socket, and saying that about a socket that just answered sent a reader
+	// hunting for processes to kill.
+	if !errors.Is(err, ErrUnrecorded) {
+		t.Fatalf("clearStale() error = %v, want ErrUnrecorded", err)
 	}
 	if _, statErr := os.Stat(SocketPath(dir)); statErr != nil {
 		t.Fatalf("clearStale removed a socket that still answers: %v", statErr)
