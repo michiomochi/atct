@@ -24,21 +24,26 @@ func (d *Daemon) monitorCheck(ctx context.Context, sessionKey string) (monitorCh
 	if err != nil {
 		return monitorCheckResponse{}, fmt.Errorf("derive session role: %w", err)
 	}
-	// No project or role means no Monitor can be attached to this session.
-	// Report that, not the scope validation error.
-	if role.ProjectID > 0 && role.Role != "" {
-		scope := store.MonitorLiveScope{ProjectID: role.ProjectID, Role: role.Role}
-		if role.GoalID != 0 {
-			goalID := role.GoalID
-			scope.GoalID = &goalID
-		}
-		live, err := d.store.HasLiveMonitorForScope(ctx, scope)
-		if err != nil {
-			return monitorCheckResponse{}, err
-		}
-		if live {
-			return monitorCheckResponse{}, nil
-		}
+	// A session with no project and no role has no scope yet, and a Monitor
+	// binds to a scope. Denying here closes the only way in: the assignment
+	// comes from receiving a handoff or claiming a project, the Monitor comes
+	// from the assignment, and the gate would demand the Monitor first. Nothing
+	// is being protected either, because a wakeup is addressed to a scope and
+	// this session is in none of them.
+	if role.ProjectID <= 0 || role.Role == "" {
+		return monitorCheckResponse{}, nil
+	}
+	scope := store.MonitorLiveScope{ProjectID: role.ProjectID, Role: role.Role}
+	if role.GoalID != 0 {
+		goalID := role.GoalID
+		scope.GoalID = &goalID
+	}
+	live, err := d.store.HasLiveMonitorForScope(ctx, scope)
+	if err != nil {
+		return monitorCheckResponse{}, err
+	}
+	if live {
+		return monitorCheckResponse{}, nil
 	}
 	return monitorCheckResponse{
 		Decision: "block",
