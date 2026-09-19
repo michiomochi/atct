@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -93,42 +94,90 @@ func TestHTTPHandlerKeepsSSEOpenUntilDisconnect(t *testing.T) {
 	}
 }
 
-func TestHTTPHandlerRoutesEmbeddedDynamicPagesAndFallsBackToRoot(t *testing.T) {
+func TestHTTPHandlerServesLocaleSpecificDocuments(t *testing.T) {
 	d := newWebTestDaemon(t)
 
-	wantRoot, err := fs.ReadFile(atctweb.Dist, "dist/index.html")
-	if err != nil {
-		t.Fatalf("read root index: %v", err)
-	}
-	wantGoal, err := fs.ReadFile(atctweb.Dist, "dist/goals/_/index.html")
-	if err != nil {
-		t.Fatalf("read goal history template: %v", err)
-	}
-	wantTask, err := fs.ReadFile(atctweb.Dist, "dist/tasks/_/index.html")
-	if err != nil {
-		t.Fatalf("read task history template: %v", err)
-	}
-
-	tests := []struct {
-		name string
-		path string
-		want []byte
-	}{
-		{name: "root", path: "/", want: wantRoot},
-		{name: "goal detail", path: "/goals/example", want: wantGoal},
-		{name: "task detail", path: "/tasks/example", want: wantTask},
-		{name: "unknown path", path: "/nonexistent/xxx", want: wantRoot},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			response := httptest.NewRecorder()
-			d.HTTPHandler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, tt.path, nil))
-
-			if response.Code != http.StatusOK {
-				t.Fatalf("status = %d, want %d", response.Code, http.StatusOK)
+	for _, locale := range []string{"en", "ja"} {
+		t.Run(locale, func(t *testing.T) {
+			if err := d.store.SetUILocale(context.Background(), locale); err != nil {
+				t.Fatalf("SetUILocale: %v", err)
 			}
-			if response.Body.String() != string(tt.want) {
-				t.Fatalf("route %v returned unexpected embedded page", tt.path)
+
+			tests := []struct {
+				name string
+				path string
+				file string
+			}{
+				{name: "root", path: "/", file: "index.html"},
+				{name: "goal detail", path: "/goals/example", file: "goals/_/index.html"},
+				{name: "task detail", path: "/tasks/example", file: "tasks/_/index.html"},
+				{name: "unknown path", path: "/nonexistent/xxx", file: "index.html"},
+			}
+			for _, tt := range tests {
+				t.Run(tt.name, func(t *testing.T) {
+					want, err := fs.ReadFile(atctweb.Dist, path.Join("dist", locale, tt.file))
+					if err != nil {
+						t.Fatalf("read %s document: %v", locale, err)
+					}
+
+					response := httptest.NewRecorder()
+					d.HTTPHandler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, tt.path, nil))
+
+					if response.Code != http.StatusOK {
+						t.Fatalf("status = %d, want %d", response.Code, http.StatusOK)
+					}
+					if response.Body.String() != string(want) {
+						t.Fatalf("route %v returned unexpected %s document", tt.path, locale)
+					}
+				})
+			}
+
+			entries, err := fs.ReadDir(atctweb.Dist, path.Join("dist", locale, "_astro"))
+			if err != nil {
+				t.Fatalf("read %s assets: %v", locale, err)
+			}
+			if len(entries) == 0 {
+				t.Fatalf("%s asset tree is empty", locale)
+			}
+			asset := ""
+			for _, entry := range entries {
+				if !entry.IsDir() {
+					asset = entry.Name()
+					break
+				}
+			}
+			if asset == "" {
+				t.Fatalf("%s asset tree contains no files", locale)
+			}
+			want, err := fs.ReadFile(atctweb.Dist, path.Join("dist", locale, "_astro", asset))
+			if err != nil {
+				t.Fatalf("read %s asset: %v", locale, err)
+			}
+			response := httptest.NewRecorder()
+			d.HTTPHandler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/"+path.Join(locale, "_astro", asset), nil))
+			if response.Code != http.StatusOK {
+				t.Fatalf("asset status = %d, want %d", response.Code, http.StatusOK)
+			}
+			if strings.HasPrefix(response.Header().Get("Content-Type"), "text/html") {
+				t.Fatalf("asset content type = %v, want non-HTML", response.Header().Get("Content-Type"))
+			}
+			if response.Body.String() != string(want) {
+				t.Fatalf("%s asset returned unexpected content", locale)
+			}
+		})
+	}
+}
+
+func TestHTTPHandlerRoutesAPIPathsBeforeHTMLFallback(t *testing.T) {
+	d := newWebTestDaemon(t)
+
+	for _, requestPath := range []string{"/api/events/reconcile", "/api/ws"} {
+		t.Run(requestPath, func(t *testing.T) {
+			response := httptest.NewRecorder()
+			d.HTTPHandler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, requestPath, nil))
+
+			if strings.HasPrefix(response.Header().Get("Content-Type"), "text/html") {
+				t.Fatalf("%s content type = %v, want API response", requestPath, response.Header().Get("Content-Type"))
 			}
 		})
 	}

@@ -91,24 +91,80 @@ func (d *Daemon) HTTPHandler() http.Handler {
 			return
 		}
 
-		serveEmbeddedWeb(w, r, dist, static)
+		if serveEmbeddedFile(w, r, dist, static) {
+			return
+		}
+		if looksLikeEmbeddedAsset(r.URL.Path) {
+			http.NotFound(w, r)
+			return
+		}
+		locale, err := d.store.GetUILocale(r.Context())
+		if err != nil {
+			http.Error(w, fmt.Sprintf("resolve UI locale: %v", err), http.StatusInternalServerError)
+			return
+		}
+		serveEmbeddedWeb(w, r, dist, locale)
 	})
 }
 
-func serveEmbeddedWeb(w http.ResponseWriter, r *http.Request, dist fs.FS, static http.Handler) {
+func serveEmbeddedFile(w http.ResponseWriter, r *http.Request, dist fs.FS, static http.Handler) bool {
 	name := strings.TrimPrefix(path.Clean(r.URL.Path), "/")
 	if name != "" && name != "." && fs.ValidPath(name) && embeddedFileExists(dist, name) {
 		static.ServeHTTP(w, r)
+		return true
+	}
+	return false
+}
+
+func serveEmbeddedWeb(w http.ResponseWriter, r *http.Request, dist fs.FS, locale string) {
+	localeDist, err := fs.Sub(dist, locale)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("web locale %q: %v", locale, err), http.StatusInternalServerError)
 		return
 	}
+	static := http.FileServer(http.FS(localeDist))
 
 	indexRequest := r.Clone(r.Context())
 	indexRequest.URL.Path = "/"
 	indexRequest.URL.RawPath = ""
-	if dynamicIndexPath := embeddedDynamicIndexPath(dist, r.URL.Path); dynamicIndexPath != "" {
+	requestPath := stripEmbeddedLocalePrefix(r.URL.Path)
+	if dynamicIndexPath := embeddedDynamicIndexPath(localeDist, requestPath); dynamicIndexPath != "" {
 		indexRequest.URL.Path = dynamicIndexPath
 	}
 	static.ServeHTTP(w, indexRequest)
+}
+
+func stripEmbeddedLocalePrefix(requestPath string) string {
+	cleanPath := path.Clean(requestPath)
+	if cleanPath == "." || cleanPath == "/" {
+		return "/"
+	}
+	segment := strings.TrimPrefix(cleanPath, "/")
+	if slash := strings.IndexByte(segment, '/'); slash >= 0 {
+		segment = segment[:slash]
+	}
+	if segment != "en" && segment != "ja" {
+		return cleanPath
+	}
+	remainder := strings.TrimPrefix(cleanPath, "/"+segment)
+	if remainder == "" {
+		return "/"
+	}
+	return remainder
+}
+
+func looksLikeEmbeddedAsset(requestPath string) bool {
+	cleanPath := path.Clean(requestPath)
+	if cleanPath == "." || cleanPath == "/" {
+		return false
+	}
+	segments := strings.Split(strings.Trim(cleanPath, "/"), "/")
+	for _, segment := range segments {
+		if segment == "_astro" {
+			return true
+		}
+	}
+	return path.Ext(cleanPath) != ""
 }
 
 func embeddedDynamicIndexPath(dist fs.FS, requestPath string) string {
