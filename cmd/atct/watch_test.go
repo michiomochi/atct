@@ -1945,6 +1945,7 @@ func TestEmitWatchWakeupWritesOneLinePerCondition(t *testing.T) {
 		{"wakeup.commits_missing", watchDecision{GoalID: "goal-2"}, "atct wakeup: goal goal-2 has no linked commits"},
 		{"wakeup.undeclared_goal", watchDecision{GoalID: "goal-3"}, "atct wakeup: goal goal-3 has no tasks declared"},
 		{"wakeup.all_tasks_dropped", watchDecision{GoalID: "goal-4"}, "atct wakeup: goal goal-4 has all tasks dropped"},
+		{"wakeup.goal_review_due", watchDecision{GoalID: "goal-5"}, "atct wakeup: proposed goal goal-5 has had no activity for 7 days; check it against current main, then withdraw it with a reason (atct_goal_withdraw) or keep it (atct_goal_confirm)"},
 		{"wakeup.unclaimed_doing", watchDecision{TaskID: "task-1"}, "atct wakeup: task task-1 is doing without a work lock"},
 		{"wakeup.handoff_unreceived", watchDecision{HandoffID: "handoff-1"}, "atct wakeup: handoff handoff-1 has no receipt"},
 		{"wakeup.handoff_unreported", watchDecision{HandoffID: "handoff-2", WorktreeActivity: "changed"}, "atct wakeup: handoff handoff-2 has no completion report, but the goal's worktree changed after receipt"},

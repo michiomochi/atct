@@ -138,6 +138,47 @@ func TestPendingCommandExcludesProposedGoal(t *testing.T) {
 	}
 }
 
+func TestPendingCommandListsProposedGoalsDueForReview(t *testing.T) {
+	dir, projectRoot := newPendingFixture(t)
+	s := openPendingStore(t, dir)
+	ctx := context.Background()
+	project, err := s.ResolveProject(ctx, projectRoot)
+	if err != nil {
+		t.Fatalf("ResolveProject: %v", err)
+	}
+	due, err := s.CreateGoal(ctx, project.ID, "Stale proposal", "agent")
+	if err != nil {
+		t.Fatalf("CreateGoal: %v", err)
+	}
+	fresh, err := s.CreateGoal(ctx, project.ID, "Fresh proposal", "agent")
+	if err != nil {
+		t.Fatalf("CreateGoal: %v", err)
+	}
+	old := time.Now().UTC().Add(-8 * 24 * time.Hour).Format(time.RFC3339)
+	if _, err := s.DB().ExecContext(ctx, `UPDATE goals SET updated_at = ? WHERE id = ?`, old, due.ID); err != nil {
+		t.Fatalf("age goal: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("Store.Close: %v", err)
+	}
+
+	output, exitCode, err := pendingCommand(dir, projectRoot)
+	if err != nil {
+		t.Fatalf("pendingCommand: %v", err)
+	}
+	if exitCode != 0 {
+		t.Fatalf("pendingCommand exit code = %d, want 0", exitCode)
+	}
+	for _, want := range []string{reviewDueGoalMarker, "Stale proposal", "goal_id: " + idText(due.ID), "atct_goal_withdraw", "atct_goal_confirm"} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("pendingCommand output does not contain %q: %q", want, output)
+		}
+	}
+	if strings.Contains(output, "Fresh proposal") {
+		t.Fatalf("pendingCommand listed goal %d that is not due: %q", fresh.ID, output)
+	}
+}
+
 func TestPendingCommandReportsGoalAfterTaskDeclarationUntilTaskDone(t *testing.T) {
 	dir, projectRoot := newPendingFixture(t)
 	s := openPendingStore(t, dir)

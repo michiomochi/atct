@@ -43,6 +43,11 @@ type GoalWithdrawIn struct {
 	Reason string `json:"reason" jsonschema:"why the goal is being abandoned; recorded as its result summary"`
 }
 
+type GoalConfirmIn struct {
+	GoalID mcpID  `json:"goal_id"`
+	Note   string `json:"note" jsonschema:"why the proposed goal is still wanted, checked against current main; recorded so the review can be traced"`
+}
+
 type ProjectClaimIn struct {
 	ProjectID mcpID `json:"project_id"`
 	Force     bool  `json:"force,omitempty" jsonschema:"replace a live project claim with this session"`
@@ -786,11 +791,22 @@ func Register(server *mcp.Server, c *Client, agentSessionID int64) {
 
 	addMCPTool[GoalWithdrawIn, RawWithUnappliedDecisions](server, &mcp.Tool{
 		Name:         "atct_goal_withdraw",
-		Description:  "Abandon an active goal, dropping its open tasks and withdrawing its open decisions. Only the project commander may do this, and only for work that is being given up rather than finished: completed work goes through atct_goal_review_request followed by atct_goal_review_complete.",
+		Description:  "Abandon an active or proposed goal, dropping its open tasks and withdrawing its open decisions. Only the project commander may do this, and only for work that is being given up rather than finished: completed work goes through atct_goal_review_request followed by atct_goal_review_complete.",
 		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in GoalWithdrawIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
 		return callWithUnappliedDecisions(ctx, c, "goal.withdraw", map[string]any{
 			"goal_id": in.GoalID, "reason": in.Reason,
+			"agent_session_id": sessionID.Get(), "include_unapplied_answers": true,
+		})
+	})
+
+	addMCPTool[GoalConfirmIn, RawWithUnappliedDecisions](server, &mcp.Tool{
+		Name:         "atct_goal_confirm",
+		Description:  "Record that a proposed goal is still wanted after review, with a note saying why. This pushes its next review out by 7 days; the goal stays proposed. Only the project commander may do this, and only for a proposed goal. To give a proposed goal up instead, use atct_goal_withdraw.",
+		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in GoalConfirmIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
+		return callWithUnappliedDecisions(ctx, c, "goal.confirm", map[string]any{
+			"goal_id": in.GoalID, "note": in.Note,
 			"agent_session_id": sessionID.Get(), "include_unapplied_answers": true,
 		})
 	})

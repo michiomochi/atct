@@ -216,6 +216,11 @@ func (f *watchScopeFilter) delivers(eventName string, decision watchDecision) bo
 	if eventName == "goal.review.complete" || eventName == "goal.review.reject" {
 		return !f.passThrough && f.goalID == ""
 	}
+	if eventName == "wakeup.goal_review_due" {
+		// A proposed goal has no subcommander, so the review belongs to the
+		// commander's project-wide watch only.
+		return f.goalID == ""
+	}
 	if f.passThrough || f.goalID != "" {
 		return true
 	}

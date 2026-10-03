@@ -284,3 +284,14 @@ Only when SessionStart emitted no key, the caller's stable full agent name is
 suitable. If a reconnect causes the role to appear wrong, call
 `atct_session_identify` again with the same key to return to the original
 session row.
+
+## Proposed goals due for review
+
+`wakeup.goal_review_due` (also listed by `atct pending`) means a proposed goal
+has had no activity for 7 days. The daemon changes nothing; the review is
+yours. Check the goal against current main, then close it one way:
+
+- Already fixed, replaced by another goal, or its premise is gone:
+  `atct_goal_withdraw` with the reason. State the evidence, not just "stale".
+- Still wanted: `atct_goal_confirm` with a note saying why it is still valid.
+  The next review comes 7 days after the confirmation.

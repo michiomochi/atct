@@ -258,6 +258,9 @@ projectLoop:
 		for _, goal := range state.UndeclaredGoals {
 			recordWakeupEvent(store.EventWakeupUndeclaredGoal, goal.ID, time.Time{}, wakeupPublishAfter, goal.ID, 0, "", 0)
 		}
+		for _, goal := range state.ReviewDueGoals {
+			recordWakeupEvent(store.EventWakeupGoalReviewDue, goal.ID, state.ReviewDueAt[goal.ID], 0, goal.ID, 0, "", 0)
+		}
 		for _, goal := range state.DroppedGoals {
 			recordWakeupEvent(store.EventWakeupAllTasksDropped, goal.ID, time.Time{}, wakeupPublishAfter, goal.ID, 0, "", 0)
 		}

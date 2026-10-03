@@ -226,6 +226,7 @@ func TestWatchScopeProjectDeliversGoalWakeupsAndCreated(t *testing.T) {
 		"wakeup.commits_missing",
 		"wakeup.undeclared_goal",
 		"wakeup.all_tasks_dropped",
+		"wakeup.goal_review_due",
 		"goal.created",
 		"wakeup.discrepancy",
 		"wakeup.evaluate_failed",
@@ -235,6 +236,16 @@ func TestWatchScopeProjectDeliversGoalWakeupsAndCreated(t *testing.T) {
 		if got := filter.delivers(eventName, watchDecision{GoalID: "goal-1", WakeupID: "wakeup-1"}); !got {
 			t.Fatalf("project scope suppressed %s, want true", eventName)
 		}
+	}
+}
+
+func TestWatchScopeGoalDoesNotDeliverGoalReviewDue(t *testing.T) {
+	decision := watchDecision{GoalID: "goal-1", WakeupID: "wakeup-1"}
+	if newWatchScopeFilter("goal-1").delivers("wakeup.goal_review_due", decision) {
+		t.Fatal("goal scope delivered wakeup.goal_review_due, want it kept to the commander's project watch")
+	}
+	if !newWatchPassThroughFilter().delivers("wakeup.goal_review_due", decision) {
+		t.Fatal("pass-through filter suppressed wakeup.goal_review_due, want true")
 	}
 }
 

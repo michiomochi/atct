@@ -18,12 +18,14 @@ const (
 	unfinishedClaimMarker          = "Unfinished tasks with work locks:"
 	staleClaimMarker               = "Stale work locks:"
 	undeclaredGoalMarker           = "Undeclared active goals:"
+	reviewDueGoalMarker            = "Proposed goals due for review:"
 	pendingDecisionReason          = "A human answered a decision you parked. Call `atct_decision_poll` with each decision_id below, then continue the work that was waiting on it."
 	pendingDefaultDecisionReason   = "No one answered a decision you parked, so its default was applied. Call `atct_decision_poll` with each decision_id below, then continue the work that was waiting on it."
 	pendingClaimReason             = "You hold"
 	pendingNoDefaultDecisionReason = "You are waiting on a human for %d decisions with no default. That does not\nblock the %d tasks below."
 	pendingStaleClaimReason        = "A task with a work lock held by another agent session is no longer running. Return it to todo with `atct_task_update`, then request a fresh task handoff."
 	pendingUndeclaredGoalReason    = "An active goal has no tasks. Call `atct_task_create` for each goal below, then continue the work."
+	pendingReviewDueGoalReason     = "A proposed goal has had no activity for 7 days. Check each goal below against current main, then call `atct_goal_withdraw` with a reason to drop it or `atct_goal_confirm` with a note to keep it."
 	pendingWakeupReason            = "An active goal has unstarted tasks. Call `atct_task_handoff_request` for a task below, then continue the work."
 	pendingCompletedGoalReason     = "All tasks are done but the active goal has no review report. Call `atct_goal_handoff_review_request`; the commander then uses `atct_goal_review_request` and, after approval and merge, `atct_goal_review_complete`."
 	pendingCommitlessGoalReason    = "All tasks in an active goal are done but no task has a linked commit. Call `atct_task_update` with `commits` for at least one task below to link its commit, then continue the work."
@@ -234,6 +236,18 @@ func pendingTextFor(dir, cwd, projectName string, projectSpecified bool, agentSe
 		output.WriteString(undeclaredGoalMarker)
 		output.WriteByte('\n')
 		for _, goal := range wakeupState.UndeclaredGoals {
+			fmt.Fprintf(&output, "- %s (goal_id: %d)\n", oneLine(domain.Headline(goal.Content)), goal.ID)
+		}
+	}
+	if len(wakeupState.ReviewDueGoals) > 0 {
+		if output.Len() > 0 {
+			output.WriteString("\n\n")
+		}
+		output.WriteString(pendingReviewDueGoalReason)
+		output.WriteString("\n\n")
+		output.WriteString(reviewDueGoalMarker)
+		output.WriteByte('\n')
+		for _, goal := range wakeupState.ReviewDueGoals {
 			fmt.Fprintf(&output, "- %s (goal_id: %d)\n", oneLine(domain.Headline(goal.Content)), goal.ID)
 		}
 	}
