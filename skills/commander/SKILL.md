@@ -129,10 +129,11 @@ When the goal is approved, close the space; do not hand it a second goal.
 
 - **One space, one goal.** The space is created for a goal and works that goal
   only. A second goal gets a new space, even when it touches the same files.
-- **Approval closes it.** The trigger is the human approving the completion
-  decision `atct_goal_complete` creates, not the completion report. A rejected
-  completion returns the same goal to the same space, so the space stays open
-  until approval.
+- **Approval closes it.** The trigger is the human approving the review requested
+  by `atct_goal_review_request`, followed by the commander calling
+  `atct_goal_review_complete`, not the completion report itself. A rejected
+  review returns the same goal to the same space, so the space stays open until
+  approval.
 - **A closed space is not reopened.** Work that arrives afterwards belongs to a
   different goal, and a different goal gets a new space.
 - The delegator closes what it woke. The commander closes the subcommander's

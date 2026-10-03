@@ -519,3 +519,67 @@ func TestRecoverRequestedTaskCreateHandoffCreatesReplacement(t *testing.T) {
 func olderRequestedAt() string {
 	return time.Now().UTC().Add(-time.Minute).Format(time.RFC3339Nano)
 }
+
+// expireTestSessionLease moves a session's heartbeat past the lease without
+// touching its pid, which is how a real session dies: the process serving it
+// stops renewing while the recorded pid — the daemon's — keeps running.
+func expireTestSessionLease(t *testing.T, s *Store, agentSessionID int64) {
+	t.Helper()
+	lapsed := formatTimestamp(time.Now().UTC().Add(-2 * RuntimeLeaseDuration))
+	result, err := s.DB().ExecContext(context.Background(),
+		`UPDATE agent_sessions SET last_heartbeat_at = ? WHERE id = ?`, lapsed, agentSessionID)
+	if err != nil {
+		t.Fatalf("expire lease for session %d: %v", agentSessionID, err)
+	}
+	if affected, err := result.RowsAffected(); err != nil || affected != 1 {
+		t.Fatalf("expire lease for session %d affected %d rows (err %v)", agentSessionID, affected, err)
+	}
+}
+
+// Over the HTTP transport every session records the daemon's pid, so that pid
+// answers "alive" for as long as ATCT runs and can never prove a session gone.
+// A session that heartbeated and then stopped is gone whatever the pid says.
+func TestRecoverTaskHandoffFromLapsedLeaseDespiteLivePID(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	goalID, holderID := newTaskRecoveryGoal(t, s, "task-recovery-lapsed-lease")
+	tasks, err := s.CreateTasks(ctx, goalID, "worker", "recovery", []string{"implement"}, []string{"implement the recovery path"})
+	if err != nil {
+		t.Fatalf("CreateTasks: %v", err)
+	}
+	// The daemon's own pid, recorded and still running, exactly as the HTTP
+	// transport records it.
+	executorID := registerNamedTestAgentSession(t, s, "task-recovery-lapsed-lease-executor", os.Getpid())
+	handoffID := "task-recovery-lapsed-lease-old"
+	addTaskHandoffDirect(t, s, handoffID, tasks[0].ID, holderID, executorID)
+	expireTestSessionLease(t, s, executorID)
+
+	recovered, err := s.RecoverTaskHandoff(ctx, handoffID, tasks[0].ID, holderID, "executor stopped heartbeating")
+	if err != nil {
+		t.Fatalf("RecoverTaskHandoff with a lapsed lease: %v", err)
+	}
+	if recovered.RecoveredAt == nil {
+		t.Fatalf("lapsed-lease recovery left the handoff open: %+v", recovered)
+	}
+	if _, err := s.RequestTaskHandoff(ctx, "task-recovery-lapsed-lease-new", tasks[0].ID, holderID, "replacement"); err != nil {
+		t.Fatalf("RequestTaskHandoff replacement: %v", err)
+	}
+}
+
+// A session inside its lease is not recoverable, whatever its pid says.
+func TestRecoverTaskHandoffRejectsOwnerInsideLease(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	goalID, holderID := newTaskRecoveryGoal(t, s, "task-recovery-held-lease")
+	tasks, err := s.CreateTasks(ctx, goalID, "worker", "recovery", []string{"implement"}, []string{"implement the recovery path"})
+	if err != nil {
+		t.Fatalf("CreateTasks: %v", err)
+	}
+	executorID := registerNamedTestAgentSession(t, s, "task-recovery-held-lease-executor", os.Getpid())
+	handoffID := "task-recovery-held-lease-old"
+	addTaskHandoffDirect(t, s, handoffID, tasks[0].ID, holderID, executorID)
+
+	if _, err := s.RecoverTaskHandoff(ctx, handoffID, tasks[0].ID, holderID, "still working"); !errors.Is(err, ErrSessionRecoveryNotProven) {
+		t.Fatalf("RecoverTaskHandoff inside the lease error = %v, want ErrSessionRecoveryNotProven", err)
+	}
+}

@@ -81,6 +81,36 @@ func agentSessionLiveAt(row sqlcgen.GetAgentSessionLivenessRow, now time.Time) b
 	return !heartbeat.Before(now.UTC().Add(-RuntimeLeaseDuration))
 }
 
+// agentSessionLeaseState says what a session's own heartbeat proves about it.
+type agentSessionLeaseState int
+
+const (
+	// leaseUnknown: the session never heartbeated, so it proves nothing. Rows
+	// registered before the lease existed look like this.
+	leaseUnknown agentSessionLeaseState = iota
+	// leaseHeld: heartbeated inside the window. The session is running.
+	leaseHeld
+	// leaseLapsed: heartbeated and then stopped. The session is gone.
+	leaseLapsed
+)
+
+func agentSessionLease(ctx context.Context, q *sqlcgen.Queries, agentSessionID int64, now time.Time) agentSessionLeaseState {
+	if agentSessionID <= 0 {
+		return leaseUnknown
+	}
+	row, err := q.GetAgentSessionLiveness(ctx, agentSessionID)
+	if err != nil {
+		return leaseUnknown
+	}
+	if !row.LastHeartbeatAt.Valid || strings.TrimSpace(row.LastHeartbeatAt.String) == "" {
+		return leaseUnknown
+	}
+	if agentSessionLiveAt(row, now) {
+		return leaseHeld
+	}
+	return leaseLapsed
+}
+
 // RenewMonitorLease renews the lease of the session a monitor token is bound
 // to. Writes are throttled to a third of the lease: the monitor polls far more
 // often than the lease needs, and every renewal is a write that blocks readers.

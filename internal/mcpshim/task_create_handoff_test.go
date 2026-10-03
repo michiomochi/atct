@@ -6,6 +6,8 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -59,6 +61,74 @@ func TestTaskCreateHandoffLifecycleToolsExecuteAgainstDaemon(t *testing.T) {
 	}
 	if handoff.CompletedBy != receiverID || handoff.CompletedAt == nil {
 		t.Fatalf("MCP creation completion = %+v, want injected session %d without task delegation", handoff, receiverID)
+	}
+}
+
+func TestGoalCompleteMCPReturnsRetirementDiagnosticWithoutMutation(t *testing.T) {
+	ctx := context.Background()
+	s, socketPath, goalID, _, receiverID := taskCreateMCPFixture(t)
+	beforeGoal, err := s.GetGoal(ctx, goalID)
+	if err != nil {
+		t.Fatalf("GetGoal before atct_goal_complete: %v", err)
+	}
+	beforeDecisions, err := s.ListDecisionsForGoal(ctx, goalID)
+	if err != nil {
+		t.Fatalf("ListDecisionsForGoal before atct_goal_complete: %v", err)
+	}
+
+	server := mcp.NewServer(&mcp.Implementation{Name: "atct-test", Version: "test"}, nil)
+	mcpshim.Register(server, mcpshim.NewClient(socketPath), receiverID)
+	clientTransport, serverTransport := mcp.NewInMemoryTransports()
+	serverSession, err := server.Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatalf("server.Connect: %v", err)
+	}
+	defer serverSession.Close()
+	client := mcp.NewClient(&mcp.Implementation{Name: "schema-test", Version: "test"}, nil)
+	clientSession, err := client.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatalf("client.Connect: %v", err)
+	}
+	defer clientSession.Close()
+
+	result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name: "atct_goal_complete",
+		Arguments: map[string]any{
+			"goal_id": goalID, "work_done": "done", "now_possible": "now",
+			"how_to_verify": "verify", "surprises": "none", "needs_review": "none",
+			"next_steps": "none",
+		},
+	})
+	if err != nil {
+		t.Fatalf("atct_goal_complete: %v", err)
+	}
+	if result == nil || !result.IsError {
+		t.Fatalf("atct_goal_complete result = %+v, want an MCP tool error", result)
+	}
+	var diagnostic strings.Builder
+	for _, content := range result.Content {
+		if text, ok := content.(*mcp.TextContent); ok {
+			diagnostic.WriteString(text.Text)
+		}
+	}
+	const wantDiagnostic = "goal.complete is retired; use atct_goal_review_request followed by atct_goal_review_complete"
+	if !strings.Contains(diagnostic.String(), wantDiagnostic) {
+		t.Fatalf("atct_goal_complete diagnostic = %q, want %q", diagnostic.String(), wantDiagnostic)
+	}
+
+	afterGoal, err := s.GetGoal(ctx, goalID)
+	if err != nil {
+		t.Fatalf("GetGoal after atct_goal_complete: %v", err)
+	}
+	if !reflect.DeepEqual(afterGoal, beforeGoal) {
+		t.Fatalf("goal changed after atct_goal_complete: before=%+v after=%+v", beforeGoal, afterGoal)
+	}
+	afterDecisions, err := s.ListDecisionsForGoal(ctx, goalID)
+	if err != nil {
+		t.Fatalf("ListDecisionsForGoal after atct_goal_complete: %v", err)
+	}
+	if !reflect.DeepEqual(afterDecisions, beforeDecisions) {
+		t.Fatalf("decisions changed after atct_goal_complete: before=%+v after=%+v", beforeDecisions, afterDecisions)
 	}
 }
 
