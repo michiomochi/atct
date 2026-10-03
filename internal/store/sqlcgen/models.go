@@ -62,6 +62,13 @@ type Goal struct {
 	Plan              string
 }
 
+type GoalConfirmation struct {
+	ID          int64
+	GoalID      int64
+	Note        string
+	ConfirmedAt string
+}
+
 type GoalHandoff struct {
 	ID                        string
 	GoalID                    int64

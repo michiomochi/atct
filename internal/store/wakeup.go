@@ -2,12 +2,18 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/michiomochi/atct/internal/domain"
+	"github.com/michiomochi/atct/internal/store/sqlcgen"
 )
+
+// goalReviewDueAfter is how long a proposed goal may sit without activity
+// before the commander is asked to review it.
+const goalReviewDueAfter = 7 * 24 * time.Hour
 
 const (
 	EventWakeup                          = "wakeup"
@@ -18,6 +24,7 @@ const (
 	EventWakeupCompletionReportMissing   = "wakeup.completion_report_missing"
 	EventWakeupCommitsMissing            = "wakeup.commits_missing"
 	EventWakeupUndeclaredGoal            = "wakeup.undeclared_goal"
+	EventWakeupGoalReviewDue             = "wakeup.goal_review_due"
 	EventWakeupAllTasksDropped           = "wakeup.all_tasks_dropped"
 	EventWakeupUnclaimedDoing            = "wakeup.unclaimed_doing"
 	EventWakeupHandoffUnreceived         = "wakeup.handoff_unreceived"
@@ -169,6 +176,8 @@ type WakeupState struct {
 	DroppedGoals               []domain.Goal
 	UnclaimedDoingTasks        []domain.Task
 	UndeclaredGoals            []domain.Goal
+	ReviewDueGoals             []domain.Goal
+	ReviewDueAt                map[int64]time.Time // goal ID -> when the review came due
 	CommitlessGoals            []domain.Goal
 	HandoffsAwaitingReceipt    []TaskHandoff
 	HandoffsAwaitingReport     []TaskHandoff
@@ -235,6 +244,26 @@ func (s *Store) EvaluateWakeup(ctx context.Context, projectID int64) (WakeupStat
 	}
 
 	now := time.Now().UTC()
+	state.ReviewDueAt = map[int64]time.Time{}
+	var confirmedAt map[int64]time.Time
+	for _, goal := range goals {
+		if goal.Status != domain.GoalProposed {
+			continue
+		}
+		if confirmedAt == nil {
+			if confirmedAt, err = s.latestGoalConfirmations(ctx); err != nil {
+				return WakeupState{}, err
+			}
+		}
+		lastActivity := goal.UpdatedAt
+		if c, ok := confirmedAt[goal.ID]; ok && c.After(lastActivity) {
+			lastActivity = c
+		}
+		if due := lastActivity.Add(goalReviewDueAfter); !due.After(now) {
+			state.ReviewDueGoals = append(state.ReviewDueGoals, goal)
+			state.ReviewDueAt[goal.ID] = due
+		}
+	}
 	for _, goal := range goals {
 		if goal.Status != domain.GoalActive {
 			continue
@@ -410,6 +439,9 @@ func (s *Store) EvaluateWakeup(ctx context.Context, projectID int64) (WakeupStat
 	if state.UndeclaredGoals == nil {
 		state.UndeclaredGoals = []domain.Goal{}
 	}
+	if state.ReviewDueGoals == nil {
+		state.ReviewDueGoals = []domain.Goal{}
+	}
 	if state.CommitlessGoals == nil {
 		state.CommitlessGoals = []domain.Goal{}
 	}
@@ -432,6 +464,22 @@ func (s *Store) EvaluateWakeup(ctx context.Context, projectID int64) (WakeupStat
 		state.StaleClaims = []domain.Task{}
 	}
 	return state, nil
+}
+
+func (s *Store) latestGoalConfirmations(ctx context.Context) (map[int64]time.Time, error) {
+	rows, err := sqlcgen.New(s.db).ListLatestGoalConfirmations(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list goal confirmations: %w", err)
+	}
+	latest := make(map[int64]time.Time, len(rows))
+	for _, row := range rows {
+		at, err := time.Parse(time.RFC3339Nano, fmt.Sprint(row.ConfirmedAt))
+		if err != nil {
+			return nil, fmt.Errorf("parse goal confirmation time: %w", err)
+		}
+		latest[row.GoalID] = at
+	}
+	return latest, nil
 }
 
 // CountUnstartedTasks returns an independent simple count that does not

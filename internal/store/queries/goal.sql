@@ -74,43 +74,18 @@ WHERE id = ? AND status = 'proposed';
 UPDATE goals SET status = 'dropped', result_summary = ?, updated_at = ?
 WHERE id = ? AND status = 'active';
 
--- name: HasGoalWork :one
-SELECT EXISTS(
-  SELECT 1
-  FROM goals AS g
-  WHERE g.id = ? AND g.creator = 'agent'
-    AND (
-      EXISTS (SELECT 1 FROM tasks WHERE goal_id = g.id)
-      OR EXISTS (SELECT 1 FROM goal_handoffs WHERE goal_id = g.id)
-      OR EXISTS (SELECT 1 FROM plan_handoffs WHERE goal_id = g.id)
-      OR EXISTS (SELECT 1 FROM task_create_handoffs WHERE goal_id = g.id)
-      OR EXISTS (SELECT 1 FROM decisions WHERE goal_id = g.id AND kind <> 'goal_approval')
-    )
-);
-
--- name: ListOpenAgentGoalApprovals :many
-SELECT d.id, d.goal_id, d.created_at, g.updated_at
-FROM decisions AS d
-JOIN goals AS g ON g.id = d.goal_id
-WHERE g.status = 'proposed' AND g.creator = 'agent'
-  AND d.kind = 'goal_approval' AND d.status = 'open'
-ORDER BY d.id;
-
 -- name: WithdrawProposedGoal :execresult
 UPDATE goals SET status = 'dropped', result_summary = ?, updated_at = ?
-WHERE goals.id = ? AND goals.status = 'proposed' AND goals.creator = 'agent'
-  AND NOT EXISTS (SELECT 1 FROM tasks WHERE tasks.goal_id = goals.id)
-  AND NOT EXISTS (SELECT 1 FROM goal_handoffs WHERE goal_handoffs.goal_id = goals.id)
-  AND NOT EXISTS (SELECT 1 FROM plan_handoffs WHERE plan_handoffs.goal_id = goals.id)
-  AND NOT EXISTS (SELECT 1 FROM task_create_handoffs WHERE task_create_handoffs.goal_id = goals.id)
-  AND EXISTS (
-    SELECT 1 FROM decisions
-    WHERE decisions.goal_id = goals.id AND kind = 'goal_approval' AND status = 'open'
-  )
-  AND NOT EXISTS (
-    SELECT 1 FROM decisions
-    WHERE decisions.goal_id = goals.id AND kind <> 'goal_approval'
-  );
+WHERE id = ? AND status = 'proposed';
+
+-- name: InsertGoalConfirmation :exec
+INSERT INTO goal_confirmations (goal_id, note, confirmed_at)
+VALUES (?, ?, ?);
+
+-- name: ListLatestGoalConfirmations :many
+SELECT goal_id, MAX(confirmed_at) AS confirmed_at
+FROM goal_confirmations
+GROUP BY goal_id;
 
 -- name: GetGoalApprovalDecisionGoalID :one
 SELECT goal_id

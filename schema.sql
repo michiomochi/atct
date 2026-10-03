@@ -266,3 +266,12 @@ CREATE INDEX IF NOT EXISTS idx_task_create_handoffs_goal_id
 CREATE UNIQUE INDEX IF NOT EXISTS idx_task_create_handoffs_open_goal_id
   ON task_create_handoffs(goal_id)
   WHERE completed_at IS NULL AND recovered_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS goal_confirmations (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  goal_id      INTEGER NOT NULL REFERENCES goals(id),
+  note         TEXT NOT NULL,
+  confirmed_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_goal_confirmations_goal_id ON goal_confirmations(goal_id);

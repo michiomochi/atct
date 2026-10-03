@@ -24,7 +24,6 @@ var (
 	ErrGoalReviewNotApproved       = errors.New("goal review is not approved")
 	ErrGoalReviewHandoffIncomplete = errors.New("goal review requires a completed delegated goal handoff")
 	ErrGoalAlreadyClaimed          = errors.New("goal already claimed")
-	ErrGoalHasWork                 = errors.New("goal has recorded work")
 	ErrGoalSelfReference           = errors.New("goal cannot be derived from itself")
 	ErrGoalDerivationCycle         = errors.New("goal derivation would create a cycle")
 )
@@ -920,11 +919,6 @@ func (s *Store) RejectGoal(ctx context.Context, decisionID int64, reason string)
 	return nil
 }
 
-const (
-	staleGoalApprovalAfter  = 14 * 24 * time.Hour
-	staleGoalApprovalReason = "automatic withdrawal: goal approval was stale for 14 days with no recorded task or handoff activity"
-)
-
 // WithdrawActiveGoal drops a goal and atomically closes its open work.
 func (s *Store) WithdrawActiveGoal(ctx context.Context, goalID int64, reason string) error {
 	if strings.TrimSpace(reason) == "" {
@@ -969,15 +963,6 @@ func (s *Store) WithdrawActiveGoal(ctx context.Context, goalID int64, reason str
 	if rows, err := result.RowsAffected(); err != nil {
 		return fmt.Errorf("withdraw goal rows affected: %w", err)
 	} else if rows != 1 {
-		if status == string(domain.GoalProposed) {
-			hasWork, err := q.HasGoalWork(ctx, goalID)
-			if err != nil {
-				return fmt.Errorf("check proposed goal work: %w", err)
-			}
-			if hasWork {
-				return fmt.Errorf("%w: %d", ErrGoalHasWork, goalID)
-			}
-		}
 		return fmt.Errorf("%w: %d", ErrGoalNotActive, goalID)
 	}
 
@@ -1069,40 +1054,36 @@ func (s *Store) WithdrawActiveGoal(ctx context.Context, goalID int64, reason str
 	return nil
 }
 
-// ReconcileStaleGoalApprovals withdraws untouched agent-created proposals that
-// have had no approval or goal update for the fixed stale window.
-func (s *Store) ReconcileStaleGoalApprovals(ctx context.Context, now time.Time) (int, error) {
-	candidates, err := sqlcgen.New(s.db).ListOpenAgentGoalApprovals(ctx)
+// ConfirmProposedGoal records that a commander reviewed a proposed goal and
+// found it still wanted. It pushes the goal's review-due time out; the goal
+// itself is not touched, since its content did not change.
+func (s *Store) ConfirmProposedGoal(ctx context.Context, goalID int64, note string) error {
+	if strings.TrimSpace(note) == "" {
+		return errors.New("confirmation note is required")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return 0, fmt.Errorf("list stale goal approvals: %w", err)
+		return fmt.Errorf("begin goal confirmation tx: %w", err)
 	}
-
-	withdrawn := 0
-	for _, candidate := range candidates {
-		goal, err := s.GetGoal(ctx, candidate.GoalID)
-		if err != nil {
-			return withdrawn, fmt.Errorf("load stale goal approval %d goal: %w", candidate.ID, err)
-		}
-		approval, err := s.GetDecision(ctx, candidate.ID)
-		if err != nil {
-			return withdrawn, fmt.Errorf("load stale goal approval %d: %w", candidate.ID, err)
-		}
-
-		lastActivity := goal.UpdatedAt
-		if approval.CreatedAt.After(lastActivity) {
-			lastActivity = approval.CreatedAt
-		}
-		if now.Before(lastActivity.Add(staleGoalApprovalAfter)) {
-			continue
-		}
-
-		if err := s.WithdrawActiveGoal(ctx, goal.ID, staleGoalApprovalReason); err != nil {
-			if errors.Is(err, ErrGoalHasWork) || errors.Is(err, ErrGoalNotActive) {
-				continue
-			}
-			return withdrawn, fmt.Errorf("withdraw stale goal approval %d: %w", candidate.ID, err)
-		}
-		withdrawn++
+	defer tx.Rollback()
+	q := sqlcgen.New(tx)
+	status, err := q.GetGoalStatus(ctx, goalID)
+	if err != nil {
+		return fmt.Errorf("lookup status for goal confirmation: %w", err)
 	}
-	return withdrawn, nil
+	if status != string(domain.GoalProposed) {
+		return fmt.Errorf("%w: %d", ErrGoalNotProposed, goalID)
+	}
+	if err := q.InsertGoalConfirmation(ctx, sqlcgen.InsertGoalConfirmationParams{
+		GoalID:      goalID,
+		Note:        note,
+		ConfirmedAt: formatTimestamp(time.Now()),
+	}); err != nil {
+		return fmt.Errorf("insert goal confirmation: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit goal confirmation: %w", err)
+	}
+	s.notify.publishAll()
+	return nil
 }

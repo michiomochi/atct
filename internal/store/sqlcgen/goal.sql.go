@@ -257,26 +257,20 @@ func (q *Queries) HasGoalReview(ctx context.Context, goalID int64) (bool, error)
 	return exists, err
 }
 
-const hasGoalWork = `-- name: HasGoalWork :one
-SELECT EXISTS(
-  SELECT 1
-  FROM goals AS g
-  WHERE g.id = ? AND g.creator = 'agent'
-    AND (
-      EXISTS (SELECT 1 FROM tasks WHERE goal_id = g.id)
-      OR EXISTS (SELECT 1 FROM goal_handoffs WHERE goal_id = g.id)
-      OR EXISTS (SELECT 1 FROM plan_handoffs WHERE goal_id = g.id)
-      OR EXISTS (SELECT 1 FROM task_create_handoffs WHERE goal_id = g.id)
-      OR EXISTS (SELECT 1 FROM decisions WHERE goal_id = g.id AND kind <> 'goal_approval')
-    )
-)
+const insertGoalConfirmation = `-- name: InsertGoalConfirmation :exec
+INSERT INTO goal_confirmations (goal_id, note, confirmed_at)
+VALUES (?, ?, ?)
 `
 
-func (q *Queries) HasGoalWork(ctx context.Context, id int64) (bool, error) {
-	row := q.db.QueryRowContext(ctx, hasGoalWork, id)
-	var exists bool
-	err := row.Scan(&exists)
-	return exists, err
+type InsertGoalConfirmationParams struct {
+	GoalID      int64
+	Note        string
+	ConfirmedAt string
+}
+
+func (q *Queries) InsertGoalConfirmation(ctx context.Context, arg InsertGoalConfirmationParams) error {
+	_, err := q.db.ExecContext(ctx, insertGoalConfirmation, arg.GoalID, arg.Note, arg.ConfirmedAt)
+	return err
 }
 
 const listAllGoals = `-- name: ListAllGoals :many
@@ -491,37 +485,27 @@ func (q *Queries) ListGoals(ctx context.Context, projectID int64) ([]ListGoalsRo
 	return items, nil
 }
 
-const listOpenAgentGoalApprovals = `-- name: ListOpenAgentGoalApprovals :many
-SELECT d.id, d.goal_id, d.created_at, g.updated_at
-FROM decisions AS d
-JOIN goals AS g ON g.id = d.goal_id
-WHERE g.status = 'proposed' AND g.creator = 'agent'
-  AND d.kind = 'goal_approval' AND d.status = 'open'
-ORDER BY d.id
+const listLatestGoalConfirmations = `-- name: ListLatestGoalConfirmations :many
+SELECT goal_id, MAX(confirmed_at) AS confirmed_at
+FROM goal_confirmations
+GROUP BY goal_id
 `
 
-type ListOpenAgentGoalApprovalsRow struct {
-	ID        int64
-	GoalID    int64
-	CreatedAt string
-	UpdatedAt string
+type ListLatestGoalConfirmationsRow struct {
+	GoalID      int64
+	ConfirmedAt interface{}
 }
 
-func (q *Queries) ListOpenAgentGoalApprovals(ctx context.Context) ([]ListOpenAgentGoalApprovalsRow, error) {
-	rows, err := q.db.QueryContext(ctx, listOpenAgentGoalApprovals)
+func (q *Queries) ListLatestGoalConfirmations(ctx context.Context) ([]ListLatestGoalConfirmationsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listLatestGoalConfirmations)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ListOpenAgentGoalApprovalsRow
+	var items []ListLatestGoalConfirmationsRow
 	for rows.Next() {
-		var i ListOpenAgentGoalApprovalsRow
-		if err := rows.Scan(
-			&i.ID,
-			&i.GoalID,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-		); err != nil {
+		var i ListLatestGoalConfirmationsRow
+		if err := rows.Scan(&i.GoalID, &i.ConfirmedAt); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -696,19 +680,7 @@ func (q *Queries) WithdrawActiveGoal(ctx context.Context, arg WithdrawActiveGoal
 
 const withdrawProposedGoal = `-- name: WithdrawProposedGoal :execresult
 UPDATE goals SET status = 'dropped', result_summary = ?, updated_at = ?
-WHERE goals.id = ? AND goals.status = 'proposed' AND goals.creator = 'agent'
-  AND NOT EXISTS (SELECT 1 FROM tasks WHERE tasks.goal_id = goals.id)
-  AND NOT EXISTS (SELECT 1 FROM goal_handoffs WHERE goal_handoffs.goal_id = goals.id)
-  AND NOT EXISTS (SELECT 1 FROM plan_handoffs WHERE plan_handoffs.goal_id = goals.id)
-  AND NOT EXISTS (SELECT 1 FROM task_create_handoffs WHERE task_create_handoffs.goal_id = goals.id)
-  AND EXISTS (
-    SELECT 1 FROM decisions
-    WHERE decisions.goal_id = goals.id AND kind = 'goal_approval' AND status = 'open'
-  )
-  AND NOT EXISTS (
-    SELECT 1 FROM decisions
-    WHERE decisions.goal_id = goals.id AND kind <> 'goal_approval'
-  )
+WHERE id = ? AND status = 'proposed'
 `
 
 type WithdrawProposedGoalParams struct {
