@@ -116,6 +116,9 @@ func addTaskHandoffDirect(t *testing.T, s *Store, handoffID string, taskID int64
 		t.Fatalf("drop task handoff uniqueness index: %v", err)
 	}
 	t.Cleanup(func() {
+		if _, err := s.DB().ExecContext(ctx, `DELETE FROM task_handoff_entries WHERE handoff_id = ?`, handoffID); err != nil {
+			t.Errorf("delete direct task handoff entries %q: %v", handoffID, err)
+		}
 		if _, err := s.DB().ExecContext(ctx, `DELETE FROM task_handoffs WHERE id = ?`, handoffID); err != nil {
 			t.Errorf("delete direct task handoff %q: %v", handoffID, err)
 		}

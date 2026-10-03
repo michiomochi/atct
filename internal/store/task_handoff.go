@@ -74,6 +74,10 @@ type TaskHandoff struct {
 	RequestedAt               *time.Time
 	ReceivedAt                *time.Time
 	CompletedReportAt         *time.Time
+	Entries                   []HandoffEntry   `json:"entries,omitempty"`
+	HasMore                   bool             `json:"has_more,omitempty"`
+	NextCursor                int64            `json:"next_cursor,omitempty"`
+	History                   HandoffEntryPage `json:"history,omitempty"`
 }
 
 func taskHandoffFromRow(row sqlcgen.TaskHandoff) (TaskHandoff, error) {
@@ -202,23 +206,47 @@ func (s *Store) requireGoalHandoffHolder(ctx context.Context, goalID, holderID i
 // running may be reclaimed; an unknown owner is treated as active because its
 // liveness cannot be disproved.
 func (s *Store) reclaimOpenTaskHandoff(ctx context.Context, handoffID string, taskID int64) error {
-	handoffs, err := s.ListTaskHandoffs(ctx, taskID)
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("list open task handoffs: %w", err)
+		return fmt.Errorf("begin task handoff reclaim tx: %w", err)
+	}
+	defer tx.Rollback()
+	reclaimed, err := reclaimOpenTaskHandoffTx(ctx, tx, handoffID, taskID)
+	if err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit task handoff reclaim: %w", err)
+	}
+	if reclaimed != nil {
+		s.publishTaskHandoffReported(ctx, *reclaimed)
+	}
+	return nil
+}
+
+func reclaimOpenTaskHandoffTx(ctx context.Context, tx *sql.Tx, handoffID string, taskID int64) (*TaskHandoff, error) {
+	rows, err := sqlcgen.New(tx).ListTaskHandoffs(ctx, taskID)
+	if err != nil {
+		return nil, fmt.Errorf("list open task handoffs: %w", err)
 	}
 
 	var open *TaskHandoff
-	for i := range handoffs {
-		if handoffs[i].CompletedReportAt != nil || handoffs[i].RecoveredAt != nil || handoffs[i].ID == handoffID {
+	for i := range rows {
+		handoff, err := taskHandoffFromRow(rows[i])
+		if err != nil {
+			return nil, fmt.Errorf("parse open task handoff: %w", err)
+		}
+		if handoff.CompletedReportAt != nil || handoff.RecoveredAt != nil || handoff.ID == handoffID {
 			continue
 		}
 		if open != nil {
-			return fmt.Errorf("%w: task %d has multiple open handoffs", ErrTaskHandoffAlreadyOpen, taskID)
+			return nil, fmt.Errorf("%w: task %d has multiple open handoffs", ErrTaskHandoffAlreadyOpen, taskID)
 		}
-		open = &handoffs[i]
+		candidate := handoff
+		open = &candidate
 	}
 	if open == nil {
-		return nil
+		return nil, nil
 	}
 
 	ownerID := open.ReceivedBy
@@ -227,13 +255,34 @@ func (s *Store) reclaimOpenTaskHandoff(ctx context.Context, handoffID string, ta
 		// is the only available liveness signal.
 		ownerID = open.RequestedBy
 	}
-	if ownerID == 0 || !claimIsDefinitelyDead(ctx, s, ownerID) {
-		return fmt.Errorf("%w: task %d has a live handoff owner", ErrTaskHandoffAlreadyOpen, taskID)
+	if ownerID == 0 || agentSessionLiveInQueries(ctx, sqlcgen.New(tx), ownerID, time.Now()) {
+		return nil, fmt.Errorf("%w: task %d has a live handoff owner", ErrTaskHandoffAlreadyOpen, taskID)
 	}
-	if _, err := s.CompleteTaskHandoff(ctx, open.ID, taskID, taskHandoffReclaimedReport); err != nil {
-		return fmt.Errorf("reclaim task handoff %q: %w", open.ID, err)
+	nowTime := time.Now().UTC()
+	now := formatTimestamp(nowTime)
+	result, err := sqlcgen.New(tx).CompleteTaskHandoff(ctx, sqlcgen.CompleteTaskHandoffParams{
+		ID:                open.ID,
+		TaskID:            taskID,
+		CompletedReportAt: sql.NullString{String: now, Valid: true},
+		CompleteReport:    sql.NullString{String: taskHandoffReclaimedReport, Valid: true},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("reclaim task handoff %q: %w", open.ID, err)
 	}
-	return nil
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return nil, fmt.Errorf("reclaim task handoff %q rows affected: %w", open.ID, err)
+	}
+	if rowsAffected != 1 {
+		return nil, fmt.Errorf("reclaim task handoff %q was not completed", open.ID)
+	}
+	authorID := open.ReceivedBy
+	if _, err := appendHandoffEntryTx(ctx, sqlcgen.New(tx), "task_handoff_entries", open.ID, HandoffEntryKindComplete, taskHandoffReclaimedReport, authorID, "", "", true, nowTime); err != nil {
+		return nil, fmt.Errorf("append reclaimed task handoff entry: %w", err)
+	}
+	open.CompletedReportAt = &nowTime
+	open.CompleteReport = taskHandoffReclaimedReport
+	return open, nil
 }
 
 // openTaskHandoff returns the task's single received, incomplete handoff.
@@ -289,17 +338,38 @@ func (s *Store) requestTaskHandoff(ctx context.Context, handoffID string, taskID
 			return TaskHandoff{}, err
 		}
 	}
-	if err := s.reclaimOpenTaskHandoff(ctx, handoffID, taskID); err != nil {
-		return TaskHandoff{}, err
+	if strings.TrimSpace(requestReport) != "" {
+		normalizedReport, err := normalizeHandoffEntryBody(requestReport)
+		if err != nil {
+			return TaskHandoff{}, err
+		}
+		requestReport = normalizedReport
 	}
-	now := formatTimestamp(time.Now())
+	nowTime := time.Now().UTC()
+	now := formatTimestamp(nowTime)
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return TaskHandoff{}, fmt.Errorf("begin task handoff request tx: %w", err)
 	}
 	defer tx.Rollback()
-	q := sqlcgen.New(tx)
-	if err := q.RequestTaskHandoff(ctx, sqlcgen.RequestTaskHandoffParams{
+	txq := sqlcgen.New(tx)
+	q := txq
+	existing, lookupErr := txq.GetTaskHandoff(ctx, handoffID)
+	if lookupErr == nil && existing.CompletedReportAt.Valid && strings.TrimSpace(existing.CompletedReportAt.String) != "" {
+		return TaskHandoff{}, fmt.Errorf("%w: task handoff %q is already complete; use amend or reopen", ErrHandoffEntryTerminal, handoffID)
+	}
+	if lookupErr != nil && !errors.Is(lookupErr, sql.ErrNoRows) {
+		return TaskHandoff{}, fmt.Errorf("find task handoff before request: %w", lookupErr)
+	}
+	reclaimed, err := reclaimOpenTaskHandoffTx(ctx, tx, handoffID, taskID)
+	if err != nil {
+		return TaskHandoff{}, err
+	}
+	existingEntryCount, err := txq.CountTaskHandoffRequestEntries(ctx, handoffID)
+	if err != nil {
+		return TaskHandoff{}, fmt.Errorf("check existing task handoff request entry: %w", err)
+	}
+	if err := txq.RequestTaskHandoff(ctx, sqlcgen.RequestTaskHandoffParams{
 		ID:            handoffID,
 		TaskID:        taskID,
 		RequestedBy:   sql.NullInt64{Int64: requestedBy, Valid: requestedBy != 0},
@@ -307,6 +377,15 @@ func (s *Store) requestTaskHandoff(ctx context.Context, handoffID string, taskID
 		RequestReport: sql.NullString{String: requestReport, Valid: requestReport != ""},
 	}); err != nil {
 		return TaskHandoff{}, fmt.Errorf("request task handoff: %w", err)
+	}
+	if existingEntryCount == 0 {
+		requestBody := requestReport
+		if strings.TrimSpace(requestBody) == "" {
+			requestBody = "requested"
+		}
+		if _, err := appendHandoffEntryTx(ctx, sqlcgen.New(tx), "task_handoff_entries", handoffID, HandoffEntryKindRequest, requestBody, requestedBy, "", "", true, nowTime); err != nil {
+			return TaskHandoff{}, fmt.Errorf("append task handoff request entry: %w", err)
+		}
 	}
 	statusResult, err := q.UpdateTaskStatus(ctx, sqlcgen.UpdateTaskStatusParams{
 		Status:    "todo",
@@ -332,6 +411,9 @@ func (s *Store) requestTaskHandoff(ctx context.Context, handoffID string, taskID
 	if err := tx.Commit(); err != nil {
 		return TaskHandoff{}, fmt.Errorf("commit task handoff request: %w", err)
 	}
+	if reclaimed != nil {
+		s.publishTaskHandoffReported(ctx, *reclaimed)
+	}
 	s.publishWorkflowEvents([]DecisionEvent{event})
 	return s.GetTaskHandoff(ctx, handoffID)
 }
@@ -344,13 +426,42 @@ func (s *Store) ReceiveTaskHandoff(ctx context.Context, handoffID string, taskID
 	if err := s.ensureTaskHandoffTask(ctx, handoffID, taskID); err != nil {
 		return TaskHandoff{}, err
 	}
-	now := formatTimestamp(time.Now())
+	nowTime := time.Now().UTC()
+	now := formatTimestamp(nowTime)
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return TaskHandoff{}, fmt.Errorf("begin task handoff receive tx: %w", err)
 	}
 	defer tx.Rollback()
 	q := sqlcgen.New(tx)
+	current, err := q.GetTaskHandoff(ctx, handoffID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return TaskHandoff{}, fmt.Errorf("%w: %s", ErrTaskHandoffNotFound, handoffID)
+		}
+		return TaskHandoff{}, fmt.Errorf("find task handoff receipt state: %w", err)
+	}
+	if current.TaskID != taskID || !current.RequestedAt.Valid || strings.TrimSpace(current.RequestedAt.String) == "" {
+		return TaskHandoff{}, fmt.Errorf("%w: handoff %q has no request", ErrTaskHandoffNotFound, handoffID)
+	}
+	if current.ReceivedAt.Valid && current.ReceivedAt.String != "" && current.ReceivedBy.Valid && current.ReceivedBy.Int64 == receivedBy {
+		page, err := listHandoffEntries(ctx, sqlcgen.New(tx), "task_handoff_entries", handoffID, 0, HandoffHistoryMaxLimit)
+		if err != nil {
+			return TaskHandoff{}, fmt.Errorf("list task handoff history after retry receive: %w", err)
+		}
+		if err := tx.Commit(); err != nil {
+			return TaskHandoff{}, fmt.Errorf("commit task handoff receive retry: %w", err)
+		}
+		received, err := s.GetTaskHandoff(ctx, handoffID)
+		if err != nil {
+			return TaskHandoff{}, err
+		}
+		received.Entries = page.Entries
+		received.HasMore = page.HasMore
+		received.NextCursor = page.NextCursor
+		received.History = page
+		return received, nil
+	}
 	result, err := q.ReceiveTaskHandoff(ctx, sqlcgen.ReceiveTaskHandoffParams{
 		ID:          handoffID,
 		TaskID:      taskID,
@@ -371,6 +482,13 @@ func (s *Store) ReceiveTaskHandoff(ctx context.Context, handoffID string, taskID
 				handoffID, receiver, ErrTaskHandoffLiveReceiver)
 		}
 		return TaskHandoff{}, fmt.Errorf("%w: %s", ErrTaskHandoffNotFound, handoffID)
+	}
+	if _, err := appendHandoffEntryTx(ctx, q, "task_handoff_entries", handoffID, HandoffEntryKindReceived, "received", receivedBy, "", "", true, nowTime); err != nil {
+		return TaskHandoff{}, fmt.Errorf("append task handoff received entry: %w", err)
+	}
+	page, err := listHandoffEntries(ctx, q, "task_handoff_entries", handoffID, 0, HandoffHistoryMaxLimit)
+	if err != nil {
+		return TaskHandoff{}, fmt.Errorf("list task handoff history after receive: %w", err)
 	}
 	statusResult, err := q.UpdateTaskStatus(ctx, sqlcgen.UpdateTaskStatusParams{
 		Status:    "doing",
@@ -396,8 +514,16 @@ func (s *Store) ReceiveTaskHandoff(ctx context.Context, handoffID string, taskID
 	if err := tx.Commit(); err != nil {
 		return TaskHandoff{}, fmt.Errorf("commit task handoff receive: %w", err)
 	}
+	received, err := s.GetTaskHandoff(ctx, handoffID)
+	if err != nil {
+		return TaskHandoff{}, err
+	}
+	received.Entries = page.Entries
+	received.HasMore = page.HasMore
+	received.NextCursor = page.NextCursor
+	received.History = page
 	s.publishWorkflowEvents([]DecisionEvent{event})
-	return s.GetTaskHandoff(ctx, handoffID)
+	return received, nil
 }
 
 // RequestTaskHandoffReview starts the review state for a received task handoff.
@@ -461,6 +587,9 @@ func (s *Store) RequestTaskHandoffReview(ctx context.Context, handoffID string, 
 	} else if affected == 0 {
 		return TaskHandoff{}, fmt.Errorf("%w: %d", ErrTaskNotFound, taskID)
 	}
+	if _, err := appendHandoffEntryTx(ctx, q, "task_handoff_entries", handoffID, HandoffEntryKindReviewRequested, reviewRequestReport, requestedBy, "", "", true, time.Now().UTC()); err != nil {
+		return TaskHandoff{}, err
+	}
 	projectID, goalID, err := taskWorkflowEventScope(ctx, q, taskID)
 	if err != nil {
 		return TaskHandoff{}, err
@@ -518,6 +647,9 @@ func (s *Store) ReceiveTaskHandoffReview(ctx context.Context, handoffID string, 
 		return TaskHandoff{}, fmt.Errorf("receive task handoff review rows affected: %w", err)
 	} else if affected == 0 {
 		return TaskHandoff{}, ErrTaskHandoffReviewState
+	}
+	if _, err := appendHandoffEntryTx(ctx, q, "task_handoff_entries", handoffID, HandoffEntryKindReviewReceived, "received", receivedBy, "", "", true, time.Now().UTC()); err != nil {
+		return TaskHandoff{}, err
 	}
 	projectID, goalID, err := taskWorkflowEventScope(ctx, q, taskID)
 	if err != nil {
@@ -612,6 +744,9 @@ func (s *Store) RecoverTaskHandoff(ctx context.Context, handoffID string, taskID
 	} else if affected != 1 {
 		return TaskHandoff{}, ErrTaskHandoffRecoveryState
 	}
+	if _, err := appendHandoffEntryTx(ctx, q, "task_handoff_entries", handoffID, HandoffEntryKindRequest, "recovered: "+reason, callerID, "", "", true, time.Now().UTC()); err != nil {
+		return TaskHandoff{}, err
+	}
 	if err := tx.Commit(); err != nil {
 		return TaskHandoff{}, fmt.Errorf("commit task handoff recovery: %w", err)
 	}
@@ -676,6 +811,9 @@ func (s *Store) RejectTaskHandoffReview(ctx context.Context, handoffID string, t
 	} else if affected == 0 {
 		return TaskHandoff{}, fmt.Errorf("%w: %d", ErrTaskNotFound, taskID)
 	}
+	if _, err := appendHandoffEntryTx(ctx, q, "task_handoff_entries", handoffID, HandoffEntryKindReviewRejected, rejectReport, reviewerID, "", "", true, time.Now().UTC()); err != nil {
+		return TaskHandoff{}, err
+	}
 	projectID, goalID, err := taskWorkflowEventScope(ctx, q, taskID)
 	if err != nil {
 		return TaskHandoff{}, err
@@ -706,12 +844,25 @@ func (s *Store) ReceiveTaskHandoffReviewRejection(ctx context.Context, handoffID
 	if handoff.ReviewRejectedAt == nil || handoff.CompletedReportAt != nil || handoff.RecoveredAt != nil || handoff.ReceivedBy != receivedBy || receivedBy == 0 {
 		return TaskHandoff{}, ErrTaskHandoffReviewState
 	}
-	result, err := sqlcgen.New(s.db).ReceiveTaskHandoffReviewRejection(ctx, sqlcgen.ReceiveTaskHandoffReviewRejectionParams{ReviewRejectionReceivedBy: sql.NullInt64{Int64: receivedBy, Valid: true}, ReviewRejectionReceivedAt: sql.NullString{String: formatTimestamp(time.Now()), Valid: true}, ID: handoffID, TaskID: taskID, ReceivedBy: sql.NullInt64{Int64: receivedBy, Valid: true}})
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return TaskHandoff{}, fmt.Errorf("begin task handoff review rejection receive tx: %w", err)
+	}
+	defer tx.Rollback()
+	q := sqlcgen.New(tx)
+	now := time.Now().UTC()
+	result, err := q.ReceiveTaskHandoffReviewRejection(ctx, sqlcgen.ReceiveTaskHandoffReviewRejectionParams{ReviewRejectionReceivedBy: sql.NullInt64{Int64: receivedBy, Valid: true}, ReviewRejectionReceivedAt: sql.NullString{String: formatTimestamp(now), Valid: true}, ID: handoffID, TaskID: taskID, ReceivedBy: sql.NullInt64{Int64: receivedBy, Valid: true}})
 	if err != nil {
 		return TaskHandoff{}, fmt.Errorf("receive task handoff review rejection: %w", err)
 	}
 	if affected, err := result.RowsAffected(); err != nil || affected == 0 {
 		return TaskHandoff{}, ErrTaskHandoffReviewState
+	}
+	if _, err := appendHandoffEntryTx(ctx, q, "task_handoff_entries", handoffID, HandoffEntryKindReceived, "review rejection received", receivedBy, "", "", true, now); err != nil {
+		return TaskHandoff{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return TaskHandoff{}, fmt.Errorf("commit task handoff review rejection receive: %w", err)
 	}
 	return s.GetTaskHandoff(ctx, handoffID)
 }
@@ -757,7 +908,8 @@ func (s *Store) CompleteTaskHandoffByReviewer(ctx context.Context, handoffID str
 		return TaskHandoff{}, taskHasOpenDecisionsError(taskID, decisions)
 	}
 
-	now := formatTimestamp(time.Now())
+	nowTime := time.Now().UTC()
+	now := formatTimestamp(nowTime)
 	result, err := q.CompleteTaskHandoffByReviewer(ctx, sqlcgen.CompleteTaskHandoffByReviewerParams{
 		CompletedReportAt: sql.NullString{String: now, Valid: true},
 		CompleteReport:    sql.NullString{String: completeReport, Valid: true},
@@ -772,6 +924,9 @@ func (s *Store) CompleteTaskHandoffByReviewer(ctx context.Context, handoffID str
 		return TaskHandoff{}, fmt.Errorf("complete task handoff by reviewer rows affected: %w", err)
 	} else if affected == 0 {
 		return TaskHandoff{}, ErrTaskHandoffReviewState
+	}
+	if _, err := appendHandoffEntryTx(ctx, q, "task_handoff_entries", handoffID, HandoffEntryKindComplete, completeReport, reviewerID, "", "", true, nowTime); err != nil {
+		return TaskHandoff{}, fmt.Errorf("append task handoff review completion entry: %w", err)
 	}
 	statusResult, err := q.UpdateTaskStatus(ctx, sqlcgen.UpdateTaskStatusParams{
 		Status:    "done",
@@ -864,13 +1019,28 @@ func (s *Store) CompleteTaskHandoff(ctx context.Context, handoffID string, taskI
 	if handoff.ReviewRequestedAt != nil && completeReport != taskHandoffReclaimedReport && completeReport != taskHandoffReleasedReport {
 		return TaskHandoff{}, fmt.Errorf("%w: complete the task handoff through its recorded reviewer", ErrTaskHandoffReviewState)
 	}
-	now := formatTimestamp(time.Now())
+	nowTime := time.Now().UTC()
+	now := formatTimestamp(nowTime)
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return TaskHandoff{}, fmt.Errorf("begin task handoff completion tx: %w", err)
 	}
 	defer tx.Rollback()
 	q := sqlcgen.New(tx)
+	current, err := q.GetTaskHandoff(ctx, handoffID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return TaskHandoff{}, fmt.Errorf("%w: %s", ErrTaskHandoffNotFound, handoffID)
+		}
+		return TaskHandoff{}, fmt.Errorf("find task handoff receiver: %w", err)
+	}
+	if current.TaskID != taskID {
+		return TaskHandoff{}, fmt.Errorf("%w: %s", ErrTaskHandoffTaskMismatch, handoffID)
+	}
+	if !current.ReceivedAt.Valid || strings.TrimSpace(current.ReceivedAt.String) == "" {
+		return TaskHandoff{}, fmt.Errorf("%w: handoff %q must be received before completion", ErrHandoffEntryParticipant, handoffID)
+	}
+	receivedBy := current.ReceivedBy
 	result, err := q.CompleteTaskHandoff(ctx, sqlcgen.CompleteTaskHandoffParams{
 		ID:                handoffID,
 		TaskID:            taskID,
@@ -889,6 +1059,13 @@ func (s *Store) CompleteTaskHandoff(ctx context.Context, handoffID string, taskI
 			return TaskHandoff{}, fmt.Errorf("task handoff %q is already reported; use another path to add a report after completion", handoffID)
 		}
 		return TaskHandoff{}, fmt.Errorf("%w: %s", ErrTaskHandoffNotFound, handoffID)
+	}
+	authorID := int64(0)
+	if receivedBy.Valid {
+		authorID = receivedBy.Int64
+	}
+	if _, err := appendHandoffEntryTx(ctx, q, "task_handoff_entries", handoffID, HandoffEntryKindComplete, completeReport, authorID, "", "", true, nowTime); err != nil {
+		return TaskHandoff{}, fmt.Errorf("append task handoff complete entry: %w", err)
 	}
 	var event DecisionEvent
 	// Claim locks have no delegate report, so their completion is not reportable.
@@ -920,6 +1097,33 @@ func (s *Store) CompleteTaskHandoff(ctx context.Context, handoffID string, taskI
 	return completed, nil
 }
 
+func (s *Store) publishTaskHandoffReported(ctx context.Context, completed TaskHandoff) {
+	// Claim locks have no delegate report, so their completion is not reportable.
+	if !handoffIsDelegation(completed.RequestedBy, completed.ReceivedBy) {
+		return
+	}
+	// Notification is best-effort; do not turn a successful completion into an error.
+	goalID, err := sqlcgen.New(s.db).GetTaskGoalID(ctx, completed.TaskID)
+	if err != nil {
+		return
+	}
+	goal, err := s.GetGoal(ctx, goalID)
+	if err != nil {
+		return
+	}
+	s.notify.publishEvent(Event{
+		Name: EventHandoffReported,
+		Data: WakeupEvent{
+			WakeupID:       NewWakeupID(),
+			ProjectID:      goal.ProjectID,
+			GoalID:         goalID,
+			TaskID:         completed.TaskID,
+			HandoffID:      completed.ID,
+			CompleteReport: completed.CompleteReport,
+		},
+	})
+}
+
 // AmendTaskHandoffReport fills in or corrects the report on a handoff that is
 // already closed without changing when it was completed.
 func (s *Store) AmendTaskHandoffReport(ctx context.Context, handoffID string, taskID int64, completeReport string) (TaskHandoff, error) {
@@ -929,7 +1133,23 @@ func (s *Store) AmendTaskHandoffReport(ctx context.Context, handoffID string, ta
 	if err := s.ensureTaskHandoffTask(ctx, handoffID, taskID); err != nil {
 		return TaskHandoff{}, err
 	}
-	result, err := sqlcgen.New(s.db).AmendTaskHandoffReport(ctx, sqlcgen.AmendTaskHandoffReportParams{
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return TaskHandoff{}, fmt.Errorf("begin task handoff amend tx: %w", err)
+	}
+	defer tx.Rollback()
+	current, err := sqlcgen.New(tx).GetTaskHandoff(ctx, handoffID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return TaskHandoff{}, fmt.Errorf("%w: %s", ErrTaskHandoffNotFound, handoffID)
+		}
+		return TaskHandoff{}, fmt.Errorf("find task handoff receiver for amend: %w", err)
+	}
+	if current.TaskID != taskID {
+		return TaskHandoff{}, fmt.Errorf("%w: %s", ErrTaskHandoffTaskMismatch, handoffID)
+	}
+	receivedBy := current.ReceivedBy
+	result, err := sqlcgen.New(tx).AmendTaskHandoffReport(ctx, sqlcgen.AmendTaskHandoffReportParams{
 		ID: handoffID, TaskID: taskID, CompleteReport: sql.NullString{String: completeReport, Valid: true},
 	})
 	if err != nil {
@@ -941,6 +1161,15 @@ func (s *Store) AmendTaskHandoffReport(ctx context.Context, handoffID string, ta
 	}
 	if n == 0 {
 		return TaskHandoff{}, fmt.Errorf("task handoff %q is not yet completed; use atct_task_handoff_complete", handoffID)
+	}
+	if !receivedBy.Valid || receivedBy.Int64 <= 0 {
+		return TaskHandoff{}, fmt.Errorf("%w: completed task handoff has no received_by", ErrHandoffEntryParticipant)
+	}
+	if _, err := appendHandoffEntryTx(ctx, sqlcgen.New(tx), "task_handoff_entries", handoffID, HandoffEntryKindCompleted, completeReport, receivedBy.Int64, "", "", true, time.Now().UTC()); err != nil {
+		return TaskHandoff{}, fmt.Errorf("append task handoff amend entry: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return TaskHandoff{}, fmt.Errorf("commit task handoff amend: %w", err)
 	}
 	return s.GetTaskHandoff(ctx, handoffID)
 }

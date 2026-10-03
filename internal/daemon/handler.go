@@ -652,10 +652,19 @@ type goalHandoffReviewRejectParams struct {
 }
 
 type goalHandoffCompleteParams struct {
-	HandoffID      string `json:"handoff_id"`
-	GoalID         int64  `json:"goal_id"`
-	AgentSessionID int64  `json:"agent_session_id"`
-	CompleteReport string `json:"complete_report"`
+	HandoffID         string `json:"handoff_id"`
+	GoalID            int64  `json:"goal_id"`
+	AgentSessionID    int64  `json:"agent_session_id"`
+	CompleteReport    string `json:"complete_report"`
+	Capability        string `json:"capability"`
+	CallerCapability  string `json:"caller_capability"`
+	MonitorCapability string `json:"monitor_capability"`
+}
+
+func (p goalHandoffCompleteParams) capabilityFields() capabilityFields {
+	return capabilityFields{
+		Capability: p.Capability, CallerCapability: p.CallerCapability, MonitorCapability: p.MonitorCapability,
+	}
 }
 
 type goalReviewRequestParams struct {
@@ -896,7 +905,14 @@ func (d *Daemon) receivePlanReviewResponse(ctx context.Context, p planHandoffRev
 // from, names the operation that follows. Carrying it on the response is what
 // keeps an agent from re-reading doc/execution-flow.md to find its next call.
 func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage, error) {
-	raw, err := d.dispatchMethod(ctx, req)
+	return d.dispatchWithPeer(ctx, req, 0)
+}
+
+// dispatchWithPeer keeps direct in-process callers compatible while attaching
+// a daemon-assigned identity to requests received over one Unix socket
+// connection. Monitored capabilities are accepted only on that same peer.
+func (d *Daemon) dispatchWithPeer(ctx context.Context, req rpc.Request, peerID uint64) (json.RawMessage, error) {
+	raw, err := d.dispatchMethodWithPeer(ctx, req, peerID)
 	if err != nil {
 		return nil, err
 	}
@@ -929,6 +945,10 @@ func withNextStep(raw json.RawMessage, next []nextStepOption) json.RawMessage {
 }
 
 func (d *Daemon) dispatchMethod(ctx context.Context, req rpc.Request) (json.RawMessage, error) {
+	return d.dispatchMethodWithPeer(ctx, req, 0)
+}
+
+func (d *Daemon) dispatchMethodWithPeer(ctx context.Context, req rpc.Request, peerID uint64) (json.RawMessage, error) {
 	params, err := d.normalizeEntityIDs(ctx, req.Method, req.Params)
 	if err != nil {
 		return nil, err
@@ -938,8 +958,9 @@ func (d *Daemon) dispatchMethod(ctx context.Context, req rpc.Request) (json.RawM
 	switch req.Method {
 	case "run.register":
 		var p struct {
-			PID int    `json:"pid"`
-			CWD string `json:"cwd"`
+			PID       int    `json:"pid"`
+			CWD       string `json:"cwd"`
+			Monitored bool   `json:"monitored"`
 		}
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, err
@@ -957,7 +978,30 @@ func (d *Daemon) dispatchMethod(ctx context.Context, req rpc.Request) (json.RawM
 		if err != nil {
 			return nil, err
 		}
-		return marshal(map[string]any{"ok": true, "agent_session_id": agentSessionID}, nil)
+		response := map[string]any{"ok": true, "agent_session_id": agentSessionID}
+		if p.Monitored {
+			capability, err := d.issueMonitoredCallerCapability(agentSessionID, peerID)
+			if err != nil {
+				return nil, err
+			}
+			response["capability"] = capability.Capability
+			response["expires_at"] = capability.ExpiresAt
+		}
+		return marshal(response, nil)
+
+	case "monitor.capability.issue", "session.capability.issue":
+		var p struct {
+			AgentSessionID int64 `json:"agent_session_id"`
+			Monitored      bool  `json:"monitored"`
+		}
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		if !p.Monitored {
+			return nil, ErrMonitoredCallerRequired
+		}
+		capability, err := d.issueMonitoredCallerCapability(p.AgentSessionID, peerID)
+		return marshal(capability, err)
 
 	case "session.identify":
 		var p struct {
@@ -1631,13 +1675,19 @@ func (d *Daemon) dispatchMethod(ctx context.Context, req rpc.Request) (json.RawM
 		response, err := d.responseWithScopedUnappliedDecisions(ctx, tk, tk.GoalID, p.AgentSessionID)
 		return marshal(response, err)
 
-	case "task.handoff.request":
+	case "task.handoff.request", "handoff.request":
 		var p taskHandoffRequestParams
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, err
 		}
 		handoff, err := d.requestTaskHandoff(ctx, p)
-		return marshal(handoff, err)
+		return marshalCanonicalHandoff(handoff, err)
+
+	case "handoff.entry.append":
+		return d.appendTaskHandoffEntryRPC(ctx, req.Params, peerID)
+
+	case "handoff.entry.history":
+		return d.historyTaskHandoffEntryRPC(ctx, req.Params, peerID)
 
 	case "task.handoff.receive":
 		var p taskHandoffReceiveParams
@@ -1650,6 +1700,57 @@ func (d *Daemon) dispatchMethod(ctx context.Context, req rpc.Request) (json.RawM
 		}
 		response, err := d.receiveTaskHandoffResponse(ctx, p, handoff)
 		return marshal(response, err)
+
+	case "handoff.receive":
+		var p taskHandoffReceiveParams
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		var handoff store.TaskHandoff
+		var err error
+		if p.HandoffID == "" {
+			handoff, err = d.store.ReceiveTaskHandoffForTask(ctx, p.TaskID, p.ReceivedBy)
+		} else {
+			handoff, err = d.store.ReceiveTaskHandoff(ctx, p.HandoffID, p.TaskID, p.ReceivedBy)
+		}
+		return marshalCanonicalHandoff(handoff, err)
+
+	case "handoff.complete":
+		var p struct {
+			HandoffID         string `json:"handoff_id"`
+			TaskID            int64  `json:"task_id"`
+			CompleteReport    string `json:"complete_report"`
+			AgentSessionID    int64  `json:"agent_session_id"`
+			Capability        string `json:"capability"`
+			CallerCapability  string `json:"caller_capability"`
+			MonitorCapability string `json:"monitor_capability"`
+		}
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		capabilitySessionID, capabilityErr := d.sessionFromCapability(capabilityFields{
+			Capability: p.Capability, CallerCapability: p.CallerCapability, MonitorCapability: p.MonitorCapability,
+		}, p.AgentSessionID, peerID)
+		if capabilityErr != nil {
+			return nil, capabilityErr
+		}
+		if capabilitySessionID != 0 && p.HandoffID != "" {
+			handoff, err := d.store.GetTaskHandoff(ctx, p.HandoffID)
+			if err != nil {
+				return nil, err
+			}
+			if err := requireHandoffParticipant(capabilitySessionID, handoff.RequestedBy, handoff.ReceivedBy); err != nil {
+				return nil, err
+			}
+		}
+		var handoff store.TaskHandoff
+		var err error
+		if p.HandoffID == "" {
+			handoff, err = d.store.CompleteTaskHandoffForTask(ctx, p.TaskID, p.CompleteReport)
+		} else {
+			handoff, err = d.store.CompleteTaskHandoff(ctx, p.HandoffID, p.TaskID, p.CompleteReport)
+		}
+		return marshalCanonicalHandoff(handoff, err)
 
 	case "task.handoff.review.request":
 		var p taskHandoffReviewRequestParams
@@ -1723,7 +1824,7 @@ func (d *Daemon) dispatchMethod(ctx context.Context, req rpc.Request) (json.RawM
 			return nil, err
 		}
 		handoff, err := d.store.AmendTaskHandoffReport(ctx, p.HandoffID, p.TaskID, p.CompleteReport)
-		return marshal(handoff, err)
+		return marshalCanonicalHandoff(handoff, err)
 
 	case "goal.handoff.request":
 		var p goalHandoffRequestParams
@@ -1731,7 +1832,13 @@ func (d *Daemon) dispatchMethod(ctx context.Context, req rpc.Request) (json.RawM
 			return nil, err
 		}
 		handoff, err := d.requestGoalHandoff(ctx, p)
-		return marshal(handoff, err)
+		return marshalCanonicalHandoff(handoff, err)
+
+	case "goal.handoff.entry.append":
+		return d.appendGoalHandoffEntryRPC(ctx, req.Params, peerID)
+
+	case "goal.handoff.entry.history":
+		return d.historyGoalHandoffEntryRPC(ctx, req.Params, peerID)
 
 	case "goal.handoff.receive":
 		var p goalHandoffReceiveParams
@@ -1743,7 +1850,10 @@ func (d *Daemon) dispatchMethod(ctx context.Context, req rpc.Request) (json.RawM
 			return nil, err
 		}
 		response, err := d.receiveGoalHandoffResponse(ctx, p, handoff)
-		return marshal(response, err)
+		if err != nil {
+			return nil, err
+		}
+		return marshalCanonicalHandoffWithRoleEvidence(handoff, response)
 
 	case "goal.handoff.review.request":
 		var p goalHandoffReviewRequestParams
@@ -1802,7 +1912,7 @@ func (d *Daemon) dispatchMethod(ctx context.Context, req rpc.Request) (json.RawM
 			return nil, err
 		}
 		handoff, err := d.completeGoalHandoff(ctx, p)
-		return marshal(handoff, err)
+		return marshalCanonicalHandoff(handoff, err)
 
 	case "goal.review.request":
 		var p goalReviewRequestParams
@@ -1860,7 +1970,7 @@ func (d *Daemon) dispatchMethod(ctx context.Context, req rpc.Request) (json.RawM
 			return nil, err
 		}
 		handoff, err := d.store.AmendGoalHandoffReport(ctx, p.HandoffID, p.GoalID, p.CompleteReport)
-		return marshal(handoff, err)
+		return marshalCanonicalHandoff(handoff, err)
 
 	case "plan.handoff.review.request":
 		var p planHandoffReviewRequestParams

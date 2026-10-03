@@ -199,6 +199,10 @@ func TestHTTPHandlerMCPServesTheShimTools(t *testing.T) {
 		"atct_goal_handoff_review_reject_receive": false,
 		"atct_plan_handoff_review_reject_receive": false,
 		"atct_task_create_handoff_receive":        false,
+		"atct_handoff_entry_append":               false,
+		"atct_handoff_entry_history":              false,
+		"atct_goal_handoff_entry_append":          false,
+		"atct_goal_handoff_entry_history":         false,
 	}
 	for _, rawTool := range tools {
 		tool, ok := rawTool.(map[string]any)

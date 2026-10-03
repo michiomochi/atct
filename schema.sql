@@ -107,9 +107,9 @@ CREATE TABLE IF NOT EXISTS decisions (
   answer_label TEXT NOT NULL DEFAULT '',
   answer_text  TEXT NOT NULL DEFAULT '',
   answered_at  TEXT,
-  applied_at   TEXT,
-  agent_session_id INTEGER NOT NULL DEFAULT 0,
-  created_at   TEXT NOT NULL
+	applied_at   TEXT,
+	agent_session_id INTEGER NOT NULL DEFAULT 0,
+	created_at   TEXT NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_decisions_open
@@ -185,6 +185,46 @@ CREATE INDEX IF NOT EXISTS idx_goal_handoffs_goal_id
 CREATE UNIQUE INDEX IF NOT EXISTS idx_goal_handoffs_open_goal_id
   ON goal_handoffs(goal_id)
   WHERE completed_report_at IS NULL AND recovered_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS task_handoff_entries (
+  id                INTEGER PRIMARY KEY AUTOINCREMENT,
+  handoff_id        TEXT NOT NULL REFERENCES task_handoffs(id) ON DELETE RESTRICT,
+  kind              TEXT NOT NULL CHECK (kind IN (
+    'request', 'received', 'review_requested', 'review_received',
+    'review_rejected', 'completed'
+  )),
+  body              TEXT NOT NULL,
+  author_session_id INTEGER REFERENCES agent_sessions(id) ON DELETE SET NULL,
+  in_reply_to_id    INTEGER,
+  created_at        TEXT NOT NULL,
+  CHECK (in_reply_to_id IS NULL OR in_reply_to_id <> id),
+  UNIQUE (handoff_id, id),
+  FOREIGN KEY (handoff_id, in_reply_to_id)
+    REFERENCES task_handoff_entries(handoff_id, id) ON DELETE RESTRICT
+);
+
+CREATE INDEX IF NOT EXISTS idx_task_handoff_entries_handoff_sequence
+  ON task_handoff_entries(handoff_id, id);
+
+CREATE TABLE IF NOT EXISTS goal_handoff_entries (
+  id                INTEGER PRIMARY KEY AUTOINCREMENT,
+  handoff_id        TEXT NOT NULL REFERENCES goal_handoffs(id) ON DELETE RESTRICT,
+  kind              TEXT NOT NULL CHECK (kind IN (
+    'request', 'received', 'review_requested', 'review_received',
+    'review_rejected', 'completed'
+  )),
+  body              TEXT NOT NULL,
+  author_session_id INTEGER REFERENCES agent_sessions(id) ON DELETE SET NULL,
+  in_reply_to_id    INTEGER,
+  created_at        TEXT NOT NULL,
+  CHECK (in_reply_to_id IS NULL OR in_reply_to_id <> id),
+  UNIQUE (handoff_id, id),
+  FOREIGN KEY (handoff_id, in_reply_to_id)
+    REFERENCES goal_handoff_entries(handoff_id, id) ON DELETE RESTRICT
+);
+
+CREATE INDEX IF NOT EXISTS idx_goal_handoff_entries_handoff_sequence
+  ON goal_handoff_entries(handoff_id, id);
 
 CREATE TABLE IF NOT EXISTS plan_handoffs (
   id                  TEXT PRIMARY KEY,

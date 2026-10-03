@@ -800,8 +800,8 @@ func TestParseHandoffComplete(t *testing.T) {
 	}
 }
 
-func TestParseHandoffRejectsRemovedAction(t *testing.T) {
-	if _, err := parseArgs([]string{"handoff", "yielded", "task-1"}); err == nil {
-		t.Fatal("parseArgs accepted removed handoff action")
+func TestParseHandoffRejectsUnknownAction(t *testing.T) {
+	if _, err := parseArgs([]string{"handoff", "unknown", "task-1"}); err == nil {
+		t.Fatal("parseArgs accepted unknown handoff action")
 	}
 }

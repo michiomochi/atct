@@ -135,6 +135,21 @@ type HandoffReportAmendIn struct {
 	CompleteReport string `json:"complete_report"`
 }
 
+type HandoffEntryAppendIn struct {
+	HandoffID   string `json:"handoff_id"`
+	TaskID      mcpID  `json:"task_id"`
+	Kind        string `json:"kind" jsonschema:"review_requested | review_received | review_rejected; lifecycle entries request, received, and completed are emitted by their handoff tools"`
+	Body        string `json:"body"`
+	InReplyToID *int64 `json:"in_reply_to_id,omitempty" jsonschema:"canonical integer entry id to reply to; optional"`
+}
+
+type HandoffEntryHistoryIn struct {
+	HandoffID string `json:"handoff_id"`
+	TaskID    mcpID  `json:"task_id"`
+	AfterID   int64  `json:"after_id,omitempty" jsonschema:"return entries after this canonical integer id; optional"`
+	Limit     int    `json:"limit,omitempty"`
+}
+
 type GoalHandoffRequestIn struct {
 	HandoffID     string `json:"handoff_id"`
 	GoalID        mcpID  `json:"goal_id"`
@@ -175,6 +190,21 @@ type GoalHandoffReportAmendIn struct {
 	HandoffID      string `json:"handoff_id"`
 	GoalID         mcpID  `json:"goal_id"`
 	CompleteReport string `json:"complete_report"`
+}
+
+type GoalHandoffEntryAppendIn struct {
+	HandoffID   string `json:"handoff_id"`
+	GoalID      mcpID  `json:"goal_id"`
+	Kind        string `json:"kind" jsonschema:"review_requested | review_received | review_rejected; lifecycle entries request, received, and completed are emitted by their handoff tools"`
+	Body        string `json:"body"`
+	InReplyToID *int64 `json:"in_reply_to_id,omitempty" jsonschema:"canonical integer entry id to reply to; optional"`
+}
+
+type GoalHandoffEntryHistoryIn struct {
+	HandoffID string `json:"handoff_id"`
+	GoalID    mcpID  `json:"goal_id"`
+	AfterID   int64  `json:"after_id,omitempty" jsonschema:"return entries after this canonical integer id; optional"`
+	Limit     int    `json:"limit,omitempty"`
 }
 
 type PlanHandoffReviewRequestIn struct {
@@ -933,6 +963,38 @@ func Register(server *mcp.Server, c *Client, agentSessionID int64) {
 		})
 	})
 
+	addMCPTool[HandoffEntryAppendIn, RawWithUnappliedDecisions](server, &mcp.Tool{
+		Name:         "atct_handoff_entry_append",
+		Description:  "Append a review_requested, review_received, or review_rejected entry to a task handoff. The caller must be a handoff participant. Lifecycle request, received, and completed entries are created by the corresponding handoff tools; use in_reply_to_id for a canonical integer entry id.",
+		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in HandoffEntryAppendIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
+		params := map[string]any{
+			"handoff_id": in.HandoffID, "task_id": in.TaskID, "kind": in.Kind, "body": in.Body,
+			"agent_session_id": sessionID.Get(),
+		}
+		if in.InReplyToID != nil {
+			params["in_reply_to_id"] = *in.InReplyToID
+		}
+		return callWithUnappliedDecisions(ctx, c, "handoff.entry.append", params)
+	})
+
+	addMCPTool[HandoffEntryHistoryIn, RawWithUnappliedDecisions](server, &mcp.Tool{
+		Name:         "atct_handoff_entry_history",
+		Description:  "Read a task handoff history page after the canonical integer after_id cursor. Entries use integer id and in_reply_to_id fields.",
+		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in HandoffEntryHistoryIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
+		params := map[string]any{
+			"handoff_id": in.HandoffID, "task_id": in.TaskID, "agent_session_id": sessionID.Get(),
+		}
+		if in.AfterID != 0 {
+			params["after_id"] = in.AfterID
+		}
+		if in.Limit != 0 {
+			params["limit"] = in.Limit
+		}
+		return callWithUnappliedDecisions(ctx, c, "handoff.entry.history", params)
+	})
+
 	addMCPTool[GoalHandoffRequestIn, RawWithUnappliedDecisions](server, &mcp.Tool{
 		Name:         "atct_goal_handoff_request",
 		Description:  "Request a goal handoff. The goal must have a live claim.",
@@ -1018,6 +1080,38 @@ func Register(server *mcp.Server, c *Client, agentSessionID int64) {
 		return callWithUnappliedDecisions(ctx, c, "goal.handoff.report.amend", map[string]any{
 			"handoff_id": in.HandoffID, "goal_id": in.GoalID, "complete_report": in.CompleteReport,
 		})
+	})
+
+	addMCPTool[GoalHandoffEntryAppendIn, RawWithUnappliedDecisions](server, &mcp.Tool{
+		Name:         "atct_goal_handoff_entry_append",
+		Description:  "Append a review_requested, review_received, or review_rejected entry to a goal handoff. The caller must be a handoff participant. Lifecycle request, received, and completed entries are created by the corresponding handoff tools; use in_reply_to_id for a canonical integer entry id.",
+		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in GoalHandoffEntryAppendIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
+		params := map[string]any{
+			"handoff_id": in.HandoffID, "goal_id": in.GoalID, "kind": in.Kind, "body": in.Body,
+			"agent_session_id": sessionID.Get(),
+		}
+		if in.InReplyToID != nil {
+			params["in_reply_to_id"] = *in.InReplyToID
+		}
+		return callWithUnappliedDecisions(ctx, c, "goal.handoff.entry.append", params)
+	})
+
+	addMCPTool[GoalHandoffEntryHistoryIn, RawWithUnappliedDecisions](server, &mcp.Tool{
+		Name:         "atct_goal_handoff_entry_history",
+		Description:  "Read a goal handoff history page after the canonical integer after_id cursor. Entries use integer id and in_reply_to_id fields.",
+		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in GoalHandoffEntryHistoryIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
+		params := map[string]any{
+			"handoff_id": in.HandoffID, "goal_id": in.GoalID, "agent_session_id": sessionID.Get(),
+		}
+		if in.AfterID != 0 {
+			params["after_id"] = in.AfterID
+		}
+		if in.Limit != 0 {
+			params["limit"] = in.Limit
+		}
+		return callWithUnappliedDecisions(ctx, c, "goal.handoff.entry.history", params)
 	})
 
 	addMCPTool[PlanHandoffReviewRequestIn, RawWithUnappliedDecisions](server, &mcp.Tool{

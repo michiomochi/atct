@@ -101,6 +101,7 @@ type goalResponse struct {
 	TaskCommits            []goalTaskCommitsView `json:"task_commits"`
 	DecisionHistory        []decisionHistoryView `json:"decision_history"`
 	DecisionHistoryOmitted int                   `json:"decision_history_omitted"`
+	Handoffs               []HandoffView         `json:"handoffs"`
 }
 
 type taskGoalView struct {
@@ -116,6 +117,7 @@ type taskDetailResponse struct {
 	DecisionHistory        []decisionHistoryView `json:"decision_history"`
 	DecisionHistoryOmitted int                   `json:"decision_history_omitted"`
 	Commits                []taskCommitView      `json:"commits"`
+	Handoffs               []HandoffView         `json:"handoffs"`
 }
 
 type decisionHistoryView struct {
@@ -271,6 +273,42 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.handleCreateGoal(w, r)
 		return
 	}
+	if len(parts) == 4 && parts[0] == "api" && parts[1] == "goals" && parts[3] == "handoffs" {
+		if parts[2] == "" {
+			writeError(w, http.StatusBadRequest, "goal id is missing")
+			return
+		}
+		if r.Method != http.MethodGet {
+			writeError(w, http.StatusBadRequest, "method is not allowed for this endpoint")
+			return
+		}
+		s.handleGoalHandoffs(w, r, parts[2], "")
+		return
+	}
+	if len(parts) == 5 && parts[0] == "api" && parts[1] == "goals" && parts[3] == "handoffs" {
+		if parts[2] == "" || parts[4] == "" {
+			writeError(w, http.StatusBadRequest, "goal handoff path is malformed")
+			return
+		}
+		if r.Method != http.MethodGet {
+			writeError(w, http.StatusBadRequest, "method is not allowed for this endpoint")
+			return
+		}
+		s.handleGoalHandoffs(w, r, parts[2], parts[4])
+		return
+	}
+	if len(parts) == 6 && parts[0] == "api" && parts[1] == "goals" && parts[3] == "handoffs" && parts[5] == "history" {
+		if parts[2] == "" || parts[4] == "" {
+			writeError(w, http.StatusBadRequest, "goal handoff history path is malformed")
+			return
+		}
+		if r.Method != http.MethodGet {
+			writeError(w, http.StatusBadRequest, "method is not allowed for this endpoint")
+			return
+		}
+		s.handleGoalHandoffs(w, r, parts[2], parts[4])
+		return
+	}
 
 	if len(parts) == 3 && parts[0] == "api" && parts[1] == "goals" {
 		if parts[2] == "" {
@@ -342,6 +380,42 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.handleTask(w, r, parts[2])
+		return
+	}
+	if len(parts) == 4 && parts[0] == "api" && parts[1] == "tasks" && parts[3] == "handoffs" {
+		if parts[2] == "" {
+			writeError(w, http.StatusBadRequest, "task id is missing")
+			return
+		}
+		if r.Method != http.MethodGet {
+			writeError(w, http.StatusBadRequest, "method is not allowed for this endpoint")
+			return
+		}
+		s.handleTaskHandoffs(w, r, parts[2], "")
+		return
+	}
+	if len(parts) == 5 && parts[0] == "api" && parts[1] == "tasks" && parts[3] == "handoffs" {
+		if parts[2] == "" || parts[4] == "" {
+			writeError(w, http.StatusBadRequest, "task handoff path is malformed")
+			return
+		}
+		if r.Method != http.MethodGet {
+			writeError(w, http.StatusBadRequest, "method is not allowed for this endpoint")
+			return
+		}
+		s.handleTaskHandoffs(w, r, parts[2], parts[4])
+		return
+	}
+	if len(parts) == 6 && parts[0] == "api" && parts[1] == "tasks" && parts[3] == "handoffs" && parts[5] == "history" {
+		if parts[2] == "" || parts[4] == "" {
+			writeError(w, http.StatusBadRequest, "task handoff history path is malformed")
+			return
+		}
+		if r.Method != http.MethodGet {
+			writeError(w, http.StatusBadRequest, "method is not allowed for this endpoint")
+			return
+		}
+		s.handleTaskHandoffs(w, r, parts[2], parts[4])
 		return
 	}
 	if len(parts) == 6 && parts[0] == "api" && parts[1] == "tasks" && parts[3] == "commits" && parts[5] == "diff" {
@@ -823,6 +897,11 @@ func (s *Server) handleGoal(w http.ResponseWriter, r *http.Request, goalID strin
 		writeStoreError(w, err)
 		return
 	}
+	goalHandoffs, err := s.listGoalHandoffViews(ctx, canonicalGoalID, goal.ProjectID, 0, store.HandoffHistoryMaxLimit)
+	if err != nil {
+		writeHandoffHistoryError(w, err)
+		return
+	}
 	decisionHistory := make([]decisionHistoryView, 0, len(appliedDecisions))
 	for _, decision := range appliedDecisions {
 		decisionHistory = append(decisionHistory, newDecisionHistoryView(decision))
@@ -847,6 +926,7 @@ func (s *Server) handleGoal(w http.ResponseWriter, r *http.Request, goalID strin
 		TaskCommits:            make([]goalTaskCommitsView, 0),
 		DecisionHistory:        decisionHistory,
 		DecisionHistoryOmitted: decisionHistoryOmitted,
+		Handoffs:               goalHandoffs,
 	}
 	for _, task := range tasks {
 		decisions := openByTask[task.ID]
@@ -1117,6 +1197,11 @@ func (s *Server) handleTask(w http.ResponseWriter, r *http.Request, taskID strin
 	for _, commit := range linkedCommits {
 		commits = append(commits, newTaskCommitView(ctx, projectRootPath, commit))
 	}
+	taskHandoffs, err := s.listTaskHandoffViews(ctx, canonicalTaskID, goal.ID, goal.ProjectID, 0, store.HandoffHistoryMaxLimit)
+	if err != nil {
+		writeHandoffHistoryError(w, err)
+		return
+	}
 
 	writeJSON(w, http.StatusOK, taskDetailResponse{
 		Task: task,
@@ -1129,6 +1214,7 @@ func (s *Server) handleTask(w http.ResponseWriter, r *http.Request, taskID strin
 		DecisionHistory:        decisionHistory,
 		DecisionHistoryOmitted: decisionHistoryOmitted,
 		Commits:                commits,
+		Handoffs:               taskHandoffs,
 	})
 }
 
@@ -1625,6 +1711,13 @@ func (s *Server) parseEventFilter(w http.ResponseWriter, r *http.Request) (event
 }
 
 func (s *Server) eventPasses(ctx context.Context, filter eventFilter, event store.DecisionEvent) bool {
+	if event.Name == EventHandoffEntryAdded {
+		data, ok := normalizeHandoffEntryEvent(event.Data)
+		if !ok {
+			return false
+		}
+		event.Data = data
+	}
 	if filter.projectID != "" {
 		eventProjectID := event.ProjectID
 		var err error
@@ -1656,6 +1749,10 @@ func eventMatchesTaskID(event store.DecisionEvent, taskID int64) bool {
 		return data.TaskID != 0 && data.TaskID == taskID
 	case *store.WakeupEvent:
 		return data != nil && data.TaskID != 0 && data.TaskID == taskID
+	case HandoffEntryAddedEvent:
+		return data.TaskID != 0 && data.TaskID == taskID
+	case *HandoffEntryAddedEvent:
+		return data != nil && data.TaskID != 0 && data.TaskID == taskID
 	case store.HandoffEvent:
 		return data.TaskID != 0 && data.TaskID == taskID
 	case *store.HandoffEvent:
@@ -1679,12 +1776,21 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	baselineAt := time.Now().UTC()
 	if _, _, _, err := s.eventScopeIDs(r.Context(), filter); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	ch, cancel := s.store.SubscribeEvents()
 	defer cancel()
+	records, err := s.scanHandoffEntryRecords(r.Context(), filter)
+	if err != nil {
+		writeHandoffHistoryError(w, err)
+		return
+	}
+	tracker := newHandoffEntryTracker(records, r.Header.Get("Last-Event-ID"), baselineAt)
+	ticker := time.NewTicker(handoffEntryPollInterval)
+	defer ticker.Stop()
 
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -1700,15 +1806,59 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 			if !ok {
 				return
 			}
+			if event.Name == EventHandoffEntryAdded {
+				data, ok := normalizeHandoffEntryEvent(event.Data)
+				if !ok {
+					continue
+				}
+				event.Data = data
+				if !tracker.mark(data) {
+					continue
+				}
+			}
 			if !s.eventPasses(r.Context(), filter, event) {
 				continue
 			}
-			if err := writeDecisionEventSSE(w, event); err != nil {
+			if err := writeSSEEvent(w, event); err != nil {
 				return
 			}
 			flusher.Flush()
+		case <-ticker.C:
+			records, err := s.scanHandoffEntryRecords(r.Context(), filter)
+			if err != nil {
+				continue
+			}
+			for _, record := range records {
+				if !tracker.mark(record.event) {
+					continue
+				}
+				event := store.DecisionEvent{Name: EventHandoffEntryAdded, Data: record.event}
+				if !s.eventPasses(r.Context(), filter, event) {
+					continue
+				}
+				if err := writeSSEEvent(w, event); err != nil {
+					return
+				}
+				flusher.Flush()
+			}
 		}
 	}
+}
+
+func writeSSEEvent(w http.ResponseWriter, event store.DecisionEvent) error {
+	data, err := json.Marshal(event.Data)
+	if err != nil {
+		return err
+	}
+	if event.Name == EventHandoffEntryAdded {
+		if entry, ok := normalizeHandoffEntryEvent(event.Data); ok {
+			if _, err := fmt.Fprintf(w, "id: %d\n", entry.ID); err != nil {
+				return err
+			}
+		}
+	}
+	_, err = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event.Name, data)
+	return err
 }
 
 func (s *Server) eventScopeIDs(ctx context.Context, filter eventFilter) (projectID, goalID, taskID int64, err error) {
@@ -1813,6 +1963,10 @@ func eventMatchesGoalID(event store.DecisionEvent, goalID int64) bool {
 		return data.GoalID != 0 && data.GoalID == goalID
 	case *store.GoalWithdrawnEvent:
 		return data != nil && data.GoalID != 0 && data.GoalID == goalID
+	case HandoffEntryAddedEvent:
+		return data.GoalID != 0 && data.GoalID == goalID
+	case *HandoffEntryAddedEvent:
+		return data != nil && data.GoalID != 0 && data.GoalID == goalID
 	case store.HandoffEvent:
 		return data.GoalID != 0 && data.GoalID == goalID
 	case *store.HandoffEvent:
@@ -1867,6 +2021,13 @@ func (s *Server) eventProjectID(ctx context.Context, event store.DecisionEvent) 
 	case store.WakeupDiscrepancyEvent:
 		return data.ProjectID, nil
 	case *store.WakeupDiscrepancyEvent:
+		if data == nil {
+			return 0, nil
+		}
+		return data.ProjectID, nil
+	case HandoffEntryAddedEvent:
+		return data.ProjectID, nil
+	case *HandoffEntryAddedEvent:
 		if data == nil {
 			return 0, nil
 		}

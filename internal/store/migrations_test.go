@@ -61,6 +61,96 @@ func TestEmptyDatabaseAppliesBaselineMigration(t *testing.T) {
 	}
 }
 
+func TestFreshDatabaseAppliesHandoffEntryMigrationsAfter0029(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "fresh-handoff-entry.db")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open fresh database: %v", err)
+	}
+	defer s.Close()
+
+	assertUserVersion(t, s.DB(), schemaVersion)
+	for _, filename := range []string{
+		"0029_goal_request_reports.sql",
+		"0030_monitor_health.sql",
+		"0048_handoff_entries.sql",
+		"0049_canonical_handoff_entries.sql",
+	} {
+		assertMigrationRecorded(t, s.DB(), filename)
+	}
+	assertTableExists(t, s.DB(), "monitor_health")
+	for _, table := range []string{"task_handoff_entries", "goal_handoff_entries"} {
+		assertTableExists(t, s.DB(), table)
+		columns := migrationTableColumns(t, s.DB(), table)
+		for _, column := range []string{"id", "handoff_id", "kind", "body", "author_session_id", "in_reply_to_id", "created_at"} {
+			if _, ok := columns[column]; !ok {
+				t.Errorf("fresh %s schema is missing column %q", table, column)
+			}
+		}
+		for _, column := range []string{"entry_id", "sequence", "relates_to", "source"} {
+			if _, ok := columns[column]; ok {
+				t.Errorf("fresh %s schema still has legacy column %q", table, column)
+			}
+		}
+	}
+}
+
+func TestUpgradeThrough0029AppliesHandoffEntryMigrations(t *testing.T) {
+	db := openMigrationTestDB(t)
+	migrations, err := loadEmbeddedMigrations()
+	if err != nil {
+		t.Fatalf("load embedded migrations: %v", err)
+	}
+
+	for _, migration := range migrations {
+		if migration.filename == "0030_monitor_health.sql" {
+			break
+		}
+		if _, err := db.Exec(migration.sql); err != nil {
+			t.Fatalf("apply pre-entry migration %s: %v", migration.filename, err)
+		}
+		if _, err := db.Exec(`INSERT INTO schema_migrations (filename, applied_at) VALUES (?, ?)`, migration.filename, "2026-09-07T00:00:00Z"); err != nil {
+			t.Fatalf("record pre-entry migration %s: %v", migration.filename, err)
+		}
+	}
+	if _, err := db.Exec(`PRAGMA user_version = 6`); err != nil {
+		t.Fatalf("set pre-entry schema version: %v", err)
+	}
+	assertMigrationRecorded(t, db, "0029_goal_request_reports.sql")
+	for _, table := range []string{"task_handoff_entries", "goal_handoff_entries"} {
+		var count int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&count); err != nil {
+			t.Fatalf("check pre-entry table %q: %v", table, err)
+		}
+		if count != 0 {
+			t.Fatalf("pre-entry table %q exists before upgrade", table)
+		}
+	}
+
+	if err := applyEmbeddedMigrations(db); err != nil {
+		t.Fatalf("upgrade from 0029: %v", err)
+	}
+	assertUserVersion(t, db, schemaVersion)
+	for _, filename := range []string{
+		"0029_goal_request_reports.sql",
+		"0030_monitor_health.sql",
+		"0048_handoff_entries.sql",
+		"0049_canonical_handoff_entries.sql",
+	} {
+		assertMigrationRecorded(t, db, filename)
+	}
+	for _, table := range []string{"task_handoff_entries", "goal_handoff_entries"} {
+		assertTableExists(t, db, table)
+		columns := migrationTableColumns(t, db, table)
+		if _, ok := columns["id"]; !ok {
+			t.Errorf("upgraded %s schema is missing canonical id", table)
+		}
+		if _, ok := columns["in_reply_to_id"]; !ok {
+			t.Errorf("upgraded %s schema is missing canonical in_reply_to_id", table)
+		}
+	}
+}
+
 func TestMigration0026RecoveredSourceHash(t *testing.T) {
 	migrations, err := loadEmbeddedMigrations()
 	if err != nil {

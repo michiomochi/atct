@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { formatDateTime } from "../i18n";
 import {
+  fetchTaskHandoffHistory,
   fetchTask,
   snoozeTask,
   subscribeToDecisionEvents,
@@ -15,6 +16,7 @@ import { AreaLoading, ErrorState } from "./StateMessage";
 import { DecisionAnswerForm } from "./DecisionAnswerForm";
 import { DecisionHistoryTable } from "./DecisionHistoryTable";
 import { TaskCommitList } from "./TaskCommitList";
+import { HandoffTimeline } from "./HandoffTimeline";
 
 interface Props {
   id: string;
@@ -65,6 +67,11 @@ export function TaskDetailPage({ id }: Props) {
   const handleDecisionEvent = useCallback(() => {
     setUpdatePending(true);
   }, []);
+
+  const fetchHandoffHistory = useCallback(
+    (handoffID: string, afterID: number) => fetchTaskHandoffHistory(resolvedID, handoffID, afterID),
+    [resolvedID],
+  );
 
   useEffect(() => {
     void load();
@@ -120,6 +127,8 @@ export function TaskDetailPage({ id }: Props) {
               </section>
             )}
           </div>
+
+          <HandoffTimeline handoffs={data.handoffs ?? []} fetchHistory={fetchHandoffHistory} />
 
           <section className="min-w-0 border-t border-line pt-5" aria-labelledby="task-attributes-heading">
                 <h2 id="task-attributes-heading" className="font-display text-lg font-semibold text-ink-950">

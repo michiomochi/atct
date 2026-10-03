@@ -1116,6 +1116,11 @@ func execEmbeddedMigration(ctx context.Context, conn *sql.Conn, migration embedd
 			return fmt.Errorf("recreate goals index during %s: %w", migration.filename, err)
 		}
 	}
+	if migration.filename == "0049_canonical_handoff_entries.sql" {
+		if err := backfillLegacyHandoffEntries(ctx, conn); err != nil {
+			return fmt.Errorf("backfill legacy handoff entries: %w", err)
+		}
+	}
 	return nil
 }
 
@@ -1156,4 +1161,106 @@ func setUserVersion(ctx context.Context, conn *sql.Conn) error {
 		return fmt.Errorf("set database schema version to %d: %w", schemaVersion, err)
 	}
 	return nil
+}
+
+type legacyHandoffReport struct {
+	handoffID         string
+	requestedBy       sql.NullInt64
+	receivedBy        sql.NullInt64
+	requestedAt       sql.NullString
+	completedReportAt sql.NullString
+	requestReport     sql.NullString
+	completeReport    sql.NullString
+}
+
+func backfillLegacyHandoffEntries(ctx context.Context, conn *sql.Conn) error {
+	if err := backfillLegacyHandoffEntryTable(ctx, conn, "task_handoffs", "task_handoff_entries"); err != nil {
+		return err
+	}
+	return backfillLegacyHandoffEntryTable(ctx, conn, "goal_handoffs", "goal_handoff_entries")
+}
+
+func backfillLegacyHandoffEntryTable(ctx context.Context, conn *sql.Conn, parentTable, entryTable string) error {
+	rows, err := conn.QueryContext(ctx, `
+		SELECT id, requested_by, received_by, requested_at, completed_report_at,
+		       request_report, complete_report
+		FROM `+parentTable+`
+		ORDER BY id
+	`)
+	if err != nil {
+		return fmt.Errorf("list %s: %w", parentTable, err)
+	}
+	var reports []legacyHandoffReport
+
+	for rows.Next() {
+		var report legacyHandoffReport
+		if err := rows.Scan(
+			&report.handoffID, &report.requestedBy, &report.receivedBy,
+			&report.requestedAt, &report.completedReportAt,
+			&report.requestReport, &report.completeReport,
+		); err != nil {
+			return fmt.Errorf("scan %s: %w", parentTable, err)
+		}
+		reports = append(reports, report)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return fmt.Errorf("iterate %s: %w", parentTable, err)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("close %s: %w", parentTable, err)
+	}
+
+	for _, report := range reports {
+		if report.requestReport.Valid && strings.TrimSpace(report.requestReport.String) != "" {
+			if err := insertLegacyHandoffEntry(ctx, conn, entryTable, report.handoffID, HandoffEntryKindRequest, report.requestReport.String, report.requestedBy, report.requestedAt.String); err != nil {
+				return fmt.Errorf("backfill %s request for %q: %w", parentTable, report.handoffID, err)
+			}
+		}
+		if report.completeReport.Valid && strings.TrimSpace(report.completeReport.String) != "" {
+			createdAt := report.completedReportAt.String
+			if createdAt == "" {
+				createdAt = report.requestedAt.String
+			}
+			if err := insertLegacyHandoffEntry(ctx, conn, entryTable, report.handoffID, HandoffEntryKindCompleted, report.completeReport.String, report.receivedBy, createdAt); err != nil {
+				return fmt.Errorf("backfill %s complete for %q: %w", parentTable, report.handoffID, err)
+			}
+		}
+	}
+	return nil
+}
+
+func insertLegacyHandoffEntry(
+	ctx context.Context,
+	conn *sql.Conn,
+	entryTable string,
+	handoffID, kind, sourceBody string,
+	author sql.NullInt64,
+	createdAt string,
+) error {
+	if strings.TrimSpace(sourceBody) == "" {
+		return nil
+	}
+	body := sourceBody
+	if createdAt == "" {
+		createdAt = time.Unix(0, 0).UTC().Format(time.RFC3339Nano)
+	}
+	var exists bool
+	if err := conn.QueryRowContext(ctx, `
+		SELECT EXISTS(
+			SELECT 1 FROM `+entryTable+`
+			WHERE handoff_id = ? AND kind = ? AND body = ?
+		)
+	`, handoffID, kind, body).Scan(&exists); err != nil {
+		return err
+	}
+	if exists {
+		return nil
+	}
+	_, err := conn.ExecContext(ctx, `
+		INSERT OR IGNORE INTO `+entryTable+` (
+			handoff_id, kind, body, author_session_id, created_at
+		) VALUES (?, ?, ?, ?, ?)
+	`, handoffID, kind, body, author, createdAt)
+	return err
 }

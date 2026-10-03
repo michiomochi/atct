@@ -252,9 +252,6 @@ func (s *Store) ClaimGoal(ctx context.Context, goalID int64, agentSessionID int6
 	}
 
 	handoffID := uuid.NewString()
-	if err := s.reclaimOpenGoalHandoff(ctx, handoffID, goalID); err != nil {
-		return domain.Goal{}, mapGoalClaimHandoffError(goalID, err)
-	}
 	if _, err := s.requestGoalHandoffForClaim(ctx, handoffID, goalID, agentSessionID); err != nil {
 		return domain.Goal{}, mapGoalClaimHandoffError(goalID, err)
 	}
@@ -866,6 +863,9 @@ func (s *Store) FinalizeGoalReview(ctx context.Context, goalID, commanderID int6
 	} else if affected != 1 {
 		return domain.Goal{}, ErrGoalHandoffReviewState
 	}
+	if _, err := appendHandoffEntryTx(ctx, q, "goal_handoff_entries", handoff.ID, HandoffEntryKindCompleted, handoff.ReviewRequestReport, commanderID, "", "", true, now); err != nil {
+		return domain.Goal{}, fmt.Errorf("append goal handoff completion entry for review finalization: %w", err)
+	}
 
 	result, err := q.FinalizeGoalReview(ctx, sqlcgen.FinalizeGoalReviewParams{UpdatedAt: now.Format(time.RFC3339), ID: goalID})
 	if err != nil {
@@ -1013,11 +1013,12 @@ func (s *Store) WithdrawActiveGoal(ctx context.Context, goalID int64, reason str
 	defer tx.Rollback()
 
 	q := sqlcgen.New(tx)
+	nowTime := time.Now().UTC()
+	now := nowTime.Format(time.RFC3339)
 	projectID, err := q.GetGoalProjectID(ctx, goalID)
 	if err != nil {
 		return fmt.Errorf("lookup project for goal withdrawal: %w", err)
 	}
-	now := time.Now().UTC().Format(time.RFC3339)
 	result, err := q.WithdrawActiveGoal(ctx, sqlcgen.WithdrawActiveGoalParams{
 		ResultSummary: reason,
 		UpdatedAt:     now,
@@ -1084,6 +1085,9 @@ func (s *Store) WithdrawActiveGoal(ctx context.Context, goalID int64, reason str
 		}
 		if _, err := result.RowsAffected(); err != nil {
 			return fmt.Errorf("complete task handoff %s rows affected: %w", handoff.ID, err)
+		}
+		if _, err := appendHandoffEntryTx(ctx, q, "task_handoff_entries", handoff.ID, HandoffEntryKindComplete, reason, handoff.ReceivedBy.Int64, "", "", true, nowTime); err != nil {
+			return fmt.Errorf("append task handoff %s withdrawal entry: %w", handoff.ID, err)
 		}
 	}
 	withdrawnEvents := make([]DecisionEvent, 0, len(openDecisions)+1)

@@ -76,6 +76,13 @@ type watchDecision struct {
 	ObservedAgentSessionID      int64   `json:"observed_agent_session_id"`
 	ObservedAgentKey            string  `json:"observed_agent_key"`
 	Instruction                 string  `json:"instruction"`
+	DetectorUnstartedTaskCount  int     `json:"detector_unstarted_task_count"`
+	DetectionID                 string  `json:"detection_id"`
+	HandoffEntryID              int64   `json:"-"`
+	AuthorSessionID             int64   `json:"author_session_id"`
+	InReplyToID                 *int64  `json:"in_reply_to_id,omitempty"`
+	BodyPreview                 string  `json:"body_preview"`
+	Preview                     string  `json:"preview"`
 	deliveryGeneration          string
 }
 
@@ -150,8 +157,36 @@ func (d *watchDecision) UnmarshalJSON(data []byte) error {
 	}, &decoded); err != nil {
 		return err
 	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	if rawEntryID, ok := fields["entry_id"]; ok {
+		entryID, err := decodeEntityID(rawEntryID)
+		if err != nil {
+			return fmt.Errorf("decode entry_id: %w", err)
+		}
+		decoded.HandoffEntryID, err = strconv.ParseInt(entryID, 10, 64)
+		if err != nil || decoded.HandoffEntryID <= 0 {
+			return fmt.Errorf("handoff entry id must be a positive integer: %q", entryID)
+		}
+	}
 	*d = watchDecision(decoded)
 	return nil
+}
+
+func (d watchDecision) handoffEntryID() (int64, error) {
+	if d.HandoffEntryID > 0 {
+		return d.HandoffEntryID, nil
+	}
+	if strings.TrimSpace(d.ID) == "" {
+		return 0, errors.New("handoff entry event has no id")
+	}
+	id, err := strconv.ParseInt(d.ID, 10, 64)
+	if err != nil || id <= 0 {
+		return 0, fmt.Errorf("handoff entry id must be a positive integer: %q", d.ID)
+	}
+	return id, nil
 }
 
 func (p *watchProject) UnmarshalJSON(data []byte) error {
@@ -172,11 +207,6 @@ type watchDeliveryKey struct {
 	defaultApplied bool
 }
 
-type watchWakeupDiscrepancyDeliveryKey struct {
-	eventName string
-	wakeupID  string
-}
-
 // Keyed by the target rather than the wakeup id, which is fresh on every
 // publish: the point is to say a condition once per goal, handoff, or task, not
 // once per occurrence.
@@ -184,7 +214,11 @@ type watchWakeupDeliveryKey struct {
 	eventName  string
 	targetID   string
 	generation string
+	wakeupID   string
 }
+
+type watchWakeupDiscrepancyDeliveryKey = watchWakeupDeliveryKey
+type watchDetectionDeliveryKey = watchWakeupDeliveryKey
 
 type watchSnapshotFunc func(context.Context) (string, []watchDecision, error)
 type watchEnsureFunc func() error
@@ -969,6 +1003,10 @@ func consumeWatchEventsWithStateAndScopeAndSink(ctx context.Context, client *htt
 	return consumeWatchEventsWithStateAndScopeAndSinkAndCursor(ctx, client, baseURL, scope, out, keepaliveTimeout, delivered, lastWakeupContent, wakeupDiscrepancyDelivered, wakeupDelivered, scopeFilter, sink)
 }
 
+func consumeWatchEventsWithStateAndScopeAndSinkAndLastEventID(ctx context.Context, client *http.Client, baseURL string, scope watchScope, out io.Writer, keepaliveTimeout time.Duration, delivered map[watchDeliveryKey]struct{}, lastWakeupContent *string, wakeupDiscrepancyDelivered map[watchWakeupDeliveryKey]struct{}, detectionDelivered map[watchDetectionDeliveryKey]struct{}, scopeFilter *watchScopeFilter, sink func(string) error, lastEventID *string) error {
+	return consumeWatchEventsDirect(ctx, client, baseURL, scope, out, keepaliveTimeout, delivered, lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered, scopeFilter, sink, lastEventID)
+}
+
 // consumeWatchEventsWithStateAndScopeAndSinkAndCursor keeps the old call shape
 // for callers outside this file. Any legacy cursor arguments are intentionally
 // ignored.
@@ -1078,11 +1116,118 @@ func consumeWatchEventsWithStateAndScopeAndSinkAndInterval(ctx context.Context, 
 				resetKeepalive()
 				continue
 			}
+			if frame.name == "handoff_entry_added" {
+				var decision watchDecision
+				if err := json.Unmarshal([]byte(frame.data), &decision); err != nil {
+					return fmt.Errorf("decode SSE event %s: %w", frame.name, err)
+				}
+				if scope.ProjectID != "" && decision.ProjectID != "" && decision.ProjectID != scope.ProjectID {
+					continue
+				}
+				if !scopeFilter.delivers(frame.name, decision) {
+					continue
+				}
+				if err := emitWatchDecisionWithStateAndSinks(out, frame.name, decision, delivered, lastWakeupContent, wakeupDiscrepancyDelivered, wakeupDelivered, sink, actionSink); err != nil {
+					return err
+				}
+				continue
+			}
 			if err := reconcileWatchScope(ctx, client, baseURL, scope, out, delivered, lastWakeupContent, wakeupDiscrepancyDelivered, wakeupDelivered, scopeFilter, sink, actionSink, latestReconciliation); err != nil {
 				return err
 			}
 			if reconciliationSucceeded != nil {
 				reconciliationSucceeded()
+			}
+		}
+	}
+}
+
+func consumeWatchEventsDirect(ctx context.Context, client *http.Client, baseURL string, scope watchScope, out io.Writer, keepaliveTimeout time.Duration, delivered map[watchDeliveryKey]struct{}, lastWakeupContent *string, wakeupDiscrepancyDelivered map[watchWakeupDeliveryKey]struct{}, detectionDelivered map[watchDetectionDeliveryKey]struct{}, scopeFilter *watchScopeFilter, sink func(string) error, lastEventID *string) error {
+	if client == nil {
+		client = &http.Client{}
+	}
+	if scopeFilter == nil {
+		scopeFilter = newWatchPassThroughFilter()
+	}
+	eventsURL, err := watchEventsURLWithScope(baseURL, scope)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, eventsURL, nil)
+	if err != nil {
+		return err
+	}
+	if lastEventID != nil && strings.TrimSpace(*lastEventID) != "" {
+		req.Header.Set("Last-Event-ID", *lastEventID)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		return fmt.Errorf("GET %s: HTTP %s", eventsURL, resp.Status)
+	}
+
+	frames, readDone := readWatchSSEFrames(ctx, resp.Body)
+	if keepaliveTimeout <= 0 {
+		keepaliveTimeout = watchKeepaliveTimeout
+	}
+	timer := time.NewTimer(keepaliveTimeout)
+	defer timer.Stop()
+	timerC := (<-chan time.Time)(timer.C)
+	missingReported := false
+	resetKeepalive := func() {
+		if !timer.Stop() {
+			select {
+			case <-timer.C:
+			default:
+			}
+		}
+		timer.Reset(keepaliveTimeout)
+		timerC = timer.C
+		missingReported = false
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-timerC:
+			if !missingReported {
+				if _, err := fmt.Fprintln(out, formatWatchKeepaliveMissing(keepaliveTimeout)); err != nil {
+					return err
+				}
+				missingReported = true
+			}
+			timerC = nil
+		case frame, ok := <-frames:
+			if !ok {
+				if err := <-readDone; err != nil {
+					return err
+				}
+				return io.EOF
+			}
+			if frame.id != "" && lastEventID != nil {
+				*lastEventID = frame.id
+			}
+			if frame.name == "keepalive" {
+				resetKeepalive()
+				continue
+			}
+			var decision watchDecision
+			if err := json.Unmarshal([]byte(frame.data), &decision); err != nil {
+				return fmt.Errorf("decode SSE event %s: %w", frame.name, err)
+			}
+			if scope.ProjectID != "" && decision.ProjectID != "" && decision.ProjectID != scope.ProjectID {
+				continue
+			}
+			if !scopeFilter.delivers(frame.name, decision) {
+				continue
+			}
+			if err := emitWatchDecisionWithStateAndSink(out, frame.name, decision, delivered, lastWakeupContent, wakeupDiscrepancyDelivered, detectionDelivered, sink); err != nil {
+				return err
 			}
 		}
 	}
@@ -1563,6 +1708,24 @@ func emitWatchDecisionWithStateAndSinks(out io.Writer, eventName string, decisio
 	writeLine := func() error {
 		return writeWatchLineWithActionSink(out, line, eventName, decision, sink, actionSink)
 	}
+	if eventName == "handoff_entry_added" {
+		entryID, err := decision.handoffEntryID()
+		if err != nil {
+			return fmt.Errorf("SSE event %s: %w", eventName, err)
+		}
+		key := watchDeliveryKey{eventName: eventName, decisionID: strconv.FormatInt(entryID, 10)}
+		if _, ok := delivered[key]; ok {
+			return nil
+		}
+		if err := writeLine(); err != nil {
+			return err
+		}
+		delivered[key] = struct{}{}
+		return nil
+	}
+	if eventName == "handoff_yielded" {
+		return writeLine()
+	}
 	targetedWakeup := strings.HasPrefix(eventName, "wakeup.") && eventName != "wakeup.discrepancy" && eventName != "wakeup.evaluate_failed"
 	if eventName == "goal.created" || targetedWakeup || eventName == "handoff_reported" {
 		target := decision.GoalID
@@ -1829,6 +1992,19 @@ func formatWatchDecision(eventName string, decision watchDecision) (string, bool
 			target = "task " + decision.TaskID
 		}
 		return fmt.Sprintf("atct handoff reported: %s (handoff %s): %s", target, decision.HandoffID, watchHandoffReportPreview(decision.CompleteReport)), true
+	case "handoff_entry_added":
+		target := "goal " + decision.GoalID
+		if decision.TaskID != "" {
+			target = "task " + decision.TaskID
+		}
+		preview := decision.BodyPreview
+		if preview == "" {
+			preview = decision.Preview
+		}
+		entryID, _ := decision.handoffEntryID()
+		return fmt.Sprintf("atct handoff entry added: %s (handoff %s, id %d, kind %s, author %d): %s", target, decision.HandoffID, entryID, decision.Kind, decision.AuthorSessionID, watchHandoffEntryPreview(preview)), true
+	case "handoff_yielded":
+		return fmt.Sprintf("atct handoff yielded: task %s", decision.TaskID), true
 	case "wakeup.claim_undelegated":
 		return fmt.Sprintf("atct wakeup: task %s has no handoff request", decision.TaskID), true
 	case "wakeup.decision_answered_unapplied":
@@ -1959,6 +2135,23 @@ func watchHandoffReportPreview(report string) string {
 		return report
 	}
 	return string(runes[:maxReportRunes]) + "…"
+}
+
+func watchHandoffEntryPreview(body string) string {
+	body = strings.Join(strings.Fields(body), " ")
+	const maxPreviewBytes = 256
+	if len([]byte(body)) <= maxPreviewBytes {
+		return body
+	}
+	var preview []byte
+	for _, r := range body {
+		runeBytes := []byte(string(r))
+		if len(preview)+len(runeBytes) > maxPreviewBytes {
+			break
+		}
+		preview = append(preview, runeBytes...)
+	}
+	return string(preview)
 }
 
 func waitForWatchReconnect(ctx context.Context, out io.Writer, interval time.Duration) error {

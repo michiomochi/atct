@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -87,6 +88,9 @@ func addGoalHandoffDirect(t *testing.T, s *Store, handoffID string, goalID int64
 		t.Fatalf("drop goal handoff uniqueness index: %v", err)
 	}
 	t.Cleanup(func() {
+		if _, err := s.DB().ExecContext(ctx, `DELETE FROM goal_handoff_entries WHERE handoff_id = ?`, handoffID); err != nil {
+			t.Errorf("delete direct goal handoff entries %q: %v", handoffID, err)
+		}
 		if _, err := s.DB().ExecContext(ctx, `DELETE FROM goal_handoffs WHERE id = ?`, handoffID); err != nil {
 			t.Errorf("delete direct goal handoff %q: %v", handoffID, err)
 		}
@@ -510,7 +514,7 @@ func TestReceiveGoalHandoffReviewAuthorization(t *testing.T) {
 				if !errors.Is(err, ErrGoalHandoffReviewReviewerMismatch) {
 					t.Fatalf("ReceiveGoalHandoffReview error = %v, want ErrGoalHandoffReviewReviewerMismatch", err)
 				}
-				if received != (GoalHandoff{}) {
+				if !reflect.DeepEqual(received, GoalHandoff{}) {
 					t.Fatalf("failed receive returned handoff = %+v, want zero value", received)
 				}
 				select {

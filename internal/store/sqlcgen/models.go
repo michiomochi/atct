@@ -84,6 +84,16 @@ type GoalHandoff struct {
 	RecoveryReport            sql.NullString
 }
 
+type GoalHandoffEntry struct {
+	ID              int64
+	HandoffID       string
+	Kind            string
+	Body            string
+	AuthorSessionID sql.NullInt64
+	InReplyToID     sql.NullInt64
+	CreatedAt       string
+}
+
 type MonitorBinding struct {
 	Token            string
 	AgentSessionID   int64
@@ -206,4 +216,14 @@ type TaskHandoff struct {
 	ReviewRejectionReceivedAt sql.NullString
 	RecoveredAt               sql.NullString
 	RecoveryReport            sql.NullString
+}
+
+type TaskHandoffEntry struct {
+	ID              int64
+	HandoffID       string
+	Kind            string
+	Body            string
+	AuthorSessionID sql.NullInt64
+	InReplyToID     sql.NullInt64
+	CreatedAt       string
 }
