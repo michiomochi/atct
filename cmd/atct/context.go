@@ -402,8 +402,11 @@ func renderContextLegacy(goals []contextGoal, decisions []domain.Decision) strin
 	return b.String()
 }
 
+// renderContext renders for no particular session: `atct context` is a CLI
+// and has no way to know which session is asking. Only tests name one, through
+// renderContextForAgentSession.
 func renderContext(goals []contextGoal, decisions []domain.Decision) string {
-	return renderContextForAgentSession(goals, decisions, currentAgentSessionID())
+	return renderContextForAgentSession(goals, decisions, 0)
 }
 
 func renderContextForAgentSession(goals []contextGoal, decisions []domain.Decision, agentSessionID int64) string {

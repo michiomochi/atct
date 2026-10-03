@@ -162,8 +162,14 @@ func TestGoalScopedWorkflowReconciliationReturnsCompletedReopenedHandoffAndAppli
 	if _, err := s.ReceiveGoalHandoff(ctx, handoff.ID, goalID, testSessionID(receiverKey)); err != nil {
 		t.Fatalf("ReceiveGoalHandoff historical: %v", err)
 	}
-	if _, err := s.CompleteGoalHandoff(ctx, handoff.ID, goalID, "historical completion"); err != nil {
-		t.Fatalf("CompleteGoalHandoff historical: %v", err)
+	if _, err := s.RequestGoalHandoffReview(ctx, handoff.ID, goalID, testSessionID(receiverKey), "historical handoff ready for review"); err != nil {
+		t.Fatalf("RequestGoalHandoffReview historical: %v", err)
+	}
+	if _, err := s.ReceiveGoalHandoffReview(ctx, handoff.ID, goalID, testSessionID(requesterKey)); err != nil {
+		t.Fatalf("ReceiveGoalHandoffReview historical: %v", err)
+	}
+	if _, err := s.CompleteGoalHandoffByReviewer(ctx, handoff.ID, goalID, testSessionID(requesterKey), "historical completion"); err != nil {
+		t.Fatalf("CompleteGoalHandoffByReviewer historical: %v", err)
 	}
 	reopenedID := "workflow-canonical-history-reopened"
 	reopened, err := s.RequestGoalHandoff(ctx, reopenedID, goalID, testSessionID(requesterKey), "reopened handoff")

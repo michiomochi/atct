@@ -13,24 +13,33 @@ func TestCanRecoverSessionRequiresDefiniteStaleProof(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
+	// These cases used to enumerate kinds of process identity: a live pid, a
+	// missing one, a mismatched start time, a dead process. The lease replaced
+	// all of that, and the only axis left is whether the session still holds
+	// one. A pid is written anyway, a live one, to show it no longer decides.
 	tests := []struct {
 		name      string
-		pid       int
-		startedAt string
+		heartbeat time.Duration // age of the last heartbeat
+		leased    bool
 		wantProof bool
 	}{
-		{name: "live identity", pid: os.Getpid(), startedAt: "fake-start-" + strconv.Itoa(os.Getpid())},
-		{name: "unknown identity", pid: 0, startedAt: ""},
-		{name: "mismatched identity", pid: os.Getpid(), startedAt: "stale-start", wantProof: true},
-		{name: "dead process", pid: 999999, startedAt: "dead-start", wantProof: true},
+		{name: "lease just renewed", leased: true},
+		{name: "lease renewed within the window", leased: true, heartbeat: RuntimeLeaseDuration / 2},
+		{name: "lease lapsed", leased: true, heartbeat: RuntimeLeaseDuration + time.Second, wantProof: true},
+		{name: "never held a lease", wantProof: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			id := testSessionID("recovery-" + tt.name)
 			if _, err := s.DB().ExecContext(ctx, `
 				INSERT INTO agent_sessions (id, pid, started_at, registered_at)
-				VALUES (?, ?, ?, ?)`, id, tt.pid, tt.startedAt, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+				VALUES (?, ?, ?, ?)`, id, os.Getpid(), "fake-start-"+strconv.Itoa(os.Getpid()), time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
 				t.Fatalf("insert session: %v", err)
+			}
+			if tt.leased {
+				if err := s.HeartbeatAgentSession(ctx, id, time.Now().UTC().Add(-tt.heartbeat)); err != nil {
+					t.Fatalf("heartbeat session: %v", err)
+				}
 			}
 
 			proof, err := s.CanRecoverSession(ctx, id)
@@ -482,7 +491,7 @@ func TestRecoverRequestedTaskCreateHandoffCreatesReplacement(t *testing.T) {
 	handoffID := "task-create-requested-recovery-old"
 	if _, err := s.DB().ExecContext(ctx, `
 		INSERT INTO task_create_handoffs (id, goal_id, requested_by, requested_at, request_report)
-		VALUES (?, ?, ?, ?, ?)`, handoffID, goalID, staleID, time.Now().UTC().Format(time.RFC3339Nano), "create implementation tasks"); err != nil {
+		VALUES (?, ?, ?, ?, ?)`, handoffID, goalID, staleID, olderRequestedAt(), "create implementation tasks"); err != nil {
 		t.Fatalf("insert requested task-create handoff: %v", err)
 	}
 
@@ -499,5 +508,78 @@ func TestRecoverRequestedTaskCreateHandoffCreatesReplacement(t *testing.T) {
 	}
 	if len(attempts) != 2 || attempts[1].RecoveredAt != nil || attempts[1].RequestedBy != testSessionID("task-create-requested-recovery-commander") {
 		t.Fatalf("requested task-create attempts = %+v, want recovered history plus replacement", attempts)
+	}
+}
+
+// olderRequestedAt is a minute back, so the attempt this test recovers really
+// is the older of the two. Stamping it with time.Now made the order depend on
+// how many digits RFC3339Nano happened to print: it trims trailing zeros, so
+// ".657" and ".657337" can land in the same second, and comparing those as
+// text puts the shorter one last because 'Z' outranks a digit.
+func olderRequestedAt() string {
+	return time.Now().UTC().Add(-time.Minute).Format(time.RFC3339Nano)
+}
+
+// expireTestSessionLease moves a session's heartbeat past the lease without
+// touching its pid, which is how a real session dies: the process serving it
+// stops renewing while the recorded pid — the daemon's — keeps running.
+func expireTestSessionLease(t *testing.T, s *Store, agentSessionID int64) {
+	t.Helper()
+	lapsed := formatTimestamp(time.Now().UTC().Add(-2 * RuntimeLeaseDuration))
+	result, err := s.DB().ExecContext(context.Background(),
+		`UPDATE agent_sessions SET last_heartbeat_at = ? WHERE id = ?`, lapsed, agentSessionID)
+	if err != nil {
+		t.Fatalf("expire lease for session %d: %v", agentSessionID, err)
+	}
+	if affected, err := result.RowsAffected(); err != nil || affected != 1 {
+		t.Fatalf("expire lease for session %d affected %d rows (err %v)", agentSessionID, affected, err)
+	}
+}
+
+// Over the HTTP transport every session records the daemon's pid, so that pid
+// answers "alive" for as long as ATCT runs and can never prove a session gone.
+// A session that heartbeated and then stopped is gone whatever the pid says.
+func TestRecoverTaskHandoffFromLapsedLeaseDespiteLivePID(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	goalID, holderID := newTaskRecoveryGoal(t, s, "task-recovery-lapsed-lease")
+	tasks, err := s.CreateTasks(ctx, goalID, "worker", "recovery", []string{"implement"}, []string{"implement the recovery path"})
+	if err != nil {
+		t.Fatalf("CreateTasks: %v", err)
+	}
+	// The daemon's own pid, recorded and still running, exactly as the HTTP
+	// transport records it.
+	executorID := registerNamedTestAgentSession(t, s, "task-recovery-lapsed-lease-executor", os.Getpid())
+	handoffID := "task-recovery-lapsed-lease-old"
+	addTaskHandoffDirect(t, s, handoffID, tasks[0].ID, holderID, executorID)
+	expireTestSessionLease(t, s, executorID)
+
+	recovered, err := s.RecoverTaskHandoff(ctx, handoffID, tasks[0].ID, holderID, "executor stopped heartbeating")
+	if err != nil {
+		t.Fatalf("RecoverTaskHandoff with a lapsed lease: %v", err)
+	}
+	if recovered.RecoveredAt == nil {
+		t.Fatalf("lapsed-lease recovery left the handoff open: %+v", recovered)
+	}
+	if _, err := s.RequestTaskHandoff(ctx, "task-recovery-lapsed-lease-new", tasks[0].ID, holderID, "replacement"); err != nil {
+		t.Fatalf("RequestTaskHandoff replacement: %v", err)
+	}
+}
+
+// A session inside its lease is not recoverable, whatever its pid says.
+func TestRecoverTaskHandoffRejectsOwnerInsideLease(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	goalID, holderID := newTaskRecoveryGoal(t, s, "task-recovery-held-lease")
+	tasks, err := s.CreateTasks(ctx, goalID, "worker", "recovery", []string{"implement"}, []string{"implement the recovery path"})
+	if err != nil {
+		t.Fatalf("CreateTasks: %v", err)
+	}
+	executorID := registerNamedTestAgentSession(t, s, "task-recovery-held-lease-executor", os.Getpid())
+	handoffID := "task-recovery-held-lease-old"
+	addTaskHandoffDirect(t, s, handoffID, tasks[0].ID, holderID, executorID)
+
+	if _, err := s.RecoverTaskHandoff(ctx, handoffID, tasks[0].ID, holderID, "still working"); !errors.Is(err, ErrSessionRecoveryNotProven) {
+		t.Fatalf("RecoverTaskHandoff inside the lease error = %v, want ErrSessionRecoveryNotProven", err)
 	}
 }

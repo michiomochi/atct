@@ -1,7 +1,6 @@
 package store
 
 import (
-	"bufio"
 	"fmt"
 	"io/fs"
 	"os"
@@ -9,7 +8,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
-	"strconv"
 	"strings"
 	"testing"
 )
@@ -54,7 +52,6 @@ func TestDocLegacyReferencePrefixesAreAbsent(t *testing.T) {
 	}
 
 	repoRoot := repositoryRootForDocumentationTest(t)
-	beforeObjects := gitObjectCountForDocumentationTest(t, repoRoot)
 
 	for _, prefix := range migratedDocumentationPrefixes {
 		cmd := exec.Command("git", "rev-parse", "--verify", prefix+"^{object}")
@@ -92,10 +89,12 @@ func TestDocLegacyReferencePrefixesAreAbsent(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	afterObjects := gitObjectCountForDocumentationTest(t, repoRoot)
-	if afterObjects != beforeObjects {
-		t.Fatalf("git object count changed while checking documentation: before=%d after=%d", beforeObjects, afterObjects)
-	}
+	// There used to be a before/after count of the repository's git objects
+	// here, to show the check had not written any. The only git command it
+	// runs is `rev-parse --verify`, which writes nothing, so the count proved
+	// nothing about this test and instead failed whenever another process
+	// committed while it ran. On 2026-09-19 that took down a release, which
+	// then passed on a rerun with nothing changed.
 }
 
 func repositoryRootForDocumentationTest(t *testing.T) string {
@@ -105,32 +104,4 @@ func repositoryRootForDocumentationTest(t *testing.T) string {
 		t.Fatal("find documentation test source")
 	}
 	return filepath.Clean(filepath.Join(filepath.Dir(filename), "..", ".."))
-}
-
-func gitObjectCountForDocumentationTest(t *testing.T, repoRoot string) int {
-	t.Helper()
-	cmd := exec.Command("git", "count-objects", "-v")
-	cmd.Dir = repoRoot
-	output, err := cmd.Output()
-	if err != nil {
-		t.Fatalf("git count-objects: %v", err)
-	}
-
-	counts := map[string]int{}
-	scanner := bufio.NewScanner(strings.NewReader(string(output)))
-	for scanner.Scan() {
-		key, value, ok := strings.Cut(scanner.Text(), ": ")
-		if !ok {
-			continue
-		}
-		parsed, err := strconv.Atoi(value)
-		if err != nil {
-			t.Fatalf("parse git count-objects field %q: %v", scanner.Text(), err)
-		}
-		counts[key] = parsed
-	}
-	if err := scanner.Err(); err != nil {
-		t.Fatalf("read git count-objects output: %v", err)
-	}
-	return counts["count"] + counts["in-pack"]
 }

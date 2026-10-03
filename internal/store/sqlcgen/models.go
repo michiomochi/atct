@@ -20,6 +20,7 @@ type AgentSession struct {
 	DiscardedDecisionID sql.NullInt64
 	DiscardReason       string
 	DevelopmentMode     int64
+	LastHeartbeatAt     sql.NullString
 }
 
 type Decision struct {

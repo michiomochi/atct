@@ -50,3 +50,23 @@ SELECT monitor_id, agent_key, scope_key, agent_session_id, cwd, role, project_id
 FROM monitor_health
 WHERE project_id = ?
 ORDER BY last_seen_at DESC, monitor_id;
+
+-- name: CountLiveMonitorsForScope :one
+SELECT COUNT(*)
+FROM monitor_health
+WHERE project_id = ?
+  AND role = ?
+  AND goal_id IS ?
+  AND last_seen_at >= ?
+  AND stopped_at IS NULL;
+
+
+-- name: CountLiveMonitorsForTaskScope :one
+SELECT COUNT(*)
+FROM monitor_health
+WHERE project_id = ?
+  AND role = 'executor'
+  AND goal_id IS ?
+  AND task_id IS ?
+  AND last_seen_at >= ?
+  AND stopped_at IS NULL;

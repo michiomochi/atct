@@ -282,9 +282,7 @@ func TestPendingCommandIncludesAllPendingReasons(t *testing.T) {
 	if err := s.Close(); err != nil {
 		t.Fatalf("Store.Close: %v", err)
 	}
-	t.Setenv(atctAgentSessionIDEnv, strconv.FormatInt(runAllSessionID, 10))
-
-	output, exitCode, err := pendingCommand(dir, projectRoot)
+	output, exitCode, err := pendingCommandForSession(dir, projectRoot, runAllSessionID)
 	if err != nil {
 		t.Fatalf("pendingCommand: %v", err)
 	}
@@ -350,6 +348,11 @@ func TestPendingCommandReportsStaleClaimSeparatelyFromOwnClaim(t *testing.T) {
 	if _, err := s.ClaimTask(ctx, staleTasks[0].ID, staleSessionID); err != nil {
 		t.Fatalf("ClaimTask stale: %v", err)
 	}
+	// It held the lock while it ran; the session then stopped and its lease
+	// stopped being renewed, which is what makes the claim stale.
+	if err := s.HeartbeatAgentSession(ctx, staleSessionID, time.Now().UTC().Add(-store.RuntimeLeaseDuration-time.Second)); err != nil {
+		t.Fatalf("expire the stale session lease: %v", err)
+	}
 	otherProject, err := s.CreateProject(ctx, "other", filepath.Join(t.TempDir(), "other-project"))
 	if err != nil {
 		t.Fatalf("CreateProject other: %v", err)
@@ -375,9 +378,7 @@ func TestPendingCommandReportsStaleClaimSeparatelyFromOwnClaim(t *testing.T) {
 	if err := s.Close(); err != nil {
 		t.Fatalf("Store.Close: %v", err)
 	}
-	t.Setenv(atctAgentSessionIDEnv, strconv.FormatInt(ownSessionID, 10))
-
-	output, exitCode, err := pendingCommand(dir, projectRoot)
+	output, exitCode, err := pendingCommandForSession(dir, projectRoot, ownSessionID)
 	if err != nil {
 		t.Fatalf("pendingCommand: %v", err)
 	}
@@ -653,8 +654,6 @@ func TestPendingCommandUsesLatestProjectAgentSessionWithoutEnv(t *testing.T) {
 	if err := s.Close(); err != nil {
 		t.Fatalf("Store.Close: %v", err)
 	}
-	t.Setenv(atctAgentSessionIDEnv, "")
-
 	output, exitCode, err := pendingCommand(dir, projectRoot)
 	if err != nil {
 		t.Fatalf("pendingCommand: %v", err)
@@ -703,9 +702,7 @@ func TestPendingCommandPrefersExplicitAgentSessionIDOverLatestProjectAgentSessio
 	if err := s.Close(); err != nil {
 		t.Fatalf("Store.Close: %v", err)
 	}
-	t.Setenv(atctAgentSessionIDEnv, strconv.FormatInt(runExplicitSessionID, 10))
-
-	output, exitCode, err := pendingCommand(dir, projectRoot)
+	output, exitCode, err := pendingCommandForSession(dir, projectRoot, runExplicitSessionID)
 	if err != nil {
 		t.Fatalf("pendingCommand: %v", err)
 	}
@@ -716,7 +713,7 @@ func TestPendingCommandPrefersExplicitAgentSessionIDOverLatestProjectAgentSessio
 		t.Fatalf("pendingCommand did not report the explicitly selected run: %q", output)
 	}
 	if strings.Contains(output, "latest task") {
-		t.Fatalf("pendingCommand reported the latest agent session despite ATCT_AGENT_SESSION_ID override: %q", output)
+		t.Fatalf("pendingCommand reported the latest agent session despite being given one: %q", output)
 	}
 }
 
@@ -756,9 +753,7 @@ func TestPendingCommandDoesNotReportRunningAnotherAgentSessionsClaim(t *testing.
 	if err := s.Close(); err != nil {
 		t.Fatalf("Store.Close: %v", err)
 	}
-	t.Setenv(atctAgentSessionIDEnv, strconv.FormatInt(runLatestSessionID, 10))
-
-	output, exitCode, err := pendingCommand(dir, projectRoot)
+	output, exitCode, err := pendingCommandForSession(dir, projectRoot, runLatestSessionID)
 	if err != nil {
 		t.Fatalf("pendingCommand: %v", err)
 	}
@@ -1313,9 +1308,7 @@ func TestPendingCommandPutsUnstartedTasksBeforeOwnClaim(t *testing.T) {
 	if err := s.Close(); err != nil {
 		t.Fatalf("Store.Close: %v", err)
 	}
-	t.Setenv(atctAgentSessionIDEnv, strconv.FormatInt(runLockSessionID, 10))
-
-	output, exitCode, err := pendingCommand(dir, projectRoot)
+	output, exitCode, err := pendingCommandForSession(dir, projectRoot, runLockSessionID)
 	if err != nil {
 		t.Fatalf("pendingCommand: %v", err)
 	}
@@ -1360,9 +1353,7 @@ func TestPendingCommandListsUnstartedSiblingOfClaimedTask(t *testing.T) {
 	if err := s.Close(); err != nil {
 		t.Fatalf("Store.Close: %v", err)
 	}
-	t.Setenv(atctAgentSessionIDEnv, strconv.FormatInt(runClaimedSiblingSessionID, 10))
-
-	output, exitCode, err := pendingCommand(dir, projectRoot)
+	output, exitCode, err := pendingCommandForSession(dir, projectRoot, runClaimedSiblingSessionID)
 	if err != nil {
 		t.Fatalf("pendingCommand: %v", err)
 	}
@@ -1436,9 +1427,7 @@ func TestPendingCommandReportsUnstartedTaskBreakdown(t *testing.T) {
 	if err := s.Close(); err != nil {
 		t.Fatalf("Store.Close: %v", err)
 	}
-	t.Setenv(atctAgentSessionIDEnv, strconv.FormatInt(runBreakdownSessionID, 10))
-
-	output, exitCode, err := pendingCommand(dir, projectRoot)
+	output, exitCode, err := pendingCommandForSession(dir, projectRoot, runBreakdownSessionID)
 	if err != nil {
 		t.Fatalf("pendingCommand: %v", err)
 	}
@@ -1487,9 +1476,7 @@ func TestPendingCommandOmitsAvailableWorkTailWhenCountIsZero(t *testing.T) {
 	if err := s.Close(); err != nil {
 		t.Fatalf("Store.Close: %v", err)
 	}
-	t.Setenv(atctAgentSessionIDEnv, strconv.FormatInt(runHeldOnlySessionID, 10))
-
-	output, exitCode, err := pendingCommand(dir, projectRoot)
+	output, exitCode, err := pendingCommandForSession(dir, projectRoot, runHeldOnlySessionID)
 	if err != nil {
 		t.Fatalf("pendingCommand: %v", err)
 	}
@@ -1537,9 +1524,7 @@ func TestPendingCommandCombinesOpenNoDefaultDecisionWithUnstartedWork(t *testing
 	if err := s.Close(); err != nil {
 		t.Fatalf("Store.Close: %v", err)
 	}
-	t.Setenv(atctAgentSessionIDEnv, strconv.FormatInt(runNoDefaultSessionID, 10))
-
-	output, exitCode, err := pendingCommand(dir, projectRoot)
+	output, exitCode, err := pendingCommandForSession(dir, projectRoot, runNoDefaultSessionID)
 	if err != nil {
 		t.Fatalf("pendingCommand: %v", err)
 	}
@@ -1587,9 +1572,7 @@ func TestPendingCommandDoesNotCombineDefaultedDecisionWithUnstartedWork(t *testi
 	if err := s.Close(); err != nil {
 		t.Fatalf("Store.Close: %v", err)
 	}
-	t.Setenv(atctAgentSessionIDEnv, strconv.FormatInt(runWithDefaultSessionID, 10))
-
-	output, exitCode, err := pendingCommand(dir, projectRoot)
+	output, exitCode, err := pendingCommandForSession(dir, projectRoot, runWithDefaultSessionID)
 	if err != nil {
 		t.Fatalf("pendingCommand: %v", err)
 	}
@@ -1627,9 +1610,7 @@ func TestPendingCommandDoesNotCombineNoDefaultDecisionWithoutUnstartedWork(t *te
 	if err := s.Close(); err != nil {
 		t.Fatalf("Store.Close: %v", err)
 	}
-	t.Setenv(atctAgentSessionIDEnv, strconv.FormatInt(runNoDefaultNoWorkSessionID, 10))
-
-	output, exitCode, err := pendingCommand(dir, projectRoot)
+	output, exitCode, err := pendingCommandForSession(dir, projectRoot, runNoDefaultNoWorkSessionID)
 	if err != nil {
 		t.Fatalf("pendingCommand: %v", err)
 	}
@@ -1687,9 +1668,7 @@ func TestPendingCommandCountsUnstartedTasksOnlyInSelectedProject(t *testing.T) {
 	if err := s.Close(); err != nil {
 		t.Fatalf("Store.Close: %v", err)
 	}
-	t.Setenv(atctAgentSessionIDEnv, strconv.FormatInt(runCurrentSessionID, 10))
-
-	output, exitCode, err := pendingCommand(dir, projectRoot)
+	output, exitCode, err := pendingCommandForSession(dir, projectRoot, runCurrentSessionID)
 	if err != nil {
 		t.Fatalf("pendingCommand: %v", err)
 	}

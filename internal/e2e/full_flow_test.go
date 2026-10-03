@@ -538,9 +538,19 @@ func TestCompletionRejectionReopensGoalHandoffThroughDaemonAndHTTP(t *testing.T)
 		t.Fatalf("initial goal.complete returned %+v", completion)
 	}
 
+	var reviewRequested store.GoalHandoff
+	callDaemon(t, stack, "goal.handoff.review.request", map[string]any{
+		"handoff_id": requested.ID, "goal_id": goal.ID, "requested_by": receiverSessionID,
+		"review_request_report": "Initial handoff ready for review",
+	}, &reviewRequested)
+	var reviewReceived e2eRoleAssignment
+	callDaemon(t, stack, "goal.handoff.review.receive", map[string]any{
+		"handoff_id": requested.ID, "goal_id": goal.ID, "received_by": commanderSessionID,
+	}, &reviewReceived)
+
 	var completed store.GoalHandoff
 	callDaemon(t, stack, "goal.handoff.complete", map[string]any{
-		"handoff_id": requested.ID, "goal_id": goal.ID, "complete_report": "Initial handoff completion",
+		"handoff_id": requested.ID, "goal_id": goal.ID, "agent_session_id": commanderSessionID, "complete_report": "Initial handoff completion",
 	}, &completed)
 	if completed.ID != requested.ID || completed.CompletedReportAt == nil {
 		t.Fatalf("initial completed handoff = %+v, want closed handoff %q", completed, requested.ID)
@@ -571,6 +581,7 @@ func TestCompletionRejectionReopensGoalHandoffThroughDaemonAndHTTP(t *testing.T)
 	if len(applied) != 1 || applied[0].ID != completion.ID || applied[0].Status != domain.DecisionApplied {
 		t.Fatalf("rejection decision.poll returned %+v", applied)
 	}
+	expectedReopenedID := fmt.Sprintf("%s-reopen-%d", requested.ID, completion.ID)
 
 	var revised domain.Decision
 	callDaemon(t, stack, "goal.complete", map[string]any{
@@ -584,11 +595,18 @@ func TestCompletionRejectionReopensGoalHandoffThroughDaemonAndHTTP(t *testing.T)
 		t.Fatalf("revised goal.complete returned %+v", revised)
 	}
 
+	callDaemon(t, stack, "goal.handoff.review.request", map[string]any{
+		"handoff_id": expectedReopenedID, "goal_id": goal.ID, "requested_by": receiverSessionID,
+		"review_request_report": "Revised handoff ready for review",
+	}, &reviewRequested)
+	callDaemon(t, stack, "goal.handoff.review.receive", map[string]any{
+		"handoff_id": expectedReopenedID, "goal_id": goal.ID, "received_by": commanderSessionID,
+	}, &reviewReceived)
+
 	var reopenedCompleted store.GoalHandoff
 	callDaemon(t, stack, "goal.handoff.complete", map[string]any{
-		"goal_id": goal.ID, "complete_report": "Revised handoff completion",
+		"handoff_id": expectedReopenedID, "goal_id": goal.ID, "agent_session_id": commanderSessionID, "complete_report": "Revised handoff completion",
 	}, &reopenedCompleted)
-	expectedReopenedID := fmt.Sprintf("%s-reopen-%d", requested.ID, completion.ID)
 	if reopenedCompleted.ID != expectedReopenedID || reopenedCompleted.ReceivedBy != receiverSessionID || reopenedCompleted.CompletedReportAt == nil {
 		t.Fatalf("reopened completed handoff = %+v, want %q received by %d", reopenedCompleted, expectedReopenedID, receiverSessionID)
 	}

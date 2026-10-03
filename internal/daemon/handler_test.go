@@ -72,9 +72,7 @@ func TestDispatchHandoffRecoverRoutesToGoalStore(t *testing.T) {
 	if _, err := fixture.store.ReceiveGoalHandoff(ctx, handoff.ID, goalID, staleID); err != nil {
 		t.Fatalf("ReceiveGoalHandoff: %v", err)
 	}
-	if _, err := fixture.store.DB().ExecContext(ctx, `UPDATE agent_sessions SET started_at = ? WHERE id = ?`, "stale-process", staleID); err != nil {
-		t.Fatalf("make stale session: %v", err)
-	}
+	expireDaemonTestSessionLease(t, fixture.store, staleID)
 
 	params, err := json.Marshal(map[string]any{
 		"handoff_kind":     "goal",
@@ -666,6 +664,11 @@ func TestProjectClaimTakesOverDeadDaemonSession(t *testing.T) {
 
 	if _, err := claimProjectForTest(t, fixture, fixture.project.ID, "daemon-dead-run"); err != nil {
 		t.Fatalf("initial dead project.claim: %v", err)
+	}
+	// The process is gone, so nothing renews its lease any more.
+	if err := fixture.store.HeartbeatAgentSession(context.Background(), daemonTestSessionID(t, fixture.store, "daemon-dead-run"),
+		time.Now().UTC().Add(-store.RuntimeLeaseDuration-time.Second)); err != nil {
+		t.Fatalf("expire the dead session lease: %v", err)
 	}
 	if _, err := claimProjectForTest(t, fixture, fixture.project.ID, "daemon-live-run"); err != nil {
 		t.Fatalf("take over dead project.claim: %v", err)

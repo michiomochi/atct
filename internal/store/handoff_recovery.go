@@ -16,6 +16,7 @@ import (
 const (
 	RecoveryProofProcessMismatch RecoveryProofKind   = "process_identity_mismatch"
 	RecoveryProofSessionDiscard  RecoveryProofKind   = "session_discard"
+	RecoveryProofLeaseLapsed     RecoveryProofKind   = "heartbeat_lease_lapsed"
 	SessionDiscardDecisionKind   domain.DecisionKind = "session_discard"
 )
 
@@ -69,35 +70,18 @@ var (
 	ErrSessionDiscardForbidden  = errors.New("session discard requires the project commander")
 )
 
-// CanRecoverSession returns proof only for a process identity that is
-// definitely stale or for a session explicitly revoked by a human decision.
+// CanRecoverSession answers whether a session's work can be taken from it.
+//
+// It delegates to the predicate the recovery writes themselves use. Having a
+// second copy here is what let the lease reach one of them and not the other:
+// this one was fixed to read the lease while every real recovery kept asking
+// the operating system about a pid that is the daemon's own.
 func (s *Store) CanRecoverSession(ctx context.Context, sessionID int64) (RecoveryProof, error) {
-	if sessionID <= 0 {
-		return RecoveryProof{}, fmt.Errorf("session id is required: %w", ErrSessionRecoveryNotProven)
-	}
-	row, err := sqlcgen.New(s.db).GetAgentSessionRecovery(ctx, sessionID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return RecoveryProof{}, fmt.Errorf("agent session %d is not registered: %w", sessionID, ErrAgentSessionNotRegistered)
-	}
+	proof, err := canRecoverSessionInTx(ctx, sqlcgen.New(s.db), sessionID)
 	if err != nil {
-		return RecoveryProof{}, fmt.Errorf("find agent session %d for recovery: %w", sessionID, err)
+		return RecoveryProof{}, err
 	}
-	hasDiscardMetadata := agentSessionHasDiscardMetadata(row)
-	if hasDiscardMetadata {
-		if !row.DiscardedAt.Valid || strings.TrimSpace(row.DiscardedAt.String) == "" ||
-			!row.DiscardedBy.Valid || row.DiscardedBy.Int64 <= 0 ||
-			!row.DiscardedDecisionID.Valid || row.DiscardedDecisionID.Int64 <= 0 ||
-			strings.TrimSpace(row.DiscardReason) == "" {
-			return RecoveryProof{}, fmt.Errorf("agent session %d has an incomplete discard record: %w", sessionID, ErrSessionRecoveryNotProven)
-		}
-		proof := RecoveryProof{SessionID: sessionID, Kind: RecoveryProofSessionDiscard}
-		proof.DiscardDecisionID = row.DiscardedDecisionID.Int64
-		return proof, nil
-	}
-	if !claimIsDefinitelyDead(ctx, s, sessionID) {
-		return RecoveryProof{}, fmt.Errorf("agent session %d is live or its liveness is unknown: %w", sessionID, ErrSessionRecoveryNotProven)
-	}
-	return RecoveryProof{SessionID: sessionID, Kind: RecoveryProofProcessMismatch}, nil
+	return proof.RecoveryProof, nil
 }
 
 type sessionDiscardDecisionPayload struct {
@@ -130,8 +114,12 @@ func (s *Store) requireProjectCommander(ctx context.Context, q *sqlcgen.Queries,
 	if agentSessionHasDiscardMetadata(commander) {
 		return fmt.Errorf("commander session %d is discarded: %w", sessionID, ErrSessionDiscardForbidden)
 	}
-	if !commander.ProjectID.Valid || commander.ProjectID.Int64 != projectID {
-		return fmt.Errorf("commander session %d is outside project %d: %w", sessionID, projectID, ErrSessionDiscardForbidden)
+	// Holding the project's claim already says which project this is, so
+	// comparing it again only adds a way to fail. Having no project at all is
+	// different: identify binds one, so a session without one never identified
+	// from inside a registered project and has no business discarding another.
+	if !commander.ProjectID.Valid {
+		return fmt.Errorf("commander session %d has no project: it never identified from inside one: %w", sessionID, ErrSessionDiscardForbidden)
 	}
 	return nil
 }
@@ -192,8 +180,15 @@ func (s *Store) RequestSessionDiscard(ctx context.Context, in SessionDiscardRequ
 	if err != nil {
 		return domain.Decision{}, fmt.Errorf("find target session %d: %w", in.TargetSessionID, err)
 	}
-	if !target.ProjectID.Valid || target.ProjectID.Int64 != in.ProjectID {
-		return domain.Decision{}, fmt.Errorf("target session %d is outside project %d: %w", in.TargetSessionID, in.ProjectID, ErrSessionDiscardForbidden)
+	// Two different refusals, so the answer says which one it is. A session in
+	// another project is out of this commander's reach; a session with no
+	// project never identified from inside one, and revoking it would be a
+	// guess about what it belongs to.
+	if !target.ProjectID.Valid {
+		return domain.Decision{}, fmt.Errorf("target session %d has no project: it never identified from inside one: %w", in.TargetSessionID, ErrSessionDiscardForbidden)
+	}
+	if target.ProjectID.Int64 != in.ProjectID {
+		return domain.Decision{}, fmt.Errorf("target session %d is in project %d, not %d: %w", in.TargetSessionID, target.ProjectID.Int64, in.ProjectID, ErrSessionDiscardForbidden)
 	}
 	if agentSessionHasDiscardMetadata(target) {
 		return domain.Decision{}, fmt.Errorf("target session %d is already discarded: %w", in.TargetSessionID, ErrSessionDiscarded)
@@ -249,7 +244,7 @@ func (s *Store) DiscardSession(ctx context.Context, projectID, targetSessionID, 
 	if agentSessionHasDiscardMetadata(target) {
 		return fmt.Errorf("target session %d is already discarded: %w", targetSessionID, ErrSessionDiscarded)
 	}
-	now := time.Now().UTC().Format(time.RFC3339Nano)
+	now := formatTimestamp(time.Now())
 	result, err := q.DiscardAgentSession(ctx, sqlcgen.DiscardAgentSessionParams{
 		DiscardedAt:         sql.NullString{String: now, Valid: true},
 		DiscardedBy:         sql.NullInt64{Int64: commanderID, Valid: true},
