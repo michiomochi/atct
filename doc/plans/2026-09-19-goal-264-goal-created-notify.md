@@ -50,8 +50,9 @@
 - Test: `internal/store/monitor_assignment_test.go`
 - Modify: `internal/store/queries/monitor_binding.sql` and generated
   `internal/store/sqlcgen/monitor_binding.sql.go`
-- Create: the next forward-only migration after `0043_runtime_heartbeat_lease`
-  adding `monitor_bindings.last_reconciled_at`
+- Create: `0045_monitor_binding_watermark.sql`, after main's
+  `0044_fixed_width_timestamps.sql`, adding
+  `monitor_bindings.last_reconciled_at`
 - Modify: `schema.sql` to keep the declared schema current
 
 **Interfaces:**
@@ -86,8 +87,14 @@
 
 - [ ] **Step 2: Add the durable token watermark.**
 
-  Add the next forward-only SQLite migration with a non-null empty default for
-  `monitor_bindings.last_reconciled_at`; update `schema.sql`, the monitor
+  After merging main, use `0045_monitor_binding_watermark.sql` for this
+  forward-only migration; do not leave the worktree's migration at 0044,
+  because main already owns `0044_fixed_width_timestamps.sql`. Before review,
+  verify that `schema_migrations` contains no
+  `0044_monitor_binding_watermark.sql` record; if an old-name record exists,
+  stop and escalate instead of silently renaming history. Add the migration
+  with a non-null empty default for `monitor_bindings.last_reconciled_at`;
+  update `schema.sql`, the monitor
   binding query source, and generated sqlc code. Add store methods to read the
   token's prior watermark and to update it from `UpsertMonitorHealth` only when
   the report is a healthy project-scoped commander report. Preserve the value
