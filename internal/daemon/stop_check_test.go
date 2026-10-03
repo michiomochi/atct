@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/michiomochi/atct/internal/domain"
@@ -263,5 +264,192 @@ func TestStopCheckSubcommander(t *testing.T) {
 	}
 	if detail == "" {
 		t.Fatal("stopCheckSubcommander(review) returned no blocking detail")
+	}
+}
+
+// waitingFixture holds a subcommander that received the goal handoff on the
+// task goal, with a commander and an executor session around it.
+type waitingFixture struct {
+	goalListFixture
+	commanderID, subID, execID int64
+	goalHandoffID              string
+}
+
+func newWaitingFixture(t *testing.T, holdGoalHandoff bool) waitingFixture {
+	t.Helper()
+	f := newGoalListFixture(t)
+	t.Cleanup(func() { _ = f.store.Close() })
+	ctx := context.Background()
+	// A fresh goal and task: the fixture's own task goal already carries a claimed task.
+	goal, err := f.store.CreateGoal(ctx, f.project.ID, "stop-wait goal", "human")
+	if err != nil {
+		t.Fatalf("CreateGoal: %v", err)
+	}
+	tasks, err := f.store.CreateTasks(ctx, goal.ID, "fixture-agent", "stop-wait-tasks", []string{"task"}, []string{"description"})
+	if err != nil {
+		t.Fatalf("CreateTasks: %v", err)
+	}
+	f.taskGoal, f.tasks = goal, tasks
+	w := waitingFixture{
+		goalListFixture: f,
+		commanderID:     daemonTestSessionID(t, f.store, "stop-wait-commander"),
+		subID:           daemonTestSessionID(t, f.store, "stop-wait-sub"),
+		execID:          daemonTestSessionID(t, f.store, "stop-wait-exec"),
+		goalHandoffID:   "stop-wait-goal-handoff",
+	}
+	if holdGoalHandoff {
+		if _, err := f.store.ClaimProject(ctx, f.project.ID, w.commanderID); err != nil {
+			t.Fatalf("ClaimProject: %v", err)
+		}
+		if _, err := f.store.RequestGoalHandoff(ctx, w.goalHandoffID, f.taskGoal.ID, w.commanderID, "delegate"); err != nil {
+			t.Fatalf("RequestGoalHandoff: %v", err)
+		}
+		if _, err := f.store.ReceiveGoalHandoff(ctx, w.goalHandoffID, f.taskGoal.ID, w.subID); err != nil {
+			t.Fatalf("ReceiveGoalHandoff: %v", err)
+		}
+	}
+	return w
+}
+
+func (w waitingFixture) liveMonitor(t *testing.T, role string) {
+	t.Helper()
+	goalID, taskID := w.taskGoal.ID, w.tasks[0].ID
+	if role != "executor" { // an executor Monitor is bound to a task as well
+		addLiveMonitorForTest(t, w.goalListFixture, role, w.project.ID, &goalID, nil)
+		return
+	}
+	addLiveMonitorForTest(t, w.goalListFixture, role, w.project.ID, &goalID, &taskID)
+}
+
+func (w waitingFixture) goalReview(t *testing.T) {
+	t.Helper()
+	if _, err := w.store.RequestGoalHandoffReview(context.Background(), w.goalHandoffID, w.taskGoal.ID, w.subID, "ready"); err != nil {
+		t.Fatalf("RequestGoalHandoffReview: %v", err)
+	}
+}
+
+func (w waitingFixture) planReview(t *testing.T) {
+	t.Helper()
+	ctx := context.Background()
+	if _, err := w.store.UpdateGoalRequestReport(ctx, w.taskGoal.ID, "spec", "plan"); err != nil {
+		t.Fatalf("UpdateGoalRequestReport: %v", err)
+	}
+	if _, err := w.store.RequestPlanHandoffReview(ctx, "stop-wait-plan", w.taskGoal.ID, w.subID, "ready"); err != nil {
+		t.Fatalf("RequestPlanHandoffReview: %v", err)
+	}
+}
+
+// taskHandoff creates a task handoff on tasks[0]: unreceived, received (the
+// executor is working), or review requested.
+func (w waitingFixture) taskHandoff(t *testing.T, receive, review bool) {
+	t.Helper()
+	ctx := context.Background()
+	const id = "stop-wait-task-handoff"
+	addTaskHandoffDirect(t, w.store, id, w.tasks[0].ID, w.subID, 0)
+	if receive {
+		if _, err := w.store.ReceiveTaskHandoff(ctx, id, w.tasks[0].ID, w.execID); err != nil {
+			t.Fatalf("ReceiveTaskHandoff: %v", err)
+		}
+	}
+	if review {
+		if _, err := w.store.RequestTaskHandoffReview(ctx, id, w.tasks[0].ID, w.execID, "ready"); err != nil {
+			t.Fatalf("RequestTaskHandoffReview: %v", err)
+		}
+	}
+}
+
+func TestStopCheckSubcommanderWaitingOnPeer(t *testing.T) {
+	cases := []struct {
+		name       string
+		hold       bool // the subcommander holds the goal handoff
+		monitor    bool
+		setup      func(*testing.T, waitingFixture)
+		wantReason string // empty: no block; otherwise a substring of the block detail
+	}{
+		{"plan review pending with monitor", true, true, func(t *testing.T, w waitingFixture) { w.planReview(t) }, ""},
+		{"plan review pending without monitor", true, false, func(t *testing.T, w waitingFixture) { w.planReview(t) }, "open goal handoff"},
+		{"goal review pending with monitor", true, true, func(t *testing.T, w waitingFixture) { w.goalReview(t) }, ""},
+		{"goal review rejected is not waiting", true, true, func(t *testing.T, w waitingFixture) {
+			w.goalReview(t)
+			ctx := context.Background()
+			if _, err := w.store.ReceiveGoalHandoffReview(ctx, w.goalHandoffID, w.taskGoal.ID, w.commanderID); err != nil {
+				t.Fatalf("ReceiveGoalHandoffReview: %v", err)
+			}
+			if _, err := w.store.RejectGoalHandoffReview(ctx, w.goalHandoffID, w.taskGoal.ID, w.commanderID, "fix"); err != nil {
+				t.Fatalf("RejectGoalHandoffReview: %v", err)
+			}
+		}, "open goal handoff"},
+		{"executor working with monitor", true, true, func(t *testing.T, w waitingFixture) { w.taskHandoff(t, true, false) }, ""},
+		{"executor working without monitor", true, false, func(t *testing.T, w waitingFixture) { w.taskHandoff(t, true, false) }, "open goal handoff"},
+		{"task review alone is not waiting", true, true, func(t *testing.T, w waitingFixture) { w.taskHandoff(t, true, true) }, "open goal handoff"},
+		{"task review handoff still blocks while goal review pends", true, true, func(t *testing.T, w waitingFixture) {
+			w.goalReview(t)
+			w.taskHandoff(t, true, true)
+		}, "task review handoff"},
+		{"unreceived task handoff still blocks while goal review pends", true, true, func(t *testing.T, w waitingFixture) {
+			w.goalReview(t)
+			w.taskHandoff(t, false, false)
+		}, "unreceived task handoff"},
+		{"nothing to wait for with monitor", true, true, func(t *testing.T, w waitingFixture) {}, "open goal handoff"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newWaitingFixture(t, tc.hold)
+			tc.setup(t, w)
+			if tc.monitor {
+				w.liveMonitor(t, "subcommander")
+			}
+			detail, err := w.daemon.stopCheckSubcommander(context.Background(), w.subID, w.taskGoal.ID)
+			if err != nil {
+				t.Fatalf("stopCheckSubcommander: %v", err)
+			}
+			if tc.wantReason == "" && detail != "" {
+				t.Fatalf("stopCheckSubcommander = %q, want no block", detail)
+			}
+			if tc.wantReason != "" && !strings.Contains(detail, tc.wantReason) {
+				t.Fatalf("stopCheckSubcommander = %q, want a block containing %q", detail, tc.wantReason)
+			}
+		})
+	}
+}
+
+func TestStopCheckExecutorWaitingOnReview(t *testing.T) {
+	cases := []struct {
+		name      string
+		monitor   bool
+		receive   bool
+		review    bool
+		reject    bool
+		wantBlock bool
+	}{
+		{"review requested with monitor", true, true, true, false, false},
+		{"review requested without monitor", false, true, true, false, true},
+		{"review rejected with monitor", true, true, true, true, true},
+		{"before review request with monitor", true, true, false, false, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newWaitingFixture(t, false)
+			w.taskHandoff(t, tc.receive, tc.review)
+			if tc.reject {
+				ctx := context.Background()
+				if _, err := w.store.ReceiveTaskHandoffReview(ctx, "stop-wait-task-handoff", w.tasks[0].ID, w.subID); err != nil {
+					t.Fatalf("ReceiveTaskHandoffReview: %v", err)
+				}
+				if _, err := w.store.RejectTaskHandoffReview(ctx, "stop-wait-task-handoff", w.tasks[0].ID, w.subID, "fix"); err != nil {
+					t.Fatalf("RejectTaskHandoffReview: %v", err)
+				}
+			}
+			if tc.monitor {
+				w.liveMonitor(t, "executor")
+			}
+			detail, err := w.daemon.stopCheckExecutor(context.Background(), w.execID)
+			if err != nil {
+				t.Fatalf("stopCheckExecutor: %v", err)
+			}
+			if (detail != "") != tc.wantBlock {
+				t.Fatalf("stopCheckExecutor = %q, wantBlock %v", detail, tc.wantBlock)
+			}
+		})
 	}
 }

@@ -263,6 +263,10 @@ commander は goal handoff の review を受領してから human review を依�
 | `atct_goal_review_complete` | commander（人間の承認後） | — |
 | ゴールの取り下げ | commander | そのゴールの subcommander |
 
+## 待機中の Stop hook
+
+相手の応答（commander の plan / goal review、subcommander の task review）を待つだけの session は、生きた Monitor があれば Stop hook で止めない。subcommander は plan review・goal review・executor の作業のいずれかを待つ間の open goal handoff、executor は review 依頼済みで差し戻されていない task handoff が対象。差し戻し、未受領、task review など他の block と、Monitor が無い場合、取得に失敗した場合は従来どおり止める。詳細は `doc/continuous-execution.md`。
+
 ## アーカイブした project
 
 `atct project archive <name|id>`（または dashboard の「プロジェクト」セクション）で project をアーカイブできる。goal・task・decision は消えずに残るが、dashboard の一覧・回答待ち、各役割の Stop hook の残作業、watch の通知、wakeup、期限切れ default の自動適用の対象から外れる。goal 詳細や task 詳細など ID を直接開く読み取りは使える。

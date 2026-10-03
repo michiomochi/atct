@@ -192,8 +192,13 @@ Codex monitor が Stop hook 用に渡す環境変数は `ATCT_MONITOR_TOKEN` だ
 | role | 停止を拒否する未完了作業 |
 | --- | --- |
 | commander | claim 済み project の active goal |
-| subcommander | 自身が受領した open goal handoff、自身に戻った plan rejection、自身が受領した task-create handoff、その goal の task review |
-| executor | 自身が受領した全 open task handoff |
+| subcommander | 自身が受領した open goal handoff（待機状態を除く）、自身に戻った plan rejection、自身が受領した task-create handoff、その goal の未受領 task handoff と task review |
+| executor | 自身が受領した全 open task handoff（review 依頼済みで差し戻されておらず、生きた Monitor があるものを除く） |
+
+待機状態は止めてよい。相手の応答は Monitor の通知で届くので、生きた Monitor がある間は idle のままで失うものがない。
+- subcommander: その goal の subcommander スコープに生きた Monitor があり、かつ「commander の plan review 待ち」「自身の goal review 待ち（差し戻されていない）」「executor が作業中の task handoff」のいずれかがあるとき、open goal handoff だけでは止めを拒否しない。差し戻された plan、未完了の task-create handoff、未受領の task handoff、task review は待機状態でも従来どおり止めを拒否する。
+- executor: review を依頼済みで差し戻されておらず、その goal の executor スコープに生きた Monitor があるとき、その handoff では止めを拒否しない。review 依頼前、差し戻し後、Monitor が無いときは従来どおり拒否する。
+- Monitor の有無を取得できないときは待機状態とみなさず、止めを拒否する。commander は変わらない。
 
 Stop hook は fail closed の判定だけを行う。monitor / daemon の停止、handoff の完了・回復、Codex の
 再開は行わない。複数の executor handoff が残っている場合も、一つでも open なら停止を拒否する。
