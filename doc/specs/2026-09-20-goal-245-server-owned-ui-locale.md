@@ -91,12 +91,12 @@ language of what agents write into ATCT.
   `work_done`, `now_possible`, `next_steps`, `surprises`, `needs_review`,
   `how_to_verify`; task titles and descriptions; decision questions, option
   labels, descriptions, and consequences; every handoff request, review,
-  complete, reject, and recovery report.
+  complete, reject, and recovery report; and the repository's `doc/specs` and
+  `doc/plans` documents, which are the same spec and plan the goal fields hold.
 - **Not governed (stay as written):** tool names, parameters, identifiers and
   keys (`handoff_id`, `declare_key`, `idempotency_key`), enum values, code,
-  commands, file paths, branch names, commit messages, quoted error and log
-  text, and repository files such as `doc/specs` and `doc/plans` (repository
-  content, not ATCT records).
+  commands, file paths, branch names, commit messages, and quoted error and log
+  text.
 - **Not enforced.** The daemon does not detect or reject text by language; the
   contract is a convention carried by `atct_role` plus the skill. Existing
   records are not rewritten. A switch made mid-session is seen on the next
