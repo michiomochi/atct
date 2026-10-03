@@ -273,6 +273,17 @@ func TestGoalHandoffReviewRejectReceiveLifecyclePreservesGoalClaim(t *testing.T)
 		t.Fatalf("goal review rejection did not preserve claim and clear reviewer state: %+v", rejected)
 	}
 
+	if _, err := s.ReceiveGoalHandoffReview(ctx, handoff.ID, goalID, requesterID); !errors.Is(err, ErrGoalHandoffReviewState) {
+		t.Fatalf("ReceiveGoalHandoffReview after rejection error = %v, want ErrGoalHandoffReviewState", err)
+	}
+	unchanged, err := s.GetGoalHandoff(ctx, handoff.ID)
+	if err != nil {
+		t.Fatalf("GetGoalHandoff after rejected review receive: %v", err)
+	}
+	if unchanged.ReviewReceivedBy != rejected.ReviewReceivedBy || unchanged.ReviewReceivedAt != rejected.ReviewReceivedAt || unchanged.ReviewRejectReport != rejected.ReviewRejectReport || unchanged.ReviewRejectedAt == nil || rejected.ReviewRejectedAt == nil || !unchanged.ReviewRejectedAt.Equal(*rejected.ReviewRejectedAt) {
+		t.Fatalf("rejected review receive changed persisted review state: before=%+v after=%+v", rejected, unchanged)
+	}
+
 	if _, err := s.RequestGoalHandoffReview(ctx, handoff.ID, goalID, receiverID, "revised goal"); err == nil {
 		t.Fatal("RequestGoalHandoffReview accepted a rejection that the original submitter has not received")
 	}
