@@ -429,7 +429,7 @@ func TestFullFlowThroughDaemonAndHTTP(t *testing.T) {
 		"goal_id": goal.ID, "work_done": "The flow completed",
 		"now_possible":  "The goal can be approved",
 		"how_to_verify": "Check the completion response",
-		"surprises":     "なし", "needs_review": "なし", "next_steps": "なし",
+		"surprises":     "なし", "needs_review": "なし", "next_goal_ids": []int64{},
 		"agent_session_id": agentSessionID,
 	}, &completion)
 	if completion.Kind != domain.KindCompletion || completion.Status != domain.DecisionOpen {
@@ -531,7 +531,7 @@ func TestCompletionRejectionReopensGoalHandoffThroughDaemonAndHTTP(t *testing.T)
 		"goal_id": goal.ID, "work_done": "Initial completion report",
 		"now_possible":  "The goal is ready for review",
 		"how_to_verify": "Review the initial completion report",
-		"surprises":     "None", "needs_review": "The first report needs revision", "next_steps": "Revise the report",
+		"surprises":     "None", "needs_review": "The first report needs revision", "next_goal_ids": []int64{},
 		"agent_session_id": commanderSessionID,
 	}, &completion)
 	if completion.Kind != domain.KindCompletion || completion.Status != domain.DecisionOpen {
@@ -588,7 +588,7 @@ func TestCompletionRejectionReopensGoalHandoffThroughDaemonAndHTTP(t *testing.T)
 		"goal_id": goal.ID, "work_done": "Revised completion report",
 		"now_possible":  "The revised goal is ready for approval",
 		"how_to_verify": "Review the revised completion report",
-		"surprises":     "None", "needs_review": "None", "next_steps": "None",
+		"surprises":     "None", "needs_review": "None", "next_goal_ids": []int64{},
 		"agent_session_id": commanderSessionID,
 	}, &revised)
 	if revised.Kind != domain.KindCompletion || revised.Status != domain.DecisionOpen || revised.ID == completion.ID {

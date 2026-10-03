@@ -72,7 +72,7 @@ func TestFullGoalLifecycle(t *testing.T) {
 		HowToVerify: "Inspect the completed task statuses.",
 		Surprises:   "なし",
 		NeedsReview: "なし",
-		NextSteps:   "なし",
+		NextGoalIDs: []int64{},
 	}, 1)
 	if err != nil {
 		t.Fatalf("CompleteGoal: %v", err)
