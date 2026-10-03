@@ -157,8 +157,12 @@ func (d *Daemon) stopCheckSubcommander(ctx context.Context, agentSessionID, goal
 	if err != nil {
 		return "", fmt.Errorf("list goal handoffs: %w", err)
 	}
+	waiting := d.subcommanderWaiting(ctx, agentSessionID, goal, goalHandoffs)
 	for _, handoff := range goalHandoffs {
 		if handoff.ReceivedBy == agentSessionID && handoff.ReceivedAt != nil && handoff.CompletedReportAt == nil && handoff.RecoveredAt == nil {
+			if waiting {
+				continue
+			}
 			return fmt.Sprintf("subcommander has open goal handoff %s", handoff.ID), nil
 		}
 	}
@@ -201,6 +205,51 @@ func (d *Daemon) stopCheckSubcommander(ctx context.Context, agentSessionID, goal
 	return "", nil
 }
 
+// subcommanderWaiting reports whether the only thing a subcommander holds is
+// an answer it is waiting for: a live Monitor on its goal scope, and either a
+// plan review or a goal review the commander has not answered, or a task an
+// executor is working on. The answer arrives through the Monitor, so stopping
+// costs nothing. When in doubt (no Monitor, a lookup error) it returns false
+// and the caller keeps blocking.
+func (d *Daemon) subcommanderWaiting(ctx context.Context, agentSessionID int64, goal domain.Goal, goalHandoffs []store.GoalHandoff) bool {
+	goalID := goal.ID
+	live, err := d.store.HasLiveMonitorForScope(ctx, store.MonitorLiveScope{ProjectID: goal.ProjectID, Role: "subcommander", GoalID: &goalID})
+	if err != nil || !live {
+		return false
+	}
+	for _, handoff := range goalHandoffs {
+		if handoff.ReceivedBy == agentSessionID && handoff.ReviewRequestedAt != nil && handoff.ReviewRejectedAt == nil && handoff.CompletedReportAt == nil && handoff.RecoveredAt == nil {
+			return true
+		}
+	}
+	planHandoffs, err := d.store.ListPlanHandoffs(ctx, goalID)
+	if err != nil {
+		return false
+	}
+	for _, handoff := range planHandoffs {
+		if handoff.ReviewRequestedAt != nil && handoff.ReviewRejectedAt == nil && handoff.CompletedReportAt == nil {
+			return true
+		}
+	}
+	tasks, err := d.store.ListTasks(ctx, goalID)
+	if err != nil {
+		return false
+	}
+	for _, task := range tasks {
+		handoffs, err := d.store.ListTaskHandoffs(ctx, task.ID)
+		if err != nil {
+			return false
+		}
+		for _, handoff := range handoffs {
+			if handoff.RequestedAt != nil && handoff.ReceivedAt != nil && handoff.CompletedReportAt == nil && handoff.RecoveredAt == nil &&
+				(handoff.ReviewRequestedAt == nil || handoff.ReviewRejectedAt != nil) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func (d *Daemon) stopCheckExecutor(ctx context.Context, agentSessionID int64) (string, error) {
 	goals, err := d.store.ListAllGoals(ctx)
 	if err != nil {
@@ -218,6 +267,13 @@ func (d *Daemon) stopCheckExecutor(ctx context.Context, agentSessionID int64) (s
 			}
 			for _, handoff := range handoffs {
 				if handoff.ReceivedBy == agentSessionID && handoff.ReceivedAt != nil && handoff.CompletedReportAt == nil && handoff.RecoveredAt == nil {
+					// Review requested and not rejected: the subcommander's answer
+					// arrives through the Monitor, so a live one of this task's means waiting only.
+					if handoff.ReviewRequestedAt != nil && handoff.ReviewRejectedAt == nil {
+						if live, err := d.store.HasLiveExecutorMonitorForTask(ctx, goal.ProjectID, goal.ID, task.ID); err == nil && live {
+							continue
+						}
+					}
 					return fmt.Sprintf("executor has open task handoff %s for task %d", handoff.ID, task.ID), nil
 				}
 			}
