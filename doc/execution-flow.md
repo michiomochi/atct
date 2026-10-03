@@ -79,6 +79,11 @@ agent が呼ぶ `atct_task_handoff_create_request` は存在しない。goal han
 subcommander が `atct_task_create_handoff_receive` でこの handoff を受領し、同じ
 `handoff_id` を渡した `atct_task_create` で task を作成して handoff を完了する。
 
+goal handoff の review が差し戻されたときも、daemon は task-create handoff を発行する
+（requested_by は差し戻した commander）。すでに open な task-create handoff があれば
+新規には作らず、それを再利用する。subcommander が受領する前に goal review が再度
+request されたときは、その handoff を「superseded」として閉じる（受領済みのものは閉じない）。
+
 ## MCP ツールの応答
 
 状態を変える MCP ツールは受領票を返す。`internal/mcpshim` が daemon の応答から報告の
@@ -208,7 +213,9 @@ flowchart TD
    `atct_goal_handoff_review_request` を出す。
 8. goal handoff が差し戻された場合は
    `atct_goal_handoff_review_reject_receive` を呼び、修正後に同じ `handoff_id` で
-   `atct_goal_handoff_review_request` を出す。
+   `atct_goal_handoff_review_request` を出す。新しい task が要る場合は、差し戻しで
+   daemon が発行した task-create handoff を `atct_task_create_handoff_receive` で受領し、
+   `atct_task_create` で task を作る。
 
 ### executor
 

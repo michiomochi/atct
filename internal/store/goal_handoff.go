@@ -578,6 +578,15 @@ func (s *Store) RequestGoalHandoffReview(ctx context.Context, handoffID string, 
 	} else if affected == 0 {
 		return GoalHandoff{}, ErrGoalHandoffReviewState
 	}
+	// A task-create handoff nobody received is moot once review is re-requested
+	// without new tasks; a received one stays open. Zero rows is fine.
+	if _, err := sqlcgen.New(tx).SupersedeOpenTaskCreateHandoff(ctx, sqlcgen.SupersedeOpenTaskCreateHandoffParams{
+		RecoveredAt:    sql.NullString{String: now, Valid: true},
+		RecoveryReport: sql.NullString{String: "superseded: goal review re-requested without new tasks", Valid: true},
+		GoalID:         goalID,
+	}); err != nil {
+		return GoalHandoff{}, fmt.Errorf("supersede open task-create handoff: %w", err)
+	}
 	if _, err := appendHandoffEntryTx(ctx, sqlcgen.New(tx), "goal_handoff_entries", handoffID, HandoffEntryKindReviewRequested, reviewRequestReport, requestedBy, "", "", true, time.Now().UTC()); err != nil {
 		return GoalHandoff{}, err
 	}
@@ -783,6 +792,27 @@ func (s *Store) RejectGoalHandoffReview(ctx context.Context, handoffID string, g
 	}
 	if _, err := appendHandoffEntryTx(ctx, sqlcgen.New(tx), "goal_handoff_entries", handoffID, HandoffEntryKindReviewRejected, rejectReport, reviewerID, "", "", true, time.Now().UTC()); err != nil {
 		return GoalHandoff{}, err
+	}
+	// Let the subcommander declare new tasks after a rejection. At most one
+	// open task-create handoff exists per goal, so reuse one that is open.
+	existing, err := sqlcgen.New(tx).ListTaskCreateHandoffs(ctx, goalID)
+	if err != nil {
+		return GoalHandoff{}, fmt.Errorf("list task-create handoffs for goal handoff review rejection: %w", err)
+	}
+	hasOpen := false
+	for _, row := range existing {
+		h, err := taskCreateHandoffFromRow(row)
+		if err != nil {
+			return GoalHandoff{}, err
+		}
+		if h.CompletedAt == nil && h.RecoveredAt == nil {
+			hasOpen = true
+		}
+	}
+	if !hasOpen {
+		if _, err := s.createTaskCreateHandoffTx(ctx, tx, goalID, reviewerID); err != nil {
+			return GoalHandoff{}, fmt.Errorf("create task-create handoff after goal handoff review rejection: %w", err)
+		}
 	}
 	projectID, err := sqlcgen.New(tx).GetGoalProjectID(ctx, goalID)
 	if err != nil {
