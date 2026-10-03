@@ -7,7 +7,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -247,9 +246,7 @@ func TestContextBriefShowsAbsentCommanderForUnclaimedProject(t *testing.T) {
 func TestRenderContextDistinguishesClaimedTasks(t *testing.T) {
 	const selfSessionID int64 = 1
 	const otherSessionID int64 = 2
-	t.Setenv(atctAgentSessionIDEnv, strconv.FormatInt(selfSessionID, 10))
-
-	got := renderContext([]contextGoal{{
+	got := renderContextForAgentSession([]contextGoal{{
 		Goal: domain.Goal{ID: 8, Content: "Claimed goal", Status: domain.GoalActive},
 		Tasks: []domain.Task{
 			{ID: 9, Title: "Unclaimed", Status: domain.TaskTodo},
@@ -260,7 +257,7 @@ func TestRenderContextDistinguishesClaimedTasks(t *testing.T) {
 			10: {ReceivedBy: selfSessionID},
 			11: {ReceivedBy: otherSessionID},
 		},
-	}}, nil)
+	}}, nil, selfSessionID)
 
 	if !strings.Contains(got, "- [todo] Unclaimed (task_id: 9)") {
 		t.Fatalf("unclaimed task missing from context:\n%s", got)

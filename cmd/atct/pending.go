@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 
 	"github.com/michiomochi/atct/internal/domain"
@@ -16,7 +15,6 @@ import (
 var errNoPendingDecisions = errors.New("no unapplied decisions")
 
 const (
-	atctAgentSessionIDEnv          = "ATCT_AGENT_SESSION_ID"
 	unfinishedClaimMarker          = "Unfinished tasks with work locks:"
 	staleClaimMarker               = "Stale work locks:"
 	undeclaredGoalMarker           = "Undeclared active goals:"
@@ -27,9 +25,9 @@ const (
 	pendingStaleClaimReason        = "A task with a work lock held by another agent session is no longer running. Return it to todo with `atct_task_update`, then request a fresh task handoff."
 	pendingUndeclaredGoalReason    = "An active goal has no tasks. Call `atct_task_create` for each goal below, then continue the work."
 	pendingWakeupReason            = "An active goal has unstarted tasks. Call `atct_task_handoff_request` for a task below, then continue the work."
-	pendingCompletedGoalReason     = "All tasks are done but the active goal has no completion report. Call `atct_goal_complete` for each goal below, then continue the work."
+	pendingCompletedGoalReason     = "All tasks are done but the active goal has no review report. Call `atct_goal_handoff_review_request`; the commander then uses `atct_goal_review_request` and, after approval and merge, `atct_goal_review_complete`."
 	pendingCommitlessGoalReason    = "All tasks in an active goal are done but no task has a linked commit. Call `atct_task_update` with `commits` for at least one task below to link its commit, then continue the work."
-	pendingDroppedGoalReason       = "All tasks in an active goal were dropped. Call `atct_goal_complete` to report that the work was withdrawn; call `atct_task_create` to create tasks again if it should be resumed."
+	pendingDroppedGoalReason       = "All tasks in an active goal were dropped. Call `atct_goal_withdraw` to report that the work was withdrawn; call `atct_task_create` to create tasks again if it should be resumed."
 	pendingUnclaimedDoingReason    = "A task is doing without a work lock. Return it to todo with `atct_task_update`, then request a fresh task handoff before continuing the work."
 	completedGoalMarker            = "Goals with all tasks done:"
 	commitlessGoalMarker           = "Goals with no linked commits:"
@@ -37,20 +35,22 @@ const (
 	unclaimedDoingMarker           = "Doing tasks without a work lock:"
 )
 
-func currentAgentSessionID() int64 {
-	value := strings.TrimSpace(os.Getenv(atctAgentSessionIDEnv))
-	if value == "" {
-		return 0
-	}
-	id, err := strconv.ParseInt(value, 10, 64)
-	if err != nil || id <= 0 {
-		return 0
-	}
-	return id
-}
-
 func pendingCommand(dir, cwd string) (string, int, error) {
 	return pendingCommandForProject(dir, cwd, "", false)
+}
+
+// pendingCommandForSession answers for one named session instead of the
+// project's latest. Only tests name one: the CLI has no way to know which
+// session is asking.
+func pendingCommandForSession(dir, cwd string, agentSessionID int64) (string, int, error) {
+	output, err := pendingTextFor(dir, cwd, "", false, agentSessionID)
+	if err != nil {
+		return "", 0, err
+	}
+	if output == "" {
+		return "", 1, nil
+	}
+	return output, 0, nil
 }
 
 func pendingCommandForProject(dir, cwd, projectName string, projectSpecified bool) (string, int, error) {
@@ -69,6 +69,12 @@ func pendingText(dir, cwd string) (string, error) {
 }
 
 func pendingTextForProject(dir, cwd, projectName string, projectSpecified bool) (string, error) {
+	return pendingTextFor(dir, cwd, projectName, projectSpecified, 0)
+}
+
+// agentSessionID of 0 means the project's latest session, which is what the
+// CLI always passes.
+func pendingTextFor(dir, cwd, projectName string, projectSpecified bool, agentSessionID int64) (string, error) {
 	dbPath := filepath.Join(dir, "atct.db")
 	if _, err := os.Stat(dbPath); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -109,7 +115,6 @@ func pendingTextForProject(dir, cwd, projectName string, projectSpecified bool) 
 	}
 
 	unfinishedTasks := make([]domain.Task, 0)
-	agentSessionID := currentAgentSessionID()
 	if agentSessionID == 0 {
 		agentSessionID, err = s.LatestAgentSessionID(ctx, project.ID)
 		if err != nil {

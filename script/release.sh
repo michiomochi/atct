@@ -8,8 +8,9 @@
 #   2. script/release.sh <version>
 #   3. atct daemon stop && atct daemon start   (with the new binary)
 #   4. Monitor the new watch
-#   5. After the replacement, each space must reacquire its project claim:
-#      call atct_project_release first (the old daemon PID still owns the claim), then atct_project_claim
+#   5. After the replacement, each space calls atct_project_claim. Releasing
+#      first is no longer needed: the claim of a session whose monitor stopped
+#      renewing its lease is stale on its own, and claiming takes it over.
 #
 # Everything between 2 and 3 used to be ten separate commands, which left ten
 # places to stop and write a summary instead of continuing.
@@ -75,13 +76,29 @@ if [[ -n "$(git status --porcelain --untracked-files=no)" ]]; then
   exit 1
 fi
 
+# Each check is quiet while it passes and prints everything when it does not.
+# Discarding the output unconditionally cost two debugging sessions on
+# 2026-09-19: the release stopped at "==> tests" with no record of which test
+# had failed, and every one of them passed when run again by hand.
+run_check() {
+  local label="$1"
+  shift
+  local output
+  if ! output="$("$@" 2>&1)"; then
+    printf '%s\n' "$output" >&2
+    echo "release check failed: $label" >&2
+    return 1
+  fi
+}
+
 echo "==> tests"
 go build ./...
-go test -count=1 -timeout 600s ./... >/dev/null
-bash tests/session_start_test.bash >/dev/null
-bash tests/wrapper_test.bash >/dev/null
-bash script/schema-check.sh
-( cd web && pnpm test >/dev/null && pnpm typecheck >/dev/null )
+run_check "go test" go test -count=1 -timeout 600s ./...
+run_check "session_start_test.bash" bash tests/session_start_test.bash
+run_check "wrapper_test.bash" bash tests/wrapper_test.bash
+run_check "schema-check.sh" bash script/schema-check.sh
+run_check "web tests" sh -c 'cd web && pnpm test'
+run_check "web typecheck" sh -c 'cd web && pnpm typecheck' 
 
 # web/embed.go bakes web/dist into the binary with go:embed all:dist, so the
 # release carries whatever is in dist at this moment. pnpm build only adds, it
@@ -114,15 +131,26 @@ if len(previous_versions) != 1:
         f"plugin manifests have different versions: {sorted(previous_versions)}"
     )
 previous = next(iter(previous_versions))
-for path, data in manifest_data:
-    data["version"] = version
-    path.write_text(json.dumps(data, indent=2) + "\n")
 
+# Check before writing anything. This used to bump the manifests first, so a
+# failure here left them on the new version while the hooks kept the old one,
+# and the next run stopped on a dirty tree instead of on the real problem.
 codex_hooks_path = pathlib.Path("hooks") / "codex-hooks.json"
 codex_hooks = codex_hooks_path.read_text()
 marker = "required=" + previous
-if codex_hooks.count(marker) != 2:
-    raise SystemExit(f"Codex hook version marker count is not 2: {codex_hooks.count(marker)}")
+# One marker per hook command. The count used to be hardcoded at 2; 468509d
+# added a third hook without touching it, and every release since then stopped
+# here.
+expected = codex_hooks.count('"type": "command"')
+found = codex_hooks.count(marker)
+if found != expected:
+    raise SystemExit(
+        f"Codex hooks carry {found} `{marker}` markers, expected one per hook command ({expected})"
+    )
+
+for path, data in manifest_data:
+    data["version"] = version
+    path.write_text(json.dumps(data, indent=2) + "\n")
 codex_hooks_path.write_text(codex_hooks.replace(marker, "required=" + version))
 
 PY
@@ -148,4 +176,4 @@ echo "==> plugin"
 claude plugin update atct@atct
 
 echo "==> done. now: atct daemon stop && atct daemon start, then re-arm the watch"
-echo "==> After the replacement, each space must reacquire its project claim: call atct_project_release first (the old daemon PID still owns the claim), then atct_project_claim"
+echo "==> After the replacement, each space calls atct_project_claim. No release first: a claim whose lease stopped being renewed is stale and is taken over by the claim itself."

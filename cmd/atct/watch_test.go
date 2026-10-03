@@ -951,6 +951,14 @@ func TestWatchLivenessPromptsOnlyForImmediateRoleAction(t *testing.T) {
 			want: true,
 		},
 		{
+			name:  "subcommander has unreceived task handoff",
+			scope: subcommanderScope,
+			reconciliation: watchReconciliation{TaskHandoffs: []watchReconciliationHandoff{{
+				GoalID: 249, TaskID: 812, RequestedAt: at("requested"),
+			}}},
+			want: true,
+		},
+		{
 			name:  "subcommander awaits executor",
 			scope: subcommanderScope,
 			reconciliation: watchReconciliation{
@@ -979,7 +987,7 @@ func TestWatchLivenessPromptsOnlyForImmediateRoleAction(t *testing.T) {
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
 			state := newWatchLivenessState(time.Unix(0, 0))
-			if got := state.PromptDue(time.Unix(60, 0), tt.scope, tt.reconciliation); got != tt.want {
+			if _, got := state.PromptDue(time.Unix(60, 0), tt.scope, tt.reconciliation); got != tt.want {
 				t.Fatalf("PromptDue() = %v, want %v", got, tt.want)
 			}
 		})
@@ -994,10 +1002,10 @@ func TestWatchLivenessSuppressesOpenHumanDecision(t *testing.T) {
 		GoalHandoffs: []watchReconciliationHandoff{{GoalID: 249, ReceivedAt: at("received")}},
 	}
 	scope := watchScope{Role: "subcommander", ProjectID: "1", GoalID: "249"}
-	if got := state.PromptDue(time.Unix(600, 0), scope, blocked); got {
+	if _, got := state.PromptDue(time.Unix(600, 0), scope, blocked); got {
 		t.Fatal("open human decision prompted, want suppression")
 	}
-	if got := state.PromptDue(time.Unix(660, 0), scope, watchReconciliation{GoalHandoffs: []watchReconciliationHandoff{{GoalID: 249, ReceivedAt: at("received")}}}); !got {
+	if _, got := state.PromptDue(time.Unix(660, 0), scope, watchReconciliation{GoalHandoffs: []watchReconciliationHandoff{{GoalID: 249, ReceivedAt: at("received")}}}); !got {
 		t.Fatal("prompt did not resume after open human decision was cleared")
 	}
 }
@@ -1010,7 +1018,7 @@ func TestWatchLivenessRendersExactSelector(t *testing.T) {
 		{scope: watchScope{Role: "subcommander", ProjectID: "1", GoalID: "249"}, want: "atct monitor liveness: recheck goal 249"},
 		{scope: watchScope{Role: "executor", ProjectID: "1", GoalID: "249", TaskID: "812"}, want: "atct monitor liveness: recheck task 812"},
 	} {
-		if got := formatWatchLiveness(tt.scope); got != tt.want {
+		if got := formatWatchLiveness(tt.scope, watchReconciliation{}); got != tt.want {
 			t.Fatalf("formatWatchLiveness(%#v) = %q, want %q", tt.scope, got, tt.want)
 		}
 	}
@@ -1775,7 +1783,6 @@ func TestWatchRecoveryReportsOnceThenHealthy(t *testing.T) {
 }
 
 func TestNormalWatchReportsHealthyReconciliationAndIgnoresHealthDiagnostics(t *testing.T) {
-	t.Setenv(atctAgentSessionIDEnv, "921")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -1855,8 +1862,11 @@ func TestNormalWatchReportsHealthyReconciliationAndIgnoresHealthDiagnostics(t *t
 	if healthy[0]["scope_key"] != nil {
 		t.Fatalf("reported scope_key = %v, want normal watch scope without lifecycle identity", healthy[0]["scope_key"])
 	}
-	if healthy[0]["agent_session_id"] != float64(921) {
-		t.Fatalf("reported agent_session_id = %v, want current normal-watch session 921", healthy[0]["agent_session_id"])
+	// A watch without a monitor token is a human's diagnostic view, not any
+	// session's Monitor, so it must not claim a session: doing so would make
+	// that session look alive for as long as somebody kept the view open.
+	if healthy[0]["agent_session_id"] != nil {
+		t.Fatalf("reported agent_session_id = %v, want a plain watch to name no session", healthy[0]["agent_session_id"])
 	}
 	if healthy[0]["agent_key"] != nil {
 		t.Fatalf("reported agent_key = %v, want no expected-scope agent key", healthy[0]["agent_key"])
@@ -1931,7 +1941,7 @@ func TestEmitWatchWakeupWritesOneLinePerCondition(t *testing.T) {
 		record watchDecision
 		want   string
 	}{
-		{"wakeup.completion_report_missing", watchDecision{GoalID: "goal-1"}, "atct wakeup: goal goal-1 has all tasks done but no completion report"},
+		{"wakeup.completion_report_missing", watchDecision{GoalID: "goal-1"}, "atct wakeup: goal goal-1 has all tasks done; request named goal review with atct_goal_handoff_review_request"},
 		{"wakeup.commits_missing", watchDecision{GoalID: "goal-2"}, "atct wakeup: goal goal-2 has no linked commits"},
 		{"wakeup.undeclared_goal", watchDecision{GoalID: "goal-3"}, "atct wakeup: goal goal-3 has no tasks declared"},
 		{"wakeup.all_tasks_dropped", watchDecision{GoalID: "goal-4"}, "atct wakeup: goal goal-4 has all tasks dropped"},
