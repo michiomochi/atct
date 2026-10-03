@@ -61,7 +61,7 @@ test_full_uuid_uses_goal_prefix() {
   local goal8='bacacb8b'
   local output="$TEMP_ROOT/full-uuid.out"
   local status
-  local worktree="$TEMP_ROOT/atct-wt-$goal8"
+  local worktree="$repo/.worktrees/$goal8"
 
   init_repo "$repo"
   status="$(run_setup "$repo" "$goal_id" "$output")"
@@ -78,7 +78,7 @@ test_short_goal_id_uses_goal_prefix() {
   local goal8='deadbeef'
   local output="$TEMP_ROOT/short-goal.out"
   local status
-  local worktree="$TEMP_ROOT/atct-wt-$goal8"
+  local worktree="$repo/.worktrees/$goal8"
 
   init_repo "$repo"
   status="$(run_setup "$repo" "$goal_id" "$output")"
@@ -97,7 +97,7 @@ test_reusing_goal_id_is_idempotent() {
   local goal8='0123abcd'
   local output="$TEMP_ROOT/reuse.out"
   local status
-  local worktree="$TEMP_ROOT/atct-wt-$goal8"
+  local worktree="$repo/.worktrees/$goal8"
 
   init_repo "$repo"
   status="$(run_setup "$repo" "$goal_id" "$output")"
@@ -110,17 +110,40 @@ test_reusing_goal_id_is_idempotent() {
     'repeated goal ID branch'
 }
 
-test_numeric_goal_id_is_rejected_without_legacy_worktree() {
+test_numeric_goal_id_creates_goal_worktree() {
   local repo="$TEMP_ROOT/numeric"
   local output="$TEMP_ROOT/numeric.out"
   local status
+  local worktree="$repo/.worktrees/7"
 
   init_repo "$repo"
-  status="$(run_setup "$repo" 1 "$output")"
+  status="$(run_setup "$repo" 7 "$output")"
 
-  assert_eq 2 "$status" 'numeric goal ID status'
-  [[ ! -e "$TEMP_ROOT/atct-wt1" && ! -L "$TEMP_ROOT/atct-wt1" ]] || \
-    fail 'numeric goal ID created the legacy atct-wt1 worktree'
+  assert_eq 0 "$status" 'numeric goal ID status'
+  [[ -d "$worktree" ]] || fail 'numeric goal ID did not create the goal worktree'
+  assert_eq 'wt/goal-7' "$(git -C "$worktree" branch --show-current)" \
+    'numeric goal ID branch'
+}
+
+test_malformed_goal_id_is_rejected() {
+  local repo="$TEMP_ROOT/malformed"
+  local output="$TEMP_ROOT/malformed.out"
+  local status
+  local goal_id
+
+  init_repo "$repo"
+  for goal_id in abc 0 -1; do
+    status="$(run_setup "$repo" "$goal_id" "$output")"
+    assert_eq 2 "$status" "malformed goal ID <$goal_id> status"
+    assert_file_contains 'usage:' "$output"
+  done
+
+  if (cd -- "$repo" && "$repo/script/worktree-setup.sh") >"$output" 2>&1; then
+    status=0
+  else
+    status=$?
+  fi
+  assert_eq 2 "$status" 'missing goal ID status'
   assert_file_contains 'usage:' "$output"
 }
 
@@ -134,14 +157,14 @@ test_missing_frontend_prerequisites_are_rejected() {
   rm -rf -- "$no_node_modules/web/node_modules"
   status="$(run_setup "$no_node_modules" a1b2c3d4 "$output")"
   assert_eq 2 "$status" 'missing web/node_modules status'
-  [[ ! -e "$TEMP_ROOT/atct-wt-a1b2c3d4" && ! -L "$TEMP_ROOT/atct-wt-a1b2c3d4" ]] || \
+  [[ ! -e "$no_node_modules/.worktrees/a1b2c3d4" && ! -L "$no_node_modules/.worktrees/a1b2c3d4" ]] || \
     fail 'missing web/node_modules created a worktree'
 
   init_repo "$no_dist"
   rm -f -- "$no_dist/web/dist/index.html"
   status="$(run_setup "$no_dist" b1c2d3e4 "$output")"
   assert_eq 2 "$status" 'missing web/dist/index.html status'
-  [[ ! -e "$TEMP_ROOT/atct-wt-b1c2d3e4" && ! -L "$TEMP_ROOT/atct-wt-b1c2d3e4" ]] || \
+  [[ ! -e "$no_dist/.worktrees/b1c2d3e4" && ! -L "$no_dist/.worktrees/b1c2d3e4" ]] || \
     fail 'missing web/dist/index.html created a worktree'
 }
 
@@ -150,7 +173,7 @@ test_frontend_dependencies_are_linked_and_dist_is_copied() {
   local goal8='c0ffee12'
   local output="$TEMP_ROOT/frontend.out"
   local status
-  local worktree="$TEMP_ROOT/atct-wt-$goal8"
+  local worktree="$repo/.worktrees/$goal8"
   local repo_path
 
   init_repo "$repo"
@@ -175,7 +198,8 @@ test_frontend_dependencies_are_linked_and_dist_is_copied() {
 test_full_uuid_uses_goal_prefix
 test_short_goal_id_uses_goal_prefix
 test_reusing_goal_id_is_idempotent
-test_numeric_goal_id_is_rejected_without_legacy_worktree
+test_numeric_goal_id_creates_goal_worktree
+test_malformed_goal_id_is_rejected
 test_missing_frontend_prerequisites_are_rejected
 test_frontend_dependencies_are_linked_and_dist_is_copied
-printf 'PASS: worktree setup (6 tests)\n'
+printf 'PASS: worktree setup (7 tests)\n'
