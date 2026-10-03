@@ -13,6 +13,9 @@ description: Use when atct_role reports commander for project-level triage, dele
 - Review plan and goal handoffs; accept with the matching completion tool or
   reject with the matching rejection tool.
 - After human approval, merge, publish, resolve conflicts, and clean up.
+- Before approval, trial-merge a goal branch in a throwaway worktree
+  (`git worktree add --detach <tmp> main`, then `git merge --no-ff --no-edit wt/goal-N` there)
+  and run the tests on it. A detached HEAD does not move main, so the merge guard allows it.
 
 Do not design a goal, implement it, or edit an executor's deliverable.
 

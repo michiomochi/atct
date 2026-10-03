@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -56,6 +57,13 @@ func goalBranchMergedIntoCurrentBranch(command string) int64 {
 // writing subcommands. Requiring git in command position keeps
 // `echo git merge wt/goal-283` from reading as a merge.
 func gitSubcommandWrites(segment string) bool {
+	return gitSubcommandIn(segment, goalBranchWriters)
+}
+
+// headMovers are the git subcommands that change which branch HEAD is on.
+var headMovers = map[string]bool{"checkout": true, "switch": true}
+
+func gitSubcommandIn(segment string, set map[string]bool) bool {
 	fields := strings.Fields(segment)
 	for len(fields) > 0 && strings.Contains(fields[0], "=") {
 		fields = fields[1:] // leading environment assignments
@@ -72,7 +80,7 @@ func gitSubcommandWrites(segment string) bool {
 			i++ // the option's argument is not the subcommand
 		case strings.HasPrefix(fields[i], "-"):
 		default:
-			return goalBranchWriters[fields[i]]
+			return set[fields[i]]
 		}
 	}
 	return false
@@ -101,11 +109,7 @@ func runMergeCheck(dir string) error {
 		_, writeErr := fmt.Fprint(os.Stdout, mergeCheckDeny("ATCT merge-check could not read the tool call: "+err.Error()))
 		return writeErr
 	}
-	goalID := goalBranchMergedIntoCurrentBranch(input.ToolInput.Command)
-	if goalID == 0 {
-		return nil
-	}
-	reason, denied := mergeCheckRefusal(dir, goalID)
+	reason, denied := mergeCheckDecision(dir, input.CWD, input.ToolInput.Command)
 	if !denied {
 		return nil
 	}
@@ -113,8 +117,103 @@ func runMergeCheck(dir string) error {
 	return err
 }
 
+// mergeCheckDecision refuses only a goal-branch merge that lands on main/master.
+// Merging into a worktree branch or a detached HEAD (a throwaway trial worktree)
+// does not move main, so it passes. A HEAD that cannot be determined is refused.
+func mergeCheckDecision(dir, cwd, command string) (string, bool) {
+	goalID := goalBranchMergedIntoCurrentBranch(command)
+	if goalID == 0 {
+		return "", false
+	}
+	gitC, moved := goalBranchGitContext(command)
+	if moved {
+		return fmt.Sprintf("ATCT merge-check cannot tell which branch wt/goal-%d would be merged into, "+
+			"because the command changes directory or switches branch (cd, pushd, git checkout, git switch) before the merge. "+
+			"Do not cd or switch; use `git -C <path>` on a work tree that already has the target HEAD.", goalID), true
+	}
+	if cwd == "" {
+		cwd, _ = os.Getwd()
+	}
+	if cwd == "" {
+		return fmt.Sprintf("ATCT merge-check could not determine the working directory for the merge of wt/goal-%d.", goalID), true
+	}
+	for _, p := range gitC {
+		if !filepath.IsAbs(p) {
+			p = filepath.Join(cwd, p)
+		}
+		cwd = p
+	}
+	switch headKind(cwd) {
+	case headOtherBranch, headDetached:
+		return "", false
+	}
+	return mergeCheckRefusal(dir, goalID)
+}
+
+// goalBranchGitContext returns the `git -C` paths on the invocation that names
+// the goal branch, and whether an earlier segment runs cd/pushd or git
+// checkout/switch (which move the directory or HEAD; the guard does not track
+// them).
+func goalBranchGitContext(command string) (gitC []string, moved bool) {
+	loc := goalBranchPattern.FindStringIndex(command)
+	if loc == nil {
+		return nil, false
+	}
+	segments := shellSegments.Split(command[:loc[0]], -1)
+	for _, seg := range segments[:len(segments)-1] {
+		fields := strings.Fields(seg)
+		for len(fields) > 0 && strings.Contains(fields[0], "=") {
+			fields = fields[1:]
+		}
+		if len(fields) > 0 && (fields[0] == "cd" || fields[0] == "pushd") {
+			moved = true
+		}
+		if gitSubcommandIn(seg, headMovers) {
+			moved = true
+		}
+	}
+	fields := strings.Fields(segments[len(segments)-1])
+	for i := 0; i+1 < len(fields); i++ {
+		if fields[i] == "-C" {
+			i++
+			gitC = append(gitC, strings.Trim(fields[i], `"'`))
+		}
+	}
+	return gitC, moved
+}
+
+type headState int
+
+const (
+	headUnknown headState = iota
+	headMain
+	headOtherBranch
+	headDetached
+)
+
+// headKind classifies HEAD of the work tree at dir. A failure of git itself is
+// headUnknown, never a pass.
+func headKind(dir string) headState {
+	out, err := exec.Command("git", "-C", dir, "symbolic-ref", "--short", "-q", "HEAD").Output()
+	name := strings.TrimSpace(string(out))
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 && name == "" {
+			return headDetached
+		}
+		return headUnknown
+	}
+	switch name {
+	case "main", "master":
+		return headMain
+	case "":
+		return headUnknown
+	}
+	return headOtherBranch
+}
+
 type mergeHookInput struct {
 	ToolName  string `json:"tool_name"`
+	CWD       string `json:"cwd"`
 	ToolInput struct {
 		Command string `json:"command"`
 	} `json:"tool_input"`
