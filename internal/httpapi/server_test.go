@@ -2052,12 +2052,20 @@ func TestHTTPGoalDetailIncludesOrderedShallowNextGoals(t *testing.T) {
 	}
 	if _, err := f.store.CompleteGoalWithReport(f.ctx, first.ID, domain.CompletionReport{
 		WorkDone:    "The first successor is ready",
+		NowPossible: "The successor can be picked up",
+		HowToVerify: "Read the goal detail",
+		Surprises:   "なし",
+		NeedsReview: "なし",
 		NextGoalIDs: []int64{grandchild.ID},
 	}, testSessionID("first-successor-run")); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := f.store.CompleteGoalWithReport(f.ctx, f.goal.ID, domain.CompletionReport{
 		WorkDone:    "The source goal is ready",
+		NowPossible: "The successor can be picked up",
+		HowToVerify: "Read the goal detail",
+		Surprises:   "なし",
+		NeedsReview: "なし",
 		NextGoalIDs: []int64{second.ID, first.ID},
 	}, testSessionID("source-goal-run")); err != nil {
 		t.Fatal(err)
