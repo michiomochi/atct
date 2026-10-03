@@ -160,7 +160,17 @@ flowchart TD
 4. plan handoff の完了で生成された task-create handoff を
    `atct_task_create_handoff_receive` で受領し、その `handoff_id` を渡して
    `atct_task_create` で task を作る。
-5. task ごとに `atct_task_handoff_request` を記録してから executor を起動する。
+5. task ごとに、まず executor の作業場所を判定する。
+   - executor pane が無ければ、同じ space に最初の 1 台を用意する。
+     初回 pane は追加 pane の例外条件には含めない。
+   - idle executor があれば再利用する。
+   - executor が既に存在する場合の追加 pane は、parallel work、
+     worktree isolation、context exhaustion、topic change のいずれかの場合だけ
+     作成する。
+   - その後、task handoff を記録してから executor を起動する。順序は
+     pane の準備 → `atct_task_handoff_request` → monitored worker の起動 →
+     worker の handoff 受領であり、worker は実装開始前に記録済み handoff を
+     受領する。
 6. executor の review request を受領してレビューし、受理なら
    `atct_task_handoff_complete`、差し戻しなら `atct_task_handoff_review_reject` を呼ぶ。
 7. 全 task が done になったら executor を閉じ、変更をコミットし、

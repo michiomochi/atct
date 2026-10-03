@@ -17,6 +17,16 @@ and the exact `session_key` from SessionStart; optional `handoff_id` and
 - Commit the goal's accepted work and submit its goal handoff for commander
   review. Ask the human only through ATCT decisions.
 
+## Executor workspace bootstrap
+
+Before applying the reuse rule in `## Delegate a task`, classify the goal space:
+
+- If the space has no executor pane, create the first executor pane in that same space. This is the required bootstrap path, not an exception to the additional-pane rule.
+- If an idle executor exists, reuse it for the next unassigned task.
+- Only after an executor exists may an additional pane be created, and only for parallel work, worktree isolation, context exhaustion, or a topic change.
+
+After the pane is prepared, request the task handoff before starting the monitored worker. The worker must receive the recorded handoff before it starts implementation.
+
 Do not inspect other goals, publish, create another subcommander, or claim the
 project.
 
