@@ -114,3 +114,42 @@ func TestTaskCreateHandoffLifecycleOverRPC(t *testing.T) {
 		t.Fatalf("completed handoff = %+v, want completed by %d without task delegation", completed, fixture.receiverID)
 	}
 }
+
+func TestTaskCreateHandoffAfterGoalHandoffRejectionOverRPC(t *testing.T) {
+	fixture := newGoalHandoffRPCTestFixture(t)
+	client := mcpshim.NewClient(fixture.socketPath)
+	ctx := context.Background()
+	goalID := fixture.claimedGoalID
+
+	var goal store.GoalHandoff
+	if err := client.Call(ctx, "goal.handoff.request", map[string]any{"handoff_id": "reissue-goal", "goal_id": goalID, "requested_by": fixture.requesterID}, &goal); err != nil {
+		t.Fatalf("goal.handoff.request: %v", err)
+	}
+	if err := client.Call(ctx, "goal.handoff.receive", map[string]any{"handoff_id": goal.ID, "goal_id": goalID, "received_by": fixture.receiverID}, &goal); err != nil {
+		t.Fatalf("goal.handoff.receive: %v", err)
+	}
+	if err := client.Call(ctx, "goal.handoff.review.request", map[string]any{"handoff_id": goal.ID, "goal_id": goalID, "requested_by": fixture.receiverID, "review_request_report": "ready"}, &goal); err != nil {
+		t.Fatalf("goal.handoff.review.request: %v", err)
+	}
+	if err := client.Call(ctx, "goal.handoff.review.receive", map[string]any{"handoff_id": goal.ID, "goal_id": goalID, "received_by": fixture.requesterID}, &goal); err != nil {
+		t.Fatalf("goal.handoff.review.receive: %v", err)
+	}
+	if err := client.Call(ctx, "goal.handoff.review.reject", map[string]any{"handoff_id": goal.ID, "goal_id": goalID, "reviewer_id": fixture.requesterID, "reject_report": "needs more tasks"}, &goal); err != nil {
+		t.Fatalf("goal.handoff.review.reject: %v", err)
+	}
+	handoff, err := fixture.store.GetTaskCreateHandoffForGoal(ctx, goalID)
+	if err != nil || handoff.CompletedAt != nil || handoff.RecoveredAt != nil || handoff.RequestedBy != fixture.requesterID {
+		t.Fatalf("task-create handoff after rejection = %+v, %v; want open, requested by the reviewer", handoff, err)
+	}
+	var received store.TaskCreateHandoff
+	if err := client.Call(ctx, "task.create_handoff.receive", map[string]any{"handoff_id": handoff.ID, "received_by": fixture.receiverID}, &received); err != nil {
+		t.Fatalf("task.create_handoff.receive: %v", err)
+	}
+	var tasks []domain.Task
+	if err := client.Call(ctx, "task.create", map[string]any{"handoff_id": handoff.ID, "goal_id": goalID, "agent_session_id": fixture.receiverID, "agent": "worker", "titles": []string{"follow-up"}, "descriptions": []string{"after rejection"}, "idempotency_key": "after-reject"}, &tasks); err != nil {
+		t.Fatalf("task.create: %v", err)
+	}
+	if len(tasks) != 1 || tasks[0].Created == nil || !*tasks[0].Created {
+		t.Fatalf("task.create = %#v, want one new task", tasks)
+	}
+}

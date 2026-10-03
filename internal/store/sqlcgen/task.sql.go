@@ -1988,6 +1988,21 @@ func (q *Queries) RequestTaskHandoffReview(ctx context.Context, arg RequestTaskH
 	)
 }
 
+const supersedeOpenTaskCreateHandoff = `-- name: SupersedeOpenTaskCreateHandoff :execresult
+UPDATE task_create_handoffs SET recovered_at = ?, recovery_report = ?
+WHERE goal_id = ? AND received_by IS NULL AND completed_at IS NULL AND recovered_at IS NULL
+`
+
+type SupersedeOpenTaskCreateHandoffParams struct {
+	RecoveredAt    sql.NullString
+	RecoveryReport sql.NullString
+	GoalID         int64
+}
+
+func (q *Queries) SupersedeOpenTaskCreateHandoff(ctx context.Context, arg SupersedeOpenTaskCreateHandoffParams) (sql.Result, error) {
+	return q.db.ExecContext(ctx, supersedeOpenTaskCreateHandoff, arg.RecoveredAt, arg.RecoveryReport, arg.GoalID)
+}
+
 const taskExists = `-- name: TaskExists :one
 SELECT id
 FROM tasks

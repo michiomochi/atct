@@ -59,6 +59,9 @@ The accepted-plan order is mandatory:
 3. The subcommander receives it and calls `atct_task_create` with its same
    `handoff_id` and a stable `idempotency_key`; then work only on those tasks.
 
+After a goal handoff review is rejected, the daemon issues a new task-create
+handoff; receive it the same way if the fix needs new tasks.
+
 **Out of order:** Tasks created before an accepted plan are never reviewed, and
 work done before it is declared never reaches the dashboard.
 

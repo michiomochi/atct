@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -65,10 +66,17 @@ func (s *Store) ListTaskCreateHandoffs(ctx context.Context, goalID int64) ([]Tas
 	return handoffs, nil
 }
 
+func taskCreateHandoffLookupError(id string, err error) error {
+	if errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("%w: task-create handoff %q not found (one is issued when a plan is accepted or a goal handoff review is rejected): %w", ErrTaskCreateHandoffState, id, err)
+	}
+	return err
+}
+
 func (s *Store) getTaskCreateHandoff(ctx context.Context, id string) (TaskCreateHandoff, error) {
 	row, err := sqlcgen.New(s.db).GetTaskCreateHandoff(ctx, id)
 	if err != nil {
-		return TaskCreateHandoff{}, err
+		return TaskCreateHandoff{}, taskCreateHandoffLookupError(id, err)
 	}
 	return taskCreateHandoffFromRow(row)
 }
@@ -219,7 +227,7 @@ func (s *Store) CreateTasksForHandoff(ctx context.Context, handoffID string, ses
 	q := sqlcgen.New(tx)
 	row, err := q.GetTaskCreateHandoff(ctx, handoffID)
 	if err != nil {
-		return nil, err
+		return nil, taskCreateHandoffLookupError(handoffID, err)
 	}
 	h, err = taskCreateHandoffFromRow(row)
 	if err != nil || h.GoalID != goalID || h.ReceivedBy != sessionID || h.RecoveredAt != nil {
