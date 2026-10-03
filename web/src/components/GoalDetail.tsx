@@ -18,6 +18,7 @@ import {
 import { formatDateTime } from "../i18n";
 import { body, findOpenGoalReview, hasCompletionReport, headline, resolveRouteID, statusLabel, type CompletionReportFields } from "../lib/ui";
 import { AreaLoading, ErrorState } from "./StateMessage";
+import { Markdown } from "./Markdown";
 import { GoalDiff } from "./GoalDiff";
 import { TaskCommitList } from "./TaskCommitList";
 import { TaskTable } from "./TaskTable";
@@ -417,7 +418,7 @@ export function GoalDetail({ id }: Props) {
       {goalBody && (
         <section className="min-w-0 border-t border-line pt-5" aria-labelledby="goal-body-heading">
           <h2 id="goal-body-heading" className="font-display text-lg font-semibold text-ink-950">{t("goal.body.title")}</h2>
-          <p className="mt-2 max-w-3xl whitespace-pre-wrap break-words text-base leading-6 text-ink-800">{goalBody}</p>
+          <div className="mt-2 max-w-3xl"><Markdown>{goalBody}</Markdown></div>
         </section>
       )}
 
@@ -438,7 +439,7 @@ export function GoalDetail({ id }: Props) {
                 <summary className="focus-ring cursor-pointer text-base font-medium text-ink-950">
                   {t(label)} <span className="text-ink-700">{t("goal.specPlan.lines", { count: text.split("\n").length })}</span>
                 </summary>
-                <p className="mt-2 max-w-3xl whitespace-pre-wrap break-words text-base leading-6 text-ink-800">{data.goal.goal[key]}</p>
+                <div className="mt-2 max-w-3xl"><Markdown>{data.goal.goal[key]}</Markdown></div>
               </details>
             );
           })}
