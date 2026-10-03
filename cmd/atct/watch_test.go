@@ -1171,7 +1171,7 @@ func TestWatchFormatsAndDeduplicatesHandoffEntryAdded(t *testing.T) {
 			t.Fatalf("emitWatchDecision: %v", err)
 		}
 	}
-	want := "atct handoff entry added: task task-1 (handoff handoff-1, id 42, kind review_requested, author 42): implemented the HTTP endpoint\n"
+	want := "atct handoff entry added: task task-1 (handoff handoff-1, id 42, kind review_requested, author 42)\n"
 	if got := output.String(); got != want {
 		t.Fatalf("handoff entry output = %q, want %q", got, want)
 	}
@@ -2467,5 +2467,49 @@ func TestClaudeMonitorActionWriterSkipsReviewReceipt(t *testing.T) {
 	}
 	if got, want := monitor.String(), "review request\n"; got != want {
 		t.Fatalf("monitor output = %q, want %q", got, want)
+	}
+}
+
+func reconcileGoalCreatedOutput(t *testing.T, body string) string {
+	t.Helper()
+	client := &http.Client{Transport: watchRoundTripper(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Status:     "200 OK",
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(body)),
+		}, nil
+	})}
+	var output bytes.Buffer
+	lastWakeupContent := ""
+	state := watchReconciliation{initialized: strings.Contains(body, `"initialized"`)}
+	if state.initialized {
+		state.Goals = []watchReconciliationGoal{{ID: "1"}}
+	}
+	if err := reconcileWatchScope(
+		context.Background(), client, "http://daemon", watchScope{Role: "commander", ProjectID: "1", MonitorToken: "token-1"}, &output,
+		make(map[watchDeliveryKey]struct{}), &lastWakeupContent,
+		make(map[watchWakeupDiscrepancyDeliveryKey]struct{}), make(map[watchWakeupDeliveryKey]struct{}), newWatchScopeFilter(""), nil, &state,
+	); err != nil {
+		t.Fatalf("reconcileWatchScope: %v", err)
+	}
+	return output.String()
+}
+
+func TestReconcileWatchScopeSkipsGoalCreatedByAgent(t *testing.T) {
+	goals := `[{"id":1,"status":"active","created_at":"2026-09-18T00:00:00Z"},` +
+		`{"id":7,"status":"active","creator":"agent","created_at":"2026-09-19T00:01:00Z"},` +
+		`{"id":8,"status":"active","creator":"human","created_at":"2026-09-19T00:02:00Z"},` +
+		`{"id":9,"status":"active","created_at":"2026-09-19T00:03:00Z"}]`
+	rest := `"decisions":[],"goal_handoffs":[],"plan_handoffs":[],"task_handoffs":[]}`
+	want := "atct goal created (goal_id: 8)\natct goal created (goal_id: 9)\n"
+
+	// initialized path: goal 1 is already known.
+	if got := reconcileGoalCreatedOutput(t, `{"initialized":true,"goals":`+goals+`,`+rest); got != want {
+		t.Fatalf("initialized output = %q, want %q", got, want)
+	}
+	// watermark path.
+	if got := reconcileGoalCreatedOutput(t, `{"monitor_last_reconciled_at":"2026-09-19T00:00:00Z","goals":`+goals+`,`+rest); got != want {
+		t.Fatalf("watermark output = %q, want %q", got, want)
 	}
 }

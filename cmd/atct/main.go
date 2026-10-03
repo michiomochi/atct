@@ -1264,6 +1264,7 @@ func addGoal(ctx context.Context, client *mcpshim.Client, headline, body string)
 	if err := client.Call(ctx, "goal.create", map[string]string{
 		"cwd":     rootPath,
 		"content": content,
+		"creator": "agent",
 	}, &goal); err != nil {
 		return err
 	}
