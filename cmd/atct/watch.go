@@ -1364,7 +1364,7 @@ func watchEventsURLWithGoal(baseURL, projectID, goalID string) (string, error) {
 
 func watchEventsURLWithScope(baseURL string, scope watchScope) (string, error) {
 	endpoint := strings.TrimRight(baseURL, "/") + "/api/events"
-	if scope.ProjectID == "" && scope.GoalID == "" && scope.TaskID == "" {
+	if scope.ProjectID == "" && scope.GoalID == "" && scope.TaskID == "" && scope.MonitorToken == "" {
 		return endpoint, nil
 	}
 	parsed, err := url.Parse(endpoint)
@@ -1380,6 +1380,10 @@ func watchEventsURLWithScope(baseURL string, scope watchScope) (string, error) {
 	}
 	if scope.TaskID != "" {
 		query.Set("task_id", scope.TaskID)
+	}
+	// The daemon uses the token to drop handoff entries this session authored or is not party to.
+	if scope.MonitorToken != "" {
+		query.Set("monitor_token", scope.MonitorToken)
 	}
 	parsed.RawQuery = query.Encode()
 	return parsed.String(), nil

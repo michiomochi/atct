@@ -653,3 +653,64 @@ func TestWorkflowMonitorEndToEndContract(t *testing.T) {
 		}
 	}
 }
+
+// TestWorkflowMonitorBoundWatchDoesNotEchoOwnHandoffEntries runs the production
+// bound watch against a real daemon HTTP handler: the SSE connection must carry
+// the monitor token so the daemon can drop entries the session itself wrote.
+func TestWorkflowMonitorBoundWatchDoesNotEchoOwnHandoffEntries(t *testing.T) {
+	ctx, cancel, db, server, client, root := startWorkflowMonitorDaemon(t)
+	defer cancel()
+
+	const (
+		commanderToken = "entry-echo-commander"
+		subToken       = "entry-echo-sub"
+	)
+	commanderID := registerWorkflowMonitorSession(t, ctx, client, root, "entry-echo-commander", commanderToken)
+	subcommanderID := registerWorkflowMonitorSession(t, ctx, client, root, "entry-echo-subcommander", subToken)
+	projects, err := db.ListProjects(ctx)
+	if err != nil || len(projects) != 1 {
+		t.Fatalf("ListProjects = (%#v, %v), want one project", projects, err)
+	}
+	callWorkflowMonitorRPC(t, ctx, client, "project.claim", map[string]any{
+		"project_id": projects[0].ID, "agent_session_id": commanderID,
+	}, &domain.Project{})
+	var goal domain.Goal
+	callWorkflowMonitorRPC(t, ctx, client, "goal.create", map[string]any{
+		"cwd": root, "content": "entry echo", "creator": "human",
+	}, &goal)
+
+	projectID := strconv.FormatInt(projects[0].ID, 10)
+	goalID := strconv.FormatInt(goal.ID, 10)
+	watchClient := &http.Client{Transport: &workflowMonitorTransport{base: server.Client().Transport}}
+	watchCtx, stopWatches := context.WithCancel(ctx)
+	defer stopWatches()
+
+	commanderWatch := startWorkflowMonitorBoundWatch(watchCtx, watchClient, server.URL, root, commanderToken)
+	waitWorkflowMonitorScope(t, commanderWatch.scopes, func(scope watchScope) bool {
+		return scope.Role == "commander" && scope.ProjectID == projectID
+	})
+
+	// The commander's own request entry must not come back to the commander.
+	callWorkflowMonitorRPC(t, ctx, client, "goal.handoff.request", map[string]any{
+		"handoff_id": "gh-entry-echo", "goal_id": goal.ID, "requested_by": commanderID,
+		"request_report": "goal ready for implementation",
+	}, &store.GoalHandoff{})
+	assertNoWorkflowMonitorAction(t, commanderWatch.recorder, "handoff_entry_added", "goal "+goalID)
+
+	callWorkflowMonitorRPC(t, ctx, client, "goal.handoff.receive", map[string]any{
+		"handoff_id": "gh-entry-echo", "goal_id": goal.ID, "received_by": subcommanderID,
+	}, &map[string]any{})
+	subWatch := startWorkflowMonitorBoundWatch(watchCtx, watchClient, server.URL, root, subToken)
+	waitWorkflowMonitorScope(t, subWatch.scopes, func(scope watchScope) bool {
+		return scope.Role == "subcommander" && scope.GoalID == goalID
+	})
+
+	// An entry the subcommander writes reaches the commander (a party), never the subcommander.
+	callWorkflowMonitorRPC(t, ctx, client, "goal.handoff.review.request", map[string]any{
+		"handoff_id": "gh-entry-echo", "goal_id": goal.ID, "requested_by": subcommanderID,
+		"review_request_report": "ready for review",
+	}, &store.GoalHandoff{})
+	waitWorkflowMonitorAction(t, commanderWatch.recorder, "handoff_entry_added", "author "+strconv.FormatInt(subcommanderID, 10))
+	assertNoWorkflowMonitorAction(t, subWatch.recorder, "handoff_entry_added", "author "+strconv.FormatInt(subcommanderID, 10))
+	assertNoWorkflowMonitorAction(t, commanderWatch.recorder, "handoff_entry_added", "author "+strconv.FormatInt(commanderID, 10))
+}
