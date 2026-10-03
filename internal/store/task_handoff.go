@@ -378,8 +378,12 @@ func (s *Store) requestTaskHandoff(ctx context.Context, handoffID string, taskID
 	}); err != nil {
 		return TaskHandoff{}, fmt.Errorf("request task handoff: %w", err)
 	}
-	if strings.TrimSpace(requestReport) != "" && existingEntryCount == 0 {
-		if _, err := appendHandoffEntryTx(ctx, sqlcgen.New(tx), "task_handoff_entries", handoffID, HandoffEntryKindRequest, requestReport, requestedBy, "", "", true, nowTime); err != nil {
+	if existingEntryCount == 0 {
+		requestBody := requestReport
+		if strings.TrimSpace(requestBody) == "" {
+			requestBody = "requested"
+		}
+		if _, err := appendHandoffEntryTx(ctx, sqlcgen.New(tx), "task_handoff_entries", handoffID, HandoffEntryKindRequest, requestBody, requestedBy, "", "", true, nowTime); err != nil {
 			return TaskHandoff{}, fmt.Errorf("append task handoff request entry: %w", err)
 		}
 	}

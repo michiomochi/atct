@@ -405,8 +405,12 @@ func (s *Store) requestGoalHandoff(ctx context.Context, handoffID string, goalID
 	}); err != nil {
 		return GoalHandoff{}, fmt.Errorf("request goal handoff: %w", err)
 	}
-	if strings.TrimSpace(requestReport) != "" && existingEntryCount == 0 {
-		if _, err := appendHandoffEntryTx(ctx, q, "goal_handoff_entries", handoffID, HandoffEntryKindRequest, requestReport, requestedBy, "", "", true, nowTime); err != nil {
+	if existingEntryCount == 0 {
+		requestBody := requestReport
+		if strings.TrimSpace(requestBody) == "" {
+			requestBody = "requested"
+		}
+		if _, err := appendHandoffEntryTx(ctx, q, "goal_handoff_entries", handoffID, HandoffEntryKindRequest, requestBody, requestedBy, "", "", true, nowTime); err != nil {
 			return GoalHandoff{}, fmt.Errorf("append goal handoff request entry: %w", err)
 		}
 	}
