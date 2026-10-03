@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"os/exec"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -1632,6 +1633,8 @@ type eventFilter struct {
 	canonicalGoalID    int64
 	canonicalTaskID    int64
 	taskID             string
+	// agentSessionID is the session behind the monitor_token; 0 when absent.
+	agentSessionID int64
 }
 
 func (s *Server) parseEventFilter(w http.ResponseWriter, r *http.Request) (eventFilter, bool) {
@@ -1661,6 +1664,14 @@ func (s *Server) parseEventFilter(w http.ResponseWriter, r *http.Request) (event
 			return eventFilter{}, false
 		}
 	}
+	if token := r.URL.Query().Get("monitor_token"); token != "" {
+		id, err := s.store.MonitorBindingAgentSessionID(r.Context(), token)
+		if err != nil && !errors.Is(err, store.ErrMonitorBindingNotFound) {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return eventFilter{}, false
+		}
+		filter.agentSessionID = id
+	}
 	return filter, true
 }
 
@@ -1671,6 +1682,14 @@ func (s *Server) eventPasses(ctx context.Context, filter eventFilter, event stor
 			return false
 		}
 		event.Data = data
+		if filter.agentSessionID != 0 {
+			if data.AuthorSessionID == filter.agentSessionID {
+				return false
+			}
+			if len(data.parties) > 0 && !slices.Contains(data.parties, filter.agentSessionID) {
+				return false
+			}
+		}
 	}
 	if filter.projectID != "" {
 		eventProjectID := event.ProjectID

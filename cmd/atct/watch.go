@@ -1396,6 +1396,7 @@ type watchReconciliationHandoff struct {
 type watchReconciliationGoal struct {
 	ID        string    `json:"id"`
 	Status    string    `json:"status"`
+	Creator   string    `json:"creator"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
@@ -1590,6 +1591,9 @@ func reconcileWatchScope(ctx context.Context, client *http.Client, baseURL strin
 			}
 		}
 		for _, goal := range newGoals {
+			if goal.Creator == "agent" {
+				continue
+			}
 			decision := watchDecision{GoalID: goal.ID, TargetRole: "commander"}
 			if !scopeFilter.delivers("goal.created", decision) {
 				continue
@@ -1993,12 +1997,8 @@ func formatWatchDecision(eventName string, decision watchDecision) (string, bool
 		if decision.TaskID != "" {
 			target = "task " + decision.TaskID
 		}
-		preview := decision.BodyPreview
-		if preview == "" {
-			preview = decision.Preview
-		}
 		entryID, _ := decision.handoffEntryID()
-		return fmt.Sprintf("atct handoff entry added: %s (handoff %s, id %d, kind %s, author %d): %s", target, decision.HandoffID, entryID, decision.Kind, decision.AuthorSessionID, watchHandoffEntryPreview(preview)), true
+		return fmt.Sprintf("atct handoff entry added: %s (handoff %s, id %d, kind %s, author %d)", target, decision.HandoffID, entryID, decision.Kind, decision.AuthorSessionID), true
 	case "handoff_yielded":
 		return fmt.Sprintf("atct handoff yielded: task %s", decision.TaskID), true
 	case "wakeup.claim_undelegated":
@@ -2141,23 +2141,6 @@ func watchHandoffReportPreview(report string) string {
 		return report
 	}
 	return string(runes[:maxReportRunes]) + "…"
-}
-
-func watchHandoffEntryPreview(body string) string {
-	body = strings.Join(strings.Fields(body), " ")
-	const maxPreviewBytes = 256
-	if len([]byte(body)) <= maxPreviewBytes {
-		return body
-	}
-	var preview []byte
-	for _, r := range body {
-		runeBytes := []byte(string(r))
-		if len(preview)+len(runeBytes) > maxPreviewBytes {
-			break
-		}
-		preview = append(preview, runeBytes...)
-	}
-	return string(preview)
 }
 
 func waitForWatchReconnect(ctx context.Context, out io.Writer, interval time.Duration) error {

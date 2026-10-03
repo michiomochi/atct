@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -37,6 +38,9 @@ type HandoffEntryAddedEvent struct {
 	AuthorSessionID int64  `json:"author_session_id"`
 	InReplyToID     *int64 `json:"in_reply_to_id,omitempty"`
 	BodyPreview     string `json:"body_preview"`
+	// parties are the sessions that hold a role in the handoff. Empty means
+	// unknown (e.g. a published event), which is delivered to everyone.
+	parties []int64
 }
 
 // HandoffEntryView is the canonical HTTP representation of one handoff entry.
@@ -420,7 +424,7 @@ func (s *Server) handleTaskHandoffs(w http.ResponseWriter, r *http.Request, task
 	writeJSON(w, http.StatusOK, newTaskHandoffView(goal.ProjectID, goalID, handoff, page))
 }
 
-func handoffEntryRecordForEntry(projectID, goalID, taskID int64, scope, handoffID string, entry store.HandoffEntry) handoffEntryRecord {
+func handoffEntryRecordForEntry(projectID, goalID, taskID int64, scope, handoffID string, parties []int64, entry store.HandoffEntry) handoffEntryRecord {
 	return handoffEntryRecord{
 		event: HandoffEntryAddedEvent{
 			ProjectID:       projectID,
@@ -433,24 +437,38 @@ func handoffEntryRecordForEntry(projectID, goalID, taskID int64, scope, handoffI
 			AuthorSessionID: entry.AuthorSessionID,
 			InReplyToID:     entry.InReplyToID,
 			BodyPreview:     truncateHandoffEntryPreview(entry.Body),
+			parties:         parties,
 		},
 		createdAt: entry.CreatedAt,
 	}
 }
 
+// handoffParties returns the distinct non-zero session ids.
+func handoffParties(ids ...int64) []int64 {
+	parties := make([]int64, 0, len(ids))
+	for _, id := range ids {
+		if id != 0 && !slices.Contains(parties, id) {
+			parties = append(parties, id)
+		}
+	}
+	return parties
+}
+
 func (s *Server) appendGoalHandoffEntryRecords(ctx context.Context, records *[]handoffEntryRecord, projectID int64, handoff store.GoalHandoff) error {
-	return s.appendHandoffEntryRecords(ctx, records, projectID, handoff.GoalID, 0, handoffEntryEventScopeGoal, handoff.ID, func(afterID int64) (store.HandoffEntryPage, error) {
+	parties := handoffParties(handoff.RequestedBy, handoff.ReceivedBy, handoff.ReviewRequestedBy, handoff.ReviewReceivedBy, handoff.ReviewRejectionReceivedBy)
+	return s.appendHandoffEntryRecords(ctx, records, projectID, handoff.GoalID, 0, handoffEntryEventScopeGoal, handoff.ID, parties, func(afterID int64) (store.HandoffEntryPage, error) {
 		return s.store.ListGoalHandoffEntries(ctx, handoff.ID, afterID, store.HandoffHistoryMaxLimit)
 	})
 }
 
 func (s *Server) appendTaskHandoffEntryRecords(ctx context.Context, records *[]handoffEntryRecord, projectID, goalID int64, handoff store.TaskHandoff) error {
-	return s.appendHandoffEntryRecords(ctx, records, projectID, goalID, handoff.TaskID, handoffEntryEventScopeTask, handoff.ID, func(afterID int64) (store.HandoffEntryPage, error) {
+	parties := handoffParties(handoff.RequestedBy, handoff.ReceivedBy, handoff.ReviewRequestedBy, handoff.ReviewReceivedBy, handoff.ReviewRejectionReceivedBy)
+	return s.appendHandoffEntryRecords(ctx, records, projectID, goalID, handoff.TaskID, handoffEntryEventScopeTask, handoff.ID, parties, func(afterID int64) (store.HandoffEntryPage, error) {
 		return s.store.ListTaskHandoffEntries(ctx, handoff.ID, afterID, store.HandoffHistoryMaxLimit)
 	})
 }
 
-func (s *Server) appendHandoffEntryRecords(ctx context.Context, records *[]handoffEntryRecord, projectID, goalID, taskID int64, scope, handoffID string, listPage func(int64) (store.HandoffEntryPage, error)) error {
+func (s *Server) appendHandoffEntryRecords(ctx context.Context, records *[]handoffEntryRecord, projectID, goalID, taskID int64, scope, handoffID string, parties []int64, listPage func(int64) (store.HandoffEntryPage, error)) error {
 	var afterID int64
 	for {
 		page, err := listPage(afterID)
@@ -458,7 +476,7 @@ func (s *Server) appendHandoffEntryRecords(ctx context.Context, records *[]hando
 			return err
 		}
 		for _, entry := range page.Entries {
-			*records = append(*records, handoffEntryRecordForEntry(projectID, goalID, taskID, scope, handoffID, entry))
+			*records = append(*records, handoffEntryRecordForEntry(projectID, goalID, taskID, scope, handoffID, parties, entry))
 		}
 		if !page.HasMore {
 			return nil

@@ -334,3 +334,57 @@ func containsLine(lines []string, want string) bool {
 	}
 	return false
 }
+
+func TestSSEHandoffEntryEventIsDeliveredOnlyToPartiesOtherThanAuthor(t *testing.T) {
+	f := newBareFixture(t)
+	taskHandoff, taskID, executor := createTaskHandoffForHTTPTest(t, f, "http-party-task")
+	goalHandoffs, err := f.store.ListGoalHandoffs(f.ctx, f.goal.ID)
+	if err != nil || len(goalHandoffs) != 1 {
+		t.Fatalf("ListGoalHandoffs = %v, %v", goalHandoffs, err)
+	}
+	goalHandoff := goalHandoffs[0]
+	commander, subcommander := goalHandoff.RequestedBy, goalHandoff.ReceivedBy
+	if err := f.store.BindMonitorToken(f.ctx, "party-commander", commander); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.store.BindMonitorToken(f.ctx, "party-executor", executor); err != nil {
+		t.Fatal(err)
+	}
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+	goalURL := eventsURLWithGoal(srv.URL, idText(f.goal.ID))
+
+	commanderStream, commanderReader := openSSEStream(t, f.ctx, srv.Client(), goalURL+"&monitor_token=party-commander")
+	defer commanderStream.Body.Close()
+	executorStream, executorReader := openSSEStream(t, f.ctx, srv.Client(), srv.URL+"/api/events?task_id="+idText(taskID)+"&monitor_token=party-executor")
+	defer executorStream.Body.Close()
+	anyStream, anyReader := openSSEStream(t, f.ctx, srv.Client(), goalURL)
+	defer anyStream.Body.Close()
+
+	// (b) the commander is not a party of the task handoff.
+	taskEntry, err := f.store.AppendTaskHandoffEntry(f.ctx, taskHandoff.ID, store.HandoffEntryKindReviewRequested, "task entry", subcommander, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// (c) the commander never receives its own entry.
+	if _, err := f.store.AppendGoalHandoffEntry(f.ctx, goalHandoff.ID, store.HandoffEntryKindReviewReceived, "own entry", commander, ""); err != nil {
+		t.Fatal(err)
+	}
+	// (b) the commander is requested_by of the goal handoff.
+	goalEntry, err := f.store.AppendGoalHandoffEntry(f.ctx, goalHandoff.ID, store.HandoffEntryKindReviewRequested, "goal entry", subcommander, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got := assertCanonicalHandoffEvent(t, []byte(readSSEFrame(t, commanderReader).data)); got.ID != goalEntry.ID {
+		t.Fatalf("commander first event = %+v, want goal entry %d", got, goalEntry.ID)
+	}
+	// (d) the executor receives the entry of the task handoff it received.
+	if got := assertCanonicalHandoffEvent(t, []byte(readSSEFrame(t, executorReader).data)); got.ID != taskEntry.ID {
+		t.Fatalf("executor first event = %+v, want task entry %d", got, taskEntry.ID)
+	}
+	// (a) a subscriber without a token still receives every entry.
+	if got := assertCanonicalHandoffEvent(t, []byte(readSSEFrame(t, anyReader).data)); got.ID != taskEntry.ID {
+		t.Fatalf("token-less first event = %+v, want task entry %d", got, taskEntry.ID)
+	}
+}
