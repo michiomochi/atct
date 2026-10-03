@@ -695,21 +695,23 @@ func TestGoalHandoffReportsAreStored(t *testing.T) {
 	}
 }
 
-func TestCompleteGoalHandoffPublishesReportedEvent(t *testing.T) {
+// TestCompleteGoalHandoffByReviewerPublishesReportedEventForSelfAddressedHandoff
+// covers the reported-event publish of CompleteGoalHandoffByReviewer on the only
+// handoffs it can still close: self-addressed ones (requested_by == received_by).
+// A delegated handoff cannot be closed through this method; it closes only
+// through approved FinalizeGoalReview, which publishes no such event.
+func TestCompleteGoalHandoffByReviewerPublishesReportedEventForSelfAddressedHandoff(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 	goalID := newTestGoal(t, s)
-	addTestAgentSession(t, s, "publish-goal-requester")
-	addTestAgentSession(t, s, "publish-goal-receiver")
+	const session = "publish-goal-self"
+	addTestAgentSession(t, s, session)
 	handoffID := "publish-goal-handoff"
-	addRequestOnlyGoalHandoff(t, s, handoffID, goalID, "publish-goal-requester")
-	if _, err := s.ReceiveGoalHandoff(ctx, handoffID, goalID, testSessionID("publish-goal-receiver")); err != nil {
-		t.Fatalf("ReceiveGoalHandoff: %v", err)
-	}
-	if _, err := s.RequestGoalHandoffReview(ctx, handoffID, goalID, testSessionID("publish-goal-receiver"), "ready for review"); err != nil {
+	addGoalHandoffDirect(t, s, handoffID, goalID, session, session)
+	if _, err := s.RequestGoalHandoffReview(ctx, handoffID, goalID, testSessionID(session), "ready for review"); err != nil {
 		t.Fatalf("RequestGoalHandoffReview: %v", err)
 	}
-	if _, err := s.ReceiveGoalHandoffReview(ctx, handoffID, goalID, testSessionID("publish-goal-requester")); err != nil {
+	if _, err := s.ReceiveGoalHandoffReview(ctx, handoffID, goalID, testSessionID(session)); err != nil {
 		t.Fatalf("ReceiveGoalHandoffReview: %v", err)
 	}
 	goal, err := s.GetGoal(ctx, goalID)
@@ -720,7 +722,7 @@ func TestCompleteGoalHandoffPublishesReportedEvent(t *testing.T) {
 	defer cancel()
 
 	const report = "goal completion report"
-	completed, err := s.CompleteGoalHandoffByReviewer(ctx, handoffID, goalID, testSessionID("publish-goal-requester"), report)
+	completed, err := s.CompleteGoalHandoffByReviewer(ctx, handoffID, goalID, testSessionID(session), report)
 	if err != nil {
 		t.Fatalf("CompleteGoalHandoffByReviewer: %v", err)
 	}

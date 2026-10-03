@@ -346,7 +346,7 @@ func prepareCompletedGoalHandoffCompletion(t *testing.T, fixture goalHandoffRPCT
 	return completion
 }
 
-func TestGoalHandoffReviewerCompletionOverRPC(t *testing.T) {
+func TestGoalHandoffReviewerCompletionOverRPCRejectsDelegatedHandoff(t *testing.T) {
 	fixture := newGoalHandoffRPCTestFixture(t)
 	client := mcpshim.NewClient(fixture.socketPath)
 	ctx := context.Background()
@@ -378,14 +378,21 @@ func TestGoalHandoffReviewerCompletionOverRPC(t *testing.T) {
 		t.Fatalf("goal.handoff.review.receive: %v", err)
 	}
 
+	// Goal 287 removed the direct close: a delegated handoff closes only
+	// through approved goal-review finalization, so the route must refuse.
 	var completed store.GoalHandoff
-	if err := client.Call(ctx, "goal.handoff.complete", map[string]any{
+	err := client.Call(ctx, "goal.handoff.complete", map[string]any{
 		"handoff_id": requested.ID, "goal_id": fixture.claimedGoalID, "agent_session_id": fixture.requesterID, "complete_report": "RPC goal completion report",
-	}, &completed); err != nil {
-		t.Fatalf("goal.handoff.complete by reviewer: %v", err)
+	}, &completed)
+	if err == nil || !strings.Contains(err.Error(), store.ErrGoalHandoffReviewState.Error()) {
+		t.Fatalf("goal.handoff.complete by reviewer error = %v, want %v", err, store.ErrGoalHandoffReviewState)
 	}
-	if completed.ID != requested.ID || completed.CompletedReportAt == nil || completed.CompleteReport != "RPC goal completion report" {
-		t.Fatalf("completed handoff = %#v, want request ID, timestamp, and report", completed)
+	persisted, err := fixture.store.GetGoalHandoff(ctx, requested.ID)
+	if err != nil {
+		t.Fatalf("GetGoalHandoff: %v", err)
+	}
+	if persisted.CompletedReportAt != nil || persisted.CompleteReport != "" {
+		t.Fatalf("goal handoff after refused completion = %#v, want open", persisted)
 	}
 }
 
