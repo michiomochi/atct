@@ -516,7 +516,7 @@ func (s *Server) handleMonitorHealth(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, health)
 		return
 	}
-	if health.State != "healthy" && health.State != "recovering" && health.State != "degraded" {
+	if health.State != "healthy" && health.State != "recovering" && health.State != "degraded" && health.State != "rearming" {
 		writeError(w, http.StatusBadRequest, "monitor state is invalid")
 		return
 	}

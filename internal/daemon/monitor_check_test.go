@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -140,11 +141,16 @@ func TestAFreshSessionCanReceiveItsGoalHandoffAndBecomeSubcommander(t *testing.T
 
 func addLiveMonitorForTest(t *testing.T, fixture goalListFixture, role string, projectID int64, goalID, taskID *int64) {
 	t.Helper()
+	addMonitorWithStateForTest(t, fixture, "healthy", role, projectID, goalID, taskID)
+}
+
+func addMonitorWithStateForTest(t *testing.T, fixture goalListFixture, state, role string, projectID int64, goalID, taskID *int64) {
+	t.Helper()
 	now := time.Now().UTC()
 	health := store.MonitorHealth{
 		CWD:              fixture.project.RootPath,
 		Role:             role,
-		State:            "healthy",
+		State:            state,
 		Reason:           "test",
 		ProjectID:        projectID,
 		GoalID:           goalID,
@@ -306,5 +312,71 @@ func TestMonitorCheckAllowsExecutorWhenAnyAssignedGoalHasLiveMonitor(t *testing.
 	}
 	if role.Role != "executor" {
 		t.Fatalf("session.role = %+v, want executor", role)
+	}
+}
+
+// A `--once` watch ends in the middle of the agent's turn, so the rest of the
+// turn's ATCT calls must pass until the grace runs out.
+func TestMonitorCheckAllowsRearmingMonitorUntilGraceEnds(t *testing.T) {
+	ctx := context.Background()
+	for _, role := range []string{"subcommander", "executor"} {
+		t.Run(role, func(t *testing.T) {
+			fixture := newGoalListFixture(t)
+			defer fixture.store.Close()
+
+			goalID := fixture.active[0].ID
+			if role == "executor" {
+				goalID = fixture.taskGoal.ID
+			}
+			commanderID := daemonTestSessionID(t, fixture.store, "rearm-commander-"+role)
+			if _, err := fixture.store.ClaimProject(ctx, fixture.project.ID, commanderID); err != nil {
+				t.Fatalf("ClaimProject: %v", err)
+			}
+			subID := daemonTestSessionID(t, fixture.store, "rearm-sub-"+role)
+			if _, err := fixture.store.RequestGoalHandoff(ctx, "rearm-goal-"+role, goalID, commanderID, "delegate goal"); err != nil {
+				t.Fatalf("RequestGoalHandoff: %v", err)
+			}
+			if _, err := fixture.store.ReceiveGoalHandoff(ctx, "rearm-goal-"+role, goalID, subID); err != nil {
+				t.Fatalf("ReceiveGoalHandoff: %v", err)
+			}
+			sessionKey := "rearm-" + role
+			sessionID := subID
+			var taskID *int64
+			if role == "executor" {
+				sessionID = daemonTestSessionID(t, fixture.store, sessionKey)
+				tid := fixture.tasks[1].ID
+				taskID = &tid
+				if _, err := fixture.store.RequestTaskHandoff(ctx, "rearm-task", tid, subID, "delegate task"); err != nil {
+					t.Fatalf("RequestTaskHandoff: %v", err)
+				}
+				if _, err := fixture.store.ReceiveTaskHandoff(ctx, "rearm-task", tid, sessionID); err != nil {
+					t.Fatalf("ReceiveTaskHandoff: %v", err)
+				}
+			}
+			if _, _, err := fixture.store.IdentifyAgentSession(ctx, sessionID, sessionKey); err != nil {
+				t.Fatalf("IdentifyAgentSession: %v", err)
+			}
+
+			addMonitorWithStateForTest(t, fixture, "rearming", role, fixture.project.ID, &goalID, taskID)
+			if response := monitorCheckDecision(t, fixture, sessionKey); response.Decision != "" {
+				t.Fatalf("monitor_check denied a %s right after --once ended: %+v", role, response)
+			}
+
+			original := store.MonitorRearmGrace
+			store.MonitorRearmGrace = -time.Second
+			defer func() { store.MonitorRearmGrace = original }()
+			// A new row, because the grace is applied when the state is stored.
+			fixture.store.DB().ExecContext(ctx, `DELETE FROM monitor_health`)
+			addMonitorWithStateForTest(t, fixture, "rearming", role, fixture.project.ID, &goalID, taskID)
+			response := monitorCheckDecision(t, fixture, sessionKey)
+			if response.Decision != "block" {
+				t.Fatalf("monitor_check allowed a %s after the grace ended: %+v", role, response)
+			}
+			for _, want := range []string{"--once", "run_in_background"} {
+				if !strings.Contains(response.Reason, want) {
+					t.Fatalf("block reason %q does not mention %q", response.Reason, want)
+				}
+			}
+		})
 	}
 }

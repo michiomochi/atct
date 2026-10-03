@@ -260,6 +260,9 @@ type watchHealthReporter struct {
 	state          string
 	transitionedAt time.Time
 	scopeActive    bool
+	// rearmOnStop, when it reports true, makes Stop announce an expected
+	// re-arm instead of a stop: a `--once` watch that fired ends mid-turn.
+	rearmOnStop func() bool
 }
 
 func newWatchHealthReporter(client *http.Client, urls []string, cwd string, scope watchScope) *watchHealthReporter {
@@ -378,7 +381,29 @@ func (r *watchHealthReporter) ClearExpectedScope() {
 }
 
 func (r *watchHealthReporter) Stop() {
+	if r != nil && r.rearmOnStop != nil && r.rearmOnStop() {
+		r.reportRearming()
+		return
+	}
 	r.ClearExpectedScope()
+}
+
+func (r *watchHealthReporter) reportRearming() {
+	now := time.Now().UTC()
+	r.mu.Lock()
+	if !r.scopeActive {
+		r.mu.Unlock()
+		return
+	}
+	health := r.health
+	health.State = "rearming"
+	health.Reason = "once: re-arm expected"
+	health.TransitionedAt = now
+	health.LastSeenAt = now
+	preferred := r.lastBaseURL
+	r.scopeActive = false
+	r.mu.Unlock()
+	r.post(context.Background(), preferred, health)
 }
 
 func (r *watchHealthReporter) post(ctx context.Context, preferred string, health store.MonitorHealth) {
@@ -515,10 +540,10 @@ func runWatch(dir, goalID string) error {
 }
 
 func runWatchWithOptions(dir, goalID string, projectScope, monitor bool) error {
-	return runWatchWithOptionsAndToken(dir, goalID, projectScope, monitor, "")
+	return runWatchWithOptionsAndToken(dir, goalID, projectScope, monitor, "", false)
 }
 
-func runWatchWithOptionsAndToken(dir, goalID string, projectScope, monitor bool, monitorToken string) error {
+func runWatchWithOptionsAndToken(dir, goalID string, projectScope, monitor bool, monitorToken string, once bool) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	cwd, err := os.Getwd()
@@ -529,7 +554,7 @@ func runWatchWithOptionsAndToken(dir, goalID string, projectScope, monitor bool,
 	client := &http.Client{}
 	baseURLs := watchBaseURLs(dir)
 	if monitor && strings.TrimSpace(monitorToken) != "" {
-		return runBoundClaudeWatch(ctx, dir, cwd, client, baseURLs, monitorToken)
+		return runBoundClaudeWatch(ctx, dir, cwd, client, baseURLs, monitorToken, once)
 	}
 	projectID := ""
 	for _, baseURL := range baseURLs {
@@ -624,7 +649,7 @@ func runWatchWithOptionsAndToken(dir, goalID string, projectScope, monitor bool,
 	}, projectIDGetter, scope, nil, actionSink, reporters...)
 }
 
-func runBoundClaudeWatch(ctx context.Context, dir, cwd string, client *http.Client, baseURLs []string, monitorToken string) error {
+func runBoundClaudeWatch(ctx context.Context, dir, cwd string, client *http.Client, baseURLs []string, monitorToken string, once bool) error {
 	registrationScope := daemonctl.WatchScope{MonitorToken: monitorToken}
 	cleanup, err := daemonctl.RegisterWatchScoped(dir, registrationScope)
 	if err != nil {
@@ -635,16 +660,27 @@ func runBoundClaudeWatch(ctx context.Context, dir, cwd string, client *http.Clie
 		return fmt.Errorf("reap bound watches: %w", err)
 	}
 	writer := monitorActionWriter{writer: os.Stdout}
+	sink := writer.Sink
+	var rearmOnStop func() bool
+	if once {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithCancel(ctx)
+		defer cancel()
+		watchOnce := newWatchOnce(dir, monitorToken, cancel, time.Now)
+		sink = watchOnce.Sink(writer.Sink)
+		rearmOnStop = watchOnce.Fired
+	}
 	snapshot, projectIDGetter := watchSnapshotWithProject(client, baseURLs, cwd)
 	return runMonitorBindingLoop(ctx, client, baseURLs, monitorToken, func(scopeCtx context.Context, scope watchScope) error {
 		reporter := newWatchHealthReporter(client, baseURLs, cwd, scope)
 		var reporters []watchHealthSink
 		if reporter != nil {
+			reporter.rearmOnStop = rearmOnStop
 			reporters = append(reporters, reporter)
 		}
 		return watchLoopWithEnsureAndProjectIDAndScopeAndActionSink(scopeCtx, io.Discard, client, watchReconnectInterval, snapshot, func() error {
 			return ensureWatchDaemon(dir)
-		}, projectIDGetter, scope, nil, writer.Sink, reporters...)
+		}, projectIDGetter, scope, nil, sink, reporters...)
 	})
 }
 

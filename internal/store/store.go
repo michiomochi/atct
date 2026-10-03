@@ -29,6 +29,11 @@ const (
 	monitorHealthRetention = 24 * time.Hour
 )
 
+// MonitorRearmGrace is how long a `--once` watch that ended on its own fire
+// still counts as live, so the agent can finish its turn and re-arm. A var so
+// tests can shorten it.
+var MonitorRearmGrace = 5 * time.Minute
+
 type MonitorHealth struct {
 	MonitorID string `json:"monitor_id"`
 	// MonitorToken is not stored. It names the binding the monitor already
@@ -128,6 +133,12 @@ func (s *Store) UpsertMonitorHealth(ctx context.Context, health MonitorHealth) e
 	if health.LastSeenAt.IsZero() {
 		health.LastSeenAt = now
 	}
+	rearming := health.State == "rearming"
+	if rearming {
+		// Every liveness check reads last_seen_at against the health lease, so
+		// back-dating it by lease - grace keeps the monitor live for the grace.
+		health.LastSeenAt = now.Add(MonitorRearmGrace - MonitorHealthLease)
+	}
 	if health.TransitionedAt.IsZero() {
 		health.TransitionedAt = now
 	}
@@ -159,6 +170,15 @@ func (s *Store) UpsertMonitorHealth(ctx context.Context, health MonitorHealth) e
 		LastSeenAt:       formatTimestamp(health.LastSeenAt),
 	}); err != nil {
 		return fmt.Errorf("upsert monitor health: %w", err)
+	}
+	if rearming && health.AgentSessionID > 0 {
+		// The session lease is renewed by the watch's polls, which have stopped.
+		if _, err := queries.HeartbeatAgentSession(ctx, sqlcgen.HeartbeatAgentSessionParams{
+			LastHeartbeatAt: sql.NullString{String: formatTimestamp(now.Add(MonitorRearmGrace - RuntimeLeaseDuration)), Valid: true},
+			ID:              health.AgentSessionID,
+		}); err != nil {
+			return fmt.Errorf("extend agent session lease for re-arm: %w", err)
+		}
 	}
 	if token := strings.TrimSpace(health.MonitorToken); token != "" && health.State == "healthy" &&
 		health.Role == "commander" && health.GoalID == nil && health.TaskID == nil {
