@@ -273,6 +273,17 @@ func TestGoalHandoffReviewRejectReceiveLifecyclePreservesGoalClaim(t *testing.T)
 		t.Fatalf("goal review rejection did not preserve claim and clear reviewer state: %+v", rejected)
 	}
 
+	if _, err := s.ReceiveGoalHandoffReview(ctx, handoff.ID, goalID, requesterID); !errors.Is(err, ErrGoalHandoffReviewState) {
+		t.Fatalf("ReceiveGoalHandoffReview after rejection error = %v, want ErrGoalHandoffReviewState", err)
+	}
+	unchanged, err := s.GetGoalHandoff(ctx, handoff.ID)
+	if err != nil {
+		t.Fatalf("GetGoalHandoff after rejected review receive: %v", err)
+	}
+	if unchanged.ReviewReceivedBy != rejected.ReviewReceivedBy || unchanged.ReviewReceivedAt != rejected.ReviewReceivedAt || unchanged.ReviewRejectReport != rejected.ReviewRejectReport || unchanged.ReviewRejectedAt == nil || rejected.ReviewRejectedAt == nil || !unchanged.ReviewRejectedAt.Equal(*rejected.ReviewRejectedAt) {
+		t.Fatalf("rejected review receive changed persisted review state: before=%+v after=%+v", rejected, unchanged)
+	}
+
 	if _, err := s.RequestGoalHandoffReview(ctx, handoff.ID, goalID, receiverID, "revised goal"); err == nil {
 		t.Fatal("RequestGoalHandoffReview accepted a rejection that the original submitter has not received")
 	}
@@ -1136,7 +1147,6 @@ func goalReviewRequestTestReport() domain.CompletionReport {
 		HowToVerify: "run goal review tests",
 		Surprises:   "none",
 		NeedsReview: "none",
-		NextSteps:   "merge",
 	}
 }
 
@@ -1410,7 +1420,7 @@ func TestRejectedGoalReviewReusesReceivedHandoff(t *testing.T) {
 		t.Fatalf("GetGoal after rejection: %v", err)
 	}
 	wantReport := goalReviewRequestTestReport()
-	if goal.Status != domain.GoalActive || goal.WorkDone != wantReport.WorkDone || goal.NowPossible != wantReport.NowPossible || goal.HowToVerify != wantReport.HowToVerify || goal.Surprises != wantReport.Surprises || goal.NeedsReview != wantReport.NeedsReview || goal.NextSteps != wantReport.NextSteps || goal.ResultSummary != wantReport.WorkDone {
+	if goal.Status != domain.GoalActive || goal.WorkDone != wantReport.WorkDone || goal.NowPossible != wantReport.NowPossible || goal.HowToVerify != wantReport.HowToVerify || goal.Surprises != wantReport.Surprises || goal.NeedsReview != wantReport.NeedsReview || goal.ResultSummary != wantReport.WorkDone {
 		t.Fatalf("goal after rejection = %+v, want active with request-time report %+v", goal, wantReport)
 	}
 	originalAfterReject, err := s.GetGoalHandoff(ctx, original.ID)
@@ -1482,7 +1492,6 @@ func TestRejectedGoalReviewReplacesRequestTimeGoalReportOnSameHandoff(t *testing
 		HowToVerify: "first verify",
 		Surprises:   "first surprise",
 		NeedsReview: "first review",
-		NextSteps:   "first next",
 	}
 	first, err := s.RequestGoalReview(ctx, goalID, requesterID, firstReport)
 	if err != nil {
@@ -1495,7 +1504,7 @@ func TestRejectedGoalReviewReplacesRequestTimeGoalReportOnSameHandoff(t *testing
 	if err != nil {
 		t.Fatalf("GetGoal after rejected review: %v", err)
 	}
-	if goalAfterReject.WorkDone != firstReport.WorkDone || goalAfterReject.NowPossible != firstReport.NowPossible || goalAfterReject.HowToVerify != firstReport.HowToVerify || goalAfterReject.Surprises != firstReport.Surprises || goalAfterReject.NeedsReview != firstReport.NeedsReview || goalAfterReject.NextSteps != firstReport.NextSteps || goalAfterReject.ResultSummary != firstReport.WorkDone {
+	if goalAfterReject.WorkDone != firstReport.WorkDone || goalAfterReject.NowPossible != firstReport.NowPossible || goalAfterReject.HowToVerify != firstReport.HowToVerify || goalAfterReject.Surprises != firstReport.Surprises || goalAfterReject.NeedsReview != firstReport.NeedsReview || goalAfterReject.ResultSummary != firstReport.WorkDone {
 		t.Fatalf("goal after rejected review = %+v, want request-time report %+v", goalAfterReject, firstReport)
 	}
 	handoffAfterReject, err := s.GetGoalHandoff(ctx, originalHandoff.ID)
@@ -1524,7 +1533,6 @@ func TestRejectedGoalReviewReplacesRequestTimeGoalReportOnSameHandoff(t *testing
 		HowToVerify: "second verify",
 		Surprises:   "second surprise",
 		NeedsReview: "second review",
-		NextSteps:   "second next",
 	}
 	second, err := s.RequestGoalReview(ctx, goalID, requesterID, secondReport)
 	if err != nil {
@@ -1534,7 +1542,7 @@ func TestRejectedGoalReviewReplacesRequestTimeGoalReportOnSameHandoff(t *testing
 	if err != nil {
 		t.Fatalf("GetGoal after revised review: %v", err)
 	}
-	if second.ID == first.ID || goalAfterReplacement.WorkDone != secondReport.WorkDone || goalAfterReplacement.NowPossible != secondReport.NowPossible || goalAfterReplacement.HowToVerify != secondReport.HowToVerify || goalAfterReplacement.Surprises != secondReport.Surprises || goalAfterReplacement.NeedsReview != secondReport.NeedsReview || goalAfterReplacement.NextSteps != secondReport.NextSteps || goalAfterReplacement.ResultSummary != secondReport.WorkDone {
+	if second.ID == first.ID || goalAfterReplacement.WorkDone != secondReport.WorkDone || goalAfterReplacement.NowPossible != secondReport.NowPossible || goalAfterReplacement.HowToVerify != secondReport.HowToVerify || goalAfterReplacement.Surprises != secondReport.Surprises || goalAfterReplacement.NeedsReview != secondReport.NeedsReview || goalAfterReplacement.ResultSummary != secondReport.WorkDone {
 		t.Fatalf("revised review = %+v, goal = %+v; want distinct review and request-time report %+v", second, goalAfterReplacement, secondReport)
 	}
 }

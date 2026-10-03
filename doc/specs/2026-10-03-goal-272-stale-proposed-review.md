@@ -70,7 +70,7 @@ wakeup は decision を作らない。人間の inbox に 2 つ目の問いは�
   期限は confirmed_at + 7 日に延びる。`goals.updated_at` は動かさない（提案の中身が
   変わったわけではないため）。note は「なぜまだ有効か」を書く欄で、後から見直しの
   根拠を辿れるようにする。proposed 以外の goal への確認は拒否する。
-- migration は 1 本（`0046_goal_confirmations.sql`、新規テーブルのみ）。既存の goals の
+- migration は 1 本（`0048_goal_confirmations.sql`、新規テーブルのみ）。既存の goals の
   列には触れない。
 
 ## 非目標

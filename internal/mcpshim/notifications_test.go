@@ -230,7 +230,7 @@ func notificationTestArgs(name string) map[string]any {
 		return map[string]any{
 			"goal_id": "goal-1", "work_done": "done", "now_possible": "ready",
 			"how_to_verify": "check the goal", "surprises": "なし",
-			"needs_review": "なし", "next_steps": "なし",
+			"needs_review": "なし",
 		}
 	case "atct_goal_set_derived_from":
 		return map[string]any{"goal_id": "goal-1", "derived_from_goal_id": "goal-2"}

@@ -96,7 +96,6 @@ func TestGoalCompleteMCPReturnsRetirementDiagnosticWithoutMutation(t *testing.T)
 		Arguments: map[string]any{
 			"goal_id": goalID, "work_done": "done", "now_possible": "now",
 			"how_to_verify": "verify", "surprises": "none", "needs_review": "none",
-			"next_steps": "none",
 		},
 	})
 	if err != nil {

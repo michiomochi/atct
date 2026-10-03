@@ -838,7 +838,7 @@ func TestGoalGetGoalReviewLifecycleProjection(t *testing.T) {
 		t.Fatalf("applied goal_review next commander action = %q, want goal.review.complete", appliedResponse.GoalReview.NextCommanderAction)
 	}
 
-	if _, err := fixture.store.DB().ExecContext(ctx, "UPDATE goals SET status = ?, work_done = ?, now_possible = ?, how_to_verify = ?, surprises = ?, needs_review = ?, next_steps = ?, result_summary = ? WHERE id = ?", string(domain.GoalDone), "recorded work", "recorded now", "recorded verification", "recorded surprises", "recorded review", "recorded next steps", "recorded summary", fixture.active[1].ID); err != nil {
+	if _, err := fixture.store.DB().ExecContext(ctx, "UPDATE goals SET status = ?, work_done = ?, now_possible = ?, how_to_verify = ?, surprises = ?, needs_review = ?, result_summary = ? WHERE id = ?", string(domain.GoalDone), "recorded work", "recorded now", "recorded verification", "recorded surprises", "recorded review", "recorded summary", fixture.active[1].ID); err != nil {
 		t.Fatalf("mark goal done: %v", err)
 	}
 	doneResponse := get(t, fixture.active[1].ID)
@@ -1582,12 +1582,19 @@ esac
 	if instructions != mcpshim.Instructions {
 		t.Fatalf("MCP initialize instructions = %v, want shared instructions", instructions)
 	}
+	if got := len(mcpshim.Instructions); got > 350 {
+		t.Fatalf("MCP instructions are %d bytes, want <= 350", got)
+	}
 	for _, marker := range []string{
-		"This repository is registered with ATCT.",
-		"An active goal is permission to coordinate work.",
-		"See the `atct` skill for details.",
+		"daemon-derived role and handoff state",
+		"receive before work",
+		"request review before completion",
+		"human decisions through ATCT",
+		"human approval",
+		"never auto-apply",
+		"`atct` skill",
 	} {
-		if !strings.Contains(instructions, marker) {
+		if !strings.Contains(strings.ToLower(instructions), strings.ToLower(marker)) {
 			t.Errorf("MCP initialize instructions missing fixed instruction %v", marker)
 		}
 	}

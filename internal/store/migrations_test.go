@@ -32,7 +32,6 @@ func TestMigratedSchemaCompletionReportCheckMatchesGoLimit(t *testing.T) {
 		"how_to_verify",
 		"surprises",
 		"needs_review",
-		"next_steps",
 	} {
 		literal := fmt.Sprintf("length(%s) <= %d", field, completionReportMaxLength)
 		if !strings.Contains(schema, literal) {
@@ -448,7 +447,7 @@ func TestOpeningFutureSchemaVersionReturnsError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open fixture: %v", err)
 	}
-	if _, err := db.Exec(`PRAGMA user_version = 7`); err != nil {
+	if _, err := db.Exec(`PRAGMA user_version = 9`); err != nil {
 		db.Close()
 		t.Fatalf("set future schema version: %v", err)
 	}
@@ -457,7 +456,7 @@ func TestOpeningFutureSchemaVersionReturnsError(t *testing.T) {
 	}
 
 	if _, err := Open(path); err == nil {
-		t.Fatal("Open succeeded for unsupported schema version 7")
+		t.Fatal("Open succeeded for unsupported schema version 9")
 	}
 }
 

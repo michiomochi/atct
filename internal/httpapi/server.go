@@ -85,6 +85,11 @@ type inboxResponse struct {
 	AttentionTasks     []TaskView         `json:"attention_tasks"`
 }
 
+type workflowReconciliationResponse struct {
+	store.WorkflowReconciliation
+	MonitorLastReconciledAt *string `json:"monitor_last_reconciled_at,omitempty"`
+}
+
 type goalResponse struct {
 	Goal                   goalView              `json:"goal"`
 	DerivedFrom            *taskGoalView         `json:"derived_from,omitempty"`
@@ -1774,7 +1779,20 @@ func (s *Server) handleEventReconciliation(w http.ResponseWriter, r *http.Reques
 		writeStoreError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, reconciliation)
+	response := workflowReconciliationResponse{WorkflowReconciliation: reconciliation}
+	if goalID == 0 && taskID == 0 {
+		if token := strings.TrimSpace(r.URL.Query().Get("monitor_token")); token != "" {
+			watermark, watermarkErr := s.store.MonitorBindingLastReconciledAt(r.Context(), token)
+			if watermarkErr != nil && !errors.Is(watermarkErr, store.ErrMonitorBindingNotFound) {
+				writeStoreError(w, watermarkErr)
+				return
+			}
+			if watermarkErr == nil {
+				response.MonitorLastReconciledAt = &watermark
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 func eventMatchesGoalID(event store.DecisionEvent, goalID int64) bool {

@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - The daemon must not withdraw or otherwise change any goal or decision on its own.
-- No new decision kind, UI, or config. One migration, new table only (`0046_goal_confirmations.sql`); do not alter `goals`.
+- No new decision kind, UI, or config. One migration, new table only (`0048_goal_confirmations.sql`); do not alter `goals`.
 - Do not touch active-goal withdrawal behavior or the commander-only authorization of `goal.withdraw`.
 - `go tool sqlc generate` must be run after editing `internal/store/queries/*.sql`; commit the regenerated `internal/store/sqlcgen`.
 - Do not hand-edit generated code.
@@ -24,7 +24,7 @@
 ### Task 1: Store — remove auto-withdrawal, open proposed withdrawal, add confirmations and the due list
 
 **Files:**
-- Create: `internal/store/migrations/0046_goal_confirmations.sql`
+- Create: `internal/store/migrations/0048_goal_confirmations.sql`
 - Modify: `internal/store/queries/goal.sql` (and regenerate `internal/store/sqlcgen/goal.sql.go`)
 - Modify: `internal/store/goal.go`
 - Modify: `internal/store/wakeup.go`

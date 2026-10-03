@@ -449,7 +449,7 @@ func TestFullFlowThroughDaemonAndHTTP(t *testing.T) {
 		"work_done":     "The flow completed",
 		"now_possible":  "The goal can be approved",
 		"how_to_verify": "Check the named goal review report",
-		"surprises":     "なし", "needs_review": "なし", "next_steps": "Merge after approval",
+		"surprises":     "なし", "needs_review": "なし", "next_goal_ids": []int64{},
 	}, &review)
 	if review.Kind != domain.KindGoalReview || review.Status != domain.DecisionOpen {
 		t.Fatalf("goal.review.request returned %+v", review)

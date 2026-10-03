@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -658,15 +659,15 @@ type goalHandoffCompleteParams struct {
 }
 
 type goalReviewRequestParams struct {
-	GoalID                  int64  `json:"goal_id"`
-	WorkDone                string `json:"work_done"`
-	NowPossible             string `json:"now_possible"`
-	HowToVerify             string `json:"how_to_verify"`
-	Surprises               string `json:"surprises"`
-	NeedsReview             string `json:"needs_review"`
-	NextSteps               string `json:"next_steps"`
-	AgentSessionID          int64  `json:"agent_session_id"`
-	IncludeUnappliedAnswers bool   `json:"include_unapplied_answers"`
+	GoalID                  int64   `json:"goal_id"`
+	WorkDone                string  `json:"work_done"`
+	NowPossible             string  `json:"now_possible"`
+	HowToVerify             string  `json:"how_to_verify"`
+	Surprises               string  `json:"surprises"`
+	NeedsReview             string  `json:"needs_review"`
+	NextGoalIDs             []int64 `json:"next_goal_ids,omitempty"`
+	AgentSessionID          int64   `json:"agent_session_id"`
+	IncludeUnappliedAnswers bool    `json:"include_unapplied_answers"`
 }
 
 type goalReviewCompleteParams struct {
@@ -1825,7 +1826,7 @@ func (d *Daemon) dispatchMethod(ctx context.Context, req rpc.Request) (json.RawM
 
 	case "goal.review.request":
 		var p goalReviewRequestParams
-		if err := json.Unmarshal(req.Params, &p); err != nil {
+		if err := decodeStrictJSON(req.Params, &p); err != nil {
 			return nil, err
 		}
 		goal, err := d.store.GetGoal(ctx, p.GoalID)
@@ -1841,7 +1842,7 @@ func (d *Daemon) dispatchMethod(ctx context.Context, req rpc.Request) (json.RawM
 			HowToVerify: p.HowToVerify,
 			Surprises:   p.Surprises,
 			NeedsReview: p.NeedsReview,
-			NextSteps:   p.NextSteps,
+			NextGoalIDs: p.NextGoalIDs,
 		}
 		review, err := d.store.RequestGoalReview(ctx, p.GoalID, p.AgentSessionID, report)
 		if err != nil || !p.IncludeUnappliedAnswers {
@@ -2147,16 +2148,21 @@ func (d *Daemon) dispatchMethod(ctx context.Context, req rpc.Request) (json.RawM
 			HowToVerify             string `json:"how_to_verify"`
 			Surprises               string `json:"surprises"`
 			NeedsReview             string `json:"needs_review"`
-			NextSteps               string `json:"next_steps"`
 			AgentSessionID          int64  `json:"agent_session_id"`
 			IncludeUnappliedAnswers bool   `json:"include_unapplied_answers"`
 		}
-		if err := json.Unmarshal(req.Params, &p); err != nil {
+		if err := decodeStrictJSON(req.Params, &p); err != nil {
 			return nil, err
 		}
 		return nil, errors.New(retiredGoalCompletionDiagnostic)
 	}
 	return nil, fmt.Errorf("unknown method: %s", req.Method)
+}
+
+func decodeStrictJSON(data []byte, dst any) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	return decoder.Decode(dst)
 }
 
 func marshal(v any, err error) (json.RawMessage, error) {

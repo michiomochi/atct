@@ -3,6 +3,7 @@ import {
   approveDecision,
   createGoal,
   fetchProjects,
+  normalizeGoal,
   rejectDecision,
   subscribeToDecisionEvents,
 } from "./api";
@@ -111,6 +112,14 @@ describe("goal creation API", () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ project_id: "project-1", content: "Ship it\n\nDetails", creator: "human" }),
     });
+  });
+});
+
+describe("goal detail API", () => {
+  it("normalizes missing successor summaries to an empty array", () => {
+    const response = normalizeGoal({ goal: { id: "goal-1" } });
+
+    expect((response.goal as { next_goals?: unknown }).next_goals).toEqual([]);
   });
 });
 

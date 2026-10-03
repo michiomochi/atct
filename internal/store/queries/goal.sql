@@ -2,10 +2,10 @@
 INSERT INTO goals (
   project_id, derived_from_goal_id, content, status, creator,
   result_summary,
-  work_done, now_possible, how_to_verify, surprises, needs_review, next_steps,
+  work_done, now_possible, how_to_verify, surprises, needs_review,
   created_at, updated_at
 )
-VALUES (?, ?, ?, ?, ?, '', '', '', '', '', '', '', ?, ?)
+VALUES (?, ?, ?, ?, ?, '', '', '', '', '', '', ?, ?)
 RETURNING id;
 
 -- name: GetGoal :one
@@ -15,7 +15,7 @@ RETURNING id;
 SELECT
   id, project_id, NULLIF(CAST(derived_from_goal_id AS INTEGER), 0) AS derived_from_goal_id,
   content, spec, plan, status, creator, result_summary,
-  work_done, now_possible, how_to_verify, surprises, needs_review, next_steps,
+  work_done, now_possible, how_to_verify, surprises, needs_review,
   created_at, updated_at
 FROM goals
 WHERE id = ?;
@@ -105,7 +105,7 @@ WHERE id = ? AND kind = 'goal_approval' AND status = 'open';
 -- name: ListGoals :many
 SELECT
   id, project_id, derived_from_goal_id, content, spec, plan, status, creator, result_summary,
-  work_done, now_possible, how_to_verify, surprises, needs_review, next_steps,
+  work_done, now_possible, how_to_verify, surprises, needs_review,
   created_at, updated_at
 FROM goals
 WHERE project_id = ?
@@ -114,7 +114,7 @@ ORDER BY created_at;
 -- name: ListAllGoals :many
 SELECT
   id, project_id, derived_from_goal_id, content, spec, plan, status, creator, result_summary,
-  work_done, now_possible, how_to_verify, surprises, needs_review, next_steps,
+  work_done, now_possible, how_to_verify, surprises, needs_review,
   created_at, updated_at
 FROM goals
 ORDER BY created_at;
@@ -122,7 +122,7 @@ ORDER BY created_at;
 -- name: ListDerivedGoals :many
 SELECT
   id, project_id, derived_from_goal_id, content, spec, plan, status, creator, result_summary,
-  work_done, now_possible, how_to_verify, surprises, needs_review, next_steps,
+  work_done, now_possible, how_to_verify, surprises, needs_review,
   created_at, updated_at
 FROM goals
 WHERE derived_from_goal_id = ?
@@ -142,11 +142,32 @@ SELECT COUNT(*)
 FROM decisions
 WHERE goal_id = ? AND kind = 'goal_review' AND status = 'applied' AND answer_label = 'approve';
 
+-- name: DeleteNextGoals :exec
+DELETE FROM next_goals
+WHERE goal_id = ?;
+
+-- name: InsertNextGoal :exec
+INSERT INTO next_goals (goal_id, next_goal_id, created_at)
+VALUES (?, ?, ?);
+
+-- name: ListNextGoalIDs :many
+SELECT next_goal_id
+FROM next_goals
+WHERE goal_id = ?
+ORDER BY next_goal_id;
+
+-- name: ListNextGoals :many
+SELECT g.id, g.content, g.status
+FROM next_goals AS ng
+JOIN goals AS g ON g.id = ng.next_goal_id
+WHERE ng.goal_id = ?
+ORDER BY ng.next_goal_id;
+
 -- name: UpdateGoalCompletionReport :execresult
 UPDATE goals SET
   result_summary = ?,
   work_done = ?, now_possible = ?, how_to_verify = ?,
-  surprises = ?, needs_review = ?, next_steps = ?, updated_at = ?
+  surprises = ?, needs_review = ?, updated_at = ?
 WHERE id = ? AND status = 'active';
 
 -- name: FinalizeGoalReview :execresult

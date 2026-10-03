@@ -776,7 +776,7 @@ func TestNamedGoalReviewRequiresCommanderAndHumanApprovalOrdering(t *testing.T) 
 		HowToVerify: "run focused integration tests",
 		Surprises:   "none",
 		NeedsReview: "none",
-		NextSteps:   "merge",
+		NextGoalIDs: []int64{},
 	}
 
 	var review domain.Decision
@@ -784,7 +784,7 @@ func TestNamedGoalReviewRequiresCommanderAndHumanApprovalOrdering(t *testing.T) 
 		"goal_id": fixture.claimedGoalID, "agent_session_id": fixture.requesterID,
 		"work_done": report.WorkDone, "now_possible": report.NowPossible,
 		"how_to_verify": report.HowToVerify, "surprises": report.Surprises,
-		"needs_review": report.NeedsReview, "next_steps": report.NextSteps,
+		"needs_review": report.NeedsReview, "next_goal_ids": report.NextGoalIDs,
 	}, &review); err != nil {
 		t.Fatalf("goal.review.request: %v", err)
 	}
@@ -809,7 +809,7 @@ func TestNamedGoalReviewRequiresCommanderAndHumanApprovalOrdering(t *testing.T) 
 	if before.Status != domain.GoalActive {
 		t.Fatalf("goal before human approval = %q, want active", before.Status)
 	}
-	if before.WorkDone != report.WorkDone || before.NowPossible != report.NowPossible || before.HowToVerify != report.HowToVerify || before.Surprises != report.Surprises || before.NeedsReview != report.NeedsReview || before.NextSteps != report.NextSteps || before.ResultSummary != report.WorkDone {
+	if before.WorkDone != report.WorkDone || before.NowPossible != report.NowPossible || before.HowToVerify != report.HowToVerify || before.Surprises != report.Surprises || before.NeedsReview != report.NeedsReview || len(before.NextGoals) != len(report.NextGoalIDs) || before.ResultSummary != report.WorkDone {
 		t.Fatalf("goal before human approval = %+v, want report %+v", before, report)
 	}
 
@@ -855,7 +855,7 @@ func TestNamedGoalReviewRequiresCommanderAndHumanApprovalOrdering(t *testing.T) 
 		"goal_id": fixture.claimedGoalID, "agent_session_id": fixture.requesterID,
 		"work_done": report.WorkDone, "now_possible": report.NowPossible,
 		"how_to_verify": report.HowToVerify, "surprises": report.Surprises,
-		"needs_review": report.NeedsReview, "next_steps": report.NextSteps,
+		"needs_review": report.NeedsReview, "next_goal_ids": report.NextGoalIDs,
 	}, &retryReview); err != nil {
 		t.Fatalf("retry goal.review.request: %v", err)
 	}
@@ -886,7 +886,7 @@ func TestNamedGoalReviewRequiresCommanderAndHumanApprovalOrdering(t *testing.T) 
 	if err := client.Call(ctx, "goal.review.complete", completeParams, &done); err != nil {
 		t.Fatalf("commander goal.review.complete after human approval: %v", err)
 	}
-	if done.Status != domain.GoalDone || done.WorkDone != report.WorkDone || done.NowPossible != report.NowPossible || done.HowToVerify != report.HowToVerify || done.Surprises != report.Surprises || done.NeedsReview != report.NeedsReview || done.NextSteps != report.NextSteps {
+	if done.Status != domain.GoalDone || done.WorkDone != report.WorkDone || done.NowPossible != report.NowPossible || done.HowToVerify != report.HowToVerify || done.Surprises != report.Surprises || done.NeedsReview != report.NeedsReview || len(done.NextGoals) != len(report.NextGoalIDs) {
 		t.Fatalf("completed goal = %+v, want final report after commander completion", done)
 	}
 	persistedHandoff, err := fixture.store.GetGoalHandoff(ctx, handoffID)

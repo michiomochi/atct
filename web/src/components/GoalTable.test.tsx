@@ -55,7 +55,7 @@ function goal(id: string, content: string, tasks: TaskView[]): Goal {
     how_to_verify: "",
     surprises: "",
     needs_review: "",
-    next_steps: "",
+    next_goals: [],
     created_at: "",
     updated_at: "",
     tasks,
