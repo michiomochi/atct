@@ -43,19 +43,6 @@ SELECT goal_id
 FROM decisions
 WHERE id = ? AND kind = 'goal_review' AND status = 'open';
 
--- name: CreateGoalReviewStateSnapshot :exec
-INSERT INTO goal_review_state_snapshots (
-  decision_id, goal_id, result_summary, work_done, now_possible,
-  how_to_verify, surprises, needs_review, next_goal_ids, created_at
-)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
-
--- name: GetGoalReviewStateSnapshot :one
-SELECT result_summary, work_done, now_possible, how_to_verify,
-  surprises, needs_review, next_goal_ids
-FROM goal_review_state_snapshots
-WHERE decision_id = ?;
-
 -- name: GetGoalStatus :one
 SELECT status
 FROM goals
@@ -147,21 +134,21 @@ DELETE FROM next_goals
 WHERE goal_id = ?;
 
 -- name: InsertNextGoal :exec
-INSERT INTO next_goals (goal_id, next_goal_id, sort_order, created_at)
-VALUES (?, ?, ?, ?);
+INSERT INTO next_goals (goal_id, next_goal_id, created_at)
+VALUES (?, ?, ?);
 
 -- name: ListNextGoalIDs :many
 SELECT next_goal_id
 FROM next_goals
 WHERE goal_id = ?
-ORDER BY sort_order;
+ORDER BY next_goal_id;
 
 -- name: ListNextGoals :many
 SELECT g.id, g.content, g.status
 FROM next_goals AS ng
 JOIN goals AS g ON g.id = ng.next_goal_id
 WHERE ng.goal_id = ?
-ORDER BY ng.sort_order;
+ORDER BY ng.next_goal_id;
 
 -- name: UpdateGoalCompletionReport :execresult
 UPDATE goals SET

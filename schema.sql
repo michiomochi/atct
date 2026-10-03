@@ -49,7 +49,6 @@ CREATE TABLE IF NOT EXISTS goals (
   how_to_verify  TEXT NOT NULL DEFAULT '',
   surprises      TEXT NOT NULL DEFAULT '',
   needs_review   TEXT NOT NULL DEFAULT '',
-  legacy_next_steps TEXT NOT NULL DEFAULT '',
   created_at     TEXT NOT NULL,
   updated_at     TEXT NOT NULL,
   CHECK (
@@ -66,31 +65,13 @@ CREATE TABLE IF NOT EXISTS goals (
 CREATE TABLE IF NOT EXISTS next_goals (
   goal_id INTEGER NOT NULL REFERENCES goals(id),
   next_goal_id INTEGER NOT NULL REFERENCES goals(id),
-  sort_order INTEGER NOT NULL CHECK (sort_order >= 0),
   created_at TEXT NOT NULL,
   PRIMARY KEY (goal_id, next_goal_id),
-  UNIQUE (goal_id, sort_order),
   CHECK (goal_id <> next_goal_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_next_goals_next_goal_id
   ON next_goals(next_goal_id);
-
-CREATE TABLE IF NOT EXISTS goal_review_state_snapshots (
-  decision_id    INTEGER PRIMARY KEY REFERENCES decisions(id),
-  goal_id        INTEGER NOT NULL REFERENCES goals(id),
-  result_summary TEXT NOT NULL,
-  work_done      TEXT NOT NULL,
-  now_possible   TEXT NOT NULL,
-  how_to_verify  TEXT NOT NULL,
-  surprises      TEXT NOT NULL,
-  needs_review   TEXT NOT NULL,
-  next_goal_ids  TEXT NOT NULL,
-  created_at     TEXT NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS idx_goal_review_state_snapshots_goal_id
-  ON goal_review_state_snapshots(goal_id);
 
 CREATE TABLE IF NOT EXISTS tasks (
   id         INTEGER PRIMARY KEY,

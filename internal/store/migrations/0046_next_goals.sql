@@ -13,7 +13,6 @@ CREATE TABLE goals_new (
   how_to_verify  TEXT NOT NULL DEFAULT '',
   surprises      TEXT NOT NULL DEFAULT '',
   needs_review   TEXT NOT NULL DEFAULT '',
-  legacy_next_steps TEXT NOT NULL DEFAULT '',
   created_at     TEXT NOT NULL,
   updated_at     TEXT NOT NULL,
   CHECK (
@@ -30,12 +29,12 @@ CREATE TABLE goals_new (
 INSERT INTO goals_new (
   id, project_id, derived_from_goal_id, content, spec, plan, status, creator,
   result_summary, work_done, now_possible, how_to_verify, surprises,
-  needs_review, legacy_next_steps, created_at, updated_at
+  needs_review, created_at, updated_at
 )
 SELECT
   id, project_id, derived_from_goal_id, content, spec, plan, status, creator,
   result_summary, work_done, now_possible, how_to_verify, surprises,
-  needs_review, next_steps, created_at, updated_at
+  needs_review, created_at, updated_at
 FROM goals;
 
 DROP TABLE goals;
@@ -44,10 +43,8 @@ ALTER TABLE goals_new RENAME TO goals;
 CREATE TABLE next_goals (
   goal_id INTEGER NOT NULL REFERENCES goals(id),
   next_goal_id INTEGER NOT NULL REFERENCES goals(id),
-  sort_order INTEGER NOT NULL CHECK (sort_order >= 0),
   created_at TEXT NOT NULL,
   PRIMARY KEY (goal_id, next_goal_id),
-  UNIQUE (goal_id, sort_order),
   CHECK (goal_id <> next_goal_id)
 );
 

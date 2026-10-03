@@ -185,7 +185,6 @@ var requiredV7Columns = map[string][]string{
 		"how_to_verify",
 		"surprises",
 		"needs_review",
-		"legacy_next_steps",
 		"created_at",
 		"updated_at",
 	},
@@ -223,7 +222,6 @@ var requiredV7Columns = map[string][]string{
 	"next_goals": {
 		"goal_id",
 		"next_goal_id",
-		"sort_order",
 		"created_at",
 	},
 }
@@ -252,7 +250,7 @@ func migrateSchema(db *sql.DB) (err error) {
 	if version < 0 {
 		return fmt.Errorf("database has invalid schema version %d", version)
 	}
-	if version == schemaVersion || version == schemaVersion-1 || version == schemaVersion-2 {
+	if version == schemaVersion || version == schemaVersion-1 {
 		return applyEmbeddedMigrations(db)
 	}
 	if version == 0 {
@@ -381,7 +379,7 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 			return fmt.Errorf("record %s during historical bridge: %w", migration.filename, err)
 		}
 	}
-	if _, err := tx.Exec(fmt.Sprintf("PRAGMA user_version = %d", schemaVersion-2)); err != nil {
+	if _, err := tx.Exec(fmt.Sprintf("PRAGMA user_version = %d", schemaVersion-1)); err != nil {
 		return fmt.Errorf("write schema version: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -694,7 +692,7 @@ func applyEmbeddedMigrations(db *sql.DB) error {
 			}
 			return setUserVersion(ctx, conn)
 
-		case schemaVersion - 2:
+		case schemaVersion - 1:
 			if err := validateV6Schema(ctx, conn, state); err != nil {
 				return err
 			}
@@ -711,25 +709,8 @@ func applyEmbeddedMigrations(db *sql.DB) error {
 			}
 			return nil
 
-		case schemaVersion - 1:
-			if err := validateV7Schema(ctx, conn); err != nil {
-				return err
-			}
-			if err := ensureSchemaMigrationsTable(ctx, conn); err != nil {
-				return err
-			}
-			if err := validateAppliedMigrations(state, migrations); err != nil {
-				return err
-			}
-			if _, ok := state.applied[migrations[0].filename]; !ok {
-				if err := recordMigration(ctx, conn, migrations[0].filename); err != nil {
-					return err
-				}
-			}
-			return nil
-
 		case schemaVersion:
-			if err := validateV8Schema(ctx, conn); err != nil {
+			if err := validateV7Schema(ctx, conn); err != nil {
 				return err
 			}
 			if err := ensureSchemaMigrationsTable(ctx, conn); err != nil {
@@ -770,7 +751,7 @@ func applyEmbeddedMigrations(db *sql.DB) error {
 			if _, ok := state.applied[migration.filename]; ok {
 				return nil
 			}
-			legacyUpgrade := state.userVersion == schemaVersion-2 || state.userVersion == schemaVersion-1
+			legacyUpgrade := state.userVersion == schemaVersion-1
 			if state.userVersion != schemaVersion && !legacyUpgrade {
 				return fmt.Errorf("database schema version changed to %d while applying %s", state.userVersion, migration.filename)
 			}
@@ -1009,33 +990,6 @@ func validateV7Schema(ctx context.Context, conn *sql.Conn) error {
 		}
 		if len(missing) != 0 {
 			return fmt.Errorf("table %q is missing v7 columns: %s", tableName, strings.Join(missing, ", "))
-		}
-	}
-	return nil
-}
-
-func validateV8Schema(ctx context.Context, conn *sql.Conn) error {
-	if err := validateV7Schema(ctx, conn); err != nil {
-		return err
-	}
-	columns, err := tableColumns(ctx, conn, "goal_review_state_snapshots")
-	if err != nil {
-		return err
-	}
-	for _, columnName := range []string{
-		"decision_id",
-		"goal_id",
-		"result_summary",
-		"work_done",
-		"now_possible",
-		"how_to_verify",
-		"surprises",
-		"needs_review",
-		"next_goal_ids",
-		"created_at",
-	} {
-		if !columns[columnName] {
-			return fmt.Errorf("table %q is missing v8 column %q", "goal_review_state_snapshots", columnName)
 		}
 	}
 	return nil

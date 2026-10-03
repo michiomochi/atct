@@ -9,7 +9,7 @@ import (
 	"github.com/michiomochi/atct/internal/domain"
 )
 
-func TestMigration0045PreservesLegacyNextStepsAndCreatesNextGoals(t *testing.T) {
+func TestMigration0046DiscardsLegacyNextStepsAndCreatesNextGoals(t *testing.T) {
 	db := openMigrationTestDB(t)
 	migrations, err := loadEmbeddedMigrations()
 	if err != nil {
@@ -50,48 +50,30 @@ CREATE INDEX idx_goals_content_for_next_goals_test ON goals(content);
 	}
 
 	if err := applyEmbeddedMigrations(db); err != nil {
-		t.Fatalf("apply 0045 migration: %v", err)
+		t.Fatalf("apply 0046 migration: %v", err)
 	}
 	assertUserVersion(t, db, schemaVersion)
 	assertMigrationRecorded(t, db, "0046_next_goals.sql")
 	assertTableExists(t, db, "next_goals")
-	assertTableExists(t, db, "goal_review_state_snapshots")
 
 	columns := migrationTableColumns(t, db, "goals")
-	if _, ok := columns["next_steps"]; ok {
-		t.Fatal("goals still exposes next_steps after migration")
-	}
-	if _, ok := columns["legacy_next_steps"]; !ok {
-		t.Fatal("goals is missing legacy_next_steps after migration")
-	}
-
-	rows, err := db.Query(`SELECT id, legacy_next_steps FROM goals ORDER BY id`)
-	if err != nil {
-		t.Fatalf("read migrated legacy next steps: %v", err)
-	}
-	defer rows.Close()
-	want := []struct {
-		id   int64
-		text string
-	}{{1, "legacy done prose"}, {2, "legacy active prose"}}
-	for _, expected := range want {
-		if !rows.Next() {
-			t.Fatalf("missing migrated legacy row %+v", expected)
-		}
-		var id int64
-		var text string
-		if err := rows.Scan(&id, &text); err != nil {
-			t.Fatalf("scan migrated legacy row: %v", err)
-		}
-		if id != expected.id || text != expected.text {
-			t.Fatalf("migrated legacy row = (%d, %q), want (%d, %q)", id, text, expected.id, expected.text)
+	for _, name := range []string{"next_steps", "legacy_next_steps"} {
+		if _, ok := columns[name]; ok {
+			t.Fatalf("goals still exposes %s after migration", name)
 		}
 	}
-	if err := rows.Err(); err != nil {
-		t.Fatalf("read migrated legacy rows: %v", err)
+	nextGoalColumns := migrationTableColumns(t, db, "next_goals")
+	if len(nextGoalColumns) != 3 {
+		t.Fatalf("next_goals columns = %v, want goal_id, next_goal_id, created_at", nextGoalColumns)
 	}
-	if rows.Next() {
-		t.Fatal("migrated legacy rows contain an unexpected extra row")
+	for _, name := range []string{"goal_id", "next_goal_id", "created_at"} {
+		if _, ok := nextGoalColumns[name]; !ok {
+			t.Fatalf("next_goals is missing %s", name)
+		}
+	}
+	var workDone string
+	if err := db.QueryRow(`SELECT work_done FROM goals WHERE id = 1`).Scan(&workDone); err != nil || workDone != "done work" {
+		t.Fatalf("migrated done goal work_done = %q, %v; want done work", workDone, err)
 	}
 
 	var foreignKeyCount int
@@ -170,7 +152,7 @@ func resubmitNextGoalsHandoff(t *testing.T, s *Store, ctx context.Context, hando
 	}
 }
 
-func TestNextGoalsPreserveOrderReplaceLinksAndAllowEmptyInput(t *testing.T) {
+func TestNextGoalsReplaceLinksAndAllowEmptyInput(t *testing.T) {
 	s, ctx, source, first, second := nextGoalsFixture(t)
 	requester := "next-goals-replace-requester"
 	receiver := "next-goals-replace-receiver"
@@ -185,13 +167,13 @@ func TestNextGoalsPreserveOrderReplaceLinksAndAllowEmptyInput(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RequestGoalReview: %v", err)
 	}
-	requireNextGoalIDs(t, s, ctx, source.ID, []int64{second.ID, first.ID})
+	requireNextGoalIDs(t, s, ctx, source.ID, []int64{first.ID, second.ID})
 	goal, err := s.GetGoal(ctx, source.ID)
 	if err != nil {
 		t.Fatalf("GetGoal: %v", err)
 	}
-	if got := []int64{goal.NextGoals[0].ID, goal.NextGoals[1].ID}; !reflect.DeepEqual(got, []int64{second.ID, first.ID}) {
-		t.Fatalf("goal next-goal summaries = %v, want %v", got, []int64{second.ID, first.ID})
+	if got := []int64{goal.NextGoals[0].ID, goal.NextGoals[1].ID}; !reflect.DeepEqual(got, []int64{first.ID, second.ID}) {
+		t.Fatalf("goal next-goal summaries = %v, want %v", got, []int64{first.ID, second.ID})
 	}
 
 	if err := s.RejectGoalReview(ctx, review.ID, "revise"); err != nil {
@@ -294,10 +276,10 @@ func TestNextGoalsSurviveReviewFinalization(t *testing.T) {
 	if done.Status != domain.GoalDone {
 		t.Fatalf("finalized goal status = %q, want %q", done.Status, domain.GoalDone)
 	}
-	requireNextGoalIDs(t, s, ctx, source.ID, []int64{second.ID, first.ID})
+	requireNextGoalIDs(t, s, ctx, source.ID, []int64{first.ID, second.ID})
 }
 
-func TestNextGoalsReviewRejectionRestoresPreviousReportAndLinks(t *testing.T) {
+func TestNextGoalsReviewRejectionKeepsRejectedRequestReportAndLinks(t *testing.T) {
 	s, ctx, source, first, second := nextGoalsFixture(t)
 	requester := "next-goals-review-restore-requester"
 	receiver := "next-goals-review-restore-receiver"
@@ -345,7 +327,7 @@ func TestNextGoalsReviewRejectionRestoresPreviousReportAndLinks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RequestGoalReview replacement: %v", err)
 	}
-	if err := s.RejectGoalReview(ctx, secondReview.ID, "restore previous review"); err != nil {
+	if err := s.RejectGoalReview(ctx, secondReview.ID, "keep the rejected request"); err != nil {
 		t.Fatalf("RejectGoalReview replacement: %v", err)
 	}
 
@@ -353,8 +335,8 @@ func TestNextGoalsReviewRejectionRestoresPreviousReportAndLinks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetGoal after replacement rejection: %v", err)
 	}
-	if goal.WorkDone != previous.WorkDone || goal.NowPossible != previous.NowPossible || goal.HowToVerify != previous.HowToVerify || goal.Surprises != previous.Surprises || goal.NeedsReview != previous.NeedsReview || goal.ResultSummary != previous.WorkDone {
-		t.Fatalf("goal after replacement rejection = %+v, want previous report %+v", goal, previous)
+	if goal.WorkDone != replacement.WorkDone || goal.NowPossible != replacement.NowPossible || goal.HowToVerify != replacement.HowToVerify || goal.Surprises != replacement.Surprises || goal.NeedsReview != replacement.NeedsReview || goal.ResultSummary != replacement.WorkDone {
+		t.Fatalf("goal after replacement rejection = %+v, want rejected request report %+v", goal, replacement)
 	}
-	requireNextGoalIDs(t, s, ctx, source.ID, []int64{first.ID})
+	requireNextGoalIDs(t, s, ctx, source.ID, []int64{second.ID})
 }

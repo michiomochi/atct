@@ -63,14 +63,13 @@ type completionTemplateLegacyGoal struct {
 }
 
 type completionTemplateMigratedGoal struct {
-	status          string
-	resultSummary   string
-	workDone        string
-	nowPossible     string
-	howToVerify     string
-	surprises       string
-	needsReview     string
-	legacyNextSteps string
+	status        string
+	resultSummary string
+	workDone      string
+	nowPossible   string
+	howToVerify   string
+	surprises     string
+	needsReview   string
 }
 
 func completionTemplateMeasureRealCopy(t *testing.T, dbPath string) {
@@ -125,7 +124,7 @@ func completionTemplateMeasureRealCopy(t *testing.T, dbPath string) {
 	defer s.Close()
 	rows, err = s.DB().Query(`
 SELECT id, status, result_summary, work_done, now_possible, how_to_verify,
-       surprises, needs_review, legacy_next_steps
+       surprises, needs_review
 FROM goals ORDER BY id`)
 	if err != nil {
 		t.Fatalf("read migrated copied reports: %v", err)
@@ -135,7 +134,7 @@ FROM goals ORDER BY id`)
 		var id string
 		var goal completionTemplateMigratedGoal
 		if err := rows.Scan(&id, &goal.status, &goal.resultSummary, &goal.workDone,
-			&goal.nowPossible, &goal.howToVerify, &goal.surprises, &goal.needsReview, &goal.legacyNextSteps); err != nil {
+			&goal.nowPossible, &goal.howToVerify, &goal.surprises, &goal.needsReview); err != nil {
 			rows.Close()
 			t.Fatalf("scan migrated copied report: %v", err)
 		}
@@ -162,7 +161,7 @@ FROM goals ORDER BY id`)
 		switch wantGoal.status {
 		case "active":
 			if gotGoal.workDone != "" || gotGoal.nowPossible != "" || gotGoal.howToVerify != "" ||
-				gotGoal.surprises != "" || gotGoal.needsReview != "" || gotGoal.legacyNextSteps != "" {
+				gotGoal.surprises != "" || gotGoal.needsReview != "" {
 				t.Fatalf("active goal %s has a migrated completion report: %+v", id, gotGoal)
 			}
 		case "done":
@@ -174,7 +173,7 @@ FROM goals ORDER BY id`)
 				t.Fatalf("done goal %s work_done = %q, want %q", id, gotGoal.workDone, wantWorkDone)
 			}
 			if gotGoal.nowPossible != "なし" || gotGoal.howToVerify != "なし" || gotGoal.surprises != "なし" ||
-				gotGoal.needsReview != "なし" || gotGoal.legacyNextSteps != "なし" {
+				gotGoal.needsReview != "なし" {
 				t.Fatalf("done goal %s placeholders = %+v", id, gotGoal)
 			}
 		default:

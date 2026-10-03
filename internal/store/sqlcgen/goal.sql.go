@@ -104,43 +104,6 @@ func (q *Queries) CreateGoal(ctx context.Context, arg CreateGoalParams) (int64, 
 	return id, err
 }
 
-const createGoalReviewStateSnapshot = `-- name: CreateGoalReviewStateSnapshot :exec
-INSERT INTO goal_review_state_snapshots (
-  decision_id, goal_id, result_summary, work_done, now_possible,
-  how_to_verify, surprises, needs_review, next_goal_ids, created_at
-)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-`
-
-type CreateGoalReviewStateSnapshotParams struct {
-	DecisionID    int64
-	GoalID        int64
-	ResultSummary string
-	WorkDone      string
-	NowPossible   string
-	HowToVerify   string
-	Surprises     string
-	NeedsReview   string
-	NextGoalIds   string
-	CreatedAt     string
-}
-
-func (q *Queries) CreateGoalReviewStateSnapshot(ctx context.Context, arg CreateGoalReviewStateSnapshotParams) error {
-	_, err := q.db.ExecContext(ctx, createGoalReviewStateSnapshot,
-		arg.DecisionID,
-		arg.GoalID,
-		arg.ResultSummary,
-		arg.WorkDone,
-		arg.NowPossible,
-		arg.HowToVerify,
-		arg.Surprises,
-		arg.NeedsReview,
-		arg.NextGoalIds,
-		arg.CreatedAt,
-	)
-	return err
-}
-
 const deleteNextGoals = `-- name: DeleteNextGoals :exec
 DELETE FROM next_goals
 WHERE goal_id = ?
@@ -247,38 +210,6 @@ func (q *Queries) GetGoalProjectID(ctx context.Context, id int64) (int64, error)
 	return project_id, err
 }
 
-const getGoalReviewStateSnapshot = `-- name: GetGoalReviewStateSnapshot :one
-SELECT result_summary, work_done, now_possible, how_to_verify,
-  surprises, needs_review, next_goal_ids
-FROM goal_review_state_snapshots
-WHERE decision_id = ?
-`
-
-type GetGoalReviewStateSnapshotRow struct {
-	ResultSummary string
-	WorkDone      string
-	NowPossible   string
-	HowToVerify   string
-	Surprises     string
-	NeedsReview   string
-	NextGoalIds   string
-}
-
-func (q *Queries) GetGoalReviewStateSnapshot(ctx context.Context, decisionID int64) (GetGoalReviewStateSnapshotRow, error) {
-	row := q.db.QueryRowContext(ctx, getGoalReviewStateSnapshot, decisionID)
-	var i GetGoalReviewStateSnapshotRow
-	err := row.Scan(
-		&i.ResultSummary,
-		&i.WorkDone,
-		&i.NowPossible,
-		&i.HowToVerify,
-		&i.Surprises,
-		&i.NeedsReview,
-		&i.NextGoalIds,
-	)
-	return i, err
-}
-
 const getGoalStatus = `-- name: GetGoalStatus :one
 SELECT status
 FROM goals
@@ -335,24 +266,18 @@ func (q *Queries) HasGoalReview(ctx context.Context, goalID int64) (bool, error)
 }
 
 const insertNextGoal = `-- name: InsertNextGoal :exec
-INSERT INTO next_goals (goal_id, next_goal_id, sort_order, created_at)
-VALUES (?, ?, ?, ?)
+INSERT INTO next_goals (goal_id, next_goal_id, created_at)
+VALUES (?, ?, ?)
 `
 
 type InsertNextGoalParams struct {
 	GoalID     int64
 	NextGoalID int64
-	SortOrder  int64
 	CreatedAt  string
 }
 
 func (q *Queries) InsertNextGoal(ctx context.Context, arg InsertNextGoalParams) error {
-	_, err := q.db.ExecContext(ctx, insertNextGoal,
-		arg.GoalID,
-		arg.NextGoalID,
-		arg.SortOrder,
-		arg.CreatedAt,
-	)
+	_, err := q.db.ExecContext(ctx, insertNextGoal, arg.GoalID, arg.NextGoalID, arg.CreatedAt)
 	return err
 }
 
@@ -365,34 +290,15 @@ FROM goals
 ORDER BY created_at
 `
 
-type ListAllGoalsRow struct {
-	ID                int64
-	ProjectID         int64
-	DerivedFromGoalID sql.NullInt64
-	Content           string
-	Spec              string
-	Plan              string
-	Status            string
-	Creator           string
-	ResultSummary     string
-	WorkDone          string
-	NowPossible       string
-	HowToVerify       string
-	Surprises         string
-	NeedsReview       string
-	CreatedAt         string
-	UpdatedAt         string
-}
-
-func (q *Queries) ListAllGoals(ctx context.Context) ([]ListAllGoalsRow, error) {
+func (q *Queries) ListAllGoals(ctx context.Context) ([]Goal, error) {
 	rows, err := q.db.QueryContext(ctx, listAllGoals)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ListAllGoalsRow
+	var items []Goal
 	for rows.Next() {
-		var i ListAllGoalsRow
+		var i Goal
 		if err := rows.Scan(
 			&i.ID,
 			&i.ProjectID,
@@ -434,34 +340,15 @@ WHERE derived_from_goal_id = ?
 ORDER BY created_at
 `
 
-type ListDerivedGoalsRow struct {
-	ID                int64
-	ProjectID         int64
-	DerivedFromGoalID sql.NullInt64
-	Content           string
-	Spec              string
-	Plan              string
-	Status            string
-	Creator           string
-	ResultSummary     string
-	WorkDone          string
-	NowPossible       string
-	HowToVerify       string
-	Surprises         string
-	NeedsReview       string
-	CreatedAt         string
-	UpdatedAt         string
-}
-
-func (q *Queries) ListDerivedGoals(ctx context.Context, derivedFromGoalID sql.NullInt64) ([]ListDerivedGoalsRow, error) {
+func (q *Queries) ListDerivedGoals(ctx context.Context, derivedFromGoalID sql.NullInt64) ([]Goal, error) {
 	rows, err := q.db.QueryContext(ctx, listDerivedGoals, derivedFromGoalID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ListDerivedGoalsRow
+	var items []Goal
 	for rows.Next() {
-		var i ListDerivedGoalsRow
+		var i Goal
 		if err := rows.Scan(
 			&i.ID,
 			&i.ProjectID,
@@ -503,34 +390,15 @@ WHERE project_id = ?
 ORDER BY created_at
 `
 
-type ListGoalsRow struct {
-	ID                int64
-	ProjectID         int64
-	DerivedFromGoalID sql.NullInt64
-	Content           string
-	Spec              string
-	Plan              string
-	Status            string
-	Creator           string
-	ResultSummary     string
-	WorkDone          string
-	NowPossible       string
-	HowToVerify       string
-	Surprises         string
-	NeedsReview       string
-	CreatedAt         string
-	UpdatedAt         string
-}
-
-func (q *Queries) ListGoals(ctx context.Context, projectID int64) ([]ListGoalsRow, error) {
+func (q *Queries) ListGoals(ctx context.Context, projectID int64) ([]Goal, error) {
 	rows, err := q.db.QueryContext(ctx, listGoals, projectID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ListGoalsRow
+	var items []Goal
 	for rows.Next() {
-		var i ListGoalsRow
+		var i Goal
 		if err := rows.Scan(
 			&i.ID,
 			&i.ProjectID,
@@ -566,7 +434,7 @@ const listNextGoalIDs = `-- name: ListNextGoalIDs :many
 SELECT next_goal_id
 FROM next_goals
 WHERE goal_id = ?
-ORDER BY sort_order
+ORDER BY next_goal_id
 `
 
 func (q *Queries) ListNextGoalIDs(ctx context.Context, goalID int64) ([]int64, error) {
@@ -597,7 +465,7 @@ SELECT g.id, g.content, g.status
 FROM next_goals AS ng
 JOIN goals AS g ON g.id = ng.next_goal_id
 WHERE ng.goal_id = ?
-ORDER BY ng.sort_order
+ORDER BY ng.next_goal_id
 `
 
 type ListNextGoalsRow struct {

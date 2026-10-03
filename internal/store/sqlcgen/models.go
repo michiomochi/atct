@@ -57,7 +57,6 @@ type Goal struct {
 	HowToVerify       string
 	Surprises         string
 	NeedsReview       string
-	LegacyNextSteps   string
 	CreatedAt         string
 	UpdatedAt         string
 }
@@ -83,19 +82,6 @@ type GoalHandoff struct {
 	ReviewRejectionReceivedAt sql.NullString
 	RecoveredAt               sql.NullString
 	RecoveryReport            sql.NullString
-}
-
-type GoalReviewStateSnapshot struct {
-	DecisionID    int64
-	GoalID        int64
-	ResultSummary string
-	WorkDone      string
-	NowPossible   string
-	HowToVerify   string
-	Surprises     string
-	NeedsReview   string
-	NextGoalIds   string
-	CreatedAt     string
 }
 
 type MonitorBinding struct {
@@ -126,7 +112,6 @@ type MonitorHealth struct {
 type NextGoal struct {
 	GoalID     int64
 	NextGoalID int64
-	SortOrder  int64
 	CreatedAt  string
 }
 

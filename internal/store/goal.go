@@ -440,11 +440,10 @@ func replaceNextGoals(ctx context.Context, q *sqlcgen.Queries, goalID int64, ids
 	if err := q.DeleteNextGoals(ctx, goalID); err != nil {
 		return fmt.Errorf("delete next goals: %w", err)
 	}
-	for order, nextGoalID := range ids {
+	for _, nextGoalID := range ids {
 		if err := q.InsertNextGoal(ctx, sqlcgen.InsertNextGoalParams{
 			GoalID:     goalID,
 			NextGoalID: nextGoalID,
-			SortOrder:  int64(order),
 			CreatedAt:  createdAt.Format(time.RFC3339Nano),
 		}); err != nil {
 			return fmt.Errorf("insert next goal %d: %w", nextGoalID, err)
@@ -648,11 +647,6 @@ func (s *Store) RequestGoalReview(ctx context.Context, goalID, agentSessionID in
 	if open > 0 {
 		return domain.Decision{}, fmt.Errorf("%w: %d", ErrGoalHasOpenDecision, goalID)
 	}
-	previousNextGoalIDs, err := q.ListNextGoalIDs(ctx, goalID)
-	if err != nil {
-		return domain.Decision{}, fmt.Errorf("get previous next goals for review: %w", err)
-	}
-
 	decisionID, err := q.CreateDecision(ctx, sqlcgen.CreateDecisionParams{
 		GoalID:         goalID,
 		TaskID:         sql.NullInt64{},
@@ -667,26 +661,6 @@ func (s *Store) RequestGoalReview(ctx context.Context, goalID, agentSessionID in
 	})
 	if err != nil {
 		return domain.Decision{}, fmt.Errorf("insert goal review decision: %w", err)
-	}
-	if hasGoalReviewState(goal, previousNextGoalIDs) {
-		nextGoalIDs, err := json.Marshal(previousNextGoalIDs)
-		if err != nil {
-			return domain.Decision{}, fmt.Errorf("marshal previous next goals for review: %w", err)
-		}
-		if err := q.CreateGoalReviewStateSnapshot(ctx, sqlcgen.CreateGoalReviewStateSnapshotParams{
-			DecisionID:    decisionID,
-			GoalID:        goalID,
-			ResultSummary: goal.ResultSummary,
-			WorkDone:      goal.WorkDone,
-			NowPossible:   goal.NowPossible,
-			HowToVerify:   goal.HowToVerify,
-			Surprises:     goal.Surprises,
-			NeedsReview:   goal.NeedsReview,
-			NextGoalIds:   string(nextGoalIDs),
-			CreatedAt:     createdAt.Format(time.RFC3339Nano),
-		}); err != nil {
-			return domain.Decision{}, fmt.Errorf("save previous goal review state: %w", err)
-		}
 	}
 	updated, err := q.UpdateGoalCompletionReport(ctx, sqlcgen.UpdateGoalCompletionReportParams{
 		ResultSummary: report.WorkDone,
@@ -792,13 +766,6 @@ func (s *Store) RejectGoalReview(ctx context.Context, decisionID int64, reason s
 	}
 	defer tx.Rollback()
 	q := sqlcgen.New(tx)
-	goalID, err := q.GetOpenGoalReviewGoalID(ctx, decisionID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return fmt.Errorf("%w: %d", ErrDecisionNotOpen, decisionID)
-	} else if err != nil {
-		return fmt.Errorf("lookup goal review for rejection: %w", err)
-	}
-
 	now := formatTimestamp(time.Now())
 	result, err := q.RejectGoalReviewDecision(ctx, sqlcgen.RejectGoalReviewDecisionParams{
 		AnswerText: reason, AnsweredAt: sql.NullString{String: now, Valid: true}, ID: decisionID,
@@ -810,39 +777,6 @@ func (s *Store) RejectGoalReview(ctx context.Context, decisionID int64, reason s
 		return fmt.Errorf("reject goal review rows affected: %w", err)
 	} else if affected != 1 {
 		return fmt.Errorf("%w: %d", ErrDecisionNotOpen, decisionID)
-	}
-	snapshot, err := q.GetGoalReviewStateSnapshot(ctx, decisionID)
-	if errors.Is(err, sql.ErrNoRows) {
-		// The first review on a goal with no prior report or links has nothing
-		// to restore; keep the report submitted with that review.
-	} else if err != nil {
-		return fmt.Errorf("get previous goal review state: %w", err)
-	} else {
-		var nextGoalIDs []int64
-		if err := json.Unmarshal([]byte(snapshot.NextGoalIds), &nextGoalIDs); err != nil {
-			return fmt.Errorf("decode previous next goals: %w", err)
-		}
-		restored, err := q.UpdateGoalCompletionReport(ctx, sqlcgen.UpdateGoalCompletionReportParams{
-			ResultSummary: snapshot.ResultSummary,
-			WorkDone:      snapshot.WorkDone,
-			NowPossible:   snapshot.NowPossible,
-			HowToVerify:   snapshot.HowToVerify,
-			Surprises:     snapshot.Surprises,
-			NeedsReview:   snapshot.NeedsReview,
-			UpdatedAt:     now,
-			ID:            goalID,
-		})
-		if err != nil {
-			return fmt.Errorf("restore previous goal review report: %w", err)
-		}
-		if affected, err := restored.RowsAffected(); err != nil {
-			return fmt.Errorf("restore previous goal review report rows affected: %w", err)
-		} else if affected != 1 {
-			return fmt.Errorf("%w: %d", ErrGoalNotActive, goalID)
-		}
-		if err := replaceNextGoals(ctx, q, goalID, nextGoalIDs, time.Now().UTC()); err != nil {
-			return fmt.Errorf("restore previous next goals: %w", err)
-		}
 	}
 	row, err := q.GetDecision(ctx, decisionID)
 	if err != nil {
@@ -859,16 +793,6 @@ func (s *Store) RejectGoalReview(ctx context.Context, decisionID int64, reason s
 	s.notify.publishAll()
 	s.publishWorkflowEvents([]DecisionEvent{event})
 	return nil
-}
-
-func hasGoalReviewState(goal domain.Goal, nextGoalIDs []int64) bool {
-	return len(nextGoalIDs) > 0 ||
-		strings.TrimSpace(goal.ResultSummary) != "" ||
-		strings.TrimSpace(goal.WorkDone) != "" ||
-		strings.TrimSpace(goal.NowPossible) != "" ||
-		strings.TrimSpace(goal.HowToVerify) != "" ||
-		strings.TrimSpace(goal.Surprises) != "" ||
-		strings.TrimSpace(goal.NeedsReview) != ""
 }
 
 func completionReportFromGoal(goal domain.Goal) domain.CompletionReport {
