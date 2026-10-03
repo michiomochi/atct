@@ -148,10 +148,6 @@ UPDATE agent_sessions
 SET pid = ?, started_at = ?, registered_at = ?
 WHERE id = ?;
 
--- name: DeleteExpiredAgentSessions :exec
-DELETE FROM agent_sessions
-WHERE registered_at < ?;
-
 -- name: UpdateAgentSessionProject :execresult
 UPDATE agent_sessions
 SET project_id = ?
@@ -162,8 +158,15 @@ INSERT INTO agent_sessions (id, project_id, registered_at)
 VALUES (?, ?, ?);
 
 -- name: DeleteExpiredAgentSessionsExcept :exec
+-- Handoffs keep their sessions as history, so a referenced session outlives
+-- retention; deleting it would fail the foreign key and the registration with it.
 DELETE FROM agent_sessions
-WHERE id <> ? AND registered_at < ?;
+WHERE agent_sessions.id <> ? AND agent_sessions.registered_at < ?
+  AND NOT EXISTS (SELECT 1 FROM task_handoffs h WHERE agent_sessions.id IN (h.requested_by, h.received_by, h.review_requested_by, h.review_received_by, h.review_rejection_received_by))
+  AND NOT EXISTS (SELECT 1 FROM goal_handoffs h WHERE agent_sessions.id IN (h.requested_by, h.received_by, h.review_requested_by, h.review_received_by, h.review_rejection_received_by))
+  AND NOT EXISTS (SELECT 1 FROM plan_handoffs h WHERE agent_sessions.id IN (h.review_requested_by, h.review_received_by, h.review_rejection_received_by))
+  AND NOT EXISTS (SELECT 1 FROM task_create_handoffs h WHERE agent_sessions.id IN (h.requested_by, h.received_by, h.completed_by))
+  AND NOT EXISTS (SELECT 1 FROM agent_sessions d WHERE d.discarded_by = agent_sessions.id);
 
 -- name: GetLatestAgentSessionID :one
 SELECT id
@@ -590,12 +593,27 @@ WHERE id = ? AND goal_id = ?
   AND completed_report_at IS NULL;
 
 -- name: ReceivePlanHandoffReviewRejection :execresult
+-- The submitter takes its own rejection back, and so does whoever holds the
+-- goal now. Keyed to the submitter alone, a rejection was stranded the moment
+-- that session ended: no successor could pick it up and no other role could
+-- either, which stopped goals 260 and 287 outright.
 UPDATE plan_handoffs
-SET review_rejection_received_by = ?, review_rejection_received_at = ?
-WHERE id = ? AND goal_id = ?
+SET review_rejection_received_by = sqlc.arg('review_rejection_received_by'),
+    review_rejection_received_at = sqlc.arg('review_rejection_received_at')
+WHERE plan_handoffs.id = sqlc.arg('id') AND plan_handoffs.goal_id = sqlc.arg('goal_id')
   AND review_rejected_at IS NOT NULL
   AND review_rejection_received_at IS NULL
-  AND review_requested_by = ?;
+  AND (
+    review_requested_by = sqlc.arg('review_rejection_received_by')
+    OR EXISTS (
+      SELECT 1 FROM goal_handoffs
+      WHERE goal_handoffs.goal_id = plan_handoffs.goal_id
+        AND goal_handoffs.received_by = sqlc.arg('review_rejection_received_by')
+        AND goal_handoffs.received_at IS NOT NULL
+        AND goal_handoffs.completed_report_at IS NULL
+        AND goal_handoffs.recovered_at IS NULL
+    )
+  );
 
 -- name: CompletePlanHandoff :execresult
 UPDATE plan_handoffs

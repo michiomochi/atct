@@ -35,7 +35,14 @@ export function GoalTable({ goals, showProject = true }: Props) {
         <Table.Body>
           {goals.map((goal) => {
             const tasks = sortTasksByOrder(goal.tasks ?? []);
-            const goalStatus = goal.awaiting_decision ? t("status.awaitingDecision") : statusLabel(locale, goal.status);
+            // A submitted review is a wait with nobody to answer it, so it
+            // needs its own label: "waiting on you" would send the reader
+            // looking for a decision that does not exist.
+            const goalStatus = goal.awaiting_decision
+              ? t("status.awaitingDecision")
+              : goal.awaiting_review
+                ? t("status.awaitingReview")
+                : statusLabel(locale, goal.status);
             const isOpen = openGoals[goal.id] ?? false;
             const goalLink = (
               <a

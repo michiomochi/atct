@@ -1192,6 +1192,14 @@ func TestWatchLivenessPromptsOnlyForImmediateRoleAction(t *testing.T) {
 			want: true,
 		},
 		{
+			name:  "subcommander has unreceived task handoff",
+			scope: subcommanderScope,
+			reconciliation: watchReconciliation{TaskHandoffs: []watchReconciliationHandoff{{
+				GoalID: 249, TaskID: 812, RequestedAt: at("requested"),
+			}}},
+			want: true,
+		},
+		{
 			name:  "subcommander awaits executor",
 			scope: subcommanderScope,
 			reconciliation: watchReconciliation{
@@ -1220,7 +1228,7 @@ func TestWatchLivenessPromptsOnlyForImmediateRoleAction(t *testing.T) {
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
 			state := newWatchLivenessState(time.Unix(0, 0))
-			if got := state.PromptDue(time.Unix(60, 0), tt.scope, tt.reconciliation); got != tt.want {
+			if _, got := state.PromptDue(time.Unix(60, 0), tt.scope, tt.reconciliation); got != tt.want {
 				t.Fatalf("PromptDue() = %v, want %v", got, tt.want)
 			}
 		})
@@ -1235,10 +1243,10 @@ func TestWatchLivenessSuppressesOpenHumanDecision(t *testing.T) {
 		GoalHandoffs: []watchReconciliationHandoff{{GoalID: 249, ReceivedAt: at("received")}},
 	}
 	scope := watchScope{Role: "subcommander", ProjectID: "1", GoalID: "249"}
-	if got := state.PromptDue(time.Unix(600, 0), scope, blocked); got {
+	if _, got := state.PromptDue(time.Unix(600, 0), scope, blocked); got {
 		t.Fatal("open human decision prompted, want suppression")
 	}
-	if got := state.PromptDue(time.Unix(660, 0), scope, watchReconciliation{GoalHandoffs: []watchReconciliationHandoff{{GoalID: 249, ReceivedAt: at("received")}}}); !got {
+	if _, got := state.PromptDue(time.Unix(660, 0), scope, watchReconciliation{GoalHandoffs: []watchReconciliationHandoff{{GoalID: 249, ReceivedAt: at("received")}}}); !got {
 		t.Fatal("prompt did not resume after open human decision was cleared")
 	}
 }
@@ -1251,7 +1259,7 @@ func TestWatchLivenessRendersExactSelector(t *testing.T) {
 		{scope: watchScope{Role: "subcommander", ProjectID: "1", GoalID: "249"}, want: "atct monitor liveness: recheck goal 249"},
 		{scope: watchScope{Role: "executor", ProjectID: "1", GoalID: "249", TaskID: "812"}, want: "atct monitor liveness: recheck task 812"},
 	} {
-		if got := formatWatchLiveness(tt.scope); got != tt.want {
+		if got := formatWatchLiveness(tt.scope, watchReconciliation{}); got != tt.want {
 			t.Fatalf("formatWatchLiveness(%#v) = %q, want %q", tt.scope, got, tt.want)
 		}
 	}
