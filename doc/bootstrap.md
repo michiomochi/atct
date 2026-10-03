@@ -103,7 +103,7 @@ Claude は通常の session として開始する。SessionStart hook が sessio
 identify と assignment を確立する。
 
 Claude Watch は既に起動した session に後から attach できる。agent は SessionStart の token を identify に渡す。
-Watch は background の Bash で `atct watch --monitor --token <monitor_token> --once` として起動し、token の binding を polling して scope を更新する。
+Watch は Monitor ツールで `atct watch --monitor --token <monitor_token>` として起動し（待つだけだった Monitor の後は `--once` を付けた background の Bash）、token の binding を polling して scope を更新する。
 
 # Codex
 

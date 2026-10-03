@@ -40,9 +40,14 @@ Then invoke `atct:commander` before continuing.
 ## Claude Code: attach the Watch
 
 After identifying the session, arm the watch as `atct:atct` `## Watch` says. The
-command is `atct watch --monitor --token <monitor_token>` with `--once` after it;
-the server derives the scope, so pass no role, project, goal, or task selector.
+default is the Monitor tool; that section also says when to switch to a
+background Bash.
 
+- `atct watch --monitor --token <monitor_token>` waits for the server-derived
+  assignment. Do not pass a role, project, goal, or task selector.
+- Always set `persistent: true`; otherwise `timeout_ms` defaults to `300000ms` (5
+  minutes) and monitoring stops silently.
+- Set `description` to `ATCT answer watch`.
 - Plain `atct watch` is for human diagnostics; it is not the Claude action
   channel. Reconnect, keepalive, and ensure diagnostics are never agent actions
   and must not be forwarded to the agent.

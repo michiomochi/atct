@@ -73,31 +73,39 @@ does not update the task.
 Claude Code only. A watch delivers the answers and wakeups addressed to this
 session. Codex needs nothing here: the `atct codex monitor` supervisor owns it.
 
-1. **Start.** Call the Bash tool with `run_in_background: true` and
-   `atct watch --monitor --token <monitor_token> --once`, using the
-   `monitor_token` SessionStart printed (the one passed to
-   `atct_session_identify`). The server derives the scope from the assignment,
-   so pass no goal, project, or role. Remember the task id the call returns:
-   `TaskStop` needs it.
-2. **Do not use the Monitor tool.** It expires after 30 minutes, and each expiry
-   notice spends a turn of an agent that is only waiting. `--once` exits after
-   the first actionable batch, so the process ending is the single wake-up and
-   its stdout is the event.
-3. **When woken, re-arm first.** Run the same command again, then act on the
-   event. The daemon holds the session live for a 5-minute grace after a
-   `--once` watch ends on its own, so ATCT calls made mid-turn are not refused;
-   that grace is insurance, not permission to skip the re-arm. Past it, ATCT
-   calls are refused and `wakeup.monitor_lost` is raised.
-4. **Empty or abnormal exit.** If the watch ended with no event, or with an
-   error, re-arm it. Make no other response.
-5. **Keep one.** Hold exactly one watch per token; a second started later stops
-   the earlier one.
-6. **Stop** a watch with `TaskStop` (see `atct:stop`). A `TaskStop` or SIGTERM
-   ends it as stopped, without the grace.
+The default is the Monitor tool: an agent with many notifications gets each one
+in a single turn, where a background Bash costs about three (woken, read the
+output, re-arm, then act). A background Bash with `--once` is only for an agent
+that has turned out to be waiting: it ends after the first event, so an idle
+agent is not woken by expiry notices. A delivery record per token keeps a
+re-armed watch from emitting the same notification twice, for both forms.
 
-**Out of order:** Acting on the event before re-arming leaves the session with
-no watch; if the work outlasts the 5-minute grace, ATCT calls are refused and the
-parent is told the monitor is lost.
+1. **Start with the Monitor tool.** Run `atct watch --monitor --token
+   <monitor_token>` with `persistent: true` and `description` set to `ATCT
+   answer watch`, using the `monitor_token` SessionStart printed (the one passed
+   to `atct_session_identify`). Without `persistent: true`, `timeout_ms`
+   defaults to `300000ms` (5 minutes) and monitoring stops silently. The server
+   derives the scope from the assignment, so pass no goal, project, or role.
+   Remember the task id the call returns: `TaskStop` needs it.
+2. **When the Monitor expires,** the notice reads `[Monitor expired after 30m
+   with N events delivered. ...]`. Make no other response; arm the next watch
+   first. If N is 0, that 30 minutes was only waiting: switch to the Bash tool
+   with `run_in_background: true` and `atct watch --monitor --token
+   <monitor_token> --once`. If N is 1 or more, attach the Monitor again.
+3. **When a `--once` Bash ends,** whether it printed an event, ended with no
+   event, or failed, attach the Monitor first, then act on the event (its
+   stdout). Do not re-arm the `--once` Bash.
+4. **Keep one.** Hold exactly one watch per token; the one started later stops
+   the earlier one.
+5. **Stop** a watch with `TaskStop` and the task id of the Monitor or the
+   background Bash (see `atct:stop`). If the task id is unknown, say so and do
+   not call `TaskStop`; never guess one.
+
+**Out of order:** Acting on the event before attaching the Monitor leaves the
+session with no watch. The daemon holds the session live for 5 minutes after a
+`--once` watch ends on its own, but that grace is insurance, not permission to
+skip the Monitor: past it, ATCT calls are refused and `wakeup.monitor_lost` is
+raised.
 
 ## Receive before you start
 
