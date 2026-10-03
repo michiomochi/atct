@@ -35,13 +35,23 @@ type WorkflowDecision struct {
 	TargetRole string `json:"target_role"`
 }
 
-func (s *Store) decisionTargetRole(ctx context.Context, agentSessionID int64) (string, error) {
+// DecisionRoutesToCommander reports whether a decision is addressed to the commander
+// by its kind (or because it has no owning session) rather than by who created it.
+func DecisionRoutesToCommander(d domain.Decision) bool {
+	return d.Kind == domain.KindGoalApproval || d.Kind == domain.KindGoalReview || d.AgentSessionID == 0
+}
+
+func (s *Store) decisionTargetRole(ctx context.Context, decision domain.Decision) (string, error) {
+	if DecisionRoutesToCommander(decision) {
+		return "commander", nil
+	}
+	agentSessionID := decision.AgentSessionID
 	projects, err := s.ListProjects(ctx)
 	if err != nil {
 		return "", err
 	}
 	for _, project := range projects {
-		if agentSessionID != 0 && project.ClaimedBy == agentSessionID {
+		if project.ClaimedBy == agentSessionID {
 			return "commander", nil
 		}
 	}
@@ -175,7 +185,7 @@ func (s *Store) ReconcileWorkflow(ctx context.Context, query WorkflowEventQuery)
 		}
 		for _, decision := range decisions {
 			if query.TaskID == 0 || decision.TaskID == query.TaskID {
-				targetRole, err := s.decisionTargetRole(ctx, decision.AgentSessionID)
+				targetRole, err := s.decisionTargetRole(ctx, decision)
 				if err != nil {
 					return WorkflowReconciliation{}, err
 				}

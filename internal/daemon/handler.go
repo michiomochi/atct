@@ -282,6 +282,30 @@ func (d *Daemon) responseWithScopedUnappliedDecisions(ctx context.Context, data 
 	}, nil
 }
 
+// appendCommanderRoutedDecisions polls the project's answered decisions that are
+// addressed to the commander by kind (e.g. a sessionless goal_approval) when the caller is a commander.
+func (d *Daemon) appendCommanderRoutedDecisions(ctx context.Context, agentSessionID int64, decs []domain.Decision) ([]domain.Decision, error) {
+	role, err := d.deriveSessionRole(ctx, agentSessionID)
+	if err != nil || role.Role != "commander" {
+		return decs, err
+	}
+	unapplied, err := d.store.ListUnappliedDecisionsForProject(ctx, role.ProjectID)
+	if err != nil {
+		return nil, err
+	}
+	for _, decision := range unapplied {
+		if !store.DecisionRoutesToCommander(decision) || decision.AgentSessionID == agentSessionID {
+			continue
+		}
+		polled, err := d.store.PollDecisions(ctx, agentSessionID, decision.ID)
+		if err != nil {
+			return nil, err
+		}
+		decs = append(decs, polled...)
+	}
+	return decs, nil
+}
+
 func (d *Daemon) listClaimableTasks(ctx context.Context, projectID, excludedTaskID int64) ([]claimableTaskSummary, error) {
 	goals, err := d.store.ListGoals(ctx, projectID)
 	if err != nil {
@@ -2161,8 +2185,21 @@ func (d *Daemon) dispatchMethodWithPeer(ctx context.Context, req rpc.Request, pe
 			if err != nil {
 				return nil, err
 			}
-			if p.AgentSessionID == 0 || (role.Role == "commander" && decision.AgentSessionID != p.AgentSessionID) {
+			if p.AgentSessionID == 0 {
 				return nil, fmt.Errorf("decision %d is owned by another agent session", p.DecisionID)
+			}
+			if role.Role == "commander" && decision.AgentSessionID != p.AgentSessionID {
+				routed := false
+				if store.DecisionRoutesToCommander(decision) {
+					goal, err := d.store.GetGoal(ctx, decision.GoalID)
+					if err != nil {
+						return nil, err
+					}
+					routed = goal.ProjectID == role.ProjectID
+				}
+				if !routed {
+					return nil, fmt.Errorf("decision %d is owned by another agent session", p.DecisionID)
+				}
 			}
 			if role.Role == "subcommander" && role.GoalID != 0 {
 				if decision.GoalID != role.GoalID {
@@ -2172,6 +2209,9 @@ func (d *Daemon) dispatchMethodWithPeer(ctx context.Context, req rpc.Request, pe
 			}
 		}
 		decs, err := d.store.PollDecisions(ctx, p.AgentSessionID, p.DecisionID)
+		if err == nil && p.DecisionID == 0 && p.AgentSessionID != 0 {
+			decs, err = d.appendCommanderRoutedDecisions(ctx, p.AgentSessionID, decs)
+		}
 		if err != nil || !p.IncludeUnappliedAnswers {
 			return marshal(decs, err)
 		}

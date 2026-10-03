@@ -62,7 +62,7 @@ attach)
 	;;
 esac
 
-if [[ -n "$goal_id" && ! "$goal_id" =~ ^([1-9][0-9]*|[0-9a-f]{8,})$ ]]; then
+if [[ -n "$goal_id" && ! "$goal_id" =~ ^[1-9][0-9]*$ ]]; then
 	usage
 	exit 2
 fi
@@ -90,8 +90,7 @@ if [[ -z "$goal_id" ]]; then
 		fail "作業ツリーを解決できない" 2
 	fi
 else
-	goal8="${goal_id:0:8}"
-	worktree="$repo/.worktrees/$goal8"
+	worktree="$repo/.worktrees/$goal_id"
 fi
 
 if [[ ! -e "$worktree" && ! -L "$worktree" ]]; then
