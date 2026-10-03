@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/michiomochi/atct/internal/domain"
+	"github.com/michiomochi/atct/internal/store"
 )
 
 type decisionPollRPCResponse struct {
@@ -153,5 +154,80 @@ func TestDecisionPollWithoutSessionRefusesForeignDecision(t *testing.T) {
 	_, rpcError := f.callDecisionPoll(t, 0, f.decisionBID)
 	if len(rpcError) == 0 || string(rpcError) == "null" {
 		t.Fatal("decision.poll succeeded without the owner session")
+	}
+}
+
+func (f unappliedDecisionScopeRPCTestFixture) answeredDecision(t *testing.T, goalID int64, kind domain.DecisionKind, session int64) int64 {
+	t.Helper()
+	d, err := f.store.AskDecision(t.Context(), store.AskInput{GoalID: goalID, Kind: kind, Question: "q", AgentSessionID: session})
+	if err != nil {
+		t.Fatalf("AskDecision: %v", err)
+	}
+	if _, err := f.store.AnswerDecision(t.Context(), store.AnswerInput{DecisionID: d.ID, AnswerText: "a"}); err != nil {
+		t.Fatalf("AnswerDecision: %v", err)
+	}
+	return d.ID
+}
+
+func TestDecisionPollForCommanderAcceptsSessionlessGoalApproval(t *testing.T) {
+	f := newUnappliedDecisionScopeRPCTestFixture(t)
+	id := f.answeredDecision(t, f.goalBID, domain.KindGoalApproval, 0)
+	result, rpcError := f.callDecisionPoll(t, f.commanderSessionID, id)
+	decision := assertPollSucceeded(t, result, rpcError, id)
+	if decision["status"] != string(domain.DecisionApplied) {
+		t.Fatalf("status = %#v, want applied", decision["status"])
+	}
+	stored, err := f.store.GetDecision(t.Context(), id)
+	if err != nil {
+		t.Fatalf("GetDecision: %v", err)
+	}
+	if stored.Status != domain.DecisionApplied {
+		t.Fatalf("stored status = %v, want applied", stored.Status)
+	}
+}
+
+func TestDecisionPollForCommanderWithoutIDAppliesSessionlessGoalApproval(t *testing.T) {
+	f := newUnappliedDecisionScopeRPCTestFixture(t)
+	id := f.answeredDecision(t, f.goalBID, domain.KindGoalApproval, 0)
+	result, rpcError := f.callDecisionPoll(t, f.commanderSessionID, 0)
+	assertPollSucceeded(t, result, rpcError, id)
+	stored, err := f.store.GetDecision(t.Context(), id)
+	if err != nil {
+		t.Fatalf("GetDecision: %v", err)
+	}
+	if stored.Status != domain.DecisionApplied {
+		t.Fatalf("stored status = %v, want applied", stored.Status)
+	}
+	// a foreign session-owned kind=decision must stay unapplied
+	other, err := f.store.GetDecision(t.Context(), f.decisionBID)
+	if err != nil {
+		t.Fatalf("GetDecision: %v", err)
+	}
+	if other.Status != domain.DecisionAnswered {
+		t.Fatalf("foreign decision status = %v, want answered", other.Status)
+	}
+}
+
+func TestDecisionPollForCommanderRefusesOtherProjectSessionlessDecision(t *testing.T) {
+	f := newUnappliedDecisionScopeRPCTestFixture(t)
+	project, err := f.store.CreateProject(t.Context(), "other-project", f.projectRoot+"-other")
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	goal, err := f.store.CreateGoal(t.Context(), project.ID, "other goal", "human")
+	if err != nil {
+		t.Fatalf("CreateGoal: %v", err)
+	}
+	id := f.answeredDecision(t, goal.ID, domain.KindGoalApproval, 0)
+	_, rpcError := f.callDecisionPoll(t, f.commanderSessionID, id)
+	if len(rpcError) == 0 || string(rpcError) == "null" {
+		t.Fatal("decision.poll succeeded for another project's decision")
+	}
+	stored, err := f.store.GetDecision(t.Context(), id)
+	if err != nil {
+		t.Fatalf("GetDecision: %v", err)
+	}
+	if stored.Status != domain.DecisionAnswered {
+		t.Fatalf("stored status = %v, want answered", stored.Status)
 	}
 }
