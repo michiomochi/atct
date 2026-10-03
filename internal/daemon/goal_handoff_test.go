@@ -220,18 +220,33 @@ func TestGoalHandoffRoutesOverRPC(t *testing.T) {
 		t.Fatalf("goal.handoff.review.receive: %v", err)
 	}
 
-	var completed store.GoalHandoff
-	if err := client.Call(ctx, "goal.handoff.complete", map[string]any{
-		"handoff_id": requested.ID, "goal_id": fixture.claimedGoalID, "agent_session_id": fixture.requesterID, "complete_report": "RPC goal completion report",
-	}, &completed); err != nil {
-		t.Fatalf("goal.handoff.complete: %v", err)
+	var review domain.Decision
+	if err := client.Call(ctx, "goal.review.request", map[string]any{
+		"goal_id": fixture.claimedGoalID, "agent_session_id": fixture.requesterID,
+		"work_done": "RPC work", "now_possible": "RPC result", "how_to_verify": "RPC verify",
+		"surprises": "none", "needs_review": "none", "next_steps": "merge",
+	}, &review); err != nil {
+		t.Fatalf("goal.review.request: %v", err)
 	}
-	if completed.CompletedReportAt == nil || completed.CompleteReport != "RPC goal completion report" {
-		t.Fatalf("completed handoff = %#v, want completion timestamp and report", completed)
+	if _, err := fixture.store.ApproveGoalReview(ctx, review.ID); err != nil {
+		t.Fatalf("ApproveGoalReview: %v", err)
+	}
+	var finalized domain.Goal
+	if err := client.Call(ctx, "goal.review.complete", map[string]any{
+		"goal_id": fixture.claimedGoalID, "agent_session_id": fixture.requesterID,
+	}, &finalized); err != nil {
+		t.Fatalf("goal.review.complete: %v", err)
+	}
+	completed, err := fixture.store.GetGoalHandoff(ctx, requested.ID)
+	if err != nil {
+		t.Fatalf("GetGoalHandoff: %v", err)
+	}
+	if completed.CompletedReportAt == nil || completed.CompleteReport != "RPC goal handoff ready for review" {
+		t.Fatalf("completed handoff = %#v, want completion timestamp and review request report", completed)
 	}
 
 	var rejected store.GoalHandoff
-	err := client.Call(ctx, "goal.handoff.request", map[string]any{
+	err = client.Call(ctx, "goal.handoff.request", map[string]any{
 		"handoff_id": "rpc-goal-handoff-unclaimed", "goal_id": fixture.unclaimedGoalID, "requested_by": fixture.requesterID,
 	}, &rejected)
 	if err == nil {
@@ -311,14 +326,10 @@ func prepareCompletedGoalHandoffCompletion(t *testing.T, fixture goalHandoffRPCT
 		t.Fatalf("goal.handoff.review.receive: %v", err)
 	}
 
-	var completed store.GoalHandoff
-	if err := client.Call(ctx, "goal.handoff.complete", map[string]any{
-		"handoff_id": requested.ID, "goal_id": fixture.claimedGoalID, "agent_session_id": fixture.requesterID, "complete_report": "Role test handoff completion report",
-	}, &completed); err != nil {
-		t.Fatalf("goal.handoff.complete: %v", err)
-	}
-	if completed.CompletedReportAt == nil {
-		t.Fatalf("completed handoff = %#v, want completion timestamp", completed)
+	// A delegated handoff closes directly only through release; the
+	// approved goal-review finalization would also finish the goal.
+	if err := client.Call(ctx, "goal.release", map[string]any{"goal_id": fixture.claimedGoalID}, nil); err != nil {
+		t.Fatalf("goal.release: %v", err)
 	}
 
 	completion, err := fixture.store.CompleteGoalWithReport(ctx, fixture.claimedGoalID, domain.CompletionReport{

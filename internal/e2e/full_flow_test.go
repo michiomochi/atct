@@ -548,13 +548,9 @@ func TestCompletionRejectionReopensGoalHandoffThroughDaemonAndHTTP(t *testing.T)
 		"handoff_id": requested.ID, "goal_id": goal.ID, "received_by": commanderSessionID,
 	}, &reviewReceived)
 
-	var completed store.GoalHandoff
-	callDaemon(t, stack, "goal.handoff.complete", map[string]any{
-		"handoff_id": requested.ID, "goal_id": goal.ID, "agent_session_id": commanderSessionID, "complete_report": "Initial handoff completion",
-	}, &completed)
-	if completed.ID != requested.ID || completed.CompletedReportAt == nil {
-		t.Fatalf("initial completed handoff = %+v, want closed handoff %q", completed, requested.ID)
-	}
+	// A delegated handoff closes directly only through release; the
+	// approved goal-review finalization would also finish the goal.
+	callDaemon(t, stack, "goal.release", map[string]any{"goal_id": goal.ID}, nil)
 
 	status, raw := httpJSON(t, stack, http.MethodPost, "/api/decisions/"+idText(completion.ID)+"/reject", map[string]string{
 		"reason": "Please revise the completion report",
@@ -603,13 +599,7 @@ func TestCompletionRejectionReopensGoalHandoffThroughDaemonAndHTTP(t *testing.T)
 		"handoff_id": expectedReopenedID, "goal_id": goal.ID, "received_by": commanderSessionID,
 	}, &reviewReceived)
 
-	var reopenedCompleted store.GoalHandoff
-	callDaemon(t, stack, "goal.handoff.complete", map[string]any{
-		"handoff_id": expectedReopenedID, "goal_id": goal.ID, "agent_session_id": commanderSessionID, "complete_report": "Revised handoff completion",
-	}, &reopenedCompleted)
-	if reopenedCompleted.ID != expectedReopenedID || reopenedCompleted.ReceivedBy != receiverSessionID || reopenedCompleted.CompletedReportAt == nil {
-		t.Fatalf("reopened completed handoff = %+v, want %q received by %d", reopenedCompleted, expectedReopenedID, receiverSessionID)
-	}
+	callDaemon(t, stack, "goal.release", map[string]any{"goal_id": goal.ID}, nil)
 
 	status, raw = httpJSON(t, stack, http.MethodPost, "/api/decisions/"+idText(revised.ID)+"/approve", map[string]string{})
 	if status != http.StatusOK {

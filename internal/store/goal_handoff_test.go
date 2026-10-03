@@ -164,9 +164,10 @@ func TestGoalHandoffRequestReceiveAndComplete(t *testing.T) {
 	if _, err := s.ReceiveGoalHandoffReview(ctx, handoff.ID, goalID, testSessionID("goal-requester")); err != nil {
 		t.Fatalf("ReceiveGoalHandoffReview failed: %v", err)
 	}
-	completed, err := s.CompleteGoalHandoffByReviewer(ctx, handoff.ID, goalID, testSessionID("goal-requester"), "completed after verifying goal handoff state")
+	finalizeGoalHandoffByReviewForTest(t, s, ctx, goalID, testSessionID("goal-requester"))
+	completed, err := s.GetGoalHandoff(ctx, handoff.ID)
 	if err != nil {
-		t.Fatalf("CompleteGoalHandoffByReviewer failed: %v", err)
+		t.Fatalf("GetGoalHandoff failed: %v", err)
 	}
 	if completed.CompletedReportAt == nil || completed.RequestedAt == nil || completed.ReceivedAt == nil {
 		t.Fatalf("completion must preserve all prior timestamps: %+v", completed)
@@ -684,11 +685,12 @@ func TestGoalHandoffReportsAreStored(t *testing.T) {
 	if _, err := s.ReceiveGoalHandoffReview(ctx, requested.ID, goalID, testSessionID("goal-report-requester")); err != nil {
 		t.Fatalf("ReceiveGoalHandoffReview: %v", err)
 	}
-	completed, err := s.CompleteGoalHandoffByReviewer(ctx, requested.ID, goalID, testSessionID("goal-report-requester"), "I completed the goal and verified it.")
+	finalizeGoalHandoffByReviewForTest(t, s, ctx, goalID, testSessionID("goal-report-requester"))
+	completed, err := s.GetGoalHandoff(ctx, requested.ID)
 	if err != nil {
-		t.Fatalf("CompleteGoalHandoffByReviewer: %v", err)
+		t.Fatalf("GetGoalHandoff: %v", err)
 	}
-	if completed.CompleteReport != "I completed the goal and verified it." {
+	if completed.CompleteReport != "ready for review" {
 		t.Fatalf("complete report = %q, want completion body", completed.CompleteReport)
 	}
 }
@@ -1006,11 +1008,7 @@ func TestRejectCompletionReopensCompletedGoalHandoff(t *testing.T) {
 	addTestAgentSession(t, s, receiver)
 
 	original := receiveGoalHandoffReviewForGoalReviewTest(t, s, ctx, handoffID, goalID, testSessionID(requester), testSessionID(receiver))
-	completed, err := s.CompleteGoalHandoffByReviewer(ctx, handoffID, goalID, testSessionID(requester), "completed before rejection")
-	if err != nil {
-		t.Fatalf("CompleteGoalHandoffByReviewer: %v", err)
-	}
-	original = completed
+	original = closeDelegatedGoalHandoffForTest(t, s, ctx, handoffID, goalID)
 
 	decision, err := s.CompleteGoalWithReport(ctx, goalID, domain.CompletionReport{
 		WorkDone:    "completion handoff reopening",
@@ -1142,10 +1140,7 @@ func TestRejectCompletionDoesNotReopenAnotherSessionsGoalHandoff(t *testing.T) {
 	addTestAgentSession(t, s, reporter)
 
 	completed := receiveGoalHandoffReviewForGoalReviewTest(t, s, ctx, handoffID, goalID, testSessionID(requester), testSessionID(owner))
-	completed, err := s.CompleteGoalHandoffByReviewer(ctx, handoffID, goalID, testSessionID(requester), "completed by the original owner")
-	if err != nil {
-		t.Fatalf("CompleteGoalHandoffByReviewer: %v", err)
-	}
+	completed = closeDelegatedGoalHandoffForTest(t, s, ctx, handoffID, goalID)
 	if completed.ReceivedBy != testSessionID(owner) {
 		t.Fatalf("completed handoff receiver = %d, want owner %d", completed.ReceivedBy, testSessionID(owner))
 	}
@@ -1193,9 +1188,7 @@ func TestApproveCompletionDoesNotReopenGoalHandoff(t *testing.T) {
 	addTestAgentSession(t, s, receiver)
 
 	handoff := receiveGoalHandoffReviewForGoalReviewTest(t, s, ctx, "completion-approval-handoff", goalID, testSessionID(requester), testSessionID(receiver))
-	if _, err := s.CompleteGoalHandoffByReviewer(ctx, handoff.ID, goalID, testSessionID(requester), "completed before approval"); err != nil {
-		t.Fatalf("CompleteGoalHandoffByReviewer: %v", err)
-	}
+	closeDelegatedGoalHandoffForTest(t, s, ctx, handoff.ID, goalID)
 
 	decision, err := s.CompleteGoalWithReport(ctx, goalID, domain.CompletionReport{
 		WorkDone:    "completion approved without a handoff",
@@ -1233,10 +1226,7 @@ func TestGoalHandoffAmendReportUpdatesCompletedHandoffWithoutChangingCompletionT
 	addLiveProjectClaim(t, s, goalID, "amend-goal-requester")
 	addTestAgentSession(t, s, "amend-goal-receiver")
 	handoff := receiveGoalHandoffReviewForGoalReviewTest(t, s, ctx, "amend-goal-handoff", goalID, testSessionID("amend-goal-requester"), testSessionID("amend-goal-receiver"))
-	completed, err := s.CompleteGoalHandoffByReviewer(ctx, handoff.ID, goalID, testSessionID("amend-goal-requester"), "original report")
-	if err != nil {
-		t.Fatalf("CompleteGoalHandoffByReviewer: %v", err)
-	}
+	completed := closeDelegatedGoalHandoffForTest(t, s, ctx, handoff.ID, goalID)
 
 	amended, err := s.AmendGoalHandoffReport(ctx, handoff.ID, goalID, "amended report")
 	if err != nil {
@@ -1340,9 +1330,7 @@ func TestGoalHandoffAllowsNewHandoffAfterCompletion(t *testing.T) {
 	addTestAgentSession(t, s, "completed-goal-receiver")
 
 	first := receiveGoalHandoffReviewForGoalReviewTest(t, s, ctx, "completed-goal-1", goalID, testSessionID("completed-goal-requester"), testSessionID("completed-goal-receiver"))
-	if _, err := s.CompleteGoalHandoffByReviewer(ctx, first.ID, goalID, testSessionID("completed-goal-requester"), "done"); err != nil {
-		t.Fatalf("CompleteGoalHandoffByReviewer failed: %v", err)
-	}
+	closeDelegatedGoalHandoffForTest(t, s, ctx, first.ID, goalID)
 
 	if _, err := s.RequestGoalHandoff(ctx, "completed-goal-2", goalID, testSessionID("completed-goal-requester"), ""); err != nil {
 		t.Fatalf("new handoff after completion failed: %v", err)
@@ -1356,9 +1344,7 @@ func TestGoalHandoffCompletionDoesNotOverwriteReportedHandoff(t *testing.T) {
 	addLiveProjectClaim(t, s, goalID, "overwrite-goal-requester")
 	addTestAgentSession(t, s, "overwrite-goal-receiver")
 	handoff := receiveGoalHandoffReviewForGoalReviewTest(t, s, ctx, "overwrite-goal-handoff", goalID, testSessionID("overwrite-goal-requester"), testSessionID("overwrite-goal-receiver"))
-	if _, err := s.CompleteGoalHandoffByReviewer(ctx, handoff.ID, goalID, testSessionID("overwrite-goal-requester"), "original report"); err != nil {
-		t.Fatalf("first CompleteGoalHandoffByReviewer: %v", err)
-	}
+	closeDelegatedGoalHandoffForTest(t, s, ctx, handoff.ID, goalID)
 	if _, err := s.CompleteGoalHandoff(ctx, handoff.ID, goalID, "replacement report"); err == nil {
 		t.Fatal("second CompleteGoalHandoff unexpectedly overwrote the completed handoff")
 	}
@@ -1366,8 +1352,8 @@ func TestGoalHandoffCompletionDoesNotOverwriteReportedHandoff(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetGoalHandoff: %v", err)
 	}
-	if stored.CompleteReport != "original report" {
-		t.Fatalf("complete report = %q, want original report", stored.CompleteReport)
+	if stored.CompleteReport != goalHandoffReleasedReport {
+		t.Fatalf("complete report = %q, want original report %q", stored.CompleteReport, goalHandoffReleasedReport)
 	}
 }
 
@@ -1467,6 +1453,34 @@ func receiveGoalHandoffReviewForGoalReviewTest(t *testing.T, s *Store, ctx conte
 		t.Fatalf("ReceiveGoalHandoffReview %q: %v", handoffID, err)
 	}
 	return handoff
+}
+
+// finalizeGoalHandoffByReviewForTest closes the received delegated handoff
+// through the only legitimate route: goal review, approval, finalization.
+// The goal ends done and the handoff's complete report is its review request report.
+func finalizeGoalHandoffByReviewForTest(t *testing.T, s *Store, ctx context.Context, goalID, commanderID int64) {
+	t.Helper()
+	review, err := s.RequestGoalReview(ctx, goalID, commanderID, goalReviewRequestTestReport())
+	if err != nil {
+		t.Fatalf("RequestGoalReview: %v", err)
+	}
+	if _, err := s.ApproveGoalReview(ctx, review.ID); err != nil {
+		t.Fatalf("ApproveGoalReview: %v", err)
+	}
+	if _, err := s.FinalizeGoalReview(ctx, goalID, commanderID); err != nil {
+		t.Fatalf("FinalizeGoalReview: %v", err)
+	}
+}
+
+// closeDelegatedGoalHandoffForTest closes a delegated handoff while the goal
+// stays active, through the released-report path that CompleteGoalHandoff allows.
+func closeDelegatedGoalHandoffForTest(t *testing.T, s *Store, ctx context.Context, handoffID string, goalID int64) GoalHandoff {
+	t.Helper()
+	completed, err := s.CompleteGoalHandoff(ctx, handoffID, goalID, goalHandoffReleasedReport)
+	if err != nil {
+		t.Fatalf("CompleteGoalHandoff released: %v", err)
+	}
+	return completed
 }
 
 func TestRequestGoalReviewRejectsWithoutDelegatedGoalHandoff(t *testing.T) {
