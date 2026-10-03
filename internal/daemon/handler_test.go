@@ -1230,7 +1230,7 @@ func TestContractN10GoalListReturnsAwaitingApprovalCount(t *testing.T) {
 	defer fixture.store.Close()
 
 	for _, goalID := range []int64{fixture.emptyTaskGoal.ID, fixture.taskGoal.ID} {
-		askOpenDecisionForContractTest(t, fixture, goalID, "completion")
+		askOpenDecisionForContractTest(t, fixture, goalID, domain.KindGoalReview)
 	}
 	response := goalListResponseForContractTest(t, fixture)
 	if response.AwaitingApprovalCount != 2 {
