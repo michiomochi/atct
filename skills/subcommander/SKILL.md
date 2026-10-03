@@ -76,9 +76,23 @@ that worker is started:
    > `session_key` (plus the optional `monitor_token`, when emitted) from SessionStart. Do this before
    > starting work. Do not substitute your agent name or token.
    >
+   > In Claude Code only, after receipt and before `atct_role`, set up your watch by
+   > the procedure in the `## Watch` section of the atct skill, using the exact
+   > token you passed to `atct_task_handoff_receive`.
+   > A Codex executor was started with `atct codex monitor` and does nothing here.
+   >
+   > If an atct tool refuses with `no live Monitor`, set up your watch and retry.
+   > If you cannot set it up, do no work: make your last output exactly
+   > `blocked: no live Monitor` and stop.
+   >
    > Then invoke the `atct_role` MCP tool with `expected_role` set to
    > `executor`. If it reports `matches: false`, do not start work; return the
    > task.
+   >
+   > A rejection reaches you as a wakeup on your watch. Receive it with
+   > `atct_task_handoff_review_reject_receive` (`handoff_id` and `task_id`), correct
+   > on the same handoff, and request review again with
+   > `atct_task_handoff_review_request`.
    >
    > When the work is complete, record the review request by calling `atct_task_handoff_review_request` with the received `handoff_id`, the
    > `task_id`, and a non-empty `review_request_report`. The report must say
@@ -101,7 +115,7 @@ that worker is started:
    calls are allowed after all reaches the goal scope in the same step.
 
    An executor may call only these atct tools:
-   `atct_session_identify`, `atct_task_handoff_receive`, `atct_role`, `atct_task_handoff_review_request`.
+   `atct_session_identify`, `atct_task_handoff_receive`, `atct_role`, `atct_task_handoff_review_request`, `atct_task_handoff_review_reject_receive`.
    Each of them is confined to the `task_id` the executor was given.
 
    An executor must not call `atct_goal_handoff_complete`, `atct_goal_handoff_receive`,
@@ -113,6 +127,12 @@ that worker is started:
    `atct_task_create`, or `atct_decision_ask`. Spell the names out; "anything not
    listed above" is not read as a prohibition. In a 2026-08-27 measurement, an
    executor closed a subcommander's goal handoff without knowing it was forbidden.
+
+   A rejection is recorded with `atct_task_handoff_review_reject` and reaches the
+   worker through its watch wakeup, not by pasting text with `herdr agent prompt`.
+   A request must never tell a worker to proceed past a `no live Monitor` refusal.
+   After a `herdr agent prompt` that wakes a worker, confirm with `herdr agent get`
+   that agent_status is working; otherwise `herdr agent send-keys <executor> enter`.
 
    An executor that reaches an irreversible or destructive operation returns it to
    the delegator. The executor does not perform the operation and does not carry
