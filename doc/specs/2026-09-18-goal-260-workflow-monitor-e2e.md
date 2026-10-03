@@ -23,13 +23,15 @@ dependencies without increasing lifecycle coverage.
 The test creates separate commander, subcommander, and executor sessions for
 one project and goal.  It drives these persisted transitions in order:
 
-1. commander requests the goal; only the prestarted goal-scoped subcommander
-   monitor receives the startup request.
+1. commander requests the goal; only the commander monitor receives the request
+   (main's `handoffProjectionRole`: an unreceived request wakes its delegator,
+   which starts the worker). The subcommander binding appears at receipt.
 2. subcommander receives the goal and submits the plan; only the
    project-scoped commander monitor receives the plan-review request.
 3. commander receives and accepts the plan; the subcommander receives the
    task-create request, creates the executor task, and delegates it.
-4. only the executor monitor receives the task request.  It receives the task,
+4. only the subcommander monitor receives the unreceived task request (the
+   delegator wakes the executor).  The executor receives the task,
    submits review, and only the subcommander monitor receives that review
    request.
 5. subcommander receives and accepts the task review.  Its executor monitor
@@ -49,10 +51,10 @@ phase, so duplicate SSE reconciliation must not create an extra monitor turn.
 
 | Boundary | Persisted action | Sole notification target | E2E assertion |
 |---|---|---|---|
-| Goal startup | `goal.handoff.request` | goal-scoped subcommander | commander is not self-notified |
+| Goal startup | `goal.handoff.request` | commander (the delegator; it wakes the subcommander) | subcommander has no binding before receipt and receives nothing |
 | Design review | `plan.handoff.review.request` | commander | subcommander/executor receive nothing |
 | Task creation | `task_create` receipt/request | subcommander | no executor task exists before plan acceptance |
-| Executor work | `task.handoff.request` | executor | only assigned executor receives it |
+| Executor work | `task.handoff.request` | subcommander (the delegator; it wakes the executor) | executors have no task scope before receipt and receive nothing |
 | Task review | `task.handoff.review.request` | subcommander | executor does not receive its own review |
 | Goal review | `goal.handoff.review.request` | commander | only commander receives it |
 | Human approval | `goal.review.complete` | human/commander continuation | merge is not eligible beforehand |
@@ -96,3 +98,11 @@ claim that daemon state alone blocks it.
 - No source implementation, task declaration, executor pane launch, commit,
   merge, or human-review action occurs until this spec and plan are accepted
   through `atct_plan_handoff_review_*`.
+
+## Correction (2026-10-03)
+
+The original table assumed an unreceived request reaches the worker's monitor.
+On main a monitor's scope comes from `/api/monitor-bindings`, which is derived
+from received handoffs, so a worker has no scope before it receives. Main pins
+the delegator routing in `TestHandoffOnlyProjectionRoutesRightRoleAndStops`.
+The E2E asserts main's routing; the rows above are corrected accordingly.
