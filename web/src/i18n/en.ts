@@ -5,7 +5,6 @@ export const en = {
 
   "dashboard.title": "Dashboard",
   "dashboard.waiting.title": "Waiting for answers",
-  "dashboard.proposed.title": "Proposed goals",
   "dashboard.openDecisions.empty":
     "No decisions are waiting for an answer. Answer a decision to move it forward.",
   "dashboard.goals.title": "Goals",
@@ -115,12 +114,6 @@ export const en = {
   "reviewExchange.scope.task": "task {{id}}",
   "reviewExchange.gap": "Records before this point were not kept",
   "reviewExchange.gapCount": "{{total}} handoffs",
-  "goal.approval.title": "Approve this goal",
-  "goal.approval.description": "Approving this goal starts the work; rejecting it withdraws the proposal.",
-  "goal.approval.reason": "Rejection reason",
-  "goal.approval.approve": "Approve",
-  "goal.approval.reject": "Reject",
-  "goal.approval.submitting": "Submitting...",
   "goal.review.title": "Goal review awaiting approval",
   "goal.review.description": "Review the completed goal handoff before the goal can proceed.",
   "goal.review.reason": "Reason for rejection",
@@ -141,11 +134,6 @@ export const en = {
   "goal.withdraw.description": "Withdrawing this goal closes open decisions and unfinished or in-progress tasks; completed tasks remain unchanged.",
   "goal.withdraw.reason": "Reason",
   "goal.withdraw.submit": "Withdraw",
-  "goal.content.edit.title": "Edit this goal's content",
-  "goal.content.edit.description": "Update the proposed goal content before approving it.",
-  "goal.content.edit.label": "Content",
-  "goal.content.edit.submit": "Save",
-  "goal.content.edit.submitting": "Saving...",
   "goal.error.load": "Could not load the goal.",
 
   "task.column.order": "Order",

@@ -3,7 +3,6 @@ package store
 import (
 	"context"
 	"errors"
-	"fmt"
 	"testing"
 
 	"github.com/michiomochi/atct/internal/domain"
@@ -79,8 +78,6 @@ func TestListUnappliedDecisionsForGoal(t *testing.T) {
 	}
 	goalA := goalARecord.ID
 	goalB := goalBRecord.ID
-	approveTestGoal(t, s, ctx, goalA)
-	approveTestGoal(t, s, ctx, goalB)
 
 	for _, tc := range []struct {
 		goalID int64
@@ -133,8 +130,6 @@ func TestListUnappliedDecisionsForProject(t *testing.T) {
 	}
 	goalA := goalARecord.ID
 	goalB := goalBRecord.ID
-	approveTestGoal(t, s, ctx, goalA)
-	approveTestGoal(t, s, ctx, goalB)
 
 	for _, tc := range []struct {
 		goalID int64
@@ -169,19 +164,5 @@ func TestListUnappliedDecisionsForProject(t *testing.T) {
 	}
 	if !seen[goalA] || !seen[goalB] {
 		t.Fatalf("got decisions for goals A/B = %v, want both %d and %d", seen, goalA, goalB)
-	}
-}
-
-func approveTestGoal(t *testing.T, s *Store, ctx context.Context, goalID int64) {
-	t.Helper()
-	approval, err := s.AskDecision(ctx, AskInput{
-		GoalID: goalID, Kind: domain.KindGoalApproval, Question: "Approve goal?",
-		Options: []domain.Option{{Label: "approve"}}, AgentSessionID: testSessionID(fmt.Sprintf("approval-%d", goalID)),
-	})
-	if err != nil {
-		t.Fatalf("AskDecision goal approval: %v", err)
-	}
-	if _, err := s.ApproveGoal(ctx, approval.ID); err != nil {
-		t.Fatalf("ApproveGoal: %v", err)
 	}
 }

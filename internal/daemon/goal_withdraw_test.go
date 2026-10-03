@@ -98,20 +98,20 @@ func TestGoalWithdrawRequiresAReason(t *testing.T) {
 	}
 }
 
-// A proposed goal that already has work recorded can still be abandoned by the
+// An agent-created goal that already has work recorded can still be abandoned by the
 // commander; the old stale-approval guard against that is gone.
-func TestGoalWithdrawLetsTheCommanderDropAProposedGoalWithWork(t *testing.T) {
+func TestGoalWithdrawLetsTheCommanderDropAnAgentGoalWithWork(t *testing.T) {
 	fixture := newGoalListFixture(t)
 	defer fixture.store.Close()
 
 	ctx := context.Background()
-	goalID := fixture.proposed[0].ID
+	goalID := fixture.agentCreated[0].ID
 	if _, err := fixture.store.DB().ExecContext(ctx, `
 		INSERT INTO tasks (goal_id, title, description, status, agent, sort_order, declare_key, created_at, updated_at)
 		VALUES (?, 'recorded', 'd', 'todo', 'agent', 0, 'k', '2026-10-01T00:00:00Z', '2026-10-01T00:00:00Z')`, goalID); err != nil {
 		t.Fatalf("insert task: %v", err)
 	}
-	commanderID := daemonTestSessionID(t, fixture.store, "withdraw-proposed")
+	commanderID := daemonTestSessionID(t, fixture.store, "withdraw-agent")
 	if _, err := fixture.store.ClaimProject(ctx, fixture.project.ID, commanderID); err != nil {
 		t.Fatalf("ClaimProject: %v", err)
 	}

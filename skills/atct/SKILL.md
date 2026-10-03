@@ -140,8 +140,7 @@ commander review. Work that is unfinished or blocked stays open and goes to
 `atct_decision_ask` with concrete options and the consequence of each; it is
 never reported through a goal-handoff review request.
 `atct_goal_review_request` applies only to an active goal after the commander
-has received the goal-handoff review; a proposed goal must be activated by
-initial approval before it can be filed.
+has received the goal-handoff review.
 
 A subcommander that stops working sends nothing at all, and the old habit caught
 that only because a delegator noticed a quiet pane. The record catches it

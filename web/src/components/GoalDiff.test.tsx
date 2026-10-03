@@ -9,7 +9,6 @@ const apiMock = vi.hoisted(() => ({
   fetchGoalDiffPatch: vi.fn(),
   rejectDecision: vi.fn(),
   subscribeToDecisionEvents: vi.fn(() => () => undefined),
-  updateGoalContent: vi.fn(),
   withdrawGoal: vi.fn(),
 }));
 

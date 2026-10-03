@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -92,49 +91,6 @@ func TestPendingCommandKeepsMultilineGoalOnOneLine(t *testing.T) {
 	}
 	if strings.Contains(output, domain.Body(goal.Content)) {
 		t.Fatalf("pendingCommand output included goal body: %q", output)
-	}
-}
-
-func TestPendingCommandExcludesProposedGoal(t *testing.T) {
-	dir, projectRoot := newPendingFixture(t)
-	s := openPendingStore(t, dir)
-	ctx := context.Background()
-	project, err := s.ResolveProject(ctx, projectRoot)
-	if err != nil {
-		t.Fatalf("ResolveProject: %v", err)
-	}
-	goal, err := s.CreateGoal(ctx, project.ID, "Await approval before pending work", "human")
-	if err != nil {
-		t.Fatalf("CreateGoal: %v", err)
-	}
-	if _, err := s.CreateTasks(ctx, goal.ID, "agent", "proposed-pending", []string{"task awaiting approval"}, []string{"Wait for approval before claiming this task."}); err != nil {
-		t.Fatalf("CreateTasks: %v", err)
-	}
-	// This state can only exist in databases created before the declaration gate.
-	db, err := sql.Open("sqlite", filepath.Join(dir, "atct.db"))
-	if err != nil {
-		t.Fatalf("open test db: %v", err)
-	}
-	if _, err := db.ExecContext(ctx, "UPDATE goals SET status = ? WHERE id = ?", string(domain.GoalProposed), goal.ID); err != nil {
-		_ = db.Close()
-		t.Fatalf("set goal proposed: %v", err)
-	}
-	if err := db.Close(); err != nil {
-		t.Fatalf("close test db: %v", err)
-	}
-	if err := s.Close(); err != nil {
-		t.Fatalf("Store.Close: %v", err)
-	}
-
-	output, exitCode, err := pendingCommand(dir, projectRoot)
-	if err != nil {
-		t.Fatalf("pendingCommand: %v", err)
-	}
-	if output != "" {
-		t.Fatalf("pendingCommand output = %q, want empty for proposed goal %d", output, goal.ID)
-	}
-	if exitCode != 1 {
-		t.Fatalf("pendingCommand exit code = %d, want 1", exitCode)
 	}
 }
 

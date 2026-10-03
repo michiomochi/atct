@@ -42,10 +42,6 @@ vi.mock("./GoalTable", () => ({
   GoalTable: () => null,
 }));
 
-vi.mock("./ProposedGoalTable", () => ({
-  ProposedGoalTable: () => null,
-}));
-
 describe("Dashboard", () => {
   let decisionEvent: (() => void) | undefined;
 
@@ -57,15 +53,6 @@ describe("Dashboard", () => {
         decisionEvent = undefined;
       };
     });
-  });
-
-  it("does not render the proposed goals section when there are no proposed goals", async () => {
-    fetchInbox.mockResolvedValue({ open_decisions: [], active_goals: [], proposed_goals: [] });
-
-    render(<Dashboard />);
-    await screen.findByRole("heading", { name: /dashboard\.goals\.title/ });
-
-    expect(screen.queryByRole("region", { name: /proposed goals|提案中のゴール/i })).toBeNull();
   });
 
   it("renders the goal create form in the active goals section heading action", async () => {
@@ -81,21 +68,6 @@ describe("Dashboard", () => {
       throw new Error("The active goals section action was not rendered");
     }
     expect(heading.parentElement?.contains(form)).toBe(true);
-  });
-
-  it("renders proposed goals before open decisions", async () => {
-    fetchInbox.mockResolvedValue({ open_decisions: [], active_goals: [], proposed_goals: [{}] });
-
-    const { container } = render(<Dashboard />);
-    await screen.findByRole("heading", { name: /dashboard\.proposed\.title/, level: 2 });
-
-    const headings = Array.from(container.querySelectorAll("h2"));
-    const proposedHeadingIndex = headings.findIndex((heading) => heading.id === "proposed-goals-heading");
-    const openDecisionsHeadingIndex = headings.findIndex((heading) => heading.id === "open-decisions-heading");
-
-    expect(proposedHeadingIndex).toBeGreaterThanOrEqual(0);
-    expect(openDecisionsHeadingIndex).toBeGreaterThanOrEqual(0);
-    expect(proposedHeadingIndex).toBeLessThan(openDecisionsHeadingIndex);
   });
 
   it("shows an update banner without reloading when a decision event arrives", async () => {

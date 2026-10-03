@@ -58,40 +58,9 @@ UPDATE decisions
 SET status = 'answered', answer_label = 'reject', answer_text = ?, answered_at = ?
 WHERE id = ? AND kind = 'goal_review' AND status = 'open';
 
--- name: MarkGoalActive :execresult
-UPDATE goals SET status = 'active', updated_at = ?
-WHERE id = ? AND status = 'proposed';
-
--- name: UpdateGoalContent :execresult
-UPDATE goals SET content = ?, updated_at = ?
-WHERE id = ? AND status = 'proposed';
-
--- name: MarkGoalDropped :execresult
-UPDATE goals SET status = 'dropped', updated_at = ?
-WHERE id = ? AND status = 'proposed';
-
 -- name: WithdrawActiveGoal :execresult
 UPDATE goals SET status = 'dropped', result_summary = ?, updated_at = ?
 WHERE id = ? AND status = 'active';
-
--- name: WithdrawProposedGoal :execresult
-UPDATE goals SET status = 'dropped', result_summary = ?, updated_at = ?
-WHERE id = ? AND status = 'proposed';
-
--- name: GetGoalApprovalDecisionGoalID :one
-SELECT goal_id
-FROM decisions
-WHERE id = ? AND kind = 'goal_approval' AND status = 'open';
-
--- name: ApplyGoalApprovalDecision :execresult
-UPDATE decisions SET status = 'applied', answer_label = 'approve',
-  answered_at = ?, applied_at = ?
-WHERE id = ? AND kind = 'goal_approval' AND status = 'open';
-
--- name: RejectGoalApprovalDecision :execresult
-UPDATE decisions SET status = 'answered', answer_label = 'reject',
-  answer_text = ?, answered_at = ?
-WHERE id = ? AND kind = 'goal_approval' AND status = 'open';
 
 -- name: ListGoals :many
 SELECT

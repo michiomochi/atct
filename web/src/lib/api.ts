@@ -192,20 +192,12 @@ export interface ReviewExchangeHistory {
   gaps: ReviewExchangeGap[];
 }
 
-export interface ProposedGoal {
-  id: string;
-  project_id: string;
-  content: string;
-  created_at: string;
-  project_name: string;
-}
 
 export interface InboxResponse {
   open_decisions: Decision[];
   unapplied_decisions: Decision[];
   active_goals: Goal[];
   attention_tasks: TaskView[];
-  proposed_goals: ProposedGoal[];
 }
 
 export interface GoalResponse {
@@ -475,7 +467,6 @@ export function normalizeInbox(value: unknown): InboxResponse {
     unapplied_decisions: arrayOrEmpty<Decision>(source.unapplied_decisions),
     active_goals: arrayOrEmpty<Goal>(source.active_goals),
     attention_tasks: arrayOrEmpty<TaskView>(source.attention_tasks),
-    proposed_goals: arrayOrEmpty<ProposedGoal>(source.proposed_goals),
   };
 }
 
@@ -614,14 +605,6 @@ export async function withdrawGoal(id: string, reason: string): Promise<Goal> {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ reason }),
-  });
-}
-
-export async function updateGoalContent(id: string, content: string): Promise<Goal> {
-  return requestJson<Goal>(`/api/goals/${encodeURIComponent(id)}/content`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ content }),
   });
 }
 

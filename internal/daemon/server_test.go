@@ -332,8 +332,8 @@ func TestDaemonCreatesGoalForResolvedProject(t *testing.T) {
 	if domain.Body(goal.Content) != "Coordinate the release work" {
 		t.Fatalf("body = %v, want %v", domain.Body(goal.Content), "Coordinate the release work")
 	}
-	if goal.Creator != "agent" || goal.Status != domain.GoalProposed {
-		t.Fatalf("goal creator/status = %v/%v, want agent/proposed", goal.Creator, goal.Status)
+	if goal.Creator != "agent" || goal.Status != domain.GoalActive {
+		t.Fatalf("goal creator/status = %v/%v, want agent/active", goal.Creator, goal.Status)
 	}
 }
 
@@ -522,7 +522,7 @@ type goalListFixture struct {
 	daemon        *Daemon
 	project       domain.Project
 	active        []domain.Goal
-	proposed      []domain.Goal
+	agentCreated  []domain.Goal
 	done          []domain.Goal
 	dropped       []domain.Goal
 	taskGoal      domain.Goal
@@ -757,8 +757,8 @@ func newGoalListFixture(t *testing.T) goalListFixture {
 	taskGoal := create("task goal", "human")
 	emptyTaskGoal := create("empty task goal", "human")
 	doneOnlyGoal := create("done-only task goal", "human")
-	proposedOne := create("proposed one", "agent")
-	proposedTwo := create("proposed two", "agent")
+	agentOne := create("agent one", "agent")
+	agentTwo := create("agent two", "agent")
 	doneOne := mark(create("done one", "human"), domain.GoalDone)
 	doneTwo := mark(create("done two", "human"), domain.GoalDone)
 	droppedOne := mark(create("dropped one", "human"), domain.GoalDropped)
@@ -814,7 +814,7 @@ func newGoalListFixture(t *testing.T) goalListFixture {
 		daemon:        New(s),
 		project:       project,
 		active:        []domain.Goal{activeParent, activeChild, taskGoal, emptyTaskGoal, doneOnlyGoal},
-		proposed:      []domain.Goal{proposedOne, proposedTwo},
+		agentCreated:  []domain.Goal{agentOne, agentTwo},
 		done:          []domain.Goal{doneOne, doneTwo},
 		dropped:       []domain.Goal{droppedOne, droppedTwo},
 		taskGoal:      taskGoal,
@@ -885,7 +885,7 @@ func TestGoalListOmitsCompletionDetails(t *testing.T) {
 	}
 }
 
-func TestGoalListKeepsActiveAndProposedGoals(t *testing.T) {
+func TestGoalListKeepsActiveAndAgentCreatedGoals(t *testing.T) {
 	fixture := newGoalListFixture(t)
 	defer fixture.store.Close()
 
@@ -897,7 +897,7 @@ func TestGoalListKeepsActiveAndProposedGoals(t *testing.T) {
 		}
 		got[item.ID] = true
 	}
-	for _, retained := range append(fixture.active, fixture.proposed...) {
+	for _, retained := range append(fixture.active, fixture.agentCreated...) {
 		if !got[retained.ID] {
 			t.Fatalf("goal.list omitted retained goal %v with status %v", retained.ID, retained.Status)
 		}
@@ -1206,20 +1206,6 @@ func claimProjectForTest(t *testing.T, fixture goalListFixture, projectID int64,
 	return fixture.daemon.dispatch(context.Background(), rpc.Request{Method: "project.claim", Params: params})
 }
 
-func updateGoalContentForTest(t *testing.T, fixture goalListFixture, goalID int64, content, sessionID string) (json.RawMessage, error) {
-	t.Helper()
-	params, err := json.Marshal(map[string]any{
-		"goal_id":                   goalID,
-		"content":                   content,
-		"agent_session_id":          daemonTestSessionID(t, fixture.store, sessionID),
-		"include_unapplied_answers": false,
-	})
-	if err != nil {
-		t.Fatalf("marshal goal.update_content params: %v", err)
-	}
-	return fixture.daemon.dispatch(context.Background(), rpc.Request{Method: "goal.update_content", Params: params})
-}
-
 func TestRequestReportDirectFieldsAuthorizeAndReadBack(t *testing.T) {
 	fixture := newGoalListFixture(t)
 	defer fixture.store.Close()
@@ -1366,82 +1352,6 @@ func openTaskHandoffForTest(t *testing.T, fixture goalListFixture, goalID, taskI
 		t.Fatalf("ListOpenTaskHandoffsForGoal: %v", err)
 	}
 	return handoffs[taskID]
-}
-
-func TestGoalUpdateContentRewritesProposedGoal(t *testing.T) {
-	fixture := newGoalListFixture(t)
-	defer fixture.store.Close()
-
-	const content = "rewritten proposed goal"
-	result, err := updateGoalContentForTest(t, fixture, fixture.proposed[0].ID, content, "goal-update-content-run")
-	if err != nil {
-		t.Fatalf("goal.update_content: %v", err)
-	}
-	var updated domain.Goal
-	if err := json.Unmarshal(result, &updated); err != nil {
-		t.Fatalf("unmarshal goal.update_content result: %v", err)
-	}
-	if updated.Content != content {
-		t.Fatalf("content = %v, want %v", updated.Content, content)
-	}
-	if updated.Status != domain.GoalProposed {
-		t.Fatalf("status = %v, want %v", updated.Status, domain.GoalProposed)
-	}
-}
-
-func TestGoalUpdateContentRejectsActiveGoal(t *testing.T) {
-	fixture := newGoalListFixture(t)
-	defer fixture.store.Close()
-
-	if _, err := updateGoalContentForTest(t, fixture, fixture.active[0].ID, "must be rejected", "goal-update-active-run"); !errors.Is(err, ErrGoalNotProposed) {
-		t.Fatalf("goal.update_content error = %v, want ErrGoalNotProposed", err)
-	}
-}
-
-func TestGoalUpdateContentRejectsDoneAndDroppedGoals(t *testing.T) {
-	fixture := newGoalListFixture(t)
-	defer fixture.store.Close()
-
-	for _, tc := range []struct {
-		name string
-		goal domain.Goal
-	}{
-		{name: "done", goal: fixture.done[0]},
-		{name: "dropped", goal: fixture.dropped[0]},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			if _, err := updateGoalContentForTest(t, fixture, tc.goal.ID, "must be rejected", "goal-update-terminal-run"); !errors.Is(err, ErrGoalNotProposed) {
-				t.Fatalf("goal.update_content error = %v, want ErrGoalNotProposed", err)
-			}
-		})
-	}
-}
-
-func TestGoalUpdateContentKeepsRejectedGoalUnchanged(t *testing.T) {
-	fixture := newGoalListFixture(t)
-	defer fixture.store.Close()
-
-	for _, tc := range []struct {
-		name string
-		goal domain.Goal
-	}{
-		{name: "active", goal: fixture.active[0]},
-		{name: "done", goal: fixture.done[0]},
-		{name: "dropped", goal: fixture.dropped[0]},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			if _, err := updateGoalContentForTest(t, fixture, tc.goal.ID, "must not replace original", "goal-update-unchanged-run"); !errors.Is(err, ErrGoalNotProposed) {
-				t.Fatalf("goal.update_content error = %v, want ErrGoalNotProposed", err)
-			}
-			got, err := fixture.store.GetGoal(context.Background(), tc.goal.ID)
-			if err != nil {
-				t.Fatalf("GetGoal after rejected update: %v", err)
-			}
-			if got.Content != tc.goal.Content {
-				t.Fatalf("content after rejected update = %v, want %v", got.Content, tc.goal.Content)
-			}
-		})
-	}
 }
 
 func TestTaskUpdateContentUpdatesTodoAndDoingTasks(t *testing.T) {

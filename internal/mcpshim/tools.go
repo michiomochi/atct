@@ -52,11 +52,6 @@ type ProjectReleaseIn struct {
 	ProjectID mcpID `json:"project_id"`
 }
 
-type GoalUpdateContentIn struct {
-	GoalID  mcpID  `json:"goal_id"`
-	Content string `json:"content"`
-}
-
 type GoalUpdateRequestReportIn struct {
 	GoalID mcpID  `json:"goal_id"`
 	Spec   string `json:"spec"`
@@ -794,7 +789,7 @@ func Register(server *mcp.Server, c *Client, agentSessionID int64) {
 
 	addMCPTool[GoalListIn, RawWithUnappliedDecisions](server, &mcp.Tool{
 		Name:         "atct_goal_list",
-		Description:  "Get active Goals and unapplied answers relevant to the current agent session. Call at startup and resume. data.review_due_goals lists proposed goals with no activity for 7 days or more, for the commander to check against current main.",
+		Description:  "Get active Goals and unapplied answers relevant to the current agent session. Call at startup and resume.",
 		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in GoalListIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
 		return callWithUnappliedDecisions(ctx, c, "goal.list", map[string]any{
@@ -844,22 +839,11 @@ func Register(server *mcp.Server, c *Client, agentSessionID int64) {
 
 	addMCPTool[GoalWithdrawIn, RawWithUnappliedDecisions](server, &mcp.Tool{
 		Name:         "atct_goal_withdraw",
-		Description:  "Abandon an active or proposed goal, dropping its open tasks and withdrawing its open decisions. Only the project commander may do this, and only for work that is being given up rather than finished: completed work goes through atct_goal_review_request followed by atct_goal_review_complete.",
+		Description:  "Abandon an active goal, dropping its open tasks and withdrawing its open decisions. Only the project commander may do this, and only for work that is being given up rather than finished: completed work goes through atct_goal_review_request followed by atct_goal_review_complete.",
 		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in GoalWithdrawIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
 		return callWithUnappliedDecisions(ctx, c, "goal.withdraw", map[string]any{
 			"goal_id": in.GoalID, "reason": in.Reason,
-			"agent_session_id": sessionID.Get(), "include_unapplied_answers": true,
-		})
-	})
-
-	addMCPTool[GoalUpdateContentIn, RawWithUnappliedDecisions](server, &mcp.Tool{
-		Name:         "atct_goal_update_content",
-		Description:  "Rewrite a proposed goal's content. Only a proposed goal can be rewritten; an approved goal (active, done, or dropped) is refused.",
-		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
-	}, func(ctx context.Context, req *mcp.CallToolRequest, in GoalUpdateContentIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
-		return callWithUnappliedDecisions(ctx, c, "goal.update_content", map[string]any{
-			"goal_id": in.GoalID, "content": in.Content,
 			"agent_session_id": sessionID.Get(), "include_unapplied_answers": true,
 		})
 	})

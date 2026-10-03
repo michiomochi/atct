@@ -74,36 +74,6 @@ func askSessionlessGoalReview(t *testing.T, s *store.Store, goalID int64) int64 
 	return d.ID
 }
 
-func TestWatchDeliversSessionlessGoalApprovalToCommanderOnce(t *testing.T) {
-	ctx := context.Background()
-	s, projectID := newReconcileContractStore(t)
-	goal, err := s.CreateGoal(ctx, projectID, "proposed by an agent", "agent")
-	if err != nil {
-		t.Fatalf("CreateGoal: %v", err)
-	}
-	decisions, err := s.ListDecisionsForGoal(ctx, goal.ID)
-	if err != nil || len(decisions) != 1 || decisions[0].AgentSessionID != 0 || decisions[0].Kind != domain.KindGoalApproval {
-		t.Fatalf("goal approval = %#v, err %v; want one session-0 goal_approval", decisions, err)
-	}
-	if _, err := s.ApproveGoal(ctx, decisions[0].ID); err != nil {
-		t.Fatalf("ApproveGoal: %v", err)
-	}
-
-	w := newCommanderRoutingWatch(t, s)
-	out := w.run(commanderScope(projectID))
-	if got := strings.Count(out, "atct decision approved"); got != 1 {
-		t.Fatalf("commander output has %d approved lines, want 1:\n%s", got, out)
-	}
-	if again := w.run(commanderScope(projectID)); strings.TrimSpace(again) != "" {
-		t.Fatalf("second reconcile re-delivered:\n%s", again)
-	}
-
-	other := newCommanderRoutingWatch(t, s)
-	if sub := other.run(subcommanderScope(projectID, goal.ID)); strings.Contains(sub, "atct decision approved") {
-		t.Fatalf("subcommander received a commander-addressed event:\n%s", sub)
-	}
-}
-
 func TestWatchDeliversSessionlessGoalReviewToCommanderOnly(t *testing.T) {
 	for _, tc := range []struct {
 		name, want string

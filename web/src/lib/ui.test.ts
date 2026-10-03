@@ -11,7 +11,6 @@ import decisionTableSource from "../components/DecisionTable.tsx?raw";
 import goalCreateFormSource from "../components/GoalCreateForm.tsx?raw";
 import goalDetailSource from "../components/GoalDetail.tsx?raw";
 import goalTableSource from "../components/GoalTable.tsx?raw";
-import proposedGoalTableSource from "../components/ProposedGoalTable.tsx?raw";
 import dashboardSource from "../components/Dashboard.tsx?raw";
 import localeSwitchSource from "../components/LocaleSwitch.tsx?raw";
 import shellSource from "../layouts/Shell.astro?raw";
@@ -31,7 +30,6 @@ import {
   decisionRecommendationLabel,
   decisionSettlementLabel,
   filterDecisionsByTask,
-  findOpenGoalApproval,
   hasCompletionReport,
   isDecisionEventName,
   resolveRouteID,
@@ -479,10 +477,9 @@ describe("Kumo content text size", () => {
       { name: "TaskTable.tsx", source: taskTableSource },
       { name: "GoalTable.tsx", source: goalTableSource },
       { name: "TaskDetailPage.tsx", source: taskDetailPageSource },
-      { name: "ProposedGoalTable.tsx", source: proposedGoalTableSource },
     ];
 
-    expect(auditedSources).toHaveLength(14);
+    expect(auditedSources).toHaveLength(13);
     expect(auditedSources.every(({ source }) => source.length > 0)).toBe(true);
 
     const classNameLines = auditedSources.flatMap(({ name, source }) =>
@@ -573,16 +570,6 @@ describe("goal detail answer flows", () => {
     expect(goalDetailSource).toContain("break-words");
   });
 
-  it("finds only an open goal approval decision", () => {
-    const goalApproval = { id: "goal-approval-1", kind: "goal_approval", status: "open" };
-    expect(findOpenGoalApproval([
-      { id: "ordinary-1", kind: "decision", status: "open" },
-      { id: "answered-1", kind: "goal_approval", status: "answered" },
-      goalApproval,
-    ])).toBe(goalApproval);
-    expect(findOpenGoalApproval([{ id: "ordinary-2", kind: "decision", status: "open" }])).toBeUndefined();
-  });
-
   it("renders one ordered task list and moves decisions into task details", () => {
     expect(goalDetailSource).not.toContain("NeedsDecisionList");
     expect(goalDetailSource).not.toContain("xl:grid-cols-3");
@@ -615,7 +602,7 @@ describe("goal detail answer flows", () => {
     expect(goalDetailSource).toContain("unattached_decisions");
     expect(goalDetailSource).toContain("approveDecision");
     expect(goalDetailSource).toContain("rejectDecision");
-    expect(goalDetailSource).toContain('t("goal.approval.title")');
+    expect(goalDetailSource).toContain('t("goal.review.title")');
     expect(goalDetailSource).not.toContain("CompletionApproval");
     expect(goalDetailSource).toContain("result_summary");
   });

@@ -782,7 +782,7 @@ test_delegation_names_the_atct_tools_an_executor_may_call() {
 
   for tool in atct_goal_handoff_complete atct_goal_handoff_receive \
     atct_goal_handoff_request atct_goal_claim atct_goal_release \
-    atct_goal_complete atct_goal_update_content atct_project_claim \
+    atct_goal_complete atct_project_claim \
     atct_project_release atct_task_handoff_request \
     atct_task_handoff_review_receive atct_task_handoff_complete \
     atct_task_handoff_review_reject atct_task_update \
@@ -805,7 +805,7 @@ test_delegation_names_the_atct_tools_an_executor_must_not_call() {
 
   for tool in atct_goal_handoff_complete atct_goal_handoff_receive \
     atct_goal_handoff_request atct_goal_claim atct_goal_release \
-    atct_goal_complete atct_goal_update_content atct_project_claim \
+    atct_goal_complete atct_project_claim \
     atct_project_release atct_task_handoff_request \
     atct_task_handoff_review_receive atct_task_handoff_complete \
     atct_task_handoff_review_reject atct_task_update \
