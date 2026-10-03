@@ -64,10 +64,7 @@ func gitSubcommandWrites(segment string) bool {
 var headMovers = map[string]bool{"checkout": true, "switch": true}
 
 func gitSubcommandIn(segment string, set map[string]bool) bool {
-	fields := strings.Fields(segment)
-	for len(fields) > 0 && strings.Contains(fields[0], "=") {
-		fields = fields[1:] // leading environment assignments
-	}
+	fields, _ := commandFields(segment)
 	if len(fields) == 0 {
 		return false
 	}
@@ -76,7 +73,7 @@ func gitSubcommandIn(segment string, set map[string]bool) bool {
 	}
 	for i := 1; i < len(fields); i++ {
 		switch {
-		case fields[i] == "-C" || fields[i] == "-c":
+		case fields[i] == "-C" || fields[i] == "-c" || fields[i] == "--git-dir" || fields[i] == "--work-tree":
 			i++ // the option's argument is not the subcommand
 		case strings.HasPrefix(fields[i], "-"):
 		default:
@@ -84,6 +81,38 @@ func gitSubcommandIn(segment string, set map[string]bool) bool {
 		}
 	}
 	return false
+}
+
+// commandFields returns a segment's fields starting at the command word, after
+// dropping group openers (`{`, `(`), environment assignments and `env` with its
+// options. `export` is dropped too, so `export GIT_DIR=...` counts as an
+// assignment. redirected reports that the prefix chose the repository itself
+// (GIT_DIR=, GIT_WORK_TREE=, env -C), which the guard cannot follow.
+func commandFields(segment string) (fields []string, redirected bool) {
+	fields = strings.Fields(strings.TrimLeft(segment, " \t({"))
+	for len(fields) > 0 {
+		f := fields[0]
+		switch {
+		case f == "{" || f == "(" || f == "export":
+		case strings.HasPrefix(f, "GIT_DIR=") || strings.HasPrefix(f, "GIT_WORK_TREE="):
+			redirected = true
+		case strings.Contains(f, "=") && !strings.HasPrefix(f, "-"):
+		case f == "env":
+			for len(fields) > 1 && strings.HasPrefix(fields[1], "-") {
+				if fields[1] == "-C" || strings.HasPrefix(fields[1], "--chdir") {
+					redirected = true
+				}
+				if fields[1] == "-C" || fields[1] == "-u" || fields[1] == "-S" {
+					fields = fields[1:] // skip the option's argument too
+				}
+				fields = fields[1:]
+			}
+		default:
+			return fields, redirected
+		}
+		fields = fields[1:]
+	}
+	return nil, redirected
 }
 
 // goalReviewApproved reports whether the human answered this goal's review
@@ -128,7 +157,7 @@ func mergeCheckDecision(dir, cwd, command string) (string, bool) {
 	gitC, moved := goalBranchGitContext(command)
 	if moved {
 		return fmt.Sprintf("ATCT merge-check cannot tell which branch wt/goal-%d would be merged into, "+
-			"because the command changes directory or switches branch (cd, pushd, git checkout, git switch) before the merge. "+
+			"because the command changes directory or switches branch (cd, pushd, git checkout, git switch) or picks the repository by environment or option (GIT_DIR=, GIT_WORK_TREE=, env -C, git --git-dir, git --work-tree) before the merge. "+
 			"Do not cd or switch; use `git -C <path>` on a work tree that already has the target HEAD.", goalID), true
 	}
 	if cwd == "" {
@@ -160,10 +189,13 @@ func goalBranchGitContext(command string) (gitC []string, moved bool) {
 		return nil, false
 	}
 	segments := shellSegments.Split(command[:loc[0]], -1)
-	for _, seg := range segments[:len(segments)-1] {
-		fields := strings.Fields(seg)
-		for len(fields) > 0 && strings.Contains(fields[0], "=") {
-			fields = fields[1:]
+	for i, seg := range segments {
+		fields, redirected := commandFields(seg)
+		if redirected {
+			moved = true
+		}
+		if i == len(segments)-1 {
+			break
 		}
 		if len(fields) > 0 && (fields[0] == "cd" || fields[0] == "pushd") {
 			moved = true
@@ -172,7 +204,10 @@ func goalBranchGitContext(command string) (gitC []string, moved bool) {
 			moved = true
 		}
 	}
-	fields := strings.Fields(segments[len(segments)-1])
+	fields, _ := commandFields(segments[len(segments)-1])
+	if gitOptionsPickRepository(fields) {
+		moved = true
+	}
 	for i := 0; i+1 < len(fields); i++ {
 		if fields[i] == "-C" {
 			i++
@@ -180,6 +215,23 @@ func goalBranchGitContext(command string) (gitC []string, moved bool) {
 		}
 	}
 	return gitC, moved
+}
+
+// gitOptionsPickRepository reports whether git's own options before the
+// subcommand choose the repository (--git-dir, --work-tree, either spelling).
+func gitOptionsPickRepository(fields []string) bool {
+	if len(fields) == 0 || (fields[0] != "git" && !strings.HasSuffix(fields[0], "/git")) {
+		return false
+	}
+	for _, f := range fields[1:] {
+		if !strings.HasPrefix(f, "-") {
+			return false
+		}
+		if f == "--git-dir" || f == "--work-tree" || strings.HasPrefix(f, "--git-dir=") || strings.HasPrefix(f, "--work-tree=") {
+			return true
+		}
+	}
+	return false
 }
 
 type headState int

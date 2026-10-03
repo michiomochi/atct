@@ -72,6 +72,15 @@ func TestMergeCheckDecisionByHead(t *testing.T) {
 		{"git checkout main before the merge", worktree, "git checkout main && git merge wt/goal-309", true},
 		{"git switch main before the merge", worktree, "git switch main && git merge wt/goal-309", true},
 		{"git -C and switch before the merge", worktree, "git -C " + worktree + " switch main; git merge wt/goal-309", true},
+		{"cd in a subshell before the merge", worktree, "(cd " + main + " && git merge --no-ff wt/goal-309)", true},
+		{"cd in a group before the merge", worktree, "{ cd " + main + "; git merge wt/goal-309; }", true},
+		{"merge inside a group", main, "{ git merge wt/goal-309; }", true},
+		{"GIT_DIR and GIT_WORK_TREE prefix", worktree, "GIT_DIR=" + main + "/.git GIT_WORK_TREE=" + main + " git merge wt/goal-309", true},
+		{"env -C", worktree, "env -C " + main + " git merge wt/goal-309", true},
+		{"--git-dir= and --work-tree=", worktree, "git --git-dir=" + main + "/.git --work-tree=" + main + " merge wt/goal-309", true},
+		{"--git-dir and --work-tree with spaces", worktree, "git --git-dir " + main + "/.git --work-tree " + main + " merge wt/goal-309", true},
+		{"export GIT_DIR before the merge", worktree, "export GIT_DIR=" + main + "/.git; git merge wt/goal-309", true},
+		{"export GIT_WORK_TREE before the merge", worktree, "export GIT_WORK_TREE=" + main + " && git merge wt/goal-309", true},
 		{"not a git directory", root, "git merge wt/goal-309", true},
 	}
 	for _, tt := range tests {
