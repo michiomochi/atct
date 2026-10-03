@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -78,6 +79,13 @@ func TestReconcileContractDeliversRealGoalHandoffToCodexBridge(t *testing.T) {
 	if _, err := s.RequestGoalHandoff(ctx, "gh-contract", goal.ID, commanderID, "deliver it"); err != nil {
 		t.Fatalf("RequestGoalHandoff: %v", err)
 	}
+	// The commander is woken for a review, not for its own request.
+	if _, err := s.ReceiveGoalHandoff(ctx, "gh-contract", goal.ID, subcommanderID); err != nil {
+		t.Fatalf("ReceiveGoalHandoff: %v", err)
+	}
+	if _, err := s.RequestGoalHandoffReview(ctx, "gh-contract", goal.ID, subcommanderID, "done"); err != nil {
+		t.Fatalf("RequestGoalHandoffReview: %v", err)
+	}
 
 	server := httptest.NewServer(httpapi.New(s).Handler())
 	t.Cleanup(server.Close)
@@ -100,7 +108,6 @@ func TestReconcileContractDeliversRealGoalHandoffToCodexBridge(t *testing.T) {
 	if len(calls) == 0 {
 		t.Fatalf("an open goal handoff produced no Codex turn; the reconcile payload did not survive decoding")
 	}
-	_ = subcommanderID
 }
 
 // The decoded payload must carry the handoff fields watch keys its decisions
@@ -145,6 +152,30 @@ func TestReconcileContractPreservesHandoffFields(t *testing.T) {
 	}
 	if state.Goals[0].Status != string(domain.GoalActive) {
 		t.Fatalf("decoded goal status = %q, want %q", state.Goals[0].Status, domain.GoalActive)
+	}
+}
+
+// The store serves RecoveredAt as a timestamp; watch must keep it, or a
+// recovered handoff reads as open.
+func TestReconcileContractPreservesRecoveredAt(t *testing.T) {
+	now := time.Now().UTC()
+	raw, err := json.Marshal(map[string]any{
+		"goal_handoffs":        []store.GoalHandoff{{ID: "g", RecoveredAt: &now}},
+		"task_handoffs":        []store.TaskHandoff{{ID: "t", RecoveredAt: &now}},
+		"task_create_handoffs": []store.TaskCreateHandoff{{ID: "c", RecoveredAt: &now}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var state watchReconciliation
+	if err := json.Unmarshal(raw, &state); err != nil {
+		t.Fatal(err)
+	}
+	if state.GoalHandoffs[0].RecoveredAt == nil || state.TaskHandoffs[0].RecoveredAt == nil || state.TaskCreateHandoffs[0].RecoveredAt == nil {
+		t.Fatalf("RecoveredAt lost in decoding: %+v", state)
+	}
+	if watchHandoffOpen(state.GoalHandoffs[0]) || watchTaskCreateHandoffOpen(state.TaskCreateHandoffs[0]) {
+		t.Fatal("recovered handoff reads as open")
 	}
 }
 
