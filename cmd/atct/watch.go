@@ -29,6 +29,9 @@ const (
 	watchKeepaliveTimeout       = 90 * time.Second
 	watchReconcileInterval      = 30 * time.Second
 	watchLivenessPromptInterval = time.Minute
+	// watchLivenessRepeatInterval is how long an unchanged wake-up waits
+	// before it is sent again.
+	watchLivenessRepeatInterval = 30 * time.Minute
 	watchEnsureMaxFailures      = 5
 	watchEnsureLimitMessage     = "atct watch: daemon ensure failed 5 consecutive times; continuing connection retries"
 )
@@ -188,6 +191,7 @@ type watchEnsureFunc func() error
 
 type watchLivenessState struct {
 	lastPromptAt time.Time
+	lastPrompt   string
 }
 
 type watchHealthSink interface {
@@ -425,16 +429,31 @@ func newWatchLivenessState(start time.Time) *watchLivenessState {
 	return &watchLivenessState{lastPromptAt: start}
 }
 
-func (s *watchLivenessState) PromptDue(now time.Time, scope watchScope, snapshot watchReconciliation) bool {
+// PromptDue returns the wake-up to send, if one is due.
+//
+// Waking an agent costs it a whole turn, so the same situation is not
+// announced twice in a row. It used to be: the state held only the time of the
+// last prompt, so a scope that stayed actionable -- a rejection nobody could
+// receive, a goal that had been withdrawn -- re-sent an identical line every
+// minute until the woken agent ran out of context.
+func (s *watchLivenessState) PromptDue(now time.Time, scope watchScope, snapshot watchReconciliation) (string, bool) {
 	if !watchLivenessActionable(scope, snapshot) || scopedOpenDecision(scope, snapshot) {
 		s.lastPromptAt = now
-		return false
+		s.lastPrompt = ""
+		return "", false
 	}
 	if now.Sub(s.lastPromptAt) < watchLivenessPromptInterval {
-		return false
+		return "", false
+	}
+	line := formatWatchLiveness(scope, snapshot)
+	// The backstop repeat is for an agent that missed the first one, not for
+	// nagging: a turn it already spent on this exact line buys nothing.
+	if line == s.lastPrompt && now.Sub(s.lastPromptAt) < watchLivenessRepeatInterval {
+		return "", false
 	}
 	s.lastPromptAt = now
-	return true
+	s.lastPrompt = line
+	return line, true
 }
 
 type watchSinkError struct {
@@ -1035,8 +1054,7 @@ func consumeWatchEventsWithStateAndScopeAndSinkAndInterval(ctx context.Context, 
 				reconciliationSucceeded()
 			}
 		case now := <-livenessTicker.C:
-			if latestReconciliation != nil && livenessState.PromptDue(now, scope, *latestReconciliation) {
-				line := formatWatchLiveness(scope, *latestReconciliation)
+			if line, due := livenessPromptFor(livenessState, now, scope, latestReconciliation); due {
 				if err := writeWatchLineWithActionSink(out, line, "monitor.liveness", watchDecision{GoalID: scope.GoalID, TaskID: scope.TaskID}, sink, actionSink); err != nil {
 					return err
 				}
@@ -1941,4 +1959,11 @@ func appendUniqueWatchURL(urls []string, addr string) []string {
 		}
 	}
 	return append(urls, baseURL)
+}
+
+func livenessPromptFor(state *watchLivenessState, now time.Time, scope watchScope, snapshot *watchReconciliation) (string, bool) {
+	if snapshot == nil {
+		return "", false
+	}
+	return state.PromptDue(now, scope, *snapshot)
 }

@@ -32,6 +32,14 @@ func watchLivenessActionable(scope watchScope, state watchReconciliation) bool {
 	if !watchLivenessEligible(scope) {
 		return false
 	}
+	// A goal that is not active has nothing for anyone to do, whatever its
+	// handoffs still look like. Withdrawing goal 294 left its goal handoff
+	// open, so the scope stayed actionable and kept waking a space whose goal
+	// had been dropped. A snapshot that does not carry the goal at all says
+	// nothing either way, so it is left alone.
+	if scope.GoalID != "" && watchReconciliationGoalStopped(state, scope.GoalID) {
+		return false
+	}
 	switch scope.Role {
 	case "commander":
 		return watchCommanderLivenessActionable(state)
@@ -269,4 +277,15 @@ func watchScopeGoalIDsEqual(left, right []int64) bool {
 		}
 	}
 	return true
+}
+
+// watchReconciliationGoalStopped reports that the snapshot carries this goal
+// and it is not active. An absent goal is unknown, not stopped.
+func watchReconciliationGoalStopped(state watchReconciliation, goalID string) bool {
+	for _, goal := range state.Goals {
+		if goal.ID == goalID {
+			return goal.Status != "active"
+		}
+	}
+	return false
 }

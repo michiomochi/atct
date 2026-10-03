@@ -524,3 +524,34 @@ func TestAgentSessionIDByKeyUnknownKeyExplainsCause(t *testing.T) {
 		}
 	}
 }
+
+func TestAgentSessionCleanupKeepsExpiredSessionsReferencedByHandoffs(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	goalID, holderID := newTaskRecoveryGoal(t, s, "expired-handoff")
+	commanderID := testSessionID("expired-handoff-commander")
+	old := time.Now().UTC().Add(-agentSessionRetention - time.Hour).Format(time.RFC3339Nano)
+	if _, err := s.DB().ExecContext(ctx, `UPDATE agent_sessions SET registered_at = ? WHERE id IN (?, ?)`, old, commanderID, holderID); err != nil {
+		t.Fatalf("backdate agent sessions: %v", err)
+	}
+
+	currentID, err := s.RegisterAgentSession(ctx, 0)
+	if err != nil {
+		t.Fatalf("RegisterAgentSession: %v", err)
+	}
+	goal, err := s.GetGoal(ctx, goalID)
+	if err != nil {
+		t.Fatalf("GetGoal: %v", err)
+	}
+	if err := s.AssociateAgentSessionWithProject(ctx, currentID, goal.ProjectID); err != nil {
+		t.Fatalf("AssociateAgentSessionWithProject: %v", err)
+	}
+
+	var remaining int
+	if err := s.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM agent_sessions WHERE id IN (?, ?)`, commanderID, holderID).Scan(&remaining); err != nil {
+		t.Fatalf("count referenced agent sessions: %v", err)
+	}
+	if remaining != 2 {
+		t.Fatalf("referenced expired agent sessions = %d, want 2", remaining)
+	}
+}
