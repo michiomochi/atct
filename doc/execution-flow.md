@@ -111,7 +111,7 @@ flowchart TD
 
     subgraph S[subcommander]
         S1[atct_goal_handoff_receive]
-        S2[atct watch --monitor --token]
+        S2[atct watch --monitor --token<br/>Monitor ツール]
         S3[atct_plan_handoff_review_request<br/>plan handoff を作成]
         S3R[atct_plan_handoff_review_reject_receive]
         S4[atct_task_create_handoff_receive<br/>task-create handoff を受領]
@@ -162,10 +162,12 @@ flowchart TD
 
 1. `atct_goal_handoff_receive` に SessionStart の `session_key` と必要なら
    `monitor_token` を渡して、goal を受領する。
-2. `atct watch --monitor --token <monitor_token>` を開始する。scope はサーバーが
+2. `atct watch --monitor --token <monitor_token>` を Monitor ツールで開始する。
+   30 分の期限切れで配送数が 0 だったときだけ、`--once` を付けた background の
+   Bash に切り替える。scope はサーバーが
    assignment から導出するので、goal や project を渡さない。token 無しの
-   `atct watch` は人間用の診断ビューで、どのセッションの Monitor にもならない
-   （`skills/start/SKILL.md` の「Claude Code: attach the Monitor」を参照）。
+   `atct watch` は人間用の診断ビューで、どのセッションの watch にもならない
+   （`skills/atct/SKILL.md` の `## Watch` を参照）。
 3. `superpowers:brainstorming` と `superpowers:writing-plans` で設計し、
    canonical spec と plan を `atct_goal_update_request_report` へ保存して
    `atct_plan_handoff_review_request` で plan handoff を作成する。

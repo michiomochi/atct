@@ -76,3 +76,46 @@ func TestHasLiveMonitorForScopeIgnoresOtherGoal(t *testing.T) {
 		t.Fatal("HasLiveMonitorForScope = true, want false for a different goal")
 	}
 }
+
+func TestRearmingMonitorKeepsScopeAndSessionLiveUntilGraceEnds(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	session, err := s.RegisterAgentSession(ctx, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.BindMonitorToken(ctx, "rearm-token", session); err != nil {
+		t.Fatal(err)
+	}
+	health := testMonitorHealth(t, time.Now().UTC())
+	health.MonitorToken = "rearm-token"
+	health.State = "rearming"
+	if err := s.UpsertMonitorHealth(ctx, health); err != nil {
+		t.Fatal(err)
+	}
+	live, err := s.HasLiveMonitorForScope(ctx, scopeOf(health))
+	if err != nil || !live {
+		t.Fatalf("HasLiveMonitorForScope = %v, %v; want true while re-arming", live, err)
+	}
+	if !s.AgentSessionLive(ctx, session, time.Now()) {
+		t.Fatal("AgentSessionLive = false right after rearming")
+	}
+	// Past the monitor-health lease but inside the grace: still live.
+	later := time.Now().Add(MonitorHealthLease + time.Minute)
+	if !s.AgentSessionLive(ctx, session, later) {
+		t.Fatal("session lease lapsed inside the grace")
+	}
+	if s.AgentSessionLive(ctx, session, time.Now().Add(MonitorRearmGrace+time.Minute)) {
+		t.Fatal("session lease outlived the grace")
+	}
+
+	original := MonitorRearmGrace
+	MonitorRearmGrace = -time.Second
+	defer func() { MonitorRearmGrace = original }()
+	if err := s.UpsertMonitorHealth(ctx, health); err != nil {
+		t.Fatal(err)
+	}
+	if live, err := s.HasLiveMonitorForScope(ctx, scopeOf(health)); err != nil || live {
+		t.Fatalf("HasLiveMonitorForScope = %v, %v; want false once the grace is negative", live, err)
+	}
+}

@@ -1,6 +1,6 @@
 ---
 name: stop
-description: Use when the human asks to stop the ATCT answer Monitor for a Claude Code session or the token-bound Codex monitor started with atct codex monitor.
+description: Use when the human asks to stop the ATCT answer watch (a Monitor or a background Bash) for a Claude Code session or the token-bound Codex monitor started with atct codex monitor.
 ---
 
 # Stop
@@ -14,9 +14,10 @@ monitor or daemon.
 
 ## Claude Code
 
-This skill stops the answer-delivery Monitor paired with `atct:start`.
+This skill stops the answer-delivery watch, the Monitor or the background Bash
+task armed as `atct:atct` `## Watch` says.
 
-1. Find the task id of the `atct watch` Monitor that `atct:start` attached in
+1. Find the task id of the `atct watch` Monitor or background Bash task armed in
    this session.
 2. If the task id is unavailable, say so and do not call `TaskStop`. Never guess
    or substitute another task id.
@@ -60,6 +61,6 @@ after `--`, for example `atct codex monitor -- stop`.
 
 To stop the daemon separately, use `atct daemon stop`.
 
-`Monitor` and `TaskStop` are Claude Code features; this skill only uses them in
-the Claude Code branch. The MCP response attachment is the shared foundation
+`TaskStop` and background Bash tasks are Claude Code features; this skill only
+uses them in the Claude Code branch. The MCP response attachment is the shared foundation
 for both harnesses.

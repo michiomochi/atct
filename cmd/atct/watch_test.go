@@ -1378,7 +1378,7 @@ func TestBoundClaudeWatchRegistersAndCleansUpMonitorToken(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		done <- runBoundClaudeWatch(ctx, dir, t.TempDir(), client, []string{"http://daemon"}, "token-1")
+		done <- runBoundClaudeWatch(ctx, dir, t.TempDir(), client, []string{"http://daemon"}, "token-1", false)
 	}()
 
 	select {
@@ -2410,6 +2410,8 @@ func TestParseArgsWatchMonitorRequiresBindingToken(t *testing.T) {
 		wantError bool
 	}{
 		{name: "binding token", args: []string{"watch", "--monitor", "--token", "token-1"}, wantToken: "token-1"},
+		{name: "once after monitor", args: []string{"watch", "--monitor", "--token", "t", "--once"}, wantToken: "t"},
+		{name: "once alone", args: []string{"watch", "--once"}, wantError: true},
 		{name: "monitor without token", args: []string{"watch", "--monitor"}, wantError: true},
 		{name: "goal selector", args: []string{"watch", "--monitor", "-goal", "249"}, wantError: true},
 		{name: "project selector", args: []string{"watch", "--monitor", "-project"}, wantError: true},
