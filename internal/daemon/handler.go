@@ -2227,14 +2227,12 @@ func (d *Daemon) dispatchMethodWithPeer(ctx context.Context, req rpc.Request, pe
 				return nil, fmt.Errorf("decision %d is owned by another agent session", p.DecisionID)
 			}
 			if role.Role == "commander" && decision.AgentSessionID != p.AgentSessionID {
-				routed := false
-				if store.DecisionRoutesToCommander(decision) {
-					goal, err := d.store.GetGoal(ctx, decision.GoalID)
-					if err != nil {
-						return nil, err
-					}
-					routed = goal.ProjectID == role.ProjectID
+				goal, err := d.store.GetGoal(ctx, decision.GoalID)
+				if err != nil {
+					return nil, err
 				}
+				routed := goal.ProjectID == role.ProjectID &&
+					(store.DecisionRoutesToCommander(decision) || goal.Status != domain.GoalActive)
 				if !routed {
 					return nil, fmt.Errorf("decision %d is owned by another agent session", p.DecisionID)
 				}
