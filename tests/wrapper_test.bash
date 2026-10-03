@@ -1602,8 +1602,8 @@ test_worktree_paths_match_the_setup_script() {
   worktree_section="$(sed -n '/^## One worktree per goal$/,/^## One space per goal$/p' "$commander_skill")"
   setup_worktree="$(sed -nE 's/^worktree="\$repo\/(.*)"/\1/p' "$setup_script")"
   setup_branch="$(sed -nE 's/^branch="(.*)"/\1/p' "$setup_script")"
-  documented_worktree="$(sed 's/\${goal8}/<goal8>/g' <<<"$setup_worktree")"
-  documented_branch="$(sed 's/\${goal8}/<goal8>/g' <<<"$setup_branch")"
+  documented_worktree="$(sed 's/\${goal_id}/<goal-id>/g' <<<"$setup_worktree")"
+  documented_branch="$(sed 's/\${goal_id}/<goal-id>/g' <<<"$setup_branch")"
   [[ -n "$documented_worktree" ]] || fail 'setup script worktree path could not be extracted'
   [[ -n "$documented_branch" ]] || fail 'setup script branch name could not be extracted'
   grep -Fq -- "$documented_worktree" <<<"$worktree_section" ||

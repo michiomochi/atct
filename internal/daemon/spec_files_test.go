@@ -176,9 +176,3 @@ func TestGoalBranchAddedSpecFilesBrokenRepoFailsOpen(t *testing.T) {
 		t.Fatalf("got %v, want none", got)
 	}
 }
-
-func TestGoalBranchNameTruncatesLongGoalIDs(t *testing.T) {
-	if got := goalBranchName(1234567890); got != "wt/goal-12345678" {
-		t.Fatalf("goalBranchName = %q", got)
-	}
-}

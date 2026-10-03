@@ -12,17 +12,8 @@ import (
 
 var specFilePrefixes = []string{"doc/specs/", "doc/plans/", "docs/superpowers/"}
 
-// goal8 is the goal number script/worktree-setup.sh uses for the worktree
-// directory and branch name: the decimal id cut to 8 characters.
-func goal8(goalID int64) string {
-	s := strconv.FormatInt(goalID, 10)
-	if len(s) > 8 {
-		s = s[:8]
-	}
-	return s
-}
-
-func goalBranchName(goalID int64) string { return "wt/goal-" + goal8(goalID) }
+// goalBranchName is the branch script/worktree-setup.sh creates for a goal.
+func goalBranchName(goalID int64) string { return "wt/goal-" + strconv.FormatInt(goalID, 10) }
 
 // goalBranchAddedSpecFiles lists files the goal branch adds under
 // doc/specs/, doc/plans/ or docs/superpowers/ relative to main (else master,
