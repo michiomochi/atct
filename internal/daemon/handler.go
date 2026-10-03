@@ -1399,6 +1399,9 @@ func (d *Daemon) dispatchMethodWithPeer(ctx context.Context, req rpc.Request, pe
 		}
 		return marshal(data, nil)
 
+	case "review.exchange.list":
+		return d.listReviewExchangesRPC(ctx, req.Params, peerID)
+
 	case "goal.sessions":
 		var p struct {
 			GoalID int64 `json:"goal_id"`
