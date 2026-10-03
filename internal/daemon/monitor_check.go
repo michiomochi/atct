@@ -53,7 +53,7 @@ func (d *Daemon) monitorCheck(ctx context.Context, sessionKey string) (monitorCh
 		return monitorCheckResponse{
 			Decision: "block",
 			Reason: "ATCT: this session has no live Monitor, so a wakeup would never reach it. " +
-				"Claude Code: arm the watch as `atct:atct` ## Watch says: Bash with `run_in_background`, `atct watch --monitor --token <monitor_token> --once`. " +
+				"Claude Code: arm the watch as `atct:atct` ## Watch says: the Monitor tool with `atct watch --monitor --token <monitor_token>`; only when that Monitor expires with no events, Bash with `run_in_background` and `--once` added. " +
 				"Codex: relaunch the pane through `atct codex monitor -- <codex args>`. " +
 				"Then retry.",
 		}, nil
@@ -79,7 +79,7 @@ func (d *Daemon) monitorCheck(ctx context.Context, sessionKey string) (monitorCh
 		// it can do instead: report what it already holds, and let the
 		// delegator replace the worker.
 		Reason: "ATCT: this session has no live Monitor, so a wakeup would never reach it. " +
-			"Claude Code: arm the watch as `atct:atct` ## Watch says: Bash with `run_in_background`, `atct watch --monitor --token <monitor_token> --once`, then retry. " +
+			"Claude Code: arm the watch as `atct:atct` ## Watch says: the Monitor tool with `atct watch --monitor --token <monitor_token>`; only when that Monitor expires with no events, Bash with `run_in_background` and `--once` added, then retry. " +
 			"Codex: you cannot restart your own Monitor from inside this pane. " +
 			"If the work you hold is finished, report it with the review request, which is still allowed. " +
 			"Otherwise stop and say so: your delegator sees the lost Monitor and replaces the worker.",

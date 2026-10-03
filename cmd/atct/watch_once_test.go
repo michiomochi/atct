@@ -192,6 +192,61 @@ func TestWatchOnceCorruptRecordIsEmpty(t *testing.T) {
 	}
 }
 
+// A record without cancel is the Monitor watch's: it dedups but never ends the watch.
+func TestWatchOnceWithoutCancelRecordsAndNeverStartsTimer(t *testing.T) {
+	dir := t.TempDir()
+	var delivered []watchAgentAction
+	next := func(a watchAgentAction) error {
+		delivered = append(delivered, a)
+		return nil
+	}
+	first := newWatchOnce(dir, "tok", nil, time.Now)
+	sink := first.Sink(next)
+	if err := sink(onceAction("a", "1")); err != nil {
+		t.Fatal(err)
+	}
+	if !first.Fired() || len(delivered) != 1 {
+		t.Fatalf("Fired = %v, delivered = %d, want true and 1", first.Fired(), len(delivered))
+	}
+	// A timer on a nil cancel would panic once the grace period is over.
+	time.Sleep(watchOnceGrace + 200*time.Millisecond)
+
+	second := newWatchOnce(dir, "tok", nil, time.Now)
+	sink = second.Sink(next)
+	if err := sink(onceAction("a", "1")); err != nil {
+		t.Fatal(err)
+	}
+	if len(delivered) != 1 || second.Fired() {
+		t.Fatalf("recorded action was delivered again: %#v", delivered)
+	}
+	if err := sink(onceAction("a", "2")); err != nil {
+		t.Fatal(err)
+	}
+	if len(delivered) != 2 {
+		t.Fatalf("new generation delivered %d times in total, want 2", len(delivered))
+	}
+}
+
+func TestWatchHealthReporterStopSendsStoppedWithoutRearmOnStop(t *testing.T) {
+	var got store.MonitorHealth
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Errorf("decode: %v", err)
+		}
+	}))
+	defer server.Close()
+	reporter := &watchHealthReporter{
+		client:      server.Client(),
+		urls:        []string{server.URL},
+		health:      store.MonitorHealth{MonitorID: "m"},
+		scopeActive: true,
+	}
+	reporter.Stop()
+	if got.State != "stopped" || got.StoppedAt == nil {
+		t.Fatalf("Stop without rearmOnStop posted %#v, want stopped", got)
+	}
+}
+
 func TestWatchHealthReporterStopRearmsOnlyWhenFired(t *testing.T) {
 	for _, fired := range []bool{true, false} {
 		var got store.MonitorHealth

@@ -659,16 +659,27 @@ func runBoundClaudeWatch(ctx context.Context, dir, cwd string, client *http.Clie
 	if _, err := daemonctl.ReapWatches(dir, registrationScope, os.Getpid()); err != nil {
 		return fmt.Errorf("reap bound watches: %w", err)
 	}
-	writer := monitorActionWriter{writer: os.Stdout}
-	sink := writer.Sink
+	return runBoundWatchLoop(ctx, dir, cwd, client, baseURLs, monitorToken, os.Stdout, once, func() error {
+		return ensureWatchDaemon(dir)
+	})
+}
+
+// runBoundWatchLoop runs one watch per scope of the token's binding. Every
+// delivery goes through the token's record, so a watch re-armed after another
+// one does not repeat what was already shown. Only --once ends on its first
+// delivery and stops reporting "stopped".
+func runBoundWatchLoop(ctx context.Context, dir, cwd string, client *http.Client, baseURLs []string, monitorToken string, out io.Writer, once bool, ensure watchEnsureFunc) error {
+	writer := monitorActionWriter{writer: out}
+	var cancel context.CancelFunc
 	var rearmOnStop func() bool
 	if once {
-		var cancel context.CancelFunc
 		ctx, cancel = context.WithCancel(ctx)
 		defer cancel()
-		watchOnce := newWatchOnce(dir, monitorToken, cancel, time.Now)
-		sink = watchOnce.Sink(writer.Sink)
-		rearmOnStop = watchOnce.Fired
+	}
+	record := newWatchOnce(dir, monitorToken, cancel, time.Now)
+	sink := record.Sink(writer.Sink)
+	if once {
+		rearmOnStop = record.Fired
 	}
 	snapshot, projectIDGetter := watchSnapshotWithProject(client, baseURLs, cwd)
 	return runMonitorBindingLoop(ctx, client, baseURLs, monitorToken, func(scopeCtx context.Context, scope watchScope) error {
@@ -678,9 +689,7 @@ func runBoundClaudeWatch(ctx context.Context, dir, cwd string, client *http.Clie
 			reporter.rearmOnStop = rearmOnStop
 			reporters = append(reporters, reporter)
 		}
-		return watchLoopWithEnsureAndProjectIDAndScopeAndActionSink(scopeCtx, io.Discard, client, watchReconnectInterval, snapshot, func() error {
-			return ensureWatchDaemon(dir)
-		}, projectIDGetter, scope, nil, sink, reporters...)
+		return watchLoopWithEnsureAndProjectIDAndScopeAndActionSink(scopeCtx, io.Discard, client, watchReconnectInterval, snapshot, ensure, projectIDGetter, scope, nil, sink, reporters...)
 	})
 }
 

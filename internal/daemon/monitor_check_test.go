@@ -372,7 +372,7 @@ func TestMonitorCheckAllowsRearmingMonitorUntilGraceEnds(t *testing.T) {
 			if response.Decision != "block" {
 				t.Fatalf("monitor_check allowed a %s after the grace ended: %+v", role, response)
 			}
-			for _, want := range []string{"--once", "run_in_background"} {
+			for _, want := range []string{"## Watch", "atct watch --monitor --token"} {
 				if !strings.Contains(response.Reason, want) {
 					t.Fatalf("block reason %q does not mention %q", response.Reason, want)
 				}

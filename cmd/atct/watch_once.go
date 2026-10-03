@@ -17,9 +17,11 @@ import (
 // before the watch ends.
 const watchOnceGrace = 500 * time.Millisecond
 
-// watchOnce ends a watch after its first actionable batch. A re-armed watch
-// reconciles from scratch and would emit every open action again, so what was
-// delivered is kept per token on disk and skipped by the next process.
+// watchOnce is the delivery record of a watch bound to a token's Claude
+// session. A re-armed watch reconciles from scratch and would emit every open
+// action again, so what was delivered is kept per token on disk and skipped by
+// the next process. Only for --once is cancel given, and the first delivery
+// then ends the watch; with a nil cancel it records and dedups only.
 type watchOnce struct {
 	path   string
 	cancel context.CancelFunc
@@ -74,7 +76,7 @@ func (w *watchOnce) Sink(next watchAgentActionSink) watchAgentActionSink {
 		if err := w.save(); err != nil {
 			fmt.Fprintf(os.Stderr, "atct watch: record delivered action: %v\n", err)
 		}
-		if !w.timerSet {
+		if w.cancel != nil && !w.timerSet {
 			w.timerSet = true
 			time.AfterFunc(watchOnceGrace, w.cancel)
 		}
