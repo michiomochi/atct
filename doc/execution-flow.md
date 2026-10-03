@@ -79,6 +79,20 @@ agent が呼ぶ `atct_task_handoff_create_request` は存在しない。goal han
 subcommander が `atct_task_create_handoff_receive` でこの handoff を受領し、同じ
 `handoff_id` を渡した `atct_task_create` で task を作成して handoff を完了する。
 
+## MCP ツールの応答
+
+状態を変える MCP ツールは受領票を返す。`internal/mcpshim` が daemon の応答から報告の
+全文（spec・plan・各報告・entries・history・description・question など）を落とし、id・状態・
+時刻・`next_step`・`role`・`claim_evidence` を残す。全文は `atct_goal_get` と
+`atct_goal_handoff_entry_history` / `atct_handoff_entry_history` で読む。
+
+- `atct_*_handoff_review_receive` と `atct_*_handoff_review_reject_receive` は、届けることが
+  役目の報告 1 つ（`ReviewRequestReport` / `ReviewRejectReport`）だけを残す。plan handoff には
+  履歴を読むツールが無いため、ここが報告を読む唯一の入口になる
+- `unapplied_decisions` は、そのセッションへ前回返した一覧から変わったときだけ付く。変わって
+  いないときは `unapplied_count` だけ、0 件に変わったときは `[]`。`atct_goal_list` は常に全文
+- 整形は MCP shim だけで行う。daemon の RPC、CLI、HTTP API、web は全文を返したまま
+
 ## タスクの状態遷移
 
 通常の実装フローでは handoff 遷移が task status を更新する。

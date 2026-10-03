@@ -459,12 +459,15 @@ type UnappliedDecisionNotice struct {
 }
 
 type RawWithUnappliedDecisions struct {
-	Data               any                       `json:"data"`
-	NextStep           []NextStepOption          `json:"next_step,omitempty"`
-	Role               string                    `json:"role,omitempty"`
-	ClaimEvidence      json.RawMessage           `json:"claim_evidence,omitempty"`
-	UnappliedDecisions []UnappliedDecisionNotice `json:"unapplied_decisions,omitempty"`
-	ClaimableTasks     json.RawMessage           `json:"claimable_tasks,omitempty"`
+	Data          any              `json:"data"`
+	NextStep      []NextStepOption `json:"next_step,omitempty"`
+	Role          string           `json:"role,omitempty"`
+	ClaimEvidence json.RawMessage  `json:"claim_evidence,omitempty"`
+	// A pointer so that [] (the list became empty) is printed while nil
+	// (unchanged since the last response) is omitted.
+	UnappliedDecisions *[]UnappliedDecisionNotice `json:"unapplied_decisions,omitempty"`
+	UnappliedCount     int                        `json:"unapplied_count,omitempty"`
+	ClaimableTasks     json.RawMessage            `json:"claimable_tasks,omitempty"`
 }
 
 func rawOutputSchema() map[string]any {
@@ -481,7 +484,9 @@ func rawOutputSchemaWithUnappliedDecisions() map[string]any {
 	return map[string]any{
 		"type": "object",
 		"properties": map[string]any{
-			"data": map[string]any{},
+			"data": map[string]any{
+				"description": "A receipt for state-changing calls (ids, status, times); report bodies are omitted. Read a handoff request in full with atct_goal_handoff_entry_history or atct_handoff_entry_history.",
+			},
 			// next_step lists what follows this transition, so the caller does
 			// not have to look the flow up. More than one entry means it
 			// chooses, and each states the condition that selects it.
@@ -499,8 +504,11 @@ func rawOutputSchemaWithUnappliedDecisions() map[string]any {
 			},
 			"role":           map[string]any{"type": "string"},
 			"claim_evidence": map[string]any{},
+			// The list is attached only when it changed since this session's
+			// last response; [] means it became empty.
 			"unapplied_decisions": map[string]any{
-				"type": "array",
+				"type":        "array",
+				"description": "Attached only when the list changed since the last response; [] means it became empty. Re-read with atct_goal_list.",
 				"items": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
@@ -511,6 +519,10 @@ func rawOutputSchemaWithUnappliedDecisions() map[string]any {
 					},
 					"required": []string{"decision_id", "question"},
 				},
+			},
+			"unapplied_count": map[string]any{
+				"type":        "integer",
+				"description": "Present instead of unapplied_decisions when the list is unchanged since the last response.",
 			},
 			"claimable_tasks": map[string]any{
 				"type":  "array",
@@ -550,16 +562,20 @@ func callWithUnappliedDecisions(ctx context.Context, c *Client, method string, p
 		ClaimableTasks     json.RawMessage           `json:"claimable_tasks"`
 	}
 	if err := json.Unmarshal(out, &envelope); err == nil && envelope.Data != nil {
+		unapplied, count := c.reconcileUnapplied(method, params, envelope.UnappliedDecisions)
 		return nil, RawWithUnappliedDecisions{
-			Data:               envelope.Data,
+			Data:               shapeData(method, envelope.Data),
 			NextStep:           envelope.NextStep,
 			Role:               envelope.Role,
 			ClaimEvidence:      envelope.ClaimEvidence,
-			UnappliedDecisions: envelope.UnappliedDecisions,
+			UnappliedDecisions: unapplied,
+			UnappliedCount:     count,
 			ClaimableTasks:     envelope.ClaimableTasks,
 		}, nil
 	}
-	return nil, RawWithUnappliedDecisions{Data: out}, nil
+	// The daemon returns some methods as a bare object with no data envelope
+	// and no unapplied_decisions, so only the shaping applies.
+	return nil, RawWithUnappliedDecisions{Data: shapeData(method, out)}, nil
 }
 
 func sessionRole(ctx context.Context, c *Client, agentSessionID int64) (roleResponse, error) {
