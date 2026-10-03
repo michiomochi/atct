@@ -50,16 +50,13 @@ assert_empty_file() {
 # and the section silently stops being checked at all.
 ORDERED_SECTIONS=(
   'atct|## Declare before you work'
-  'atct|## Receive before you start'
+  'atct|## Handoff review order'
   'subcommander|## Delegate a task'
   'subcommander|### Two-layer delegation'
   'commander|## Delegate a goal'
   'atct|## Fill in a report on a handoff that is already closed'
   'atct|## Recover when your role comes back wrong'
   'subcommander|## Close a task the moment it is finished'
-  'atct|## Report completion in six parts'
-  'atct|## Apply what you were told'
-  'atct|## Finishing'
 )
 
 # Every skill whose numbered lists are checked for contiguity.
@@ -608,7 +605,7 @@ unsent_report_section() {
 }
 
 recovery_section() {
-  sed -n '/^## Recover when your role comes back wrong$/,/^## Close a task/p' \
+  sed -n '/^## Recover when your role comes back wrong$/,/^## Completion$/p' \
     "$REPO_ROOT/skills/atct/SKILL.md"
 }
 
@@ -951,8 +948,8 @@ test_delegated_claim_contract_is_explicit() {
 
   assert_file_contains 'Hold the parent, not the task.' "$subcommander_skill"
   assert_file_contains 'Hold the parent, not the goal.' "$commander_skill"
-  assert_file_contains '## Delegate a task' "$atct_skill"
-  assert_file_contains '## Delegate a goal' "$atct_skill"
+  assert_file_contains '## Delegate a task' "$subcommander_skill"
+  assert_file_contains '## Delegate a goal' "$commander_skill"
   assert_file_contains 'First record receipt of the handoff by calling `atct_task_handoff_receive`' "$subcommander_skill"
   assert_file_contains 'Then record receipt of the goal handoff by calling' "$commander_skill"
   assert_file_contains 'Every implementation task is delegated.' "$atct_skill"
@@ -1363,7 +1360,7 @@ test_role_contract_uses_neutral_language() {
   local atct_skill="$REPO_ROOT/skills/atct/SKILL.md"
   local roles_section
 
-  roles_section="$(sed -n '/^## Roles$/,/^## Role-specific skills$/p' "$atct_skill")"
+  roles_section="$(sed -n '/^## Roles$/,/^## Declare before you work$/p' "$atct_skill")"
   if grep -Eiq 'space|worktree|git|harness|multiplexer' <<<"$roles_section"; then
     fail 'role boundary table must use neutral language'
   fi
