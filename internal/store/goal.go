@@ -177,6 +177,9 @@ func goalFromFields(id, projectID int64, derivedFromGoalID sql.NullInt64, conten
 }
 
 func (s *Store) UpdateGoalRequestReport(ctx context.Context, goalID int64, spec, plan string) (domain.Goal, error) {
+	if err := checkSpecPlanNotReferenceOnly(spec, plan); err != nil {
+		return domain.Goal{}, err
+	}
 	result, err := sqlcgen.New(s.db).UpdateGoalRequestReport(ctx, sqlcgen.UpdateGoalRequestReportParams{Spec: spec, Plan: plan, UpdatedAt: time.Now().UTC().Format(time.RFC3339), ID: goalID})
 	if err != nil {
 		return domain.Goal{}, fmt.Errorf("update goal request report: %w", err)

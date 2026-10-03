@@ -865,7 +865,7 @@ func Register(server *mcp.Server, c *Client, agentSessionID int64) {
 	})
 
 	addMCPTool[GoalUpdateRequestReportIn, RawWithUnappliedDecisions](server, &mcp.Tool{
-		Name: "atct_goal_update_request_report", Description: "Overwrite a goal's spec and plan when the caller holds its goal handoff.", OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
+		Name: "atct_goal_update_request_report", Description: "Overwrite a goal's spec and plan when the caller holds its goal handoff. Write them in full; a field that is only a reference to doc/specs, doc/plans or docs/superpowers is refused.", OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in GoalUpdateRequestReportIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
 		return callWithUnappliedDecisions(ctx, c, "goal.update_request_report", map[string]any{"goal_id": in.GoalID, "spec": in.Spec, "plan": in.Plan, "agent_session_id": sessionID.Get()})
 	})

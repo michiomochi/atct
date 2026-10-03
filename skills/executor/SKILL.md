@@ -14,6 +14,8 @@ a mismatch, stop.
 - Implement and run only the verification named in the task handoff.
 - Use only `atct_session_identify`, `atct_task_handoff_receive`, `atct_role`,
   and `atct_task_handoff_review_request`, all for the received task.
+- Do not create spec or plan files under `doc/specs/`, `doc/plans/` or
+  `docs/superpowers/`.
 - Submit a review report stating the work, verification, unavailable checks,
   and changed paths. Return design or irreversible decisions to the delegator.
 

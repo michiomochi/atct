@@ -1215,6 +1215,9 @@ func (s *Store) RequestPlanHandoffReview(ctx context.Context, handoffID string, 
 	if completeReportIsEmpty(goal.Spec) || completeReportIsEmpty(goal.Plan) {
 		return PlanHandoff{}, ErrPlanHandoffGoalArtifactsEmpty
 	}
+	if err := checkSpecPlanNotReferenceOnly(goal.Spec, goal.Plan); err != nil {
+		return PlanHandoff{}, err
+	}
 
 	existing, err := s.GetPlanHandoff(ctx, handoffID)
 	if err == nil {

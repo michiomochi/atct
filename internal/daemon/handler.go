@@ -1906,6 +1906,9 @@ func (d *Daemon) dispatchMethodWithPeer(ctx context.Context, req rpc.Request, pe
 		if err := d.authorizeRole(ctx, []string{"subcommander"}, 0, p.GoalID, 0, p.RequestedBy, "goal handoff review request"); err != nil {
 			return nil, err
 		}
+		if err := d.refuseAddedSpecFiles(ctx, p.GoalID); err != nil {
+			return nil, err
+		}
 		handoff, err := d.store.RequestGoalHandoffReview(ctx, p.HandoffID, p.GoalID, p.RequestedBy, p.ReviewRequestReport)
 		return marshal(handoff, err)
 
