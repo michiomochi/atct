@@ -32,7 +32,6 @@ func TestMigratedSchemaCompletionReportCheckMatchesGoLimit(t *testing.T) {
 		"how_to_verify",
 		"surprises",
 		"needs_review",
-		"next_steps",
 	} {
 		literal := fmt.Sprintf("length(%s) <= %d", field, completionReportMaxLength)
 		if !strings.Contains(schema, literal) {
@@ -74,8 +73,8 @@ func TestFreshDatabaseAppliesHandoffEntryMigrationsAfter0029(t *testing.T) {
 	for _, filename := range []string{
 		"0029_goal_request_reports.sql",
 		"0030_monitor_health.sql",
-		"0047_handoff_entries.sql",
-		"0048_canonical_handoff_entries.sql",
+		"0048_handoff_entries.sql",
+		"0049_canonical_handoff_entries.sql",
 	} {
 		assertMigrationRecorded(t, s.DB(), filename)
 	}
@@ -135,8 +134,8 @@ func TestUpgradeThrough0029AppliesHandoffEntryMigrations(t *testing.T) {
 	for _, filename := range []string{
 		"0029_goal_request_reports.sql",
 		"0030_monitor_health.sql",
-		"0047_handoff_entries.sql",
-		"0048_canonical_handoff_entries.sql",
+		"0048_handoff_entries.sql",
+		"0049_canonical_handoff_entries.sql",
 	} {
 		assertMigrationRecorded(t, db, filename)
 	}
@@ -538,7 +537,7 @@ func TestOpeningFutureSchemaVersionReturnsError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open fixture: %v", err)
 	}
-	if _, err := db.Exec(`PRAGMA user_version = 7`); err != nil {
+	if _, err := db.Exec(`PRAGMA user_version = 9`); err != nil {
 		db.Close()
 		t.Fatalf("set future schema version: %v", err)
 	}
@@ -547,7 +546,7 @@ func TestOpeningFutureSchemaVersionReturnsError(t *testing.T) {
 	}
 
 	if _, err := Open(path); err == nil {
-		t.Fatal("Open succeeded for unsupported schema version 7")
+		t.Fatal("Open succeeded for unsupported schema version 9")
 	}
 }
 

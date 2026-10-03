@@ -61,7 +61,7 @@ func TestMonitorBindingEndpointTracksAssignmentTransitions(t *testing.T) {
 	if _, err := f.store.ReceiveGoalHandoffReview(f.ctx, "monitor-goal-handoff", f.goal.ID, commander); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.store.CompleteGoalHandoffByReviewer(f.ctx, "monitor-goal-handoff", f.goal.ID, commander, "done"); err != nil {
+	if err := f.store.ReleaseGoal(f.ctx, f.goal.ID); err != nil {
 		t.Fatal(err)
 	}
 	assertMonitorAssignment(t, f, token, store.MonitorAssignment{Role: "executor"})

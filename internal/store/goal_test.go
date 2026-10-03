@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"reflect"
 	"testing"
 
 	"github.com/michiomochi/atct/internal/domain"
@@ -182,15 +183,14 @@ func TestUpdateGoalContentPreservesCompletionReport(t *testing.T) {
 		HowToVerify: "verify before",
 		Surprises:   "surprises before",
 		NeedsReview: "review before",
-		NextSteps:   "next steps before",
 	}
 	if _, err := s.DB().ExecContext(ctx, `
 		UPDATE goals SET
 			work_done = ?, now_possible = ?, how_to_verify = ?,
-			surprises = ?, needs_review = ?, next_steps = ?
+			surprises = ?, needs_review = ?
 		WHERE id = ?`,
 		wantReport.WorkDone, wantReport.NowPossible, wantReport.HowToVerify,
-		wantReport.Surprises, wantReport.NeedsReview, wantReport.NextSteps, goal.ID,
+		wantReport.Surprises, wantReport.NeedsReview, goal.ID,
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -205,9 +205,8 @@ func TestUpdateGoalContentPreservesCompletionReport(t *testing.T) {
 		HowToVerify: got.HowToVerify,
 		Surprises:   got.Surprises,
 		NeedsReview: got.NeedsReview,
-		NextSteps:   got.NextSteps,
 	}
-	if gotReport != wantReport {
+	if !reflect.DeepEqual(gotReport, wantReport) {
 		t.Fatalf("completion report = %+v, want %+v", gotReport, wantReport)
 	}
 }

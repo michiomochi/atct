@@ -306,18 +306,33 @@ func TestGoalHandoffRoutesOverRPC(t *testing.T) {
 		t.Fatalf("goal.handoff.review.receive: %v", err)
 	}
 
-	var completed store.GoalHandoff
-	if err := client.Call(ctx, "goal.handoff.complete", map[string]any{
-		"handoff_id": requested.ID, "goal_id": fixture.claimedGoalID, "agent_session_id": fixture.requesterID, "complete_report": "RPC goal completion report",
-	}, &completed); err != nil {
-		t.Fatalf("goal.handoff.complete: %v", err)
+	var review domain.Decision
+	if err := client.Call(ctx, "goal.review.request", map[string]any{
+		"goal_id": fixture.claimedGoalID, "agent_session_id": fixture.requesterID,
+		"work_done": "RPC work", "now_possible": "RPC result", "how_to_verify": "RPC verify",
+		"surprises": "none", "needs_review": "none", "next_goal_ids": []int64{},
+	}, &review); err != nil {
+		t.Fatalf("goal.review.request: %v", err)
 	}
-	if completed.CompletedReportAt == nil || completed.CompleteReport != "RPC goal completion report" {
-		t.Fatalf("completed handoff = %#v, want completion timestamp and report", completed)
+	if _, err := fixture.store.ApproveGoalReview(ctx, review.ID); err != nil {
+		t.Fatalf("ApproveGoalReview: %v", err)
+	}
+	var finalized domain.Goal
+	if err := client.Call(ctx, "goal.review.complete", map[string]any{
+		"goal_id": fixture.claimedGoalID, "agent_session_id": fixture.requesterID,
+	}, &finalized); err != nil {
+		t.Fatalf("goal.review.complete: %v", err)
+	}
+	completed, err := fixture.store.GetGoalHandoff(ctx, requested.ID)
+	if err != nil {
+		t.Fatalf("GetGoalHandoff: %v", err)
+	}
+	if completed.CompletedReportAt == nil || completed.CompleteReport != "RPC goal handoff ready for review" {
+		t.Fatalf("completed handoff = %#v, want completion timestamp and review request report", completed)
 	}
 
 	var rejected store.GoalHandoff
-	err := client.Call(ctx, "goal.handoff.request", map[string]any{
+	err = client.Call(ctx, "goal.handoff.request", map[string]any{
 		"handoff_id": "rpc-goal-handoff-unclaimed", "goal_id": fixture.unclaimedGoalID, "requested_by": fixture.requesterID,
 	}, &rejected)
 	if err == nil {
@@ -328,7 +343,7 @@ func TestGoalHandoffRoutesOverRPC(t *testing.T) {
 	}
 }
 
-func TestGoalHandoffReviewerCompletionOverRPC(t *testing.T) {
+func TestGoalHandoffReviewerCompletionOverRPCRejectsDelegatedHandoff(t *testing.T) {
 	fixture := newGoalHandoffRPCTestFixture(t)
 	client := mcpshim.NewClient(fixture.socketPath)
 	ctx := context.Background()
@@ -360,14 +375,21 @@ func TestGoalHandoffReviewerCompletionOverRPC(t *testing.T) {
 		t.Fatalf("goal.handoff.review.receive: %v", err)
 	}
 
+	// Goal 287 removed the direct close: a delegated handoff closes only
+	// through approved goal-review finalization, so the route must refuse.
 	var completed store.GoalHandoff
-	if err := client.Call(ctx, "goal.handoff.complete", map[string]any{
+	err := client.Call(ctx, "goal.handoff.complete", map[string]any{
 		"handoff_id": requested.ID, "goal_id": fixture.claimedGoalID, "agent_session_id": fixture.requesterID, "complete_report": "RPC goal completion report",
-	}, &completed); err != nil {
-		t.Fatalf("goal.handoff.complete by reviewer: %v", err)
+	}, &completed)
+	if err == nil || !strings.Contains(err.Error(), store.ErrGoalHandoffReviewState.Error()) {
+		t.Fatalf("goal.handoff.complete by reviewer error = %v, want %v", err, store.ErrGoalHandoffReviewState)
 	}
-	if completed.ID != requested.ID || completed.CompletedReportAt == nil || completed.CompleteReport != "RPC goal completion report" {
-		t.Fatalf("completed handoff = %#v, want request ID, timestamp, and report", completed)
+	persisted, err := fixture.store.GetGoalHandoff(ctx, requested.ID)
+	if err != nil {
+		t.Fatalf("GetGoalHandoff: %v", err)
+	}
+	if persisted.CompletedReportAt != nil || persisted.CompleteReport != "" {
+		t.Fatalf("goal handoff after refused completion = %#v, want open", persisted)
 	}
 }
 
@@ -505,14 +527,19 @@ func TestNamedGoalAndPlanHandoffReviewRoutesReturnRoleEvidence(t *testing.T) {
 	}
 
 	var goalCompleted store.GoalHandoff
-	if err := client.Call(ctx, "goal.handoff.complete", map[string]any{
+	err := client.Call(ctx, "goal.handoff.complete", map[string]any{
 		"handoff_id": goalHandoffID, "goal_id": fixture.claimedGoalID, "agent_session_id": fixture.requesterID,
 		"complete_report": "named goal completion report",
-	}, &goalCompleted); err != nil {
-		t.Fatalf("goal.handoff.complete: %v", err)
+	}, &goalCompleted)
+	if err == nil || !strings.Contains(err.Error(), store.ErrGoalHandoffReviewState.Error()) {
+		t.Fatalf("goal.handoff.complete error = %v, want %v", err, store.ErrGoalHandoffReviewState)
 	}
-	if goalCompleted.CompletedReportAt == nil || goalCompleted.CompleteReport != "named goal completion report" {
-		t.Fatalf("completed goal handoff = %#v, want reviewer completion", goalCompleted)
+	persisted, err := fixture.store.GetGoalHandoff(ctx, goalHandoffID)
+	if err != nil {
+		t.Fatalf("GetGoalHandoff: %v", err)
+	}
+	if persisted.CompletedReportAt != nil || persisted.CompleteReport != "" {
+		t.Fatalf("goal handoff after refused completion = %#v, want open", persisted)
 	}
 }
 
@@ -539,6 +566,23 @@ func TestNamedGoalAndPlanHandoffReviewRejectReceiveRetriesOverRPC(t *testing.T) 
 	if err := client.Call(ctx, "goal.handoff.review.reject", map[string]any{"handoff_id": goalHandoffID, "goal_id": fixture.claimedGoalID, "reviewer_id": fixture.requesterID, "reject_report": "revise"}, &goal); err != nil {
 		t.Fatalf("goal.handoff.review.reject: %v", err)
 	}
+	rejectedBeforeReceive, err := fixture.store.GetGoalHandoff(ctx, goalHandoffID)
+	if err != nil {
+		t.Fatalf("GetGoalHandoff after review rejection: %v", err)
+	}
+	var reviewReceived handoffReceiveResponse
+	if err := client.Call(ctx, "goal.handoff.review.receive", map[string]any{"handoff_id": goalHandoffID, "goal_id": fixture.claimedGoalID, "received_by": fixture.requesterID}, &reviewReceived); err == nil {
+		t.Fatal("goal.handoff.review.receive accepted a rejected review")
+	} else if !strings.Contains(err.Error(), store.ErrGoalHandoffReviewState.Error()) {
+		t.Fatalf("goal.handoff.review.receive after rejection error = %v, want %v", err, store.ErrGoalHandoffReviewState)
+	}
+	rejectedAfterReceive, err := fixture.store.GetGoalHandoff(ctx, goalHandoffID)
+	if err != nil {
+		t.Fatalf("GetGoalHandoff after rejected review receive: %v", err)
+	}
+	if rejectedAfterReceive.ReviewRejectReport != rejectedBeforeReceive.ReviewRejectReport || rejectedAfterReceive.ReviewRejectedAt == nil || !rejectedAfterReceive.ReviewRejectedAt.Equal(*rejectedBeforeReceive.ReviewRejectedAt) {
+		t.Fatalf("rejected review evidence changed after receive: before=%+v after=%+v", rejectedBeforeReceive, rejectedAfterReceive)
+	}
 	if err := client.Call(ctx, "goal.handoff.review.reject.receive", map[string]any{"handoff_id": goalHandoffID, "goal_id": fixture.claimedGoalID, "received_by": fixture.requesterID}, &goal); err == nil {
 		t.Fatal("goal.handoff.review.reject.receive accepted the reviewer")
 	}
@@ -547,6 +591,22 @@ func TestNamedGoalAndPlanHandoffReviewRejectReceiveRetriesOverRPC(t *testing.T) 
 	}
 	if goal.ReviewRejectionReceivedBy != fixture.receiverID || goal.ReviewRejectionReceivedAt == nil {
 		t.Fatalf("goal rejection receipt = %+v, want receiver and timestamp", goal)
+	}
+	rejectionReceivedBeforeReceive, err := fixture.store.GetGoalHandoff(ctx, goalHandoffID)
+	if err != nil {
+		t.Fatalf("GetGoalHandoff after rejection receipt: %v", err)
+	}
+	if err := client.Call(ctx, "goal.handoff.review.receive", map[string]any{"handoff_id": goalHandoffID, "goal_id": fixture.claimedGoalID, "received_by": fixture.requesterID}, &reviewReceived); err == nil {
+		t.Fatal("goal.handoff.review.receive accepted a rejection-received review")
+	} else if !strings.Contains(err.Error(), store.ErrGoalHandoffReviewState.Error()) {
+		t.Fatalf("goal.handoff.review.receive after rejection receipt error = %v, want %v", err, store.ErrGoalHandoffReviewState)
+	}
+	rejectionReceivedAfterReceive, err := fixture.store.GetGoalHandoff(ctx, goalHandoffID)
+	if err != nil {
+		t.Fatalf("GetGoalHandoff after rejection receipt review receive: %v", err)
+	}
+	if rejectionReceivedAfterReceive.ReviewRejectionReceivedBy != rejectionReceivedBeforeReceive.ReviewRejectionReceivedBy || rejectionReceivedAfterReceive.ReviewRejectionReceivedAt == nil || !rejectionReceivedAfterReceive.ReviewRejectionReceivedAt.Equal(*rejectionReceivedBeforeReceive.ReviewRejectionReceivedAt) {
+		t.Fatalf("rejection receipt evidence changed after review receive: before=%+v after=%+v", rejectionReceivedBeforeReceive, rejectionReceivedAfterReceive)
 	}
 	if err := client.Call(ctx, "goal.handoff.review.request", map[string]any{"handoff_id": goalHandoffID, "goal_id": fixture.claimedGoalID, "requested_by": fixture.receiverID, "review_request_report": "revised"}, &goal); err != nil {
 		t.Fatalf("retry goal.handoff.review.request: %v", err)
@@ -789,7 +849,7 @@ func TestNamedGoalReviewRequiresCommanderAndHumanApprovalOrdering(t *testing.T) 
 		HowToVerify: "run focused integration tests",
 		Surprises:   "none",
 		NeedsReview: "none",
-		NextSteps:   "merge",
+		NextGoalIDs: []int64{},
 	}
 
 	var review domain.Decision
@@ -797,7 +857,7 @@ func TestNamedGoalReviewRequiresCommanderAndHumanApprovalOrdering(t *testing.T) 
 		"goal_id": fixture.claimedGoalID, "agent_session_id": fixture.requesterID,
 		"work_done": report.WorkDone, "now_possible": report.NowPossible,
 		"how_to_verify": report.HowToVerify, "surprises": report.Surprises,
-		"needs_review": report.NeedsReview, "next_steps": report.NextSteps,
+		"needs_review": report.NeedsReview, "next_goal_ids": report.NextGoalIDs,
 	}, &review); err != nil {
 		t.Fatalf("goal.review.request: %v", err)
 	}
@@ -822,7 +882,7 @@ func TestNamedGoalReviewRequiresCommanderAndHumanApprovalOrdering(t *testing.T) 
 	if before.Status != domain.GoalActive {
 		t.Fatalf("goal before human approval = %q, want active", before.Status)
 	}
-	if before.WorkDone != report.WorkDone || before.NowPossible != report.NowPossible || before.HowToVerify != report.HowToVerify || before.Surprises != report.Surprises || before.NeedsReview != report.NeedsReview || before.NextSteps != report.NextSteps || before.ResultSummary != report.WorkDone {
+	if before.WorkDone != report.WorkDone || before.NowPossible != report.NowPossible || before.HowToVerify != report.HowToVerify || before.Surprises != report.Surprises || before.NeedsReview != report.NeedsReview || len(before.NextGoals) != len(report.NextGoalIDs) || before.ResultSummary != report.WorkDone {
 		t.Fatalf("goal before human approval = %+v, want report %+v", before, report)
 	}
 
@@ -868,7 +928,7 @@ func TestNamedGoalReviewRequiresCommanderAndHumanApprovalOrdering(t *testing.T) 
 		"goal_id": fixture.claimedGoalID, "agent_session_id": fixture.requesterID,
 		"work_done": report.WorkDone, "now_possible": report.NowPossible,
 		"how_to_verify": report.HowToVerify, "surprises": report.Surprises,
-		"needs_review": report.NeedsReview, "next_steps": report.NextSteps,
+		"needs_review": report.NeedsReview, "next_goal_ids": report.NextGoalIDs,
 	}, &retryReview); err != nil {
 		t.Fatalf("retry goal.review.request: %v", err)
 	}
@@ -899,7 +959,7 @@ func TestNamedGoalReviewRequiresCommanderAndHumanApprovalOrdering(t *testing.T) 
 	if err := client.Call(ctx, "goal.review.complete", completeParams, &done); err != nil {
 		t.Fatalf("commander goal.review.complete after human approval: %v", err)
 	}
-	if done.Status != domain.GoalDone || done.WorkDone != report.WorkDone || done.NowPossible != report.NowPossible || done.HowToVerify != report.HowToVerify || done.Surprises != report.Surprises || done.NeedsReview != report.NeedsReview || done.NextSteps != report.NextSteps {
+	if done.Status != domain.GoalDone || done.WorkDone != report.WorkDone || done.NowPossible != report.NowPossible || done.HowToVerify != report.HowToVerify || done.Surprises != report.Surprises || done.NeedsReview != report.NeedsReview || len(done.NextGoals) != len(report.NextGoalIDs) {
 		t.Fatalf("completed goal = %+v, want final report after commander completion", done)
 	}
 	persistedHandoff, err := fixture.store.GetGoalHandoff(ctx, handoffID)

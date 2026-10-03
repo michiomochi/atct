@@ -77,10 +77,9 @@ type cliConfig struct {
 	codexMonitorPassthrough bool
 	codexMonitorExplicit    bool
 	codexMonitorAutomatic   bool
-	codexMonitorProjectID   string
 	codexMonitorRole        string
 	codexMonitorGoalID      string
-	codexMonitorTaskID      string
+	codexMonitorHandoffID   string
 }
 
 type cliHandoffEntry struct {
@@ -291,16 +290,54 @@ func parseArgs(args []string) (cliConfig, error) {
 				break
 			}
 		}
-		for _, arg := range monitorArgs {
-			if arg == "--scope" || strings.HasPrefix(arg, "--scope=") ||
-				arg == "--role" || strings.HasPrefix(arg, "--role=") ||
-				arg == "--project" || strings.HasPrefix(arg, "--project=") ||
-				arg == "--goal" || strings.HasPrefix(arg, "--goal=") ||
-				arg == "--task" || strings.HasPrefix(arg, "--task=") {
-				return cliConfig{}, errInvalidArgs
+		for len(monitorArgs) > 0 {
+			name, value, inline := codexMonitorOption(monitorArgs[0])
+			if name == "" {
+				if codexMonitorRejectedOption(monitorArgs[0]) {
+					return cliConfig{}, errInvalidArgs
+				}
+				break
+			}
+			if !inline {
+				if len(monitorArgs) < 2 || strings.TrimSpace(monitorArgs[1]) == "" || strings.HasPrefix(monitorArgs[1], "-") {
+					return cliConfig{}, errInvalidArgs
+				}
+				value = monitorArgs[1]
+				monitorArgs = monitorArgs[2:]
+			} else {
+				if strings.TrimSpace(value) == "" {
+					return cliConfig{}, errInvalidArgs
+				}
+				monitorArgs = monitorArgs[1:]
+			}
+			cfg.codexMonitorExplicit = true
+			switch name {
+			case "--role":
+				if cfg.codexMonitorRole != "" {
+					return cliConfig{}, errInvalidArgs
+				}
+				cfg.codexMonitorRole = value
+			case "--goal":
+				if cfg.codexMonitorGoalID != "" {
+					return cliConfig{}, errInvalidArgs
+				}
+				cfg.codexMonitorGoalID = value
+			case "--handoff":
+				if cfg.codexMonitorHandoffID != "" {
+					return cliConfig{}, errInvalidArgs
+				}
+				cfg.codexMonitorHandoffID = value
 			}
 		}
-		if hasPassthroughDelimiter {
+		if cfg.codexMonitorExplicit {
+			if len(monitorArgs) > 0 {
+				return cliConfig{}, errInvalidArgs
+			}
+			if err := validateCodexMonitorConfig(cfg); err != nil {
+				return cliConfig{}, err
+			}
+			rest = passthroughArgs
+		} else if hasPassthroughDelimiter {
 			rest = passthroughArgs
 		}
 		cfg.codexArgs = append([]string(nil), rest...)
@@ -617,30 +654,54 @@ func hasEmptyHandoffPositional(positionals []string) bool {
 	return false
 }
 
+func codexMonitorOption(arg string) (name, value string, inline bool) {
+	for _, candidate := range []string{"--role", "--goal", "--handoff"} {
+		if arg == candidate {
+			return candidate, "", false
+		}
+		prefix := candidate + "="
+		if strings.HasPrefix(arg, prefix) {
+			return candidate, strings.TrimPrefix(arg, prefix), true
+		}
+	}
+	return "", "", false
+}
+
+func codexMonitorRejectedOption(arg string) bool {
+	for _, option := range []string{"--scope", "--project", "--task"} {
+		if arg == option || strings.HasPrefix(arg, option+"=") {
+			return true
+		}
+	}
+	return false
+}
+
 func invalidHandoffArgs(format string, args ...any) (cliConfig, error) {
 	fmt.Fprintf(os.Stderr, format+"\n", args...)
 	printUsage()
 	return cliConfig{}, errInvalidArgs
 }
 
-func validateCodexMonitorRole(cfg cliConfig) error {
-	if _, err := strconv.ParseInt(cfg.codexMonitorGoalID, 10, 64); cfg.codexMonitorGoalID != "" && err != nil {
+func validateCodexMonitorConfig(cfg cliConfig) error {
+	if !cfg.codexMonitorExplicit {
+		return nil
+	}
+	if cfg.codexMonitorRole == "" {
 		return errInvalidArgs
 	}
-	if _, err := strconv.ParseInt(cfg.codexMonitorTaskID, 10, 64); cfg.codexMonitorTaskID != "" && err != nil {
-		return errInvalidArgs
+	if cfg.codexMonitorGoalID != "" {
+		goalID, err := strconv.ParseInt(cfg.codexMonitorGoalID, 10, 64)
+		if err != nil || goalID <= 0 {
+			return errInvalidArgs
+		}
 	}
 	switch cfg.codexMonitorRole {
 	case "commander":
-		if cfg.codexMonitorGoalID != "" || cfg.codexMonitorTaskID != "" {
+		if cfg.codexMonitorGoalID != "" || cfg.codexMonitorHandoffID != "" {
 			return errInvalidArgs
 		}
 	case "subcommander":
-		if cfg.codexMonitorGoalID == "" || cfg.codexMonitorTaskID != "" {
-			return errInvalidArgs
-		}
-	case "executor":
-		if cfg.codexMonitorTaskID == "" || cfg.codexMonitorGoalID != "" {
+		if cfg.codexMonitorGoalID == "" || cfg.codexMonitorHandoffID == "" {
 			return errInvalidArgs
 		}
 	default:

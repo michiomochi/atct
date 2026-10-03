@@ -26,10 +26,16 @@ export interface Goal {
   how_to_verify: string;
   surprises: string;
   needs_review: string;
-  next_steps: string;
+  next_goals: NextGoal[];
   created_at: string;
   updated_at: string;
   tasks: TaskView[] | null;
+}
+
+export interface NextGoal {
+  id: string;
+  headline: string;
+  status: string;
 }
 
 export interface RelatedGoal {
@@ -368,8 +374,9 @@ export function normalizeGoal(value: unknown): GoalResponse {
   const source = isRecord(value) ? value : {};
   const omitted = source.decision_history_omitted;
   const derivedFrom = source.derived_from;
+  const rawGoal = isRecord(source.goal) ? source.goal : {};
   const response: GoalResponse = {
-    goal: source.goal as Goal,
+    goal: { ...rawGoal, next_goals: arrayOrEmpty<NextGoal>(rawGoal.next_goals) } as Goal,
     now: arrayOrEmpty<TaskView>(source.now),
     needs_decision: arrayOrEmpty<TaskView>(source.needs_decision),
     unattached_decisions: arrayOrEmpty<Decision>(source.unattached_decisions),

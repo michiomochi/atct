@@ -71,7 +71,7 @@ func stopCheckGoalReview(t *testing.T, fixture stopCheckFixture) domain.Decision
 		t.Fatalf("ReceiveGoalHandoffReview: %v", err)
 	}
 	decision, err := fixture.store.RequestGoalReview(ctx, fixture.goalID, fixture.commanderID, domain.CompletionReport{
-		WorkDone: "done", NowPossible: "now", HowToVerify: "verify", Surprises: "none", NeedsReview: "none", NextSteps: "next",
+		WorkDone: "done", NowPossible: "now", HowToVerify: "verify", Surprises: "none", NeedsReview: "none", NextGoalIDs: []int64{},
 	})
 	if err != nil {
 		t.Fatalf("RequestGoalReview: %v", err)

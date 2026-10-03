@@ -91,6 +91,17 @@ func TestPlanHandoffReviewRejectReceiveLifecycle(t *testing.T) {
 		t.Fatalf("plan review rejection did not clear reviewer state: %+v", rejected)
 	}
 
+	if _, err := s.ReceivePlanHandoffReview(ctx, reviewRequested.ID, goalID, commanderID); !errors.Is(err, ErrPlanHandoffReviewState) {
+		t.Fatalf("ReceivePlanHandoffReview after rejection error = %v, want ErrPlanHandoffReviewState", err)
+	}
+	unchanged, err := s.GetPlanHandoff(ctx, reviewRequested.ID)
+	if err != nil {
+		t.Fatalf("GetPlanHandoff after rejected review receive: %v", err)
+	}
+	if unchanged.ReviewReceivedBy != rejected.ReviewReceivedBy || unchanged.ReviewReceivedAt != rejected.ReviewReceivedAt || unchanged.ReviewRejectReport != rejected.ReviewRejectReport || unchanged.ReviewRejectedAt == nil || rejected.ReviewRejectedAt == nil || !unchanged.ReviewRejectedAt.Equal(*rejected.ReviewRejectedAt) {
+		t.Fatalf("rejected review receive changed persisted review state: before=%+v after=%+v", rejected, unchanged)
+	}
+
 	if _, err := s.RequestPlanHandoffReview(ctx, reviewRequested.ID, goalID, subcommanderID, "revised plan"); err == nil {
 		t.Fatal("RequestPlanHandoffReview accepted a rejection that the original submitter has not received")
 	}

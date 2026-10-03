@@ -154,6 +154,14 @@ describe("handoff history API", () => {
   });
 });
 
+describe("goal detail API", () => {
+  it("normalizes missing successor summaries to an empty array", () => {
+    const response = normalizeGoal({ goal: { id: "goal-1" } });
+
+    expect((response.goal as { next_goals?: unknown }).next_goals).toEqual([]);
+  });
+});
+
 describe("decision event subscription", () => {
   afterEach(() => {
     vi.useRealTimers();

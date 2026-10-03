@@ -2011,10 +2011,84 @@ func TestHTTPGoalDetailIncludesCompletionReportFields(t *testing.T) {
 		"how_to_verify",
 		"surprises",
 		"needs_review",
-		"next_steps",
+		"next_goals",
 	} {
 		if _, ok := payload.Goal[field]; !ok {
 			t.Errorf("goal JSON missing %q", field)
+		}
+	}
+	if _, ok := payload.Goal["next_steps"]; ok {
+		t.Error("goal JSON still exposes legacy next_steps")
+	}
+	if got := string(bytes.TrimSpace(payload.Goal["next_goals"])); got != "[]" {
+		t.Fatalf("goal.next_goals = %s, want []", got)
+	}
+}
+
+func TestHTTPGoalDetailIncludesShallowNextGoalsByAscendingID(t *testing.T) {
+	f := newBareFixture(t)
+	first, err := f.store.CreateGoal(f.ctx, f.project.ID, "First successor", "human")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := f.store.CreateGoal(f.ctx, f.project.ID, "Second successor", "human")
+	if err != nil {
+		t.Fatal(err)
+	}
+	grandchild, err := f.store.CreateGoal(f.ctx, f.project.ID, "Grandchild successor", "human")
+	if err != nil {
+		t.Fatal(err)
+	}
+	commanderID, err := f.store.RegisterAgentSession(f.ctx, os.Getpid())
+	if err != nil {
+		t.Fatalf("RegisterAgentSession: %v", err)
+	}
+	requestHTTPGoalReview(t, f, first.ID, commanderID, "first-successor", grandchild.ID)
+	requestHTTPGoalReview(t, f, f.goal.ID, commanderID, "source-goal", second.ID, first.ID)
+
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+	status, _, body := doRequest(t, srv.Client(), http.MethodGet, urlID(srv.URL+"/api/goals/", f.goal.ID), nil)
+	if status != http.StatusOK {
+		t.Fatalf("goal status = %d; body=%s", status, body)
+	}
+	var payload struct {
+		Goal struct {
+			NextGoals []json.RawMessage `json:"next_goals"`
+		} `json:"goal"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatalf("decode goal detail: %v; body=%s", err, body)
+	}
+	if len(payload.Goal.NextGoals) != 2 {
+		t.Fatalf("goal.next_goals = %s, want 2 entries", body)
+	}
+	want := []struct {
+		id       int64
+		headline string
+		status   domain.GoalStatus
+	}{
+		{first.ID, "First successor", domain.GoalActive},
+		{second.ID, "Second successor", domain.GoalActive},
+	}
+	for i, raw := range payload.Goal.NextGoals {
+		var got struct {
+			ID       int64             `json:"id"`
+			Headline string            `json:"headline"`
+			Status   domain.GoalStatus `json:"status"`
+		}
+		if err := json.Unmarshal(raw, &got); err != nil {
+			t.Fatalf("decode next_goals[%d]: %v", i, err)
+		}
+		if got.ID != want[i].id || got.Headline != want[i].headline || got.Status != want[i].status {
+			t.Fatalf("next_goals[%d] = %+v, want %+v", i, got, want[i])
+		}
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &fields); err != nil {
+			t.Fatalf("decode next_goals[%d] fields: %v", i, err)
+		}
+		if _, ok := fields["next_goals"]; ok {
+			t.Fatalf("next_goals[%d] unexpectedly contains nested next_goals", i)
 		}
 	}
 }
@@ -2592,7 +2666,7 @@ func TestHTTPApproveAndRejectGoalReviewEndpoints(t *testing.T) {
 	}
 }
 
-func requestHTTPGoalReview(t *testing.T, f *fixture, goalID, commanderID int64, label string) domain.Decision {
+func requestHTTPGoalReview(t *testing.T, f *fixture, goalID, commanderID int64, label string, nextGoalIDs ...int64) domain.Decision {
 	t.Helper()
 	receiverID := registerTestSession(t, f.store, label+"-receiver", 0)
 	if _, err := f.store.ClaimProject(f.ctx, f.project.ID, commanderID); err != nil {
@@ -2613,7 +2687,7 @@ func requestHTTPGoalReview(t *testing.T, f *fixture, goalID, commanderID int64, 
 	}
 	review, err := f.store.RequestGoalReview(f.ctx, goalID, commanderID, domain.CompletionReport{
 		WorkDone: "completed " + label, NowPossible: "reviewable result", HowToVerify: "run the HTTP endpoint test",
-		Surprises: "none", NeedsReview: "approve or reject", NextSteps: "finalize after approval",
+		Surprises: "none", NeedsReview: "approve or reject", NextGoalIDs: append([]int64{}, nextGoalIDs...),
 	})
 	if err != nil {
 		t.Fatalf("RequestGoalReview: %v", err)

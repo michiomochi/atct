@@ -11,8 +11,12 @@ func newWatchCodexActionSink(bridge *codexMonitorBridge) watchAgentActionSink {
 		return nil
 	}
 	return func(action watchAgentAction) error {
-		return bridge.enqueueAction(context.Background(), codexMonitorAction{line: action.line, eventName: action.eventName, goalID: action.goalID, deliveryKey: action.deliveryKey})
+		return bridge.enqueueWatchAction(context.Background(), action)
 	}
+}
+
+func isHandoffLifecycleEvent(eventName string) bool {
+	return strings.Contains(eventName, "handoff.")
 }
 
 func watchActionDeliveryIdentity(eventName, line string, decision watchDecision) (string, string) {
@@ -20,7 +24,7 @@ func watchActionDeliveryIdentity(eventName, line string, decision watchDecision)
 	switch {
 	case strings.HasPrefix(eventName, "decision."):
 		subject = decision.DecisionID
-	case strings.Contains(eventName, ".handoff."):
+	case isHandoffLifecycleEvent(eventName):
 		subject = decision.HandoffID
 	case strings.HasPrefix(eventName, "wakeup."):
 		subject = decision.WakeupID
