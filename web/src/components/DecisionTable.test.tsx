@@ -172,18 +172,62 @@ describe("DecisionTable", () => {
     expect(links.map((l) => l.textContent)).toEqual(["Second by time", "First by time"]);
   });
 
-  test("shows the priority reason label under unanswered questions only", () => {
+  test("puts the priority column first and shows rank and reason for open rows", () => {
+    render(<DecisionTable decisions={[decision({ priority: 3, priority_reason: "queued" })]} emptyText="No decisions" />);
+
+    const headers = screen.getAllByRole("columnheader");
+    expect(headers[0].textContent).toBe("decision.column.priority");
+    expect(headers[1].textContent).toBe("decision.column.question");
+    const cells = screen.getAllByRole("row")[1].querySelectorAll("td");
+    expect(cells[0].textContent).toBe("3decision.priority.queued");
+    expect(screen.getByText("3").classList.contains("font-semibold")).toBe(true);
+  });
+
+  test("shows a dash in the priority cell for answered rows", () => {
     render(
       <DecisionTable
-        decisions={[
-          decision({ id: "d-1", priority: 3, priority_reason: "queued" }),
-          decision({ id: "d-2", question: "Done one", status: "answered", priority_reason: "queued" }),
-        ]}
+        decisions={[decision({ status: "answered", priority: 2, priority_reason: "queued" })]}
         emptyText="No decisions"
       />,
     );
 
-    expect(screen.getAllByText("decision.priority.queued")).toHaveLength(1);
+    expect(screen.getAllByRole("row")[1].querySelectorAll("td")[0].textContent).toBe("-");
+    expect(screen.queryByText("decision.priority.queued")).toBeNull();
+  });
+
+  test("shows a dash when priority is unset or 0", () => {
+    render(
+      <DecisionTable
+        decisions={[decision({ id: "d-1" }), decision({ id: "d-2", priority: 0, priority_reason: "queued" })]}
+        emptyText="No decisions"
+      />,
+    );
+
+    const rows = screen.getAllByRole("row");
+    expect(rows[1].querySelectorAll("td")[0].textContent).toBe("-");
+    expect(rows[2].querySelectorAll("td")[0].textContent).toBe("-");
+  });
+
+  test("shows only the rank when the reason is unknown", () => {
+    render(<DecisionTable decisions={[decision({ priority: 2, priority_reason: "mystery" })]} emptyText="No decisions" />);
+
+    expect(screen.getAllByRole("row")[1].querySelectorAll("td")[0].textContent).toBe("2");
+  });
+
+  test("does not render the reason label inside the question cell", () => {
+    render(<DecisionTable decisions={[decision({ priority: 3, priority_reason: "queued" })]} emptyText="No decisions" />);
+
+    const questionCell = screen.getAllByRole("row")[1].querySelectorAll("td")[1];
+    expect(questionCell.textContent).not.toContain("decision.priority.queued");
+  });
+
+  test("expanded row spans five columns", () => {
+    render(<DecisionTable decisions={[decision()]} emptyText="No decisions" />);
+
+    fireEvent.click(screen.getByRole("button", { name: "decision.column.question" }));
+
+    const detail = screen.getAllByRole("row")[2].querySelector("td");
+    expect(detail?.getAttribute("colspan")).toBe("5");
   });
 
   test("renders without priority_reason", () => {
