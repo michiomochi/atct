@@ -39,6 +39,8 @@ func sessionStartMonitorToken(sessionID, token string) string {
 	return fmt.Sprintf("%x", sum)
 }
 
+const sessionStartExecutionFlowDirective = " Before any ATCT work, read `doc/execution-flow.md` and follow its procedure.\n"
+
 func sessionKeyMessageWithMonitorToken(sessionID, monitorToken string) string {
 	sessionID = strings.TrimSpace(sessionID)
 	if sessionID == "" {
@@ -46,7 +48,7 @@ func sessionKeyMessageWithMonitorToken(sessionID, monitorToken string) string {
 	}
 	monitorToken = strings.TrimSpace(monitorToken)
 	if monitorToken != "" {
-		return fmt.Sprintf("ATCT session key: %s. When receiving a task or goal handoff, pass this exact session_key and monitor_token %s to its receive tool. Otherwise, call atct_session_identify with them before other ATCT operations.\n", sessionID, monitorToken)
+		return fmt.Sprintf("ATCT session key: %s. When receiving a task or goal handoff, pass this exact session_key and monitor_token %s to its receive tool. Otherwise, call atct_session_identify with them before other ATCT operations.", sessionID, monitorToken) + sessionStartExecutionFlowDirective
 	}
-	return fmt.Sprintf("ATCT session key: %s. When receiving a task or goal handoff, pass this exact session_key to its receive tool. Otherwise, call atct_session_identify with it before other ATCT operations.\n", sessionID)
+	return fmt.Sprintf("ATCT session key: %s. When receiving a task or goal handoff, pass this exact session_key to its receive tool. Otherwise, call atct_session_identify with it before other ATCT operations.", sessionID) + sessionStartExecutionFlowDirective
 }

@@ -253,7 +253,7 @@ fi
 input="$(cat)"
 printf '%s\n%s\n' "$*" "$input" >>"$ATCT_STOP_LOG"
 if [[ "${1:-}" == session-key ]]; then
-  printf '%s' 'ATCT session key: hook-session-1'
+  printf '%s' 'ATCT session key: hook-session-1. Before any ATCT work, read `doc/execution-flow.md` and follow its procedure.'
   exit 0
 fi
 if [[ "$input" == *'"stop_hook_active":true'* ]]; then exit 0; fi
@@ -323,7 +323,7 @@ PY
 )"
   : >"$log"
   output="$(PATH="$codex_fixture:/usr/bin:/bin" ATCT_STOP_LOG="$log" sh -c "$session_command" <<< "$input")"
-  assert_eq 'ATCT session key: hook-session-1' "$output" 'Codex SessionStart hook must use the PATH CLI'
+  assert_eq 'ATCT session key: hook-session-1. Before any ATCT work, read `doc/execution-flow.md` and follow its procedure.' "$output" 'Codex SessionStart hook must use the PATH CLI'
   assert_eq $'session-key --hook-input\n{"session_id":"hook-session-1","stop_hook_active":false}' "$(<"$log")" 'Codex SessionStart hook must pass raw hook input to shared CLI'
   output="$(PATH="$older_codex_fixture:/usr/bin:/bin" sh -c "$session_command" <<< "$input")"
   assert_eq 'ATCT: upgrade the CLI with: brew upgrade --cask michiomochi/tap/atct' "$output" 'older Codex SessionStart hook must print Homebrew upgrade instruction'
@@ -395,6 +395,45 @@ test_session_start_is_silent_without_atct_wrapper() {
 
   output="$(PATH="" /bin/bash "$hook" 2>&1)" || fail 'hook failed without an atct wrapper'
   assert_eq '' "$output" 'missing atct wrapper must keep the hook silent'
+}
+
+test_session_start_hook_uses_shared_session_key_message() {
+  local plugin_version
+  plugin_version="$(awk -F '"' '/"version"[[:space:]]*:/ { print $4; exit }' "$REPO_ROOT/.claude-plugin/plugin.json")"
+  local fixture="$TEMP_ROOT/session-start-shared-message"
+  local hook="$fixture/hooks/session-start"
+  local fake="$fixture/bin/atct"
+  local log="$fixture/atct.log"
+  local output
+
+  mkdir -p "$(dirname "$hook")" "$(dirname "$fake")" "$fixture/.claude-plugin"
+  cp "$REPO_ROOT/hooks/session-start" "$hook"
+  printf '{"version":"%s"}\n' "$plugin_version" >"$fixture/.claude-plugin/plugin.json"
+  cat >"$fake" <<'SCRIPT'
+#!/usr/bin/env bash
+if [[ "${1:-}" == version ]]; then
+  printf 'version\n' >>"$ATCT_SESSION_START_LOG"
+  printf '%s\n' "$ATCT_TEST_VERSION"
+  exit 0
+fi
+if [[ "$*" == 'context -brief' ]]; then
+  printf 'context -brief\n' >>"$ATCT_SESSION_START_LOG"
+  exit 0
+fi
+if [[ "$*" == 'session-key --hook-input' ]]; then
+  input="$(cat)"
+  printf '%s\n%s' "$*" "$input" >>"$ATCT_SESSION_START_LOG"
+  printf '%s' 'ATCT session key: hook-session-1. Before any ATCT work, read `doc/execution-flow.md` and follow its procedure.'
+  exit 0
+fi
+exit 1
+SCRIPT
+  chmod +x "$hook" "$fake"
+  export ATCT_TEST_VERSION="$plugin_version"
+
+  output="$(PATH="$(dirname "$fake"):$PATH" ATCT_SESSION_START_LOG="$log" /bin/bash "$hook" <<< '{"session_id":"hook-session-1"}')"
+  assert_eq 'ATCT session key: hook-session-1. Before any ATCT work, read `doc/execution-flow.md` and follow its procedure.' "$output" 'Claude SessionStart hook must use the shared session-key output'
+  assert_eq $'version\ncontext -brief\nsession-key --hook-input\n{"session_id":"hook-session-1"}' "$(<"$log")" 'Claude SessionStart hook must pass raw input through the shared CLI'
 }
 
 delegate_goal_section() {
