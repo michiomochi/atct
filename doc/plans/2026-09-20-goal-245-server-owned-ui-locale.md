@@ -214,3 +214,24 @@ accepted paths and runs the focused Go tests above, `go test ./internal/store
 `(cd web && pnpm typecheck)`, and `(cd web && pnpm build)`. The goal review
 request must report every command result, the three task commit SHAs, and the
 remaining boundary that adjacent goals were not edited.
+
+## Task 4: Expose `ui_locale` through `atct_role` (added after review rejection)
+
+**Files:** `internal/daemon/handler.go`, `internal/mcpshim/tools.go`, `cmd/atct/role.go`, `internal/mcpshim/instructions.go`, and their tests.
+
+- `session.role` data carries `ui_locale` from `store.GetUILocale` (fallback `en`); the MCP shim and CLI role structs pass it through unchanged for commander, subcommander, and executor.
+- `mcpshim.Instructions` gains one sentence: write ATCT records in the language of `ui_locale` from `atct_role`, per the `atct` skill.
+- Tests: `atct_role` for each of the three roles returns `ui_locale` `en` by default and `ja` after `SetUILocale("ja")`; the instructions string mentions `ui_locale`.
+- Verify: `go test ./internal/daemon ./internal/mcpshim ./cmd/atct`, then `go build ./...` and `go vet ./...`. Commit `feat: expose ui locale to agents through atct_role`.
+
+## Task 5: Add the record-language rule to the atct skill
+
+**Files:** `skills/atct/SKILL.md`.
+
+- Add a short section "Language of ATCT records" stating the governed and not-governed lists from the spec and that `ui_locale` is read from `atct_role`; re-read it after a context reset. Role skills are not edited.
+- Match the surrounding skill's density; do not create `reference/`.
+- Verify: `git diff --stat` shows only that file; `ORCHESTRATION_SKILL_PATH=/private/tmp/atct-no-orchestration-skill bash tests/wrapper_test.bash`. Commit `docs: add ATCT record language rule`.
+
+## Integration gate (extended)
+
+After Tasks 4 and 5 are accepted, the subcommander merges current main, uses the next migration number after main's latest, and runs `go build ./...`, `go vet ./...`, `go test ./... -count=1`, `./script/schema-check.sh`, the wrapper test, and in `web/` `pnpm test`, `PUBLIC_ATCT_LOCALE=en pnpm typecheck`, `pnpm build`.

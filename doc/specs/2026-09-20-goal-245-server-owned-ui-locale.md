@@ -67,3 +67,41 @@ this goal; shared-file overlap is recorded for review rather than edited.
 
 Acceptance requires focused store/API/daemon tests, the web locale test set,
 `pnpm typecheck`, and a successful dual-locale `pnpm build`.
+
+## Language of ATCT records (added after the 2026-10-03 goal review rejection)
+
+The human asked whether the stored language will also make specs, plans, and
+task names be written in that language. Measured at merge `f7c979d`: no. The
+only readers of `GetUILocale` are the daemon's HTML fallback and
+`/api/ui-settings`; nothing reaches an agent, so the setting changed only the
+dashboard chrome. This goal now makes the stored locale the authority for the
+language of what agents write into ATCT.
+
+- **Delivery.** `atct_role` data gains `ui_locale` (`"en"` or `"ja"`), read from
+  the daemon store on every call. Every role calls `atct_role` right after
+  `atct_session_identify`, on Claude and Codex alike, so one daemon-owned field
+  reaches commander, subcommander, and executor. SessionStart is not used: the
+  Codex hook prints only the session key, and the Claude brief is a CLI-side
+  summary line.
+- **Rule.** `atct:atct` (the SSOT every role loads) gains a section naming
+  `ui_locale` as the language of ATCT records and the boundary below. Role
+  skills do not restate it. The static MCP `Instructions` gain one sentence
+  pointing at it, so a client that has not loaded the skill still sees it.
+- **Governed (write in `ui_locale`):** goal content, spec, plan, `result_summary`,
+  `work_done`, `now_possible`, `next_steps`, `surprises`, `needs_review`,
+  `how_to_verify`; task titles and descriptions; decision questions, option
+  labels, descriptions, and consequences; every handoff request, review,
+  complete, reject, and recovery report.
+- **Not governed (stay as written):** tool names, parameters, identifiers and
+  keys (`handoff_id`, `declare_key`, `idempotency_key`), enum values, code,
+  commands, file paths, branch names, commit messages, quoted error and log
+  text, and repository files such as `doc/specs` and `doc/plans` (repository
+  content, not ATCT records).
+- **Not enforced.** The daemon does not detect or reject text by language; the
+  contract is a convention carried by `atct_role` plus the skill. Existing
+  records are not rewritten. A switch made mid-session is seen on the next
+  `atct_role` call (the skill says to re-read it after a context reset).
+- **Rejected alternatives:** a SessionStart line (Claude-only, misses Codex); a
+  per-tool response field on every ATCT call (noise on every response); an
+  MCP `Instructions` string built per connection (the stdio shim has no store
+  access and would need a new RPC).
