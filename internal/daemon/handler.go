@@ -21,6 +21,10 @@ var ErrGoalAlreadyClaimed = errors.New("goal already claimed")
 var ErrProjectAlreadyClaimed = errors.New("project already claimed")
 var ErrDecisionOutsideGoal = errors.New("decision belongs to another goal")
 var ErrRoleUnauthorized = errors.New("role is not authorized for this operation")
+var ErrSessionNotIdentified = errors.New("agent session is not identified")
+
+const identifyHint = "this MCP transport session was never identified (a reconnect, a daemon restart, or a second transport of the same client opens a new one): call atct_session_identify with the session_key and monitor_token from SessionStart, then retry"
+
 var ErrHandoffCompletionSessionRequired = errors.New("agent_session_id is required; identify the session and use the named handoff review flow")
 
 const retiredGoalCompletionDiagnostic = "goal.complete is retired; use atct_goal_review_request followed by atct_goal_review_complete"
@@ -937,9 +941,42 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 func (d *Daemon) dispatchWithPeer(ctx context.Context, req rpc.Request, peerID uint64) (json.RawMessage, error) {
 	raw, err := d.dispatchMethodWithPeer(ctx, req, peerID)
 	if err != nil {
-		return nil, err
+		return nil, d.withIdentifyHint(ctx, req, err)
 	}
 	return withNextStep(raw, nextStepAfter[req.Method]), nil
+}
+
+// withIdentifyHint appends the re-identify instruction when the caller is a
+// transport row that never ran session.identify. Without it a refusal such as
+// ErrRoleUnauthorized reads as "you are an executor" and the agent stops,
+// though re-identifying reattaches the row to its canonical session.
+func (d *Daemon) withIdentifyHint(ctx context.Context, req rpc.Request, err error) error {
+	if req.Method == "session.identify" || req.Method == "run.register" || errors.Is(err, ErrSessionNotIdentified) {
+		return err
+	}
+	var p struct {
+		AgentSessionID int64 `json:"agent_session_id"`
+		RequestedBy    int64 `json:"requested_by"`
+		ReceivedBy     int64 `json:"received_by"`
+		ReviewerID     int64 `json:"reviewer_id"`
+	}
+	if json.Unmarshal(req.Params, &p) != nil {
+		return err
+	}
+	id := int64(0)
+	for _, candidate := range []int64{p.AgentSessionID, p.RequestedBy, p.ReceivedBy, p.ReviewerID} {
+		if candidate != 0 {
+			id = candidate
+			break
+		}
+	}
+	if id == 0 {
+		return err
+	}
+	if unidentified, lookupErr := d.store.AgentSessionUnidentified(ctx, id); lookupErr == nil && unidentified {
+		return fmt.Errorf("%w; %s", err, identifyHint)
+	}
+	return err
 }
 
 // withNextStep adds next_step to an object response. A response that is not a
@@ -1115,7 +1152,8 @@ func (d *Daemon) dispatchMethodWithPeer(ctx context.Context, req rpc.Request, pe
 
 	case "session.role":
 		var p struct {
-			AgentSessionID int64 `json:"agent_session_id"`
+			AgentSessionID    int64 `json:"agent_session_id"`
+			RequireIdentified bool  `json:"require_identified"`
 		}
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, err
@@ -1124,6 +1162,17 @@ func (d *Daemon) dispatchMethodWithPeer(ctx context.Context, req rpc.Request, pe
 		response, err := d.deriveSessionRole(ctx, p.AgentSessionID)
 		if err != nil {
 			return nil, err
+		}
+		// A row that holds nothing derives executor; for a transport that never
+		// identified that is "unknown", not a role the agent should obey.
+		if p.RequireIdentified && response.Role == "executor" && response.ProjectID == 0 {
+			unidentified, err := d.store.AgentSessionUnidentified(ctx, p.AgentSessionID)
+			if err != nil {
+				return nil, err
+			}
+			if unidentified {
+				return nil, fmt.Errorf("%w: %s", ErrSessionNotIdentified, identifyHint)
+			}
 		}
 		return marshal(roleResponseFor(response), nil)
 

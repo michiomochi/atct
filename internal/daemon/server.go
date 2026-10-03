@@ -76,6 +76,9 @@ func (d *Daemon) HTTPHandler() http.Handler {
 			log.Printf("mcp: register agent session: %v", err)
 			return nil
 		}
+		// One client opens several transports and agent_sessions has no column
+		// saying which made a row; this line is the only trace.
+		log.Printf("mcp: registered agent session %d (remote %s, user-agent %q)", registerResponse.AgentSessionID, r.RemoteAddr, r.UserAgent())
 
 		server := mcp.NewServer(&mcp.Implementation{Name: "atct", Version: d.version}, &mcp.ServerOptions{
 			Instructions: mcpshim.Instructions,
