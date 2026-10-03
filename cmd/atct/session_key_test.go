@@ -4,7 +4,7 @@ import "testing"
 
 func TestSessionKeyMessageIncludesMonitorToken(t *testing.T) {
 	got := sessionKeyMessageWithMonitorToken("codex-session-1", "token-1")
-	want := "ATCT session key: codex-session-1. When receiving a task or goal handoff, pass this exact session_key and monitor_token token-1 to its receive tool. Otherwise, call atct_session_identify with them before other ATCT operations.\n"
+	want := "ATCT session key: codex-session-1. When receiving a task or goal handoff, pass this exact session_key and monitor_token token-1 to its receive tool. Otherwise, call atct_session_identify with them before other ATCT operations. Before any ATCT work, read `doc/execution-flow.md` and follow its procedure.\n"
 	if got != want {
 		t.Fatalf("sessionKeyMessageWithMonitorToken = %q, want %q", got, want)
 	}
@@ -12,7 +12,7 @@ func TestSessionKeyMessageIncludesMonitorToken(t *testing.T) {
 
 func TestSessionKeyMessageDirectsReceiveWithoutMonitorToken(t *testing.T) {
 	got := sessionKeyMessageWithMonitorToken("codex-session-1", "")
-	want := "ATCT session key: codex-session-1. When receiving a task or goal handoff, pass this exact session_key to its receive tool. Otherwise, call atct_session_identify with it before other ATCT operations.\n"
+	want := "ATCT session key: codex-session-1. When receiving a task or goal handoff, pass this exact session_key to its receive tool. Otherwise, call atct_session_identify with it before other ATCT operations. Before any ATCT work, read `doc/execution-flow.md` and follow its procedure.\n"
 	if got != want {
 		t.Fatalf("sessionKeyMessageWithMonitorToken = %q, want %q", got, want)
 	}
