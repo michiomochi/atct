@@ -53,24 +53,36 @@ func watchLivenessActionable(scope watchScope, state watchReconciliation) bool {
 }
 
 func watchCommanderLivenessActionable(state watchReconciliation) bool {
-	for _, handoffs := range [][]watchReconciliationHandoff{state.GoalHandoffs, state.PlanHandoffs} {
-		for _, handoff := range handoffs {
-			if watchHandoffOpen(handoff) && handoff.ReviewRequestedAt != nil && handoff.ReviewRejectedAt == nil {
-				return true
+	kind, handoffID, goalID := watchCommanderLivenessTarget(state)
+	return kind != "" || handoffID != "" || goalID != ""
+}
+
+// watchCommanderLivenessTarget names what the commander is to act on: a goal or
+// plan handoff waiting for its review, else a goal whose approved review is
+// waiting to be completed. All empty means there is nothing to name.
+func watchCommanderLivenessTarget(state watchReconciliation) (kind, handoffID, goalID string) {
+	for _, group := range []struct {
+		kind     string
+		handoffs []watchReconciliationHandoff
+	}{{"goal", state.GoalHandoffs}, {"plan", state.PlanHandoffs}} {
+		for _, handoff := range group.handoffs {
+			id := strconv.FormatInt(handoff.GoalID, 10)
+			if watchHandoffOpen(handoff) && handoff.ReviewRequestedAt != nil && handoff.ReviewRejectedAt == nil && !watchReconciliationGoalStopped(state, id) {
+				return group.kind, handoff.ID, id
 			}
 		}
 	}
 	for _, decision := range state.Decisions {
 		if decision.Kind == "goal_review" && decision.Status == "applied" && decision.AnswerLabel == "approve" && watchReconciliationHasActiveGoal(state, decision.GoalID) {
-			return true
+			return "goal", "", decision.GoalID
 		}
 	}
-	return false
+	return "", "", ""
 }
 
 func watchSubcommanderLivenessActionable(scope watchScope, state watchReconciliation) bool {
 	for _, handoff := range state.TaskCreateHandoffs {
-		if watchTaskCreateHandoffMatchesGoal(scope, handoff) && handoff.CompletedAt == nil {
+		if watchTaskCreateHandoffMatchesGoal(scope, handoff) && watchTaskCreateHandoffOpen(handoff) {
 			return true
 		}
 	}
@@ -144,7 +156,11 @@ func watchGoalHasOpenTaskHandoff(scope watchScope, state watchReconciliation) bo
 }
 
 func watchHandoffOpen(handoff watchReconciliationHandoff) bool {
-	return handoff.CompletedReportAt == nil
+	return handoff.CompletedReportAt == nil && handoff.RecoveredAt == nil
+}
+
+func watchTaskCreateHandoffOpen(handoff watchTaskCreateHandoff) bool {
+	return handoff.CompletedAt == nil && handoff.RecoveredAt == nil
 }
 
 func watchHandoffMatchesGoal(scope watchScope, handoff watchReconciliationHandoff) bool {
