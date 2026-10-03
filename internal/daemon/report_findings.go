@@ -3,13 +3,13 @@ package daemon
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/michiomochi/atct/internal/domain"
-	"os"
 )
 
 const findingsListMax = 10

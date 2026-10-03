@@ -1759,7 +1759,8 @@ func (d *Daemon) dispatchMethodWithPeer(ctx context.Context, req rpc.Request, pe
 		if err := d.authorizeRole(ctx, []string{"executor"}, 0, 0, p.TaskID, p.RequestedBy, "task handoff review request"); err != nil {
 			return nil, err
 		}
-		handoff, err := d.store.RequestTaskHandoffReview(ctx, p.HandoffID, p.TaskID, p.RequestedBy, p.ReviewRequestReport)
+		note := d.taskReviewNote(ctx, p.TaskID)
+		handoff, err := d.store.RequestTaskHandoffReview(ctx, p.HandoffID, p.TaskID, p.RequestedBy, appendFindings(p.ReviewRequestReport, note))
 		return marshal(handoff, err)
 
 	case "task.handoff.review.receive":
@@ -1865,7 +1866,11 @@ func (d *Daemon) dispatchMethodWithPeer(ctx context.Context, req rpc.Request, pe
 		if err := d.refuseGoalBranchProblems(ctx, p.GoalID); err != nil {
 			return nil, err
 		}
-		handoff, err := d.store.RequestGoalHandoffReview(ctx, p.HandoffID, p.GoalID, p.RequestedBy, p.ReviewRequestReport)
+		note, err := d.goalReviewGate(ctx, p.GoalID)
+		if err != nil {
+			return nil, err
+		}
+		handoff, err := d.store.RequestGoalHandoffReview(ctx, p.HandoffID, p.GoalID, p.RequestedBy, appendFindings(p.ReviewRequestReport, note))
 		return marshal(handoff, err)
 
 	case "goal.handoff.review.receive":
