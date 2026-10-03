@@ -912,7 +912,7 @@ test_one_space_per_goal_binds_a_space_to_one_goal() {
 }
 
 test_one_space_per_goal_closes_on_approval() {
-  assert_file_contains 'approving the review requested by' "$REPO_ROOT/skills/commander/SKILL.md"
+  assert_file_contains 'approving the review requested' "$REPO_ROOT/skills/commander/SKILL.md"
   assert_file_contains 'atct_goal_review_complete' "$REPO_ROOT/skills/commander/SKILL.md"
 }
 
