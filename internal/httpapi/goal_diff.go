@@ -217,11 +217,7 @@ func goalDiffMergeCommitByMessage(ctx context.Context, projectRootPath, goalID, 
 }
 
 func goalWorktreeBranch(goalID int64) string {
-	goal8 := strconv.FormatInt(goalID, 10)
-	if len(goal8) > 8 {
-		goal8 = goal8[:8]
-	}
-	return "wt/goal-" + goal8
+	return "wt/goal-" + strconv.FormatInt(goalID, 10)
 }
 
 func resolveGoalDiffBase(ctx context.Context, projectRootPath string) (string, string, error) {

@@ -55,58 +55,20 @@ run_setup() {
   printf '%s\n' "$status"
 }
 
-test_full_uuid_uses_goal_prefix() {
-  local repo="$TEMP_ROOT/full-uuid"
-  local goal_id='bacacb8b-4f34-47d4-9bd9-699a112eb032'
-  local goal8='bacacb8b'
-  local output="$TEMP_ROOT/full-uuid.out"
-  local status
-  local worktree="$repo/.worktrees/$goal8"
-
-  init_repo "$repo"
-  status="$(run_setup "$repo" "$goal_id" "$output")"
-
-  assert_eq 0 "$status" 'full UUID setup status'
-  [[ -d "$worktree" ]] || fail 'full UUID did not create the goal worktree'
-  assert_eq "wt/goal-$goal8" "$(git -C "$worktree" branch --show-current)" \
-    'full UUID branch'
-}
-
-test_short_goal_id_uses_goal_prefix() {
-  local repo="$TEMP_ROOT/short-goal"
-  local goal_id='deadbeef-4f34-47d4-9bd9-699a112eb032'
-  local goal8='deadbeef'
-  local output="$TEMP_ROOT/short-goal.out"
-  local status
-  local worktree="$repo/.worktrees/$goal8"
-
-  init_repo "$repo"
-  status="$(run_setup "$repo" "$goal_id" "$output")"
-  assert_eq 0 "$status" 'full UUID setup before short ID'
-
-  status="$(run_setup "$repo" "$goal8" "$output")"
-  assert_eq 0 "$status" 'short goal ID setup status'
-  [[ -d "$worktree" ]] || fail 'short goal ID did not reuse the goal worktree'
-  assert_eq "wt/goal-$goal8" "$(git -C "$worktree" branch --show-current)" \
-    'short goal ID branch'
-}
-
 test_reusing_goal_id_is_idempotent() {
   local repo="$TEMP_ROOT/reuse"
-  local goal_id='0123abcd-4f34-47d4-9bd9-699a112eb032'
-  local goal8='0123abcd'
   local output="$TEMP_ROOT/reuse.out"
   local status
-  local worktree="$repo/.worktrees/$goal8"
+  local worktree="$repo/.worktrees/12"
 
   init_repo "$repo"
-  status="$(run_setup "$repo" "$goal_id" "$output")"
+  status="$(run_setup "$repo" 12 "$output")"
   assert_eq 0 "$status" 'first repeated goal ID setup'
 
-  status="$(run_setup "$repo" "$goal_id" "$output")"
+  status="$(run_setup "$repo" 12 "$output")"
   assert_eq 0 "$status" 'second repeated goal ID setup'
   [[ -d "$worktree" ]] || fail 'repeated goal ID worktree disappeared'
-  assert_eq "wt/goal-$goal8" "$(git -C "$worktree" branch --show-current)" \
+  assert_eq 'wt/goal-12' "$(git -C "$worktree" branch --show-current)" \
     'repeated goal ID branch'
 }
 
@@ -114,15 +76,46 @@ test_numeric_goal_id_creates_goal_worktree() {
   local repo="$TEMP_ROOT/numeric"
   local output="$TEMP_ROOT/numeric.out"
   local status
-  local worktree="$repo/.worktrees/7"
+  local worktree="$repo/.worktrees/21"
 
   init_repo "$repo"
-  status="$(run_setup "$repo" 7 "$output")"
+  status="$(run_setup "$repo" 21 "$output")"
 
   assert_eq 0 "$status" 'numeric goal ID status'
   [[ -d "$worktree" ]] || fail 'numeric goal ID did not create the goal worktree'
-  assert_eq 'wt/goal-7' "$(git -C "$worktree" branch --show-current)" \
+  assert_eq 'wt/goal-21' "$(git -C "$worktree" branch --show-current)" \
     'numeric goal ID branch'
+}
+
+test_long_numeric_goal_id_is_not_truncated() {
+  local repo="$TEMP_ROOT/long-numeric"
+  local output="$TEMP_ROOT/long-numeric.out"
+  local status
+  local worktree="$repo/.worktrees/1234567890"
+
+  init_repo "$repo"
+  status="$(run_setup "$repo" 1234567890 "$output")"
+
+  assert_eq 0 "$status" 'long numeric goal ID status'
+  [[ -d "$worktree" ]] || fail 'long numeric goal ID did not create the goal worktree'
+  assert_eq 'wt/goal-1234567890' "$(git -C "$worktree" branch --show-current)" \
+    'long numeric goal ID branch'
+}
+
+test_legacy_goal_ids_are_rejected() {
+  local repo="$TEMP_ROOT/legacy"
+  local output="$TEMP_ROOT/legacy.out"
+  local status
+  local goal_id
+
+  init_repo "$repo"
+  for goal_id in bacacb8b-4f34-47d4-9bd9-699a112eb032 deadbeef; do
+    status="$(run_setup "$repo" "$goal_id" "$output")"
+    assert_eq 2 "$status" "legacy goal ID <$goal_id> status"
+    assert_file_contains 'usage:' "$output"
+    [[ ! -e "$repo/.worktrees/${goal_id:0:8}" && ! -e "$repo/.worktrees/$goal_id" ]] || \
+      fail "legacy goal ID <$goal_id> created a worktree"
+  done
 }
 
 test_malformed_goal_id_is_rejected() {
@@ -155,29 +148,29 @@ test_missing_frontend_prerequisites_are_rejected() {
 
   init_repo "$no_node_modules"
   rm -rf -- "$no_node_modules/web/node_modules"
-  status="$(run_setup "$no_node_modules" a1b2c3d4 "$output")"
+  status="$(run_setup "$no_node_modules" 21 "$output")"
   assert_eq 2 "$status" 'missing web/node_modules status'
-  [[ ! -e "$no_node_modules/.worktrees/a1b2c3d4" && ! -L "$no_node_modules/.worktrees/a1b2c3d4" ]] || \
+  [[ ! -e "$no_node_modules/.worktrees/21" && ! -L "$no_node_modules/.worktrees/21" ]] || \
     fail 'missing web/node_modules created a worktree'
 
   init_repo "$no_dist"
   rm -f -- "$no_dist/web/dist/index.html"
-  status="$(run_setup "$no_dist" b1c2d3e4 "$output")"
+  status="$(run_setup "$no_dist" 22 "$output")"
   assert_eq 2 "$status" 'missing web/dist/index.html status'
-  [[ ! -e "$no_dist/.worktrees/b1c2d3e4" && ! -L "$no_dist/.worktrees/b1c2d3e4" ]] || \
+  [[ ! -e "$no_dist/.worktrees/22" && ! -L "$no_dist/.worktrees/22" ]] || \
     fail 'missing web/dist/index.html created a worktree'
 }
 
 test_frontend_dependencies_are_linked_and_dist_is_copied() {
   local repo="$TEMP_ROOT/frontend"
-  local goal8='c0ffee12'
+  local goal_id=31
   local output="$TEMP_ROOT/frontend.out"
   local status
-  local worktree="$repo/.worktrees/$goal8"
+  local worktree="$repo/.worktrees/$goal_id"
   local repo_path
 
   init_repo "$repo"
-  status="$(run_setup "$repo" "$goal8" "$output")"
+  status="$(run_setup "$repo" "$goal_id" "$output")"
 
   assert_eq 0 "$status" 'frontend setup status'
   [[ -L "$worktree/web/node_modules" ]] || fail 'web/node_modules is not a symlink'
@@ -195,10 +188,10 @@ test_frontend_dependencies_are_linked_and_dist_is_copied() {
     'web/dist must not remain linked to the source'
 }
 
-test_full_uuid_uses_goal_prefix
-test_short_goal_id_uses_goal_prefix
 test_reusing_goal_id_is_idempotent
 test_numeric_goal_id_creates_goal_worktree
+test_long_numeric_goal_id_is_not_truncated
+test_legacy_goal_ids_are_rejected
 test_malformed_goal_id_is_rejected
 test_missing_frontend_prerequisites_are_rejected
 test_frontend_dependencies_are_linked_and_dist_is_copied

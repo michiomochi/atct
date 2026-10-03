@@ -11,14 +11,10 @@
 set -euo pipefail
 
 goal_id="${1:-}"
-# Goal ids are integers since 34bbf32. The 8-hex form is the pre-numbering id
-# and is still accepted so worktrees created under the old scheme keep working.
-# A full UUID (8 leading hex + dashed remainder) is accepted too.
-if [[ $# -ne 1 || ! "$goal_id" =~ ^([1-9][0-9]*|[0-9a-f]{8}[0-9a-f-]*)$ ]]; then
+if [[ $# -ne 1 || ! "$goal_id" =~ ^[1-9][0-9]*$ ]]; then
   echo "usage: script/worktree-setup.sh <goal-id>" >&2
   exit 2
 fi
-goal8="${goal_id:0:8}"
 
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 git_dir="$(git -C "$repo" rev-parse --absolute-git-dir)"
@@ -27,8 +23,8 @@ if [[ "$git_dir" != "$git_common_dir" ]]; then
   echo "作業ツリーの中では実行できない。主チェックアウトで実行しろ" >&2
   exit 2
 fi
-worktree="$repo/.worktrees/${goal8}"
-branch="wt/goal-${goal8}"
+worktree="$repo/.worktrees/${goal_id}"
+branch="wt/goal-${goal_id}"
 
 if [[ ! -d "$repo/web/node_modules" ]]; then
   echo "主チェックアウトに web/node_modules がありません。先に主で pnpm install を走らせろ" >&2
