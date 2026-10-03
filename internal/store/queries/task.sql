@@ -148,10 +148,6 @@ UPDATE agent_sessions
 SET pid = ?, started_at = ?, registered_at = ?
 WHERE id = ?;
 
--- name: DeleteExpiredAgentSessions :exec
-DELETE FROM agent_sessions
-WHERE registered_at < ?;
-
 -- name: UpdateAgentSessionProject :execresult
 UPDATE agent_sessions
 SET project_id = ?
@@ -162,8 +158,15 @@ INSERT INTO agent_sessions (id, project_id, registered_at)
 VALUES (?, ?, ?);
 
 -- name: DeleteExpiredAgentSessionsExcept :exec
+-- Handoffs keep their sessions as history, so a referenced session outlives
+-- retention; deleting it would fail the foreign key and the registration with it.
 DELETE FROM agent_sessions
-WHERE id <> ? AND registered_at < ?;
+WHERE agent_sessions.id <> ? AND agent_sessions.registered_at < ?
+  AND NOT EXISTS (SELECT 1 FROM task_handoffs h WHERE agent_sessions.id IN (h.requested_by, h.received_by, h.review_requested_by, h.review_received_by, h.review_rejection_received_by))
+  AND NOT EXISTS (SELECT 1 FROM goal_handoffs h WHERE agent_sessions.id IN (h.requested_by, h.received_by, h.review_requested_by, h.review_received_by, h.review_rejection_received_by))
+  AND NOT EXISTS (SELECT 1 FROM plan_handoffs h WHERE agent_sessions.id IN (h.review_requested_by, h.review_received_by, h.review_rejection_received_by))
+  AND NOT EXISTS (SELECT 1 FROM task_create_handoffs h WHERE agent_sessions.id IN (h.requested_by, h.received_by, h.completed_by))
+  AND NOT EXISTS (SELECT 1 FROM agent_sessions d WHERE d.discarded_by = agent_sessions.id);
 
 -- name: GetLatestAgentSessionID :one
 SELECT id
