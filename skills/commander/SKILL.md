@@ -215,7 +215,8 @@ that subcommander is started:
    > the goal.
    >
    > Then, in Claude Code only, attach `atct watch --monitor --token
-   > <monitor_token>` to a persistent background stream. Use the exact token
+   > <monitor_token>` as `atct:atct` `## Watch` says: a background Bash with
+   > `--once`, re-armed first whenever it wakes you. Use the exact token
    > already passed to `atct_session_identify`; do not pass a goal.
    > The server-derived assignment limits this Watch to the received goal.
    >

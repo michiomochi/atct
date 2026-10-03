@@ -9,6 +9,7 @@ description: Use when atct_role reports subcommander for a received goal handoff
 calling `atct_goal_handoff_receive` with the `goal_id` provided in the handoff
 and the exact `session_key` from SessionStart; optional `handoff_id` and
 `monitor_token` may be included. Then call `atct_role` with `expected_role` set to `subcommander`; on a mismatch, stop.
+Your own watch follows `atct:atct` `## Watch`.
 
 - Design only the received goal; write its spec and plan, then submit its plan
   handoff for commander review. Spec and plan go in full into the goal's `spec`

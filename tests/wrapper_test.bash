@@ -1060,7 +1060,7 @@ test_start_identifies_before_monitor() {
   local monitor_line
 
   identify_line="$(grep -n '^## First step: identify' "$start_skill" | head -1 | cut -d: -f1)"
-  monitor_line="$(grep -n '^## .*Claude Code.*Monitor' "$start_skill" | head -1 | cut -d: -f1)"
+  monitor_line="$(grep -n '^## .*Claude Code.*Watch' "$start_skill" | head -1 | cut -d: -f1)"
   [[ -n "$identify_line" && -n "$monitor_line" ]] ||
     fail 'start order requires identify and monitor headings'
   (( identify_line < monitor_line )) ||
@@ -1169,10 +1169,19 @@ test_start_does_not_duplicate_delegated_worker_preamble() {
   assert_file_not_contains 'First call `atct_session_identify` with a stable session key' "$start_skill"
 }
 
-test_start_keeps_monitor_persistence_requirement() {
+test_start_does_not_use_the_monitor_tool() {
   local start_skill="$REPO_ROOT/skills/start/SKILL.md"
 
-  assert_file_contains 'Always set `persistent: true`' "$start_skill"
+  assert_file_not_contains 'persistent: true' "$start_skill"
+  assert_file_contains '`## Watch`' "$start_skill"
+}
+
+test_atct_skill_defines_the_background_watch() {
+  local atct_skill="$REPO_ROOT/skills/atct/SKILL.md"
+
+  assert_file_contains '## Watch' "$atct_skill"
+  assert_file_contains '--once' "$atct_skill"
+  assert_file_contains 'run_in_background' "$atct_skill"
 }
 
 test_start_documents_liveness_authority_boundary() {
@@ -1779,7 +1788,8 @@ test_start_explains_mcp_reconnect_gap
 test_start_monitor_is_not_first_step
 test_start_does_not_branch_on_session_attachment
 test_start_does_not_duplicate_delegated_worker_preamble
-test_start_keeps_monitor_persistence_requirement
+test_start_does_not_use_the_monitor_tool
+test_atct_skill_defines_the_background_watch
 test_start_documents_liveness_authority_boundary
 test_start_uses_monitor_watch_for_claude_actions
 test_readme_documents_liveness_contract

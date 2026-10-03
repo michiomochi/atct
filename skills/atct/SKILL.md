@@ -68,6 +68,37 @@ Fix a declared `todo` or `doing` task with `atct_task_update_content`; `done`
 and `dropped` tasks are rejected. Re-declaring with the same `idempotency_key`
 does not update the task.
 
+## Watch
+
+Claude Code only. A watch delivers the answers and wakeups addressed to this
+session. Codex needs nothing here: the `atct codex monitor` supervisor owns it.
+
+1. **Start.** Call the Bash tool with `run_in_background: true` and
+   `atct watch --monitor --token <monitor_token> --once`, using the
+   `monitor_token` SessionStart printed (the one passed to
+   `atct_session_identify`). The server derives the scope from the assignment,
+   so pass no goal, project, or role. Remember the task id the call returns:
+   `TaskStop` needs it.
+2. **Do not use the Monitor tool.** It expires after 30 minutes, and each expiry
+   notice spends a turn of an agent that is only waiting. `--once` exits after
+   the first actionable batch, so the process ending is the single wake-up and
+   its stdout is the event.
+3. **When woken, re-arm first.** Run the same command again, then act on the
+   event. The daemon holds the session live for a 5-minute grace after a
+   `--once` watch ends on its own, so ATCT calls made mid-turn are not refused;
+   that grace is insurance, not permission to skip the re-arm. Past it, ATCT
+   calls are refused and `wakeup.monitor_lost` is raised.
+4. **Empty or abnormal exit.** If the watch ended with no event, or with an
+   error, re-arm it. Make no other response.
+5. **Keep one.** Hold exactly one watch per token; a second started later stops
+   the earlier one.
+6. **Stop** a watch with `TaskStop` (see `atct:stop`). A `TaskStop` or SIGTERM
+   ends it as stopped, without the grace.
+
+**Out of order:** Acting on the event before re-arming leaves the session with
+no watch; if the work outlasts the 5-minute grace, ATCT calls are refused and the
+parent is told the monitor is lost.
+
 ## Receive before you start
 
 Every implementation task is delegated. The worker must receive its task handoff before touching the work, passing the

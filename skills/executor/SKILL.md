@@ -9,7 +9,7 @@ description: Use when atct_role reports executor for a received task handoff and
 calling `atct_task_handoff_receive` with the `task_id` and `handoff_id` provided
 in the handoff, the exact `session_key` from SessionStart, and optional
 `monitor_token`. Then call `atct_role` with `expected_role` set to `executor`; on
-a mismatch, stop.
+a mismatch, stop. Your own watch follows `atct:atct` `## Watch`.
 
 - Implement and run only the verification named in the task handoff.
 - Use only `atct_session_identify`, `atct_task_handoff_receive`, `atct_role`,
