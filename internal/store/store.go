@@ -107,10 +107,6 @@ func validateMonitorHealth(health MonitorHealth) error {
 	return nil
 }
 
-// monitorWatermarkLayout is fixed-width so SQL string comparison orders by time.
-// ponytail: replace with main's timestampLayout when this branch rebases onto it.
-const monitorWatermarkLayout = "2006-01-02T15:04:05.000000000Z07:00"
-
 func (s *Store) UpsertMonitorHealth(ctx context.Context, health MonitorHealth) error {
 	if err := validateMonitorHealth(health); err != nil {
 		return err
@@ -166,7 +162,7 @@ func (s *Store) UpsertMonitorHealth(ctx context.Context, health MonitorHealth) e
 	}
 	if token := strings.TrimSpace(health.MonitorToken); token != "" && health.State == "healthy" &&
 		health.Role == "commander" && health.GoalID == nil && health.TaskID == nil {
-		watermark := health.LastSeenAt.UTC().Format(monitorWatermarkLayout)
+		watermark := formatTimestamp(health.LastSeenAt)
 		if err := queries.AdvanceMonitorBindingLastReconciledAt(ctx, sqlcgen.AdvanceMonitorBindingLastReconciledAtParams{
 			Token:            token,
 			LastReconciledAt: watermark,

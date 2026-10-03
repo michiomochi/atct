@@ -91,7 +91,7 @@
   forward-only migration; do not leave the worktree's migration at 0044,
   because main already owns `0044_fixed_width_timestamps.sql`. Before review,
   verify that `schema_migrations` contains no
-  `0044_monitor_binding_watermark.sql` record; if an old-name record exists,
+  `0045_monitor_binding_watermark.sql` record; if an old-name record exists,
   stop and escalate instead of silently renaming history. Add the migration
   with a non-null empty default for `monitor_bindings.last_reconciled_at`;
   update `schema.sql`, the monitor

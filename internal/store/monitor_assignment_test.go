@@ -255,8 +255,8 @@ func TestMonitorHealthAdvancesProjectCommanderWatermark(t *testing.T) {
 	if err := s.DB().QueryRowContext(ctx, `SELECT last_reconciled_at FROM monitor_bindings WHERE token = ?`, token).Scan(&got); err != nil {
 		t.Fatal(err)
 	}
-	if got != now.Format(monitorWatermarkLayout) {
-		t.Fatalf("last_reconciled_at = %q, want %q", got, now.Format(monitorWatermarkLayout))
+	if got != now.Format(timestampLayout) {
+		t.Fatalf("last_reconciled_at = %q, want %q", got, now.Format(timestampLayout))
 	}
 }
 
@@ -334,15 +334,15 @@ func TestMonitorHealthWatermarkOrdersByTimeAcrossFractionWidths(t *testing.T) {
 		return got
 	}
 	at51 := base.Add(510 * time.Millisecond)
-	if got := report(at51); got != at51.Format(monitorWatermarkLayout) {
-		t.Fatalf("watermark = %q, want %q", got, at51.Format(monitorWatermarkLayout))
+	if got := report(at51); got != at51.Format(timestampLayout) {
+		t.Fatalf("watermark = %q, want %q", got, at51.Format(timestampLayout))
 	}
 	// .5 is earlier than .51 but sorts after it as a trimmed RFC3339Nano string.
-	if got := report(base.Add(500 * time.Millisecond)); got != at51.Format(monitorWatermarkLayout) {
-		t.Fatalf("watermark moved backwards to %q, want %q", got, at51.Format(monitorWatermarkLayout))
+	if got := report(base.Add(500 * time.Millisecond)); got != at51.Format(timestampLayout) {
+		t.Fatalf("watermark moved backwards to %q, want %q", got, at51.Format(timestampLayout))
 	}
 	at60 := base.Add(600 * time.Millisecond)
-	if got := report(at60); got != at60.Format(monitorWatermarkLayout) {
-		t.Fatalf("watermark after .6 = %q, want advance to %q", got, at60.Format(monitorWatermarkLayout))
+	if got := report(at60); got != at60.Format(timestampLayout) {
+		t.Fatalf("watermark after .6 = %q, want advance to %q", got, at60.Format(timestampLayout))
 	}
 }
