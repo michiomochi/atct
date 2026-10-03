@@ -9,7 +9,7 @@ import (
 	"github.com/michiomochi/atct/internal/rpc"
 )
 
-func TestGoalGetReturnsOrderedShallowNextGoals(t *testing.T) {
+func TestGoalGetReturnsShallowNextGoalsByAscendingID(t *testing.T) {
 	fixture := newGoalListFixture(t)
 	defer fixture.store.Close()
 	ctx := context.Background()
@@ -18,8 +18,8 @@ func TestGoalGetReturnsOrderedShallowNextGoals(t *testing.T) {
 	second := fixture.active[3]
 	grandchild := fixture.proposed[0]
 	if _, err := fixture.store.DB().ExecContext(ctx, `
-INSERT INTO next_goals (goal_id, next_goal_id, sort_order, created_at)
-VALUES (?, ?, 0, '2026-09-20T00:00:00Z'), (?, ?, 1, '2026-09-20T00:00:00Z'), (?, ?, 0, '2026-09-20T00:00:00Z')`,
+INSERT INTO next_goals (goal_id, next_goal_id, created_at)
+VALUES (?, ?, '2026-09-20T00:00:00Z'), (?, ?, '2026-09-20T00:00:00Z'), (?, ?, '2026-09-20T00:00:00Z')`,
 		source.ID, second.ID, source.ID, first.ID, first.ID, grandchild.ID); err != nil {
 		t.Fatalf("insert next goals: %v", err)
 	}
@@ -43,7 +43,7 @@ VALUES (?, ?, 0, '2026-09-20T00:00:00Z'), (?, ?, 1, '2026-09-20T00:00:00Z'), (?,
 	if len(response.Goal.NextGoals) != 2 {
 		t.Fatalf("goal.get next_goals count = %d, want 2", len(response.Goal.NextGoals))
 	}
-	for index, wantID := range []int64{second.ID, first.ID} {
+	for index, wantID := range []int64{first.ID, second.ID} {
 		var summary map[string]json.RawMessage
 		if err := json.Unmarshal(response.Goal.NextGoals[index], &summary); err != nil {
 			t.Fatalf("decode next_goals[%d]: %v", index, err)

@@ -147,7 +147,7 @@ reaches the human without passing through the delegator's context.
 | the design and why | a spec committed with the goal's work, and `work_done` |
 | something found inside this goal | `surprises` and `needs_review` |
 | something found that is another goal | `atct_decision_ask`, addressed to the human |
-| what was left undone | `next_goal_ids`, the ordered ids of the goals to proceed with next |
+| what was left undone | `next_goal_ids`, the ids of the goals to proceed with next |
 | the goal is ready for commander review | `atct_goal_handoff_review_request`, the one message |
 
 A subcommander that stops working sends nothing at all, and the old habit caught
@@ -317,7 +317,7 @@ nothing" from "I did not look."
 | `how_to_verify` | What to look at to confirm it |
 | `surprises` | What turned out differently than expected |
 | `needs_review` | What you want them to look at closely |
-| `next_goal_ids` | Ordered ids of the existing goals that should proceed next; an empty array when there are none. Create the goal first (existing goal-creation flow), then pass its id. |
+| `next_goal_ids` | Ids of the existing goals that should proceed next; an empty array when there are none. Create the goal first (existing goal-creation flow), then pass its id. |
 
 A legacy `next_steps` input is rejected, not ignored.
 

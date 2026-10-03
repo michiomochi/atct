@@ -2025,7 +2025,7 @@ func TestHTTPGoalDetailIncludesCompletionReportFields(t *testing.T) {
 	}
 }
 
-func TestHTTPGoalDetailIncludesOrderedShallowNextGoals(t *testing.T) {
+func TestHTTPGoalDetailIncludesShallowNextGoalsByAscendingID(t *testing.T) {
 	f := newBareFixture(t)
 	first, err := f.store.CreateGoal(f.ctx, f.project.ID, "First successor", "human")
 	if err != nil {
@@ -2068,8 +2068,8 @@ func TestHTTPGoalDetailIncludesOrderedShallowNextGoals(t *testing.T) {
 		headline string
 		status   domain.GoalStatus
 	}{
-		{second.ID, "Second successor", domain.GoalActive},
 		{first.ID, "First successor", domain.GoalActive},
+		{second.ID, "Second successor", domain.GoalActive},
 	}
 	for i, raw := range payload.Goal.NextGoals {
 		var got struct {

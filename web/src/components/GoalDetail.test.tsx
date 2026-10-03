@@ -327,7 +327,7 @@ describe("GoalDetail", () => {
     expect(report.compareDocumentPosition(approve) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
   });
 
-  it("renders ordered successor links with target statuses", async () => {
+  it("renders successor links as returned by the API with target statuses", async () => {
     const response = goalResponse() as GoalResponseFixture & {
       goal: Goal & { next_goals: Array<{ id: string; headline: string; status: string }> };
     };

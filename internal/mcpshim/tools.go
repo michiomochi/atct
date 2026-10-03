@@ -245,7 +245,7 @@ type GoalReviewRequestIn struct {
 	HowToVerify string  `json:"how_to_verify" jsonschema:"how to verify the result; write なし when there is nothing to report"`
 	Surprises   string  `json:"surprises" jsonschema:"what differed from expectations; write なし when there is nothing to report"`
 	NeedsReview string  `json:"needs_review" jsonschema:"what still needs confirmation; write なし when there is nothing to report"`
-	NextGoalIDs []int64 `json:"next_goal_ids,omitempty" jsonschema:"optional ordered successor goal IDs"`
+	NextGoalIDs []int64 `json:"next_goal_ids,omitempty" jsonschema:"optional successor goal IDs"`
 }
 
 func (in *GoalCompleteIn) UnmarshalJSON(data []byte) error {
