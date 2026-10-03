@@ -154,25 +154,21 @@ func nullableEntryReply(value string) (sql.NullInt64, error) {
 	return sql.NullInt64{Int64: id, Valid: true}, nil
 }
 
-// canonicalInternalHandoffEntryKind adapts state-transition callers that have
-// not yet been cut over. Removed amendment/system entries have no canonical
-// representation and are intentionally ignored; their parent handoff update
-// remains the compatibility record until those callers are migrated.
-func canonicalInternalHandoffEntryKind(kind string) (canonical string, skip bool, err error) {
+// canonicalInternalHandoffEntryKind maps legacy internal kind names onto the
+// canonical entry kinds.
+func canonicalInternalHandoffEntryKind(kind string) (string, error) {
 	switch kind {
-	case HandoffEntryKindAmend, HandoffEntryKindSystem:
-		return "", true, nil
 	case "complete":
-		return HandoffEntryKindCompleted, false, nil
+		return HandoffEntryKindCompleted, nil
 	case "review_request":
-		return HandoffEntryKindReviewRequested, false, nil
+		return HandoffEntryKindReviewRequested, nil
 	case "review_response":
-		return HandoffEntryKindReviewReceived, false, nil
+		return HandoffEntryKindReviewReceived, nil
 	default:
 		if !validHandoffEntryKind(kind) {
-			return "", false, fmt.Errorf("%w: %q", ErrHandoffEntryKindInvalid, kind)
+			return "", fmt.Errorf("%w: %q", ErrHandoffEntryKindInvalid, kind)
 		}
-		return kind, false, nil
+		return kind, nil
 	}
 }
 
@@ -185,12 +181,9 @@ func appendHandoffEntryTx(
 	allowStateEntry bool,
 	now time.Time,
 ) (HandoffEntry, error) {
-	canonicalKind, skip, err := canonicalInternalHandoffEntryKind(kind)
+	canonicalKind, err := canonicalInternalHandoffEntryKind(kind)
 	if err != nil {
 		return HandoffEntry{}, err
-	}
-	if skip {
-		return HandoffEntry{}, nil
 	}
 	body, err = normalizeHandoffEntryBody(body)
 	if err != nil {

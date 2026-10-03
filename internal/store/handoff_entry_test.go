@@ -146,11 +146,11 @@ func TestGoalHandoffTransitionsAppendEntries(t *testing.T) {
 	if err := rows.Err(); err != nil {
 		t.Fatalf("iterate goal handoff entries: %v", err)
 	}
-	if len(got) != 3 {
-		t.Fatalf("goal handoff entries = %+v, want request/received/completed", got)
+	if len(got) != 5 {
+		t.Fatalf("goal handoff entries = %+v, want request/received/review_requested/review_received/completed", got)
 	}
-	wantKinds := []string{HandoffEntryKindRequest, HandoffEntryKindReceived, HandoffEntryKindCompleted}
-	wantBodies := []string{"please take this goal", "received", "goal completed"}
+	wantKinds := []string{HandoffEntryKindRequest, HandoffEntryKindReceived, HandoffEntryKindReviewRequested, HandoffEntryKindReviewReceived, HandoffEntryKindCompleted}
+	wantBodies := []string{"please take this goal", "received", "ready for review", "received", "goal completed"}
 	for i, item := range got {
 		if item.id != int64(i+1) || item.kind != wantKinds[i] || item.body != wantBodies[i] {
 			t.Fatalf("entry[%d] = %+v, want id=%d kind=%q body=%q", i, item, i+1, wantKinds[i], wantBodies[i])
@@ -871,5 +871,45 @@ func TestCompleteHandoffRejectsUnreceivedStateBeforeAppendingEntry(t *testing.T)
 	}
 	if entryCount != 0 {
 		t.Fatalf("rejected completion entry count = %d, want 0", entryCount)
+	}
+}
+
+func TestTaskHandoffRejectAndAmendAppendEntries(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	taskID := addTestTasks(t, s, 1)[0]
+	addLiveParentGoalClaim(t, s, taskID, "entry2-requester")
+	addTestAgentSession(t, s, "entry2-receiver")
+	reqID, recvID := testSessionID("entry2-requester"), testSessionID("entry2-receiver")
+
+	h, err := s.RequestTaskHandoff(ctx, "entry2-handoff", taskID, reqID, "go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	steps := []func() error{
+		func() error { _, err := s.ReceiveTaskHandoff(ctx, h.ID, taskID, recvID); return err },
+		func() error { _, err := s.RequestTaskHandoffReview(ctx, h.ID, taskID, recvID, "r1"); return err },
+		func() error { _, err := s.ReceiveTaskHandoffReview(ctx, h.ID, taskID, reqID); return err },
+		func() error { _, err := s.RejectTaskHandoffReview(ctx, h.ID, taskID, reqID, "no"); return err },
+		func() error { _, err := s.ReceiveTaskHandoffReviewRejection(ctx, h.ID, taskID, recvID); return err },
+		func() error { _, err := s.RequestTaskHandoffReview(ctx, h.ID, taskID, recvID, "r2"); return err },
+		func() error { _, err := s.ReceiveTaskHandoffReview(ctx, h.ID, taskID, reqID); return err },
+		func() error { _, err := s.CompleteTaskHandoffByReviewer(ctx, h.ID, taskID, reqID, "done"); return err },
+		func() error { _, err := s.AmendTaskHandoffReport(ctx, h.ID, taskID, "fixed"); return err },
+	}
+	wantKinds := []string{"received", "review_requested", "review_received", "review_rejected", "received", "review_requested", "review_received", "completed", "completed"}
+	wantBodies := []string{"received", "r1", "received", "no", "review rejection received", "r2", "received", "done", "fixed"}
+	for i, step := range steps {
+		if err := step(); err != nil {
+			t.Fatalf("step %d: %v", i, err)
+		}
+		page, err := s.ListTaskHandoffEntries(ctx, h.ID, 0, 100)
+		if err != nil {
+			t.Fatal(err)
+		}
+		last := page.Entries[len(page.Entries)-1]
+		if len(page.Entries) != i+2 || last.Kind != wantKinds[i] || last.Body != wantBodies[i] {
+			t.Fatalf("step %d: entries=%d last=%s/%q, want %d %s/%q", i, len(page.Entries), last.Kind, last.Body, i+2, wantKinds[i], wantBodies[i])
+		}
 	}
 }

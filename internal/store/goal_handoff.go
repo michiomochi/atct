@@ -574,6 +574,9 @@ func (s *Store) RequestGoalHandoffReview(ctx context.Context, handoffID string, 
 	} else if affected == 0 {
 		return GoalHandoff{}, ErrGoalHandoffReviewState
 	}
+	if _, err := appendHandoffEntryTx(ctx, sqlcgen.New(tx), "goal_handoff_entries", handoffID, HandoffEntryKindReviewRequested, reviewRequestReport, requestedBy, "", "", true, time.Now().UTC()); err != nil {
+		return GoalHandoff{}, err
+	}
 	projectID, err := sqlcgen.New(tx).GetGoalProjectID(ctx, goalID)
 	if err != nil {
 		return GoalHandoff{}, fmt.Errorf("find project for goal handoff review request: %w", err)
@@ -631,6 +634,9 @@ func (s *Store) ReceiveGoalHandoffReview(ctx context.Context, handoffID string, 
 		return GoalHandoff{}, fmt.Errorf("receive goal handoff review rows affected: %w", err)
 	} else if affected == 0 {
 		return GoalHandoff{}, ErrGoalHandoffReviewState
+	}
+	if _, err := appendHandoffEntryTx(ctx, sqlcgen.New(tx), "goal_handoff_entries", handoffID, HandoffEntryKindReviewReceived, "received", receivedBy, "", "", true, time.Now().UTC()); err != nil {
+		return GoalHandoff{}, err
 	}
 	projectID, err := sqlcgen.New(tx).GetGoalProjectID(ctx, goalID)
 	if err != nil {
@@ -718,6 +724,9 @@ func (s *Store) RecoverGoalHandoff(ctx context.Context, handoffID string, goalID
 	if affected, err := result.RowsAffected(); err != nil || affected != 1 {
 		return GoalHandoff{}, fmt.Errorf("recover stale goal handoff owner: %w", ErrGoalHandoffReviewState)
 	}
+	if _, err := appendHandoffEntryTx(ctx, sqlcgen.New(tx), "goal_handoff_entries", handoffID, HandoffEntryKindRequest, "recovered: "+reason, callerID, "", "", true, time.Now().UTC()); err != nil {
+		return GoalHandoff{}, err
+	}
 	if err := tx.Commit(); err != nil {
 		return GoalHandoff{}, fmt.Errorf("commit goal handoff recovery: %w", err)
 	}
@@ -768,6 +777,9 @@ func (s *Store) RejectGoalHandoffReview(ctx context.Context, handoffID string, g
 	} else if affected == 0 {
 		return GoalHandoff{}, ErrGoalHandoffReviewState
 	}
+	if _, err := appendHandoffEntryTx(ctx, sqlcgen.New(tx), "goal_handoff_entries", handoffID, HandoffEntryKindReviewRejected, rejectReport, reviewerID, "", "", true, time.Now().UTC()); err != nil {
+		return GoalHandoff{}, err
+	}
 	projectID, err := sqlcgen.New(tx).GetGoalProjectID(ctx, goalID)
 	if err != nil {
 		return GoalHandoff{}, fmt.Errorf("find project for goal handoff review rejection: %w", err)
@@ -797,12 +809,24 @@ func (s *Store) ReceiveGoalHandoffReviewRejection(ctx context.Context, handoffID
 	if handoff.ReviewRejectedAt == nil || handoff.CompletedReportAt != nil || handoff.ReceivedBy != receivedBy || receivedBy == 0 {
 		return GoalHandoff{}, ErrGoalHandoffReviewState
 	}
-	result, err := sqlcgen.New(s.db).ReceiveGoalHandoffReviewRejection(ctx, sqlcgen.ReceiveGoalHandoffReviewRejectionParams{ReviewRejectionReceivedBy: sql.NullInt64{Int64: receivedBy, Valid: true}, ReviewRejectionReceivedAt: sql.NullString{String: formatTimestamp(time.Now()), Valid: true}, ID: handoffID, GoalID: goalID, ReceivedBy: sql.NullInt64{Int64: receivedBy, Valid: true}})
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return GoalHandoff{}, fmt.Errorf("begin goal handoff review rejection receive tx: %w", err)
+	}
+	defer tx.Rollback()
+	now := time.Now().UTC()
+	result, err := sqlcgen.New(tx).ReceiveGoalHandoffReviewRejection(ctx, sqlcgen.ReceiveGoalHandoffReviewRejectionParams{ReviewRejectionReceivedBy: sql.NullInt64{Int64: receivedBy, Valid: true}, ReviewRejectionReceivedAt: sql.NullString{String: formatTimestamp(now), Valid: true}, ID: handoffID, GoalID: goalID, ReceivedBy: sql.NullInt64{Int64: receivedBy, Valid: true}})
 	if err != nil {
 		return GoalHandoff{}, fmt.Errorf("receive goal handoff review rejection: %w", err)
 	}
 	if affected, err := result.RowsAffected(); err != nil || affected == 0 {
 		return GoalHandoff{}, ErrGoalHandoffReviewState
+	}
+	if _, err := appendHandoffEntryTx(ctx, sqlcgen.New(tx), "goal_handoff_entries", handoffID, HandoffEntryKindReceived, "review rejection received", receivedBy, "", "", true, now); err != nil {
+		return GoalHandoff{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return GoalHandoff{}, fmt.Errorf("commit goal handoff review rejection receive: %w", err)
 	}
 	return s.GetGoalHandoff(ctx, handoffID)
 }
@@ -1083,7 +1107,7 @@ func (s *Store) AmendGoalHandoffReport(ctx context.Context, handoffID string, go
 	if !receivedBy.Valid || receivedBy.Int64 <= 0 {
 		return GoalHandoff{}, fmt.Errorf("%w: completed goal handoff has no received_by", ErrHandoffEntryParticipant)
 	}
-	if _, err := appendHandoffEntryTx(ctx, sqlcgen.New(tx), "goal_handoff_entries", handoffID, HandoffEntryKindAmend, completeReport, receivedBy.Int64, "", "", false, time.Now().UTC()); err != nil {
+	if _, err := appendHandoffEntryTx(ctx, sqlcgen.New(tx), "goal_handoff_entries", handoffID, HandoffEntryKindCompleted, completeReport, receivedBy.Int64, "", "", true, time.Now().UTC()); err != nil {
 		return GoalHandoff{}, fmt.Errorf("append goal handoff amend entry: %w", err)
 	}
 	if err := tx.Commit(); err != nil {

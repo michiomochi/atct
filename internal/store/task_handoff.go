@@ -583,6 +583,9 @@ func (s *Store) RequestTaskHandoffReview(ctx context.Context, handoffID string, 
 	} else if affected == 0 {
 		return TaskHandoff{}, fmt.Errorf("%w: %d", ErrTaskNotFound, taskID)
 	}
+	if _, err := appendHandoffEntryTx(ctx, q, "task_handoff_entries", handoffID, HandoffEntryKindReviewRequested, reviewRequestReport, requestedBy, "", "", true, time.Now().UTC()); err != nil {
+		return TaskHandoff{}, err
+	}
 	projectID, goalID, err := taskWorkflowEventScope(ctx, q, taskID)
 	if err != nil {
 		return TaskHandoff{}, err
@@ -640,6 +643,9 @@ func (s *Store) ReceiveTaskHandoffReview(ctx context.Context, handoffID string, 
 		return TaskHandoff{}, fmt.Errorf("receive task handoff review rows affected: %w", err)
 	} else if affected == 0 {
 		return TaskHandoff{}, ErrTaskHandoffReviewState
+	}
+	if _, err := appendHandoffEntryTx(ctx, q, "task_handoff_entries", handoffID, HandoffEntryKindReviewReceived, "received", receivedBy, "", "", true, time.Now().UTC()); err != nil {
+		return TaskHandoff{}, err
 	}
 	projectID, goalID, err := taskWorkflowEventScope(ctx, q, taskID)
 	if err != nil {
@@ -734,6 +740,9 @@ func (s *Store) RecoverTaskHandoff(ctx context.Context, handoffID string, taskID
 	} else if affected != 1 {
 		return TaskHandoff{}, ErrTaskHandoffRecoveryState
 	}
+	if _, err := appendHandoffEntryTx(ctx, q, "task_handoff_entries", handoffID, HandoffEntryKindRequest, "recovered: "+reason, callerID, "", "", true, time.Now().UTC()); err != nil {
+		return TaskHandoff{}, err
+	}
 	if err := tx.Commit(); err != nil {
 		return TaskHandoff{}, fmt.Errorf("commit task handoff recovery: %w", err)
 	}
@@ -798,6 +807,9 @@ func (s *Store) RejectTaskHandoffReview(ctx context.Context, handoffID string, t
 	} else if affected == 0 {
 		return TaskHandoff{}, fmt.Errorf("%w: %d", ErrTaskNotFound, taskID)
 	}
+	if _, err := appendHandoffEntryTx(ctx, q, "task_handoff_entries", handoffID, HandoffEntryKindReviewRejected, rejectReport, reviewerID, "", "", true, time.Now().UTC()); err != nil {
+		return TaskHandoff{}, err
+	}
 	projectID, goalID, err := taskWorkflowEventScope(ctx, q, taskID)
 	if err != nil {
 		return TaskHandoff{}, err
@@ -828,12 +840,25 @@ func (s *Store) ReceiveTaskHandoffReviewRejection(ctx context.Context, handoffID
 	if handoff.ReviewRejectedAt == nil || handoff.CompletedReportAt != nil || handoff.RecoveredAt != nil || handoff.ReceivedBy != receivedBy || receivedBy == 0 {
 		return TaskHandoff{}, ErrTaskHandoffReviewState
 	}
-	result, err := sqlcgen.New(s.db).ReceiveTaskHandoffReviewRejection(ctx, sqlcgen.ReceiveTaskHandoffReviewRejectionParams{ReviewRejectionReceivedBy: sql.NullInt64{Int64: receivedBy, Valid: true}, ReviewRejectionReceivedAt: sql.NullString{String: formatTimestamp(time.Now()), Valid: true}, ID: handoffID, TaskID: taskID, ReceivedBy: sql.NullInt64{Int64: receivedBy, Valid: true}})
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return TaskHandoff{}, fmt.Errorf("begin task handoff review rejection receive tx: %w", err)
+	}
+	defer tx.Rollback()
+	q := sqlcgen.New(tx)
+	now := time.Now().UTC()
+	result, err := q.ReceiveTaskHandoffReviewRejection(ctx, sqlcgen.ReceiveTaskHandoffReviewRejectionParams{ReviewRejectionReceivedBy: sql.NullInt64{Int64: receivedBy, Valid: true}, ReviewRejectionReceivedAt: sql.NullString{String: formatTimestamp(now), Valid: true}, ID: handoffID, TaskID: taskID, ReceivedBy: sql.NullInt64{Int64: receivedBy, Valid: true}})
 	if err != nil {
 		return TaskHandoff{}, fmt.Errorf("receive task handoff review rejection: %w", err)
 	}
 	if affected, err := result.RowsAffected(); err != nil || affected == 0 {
 		return TaskHandoff{}, ErrTaskHandoffReviewState
+	}
+	if _, err := appendHandoffEntryTx(ctx, q, "task_handoff_entries", handoffID, HandoffEntryKindReceived, "review rejection received", receivedBy, "", "", true, now); err != nil {
+		return TaskHandoff{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return TaskHandoff{}, fmt.Errorf("commit task handoff review rejection receive: %w", err)
 	}
 	return s.GetTaskHandoff(ctx, handoffID)
 }
@@ -1136,7 +1161,7 @@ func (s *Store) AmendTaskHandoffReport(ctx context.Context, handoffID string, ta
 	if !receivedBy.Valid || receivedBy.Int64 <= 0 {
 		return TaskHandoff{}, fmt.Errorf("%w: completed task handoff has no received_by", ErrHandoffEntryParticipant)
 	}
-	if _, err := appendHandoffEntryTx(ctx, sqlcgen.New(tx), "task_handoff_entries", handoffID, HandoffEntryKindAmend, completeReport, receivedBy.Int64, "", "", false, time.Now().UTC()); err != nil {
+	if _, err := appendHandoffEntryTx(ctx, sqlcgen.New(tx), "task_handoff_entries", handoffID, HandoffEntryKindCompleted, completeReport, receivedBy.Int64, "", "", true, time.Now().UTC()); err != nil {
 		return TaskHandoff{}, fmt.Errorf("append task handoff amend entry: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
