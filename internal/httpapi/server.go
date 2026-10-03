@@ -370,6 +370,22 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.handleGoalDiff(w, r, parts[2])
 		return
 	}
+	if len(parts) == 4 && parts[0] == "api" && (parts[1] == "goals" || parts[1] == "tasks") && parts[3] == "review-exchanges" {
+		if parts[2] == "" {
+			writeError(w, http.StatusBadRequest, parts[1][:len(parts[1])-1]+" id is missing")
+			return
+		}
+		if r.Method != http.MethodGet {
+			writeError(w, http.StatusBadRequest, "method is not allowed for this endpoint")
+			return
+		}
+		if parts[1] == "goals" {
+			s.handleReviewExchanges(w, r, parts[2], "")
+		} else {
+			s.handleReviewExchanges(w, r, "", parts[2])
+		}
+		return
+	}
 	if len(parts) == 3 && parts[0] == "api" && parts[1] == "tasks" {
 		if parts[2] == "" {
 			writeError(w, http.StatusBadRequest, "task id is missing")

@@ -6,6 +6,7 @@ import {
   approveDecision,
   fetchGoal,
   fetchGoalDiff,
+  fetchGoalReviewExchanges,
   fetchInbox,
   fetchTaskCommitDiff,
   rejectDecision,
@@ -29,6 +30,7 @@ const apiMock = vi.hoisted(() => ({
   fetchGoal: vi.fn(),
   fetchGoalDiff: vi.fn(() => Promise.resolve({ available: false, reason: "no_branch" })),
   fetchGoalDiffPatch: vi.fn(),
+  fetchGoalReviewExchanges: vi.fn(() => Promise.resolve({ exchanges: [], gaps: [] })),
   fetchInbox: vi.fn(),
   fetchTaskCommitDiff: vi.fn(),
   rejectDecision: vi.fn(),
@@ -200,6 +202,37 @@ function emptyInbox(): InboxResponse {
 }
 
 describe("GoalDetail", () => {
+  it("shows review exchanges fetched for the resolved goal, in time order", async () => {
+    vi.mocked(fetchGoal).mockResolvedValue(goalResponse());
+    vi.mocked(fetchGoalReviewExchanges).mockResolvedValue({
+      exchanges: [
+        { scope: "goal", handoff_id: "h2", rejection: { source: "human", at: "2026-10-01T00:00:09Z", decision_id: 2, reason: "second" }, response: null },
+        { scope: "goal", handoff_id: "h1", rejection: { source: "handoff", at: "2026-10-01T00:00:01Z", actor_session_id: 3, reason: "first" },
+          response: { at: "2026-10-01T00:00:02Z", author_session_id: 4, handoff_id: "h3", report: "answer" } },
+      ],
+      gaps: [],
+    });
+    render(<GoalDetail id="goal-1" />);
+
+    const section = await screen.findByTestId("review-exchanges");
+    await screen.findByText("first");
+    expect(fetchGoalReviewExchanges).toHaveBeenCalledWith("goal-1");
+    const cards = [...section.querySelectorAll("article")].map((card) => card.textContent ?? "");
+    expect(cards).toHaveLength(2);
+    expect(cards[0]).toContain("first");
+    expect(cards[0]).toContain("answer");
+    expect(cards[1]).toContain("second");
+  });
+
+  it("keeps the page when review exchanges fail to load", async () => {
+    vi.mocked(fetchGoal).mockResolvedValue(goalResponse());
+    vi.mocked(fetchGoalReviewExchanges).mockRejectedValueOnce(new Error("exchange failure"));
+    render(<GoalDetail id="goal-1" />);
+
+    expect((await within(await screen.findByTestId("review-exchanges")).findByRole("alert")).textContent).toContain("exchange failure");
+    expect(screen.getByRole("heading", { name: "Fixture goal" })).not.toBeNull();
+  });
+
   it("renders multi-line read-only spec and plan", async () => {
     const spec = "# Canonical spec\n\nSpec line one.\nSpec line two.";
     const plan = "# Canonical plan\n\nPlan line one.\nPlan line two.";
