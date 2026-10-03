@@ -78,8 +78,10 @@ table. The human decided on 2026-10-03 (decision 855) that the old prose need
 not be preserved. Existing prose is therefore discarded and never converted
 into `next_goals` links.
 
-One migration, `0046_next_goals.sql`, creates `next_goals` and drops the column
-(0045 is Goal 282's `0045_retire_legacy_completion.sql` on main). It advances
+One migration, `0047_next_goals.sql`, creates `next_goals` and drops the column
+(main already has `0045_retire_legacy_completion.sql` from Goal 282 and
+`0046_monitor_binding_watermark.sql` from Goal 264; whichever goal lands later
+renumbers its migration at merge time). It advances
 the logical schema version by one. None of this goal's migrations has been
 applied to any shared database, so the file is edited in place rather than
 adding a second migration. `schema.sql`, schema validation, SQLC output, and
