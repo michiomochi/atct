@@ -459,12 +459,15 @@ type UnappliedDecisionNotice struct {
 }
 
 type RawWithUnappliedDecisions struct {
-	Data               any                       `json:"data"`
-	NextStep           []NextStepOption          `json:"next_step,omitempty"`
-	Role               string                    `json:"role,omitempty"`
-	ClaimEvidence      json.RawMessage           `json:"claim_evidence,omitempty"`
-	UnappliedDecisions []UnappliedDecisionNotice `json:"unapplied_decisions,omitempty"`
-	ClaimableTasks     json.RawMessage           `json:"claimable_tasks,omitempty"`
+	Data          any              `json:"data"`
+	NextStep      []NextStepOption `json:"next_step,omitempty"`
+	Role          string           `json:"role,omitempty"`
+	ClaimEvidence json.RawMessage  `json:"claim_evidence,omitempty"`
+	// A pointer so that [] (the list became empty) is printed while nil
+	// (unchanged since the last response) is omitted.
+	UnappliedDecisions *[]UnappliedDecisionNotice `json:"unapplied_decisions,omitempty"`
+	UnappliedCount     int                        `json:"unapplied_count,omitempty"`
+	ClaimableTasks     json.RawMessage            `json:"claimable_tasks,omitempty"`
 }
 
 func rawOutputSchema() map[string]any {
@@ -550,16 +553,20 @@ func callWithUnappliedDecisions(ctx context.Context, c *Client, method string, p
 		ClaimableTasks     json.RawMessage           `json:"claimable_tasks"`
 	}
 	if err := json.Unmarshal(out, &envelope); err == nil && envelope.Data != nil {
+		unapplied, count := c.reconcileUnapplied(method, params, envelope.UnappliedDecisions)
 		return nil, RawWithUnappliedDecisions{
-			Data:               envelope.Data,
+			Data:               shapeData(method, envelope.Data),
 			NextStep:           envelope.NextStep,
 			Role:               envelope.Role,
 			ClaimEvidence:      envelope.ClaimEvidence,
-			UnappliedDecisions: envelope.UnappliedDecisions,
+			UnappliedDecisions: unapplied,
+			UnappliedCount:     count,
 			ClaimableTasks:     envelope.ClaimableTasks,
 		}, nil
 	}
-	return nil, RawWithUnappliedDecisions{Data: out}, nil
+	// The daemon returns some methods as a bare object with no data envelope
+	// and no unapplied_decisions, so only the shaping applies.
+	return nil, RawWithUnappliedDecisions{Data: shapeData(method, out)}, nil
 }
 
 func sessionRole(ctx context.Context, c *Client, agentSessionID int64) (roleResponse, error) {
