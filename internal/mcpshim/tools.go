@@ -145,6 +145,11 @@ type HandoffEntryHistoryIn struct {
 	Limit     int    `json:"limit,omitempty"`
 }
 
+type ReviewExchangesIn struct {
+	GoalID mcpID `json:"goal_id"`
+	TaskID mcpID `json:"task_id,omitempty" jsonschema:"limit to this task; omit for the whole goal"`
+}
+
 type GoalHandoffRequestIn struct {
 	HandoffID     string `json:"handoff_id"`
 	GoalID        mcpID  `json:"goal_id"`
@@ -977,6 +982,18 @@ func Register(server *mcp.Server, c *Client, agentSessionID int64) {
 			params["limit"] = in.Limit
 		}
 		return callWithUnappliedDecisions(ctx, c, "handoff.entry.history", params)
+	})
+
+	addMCPTool[ReviewExchangesIn, RawWithUnappliedDecisions](server, &mcp.Tool{
+		Name:         "atct_review_exchanges",
+		Description:  "Read pairs of a rejection and its response (the next review-request report) in time order. Covers commander rejections of goal, plan and task reviews, and human rejections and withdrawals. Handoffs whose earlier history was not recorded appear in gaps.",
+		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in ReviewExchangesIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
+		params := map[string]any{"goal_id": in.GoalID, "agent_session_id": sessionID.Get()}
+		if in.TaskID != "" {
+			params["task_id"] = in.TaskID
+		}
+		return callWithUnappliedDecisions(ctx, c, "review.exchange.list", params)
 	})
 
 	addMCPTool[GoalHandoffRequestIn, RawWithUnappliedDecisions](server, &mcp.Tool{

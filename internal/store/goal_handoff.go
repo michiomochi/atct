@@ -1252,6 +1252,9 @@ func (s *Store) RequestPlanHandoffReview(ctx context.Context, handoffID string, 
 	} else if affected == 0 {
 		return PlanHandoff{}, ErrPlanHandoffReviewState
 	}
+	if err := appendPlanHandoffEntryTx(ctx, sqlcgen.New(tx), handoffID, HandoffEntryKindReviewRequested, reviewRequestReport, requestedBy, now); err != nil {
+		return PlanHandoff{}, err
+	}
 	projectID, err := sqlcgen.New(tx).GetGoalProjectID(ctx, goalID)
 	if err != nil {
 		return PlanHandoff{}, fmt.Errorf("find project for plan handoff review request: %w", err)
@@ -1443,6 +1446,9 @@ func (s *Store) RejectPlanHandoffReview(ctx context.Context, handoffID string, g
 		return PlanHandoff{}, fmt.Errorf("reject plan handoff review rows affected: %w", err)
 	} else if affected == 0 {
 		return PlanHandoff{}, ErrPlanHandoffReviewState
+	}
+	if err := appendPlanHandoffEntryTx(ctx, sqlcgen.New(tx), handoffID, HandoffEntryKindReviewRejected, rejectReport, reviewerID, now); err != nil {
+		return PlanHandoff{}, err
 	}
 	projectID, err := sqlcgen.New(tx).GetGoalProjectID(ctx, goalID)
 	if err != nil {

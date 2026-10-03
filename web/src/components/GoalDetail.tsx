@@ -7,6 +7,7 @@ import {
   approveDecision,
   fetchGoal,
   fetchGoalHandoffHistory,
+  fetchGoalReviewExchanges,
   rejectDecision,
   subscribeToDecisionEvents,
   withdrawGoal,
@@ -21,6 +22,7 @@ import { GoalDiff } from "./GoalDiff";
 import { TaskCommitList } from "./TaskCommitList";
 import { TaskTable } from "./TaskTable";
 import { HandoffTimeline } from "./HandoffTimeline";
+import { ReviewExchanges } from "./ReviewExchanges";
 import { UnattachedDecisionList } from "./UnattachedDecisionList";
 
 interface Props {
@@ -319,6 +321,8 @@ export function GoalDetail({ id }: Props) {
     [resolvedID],
   );
 
+  const fetchReviewExchanges = useCallback(() => fetchGoalReviewExchanges(resolvedID), [resolvedID]);
+
   useEffect(() => {
     void load();
     return subscribeToDecisionEvents(handleDecisionEvent);
@@ -375,6 +379,8 @@ export function GoalDetail({ id }: Props) {
           </Button>
         </div>
       )}
+
+      {data && <ReviewExchanges fetchHistory={fetchReviewExchanges} />}
 
       {data && <HandoffTimeline handoffs={data.goal.handoffs ?? []} fetchHistory={fetchHandoffHistory} />}
 

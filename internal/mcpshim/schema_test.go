@@ -95,6 +95,7 @@ func TestRegisterPublishesRoleAndLifecycleToolsWithFlexibleOutputSchema(t *testi
 		"atct_handoff_entry_history":              true,
 		"atct_goal_handoff_entry_append":          true,
 		"atct_goal_handoff_entry_history":         true,
+		"atct_review_exchanges":                   true,
 	}
 	if len(got.Tools) != len(wantNames) {
 		t.Fatalf("tool count = %d, want %d", len(got.Tools), len(wantNames))
@@ -330,6 +331,7 @@ func TestRegisterPublishesRoleAndLifecycleToolsWithFlexibleOutputSchema(t *testi
 		{name: "atct_goal_handoff_entry_history", args: map[string]any{
 			"handoff_id": "goal-handoff-1", "goal_id": "goal-1", "after_id": 1, "limit": 20,
 		}},
+		{name: "atct_review_exchanges", args: map[string]any{"goal_id": "goal-1", "task_id": "task-1"}},
 		{name: "atct_decision_ask", args: map[string]any{
 			"goal_id": "goal-1", "question": "question", "options": []any{}, "wait_ms": 0,
 		}},
@@ -843,6 +845,10 @@ func TestHandoffToolsInjectAgentSessionID(t *testing.T) {
 		{
 			name: "atct_goal_handoff_entry_history", method: "goal.handoff.entry.history", ownedBy: "agent_session_id",
 			args: map[string]any{"handoff_id": "goal-handoff-1", "goal_id": "goal-1", "after_id": 1, "limit": 20},
+		},
+		{
+			name: "atct_review_exchanges", method: "review.exchange.list", ownedBy: "agent_session_id",
+			args: map[string]any{"goal_id": "goal-1", "task_id": "task-1"},
 		},
 	} {
 		result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{

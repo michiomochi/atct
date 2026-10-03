@@ -203,6 +203,7 @@ func TestHTTPHandlerMCPServesTheShimTools(t *testing.T) {
 		"atct_handoff_entry_history":              false,
 		"atct_goal_handoff_entry_append":          false,
 		"atct_goal_handoff_entry_history":         false,
+		"atct_review_exchanges":                   false,
 	}
 	for _, rawTool := range tools {
 		tool, ok := rawTool.(map[string]any)

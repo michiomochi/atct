@@ -17,6 +17,14 @@ interface Props {
   emptyText: string;
 }
 
+// Literal keys so the unused-key check in i18n.test.ts can see them.
+const priorityReasonKeys: Record<string, "decision.priority.goal_review" | "decision.priority.task_in_progress" | "decision.priority.queued" | "decision.priority.auto_settles"> = {
+  goal_review: "decision.priority.goal_review",
+  task_in_progress: "decision.priority.task_in_progress",
+  queued: "decision.priority.queued",
+  auto_settles: "decision.priority.auto_settles",
+};
+
 const columnScope = { scope: "col" } as const;
 
 export function DecisionTable({ decisions, emptyText }: Props) {
@@ -48,6 +56,7 @@ export function DecisionTable({ decisions, emptyText }: Props) {
             const autoSettlement = autoSettlementSeconds === undefined
               ? undefined
               : t("decision.autoSettlesIn", { duration: formatDuration(locale, autoSettlementSeconds) });
+            const priorityKey = unanswered && decision.priority_reason ? priorityReasonKeys[decision.priority_reason] : undefined;
             const questionHref = decision.task_id
               ? `/tasks/${encodePathSegment(decision.task_id)}`
               : `/goals/${encodePathSegment(decision.goal_id)}`;
@@ -85,6 +94,7 @@ export function DecisionTable({ decisions, emptyText }: Props) {
                         {decision.question}
                       </a>
                     )}
+                    {priorityKey && <p className="mt-1 text-base text-ink-700">{t(priorityKey)}</p>}
                     <p className="mt-1 font-mono text-base text-ink-500">{decisionKindLabel(locale, decision.kind)}</p>
                     {recommendation && <p className="mt-1 text-base font-medium text-accent-700">{recommendation}: {decision.default_option}</p>}
                     {autoSettlement && <p className="mt-1 text-base text-ink-500">{autoSettlement}</p>}

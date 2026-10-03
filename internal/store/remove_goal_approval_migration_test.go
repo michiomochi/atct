@@ -8,7 +8,7 @@ import (
 	"github.com/michiomochi/atct/internal/domain"
 )
 
-// 0050 runs against a schema that already holds goals in every old status; the
+// 0051 runs against a schema that already holds goals in every old status; the
 // fixture is built on the current schema and the migration's SQL is applied to it.
 func TestRemoveGoalApprovalMigrationDropsProposedGoalsAndWithdrawsOpenApprovals(t *testing.T) {
 	ctx := context.Background()
@@ -62,7 +62,7 @@ func TestRemoveGoalApprovalMigrationDropsProposedGoalsAndWithdrawsOpenApprovals(
 	}
 	var found bool
 	for _, m := range migrations {
-		if strings.HasPrefix(m.filename, "0050_") {
+		if strings.HasPrefix(m.filename, "0051_") {
 			found = true
 			if _, err := s.DB().ExecContext(ctx, m.sql); err != nil {
 				t.Fatalf("execute %s: %v", m.filename, err)
@@ -70,7 +70,7 @@ func TestRemoveGoalApprovalMigrationDropsProposedGoalsAndWithdrawsOpenApprovals(
 		}
 	}
 	if !found {
-		t.Fatal("migration 0050 is not embedded")
+		t.Fatal("migration 0051 is not embedded")
 	}
 
 	if got := statusOf("goals", proposed); got != string(domain.GoalDropped) {
