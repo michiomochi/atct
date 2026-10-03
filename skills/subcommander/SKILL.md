@@ -73,20 +73,20 @@ that worker is started:
    > `session_key` (plus the optional `monitor_token`, when emitted) from SessionStart. Do this before
    > starting work. Do not substitute your agent name or token.
    >
-   > In Claude Code only, then attach `atct watch --monitor --token <monitor_token>`
-   > with the Monitor tool (persistent), using the exact token you passed to
-   > `atct_task_handoff_receive`, following the watch procedure in the atct skill.
+   > In Claude Code only, after receipt and before `atct_role`, set up your watch by
+   > the procedure in the `## Watch` section of the atct skill, using the exact
+   > token you passed to `atct_task_handoff_receive`.
    > A Codex executor was started with `atct codex monitor` and does nothing here.
    >
-   > If an atct tool refuses with `no live Monitor`, attach the Monitor and retry.
-   > If you cannot attach it, do no work: make your last output exactly
+   > If an atct tool refuses with `no live Monitor`, set up your watch and retry.
+   > If you cannot set it up, do no work: make your last output exactly
    > `blocked: no live Monitor` and stop.
    >
    > Then invoke the `atct_role` MCP tool with `expected_role` set to
    > `executor`. If it reports `matches: false`, do not start work; return the
    > task.
    >
-   > A rejection reaches you as a wakeup on your Monitor. Receive it with
+   > A rejection reaches you as a wakeup on your watch. Receive it with
    > `atct_task_handoff_review_reject_receive` (`handoff_id` and `task_id`), correct
    > on the same handoff, and request review again with
    > `atct_task_handoff_review_request`.
@@ -126,7 +126,7 @@ that worker is started:
    executor closed a subcommander's goal handoff without knowing it was forbidden.
 
    A rejection is recorded with `atct_task_handoff_review_reject` and reaches the
-   worker through its Monitor wakeup, not by pasting text with `herdr agent prompt`.
+   worker through its watch wakeup, not by pasting text with `herdr agent prompt`.
    A request must never tell a worker to proceed past a `no live Monitor` refusal.
    After a `herdr agent prompt` that wakes a worker, confirm with `herdr agent get`
    that agent_status is working; otherwise `herdr agent send-keys <executor> enter`.
