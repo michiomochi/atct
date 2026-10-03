@@ -467,6 +467,14 @@ that subcommander is started:
    after human approval and merge, only the commander may call `atct_goal_review_complete` with the `goal_id` provided in this request.
    `atct_goal_handoff_complete` is reserved for legacy/out-of-order recovery,
    not the normal goal-review path.
+   `atct_goal_handoff_review_request` is terminal: call it once, and only after
+   every declared task is accepted and committed and the goal is ready for
+   commander review. Work that is unfinished or blocked stays open and goes to
+   `atct_decision_ask` with concrete options and the consequence of each; it is
+   never reported through a goal-handoff review request.
+   `atct_goal_review_request` applies only to an active goal after the commander
+   has received the goal-handoff review; a proposed goal must be activated by
+   initial approval before it can be filed.
 
 5. Keep one subcommander per goal. A subcommander may wake executors for its
    goal, but must not inspect or manage other goals, create another
