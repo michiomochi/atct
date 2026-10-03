@@ -470,14 +470,19 @@ func TestNamedGoalAndPlanHandoffReviewRoutesReturnRoleEvidence(t *testing.T) {
 	}
 
 	var goalCompleted store.GoalHandoff
-	if err := client.Call(ctx, "goal.handoff.complete", map[string]any{
+	err := client.Call(ctx, "goal.handoff.complete", map[string]any{
 		"handoff_id": goalHandoffID, "goal_id": fixture.claimedGoalID, "agent_session_id": fixture.requesterID,
 		"complete_report": "named goal completion report",
-	}, &goalCompleted); err != nil {
-		t.Fatalf("goal.handoff.complete: %v", err)
+	}, &goalCompleted)
+	if err == nil || !strings.Contains(err.Error(), store.ErrGoalHandoffReviewState.Error()) {
+		t.Fatalf("goal.handoff.complete error = %v, want %v", err, store.ErrGoalHandoffReviewState)
 	}
-	if goalCompleted.CompletedReportAt == nil || goalCompleted.CompleteReport != "named goal completion report" {
-		t.Fatalf("completed goal handoff = %#v, want reviewer completion", goalCompleted)
+	persisted, err := fixture.store.GetGoalHandoff(ctx, goalHandoffID)
+	if err != nil {
+		t.Fatalf("GetGoalHandoff: %v", err)
+	}
+	if persisted.CompletedReportAt != nil || persisted.CompleteReport != "" {
+		t.Fatalf("goal handoff after refused completion = %#v, want open", persisted)
 	}
 }
 

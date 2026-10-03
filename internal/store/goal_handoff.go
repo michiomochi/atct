@@ -683,6 +683,10 @@ func (s *Store) CompleteGoalHandoffByReviewer(ctx context.Context, handoffID str
 	if handoff.ReviewReceivedBy != reviewerID {
 		return GoalHandoff{}, fmt.Errorf("%w: goal handoff reviewer %d is not recorded reviewer %d", ErrGoalHandoffReviewReviewerMismatch, reviewerID, handoff.ReviewReceivedBy)
 	}
+	// A delegated handoff closes only through approved FinalizeGoalReview.
+	if handoff.RequestedBy != 0 && handoff.ReceivedBy != 0 && handoff.RequestedBy != handoff.ReceivedBy {
+		return GoalHandoff{}, ErrGoalHandoffReviewState
+	}
 
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	tx, err := s.db.BeginTx(ctx, nil)
