@@ -15,6 +15,7 @@ export interface Goal {
   id: string;
   project_id: string;
   project_name?: string;
+  project_archived?: boolean;
   content: string;
   spec: string;
   plan: string;
@@ -50,6 +51,7 @@ export interface Project {
   name: string;
   root_path: string;
   created_at: string;
+  archived_at?: string;
 }
 
 export interface CreateGoalPayload {
@@ -513,6 +515,14 @@ export async function fetchInbox(): Promise<InboxResponse> {
 export async function fetchProjects(): Promise<Project[]> {
   const value = await requestJson<unknown>("/api/projects");
   return Array.isArray(value) ? (value as Project[]) : [];
+}
+
+export async function archiveProject(id: string): Promise<Project> {
+  return requestJson<Project>(`/api/projects/${encodeURIComponent(id)}/archive`, { method: "POST" });
+}
+
+export async function unarchiveProject(id: string): Promise<Project> {
+  return requestJson<Project>(`/api/projects/${encodeURIComponent(id)}/unarchive`, { method: "POST" });
 }
 
 export async function createGoal(payload: CreateGoalPayload): Promise<Goal> {

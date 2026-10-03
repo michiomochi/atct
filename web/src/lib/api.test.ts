@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   ApiError,
+  archiveProject,
+  unarchiveProject,
   approveDecision,
   createGoal,
   fetchGoalHandoffHistory,
@@ -382,5 +384,30 @@ describe("review exchange API", () => {
     await expect(fetchTaskReviewExchanges("task/1")).resolves.toEqual({ exchanges: [], gaps: [] });
     expect(fetchMock).toHaveBeenNthCalledWith(1, "/api/goals/goal%2F1/review-exchanges", undefined);
     expect(fetchMock).toHaveBeenNthCalledWith(2, "/api/tasks/task%2F1/review-exchanges", undefined);
+  });
+});
+
+describe("project archive requests", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it.each([
+    ["archive", archiveProject],
+    ["unarchive", unarchiveProject],
+  ] as const)("posts to /api/projects/{id}/%s", async (action, call) => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, text: () => Promise.resolve('{"id":"p 1","name":"x"}') });
+    vi.stubGlobal("fetch", fetchMock);
+    await call("p 1");
+    expect(fetchMock).toHaveBeenCalledWith(`/api/projects/p%201/${action}`, { method: "POST" });
+  });
+
+  it("surfaces the reason of a refused request", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: false,
+      status: 409,
+      text: () => Promise.resolve('{"error":"project \\"x\\" is archived"}'),
+    }));
+    await expect(archiveProject("1")).rejects.toThrow('project "x" is archived');
   });
 });

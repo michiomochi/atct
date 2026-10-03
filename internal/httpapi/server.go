@@ -50,9 +50,11 @@ type goalView struct {
 	// yet received. There is nothing for a human to answer, so it carries no
 	// open decision, and without this the goal looked the same as one nobody
 	// had picked up.
-	AwaitingReview bool       `json:"awaiting_review"`
-	ProjectName    string     `json:"project_name"`
-	Tasks          []TaskView `json:"tasks"`
+	AwaitingReview bool   `json:"awaiting_review"`
+	ProjectName    string `json:"project_name"`
+	// ProjectArchived is set on the goal detail so the page can say why changes are refused.
+	ProjectArchived bool       `json:"project_archived"`
+	Tasks           []TaskView `json:"tasks"`
 }
 
 type goalTaskCommitsView struct {
@@ -918,11 +920,13 @@ func (s *Server) handleGoal(w http.ResponseWriter, r *http.Request, goalID strin
 	}
 	projectName := ""
 	projectRootPath := ""
+	projectArchived := false
 	projectNames := make(map[int64]string, len(projects))
 	for _, project := range projects {
 		projectNames[project.ID] = project.Name
 		if project.ID == goal.ProjectID {
 			projectName = project.Name
+			projectArchived = project.ArchivedAt != nil
 			projectRootPath = project.RootPath
 		}
 	}
@@ -985,7 +989,7 @@ func (s *Server) handleGoal(w http.ResponseWriter, r *http.Request, goalID strin
 
 	allTaskViews := make([]TaskView, 0, len(tasks))
 	response := goalResponse{
-		Goal:                   goalView{Goal: goal, ProjectName: projectName},
+		Goal:                   goalView{Goal: goal, ProjectName: projectName, ProjectArchived: projectArchived},
 		DerivedFrom:            derivedFrom,
 		DerivedGoals:           derivedGoalViews,
 		Now:                    make([]TaskView, 0),

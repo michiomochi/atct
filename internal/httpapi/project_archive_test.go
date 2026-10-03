@@ -122,3 +122,41 @@ func TestHTTPArchivedProjectRefusesWritesAndAllowsReads(t *testing.T) {
 	archiveProjectViaHTTP(t, f, srv.URL, c, "unarchive")
 	check(false)
 }
+
+func TestHTTPGoalDetailReportsProjectArchived(t *testing.T) {
+	f := newFixture(t)
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+	c := srv.Client()
+
+	archived := func() bool {
+		t.Helper()
+		status, _, body := doRequest(t, c, http.MethodGet, urlID(srv.URL+"/api/goals/", f.goal.ID), nil)
+		if status != http.StatusOK {
+			t.Fatalf("goal status = %d; body=%s", status, body)
+		}
+		var response struct {
+			Goal struct {
+				ProjectArchived *bool `json:"project_archived"`
+			} `json:"goal"`
+		}
+		if err := json.Unmarshal(body, &response); err != nil {
+			t.Fatal(err)
+		}
+		if response.Goal.ProjectArchived == nil {
+			t.Fatalf("goal has no project_archived; body=%s", body)
+		}
+		return *response.Goal.ProjectArchived
+	}
+	if archived() {
+		t.Fatal("project_archived = true for an active project")
+	}
+	archiveProjectViaHTTP(t, f, srv.URL, c, "archive")
+	if !archived() {
+		t.Fatal("project_archived = false for an archived project")
+	}
+	archiveProjectViaHTTP(t, f, srv.URL, c, "unarchive")
+	if archived() {
+		t.Fatal("project_archived = true after unarchive")
+	}
+}

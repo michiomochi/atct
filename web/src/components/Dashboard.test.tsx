@@ -34,6 +34,14 @@ vi.mock("./GoalCreateForm", () => ({
   ),
 }));
 
+vi.mock("./ProjectList", () => ({
+  ProjectList: ({ onChanged }: { onChanged?: () => void }) => (
+    <button type="button" data-testid="project-list" onClick={onChanged}>
+      Projects
+    </button>
+  ),
+}));
+
 vi.mock("./DecisionTable", () => ({
   DecisionTable: () => null,
 }));
@@ -80,5 +88,16 @@ describe("Dashboard", () => {
 
     expect(fetchInbox).toHaveBeenCalledTimes(1);
     expect(screen.getByRole("status").textContent).toContain("state.updateAvailable");
+  });
+
+  it("reloads the inbox when a project is archived or unarchived", async () => {
+    const { fireEvent } = await import("@testing-library/react");
+    render(<Dashboard />);
+    await waitFor(() => expect(fetchInbox).toHaveBeenCalledTimes(1));
+
+    const buttons = await screen.findAllByTestId("project-list");
+    fireEvent.click(buttons[buttons.length - 1]);
+
+    await waitFor(() => expect(fetchInbox).toHaveBeenCalledTimes(2));
   });
 });

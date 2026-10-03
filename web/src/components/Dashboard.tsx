@@ -5,6 +5,7 @@ import { fetchInbox, subscribeToDecisionEvents, type InboxResponse } from "../li
 import { DecisionTable } from "./DecisionTable";
 import { GoalTable } from "./GoalTable";
 import { GoalCreateForm } from "./GoalCreateForm";
+import { ProjectList } from "./ProjectList";
 import { AreaLoading, EmptyState, ErrorState } from "./StateMessage";
 import { Section } from "./Section";
 import { groupGoalsByProject } from "../lib/ui";
@@ -100,6 +101,10 @@ export function Dashboard() {
             ))}
           </div>
         )}
+      </Section>
+
+      <Section id="projects" title={t("dashboard.projects.title")} hideCount>
+        <ProjectList onChanged={handleGoalCreated} />
       </Section>
     </main>
   );
