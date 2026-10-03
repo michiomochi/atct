@@ -98,6 +98,7 @@ SELECT
 FROM decisions
 WHERE status = 'answered'
   AND goal_id IN (SELECT goals.id FROM goals WHERE goals.project_id NOT IN (SELECT id FROM projects WHERE archived_at IS NOT NULL))
+  AND goal_id IN (SELECT goals.id FROM goals WHERE goals.status = 'active')
 ORDER BY answered_at;
 
 -- name: ListUnappliedDecisionsForProject :many
@@ -109,6 +110,7 @@ FROM decisions
 WHERE status = 'answered'
   AND goal_id IN (SELECT goals.id FROM goals WHERE goals.project_id = ?)
   AND goal_id IN (SELECT goals.id FROM goals WHERE goals.project_id NOT IN (SELECT id FROM projects WHERE archived_at IS NOT NULL))
+  AND goal_id IN (SELECT goals.id FROM goals WHERE goals.status = 'active')
 ORDER BY answered_at;
 
 -- name: ListUnappliedDecisionsForGoal :many
@@ -119,6 +121,7 @@ SELECT
 FROM decisions
 WHERE status = 'answered'
   AND goal_id = ?
+  AND goal_id IN (SELECT goals.id FROM goals WHERE goals.status = 'active')
 ORDER BY answered_at;
 
 -- name: CountAppliedDecisions :one
