@@ -49,6 +49,8 @@ writing-plans) or a personal setting that points at `doc/specs` or `doc/plans`,
 the goal's fields win under ATCT. Existing files in those directories are not
 removed or migrated.
 
+Write a goal's `content`, `spec` and `plan` in Markdown. The dashboard renders them as Markdown; raw HTML is not rendered.
+
 ## Language of ATCT records
 
 Write ATCT records in the language of the `ui_locale` (`en` or `ja`) that

@@ -242,7 +242,8 @@ describe("GoalDetail", () => {
     const details = [...section.querySelectorAll("details")];
     expect(details).toHaveLength(2);
     expect(details.every((element) => !element.open)).toBe(true);
-    expect(details.map((element) => element.querySelector("p")?.textContent)).toEqual([spec, plan]);
+    expect(details.map((element) => element.querySelector("h1")?.textContent)).toEqual(["Canonical spec", "Canonical plan"]);
+    expect(details.map((element) => element.querySelector("p")?.textContent)).toEqual(["Spec line one.\nSpec line two.", "Plan line one.\nPlan line two."]);
     expect(details.map((element) => element.querySelector("summary")?.textContent)).toEqual([
       "goal.spec goal.specPlan.lines",
       "goal.plan goal.specPlan.lines",

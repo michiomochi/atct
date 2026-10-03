@@ -163,7 +163,7 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "  project list         List registered projects")
 	fmt.Fprintln(os.Stderr, "  project archive <name|id>    Hide a project and its goals from lists, watches and hooks")
 	fmt.Fprintln(os.Stderr, "  project unarchive <name|id>  Restore an archived project")
-	fmt.Fprintln(os.Stderr, "  goal add <content>   Create a goal for the current project")
+	fmt.Fprintln(os.Stderr, "  goal add <content>   Create a goal for the current project (content is Markdown)")
 	fmt.Fprintln(os.Stderr, "  goal list            List goals for the current project")
 	fmt.Fprintln(os.Stderr, "  context [-brief]      Print the current goal context for an AI session")
 	fmt.Fprintln(os.Stderr, "  pending              Print unanswered human decisions for the current project")
