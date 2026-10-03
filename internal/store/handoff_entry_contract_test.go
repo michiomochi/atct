@@ -394,7 +394,7 @@ func TestDecision685DropLegacyHandoffEntryKinds(t *testing.T) {
 			break
 		}
 	}
-	if _, err := raw.Exec(`PRAGMA user_version = 6`); err != nil {
+	if _, err := raw.Exec(`PRAGMA user_version = 7`); err != nil {
 		raw.Close()
 		t.Fatalf("set fixture schema version: %v", err)
 	}
@@ -523,7 +523,7 @@ func TestOpenBackfillsLegacyReportsAsCanonicalEntries(t *testing.T) {
 			t.Fatalf("record fixture migration %s: %v", migration.filename, err)
 		}
 	}
-	if _, err := raw.Exec(`PRAGMA user_version = 6`); err != nil {
+	if _, err := raw.Exec(`PRAGMA user_version = 7`); err != nil {
 		raw.Close()
 		t.Fatalf("set fixture schema version: %v", err)
 	}

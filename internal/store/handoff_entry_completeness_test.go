@@ -175,6 +175,8 @@ type lifecycleStep struct {
 	body   string
 	author int64
 	run    func() error
+	// setup runs once before the step, outside the entry assertions.
+	setup func() error
 }
 
 // lifecycleSteps is request -> receive -> review -> reject -> reject receive ->
@@ -191,16 +193,16 @@ func lifecycleSteps(t *testing.T, kind string) (handoffThread, string, []lifecyc
 		req, recv := testSessionID("cl-task-req"), testSessionID("cl-task-recv")
 		do := func(f func() error) func() error { return f }
 		return newTaskThread(s), id, []lifecycleStep{
-			{"request", HandoffEntryKindRequest, "go", req, do(func() error { _, err := s.RequestTaskHandoff(ctx, id, taskID, req, "go"); return err })},
-			{"receive", HandoffEntryKindReceived, "received", recv, do(func() error { _, err := s.ReceiveTaskHandoff(ctx, id, taskID, recv); return err })},
-			{"review request", HandoffEntryKindReviewRequested, "r1", recv, do(func() error { _, err := s.RequestTaskHandoffReview(ctx, id, taskID, recv, "r1"); return err })},
-			{"review receive", HandoffEntryKindReviewReceived, "received", req, do(func() error { _, err := s.ReceiveTaskHandoffReview(ctx, id, taskID, req); return err })},
-			{"reject", HandoffEntryKindReviewRejected, "no", req, do(func() error { _, err := s.RejectTaskHandoffReview(ctx, id, taskID, req, "no"); return err })},
-			{"reject receive", HandoffEntryKindReceived, "review rejection received", recv, do(func() error { _, err := s.ReceiveTaskHandoffReviewRejection(ctx, id, taskID, recv); return err })},
-			{"review request again", HandoffEntryKindReviewRequested, "r2", recv, do(func() error { _, err := s.RequestTaskHandoffReview(ctx, id, taskID, recv, "r2"); return err })},
-			{"review receive again", HandoffEntryKindReviewReceived, "received", req, do(func() error { _, err := s.ReceiveTaskHandoffReview(ctx, id, taskID, req); return err })},
-			{"complete", HandoffEntryKindCompleted, "done", req, do(func() error { _, err := s.CompleteTaskHandoffByReviewer(ctx, id, taskID, req, "done"); return err })},
-			{"amend", HandoffEntryKindCompleted, "fixed", recv, do(func() error { _, err := s.AmendTaskHandoffReport(ctx, id, taskID, "fixed"); return err })},
+			{"request", HandoffEntryKindRequest, "go", req, do(func() error { _, err := s.RequestTaskHandoff(ctx, id, taskID, req, "go"); return err }), nil},
+			{"receive", HandoffEntryKindReceived, "received", recv, do(func() error { _, err := s.ReceiveTaskHandoff(ctx, id, taskID, recv); return err }), nil},
+			{"review request", HandoffEntryKindReviewRequested, "r1", recv, do(func() error { _, err := s.RequestTaskHandoffReview(ctx, id, taskID, recv, "r1"); return err }), nil},
+			{"review receive", HandoffEntryKindReviewReceived, "received", req, do(func() error { _, err := s.ReceiveTaskHandoffReview(ctx, id, taskID, req); return err }), nil},
+			{"reject", HandoffEntryKindReviewRejected, "no", req, do(func() error { _, err := s.RejectTaskHandoffReview(ctx, id, taskID, req, "no"); return err }), nil},
+			{"reject receive", HandoffEntryKindReceived, "review rejection received", recv, do(func() error { _, err := s.ReceiveTaskHandoffReviewRejection(ctx, id, taskID, recv); return err }), nil},
+			{"review request again", HandoffEntryKindReviewRequested, "r2", recv, do(func() error { _, err := s.RequestTaskHandoffReview(ctx, id, taskID, recv, "r2"); return err }), nil},
+			{"review receive again", HandoffEntryKindReviewReceived, "received", req, do(func() error { _, err := s.ReceiveTaskHandoffReview(ctx, id, taskID, req); return err }), nil},
+			{"complete", HandoffEntryKindCompleted, "done", req, do(func() error { _, err := s.CompleteTaskHandoffByReviewer(ctx, id, taskID, req, "done"); return err }), nil},
+			{"amend", HandoffEntryKindCompleted, "fixed", recv, do(func() error { _, err := s.AmendTaskHandoffReport(ctx, id, taskID, "fixed"); return err }), nil},
 		}
 	}
 	goalID := newTestGoal(t, s)
@@ -208,16 +210,27 @@ func lifecycleSteps(t *testing.T, kind string) (handoffThread, string, []lifecyc
 	addTestAgentSession(t, s, "cl-goal-recv")
 	req, recv := testSessionID("cl-goal-req"), testSessionID("cl-goal-recv")
 	return newGoalThread(s), id, []lifecycleStep{
-		{"request", HandoffEntryKindRequest, "go", req, func() error { _, err := s.RequestGoalHandoff(ctx, id, goalID, req, "go"); return err }},
-		{"receive", HandoffEntryKindReceived, "received", recv, func() error { _, err := s.ReceiveGoalHandoff(ctx, id, goalID, recv); return err }},
-		{"review request", HandoffEntryKindReviewRequested, "r1", recv, func() error { _, err := s.RequestGoalHandoffReview(ctx, id, goalID, recv, "r1"); return err }},
-		{"review receive", HandoffEntryKindReviewReceived, "received", req, func() error { _, err := s.ReceiveGoalHandoffReview(ctx, id, goalID, req); return err }},
-		{"reject", HandoffEntryKindReviewRejected, "no", req, func() error { _, err := s.RejectGoalHandoffReview(ctx, id, goalID, req, "no"); return err }},
-		{"reject receive", HandoffEntryKindReceived, "review rejection received", recv, func() error { _, err := s.ReceiveGoalHandoffReviewRejection(ctx, id, goalID, recv); return err }},
-		{"review request again", HandoffEntryKindReviewRequested, "r2", recv, func() error { _, err := s.RequestGoalHandoffReview(ctx, id, goalID, recv, "r2"); return err }},
-		{"review receive again", HandoffEntryKindReviewReceived, "received", req, func() error { _, err := s.ReceiveGoalHandoffReview(ctx, id, goalID, req); return err }},
-		{"complete", HandoffEntryKindCompleted, "done", req, func() error { _, err := s.CompleteGoalHandoffByReviewer(ctx, id, goalID, req, "done"); return err }},
-		{"amend", HandoffEntryKindCompleted, "fixed", recv, func() error { _, err := s.AmendGoalHandoffReport(ctx, id, goalID, "fixed"); return err }},
+		{"request", HandoffEntryKindRequest, "go", req, func() error { _, err := s.RequestGoalHandoff(ctx, id, goalID, req, "go"); return err }, nil},
+		{"receive", HandoffEntryKindReceived, "received", recv, func() error { _, err := s.ReceiveGoalHandoff(ctx, id, goalID, recv); return err }, nil},
+		{"review request", HandoffEntryKindReviewRequested, "r1", recv, func() error { _, err := s.RequestGoalHandoffReview(ctx, id, goalID, recv, "r1"); return err }, nil},
+		{"review receive", HandoffEntryKindReviewReceived, "received", req, func() error { _, err := s.ReceiveGoalHandoffReview(ctx, id, goalID, req); return err }, nil},
+		{"reject", HandoffEntryKindReviewRejected, "no", req, func() error { _, err := s.RejectGoalHandoffReview(ctx, id, goalID, req, "no"); return err }, nil},
+		{"reject receive", HandoffEntryKindReceived, "review rejection received", recv, func() error { _, err := s.ReceiveGoalHandoffReviewRejection(ctx, id, goalID, recv); return err }, nil},
+		{"review request again", HandoffEntryKindReviewRequested, "r2", recv, func() error { _, err := s.RequestGoalHandoffReview(ctx, id, goalID, recv, "r2"); return err }, nil},
+		{"review receive again", HandoffEntryKindReviewReceived, "received", req, func() error { _, err := s.ReceiveGoalHandoffReview(ctx, id, goalID, req); return err }, nil},
+		// A delegated goal handoff closes only through an approved goal review, and the
+		// completed entry carries the handoff's last review request report.
+		{name: "complete", kind: HandoffEntryKindCompleted, body: "r2", author: req,
+			setup: func() error {
+				review, err := s.RequestGoalReview(ctx, goalID, req, goalReviewRequestTestReport())
+				if err != nil {
+					return err
+				}
+				_, err = s.ApproveGoalReview(ctx, review.ID)
+				return err
+			},
+			run: func() error { _, err := s.FinalizeGoalReview(ctx, goalID, req); return err }},
+		{"amend", HandoffEntryKindCompleted, "fixed", recv, func() error { _, err := s.AmendGoalHandoffReport(ctx, id, goalID, "fixed"); return err }, nil},
 	}
 }
 
@@ -226,6 +239,11 @@ func TestHandoffEntriesFollowEveryLifecycleTransition(t *testing.T) {
 		t.Run(scope, func(t *testing.T) {
 			h, id, steps := lifecycleSteps(t, scope)
 			for _, step := range steps {
+				if step.setup != nil {
+					if err := step.setup(); err != nil {
+						t.Fatalf("%s setup: %v", step.name, err)
+					}
+				}
 				h.requireOneMoreEntry(t, step.name, id, step.run, step.kind, step.body, step.author)
 			}
 		})
@@ -238,6 +256,11 @@ func TestHandoffTransitionsAreAtomicWithTheirEntry(t *testing.T) {
 		t.Run(scope, func(t *testing.T) {
 			h, id, steps := lifecycleSteps(t, scope)
 			for _, step := range steps {
+				if step.setup != nil {
+					if err := step.setup(); err != nil {
+						t.Fatalf("%s setup: %v", step.name, err)
+					}
+				}
 				h.requireAtomic(t, step.name, id, step.run)
 				h.requireOneMoreEntry(t, step.name+" after failure", id, step.run, step.kind, step.body, step.author)
 			}

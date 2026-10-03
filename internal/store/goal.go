@@ -863,6 +863,9 @@ func (s *Store) FinalizeGoalReview(ctx context.Context, goalID, commanderID int6
 	} else if affected != 1 {
 		return domain.Goal{}, ErrGoalHandoffReviewState
 	}
+	if _, err := appendHandoffEntryTx(ctx, q, "goal_handoff_entries", handoff.ID, HandoffEntryKindCompleted, handoff.ReviewRequestReport, commanderID, "", "", true, now); err != nil {
+		return domain.Goal{}, fmt.Errorf("append goal handoff completion entry for review finalization: %w", err)
+	}
 
 	result, err := q.FinalizeGoalReview(ctx, sqlcgen.FinalizeGoalReviewParams{UpdatedAt: now.Format(time.RFC3339), ID: goalID})
 	if err != nil {
