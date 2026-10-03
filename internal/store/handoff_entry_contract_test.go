@@ -390,7 +390,7 @@ func TestDecision685DropLegacyHandoffEntryKinds(t *testing.T) {
 			raw.Close()
 			t.Fatalf("record fixture migration %s: %v", migration.filename, err)
 		}
-		if migration.filename == "0046_handoff_entries.sql" {
+		if migration.filename == "0047_handoff_entries.sql" {
 			break
 		}
 	}
@@ -476,7 +476,7 @@ func TestDecision685DropLegacyHandoffEntryKinds(t *testing.T) {
 	}
 	var migrationCount int
 	if err := s.DB().QueryRowContext(ctx, `
-		SELECT COUNT(*) FROM schema_migrations WHERE filename = '0047_canonical_handoff_entries.sql'
+		SELECT COUNT(*) FROM schema_migrations WHERE filename = '0048_canonical_handoff_entries.sql'
 	`).Scan(&migrationCount); err != nil {
 		t.Fatalf("check canonical migration record: %v", err)
 	}
@@ -511,7 +511,7 @@ func TestOpenBackfillsLegacyReportsAsCanonicalEntries(t *testing.T) {
 		t.Fatalf("load embedded migrations: %v", err)
 	}
 	for _, migration := range migrations {
-		if migration.filename == "0046_handoff_entries.sql" {
+		if migration.filename == "0047_handoff_entries.sql" {
 			break
 		}
 		if _, err := raw.Exec(migration.sql); err != nil {

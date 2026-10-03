@@ -74,8 +74,8 @@ func TestFreshDatabaseAppliesHandoffEntryMigrationsAfter0029(t *testing.T) {
 	for _, filename := range []string{
 		"0029_goal_request_reports.sql",
 		"0030_monitor_health.sql",
-		"0046_handoff_entries.sql",
-		"0047_canonical_handoff_entries.sql",
+		"0047_handoff_entries.sql",
+		"0048_canonical_handoff_entries.sql",
 	} {
 		assertMigrationRecorded(t, s.DB(), filename)
 	}
@@ -135,8 +135,8 @@ func TestUpgradeThrough0029AppliesHandoffEntryMigrations(t *testing.T) {
 	for _, filename := range []string{
 		"0029_goal_request_reports.sql",
 		"0030_monitor_health.sql",
-		"0046_handoff_entries.sql",
-		"0047_canonical_handoff_entries.sql",
+		"0047_handoff_entries.sql",
+		"0048_canonical_handoff_entries.sql",
 	} {
 		assertMigrationRecorded(t, db, filename)
 	}
