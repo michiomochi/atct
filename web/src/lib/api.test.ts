@@ -41,12 +41,12 @@ class FakeWebSocket {
   }
 }
 
-describe("completion API", () => {
+describe("decision API", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
   });
 
-  it("posts completion approval to the completion endpoint", async () => {
+  it("posts approval to the generic decision endpoint", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       text: () => Promise.resolve('{"id":"goal-1","status":"done"}'),
@@ -62,7 +62,7 @@ describe("completion API", () => {
     });
   });
 
-  it("posts the rejection reason to the completion endpoint", async () => {
+  it("posts a rejection reason to the generic decision endpoint", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       text: () => Promise.resolve('{"id":"decision-1","status":"answered"}'),
