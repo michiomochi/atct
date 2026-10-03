@@ -142,7 +142,7 @@ func (s *Store) ListTasks(ctx context.Context, goalID int64) ([]domain.Task, err
 func (s *Store) SnoozeTask(ctx context.Context, taskID int64, until *time.Time) (domain.Task, error) {
 	var snoozedUntil sql.NullString
 	if until != nil {
-		snoozedUntil = sql.NullString{String: until.UTC().Format(time.RFC3339Nano), Valid: true}
+		snoozedUntil = sql.NullString{String: formatTimestamp(*until), Valid: true}
 	}
 
 	res, err := taskQueries(s).UpdateTaskSnooze(ctx, sqlcgen.UpdateTaskSnoozeParams{
@@ -178,7 +178,7 @@ func (s *Store) LinkTaskCommit(ctx context.Context, taskID int64, c domain.TaskC
 		FilesChanged: int64(c.FilesChanged),
 		Insertions:   int64(c.Insertions),
 		Deletions:    int64(c.Deletions),
-		CreatedAt:    c.CreatedAt.UTC().Format(time.RFC3339Nano),
+		CreatedAt:    formatTimestamp(c.CreatedAt),
 	})
 	if err != nil {
 		return fmt.Errorf("link task commit: %w", err)

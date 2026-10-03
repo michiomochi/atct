@@ -39,7 +39,7 @@ func runMonitorCheck(config cliConfig, dir, exePath string) error {
 		_, writeErr := fmt.Fprint(os.Stdout, monitorCheckDeny(err.Error()))
 		return writeErr
 	}
-	if !isATCTTool(input.ToolName) || isSessionIdentifyTool(input.ToolName) {
+	if !isATCTTool(input.ToolName) || isMonitorExemptTool(input.ToolName) {
 		return nil
 	}
 	_, err = fmt.Fprint(os.Stdout, monitorCheckResult(config, dir, exePath, input.SessionID))
@@ -53,11 +53,35 @@ func isATCTTool(name string) bool {
 	return strings.HasPrefix(name, "mcp__atct__") || strings.HasPrefix(name, "atct__")
 }
 
-// isSessionIdentifyTool exempts the one tool that registers the session. Gating
-// it deadlocks a session whose key is not in the database yet: the monitor check
-// fails to resolve the key, denies the call, and nothing can ever register it.
-func isSessionIdentifyTool(name string) bool {
-	return strings.HasSuffix(strings.TrimSpace(name), "atct_session_identify")
+// monitorExemptTools are the calls the gate must not refuse, whatever the
+// state of the session's Monitor.
+//
+// The gate exists to stop a session taking on work whose wakeups would never
+// reach it. These take on nothing.
+//
+// atct_session_identify registers the session. Gating it deadlocks one whose
+// key is not in the database yet: the check cannot resolve the key, denies the
+// call, and nothing is left that could register it.
+//
+// The review requests are how a worker reports that the work it already holds
+// is finished. A report travels one way and waits for no wakeup, so refusing
+// it protects nothing and throws away the work instead: the session cannot
+// restore its own Monitor, and what it has done dies with the pane.
+var monitorExemptTools = []string{
+	"atct_session_identify",
+	"atct_task_handoff_review_request",
+	"atct_goal_handoff_review_request",
+	"atct_plan_handoff_review_request",
+}
+
+func isMonitorExemptTool(name string) bool {
+	name = strings.TrimSpace(name)
+	for _, exempt := range monitorExemptTools {
+		if strings.HasSuffix(name, exempt) {
+			return true
+		}
+	}
+	return false
 }
 
 func decodeMonitorHookInput(r io.Reader) (monitorHookInput, error) {

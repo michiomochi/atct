@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/michiomochi/atct/internal/domain"
 	"github.com/michiomochi/atct/internal/httpapi"
@@ -162,4 +163,111 @@ func decodeReconciliation(t *testing.T, client *http.Client, baseURL string, pro
 		t.Fatalf("reconcileWatchScope: %v", err)
 	}
 	return state
+}
+
+// The watch asks every handoff which goal it belongs to, and answers a
+// subcommander's "is my executor still working?" with it. Task handoffs were
+// sent without a goal, so that question always answered no and the
+// subcommander was prompted every minute while its executor held the task.
+func TestReconcileContractCarriesTheGoalOnTaskHandoffs(t *testing.T) {
+	ctx := context.Background()
+	s, projectID := newReconcileContractStore(t)
+	commanderID := newReconcileContractSession(t, s, projectID)
+	claimReconcileContractProject(t, s, projectID, commanderID)
+
+	goal, err := s.CreateGoal(ctx, projectID, "task handoff goal contract", "human")
+	if err != nil {
+		t.Fatalf("CreateGoal: %v", err)
+	}
+	// A task handoff needs the goal handoff above it, the way delegation works.
+	if _, err := s.RequestGoalHandoff(ctx, "gh-for-task-contract", goal.ID, commanderID, "delegate"); err != nil {
+		t.Fatalf("RequestGoalHandoff: %v", err)
+	}
+	if _, err := s.ReceiveGoalHandoff(ctx, "gh-for-task-contract", goal.ID, commanderID); err != nil {
+		t.Fatalf("ReceiveGoalHandoff: %v", err)
+	}
+	tasks, err := s.CreateTasks(ctx, goal.ID, "agent", "task-handoff-contract", []string{"do it"}, []string{"A task to hand off."})
+	if err != nil {
+		t.Fatalf("CreateTasks: %v", err)
+	}
+	if _, err := s.RequestTaskHandoff(ctx, "th-goal-contract", tasks[0].ID, commanderID, "deliver it"); err != nil {
+		t.Fatalf("RequestTaskHandoff: %v", err)
+	}
+
+	server := httptest.NewServer(httpapi.New(s).Handler())
+	t.Cleanup(server.Close)
+
+	state := decodeReconciliation(t, server.Client(), server.URL, projectID)
+	if len(state.TaskHandoffs) != 1 {
+		t.Fatalf("decoded task handoffs = %d, want 1", len(state.TaskHandoffs))
+	}
+	handoff := state.TaskHandoffs[0]
+	if handoff.TaskID != tasks[0].ID {
+		t.Fatalf("decoded handoff TaskID = %d, want %d", handoff.TaskID, tasks[0].ID)
+	}
+	if handoff.GoalID != goal.ID {
+		t.Fatalf("decoded task handoff GoalID = %d, want %d; the watch cannot scope it to a goal", handoff.GoalID, goal.ID)
+	}
+}
+
+// An open task handoff tells the subcommander to stand down, so the payload
+// has to say when the worker behind it is gone. Goal 272 sat for two hours on
+// a handoff whose executor had died, and without this the subcommander would
+// be told to stand down forever.
+func TestReconcileContractMarksAHandoffWhoseMonitorIsGone(t *testing.T) {
+	ctx := context.Background()
+	s, projectID := newReconcileContractStore(t)
+	commanderID := newReconcileContractSession(t, s, projectID)
+	claimReconcileContractProject(t, s, projectID, commanderID)
+
+	goal, err := s.CreateGoal(ctx, projectID, "monitor lost contract", "human")
+	if err != nil {
+		t.Fatalf("CreateGoal: %v", err)
+	}
+	if _, err := s.RequestGoalHandoff(ctx, "gh-monitor-lost", goal.ID, commanderID, "delegate"); err != nil {
+		t.Fatalf("RequestGoalHandoff: %v", err)
+	}
+	if _, err := s.ReceiveGoalHandoff(ctx, "gh-monitor-lost", goal.ID, commanderID); err != nil {
+		t.Fatalf("ReceiveGoalHandoff: %v", err)
+	}
+	tasks, err := s.CreateTasks(ctx, goal.ID, "agent", "monitor-lost-contract", []string{"do it"}, []string{"A task whose worker dies."})
+	if err != nil {
+		t.Fatalf("CreateTasks: %v", err)
+	}
+	if _, err := s.RequestTaskHandoff(ctx, "th-monitor-lost", tasks[0].ID, commanderID, "deliver it"); err != nil {
+		t.Fatalf("RequestTaskHandoff: %v", err)
+	}
+	if _, err := s.ReceiveTaskHandoff(ctx, "th-monitor-lost", tasks[0].ID, commanderID); err != nil {
+		t.Fatalf("ReceiveTaskHandoff: %v", err)
+	}
+
+	server := httptest.NewServer(httpapi.New(s).Handler())
+	t.Cleanup(server.Close)
+
+	state := decodeReconciliation(t, server.Client(), server.URL, projectID)
+	if len(state.TaskHandoffs) != 1 {
+		t.Fatalf("decoded task handoffs = %d, want 1", len(state.TaskHandoffs))
+	}
+	if !state.TaskHandoffs[0].MonitorLost {
+		t.Fatal("a received handoff with no executor monitor was not marked lost")
+	}
+
+	// And the other way: a heartbeating executor is work in progress.
+	now := time.Now().UTC()
+	taskID := tasks[0].ID
+	health := store.MonitorHealth{
+		CWD: t.TempDir(), Role: "executor", State: "healthy",
+		ProjectID: projectID, GoalID: &goal.ID, TaskID: &taskID,
+		PID: os.Getpid(), ProcessStartedAt: now.Add(-time.Minute),
+		TransitionedAt: now, LastSeenAt: now,
+	}
+	health.MonitorID = store.MonitorHealthID(health.CWD, health.Role, health.ProjectID, health.GoalID, health.TaskID, health.PID, health.ProcessStartedAt)
+	if err := s.UpsertMonitorHealth(ctx, health); err != nil {
+		t.Fatalf("UpsertMonitorHealth: %v", err)
+	}
+
+	state = decodeReconciliation(t, server.Client(), server.URL, projectID)
+	if state.TaskHandoffs[0].MonitorLost {
+		t.Fatal("a handoff whose executor is heartbeating was marked lost")
+	}
 }

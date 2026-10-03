@@ -274,19 +274,14 @@ func (q *Queries) CreateTaskCreateHandoff(ctx context.Context, arg CreateTaskCre
 	return err
 }
 
-const deleteExpiredAgentSessions = `-- name: DeleteExpiredAgentSessions :exec
-DELETE FROM agent_sessions
-WHERE registered_at < ?
-`
-
-func (q *Queries) DeleteExpiredAgentSessions(ctx context.Context, registeredAt string) error {
-	_, err := q.db.ExecContext(ctx, deleteExpiredAgentSessions, registeredAt)
-	return err
-}
-
 const deleteExpiredAgentSessionsExcept = `-- name: DeleteExpiredAgentSessionsExcept :exec
 DELETE FROM agent_sessions
-WHERE id <> ? AND registered_at < ?
+WHERE agent_sessions.id <> ? AND agent_sessions.registered_at < ?
+  AND NOT EXISTS (SELECT 1 FROM task_handoffs h WHERE agent_sessions.id IN (h.requested_by, h.received_by, h.review_requested_by, h.review_received_by, h.review_rejection_received_by))
+  AND NOT EXISTS (SELECT 1 FROM goal_handoffs h WHERE agent_sessions.id IN (h.requested_by, h.received_by, h.review_requested_by, h.review_received_by, h.review_rejection_received_by))
+  AND NOT EXISTS (SELECT 1 FROM plan_handoffs h WHERE agent_sessions.id IN (h.review_requested_by, h.review_received_by, h.review_rejection_received_by))
+  AND NOT EXISTS (SELECT 1 FROM task_create_handoffs h WHERE agent_sessions.id IN (h.requested_by, h.received_by, h.completed_by))
+  AND NOT EXISTS (SELECT 1 FROM agent_sessions d WHERE d.discarded_by = agent_sessions.id)
 `
 
 type DeleteExpiredAgentSessionsExceptParams struct {
@@ -294,6 +289,8 @@ type DeleteExpiredAgentSessionsExceptParams struct {
 	RegisteredAt string
 }
 
+// Handoffs keep their sessions as history, so a referenced session outlives
+// retention; deleting it would fail the foreign key and the registration with it.
 func (q *Queries) DeleteExpiredAgentSessionsExcept(ctx context.Context, arg DeleteExpiredAgentSessionsExceptParams) error {
 	_, err := q.db.ExecContext(ctx, deleteExpiredAgentSessionsExcept, arg.ID, arg.RegisteredAt)
 	return err
@@ -1125,15 +1122,25 @@ func (q *Queries) MaxTaskSortOrder(ctx context.Context, goalID int64) (int64, er
 const receiveGoalHandoff = `-- name: ReceiveGoalHandoff :execresult
 UPDATE goal_handoffs
 SET received_by = ?1, received_at = ?2
-WHERE id = ?3 AND goal_id = ?4 AND requested_at IS NOT NULL AND recovered_at IS NULL
-  AND (received_at IS NULL OR received_by = ?1)
+WHERE goal_handoffs.id = ?3 AND goal_id = ?4 AND requested_at IS NOT NULL AND recovered_at IS NULL
+  AND (
+    received_at IS NULL
+    OR received_by = ?1
+    OR NOT EXISTS (
+      SELECT 1 FROM agent_sessions
+      WHERE agent_sessions.id = goal_handoffs.received_by
+        AND agent_sessions.last_heartbeat_at IS NOT NULL
+        AND agent_sessions.last_heartbeat_at >= ?5
+    )
+  )
 `
 
 type ReceiveGoalHandoffParams struct {
-	ReceivedBy sql.NullInt64
-	ReceivedAt sql.NullString
-	ID         string
-	GoalID     int64
+	ReceivedBy  sql.NullInt64
+	ReceivedAt  sql.NullString
+	ID          string
+	GoalID      int64
+	LeaseCutoff sql.NullString
 }
 
 // Same rule as ReceiveTaskHandoff, for the subcommander scope.
@@ -1143,6 +1150,7 @@ func (q *Queries) ReceiveGoalHandoff(ctx context.Context, arg ReceiveGoalHandoff
 		arg.ReceivedAt,
 		arg.ID,
 		arg.GoalID,
+		arg.LeaseCutoff,
 	)
 }
 
@@ -1227,11 +1235,22 @@ func (q *Queries) ReceivePlanHandoffReview(ctx context.Context, arg ReceivePlanH
 
 const receivePlanHandoffReviewRejection = `-- name: ReceivePlanHandoffReviewRejection :execresult
 UPDATE plan_handoffs
-SET review_rejection_received_by = ?, review_rejection_received_at = ?
-WHERE id = ? AND goal_id = ?
+SET review_rejection_received_by = ?1,
+    review_rejection_received_at = ?2
+WHERE plan_handoffs.id = ?3 AND plan_handoffs.goal_id = ?4
   AND review_rejected_at IS NOT NULL
   AND review_rejection_received_at IS NULL
-  AND review_requested_by = ?
+  AND (
+    review_requested_by = ?1
+    OR EXISTS (
+      SELECT 1 FROM goal_handoffs
+      WHERE goal_handoffs.goal_id = plan_handoffs.goal_id
+        AND goal_handoffs.received_by = ?1
+        AND goal_handoffs.received_at IS NOT NULL
+        AND goal_handoffs.completed_report_at IS NULL
+        AND goal_handoffs.recovered_at IS NULL
+    )
+  )
 `
 
 type ReceivePlanHandoffReviewRejectionParams struct {
@@ -1239,16 +1258,18 @@ type ReceivePlanHandoffReviewRejectionParams struct {
 	ReviewRejectionReceivedAt sql.NullString
 	ID                        string
 	GoalID                    int64
-	ReviewRequestedBy         sql.NullInt64
 }
 
+// The submitter takes its own rejection back, and so does whoever holds the
+// goal now. Keyed to the submitter alone, a rejection was stranded the moment
+// that session ended: no successor could pick it up and no other role could
+// either, which stopped goals 260 and 287 outright.
 func (q *Queries) ReceivePlanHandoffReviewRejection(ctx context.Context, arg ReceivePlanHandoffReviewRejectionParams) (sql.Result, error) {
 	return q.db.ExecContext(ctx, receivePlanHandoffReviewRejection,
 		arg.ReviewRejectionReceivedBy,
 		arg.ReviewRejectionReceivedAt,
 		arg.ID,
 		arg.GoalID,
-		arg.ReviewRequestedBy,
 	)
 }
 
@@ -1270,26 +1291,39 @@ func (q *Queries) ReceiveTaskCreateHandoff(ctx context.Context, arg ReceiveTaskC
 const receiveTaskHandoff = `-- name: ReceiveTaskHandoff :execresult
 UPDATE task_handoffs
 SET received_by = ?1, received_at = ?2
-WHERE id = ?3 AND task_id = ?4 AND requested_at IS NOT NULL
-  AND (received_at IS NULL OR received_by = ?1)
+WHERE task_handoffs.id = ?3 AND task_id = ?4 AND requested_at IS NOT NULL
+  AND (
+    received_at IS NULL
+    OR received_by = ?1
+    OR NOT EXISTS (
+      SELECT 1 FROM agent_sessions
+      WHERE agent_sessions.id = task_handoffs.received_by
+        AND agent_sessions.last_heartbeat_at IS NOT NULL
+        AND agent_sessions.last_heartbeat_at >= ?5
+    )
+  )
 `
 
 type ReceiveTaskHandoffParams struct {
-	ReceivedBy sql.NullInt64
-	ReceivedAt sql.NullString
-	ID         string
-	TaskID     int64
+	ReceivedBy  sql.NullInt64
+	ReceivedAt  sql.NullString
+	ID          string
+	TaskID      int64
+	LeaseCutoff sql.NullString
 }
 
 // Receiving is what gives a session its executor scope, so a second receiver
-// would silently strip the first of its role. The receiver may say it again,
-// which is how an agent that lost its context gets back to its own work.
+// would silently strip the first of its role. Three receivers are allowed: the
+// first one, the same one again (which is how an agent that lost its context
+// gets back to its own work), and a successor to one whose lease lapsed, since
+// otherwise a stopped pane holds the task until a commander recovers it.
 func (q *Queries) ReceiveTaskHandoff(ctx context.Context, arg ReceiveTaskHandoffParams) (sql.Result, error) {
 	return q.db.ExecContext(ctx, receiveTaskHandoff,
 		arg.ReceivedBy,
 		arg.ReceivedAt,
 		arg.ID,
 		arg.TaskID,
+		arg.LeaseCutoff,
 	)
 }
 

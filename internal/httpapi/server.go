@@ -43,9 +43,14 @@ type TaskView struct {
 
 type goalView struct {
 	domain.Goal
-	AwaitingDecision bool       `json:"awaiting_decision"`
-	ProjectName      string     `json:"project_name"`
-	Tasks            []TaskView `json:"tasks"`
+	AwaitingDecision bool `json:"awaiting_decision"`
+	// AwaitingReview is a goal whose handoff review has been submitted and not
+	// yet received. There is nothing for a human to answer, so it carries no
+	// open decision, and without this the goal looked the same as one nobody
+	// had picked up.
+	AwaitingReview bool       `json:"awaiting_review"`
+	ProjectName    string     `json:"project_name"`
+	Tasks          []TaskView `json:"tasks"`
 }
 
 type goalTaskCommitsView struct {
@@ -709,9 +714,15 @@ func (s *Server) handleInbox(w http.ResponseWriter, r *http.Request) {
 			for _, task := range goalTasks {
 				taskViews = append(taskViews, newTaskView(task, handoffs[task.ID], openByTask[task.ID]))
 			}
+			awaitingReview, err := s.goalAwaitsHandoffReview(ctx, goal.ID)
+			if err != nil {
+				writeStoreError(w, err)
+				return
+			}
 			activeGoals = append(activeGoals, goalView{
 				Goal:             goal,
 				AwaitingDecision: openByGoal[goal.ID],
+				AwaitingReview:   awaitingReview,
 				ProjectName:      projectNames[goal.ProjectID],
 				Tasks:            taskViews,
 			})
@@ -864,6 +875,32 @@ func (s *Server) handleGoal(w http.ResponseWriter, r *http.Request, goalID strin
 	response.Goal.Tasks = nonNilTaskViews(allTaskViews)
 
 	writeJSON(w, http.StatusOK, response)
+}
+
+// goalAwaitsHandoffReview reports a submitted review that nobody has received
+// yet, for the goal's own handoff or for its plan.
+func (s *Server) goalAwaitsHandoffReview(ctx context.Context, goalID int64) (bool, error) {
+	goalHandoffs, err := s.store.ListGoalHandoffs(ctx, goalID)
+	if err != nil {
+		return false, err
+	}
+	for _, handoff := range goalHandoffs {
+		if handoff.ReviewRequestedAt != nil && handoff.ReviewReceivedAt == nil &&
+			handoff.ReviewRejectedAt == nil && handoff.CompletedReportAt == nil && handoff.RecoveredAt == nil {
+			return true, nil
+		}
+	}
+	planHandoffs, err := s.store.ListPlanHandoffs(ctx, goalID)
+	if err != nil {
+		return false, err
+	}
+	for _, handoff := range planHandoffs {
+		if handoff.ReviewRequestedAt != nil && handoff.ReviewReceivedAt == nil &&
+			handoff.ReviewRejectedAt == nil && handoff.CompletedReportAt == nil {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (s *Server) handleWithdraw(w http.ResponseWriter, r *http.Request, goalID string) {
@@ -1345,7 +1382,7 @@ func (s *Server) handleAnswer(w http.ResponseWriter, r *http.Request, decisionID
 	if !ok {
 		return
 	}
-	if decision.Kind == domain.KindCompletion || decision.Kind == domain.KindGoalApproval || decision.Kind == domain.KindGoalReview {
+	if decision.Kind == domain.DecisionKind("completion") || decision.Kind == domain.KindGoalApproval || decision.Kind == domain.KindGoalReview {
 		writeError(w, http.StatusBadRequest, "use approve or reject for this decision")
 		return
 	}
@@ -1387,6 +1424,10 @@ func (s *Server) handleRevise(w http.ResponseWriter, r *http.Request, decisionID
 	}
 	if err != nil {
 		writeStoreError(w, err)
+		return
+	}
+	if original.Kind == domain.DecisionKind("completion") {
+		writeError(w, http.StatusConflict, store.ErrDecisionNotOpen.Error())
 		return
 	}
 	if original.DefaultAppliedAt == nil && original.AnsweredAt == nil {
@@ -1446,8 +1487,6 @@ func (s *Server) handleApprove(w http.ResponseWriter, r *http.Request, decisionI
 		err  error
 	)
 	switch decision.Kind {
-	case domain.KindCompletion:
-		goal, err = s.store.ApproveCompletion(r.Context(), decision.ID)
 	case domain.KindGoalApproval:
 		goal, err = s.store.ApproveGoal(r.Context(), decision.ID)
 	case domain.KindGoalReview:
@@ -1483,8 +1522,6 @@ func (s *Server) handleReject(w http.ResponseWriter, r *http.Request, decisionID
 	}
 	var err error
 	switch decision.Kind {
-	case domain.KindCompletion:
-		err = s.store.RejectCompletion(r.Context(), canonicalDecisionID, request.Reason)
 	case domain.KindGoalApproval:
 		err = s.store.RejectGoal(r.Context(), canonicalDecisionID, request.Reason)
 	case domain.KindGoalReview:
@@ -1536,7 +1573,7 @@ func (s *Server) getOpenDecision(w http.ResponseWriter, ctx context.Context, dec
 		writeStoreError(w, err)
 		return domain.Decision{}, false
 	}
-	if decision.Status != domain.DecisionOpen || (decision.Kind != domain.KindCompletion && decision.Kind != domain.KindGoalApproval && decision.Kind != domain.KindGoalReview) {
+	if decision.Status != domain.DecisionOpen || (decision.Kind != domain.KindGoalApproval && decision.Kind != domain.KindGoalReview) {
 		writeError(w, http.StatusConflict, store.ErrDecisionNotOpen.Error())
 		return domain.Decision{}, false
 	}

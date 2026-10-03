@@ -30,8 +30,14 @@ func TestGoalHandoffCannotBeTakenFromItsReceiver(t *testing.T) {
 		t.Fatalf("ReceiveGoalHandoff(receiver): %v", err)
 	}
 
-	if _, err := s.ReceiveGoalHandoff(ctx, handoffID, goalID, testSessionID("takeover-intruder")); err == nil {
+	_, err := s.ReceiveGoalHandoff(ctx, handoffID, goalID, testSessionID("takeover-intruder"))
+	if err == nil {
 		t.Fatal("a second session received a handoff that was already received")
+	}
+	// "not found" sent the caller looking for a handoff that was in front of
+	// them the whole time.
+	if !errors.Is(err, ErrGoalHandoffLiveReceiver) {
+		t.Fatalf("refusal = %v, want it to name the live receiver", err)
 	}
 
 	handoff, err := s.GetGoalHandoff(ctx, handoffID)
@@ -83,8 +89,12 @@ func TestTaskHandoffCannotBeTakenFromItsReceiver(t *testing.T) {
 		t.Fatalf("ReceiveTaskHandoff(receiver): %v", err)
 	}
 
-	if _, err := s.ReceiveTaskHandoff(ctx, handoffID, taskID, testSessionID("task-takeover-intruder")); err == nil {
+	_, err := s.ReceiveTaskHandoff(ctx, handoffID, taskID, testSessionID("task-takeover-intruder"))
+	if err == nil {
 		t.Fatal("a second session received a task handoff that was already received")
+	}
+	if !errors.Is(err, ErrTaskHandoffLiveReceiver) {
+		t.Fatalf("refusal = %v, want it to name the live receiver", err)
 	}
 
 	handoff, err := s.GetTaskHandoff(ctx, handoffID)
@@ -172,5 +182,73 @@ func TestSessionDiscardRefusesASessionWithNoProject(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "has no project") {
 		t.Fatalf("error %q does not say the session has no project", err)
+	}
+}
+
+// A handoff must not be taken off a receiver that is still working, and must
+// be takeable from one that stopped: the delegator's only other move is to
+// recover it, which needs a commander that may not be the one retrying.
+func TestGoalHandoffCanBeTakenFromAStaleReceiver(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	goalID := newTestGoal(t, s)
+	addLiveProjectClaim(t, s, goalID, "stale-takeover-requester")
+	addTestAgentSession(t, s, "stale-takeover-receiver")
+	addTestAgentSession(t, s, "stale-takeover-successor")
+
+	const handoffID = "goal-handoff-stale-takeover"
+	if _, err := s.RequestGoalHandoff(ctx, handoffID, goalID, testSessionID("stale-takeover-requester"), ""); err != nil {
+		t.Fatalf("RequestGoalHandoff: %v", err)
+	}
+	receiver := testSessionID("stale-takeover-receiver")
+	if _, err := s.ReceiveGoalHandoff(ctx, handoffID, goalID, receiver); err != nil {
+		t.Fatalf("ReceiveGoalHandoff(receiver): %v", err)
+	}
+
+	// While it is running, nobody else may take it.
+	if _, err := s.ReceiveGoalHandoff(ctx, handoffID, goalID, testSessionID("stale-takeover-successor")); err == nil {
+		t.Fatal("a second session took a handoff from a running receiver")
+	}
+
+	// Its monitor stops; the pane is gone.
+	expireTestAgentSessionLease(t, s, receiver)
+
+	successor := testSessionID("stale-takeover-successor")
+	if _, err := s.ReceiveGoalHandoff(ctx, handoffID, goalID, successor); err != nil {
+		t.Fatalf("ReceiveGoalHandoff(successor) after the receiver went stale: %v", err)
+	}
+	handoff, err := s.GetGoalHandoff(ctx, handoffID)
+	if err != nil {
+		t.Fatalf("GetGoalHandoff: %v", err)
+	}
+	if handoff.ReceivedBy != successor {
+		t.Fatalf("received_by = %d, want the successor %d", handoff.ReceivedBy, successor)
+	}
+}
+
+func TestTaskHandoffCanBeTakenFromAStaleReceiver(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	taskID := addTestTasks(t, s, 1)[0]
+	addLiveParentGoalClaim(t, s, taskID, "task-stale-requester")
+	addTestAgentSession(t, s, "task-stale-receiver")
+	addTestAgentSession(t, s, "task-stale-successor")
+
+	const handoffID = "task-handoff-stale-takeover"
+	if _, err := s.RequestTaskHandoff(ctx, handoffID, taskID, testSessionID("task-stale-requester"), ""); err != nil {
+		t.Fatalf("RequestTaskHandoff: %v", err)
+	}
+	receiver := testSessionID("task-stale-receiver")
+	if _, err := s.ReceiveTaskHandoff(ctx, handoffID, taskID, receiver); err != nil {
+		t.Fatalf("ReceiveTaskHandoff(receiver): %v", err)
+	}
+	if _, err := s.ReceiveTaskHandoff(ctx, handoffID, taskID, testSessionID("task-stale-successor")); err == nil {
+		t.Fatal("a second session took a task handoff from a running receiver")
+	}
+
+	expireTestAgentSessionLease(t, s, receiver)
+
+	if _, err := s.ReceiveTaskHandoff(ctx, handoffID, taskID, testSessionID("task-stale-successor")); err != nil {
+		t.Fatalf("ReceiveTaskHandoff(successor) after the receiver went stale: %v", err)
 	}
 }
