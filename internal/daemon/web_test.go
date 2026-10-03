@@ -404,6 +404,25 @@ func TestHTTPHandlerMCPCallsAtctRole(t *testing.T) {
 	client.initialize(t)
 	client.initialized(t)
 
+	// A transport that never identified holds nothing; atct_role must say so
+	// and name the recovery instead of reporting executor.
+	refused := mcpResult(t, client.call(t, "tools/call", map[string]any{
+		"name":      "atct_role",
+		"arguments": map[string]any{},
+	}))
+	refusedText, _ := json.Marshal(refused["content"])
+	if refused["isError"] != true || !strings.Contains(string(refusedText), "atct_session_identify") {
+		t.Fatalf("atct_role before identify = %#v, want an error naming atct_session_identify", refused)
+	}
+
+	identified := mcpResult(t, client.call(t, "tools/call", map[string]any{
+		"name":      "atct_session_identify",
+		"arguments": map[string]any{"session_key": "mcp-role-key"},
+	}))
+	if identified["isError"] == true {
+		t.Fatalf("atct_session_identify returned an error result: %#v", identified)
+	}
+
 	payload := client.call(t, "tools/call", map[string]any{
 		"name":      "atct_role",
 		"arguments": map[string]any{},
