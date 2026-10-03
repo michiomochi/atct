@@ -484,7 +484,9 @@ func rawOutputSchemaWithUnappliedDecisions() map[string]any {
 	return map[string]any{
 		"type": "object",
 		"properties": map[string]any{
-			"data": map[string]any{},
+			"data": map[string]any{
+				"description": "A receipt for state-changing calls (ids, status, times); report bodies are omitted. Read a handoff request in full with atct_goal_handoff_entry_history or atct_handoff_entry_history.",
+			},
 			// next_step lists what follows this transition, so the caller does
 			// not have to look the flow up. More than one entry means it
 			// chooses, and each states the condition that selects it.
@@ -502,8 +504,11 @@ func rawOutputSchemaWithUnappliedDecisions() map[string]any {
 			},
 			"role":           map[string]any{"type": "string"},
 			"claim_evidence": map[string]any{},
+			// The list is attached only when it changed since this session's
+			// last response; [] means it became empty.
 			"unapplied_decisions": map[string]any{
-				"type": "array",
+				"type":        "array",
+				"description": "Attached only when the list changed since the last response; [] means it became empty. Re-read with atct_goal_list.",
 				"items": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
@@ -514,6 +519,10 @@ func rawOutputSchemaWithUnappliedDecisions() map[string]any {
 					},
 					"required": []string{"decision_id", "question"},
 				},
+			},
+			"unapplied_count": map[string]any{
+				"type":        "integer",
+				"description": "Present instead of unapplied_decisions when the list is unchanged since the last response.",
 			},
 			"claimable_tasks": map[string]any{
 				"type":  "array",
