@@ -373,6 +373,64 @@ func newBareFixture(t *testing.T) *fixture {
 	return &fixture{ctx: ctx, store: db, project: ns, goal: goal}
 }
 
+func TestHTTPUISettings(t *testing.T) {
+	f := newBareFixture(t)
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+
+	getLocale := func(want string) {
+		t.Helper()
+		status, headers, body := doRequest(t, srv.Client(), http.MethodGet, srv.URL+"/api/ui-settings", nil)
+		if status != http.StatusOK {
+			t.Fatalf("GET /api/ui-settings status = %d; body=%s", status, body)
+		}
+		if !strings.HasPrefix(headers.Get("Content-Type"), "application/json") {
+			t.Fatalf("GET /api/ui-settings content type = %q", headers.Get("Content-Type"))
+		}
+		var response struct {
+			Locale string `json:"locale"`
+		}
+		if err := json.Unmarshal(body, &response); err != nil {
+			t.Fatalf("decode locale response: %v; body=%s", err, body)
+		}
+		if response.Locale != want {
+			t.Fatalf("locale = %q, want %q", response.Locale, want)
+		}
+	}
+
+	getLocale("en")
+
+	status, _, body := doRequest(t, srv.Client(), http.MethodPut, srv.URL+"/api/ui-settings/locale", mustJSON(t, map[string]string{"locale": "ja"}))
+	if status != http.StatusOK {
+		t.Fatalf("PUT /api/ui-settings/locale status = %d; body=%s", status, body)
+	}
+	var updated struct {
+		Locale string `json:"locale"`
+	}
+	if err := json.Unmarshal(body, &updated); err != nil {
+		t.Fatal(err)
+	}
+	if updated.Locale != "ja" {
+		t.Fatalf("updated locale = %q, want ja", updated.Locale)
+	}
+	getLocale("ja")
+
+	for _, test := range []struct {
+		name string
+		body []byte
+	}{
+		{name: "malformed JSON", body: []byte("{")},
+		{name: "missing locale", body: mustJSON(t, map[string]string{})},
+		{name: "unsupported locale", body: mustJSON(t, map[string]string{"locale": "fr"})},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			status, headers, body := doRequest(t, srv.Client(), http.MethodPut, srv.URL+"/api/ui-settings/locale", test.body)
+			assertErrorObject(t, status, headers, body, http.StatusBadRequest)
+			getLocale("ja")
+		})
+	}
+}
+
 func TestHTTPInboxMarksDefaultSettledDecision(t *testing.T) {
 	f := newBareFixture(t)
 	afterMs := int64(1)

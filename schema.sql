@@ -333,3 +333,8 @@ CREATE INDEX IF NOT EXISTS idx_task_create_handoffs_goal_id
 CREATE UNIQUE INDEX IF NOT EXISTS idx_task_create_handoffs_open_goal_id
   ON task_create_handoffs(goal_id)
   WHERE completed_at IS NULL AND recovered_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS ui_settings (
+  id     INTEGER PRIMARY KEY CHECK (id = 1),
+  locale TEXT NOT NULL CHECK (locale IN ('en', 'ja'))
+);

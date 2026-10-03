@@ -2,6 +2,7 @@ export const en = {
   "locale.label": "Language",
   "locale.en": "English",
   "locale.ja": "日本語",
+  "locale.error.update": "Could not save the language preference.",
 
   "dashboard.title": "Dashboard",
   "dashboard.waiting.title": "Waiting for answers",

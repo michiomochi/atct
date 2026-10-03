@@ -625,11 +625,13 @@ describe("goal detail answer flows", () => {
     expect(shellSource).toContain('href="/"');
   });
 
-  it("applies the stored locale after the client islands hydrate", () => {
-    expect(localeSwitchSource).toContain("readStoredLocale");
-    expect(localeSwitchSource).toContain("resolveLocale");
-    expect(localeSwitchSource).toContain("document.readyState");
-    expect(localeSwitchSource).toContain("setTimeout");
+  it("keeps locale ownership on the server", () => {
+    expect(localeSwitchSource).not.toContain("localStorage");
+    expect(localeSwitchSource).not.toContain("navigator.language");
+    expect(localeSwitchSource).not.toContain("useEffect");
+    expect(localeSwitchSource).not.toContain("changeLanguage");
+    expect(localeSwitchSource).toContain("updateUILocale");
+    expect(localeSwitchSource).toContain("window.location.reload");
     expect(dashboardSource).not.toContain("readStoredLocale");
     expect(dashboardSource).not.toContain("changeLanguage");
     expect(goalDetailSource).not.toContain("readStoredLocale");

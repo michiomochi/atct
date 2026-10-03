@@ -241,3 +241,8 @@ type TaskHandoffEntry struct {
 	InReplyToID     sql.NullInt64
 	CreatedAt       string
 }
+
+type UiSetting struct {
+	ID     int64
+	Locale string
+}

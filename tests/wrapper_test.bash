@@ -1679,7 +1679,7 @@ test_role_response_does_not_leak_other_boundaries() {
   local selected_role
   local response_block
 
-  role_response="$(sed -n '/^func roleResponseFor(assignment roleAssignment) any {$/,/^}$/p' "$handler_go")"
+  role_response="$(sed -n '/^func roleResponseFor(assignment roleAssignment, uiLocale string) any {$/,/^}$/p' "$handler_go")"
   [[ -n "$role_response" ]] || fail 'role response function could not be extracted'
 
   selected_role="$(sed -nE 's/^[[:space:]]*boundary := roleBoundaries\[([^]]+)\][[:space:]]*$/\1/p' <<<"$role_response")"
@@ -1688,11 +1688,9 @@ test_role_response_does_not_leak_other_boundaries() {
   for response_type in commanderRole subcommanderRole executorRole; do
     response_block="$(sed -n "/return ${response_type}{/,/^[[:space:]]*}[[:space:]]*$/p" <<<"$role_response")"
     [[ -n "$response_block" ]] || fail "$response_type response block could not be extracted"
-    grep -Fq -- 'Does:    boundary.Does' <<<"$response_block" ||
-      grep -Fq -- 'Does:      boundary.Does' <<<"$response_block" ||
+    grep -Eq -- 'Does:[[:space:]]+boundary\.Does' <<<"$response_block" ||
       fail "$response_type response must use the selected boundary's Does"
-    grep -Fq -- 'DoesNot: boundary.DoesNot' <<<"$response_block" ||
-      grep -Fq -- 'DoesNot:   boundary.DoesNot' <<<"$response_block" ||
+    grep -Eq -- 'DoesNot:[[:space:]]+boundary\.DoesNot' <<<"$response_block" ||
       fail "$response_type response must use the selected boundary's DoesNot"
   done
 }

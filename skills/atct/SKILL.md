@@ -49,6 +49,24 @@ writing-plans) or a personal setting that points at `doc/specs` or `doc/plans`,
 the goal's fields win under ATCT. Existing files in those directories are not
 removed or migrated.
 
+## Language of ATCT records
+
+Write ATCT records in the language of the `ui_locale` (`en` or `ja`) that
+`atct_role` returns. After the context is reset (compaction or clear), read it
+again with `atct_role`.
+
+**Write in the configured language:** a goal's `content`, `spec`, `plan`,
+`result_summary`, `work_done`, `now_possible`, `next_steps`, `surprises`,
+`needs_review` and `how_to_verify`; a task's title and description; a decision's
+question and options (`label`, `description`, `consequence`); the text of every
+handoff request, report, review, complete, reject and recovery.
+
+**Keep in English:** tool names, parameters, identifiers and keys (`handoff_id`,
+`declare_key`, `idempotency_key`), enum values, code, commands, file paths, branch
+names, commit messages, and quoted errors or logs.
+
+The daemon does not check the language; this is a convention to follow.
+
 ## Declare before you work
 
 An active goal authorizes coordination; do not wait for another plan approval.

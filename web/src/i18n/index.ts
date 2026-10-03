@@ -4,13 +4,12 @@ import { en, type TranslationKey } from "./en";
 import { ja } from "./ja";
 
 export type Locale = "en" | "ja";
+export const BUILD_LOCALE: Locale = import.meta.env.PUBLIC_ATCT_LOCALE === "ja" ? "ja" : "en";
 export const STORAGE_KEY = "atct.locale";
 
 i18n.use(initReactI18next).init({
   resources: { en: { translation: en }, ja: { translation: ja } },
-  // Start at English so server-rendered markup and the first client render agree.
-  // The stored choice is applied after hydration; see the provider in Task 2.
-  lng: "en",
+  lng: BUILD_LOCALE,
   fallbackLng: "en",
   // Keys are dotted flat strings, and UI copy contains ":". Without these two,
   // i18next reads "dashboard.title" as nesting and "Status: open" as a namespace.

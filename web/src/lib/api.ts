@@ -3,6 +3,7 @@ import {
   KEEPALIVE_EVENT_NAME,
   type DecisionEventName,
 } from "./ui";
+import type { Locale } from "../i18n";
 
 export interface Option {
   label: string;
@@ -519,6 +520,14 @@ export async function createGoal(payload: CreateGoalPayload): Promise<Goal> {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
+  });
+}
+
+export function updateUILocale(locale: Locale): Promise<{ locale: Locale }> {
+  return requestJson<{ locale: Locale }>("/api/ui-settings/locale", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ locale }),
   });
 }
 

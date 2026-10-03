@@ -4,6 +4,7 @@ export const ja: Record<TranslationKey, string> = {
   "locale.label": "言語",
   "locale.en": "English",
   "locale.ja": "日本語",
+  "locale.error.update": "言語設定を保存できませんでした。",
 
   "dashboard.title": "ダッシュボード",
   "dashboard.waiting.title": "回答待ち",

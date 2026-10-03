@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { en } from "./en";
 import { ja } from "./ja";
-import i18n, { formatDateTime, formatDuration, resolveLocale, t } from "./index";
+import i18n, { BUILD_LOCALE, formatDateTime, formatDuration, t } from "./index";
 import currentTestSource from "./i18n.test.ts?raw";
 
 const sourceModules = import.meta.glob("../**/*.{ts,tsx,astro}", {
@@ -81,25 +81,9 @@ describe("resource parity", () => {
   });
 });
 
-describe("resolveLocale", () => {
-  it("prefers the stored locale", () => {
-    expect(resolveLocale("ja", "en-US")).toBe("ja");
-    expect(resolveLocale("en", "ja-JP")).toBe("en");
-  });
-
-  it("falls back to the browser language", () => {
-    expect(resolveLocale(null, "ja-JP")).toBe("ja");
-    expect(resolveLocale(null, "ja")).toBe("ja");
-    expect(resolveLocale(null, "en-GB")).toBe("en");
-  });
-
-  it("ignores an unsupported stored value", () => {
-    expect(resolveLocale("fr", "ja-JP")).toBe("ja");
-    expect(resolveLocale("", null)).toBe("en");
-  });
-
-  it("defaults to English", () => {
-    expect(resolveLocale(null, null)).toBe("en");
+describe("build locale", () => {
+  it("initializes i18next from the compile-time locale", () => {
+    expect(i18n.language).toBe(BUILD_LOCALE);
   });
 });
 
