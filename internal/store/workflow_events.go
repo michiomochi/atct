@@ -38,7 +38,7 @@ type WorkflowDecision struct {
 // DecisionRoutesToCommander reports whether a decision is addressed to the commander
 // by its kind (or because it has no owning session) rather than by who created it.
 func DecisionRoutesToCommander(d domain.Decision) bool {
-	return d.Kind == domain.KindGoalApproval || d.Kind == domain.KindGoalReview || d.AgentSessionID == 0
+	return d.Kind == domain.KindGoalReview || d.AgentSessionID == 0
 }
 
 func (s *Store) decisionTargetRole(ctx context.Context, decision domain.Decision) (string, error) {

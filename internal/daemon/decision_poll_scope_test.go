@@ -169,9 +169,9 @@ func (f unappliedDecisionScopeRPCTestFixture) answeredDecision(t *testing.T, goa
 	return d.ID
 }
 
-func TestDecisionPollForCommanderAcceptsSessionlessGoalApproval(t *testing.T) {
+func TestDecisionPollForCommanderAcceptsSessionlessGoalReview(t *testing.T) {
 	f := newUnappliedDecisionScopeRPCTestFixture(t)
-	id := f.answeredDecision(t, f.goalBID, domain.KindGoalApproval, 0)
+	id := f.answeredDecision(t, f.goalBID, domain.KindGoalReview, 0)
 	result, rpcError := f.callDecisionPoll(t, f.commanderSessionID, id)
 	decision := assertPollSucceeded(t, result, rpcError, id)
 	if decision["status"] != string(domain.DecisionApplied) {
@@ -186,9 +186,9 @@ func TestDecisionPollForCommanderAcceptsSessionlessGoalApproval(t *testing.T) {
 	}
 }
 
-func TestDecisionPollForCommanderWithoutIDAppliesSessionlessGoalApproval(t *testing.T) {
+func TestDecisionPollForCommanderWithoutIDAppliesSessionlessGoalReview(t *testing.T) {
 	f := newUnappliedDecisionScopeRPCTestFixture(t)
-	id := f.answeredDecision(t, f.goalBID, domain.KindGoalApproval, 0)
+	id := f.answeredDecision(t, f.goalBID, domain.KindGoalReview, 0)
 	result, rpcError := f.callDecisionPoll(t, f.commanderSessionID, 0)
 	assertPollSucceeded(t, result, rpcError, id)
 	stored, err := f.store.GetDecision(t.Context(), id)
@@ -218,7 +218,7 @@ func TestDecisionPollForCommanderRefusesOtherProjectSessionlessDecision(t *testi
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
-	id := f.answeredDecision(t, goal.ID, domain.KindGoalApproval, 0)
+	id := f.answeredDecision(t, goal.ID, domain.KindGoalReview, 0)
 	_, rpcError := f.callDecisionPoll(t, f.commanderSessionID, id)
 	if len(rpcError) == 0 || string(rpcError) == "null" {
 		t.Fatal("decision.poll succeeded for another project's decision")

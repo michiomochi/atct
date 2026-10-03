@@ -102,7 +102,6 @@ func unsupportedAckTools() []string {
 		"atct_project_release",
 		"atct_goal_claim",
 		"atct_goal_release",
-		"atct_goal_update_content",
 		"atct_goal_update_request_report",
 		"atct_task_create",
 		"atct_task_claim",

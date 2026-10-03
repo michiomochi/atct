@@ -59,7 +59,6 @@ func TestRegisterPublishesRoleAndLifecycleToolsWithFlexibleOutputSchema(t *testi
 		"atct_goal_claim":                         true,
 		"atct_goal_release":                       true,
 		"atct_goal_withdraw":                      true,
-		"atct_goal_update_content":                true,
 		"atct_task_update_content":                true,
 		"atct_project_claim":                      true,
 		"atct_project_release":                    true,
@@ -280,9 +279,6 @@ func TestRegisterPublishesRoleAndLifecycleToolsWithFlexibleOutputSchema(t *testi
 		{name: "atct_goal_list", args: map[string]any{"cwd": "/tmp"}},
 		{name: "atct_goal_get", args: map[string]any{"goal_id": "goal-1"}},
 		{name: "atct_goal_claim", args: map[string]any{"goal_id": "goal-1"}},
-		{name: "atct_goal_update_content", args: map[string]any{
-			"goal_id": "goal-1", "content": "updated goal",
-		}},
 		{name: "atct_goal_update_request_report", args: map[string]any{
 			"goal_id": "goal-1", "spec": "updated spec", "plan": "updated plan",
 		}},

@@ -186,34 +186,6 @@ func TestEvaluateWakeupClassifiesUnstartedTasksForGoalWaitingForOpenDecision(t *
 	}
 }
 
-func TestEvaluateWakeupExcludesProposedGoal(t *testing.T) {
-	ctx := context.Background()
-	s := newTestStore(t)
-	project, err := s.CreateProject(ctx, "atct", "/repos/atct")
-	if err != nil {
-		t.Fatalf("CreateProject: %v", err)
-	}
-	goal, err := s.CreateGoal(ctx, project.ID, "Await approval before wakeup", "human")
-	if err != nil {
-		t.Fatalf("CreateGoal: %v", err)
-	}
-	if _, err := s.CreateTasks(ctx, goal.ID, "agent", "wakeup-proposed", []string{"Proposed task"}, []string{"Wait for approval before wakeup."}); err != nil {
-		t.Fatalf("CreateTasks: %v", err)
-	}
-	// This state can only exist in databases created before the declaration gate.
-	if _, err := s.db.ExecContext(ctx, "UPDATE goals SET status = ? WHERE id = ?", string(domain.GoalProposed), goal.ID); err != nil {
-		t.Fatalf("set goal proposed: %v", err)
-	}
-
-	state, err := s.EvaluateWakeup(ctx, project.ID)
-	if err != nil {
-		t.Fatalf("EvaluateWakeup: %v", err)
-	}
-	if state.ActionableGoalCount != 0 || state.UnstartedTaskCount != 0 || len(state.Tasks) != 0 {
-		t.Fatalf("wakeup state = %+v, want proposed goal excluded", state)
-	}
-}
-
 func TestEvaluateWakeupClassifiesUnstartedTasksForGoalWithRunningClaim(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
@@ -645,43 +617,6 @@ func TestEvaluateWakeupDoesNotReportAllDroppedGoalAsCommitless(t *testing.T) {
 	}
 	if len(state.CommitlessGoals) != 1 || state.CommitlessGoals[0].ID != mixedGoal.ID {
 		t.Fatalf("commitless goals = %#v, want only %d", state.CommitlessGoals, mixedGoal.ID)
-	}
-}
-
-func TestEvaluateWakeupDoesNotReportProposedGoalAsUndeclaredOrCommitless(t *testing.T) {
-	ctx := context.Background()
-	s := newTestStore(t)
-	project, err := s.CreateProject(ctx, "atct", "/repos/atct")
-	if err != nil {
-		t.Fatalf("CreateProject: %v", err)
-	}
-	proposedEmptyGoal, err := s.CreateGoal(ctx, project.ID, "Proposed empty goal", "agent")
-	if err != nil {
-		t.Fatalf("CreateGoal proposed empty: %v", err)
-	}
-	proposedDoneGoal, err := s.CreateGoal(ctx, project.ID, "Proposed done goal", "human")
-	if err != nil {
-		t.Fatalf("CreateGoal proposed done: %v", err)
-	}
-	proposedTasks, err := s.CreateTasks(ctx, proposedDoneGoal.ID, "agent", "wakeup-proposed-done", []string{"Proposed done task"}, []string{"Complete the proposed done task."})
-	if err != nil {
-		t.Fatalf("CreateTasks proposed: %v", err)
-	}
-	// This state can only exist in databases created before the declaration gate.
-	if _, err := s.db.ExecContext(ctx, "UPDATE goals SET status = ? WHERE id = ?", string(domain.GoalProposed), proposedDoneGoal.ID); err != nil {
-		t.Fatalf("set goal proposed: %v", err)
-	}
-	updateWakeupTask(t, s, proposedTasks[0].ID, domain.TaskDone)
-
-	state, err := s.EvaluateWakeup(ctx, project.ID)
-	if err != nil {
-		t.Fatalf("EvaluateWakeup: %v", err)
-	}
-	if len(state.UndeclaredGoals) != 0 {
-		t.Fatalf("undeclared goals = %#v, want proposed goal %d excluded", state.UndeclaredGoals, proposedEmptyGoal.ID)
-	}
-	if len(state.CommitlessGoals) != 0 {
-		t.Fatalf("commitless goals = %#v, want proposed goal %d excluded", state.CommitlessGoals, proposedDoneGoal.ID)
 	}
 }
 

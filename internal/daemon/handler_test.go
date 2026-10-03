@@ -788,7 +788,7 @@ func TestGoalGetGoalReviewLifecycleProjection(t *testing.T) {
 		return decision
 	}
 
-	noReview := get(t, fixture.proposed[0].ID)
+	noReview := get(t, fixture.agentCreated[0].ID)
 	if noReview.GoalReview != nil {
 		t.Fatalf("goal.get returned goal_review for a goal without one: %+v", noReview.GoalReview)
 	}
@@ -1436,17 +1436,17 @@ func TestContractN13GoalGetResponseSizeBreakdown(t *testing.T) {
 	measure("long-content", longGoal.ID)
 }
 
-func TestContractB1GoalListKeepsActiveAndProposedGoals(t *testing.T) {
+func TestContractB1GoalListKeepsActiveAndAgentCreatedGoals(t *testing.T) {
 	fixture := newGoalListFixture(t)
 	defer fixture.store.Close()
 
-	proposed, err := fixture.store.CreateGoal(context.Background(), fixture.project.ID, "proposed contract goal", "contract-test")
+	agentGoal, err := fixture.store.CreateGoal(context.Background(), fixture.project.ID, "agent contract goal", "contract-test")
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
 	goals := listGoalPayloadsForContractTest(t, fixture)
 	findGoalPayloadForContractTest(t, goals, fixture.emptyTaskGoal.ID)
-	findGoalPayloadForContractTest(t, goals, proposed.ID)
+	findGoalPayloadForContractTest(t, goals, agentGoal.ID)
 }
 
 func TestContractB2GoalListKeepsOnlyTodoAndDoingTasks(t *testing.T) {

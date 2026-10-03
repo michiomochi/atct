@@ -1501,14 +1501,6 @@ func reconcileWatchScope(ctx context.Context, client *http.Client, baseURL strin
 			}
 			continue
 		}
-		if shouldProjectAppliedGoalApproval(scope, state, decision) {
-			if err := emitWatchDecisionWithStateAndSinks(out, "decision.approved", decision,
-				delivered, lastWakeupContent, wakeupDiscrepancyDelivered,
-				wakeupDelivered, sink, actionSink); err != nil {
-				return err
-			}
-			continue
-		}
 		var eventName string
 		switch decision.Status {
 		case "open":
@@ -1876,16 +1868,6 @@ func writeWatchLineWithActionSink(out io.Writer, line, eventName string, decisio
 		}
 	}
 	return nil
-}
-
-func shouldProjectAppliedGoalApproval(scope watchScope, state watchReconciliation, decision watchDecision) bool {
-	if scope.ProjectID == "" || scope.GoalID != "" || scope.TaskID != "" {
-		return false
-	}
-	if decision.Kind != "goal_approval" || decision.Status != "applied" || decision.GoalID == "" {
-		return false
-	}
-	return watchReconciliationHasActiveGoal(state, decision.GoalID)
 }
 
 func shouldProjectGoalReviewTransition(scope watchScope) bool {

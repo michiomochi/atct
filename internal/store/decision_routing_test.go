@@ -36,13 +36,12 @@ func TestDecisionTargetRoleRoutesByKind(t *testing.T) {
 		}
 		return d.ID
 	}
-	approval0 := ask(domain.KindGoalApproval, 0)
 	review0 := ask(domain.KindGoalReview, 0)
 	decision0 := ask(domain.KindDecision, 0)
 	other := ask(domain.KindDecision, testSessionID("routing-other"))
 
 	roles := reconciledTargetRoles(t, s, goalID)
-	for name, id := range map[string]int64{"goal_approval": approval0, "goal_review": review0, "decision": decision0} {
+	for name, id := range map[string]int64{"goal_review": review0, "decision": decision0} {
 		if roles[id] != "commander" {
 			t.Errorf("session 0 %s target_role = %q, want commander", name, roles[id])
 		}
@@ -72,59 +71,5 @@ func TestDecisionTargetRoleSubcommanderUnchanged(t *testing.T) {
 	}
 	if got := reconciledTargetRoles(t, s, goalID)[d.ID]; got != "subcommander" {
 		t.Errorf("subcommander decision target_role = %q, want subcommander", got)
-	}
-}
-
-func TestListUnappliedHidesDroppedGoalApproval(t *testing.T) {
-	s := newTestStore(t)
-	ctx := context.Background()
-	droppedID := newTestGoal(t, s)
-	goal, err := s.GetGoal(ctx, droppedID)
-	if err != nil {
-		t.Fatalf("GetGoal: %v", err)
-	}
-	active, err := s.CreateGoal(ctx, goal.ProjectID, "active", "human")
-	if err != nil {
-		t.Fatalf("CreateGoal: %v", err)
-	}
-	activeID := active.ID
-	answer := func(goalID int64, kind domain.DecisionKind) int64 {
-		t.Helper()
-		d, err := s.AskDecision(ctx, AskInput{GoalID: goalID, Kind: kind, Question: "q", AgentSessionID: 0})
-		if err != nil {
-			t.Fatalf("AskDecision: %v", err)
-		}
-		if _, err := s.AnswerDecision(ctx, AnswerInput{DecisionID: d.ID, AnswerText: "a"}); err != nil {
-			t.Fatalf("AnswerDecision: %v", err)
-		}
-		return d.ID
-	}
-	dropped := answer(droppedID, domain.KindGoalApproval)
-	activeDecision := answer(activeID, domain.KindGoalApproval)
-	if _, err := s.DB().ExecContext(ctx, `UPDATE goals SET status = 'dropped' WHERE id = ?`, droppedID); err != nil {
-		t.Fatalf("drop goal: %v", err)
-	}
-
-	lists := map[string]func() ([]domain.Decision, error){
-		"all":          func() ([]domain.Decision, error) { return s.ListUnappliedDecisions(ctx) },
-		"project":      func() ([]domain.Decision, error) { return s.ListUnappliedDecisionsForProject(ctx, goal.ProjectID) },
-		"goal-dropped": func() ([]domain.Decision, error) { return s.ListUnappliedDecisionsForGoal(ctx, droppedID) },
-		"goal-active":  func() ([]domain.Decision, error) { return s.ListUnappliedDecisionsForGoal(ctx, activeID) },
-	}
-	for name, list := range lists {
-		got, err := list()
-		if err != nil {
-			t.Fatalf("%s: %v", name, err)
-		}
-		has := map[int64]bool{}
-		for _, d := range got {
-			has[d.ID] = true
-		}
-		if has[dropped] {
-			t.Errorf("%s: dropped goal's goal_approval listed", name)
-		}
-		if name != "goal-dropped" && !has[activeDecision] {
-			t.Errorf("%s: active goal's answered goal_approval missing", name)
-		}
 	}
 }

@@ -16,7 +16,7 @@ func TestGoalGetReturnsShallowNextGoalsByAscendingID(t *testing.T) {
 	source := fixture.active[0]
 	first := fixture.active[2]
 	second := fixture.active[3]
-	grandchild := fixture.proposed[0]
+	grandchild := fixture.agentCreated[0]
 	if _, err := fixture.store.DB().ExecContext(ctx, `
 INSERT INTO next_goals (goal_id, next_goal_id, created_at)
 VALUES (?, ?, '2026-09-20T00:00:00Z'), (?, ?, '2026-09-20T00:00:00Z'), (?, ?, '2026-09-20T00:00:00Z')`,

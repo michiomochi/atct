@@ -19,7 +19,6 @@ import (
 
 var ErrGoalAlreadyClaimed = errors.New("goal already claimed")
 var ErrProjectAlreadyClaimed = errors.New("project already claimed")
-var ErrGoalNotProposed = errors.New("goal is not proposed")
 var ErrDecisionOutsideGoal = errors.New("decision belongs to another goal")
 var ErrRoleUnauthorized = errors.New("role is not authorized for this operation")
 var ErrHandoffCompletionSessionRequired = errors.New("agent_session_id is required; identify the session and use the named handoff review flow")
@@ -126,10 +125,6 @@ type goalListTaskCounts struct {
 	Done    int `json:"done"`
 	Dropped int `json:"dropped"`
 }
-
-// goalReviewDueAfter is how long a proposed goal may sit without activity
-// before goal.list lists it for the commander's review.
-const goalReviewDueAfter = 7 * 24 * time.Hour
 
 func summaryLine(content string) string {
 	for _, line := range strings.Split(content, "\n") {
@@ -283,7 +278,7 @@ func (d *Daemon) responseWithScopedUnappliedDecisions(ctx context.Context, data 
 }
 
 // appendCommanderRoutedDecisions polls the project's answered decisions that are
-// addressed to the commander by kind (e.g. a sessionless goal_approval) when the caller is a commander.
+// addressed to the commander by kind (e.g. a sessionless goal_review) when the caller is a commander.
 func (d *Daemon) appendCommanderRoutedDecisions(ctx context.Context, agentSessionID int64, decs []domain.Decision) ([]domain.Decision, error) {
 	role, err := d.deriveSessionRole(ctx, agentSessionID)
 	if err != nil || role.Role != "commander" {
@@ -1353,21 +1348,9 @@ func (d *Daemon) dispatchMethodWithPeer(ctx context.Context, req rpc.Request, pe
 		if err != nil {
 			return nil, err
 		}
-		type reviewDueGoal struct {
-			ID        int64     `json:"id"`
-			Title     string    `json:"title"`
-			UpdatedAt time.Time `json:"updated_at"`
-		}
-		reviewDueGoals := []reviewDueGoal{}
-		for _, goal := range goals {
-			if goal.Status == domain.GoalProposed && time.Since(goal.UpdatedAt) >= goalReviewDueAfter {
-				reviewDueGoals = append(reviewDueGoals, reviewDueGoal{ID: goal.ID, Title: summaryLine(goal.Content), UpdatedAt: goal.UpdatedAt})
-			}
-		}
 		data := map[string]any{
 			"project":                  ns,
 			"goals":                    visibleGoals,
-			"review_due_goals":         reviewDueGoals,
 			"awaiting_approval_count":  awaitingApprovalCount,
 			"answered_decisions":       mine,
 			"orphaned_decisions":       orphaned,
@@ -1514,33 +1497,6 @@ func (d *Daemon) dispatchMethodWithPeer(ctx context.Context, req rpc.Request, pe
 		}
 		goal, err := d.store.GetGoal(ctx, p.GoalID)
 		return marshal(goal, err)
-
-	case "goal.update_content":
-		var p struct {
-			GoalID                  int64  `json:"goal_id"`
-			Content                 string `json:"content"`
-			AgentSessionID          int64  `json:"agent_session_id"`
-			IncludeUnappliedAnswers bool   `json:"include_unapplied_answers"`
-		}
-		if err := json.Unmarshal(req.Params, &p); err != nil {
-			return nil, err
-		}
-		goal, err := d.store.GetGoal(ctx, p.GoalID)
-		if err != nil {
-			return nil, err
-		}
-		if err := d.ensureAgentSessionProject(ctx, p.AgentSessionID, goal.ProjectID); err != nil {
-			return nil, err
-		}
-		updated, err := d.store.UpdateGoalContent(ctx, p.GoalID, p.Content)
-		if errors.Is(err, store.ErrGoalNotProposed) {
-			return nil, ErrGoalNotProposed
-		}
-		if err != nil || !p.IncludeUnappliedAnswers {
-			return marshal(updated, err)
-		}
-		response, err := d.responseWithScopedUnappliedDecisions(ctx, updated, p.GoalID, p.AgentSessionID)
-		return marshal(response, err)
 
 	case "goal.update_request_report":
 		var p struct {
