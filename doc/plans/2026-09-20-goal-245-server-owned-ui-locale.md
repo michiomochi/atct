@@ -10,7 +10,8 @@
 
 ## Global Constraints
 
-- At design time the migration maximum was `0043_runtime_heartbeat_lease.sql`, but current `main` now contains `0044_fixed_width_timestamps.sql` at `d3817ade631b56a153a5304eebf74b658643b15c`. Merge that current main normally and remeasure immediately before creating this goal's migration; the next available number is `0045_ui_settings.sql`. If main advances again, record the new number here before writing the migration.
+- At design time the migration maximum was `0043_runtime_heartbeat_lease.sql`, but current `main` now contains `0044_fixed_width_timestamps.sql` at `d3817ade631b56a153a5304eebf74b658643b15c`. Merge that current main normally and remeasure immediately before creating this goal's migration; the next available number is `0050_ui_settings.sql`. If main advances again, record the new number here before writing the migration.
+- Renumbered (2026-10-03): main advanced again (0045 is main's legacy-completion retirement; 0046–0049 are reserved by Goals 264, 273, 240). The commander assigned **`0050_ui_settings.sql`** for this goal.
 - Supported locales are exactly `en` and `ja`; invalid or missing stored values read as `en`.
 - `localStorage`, `navigator.language`, load-time locale recovery, DOM patching, and post-hydration `changeLanguage` are forbidden.
 - API, MCP, WebSocket, SSE, reconciliation, and literal static asset routes keep their current precedence and meaning.
@@ -23,7 +24,7 @@
 
 **Files:**
 
-- Create: `internal/store/migrations/0045_ui_settings.sql`
+- Create: `internal/store/migrations/0050_ui_settings.sql`
 - Create: `internal/store/queries/ui_settings.sql`
 - Create: `internal/store/ui_settings.go`
 - Create: `internal/store/ui_settings_test.go`
@@ -100,7 +101,7 @@
   go test ./internal/store -run 'Test(UISettings|SchemaParity|EmptyDatabaseAppliesBaselineMigration)'
   go test ./internal/httpapi -run 'TestHTTPUISettings'
   ./script/schema-check.sh
-  git add internal/store/migrations/0045_ui_settings.sql internal/store/queries/ui_settings.sql internal/store/ui_settings.go internal/store/ui_settings_test.go internal/store/sqlcgen schema.sql internal/httpapi/server.go internal/httpapi/server_test.go
+  git add internal/store/migrations/0050_ui_settings.sql internal/store/queries/ui_settings.sql internal/store/ui_settings.go internal/store/ui_settings_test.go internal/store/sqlcgen schema.sql internal/httpapi/server.go internal/httpapi/server_test.go
   git commit -m "feat: persist server-owned UI locale"
   ```
 
