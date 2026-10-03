@@ -86,6 +86,8 @@ export interface Decision {
   default_option?: string;
   default_after_ms?: number;
   settled_by_default?: boolean;
+  priority?: number;
+  priority_reason?: string;
   answer_label?: string;
   answer_text?: string;
   answered_at?: string;

@@ -63,6 +63,17 @@ describe("resource parity", () => {
     expect(ja["decision.autoSettlesIn"]).toBe("{{duration}}後に自動確定");
   });
 
+  it("translates the decision priority reasons", () => {
+    expect(en["decision.priority.goal_review"]).toBe("Goal waiting to close");
+    expect(en["decision.priority.task_in_progress"]).toBe("A task in progress is blocked");
+    expect(en["decision.priority.queued"]).toBe("Queued");
+    expect(en["decision.priority.auto_settles"]).toBe("Settles by default on its own");
+    expect(ja["decision.priority.goal_review"]).toBe("goal の完了待ち");
+    expect(ja["decision.priority.task_in_progress"]).toBe("作業中のタスクが止まっている");
+    expect(ja["decision.priority.queued"]).toBe("待機中");
+    expect(ja["decision.priority.auto_settles"]).toBe("既定の選択肢で自動確定");
+  });
+
   it("keeps dotted keys flat rather than nested", () => {
     for (const key of Object.keys(en)) {
       expect(typeof en[key as keyof typeof en]).toBe("string");

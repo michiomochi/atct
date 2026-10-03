@@ -114,6 +114,8 @@ type decisionViewResponse struct {
 	SettledByDefault bool   `json:"settled_by_default"`
 	DefaultOption    string `json:"default_option"`
 	DefaultAfterMs   *int64 `json:"default_after_ms"`
+	Priority         int    `json:"priority"`
+	PriorityReason   string `json:"priority_reason"`
 }
 
 func TestHTTPInboxIncludesGoalTitlePerDecision(t *testing.T) {
@@ -4086,5 +4088,146 @@ func TestHTTPGoalContentDoesNotChangeRejectedGoal(t *testing.T) {
 	}
 	if response.Goal.Content != f.goal.Content {
 		t.Fatalf("rejected goal content = %q, want unchanged %q", response.Goal.Content, f.goal.Content)
+	}
+}
+
+func fetchInboxDecisions(t *testing.T, srv *httptest.Server) (open []decisionViewResponse, unapplied []map[string]any) {
+	t.Helper()
+	status, _, body := doRequest(t, srv.Client(), http.MethodGet, srv.URL+"/api/inbox", nil)
+	if status != http.StatusOK {
+		t.Fatalf("inbox status = %d; body=%s", status, body)
+	}
+	var response struct {
+		OpenDecisions      []decisionViewResponse `json:"open_decisions"`
+		UnappliedDecisions []map[string]any       `json:"unapplied_decisions"`
+	}
+	if err := json.Unmarshal(body, &response); err != nil {
+		t.Fatal(err)
+	}
+	return response.OpenDecisions, response.UnappliedDecisions
+}
+
+func TestHTTPInboxOpenDecisionsSortedByPriority(t *testing.T) {
+	f := newBareFixture(t)
+	tasks, err := f.store.CreateTasks(f.ctx, f.goal.ID, "agent", "key", []string{"todo", "doing", "done"}, []string{"a", "b", "c"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.store.UpdateTask(f.ctx, tasks[1].ID, domain.TaskDoing, 0); err != nil {
+		t.Fatal(err)
+	}
+	afterMs := int64(60 * 1000)
+	ask := func(in store.AskInput) domain.Decision {
+		t.Helper()
+		in.GoalID = f.goal.ID
+		if in.Kind == "" {
+			in.Kind = domain.KindDecision
+		}
+		in.Question = "q"
+		d, err := f.store.AskDecision(f.ctx, in)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return d
+	}
+	opts := []domain.Option{{Label: "A"}, {Label: "B"}}
+	// Created in the reverse of the expected order, so a pass-through order fails.
+	auto := ask(store.AskInput{TaskID: tasks[0].ID, Options: opts, DefaultOption: "A", DefaultAfterMs: &afterMs})
+	ask(store.AskInput{TaskID: tasks[2].ID, Options: opts})
+	doing := ask(store.AskInput{TaskID: tasks[1].ID, Options: opts, DefaultOption: "A", DefaultAfterMs: &afterMs})
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+
+	open, unapplied := fetchInboxDecisions(t, srv)
+	if len(open) != 3 {
+		t.Fatalf("open = %+v", open)
+	}
+	// doing task wins over its default_after_ms; todo-task rows follow by default_after_ms.
+	if open[0].ID != doing.ID || open[0].Priority != 2 || open[0].PriorityReason != domain.PriorityTaskInProgress {
+		t.Fatalf("first = %+v", open[0])
+	}
+	if open[1].Priority != 3 || open[1].PriorityReason != domain.PriorityQueued {
+		t.Fatalf("second = %+v", open[1])
+	}
+	if open[2].ID != auto.ID || open[2].Priority != 4 || open[2].PriorityReason != domain.PriorityAutoSettles {
+		t.Fatalf("third = %+v", open[2])
+	}
+	for _, u := range unapplied {
+		if _, ok := u["priority"]; ok {
+			t.Fatalf("unapplied has priority: %+v", u)
+		}
+		if _, ok := u["priority_reason"]; ok {
+			t.Fatalf("unapplied has priority_reason: %+v", u)
+		}
+	}
+}
+
+func TestHTTPInboxGoalReviewRanksFirstAndTiesFollowID(t *testing.T) {
+	f := newBareFixture(t)
+	second, err := f.store.CreateGoal(f.ctx, f.project.ID, "Second goal", "human")
+	if err != nil {
+		t.Fatal(err)
+	}
+	third, err := f.store.CreateGoal(f.ctx, f.project.ID, "Third goal", "human")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ask := func(goalID int64, kind domain.DecisionKind) domain.Decision {
+		t.Helper()
+		d, err := f.store.AskDecision(f.ctx, store.AskInput{GoalID: goalID, Kind: kind, Question: "q"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return d
+	}
+	a := ask(f.goal.ID, domain.KindDecision)
+	b := ask(second.ID, domain.KindDecision)
+	review := ask(third.ID, domain.KindGoalReview)
+	// Force identical created_at so only the id tie-break decides a vs b.
+	if _, err := f.store.DB().ExecContext(f.ctx, `UPDATE decisions SET created_at = (SELECT created_at FROM decisions WHERE id = ?) WHERE id IN (?, ?)`, a.ID, b.ID, a.ID); err != nil {
+		t.Fatal(err)
+	}
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+
+	open, _ := fetchInboxDecisions(t, srv)
+	if len(open) != 3 {
+		t.Fatalf("open = %+v", open)
+	}
+	if open[0].ID != review.ID || open[0].Priority != 1 || open[0].PriorityReason != domain.PriorityGoalReview {
+		t.Fatalf("first = %+v", open[0])
+	}
+	if open[1].ID != a.ID || open[2].ID != b.ID {
+		t.Fatalf("tie order = %d,%d want %d,%d", open[1].ID, open[2].ID, a.ID, b.ID)
+	}
+}
+
+func TestHTTPInboxReordersWhenTaskStatusChanges(t *testing.T) {
+	f := newBareFixture(t)
+	tasks, err := f.store.CreateTasks(f.ctx, f.goal.ID, "agent", "key", []string{"one", "two"}, []string{"a", "b"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := f.store.AskDecision(f.ctx, store.AskInput{GoalID: f.goal.ID, TaskID: tasks[0].ID, Kind: domain.KindDecision, Question: "q"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := f.store.AskDecision(f.ctx, store.AskInput{GoalID: f.goal.ID, TaskID: tasks[1].ID, Kind: domain.KindDecision, Question: "q"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+
+	open, _ := fetchInboxDecisions(t, srv)
+	if open[0].ID != first.ID || open[0].Priority != 3 || open[1].Priority != 3 {
+		t.Fatalf("before = %+v", open)
+	}
+	if _, err := f.store.UpdateTask(f.ctx, tasks[1].ID, domain.TaskDoing, 0); err != nil {
+		t.Fatal(err)
+	}
+	open, _ = fetchInboxDecisions(t, srv)
+	if open[0].ID != second.ID || open[0].Priority != 2 || open[1].ID != first.ID {
+		t.Fatalf("after = %+v", open)
 	}
 }
