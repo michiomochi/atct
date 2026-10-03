@@ -61,19 +61,22 @@ type commanderRole struct {
 	ProjectID int64    `json:"project_id"`
 	Does      []string `json:"does"`
 	DoesNot   []string `json:"does_not"`
+	UILocale  string   `json:"ui_locale"`
 }
 
 type subcommanderRole struct {
-	Role    string   `json:"role"`
-	GoalID  int64    `json:"goal_id"`
-	Does    []string `json:"does"`
-	DoesNot []string `json:"does_not"`
+	Role     string   `json:"role"`
+	GoalID   int64    `json:"goal_id"`
+	Does     []string `json:"does"`
+	DoesNot  []string `json:"does_not"`
+	UILocale string   `json:"ui_locale"`
 }
 
 type executorRole struct {
-	Role    string   `json:"role"`
-	Does    []string `json:"does"`
-	DoesNot []string `json:"does_not"`
+	Role     string   `json:"role"`
+	Does     []string `json:"does"`
+	DoesNot  []string `json:"does_not"`
+	UILocale string   `json:"ui_locale"`
 }
 
 type roleBoundary struct {
@@ -193,7 +196,7 @@ func (d *Daemon) deriveSessionRole(ctx context.Context, agentSessionID int64) (r
 	return roleAssignment{Role: assignment.Role, ProjectID: assignment.ProjectID, GoalID: assignment.GoalID}, nil
 }
 
-func roleResponseFor(assignment roleAssignment) any {
+func roleResponseFor(assignment roleAssignment, uiLocale string) any {
 	boundary := roleBoundaries[assignment.Role]
 	switch assignment.Role {
 	case "commander":
@@ -202,19 +205,22 @@ func roleResponseFor(assignment roleAssignment) any {
 			ProjectID: assignment.ProjectID,
 			Does:      boundary.Does,
 			DoesNot:   boundary.DoesNot,
+			UILocale:  uiLocale,
 		}
 	case "subcommander":
 		return subcommanderRole{
-			Role:    assignment.Role,
-			GoalID:  assignment.GoalID,
-			Does:    boundary.Does,
-			DoesNot: boundary.DoesNot,
+			Role:     assignment.Role,
+			GoalID:   assignment.GoalID,
+			Does:     boundary.Does,
+			DoesNot:  boundary.DoesNot,
+			UILocale: uiLocale,
 		}
 	default:
 		return executorRole{
-			Role:    "executor",
-			Does:    boundary.Does,
-			DoesNot: boundary.DoesNot,
+			Role:     "executor",
+			Does:     boundary.Does,
+			DoesNot:  boundary.DoesNot,
+			UILocale: uiLocale,
 		}
 	}
 }
@@ -1174,7 +1180,11 @@ func (d *Daemon) dispatchMethodWithPeer(ctx context.Context, req rpc.Request, pe
 				return nil, fmt.Errorf("%w: %s", ErrSessionNotIdentified, identifyHint)
 			}
 		}
-		return marshal(roleResponseFor(response), nil)
+		uiLocale, err := d.store.GetUILocale(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return marshal(roleResponseFor(response, uiLocale), nil)
 
 	case "session.stop_check":
 		var p struct {

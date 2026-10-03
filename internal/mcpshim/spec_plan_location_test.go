@@ -57,3 +57,15 @@ func TestGoalUpdateRequestReportDescriptionStatesTheRule(t *testing.T) {
 		}
 	}
 }
+
+func TestRoleDescriptionMentionsUILocale(t *testing.T) {
+	src := readRepoFile(t, "internal/mcpshim/tools.go")
+	i := strings.Index(src, `Name:         "atct_role"`)
+	if i < 0 {
+		t.Fatal("tool not found")
+	}
+	line := src[i : i+strings.Index(src[i:], "\n")+strings.Index(src[i+strings.Index(src[i:], "\n")+1:], "\n")+1]
+	if !strings.Contains(line, "ui_locale") {
+		t.Errorf("atct_role description lacks ui_locale: %s", line)
+	}
+}

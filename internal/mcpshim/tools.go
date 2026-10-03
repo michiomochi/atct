@@ -412,6 +412,7 @@ type commanderRole struct {
 	ProjectID    int64    `json:"project_id"`
 	Does         []string `json:"does"`
 	DoesNot      []string `json:"does_not"`
+	UILocale     string   `json:"ui_locale,omitempty"`
 	ExpectedRole string   `json:"expected_role,omitempty"`
 	Matches      *bool    `json:"matches,omitempty"`
 }
@@ -421,6 +422,7 @@ type subcommanderRole struct {
 	GoalID       int64    `json:"goal_id"`
 	Does         []string `json:"does"`
 	DoesNot      []string `json:"does_not"`
+	UILocale     string   `json:"ui_locale,omitempty"`
 	ExpectedRole string   `json:"expected_role,omitempty"`
 	Matches      *bool    `json:"matches,omitempty"`
 }
@@ -429,6 +431,7 @@ type executorRole struct {
 	Role         string   `json:"role"`
 	Does         []string `json:"does"`
 	DoesNot      []string `json:"does_not"`
+	UILocale     string   `json:"ui_locale,omitempty"`
 	ExpectedRole string   `json:"expected_role,omitempty"`
 	Matches      *bool    `json:"matches,omitempty"`
 }
@@ -780,7 +783,7 @@ func Register(server *mcp.Server, c *Client, agentSessionID int64) {
 
 	addMCPTool[RoleIn, Raw](server, &mcp.Tool{
 		Name:         "atct_role",
-		Description:  "Verify the current agent role and its project/goal claim evidence through the daemon. An optional expected_role is reported as matches; a mismatch is returned as structured data.",
+		Description:  "Verify the current agent role and its project/goal claim evidence through the daemon. An optional expected_role is reported as matches; a mismatch is returned as structured data. Write ATCT records in the language of the returned ui_locale (follow the atct skill).",
 		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in RoleIn) (*mcp.CallToolResult, Raw, error) {
 		return callRole(ctx, c, in, sessionID.Get())

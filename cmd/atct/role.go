@@ -20,19 +20,22 @@ type commanderRole struct {
 	ProjectID int64    `json:"project_id"`
 	Does      []string `json:"does"`
 	DoesNot   []string `json:"does_not"`
+	UILocale  string   `json:"ui_locale"`
 }
 
 type subcommanderRole struct {
-	Role    string   `json:"role"`
-	GoalID  int64    `json:"goal_id"`
-	Does    []string `json:"does"`
-	DoesNot []string `json:"does_not"`
+	Role     string   `json:"role"`
+	GoalID   int64    `json:"goal_id"`
+	Does     []string `json:"does"`
+	DoesNot  []string `json:"does_not"`
+	UILocale string   `json:"ui_locale"`
 }
 
 type executorRole struct {
-	Role    string   `json:"role"`
-	Does    []string `json:"does"`
-	DoesNot []string `json:"does_not"`
+	Role     string   `json:"role"`
+	Does     []string `json:"does"`
+	DoesNot  []string `json:"does_not"`
+	UILocale string   `json:"ui_locale"`
 }
 
 type roleResponse interface {
