@@ -6,8 +6,9 @@
 #
 # node_modules is shared with the primary checkout. Running pnpm install in a
 # worktree changes the primary checkout's dependencies too.
-# web/dist is copied from the primary checkout's build. If web/src changes in
-# a worktree, run pnpm build there once to refresh the copied output.
+# web/dist (the en and ja builds: web/dist/en, web/dist/ja) is copied from the
+# primary checkout's build. If web/src changes in a worktree, run pnpm build
+# there once to refresh the copied output.
 set -euo pipefail
 
 goal_id="${1:-}"
@@ -30,10 +31,12 @@ if [[ ! -d "$repo/web/node_modules" ]]; then
   echo "主チェックアウトに web/node_modules がありません。先に主で pnpm install を走らせろ" >&2
   exit 2
 fi
-if [[ ! -f "$repo/web/dist/index.html" ]]; then
-  echo "主チェックアウトに web/dist/index.html がありません。先に主で pnpm build を走らせろ" >&2
-  exit 2
-fi
+for locale in en ja; do
+  if [[ ! -f "$repo/web/dist/$locale/index.html" ]]; then
+    echo "主チェックアウトに web/dist/$locale/index.html がありません。先に主で pnpm build を走らせろ" >&2
+    exit 2
+  fi
+done
 
 if [[ ! -e "$worktree" && ! -L "$worktree" ]]; then
   if git show-ref --verify --quiet "refs/heads/$branch"; then

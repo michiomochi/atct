@@ -27,13 +27,14 @@ assert_file_contains() {
 init_repo() {
   local repo="$1"
 
-  mkdir -p "$repo/script" "$repo/web/node_modules" "$repo/web/dist"
+  mkdir -p "$repo/script" "$repo/web/node_modules" "$repo/web/dist/en" "$repo/web/dist/ja"
   cp -- "$SETUP_SCRIPT" "$repo/script/worktree-setup.sh"
   chmod +x "$repo/script/worktree-setup.sh"
   printf 'fixture repository\n' >"$repo/README.md"
   printf 'module fixture\n' >"$repo/web/node_modules/marker"
   printf 'tracked dist directory\n' >"$repo/web/dist/.gitkeep"
-  printf 'dist fixture\n' >"$repo/web/dist/index.html"
+  printf 'dist fixture en\n' >"$repo/web/dist/en/index.html"
+  printf 'dist fixture ja\n' >"$repo/web/dist/ja/index.html"
 
   git -C "$repo" init -q -b main
   git -C "$repo" add README.md web/dist/.gitkeep
@@ -142,9 +143,11 @@ test_malformed_goal_id_is_rejected() {
 
 test_missing_frontend_prerequisites_are_rejected() {
   local no_node_modules="$TEMP_ROOT/no-node-modules"
-  local no_dist="$TEMP_ROOT/no-dist"
   local output="$TEMP_ROOT/missing.out"
   local status
+  local locale
+  local repo
+  local goal_id=22
 
   init_repo "$no_node_modules"
   rm -rf -- "$no_node_modules/web/node_modules"
@@ -153,12 +156,17 @@ test_missing_frontend_prerequisites_are_rejected() {
   [[ ! -e "$no_node_modules/.worktrees/21" && ! -L "$no_node_modules/.worktrees/21" ]] || \
     fail 'missing web/node_modules created a worktree'
 
-  init_repo "$no_dist"
-  rm -f -- "$no_dist/web/dist/index.html"
-  status="$(run_setup "$no_dist" 22 "$output")"
-  assert_eq 2 "$status" 'missing web/dist/index.html status'
-  [[ ! -e "$no_dist/.worktrees/22" && ! -L "$no_dist/.worktrees/22" ]] || \
-    fail 'missing web/dist/index.html created a worktree'
+  for locale in en ja; do
+    repo="$TEMP_ROOT/no-dist-$locale"
+    init_repo "$repo"
+    rm -f -- "$repo/web/dist/$locale/index.html"
+    status="$(run_setup "$repo" "$goal_id" "$output")"
+    assert_eq 2 "$status" "missing web/dist/$locale/index.html status"
+    [[ ! -e "$repo/.worktrees/$goal_id" && ! -L "$repo/.worktrees/$goal_id" ]] || \
+      fail "missing web/dist/$locale/index.html created a worktree"
+    assert_file_contains "web/dist/$locale/index.html" "$output"
+    goal_id=$((goal_id + 1))
+  done
 }
 
 test_frontend_dependencies_are_linked_and_dist_is_copied() {
@@ -181,11 +189,15 @@ test_frontend_dependencies_are_linked_and_dist_is_copied() {
     'linked node_modules content'
   [[ -d "$worktree/web/dist" && ! -L "$worktree/web/dist" ]] || \
     fail 'web/dist is not a copied directory'
-  assert_eq 'dist fixture' "$(<"$worktree/web/dist/index.html")" 'copied web/dist content'
+  assert_eq 'dist fixture en' "$(<"$worktree/web/dist/en/index.html")" 'copied web/dist/en content'
+  assert_eq 'dist fixture ja' "$(<"$worktree/web/dist/ja/index.html")" 'copied web/dist/ja content'
 
-  printf 'changed source\n' >"$repo/web/dist/index.html"
-  assert_eq 'dist fixture' "$(<"$worktree/web/dist/index.html")" \
-    'web/dist must not remain linked to the source'
+  printf 'changed source en\n' >"$repo/web/dist/en/index.html"
+  printf 'changed source ja\n' >"$repo/web/dist/ja/index.html"
+  assert_eq 'dist fixture en' "$(<"$worktree/web/dist/en/index.html")" \
+    'web/dist/en must not remain linked to the source'
+  assert_eq 'dist fixture ja' "$(<"$worktree/web/dist/ja/index.html")" \
+    'web/dist/ja must not remain linked to the source'
 }
 
 test_reusing_goal_id_is_idempotent
