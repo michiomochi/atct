@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { formatDateTime } from "../i18n";
 import {
   fetchTaskHandoffHistory,
+  fetchTaskReviewExchanges,
   fetchTask,
   snoozeTask,
   subscribeToDecisionEvents,
@@ -17,6 +18,7 @@ import { DecisionAnswerForm } from "./DecisionAnswerForm";
 import { DecisionHistoryTable } from "./DecisionHistoryTable";
 import { TaskCommitList } from "./TaskCommitList";
 import { HandoffTimeline } from "./HandoffTimeline";
+import { ReviewExchanges } from "./ReviewExchanges";
 
 interface Props {
   id: string;
@@ -73,6 +75,8 @@ export function TaskDetailPage({ id }: Props) {
     [resolvedID],
   );
 
+  const fetchReviewExchanges = useCallback(() => fetchTaskReviewExchanges(resolvedID), [resolvedID]);
+
   useEffect(() => {
     void load();
     return subscribeToDecisionEvents(handleDecisionEvent);
@@ -127,6 +131,8 @@ export function TaskDetailPage({ id }: Props) {
               </section>
             )}
           </div>
+
+          <ReviewExchanges fetchHistory={fetchReviewExchanges} showTaskBadge={false} />
 
           <HandoffTimeline handoffs={data.handoffs ?? []} fetchHistory={fetchHandoffHistory} />
 
