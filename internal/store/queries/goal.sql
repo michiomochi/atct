@@ -129,32 +129,12 @@ SELECT COUNT(*)
 FROM decisions
 WHERE goal_id = ? AND kind = 'goal_review' AND status = 'applied' AND answer_label = 'approve';
 
--- name: FinalizeGoal :execresult
-UPDATE goals
-SET status = 'done', result_summary = ?, work_done = ?, now_possible = ?,
-    how_to_verify = ?, surprises = ?, needs_review = ?, next_steps = ?, updated_at = ?
-WHERE id = ? AND status = 'active';
-
 -- name: UpdateGoalCompletionReport :execresult
 UPDATE goals SET
   result_summary = ?,
   work_done = ?, now_possible = ?, how_to_verify = ?,
   surprises = ?, needs_review = ?, next_steps = ?, updated_at = ?
 WHERE id = ? AND status = 'active';
-
--- name: GetCompletionDecisionGoalID :one
-SELECT goal_id
-FROM decisions
-WHERE id = ? AND kind = 'completion' AND status = 'open';
-
--- name: ApplyCompletionDecision :execresult
-UPDATE decisions SET status = 'applied', answer_label = 'approve',
-  answered_at = ?, applied_at = ?
-WHERE id = ?;
-
--- name: MarkGoalDone :execresult
-UPDATE goals SET status = 'done', updated_at = ?
-WHERE id = ?;
 
 -- name: FinalizeGoalReview :execresult
 UPDATE goals SET status = 'done', updated_at = ?
