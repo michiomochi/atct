@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"os/exec"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -75,6 +76,9 @@ type decisionView struct {
 	DefaultOption    string `json:"default_option"`
 	DefaultAfterMs   *int64 `json:"default_after_ms,omitempty"`
 	SettledByDefault bool   `json:"settled_by_default"`
+	// Set on open_decisions only; see domain.DecisionPriority.
+	Priority       int    `json:"priority,omitempty"`
+	PriorityReason string `json:"priority_reason,omitempty"`
 }
 
 type inboxResponse struct {
@@ -368,6 +372,22 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.handleGoalDiff(w, r, parts[2])
+		return
+	}
+	if len(parts) == 4 && parts[0] == "api" && (parts[1] == "goals" || parts[1] == "tasks") && parts[3] == "review-exchanges" {
+		if parts[2] == "" {
+			writeError(w, http.StatusBadRequest, parts[1][:len(parts[1])-1]+" id is missing")
+			return
+		}
+		if r.Method != http.MethodGet {
+			writeError(w, http.StatusBadRequest, "method is not allowed for this endpoint")
+			return
+		}
+		if parts[1] == "goals" {
+			s.handleReviewExchanges(w, r, parts[2], "")
+		} else {
+			s.handleReviewExchanges(w, r, "", parts[2])
+		}
 		return
 	}
 	if len(parts) == 3 && parts[0] == "api" && parts[1] == "tasks" {
@@ -761,6 +781,7 @@ func (s *Server) handleInbox(w http.ResponseWriter, r *http.Request) {
 	activeGoals := make([]goalView, 0)
 	proposedGoals := make([]proposedGoalView, 0)
 	attentionTasks := make([]TaskView, 0)
+	taskStatus := make(map[int64]domain.TaskStatus)
 	for _, goal := range goals {
 		if goal.Status == domain.GoalProposed {
 			proposedGoals = append(proposedGoals, proposedGoalView{
@@ -781,6 +802,9 @@ func (s *Server) handleInbox(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			writeStoreError(w, err)
 			return
+		}
+		for _, task := range tasks {
+			taskStatus[task.ID] = task.Status
 		}
 		if goal.Status == domain.GoalActive {
 			goalTasks := append([]domain.Task(nil), tasks...)
@@ -817,6 +841,22 @@ func (s *Server) handleInbox(w http.ResponseWriter, r *http.Request) {
 			attentionTasks = append(attentionTasks, taskView)
 		}
 	}
+
+	for i := range openDecisionViews {
+		v := &openDecisionViews[i]
+		status, hasTask := taskStatus[v.TaskID]
+		v.Priority, v.PriorityReason = domain.DecisionPriority(v.Kind, status, v.TaskID != 0 && hasTask, v.DefaultAfterMs != nil)
+	}
+	sort.SliceStable(openDecisionViews, func(i, j int) bool {
+		a, b := openDecisionViews[i], openDecisionViews[j]
+		if a.Priority != b.Priority {
+			return a.Priority < b.Priority
+		}
+		if !a.CreatedAt.Equal(b.CreatedAt) {
+			return a.CreatedAt.Before(b.CreatedAt)
+		}
+		return a.ID < b.ID
+	})
 
 	writeJSON(w, http.StatusOK, inboxResponse{
 		OpenDecisions:      openDecisionViews,
