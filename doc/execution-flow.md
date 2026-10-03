@@ -84,7 +84,7 @@ subcommander が `atct_task_create_handoff_receive` でこの handoff を受領�
 
 ```mermaid
 flowchart TD
-    H([人間]) -->|ゴールを承認| G[goal: proposed → active]
+    H([人間]) -->|ゴールを作成| G[goal 作成 → active]
 
     subgraph C[commander]
         C1[worktree を用意]
