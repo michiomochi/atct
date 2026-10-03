@@ -2,7 +2,6 @@ package store
 
 import (
 	"context"
-	"errors"
 	"sort"
 	"testing"
 	"time"
@@ -33,7 +32,7 @@ func TestWithdrawActiveGoalRequiresReason(t *testing.T) {
 	}
 }
 
-func TestWithdrawActiveGoalRejectsProposedGoal(t *testing.T) {
+func TestWithdrawActiveGoalWithdrawsUntouchedProposedGoal(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	project, err := s.CreateProject(ctx, "proposed", "/repos/proposed")
@@ -44,22 +43,58 @@ func TestWithdrawActiveGoalRejectsProposedGoal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
-	before, err := s.GetGoal(ctx, goal.ID)
+	approval, err := s.ListOpenDecisions(ctx, goal.ID)
 	if err != nil {
-		t.Fatalf("GetGoal before withdrawal: %v", err)
+		t.Fatalf("ListOpenDecisions: %v", err)
+	}
+	if len(approval) != 1 {
+		t.Fatalf("open decisions = %d, want 1", len(approval))
 	}
 
-	err = s.WithdrawActiveGoal(ctx, goal.ID, "no longer needed")
-	if !errors.Is(err, ErrGoalNotActive) {
-		t.Fatalf("err = %v, want ErrGoalNotActive", err)
+	events, unsubscribe := s.SubscribeEvents()
+	defer unsubscribe()
+
+	const reason = "no longer needed"
+	if err := s.WithdrawActiveGoal(ctx, goal.ID, reason); err != nil {
+		t.Fatalf("WithdrawActiveGoal: %v", err)
 	}
 
 	after, err := s.GetGoal(ctx, goal.ID)
 	if err != nil {
 		t.Fatalf("GetGoal after withdrawal: %v", err)
 	}
-	if after.Status != before.Status || after.ResultSummary != before.ResultSummary || !after.UpdatedAt.Equal(before.UpdatedAt) {
-		t.Fatalf("proposed goal changed: before=%+v after=%+v", before, after)
+	if after.Status != domain.GoalDropped || after.ResultSummary != reason {
+		t.Fatalf("goal after withdrawal = %+v, want dropped with reason %q", after, reason)
+	}
+	gotApproval, err := s.GetDecision(ctx, approval[0].ID)
+	if err != nil {
+		t.Fatalf("GetDecision: %v", err)
+	}
+	if gotApproval.Status != domain.DecisionWithdrawn || gotApproval.AnswerText != reason {
+		t.Fatalf("approval after withdrawal = %+v, want withdrawn with reason %q", gotApproval, reason)
+	}
+
+	var withdrawn []GoalWithdrawnEvent
+	for {
+		select {
+		case event := <-events:
+			if event.Name != EventGoalWithdrawn {
+				continue
+			}
+			got, ok := event.Data.(GoalWithdrawnEvent)
+			if !ok {
+				t.Fatalf("goal withdrawal event data = %T, want GoalWithdrawnEvent", event.Data)
+			}
+			withdrawn = append(withdrawn, got)
+		default:
+			if len(withdrawn) != 1 {
+				t.Fatalf("goal withdrawal events = %d, want 1", len(withdrawn))
+			}
+			if withdrawn[0].GoalID != goal.ID || withdrawn[0].Reason != reason || !sameInt64IDs(withdrawn[0].WithdrawnDecisionIDs, []int64{approval[0].ID}) {
+				t.Fatalf("goal withdrawal event = %+v, want goal %d, reason %q, approval %d", withdrawn[0], goal.ID, reason, approval[0].ID)
+			}
+			return
+		}
 	}
 }
 
@@ -395,4 +430,50 @@ func TestWithdrawActiveGoalDoesNotPublishHandoffReported(t *testing.T) {
 	}
 	waitForGoalWithdrawn(t, events)
 	expectNoHandoffReported(t, events)
+}
+
+func TestWithdrawActiveGoalWithdrawsProposedGoalWithWorkAndHumanCreator(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	project, err := s.CreateProject(ctx, "proposed-with-work", t.TempDir())
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	goal, err := s.CreateGoal(ctx, project.ID, "proposed goal", "agent")
+	if err != nil {
+		t.Fatalf("CreateGoal: %v", err)
+	}
+	if _, err := s.DB().ExecContext(ctx, `UPDATE goals SET creator = 'human' WHERE id = ?`, goal.ID); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err := s.DB().ExecContext(ctx, `
+		INSERT INTO tasks (goal_id, title, description, status, agent, sort_order, declare_key, created_at, updated_at)
+		VALUES (?, 'open task', 'd', 'todo', 'agent', 0, 'k', ?, ?)`, goal.ID, now, now); err != nil {
+		t.Fatalf("insert task: %v", err)
+	}
+	if _, err := s.AskDecision(ctx, AskInput{GoalID: goal.ID, Kind: domain.KindDecision, Question: "extra?"}); err != nil {
+		t.Fatalf("AskDecision: %v", err)
+	}
+	const reason = "superseded by a fix on main"
+	if err := s.WithdrawActiveGoal(ctx, goal.ID, reason); err != nil {
+		t.Fatalf("WithdrawActiveGoal: %v", err)
+	}
+	got, _ := s.GetGoal(ctx, goal.ID)
+	if got.Status != domain.GoalDropped || got.ResultSummary != reason {
+		t.Fatalf("goal = %+v, want dropped with reason", got)
+	}
+	tasks, _ := s.ListTasks(ctx, goal.ID)
+	if len(tasks) != 1 || tasks[0].Status != domain.TaskDropped {
+		t.Fatalf("tasks = %+v, want one dropped", tasks)
+	}
+	decisions, _ := s.ListDecisionsForGoal(ctx, goal.ID)
+	if len(decisions) != 2 {
+		t.Fatalf("decisions = %d, want 2", len(decisions))
+	}
+	for _, d := range decisions {
+		if d.Status != domain.DecisionWithdrawn || d.AnswerText != reason {
+			t.Fatalf("decision = %+v, want withdrawn with reason", d)
+		}
+	}
 }

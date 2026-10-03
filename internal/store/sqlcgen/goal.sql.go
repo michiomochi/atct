@@ -653,3 +653,18 @@ type WithdrawActiveGoalParams struct {
 func (q *Queries) WithdrawActiveGoal(ctx context.Context, arg WithdrawActiveGoalParams) (sql.Result, error) {
 	return q.db.ExecContext(ctx, withdrawActiveGoal, arg.ResultSummary, arg.UpdatedAt, arg.ID)
 }
+
+const withdrawProposedGoal = `-- name: WithdrawProposedGoal :execresult
+UPDATE goals SET status = 'dropped', result_summary = ?, updated_at = ?
+WHERE id = ? AND status = 'proposed'
+`
+
+type WithdrawProposedGoalParams struct {
+	ResultSummary string
+	UpdatedAt     string
+	ID            int64
+}
+
+func (q *Queries) WithdrawProposedGoal(ctx context.Context, arg WithdrawProposedGoalParams) (sql.Result, error) {
+	return q.db.ExecContext(ctx, withdrawProposedGoal, arg.ResultSummary, arg.UpdatedAt, arg.ID)
+}

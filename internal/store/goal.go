@@ -1000,7 +1000,7 @@ func (s *Store) RejectGoal(ctx context.Context, decisionID int64, reason string)
 	return nil
 }
 
-// WithdrawActiveGoal drops an active Goal and atomically closes its open work.
+// WithdrawActiveGoal drops a goal and atomically closes its open work.
 func (s *Store) WithdrawActiveGoal(ctx context.Context, goalID int64, reason string) error {
 	if strings.TrimSpace(reason) == "" {
 		return errors.New("withdrawal reason is required")
@@ -1019,11 +1019,26 @@ func (s *Store) WithdrawActiveGoal(ctx context.Context, goalID int64, reason str
 	if err != nil {
 		return fmt.Errorf("lookup project for goal withdrawal: %w", err)
 	}
-	result, err := q.WithdrawActiveGoal(ctx, sqlcgen.WithdrawActiveGoalParams{
-		ResultSummary: reason,
-		UpdatedAt:     now,
-		ID:            goalID,
-	})
+	status, err := q.GetGoalStatus(ctx, goalID)
+	if err != nil {
+		return fmt.Errorf("lookup status for goal withdrawal: %w", err)
+	}
+	var result sql.Result
+	if status == string(domain.GoalProposed) {
+		result, err = q.WithdrawProposedGoal(ctx, sqlcgen.WithdrawProposedGoalParams{
+			ResultSummary: reason,
+			UpdatedAt:     now,
+			ID:            goalID,
+		})
+	} else if status == string(domain.GoalActive) {
+		result, err = q.WithdrawActiveGoal(ctx, sqlcgen.WithdrawActiveGoalParams{
+			ResultSummary: reason,
+			UpdatedAt:     now,
+			ID:            goalID,
+		})
+	} else {
+		return fmt.Errorf("%w: %d", ErrGoalNotActive, goalID)
+	}
 	if err != nil {
 		return fmt.Errorf("withdraw goal: %w", err)
 	}

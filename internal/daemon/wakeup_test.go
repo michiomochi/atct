@@ -57,6 +57,18 @@ func receiveActionableWakeupEvent(t *testing.T, ch <-chan store.DecisionEvent) s
 	}
 }
 
+func receiveMaintenanceEventsThroughKeepalive(t *testing.T, ch <-chan store.DecisionEvent) []store.DecisionEvent {
+	t.Helper()
+	var events []store.DecisionEvent
+	for {
+		event := receiveActionableWakeupEvent(t, ch)
+		events = append(events, event)
+		if event.Name == store.EventKeepalive {
+			return events
+		}
+	}
+}
+
 func decodeEvaluateFailure(t *testing.T, event store.DecisionEvent) (string, string) {
 	t.Helper()
 	if event.Name != "wakeup.evaluate_failed" {
@@ -605,6 +617,49 @@ func TestRunMaintenancePublishesKeepaliveWithInjectedTime(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("timed out waiting for keepalive event")
+	}
+}
+
+func TestRunMaintenanceLeavesOldProposedGoalAlone(t *testing.T) {
+	ctx := context.Background()
+	s := newWakeupTestStore(t)
+	now := time.Date(2026, 10, 3, 14, 0, 0, 0, time.UTC)
+	project, err := s.CreateProject(ctx, "atct-old-proposal", filepath.Join(t.TempDir(), "old"))
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	goal, err := s.CreateGoal(ctx, project.ID, "Old proposal", "agent")
+	if err != nil {
+		t.Fatalf("CreateGoal: %v", err)
+	}
+	approvals, err := s.ListOpenDecisions(ctx, goal.ID)
+	if err != nil || len(approvals) != 1 {
+		t.Fatalf("open approvals = %v, %v; want one", approvals, err)
+	}
+	old := now.Add(-30 * 24 * time.Hour).Format(time.RFC3339)
+	if _, err := s.DB().ExecContext(ctx, `UPDATE goals SET created_at = ?, updated_at = ? WHERE id = ?`, old, old, goal.ID); err != nil {
+		t.Fatalf("age goal: %v", err)
+	}
+	ch, cancel := s.SubscribeEvents()
+	defer cancel()
+
+	callRunMaintenanceWith(t, newDaemonWithClock(s, func() time.Time { return now }), ctx, newWakeupTracker(time.Time{}), now, s.EvaluateWakeup)
+
+	for _, event := range receiveMaintenanceEventsThroughKeepalive(t, ch) {
+		if event.Name == store.EventGoalWithdrawn || event.Name == store.EventWakeupEvaluateFailed {
+			t.Fatalf("maintenance changed an old proposal: %#v", event)
+		}
+	}
+	got, err := s.GetGoal(ctx, goal.ID)
+	if err != nil {
+		t.Fatalf("GetGoal: %v", err)
+	}
+	approval, err := s.GetDecision(ctx, approvals[0].ID)
+	if err != nil {
+		t.Fatalf("GetDecision: %v", err)
+	}
+	if got.Status != domain.GoalProposed || approval.Status != domain.DecisionOpen {
+		t.Fatalf("statuses = (%q, %q), want (proposed, open)", got.Status, approval.Status)
 	}
 }
 
