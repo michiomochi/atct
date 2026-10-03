@@ -256,7 +256,7 @@ worktree の中から自分を消せないからである。
 - **回収漏れの節目**: Goal 272 の節目と揃える。commander の最初の Look（`atct_goal_list`）と、
   `atct_goal_review_complete` 後の次の Look。`git worktree list` の `.worktrees/<id>` と
   `atct_goal_list` の active goal id を突き合わせる。active に無い id は `atct_goal_get` で
-  status を確認し、done / dropped のものだけを回収する。proposed など他の status、または
+  status を確認し、done / dropped のものだけを回収する。active など他の status、または
   確認できないものは触らない。`git branch --list 'wt/goal-*'` で branch の残りも見る。
   回収漏れの検出用コードは無い。この 2 コマンドで足りる。
 
