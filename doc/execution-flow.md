@@ -13,6 +13,17 @@ ATCT の実行フローである。各層はここに定めた責務と handoff 
 4. **実装は executor が行う。**subcommander は設計・委譲・レビュー・決定を担い、
    実装タスクを自分で実行しない。
 
+## spec / plan の置き場所
+
+ATCT 管理下の作業では、spec と plan は goal の `spec` / `plan` フィールドへ
+`atct_goal_update_request_report` で全文を書く。`doc/specs/`・`doc/plans/`・
+`docs/superpowers/` にファイルを足さない。「詳細は doc/plans/x.md」のように参照だけを
+フィールドに書くことも許されず、拒否される。
+
+superpowers（brainstorming・writing-plans）の既定の保存先や、`doc/specs`・`doc/plans` を
+指す個人設定と食い違うときは、ATCT 管理下では goal のフィールドが優先する。これらの
+ディレクトリにある既存のファイルは削除も移行もしない。
+
 ## 層と責務
 
 | 層 | やること |

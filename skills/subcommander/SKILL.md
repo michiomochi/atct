@@ -11,7 +11,8 @@ and the exact `session_key` from SessionStart; optional `handoff_id` and
 `monitor_token` may be included. Then call `atct_role` with `expected_role` set to `subcommander`; on a mismatch, stop.
 
 - Design only the received goal; write its spec and plan, then submit its plan
-  handoff for commander review.
+  handoff for commander review. Spec and plan go in full into the goal's `spec`
+  and `plan` fields, never into files.
 - After plan acceptance, declare and delegate each task, review executor
   handoffs, and accept or reject them.
 - Commit the goal's accepted work and submit its goal handoff for commander

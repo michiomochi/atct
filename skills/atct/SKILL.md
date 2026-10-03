@@ -37,6 +37,18 @@ match, load exactly the matching role skill (`atct:commander`,
 `atct:subcommander`, or `atct:executor`); role skills own their operations and
 must not replace these rules or load another role's skill.
 
+## Spec and plan live in the goal
+
+In ATCT-managed work, write the spec and plan in full into the goal's
+`spec` / `plan` fields with `atct_goal_update_request_report`. Do not add files
+under `doc/specs/`, `doc/plans/` or `docs/superpowers/`. Do not put only a reference
+such as "see doc/plans/x.md" in a field; a reference-only field is refused.
+
+When this conflicts with superpowers' default save location (brainstorming,
+writing-plans) or a personal setting that points at `doc/specs` or `doc/plans`,
+the goal's fields win under ATCT. Existing files in those directories are not
+removed or migrated.
+
 ## Declare before you work
 
 An active goal authorizes coordination; do not wait for another plan approval.
@@ -116,7 +128,7 @@ reaches the human without passing through the delegator's context.
 |---|---|
 | receipt of the goal | the `atct_goal_handoff_receive` record itself |
 | progress on the work | tasks: `atct_task_create`, then `done` as each one lands |
-| the design and why | a spec committed with the goal's work, and `work_done` |
+| the design and why | the goal's `spec` and `plan` fields, in full, and `work_done` |
 | something found inside this goal | `surprises` and `needs_review` |
 | something found that is another goal | `atct_decision_ask`, addressed to the human |
 | what was left undone | `next_goal_ids`, the ids of the goals to proceed with next |
