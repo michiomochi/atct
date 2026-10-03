@@ -50,16 +50,13 @@ assert_empty_file() {
 # and the section silently stops being checked at all.
 ORDERED_SECTIONS=(
   'atct|## Declare before you work'
-  'atct|## Receive before you start'
+  'atct|## Handoff review order'
   'subcommander|## Delegate a task'
   'subcommander|### Two-layer delegation'
   'commander|## Delegate a goal'
   'atct|## Fill in a report on a handoff that is already closed'
   'atct|## Recover when your role comes back wrong'
   'subcommander|## Close a task the moment it is finished'
-  'atct|## Report completion in six parts'
-  'atct|## Apply what you were told'
-  'atct|## Finishing'
 )
 
 # Every skill whose numbered lists are checked for contiguity.
@@ -460,7 +457,7 @@ test_goal_handoff_forbids_upward_design_questions() {
 }
 
 test_goal_handoff_names_the_single_upward_message() {
-  delegate_goal_section_contains '`next_steps` for what you left, and `atct_decision_ask` for anything that'
+  delegate_goal_section_contains '`next_goal_ids` for the goals that should follow, and `atct_decision_ask`'
 
   local section
   section="$(unsent_report_section)"
@@ -608,7 +605,7 @@ unsent_report_section() {
 }
 
 recovery_section() {
-  sed -n '/^## Recover when your role comes back wrong$/,/^## Close a task/p' \
+  sed -n '/^## Recover when your role comes back wrong$/,/^## Completion$/p' \
     "$REPO_ROOT/skills/atct/SKILL.md"
 }
 
@@ -912,7 +909,8 @@ test_one_space_per_goal_binds_a_space_to_one_goal() {
 }
 
 test_one_space_per_goal_closes_on_approval() {
-  assert_file_contains 'approving the completion' "$REPO_ROOT/skills/commander/SKILL.md"
+  assert_file_contains 'approving the review requested' "$REPO_ROOT/skills/commander/SKILL.md"
+  assert_file_contains 'atct_goal_review_complete' "$REPO_ROOT/skills/commander/SKILL.md"
 }
 
 test_one_space_per_goal_forbids_reuse() {
@@ -951,8 +949,8 @@ test_delegated_claim_contract_is_explicit() {
 
   assert_file_contains 'Hold the parent, not the task.' "$subcommander_skill"
   assert_file_contains 'Hold the parent, not the goal.' "$commander_skill"
-  assert_file_contains '## Delegate a task' "$atct_skill"
-  assert_file_contains '## Delegate a goal' "$atct_skill"
+  assert_file_contains '## Delegate a task' "$subcommander_skill"
+  assert_file_contains '## Delegate a goal' "$commander_skill"
   assert_file_contains 'First record receipt of the handoff by calling `atct_task_handoff_receive`' "$subcommander_skill"
   assert_file_contains 'Then record receipt of the goal handoff by calling' "$commander_skill"
   assert_file_contains 'Every implementation task is delegated.' "$atct_skill"
@@ -1363,7 +1361,7 @@ test_role_contract_uses_neutral_language() {
   local atct_skill="$REPO_ROOT/skills/atct/SKILL.md"
   local roles_section
 
-  roles_section="$(sed -n '/^## Roles$/,/^## Role-specific skills$/p' "$atct_skill")"
+  roles_section="$(sed -n '/^## Roles$/,/^## Declare before you work$/p' "$atct_skill")"
   if grep -Eiq 'space|worktree|git|harness|multiplexer' <<<"$roles_section"; then
     fail 'role boundary table must use neutral language'
   fi

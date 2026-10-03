@@ -3,6 +3,7 @@ import {
   approveDecision,
   createGoal,
   fetchProjects,
+  normalizeGoal,
   rejectDecision,
   subscribeToDecisionEvents,
 } from "./api";
@@ -41,12 +42,12 @@ class FakeWebSocket {
   }
 }
 
-describe("completion API", () => {
+describe("decision API", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
   });
 
-  it("posts completion approval to the completion endpoint", async () => {
+  it("posts approval to the generic decision endpoint", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       text: () => Promise.resolve('{"id":"goal-1","status":"done"}'),
@@ -62,7 +63,7 @@ describe("completion API", () => {
     });
   });
 
-  it("posts the rejection reason to the completion endpoint", async () => {
+  it("posts a rejection reason to the generic decision endpoint", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       text: () => Promise.resolve('{"id":"decision-1","status":"answered"}'),
@@ -111,6 +112,14 @@ describe("goal creation API", () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ project_id: "project-1", content: "Ship it\n\nDetails", creator: "human" }),
     });
+  });
+});
+
+describe("goal detail API", () => {
+  it("normalizes missing successor summaries to an empty array", () => {
+    const response = normalizeGoal({ goal: { id: "goal-1" } });
+
+    expect((response.goal as { next_goals?: unknown }).next_goals).toEqual([]);
   });
 });
 

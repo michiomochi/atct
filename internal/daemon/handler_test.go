@@ -309,144 +309,6 @@ func ageAgentSessionForTest(t *testing.T, fixture goalListFixture, sessionID str
 	}
 }
 
-func TestGoalCompleteDeniesSessionWithoutGoalHandoff(t *testing.T) {
-	fixture := newGoalListFixture(t)
-	defer fixture.store.Close()
-
-	goalID := fixture.emptyTaskGoal.ID
-	sessionID := daemonTestSessionID(t, fixture.store, "goal-complete-without-handoff")
-	params, err := json.Marshal(map[string]any{
-		"goal_id":          goalID,
-		"work_done":        "work",
-		"now_possible":     "now",
-		"how_to_verify":    "verify",
-		"surprises":        "none",
-		"needs_review":     "none",
-		"next_steps":       "next",
-		"agent_session_id": sessionID,
-	})
-	if err != nil {
-		t.Fatalf("marshal goal.complete params: %v", err)
-	}
-	if _, err := fixture.daemon.dispatch(context.Background(), rpc.Request{Method: "goal.complete", Params: params}); err == nil {
-		t.Fatal("goal.complete unexpectedly succeeded without a goal handoff")
-	} else if !errors.Is(err, ErrRoleUnauthorized) {
-		t.Fatalf("goal.complete error = %v, want ErrRoleUnauthorized", err)
-	}
-
-	goal, err := fixture.store.GetGoal(context.Background(), goalID)
-	if err != nil {
-		t.Fatalf("GetGoal after rejected completion: %v", err)
-	}
-	if goal.Status != domain.GoalActive {
-		t.Fatalf("goal status after rejected completion = %v, want %v", goal.Status, domain.GoalActive)
-	}
-}
-
-func TestGoalCompleteDeniesNonCommanderOfAnotherGoal(t *testing.T) {
-	fixture := newGoalListFixture(t)
-	defer fixture.store.Close()
-
-	goalA := fixture.active[0]
-	goalB := fixture.emptyTaskGoal
-	const (
-		sessionA = "goal-complete-wrong-holder-caller"
-		sessionB = "goal-complete-wrong-holder-owner"
-	)
-	if _, err := claimGoalForTest(t, fixture, goalA.ID, sessionA); err != nil {
-		t.Fatalf("goal.claim for goal A: %v", err)
-	}
-	if _, err := claimGoalForTest(t, fixture, goalB.ID, sessionB); err != nil {
-		t.Fatalf("goal.claim for goal B: %v", err)
-	}
-
-	callerID := daemonTestSessionID(t, fixture.store, sessionA)
-	params, err := json.Marshal(map[string]any{
-		"goal_id":          goalB.ID,
-		"work_done":        "work",
-		"now_possible":     "now",
-		"how_to_verify":    "verify",
-		"surprises":        "none",
-		"needs_review":     "none",
-		"next_steps":       "next",
-		"agent_session_id": callerID,
-	})
-	if err != nil {
-		t.Fatalf("marshal goal.complete params: %v", err)
-	}
-	if _, err := fixture.daemon.dispatch(context.Background(), rpc.Request{Method: "goal.complete", Params: params}); err == nil {
-		t.Fatal("goal.complete unexpectedly succeeded for another goal holder")
-	} else {
-		if !errors.Is(err, ErrRoleUnauthorized) {
-			t.Fatalf("goal.complete error = %v, want ErrRoleUnauthorized", err)
-		}
-	}
-
-	got, err := fixture.store.GetGoal(context.Background(), goalB.ID)
-	if err != nil {
-		t.Fatalf("GetGoal after rejected completion: %v", err)
-	}
-	if got.Status != domain.GoalActive {
-		t.Fatalf("goal B status after rejected completion = %v, want %v", got.Status, domain.GoalActive)
-	}
-}
-
-func TestGoalCompleteDeniesGoalClaimHolder(t *testing.T) {
-	fixture := newGoalListFixture(t)
-	defer fixture.store.Close()
-
-	goalID := fixture.emptyTaskGoal.ID
-	const sessionLabel = "goal-complete-handoff-holder"
-	if _, err := claimGoalForTest(t, fixture, goalID, sessionLabel); err != nil {
-		t.Fatalf("goal.claim: %v", err)
-	}
-	params, err := json.Marshal(map[string]any{
-		"goal_id":          goalID,
-		"work_done":        "work",
-		"now_possible":     "now",
-		"how_to_verify":    "verify",
-		"surprises":        "none",
-		"needs_review":     "none",
-		"next_steps":       "next",
-		"agent_session_id": daemonTestSessionID(t, fixture.store, sessionLabel),
-	})
-	if err != nil {
-		t.Fatalf("marshal goal.complete params: %v", err)
-	}
-	if _, err := fixture.daemon.dispatch(context.Background(), rpc.Request{Method: "goal.complete", Params: params}); err == nil {
-		t.Fatal("goal.complete unexpectedly succeeded for a non-commander goal claimant")
-	} else if !errors.Is(err, ErrRoleUnauthorized) {
-		t.Fatalf("goal.complete error = %v, want ErrRoleUnauthorized", err)
-	}
-}
-
-func TestGoalCompleteAllowsProjectClaimHolder(t *testing.T) {
-	fixture := newGoalListFixture(t)
-	defer fixture.store.Close()
-
-	goalID := fixture.emptyTaskGoal.ID
-	const sessionLabel = "goal-complete-project-holder"
-	if _, err := claimProjectForTest(t, fixture, fixture.project.ID, sessionLabel); err != nil {
-		t.Fatalf("project.claim: %v", err)
-	}
-	params, err := json.Marshal(map[string]any{
-		"goal_id":          goalID,
-		"work_done":        "work",
-		"now_possible":     "now",
-		"how_to_verify":    "verify",
-		"surprises":        "none",
-		"needs_review":     "none",
-		"next_steps":       "next",
-		"agent_session_id": daemonTestSessionID(t, fixture.store, sessionLabel),
-	})
-	if err != nil {
-		t.Fatalf("marshal goal.complete params: %v", err)
-	}
-	if _, err := fixture.daemon.dispatch(context.Background(), rpc.Request{Method: "goal.complete", Params: params}); err != nil {
-		t.Fatalf("goal.complete for project claim holder: %v", err)
-	}
-}
-
 func TestDaemonAssociationKeepsFirstSession(t *testing.T) {
 	fixture := newGoalListFixture(t)
 	defer fixture.store.Close()
@@ -976,7 +838,7 @@ func TestGoalGetGoalReviewLifecycleProjection(t *testing.T) {
 		t.Fatalf("applied goal_review next commander action = %q, want goal.review.complete", appliedResponse.GoalReview.NextCommanderAction)
 	}
 
-	if _, err := fixture.store.DB().ExecContext(ctx, "UPDATE goals SET status = ?, work_done = ?, now_possible = ?, how_to_verify = ?, surprises = ?, needs_review = ?, next_steps = ?, result_summary = ? WHERE id = ?", string(domain.GoalDone), "recorded work", "recorded now", "recorded verification", "recorded surprises", "recorded review", "recorded next steps", "recorded summary", fixture.active[1].ID); err != nil {
+	if _, err := fixture.store.DB().ExecContext(ctx, "UPDATE goals SET status = ?, work_done = ?, now_possible = ?, how_to_verify = ?, surprises = ?, needs_review = ?, result_summary = ? WHERE id = ?", string(domain.GoalDone), "recorded work", "recorded now", "recorded verification", "recorded surprises", "recorded review", "recorded summary", fixture.active[1].ID); err != nil {
 		t.Fatalf("mark goal done: %v", err)
 	}
 	doneResponse := get(t, fixture.active[1].ID)
@@ -1330,17 +1192,17 @@ fi
 	}
 }
 
-func TestContractN8GoalListHidesGoalsAwaitingCompletionApproval(t *testing.T) {
+func TestContractN8GoalListKeepsGoalsWithHistoricalCompletionDecision(t *testing.T) {
 	fixture := newGoalListFixture(t)
 	defer fixture.store.Close()
 
 	for _, goalID := range []int64{fixture.emptyTaskGoal.ID, fixture.taskGoal.ID} {
-		askOpenDecisionForContractTest(t, fixture, goalID, domain.KindCompletion)
+		askOpenDecisionForContractTest(t, fixture, goalID, "completion")
 	}
 	response := goalListResponseForContractTest(t, fixture)
 	for _, goalID := range []int64{fixture.emptyTaskGoal.ID, fixture.taskGoal.ID} {
-		if goalPayloadExistsForContractTest(response.Goals, goalID) {
-			t.Errorf("goal.list returned goal %v while completion approval is open", goalID)
+		if !goalPayloadExistsForContractTest(response.Goals, goalID) {
+			t.Errorf("goal.list omitted goal %v while a historical completion decision is open", goalID)
 		}
 	}
 }
@@ -1368,7 +1230,7 @@ func TestContractN10GoalListReturnsAwaitingApprovalCount(t *testing.T) {
 	defer fixture.store.Close()
 
 	for _, goalID := range []int64{fixture.emptyTaskGoal.ID, fixture.taskGoal.ID} {
-		askOpenDecisionForContractTest(t, fixture, goalID, domain.KindCompletion)
+		askOpenDecisionForContractTest(t, fixture, goalID, domain.KindGoalReview)
 	}
 	response := goalListResponseForContractTest(t, fixture)
 	if response.AwaitingApprovalCount != 2 {
@@ -1720,12 +1582,19 @@ esac
 	if instructions != mcpshim.Instructions {
 		t.Fatalf("MCP initialize instructions = %v, want shared instructions", instructions)
 	}
+	if got := len(mcpshim.Instructions); got > 350 {
+		t.Fatalf("MCP instructions are %d bytes, want <= 350", got)
+	}
 	for _, marker := range []string{
-		"This repository is registered with ATCT.",
-		"An active goal is permission to coordinate work.",
-		"See the `atct` skill for details.",
+		"daemon-derived role and handoff state",
+		"receive before work",
+		"request review before completion",
+		"human decisions through ATCT",
+		"human approval",
+		"never auto-apply",
+		"`atct` skill",
 	} {
-		if !strings.Contains(instructions, marker) {
+		if !strings.Contains(strings.ToLower(instructions), strings.ToLower(marker)) {
 			t.Errorf("MCP initialize instructions missing fixed instruction %v", marker)
 		}
 	}

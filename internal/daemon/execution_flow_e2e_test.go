@@ -233,7 +233,7 @@ func (f *flowFixture) requestHumanReview(goalID int64) domain.Decision {
 	f.call("goal.review.request", goalReviewRequestParams{
 		GoalID: goalID, AgentSessionID: f.commanderID,
 		WorkDone: "work", NowPossible: "possible", HowToVerify: "verify",
-		Surprises: "none", NeedsReview: "none", NextSteps: "none",
+		Surprises: "none", NeedsReview: "none", NextGoalIDs: []int64{},
 	})
 	decisions, err := f.store.ListDecisionsForGoal(f.ctx, goalID)
 	if err != nil {

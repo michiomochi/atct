@@ -20,7 +20,7 @@ type Store struct {
 	notify *notifier
 }
 
-const schemaVersion = 6
+const schemaVersion = 7
 
 const agentSessionRetention = 30 * 24 * time.Hour
 
@@ -159,6 +159,16 @@ func (s *Store) UpsertMonitorHealth(ctx context.Context, health MonitorHealth) e
 		LastSeenAt:       formatTimestamp(health.LastSeenAt),
 	}); err != nil {
 		return fmt.Errorf("upsert monitor health: %w", err)
+	}
+	if token := strings.TrimSpace(health.MonitorToken); token != "" && health.State == "healthy" &&
+		health.Role == "commander" && health.GoalID == nil && health.TaskID == nil {
+		watermark := formatTimestamp(health.LastSeenAt)
+		if err := queries.AdvanceMonitorBindingLastReconciledAt(ctx, sqlcgen.AdvanceMonitorBindingLastReconciledAtParams{
+			Token:            token,
+			LastReconciledAt: watermark,
+		}); err != nil {
+			return fmt.Errorf("advance monitor binding watermark: %w", err)
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit monitor health upsert: %w", err)

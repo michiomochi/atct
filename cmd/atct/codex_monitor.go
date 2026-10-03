@@ -955,7 +955,7 @@ func (b *codexMonitorBridge) ActionSinkWithContext(ctx context.Context) watchAge
 
 func codexMonitorActionFromWatchAction(action watchAgentAction) codexMonitorAction {
 	var handoffID string
-	if strings.Contains(action.eventName, ".handoff.") {
+	if isHandoffLifecycleEvent(action.eventName) {
 		parts := strings.Split(action.deliveryKey, "\x00")
 		if len(parts) == 3 && parts[0] == action.eventName {
 			handoffID = parts[2]

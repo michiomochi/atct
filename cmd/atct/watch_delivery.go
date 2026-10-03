@@ -15,12 +15,16 @@ func newWatchCodexActionSink(bridge *codexMonitorBridge) watchAgentActionSink {
 	}
 }
 
+func isHandoffLifecycleEvent(eventName string) bool {
+	return strings.Contains(eventName, "handoff.")
+}
+
 func watchActionDeliveryIdentity(eventName, line string, decision watchDecision) (string, string) {
 	subject := line
 	switch {
 	case strings.HasPrefix(eventName, "decision."):
 		subject = decision.DecisionID
-	case strings.Contains(eventName, ".handoff."):
+	case isHandoffLifecycleEvent(eventName):
 		subject = decision.HandoffID
 	case strings.HasPrefix(eventName, "wakeup."):
 		subject = decision.WakeupID

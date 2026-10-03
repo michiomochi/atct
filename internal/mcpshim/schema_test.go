@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -282,12 +283,12 @@ func TestRegisterPublishesRoleAndLifecycleToolsWithFlexibleOutputSchema(t *testi
 		{name: "atct_goal_complete", args: map[string]any{
 			"goal_id": "goal-1", "work_done": "done", "now_possible": "ready",
 			"how_to_verify": "check the goal", "surprises": "なし",
-			"needs_review": "なし", "next_steps": "なし",
+			"needs_review": "なし",
 		}},
 		{name: "atct_goal_review_request", args: map[string]any{
 			"goal_id": "goal-1", "work_done": "done", "now_possible": "ready",
 			"how_to_verify": "check the goal", "surprises": "なし",
-			"needs_review": "なし", "next_steps": "なし",
+			"needs_review": "なし", "next_goal_ids": []int64{},
 		}},
 		{name: "atct_goal_review_complete", args: map[string]any{"goal_id": "goal-1"}},
 		{name: "atct_goal_set_derived_from", args: map[string]any{
@@ -333,10 +334,19 @@ func TestGoalReviewToolsExposeCanonicalSchemas(t *testing.T) {
 	}
 	want := map[string][]string{
 		"atct_goal_complete": {
-			"goal_id", "work_done", "now_possible", "how_to_verify", "surprises", "needs_review", "next_steps",
+			"goal_id", "work_done", "now_possible", "how_to_verify", "surprises", "needs_review",
 		},
 		"atct_goal_review_request": {
-			"goal_id", "work_done", "now_possible", "how_to_verify", "surprises", "needs_review", "next_steps",
+			"goal_id", "work_done", "now_possible", "how_to_verify", "surprises", "needs_review", "next_goal_ids",
+		},
+		"atct_goal_review_complete": {"goal_id"},
+	}
+	requiredByTool := map[string][]string{
+		"atct_goal_complete": {
+			"goal_id", "work_done", "now_possible", "how_to_verify", "surprises", "needs_review",
+		},
+		"atct_goal_review_request": {
+			"goal_id", "work_done", "now_possible", "how_to_verify", "surprises", "needs_review",
 		},
 		"atct_goal_review_complete": {"goal_id"},
 	}
@@ -367,27 +377,30 @@ func TestGoalReviewToolsExposeCanonicalSchemas(t *testing.T) {
 				t.Errorf("%s omitted input field %q", name, field)
 			}
 		}
-		var required []string
+		var requiredFieldsList []string
 		switch values := inputSchema["required"].(type) {
 		case []string:
-			required = values
+			requiredFieldsList = values
 		case []any:
 			for _, value := range values {
 				if field, ok := value.(string); ok {
-					required = append(required, field)
+					requiredFieldsList = append(requiredFieldsList, field)
 				}
 			}
 		default:
 			t.Fatalf("%s required = %T, want string array", name, inputSchema["required"])
 		}
-		requiredFields := make(map[string]bool, len(required))
-		for _, field := range required {
+		requiredFields := make(map[string]bool, len(requiredFieldsList))
+		for _, field := range requiredFieldsList {
 			requiredFields[field] = true
 		}
-		for _, field := range fields {
+		for _, field := range requiredByTool[name] {
 			if !requiredFields[field] {
 				t.Errorf("%s must require input field %q", name, field)
 			}
+		}
+		if requiredFields["next_goal_ids"] {
+			t.Errorf("%s must allow omitted next_goal_ids", name)
 		}
 	}
 }
@@ -1141,8 +1154,8 @@ func TestGoalReviewToolsForwardCanonicalMethods(t *testing.T) {
 		howToVerify = "run review tests"
 		surprises   = "none"
 		needsReview = "なし"
-		nextSteps   = "merge"
 	)
+	nextGoalIDs := []int64{7, 3}
 	cases := []struct {
 		name   string
 		method string
@@ -1153,7 +1166,7 @@ func TestGoalReviewToolsForwardCanonicalMethods(t *testing.T) {
 			args: map[string]any{
 				"goal_id": "2", "work_done": workDone, "now_possible": nowPossible,
 				"how_to_verify": howToVerify, "surprises": surprises,
-				"needs_review": needsReview, "next_steps": nextSteps,
+				"needs_review": needsReview, "next_goal_ids": nextGoalIDs,
 			},
 		},
 		{
@@ -1189,23 +1202,65 @@ func TestGoalReviewToolsForwardCanonicalMethods(t *testing.T) {
 			t.Errorf("%s include_unapplied_answers = %#v, want true", tc.name, got)
 		}
 		if tc.name == "atct_goal_review_request" {
-			want := map[string]string{
+			want := map[string]any{
 				"work_done": workDone, "now_possible": nowPossible,
 				"how_to_verify": howToVerify, "surprises": surprises,
-				"needs_review": needsReview, "next_steps": nextSteps,
+				"needs_review": needsReview, "next_goal_ids": []any{float64(7), float64(3)},
 			}
 			for field, value := range want {
-				if got := call.params[field]; got != value {
+				if got := call.params[field]; !reflect.DeepEqual(got, value) {
 					t.Errorf("%s %s = %#v, want %q", tc.name, field, got, value)
 				}
 			}
 		} else {
-			for _, field := range []string{"work_done", "now_possible", "how_to_verify", "surprises", "needs_review", "next_steps"} {
+			for _, field := range []string{"work_done", "now_possible", "how_to_verify", "surprises", "needs_review", "next_steps", "next_goal_ids"} {
 				if _, ok := call.params[field]; ok {
 					t.Errorf("%s unexpectedly included %s", tc.name, field)
 				}
 			}
 		}
+	}
+}
+
+func TestGoalReviewToolRejectsLegacyNextStepsInput(t *testing.T) {
+	ctx := context.Background()
+	socketPath, calls := startCapturingSchemaTestDaemon(t)
+	server := mcp.NewServer(&mcp.Implementation{Name: "atct-test", Version: "test"}, nil)
+	mcpshim.Register(server, mcpshim.NewClient(socketPath), 2)
+
+	clientTransport, serverTransport := mcp.NewInMemoryTransports()
+	serverSession, err := server.Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatalf("server.Connect: %v", err)
+	}
+	defer serverSession.Close()
+
+	client := mcp.NewClient(&mcp.Implementation{Name: "schema-test", Version: "test"}, nil)
+	clientSession, err := client.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatalf("client.Connect: %v", err)
+	}
+	defer clientSession.Close()
+
+	result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name: "atct_goal_review_request",
+		Arguments: map[string]any{
+			"goal_id": "2", "work_done": "work", "now_possible": "result",
+			"how_to_verify": "verify", "surprises": "none", "needs_review": "none",
+			"next_steps": "legacy",
+		},
+	})
+	if err != nil {
+		if !strings.Contains(err.Error(), "next_steps") {
+			t.Fatalf("legacy next_steps input error = %v, want an explicit unknown-field error", err)
+		}
+	} else if result == nil || !result.IsError {
+		t.Fatalf("legacy next_steps input result = %+v, want an explicit error", result)
+	}
+	select {
+	case call := <-calls:
+		t.Fatalf("legacy next_steps input unexpectedly reached %s with params %#v", call.method, call.params)
+	default:
 	}
 }
 

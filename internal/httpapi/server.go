@@ -85,6 +85,11 @@ type inboxResponse struct {
 	AttentionTasks     []TaskView         `json:"attention_tasks"`
 }
 
+type workflowReconciliationResponse struct {
+	store.WorkflowReconciliation
+	MonitorLastReconciledAt *string `json:"monitor_last_reconciled_at,omitempty"`
+}
+
 type goalResponse struct {
 	Goal                   goalView              `json:"goal"`
 	DerivedFrom            *taskGoalView         `json:"derived_from,omitempty"`
@@ -1382,7 +1387,7 @@ func (s *Server) handleAnswer(w http.ResponseWriter, r *http.Request, decisionID
 	if !ok {
 		return
 	}
-	if decision.Kind == domain.KindCompletion || decision.Kind == domain.KindGoalApproval || decision.Kind == domain.KindGoalReview {
+	if decision.Kind == domain.DecisionKind("completion") || decision.Kind == domain.KindGoalApproval || decision.Kind == domain.KindGoalReview {
 		writeError(w, http.StatusBadRequest, "use approve or reject for this decision")
 		return
 	}
@@ -1424,6 +1429,10 @@ func (s *Server) handleRevise(w http.ResponseWriter, r *http.Request, decisionID
 	}
 	if err != nil {
 		writeStoreError(w, err)
+		return
+	}
+	if original.Kind == domain.DecisionKind("completion") {
+		writeError(w, http.StatusConflict, store.ErrDecisionNotOpen.Error())
 		return
 	}
 	if original.DefaultAppliedAt == nil && original.AnsweredAt == nil {
@@ -1483,8 +1492,6 @@ func (s *Server) handleApprove(w http.ResponseWriter, r *http.Request, decisionI
 		err  error
 	)
 	switch decision.Kind {
-	case domain.KindCompletion:
-		goal, err = s.store.ApproveCompletion(r.Context(), decision.ID)
 	case domain.KindGoalApproval:
 		goal, err = s.store.ApproveGoal(r.Context(), decision.ID)
 	case domain.KindGoalReview:
@@ -1520,8 +1527,6 @@ func (s *Server) handleReject(w http.ResponseWriter, r *http.Request, decisionID
 	}
 	var err error
 	switch decision.Kind {
-	case domain.KindCompletion:
-		err = s.store.RejectCompletion(r.Context(), canonicalDecisionID, request.Reason)
 	case domain.KindGoalApproval:
 		err = s.store.RejectGoal(r.Context(), canonicalDecisionID, request.Reason)
 	case domain.KindGoalReview:
@@ -1573,7 +1578,7 @@ func (s *Server) getOpenDecision(w http.ResponseWriter, ctx context.Context, dec
 		writeStoreError(w, err)
 		return domain.Decision{}, false
 	}
-	if decision.Status != domain.DecisionOpen || (decision.Kind != domain.KindCompletion && decision.Kind != domain.KindGoalApproval && decision.Kind != domain.KindGoalReview) {
+	if decision.Status != domain.DecisionOpen || (decision.Kind != domain.KindGoalApproval && decision.Kind != domain.KindGoalReview) {
 		writeError(w, http.StatusConflict, store.ErrDecisionNotOpen.Error())
 		return domain.Decision{}, false
 	}
@@ -1774,7 +1779,20 @@ func (s *Server) handleEventReconciliation(w http.ResponseWriter, r *http.Reques
 		writeStoreError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, reconciliation)
+	response := workflowReconciliationResponse{WorkflowReconciliation: reconciliation}
+	if goalID == 0 && taskID == 0 {
+		if token := strings.TrimSpace(r.URL.Query().Get("monitor_token")); token != "" {
+			watermark, watermarkErr := s.store.MonitorBindingLastReconciledAt(r.Context(), token)
+			if watermarkErr != nil && !errors.Is(watermarkErr, store.ErrMonitorBindingNotFound) {
+				writeStoreError(w, watermarkErr)
+				return
+			}
+			if watermarkErr == nil {
+				response.MonitorLastReconciledAt = &watermark
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 func eventMatchesGoalID(event store.DecisionEvent, goalID int64) bool {

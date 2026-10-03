@@ -13,7 +13,7 @@ ORDER BY id;
 -- name: ListOpenGoalHandoffClaims :many
 SELECT g.id, g.project_id, g.derived_from_goal_id, g.content, g.status,
        g.creator, g.result_summary, g.work_done, g.now_possible,
-       g.how_to_verify, g.surprises, g.needs_review, g.next_steps,
+       g.how_to_verify, g.surprises, g.needs_review,
        g.created_at, g.updated_at,
        gh.requested_by, gh.received_by
 FROM goal_handoffs AS gh

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"reflect"
 	"testing"
 
 	"github.com/michiomochi/atct/internal/domain"
@@ -118,42 +119,48 @@ func TestUpdateGoalContentRejectsDoneAndDroppedGoals(t *testing.T) {
 
 	for _, status := range []domain.GoalStatus{domain.GoalDone, domain.GoalDropped} {
 		t.Run(string(status), func(t *testing.T) {
-			for i := 0; i < 2; i++ {
-				var goal domain.Goal
-				switch status {
-				case domain.GoalDone:
-					goal, err = s.CreateGoal(ctx, project.ID, "done content", "human")
-					if err != nil {
-						t.Fatal(err)
-					}
-					decision, completeErr := s.CompleteGoal(ctx, goal.ID, "done summary", testSessionID("done-run"))
-					if completeErr != nil {
-						t.Fatal(completeErr)
-					}
-					if _, approveErr := s.ApproveCompletion(ctx, decision.ID); approveErr != nil {
-						t.Fatal(approveErr)
-					}
-				case domain.GoalDropped:
-					goal, err = s.CreateGoal(ctx, project.ID, "dropped content", "agent")
-					if err != nil {
-						t.Fatal(err)
-					}
-					decisions, listErr := s.ListOpenDecisions(ctx, goal.ID)
-					if listErr != nil {
-						t.Fatal(listErr)
-					}
-					if len(decisions) == 0 {
-						t.Fatal("no approval decision for dropped goal")
-					}
-					if rejectErr := s.RejectGoal(ctx, decisions[0].ID, "not needed"); rejectErr != nil {
-						t.Fatal(rejectErr)
-					}
+			var goal domain.Goal
+			switch status {
+			case domain.GoalDone:
+				goal, err = s.CreateGoal(ctx, project.ID, "done content", "human")
+				if err != nil {
+					t.Fatal(err)
 				}
+				const requester = "update-done-requester"
+				const receiver = "update-done-receiver"
+				addLiveProjectClaim(t, s, goal.ID, requester)
+				addTestAgentSession(t, s, receiver)
+				receiveGoalHandoffReviewForGoalReviewTest(t, s, ctx, "update-done-handoff", goal.ID, testSessionID(requester), testSessionID(receiver))
+				review, reviewErr := s.RequestGoalReview(ctx, goal.ID, testSessionID(requester), goalReviewRequestTestReport())
+				if reviewErr != nil {
+					t.Fatal(reviewErr)
+				}
+				if _, reviewErr = s.ApproveGoalReview(ctx, review.ID); reviewErr != nil {
+					t.Fatal(reviewErr)
+				}
+				if _, reviewErr = s.FinalizeGoalReview(ctx, goal.ID, testSessionID(requester)); reviewErr != nil {
+					t.Fatal(reviewErr)
+				}
+			case domain.GoalDropped:
+				goal, err = s.CreateGoal(ctx, project.ID, "dropped content", "agent")
+				if err != nil {
+					t.Fatal(err)
+				}
+				decisions, listErr := s.ListOpenDecisions(ctx, goal.ID)
+				if listErr != nil {
+					t.Fatal(listErr)
+				}
+				if len(decisions) == 0 {
+					t.Fatal("no approval decision for dropped goal")
+				}
+				if rejectErr := s.RejectGoal(ctx, decisions[0].ID, "not needed"); rejectErr != nil {
+					t.Fatal(rejectErr)
+				}
+			}
 
-				_, updateErr := s.UpdateGoalContent(ctx, goal.ID, "new content")
-				if !errors.Is(updateErr, ErrGoalNotProposed) {
-					t.Fatalf("fixture %d: error = %v, want ErrGoalNotProposed", i, updateErr)
-				}
+			_, updateErr := s.UpdateGoalContent(ctx, goal.ID, "new content")
+			if !errors.Is(updateErr, ErrGoalNotProposed) {
+				t.Fatalf("error = %v, want ErrGoalNotProposed", updateErr)
 			}
 		})
 	}
@@ -176,15 +183,14 @@ func TestUpdateGoalContentPreservesCompletionReport(t *testing.T) {
 		HowToVerify: "verify before",
 		Surprises:   "surprises before",
 		NeedsReview: "review before",
-		NextSteps:   "next steps before",
 	}
 	if _, err := s.DB().ExecContext(ctx, `
 		UPDATE goals SET
 			work_done = ?, now_possible = ?, how_to_verify = ?,
-			surprises = ?, needs_review = ?, next_steps = ?
+			surprises = ?, needs_review = ?
 		WHERE id = ?`,
 		wantReport.WorkDone, wantReport.NowPossible, wantReport.HowToVerify,
-		wantReport.Surprises, wantReport.NeedsReview, wantReport.NextSteps, goal.ID,
+		wantReport.Surprises, wantReport.NeedsReview, goal.ID,
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -199,9 +205,8 @@ func TestUpdateGoalContentPreservesCompletionReport(t *testing.T) {
 		HowToVerify: got.HowToVerify,
 		Surprises:   got.Surprises,
 		NeedsReview: got.NeedsReview,
-		NextSteps:   got.NextSteps,
 	}
-	if gotReport != wantReport {
+	if !reflect.DeepEqual(gotReport, wantReport) {
 		t.Fatalf("completion report = %+v, want %+v", gotReport, wantReport)
 	}
 }

@@ -25,10 +25,12 @@ func frozenWatchAgentActionCases() []watchAgentActionCase {
 		{name: "goal created", eventName: "goal.created", line: "atct goal created (goal_id: 1)", decision: watchDecision{GoalID: "1"}, want: true},
 		{name: "wakeup", eventName: "wakeup", line: "atct wakeup: actionable_goals=1", want: true},
 		{name: "liveness", eventName: "monitor.liveness", line: "atct monitor liveness: recheck task 1", decision: watchDecision{GoalID: "249", TaskID: "1"}, want: true},
-		{name: "goal wakeup", eventName: "wakeup.completion_report_missing", line: "atct wakeup: goal 1 has all tasks done but no completion report", decision: watchDecision{GoalID: "1"}, want: true},
+		{name: "goal wakeup", eventName: "wakeup.completion_report_missing", line: "atct wakeup: goal 1 has all tasks done; request named goal review with atct_goal_handoff_review_request", decision: watchDecision{GoalID: "1"}, want: true},
 		{name: "task handoff requested", eventName: "task.handoff.request", line: "atct task handoff requested (task_id: 1, handoff_id: h1)", decision: watchDecision{TaskID: "1", HandoffID: "h1"}, want: true},
 		{name: "task handoff received", eventName: "task.handoff.receive", line: "atct task handoff received (task_id: 1, handoff_id: h1)", decision: watchDecision{TaskID: "1", HandoffID: "h1"}, want: true},
 		{name: "task handoff completed", eventName: "task.handoff.complete", line: "atct task handoff completed (task_id: 1, handoff_id: h1)", decision: watchDecision{TaskID: "1", HandoffID: "h1"}, want: true},
+		{name: "task-create handoff requested", eventName: "task.create_handoff.request", line: "atct task-create handoff requested (goal_id: 1, handoff_id: h1)", decision: watchDecision{GoalID: "1", HandoffID: "h1", TargetRole: "subcommander"}, want: true},
+		{name: "task-create handoff received", eventName: "task.create_handoff.receive", line: "atct task-create handoff received (goal_id: 1, handoff_id: h1)", decision: watchDecision{GoalID: "1", HandoffID: "h1", TargetRole: "subcommander"}, want: true},
 		{name: "goal handoff requested", eventName: "goal.handoff.request", line: "atct goal handoff requested (goal_id: 1, handoff_id: h1)", decision: watchDecision{GoalID: "1", HandoffID: "h1"}, want: true},
 		{name: "goal handoff received", eventName: "goal.handoff.receive", line: "atct goal handoff received (goal_id: 1, handoff_id: h1)", decision: watchDecision{GoalID: "1", HandoffID: "h1"}, want: true},
 		{name: "goal handoff completed", eventName: "goal.handoff.complete", line: "atct goal handoff completed (goal_id: 1, handoff_id: h1)", decision: watchDecision{GoalID: "1", HandoffID: "h1"}, want: true},
@@ -102,6 +104,28 @@ func TestWatchAgentActionSelectorMarksOnlyReviewReceiptControlOnly(t *testing.T)
 				t.Fatalf("controlOnly = %v, want %v", action.controlOnly, tc.controlOnly)
 			}
 		})
+	}
+}
+
+func TestTaskCreateHandoffActionUsesDurableIdentity(t *testing.T) {
+	decision := watchDecision{GoalID: "7", HandoffID: "create-1", TargetRole: "subcommander"}
+	line, ok := formatWatchDecision("task.create_handoff.request", decision)
+	if !ok {
+		t.Fatal("formatWatchDecision() rejected task-create request")
+	}
+
+	action, ok := selectWatchAgentAction(line, "task.create_handoff.request", decision)
+	if !ok {
+		t.Fatal("selectWatchAgentAction() rejected task-create request")
+	}
+	wantDeliveryKey := "task.create_handoff.request\x00subcommander\x00create-1"
+	if action.deliveryKey != wantDeliveryKey {
+		t.Fatalf("delivery key = %q, want %q", action.deliveryKey, wantDeliveryKey)
+	}
+
+	converted := codexMonitorActionFromWatchAction(action)
+	if converted.handoffID != "create-1" {
+		t.Fatalf("Codex handoff ID = %q, want %q", converted.handoffID, "create-1")
 	}
 }
 

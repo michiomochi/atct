@@ -10,8 +10,7 @@ const completionReportCheckFormat = `CHECK (
     length(trim(now_possible)) > 0 AND length(now_possible) <= %[1]d AND
     length(trim(how_to_verify)) > 0 AND length(how_to_verify) <= %[1]d AND
     length(trim(surprises)) > 0 AND length(surprises) <= %[1]d AND
-    length(trim(needs_review)) > 0 AND length(needs_review) <= %[1]d AND
-    length(trim(next_steps)) > 0 AND length(next_steps) <= %[1]d
+    length(trim(needs_review)) > 0 AND length(needs_review) <= %[1]d
   )
 )`
 
