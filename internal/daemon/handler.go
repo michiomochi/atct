@@ -127,6 +127,10 @@ type goalListTaskCounts struct {
 	Dropped int `json:"dropped"`
 }
 
+// goalReviewDueAfter is how long a proposed goal may sit without activity
+// before goal.list lists it for the commander's review.
+const goalReviewDueAfter = 7 * 24 * time.Hour
+
 func summaryLine(content string) string {
 	for _, line := range strings.Split(content, "\n") {
 		line = strings.TrimSpace(line)
@@ -1281,9 +1285,21 @@ func (d *Daemon) dispatchMethod(ctx context.Context, req rpc.Request) (json.RawM
 		if err != nil {
 			return nil, err
 		}
+		type reviewDueGoal struct {
+			ID        int64     `json:"id"`
+			Title     string    `json:"title"`
+			UpdatedAt time.Time `json:"updated_at"`
+		}
+		reviewDueGoals := []reviewDueGoal{}
+		for _, goal := range goals {
+			if goal.Status == domain.GoalProposed && time.Since(goal.UpdatedAt) >= goalReviewDueAfter {
+				reviewDueGoals = append(reviewDueGoals, reviewDueGoal{ID: goal.ID, Title: summaryLine(goal.Content), UpdatedAt: goal.UpdatedAt})
+			}
+		}
 		data := map[string]any{
 			"project":                  ns,
 			"goals":                    visibleGoals,
+			"review_due_goals":         reviewDueGoals,
 			"awaiting_approval_count":  awaitingApprovalCount,
 			"answered_decisions":       mine,
 			"orphaned_decisions":       orphaned,

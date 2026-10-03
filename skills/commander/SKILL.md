@@ -284,3 +284,23 @@ Only when SessionStart emitted no key, the caller's stable full agent name is
 suitable. If a reconnect causes the role to appear wrong, call
 `atct_session_identify` again with the same key to return to the original
 session row.
+
+## Proposed goals due for review
+
+A proposed goal that sits idle gets stale: the fix may already be on main, or
+another goal may have replaced it. The daemon never withdraws a goal on its own;
+the review is yours, at two checkpoints:
+
+- the first Look of a session (`atct_goal_list`), and
+- the next Look after `atct_goal_review_complete`.
+
+If `data.review_due_goals` from `atct_goal_list` is not empty, check each goal
+against current main. Withdraw it with `atct_goal_withdraw` only on one of these
+grounds, and give the evidence as the reason (not just "stale"):
+
+- the fix is already on main,
+- another goal replaced it,
+- its premise is gone.
+
+Leave every other goal untouched. Nothing is recorded: a goal you keep is
+checked again at the next checkpoint.

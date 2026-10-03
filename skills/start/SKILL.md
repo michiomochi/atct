@@ -139,7 +139,9 @@ Run this until nothing is left, not until the next natural pause.
    selected, keep the project fixed for the entire session. Working on another
    project's goals can conflict with the run assigned to that project. It
    returns the active goals, the tasks under them, and any answers waiting for
-   you.
+   you. If `review_due_goals` is not empty, follow
+   the "Proposed goals due for review" procedure in the `atct:commander` skill
+   (the checkpoints are session start and after a goal completes).
 
 2. **Collect what you were told.** For every decision in `orphaned_decisions` or
    `answered_decisions`, call `atct_decision_poll` with its `decision_id` before

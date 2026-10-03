@@ -759,7 +759,7 @@ func Register(server *mcp.Server, c *Client, agentSessionID int64) {
 
 	addMCPTool[GoalListIn, RawWithUnappliedDecisions](server, &mcp.Tool{
 		Name:         "atct_goal_list",
-		Description:  "Get active Goals and unapplied answers relevant to the current agent session. Call at startup and resume.",
+		Description:  "Get active Goals and unapplied answers relevant to the current agent session. Call at startup and resume. data.review_due_goals lists proposed goals with no activity for 7 days or more, for the commander to check against current main.",
 		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in GoalListIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
 		return callWithUnappliedDecisions(ctx, c, "goal.list", map[string]any{
