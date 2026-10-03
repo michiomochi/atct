@@ -672,15 +672,19 @@ type codexMonitorBridge struct {
 	queue                    []codexMonitorAction
 	activeAction             *codexMonitorAction
 	reviewControlGenerations map[string]time.Time
+	acknowledgements         *codexMonitorAcknowledgements
 	disabled                 bool
 	submitMu                 sync.Mutex
 }
 
-func newCodexMonitorBridge(starter codexTurnStarter, threadID string) *codexMonitorBridge {
+func newCodexMonitorBridge(starter codexTurnStarter, threadID string, acknowledgements ...*codexMonitorAcknowledgements) *codexMonitorBridge {
 	bridge := &codexMonitorBridge{
 		starter:                  starter,
 		threadID:                 threadID,
 		reviewControlGenerations: make(map[string]time.Time),
+	}
+	if len(acknowledgements) > 0 {
+		bridge.acknowledgements = acknowledgements[0]
 	}
 	if app, ok := starter.(codexMonitorApp); ok {
 		bridge.app = app
@@ -939,9 +943,7 @@ func (b *codexMonitorBridge) ActionSink() watchAgentActionSink {
 
 func (b *codexMonitorBridge) ActionSinkWithContext(ctx context.Context) watchAgentActionSink {
 	return func(action watchAgentAction) error {
-		// Transient turn submission failures stay in the bridge queue. Terminal
-		// bridge failures return through the watcher as watchSinkError.
-		if err := b.enqueueAction(ctx, codexMonitorActionFromWatchAction(action)); err != nil {
+		if err := b.enqueueWatchAction(ctx, action); err != nil {
 			b.stateMu.Lock()
 			disabled := b.disabled
 			b.stateMu.Unlock()
@@ -953,13 +955,21 @@ func (b *codexMonitorBridge) ActionSinkWithContext(ctx context.Context) watchAge
 	}
 }
 
-func codexMonitorActionFromWatchAction(action watchAgentAction) codexMonitorAction {
-	var handoffID string
-	if isHandoffLifecycleEvent(action.eventName) {
-		parts := strings.Split(action.deliveryKey, "\x00")
-		if len(parts) == 3 && parts[0] == action.eventName {
-			handoffID = parts[2]
+func (b *codexMonitorBridge) enqueueWatchAction(ctx context.Context, action watchAgentAction) error {
+	if b != nil && b.acknowledgements != nil {
+		if key, ok := codexMonitorMutationKeyFromWatchAction(action); ok && b.acknowledgements.Consume(key) {
+			return nil
 		}
+	}
+	// Transient turn submission failures stay in the bridge queue. Terminal
+	// bridge failures return through the watcher as watchSinkError.
+	return b.enqueueAction(ctx, codexMonitorActionFromWatchAction(action))
+}
+
+func codexMonitorActionFromWatchAction(action watchAgentAction) codexMonitorAction {
+	handoffID := action.handoffID
+	if handoffID == "" {
+		handoffID = watchActionHandoffID(action.eventName, action.deliveryKey, action.line)
 	}
 	return codexMonitorAction{
 		line:        action.line,

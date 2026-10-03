@@ -84,3 +84,40 @@ func TestResolveAtctPathFallsBackToBareName(t *testing.T) {
 		t.Fatalf("resolveAtctPath = %q, want %q for PATH lookup", got, "atct")
 	}
 }
+
+func TestNewMCPTransportLeavesBaseUnchangedWithoutValidAcknowledgementEnvironment(t *testing.T) {
+	base := &fakeAckTransport{}
+	for _, tc := range []struct {
+		name       string
+		socket     string
+		capability string
+	}{
+		{name: "missing", socket: "", capability: ""},
+		{name: "missing_socket", socket: "", capability: "capability"},
+		{name: "missing_capability", socket: "/tmp/ack.sock", capability: ""},
+		{name: "whitespace_socket", socket: " ", capability: "capability"},
+		{name: "whitespace_capability", socket: "/tmp/ack.sock", capability: " "},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv(codexMonitorAckSocketEnvironment, tc.socket)
+			t.Setenv(codexMonitorAckCapabilityEnvironment, tc.capability)
+			if got := newMCPTransport(base); got != base {
+				t.Fatalf("newMCPTransport type = %T, want unchanged base %T", got, base)
+			}
+		})
+	}
+}
+
+func TestNewMCPTransportWrapsBaseWithAcknowledgementEnvironment(t *testing.T) {
+	base := &fakeAckTransport{}
+	t.Setenv(codexMonitorAckSocketEnvironment, "/tmp/ack.sock")
+	t.Setenv(codexMonitorAckCapabilityEnvironment, "capability")
+
+	got := newMCPTransport(base)
+	if got == base {
+		t.Fatal("newMCPTransport returned the base transport")
+	}
+	if _, ok := got.(*codexMonitorAckTransport); !ok {
+		t.Fatalf("newMCPTransport type = %T, want *codexMonitorAckTransport", got)
+	}
+}

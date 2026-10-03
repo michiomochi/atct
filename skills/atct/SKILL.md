@@ -122,6 +122,15 @@ reaches the human without passing through the delegator's context.
 | what was left undone | `next_goal_ids`, the ids of the goals to proceed with next |
 | the goal is ready for commander review | `atct_goal_handoff_review_request`, the one message |
 
+`atct_goal_handoff_review_request` is terminal: call it once, and only after
+every declared task is accepted and committed and the goal is ready for
+commander review. Work that is unfinished or blocked stays open and goes to
+`atct_decision_ask` with concrete options and the consequence of each; it is
+never reported through a goal-handoff review request.
+`atct_goal_review_request` applies only to an active goal after the commander
+has received the goal-handoff review; a proposed goal must be activated by
+initial approval before it can be filed.
+
 A subcommander that stops working sends nothing at all, and the old habit caught
 that only because a delegator noticed a quiet pane. The record catches it
 instead: a goal with tasks and no commits, or a closed handoff with nothing
