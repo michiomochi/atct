@@ -10,7 +10,7 @@
     "build": "PUBLIC_ATCT_LOCALE=en astro check && PUBLIC_ATCT_LOCALE=en astro build && PUBLIC_ATCT_LOCALE=ja astro build",
     "preview": "astro preview",
     "test": "vitest run",
-    "typecheck": "astro check"
+    "typecheck": "PUBLIC_ATCT_LOCALE=en astro check"
   },
   "dependencies": {
     "@astrojs/react": "^4.3.0",
