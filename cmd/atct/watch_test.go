@@ -634,8 +634,10 @@ func TestConsumeWatchEventsReconcilesEverySignalWithoutApplyingPayloadOrAcknowle
 	mu.Lock()
 	gotReconcileCalls, gotCursorCalls := reconcileCalls, cursorCalls
 	mu.Unlock()
-	if gotReconcileCalls != 3 {
-		t.Fatalf("reconciliation calls = %d, want one per live signal", gotReconcileCalls)
+	// One reconcile per live signal (3), plus one right after the SSE connect to
+	// cover events emitted before the subscription.
+	if gotReconcileCalls != 4 {
+		t.Fatalf("reconciliation calls = %d, want one per live signal plus one after connect", gotReconcileCalls)
 	}
 	if gotCursorCalls != 0 {
 		t.Fatalf("cursor acknowledgements = %d, want 0", gotCursorCalls)
@@ -1250,12 +1252,18 @@ func TestWatchKeepsQuietWhileKeepalivesArriveAndReportsAfterTheyStop(t *testing.
 	output.needles = []string{missing}
 	reader, writer := io.Pipe()
 	defer writer.Close()
-	client := &http.Client{Transport: watchRoundTripper(func(*http.Request) (*http.Response, error) {
+	// Only /api/events is the keepalive stream; the reconcile that runs right
+	// after connecting gets a minimal empty response.
+	client := &http.Client{Transport: watchRoundTripper(func(req *http.Request) (*http.Response, error) {
+		body := io.Reader(reader)
+		if req.URL.Path != "/api/events" {
+			body = strings.NewReader(`{"decisions":[],"goal_handoffs":[],"plan_handoffs":[],"task_handoffs":[]}`)
+		}
 		return &http.Response{
 			StatusCode: http.StatusOK,
 			Status:     "200 OK",
 			Header:     make(http.Header),
-			Body:       reader,
+			Body:       io.NopCloser(body),
 		}, nil
 	})}
 	errCh := make(chan error, 1)
@@ -1297,12 +1305,18 @@ func TestWatchReportsOneKeepaliveMissingLine(t *testing.T) {
 	output.needles = []string{missing}
 	reader, writer := io.Pipe()
 	defer writer.Close()
-	client := &http.Client{Transport: watchRoundTripper(func(*http.Request) (*http.Response, error) {
+	// Only /api/events is the keepalive stream; the reconcile that runs right
+	// after connecting gets a minimal empty response.
+	client := &http.Client{Transport: watchRoundTripper(func(req *http.Request) (*http.Response, error) {
+		body := io.Reader(reader)
+		if req.URL.Path != "/api/events" {
+			body = strings.NewReader(`{"decisions":[],"goal_handoffs":[],"plan_handoffs":[],"task_handoffs":[]}`)
+		}
 		return &http.Response{
 			StatusCode: http.StatusOK,
 			Status:     "200 OK",
 			Header:     make(http.Header),
-			Body:       reader,
+			Body:       io.NopCloser(body),
 		}, nil
 	})}
 	errCh := make(chan error, 1)
@@ -1672,7 +1686,11 @@ func TestWatchReadsSnapshotAfterDisconnect(t *testing.T) {
 			call := reconcileCalls
 			mu.Unlock()
 			w.Header().Set("Content-Type", "application/json")
-			if call == 1 {
+			// Calls 1 and 2 are the initial reconcile and the one right after the
+			// SSE connect. The stranded decision shows up only from call 3, i.e.
+			// the reconcile after the disconnect, so the test proves the snapshot
+			// is read again after the stream drops.
+			if call <= 2 {
 				_, _ = io.WriteString(w, `{"decisions":[],"goal_handoffs":[],"plan_handoffs":[],"task_handoffs":[]}`)
 				return
 			}
@@ -1706,8 +1724,8 @@ func TestWatchReadsSnapshotAfterDisconnect(t *testing.T) {
 	mu.Lock()
 	gotInboxCalls, gotEventCalls := inboxCalls, eventCalls
 	mu.Unlock()
-	if gotInboxCalls < 2 || gotEventCalls < 1 || reconcileCalls < 2 {
-		t.Fatalf("requests after disconnect = inbox %d, events %d, reconcile %d, want inbox >=2, events >=1, reconcile >=2", gotInboxCalls, gotEventCalls, reconcileCalls)
+	if gotInboxCalls < 2 || gotEventCalls < 1 || reconcileCalls < 3 {
+		t.Fatalf("requests after disconnect = inbox %d, events %d, reconcile %d, want inbox >=2, events >=1, reconcile >=3", gotInboxCalls, gotEventCalls, reconcileCalls)
 	}
 }
 

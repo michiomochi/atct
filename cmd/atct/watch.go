@@ -1052,6 +1052,15 @@ func consumeWatchEventsWithStateAndScopeAndSinkAndInterval(ctx context.Context, 
 		return fmt.Errorf("GET %s: HTTP %s", eventsURL, resp.Status)
 	}
 
+	// Events emitted between the caller's reconcile and this subscription are
+	// not on the stream, so reconcile once now that it is open.
+	if err := reconcileWatchScope(ctx, client, baseURL, scope, out, delivered, lastWakeupContent, wakeupDiscrepancyDelivered, wakeupDelivered, scopeFilter, sink, actionSink, latestReconciliation); err != nil {
+		return err
+	}
+	if reconciliationSucceeded != nil {
+		reconciliationSucceeded()
+	}
+
 	frames, readDone := readWatchSSEFrames(ctx, resp.Body)
 	if keepaliveTimeout <= 0 {
 		keepaliveTimeout = watchKeepaliveTimeout
