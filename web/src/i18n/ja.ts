@@ -17,6 +17,7 @@ export const ja: Record<TranslationKey, string> = {
   "dashboard.error.load": "ダッシュボードを読み込めませんでした。",
 
   "decision.caption.list": "判断一覧",
+  "decision.column.priority": "優先度",
   "decision.column.question": "質問",
   "decision.column.project": "プロジェクト",
   "decision.column.goal": "ゴール",
