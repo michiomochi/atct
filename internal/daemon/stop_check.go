@@ -2,9 +2,11 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/michiomochi/atct/internal/domain"
+	"github.com/michiomochi/atct/internal/store"
 )
 
 type stopCheckResponse struct {
@@ -142,6 +144,15 @@ func (d *Daemon) stopCheckCommander(ctx context.Context, projectID int64) (strin
 }
 
 func (d *Daemon) stopCheckSubcommander(ctx context.Context, agentSessionID, goalID int64) (string, error) {
+	goal, err := d.store.GetGoal(ctx, goalID)
+	if err != nil {
+		return "", fmt.Errorf("get goal: %w", err)
+	}
+	if err := d.store.EnsureProjectActive(ctx, goal.ProjectID); errors.Is(err, store.ErrProjectArchived) {
+		return "", nil
+	} else if err != nil {
+		return "", err
+	}
 	goalHandoffs, err := d.store.ListGoalHandoffs(ctx, goalID)
 	if err != nil {
 		return "", fmt.Errorf("list goal handoffs: %w", err)

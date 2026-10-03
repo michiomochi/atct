@@ -165,6 +165,7 @@ SELECT
   answer_label, answer_text, answered_at, applied_at, agent_session_id, created_at
 FROM decisions
 WHERE status = 'open'
+  AND goal_id IN (SELECT goals.id FROM goals WHERE goals.project_id NOT IN (SELECT id FROM projects WHERE archived_at IS NOT NULL))
 ORDER BY created_at
 `
 
@@ -478,6 +479,7 @@ SELECT
   answer_label, answer_text, answered_at, applied_at, agent_session_id, created_at
 FROM decisions
 WHERE status = 'open' AND default_after_ms IS NOT NULL AND default_option != ''
+  AND goal_id IN (SELECT goals.id FROM goals WHERE goals.project_id NOT IN (SELECT id FROM projects WHERE archived_at IS NOT NULL))
 ORDER BY created_at
 `
 
@@ -578,6 +580,7 @@ SELECT
   answer_label, answer_text, answered_at, applied_at, agent_session_id, created_at
 FROM decisions
 WHERE status = 'answered'
+  AND goal_id IN (SELECT goals.id FROM goals WHERE goals.project_id NOT IN (SELECT id FROM projects WHERE archived_at IS NOT NULL))
 ORDER BY answered_at
 `
 
@@ -680,6 +683,7 @@ SELECT
 FROM decisions
 WHERE status = 'answered'
   AND goal_id IN (SELECT goals.id FROM goals WHERE goals.project_id = ?)
+  AND goal_id IN (SELECT goals.id FROM goals WHERE goals.project_id NOT IN (SELECT id FROM projects WHERE archived_at IS NOT NULL))
 ORDER BY answered_at
 `
 

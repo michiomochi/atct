@@ -1020,6 +1020,9 @@ func (d *Daemon) dispatchMethodWithPeer(ctx context.Context, req rpc.Request, pe
 		return nil, err
 	}
 	req.Params = params
+	if err := d.ensureProjectActiveForMethod(ctx, req.Method, req.Params); err != nil {
+		return nil, err
+	}
 
 	switch req.Method {
 	case "run.register":
@@ -1225,6 +1228,18 @@ func (d *Daemon) dispatchMethodWithPeer(ctx context.Context, req rpc.Request, pe
 	case "project.list":
 		projects, err := d.store.ListProjects(ctx)
 		return marshal(projects, err)
+
+	case "project.archive", "project.unarchive":
+		var p struct {
+			ProjectID int64 `json:"project_id"`
+		}
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		if req.Method == "project.archive" {
+			return marshal(d.store.ArchiveProject(ctx, p.ProjectID))
+		}
+		return marshal(d.store.UnarchiveProject(ctx, p.ProjectID))
 
 	case "project.claim":
 		var p struct {

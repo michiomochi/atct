@@ -185,6 +185,21 @@ function emptyInbox(): InboxResponse {
 }
 
 describe("GoalDetail", () => {
+  it("notes that the project is archived and says how to undo it", async () => {
+    vi.mocked(fetchGoal).mockResolvedValue(goalResponse({ project_archived: true }));
+    render(<GoalDetail id="goal-1" />);
+
+    expect((await screen.findByRole("status")).textContent).toBe("goal.projectArchived");
+  });
+
+  it("shows no archive note for an active project", async () => {
+    vi.mocked(fetchGoal).mockResolvedValue(goalResponse({ project_archived: false }));
+    render(<GoalDetail id="goal-1" />);
+
+    await screen.findByRole("heading", { name: "Fixture goal" });
+    expect(screen.queryByText("goal.projectArchived")).toBeNull();
+  });
+
   it("shows review exchanges fetched for the resolved goal, in time order", async () => {
     vi.mocked(fetchGoal).mockResolvedValue(goalResponse());
     vi.mocked(fetchGoalReviewExchanges).mockResolvedValue({

@@ -119,7 +119,7 @@ var validSubcommands = map[string]bool{
 }
 
 var validDaemonActions = map[string]bool{"start": true, "stop": true}
-var validProjectActions = map[string]bool{"add": true, "list": true}
+var validProjectActions = map[string]bool{"add": true, "list": true, "archive": true, "unarchive": true}
 var validGoalActions = map[string]bool{"add": true, "list": true}
 var validHandoffActions = map[string]bool{"append": true, "complete": true, "history": true, "yielded": true}
 
@@ -159,6 +159,8 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "  daemon stop           Stop the running daemon")
 	fmt.Fprintln(os.Stderr, "  project add [name]   Register the current project")
 	fmt.Fprintln(os.Stderr, "  project list         List registered projects")
+	fmt.Fprintln(os.Stderr, "  project archive <name|id>    Hide a project and its goals from lists, watches and hooks")
+	fmt.Fprintln(os.Stderr, "  project unarchive <name|id>  Restore an archived project")
 	fmt.Fprintln(os.Stderr, "  goal add <content>   Create a goal for the current project")
 	fmt.Fprintln(os.Stderr, "  goal list            List goals for the current project")
 	fmt.Fprintln(os.Stderr, "  context [-brief]      Print the current goal context for an AI session")
@@ -217,7 +219,7 @@ func parseArgs(args []string) (cliConfig, error) {
 	}
 	if sub == "project" {
 		if len(rest) < 1 {
-			fmt.Fprintln(os.Stderr, "project requires an action: add or list")
+			fmt.Fprintln(os.Stderr, "project requires an action: add, list, archive or unarchive")
 			printUsage()
 			return cliConfig{}, errInvalidArgs
 		}
@@ -230,6 +232,15 @@ func parseArgs(args []string) (cliConfig, error) {
 		cfg.projectAction = action
 		rest = rest[1:]
 		if action == "add" && len(rest) > 0 && !strings.HasPrefix(rest[0], "-") {
+			cfg.projectName = rest[0]
+			rest = rest[1:]
+		}
+		if action == "archive" || action == "unarchive" {
+			if len(rest) < 1 || strings.HasPrefix(rest[0], "-") {
+				fmt.Fprintf(os.Stderr, "project %s requires a project name or id\n", action)
+				printUsage()
+				return cliConfig{}, errInvalidArgs
+			}
 			cfg.projectName = rest[0]
 			rest = rest[1:]
 		}
@@ -1032,6 +1043,8 @@ func runProject(config cliConfig, dir, exePath string) error {
 		return addProject(ctx, client, config.projectName)
 	case "list":
 		return listProjects(ctx, client)
+	case "archive", "unarchive":
+		return setProjectArchived(ctx, client, config.projectName, config.projectAction == "archive")
 	default:
 		return fmt.Errorf("unsupported project action %q", config.projectAction)
 	}
@@ -1094,8 +1107,48 @@ func listProjects(ctx context.Context, client *mcpshim.Client) error {
 		return err
 	}
 	for _, project := range projects {
-		fmt.Fprintf(os.Stdout, "%s\t%s\n", project.Name, project.RootPath)
+		fmt.Fprintln(os.Stdout, projectListLine(project))
 	}
+	return nil
+}
+
+func projectListLine(project domain.Project) string {
+	line := project.Name + "\t" + project.RootPath
+	if project.ArchivedAt != nil {
+		line += "\tarchived"
+	}
+	return line
+}
+
+// findProjectByNameOrID matches a project by name, or by id when ref is numeric.
+func findProjectByNameOrID(projects []domain.Project, ref string) (domain.Project, error) {
+	id, idErr := strconv.ParseInt(ref, 10, 64)
+	for _, project := range projects {
+		if project.Name == ref || (idErr == nil && project.ID == id) {
+			return project, nil
+		}
+	}
+	return domain.Project{}, fmt.Errorf("project %q is not registered", ref)
+}
+
+func setProjectArchived(ctx context.Context, client *mcpshim.Client, ref string, archive bool) error {
+	var projects []domain.Project
+	if err := client.Call(ctx, "project.list", map[string]string{}, &projects); err != nil {
+		return err
+	}
+	project, err := findProjectByNameOrID(projects, ref)
+	if err != nil {
+		return err
+	}
+	method, done := "project.unarchive", "unarchived"
+	if archive {
+		method, done = "project.archive", "archived"
+	}
+	var updated domain.Project
+	if err := client.Call(ctx, method, map[string]int64{"project_id": project.ID}, &updated); err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "%s project %q\n", done, project.Name)
 	return nil
 }
 

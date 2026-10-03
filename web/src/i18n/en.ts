@@ -227,6 +227,37 @@ export const en = {
   "duration.minutes": "{{value}}m",
   "duration.hours": "{{value}}h",
   "duration.none": "-",
+
+  "dashboard.projects.title":
+    "Projects",
+  "project.caption.list":
+    "Project list",
+  "project.column.name":
+    "Project",
+  "project.column.status":
+    "Status",
+  "project.column.action":
+    "Action",
+  "project.status.active":
+    "Active",
+  "project.status.archived":
+    "Archived",
+  "project.action.archive":
+    "Archive",
+  "project.action.unarchive":
+    "Unarchive",
+  "project.confirm.archive":
+    "Archive project {{name}}? Its goals leave the lists, waiting answers, hooks and watches, and changes to them are refused until you unarchive it.",
+  "project.confirm.unarchive":
+    "Unarchive project {{name}}? Its goals return to the lists and can be changed again.",
+  "project.error.load":
+    "Could not load projects.",
+  "project.error.update":
+    "Could not update the project.",
+  "project.empty":
+    "No projects are registered. Run atct project add in a repository to register one.",
+  "goal.projectArchived":
+    "This goal's project is archived. Changes are refused until you unarchive it with atct project unarchive {{name}} or from the Projects section of the dashboard.",
 } as const;
 
 export type TranslationKey = keyof typeof en;

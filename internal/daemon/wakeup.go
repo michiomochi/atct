@@ -105,6 +105,9 @@ func (t *wakeupTracker) evaluateWith(ctx context.Context, s *store.Store, now ti
 	var projectErrs []error
 projectLoop:
 	for _, project := range projects {
+		if project.ArchivedAt != nil {
+			continue
+		}
 		state, err := evaluateWakeup(ctx, project.ID)
 		if err != nil {
 			projectErrs = append(projectErrs, fmt.Errorf("project %d: %w", project.ID, err))

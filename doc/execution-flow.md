@@ -263,6 +263,12 @@ commander は goal handoff の review を受領してから human review を依�
 | `atct_goal_review_complete` | commander（人間の承認後） | — |
 | ゴールの取り下げ | commander | そのゴールの subcommander |
 
+## アーカイブした project
+
+`atct project archive <name|id>`（または dashboard の「プロジェクト」セクション）で project をアーカイブできる。goal・task・decision は消えずに残るが、dashboard の一覧・回答待ち、各役割の Stop hook の残作業、watch の通知、wakeup、期限切れ default の自動適用の対象から外れる。goal 詳細や task 詳細など ID を直接開く読み取りは使える。
+
+archived な project に対する変更系（goal の作成・claim、handoff、task の変更、decision の ask / poll / withdraw、plan / review の要求）は、RPC でも HTTP（409）でも、project 名と `atct project unarchive <name>` を含む理由で拒否される。`project.release` は通る。解除は `atct project unarchive <name|id>` か dashboard から行い、解除すると元に戻る。archive 中に期限が切れた default は、解除後の最初の maintenance でまとめて適用される。アーカイブは人間の依頼があったときだけ commander が CLI から行う。MCP tool は無く、subcommander と executor は行わない。
+
 ## worktree とコミット
 
 - ゴール 1 つに worktree 1 つ、subcommander 1 人を対応させる。

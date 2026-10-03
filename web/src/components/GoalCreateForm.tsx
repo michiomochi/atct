@@ -27,7 +27,7 @@ export function GoalCreateForm({ onCreated }: Props = {}) {
     setProjectsLoading(true);
     setProjectsError(null);
     try {
-      const nextProjects = await fetchProjects();
+      const nextProjects = (await fetchProjects()).filter((project) => !project.archived_at);
       setProjects(nextProjects);
       setProjectID((current) =>
         nextProjects.some((project) => project.id === current) ? current : "",

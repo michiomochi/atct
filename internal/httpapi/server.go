@@ -50,9 +50,11 @@ type goalView struct {
 	// yet received. There is nothing for a human to answer, so it carries no
 	// open decision, and without this the goal looked the same as one nobody
 	// had picked up.
-	AwaitingReview bool       `json:"awaiting_review"`
-	ProjectName    string     `json:"project_name"`
-	Tasks          []TaskView `json:"tasks"`
+	AwaitingReview bool   `json:"awaiting_review"`
+	ProjectName    string `json:"project_name"`
+	// ProjectArchived is set on the goal detail so the page can say why changes are refused.
+	ProjectArchived bool       `json:"project_archived"`
+	Tasks           []TaskView `json:"tasks"`
 }
 
 type goalTaskCommitsView struct {
@@ -205,6 +207,9 @@ func (id *inputID) UnmarshalJSON(data []byte) error {
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/"), "/")
+	if s.rejectArchivedWrite(w, r, parts) {
+		return
+	}
 	if len(parts) == 2 && parts[0] == "api" && parts[1] == "ui-settings" {
 		if r.Method != http.MethodGet {
 			writeError(w, http.StatusBadRequest, "method is not allowed for this endpoint")
@@ -275,6 +280,18 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.handleProjects(w, r)
+		return
+	}
+	if len(parts) == 3 && parts[0] == "api" && parts[1] == "projects" && (parts[2] == "archive" || parts[2] == "unarchive") {
+		writeError(w, http.StatusBadRequest, "project id is missing")
+		return
+	}
+	if len(parts) == 4 && parts[0] == "api" && parts[1] == "projects" && (parts[3] == "archive" || parts[3] == "unarchive") {
+		if r.Method != http.MethodPost {
+			writeError(w, http.StatusBadRequest, "method is not allowed for this endpoint")
+			return
+		}
+		s.handleArchiveProject(w, r, parts[2], parts[3] == "archive")
 		return
 	}
 	if len(parts) == 2 && parts[0] == "api" && parts[1] == "goals" {
@@ -727,6 +744,11 @@ func (s *Server) handleCreateGoal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err := s.store.EnsureProjectActive(r.Context(), projectID); err != nil {
+		writeStoreError(w, err)
+		return
+	}
+
 	goal, err := s.store.CreateGoal(r.Context(), projectID, request.Content, request.Creator)
 	if err != nil {
 		writeStoreError(w, err)
@@ -898,11 +920,13 @@ func (s *Server) handleGoal(w http.ResponseWriter, r *http.Request, goalID strin
 	}
 	projectName := ""
 	projectRootPath := ""
+	projectArchived := false
 	projectNames := make(map[int64]string, len(projects))
 	for _, project := range projects {
 		projectNames[project.ID] = project.Name
 		if project.ID == goal.ProjectID {
 			projectName = project.Name
+			projectArchived = project.ArchivedAt != nil
 			projectRootPath = project.RootPath
 		}
 	}
@@ -965,7 +989,7 @@ func (s *Server) handleGoal(w http.ResponseWriter, r *http.Request, goalID strin
 
 	allTaskViews := make([]TaskView, 0, len(tasks))
 	response := goalResponse{
-		Goal:                   goalView{Goal: goal, ProjectName: projectName},
+		Goal:                   goalView{Goal: goal, ProjectName: projectName, ProjectArchived: projectArchived},
 		DerivedFrom:            derivedFrom,
 		DerivedGoals:           derivedGoalViews,
 		Now:                    make([]TaskView, 0),
@@ -2210,5 +2234,82 @@ func (s *Server) resolveDecisionID(w http.ResponseWriter, ctx context.Context, v
 }
 
 func writeStoreError(w http.ResponseWriter, err error) {
+	if errors.Is(err, store.ErrProjectArchived) {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
 	writeError(w, http.StatusInternalServerError, err.Error())
+}
+
+func (s *Server) handleArchiveProject(w http.ResponseWriter, r *http.Request, id string, archive bool) {
+	projectID, ok := s.resolveProjectID(w, r.Context(), id)
+	if !ok {
+		return
+	}
+	var (
+		project domain.Project
+		err     error
+	)
+	if archive {
+		project, err = s.store.ArchiveProject(r.Context(), projectID)
+	} else {
+		project, err = s.store.UnarchiveProject(r.Context(), projectID)
+	}
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, project)
+}
+
+// rejectArchivedWrite answers 409 to a non-GET request under /api/goals/{id},
+// /api/tasks/{id} or /api/decisions/{id} whose project is archived. An id that
+// does not resolve is left to the endpoint's own error.
+func (s *Server) rejectArchivedWrite(w http.ResponseWriter, r *http.Request, parts []string) bool {
+	if r.Method == http.MethodGet || len(parts) < 3 || parts[0] != "api" || parts[2] == "" {
+		return false
+	}
+	ctx := r.Context()
+	var projectID int64
+	switch parts[1] {
+	case "goals":
+		goalID, err := s.store.ResolveGoalID(ctx, parts[2])
+		if err != nil {
+			return false
+		}
+		goal, err := s.store.GetGoal(ctx, goalID)
+		if err != nil {
+			return false
+		}
+		projectID = goal.ProjectID
+	case "tasks":
+		taskID, err := s.store.ResolveTaskID(ctx, parts[2])
+		if err != nil {
+			return false
+		}
+		if projectID, err = s.store.ProjectIDForTask(ctx, taskID); err != nil {
+			return false
+		}
+	case "decisions":
+		decisionID, err := s.store.ResolveDecisionID(ctx, parts[2])
+		if err != nil {
+			return false
+		}
+		decision, err := s.store.GetDecision(ctx, decisionID)
+		if err != nil {
+			return false
+		}
+		goal, err := s.store.GetGoal(ctx, decision.GoalID)
+		if err != nil {
+			return false
+		}
+		projectID = goal.ProjectID
+	default:
+		return false
+	}
+	if err := s.store.EnsureProjectActive(ctx, projectID); errors.Is(err, store.ErrProjectArchived) {
+		writeStoreError(w, err)
+		return true
+	}
+	return false
 }

@@ -228,4 +228,35 @@ export const ja: Record<TranslationKey, string> = {
   "duration.minutes": "{{value}}分",
   "duration.hours": "{{value}}時間",
   "duration.none": "-",
+
+  "dashboard.projects.title":
+    "プロジェクト",
+  "project.caption.list":
+    "プロジェクト一覧",
+  "project.column.name":
+    "プロジェクト",
+  "project.column.status":
+    "状態",
+  "project.column.action":
+    "操作",
+  "project.status.active":
+    "有効",
+  "project.status.archived":
+    "アーカイブ済み",
+  "project.action.archive":
+    "アーカイブ",
+  "project.action.unarchive":
+    "解除",
+  "project.confirm.archive":
+    "プロジェクト {{name}} をアーカイブしますか？ ゴールは一覧・回答待ち・フック・監視の対象から外れ、解除するまで変更操作は拒否されます。",
+  "project.confirm.unarchive":
+    "プロジェクト {{name}} のアーカイブを解除しますか？ ゴールは一覧に戻り、再び変更できます。",
+  "project.error.load":
+    "プロジェクトを読み込めませんでした。",
+  "project.error.update":
+    "プロジェクトを更新できませんでした。",
+  "project.empty":
+    "登録されたプロジェクトはありません。リポジトリで atct project add を実行して登録してください。",
+  "goal.projectArchived":
+    "このゴールのプロジェクトはアーカイブされています。atct project unarchive {{name}} かダッシュボードのプロジェクトで解除するまで、変更操作は拒否されます。",
 };

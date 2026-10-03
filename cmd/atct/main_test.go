@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/michiomochi/atct/internal/daemonctl"
+	"github.com/michiomochi/atct/internal/domain"
 	"github.com/michiomochi/atct/internal/mcpshim"
 )
 
@@ -842,5 +843,44 @@ func TestAddGoalSendsCreatorAgent(t *testing.T) {
 	}
 	if got := (<-params)["creator"]; got != "agent" {
 		t.Fatalf("creator = %q, want agent", got)
+	}
+}
+
+func TestParseArgsProjectArchiveAndUnarchive(t *testing.T) {
+	for _, action := range []string{"archive", "unarchive"} {
+		cfg, err := parseArgs([]string{"project", action, "myproj"})
+		if err != nil {
+			t.Fatalf("parseArgs(project %s myproj): %v", action, err)
+		}
+		if cfg.projectAction != action || cfg.projectName != "myproj" {
+			t.Fatalf("cfg = %q %q, want %q myproj", cfg.projectAction, cfg.projectName, action)
+		}
+		if _, err := parseArgs([]string{"project", action}); err == nil {
+			t.Fatalf("parseArgs(project %s) without a target returned nil error", action)
+		}
+	}
+}
+
+func TestFindProjectByNameOrID(t *testing.T) {
+	projects := []domain.Project{{ID: 3, Name: "alpha"}, {ID: 7, Name: "beta"}}
+	for ref, wantID := range map[string]int64{"alpha": 3, "beta": 7, "3": 3, "7": 7} {
+		got, err := findProjectByNameOrID(projects, ref)
+		if err != nil || got.ID != wantID {
+			t.Errorf("findProjectByNameOrID(%q) = %+v, %v; want id %d", ref, got, err, wantID)
+		}
+	}
+	_, err := findProjectByNameOrID(projects, "gamma")
+	if err == nil || !strings.Contains(err.Error(), `project "gamma" is not registered`) {
+		t.Fatalf("missing project error = %v", err)
+	}
+}
+
+func TestProjectListLineMarksArchived(t *testing.T) {
+	now := time.Now()
+	if got := projectListLine(domain.Project{Name: "a", RootPath: "/r"}); got != "a\t/r" {
+		t.Fatalf("active line = %q", got)
+	}
+	if got := projectListLine(domain.Project{Name: "a", RootPath: "/r", ArchivedAt: &now}); got != "a\t/r\tarchived" {
+		t.Fatalf("archived line = %q", got)
 	}
 }

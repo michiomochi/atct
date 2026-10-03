@@ -44,4 +44,22 @@ describe("GoalCreateForm header dialog", () => {
     }));
     await waitFor(() => expect(onCreated).toHaveBeenCalledTimes(1));
   });
+
+  it("leaves archived projects out of the choices", async () => {
+    fetchProjects.mockResolvedValue([
+      { id: "project-1", name: "Active project" },
+      { id: "project-2", name: "Archived project", archived_at: "2026-02-01T00:00:00Z" },
+    ]);
+    render(<GoalCreateForm />);
+    fireEvent.click(await screen.findByRole("button", { name: "form.goal.action.new" }));
+    await screen.findByLabelText("form.goal.project.label");
+    expect(screen.getByRole("option", { name: "Active project" })).toBeTruthy();
+    expect(screen.queryByRole("option", { name: "Archived project" })).toBeNull();
+  });
+
+  it("falls back to the no-project message when every project is archived", async () => {
+    fetchProjects.mockResolvedValue([{ id: "project-2", name: "Archived project", archived_at: "2026-02-01T00:00:00Z" }]);
+    render(<GoalCreateForm />);
+    expect(await screen.findByText("form.goal.noProject")).toBeTruthy();
+  });
 });

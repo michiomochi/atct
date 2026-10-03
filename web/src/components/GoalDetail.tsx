@@ -372,6 +372,11 @@ export function GoalDetail({ id }: Props) {
             ].join(" · ")}
           </p>
         )}
+        {data?.goal.goal.project_archived && (
+          <p className="mt-3 border border-notice-800 bg-notice-100 px-4 py-3 text-base text-notice-800" role="status">
+            {t("goal.projectArchived", { name: data.goal.goal.project_name || "" })}
+          </p>
+        )}
       </div>
 
       {updatePending && (

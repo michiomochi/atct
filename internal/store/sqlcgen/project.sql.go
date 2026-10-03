@@ -10,6 +10,21 @@ import (
 	"database/sql"
 )
 
+const archiveProject = `-- name: ArchiveProject :execresult
+UPDATE projects
+SET archived_at = COALESCE(archived_at, ?)
+WHERE id = ?
+`
+
+type ArchiveProjectParams struct {
+	ArchivedAt sql.NullString
+	ID         int64
+}
+
+func (q *Queries) ArchiveProject(ctx context.Context, arg ArchiveProjectParams) (sql.Result, error) {
+	return q.db.ExecContext(ctx, archiveProject, arg.ArchivedAt, arg.ID)
+}
+
 const claimProject = `-- name: ClaimProject :execresult
 UPDATE projects
 SET claimed_by = ?, claimed_at = ?
@@ -46,7 +61,7 @@ func (q *Queries) CreateProject(ctx context.Context, arg CreateProjectParams) (i
 }
 
 const getProject = `-- name: GetProject :one
-SELECT id, name, root_path, created_at, claimed_by, claimed_at
+SELECT id, name, root_path, created_at, claimed_by, claimed_at, archived_at
 FROM projects
 WHERE id = ?
 `
@@ -61,12 +76,13 @@ func (q *Queries) GetProject(ctx context.Context, id int64) (Project, error) {
 		&i.CreatedAt,
 		&i.ClaimedBy,
 		&i.ClaimedAt,
+		&i.ArchivedAt,
 	)
 	return i, err
 }
 
 const listProjects = `-- name: ListProjects :many
-SELECT id, name, root_path, created_at, claimed_by, claimed_at
+SELECT id, name, root_path, created_at, claimed_by, claimed_at, archived_at
 FROM projects
 ORDER BY created_at
 `
@@ -87,6 +103,7 @@ func (q *Queries) ListProjects(ctx context.Context) ([]Project, error) {
 			&i.CreatedAt,
 			&i.ClaimedBy,
 			&i.ClaimedAt,
+			&i.ArchivedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -112,7 +129,7 @@ func (q *Queries) ReleaseProject(ctx context.Context, id int64) (sql.Result, err
 }
 
 const resolveProject = `-- name: ResolveProject :one
-SELECT id, name, root_path, created_at, claimed_by, claimed_at
+SELECT id, name, root_path, created_at, claimed_by, claimed_at, archived_at
 FROM projects
 WHERE ? = root_path OR ? LIKE root_path || '/%'
 ORDER BY LENGTH(root_path) DESC
@@ -134,6 +151,17 @@ func (q *Queries) ResolveProject(ctx context.Context, arg ResolveProjectParams) 
 		&i.CreatedAt,
 		&i.ClaimedBy,
 		&i.ClaimedAt,
+		&i.ArchivedAt,
 	)
 	return i, err
+}
+
+const unarchiveProject = `-- name: UnarchiveProject :execresult
+UPDATE projects
+SET archived_at = NULL
+WHERE id = ?
+`
+
+func (q *Queries) UnarchiveProject(ctx context.Context, id int64) (sql.Result, error) {
+	return q.db.ExecContext(ctx, unarchiveProject, id)
 }

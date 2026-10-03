@@ -12,12 +12,13 @@ type Option struct {
 }
 
 type Project struct {
-	ID        int64      `json:"id"`
-	Name      string     `json:"name"`
-	RootPath  string     `json:"root_path"`
-	CreatedAt time.Time  `json:"created_at"`
-	ClaimedBy int64      `json:"claimed_by"`
-	ClaimedAt *time.Time `json:"claimed_at,omitempty"`
+	ID         int64      `json:"id"`
+	Name       string     `json:"name"`
+	RootPath   string     `json:"root_path"`
+	CreatedAt  time.Time  `json:"created_at"`
+	ClaimedBy  int64      `json:"claimed_by"`
+	ClaimedAt  *time.Time `json:"claimed_at,omitempty"`
+	ArchivedAt *time.Time `json:"archived_at,omitempty"`
 }
 
 type CompletionReport struct {

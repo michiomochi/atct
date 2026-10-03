@@ -157,12 +157,13 @@ type PlanHandoffEntry struct {
 }
 
 type Project struct {
-	ID        int64
-	Name      string
-	RootPath  string
-	CreatedAt string
-	ClaimedBy int64
-	ClaimedAt sql.NullString
+	ID         int64
+	Name       string
+	RootPath   string
+	CreatedAt  string
+	ClaimedBy  int64
+	ClaimedAt  sql.NullString
+	ArchivedAt sql.NullString
 }
 
 type SchemaMigration struct {

@@ -69,6 +69,7 @@ SELECT
   created_at, updated_at
 FROM goals
 WHERE project_id = ?
+  AND project_id NOT IN (SELECT id FROM projects WHERE archived_at IS NOT NULL)
 ORDER BY created_at;
 
 -- name: ListAllGoals :many
@@ -77,6 +78,7 @@ SELECT
   work_done, now_possible, how_to_verify, surprises, needs_review,
   created_at, updated_at
 FROM goals
+WHERE project_id NOT IN (SELECT id FROM projects WHERE archived_at IS NOT NULL)
 ORDER BY created_at;
 
 -- name: ListDerivedGoals :many
