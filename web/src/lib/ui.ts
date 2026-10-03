@@ -96,10 +96,6 @@ export function filterDecisionsByTask<T extends { task_id?: string }>(decisions:
   return decisions.filter((decision) => decision.task_id === taskID);
 }
 
-export function findOpenCompletion<T extends CompletionLike>(decisions: T[]): T | undefined {
-  return decisions.find((decision) => decision.kind === "completion" && decision.status === "open");
-}
-
 export function findOpenGoalApproval<T extends CompletionLike>(decisions: T[]): T | undefined {
   return decisions.find((decision) => decision.kind === "goal_approval" && decision.status === "open");
 }

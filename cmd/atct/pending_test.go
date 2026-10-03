@@ -796,8 +796,7 @@ func TestPendingCommandReportsActiveGoalAfterAllTasksDone(t *testing.T) {
 		t.Fatalf("pendingCommand exit code = %d, want 0", exitCode)
 	}
 	for _, want := range []string{
-		"All tasks are done but the active goal has no completion report.",
-		"Call `atct_goal_complete`",
+		pendingCompletedGoalReason,
 		domain.Headline(goal.Content),
 		idText(goal.ID),
 	} {
@@ -807,7 +806,7 @@ func TestPendingCommandReportsActiveGoalAfterAllTasksDone(t *testing.T) {
 	}
 }
 
-func TestPendingCommandDoesNotReportGoalWithCompletionReport(t *testing.T) {
+func TestPendingCommandReportsGoalWithOpenLegacyCompletionDecision(t *testing.T) {
 	dir, projectRoot := newPendingFixture(t)
 	s := openPendingStore(t, dir)
 	ctx := context.Background()
@@ -842,17 +841,13 @@ func TestPendingCommandDoesNotReportGoalWithCompletionReport(t *testing.T) {
 	if err != nil {
 		t.Fatalf("pendingCommand: %v", err)
 	}
-	if strings.Contains(output, pendingCompletedGoalReason) {
-		t.Fatalf("pendingCommand reported a goal with a completion report: %q", output)
+	for _, want := range []string{pendingCompletedGoalReason, domain.Headline(goal.Content), idText(goal.ID)} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("pendingCommand output does not contain %q: %q", want, output)
+		}
 	}
-	if strings.Contains(output, domain.Headline(goal.Content)) {
-		t.Fatalf("pendingCommand reported the completed goal: %q", output)
-	}
-	if output != "" {
-		t.Fatalf("pendingCommand output = %q, want empty", output)
-	}
-	if exitCode != 1 {
-		t.Fatalf("pendingCommand exit code = %d, want 1", exitCode)
+	if exitCode != 0 {
+		t.Fatalf("pendingCommand exit code = %d, want 0", exitCode)
 	}
 }
 
@@ -892,7 +887,7 @@ func TestPendingCommandUsesSeparateReasonForAllDroppedGoal(t *testing.T) {
 	if strings.Contains(output, "All tasks are done but the active goal has no completion report.") {
 		t.Fatalf("pendingCommand reported the dropped goal as completed: %q", output)
 	}
-	for _, want := range []string{domain.Headline(goal.Content), idText(goal.ID), "atct_goal_complete", "atct_task_create"} {
+	for _, want := range []string{domain.Headline(goal.Content), idText(goal.ID), "atct_goal_withdraw", "atct_task_create"} {
 		if !strings.Contains(strings.ToLower(output), strings.ToLower(want)) {
 			t.Fatalf("pendingCommand output does not contain %q: %q", want, output)
 		}
@@ -1061,7 +1056,7 @@ func TestPendingCommandReportsCommitlessGoalWhenAllTasksDoneWithoutLinkedCommit(
 	}
 }
 
-func TestPendingCommandDoesNotReportCommitlessGoalWhenOpenCompletionDecisionExists(t *testing.T) {
+func TestPendingCommandReportsCommitlessGoalWhenOpenLegacyCompletionDecisionExists(t *testing.T) {
 	dir, projectRoot := newPendingFixture(t)
 	s := openPendingStore(t, dir)
 	ctx := context.Background()
@@ -1081,7 +1076,7 @@ func TestPendingCommandDoesNotReportCommitlessGoalWhenOpenCompletionDecisionExis
 		t.Fatalf("UpdateTask: %v", err)
 	}
 	if _, err := s.AskDecision(ctx, store.AskInput{
-		GoalID: goal.ID, Kind: domain.KindCompletion, Question: "Approve this goal as complete?",
+		GoalID: goal.ID, Kind: "completion", Question: "Approve this goal as complete?",
 	}); err != nil {
 		t.Fatalf("AskDecision: %v", err)
 	}
@@ -1093,17 +1088,13 @@ func TestPendingCommandDoesNotReportCommitlessGoalWhenOpenCompletionDecisionExis
 	if err != nil {
 		t.Fatalf("pendingCommand: %v", err)
 	}
-	if strings.Contains(output, commitlessGoalMarker) {
-		t.Fatalf("pendingCommand reported a goal with an open completion decision as commitless: %q", output)
+	for _, want := range []string{commitlessGoalMarker, domain.Headline(goal.Content), idText(goal.ID)} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("pendingCommand output does not contain %q: %q", want, output)
+		}
 	}
-	if strings.Contains(output, domain.Headline(goal.Content)) {
-		t.Fatalf("pendingCommand reported the goal with an open completion decision: %q", output)
-	}
-	if output != "" {
-		t.Fatalf("pendingCommand output = %q, want empty", output)
-	}
-	if exitCode != 1 {
-		t.Fatalf("pendingCommand exit code = %d, want 1", exitCode)
+	if exitCode != 0 {
+		t.Fatalf("pendingCommand exit code = %d, want 0", exitCode)
 	}
 }
 

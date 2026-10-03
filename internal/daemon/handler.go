@@ -21,6 +21,9 @@ var ErrProjectAlreadyClaimed = errors.New("project already claimed")
 var ErrGoalNotProposed = errors.New("goal is not proposed")
 var ErrDecisionOutsideGoal = errors.New("decision belongs to another goal")
 var ErrRoleUnauthorized = errors.New("role is not authorized for this operation")
+var ErrHandoffCompletionSessionRequired = errors.New("agent_session_id is required; identify the session and use the named handoff review flow")
+
+const retiredGoalCompletionDiagnostic = "goal.complete is retired; use atct_goal_review_request followed by atct_goal_review_complete"
 
 type responseWithUnappliedDecisions struct {
 	Data               any                             `json:"data"`
@@ -346,10 +349,6 @@ func (d *Daemon) ensureAgentSessionProject(ctx context.Context, agentSessionID i
 		}
 	}
 	return fmt.Errorf("agent session project scope violation: assigned project %q, target project %q", assignedProjectName, targetProjectName)
-}
-
-func (d *Daemon) authorizeGoalCompletion(ctx context.Context, goalID int64, projectID int64, agentSessionID int64) error {
-	return d.authorizeCommander(ctx, goalID, projectID, agentSessionID, "goal completion")
 }
 
 func (d *Daemon) authorizeGoalHandoffHolder(ctx context.Context, goalID, agentSessionID int64, operation string) error {
@@ -828,16 +827,13 @@ func (d *Daemon) receiveTaskHandoffResponse(ctx context.Context, p taskHandoffRe
 }
 
 func (d *Daemon) completeTaskHandoff(ctx context.Context, p taskHandoffCompleteParams) (store.TaskHandoff, error) {
-	if p.AgentSessionID != 0 {
-		if p.HandoffID == "" {
-			return store.TaskHandoff{}, fmt.Errorf("task handoff completion by reviewer requires handoff_id")
-		}
-		return d.store.CompleteTaskHandoffByReviewer(ctx, p.HandoffID, p.TaskID, p.AgentSessionID, p.CompleteReport)
+	if p.AgentSessionID == 0 {
+		return store.TaskHandoff{}, ErrHandoffCompletionSessionRequired
 	}
 	if p.HandoffID == "" {
-		return d.store.CompleteTaskHandoffForTask(ctx, p.TaskID, p.CompleteReport)
+		return store.TaskHandoff{}, fmt.Errorf("task handoff completion by reviewer requires handoff_id")
 	}
-	return d.store.CompleteTaskHandoff(ctx, p.HandoffID, p.TaskID, p.CompleteReport)
+	return d.store.CompleteTaskHandoffByReviewer(ctx, p.HandoffID, p.TaskID, p.AgentSessionID, p.CompleteReport)
 }
 
 func (d *Daemon) requestGoalHandoff(ctx context.Context, p goalHandoffRequestParams) (store.GoalHandoff, error) {
@@ -863,23 +859,20 @@ func (d *Daemon) receiveGoalHandoffResponse(ctx context.Context, p goalHandoffRe
 }
 
 func (d *Daemon) completeGoalHandoff(ctx context.Context, p goalHandoffCompleteParams) (store.GoalHandoff, error) {
-	if p.AgentSessionID != 0 {
-		if p.HandoffID == "" {
-			return store.GoalHandoff{}, fmt.Errorf("goal handoff completion by reviewer requires handoff_id")
-		}
-		goal, err := d.store.GetGoal(ctx, p.GoalID)
-		if err != nil {
-			return store.GoalHandoff{}, err
-		}
-		if err := d.authorizeCommander(ctx, p.GoalID, goal.ProjectID, p.AgentSessionID, "goal handoff completion"); err != nil {
-			return store.GoalHandoff{}, err
-		}
-		return d.store.CompleteGoalHandoffByReviewer(ctx, p.HandoffID, p.GoalID, p.AgentSessionID, p.CompleteReport)
+	if p.AgentSessionID == 0 {
+		return store.GoalHandoff{}, ErrHandoffCompletionSessionRequired
 	}
 	if p.HandoffID == "" {
-		return d.store.CompleteGoalHandoffForGoal(ctx, p.GoalID, p.CompleteReport)
+		return store.GoalHandoff{}, fmt.Errorf("goal handoff completion by reviewer requires handoff_id")
 	}
-	return d.store.CompleteGoalHandoff(ctx, p.HandoffID, p.GoalID, p.CompleteReport)
+	goal, err := d.store.GetGoal(ctx, p.GoalID)
+	if err != nil {
+		return store.GoalHandoff{}, err
+	}
+	if err := d.authorizeCommander(ctx, p.GoalID, goal.ProjectID, p.AgentSessionID, "goal handoff completion"); err != nil {
+		return store.GoalHandoff{}, err
+	}
+	return d.store.CompleteGoalHandoffByReviewer(ctx, p.HandoffID, p.GoalID, p.AgentSessionID, p.CompleteReport)
 }
 
 func (d *Daemon) receiveGoalReviewResponse(ctx context.Context, p goalHandoffReviewReceiveParams, handoff store.GoalHandoff) (responseWithRoleEvidence, error) {
@@ -1221,7 +1214,7 @@ func (d *Daemon) dispatchMethod(ctx context.Context, req rpc.Request) (json.RawM
 			}
 			awaitingApproval := false
 			for _, decision := range openDecisions {
-				if decision.Kind == domain.KindCompletion || decision.Kind == domain.KindGoalReview {
+				if decision.Kind == domain.KindGoalReview {
 					awaitingApproval = true
 					break
 				}
@@ -1710,10 +1703,11 @@ func (d *Daemon) dispatchMethod(ctx context.Context, req rpc.Request) (json.RawM
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, err
 		}
-		if p.AgentSessionID != 0 {
-			if err := d.authorizeRole(ctx, []string{"subcommander"}, 0, 0, p.TaskID, p.AgentSessionID, "task handoff completion"); err != nil {
-				return nil, err
-			}
+		if p.AgentSessionID == 0 {
+			return nil, ErrHandoffCompletionSessionRequired
+		}
+		if err := d.authorizeRole(ctx, []string{"subcommander"}, 0, 0, p.TaskID, p.AgentSessionID, "task handoff completion"); err != nil {
+			return nil, err
 		}
 		handoff, err := d.completeTaskHandoff(ctx, p)
 		return marshal(handoff, err)
@@ -1800,10 +1794,11 @@ func (d *Daemon) dispatchMethod(ctx context.Context, req rpc.Request) (json.RawM
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, err
 		}
-		if p.AgentSessionID != 0 {
-			if err := d.authorizeRole(ctx, []string{"commander"}, 0, p.GoalID, 0, p.AgentSessionID, "goal handoff completion"); err != nil {
-				return nil, err
-			}
+		if p.AgentSessionID == 0 {
+			return nil, ErrHandoffCompletionSessionRequired
+		}
+		if err := d.authorizeRole(ctx, []string{"commander"}, 0, p.GoalID, 0, p.AgentSessionID, "goal handoff completion"); err != nil {
+			return nil, err
 		}
 		handoff, err := d.completeGoalHandoff(ctx, p)
 		return marshal(handoff, err)
@@ -2139,32 +2134,7 @@ func (d *Daemon) dispatchMethod(ctx context.Context, req rpc.Request) (json.RawM
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, err
 		}
-		goal, err := d.store.GetGoal(ctx, p.GoalID)
-		if err != nil {
-			return nil, err
-		}
-		if err := d.authorizeGoalCompletion(ctx, p.GoalID, goal.ProjectID, p.AgentSessionID); err != nil {
-			return nil, err
-		}
-		if err := d.ensureAgentSessionProject(ctx, p.AgentSessionID, goal.ProjectID); err != nil {
-			return nil, err
-		}
-		report := domain.CompletionReport{
-			WorkDone:    p.WorkDone,
-			NowPossible: p.NowPossible,
-			HowToVerify: p.HowToVerify,
-			Surprises:   p.Surprises,
-			NeedsReview: p.NeedsReview,
-			NextSteps:   p.NextSteps,
-		}
-		// Keep the legacy completion decision as a compatibility adapter. Named
-		// human goal reviews are finalized through goal.review.complete.
-		dec, err := d.store.CompleteGoalWithReport(ctx, p.GoalID, report, p.AgentSessionID)
-		if err != nil || !p.IncludeUnappliedAnswers {
-			return marshal(dec, err)
-		}
-		response, err := d.responseWithScopedUnappliedDecisions(ctx, dec, p.GoalID, p.AgentSessionID)
-		return marshal(response, err)
+		return nil, errors.New(retiredGoalCompletionDiagnostic)
 	}
 	return nil, fmt.Errorf("unknown method: %s", req.Method)
 }
