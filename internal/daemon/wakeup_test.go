@@ -1409,12 +1409,9 @@ func newWakeupTestWorktree(t *testing.T, root string, goalID int64, initialCommi
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("git commit initial: %v: %s", err, output)
 	}
-	goal8 := strconv.FormatInt(goalID, 10)
-	if len(goal8) > 8 {
-		goal8 = goal8[:8]
-	}
-	worktree := filepath.Join(root, ".worktrees", goal8)
-	git("worktree", "add", "-b", "wt/goal-"+goal8, worktree)
+	goalDir := strconv.FormatInt(goalID, 10)
+	worktree := filepath.Join(root, ".worktrees", goalDir)
+	git("worktree", "add", "-b", "wt/goal-"+goalDir, worktree)
 	return worktree
 }
 

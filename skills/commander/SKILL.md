@@ -33,8 +33,8 @@ ATCT uses `script/worktree-setup.sh <goal-id>` as the canonical way to prepare
 a worktree. Do not use a session-scoped native worktree tool such as
 `EnterWorktree`.
 
-- The script derives the location and branch from the goal id: `.worktrees/<goal8>`
-  and `wt/goal-<goal8>`. A second person working on the same goal enters the
+- The script derives the location and branch from the goal id: `.worktrees/<goal-id>`
+  and `wt/goal-<goal-id>`. A second person working on the same goal enters the
   same tree. A native tool names worktrees per session, so it creates one per
   agent instead of one per goal.
 - The script borrows `web/node_modules` from the primary checkout through a

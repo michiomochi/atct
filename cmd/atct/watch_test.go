@@ -1252,14 +1252,18 @@ func TestWatchLivenessSuppressesOpenHumanDecision(t *testing.T) {
 }
 
 func TestWatchLivenessRendersExactSelector(t *testing.T) {
+	at := func(value string) *string { return &value }
 	for _, tt := range []struct {
 		scope watchScope
+		state watchReconciliation
 		want  string
 	}{
+		{scope: watchScope{Role: "commander", ProjectID: "1"}, state: watchReconciliation{GoalHandoffs: []watchReconciliationHandoff{{ID: "gh-9", GoalID: 306, ReviewRequestedAt: at("q")}}}, want: "atct monitor liveness: goal handoff gh-9 is waiting for your review (goal 306)"},
+		{scope: watchScope{Role: "commander", ProjectID: "1"}, state: watchReconciliation{PlanHandoffs: []watchReconciliationHandoff{{ID: "ph-2", GoalID: 5, ReviewRequestedAt: at("q")}}}, want: "atct monitor liveness: plan handoff ph-2 is waiting for your review (goal 5)"},
 		{scope: watchScope{Role: "subcommander", ProjectID: "1", GoalID: "249"}, want: "atct monitor liveness: recheck goal 249"},
 		{scope: watchScope{Role: "executor", ProjectID: "1", GoalID: "249", TaskID: "812"}, want: "atct monitor liveness: recheck task 812"},
 	} {
-		if got := formatWatchLiveness(tt.scope, watchReconciliation{}); got != tt.want {
+		if got := formatWatchLiveness(tt.scope, tt.state); got != tt.want {
 			t.Fatalf("formatWatchLiveness(%#v) = %q, want %q", tt.scope, got, tt.want)
 		}
 	}
