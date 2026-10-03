@@ -70,7 +70,7 @@ function CompletionReport({ goal }: { goal: Goal }) {
   return (
     <section className="min-w-0 border-t border-line pt-5" data-testid="completion-report" aria-labelledby="completion-report-heading">
       <h2 id="completion-report-heading" className="font-display text-lg font-semibold text-ink-950">{t("goal.completion.report.title")}</h2>
-      <div className="mt-4 grid min-w-0 gap-6 sm:grid-cols-2">
+      <div className="mt-4 grid min-w-0 gap-6">
         {completionReportFields.map(({ key, label }) => {
           const value = report[key].trim() ? report[key] : t("goal.completion.report.empty");
           return (
@@ -89,13 +89,11 @@ type GoalReviewAction = "approve" | "reject";
 
 function GoalReview({
   decision,
-  goal,
   onUpdated,
   reason,
   onReasonChange,
 }: {
   decision: Decision;
-  goal: Goal;
   onUpdated: () => void;
   reason: string;
   onReasonChange: (reason: string) => void;
@@ -163,7 +161,6 @@ function GoalReview({
       <h2 id="goal-review-heading" className="font-display text-lg font-semibold text-ink-950">{t("goal.review.title")}</h2>
       <p className="mt-2 max-w-3xl text-base leading-6 text-ink-700">{t("goal.review.description")}</p>
       <p className="mt-4 max-w-3xl whitespace-pre-wrap break-words text-base leading-6 text-ink-950">{decision.question}</p>
-      {goal.status === "active" && <CompletionReport goal={goal} />}
       <form className="mt-4 min-w-0 max-w-3xl border-l-2 border-accent-600 pl-4" onSubmit={handleSubmit} noValidate>
         <label className="mb-3 block text-base text-ink-800" htmlFor={reasonID}>
           {t("goal.review.reason")} <span className="text-ink-500">{t("form.optional")}</span>
@@ -284,6 +281,19 @@ function GoalWithdrawal({ goal, onUpdated }: { goal: Goal; onUpdated: () => void
   );
 }
 
+function relatedGoalLink(id: string, headline: string) {
+  return (
+    <a
+      className="focus-ring inline-block w-fit max-w-full text-left text-accent-700 underline decoration-accent-100 underline-offset-4 hover:decoration-accent-700"
+      href={`/goals/${encodeURIComponent(id)}`}
+    >
+      <span className="text-clamp-2 block max-w-[32rem] break-words font-medium" title={headline}>
+        {headline}
+      </span>
+    </a>
+  );
+}
+
 export function GoalDetail({ id }: Props) {
   const [state, setState] = useState<LoadState>({ kind: "loading" });
   const [goalReviewReason, setGoalReviewReason] = useState("");
@@ -333,7 +343,13 @@ export function GoalDetail({ id }: Props) {
   const locale = i18n.language.startsWith("ja") ? "ja" : "en";
   const tasks = data?.goal.goal.tasks ?? [];
   const taskCommits = data?.goal.task_commits ?? [];
-  const hasActiveGoalReview = data?.goal.goal.status === "active" && Boolean(data.goalReview);
+  const taskDecisionCount = data?.goal.needs_decision.flatMap((task) => task.open_decisions ?? []).length ?? 0;
+  const hasAttention = Boolean(data && (data.goalReview || data.unattachedDecisions.length > 0 || taskDecisionCount > 0));
+  const goalBody = data ? body(data.goal.goal.content) : "";
+  const relatedGoals = data
+    ? { derivedFrom: data.goal.derived_from, derived: data.goal.derived_goals, next: data.goal.goal.next_goals }
+    : undefined;
+  const hasRelatedGoals = Boolean(relatedGoals && (relatedGoals.derivedFrom || relatedGoals.derived.length > 0 || relatedGoals.next.length > 0));
 
   return (
     <main className="min-w-0 max-w-full space-y-10 overflow-x-hidden px-0.5">
@@ -342,27 +358,19 @@ export function GoalDetail({ id }: Props) {
           {t("goal.backToDashboard")}
         </a>
         <div className="mt-2 flex flex-wrap items-start justify-between gap-4 sm:flex-nowrap">
-          <h1 className="min-w-0 flex-1 font-display text-3xl font-semibold text-ink-950">
+          <h1 className="min-w-0 flex-1 break-words font-display text-3xl font-semibold text-ink-950">
             {data ? headline(data.goal.goal.content) : t("goal.title")}
           </h1>
           {data && <GoalWithdrawal goal={data.goal.goal} onUpdated={load} />}
         </div>
-        {data && body(data.goal.goal.content) && <p className="mt-3 max-w-3xl whitespace-pre-wrap text-base leading-6 text-ink-700">{body(data.goal.goal.content)}</p>}
         {data && (
-          <dl className="mt-5 grid min-w-0 gap-x-6 gap-y-3 border-t border-line pt-4 sm:grid-cols-3">
-            <div className="min-w-0">
-              <dt className="text-base font-semibold uppercase text-ink-700">{t("goal.project")}</dt>
-              <dd className="mt-1 break-words text-base text-ink-950">{data.goal.goal.project_name || "-"}</dd>
-            </div>
-            <div className="min-w-0">
-              <dt className="text-base font-semibold uppercase text-ink-700">{t("goal.column.status")}</dt>
-              <dd className="mt-1 break-words text-base text-ink-950">{statusLabel(locale, data.goal.goal.status)}</dd>
-            </div>
-            <div className="min-w-0">
-              <dt className="text-base font-semibold uppercase text-ink-700">{t("goal.column.updatedAt")}</dt>
-              <dd className="mt-1 break-words text-base text-ink-950">{formatDateTime(locale, data.goal.goal.updated_at)}</dd>
-            </div>
-          </dl>
+          <p className="mt-3 min-w-0 break-words text-base text-ink-700">
+            {[
+              data.goal.goal.project_name || "-",
+              `${t("goal.column.status")}: ${statusLabel(locale, data.goal.goal.status)}`,
+              `${t("goal.column.updatedAt")}: ${formatDateTime(locale, data.goal.goal.updated_at)}`,
+            ].join(" · ")}
+          </p>
         )}
       </div>
 
@@ -380,110 +388,59 @@ export function GoalDetail({ id }: Props) {
         </div>
       )}
 
-      {data && <ReviewExchanges fetchHistory={fetchReviewExchanges} />}
-
-      {data && <HandoffTimeline handoffs={data.goal.handoffs ?? []} fetchHistory={fetchHandoffHistory} />}
-
-      {data && !hasActiveGoalReview && <CompletionReport goal={data.goal.goal} />}
-
-      {data && (
-        <section className="grid min-w-0 gap-6 border-t border-line pt-5 sm:grid-cols-2" data-testid="request-report">
-          {([{ key: "spec", label: "goal.spec" }, { key: "plan", label: "goal.plan" }] as const).map(({ key, label }) => (
-            <section key={key} className="min-w-0">
-              <h2 className="font-display text-lg font-semibold text-ink-950">{t(label)}</h2>
-              <p className="mt-2 whitespace-pre-wrap break-words text-base leading-6 text-ink-800">{data.goal.goal[key].trim() || t("goal.requestReport.unset")}</p>
-            </section>
-          ))}
-        </section>
-      )}
-
-      {data?.goalReview && (
-        <GoalReview
-          decision={data.goalReview}
-          goal={data.goal.goal}
-          onUpdated={load}
-          reason={goalReviewReason}
-          onReasonChange={handleGoalReviewReasonChange}
-        />
-      )}
-
-      {data && <UnattachedDecisionList decisions={data.unattachedDecisions} onRefresh={load} />}
-
-      {data?.goal.derived_from && (
-        <section className="min-w-0 border-t border-line pt-5" aria-labelledby="goal-derived-from-heading">
-          <h2 id="goal-derived-from-heading" className="font-display text-lg font-semibold text-ink-950">
-            {t("goal.derivedFrom.title")}
-          </h2>
-          <div className="mt-6">
-            <h3 className="font-display text-base font-semibold text-ink-950">
-              <a
-                className="focus-ring inline-block w-fit max-w-full text-left text-accent-700 underline decoration-accent-100 underline-offset-4 hover:decoration-accent-700"
-                href={`/goals/${encodeURIComponent(data.goal.derived_from.id)}`}
-              >
-                <span
-                  className="text-clamp-2 block max-w-[32rem] break-words font-medium"
-                  title={data.goal.derived_from.headline}
-                >
-                  {data.goal.derived_from.headline}
-                </span>
-              </a>
-            </h3>
-          </div>
-        </section>
-      )}
-
-      {data && data.goal.derived_goals.length > 0 && (
-        <section className="min-w-0 border-t border-line pt-5" aria-labelledby="goal-derived-goals-heading">
-          <h2 id="goal-derived-goals-heading" className="font-display text-lg font-semibold text-ink-950">
-            {t("goal.derivedGoals.title")}
-          </h2>
-          <div className="mt-6 space-y-6">
-            {data.goal.derived_goals.map(({ id, headline }) => (
-              <h3 key={id} className="font-display text-base font-semibold text-ink-950">
-                <a
-                  className="focus-ring inline-block w-fit max-w-full text-left text-accent-700 underline decoration-accent-100 underline-offset-4 hover:decoration-accent-700"
-                  href={`/goals/${encodeURIComponent(id)}`}
-                >
-                  <span className="text-clamp-2 block max-w-[32rem] break-words font-medium" title={headline}>
-                    {headline}
-                  </span>
-                </a>
-              </h3>
-            ))}
-          </div>
-        </section>
-      )}
-
-      {data && (
-        <section className="min-w-0 border-t border-line pt-5" data-testid="next-goals" aria-labelledby="goal-next-goals-heading">
-          <h2 id="goal-next-goals-heading" className="font-display text-lg font-semibold text-ink-950">
-            {t("goal.nextGoals.title")}
-          </h2>
-          {data.goal.goal.next_goals.length === 0 ? (
-            <p className="mt-4 text-base text-ink-700">{t("goal.nextGoals.empty")}</p>
-          ) : (
-            <ul className="mt-6 space-y-4">
-              {data.goal.goal.next_goals.map(({ id, headline, status }) => (
-                <li key={id} className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
-                  <a
-                    className="focus-ring inline-block w-fit max-w-full text-left text-accent-700 underline decoration-accent-100 underline-offset-4 hover:decoration-accent-700"
-                    href={`/goals/${encodeURIComponent(id)}`}
-                  >
-                    <span className="text-clamp-2 block max-w-[32rem] break-words font-medium" title={headline}>
-                      {headline}
-                    </span>
-                  </a>
-                  <span className="text-base text-ink-700">
-                    {t("goal.column.status")}: {statusLabel(locale, status)}
-                  </span>
-                </li>
-              ))}
-            </ul>
+      {data && hasAttention && (
+        <section className="min-w-0 space-y-6" data-testid="attention" aria-labelledby="attention-heading">
+          <h2 id="attention-heading" className="font-display text-xl font-semibold text-ink-950">{t("goal.attention.title")}</h2>
+          {data.goalReview && (
+            <GoalReview
+              decision={data.goalReview}
+              onUpdated={load}
+              reason={goalReviewReason}
+              onReasonChange={handleGoalReviewReasonChange}
+            />
+          )}
+          <UnattachedDecisionList decisions={data.unattachedDecisions} onRefresh={load} />
+          {taskDecisionCount > 0 && (
+            <p className="max-w-3xl text-base leading-6 text-ink-800">
+              {t("goal.attention.taskDecisions", { count: taskDecisionCount })}{" "}
+              <a className="focus-ring text-accent-700 underline underline-offset-4" href="#task-list">{t("goal.attention.toTasks")}</a>
+            </p>
           )}
         </section>
       )}
 
-      <section className="min-w-0 border-t border-line pt-5" data-testid="task-list" aria-labelledby="task-list-heading">
+      {goalBody && (
+        <section className="min-w-0 border-t border-line pt-5" aria-labelledby="goal-body-heading">
+          <h2 id="goal-body-heading" className="font-display text-lg font-semibold text-ink-950">{t("goal.body.title")}</h2>
+          <p className="mt-2 max-w-3xl whitespace-pre-wrap break-words text-base leading-6 text-ink-800">{goalBody}</p>
+        </section>
+      )}
+
+      {data && <CompletionReport goal={data.goal.goal} />}
+
+      {data && (
+        <section className="min-w-0 space-y-4 border-t border-line pt-5" data-testid="spec-plan" aria-labelledby="spec-plan-heading">
+          <h2 id="spec-plan-heading" className="font-display text-lg font-semibold text-ink-950">{t("goal.specPlan.title")}</h2>
+          {([{ key: "spec", label: "goal.spec" }, { key: "plan", label: "goal.plan" }] as const).map(({ key, label }) => {
+            const text = data.goal.goal[key].trim();
+            if (!text) {
+              return (
+                <p key={key} className="text-base text-ink-700">{t(label)}: {t("goal.requestReport.unset")}</p>
+              );
+            }
+            return (
+              <details key={key} className="min-w-0">
+                <summary className="focus-ring cursor-pointer text-base font-medium text-ink-950">
+                  {t(label)} <span className="text-ink-700">{t("goal.specPlan.lines", { count: text.split("\n").length })}</span>
+                </summary>
+                <p className="mt-2 max-w-3xl whitespace-pre-wrap break-words text-base leading-6 text-ink-800">{data.goal.goal[key]}</p>
+              </details>
+            );
+          })}
+        </section>
+      )}
+
+      <section id="task-list" className="min-w-0 border-t border-line pt-5" data-testid="task-list" aria-labelledby="task-list-heading">
         <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-2">
           <h2 id="task-list-heading" className="font-display text-lg font-semibold text-ink-950">{t("goal.tasks.title")}</h2>
           {data && <p className="text-base text-ink-700">{tasks.length}</p>}
@@ -531,6 +488,47 @@ export function GoalDetail({ id }: Props) {
           </div>
         </section>
       )}
+
+      {relatedGoals && hasRelatedGoals && (
+        <section className="min-w-0 space-y-6 border-t border-line pt-5" data-testid="related-goals" aria-labelledby="goal-related-heading">
+          <h2 id="goal-related-heading" className="font-display text-lg font-semibold text-ink-950">{t("goal.related.title")}</h2>
+          {relatedGoals.derivedFrom && (
+            <div className="min-w-0">
+              <h3 className="font-display text-base font-semibold text-ink-950">{t("goal.derivedFrom.title")}</h3>
+              <ul className="mt-3 space-y-3">
+                <li>{relatedGoalLink(relatedGoals.derivedFrom.id, relatedGoals.derivedFrom.headline)}</li>
+              </ul>
+            </div>
+          )}
+          {relatedGoals.derived.length > 0 && (
+            <div className="min-w-0">
+              <h3 className="font-display text-base font-semibold text-ink-950">{t("goal.derivedGoals.title")}</h3>
+              <ul className="mt-3 space-y-3">
+                {relatedGoals.derived.map(({ id, headline }) => <li key={id}>{relatedGoalLink(id, headline)}</li>)}
+              </ul>
+            </div>
+          )}
+          {relatedGoals.next.length > 0 && (
+            <div className="min-w-0">
+              <h3 className="font-display text-base font-semibold text-ink-950">{t("goal.nextGoals.title")}</h3>
+              <ul className="mt-3 space-y-3">
+                {relatedGoals.next.map(({ id, headline, status }) => (
+                  <li key={id} className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+                    {relatedGoalLink(id, headline)}
+                    <span className="text-base text-ink-700">
+                      {t("goal.column.status")}: {statusLabel(locale, status)}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </section>
+      )}
+
+      {data && <ReviewExchanges fetchHistory={fetchReviewExchanges} />}
+
+      {data && <HandoffTimeline handoffs={data.goal.handoffs ?? []} fetchHistory={fetchHandoffHistory} />}
 
     </main>
   );

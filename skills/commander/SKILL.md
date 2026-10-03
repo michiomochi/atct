@@ -251,6 +251,14 @@ that subcommander is started:
    `atct_goal_handoff_complete` is reserved for legacy/out-of-order recovery,
    not the normal goal-review path.
 
+   The daemon checks that the goal branch contains main only at review request
+   time. After human approval and before merging, run
+   `git merge-base --is-ancestor main wt/goal-<id>`. If it is not an ancestor,
+   run `git merge main --no-edit` in the goal worktree, re-run the verification
+   set, then merge. Reject the handoff only when that merge conflicts or the
+   verification fails; bouncing a goal merely because main moved keeps the round
+   trips this check exists to remove.
+
 5. Keep one subcommander per goal. A subcommander may wake executors for its
    goal, but must not inspect or manage other goals, create another
    subcommander, or release the goal.
