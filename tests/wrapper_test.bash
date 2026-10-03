@@ -775,7 +775,7 @@ test_delegation_names_the_atct_tools_an_executor_may_call() {
     fail 'delegate task section has no allowlist line after `An executor may call only these atct tools:`'
 
   for tool in atct_session_identify atct_task_handoff_receive atct_role \
-    atct_task_handoff_review_request; do
+    atct_task_handoff_review_request atct_task_handoff_review_reject_receive; do
     grep -Fq -- "\`$tool\`" <<<"$allowlist" ||
       fail "the allowlist line does not allow <$tool>"
   done
@@ -819,6 +819,55 @@ test_delegation_names_the_atct_tools_an_executor_must_not_call() {
     ! grep -Fq -- "\`$tool\`" <<<"$forbidden" ||
       fail "the forbidden block must not forbid the allowed <$tool>"
   done
+}
+
+test_delegation_template_sets_up_the_watch_between_receive_and_role() {
+  local section receive_line watch_line role_line
+
+  section="$(delegate_task_section)"
+  receive_line="$(grep -nF -- 'First record receipt of the handoff by calling `atct_task_handoff_receive`' \
+    <<<"$section" | head -1 | cut -d: -f1 || true)"
+  watch_line="$(grep -nF -- '## Watch' \
+    <<<"$section" | head -1 | cut -d: -f1 || true)"
+  role_line="$(grep -nF -- 'Then invoke the `atct_role` MCP tool' \
+    <<<"$section" | head -1 | cut -d: -f1 || true)"
+
+  [[ -n "$receive_line" && -n "$watch_line" && -n "$role_line" ]] ||
+    fail "template must name receive, watch, and role check: receive=$receive_line watch=$watch_line role=$role_line"
+  (( receive_line < watch_line && watch_line < role_line )) ||
+    fail "template watch step must sit between receive and role check: receive=$receive_line watch=$watch_line role=$role_line"
+}
+
+test_delegation_template_references_the_watch_section_without_spelling_it_out() {
+  local section
+
+  delegate_task_section_contains '## Watch'
+  section="$(delegate_task_section)"
+  ! grep -qF -- 'atct watch --monitor --token' <<<"$section" ||
+    fail 'delegate section must not spell out the watch command'
+  ! grep -qF -- 'persistent' <<<"$section" ||
+    fail 'delegate section must not mention persistent'
+}
+
+test_delegation_template_and_executor_skill_state_the_blocked_output() {
+  delegate_task_section_contains 'blocked: no live Monitor'
+  assert_file_contains 'blocked: no live Monitor' "$REPO_ROOT/skills/executor/SKILL.md"
+}
+
+test_executor_skill_sets_up_the_watch_between_receive_and_role() {
+  local skill receive_line watch_line role_line
+
+  skill="$REPO_ROOT/skills/executor/SKILL.md"
+  receive_line="$(grep -nF 'atct_task_handoff_receive`' "$skill" | head -1 | cut -d: -f1 || true)"
+  watch_line="$(grep -nF '## Watch' "$skill" | head -1 | cut -d: -f1 || true)"
+  role_line="$(grep -nF 'atct_role` with `expected_role' "$skill" | head -1 | cut -d: -f1 || true)"
+
+  [[ -n "$receive_line" && -n "$watch_line" && -n "$role_line" ]] ||
+    fail "executor entry must name receive, watch, and role check: receive=$receive_line watch=$watch_line role=$role_line"
+  (( receive_line < watch_line && watch_line < role_line )) ||
+    fail "executor watch step must sit between receive and role check: receive=$receive_line watch=$watch_line role=$role_line"
+  assert_file_not_contains 'persistent' "$skill"
+  assert_file_contains '`atct_task_handoff_review_reject_receive`' "$skill"
 }
 
 test_delegation_requests_review_before_reviewer_closes_the_task() {
@@ -1840,6 +1889,10 @@ test_handoff_completion_keeps_one_normal_path
 test_delegation_names_the_atct_tools_an_executor_may_call
 test_delegation_names_the_atct_tools_an_executor_must_not_call
 test_delegation_requests_review_before_reviewer_closes_the_task
+test_delegation_template_sets_up_the_watch_between_receive_and_role
+test_delegation_template_references_the_watch_section_without_spelling_it_out
+test_delegation_template_and_executor_skill_state_the_blocked_output
+test_executor_skill_sets_up_the_watch_between_receive_and_role
 test_recovery_section_explains_why_the_role_drops
 test_orchestration_skill_has_no_blanket_atct_ban
 test_goal_handoff_completion_keeps_one_normal_path
