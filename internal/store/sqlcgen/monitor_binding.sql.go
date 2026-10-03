@@ -9,6 +9,26 @@ import (
 	"context"
 )
 
+const advanceMonitorBindingLastReconciledAt = `-- name: AdvanceMonitorBindingLastReconciledAt :exec
+UPDATE monitor_bindings
+SET last_reconciled_at = CASE
+  WHEN last_reconciled_at = '' OR last_reconciled_at < ?1
+    THEN ?1
+  ELSE last_reconciled_at
+END
+WHERE token = ?2
+`
+
+type AdvanceMonitorBindingLastReconciledAtParams struct {
+	LastReconciledAt string
+	Token            string
+}
+
+func (q *Queries) AdvanceMonitorBindingLastReconciledAt(ctx context.Context, arg AdvanceMonitorBindingLastReconciledAtParams) error {
+	_, err := q.db.ExecContext(ctx, advanceMonitorBindingLastReconciledAt, arg.LastReconciledAt, arg.Token)
+	return err
+}
+
 const bindMonitorToken = `-- name: BindMonitorToken :exec
 INSERT INTO monitor_bindings (token, agent_session_id, created_at)
 VALUES (?1, ?2, ?3)
@@ -39,4 +59,17 @@ func (q *Queries) GetMonitorBindingAgentSessionID(ctx context.Context, token str
 	var agent_session_id int64
 	err := row.Scan(&agent_session_id)
 	return agent_session_id, err
+}
+
+const getMonitorBindingLastReconciledAt = `-- name: GetMonitorBindingLastReconciledAt :one
+SELECT last_reconciled_at
+FROM monitor_bindings
+WHERE token = ?1
+`
+
+func (q *Queries) GetMonitorBindingLastReconciledAt(ctx context.Context, token string) (string, error) {
+	row := q.db.QueryRowContext(ctx, getMonitorBindingLastReconciledAt, token)
+	var last_reconciled_at string
+	err := row.Scan(&last_reconciled_at)
+	return last_reconciled_at, err
 }

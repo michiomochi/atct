@@ -237,7 +237,8 @@ CREATE INDEX IF NOT EXISTS monitor_health_last_seen_idx
 CREATE TABLE IF NOT EXISTS monitor_bindings (
   token            TEXT PRIMARY KEY,
   agent_session_id INTEGER NOT NULL REFERENCES agent_sessions(id) ON DELETE CASCADE,
-  created_at       TEXT NOT NULL
+  created_at       TEXT NOT NULL,
+  last_reconciled_at TEXT NOT NULL DEFAULT ''
 );
 
 CREATE INDEX IF NOT EXISTS idx_monitor_bindings_agent_session_id

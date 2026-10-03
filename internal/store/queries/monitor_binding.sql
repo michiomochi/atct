@@ -9,3 +9,17 @@ ON CONFLICT(token) DO UPDATE SET
 SELECT agent_session_id
 FROM monitor_bindings
 WHERE token = sqlc.arg('token');
+
+-- name: GetMonitorBindingLastReconciledAt :one
+SELECT last_reconciled_at
+FROM monitor_bindings
+WHERE token = sqlc.arg('token');
+
+-- name: AdvanceMonitorBindingLastReconciledAt :exec
+UPDATE monitor_bindings
+SET last_reconciled_at = CASE
+  WHEN last_reconciled_at = '' OR last_reconciled_at < sqlc.arg('last_reconciled_at')
+    THEN sqlc.arg('last_reconciled_at')
+  ELSE last_reconciled_at
+END
+WHERE token = sqlc.arg('token');

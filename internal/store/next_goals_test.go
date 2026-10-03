@@ -9,7 +9,7 @@ import (
 	"github.com/michiomochi/atct/internal/domain"
 )
 
-func TestMigration0046DiscardsLegacyNextStepsAndCreatesNextGoals(t *testing.T) {
+func TestMigration0047DiscardsLegacyNextStepsAndCreatesNextGoals(t *testing.T) {
 	db := openMigrationTestDB(t)
 	migrations, err := loadEmbeddedMigrations()
 	if err != nil {
@@ -17,7 +17,7 @@ func TestMigration0046DiscardsLegacyNextStepsAndCreatesNextGoals(t *testing.T) {
 	}
 	found := false
 	for _, migration := range migrations {
-		if migration.filename == "0046_next_goals.sql" {
+		if migration.filename == "0047_next_goals.sql" {
 			found = true
 			break
 		}
@@ -29,7 +29,7 @@ func TestMigration0046DiscardsLegacyNextStepsAndCreatesNextGoals(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Fatal("embedded migrations do not contain 0046_next_goals.sql")
+		t.Fatal("embedded migrations do not contain 0047_next_goals.sql")
 	}
 	if _, err := db.Exec(`PRAGMA user_version = 6`); err != nil {
 		t.Fatalf("set v6 schema version: %v", err)
@@ -50,10 +50,10 @@ CREATE INDEX idx_goals_content_for_next_goals_test ON goals(content);
 	}
 
 	if err := applyEmbeddedMigrations(db); err != nil {
-		t.Fatalf("apply 0046 migration: %v", err)
+		t.Fatalf("apply 0047 migration: %v", err)
 	}
 	assertUserVersion(t, db, schemaVersion)
-	assertMigrationRecorded(t, db, "0046_next_goals.sql")
+	assertMigrationRecorded(t, db, "0047_next_goals.sql")
 	assertTableExists(t, db, "next_goals")
 
 	columns := migrationTableColumns(t, db, "goals")

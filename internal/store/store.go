@@ -160,6 +160,16 @@ func (s *Store) UpsertMonitorHealth(ctx context.Context, health MonitorHealth) e
 	}); err != nil {
 		return fmt.Errorf("upsert monitor health: %w", err)
 	}
+	if token := strings.TrimSpace(health.MonitorToken); token != "" && health.State == "healthy" &&
+		health.Role == "commander" && health.GoalID == nil && health.TaskID == nil {
+		watermark := formatTimestamp(health.LastSeenAt)
+		if err := queries.AdvanceMonitorBindingLastReconciledAt(ctx, sqlcgen.AdvanceMonitorBindingLastReconciledAtParams{
+			Token:            token,
+			LastReconciledAt: watermark,
+		}); err != nil {
+			return fmt.Errorf("advance monitor binding watermark: %w", err)
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit monitor health upsert: %w", err)
 	}
