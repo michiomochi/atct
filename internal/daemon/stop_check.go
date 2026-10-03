@@ -268,10 +268,9 @@ func (d *Daemon) stopCheckExecutor(ctx context.Context, agentSessionID int64) (s
 			for _, handoff := range handoffs {
 				if handoff.ReceivedBy == agentSessionID && handoff.ReceivedAt != nil && handoff.CompletedReportAt == nil && handoff.RecoveredAt == nil {
 					// Review requested and not rejected: the subcommander's answer
-					// arrives through the Monitor, so a live one means waiting only.
+					// arrives through the Monitor, so a live one of this task's means waiting only.
 					if handoff.ReviewRequestedAt != nil && handoff.ReviewRejectedAt == nil {
-						goalID := goal.ID
-						if live, err := d.store.HasLiveMonitorForScope(ctx, store.MonitorLiveScope{ProjectID: goal.ProjectID, Role: "executor", GoalID: &goalID}); err == nil && live {
+						if live, err := d.store.HasLiveExecutorMonitorForTask(ctx, goal.ProjectID, goal.ID, task.ID); err == nil && live {
 							continue
 						}
 					}

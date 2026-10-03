@@ -453,3 +453,27 @@ func TestStopCheckExecutorWaitingOnReview(t *testing.T) {
 		})
 	}
 }
+
+// A Monitor of another executor on the same goal (another task) is not this
+// task's Monitor: the waiting executor must still be blocked.
+func TestStopCheckExecutorIgnoresOtherTaskMonitor(t *testing.T) {
+	w := newWaitingFixture(t, false)
+	w.taskHandoff(t, true, true)
+	goalID, otherTaskID := w.taskGoal.ID, w.tasks[0].ID+1000
+	addLiveMonitorForTest(t, w.goalListFixture, "executor", w.project.ID, &goalID, &otherTaskID)
+	detail, err := w.daemon.stopCheckExecutor(context.Background(), w.execID)
+	if err != nil {
+		t.Fatalf("stopCheckExecutor: %v", err)
+	}
+	if detail == "" {
+		t.Fatal("stopCheckExecutor allowed stop on another task's Monitor, want block")
+	}
+	w.liveMonitor(t, "executor")
+	detail, err = w.daemon.stopCheckExecutor(context.Background(), w.execID)
+	if err != nil {
+		t.Fatalf("stopCheckExecutor: %v", err)
+	}
+	if detail != "" {
+		t.Fatalf("stopCheckExecutor = %q, want pass with own task's Monitor", detail)
+	}
+}

@@ -42,3 +42,11 @@ func (s *Store) HasLiveMonitorForScope(ctx context.Context, scope MonitorLiveSco
 	}
 	return count > 0, nil
 }
+
+// HasLiveExecutorMonitorForTask reports whether the executor of one task still
+// has a Monitor inside the health lease. Unlike HasLiveMonitorForScope it
+// matches the task too, so another executor's Monitor on the same goal does
+// not count.
+func (s *Store) HasLiveExecutorMonitorForTask(ctx context.Context, projectID, goalID, taskID int64) (bool, error) {
+	return s.hasLiveExecutorMonitor(ctx, projectID, goalID, taskID)
+}
