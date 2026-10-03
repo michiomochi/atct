@@ -6,6 +6,7 @@ import (
 	"net"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/michiomochi/atct/internal/domain"
 	"github.com/michiomochi/atct/internal/store"
@@ -229,5 +230,91 @@ func TestDecisionPollForCommanderRefusesOtherProjectSessionlessDecision(t *testi
 	}
 	if stored.Status != domain.DecisionAnswered {
 		t.Fatalf("stored status = %v, want answered", stored.Status)
+	}
+}
+
+func (f unappliedDecisionScopeRPCTestFixture) setGoalStatus(t *testing.T, goalID int64, status domain.GoalStatus) {
+	t.Helper()
+	if _, err := f.store.DB().ExecContext(t.Context(), `UPDATE goals SET status = ?, work_done = 'x', now_possible = 'x', how_to_verify = 'x', surprises = 'x', needs_review = 'x' WHERE id = ?`, string(status), goalID); err != nil {
+		t.Fatalf("set goal status: %v", err)
+	}
+}
+
+func TestDecisionPollForCommanderAcceptsOwnerDecisionOnClosedGoal(t *testing.T) {
+	for _, status := range []domain.GoalStatus{domain.GoalDropped, domain.GoalDone} {
+		t.Run(string(status), func(t *testing.T) {
+			f := newUnappliedDecisionScopeRPCTestFixture(t)
+			owner := daemonTestSessionID(t, f.store, "closed-goal-owner")
+			id := f.answeredDecision(t, f.goalBID, domain.KindDecision, owner)
+			f.setGoalStatus(t, f.goalBID, status)
+			result, rpcError := f.callDecisionPoll(t, f.commanderSessionID, id)
+			decision := assertPollSucceeded(t, result, rpcError, id)
+			if decision["status"] != string(domain.DecisionApplied) {
+				t.Fatalf("status = %#v, want applied", decision["status"])
+			}
+			stored, err := f.store.GetDecision(t.Context(), id)
+			if err != nil {
+				t.Fatalf("GetDecision: %v", err)
+			}
+			if stored.Status != domain.DecisionApplied {
+				t.Fatalf("stored status = %v, want applied", stored.Status)
+			}
+		})
+	}
+}
+
+func TestDecisionPollForCommanderRefusesOtherProjectOwnerDecisionOnClosedGoal(t *testing.T) {
+	f := newUnappliedDecisionScopeRPCTestFixture(t)
+	project, err := f.store.CreateProject(t.Context(), "other-project-closed", f.projectRoot+"-other-closed")
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	goal, err := f.store.CreateGoal(t.Context(), project.ID, "other goal", "human")
+	if err != nil {
+		t.Fatalf("CreateGoal: %v", err)
+	}
+	owner := daemonTestSessionID(t, f.store, "other-project-owner")
+	id := f.answeredDecision(t, goal.ID, domain.KindDecision, owner)
+	f.setGoalStatus(t, goal.ID, domain.GoalDropped)
+	_, rpcError := f.callDecisionPoll(t, f.commanderSessionID, id)
+	if len(rpcError) == 0 || string(rpcError) == "null" {
+		t.Fatal("decision.poll succeeded for another project's decision")
+	}
+	stored, err := f.store.GetDecision(t.Context(), id)
+	if err != nil {
+		t.Fatalf("GetDecision: %v", err)
+	}
+	if stored.Status != domain.DecisionAnswered {
+		t.Fatalf("stored status = %v, want answered", stored.Status)
+	}
+}
+
+func TestDecisionPollForCommanderRefusesOwnerDecisionOnActiveGoal(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		age  time.Duration
+	}{
+		{"owner live", 0},
+		{"owner lease lapsed", store.RuntimeLeaseDuration + time.Second},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newUnappliedDecisionScopeRPCTestFixture(t)
+			owner := daemonTestSessionID(t, f.store, "active-goal-owner")
+			if err := f.store.HeartbeatAgentSession(t.Context(), owner, time.Now().UTC().Add(-tc.age)); err != nil {
+				t.Fatalf("HeartbeatAgentSession: %v", err)
+			}
+			id := f.answeredDecision(t, f.goalBID, domain.KindDecision, owner)
+			_, rpcError := f.callDecisionPoll(t, f.commanderSessionID, id)
+			if len(rpcError) == 0 || string(rpcError) == "null" {
+				t.Fatal("decision.poll succeeded for an owner decision on an active goal")
+			}
+			stored, err := f.store.GetDecision(t.Context(), id)
+			if err != nil {
+				t.Fatalf("GetDecision: %v", err)
+			}
+			if stored.Status != domain.DecisionAnswered || stored.AppliedAt != nil {
+				t.Fatalf("stored = %#v, want answered and unapplied", stored)
+			}
+		})
 	}
 }
