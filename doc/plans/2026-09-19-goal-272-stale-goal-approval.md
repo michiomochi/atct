@@ -1,5 +1,7 @@
 # Stale Goal Approval Cleanup Implementation Plan
 
+> **Superseded** by `doc/plans/2026-10-03-goal-272-stale-proposed-review.md` (2026-10-03).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use ATCT executor handoffs task-by-task with the superpowers test/review workflow. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Automatically retire old, untouched proposed goals while preserving every proposed goal with recorded work or recent activity.
