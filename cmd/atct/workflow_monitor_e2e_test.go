@@ -412,15 +412,14 @@ func TestWorkflowMonitorEndToEndContract(t *testing.T) {
 	})
 	watchTransport.waitForEvents(t, 2)
 
-	// 1. goal startup: an unreceived goal handoff wakes the commander (the
-	// requester checks that it is picked up); the subcommander has no scope yet.
+	// 1. goal startup: the commander made the request, so it is not echoed back; the subcommander has no scope yet.
 	callWorkflowMonitorRPC(t, ctx, client, "goal.handoff.request", map[string]any{
 		"handoff_id":     "gh-workflow-e2e",
 		"goal_id":        goal.ID,
 		"requested_by":   commanderID,
 		"request_report": "goal ready for implementation",
 	}, &store.GoalHandoff{})
-	waitWorkflowMonitorAction(t, commanderWatch.recorder, "goal.handoff.request", "gh-workflow-e2e")
+	assertNoWorkflowMonitorAction(t, commanderWatch.recorder, "goal.handoff.request", "gh-workflow-e2e")
 	assertNoWorkflowMonitorAction(t, subStatic.recorder, "goal.handoff.request", "gh-workflow-e2e")
 
 	callWorkflowMonitorRPC(t, ctx, client, "goal.handoff.receive", map[string]any{

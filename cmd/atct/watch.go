@@ -1382,6 +1382,7 @@ type watchReconciliationHandoff struct {
 	RequestedAt               *string `json:"RequestedAt"`
 	ReceivedAt                *string `json:"ReceivedAt"`
 	CompletedReportAt         *string `json:"CompletedReportAt"`
+	RecoveredAt               *string `json:"RecoveredAt"`
 	ReviewRequestedAt         *string `json:"ReviewRequestedAt"`
 	ReviewReceivedAt          *string `json:"ReviewReceivedAt"`
 	ReviewRejectedAt          *string `json:"ReviewRejectedAt"`
@@ -1427,6 +1428,7 @@ type watchTaskCreateHandoff struct {
 	RequestedAt *string `json:"RequestedAt"`
 	ReceivedAt  *string `json:"ReceivedAt"`
 	CompletedAt *string `json:"CompletedAt"`
+	RecoveredAt *string `json:"RecoveredAt"`
 }
 
 func watchActionSinkFromArgs(args ...any) watchAgentActionSink {
@@ -1524,6 +1526,9 @@ func reconcileWatchScope(ctx context.Context, client *http.Client, baseURL strin
 		}
 	}
 	for _, handoff := range state.TaskHandoffs {
+		if watchReconciliationGoalStopped(state, strconv.FormatInt(handoff.GoalID, 10)) {
+			continue
+		}
 		if eventName, decision, ok := watchReconciliationHandoffEvent("task", handoff); ok && watchHandoffProjectionMatchesScope(decision, scope) {
 			if !scopeFilter.delivers(eventName, decision) {
 				continue
@@ -1534,6 +1539,9 @@ func reconcileWatchScope(ctx context.Context, client *http.Client, baseURL strin
 		}
 	}
 	for _, handoff := range state.GoalHandoffs {
+		if watchReconciliationGoalStopped(state, strconv.FormatInt(handoff.GoalID, 10)) {
+			continue
+		}
 		if eventName, decision, ok := watchReconciliationHandoffEvent("goal", handoff); ok && watchHandoffProjectionMatchesScope(decision, scope) {
 			if !scopeFilter.delivers(eventName, decision) {
 				continue
@@ -1544,6 +1552,9 @@ func reconcileWatchScope(ctx context.Context, client *http.Client, baseURL strin
 		}
 	}
 	for _, handoff := range state.PlanHandoffs {
+		if watchReconciliationGoalStopped(state, strconv.FormatInt(handoff.GoalID, 10)) {
+			continue
+		}
 		if eventName, decision, ok := watchReconciliationHandoffEvent("plan", handoff); ok && watchHandoffProjectionMatchesScope(decision, scope) {
 			if !scopeFilter.delivers(eventName, decision) {
 				continue
@@ -1554,6 +1565,9 @@ func reconcileWatchScope(ctx context.Context, client *http.Client, baseURL strin
 		}
 	}
 	for _, handoff := range state.TaskCreateHandoffs {
+		if watchReconciliationGoalStopped(state, strconv.FormatInt(handoff.GoalID, 10)) {
+			continue
+		}
 		if eventName, decision, ok := watchTaskCreateHandoffEvent(handoff); ok && watchHandoffProjectionMatchesScope(decision, scope) {
 			if err := emitWatchDecisionWithStateAndSinks(out, eventName, decision, delivered, lastWakeupContent, wakeupDiscrepancyDelivered, wakeupDelivered, sink, actionSink); err != nil {
 				return err
@@ -1603,7 +1617,7 @@ func reconcileWatchScope(ctx context.Context, client *http.Client, baseURL strin
 }
 
 func watchReconciliationHandoffEvent(kind string, handoff watchReconciliationHandoff) (string, watchDecision, bool) {
-	if handoff.CompletedReportAt != nil {
+	if !watchHandoffOpen(handoff) {
 		return "", watchDecision{}, false
 	}
 	decision := watchDecision{HandoffID: handoff.ID, GoalID: strconv.FormatInt(handoff.GoalID, 10)}
@@ -1643,14 +1657,14 @@ func handoffProjectionRole(kind, phase string) string {
 	switch kind {
 	case "goal":
 		switch phase {
-		case "request", "review.request", "review.receive":
+		case "review.request":
 			return "commander"
 		case "review.reject", "review.reject.receive":
 			return "subcommander"
 		}
 	case "plan":
 		switch phase {
-		case "review.request", "review.receive":
+		case "review.request":
 			return "commander"
 		case "review.reject", "review.reject.receive":
 			return "subcommander"
@@ -1667,7 +1681,7 @@ func handoffProjectionRole(kind, phase string) string {
 }
 
 func watchTaskCreateHandoffEvent(handoff watchTaskCreateHandoff) (string, watchDecision, bool) {
-	if handoff.CompletedAt != nil {
+	if !watchTaskCreateHandoffOpen(handoff) {
 		return "", watchDecision{}, false
 	}
 	decision := watchDecision{HandoffID: handoff.ID, GoalID: strconv.FormatInt(handoff.GoalID, 10), TargetRole: "subcommander"}
@@ -2034,6 +2048,16 @@ func formatWatchLiveness(scope watchScope, state watchReconciliation) string {
 	if rejected, kind := watchRejectedHandoff(scope, state); rejected != "" {
 		return fmt.Sprintf("atct monitor liveness: %s handoff %s was rejected and is waiting to be received (%s)",
 			kind, rejected, watchScopeSubject(scope))
+	}
+	if scope.Role == "commander" {
+		kind, handoffID, goalID := watchCommanderLivenessTarget(state)
+		switch {
+		case handoffID != "":
+			return fmt.Sprintf("atct monitor liveness: %s handoff %s is waiting for your review (goal %s)", kind, handoffID, goalID)
+		case goalID != "":
+			return fmt.Sprintf("atct monitor liveness: goal %s review was approved and is waiting to be completed", goalID)
+		}
+		return ""
 	}
 	if scope.TaskID != "" {
 		return fmt.Sprintf("atct monitor liveness: recheck task %s", scope.TaskID)
