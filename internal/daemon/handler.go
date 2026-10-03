@@ -970,6 +970,7 @@ func (d *Daemon) dispatchMethod(ctx context.Context, req rpc.Request) (json.RawM
 			AgentSessionID int64  `json:"agent_session_id"`
 			SessionKey     string `json:"session_key"`
 			MonitorToken   string `json:"monitor_token"`
+			CWD            string `json:"cwd"`
 		}
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, err
@@ -981,6 +982,23 @@ func (d *Daemon) dispatchMethod(ctx context.Context, req rpc.Request) (json.RawM
 		if strings.TrimSpace(p.MonitorToken) != "" {
 			if err := d.store.BindMonitorToken(ctx, p.MonitorToken, canonicalID); err != nil {
 				return nil, err
+			}
+		}
+		// Identify is the one call every session makes before anything else,
+		// so it is where the project belongs. Waiting for whichever later
+		// operation happens to pass through ensureAgentSessionProject left a
+		// session that never got that far with no project at all.
+		//
+		// A cwd outside any registered project is not an error: the session is
+		// simply not in one, and the later path still applies.
+		if cwd := strings.TrimSpace(p.CWD); cwd != "" {
+			project, projectErr := d.store.ResolveProject(ctx, cwd)
+			if projectErr == nil {
+				if err := d.ensureAgentSessionProject(ctx, canonicalID, project.ID); err != nil {
+					return nil, err
+				}
+			} else if !errors.Is(projectErr, store.ErrProjectNotFound) {
+				return nil, projectErr
 			}
 		}
 		assignment, err := d.store.MonitorAssignment(ctx, canonicalID)
@@ -1397,6 +1415,27 @@ func (d *Daemon) dispatchMethod(ctx context.Context, req rpc.Request) (json.RawM
 		}
 		err := d.store.ReleaseGoal(ctx, p.GoalID)
 		return marshal(nil, err)
+
+	case "goal.withdraw":
+		var p struct {
+			GoalID         int64  `json:"goal_id"`
+			AgentSessionID int64  `json:"agent_session_id"`
+			Reason         string `json:"reason"`
+		}
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		// Withdrawing throws away work other sessions may be doing, so it
+		// belongs to the role that owns the project rather than to whoever
+		// happens to hold the goal.
+		if err := d.authorizeRole(ctx, []string{"commander"}, 0, p.GoalID, 0, p.AgentSessionID, "goal withdrawal"); err != nil {
+			return nil, err
+		}
+		if err := d.store.WithdrawActiveGoal(ctx, p.GoalID, p.Reason); err != nil {
+			return nil, err
+		}
+		goal, err := d.store.GetGoal(ctx, p.GoalID)
+		return marshal(goal, err)
 
 	case "goal.update_content":
 		var p struct {

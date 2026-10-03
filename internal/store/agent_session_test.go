@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -504,5 +505,53 @@ PRAGMA user_version = 4;
 	}
 	if projectName != "human project" || goalContent != "Human goal\n\nKeep this goal" || taskTitle != "Human task" || decisionQuestion != "Keep this decision" || decisionAnswer != "Keep it" {
 		t.Fatalf("migrated human data changed: project=%q goal=%q task=%q decision=%q answer=%q", projectName, goalContent, taskTitle, decisionQuestion, decisionAnswer)
+	}
+}
+
+func TestAgentSessionIDByKeyUnknownKeyExplainsCause(t *testing.T) {
+	s := newTestStore(t)
+
+	_, err := s.AgentSessionIDByKey(context.Background(), "never-identified")
+	if err == nil {
+		t.Fatal("AgentSessionIDByKey(unknown) = nil error, want failure")
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("error leaks sql.ErrNoRows: %v", err)
+	}
+	for _, want := range []string{"never-identified", "atct_session_identify"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error %q does not mention %q", err, want)
+		}
+	}
+}
+
+func TestAgentSessionCleanupKeepsExpiredSessionsReferencedByHandoffs(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	goalID, holderID := newTaskRecoveryGoal(t, s, "expired-handoff")
+	commanderID := testSessionID("expired-handoff-commander")
+	old := time.Now().UTC().Add(-agentSessionRetention - time.Hour).Format(time.RFC3339Nano)
+	if _, err := s.DB().ExecContext(ctx, `UPDATE agent_sessions SET registered_at = ? WHERE id IN (?, ?)`, old, commanderID, holderID); err != nil {
+		t.Fatalf("backdate agent sessions: %v", err)
+	}
+
+	currentID, err := s.RegisterAgentSession(ctx, 0)
+	if err != nil {
+		t.Fatalf("RegisterAgentSession: %v", err)
+	}
+	goal, err := s.GetGoal(ctx, goalID)
+	if err != nil {
+		t.Fatalf("GetGoal: %v", err)
+	}
+	if err := s.AssociateAgentSessionWithProject(ctx, currentID, goal.ProjectID); err != nil {
+		t.Fatalf("AssociateAgentSessionWithProject: %v", err)
+	}
+
+	var remaining int
+	if err := s.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM agent_sessions WHERE id IN (?, ?)`, commanderID, holderID).Scan(&remaining); err != nil {
+		t.Fatalf("count referenced agent sessions: %v", err)
+	}
+	if remaining != 2 {
+		t.Fatalf("referenced expired agent sessions = %d, want 2", remaining)
 	}
 }

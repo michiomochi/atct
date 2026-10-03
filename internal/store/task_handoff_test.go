@@ -14,9 +14,15 @@ import (
 	"github.com/michiomochi/atct/internal/store/sqlcgen"
 )
 
+// addTestAgentSession adds an ordinary running session. It passed pid 0 back
+// when liveness read a pid, which made every one of them look stale; the tests
+// that want a stale session say so now with expireTestAgentSessionLease.
 func addTestAgentSession(t *testing.T, s *Store, id string) {
 	t.Helper()
-	registerNamedTestAgentSession(t, s, id, 0)
+	sessionID := registerNamedTestAgentSession(t, s, id, 0)
+	if err := s.HeartbeatAgentSession(context.Background(), sessionID, time.Now().UTC()); err != nil {
+		t.Fatalf("lease test agent session %q: %v", id, err)
+	}
 }
 
 func addTestTasks(t *testing.T, s *Store, count int) []int64 {
@@ -521,6 +527,7 @@ func TestTaskHandoffAllowsSecondHandoffForSameTask(t *testing.T) {
 	`, 999999, "dead", testSessionID("dead-receiver")); err != nil {
 		t.Fatalf("dead receiver session fixture update failed: %v", err)
 	}
+	expireTestAgentSessionLease(t, s, testSessionID("dead-receiver"))
 
 	first, err := s.RequestTaskHandoff(ctx, "handoff-1", taskID, testSessionID("requester"), "")
 	if err != nil {
@@ -886,6 +893,7 @@ func TestTaskHandoffReclaimsDeadClaim(t *testing.T) {
 	`, 999999, "dead", testSessionID("dead-claim-owner")); err != nil {
 		t.Fatalf("dead claim session fixture update failed: %v", err)
 	}
+	expireTestAgentSessionLease(t, s, testSessionID("dead-claim-owner"))
 	addTaskHandoffDirect(t, s, "handoff-dead-claim-existing", taskID, "dead-claim-owner", "dead-claim-owner")
 
 	handoff, err := s.RequestTaskHandoff(ctx, "handoff-dead-claim", taskID, testSessionID("requester"), "")

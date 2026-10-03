@@ -543,6 +543,8 @@ func TestClaimGoalTakesOverDeadClaim(t *testing.T) {
 	`, 999999, "dead", deadID); err != nil {
 		t.Fatalf("dead session fixture update failed: %v", err)
 	}
+	expireTestAgentSessionLease(t, s, deadID)
+	expireTestAgentSessionLease(t, s, deadID)
 	if _, err := s.ClaimGoal(ctx, goal.ID, deadID); err != nil {
 		t.Fatalf("ClaimGoal dead: %v", err)
 	}
@@ -732,6 +734,8 @@ func TestGoalClaimLivenessSeparatesLiveAndDeadSessions(t *testing.T) {
 	if _, err := s.ClaimGoal(ctx, deadGoal.ID, deadID); err != nil {
 		t.Fatalf("ClaimGoal dead: %v", err)
 	}
+	// It held the goal while it was running; then its monitor stopped.
+	expireTestAgentSessionLease(t, s, deadID)
 
 	running, stale, err := GoalClaimLiveness(ctx, s, ns.ID)
 	if err != nil {

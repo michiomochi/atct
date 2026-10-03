@@ -388,6 +388,7 @@ func TestClaimProjectTakesOverDeadSessionClaim(t *testing.T) {
 		t.Fatalf("kill dead-session fixture: %v", err)
 	}
 	_ = deadProcess.Wait()
+	expireTestAgentSessionLease(t, s, deadID)
 
 	if _, err := s.ClaimProject(ctx, project.ID, deadID); err != nil {
 		t.Fatalf("claim with dead session: %v", err)

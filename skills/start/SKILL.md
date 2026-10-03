@@ -17,6 +17,10 @@ emitted, use this pane's full `<project>-<unit>-<role>` agent name. Do not use
 only a role such as `commander`: it can collide across projects and merge their
 sessions into one row.
 
+Pass the current directory as `cwd` in the same call. That is what binds the
+session to its project, and a session with no project cannot be revoked later:
+the request is refused because nothing says which project it belonged to.
+
 A claim taken before the key was registered is not restored after a reconnect;
 only a claim retaken after identification can return. If a new version has just
 been installed and `atct_session_identify` is not yet in the tool list because

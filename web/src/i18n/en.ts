@@ -31,6 +31,7 @@ export const en = {
   "status.task.completed": "Completed",
   "status.task.awaitingDecision": "Awaiting decision",
   "status.awaitingDecision": "Waiting on you",
+  "status.awaitingReview": "Waiting on review",
   "status.decision.open": "Awaiting answer",
   "status.decision.answered": "Answered",
   "status.decision.applied": "Applied",

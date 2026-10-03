@@ -202,7 +202,7 @@ that subcommander is started:
    cannot answer for itself.
 4. Put these exact instructions at the very beginning of the request:
 
-   > First call `atct_session_identify` before any other atct call. If SessionStart emitted `ATCT session key: <session_id> ... monitor_token <monitor_token>`, pass those exact values as `session_key` and `monitor_token`; do not substitute your agent name or token. Only if no SessionStart key was emitted, use your stable full agent name and omit `monitor_token`.
+   > First call `atct_session_identify` before any other atct call, passing your current directory as `cwd`. If SessionStart emitted `ATCT session key: <session_id> ... monitor_token <monitor_token>`, pass those exact values as `session_key` and `monitor_token`; do not substitute your agent name or token. Only if no SessionStart key was emitted, use your stable full agent name and omit `monitor_token`.
    >
    > Then record receipt of the goal handoff by calling
    > `atct_goal_handoff_receive` with the `goal_id` provided in this request and the exact `session_key` from SessionStart.
