@@ -50,8 +50,8 @@
 - Test: `internal/store/monitor_assignment_test.go`
 - Modify: `internal/store/queries/monitor_binding.sql` and generated
   `internal/store/sqlcgen/monitor_binding.sql.go`
-- Create: `0045_monitor_binding_watermark.sql`, after main's
-  `0044_fixed_width_timestamps.sql`, adding
+- Create: `0046_monitor_binding_watermark.sql`, after main's
+  `0045_retire_legacy_completion.sql`, adding
   `monitor_bindings.last_reconciled_at`
 - Modify: `schema.sql` to keep the declared schema current
 
@@ -87,9 +87,9 @@
 
 - [ ] **Step 2: Add the durable token watermark.**
 
-  After merging main, use `0045_monitor_binding_watermark.sql` for this
-  forward-only migration; do not leave the worktree's migration at 0044,
-  because main already owns `0044_fixed_width_timestamps.sql`. Before review,
+  After merging main, use `0046_monitor_binding_watermark.sql` for this
+  forward-only migration; do not leave the worktree's migration at 0044 or 0045,
+  because main already owns `0044_fixed_width_timestamps.sql` and `0045_retire_legacy_completion.sql`. Before review,
   verify that `schema_migrations` contains no
   `0045_monitor_binding_watermark.sql` record; if an old-name record exists,
   stop and escalate instead of silently renaming history. Add the migration
