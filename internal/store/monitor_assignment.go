@@ -88,6 +88,23 @@ func (s *Store) MonitorBindingAgentSessionID(ctx context.Context, token string) 
 	return agentSessionID, nil
 }
 
+// MonitorBindingLastReconciledAt returns the stable token-scoped reconciliation
+// watermark. An empty value means that the token has no durable baseline yet.
+func (s *Store) MonitorBindingLastReconciledAt(ctx context.Context, token string) (string, error) {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return "", fmt.Errorf("monitor token is required")
+	}
+	watermark, err := sqlcgen.New(s.db).GetMonitorBindingLastReconciledAt(ctx, token)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", ErrMonitorBindingNotFound
+		}
+		return "", fmt.Errorf("find monitor binding watermark: %w", err)
+	}
+	return watermark, nil
+}
+
 // MonitorAssignment derives the same role precedence used for authorization.
 // An executor retains every received, incomplete task handoff as a scope.
 func (s *Store) MonitorAssignment(ctx context.Context, agentSessionID int64) (MonitorAssignment, error) {
