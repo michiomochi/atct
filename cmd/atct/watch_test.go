@@ -987,7 +987,7 @@ func TestWatchLivenessPromptsOnlyForImmediateRoleAction(t *testing.T) {
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
 			state := newWatchLivenessState(time.Unix(0, 0))
-			if got := state.PromptDue(time.Unix(60, 0), tt.scope, tt.reconciliation); got != tt.want {
+			if _, got := state.PromptDue(time.Unix(60, 0), tt.scope, tt.reconciliation); got != tt.want {
 				t.Fatalf("PromptDue() = %v, want %v", got, tt.want)
 			}
 		})
@@ -1002,10 +1002,10 @@ func TestWatchLivenessSuppressesOpenHumanDecision(t *testing.T) {
 		GoalHandoffs: []watchReconciliationHandoff{{GoalID: 249, ReceivedAt: at("received")}},
 	}
 	scope := watchScope{Role: "subcommander", ProjectID: "1", GoalID: "249"}
-	if got := state.PromptDue(time.Unix(600, 0), scope, blocked); got {
+	if _, got := state.PromptDue(time.Unix(600, 0), scope, blocked); got {
 		t.Fatal("open human decision prompted, want suppression")
 	}
-	if got := state.PromptDue(time.Unix(660, 0), scope, watchReconciliation{GoalHandoffs: []watchReconciliationHandoff{{GoalID: 249, ReceivedAt: at("received")}}}); !got {
+	if _, got := state.PromptDue(time.Unix(660, 0), scope, watchReconciliation{GoalHandoffs: []watchReconciliationHandoff{{GoalID: 249, ReceivedAt: at("received")}}}); !got {
 		t.Fatal("prompt did not resume after open human decision was cleared")
 	}
 }
@@ -1941,7 +1941,7 @@ func TestEmitWatchWakeupWritesOneLinePerCondition(t *testing.T) {
 		record watchDecision
 		want   string
 	}{
-		{"wakeup.completion_report_missing", watchDecision{GoalID: "goal-1"}, "atct wakeup: goal goal-1 has all tasks done but no completion report"},
+		{"wakeup.completion_report_missing", watchDecision{GoalID: "goal-1"}, "atct wakeup: goal goal-1 has all tasks done; request named goal review with atct_goal_handoff_review_request"},
 		{"wakeup.commits_missing", watchDecision{GoalID: "goal-2"}, "atct wakeup: goal goal-2 has no linked commits"},
 		{"wakeup.undeclared_goal", watchDecision{GoalID: "goal-3"}, "atct wakeup: goal goal-3 has no tasks declared"},
 		{"wakeup.all_tasks_dropped", watchDecision{GoalID: "goal-4"}, "atct wakeup: goal goal-4 has all tasks dropped"},

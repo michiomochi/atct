@@ -351,7 +351,10 @@ func (s *Store) RegisterAgentSessionInProject(ctx context.Context, pid int, proj
 	if err != nil {
 		return 0, fmt.Errorf("register agent session: %w", err)
 	}
-	if err := queries.DeleteExpiredAgentSessions(ctx, formatTimestamp(now.Add(-agentSessionRetention))); err != nil {
+	if err := queries.DeleteExpiredAgentSessionsExcept(ctx, sqlcgen.DeleteExpiredAgentSessionsExceptParams{
+		ID:           agentSessionID,
+		RegisteredAt: formatTimestamp(now.Add(-agentSessionRetention)),
+	}); err != nil {
 		return 0, fmt.Errorf("clean up old agent sessions: %w", err)
 	}
 	// A session is alive the moment it registers: its transport is open. The
