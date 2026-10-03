@@ -228,7 +228,7 @@ remaining boundary that adjacent goals were not edited.
 
 **Files:** `skills/atct/SKILL.md`.
 
-- Add a short section "Language of ATCT records" stating the governed and not-governed lists from the spec and that `ui_locale` is read from `atct_role`; re-read it after a context reset. Role skills are not edited.
+- Add a short section "Language of ATCT records" stating the governed and not-governed lists from the spec (`doc/specs` and `doc/plans` are governed; only tool names, identifiers, code, commands, paths, commit messages, and quoted errors stay English) and that `ui_locale` is read from `atct_role`; re-read it after a context reset. Role skills are not edited.
 - Match the surrounding skill's density; do not create `reference/`.
 - Verify: `git diff --stat` shows only that file; `ORCHESTRATION_SKILL_PATH=/private/tmp/atct-no-orchestration-skill bash tests/wrapper_test.bash`. Commit `docs: add ATCT record language rule`.
 
