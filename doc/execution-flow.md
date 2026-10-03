@@ -142,7 +142,8 @@ flowchart TD
    人間の review へ進める。
 5. `atct_goal_review_request` で人間の review を依頼する。**人間が承認するまで main へは
    マージしない。**承認後にマージして `atct_goal_review_complete` を呼ぶ。この操作は
-   goal handoff と goal を同じ transaction で完了し、worktree と subcommander を片付ける。
+   goal handoff と goal を同じ transaction で完了する。worktree・branch・space は
+   commander が「worktree・branch・space の回収」に従って回収する。
 6. 人間が却下した場合は、通知を受けた commander がフィードバックを添えて
    `atct_goal_handoff_review_reject` を呼ぶ。新しい handoff は作らない。
 
@@ -243,5 +244,47 @@ commander は goal handoff の review を受領してから human review を依�
 `approve` で applied になっていること。
 
 マージ後は `atct_goal_review_complete` を呼ぶ。これは記録であって許可ではないので、
-先に呼んでマージの根拠にしてはならない。承認後の後片付け（worktree と branch の回収）は
-commander が行う。
+先に呼んでマージの根拠にしてはならない。承認後（と取り下げ後）の後片付けは
+commander が行う。「worktree・branch・space の回収」を参照。
+
+## worktree・branch・space の回収
+
+**回収するのは commander だけである。**subcommander と executor は回収しない。自分の
+worktree の中から自分を消せないからである。
+
+- **いつ**: `atct_goal_review_complete` の直後（done）と、`atct_goal_withdraw` の直後（dropped）。
+- **回収漏れの節目**: Goal 272 の節目と揃える。commander の最初の Look（`atct_goal_list`）と、
+  `atct_goal_review_complete` 後の次の Look。`git worktree list` の `.worktrees/<id>` と
+  `atct_goal_list` の active goal id を突き合わせる。active に無い id は `atct_goal_get` で
+  status を確認し、done / dropped のものだけを回収する。proposed など他の status、または
+  確認できないものは触らない。`git branch --list 'wt/goal-*'` で branch の残りも見る。
+  回収漏れの検出用コードは無い。この 2 コマンドで足りる。
+
+### 手順
+
+1. 上の status 確認。スクリプトは goal の status を確かめない（DB に触れない）ので、
+   この確認は必須である。
+2. 主チェックアウトで `script/worktree-reclaim.sh <id>` を実行する。
+3. subcommander の space（と executor の pane）を閉じる。herdr の操作は herdr スキルに従う。
+   `## One space per goal` は dropped にも適用する。
+
+パスと branch 名は `.worktrees/<id>` と `wt/goal-<id>`（整数 id）である。
+
+### スクリプトの挙動
+
+- 未コミットの変更（merge 途中を含む）は、goal 自身の branch へ
+  `snapshot: abandoned worktree of goal <id>` として commit してから、`--force` なしで
+  worktree を外す。
+- main に merge 済みの branch だけ `git branch -d` で消す。未 merge の branch
+  （スナップショットを含む）は残し、commit 数を表示する。スナップショット後に残った branch は、
+  中身を確認してから commander が消す。
+- ignored のもの（web/node_modules の symlink、コピーした web/dist）は再生成できるので捨てる。
+- worktree の HEAD が `wt/goal-<id>` でない場合、または rebase・cherry-pick・revert・bisect
+  の途中の場合は、exit 1 で何も消さずに中断する。commander が worktree を開いて手で
+  片づけてから再実行する。
+
+### 手作業で stash を使わない理由
+
+実測（2026-10-03）: `git stash push -u` は unmerged paths があると失敗し、後続の
+`git worktree remove --force` で goal 228 の未コミットの変更を失った。stash は全 worktree 共有の
+1 本のスタックで goal に結びつかない。`--force` で worktree を消さない。
