@@ -172,7 +172,8 @@ Three times, and no others:
   does not depend on it
 - You are about to do something that cannot be undone — see the `atct` skill for
   what counts
-- A goal is met — `atct_goal_complete` for approval
+- A goal is met — `atct_goal_review_request` for human approval, then
+  `atct_goal_review_complete` after approval and merge
 
 Finishing a task is none of these.
 

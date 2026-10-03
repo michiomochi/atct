@@ -25,7 +25,7 @@ func frozenWatchAgentActionCases() []watchAgentActionCase {
 		{name: "goal created", eventName: "goal.created", line: "atct goal created (goal_id: 1)", decision: watchDecision{GoalID: "1"}, want: true},
 		{name: "wakeup", eventName: "wakeup", line: "atct wakeup: actionable_goals=1", want: true},
 		{name: "liveness", eventName: "monitor.liveness", line: "atct monitor liveness: recheck task 1", decision: watchDecision{GoalID: "249", TaskID: "1"}, want: true},
-		{name: "goal wakeup", eventName: "wakeup.completion_report_missing", line: "atct wakeup: goal 1 has all tasks done but no completion report", decision: watchDecision{GoalID: "1"}, want: true},
+		{name: "goal wakeup", eventName: "wakeup.completion_report_missing", line: "atct wakeup: goal 1 has all tasks done; request named goal review with atct_goal_handoff_review_request", decision: watchDecision{GoalID: "1"}, want: true},
 		{name: "task handoff requested", eventName: "task.handoff.request", line: "atct task handoff requested (task_id: 1, handoff_id: h1)", decision: watchDecision{TaskID: "1", HandoffID: "h1"}, want: true},
 		{name: "task handoff received", eventName: "task.handoff.receive", line: "atct task handoff received (task_id: 1, handoff_id: h1)", decision: watchDecision{TaskID: "1", HandoffID: "h1"}, want: true},
 		{name: "task handoff completed", eventName: "task.handoff.complete", line: "atct task handoff completed (task_id: 1, handoff_id: h1)", decision: watchDecision{TaskID: "1", HandoffID: "h1"}, want: true},
