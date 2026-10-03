@@ -67,7 +67,7 @@ func main() {
 	})
 	mcpshim.Register(server, client, registerResponse.AgentSessionID)
 
-	if err := server.Run(context.Background(), &mcp.StdioTransport{}); err != nil {
+	if err := server.Run(context.Background(), newMCPTransport(&mcp.StdioTransport{})); err != nil {
 		log.Fatal(err)
 	}
 }

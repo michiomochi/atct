@@ -218,6 +218,7 @@ func runCodexShimWithDeps(config cliConfig, dir string, deps codexShimDeps) (int
 	monitorConfig.codexMonitorAction = "monitor"
 	monitorConfig.codexMonitorPassthrough = false
 	monitorConfig.codexMonitorAutomatic = true
+	monitorConfig.codexMonitorRole = "commander"
 	return deps.runMonitor(monitorConfig, dir)
 }
 

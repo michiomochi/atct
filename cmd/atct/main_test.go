@@ -180,12 +180,22 @@ func TestParseArgsCodexMonitorPreservesScopeAfterPassthroughDelimiter(t *testing
 	}
 }
 
-func TestParseArgsCodexMonitorRejectsRemovedSelectors(t *testing.T) {
+func TestParseArgsCodexMonitorAcceptsCommanderSelector(t *testing.T) {
+	cfg, err := parseArgs([]string{"codex", "monitor", "--role", "commander"})
+	if err != nil {
+		t.Fatalf("parseArgs: %v", err)
+	}
+	if !cfg.codexMonitorExplicit || cfg.codexMonitorRole != "commander" {
+		t.Fatalf("monitor config = %#v, want explicit commander", cfg)
+	}
+}
+
+func TestParseArgsCodexMonitorRejectsUnsupportedSelectors(t *testing.T) {
 	for _, args := range [][]string{
-		{"codex", "monitor", "--role", "commander"},
 		{"codex", "monitor", "--project", "7"},
 		{"codex", "monitor", "--goal", "206"},
 		{"codex", "monitor", "--task", "846"},
+		{"codex", "monitor", "--role", "executor", "--task", "846"},
 	} {
 		if _, err := parseArgs(args); !errors.Is(err, errInvalidArgs) {
 			t.Fatalf("parseArgs(%q) error = %v, want errInvalidArgs", args, err)
