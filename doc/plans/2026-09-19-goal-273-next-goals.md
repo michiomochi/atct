@@ -1,5 +1,64 @@
 # Goal 273: Persistent Next Goals Implementation Plan
 
+## Revision 2026-10-03 (human review, decision 855)
+
+The human rejected the goal review with three simplifications. They supersede
+every conflicting statement in the original plan below (which is kept as the
+record of tasks 1307-1309, 1323, 1324).
+
+1. Drop `legacy_next_steps`: the migration discards the old `next_steps` values.
+2. Drop `next_goals.sort_order`: links are a set, listed by `next_goal_id`
+   ascending; the contract no longer says "ordered".
+3. Drop `goal_review_state_snapshots` and migration 0046 for it. Evidence: main's
+   `RejectGoalReview` never restored a previous report, and the same kind of
+   table (`goal_review_snapshots`, 0026) was dropped in 0028. A rejected review
+   leaves the links as the rejected request set them; the next request replaces
+   them.
+
+Goal 282 has since merged to main (`goal.complete` retired, migration
+`0045_retire_legacy_completion.sql`). `next_goal_ids` therefore lives only on
+`atct_goal_review_request`; `atct_goal_complete` stays a retired stub.
+
+### Task A: Merge current main and resolve conflicts
+Merge main into the worktree (the subcommander starts the merge and commits it;
+the executor only resolves the conflicted files and does not commit). Conflicts
+are in daemon, store, e2e, httpapi tests and skills/atct/SKILL.md. Keep main's
+Goal 282 behavior (retired `goal.complete`, review-based flow) and keep this
+goal's `next_goals` work on the review path. Rename `0045_next_goals.sql` to
+`0046_next_goals.sql` and `0046_goal_review_state_snapshots.sql` to
+`0047_goal_review_state_snapshots.sql` so migrations are one linear sequence
+(Task B then removes the latter). Goal: `go build ./...` and the focused
+packages compile and pass; no design change here.
+
+### Task B: Simplify persistence
+Edit `0046_next_goals.sql` in place (never applied anywhere): no
+`legacy_next_steps`, no `sort_order`/`UNIQUE(goal_id, sort_order)`; rebuilt
+`goals` has neither `next_steps` nor a legacy column. Delete the snapshots
+migration, table, queries, sqlc output, `schema.sql` entry, schema validation
+(version back down by one), the snapshot write in `RequestGoalReview` and the
+restore in `RejectGoalReview` (rejection becomes main's behavior). Queries list
+links `ORDER BY next_goal_id`. Replace `replaceNextGoals` order handling with a
+set insert (duplicates still rejected). Update store tests (drop ordering,
+legacy, snapshot and restore-on-reject tests; add: rejection keeps the rejected
+request's links). `./script/schema-check.sh` must pass.
+
+### Task C: Contract, presentation, skills wording
+Remove "ordered" from `next_goal_ids` everywhere it is described or asserted:
+MCP schema text, daemon/mcpshim tests, HTTP goal detail (summaries sorted by
+target ID), web (`GoalDetail`, i18n, tests), skills/atct/SKILL.md,
+skills/commander/SKILL.md, tests/wrapper_test.bash. Remove any read path of
+`legacy_next_steps` (daemon/store test fixtures that write it). Do not touch
+`internal/mcpshim/instructions.go`.
+
+### Verification (subcommander, committed tree, merged main)
+`go build ./...`, `go vet ./...`, `go test ./... -count=1`,
+`./script/schema-check.sh`,
+`ORCHESTRATION_SKILL_PATH=/private/tmp/atct-no-orchestration-skill bash tests/wrapper_test.bash`,
+web test / typecheck / build, `git status --short` empty.
+
+---
+
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development for implementation tasks and superpowers:test-driven-development before changing behavior. Follow the task boundaries and verification commands below.
 
 **Goal:** Replace public `next_steps` completion prose with ordered,
