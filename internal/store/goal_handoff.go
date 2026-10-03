@@ -479,7 +479,7 @@ func (s *Store) ReceiveGoalHandoffReview(ctx context.Context, handoffID string, 
 	if handoff.GoalID != goalID {
 		return GoalHandoff{}, fmt.Errorf("%w: %q belongs to goal %d, not %d", ErrGoalHandoffGoalMismatch, handoffID, handoff.GoalID, goalID)
 	}
-	if handoff.ReviewRequestedAt == nil || handoff.CompletedReportAt != nil || handoff.ReviewReceivedAt != nil {
+	if handoff.ReviewRequestedAt == nil || handoff.CompletedReportAt != nil || handoff.ReviewReceivedAt != nil || handoff.ReviewRejectedAt != nil || handoff.ReviewRejectionReceivedAt != nil {
 		return GoalHandoff{}, ErrGoalHandoffReviewState
 	}
 	if receivedBy == 0 || handoff.RequestedBy != receivedBy {
@@ -703,6 +703,10 @@ func (s *Store) CompleteGoalHandoffByReviewer(ctx context.Context, handoffID str
 	}
 	if handoff.ReviewReceivedBy != reviewerID {
 		return GoalHandoff{}, fmt.Errorf("%w: goal handoff reviewer %d is not recorded reviewer %d", ErrGoalHandoffReviewReviewerMismatch, reviewerID, handoff.ReviewReceivedBy)
+	}
+	// A delegated handoff closes only through approved FinalizeGoalReview.
+	if handoff.RequestedBy != 0 && handoff.ReceivedBy != 0 && handoff.RequestedBy != handoff.ReceivedBy {
+		return GoalHandoff{}, ErrGoalHandoffReviewState
 	}
 
 	now := formatTimestamp(time.Now())

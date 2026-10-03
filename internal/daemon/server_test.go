@@ -724,9 +724,7 @@ func TestMonitorBindingLifecycleMatchesDaemonAssignments(t *testing.T) {
 	dispatch("goal.handoff.review.receive", map[string]any{
 		"handoff_id": "lifecycle-goal-handoff", "goal_id": goalB.ID, "received_by": commanderB,
 	})
-	dispatch("goal.handoff.complete", map[string]any{
-		"handoff_id": "lifecycle-goal-handoff", "goal_id": goalB.ID, "agent_session_id": commanderB, "complete_report": "done",
-	})
+	dispatch("goal.release", map[string]any{"goal_id": goalB.ID})
 	assertAssignment(store.MonitorAssignment{Role: "executor"})
 }
 
