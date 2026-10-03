@@ -265,22 +265,6 @@ func (q *Queries) HasGoalReview(ctx context.Context, goalID int64) (bool, error)
 	return exists, err
 }
 
-const insertGoalConfirmation = `-- name: InsertGoalConfirmation :exec
-INSERT INTO goal_confirmations (goal_id, note, confirmed_at)
-VALUES (?, ?, ?)
-`
-
-type InsertGoalConfirmationParams struct {
-	GoalID      int64
-	Note        string
-	ConfirmedAt string
-}
-
-func (q *Queries) InsertGoalConfirmation(ctx context.Context, arg InsertGoalConfirmationParams) error {
-	_, err := q.db.ExecContext(ctx, insertGoalConfirmation, arg.GoalID, arg.Note, arg.ConfirmedAt)
-	return err
-}
-
 const insertNextGoal = `-- name: InsertNextGoal :exec
 INSERT INTO next_goals (goal_id, next_goal_id, created_at)
 VALUES (?, ?, ?)
@@ -433,40 +417,6 @@ func (q *Queries) ListGoals(ctx context.Context, projectID int64) ([]Goal, error
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listLatestGoalConfirmations = `-- name: ListLatestGoalConfirmations :many
-SELECT goal_id, MAX(confirmed_at) AS confirmed_at
-FROM goal_confirmations
-GROUP BY goal_id
-`
-
-type ListLatestGoalConfirmationsRow struct {
-	GoalID      int64
-	ConfirmedAt interface{}
-}
-
-func (q *Queries) ListLatestGoalConfirmations(ctx context.Context) ([]ListLatestGoalConfirmationsRow, error) {
-	rows, err := q.db.QueryContext(ctx, listLatestGoalConfirmations)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ListLatestGoalConfirmationsRow
-	for rows.Next() {
-		var i ListLatestGoalConfirmationsRow
-		if err := rows.Scan(&i.GoalID, &i.ConfirmedAt); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

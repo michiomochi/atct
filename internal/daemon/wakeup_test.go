@@ -663,62 +663,6 @@ func TestRunMaintenanceLeavesOldProposedGoalAlone(t *testing.T) {
 	}
 }
 
-func TestWakeupTrackerPublishesGoalReviewDueOnce(t *testing.T) {
-	ctx := context.Background()
-	s := newWakeupTestStore(t)
-	projectID, _ := newWakeupTestGoal(t, s, "review-due")
-	dueGoal, err := s.CreateGoal(ctx, projectID, "Due proposal", "agent")
-	if err != nil {
-		t.Fatalf("CreateGoal: %v", err)
-	}
-	freshGoal, err := s.CreateGoal(ctx, projectID, "Fresh proposal", "agent")
-	if err != nil {
-		t.Fatalf("CreateGoal: %v", err)
-	}
-	dueAt := time.Date(2026, 10, 3, 9, 0, 0, 0, time.UTC)
-	state := store.WakeupState{
-		ReviewDueGoals: []domain.Goal{dueGoal},
-		ReviewDueAt:    map[int64]time.Time{dueGoal.ID: dueAt},
-	}
-	evaluateWakeup := func(context.Context, int64) (store.WakeupState, error) { return state, nil }
-	tracker := newWakeupTracker(time.Time{})
-
-	events, err := tracker.evaluateWith(ctx, s, dueAt.Add(time.Minute), evaluateWakeup)
-	if err != nil {
-		t.Fatalf("evaluate: %v", err)
-	}
-	wakeup, ok := findWakeupEvent(events, store.EventWakeupGoalReviewDue, dueGoal.ID)
-	if !ok || wakeup.ProjectID != projectID {
-		t.Fatalf("events = %#v, want one review-due wakeup for goal %d", events, dueGoal.ID)
-	}
-	if _, ok := findWakeupEvent(events, store.EventWakeupGoalReviewDue, freshGoal.ID); ok {
-		t.Fatalf("review-due wakeup published for a goal that is not due: %#v", events)
-	}
-	if events, err := tracker.evaluateWith(ctx, s, dueAt.Add(time.Hour), evaluateWakeup); err != nil {
-		t.Fatalf("second evaluate: %v", err)
-	} else if _, ok := findWakeupEvent(events, store.EventWakeupGoalReviewDue, dueGoal.ID); ok {
-		t.Fatalf("review-due wakeup published twice: %#v", events)
-	}
-
-	// A confirmation clears the state; the next due time publishes again.
-	state = store.WakeupState{}
-	if _, err := tracker.evaluateWith(ctx, s, dueAt.Add(2*time.Hour), evaluateWakeup); err != nil {
-		t.Fatalf("cleared evaluate: %v", err)
-	}
-	nextDue := dueAt.Add(7 * 24 * time.Hour)
-	state = store.WakeupState{
-		ReviewDueGoals: []domain.Goal{dueGoal},
-		ReviewDueAt:    map[int64]time.Time{dueGoal.ID: nextDue},
-	}
-	events, err = tracker.evaluateWith(ctx, s, nextDue.Add(time.Minute), evaluateWakeup)
-	if err != nil {
-		t.Fatalf("re-due evaluate: %v", err)
-	}
-	if _, ok := findWakeupEvent(events, store.EventWakeupGoalReviewDue, dueGoal.ID); !ok {
-		t.Fatalf("events = %#v, want review-due wakeup after the next due time", events)
-	}
-}
-
 func TestRunMaintenancePublishesEvaluateFailure(t *testing.T) {
 	ctx := context.Background()
 	s := newWakeupTestStore(t)

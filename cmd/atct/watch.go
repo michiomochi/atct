@@ -1811,8 +1811,6 @@ func formatWatchDecision(eventName string, decision watchDecision) (string, bool
 		return fmt.Sprintf("atct wakeup: goal %s has no tasks declared", decision.GoalID), true
 	case "wakeup.all_tasks_dropped":
 		return fmt.Sprintf("atct wakeup: goal %s has all tasks dropped", decision.GoalID), true
-	case "wakeup.goal_review_due":
-		return fmt.Sprintf("atct wakeup: proposed goal %s has had no activity for 7 days; check it against current main, then withdraw it with a reason (atct_goal_withdraw) or keep it (atct_goal_confirm)", decision.GoalID), true
 	case "wakeup.unclaimed_doing":
 		return fmt.Sprintf("atct wakeup: task %s is doing without a work lock", decision.TaskID), true
 	case "wakeup.handoff_unreceived":

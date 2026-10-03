@@ -1431,26 +1431,6 @@ func (d *Daemon) dispatchMethod(ctx context.Context, req rpc.Request) (json.RawM
 		goal, err := d.store.GetGoal(ctx, p.GoalID)
 		return marshal(goal, err)
 
-	case "goal.confirm":
-		var p struct {
-			GoalID         int64  `json:"goal_id"`
-			AgentSessionID int64  `json:"agent_session_id"`
-			Note           string `json:"note"`
-		}
-		if err := json.Unmarshal(req.Params, &p); err != nil {
-			return nil, err
-		}
-		// Confirming closes a commander's review of a proposed goal, the same
-		// review that withdrawing closes the other way.
-		if err := d.authorizeRole(ctx, []string{"commander"}, 0, p.GoalID, 0, p.AgentSessionID, "goal confirmation"); err != nil {
-			return nil, err
-		}
-		if err := d.store.ConfirmProposedGoal(ctx, p.GoalID, p.Note); err != nil {
-			return nil, err
-		}
-		goal, err := d.store.GetGoal(ctx, p.GoalID)
-		return marshal(goal, err)
-
 	case "goal.update_content":
 		var p struct {
 			GoalID                  int64  `json:"goal_id"`

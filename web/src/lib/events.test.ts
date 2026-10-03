@@ -15,7 +15,6 @@ const NON_SCREEN_EVENT_NAMES = [
   "wakeup.completion_report_missing",
   "wakeup.commits_missing",
   "wakeup.undeclared_goal",
-  "wakeup.goal_review_due",
   "wakeup.all_tasks_dropped",
   "wakeup.unclaimed_doing",
   "wakeup.handoff_unreceived",

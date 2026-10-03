@@ -431,3 +431,49 @@ func TestWithdrawActiveGoalDoesNotPublishHandoffReported(t *testing.T) {
 	waitForGoalWithdrawn(t, events)
 	expectNoHandoffReported(t, events)
 }
+
+func TestWithdrawActiveGoalWithdrawsProposedGoalWithWorkAndHumanCreator(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	project, err := s.CreateProject(ctx, "proposed-with-work", t.TempDir())
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	goal, err := s.CreateGoal(ctx, project.ID, "proposed goal", "agent")
+	if err != nil {
+		t.Fatalf("CreateGoal: %v", err)
+	}
+	if _, err := s.DB().ExecContext(ctx, `UPDATE goals SET creator = 'human' WHERE id = ?`, goal.ID); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err := s.DB().ExecContext(ctx, `
+		INSERT INTO tasks (goal_id, title, description, status, agent, sort_order, declare_key, created_at, updated_at)
+		VALUES (?, 'open task', 'd', 'todo', 'agent', 0, 'k', ?, ?)`, goal.ID, now, now); err != nil {
+		t.Fatalf("insert task: %v", err)
+	}
+	if _, err := s.AskDecision(ctx, AskInput{GoalID: goal.ID, Kind: domain.KindDecision, Question: "extra?"}); err != nil {
+		t.Fatalf("AskDecision: %v", err)
+	}
+	const reason = "superseded by a fix on main"
+	if err := s.WithdrawActiveGoal(ctx, goal.ID, reason); err != nil {
+		t.Fatalf("WithdrawActiveGoal: %v", err)
+	}
+	got, _ := s.GetGoal(ctx, goal.ID)
+	if got.Status != domain.GoalDropped || got.ResultSummary != reason {
+		t.Fatalf("goal = %+v, want dropped with reason", got)
+	}
+	tasks, _ := s.ListTasks(ctx, goal.ID)
+	if len(tasks) != 1 || tasks[0].Status != domain.TaskDropped {
+		t.Fatalf("tasks = %+v, want one dropped", tasks)
+	}
+	decisions, _ := s.ListDecisionsForGoal(ctx, goal.ID)
+	if len(decisions) != 2 {
+		t.Fatalf("decisions = %d, want 2", len(decisions))
+	}
+	for _, d := range decisions {
+		if d.Status != domain.DecisionWithdrawn || d.AnswerText != reason {
+			t.Fatalf("decision = %+v, want withdrawn with reason", d)
+		}
+	}
+}

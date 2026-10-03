@@ -78,15 +78,6 @@ WHERE id = ? AND status = 'active';
 UPDATE goals SET status = 'dropped', result_summary = ?, updated_at = ?
 WHERE id = ? AND status = 'proposed';
 
--- name: InsertGoalConfirmation :exec
-INSERT INTO goal_confirmations (goal_id, note, confirmed_at)
-VALUES (?, ?, ?);
-
--- name: ListLatestGoalConfirmations :many
-SELECT goal_id, MAX(confirmed_at) AS confirmed_at
-FROM goal_confirmations
-GROUP BY goal_id;
-
 -- name: GetGoalApprovalDecisionGoalID :one
 SELECT goal_id
 FROM decisions

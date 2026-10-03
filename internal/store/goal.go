@@ -1134,37 +1134,3 @@ func (s *Store) WithdrawActiveGoal(ctx context.Context, goalID int64, reason str
 	s.notify.publishAll()
 	return nil
 }
-
-// ConfirmProposedGoal records that a commander reviewed a proposed goal and
-// found it still wanted. It pushes the goal's review-due time out; the goal
-// itself is not touched, since its content did not change.
-func (s *Store) ConfirmProposedGoal(ctx context.Context, goalID int64, note string) error {
-	if strings.TrimSpace(note) == "" {
-		return errors.New("confirmation note is required")
-	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("begin goal confirmation tx: %w", err)
-	}
-	defer tx.Rollback()
-	q := sqlcgen.New(tx)
-	status, err := q.GetGoalStatus(ctx, goalID)
-	if err != nil {
-		return fmt.Errorf("lookup status for goal confirmation: %w", err)
-	}
-	if status != string(domain.GoalProposed) {
-		return fmt.Errorf("%w: %d", ErrGoalNotProposed, goalID)
-	}
-	if err := q.InsertGoalConfirmation(ctx, sqlcgen.InsertGoalConfirmationParams{
-		GoalID:      goalID,
-		Note:        note,
-		ConfirmedAt: formatTimestamp(time.Now()),
-	}); err != nil {
-		return fmt.Errorf("insert goal confirmation: %w", err)
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit goal confirmation: %w", err)
-	}
-	s.notify.publishAll()
-	return nil
-}
