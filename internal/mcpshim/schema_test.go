@@ -1369,7 +1369,31 @@ func TestRoleToolReportsExpectedRoleMismatchInResult(t *testing.T) {
 	}
 }
 
-func callRoleTool(t *testing.T, claimProject, claimGoal, withTask bool, expectedRole string) (*mcp.CallToolResult, error, int64, int64) {
+func TestRoleToolReturnsMatchingExecutorForReceivedTaskWithLiveMonitor(t *testing.T) {
+	result, callErr, _, _ := callRoleTool(t, false, false, true, "executor", true)
+	if callErr != nil {
+		t.Fatalf("atct_role: %v", callErr)
+	}
+	if result == nil || result.IsError {
+		t.Fatalf("atct_role returned error result: %+v", result)
+	}
+	data := decodeRoleResult(t, result)
+	if got := decodeRoleString(t, data, "role"); got != "executor" {
+		t.Errorf("role = %q, want executor", got)
+	}
+	if got := decodeRoleString(t, data, "expected_role"); got != "executor" {
+		t.Errorf("expected_role = %q, want executor", got)
+	}
+	var matches bool
+	if err := json.Unmarshal(data["matches"], &matches); err != nil {
+		t.Fatalf("decode matches: %v", err)
+	}
+	if !matches {
+		t.Error("matches = false, want true")
+	}
+}
+
+func callRoleTool(t *testing.T, claimProject, claimGoal, withTask bool, expectedRole string, receiveTask ...bool) (*mcp.CallToolResult, error, int64, int64) {
 	t.Helper()
 	ctx := context.Background()
 	storeDir := t.TempDir()
@@ -1387,11 +1411,14 @@ func callRoleTool(t *testing.T, claimProject, claimGoal, withTask bool, expected
 		s.Close()
 		t.Fatalf("CreateGoal: %v", err)
 	}
+	var taskID int64
 	if withTask {
-		if _, err := s.CreateTasks(ctx, goal.ID, "agent", "role-fixture-task", []string{"role fixture task"}, []string{"Complete the role fixture task."}); err != nil {
+		tasks, err := s.CreateTasks(ctx, goal.ID, "agent", "role-fixture-task", []string{"role fixture task"}, []string{"Complete the role fixture task."})
+		if err != nil {
 			s.Close()
 			t.Fatalf("CreateTasks: %v", err)
 		}
+		taskID = tasks[0].ID
 	}
 	sessionID, err := s.RegisterAgentSession(ctx, os.Getpid())
 	if err != nil {
@@ -1408,6 +1435,62 @@ func callRoleTool(t *testing.T, claimProject, claimGoal, withTask bool, expected
 		if _, err := s.ClaimGoal(ctx, goal.ID, sessionID); err != nil {
 			s.Close()
 			t.Fatalf("ClaimGoal: %v", err)
+		}
+	}
+	if len(receiveTask) > 0 && receiveTask[0] {
+		if !withTask {
+			s.Close()
+			t.Fatal("receiveTask requires withTask")
+		}
+		requesterID, err := s.RegisterAgentSession(ctx, os.Getpid())
+		if err != nil {
+			s.Close()
+			t.Fatalf("RegisterAgentSession requester: %v", err)
+		}
+		commanderID, err := s.RegisterAgentSession(ctx, os.Getpid())
+		if err != nil {
+			s.Close()
+			t.Fatalf("RegisterAgentSession commander: %v", err)
+		}
+		if _, err := s.ClaimProject(ctx, project.ID, commanderID); err != nil {
+			s.Close()
+			t.Fatalf("ClaimProject: %v", err)
+		}
+		if _, err := s.RequestGoalHandoff(ctx, "role-received-goal", goal.ID, commanderID, "delegate role fixture goal"); err != nil {
+			s.Close()
+			t.Fatalf("RequestGoalHandoff: %v", err)
+		}
+		if _, err := s.ReceiveGoalHandoff(ctx, "role-received-goal", goal.ID, requesterID); err != nil {
+			s.Close()
+			t.Fatalf("ReceiveGoalHandoff: %v", err)
+		}
+		if _, err := s.RequestTaskHandoff(ctx, "role-received-task", taskID, requesterID, "delegate role fixture task"); err != nil {
+			s.Close()
+			t.Fatalf("RequestTaskHandoff: %v", err)
+		}
+		if _, err := s.ReceiveTaskHandoff(ctx, "role-received-task", taskID, sessionID); err != nil {
+			s.Close()
+			t.Fatalf("ReceiveTaskHandoff: %v", err)
+		}
+		goalID := goal.ID
+		now := time.Now().UTC()
+		health := store.MonitorHealth{
+			CWD:              project.RootPath,
+			Role:             "executor",
+			State:            "healthy",
+			Reason:           "test",
+			ProjectID:        project.ID,
+			GoalID:           &goalID,
+			TaskID:           &taskID,
+			PID:              os.Getpid(),
+			ProcessStartedAt: now.Add(-time.Minute),
+			TransitionedAt:   now,
+			LastSeenAt:       now,
+		}
+		health.MonitorID = store.MonitorHealthID(health.CWD, health.Role, health.ProjectID, health.GoalID, health.TaskID, health.PID, health.ProcessStartedAt)
+		if err := s.UpsertMonitorHealth(ctx, health); err != nil {
+			s.Close()
+			t.Fatalf("UpsertMonitorHealth: %v", err)
 		}
 	}
 

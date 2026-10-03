@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/fs"
+	"log"
 	"net"
 	"net/http"
 	"os"
@@ -71,6 +72,8 @@ func (d *Daemon) HTTPHandler() http.Handler {
 		if err := client.Call(r.Context(), "run.register", map[string]any{
 			"pid": os.Getpid(),
 		}, &registerResponse); err != nil {
+			// The SDK answers nil with a bare "no server available"; this is the only trace of why.
+			log.Printf("mcp: register agent session: %v", err)
 			return nil
 		}
 

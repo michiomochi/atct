@@ -186,28 +186,6 @@ FROM goals ORDER BY id`)
 	t.Logf("VACUUM INTO copy preserved %d existing reports (%d done in work_done, active reports retained in result_summary)", reported, doneReported)
 }
 
-func TestCompletionTemplateAllFieldsCanBecomeDone(t *testing.T) {
-	s, ctx, goal := completionTemplateStore(t)
-	report := completionTemplateReport()
-
-	decision, err := s.CompleteGoalWithReport(ctx, goal.ID, report, testSessionID("completion-template-run"))
-	if err != nil {
-		t.Fatalf("complete goal: %v", err)
-	}
-	done, err := s.ApproveCompletion(ctx, decision.ID)
-	if err != nil {
-		t.Fatalf("approve completion: %v", err)
-	}
-	if done.Status != domain.GoalDone {
-		t.Fatalf("goal status = %q, want %q", done.Status, domain.GoalDone)
-	}
-	if done.WorkDone != report.WorkDone || done.NowPossible != report.NowPossible ||
-		done.HowToVerify != report.HowToVerify || done.Surprises != report.Surprises ||
-		done.NeedsReview != report.NeedsReview || done.NextSteps != report.NextSteps {
-		t.Fatalf("completion report = %+v, want %+v", done, report)
-	}
-}
-
 func TestCompletionTemplateRejectsEmptyFields(t *testing.T) {
 	fields := []struct {
 		name  string

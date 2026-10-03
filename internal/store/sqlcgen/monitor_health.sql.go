@@ -253,7 +253,7 @@ VALUES (
   ?11, ?12, ?13,
   ?14, ?15, NULL
 )
-  ON CONFLICT(monitor_id) DO UPDATE SET
+ON CONFLICT(monitor_id) DO UPDATE SET
   agent_key = excluded.agent_key,
   scope_key = excluded.scope_key,
   agent_session_id = excluded.agent_session_id,

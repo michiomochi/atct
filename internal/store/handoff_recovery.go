@@ -16,6 +16,7 @@ import (
 const (
 	RecoveryProofProcessMismatch RecoveryProofKind   = "process_identity_mismatch"
 	RecoveryProofSessionDiscard  RecoveryProofKind   = "session_discard"
+	RecoveryProofLeaseLapsed     RecoveryProofKind   = "heartbeat_lease_lapsed"
 	SessionDiscardDecisionKind   domain.DecisionKind = "session_discard"
 )
 
@@ -69,35 +70,18 @@ var (
 	ErrSessionDiscardForbidden  = errors.New("session discard requires the project commander")
 )
 
-// CanRecoverSession returns proof only for a process identity that is
-// definitely stale or for a session explicitly revoked by a human decision.
+// CanRecoverSession answers whether a session's work can be taken from it.
+//
+// It delegates to the predicate the recovery writes themselves use. Having a
+// second copy here is what let the lease reach one of them and not the other:
+// this one was fixed to read the lease while every real recovery kept asking
+// the operating system about a pid that is the daemon's own.
 func (s *Store) CanRecoverSession(ctx context.Context, sessionID int64) (RecoveryProof, error) {
-	if sessionID <= 0 {
-		return RecoveryProof{}, fmt.Errorf("session id is required: %w", ErrSessionRecoveryNotProven)
-	}
-	row, err := sqlcgen.New(s.db).GetAgentSessionRecovery(ctx, sessionID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return RecoveryProof{}, fmt.Errorf("agent session %d is not registered: %w", sessionID, ErrAgentSessionNotRegistered)
-	}
+	proof, err := canRecoverSessionInTx(ctx, sqlcgen.New(s.db), sessionID)
 	if err != nil {
-		return RecoveryProof{}, fmt.Errorf("find agent session %d for recovery: %w", sessionID, err)
+		return RecoveryProof{}, err
 	}
-	hasDiscardMetadata := agentSessionHasDiscardMetadata(row)
-	if hasDiscardMetadata {
-		if !row.DiscardedAt.Valid || strings.TrimSpace(row.DiscardedAt.String) == "" ||
-			!row.DiscardedBy.Valid || row.DiscardedBy.Int64 <= 0 ||
-			!row.DiscardedDecisionID.Valid || row.DiscardedDecisionID.Int64 <= 0 ||
-			strings.TrimSpace(row.DiscardReason) == "" {
-			return RecoveryProof{}, fmt.Errorf("agent session %d has an incomplete discard record: %w", sessionID, ErrSessionRecoveryNotProven)
-		}
-		proof := RecoveryProof{SessionID: sessionID, Kind: RecoveryProofSessionDiscard}
-		proof.DiscardDecisionID = row.DiscardedDecisionID.Int64
-		return proof, nil
-	}
-	if !claimIsDefinitelyDead(ctx, s, sessionID) {
-		return RecoveryProof{}, fmt.Errorf("agent session %d is live or its liveness is unknown: %w", sessionID, ErrSessionRecoveryNotProven)
-	}
-	return RecoveryProof{SessionID: sessionID, Kind: RecoveryProofProcessMismatch}, nil
+	return proof.RecoveryProof, nil
 }
 
 type sessionDiscardDecisionPayload struct {

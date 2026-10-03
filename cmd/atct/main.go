@@ -64,6 +64,7 @@ type cliConfig struct {
 	roleAgentSessionID      string
 	stopCheckHookInput      bool
 	monitorCheckHookInput   bool
+	mergeCheckHookInput     bool
 	sessionKeyHookInput     bool
 	watchGoalID             string
 	watchProjectScope       bool
@@ -110,6 +111,7 @@ var validSubcommands = map[string]bool{
 	"role":          true,
 	"stop-check":    true,
 	"monitor-check": true,
+	"merge-check":   true,
 	"session-key":   true,
 	"handoff":       true,
 	"codex":         true,
@@ -173,6 +175,7 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "  handoff options: --kind, --body, --in-reply-to-id, --after-id, --limit, --report, --capability")
 	fmt.Fprintln(os.Stderr, "  stop-check           Emit a Codex continuation when scoped role work remains")
 	fmt.Fprintln(os.Stderr, "  monitor-check        Deny an ATCT tool call when the session has no live Monitor")
+	fmt.Fprintln(os.Stderr, "  merge-check          Deny merging a goal branch into main before the human approves")
 	fmt.Fprintln(os.Stderr, "  session-key          Print the SessionStart key for atct_session_identify")
 	fmt.Fprintln(os.Stderr, "  version              Print the installed CLI version")
 	fmt.Fprintln(os.Stderr, "  codex shim install [--profile <path>]  Install the transparent Codex shim")
@@ -330,6 +333,9 @@ func parseArgs(args []string) (cliConfig, error) {
 	if sub == "monitor-check" {
 		flags.BoolVar(&cfg.monitorCheckHookInput, "hook-input", false, "read hook JSON from stdin")
 	}
+	if sub == "merge-check" {
+		flags.BoolVar(&cfg.mergeCheckHookInput, "hook-input", false, "read hook JSON from stdin")
+	}
 	if sub == "session-key" {
 		flags.BoolVar(&cfg.sessionKeyHookInput, "hook-input", false, "read hook JSON from stdin")
 	}
@@ -396,6 +402,10 @@ func parseArgs(args []string) (cliConfig, error) {
 	}
 	if sub == "monitor-check" && !cfg.monitorCheckHookInput {
 		fmt.Fprintln(os.Stderr, "monitor-check requires --hook-input")
+		return cliConfig{}, errInvalidArgs
+	}
+	if sub == "merge-check" && !cfg.mergeCheckHookInput {
+		fmt.Fprintln(os.Stderr, "merge-check requires --hook-input")
 		return cliConfig{}, errInvalidArgs
 	}
 	if sub == "session-key" && !cfg.sessionKeyHookInput {
@@ -812,6 +822,12 @@ func main() {
 	case "monitor-check":
 		if err := runMonitorCheck(config, dir, exePath); err != nil {
 			log.Printf("monitor-check: %v", err)
+			os.Exit(1)
+		}
+		return
+	case "merge-check":
+		if err := runMergeCheck(dir); err != nil {
+			log.Printf("merge-check: %v", err)
 			os.Exit(1)
 		}
 		return

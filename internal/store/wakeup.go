@@ -257,13 +257,6 @@ func (s *Store) EvaluateWakeup(ctx context.Context, projectID int64) (WakeupStat
 				hasOpenGoalHandoff = true
 			}
 		}
-		hasOpenCompletionDecision := false
-		for _, decision := range openDecisions {
-			if decision.Kind == domain.KindCompletion && decision.Status == domain.DecisionOpen {
-				hasOpenCompletionDecision = true
-				break
-			}
-		}
 		taskHandoffs := make(map[int64][]TaskHandoff, len(tasks))
 		taskClaimed := make(map[int64]bool, len(tasks))
 		if len(tasks) == 0 {
@@ -302,12 +295,12 @@ func (s *Store) EvaluateWakeup(ctx context.Context, projectID int64) (WakeupStat
 					state.UnclaimedDoingTasks = append(state.UnclaimedDoingTasks, task)
 				}
 			}
-			if allDone && !hasOpenCompletionDecision {
+			if allDone {
 				state.CompletedGoals = append(state.CompletedGoals, goal)
-			} else if allDropped && !hasOpenCompletionDecision {
+			} else if allDropped {
 				state.DroppedGoals = append(state.DroppedGoals, goal)
 			}
-			if allTerminal && hasDoneTask && !hasOpenCompletionDecision {
+			if allTerminal && hasDoneTask {
 				hasLinkedCommit := false
 				for _, task := range tasks {
 					commits, err := s.ListTaskCommits(ctx, task.ID)
