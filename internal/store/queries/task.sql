@@ -142,6 +142,11 @@ SELECT id
 FROM agent_sessions
 WHERE session_key = ?;
 
+-- name: GetAgentSessionKey :one
+SELECT session_key
+FROM agent_sessions
+WHERE id = ?;
+
 -- name: UpdateAgentSessionKey :exec
 UPDATE agent_sessions
 SET session_key = ?

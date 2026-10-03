@@ -502,6 +502,17 @@ func (s *Store) AgentSessionIDByKey(ctx context.Context, sessionKey string) (int
 	return id, err
 }
 
+// AgentSessionUnidentified reports whether the row exists but never ran
+// session.identify. An MCP client can hold several transports, and a reconnect
+// or daemon restart opens a new one; each starts as such a row.
+func (s *Store) AgentSessionUnidentified(ctx context.Context, agentSessionID int64) (bool, error) {
+	key, err := sqlcgen.New(s.db).GetAgentSessionKey(ctx, agentSessionID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return key == "", err
+}
+
 func (s *Store) AssociateAgentSessionWithProject(ctx context.Context, agentSessionID int64, projectID int64) error {
 	agentSessionID, err := requireAgentSessionID(agentSessionID)
 	if err != nil {

@@ -50,6 +50,14 @@ task/goal handoff を receive する worker は、SessionStart の正確な `ses
 canonical な agent session を確定し、receive は role と claim evidence を返す。
 `atct_role` は継続作業の前提ではなく、役割異常の診断に使う。
 
+1 つのクライアントは複数の MCP transport を開き、再接続や daemon 再起動でさらに増える。
+transport ごとに新しい agent_sessions 行ができる。`session.identify` を一度も実行していない行は
+何も保有せず、役割を導出すると `executor` になってしまう。そのため `atct_role` はその行を拒否し、
+`atct_session_identify` を呼ぶよう伝えるエラーを返す。そのような行からの RPC が失敗した場合も、
+同じ案内がエラーに付く。同じ `session_key` で `session.identify` を実行すると canonical な行に
+再接続されるので、claim と monitor は同じ行に残る。クライアントを区別する列は無いため、
+代わりに `/mcp` ハンドラが登録ごとにリモートアドレスと user-agent をログに残す。
+
 ## handoff の状態
 
 | 状態 | 遷移させる者 | `goal` | `plan` | `task` |

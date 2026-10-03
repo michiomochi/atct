@@ -342,6 +342,19 @@ func (q *Queries) GetAgentSessionIDByKey(ctx context.Context, sessionKey string)
 	return id, err
 }
 
+const getAgentSessionKey = `-- name: GetAgentSessionKey :one
+SELECT session_key
+FROM agent_sessions
+WHERE id = ?
+`
+
+func (q *Queries) GetAgentSessionKey(ctx context.Context, id int64) (string, error) {
+	row := q.db.QueryRowContext(ctx, getAgentSessionKey, id)
+	var session_key string
+	err := row.Scan(&session_key)
+	return session_key, err
+}
+
 const getAgentSessionLiveness = `-- name: GetAgentSessionLiveness :one
 SELECT pid, started_at, last_heartbeat_at
 FROM agent_sessions

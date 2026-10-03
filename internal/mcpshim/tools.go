@@ -578,9 +578,12 @@ func callWithUnappliedDecisions(ctx context.Context, c *Client, method string, p
 	return nil, RawWithUnappliedDecisions{Data: shapeData(method, out)}, nil
 }
 
-func sessionRole(ctx context.Context, c *Client, agentSessionID int64) (roleResponse, error) {
+func sessionRole(ctx context.Context, c *Client, agentSessionID int64, requireIdentified bool) (roleResponse, error) {
 	var raw json.RawMessage
-	if err := c.Call(ctx, "session.role", map[string]any{"agent_session_id": agentSessionID}, &raw); err != nil {
+	if err := c.Call(ctx, "session.role", map[string]any{
+		"agent_session_id":   agentSessionID,
+		"require_identified": requireIdentified,
+	}, &raw); err != nil {
 		return nil, err
 	}
 	return decodeRoleResponse(raw)
@@ -641,7 +644,7 @@ func callClaimWithRole(ctx context.Context, c *Client, method string, params any
 	if err != nil {
 		return nil, RawWithUnappliedDecisions{}, err
 	}
-	response, err := sessionRole(ctx, c, agentSessionID)
+	response, err := sessionRole(ctx, c, agentSessionID, false)
 	if err != nil {
 		return nil, result, nil
 	}
@@ -655,7 +658,7 @@ func callRole(ctx context.Context, c *Client, in RoleIn, agentSessionID int64) (
 		return nil, Raw{}, fmt.Errorf("expected_role must be one of commander, subcommander, executor")
 	}
 
-	response, err := sessionRole(ctx, c, agentSessionID)
+	response, err := sessionRole(ctx, c, agentSessionID, true)
 	if err != nil {
 		return nil, Raw{}, err
 	}
