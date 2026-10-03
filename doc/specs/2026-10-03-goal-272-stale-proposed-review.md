@@ -1,4 +1,4 @@
-# 古くなった proposed goal を commander の見直しに回す仕様
+# 古くなった proposed goal を commander の節目の確認に回す仕様
 
 日付: 2026-10-03
 ゴール: 272
@@ -6,92 +6,88 @@
 
 ## 目的
 
-proposed のまま 7 日以上動きのない goal を、無条件に取り下げず、commander の
-見直し対象として知らせる。見直しの結果は「理由付きで取り下げ」か「確認済みとして
-残す」のどちらかで記録する。人間の差し戻し（decision 866）:
-「無条件で取り下げるのではなく、1週間以上たっているものは再度確認され整理される」。
+proposed のまま 7 日以上動きのない goal を、daemon が取り下げるのではなく、commander が
+決まった節目で現行 main と照合して整理する。人間の差し戻し:
 
-見本は 2026-10-03 に commander が手でやった整理である。proposed goal を 1 件ずつ現行
-main と照合し、「修正が main にある」「別 goal に置き換えられた」「前提が消えた」の
-どれかに根拠付きで当てはまるものだけを取り下げ、有効なものは残した（30 件中 13 件）。
-この判定は daemon にはできない。daemon は見直しの時機を知らせ、結果を記録するだけにする。
+- decision 866:「無条件で取り下げるのではなく、1週間以上たっているものは再度確認され整理される」
+- decision 877:「goal_confirmations は不要じゃない？各チェックポイントで古くなってるかを確認する
+  プロセスをいれればよくない？」
+
+見本は 2026-10-03 に commander が手でやった整理である。proposed goal を 1 件ずつ現行 main と
+照合し、次のどれかに根拠付きで当てはまるものだけを理由付きで取り下げ、有効なものは残した。
+
+- 修正がすでに main にある
+- 別の goal に置き換えられた
+- 前提が消えた
+
+この判定は daemon にはできない。daemon は「7 日以上動きのない proposed goal」を見つけやすく
+するだけにし、確認の記録は持たない。残した goal は次の節目でまた確かめる（手間は小さい）。
+
+## 節目（チェックポイント）
+
+**commander が `atct_goal_list` を見る 2 つの場面**とする。
+
+1. `/atct:start` の開始時（セッションの最初の Look）
+2. goal を完了させた直後（`atct_goal_review_complete` の後に回ってくる次の Look）
+
+根拠: `atct_goal_list` は skills/start の loop の Look で commander が必ず通る呼び出しで、
+`awaiting_approval_count` のような proposed 側の状況もすでにここで見ている。専用の呼び出しや
+新しい経路を足さずに済む。ループの毎周ではなく上の 2 場面に絞るのは、残した goal を毎周
+確かめ直す手間を避けるため。goal の委譲前は、委譲する goal の判断と無関係な整理を割り込ませる
+ことになるので節目にしない。
 
 ## 動作
 
 ### 1. 自動取り下げをやめる
 
-`ReconcileStaleGoalApprovals` と maintenance からの呼び出しを削除する。daemon は
-goal の状態を変えない。14 日の定数、`ListOpenAgentGoalApprovals`、`HasGoalWork`、
-`ErrGoalHasWork` も不要になるので削除する。
+`ReconcileStaleGoalApprovals` と maintenance からの呼び出し、14 日の定数、`HasGoalWork`、
+`ListOpenAgentGoalApprovals`、`ErrGoalHasWork` を削除する。daemon は goal を変えない。
 
-### 2. 見直し期限
+### 2. 見つけやすくする（`atct_goal_list`）
 
-proposed の goal は、次のうち最も新しい時刻から 7 日経つと「見直し待ち」になる。
+`goal.list` のレスポンス `data` に `review_due_goals` を足す。proposed の goal のうち
+`goals.updated_at` から 7 日以上経ったものの `{id, title, updated_at}` の配列。creator は
+問わない（知らせるだけで害がない）。7 日は定数 `goalReviewDueAfter` とし、設定項目は作らない。
+ハンドラがすでに取得している `ListGoals` の結果を絞るだけで、store・query・migration は増やさない。
 
-- `goals.updated_at`（提案文や spec/plan の更新を含む）
-- その goal の最新の確認記録（後述）の `confirmed_at`
+### 3. 節目での手順（skills/commander/SKILL.md、skills/start の loop の Look に 1 行の参照）
 
-creator では絞らない。現状 proposed を作るのは agent だけだが、人間が作った goal も
-古くなり、知らせるだけなら対象を広げても害がない。7 日は定数 `goalReviewDueAfter`
-とし、設定項目は作らない。
+節目で `review_due_goals` が空でなければ、各 goal を現行 main と照合し、上の 3 つの根拠の
+どれかに当てはまるものを `atct_goal_withdraw` で理由（根拠）付きに取り下げる。当てはまらない
+ものは何もせず残す（記録しない）。
 
-### 3. commander への知らせ
+### 4. 取り下げの経路
 
-既存の wakeup の仕組みに載せる。
+commander 専用の `atct_goal_withdraw` を proposed にも使えるようにした変更を残す。
+`WithdrawActiveGoal` の proposed 用の更新条件は `status = 'proposed'` だけ。open な
+goal_approval は既存の transaction で理由付きで withdrawn になる。decision の作成者 session に
+依存しないため、`agent_session_id=0` の decision も取り下げられる。作業記録（task、handoff、
+追加 decision）のある proposed goal も取り下げられる点は、needs_review に残す。
 
-- `store.EvaluateWakeup` が `WakeupState.ReviewDueGoals []domain.Goal` を返す
-  （`UndeclaredGoals` と同じ形。active 以外を飛ばす既存ループとは別に proposed を走査）。
-- daemon の `evaluateWith` が、goal ごとに `wakeup.goal_review_due`
-  （`store.EventWakeupGoalReviewDue`、`WakeupEvent{GoalID}`）を発行する。開始時刻は
-  期限到達時刻（最終動作 + 7 日）で、猶予は 0。既存の `recordWakeupEvent` が使う
-  `publishWakeup` に従い、状態が続く間は 1 回だけ出る。見直しで goal が proposed で
-  なくなる、または確認で期限が延びると状態が消え、次の期限到達でまた出る。
-- `cmd/atct/watch_scope.go` の project 範囲の配送リスト（commander の watch）に
-  `wakeup.goal_review_due` を加える。subcommander の goal 範囲の watch には出ない。
-- `cmd/atct/watch.go` の表示: 「proposed goal N は 7 日動きがない。現行 main と照合し、
-  `atct_goal_withdraw`（理由付き）で取り下げるか `atct_goal_confirm` で残す」。
-- `atct pending`（`cmd/atct/pending.go`）にも見直し待ち一覧を出す。wakeup は 1 回しか
-  出ないため、見逃した commander が再度見つけられる経路が必要である。
+### 5. 作らないもの
 
-wakeup は decision を作らない。人間の inbox に 2 つ目の問いは増やさない。
-
-### 4. 見直しの結果の記録
-
-- **取り下げ**: 既存の commander 専用 `goal.withdraw` / `atct_goal_withdraw` をそのまま
-  使う。`WithdrawActiveGoal` の proposed 用の更新から creator・実行記録・approval の
-  条件を外し、`status = 'proposed'` だけを条件にする。commander が理由を付けて明示的に
-  行う操作なので、自動処理用に付けた「記録があれば拒否」の保護は不要になる。
-  open な goal_approval は既存の transaction で理由付きで withdrawn になる。
-  decision の作成者 session に依存しないため、`agent_session_id=0` の decision も
-  取り下げられる（commander が poll できない問題に左右されない）。
-- **確認済みとして残す**: 新しい commander 専用の操作 `goal.confirm`
-  （MCP: `atct_goal_confirm`、引数 `goal_id` と非空の `note`）。proposed の goal にだけ
-  使え、`goal_confirmations(id, goal_id, note, confirmed_at)` に 1 行追加する。これで
-  期限は confirmed_at + 7 日に延びる。`goals.updated_at` は動かさない（提案の中身が
-  変わったわけではないため）。note は「なぜまだ有効か」を書く欄で、後から見直しの
-  根拠を辿れるようにする。proposed 以外の goal への確認は拒否する。
-- migration は 1 本（`0048_goal_confirmations.sql`、新規テーブルのみ）。既存の goals の
-  列には触れない。
+- `goal_confirmations` テーブル、migration、`atct_goal_confirm`、`goal.confirm`、
+  `Store.ConfirmProposedGoal`
+- wakeup（`wakeup.goal_review_due`、`WakeupState.ReviewDueGoals`）。残した goal は 7 日超の
+  まま残るため、確認の記録なしでは wakeup が消えず、daemon 再起動のたびに再発行されて節目での
+  確認と重複する。
+- watch の配送・表示、`atct pending` の一覧
 
 ## 非目標
 
-- daemon が goal を自動で dropped にすること
-- main との照合を daemon で自動判定すること
-- 見直しのための新しい decision kind、UI、設定項目
-- active / done / dropped の goal の見直し
-- Goal 307（`agent_session_id=0` の decision の配送）の修正
+daemon の自動取り下げ、main との自動照合、新 decision kind・UI・設定・migration、
+active/done/dropped の goal の見直し、Goal 307 の修正。
 
 ## 受け入れ条件
 
-1. 7 日動きのない proposed goal（creator 問わず）に対し、daemon の maintenance は
-   goal も approval も変更しない。
-2. 7 日未満の proposed goal には `wakeup.goal_review_due` が出ない。7 日以上で 1 回出る。
-3. `atct_goal_confirm` で期限が確認時刻 + 7 日に延び、wakeup 状態が消える。
-   proposed 以外、または note が空なら拒否される。commander 以外は拒否される。
-4. commander の `atct_goal_withdraw` が proposed の goal（creator・実行記録を問わず）を
-   理由付きで dropped にし、open な approval を withdrawn にする。active の既存挙動は
-   変わらない。
-5. commander の watch に見直し待ちの行が出る。goal 範囲の watch には出ない。
-6. `atct pending` に見直し待ちの goal が出る。
-7. `go build`、`go vet`、`go test ./... -count=1`、`./script/schema-check.sh`、wrapper test が
+1. 7 日以上動きのない proposed goal（creator 問わず）に対し、daemon の maintenance は goal も
+   approval も変更しない。
+2. `atct_goal_list` の `review_due_goals` に、proposed かつ updated_at が 7 日以上前の goal だけが
+   入る（6 日、active、done は入らない）。
+3. commander の `atct_goal_withdraw` が proposed の goal（creator・実行記録を問わず）を理由付きで
+   dropped にし、open な approval を withdrawn にする。active の既存挙動は変わらない。
+4. `goal_confirmations`、migration、`atct_goal_confirm`、wakeup、watch、pending の追加が
+   残っていない（main との差分に出ない）。
+5. SKILL.md に節目と手順が書かれ、skills/start の Look から参照されている。
+6. `go build`、`go vet`、`go test ./... -count=1`、`./script/schema-check.sh`、wrapper test が
    現行 main を取り込んだ tree で通る。
