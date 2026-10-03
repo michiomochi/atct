@@ -59,7 +59,6 @@ func TestRegisterPublishesRoleAndLifecycleToolsWithFlexibleOutputSchema(t *testi
 		"atct_goal_claim":                         true,
 		"atct_goal_release":                       true,
 		"atct_goal_withdraw":                      true,
-		"atct_goal_update_content":                true,
 		"atct_task_update_content":                true,
 		"atct_project_claim":                      true,
 		"atct_project_release":                    true,
@@ -96,6 +95,7 @@ func TestRegisterPublishesRoleAndLifecycleToolsWithFlexibleOutputSchema(t *testi
 		"atct_handoff_entry_history":              true,
 		"atct_goal_handoff_entry_append":          true,
 		"atct_goal_handoff_entry_history":         true,
+		"atct_review_exchanges":                   true,
 	}
 	if len(got.Tools) != len(wantNames) {
 		t.Fatalf("tool count = %d, want %d", len(got.Tools), len(wantNames))
@@ -280,9 +280,6 @@ func TestRegisterPublishesRoleAndLifecycleToolsWithFlexibleOutputSchema(t *testi
 		{name: "atct_goal_list", args: map[string]any{"cwd": "/tmp"}},
 		{name: "atct_goal_get", args: map[string]any{"goal_id": "goal-1"}},
 		{name: "atct_goal_claim", args: map[string]any{"goal_id": "goal-1"}},
-		{name: "atct_goal_update_content", args: map[string]any{
-			"goal_id": "goal-1", "content": "updated goal",
-		}},
 		{name: "atct_goal_update_request_report", args: map[string]any{
 			"goal_id": "goal-1", "spec": "updated spec", "plan": "updated plan",
 		}},
@@ -334,6 +331,7 @@ func TestRegisterPublishesRoleAndLifecycleToolsWithFlexibleOutputSchema(t *testi
 		{name: "atct_goal_handoff_entry_history", args: map[string]any{
 			"handoff_id": "goal-handoff-1", "goal_id": "goal-1", "after_id": 1, "limit": 20,
 		}},
+		{name: "atct_review_exchanges", args: map[string]any{"goal_id": "goal-1", "task_id": "task-1"}},
 		{name: "atct_decision_ask", args: map[string]any{
 			"goal_id": "goal-1", "question": "question", "options": []any{}, "wait_ms": 0,
 		}},
@@ -847,6 +845,10 @@ func TestHandoffToolsInjectAgentSessionID(t *testing.T) {
 		{
 			name: "atct_goal_handoff_entry_history", method: "goal.handoff.entry.history", ownedBy: "agent_session_id",
 			args: map[string]any{"handoff_id": "goal-handoff-1", "goal_id": "goal-1", "after_id": 1, "limit": 20},
+		},
+		{
+			name: "atct_review_exchanges", method: "review.exchange.list", ownedBy: "agent_session_id",
+			args: map[string]any{"goal_id": "goal-1", "task_id": "task-1"},
 		},
 	} {
 		result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
@@ -1479,6 +1481,11 @@ func callRoleTool(t *testing.T, claimProject, claimGoal, withTask bool, expected
 	if err != nil {
 		s.Close()
 		t.Fatalf("RegisterAgentSession: %v", err)
+	}
+	// atct_role refuses a row that never ran session.identify; a real agent has.
+	if _, _, err := s.IdentifyAgentSession(ctx, sessionID, "role-fixture-key"); err != nil {
+		s.Close()
+		t.Fatalf("IdentifyAgentSession: %v", err)
 	}
 	if claimProject {
 		if _, err := s.ClaimProject(ctx, project.ID, sessionID); err != nil {

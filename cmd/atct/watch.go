@@ -260,6 +260,9 @@ type watchHealthReporter struct {
 	state          string
 	transitionedAt time.Time
 	scopeActive    bool
+	// rearmOnStop, when it reports true, makes Stop announce an expected
+	// re-arm instead of a stop: a `--once` watch that fired ends mid-turn.
+	rearmOnStop func() bool
 }
 
 func newWatchHealthReporter(client *http.Client, urls []string, cwd string, scope watchScope) *watchHealthReporter {
@@ -378,7 +381,29 @@ func (r *watchHealthReporter) ClearExpectedScope() {
 }
 
 func (r *watchHealthReporter) Stop() {
+	if r != nil && r.rearmOnStop != nil && r.rearmOnStop() {
+		r.reportRearming()
+		return
+	}
 	r.ClearExpectedScope()
+}
+
+func (r *watchHealthReporter) reportRearming() {
+	now := time.Now().UTC()
+	r.mu.Lock()
+	if !r.scopeActive {
+		r.mu.Unlock()
+		return
+	}
+	health := r.health
+	health.State = "rearming"
+	health.Reason = "once: re-arm expected"
+	health.TransitionedAt = now
+	health.LastSeenAt = now
+	preferred := r.lastBaseURL
+	r.scopeActive = false
+	r.mu.Unlock()
+	r.post(context.Background(), preferred, health)
 }
 
 func (r *watchHealthReporter) post(ctx context.Context, preferred string, health store.MonitorHealth) {
@@ -515,10 +540,10 @@ func runWatch(dir, goalID string) error {
 }
 
 func runWatchWithOptions(dir, goalID string, projectScope, monitor bool) error {
-	return runWatchWithOptionsAndToken(dir, goalID, projectScope, monitor, "")
+	return runWatchWithOptionsAndToken(dir, goalID, projectScope, monitor, "", false)
 }
 
-func runWatchWithOptionsAndToken(dir, goalID string, projectScope, monitor bool, monitorToken string) error {
+func runWatchWithOptionsAndToken(dir, goalID string, projectScope, monitor bool, monitorToken string, once bool) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	cwd, err := os.Getwd()
@@ -529,7 +554,7 @@ func runWatchWithOptionsAndToken(dir, goalID string, projectScope, monitor bool,
 	client := &http.Client{}
 	baseURLs := watchBaseURLs(dir)
 	if monitor && strings.TrimSpace(monitorToken) != "" {
-		return runBoundClaudeWatch(ctx, dir, cwd, client, baseURLs, monitorToken)
+		return runBoundClaudeWatch(ctx, dir, cwd, client, baseURLs, monitorToken, once)
 	}
 	projectID := ""
 	for _, baseURL := range baseURLs {
@@ -624,7 +649,7 @@ func runWatchWithOptionsAndToken(dir, goalID string, projectScope, monitor bool,
 	}, projectIDGetter, scope, nil, actionSink, reporters...)
 }
 
-func runBoundClaudeWatch(ctx context.Context, dir, cwd string, client *http.Client, baseURLs []string, monitorToken string) error {
+func runBoundClaudeWatch(ctx context.Context, dir, cwd string, client *http.Client, baseURLs []string, monitorToken string, once bool) error {
 	registrationScope := daemonctl.WatchScope{MonitorToken: monitorToken}
 	cleanup, err := daemonctl.RegisterWatchScoped(dir, registrationScope)
 	if err != nil {
@@ -634,17 +659,37 @@ func runBoundClaudeWatch(ctx context.Context, dir, cwd string, client *http.Clie
 	if _, err := daemonctl.ReapWatches(dir, registrationScope, os.Getpid()); err != nil {
 		return fmt.Errorf("reap bound watches: %w", err)
 	}
-	writer := monitorActionWriter{writer: os.Stdout}
+	return runBoundWatchLoop(ctx, dir, cwd, client, baseURLs, monitorToken, os.Stdout, once, func() error {
+		return ensureWatchDaemon(dir)
+	})
+}
+
+// runBoundWatchLoop runs one watch per scope of the token's binding. Every
+// delivery goes through the token's record, so a watch re-armed after another
+// one does not repeat what was already shown. Only --once ends on its first
+// delivery and stops reporting "stopped".
+func runBoundWatchLoop(ctx context.Context, dir, cwd string, client *http.Client, baseURLs []string, monitorToken string, out io.Writer, once bool, ensure watchEnsureFunc) error {
+	writer := monitorActionWriter{writer: out}
+	var cancel context.CancelFunc
+	var rearmOnStop func() bool
+	if once {
+		ctx, cancel = context.WithCancel(ctx)
+		defer cancel()
+	}
+	record := newWatchOnce(dir, monitorToken, cancel, time.Now)
+	sink := record.Sink(writer.Sink)
+	if once {
+		rearmOnStop = record.Fired
+	}
 	snapshot, projectIDGetter := watchSnapshotWithProject(client, baseURLs, cwd)
 	return runMonitorBindingLoop(ctx, client, baseURLs, monitorToken, func(scopeCtx context.Context, scope watchScope) error {
 		reporter := newWatchHealthReporter(client, baseURLs, cwd, scope)
 		var reporters []watchHealthSink
 		if reporter != nil {
+			reporter.rearmOnStop = rearmOnStop
 			reporters = append(reporters, reporter)
 		}
-		return watchLoopWithEnsureAndProjectIDAndScopeAndActionSink(scopeCtx, io.Discard, client, watchReconnectInterval, snapshot, func() error {
-			return ensureWatchDaemon(dir)
-		}, projectIDGetter, scope, nil, writer.Sink, reporters...)
+		return watchLoopWithEnsureAndProjectIDAndScopeAndActionSink(scopeCtx, io.Discard, client, watchReconnectInterval, snapshot, ensure, projectIDGetter, scope, nil, sink, reporters...)
 	})
 }
 
@@ -1052,6 +1097,15 @@ func consumeWatchEventsWithStateAndScopeAndSinkAndInterval(ctx context.Context, 
 		return fmt.Errorf("GET %s: HTTP %s", eventsURL, resp.Status)
 	}
 
+	// Events emitted between the caller's reconcile and this subscription are
+	// not on the stream, so reconcile once now that it is open.
+	if err := reconcileWatchScope(ctx, client, baseURL, scope, out, delivered, lastWakeupContent, wakeupDiscrepancyDelivered, wakeupDelivered, scopeFilter, sink, actionSink, latestReconciliation); err != nil {
+		return err
+	}
+	if reconciliationSucceeded != nil {
+		reconciliationSucceeded()
+	}
+
 	frames, readDone := readWatchSSEFrames(ctx, resp.Body)
 	if keepaliveTimeout <= 0 {
 		keepaliveTimeout = watchKeepaliveTimeout
@@ -1310,7 +1364,7 @@ func watchEventsURLWithGoal(baseURL, projectID, goalID string) (string, error) {
 
 func watchEventsURLWithScope(baseURL string, scope watchScope) (string, error) {
 	endpoint := strings.TrimRight(baseURL, "/") + "/api/events"
-	if scope.ProjectID == "" && scope.GoalID == "" && scope.TaskID == "" {
+	if scope.ProjectID == "" && scope.GoalID == "" && scope.TaskID == "" && scope.MonitorToken == "" {
 		return endpoint, nil
 	}
 	parsed, err := url.Parse(endpoint)
@@ -1326,6 +1380,10 @@ func watchEventsURLWithScope(baseURL string, scope watchScope) (string, error) {
 	}
 	if scope.TaskID != "" {
 		query.Set("task_id", scope.TaskID)
+	}
+	// The daemon uses the token to drop handoff entries this session authored or is not party to.
+	if scope.MonitorToken != "" {
+		query.Set("monitor_token", scope.MonitorToken)
 	}
 	parsed.RawQuery = query.Encode()
 	return parsed.String(), nil
@@ -1396,6 +1454,7 @@ type watchReconciliationHandoff struct {
 type watchReconciliationGoal struct {
 	ID        string    `json:"id"`
 	Status    string    `json:"status"`
+	Creator   string    `json:"creator"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
@@ -1501,14 +1560,6 @@ func reconcileWatchScope(ctx context.Context, client *http.Client, baseURL strin
 			}
 			continue
 		}
-		if shouldProjectAppliedGoalApproval(scope, state, decision) {
-			if err := emitWatchDecisionWithStateAndSinks(out, "decision.approved", decision,
-				delivered, lastWakeupContent, wakeupDiscrepancyDelivered,
-				wakeupDelivered, sink, actionSink); err != nil {
-				return err
-			}
-			continue
-		}
 		var eventName string
 		switch decision.Status {
 		case "open":
@@ -1598,6 +1649,9 @@ func reconcileWatchScope(ctx context.Context, client *http.Client, baseURL strin
 			}
 		}
 		for _, goal := range newGoals {
+			if goal.Creator == "agent" {
+				continue
+			}
 			decision := watchDecision{GoalID: goal.ID, TargetRole: "commander"}
 			if !scopeFilter.delivers("goal.created", decision) {
 				continue
@@ -1878,16 +1932,6 @@ func writeWatchLineWithActionSink(out io.Writer, line, eventName string, decisio
 	return nil
 }
 
-func shouldProjectAppliedGoalApproval(scope watchScope, state watchReconciliation, decision watchDecision) bool {
-	if scope.ProjectID == "" || scope.GoalID != "" || scope.TaskID != "" {
-		return false
-	}
-	if decision.Kind != "goal_approval" || decision.Status != "applied" || decision.GoalID == "" {
-		return false
-	}
-	return watchReconciliationHasActiveGoal(state, decision.GoalID)
-}
-
 func shouldProjectGoalReviewTransition(scope watchScope) bool {
 	return scope.ProjectID != "" && scope.GoalID == "" && scope.TaskID == ""
 }
@@ -2011,12 +2055,8 @@ func formatWatchDecision(eventName string, decision watchDecision) (string, bool
 		if decision.TaskID != "" {
 			target = "task " + decision.TaskID
 		}
-		preview := decision.BodyPreview
-		if preview == "" {
-			preview = decision.Preview
-		}
 		entryID, _ := decision.handoffEntryID()
-		return fmt.Sprintf("atct handoff entry added: %s (handoff %s, id %d, kind %s, author %d): %s", target, decision.HandoffID, entryID, decision.Kind, decision.AuthorSessionID, watchHandoffEntryPreview(preview)), true
+		return fmt.Sprintf("atct handoff entry added: %s (handoff %s, id %d, kind %s, author %d)", target, decision.HandoffID, entryID, decision.Kind, decision.AuthorSessionID), true
 	case "handoff_yielded":
 		return fmt.Sprintf("atct handoff yielded: task %s", decision.TaskID), true
 	case "wakeup.claim_undelegated":
@@ -2159,23 +2199,6 @@ func watchHandoffReportPreview(report string) string {
 		return report
 	}
 	return string(runes[:maxReportRunes]) + "…"
-}
-
-func watchHandoffEntryPreview(body string) string {
-	body = strings.Join(strings.Fields(body), " ")
-	const maxPreviewBytes = 256
-	if len([]byte(body)) <= maxPreviewBytes {
-		return body
-	}
-	var preview []byte
-	for _, r := range body {
-		runeBytes := []byte(string(r))
-		if len(preview)+len(runeBytes) > maxPreviewBytes {
-			break
-		}
-		preview = append(preview, runeBytes...)
-	}
-	return string(preview)
 }
 
 func waitForWatchReconnect(ctx context.Context, out io.Writer, interval time.Duration) error {

@@ -305,3 +305,30 @@ func requireHandoffParticipant(agentSessionID, requestedBy, receivedBy int64) er
 	}
 	return nil
 }
+
+type reviewExchangeRPCParams struct {
+	GoalID            int64  `json:"goal_id"`
+	TaskID            int64  `json:"task_id"`
+	AgentSessionID    int64  `json:"agent_session_id"`
+	Capability        string `json:"capability"`
+	CallerCapability  string `json:"caller_capability"`
+	MonitorCapability string `json:"monitor_capability"`
+}
+
+// listReviewExchangesRPC is a read like goal.get: it spans every handoff of the
+// goal plus human decisions, so there is no single thread whose participants
+// could be required. A capability, when given, is still validated as in the
+// history RPCs.
+func (d *Daemon) listReviewExchangesRPC(ctx context.Context, raw json.RawMessage, peerID uint64) (json.RawMessage, error) {
+	var p reviewExchangeRPCParams
+	if err := decodeHandoffEntryRPCParams(raw, &p); err != nil {
+		return nil, err
+	}
+	if _, err := d.sessionFromCapability(capabilityFields{
+		Capability: p.Capability, CallerCapability: p.CallerCapability, MonitorCapability: p.MonitorCapability,
+	}, p.AgentSessionID, peerID); err != nil {
+		return nil, err
+	}
+	history, err := d.store.ListReviewExchanges(ctx, p.GoalID, p.TaskID)
+	return marshal(history, err)
+}

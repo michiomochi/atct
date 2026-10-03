@@ -1,12 +1,17 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  ApiError,
   approveDecision,
   createGoal,
   fetchGoalHandoffHistory,
+  fetchGoalReviewExchanges,
+  fetchTaskReviewExchanges,
+  normalizeReviewExchanges,
   fetchProjects,
   normalizeGoal,
   rejectDecision,
   subscribeToDecisionEvents,
+  updateUILocale,
 } from "./api";
 import { DECISION_EVENT_NAMES } from "./ui";
 
@@ -113,6 +118,38 @@ describe("goal creation API", () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ project_id: "project-1", content: "Ship it\n\nDetails", creator: "human" }),
     });
+  });
+});
+
+describe("locale API", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("puts the selected locale using the exact JSON contract", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      text: () => Promise.resolve('{"locale":"ja"}'),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(updateUILocale("ja")).resolves.toEqual({ locale: "ja" });
+    expect(fetchMock).toHaveBeenCalledWith("/api/ui-settings/locale", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ locale: "ja" }),
+    });
+  });
+
+  it("keeps non-2xx responses as ApiError", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 503,
+      text: () => Promise.resolve('{"error":"locale service unavailable"}'),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(updateUILocale("ja")).rejects.toBeInstanceOf(ApiError);
   });
 });
 
@@ -297,5 +334,53 @@ describe("decision event subscription", () => {
     vi.advanceTimersByTime(5_000);
 
     expect(FakeWebSocket.instances).toHaveLength(1);
+  });
+});
+
+describe("review exchange API", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("turns missing or null arrays into empty ones", () => {
+    expect(normalizeReviewExchanges({})).toEqual({ exchanges: [], gaps: [] });
+    expect(normalizeReviewExchanges({ exchanges: null, gaps: null })).toEqual({ exchanges: [], gaps: [] });
+    expect(normalizeReviewExchanges(null)).toEqual({ exchanges: [], gaps: [] });
+  });
+
+  it("keeps valid pairs, null responses and gaps, and drops malformed ones", () => {
+    const history = normalizeReviewExchanges({
+      exchanges: [
+        {
+          scope: "task", task_id: 7, handoff_id: "h1",
+          rejection: { source: "handoff", at: "2026-10-01T00:00:01Z", actor_session_id: 3, reason: "fix" },
+          response: { at: "2026-10-01T00:00:02Z", author_session_id: 4, handoff_id: "h2", report: "fixed" },
+        },
+        { scope: "goal", rejection: { source: "human", at: "2026-10-01T00:00:03Z", decision_id: 9, reason: "no" }, response: null },
+        { scope: "bogus", rejection: { source: "human", at: "x", reason: "" }, response: null },
+        { scope: "plan", rejection: { source: "unknown", at: "x", reason: "" }, response: null },
+        "not an object",
+      ],
+      gaps: [
+        { scope: "goal", handoff_id: "g1", before_at: "2026-10-01T00:00:00Z" },
+        { scope: "goal", handoff_id: "", before_at: "2026-10-01T00:00:00Z" },
+      ],
+    });
+
+    expect(history.exchanges).toHaveLength(2);
+    expect(history.exchanges[0]).toMatchObject({ scope: "task", task_id: 7, handoff_id: "h1", response: { author_session_id: 4, report: "fixed" } });
+    expect(history.exchanges[1]).toMatchObject({ scope: "goal", rejection: { source: "human", decision_id: 9 }, response: null });
+    expect(history.exchanges[1].handoff_id).toBeUndefined();
+    expect(history.gaps).toEqual([{ scope: "goal", handoff_id: "g1", before_at: "2026-10-01T00:00:00Z" }]);
+  });
+
+  it("fetches the goal and task endpoints", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, text: () => Promise.resolve('{"exchanges":[],"gaps":[]}') });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(fetchGoalReviewExchanges("goal/1")).resolves.toEqual({ exchanges: [], gaps: [] });
+    await expect(fetchTaskReviewExchanges("task/1")).resolves.toEqual({ exchanges: [], gaps: [] });
+    expect(fetchMock).toHaveBeenNthCalledWith(1, "/api/goals/goal%2F1/review-exchanges", undefined);
+    expect(fetchMock).toHaveBeenNthCalledWith(2, "/api/tasks/task%2F1/review-exchanges", undefined);
   });
 });

@@ -7,7 +7,7 @@
   },
   "scripts": {
     "dev": "astro dev",
-    "build": "astro check && astro build",
+    "build": "PUBLIC_ATCT_LOCALE=en astro check && PUBLIC_ATCT_LOCALE=en astro build && PUBLIC_ATCT_LOCALE=ja astro build",
     "preview": "astro preview",
     "test": "vitest run",
     "typecheck": "astro check"

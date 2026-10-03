@@ -28,8 +28,6 @@ type openTaskDecision struct {
 func goalNotActiveError(goalID int64, status domain.GoalStatus, beforeAction, action string) error {
 	var stateMessage string
 	switch status {
-	case domain.GoalProposed:
-		stateMessage = fmt.Sprintf("goal %d is not approved; obtain human approval before %s its tasks (承認されていないため、先に人間の承認を得てください)", goalID, beforeAction)
 	case domain.GoalDone:
 		stateMessage = fmt.Sprintf("goal %d is complete; cannot %s its tasks (ゴールが完了しているため、タスク操作はできません)", goalID, action)
 	case domain.GoalDropped:

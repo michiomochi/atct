@@ -3,6 +3,7 @@ package web
 import (
 	"io/fs"
 	"os"
+	"path"
 	"testing"
 )
 
@@ -23,6 +24,20 @@ func TestDistEmbedMatchesSourceFiles(t *testing.T) {
 	for name := range embeddedFiles {
 		if _, ok := sourceFiles[name]; !ok {
 			t.Errorf("embedded dist contains unexpected file %q", name)
+		}
+	}
+
+	for _, locale := range []string{"en", "ja"} {
+		if _, ok := sourceFiles[path.Join(locale, "index.html")]; !ok {
+			t.Errorf("%s locale tree is missing index.html", locale)
+		}
+		entries, err := fs.ReadDir(os.DirFS("dist"), path.Join(locale, "_astro"))
+		if err != nil {
+			t.Errorf("read %s asset tree: %v", locale, err)
+			continue
+		}
+		if len(entries) == 0 {
+			t.Errorf("%s asset tree is empty", locale)
 		}
 	}
 }

@@ -10,22 +10,6 @@ import (
 	"database/sql"
 )
 
-const applyGoalApprovalDecision = `-- name: ApplyGoalApprovalDecision :execresult
-UPDATE decisions SET status = 'applied', answer_label = 'approve',
-  answered_at = ?, applied_at = ?
-WHERE id = ? AND kind = 'goal_approval' AND status = 'open'
-`
-
-type ApplyGoalApprovalDecisionParams struct {
-	AnsweredAt sql.NullString
-	AppliedAt  sql.NullString
-	ID         int64
-}
-
-func (q *Queries) ApplyGoalApprovalDecision(ctx context.Context, arg ApplyGoalApprovalDecisionParams) (sql.Result, error) {
-	return q.db.ExecContext(ctx, applyGoalApprovalDecision, arg.AnsweredAt, arg.AppliedAt, arg.ID)
-}
-
 const approveGoalReviewDecision = `-- name: ApproveGoalReviewDecision :execresult
 UPDATE decisions
 SET status = 'applied', answer_label = 'approve', answered_at = ?, applied_at = ?
@@ -182,19 +166,6 @@ func (q *Queries) GetGoal(ctx context.Context, id int64) (GetGoalRow, error) {
 		&i.UpdatedAt,
 	)
 	return i, err
-}
-
-const getGoalApprovalDecisionGoalID = `-- name: GetGoalApprovalDecisionGoalID :one
-SELECT goal_id
-FROM decisions
-WHERE id = ? AND kind = 'goal_approval' AND status = 'open'
-`
-
-func (q *Queries) GetGoalApprovalDecisionGoalID(ctx context.Context, id int64) (int64, error) {
-	row := q.db.QueryRowContext(ctx, getGoalApprovalDecisionGoalID, id)
-	var goal_id int64
-	err := row.Scan(&goal_id)
-	return goal_id, err
 }
 
 const getGoalProjectID = `-- name: GetGoalProjectID :one
@@ -497,50 +468,6 @@ func (q *Queries) ListNextGoals(ctx context.Context, goalID int64) ([]ListNextGo
 	return items, nil
 }
 
-const markGoalActive = `-- name: MarkGoalActive :execresult
-UPDATE goals SET status = 'active', updated_at = ?
-WHERE id = ? AND status = 'proposed'
-`
-
-type MarkGoalActiveParams struct {
-	UpdatedAt string
-	ID        int64
-}
-
-func (q *Queries) MarkGoalActive(ctx context.Context, arg MarkGoalActiveParams) (sql.Result, error) {
-	return q.db.ExecContext(ctx, markGoalActive, arg.UpdatedAt, arg.ID)
-}
-
-const markGoalDropped = `-- name: MarkGoalDropped :execresult
-UPDATE goals SET status = 'dropped', updated_at = ?
-WHERE id = ? AND status = 'proposed'
-`
-
-type MarkGoalDroppedParams struct {
-	UpdatedAt string
-	ID        int64
-}
-
-func (q *Queries) MarkGoalDropped(ctx context.Context, arg MarkGoalDroppedParams) (sql.Result, error) {
-	return q.db.ExecContext(ctx, markGoalDropped, arg.UpdatedAt, arg.ID)
-}
-
-const rejectGoalApprovalDecision = `-- name: RejectGoalApprovalDecision :execresult
-UPDATE decisions SET status = 'answered', answer_label = 'reject',
-  answer_text = ?, answered_at = ?
-WHERE id = ? AND kind = 'goal_approval' AND status = 'open'
-`
-
-type RejectGoalApprovalDecisionParams struct {
-	AnswerText string
-	AnsweredAt sql.NullString
-	ID         int64
-}
-
-func (q *Queries) RejectGoalApprovalDecision(ctx context.Context, arg RejectGoalApprovalDecisionParams) (sql.Result, error) {
-	return q.db.ExecContext(ctx, rejectGoalApprovalDecision, arg.AnswerText, arg.AnsweredAt, arg.ID)
-}
-
 const rejectGoalReviewDecision = `-- name: RejectGoalReviewDecision :execresult
 UPDATE decisions
 SET status = 'answered', answer_label = 'reject', answer_text = ?, answered_at = ?
@@ -604,21 +531,6 @@ func (q *Queries) UpdateGoalCompletionReport(ctx context.Context, arg UpdateGoal
 	)
 }
 
-const updateGoalContent = `-- name: UpdateGoalContent :execresult
-UPDATE goals SET content = ?, updated_at = ?
-WHERE id = ? AND status = 'proposed'
-`
-
-type UpdateGoalContentParams struct {
-	Content   string
-	UpdatedAt string
-	ID        int64
-}
-
-func (q *Queries) UpdateGoalContent(ctx context.Context, arg UpdateGoalContentParams) (sql.Result, error) {
-	return q.db.ExecContext(ctx, updateGoalContent, arg.Content, arg.UpdatedAt, arg.ID)
-}
-
 const updateGoalRequestReport = `-- name: UpdateGoalRequestReport :execresult
 UPDATE goals SET spec = ?, plan = ?, updated_at = ? WHERE id = ?
 `
@@ -652,19 +564,4 @@ type WithdrawActiveGoalParams struct {
 
 func (q *Queries) WithdrawActiveGoal(ctx context.Context, arg WithdrawActiveGoalParams) (sql.Result, error) {
 	return q.db.ExecContext(ctx, withdrawActiveGoal, arg.ResultSummary, arg.UpdatedAt, arg.ID)
-}
-
-const withdrawProposedGoal = `-- name: WithdrawProposedGoal :execresult
-UPDATE goals SET status = 'dropped', result_summary = ?, updated_at = ?
-WHERE id = ? AND status = 'proposed'
-`
-
-type WithdrawProposedGoalParams struct {
-	ResultSummary string
-	UpdatedAt     string
-	ID            int64
-}
-
-func (q *Queries) WithdrawProposedGoal(ctx context.Context, arg WithdrawProposedGoalParams) (sql.Result, error) {
-	return q.db.ExecContext(ctx, withdrawProposedGoal, arg.ResultSummary, arg.UpdatedAt, arg.ID)
 }

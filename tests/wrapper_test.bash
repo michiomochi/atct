@@ -775,14 +775,14 @@ test_delegation_names_the_atct_tools_an_executor_may_call() {
     fail 'delegate task section has no allowlist line after `An executor may call only these atct tools:`'
 
   for tool in atct_session_identify atct_task_handoff_receive atct_role \
-    atct_task_handoff_review_request; do
+    atct_task_handoff_review_request atct_task_handoff_review_reject_receive; do
     grep -Fq -- "\`$tool\`" <<<"$allowlist" ||
       fail "the allowlist line does not allow <$tool>"
   done
 
   for tool in atct_goal_handoff_complete atct_goal_handoff_receive \
     atct_goal_handoff_request atct_goal_claim atct_goal_release \
-    atct_goal_complete atct_goal_update_content atct_project_claim \
+    atct_goal_complete atct_project_claim \
     atct_project_release atct_task_handoff_request \
     atct_task_handoff_review_receive atct_task_handoff_complete \
     atct_task_handoff_review_reject atct_task_update \
@@ -805,7 +805,7 @@ test_delegation_names_the_atct_tools_an_executor_must_not_call() {
 
   for tool in atct_goal_handoff_complete atct_goal_handoff_receive \
     atct_goal_handoff_request atct_goal_claim atct_goal_release \
-    atct_goal_complete atct_goal_update_content atct_project_claim \
+    atct_goal_complete atct_project_claim \
     atct_project_release atct_task_handoff_request \
     atct_task_handoff_review_receive atct_task_handoff_complete \
     atct_task_handoff_review_reject atct_task_update \
@@ -819,6 +819,55 @@ test_delegation_names_the_atct_tools_an_executor_must_not_call() {
     ! grep -Fq -- "\`$tool\`" <<<"$forbidden" ||
       fail "the forbidden block must not forbid the allowed <$tool>"
   done
+}
+
+test_delegation_template_sets_up_the_watch_between_receive_and_role() {
+  local section receive_line watch_line role_line
+
+  section="$(delegate_task_section)"
+  receive_line="$(grep -nF -- 'First record receipt of the handoff by calling `atct_task_handoff_receive`' \
+    <<<"$section" | head -1 | cut -d: -f1 || true)"
+  watch_line="$(grep -nF -- '## Watch' \
+    <<<"$section" | head -1 | cut -d: -f1 || true)"
+  role_line="$(grep -nF -- 'Then invoke the `atct_role` MCP tool' \
+    <<<"$section" | head -1 | cut -d: -f1 || true)"
+
+  [[ -n "$receive_line" && -n "$watch_line" && -n "$role_line" ]] ||
+    fail "template must name receive, watch, and role check: receive=$receive_line watch=$watch_line role=$role_line"
+  (( receive_line < watch_line && watch_line < role_line )) ||
+    fail "template watch step must sit between receive and role check: receive=$receive_line watch=$watch_line role=$role_line"
+}
+
+test_delegation_template_references_the_watch_section_without_spelling_it_out() {
+  local section
+
+  delegate_task_section_contains '## Watch'
+  section="$(delegate_task_section)"
+  ! grep -qF -- 'atct watch --monitor --token' <<<"$section" ||
+    fail 'delegate section must not spell out the watch command'
+  ! grep -qF -- 'persistent' <<<"$section" ||
+    fail 'delegate section must not mention persistent'
+}
+
+test_delegation_template_and_executor_skill_state_the_blocked_output() {
+  delegate_task_section_contains 'blocked: no live Monitor'
+  assert_file_contains 'blocked: no live Monitor' "$REPO_ROOT/skills/executor/SKILL.md"
+}
+
+test_executor_skill_sets_up_the_watch_between_receive_and_role() {
+  local skill receive_line watch_line role_line
+
+  skill="$REPO_ROOT/skills/executor/SKILL.md"
+  receive_line="$(grep -nF 'atct_task_handoff_receive`' "$skill" | head -1 | cut -d: -f1 || true)"
+  watch_line="$(grep -nF '## Watch' "$skill" | head -1 | cut -d: -f1 || true)"
+  role_line="$(grep -nF 'atct_role` with `expected_role' "$skill" | head -1 | cut -d: -f1 || true)"
+
+  [[ -n "$receive_line" && -n "$watch_line" && -n "$role_line" ]] ||
+    fail "executor entry must name receive, watch, and role check: receive=$receive_line watch=$watch_line role=$role_line"
+  (( receive_line < watch_line && watch_line < role_line )) ||
+    fail "executor watch step must sit between receive and role check: receive=$receive_line watch=$watch_line role=$role_line"
+  assert_file_not_contains 'persistent' "$skill"
+  assert_file_contains '`atct_task_handoff_review_reject_receive`' "$skill"
 }
 
 test_delegation_requests_review_before_reviewer_closes_the_task() {
@@ -1060,7 +1109,7 @@ test_start_identifies_before_monitor() {
   local monitor_line
 
   identify_line="$(grep -n '^## First step: identify' "$start_skill" | head -1 | cut -d: -f1)"
-  monitor_line="$(grep -n '^## .*Claude Code.*Monitor' "$start_skill" | head -1 | cut -d: -f1)"
+  monitor_line="$(grep -n '^## .*Claude Code.*Watch' "$start_skill" | head -1 | cut -d: -f1)"
   [[ -n "$identify_line" && -n "$monitor_line" ]] ||
     fail 'start order requires identify and monitor headings'
   (( identify_line < monitor_line )) ||
@@ -1173,6 +1222,18 @@ test_start_keeps_monitor_persistence_requirement() {
   local start_skill="$REPO_ROOT/skills/start/SKILL.md"
 
   assert_file_contains 'Always set `persistent: true`' "$start_skill"
+  assert_file_contains 'ATCT answer watch' "$start_skill"
+  assert_file_contains '`## Watch`' "$start_skill"
+}
+
+test_atct_skill_defines_the_background_watch() {
+  local atct_skill="$REPO_ROOT/skills/atct/SKILL.md"
+
+  assert_file_contains '## Watch' "$atct_skill"
+  assert_file_contains '--once' "$atct_skill"
+  assert_file_contains 'run_in_background' "$atct_skill"
+  assert_file_contains 'Monitor' "$atct_skill"
+  assert_file_contains 'events delivered' "$atct_skill"
 }
 
 test_start_documents_liveness_authority_boundary() {
@@ -1618,7 +1679,7 @@ test_role_response_does_not_leak_other_boundaries() {
   local selected_role
   local response_block
 
-  role_response="$(sed -n '/^func roleResponseFor(assignment roleAssignment) any {$/,/^}$/p' "$handler_go")"
+  role_response="$(sed -n '/^func roleResponseFor(assignment roleAssignment, uiLocale string) any {$/,/^}$/p' "$handler_go")"
   [[ -n "$role_response" ]] || fail 'role response function could not be extracted'
 
   selected_role="$(sed -nE 's/^[[:space:]]*boundary := roleBoundaries\[([^]]+)\][[:space:]]*$/\1/p' <<<"$role_response")"
@@ -1627,11 +1688,9 @@ test_role_response_does_not_leak_other_boundaries() {
   for response_type in commanderRole subcommanderRole executorRole; do
     response_block="$(sed -n "/return ${response_type}{/,/^[[:space:]]*}[[:space:]]*$/p" <<<"$role_response")"
     [[ -n "$response_block" ]] || fail "$response_type response block could not be extracted"
-    grep -Fq -- 'Does:    boundary.Does' <<<"$response_block" ||
-      grep -Fq -- 'Does:      boundary.Does' <<<"$response_block" ||
+    grep -Eq -- 'Does:[[:space:]]+boundary\.Does' <<<"$response_block" ||
       fail "$response_type response must use the selected boundary's Does"
-    grep -Fq -- 'DoesNot: boundary.DoesNot' <<<"$response_block" ||
-      grep -Fq -- 'DoesNot:   boundary.DoesNot' <<<"$response_block" ||
+    grep -Eq -- 'DoesNot:[[:space:]]+boundary\.DoesNot' <<<"$response_block" ||
       fail "$response_type response must use the selected boundary's DoesNot"
   done
 }
@@ -1780,6 +1839,7 @@ test_start_monitor_is_not_first_step
 test_start_does_not_branch_on_session_attachment
 test_start_does_not_duplicate_delegated_worker_preamble
 test_start_keeps_monitor_persistence_requirement
+test_atct_skill_defines_the_background_watch
 test_start_documents_liveness_authority_boundary
 test_start_uses_monitor_watch_for_claude_actions
 test_readme_documents_liveness_contract
@@ -1840,6 +1900,10 @@ test_handoff_completion_keeps_one_normal_path
 test_delegation_names_the_atct_tools_an_executor_may_call
 test_delegation_names_the_atct_tools_an_executor_must_not_call
 test_delegation_requests_review_before_reviewer_closes_the_task
+test_delegation_template_sets_up_the_watch_between_receive_and_role
+test_delegation_template_references_the_watch_section_without_spelling_it_out
+test_delegation_template_and_executor_skill_state_the_blocked_output
+test_executor_skill_sets_up_the_watch_between_receive_and_role
 test_recovery_section_explains_why_the_role_drops
 test_orchestration_skill_has_no_blanket_atct_ban
 test_goal_handoff_completion_keeps_one_normal_path

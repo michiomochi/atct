@@ -356,7 +356,7 @@ func containsDecision(decisions []domain.Decision, id int64) bool {
 func TestFullFlowThroughDaemonAndHTTP(t *testing.T) {
 	stack := newE2EStack(t)
 	project := createProject(t, stack)
-	// human として作る。agent の提案と承認の経路は goal_approval_test.go が覆う
+	// human として作る。agent が作った goal も作成時点で active
 	goal := createGoal(t, stack)
 	if goal.ProjectID != project.ID {
 		t.Fatalf("goal project_id = %d, want %d", goal.ProjectID, project.ID)
@@ -518,7 +518,7 @@ func TestFullFlowThroughDaemonAndHTTP(t *testing.T) {
 func TestOpenDecisionBlocksTaskDoneThroughDaemon(t *testing.T) {
 	stack := newE2EStack(t)
 	createProject(t, stack)
-	// human として作る。agent の提案と承認の経路は goal_approval_test.go が覆う
+	// human として作る。agent が作った goal も作成時点で active
 	goal := createGoal(t, stack)
 	tasks := declareTasks(t, stack, goal.ID, []string{"Blocked task"})
 	askParked(t, stack, goal.ID, tasks[0].ID, "blocked-run")
@@ -548,7 +548,7 @@ func TestOpenDecisionBlocksTaskDoneThroughDaemon(t *testing.T) {
 func TestAnsweredDecisionAppearsUnappliedInInbox(t *testing.T) {
 	stack := newE2EStack(t)
 	createProject(t, stack)
-	// human として作る。agent の提案と承認の経路は goal_approval_test.go が覆う
+	// human として作る。agent が作った goal も作成時点で active
 	goal := createGoal(t, stack)
 	tasks := declareTasks(t, stack, goal.ID, []string{"Awaiting answer"})
 	decision := askParked(t, stack, goal.ID, tasks[0].ID, "unapplied-run")

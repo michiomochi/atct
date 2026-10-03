@@ -1,7 +1,7 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Decision, DecisionHistoryEntry, Task, TaskCommitDiff, TaskDetailResponse } from "../lib/api";
-import { fetchTask, fetchTaskCommitDiff, snoozeTask, subscribeToDecisionEvents } from "../lib/api";
+import { fetchTask, fetchTaskCommitDiff, fetchTaskReviewExchanges, snoozeTask, subscribeToDecisionEvents } from "../lib/api";
 import { TaskDetailPage } from "./TaskDetailPage";
 
 const i18nMock = vi.hoisted(() => ({
@@ -18,6 +18,7 @@ const apiMock = vi.hoisted(() => ({
   answerDecision: vi.fn(),
   fetchTask: vi.fn(),
   fetchTaskCommitDiff: vi.fn(),
+  fetchTaskReviewExchanges: vi.fn(() => Promise.resolve({ exchanges: [], gaps: [] })),
   reviseDecision: vi.fn(),
   snoozeTask: vi.fn(),
   subscribeToDecisionEvents: vi.fn(() => () => undefined),
@@ -58,6 +59,26 @@ async function renderTaskDetailWithCommits(commits: unknown[]) {
   render(<TaskDetailPage id="task-1" />);
   await screen.findByRole("heading", { name: "Commit task" });
 }
+
+describe("TaskDetailPage review exchanges", () => {
+  it("shows the task's rejection and response without a task badge", async () => {
+    vi.mocked(fetchTaskReviewExchanges).mockResolvedValue({
+      exchanges: [{
+        scope: "task", task_id: 7, handoff_id: "h1",
+        rejection: { source: "handoff", at: "2026-10-01T00:00:01Z", actor_session_id: 3, reason: "needs a test" },
+        response: { at: "2026-10-01T00:00:02Z", author_session_id: 4, handoff_id: "h2", report: "test added" },
+      }],
+      gaps: [],
+    });
+    await renderTaskDetailWithCommits([]);
+
+    const section = await screen.findByTestId("review-exchanges");
+    await within(section).findByText("needs a test");
+    expect(fetchTaskReviewExchanges).toHaveBeenCalledWith("task-1");
+    expect(within(section).getByText("test added")).not.toBeNull();
+    expect(within(section).queryByText(/reviewExchange\.scope\.task/)).toBeNull();
+  });
+});
 
 describe("TaskDetailPage commits", () => {
   it("does not render the commits section when commits are empty", async () => {

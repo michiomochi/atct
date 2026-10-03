@@ -37,6 +37,36 @@ match, load exactly the matching role skill (`atct:commander`,
 `atct:subcommander`, or `atct:executor`); role skills own their operations and
 must not replace these rules or load another role's skill.
 
+## Spec and plan live in the goal
+
+In ATCT-managed work, write the spec and plan in full into the goal's
+`spec` / `plan` fields with `atct_goal_update_request_report`. Do not add files
+under `doc/specs/`, `doc/plans/` or `docs/superpowers/`. Do not put only a reference
+such as "see doc/plans/x.md" in a field; a reference-only field is refused.
+
+When this conflicts with superpowers' default save location (brainstorming,
+writing-plans) or a personal setting that points at `doc/specs` or `doc/plans`,
+the goal's fields win under ATCT. Existing files in those directories are not
+removed or migrated.
+
+## Language of ATCT records
+
+Write ATCT records in the language of the `ui_locale` (`en` or `ja`) that
+`atct_role` returns. After the context is reset (compaction or clear), read it
+again with `atct_role`.
+
+**Write in the configured language:** a goal's `content`, `spec`, `plan`,
+`result_summary`, `work_done`, `now_possible`, `next_steps`, `surprises`,
+`needs_review` and `how_to_verify`; a task's title and description; a decision's
+question and options (`label`, `description`, `consequence`); the text of every
+handoff request, report, review, complete, reject and recovery.
+
+**Keep in English:** tool names, parameters, identifiers and keys (`handoff_id`,
+`declare_key`, `idempotency_key`), enum values, code, commands, file paths, branch
+names, commit messages, and quoted errors or logs.
+
+The daemon does not check the language; this is a convention to follow.
+
 ## Declare before you work
 
 An active goal authorizes coordination; do not wait for another plan approval.
@@ -47,6 +77,9 @@ The accepted-plan order is mandatory:
 3. The subcommander receives it and calls `atct_task_create` with its same
    `handoff_id` and a stable `idempotency_key`; then work only on those tasks.
 
+After a goal handoff review is rejected, the daemon issues a new task-create
+handoff; receive it the same way if the fix needs new tasks.
+
 **Out of order:** Tasks created before an accepted plan are never reviewed, and
 work done before it is declared never reaches the dashboard.
 
@@ -55,6 +88,45 @@ work done before it is declared never reaches the dashboard.
 Fix a declared `todo` or `doing` task with `atct_task_update_content`; `done`
 and `dropped` tasks are rejected. Re-declaring with the same `idempotency_key`
 does not update the task.
+
+## Watch
+
+Claude Code only. A watch delivers the answers and wakeups addressed to this
+session. Codex needs nothing here: the `atct codex monitor` supervisor owns it.
+
+The default is the Monitor tool: an agent with many notifications gets each one
+in a single turn, where a background Bash costs about three (woken, read the
+output, re-arm, then act). A background Bash with `--once` is only for an agent
+that has turned out to be waiting: it ends after the first event, so an idle
+agent is not woken by expiry notices. A delivery record per token keeps a
+re-armed watch from emitting the same notification twice, for both forms.
+
+1. **Start with the Monitor tool.** Run `atct watch --monitor --token
+   <monitor_token>` with `persistent: true` and `description` set to `ATCT
+   answer watch`, using the `monitor_token` SessionStart printed (the one passed
+   to `atct_session_identify`). Without `persistent: true`, `timeout_ms`
+   defaults to `300000ms` (5 minutes) and monitoring stops silently. The server
+   derives the scope from the assignment, so pass no goal, project, or role.
+   Remember the task id the call returns: `TaskStop` needs it.
+2. **When the Monitor expires,** the notice reads `[Monitor expired after 30m
+   with N events delivered. ...]`. Make no other response; arm the next watch
+   first. If N is 0, that 30 minutes was only waiting: switch to the Bash tool
+   with `run_in_background: true` and `atct watch --monitor --token
+   <monitor_token> --once`. If N is 1 or more, attach the Monitor again.
+3. **When a `--once` Bash ends,** whether it printed an event, ended with no
+   event, or failed, attach the Monitor first, then act on the event (its
+   stdout). Do not re-arm the `--once` Bash.
+4. **Keep one.** Hold exactly one watch per token; the one started later stops
+   the earlier one.
+5. **Stop** a watch with `TaskStop` and the task id of the Monitor or the
+   background Bash (see `atct:stop`). If the task id is unknown, say so and do
+   not call `TaskStop`; never guess one.
+
+**Out of order:** Acting on the event before attaching the Monitor leaves the
+session with no watch. The daemon holds the session live for 5 minutes after a
+`--once` watch ends on its own, but that grace is insurance, not permission to
+skip the Monitor: past it, ATCT calls are refused and `wakeup.monitor_lost` is
+raised.
 
 ## Receive before you start
 
@@ -116,7 +188,7 @@ reaches the human without passing through the delegator's context.
 |---|---|
 | receipt of the goal | the `atct_goal_handoff_receive` record itself |
 | progress on the work | tasks: `atct_task_create`, then `done` as each one lands |
-| the design and why | a spec committed with the goal's work, and `work_done` |
+| the design and why | the goal's `spec` and `plan` fields, in full, and `work_done` |
 | something found inside this goal | `surprises` and `needs_review` |
 | something found that is another goal | `atct_decision_ask`, addressed to the human |
 | what was left undone | `next_goal_ids`, the ids of the goals to proceed with next |
@@ -128,8 +200,7 @@ commander review. Work that is unfinished or blocked stays open and goes to
 `atct_decision_ask` with concrete options and the consequence of each; it is
 never reported through a goal-handoff review request.
 `atct_goal_review_request` applies only to an active goal after the commander
-has received the goal-handoff review; a proposed goal must be activated by
-initial approval before it can be filed.
+has received the goal-handoff review.
 
 A subcommander that stops working sends nothing at all, and the old habit caught
 that only because a delegator noticed a quiet pane. The record catches it

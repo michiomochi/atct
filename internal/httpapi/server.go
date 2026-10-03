@@ -9,6 +9,8 @@ import (
 	"io"
 	"net/http"
 	"os/exec"
+	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -59,14 +61,6 @@ type goalTaskCommitsView struct {
 	Commits   []taskCommitView `json:"commits"`
 }
 
-type proposedGoalView struct {
-	ID          int64     `json:"id"`
-	ProjectID   int64     `json:"project_id"`
-	Content     string    `json:"content"`
-	CreatedAt   time.Time `json:"created_at"`
-	ProjectName string    `json:"project_name"`
-}
-
 type decisionView struct {
 	domain.Decision
 	ProjectID        int64  `json:"project_id"`
@@ -75,14 +69,16 @@ type decisionView struct {
 	DefaultOption    string `json:"default_option"`
 	DefaultAfterMs   *int64 `json:"default_after_ms,omitempty"`
 	SettledByDefault bool   `json:"settled_by_default"`
+	// Set on open_decisions only; see domain.DecisionPriority.
+	Priority       int    `json:"priority,omitempty"`
+	PriorityReason string `json:"priority_reason,omitempty"`
 }
 
 type inboxResponse struct {
-	OpenDecisions      []decisionView     `json:"open_decisions"`
-	UnappliedDecisions []decisionView     `json:"unapplied_decisions"`
-	ActiveGoals        []goalView         `json:"active_goals"`
-	ProposedGoals      []proposedGoalView `json:"proposed_goals"`
-	AttentionTasks     []TaskView         `json:"attention_tasks"`
+	OpenDecisions      []decisionView `json:"open_decisions"`
+	UnappliedDecisions []decisionView `json:"unapplied_decisions"`
+	ActiveGoals        []goalView     `json:"active_goals"`
+	AttentionTasks     []TaskView     `json:"attention_tasks"`
 }
 
 type workflowReconciliationResponse struct {
@@ -175,10 +171,6 @@ type snoozeRequest struct {
 	SnoozedUntil *string `json:"snoozed_until"`
 }
 
-type updateGoalContentRequest struct {
-	Content string `json:"content"`
-}
-
 type setGoalDerivedFromRequest struct {
 	DerivedFromGoalID inputID `json:"derived_from_goal_id"`
 }
@@ -187,6 +179,10 @@ type createGoalRequest struct {
 	ProjectID inputID `json:"project_id"`
 	Content   string  `json:"content"`
 	Creator   string  `json:"creator"`
+}
+
+type uiSettingsResponse struct {
+	Locale string `json:"locale"`
 }
 
 // inputID accepts canonical numeric IDs and preserves string input so removed
@@ -209,6 +205,22 @@ func (id *inputID) UnmarshalJSON(data []byte) error {
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/"), "/")
+	if len(parts) == 2 && parts[0] == "api" && parts[1] == "ui-settings" {
+		if r.Method != http.MethodGet {
+			writeError(w, http.StatusBadRequest, "method is not allowed for this endpoint")
+			return
+		}
+		s.handleUISettings(w, r)
+		return
+	}
+	if len(parts) == 3 && parts[0] == "api" && parts[1] == "ui-settings" && parts[2] == "locale" {
+		if r.Method != http.MethodPut {
+			writeError(w, http.StatusBadRequest, "method is not allowed for this endpoint")
+			return
+		}
+		s.handleUILocale(w, r)
+		return
+	}
 	if len(parts) == 2 && parts[0] == "api" && parts[1] == "inbox" {
 		if r.Method != http.MethodGet {
 			writeError(w, http.StatusBadRequest, "method is not allowed for this endpoint")
@@ -334,18 +346,6 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.handleWithdraw(w, r, parts[2])
 		return
 	}
-	if len(parts) == 4 && parts[0] == "api" && parts[1] == "goals" && parts[3] == "content" {
-		if parts[2] == "" {
-			writeError(w, http.StatusBadRequest, "goal id is missing")
-			return
-		}
-		if r.Method != http.MethodPost {
-			writeError(w, http.StatusBadRequest, "method is not allowed for this endpoint")
-			return
-		}
-		s.handleUpdateGoalContent(w, r, parts[2])
-		return
-	}
 	if len(parts) == 4 && parts[0] == "api" && parts[1] == "goals" && parts[3] == "derived-from" {
 		if parts[2] == "" {
 			writeError(w, http.StatusBadRequest, "goal id is missing")
@@ -368,6 +368,22 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.handleGoalDiff(w, r, parts[2])
+		return
+	}
+	if len(parts) == 4 && parts[0] == "api" && (parts[1] == "goals" || parts[1] == "tasks") && parts[3] == "review-exchanges" {
+		if parts[2] == "" {
+			writeError(w, http.StatusBadRequest, parts[1][:len(parts[1])-1]+" id is missing")
+			return
+		}
+		if r.Method != http.MethodGet {
+			writeError(w, http.StatusBadRequest, "method is not allowed for this endpoint")
+			return
+		}
+		if parts[1] == "goals" {
+			s.handleReviewExchanges(w, r, parts[2], "")
+		} else {
+			s.handleReviewExchanges(w, r, "", parts[2])
+		}
 		return
 	}
 	if len(parts) == 3 && parts[0] == "api" && parts[1] == "tasks" {
@@ -479,12 +495,42 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func malformedAPIPath(path string) bool {
-	for _, prefix := range []string{"/api/inbox", "/api/monitor-health", "/api/events", "/api/ws", "/api/watch", "/api/projects", "/api/goals", "/api/tasks", "/api/decisions"} {
+	for _, prefix := range []string{"/api/inbox", "/api/ui-settings", "/api/monitor-health", "/api/events", "/api/ws", "/api/watch", "/api/projects", "/api/goals", "/api/tasks", "/api/decisions"} {
 		if path == prefix || strings.HasPrefix(path, prefix+"/") {
 			return true
 		}
 	}
 	return false
+}
+
+func (s *Server) handleUISettings(w http.ResponseWriter, r *http.Request) {
+	locale, err := s.store.GetUILocale(r.Context())
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, uiSettingsResponse{Locale: locale})
+}
+
+func (s *Server) handleUILocale(w http.ResponseWriter, r *http.Request) {
+	var request uiSettingsResponse
+	if err := decodeJSONBody(r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if request.Locale == "" {
+		writeError(w, http.StatusBadRequest, "locale is required")
+		return
+	}
+	if err := s.store.SetUILocale(r.Context(), request.Locale); err != nil {
+		if errors.Is(err, store.ErrUnsupportedUILocale) {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, uiSettingsResponse{Locale: request.Locale})
 }
 
 func (s *Server) handleMonitorHealth(w http.ResponseWriter, r *http.Request) {
@@ -521,7 +567,7 @@ func (s *Server) handleMonitorHealth(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, health)
 		return
 	}
-	if health.State != "healthy" && health.State != "recovering" && health.State != "degraded" {
+	if health.State != "healthy" && health.State != "recovering" && health.State != "degraded" && health.State != "rearming" {
 		writeError(w, http.StatusBadRequest, "monitor state is invalid")
 		return
 	}
@@ -731,11 +777,6 @@ func (s *Server) handleInbox(w http.ResponseWriter, r *http.Request) {
 	}
 	openDecisionViews := make([]decisionView, 0, len(openDecisions))
 	for _, decision := range openDecisions {
-		// A goal waiting for approval is shown in its own section, and approving it
-		// happens on the goal page. Listing it here too puts one act in two places.
-		if decision.Kind == domain.KindGoalApproval {
-			continue
-		}
 		openDecisionViews = append(openDecisionViews, decisionView{
 			Decision:         decision,
 			ProjectID:        goalProjectIDs[decision.GoalID],
@@ -759,19 +800,9 @@ func (s *Server) handleInbox(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	activeGoals := make([]goalView, 0)
-	proposedGoals := make([]proposedGoalView, 0)
 	attentionTasks := make([]TaskView, 0)
+	taskStatus := make(map[int64]domain.TaskStatus)
 	for _, goal := range goals {
-		if goal.Status == domain.GoalProposed {
-			proposedGoals = append(proposedGoals, proposedGoalView{
-				ID:          goal.ID,
-				ProjectID:   goal.ProjectID,
-				Content:     goal.Content,
-				CreatedAt:   goal.CreatedAt,
-				ProjectName: projectNames[goal.ProjectID],
-			})
-			continue
-		}
 		tasks, err := s.store.ListTasks(ctx, goal.ID)
 		if err != nil {
 			writeStoreError(w, err)
@@ -781,6 +812,9 @@ func (s *Server) handleInbox(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			writeStoreError(w, err)
 			return
+		}
+		for _, task := range tasks {
+			taskStatus[task.ID] = task.Status
 		}
 		if goal.Status == domain.GoalActive {
 			goalTasks := append([]domain.Task(nil), tasks...)
@@ -818,11 +852,26 @@ func (s *Server) handleInbox(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	for i := range openDecisionViews {
+		v := &openDecisionViews[i]
+		status, hasTask := taskStatus[v.TaskID]
+		v.Priority, v.PriorityReason = domain.DecisionPriority(v.Kind, status, v.TaskID != 0 && hasTask, v.DefaultAfterMs != nil)
+	}
+	sort.SliceStable(openDecisionViews, func(i, j int) bool {
+		a, b := openDecisionViews[i], openDecisionViews[j]
+		if a.Priority != b.Priority {
+			return a.Priority < b.Priority
+		}
+		if !a.CreatedAt.Equal(b.CreatedAt) {
+			return a.CreatedAt.Before(b.CreatedAt)
+		}
+		return a.ID < b.ID
+	})
+
 	writeJSON(w, http.StatusOK, inboxResponse{
 		OpenDecisions:      openDecisionViews,
 		UnappliedDecisions: unappliedDecisionViews,
 		ActiveGoals:        activeGoals,
-		ProposedGoals:      proposedGoals,
 		AttentionTasks:     nonNilTaskViews(attentionTasks),
 	})
 }
@@ -1022,46 +1071,6 @@ func (s *Server) handleWithdraw(w http.ResponseWriter, r *http.Request, goalID s
 	}
 
 	goal, err := s.store.GetGoal(r.Context(), canonicalGoalID)
-	if err != nil {
-		writeStoreError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, goal)
-}
-
-func (s *Server) handleUpdateGoalContent(w http.ResponseWriter, r *http.Request, goalID string) {
-	var request updateGoalContentRequest
-	if err := decodeJSONBody(r, &request); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON body")
-		return
-	}
-	if strings.TrimSpace(request.Content) == "" {
-		writeError(w, http.StatusBadRequest, "content is required")
-		return
-	}
-
-	canonicalGoalID, ok := s.resolveGoalID(w, r.Context(), goalID)
-	if !ok {
-		return
-	}
-	goal, err := s.store.UpdateGoalContent(r.Context(), canonicalGoalID, request.Content)
-	if errors.Is(err, store.ErrGoalNotProposed) {
-		current, goalErr := s.store.GetGoal(r.Context(), canonicalGoalID)
-		if errors.Is(goalErr, store.ErrGoalNotFound) {
-			writeError(w, http.StatusNotFound, goalErr.Error())
-			return
-		}
-		if goalErr != nil {
-			writeStoreError(w, goalErr)
-			return
-		}
-		writeError(w, http.StatusConflict, fmt.Sprintf("goal %s is %s, not proposed", goalID, current.Status))
-		return
-	}
-	if errors.Is(err, store.ErrGoalNotFound) {
-		writeError(w, http.StatusNotFound, err.Error())
-		return
-	}
 	if err != nil {
 		writeStoreError(w, err)
 		return
@@ -1473,7 +1482,7 @@ func (s *Server) handleAnswer(w http.ResponseWriter, r *http.Request, decisionID
 	if !ok {
 		return
 	}
-	if decision.Kind == domain.DecisionKind("completion") || decision.Kind == domain.KindGoalApproval || decision.Kind == domain.KindGoalReview {
+	if decision.Kind == domain.DecisionKind("completion") || decision.Kind == domain.KindGoalReview {
 		writeError(w, http.StatusBadRequest, "use approve or reject for this decision")
 		return
 	}
@@ -1578,8 +1587,6 @@ func (s *Server) handleApprove(w http.ResponseWriter, r *http.Request, decisionI
 		err  error
 	)
 	switch decision.Kind {
-	case domain.KindGoalApproval:
-		goal, err = s.store.ApproveGoal(r.Context(), decision.ID)
 	case domain.KindGoalReview:
 		goal, err = s.store.ApproveGoalReview(r.Context(), decision.ID)
 	default:
@@ -1613,8 +1620,6 @@ func (s *Server) handleReject(w http.ResponseWriter, r *http.Request, decisionID
 	}
 	var err error
 	switch decision.Kind {
-	case domain.KindGoalApproval:
-		err = s.store.RejectGoal(r.Context(), canonicalDecisionID, request.Reason)
 	case domain.KindGoalReview:
 		err = s.store.RejectGoalReview(r.Context(), canonicalDecisionID, request.Reason)
 	default:
@@ -1664,7 +1669,7 @@ func (s *Server) getOpenDecision(w http.ResponseWriter, ctx context.Context, dec
 		writeStoreError(w, err)
 		return domain.Decision{}, false
 	}
-	if decision.Status != domain.DecisionOpen || (decision.Kind != domain.KindGoalApproval && decision.Kind != domain.KindGoalReview) {
+	if decision.Status != domain.DecisionOpen || decision.Kind != domain.KindGoalReview {
 		writeError(w, http.StatusConflict, store.ErrDecisionNotOpen.Error())
 		return domain.Decision{}, false
 	}
@@ -1678,6 +1683,8 @@ type eventFilter struct {
 	canonicalGoalID    int64
 	canonicalTaskID    int64
 	taskID             string
+	// agentSessionID is the session behind the monitor_token; 0 when absent.
+	agentSessionID int64
 }
 
 func (s *Server) parseEventFilter(w http.ResponseWriter, r *http.Request) (eventFilter, bool) {
@@ -1707,6 +1714,14 @@ func (s *Server) parseEventFilter(w http.ResponseWriter, r *http.Request) (event
 			return eventFilter{}, false
 		}
 	}
+	if token := r.URL.Query().Get("monitor_token"); token != "" {
+		id, err := s.store.MonitorBindingAgentSessionID(r.Context(), token)
+		if err != nil && !errors.Is(err, store.ErrMonitorBindingNotFound) {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return eventFilter{}, false
+		}
+		filter.agentSessionID = id
+	}
 	return filter, true
 }
 
@@ -1717,6 +1732,14 @@ func (s *Server) eventPasses(ctx context.Context, filter eventFilter, event stor
 			return false
 		}
 		event.Data = data
+		if filter.agentSessionID != 0 {
+			if data.AuthorSessionID == filter.agentSessionID {
+				return false
+			}
+			if len(data.parties) > 0 && !slices.Contains(data.parties, filter.agentSessionID) {
+				return false
+			}
+		}
 	}
 	if filter.projectID != "" {
 		eventProjectID := event.ProjectID

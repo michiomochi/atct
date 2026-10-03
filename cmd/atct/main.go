@@ -70,6 +70,7 @@ type cliConfig struct {
 	watchProjectScope       bool
 	watchMonitor            bool
 	watchMonitorToken       string
+	watchOnce               bool
 	codexShimAction         string
 	codexShimProfile        string
 	codexMonitorAction      string
@@ -162,7 +163,7 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "  goal list            List goals for the current project")
 	fmt.Fprintln(os.Stderr, "  context [-brief]      Print the current goal context for an AI session")
 	fmt.Fprintln(os.Stderr, "  pending              Print unanswered human decisions for the current project")
-	fmt.Fprintln(os.Stderr, "  watch [--monitor --token string | -goal string | -project]  Stream monitor actions or diagnostic events")
+	fmt.Fprintln(os.Stderr, "  watch [--monitor --token string [--once] | -goal string | -project]  Stream monitor actions or diagnostic events")
 	fmt.Fprintln(os.Stderr, "  role                 Report the claim-derived role for an agent session")
 	fmt.Fprintln(os.Stderr, "  handoff append <handoff-id> <task-id> <kind> <body>  Append a task handoff entry")
 	fmt.Fprintln(os.Stderr, "  handoff history <handoff-id> <task-id>  Read task handoff history")
@@ -381,6 +382,7 @@ func parseArgs(args []string) (cliConfig, error) {
 		flags.BoolVar(&cfg.watchProjectScope, "project", false, "filter watch events to what a commander acts on")
 		flags.BoolVar(&cfg.watchMonitor, "monitor", false, "emit only assignment-bound actions for a Claude Monitor")
 		flags.StringVar(&cfg.watchMonitorToken, "token", "", "bind the monitor to its SessionStart token")
+		flags.BoolVar(&cfg.watchOnce, "once", false, "exit after delivering the first actionable batch; requires --monitor")
 	}
 	var description *string
 	if sub == "goal" && cfg.goalAction == "add" {
@@ -425,6 +427,10 @@ func parseArgs(args []string) (cliConfig, error) {
 	}
 	if sub == "watch" && cfg.watchMonitor && strings.TrimSpace(cfg.watchMonitorToken) == "" {
 		fmt.Fprintln(os.Stderr, "watch: --monitor requires --token")
+		return cliConfig{}, errInvalidArgs
+	}
+	if sub == "watch" && cfg.watchOnce && !cfg.watchMonitor {
+		fmt.Fprintln(os.Stderr, "watch: --once requires --monitor")
 		return cliConfig{}, errInvalidArgs
 	}
 	if sub == "role" && cfg.roleExpectedSet {
@@ -899,7 +905,7 @@ func main() {
 		}
 		return
 	case "watch":
-		if err := runWatchWithOptionsAndToken(dir, config.watchGoalID, config.watchProjectScope, config.watchMonitor, config.watchMonitorToken); err != nil {
+		if err := runWatchWithOptionsAndToken(dir, config.watchGoalID, config.watchProjectScope, config.watchMonitor, config.watchMonitorToken, config.watchOnce); err != nil {
 			log.Fatalf("watch: %v", err)
 		}
 		return
@@ -1258,6 +1264,7 @@ func addGoal(ctx context.Context, client *mcpshim.Client, headline, body string)
 	if err := client.Call(ctx, "goal.create", map[string]string{
 		"cwd":     rootPath,
 		"content": content,
+		"creator": "agent",
 	}, &goal); err != nil {
 		return err
 	}

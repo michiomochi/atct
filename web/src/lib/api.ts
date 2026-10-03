@@ -3,6 +3,7 @@ import {
   KEEPALIVE_EVENT_NAME,
   type DecisionEventName,
 } from "./ui";
+import type { Locale } from "../i18n";
 
 export interface Option {
   label: string;
@@ -86,6 +87,8 @@ export interface Decision {
   default_option?: string;
   default_after_ms?: number;
   settled_by_default?: boolean;
+  priority?: number;
+  priority_reason?: string;
   answer_label?: string;
   answer_text?: string;
   answered_at?: string;
@@ -152,20 +155,50 @@ export interface Handoff {
   next_after_id: number;
 }
 
-export interface ProposedGoal {
-  id: string;
-  project_id: string;
-  content: string;
-  created_at: string;
-  project_name: string;
+export type ReviewScope = "goal" | "plan" | "task";
+export type ReviewRejectionSource = "handoff" | "human" | "withdrawn";
+
+export interface ReviewRejection {
+  source: ReviewRejectionSource;
+  at: string;
+  actor_session_id?: number;
+  decision_id?: number;
+  reason: string;
 }
+
+export interface ReviewResponse {
+  at: string;
+  author_session_id: number;
+  handoff_id: string;
+  report: string;
+}
+
+export interface ReviewExchange {
+  scope: ReviewScope;
+  task_id?: number;
+  handoff_id?: string;
+  rejection: ReviewRejection;
+  response: ReviewResponse | null;
+}
+
+export interface ReviewExchangeGap {
+  scope: ReviewScope;
+  handoff_id: string;
+  task_id?: number;
+  before_at: string;
+}
+
+export interface ReviewExchangeHistory {
+  exchanges: ReviewExchange[];
+  gaps: ReviewExchangeGap[];
+}
+
 
 export interface InboxResponse {
   open_decisions: Decision[];
   unapplied_decisions: Decision[];
   active_goals: Goal[];
   attention_tasks: TaskView[];
-  proposed_goals: ProposedGoal[];
 }
 
 export interface GoalResponse {
@@ -338,6 +371,75 @@ function normalizeHandoffs(value: unknown): Handoff[] {
   return arrayOrEmpty<unknown>(value).map(normalizeHandoff);
 }
 
+const REVIEW_SCOPES: readonly string[] = ["goal", "plan", "task"];
+const REVIEW_SOURCES: readonly string[] = ["handoff", "human", "withdrawn"];
+
+function positiveIntOrUndefined(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : undefined;
+}
+
+function normalizeReviewExchange(value: unknown): ReviewExchange | null {
+  const source = isRecord(value) ? value : {};
+  const rejection = isRecord(source.rejection) ? source.rejection : {};
+  if (
+    typeof source.scope !== "string" || !REVIEW_SCOPES.includes(source.scope) ||
+    typeof rejection.source !== "string" || !REVIEW_SOURCES.includes(rejection.source) ||
+    typeof rejection.at !== "string"
+  ) {
+    return null;
+  }
+  const response = isRecord(source.response) ? source.response : null;
+  const taskID = positiveIntOrUndefined(source.task_id);
+  const actorID = positiveIntOrUndefined(rejection.actor_session_id);
+  const decisionID = positiveIntOrUndefined(rejection.decision_id);
+  return {
+    scope: source.scope as ReviewScope,
+    ...(taskID !== undefined ? { task_id: taskID } : {}),
+    ...(typeof source.handoff_id === "string" && source.handoff_id !== "" ? { handoff_id: source.handoff_id } : {}),
+    rejection: {
+      source: rejection.source as ReviewRejectionSource,
+      at: rejection.at,
+      ...(actorID !== undefined ? { actor_session_id: actorID } : {}),
+      ...(decisionID !== undefined ? { decision_id: decisionID } : {}),
+      reason: typeof rejection.reason === "string" ? rejection.reason : "",
+    },
+    response: response !== null && typeof response.at === "string"
+      ? {
+          at: response.at,
+          author_session_id: positiveIntOrUndefined(response.author_session_id) ?? 0,
+          handoff_id: typeof response.handoff_id === "string" ? response.handoff_id : "",
+          report: typeof response.report === "string" ? response.report : "",
+        }
+      : null,
+  };
+}
+
+function normalizeReviewExchangeGap(value: unknown): ReviewExchangeGap | null {
+  const source = isRecord(value) ? value : {};
+  if (
+    typeof source.scope !== "string" || !REVIEW_SCOPES.includes(source.scope) ||
+    typeof source.handoff_id !== "string" || source.handoff_id === "" ||
+    typeof source.before_at !== "string"
+  ) {
+    return null;
+  }
+  const taskID = positiveIntOrUndefined(source.task_id);
+  return {
+    scope: source.scope as ReviewScope,
+    handoff_id: source.handoff_id,
+    ...(taskID !== undefined ? { task_id: taskID } : {}),
+    before_at: source.before_at,
+  };
+}
+
+export function normalizeReviewExchanges(value: unknown): ReviewExchangeHistory {
+  const source = isRecord(value) ? value : {};
+  return {
+    exchanges: arrayOrEmpty<unknown>(source.exchanges).map(normalizeReviewExchange).filter((item): item is ReviewExchange => item !== null),
+    gaps: arrayOrEmpty<unknown>(source.gaps).map(normalizeReviewExchangeGap).filter((item): item is ReviewExchangeGap => item !== null),
+  };
+}
+
 async function readResponseBody(response: Response): Promise<unknown> {
   const text = await response.text();
   if (!text) return {};
@@ -366,7 +468,6 @@ export function normalizeInbox(value: unknown): InboxResponse {
     unapplied_decisions: arrayOrEmpty<Decision>(source.unapplied_decisions),
     active_goals: arrayOrEmpty<Goal>(source.active_goals),
     attention_tasks: arrayOrEmpty<TaskView>(source.attention_tasks),
-    proposed_goals: arrayOrEmpty<ProposedGoal>(source.proposed_goals),
   };
 }
 
@@ -422,6 +523,14 @@ export async function createGoal(payload: CreateGoalPayload): Promise<Goal> {
   });
 }
 
+export function updateUILocale(locale: Locale): Promise<{ locale: Locale }> {
+  return requestJson<{ locale: Locale }>("/api/ui-settings/locale", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ locale }),
+  });
+}
+
 export async function fetchGoal(id: string): Promise<GoalResponse> {
   return normalizeGoal(await requestJson<unknown>(`/api/goals/${encodeURIComponent(id)}`));
 }
@@ -442,6 +551,14 @@ export async function fetchTaskHandoffHistory(taskID: string, handoffID: string,
   return normalizeHandoff(await requestJson<unknown>(
     `/api/tasks/${encodeURIComponent(taskID)}/handoffs/${encodeURIComponent(handoffID)}?${query.toString()}`,
   ));
+}
+
+export async function fetchGoalReviewExchanges(goalID: string): Promise<ReviewExchangeHistory> {
+  return normalizeReviewExchanges(await requestJson<unknown>(`/api/goals/${encodeURIComponent(goalID)}/review-exchanges`));
+}
+
+export async function fetchTaskReviewExchanges(taskID: string): Promise<ReviewExchangeHistory> {
+  return normalizeReviewExchanges(await requestJson<unknown>(`/api/tasks/${encodeURIComponent(taskID)}/review-exchanges`));
 }
 
 export async function fetchTaskCommitDiff(taskID: string, sha: string): Promise<TaskCommitDiff> {
@@ -497,14 +614,6 @@ export async function withdrawGoal(id: string, reason: string): Promise<Goal> {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ reason }),
-  });
-}
-
-export async function updateGoalContent(id: string, content: string): Promise<Goal> {
-  return requestJson<Goal>(`/api/goals/${encodeURIComponent(id)}/content`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ content }),
   });
 }
 

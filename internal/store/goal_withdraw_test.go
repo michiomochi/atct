@@ -32,16 +32,19 @@ func TestWithdrawActiveGoalRequiresReason(t *testing.T) {
 	}
 }
 
-func TestWithdrawActiveGoalWithdrawsUntouchedProposedGoal(t *testing.T) {
+func TestWithdrawActiveGoalWithdrawsUntouchedGoalWithOpenDecision(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	project, err := s.CreateProject(ctx, "proposed", "/repos/proposed")
+	project, err := s.CreateProject(ctx, "withdraw", "/repos/withdraw")
 	if err != nil {
 		t.Fatalf("CreateProject: %v", err)
 	}
-	goal, err := s.CreateGoal(ctx, project.ID, "proposed goal", "agent")
+	goal, err := s.CreateGoal(ctx, project.ID, "withdrawn goal", "agent")
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
+	}
+	if _, err := s.AskDecision(ctx, AskInput{GoalID: goal.ID, Kind: domain.KindDecision, Question: "open?"}); err != nil {
+		t.Fatalf("AskDecision: %v", err)
 	}
 	approval, err := s.ListOpenDecisions(ctx, goal.ID)
 	if err != nil {
@@ -432,19 +435,16 @@ func TestWithdrawActiveGoalDoesNotPublishHandoffReported(t *testing.T) {
 	expectNoHandoffReported(t, events)
 }
 
-func TestWithdrawActiveGoalWithdrawsProposedGoalWithWorkAndHumanCreator(t *testing.T) {
+func TestWithdrawActiveGoalWithdrawsAgentGoalWithWork(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	project, err := s.CreateProject(ctx, "proposed-with-work", t.TempDir())
+	project, err := s.CreateProject(ctx, "agent-with-work", t.TempDir())
 	if err != nil {
 		t.Fatalf("CreateProject: %v", err)
 	}
-	goal, err := s.CreateGoal(ctx, project.ID, "proposed goal", "agent")
+	goal, err := s.CreateGoal(ctx, project.ID, "agent goal", "agent")
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
-	}
-	if _, err := s.DB().ExecContext(ctx, `UPDATE goals SET creator = 'human' WHERE id = ?`, goal.ID); err != nil {
-		t.Fatal(err)
 	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	if _, err := s.DB().ExecContext(ctx, `
@@ -468,8 +468,8 @@ func TestWithdrawActiveGoalWithdrawsProposedGoalWithWorkAndHumanCreator(t *testi
 		t.Fatalf("tasks = %+v, want one dropped", tasks)
 	}
 	decisions, _ := s.ListDecisionsForGoal(ctx, goal.ID)
-	if len(decisions) != 2 {
-		t.Fatalf("decisions = %d, want 2", len(decisions))
+	if len(decisions) != 1 {
+		t.Fatalf("decisions = %d, want 1", len(decisions))
 	}
 	for _, d := range decisions {
 		if d.Status != domain.DecisionWithdrawn || d.AnswerText != reason {

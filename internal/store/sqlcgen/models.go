@@ -94,6 +94,11 @@ type GoalHandoffEntry struct {
 	CreatedAt       string
 }
 
+type HandoffHistoryGap struct {
+	HandoffID string
+	Scope     string
+}
+
 type MonitorBinding struct {
 	Token            string
 	AgentSessionID   int64
@@ -140,6 +145,15 @@ type PlanHandoff struct {
 	CompleteReport            sql.NullString
 	ReviewRejectionReceivedBy sql.NullInt64
 	ReviewRejectionReceivedAt sql.NullString
+}
+
+type PlanHandoffEntry struct {
+	ID              int64
+	HandoffID       string
+	Kind            string
+	Body            string
+	AuthorSessionID sql.NullInt64
+	CreatedAt       string
 }
 
 type Project struct {
@@ -226,4 +240,9 @@ type TaskHandoffEntry struct {
 	AuthorSessionID sql.NullInt64
 	InReplyToID     sql.NullInt64
 	CreatedAt       string
+}
+
+type UiSetting struct {
+	ID     int64
+	Locale string
 }

@@ -909,9 +909,7 @@ func startReapTestProcess(t *testing.T) (*exec.Cmd, <-chan error) {
 			return
 		default:
 		}
-		if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
-			_ = cmd.Process.Signal(syscall.SIGTERM)
-		}
+		_ = cmd.Process.Signal(syscall.SIGTERM)
 		select {
 		case <-done:
 		case <-time.After(time.Second):

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { en } from "./en";
 import { ja } from "./ja";
-import i18n, { formatDateTime, formatDuration, resolveLocale, t } from "./index";
+import i18n, { BUILD_LOCALE, formatDateTime, formatDuration, t } from "./index";
 import currentTestSource from "./i18n.test.ts?raw";
 
 const sourceModules = import.meta.glob("../**/*.{ts,tsx,astro}", {
@@ -63,6 +63,17 @@ describe("resource parity", () => {
     expect(ja["decision.autoSettlesIn"]).toBe("{{duration}}後に自動確定");
   });
 
+  it("translates the decision priority reasons", () => {
+    expect(en["decision.priority.goal_review"]).toBe("Goal waiting to close");
+    expect(en["decision.priority.task_in_progress"]).toBe("A task in progress is blocked");
+    expect(en["decision.priority.queued"]).toBe("Queued");
+    expect(en["decision.priority.auto_settles"]).toBe("Settles by default on its own");
+    expect(ja["decision.priority.goal_review"]).toBe("goal の完了待ち");
+    expect(ja["decision.priority.task_in_progress"]).toBe("作業中のタスクが止まっている");
+    expect(ja["decision.priority.queued"]).toBe("待機中");
+    expect(ja["decision.priority.auto_settles"]).toBe("既定の選択肢で自動確定");
+  });
+
   it("keeps dotted keys flat rather than nested", () => {
     for (const key of Object.keys(en)) {
       expect(typeof en[key as keyof typeof en]).toBe("string");
@@ -70,25 +81,9 @@ describe("resource parity", () => {
   });
 });
 
-describe("resolveLocale", () => {
-  it("prefers the stored locale", () => {
-    expect(resolveLocale("ja", "en-US")).toBe("ja");
-    expect(resolveLocale("en", "ja-JP")).toBe("en");
-  });
-
-  it("falls back to the browser language", () => {
-    expect(resolveLocale(null, "ja-JP")).toBe("ja");
-    expect(resolveLocale(null, "ja")).toBe("ja");
-    expect(resolveLocale(null, "en-GB")).toBe("en");
-  });
-
-  it("ignores an unsupported stored value", () => {
-    expect(resolveLocale("fr", "ja-JP")).toBe("ja");
-    expect(resolveLocale("", null)).toBe("en");
-  });
-
-  it("defaults to English", () => {
-    expect(resolveLocale(null, null)).toBe("en");
+describe("build locale", () => {
+  it("initializes i18next from the compile-time locale", () => {
+    expect(i18n.language).toBe(BUILD_LOCALE);
   });
 });
 

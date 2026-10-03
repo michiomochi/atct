@@ -29,6 +29,11 @@ const (
 	monitorHealthRetention = 24 * time.Hour
 )
 
+// MonitorRearmGrace is how long a `--once` watch that ended on its own fire
+// still counts as live, so the agent can finish its turn and re-arm. A var so
+// tests can shorten it.
+var MonitorRearmGrace = 5 * time.Minute
+
 type MonitorHealth struct {
 	MonitorID string `json:"monitor_id"`
 	// MonitorToken is not stored. It names the binding the monitor already
@@ -128,6 +133,12 @@ func (s *Store) UpsertMonitorHealth(ctx context.Context, health MonitorHealth) e
 	if health.LastSeenAt.IsZero() {
 		health.LastSeenAt = now
 	}
+	rearming := health.State == "rearming"
+	if rearming {
+		// Every liveness check reads last_seen_at against the health lease, so
+		// back-dating it by lease - grace keeps the monitor live for the grace.
+		health.LastSeenAt = now.Add(MonitorRearmGrace - MonitorHealthLease)
+	}
 	if health.TransitionedAt.IsZero() {
 		health.TransitionedAt = now
 	}
@@ -159,6 +170,15 @@ func (s *Store) UpsertMonitorHealth(ctx context.Context, health MonitorHealth) e
 		LastSeenAt:       formatTimestamp(health.LastSeenAt),
 	}); err != nil {
 		return fmt.Errorf("upsert monitor health: %w", err)
+	}
+	if rearming && health.AgentSessionID > 0 {
+		// The session lease is renewed by the watch's polls, which have stopped.
+		if _, err := queries.HeartbeatAgentSession(ctx, sqlcgen.HeartbeatAgentSessionParams{
+			LastHeartbeatAt: sql.NullString{String: formatTimestamp(now.Add(MonitorRearmGrace - RuntimeLeaseDuration)), Valid: true},
+			ID:              health.AgentSessionID,
+		}); err != nil {
+			return fmt.Errorf("extend agent session lease for re-arm: %w", err)
+		}
 	}
 	if token := strings.TrimSpace(health.MonitorToken); token != "" && health.State == "healthy" &&
 		health.Role == "commander" && health.GoalID == nil && health.TaskID == nil {
@@ -480,6 +500,17 @@ func (s *Store) AgentSessionIDByKey(ctx context.Context, sessionKey string) (int
 		return 0, fmt.Errorf("session_key %q is not registered: this session never ran atct_session_identify (or the ATCT database was reset since it did). Call atct_session_identify with the session_key and monitor_token from SessionStart, then retry", sessionKey)
 	}
 	return id, err
+}
+
+// AgentSessionUnidentified reports whether the row exists but never ran
+// session.identify. An MCP client can hold several transports, and a reconnect
+// or daemon restart opens a new one; each starts as such a row.
+func (s *Store) AgentSessionUnidentified(ctx context.Context, agentSessionID int64) (bool, error) {
+	key, err := sqlcgen.New(s.db).GetAgentSessionKey(ctx, agentSessionID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return key == "", err
 }
 
 func (s *Store) AssociateAgentSessionWithProject(ctx context.Context, agentSessionID int64, projectID int64) error {

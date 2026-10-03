@@ -46,6 +46,10 @@ WHERE task_create_handoffs.id = ? AND task_create_handoffs.goal_id = ? AND task_
   AND recovered_at IS NULL
   AND EXISTS (SELECT 1 FROM agent_sessions WHERE agent_sessions.id = task_create_handoffs.received_by AND pid = ? AND started_at = ?);
 
+-- name: SupersedeOpenTaskCreateHandoff :execresult
+UPDATE task_create_handoffs SET recovered_at = ?, recovery_report = ?
+WHERE goal_id = ? AND received_by IS NULL AND completed_at IS NULL AND recovered_at IS NULL;
+
 -- name: CompleteTaskCreateHandoff :execresult
 UPDATE task_create_handoffs SET completed_by = ?, completed_at = ?, complete_report = ?
 WHERE id = ? AND received_by = ? AND completed_at IS NULL AND recovered_at IS NULL;
@@ -137,6 +141,11 @@ RETURNING id;
 SELECT id
 FROM agent_sessions
 WHERE session_key = ?;
+
+-- name: GetAgentSessionKey :one
+SELECT session_key
+FROM agent_sessions
+WHERE id = ?;
 
 -- name: UpdateAgentSessionKey :exec
 UPDATE agent_sessions

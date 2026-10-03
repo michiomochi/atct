@@ -788,7 +788,7 @@ func TestGoalGetGoalReviewLifecycleProjection(t *testing.T) {
 		return decision
 	}
 
-	noReview := get(t, fixture.proposed[0].ID)
+	noReview := get(t, fixture.agentCreated[0].ID)
 	if noReview.GoalReview != nil {
 		t.Fatalf("goal.get returned goal_review for a goal without one: %+v", noReview.GoalReview)
 	}
@@ -1436,17 +1436,17 @@ func TestContractN13GoalGetResponseSizeBreakdown(t *testing.T) {
 	measure("long-content", longGoal.ID)
 }
 
-func TestContractB1GoalListKeepsActiveAndProposedGoals(t *testing.T) {
+func TestContractB1GoalListKeepsActiveAndAgentCreatedGoals(t *testing.T) {
 	fixture := newGoalListFixture(t)
 	defer fixture.store.Close()
 
-	proposed, err := fixture.store.CreateGoal(context.Background(), fixture.project.ID, "proposed contract goal", "contract-test")
+	agentGoal, err := fixture.store.CreateGoal(context.Background(), fixture.project.ID, "agent contract goal", "contract-test")
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
 	goals := listGoalPayloadsForContractTest(t, fixture)
 	findGoalPayloadForContractTest(t, goals, fixture.emptyTaskGoal.ID)
-	findGoalPayloadForContractTest(t, goals, proposed.ID)
+	findGoalPayloadForContractTest(t, goals, agentGoal.ID)
 }
 
 func TestContractB2GoalListKeepsOnlyTodoAndDoingTasks(t *testing.T) {
@@ -2052,4 +2052,64 @@ func TestHandoffSequenceRequiresReceiveBeforeRole(t *testing.T) {
 			"requested_by": daemonTestSessionID(t, fixture.store, sessionID),
 		}, ErrRoleUnauthorized.Error())
 	})
+}
+
+func TestSessionRoleCarriesUILocale(t *testing.T) {
+	for _, tt := range []struct {
+		name         string
+		claimProject bool
+		claimGoal    bool
+	}{
+		{name: "commander", claimProject: true},
+		{name: "subcommander", claimGoal: true},
+		{name: "executor"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			fixture := newGoalListFixture(t)
+			defer fixture.store.Close()
+
+			sessionID := daemonTestSessionID(t, fixture.store, "session-ui-locale-"+tt.name)
+			if tt.claimProject {
+				claimParams, _ := json.Marshal(map[string]any{"project_id": fixture.project.ID, "agent_session_id": sessionID})
+				if _, err := fixture.daemon.dispatch(context.Background(), rpc.Request{Method: "project.claim", Params: claimParams}); err != nil {
+					t.Fatalf("project.claim: %v", err)
+				}
+			}
+			if tt.claimGoal {
+				claimParams, _ := json.Marshal(map[string]any{"goal_id": fixture.active[0].ID, "agent_session_id": sessionID})
+				if _, err := fixture.daemon.dispatch(context.Background(), rpc.Request{Method: "goal.claim", Params: claimParams}); err != nil {
+					t.Fatalf("goal.claim: %v", err)
+				}
+			}
+
+			params, _ := json.Marshal(map[string]any{"agent_session_id": sessionID})
+			locale := func() string {
+				raw, err := fixture.daemon.dispatch(context.Background(), rpc.Request{Method: "session.role", Params: params})
+				if err != nil {
+					t.Fatalf("session.role: %v", err)
+				}
+				var got struct {
+					Role     string `json:"role"`
+					UILocale string `json:"ui_locale"`
+				}
+				if err := json.Unmarshal(raw, &got); err != nil {
+					t.Fatalf("decode session.role %v: %v", raw, err)
+				}
+				if got.Role != tt.name {
+					t.Fatalf("role = %q, want %q", got.Role, tt.name)
+				}
+				return got.UILocale
+			}
+
+			if got := locale(); got != "en" {
+				t.Fatalf("default ui_locale = %q, want en", got)
+			}
+			if err := fixture.store.SetUILocale(context.Background(), "ja"); err != nil {
+				t.Fatalf("SetUILocale: %v", err)
+			}
+			if got := locale(); got != "ja" {
+				t.Fatalf("ui_locale after SetUILocale(ja) = %q, want ja", got)
+			}
+		})
+	}
 }

@@ -19,9 +19,12 @@ import (
 
 var ErrGoalAlreadyClaimed = errors.New("goal already claimed")
 var ErrProjectAlreadyClaimed = errors.New("project already claimed")
-var ErrGoalNotProposed = errors.New("goal is not proposed")
 var ErrDecisionOutsideGoal = errors.New("decision belongs to another goal")
 var ErrRoleUnauthorized = errors.New("role is not authorized for this operation")
+var ErrSessionNotIdentified = errors.New("agent session is not identified")
+
+const identifyHint = "this MCP transport session was never identified (a reconnect, a daemon restart, or a second transport of the same client opens a new one): call atct_session_identify with the session_key and monitor_token from SessionStart, then retry"
+
 var ErrHandoffCompletionSessionRequired = errors.New("agent_session_id is required; identify the session and use the named handoff review flow")
 
 const retiredGoalCompletionDiagnostic = "goal.complete is retired; use atct_goal_review_request followed by atct_goal_review_complete"
@@ -58,19 +61,22 @@ type commanderRole struct {
 	ProjectID int64    `json:"project_id"`
 	Does      []string `json:"does"`
 	DoesNot   []string `json:"does_not"`
+	UILocale  string   `json:"ui_locale"`
 }
 
 type subcommanderRole struct {
-	Role    string   `json:"role"`
-	GoalID  int64    `json:"goal_id"`
-	Does    []string `json:"does"`
-	DoesNot []string `json:"does_not"`
+	Role     string   `json:"role"`
+	GoalID   int64    `json:"goal_id"`
+	Does     []string `json:"does"`
+	DoesNot  []string `json:"does_not"`
+	UILocale string   `json:"ui_locale"`
 }
 
 type executorRole struct {
-	Role    string   `json:"role"`
-	Does    []string `json:"does"`
-	DoesNot []string `json:"does_not"`
+	Role     string   `json:"role"`
+	Does     []string `json:"does"`
+	DoesNot  []string `json:"does_not"`
+	UILocale string   `json:"ui_locale"`
 }
 
 type roleBoundary struct {
@@ -126,10 +132,6 @@ type goalListTaskCounts struct {
 	Done    int `json:"done"`
 	Dropped int `json:"dropped"`
 }
-
-// goalReviewDueAfter is how long a proposed goal may sit without activity
-// before goal.list lists it for the commander's review.
-const goalReviewDueAfter = 7 * 24 * time.Hour
 
 func summaryLine(content string) string {
 	for _, line := range strings.Split(content, "\n") {
@@ -194,7 +196,7 @@ func (d *Daemon) deriveSessionRole(ctx context.Context, agentSessionID int64) (r
 	return roleAssignment{Role: assignment.Role, ProjectID: assignment.ProjectID, GoalID: assignment.GoalID}, nil
 }
 
-func roleResponseFor(assignment roleAssignment) any {
+func roleResponseFor(assignment roleAssignment, uiLocale string) any {
 	boundary := roleBoundaries[assignment.Role]
 	switch assignment.Role {
 	case "commander":
@@ -203,19 +205,22 @@ func roleResponseFor(assignment roleAssignment) any {
 			ProjectID: assignment.ProjectID,
 			Does:      boundary.Does,
 			DoesNot:   boundary.DoesNot,
+			UILocale:  uiLocale,
 		}
 	case "subcommander":
 		return subcommanderRole{
-			Role:    assignment.Role,
-			GoalID:  assignment.GoalID,
-			Does:    boundary.Does,
-			DoesNot: boundary.DoesNot,
+			Role:     assignment.Role,
+			GoalID:   assignment.GoalID,
+			Does:     boundary.Does,
+			DoesNot:  boundary.DoesNot,
+			UILocale: uiLocale,
 		}
 	default:
 		return executorRole{
-			Role:    "executor",
-			Does:    boundary.Does,
-			DoesNot: boundary.DoesNot,
+			Role:     "executor",
+			Does:     boundary.Does,
+			DoesNot:  boundary.DoesNot,
+			UILocale: uiLocale,
 		}
 	}
 }
@@ -283,7 +288,7 @@ func (d *Daemon) responseWithScopedUnappliedDecisions(ctx context.Context, data 
 }
 
 // appendCommanderRoutedDecisions polls the project's answered decisions that are
-// addressed to the commander by kind (e.g. a sessionless goal_approval) when the caller is a commander.
+// addressed to the commander by kind (e.g. a sessionless goal_review) when the caller is a commander.
 func (d *Daemon) appendCommanderRoutedDecisions(ctx context.Context, agentSessionID int64, decs []domain.Decision) ([]domain.Decision, error) {
 	role, err := d.deriveSessionRole(ctx, agentSessionID)
 	if err != nil || role.Role != "commander" {
@@ -942,9 +947,42 @@ func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage
 func (d *Daemon) dispatchWithPeer(ctx context.Context, req rpc.Request, peerID uint64) (json.RawMessage, error) {
 	raw, err := d.dispatchMethodWithPeer(ctx, req, peerID)
 	if err != nil {
-		return nil, err
+		return nil, d.withIdentifyHint(ctx, req, err)
 	}
 	return withNextStep(raw, nextStepAfter[req.Method]), nil
+}
+
+// withIdentifyHint appends the re-identify instruction when the caller is a
+// transport row that never ran session.identify. Without it a refusal such as
+// ErrRoleUnauthorized reads as "you are an executor" and the agent stops,
+// though re-identifying reattaches the row to its canonical session.
+func (d *Daemon) withIdentifyHint(ctx context.Context, req rpc.Request, err error) error {
+	if req.Method == "session.identify" || req.Method == "run.register" || errors.Is(err, ErrSessionNotIdentified) {
+		return err
+	}
+	var p struct {
+		AgentSessionID int64 `json:"agent_session_id"`
+		RequestedBy    int64 `json:"requested_by"`
+		ReceivedBy     int64 `json:"received_by"`
+		ReviewerID     int64 `json:"reviewer_id"`
+	}
+	if json.Unmarshal(req.Params, &p) != nil {
+		return err
+	}
+	id := int64(0)
+	for _, candidate := range []int64{p.AgentSessionID, p.RequestedBy, p.ReceivedBy, p.ReviewerID} {
+		if candidate != 0 {
+			id = candidate
+			break
+		}
+	}
+	if id == 0 {
+		return err
+	}
+	if unidentified, lookupErr := d.store.AgentSessionUnidentified(ctx, id); lookupErr == nil && unidentified {
+		return fmt.Errorf("%w; %s", err, identifyHint)
+	}
+	return err
 }
 
 // withNextStep adds next_step to an object response. A response that is not a
@@ -1120,7 +1158,8 @@ func (d *Daemon) dispatchMethodWithPeer(ctx context.Context, req rpc.Request, pe
 
 	case "session.role":
 		var p struct {
-			AgentSessionID int64 `json:"agent_session_id"`
+			AgentSessionID    int64 `json:"agent_session_id"`
+			RequireIdentified bool  `json:"require_identified"`
 		}
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, err
@@ -1130,7 +1169,22 @@ func (d *Daemon) dispatchMethodWithPeer(ctx context.Context, req rpc.Request, pe
 		if err != nil {
 			return nil, err
 		}
-		return marshal(roleResponseFor(response), nil)
+		// A row that holds nothing derives executor; for a transport that never
+		// identified that is "unknown", not a role the agent should obey.
+		if p.RequireIdentified && response.Role == "executor" && response.ProjectID == 0 {
+			unidentified, err := d.store.AgentSessionUnidentified(ctx, p.AgentSessionID)
+			if err != nil {
+				return nil, err
+			}
+			if unidentified {
+				return nil, fmt.Errorf("%w: %s", ErrSessionNotIdentified, identifyHint)
+			}
+		}
+		uiLocale, err := d.store.GetUILocale(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return marshal(roleResponseFor(response, uiLocale), nil)
 
 	case "session.stop_check":
 		var p struct {
@@ -1353,21 +1407,9 @@ func (d *Daemon) dispatchMethodWithPeer(ctx context.Context, req rpc.Request, pe
 		if err != nil {
 			return nil, err
 		}
-		type reviewDueGoal struct {
-			ID        int64     `json:"id"`
-			Title     string    `json:"title"`
-			UpdatedAt time.Time `json:"updated_at"`
-		}
-		reviewDueGoals := []reviewDueGoal{}
-		for _, goal := range goals {
-			if goal.Status == domain.GoalProposed && time.Since(goal.UpdatedAt) >= goalReviewDueAfter {
-				reviewDueGoals = append(reviewDueGoals, reviewDueGoal{ID: goal.ID, Title: summaryLine(goal.Content), UpdatedAt: goal.UpdatedAt})
-			}
-		}
 		data := map[string]any{
 			"project":                  ns,
 			"goals":                    visibleGoals,
-			"review_due_goals":         reviewDueGoals,
 			"awaiting_approval_count":  awaitingApprovalCount,
 			"answered_decisions":       mine,
 			"orphaned_decisions":       orphaned,
@@ -1422,6 +1464,9 @@ func (d *Daemon) dispatchMethodWithPeer(ctx context.Context, req rpc.Request, pe
 			data["goal_review"] = review
 		}
 		return marshal(data, nil)
+
+	case "review.exchange.list":
+		return d.listReviewExchangesRPC(ctx, req.Params, peerID)
 
 	case "goal.sessions":
 		var p struct {
@@ -1514,33 +1559,6 @@ func (d *Daemon) dispatchMethodWithPeer(ctx context.Context, req rpc.Request, pe
 		}
 		goal, err := d.store.GetGoal(ctx, p.GoalID)
 		return marshal(goal, err)
-
-	case "goal.update_content":
-		var p struct {
-			GoalID                  int64  `json:"goal_id"`
-			Content                 string `json:"content"`
-			AgentSessionID          int64  `json:"agent_session_id"`
-			IncludeUnappliedAnswers bool   `json:"include_unapplied_answers"`
-		}
-		if err := json.Unmarshal(req.Params, &p); err != nil {
-			return nil, err
-		}
-		goal, err := d.store.GetGoal(ctx, p.GoalID)
-		if err != nil {
-			return nil, err
-		}
-		if err := d.ensureAgentSessionProject(ctx, p.AgentSessionID, goal.ProjectID); err != nil {
-			return nil, err
-		}
-		updated, err := d.store.UpdateGoalContent(ctx, p.GoalID, p.Content)
-		if errors.Is(err, store.ErrGoalNotProposed) {
-			return nil, ErrGoalNotProposed
-		}
-		if err != nil || !p.IncludeUnappliedAnswers {
-			return marshal(updated, err)
-		}
-		response, err := d.responseWithScopedUnappliedDecisions(ctx, updated, p.GoalID, p.AgentSessionID)
-		return marshal(response, err)
 
 	case "goal.update_request_report":
 		var p struct {
@@ -1800,7 +1818,8 @@ func (d *Daemon) dispatchMethodWithPeer(ctx context.Context, req rpc.Request, pe
 		if err := d.authorizeRole(ctx, []string{"executor"}, 0, 0, p.TaskID, p.RequestedBy, "task handoff review request"); err != nil {
 			return nil, err
 		}
-		handoff, err := d.store.RequestTaskHandoffReview(ctx, p.HandoffID, p.TaskID, p.RequestedBy, p.ReviewRequestReport)
+		note := d.taskReviewNote(ctx, p.TaskID)
+		handoff, err := d.store.RequestTaskHandoffReview(ctx, p.HandoffID, p.TaskID, p.RequestedBy, appendFindings(p.ReviewRequestReport, note))
 		return marshal(handoff, err)
 
 	case "task.handoff.review.receive":
@@ -1903,7 +1922,14 @@ func (d *Daemon) dispatchMethodWithPeer(ctx context.Context, req rpc.Request, pe
 		if err := d.authorizeRole(ctx, []string{"subcommander"}, 0, p.GoalID, 0, p.RequestedBy, "goal handoff review request"); err != nil {
 			return nil, err
 		}
-		handoff, err := d.store.RequestGoalHandoffReview(ctx, p.HandoffID, p.GoalID, p.RequestedBy, p.ReviewRequestReport)
+		if err := d.refuseGoalBranchProblems(ctx, p.GoalID); err != nil {
+			return nil, err
+		}
+		note, err := d.goalReviewGate(ctx, p.GoalID)
+		if err != nil {
+			return nil, err
+		}
+		handoff, err := d.store.RequestGoalHandoffReview(ctx, p.HandoffID, p.GoalID, p.RequestedBy, appendFindings(p.ReviewRequestReport, note))
 		return marshal(handoff, err)
 
 	case "goal.handoff.review.receive":

@@ -94,13 +94,27 @@ scope は届け先の境界であり、Session Stop の role 解決とは別で�
 
 ## Claude Watch
 
-Claude は SessionStart の monitor token で起動した persistent watch を一つだけ使う。
-`atct watch --monitor --token <monitor_token>` は token に結び付いた canonical session の
-assignment を server から取得し、claim / handoff に伴う scope の変更も追従する。role や scope を
-起動引数で指定しない。
+Claude は SessionStart の monitor token で、watch を一つだけ使う。既定は Monitor ツールで、
+`atct watch --monitor --token <monitor_token>` を `persistent: true` で張る。通知が多い agent は、
+Bash だと通知 1 件ごとに「起こされる、出力を読む、張り直す、対応する」で約 3 回のやりとりがかかるが、
+Monitor は 1 回で済む。Monitor は 30 分で切れ、通知は `[Monitor expired after 30m with N events
+delivered. ...]` の形で来る。N が 0 なら待つだけだったので、`--once` を付けた background の Bash に
+切り替え、N が 1 以上なら Monitor を張り直す。`--once` は最初の actionable な通知を stdout に出して
+終了し、その process の終了が agent を 1 回起こす。`--once` の Bash が終わったら（通知を出したとき、
+出さなかったとき、異常終了のとき）、先に Monitor を張り、その後で通知に対応する。`--once` を続けて
+張り直さない。scope は server が assignment から導き、role や scope を起動引数で指定しない。
+配送した通知は token ごとのファイルに記録され、張り直した watch は、Monitor でも `--once` でも、
+同じ通知を再び出さない。
 
-Claude Watch は通知を表示する。Session を停止するには、この session に attach された monitor の
-task ID が分かる時だけ `TaskStop` を使う。ID は推測しない。
+終了から張り直しまでは猶予がある。`--once` が自分の発火で終わるとき、watch は `stopped` ではなく
+`rearming` を送り、daemon は monitor health と session の runtime lease の両方を 5 分間生きているものと
+して扱う。この間は作業中のターンの途中でも ATCT 呼び出しは拒否されない。対象は自分の発火による終了だけ
+で、SIGTERM、`TaskStop`、重複 watch の停止、scope の変更は従来どおり `stopped` になる。5 分を過ぎても
+張り直さなければ従来どおり拒否され、`wakeup.monitor_lost` になる。猶予は保険であり、張り直しを省いてよい
+理由ではない。
+
+Claude Watch は通知を表示する。Session を停止するには、この session で起動した Monitor または background の
+Bash task の task ID が分かる時だけ `TaskStop` を使う。ID は推測しない。
 
 ## Codex Bridge
 

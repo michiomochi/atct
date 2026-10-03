@@ -249,6 +249,23 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_plan_handoffs_open_goal_id
   ON plan_handoffs(goal_id)
   WHERE completed_report_at IS NULL;
 
+CREATE TABLE IF NOT EXISTS plan_handoff_entries (
+  id                INTEGER PRIMARY KEY AUTOINCREMENT,
+  handoff_id        TEXT NOT NULL REFERENCES plan_handoffs(id) ON DELETE RESTRICT,
+  kind              TEXT NOT NULL CHECK (kind IN ('review_requested', 'review_rejected')),
+  body              TEXT NOT NULL,
+  author_session_id INTEGER REFERENCES agent_sessions(id) ON DELETE SET NULL,
+  created_at        TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_plan_handoff_entries_handoff_sequence
+  ON plan_handoff_entries(handoff_id, id);
+
+CREATE TABLE IF NOT EXISTS handoff_history_gaps (
+  handoff_id TEXT PRIMARY KEY,
+  scope      TEXT NOT NULL CHECK (scope IN ('goal', 'task', 'plan'))
+);
+
 CREATE TABLE IF NOT EXISTS monitor_health (
   monitor_id         TEXT PRIMARY KEY,
   agent_key          TEXT NOT NULL DEFAULT '',
@@ -316,3 +333,8 @@ CREATE INDEX IF NOT EXISTS idx_task_create_handoffs_goal_id
 CREATE UNIQUE INDEX IF NOT EXISTS idx_task_create_handoffs_open_goal_id
   ON task_create_handoffs(goal_id)
   WHERE completed_at IS NULL AND recovered_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS ui_settings (
+  id     INTEGER PRIMARY KEY CHECK (id = 1),
+  locale TEXT NOT NULL CHECK (locale IN ('en', 'ja'))
+);

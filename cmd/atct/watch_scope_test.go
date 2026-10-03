@@ -442,6 +442,25 @@ func TestWatchEventsURLOmitsDurableWatcherKey(t *testing.T) {
 	}
 }
 
+func TestWatchEventsURLCarriesMonitorToken(t *testing.T) {
+	for _, scope := range []watchScope{
+		{ProjectID: "1", GoalID: "2", MonitorToken: "token-1"},
+		{MonitorToken: "token-1"},
+	} {
+		got, err := watchEventsURLWithScope("http://daemon", scope)
+		if err != nil {
+			t.Fatal(err)
+		}
+		parsed, err := url.Parse(got)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if parsed.Query().Get("monitor_token") != "token-1" {
+			t.Fatalf("%+v: events URL %q has no monitor_token", scope, got)
+		}
+	}
+}
+
 func reconcileOnce(t *testing.T, scope watchScope, body string) string {
 	t.Helper()
 	client := &http.Client{Transport: watchRoundTripper(func(req *http.Request) (*http.Response, error) {

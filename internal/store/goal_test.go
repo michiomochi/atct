@@ -4,210 +4,33 @@ import (
 	"context"
 	"errors"
 	"os"
-	"reflect"
 	"testing"
 
 	"github.com/michiomochi/atct/internal/domain"
 )
 
-func TestUpdateGoalContentUpdatesProposedGoal(t *testing.T) {
+func TestCreateGoalIsActiveWithoutApprovalForAnyCreator(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	project, err := s.CreateProject(ctx, "test-project", "/repos/atct")
 	if err != nil {
 		t.Fatal(err)
 	}
-	goal, err := s.CreateGoal(ctx, project.ID, "original content", "agent")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	got, err := s.UpdateGoalContent(ctx, goal.ID, "updated content")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.Content != "updated content" {
-		t.Fatalf("content = %q, want %q", got.Content, "updated content")
-	}
-	if got.Status != domain.GoalProposed {
-		t.Fatalf("status = %q, want %q", got.Status, domain.GoalProposed)
-	}
-
-	persisted, err := s.GetGoal(ctx, goal.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if persisted.Content != "updated content" {
-		t.Fatalf("persisted content = %q, want %q", persisted.Content, "updated content")
-	}
-}
-
-func TestUpdateGoalContentRejectsBlankContent(t *testing.T) {
-	for _, tt := range []struct {
-		name    string
-		content string
-	}{
-		{name: "empty", content: ""},
-		{name: "whitespace", content: " \t\n "},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			ctx := context.Background()
-			s := newTestStore(t)
-			project, err := s.CreateProject(ctx, "test-project", "/repos/atct")
-			if err != nil {
-				t.Fatal(err)
-			}
-			goal, err := s.CreateGoal(ctx, project.ID, "original content", "agent")
-			if err != nil {
-				t.Fatal(err)
-			}
-
-			_, err = s.UpdateGoalContent(ctx, goal.ID, tt.content)
-			if err == nil {
-				t.Fatal("UpdateGoalContent succeeded for blank content")
-			}
-			persisted, getErr := s.GetGoal(ctx, goal.ID)
-			if getErr != nil {
-				t.Fatal(getErr)
-			}
-			if persisted.Content != "original content" {
-				t.Fatalf("content = %q after rejected update, want %q", persisted.Content, "original content")
-			}
-		})
-	}
-}
-
-func TestUpdateGoalContentReturnsNotFoundForMissingGoal(t *testing.T) {
-	_, err := newTestStore(t).UpdateGoalContent(context.Background(), 0, "new content")
-	if !errors.Is(err, ErrGoalNotFound) {
-		t.Fatalf("error = %v, want ErrGoalNotFound", err)
-	}
-}
-
-func TestUpdateGoalContentRejectsActiveGoal(t *testing.T) {
-	ctx := context.Background()
-	s := newTestStore(t)
-	project, err := s.CreateProject(ctx, "test-project", "/repos/atct")
-	if err != nil {
-		t.Fatal(err)
-	}
-	goal, err := s.CreateGoal(ctx, project.ID, "active content", "human")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	_, err = s.UpdateGoalContent(ctx, goal.ID, "new content")
-	if !errors.Is(err, ErrGoalNotProposed) {
-		t.Fatalf("error = %v, want ErrGoalNotProposed", err)
-	}
-	persisted, err := s.GetGoal(ctx, goal.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if persisted.Content != "active content" {
-		t.Fatalf("content = %q after rejected update, want %q", persisted.Content, "active content")
-	}
-}
-
-func TestUpdateGoalContentRejectsDoneAndDroppedGoals(t *testing.T) {
-	ctx := context.Background()
-	s := newTestStore(t)
-	project, err := s.CreateProject(ctx, "test-project", "/repos/atct")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	for _, status := range []domain.GoalStatus{domain.GoalDone, domain.GoalDropped} {
-		t.Run(string(status), func(t *testing.T) {
-			var goal domain.Goal
-			switch status {
-			case domain.GoalDone:
-				goal, err = s.CreateGoal(ctx, project.ID, "done content", "human")
-				if err != nil {
-					t.Fatal(err)
-				}
-				const requester = "update-done-requester"
-				const receiver = "update-done-receiver"
-				addLiveProjectClaim(t, s, goal.ID, requester)
-				addTestAgentSession(t, s, receiver)
-				receiveGoalHandoffReviewForGoalReviewTest(t, s, ctx, "update-done-handoff", goal.ID, testSessionID(requester), testSessionID(receiver))
-				review, reviewErr := s.RequestGoalReview(ctx, goal.ID, testSessionID(requester), goalReviewRequestTestReport())
-				if reviewErr != nil {
-					t.Fatal(reviewErr)
-				}
-				if _, reviewErr = s.ApproveGoalReview(ctx, review.ID); reviewErr != nil {
-					t.Fatal(reviewErr)
-				}
-				if _, reviewErr = s.FinalizeGoalReview(ctx, goal.ID, testSessionID(requester)); reviewErr != nil {
-					t.Fatal(reviewErr)
-				}
-			case domain.GoalDropped:
-				goal, err = s.CreateGoal(ctx, project.ID, "dropped content", "agent")
-				if err != nil {
-					t.Fatal(err)
-				}
-				decisions, listErr := s.ListOpenDecisions(ctx, goal.ID)
-				if listErr != nil {
-					t.Fatal(listErr)
-				}
-				if len(decisions) == 0 {
-					t.Fatal("no approval decision for dropped goal")
-				}
-				if rejectErr := s.RejectGoal(ctx, decisions[0].ID, "not needed"); rejectErr != nil {
-					t.Fatal(rejectErr)
-				}
-			}
-
-			_, updateErr := s.UpdateGoalContent(ctx, goal.ID, "new content")
-			if !errors.Is(updateErr, ErrGoalNotProposed) {
-				t.Fatalf("error = %v, want ErrGoalNotProposed", updateErr)
-			}
-		})
-	}
-}
-
-func TestUpdateGoalContentPreservesCompletionReport(t *testing.T) {
-	ctx := context.Background()
-	s := newTestStore(t)
-	project, err := s.CreateProject(ctx, "test-project", "/repos/atct")
-	if err != nil {
-		t.Fatal(err)
-	}
-	goal, err := s.CreateGoal(ctx, project.ID, "original content", "agent")
-	if err != nil {
-		t.Fatal(err)
-	}
-	wantReport := domain.CompletionReport{
-		WorkDone:    "work done before",
-		NowPossible: "now possible before",
-		HowToVerify: "verify before",
-		Surprises:   "surprises before",
-		NeedsReview: "review before",
-	}
-	if _, err := s.DB().ExecContext(ctx, `
-		UPDATE goals SET
-			work_done = ?, now_possible = ?, how_to_verify = ?,
-			surprises = ?, needs_review = ?
-		WHERE id = ?`,
-		wantReport.WorkDone, wantReport.NowPossible, wantReport.HowToVerify,
-		wantReport.Surprises, wantReport.NeedsReview, goal.ID,
-	); err != nil {
-		t.Fatal(err)
-	}
-
-	got, err := s.UpdateGoalContent(ctx, goal.ID, "updated content")
-	if err != nil {
-		t.Fatal(err)
-	}
-	gotReport := domain.CompletionReport{
-		WorkDone:    got.WorkDone,
-		NowPossible: got.NowPossible,
-		HowToVerify: got.HowToVerify,
-		Surprises:   got.Surprises,
-		NeedsReview: got.NeedsReview,
-	}
-	if !reflect.DeepEqual(gotReport, wantReport) {
-		t.Fatalf("completion report = %+v, want %+v", gotReport, wantReport)
+	for _, creator := range []string{"human", "agent"} {
+		goal, err := s.CreateGoal(ctx, project.ID, "goal by "+creator, creator)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if goal.Status != domain.GoalActive || goal.Creator != creator {
+			t.Fatalf("%s goal = status %q creator %q, want active/%s", creator, goal.Status, goal.Creator, creator)
+		}
+		var decisions int
+		if err := s.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM decisions WHERE goal_id = ?`, goal.ID).Scan(&decisions); err != nil {
+			t.Fatal(err)
+		}
+		if decisions != 0 {
+			t.Fatalf("%s goal has %d decisions, want 0", creator, decisions)
+		}
 	}
 }
 
