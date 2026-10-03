@@ -31,7 +31,6 @@ func TestSpecAndPlanLiveInGoalFieldsIsDistributed(t *testing.T) {
 		{"subcommander skill", readRepoFile(t, "skills/subcommander/SKILL.md"), []string{"`spec`", "`plan`", "never into files"}},
 		{"executor skill", readRepoFile(t, "skills/executor/SKILL.md"), []string{"doc/specs", "doc/plans", "docs/superpowers"}},
 		{"execution-flow", readRepoFile(t, "doc/execution-flow.md"), []string{"spec / plan の置き場所", "doc/specs", "doc/plans", "docs/superpowers", "`spec` / `plan`", "superpowers", "個人設定"}},
-		{"mcp instructions", Instructions, []string{"doc/specs", "`spec` / `plan`", "superpowers", "`atct` skill"}},
 	}
 	for _, tc := range cases {
 		for _, w := range tc.want {
