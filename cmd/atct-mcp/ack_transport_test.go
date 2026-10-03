@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -15,6 +16,16 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
+
+func shortSocketDir(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("/tmp", "a")
+	if err != nil {
+		t.Fatalf("MkdirTemp: %v", err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	return dir
+}
 
 type fakeAckTransport struct {
 	connection *fakeAckConnection
@@ -366,7 +377,7 @@ func TestAckTransportReportsAfterSuccessfulResponseWrite(t *testing.T) {
 }
 
 func TestAckTransportSendsAcceptedWireToUnixListener(t *testing.T) {
-	listener, err := net.Listen("unix", filepath.Join(t.TempDir(), "ack.sock"))
+	listener, err := net.Listen("unix", filepath.Join(shortSocketDir(t), "ack.sock"))
 	if err != nil {
 		t.Fatalf("net.Listen: %v", err)
 	}

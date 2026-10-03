@@ -44,7 +44,7 @@ func TestCodexMonitorAcknowledgementsServeAuthenticatesWireRecords(t *testing.T)
 	if err != nil {
 		t.Fatalf("newCodexMonitorAcknowledgements: %v", err)
 	}
-	listener, err := net.Listen("unix", filepath.Join(t.TempDir(), "ack.sock"))
+	listener, err := net.Listen("unix", filepath.Join(shortSocketDir(t), "ack.sock"))
 	if err != nil {
 		t.Fatalf("net.Listen: %v", err)
 	}

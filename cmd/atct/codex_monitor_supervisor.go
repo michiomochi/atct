@@ -239,7 +239,11 @@ func runCodexMonitorWithDeps(config cliConfig, dir string, deps codexMonitorDeps
 
 	var ackRuntime *codexMonitorAckRuntime
 	if config.codexMonitorRole == "commander" {
-		ackRuntime, _ = newCodexMonitorAckRuntime(monitorDir, os.Getpid(), deps.listenUnix, deps.newAckCapability)
+		var ackErr error
+		ackRuntime, ackErr = newCodexMonitorAckRuntime(monitorDir, os.Getpid(), deps.listenUnix, deps.newAckCapability)
+		if ackErr != nil {
+			fmt.Fprintf(deps.stderr, "atct: monitor acknowledgement disabled: %v\n", ackErr)
+		}
 	}
 	// The monitor owns this fresh App Server socket. Let the remote TUI create
 	// its session, then attach to that TUI's thread/started notification. A

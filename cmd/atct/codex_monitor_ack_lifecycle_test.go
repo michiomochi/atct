@@ -48,8 +48,18 @@ func TestParseArgsCodexMonitorRejectsIncompleteSubcommanderHandoff(t *testing.T)
 	}
 }
 
+func shortSocketDir(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("/tmp", "a")
+	if err != nil {
+		t.Fatalf("MkdirTemp: %v", err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	return dir
+}
+
 func TestCodexMonitorCommanderAckEnvironmentIsTUIOnlyAndCleanedUp(t *testing.T) {
-	monitorDir := t.TempDir()
+	monitorDir := shortSocketDir(t)
 	app := newFakeCodexMonitorApp()
 	tui := newFakeCodexMonitorProcess(0)
 	var appEnv, tuiEnv []string
@@ -96,6 +106,53 @@ func TestCodexMonitorCommanderAckEnvironmentIsTUIOnlyAndCleanedUp(t *testing.T) 
 	}
 	if _, err := os.Stat(ackSocket); !os.IsNotExist(err) {
 		t.Fatalf("acknowledgement socket stat error = %v, want removed socket", err)
+	}
+}
+
+func TestCodexMonitorCommanderAckListenFailureIsReportedAndLaunchContinues(t *testing.T) {
+	app := newFakeCodexMonitorApp()
+	tui := newFakeCodexMonitorProcess(0)
+	var tuiEnv []string
+	var stderr strings.Builder
+	deps := codexMonitorDeps{
+		resolveCodex:    func() (string, error) { return "/opt/codex", nil },
+		newMonitorToken: func() (string, error) { return "token-commander", nil },
+		reap:            func(string) (daemonctl.CodexMonitorReapResult, error) { return daemonctl.CodexMonitorReapResult{}, nil },
+		register:        func(string, daemonctl.CodexMonitorRecord) (func(), error) { return func() {}, nil },
+		startProcess: func(kind codexMonitorProcessKind, _ string, _ []string, env []string) (codexMonitorProcess, error) {
+			if kind == codexMonitorAppServer {
+				return app, nil
+			}
+			tuiEnv = append([]string(nil), env...)
+			tui.finish()
+			return tui, nil
+		},
+		connectAppServer: func(context.Context, string) (codexMonitorApp, error) { return app, nil },
+		projectPath:      func() (string, error) { return "/project", nil },
+		runBoundWatch: func(ctx context.Context, _ string, _ string, _ *codexMonitorBridge) error {
+			<-ctx.Done()
+			return nil
+		},
+		listenUnix: func(string, string) (net.Listener, error) { return nil, errors.New("listen refused") },
+		stderr:     &stderr,
+	}
+
+	code, err := runCodexMonitorWithDeps(cliConfig{
+		codexMonitorAction:   "monitor",
+		codexMonitorExplicit: true,
+		codexMonitorRole:     "commander",
+	}, shortSocketDir(t), deps)
+	if err != nil {
+		t.Fatalf("runCodexMonitorWithDeps: %v", err)
+	}
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0", code)
+	}
+	if !strings.Contains(stderr.String(), "acknowledgement disabled") {
+		t.Fatalf("stderr = %q, want acknowledgement disabled notice", stderr.String())
+	}
+	if environmentValue(tuiEnv, codexMonitorAckSocketEnvironment) != "" || environmentValue(tuiEnv, codexMonitorAckCapabilityEnvironment) != "" {
+		t.Fatalf("TUI environment = %#v, want no acknowledgement environment", tuiEnv)
 	}
 }
 
@@ -247,7 +304,7 @@ func TestCodexMonitorAcknowledgementWireSuppressesBridgeAction(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newCodexMonitorAcknowledgements: %v", err)
 	}
-	listener, err := net.Listen("unix", filepath.Join(t.TempDir(), "ack.sock"))
+	listener, err := net.Listen("unix", filepath.Join(shortSocketDir(t), "ack.sock"))
 	if err != nil {
 		t.Fatalf("net.Listen: %v", err)
 	}
