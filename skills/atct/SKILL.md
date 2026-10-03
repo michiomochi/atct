@@ -153,6 +153,26 @@ decision that is no longer relevant. Ask immediately before an irreversible or
 destructive operation. If a design choice changes the work and cannot be
 settled from the code, ask instead of guessing.
 
+## Archived projects
+
+`atct project archive <name|id>` hides a project without deleting anything: its
+goals, tasks and decisions stay, but they leave the dashboard lists, the waiting
+answers, every role's Stop hook, the watch, wakeups and the automatic default of
+an expired decision. Reading by id (a goal or task page) still works. Changes
+are refused for an archived project: creating or claiming a goal, handoffs,
+task changes, `atct_decision_ask` / `atct_decision_poll` / withdraw, and plan or
+review requests. The error names the project and the way back,
+`atct project unarchive <name>` (or the dashboard's Projects section).
+`project.release` still works. Unarchiving restores everything; defaults that
+expired meanwhile are applied at the next maintenance.
+
+Only the commander archives, and only when the human asks, with
+`atct project archive <name>`. A subcommander or executor never does. There is
+no MCP tool for it, so no agent can archive on its own.
+
+If an ATCT call is refused because the project is archived, stop the work and
+return it to your delegator. Unarchiving is the human's decision.
+
 ## What the delegator answers
 
 A delegator that answers a question about the inside of a goal is guessing; it

@@ -47,6 +47,10 @@ cd /path/to/your/repo
 atct project add
 ```
 
+To stop tracking a project without deleting it, run `atct project archive <name>` (or use the
+**Projects** section of the dashboard). Its goals leave the lists, waiting answers, hooks and
+watches, and changes to them are refused until `atct project unarchive <name>` brings it back.
+
 A goal is one field. Write what you want in as much or as little detail as you like; the
 first line is what lists and links show, and anything after it is the detail.
 
