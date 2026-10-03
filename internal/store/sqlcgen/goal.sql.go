@@ -10,22 +10,6 @@ import (
 	"database/sql"
 )
 
-const applyCompletionDecision = `-- name: ApplyCompletionDecision :execresult
-UPDATE decisions SET status = 'applied', answer_label = 'approve',
-  answered_at = ?, applied_at = ?
-WHERE id = ?
-`
-
-type ApplyCompletionDecisionParams struct {
-	AnsweredAt sql.NullString
-	AppliedAt  sql.NullString
-	ID         int64
-}
-
-func (q *Queries) ApplyCompletionDecision(ctx context.Context, arg ApplyCompletionDecisionParams) (sql.Result, error) {
-	return q.db.ExecContext(ctx, applyCompletionDecision, arg.AnsweredAt, arg.AppliedAt, arg.ID)
-}
-
 const applyGoalApprovalDecision = `-- name: ApplyGoalApprovalDecision :execresult
 UPDATE decisions SET status = 'applied', answer_label = 'approve',
   answered_at = ?, applied_at = ?
@@ -167,37 +151,6 @@ func (q *Queries) DeleteNextGoals(ctx context.Context, goalID int64) error {
 	return err
 }
 
-const finalizeGoal = `-- name: FinalizeGoal :execresult
-UPDATE goals
-SET status = 'done', result_summary = ?, work_done = ?, now_possible = ?,
-    how_to_verify = ?, surprises = ?, needs_review = ?, updated_at = ?
-WHERE id = ? AND status = 'active'
-`
-
-type FinalizeGoalParams struct {
-	ResultSummary string
-	WorkDone      string
-	NowPossible   string
-	HowToVerify   string
-	Surprises     string
-	NeedsReview   string
-	UpdatedAt     string
-	ID            int64
-}
-
-func (q *Queries) FinalizeGoal(ctx context.Context, arg FinalizeGoalParams) (sql.Result, error) {
-	return q.db.ExecContext(ctx, finalizeGoal,
-		arg.ResultSummary,
-		arg.WorkDone,
-		arg.NowPossible,
-		arg.HowToVerify,
-		arg.Surprises,
-		arg.NeedsReview,
-		arg.UpdatedAt,
-		arg.ID,
-	)
-}
-
 const finalizeGoalReview = `-- name: FinalizeGoalReview :execresult
 UPDATE goals SET status = 'done', updated_at = ?
 WHERE id = ? AND status = 'active'
@@ -210,19 +163,6 @@ type FinalizeGoalReviewParams struct {
 
 func (q *Queries) FinalizeGoalReview(ctx context.Context, arg FinalizeGoalReviewParams) (sql.Result, error) {
 	return q.db.ExecContext(ctx, finalizeGoalReview, arg.UpdatedAt, arg.ID)
-}
-
-const getCompletionDecisionGoalID = `-- name: GetCompletionDecisionGoalID :one
-SELECT goal_id
-FROM decisions
-WHERE id = ? AND kind = 'completion' AND status = 'open'
-`
-
-func (q *Queries) GetCompletionDecisionGoalID(ctx context.Context, id int64) (int64, error) {
-	row := q.db.QueryRowContext(ctx, getCompletionDecisionGoalID, id)
-	var goal_id int64
-	err := row.Scan(&goal_id)
-	return goal_id, err
 }
 
 const getGoal = `-- name: GetGoal :one
@@ -701,20 +641,6 @@ type MarkGoalActiveParams struct {
 
 func (q *Queries) MarkGoalActive(ctx context.Context, arg MarkGoalActiveParams) (sql.Result, error) {
 	return q.db.ExecContext(ctx, markGoalActive, arg.UpdatedAt, arg.ID)
-}
-
-const markGoalDone = `-- name: MarkGoalDone :execresult
-UPDATE goals SET status = 'done', updated_at = ?
-WHERE id = ?
-`
-
-type MarkGoalDoneParams struct {
-	UpdatedAt string
-	ID        int64
-}
-
-func (q *Queries) MarkGoalDone(ctx context.Context, arg MarkGoalDoneParams) (sql.Result, error) {
-	return q.db.ExecContext(ctx, markGoalDone, arg.UpdatedAt, arg.ID)
 }
 
 const markGoalDropped = `-- name: MarkGoalDropped :execresult

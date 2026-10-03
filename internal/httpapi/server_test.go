@@ -1967,40 +1967,29 @@ func TestHTTPGoalDetailDoesNotDuplicateTaskDecision(t *testing.T) {
 
 func TestHTTPGoalDetailIncludesCompletionDecision(t *testing.T) {
 	f := newBareFixture(t)
-	decision, err := f.store.CompleteGoalWithReport(f.ctx, f.goal.ID, domain.CompletionReport{
-		WorkDone:    "The work is ready",
-		NowPossible: "The goal can be approved",
-		HowToVerify: "Review the completion report",
-		Surprises:   "なし",
-		NeedsReview: "なし",
-		NextGoalIDs: []int64{},
-	}, testSessionID("completion-run"))
+	commanderID, err := f.store.RegisterAgentSession(f.ctx, os.Getpid())
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("RegisterAgentSession: %v", err)
 	}
+	decision := requestHTTPGoalReview(t, f, f.goal.ID, commanderID, "goal-detail-review")
 
 	detail := fetchGoalDetail(t, f)
 	if len(detail.UnattachedDecisions) != 1 {
 		t.Fatalf("unattached_decisions = %+v", detail.UnattachedDecisions)
 	}
 	got := detail.UnattachedDecisions[0]
-	if got.ID != decision.ID || got.Kind != domain.DecisionKind("completion") || got.TaskID != 0 {
-		t.Fatalf("completion decision = %+v", got)
+	if got.ID != decision.ID || got.Kind != domain.KindGoalReview || got.TaskID != 0 {
+		t.Fatalf("goal review decision = %+v", got)
 	}
 }
 
 func TestHTTPGoalDetailIncludesCompletionReportFields(t *testing.T) {
 	f := newBareFixture(t)
-	if _, err := f.store.CompleteGoalWithReport(f.ctx, f.goal.ID, domain.CompletionReport{
-		WorkDone:    "The work is ready",
-		NowPossible: "The goal can be approved",
-		HowToVerify: "Review the completion report",
-		Surprises:   "なし",
-		NeedsReview: "なし",
-		NextGoalIDs: []int64{},
-	}, testSessionID("completion-run")); err != nil {
-		t.Fatal(err)
+	commanderID, err := f.store.RegisterAgentSession(f.ctx, os.Getpid())
+	if err != nil {
+		t.Fatalf("RegisterAgentSession: %v", err)
 	}
+	requestHTTPGoalReview(t, f, f.goal.ID, commanderID, "goal-detail-report")
 
 	srv := newTestServer(t, f.store)
 	defer srv.Close()
@@ -2050,26 +2039,12 @@ func TestHTTPGoalDetailIncludesOrderedShallowNextGoals(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.store.CompleteGoalWithReport(f.ctx, first.ID, domain.CompletionReport{
-		WorkDone:    "The first successor is ready",
-		NowPossible: "The successor can be picked up",
-		HowToVerify: "Read the goal detail",
-		Surprises:   "なし",
-		NeedsReview: "なし",
-		NextGoalIDs: []int64{grandchild.ID},
-	}, testSessionID("first-successor-run")); err != nil {
-		t.Fatal(err)
+	commanderID, err := f.store.RegisterAgentSession(f.ctx, os.Getpid())
+	if err != nil {
+		t.Fatalf("RegisterAgentSession: %v", err)
 	}
-	if _, err := f.store.CompleteGoalWithReport(f.ctx, f.goal.ID, domain.CompletionReport{
-		WorkDone:    "The source goal is ready",
-		NowPossible: "The successor can be picked up",
-		HowToVerify: "Read the goal detail",
-		Surprises:   "なし",
-		NeedsReview: "なし",
-		NextGoalIDs: []int64{second.ID, first.ID},
-	}, testSessionID("source-goal-run")); err != nil {
-		t.Fatal(err)
-	}
+	requestHTTPGoalReview(t, f, first.ID, commanderID, "first-successor", grandchild.ID)
+	requestHTTPGoalReview(t, f, f.goal.ID, commanderID, "source-goal", second.ID, first.ID)
 
 	srv := newTestServer(t, f.store)
 	defer srv.Close()
@@ -2489,40 +2464,6 @@ func declareWakeupTestTasks(t *testing.T, f *fixture) []domain.Task {
 	return tasks
 }
 
-func TestHTTPAnswerRejectsCompletionDecision(t *testing.T) {
-	f := newFixture(t)
-	completion, err := f.store.AskDecision(f.ctx, store.AskInput{
-		GoalID:   f.goal.ID,
-		TaskID:   f.tasks[0].ID,
-		Kind:     domain.KindCompletion,
-		Question: "May this task be completed?",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	srv := newTestServer(t, f.store)
-	defer srv.Close()
-
-	status, headers, body := doRequest(t, srv.Client(), http.MethodPost, urlID(srv.URL+"/api/decisions/", completion.ID)+"/answer", mustJSON(t, map[string]string{
-		"answer_text": "yes",
-	}))
-	assertErrorObject(t, status, headers, body, http.StatusBadRequest)
-	var response map[string]string
-	if err := json.Unmarshal(body, &response); err != nil {
-		t.Fatal(err)
-	}
-	if response["error"] != "use approve or reject for this decision" {
-		t.Fatalf("unexpected answer guard error = %q", response["error"])
-	}
-	got, err := f.store.GetDecision(f.ctx, completion.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.Status != domain.DecisionOpen {
-		t.Fatalf("completion decision status = %q, want open", got.Status)
-	}
-}
-
 func TestHTTPAnswerRejectsGoalApprovalDecision(t *testing.T) {
 	f := newFixture(t)
 	approval, err := f.store.AskDecision(f.ctx, store.AskInput{
@@ -2579,67 +2520,100 @@ func TestHTTPAnswerAllowsDecisionKind(t *testing.T) {
 	}
 }
 
-func TestHTTPApproveAndRejectCompletionEndpoints(t *testing.T) {
+func TestHTTPAnswerRejectsRetiredCompletionDecision(t *testing.T) {
 	f := newBareFixture(t)
+	completion, err := f.store.AskDecision(f.ctx, store.AskInput{
+		GoalID:         f.goal.ID,
+		Kind:           domain.DecisionKind("completion"),
+		Question:       "May this goal be completed?",
+		AgentSessionID: testSessionID("http-retired-completion-answer"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	srv := newTestServer(t, f.store)
 	defer srv.Close()
-	client := srv.Client()
 
-	approveGoal, err := f.store.CreateGoal(f.ctx, f.project.ID, "Approve me", "human")
+	status, headers, body := doRequest(t, srv.Client(), http.MethodPost, urlID(srv.URL+"/api/decisions/", completion.ID)+"/answer", mustJSON(t, map[string]string{
+		"answer_text": "yes",
+	}))
+	assertErrorObject(t, status, headers, body, http.StatusBadRequest)
+	var response map[string]string
+	if err := json.Unmarshal(body, &response); err != nil {
+		t.Fatal(err)
+	}
+	if response["error"] != "use approve or reject for this decision" {
+		t.Fatalf("unexpected retired completion answer error = %q", response["error"])
+	}
+	got, err := f.store.GetDecision(f.ctx, completion.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	approveDecision, err := f.store.CompleteGoalWithReport(f.ctx, approveGoal.ID, domain.CompletionReport{
-		WorkDone:    "finished",
-		NowPossible: "The goal is ready for approval",
-		HowToVerify: "Inspect the approved goal",
-		Surprises:   "なし",
-		NeedsReview: "なし",
-		NextGoalIDs: []int64{},
-	}, testSessionID("approve-run"))
-	if err != nil {
-		t.Fatal(err)
+	if got.Status != domain.DecisionOpen {
+		t.Fatalf("completion decision status = %q, want open", got.Status)
 	}
-	status, headers, body := doRequest(t, client, http.MethodPost, urlID(srv.URL+"/api/decisions/", approveDecision.ID)+"/approve", mustJSON(t, map[string]string{}))
-	if status != http.StatusOK {
-		t.Fatalf("approve status = %d; body=%s", status, body)
-	}
-	var approvedGoal domain.Goal
-	if err := json.Unmarshal(body, &approvedGoal); err != nil {
-		t.Fatal(err)
-	}
-	if approvedGoal.ID != approveGoal.ID || approvedGoal.Status != domain.GoalStatus("done") {
-		t.Fatalf("approved goal = %+v", approvedGoal)
-	}
+}
 
-	rejectGoal, err := f.store.CreateGoal(f.ctx, f.project.ID, "Reject me", "human")
-	if err != nil {
-		t.Fatal(err)
+func TestHTTPRevisionRejectsSettledRetiredCompletionDecision(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		settle func(*fixture, int64) error
+	}{
+		{
+			name: "answered",
+			settle: func(f *fixture, decisionID int64) error {
+				_, err := f.store.AnswerDecision(f.ctx, store.AnswerInput{DecisionID: decisionID, AnswerText: "yes"})
+				return err
+			},
+		},
+		{
+			name: "withdrawn",
+			settle: func(f *fixture, decisionID int64) error {
+				return f.store.WithdrawDecision(f.ctx, decisionID, "legacy completion retired")
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newBareFixture(t)
+			completion, err := f.store.AskDecision(f.ctx, store.AskInput{
+				GoalID:         f.goal.ID,
+				Kind:           domain.DecisionKind("completion"),
+				Question:       "May this goal be completed?",
+				AgentSessionID: testSessionID("http-retired-completion-" + tc.name),
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := tc.settle(f, completion.ID); err != nil {
+				t.Fatalf("settle completion decision: %v", err)
+			}
+			before, err := f.store.ListDecisionsForGoal(f.ctx, f.goal.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			srv := newTestServer(t, f.store)
+			defer srv.Close()
+			status, headers, body := doRequest(t, srv.Client(), http.MethodPost, urlID(srv.URL+"/api/decisions/", completion.ID)+"/revise", mustJSON(t, map[string]any{
+				"options": []map[string]string{{"label": "new"}},
+			}))
+			assertErrorObject(t, status, headers, body, http.StatusConflict)
+			var response map[string]string
+			if err := json.Unmarshal(body, &response); err != nil {
+				t.Fatal(err)
+			}
+			if response["error"] != "decision is not open" {
+				t.Fatalf("unexpected retired completion revision error = %q", response["error"])
+			}
+			after, err := f.store.ListDecisionsForGoal(f.ctx, f.goal.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(after) != len(before) {
+				t.Fatalf("decision count after retired completion revision = %d, want %d", len(after), len(before))
+			}
+		})
 	}
-	rejectDecision, err := f.store.CompleteGoalWithReport(f.ctx, rejectGoal.ID, domain.CompletionReport{
-		WorkDone:    "try again",
-		NowPossible: "Rework can continue",
-		HowToVerify: "Review the rejection reason",
-		Surprises:   "なし",
-		NeedsReview: "needs work",
-		NextGoalIDs: []int64{},
-	}, testSessionID("reject-run"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	status, _, body = doRequest(t, client, http.MethodPost, urlID(srv.URL+"/api/decisions/", rejectDecision.ID)+"/reject", mustJSON(t, map[string]string{"reason": "needs work"}))
-	if status != http.StatusOK {
-		t.Fatalf("reject status = %d; body=%s", status, body)
-	}
-	var rejected domain.Decision
-	if err := json.Unmarshal(body, &rejected); err != nil {
-		t.Fatal(err)
-	}
-	if rejected.ID != rejectDecision.ID || rejected.Status != domain.DecisionStatus("answered") {
-		t.Fatalf("rejected decision = %+v", rejected)
-	}
-	status, headers, body = doRequest(t, client, http.MethodPost, urlID(srv.URL+"/api/decisions/", rejectDecision.ID)+"/reject", mustJSON(t, map[string]string{}))
-	assertErrorObject(t, status, headers, body, http.StatusConflict)
 }
 
 func TestHTTPApproveAndRejectGoalReviewEndpoints(t *testing.T) {
@@ -2692,7 +2666,7 @@ func TestHTTPApproveAndRejectGoalReviewEndpoints(t *testing.T) {
 	}
 }
 
-func requestHTTPGoalReview(t *testing.T, f *fixture, goalID, commanderID int64, label string) domain.Decision {
+func requestHTTPGoalReview(t *testing.T, f *fixture, goalID, commanderID int64, label string, nextGoalIDs ...int64) domain.Decision {
 	t.Helper()
 	receiverID := registerTestSession(t, f.store, label+"-receiver", 0)
 	if _, err := f.store.ClaimProject(f.ctx, f.project.ID, commanderID); err != nil {
@@ -2713,7 +2687,7 @@ func requestHTTPGoalReview(t *testing.T, f *fixture, goalID, commanderID int64, 
 	}
 	review, err := f.store.RequestGoalReview(f.ctx, goalID, commanderID, domain.CompletionReport{
 		WorkDone: "completed " + label, NowPossible: "reviewable result", HowToVerify: "run the HTTP endpoint test",
-		Surprises: "none", NeedsReview: "approve or reject", NextGoalIDs: []int64{},
+		Surprises: "none", NeedsReview: "approve or reject", NextGoalIDs: append([]int64{}, nextGoalIDs...),
 	})
 	if err != nil {
 		t.Fatalf("RequestGoalReview: %v", err)
@@ -3730,47 +3704,6 @@ func TestSSEPublishesAllDecisionTransitionsWithExactPayloads(t *testing.T) {
 	}
 	assertSSEDecision(t, reader, "decision.withdrawn", withdrawn)
 
-	approveDecision, err := f.store.CompleteGoalWithReport(f.ctx, goals[0].ID, domain.CompletionReport{
-		WorkDone:    "done",
-		NowPossible: "The goal is approved",
-		HowToVerify: "Check the approval event",
-		Surprises:   "なし",
-		NeedsReview: "なし",
-		NextGoalIDs: []int64{},
-	}, testSessionID("approve-run"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	assertSSEDecision(t, reader, "decision.created", approveDecision)
-	if _, err := f.store.ApproveCompletion(f.ctx, approveDecision.ID); err != nil {
-		t.Fatal(err)
-	}
-	approveDecision, err = f.store.GetDecision(f.ctx, approveDecision.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	assertSSEDecision(t, reader, "decision.approved", approveDecision)
-
-	rejectDecision, err := f.store.CompleteGoalWithReport(f.ctx, goals[1].ID, domain.CompletionReport{
-		WorkDone:    "not yet",
-		NowPossible: "Rework can continue",
-		HowToVerify: "Check the rejection event",
-		Surprises:   "なし",
-		NeedsReview: "needs work",
-		NextGoalIDs: []int64{},
-	}, testSessionID("reject-run"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	assertSSEDecision(t, reader, "decision.created", rejectDecision)
-	if err := f.store.RejectCompletion(f.ctx, rejectDecision.ID, "needs work"); err != nil {
-		t.Fatal(err)
-	}
-	rejectDecision, err = f.store.GetDecision(f.ctx, rejectDecision.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	assertSSEDecision(t, reader, "decision.rejected", rejectDecision)
 }
 
 func TestHTTPUnknownGoalAndDecisionReturnJSONNotFound(t *testing.T) {
@@ -4079,19 +4012,16 @@ func TestHTTPGoalContentRejectsDoneAndDroppedGoals(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	completion, err := f.store.CompleteGoalWithReport(f.ctx, done.ID, domain.CompletionReport{
-		WorkDone:    "done",
-		NowPossible: "none",
-		HowToVerify: "verify",
-		Surprises:   "none",
-		NeedsReview: "none",
-		NextGoalIDs: []int64{},
-	}, testSessionID("done-run"))
+	commanderID, err := f.store.RegisterAgentSession(f.ctx, os.Getpid())
 	if err != nil {
-		t.Fatalf("complete done goal: %v", err)
+		t.Fatalf("RegisterAgentSession: %v", err)
 	}
-	if _, err := f.store.ApproveCompletion(f.ctx, completion.ID); err != nil {
-		t.Fatalf("approve done goal: %v", err)
+	doneReview := requestHTTPGoalReview(t, f, done.ID, commanderID, "http-content-done")
+	if _, err := f.store.ApproveGoalReview(f.ctx, doneReview.ID); err != nil {
+		t.Fatalf("ApproveGoalReview: %v", err)
+	}
+	if _, err := f.store.FinalizeGoalReview(f.ctx, done.ID, commanderID); err != nil {
+		t.Fatalf("FinalizeGoalReview: %v", err)
 	}
 
 	dropped, err := f.store.CreateGoal(f.ctx, f.project.ID, "Dropped goal", "agent")

@@ -216,10 +216,23 @@ func TestTaskHandoffRoutesOverRPC(t *testing.T) {
 	if received.ReceivedAt == nil || received.ReceivedBy != fixture.receiverID {
 		t.Fatalf("received handoff = %#v, want receipt timestamp and receiver", received)
 	}
+	var reviewRequested store.TaskHandoff
+	if err := client.Call(ctx, "task.handoff.review.request", map[string]any{
+		"handoff_id": "rpc-handoff-1", "task_id": fixture.claimedTaskID, "requested_by": fixture.receiverID,
+		"review_request_report": "RPC task handoff ready for review",
+	}, &reviewRequested); err != nil {
+		t.Fatalf("handoff.review.request: %v", err)
+	}
+	var reviewReceived handoffReceiveResponse
+	if err := client.Call(ctx, "task.handoff.review.receive", map[string]any{
+		"handoff_id": "rpc-handoff-1", "task_id": fixture.claimedTaskID, "received_by": fixture.requesterID,
+	}, &reviewReceived); err != nil {
+		t.Fatalf("handoff.review.receive: %v", err)
+	}
 
 	var completed store.TaskHandoff
 	if err := client.Call(ctx, "task.handoff.complete", map[string]any{
-		"handoff_id": "rpc-handoff-1", "task_id": fixture.claimedTaskID, "complete_report": "RPC task completion report",
+		"handoff_id": "rpc-handoff-1", "task_id": fixture.claimedTaskID, "agent_session_id": fixture.requesterID, "complete_report": "RPC task completion report",
 	}, &completed); err != nil {
 		t.Fatalf("handoff.complete: %v", err)
 	}
@@ -441,10 +454,23 @@ func TestTaskHandoffCompleteByTaskOverRPC(t *testing.T) {
 	}, &received); err != nil {
 		t.Fatalf("handoff.receive: %v", err)
 	}
+	var reviewRequested store.TaskHandoff
+	if err := client.Call(ctx, "task.handoff.review.request", map[string]any{
+		"handoff_id": requested.ID, "task_id": fixture.claimedTaskID, "requested_by": fixture.receiverID,
+		"review_request_report": "RPC task handoff ready for review",
+	}, &reviewRequested); err != nil {
+		t.Fatalf("handoff.review.request: %v", err)
+	}
+	var reviewReceived handoffReceiveResponse
+	if err := client.Call(ctx, "task.handoff.review.receive", map[string]any{
+		"handoff_id": requested.ID, "task_id": fixture.claimedTaskID, "received_by": fixture.requesterID,
+	}, &reviewReceived); err != nil {
+		t.Fatalf("handoff.review.receive: %v", err)
+	}
 
 	var completed store.TaskHandoff
 	if err := client.Call(ctx, "task.handoff.complete", map[string]any{
-		"task_id": fixture.claimedTaskID, "complete_report": "RPC task-ID completion report",
+		"handoff_id": requested.ID, "task_id": fixture.claimedTaskID, "agent_session_id": fixture.requesterID, "complete_report": "RPC task-ID completion report",
 	}, &completed); err != nil {
 		t.Fatalf("handoff.complete by task_id: %v", err)
 	}
@@ -474,12 +500,12 @@ func TestTaskHandoffCompleteByTaskOverRPCRejectsAmbiguousPendingRequests(t *test
 
 	var completed store.TaskHandoff
 	err := client.Call(ctx, "task.handoff.complete", map[string]any{
-		"task_id": fixture.claimedTaskID,
+		"task_id": fixture.claimedTaskID, "agent_session_id": fixture.requesterID,
 	}, &completed)
 	if err == nil {
 		t.Fatalf("ambiguous task handoff complete succeeded: %#v", completed)
 	}
-	if !strings.Contains(err.Error(), store.ErrTaskHandoffAmbiguous.Error()) {
-		t.Fatalf("ambiguous task handoff complete error = %v, want %v", err, store.ErrTaskHandoffAmbiguous)
+	if !strings.Contains(err.Error(), "task handoff completion by reviewer requires handoff_id") {
+		t.Fatalf("task handoff completion error = %v, want handoff_id diagnostic", err)
 	}
 }

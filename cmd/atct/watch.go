@@ -1762,7 +1762,7 @@ func formatWatchDecision(eventName string, decision watchDecision) (string, bool
 	case "wakeup":
 		return fmt.Sprintf("atct wakeup: actionable_goals=%d unassigned_goals=%d unstarted_tasks=%d waiting_answer_tasks=%d untouched_tasks=%d delegated_tasks=%d waiting_answers=%d unassigned=%s", decision.ActionableGoalCount, decision.UnassignedGoalCount, decision.UnstartedTaskCount, decision.WaitingAnswerTaskCount, decision.UntouchedTaskCount, decision.DelegatedTaskCount, decision.WaitingAnswerCount, formatUnassignedGoalIDs(decision.UnassignedGoalIDs)), true
 	case "wakeup.completion_report_missing":
-		return fmt.Sprintf("atct wakeup: goal %s has all tasks done but no completion report", decision.GoalID), true
+		return fmt.Sprintf("atct wakeup: goal %s has all tasks done; request named goal review with atct_goal_handoff_review_request", decision.GoalID), true
 	case "wakeup.commits_missing":
 		return fmt.Sprintf("atct wakeup: goal %s has no linked commits", decision.GoalID), true
 	case "wakeup.undeclared_goal":

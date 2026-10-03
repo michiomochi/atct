@@ -289,10 +289,13 @@ one-word decision inside a retrospective makes them ask again.
 1. Commit the goal's work.
 2. Close every task the goal declared.
 3. Fill in the five text fields, add `next_goal_ids` if goals should follow, and
-   call `atct_goal_complete`. What a caller supplies is a separate question
-   from what the column stores: all five text columns hold
-   non-empty text once the goal is `done`, so even "there was nothing here"
-   arrives as a written value.
+   call `atct_goal_review_request`. This records the report while the goal
+   handoff remains open for human approval. After approval and merge, the
+   commander calls `atct_goal_review_complete` to atomically complete the
+   reviewed handoff and the goal. What a caller supplies is a separate question
+   from what the column stores: all five text columns hold non-empty text once
+   the goal is `done`, so even "there was nothing here" arrives as a written
+   value.
 
 **Out of order:** Report first and the goal goes to the human for approval with
 zero commits and its tasks still `todo`. The dashboard says "completed" about work
@@ -300,9 +303,9 @@ that is not in the repository, `how_to_verify` points at changes the approver
 cannot find, and the tasks stay open behind a goal that is already closed. Goal
 144 closed with no commits and four tasks still `todo` on 2026-08-27.
 
-`atct_goal_complete` takes five required text fields and an optional
-`next_goal_ids` list, and the database rejects a completion with any text field
-empty. **For the five text fields — `work_done`,
+`atct_goal_review_request` takes five required text fields and an optional
+`next_goal_ids` list, and the database rejects a review request with any text
+field empty. **For the five text fields — `work_done`,
 `now_possible`, `how_to_verify`, `surprises`, `needs_review` — where nothing
 applies, say so** — writing "none" is the point, because it separates "there was
 nothing" from "I did not look."
@@ -363,11 +366,12 @@ whether you are still blocked on it.
 1. Answer or withdraw every decision still open on the goal's tasks. A task
    cannot become `done` while a decision on it is open.
 2. Set those tasks to `done`.
-3. Call `atct_goal_complete` when the work is done. It creates a completion
-   decision for the human to approve or reject; approval closes the goal, and
-   rejection returns a reason for you to act on.
+3. Call `atct_goal_review_request` with the five text fields (plus `next_goal_ids` when goals should follow) when the work is
+   done. It sends the report to the human for approval while the goal handoff
+   remains open. After approval and merge, the commander calls
+   `atct_goal_review_complete`; rejection returns a reason for you to act on.
 
 **Out of order:** Go for `done` with a decision still open and the update is
-refused, so the goal never reaches a state `atct_goal_complete` can describe
+refused, so the goal never reaches a state the review request can describe
 truthfully. You find that out at the last step, with a completion report already
 written, and have to go back for the decision you left open.

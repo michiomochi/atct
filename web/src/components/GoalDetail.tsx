@@ -15,7 +15,7 @@ import {
   type GoalResponse,
 } from "../lib/api";
 import { formatDateTime } from "../i18n";
-import { body, findOpenCompletion, findOpenGoalApproval, findOpenGoalReview, hasCompletionReport, headline, resolveRouteID, statusLabel, type CompletionReportFields } from "../lib/ui";
+import { body, findOpenGoalApproval, findOpenGoalReview, hasCompletionReport, headline, resolveRouteID, statusLabel, type CompletionReportFields } from "../lib/ui";
 import { AreaLoading, ErrorState } from "./StateMessage";
 import { GoalDiff } from "./GoalDiff";
 import { TaskCommitList } from "./TaskCommitList";
@@ -33,13 +33,10 @@ type LoadState =
 
 interface GoalDetailData {
   goal: GoalResponse;
-  completion?: Decision;
   goalApproval?: Decision;
   goalReview?: Decision;
   unattachedDecisions: Decision[];
 }
-
-type CompletionAction = "approve" | "reject";
 
 function errorMessage(reason: unknown, fallback: string): string {
   return reason instanceof Error ? reason.message : fallback;
@@ -82,112 +79,6 @@ function CompletionReport({ goal }: { goal: Goal }) {
           );
         })}
       </div>
-    </section>
-  );
-}
-
-function CompletionApproval({
-  decision,
-  onUpdated,
-  reason,
-  onReasonChange,
-}: {
-  decision: Decision;
-  onUpdated: () => void;
-  reason: string;
-  onReasonChange: (reason: string) => void;
-}) {
-  const { t } = useTranslation();
-  const [submitError, setSubmitError] = useState<string | null>(null);
-  const [conflict, setConflict] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
-
-  const reasonID = `completion-reason-${decision.id}`;
-
-  async function submit(action: CompletionAction) {
-    setSubmitError(null);
-    setConflict(false);
-
-    setSubmitting(true);
-    try {
-      if (action === "approve") {
-        await approveDecision(decision.id);
-      } else {
-        await rejectDecision(decision.id, reason.trim());
-      }
-      onUpdated();
-    } catch (error) {
-      if (error instanceof ApiError && error.status === 409) {
-        setConflict(true);
-      } else {
-        setSubmitError(error instanceof Error ? error.message : t("goal.completion.error.update"));
-      }
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const submitter = (event.nativeEvent as SubmitEvent).submitter;
-    const action: CompletionAction = submitter instanceof HTMLButtonElement && submitter.value === "reject" ? "reject" : "approve";
-    void submit(action);
-  }
-
-  if (conflict) {
-    return (
-      <section className="min-w-0 border-t border-line pt-5" data-testid="completion-approval" aria-labelledby="completion-approval-heading">
-        <h2 id="completion-approval-heading" className="font-display text-lg font-semibold text-ink-950">{t("goal.completion.title")}</h2>
-        <div className="mt-4 border border-notice-800 bg-notice-100 px-4 py-4 text-base text-notice-800" role="alert">
-          <p>{t("goal.completion.conflict")}</p>
-          <Button
-            type="button"
-            variant="outline"
-            className="focus-ring mt-3 px-3 py-2 text-base font-medium"
-            onClick={onUpdated}
-          >
-            {t("goal.completion.fetchLatest")}
-          </Button>
-        </div>
-      </section>
-    );
-  }
-
-  return (
-    <section className="min-w-0 border-t border-line pt-5" data-testid="completion-approval" aria-labelledby="completion-approval-heading">
-        <h2 id="completion-approval-heading" className="font-display text-lg font-semibold text-ink-950">{t("goal.completion.title")}</h2>
-      <form className="mt-4 min-w-0 max-w-3xl border-l-2 border-accent-600 pl-4" onSubmit={handleSubmit} noValidate>
-        <label className="mb-3 block text-base text-ink-800" htmlFor={reasonID}>
-          {t("goal.completion.reason")} <span className="text-ink-500">{t("form.optional")}</span>
-          <textarea
-            className="focus-ring mt-1 block min-h-24 w-full resize-y border border-line bg-surface px-3 py-2 text-base leading-6 text-ink-950"
-            id={reasonID}
-            value={reason}
-            onChange={(event) => onReasonChange(event.target.value)}
-          />
-        </label>
-        {submitError && <p className="mb-3 text-base text-danger-700" role="alert">{submitError}</p>}
-        <div className="flex flex-wrap gap-3">
-          <Button
-            type="submit"
-            value="approve"
-            variant="primary"
-            disabled={submitting}
-            className="focus-ring px-3 py-2 text-base font-medium disabled:cursor-wait disabled:opacity-60"
-          >
-            {submitting ? t("goal.completion.submitting") : t("goal.completion.approve")}
-          </Button>
-          <Button
-            type="submit"
-            value="reject"
-            variant="secondary-destructive"
-            disabled={submitting}
-            className="focus-ring px-3 py-2 text-base font-medium disabled:cursor-wait disabled:opacity-60"
-          >
-            {t("goal.completion.reject")}
-          </Button>
-        </div>
-      </form>
     </section>
   );
 }
@@ -244,7 +135,7 @@ function GoalApproval({
       <p className="mt-2 max-w-3xl text-base leading-6 text-ink-700">{t("goal.approval.description")}</p>
       <form className="mt-4 min-w-0 max-w-3xl border-l-2 border-accent-600 pl-4" onSubmit={handleSubmit} noValidate>
         <label className="mb-3 block text-base text-ink-800" htmlFor={reasonID}>
-          {t("goal.completion.reason")}
+          {t("goal.approval.reason")}
           <textarea
             className="focus-ring mt-1 block min-h-24 w-full resize-y border border-line bg-surface px-3 py-2 text-base leading-6 text-ink-950"
             id={reasonID}
@@ -263,7 +154,7 @@ function GoalApproval({
             disabled={submitting}
             className="focus-ring px-3 py-2 text-base font-medium disabled:cursor-wait disabled:opacity-60"
           >
-            {submitting ? t("goal.completion.submitting") : t("goal.approval.approve")}
+            {submitting ? t("goal.approval.submitting") : t("goal.approval.approve")}
           </Button>
           <Button
             type="submit"
@@ -565,17 +456,12 @@ function GoalContentEdit({ goal, onUpdated }: { goal: Goal; onUpdated: () => voi
 
 export function GoalDetail({ id }: Props) {
   const [state, setState] = useState<LoadState>({ kind: "loading" });
-  const [completionReason, setCompletionReason] = useState("");
   const [goalApprovalReason, setGoalApprovalReason] = useState("");
   const [goalReviewReason, setGoalReviewReason] = useState("");
   const [updatePending, setUpdatePending] = useState(false);
   const { t, i18n } = useTranslation();
   const pathname = id === "_" && typeof window !== "undefined" ? window.location.pathname : "";
   const resolvedID = resolveRouteID(id, pathname, "/goals/");
-
-  const handleCompletionReasonChange = useCallback((reason: string) => {
-    setCompletionReason(reason);
-  }, []);
 
   const handleGoalApprovalReasonChange = useCallback((reason: string) => {
     setGoalApprovalReason(reason);
@@ -587,19 +473,17 @@ export function GoalDetail({ id }: Props) {
 
   const load = useCallback(async () => {
     setUpdatePending(false);
-    setCompletionReason("");
     setGoalApprovalReason("");
     setGoalReviewReason("");
     setState({ kind: "loading" });
     try {
       const goal = await fetchGoal(resolvedID);
-      const completion = findOpenCompletion(goal.unattached_decisions);
       const goalApproval = findOpenGoalApproval(goal.unattached_decisions);
       const goalReview = findOpenGoalReview(goal.unattached_decisions);
       const unattachedDecisions = goal.unattached_decisions.filter(
         (decision) => decision.kind === "decision" && decision.status === "open",
       );
-      setState({ kind: "ready", data: { goal, completion, goalApproval, goalReview, unattachedDecisions } });
+      setState({ kind: "ready", data: { goal, goalApproval, goalReview, unattachedDecisions } });
     } catch (reason) {
       setState({ kind: "error", message: errorMessage(reason, t("goal.error.load")) });
     }
@@ -682,15 +566,6 @@ export function GoalDetail({ id }: Props) {
             </section>
           ))}
         </section>
-      )}
-
-      {data?.completion && (
-        <CompletionApproval
-          decision={data.completion}
-          onUpdated={load}
-          reason={completionReason}
-          onReasonChange={handleCompletionReasonChange}
-        />
       )}
 
       {data?.goalReview && (

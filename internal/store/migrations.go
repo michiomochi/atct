@@ -1144,7 +1144,7 @@ func validateAppliedMigrations(state migrationState, migrations []embeddedMigrat
 
 func execEmbeddedMigration(ctx context.Context, conn *sql.Conn, migration embeddedMigration) error {
 	var goalIndexes []string
-	if migration.filename == "0045_next_goals.sql" {
+	if migration.filename == "0046_next_goals.sql" {
 		var err error
 		goalIndexes, err = goalIndexesOnConn(ctx, conn)
 		if err != nil {

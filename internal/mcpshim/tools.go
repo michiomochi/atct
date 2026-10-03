@@ -226,13 +226,12 @@ type DecisionWithdrawIn struct {
 }
 
 type GoalCompleteIn struct {
-	GoalID      mcpID   `json:"goal_id"`
-	WorkDone    string  `json:"work_done" jsonschema:"what was completed; write なし when there is nothing to report"`
-	NowPossible string  `json:"now_possible" jsonschema:"what is possible now; write なし when there is nothing to report"`
-	HowToVerify string  `json:"how_to_verify" jsonschema:"how to verify the result; write なし when there is nothing to report"`
-	Surprises   string  `json:"surprises" jsonschema:"what differed from expectations; write なし when there is nothing to report"`
-	NeedsReview string  `json:"needs_review" jsonschema:"what still needs confirmation; write なし when there is nothing to report"`
-	NextGoalIDs []int64 `json:"next_goal_ids,omitempty" jsonschema:"optional ordered successor goal IDs"`
+	GoalID      mcpID  `json:"goal_id"`
+	WorkDone    string `json:"work_done" jsonschema:"what was completed; write なし when there is nothing to report"`
+	NowPossible string `json:"now_possible" jsonschema:"what is possible now; write なし when there is nothing to report"`
+	HowToVerify string `json:"how_to_verify" jsonschema:"how to verify the result; write なし when there is nothing to report"`
+	Surprises   string `json:"surprises" jsonschema:"what differed from expectations; write なし when there is nothing to report"`
+	NeedsReview string `json:"needs_review" jsonschema:"what still needs confirmation; write なし when there is nothing to report"`
 
 	// ResultSummary keeps old Go callers compiling without exposing the removed
 	// result_summary MCP argument.
@@ -810,7 +809,7 @@ func Register(server *mcp.Server, c *Client, agentSessionID int64) {
 
 	addMCPTool[GoalWithdrawIn, RawWithUnappliedDecisions](server, &mcp.Tool{
 		Name:         "atct_goal_withdraw",
-		Description:  "Abandon an active goal, dropping its open tasks and withdrawing its open decisions. Only the project commander may do this, and only for work that is being given up rather than finished: a goal that was completed goes through atct_goal_complete instead.",
+		Description:  "Abandon an active goal, dropping its open tasks and withdrawing its open decisions. Only the project commander may do this, and only for work that is being given up rather than finished: completed work goes through atct_goal_review_request followed by atct_goal_review_complete.",
 		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in GoalWithdrawIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
 		return callWithUnappliedDecisions(ctx, c, "goal.withdraw", map[string]any{
@@ -1143,14 +1142,14 @@ func Register(server *mcp.Server, c *Client, agentSessionID int64) {
 
 	addMCPTool[GoalCompleteIn, RawWithUnappliedDecisions](server, &mcp.Tool{
 		Name:         "atct_goal_complete",
-		Description:  "Finalize an active goal with its six-part completion report after human goal review approval.",
+		Description:  "Retired compatibility entry point. Use atct_goal_review_request, then atct_goal_review_complete.",
 		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in GoalCompleteIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
 		return callWithUnappliedDecisions(ctx, c, "goal.complete", map[string]any{
 			"goal_id": in.GoalID, "work_done": in.WorkDone,
 			"now_possible": in.NowPossible, "how_to_verify": in.HowToVerify,
 			"surprises": in.Surprises, "needs_review": in.NeedsReview,
-			"next_goal_ids": in.NextGoalIDs, "agent_session_id": sessionID.Get(), "include_unapplied_answers": true,
+			"agent_session_id": sessionID.Get(), "include_unapplied_answers": true,
 		})
 	})
 

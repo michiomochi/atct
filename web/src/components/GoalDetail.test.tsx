@@ -144,20 +144,6 @@ function taskView(id: string, title: string, order: number): TaskView {
   };
 }
 
-function completionDecision(): Decision {
-  return {
-    id: "completion-1",
-    goal_id: "goal-1",
-    goal_headline: "Fixture goal",
-    kind: "completion",
-    question: "Review the completion",
-    options: [],
-    status: "open",
-    agent_session_id: "fixture-run",
-    created_at: "2026-08-20T00:00:00Z",
-  };
-}
-
 function goalApprovalDecision(): Decision {
   return {
     id: "goal-approval-1",
@@ -295,7 +281,6 @@ describe("GoalDetail", () => {
     const response = goalResponse({ status: "proposed" });
     response.unattached_decisions = [
       ordinaryDecision(),
-      completionDecision(),
       goalApprovalDecision(),
       goalReviewDecision(),
     ];
@@ -312,7 +297,6 @@ describe("GoalDetail", () => {
     expect(within(list).queryByText("Approve the proposed goal")).toBeNull();
     expect(within(list).queryByText("Review the completed goal handoff")).toBeNull();
     expect(within(list).queryAllByRole("button", { name: "form.answer.submit" })).toHaveLength(1);
-    expect(screen.getByTestId("completion-approval")).not.toBeNull();
     expect(screen.getByTestId("goal-approval")).not.toBeNull();
     expect(screen.getByTestId("goal-review")).not.toBeNull();
   });
@@ -465,14 +449,14 @@ describe("GoalDetail", () => {
       return () => undefined;
     });
     const response = goalResponse({});
-    response.unattached_decisions = [completionDecision()];
+    response.unattached_decisions = [goalReviewDecision()];
     vi.mocked(fetchGoal).mockResolvedValue(response);
 
     render(<GoalDetail id="goal-1" />);
 
-    const completionApproval = () => within(screen.getByTestId("completion-approval"));
-    await waitFor(() => expect(completionApproval().getByRole("textbox")).not.toBeNull());
-    const reason = completionApproval().getByRole("textbox");
+    const goalReview = () => within(screen.getByTestId("goal-review"));
+    await waitFor(() => expect(goalReview().getByRole("textbox")).not.toBeNull());
+    const reason = goalReview().getByRole("textbox");
     fireEvent.change(reason, { target: { value: "keep this reason" } });
     act(() => decisionEvent?.("decision.created"));
 
@@ -482,7 +466,7 @@ describe("GoalDetail", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "state.fetchLatest" }));
     await waitFor(() => expect(fetchGoal).toHaveBeenCalledTimes(2));
-    await waitFor(() => expect((completionApproval().getByRole("textbox") as HTMLTextAreaElement).value).toBe(""));
+    await waitFor(() => expect((goalReview().getByRole("textbox") as HTMLTextAreaElement).value).toBe(""));
     expect(screen.queryByText("state.updateAvailable")).toBeNull();
   });
 

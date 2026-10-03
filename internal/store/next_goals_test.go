@@ -17,7 +17,7 @@ func TestMigration0045PreservesLegacyNextStepsAndCreatesNextGoals(t *testing.T) 
 	}
 	found := false
 	for _, migration := range migrations {
-		if migration.filename == "0045_next_goals.sql" {
+		if migration.filename == "0046_next_goals.sql" {
 			found = true
 			break
 		}
@@ -29,7 +29,7 @@ func TestMigration0045PreservesLegacyNextStepsAndCreatesNextGoals(t *testing.T) 
 		}
 	}
 	if !found {
-		t.Fatal("embedded migrations do not contain 0045_next_goals.sql")
+		t.Fatal("embedded migrations do not contain 0046_next_goals.sql")
 	}
 	if _, err := db.Exec(`PRAGMA user_version = 6`); err != nil {
 		t.Fatalf("set v6 schema version: %v", err)
@@ -53,7 +53,7 @@ CREATE INDEX idx_goals_content_for_next_goals_test ON goals(content);
 		t.Fatalf("apply 0045 migration: %v", err)
 	}
 	assertUserVersion(t, db, schemaVersion)
-	assertMigrationRecorded(t, db, "0045_next_goals.sql")
+	assertMigrationRecorded(t, db, "0046_next_goals.sql")
 	assertTableExists(t, db, "next_goals")
 	assertTableExists(t, db, "goal_review_state_snapshots")
 
@@ -152,12 +152,38 @@ func requireNextGoalIDs(t *testing.T, s *Store, ctx context.Context, goalID int6
 	}
 }
 
+// resubmitNextGoalsHandoff walks a rejected goal review back through the
+// handoff so that the next RequestGoalReview is allowed.
+func resubmitNextGoalsHandoff(t *testing.T, s *Store, ctx context.Context, handoffID string, goalID, requesterID, receiverID int64) {
+	t.Helper()
+	if _, err := s.RejectGoalHandoffReview(ctx, handoffID, goalID, requesterID, "revise"); err != nil {
+		t.Fatalf("RejectGoalHandoffReview: %v", err)
+	}
+	if _, err := s.ReceiveGoalHandoffReviewRejection(ctx, handoffID, goalID, receiverID); err != nil {
+		t.Fatalf("ReceiveGoalHandoffReviewRejection: %v", err)
+	}
+	if _, err := s.RequestGoalHandoffReview(ctx, handoffID, goalID, receiverID, "revised goal ready"); err != nil {
+		t.Fatalf("RequestGoalHandoffReview: %v", err)
+	}
+	if _, err := s.ReceiveGoalHandoffReview(ctx, handoffID, goalID, requesterID); err != nil {
+		t.Fatalf("ReceiveGoalHandoffReview: %v", err)
+	}
+}
+
 func TestNextGoalsPreserveOrderReplaceLinksAndAllowEmptyInput(t *testing.T) {
 	s, ctx, source, first, second := nextGoalsFixture(t)
+	requester := "next-goals-replace-requester"
+	receiver := "next-goals-replace-receiver"
+	requesterID := testSessionID(requester)
+	receiverID := testSessionID(receiver)
+	addLiveProjectClaim(t, s, source.ID, requester)
+	addTestAgentSession(t, s, receiver)
+	const handoffID = "next-goals-replace-handoff"
+	receiveGoalHandoffReviewForGoalReviewTest(t, s, ctx, handoffID, source.ID, requesterID, receiverID)
 
-	decision, err := s.CompleteGoalWithReport(ctx, source.ID, nextGoalsReport(second.ID, first.ID), testSessionID("next-goals-replace"))
+	review, err := s.RequestGoalReview(ctx, source.ID, requesterID, nextGoalsReport(second.ID, first.ID))
 	if err != nil {
-		t.Fatalf("CompleteGoalWithReport: %v", err)
+		t.Fatalf("RequestGoalReview: %v", err)
 	}
 	requireNextGoalIDs(t, s, ctx, source.ID, []int64{second.ID, first.ID})
 	goal, err := s.GetGoal(ctx, source.ID)
@@ -168,19 +194,21 @@ func TestNextGoalsPreserveOrderReplaceLinksAndAllowEmptyInput(t *testing.T) {
 		t.Fatalf("goal next-goal summaries = %v, want %v", got, []int64{second.ID, first.ID})
 	}
 
-	if err := s.RejectCompletion(ctx, decision.ID, "revise"); err != nil {
-		t.Fatalf("RejectCompletion: %v", err)
+	if err := s.RejectGoalReview(ctx, review.ID, "revise"); err != nil {
+		t.Fatalf("RejectGoalReview: %v", err)
 	}
-	decision, err = s.CompleteGoalWithReport(ctx, source.ID, nextGoalsReport(first.ID), testSessionID("next-goals-replace"))
+	resubmitNextGoalsHandoff(t, s, ctx, handoffID, source.ID, requesterID, receiverID)
+	review, err = s.RequestGoalReview(ctx, source.ID, requesterID, nextGoalsReport(first.ID))
 	if err != nil {
-		t.Fatalf("CompleteGoalWithReport replacement: %v", err)
+		t.Fatalf("RequestGoalReview replacement: %v", err)
 	}
 	requireNextGoalIDs(t, s, ctx, source.ID, []int64{first.ID})
-	if err := s.RejectCompletion(ctx, decision.ID, "clear links"); err != nil {
-		t.Fatalf("RejectCompletion replacement: %v", err)
+	if err := s.RejectGoalReview(ctx, review.ID, "clear links"); err != nil {
+		t.Fatalf("RejectGoalReview replacement: %v", err)
 	}
-	if _, err := s.CompleteGoalWithReport(ctx, source.ID, nextGoalsReport(), testSessionID("next-goals-replace")); err != nil {
-		t.Fatalf("CompleteGoalWithReport empty replacement: %v", err)
+	resubmitNextGoalsHandoff(t, s, ctx, handoffID, source.ID, requesterID, receiverID)
+	if _, err := s.RequestGoalReview(ctx, source.ID, requesterID, nextGoalsReport()); err != nil {
+		t.Fatalf("RequestGoalReview empty replacement: %v", err)
 	}
 	requireNextGoalIDs(t, s, ctx, source.ID, nil)
 }
@@ -207,9 +235,9 @@ func TestNextGoalsRejectInvalidTargetIDs(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := crossProjectStore.CompleteGoalWithReport(ctx, source.ID, nextGoalsReport(tc.ids...), testSessionID("next-goals-invalid-"+tc.name))
+			_, err := crossProjectStore.RequestGoalReview(ctx, source.ID, testSessionID("next-goals-invalid-"+tc.name), nextGoalsReport(tc.ids...))
 			if !errors.Is(err, tc.want) {
-				t.Fatalf("CompleteGoalWithReport error = %v, want %v", err, tc.want)
+				t.Fatalf("RequestGoalReview error = %v, want %v", err, tc.want)
 			}
 			requireNextGoalIDs(t, crossProjectStore, ctx, source.ID, nil)
 		})

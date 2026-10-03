@@ -163,32 +163,12 @@ JOIN goals AS g ON g.id = ng.next_goal_id
 WHERE ng.goal_id = ?
 ORDER BY ng.sort_order;
 
--- name: FinalizeGoal :execresult
-UPDATE goals
-SET status = 'done', result_summary = ?, work_done = ?, now_possible = ?,
-    how_to_verify = ?, surprises = ?, needs_review = ?, updated_at = ?
-WHERE id = ? AND status = 'active';
-
 -- name: UpdateGoalCompletionReport :execresult
 UPDATE goals SET
   result_summary = ?,
   work_done = ?, now_possible = ?, how_to_verify = ?,
   surprises = ?, needs_review = ?, updated_at = ?
 WHERE id = ? AND status = 'active';
-
--- name: GetCompletionDecisionGoalID :one
-SELECT goal_id
-FROM decisions
-WHERE id = ? AND kind = 'completion' AND status = 'open';
-
--- name: ApplyCompletionDecision :execresult
-UPDATE decisions SET status = 'applied', answer_label = 'approve',
-  answered_at = ?, applied_at = ?
-WHERE id = ?;
-
--- name: MarkGoalDone :execresult
-UPDATE goals SET status = 'done', updated_at = ?
-WHERE id = ?;
 
 -- name: FinalizeGoalReview :execresult
 UPDATE goals SET status = 'done', updated_at = ?
