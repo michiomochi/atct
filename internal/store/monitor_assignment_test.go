@@ -191,3 +191,158 @@ func TestMonitorBindingTracksAssignmentTransitions(t *testing.T) {
 		t.Fatalf("binding after completion = %+v, want %+v", got, want)
 	}
 }
+
+func TestMonitorBindingWatermarkSurvivesTokenRebind(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	firstSession, err := s.RegisterAgentSession(ctx, os.Getpid())
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondSession, err := s.RegisterAgentSession(ctx, os.Getpid())
+	if err != nil {
+		t.Fatal(err)
+	}
+	const token = "watermark-rebind-token"
+	const watermark = "2026-09-19T00:00:00Z"
+	if err := s.BindMonitorToken(ctx, token, firstSession); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.DB().ExecContext(ctx, `UPDATE monitor_bindings SET last_reconciled_at = ? WHERE token = ?`, watermark, token); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.BindMonitorToken(ctx, token, secondSession); err != nil {
+		t.Fatal(err)
+	}
+
+	var gotSession int64
+	var gotWatermark string
+	if err := s.DB().QueryRowContext(ctx, `SELECT agent_session_id, last_reconciled_at FROM monitor_bindings WHERE token = ?`, token).Scan(&gotSession, &gotWatermark); err != nil {
+		t.Fatal(err)
+	}
+	if gotSession != secondSession || gotWatermark != watermark {
+		t.Fatalf("monitor binding = (%d, %q), want (%d, %q)", gotSession, gotWatermark, secondSession, watermark)
+	}
+}
+
+func TestMonitorHealthAdvancesProjectCommanderWatermark(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	project, err := s.CreateProject(ctx, "monitor-watermark", t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := s.RegisterAgentSession(ctx, os.Getpid())
+	if err != nil {
+		t.Fatal(err)
+	}
+	const token = "health-watermark-token"
+	if err := s.BindMonitorToken(ctx, token, session); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	health := MonitorHealth{
+		MonitorToken: token, CWD: project.RootPath, Role: "commander", State: "healthy", Reason: "reconciled",
+		ProjectID: project.ID, PID: os.Getpid(), ProcessStartedAt: now.Add(-time.Minute),
+		TransitionedAt: now, LastSeenAt: now, ScopeKey: "project:monitor",
+	}
+	health.MonitorID = MonitorHealthID(health.CWD, health.Role, health.ProjectID, nil, nil, health.PID, health.ProcessStartedAt, health.ScopeKey)
+	if err := s.UpsertMonitorHealth(ctx, health); err != nil {
+		t.Fatal(err)
+	}
+
+	var got string
+	if err := s.DB().QueryRowContext(ctx, `SELECT last_reconciled_at FROM monitor_bindings WHERE token = ?`, token).Scan(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got != now.Format(timestampLayout) {
+		t.Fatalf("last_reconciled_at = %q, want %q", got, now.Format(timestampLayout))
+	}
+}
+
+func TestMonitorHealthDoesNotAdvanceScopedOrUnhealthyWatermark(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	project, err := s.CreateProject(ctx, "monitor-watermark-guard", t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := s.RegisterAgentSession(ctx, os.Getpid())
+	if err != nil {
+		t.Fatal(err)
+	}
+	const token = "health-watermark-guard-token"
+	const initial = "2026-09-18T00:00:00Z"
+	if err := s.BindMonitorToken(ctx, token, session); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.DB().ExecContext(ctx, `UPDATE monitor_bindings SET last_reconciled_at = ? WHERE token = ?`, initial, token); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	goalID := int64(9)
+	for _, health := range []MonitorHealth{
+		{MonitorToken: token, CWD: project.RootPath, Role: "commander", State: "recovering", ProjectID: project.ID, PID: os.Getpid(), ProcessStartedAt: now.Add(-time.Minute), TransitionedAt: now, LastSeenAt: now},
+		{MonitorToken: token, CWD: project.RootPath, Role: "subcommander", State: "healthy", ProjectID: project.ID, GoalID: &goalID, PID: os.Getpid(), ProcessStartedAt: now.Add(-time.Minute), TransitionedAt: now, LastSeenAt: now},
+	} {
+		health.MonitorID = MonitorHealthID(health.CWD, health.Role, health.ProjectID, health.GoalID, health.TaskID, health.PID, health.ProcessStartedAt)
+		if err := s.UpsertMonitorHealth(ctx, health); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var got string
+	if err := s.DB().QueryRowContext(ctx, `SELECT last_reconciled_at FROM monitor_bindings WHERE token = ?`, token).Scan(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got != initial {
+		t.Fatalf("last_reconciled_at = %q after guarded reports, want %q", got, initial)
+	}
+}
+
+func TestMonitorHealthWatermarkOrdersByTimeAcrossFractionWidths(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	project, err := s.CreateProject(ctx, "monitor-watermark-order", t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := s.RegisterAgentSession(ctx, os.Getpid())
+	if err != nil {
+		t.Fatal(err)
+	}
+	const token = "health-watermark-order-token"
+	if err := s.BindMonitorToken(ctx, token, session); err != nil {
+		t.Fatal(err)
+	}
+	base := time.Date(2026, 10, 3, 1, 0, 5, 0, time.UTC)
+	report := func(lastSeen time.Time) string {
+		t.Helper()
+		health := MonitorHealth{
+			MonitorToken: token, CWD: project.RootPath, Role: "commander", State: "healthy", Reason: "reconciled",
+			ProjectID: project.ID, PID: os.Getpid(), ProcessStartedAt: base.Add(-time.Minute),
+			TransitionedAt: lastSeen, LastSeenAt: lastSeen,
+		}
+		health.MonitorID = MonitorHealthID(health.CWD, health.Role, health.ProjectID, nil, nil, health.PID, health.ProcessStartedAt)
+		if err := s.UpsertMonitorHealth(ctx, health); err != nil {
+			t.Fatal(err)
+		}
+		var got string
+		if err := s.DB().QueryRowContext(ctx, `SELECT last_reconciled_at FROM monitor_bindings WHERE token = ?`, token).Scan(&got); err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+	at51 := base.Add(510 * time.Millisecond)
+	if got := report(at51); got != at51.Format(timestampLayout) {
+		t.Fatalf("watermark = %q, want %q", got, at51.Format(timestampLayout))
+	}
+	// .5 is earlier than .51 but sorts after it as a trimmed RFC3339Nano string.
+	if got := report(base.Add(500 * time.Millisecond)); got != at51.Format(timestampLayout) {
+		t.Fatalf("watermark moved backwards to %q, want %q", got, at51.Format(timestampLayout))
+	}
+	at60 := base.Add(600 * time.Millisecond)
+	if got := report(at60); got != at60.Format(timestampLayout) {
+		t.Fatalf("watermark after .6 = %q, want advance to %q", got, at60.Format(timestampLayout))
+	}
+}

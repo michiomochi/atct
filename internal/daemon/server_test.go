@@ -717,9 +717,14 @@ func TestMonitorBindingLifecycleMatchesDaemonAssignments(t *testing.T) {
 	dispatch("project.release", map[string]any{"project_id": projectA.ID, "agent_session_id": target})
 	want = store.MonitorAssignment{Role: "subcommander", ProjectID: projectB.ID, GoalID: goalB.ID}
 	assertAssignment(want)
-	dispatch("goal.handoff.complete", map[string]any{
-		"handoff_id": "lifecycle-goal-handoff", "goal_id": goalB.ID, "complete_report": "done",
+	dispatch("goal.handoff.review.request", map[string]any{
+		"handoff_id": "lifecycle-goal-handoff", "goal_id": goalB.ID,
+		"requested_by": target, "review_request_report": "ready for review",
 	})
+	dispatch("goal.handoff.review.receive", map[string]any{
+		"handoff_id": "lifecycle-goal-handoff", "goal_id": goalB.ID, "received_by": commanderB,
+	})
+	dispatch("goal.release", map[string]any{"goal_id": goalB.ID})
 	assertAssignment(store.MonitorAssignment{Role: "executor"})
 }
 
@@ -737,7 +742,7 @@ func newGoalListFixture(t *testing.T) goalListFixture {
 		return goal
 	}
 	mark := func(goal domain.Goal, status domain.GoalStatus) domain.Goal {
-		_, err := s.DB().ExecContext(ctx, "UPDATE goals SET status = ?, work_done = ?, now_possible = ?, how_to_verify = ?, surprises = ?, needs_review = ?, next_steps = ?, result_summary = ? WHERE id = ?", string(status), "recorded work", "recorded now", "recorded verification", "recorded surprises", "recorded review", "recorded next steps", "recorded summary", goal.ID)
+		_, err := s.DB().ExecContext(ctx, "UPDATE goals SET status = ?, work_done = ?, now_possible = ?, how_to_verify = ?, surprises = ?, needs_review = ?, result_summary = ? WHERE id = ?", string(status), "recorded work", "recorded now", "recorded verification", "recorded surprises", "recorded review", "recorded summary", goal.ID)
 		if err != nil {
 			t.Fatalf("mark goal %v as %v: %v", goal.ID, status, err)
 		}

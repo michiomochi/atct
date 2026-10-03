@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"testing"
+	"time"
 )
 
 func setPlanReviewGoalArtifacts(t *testing.T, s *Store, goalID int64) {
@@ -90,6 +91,17 @@ func TestPlanHandoffReviewRejectReceiveLifecycle(t *testing.T) {
 		t.Fatalf("plan review rejection did not clear reviewer state: %+v", rejected)
 	}
 
+	if _, err := s.ReceivePlanHandoffReview(ctx, reviewRequested.ID, goalID, commanderID); !errors.Is(err, ErrPlanHandoffReviewState) {
+		t.Fatalf("ReceivePlanHandoffReview after rejection error = %v, want ErrPlanHandoffReviewState", err)
+	}
+	unchanged, err := s.GetPlanHandoff(ctx, reviewRequested.ID)
+	if err != nil {
+		t.Fatalf("GetPlanHandoff after rejected review receive: %v", err)
+	}
+	if unchanged.ReviewReceivedBy != rejected.ReviewReceivedBy || unchanged.ReviewReceivedAt != rejected.ReviewReceivedAt || unchanged.ReviewRejectReport != rejected.ReviewRejectReport || unchanged.ReviewRejectedAt == nil || rejected.ReviewRejectedAt == nil || !unchanged.ReviewRejectedAt.Equal(*rejected.ReviewRejectedAt) {
+		t.Fatalf("rejected review receive changed persisted review state: before=%+v after=%+v", rejected, unchanged)
+	}
+
 	if _, err := s.RequestPlanHandoffReview(ctx, reviewRequested.ID, goalID, subcommanderID, "revised plan"); err == nil {
 		t.Fatal("RequestPlanHandoffReview accepted a rejection that the original submitter has not received")
 	}
@@ -133,15 +145,16 @@ func TestRecoverPlanHandoffClearsOnlyDefinitelyStaleReviewer(t *testing.T) {
 	if _, err := s.DB().ExecContext(ctx, `UPDATE projects SET claimed_by = ? WHERE id = ?`, staleCommanderID, goal.ProjectID); err != nil {
 		t.Fatalf("claim project for stale commander: %v", err)
 	}
-	if _, err := s.DB().ExecContext(ctx, `UPDATE agent_sessions SET started_at = 'stale-process-start' WHERE id = ?`, staleCommanderID); err != nil {
-		t.Fatalf("make commander definitely stale: %v", err)
-	}
+	expireTestAgentSessionLease(t, s, staleCommanderID)
 	// The stale commander was live when it received the review; only its
 	// process identity is now stale. The current commander must be able to
 	// reopen that receipt without changing the submitting subcommander.
 	handoff, err := s.RequestGoalHandoff(ctx, "recover-plan-goal", goalID, staleCommanderID, "delegate")
 	if err == nil {
 		t.Fatal("RequestGoalHandoff accepted a definitely stale commander")
+	}
+	if err := s.HeartbeatAgentSession(ctx, staleCommanderID, time.Now().UTC()); err != nil {
+		t.Fatalf("renew the commander lease: %v", err)
 	}
 	if _, err := s.DB().ExecContext(ctx, `UPDATE agent_sessions SET started_at = ? WHERE id = ?`, processStartedAtOrFail(t, os.Getpid()), staleCommanderID); err != nil {
 		t.Fatalf("restore commander identity for setup: %v", err)
@@ -167,9 +180,7 @@ func TestRecoverPlanHandoffClearsOnlyDefinitelyStaleReviewer(t *testing.T) {
 	if _, err := s.RecoverPlanHandoff(ctx, plan.ID, goalID, freshCommanderID, "live reviewer"); !errors.Is(err, ErrSessionRecoveryNotProven) {
 		t.Fatalf("RecoverPlanHandoff with live reviewer error = %v, want ErrSessionRecoveryNotProven", err)
 	}
-	if _, err := s.DB().ExecContext(ctx, `UPDATE agent_sessions SET started_at = 'stale-process-start' WHERE id = ?`, staleCommanderID); err != nil {
-		t.Fatalf("make recorded reviewer stale: %v", err)
-	}
+	expireTestSessionLease(t, s, staleCommanderID)
 
 	recovered, err := s.RecoverPlanHandoff(ctx, plan.ID, goalID, freshCommanderID, "reviewer process identity changed")
 	if err != nil {

@@ -691,19 +691,50 @@ func TestCodexMonitorQueueRetainsFailedSubmission(t *testing.T) {
 	}
 }
 
-func TestCodexMonitorUnknownSubmissionDoesNotRetry(t *testing.T) {
+func TestCodexMonitorUnknownSubmissionStopsActionSink(t *testing.T) {
 	starter := &fakeCodexTurnStarter{errs: []error{errCodexTurnSubmitUnknown}}
 	bridge := newCodexMonitorBridge(starter, "thread-1")
 	ctx := context.Background()
 
-	if err := bridge.Enqueue(ctx, "possibly-submitted"); !errors.Is(err, errCodexTurnSubmitUnknown) {
-		t.Fatalf("Enqueue() error = %v, want unknown submission", err)
+	action := watchAgentAction{line: "possibly-submitted", eventName: "task.handoff.review.reject"}
+	if err := bridge.ActionSinkWithContext(ctx)(action); !errors.Is(err, errCodexTurnSubmitUnknown) {
+		t.Fatalf("ActionSinkWithContext() error = %v, want unknown submission", err)
 	}
-	if got := bridge.QueueLen(); got != 0 {
-		t.Fatalf("QueueLen() after unknown submission = %d, want 0", got)
+	if got := bridge.QueueLen(); got != 1 {
+		t.Fatalf("QueueLen() after unknown submission = %d, want reserved action retained", got)
+	}
+	if !bridge.disabled {
+		t.Fatal("bridge disabled = false, want terminal monitor state")
 	}
 	if err := bridge.HandleNotification(ctx, codexAppServerNotification{Method: "thread/status/changed", Params: mustJSON(map[string]any{"threadId": "thread-1", "status": map[string]any{"type": "idle"}})}); err != nil {
 		t.Fatalf("HandleNotification(idle): %v", err)
+	}
+	if got := starter.callsSnapshot(); len(got) != 1 {
+		t.Fatalf("turn starts = %#v, want one possibly-submitted attempt", got)
+	}
+}
+
+func TestCodexMonitorUnknownSubmissionIgnoresObservedTurnStarted(t *testing.T) {
+	starter := &fakeCodexTurnStarter{errs: []error{errCodexTurnSubmitUnknown}}
+	bridge := newCodexMonitorBridge(starter, "thread-1")
+	ctx := context.Background()
+	starter.onStart = func() {
+		if err := bridge.HandleNotification(ctx, codexAppServerNotification{
+			Method: "turn/started",
+			Params: mustJSON(map[string]any{
+				"threadId": "thread-1",
+				"turn":     map[string]any{"id": "foreign-turn"},
+			}),
+		}); err != nil {
+			t.Errorf("HandleNotification(turn/started): %v", err)
+		}
+	}
+
+	if err := bridge.Enqueue(ctx, "possibly-submitted"); !errors.Is(err, errCodexTurnSubmitUnknown) {
+		t.Fatalf("Enqueue() error = %v, want unknown submission", err)
+	}
+	if got := bridge.QueueLen(); got != 1 {
+		t.Fatalf("QueueLen() after foreign turn/started = %d, want reserved action retained", got)
 	}
 	if got := starter.callsSnapshot(); len(got) != 1 {
 		t.Fatalf("turn starts = %#v, want one possibly-submitted attempt", got)
@@ -789,10 +820,12 @@ func TestCodexMonitorIdleThreadStartedRetriesTransientStartFailure(t *testing.T)
 	}
 }
 
-func TestCodexMonitorFatalAppServerFailureDropsPossiblySubmittedItem(t *testing.T) {
+func TestCodexMonitorAppServerClosedRetainsPossiblySubmittedItem(t *testing.T) {
 	app := newFakeCodexMonitorApp()
 	app.notificationErr = errors.New("App Server connection lost")
+	startCalls := 0
 	app.startTurn = func(context.Context, string, string) (codexTurn, error) {
+		startCalls++
 		return codexTurn{}, errors.New("turn start failed")
 	}
 	bridge := newCodexMonitorBridge(app, "thread-1")
@@ -801,8 +834,8 @@ func TestCodexMonitorFatalAppServerFailureDropsPossiblySubmittedItem(t *testing.
 	if err := bridge.Enqueue(ctx, "must-remain-queued"); err == nil {
 		t.Fatal("Enqueue() error = nil, want terminal App Server failure")
 	}
-	if got := bridge.QueueLen(); got != 0 {
-		t.Fatalf("QueueLen() after fatal App Server failure = %d, want 0", got)
+	if got := bridge.QueueLen(); got != 1 {
+		t.Fatalf("QueueLen() after fatal App Server failure = %d, want 1", got)
 	}
 	if !bridge.disabled {
 		t.Fatal("bridge disabled = false, want terminal monitor state")
@@ -817,8 +850,11 @@ func TestCodexMonitorFatalAppServerFailureDropsPossiblySubmittedItem(t *testing.
 	}); err != nil {
 		t.Fatalf("HandleNotification(idle) error = %v, want terminal state to suppress retries", err)
 	}
-	if got := bridge.QueueLen(); got != 0 {
-		t.Fatalf("QueueLen() after terminal idle notification = %d, want 0", got)
+	if got := bridge.QueueLen(); got != 1 {
+		t.Fatalf("QueueLen() after terminal idle notification = %d, want 1", got)
+	}
+	if got := startCalls; got != 1 {
+		t.Fatalf("turn starts after terminal idle notification = %d, want 1", got)
 	}
 }
 
@@ -1187,6 +1223,335 @@ func TestCodexMonitorReconciliationReviewQueueUsesGeneration(t *testing.T) {
 	}
 	if got := bridge.QueueLen(); got != 0 {
 		t.Fatalf("queue after idle notification = %d, want 0", got)
+	}
+}
+
+func TestCodexMonitorRejectionDeliveryAcrossHandoffKinds(t *testing.T) {
+	const (
+		goalID              = "246"
+		taskID              = "1281"
+		handoffRequestAt    = "2026-09-16T00:00:01.000000000Z"
+		handoffReceivedAt   = "2026-09-16T00:00:02.000000000Z"
+		handoffRejectedAt   = "2026-09-16T00:00:03.000000000Z"
+		handoffRequestEvent = ".handoff.review.request"
+		handoffReceiveEvent = ".handoff.review.receive"
+		handoffRejectEvent  = ".handoff.review.reject"
+		livenessEvent       = "monitor.liveness"
+	)
+	cases := []struct {
+		name      string
+		kind      string
+		handoffID string
+		role      string
+		task      bool
+	}{
+		{name: "plan", kind: "plan", handoffID: "plan-handoff-246", role: "subcommander"},
+		{name: "goal", kind: "goal", handoffID: "goal-handoff-246", role: "subcommander"},
+		{name: "task", kind: "task", handoffID: "task-handoff-1281", role: "executor", task: true},
+	}
+	stringPtr := func(value string) *string { return &value }
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			scope := watchScope{ProjectID: "1", GoalID: goalID, Role: tc.role}
+			if tc.task {
+				scope.TaskID = taskID
+			}
+			actionFor := func(eventName, generation string) watchAgentAction {
+				t.Helper()
+				decision := watchDecision{
+					GoalID:             goalID,
+					HandoffID:          tc.handoffID,
+					TargetRole:         tc.role,
+					deliveryGeneration: generation,
+				}
+				if tc.task {
+					decision.TaskID = taskID
+				}
+				var line string
+				var ok bool
+				if eventName == livenessEvent {
+					line = formatWatchLiveness(scope, watchReconciliation{})
+					ok = true
+				} else {
+					line, ok = formatWatchDecision(eventName, decision)
+				}
+				if !ok {
+					t.Fatalf("formatWatchDecision(%q) rejected test action", eventName)
+				}
+				action, ok := selectWatchAgentAction(line, eventName, decision)
+				if !ok {
+					t.Fatalf("selectWatchAgentAction(%q) rejected test action", eventName)
+				}
+				wantControlOnly := strings.HasSuffix(eventName, ".handoff.review.receive")
+				if action.controlOnly != wantControlOnly {
+					t.Fatalf("action %q controlOnly = %v, want %v", eventName, action.controlOnly, wantControlOnly)
+				}
+				return action
+			}
+
+			t.Run("confirmed rejection precedes liveness", func(t *testing.T) {
+				starter := &fakeCodexTurnStarter{}
+				bridge := newCodexMonitorBridge(starter, "thread-1")
+				bridge.SetActive(true)
+				ctx := context.Background()
+				enqueue := func(action watchAgentAction) {
+					t.Helper()
+					if err := bridge.ActionSinkWithContext(ctx)(action); err != nil {
+						t.Fatalf("enqueue %q: %v", action.line, err)
+					}
+				}
+
+				enqueue(actionFor(tc.kind+handoffRequestEvent, handoffRequestAt))
+				enqueue(actionFor(tc.kind+handoffReceiveEvent, handoffReceivedAt))
+				if got := bridge.QueueLen(); got != 0 {
+					t.Fatalf("queue after control-only receipt = %d, want older request removed", got)
+				}
+				if got := starter.callsSnapshot(); len(got) != 0 {
+					t.Fatalf("turns after control-only receipt = %#v, want none", got)
+				}
+
+				rejection := actionFor(tc.kind+handoffRejectEvent, handoffRejectedAt)
+				liveness := actionFor(livenessEvent, "")
+				enqueue(rejection)
+				enqueue(liveness)
+				bridge.stateMu.Lock()
+				if len(bridge.queue) != 2 || bridge.queue[0].line != rejection.line || bridge.queue[1].line != liveness.line {
+					t.Fatalf("queued actions = %#v, want rejection then liveness", bridge.queue)
+				}
+				if bridge.queue[0].controlOnly {
+					t.Fatal("rejection action is control-only")
+				}
+				bridge.stateMu.Unlock()
+
+				for range 2 {
+					if err := bridge.HandleNotification(ctx, codexAppServerNotification{
+						Method: "turn/completed",
+						Params: mustJSON(map[string]any{"threadId": "thread-1"}),
+					}); err != nil {
+						t.Fatalf("HandleNotification(completed): %v", err)
+					}
+				}
+				if got := starter.callsSnapshot(); len(got) != 2 || got[0] != rejection.line || got[1] != liveness.line {
+					t.Fatalf("confirmed turns = %#v, want [%q %q]", got, rejection.line, liveness.line)
+				}
+
+				handoff := watchReconciliationHandoff{
+					ID:                tc.handoffID,
+					GoalID:            246,
+					RequestedAt:       stringPtr(handoffRequestAt),
+					ReviewRequestedAt: stringPtr(handoffRequestAt),
+					ReviewReceivedAt:  stringPtr(handoffReceivedAt),
+					ReviewRejectedAt:  stringPtr(handoffRejectedAt),
+				}
+				state := watchReconciliation{}
+				switch tc.kind {
+				case "plan":
+					state.PlanHandoffs = []watchReconciliationHandoff{handoff}
+				case "goal":
+					state.GoalHandoffs = []watchReconciliationHandoff{handoff}
+				case "task":
+					handoff.TaskID = 1281
+					state.TaskHandoffs = []watchReconciliationHandoff{handoff}
+				}
+				payload := string(mustJSON(state))
+				var reconcileCalls int
+				client := &http.Client{Transport: watchRoundTripper(func(req *http.Request) (*http.Response, error) {
+					if req.URL.Path != "/api/events/reconcile" {
+						return nil, errors.New("unexpected request path")
+					}
+					reconcileCalls++
+					return &http.Response{
+						StatusCode: http.StatusOK,
+						Status:     "200 OK",
+						Header:     http.Header{"Content-Type": []string{"application/json"}},
+						Body:       io.NopCloser(strings.NewReader(payload)),
+					}, nil
+				})}
+				freshStarter := &fakeCodexTurnStarter{}
+				freshBridge := newCodexMonitorBridge(freshStarter, "thread-fresh")
+				delivered := make(map[watchDeliveryKey]struct{})
+				lastWakeupContent := ""
+				wakeupDiscrepancyDelivered := make(map[watchWakeupDiscrepancyDeliveryKey]struct{})
+				wakeupDelivered := make(map[watchWakeupDeliveryKey]struct{})
+				scopeFilter := newWatchScopeFilter(goalID)
+				if tc.task {
+					scopeFilter = newWatchTaskScopeFilter(taskID)
+				}
+				for range 2 {
+					if err := reconcileWatchScope(
+						ctx, client, "http://daemon", scope, io.Discard,
+						delivered, &lastWakeupContent, wakeupDiscrepancyDelivered, wakeupDelivered,
+						scopeFilter, freshBridge.LineSink(), freshBridge.ActionSink(),
+					); err != nil {
+						t.Fatalf("fresh reconcileWatchScope: %v", err)
+					}
+				}
+				if reconcileCalls != 2 {
+					t.Fatalf("fresh reconciliation calls = %d, want 2", reconcileCalls)
+				}
+				if got := freshStarter.callsSnapshot(); len(got) != 1 || got[0] != rejection.line {
+					t.Fatalf("fresh watcher turns = %#v, want one %q", got, rejection.line)
+				}
+			})
+
+			t.Run("unknown rejection stops liveness", func(t *testing.T) {
+				starter := &fakeCodexTurnStarter{errs: []error{errCodexTurnSubmitUnknown}}
+				bridge := newCodexMonitorBridge(starter, "thread-1")
+				bridge.SetActive(true)
+				ctx := context.Background()
+				enqueue := func(action watchAgentAction) {
+					t.Helper()
+					if err := bridge.ActionSinkWithContext(ctx)(action); err != nil {
+						t.Fatalf("enqueue %q: %v", action.line, err)
+					}
+				}
+				enqueue(actionFor(tc.kind+handoffRequestEvent, handoffRequestAt))
+				enqueue(actionFor(tc.kind+handoffReceiveEvent, handoffReceivedAt))
+				bridge.SetActive(false)
+				rejection := actionFor(tc.kind+handoffRejectEvent, handoffRejectedAt)
+				if err := bridge.ActionSinkWithContext(ctx)(rejection); !errors.Is(err, errCodexTurnSubmitUnknown) {
+					t.Fatalf("rejection sink error = %v, want unknown submission", err)
+				}
+				if got := starter.callsSnapshot(); len(got) != 1 || got[0] != rejection.line {
+					t.Fatalf("unknown turns = %#v, want one %q", got, rejection.line)
+				}
+				if got := bridge.QueueLen(); got != 1 {
+					t.Fatalf("queue after unknown rejection = %d, want retained rejection", got)
+				}
+				if !bridge.disabled {
+					t.Fatal("bridge disabled = false, want terminal monitor state")
+				}
+				if err := bridge.ActionSinkWithContext(ctx)(actionFor(livenessEvent, "")); err == nil {
+					t.Fatal("liveness sink error = nil, want terminal bridge error")
+				}
+				if err := bridge.HandleNotification(ctx, codexAppServerNotification{
+					Method: "thread/status/changed",
+					Params: mustJSON(map[string]any{
+						"threadId": "thread-1",
+						"status":   map[string]any{"type": "idle"},
+					}),
+				}); err != nil {
+					t.Fatalf("HandleNotification(idle): %v", err)
+				}
+				if got := starter.callsSnapshot(); len(got) != 1 {
+					t.Fatalf("turns after liveness/idle = %#v, want one attempt", got)
+				}
+			})
+		})
+	}
+}
+
+func TestCodexMonitorTaskCreateHandoffReconciliationLifecycle(t *testing.T) {
+	const (
+		requestState  = `{"task_create_handoffs":[{"ID":"create-1","GoalID":7,"RequestedAt":"2026-09-19T00:00:01.000000000Z"}]}`
+		receiveState  = `{"task_create_handoffs":[{"ID":"create-1","GoalID":7,"ReceivedAt":"2026-09-19T00:00:02.000000000Z"}]}`
+		completeState = `{"task_create_handoffs":[{"ID":"create-1","GoalID":7,"CompletedAt":"2026-09-19T00:00:03.000000000Z"}]}`
+	)
+	responses := []string{requestState, requestState, receiveState, completeState}
+	responseIndex := 0
+	client := &http.Client{Transport: watchRoundTripper(func(req *http.Request) (*http.Response, error) {
+		if req.URL.Path != "/api/events/reconcile" {
+			return nil, errors.New("unexpected request path")
+		}
+		body := responses[responseIndex]
+		responseIndex++
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Status:     "200 OK",
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(body)),
+		}, nil
+	})}
+
+	starter := &fakeCodexTurnStarter{}
+	bridge := newCodexMonitorBridge(starter, "thread-1")
+	bridge.SetActive(true)
+	scope := watchScope{ProjectID: "1", GoalID: "7", Role: "subcommander"}
+	delivered := make(map[watchDeliveryKey]struct{})
+	lastWakeupContent := ""
+	wakeupDiscrepancyDelivered := make(map[watchWakeupDiscrepancyDeliveryKey]struct{})
+	wakeupDelivered := make(map[watchWakeupDeliveryKey]struct{})
+	for range responses {
+		if err := reconcileWatchScope(
+			context.Background(), client, "http://daemon", scope, io.Discard,
+			delivered, &lastWakeupContent, wakeupDiscrepancyDelivered, wakeupDelivered,
+			newWatchScopeFilter("7"), bridge.LineSink(), bridge.ActionSink(),
+		); err != nil {
+			t.Fatalf("reconcileWatchScope: %v", err)
+		}
+	}
+
+	bridge.stateMu.Lock()
+	if len(bridge.queue) != 2 {
+		t.Fatalf("queued task-create actions = %#v, want request and receive", bridge.queue)
+	}
+	if bridge.queue[0].eventName != "task.create_handoff.request" || bridge.queue[0].handoffID != "create-1" {
+		t.Fatalf("queued request = %#v, want durable handoff identity", bridge.queue[0])
+	}
+	if bridge.queue[1].eventName != "task.create_handoff.receive" || bridge.queue[1].handoffID != "create-1" {
+		t.Fatalf("queued receive = %#v, want distinct agent-facing durable action", bridge.queue[1])
+	}
+	if bridge.queue[1].controlOnly {
+		t.Fatal("task-create receive action is control-only, want agent-facing")
+	}
+	bridge.stateMu.Unlock()
+	if got := starter.callsSnapshot(); len(got) != 0 {
+		t.Fatalf("turns while monitor active = %#v, want queued actions", got)
+	}
+}
+
+func TestCodexMonitorTaskCreateHandoffUnknownSubmissionRecoversFresh(t *testing.T) {
+	const requestState = `{"task_create_handoffs":[{"ID":"create-1","GoalID":7,"RequestedAt":"2026-09-19T00:00:01.000000000Z"}]}`
+	client := &http.Client{Transport: watchRoundTripper(func(req *http.Request) (*http.Response, error) {
+		if req.URL.Path != "/api/events/reconcile" {
+			return nil, errors.New("unexpected request path")
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Status:     "200 OK",
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(requestState)),
+		}, nil
+	})}
+	scope := watchScope{ProjectID: "1", GoalID: "7", Role: "subcommander"}
+	reconcile := func(t *testing.T, bridge *codexMonitorBridge, delivered map[watchDeliveryKey]struct{}) error {
+		t.Helper()
+		lastWakeupContent := ""
+		return reconcileWatchScope(
+			context.Background(), client, "http://daemon", scope, io.Discard,
+			delivered, &lastWakeupContent,
+			make(map[watchWakeupDiscrepancyDeliveryKey]struct{}),
+			make(map[watchWakeupDeliveryKey]struct{}),
+			newWatchScopeFilter("7"), bridge.LineSink(), bridge.ActionSink(),
+		)
+	}
+
+	failedStarter := &fakeCodexTurnStarter{errs: []error{errCodexTurnSubmitUnknown}}
+	failedBridge := newCodexMonitorBridge(failedStarter, "thread-1")
+	err := reconcile(t, failedBridge, make(map[watchDeliveryKey]struct{}))
+	if !errors.Is(err, errCodexTurnSubmitUnknown) {
+		t.Fatalf("unknown task-create submission error = %v, want unknown submission", err)
+	}
+	failedBridge.stateMu.Lock()
+	if len(failedBridge.queue) != 1 || failedBridge.queue[0].handoffID != "create-1" {
+		t.Fatalf("retained task-create request = %#v, want durable queued request", failedBridge.queue)
+	}
+	failedBridge.stateMu.Unlock()
+	if !failedBridge.disabled {
+		t.Fatal("bridge disabled = false, want terminal monitor state")
+	}
+	if got := failedStarter.callsSnapshot(); len(got) != 1 || !strings.Contains(got[0], "handoff_id: create-1") {
+		t.Fatalf("unknown submission turns = %#v, want one task-create request", got)
+	}
+
+	freshStarter := &fakeCodexTurnStarter{}
+	freshBridge := newCodexMonitorBridge(freshStarter, "thread-fresh")
+	if err := reconcile(t, freshBridge, make(map[watchDeliveryKey]struct{})); err != nil {
+		t.Fatalf("fresh reconciliation: %v", err)
+	}
+	if got := freshStarter.callsSnapshot(); len(got) != 1 || !strings.Contains(got[0], "handoff_id: create-1") {
+		t.Fatalf("fresh recovery turns = %#v, want one recovered task-create request", got)
 	}
 }
 

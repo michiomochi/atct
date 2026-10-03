@@ -38,6 +38,11 @@ type GoalReleaseIn struct {
 	GoalID mcpID `json:"goal_id"`
 }
 
+type GoalWithdrawIn struct {
+	GoalID mcpID  `json:"goal_id"`
+	Reason string `json:"reason" jsonschema:"why the goal is being abandoned; recorded as its result summary"`
+}
+
 type ProjectClaimIn struct {
 	ProjectID mcpID `json:"project_id"`
 	Force     bool  `json:"force,omitempty" jsonschema:"replace a live project claim with this session"`
@@ -227,7 +232,6 @@ type GoalCompleteIn struct {
 	HowToVerify string `json:"how_to_verify" jsonschema:"how to verify the result; write なし when there is nothing to report"`
 	Surprises   string `json:"surprises" jsonschema:"what differed from expectations; write なし when there is nothing to report"`
 	NeedsReview string `json:"needs_review" jsonschema:"what still needs confirmation; write なし when there is nothing to report"`
-	NextSteps   string `json:"next_steps" jsonschema:"what should happen next; write なし when there is nothing to report"`
 
 	// ResultSummary keeps old Go callers compiling without exposing the removed
 	// result_summary MCP argument.
@@ -235,13 +239,37 @@ type GoalCompleteIn struct {
 }
 
 type GoalReviewRequestIn struct {
-	GoalID      mcpID  `json:"goal_id"`
-	WorkDone    string `json:"work_done" jsonschema:"what was completed; write なし when there is nothing to report"`
-	NowPossible string `json:"now_possible" jsonschema:"what is possible now; write なし when there is nothing to report"`
-	HowToVerify string `json:"how_to_verify" jsonschema:"how to verify the result; write なし when there is nothing to report"`
-	Surprises   string `json:"surprises" jsonschema:"what differed from expectations; write なし when there is nothing to report"`
-	NeedsReview string `json:"needs_review" jsonschema:"what still needs confirmation; write なし when there is nothing to report"`
-	NextSteps   string `json:"next_steps" jsonschema:"what should happen next; write なし when there is nothing to report"`
+	GoalID      mcpID   `json:"goal_id"`
+	WorkDone    string  `json:"work_done" jsonschema:"what was completed; write なし when there is nothing to report"`
+	NowPossible string  `json:"now_possible" jsonschema:"what is possible now; write なし when there is nothing to report"`
+	HowToVerify string  `json:"how_to_verify" jsonschema:"how to verify the result; write なし when there is nothing to report"`
+	Surprises   string  `json:"surprises" jsonschema:"what differed from expectations; write なし when there is nothing to report"`
+	NeedsReview string  `json:"needs_review" jsonschema:"what still needs confirmation; write なし when there is nothing to report"`
+	NextGoalIDs []int64 `json:"next_goal_ids,omitempty" jsonschema:"optional successor goal IDs"`
+}
+
+func (in *GoalCompleteIn) UnmarshalJSON(data []byte) error {
+	type alias GoalCompleteIn
+	var decoded alias
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&decoded); err != nil {
+		return err
+	}
+	*in = GoalCompleteIn(decoded)
+	return nil
+}
+
+func (in *GoalReviewRequestIn) UnmarshalJSON(data []byte) error {
+	type alias GoalReviewRequestIn
+	var decoded alias
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&decoded); err != nil {
+		return err
+	}
+	*in = GoalReviewRequestIn(decoded)
+	return nil
 }
 
 type GoalReviewCompleteIn struct {
@@ -308,6 +336,7 @@ type RoleIn struct {
 type SessionIdentifyIn struct {
 	SessionKey   string `json:"session_key"`
 	MonitorToken string `json:"monitor_token,omitempty" jsonschema:"optional monitor token from SessionStart in Claude or injected by atct codex monitor"`
+	Cwd          string `json:"cwd,omitempty" jsonschema:"agent working directory; used to derive the project automatically"`
 }
 
 type SessionDiscardRequestIn struct {
@@ -386,6 +415,14 @@ type Raw struct {
 	Data any `json:"data"`
 }
 
+// NextStepOption is one operation the flow can continue with. More than one
+// means the caller chooses, and each carries the condition that selects it.
+type NextStepOption struct {
+	When string `json:"when,omitempty"`
+	Call string `json:"call"`
+	Note string `json:"note,omitempty"`
+}
+
 type UnappliedDecisionNotice struct {
 	DecisionID int64  `json:"decision_id"`
 	Question   string `json:"question"`
@@ -393,6 +430,7 @@ type UnappliedDecisionNotice struct {
 
 type RawWithUnappliedDecisions struct {
 	Data               any                       `json:"data"`
+	NextStep           []NextStepOption          `json:"next_step,omitempty"`
 	Role               string                    `json:"role,omitempty"`
 	ClaimEvidence      json.RawMessage           `json:"claim_evidence,omitempty"`
 	UnappliedDecisions []UnappliedDecisionNotice `json:"unapplied_decisions,omitempty"`
@@ -413,7 +451,22 @@ func rawOutputSchemaWithUnappliedDecisions() map[string]any {
 	return map[string]any{
 		"type": "object",
 		"properties": map[string]any{
-			"data":           map[string]any{},
+			"data": map[string]any{},
+			// next_step lists what follows this transition, so the caller does
+			// not have to look the flow up. More than one entry means it
+			// chooses, and each states the condition that selects it.
+			"next_step": map[string]any{
+				"type": "array",
+				"items": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"when": map[string]any{"type": "string"},
+						"call": map[string]any{"type": "string"},
+						"note": map[string]any{"type": "string"},
+					},
+					"required": []string{"call"},
+				},
+			},
 			"role":           map[string]any{"type": "string"},
 			"claim_evidence": map[string]any{},
 			"unapplied_decisions": map[string]any{
@@ -460,6 +513,7 @@ func callWithUnappliedDecisions(ctx context.Context, c *Client, method string, p
 
 	var envelope struct {
 		Data               json.RawMessage           `json:"data"`
+		NextStep           []NextStepOption          `json:"next_step"`
 		Role               string                    `json:"role"`
 		ClaimEvidence      json.RawMessage           `json:"claim_evidence"`
 		UnappliedDecisions []UnappliedDecisionNotice `json:"unapplied_decisions"`
@@ -468,6 +522,7 @@ func callWithUnappliedDecisions(ctx context.Context, c *Client, method string, p
 	if err := json.Unmarshal(out, &envelope); err == nil && envelope.Data != nil {
 		return nil, RawWithUnappliedDecisions{
 			Data:               envelope.Data,
+			NextStep:           envelope.NextStep,
 			Role:               envelope.Role,
 			ClaimEvidence:      envelope.ClaimEvidence,
 			UnappliedDecisions: envelope.UnappliedDecisions,
@@ -583,6 +638,7 @@ func callSessionIdentify(ctx context.Context, c *Client, in SessionIdentifyIn, a
 		"agent_session_id": agentSessionID.Get(),
 		"session_key":      strings.TrimSpace(in.SessionKey),
 		"monitor_token":    strings.TrimSpace(in.MonitorToken),
+		"cwd":              strings.TrimSpace(in.Cwd),
 	}, &response); err != nil {
 		return nil, RawWithUnappliedDecisions{}, err
 	}
@@ -748,6 +804,17 @@ func Register(server *mcp.Server, c *Client, agentSessionID int64) {
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in GoalReleaseIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
 		return callWithUnappliedDecisions(ctx, c, "goal.release", map[string]any{
 			"goal_id": in.GoalID,
+		})
+	})
+
+	addMCPTool[GoalWithdrawIn, RawWithUnappliedDecisions](server, &mcp.Tool{
+		Name:         "atct_goal_withdraw",
+		Description:  "Abandon an active goal, dropping its open tasks and withdrawing its open decisions. Only the project commander may do this, and only for work that is being given up rather than finished: completed work goes through atct_goal_review_request followed by atct_goal_review_complete.",
+		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in GoalWithdrawIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
+		return callWithUnappliedDecisions(ctx, c, "goal.withdraw", map[string]any{
+			"goal_id": in.GoalID, "reason": in.Reason,
+			"agent_session_id": sessionID.Get(), "include_unapplied_answers": true,
 		})
 	})
 
@@ -1075,14 +1142,14 @@ func Register(server *mcp.Server, c *Client, agentSessionID int64) {
 
 	addMCPTool[GoalCompleteIn, RawWithUnappliedDecisions](server, &mcp.Tool{
 		Name:         "atct_goal_complete",
-		Description:  "Finalize an active goal with its six-part completion report after human goal review approval.",
+		Description:  "Retired compatibility entry point. Use atct_goal_review_request, then atct_goal_review_complete.",
 		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in GoalCompleteIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
 		return callWithUnappliedDecisions(ctx, c, "goal.complete", map[string]any{
 			"goal_id": in.GoalID, "work_done": in.WorkDone,
 			"now_possible": in.NowPossible, "how_to_verify": in.HowToVerify,
 			"surprises": in.Surprises, "needs_review": in.NeedsReview,
-			"next_steps": in.NextSteps, "agent_session_id": sessionID.Get(), "include_unapplied_answers": true,
+			"agent_session_id": sessionID.Get(), "include_unapplied_answers": true,
 		})
 	})
 
@@ -1095,7 +1162,7 @@ func Register(server *mcp.Server, c *Client, agentSessionID int64) {
 			"goal_id": in.GoalID, "work_done": in.WorkDone,
 			"now_possible": in.NowPossible, "how_to_verify": in.HowToVerify,
 			"surprises": in.Surprises, "needs_review": in.NeedsReview,
-			"next_steps": in.NextSteps, "agent_session_id": sessionID.Get(),
+			"next_goal_ids": in.NextGoalIDs, "agent_session_id": sessionID.Get(),
 			"include_unapplied_answers": true,
 		})
 	})

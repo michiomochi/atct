@@ -27,7 +27,6 @@ describe("resource parity", () => {
       "goal.completion.report.howToVerify": "確かめ方",
       "goal.completion.report.surprises": "想定と違ったこと",
       "goal.completion.report.needsReview": "確認が必要なこと",
-      "goal.completion.report.nextSteps": "次にやること",
     } as const;
 
     for (const [key, expected] of Object.entries(headings)) {

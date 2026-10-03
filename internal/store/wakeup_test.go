@@ -500,7 +500,7 @@ func TestEvaluateWakeupDoesNotReportGoalWithLinkedTaskCommitAsCommitless(t *test
 	}
 }
 
-func TestEvaluateWakeupDoesNotReportGoalWithOpenCompletionDecisionAsCommitless(t *testing.T) {
+func TestEvaluateWakeupReportsGoalWithOpenLegacyCompletionDecisionAsCommitless(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	project, err := s.CreateProject(ctx, "atct", "/repos/atct")
@@ -527,7 +527,7 @@ func TestEvaluateWakeupDoesNotReportGoalWithOpenCompletionDecisionAsCommitless(t
 	updateWakeupTask(t, s, readyTasks[0].ID, domain.TaskDone)
 	if _, err := s.AskDecision(ctx, AskInput{
 		GoalID: waitingGoal.ID, TaskID: waitingTasks[0].ID,
-		Kind: domain.KindCompletion, Question: "Should completion be reported now?",
+		Kind: "completion", Question: "Should completion be reported now?",
 	}); err != nil {
 		t.Fatalf("AskDecision: %v", err)
 	}
@@ -536,8 +536,8 @@ func TestEvaluateWakeupDoesNotReportGoalWithOpenCompletionDecisionAsCommitless(t
 	if err != nil {
 		t.Fatalf("EvaluateWakeup: %v", err)
 	}
-	if len(state.CommitlessGoals) != 1 || state.CommitlessGoals[0].ID != readyGoal.ID {
-		t.Fatalf("commitless goals = %#v, want only %d", state.CommitlessGoals, readyGoal.ID)
+	if len(state.CommitlessGoals) != 2 || state.CommitlessGoals[0].ID != waitingGoal.ID || state.CommitlessGoals[1].ID != readyGoal.ID {
+		t.Fatalf("commitless goals = %#v, want %d and %d", state.CommitlessGoals, waitingGoal.ID, readyGoal.ID)
 	}
 }
 
@@ -560,7 +560,7 @@ func TestEvaluateWakeupCountsActionableGoalsWithoutCompletionApproval(t *testing
 	updateWakeupTask(t, s, waitingTasks[0].ID, domain.TaskDone)
 	if _, err := s.AskDecision(ctx, AskInput{
 		GoalID: waitingGoal.ID, TaskID: waitingTasks[0].ID,
-		Kind: domain.KindCompletion, Question: "Approve this goal as complete?",
+		Kind: "completion", Question: "Approve this goal as complete?",
 	}); err != nil {
 		t.Fatalf("AskDecision: %v", err)
 	}
@@ -898,6 +898,8 @@ func TestEvaluateWakeupCollectsUnappliedDecisionsAndStaleClaims(t *testing.T) {
 	if _, err := s.ClaimTask(ctx, tasks[2].ID, testSessionID("missing-session")); err != nil {
 		t.Fatalf("ClaimTask stale: %v", err)
 	}
+	// The name says it: this session is gone, so its lease is not being renewed.
+	expireTestAgentSessionLease(t, s, testSessionID("missing-session"))
 	liveSessionID, err := s.RegisterAgentSession(ctx, os.Getpid())
 	if err != nil {
 		t.Fatalf("RegisterAgentSession: %v", err)

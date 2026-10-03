@@ -251,9 +251,9 @@ func TestProjectScopedWritesRejectOtherProject(t *testing.T) {
 			params: map[string]any{
 				"goal_id": f.targetGoal.ID, "work_done": "done", "now_possible": "now",
 				"how_to_verify": "verify", "surprises": "none", "needs_review": "none",
-				"next_steps": "none", "agent_session_id": f.agentSessionID,
+				"agent_session_id": f.agentSessionID,
 			},
-			wantContains: []string{ErrRoleUnauthorized.Error()},
+			wantContains: []string{retiredGoalCompletionDiagnostic},
 		},
 	}
 
@@ -501,13 +501,13 @@ func TestProjectScopedWritesAllowAssignedProjectAndGoalListReadsOtherProject(t *
 	params, err = json.Marshal(map[string]any{
 		"goal_id": f.completeGoal.ID, "work_done": "done", "now_possible": "now",
 		"how_to_verify": "verify", "surprises": "none", "needs_review": "none",
-		"next_steps": "none", "agent_session_id": f.agentSessionID,
+		"agent_session_id": f.agentSessionID,
 	})
 	if err != nil {
 		t.Fatalf("Marshal goal.complete params: %v", err)
 	}
-	if _, err := f.daemon.dispatch(f.ctx, rpc.Request{Method: "goal.complete", Params: params}); err != nil {
-		t.Fatalf("goal.complete: %v", err)
+	if _, err := f.daemon.dispatch(f.ctx, rpc.Request{Method: "goal.complete", Params: params}); err == nil || !strings.Contains(err.Error(), retiredGoalCompletionDiagnostic) {
+		t.Fatalf("goal.complete error = %v, want retired goal review diagnostic", err)
 	}
 
 	readSessionID := daemonTestSessionID(t, f.store, "read-run")

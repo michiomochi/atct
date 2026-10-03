@@ -20,6 +20,7 @@ type AgentSession struct {
 	DiscardedDecisionID sql.NullInt64
 	DiscardReason       string
 	DevelopmentMode     int64
+	LastHeartbeatAt     sql.NullString
 }
 
 type Decision struct {
@@ -46,6 +47,8 @@ type Goal struct {
 	ProjectID         int64
 	DerivedFromGoalID sql.NullInt64
 	Content           string
+	Spec              string
+	Plan              string
 	Status            string
 	Creator           string
 	ResultSummary     string
@@ -54,11 +57,8 @@ type Goal struct {
 	HowToVerify       string
 	Surprises         string
 	NeedsReview       string
-	NextSteps         string
 	CreatedAt         string
 	UpdatedAt         string
-	Spec              string
-	Plan              string
 }
 
 type GoalHandoff struct {
@@ -85,9 +85,10 @@ type GoalHandoff struct {
 }
 
 type MonitorBinding struct {
-	Token          string
-	AgentSessionID int64
-	CreatedAt      string
+	Token            string
+	AgentSessionID   int64
+	CreatedAt        string
+	LastReconciledAt string
 }
 
 type MonitorHealth struct {
@@ -107,6 +108,12 @@ type MonitorHealth struct {
 	StoppedAt        sql.NullString
 	ScopeKey         string
 	AgentSessionID   int64
+}
+
+type NextGoal struct {
+	GoalID     int64
+	NextGoalID int64
+	CreatedAt  string
 }
 
 type PlanHandoff struct {

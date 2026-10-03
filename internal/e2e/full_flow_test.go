@@ -419,21 +419,40 @@ func TestFullFlowThroughDaemonAndHTTP(t *testing.T) {
 			t.Fatalf("task.update returned %+v", updated)
 		}
 	}
-	var claimedGoal domain.Goal
-	callDaemon(t, stack, "goal.claim", map[string]any{
-		"goal_id": goal.ID, "agent_session_id": agentSessionID,
-	}, &claimedGoal)
+	receiverSessionID := stack.session(t, "flow-review-receiver")
+	if err := stack.db.AssociateAgentSessionWithProject(context.Background(), receiverSessionID, project.ID); err != nil {
+		t.Fatalf("AssociateAgentSessionWithProject: %v", err)
+	}
+	const handoffID = "e2e-goal-review-handoff"
+	var requested store.GoalHandoff
+	callDaemon(t, stack, "goal.handoff.request", map[string]any{
+		"handoff_id": handoffID, "goal_id": goal.ID, "requested_by": agentSessionID,
+		"request_report": "delegate the completed goal for named review",
+	}, &requested)
+	var receivedResponse struct {
+		Data store.GoalHandoff `json:"data"`
+	}
+	callDaemon(t, stack, "goal.handoff.receive", map[string]any{
+		"handoff_id": handoffID, "goal_id": goal.ID, "received_by": receiverSessionID,
+	}, &receivedResponse)
+	callDaemon(t, stack, "goal.handoff.review.request", map[string]any{
+		"handoff_id": handoffID, "goal_id": goal.ID, "requested_by": receiverSessionID,
+		"review_request_report": "receiver reviewed the completed work",
+	}, &requested)
+	callDaemon(t, stack, "goal.handoff.review.receive", map[string]any{
+		"handoff_id": handoffID, "goal_id": goal.ID, "received_by": agentSessionID,
+	}, &receivedResponse)
 
-	var completion domain.Decision
-	callDaemon(t, stack, "goal.complete", map[string]any{
-		"goal_id": goal.ID, "work_done": "The flow completed",
+	var review domain.Decision
+	callDaemon(t, stack, "goal.review.request", map[string]any{
+		"goal_id": goal.ID, "agent_session_id": agentSessionID,
+		"work_done":     "The flow completed",
 		"now_possible":  "The goal can be approved",
-		"how_to_verify": "Check the completion response",
-		"surprises":     "なし", "needs_review": "なし", "next_steps": "なし",
-		"agent_session_id": agentSessionID,
-	}, &completion)
-	if completion.Kind != domain.KindCompletion || completion.Status != domain.DecisionOpen {
-		t.Fatalf("goal.complete returned %+v", completion)
+		"how_to_verify": "Check the named goal review report",
+		"surprises":     "なし", "needs_review": "なし", "next_goal_ids": []int64{},
+	}, &review)
+	if review.Kind != domain.KindGoalReview || review.Status != domain.DecisionOpen {
+		t.Fatalf("goal.review.request returned %+v", review)
 	}
 
 	status, raw = httpJSON(t, stack, http.MethodGet, "/api/inbox", nil)
@@ -441,21 +460,21 @@ func TestFullFlowThroughDaemonAndHTTP(t *testing.T) {
 		t.Fatalf("GET /api/inbox for completion status = %d, body %s", status, raw)
 	}
 	decodeJSON(t, raw, &inbox)
-	if !containsDecision(inbox.OpenDecisions, completion.ID) {
-		t.Fatalf("completion decision missing from inbox: %+v", inbox.OpenDecisions)
+	if !containsDecision(inbox.OpenDecisions, review.ID) {
+		t.Fatalf("goal review missing from inbox: %+v", inbox.OpenDecisions)
 	}
 
 	response, reader, cancelSSE := openSSE(t, stack)
 	defer response.Body.Close()
 	defer cancelSSE()
-	status, raw = httpJSON(t, stack, http.MethodPost, "/api/decisions/"+idText(completion.ID)+"/approve", map[string]string{})
+	status, raw = httpJSON(t, stack, http.MethodPost, "/api/decisions/"+idText(review.ID)+"/approve", map[string]string{})
 	if status != http.StatusOK {
 		t.Fatalf("POST approve status = %d, body %s", status, raw)
 	}
-	var doneGoal domain.Goal
-	decodeJSON(t, raw, &doneGoal)
-	if doneGoal.ID != goal.ID || doneGoal.Status != domain.GoalDone {
-		t.Fatalf("approve response = %+v", doneGoal)
+	var approvedGoal domain.Goal
+	decodeJSON(t, raw, &approvedGoal)
+	if approvedGoal.ID != goal.ID || approvedGoal.Status != domain.GoalActive {
+		t.Fatalf("approve response = %+v", approvedGoal)
 	}
 	frame, err := nextSSEFrame(reader)
 	if err != nil {
@@ -466,8 +485,15 @@ func TestFullFlowThroughDaemonAndHTTP(t *testing.T) {
 	}
 	var approved domain.Decision
 	decodeJSON(t, []byte(frame.data), &approved)
-	if approved.ID != completion.ID || approved.Status != domain.DecisionApplied {
+	if approved.ID != review.ID || approved.Status != domain.DecisionApplied {
 		t.Fatalf("approval SSE data = %+v", approved)
+	}
+	var doneGoal domain.Goal
+	callDaemon(t, stack, "goal.review.complete", map[string]any{
+		"goal_id": goal.ID, "agent_session_id": agentSessionID,
+	}, &doneGoal)
+	if doneGoal.ID != goal.ID || doneGoal.Status != domain.GoalDone {
+		t.Fatalf("goal.review.complete response = %+v", doneGoal)
 	}
 
 	status, raw = httpJSON(t, stack, http.MethodGet, "/api/goals/"+idText(goal.ID), nil)
@@ -484,123 +510,8 @@ func TestFullFlowThroughDaemonAndHTTP(t *testing.T) {
 		t.Fatalf("final GET /api/inbox status = %d, body %s", status, raw)
 	}
 	decodeJSON(t, raw, &inbox)
-	if containsDecision(inbox.OpenDecisions, completion.ID) || containsDecision(inbox.UnappliedDecisions, completion.ID) {
-		t.Fatalf("completion decision remains actionable: %+v", inbox)
-	}
-}
-
-func TestCompletionRejectionReopensGoalHandoffThroughDaemonAndHTTP(t *testing.T) {
-	stack := newE2EStack(t)
-	project := createProject(t, stack)
-	goal := createGoal(t, stack)
-	ctx := context.Background()
-	commanderSessionID, err := stack.db.RegisterAgentSession(ctx, os.Getpid())
-	if err != nil {
-		t.Fatalf("register commander e2e session: %v", err)
-	}
-	receiverSessionID, err := stack.db.RegisterAgentSession(ctx, os.Getpid())
-	if err != nil {
-		t.Fatalf("register receiver e2e session: %v", err)
-	}
-
-	if err := stack.db.AssociateAgentSessionWithProject(ctx, commanderSessionID, project.ID); err != nil {
-		t.Fatalf("AssociateAgentSessionWithProject: %v", err)
-	}
-	if _, err := stack.db.ClaimProject(ctx, project.ID, commanderSessionID); err != nil {
-		t.Fatalf("ClaimProject: %v", err)
-	}
-
-	var requested store.GoalHandoff
-	callDaemon(t, stack, "goal.handoff.request", map[string]any{
-		"handoff_id": "e2e-completion-rejection-handoff", "goal_id": goal.ID,
-		"requested_by": commanderSessionID, "request_report": "Initial goal handoff",
-	}, &requested)
-	var receivedResponse struct {
-		Data store.GoalHandoff `json:"data"`
-	}
-	callDaemon(t, stack, "goal.handoff.receive", map[string]any{
-		"handoff_id": requested.ID, "goal_id": goal.ID, "received_by": receiverSessionID,
-	}, &receivedResponse)
-	received := receivedResponse.Data
-	if received.ReceivedBy != receiverSessionID || received.ReceivedAt == nil {
-		t.Fatalf("received handoff = %+v, want receiver %d", received, receiverSessionID)
-	}
-
-	var completion domain.Decision
-	callDaemon(t, stack, "goal.complete", map[string]any{
-		"goal_id": goal.ID, "work_done": "Initial completion report",
-		"now_possible":  "The goal is ready for review",
-		"how_to_verify": "Review the initial completion report",
-		"surprises":     "None", "needs_review": "The first report needs revision", "next_steps": "Revise the report",
-		"agent_session_id": commanderSessionID,
-	}, &completion)
-	if completion.Kind != domain.KindCompletion || completion.Status != domain.DecisionOpen {
-		t.Fatalf("initial goal.complete returned %+v", completion)
-	}
-
-	var completed store.GoalHandoff
-	callDaemon(t, stack, "goal.handoff.complete", map[string]any{
-		"handoff_id": requested.ID, "goal_id": goal.ID, "complete_report": "Initial handoff completion",
-	}, &completed)
-	if completed.ID != requested.ID || completed.CompletedReportAt == nil {
-		t.Fatalf("initial completed handoff = %+v, want closed handoff %q", completed, requested.ID)
-	}
-
-	status, raw := httpJSON(t, stack, http.MethodPost, "/api/decisions/"+idText(completion.ID)+"/reject", map[string]string{
-		"reason": "Please revise the completion report",
-	})
-	if status != http.StatusOK {
-		t.Fatalf("POST reject status = %d, body %s", status, raw)
-	}
-	var rejected domain.Decision
-	decodeJSON(t, raw, &rejected)
-	if rejected.ID != completion.ID || rejected.Status != domain.DecisionAnswered {
-		t.Fatalf("reject response = %+v, want answered decision %d", rejected, completion.ID)
-	}
-
-	var role e2eRoleAssignment
-	callDaemon(t, stack, "session.role", map[string]any{"agent_session_id": receiverSessionID}, &role)
-	if role.Role != "subcommander" || role.GoalID != goal.ID {
-		t.Fatalf("role after rejection = %+v, want subcommander for goal %d", role, goal.ID)
-	}
-
-	var applied []domain.Decision
-	callDaemon(t, stack, "decision.poll", map[string]any{
-		"agent_session_id": receiverSessionID, "decision_id": completion.ID,
-	}, &applied)
-	if len(applied) != 1 || applied[0].ID != completion.ID || applied[0].Status != domain.DecisionApplied {
-		t.Fatalf("rejection decision.poll returned %+v", applied)
-	}
-
-	var revised domain.Decision
-	callDaemon(t, stack, "goal.complete", map[string]any{
-		"goal_id": goal.ID, "work_done": "Revised completion report",
-		"now_possible":  "The revised goal is ready for approval",
-		"how_to_verify": "Review the revised completion report",
-		"surprises":     "None", "needs_review": "None", "next_steps": "None",
-		"agent_session_id": commanderSessionID,
-	}, &revised)
-	if revised.Kind != domain.KindCompletion || revised.Status != domain.DecisionOpen || revised.ID == completion.ID {
-		t.Fatalf("revised goal.complete returned %+v", revised)
-	}
-
-	var reopenedCompleted store.GoalHandoff
-	callDaemon(t, stack, "goal.handoff.complete", map[string]any{
-		"goal_id": goal.ID, "complete_report": "Revised handoff completion",
-	}, &reopenedCompleted)
-	expectedReopenedID := fmt.Sprintf("%s-reopen-%d", requested.ID, completion.ID)
-	if reopenedCompleted.ID != expectedReopenedID || reopenedCompleted.ReceivedBy != receiverSessionID || reopenedCompleted.CompletedReportAt == nil {
-		t.Fatalf("reopened completed handoff = %+v, want %q received by %d", reopenedCompleted, expectedReopenedID, receiverSessionID)
-	}
-
-	status, raw = httpJSON(t, stack, http.MethodPost, "/api/decisions/"+idText(revised.ID)+"/approve", map[string]string{})
-	if status != http.StatusOK {
-		t.Fatalf("POST revised approve status = %d, body %s", status, raw)
-	}
-	var doneGoal domain.Goal
-	decodeJSON(t, raw, &doneGoal)
-	if doneGoal.ID != goal.ID || doneGoal.Status != domain.GoalDone {
-		t.Fatalf("revised approve response = %+v", doneGoal)
+	if containsDecision(inbox.OpenDecisions, review.ID) || containsDecision(inbox.UnappliedDecisions, review.ID) {
+		t.Fatalf("goal review remains actionable: %+v", inbox)
 	}
 }
 

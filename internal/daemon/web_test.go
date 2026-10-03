@@ -169,7 +169,11 @@ func TestHTTPHandlerMCPInitializeReturnsStreamableResponse(t *testing.T) {
 	}
 }
 
-func TestHTTPHandlerMCPListsFortySevenTools(t *testing.T) {
+// A spot check that the HTTP transport serves the same tools as the shim; the
+// exact set is pinned in internal/mcpshim. This used to assert a count of 47
+// as well, with the number in its name, so adding a tool meant editing two
+// packages and renaming a test whose name was already wrong by then.
+func TestHTTPHandlerMCPServesTheShimTools(t *testing.T) {
 	fixture := newMCPHTTPTestServer(t)
 	client := newMCPHTTPTestClient(fixture.server.URL + "/mcp")
 	client.initialize(t)
@@ -180,9 +184,6 @@ func TestHTTPHandlerMCPListsFortySevenTools(t *testing.T) {
 	tools, ok := result["tools"].([]any)
 	if !ok {
 		t.Fatalf("tools/list result.tools = %T, want array", result["tools"])
-	}
-	if len(tools) != 47 {
-		t.Fatalf("tools/list returned %d tools, want 47", len(tools))
 	}
 	wantNames := map[string]bool{
 		"atct_role":                               false,

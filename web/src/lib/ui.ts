@@ -84,7 +84,6 @@ export interface CompletionReportFields {
   how_to_verify: string;
   surprises: string;
   needs_review: string;
-  next_steps: string;
 }
 
 export function hasCompletionReport(report: CompletionReportFields): boolean {
@@ -94,10 +93,6 @@ export function hasCompletionReport(report: CompletionReportFields): boolean {
 export function filterDecisionsByTask<T extends { task_id?: string }>(decisions: T[], taskID: string): T[] {
   if (!taskID) return [];
   return decisions.filter((decision) => decision.task_id === taskID);
-}
-
-export function findOpenCompletion<T extends CompletionLike>(decisions: T[]): T | undefined {
-  return decisions.find((decision) => decision.kind === "completion" && decision.status === "open");
 }
 
 export function findOpenGoalApproval<T extends CompletionLike>(decisions: T[]): T | undefined {

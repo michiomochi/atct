@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -66,20 +67,53 @@ func TestFullGoalLifecycle(t *testing.T) {
 		}
 	}
 
-	comp, err := s.CompleteGoalWithReport(ctx, g.ID, domain.CompletionReport{
+	commanderID, err := s.RegisterAgentSession(ctx, os.Getpid())
+	if err != nil {
+		t.Fatalf("RegisterAgentSession commander: %v", err)
+	}
+	receiverID, err := s.RegisterAgentSession(ctx, os.Getpid())
+	if err != nil {
+		t.Fatalf("RegisterAgentSession receiver: %v", err)
+	}
+	for _, sessionID := range []int64{commanderID, receiverID} {
+		if err := s.AssociateAgentSessionWithProject(ctx, sessionID, ns.ID); err != nil {
+			t.Fatalf("AssociateAgentSessionWithProject: %v", err)
+		}
+	}
+	if _, err := s.ClaimProject(ctx, ns.ID, commanderID); err != nil {
+		t.Fatalf("ClaimProject: %v", err)
+	}
+	handoff, err := s.RequestGoalHandoff(ctx, "e2e-goal-review-handoff", g.ID, commanderID, "delegate the completed goal for review")
+	if err != nil {
+		t.Fatalf("RequestGoalHandoff: %v", err)
+	}
+	if _, err := s.ReceiveGoalHandoff(ctx, handoff.ID, g.ID, receiverID); err != nil {
+		t.Fatalf("ReceiveGoalHandoff: %v", err)
+	}
+	if _, err := s.RequestGoalHandoffReview(ctx, handoff.ID, g.ID, receiverID, "review the completed goal"); err != nil {
+		t.Fatalf("RequestGoalHandoffReview: %v", err)
+	}
+	if _, err := s.ReceiveGoalHandoffReview(ctx, handoff.ID, g.ID, commanderID); err != nil {
+		t.Fatalf("ReceiveGoalHandoffReview: %v", err)
+	}
+
+	review, err := s.RequestGoalReview(ctx, g.ID, commanderID, domain.CompletionReport{
 		WorkDone:    "All tasks complete. SQLite was selected.",
 		NowPossible: "The goal can be approved.",
 		HowToVerify: "Inspect the completed task statuses.",
 		Surprises:   "なし",
 		NeedsReview: "なし",
-		NextSteps:   "なし",
-	}, 1)
+		NextGoalIDs: []int64{},
+	})
 	if err != nil {
-		t.Fatalf("CompleteGoal: %v", err)
+		t.Fatalf("RequestGoalReview: %v", err)
 	}
-	done, err := s.ApproveCompletion(ctx, comp.ID)
+	if _, err := s.ApproveGoalReview(ctx, review.ID); err != nil {
+		t.Fatalf("ApproveGoalReview: %v", err)
+	}
+	done, err := s.FinalizeGoalReview(ctx, g.ID, commanderID)
 	if err != nil {
-		t.Fatalf("ApproveCompletion: %v", err)
+		t.Fatalf("FinalizeGoalReview: %v", err)
 	}
 	if done.Status != domain.GoalDone {
 		t.Fatalf("goal status = %q, want %q", done.Status, domain.GoalDone)

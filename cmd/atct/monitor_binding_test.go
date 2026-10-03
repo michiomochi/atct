@@ -114,8 +114,8 @@ func TestMonitorBindingLoopWaitsForBindingAndReplacesChangedScope(t *testing.T) 
 
 	select {
 	case scope := <-started:
-		if scope != (watchScope{Role: "commander", ProjectID: "7"}) {
-			t.Fatalf("first scope = %#v, want commander project 7", scope)
+		if scope != (watchScope{Role: "commander", ProjectID: "7", MonitorToken: "token-1"}) {
+			t.Fatalf("first scope = %#v, want commander project 7 carrying its token", scope)
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("bound commander watch did not start")
@@ -127,8 +127,8 @@ func TestMonitorBindingLoopWaitsForBindingAndReplacesChangedScope(t *testing.T) 
 	}
 	select {
 	case scope := <-started:
-		if scope != (watchScope{Role: "subcommander", ProjectID: "7", GoalID: "16"}) {
-			t.Fatalf("replacement scope = %#v, want subcommander goal 16", scope)
+		if scope != (watchScope{Role: "subcommander", ProjectID: "7", GoalID: "16", MonitorToken: "token-1"}) {
+			t.Fatalf("replacement scope = %#v, want subcommander goal 16 carrying its token", scope)
 		}
 	case <-time.After(time.Second):
 		t.Fatal("changed binding did not start a replacement watch")

@@ -31,7 +31,6 @@ import {
   decisionRecommendationLabel,
   decisionSettlementLabel,
   filterDecisionsByTask,
-  findOpenCompletion,
   findOpenGoalApproval,
   hasCompletionReport,
   isDecisionEventName,
@@ -118,7 +117,7 @@ function fixtureGoal(id: string, projectName: string): Goal {
     how_to_verify: "",
     surprises: "",
     needs_review: "",
-    next_steps: "",
+    next_goals: [],
     created_at: "",
     updated_at: "",
     tasks: [],
@@ -181,14 +180,13 @@ describe("sortTasksByOrder", () => {
 });
 
 describe("goal detail helpers", () => {
-  it("reports whether any of the six completion fields is filled", () => {
+  it("reports whether any of the five completion fields is filled", () => {
     const emptyReport = {
       work_done: "",
       now_possible: "  ",
       how_to_verify: "",
       surprises: "",
       needs_review: "",
-      next_steps: "",
     };
 
     expect(hasCompletionReport(emptyReport)).toBe(false);
@@ -555,7 +553,6 @@ describe("goal detail answer flows", () => {
       "how_to_verify",
       "surprises",
       "needs_review",
-      "next_steps",
     ]) {
       expect(goalDetailSource).toContain(`goal.${field}`);
     }
@@ -566,7 +563,6 @@ describe("goal detail answer flows", () => {
       "goal.completion.report.howToVerify",
       "goal.completion.report.surprises",
       "goal.completion.report.needsReview",
-      "goal.completion.report.nextSteps",
     ]) {
       expect(goalDetailSource).toContain(key);
     }
@@ -576,24 +572,14 @@ describe("goal detail answer flows", () => {
     expect(goalDetailSource).toContain("break-words");
   });
 
-  it("finds only an open completion decision", () => {
-    const completion = { id: "completion-1", kind: "completion", status: "open" };
-    expect(findOpenCompletion([
-      { id: "answered-1", kind: "completion", status: "answered" },
-      completion,
-      { id: "ordinary-1", kind: "decision", status: "open" },
-    ])).toBe(completion);
-    expect(findOpenCompletion([{ id: "done-1", kind: "completion", status: "applied" }])).toBeUndefined();
-  });
-
   it("finds only an open goal approval decision", () => {
     const goalApproval = { id: "goal-approval-1", kind: "goal_approval", status: "open" };
     expect(findOpenGoalApproval([
-      { id: "completion-1", kind: "completion", status: "open" },
+      { id: "ordinary-1", kind: "decision", status: "open" },
       { id: "answered-1", kind: "goal_approval", status: "answered" },
       goalApproval,
     ])).toBe(goalApproval);
-    expect(findOpenGoalApproval([{ id: "completion-2", kind: "completion", status: "open" }])).toBeUndefined();
+    expect(findOpenGoalApproval([{ id: "ordinary-2", kind: "decision", status: "open" }])).toBeUndefined();
   });
 
   it("renders one ordered task list and moves decisions into task details", () => {
@@ -628,8 +614,8 @@ describe("goal detail answer flows", () => {
     expect(goalDetailSource).toContain("unattached_decisions");
     expect(goalDetailSource).toContain("approveDecision");
     expect(goalDetailSource).toContain("rejectDecision");
-    expect(goalDetailSource).toContain('t("goal.completion.title")');
     expect(goalDetailSource).toContain('t("goal.approval.title")');
+    expect(goalDetailSource).not.toContain("CompletionApproval");
     expect(goalDetailSource).toContain("result_summary");
   });
 

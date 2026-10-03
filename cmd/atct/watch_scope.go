@@ -13,7 +13,7 @@ type watchScopeFilter struct {
 	unassignedGoalIDs   []int64
 }
 
-type watchScope struct{ ProjectID, GoalID, TaskID, Role, ScopeKey string }
+type watchScope struct{ ProjectID, GoalID, TaskID, Role, ScopeKey, MonitorToken string }
 
 func watchLivenessEligible(scope watchScope) bool {
 	if scope.Role == "commander" {
@@ -30,6 +30,14 @@ func watchLivenessEligible(scope watchScope) bool {
 
 func watchLivenessActionable(scope watchScope, state watchReconciliation) bool {
 	if !watchLivenessEligible(scope) {
+		return false
+	}
+	// A goal that is not active has nothing for anyone to do, whatever its
+	// handoffs still look like. Withdrawing goal 294 left its goal handoff
+	// open, so the scope stayed actionable and kept waking a space whose goal
+	// had been dropped. A snapshot that does not carry the goal at all says
+	// nothing either way, so it is left alone.
+	if scope.GoalID != "" && watchReconciliationGoalStopped(state, scope.GoalID) {
 		return false
 	}
 	switch scope.Role {
@@ -70,6 +78,9 @@ func watchSubcommanderLivenessActionable(scope watchScope, state watchReconcilia
 		if !watchHandoffMatchesGoal(scope, handoff) || !watchHandoffOpen(handoff) {
 			continue
 		}
+		if handoff.RequestedAt != nil && handoff.ReceivedAt == nil {
+			return true
+		}
 		if handoff.ReviewRequestedAt != nil || handoff.ReviewRejectedAt != nil {
 			return true
 		}
@@ -77,6 +88,11 @@ func watchSubcommanderLivenessActionable(scope watchScope, state watchReconcilia
 	if watchGoalHasOpenTaskHandoff(scope, state) {
 		return false
 	}
+	// A rejection is work wherever it sits, so look for one across every
+	// handoff before anything else decides. Answering from the first open
+	// handoff met let a goal handoff still under review say "nothing to do"
+	// while a rejected plan handoff waited behind it, which is how goal 260
+	// stood idle with a rejection to pick up.
 	for _, handoffs := range [][]watchReconciliationHandoff{state.GoalHandoffs, state.PlanHandoffs} {
 		for _, handoff := range handoffs {
 			if !watchHandoffMatchesGoal(scope, handoff) || !watchHandoffOpen(handoff) {
@@ -84,6 +100,13 @@ func watchSubcommanderLivenessActionable(scope watchScope, state watchReconcilia
 			}
 			if handoff.ReviewRejectedAt != nil {
 				return true
+			}
+		}
+	}
+	for _, handoffs := range [][]watchReconciliationHandoff{state.GoalHandoffs, state.PlanHandoffs} {
+		for _, handoff := range handoffs {
+			if !watchHandoffMatchesGoal(scope, handoff) || !watchHandoffOpen(handoff) {
+				continue
 			}
 			if handoff.ReviewRequestedAt != nil {
 				return false
@@ -108,9 +131,12 @@ func watchExecutorLivenessActionable(scope watchScope, state watchReconciliation
 	return false
 }
 
+// watchGoalHasOpenTaskHandoff answers whether someone else is working on this
+// goal's tasks. A handoff whose monitor is gone is nobody working: the
+// subcommander has to hear about that one rather than be told to stand down.
 func watchGoalHasOpenTaskHandoff(scope watchScope, state watchReconciliation) bool {
 	for _, handoff := range state.TaskHandoffs {
-		if watchHandoffMatchesGoal(scope, handoff) && watchHandoffOpen(handoff) {
+		if watchHandoffMatchesGoal(scope, handoff) && watchHandoffOpen(handoff) && !handoff.MonitorLost {
 			return true
 		}
 	}
@@ -214,6 +240,9 @@ func (f *watchScopeFilter) delivers(eventName string, decision watchDecision) bo
 		return true
 	case "decision.answered":
 		return !decision.defaultApplied()
+	case "decision.withdrawn":
+		// Scoped like an answer, because it ends the same wait.
+		return true
 	case "wakeup":
 		if f.hasWakeupState && f.actionableGoalCount == decision.ActionableGoalCount &&
 			f.unassignedGoalCount == decision.UnassignedGoalCount &&
@@ -248,4 +277,15 @@ func watchScopeGoalIDsEqual(left, right []int64) bool {
 		}
 	}
 	return true
+}
+
+// watchReconciliationGoalStopped reports that the snapshot carries this goal
+// and it is not active. An absent goal is unknown, not stopped.
+func watchReconciliationGoalStopped(state watchReconciliation, goalID string) bool {
+	for _, goal := range state.Goals {
+		if goal.ID == goalID {
+			return goal.Status != "active"
+		}
+	}
+	return false
 }

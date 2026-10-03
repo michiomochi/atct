@@ -29,6 +29,9 @@ const (
 	watchKeepaliveTimeout       = 90 * time.Second
 	watchReconcileInterval      = 30 * time.Second
 	watchLivenessPromptInterval = time.Minute
+	// watchLivenessRepeatInterval is how long an unchanged wake-up waits
+	// before it is sent again.
+	watchLivenessRepeatInterval = 30 * time.Minute
 	watchEnsureMaxFailures      = 5
 	watchEnsureLimitMessage     = "atct watch: daemon ensure failed 5 consecutive times; continuing connection retries"
 )
@@ -188,6 +191,7 @@ type watchEnsureFunc func() error
 
 type watchLivenessState struct {
 	lastPromptAt time.Time
+	lastPrompt   string
 }
 
 type watchHealthSink interface {
@@ -253,7 +257,7 @@ func newWatchHealthReporter(client *http.Client, urls []string, cwd string, scop
 		GoalID:           goalID,
 		TaskID:           taskID,
 		ScopeKey:         strings.TrimSpace(scope.ScopeKey),
-		AgentSessionID:   currentAgentSessionID(),
+		MonitorToken:     strings.TrimSpace(scope.MonitorToken),
 		PID:              os.Getpid(),
 		ProcessStartedAt: processStartedAt,
 	}
@@ -425,16 +429,31 @@ func newWatchLivenessState(start time.Time) *watchLivenessState {
 	return &watchLivenessState{lastPromptAt: start}
 }
 
-func (s *watchLivenessState) PromptDue(now time.Time, scope watchScope, snapshot watchReconciliation) bool {
+// PromptDue returns the wake-up to send, if one is due.
+//
+// Waking an agent costs it a whole turn, so the same situation is not
+// announced twice in a row. It used to be: the state held only the time of the
+// last prompt, so a scope that stayed actionable -- a rejection nobody could
+// receive, a goal that had been withdrawn -- re-sent an identical line every
+// minute until the woken agent ran out of context.
+func (s *watchLivenessState) PromptDue(now time.Time, scope watchScope, snapshot watchReconciliation) (string, bool) {
 	if !watchLivenessActionable(scope, snapshot) || scopedOpenDecision(scope, snapshot) {
 		s.lastPromptAt = now
-		return false
+		s.lastPrompt = ""
+		return "", false
 	}
 	if now.Sub(s.lastPromptAt) < watchLivenessPromptInterval {
-		return false
+		return "", false
+	}
+	line := formatWatchLiveness(scope, snapshot)
+	// The backstop repeat is for an agent that missed the first one, not for
+	// nagging: a turn it already spent on this exact line buys nothing.
+	if line == s.lastPrompt && now.Sub(s.lastPromptAt) < watchLivenessRepeatInterval {
+		return "", false
 	}
 	s.lastPromptAt = now
-	return true
+	s.lastPrompt = line
+	return line, true
 }
 
 type watchSinkError struct {
@@ -1035,8 +1054,7 @@ func consumeWatchEventsWithStateAndScopeAndSinkAndInterval(ctx context.Context, 
 				reconciliationSucceeded()
 			}
 		case now := <-livenessTicker.C:
-			if latestReconciliation != nil && livenessState.PromptDue(now, scope, *latestReconciliation) {
-				line := formatWatchLiveness(scope)
+			if line, due := livenessPromptFor(livenessState, now, scope, latestReconciliation); due {
 				if err := writeWatchLineWithActionSink(out, line, "monitor.liveness", watchDecision{GoalID: scope.GoalID, TaskID: scope.TaskID}, sink, actionSink); err != nil {
 					return err
 				}
@@ -1184,6 +1202,9 @@ func watchReconcileURL(baseURL string, scope watchScope) (string, error) {
 	if scope.TaskID != "" {
 		query.Set("task_id", scope.TaskID)
 	}
+	if scope.MonitorToken != "" {
+		query.Set("monitor_token", scope.MonitorToken)
+	}
 	parsed.RawQuery = query.Encode()
 	return parsed.String(), nil
 }
@@ -1220,11 +1241,16 @@ type watchReconciliationHandoff struct {
 	ReviewReceivedAt          *string `json:"ReviewReceivedAt"`
 	ReviewRejectedAt          *string `json:"ReviewRejectedAt"`
 	ReviewRejectionReceivedAt *string `json:"ReviewRejectionReceivedAt"`
+	// MonitorLost marks a handoff whose worker has no monitor left. An open
+	// handoff otherwise reads as "somebody else is on it", which is only true
+	// while that somebody is still there.
+	MonitorLost bool `json:"MonitorLost"`
 }
 
 type watchReconciliationGoal struct {
-	ID     string `json:"id"`
-	Status string `json:"status"`
+	ID        string    `json:"id"`
+	Status    string    `json:"status"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 func (g *watchReconciliationGoal) UnmarshalJSON(data []byte) error {
@@ -1240,12 +1266,14 @@ func (g *watchReconciliationGoal) UnmarshalJSON(data []byte) error {
 }
 
 type watchReconciliation struct {
-	Goals              []watchReconciliationGoal    `json:"goals"`
-	Decisions          []watchDecision              `json:"decisions"`
-	GoalHandoffs       []watchReconciliationHandoff `json:"goal_handoffs"`
-	PlanHandoffs       []watchReconciliationHandoff `json:"plan_handoffs"`
-	TaskHandoffs       []watchReconciliationHandoff `json:"task_handoffs"`
-	TaskCreateHandoffs []watchTaskCreateHandoff     `json:"task_create_handoffs"`
+	Goals                   []watchReconciliationGoal    `json:"goals"`
+	MonitorLastReconciledAt *string                      `json:"monitor_last_reconciled_at"`
+	Decisions               []watchDecision              `json:"decisions"`
+	GoalHandoffs            []watchReconciliationHandoff `json:"goal_handoffs"`
+	PlanHandoffs            []watchReconciliationHandoff `json:"plan_handoffs"`
+	TaskHandoffs            []watchReconciliationHandoff `json:"task_handoffs"`
+	TaskCreateHandoffs      []watchTaskCreateHandoff     `json:"task_create_handoffs"`
+	initialized             bool
 }
 
 type watchTaskCreateHandoff struct {
@@ -1387,7 +1415,43 @@ func reconcileWatchScope(ctx context.Context, client *http.Client, baseURL strin
 			}
 		}
 	}
+	if latestReconciliation != nil && scope.ProjectID != "" && scope.GoalID == "" && scope.TaskID == "" {
+		var newGoals []watchReconciliationGoal
+		if latestReconciliation.initialized {
+			previousGoalIDs := make(map[string]struct{}, len(latestReconciliation.Goals))
+			for _, goal := range latestReconciliation.Goals {
+				previousGoalIDs[goal.ID] = struct{}{}
+			}
+			for _, goal := range state.Goals {
+				if _, ok := previousGoalIDs[goal.ID]; !ok {
+					newGoals = append(newGoals, goal)
+				}
+			}
+		} else if state.MonitorLastReconciledAt != nil && strings.TrimSpace(*state.MonitorLastReconciledAt) != "" {
+			watermark, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(*state.MonitorLastReconciledAt))
+			if err != nil {
+				return fmt.Errorf("parse monitor reconciliation watermark: %w", err)
+			}
+			for _, goal := range state.Goals {
+				if goal.CreatedAt.After(watermark) {
+					newGoals = append(newGoals, goal)
+				}
+			}
+		}
+		for _, goal := range newGoals {
+			decision := watchDecision{GoalID: goal.ID, TargetRole: "commander"}
+			if !scopeFilter.delivers("goal.created", decision) {
+				continue
+			}
+			if err := emitWatchDecisionWithStateAndSinks(out, "goal.created", decision,
+				delivered, lastWakeupContent, wakeupDiscrepancyDelivered,
+				wakeupDelivered, sink, actionSink); err != nil {
+				return err
+			}
+		}
+	}
 	if latestReconciliation != nil {
+		state.initialized = true
 		*latestReconciliation = state
 	}
 	return nil
@@ -1676,6 +1740,11 @@ func formatWatchDecision(eventName string, decision watchDecision) (string, bool
 		return fmt.Sprintf("atct decision answered (decision_id: %s)", decision.decisionID()), true
 	case "decision.pending":
 		return fmt.Sprintf("atct decision pending (decision_id: %s)", decision.decisionID()), true
+	case "decision.withdrawn":
+		// The session that asked it is waiting for an answer. Say that none is
+		// coming, or it waits for good: goal 260 sat idle on a withdrawn
+		// decision with all five of its tasks already done.
+		return fmt.Sprintf("atct decision withdrawn, no answer is coming (decision_id: %s)", decision.decisionID()), true
 	case "decision.approved":
 		return fmt.Sprintf("atct decision approved (decision_id: %s)", decision.decisionID()), true
 	case "decision.rejected":
@@ -1735,7 +1804,7 @@ func formatWatchDecision(eventName string, decision watchDecision) (string, bool
 	case "wakeup":
 		return fmt.Sprintf("atct wakeup: actionable_goals=%d unassigned_goals=%d unstarted_tasks=%d waiting_answer_tasks=%d untouched_tasks=%d delegated_tasks=%d waiting_answers=%d unassigned=%s", decision.ActionableGoalCount, decision.UnassignedGoalCount, decision.UnstartedTaskCount, decision.WaitingAnswerTaskCount, decision.UntouchedTaskCount, decision.DelegatedTaskCount, decision.WaitingAnswerCount, formatUnassignedGoalIDs(decision.UnassignedGoalIDs)), true
 	case "wakeup.completion_report_missing":
-		return fmt.Sprintf("atct wakeup: goal %s has all tasks done but no completion report", decision.GoalID), true
+		return fmt.Sprintf("atct wakeup: goal %s has all tasks done; request named goal review with atct_goal_handoff_review_request", decision.GoalID), true
 	case "wakeup.commits_missing":
 		return fmt.Sprintf("atct wakeup: goal %s has no linked commits", decision.GoalID), true
 	case "wakeup.undeclared_goal":
@@ -1779,11 +1848,56 @@ func formatWatchDecision(eventName string, decision watchDecision) (string, bool
 	}
 }
 
-func formatWatchLiveness(scope watchScope) string {
+// formatWatchLiveness names what to act on. "recheck goal 287" named nothing,
+// so its subcommander rechecked, read an open goal handoff, and reported that
+// no transition was available while a rejected plan handoff waited.
+func formatWatchLiveness(scope watchScope, state watchReconciliation) string {
+	// A rejection comes first whatever the scope. An executor used to be told
+	// only "recheck task 1307", so the one agent allowed to receive the
+	// rejection was never told one was waiting, and the task sat rejected.
+	if rejected, kind := watchRejectedHandoff(scope, state); rejected != "" {
+		return fmt.Sprintf("atct monitor liveness: %s handoff %s was rejected and is waiting to be received (%s)",
+			kind, rejected, watchScopeSubject(scope))
+	}
 	if scope.TaskID != "" {
 		return fmt.Sprintf("atct monitor liveness: recheck task %s", scope.TaskID)
 	}
 	return fmt.Sprintf("atct monitor liveness: recheck goal %s", scope.GoalID)
+}
+
+func watchScopeSubject(scope watchScope) string {
+	if scope.TaskID != "" {
+		return "task " + scope.TaskID
+	}
+	return "goal " + scope.GoalID
+}
+
+// watchRejectedHandoff returns the first rejected handoff nobody has received.
+//
+// A task-scoped monitor speaks only for its own task: putting a sibling task's
+// rejection in front of it would name work it cannot receive.
+func watchRejectedHandoff(scope watchScope, state watchReconciliation) (string, string) {
+	for _, group := range []struct {
+		kind     string
+		handoffs []watchReconciliationHandoff
+	}{{"goal", state.GoalHandoffs}, {"plan", state.PlanHandoffs}, {"task", state.TaskHandoffs}} {
+		for _, handoff := range group.handoffs {
+			if !watchHandoffOpen(handoff) {
+				continue
+			}
+			if scope.TaskID != "" {
+				if group.kind != "task" || !watchHandoffMatchesTask(scope, handoff) {
+					continue
+				}
+			} else if !watchHandoffMatchesGoal(scope, handoff) {
+				continue
+			}
+			if handoff.ReviewRejectedAt != nil && handoff.ReviewRejectionReceivedAt == nil {
+				return handoff.ID, group.kind
+			}
+		}
+	}
+	return "", ""
 }
 
 func formatUnassignedGoalIDs(ids []int64) string {
@@ -1887,4 +2001,11 @@ func appendUniqueWatchURL(urls []string, addr string) []string {
 		}
 	}
 	return append(urls, baseURL)
+}
+
+func livenessPromptFor(state *watchLivenessState, now time.Time, scope watchScope, snapshot *watchReconciliation) (string, bool) {
+	if snapshot == nil {
+		return "", false
+	}
+	return state.PromptDue(now, scope, *snapshot)
 }

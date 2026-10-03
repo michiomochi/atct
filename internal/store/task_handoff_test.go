@@ -14,9 +14,15 @@ import (
 	"github.com/michiomochi/atct/internal/store/sqlcgen"
 )
 
+// addTestAgentSession adds an ordinary running session. It passed pid 0 back
+// when liveness read a pid, which made every one of them look stale; the tests
+// that want a stale session say so now with expireTestAgentSessionLease.
 func addTestAgentSession(t *testing.T, s *Store, id string) {
 	t.Helper()
-	registerNamedTestAgentSession(t, s, id, 0)
+	sessionID := registerNamedTestAgentSession(t, s, id, 0)
+	if err := s.HeartbeatAgentSession(context.Background(), sessionID, time.Now().UTC()); err != nil {
+		t.Fatalf("lease test agent session %q: %v", id, err)
+	}
 }
 
 func addTestTasks(t *testing.T, s *Store, count int) []int64 {
@@ -283,6 +289,17 @@ func TestTaskHandoffReviewRejectReceiveLifecycleUpdatesTaskStatusAndPreservesCla
 	}
 	assertTaskStatus(t, s, taskID, domain.TaskDoing)
 
+	if _, err := s.ReceiveTaskHandoffReview(ctx, handoff.ID, taskID, requesterID); !errors.Is(err, ErrTaskHandoffReviewState) {
+		t.Fatalf("ReceiveTaskHandoffReview after rejection error = %v, want ErrTaskHandoffReviewState", err)
+	}
+	unchanged, err := s.GetTaskHandoff(ctx, handoff.ID)
+	if err != nil {
+		t.Fatalf("GetTaskHandoff after rejected review receive: %v", err)
+	}
+	if unchanged.ReviewReceivedBy != rejected.ReviewReceivedBy || unchanged.ReviewReceivedAt != rejected.ReviewReceivedAt || unchanged.ReviewRejectReport != rejected.ReviewRejectReport || unchanged.ReviewRejectedAt == nil || rejected.ReviewRejectedAt == nil || !unchanged.ReviewRejectedAt.Equal(*rejected.ReviewRejectedAt) {
+		t.Fatalf("rejected review receive changed persisted review state: before=%+v after=%+v", rejected, unchanged)
+	}
+
 	if _, err := s.RequestTaskHandoff(ctx, "task-review-second-open", taskID, requesterID, "second handoff"); err == nil {
 		t.Fatal("RequestTaskHandoff opened a second handoff after review rejection")
 	}
@@ -521,6 +538,7 @@ func TestTaskHandoffAllowsSecondHandoffForSameTask(t *testing.T) {
 	`, 999999, "dead", testSessionID("dead-receiver")); err != nil {
 		t.Fatalf("dead receiver session fixture update failed: %v", err)
 	}
+	expireTestAgentSessionLease(t, s, testSessionID("dead-receiver"))
 
 	first, err := s.RequestTaskHandoff(ctx, "handoff-1", taskID, testSessionID("requester"), "")
 	if err != nil {
@@ -886,6 +904,7 @@ func TestTaskHandoffReclaimsDeadClaim(t *testing.T) {
 	`, 999999, "dead", testSessionID("dead-claim-owner")); err != nil {
 		t.Fatalf("dead claim session fixture update failed: %v", err)
 	}
+	expireTestAgentSessionLease(t, s, testSessionID("dead-claim-owner"))
 	addTaskHandoffDirect(t, s, "handoff-dead-claim-existing", taskID, "dead-claim-owner", "dead-claim-owner")
 
 	handoff, err := s.RequestTaskHandoff(ctx, "handoff-dead-claim", taskID, testSessionID("requester"), "")

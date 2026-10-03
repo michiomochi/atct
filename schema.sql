@@ -24,7 +24,8 @@ CREATE TABLE IF NOT EXISTS agent_sessions (
   discarded_by  INTEGER REFERENCES agent_sessions(id),
   discarded_decision_id INTEGER REFERENCES decisions(id),
   discard_reason TEXT NOT NULL DEFAULT '',
-  development_mode INTEGER NOT NULL DEFAULT 0
+  development_mode INTEGER NOT NULL DEFAULT 0,
+  last_heartbeat_at TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_agent_sessions_project_registered_at
@@ -48,7 +49,6 @@ CREATE TABLE IF NOT EXISTS goals (
   how_to_verify  TEXT NOT NULL DEFAULT '',
   surprises      TEXT NOT NULL DEFAULT '',
   needs_review   TEXT NOT NULL DEFAULT '',
-  next_steps     TEXT NOT NULL DEFAULT '',
   created_at     TEXT NOT NULL,
   updated_at     TEXT NOT NULL,
   CHECK (
@@ -57,11 +57,21 @@ CREATE TABLE IF NOT EXISTS goals (
     length(trim(now_possible)) > 0 AND length(now_possible) <= 2000 AND
     length(trim(how_to_verify)) > 0 AND length(how_to_verify) <= 2000 AND
     length(trim(surprises)) > 0 AND length(surprises) <= 2000 AND
-    length(trim(needs_review)) > 0 AND length(needs_review) <= 2000 AND
-    length(trim(next_steps)) > 0 AND length(next_steps) <= 2000
+    length(trim(needs_review)) > 0 AND length(needs_review) <= 2000
   )
 )
 );
+
+CREATE TABLE IF NOT EXISTS next_goals (
+  goal_id INTEGER NOT NULL REFERENCES goals(id),
+  next_goal_id INTEGER NOT NULL REFERENCES goals(id),
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (goal_id, next_goal_id),
+  CHECK (goal_id <> next_goal_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_next_goals_next_goal_id
+  ON next_goals(next_goal_id);
 
 CREATE TABLE IF NOT EXISTS tasks (
   id         INTEGER PRIMARY KEY,
@@ -227,7 +237,8 @@ CREATE INDEX IF NOT EXISTS monitor_health_last_seen_idx
 CREATE TABLE IF NOT EXISTS monitor_bindings (
   token            TEXT PRIMARY KEY,
   agent_session_id INTEGER NOT NULL REFERENCES agent_sessions(id) ON DELETE CASCADE,
-  created_at       TEXT NOT NULL
+  created_at       TEXT NOT NULL,
+  last_reconciled_at TEXT NOT NULL DEFAULT ''
 );
 
 CREATE INDEX IF NOT EXISTS idx_monitor_bindings_agent_session_id

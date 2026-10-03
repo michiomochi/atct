@@ -88,6 +88,71 @@ func TestWorkflowReconcileCanonicalEndpoint(t *testing.T) {
 	}
 }
 
+func TestWorkflowReconcileMonitorWatermarkEmptyForNewBinding(t *testing.T) {
+	f := newBareFixture(t)
+	session, err := f.store.RegisterAgentSession(f.ctx, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const token = "workflow-watermark-empty"
+	if err := f.store.BindMonitorToken(f.ctx, token, session); err != nil {
+		t.Fatal(err)
+	}
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+	status, _, body := doRequest(t, srv.Client(), http.MethodGet, srv.URL+"/api/events/reconcile?project_id="+strconv.FormatInt(f.project.ID, 10)+"&monitor_token="+token, nil)
+	if status != http.StatusOK {
+		t.Fatalf("reconcile status = %d; body=%s", status, body)
+	}
+	var response struct {
+		MonitorLastReconciledAt *string `json:"monitor_last_reconciled_at"`
+	}
+	if err := json.Unmarshal(body, &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.MonitorLastReconciledAt == nil || *response.MonitorLastReconciledAt != "" {
+		t.Fatalf("monitor_last_reconciled_at = %v, want empty metadata", response.MonitorLastReconciledAt)
+	}
+}
+
+func TestWorkflowReconcileMonitorWatermarkPreservedAfterRebinding(t *testing.T) {
+	f := newBareFixture(t)
+	firstSession, err := f.store.RegisterAgentSession(f.ctx, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondSession, err := f.store.RegisterAgentSession(f.ctx, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const token = "workflow-watermark-rebind"
+	const watermark = "2026-09-19T00:00:00Z"
+	if err := f.store.BindMonitorToken(f.ctx, token, firstSession); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.store.DB().ExecContext(f.ctx, `UPDATE monitor_bindings SET last_reconciled_at = ? WHERE token = ?`, watermark, token); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.store.BindMonitorToken(f.ctx, token, secondSession); err != nil {
+		t.Fatal(err)
+	}
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+	status, _, body := doRequest(t, srv.Client(), http.MethodGet, srv.URL+"/api/events/reconcile?project_id="+strconv.FormatInt(f.project.ID, 10)+"&monitor_token="+token, nil)
+	if status != http.StatusOK {
+		t.Fatalf("reconcile status = %d; body=%s", status, body)
+	}
+	var response struct {
+		MonitorLastReconciledAt *string `json:"monitor_last_reconciled_at"`
+	}
+	if err := json.Unmarshal(body, &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.MonitorLastReconciledAt == nil || *response.MonitorLastReconciledAt != watermark {
+		t.Fatalf("monitor_last_reconciled_at = %v, want %q", response.MonitorLastReconciledAt, watermark)
+	}
+}
+
 func TestSSEDoesNotRejectAStaleCursor(t *testing.T) {
 	f := newBareFixture(t)
 	decision, err := f.store.AskDecision(f.ctx, store.AskInput{

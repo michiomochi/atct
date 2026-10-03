@@ -88,7 +88,7 @@ func (s *Store) ReceiveTaskCreateHandoff(ctx context.Context, id string, receive
 	if err != nil || goalHandoff == nil || goalHandoff.ReceivedBy != receivedBy {
 		return h, ErrTaskCreateHandoffState
 	}
-	_, err = sqlcgen.New(s.db).ReceiveTaskCreateHandoff(ctx, sqlcgen.ReceiveTaskCreateHandoffParams{ID: id, ReceivedBy: sql.NullInt64{Int64: receivedBy, Valid: true}, ReceivedAt: sql.NullString{String: time.Now().UTC().Format(time.RFC3339Nano), Valid: true}})
+	_, err = sqlcgen.New(s.db).ReceiveTaskCreateHandoff(ctx, sqlcgen.ReceiveTaskCreateHandoffParams{ID: id, ReceivedBy: sql.NullInt64{Int64: receivedBy, Valid: true}, ReceivedAt: sql.NullString{String: formatTimestamp(time.Now()), Valid: true}})
 	if err != nil {
 		return h, err
 	}
@@ -154,7 +154,7 @@ func (s *Store) RecoverTaskCreateHandoff(ctx context.Context, handoffID string, 
 	if agentSessionHasDiscardMetadata(replacementSession) {
 		return TaskCreateHandoff{}, ErrSessionDiscarded
 	}
-	recoveredAt := time.Now().UTC().Format(time.RFC3339Nano)
+	recoveredAt := formatTimestamp(time.Now())
 	var result sql.Result
 	if phase == "received" {
 		result, err = q.RecoverTaskCreateHandoffReceiver(ctx, sqlcgen.RecoverTaskCreateHandoffReceiverParams{
@@ -187,7 +187,7 @@ func (s *Store) RecoverTaskCreateHandoff(ctx context.Context, handoffID string, 
 
 func (s *Store) createTaskCreateHandoffTx(ctx context.Context, tx *sql.Tx, goalID, requestedBy int64) (string, error) {
 	id := uuid.NewString()
-	err := sqlcgen.New(tx).CreateTaskCreateHandoff(ctx, sqlcgen.CreateTaskCreateHandoffParams{ID: id, GoalID: goalID, RequestedBy: sql.NullInt64{Int64: requestedBy, Valid: true}, RequestedAt: sql.NullString{String: time.Now().UTC().Format(time.RFC3339Nano), Valid: true}, RequestReport: sql.NullString{String: "create implementation tasks for accepted plan", Valid: true}})
+	err := sqlcgen.New(tx).CreateTaskCreateHandoff(ctx, sqlcgen.CreateTaskCreateHandoffParams{ID: id, GoalID: goalID, RequestedBy: sql.NullInt64{Int64: requestedBy, Valid: true}, RequestedAt: sql.NullString{String: formatTimestamp(time.Now()), Valid: true}, RequestReport: sql.NullString{String: "create implementation tasks for accepted plan", Valid: true}})
 	return id, err
 }
 
@@ -251,7 +251,7 @@ func (s *Store) CreateTasksForHandoff(ctx context.Context, handoffID string, ses
 			return nil, err
 		}
 	}
-	completed, err := q.CompleteTaskCreateHandoff(ctx, sqlcgen.CompleteTaskCreateHandoffParams{ID: handoffID, ReceivedBy: sql.NullInt64{Int64: sessionID, Valid: true}, CompletedBy: sql.NullInt64{Int64: sessionID, Valid: true}, CompletedAt: sql.NullString{String: time.Now().UTC().Format(time.RFC3339Nano), Valid: true}, CompleteReport: sql.NullString{String: "implementation tasks created", Valid: true}})
+	completed, err := q.CompleteTaskCreateHandoff(ctx, sqlcgen.CompleteTaskCreateHandoffParams{ID: handoffID, ReceivedBy: sql.NullInt64{Int64: sessionID, Valid: true}, CompletedBy: sql.NullInt64{Int64: sessionID, Valid: true}, CompletedAt: sql.NullString{String: formatTimestamp(time.Now()), Valid: true}, CompleteReport: sql.NullString{String: "implementation tasks created", Valid: true}})
 	if err != nil {
 		return nil, err
 	}

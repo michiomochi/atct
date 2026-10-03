@@ -158,12 +158,74 @@ func TestGoalHandoffRequestReceiveAndComplete(t *testing.T) {
 		t.Fatalf("receive must preserve request and incomplete state: %+v", received)
 	}
 
-	completed, err := s.CompleteGoalHandoff(ctx, handoff.ID, goalID, "completed after verifying goal handoff state")
+	if _, err := s.RequestGoalHandoffReview(ctx, handoff.ID, goalID, testSessionID("goal-receiver"), "ready for review"); err != nil {
+		t.Fatalf("RequestGoalHandoffReview failed: %v", err)
+	}
+	if _, err := s.ReceiveGoalHandoffReview(ctx, handoff.ID, goalID, testSessionID("goal-requester")); err != nil {
+		t.Fatalf("ReceiveGoalHandoffReview failed: %v", err)
+	}
+	finalizeGoalHandoffByReviewForTest(t, s, ctx, goalID, testSessionID("goal-requester"))
+	completed, err := s.GetGoalHandoff(ctx, handoff.ID)
 	if err != nil {
-		t.Fatalf("CompleteGoalHandoff failed: %v", err)
+		t.Fatalf("GetGoalHandoff failed: %v", err)
 	}
 	if completed.CompletedReportAt == nil || completed.RequestedAt == nil || completed.ReceivedAt == nil {
 		t.Fatalf("completion must preserve all prior timestamps: %+v", completed)
+	}
+}
+
+func TestGoalHandoffDirectCompletionRequiresReviewer(t *testing.T) {
+	tests := []struct {
+		name           string
+		completeByGoal bool
+		requestReview  bool
+	}{
+		{name: "direct before review"},
+		{name: "for goal before review", completeByGoal: true},
+		{name: "direct after review", requestReview: true},
+		{name: "for goal after review", completeByGoal: true, requestReview: true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newTestStore(t)
+			ctx := context.Background()
+			goalID := newTestGoal(t, s)
+			requester := "direct-close-requester"
+			receiver := "direct-close-receiver"
+			addLiveProjectClaim(t, s, goalID, requester)
+			addTestAgentSession(t, s, receiver)
+
+			handoff, err := s.RequestGoalHandoff(ctx, "direct-close-"+strings.ReplaceAll(tc.name, " ", "-"), goalID, testSessionID(requester), "delegate")
+			if err != nil {
+				t.Fatalf("RequestGoalHandoff: %v", err)
+			}
+			if _, err := s.ReceiveGoalHandoff(ctx, handoff.ID, goalID, testSessionID(receiver)); err != nil {
+				t.Fatalf("ReceiveGoalHandoff: %v", err)
+			}
+			if tc.requestReview {
+				if _, err := s.RequestGoalHandoffReview(ctx, handoff.ID, goalID, testSessionID(receiver), "ready for review"); err != nil {
+					t.Fatalf("RequestGoalHandoffReview: %v", err)
+				}
+			}
+
+			if tc.completeByGoal {
+				_, err = s.CompleteGoalHandoffForGoal(ctx, goalID, "direct completion bypass")
+			} else {
+				_, err = s.CompleteGoalHandoff(ctx, handoff.ID, goalID, "direct completion bypass")
+			}
+			if !errors.Is(err, ErrGoalHandoffReviewState) {
+				t.Fatalf("direct completion error = %v, want ErrGoalHandoffReviewState", err)
+			}
+
+			stored, err := s.GetGoalHandoff(ctx, handoff.ID)
+			if err != nil {
+				t.Fatalf("GetGoalHandoff: %v", err)
+			}
+			if stored.CompletedReportAt != nil || stored.CompleteReport != "" {
+				t.Fatalf("direct completion changed handoff: %+v", stored)
+			}
+		})
 	}
 }
 
@@ -211,6 +273,27 @@ func TestGoalHandoffReviewRejectReceiveLifecyclePreservesGoalClaim(t *testing.T)
 	if rejected.ReceivedBy != receiverID || rejected.ReviewReceivedBy != 0 || rejected.ReviewReceivedAt != nil || rejected.ReviewRejectReport != "revise the goal" || rejected.ReviewRejectedAt == nil {
 		t.Fatalf("goal review rejection did not preserve claim and clear reviewer state: %+v", rejected)
 	}
+	if _, err := s.ReceiveGoalHandoffReview(ctx, handoff.ID, goalID, requesterID); !errors.Is(err, ErrGoalHandoffReviewState) {
+		t.Fatalf("ReceiveGoalHandoffReview after rejection error = %v, want ErrGoalHandoffReviewState", err)
+	}
+	rejectedAfterReceive, err := s.GetGoalHandoff(ctx, handoff.ID)
+	if err != nil {
+		t.Fatalf("GetGoalHandoff after rejected review receive: %v", err)
+	}
+	if rejectedAfterReceive.ReviewRejectReport != rejected.ReviewRejectReport || rejectedAfterReceive.ReviewRejectedAt == nil || !rejectedAfterReceive.ReviewRejectedAt.Equal(*rejected.ReviewRejectedAt) {
+		t.Fatalf("rejected review evidence changed after receive: before=%+v after=%+v", rejected, rejectedAfterReceive)
+	}
+
+	if _, err := s.ReceiveGoalHandoffReview(ctx, handoff.ID, goalID, requesterID); !errors.Is(err, ErrGoalHandoffReviewState) {
+		t.Fatalf("ReceiveGoalHandoffReview after rejection error = %v, want ErrGoalHandoffReviewState", err)
+	}
+	unchanged, err := s.GetGoalHandoff(ctx, handoff.ID)
+	if err != nil {
+		t.Fatalf("GetGoalHandoff after rejected review receive: %v", err)
+	}
+	if unchanged.ReviewReceivedBy != rejected.ReviewReceivedBy || unchanged.ReviewReceivedAt != rejected.ReviewReceivedAt || unchanged.ReviewRejectReport != rejected.ReviewRejectReport || unchanged.ReviewRejectedAt == nil || rejected.ReviewRejectedAt == nil || !unchanged.ReviewRejectedAt.Equal(*rejected.ReviewRejectedAt) {
+		t.Fatalf("rejected review receive changed persisted review state: before=%+v after=%+v", rejected, unchanged)
+	}
 
 	if _, err := s.RequestGoalHandoffReview(ctx, handoff.ID, goalID, receiverID, "revised goal"); err == nil {
 		t.Fatal("RequestGoalHandoffReview accepted a rejection that the original submitter has not received")
@@ -225,6 +308,16 @@ func TestGoalHandoffReviewRejectReceiveLifecyclePreservesGoalClaim(t *testing.T)
 	if rejectionReceived.ReviewRejectionReceivedBy != receiverID || rejectionReceived.ReviewRejectionReceivedAt == nil {
 		t.Fatalf("unexpected goal rejection receipt: %+v", rejectionReceived)
 	}
+	if _, err := s.ReceiveGoalHandoffReview(ctx, handoff.ID, goalID, requesterID); !errors.Is(err, ErrGoalHandoffReviewState) {
+		t.Fatalf("ReceiveGoalHandoffReview after rejection receipt error = %v, want ErrGoalHandoffReviewState", err)
+	}
+	rejectionReceivedAfterReceive, err := s.GetGoalHandoff(ctx, handoff.ID)
+	if err != nil {
+		t.Fatalf("GetGoalHandoff after rejection receipt review receive: %v", err)
+	}
+	if rejectionReceivedAfterReceive.ReviewRejectionReceivedBy != rejectionReceived.ReviewRejectionReceivedBy || rejectionReceivedAfterReceive.ReviewRejectionReceivedAt == nil || !rejectionReceivedAfterReceive.ReviewRejectionReceivedAt.Equal(*rejectionReceived.ReviewRejectionReceivedAt) {
+		t.Fatalf("rejection receipt evidence changed after review receive: before=%+v after=%+v", rejectionReceived, rejectionReceivedAfterReceive)
+	}
 
 	if _, err := s.RequestGoalHandoffReview(ctx, handoff.ID, goalID, receiverID, "revised goal"); err != nil {
 		t.Fatalf("second RequestGoalHandoffReview: %v", err)
@@ -238,12 +331,72 @@ func TestGoalHandoffReviewRejectReceiveLifecyclePreservesGoalClaim(t *testing.T)
 	if _, err := s.CompleteGoalHandoff(ctx, handoff.ID, goalID, "bypassed review"); err == nil {
 		t.Fatal("CompleteGoalHandoff bypassed the recorded reviewer")
 	}
-	completed, err := s.CompleteGoalHandoffByReviewer(ctx, handoff.ID, goalID, requesterID, "approved after review")
-	if err != nil {
-		t.Fatalf("CompleteGoalHandoffByReviewer: %v", err)
+	if _, err := s.CompleteGoalHandoffByReviewer(ctx, handoff.ID, goalID, requesterID, "approved after review"); !errors.Is(err, ErrGoalHandoffReviewState) {
+		t.Fatalf("CompleteGoalHandoffByReviewer error = %v, want ErrGoalHandoffReviewState", err)
 	}
-	if completed.CompletedReportAt == nil || completed.CompleteReport != "approved after review" {
-		t.Fatalf("unexpected completed goal handoff: %+v", completed)
+}
+
+func TestCompleteGoalHandoffByReviewerRejectsDelegatedReceivedReview(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	goalID := newTestGoal(t, s)
+	requesterID := testSessionID("reviewer-guard-requester")
+	receiverID := testSessionID("reviewer-guard-receiver")
+	addLiveProjectClaim(t, s, goalID, "reviewer-guard-requester")
+	addTestAgentSession(t, s, "reviewer-guard-receiver")
+	handoff := receiveGoalHandoffReviewForGoalReviewTest(t, s, ctx, "reviewer-guard-handoff", goalID, requesterID, receiverID)
+	events, cancel := s.SubscribeEvents()
+	defer cancel()
+
+	if _, err := s.CompleteGoalHandoffByReviewer(ctx, handoff.ID, goalID, requesterID, "direct completion"); !errors.Is(err, ErrGoalHandoffReviewState) {
+		t.Fatalf("CompleteGoalHandoffByReviewer error = %v, want ErrGoalHandoffReviewState", err)
+	}
+	after, err := s.GetGoalHandoff(ctx, handoff.ID)
+	if err != nil {
+		t.Fatalf("GetGoalHandoff: %v", err)
+	}
+	if after.CompletedReportAt != nil || after.CompleteReport != "" {
+		t.Fatalf("handoff after refused completion = %+v, want open", after)
+	}
+	expectNoHandoffReported(t, events)
+	if _, err := s.RequestGoalReview(ctx, goalID, requesterID, goalReviewRequestTestReport()); err != nil {
+		t.Fatalf("RequestGoalReview on open handoff: %v", err)
+	}
+}
+
+func TestReceiveGoalHandoffReviewRejectsSecondReceipt(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	goalID := newTestGoal(t, s)
+	requesterID := testSessionID("goal-review-second-receipt-requester")
+	receiverID := testSessionID("goal-review-second-receipt-receiver")
+	addLiveProjectClaim(t, s, goalID, "goal-review-second-receipt-requester")
+	addTestAgentSession(t, s, "goal-review-second-receipt-receiver")
+
+	handoff, err := s.RequestGoalHandoff(ctx, "goal-review-second-receipt", goalID, requesterID, "take the goal")
+	if err != nil {
+		t.Fatalf("RequestGoalHandoff: %v", err)
+	}
+	if _, err := s.ReceiveGoalHandoff(ctx, handoff.ID, goalID, receiverID); err != nil {
+		t.Fatalf("ReceiveGoalHandoff: %v", err)
+	}
+	if _, err := s.RequestGoalHandoffReview(ctx, handoff.ID, goalID, receiverID, "goal is ready"); err != nil {
+		t.Fatalf("RequestGoalHandoffReview: %v", err)
+	}
+
+	received, err := s.ReceiveGoalHandoffReview(ctx, handoff.ID, goalID, requesterID)
+	if err != nil {
+		t.Fatalf("ReceiveGoalHandoffReview: %v", err)
+	}
+	if _, err := s.ReceiveGoalHandoffReview(ctx, handoff.ID, goalID, requesterID); !errors.Is(err, ErrGoalHandoffReviewState) {
+		t.Fatalf("second ReceiveGoalHandoffReview error = %v, want ErrGoalHandoffReviewState", err)
+	}
+	after, err := s.GetGoalHandoff(ctx, handoff.ID)
+	if err != nil {
+		t.Fatalf("GetGoalHandoff after second review receive: %v", err)
+	}
+	if after.ReviewReceivedBy != received.ReviewReceivedBy || after.ReviewReceivedAt == nil || !after.ReviewReceivedAt.Equal(*received.ReviewReceivedAt) {
+		t.Fatalf("review receipt evidence changed after second receive: before=%+v after=%+v", received, after)
 	}
 }
 
@@ -537,25 +690,40 @@ func TestGoalHandoffReportsAreStored(t *testing.T) {
 	if _, err := s.ReceiveGoalHandoff(ctx, requested.ID, goalID, testSessionID("goal-report-receiver")); err != nil {
 		t.Fatalf("ReceiveGoalHandoff: %v", err)
 	}
-	completed, err := s.CompleteGoalHandoff(ctx, requested.ID, goalID, "I completed the goal and verified it.")
-	if err != nil {
-		t.Fatalf("CompleteGoalHandoff: %v", err)
+	if _, err := s.RequestGoalHandoffReview(ctx, requested.ID, goalID, testSessionID("goal-report-receiver"), "ready for review"); err != nil {
+		t.Fatalf("RequestGoalHandoffReview: %v", err)
 	}
-	if completed.CompleteReport != "I completed the goal and verified it." {
+	if _, err := s.ReceiveGoalHandoffReview(ctx, requested.ID, goalID, testSessionID("goal-report-requester")); err != nil {
+		t.Fatalf("ReceiveGoalHandoffReview: %v", err)
+	}
+	finalizeGoalHandoffByReviewForTest(t, s, ctx, goalID, testSessionID("goal-report-requester"))
+	completed, err := s.GetGoalHandoff(ctx, requested.ID)
+	if err != nil {
+		t.Fatalf("GetGoalHandoff: %v", err)
+	}
+	if completed.CompleteReport != "ready for review" {
 		t.Fatalf("complete report = %q, want completion body", completed.CompleteReport)
 	}
 }
 
-func TestCompleteGoalHandoffPublishesReportedEvent(t *testing.T) {
+// TestCompleteGoalHandoffByReviewerPublishesReportedEventForSelfAddressedHandoff
+// covers the reported-event publish of CompleteGoalHandoffByReviewer on the only
+// handoffs it can still close: self-addressed ones (requested_by == received_by).
+// A delegated handoff cannot be closed through this method; it closes only
+// through approved FinalizeGoalReview, which publishes no such event.
+func TestCompleteGoalHandoffByReviewerPublishesReportedEventForSelfAddressedHandoff(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 	goalID := newTestGoal(t, s)
-	addTestAgentSession(t, s, "publish-goal-requester")
-	addTestAgentSession(t, s, "publish-goal-receiver")
+	const session = "publish-goal-self"
+	addTestAgentSession(t, s, session)
 	handoffID := "publish-goal-handoff"
-	addRequestOnlyGoalHandoff(t, s, handoffID, goalID, "publish-goal-requester")
-	if _, err := s.ReceiveGoalHandoff(ctx, handoffID, goalID, testSessionID("publish-goal-receiver")); err != nil {
-		t.Fatalf("ReceiveGoalHandoff: %v", err)
+	addGoalHandoffDirect(t, s, handoffID, goalID, session, session)
+	if _, err := s.RequestGoalHandoffReview(ctx, handoffID, goalID, testSessionID(session), "ready for review"); err != nil {
+		t.Fatalf("RequestGoalHandoffReview: %v", err)
+	}
+	if _, err := s.ReceiveGoalHandoffReview(ctx, handoffID, goalID, testSessionID(session)); err != nil {
+		t.Fatalf("ReceiveGoalHandoffReview: %v", err)
 	}
 	goal, err := s.GetGoal(ctx, goalID)
 	if err != nil {
@@ -565,9 +733,9 @@ func TestCompleteGoalHandoffPublishesReportedEvent(t *testing.T) {
 	defer cancel()
 
 	const report = "goal completion report"
-	completed, err := s.CompleteGoalHandoff(ctx, handoffID, goalID, report)
+	completed, err := s.CompleteGoalHandoffByReviewer(ctx, handoffID, goalID, testSessionID(session), report)
 	if err != nil {
-		t.Fatalf("CompleteGoalHandoff: %v", err)
+		t.Fatalf("CompleteGoalHandoffByReviewer: %v", err)
 	}
 	wakeup := waitForHandoffReported(t, events)
 
@@ -631,7 +799,7 @@ func TestCompleteGoalHandoffPublishesUnknownIdentityReportedEvent(t *testing.T) 
 
 			events, cancel := s.SubscribeEvents()
 			defer cancel()
-			if _, err := s.CompleteGoalHandoff(ctx, handoffID, goalID, "unknown identity completed"); err != nil {
+			if _, err := s.CompleteGoalHandoff(ctx, handoffID, goalID, goalHandoffReclaimedReport); err != nil {
 				t.Fatalf("CompleteGoalHandoff: %v", err)
 			}
 			waitForHandoffReported(t, events)
@@ -713,6 +881,7 @@ func TestGoalHandoffAllowsSecondHandoffForSameGoal(t *testing.T) {
 	`, 999999, "dead", testSessionID("goal-dead-receiver")); err != nil {
 		t.Fatalf("dead receiver session fixture update failed: %v", err)
 	}
+	expireTestAgentSessionLease(t, s, testSessionID("goal-dead-receiver"))
 
 	first, err := s.RequestGoalHandoff(ctx, "goal-handoff-1", goalID, testSessionID("goal-requester"), "")
 	if err != nil {
@@ -818,15 +987,14 @@ func TestGoalHandoffCompleteByGoal(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 	goalID := newTestGoal(t, s)
-	addTestAgentSession(t, s, "complete-by-goal-requester")
-	addTestAgentSession(t, s, "complete-by-goal-receiver")
+	addLiveProjectClaim(t, s, goalID, "complete-by-goal-requester")
 
 	addRequestOnlyGoalHandoff(t, s, "complete-by-goal", goalID, "complete-by-goal-requester")
 	requested, err := s.GetGoalHandoff(ctx, "complete-by-goal")
 	if err != nil {
 		t.Fatalf("GetGoalHandoff failed: %v", err)
 	}
-	if _, err := s.ReceiveGoalHandoff(ctx, requested.ID, goalID, testSessionID("complete-by-goal-receiver")); err != nil {
+	if _, err := s.ReceiveGoalHandoff(ctx, requested.ID, goalID, testSessionID("complete-by-goal-requester")); err != nil {
 		t.Fatalf("ReceiveGoalHandoff failed: %v", err)
 	}
 
@@ -842,271 +1010,14 @@ func TestGoalHandoffCompleteByGoal(t *testing.T) {
 	}
 }
 
-func TestRejectCompletionReopensCompletedGoalHandoff(t *testing.T) {
-	s := newTestStore(t)
-	ctx := context.Background()
-	goalID := newTestGoal(t, s)
-	const requester = "completion-reopen-requester"
-	const receiver = "completion-reopen-receiver"
-	const handoffID = "completion-reopen-handoff"
-	addLiveProjectClaim(t, s, goalID, requester)
-	addTestAgentSession(t, s, receiver)
-
-	original, err := s.RequestGoalHandoff(ctx, handoffID, goalID, testSessionID(requester), "")
-	if err != nil {
-		t.Fatalf("RequestGoalHandoff: %v", err)
-	}
-	if _, err := s.ReceiveGoalHandoff(ctx, original.ID, goalID, testSessionID(receiver)); err != nil {
-		t.Fatalf("ReceiveGoalHandoff: %v", err)
-	}
-	original, err = s.CompleteGoalHandoffForGoal(ctx, goalID, "completed before rejection")
-	if err != nil {
-		t.Fatalf("CompleteGoalHandoffForGoal: %v", err)
-	}
-
-	decision, err := s.CompleteGoalWithReport(ctx, goalID, domain.CompletionReport{
-		WorkDone:    "completion handoff reopening",
-		NowPossible: "continue work",
-		HowToVerify: "run store tests",
-		Surprises:   "none",
-		NeedsReview: "no",
-		NextSteps:   "continue",
-	}, testSessionID(receiver))
-	if err != nil {
-		t.Fatalf("CompleteGoalWithReport: %v", err)
-	}
-	const reason = "不足している検証を追加する"
-	if err := s.RejectCompletion(ctx, decision.ID, reason); err != nil {
-		t.Fatalf("RejectCompletion: %v", err)
-	}
-
-	handoffs, err := s.ListGoalHandoffs(ctx, goalID)
-	if err != nil {
-		t.Fatalf("ListGoalHandoffs: %v", err)
-	}
-	var open []GoalHandoff
-	for _, handoff := range handoffs {
-		if handoff.CompletedReportAt == nil {
-			open = append(open, handoff)
-		}
-	}
-	if len(open) != 1 {
-		t.Fatalf("got %d open handoffs, want 1: %+v", len(open), handoffs)
-	}
-	if want := fmt.Sprintf("%s-reopen-%d", original.ID, decision.ID); open[0].ID != want {
-		t.Fatalf("reopened handoff ID = %q, want %q", open[0].ID, want)
-	}
-	if open[0].RequestedBy != original.RequestedBy || open[0].ReceivedBy != original.ReceivedBy {
-		t.Fatalf("reopened handoff ownership = requested_by:%d received_by:%d, want requested_by:%d received_by:%d", open[0].RequestedBy, open[0].ReceivedBy, original.RequestedBy, original.ReceivedBy)
-	}
-	if open[0].RequestedAt == nil || open[0].ReceivedAt == nil {
-		t.Fatalf("reopened handoff is not received: %+v", open[0])
-	}
-	if open[0].RequestReport != "完了報告が却下されたため handoff を再発行した: "+reason {
-		t.Fatalf("reopened handoff request report = %q", open[0].RequestReport)
-	}
-}
-
-func TestRejectCompletionDoesNotReopenWhenGoalHandoffIsAlreadyOpen(t *testing.T) {
-	s := newTestStore(t)
-	ctx := context.Background()
-	goalID := newTestGoal(t, s)
-	const requester = "completion-open-requester"
-	const receiver = "completion-open-receiver"
-	const handoffID = "completion-open-handoff"
-	addLiveProjectClaim(t, s, goalID, requester)
-	addTestAgentSession(t, s, receiver)
-
-	requested, err := s.RequestGoalHandoff(ctx, handoffID, goalID, testSessionID(requester), "")
-	if err != nil {
-		t.Fatalf("RequestGoalHandoff: %v", err)
-	}
-	if _, err := s.ReceiveGoalHandoff(ctx, requested.ID, goalID, testSessionID(receiver)); err != nil {
-		t.Fatalf("ReceiveGoalHandoff: %v", err)
-	}
-	decision, err := s.CompleteGoalWithReport(ctx, goalID, domain.CompletionReport{
-		WorkDone:    "completion with an open handoff",
-		NowPossible: "continue work",
-		HowToVerify: "run store tests",
-		Surprises:   "none",
-		NeedsReview: "no",
-		NextSteps:   "continue",
-	}, testSessionID(receiver))
-	if err != nil {
-		t.Fatalf("CompleteGoalWithReport: %v", err)
-	}
-	if err := s.RejectCompletion(ctx, decision.ID, "keep the existing owner"); err != nil {
-		t.Fatalf("RejectCompletion: %v", err)
-	}
-
-	handoffs, err := s.ListGoalHandoffs(ctx, goalID)
-	if err != nil {
-		t.Fatalf("ListGoalHandoffs: %v", err)
-	}
-	if len(handoffs) != 1 || handoffs[0].ID != requested.ID || handoffs[0].CompletedReportAt != nil {
-		t.Fatalf("handoffs after rejection = %+v, want the original open handoff only", handoffs)
-	}
-}
-
-func TestRejectCompletionDoesNotReopenWithoutCompletedGoalHandoff(t *testing.T) {
-	s := newTestStore(t)
-	ctx := context.Background()
-	goalID := newTestGoal(t, s)
-	const receiver = "completion-no-handoff-receiver"
-	addTestAgentSession(t, s, receiver)
-
-	decision, err := s.CompleteGoalWithReport(ctx, goalID, domain.CompletionReport{
-		WorkDone:    "completion without a handoff",
-		NowPossible: "continue work",
-		HowToVerify: "run store tests",
-		Surprises:   "none",
-		NeedsReview: "no",
-		NextSteps:   "continue",
-	}, testSessionID(receiver))
-	if err != nil {
-		t.Fatalf("CompleteGoalWithReport: %v", err)
-	}
-	if err := s.RejectCompletion(ctx, decision.ID, "report from an unassigned session"); err != nil {
-		t.Fatalf("RejectCompletion: %v", err)
-	}
-
-	handoffs, err := s.ListGoalHandoffs(ctx, goalID)
-	if err != nil {
-		t.Fatalf("ListGoalHandoffs: %v", err)
-	}
-	for _, handoff := range handoffs {
-		if handoff.CompletedReportAt == nil {
-			t.Fatalf("unexpected open handoff after rejection: %+v", handoff)
-		}
-	}
-}
-
-func TestRejectCompletionDoesNotReopenAnotherSessionsGoalHandoff(t *testing.T) {
-	s := newTestStore(t)
-	ctx := context.Background()
-	goalID := newTestGoal(t, s)
-	const requester = "completion-other-session-requester"
-	const owner = "completion-other-session-owner"
-	const reporter = "completion-other-session-reporter"
-	const handoffID = "completion-other-session-handoff"
-	addLiveProjectClaim(t, s, goalID, requester)
-	addTestAgentSession(t, s, owner)
-	addTestAgentSession(t, s, reporter)
-
-	requested, err := s.RequestGoalHandoff(ctx, handoffID, goalID, testSessionID(requester), "")
-	if err != nil {
-		t.Fatalf("RequestGoalHandoff: %v", err)
-	}
-	if _, err := s.ReceiveGoalHandoff(ctx, requested.ID, goalID, testSessionID(owner)); err != nil {
-		t.Fatalf("ReceiveGoalHandoff: %v", err)
-	}
-	completed, err := s.CompleteGoalHandoffForGoal(ctx, goalID, "completed by the original owner")
-	if err != nil {
-		t.Fatalf("CompleteGoalHandoffForGoal: %v", err)
-	}
-	if completed.ReceivedBy != testSessionID(owner) {
-		t.Fatalf("completed handoff receiver = %d, want owner %d", completed.ReceivedBy, testSessionID(owner))
-	}
-
-	before, err := s.ListGoalHandoffs(ctx, goalID)
-	if err != nil {
-		t.Fatalf("ListGoalHandoffs before rejection: %v", err)
-	}
-	decision, err := s.CompleteGoalWithReport(ctx, goalID, domain.CompletionReport{
-		WorkDone:    "completion from another session",
-		NowPossible: "continue work",
-		HowToVerify: "run store tests",
-		Surprises:   "none",
-		NeedsReview: "no",
-		NextSteps:   "continue",
-	}, testSessionID(reporter))
-	if err != nil {
-		t.Fatalf("CompleteGoalWithReport: %v", err)
-	}
-	if err := s.RejectCompletion(ctx, decision.ID, "the original owner must keep the handoff"); err != nil {
-		t.Fatalf("RejectCompletion: %v", err)
-	}
-
-	after, err := s.ListGoalHandoffs(ctx, goalID)
-	if err != nil {
-		t.Fatalf("ListGoalHandoffs after rejection: %v", err)
-	}
-	if len(after) != len(before) {
-		t.Fatalf("handoff count after rejection = %d, want unchanged count %d: before=%+v after=%+v", len(after), len(before), before, after)
-	}
-	for _, handoff := range after {
-		if handoff.CompletedReportAt == nil {
-			t.Fatalf("unexpected open handoff after another session's rejection: %+v", handoff)
-		}
-	}
-}
-
-func TestApproveCompletionDoesNotReopenGoalHandoff(t *testing.T) {
-	s := newTestStore(t)
-	ctx := context.Background()
-	goalID := newTestGoal(t, s)
-	const requester = "completion-approval-requester"
-	const receiver = "completion-approval-receiver"
-	addLiveProjectClaim(t, s, goalID, requester)
-	addTestAgentSession(t, s, receiver)
-
-	handoff, err := s.RequestGoalHandoff(ctx, "completion-approval-handoff", goalID, testSessionID(requester), "")
-	if err != nil {
-		t.Fatalf("RequestGoalHandoff: %v", err)
-	}
-	if _, err := s.ReceiveGoalHandoff(ctx, handoff.ID, goalID, testSessionID(receiver)); err != nil {
-		t.Fatalf("ReceiveGoalHandoff: %v", err)
-	}
-	if _, err := s.CompleteGoalHandoffForGoal(ctx, goalID, "completed before approval"); err != nil {
-		t.Fatalf("CompleteGoalHandoffForGoal: %v", err)
-	}
-
-	decision, err := s.CompleteGoalWithReport(ctx, goalID, domain.CompletionReport{
-		WorkDone:    "completion approved without a handoff",
-		NowPossible: "finish the goal",
-		HowToVerify: "run store tests",
-		Surprises:   "none",
-		NeedsReview: "no",
-		NextSteps:   "none",
-	}, testSessionID(receiver))
-	if err != nil {
-		t.Fatalf("CompleteGoalWithReport: %v", err)
-	}
-	if _, err := s.ApproveCompletion(ctx, decision.ID); err != nil {
-		t.Fatalf("ApproveCompletion: %v", err)
-	}
-
-	handoffs, err := s.ListGoalHandoffs(ctx, goalID)
-	if err != nil {
-		t.Fatalf("ListGoalHandoffs: %v", err)
-	}
-	if len(handoffs) != 1 {
-		t.Fatalf("got %d handoffs after approval, want the completed handoff: %+v", len(handoffs), handoffs)
-	}
-	for _, handoff := range handoffs {
-		if handoff.CompletedReportAt == nil {
-			t.Fatalf("unexpected open handoff after approval: %+v", handoff)
-		}
-	}
-}
-
 func TestGoalHandoffAmendReportUpdatesCompletedHandoffWithoutChangingCompletionTime(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 	goalID := newTestGoal(t, s)
 	addLiveProjectClaim(t, s, goalID, "amend-goal-requester")
 	addTestAgentSession(t, s, "amend-goal-receiver")
-	handoff, err := s.RequestGoalHandoff(ctx, "amend-goal-handoff", goalID, testSessionID("amend-goal-requester"), "")
-	if err != nil {
-		t.Fatalf("RequestGoalHandoff: %v", err)
-	}
-	if _, err := s.ReceiveGoalHandoff(ctx, handoff.ID, goalID, testSessionID("amend-goal-receiver")); err != nil {
-		t.Fatalf("ReceiveGoalHandoff: %v", err)
-	}
-	completed, err := s.CompleteGoalHandoff(ctx, handoff.ID, goalID, "original report")
-	if err != nil {
-		t.Fatalf("CompleteGoalHandoff: %v", err)
-	}
+	handoff := receiveGoalHandoffReviewForGoalReviewTest(t, s, ctx, "amend-goal-handoff", goalID, testSessionID("amend-goal-requester"), testSessionID("amend-goal-receiver"))
+	completed := closeDelegatedGoalHandoffForTest(t, s, ctx, handoff.ID, goalID)
 
 	amended, err := s.AmendGoalHandoffReport(ctx, handoff.ID, goalID, "amended report")
 	if err != nil {
@@ -1209,16 +1120,8 @@ func TestGoalHandoffAllowsNewHandoffAfterCompletion(t *testing.T) {
 	addLiveProjectClaim(t, s, goalID, "completed-goal-requester")
 	addTestAgentSession(t, s, "completed-goal-receiver")
 
-	first, err := s.RequestGoalHandoff(ctx, "completed-goal-1", goalID, testSessionID("completed-goal-requester"), "")
-	if err != nil {
-		t.Fatalf("first RequestGoalHandoff failed: %v", err)
-	}
-	if _, err := s.ReceiveGoalHandoff(ctx, first.ID, goalID, testSessionID("completed-goal-receiver")); err != nil {
-		t.Fatalf("ReceiveGoalHandoff failed: %v", err)
-	}
-	if _, err := s.CompleteGoalHandoff(ctx, first.ID, goalID, "done"); err != nil {
-		t.Fatalf("CompleteGoalHandoff failed: %v", err)
-	}
+	first := receiveGoalHandoffReviewForGoalReviewTest(t, s, ctx, "completed-goal-1", goalID, testSessionID("completed-goal-requester"), testSessionID("completed-goal-receiver"))
+	closeDelegatedGoalHandoffForTest(t, s, ctx, first.ID, goalID)
 
 	if _, err := s.RequestGoalHandoff(ctx, "completed-goal-2", goalID, testSessionID("completed-goal-requester"), ""); err != nil {
 		t.Fatalf("new handoff after completion failed: %v", err)
@@ -1231,16 +1134,8 @@ func TestGoalHandoffCompletionDoesNotOverwriteReportedHandoff(t *testing.T) {
 	goalID := newTestGoal(t, s)
 	addLiveProjectClaim(t, s, goalID, "overwrite-goal-requester")
 	addTestAgentSession(t, s, "overwrite-goal-receiver")
-	handoff, err := s.RequestGoalHandoff(ctx, "overwrite-goal-handoff", goalID, testSessionID("overwrite-goal-requester"), "")
-	if err != nil {
-		t.Fatalf("RequestGoalHandoff: %v", err)
-	}
-	if _, err := s.ReceiveGoalHandoff(ctx, handoff.ID, goalID, testSessionID("overwrite-goal-receiver")); err != nil {
-		t.Fatalf("ReceiveGoalHandoff: %v", err)
-	}
-	if _, err := s.CompleteGoalHandoff(ctx, handoff.ID, goalID, "original report"); err != nil {
-		t.Fatalf("first CompleteGoalHandoff: %v", err)
-	}
+	handoff := receiveGoalHandoffReviewForGoalReviewTest(t, s, ctx, "overwrite-goal-handoff", goalID, testSessionID("overwrite-goal-requester"), testSessionID("overwrite-goal-receiver"))
+	closeDelegatedGoalHandoffForTest(t, s, ctx, handoff.ID, goalID)
 	if _, err := s.CompleteGoalHandoff(ctx, handoff.ID, goalID, "replacement report"); err == nil {
 		t.Fatal("second CompleteGoalHandoff unexpectedly overwrote the completed handoff")
 	}
@@ -1248,8 +1143,8 @@ func TestGoalHandoffCompletionDoesNotOverwriteReportedHandoff(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetGoalHandoff: %v", err)
 	}
-	if stored.CompleteReport != "original report" {
-		t.Fatalf("complete report = %q, want original report", stored.CompleteReport)
+	if stored.CompleteReport != goalHandoffReleasedReport {
+		t.Fatalf("complete report = %q, want original report %q", stored.CompleteReport, goalHandoffReleasedReport)
 	}
 }
 
@@ -1329,18 +1224,7 @@ func goalReviewRequestTestReport() domain.CompletionReport {
 		HowToVerify: "run goal review tests",
 		Surprises:   "none",
 		NeedsReview: "none",
-		NextSteps:   "merge",
 	}
-}
-
-func completeGoalHandoffReviewForGoalReviewTest(t *testing.T, s *Store, ctx context.Context, handoffID string, goalID, requesterID, receiverID int64) GoalHandoff {
-	t.Helper()
-	handoff := receiveGoalHandoffReviewForGoalReviewTest(t, s, ctx, handoffID, goalID, requesterID, receiverID)
-	completed, err := s.CompleteGoalHandoffByReviewer(ctx, handoff.ID, goalID, requesterID, "commander completed the reviewed goal handoff")
-	if err != nil {
-		t.Fatalf("CompleteGoalHandoffByReviewer %q: %v", handoffID, err)
-	}
-	return completed
 }
 
 func receiveGoalHandoffReviewForGoalReviewTest(t *testing.T, s *Store, ctx context.Context, handoffID string, goalID, requesterID, receiverID int64) GoalHandoff {
@@ -1359,6 +1243,34 @@ func receiveGoalHandoffReviewForGoalReviewTest(t *testing.T, s *Store, ctx conte
 		t.Fatalf("ReceiveGoalHandoffReview %q: %v", handoffID, err)
 	}
 	return handoff
+}
+
+// finalizeGoalHandoffByReviewForTest closes the received delegated handoff
+// through the only legitimate route: goal review, approval, finalization.
+// The goal ends done and the handoff's complete report is its review request report.
+func finalizeGoalHandoffByReviewForTest(t *testing.T, s *Store, ctx context.Context, goalID, commanderID int64) {
+	t.Helper()
+	review, err := s.RequestGoalReview(ctx, goalID, commanderID, goalReviewRequestTestReport())
+	if err != nil {
+		t.Fatalf("RequestGoalReview: %v", err)
+	}
+	if _, err := s.ApproveGoalReview(ctx, review.ID); err != nil {
+		t.Fatalf("ApproveGoalReview: %v", err)
+	}
+	if _, err := s.FinalizeGoalReview(ctx, goalID, commanderID); err != nil {
+		t.Fatalf("FinalizeGoalReview: %v", err)
+	}
+}
+
+// closeDelegatedGoalHandoffForTest closes a delegated handoff while the goal
+// stays active, through the released-report path that CompleteGoalHandoff allows.
+func closeDelegatedGoalHandoffForTest(t *testing.T, s *Store, ctx context.Context, handoffID string, goalID int64) GoalHandoff {
+	t.Helper()
+	completed, err := s.CompleteGoalHandoff(ctx, handoffID, goalID, goalHandoffReleasedReport)
+	if err != nil {
+		t.Fatalf("CompleteGoalHandoff released: %v", err)
+	}
+	return completed
 }
 
 func TestRequestGoalReviewRejectsWithoutDelegatedGoalHandoff(t *testing.T) {
@@ -1498,11 +1410,9 @@ func TestRecoverGoalHandoffClearsOnlyDefinitelyStaleReviewer(t *testing.T) {
 	if _, err := s.RecoverGoalHandoff(ctx, handoff.ID, goalID, freshCommanderID, "live reviewer"); !errors.Is(err, ErrSessionRecoveryNotProven) {
 		t.Fatalf("RecoverGoalHandoff with live reviewer error = %v, want ErrSessionRecoveryNotProven", err)
 	}
-	if _, err := s.DB().ExecContext(ctx, `UPDATE agent_sessions SET started_at = 'stale-process-start' WHERE id = ?`, staleCommanderID); err != nil {
-		t.Fatalf("make recorded reviewer stale: %v", err)
-	}
+	expireTestSessionLease(t, s, staleCommanderID)
 
-	recovered, err := s.RecoverGoalHandoff(ctx, handoff.ID, goalID, freshCommanderID, "reviewer process identity changed")
+	recovered, err := s.RecoverGoalHandoff(ctx, handoff.ID, goalID, freshCommanderID, "reviewer stopped heartbeating")
 	if err != nil {
 		t.Fatalf("RecoverGoalHandoff: %v", err)
 	}
@@ -1605,7 +1515,7 @@ func TestRejectedGoalReviewReusesReceivedHandoff(t *testing.T) {
 		t.Fatalf("GetGoal after rejection: %v", err)
 	}
 	wantReport := goalReviewRequestTestReport()
-	if goal.Status != domain.GoalActive || goal.WorkDone != wantReport.WorkDone || goal.NowPossible != wantReport.NowPossible || goal.HowToVerify != wantReport.HowToVerify || goal.Surprises != wantReport.Surprises || goal.NeedsReview != wantReport.NeedsReview || goal.NextSteps != wantReport.NextSteps || goal.ResultSummary != wantReport.WorkDone {
+	if goal.Status != domain.GoalActive || goal.WorkDone != wantReport.WorkDone || goal.NowPossible != wantReport.NowPossible || goal.HowToVerify != wantReport.HowToVerify || goal.Surprises != wantReport.Surprises || goal.NeedsReview != wantReport.NeedsReview || goal.ResultSummary != wantReport.WorkDone {
 		t.Fatalf("goal after rejection = %+v, want active with request-time report %+v", goal, wantReport)
 	}
 	originalAfterReject, err := s.GetGoalHandoff(ctx, original.ID)
@@ -1655,51 +1565,11 @@ func TestRequestGoalReviewRejectsPlainCompletedGoalHandoff(t *testing.T) {
 	if _, err := s.ReceiveGoalHandoff(ctx, handoff.ID, goalID, receiverID); err != nil {
 		t.Fatalf("ReceiveGoalHandoff: %v", err)
 	}
-	if _, err := s.CompleteGoalHandoff(ctx, handoff.ID, goalID, "receiver completed without commander review"); err != nil {
+	if _, err := s.CompleteGoalHandoff(ctx, handoff.ID, goalID, goalHandoffReclaimedReport); err != nil {
 		t.Fatalf("CompleteGoalHandoff: %v", err)
 	}
 
 	requireGoalReviewHandoffIncomplete(t, s, ctx, goalID, requesterID, "plain completion without handoff review")
-}
-
-func TestCompleteGoalWithReportKeepsKindCompletionIndependentOfGoalHandoffReview(t *testing.T) {
-	s := newTestStore(t)
-	ctx := context.Background()
-	goalID := newTestGoal(t, s)
-	requesterID := testSessionID("completion-kind-requester")
-	receiverID := testSessionID("completion-kind-receiver")
-	addLiveProjectClaim(t, s, goalID, "completion-kind-requester")
-	addTestAgentSession(t, s, "completion-kind-receiver")
-
-	handoff, err := s.RequestGoalHandoff(ctx, "completion-kind-open-handoff", goalID, requesterID, "delegate before legacy completion")
-	if err != nil {
-		t.Fatalf("RequestGoalHandoff: %v", err)
-	}
-	if _, err := s.ReceiveGoalHandoff(ctx, handoff.ID, goalID, receiverID); err != nil {
-		t.Fatalf("ReceiveGoalHandoff: %v", err)
-	}
-
-	d, err := s.CompleteGoalWithReport(ctx, goalID, domain.CompletionReport{
-		WorkDone:    "legacy completion work",
-		NowPossible: "legacy completion result",
-		HowToVerify: "run the store tests",
-		Surprises:   "none",
-		NeedsReview: "none",
-		NextSteps:   "merge",
-	}, requesterID)
-	if err != nil {
-		t.Fatalf("CompleteGoalWithReport: %v", err)
-	}
-	if d.Kind != domain.KindCompletion || d.TaskID != 0 {
-		t.Fatalf("completion decision = %+v, want taskless KindCompletion", d)
-	}
-	stored, err := s.GetDecision(ctx, d.ID)
-	if err != nil {
-		t.Fatalf("GetDecision: %v", err)
-	}
-	if stored.Kind != domain.KindCompletion {
-		t.Fatalf("stored completion decision kind = %q, want %q", stored.Kind, domain.KindCompletion)
-	}
 }
 
 func TestRejectedGoalReviewReplacesRequestTimeGoalReportOnSameHandoff(t *testing.T) {
@@ -1717,7 +1587,6 @@ func TestRejectedGoalReviewReplacesRequestTimeGoalReportOnSameHandoff(t *testing
 		HowToVerify: "first verify",
 		Surprises:   "first surprise",
 		NeedsReview: "first review",
-		NextSteps:   "first next",
 	}
 	first, err := s.RequestGoalReview(ctx, goalID, requesterID, firstReport)
 	if err != nil {
@@ -1730,7 +1599,7 @@ func TestRejectedGoalReviewReplacesRequestTimeGoalReportOnSameHandoff(t *testing
 	if err != nil {
 		t.Fatalf("GetGoal after rejected review: %v", err)
 	}
-	if goalAfterReject.WorkDone != firstReport.WorkDone || goalAfterReject.NowPossible != firstReport.NowPossible || goalAfterReject.HowToVerify != firstReport.HowToVerify || goalAfterReject.Surprises != firstReport.Surprises || goalAfterReject.NeedsReview != firstReport.NeedsReview || goalAfterReject.NextSteps != firstReport.NextSteps || goalAfterReject.ResultSummary != firstReport.WorkDone {
+	if goalAfterReject.WorkDone != firstReport.WorkDone || goalAfterReject.NowPossible != firstReport.NowPossible || goalAfterReject.HowToVerify != firstReport.HowToVerify || goalAfterReject.Surprises != firstReport.Surprises || goalAfterReject.NeedsReview != firstReport.NeedsReview || goalAfterReject.ResultSummary != firstReport.WorkDone {
 		t.Fatalf("goal after rejected review = %+v, want request-time report %+v", goalAfterReject, firstReport)
 	}
 	handoffAfterReject, err := s.GetGoalHandoff(ctx, originalHandoff.ID)
@@ -1759,7 +1628,6 @@ func TestRejectedGoalReviewReplacesRequestTimeGoalReportOnSameHandoff(t *testing
 		HowToVerify: "second verify",
 		Surprises:   "second surprise",
 		NeedsReview: "second review",
-		NextSteps:   "second next",
 	}
 	second, err := s.RequestGoalReview(ctx, goalID, requesterID, secondReport)
 	if err != nil {
@@ -1769,37 +1637,7 @@ func TestRejectedGoalReviewReplacesRequestTimeGoalReportOnSameHandoff(t *testing
 	if err != nil {
 		t.Fatalf("GetGoal after revised review: %v", err)
 	}
-	if second.ID == first.ID || goalAfterReplacement.WorkDone != secondReport.WorkDone || goalAfterReplacement.NowPossible != secondReport.NowPossible || goalAfterReplacement.HowToVerify != secondReport.HowToVerify || goalAfterReplacement.Surprises != secondReport.Surprises || goalAfterReplacement.NeedsReview != secondReport.NeedsReview || goalAfterReplacement.NextSteps != secondReport.NextSteps || goalAfterReplacement.ResultSummary != secondReport.WorkDone {
+	if second.ID == first.ID || goalAfterReplacement.WorkDone != secondReport.WorkDone || goalAfterReplacement.NowPossible != secondReport.NowPossible || goalAfterReplacement.HowToVerify != secondReport.HowToVerify || goalAfterReplacement.Surprises != secondReport.Surprises || goalAfterReplacement.NeedsReview != secondReport.NeedsReview || goalAfterReplacement.ResultSummary != secondReport.WorkDone {
 		t.Fatalf("revised review = %+v, goal = %+v; want distinct review and request-time report %+v", second, goalAfterReplacement, secondReport)
-	}
-}
-
-func TestCompleteGoalWithReportIgnoresHistoricalGoalReview(t *testing.T) {
-	s := newTestStore(t)
-	ctx := context.Background()
-	goalID := newTestGoal(t, s)
-	requesterID := testSessionID("legacy-completion-after-review-requester")
-	receiverID := testSessionID("legacy-completion-after-review-receiver")
-	addLiveProjectClaim(t, s, goalID, "legacy-completion-after-review-requester")
-	addTestAgentSession(t, s, "legacy-completion-after-review-receiver")
-	receiveGoalHandoffReviewForGoalReviewTest(t, s, ctx, "legacy-completion-after-review-handoff", goalID, requesterID, receiverID)
-	if review, err := s.RequestGoalReview(ctx, goalID, requesterID, domain.CompletionReport{
-		WorkDone: "review work", NowPossible: "review result", HowToVerify: "review verify",
-		Surprises: "review surprise", NeedsReview: "review needs", NextSteps: "review next",
-	}); err != nil {
-		t.Fatalf("RequestGoalReview: %v", err)
-	} else if err := s.RejectGoalReview(ctx, review.ID, "keep legacy completion path"); err != nil {
-		t.Fatalf("RejectGoalReview: %v", err)
-	}
-
-	completion, err := s.CompleteGoalWithReport(ctx, goalID, domain.CompletionReport{
-		WorkDone: "legacy work", NowPossible: "legacy result", HowToVerify: "legacy verify",
-		Surprises: "legacy surprise", NeedsReview: "legacy review", NextSteps: "legacy next",
-	}, requesterID)
-	if err != nil {
-		t.Fatalf("CompleteGoalWithReport: %v", err)
-	}
-	if completion.Kind != domain.KindCompletion {
-		t.Fatalf("completion decision kind = %q, want %q", completion.Kind, domain.KindCompletion)
 	}
 }
