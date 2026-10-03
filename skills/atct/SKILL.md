@@ -119,7 +119,7 @@ reaches the human without passing through the delegator's context.
 | the design and why | a spec committed with the goal's work, and `work_done` |
 | something found inside this goal | `surprises` and `needs_review` |
 | something found that is another goal | `atct_decision_ask`, addressed to the human |
-| what was left undone | `next_steps` |
+| what was left undone | `next_goal_ids`, the ids of the goals to proceed with next |
 | the goal is ready for commander review | `atct_goal_handoff_review_request`, the one message |
 
 A subcommander that stops working sends nothing at all, and the old habit caught
@@ -182,7 +182,9 @@ Reviewers receive, review, and complete or reject; subcommanders commit goal
 work only after its tasks are done, and commanders handle merge and publish.
 When committing the goal's work, name the paths explicitly; never use `git add -A`.
 
-Completion reports state: `work_done`, `now_possible`, `how_to_verify`,
-`surprises`, `needs_review`, and `next_steps`. Keep them concise and say
-`none` where a field does not apply. A goal is complete only after its tasks
+Completion reports have five required text fields (`work_done`, `now_possible`,
+`how_to_verify`, `surprises`, `needs_review`) plus an optional `next_goal_ids`
+list of existing goal ids (empty or omitted when none). Keep the text fields
+concise and say `none` where one does not apply. A legacy `next_steps` input is
+rejected, not ignored. A goal is complete only after its tasks
 and decisions are resolved and the appropriate ATCT approval flow is recorded.

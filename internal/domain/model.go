@@ -21,29 +21,35 @@ type Project struct {
 }
 
 type CompletionReport struct {
-	WorkDone    string `json:"work_done"`
-	NowPossible string `json:"now_possible"`
-	HowToVerify string `json:"how_to_verify"`
-	Surprises   string `json:"surprises"`
-	NeedsReview string `json:"needs_review"`
-	NextSteps   string `json:"next_steps"`
+	WorkDone    string  `json:"work_done"`
+	NowPossible string  `json:"now_possible"`
+	HowToVerify string  `json:"how_to_verify"`
+	Surprises   string  `json:"surprises"`
+	NeedsReview string  `json:"needs_review"`
+	NextGoalIDs []int64 `json:"next_goal_ids,omitempty"`
+}
+
+type GoalSummary struct {
+	ID       int64      `json:"id"`
+	Headline string     `json:"headline"`
+	Status   GoalStatus `json:"status"`
 }
 
 type Goal struct {
-	ID                int64      `json:"id"`
-	ProjectID         int64      `json:"project_id"`
-	DerivedFromGoalID int64      `json:"derived_from_goal_id"`
-	Content           string     `json:"content"`
-	Spec              string     `json:"spec"`
-	Plan              string     `json:"plan"`
-	Status            GoalStatus `json:"status"`
-	Creator           string     `json:"creator"`
-	WorkDone          string     `json:"work_done"`
-	NowPossible       string     `json:"now_possible"`
-	HowToVerify       string     `json:"how_to_verify"`
-	Surprises         string     `json:"surprises"`
-	NeedsReview       string     `json:"needs_review"`
-	NextSteps         string     `json:"next_steps"`
+	ID                int64         `json:"id"`
+	ProjectID         int64         `json:"project_id"`
+	DerivedFromGoalID int64         `json:"derived_from_goal_id"`
+	Content           string        `json:"content"`
+	Spec              string        `json:"spec"`
+	Plan              string        `json:"plan"`
+	Status            GoalStatus    `json:"status"`
+	Creator           string        `json:"creator"`
+	WorkDone          string        `json:"work_done"`
+	NowPossible       string        `json:"now_possible"`
+	HowToVerify       string        `json:"how_to_verify"`
+	Surprises         string        `json:"surprises"`
+	NeedsReview       string        `json:"needs_review"`
+	NextGoals         []GoalSummary `json:"next_goals"`
 
 	// ResultSummary preserves the legacy completion report field for API clients
 	// that still use the pre-structured report format.

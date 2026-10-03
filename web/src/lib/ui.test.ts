@@ -117,7 +117,7 @@ function fixtureGoal(id: string, projectName: string): Goal {
     how_to_verify: "",
     surprises: "",
     needs_review: "",
-    next_steps: "",
+    next_goals: [],
     created_at: "",
     updated_at: "",
     tasks: [],
@@ -180,14 +180,13 @@ describe("sortTasksByOrder", () => {
 });
 
 describe("goal detail helpers", () => {
-  it("reports whether any of the six completion fields is filled", () => {
+  it("reports whether any of the five completion fields is filled", () => {
     const emptyReport = {
       work_done: "",
       now_possible: "  ",
       how_to_verify: "",
       surprises: "",
       needs_review: "",
-      next_steps: "",
     };
 
     expect(hasCompletionReport(emptyReport)).toBe(false);
@@ -554,7 +553,6 @@ describe("goal detail answer flows", () => {
       "how_to_verify",
       "surprises",
       "needs_review",
-      "next_steps",
     ]) {
       expect(goalDetailSource).toContain(`goal.${field}`);
     }
@@ -565,7 +563,6 @@ describe("goal detail answer flows", () => {
       "goal.completion.report.howToVerify",
       "goal.completion.report.surprises",
       "goal.completion.report.needsReview",
-      "goal.completion.report.nextSteps",
     ]) {
       expect(goalDetailSource).toContain(key);
     }

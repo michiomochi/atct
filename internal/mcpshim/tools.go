@@ -232,7 +232,6 @@ type GoalCompleteIn struct {
 	HowToVerify string `json:"how_to_verify" jsonschema:"how to verify the result; write なし when there is nothing to report"`
 	Surprises   string `json:"surprises" jsonschema:"what differed from expectations; write なし when there is nothing to report"`
 	NeedsReview string `json:"needs_review" jsonschema:"what still needs confirmation; write なし when there is nothing to report"`
-	NextSteps   string `json:"next_steps" jsonschema:"what should happen next; write なし when there is nothing to report"`
 
 	// ResultSummary keeps old Go callers compiling without exposing the removed
 	// result_summary MCP argument.
@@ -240,13 +239,37 @@ type GoalCompleteIn struct {
 }
 
 type GoalReviewRequestIn struct {
-	GoalID      mcpID  `json:"goal_id"`
-	WorkDone    string `json:"work_done" jsonschema:"what was completed; write なし when there is nothing to report"`
-	NowPossible string `json:"now_possible" jsonschema:"what is possible now; write なし when there is nothing to report"`
-	HowToVerify string `json:"how_to_verify" jsonschema:"how to verify the result; write なし when there is nothing to report"`
-	Surprises   string `json:"surprises" jsonschema:"what differed from expectations; write なし when there is nothing to report"`
-	NeedsReview string `json:"needs_review" jsonschema:"what still needs confirmation; write なし when there is nothing to report"`
-	NextSteps   string `json:"next_steps" jsonschema:"what should happen next; write なし when there is nothing to report"`
+	GoalID      mcpID   `json:"goal_id"`
+	WorkDone    string  `json:"work_done" jsonschema:"what was completed; write なし when there is nothing to report"`
+	NowPossible string  `json:"now_possible" jsonschema:"what is possible now; write なし when there is nothing to report"`
+	HowToVerify string  `json:"how_to_verify" jsonschema:"how to verify the result; write なし when there is nothing to report"`
+	Surprises   string  `json:"surprises" jsonschema:"what differed from expectations; write なし when there is nothing to report"`
+	NeedsReview string  `json:"needs_review" jsonschema:"what still needs confirmation; write なし when there is nothing to report"`
+	NextGoalIDs []int64 `json:"next_goal_ids,omitempty" jsonschema:"optional successor goal IDs"`
+}
+
+func (in *GoalCompleteIn) UnmarshalJSON(data []byte) error {
+	type alias GoalCompleteIn
+	var decoded alias
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&decoded); err != nil {
+		return err
+	}
+	*in = GoalCompleteIn(decoded)
+	return nil
+}
+
+func (in *GoalReviewRequestIn) UnmarshalJSON(data []byte) error {
+	type alias GoalReviewRequestIn
+	var decoded alias
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&decoded); err != nil {
+		return err
+	}
+	*in = GoalReviewRequestIn(decoded)
+	return nil
 }
 
 type GoalReviewCompleteIn struct {
@@ -1126,7 +1149,7 @@ func Register(server *mcp.Server, c *Client, agentSessionID int64) {
 			"goal_id": in.GoalID, "work_done": in.WorkDone,
 			"now_possible": in.NowPossible, "how_to_verify": in.HowToVerify,
 			"surprises": in.Surprises, "needs_review": in.NeedsReview,
-			"next_steps": in.NextSteps, "agent_session_id": sessionID.Get(), "include_unapplied_answers": true,
+			"agent_session_id": sessionID.Get(), "include_unapplied_answers": true,
 		})
 	})
 
@@ -1139,7 +1162,7 @@ func Register(server *mcp.Server, c *Client, agentSessionID int64) {
 			"goal_id": in.GoalID, "work_done": in.WorkDone,
 			"now_possible": in.NowPossible, "how_to_verify": in.HowToVerify,
 			"surprises": in.Surprises, "needs_review": in.NeedsReview,
-			"next_steps": in.NextSteps, "agent_session_id": sessionID.Get(),
+			"next_goal_ids": in.NextGoalIDs, "agent_session_id": sessionID.Get(),
 			"include_unapplied_answers": true,
 		})
 	})

@@ -597,7 +597,7 @@ func TestWorkflowMonitorEndToEndContract(t *testing.T) {
 		"goal_id": goal.ID, "agent_session_id": commanderID,
 		"work_done": "workflow lifecycle verified", "now_possible": "scoped monitor delivery",
 		"how_to_verify": "run the focused test", "surprises": "none", "needs_review": "none",
-		"next_steps": "merge after approval",
+		"next_goal_ids": []int64{},
 	}, &review)
 
 	markers := []string{"goal-review-request"}
