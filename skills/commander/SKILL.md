@@ -223,8 +223,8 @@ that subcommander is started:
    > reading of this goal's code. Send the delegator nothing until the completion
    > report. What you would have said goes into the record instead: a task for
    > work in flight, `surprises` and `needs_review` for what you found,
-   > `next_steps` for what you left, and `atct_decision_ask` for anything that
-   > needs the human.
+   > `next_goal_ids` for the goals that should follow, and `atct_decision_ask`
+   > for anything that needs the human.
    >
    > A fact that spans another goal is not an exception. Raise it with
    > `atct_decision_ask`; the answer reaches you through your own watch, without

@@ -460,7 +460,7 @@ test_goal_handoff_forbids_upward_design_questions() {
 }
 
 test_goal_handoff_names_the_single_upward_message() {
-  delegate_goal_section_contains '`next_steps` for what you left, and `atct_decision_ask` for anything that'
+  delegate_goal_section_contains '`next_goal_ids` for the goals that should follow, and `atct_decision_ask`'
 
   local section
   section="$(unsent_report_section)"

@@ -147,7 +147,7 @@ reaches the human without passing through the delegator's context.
 | the design and why | a spec committed with the goal's work, and `work_done` |
 | something found inside this goal | `surprises` and `needs_review` |
 | something found that is another goal | `atct_decision_ask`, addressed to the human |
-| what was left undone | `next_steps` |
+| what was left undone | `next_goal_ids`, the ordered ids of the goals to proceed with next |
 | the goal is ready for commander review | `atct_goal_handoff_review_request`, the one message |
 
 A subcommander that stops working sends nothing at all, and the old habit caught
@@ -288,8 +288,9 @@ one-word decision inside a retrospective makes them ask again.
 
 1. Commit the goal's work.
 2. Close every task the goal declared.
-3. Fill in all six fields and call `atct_goal_complete`. What a caller supplies
-   is a separate question from what the column stores: all six columns hold
+3. Fill in the five text fields, add `next_goal_ids` if goals should follow, and
+   call `atct_goal_complete`. What a caller supplies is a separate question
+   from what the column stores: all five text columns hold
    non-empty text once the goal is `done`, so even "there was nothing here"
    arrives as a written value.
 
@@ -299,8 +300,9 @@ that is not in the repository, `how_to_verify` points at changes the approver
 cannot find, and the tasks stay open behind a goal that is already closed. Goal
 144 closed with no commits and four tasks still `todo` on 2026-08-27.
 
-`atct_goal_complete` takes six fields, and the database rejects a completion
-with any of them empty. **For the five text fields — `work_done`,
+`atct_goal_complete` takes five required text fields and an optional
+`next_goal_ids` list, and the database rejects a completion with any text field
+empty. **For the five text fields — `work_done`,
 `now_possible`, `how_to_verify`, `surprises`, `needs_review` — where nothing
 applies, say so** — writing "none" is the point, because it separates "there was
 nothing" from "I did not look."
@@ -312,22 +314,25 @@ nothing" from "I did not look."
 | `how_to_verify` | What to look at to confirm it |
 | `surprises` | What turned out differently than expected |
 | `needs_review` | What you want them to look at closely |
-| `next_steps` | What you left for later, and why |
+| `next_goal_ids` | Ordered ids of the existing goals that should proceed next; an empty array when there are none. Create the goal first (existing goal-creation flow), then pass its id. |
+
+A legacy `next_steps` input is rejected, not ignored.
 
 The approver reads `how_to_verify` and `needs_review` first: these fields say
 what to check and what still needs confirmation. Keep `work_done` concise so it
 does not bury them.
 
-**`work_done` is the only field about you.** The other five are about them —
-what they gained, what to check, what to worry about, what is still open. A
-report where all six read like a changelog has answered one question six times.
+**`work_done` is the only field about you.** The other four text fields are
+about them — what they gained, what to check, what to worry about, what is still
+open. A report where all five read like a changelog has answered one question
+five times.
 
 **`surprises` is where a report earns its keep.** It is the field a writer most
 wants to skip and a reviewer most needs. If your change touched the human's data
 in a way they did not ask for, that belongs here, not buried in `work_done`.
 
 Each field has a length limit. **A report nobody finishes reading cannot be
-approved**, and six short fields beat one long one.
+approved**, and short fields beat one long one.
 ## Name goals after the symptom, not the mechanism
 
 "Attach unattached decisions to the goal detail response" describes the fix.
