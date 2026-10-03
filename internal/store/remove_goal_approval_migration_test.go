@@ -4,34 +4,28 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/michiomochi/atct/internal/domain"
 )
 
 // 0051 runs against a schema that already holds goals in every old status; the
 // fixture is built on the current schema and the migration's SQL is applied to it.
-func TestRemoveGoalApprovalMigrationDropsProposedGoalsAndWithdrawsOpenApprovals(t *testing.T) {
+func TestRemoveGoalApprovalMigrationActivatesRecentProposedGoalsAndDropsStaleOnes(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	project, err := s.CreateProject(ctx, "migration", "/repos/migration")
-	if err != nil {
-		t.Fatal(err)
-	}
-	newGoal := func(status string) int64 {
+	newGoal := func(projectID int64, status string, age time.Duration) int64 {
 		t.Helper()
-		g, err := s.CreateGoal(ctx, project.ID, status+" goal", "human")
+		g, err := s.CreateGoal(ctx, projectID, status+" goal", "human")
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := s.DB().ExecContext(ctx, `UPDATE goals SET status = ?, work_done = 'x', now_possible = 'x', how_to_verify = 'x', surprises = 'x', needs_review = 'x' WHERE id = ?`, status, g.ID); err != nil {
+		updatedAt := time.Now().UTC().Add(-age).Format(time.RFC3339)
+		if _, err := s.DB().ExecContext(ctx, `UPDATE goals SET status = ?, updated_at = ?, work_done = 'x', now_possible = 'x', how_to_verify = 'x', surprises = 'x', needs_review = 'x' WHERE id = ?`, status, updatedAt, g.ID); err != nil {
 			t.Fatal(err)
 		}
 		return g.ID
 	}
-	proposed := newGoal("proposed")
-	active := newGoal("active")
-	done := newGoal("done")
-	dropped := newGoal("dropped")
 	approval := func(goalID int64, status string) int64 {
 		t.Helper()
 		res, err := s.DB().ExecContext(ctx, `
@@ -43,17 +37,32 @@ func TestRemoveGoalApprovalMigrationDropsProposedGoalsAndWithdrawsOpenApprovals(
 		id, _ := res.LastInsertId()
 		return id
 	}
-	openApproval := approval(proposed, "open")
-	appliedApproval := approval(active, "applied")
 
-	statusOf := func(table string, id int64) string {
-		t.Helper()
-		var status string
-		if err := s.DB().QueryRowContext(ctx, `SELECT status FROM `+table+` WHERE id = ?`, id).Scan(&status); err != nil {
+	const day = 24 * time.Hour
+	type fixture struct{ goal, approval int64 }
+	var recent, stale []fixture
+	for _, name := range []string{"one", "two"} {
+		project, err := s.CreateProject(ctx, "migration-"+name, "/repos/migration-"+name)
+		if err != nil {
 			t.Fatal(err)
 		}
-		return status
+		for _, age := range []time.Duration{day, 6*day + 23*time.Hour} {
+			g := newGoal(project.ID, "proposed", age)
+			recent = append(recent, fixture{g, approval(g, "open")})
+		}
+		for _, age := range []time.Duration{8 * day, 7*day + time.Minute} {
+			g := newGoal(project.ID, "proposed", age)
+			stale = append(stale, fixture{g, approval(g, "open")})
+		}
 	}
+	project, err := s.CreateProject(ctx, "migration-other", "/repos/migration-other")
+	if err != nil {
+		t.Fatal(err)
+	}
+	active := newGoal(project.ID, "active", 30*day)
+	done := newGoal(project.ID, "done", 30*day)
+	dropped := newGoal(project.ID, "dropped", 30*day)
+	appliedApproval := approval(active, "applied")
 	before := map[int64]string{active: "active", done: "done", dropped: "dropped"}
 
 	migrations, err := loadEmbeddedMigrations()
@@ -73,20 +82,50 @@ func TestRemoveGoalApprovalMigrationDropsProposedGoalsAndWithdrawsOpenApprovals(
 		t.Fatal("migration 0051 is not embedded")
 	}
 
-	if got := statusOf("goals", proposed); got != string(domain.GoalDropped) {
-		t.Fatalf("proposed goal status = %q, want dropped", got)
+	statusOf := func(table string, id int64) string {
+		t.Helper()
+		var status string
+		if err := s.DB().QueryRowContext(ctx, `SELECT status FROM `+table+` WHERE id = ?`, id).Scan(&status); err != nil {
+			t.Fatal(err)
+		}
+		return status
 	}
-	goal, err := s.GetGoal(ctx, proposed)
-	if err != nil {
-		t.Fatal(err)
+	for _, f := range recent {
+		goal, err := s.GetGoal(ctx, f.goal)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if goal.Status != domain.GoalActive || goal.ResultSummary != "" {
+			t.Fatalf("recent goal %d = %q / %q, want active without result_summary", f.goal, goal.Status, goal.ResultSummary)
+		}
+		var status, label string
+		var answeredAt, appliedAt *string
+		if err := s.DB().QueryRowContext(ctx, `SELECT status, answer_label, answered_at, applied_at FROM decisions WHERE id = ?`, f.approval).Scan(&status, &label, &answeredAt, &appliedAt); err != nil {
+			t.Fatal(err)
+		}
+		if status != "applied" || label != "approve" || answeredAt == nil || appliedAt == nil {
+			t.Fatalf("recent goal %d approval = %q/%q/%v/%v, want applied/approve with timestamps", f.goal, status, label, answeredAt, appliedAt)
+		}
 	}
-	if !strings.Contains(goal.ResultSummary, "Goal 321") {
-		t.Fatalf("result_summary = %q, want the Goal 321 reason", goal.ResultSummary)
+	for _, f := range stale {
+		goal, err := s.GetGoal(ctx, f.goal)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if goal.Status != domain.GoalDropped || !strings.Contains(goal.ResultSummary, "Goal 321") {
+			t.Fatalf("stale goal %d = %q / %q, want dropped with the Goal 321 reason", f.goal, goal.Status, goal.ResultSummary)
+		}
+		if got := statusOf("decisions", f.approval); got != string(domain.DecisionWithdrawn) {
+			t.Fatalf("stale goal %d approval = %q, want withdrawn", f.goal, got)
+		}
 	}
 	for id, want := range before {
 		if got := statusOf("goals", id); got != want {
 			t.Fatalf("goal %d status = %q, want %q unchanged", id, got, want)
 		}
+	}
+	if got := statusOf("decisions", appliedApproval); got != "applied" {
+		t.Fatalf("applied approval status = %q, want applied unchanged", got)
 	}
 	var proposedLeft, openApprovals int
 	if err := s.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM goals WHERE status = 'proposed'`).Scan(&proposedLeft); err != nil {
@@ -97,11 +136,5 @@ func TestRemoveGoalApprovalMigrationDropsProposedGoalsAndWithdrawsOpenApprovals(
 	}
 	if proposedLeft != 0 || openApprovals != 0 {
 		t.Fatalf("proposed goals = %d, open goal_approval = %d, want 0/0", proposedLeft, openApprovals)
-	}
-	if got := statusOf("decisions", openApproval); got != string(domain.DecisionWithdrawn) {
-		t.Fatalf("open approval status = %q, want withdrawn", got)
-	}
-	if got := statusOf("decisions", appliedApproval); got != "applied" {
-		t.Fatalf("applied approval status = %q, want applied unchanged", got)
 	}
 }
