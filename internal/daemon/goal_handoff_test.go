@@ -297,7 +297,7 @@ func TestGoalHandoffRoutesOverRPC(t *testing.T) {
 	if err := client.Call(ctx, "goal.review.request", map[string]any{
 		"goal_id": fixture.claimedGoalID, "agent_session_id": fixture.requesterID,
 		"work_done": "RPC work", "now_possible": "RPC result", "how_to_verify": "RPC verify",
-		"surprises": "none", "needs_review": "none", "next_steps": "merge",
+		"surprises": "none", "needs_review": "none", "next_goal_ids": []int64{},
 	}, &review); err != nil {
 		t.Fatalf("goal.review.request: %v", err)
 	}
