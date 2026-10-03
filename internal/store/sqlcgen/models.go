@@ -96,9 +96,10 @@ type GoalHandoffEntry struct {
 }
 
 type MonitorBinding struct {
-	Token          string
-	AgentSessionID int64
-	CreatedAt      string
+	Token            string
+	AgentSessionID   int64
+	CreatedAt        string
+	LastReconciledAt string
 }
 
 type MonitorHealth struct {

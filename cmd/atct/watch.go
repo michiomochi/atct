@@ -1347,6 +1347,9 @@ func watchReconcileURL(baseURL string, scope watchScope) (string, error) {
 	if scope.TaskID != "" {
 		query.Set("task_id", scope.TaskID)
 	}
+	if scope.MonitorToken != "" {
+		query.Set("monitor_token", scope.MonitorToken)
+	}
 	parsed.RawQuery = query.Encode()
 	return parsed.String(), nil
 }
@@ -1390,8 +1393,9 @@ type watchReconciliationHandoff struct {
 }
 
 type watchReconciliationGoal struct {
-	ID     string `json:"id"`
-	Status string `json:"status"`
+	ID        string    `json:"id"`
+	Status    string    `json:"status"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 func (g *watchReconciliationGoal) UnmarshalJSON(data []byte) error {
@@ -1407,12 +1411,14 @@ func (g *watchReconciliationGoal) UnmarshalJSON(data []byte) error {
 }
 
 type watchReconciliation struct {
-	Goals              []watchReconciliationGoal    `json:"goals"`
-	Decisions          []watchDecision              `json:"decisions"`
-	GoalHandoffs       []watchReconciliationHandoff `json:"goal_handoffs"`
-	PlanHandoffs       []watchReconciliationHandoff `json:"plan_handoffs"`
-	TaskHandoffs       []watchReconciliationHandoff `json:"task_handoffs"`
-	TaskCreateHandoffs []watchTaskCreateHandoff     `json:"task_create_handoffs"`
+	Goals                   []watchReconciliationGoal    `json:"goals"`
+	MonitorLastReconciledAt *string                      `json:"monitor_last_reconciled_at"`
+	Decisions               []watchDecision              `json:"decisions"`
+	GoalHandoffs            []watchReconciliationHandoff `json:"goal_handoffs"`
+	PlanHandoffs            []watchReconciliationHandoff `json:"plan_handoffs"`
+	TaskHandoffs            []watchReconciliationHandoff `json:"task_handoffs"`
+	TaskCreateHandoffs      []watchTaskCreateHandoff     `json:"task_create_handoffs"`
+	initialized             bool
 }
 
 type watchTaskCreateHandoff struct {
@@ -1554,7 +1560,43 @@ func reconcileWatchScope(ctx context.Context, client *http.Client, baseURL strin
 			}
 		}
 	}
+	if latestReconciliation != nil && scope.ProjectID != "" && scope.GoalID == "" && scope.TaskID == "" {
+		var newGoals []watchReconciliationGoal
+		if latestReconciliation.initialized {
+			previousGoalIDs := make(map[string]struct{}, len(latestReconciliation.Goals))
+			for _, goal := range latestReconciliation.Goals {
+				previousGoalIDs[goal.ID] = struct{}{}
+			}
+			for _, goal := range state.Goals {
+				if _, ok := previousGoalIDs[goal.ID]; !ok {
+					newGoals = append(newGoals, goal)
+				}
+			}
+		} else if state.MonitorLastReconciledAt != nil && strings.TrimSpace(*state.MonitorLastReconciledAt) != "" {
+			watermark, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(*state.MonitorLastReconciledAt))
+			if err != nil {
+				return fmt.Errorf("parse monitor reconciliation watermark: %w", err)
+			}
+			for _, goal := range state.Goals {
+				if goal.CreatedAt.After(watermark) {
+					newGoals = append(newGoals, goal)
+				}
+			}
+		}
+		for _, goal := range newGoals {
+			decision := watchDecision{GoalID: goal.ID, TargetRole: "commander"}
+			if !scopeFilter.delivers("goal.created", decision) {
+				continue
+			}
+			if err := emitWatchDecisionWithStateAndSinks(out, "goal.created", decision,
+				delivered, lastWakeupContent, wakeupDiscrepancyDelivered,
+				wakeupDelivered, sink, actionSink); err != nil {
+				return err
+			}
+		}
+	}
 	if latestReconciliation != nil {
+		state.initialized = true
 		*latestReconciliation = state
 	}
 	return nil
