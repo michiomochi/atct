@@ -223,8 +223,15 @@ describe("GoalDetail", () => {
 
     render(<GoalDetail id="goal-1" />);
 
-    const report = await screen.findByTestId("request-report");
-    expect(Array.from(report.querySelectorAll("p"), (paragraph) => paragraph.textContent)).toEqual([spec, plan]);
+    const section = await screen.findByTestId("spec-plan");
+    const details = [...section.querySelectorAll("details")];
+    expect(details).toHaveLength(2);
+    expect(details.every((element) => !element.open)).toBe(true);
+    expect(details.map((element) => element.querySelector("p")?.textContent)).toEqual([spec, plan]);
+    expect(details.map((element) => element.querySelector("summary")?.textContent)).toEqual([
+      "goal.spec goal.specPlan.lines",
+      "goal.plan goal.specPlan.lines",
+    ]);
   });
 
   it("uses unset for empty spec and plan values", async () => {
@@ -232,11 +239,39 @@ describe("GoalDetail", () => {
 
     render(<GoalDetail id="goal-1" />);
 
-    const report = await screen.findByTestId("request-report");
-    expect(Array.from(report.querySelectorAll("p"), (paragraph) => paragraph.textContent)).toEqual([
-      "goal.requestReport.unset",
-      "goal.requestReport.unset",
-    ]);
+    const section = await screen.findByTestId("spec-plan");
+    expect(section.querySelectorAll("details")).toHaveLength(0);
+    expect(within(section).getAllByText(/goal\.requestReport\.unset/)).toHaveLength(2);
+  });
+
+  it("puts the action zone before the completion report and the task list, with history last", async () => {
+    const response = goalResponse({ work_done: "Completed work", tasks: [taskView("task-1", "Existing task", 0)] });
+    response.unattached_decisions = [goalReviewDecision(), ordinaryDecision()];
+    response.needs_decision = [{ ...taskView("task-1", "Existing task", 0), open_decisions: [ordinaryDecision()] }];
+    vi.mocked(fetchGoal).mockResolvedValueOnce(response);
+
+    render(<GoalDetail id="goal-1" />);
+
+    const attention = await screen.findByTestId("attention");
+    const follows = (a: Element, b: Element) => Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+    const report = screen.getByTestId("completion-report");
+    const tasks = screen.getByTestId("task-list");
+    expect(follows(attention, report)).toBe(true);
+    expect(follows(attention, tasks)).toBe(true);
+    expect(within(attention).getByTestId("goal-review")).not.toBeNull();
+    expect(within(attention).getByTestId("unattached-decision-list")).not.toBeNull();
+    expect(within(attention).getByRole("link", { name: "goal.attention.toTasks" }).getAttribute("href")).toBe("#task-list");
+    expect(follows(tasks, await screen.findByTestId("review-exchanges"))).toBe(true);
+    expect(follows(screen.getByTestId("review-exchanges"), screen.getByTestId("handoff-timeline"))).toBe(true);
+  });
+
+  it("renders no action zone when nothing needs the human", async () => {
+    vi.mocked(fetchGoal).mockResolvedValueOnce(goalResponse());
+
+    render(<GoalDetail id="goal-1" />);
+
+    await screen.findByTestId("task-list");
+    expect(screen.queryByTestId("attention")).toBeNull();
   });
   it("asks for the goal diff with the id resolved from the route, not the placeholder", async () => {
     const response = goalResponse({ status: "active" });
@@ -291,7 +326,7 @@ describe("GoalDetail", () => {
     expect(screen.getByTestId("goal-review")).not.toBeNull();
   });
 
-  it("renders the existing completion report once inside an active goal review", async () => {
+  it("renders the completion report once, outside the action zone, while a goal review is open", async () => {
     const response = goalResponse({
       work_done: "Completed work",
       now_possible: "Now possible",
@@ -305,8 +340,10 @@ describe("GoalDetail", () => {
     render(<GoalDetail id="goal-1" />);
 
     const card = await screen.findByTestId("goal-review");
-    const report = within(card).getByTestId("completion-report");
+    const report = screen.getByTestId("completion-report");
     expect(screen.getAllByTestId("completion-report")).toHaveLength(1);
+    expect(within(screen.getByTestId("attention")).queryByTestId("completion-report")).toBeNull();
+    expect(within(card).queryByTestId("completion-report")).toBeNull();
     expect(within(report).getByText("Completed work")).not.toBeNull();
     expect(within(report).getByText("Now possible")).not.toBeNull();
     expect(within(report).getByText("Verify here")).not.toBeNull();
@@ -314,7 +351,7 @@ describe("GoalDetail", () => {
     expect(within(report).getByText("Review this")).not.toBeNull();
 
     const approve = within(card).getByRole("button", { name: "goal.review.approve" });
-    expect(report.compareDocumentPosition(approve) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(approve.compareDocumentPosition(report) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
   });
 
   it("renders successor links as returned by the API with target statuses", async () => {
@@ -329,7 +366,7 @@ describe("GoalDetail", () => {
 
     render(<GoalDetail id="goal-1" />);
 
-    const section = await screen.findByTestId("next-goals");
+    const section = await screen.findByTestId("related-goals");
     const links = within(section).getAllByRole("link");
     expect(links.map((link) => link.textContent)).toEqual(["Second successor", "First successor"]);
     expect(links.map((link) => link.getAttribute("href"))).toEqual([
@@ -340,18 +377,14 @@ describe("GoalDetail", () => {
     expect(within(section).getByText(/In progress/)).not.toBeNull();
   });
 
-  it("renders a concise empty successor state", async () => {
-    const response = goalResponse() as GoalResponseFixture & {
-      goal: Goal & { next_goals: Array<{ id: string; headline: string; status: string }> };
-    };
-    response.goal.next_goals = [];
-    vi.mocked(fetchGoal).mockResolvedValueOnce(response);
+  it("omits the related goals section when derived-from, derived and next goals are all empty", async () => {
+    vi.mocked(fetchGoal).mockResolvedValueOnce(goalResponse());
 
     render(<GoalDetail id="goal-1" />);
 
-    const section = await screen.findByTestId("next-goals");
-    expect(within(section).getByText("goal.nextGoals.empty")).not.toBeNull();
-    expect(within(section).queryByRole("link")).toBeNull();
+    await screen.findByTestId("task-list");
+    expect(screen.queryByTestId("related-goals")).toBeNull();
+    expect(screen.queryByRole("heading", { name: "goal.related.title" })).toBeNull();
   });
 
   it("approves an open goal review with the generic decision API and reloads after success", async () => {
