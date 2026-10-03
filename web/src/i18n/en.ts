@@ -16,6 +16,7 @@ export const en = {
   "dashboard.error.load": "Could not load the dashboard.",
 
   "decision.caption.list": "Decision list",
+  "decision.column.priority": "Priority",
   "decision.column.question": "Question",
   "decision.column.project": "Project",
   "decision.column.goal": "Goal",

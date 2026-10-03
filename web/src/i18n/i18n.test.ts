@@ -63,6 +63,11 @@ describe("resource parity", () => {
     expect(ja["decision.autoSettlesIn"]).toBe("{{duration}}後に自動確定");
   });
 
+  it("translates the priority column heading", () => {
+    expect(en["decision.column.priority"]).toBe("Priority");
+    expect(ja["decision.column.priority"]).toBe("優先度");
+  });
+
   it("translates the decision priority reasons", () => {
     expect(en["decision.priority.goal_review"]).toBe("Goal waiting to close");
     expect(en["decision.priority.task_in_progress"]).toBe("A task in progress is blocked");

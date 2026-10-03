@@ -36,11 +36,12 @@ export function DecisionTable({ decisions, emptyText }: Props) {
 
   return (
     <div className="table-scroll">
-      <Table className="min-w-[64rem] w-full border-collapse text-left text-base">
+      <Table className="min-w-[72rem] w-full border-collapse text-left text-base">
         <caption className="sr-only">{t("decision.caption.list")}</caption>
           <Table.Header className="border-b-2 border-ink-300 text-base text-ink-700">
           <Table.Row>
-            <Table.Head {...columnScope} className="px-3 py-3 font-semibold">{t("decision.column.question")}</Table.Head>
+            <Table.Head {...columnScope} className="w-32 min-w-[8rem] px-3 py-3 font-semibold">{t("decision.column.priority")}</Table.Head>
+            <Table.Head {...columnScope} className="min-w-[18rem] px-3 py-3 font-semibold">{t("decision.column.question")}</Table.Head>
             <Table.Head {...columnScope} className="w-40 px-3 py-3 font-semibold">{t("decision.column.project")}</Table.Head>
             <Table.Head {...columnScope} className="w-48 px-3 py-3 font-semibold">{t("decision.column.goal")}</Table.Head>
             <Table.Head {...columnScope} className="w-44 px-3 py-3 font-semibold">{t("decision.column.createdAt")}</Table.Head>
@@ -63,6 +64,16 @@ export function DecisionTable({ decisions, emptyText }: Props) {
             return (
               <Fragment key={decision.id}>
                 <Table.Row className="border-b border-line align-top last:border-b-0">
+                  <Table.Cell className="px-3 py-4">
+                    {unanswered && decision.priority ? (
+                      <>
+                        <p className="font-semibold text-ink-950">{decision.priority}</p>
+                        {priorityKey && <p className="mt-1 text-base text-ink-700">{t(priorityKey)}</p>}
+                      </>
+                    ) : (
+                      <span className="text-ink-700">-</span>
+                    )}
+                  </Table.Cell>
                   <Table.Cell className="px-3 py-4">
                     {unanswered ? (
                       <div className="flex items-start gap-2">
@@ -94,13 +105,12 @@ export function DecisionTable({ decisions, emptyText }: Props) {
                         {decision.question}
                       </a>
                     )}
-                    {priorityKey && <p className="mt-1 text-base text-ink-700">{t(priorityKey)}</p>}
                     <p className="mt-1 font-mono text-base text-ink-500">{decisionKindLabel(locale, decision.kind)}</p>
                     {recommendation && <p className="mt-1 text-base font-medium text-accent-700">{recommendation}: {decision.default_option}</p>}
                     {autoSettlement && <p className="mt-1 text-base text-ink-500">{autoSettlement}</p>}
                     {settlement && <p className="mt-1 text-base text-ink-500">{settlement}</p>}
                   </Table.Cell>
-                  <Table.Cell className="px-3 py-4 text-ink-700">{decision.project_name || "-"}</Table.Cell>
+                  <Table.Cell className="break-all px-3 py-4 text-ink-700">{decision.project_name || "-"}</Table.Cell>
                   <Table.Cell className="px-3 py-4">
                     <a
                       className="focus-ring font-medium text-accent-700 underline decoration-accent-100 underline-offset-4 hover:decoration-accent-700"
@@ -113,7 +123,7 @@ export function DecisionTable({ decisions, emptyText }: Props) {
                 </Table.Row>
                 {isOpen && (
                   <Table.Row className="border-b border-line align-top">
-                    <Table.Cell colSpan={4} className="px-3 py-4">
+                    <Table.Cell colSpan={5} className="px-3 py-4">
                       <div className="space-y-4">
                         <p className="whitespace-pre-wrap font-medium text-ink-950">{decision.question}</p>
                         {(recommendation || autoSettlement || settlement) && (
