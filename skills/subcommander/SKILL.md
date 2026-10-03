@@ -17,6 +17,9 @@ and the exact `session_key` from SessionStart; optional `handoff_id` and
   handoffs, and accept or reject them.
 - Commit the goal's accepted work and submit its goal handoff for commander
   review. Ask the human only through ATCT decisions.
+  Before the goal review request, run `git merge main --no-edit` in the goal
+  worktree and the verification set; the daemon refuses the request when the
+  goal branch does not contain main.
 
 ## Executor workspace bootstrap
 
