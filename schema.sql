@@ -4,7 +4,8 @@ CREATE TABLE IF NOT EXISTS projects (
   root_path  TEXT NOT NULL,
   created_at TEXT NOT NULL,
   claimed_by INTEGER NOT NULL DEFAULT 0,
-  claimed_at TEXT
+  claimed_at TEXT,
+  archived_at TEXT
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_name

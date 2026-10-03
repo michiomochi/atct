@@ -17,6 +17,7 @@ import (
 var (
 	ErrProjectNotFound       = errors.New("project not found for cwd")
 	ErrProjectAlreadyClaimed = errors.New("project already claimed")
+	ErrProjectArchived       = errors.New("project archived")
 )
 
 func (s *Store) CreateProject(ctx context.Context, name, rootPath string) (domain.Project, error) {
@@ -111,7 +112,7 @@ func (s *Store) claimProject(ctx context.Context, projectID int64, agentSessionI
 		}
 		return domain.Project{}, fmt.Errorf("lookup claimed project: %w", err)
 	}
-	return projectFromValues(claimedRow.ID, claimedRow.Name, claimedRow.RootPath, claimedRow.CreatedAt, claimedRow.ClaimedBy, claimedRow.ClaimedAt)
+	return projectFromValues(claimedRow.ID, claimedRow.Name, claimedRow.RootPath, claimedRow.CreatedAt, claimedRow.ClaimedBy, claimedRow.ClaimedAt, claimedRow.ArchivedAt)
 }
 
 // ReleaseProject clears a project's claim.
@@ -156,7 +157,7 @@ func (s *Store) ListProjects(ctx context.Context) ([]domain.Project, error) {
 
 	out := []domain.Project{}
 	for _, row := range rows {
-		p, err := projectFromValues(row.ID, row.Name, row.RootPath, row.CreatedAt, row.ClaimedBy, row.ClaimedAt)
+		p, err := projectFromValues(row.ID, row.Name, row.RootPath, row.CreatedAt, row.ClaimedBy, row.ClaimedAt, row.ArchivedAt)
 		if err != nil {
 			return nil, err
 		}
@@ -181,21 +182,22 @@ func (s *Store) ResolveProject(ctx context.Context, cwd string) (domain.Project,
 		}
 		return domain.Project{}, fmt.Errorf("scan project: %w", err)
 	}
-	return projectFromValues(row.ID, row.Name, row.RootPath, row.CreatedAt, row.ClaimedBy, row.ClaimedAt)
+	return projectFromValues(row.ID, row.Name, row.RootPath, row.CreatedAt, row.ClaimedBy, row.ClaimedAt, row.ArchivedAt)
 }
 
-func projectFromValues(id int64, name, rootPath, createdAt string, claimedBy int64, claimedAt sql.NullString) (domain.Project, error) {
+func projectFromValues(id int64, name, rootPath, createdAt string, claimedBy int64, claimedAt, archivedAt sql.NullString) (domain.Project, error) {
 	t, err := time.Parse(time.RFC3339, createdAt)
 	if err != nil {
 		return domain.Project{}, fmt.Errorf("parse created_at: %w", err)
 	}
 	return domain.Project{
-		ID:        id,
-		Name:      name,
-		RootPath:  rootPath,
-		CreatedAt: t,
-		ClaimedBy: claimedBy,
-		ClaimedAt: parseClaimedAt(claimedAt),
+		ID:         id,
+		Name:       name,
+		RootPath:   rootPath,
+		CreatedAt:  t,
+		ClaimedBy:  claimedBy,
+		ClaimedAt:  parseClaimedAt(claimedAt),
+		ArchivedAt: parseClaimedAt(archivedAt),
 	}, nil
 }
 
@@ -272,4 +274,59 @@ func normalizeProjectPath(path string) string {
 		path = resolved
 	}
 	return path
+}
+
+// ArchiveProject hides a project from lists and watches. It is idempotent and
+// keeps the original archived_at; claims are untouched.
+func (s *Store) ArchiveProject(ctx context.Context, projectID int64) (domain.Project, error) {
+	return s.setArchived(ctx, projectID, true)
+}
+
+// UnarchiveProject restores an archived project. It is idempotent.
+func (s *Store) UnarchiveProject(ctx context.Context, projectID int64) (domain.Project, error) {
+	return s.setArchived(ctx, projectID, false)
+}
+
+func (s *Store) setArchived(ctx context.Context, projectID int64, archived bool) (domain.Project, error) {
+	q := sqlcgen.New(s.db)
+	var (
+		result sql.Result
+		err    error
+	)
+	if archived {
+		result, err = q.ArchiveProject(ctx, sqlcgen.ArchiveProjectParams{
+			ArchivedAt: sql.NullString{String: time.Now().UTC().Format(time.RFC3339), Valid: true},
+			ID:         projectID,
+		})
+	} else {
+		result, err = q.UnarchiveProject(ctx, projectID)
+	}
+	if err != nil {
+		return domain.Project{}, fmt.Errorf("update project archive: %w", err)
+	}
+	if n, err := result.RowsAffected(); err != nil {
+		return domain.Project{}, fmt.Errorf("check archived project: %w", err)
+	} else if n == 0 {
+		return domain.Project{}, fmt.Errorf("%w: %d", ErrProjectNotFound, projectID)
+	}
+	row, err := q.GetProject(ctx, projectID)
+	if err != nil {
+		return domain.Project{}, fmt.Errorf("lookup archived project: %w", err)
+	}
+	return projectFromValues(row.ID, row.Name, row.RootPath, row.CreatedAt, row.ClaimedBy, row.ClaimedAt, row.ArchivedAt)
+}
+
+// EnsureProjectActive refuses changes to an archived project.
+func (s *Store) EnsureProjectActive(ctx context.Context, projectID int64) error {
+	row, err := sqlcgen.New(s.db).GetProject(ctx, projectID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("%w: %d", ErrProjectNotFound, projectID)
+		}
+		return fmt.Errorf("lookup project: %w", err)
+	}
+	if row.ArchivedAt.Valid {
+		return fmt.Errorf("%w: project %q is archived; run `atct project unarchive %s` (or use the dashboard) before changing its goals", ErrProjectArchived, row.Name, row.Name)
+	}
+	return nil
 }
