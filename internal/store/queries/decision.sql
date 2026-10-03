@@ -104,7 +104,7 @@ SELECT
   answer_label, answer_text, answered_at, applied_at, agent_session_id, created_at
 FROM decisions
 WHERE status = 'answered'
-  AND goal_id IN (SELECT id FROM goals WHERE project_id = ?)
+  AND goal_id IN (SELECT goals.id FROM goals WHERE goals.project_id = ?)
 ORDER BY answered_at;
 
 -- name: ListUnappliedDecisionsForGoal :many

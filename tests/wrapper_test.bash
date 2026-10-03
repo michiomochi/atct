@@ -50,16 +50,13 @@ assert_empty_file() {
 # and the section silently stops being checked at all.
 ORDERED_SECTIONS=(
   'atct|## Declare before you work'
-  'atct|## Receive before you start'
+  'atct|## Handoff review order'
   'subcommander|## Delegate a task'
   'subcommander|### Two-layer delegation'
   'commander|## Delegate a goal'
   'atct|## Fill in a report on a handoff that is already closed'
   'atct|## Recover when your role comes back wrong'
   'subcommander|## Close a task the moment it is finished'
-  'atct|## Report completion in six parts'
-  'atct|## Apply what you were told'
-  'atct|## Finishing'
 )
 
 # Every skill whose numbered lists are checked for contiguity.
@@ -256,7 +253,7 @@ fi
 input="$(cat)"
 printf '%s\n%s\n' "$*" "$input" >>"$ATCT_STOP_LOG"
 if [[ "${1:-}" == session-key ]]; then
-  printf '%s' 'ATCT session key: hook-session-1'
+  printf '%s' 'ATCT session key: hook-session-1. Before any ATCT work, read `doc/execution-flow.md` and follow its procedure.'
   exit 0
 fi
 if [[ "$input" == *'"stop_hook_active":true'* ]]; then exit 0; fi
@@ -326,7 +323,7 @@ PY
 )"
   : >"$log"
   output="$(PATH="$codex_fixture:/usr/bin:/bin" ATCT_STOP_LOG="$log" sh -c "$session_command" <<< "$input")"
-  assert_eq 'ATCT session key: hook-session-1' "$output" 'Codex SessionStart hook must use the PATH CLI'
+  assert_eq 'ATCT session key: hook-session-1. Before any ATCT work, read `doc/execution-flow.md` and follow its procedure.' "$output" 'Codex SessionStart hook must use the PATH CLI'
   assert_eq $'session-key --hook-input\n{"session_id":"hook-session-1","stop_hook_active":false}' "$(<"$log")" 'Codex SessionStart hook must pass raw hook input to shared CLI'
   output="$(PATH="$older_codex_fixture:/usr/bin:/bin" sh -c "$session_command" <<< "$input")"
   assert_eq 'ATCT: upgrade the CLI with: brew upgrade --cask michiomochi/tap/atct' "$output" 'older Codex SessionStart hook must print Homebrew upgrade instruction'
@@ -400,6 +397,45 @@ test_session_start_is_silent_without_atct_wrapper() {
   assert_eq '' "$output" 'missing atct wrapper must keep the hook silent'
 }
 
+test_session_start_hook_uses_shared_session_key_message() {
+  local plugin_version
+  plugin_version="$(awk -F '"' '/"version"[[:space:]]*:/ { print $4; exit }' "$REPO_ROOT/.claude-plugin/plugin.json")"
+  local fixture="$TEMP_ROOT/session-start-shared-message"
+  local hook="$fixture/hooks/session-start"
+  local fake="$fixture/bin/atct"
+  local log="$fixture/atct.log"
+  local output
+
+  mkdir -p "$(dirname "$hook")" "$(dirname "$fake")" "$fixture/.claude-plugin"
+  cp "$REPO_ROOT/hooks/session-start" "$hook"
+  printf '{"version":"%s"}\n' "$plugin_version" >"$fixture/.claude-plugin/plugin.json"
+  cat >"$fake" <<'SCRIPT'
+#!/usr/bin/env bash
+if [[ "${1:-}" == version ]]; then
+  printf 'version\n' >>"$ATCT_SESSION_START_LOG"
+  printf '%s\n' "$ATCT_TEST_VERSION"
+  exit 0
+fi
+if [[ "$*" == 'context -brief' ]]; then
+  printf 'context -brief\n' >>"$ATCT_SESSION_START_LOG"
+  exit 0
+fi
+if [[ "$*" == 'session-key --hook-input' ]]; then
+  input="$(cat)"
+  printf '%s\n%s' "$*" "$input" >>"$ATCT_SESSION_START_LOG"
+  printf '%s' 'ATCT session key: hook-session-1. Before any ATCT work, read `doc/execution-flow.md` and follow its procedure.'
+  exit 0
+fi
+exit 1
+SCRIPT
+  chmod +x "$hook" "$fake"
+  export ATCT_TEST_VERSION="$plugin_version"
+
+  output="$(PATH="$(dirname "$fake"):$PATH" ATCT_SESSION_START_LOG="$log" /bin/bash "$hook" <<< '{"session_id":"hook-session-1"}')"
+  assert_eq 'ATCT session key: hook-session-1. Before any ATCT work, read `doc/execution-flow.md` and follow its procedure.' "$output" 'Claude SessionStart hook must use the shared session-key output'
+  assert_eq $'version\ncontext -brief\nsession-key --hook-input\n{"session_id":"hook-session-1"}' "$(<"$log")" 'Claude SessionStart hook must pass raw input through the shared CLI'
+}
+
 delegate_goal_section() {
   sed -n '/^## Delegate a goal$/,$p' \
     "$REPO_ROOT/skills/commander/SKILL.md"
@@ -460,7 +496,7 @@ test_goal_handoff_forbids_upward_design_questions() {
 }
 
 test_goal_handoff_names_the_single_upward_message() {
-  delegate_goal_section_contains '`next_steps` for what you left, and `atct_decision_ask` for anything that'
+  delegate_goal_section_contains '`next_goal_ids` for the goals that should follow, and `atct_decision_ask`'
 
   local section
   section="$(unsent_report_section)"
@@ -608,7 +644,7 @@ unsent_report_section() {
 }
 
 recovery_section() {
-  sed -n '/^## Recover when your role comes back wrong$/,/^## Close a task/p' \
+  sed -n '/^## Recover when your role comes back wrong$/,/^## Completion$/p' \
     "$REPO_ROOT/skills/atct/SKILL.md"
 }
 
@@ -739,14 +775,14 @@ test_delegation_names_the_atct_tools_an_executor_may_call() {
     fail 'delegate task section has no allowlist line after `An executor may call only these atct tools:`'
 
   for tool in atct_session_identify atct_task_handoff_receive atct_role \
-    atct_task_handoff_review_request; do
+    atct_task_handoff_review_request atct_task_handoff_review_reject_receive; do
     grep -Fq -- "\`$tool\`" <<<"$allowlist" ||
       fail "the allowlist line does not allow <$tool>"
   done
 
   for tool in atct_goal_handoff_complete atct_goal_handoff_receive \
     atct_goal_handoff_request atct_goal_claim atct_goal_release \
-    atct_goal_complete atct_goal_update_content atct_project_claim \
+    atct_goal_complete atct_project_claim \
     atct_project_release atct_task_handoff_request \
     atct_task_handoff_review_receive atct_task_handoff_complete \
     atct_task_handoff_review_reject atct_task_update \
@@ -769,7 +805,7 @@ test_delegation_names_the_atct_tools_an_executor_must_not_call() {
 
   for tool in atct_goal_handoff_complete atct_goal_handoff_receive \
     atct_goal_handoff_request atct_goal_claim atct_goal_release \
-    atct_goal_complete atct_goal_update_content atct_project_claim \
+    atct_goal_complete atct_project_claim \
     atct_project_release atct_task_handoff_request \
     atct_task_handoff_review_receive atct_task_handoff_complete \
     atct_task_handoff_review_reject atct_task_update \
@@ -783,6 +819,55 @@ test_delegation_names_the_atct_tools_an_executor_must_not_call() {
     ! grep -Fq -- "\`$tool\`" <<<"$forbidden" ||
       fail "the forbidden block must not forbid the allowed <$tool>"
   done
+}
+
+test_delegation_template_sets_up_the_watch_between_receive_and_role() {
+  local section receive_line watch_line role_line
+
+  section="$(delegate_task_section)"
+  receive_line="$(grep -nF -- 'First record receipt of the handoff by calling `atct_task_handoff_receive`' \
+    <<<"$section" | head -1 | cut -d: -f1 || true)"
+  watch_line="$(grep -nF -- '## Watch' \
+    <<<"$section" | head -1 | cut -d: -f1 || true)"
+  role_line="$(grep -nF -- 'Then invoke the `atct_role` MCP tool' \
+    <<<"$section" | head -1 | cut -d: -f1 || true)"
+
+  [[ -n "$receive_line" && -n "$watch_line" && -n "$role_line" ]] ||
+    fail "template must name receive, watch, and role check: receive=$receive_line watch=$watch_line role=$role_line"
+  (( receive_line < watch_line && watch_line < role_line )) ||
+    fail "template watch step must sit between receive and role check: receive=$receive_line watch=$watch_line role=$role_line"
+}
+
+test_delegation_template_references_the_watch_section_without_spelling_it_out() {
+  local section
+
+  delegate_task_section_contains '## Watch'
+  section="$(delegate_task_section)"
+  ! grep -qF -- 'atct watch --monitor --token' <<<"$section" ||
+    fail 'delegate section must not spell out the watch command'
+  ! grep -qF -- 'persistent' <<<"$section" ||
+    fail 'delegate section must not mention persistent'
+}
+
+test_delegation_template_and_executor_skill_state_the_blocked_output() {
+  delegate_task_section_contains 'blocked: no live Monitor'
+  assert_file_contains 'blocked: no live Monitor' "$REPO_ROOT/skills/executor/SKILL.md"
+}
+
+test_executor_skill_sets_up_the_watch_between_receive_and_role() {
+  local skill receive_line watch_line role_line
+
+  skill="$REPO_ROOT/skills/executor/SKILL.md"
+  receive_line="$(grep -nF 'atct_task_handoff_receive`' "$skill" | head -1 | cut -d: -f1 || true)"
+  watch_line="$(grep -nF '## Watch' "$skill" | head -1 | cut -d: -f1 || true)"
+  role_line="$(grep -nF 'atct_role` with `expected_role' "$skill" | head -1 | cut -d: -f1 || true)"
+
+  [[ -n "$receive_line" && -n "$watch_line" && -n "$role_line" ]] ||
+    fail "executor entry must name receive, watch, and role check: receive=$receive_line watch=$watch_line role=$role_line"
+  (( receive_line < watch_line && watch_line < role_line )) ||
+    fail "executor watch step must sit between receive and role check: receive=$receive_line watch=$watch_line role=$role_line"
+  assert_file_not_contains 'persistent' "$skill"
+  assert_file_contains '`atct_task_handoff_review_reject_receive`' "$skill"
 }
 
 test_delegation_requests_review_before_reviewer_closes_the_task() {
@@ -952,8 +1037,8 @@ test_delegated_claim_contract_is_explicit() {
 
   assert_file_contains 'Hold the parent, not the task.' "$subcommander_skill"
   assert_file_contains 'Hold the parent, not the goal.' "$commander_skill"
-  assert_file_contains '## Delegate a task' "$atct_skill"
-  assert_file_contains '## Delegate a goal' "$atct_skill"
+  assert_file_contains '## Delegate a task' "$subcommander_skill"
+  assert_file_contains '## Delegate a goal' "$commander_skill"
   assert_file_contains 'First record receipt of the handoff by calling `atct_task_handoff_receive`' "$subcommander_skill"
   assert_file_contains 'Then record receipt of the goal handoff by calling' "$commander_skill"
   assert_file_contains 'Every implementation task is delegated.' "$atct_skill"
@@ -1024,7 +1109,7 @@ test_start_identifies_before_monitor() {
   local monitor_line
 
   identify_line="$(grep -n '^## First step: identify' "$start_skill" | head -1 | cut -d: -f1)"
-  monitor_line="$(grep -n '^## .*Claude Code.*Monitor' "$start_skill" | head -1 | cut -d: -f1)"
+  monitor_line="$(grep -n '^## .*Claude Code.*Watch' "$start_skill" | head -1 | cut -d: -f1)"
   [[ -n "$identify_line" && -n "$monitor_line" ]] ||
     fail 'start order requires identify and monitor headings'
   (( identify_line < monitor_line )) ||
@@ -1137,6 +1222,18 @@ test_start_keeps_monitor_persistence_requirement() {
   local start_skill="$REPO_ROOT/skills/start/SKILL.md"
 
   assert_file_contains 'Always set `persistent: true`' "$start_skill"
+  assert_file_contains 'ATCT answer watch' "$start_skill"
+  assert_file_contains '`## Watch`' "$start_skill"
+}
+
+test_atct_skill_defines_the_background_watch() {
+  local atct_skill="$REPO_ROOT/skills/atct/SKILL.md"
+
+  assert_file_contains '## Watch' "$atct_skill"
+  assert_file_contains '--once' "$atct_skill"
+  assert_file_contains 'run_in_background' "$atct_skill"
+  assert_file_contains 'Monitor' "$atct_skill"
+  assert_file_contains 'events delivered' "$atct_skill"
 }
 
 test_start_documents_liveness_authority_boundary() {
@@ -1364,7 +1461,7 @@ test_role_contract_uses_neutral_language() {
   local atct_skill="$REPO_ROOT/skills/atct/SKILL.md"
   local roles_section
 
-  roles_section="$(sed -n '/^## Roles$/,/^## Role-specific skills$/p' "$atct_skill")"
+  roles_section="$(sed -n '/^## Roles$/,/^## Declare before you work$/p' "$atct_skill")"
   if grep -Eiq 'space|worktree|git|harness|multiplexer' <<<"$roles_section"; then
     fail 'role boundary table must use neutral language'
   fi
@@ -1566,8 +1663,8 @@ test_worktree_paths_match_the_setup_script() {
   worktree_section="$(sed -n '/^## One worktree per goal$/,/^## One space per goal$/p' "$commander_skill")"
   setup_worktree="$(sed -nE 's/^worktree="\$repo\/(.*)"/\1/p' "$setup_script")"
   setup_branch="$(sed -nE 's/^branch="(.*)"/\1/p' "$setup_script")"
-  documented_worktree="$(sed 's/\${goal8}/<goal8>/g' <<<"$setup_worktree")"
-  documented_branch="$(sed 's/\${goal8}/<goal8>/g' <<<"$setup_branch")"
+  documented_worktree="$(sed 's/\${goal_id}/<goal-id>/g' <<<"$setup_worktree")"
+  documented_branch="$(sed 's/\${goal_id}/<goal-id>/g' <<<"$setup_branch")"
   [[ -n "$documented_worktree" ]] || fail 'setup script worktree path could not be extracted'
   [[ -n "$documented_branch" ]] || fail 'setup script branch name could not be extracted'
   grep -Fq -- "$documented_worktree" <<<"$worktree_section" ||
@@ -1744,6 +1841,7 @@ test_start_monitor_is_not_first_step
 test_start_does_not_branch_on_session_attachment
 test_start_does_not_duplicate_delegated_worker_preamble
 test_start_keeps_monitor_persistence_requirement
+test_atct_skill_defines_the_background_watch
 test_start_documents_liveness_authority_boundary
 test_start_uses_monitor_watch_for_claude_actions
 test_readme_documents_liveness_contract
@@ -1804,6 +1902,10 @@ test_handoff_completion_keeps_one_normal_path
 test_delegation_names_the_atct_tools_an_executor_may_call
 test_delegation_names_the_atct_tools_an_executor_must_not_call
 test_delegation_requests_review_before_reviewer_closes_the_task
+test_delegation_template_sets_up_the_watch_between_receive_and_role
+test_delegation_template_references_the_watch_section_without_spelling_it_out
+test_delegation_template_and_executor_skill_state_the_blocked_output
+test_executor_skill_sets_up_the_watch_between_receive_and_role
 test_recovery_section_explains_why_the_role_drops
 test_orchestration_skill_has_no_blanket_atct_ban
 test_goal_handoff_completion_keeps_one_normal_path

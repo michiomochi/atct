@@ -116,6 +116,9 @@ func addTaskHandoffDirect(t *testing.T, s *Store, handoffID string, taskID int64
 		t.Fatalf("drop task handoff uniqueness index: %v", err)
 	}
 	t.Cleanup(func() {
+		if _, err := s.DB().ExecContext(ctx, `DELETE FROM task_handoff_entries WHERE handoff_id = ?`, handoffID); err != nil {
+			t.Errorf("delete direct task handoff entries %q: %v", handoffID, err)
+		}
 		if _, err := s.DB().ExecContext(ctx, `DELETE FROM task_handoffs WHERE id = ?`, handoffID); err != nil {
 			t.Errorf("delete direct task handoff %q: %v", handoffID, err)
 		}
@@ -288,6 +291,17 @@ func TestTaskHandoffReviewRejectReceiveLifecycleUpdatesTaskStatusAndPreservesCla
 		t.Fatalf("review rejection did not preserve claim and clear reviewer state: %+v", rejected)
 	}
 	assertTaskStatus(t, s, taskID, domain.TaskDoing)
+
+	if _, err := s.ReceiveTaskHandoffReview(ctx, handoff.ID, taskID, requesterID); !errors.Is(err, ErrTaskHandoffReviewState) {
+		t.Fatalf("ReceiveTaskHandoffReview after rejection error = %v, want ErrTaskHandoffReviewState", err)
+	}
+	unchanged, err := s.GetTaskHandoff(ctx, handoff.ID)
+	if err != nil {
+		t.Fatalf("GetTaskHandoff after rejected review receive: %v", err)
+	}
+	if unchanged.ReviewReceivedBy != rejected.ReviewReceivedBy || unchanged.ReviewReceivedAt != rejected.ReviewReceivedAt || unchanged.ReviewRejectReport != rejected.ReviewRejectReport || unchanged.ReviewRejectedAt == nil || rejected.ReviewRejectedAt == nil || !unchanged.ReviewRejectedAt.Equal(*rejected.ReviewRejectedAt) {
+		t.Fatalf("rejected review receive changed persisted review state: before=%+v after=%+v", rejected, unchanged)
+	}
 
 	if _, err := s.RequestTaskHandoff(ctx, "task-review-second-open", taskID, requesterID, "second handoff"); err == nil {
 		t.Fatal("RequestTaskHandoff opened a second handoff after review rejection")

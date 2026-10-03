@@ -251,7 +251,7 @@ func TestProjectScopedWritesRejectOtherProject(t *testing.T) {
 			params: map[string]any{
 				"goal_id": f.targetGoal.ID, "work_done": "done", "now_possible": "now",
 				"how_to_verify": "verify", "surprises": "none", "needs_review": "none",
-				"next_steps": "none", "agent_session_id": f.agentSessionID,
+				"agent_session_id": f.agentSessionID,
 			},
 			wantContains: []string{retiredGoalCompletionDiagnostic},
 		},
@@ -501,7 +501,7 @@ func TestProjectScopedWritesAllowAssignedProjectAndGoalListReadsOtherProject(t *
 	params, err = json.Marshal(map[string]any{
 		"goal_id": f.completeGoal.ID, "work_done": "done", "now_possible": "now",
 		"how_to_verify": "verify", "surprises": "none", "needs_review": "none",
-		"next_steps": "none", "agent_session_id": f.agentSessionID,
+		"agent_session_id": f.agentSessionID,
 	})
 	if err != nil {
 		t.Fatalf("Marshal goal.complete params: %v", err)

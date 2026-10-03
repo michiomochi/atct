@@ -52,11 +52,6 @@ type ProjectReleaseIn struct {
 	ProjectID mcpID `json:"project_id"`
 }
 
-type GoalUpdateContentIn struct {
-	GoalID  mcpID  `json:"goal_id"`
-	Content string `json:"content"`
-}
-
 type GoalUpdateRequestReportIn struct {
 	GoalID mcpID  `json:"goal_id"`
 	Spec   string `json:"spec"`
@@ -135,6 +130,26 @@ type HandoffReportAmendIn struct {
 	CompleteReport string `json:"complete_report"`
 }
 
+type HandoffEntryAppendIn struct {
+	HandoffID   string `json:"handoff_id"`
+	TaskID      mcpID  `json:"task_id"`
+	Kind        string `json:"kind" jsonschema:"review_requested | review_received | review_rejected; lifecycle entries request, received, and completed are emitted by their handoff tools"`
+	Body        string `json:"body"`
+	InReplyToID *int64 `json:"in_reply_to_id,omitempty" jsonschema:"canonical integer entry id to reply to; optional"`
+}
+
+type HandoffEntryHistoryIn struct {
+	HandoffID string `json:"handoff_id"`
+	TaskID    mcpID  `json:"task_id"`
+	AfterID   int64  `json:"after_id,omitempty" jsonschema:"return entries after this canonical integer id; optional"`
+	Limit     int    `json:"limit,omitempty"`
+}
+
+type ReviewExchangesIn struct {
+	GoalID mcpID `json:"goal_id"`
+	TaskID mcpID `json:"task_id,omitempty" jsonschema:"limit to this task; omit for the whole goal"`
+}
+
 type GoalHandoffRequestIn struct {
 	HandoffID     string `json:"handoff_id"`
 	GoalID        mcpID  `json:"goal_id"`
@@ -175,6 +190,21 @@ type GoalHandoffReportAmendIn struct {
 	HandoffID      string `json:"handoff_id"`
 	GoalID         mcpID  `json:"goal_id"`
 	CompleteReport string `json:"complete_report"`
+}
+
+type GoalHandoffEntryAppendIn struct {
+	HandoffID   string `json:"handoff_id"`
+	GoalID      mcpID  `json:"goal_id"`
+	Kind        string `json:"kind" jsonschema:"review_requested | review_received | review_rejected; lifecycle entries request, received, and completed are emitted by their handoff tools"`
+	Body        string `json:"body"`
+	InReplyToID *int64 `json:"in_reply_to_id,omitempty" jsonschema:"canonical integer entry id to reply to; optional"`
+}
+
+type GoalHandoffEntryHistoryIn struct {
+	HandoffID string `json:"handoff_id"`
+	GoalID    mcpID  `json:"goal_id"`
+	AfterID   int64  `json:"after_id,omitempty" jsonschema:"return entries after this canonical integer id; optional"`
+	Limit     int    `json:"limit,omitempty"`
 }
 
 type PlanHandoffReviewRequestIn struct {
@@ -232,7 +262,6 @@ type GoalCompleteIn struct {
 	HowToVerify string `json:"how_to_verify" jsonschema:"how to verify the result; write なし when there is nothing to report"`
 	Surprises   string `json:"surprises" jsonschema:"what differed from expectations; write なし when there is nothing to report"`
 	NeedsReview string `json:"needs_review" jsonschema:"what still needs confirmation; write なし when there is nothing to report"`
-	NextSteps   string `json:"next_steps" jsonschema:"what should happen next; write なし when there is nothing to report"`
 
 	// ResultSummary keeps old Go callers compiling without exposing the removed
 	// result_summary MCP argument.
@@ -240,13 +269,37 @@ type GoalCompleteIn struct {
 }
 
 type GoalReviewRequestIn struct {
-	GoalID      mcpID  `json:"goal_id"`
-	WorkDone    string `json:"work_done" jsonschema:"what was completed; write なし when there is nothing to report"`
-	NowPossible string `json:"now_possible" jsonschema:"what is possible now; write なし when there is nothing to report"`
-	HowToVerify string `json:"how_to_verify" jsonschema:"how to verify the result; write なし when there is nothing to report"`
-	Surprises   string `json:"surprises" jsonschema:"what differed from expectations; write なし when there is nothing to report"`
-	NeedsReview string `json:"needs_review" jsonschema:"what still needs confirmation; write なし when there is nothing to report"`
-	NextSteps   string `json:"next_steps" jsonschema:"what should happen next; write なし when there is nothing to report"`
+	GoalID      mcpID   `json:"goal_id"`
+	WorkDone    string  `json:"work_done" jsonschema:"what was completed; write なし when there is nothing to report"`
+	NowPossible string  `json:"now_possible" jsonschema:"what is possible now; write なし when there is nothing to report"`
+	HowToVerify string  `json:"how_to_verify" jsonschema:"how to verify the result; write なし when there is nothing to report"`
+	Surprises   string  `json:"surprises" jsonschema:"what differed from expectations; write なし when there is nothing to report"`
+	NeedsReview string  `json:"needs_review" jsonschema:"what still needs confirmation; write なし when there is nothing to report"`
+	NextGoalIDs []int64 `json:"next_goal_ids,omitempty" jsonschema:"optional successor goal IDs"`
+}
+
+func (in *GoalCompleteIn) UnmarshalJSON(data []byte) error {
+	type alias GoalCompleteIn
+	var decoded alias
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&decoded); err != nil {
+		return err
+	}
+	*in = GoalCompleteIn(decoded)
+	return nil
+}
+
+func (in *GoalReviewRequestIn) UnmarshalJSON(data []byte) error {
+	type alias GoalReviewRequestIn
+	var decoded alias
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&decoded); err != nil {
+		return err
+	}
+	*in = GoalReviewRequestIn(decoded)
+	return nil
 }
 
 type GoalReviewCompleteIn struct {
@@ -406,12 +459,15 @@ type UnappliedDecisionNotice struct {
 }
 
 type RawWithUnappliedDecisions struct {
-	Data               any                       `json:"data"`
-	NextStep           []NextStepOption          `json:"next_step,omitempty"`
-	Role               string                    `json:"role,omitempty"`
-	ClaimEvidence      json.RawMessage           `json:"claim_evidence,omitempty"`
-	UnappliedDecisions []UnappliedDecisionNotice `json:"unapplied_decisions,omitempty"`
-	ClaimableTasks     json.RawMessage           `json:"claimable_tasks,omitempty"`
+	Data          any              `json:"data"`
+	NextStep      []NextStepOption `json:"next_step,omitempty"`
+	Role          string           `json:"role,omitempty"`
+	ClaimEvidence json.RawMessage  `json:"claim_evidence,omitempty"`
+	// A pointer so that [] (the list became empty) is printed while nil
+	// (unchanged since the last response) is omitted.
+	UnappliedDecisions *[]UnappliedDecisionNotice `json:"unapplied_decisions,omitempty"`
+	UnappliedCount     int                        `json:"unapplied_count,omitempty"`
+	ClaimableTasks     json.RawMessage            `json:"claimable_tasks,omitempty"`
 }
 
 func rawOutputSchema() map[string]any {
@@ -428,7 +484,9 @@ func rawOutputSchemaWithUnappliedDecisions() map[string]any {
 	return map[string]any{
 		"type": "object",
 		"properties": map[string]any{
-			"data": map[string]any{},
+			"data": map[string]any{
+				"description": "A receipt for state-changing calls (ids, status, times); report bodies are omitted. Read a handoff request in full with atct_goal_handoff_entry_history or atct_handoff_entry_history.",
+			},
 			// next_step lists what follows this transition, so the caller does
 			// not have to look the flow up. More than one entry means it
 			// chooses, and each states the condition that selects it.
@@ -446,8 +504,11 @@ func rawOutputSchemaWithUnappliedDecisions() map[string]any {
 			},
 			"role":           map[string]any{"type": "string"},
 			"claim_evidence": map[string]any{},
+			// The list is attached only when it changed since this session's
+			// last response; [] means it became empty.
 			"unapplied_decisions": map[string]any{
-				"type": "array",
+				"type":        "array",
+				"description": "Attached only when the list changed since the last response; [] means it became empty. Re-read with atct_goal_list.",
 				"items": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
@@ -458,6 +519,10 @@ func rawOutputSchemaWithUnappliedDecisions() map[string]any {
 					},
 					"required": []string{"decision_id", "question"},
 				},
+			},
+			"unapplied_count": map[string]any{
+				"type":        "integer",
+				"description": "Present instead of unapplied_decisions when the list is unchanged since the last response.",
 			},
 			"claimable_tasks": map[string]any{
 				"type":  "array",
@@ -497,21 +562,28 @@ func callWithUnappliedDecisions(ctx context.Context, c *Client, method string, p
 		ClaimableTasks     json.RawMessage           `json:"claimable_tasks"`
 	}
 	if err := json.Unmarshal(out, &envelope); err == nil && envelope.Data != nil {
+		unapplied, count := c.reconcileUnapplied(method, params, envelope.UnappliedDecisions)
 		return nil, RawWithUnappliedDecisions{
-			Data:               envelope.Data,
+			Data:               shapeData(method, envelope.Data),
 			NextStep:           envelope.NextStep,
 			Role:               envelope.Role,
 			ClaimEvidence:      envelope.ClaimEvidence,
-			UnappliedDecisions: envelope.UnappliedDecisions,
+			UnappliedDecisions: unapplied,
+			UnappliedCount:     count,
 			ClaimableTasks:     envelope.ClaimableTasks,
 		}, nil
 	}
-	return nil, RawWithUnappliedDecisions{Data: out}, nil
+	// The daemon returns some methods as a bare object with no data envelope
+	// and no unapplied_decisions, so only the shaping applies.
+	return nil, RawWithUnappliedDecisions{Data: shapeData(method, out)}, nil
 }
 
-func sessionRole(ctx context.Context, c *Client, agentSessionID int64) (roleResponse, error) {
+func sessionRole(ctx context.Context, c *Client, agentSessionID int64, requireIdentified bool) (roleResponse, error) {
 	var raw json.RawMessage
-	if err := c.Call(ctx, "session.role", map[string]any{"agent_session_id": agentSessionID}, &raw); err != nil {
+	if err := c.Call(ctx, "session.role", map[string]any{
+		"agent_session_id":   agentSessionID,
+		"require_identified": requireIdentified,
+	}, &raw); err != nil {
 		return nil, err
 	}
 	return decodeRoleResponse(raw)
@@ -572,7 +644,7 @@ func callClaimWithRole(ctx context.Context, c *Client, method string, params any
 	if err != nil {
 		return nil, RawWithUnappliedDecisions{}, err
 	}
-	response, err := sessionRole(ctx, c, agentSessionID)
+	response, err := sessionRole(ctx, c, agentSessionID, false)
 	if err != nil {
 		return nil, result, nil
 	}
@@ -586,7 +658,7 @@ func callRole(ctx context.Context, c *Client, in RoleIn, agentSessionID int64) (
 		return nil, Raw{}, fmt.Errorf("expected_role must be one of commander, subcommander, executor")
 	}
 
-	response, err := sessionRole(ctx, c, agentSessionID)
+	response, err := sessionRole(ctx, c, agentSessionID, true)
 	if err != nil {
 		return nil, Raw{}, err
 	}
@@ -795,19 +867,8 @@ func Register(server *mcp.Server, c *Client, agentSessionID int64) {
 		})
 	})
 
-	addMCPTool[GoalUpdateContentIn, RawWithUnappliedDecisions](server, &mcp.Tool{
-		Name:         "atct_goal_update_content",
-		Description:  "Rewrite a proposed goal's content. Only a proposed goal can be rewritten; an approved goal (active, done, or dropped) is refused.",
-		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
-	}, func(ctx context.Context, req *mcp.CallToolRequest, in GoalUpdateContentIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
-		return callWithUnappliedDecisions(ctx, c, "goal.update_content", map[string]any{
-			"goal_id": in.GoalID, "content": in.Content,
-			"agent_session_id": sessionID.Get(), "include_unapplied_answers": true,
-		})
-	})
-
 	addMCPTool[GoalUpdateRequestReportIn, RawWithUnappliedDecisions](server, &mcp.Tool{
-		Name: "atct_goal_update_request_report", Description: "Overwrite a goal's spec and plan when the caller holds its goal handoff.", OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
+		Name: "atct_goal_update_request_report", Description: "Overwrite a goal's spec and plan when the caller holds its goal handoff. Write them in full; a field that is only a reference to doc/specs, doc/plans or docs/superpowers is refused.", OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in GoalUpdateRequestReportIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
 		return callWithUnappliedDecisions(ctx, c, "goal.update_request_report", map[string]any{"goal_id": in.GoalID, "spec": in.Spec, "plan": in.Plan, "agent_session_id": sessionID.Get()})
 	})
@@ -910,6 +971,50 @@ func Register(server *mcp.Server, c *Client, agentSessionID int64) {
 		})
 	})
 
+	addMCPTool[HandoffEntryAppendIn, RawWithUnappliedDecisions](server, &mcp.Tool{
+		Name:         "atct_handoff_entry_append",
+		Description:  "Append a review_requested, review_received, or review_rejected entry to a task handoff. The caller must be a handoff participant. Lifecycle request, received, and completed entries are created by the corresponding handoff tools; use in_reply_to_id for a canonical integer entry id.",
+		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in HandoffEntryAppendIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
+		params := map[string]any{
+			"handoff_id": in.HandoffID, "task_id": in.TaskID, "kind": in.Kind, "body": in.Body,
+			"agent_session_id": sessionID.Get(),
+		}
+		if in.InReplyToID != nil {
+			params["in_reply_to_id"] = *in.InReplyToID
+		}
+		return callWithUnappliedDecisions(ctx, c, "handoff.entry.append", params)
+	})
+
+	addMCPTool[HandoffEntryHistoryIn, RawWithUnappliedDecisions](server, &mcp.Tool{
+		Name:         "atct_handoff_entry_history",
+		Description:  "Read a task handoff history page after the canonical integer after_id cursor. Entries use integer id and in_reply_to_id fields.",
+		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in HandoffEntryHistoryIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
+		params := map[string]any{
+			"handoff_id": in.HandoffID, "task_id": in.TaskID, "agent_session_id": sessionID.Get(),
+		}
+		if in.AfterID != 0 {
+			params["after_id"] = in.AfterID
+		}
+		if in.Limit != 0 {
+			params["limit"] = in.Limit
+		}
+		return callWithUnappliedDecisions(ctx, c, "handoff.entry.history", params)
+	})
+
+	addMCPTool[ReviewExchangesIn, RawWithUnappliedDecisions](server, &mcp.Tool{
+		Name:         "atct_review_exchanges",
+		Description:  "Read pairs of a rejection and its response (the next review-request report) in time order. Covers commander rejections of goal, plan and task reviews, and human rejections and withdrawals. Handoffs whose earlier history was not recorded appear in gaps.",
+		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in ReviewExchangesIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
+		params := map[string]any{"goal_id": in.GoalID, "agent_session_id": sessionID.Get()}
+		if in.TaskID != "" {
+			params["task_id"] = in.TaskID
+		}
+		return callWithUnappliedDecisions(ctx, c, "review.exchange.list", params)
+	})
+
 	addMCPTool[GoalHandoffRequestIn, RawWithUnappliedDecisions](server, &mcp.Tool{
 		Name:         "atct_goal_handoff_request",
 		Description:  "Request a goal handoff. The goal must have a live claim.",
@@ -995,6 +1100,38 @@ func Register(server *mcp.Server, c *Client, agentSessionID int64) {
 		return callWithUnappliedDecisions(ctx, c, "goal.handoff.report.amend", map[string]any{
 			"handoff_id": in.HandoffID, "goal_id": in.GoalID, "complete_report": in.CompleteReport,
 		})
+	})
+
+	addMCPTool[GoalHandoffEntryAppendIn, RawWithUnappliedDecisions](server, &mcp.Tool{
+		Name:         "atct_goal_handoff_entry_append",
+		Description:  "Append a review_requested, review_received, or review_rejected entry to a goal handoff. The caller must be a handoff participant. Lifecycle request, received, and completed entries are created by the corresponding handoff tools; use in_reply_to_id for a canonical integer entry id.",
+		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in GoalHandoffEntryAppendIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
+		params := map[string]any{
+			"handoff_id": in.HandoffID, "goal_id": in.GoalID, "kind": in.Kind, "body": in.Body,
+			"agent_session_id": sessionID.Get(),
+		}
+		if in.InReplyToID != nil {
+			params["in_reply_to_id"] = *in.InReplyToID
+		}
+		return callWithUnappliedDecisions(ctx, c, "goal.handoff.entry.append", params)
+	})
+
+	addMCPTool[GoalHandoffEntryHistoryIn, RawWithUnappliedDecisions](server, &mcp.Tool{
+		Name:         "atct_goal_handoff_entry_history",
+		Description:  "Read a goal handoff history page after the canonical integer after_id cursor. Entries use integer id and in_reply_to_id fields.",
+		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in GoalHandoffEntryHistoryIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
+		params := map[string]any{
+			"handoff_id": in.HandoffID, "goal_id": in.GoalID, "agent_session_id": sessionID.Get(),
+		}
+		if in.AfterID != 0 {
+			params["after_id"] = in.AfterID
+		}
+		if in.Limit != 0 {
+			params["limit"] = in.Limit
+		}
+		return callWithUnappliedDecisions(ctx, c, "goal.handoff.entry.history", params)
 	})
 
 	addMCPTool[PlanHandoffReviewRequestIn, RawWithUnappliedDecisions](server, &mcp.Tool{
@@ -1126,7 +1263,7 @@ func Register(server *mcp.Server, c *Client, agentSessionID int64) {
 			"goal_id": in.GoalID, "work_done": in.WorkDone,
 			"now_possible": in.NowPossible, "how_to_verify": in.HowToVerify,
 			"surprises": in.Surprises, "needs_review": in.NeedsReview,
-			"next_steps": in.NextSteps, "agent_session_id": sessionID.Get(), "include_unapplied_answers": true,
+			"agent_session_id": sessionID.Get(), "include_unapplied_answers": true,
 		})
 	})
 
@@ -1139,7 +1276,7 @@ func Register(server *mcp.Server, c *Client, agentSessionID int64) {
 			"goal_id": in.GoalID, "work_done": in.WorkDone,
 			"now_possible": in.NowPossible, "how_to_verify": in.HowToVerify,
 			"surprises": in.Surprises, "needs_review": in.NeedsReview,
-			"next_steps": in.NextSteps, "agent_session_id": sessionID.Get(),
+			"next_goal_ids": in.NextGoalIDs, "agent_session_id": sessionID.Get(),
 			"include_unapplied_answers": true,
 		})
 	})

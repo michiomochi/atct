@@ -788,7 +788,7 @@ func TestGoalGetGoalReviewLifecycleProjection(t *testing.T) {
 		return decision
 	}
 
-	noReview := get(t, fixture.proposed[0].ID)
+	noReview := get(t, fixture.agentCreated[0].ID)
 	if noReview.GoalReview != nil {
 		t.Fatalf("goal.get returned goal_review for a goal without one: %+v", noReview.GoalReview)
 	}
@@ -838,7 +838,7 @@ func TestGoalGetGoalReviewLifecycleProjection(t *testing.T) {
 		t.Fatalf("applied goal_review next commander action = %q, want goal.review.complete", appliedResponse.GoalReview.NextCommanderAction)
 	}
 
-	if _, err := fixture.store.DB().ExecContext(ctx, "UPDATE goals SET status = ?, work_done = ?, now_possible = ?, how_to_verify = ?, surprises = ?, needs_review = ?, next_steps = ?, result_summary = ? WHERE id = ?", string(domain.GoalDone), "recorded work", "recorded now", "recorded verification", "recorded surprises", "recorded review", "recorded next steps", "recorded summary", fixture.active[1].ID); err != nil {
+	if _, err := fixture.store.DB().ExecContext(ctx, "UPDATE goals SET status = ?, work_done = ?, now_possible = ?, how_to_verify = ?, surprises = ?, needs_review = ?, result_summary = ? WHERE id = ?", string(domain.GoalDone), "recorded work", "recorded now", "recorded verification", "recorded surprises", "recorded review", "recorded summary", fixture.active[1].ID); err != nil {
 		t.Fatalf("mark goal done: %v", err)
 	}
 	doneResponse := get(t, fixture.active[1].ID)
@@ -1436,17 +1436,17 @@ func TestContractN13GoalGetResponseSizeBreakdown(t *testing.T) {
 	measure("long-content", longGoal.ID)
 }
 
-func TestContractB1GoalListKeepsActiveAndProposedGoals(t *testing.T) {
+func TestContractB1GoalListKeepsActiveAndAgentCreatedGoals(t *testing.T) {
 	fixture := newGoalListFixture(t)
 	defer fixture.store.Close()
 
-	proposed, err := fixture.store.CreateGoal(context.Background(), fixture.project.ID, "proposed contract goal", "contract-test")
+	agentGoal, err := fixture.store.CreateGoal(context.Background(), fixture.project.ID, "agent contract goal", "contract-test")
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
 	goals := listGoalPayloadsForContractTest(t, fixture)
 	findGoalPayloadForContractTest(t, goals, fixture.emptyTaskGoal.ID)
-	findGoalPayloadForContractTest(t, goals, proposed.ID)
+	findGoalPayloadForContractTest(t, goals, agentGoal.ID)
 }
 
 func TestContractB2GoalListKeepsOnlyTodoAndDoingTasks(t *testing.T) {
@@ -1582,12 +1582,19 @@ esac
 	if instructions != mcpshim.Instructions {
 		t.Fatalf("MCP initialize instructions = %v, want shared instructions", instructions)
 	}
+	if got := len(mcpshim.Instructions); got > 350 {
+		t.Fatalf("MCP instructions are %d bytes, want <= 350", got)
+	}
 	for _, marker := range []string{
-		"This repository is registered with ATCT.",
-		"An active goal is permission to coordinate work.",
-		"See the `atct` skill for details.",
+		"daemon-derived role and handoff state",
+		"receive before work",
+		"request review before completion",
+		"human decisions through ATCT",
+		"human approval",
+		"never auto-apply",
+		"`atct` skill",
 	} {
-		if !strings.Contains(instructions, marker) {
+		if !strings.Contains(strings.ToLower(instructions), strings.ToLower(marker)) {
 			t.Errorf("MCP initialize instructions missing fixed instruction %v", marker)
 		}
 	}

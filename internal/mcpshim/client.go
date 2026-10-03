@@ -15,6 +15,7 @@ import (
 // The shim is stateless; all writes converge on the single daemon process.
 type Client struct {
 	socketPath string
+	unapplied  unappliedState
 }
 
 func NewClient(socketPath string) *Client {

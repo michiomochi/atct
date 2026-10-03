@@ -98,7 +98,7 @@ run_check "session_start_test.bash" bash tests/session_start_test.bash
 run_check "wrapper_test.bash" bash tests/wrapper_test.bash
 run_check "schema-check.sh" bash script/schema-check.sh
 run_check "web tests" sh -c 'cd web && pnpm test'
-run_check "web typecheck" sh -c 'cd web && pnpm typecheck' 
+run_check "web typecheck" sh -c 'cd web && pnpm typecheck'
 
 # web/embed.go bakes web/dist into the binary with go:embed all:dist, so the
 # release carries whatever is in dist at this moment. pnpm build only adds, it

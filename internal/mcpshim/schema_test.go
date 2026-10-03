@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -58,7 +59,6 @@ func TestRegisterPublishesRoleAndLifecycleToolsWithFlexibleOutputSchema(t *testi
 		"atct_goal_claim":                         true,
 		"atct_goal_release":                       true,
 		"atct_goal_withdraw":                      true,
-		"atct_goal_update_content":                true,
 		"atct_task_update_content":                true,
 		"atct_project_claim":                      true,
 		"atct_project_release":                    true,
@@ -91,6 +91,11 @@ func TestRegisterPublishesRoleAndLifecycleToolsWithFlexibleOutputSchema(t *testi
 		"atct_plan_handoff_review_reject_receive": true,
 		"atct_goal_update_request_report":         true,
 		"atct_task_create_handoff_receive":        true,
+		"atct_handoff_entry_append":               true,
+		"atct_handoff_entry_history":              true,
+		"atct_goal_handoff_entry_append":          true,
+		"atct_goal_handoff_entry_history":         true,
+		"atct_review_exchanges":                   true,
 	}
 	if len(got.Tools) != len(wantNames) {
 		t.Fatalf("tool count = %d, want %d", len(got.Tools), len(wantNames))
@@ -176,6 +181,49 @@ func TestRegisterPublishesRoleAndLifecycleToolsWithFlexibleOutputSchema(t *testi
 					t.Errorf("%s input schema must require handoff_id", tool.Name)
 				}
 			}
+		case "atct_handoff_entry_append", "atct_goal_handoff_entry_append", "atct_handoff_entry_history", "atct_goal_handoff_entry_history":
+			inputSchema, ok := tool.InputSchema.(map[string]any)
+			if !ok {
+				t.Fatalf("%s input schema = %T, want object schema", tool.Name, tool.InputSchema)
+			}
+			inputProperties, ok := inputSchema["properties"].(map[string]any)
+			if !ok {
+				t.Fatalf("%s input schema properties = %T, want object", tool.Name, inputSchema["properties"])
+			}
+			idField := "task_id"
+			if strings.HasPrefix(tool.Name, "atct_goal_") {
+				idField = "goal_id"
+			}
+			for _, field := range []string{"handoff_id", idField} {
+				if _, ok := inputProperties[field]; !ok {
+					t.Errorf("%s input schema omitted %q", tool.Name, field)
+				}
+			}
+			if tool.Name == "atct_handoff_entry_append" || tool.Name == "atct_goal_handoff_entry_append" {
+				for _, field := range []string{"kind", "body", "in_reply_to_id"} {
+					if _, ok := inputProperties[field]; !ok {
+						t.Errorf("%s input schema omitted %q", tool.Name, field)
+					}
+				}
+				if _, ok := inputProperties["relates_to"]; ok {
+					t.Errorf("%s input schema exposes removed field relates_to", tool.Name)
+				}
+				if !strings.Contains(tool.Description, "review_requested") || !strings.Contains(tool.Description, "in_reply_to_id") {
+					t.Errorf("%s description = %q, want canonical kinds and reply field", tool.Name, tool.Description)
+				}
+			} else {
+				for _, field := range []string{"after_id", "limit"} {
+					if _, ok := inputProperties[field]; !ok {
+						t.Errorf("%s input schema omitted %q", tool.Name, field)
+					}
+				}
+				if _, ok := inputProperties["cursor"]; ok {
+					t.Errorf("%s input schema exposes removed field cursor", tool.Name)
+				}
+				if !strings.Contains(tool.Description, "after_id") {
+					t.Errorf("%s description = %q, want after_id cursor guidance", tool.Name, tool.Description)
+				}
+			}
 		}
 		if tool.Name == "atct_task_create" {
 			inputSchema, ok := tool.InputSchema.(map[string]any)
@@ -232,9 +280,6 @@ func TestRegisterPublishesRoleAndLifecycleToolsWithFlexibleOutputSchema(t *testi
 		{name: "atct_goal_list", args: map[string]any{"cwd": "/tmp"}},
 		{name: "atct_goal_get", args: map[string]any{"goal_id": "goal-1"}},
 		{name: "atct_goal_claim", args: map[string]any{"goal_id": "goal-1"}},
-		{name: "atct_goal_update_content", args: map[string]any{
-			"goal_id": "goal-1", "content": "updated goal",
-		}},
 		{name: "atct_goal_update_request_report", args: map[string]any{
 			"goal_id": "goal-1", "spec": "updated spec", "plan": "updated plan",
 		}},
@@ -274,6 +319,19 @@ func TestRegisterPublishesRoleAndLifecycleToolsWithFlexibleOutputSchema(t *testi
 		{name: "atct_goal_handoff_complete", args: map[string]any{
 			"handoff_id": "goal-handoff-1", "goal_id": "goal-1", "complete_report": "goal completion",
 		}},
+		{name: "atct_handoff_entry_append", args: map[string]any{
+			"handoff_id": "handoff-1", "task_id": "task-1", "kind": "review_requested", "body": "review", "in_reply_to_id": 1,
+		}},
+		{name: "atct_handoff_entry_history", args: map[string]any{
+			"handoff_id": "handoff-1", "task_id": "task-1", "after_id": 1, "limit": 20,
+		}},
+		{name: "atct_goal_handoff_entry_append", args: map[string]any{
+			"handoff_id": "goal-handoff-1", "goal_id": "goal-1", "kind": "review_rejected", "body": "rejected",
+		}},
+		{name: "atct_goal_handoff_entry_history", args: map[string]any{
+			"handoff_id": "goal-handoff-1", "goal_id": "goal-1", "after_id": 1, "limit": 20,
+		}},
+		{name: "atct_review_exchanges", args: map[string]any{"goal_id": "goal-1", "task_id": "task-1"}},
 		{name: "atct_decision_ask", args: map[string]any{
 			"goal_id": "goal-1", "question": "question", "options": []any{}, "wait_ms": 0,
 		}},
@@ -282,12 +340,12 @@ func TestRegisterPublishesRoleAndLifecycleToolsWithFlexibleOutputSchema(t *testi
 		{name: "atct_goal_complete", args: map[string]any{
 			"goal_id": "goal-1", "work_done": "done", "now_possible": "ready",
 			"how_to_verify": "check the goal", "surprises": "なし",
-			"needs_review": "なし", "next_steps": "なし",
+			"needs_review": "なし",
 		}},
 		{name: "atct_goal_review_request", args: map[string]any{
 			"goal_id": "goal-1", "work_done": "done", "now_possible": "ready",
 			"how_to_verify": "check the goal", "surprises": "なし",
-			"needs_review": "なし", "next_steps": "なし",
+			"needs_review": "なし", "next_goal_ids": []int64{},
 		}},
 		{name: "atct_goal_review_complete", args: map[string]any{"goal_id": "goal-1"}},
 		{name: "atct_goal_set_derived_from", args: map[string]any{
@@ -333,10 +391,19 @@ func TestGoalReviewToolsExposeCanonicalSchemas(t *testing.T) {
 	}
 	want := map[string][]string{
 		"atct_goal_complete": {
-			"goal_id", "work_done", "now_possible", "how_to_verify", "surprises", "needs_review", "next_steps",
+			"goal_id", "work_done", "now_possible", "how_to_verify", "surprises", "needs_review",
 		},
 		"atct_goal_review_request": {
-			"goal_id", "work_done", "now_possible", "how_to_verify", "surprises", "needs_review", "next_steps",
+			"goal_id", "work_done", "now_possible", "how_to_verify", "surprises", "needs_review", "next_goal_ids",
+		},
+		"atct_goal_review_complete": {"goal_id"},
+	}
+	requiredByTool := map[string][]string{
+		"atct_goal_complete": {
+			"goal_id", "work_done", "now_possible", "how_to_verify", "surprises", "needs_review",
+		},
+		"atct_goal_review_request": {
+			"goal_id", "work_done", "now_possible", "how_to_verify", "surprises", "needs_review",
 		},
 		"atct_goal_review_complete": {"goal_id"},
 	}
@@ -367,27 +434,30 @@ func TestGoalReviewToolsExposeCanonicalSchemas(t *testing.T) {
 				t.Errorf("%s omitted input field %q", name, field)
 			}
 		}
-		var required []string
+		var requiredFieldsList []string
 		switch values := inputSchema["required"].(type) {
 		case []string:
-			required = values
+			requiredFieldsList = values
 		case []any:
 			for _, value := range values {
 				if field, ok := value.(string); ok {
-					required = append(required, field)
+					requiredFieldsList = append(requiredFieldsList, field)
 				}
 			}
 		default:
 			t.Fatalf("%s required = %T, want string array", name, inputSchema["required"])
 		}
-		requiredFields := make(map[string]bool, len(required))
-		for _, field := range required {
+		requiredFields := make(map[string]bool, len(requiredFieldsList))
+		for _, field := range requiredFieldsList {
 			requiredFields[field] = true
 		}
-		for _, field := range fields {
+		for _, field := range requiredByTool[name] {
 			if !requiredFields[field] {
 				t.Errorf("%s must require input field %q", name, field)
 			}
+		}
+		if requiredFields["next_goal_ids"] {
+			t.Errorf("%s must allow omitted next_goal_ids", name)
 		}
 	}
 }
@@ -759,6 +829,26 @@ func TestHandoffToolsInjectAgentSessionID(t *testing.T) {
 			name: "atct_goal_handoff_report_amend", method: "goal.handoff.report.amend",
 			reportField: "complete_report", reportValue: "amended goal report",
 			args: map[string]any{"handoff_id": "goal-handoff-1", "goal_id": "goal-1", "complete_report": "amended goal report"},
+		},
+		{
+			name: "atct_handoff_entry_append", method: "handoff.entry.append", ownedBy: "agent_session_id",
+			args: map[string]any{"handoff_id": "handoff-1", "task_id": "task-1", "kind": "review_requested", "body": "review", "in_reply_to_id": 1},
+		},
+		{
+			name: "atct_handoff_entry_history", method: "handoff.entry.history", ownedBy: "agent_session_id",
+			args: map[string]any{"handoff_id": "handoff-1", "task_id": "task-1", "after_id": 1, "limit": 20},
+		},
+		{
+			name: "atct_goal_handoff_entry_append", method: "goal.handoff.entry.append", ownedBy: "agent_session_id",
+			args: map[string]any{"handoff_id": "goal-handoff-1", "goal_id": "goal-1", "kind": "review_rejected", "body": "rejected"},
+		},
+		{
+			name: "atct_goal_handoff_entry_history", method: "goal.handoff.entry.history", ownedBy: "agent_session_id",
+			args: map[string]any{"handoff_id": "goal-handoff-1", "goal_id": "goal-1", "after_id": 1, "limit": 20},
+		},
+		{
+			name: "atct_review_exchanges", method: "review.exchange.list", ownedBy: "agent_session_id",
+			args: map[string]any{"goal_id": "goal-1", "task_id": "task-1"},
 		},
 	} {
 		result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
@@ -1141,8 +1231,8 @@ func TestGoalReviewToolsForwardCanonicalMethods(t *testing.T) {
 		howToVerify = "run review tests"
 		surprises   = "none"
 		needsReview = "なし"
-		nextSteps   = "merge"
 	)
+	nextGoalIDs := []int64{7, 3}
 	cases := []struct {
 		name   string
 		method string
@@ -1153,7 +1243,7 @@ func TestGoalReviewToolsForwardCanonicalMethods(t *testing.T) {
 			args: map[string]any{
 				"goal_id": "2", "work_done": workDone, "now_possible": nowPossible,
 				"how_to_verify": howToVerify, "surprises": surprises,
-				"needs_review": needsReview, "next_steps": nextSteps,
+				"needs_review": needsReview, "next_goal_ids": nextGoalIDs,
 			},
 		},
 		{
@@ -1189,23 +1279,65 @@ func TestGoalReviewToolsForwardCanonicalMethods(t *testing.T) {
 			t.Errorf("%s include_unapplied_answers = %#v, want true", tc.name, got)
 		}
 		if tc.name == "atct_goal_review_request" {
-			want := map[string]string{
+			want := map[string]any{
 				"work_done": workDone, "now_possible": nowPossible,
 				"how_to_verify": howToVerify, "surprises": surprises,
-				"needs_review": needsReview, "next_steps": nextSteps,
+				"needs_review": needsReview, "next_goal_ids": []any{float64(7), float64(3)},
 			}
 			for field, value := range want {
-				if got := call.params[field]; got != value {
+				if got := call.params[field]; !reflect.DeepEqual(got, value) {
 					t.Errorf("%s %s = %#v, want %q", tc.name, field, got, value)
 				}
 			}
 		} else {
-			for _, field := range []string{"work_done", "now_possible", "how_to_verify", "surprises", "needs_review", "next_steps"} {
+			for _, field := range []string{"work_done", "now_possible", "how_to_verify", "surprises", "needs_review", "next_steps", "next_goal_ids"} {
 				if _, ok := call.params[field]; ok {
 					t.Errorf("%s unexpectedly included %s", tc.name, field)
 				}
 			}
 		}
+	}
+}
+
+func TestGoalReviewToolRejectsLegacyNextStepsInput(t *testing.T) {
+	ctx := context.Background()
+	socketPath, calls := startCapturingSchemaTestDaemon(t)
+	server := mcp.NewServer(&mcp.Implementation{Name: "atct-test", Version: "test"}, nil)
+	mcpshim.Register(server, mcpshim.NewClient(socketPath), 2)
+
+	clientTransport, serverTransport := mcp.NewInMemoryTransports()
+	serverSession, err := server.Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatalf("server.Connect: %v", err)
+	}
+	defer serverSession.Close()
+
+	client := mcp.NewClient(&mcp.Implementation{Name: "schema-test", Version: "test"}, nil)
+	clientSession, err := client.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatalf("client.Connect: %v", err)
+	}
+	defer clientSession.Close()
+
+	result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name: "atct_goal_review_request",
+		Arguments: map[string]any{
+			"goal_id": "2", "work_done": "work", "now_possible": "result",
+			"how_to_verify": "verify", "surprises": "none", "needs_review": "none",
+			"next_steps": "legacy",
+		},
+	})
+	if err != nil {
+		if !strings.Contains(err.Error(), "next_steps") {
+			t.Fatalf("legacy next_steps input error = %v, want an explicit unknown-field error", err)
+		}
+	} else if result == nil || !result.IsError {
+		t.Fatalf("legacy next_steps input result = %+v, want an explicit error", result)
+	}
+	select {
+	case call := <-calls:
+		t.Fatalf("legacy next_steps input unexpectedly reached %s with params %#v", call.method, call.params)
+	default:
 	}
 }
 
@@ -1349,6 +1481,11 @@ func callRoleTool(t *testing.T, claimProject, claimGoal, withTask bool, expected
 	if err != nil {
 		s.Close()
 		t.Fatalf("RegisterAgentSession: %v", err)
+	}
+	// atct_role refuses a row that never ran session.identify; a real agent has.
+	if _, _, err := s.IdentifyAgentSession(ctx, sessionID, "role-fixture-key"); err != nil {
+		s.Close()
+		t.Fatalf("IdentifyAgentSession: %v", err)
 	}
 	if claimProject {
 		if _, err := s.ClaimProject(ctx, project.ID, sessionID); err != nil {

@@ -5,11 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -37,18 +39,78 @@ type codexMonitorProcess interface {
 }
 
 type codexMonitorDeps struct {
-	resolveCodex     func() (string, error)
-	runNormal        func(string, []string) (int, error)
-	startProcess     func(codexMonitorProcessKind, string, []string, []string) (codexMonitorProcess, error)
-	connectAppServer func(context.Context, string) (codexMonitorApp, error)
-	runBoundWatch    func(context.Context, string, string, *codexMonitorBridge) error
-	projectPath      func() (string, error)
-	reap             func(string) (daemonctl.CodexMonitorReapResult, error)
-	register         func(string, daemonctl.CodexMonitorRecord) (func(), error)
-	stopMonitors     func(string, string) (daemonctl.CodexMonitorStopResult, error)
-	now              func() time.Time
-	newMonitorToken  func() (string, error)
-	stderr           io.Writer
+	resolveCodex        func() (string, error)
+	runNormal           func(string, []string) (int, error)
+	startProcess        func(codexMonitorProcessKind, string, []string, []string) (codexMonitorProcess, error)
+	listenUnix          func(string, string) (net.Listener, error)
+	newAckCapability    func() (string, error)
+	sendAcknowledgement func(string, string, codexMonitorAckRecord) error
+	connectAppServer    func(context.Context, string) (codexMonitorApp, error)
+	runBoundWatch       func(context.Context, string, string, *codexMonitorBridge) error
+	projectPath         func() (string, error)
+	reap                func(string) (daemonctl.CodexMonitorReapResult, error)
+	register            func(string, daemonctl.CodexMonitorRecord) (func(), error)
+	stopMonitors        func(string, string) (daemonctl.CodexMonitorStopResult, error)
+	now                 func() time.Time
+	newMonitorToken     func() (string, error)
+	stderr              io.Writer
+}
+
+type codexMonitorAckRuntime struct {
+	acknowledgements *codexMonitorAcknowledgements
+	listener         net.Listener
+	path             string
+	address          string
+	capability       string
+}
+
+func newCodexMonitorAckRuntime(monitorDir string, pid int, listenUnix func(string, string) (net.Listener, error), newCapability func() (string, error)) (*codexMonitorAckRuntime, error) {
+	if listenUnix == nil {
+		listenUnix = net.Listen
+	}
+	if newCapability == nil {
+		newCapability = newCodexMonitorAcknowledgementCapability
+	}
+	capability, err := newCapability()
+	if err != nil {
+		return nil, err
+	}
+	acknowledgements, err := newCodexMonitorAcknowledgements(capability)
+	if err != nil {
+		return nil, err
+	}
+	path := filepath.Join(monitorDir, fmt.Sprintf("%d.a", pid))
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("remove stale acknowledgement socket: %w", err)
+	}
+	listener, err := listenUnix("unix", path)
+	if err != nil {
+		return nil, fmt.Errorf("listen for monitor acknowledgements: %w", err)
+	}
+	if err := os.Chmod(path, 0o600); err != nil {
+		_ = listener.Close()
+		_ = os.Remove(path)
+		return nil, fmt.Errorf("protect monitor acknowledgement socket: %w", err)
+	}
+	return &codexMonitorAckRuntime{
+		acknowledgements: acknowledgements,
+		listener:         listener,
+		path:             path,
+		address:          path,
+		capability:       capability,
+	}, nil
+}
+
+func (r *codexMonitorAckRuntime) close() {
+	if r == nil {
+		return
+	}
+	if r.listener != nil {
+		_ = r.listener.Close()
+	}
+	if r.path != "" {
+		_ = os.Remove(r.path)
+	}
 }
 
 // codexMonitorWatchOutput discards watcher diagnostics emitted while the watch
@@ -76,6 +138,12 @@ func runCodexMonitorWithDeps(config cliConfig, dir string, deps codexMonitorDeps
 	}
 	if config.codexMonitorAction != "monitor" {
 		return 1, fmt.Errorf("unsupported Codex monitor action %q", config.codexMonitorAction)
+	}
+	parentAckSocket := strings.TrimSpace(os.Getenv(codexMonitorAckSocketEnvironment))
+	parentAckCapability := strings.TrimSpace(os.Getenv(codexMonitorAckCapabilityEnvironment))
+	if parentAckSocket != "" || parentAckCapability != "" {
+		_ = os.Unsetenv(codexMonitorAckSocketEnvironment)
+		_ = os.Unsetenv(codexMonitorAckCapabilityEnvironment)
 	}
 	if !config.codexMonitorAutomatic && len(args) > 0 && args[0] == "resume" {
 		return deps.runNormal("codex", args)
@@ -141,10 +209,6 @@ func runCodexMonitorWithDeps(config cliConfig, dir string, deps codexMonitorDeps
 		return codexMonitorSetupFailure(deps, "connect App Server: "+err.Error(), executable, args)
 	}
 
-	// The monitor owns this fresh App Server socket. Let the remote TUI create
-	// its session, then attach to that TUI's thread/started notification. A
-	// thread/start response cannot be resumed by a separate remote TUI client.
-	bridge := newCodexMonitorBridge(app, "")
 	lifecycleCtx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stopSignals()
 	monitorCtx, cancelMonitor := context.WithCancel(lifecycleCtx)
@@ -173,6 +237,30 @@ func runCodexMonitorWithDeps(config cliConfig, dir string, deps codexMonitorDeps
 		return codexMonitorSetupFailure(deps, "register monitor: "+err.Error(), executable, args)
 	}
 
+	var ackRuntime *codexMonitorAckRuntime
+	if config.codexMonitorRole == "commander" {
+		var ackErr error
+		ackRuntime, ackErr = newCodexMonitorAckRuntime(monitorDir, os.Getpid(), deps.listenUnix, deps.newAckCapability)
+		if ackErr != nil {
+			fmt.Fprintf(deps.stderr, "atct: monitor acknowledgement disabled: %v\n", ackErr)
+		}
+	}
+	// The monitor owns this fresh App Server socket. Let the remote TUI create
+	// its session, then attach to that TUI's thread/started notification. A
+	// thread/start response cannot be resumed by a separate remote TUI client.
+	var acknowledgements *codexMonitorAcknowledgements
+	if ackRuntime != nil {
+		acknowledgements = ackRuntime.acknowledgements
+	}
+	bridge := newCodexMonitorBridge(app, "", acknowledgements)
+	var ackDone chan error
+	if ackRuntime != nil {
+		ackDone = make(chan error, 1)
+		ackStore := ackRuntime.acknowledgements
+		ackListener := ackRuntime.listener
+		go func() { ackDone <- ackStore.Serve(monitorCtx, ackListener) }()
+	}
+
 	bridgeDone := make(chan error, 1)
 	go func() { bridgeDone <- bridge.Run(monitorCtx) }()
 	watchDone := make(chan error, 1)
@@ -186,7 +274,17 @@ func runCodexMonitorWithDeps(config cliConfig, dir string, deps codexMonitorDeps
 	remoteArgs := make([]string, 0, len(args)+2)
 	remoteArgs = append(remoteArgs, "--remote", "unix://"+socketPath)
 	remoteArgs = append(remoteArgs, args...)
-	tuiProcess, err := deps.startProcess(codexMonitorTUI, executable, remoteArgs, childEnv)
+	tuiEnv := append([]string(nil), childEnv...)
+	if ackRuntime != nil {
+		var envErr error
+		tuiEnv, envErr = appendCodexMonitorAcknowledgementEnvironment(tuiEnv, ackRuntime.address, ackRuntime.capability)
+		if envErr != nil {
+			ackRuntime.close()
+			ackRuntime = nil
+			tuiEnv = append([]string(nil), childEnv...)
+		}
+	}
+	tuiProcess, err := deps.startProcess(codexMonitorTUI, executable, remoteArgs, tuiEnv)
 	if err != nil {
 		cancelWatch()
 		cancelMonitor()
@@ -199,10 +297,22 @@ func runCodexMonitorWithDeps(config cliConfig, dir string, deps codexMonitorDeps
 		if recordCleanup != nil {
 			recordCleanup()
 		}
+		if ackRuntime != nil {
+			ackRuntime.close()
+		}
 		_ = os.Remove(socketPath)
 		return codexMonitorSetupFailure(deps, "start Codex TUI: "+err.Error(), executable, args)
 	}
 	tuiDone := waitCodexMonitorProcess(tuiProcess)
+	if config.codexMonitorRole == "subcommander" && config.codexMonitorExplicit && parentAckSocket != "" && parentAckCapability != "" {
+		if goalID, parseErr := strconv.ParseInt(config.codexMonitorGoalID, 10, 64); parseErr == nil && goalID > 0 {
+			_ = deps.sendAcknowledgement(parentAckSocket, parentAckCapability, codexMonitorAckRecord{
+				Type:      codexMonitorAckRecordSubcommanderLaunched,
+				GoalID:    goalID,
+				HandoffID: config.codexMonitorHandoffID,
+			})
+		}
+	}
 
 	monitorDisabled := false
 	disableMonitor := func(err error) {
@@ -222,6 +332,15 @@ func runCodexMonitorWithDeps(config cliConfig, dir string, deps codexMonitorDeps
 		cleanupOnce = true
 		cancelWatch()
 		cancelMonitor()
+		if ackRuntime != nil {
+			ackRuntime.close()
+			if ackDone != nil {
+				select {
+				case <-ackDone:
+				default:
+				}
+			}
+		}
 		_ = app.Close()
 		waitCodexMonitorDone(bridgeDone)
 		waitCodexMonitorDone(watchDone)
@@ -336,6 +455,15 @@ func codexMonitorDepsWithDefaults(dir string, deps codexMonitorDeps) codexMonito
 	if deps.startProcess == nil {
 		deps.startProcess = startCodexMonitorProcess
 	}
+	if deps.listenUnix == nil {
+		deps.listenUnix = net.Listen
+	}
+	if deps.newAckCapability == nil {
+		deps.newAckCapability = newCodexMonitorAcknowledgementCapability
+	}
+	if deps.sendAcknowledgement == nil {
+		deps.sendAcknowledgement = sendCodexMonitorAcknowledgement
+	}
 	if deps.connectAppServer == nil {
 		deps.connectAppServer = connectCodexAppServer
 	}
@@ -445,17 +573,36 @@ func codexMonitorProjectPath() (string, error) {
 	return absolute, nil
 }
 
-func codexMonitorEnvironment(monitorToken string) ([]string, error) {
+func codexMonitorEnvironment(monitorToken string, acknowledgement ...string) ([]string, error) {
 	if strings.TrimSpace(monitorToken) == "" {
 		return nil, errors.New("monitor token is empty")
 	}
-	return []string{"ATCT_MONITOR_TOKEN=" + monitorToken}, nil
+	if len(acknowledgement) != 0 && len(acknowledgement) != 2 {
+		return nil, errors.New("monitor acknowledgement environment requires socket and capability")
+	}
+	environment := []string{"ATCT_MONITOR_TOKEN=" + monitorToken}
+	if len(acknowledgement) == 2 {
+		return appendCodexMonitorAcknowledgementEnvironment(environment, acknowledgement[0], acknowledgement[1])
+	}
+	return environment, nil
+}
+
+func appendCodexMonitorAcknowledgementEnvironment(environment []string, address, capability string) ([]string, error) {
+	if strings.TrimSpace(address) == "" || strings.TrimSpace(capability) == "" {
+		return nil, errors.New("monitor acknowledgement socket and capability are required")
+	}
+	result := append([]string(nil), environment...)
+	result = append(result,
+		codexMonitorAckSocketEnvironment+"="+address,
+		codexMonitorAckCapabilityEnvironment+"="+capability,
+	)
+	return result, nil
 }
 
 func startCodexMonitorProcess(kind codexMonitorProcessKind, executable string, args []string, extraEnv []string) (codexMonitorProcess, error) {
 	cmd := exec.Command(executable, args...)
 	if len(extraEnv) > 0 {
-		cmd.Env = append(os.Environ(), extraEnv...)
+		cmd.Env = codexMonitorChildEnvironment(extraEnv)
 	}
 	if kind == codexMonitorAppServer {
 		cmd.Stdout = io.Discard
@@ -469,6 +616,21 @@ func startCodexMonitorProcess(kind codexMonitorProcessKind, executable string, a
 		return nil, err
 	}
 	return &execCodexMonitorProcess{cmd: cmd}, nil
+}
+
+func codexMonitorChildEnvironment(extraEnv []string) []string {
+	result := make([]string, 0, len(os.Environ())+len(extraEnv))
+	for _, entry := range os.Environ() {
+		name := entry
+		if index := strings.IndexByte(entry, '='); index >= 0 {
+			name = entry[:index]
+		}
+		if name == codexMonitorAckSocketEnvironment || name == codexMonitorAckCapabilityEnvironment {
+			continue
+		}
+		result = append(result, entry)
+	}
+	return append(result, extraEnv...)
 }
 
 type execCodexMonitorProcess struct {

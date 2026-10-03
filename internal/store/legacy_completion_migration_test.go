@@ -102,7 +102,6 @@ type legacyCompletionGoalSnapshot struct {
 	howToVerify   string
 	surprises     string
 	needsReview   string
-	nextSteps     string
 }
 
 func readLegacyCompletionGoalSnapshot(t *testing.T, db *sql.DB) legacyCompletionGoalSnapshot {
@@ -110,13 +109,13 @@ func readLegacyCompletionGoalSnapshot(t *testing.T, db *sql.DB) legacyCompletion
 	var snapshot legacyCompletionGoalSnapshot
 	if err := db.QueryRow(`
 SELECT status, result_summary, work_done, now_possible, how_to_verify,
-       surprises, needs_review, next_steps
+       surprises, needs_review
 FROM goals
 WHERE id = 1
 `).Scan(
 		&snapshot.status, &snapshot.resultSummary, &snapshot.workDone,
 		&snapshot.nowPossible, &snapshot.howToVerify, &snapshot.surprises,
-		&snapshot.needsReview, &snapshot.nextSteps,
+		&snapshot.needsReview,
 	); err != nil {
 		t.Fatalf("read goal snapshot: %v", err)
 	}

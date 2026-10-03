@@ -30,8 +30,8 @@ ATCT uses `script/worktree-setup.sh <goal-id>` as the canonical way to prepare
 a worktree. Do not use a session-scoped native worktree tool such as
 `EnterWorktree`.
 
-- The script derives the location and branch from the goal id: `.worktrees/<goal8>`
-  and `wt/goal-<goal8>`. A second person working on the same goal enters the
+- The script derives the location and branch from the goal id: `.worktrees/<goal-id>`
+  and `wt/goal-<goal-id>`. A second person working on the same goal enters the
   same tree. A native tool names worktrees per session, so it creates one per
   agent instead of one per goal.
 - The script borrows `web/node_modules` from the primary checkout through a
@@ -215,7 +215,9 @@ that subcommander is started:
    > the goal.
    >
    > Then, in Claude Code only, attach `atct watch --monitor --token
-   > <monitor_token>` to a persistent background stream. Use the exact token
+   > <monitor_token>` as `atct:atct` `## Watch` says: the Monitor tool,
+   > switching to a background Bash with `--once` only after a Monitor that
+   > expired with no events. Use the exact token
    > already passed to `atct_session_identify`; do not pass a goal.
    > The server-derived assignment limits this Watch to the received goal.
    >
@@ -224,8 +226,8 @@ that subcommander is started:
    > reading of this goal's code. Send the delegator nothing until the completion
    > report. What you would have said goes into the record instead: a task for
    > work in flight, `surprises` and `needs_review` for what you found,
-   > `next_steps` for what you left, and `atct_decision_ask` for anything that
-   > needs the human.
+   > `next_goal_ids` for the goals that should follow, and `atct_decision_ask`
+   > for anything that needs the human.
    >
    > A fact that spans another goal is not an exception. Raise it with
    > `atct_decision_ask`; the answer reaches you through your own watch, without
@@ -250,6 +252,14 @@ that subcommander is started:
    after human approval and merge, only the commander may call `atct_goal_review_complete` with the `goal_id` provided in this request.
    `atct_goal_handoff_complete` is reserved for legacy/out-of-order recovery,
    not the normal goal-review path.
+
+   The daemon checks that the goal branch contains main only at review request
+   time. After human approval and before merging, run
+   `git merge-base --is-ancestor main wt/goal-<id>`. If it is not an ancestor,
+   run `git merge main --no-edit` in the goal worktree, re-run the verification
+   set, then merge. Reject the handoff only when that merge conflicts or the
+   verification fails; bouncing a goal merely because main moved keeps the round
+   trips this check exists to remove.
 
 5. Keep one subcommander per goal. A subcommander may wake executors for its
    goal, but must not inspect or manage other goals, create another
@@ -284,3 +294,34 @@ Only when SessionStart emitted no key, the caller's stable full agent name is
 suitable. If a reconnect causes the role to appear wrong, call
 `atct_session_identify` again with the same key to return to the original
 session row.
+
+## Closed goals to reclaim
+
+A done or dropped goal leaves a worktree, a branch and a space behind. Nothing
+reclaims them for you, and only the commander can: a subcommander cannot remove
+the worktree it is standing in. Reclaim at the same checkpoints, plus right
+after `atct_goal_withdraw`:
+
+- the first Look of a session (`atct_goal_list`), and
+- the next Look after `atct_goal_review_complete`.
+
+Compare `.worktrees/<id>` in `git worktree list` with the active goal ids from
+`atct_goal_list`. For each id that is not active, confirm its status with
+`atct_goal_get` and reclaim only done or dropped goals; leave active or
+unconfirmed ones alone. `script/worktree-reclaim.sh` does not check status, so
+this confirmation is yours. Then, from the primary checkout:
+
+1. `script/worktree-reclaim.sh <id>`
+2. Close the goal's space (and its executor panes).
+
+The script snapshot-commits uncommitted or merge-in-progress work onto the
+goal's own branch, never uses stash or `--force`, and keeps a branch that is not
+merged into main. It exits 1 with nothing removed when the worktree HEAD is not
+`wt/goal-<id>` or a rebase, cherry-pick, revert or bisect is in progress; open
+the worktree and clear that by hand, then rerun. Details and the reason stash
+is off the table: "worktree・branch・space の回収" in `doc/execution-flow.md`.
+
+**Out of order:** Closing the space before running the script leaves the
+worktree and branch behind with no one assigned to them; running the script
+without confirming the status can remove the worktree of a goal that is still
+being worked.

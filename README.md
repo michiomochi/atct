@@ -142,9 +142,8 @@ state back** — a commit is undoable, a force push over work that exists nowher
 Say `/atct:start` to hand a session that responsibility explicitly. Whoever runs it owns what
 ATCT says about this repository: every claim, every completed task, every parked decision.
 
-Your side of it is three things: answer the decisions that are parked, approve or send back the
-completion report when a goal claims to be finished, and approve or reject the goals an agent
-proposes. Everything else runs without you.
+Your side of it is two things: answer the decisions that are parked, and approve or send back the
+completion report when a goal claims to be finished. Everything else runs without you.
 
 ## Your answer reaches a session that already moved on
 
@@ -265,11 +264,9 @@ agents stays your business.
 | **Work lock** | The claim on a task. One agent session holds it, so two never take the same task |
 | **Decision** | A question an agent cannot settle alone, with options it wrote itself |
 
-A goal is `active`, `proposed`, `done`, or `dropped`. **You create goals active.** An agent
-can propose one — it lands as `proposed` and does nothing until you approve it, which is the
-one place an agent gets to suggest what to work on. A goal you no longer want is withdrawn
-with a reason, from its own page; that closes its open decisions and its unfinished tasks
-along with it.
+A goal is `active`, `done`, or `dropped`. **A goal is active the moment it is created.** A goal
+you no longer want is withdrawn with a reason, from its own page; that closes its open decisions
+and its unfinished tasks along with it.
 
 Every option carries a `consequence` — what happens if you pick it. You should be able to decide
 without going back to ask what the choice actually means.
@@ -279,10 +276,10 @@ hold the same one.
 
 ## The screens
 
-- **Dashboard** — goals an agent has proposed, then every unanswered decision across every
-  project, then the goals themselves grouped by project. The one screen that matters.
+- **Dashboard** — every unanswered decision across every project, then the goals themselves
+  grouped by project. The one screen that matters.
 - **Goal detail** — what is running now, what needs a decision, what is queued next, the
-  completion report when there is one, and the controls for approving or withdrawing the goal.
+  completion report when there is one, and the controls for withdrawing the goal.
 - **Task detail** — the task, its answer history, and the commits it produced, with the diff
   of each one readable in place.
 

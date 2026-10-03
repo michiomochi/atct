@@ -28,8 +28,6 @@ type openTaskDecision struct {
 func goalNotActiveError(goalID int64, status domain.GoalStatus, beforeAction, action string) error {
 	var stateMessage string
 	switch status {
-	case domain.GoalProposed:
-		stateMessage = fmt.Sprintf("goal %d is not approved; obtain human approval before %s its tasks (承認されていないため、先に人間の承認を得てください)", goalID, beforeAction)
 	case domain.GoalDone:
 		stateMessage = fmt.Sprintf("goal %d is complete; cannot %s its tasks (ゴールが完了しているため、タスク操作はできません)", goalID, action)
 	case domain.GoalDropped:
@@ -118,6 +116,11 @@ func (s *Store) CreateTasks(ctx context.Context, goalID int64, agent, idempotenc
 		*tasks[i].Created = created
 	}
 	return tasks, nil
+}
+
+// DeclareTasks preserves the pre-rename API for callers that still use it.
+func (s *Store) DeclareTasks(ctx context.Context, goalID int64, agent, idempotencyKey string, titles []string, descriptions []string) ([]domain.Task, error) {
+	return s.CreateTasks(ctx, goalID, agent, idempotencyKey, titles, descriptions)
 }
 
 func (s *Store) ListTasks(ctx context.Context, goalID int64) ([]domain.Task, error) {
@@ -436,7 +439,8 @@ func (s *Store) updateTask(ctx context.Context, taskID int64, status domain.Task
 		}
 	}
 
-	now := time.Now().UTC().Format(time.RFC3339)
+	nowTime := time.Now().UTC()
+	now := nowTime.Format(time.RFC3339)
 	res, err := q.UpdateTaskStatus(ctx, sqlcgen.UpdateTaskStatusParams{
 		Status:    string(status),
 		UpdatedAt: now,
@@ -457,13 +461,36 @@ func (s *Store) updateTask(ctx context.Context, taskID int64, status domain.Task
 		}
 		return domain.Task{}, fmt.Errorf("task claim changed while updating %d; retry the update", taskID)
 	}
+	if releaseHandoff != nil {
+		result, err := q.CompleteTaskHandoff(ctx, sqlcgen.CompleteTaskHandoffParams{
+			ID:                releaseHandoff.ID,
+			TaskID:            taskID,
+			CompletedReportAt: sql.NullString{String: nowTime.Format(time.RFC3339Nano), Valid: true},
+			CompleteReport:    sql.NullString{String: taskHandoffReleasedReport, Valid: true},
+		})
+		if err != nil {
+			return domain.Task{}, fmt.Errorf("complete task handoff after release: %w", err)
+		}
+		released, err := result.RowsAffected()
+		if err != nil {
+			return domain.Task{}, fmt.Errorf("complete task handoff after release rows affected: %w", err)
+		}
+		if released != 1 {
+			return domain.Task{}, fmt.Errorf("complete task handoff after release affected %d rows", released)
+		}
+		if _, err := appendHandoffEntryTx(ctx, q, "task_handoff_entries", releaseHandoff.ID, HandoffEntryKindComplete, taskHandoffReleasedReport, releaseHandoff.ReceivedBy, "", "", true, nowTime); err != nil {
+			return domain.Task{}, fmt.Errorf("append task handoff release entry: %w", err)
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return domain.Task{}, fmt.Errorf("commit: %w", err)
 	}
 	if releaseHandoff != nil {
-		if _, err := s.CompleteTaskHandoff(ctx, releaseHandoff.ID, taskID, taskHandoffReleasedReport); err != nil {
-			return domain.Task{}, fmt.Errorf("complete task handoff after release: %w", err)
+		completed, err := s.GetTaskHandoff(ctx, releaseHandoff.ID)
+		if err != nil {
+			return domain.Task{}, fmt.Errorf("get task handoff after release: %w", err)
 		}
+		s.publishTaskHandoffReported(ctx, completed)
 	}
 
 	goalID, err := taskQueries(s).GetTaskGoalID(ctx, taskID)
@@ -533,10 +560,6 @@ func (s *Store) ClaimTask(ctx context.Context, taskID int64, agentSessionID int6
 	}
 
 	handoffID := uuid.NewString()
-	if err := s.reclaimOpenTaskHandoff(ctx, handoffID, taskID); err != nil {
-		return domain.Task{}, mapTaskClaimHandoffError(taskID, err)
-	}
-
 	if _, err := s.requestTaskHandoffForClaim(ctx, handoffID, taskID, agentSessionID); err != nil {
 		return domain.Task{}, mapTaskClaimHandoffError(taskID, err)
 	}

@@ -95,52 +95,6 @@ func TestCreateGoalPublishesGoalCreatedEventForHuman(t *testing.T) {
 	assertNoGoalCreatedEvent(t, events)
 }
 
-func TestCreateGoalPublishesGoalCreatedEventForAgent(t *testing.T) {
-	ctx := context.Background()
-	s := newTestStore(t)
-	parentID := newTestGoal(t, s)
-	parent, err := s.GetGoal(ctx, parentID)
-	if err != nil {
-		t.Fatalf("GetGoal: %v", err)
-	}
-
-	events, cancel := s.SubscribeEvents()
-	defer cancel()
-
-	created, err := s.CreateGoal(ctx, parent.ProjectID, "agent-created", "agent")
-	if err != nil {
-		t.Fatalf("CreateGoal: %v", err)
-	}
-
-	goalEvents := 0
-	decisionEvents := 0
-	for range 2 {
-		event := receiveStoreEvent(t, events)
-		switch event.Name {
-		case "goal.created":
-			goalEvents++
-			goal, ok := event.Data.(domain.Goal)
-			if !ok {
-				t.Fatalf("event data type = %T, want domain.Goal", event.Data)
-			}
-			if goal.ID != created.ID {
-				t.Fatalf("event goal id = %d, want %d", goal.ID, created.ID)
-			}
-		case "decision.created":
-			decisionEvents++
-		default:
-			t.Fatalf("unexpected event name = %q", event.Name)
-		}
-	}
-	if goalEvents != 1 {
-		t.Fatalf("goal.created events = %d, want 1", goalEvents)
-	}
-	if decisionEvents != 1 {
-		t.Fatalf("decision.created events = %d, want 1", decisionEvents)
-	}
-	assertNoGoalCreatedEvent(t, events)
-}
-
 func TestAskDecisionDoesNotPublishGoalCreatedEvent(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)

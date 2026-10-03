@@ -354,11 +354,8 @@ func handoffWorktreeActivity(ctx context.Context, projectRoot string, goalID int
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 
-	goal8 := strconv.FormatInt(goalID, 10)
-	if len(goal8) > 8 {
-		goal8 = goal8[:8]
-	}
-	worktree := filepath.Join(projectRoot, ".worktrees", goal8)
+	goalDir := strconv.FormatInt(goalID, 10)
+	worktree := filepath.Join(projectRoot, ".worktrees", goalDir)
 	info, err := os.Stat(worktree)
 	if err != nil || !info.IsDir() {
 		return ""
@@ -378,7 +375,7 @@ func handoffWorktreeActivity(ctx context.Context, projectRoot string, goalID int
 		}
 	}
 
-	commits, err := runWakeupGit(ctx, worktree, "log", "--format=%ct", "--after="+receivedAt.Format(time.RFC3339Nano), "wt/goal-"+goal8)
+	commits, err := runWakeupGit(ctx, worktree, "log", "--format=%ct", "--after="+receivedAt.Format(time.RFC3339Nano), "wt/goal-"+goalDir)
 	if err != nil {
 		return ""
 	}

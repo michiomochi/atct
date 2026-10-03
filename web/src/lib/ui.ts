@@ -38,6 +38,8 @@ export const DECISION_EVENT_NAMES = [
   "detection.handoff_unreported",
   // 報告が届いたことは異常ではないが、handoff の状態が変わるので画面は更新する。
   "handoff_reported",
+  // 新しい handoff entry は時系列表示を再取得できる状態にする。
+  "handoff_entry_added",
   "detection.claim_undelegated",
   "detection.decision_answered_unapplied",
   "detection.decision_default_unapplied",
@@ -84,7 +86,6 @@ export interface CompletionReportFields {
   how_to_verify: string;
   surprises: string;
   needs_review: string;
-  next_steps: string;
 }
 
 export function hasCompletionReport(report: CompletionReportFields): boolean {
@@ -94,10 +95,6 @@ export function hasCompletionReport(report: CompletionReportFields): boolean {
 export function filterDecisionsByTask<T extends { task_id?: string }>(decisions: T[], taskID: string): T[] {
   if (!taskID) return [];
   return decisions.filter((decision) => decision.task_id === taskID);
-}
-
-export function findOpenGoalApproval<T extends CompletionLike>(decisions: T[]): T | undefined {
-  return decisions.find((decision) => decision.kind === "goal_approval" && decision.status === "open");
 }
 
 export function findOpenGoalReview<T extends CompletionLike>(decisions: T[]): T | undefined {

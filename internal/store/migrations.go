@@ -160,6 +160,72 @@ var requiredCurrentV6Columns = map[string][]string{
 	},
 }
 
+var requiredV7Columns = map[string][]string{
+	"projects": {
+		"id",
+		"name",
+		"root_path",
+		"created_at",
+	},
+	"agent_sessions": {
+		"id",
+		"project_id",
+		"registered_at",
+		"pid",
+		"started_at",
+	},
+	"goals": {
+		"id",
+		"project_id",
+		"content",
+		"status",
+		"result_summary",
+		"work_done",
+		"now_possible",
+		"how_to_verify",
+		"surprises",
+		"needs_review",
+		"created_at",
+		"updated_at",
+	},
+	"tasks": {
+		"id",
+		"goal_id",
+		"title",
+		"description",
+		"status",
+		"agent",
+		"sort_order",
+		"declare_key",
+		"snoozed_until",
+		"created_at",
+		"updated_at",
+	},
+	"decisions": {
+		"id",
+		"goal_id",
+		"task_id",
+		"kind",
+		"question",
+		"options",
+		"status",
+		"default_option",
+		"default_after_ms",
+		"default_applied_at",
+		"answer_label",
+		"answer_text",
+		"answered_at",
+		"applied_at",
+		"agent_session_id",
+		"created_at",
+	},
+	"next_goals": {
+		"goal_id",
+		"next_goal_id",
+		"created_at",
+	},
+}
+
 func configureDatabase(db *sql.DB) error {
 	for _, pragma := range []string{
 		"PRAGMA journal_mode=WAL",
@@ -184,7 +250,7 @@ func migrateSchema(db *sql.DB) (err error) {
 	if version < 0 {
 		return fmt.Errorf("database has invalid schema version %d", version)
 	}
-	if version == schemaVersion {
+	if version == schemaVersion || version == schemaVersion-1 {
 		return applyEmbeddedMigrations(db)
 	}
 	if version == 0 {
@@ -313,7 +379,7 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 			return fmt.Errorf("record %s during historical bridge: %w", migration.filename, err)
 		}
 	}
-	if _, err := tx.Exec(fmt.Sprintf("PRAGMA user_version = %d", schemaVersion)); err != nil {
+	if _, err := tx.Exec(fmt.Sprintf("PRAGMA user_version = %d", schemaVersion-1)); err != nil {
 		return fmt.Errorf("write schema version: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -626,8 +692,25 @@ func applyEmbeddedMigrations(db *sql.DB) error {
 			}
 			return setUserVersion(ctx, conn)
 
-		case schemaVersion:
+		case schemaVersion - 1:
 			if err := validateV6Schema(ctx, conn, state); err != nil {
+				return err
+			}
+			if err := ensureSchemaMigrationsTable(ctx, conn); err != nil {
+				return err
+			}
+			if err := validateAppliedMigrations(state, migrations); err != nil {
+				return err
+			}
+			if _, ok := state.applied[migrations[0].filename]; !ok {
+				if err := recordMigration(ctx, conn, migrations[0].filename); err != nil {
+					return err
+				}
+			}
+			return nil
+
+		case schemaVersion:
+			if err := validateV7Schema(ctx, conn); err != nil {
 				return err
 			}
 			if err := ensureSchemaMigrationsTable(ctx, conn); err != nil {
@@ -659,9 +742,6 @@ func applyEmbeddedMigrations(db *sql.DB) error {
 			if err != nil {
 				return err
 			}
-			if state.userVersion != schemaVersion {
-				return fmt.Errorf("database schema version changed to %d while applying %s", state.userVersion, migration.filename)
-			}
 			if !state.hasMigrationsTable {
 				return fmt.Errorf("%s is missing %s", migration.filename, schemaMigrationsTable)
 			}
@@ -670,6 +750,10 @@ func applyEmbeddedMigrations(db *sql.DB) error {
 			}
 			if _, ok := state.applied[migration.filename]; ok {
 				return nil
+			}
+			legacyUpgrade := state.userVersion == schemaVersion-1
+			if state.userVersion != schemaVersion && !legacyUpgrade {
+				return fmt.Errorf("database schema version changed to %d while applying %s", state.userVersion, migration.filename)
 			}
 			for _, previous := range migrations[:migrationIndex] {
 				if _, ok := state.applied[previous.filename]; !ok {
@@ -887,6 +971,30 @@ func validateV6Schema(ctx context.Context, conn *sql.Conn, state migrationState)
 	return nil
 }
 
+func validateV7Schema(ctx context.Context, conn *sql.Conn) error {
+	tables := make([]string, 0, len(requiredV7Columns))
+	for tableName := range requiredV7Columns {
+		tables = append(tables, tableName)
+	}
+	sort.Strings(tables)
+	for _, tableName := range tables {
+		columns, err := tableColumns(ctx, conn, tableName)
+		if err != nil {
+			return err
+		}
+		missing := make([]string, 0)
+		for _, columnName := range requiredV7Columns[tableName] {
+			if !columns[columnName] {
+				missing = append(missing, columnName)
+			}
+		}
+		if len(missing) != 0 {
+			return fmt.Errorf("table %q is missing v7 columns: %s", tableName, strings.Join(missing, ", "))
+		}
+	}
+	return nil
+}
+
 func withoutTaskAndGoalClaimColumns(required map[string][]string) map[string][]string {
 	withoutClaims := make(map[string][]string, len(required))
 	for table, columns := range required {
@@ -989,10 +1097,52 @@ func validateAppliedMigrations(state migrationState, migrations []embeddedMigrat
 }
 
 func execEmbeddedMigration(ctx context.Context, conn *sql.Conn, migration embeddedMigration) error {
+	var goalIndexes []string
+	if migration.filename == "0047_next_goals.sql" {
+		var err error
+		goalIndexes, err = goalIndexesOnConn(ctx, conn)
+		if err != nil {
+			return fmt.Errorf("read goals indexes: %w", err)
+		}
+	}
 	if _, err := conn.ExecContext(ctx, migration.sql); err != nil {
 		return fmt.Errorf("execute schema migration %s: %w", migration.filename, err)
 	}
+	for _, indexSQL := range goalIndexes {
+		if strings.Contains(strings.ToLower(indexSQL), "next_steps") {
+			continue
+		}
+		if _, err := conn.ExecContext(ctx, indexSQL); err != nil {
+			return fmt.Errorf("recreate goals index during %s: %w", migration.filename, err)
+		}
+	}
+	if migration.filename == "0049_canonical_handoff_entries.sql" {
+		if err := backfillLegacyHandoffEntries(ctx, conn); err != nil {
+			return fmt.Errorf("backfill legacy handoff entries: %w", err)
+		}
+	}
 	return nil
+}
+
+func goalIndexesOnConn(ctx context.Context, conn *sql.Conn) ([]string, error) {
+	rows, err := conn.QueryContext(ctx, `
+		SELECT sql FROM sqlite_master
+		WHERE type = 'index' AND tbl_name = 'goals' AND sql IS NOT NULL
+		ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var indexes []string
+	for rows.Next() {
+		var indexSQL string
+		if err := rows.Scan(&indexSQL); err != nil {
+			return nil, err
+		}
+		indexes = append(indexes, indexSQL)
+	}
+	return indexes, rows.Err()
 }
 
 func recordMigration(ctx context.Context, conn *sql.Conn, filename string) error {
@@ -1011,4 +1161,106 @@ func setUserVersion(ctx context.Context, conn *sql.Conn) error {
 		return fmt.Errorf("set database schema version to %d: %w", schemaVersion, err)
 	}
 	return nil
+}
+
+type legacyHandoffReport struct {
+	handoffID         string
+	requestedBy       sql.NullInt64
+	receivedBy        sql.NullInt64
+	requestedAt       sql.NullString
+	completedReportAt sql.NullString
+	requestReport     sql.NullString
+	completeReport    sql.NullString
+}
+
+func backfillLegacyHandoffEntries(ctx context.Context, conn *sql.Conn) error {
+	if err := backfillLegacyHandoffEntryTable(ctx, conn, "task_handoffs", "task_handoff_entries"); err != nil {
+		return err
+	}
+	return backfillLegacyHandoffEntryTable(ctx, conn, "goal_handoffs", "goal_handoff_entries")
+}
+
+func backfillLegacyHandoffEntryTable(ctx context.Context, conn *sql.Conn, parentTable, entryTable string) error {
+	rows, err := conn.QueryContext(ctx, `
+		SELECT id, requested_by, received_by, requested_at, completed_report_at,
+		       request_report, complete_report
+		FROM `+parentTable+`
+		ORDER BY id
+	`)
+	if err != nil {
+		return fmt.Errorf("list %s: %w", parentTable, err)
+	}
+	var reports []legacyHandoffReport
+
+	for rows.Next() {
+		var report legacyHandoffReport
+		if err := rows.Scan(
+			&report.handoffID, &report.requestedBy, &report.receivedBy,
+			&report.requestedAt, &report.completedReportAt,
+			&report.requestReport, &report.completeReport,
+		); err != nil {
+			return fmt.Errorf("scan %s: %w", parentTable, err)
+		}
+		reports = append(reports, report)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return fmt.Errorf("iterate %s: %w", parentTable, err)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("close %s: %w", parentTable, err)
+	}
+
+	for _, report := range reports {
+		if report.requestReport.Valid && strings.TrimSpace(report.requestReport.String) != "" {
+			if err := insertLegacyHandoffEntry(ctx, conn, entryTable, report.handoffID, HandoffEntryKindRequest, report.requestReport.String, report.requestedBy, report.requestedAt.String); err != nil {
+				return fmt.Errorf("backfill %s request for %q: %w", parentTable, report.handoffID, err)
+			}
+		}
+		if report.completeReport.Valid && strings.TrimSpace(report.completeReport.String) != "" {
+			createdAt := report.completedReportAt.String
+			if createdAt == "" {
+				createdAt = report.requestedAt.String
+			}
+			if err := insertLegacyHandoffEntry(ctx, conn, entryTable, report.handoffID, HandoffEntryKindCompleted, report.completeReport.String, report.receivedBy, createdAt); err != nil {
+				return fmt.Errorf("backfill %s complete for %q: %w", parentTable, report.handoffID, err)
+			}
+		}
+	}
+	return nil
+}
+
+func insertLegacyHandoffEntry(
+	ctx context.Context,
+	conn *sql.Conn,
+	entryTable string,
+	handoffID, kind, sourceBody string,
+	author sql.NullInt64,
+	createdAt string,
+) error {
+	if strings.TrimSpace(sourceBody) == "" {
+		return nil
+	}
+	body := sourceBody
+	if createdAt == "" {
+		createdAt = time.Unix(0, 0).UTC().Format(time.RFC3339Nano)
+	}
+	var exists bool
+	if err := conn.QueryRowContext(ctx, `
+		SELECT EXISTS(
+			SELECT 1 FROM `+entryTable+`
+			WHERE handoff_id = ? AND kind = ? AND body = ?
+		)
+	`, handoffID, kind, body).Scan(&exists); err != nil {
+		return err
+	}
+	if exists {
+		return nil
+	}
+	_, err := conn.ExecContext(ctx, `
+		INSERT OR IGNORE INTO `+entryTable+` (
+			handoff_id, kind, body, author_session_id, created_at
+		) VALUES (?, ?, ?, ?, ?)
+	`, handoffID, kind, body, author, createdAt)
+	return err
 }

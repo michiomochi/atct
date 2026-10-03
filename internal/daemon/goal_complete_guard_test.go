@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -44,7 +45,7 @@ func TestGoalCompleteDispatchReturnsNamedReviewMigrationDiagnosticWithoutMutatio
 	if err != nil {
 		t.Fatalf("GetGoal after dispatch: %v", err)
 	}
-	if after != before {
+	if !reflect.DeepEqual(after, before) {
 		t.Fatalf("goal changed after retired goal.complete: before=%+v after=%+v", before, after)
 	}
 	decisionsAfter, err := s.ListDecisionsForGoal(ctx, goal.ID)
@@ -68,7 +69,7 @@ func TestCommanderGoalReviewThenCompleteWritesFinalReport(t *testing.T) {
 		"goal_id": goal.ID, "agent_session_id": commanderID,
 		"work_done": report.WorkDone, "now_possible": report.NowPossible,
 		"how_to_verify": report.HowToVerify, "surprises": report.Surprises,
-		"needs_review": report.NeedsReview, "next_steps": report.NextSteps,
+		"needs_review": report.NeedsReview, "next_goal_ids": report.NextGoalIDs,
 	})
 	if err != nil {
 		t.Fatalf("Marshal goal.review.request params: %v", err)
@@ -137,7 +138,7 @@ func TestCommanderGoalReviewThenCompleteWritesFinalReport(t *testing.T) {
 	if err := json.Unmarshal(raw, &done); err != nil {
 		t.Fatalf("decode goal.review.complete response %s: %v", raw, err)
 	}
-	if done.Status != domain.GoalDone || done.WorkDone != report.WorkDone || done.NextSteps != report.NextSteps {
+	if done.Status != domain.GoalDone || done.WorkDone != report.WorkDone || len(done.NextGoals) != len(report.NextGoalIDs) {
 		t.Fatalf("completed goal = %+v, want final report and done status", done)
 	}
 	handoff, err := s.GetGoalHandoff(ctx, handoffID)
@@ -177,7 +178,6 @@ func goalCompleteParams(t *testing.T, goalID, sessionID int64, report domain.Com
 		"how_to_verify":    report.HowToVerify,
 		"surprises":        report.Surprises,
 		"needs_review":     report.NeedsReview,
-		"next_steps":       report.NextSteps,
 		"agent_session_id": sessionID,
 	})
 	if err != nil {
@@ -193,6 +193,6 @@ func approvedGoalReport(label string) domain.CompletionReport {
 		HowToVerify: "AAA-" + label + "-approved-how-to-verify",
 		Surprises:   "AAA-" + label + "-approved-surprises",
 		NeedsReview: "AAA-" + label + "-approved-needs-review",
-		NextSteps:   "AAA-" + label + "-approved-next-steps",
+		NextGoalIDs: []int64{},
 	}
 }

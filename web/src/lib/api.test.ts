@@ -1,12 +1,17 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-	ApiError,
-	approveDecision,
-	createGoal,
-	fetchProjects,
-	rejectDecision,
-	subscribeToDecisionEvents,
-	updateUILocale,
+  ApiError,
+  approveDecision,
+  createGoal,
+  fetchGoalHandoffHistory,
+  fetchGoalReviewExchanges,
+  fetchTaskReviewExchanges,
+  normalizeReviewExchanges,
+  fetchProjects,
+  normalizeGoal,
+  rejectDecision,
+  subscribeToDecisionEvents,
+  updateUILocale,
 } from "./api";
 import { DECISION_EVENT_NAMES } from "./ui";
 
@@ -148,6 +153,52 @@ describe("locale API", () => {
   });
 });
 
+describe("handoff history API", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("fetches an after_id page for a goal handoff", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      text: () => Promise.resolve('{"id":"handoff-1","entries":[{"id":4,"handoff_id":"handoff-1","kind":"review_requested","body":"review","author_session_id":8,"in_reply_to_id":2,"created_at":"2026-08-20T00:00:00Z"}],"has_more":false,"next_after_id":4}'),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(fetchGoalHandoffHistory("goal/1", "handoff/1", 2, 20)).resolves.toMatchObject({
+      id: "handoff-1",
+      next_after_id: 4,
+      entries: [{ id: 4, kind: "review_requested", author_session_id: 8, in_reply_to_id: 2 }],
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/goals/goal%2F1/handoffs/handoff%2F1?after_id=2&limit=20",
+      undefined,
+    );
+  });
+
+  it("normalizes embedded handoff pages without changing older goal payloads", () => {
+    const response = normalizeGoal({
+      goal: { id: "goal-1" },
+      handoffs: [{ id: "handoff-1", entries: [{ id: 1, handoff_id: "handoff-1", kind: "progress", body: "removed", author_session_id: 8, created_at: "2026-08-20T00:00:00Z" }, { id: 2, handoff_id: "handoff-1", kind: "received", body: "received", author_session_id: 8, created_at: "2026-08-20T00:00:00Z" }] }],
+    });
+
+    expect(response.handoffs).toHaveLength(1);
+    expect(response.handoffs?.[0]).toMatchObject({
+      id: "handoff-1",
+      entries: [{ id: 2, kind: "received" }],
+    });
+    expect(normalizeGoal({ goal: { id: "goal-2" } }).handoffs).toEqual([]);
+  });
+});
+
+describe("goal detail API", () => {
+  it("normalizes missing successor summaries to an empty array", () => {
+    const response = normalizeGoal({ goal: { id: "goal-1" } });
+
+    expect((response.goal as { next_goals?: unknown }).next_goals).toEqual([]);
+  });
+});
+
 describe("decision event subscription", () => {
   afterEach(() => {
     vi.useRealTimers();
@@ -283,5 +334,53 @@ describe("decision event subscription", () => {
     vi.advanceTimersByTime(5_000);
 
     expect(FakeWebSocket.instances).toHaveLength(1);
+  });
+});
+
+describe("review exchange API", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("turns missing or null arrays into empty ones", () => {
+    expect(normalizeReviewExchanges({})).toEqual({ exchanges: [], gaps: [] });
+    expect(normalizeReviewExchanges({ exchanges: null, gaps: null })).toEqual({ exchanges: [], gaps: [] });
+    expect(normalizeReviewExchanges(null)).toEqual({ exchanges: [], gaps: [] });
+  });
+
+  it("keeps valid pairs, null responses and gaps, and drops malformed ones", () => {
+    const history = normalizeReviewExchanges({
+      exchanges: [
+        {
+          scope: "task", task_id: 7, handoff_id: "h1",
+          rejection: { source: "handoff", at: "2026-10-01T00:00:01Z", actor_session_id: 3, reason: "fix" },
+          response: { at: "2026-10-01T00:00:02Z", author_session_id: 4, handoff_id: "h2", report: "fixed" },
+        },
+        { scope: "goal", rejection: { source: "human", at: "2026-10-01T00:00:03Z", decision_id: 9, reason: "no" }, response: null },
+        { scope: "bogus", rejection: { source: "human", at: "x", reason: "" }, response: null },
+        { scope: "plan", rejection: { source: "unknown", at: "x", reason: "" }, response: null },
+        "not an object",
+      ],
+      gaps: [
+        { scope: "goal", handoff_id: "g1", before_at: "2026-10-01T00:00:00Z" },
+        { scope: "goal", handoff_id: "", before_at: "2026-10-01T00:00:00Z" },
+      ],
+    });
+
+    expect(history.exchanges).toHaveLength(2);
+    expect(history.exchanges[0]).toMatchObject({ scope: "task", task_id: 7, handoff_id: "h1", response: { author_session_id: 4, report: "fixed" } });
+    expect(history.exchanges[1]).toMatchObject({ scope: "goal", rejection: { source: "human", decision_id: 9 }, response: null });
+    expect(history.exchanges[1].handoff_id).toBeUndefined();
+    expect(history.gaps).toEqual([{ scope: "goal", handoff_id: "g1", before_at: "2026-10-01T00:00:00Z" }]);
+  });
+
+  it("fetches the goal and task endpoints", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, text: () => Promise.resolve('{"exchanges":[],"gaps":[]}') });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(fetchGoalReviewExchanges("goal/1")).resolves.toEqual({ exchanges: [], gaps: [] });
+    await expect(fetchTaskReviewExchanges("task/1")).resolves.toEqual({ exchanges: [], gaps: [] });
+    expect(fetchMock).toHaveBeenNthCalledWith(1, "/api/goals/goal%2F1/review-exchanges", undefined);
+    expect(fetchMock).toHaveBeenNthCalledWith(2, "/api/tasks/task%2F1/review-exchanges", undefined);
   });
 });

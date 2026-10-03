@@ -97,3 +97,33 @@ func TestGoalWithdrawRequiresAReason(t *testing.T) {
 		t.Fatal("goal.withdraw accepted an empty reason")
 	}
 }
+
+// An agent-created goal that already has work recorded can still be abandoned by the
+// commander; the old stale-approval guard against that is gone.
+func TestGoalWithdrawLetsTheCommanderDropAnAgentGoalWithWork(t *testing.T) {
+	fixture := newGoalListFixture(t)
+	defer fixture.store.Close()
+
+	ctx := context.Background()
+	goalID := fixture.agentCreated[0].ID
+	if _, err := fixture.store.DB().ExecContext(ctx, `
+		INSERT INTO tasks (goal_id, title, description, status, agent, sort_order, declare_key, created_at, updated_at)
+		VALUES (?, 'recorded', 'd', 'todo', 'agent', 0, 'k', '2026-10-01T00:00:00Z', '2026-10-01T00:00:00Z')`, goalID); err != nil {
+		t.Fatalf("insert task: %v", err)
+	}
+	commanderID := daemonTestSessionID(t, fixture.store, "withdraw-agent")
+	if _, err := fixture.store.ClaimProject(ctx, fixture.project.ID, commanderID); err != nil {
+		t.Fatalf("ClaimProject: %v", err)
+	}
+
+	if err := withdrawGoal(t, fixture, goalID, commanderID, "superseded by a fix on main"); err != nil {
+		t.Fatalf("goal.withdraw: %v", err)
+	}
+	goal, err := fixture.store.GetGoal(ctx, goalID)
+	if err != nil {
+		t.Fatalf("GetGoal: %v", err)
+	}
+	if goal.Status != domain.GoalDropped || !strings.Contains(goal.ResultSummary, "superseded by a fix on main") {
+		t.Fatalf("goal = %+v, want dropped with the reason", goal)
+	}
+}

@@ -49,7 +49,6 @@ CREATE TABLE IF NOT EXISTS goals (
   how_to_verify  TEXT NOT NULL DEFAULT '',
   surprises      TEXT NOT NULL DEFAULT '',
   needs_review   TEXT NOT NULL DEFAULT '',
-  next_steps     TEXT NOT NULL DEFAULT '',
   created_at     TEXT NOT NULL,
   updated_at     TEXT NOT NULL,
   CHECK (
@@ -58,11 +57,21 @@ CREATE TABLE IF NOT EXISTS goals (
     length(trim(now_possible)) > 0 AND length(now_possible) <= 2000 AND
     length(trim(how_to_verify)) > 0 AND length(how_to_verify) <= 2000 AND
     length(trim(surprises)) > 0 AND length(surprises) <= 2000 AND
-    length(trim(needs_review)) > 0 AND length(needs_review) <= 2000 AND
-    length(trim(next_steps)) > 0 AND length(next_steps) <= 2000
+    length(trim(needs_review)) > 0 AND length(needs_review) <= 2000
   )
 )
 );
+
+CREATE TABLE IF NOT EXISTS next_goals (
+  goal_id INTEGER NOT NULL REFERENCES goals(id),
+  next_goal_id INTEGER NOT NULL REFERENCES goals(id),
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (goal_id, next_goal_id),
+  CHECK (goal_id <> next_goal_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_next_goals_next_goal_id
+  ON next_goals(next_goal_id);
 
 CREATE TABLE IF NOT EXISTS tasks (
   id         INTEGER PRIMARY KEY,
@@ -98,9 +107,9 @@ CREATE TABLE IF NOT EXISTS decisions (
   answer_label TEXT NOT NULL DEFAULT '',
   answer_text  TEXT NOT NULL DEFAULT '',
   answered_at  TEXT,
-  applied_at   TEXT,
-  agent_session_id INTEGER NOT NULL DEFAULT 0,
-  created_at   TEXT NOT NULL
+	applied_at   TEXT,
+	agent_session_id INTEGER NOT NULL DEFAULT 0,
+	created_at   TEXT NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_decisions_open
@@ -177,6 +186,46 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_goal_handoffs_open_goal_id
   ON goal_handoffs(goal_id)
   WHERE completed_report_at IS NULL AND recovered_at IS NULL;
 
+CREATE TABLE IF NOT EXISTS task_handoff_entries (
+  id                INTEGER PRIMARY KEY AUTOINCREMENT,
+  handoff_id        TEXT NOT NULL REFERENCES task_handoffs(id) ON DELETE RESTRICT,
+  kind              TEXT NOT NULL CHECK (kind IN (
+    'request', 'received', 'review_requested', 'review_received',
+    'review_rejected', 'completed'
+  )),
+  body              TEXT NOT NULL,
+  author_session_id INTEGER REFERENCES agent_sessions(id) ON DELETE SET NULL,
+  in_reply_to_id    INTEGER,
+  created_at        TEXT NOT NULL,
+  CHECK (in_reply_to_id IS NULL OR in_reply_to_id <> id),
+  UNIQUE (handoff_id, id),
+  FOREIGN KEY (handoff_id, in_reply_to_id)
+    REFERENCES task_handoff_entries(handoff_id, id) ON DELETE RESTRICT
+);
+
+CREATE INDEX IF NOT EXISTS idx_task_handoff_entries_handoff_sequence
+  ON task_handoff_entries(handoff_id, id);
+
+CREATE TABLE IF NOT EXISTS goal_handoff_entries (
+  id                INTEGER PRIMARY KEY AUTOINCREMENT,
+  handoff_id        TEXT NOT NULL REFERENCES goal_handoffs(id) ON DELETE RESTRICT,
+  kind              TEXT NOT NULL CHECK (kind IN (
+    'request', 'received', 'review_requested', 'review_received',
+    'review_rejected', 'completed'
+  )),
+  body              TEXT NOT NULL,
+  author_session_id INTEGER REFERENCES agent_sessions(id) ON DELETE SET NULL,
+  in_reply_to_id    INTEGER,
+  created_at        TEXT NOT NULL,
+  CHECK (in_reply_to_id IS NULL OR in_reply_to_id <> id),
+  UNIQUE (handoff_id, id),
+  FOREIGN KEY (handoff_id, in_reply_to_id)
+    REFERENCES goal_handoff_entries(handoff_id, id) ON DELETE RESTRICT
+);
+
+CREATE INDEX IF NOT EXISTS idx_goal_handoff_entries_handoff_sequence
+  ON goal_handoff_entries(handoff_id, id);
+
 CREATE TABLE IF NOT EXISTS plan_handoffs (
   id                  TEXT PRIMARY KEY,
   goal_id             INTEGER NOT NULL REFERENCES goals(id),
@@ -199,6 +248,23 @@ CREATE INDEX IF NOT EXISTS idx_plan_handoffs_goal_id
 CREATE UNIQUE INDEX IF NOT EXISTS idx_plan_handoffs_open_goal_id
   ON plan_handoffs(goal_id)
   WHERE completed_report_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS plan_handoff_entries (
+  id                INTEGER PRIMARY KEY AUTOINCREMENT,
+  handoff_id        TEXT NOT NULL REFERENCES plan_handoffs(id) ON DELETE RESTRICT,
+  kind              TEXT NOT NULL CHECK (kind IN ('review_requested', 'review_rejected')),
+  body              TEXT NOT NULL,
+  author_session_id INTEGER REFERENCES agent_sessions(id) ON DELETE SET NULL,
+  created_at        TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_plan_handoff_entries_handoff_sequence
+  ON plan_handoff_entries(handoff_id, id);
+
+CREATE TABLE IF NOT EXISTS handoff_history_gaps (
+  handoff_id TEXT PRIMARY KEY,
+  scope      TEXT NOT NULL CHECK (scope IN ('goal', 'task', 'plan'))
+);
 
 CREATE TABLE IF NOT EXISTS monitor_health (
   monitor_id         TEXT PRIMARY KEY,
@@ -228,7 +294,8 @@ CREATE INDEX IF NOT EXISTS monitor_health_last_seen_idx
 CREATE TABLE IF NOT EXISTS monitor_bindings (
   token            TEXT PRIMARY KEY,
   agent_session_id INTEGER NOT NULL REFERENCES agent_sessions(id) ON DELETE CASCADE,
-  created_at       TEXT NOT NULL
+  created_at       TEXT NOT NULL,
+  last_reconciled_at TEXT NOT NULL DEFAULT ''
 );
 
 CREATE INDEX IF NOT EXISTS idx_monitor_bindings_agent_session_id

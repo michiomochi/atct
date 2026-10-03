@@ -156,4 +156,61 @@ describe("DecisionTable", () => {
     const questionLink = screen.getByRole("link", { name: "Which option should we choose?" });
     expect(questionLink.getAttribute("href")).toBe("/goals/goal-1");
   });
+
+  test("renders decisions in the given order without re-sorting", () => {
+    render(
+      <DecisionTable
+        decisions={[
+          decision({ id: "d-b", question: "Second by time", created_at: "2026-08-21T00:00:00Z", priority: 1 }),
+          decision({ id: "d-a", question: "First by time", created_at: "2026-08-20T00:00:00Z", priority: 4 }),
+        ]}
+        emptyText="No decisions"
+      />,
+    );
+
+    const links = screen.getAllByRole("link").filter((l) => l.getAttribute("href")?.startsWith("/goals/goal-1") && l.getAttribute("title"));
+    expect(links.map((l) => l.textContent)).toEqual(["Second by time", "First by time"]);
+  });
+
+  test("shows the priority reason label under unanswered questions only", () => {
+    render(
+      <DecisionTable
+        decisions={[
+          decision({ id: "d-1", priority: 3, priority_reason: "queued" }),
+          decision({ id: "d-2", question: "Done one", status: "answered", priority_reason: "queued" }),
+        ]}
+        emptyText="No decisions"
+      />,
+    );
+
+    expect(screen.getAllByText("decision.priority.queued")).toHaveLength(1);
+  });
+
+  test("renders without priority_reason", () => {
+    render(<DecisionTable decisions={[decision()]} emptyText="No decisions" />);
+
+    expect(screen.getByRole("link", { name: "Which option should we choose?" })).toBeTruthy();
+    expect(screen.queryByText(/decision\.priority\./)).toBeNull();
+  });
+});
+
+describe("DecisionTable priority labels in each language", () => {
+  const labels = {
+    ja: { goal_review: "goal の完了待ち", task_in_progress: "作業中のタスクが止まっている", queued: "待機中", auto_settles: "既定の選択肢で自動確定" },
+    en: { goal_review: "Goal waiting to close", task_in_progress: "A task in progress is blocked", queued: "Queued", auto_settles: "Settles by default on its own" },
+  } as const;
+
+  for (const lang of ["ja", "en"] as const) {
+    test(`shows ${lang} labels`, async () => {
+      const { createInstance } = await import("i18next");
+      const { en } = await import("../i18n/en");
+      const { ja } = await import("../i18n/ja");
+      const inst = createInstance();
+      await inst.init({ lng: lang, resources: { en: { translation: en }, ja: { translation: ja } } });
+      const lookup = (key: keyof typeof en) => inst.t(key);
+      for (const [reason, expected] of Object.entries(labels[lang])) {
+        expect(lookup(`decision.priority.${reason}` as keyof typeof en)).toBe(expected);
+      }
+    });
+  }
 });

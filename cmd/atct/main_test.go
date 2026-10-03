@@ -1,6 +1,9 @@
 package main
 
 import (
+	"bufio"
+	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net"
@@ -15,6 +18,7 @@ import (
 	"time"
 
 	"github.com/michiomochi/atct/internal/daemonctl"
+	"github.com/michiomochi/atct/internal/mcpshim"
 )
 
 func TestParseArgs(t *testing.T) {
@@ -180,12 +184,22 @@ func TestParseArgsCodexMonitorPreservesScopeAfterPassthroughDelimiter(t *testing
 	}
 }
 
-func TestParseArgsCodexMonitorRejectsRemovedSelectors(t *testing.T) {
+func TestParseArgsCodexMonitorAcceptsCommanderSelector(t *testing.T) {
+	cfg, err := parseArgs([]string{"codex", "monitor", "--role", "commander"})
+	if err != nil {
+		t.Fatalf("parseArgs: %v", err)
+	}
+	if !cfg.codexMonitorExplicit || cfg.codexMonitorRole != "commander" {
+		t.Fatalf("monitor config = %#v, want explicit commander", cfg)
+	}
+}
+
+func TestParseArgsCodexMonitorRejectsUnsupportedSelectors(t *testing.T) {
 	for _, args := range [][]string{
-		{"codex", "monitor", "--role", "commander"},
 		{"codex", "monitor", "--project", "7"},
 		{"codex", "monitor", "--goal", "206"},
 		{"codex", "monitor", "--task", "846"},
+		{"codex", "monitor", "--role", "executor", "--task", "846"},
 	} {
 		if _, err := parseArgs(args); !errors.Is(err, errInvalidArgs) {
 			t.Fatalf("parseArgs(%q) error = %v, want errInvalidArgs", args, err)
@@ -790,8 +804,43 @@ func TestParseHandoffComplete(t *testing.T) {
 	}
 }
 
-func TestParseHandoffRejectsRemovedAction(t *testing.T) {
-	if _, err := parseArgs([]string{"handoff", "yielded", "task-1"}); err == nil {
-		t.Fatal("parseArgs accepted removed handoff action")
+func TestParseHandoffRejectsUnknownAction(t *testing.T) {
+	if _, err := parseArgs([]string{"handoff", "unknown", "task-1"}); err == nil {
+		t.Fatal("parseArgs accepted unknown handoff action")
+	}
+}
+
+func TestAddGoalSendsCreatorAgent(t *testing.T) {
+	dir, err := os.MkdirTemp("/tmp", "atct-addgoal")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+	socket := filepath.Join(dir, "d.sock")
+	listener, err := net.Listen("unix", socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	params := make(chan map[string]string, 1)
+	go func() {
+		conn, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		line, _ := bufio.NewReader(conn).ReadBytes('\n')
+		var req struct {
+			Params map[string]string `json:"params"`
+		}
+		_ = json.Unmarshal(line, &req)
+		params <- req.Params
+		_, _ = conn.Write([]byte(`{"result":{"content":"x"}}` + "\n"))
+	}()
+	if err := addGoal(context.Background(), mcpshim.NewClient(socket), "x", ""); err != nil {
+		t.Fatal(err)
+	}
+	if got := (<-params)["creator"]; got != "agent" {
+		t.Fatalf("creator = %q, want agent", got)
 	}
 }

@@ -342,6 +342,19 @@ func (q *Queries) GetAgentSessionIDByKey(ctx context.Context, sessionKey string)
 	return id, err
 }
 
+const getAgentSessionKey = `-- name: GetAgentSessionKey :one
+SELECT session_key
+FROM agent_sessions
+WHERE id = ?
+`
+
+func (q *Queries) GetAgentSessionKey(ctx context.Context, id int64) (string, error) {
+	row := q.db.QueryRowContext(ctx, getAgentSessionKey, id)
+	var session_key string
+	err := row.Scan(&session_key)
+	return session_key, err
+}
+
 const getAgentSessionLiveness = `-- name: GetAgentSessionLiveness :one
 SELECT pid, started_at, last_heartbeat_at
 FROM agent_sessions
@@ -1160,6 +1173,7 @@ SET review_received_by = ?, review_received_at = ?
 WHERE id = ? AND goal_id = ?
   AND review_requested_at IS NOT NULL
   AND review_received_at IS NULL
+  AND review_rejected_at IS NULL
   AND completed_report_at IS NULL
   AND recovered_at IS NULL
 `
@@ -1214,6 +1228,7 @@ SET review_received_by = ?, review_received_at = ?
 WHERE id = ? AND goal_id = ?
   AND review_requested_at IS NOT NULL
   AND review_received_at IS NULL
+  AND review_rejected_at IS NULL
   AND completed_report_at IS NULL
 `
 
@@ -1333,6 +1348,7 @@ SET review_received_by = ?, review_received_at = ?
 WHERE id = ? AND task_id = ?
   AND review_requested_at IS NOT NULL
   AND review_received_at IS NULL
+  AND review_rejected_at IS NULL
   AND completed_report_at IS NULL
   AND recovered_at IS NULL
 `
@@ -1983,6 +1999,21 @@ func (q *Queries) RequestTaskHandoffReview(ctx context.Context, arg RequestTaskH
 		arg.ID,
 		arg.TaskID,
 	)
+}
+
+const supersedeOpenTaskCreateHandoff = `-- name: SupersedeOpenTaskCreateHandoff :execresult
+UPDATE task_create_handoffs SET recovered_at = ?, recovery_report = ?
+WHERE goal_id = ? AND received_by IS NULL AND completed_at IS NULL AND recovered_at IS NULL
+`
+
+type SupersedeOpenTaskCreateHandoffParams struct {
+	RecoveredAt    sql.NullString
+	RecoveryReport sql.NullString
+	GoalID         int64
+}
+
+func (q *Queries) SupersedeOpenTaskCreateHandoff(ctx context.Context, arg SupersedeOpenTaskCreateHandoffParams) (sql.Result, error) {
+	return q.db.ExecContext(ctx, supersedeOpenTaskCreateHandoff, arg.RecoveredAt, arg.RecoveryReport, arg.GoalID)
 }
 
 const taskExists = `-- name: TaskExists :one

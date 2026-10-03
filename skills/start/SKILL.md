@@ -37,21 +37,21 @@ replaces a live project claim, and the resulting project claim makes this
 `/atct:start` session the commander even when it already holds a goal handoff.
 Then invoke `atct:commander` before continuing.
 
-## Claude Code: attach the Monitor
+## Claude Code: attach the Watch
 
-After identifying the session, attach one Claude Monitor using the monitor-only
-`atct watch` entrypoint and keep its id.
+After identifying the session, arm the watch as `atct:atct` `## Watch` says. The
+default is the Monitor tool; that section also says when to switch to a
+background Bash.
 
 - `atct watch --monitor --token <monitor_token>` waits for the server-derived
   assignment. Do not pass a role, project, goal, or task selector.
-- Plain `atct watch` is for human diagnostics; it is not the Claude action
-  channel. Reconnect, keepalive, and ensure diagnostics are never agent actions
-  and must not be forwarded to the Monitor.
-- Keep the session's Monitor; do not attach a second. Two Monitors in one
-  session emit the same answer twice.
 - Always set `persistent: true`; otherwise `timeout_ms` defaults to `300000ms` (5
   minutes) and monitoring stops silently.
 - Set `description` to `ATCT answer watch`.
+- Plain `atct watch` is for human diagnostics; it is not the Claude action
+  channel. Reconnect, keepalive, and ensure diagnostics are never agent actions
+  and must not be forwarded to the agent.
+- Keep one watch; do not arm a second.
 - This step applies only in Claude Code. The MCP response attachment remains the
   shared foundation for both harnesses.
 

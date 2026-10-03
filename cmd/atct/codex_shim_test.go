@@ -386,8 +386,8 @@ func TestRunCodexShimDispatchesRegisteredInteractiveProject(t *testing.T) {
 	if normalCalls != 0 {
 		t.Fatalf("normal Codex calls = %d, want 0", normalCalls)
 	}
-	if gotMonitorConfig.codexMonitorAction != "monitor" || !gotMonitorConfig.codexMonitorAutomatic {
-		t.Fatalf("monitor config = %#v, want automatic monitor action", gotMonitorConfig)
+	if gotMonitorConfig.codexMonitorAction != "monitor" || !gotMonitorConfig.codexMonitorAutomatic || gotMonitorConfig.codexMonitorRole != "commander" {
+		t.Fatalf("monitor config = %#v, want automatic commander monitor action", gotMonitorConfig)
 	}
 	if len(gotMonitorConfig.codexArgs) != 0 {
 		t.Fatalf("monitor args = %#v, want original args", gotMonitorConfig.codexArgs)

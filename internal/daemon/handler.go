@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -18,9 +19,12 @@ import (
 
 var ErrGoalAlreadyClaimed = errors.New("goal already claimed")
 var ErrProjectAlreadyClaimed = errors.New("project already claimed")
-var ErrGoalNotProposed = errors.New("goal is not proposed")
 var ErrDecisionOutsideGoal = errors.New("decision belongs to another goal")
 var ErrRoleUnauthorized = errors.New("role is not authorized for this operation")
+var ErrSessionNotIdentified = errors.New("agent session is not identified")
+
+const identifyHint = "this MCP transport session was never identified (a reconnect, a daemon restart, or a second transport of the same client opens a new one): call atct_session_identify with the session_key and monitor_token from SessionStart, then retry"
+
 var ErrHandoffCompletionSessionRequired = errors.New("agent_session_id is required; identify the session and use the named handoff review flow")
 
 const retiredGoalCompletionDiagnostic = "goal.complete is retired; use atct_goal_review_request followed by atct_goal_review_complete"
@@ -275,6 +279,30 @@ func (d *Daemon) responseWithScopedUnappliedDecisions(ctx context.Context, data 
 		Data:               data,
 		UnappliedDecisions: unappliedDecisionNotificationsExcept(unapplied, excludedIDs...),
 	}, nil
+}
+
+// appendCommanderRoutedDecisions polls the project's answered decisions that are
+// addressed to the commander by kind (e.g. a sessionless goal_review) when the caller is a commander.
+func (d *Daemon) appendCommanderRoutedDecisions(ctx context.Context, agentSessionID int64, decs []domain.Decision) ([]domain.Decision, error) {
+	role, err := d.deriveSessionRole(ctx, agentSessionID)
+	if err != nil || role.Role != "commander" {
+		return decs, err
+	}
+	unapplied, err := d.store.ListUnappliedDecisionsForProject(ctx, role.ProjectID)
+	if err != nil {
+		return nil, err
+	}
+	for _, decision := range unapplied {
+		if !store.DecisionRoutesToCommander(decision) || decision.AgentSessionID == agentSessionID {
+			continue
+		}
+		polled, err := d.store.PollDecisions(ctx, agentSessionID, decision.ID)
+		if err != nil {
+			return nil, err
+		}
+		decs = append(decs, polled...)
+	}
+	return decs, nil
 }
 
 func (d *Daemon) listClaimableTasks(ctx context.Context, projectID, excludedTaskID int64) ([]claimableTaskSummary, error) {
@@ -651,22 +679,31 @@ type goalHandoffReviewRejectParams struct {
 }
 
 type goalHandoffCompleteParams struct {
-	HandoffID      string `json:"handoff_id"`
-	GoalID         int64  `json:"goal_id"`
-	AgentSessionID int64  `json:"agent_session_id"`
-	CompleteReport string `json:"complete_report"`
+	HandoffID         string `json:"handoff_id"`
+	GoalID            int64  `json:"goal_id"`
+	AgentSessionID    int64  `json:"agent_session_id"`
+	CompleteReport    string `json:"complete_report"`
+	Capability        string `json:"capability"`
+	CallerCapability  string `json:"caller_capability"`
+	MonitorCapability string `json:"monitor_capability"`
+}
+
+func (p goalHandoffCompleteParams) capabilityFields() capabilityFields {
+	return capabilityFields{
+		Capability: p.Capability, CallerCapability: p.CallerCapability, MonitorCapability: p.MonitorCapability,
+	}
 }
 
 type goalReviewRequestParams struct {
-	GoalID                  int64  `json:"goal_id"`
-	WorkDone                string `json:"work_done"`
-	NowPossible             string `json:"now_possible"`
-	HowToVerify             string `json:"how_to_verify"`
-	Surprises               string `json:"surprises"`
-	NeedsReview             string `json:"needs_review"`
-	NextSteps               string `json:"next_steps"`
-	AgentSessionID          int64  `json:"agent_session_id"`
-	IncludeUnappliedAnswers bool   `json:"include_unapplied_answers"`
+	GoalID                  int64   `json:"goal_id"`
+	WorkDone                string  `json:"work_done"`
+	NowPossible             string  `json:"now_possible"`
+	HowToVerify             string  `json:"how_to_verify"`
+	Surprises               string  `json:"surprises"`
+	NeedsReview             string  `json:"needs_review"`
+	NextGoalIDs             []int64 `json:"next_goal_ids,omitempty"`
+	AgentSessionID          int64   `json:"agent_session_id"`
+	IncludeUnappliedAnswers bool    `json:"include_unapplied_answers"`
 }
 
 type goalReviewCompleteParams struct {
@@ -895,11 +932,51 @@ func (d *Daemon) receivePlanReviewResponse(ctx context.Context, p planHandoffRev
 // from, names the operation that follows. Carrying it on the response is what
 // keeps an agent from re-reading doc/execution-flow.md to find its next call.
 func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage, error) {
-	raw, err := d.dispatchMethod(ctx, req)
+	return d.dispatchWithPeer(ctx, req, 0)
+}
+
+// dispatchWithPeer keeps direct in-process callers compatible while attaching
+// a daemon-assigned identity to requests received over one Unix socket
+// connection. Monitored capabilities are accepted only on that same peer.
+func (d *Daemon) dispatchWithPeer(ctx context.Context, req rpc.Request, peerID uint64) (json.RawMessage, error) {
+	raw, err := d.dispatchMethodWithPeer(ctx, req, peerID)
 	if err != nil {
-		return nil, err
+		return nil, d.withIdentifyHint(ctx, req, err)
 	}
 	return withNextStep(raw, nextStepAfter[req.Method]), nil
+}
+
+// withIdentifyHint appends the re-identify instruction when the caller is a
+// transport row that never ran session.identify. Without it a refusal such as
+// ErrRoleUnauthorized reads as "you are an executor" and the agent stops,
+// though re-identifying reattaches the row to its canonical session.
+func (d *Daemon) withIdentifyHint(ctx context.Context, req rpc.Request, err error) error {
+	if req.Method == "session.identify" || req.Method == "run.register" || errors.Is(err, ErrSessionNotIdentified) {
+		return err
+	}
+	var p struct {
+		AgentSessionID int64 `json:"agent_session_id"`
+		RequestedBy    int64 `json:"requested_by"`
+		ReceivedBy     int64 `json:"received_by"`
+		ReviewerID     int64 `json:"reviewer_id"`
+	}
+	if json.Unmarshal(req.Params, &p) != nil {
+		return err
+	}
+	id := int64(0)
+	for _, candidate := range []int64{p.AgentSessionID, p.RequestedBy, p.ReceivedBy, p.ReviewerID} {
+		if candidate != 0 {
+			id = candidate
+			break
+		}
+	}
+	if id == 0 {
+		return err
+	}
+	if unidentified, lookupErr := d.store.AgentSessionUnidentified(ctx, id); lookupErr == nil && unidentified {
+		return fmt.Errorf("%w; %s", err, identifyHint)
+	}
+	return err
 }
 
 // withNextStep adds next_step to an object response. A response that is not a
@@ -928,6 +1005,10 @@ func withNextStep(raw json.RawMessage, next []nextStepOption) json.RawMessage {
 }
 
 func (d *Daemon) dispatchMethod(ctx context.Context, req rpc.Request) (json.RawMessage, error) {
+	return d.dispatchMethodWithPeer(ctx, req, 0)
+}
+
+func (d *Daemon) dispatchMethodWithPeer(ctx context.Context, req rpc.Request, peerID uint64) (json.RawMessage, error) {
 	params, err := d.normalizeEntityIDs(ctx, req.Method, req.Params)
 	if err != nil {
 		return nil, err
@@ -937,8 +1018,9 @@ func (d *Daemon) dispatchMethod(ctx context.Context, req rpc.Request) (json.RawM
 	switch req.Method {
 	case "run.register":
 		var p struct {
-			PID int    `json:"pid"`
-			CWD string `json:"cwd"`
+			PID       int    `json:"pid"`
+			CWD       string `json:"cwd"`
+			Monitored bool   `json:"monitored"`
 		}
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, err
@@ -956,7 +1038,30 @@ func (d *Daemon) dispatchMethod(ctx context.Context, req rpc.Request) (json.RawM
 		if err != nil {
 			return nil, err
 		}
-		return marshal(map[string]any{"ok": true, "agent_session_id": agentSessionID}, nil)
+		response := map[string]any{"ok": true, "agent_session_id": agentSessionID}
+		if p.Monitored {
+			capability, err := d.issueMonitoredCallerCapability(agentSessionID, peerID)
+			if err != nil {
+				return nil, err
+			}
+			response["capability"] = capability.Capability
+			response["expires_at"] = capability.ExpiresAt
+		}
+		return marshal(response, nil)
+
+	case "monitor.capability.issue", "session.capability.issue":
+		var p struct {
+			AgentSessionID int64 `json:"agent_session_id"`
+			Monitored      bool  `json:"monitored"`
+		}
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		if !p.Monitored {
+			return nil, ErrMonitoredCallerRequired
+		}
+		capability, err := d.issueMonitoredCallerCapability(p.AgentSessionID, peerID)
+		return marshal(capability, err)
 
 	case "session.identify":
 		var p struct {
@@ -1047,7 +1152,8 @@ func (d *Daemon) dispatchMethod(ctx context.Context, req rpc.Request) (json.RawM
 
 	case "session.role":
 		var p struct {
-			AgentSessionID int64 `json:"agent_session_id"`
+			AgentSessionID    int64 `json:"agent_session_id"`
+			RequireIdentified bool  `json:"require_identified"`
 		}
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, err
@@ -1056,6 +1162,17 @@ func (d *Daemon) dispatchMethod(ctx context.Context, req rpc.Request) (json.RawM
 		response, err := d.deriveSessionRole(ctx, p.AgentSessionID)
 		if err != nil {
 			return nil, err
+		}
+		// A row that holds nothing derives executor; for a transport that never
+		// identified that is "unknown", not a role the agent should obey.
+		if p.RequireIdentified && response.Role == "executor" && response.ProjectID == 0 {
+			unidentified, err := d.store.AgentSessionUnidentified(ctx, p.AgentSessionID)
+			if err != nil {
+				return nil, err
+			}
+			if unidentified {
+				return nil, fmt.Errorf("%w: %s", ErrSessionNotIdentified, identifyHint)
+			}
 		}
 		return marshal(roleResponseFor(response), nil)
 
@@ -1338,6 +1455,9 @@ func (d *Daemon) dispatchMethod(ctx context.Context, req rpc.Request) (json.RawM
 		}
 		return marshal(data, nil)
 
+	case "review.exchange.list":
+		return d.listReviewExchangesRPC(ctx, req.Params, peerID)
+
 	case "goal.sessions":
 		var p struct {
 			GoalID int64 `json:"goal_id"`
@@ -1429,33 +1549,6 @@ func (d *Daemon) dispatchMethod(ctx context.Context, req rpc.Request) (json.RawM
 		}
 		goal, err := d.store.GetGoal(ctx, p.GoalID)
 		return marshal(goal, err)
-
-	case "goal.update_content":
-		var p struct {
-			GoalID                  int64  `json:"goal_id"`
-			Content                 string `json:"content"`
-			AgentSessionID          int64  `json:"agent_session_id"`
-			IncludeUnappliedAnswers bool   `json:"include_unapplied_answers"`
-		}
-		if err := json.Unmarshal(req.Params, &p); err != nil {
-			return nil, err
-		}
-		goal, err := d.store.GetGoal(ctx, p.GoalID)
-		if err != nil {
-			return nil, err
-		}
-		if err := d.ensureAgentSessionProject(ctx, p.AgentSessionID, goal.ProjectID); err != nil {
-			return nil, err
-		}
-		updated, err := d.store.UpdateGoalContent(ctx, p.GoalID, p.Content)
-		if errors.Is(err, store.ErrGoalNotProposed) {
-			return nil, ErrGoalNotProposed
-		}
-		if err != nil || !p.IncludeUnappliedAnswers {
-			return marshal(updated, err)
-		}
-		response, err := d.responseWithScopedUnappliedDecisions(ctx, updated, p.GoalID, p.AgentSessionID)
-		return marshal(response, err)
 
 	case "goal.update_request_report":
 		var p struct {
@@ -1630,13 +1723,19 @@ func (d *Daemon) dispatchMethod(ctx context.Context, req rpc.Request) (json.RawM
 		response, err := d.responseWithScopedUnappliedDecisions(ctx, tk, tk.GoalID, p.AgentSessionID)
 		return marshal(response, err)
 
-	case "task.handoff.request":
+	case "task.handoff.request", "handoff.request":
 		var p taskHandoffRequestParams
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, err
 		}
 		handoff, err := d.requestTaskHandoff(ctx, p)
-		return marshal(handoff, err)
+		return marshalCanonicalHandoff(handoff, err)
+
+	case "handoff.entry.append":
+		return d.appendTaskHandoffEntryRPC(ctx, req.Params, peerID)
+
+	case "handoff.entry.history":
+		return d.historyTaskHandoffEntryRPC(ctx, req.Params, peerID)
 
 	case "task.handoff.receive":
 		var p taskHandoffReceiveParams
@@ -1650,6 +1749,57 @@ func (d *Daemon) dispatchMethod(ctx context.Context, req rpc.Request) (json.RawM
 		response, err := d.receiveTaskHandoffResponse(ctx, p, handoff)
 		return marshal(response, err)
 
+	case "handoff.receive":
+		var p taskHandoffReceiveParams
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		var handoff store.TaskHandoff
+		var err error
+		if p.HandoffID == "" {
+			handoff, err = d.store.ReceiveTaskHandoffForTask(ctx, p.TaskID, p.ReceivedBy)
+		} else {
+			handoff, err = d.store.ReceiveTaskHandoff(ctx, p.HandoffID, p.TaskID, p.ReceivedBy)
+		}
+		return marshalCanonicalHandoff(handoff, err)
+
+	case "handoff.complete":
+		var p struct {
+			HandoffID         string `json:"handoff_id"`
+			TaskID            int64  `json:"task_id"`
+			CompleteReport    string `json:"complete_report"`
+			AgentSessionID    int64  `json:"agent_session_id"`
+			Capability        string `json:"capability"`
+			CallerCapability  string `json:"caller_capability"`
+			MonitorCapability string `json:"monitor_capability"`
+		}
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		capabilitySessionID, capabilityErr := d.sessionFromCapability(capabilityFields{
+			Capability: p.Capability, CallerCapability: p.CallerCapability, MonitorCapability: p.MonitorCapability,
+		}, p.AgentSessionID, peerID)
+		if capabilityErr != nil {
+			return nil, capabilityErr
+		}
+		if capabilitySessionID != 0 && p.HandoffID != "" {
+			handoff, err := d.store.GetTaskHandoff(ctx, p.HandoffID)
+			if err != nil {
+				return nil, err
+			}
+			if err := requireHandoffParticipant(capabilitySessionID, handoff.RequestedBy, handoff.ReceivedBy); err != nil {
+				return nil, err
+			}
+		}
+		var handoff store.TaskHandoff
+		var err error
+		if p.HandoffID == "" {
+			handoff, err = d.store.CompleteTaskHandoffForTask(ctx, p.TaskID, p.CompleteReport)
+		} else {
+			handoff, err = d.store.CompleteTaskHandoff(ctx, p.HandoffID, p.TaskID, p.CompleteReport)
+		}
+		return marshalCanonicalHandoff(handoff, err)
+
 	case "task.handoff.review.request":
 		var p taskHandoffReviewRequestParams
 		if err := json.Unmarshal(req.Params, &p); err != nil {
@@ -1658,7 +1808,8 @@ func (d *Daemon) dispatchMethod(ctx context.Context, req rpc.Request) (json.RawM
 		if err := d.authorizeRole(ctx, []string{"executor"}, 0, 0, p.TaskID, p.RequestedBy, "task handoff review request"); err != nil {
 			return nil, err
 		}
-		handoff, err := d.store.RequestTaskHandoffReview(ctx, p.HandoffID, p.TaskID, p.RequestedBy, p.ReviewRequestReport)
+		note := d.taskReviewNote(ctx, p.TaskID)
+		handoff, err := d.store.RequestTaskHandoffReview(ctx, p.HandoffID, p.TaskID, p.RequestedBy, appendFindings(p.ReviewRequestReport, note))
 		return marshal(handoff, err)
 
 	case "task.handoff.review.receive":
@@ -1722,7 +1873,7 @@ func (d *Daemon) dispatchMethod(ctx context.Context, req rpc.Request) (json.RawM
 			return nil, err
 		}
 		handoff, err := d.store.AmendTaskHandoffReport(ctx, p.HandoffID, p.TaskID, p.CompleteReport)
-		return marshal(handoff, err)
+		return marshalCanonicalHandoff(handoff, err)
 
 	case "goal.handoff.request":
 		var p goalHandoffRequestParams
@@ -1730,7 +1881,13 @@ func (d *Daemon) dispatchMethod(ctx context.Context, req rpc.Request) (json.RawM
 			return nil, err
 		}
 		handoff, err := d.requestGoalHandoff(ctx, p)
-		return marshal(handoff, err)
+		return marshalCanonicalHandoff(handoff, err)
+
+	case "goal.handoff.entry.append":
+		return d.appendGoalHandoffEntryRPC(ctx, req.Params, peerID)
+
+	case "goal.handoff.entry.history":
+		return d.historyGoalHandoffEntryRPC(ctx, req.Params, peerID)
 
 	case "goal.handoff.receive":
 		var p goalHandoffReceiveParams
@@ -1742,7 +1899,10 @@ func (d *Daemon) dispatchMethod(ctx context.Context, req rpc.Request) (json.RawM
 			return nil, err
 		}
 		response, err := d.receiveGoalHandoffResponse(ctx, p, handoff)
-		return marshal(response, err)
+		if err != nil {
+			return nil, err
+		}
+		return marshalCanonicalHandoffWithRoleEvidence(handoff, response)
 
 	case "goal.handoff.review.request":
 		var p goalHandoffReviewRequestParams
@@ -1752,7 +1912,14 @@ func (d *Daemon) dispatchMethod(ctx context.Context, req rpc.Request) (json.RawM
 		if err := d.authorizeRole(ctx, []string{"subcommander"}, 0, p.GoalID, 0, p.RequestedBy, "goal handoff review request"); err != nil {
 			return nil, err
 		}
-		handoff, err := d.store.RequestGoalHandoffReview(ctx, p.HandoffID, p.GoalID, p.RequestedBy, p.ReviewRequestReport)
+		if err := d.refuseGoalBranchProblems(ctx, p.GoalID); err != nil {
+			return nil, err
+		}
+		note, err := d.goalReviewGate(ctx, p.GoalID)
+		if err != nil {
+			return nil, err
+		}
+		handoff, err := d.store.RequestGoalHandoffReview(ctx, p.HandoffID, p.GoalID, p.RequestedBy, appendFindings(p.ReviewRequestReport, note))
 		return marshal(handoff, err)
 
 	case "goal.handoff.review.receive":
@@ -1801,11 +1968,11 @@ func (d *Daemon) dispatchMethod(ctx context.Context, req rpc.Request) (json.RawM
 			return nil, err
 		}
 		handoff, err := d.completeGoalHandoff(ctx, p)
-		return marshal(handoff, err)
+		return marshalCanonicalHandoff(handoff, err)
 
 	case "goal.review.request":
 		var p goalReviewRequestParams
-		if err := json.Unmarshal(req.Params, &p); err != nil {
+		if err := decodeStrictJSON(req.Params, &p); err != nil {
 			return nil, err
 		}
 		goal, err := d.store.GetGoal(ctx, p.GoalID)
@@ -1821,7 +1988,7 @@ func (d *Daemon) dispatchMethod(ctx context.Context, req rpc.Request) (json.RawM
 			HowToVerify: p.HowToVerify,
 			Surprises:   p.Surprises,
 			NeedsReview: p.NeedsReview,
-			NextSteps:   p.NextSteps,
+			NextGoalIDs: p.NextGoalIDs,
 		}
 		review, err := d.store.RequestGoalReview(ctx, p.GoalID, p.AgentSessionID, report)
 		if err != nil || !p.IncludeUnappliedAnswers {
@@ -1859,7 +2026,7 @@ func (d *Daemon) dispatchMethod(ctx context.Context, req rpc.Request) (json.RawM
 			return nil, err
 		}
 		handoff, err := d.store.AmendGoalHandoffReport(ctx, p.HandoffID, p.GoalID, p.CompleteReport)
-		return marshal(handoff, err)
+		return marshalCanonicalHandoff(handoff, err)
 
 	case "plan.handoff.review.request":
 		var p planHandoffReviewRequestParams
@@ -2031,8 +2198,21 @@ func (d *Daemon) dispatchMethod(ctx context.Context, req rpc.Request) (json.RawM
 			if err != nil {
 				return nil, err
 			}
-			if p.AgentSessionID == 0 || (role.Role == "commander" && decision.AgentSessionID != p.AgentSessionID) {
+			if p.AgentSessionID == 0 {
 				return nil, fmt.Errorf("decision %d is owned by another agent session", p.DecisionID)
+			}
+			if role.Role == "commander" && decision.AgentSessionID != p.AgentSessionID {
+				routed := false
+				if store.DecisionRoutesToCommander(decision) {
+					goal, err := d.store.GetGoal(ctx, decision.GoalID)
+					if err != nil {
+						return nil, err
+					}
+					routed = goal.ProjectID == role.ProjectID
+				}
+				if !routed {
+					return nil, fmt.Errorf("decision %d is owned by another agent session", p.DecisionID)
+				}
 			}
 			if role.Role == "subcommander" && role.GoalID != 0 {
 				if decision.GoalID != role.GoalID {
@@ -2042,6 +2222,9 @@ func (d *Daemon) dispatchMethod(ctx context.Context, req rpc.Request) (json.RawM
 			}
 		}
 		decs, err := d.store.PollDecisions(ctx, p.AgentSessionID, p.DecisionID)
+		if err == nil && p.DecisionID == 0 && p.AgentSessionID != 0 {
+			decs, err = d.appendCommanderRoutedDecisions(ctx, p.AgentSessionID, decs)
+		}
 		if err != nil || !p.IncludeUnappliedAnswers {
 			return marshal(decs, err)
 		}
@@ -2127,16 +2310,21 @@ func (d *Daemon) dispatchMethod(ctx context.Context, req rpc.Request) (json.RawM
 			HowToVerify             string `json:"how_to_verify"`
 			Surprises               string `json:"surprises"`
 			NeedsReview             string `json:"needs_review"`
-			NextSteps               string `json:"next_steps"`
 			AgentSessionID          int64  `json:"agent_session_id"`
 			IncludeUnappliedAnswers bool   `json:"include_unapplied_answers"`
 		}
-		if err := json.Unmarshal(req.Params, &p); err != nil {
+		if err := decodeStrictJSON(req.Params, &p); err != nil {
 			return nil, err
 		}
 		return nil, errors.New(retiredGoalCompletionDiagnostic)
 	}
 	return nil, fmt.Errorf("unknown method: %s", req.Method)
+}
+
+func decodeStrictJSON(data []byte, dst any) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	return decoder.Decode(dst)
 }
 
 func marshal(v any, err error) (json.RawMessage, error) {

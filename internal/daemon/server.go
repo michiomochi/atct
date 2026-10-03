@@ -12,6 +12,8 @@ import (
 	"os"
 	"path"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/michiomochi/atct/internal/httpapi"
@@ -23,10 +25,13 @@ import (
 )
 
 type Daemon struct {
-	store      *store.Store
-	clock      func() time.Time
-	version    string
-	socketPath string
+	store        *store.Store
+	clock        func() time.Time
+	version      string
+	socketPath   string
+	nextPeerID   atomic.Uint64
+	capabilityMu sync.Mutex
+	capabilities map[string]monitoredCallerCapability
 }
 
 const defaultVersion = "dev"
@@ -71,6 +76,9 @@ func (d *Daemon) HTTPHandler() http.Handler {
 			log.Printf("mcp: register agent session: %v", err)
 			return nil
 		}
+		// One client opens several transports and agent_sessions has no column
+		// saying which made a row; this line is the only trace.
+		log.Printf("mcp: registered agent session %d (remote %s, user-agent %q)", registerResponse.AgentSessionID, r.RemoteAddr, r.UserAgent())
 
 		server := mcp.NewServer(&mcp.Implementation{Name: "atct", Version: d.version}, &mcp.ServerOptions{
 			Instructions: mcpshim.Instructions,
@@ -246,11 +254,12 @@ func (d *Daemon) Serve(ctx context.Context, socketPath string) error {
 				return fmt.Errorf("accept: %w", err)
 			}
 		}
-		go d.handleConn(ctx, conn)
+		peerID := d.nextPeerID.Add(1)
+		go d.handleConn(ctx, conn, peerID)
 	}
 }
 
-func (d *Daemon) handleConn(ctx context.Context, conn net.Conn) {
+func (d *Daemon) handleConn(ctx context.Context, conn net.Conn, peerID uint64) {
 	defer conn.Close()
 	scanner := bufio.NewScanner(conn)
 	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
@@ -262,7 +271,7 @@ func (d *Daemon) handleConn(ctx context.Context, conn net.Conn) {
 		if err := json.Unmarshal(scanner.Bytes(), &req); err != nil {
 			resp.Error = fmt.Sprintf("invalid request: %v", err)
 		} else {
-			result, err := d.dispatch(ctx, req)
+			result, err := d.dispatchWithPeer(ctx, req, peerID)
 			if err != nil {
 				resp.Error = err.Error()
 			} else {

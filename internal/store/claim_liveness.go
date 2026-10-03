@@ -80,7 +80,6 @@ func GoalClaimLiveness(ctx context.Context, s *Store, projectID int64) (running 
 			claim.HowToVerify,
 			claim.Surprises,
 			claim.NeedsReview,
-			claim.NextSteps,
 			claim.CreatedAt,
 			claim.UpdatedAt,
 		)
