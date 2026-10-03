@@ -9,14 +9,13 @@ import {
   fetchGoalHandoffHistory,
   rejectDecision,
   subscribeToDecisionEvents,
-  updateGoalContent,
   withdrawGoal,
   type Decision,
   type Goal,
   type GoalResponse,
 } from "../lib/api";
 import { formatDateTime } from "../i18n";
-import { body, findOpenGoalApproval, findOpenGoalReview, hasCompletionReport, headline, resolveRouteID, statusLabel, type CompletionReportFields } from "../lib/ui";
+import { body, findOpenGoalReview, hasCompletionReport, headline, resolveRouteID, statusLabel, type CompletionReportFields } from "../lib/ui";
 import { AreaLoading, ErrorState } from "./StateMessage";
 import { GoalDiff } from "./GoalDiff";
 import { TaskCommitList } from "./TaskCommitList";
@@ -35,7 +34,6 @@ type LoadState =
 
 interface GoalDetailData {
   goal: GoalResponse;
-  goalApproval?: Decision;
   goalReview?: Decision;
   unattachedDecisions: Decision[];
 }
@@ -81,94 +79,6 @@ function CompletionReport({ goal }: { goal: Goal }) {
           );
         })}
       </div>
-    </section>
-  );
-}
-
-type GoalApprovalAction = "approve" | "reject";
-
-function GoalApproval({
-  decision,
-  onUpdated,
-  reason,
-  onReasonChange,
-}: {
-  decision: Decision;
-  onUpdated: () => void;
-  reason: string;
-  onReasonChange: (reason: string) => void;
-}) {
-  const { t } = useTranslation();
-  const [submitError, setSubmitError] = useState<string | null>(null);
-  const [submitting, setSubmitting] = useState(false);
-
-  const reasonID = `goal-approval-reason-${decision.id}`;
-
-  async function submit(action: GoalApprovalAction) {
-    const trimmedReason = reason.trim();
-    if (submitting || (action === "reject" && trimmedReason === "")) return;
-
-    setSubmitError(null);
-    setSubmitting(true);
-    try {
-      if (action === "approve") {
-        await approveDecision(decision.id);
-      } else {
-        await rejectDecision(decision.id, trimmedReason);
-      }
-      onUpdated();
-    } catch (error) {
-      setSubmitError(errorMessage(error, t("goal.error.load")));
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const submitter = (event.nativeEvent as SubmitEvent).submitter;
-    const action: GoalApprovalAction = submitter instanceof HTMLButtonElement && submitter.value === "reject" ? "reject" : "approve";
-    void submit(action);
-  }
-
-  return (
-    <section className="min-w-0 border-t border-line pt-5" data-testid="goal-approval" aria-labelledby="goal-approval-heading">
-      <h2 id="goal-approval-heading" className="font-display text-lg font-semibold text-ink-950">{t("goal.approval.title")}</h2>
-      <p className="mt-2 max-w-3xl text-base leading-6 text-ink-700">{t("goal.approval.description")}</p>
-      <form className="mt-4 min-w-0 max-w-3xl border-l-2 border-accent-600 pl-4" onSubmit={handleSubmit} noValidate>
-        <label className="mb-3 block text-base text-ink-800" htmlFor={reasonID}>
-          {t("goal.approval.reason")}
-          <textarea
-            className="focus-ring mt-1 block min-h-24 w-full resize-y border border-line bg-surface px-3 py-2 text-base leading-6 text-ink-950"
-            id={reasonID}
-            value={reason}
-            onChange={(event) => onReasonChange(event.target.value)}
-            required
-            aria-required="true"
-          />
-        </label>
-        {submitError && <p className="mb-3 text-base text-danger-700" role="alert">{submitError}</p>}
-        <div className="flex flex-wrap gap-3">
-          <Button
-            type="submit"
-            value="approve"
-            variant="primary"
-            disabled={submitting}
-            className="focus-ring px-3 py-2 text-base font-medium disabled:cursor-wait disabled:opacity-60"
-          >
-            {submitting ? t("goal.approval.submitting") : t("goal.approval.approve")}
-          </Button>
-          <Button
-            type="submit"
-            value="reject"
-            variant="secondary-destructive"
-            disabled={submitting || reason.trim() === ""}
-            className="focus-ring px-3 py-2 text-base font-medium disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {t("goal.approval.reject")}
-          </Button>
-        </div>
-      </form>
     </section>
   );
 }
@@ -372,102 +282,13 @@ function GoalWithdrawal({ goal, onUpdated }: { goal: Goal; onUpdated: () => void
   );
 }
 
-function GoalContentEdit({ goal, onUpdated }: { goal: Goal; onUpdated: () => void }) {
-  const { t } = useTranslation();
-  const [open, setOpen] = useState(false);
-  const [content, setContent] = useState(goal.content);
-  const [submitError, setSubmitError] = useState<string | null>(null);
-  const [submitting, setSubmitting] = useState(false);
-
-  const contentID = `goal-content-edit-${goal.id}`;
-
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (content.trim() === "" || submitting) return;
-
-    setSubmitError(null);
-    setSubmitting(true);
-    try {
-      await updateGoalContent(goal.id, content);
-      setOpen(false);
-      onUpdated();
-    } catch (error) {
-      setSubmitError(errorMessage(error, t("goal.error.load")));
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  return (
-    <Dialog.Root open={open} onOpenChange={setOpen}>
-      {goal.status === "proposed" && (
-        <Dialog.Trigger
-          render={(triggerProps) => (
-            <Button
-              {...triggerProps}
-              data-testid="goal-content-edit-trigger"
-              type="button"
-              variant="outline"
-              className="focus-ring shrink-0 px-3 py-2 text-base font-medium"
-            >
-              {t("goal.content.edit.submit")}
-            </Button>
-          )}
-        />
-      )}
-      <Dialog className="p-6">
-        <Dialog.Title className="mb-4 font-display text-xl font-semibold text-ink-950">
-          {t("goal.content.edit.title")}
-        </Dialog.Title>
-        <p className="mb-4 max-w-3xl text-base leading-6 text-ink-700">{t("goal.content.edit.description")}</p>
-        <form className="min-w-0 max-w-3xl" onSubmit={handleSubmit} noValidate>
-          <label className="mb-3 block text-base text-ink-800" htmlFor={contentID}>
-            {t("goal.content.edit.label")}
-            <textarea
-              className="focus-ring mt-1 block min-h-48 w-full resize-y border border-line bg-surface px-3 py-2 text-base leading-6 text-ink-950"
-              id={contentID}
-              value={content}
-              onChange={(event) => setContent(event.target.value)}
-              required
-              aria-required="true"
-            />
-          </label>
-          {submitError && <p className="mb-3 text-base text-danger-700" role="alert">{submitError}</p>}
-          <div className="flex flex-wrap gap-3">
-            <Button
-              type="submit"
-              variant="primary"
-              disabled={submitting || content.trim() === ""}
-              className="focus-ring px-3 py-2 text-base font-medium disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {submitting ? t("goal.content.edit.submitting") : t("goal.content.edit.submit")}
-            </Button>
-            <Dialog.Close
-              render={(closeProps) => (
-                <Button {...closeProps} type="button" variant="outline" className="focus-ring px-3 py-2 text-base">
-                  {t("form.goal.cancel")}
-                </Button>
-              )}
-            />
-          </div>
-        </form>
-      </Dialog>
-    </Dialog.Root>
-  );
-}
-
 export function GoalDetail({ id }: Props) {
   const [state, setState] = useState<LoadState>({ kind: "loading" });
-  const [goalApprovalReason, setGoalApprovalReason] = useState("");
   const [goalReviewReason, setGoalReviewReason] = useState("");
   const [updatePending, setUpdatePending] = useState(false);
   const { t, i18n } = useTranslation();
   const pathname = id === "_" && typeof window !== "undefined" ? window.location.pathname : "";
   const resolvedID = resolveRouteID(id, pathname, "/goals/");
-
-  const handleGoalApprovalReasonChange = useCallback((reason: string) => {
-    setGoalApprovalReason(reason);
-  }, []);
 
   const handleGoalReviewReasonChange = useCallback((reason: string) => {
     setGoalReviewReason(reason);
@@ -475,17 +296,15 @@ export function GoalDetail({ id }: Props) {
 
   const load = useCallback(async () => {
     setUpdatePending(false);
-    setGoalApprovalReason("");
     setGoalReviewReason("");
     setState({ kind: "loading" });
     try {
       const goal = await fetchGoal(resolvedID);
-      const goalApproval = findOpenGoalApproval(goal.unattached_decisions);
       const goalReview = findOpenGoalReview(goal.unattached_decisions);
       const unattachedDecisions = goal.unattached_decisions.filter(
         (decision) => decision.kind === "decision" && decision.status === "open",
       );
-      setState({ kind: "ready", data: { goal, goalApproval, goalReview, unattachedDecisions } });
+      setState({ kind: "ready", data: { goal, goalReview, unattachedDecisions } });
     } catch (reason) {
       setState({ kind: "error", message: errorMessage(reason, t("goal.error.load")) });
     }
@@ -522,12 +341,7 @@ export function GoalDetail({ id }: Props) {
           <h1 className="min-w-0 flex-1 font-display text-3xl font-semibold text-ink-950">
             {data ? headline(data.goal.goal.content) : t("goal.title")}
           </h1>
-          {data && (
-            <>
-              <GoalWithdrawal goal={data.goal.goal} onUpdated={load} />
-              <GoalContentEdit goal={data.goal.goal} onUpdated={load} />
-            </>
-          )}
+          {data && <GoalWithdrawal goal={data.goal.goal} onUpdated={load} />}
         </div>
         {data && body(data.goal.goal.content) && <p className="mt-3 max-w-3xl whitespace-pre-wrap text-base leading-6 text-ink-700">{body(data.goal.goal.content)}</p>}
         {data && (
@@ -584,15 +398,6 @@ export function GoalDetail({ id }: Props) {
           onUpdated={load}
           reason={goalReviewReason}
           onReasonChange={handleGoalReviewReasonChange}
-        />
-      )}
-
-      {data?.goal.goal.status === "proposed" && data.goalApproval && (
-        <GoalApproval
-          decision={data.goalApproval}
-          onUpdated={load}
-          reason={goalApprovalReason}
-          onReasonChange={handleGoalApprovalReasonChange}
         />
       )}
 

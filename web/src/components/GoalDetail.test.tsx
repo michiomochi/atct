@@ -10,7 +10,6 @@ import {
   fetchTaskCommitDiff,
   rejectDecision,
   subscribeToDecisionEvents,
-  updateGoalContent,
   withdrawGoal,
 } from "../lib/api";
 import { Dashboard } from "./Dashboard";
@@ -34,7 +33,6 @@ const apiMock = vi.hoisted(() => ({
   rejectDecision: vi.fn(),
   reviseDecision: vi.fn(),
   subscribeToDecisionEvents: vi.fn(() => () => undefined),
-  updateGoalContent: vi.fn(),
   withdrawGoal: vi.fn(),
 }));
 
@@ -144,20 +142,6 @@ function taskView(id: string, title: string, order: number): TaskView {
   };
 }
 
-function goalApprovalDecision(): Decision {
-  return {
-    id: "goal-approval-1",
-    goal_id: "goal-1",
-    goal_headline: "Fixture goal",
-    kind: "goal_approval",
-    question: "Approve the proposed goal",
-    options: [],
-    status: "open",
-    agent_session_id: "fixture-run",
-    created_at: "2026-08-20T00:00:00Z",
-  };
-}
-
 function goalReviewDecision(): Decision {
   return {
     id: "goal-review-1",
@@ -194,7 +178,6 @@ function emptyInbox(): InboxResponse {
     open_decisions: [],
     unapplied_decisions: [],
     active_goals: [],
-    proposed_goals: [],
     attention_tasks: [],
   };
 }
@@ -233,28 +216,6 @@ describe("GoalDetail", () => {
     expect(fetchGoalDiff).not.toHaveBeenCalledWith("_");
   });
 
-  it("does not render goal approval for an active goal", async () => {
-    const response = goalResponse({ status: "active" });
-    response.unattached_decisions = [goalApprovalDecision()];
-    vi.mocked(fetchGoal).mockResolvedValueOnce(response);
-
-    render(<GoalDetail id="goal-1" />);
-
-    await waitFor(() => expect(fetchGoal).toHaveBeenCalledWith("goal-1"));
-    expect(screen.queryByTestId("goal-approval")).toBeNull();
-  });
-
-  it("does not render goal approval for a done goal", async () => {
-    const response = goalResponse({ status: "done" });
-    response.unattached_decisions = [goalApprovalDecision()];
-    vi.mocked(fetchGoal).mockResolvedValueOnce(response);
-
-    render(<GoalDetail id="goal-1" />);
-
-    await waitFor(() => expect(fetchGoal).toHaveBeenCalledWith("goal-1"));
-    expect(screen.queryByTestId("goal-approval")).toBeNull();
-  });
-
   it("renders an open taskless goal review with accessible actions and requires a rejection reason", async () => {
     const response = goalResponse();
     response.unattached_decisions = [goalReviewDecision()];
@@ -274,14 +235,12 @@ describe("GoalDetail", () => {
     fireEvent.change(reason, { target: { value: "   " } });
     expect((reject as HTMLButtonElement).disabled).toBe(true);
     expect(screen.queryByTestId("completion-approval")).toBeNull();
-    expect(screen.queryByTestId("goal-approval")).toBeNull();
   });
 
   it("renders an open taskless ordinary decision with the existing answer form", async () => {
-    const response = goalResponse({ status: "proposed" });
+    const response = goalResponse();
     response.unattached_decisions = [
       ordinaryDecision(),
-      goalApprovalDecision(),
       goalReviewDecision(),
     ];
     vi.mocked(fetchGoal).mockResolvedValueOnce(response);
@@ -294,10 +253,8 @@ describe("GoalDetail", () => {
     expect(within(list).getByRole("textbox")).not.toBeNull();
     expect(within(list).getByRole("button", { name: "form.answer.submit" })).not.toBeNull();
     expect(within(list).queryByText("Review the completion")).toBeNull();
-    expect(within(list).queryByText("Approve the proposed goal")).toBeNull();
     expect(within(list).queryByText("Review the completed goal handoff")).toBeNull();
     expect(within(list).queryAllByRole("button", { name: "form.answer.submit" })).toHaveLength(1);
-    expect(screen.getByTestId("goal-approval")).not.toBeNull();
     expect(screen.getByTestId("goal-review")).not.toBeNull();
   });
 
@@ -397,49 +354,6 @@ describe("GoalDetail", () => {
     await waitFor(() => expect(rejectDecision).toHaveBeenCalledWith("goal-review-1", "Needs a correction"));
     await waitFor(() => expect(fetchGoal).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(screen.queryByTestId("goal-review")).toBeNull());
-  });
-
-  it("disables goal approval rejection while the reason is empty", async () => {
-    const response = goalResponse({ status: "proposed" });
-    response.unattached_decisions = [goalApprovalDecision()];
-    vi.mocked(fetchGoal).mockResolvedValue(response);
-
-    render(<GoalDetail id="goal-1" />);
-
-    const approval = () => within(screen.getByTestId("goal-approval"));
-    await waitFor(() => expect(approval().getByRole("textbox")).not.toBeNull());
-    expect((approval().getByRole("button", { name: "goal.approval.reject" }) as HTMLButtonElement).disabled).toBe(true);
-    expect((approval().getByRole("button", { name: "goal.approval.approve" }) as HTMLButtonElement).disabled).toBe(false);
-  });
-
-  it("approves a goal with its decision ID", async () => {
-    const response = goalResponse({ status: "proposed" });
-    response.unattached_decisions = [goalApprovalDecision()];
-    vi.mocked(fetchGoal).mockResolvedValue(response);
-    vi.mocked(approveDecision).mockResolvedValueOnce(goal({ status: "active" }));
-
-    render(<GoalDetail id="goal-1" />);
-
-    await waitFor(() => expect(screen.getByTestId("goal-approval")).not.toBeNull());
-    fireEvent.click(screen.getByRole("button", { name: "goal.approval.approve" }));
-
-    await waitFor(() => expect(approveDecision).toHaveBeenCalledWith("goal-approval-1"));
-  });
-
-  it("shows the server message when goal approval returns a conflict", async () => {
-    const serverMessage = "goal goal-1 was already reviewed";
-    const serverError = Object.assign(new Error(serverMessage), { status: 409 });
-    const response = goalResponse({ status: "proposed" });
-    response.unattached_decisions = [goalApprovalDecision()];
-    vi.mocked(fetchGoal).mockResolvedValue(response);
-    vi.mocked(approveDecision).mockRejectedValueOnce(serverError);
-
-    render(<GoalDetail id="goal-1" />);
-
-    await waitFor(() => expect(screen.getByTestId("goal-approval")).not.toBeNull());
-    fireEvent.click(screen.getByRole("button", { name: "goal.approval.approve" }));
-
-    await waitFor(() => expect(screen.getByText(serverMessage)).not.toBeNull());
   });
 
   it("shows an update banner without reloading until explicit refresh", async () => {
@@ -783,15 +697,6 @@ describe("GoalDetail", () => {
     expect(dialog.contains(reasons[0])).toBe(true);
   });
 
-  it("does not render the withdrawal action for a proposed goal", async () => {
-    vi.mocked(fetchGoal).mockResolvedValueOnce(goalResponse({ status: "proposed" }));
-
-    render(<GoalDetail id="goal-1" />);
-
-    await waitFor(() => expect(fetchGoal).toHaveBeenCalledWith("goal-1"));
-    expect(screen.queryByTestId("goal-withdraw-trigger")).toBeNull();
-  });
-
   it("does not render goal withdrawal for a done goal", async () => {
     vi.mocked(fetchGoal).mockResolvedValueOnce(goalResponse({ status: "done" }));
 
@@ -839,88 +744,5 @@ describe("GoalDetail", () => {
     await waitFor(() => expect(withdrawGoal).toHaveBeenCalledWith("goal-1", "No longer needed"));
     await waitFor(() => expect(fetchGoal).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(screen.queryByTestId("goal-withdraw-trigger")).toBeNull());
-  });
-
-  it("shows the content edit action and opens its dialog for a proposed goal", async () => {
-    vi.mocked(fetchGoal).mockResolvedValueOnce(goalResponse({ status: "proposed" }));
-
-    render(<GoalDetail id="goal-1" />);
-
-    await waitFor(() => expect(screen.getByTestId("goal-content-edit-trigger")).not.toBeNull());
-    fireEvent.click(screen.getByTestId("goal-content-edit-trigger"));
-
-    expect(await screen.findByRole("dialog")).not.toBeNull();
-  });
-
-  it("initializes the content edit textarea with the current goal content", async () => {
-    const currentContent = `${"A".repeat(1500)}\n\nDetails that must remain editable`;
-    vi.mocked(fetchGoal).mockResolvedValueOnce(goalResponse({ status: "proposed", content: currentContent }));
-
-    render(<GoalDetail id="goal-1" />);
-
-    await waitFor(() => expect(screen.getByTestId("goal-content-edit-trigger")).not.toBeNull());
-    fireEvent.click(screen.getByTestId("goal-content-edit-trigger"));
-    const dialog = await screen.findByRole("dialog");
-    const content = within(dialog).getByRole("textbox", { name: "goal.content.edit.label" });
-
-    expect((content as HTMLTextAreaElement).value).toBe(currentContent);
-  });
-
-  it("updates proposed goal content and reloads after success", async () => {
-    const updatedContent = "Updated proposed goal\n\nWith details";
-    vi.mocked(fetchGoal)
-      .mockResolvedValueOnce(goalResponse({ status: "proposed", content: "Original proposed goal" }))
-      .mockResolvedValueOnce(goalResponse({ status: "proposed", content: updatedContent }));
-    vi.mocked(updateGoalContent).mockResolvedValueOnce(goal({ status: "proposed", content: updatedContent }));
-
-    render(<GoalDetail id="goal-1" />);
-
-    await waitFor(() => expect(screen.getByTestId("goal-content-edit-trigger")).not.toBeNull());
-    fireEvent.click(screen.getByTestId("goal-content-edit-trigger"));
-    const dialog = await screen.findByRole("dialog");
-    fireEvent.change(within(dialog).getByRole("textbox", { name: "goal.content.edit.label" }), {
-      target: { value: updatedContent },
-    });
-    fireEvent.click(within(dialog).getByRole("button", { name: "goal.content.edit.submit" }));
-
-    await waitFor(() => expect(updateGoalContent).toHaveBeenCalledWith("goal-1", updatedContent));
-    await waitFor(() => expect(fetchGoal).toHaveBeenCalledTimes(2));
-  });
-
-  it("does not render the content edit action for an active goal", async () => {
-    vi.mocked(fetchGoal).mockResolvedValueOnce(goalResponse({ status: "active" }));
-
-    render(<GoalDetail id="goal-1" />);
-
-    await waitFor(() => expect(fetchGoal).toHaveBeenCalledWith("goal-1"));
-    expect(screen.queryByTestId("goal-content-edit-trigger")).toBeNull();
-  });
-
-  it("does not render the content edit action for done or dropped goals", async () => {
-    for (const status of ["done", "dropped"] as const) {
-      vi.mocked(fetchGoal).mockResolvedValueOnce(goalResponse({ status }));
-
-      render(<GoalDetail id="goal-1" />);
-
-      await waitFor(() => expect(fetchGoal).toHaveBeenCalledWith("goal-1"));
-      expect(screen.queryByTestId("goal-content-edit-trigger")).toBeNull();
-      cleanup();
-    }
-  });
-
-  it("shows the server message when content editing returns a conflict", async () => {
-    const serverMessage = "goal goal-1 is active, not proposed";
-    const serverError = Object.assign(new Error(serverMessage), { status: 409 });
-    vi.mocked(fetchGoal).mockResolvedValueOnce(goalResponse({ status: "proposed" }));
-    vi.mocked(updateGoalContent).mockRejectedValueOnce(serverError);
-
-    render(<GoalDetail id="goal-1" />);
-
-    await waitFor(() => expect(screen.getByTestId("goal-content-edit-trigger")).not.toBeNull());
-    fireEvent.click(screen.getByTestId("goal-content-edit-trigger"));
-    const dialog = await screen.findByRole("dialog");
-    fireEvent.click(within(dialog).getByRole("button", { name: "goal.content.edit.submit" }));
-
-    await waitFor(() => expect(screen.getByText(serverMessage)).not.toBeNull());
   });
 });
