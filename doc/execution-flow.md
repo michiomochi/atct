@@ -180,8 +180,8 @@ flowchart TD
    人間の review へ進める。
 5. `atct_goal_review_request` で人間の review を依頼する。**人間が承認するまで main へは
    マージしない。**承認後にマージして `atct_goal_review_complete` を呼ぶ。この操作は
-   goal handoff と goal を同じ transaction で完了する。worktree・branch・space は
-   commander が「worktree・branch・space の回収」に従って回収する。
+   goal handoff と goal を同じ transaction で完了する。worktree・branch・workspace は
+   commander が「worktree・branch・workspace の回収」に従って回収する。
 6. 人間が却下した場合は、通知を受けた commander がフィードバックを添えて
    `atct_goal_handoff_review_reject` を呼ぶ。新しい handoff は作らない。
 
@@ -205,14 +205,14 @@ flowchart TD
    `atct_task_create_handoff_receive` で受領し、その `handoff_id` を渡して
    `atct_task_create` で task を作る。
 5. task ごとに、まず executor の作業場所を判定する。
-   - executor pane が無ければ、同じ space に最初の 1 台を用意する。
-     初回 pane は追加 pane の例外条件には含めない。
+   - executor session が無ければ、同じ workspace に最初の 1 台を用意する。
+     初回 executor session は追加 executor session の例外条件には含めない。
    - idle executor があれば再利用する。
-   - executor が既に存在する場合の追加 pane は、parallel work、
+   - executor が既に存在する場合の追加 executor session は、parallel work、
      worktree isolation、context exhaustion、topic change のいずれかの場合だけ
      作成する。
    - その後、task handoff を記録してから executor を起動する。順序は
-     pane の準備 → `atct_task_handoff_request` → monitored worker の起動 →
+     executor session の準備 → `atct_task_handoff_request` → monitored worker の起動 →
      worker の handoff 受領であり、worker は実装開始前に記録済み handoff を
      受領する。
 6. executor の review request を受領してレビューし、受理なら
@@ -297,9 +297,9 @@ archived な project に対する変更系（goal の作成・claim、handoff、
 
 マージ後は `atct_goal_review_complete` を呼ぶ。これは記録であって許可ではないので、
 先に呼んでマージの根拠にしてはならない。承認後（と取り下げ後）の後片付けは
-commander が行う。「worktree・branch・space の回収」を参照。
+commander が行う。「worktree・branch・workspace の回収」を参照。
 
-## worktree・branch・space の回収
+## worktree・branch・workspace の回収
 
 **回収するのは commander だけである。**subcommander と executor は回収しない。自分の
 worktree の中から自分を消せないからである。
@@ -317,8 +317,8 @@ worktree の中から自分を消せないからである。
 1. 上の status 確認。スクリプトは goal の status を確かめない（DB に触れない）ので、
    この確認は必須である。
 2. 主チェックアウトで `script/worktree-reclaim.sh <id>` を実行する。
-3. subcommander の space（と executor の pane）を閉じる。herdr の操作は herdr スキルに従う。
-   `## One space per goal` は dropped にも適用する。
+3. subcommander の workspace を閉じ、executor session を終える。workspace の用意と片付けの手段（マルチプレクサ・ターミナル・別プロセス）は ATCT の外で決める。
+   `## One workspace per goal` は dropped にも適用する。
 
 パスと branch 名は `.worktrees/<id>` と `wt/goal-<id>`（整数 id）である。
 

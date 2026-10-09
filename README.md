@@ -96,9 +96,9 @@ identification and claim or handoff receipt. `--role`, `--project`, `--goal`, `-
 are not monitor options. A running normal Codex process cannot be retrofitted; use a fresh monitored
 process.
 
-For a monitored worker, the delegator requests the handoff first, creates a fresh worker pane, then
-runs `herdr pane run <pane> atct codex monitor -- <codex args>`
-before the worker process. Plain `herdr agent start` bypasses this monitored launch. The new worker
+For a monitored worker, the delegator requests the handoff first, then runs
+`atct codex monitor -- <codex args>` inside a workspace to start a fresh worker session. A plain
+start bypasses the monitor. The new worker
 then calls `atct_task_handoff_receive` with its SessionStart `session_key` (and
 `monitor_token`, when emitted), and `atct_role`.
 
@@ -129,7 +129,7 @@ To reproduce the GREEN documentation check, use at least five fresh contexts wit
 time/sunk-cost/authority pressure scenario. Preserve each complete raw response and provenance, then
 score every response against the generic token-bound command with no role or scope selectors,
 record-first handoff ordering,
-`herdr pane run <pane> atct codex monitor` before the worker, the worker's identify → receive(task
+`atct codex monitor -- <codex args>` inside a workspace to start a fresh worker session, the worker's identify → receive(task
 only) → role sequence, and no retrofit. Read every response manually and retain the per-criterion
 scores; a valid monitor-wrapper command is required in every passing response.
 
