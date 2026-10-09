@@ -157,15 +157,8 @@ func (d *Daemon) stopCheckSubcommander(ctx context.Context, agentSessionID, goal
 	if err != nil {
 		return "", fmt.Errorf("list goal handoffs: %w", err)
 	}
-	waiting := d.subcommanderWaiting(ctx, agentSessionID, goal, goalHandoffs)
-	for _, handoff := range goalHandoffs {
-		if handoff.ReceivedBy == agentSessionID && handoff.ReceivedAt != nil && handoff.CompletedReportAt == nil && handoff.RecoveredAt == nil {
-			if waiting {
-				continue
-			}
-			return fmt.Sprintf("subcommander has open goal handoff %s", handoff.ID), nil
-		}
-	}
+	live, err := d.store.HasLiveMonitorForScope(ctx, store.MonitorLiveScope{ProjectID: goal.ProjectID, Role: "subcommander", GoalID: &goalID})
+	live = err == nil && live
 	planHandoffs, err := d.store.ListPlanHandoffs(ctx, goalID)
 	if err != nil {
 		return "", fmt.Errorf("list plan handoffs: %w", err)
@@ -194,12 +187,24 @@ func (d *Daemon) stopCheckSubcommander(ctx context.Context, agentSessionID, goal
 			return "", fmt.Errorf("list task handoffs for task %d: %w", task.ID, err)
 		}
 		for _, handoff := range handoffs {
-			if handoff.RequestedAt != nil && handoff.ReceivedAt == nil && handoff.CompletedReportAt == nil && handoff.RecoveredAt == nil {
+			// With a live Monitor, an unreceived handoff is an executor still
+			// starting; one that never starts is reported by the liveness prompt.
+			if !live && handoff.RequestedAt != nil && handoff.ReceivedAt == nil && handoff.CompletedReportAt == nil && handoff.RecoveredAt == nil {
 				return fmt.Sprintf("subcommander has unreceived task handoff %s for task %d", handoff.ID, task.ID), nil
 			}
 			if handoff.ReviewRequestedAt != nil && handoff.ReviewRejectedAt == nil && handoff.CompletedReportAt == nil && handoff.RecoveredAt == nil {
 				return fmt.Sprintf("subcommander has task review handoff %s for task %d", handoff.ID, task.ID), nil
 			}
+		}
+	}
+	// Checked last so that the more specific reasons above are reported first.
+	waiting := d.subcommanderWaiting(ctx, agentSessionID, goal, goalHandoffs, live)
+	for _, handoff := range goalHandoffs {
+		if handoff.ReceivedBy == agentSessionID && handoff.ReceivedAt != nil && handoff.CompletedReportAt == nil && handoff.RecoveredAt == nil {
+			if waiting {
+				continue
+			}
+			return fmt.Sprintf("subcommander has open goal handoff %s", handoff.ID), nil
 		}
 	}
 	return "", nil
@@ -208,15 +213,14 @@ func (d *Daemon) stopCheckSubcommander(ctx context.Context, agentSessionID, goal
 // subcommanderWaiting reports whether the only thing a subcommander holds is
 // an answer it is waiting for: a live Monitor on its goal scope, and either a
 // plan review or a goal review the commander has not answered, or a task an
-// executor is working on. The answer arrives through the Monitor, so stopping
-// costs nothing. When in doubt (no Monitor, a lookup error) it returns false
-// and the caller keeps blocking.
-func (d *Daemon) subcommanderWaiting(ctx context.Context, agentSessionID int64, goal domain.Goal, goalHandoffs []store.GoalHandoff) bool {
-	goalID := goal.ID
-	live, err := d.store.HasLiveMonitorForScope(ctx, store.MonitorLiveScope{ProjectID: goal.ProjectID, Role: "subcommander", GoalID: &goalID})
-	if err != nil || !live {
+// executor is starting or working on. The answer arrives through the Monitor,
+// so stopping costs nothing. When in doubt (no Monitor, a lookup error) it
+// returns false and the caller keeps blocking.
+func (d *Daemon) subcommanderWaiting(ctx context.Context, agentSessionID int64, goal domain.Goal, goalHandoffs []store.GoalHandoff, live bool) bool {
+	if !live {
 		return false
 	}
+	goalID := goal.ID
 	for _, handoff := range goalHandoffs {
 		if handoff.ReceivedBy == agentSessionID && handoff.ReviewRequestedAt != nil && handoff.ReviewRejectedAt == nil && handoff.CompletedReportAt == nil && handoff.RecoveredAt == nil {
 			return true
@@ -241,7 +245,7 @@ func (d *Daemon) subcommanderWaiting(ctx context.Context, agentSessionID int64, 
 			return false
 		}
 		for _, handoff := range handoffs {
-			if handoff.RequestedAt != nil && handoff.ReceivedAt != nil && handoff.CompletedReportAt == nil && handoff.RecoveredAt == nil &&
+			if handoff.RequestedAt != nil && handoff.CompletedReportAt == nil && handoff.RecoveredAt == nil &&
 				(handoff.ReviewRequestedAt == nil || handoff.ReviewRejectedAt != nil) {
 				return true
 			}
