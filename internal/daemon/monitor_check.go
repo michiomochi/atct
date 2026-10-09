@@ -38,11 +38,10 @@ func (d *Daemon) monitorCheck(ctx context.Context, sessionKey string) (monitorCh
 	}
 	if assignment.Role == "executor" {
 		for _, task := range assignment.Tasks {
-			if task.ProjectID <= 0 || task.GoalID <= 0 {
+			if task.ProjectID <= 0 || task.GoalID <= 0 || task.TaskID <= 0 {
 				continue
 			}
-			goalID := task.GoalID
-			live, err := hasLive(store.MonitorLiveScope{ProjectID: task.ProjectID, Role: assignment.Role, GoalID: &goalID})
+			live, err := d.store.HasLiveExecutorMonitorForTask(ctx, task.ProjectID, task.GoalID, task.TaskID)
 			if err != nil {
 				return monitorCheckResponse{}, err
 			}
