@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -312,6 +313,59 @@ func TestMonitorCheckAllowsExecutorWhenAnyAssignedGoalHasLiveMonitor(t *testing.
 	}
 	if role.Role != "executor" {
 		t.Fatalf("session.role = %+v, want executor", role)
+	}
+}
+
+// A sibling executor's Monitor on the same goal must not cover this task.
+func TestMonitorCheckBlocksExecutorWhenOnlySiblingTaskHasLiveMonitor(t *testing.T) {
+	fixture := newGoalListFixture(t)
+	defer fixture.store.Close()
+
+	ctx := context.Background()
+	commanderID := daemonTestSessionID(t, fixture.store, "monitor-check-sibling-commander")
+	if _, err := fixture.store.ClaimProject(ctx, fixture.project.ID, commanderID); err != nil {
+		t.Fatalf("ClaimProject: %v", err)
+	}
+	subID := daemonTestSessionID(t, fixture.store, "monitor-check-sibling-sub")
+	if _, err := fixture.store.RequestGoalHandoff(ctx, "monitor-check-sibling-goal", fixture.taskGoal.ID, commanderID, "delegate goal"); err != nil {
+		t.Fatalf("RequestGoalHandoff: %v", err)
+	}
+	if _, err := fixture.store.ReceiveGoalHandoff(ctx, "monitor-check-sibling-goal", fixture.taskGoal.ID, subID); err != nil {
+		t.Fatalf("ReceiveGoalHandoff: %v", err)
+	}
+
+	extraTasks, err := fixture.store.CreateTasks(ctx, fixture.taskGoal.ID, "fixture-agent", "sibling-monitor-check-task", []string{"sibling one", "sibling two"}, []string{"sibling one", "sibling two"})
+	if err != nil {
+		t.Fatalf("CreateTasks: %v", err)
+	}
+	// CreateTasks returns every task of the goal; the two new ones come last.
+	siblingTasks := []int64{extraTasks[len(extraTasks)-2].ID, extraTasks[len(extraTasks)-1].ID}
+
+	const sessionKey = "monitor-check-sibling-self"
+	for i, key := range []string{sessionKey, "monitor-check-sibling-other"} {
+		executorID := daemonTestSessionID(t, fixture.store, key)
+		if _, _, err := fixture.store.IdentifyAgentSession(ctx, executorID, key); err != nil {
+			t.Fatalf("IdentifyAgentSession: %v", err)
+		}
+		handoffID := fmt.Sprintf("monitor-check-sibling-task-%d", i)
+		taskID := siblingTasks[i]
+		if _, err := fixture.store.RequestTaskHandoff(ctx, handoffID, taskID, subID, "delegate task"); err != nil {
+			t.Fatalf("RequestTaskHandoff: %v", err)
+		}
+		if _, err := fixture.store.ReceiveTaskHandoff(ctx, handoffID, taskID, executorID); err != nil {
+			t.Fatalf("ReceiveTaskHandoff: %v", err)
+		}
+	}
+
+	goalID, selfTaskID, otherTaskID := fixture.taskGoal.ID, siblingTasks[0], siblingTasks[1]
+	addLiveMonitorForTest(t, fixture, "executor", fixture.project.ID, &goalID, &otherTaskID)
+	if response := monitorCheckDecision(t, fixture, sessionKey); response.Decision != "block" {
+		t.Fatalf("monitor_check allowed executor on a sibling task's Monitor: %+v", response)
+	}
+
+	addLiveMonitorForTest(t, fixture, "executor", fixture.project.ID, &goalID, &selfTaskID)
+	if response := monitorCheckDecision(t, fixture, sessionKey); response.Decision != "" {
+		t.Fatalf("monitor_check denied executor with its own live Monitor: %+v", response)
 	}
 }
 

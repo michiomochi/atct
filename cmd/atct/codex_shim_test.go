@@ -654,3 +654,128 @@ func TestRunCodexShimInstallEmbedsAbsoluteRealCodexFallback(t *testing.T) {
 		t.Fatalf("installed shim = %q, want embedded absolute fallback %q", shim, wantFallback)
 	}
 }
+
+// TestMain keeps resolution independent of a ChatGPT.app installed on the
+// machine running the tests.
+func TestMain(m *testing.M) {
+	codexKnownLocations = nil
+	os.Exit(m.Run())
+}
+
+func setCodexKnownLocations(t *testing.T, paths ...string) {
+	t.Helper()
+	old := codexKnownLocations
+	codexKnownLocations = paths
+	t.Cleanup(func() { codexKnownLocations = old })
+}
+
+func writeFakeCodex(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o700); err != nil {
+		t.Fatalf("write %s: %v", path, err)
+	}
+}
+
+func TestResolveRealCodexFallsBackToKnownLocation(t *testing.T) {
+	root := t.TempDir()
+	first := filepath.Join(root, "new", "codex")
+	second := filepath.Join(root, "old", "codex")
+	writeFakeCodex(t, second, "#!/bin/sh\nexit 0\n")
+	setCodexKnownLocations(t, first, second)
+
+	got, err := resolveRealCodex(t.TempDir())
+	if err != nil {
+		t.Fatalf("resolveRealCodex: %v", err)
+	}
+	if got != second {
+		t.Fatalf("resolveRealCodex = %q, want %q", got, second)
+	}
+}
+
+func TestResolveRealCodexPrefersPathOverKnownLocation(t *testing.T) {
+	binDir := t.TempDir()
+	pathCodex := filepath.Join(binDir, "codex")
+	writeFakeCodex(t, pathCodex, "#!/bin/sh\nexit 0\n")
+	known := filepath.Join(t.TempDir(), "codex")
+	writeFakeCodex(t, known, "#!/bin/sh\nexit 0\n")
+	setCodexKnownLocations(t, known)
+
+	got, err := resolveRealCodex(binDir)
+	if err != nil {
+		t.Fatalf("resolveRealCodex: %v", err)
+	}
+	if got != pathCodex {
+		t.Fatalf("resolveRealCodex = %q, want %q", got, pathCodex)
+	}
+}
+
+func TestResolveRealCodexSkipsMarkedShimInKnownLocations(t *testing.T) {
+	root := t.TempDir()
+	marked := filepath.Join(root, "new", "codex")
+	writeFakeCodex(t, marked, "#!/bin/sh\n"+codexShimMarker+"\n")
+	real := filepath.Join(root, "old", "codex")
+	writeFakeCodex(t, real, "#!/bin/sh\nexit 0\n")
+	setCodexKnownLocations(t, marked, real)
+
+	got, err := resolveRealCodex(t.TempDir())
+	if err != nil {
+		t.Fatalf("resolveRealCodex: %v", err)
+	}
+	if got != real {
+		t.Fatalf("resolveRealCodex = %q, want %q", got, real)
+	}
+}
+
+func TestResolveRealCodexErrorListsKnownLocations(t *testing.T) {
+	root := t.TempDir()
+	a := filepath.Join(root, "a", "codex")
+	b := filepath.Join(root, "b", "codex")
+	setCodexKnownLocations(t, a, b)
+
+	_, err := resolveRealCodex(t.TempDir())
+	if err == nil {
+		t.Fatal("resolveRealCodex returned nil error")
+	}
+	want := "resolve codex executable: command not found (searched PATH and: " + a + ", " + b + ")"
+	if err.Error() != want {
+		t.Fatalf("error = %q, want %q", err.Error(), want)
+	}
+}
+
+func TestResolveCodexExecutableFindsNestedKnownLocation(t *testing.T) {
+	nested := filepath.Join(t.TempDir(), "Resources", "codex-cli", "CodexCLI.app", "Contents", "MacOS", "codex")
+	writeFakeCodex(t, nested, "#!/bin/sh\nexit 0\n")
+	setCodexKnownLocations(t, nested)
+	t.Setenv("PATH", t.TempDir())
+
+	got, err := resolveCodexExecutable()
+	if err != nil {
+		t.Fatalf("resolveCodexExecutable: %v", err)
+	}
+	if got != nested {
+		t.Fatalf("resolveCodexExecutable = %q, want %q", got, nested)
+	}
+}
+
+func TestWriteCodexShimEmbedsKnownLocationAsFallback(t *testing.T) {
+	nested := filepath.Join(t.TempDir(), "Resources", "codex-cli", "CodexCLI.app", "Contents", "MacOS", "codex")
+	writeFakeCodex(t, nested, "#!/bin/sh\nexit 0\n")
+	setCodexKnownLocations(t, nested)
+	t.Setenv("PATH", t.TempDir())
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	if err := writeCodexShim(home, "", "/opt/atct"); err != nil {
+		t.Fatalf("writeCodexShim: %v", err)
+	}
+	shim, err := os.ReadFile(filepath.Join(home, ".atct", "bin", "codex"))
+	if err != nil {
+		t.Fatalf("read shim: %v", err)
+	}
+	if !strings.Contains(string(shim), shellQuote(nested)) {
+		t.Fatalf("shim = %q, want fallback %q", shim, nested)
+	}
+}

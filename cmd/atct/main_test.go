@@ -42,6 +42,16 @@ func TestParseArgs(t *testing.T) {
 			wantListen: defaultListenAddr,
 		},
 		{
+			name:       "execution-flow is a subcommand",
+			args:       []string{"execution-flow"},
+			wantListen: defaultListenAddr,
+		},
+		{
+			name:    "execution-flow rejects arguments",
+			args:    []string{"execution-flow", "extra"},
+			wantErr: true,
+		},
+		{
 			name:    "missing subcommand is rejected",
 			args:    []string{},
 			wantErr: true,
