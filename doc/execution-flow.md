@@ -265,7 +265,7 @@ commander は goal handoff の review を受領してから human review を依�
 
 ## 待機中の Stop hook
 
-相手の応答（commander の plan / goal review、subcommander の task review）を待つだけの session は、生きた Monitor があれば Stop hook で止めない。subcommander は plan review・goal review・executor の作業のいずれかを待つ間の open goal handoff、executor は review 依頼済みで差し戻されていない task handoff が対象。差し戻し、未受領、task review など他の block と、Monitor が無い場合、取得に失敗した場合は従来どおり止める。詳細は `atct continuous-execution` で読める。
+相手の応答（commander の plan / goal review、subcommander の task review）を待つだけの session は、生きた Monitor があれば Stop hook で止めない。subcommander は plan review・goal review・executor の起動（task handoff の未受領）と作業のいずれかを待つ間の open goal handoff、executor は review 依頼済みで差し戻されていない task handoff が対象。差し戻し、task-create handoff、task review など他の block と、Monitor が無い場合（未受領の task handoff も止める）、取得に失敗した場合は従来どおり止める。詳細は `atct continuous-execution` で読める。
 
 ## アーカイブした project
 
