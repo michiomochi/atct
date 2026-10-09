@@ -17,6 +17,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/michiomochi/atct/doc"
 	"github.com/michiomochi/atct/internal/daemon"
 	"github.com/michiomochi/atct/internal/daemonctl"
 	"github.com/michiomochi/atct/internal/domain"
@@ -103,21 +104,22 @@ type cliHandoffEntryPage struct {
 var errInvalidArgs = errors.New("invalid command line")
 
 var validSubcommands = map[string]bool{
-	"daemon":        true,
-	"project":       true,
-	"goal":          true,
-	"context":       true,
-	"pending":       true,
-	"watch":         true,
-	"role":          true,
-	"stop-check":    true,
-	"monitor-check": true,
-	"merge-check":   true,
-	"session-key":   true,
-	"handoff":       true,
-	"codex":         true,
-	"version":       true,
-	"token-usage":   true,
+	"daemon":         true,
+	"project":        true,
+	"goal":           true,
+	"context":        true,
+	"pending":        true,
+	"watch":          true,
+	"role":           true,
+	"stop-check":     true,
+	"monitor-check":  true,
+	"merge-check":    true,
+	"session-key":    true,
+	"execution-flow": true,
+	"handoff":        true,
+	"codex":          true,
+	"version":        true,
+	"token-usage":    true,
 }
 
 var validDaemonActions = map[string]bool{"start": true, "stop": true}
@@ -181,6 +183,7 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "  monitor-check        Deny an ATCT tool call when the session has no live Monitor")
 	fmt.Fprintln(os.Stderr, "  merge-check          Deny merging a goal branch into main before the human approves")
 	fmt.Fprintln(os.Stderr, "  session-key          Print the SessionStart key for atct_session_identify")
+	fmt.Fprintln(os.Stderr, "  execution-flow       Print the ATCT execution flow document")
 	fmt.Fprintln(os.Stderr, "  version              Print the installed CLI version")
 	fmt.Fprintln(os.Stderr, "  token-usage [--since YYYY-MM-DD] [--role R] [--goal ID] [--json] [--root DIR] [--prefix NAME]  Report token usage by role and factor from Claude Code transcripts")
 	fmt.Fprintln(os.Stderr, "  codex shim install [--profile <path>]  Install the transparent Codex shim")
@@ -778,6 +781,10 @@ func main() {
 	}
 	if config.subcommand == "version" {
 		fmt.Println(version)
+		return
+	}
+	if config.subcommand == "execution-flow" {
+		fmt.Print(doc.ExecutionFlow)
 		return
 	}
 	if config.subcommand == "token-usage" {

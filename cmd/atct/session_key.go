@@ -39,7 +39,7 @@ func sessionStartMonitorToken(sessionID, token string) string {
 	return fmt.Sprintf("%x", sum)
 }
 
-const sessionStartExecutionFlowDirective = " Before any ATCT work, read `doc/execution-flow.md` and follow its procedure.\n"
+const sessionStartExecutionFlowDirective = " Before any ATCT work, run `atct execution-flow` and follow its procedure.\n"
 
 func sessionKeyMessageWithMonitorToken(sessionID, monitorToken string) string {
 	sessionID = strings.TrimSpace(sessionID)

@@ -253,7 +253,7 @@ fi
 input="$(cat)"
 printf '%s\n%s\n' "$*" "$input" >>"$ATCT_STOP_LOG"
 if [[ "${1:-}" == session-key ]]; then
-  printf '%s' 'ATCT session key: hook-session-1. Before any ATCT work, read `doc/execution-flow.md` and follow its procedure.'
+  printf '%s' 'ATCT session key: hook-session-1. Before any ATCT work, run `atct execution-flow` and follow its procedure.'
   exit 0
 fi
 if [[ "$input" == *'"stop_hook_active":true'* ]]; then exit 0; fi
@@ -323,7 +323,7 @@ PY
 )"
   : >"$log"
   output="$(PATH="$codex_fixture:/usr/bin:/bin" ATCT_STOP_LOG="$log" sh -c "$session_command" <<< "$input")"
-  assert_eq 'ATCT session key: hook-session-1. Before any ATCT work, read `doc/execution-flow.md` and follow its procedure.' "$output" 'Codex SessionStart hook must use the PATH CLI'
+  assert_eq 'ATCT session key: hook-session-1. Before any ATCT work, run `atct execution-flow` and follow its procedure.' "$output" 'Codex SessionStart hook must use the PATH CLI'
   assert_eq $'session-key --hook-input\n{"session_id":"hook-session-1","stop_hook_active":false}' "$(<"$log")" 'Codex SessionStart hook must pass raw hook input to shared CLI'
   output="$(PATH="$older_codex_fixture:/usr/bin:/bin" sh -c "$session_command" <<< "$input")"
   assert_eq 'ATCT: upgrade the CLI with: brew upgrade --cask michiomochi/tap/atct' "$output" 'older Codex SessionStart hook must print Homebrew upgrade instruction'
@@ -423,7 +423,7 @@ fi
 if [[ "$*" == 'session-key --hook-input' ]]; then
   input="$(cat)"
   printf '%s\n%s' "$*" "$input" >>"$ATCT_SESSION_START_LOG"
-  printf '%s' 'ATCT session key: hook-session-1. Before any ATCT work, read `doc/execution-flow.md` and follow its procedure.'
+  printf '%s' 'ATCT session key: hook-session-1. Before any ATCT work, run `atct execution-flow` and follow its procedure.'
   exit 0
 fi
 exit 1
@@ -432,7 +432,7 @@ SCRIPT
   export ATCT_TEST_VERSION="$plugin_version"
 
   output="$(PATH="$(dirname "$fake"):$PATH" ATCT_SESSION_START_LOG="$log" /bin/bash "$hook" <<< '{"session_id":"hook-session-1"}')"
-  assert_eq 'ATCT session key: hook-session-1. Before any ATCT work, read `doc/execution-flow.md` and follow its procedure.' "$output" 'Claude SessionStart hook must use the shared session-key output'
+  assert_eq 'ATCT session key: hook-session-1. Before any ATCT work, run `atct execution-flow` and follow its procedure.' "$output" 'Claude SessionStart hook must use the shared session-key output'
   assert_eq $'version\ncontext -brief\nsession-key --hook-input\n{"session_id":"hook-session-1"}' "$(<"$log")" 'Claude SessionStart hook must pass raw input through the shared CLI'
 }
 
