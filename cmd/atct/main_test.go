@@ -52,6 +52,31 @@ func TestParseArgs(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			name:       "continuous-execution is a subcommand",
+			args:       []string{"continuous-execution"},
+			wantListen: defaultListenAddr,
+		},
+		{
+			name:    "continuous-execution rejects arguments",
+			args:    []string{"continuous-execution", "extra"},
+			wantErr: true,
+		},
+		{
+			name:       "worktree-reclaim takes a goal id",
+			args:       []string{"worktree-reclaim", "341"},
+			wantListen: defaultListenAddr,
+		},
+		{
+			name:    "worktree-reclaim requires a goal id",
+			args:    []string{"worktree-reclaim"},
+			wantErr: true,
+		},
+		{
+			name:    "worktree-reclaim rejects extra arguments",
+			args:    []string{"worktree-reclaim", "341", "extra"},
+			wantErr: true,
+		},
+		{
 			name:    "missing subcommand is rejected",
 			args:    []string{},
 			wantErr: true,
@@ -95,6 +120,31 @@ func TestVersionCommandPrintsBuildVersionWithoutCreatingATCTHome(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(home, ".atct")); !os.IsNotExist(err) {
 		t.Fatalf("atct version created %s: stat error = %v", filepath.Join(home, ".atct"), err)
+	}
+}
+
+func TestParseArgsWorktreeReclaimKeepsGoalIDForTheScript(t *testing.T) {
+	cfg, err := parseArgs([]string{"worktree-reclaim", "-5"})
+	if err != nil {
+		t.Fatalf("parseArgs: %v", err)
+	}
+	if cfg.worktreeReclaimGoalID != "-5" {
+		t.Fatalf("worktreeReclaimGoalID = %q, want -5", cfg.worktreeReclaimGoalID)
+	}
+}
+
+func TestWorktreeReclaimCommandPassesScriptExitCode(t *testing.T) {
+	binary := buildAtctTestBinary(t)
+	cmd := exec.Command(binary, "worktree-reclaim", "abc")
+	cmd.Env = testEnvWithHome(t.TempDir())
+	cmd.Dir = t.TempDir()
+	output, err := cmd.CombinedOutput()
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 2 {
+		t.Fatalf("atct worktree-reclaim abc: err = %v, want exit 2\noutput:\n%s", err, output)
+	}
+	if !strings.Contains(string(output), "usage: atct worktree-reclaim <goal-id>") {
+		t.Fatalf("output lacks usage:\n%s", output)
 	}
 }
 

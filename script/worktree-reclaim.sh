@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # Reclaim a done/dropped goal's worktree without losing work.
 #
-#   script/worktree-reclaim.sh <goal-id>
+#   atct worktree-reclaim <goal-id>
+#
+# Run from the primary checkout. The repo is located from cwd, because
+# atct feeds this script to `bash -s` on stdin, where BASH_SOURCE[0] is empty.
 #
 # Uncommitted work (including a merge in progress) is snapshot-committed onto
 # the goal's own branch, then the worktree is removed WITHOUT --force. The
@@ -18,11 +21,14 @@ set -euo pipefail
 
 goal_id="${1:-}"
 if [[ $# -ne 1 || ! "$goal_id" =~ ^[1-9][0-9]*$ ]]; then
-  echo "usage: script/worktree-reclaim.sh <goal-id>" >&2
+  echo "usage: atct worktree-reclaim <goal-id>" >&2
   exit 2
 fi
 
-repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+if ! repo="$(git rev-parse --show-toplevel 2>/dev/null)"; then
+  echo "git リポジトリの外では実行できない。主チェックアウトの git リポジトリの中で実行しろ" >&2
+  exit 2
+fi
 git_dir="$(git -C "$repo" rev-parse --absolute-git-dir)"
 git_common_dir="$(git -C "$repo" rev-parse --path-format=absolute --git-common-dir)"
 if [[ "$git_dir" != "$git_common_dir" ]]; then
