@@ -209,6 +209,19 @@ func lifecycleSteps(t *testing.T, kind string) (handoffThread, string, []lifecyc
 	addLiveProjectClaim(t, s, goalID, "cl-goal-req")
 	addTestAgentSession(t, s, "cl-goal-recv")
 	req, recv := testSessionID("cl-goal-req"), testSessionID("cl-goal-recv")
+	// A commander that takes over the project re-receives the review its
+	// predecessor received; the claim then returns so the rest is unchanged.
+	takeover := registerNamedTestAgentSession(t, s, "cl-goal-takeover", os.Getpid())
+	claimProject := func(commander int64) func() error {
+		return func() error {
+			goal, err := s.GetGoal(ctx, goalID)
+			if err != nil {
+				return err
+			}
+			_, err = s.DB().ExecContext(ctx, `UPDATE projects SET claimed_by = ? WHERE id = ?`, commander, goal.ProjectID)
+			return err
+		}
+	}
 	return newGoalThread(s), id, []lifecycleStep{
 		{"request", HandoffEntryKindRequest, "go", req, func() error { _, err := s.RequestGoalHandoff(ctx, id, goalID, req, "go"); return err }, nil},
 		{"receive", HandoffEntryKindReceived, "received", recv, func() error { _, err := s.ReceiveGoalHandoff(ctx, id, goalID, recv); return err }, nil},
@@ -218,6 +231,8 @@ func lifecycleSteps(t *testing.T, kind string) (handoffThread, string, []lifecyc
 		{"reject receive", HandoffEntryKindReceived, "review rejection received", recv, func() error { _, err := s.ReceiveGoalHandoffReviewRejection(ctx, id, goalID, recv); return err }, nil},
 		{"review request again", HandoffEntryKindReviewRequested, "r2", recv, func() error { _, err := s.RequestGoalHandoffReview(ctx, id, goalID, recv, "r2"); return err }, nil},
 		{"review receive again", HandoffEntryKindReviewReceived, "received", req, func() error { _, err := s.ReceiveGoalHandoffReview(ctx, id, goalID, req); return err }, nil},
+		{"review re-receive after takeover", HandoffEntryKindReviewReceived, "received", takeover, func() error { _, err := s.ReceiveGoalHandoffReview(ctx, id, goalID, takeover); return err }, claimProject(takeover)},
+		{"review re-receive after claim returns", HandoffEntryKindReviewReceived, "received", req, func() error { _, err := s.ReceiveGoalHandoffReview(ctx, id, goalID, req); return err }, claimProject(req)},
 		// A delegated goal handoff closes only through an approved goal review, and the
 		// completed entry carries the handoff's last review request report.
 		{name: "complete", kind: HandoffEntryKindCompleted, body: "r2", author: req,
@@ -543,6 +558,7 @@ var handoffWriteQueries = map[string]string{
 	"ReceiveGoalHandoff":                "receive",
 	"RequestGoalHandoffReview":          "review request",
 	"ReceiveGoalHandoffReview":          "review receive",
+	"ReReceiveGoalHandoffReview":        "review re-receive after takeover",
 	"RecoverGoalHandoffRequester":       "recover (requested)",
 	"RecoverGoalHandoffReceiver":        "recover (received)",
 	"RecoverGoalHandoffReview":          "recover (review_received)",

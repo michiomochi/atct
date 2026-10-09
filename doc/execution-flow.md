@@ -241,6 +241,7 @@ flowchart TD
 commander は goal handoff の review を受領してから human review を依頼する。その間 handoff は
 開いたままであり、承認後の `atct_goal_review_complete` が main へのマージ後に handoff と goal を
 同時に完了する。人間の却下は handoff の差し戻しへ変換され、同じ handoff で作業を再開する。
+commander が交代した後は、現在の commander が `atct_goal_review_complete` と `atct_goal_handoff_review_reject` をそのまま実行でき、`atct_goal_review_request` だけは先に `atct_goal_handoff_review_receive` で受領し直す必要がある（`atct_handoff_recover` は不要で、claim を失った前の commander はどれも実行できない）。
 
 **この承認が main へマージしてよい唯一の条件である。**「main へのマージは人間の承認が
 唯一の条件である」を参照。

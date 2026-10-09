@@ -477,6 +477,16 @@ WHERE id = ? AND goal_id = ?
   AND completed_report_at IS NULL
   AND recovered_at IS NULL;
 
+-- name: ReReceiveGoalHandoffReview :execresult
+UPDATE goal_handoffs
+SET review_received_by = sqlc.arg(new_review_received_by), review_received_at = sqlc.arg(review_received_at)
+WHERE id = sqlc.arg(id) AND goal_id = sqlc.arg(goal_id)
+  AND review_received_by = sqlc.arg(old_review_received_by)
+  AND review_received_at IS NOT NULL
+  AND review_rejected_at IS NULL
+  AND completed_report_at IS NULL
+  AND recovered_at IS NULL;
+
 -- name: RecoverGoalHandoffReview :execresult
 UPDATE goal_handoffs
 SET review_received_by = NULL, review_received_at = NULL

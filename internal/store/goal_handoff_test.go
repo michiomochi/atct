@@ -1342,7 +1342,7 @@ func TestGoalReviewCompletionUsesRecordedReviewerLineage(t *testing.T) {
 		ReviewReceivedBy:  3,
 		CompleteReport:    "accepted",
 	}
-	if !goalHandoffHasCommanderReviewCompletion(handoff, 3) {
+	if !goalHandoffHasCommanderReviewCompletion(handoff) {
 		t.Fatal("recorded reviewer should authorize the completed handoff despite stale requester lineage")
 	}
 }
@@ -1426,6 +1426,240 @@ func TestRecoverGoalHandoffClearsOnlyDefinitelyStaleReviewer(t *testing.T) {
 	if _, err := s.ReceiveGoalHandoffReview(ctx, handoff.ID, goalID, freshCommanderID); err != nil {
 		t.Fatalf("ReceiveGoalHandoffReview after recovery: %v", err)
 	}
+}
+
+// goalReviewTakeover is a goal delegated by oldCommander to subcommander,
+// whose review is ready. newCommander is live but holds no claim until
+// takeOver is called.
+type goalReviewTakeover struct {
+	s                                        *Store
+	goalID, projectID                        int64
+	oldCommander, newCommander, subcommander int64
+	handoffID                                string
+}
+
+func newGoalReviewTakeover(t *testing.T, s *Store, ctx context.Context, receiveReview bool) goalReviewTakeover {
+	t.Helper()
+	goalID := newTestGoal(t, s)
+	goal, err := s.GetGoal(ctx, goalID)
+	if err != nil {
+		t.Fatalf("GetGoal: %v", err)
+	}
+	g := goalReviewTakeover{
+		s:            s,
+		goalID:       goalID,
+		projectID:    goal.ProjectID,
+		oldCommander: registerNamedTestAgentSession(t, s, t.Name()+"-old-commander", os.Getpid()),
+		newCommander: registerNamedTestAgentSession(t, s, t.Name()+"-new-commander", os.Getpid()),
+		subcommander: registerNamedTestAgentSession(t, s, t.Name()+"-subcommander", os.Getpid()),
+		handoffID:    t.Name() + "-handoff",
+	}
+	g.claim(t, ctx, g.oldCommander)
+	if _, err := s.RequestGoalHandoff(ctx, g.handoffID, goalID, g.oldCommander, "delegate"); err != nil {
+		t.Fatalf("RequestGoalHandoff: %v", err)
+	}
+	if _, err := s.ReceiveGoalHandoff(ctx, g.handoffID, goalID, g.subcommander); err != nil {
+		t.Fatalf("ReceiveGoalHandoff: %v", err)
+	}
+	if _, err := s.RequestGoalHandoffReview(ctx, g.handoffID, goalID, g.subcommander, "ready"); err != nil {
+		t.Fatalf("RequestGoalHandoffReview: %v", err)
+	}
+	if receiveReview {
+		if _, err := s.ReceiveGoalHandoffReview(ctx, g.handoffID, goalID, g.oldCommander); err != nil {
+			t.Fatalf("ReceiveGoalHandoffReview: %v", err)
+		}
+	}
+	return g
+}
+
+func (g goalReviewTakeover) claim(t *testing.T, ctx context.Context, commander int64) {
+	t.Helper()
+	if _, err := g.s.DB().ExecContext(ctx, `UPDATE projects SET claimed_by = ? WHERE id = ?`, commander, g.projectID); err != nil {
+		t.Fatalf("claim project for %d: %v", commander, err)
+	}
+}
+
+func (g goalReviewTakeover) takeOver(t *testing.T, ctx context.Context) {
+	t.Helper()
+	g.claim(t, ctx, g.newCommander)
+}
+
+// requestAndApprove asks for the human goal review as the old commander and
+// approves it, as happens before a takeover.
+func (g goalReviewTakeover) requestAndApprove(t *testing.T, ctx context.Context) {
+	t.Helper()
+	review, err := g.s.RequestGoalReview(ctx, g.goalID, g.oldCommander, goalReviewRequestTestReport())
+	if err != nil {
+		t.Fatalf("RequestGoalReview: %v", err)
+	}
+	if _, err := g.s.ApproveGoalReview(ctx, review.ID); err != nil {
+		t.Fatalf("ApproveGoalReview: %v", err)
+	}
+}
+
+func TestFinalizeGoalReviewByCommanderAfterTakeover(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	g := newGoalReviewTakeover(t, s, ctx, true)
+	g.requestAndApprove(t, ctx)
+	g.takeOver(t, ctx)
+
+	goal, err := s.FinalizeGoalReview(ctx, g.goalID, g.newCommander)
+	if err != nil {
+		t.Fatalf("FinalizeGoalReview by new commander: %v", err)
+	}
+	if goal.Status != domain.GoalDone {
+		t.Fatalf("goal status = %q, want done", goal.Status)
+	}
+	handoff, err := s.GetGoalHandoff(ctx, g.handoffID)
+	if err != nil {
+		t.Fatalf("GetGoalHandoff: %v", err)
+	}
+	if handoff.CompletedReportAt == nil || handoff.ReviewReceivedBy != g.oldCommander {
+		t.Fatalf("goal handoff = %+v, want completed with the recorded receiver kept", handoff)
+	}
+}
+
+func TestFinalizeGoalReviewRefusesPreviousCommanderAfterTakeover(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	g := newGoalReviewTakeover(t, s, ctx, true)
+	g.requestAndApprove(t, ctx)
+	g.takeOver(t, ctx)
+
+	if _, err := s.FinalizeGoalReview(ctx, g.goalID, g.oldCommander); !errors.Is(err, ErrGoalReviewHandoffIncomplete) {
+		t.Fatalf("FinalizeGoalReview by previous commander error = %v, want ErrGoalReviewHandoffIncomplete", err)
+	}
+}
+
+func TestFinalizeGoalReviewRefusesUnreceivedReview(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	g := newGoalReviewTakeover(t, s, ctx, true)
+	// An approval and a stored report exist, but the resubmitted review has
+	// not been received by anyone.
+	g.requestAndApprove(t, ctx)
+	if _, err := s.RejectGoalHandoffReview(ctx, g.handoffID, g.goalID, g.oldCommander, "fix it"); err != nil {
+		t.Fatalf("RejectGoalHandoffReview: %v", err)
+	}
+	if _, err := s.ReceiveGoalHandoffReviewRejection(ctx, g.handoffID, g.goalID, g.subcommander); err != nil {
+		t.Fatalf("ReceiveGoalHandoffReviewRejection: %v", err)
+	}
+	if _, err := s.RequestGoalHandoffReview(ctx, g.handoffID, g.goalID, g.subcommander, "fixed"); err != nil {
+		t.Fatalf("RequestGoalHandoffReview again: %v", err)
+	}
+	g.takeOver(t, ctx)
+
+	if _, err := s.FinalizeGoalReview(ctx, g.goalID, g.newCommander); !errors.Is(err, ErrGoalReviewHandoffIncomplete) {
+		t.Fatalf("FinalizeGoalReview without review receipt error = %v, want ErrGoalReviewHandoffIncomplete", err)
+	}
+}
+
+func TestFinalizeGoalReviewRefusesUnapprovedReviewAfterTakeover(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	g := newGoalReviewTakeover(t, s, ctx, true)
+	review, err := s.RequestGoalReview(ctx, g.goalID, g.oldCommander, goalReviewRequestTestReport())
+	if err != nil {
+		t.Fatalf("RequestGoalReview: %v", err)
+	}
+	if err := s.RejectGoalReview(ctx, review.ID, "not yet"); err != nil {
+		t.Fatalf("RejectGoalReview: %v", err)
+	}
+	g.takeOver(t, ctx)
+
+	if _, err := s.FinalizeGoalReview(ctx, g.goalID, g.newCommander); !errors.Is(err, ErrGoalReviewNotApproved) {
+		t.Fatalf("FinalizeGoalReview without approval error = %v, want ErrGoalReviewNotApproved", err)
+	}
+}
+
+func TestRejectGoalHandoffReviewByCommanderAfterTakeover(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	g := newGoalReviewTakeover(t, s, ctx, true)
+	g.takeOver(t, ctx)
+	bystander := registerNamedTestAgentSession(t, s, t.Name()+"-bystander", os.Getpid())
+
+	if _, err := s.RejectGoalHandoffReview(ctx, g.handoffID, g.goalID, bystander, "fix it"); !errors.Is(err, ErrGoalHandoffReviewReviewerMismatch) {
+		t.Fatalf("RejectGoalHandoffReview by unclaimed session error = %v, want ErrGoalHandoffReviewReviewerMismatch", err)
+	}
+	rejected, err := s.RejectGoalHandoffReview(ctx, g.handoffID, g.goalID, g.newCommander, "fix it")
+	if err != nil {
+		t.Fatalf("RejectGoalHandoffReview by new commander: %v", err)
+	}
+	if rejected.ReviewRejectedAt == nil {
+		t.Fatalf("goal handoff = %+v, want rejected", rejected)
+	}
+}
+
+func TestRequestGoalReviewAfterTakeoverNeedsReReceive(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	g := newGoalReviewTakeover(t, s, ctx, true)
+	g.takeOver(t, ctx)
+
+	if _, err := s.RequestGoalReview(ctx, g.goalID, g.newCommander, goalReviewRequestTestReport()); !errors.Is(err, ErrGoalReviewHandoffIncomplete) {
+		t.Fatalf("RequestGoalReview before re-receive error = %v, want ErrGoalReviewHandoffIncomplete", err)
+	}
+	received, err := s.ReceiveGoalHandoffReview(ctx, g.handoffID, g.goalID, g.newCommander)
+	if err != nil {
+		t.Fatalf("ReceiveGoalHandoffReview re-receive: %v", err)
+	}
+	if received.ReviewReceivedBy != g.newCommander {
+		t.Fatalf("review received by = %d, want new commander %d", received.ReviewReceivedBy, g.newCommander)
+	}
+	if _, err := s.RequestGoalReview(ctx, g.goalID, g.newCommander, goalReviewRequestTestReport()); err != nil {
+		t.Fatalf("RequestGoalReview after re-receive: %v", err)
+	}
+}
+
+func TestReceiveGoalHandoffReviewReReceiveRefusals(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("previous commander without claim", func(t *testing.T) {
+		s := newTestStore(t)
+		g := newGoalReviewTakeover(t, s, ctx, true)
+		g.takeOver(t, ctx)
+		if _, err := s.ReceiveGoalHandoffReview(ctx, g.handoffID, g.goalID, g.newCommander); err != nil {
+			t.Fatalf("ReceiveGoalHandoffReview by new commander: %v", err)
+		}
+		if _, err := s.ReceiveGoalHandoffReview(ctx, g.handoffID, g.goalID, g.oldCommander); !errors.Is(err, ErrGoalHandoffReviewState) {
+			t.Fatalf("re-receive by previous commander error = %v, want ErrGoalHandoffReviewState", err)
+		}
+	})
+
+	t.Run("same session twice", func(t *testing.T) {
+		s := newTestStore(t)
+		g := newGoalReviewTakeover(t, s, ctx, true)
+		if _, err := s.ReceiveGoalHandoffReview(ctx, g.handoffID, g.goalID, g.oldCommander); !errors.Is(err, ErrGoalHandoffReviewState) {
+			t.Fatalf("second receive by same session error = %v, want ErrGoalHandoffReviewState", err)
+		}
+	})
+
+	t.Run("completed handoff", func(t *testing.T) {
+		s := newTestStore(t)
+		g := newGoalReviewTakeover(t, s, ctx, true)
+		g.requestAndApprove(t, ctx)
+		if _, err := s.FinalizeGoalReview(ctx, g.goalID, g.oldCommander); err != nil {
+			t.Fatalf("FinalizeGoalReview: %v", err)
+		}
+		g.takeOver(t, ctx)
+		if _, err := s.ReceiveGoalHandoffReview(ctx, g.handoffID, g.goalID, g.newCommander); !errors.Is(err, ErrGoalHandoffReviewState) {
+			t.Fatalf("re-receive of completed handoff error = %v, want ErrGoalHandoffReviewState", err)
+		}
+	})
+
+	t.Run("rejected handoff", func(t *testing.T) {
+		s := newTestStore(t)
+		g := newGoalReviewTakeover(t, s, ctx, true)
+		if _, err := s.RejectGoalHandoffReview(ctx, g.handoffID, g.goalID, g.oldCommander, "fix it"); err != nil {
+			t.Fatalf("RejectGoalHandoffReview: %v", err)
+		}
+		g.takeOver(t, ctx)
+		if _, err := s.ReceiveGoalHandoffReview(ctx, g.handoffID, g.goalID, g.newCommander); !errors.Is(err, ErrGoalHandoffReviewState) {
+			t.Fatalf("re-receive of rejected handoff error = %v, want ErrGoalHandoffReviewState", err)
+		}
+	})
 }
 
 func TestRecoverGoalHandoffTerminalizesStaleReceiverAndAllowsReplacement(t *testing.T) {

@@ -262,6 +262,7 @@ that subcommander is started:
    after human approval and merge, only the commander may call `atct_goal_review_complete` with the `goal_id` provided in this request.
    `atct_goal_handoff_complete` is reserved for legacy/out-of-order recovery,
    not the normal goal-review path.
+   After a takeover, the current commander can run `atct_goal_review_complete` and `atct_goal_handoff_review_reject` as they are, but must re-receive with `atct_goal_handoff_review_receive` before `atct_goal_review_request`; `atct_handoff_recover` is not needed, and the previous commander has lost the claim and can do none of them.
 
    The daemon checks that the goal branch contains main only at review request
    time. After human approval and before merging, run
