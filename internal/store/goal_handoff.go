@@ -607,7 +607,9 @@ func (s *Store) RequestGoalHandoffReview(ctx context.Context, handoffID string, 
 
 // ReceiveGoalHandoffReview records the reviewer's receipt. The original goal
 // handoff requester remains allowed, while a new current claimant of the goal's
-// project may receive the review after a claim turnover.
+// project may receive the review after a claim turnover. A review already
+// received by another session is re-pointed to the current claimant, so a
+// commander that took over can request the human review itself.
 func (s *Store) ReceiveGoalHandoffReview(ctx context.Context, handoffID string, goalID, receivedBy int64) (GoalHandoff, error) {
 	if err := s.requireUndiscardedSession(ctx, receivedBy); err != nil {
 		return GoalHandoff{}, err
@@ -619,10 +621,16 @@ func (s *Store) ReceiveGoalHandoffReview(ctx context.Context, handoffID string, 
 	if handoff.GoalID != goalID {
 		return GoalHandoff{}, fmt.Errorf("%w: %q belongs to goal %d, not %d", ErrGoalHandoffGoalMismatch, handoffID, handoff.GoalID, goalID)
 	}
-	if handoff.ReviewRequestedAt == nil || handoff.CompletedReportAt != nil || handoff.ReviewReceivedAt != nil || handoff.ReviewRejectedAt != nil || handoff.ReviewRejectionReceivedAt != nil {
+	reReceive := handoff.ReviewReceivedAt != nil && handoff.ReviewReceivedBy != receivedBy &&
+		handoff.CompletedReportAt == nil && handoff.ReviewRejectedAt == nil && handoff.RecoveredAt == nil
+	if reReceive {
+		if err := s.requireProjectClaimForGoal(ctx, goalID, receivedBy); err != nil {
+			return GoalHandoff{}, fmt.Errorf("%w: review already received by %d: %v", ErrGoalHandoffReviewState, handoff.ReviewReceivedBy, err)
+		}
+	} else if handoff.ReviewRequestedAt == nil || handoff.CompletedReportAt != nil || handoff.ReviewReceivedAt != nil || handoff.ReviewRejectedAt != nil || handoff.ReviewRejectionReceivedAt != nil {
 		return GoalHandoff{}, ErrGoalHandoffReviewState
 	}
-	if receivedBy == 0 || handoff.RequestedBy != receivedBy {
+	if !reReceive && (receivedBy == 0 || handoff.RequestedBy != receivedBy) {
 		if err := s.requireProjectClaimForGoal(ctx, goalID, receivedBy); err != nil {
 			return GoalHandoff{}, fmt.Errorf("%w: goal handoff reviewer %d is not requester %d or current project claimant: %v", ErrGoalHandoffReviewReviewerMismatch, receivedBy, handoff.RequestedBy, err)
 		}
@@ -634,12 +642,23 @@ func (s *Store) ReceiveGoalHandoffReview(ctx context.Context, handoffID string, 
 		return GoalHandoff{}, fmt.Errorf("begin goal handoff review receive tx: %w", err)
 	}
 	defer tx.Rollback()
-	result, err := sqlcgen.New(tx).ReceiveGoalHandoffReview(ctx, sqlcgen.ReceiveGoalHandoffReviewParams{
-		ReviewReceivedBy: sql.NullInt64{Int64: receivedBy, Valid: true},
-		ReviewReceivedAt: sql.NullString{String: now, Valid: true},
-		ID:               handoffID,
-		GoalID:           goalID,
-	})
+	var result sql.Result
+	if reReceive {
+		result, err = sqlcgen.New(tx).ReReceiveGoalHandoffReview(ctx, sqlcgen.ReReceiveGoalHandoffReviewParams{
+			NewReviewReceivedBy: sql.NullInt64{Int64: receivedBy, Valid: true},
+			ReviewReceivedAt:    sql.NullString{String: now, Valid: true},
+			ID:                  handoffID,
+			GoalID:              goalID,
+			OldReviewReceivedBy: sql.NullInt64{Int64: handoff.ReviewReceivedBy, Valid: true},
+		})
+	} else {
+		result, err = sqlcgen.New(tx).ReceiveGoalHandoffReview(ctx, sqlcgen.ReceiveGoalHandoffReviewParams{
+			ReviewReceivedBy: sql.NullInt64{Int64: receivedBy, Valid: true},
+			ReviewReceivedAt: sql.NullString{String: now, Valid: true},
+			ID:               handoffID,
+			GoalID:           goalID,
+		})
+	}
 	if err != nil {
 		return GoalHandoff{}, fmt.Errorf("receive goal handoff review: %w", err)
 	}
@@ -765,8 +784,9 @@ func (s *Store) RejectGoalHandoffReview(ctx context.Context, handoffID string, g
 	if handoff.ReviewReceivedAt == nil || handoff.CompletedReportAt != nil {
 		return GoalHandoff{}, ErrGoalHandoffReviewState
 	}
-	if handoff.ReviewReceivedBy != reviewerID {
-		return GoalHandoff{}, fmt.Errorf("%w: goal handoff reviewer %d is not recorded reviewer %d", ErrGoalHandoffReviewReviewerMismatch, reviewerID, handoff.ReviewReceivedBy)
+	// The current commander may reject a review its predecessor received.
+	if handoff.ReviewReceivedBy != reviewerID && s.requireProjectClaimForGoal(ctx, goalID, reviewerID) != nil {
+		return GoalHandoff{}, fmt.Errorf("%w: goal handoff reviewer %d is not recorded reviewer %d or current project claimant", ErrGoalHandoffReviewReviewerMismatch, reviewerID, handoff.ReviewReceivedBy)
 	}
 
 	nowTime := time.Now().UTC()

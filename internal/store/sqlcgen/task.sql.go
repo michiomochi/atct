@@ -1132,6 +1132,35 @@ func (q *Queries) MaxTaskSortOrder(ctx context.Context, goalID int64) (int64, er
 	return sort_order, err
 }
 
+const reReceiveGoalHandoffReview = `-- name: ReReceiveGoalHandoffReview :execresult
+UPDATE goal_handoffs
+SET review_received_by = ?1, review_received_at = ?2
+WHERE id = ?3 AND goal_id = ?4
+  AND review_received_by = ?5
+  AND review_received_at IS NOT NULL
+  AND review_rejected_at IS NULL
+  AND completed_report_at IS NULL
+  AND recovered_at IS NULL
+`
+
+type ReReceiveGoalHandoffReviewParams struct {
+	NewReviewReceivedBy sql.NullInt64
+	ReviewReceivedAt    sql.NullString
+	ID                  string
+	GoalID              int64
+	OldReviewReceivedBy sql.NullInt64
+}
+
+func (q *Queries) ReReceiveGoalHandoffReview(ctx context.Context, arg ReReceiveGoalHandoffReviewParams) (sql.Result, error) {
+	return q.db.ExecContext(ctx, reReceiveGoalHandoffReview,
+		arg.NewReviewReceivedBy,
+		arg.ReviewReceivedAt,
+		arg.ID,
+		arg.GoalID,
+		arg.OldReviewReceivedBy,
+	)
+}
+
 const receiveGoalHandoff = `-- name: ReceiveGoalHandoff :execresult
 UPDATE goal_handoffs
 SET received_by = ?1, received_at = ?2
