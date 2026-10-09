@@ -267,8 +267,9 @@ that subcommander is started:
    run `git merge main --no-edit` in the goal worktree, re-run the verification
    set, then merge. Reject the handoff only when that merge conflicts or the
    verification fails; bouncing a goal merely because main moved keeps the round
-   trips this check exists to remove. This is the only place a conflict with a
-   parallel goal is caught; the branch is not merged anywhere before approval.
+   trips this check exists to remove. This check catches conflicts with goals
+   that landed after this goal's review request; do not trial-merge the branch
+   before approval.
 
 5. Keep one subcommander per goal. A subcommander may wake executors for its
    goal, but must not inspect or manage other goals, create another
