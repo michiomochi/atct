@@ -8,7 +8,7 @@ description: Use when atct_role reports commander for project-level triage, dele
 `atct:atct` is the SSOT for shared ATCT rules. First call `atct_role` with
 `expected_role` set to `commander`; on a mismatch, stop.
 
-- Triage project work, prepare each goal's worktree and space, and delegate a
+- Triage project work, prepare each goal's worktree and workspace, and delegate a
   goal before waking its subcommander.
 - Review plan and goal handoffs; accept with the matching completion tool or
   reject with the matching rejection tool.
@@ -60,8 +60,8 @@ not proceed to Step 1.
 - `executor`: Work in the worktree for the handed-off goal; it does not create
   one itself.
 
-The commander prepares the goal's space at the same time as its worktree, and
-closes that space when the goal is approved; see `## One space per goal`.
+The commander prepares the goal's workspace at the same time as its worktree, and
+closes that workspace when the goal is approved; see `## One workspace per goal`.
 
 ### When the primary checkout is right
 
@@ -125,37 +125,37 @@ A worktree does not make every resource independent:
 - `GOCACHE` is shared by default across all worktrees. Sharing is harmless
   because the cache is content-addressed, but point it outside the repository:
   if it points inside, generated files can fill `git status`.
-## One space per goal
+## One workspace per goal
 
-A space belongs to one goal from the moment it is created until it is closed.
-When the goal is approved, close the space; do not hand it a second goal.
+A workspace belongs to one goal from the moment it is created until it is closed.
+When the goal is approved, close the workspace; do not hand it a second goal.
 
-- **One space, one goal.** The space is created for a goal and works that goal
-  only. A second goal gets a new space, even when it touches the same files.
+- **One workspace, one goal.** The workspace is created for a goal and works that goal
+  only. A second goal gets a new workspace, even when it touches the same files.
 - **Approval closes it.** The trigger is the human approving the review requested
   by `atct_goal_review_request`, followed by the commander calling
   `atct_goal_review_complete`, not the completion report itself. A rejected
-  review returns the same goal to the same space, so the space stays open until
+  review returns the same goal to the same workspace, so the workspace stays open until
   approval.
-- **A closed space is not reopened.** Work that arrives afterwards belongs to a
-  different goal, and a different goal gets a new space.
+- **A closed workspace is not reopened.** Work that arrives afterwards belongs to a
+  different goal, and a different goal gets a new workspace.
 - The delegator closes what it woke. The commander closes the subcommander's
-  space when the goal is approved; the subcommander closes its executors' panes
+  workspace when the goal is approved; the subcommander ends its executors' sessions
   when their tasks are done.
 
 ### The only exception
 
-The `commander`'s own space is the exception, and there is no other. It holds
+The `commander`'s own workspace is the exception, and there is no other. It holds
 the project rather than one goal, so it outlives every goal and is not closed
 between them.
 
 Three cases look like exceptions and are not:
 
-- A rejected completion is the same goal, not a second one, so the space stays
+- A rejected completion is the same goal, not a second one, so the workspace stays
   open and the work continues there.
 - A goal derived from another (`derived_from`) is a new goal, and a new goal
-  gets a new space.
-- Two goals that touch the same file still get one space each. Serializing them
+  gets a new workspace.
+- Two goals that touch the same file still get one workspace each. Serializing them
   is the commander's decision about when to delegate, and the conflict, if any,
   is resolved at the merge.
 
@@ -165,14 +165,14 @@ Reuse was how one machine serialized goals that touched the same file, back when
 every agent shared the primary checkout. `## One worktree per goal` removed that
 reason: each goal already edits its own tree. What reuse still costs:
 
-- The space's name stops naming its goal. On 2026-08-26 one space held five
+- The workspace's name stops naming its goal. On 2026-08-26 one workspace held five
   goals, so nothing led from the name to the contents.
 - `atct_goal_sessions` resolves a goal to the sessions that worked it through
   `goal_handoffs.received_by`. One session key spread over five goals resolves
-  to no single space.
+  to no single workspace.
 - Context accumulates across goals that have nothing to do with each other.
-- The trigger to close disappears. A space handed the next goal at approval is
-  never closed at all; on 2026-08-26 fifteen spaces were closed by hand.
+- The trigger to close disappears. A workspace handed the next goal at approval is
+  never closed at all; on 2026-08-26 fifteen workspaces were closed by hand.
 ## Delegate a goal
 
 When handing a goal to a subcommander, keep the contract independent of how
@@ -300,7 +300,7 @@ session row.
 
 ## Closed goals to reclaim
 
-A done or dropped goal leaves a worktree, a branch and a space behind. Nothing
+A done or dropped goal leaves a worktree, a branch and a workspace behind. Nothing
 reclaims them for you, and only the commander can: a subcommander cannot remove
 the worktree it is standing in. Reclaim at the same checkpoints, plus right
 after `atct_goal_withdraw`:
@@ -315,16 +315,16 @@ unconfirmed ones alone. `script/worktree-reclaim.sh` does not check status, so
 this confirmation is yours. Then, from the primary checkout:
 
 1. `script/worktree-reclaim.sh <id>`
-2. Close the goal's space (and its executor panes).
+2. Close the goal's workspace (and end its executor sessions).
 
 The script snapshot-commits uncommitted or merge-in-progress work onto the
 goal's own branch, never uses stash or `--force`, and keeps a branch that is not
 merged into main. It exits 1 with nothing removed when the worktree HEAD is not
 `wt/goal-<id>` or a rebase, cherry-pick, revert or bisect is in progress; open
 the worktree and clear that by hand, then rerun. Details and the reason stash
-is off the table: "worktree・branch・space の回収" in `doc/execution-flow.md`.
+is off the table: "worktree・branch・workspace の回収" in `doc/execution-flow.md`.
 
-**Out of order:** Closing the space before running the script leaves the
+**Out of order:** Closing the workspace before running the script leaves the
 worktree and branch behind with no one assigned to them; running the script
 without confirming the status can remove the worktree of a goal that is still
 being worked.

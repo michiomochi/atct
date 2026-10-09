@@ -21,15 +21,15 @@ and the exact `session_key` from SessionStart; optional `handoff_id` and
   worktree and the verification set; the daemon refuses the request when the
   goal branch does not contain main.
 
-## Executor workspace bootstrap
+## Executor session bootstrap
 
-Before applying the reuse rule in `## Delegate a task`, classify the goal space:
+Before applying the reuse rule in `## Delegate a task`, classify the goal workspace:
 
-- If the space has no executor pane, create the first executor pane in that same space. This is the required bootstrap path, not an exception to the additional-pane rule.
+- If the workspace has no executor session, start the first executor session in that same workspace. This is the required bootstrap path, not an exception to the additional-executor-session rule.
 - If an idle executor exists, reuse it for the next unassigned task.
-- Only after an executor exists may an additional pane be created, and only for parallel work, worktree isolation, context exhaustion, or a topic change.
+- Only after an executor exists may an additional executor session be created, and only for parallel work, worktree isolation, context exhaustion, or a topic change.
 
-After the pane is prepared, request the task handoff before starting the monitored worker. The worker must receive the recorded handoff before it starts implementation.
+After the executor session is prepared, request the task handoff before starting the monitored worker. The worker must receive the recorded handoff before it starts implementation.
 
 Do not inspect other goals, publish, create another subcommander, or claim the
 project.
@@ -51,7 +51,7 @@ that worker is started:
    The delegator must call `atct_task_handoff_request` with a unique handoff ID
    and the task ID. Wait for the request to succeed before waking the
    worker; this creates the record needed to receive and complete the handoff.
-3. For a monitored Codex worker, reuse an idle executor workspace if one is
+3. For a monitored Codex worker, reuse an idle executor session if one is
    available. Create a new one only for parallel work, worktree isolation,
    context exhaustion, or a topic change. After the request succeeds, start the
    worker process through the monitor wrapper:
@@ -129,10 +129,9 @@ that worker is started:
    executor closed a subcommander's goal handoff without knowing it was forbidden.
 
    A rejection is recorded with `atct_task_handoff_review_reject` and reaches the
-   worker through its watch wakeup, not by pasting text with `herdr agent prompt`.
+   worker through its watch wakeup, not by pasting text into the worker's terminal.
    A request must never tell a worker to proceed past a `no live Monitor` refusal.
-   After a `herdr agent prompt` that wakes a worker, confirm with `herdr agent get`
-   that agent_status is working; otherwise `herdr agent send-keys <executor> enter`.
+   After waking a worker, confirm that it is working; if it is not, wake it again.
 
    An executor that reaches an irreversible or destructive operation returns it to
    the delegator. The executor does not perform the operation and does not carry
@@ -160,14 +159,14 @@ that worker is started:
 6. Keep one handoff per task and one worker for its correction and review
    cycle. Return a rejection to the same worker; it remains the same task and
    handoff. When an executor finishes and unassigned tasks remain, reuse an idle executor for the next task.
-   A different task alone is not a reason to create a new executor. Start a new executor pane only for parallel work, worktree isolation, context exhaustion, or a topic change. If no unassigned tasks remain, close the idle executor.
+   A different task alone is not a reason to create a new executor. Start a new executor session only for parallel work, worktree isolation, context exhaustion, or a topic change. If no unassigned tasks remain, close the idle executor.
    What breaks when you batch is the record, not the context. A handoff points
    to one task. If three tasks are sent in one message, only one handoff is
    created; the other two have no owner, receipt, or completion, so the
    dashboard says nobody started them. In a 2026-08-24 measurement, sending
    three tasks to executor-33 in one message broke the records for two of the
    three. Task count and compression count are not correlated: in that same
-   measurement, the three-task pane compressed twice while the one-task pane
+   measurement, the three-task session compressed twice while the one-task session
    compressed seven times.
 
    For a follow-up that starts a new task on the same worker, recreate the
@@ -177,7 +176,7 @@ that worker is started:
 
 The worker must perform both instructions itself before doing any work. The
 delegator must not run either instruction on the worker's behalf or treat a
-worker name, pane title, or launch context as proof of the role. If the role
+worker name, session title, or launch context as proof of the role. If the role
 check reports a mismatch, the worker returns the task without touching it.
 
 **Out of order:** Waking the worker before the request succeeds leaves it with

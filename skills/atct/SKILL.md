@@ -225,7 +225,7 @@ never reported through a goal-handoff review request.
 has received the goal-handoff review.
 
 A subcommander that stops working sends nothing at all, and the old habit caught
-that only because a delegator noticed a quiet pane. The record catches it
+that only because a delegator noticed a quiet terminal. The record catches it
 instead: a goal with tasks and no commits, or a closed handoff with nothing
 committed, each raises a Wakeup on the delegator's watch. On 2026-08-27 goal
 172 stalled with three tasks still `todo` and eight files uncommitted, and goal

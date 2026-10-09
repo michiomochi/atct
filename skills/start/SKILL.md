@@ -13,7 +13,7 @@ human reaches for when they want progress rather than a plan.
 Before entering the goal loop, call `atct_session_identify`. Pass the exact
 `session_key` and `monitor_token` printed by SessionStart; do not substitute an
 agent name or generate a different token. Only when no SessionStart key was
-emitted, use this pane's full `<project>-<unit>-<role>` agent name. Do not use
+emitted, use this session's full `<project>-<unit>-<role>` agent name. Do not use
 only a role such as `commander`: it can collide across projects and merge their
 sessions into one row.
 

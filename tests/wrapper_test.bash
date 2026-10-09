@@ -918,7 +918,7 @@ test_orchestration_skill_has_no_blanket_atct_ban() {
   # prohibition list, and two call orderings. dotfiles a009868 removed all of
   # them on purpose: doc/specs/2026-09-13-orchestration-skill-boundary.md makes
   # `atct` the only place that states roles, handoffs, and tool order, and
-  # orchestration only places panes. Asserting the list here would pull the
+  # orchestration only starts the workers. Asserting the list here would pull the
   # duplicate back, which is what that spec set out to remove.
   #
   # The blanket ban must still be gone: it is the regression that made every
@@ -986,45 +986,45 @@ test_recovery_section_names_existing_tools() {
   done
 }
 
-test_one_space_per_goal_section_exists() {
+test_one_workspace_per_goal_section_exists() {
   # The shared skill only names where the section went; the rule itself, and so
   # this assertion, belongs to commander.
-  assert_file_contains '## One space per goal' "$REPO_ROOT/skills/commander/SKILL.md"
+  assert_file_contains '## One workspace per goal' "$REPO_ROOT/skills/commander/SKILL.md"
 }
 
-test_one_space_per_goal_binds_a_space_to_one_goal() {
-  assert_file_contains 'A space belongs to one goal' "$REPO_ROOT/skills/commander/SKILL.md"
+test_one_workspace_per_goal_binds_a_workspace_to_one_goal() {
+  assert_file_contains 'A workspace belongs to one goal' "$REPO_ROOT/skills/commander/SKILL.md"
 }
 
-test_one_space_per_goal_closes_on_approval() {
+test_one_workspace_per_goal_closes_on_approval() {
   assert_file_contains 'approving the review requested' "$REPO_ROOT/skills/commander/SKILL.md"
   assert_file_contains 'atct_goal_review_complete' "$REPO_ROOT/skills/commander/SKILL.md"
 }
 
-test_one_space_per_goal_forbids_reuse() {
+test_one_workspace_per_goal_forbids_reuse() {
   local commander_skill="$REPO_ROOT/skills/commander/SKILL.md"
   assert_file_contains 'do not hand it a second goal' "$commander_skill"
-  assert_file_contains 'A closed space is not reopened' "$commander_skill"
+  assert_file_contains 'A closed workspace is not reopened' "$commander_skill"
 }
 
-test_one_space_per_goal_names_the_only_exception() {
+test_one_workspace_per_goal_names_the_only_exception() {
   local commander_skill="$REPO_ROOT/skills/commander/SKILL.md"
-  assert_file_contains "The \`commander\`'s own space is the exception, and there is no other." "$commander_skill"
+  assert_file_contains "The \`commander\`'s own workspace is the exception, and there is no other." "$commander_skill"
   assert_file_contains 'A rejected completion is the same goal' "$commander_skill"
 }
 
-test_one_space_per_goal_sits_between_worktree_and_commit() {
+test_one_workspace_per_goal_sits_between_worktree_and_commit() {
   local commander_skill="$REPO_ROOT/skills/commander/SKILL.md"
   local worktree
-  local space
+  local workspace
   local delegate
   # Both rules moved to commander in 6979a33; `## Commit safely` stayed in the
   # shared skill, so the trailing bound is the section that now follows them.
   worktree="$(grep -n '^## One worktree per goal$' "$commander_skill" | cut -d: -f1)"
-  space="$(grep -n '^## One space per goal$' "$commander_skill" | cut -d: -f1)"
+  workspace="$(grep -n '^## One workspace per goal$' "$commander_skill" | cut -d: -f1)"
   delegate="$(grep -n '^## Delegate a goal$' "$commander_skill" | cut -d: -f1)"
-  (( worktree < space && space < delegate )) ||
-    fail 'one space per goal must follow the worktree rule and precede goal delegation'
+  (( worktree < workspace && workspace < delegate )) ||
+    fail 'one workspace per goal must follow the worktree rule and precede goal delegation'
 }
 
 test_delegated_claim_contract_is_explicit() {
@@ -1352,11 +1352,11 @@ test_executor_reuse_contract_is_explicit() {
   section="$(delegate_task_section)"
 
   for needle in \
-    'reuse an idle executor workspace if one is' \
+    'reuse an idle executor session if one is' \
     'Create a new one only for parallel work, worktree isolation,' \
     'When an executor finishes and unassigned tasks remain, reuse an idle executor for the next task.' \
     'A different task alone is not a reason to create a new executor.' \
-    'Start a new executor pane only for parallel work, worktree isolation, context exhaustion, or a topic change.' \
+    'Start a new executor session only for parallel work, worktree isolation, context exhaustion, or a topic change.' \
     'If no unassigned tasks remain, close the idle executor.'; do
     grep -Fq -- "$needle" <<<"$section" ||
       fail "task delegation section omits executor reuse rule <$needle>"
@@ -1366,15 +1366,15 @@ test_executor_reuse_contract_is_explicit() {
   assert_file_not_contains 'Start a new worker for a different task.' "$REPO_ROOT/skills/atct/SKILL.md"
 }
 
-test_executor_reuse_contract_preserves_idle_worker_and_reason_gated_pane() {
+test_executor_reuse_contract_preserves_idle_worker_and_reason_gated_session() {
   local section
   local idle_rule
   local reuse_rule
-  local pane_rule
+  local session_rule
   local reason
 
   section="$(delegate_task_section)"
-  idle_rule="$(grep -F -- 'reuse an idle executor workspace if one is' <<<"$section" || true)"
+  idle_rule="$(grep -F -- 'reuse an idle executor session if one is' <<<"$section" || true)"
   [[ -n "$idle_rule" ]] || fail 'task delegation section omits the idle executor choice'
 
   reuse_rule="$(grep -F -- 'When an executor finishes and unassigned tasks remain, reuse an idle executor for the next task.' <<<"$section" || true)"
@@ -1382,14 +1382,14 @@ test_executor_reuse_contract_preserves_idle_worker_and_reason_gated_pane() {
   grep -Fq -- 'A different task alone is not a reason to create a new executor.' <<<"$section" ||
     fail 'task delegation section permits a new executor for a different task alone'
 
-  pane_rule="$(grep -F -- 'Start a new executor pane only for ' <<<"$section" | sed -E 's/^.*Start a new executor pane only for /Start a new executor pane only for /; s/[[:space:]]+If no unassigned tasks remain,.*$//' || true)"
+  session_rule="$(grep -F -- 'Start a new executor session only for ' <<<"$section" | sed -E 's/^.*Start a new executor session only for /Start a new executor session only for /; s/[[:space:]]+If no unassigned tasks remain,.*$//' || true)"
   assert_eq \
-    'Start a new executor pane only for parallel work, worktree isolation, context exhaustion, or a topic change.' \
-    "$pane_rule" \
-    'new executor pane rule must contain only the four permitted reasons'
+    'Start a new executor session only for parallel work, worktree isolation, context exhaustion, or a topic change.' \
+    "$session_rule" \
+    'new executor session rule must contain only the four permitted reasons'
   for reason in 'parallel work' 'worktree isolation' 'context exhaustion' 'a topic change'; do
-    grep -Fq -- "$reason" <<<"$pane_rule" ||
-      fail "new executor pane rule omits permitted reason <$reason>"
+    grep -Fq -- "$reason" <<<"$session_rule" ||
+      fail "new executor session rule omits permitted reason <$reason>"
   done
 }
 
@@ -1589,7 +1589,7 @@ test_worktree_rule_defers_to_superpowers() {
   local commander_skill="$REPO_ROOT/skills/commander/SKILL.md"
   local worktree_section
 
-  worktree_section="$(sed -n '/^## One worktree per goal$/,/^## One space per goal$/p' "$commander_skill")"
+  worktree_section="$(sed -n '/^## One worktree per goal$/,/^## One workspace per goal$/p' "$commander_skill")"
   grep -Fq -- 'superpowers:using-git-worktrees' <<<"$worktree_section" ||
     fail 'worktree rule must refer to superpowers:using-git-worktrees'
   if grep -Fq -- 'git worktree add' <<<"$worktree_section"; then
@@ -1604,7 +1604,7 @@ test_worktree_rule_names_who_creates_it() {
   local commander_skill="$REPO_ROOT/skills/commander/SKILL.md"
   local worktree_section
 
-  worktree_section="$(sed -n '/^## One worktree per goal$/,/^## One space per goal$/p' "$commander_skill")"
+  worktree_section="$(sed -n '/^## One worktree per goal$/,/^## One workspace per goal$/p' "$commander_skill")"
   for role in commander subcommander executor; do
     grep -Fq -- "$role" <<<"$worktree_section" ||
       fail "worktree rule must name $role"
@@ -1617,7 +1617,7 @@ test_worktree_rule_allows_the_primary_checkout() {
   local commander_skill="$REPO_ROOT/skills/commander/SKILL.md"
   local worktree_section
 
-  worktree_section="$(sed -n '/^## One worktree per goal$/,/^## One space per goal$/p' "$commander_skill")"
+  worktree_section="$(sed -n '/^## One worktree per goal$/,/^## One workspace per goal$/p' "$commander_skill")"
   grep -Fq -- '### When the primary checkout is right' <<<"$worktree_section" ||
     fail 'worktree rule must name when the primary checkout is right'
   grep -Eiq -- 'commander.*review' <<<"$worktree_section" ||
@@ -1630,7 +1630,7 @@ test_worktree_rule_chooses_the_setup_script_over_a_native_tool() {
   local commander_skill="$REPO_ROOT/skills/commander/SKILL.md"
   local worktree_section
 
-  worktree_section="$(sed -n '/^## One worktree per goal$/,/^## One space per goal$/p' "$commander_skill")"
+  worktree_section="$(sed -n '/^## One worktree per goal$/,/^## One workspace per goal$/p' "$commander_skill")"
   for term in script/worktree-setup.sh EnterWorktree web/node_modules web/dist; do
     grep -Fq -- "$term" <<<"$worktree_section" ||
       fail "worktree rule must mention $term"
@@ -1641,7 +1641,7 @@ test_worktree_rule_lists_what_is_not_separated() {
   local commander_skill="$REPO_ROOT/skills/commander/SKILL.md"
   local worktree_section
 
-  worktree_section="$(sed -n '/^## One worktree per goal$/,/^## One space per goal$/p' "$commander_skill")"
+  worktree_section="$(sed -n '/^## One worktree per goal$/,/^## One workspace per goal$/p' "$commander_skill")"
   grep -Fq -- '### What a worktree does not separate' <<<"$worktree_section" ||
     fail 'worktree rule must name what a worktree does not separate'
   grep -Fq -- '~/.atct/atct.db' <<<"$worktree_section" ||
@@ -1660,7 +1660,7 @@ test_worktree_paths_match_the_setup_script() {
   local documented_worktree
   local documented_branch
 
-  worktree_section="$(sed -n '/^## One worktree per goal$/,/^## One space per goal$/p' "$commander_skill")"
+  worktree_section="$(sed -n '/^## One worktree per goal$/,/^## One workspace per goal$/p' "$commander_skill")"
   setup_worktree="$(sed -nE 's/^worktree="\$repo\/(.*)"/\1/p' "$setup_script")"
   setup_branch="$(sed -nE 's/^branch="(.*)"/\1/p' "$setup_script")"
   documented_worktree="$(sed 's/\${goal_id}/<goal-id>/g' <<<"$setup_worktree")"
@@ -1863,7 +1863,7 @@ test_task_handoff_recreation_uses_new_id
 test_task_handoff_recreation_keeps_worker_identity
 test_task_handoff_uses_canonical_review_order
 test_executor_reuse_contract_is_explicit
-test_executor_reuse_contract_preserves_idle_worker_and_reason_gated_pane
+test_executor_reuse_contract_preserves_idle_worker_and_reason_gated_session
 test_goal_handoff_cause_is_preserved
 test_goal_completion_is_commander_owned
 test_task_batch_record_context_reason_is_preserved
@@ -1914,12 +1914,12 @@ test_recovery_section_omits_task_release
 test_recovery_section_omits_task_update
 test_recovery_section_omits_goal_release
 test_recovery_section_names_existing_tools
-test_one_space_per_goal_section_exists
-test_one_space_per_goal_binds_a_space_to_one_goal
-test_one_space_per_goal_closes_on_approval
-test_one_space_per_goal_forbids_reuse
-test_one_space_per_goal_names_the_only_exception
-test_one_space_per_goal_sits_between_worktree_and_commit
+test_one_workspace_per_goal_section_exists
+test_one_workspace_per_goal_binds_a_workspace_to_one_goal
+test_one_workspace_per_goal_closes_on_approval
+test_one_workspace_per_goal_forbids_reuse
+test_one_workspace_per_goal_names_the_only_exception
+test_one_workspace_per_goal_sits_between_worktree_and_commit
 test_stop_hooks_share_server_check
 test_claude_hooks_json_keeps_session_start_and_pre_tool_use_sections
 test_stop_hook_file_is_executable_but_other_hooks_remain
