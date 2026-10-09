@@ -74,13 +74,17 @@ test_usage_and_preconditions() {
   assert_eq 2 "$(run_reclaim "$repo" "$out" 0)" 'zero id status'
   assert_file_contains 'usage:' "$out"
 
-  add_worktree "$repo" 5
-  # Run the primary's script with cwd inside the worktree; it locates the repo from its own path,
-  # so copy it into the worktree to exercise the git_dir != git_common_dir branch.
   local status=0
-  mkdir -p "$repo/.worktrees/5/script"
-  cp -- "$RECLAIM_SCRIPT" "$repo/.worktrees/5/script/worktree-reclaim.sh"
-  (cd -- "$repo/.worktrees/5" && bash script/worktree-reclaim.sh 7) >"$out" 2>&1 || status=$?
+  local outside="$TEMP_ROOT/not-a-repo"
+  mkdir -p "$outside"
+  (cd -- "$outside" && bash "$RECLAIM_SCRIPT" 7) >"$out" 2>&1 || status=$?
+  assert_eq 2 "$status" 'outside a git repo status'
+  assert_file_contains 'git リポジトリの中で実行しろ' "$out"
+
+  add_worktree "$repo" 5
+  # The script locates the repo from cwd, so cwd inside the worktree hits the git_dir != git_common_dir branch.
+  status=0
+  (cd -- "$repo/.worktrees/5" && bash "$RECLAIM_SCRIPT" 7) >"$out" 2>&1 || status=$?
   assert_eq 2 "$status" 'inside worktree status'
   [[ -d "$repo/.worktrees/5" ]] || fail 'inside-worktree run removed the worktree'
 
@@ -220,6 +224,21 @@ test_only_ignored_files_dirty() {
     'primary web/node_modules was damaged'
 }
 
+# atct worktree-reclaim feeds the script to bash on stdin, where BASH_SOURCE[0] is empty.
+test_script_on_stdin_reclaims() {
+  local repo="$TEMP_ROOT/stdin"
+  local out="$TEMP_ROOT/stdin.out"
+  local status=0
+
+  init_repo "$repo"
+  add_worktree "$repo" 19
+  (cd -- "$repo" && bash -s -- 19 <"$RECLAIM_SCRIPT") >"$out" 2>&1 || status=$?
+  assert_eq 0 "$status" 'stdin status'
+  [[ ! -e "$repo/.worktrees/19" ]] || fail 'worktree still exists'
+  branch_exists "$repo" wt/goal-19 && fail 'merged branch was not deleted'
+  assert_file_contains 'deleted branch wt/goal-19' "$out"
+}
+
 test_nothing_to_reclaim() {
   local repo="$TEMP_ROOT/nothing"
   local out="$TEMP_ROOT/nothing.out"
@@ -241,4 +260,5 @@ test_rebase_in_progress_aborts
 test_detached_head_aborts
 test_only_ignored_files_dirty
 test_nothing_to_reclaim
-printf 'PASS: worktree reclaim (9 tests)\n'
+test_script_on_stdin_reclaims
+printf 'PASS: worktree reclaim (10 tests)\n'

@@ -5,10 +5,10 @@ description: Use when working on a goal that a human is tracking - declaring the
 
 # ATCT
 
-ATCT records work and routes decisions. Follow the `next_step` in every ATCT
-response; it is the current operation derived from the same state machine.
-Read `doc/execution-flow.md` only when `next_step` does not answer the
-question. The complete transition table is there.
+ATCT records work and routes decisions.
+Before any ATCT work, run `atct execution-flow` and follow its procedure.
+After you have read it, follow the `next_step` in every ATCT response; it is
+the current operation derived from the same state machine.
 
 ## Roles
 

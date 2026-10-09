@@ -1176,7 +1176,7 @@ test_role_entry_receives_with_credentials_before_role_check() {
 }
 
 test_atct_skill_requires_execution_flow() {
-  assert_file_contains 'Read `doc/execution-flow.md` only when `next_step` does not answer the' "$REPO_ROOT/skills/atct/SKILL.md"
+  assert_file_contains 'Before any ATCT work, run `atct execution-flow` and follow its procedure.' "$REPO_ROOT/skills/atct/SKILL.md"
 }
 
 # The tool takes cwd, but nothing fills it unless a skill says to. An optional
@@ -1197,7 +1197,7 @@ test_start_explains_mcp_reconnect_gap() {
 
   assert_file_contains 'new version has just' "$start_skill"
   assert_file_contains 'MCP has not reconnected' "$start_skill"
-  assert_file_contains 'recovery section in `skills/atct/SKILL.md`' "$start_skill"
+  assert_file_contains 'recovery section of the `atct:atct` skill' "$start_skill"
 }
 
 test_start_monitor_is_not_first_step() {
