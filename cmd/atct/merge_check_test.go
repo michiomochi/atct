@@ -51,11 +51,11 @@ func TestMergeCheckDecisionByHead(t *testing.T) {
 	root := t.TempDir()
 	main := filepath.Join(root, "main")
 	worktree := filepath.Join(root, "wt")
-	trial := filepath.Join(root, "trial")
+	detached := filepath.Join(root, "detached")
 	runGit(t, root, "init", "-b", "main", main)
 	runGit(t, main, "commit", "--allow-empty", "-m", "init")
 	runGit(t, main, "worktree", "add", "-b", "wt/goal-309", worktree)
-	runGit(t, main, "worktree", "add", "--detach", trial, "main")
+	runGit(t, main, "worktree", "add", "--detach", detached, "main")
 	db := t.TempDir() // no approval recorded
 
 	tests := []struct {
@@ -66,7 +66,7 @@ func TestMergeCheckDecisionByHead(t *testing.T) {
 	}{
 		{"main into a goal worktree, branch named in the message", worktree, `git merge main -m "merge main into wt/goal-309"`, false},
 		{"goal branch into main", main, "git merge --no-ff wt/goal-309", true},
-		{"goal branch into a detached trial worktree", trial, "git merge --no-ff --no-edit wt/goal-309", false},
+		{"goal branch into a detached HEAD worktree", detached, "git merge --no-ff --no-edit wt/goal-309", false},
 		{"git -C pointing at main from a worktree", worktree, "git -C " + main + " merge wt/goal-309", true},
 		{"cd before the merge", worktree, "cd " + main + " && git merge wt/goal-309", true},
 		{"git checkout main before the merge", worktree, "git checkout main && git merge wt/goal-309", true},
