@@ -147,7 +147,7 @@ func runMergeCheck(dir string) error {
 }
 
 // mergeCheckDecision refuses only a goal-branch merge that lands on main/master.
-// Merging into a worktree branch or a detached HEAD (a throwaway trial worktree)
+// Merging into a worktree branch or a detached HEAD
 // does not move main, so it passes. A HEAD that cannot be determined is refused.
 func mergeCheckDecision(dir, cwd, command string) (string, bool) {
 	goalID := goalBranchMergedIntoCurrentBranch(command)
