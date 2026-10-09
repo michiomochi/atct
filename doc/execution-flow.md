@@ -194,7 +194,7 @@ flowchart TD
    Bash に切り替える。scope はサーバーが
    assignment から導出するので、goal や project を渡さない。token 無しの
    `atct watch` は人間用の診断ビューで、どのセッションの watch にもならない
-   （`skills/atct/SKILL.md` の `## Watch` を参照）。
+   （`atct:atct` スキルの `## Watch` を参照）。
 3. `superpowers:brainstorming` と `superpowers:writing-plans` で設計し、
    canonical spec と plan を `atct_goal_update_request_report` へ保存して
    `atct_plan_handoff_review_request` で plan handoff を作成する。
@@ -266,7 +266,7 @@ commander が交代した後は、現在の commander が `atct_goal_review_comp
 
 ## 待機中の Stop hook
 
-相手の応答（commander の plan / goal review、subcommander の task review）を待つだけの session は、生きた Monitor があれば Stop hook で止めない。subcommander は plan review・goal review・executor の作業のいずれかを待つ間の open goal handoff、executor は review 依頼済みで差し戻されていない task handoff が対象。差し戻し、未受領、task review など他の block と、Monitor が無い場合、取得に失敗した場合は従来どおり止める。詳細は `doc/continuous-execution.md`。
+相手の応答（commander の plan / goal review、subcommander の task review）を待つだけの session は、生きた Monitor があれば Stop hook で止めない。subcommander は plan review・goal review・executor の起動（task handoff の未受領）と作業のいずれかを待つ間の open goal handoff、executor は review 依頼済みで差し戻されていない task handoff が対象。差し戻し、task-create handoff、task review など他の block と、Monitor が無い場合（未受領の task handoff も止める）、取得に失敗した場合は従来どおり止める。詳細は `atct continuous-execution` で読める。
 
 ## アーカイブした project
 
@@ -317,7 +317,7 @@ worktree の中から自分を消せないからである。
 
 1. 上の status 確認。スクリプトは goal の status を確かめない（DB に触れない）ので、
    この確認は必須である。
-2. 主チェックアウトで `script/worktree-reclaim.sh <id>` を実行する。
+2. 主チェックアウトで `atct worktree-reclaim <id>` を実行する。
 3. subcommander の workspace を閉じ、executor session を終える。workspace の用意と片付けの手段（マルチプレクサ・ターミナル・別プロセス）は ATCT の外で決める。
    `## One workspace per goal` は dropped にも適用する。
 

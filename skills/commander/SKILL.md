@@ -29,9 +29,15 @@ carries that contract.
 
 ## One worktree per goal
 
-ATCT uses `script/worktree-setup.sh <goal-id>` as the canonical way to prepare
-a worktree. Do not use a session-scoped native worktree tool such as
+In the atct repository, `script/worktree-setup.sh <goal-id>` is the canonical
+way to prepare a worktree. It and `script/worktree-node-modules.sh` exist only
+in the atct repository, because they handle its `web/node_modules` and
+`web/dist`. Do not use a session-scoped native worktree tool such as
 `EnterWorktree`.
+
+In any other project, follow `superpowers:using-git-worktrees` and create the
+goal's worktree at `.worktrees/<goal-id>` on the branch `wt/goal-<goal-id>`,
+because `atct worktree-reclaim` assumes those two names.
 
 - The script derives the location and branch from the goal id: `.worktrees/<goal-id>`
   and `wt/goal-<goal-id>`. A second person working on the same goal enters the
@@ -43,9 +49,9 @@ a worktree. Do not use a session-scoped native worktree tool such as
 - The script runs only from the primary checkout; when run inside a worktree it
   exits with status 2.
 
-`script/worktree-setup.sh` is the replacement for Steps 1a and 1b of
-`superpowers:using-git-worktrees`, and it also covers the frontend part of Step
-2 (Project Setup). The `.worktrees/` directory is already in `.gitignore`, so
+In the atct repository, `script/worktree-setup.sh` is the replacement for
+Steps 1a and 1b of `superpowers:using-git-worktrees`, and it also covers the
+frontend part of Step 2 (Project Setup). The `.worktrees/` directory is already in `.gitignore`, so
 the skill's safety check is satisfied. Follow the reference skill instead of
 copying its setup procedure here.
 
@@ -69,8 +75,8 @@ The primary checkout is appropriate in these cases:
 
 - `commander` reviews landed changes, publishes a release, resolves conflicts
   between worktrees, or cleans up a worktree after the goal closes.
-- Running `script/worktree-setup.sh` itself, because it does not run inside a
-  worktree.
+- Running `script/worktree-setup.sh` in the atct repository itself, because it
+  does not run inside a worktree.
 - Working on a goal that changes this rule: the rule cannot apply to the change
   until it lands. This rule is being written in the primary checkout for that
   reason.
@@ -88,6 +94,7 @@ Detach the worktree first. It replaces the symlink with real dependencies and
 leaves the primary checkout untouched.
 
 ```sh
+# atct repository only
 script/worktree-node-modules.sh detach          # from inside the worktree
 script/worktree-node-modules.sh detach <goal>   # from the primary checkout
 script/worktree-node-modules.sh status
@@ -312,10 +319,10 @@ after `atct_goal_withdraw`:
 Compare `.worktrees/<id>` in `git worktree list` with the active goal ids from
 `atct_goal_list`. For each id that is not active, confirm its status with
 `atct_goal_get` and reclaim only done or dropped goals; leave active or
-unconfirmed ones alone. `script/worktree-reclaim.sh` does not check status, so
+unconfirmed ones alone. `atct worktree-reclaim` does not check status, so
 this confirmation is yours. Then, from the primary checkout:
 
-1. `script/worktree-reclaim.sh <id>`
+1. `atct worktree-reclaim <id>`
 2. Close the goal's workspace (and end its executor sessions).
 
 The script snapshot-commits uncommitted or merge-in-progress work onto the
@@ -323,7 +330,7 @@ goal's own branch, never uses stash or `--force`, and keeps a branch that is not
 merged into main. It exits 1 with nothing removed when the worktree HEAD is not
 `wt/goal-<id>` or a rebase, cherry-pick, revert or bisect is in progress; open
 the worktree and clear that by hand, then rerun. Details and the reason stash
-is off the table: "worktree・branch・workspace の回収" in `doc/execution-flow.md`.
+is off the table: "worktree・branch・workspace の回収" in `atct execution-flow`.
 
 **Out of order:** Closing the workspace before running the script leaves the
 worktree and branch behind with no one assigned to them; running the script

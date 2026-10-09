@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strconv"
@@ -23,6 +24,7 @@ import (
 	"github.com/michiomochi/atct/internal/domain"
 	"github.com/michiomochi/atct/internal/mcpshim"
 	"github.com/michiomochi/atct/internal/store"
+	"github.com/michiomochi/atct/script"
 )
 
 const (
@@ -58,6 +60,7 @@ type cliConfig struct {
 	projectAction           string
 	projectName             string
 	goalAction              string
+	worktreeReclaimGoalID   string
 	goalTitle               string
 	goalDescription         string
 	roleExpected            string
@@ -104,22 +107,24 @@ type cliHandoffEntryPage struct {
 var errInvalidArgs = errors.New("invalid command line")
 
 var validSubcommands = map[string]bool{
-	"daemon":         true,
-	"project":        true,
-	"goal":           true,
-	"context":        true,
-	"pending":        true,
-	"watch":          true,
-	"role":           true,
-	"stop-check":     true,
-	"monitor-check":  true,
-	"merge-check":    true,
-	"session-key":    true,
-	"execution-flow": true,
-	"handoff":        true,
-	"codex":          true,
-	"version":        true,
-	"token-usage":    true,
+	"daemon":               true,
+	"project":              true,
+	"goal":                 true,
+	"context":              true,
+	"pending":              true,
+	"watch":                true,
+	"role":                 true,
+	"stop-check":           true,
+	"monitor-check":        true,
+	"merge-check":          true,
+	"session-key":          true,
+	"execution-flow":       true,
+	"continuous-execution": true,
+	"worktree-reclaim":     true,
+	"handoff":              true,
+	"codex":                true,
+	"version":              true,
+	"token-usage":          true,
 }
 
 var validDaemonActions = map[string]bool{"start": true, "stop": true}
@@ -184,6 +189,8 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "  merge-check          Deny merging a goal branch into main before the human approves")
 	fmt.Fprintln(os.Stderr, "  session-key          Print the SessionStart key for atct_session_identify")
 	fmt.Fprintln(os.Stderr, "  execution-flow       Print the ATCT execution flow document")
+	fmt.Fprintln(os.Stderr, "  continuous-execution Print the ATCT continuous execution document")
+	fmt.Fprintln(os.Stderr, "  worktree-reclaim <goal-id>  Reclaim a done/dropped goal's worktree from the primary checkout")
 	fmt.Fprintln(os.Stderr, "  version              Print the installed CLI version")
 	fmt.Fprintln(os.Stderr, "  token-usage [--since YYYY-MM-DD] [--role R] [--goal ID] [--json] [--root DIR] [--prefix NAME]  Report token usage by role and factor from Claude Code transcripts")
 	fmt.Fprintln(os.Stderr, "  codex shim install [--profile <path>]  Install the transparent Codex shim")
@@ -282,6 +289,17 @@ func parseArgs(args []string) (cliConfig, error) {
 	}
 	if sub == "handoff" {
 		return parseHandoffArgs(cfg, rest)
+	}
+	if sub == "worktree-reclaim" {
+		// The goal id is validated by the script, so "-5" is passed through rather than parsed as a flag.
+		if len(rest) != 1 {
+			fmt.Fprintln(os.Stderr, "worktree-reclaim requires exactly one goal id")
+			printUsage()
+			return cliConfig{}, errInvalidArgs
+		}
+		cfg.listenAddr = defaultListenAddr
+		cfg.worktreeReclaimGoalID = rest[0]
+		return cfg, nil
 	}
 	if sub == "codex" {
 		if len(rest) > 0 && rest[0] == "shim" {
@@ -786,6 +804,13 @@ func main() {
 	if config.subcommand == "execution-flow" {
 		fmt.Print(doc.ExecutionFlow)
 		return
+	}
+	if config.subcommand == "continuous-execution" {
+		fmt.Print(doc.ContinuousExecution)
+		return
+	}
+	if config.subcommand == "worktree-reclaim" {
+		os.Exit(runWorktreeReclaim(config.worktreeReclaimGoalID))
 	}
 	if config.subcommand == "token-usage" {
 		if err := runTokenUsage(config.tokenUsage); err != nil {
@@ -1365,4 +1390,27 @@ func listGoals(ctx context.Context, client *mcpshim.Client) error {
 		fmt.Fprintf(os.Stdout, "%s\t%s\n", domain.Headline(goal.Content), goal.Status)
 	}
 	return nil
+}
+
+// runWorktreeReclaim feeds the embedded script to bash on stdin, so it works from any project's
+// primary checkout without the atct repository on disk. It returns the script's exit code.
+func runWorktreeReclaim(goalID string) int {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "worktree-reclaim: bash not found on PATH: %v\n", err)
+		return 2
+	}
+	cmd := exec.Command(bash, "-s", "--", goalID)
+	cmd.Stdin = strings.NewReader(script.WorktreeReclaim)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			return exitErr.ExitCode()
+		}
+		fmt.Fprintf(os.Stderr, "worktree-reclaim: run bash: %v\n", err)
+		return 2
+	}
+	return 0
 }

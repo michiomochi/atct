@@ -24,7 +24,7 @@ the request is refused because nothing says which project it belonged to.
 A claim taken before the key was registered is not restored after a reconnect;
 only a claim retaken after identification can return. If a new version has just
 been installed and `atct_session_identify` is not yet in the tool list because
-MCP has not reconnected, use the recovery section in `skills/atct/SKILL.md` once
+MCP has not reconnected, use the recovery section of the `atct:atct` skill once
 the tools are available.
 
 ## Claim the project as commander
