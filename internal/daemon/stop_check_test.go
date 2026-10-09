@@ -236,12 +236,14 @@ func TestStopCheckSubcommander(t *testing.T) {
 	executorID := daemonTestSessionID(t, fixture.store, "stop-check-subcommander-executor")
 	addTaskHandoffDirect(t, fixture.store, handoffID, fixture.tasks[0].ID, subcommanderID, 0)
 
+	// No subcommander Monitor: nothing would report an executor that never
+	// receives, so the request-only handoff blocks.
 	detail, err := fixture.daemon.stopCheckSubcommander(ctx, subcommanderID, fixture.taskGoal.ID)
 	if err != nil {
-		t.Fatalf("stopCheckSubcommander(request-only): %v", err)
+		t.Fatalf("stopCheckSubcommander(request-only, no monitor): %v", err)
 	}
-	if detail == "" {
-		t.Fatal("stopCheckSubcommander(request-only) returned no blocking detail")
+	if !strings.Contains(detail, "unreceived task handoff") {
+		t.Fatalf("stopCheckSubcommander(request-only, no monitor) = %q, want unreceived task handoff", detail)
 	}
 
 	if _, err := fixture.store.ReceiveTaskHandoff(ctx, handoffID, fixture.tasks[0].ID, executorID); err != nil {
@@ -381,15 +383,47 @@ func TestStopCheckSubcommanderWaitingOnPeer(t *testing.T) {
 		}, "open goal handoff"},
 		{"executor working with monitor", true, true, func(t *testing.T, w waitingFixture) { w.taskHandoff(t, true, false) }, ""},
 		{"executor working without monitor", true, false, func(t *testing.T, w waitingFixture) { w.taskHandoff(t, true, false) }, "open goal handoff"},
-		{"task review alone is not waiting", true, true, func(t *testing.T, w waitingFixture) { w.taskHandoff(t, true, true) }, "open goal handoff"},
+		{"task review alone is not waiting", true, true, func(t *testing.T, w waitingFixture) { w.taskHandoff(t, true, true) }, "task review handoff"},
 		{"task review handoff still blocks while goal review pends", true, true, func(t *testing.T, w waitingFixture) {
 			w.goalReview(t)
 			w.taskHandoff(t, true, true)
 		}, "task review handoff"},
-		{"unreceived task handoff still blocks while goal review pends", true, true, func(t *testing.T, w waitingFixture) {
+		{"unreceived task handoff with monitor is the executor starting", true, true, func(t *testing.T, w waitingFixture) { w.taskHandoff(t, false, false) }, ""},
+		{"unreceived task handoff without monitor", true, false, func(t *testing.T, w waitingFixture) { w.taskHandoff(t, false, false) }, "unreceived task handoff"},
+		{"unreceived task handoff without monitor while goal review pends", true, false, func(t *testing.T, w waitingFixture) {
 			w.goalReview(t)
 			w.taskHandoff(t, false, false)
 		}, "unreceived task handoff"},
+		{"rejected plan handoff is not waiting", true, true, func(t *testing.T, w waitingFixture) {
+			w.planReview(t)
+			ctx := context.Background()
+			if _, err := w.store.ReceivePlanHandoffReview(ctx, "stop-wait-plan", w.taskGoal.ID, w.commanderID); err != nil {
+				t.Fatalf("ReceivePlanHandoffReview: %v", err)
+			}
+			if _, err := w.store.RejectPlanHandoffReview(ctx, "stop-wait-plan", w.taskGoal.ID, w.commanderID, "fix"); err != nil {
+				t.Fatalf("RejectPlanHandoffReview: %v", err)
+			}
+			if _, err := w.store.ReceivePlanHandoffReviewRejection(ctx, "stop-wait-plan", w.taskGoal.ID, w.subID); err != nil {
+				t.Fatalf("ReceivePlanHandoffReviewRejection: %v", err)
+			}
+		}, "rejected plan handoff"},
+		{"open task-create handoff is not waiting", true, true, func(t *testing.T, w waitingFixture) {
+			w.planReview(t)
+			ctx := context.Background()
+			if _, err := w.store.ReceivePlanHandoffReview(ctx, "stop-wait-plan", w.taskGoal.ID, w.commanderID); err != nil {
+				t.Fatalf("ReceivePlanHandoffReview: %v", err)
+			}
+			if _, err := w.store.CompletePlanHandoff(ctx, "stop-wait-plan", w.taskGoal.ID, w.commanderID, "ok"); err != nil {
+				t.Fatalf("CompletePlanHandoff: %v", err)
+			}
+			createHandoff, err := w.store.GetTaskCreateHandoffForGoal(ctx, w.taskGoal.ID)
+			if err != nil {
+				t.Fatalf("GetTaskCreateHandoffForGoal: %v", err)
+			}
+			if _, err := w.store.ReceiveTaskCreateHandoff(ctx, createHandoff.ID, w.subID); err != nil {
+				t.Fatalf("ReceiveTaskCreateHandoff: %v", err)
+			}
+		}, "open task-create handoff"},
 		{"nothing to wait for with monitor", true, true, func(t *testing.T, w waitingFixture) {}, "open goal handoff"},
 	}
 	for _, tc := range cases {
