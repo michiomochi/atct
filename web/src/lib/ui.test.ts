@@ -40,6 +40,7 @@ import {
   groupGoalsByProject,
   headline,
   body,
+  stripHeadingMarker,
 } from "./ui";
 
 const sourceDirectory = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -144,7 +145,35 @@ function fixtureTask(id: string, order: number): TaskView {
   };
 }
 
+describe("stripHeadingMarker", () => {
+  it.each([
+    ["# T", "T"],
+    ["###### T", "T"],
+    ["####### T", "####### T"],
+    ["#T", "#T"],
+    ["#", ""],
+    ["#   T", "T"],
+    ["  # T", "T"],
+    ["# T #", "T #"],
+  ])("maps %j to %j", (input, expected) => {
+    expect(stripHeadingMarker(input)).toBe(expected);
+  });
+});
+
 describe("headline", () => {
+  it.each([
+    ["# T", "T"],
+    ["###### T", "T"],
+    ["####### T", "####### T"],
+    ["#T", "#T"],
+    ["#", ""],
+    ["#   T", "T"],
+    ["  # T", "T"],
+    ["# T #", "T #"],
+  ])("maps first line %j to %j", (input, expected) => {
+    expect(headline(input)).toBe(expected);
+  });
+
   it("strips a Markdown heading marker from the first line", () => {
     expect(headline("# T\n本文")).toBe("T");
     expect(headline("###### T")).toBe("T");

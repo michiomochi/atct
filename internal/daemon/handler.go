@@ -135,7 +135,7 @@ type goalListTaskCounts struct {
 
 func summaryLine(content string) string {
 	for _, line := range strings.Split(content, "\n") {
-		line = domain.StripHeadingMarker(line)
+		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
 		}

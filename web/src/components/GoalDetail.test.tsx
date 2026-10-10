@@ -827,4 +827,24 @@ describe("GoalDetail", () => {
     await waitFor(() => expect(fetchGoal).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(screen.queryByTestId("goal-withdraw-trigger")).toBeNull());
   });
+
+  it("hides heading markers from related goal headlines in text and title", async () => {
+    const response = goalResponse() as GoalResponseFixture & {
+      goal: Goal & { next_goals: Array<{ id: string; headline: string; status: string }> };
+    };
+    response.derived_from = { id: "goal-parent", headline: "# Parent goal", project_name: "Fixture project" };
+    response.derived_goals = [{ id: "goal-child", headline: "## Child goal", project_name: "Fixture project" }];
+    response.goal.next_goals = [{ id: "goal-next", headline: "# Next goal", status: "active" }];
+    vi.mocked(fetchGoal).mockResolvedValueOnce(response);
+
+    render(<GoalDetail id="goal-1" />);
+
+    const section = await screen.findByTestId("related-goals");
+    for (const text of ["Parent goal", "Child goal", "Next goal"]) {
+      expect(within(section).getByText(text)).not.toBeNull();
+      expect(section.querySelector(`[title="${text}"]`)).not.toBeNull();
+    }
+    expect(section.querySelectorAll('[title^="#"]')).toHaveLength(0);
+    expect(within(section).queryByText(/^#/)).toBeNull();
+  });
 });
