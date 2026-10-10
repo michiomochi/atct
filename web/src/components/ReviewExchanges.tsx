@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { formatDateTime } from "../i18n";
 import type { ReviewExchange, ReviewExchangeGap, ReviewExchangeHistory, ReviewRejectionSource } from "../lib/api";
 import { AreaLoading, EmptyState, ErrorState } from "./StateMessage";
+import { Markdown } from "./Markdown";
 
 interface Props {
   fetchHistory: () => Promise<ReviewExchangeHistory>;
@@ -122,7 +123,7 @@ export function ReviewExchanges({ fetchHistory, showTaskBadge = true }: Props) {
                     {actor && <span>{actor}</span>}
                     <time dateTime={rejection.at}>{formatDateTime(locale, rejection.at)}</time>
                   </div>
-                  <p className="mt-1 whitespace-pre-wrap break-words text-base leading-6 text-ink-950">{rejection.reason}</p>
+                  <div className="mt-1"><Markdown>{rejection.reason}</Markdown></div>
                   <div className="mt-4 min-w-0 border-l-2 border-line pl-4">
                     {response ? (
                       <>
@@ -132,7 +133,7 @@ export function ReviewExchanges({ fetchHistory, showTaskBadge = true }: Props) {
                           <time dateTime={response.at}>{formatDateTime(locale, response.at)}</time>
                           <span className="break-all">{response.handoff_id}</span>
                         </div>
-                        <p className="mt-1 whitespace-pre-wrap break-words text-base leading-6 text-ink-950">{response.report}</p>
+                        <div className="mt-1"><Markdown>{response.report}</Markdown></div>
                       </>
                     ) : (
                       <p className="text-base text-ink-700">{t("reviewExchange.pending")}</p>

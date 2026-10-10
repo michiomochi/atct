@@ -16,6 +16,7 @@ import { activeSnoozeUntil, resolveRouteID } from "../lib/ui";
 import { AreaLoading, ErrorState } from "./StateMessage";
 import { DecisionAnswerForm } from "./DecisionAnswerForm";
 import { DecisionHistoryTable } from "./DecisionHistoryTable";
+import { Markdown } from "./Markdown";
 import { TaskCommitList } from "./TaskCommitList";
 import { HandoffTimeline } from "./HandoffTimeline";
 import { ReviewExchanges } from "./ReviewExchanges";
@@ -127,7 +128,7 @@ export function TaskDetailPage({ id }: Props) {
             {data.task.description.trim() && (
               <section className="mt-5 max-w-3xl">
                 <h2 className="font-display text-lg font-semibold text-ink-950">{t("task.detail.description")}</h2>
-                <p className="mt-2 whitespace-pre-wrap break-words text-base leading-6 text-ink-700">{data.task.description}</p>
+                <div className="mt-2"><Markdown>{data.task.description}</Markdown></div>
               </section>
             )}
           </div>

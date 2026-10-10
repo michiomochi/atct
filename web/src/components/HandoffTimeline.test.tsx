@@ -1,5 +1,5 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Handoff, HandoffEntry } from "../lib/api";
 import { HandoffTimeline } from "./HandoffTimeline";
 
@@ -47,7 +47,21 @@ function handoff(overrides: Partial<Handoff> = {}): Handoff {
   };
 }
 
+afterEach(cleanup);
+
 describe("HandoffTimeline", () => {
+  it("renders entry bodies as Markdown", () => {
+    render(
+      <HandoffTimeline
+        handoffs={[handoff({ entries: [entry(1, "- first item\n- second item")], has_more: false, next_after_id: 1 })]}
+        fetchHistory={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("first item").tagName).toBe("LI");
+    expect(screen.queryByText("- first item")).toBeNull();
+  });
+
   it("renders a read-only timeline and loads the next after_id page", async () => {
     const fetchHistory = vi.fn().mockResolvedValue(
       handoff({

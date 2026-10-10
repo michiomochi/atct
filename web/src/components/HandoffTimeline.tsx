@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { formatDateTime } from "../i18n";
 import type { Handoff } from "../lib/api";
 import { EmptyState } from "./StateMessage";
+import { Markdown } from "./Markdown";
 
 interface Props {
   handoffs: Handoff[];
@@ -76,7 +77,7 @@ export function HandoffTimeline({ handoffs, fetchHistory }: Props) {
                         <span>{t("handoff.timeline.author", { author: entry.author_session_id })}</span>
                         <time dateTime={entry.created_at}>{formatDateTime(locale, entry.created_at)}</time>
                       </div>
-                      <p className="mt-1 whitespace-pre-wrap break-words text-base leading-6 text-ink-950">{entry.body}</p>
+                      <div className="mt-1"><Markdown>{entry.body}</Markdown></div>
                     </li>
                   ))}
                 </ol>
