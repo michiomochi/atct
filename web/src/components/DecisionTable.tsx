@@ -6,6 +6,7 @@ import {
   decisionRecommendationLabel,
   decisionSettlementLabel,
   encodePathSegment,
+  stripHeadingMarker,
 } from "../lib/ui";
 import { Table } from "@cloudflare/kumo/components/table";
 import { Fragment, useState } from "react";
@@ -116,7 +117,7 @@ export function DecisionTable({ decisions, emptyText }: Props) {
                       className="focus-ring font-medium text-accent-700 underline decoration-accent-100 underline-offset-4 hover:decoration-accent-700"
                       href={`/goals/${encodePathSegment(decision.goal_id)}`}
                     >
-                      {decision.goal_headline || "-"}
+                      {stripHeadingMarker(decision.goal_headline) || "-"}
                     </a>
                   </Table.Cell>
                   <Table.Cell className="px-3 py-4 text-ink-700">{formatDateTime(locale, decision.created_at)}</Table.Cell>

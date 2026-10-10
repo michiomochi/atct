@@ -16,7 +16,7 @@ import {
   type GoalResponse,
 } from "../lib/api";
 import { formatDateTime } from "../i18n";
-import { body, findOpenGoalReview, hasCompletionReport, headline, resolveRouteID, statusLabel, type CompletionReportFields } from "../lib/ui";
+import { body, findOpenGoalReview, hasCompletionReport, headline, resolveRouteID, statusLabel, stripHeadingMarker, type CompletionReportFields } from "../lib/ui";
 import { AreaLoading, ErrorState } from "./StateMessage";
 import { Markdown } from "./Markdown";
 import { GoalDiff } from "./GoalDiff";
@@ -283,13 +283,14 @@ function GoalWithdrawal({ goal, onUpdated }: { goal: Goal; onUpdated: () => void
 }
 
 function relatedGoalLink(id: string, headline: string) {
+  const text = stripHeadingMarker(headline);
   return (
     <a
       className="focus-ring inline-block w-fit max-w-full text-left text-accent-700 underline decoration-accent-100 underline-offset-4 hover:decoration-accent-700"
       href={`/goals/${encodeURIComponent(id)}`}
     >
-      <span className="text-clamp-2 block max-w-[32rem] break-words font-medium" title={headline}>
-        {headline}
+      <span className="text-clamp-2 block max-w-[32rem] break-words font-medium" title={text}>
+        {text}
       </span>
     </a>
   );

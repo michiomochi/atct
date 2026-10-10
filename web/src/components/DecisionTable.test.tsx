@@ -257,4 +257,17 @@ describe("DecisionTable priority labels in each language", () => {
       }
     });
   }
+
+  test("does not show the Markdown heading marker of the goal headline", () => {
+    render(
+      <DecisionTable
+        decisions={[decision({ goal_headline: "# Fixture goal" })]}
+        emptyText="No decisions"
+      />,
+    );
+
+    const link = screen.getByRole("link", { name: "Fixture goal" });
+    expect(link.textContent).toBe("Fixture goal");
+    expect(screen.queryByText("# Fixture goal")).toBeNull();
+  });
 });

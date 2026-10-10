@@ -38,6 +38,9 @@ import {
   taskStatusLabel,
   validateAnswer,
   groupGoalsByProject,
+  headline,
+  body,
+  stripHeadingMarker,
 } from "./ui";
 
 const sourceDirectory = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -141,6 +144,53 @@ function fixtureTask(id: string, order: number): TaskView {
     project_name: "Fixture project",
   };
 }
+
+describe("stripHeadingMarker", () => {
+  it.each([
+    ["# T", "T"],
+    ["###### T", "T"],
+    ["####### T", "####### T"],
+    ["#T", "#T"],
+    ["#", ""],
+    ["#   T", "T"],
+    ["  # T", "T"],
+    ["# T #", "T #"],
+  ])("maps %j to %j", (input, expected) => {
+    expect(stripHeadingMarker(input)).toBe(expected);
+  });
+});
+
+describe("headline", () => {
+  it.each([
+    ["# T", "T"],
+    ["###### T", "T"],
+    ["####### T", "####### T"],
+    ["#T", "#T"],
+    ["#", ""],
+    ["#   T", "T"],
+    ["  # T", "T"],
+    ["# T #", "T #"],
+  ])("maps first line %j to %j", (input, expected) => {
+    expect(headline(input)).toBe(expected);
+  });
+
+  it("strips a Markdown heading marker from the first line", () => {
+    expect(headline("# T\n本文")).toBe("T");
+    expect(headline("###### T")).toBe("T");
+    expect(headline("#   T")).toBe("T");
+    expect(headline("  # T")).toBe("T");
+  });
+
+  it("keeps lines that are not heading markers", () => {
+    expect(headline("####### T")).toBe("####### T");
+    expect(headline("#T")).toBe("#T");
+    expect(headline("#")).toBe("");
+  });
+
+  it("leaves the body unchanged", () => {
+    expect(body("# T\n# 本文")).toBe("# 本文");
+  });
+});
 
 describe("groupGoalsByProject", () => {
   it("sorts project names and keeps each project's goals together", () => {

@@ -101,11 +101,19 @@ export function findOpenGoalReview<T extends CompletionLike>(decisions: T[]): T 
   return decisions.find((decision) => decision.kind === "goal_review" && decision.status === "open");
 }
 
+// The one place that removes a leading Markdown heading marker from a line.
+// A line that only looks like one (#hashtag, 7+ #s) is returned unchanged.
+export function stripHeadingMarker(line: string): string {
+  const trimmed = line.trim();
+  const heading = /^#{1,6}(?:[ \t]+(.*)|$)/.exec(trimmed);
+  return heading ? (heading[1] ?? "").trim() : trimmed;
+}
+
 // A goal's content is one field; these two decide what counts as its first line
 // and what counts as the rest, so seven components do not each decide separately.
 export function headline(content: string): string {
   const index = content.indexOf("\n");
-  return (index < 0 ? content : content.slice(0, index)).trim();
+  return stripHeadingMarker(index < 0 ? content : content.slice(0, index));
 }
 
 export function body(content: string): string {
