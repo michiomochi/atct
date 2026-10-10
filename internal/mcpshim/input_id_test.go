@@ -62,6 +62,7 @@ func TestMCPIDInputSchemasAllowNumbersAndStrings(t *testing.T) {
 		"atct_project_claim":         {"project_id"},
 		"atct_task_update":           {"task_id"},
 		"atct_decision_withdraw":     {"decision_id"},
+		"atct_decision_answer":       {"decision_id"},
 		"atct_goal_set_derived_from": {"goal_id", "derived_from_goal_id"},
 	}
 	for _, tool := range tools.Tools {

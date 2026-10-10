@@ -502,6 +502,11 @@ func (s *Store) AgentSessionIDByKey(ctx context.Context, sessionKey string) (int
 	return id, err
 }
 
+// AgentSessionKey returns the harness session key recorded for an agent session.
+func (s *Store) AgentSessionKey(ctx context.Context, agentSessionID int64) (string, error) {
+	return sqlcgen.New(s.db).GetAgentSessionKey(ctx, agentSessionID)
+}
+
 // AgentSessionUnidentified reports whether the row exists but never ran
 // session.identify. An MCP client can hold several transports, and a reconnect
 // or daemon restart opens a new one; each starts as such a row.

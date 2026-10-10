@@ -112,6 +112,7 @@ func unsupportedAckTools() []string {
 		"atct_decision_ask",
 		"atct_decision_poll",
 		"atct_decision_withdraw",
+		"atct_decision_answer",
 		"atct_goal_complete",
 		"atct_goal_review_request",
 		"atct_goal_review_complete",

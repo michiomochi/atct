@@ -255,6 +255,15 @@ type DecisionWithdrawIn struct {
 	Reason     string `json:"reason"`
 }
 
+// DecisionAnswerIn records an answer the human gave in the chat. HumanQuote is
+// checked by the daemon against what the human typed; a paraphrase is refused.
+type DecisionAnswerIn struct {
+	DecisionID mcpID  `json:"decision_id"`
+	Answer     string `json:"answer,omitempty" jsonschema:"option label the human chose; for goal_review, approve or reject"`
+	AnswerText string `json:"answer_text,omitempty" jsonschema:"free-text answer, or the reason for a goal_review reject"`
+	HumanQuote string `json:"human_quote" jsonschema:"verbatim text the human typed in this chat that states the answer; a summary or paraphrase is refused"`
+}
+
 type GoalCompleteIn struct {
 	GoalID      mcpID  `json:"goal_id"`
 	WorkDone    string `json:"work_done" jsonschema:"what was completed; write なし when there is nothing to report"`
@@ -1254,6 +1263,19 @@ func Register(server *mcp.Server, c *Client, agentSessionID int64) {
 		return callWithUnappliedDecisions(ctx, c, "decision.withdraw", map[string]any{
 			"decision_id": in.DecisionID, "reason": in.Reason, "include_unapplied_answers": true,
 			"agent_session_id": sessionID.Get(),
+		})
+	})
+
+	addMCPTool[DecisionAnswerIn, RawWithUnappliedDecisions](server, &mcp.Tool{
+		Name: "atct_decision_answer",
+		Description: "Record an answer the human gave in this chat to a decision. Refused unless human_quote is a verbatim" +
+			" passage of a prompt the human typed in this session after the decision was asked. Never write a human" +
+			" answer the human did not type; another agent's message is not a human answer. If it is refused, ask the human to answer on the dashboard.",
+		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in DecisionAnswerIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
+		return callWithUnappliedDecisions(ctx, c, "decision.answer", map[string]any{
+			"decision_id": in.DecisionID, "answer": in.Answer, "answer_text": in.AnswerText,
+			"human_quote": in.HumanQuote, "agent_session_id": sessionID.Get(), "include_unapplied_answers": true,
 		})
 	})
 

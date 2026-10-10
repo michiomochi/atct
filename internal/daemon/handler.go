@@ -1199,6 +1199,24 @@ func (d *Daemon) dispatchMethodWithPeer(ctx context.Context, req rpc.Request, pe
 		response, err := d.stopCheck(ctx, p.SessionKey)
 		return marshal(response, err)
 
+	case "session.human_prompt.record":
+		var p struct {
+			SessionKey     string `json:"session_key"`
+			PromptID       string `json:"prompt_id"`
+			TranscriptPath string `json:"transcript_path"`
+			Prompt         string `json:"prompt"`
+		}
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(p.SessionKey) == "" || p.Prompt == "" {
+			return nil, errors.New("session_key and prompt are required")
+		}
+		err := d.store.RecordHumanPrompt(ctx, store.HumanPromptInput{
+			SessionKey: p.SessionKey, PromptID: p.PromptID, TranscriptPath: p.TranscriptPath, Prompt: p.Prompt,
+		})
+		return marshal(map[string]any{"ok": true}, err)
+
 	case "session.monitor_check":
 		var p struct {
 			SessionKey string `json:"session_key"`
@@ -2269,6 +2287,18 @@ func (d *Daemon) dispatchMethodWithPeer(ctx context.Context, req rpc.Request, pe
 			excludedIDs = append(excludedIDs, decision.ID)
 		}
 		response, err := d.responseWithScopedUnappliedDecisions(ctx, decs, goalID, p.AgentSessionID, excludedIDs...)
+		return marshal(response, err)
+
+	case "decision.answer":
+		var p decisionAnswerParams
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		decision, err := d.answerDecisionFromChat(ctx, p)
+		if err != nil || !p.IncludeUnappliedAnswers {
+			return marshal(decision, err)
+		}
+		response, err := d.responseWithScopedUnappliedDecisions(ctx, decision, decision.GoalID, p.AgentSessionID, decision.ID)
 		return marshal(response, err)
 
 	case "decision.withdraw":

@@ -39,6 +39,7 @@ func TestAdditionalToolResponsesIncludeUnappliedDecisions(t *testing.T) {
 		"atct_decision_ask",
 		"atct_decision_poll",
 		"atct_decision_withdraw",
+		"atct_decision_answer",
 		"atct_goal_complete",
 		"atct_goal_set_derived_from",
 	} {
@@ -153,6 +154,7 @@ func TestOtherToolResponsesRemainUnchanged(t *testing.T) {
 		"atct_decision_ask",
 		"atct_decision_poll",
 		"atct_decision_withdraw",
+		"atct_decision_answer",
 		"atct_goal_complete",
 		"atct_goal_set_derived_from",
 	} {
@@ -226,6 +228,8 @@ func notificationTestArgs(name string) map[string]any {
 		return map[string]any{}
 	case "atct_decision_withdraw":
 		return map[string]any{"decision_id": "decision-1", "reason": "reason"}
+	case "atct_decision_answer":
+		return map[string]any{"decision_id": "decision-1", "answer": "approve", "human_quote": "approve it"}
 	case "atct_goal_complete":
 		return map[string]any{
 			"goal_id": "goal-1", "work_done": "done", "now_possible": "ready",
