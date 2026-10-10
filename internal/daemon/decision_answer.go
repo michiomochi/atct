@@ -144,7 +144,10 @@ func (d *Daemon) verifyHumanQuote(ctx context.Context, agentSessionID int64, dec
 	if sessionKey == "" {
 		return "", "", fmt.Errorf("%w: this session has no session_key", ErrHumanQuoteUnverified)
 	}
-	prompts, err := d.store.HumanPromptsSince(ctx, sessionKey, decision.CreatedAt)
+	// The store keeps created_at in whole seconds, so a message in the second the
+	// decision was asked could predate it. A real answer never comes that fast.
+	since := decision.CreatedAt.Add(time.Second)
+	prompts, err := d.store.HumanPromptsSince(ctx, sessionKey, since)
 	if err != nil {
 		return "", "", err
 	}
@@ -159,11 +162,11 @@ func (d *Daemon) verifyHumanQuote(ctx context.Context, agentSessionID int64, dec
 			reason = "transcript path is not this session's harness transcript"
 			continue
 		}
-		if !insideClaudeProjects(prompt.TranscriptPath) {
+		if !insideClaudeProjects(prompt.TranscriptPath, sessionKey) {
 			reason = "transcript path is outside the Claude Code projects directory"
 			continue
 		}
-		text, ok, err := transcriptHumanQuote(prompt.TranscriptPath, prompt.PromptID, needle, decision.CreatedAt)
+		text, ok, err := transcriptHumanQuote(prompt.TranscriptPath, prompt.PromptID, needle, since)
 		if err != nil {
 			reason = fmt.Sprintf("read transcript: %v", err)
 			continue
@@ -189,10 +192,16 @@ func isHarnessTranscriptPath(path, sessionKey string) bool {
 	return filepath.Base(filepath.Dir(filepath.Dir(path))) == "projects"
 }
 
-// insideClaudeProjects reports whether path, with symlinks resolved, lies under
-// the projects folder of CLAUDE_CONFIG_DIR or of the default ~/.claude. A
-// symlink in an otherwise valid location can point at any file.
-func insideClaudeProjects(path string) bool {
+// insideClaudeProjects reports whether path is exactly <projects>/<project>/
+// <session_key>.jsonl under the projects folder of CLAUDE_CONFIG_DIR or of the
+// default ~/.claude. The agent can write files under those folders too (an
+// auto-memory folder, for one), so the depth and name are checked, and the
+// file itself must not be a symlink: a symlink can point at any file.
+func insideClaudeProjects(path, sessionKey string) bool {
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() {
+		return false
+	}
 	resolved, err := filepath.EvalSymlinks(path)
 	if err != nil {
 		return false
@@ -210,7 +219,11 @@ func insideClaudeProjects(path string) bool {
 			continue
 		}
 		rel, err := filepath.Rel(realRoot, resolved)
-		if err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		if err != nil {
+			continue
+		}
+		parts := strings.Split(rel, string(filepath.Separator))
+		if len(parts) == 2 && parts[0] != ".." && parts[1] == sessionKey+".jsonl" {
 			return true
 		}
 	}

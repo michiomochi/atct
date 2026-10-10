@@ -170,7 +170,7 @@ commander of the same project for a goal review or a decision with no asking
 session, can record it. If the human's answer is unclear, do not record it: ask
 again. If the record is refused, ask the human to answer on the dashboard and do
 not retry with other quotes. Codex does not register the prompt hook, so the
-record is always refused there.
+record is always refused there. The check reads the transcript under the Claude Code projects folder, so the daemon must see the same `CLAUDE_CONFIG_DIR` as Claude Code; if it does not, a genuine answer is refused too, and the human answers on the dashboard.
 
 ## Archived projects
 
