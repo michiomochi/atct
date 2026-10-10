@@ -79,6 +79,23 @@ export function DecisionHistoryTable({ decisions, omittedCount }: Props) {
                   <Table.Cell className="max-w-64 break-words px-3 py-4 text-ink-700">
                     <p>{answer || "-"}</p>
                     {settlement && <p className="mt-1 text-base text-ink-500">{settlement}</p>}
+                    {decision.answered_via === "chat" && (
+                      <div className="mt-2 space-y-1 text-base text-ink-700">
+                        <p className="font-semibold">{t("goal.history.answer.chat")}</p>
+                        {decision.answer_quote && (
+                          <p>
+                            <span className="text-ink-500">{t("goal.history.answer.quote")}: </span>
+                            {decision.answer_quote}
+                          </p>
+                        )}
+                        {decision.answer_evidence && (
+                          <details>
+                            <summary className="cursor-pointer text-ink-500">{t("goal.history.answer.evidence")}</summary>
+                            <p className="mt-1 whitespace-pre-wrap break-words">{decision.answer_evidence}</p>
+                          </details>
+                        )}
+                      </div>
+                    )}
                   </Table.Cell>
                   <Table.Cell className="whitespace-nowrap px-3 py-4 text-ink-700">{decision.answered_at ? formatDateTime(locale, decision.answered_at) : "-"}</Table.Cell>
                   <Table.Cell className="whitespace-nowrap px-3 py-4 text-ink-700">{decision.applied_at ? formatDateTime(locale, decision.applied_at) : "-"}</Table.Cell>
