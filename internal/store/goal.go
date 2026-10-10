@@ -688,10 +688,10 @@ func (s *Store) ApproveGoalReviewWith(ctx context.Context, decisionID int64, src
 	now := time.Now().UTC().Format(time.RFC3339)
 	result, err := q.ApproveGoalReviewDecision(ctx, sqlcgen.ApproveGoalReviewDecisionParams{
 		AnsweredAt: sql.NullString{String: now, Valid: true}, AppliedAt: sql.NullString{String: now, Valid: true},
-		AnsweredVia: src.Via, AnswerQuote: src.Quote, AnswerEvidence: src.Evidence, ID: decisionID,
+		AnsweredVia: src.Via, AnswerQuote: src.Quote, AnswerEvidence: src.Evidence, AnswerPromptID: src.PromptID, ID: decisionID,
 	})
 	if err != nil {
-		return domain.Goal{}, fmt.Errorf("approve goal review: %w", err)
+		return domain.Goal{}, answerWriteError("approve goal review", err)
 	}
 	if affected, err := result.RowsAffected(); err != nil {
 		return domain.Goal{}, fmt.Errorf("approve goal review rows affected: %w", err)
@@ -734,10 +734,10 @@ func (s *Store) RejectGoalReviewWith(ctx context.Context, decisionID int64, reas
 	now := formatTimestamp(time.Now())
 	result, err := q.RejectGoalReviewDecision(ctx, sqlcgen.RejectGoalReviewDecisionParams{
 		AnswerText: reason, AnsweredAt: sql.NullString{String: now, Valid: true},
-		AnsweredVia: src.Via, AnswerQuote: src.Quote, AnswerEvidence: src.Evidence, ID: decisionID,
+		AnsweredVia: src.Via, AnswerQuote: src.Quote, AnswerEvidence: src.Evidence, AnswerPromptID: src.PromptID, ID: decisionID,
 	})
 	if err != nil {
-		return fmt.Errorf("reject goal review: %w", err)
+		return answerWriteError("reject goal review", err)
 	}
 	if affected, err := result.RowsAffected(); err != nil {
 		return fmt.Errorf("reject goal review rows affected: %w", err)

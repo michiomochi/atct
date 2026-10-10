@@ -13,7 +13,7 @@ import (
 const approveGoalReviewDecision = `-- name: ApproveGoalReviewDecision :execresult
 UPDATE decisions
 SET status = 'applied', answer_label = 'approve', answered_at = ?, applied_at = ?,
-    answered_via = ?, answer_quote = ?, answer_evidence = ?
+    answered_via = ?, answer_quote = ?, answer_evidence = ?, answer_prompt_id = ?
 WHERE id = ? AND kind = 'goal_review' AND status = 'open'
 `
 
@@ -23,6 +23,7 @@ type ApproveGoalReviewDecisionParams struct {
 	AnsweredVia    string
 	AnswerQuote    string
 	AnswerEvidence string
+	AnswerPromptID string
 	ID             int64
 }
 
@@ -33,6 +34,7 @@ func (q *Queries) ApproveGoalReviewDecision(ctx context.Context, arg ApproveGoal
 		arg.AnsweredVia,
 		arg.AnswerQuote,
 		arg.AnswerEvidence,
+		arg.AnswerPromptID,
 		arg.ID,
 	)
 }
@@ -484,7 +486,7 @@ func (q *Queries) ListNextGoals(ctx context.Context, goalID int64) ([]ListNextGo
 const rejectGoalReviewDecision = `-- name: RejectGoalReviewDecision :execresult
 UPDATE decisions
 SET status = 'answered', answer_label = 'reject', answer_text = ?, answered_at = ?,
-    answered_via = ?, answer_quote = ?, answer_evidence = ?
+    answered_via = ?, answer_quote = ?, answer_evidence = ?, answer_prompt_id = ?
 WHERE id = ? AND kind = 'goal_review' AND status = 'open'
 `
 
@@ -494,6 +496,7 @@ type RejectGoalReviewDecisionParams struct {
 	AnsweredVia    string
 	AnswerQuote    string
 	AnswerEvidence string
+	AnswerPromptID string
 	ID             int64
 }
 
@@ -504,6 +507,7 @@ func (q *Queries) RejectGoalReviewDecision(ctx context.Context, arg RejectGoalRe
 		arg.AnsweredVia,
 		arg.AnswerQuote,
 		arg.AnswerEvidence,
+		arg.AnswerPromptID,
 		arg.ID,
 	)
 }

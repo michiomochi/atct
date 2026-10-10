@@ -18,3 +18,7 @@ CREATE INDEX idx_human_prompts_session
 ALTER TABLE decisions ADD COLUMN answered_via TEXT NOT NULL DEFAULT '';
 ALTER TABLE decisions ADD COLUMN answer_quote TEXT NOT NULL DEFAULT '';
 ALTER TABLE decisions ADD COLUMN answer_evidence TEXT NOT NULL DEFAULT '';
+-- One human prompt answers at most one decision. Empty for dashboard answers.
+ALTER TABLE decisions ADD COLUMN answer_prompt_id TEXT NOT NULL DEFAULT '';
+CREATE UNIQUE INDEX idx_decisions_answer_prompt
+  ON decisions(answer_prompt_id) WHERE answer_prompt_id <> '';

@@ -34,7 +34,9 @@ func newChatAnswerFixture(t *testing.T) chatAnswerFixture {
 	if _, _, err := f.store.IdentifyAgentSession(ctx, f.commanderSessionID, cmdKey); err != nil {
 		t.Fatalf("IdentifyAgentSession commander: %v", err)
 	}
-	projectsDir := filepath.Join(t.TempDir(), "projects", "atct-test")
+	configDir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", configDir)
+	projectsDir := filepath.Join(configDir, "projects", "atct-test")
 	if err := os.MkdirAll(projectsDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll projects: %v", err)
 	}
@@ -116,8 +118,13 @@ func refused(rpcError json.RawMessage) bool {
 // origin the daemon requires; a non-human line does not.
 func appendTranscriptLine(t *testing.T, path, promptID, text string, human bool) {
 	t.Helper()
+	appendTranscriptLineAt(t, path, promptID, text, human, time.Now())
+}
+
+func appendTranscriptLineAt(t *testing.T, path, promptID, text string, human bool, at time.Time) {
+	t.Helper()
 	entry := map[string]any{
-		"type": "user", "promptId": promptID,
+		"type": "user", "promptId": promptID, "timestamp": at.UTC().Format(time.RFC3339Nano),
 		"message": map[string]any{"role": "user", "content": text},
 	}
 	if human {
@@ -140,7 +147,7 @@ func appendTranscriptLine(t *testing.T, path, promptID, text string, human bool)
 func TestChatAnswerRecordsVerifiedHumanQuote(t *testing.T) {
 	f := newChatAnswerFixture(t)
 	d := f.askChatDecision(t)
-	prompt := "はい、Aにしてください"
+	prompt := "Aにしてください"
 	f.recordPrompt(t, f.subKey, "pid-ok", prompt, prompt, time.Now())
 
 	result, rpcError := f.answerRPC(t, f.subcommanderSessionID, d.ID, "A", "", "Aにしてください")
@@ -162,7 +169,7 @@ func TestChatAnswerFallsBackToOlderHumanPrompt(t *testing.T) {
 	d := f.askChatDecision(t)
 	// The older prompt is a real human message. The newer one holds the same
 	// quote, but it came from a non-human source such as a task notification.
-	human := "はい、Aにしてください"
+	human := "Aにしてください"
 	f.recordPrompt(t, f.subKey, "pid-old", human, human, time.Now())
 	notification := "<task-notification>Aにしてください</task-notification>"
 	f.recordPromptLine(t, f.subKey, "pid-new", notification, notification, false, time.Now())
@@ -305,13 +312,134 @@ func TestIsHarnessTranscriptPath(t *testing.T) {
 	}
 }
 
-func TestChatAnswerRefusesShortQuote(t *testing.T) {
+func TestChatAnswerAcceptsOneCharacterWholeLine(t *testing.T) {
 	f := newChatAnswerFixture(t)
 	d := f.askChatDecision(t)
 	f.recordPrompt(t, f.subKey, "pid-short", "A", "A", time.Now())
 
-	if _, rpcError := f.answerRPC(t, f.subcommanderSessionID, d.ID, "A", "", "A"); !refused(rpcError) {
-		t.Fatalf("one-character quote was accepted")
+	if _, rpcError := f.answerRPC(t, f.subcommanderSessionID, d.ID, "A", "", "A"); refused(rpcError) {
+		t.Fatalf("one-character whole-line quote refused: %s", rpcError)
+	}
+}
+
+func TestChatAnswerRefusesQuoteWithoutLetterOrDigit(t *testing.T) {
+	f := newChatAnswerFixture(t)
+	d := f.askChatDecision(t)
+	f.recordPrompt(t, f.subKey, "pid-punct", "。。", "。。", time.Now())
+
+	if _, rpcError := f.answerRPC(t, f.subcommanderSessionID, d.ID, "A", "", "。。"); !refused(rpcError) {
+		t.Fatalf("quote without a letter or digit was accepted")
+	}
+}
+
+func TestChatAnswerRefusesQuoteInsideLongerLine(t *testing.T) {
+	f := newChatAnswerFixture(t)
+	d := f.askChatDecision(t)
+	f.recordPrompt(t, f.subKey, "pid-part", "はい、Aにしてください", "はい、Aにしてください", time.Now())
+
+	if _, rpcError := f.answerRPC(t, f.subcommanderSessionID, d.ID, "A", "", "Aにしてください"); !refused(rpcError) {
+		t.Fatalf("quote that is only part of the human's line was accepted")
+	}
+}
+
+func TestChatGoalReviewRefusesApproveTakenFromInsideALine(t *testing.T) {
+	f := newChatAnswerFixture(t)
+	review, err := f.store.AskDecision(t.Context(), store.AskInput{
+		GoalID: f.goalAID, Kind: domain.KindGoalReview, Question: "approve goal A?",
+	})
+	if err != nil {
+		t.Fatalf("AskDecision goal review: %v", err)
+	}
+	line := "まだ approve しないで、テストが落ちている"
+	f.recordPrompt(t, f.cmdKey, "pid-not-yet", line, line, time.Now())
+
+	if _, rpcError := f.answerRPC(t, f.commanderSessionID, review.ID, "approve", "", "approve"); !refused(rpcError) {
+		t.Fatalf("approve was taken from inside the human's line")
+	}
+	got, err := f.store.GetDecision(t.Context(), review.ID)
+	if err != nil {
+		t.Fatalf("GetDecision: %v", err)
+	}
+	if got.Status != domain.DecisionOpen {
+		t.Fatalf("goal review status = %s after refused approve, want open", got.Status)
+	}
+}
+
+func TestChatAnswerMatchesWholeLineOfMultiLinePrompt(t *testing.T) {
+	f := newChatAnswerFixture(t)
+	d := f.askChatDecision(t)
+	// The hook prompt holds the quote as one line; the transcript holds more.
+	f.recordPrompt(t, f.subKey, "pid-multi", "次の件です\nAにしてください", "次の件です\nAにしてください\n詳細は後で", time.Now())
+
+	if _, rpcError := f.answerRPC(t, f.subcommanderSessionID, d.ID, "A", "", "Aにしてください"); refused(rpcError) {
+		t.Fatalf("whole line of a multi-line prompt refused: %s", rpcError)
+	}
+	got, err := f.store.GetDecision(t.Context(), d.ID)
+	if err != nil {
+		t.Fatalf("GetDecision: %v", err)
+	}
+	// The evidence is the transcript's human message, not the hook's copy.
+	if want := "次の件です\nAにしてください\n詳細は後で"; got.AnswerEvidence != want {
+		t.Fatalf("answer_evidence = %q, want the transcript message %q", got.AnswerEvidence, want)
+	}
+}
+
+func TestChatAnswerRefusesPromptRecordedAgainWithLaterTime(t *testing.T) {
+	f := newChatAnswerFixture(t)
+	d := f.askChatDecision(t)
+	// The human's message was written before the decision was asked. The agent
+	// re-records it through session.human_prompt.record, so the hook's time is now.
+	appendTranscriptLineAt(t, f.transcriptPath(f.subKey), "pid-replayed", "Aにしてください", true, d.CreatedAt.Add(-time.Hour))
+	if err := f.store.RecordHumanPrompt(t.Context(), store.HumanPromptInput{
+		SessionKey: f.subKey, PromptID: "pid-replayed", TranscriptPath: f.transcriptPath(f.subKey),
+		Prompt: "Aにしてください", RecordedAt: time.Now(),
+	}); err != nil {
+		t.Fatalf("RecordHumanPrompt: %v", err)
+	}
+
+	if _, rpcError := f.answerRPC(t, f.subcommanderSessionID, d.ID, "A", "", "Aにしてください"); !refused(rpcError) {
+		t.Fatalf("message written before the decision was accepted through a later hook time")
+	}
+}
+
+func TestChatAnswerRefusesPromptAlreadyUsedForAnotherDecision(t *testing.T) {
+	f := newChatAnswerFixture(t)
+	first := f.askChatDecision(t)
+	second := f.askChatDecision(t)
+	f.recordPrompt(t, f.subKey, "pid-once", "Aにしてください", "Aにしてください", time.Now())
+	if _, rpcError := f.answerRPC(t, f.subcommanderSessionID, first.ID, "A", "", "Aにしてください"); refused(rpcError) {
+		t.Fatalf("first answer refused: %s", rpcError)
+	}
+
+	if _, rpcError := f.answerRPC(t, f.subcommanderSessionID, second.ID, "A", "", "Aにしてください"); !refused(rpcError) {
+		t.Fatalf("one human message answered two decisions")
+	}
+	got, err := f.store.GetDecision(t.Context(), second.ID)
+	if err != nil {
+		t.Fatalf("GetDecision: %v", err)
+	}
+	if got.Status != domain.DecisionOpen {
+		t.Fatalf("second decision status = %s after refused reuse, want open", got.Status)
+	}
+}
+
+func TestChatAnswerRefusesTranscriptSymlinkedOutsideProjects(t *testing.T) {
+	f := newChatAnswerFixture(t)
+	d := f.askChatDecision(t)
+	outside := filepath.Join(t.TempDir(), "outside.jsonl")
+	appendTranscriptLine(t, outside, "pid-link", "Aにしてください", true)
+	link := f.transcriptPath(f.subKey)
+	if err := os.Symlink(outside, link); err != nil {
+		t.Fatalf("Symlink: %v", err)
+	}
+	if err := f.store.RecordHumanPrompt(t.Context(), store.HumanPromptInput{
+		SessionKey: f.subKey, PromptID: "pid-link", TranscriptPath: link, Prompt: "Aにしてください", RecordedAt: time.Now(),
+	}); err != nil {
+		t.Fatalf("RecordHumanPrompt: %v", err)
+	}
+
+	if _, rpcError := f.answerRPC(t, f.subcommanderSessionID, d.ID, "A", "", "Aにしてください"); !refused(rpcError) {
+		t.Fatalf("symlink from the projects folder to a file outside it was accepted")
 	}
 }
 

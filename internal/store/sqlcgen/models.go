@@ -43,6 +43,7 @@ type Decision struct {
 	AnsweredVia      string
 	AnswerQuote      string
 	AnswerEvidence   string
+	AnswerPromptID   string
 }
 
 type Goal struct {

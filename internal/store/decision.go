@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/michiomochi/atct/internal/domain"
@@ -277,6 +278,22 @@ type AnswerSource struct {
 	Via      string
 	Quote    string
 	Evidence string
+	// PromptID is the human prompt the answer came from. Each prompt answers
+	// at most one decision.
+	PromptID string
+}
+
+// ErrAnswerPromptReused refuses a chat answer whose human prompt already
+// answered another decision.
+var ErrAnswerPromptReused = errors.New("human prompt already answered another decision")
+
+// answerWriteError maps the unique index on answer_prompt_id to
+// ErrAnswerPromptReused. Any other failure keeps op as its context.
+func answerWriteError(op string, err error) error {
+	if strings.Contains(err.Error(), "UNIQUE constraint failed: decisions.answer_prompt_id") {
+		return fmt.Errorf("%w: %v", ErrAnswerPromptReused, err)
+	}
+	return fmt.Errorf("%s: %w", op, err)
 }
 
 // AnswerDecision performs a conditional transition from open.
@@ -307,10 +324,11 @@ func (s *Store) answerDecision(ctx context.Context, in AnswerInput, src AnswerSo
 		AnsweredVia:    src.Via,
 		AnswerQuote:    src.Quote,
 		AnswerEvidence: src.Evidence,
+		AnswerPromptID: src.PromptID,
 		ID:             in.DecisionID,
 	})
 	if err != nil {
-		return domain.Decision{}, fmt.Errorf("update decision: %w", err)
+		return domain.Decision{}, answerWriteError("update decision", err)
 	}
 	n, err := res.RowsAffected()
 	if err != nil {

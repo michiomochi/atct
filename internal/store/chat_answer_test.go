@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -182,5 +183,44 @@ func TestRecordHumanPromptTruncatesToRunes(t *testing.T) {
 	}
 	if len(got) != 1 || len([]rune(got[0].Prompt)) != humanPromptMaxRunes {
 		t.Fatalf("stored prompt runes = %d, want %d", len([]rune(got[0].Prompt)), humanPromptMaxRunes)
+	}
+}
+
+func TestAnswerDecisionRefusesPromptAlreadyUsedForAnotherDecision(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	goalID := newTestGoal(t, s)
+	taskID := newTestDecisionTask(t, s, goalID, "chat-prompt-reuse")
+
+	first, err := s.AskDecision(ctx, AskInput{
+		GoalID: goalID, TaskID: taskID, Kind: domain.KindDecision, Question: "first?", AgentSessionID: testSessionID("chat-prompt-reuse-1"),
+	})
+	if err != nil {
+		t.Fatalf("AskDecision first: %v", err)
+	}
+	second, err := s.AskDecision(ctx, AskInput{
+		GoalID: goalID, TaskID: taskID, Kind: domain.KindDecision, Question: "second?", AgentSessionID: testSessionID("chat-prompt-reuse-2"),
+	})
+	if err != nil {
+		t.Fatalf("AskDecision second: %v", err)
+	}
+	if _, err := s.AnswerDecisionWith(ctx, AnswerInput{DecisionID: first.ID, AnswerText: "yes"}, AnswerSource{
+		Via: "chat", Quote: "yes", Evidence: "yes", PromptID: "pid-once",
+	}); err != nil {
+		t.Fatalf("first AnswerDecisionWith: %v", err)
+	}
+
+	_, err = s.AnswerDecisionWith(ctx, AnswerInput{DecisionID: second.ID, AnswerText: "yes"}, AnswerSource{
+		Via: "chat", Quote: "yes", Evidence: "yes", PromptID: "pid-once",
+	})
+	if !errors.Is(err, ErrAnswerPromptReused) {
+		t.Fatalf("second AnswerDecisionWith err = %v, want ErrAnswerPromptReused", err)
+	}
+	got, err := s.GetDecision(ctx, second.ID)
+	if err != nil {
+		t.Fatalf("GetDecision: %v", err)
+	}
+	if got.Status != domain.DecisionOpen {
+		t.Fatalf("second decision status = %s after refused reuse, want open", got.Status)
 	}
 }

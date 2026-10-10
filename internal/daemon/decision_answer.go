@@ -11,16 +11,15 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"unicode/utf8"
+	"time"
+	"unicode"
 
 	"github.com/michiomochi/atct/internal/domain"
 	"github.com/michiomochi/atct/internal/store"
 )
 
-// humanQuoteMinRunes is the shortest quote that counts as evidence. A one- or
-// two-character quote such as "はい" occurs in almost any prompt, so it proves
-// nothing about what the human said.
-const humanQuoteMinRunes = 2
+// humanEvidenceMaxRunes caps the human message kept as answer_evidence.
+const humanEvidenceMaxRunes = 8000
 
 // ErrHumanQuoteUnverified refuses a chat answer whose quote cannot be tied to a
 // message the human actually typed. The decision stays open.
@@ -54,29 +53,34 @@ func (d *Daemon) answerDecisionFromChat(ctx context.Context, p decisionAnswerPar
 	if err := validateChatAnswer(decision, p); err != nil {
 		return domain.Decision{}, err
 	}
-	evidence, err := d.verifyHumanQuote(ctx, p.AgentSessionID, decision, p.HumanQuote)
+	promptID, evidence, err := d.verifyHumanQuote(ctx, p.AgentSessionID, decision, p.HumanQuote)
 	if err != nil {
 		return domain.Decision{}, err
 	}
 
-	src := store.AnswerSource{Via: "chat", Quote: strings.TrimSpace(p.HumanQuote), Evidence: evidence}
-	switch {
-	case decision.Kind == domain.KindGoalReview && p.Answer == "approve":
-		if _, err := d.store.ApproveGoalReviewWith(ctx, decision.ID, src); err != nil {
-			return domain.Decision{}, err
+	src := store.AnswerSource{Via: "chat", Quote: strings.TrimSpace(p.HumanQuote), Evidence: evidence, PromptID: promptID}
+	if err := d.writeChatAnswer(ctx, decision, p, src); err != nil {
+		if errors.Is(err, store.ErrAnswerPromptReused) {
+			return domain.Decision{}, fmt.Errorf("%w: this human message already answered another decision; ask the human to answer on the dashboard", ErrHumanQuoteUnverified)
 		}
-	case decision.Kind == domain.KindGoalReview:
-		if err := d.store.RejectGoalReviewWith(ctx, decision.ID, p.AnswerText, src); err != nil {
-			return domain.Decision{}, err
-		}
-	default:
-		if _, err := d.store.AnswerDecisionWith(ctx, store.AnswerInput{
-			DecisionID: decision.ID, AnswerLabel: p.Answer, AnswerText: p.AnswerText,
-		}, src); err != nil {
-			return domain.Decision{}, err
-		}
+		return domain.Decision{}, err
 	}
 	return d.store.GetDecision(ctx, decision.ID)
+}
+
+func (d *Daemon) writeChatAnswer(ctx context.Context, decision domain.Decision, p decisionAnswerParams, src store.AnswerSource) error {
+	switch {
+	case decision.Kind == domain.KindGoalReview && p.Answer == "approve":
+		_, err := d.store.ApproveGoalReviewWith(ctx, decision.ID, src)
+		return err
+	case decision.Kind == domain.KindGoalReview:
+		return d.store.RejectGoalReviewWith(ctx, decision.ID, p.AnswerText, src)
+	default:
+		_, err := d.store.AnswerDecisionWith(ctx, store.AnswerInput{
+			DecisionID: decision.ID, AnswerLabel: p.Answer, AnswerText: p.AnswerText,
+		}, src)
+		return err
+	}
 }
 
 // ensureCanAnswerFromChat admits the session that asked the decision, and a
@@ -123,50 +127,53 @@ func validateChatAnswer(decision domain.Decision, p decisionAnswerParams) error 
 	return nil
 }
 
-// verifyHumanQuote returns the human prompt that contains the quote. The quote
-// must be found in a prompt the hook recorded for this session after the
-// decision was asked, and that prompt's transcript must hold the same text as a
-// human message. Any miss refuses the answer.
-func (d *Daemon) verifyHumanQuote(ctx context.Context, agentSessionID int64, decision domain.Decision, quote string) (string, error) {
+// verifyHumanQuote returns the prompt ID and the human message that hold the
+// quote as one whole line. The quote must be found in a prompt the hook recorded
+// for this session after the decision was asked, and that prompt's transcript
+// must hold the same line as a human message written after the decision was
+// asked. Any miss refuses the answer.
+func (d *Daemon) verifyHumanQuote(ctx context.Context, agentSessionID int64, decision domain.Decision, quote string) (string, string, error) {
 	needle := normalizeQuoteText(quote)
-	if utf8.RuneCountInString(needle) < humanQuoteMinRunes {
-		return "", fmt.Errorf("%w: human_quote must be at least %d characters", ErrHumanQuoteUnverified, humanQuoteMinRunes)
+	if !hasLetterOrDigit(needle) {
+		return "", "", fmt.Errorf("%w: human_quote must contain a letter or a digit", ErrHumanQuoteUnverified)
 	}
 	sessionKey, err := d.store.AgentSessionKey(ctx, agentSessionID)
 	if err != nil {
-		return "", fmt.Errorf("resolve session key: %w", err)
+		return "", "", fmt.Errorf("resolve session key: %w", err)
 	}
 	if sessionKey == "" {
-		return "", fmt.Errorf("%w: this session has no session_key", ErrHumanQuoteUnverified)
+		return "", "", fmt.Errorf("%w: this session has no session_key", ErrHumanQuoteUnverified)
 	}
 	prompts, err := d.store.HumanPromptsSince(ctx, sessionKey, decision.CreatedAt)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
-	// Every prompt that contains the quote is a candidate, newest first. The
-	// first one whose transcript holds the same text as a human message is the
-	// evidence. A hook can also record non-human input, so a newer match is not
-	// proof on its own, and the older candidates still get checked.
-	reason := fmt.Sprintf("no prompt this session sent after decision %d was asked contains it", decision.ID)
+	// The hook's copy only finds candidates. The transcript decides, and a
+	// message written before the decision was asked never counts. Newest first.
+	reason := fmt.Sprintf("no prompt this session sent after decision %d was asked has the quote as a whole line", decision.ID)
 	for _, prompt := range prompts {
-		if !strings.Contains(normalizeQuoteText(prompt.Prompt), needle) {
+		if !quoteLineMatches(prompt.Prompt, needle) {
 			continue
 		}
 		if !isHarnessTranscriptPath(prompt.TranscriptPath, sessionKey) {
 			reason = "transcript path is not this session's harness transcript"
 			continue
 		}
-		ok, err := transcriptHasHumanQuote(prompt.TranscriptPath, prompt.PromptID, needle)
+		if !insideClaudeProjects(prompt.TranscriptPath) {
+			reason = "transcript path is outside the Claude Code projects directory"
+			continue
+		}
+		text, ok, err := transcriptHumanQuote(prompt.TranscriptPath, prompt.PromptID, needle, decision.CreatedAt)
 		if err != nil {
 			reason = fmt.Sprintf("read transcript: %v", err)
 			continue
 		}
 		if ok {
-			return prompt.Prompt, nil
+			return prompt.PromptID, truncateRunes(text, humanEvidenceMaxRunes), nil
 		}
-		reason = "the transcript has no human message with that prompt_id containing it"
+		reason = "the transcript has no human message with that prompt_id, written after the decision was asked, that has the quote as a whole line"
 	}
-	return "", fmt.Errorf("%w: %s; ask the human to answer on the dashboard", ErrHumanQuoteUnverified, reason)
+	return "", "", fmt.Errorf("%w: %s; ask the human to answer on the dashboard", ErrHumanQuoteUnverified, reason)
 }
 
 // isHarnessTranscriptPath accepts only the path Claude Code writes a session's
@@ -182,16 +189,72 @@ func isHarnessTranscriptPath(path, sessionKey string) bool {
 	return filepath.Base(filepath.Dir(filepath.Dir(path))) == "projects"
 }
 
+// insideClaudeProjects reports whether path, with symlinks resolved, lies under
+// the projects folder of CLAUDE_CONFIG_DIR or of the default ~/.claude. A
+// symlink in an otherwise valid location can point at any file.
+func insideClaudeProjects(path string) bool {
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return false
+	}
+	var roots []string
+	if dir := os.Getenv("CLAUDE_CONFIG_DIR"); dir != "" {
+		roots = append(roots, filepath.Join(dir, "projects"))
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		roots = append(roots, filepath.Join(home, ".claude", "projects"))
+	}
+	for _, root := range roots {
+		realRoot, err := filepath.EvalSymlinks(root)
+		if err != nil {
+			continue
+		}
+		rel, err := filepath.Rel(realRoot, resolved)
+		if err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
+}
+
 // normalizeQuoteText trims the text and collapses every run of whitespace,
 // newlines included, into one space.
 func normalizeQuoteText(s string) string {
 	return strings.Join(strings.Fields(s), " ")
 }
 
+// quoteLineMatches reports whether the normalized needle equals one whole line
+// of text. A quote inside a longer line does not count.
+func quoteLineMatches(text, needle string) bool {
+	for _, line := range strings.Split(text, "\n") {
+		if normalizeQuoteText(line) == needle {
+			return true
+		}
+	}
+	return false
+}
+
+// hasLetterOrDigit keeps a quote made only of punctuation or spaces from
+// matching a line that is only punctuation.
+func hasLetterOrDigit(s string) bool {
+	return strings.ContainsFunc(s, func(r rune) bool {
+		return unicode.IsLetter(r) || unicode.IsDigit(r)
+	})
+}
+
+func truncateRunes(s string, max int) string {
+	runes := []rune(s)
+	if len(runes) > max {
+		return string(runes[:max])
+	}
+	return s
+}
+
 type transcriptEntry struct {
-	Type     string `json:"type"`
-	PromptID string `json:"promptId"`
-	Origin   struct {
+	Type      string `json:"type"`
+	PromptID  string `json:"promptId"`
+	Timestamp string `json:"timestamp"`
+	Origin    struct {
 		Kind string `json:"kind"`
 	} `json:"origin"`
 	Message struct {
@@ -199,41 +262,50 @@ type transcriptEntry struct {
 	} `json:"message"`
 }
 
-// transcriptHasHumanQuote scans the transcript line by line with no line-length
-// limit. Only lines that mention promptID are parsed.
-func transcriptHasHumanQuote(path, promptID, needle string) (bool, error) {
+// transcriptHumanQuote scans the transcript line by line with no line-length
+// limit. It returns the text of the human message with promptID that holds the
+// needle as a whole line and was written at or after since. Only lines that
+// mention promptID are parsed.
+func transcriptHumanQuote(path, promptID, needle string, since time.Time) (string, bool, error) {
 	if promptID == "" {
-		return false, nil
+		return "", false, nil
 	}
 	f, err := os.Open(path)
 	if err != nil {
-		return false, err
+		return "", false, err
 	}
 	defer f.Close()
 	r := bufio.NewReader(f)
 	for {
 		line, readErr := r.ReadBytes('\n')
-		if bytes.Contains(line, []byte(promptID)) && transcriptLineHasHumanText(line, promptID, needle) {
-			return true, nil
+		if bytes.Contains(line, []byte(promptID)) {
+			if text, ok := transcriptLineHumanQuote(line, promptID, needle, since); ok {
+				return text, true, nil
+			}
 		}
 		if errors.Is(readErr, io.EOF) {
-			return false, nil
+			return "", false, nil
 		}
 		if readErr != nil {
-			return false, readErr
+			return "", false, readErr
 		}
 	}
 }
 
-func transcriptLineHasHumanText(line []byte, promptID, needle string) bool {
+func transcriptLineHumanQuote(line []byte, promptID, needle string, since time.Time) (string, bool) {
 	var entry transcriptEntry
 	if err := json.Unmarshal(line, &entry); err != nil {
-		return false
+		return "", false
 	}
 	if entry.Type != "user" || entry.PromptID != promptID || entry.Origin.Kind != "human" {
-		return false
+		return "", false
 	}
-	return strings.Contains(normalizeQuoteText(messageText(entry.Message.Content)), needle)
+	at, err := time.Parse(time.RFC3339Nano, entry.Timestamp)
+	if err != nil || at.Before(since) {
+		return "", false
+	}
+	text := messageText(entry.Message.Content)
+	return text, quoteLineMatches(text, needle)
 }
 
 // messageText reads a message's content, either a plain string or an array of
