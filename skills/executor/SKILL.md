@@ -28,7 +28,9 @@ a mismatch, stop.
   and changed paths. Return design or irreversible decisions to the delegator.
 
 Do not make design decisions, re-delegate, commit, or write internal
-version-control details.
+version-control details. An executor also never opens a human decision
+(`atct_decision_ask`) or records a human's answer (`atct_decision_answer`); both
+belong to the delegator.
 
 On an unexpected condition, escalate it to the subcommander; do not use a
 development-mode override yourself.
