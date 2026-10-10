@@ -105,7 +105,9 @@ export function findOpenGoalReview<T extends CompletionLike>(decisions: T[]): T 
 // and what counts as the rest, so seven components do not each decide separately.
 export function headline(content: string): string {
   const index = content.indexOf("\n");
-  return (index < 0 ? content : content.slice(0, index)).trim();
+  const line = (index < 0 ? content : content.slice(0, index)).trim();
+  const heading = /^#{1,6}(?:[ \t]+(.*)|$)/.exec(line);
+  return heading ? (heading[1] ?? "").trim() : line;
 }
 
 export function body(content: string): string {

@@ -61,9 +61,24 @@ type Goal struct {
 
 func Headline(content string) string {
 	if index := strings.IndexByte(content, '\n'); index >= 0 {
-		return strings.TrimSpace(content[:index])
+		return StripHeadingMarker(content[:index])
 	}
-	return strings.TrimSpace(content)
+	return StripHeadingMarker(content)
+}
+
+// StripHeadingMarker removes a Markdown ATX heading marker (1 to 6 "#" followed
+// by a space, a tab, or the end of the line) and returns the trimmed rest. Any
+// other line is returned trimmed and unchanged.
+func StripHeadingMarker(line string) string {
+	line = strings.TrimSpace(line)
+	n := 0
+	for n < len(line) && line[n] == '#' {
+		n++
+	}
+	if n >= 1 && n <= 6 && (n == len(line) || line[n] == ' ' || line[n] == '\t') {
+		return strings.TrimSpace(line[n:])
+	}
+	return line
 }
 
 // Body returns everything after a Goal's headline. Empty when the content is a

@@ -38,6 +38,8 @@ import {
   taskStatusLabel,
   validateAnswer,
   groupGoalsByProject,
+  headline,
+  body,
 } from "./ui";
 
 const sourceDirectory = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -141,6 +143,25 @@ function fixtureTask(id: string, order: number): TaskView {
     project_name: "Fixture project",
   };
 }
+
+describe("headline", () => {
+  it("strips a Markdown heading marker from the first line", () => {
+    expect(headline("# T\n本文")).toBe("T");
+    expect(headline("###### T")).toBe("T");
+    expect(headline("#   T")).toBe("T");
+    expect(headline("  # T")).toBe("T");
+  });
+
+  it("keeps lines that are not heading markers", () => {
+    expect(headline("####### T")).toBe("####### T");
+    expect(headline("#T")).toBe("#T");
+    expect(headline("#")).toBe("");
+  });
+
+  it("leaves the body unchanged", () => {
+    expect(body("# T\n# 本文")).toBe("# 本文");
+  });
+});
 
 describe("groupGoalsByProject", () => {
   it("sorts project names and keeps each project's goals together", () => {

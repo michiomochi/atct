@@ -607,6 +607,74 @@ func TestContractN3GoalListTruncatesTitleAndCountsRunes(t *testing.T) {
 	}
 }
 
+func TestSummaryLineStripsHeadingMarker(t *testing.T) {
+	cases := []struct {
+		content string
+		want    string
+	}{
+		{"#\n本文", "本文"},
+		{"\n\n## T", "T"},
+		{"# T\n本文", "T"},
+		{"#T", "#T"},
+		{"####### T", "####### T"},
+	}
+	for _, c := range cases {
+		if got := summaryLine(c.content); got != c.want {
+			t.Fatalf("summaryLine(%q) = %q, want %q", c.content, got, c.want)
+		}
+	}
+}
+
+func TestSummaryLineTruncatesAfterStrippingHeadingMarker(t *testing.T) {
+	heading := strings.Repeat("あ", 130)
+	if got, want := summaryLine("# "+heading), strings.Repeat("あ", 120)+"…"; got != want {
+		t.Fatalf("summaryLine = %q, want %q", got, want)
+	}
+}
+
+func TestContractN2bGoalListTitleStripsHeadingMarker(t *testing.T) {
+	fixture := newGoalListFixture(t)
+	defer fixture.store.Close()
+
+	created, err := fixture.store.CreateGoal(context.Background(), fixture.project.ID, "# Heading goal\nbody", "contract-test")
+	if err != nil {
+		t.Fatalf("CreateGoal: %v", err)
+	}
+	goal := findGoalPayloadForContractTest(t, listGoalPayloadsForContractTest(t, fixture), created.ID)
+
+	var title string
+	if err := json.Unmarshal(goal["title"], &title); err != nil {
+		t.Fatalf("decode title: %v", err)
+	}
+	if title != "Heading goal" {
+		t.Fatalf("title = %q, want %q", title, "Heading goal")
+	}
+}
+
+func TestContractB11bGoalListTaskDescriptionStripsHeadingMarker(t *testing.T) {
+	fixture := newGoalListFixture(t)
+	defer fixture.store.Close()
+
+	tasks, err := fixture.store.CreateTasks(context.Background(), fixture.emptyTaskGoal.ID, "contract-test", "heading-description-contract", []string{"heading description task"}, []string{"# 説明\n本文"})
+	if err != nil {
+		t.Fatalf("CreateTasks: %v", err)
+	}
+	goal := findGoalPayloadForContractTest(t, goalListResponseForContractTest(t, fixture).Goals, fixture.emptyTaskGoal.ID)
+	var listed []struct {
+		ID          int64  `json:"id"`
+		Description string `json:"description"`
+	}
+	if err := json.Unmarshal(goal["tasks"], &listed); err != nil {
+		t.Fatalf("decode listed tasks: %v", err)
+	}
+	if len(listed) != 1 || listed[0].ID != tasks[0].ID {
+		t.Fatalf("goal.list tasks = %+v, want task %v", listed, tasks[0].ID)
+	}
+	if listed[0].Description != "説明" {
+		t.Fatalf("task description = %q, want %q", listed[0].Description, "説明")
+	}
+}
+
 func TestContractN4GoalListTaskCountsDistinguishEmptyAndDoneOnlyGoals(t *testing.T) {
 	fixture := newGoalListFixture(t)
 	defer fixture.store.Close()
