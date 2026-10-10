@@ -25,7 +25,11 @@ a mismatch, stop.
 - Do not create spec or plan files under `doc/specs/`, `doc/plans/` or
   `docs/superpowers/`.
 - Submit a review report stating the work, verification, unavailable checks,
-  and changed paths. Return design or irreversible decisions to the delegator.
+  and changed paths. Decide a reversible, non-destructive choice of means inside
+  the task yourself (for example how many launches to split a run into) and state
+  the choice and why in the review report. Return to the delegator only a design
+  decision, an irreversible or destructive operation, or something only the human
+  can do.
 
 Do not make design decisions, re-delegate, commit, or write internal
 version-control details.

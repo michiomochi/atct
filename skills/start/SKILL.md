@@ -165,15 +165,20 @@ Run this until nothing is left, not until the next natural pause.
 
 ## When to come back to the human
 
-Three times, and no others:
+Four times, and no others:
 
-- A choice would change the shape of the work and you cannot settle it from the
-  code — `atct_decision_ask` with `wait_ms=0`, then keep going on something that
-  does not depend on it
-- You are about to do something that cannot be undone — see the `atct` skill for
-  what counts
+- You are about to do something that cannot be undone or is destructive — see the
+  `atct` skill for what counts
+- You need something only the human can do (a permission, a credential, an
+  external account, approval of a cost not yet approved) — `atct_decision_ask`
+- The work would change an outcome the human asked for or approved —
+  `atct_decision_ask` with `wait_ms=0`, then keep going on something that does not
+  depend on it
 - A goal is met — `atct_goal_review_request` for human approval, then
   `atct_goal_review_complete` after approval and merge
+
+A reversible, non-destructive choice of means inside the approved outcome is none
+of these: decide it and record it in the completion report.
 
 Finishing a task is none of these.
 
