@@ -91,6 +91,27 @@ describe("DecisionTable", () => {
     expect(screen.getByText(options[1].consequence)).toBeTruthy();
   });
 
+  test("renders Markdown in the opened question and option text", () => {
+    render(
+      <DecisionTable
+        decisions={[
+          decision({
+            question: "- first\n- second",
+            options: [{ label: "Option A", description: "- a\n- b", consequence: "- c\n- d" }],
+          }),
+        ]}
+        emptyText="No decisions"
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "decision.column.question" }));
+
+    expect(screen.getByText("first").tagName).toBe("LI");
+    expect(screen.getByText("a").tagName).toBe("LI");
+    expect(screen.getByText("c").tagName).toBe("LI");
+    expect(screen.queryByText("- a")).toBeNull();
+  });
+
   test("closes the first row when another row is opened", () => {
     render(
       <DecisionTable

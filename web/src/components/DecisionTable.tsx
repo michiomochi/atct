@@ -12,6 +12,7 @@ import { Table } from "@cloudflare/kumo/components/table";
 import { Fragment, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { EmptyState } from "./StateMessage";
+import { Markdown } from "./Markdown";
 
 interface Props {
   decisions: Decision[];
@@ -126,7 +127,7 @@ export function DecisionTable({ decisions, emptyText }: Props) {
                   <Table.Row className="border-b border-line align-top">
                     <Table.Cell colSpan={5} className="px-3 py-4">
                       <div className="space-y-4">
-                        <p className="whitespace-pre-wrap font-medium text-ink-950">{decision.question}</p>
+                        <div><Markdown>{decision.question}</Markdown></div>
                         {(recommendation || autoSettlement || settlement) && (
                           <div className="space-y-1 text-base">
                             {recommendation && <p className="font-medium text-accent-700">{recommendation}: {decision.default_option}</p>}
@@ -150,8 +151,8 @@ export function DecisionTable({ decisions, emptyText }: Props) {
                                       <span className="ml-2 text-base font-medium text-accent-700">{optionRecommendation}</span>
                                     )}
                                   </p>
-                                  <p className="mt-1 text-base text-ink-700">{option.description}</p>
-                                  <p className="mt-1 text-base text-ink-700">{option.consequence}</p>
+                                  <div className="mt-1"><Markdown>{option.description}</Markdown></div>
+                                  <div className="mt-1"><Markdown>{option.consequence}</Markdown></div>
                                 </li>
                               );
                             })}
