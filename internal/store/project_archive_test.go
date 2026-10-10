@@ -285,8 +285,13 @@ func TestMigration0053KeepsExistingRows(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Rewind to the 0052 state.
+	// Rewind to the 0052 state, undoing the later 0054 first.
 	for _, q := range []string{
+		`DROP TABLE human_prompts`,
+		`ALTER TABLE decisions DROP COLUMN answered_via`,
+		`ALTER TABLE decisions DROP COLUMN answer_quote`,
+		`ALTER TABLE decisions DROP COLUMN answer_evidence`,
+		`DELETE FROM schema_migrations WHERE filename = '0054_chat_answer.sql'`,
 		`ALTER TABLE projects DROP COLUMN archived_at`,
 		`DELETE FROM schema_migrations WHERE filename = '0053_project_archive.sql'`,
 	} {

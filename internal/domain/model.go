@@ -113,6 +113,9 @@ type Decision struct {
 	DefaultAppliedAt *time.Time     `json:"default_applied_at,omitempty"`
 	AnswerLabel      string         `json:"answer_label,omitempty"`
 	AnswerText       string         `json:"answer_text,omitempty"`
+	AnsweredVia      string         `json:"answered_via,omitempty"`
+	AnswerQuote      string         `json:"answer_quote,omitempty"`
+	AnswerEvidence   string         `json:"answer_evidence,omitempty"`
 	AnsweredAt       *time.Time     `json:"answered_at,omitempty"`
 	AppliedAt        *time.Time     `json:"applied_at,omitempty"`
 	AgentSessionID   int64          `json:"agent_session_id"`

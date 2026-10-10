@@ -12,15 +12,19 @@ import (
 
 const answerDecision = `-- name: AnswerDecision :execresult
 UPDATE decisions
-SET status = 'answered', answer_label = ?, answer_text = ?, answered_at = ?
+SET status = 'answered', answer_label = ?, answer_text = ?, answered_at = ?,
+    answered_via = ?, answer_quote = ?, answer_evidence = ?
 WHERE id = ? AND status = 'open'
 `
 
 type AnswerDecisionParams struct {
-	AnswerLabel string
-	AnswerText  string
-	AnsweredAt  sql.NullString
-	ID          int64
+	AnswerLabel    string
+	AnswerText     string
+	AnsweredAt     sql.NullString
+	AnsweredVia    string
+	AnswerQuote    string
+	AnswerEvidence string
+	ID             int64
 }
 
 func (q *Queries) AnswerDecision(ctx context.Context, arg AnswerDecisionParams) (sql.Result, error) {
@@ -28,6 +32,9 @@ func (q *Queries) AnswerDecision(ctx context.Context, arg AnswerDecisionParams) 
 		arg.AnswerLabel,
 		arg.AnswerText,
 		arg.AnsweredAt,
+		arg.AnsweredVia,
+		arg.AnswerQuote,
+		arg.AnswerEvidence,
 		arg.ID,
 	)
 }
@@ -129,7 +136,8 @@ const getDecision = `-- name: GetDecision :one
 SELECT
   id, goal_id, task_id, kind, question, options, status,
   default_option, default_after_ms, default_applied_at,
-  answer_label, answer_text, answered_at, applied_at, agent_session_id, created_at
+  answer_label, answer_text, answered_at, applied_at, agent_session_id, created_at,
+  answered_via, answer_quote, answer_evidence
 FROM decisions
 WHERE id = ?
 `
@@ -154,6 +162,9 @@ func (q *Queries) GetDecision(ctx context.Context, id int64) (Decision, error) {
 		&i.AppliedAt,
 		&i.AgentSessionID,
 		&i.CreatedAt,
+		&i.AnsweredVia,
+		&i.AnswerQuote,
+		&i.AnswerEvidence,
 	)
 	return i, err
 }
@@ -162,7 +173,8 @@ const listAllOpenDecisions = `-- name: ListAllOpenDecisions :many
 SELECT
   id, goal_id, task_id, kind, question, options, status,
   default_option, default_after_ms, default_applied_at,
-  answer_label, answer_text, answered_at, applied_at, agent_session_id, created_at
+  answer_label, answer_text, answered_at, applied_at, agent_session_id, created_at,
+  answered_via, answer_quote, answer_evidence
 FROM decisions
 WHERE status = 'open'
   AND goal_id IN (SELECT goals.id FROM goals WHERE goals.project_id NOT IN (SELECT id FROM projects WHERE archived_at IS NOT NULL))
@@ -195,6 +207,9 @@ func (q *Queries) ListAllOpenDecisions(ctx context.Context) ([]Decision, error) 
 			&i.AppliedAt,
 			&i.AgentSessionID,
 			&i.CreatedAt,
+			&i.AnsweredVia,
+			&i.AnswerQuote,
+			&i.AnswerEvidence,
 		); err != nil {
 			return nil, err
 		}
@@ -213,7 +228,8 @@ const listAnsweredDecisionForID = `-- name: ListAnsweredDecisionForID :many
 SELECT
   id, goal_id, task_id, kind, question, options, status,
   default_option, default_after_ms, default_applied_at,
-  answer_label, answer_text, answered_at, applied_at, agent_session_id, created_at
+  answer_label, answer_text, answered_at, applied_at, agent_session_id, created_at,
+  answered_via, answer_quote, answer_evidence
 FROM decisions
 WHERE status = 'answered' AND id = ?
 ORDER BY answered_at
@@ -245,6 +261,9 @@ func (q *Queries) ListAnsweredDecisionForID(ctx context.Context, id int64) ([]De
 			&i.AppliedAt,
 			&i.AgentSessionID,
 			&i.CreatedAt,
+			&i.AnsweredVia,
+			&i.AnswerQuote,
+			&i.AnswerEvidence,
 		); err != nil {
 			return nil, err
 		}
@@ -263,7 +282,8 @@ const listAnsweredDecisionsForAgentSession = `-- name: ListAnsweredDecisionsForA
 SELECT
   id, goal_id, task_id, kind, question, options, status,
   default_option, default_after_ms, default_applied_at,
-  answer_label, answer_text, answered_at, applied_at, agent_session_id, created_at
+  answer_label, answer_text, answered_at, applied_at, agent_session_id, created_at,
+  answered_via, answer_quote, answer_evidence
 FROM decisions
 WHERE status = 'answered' AND agent_session_id = ?
 ORDER BY answered_at
@@ -295,6 +315,9 @@ func (q *Queries) ListAnsweredDecisionsForAgentSession(ctx context.Context, agen
 			&i.AppliedAt,
 			&i.AgentSessionID,
 			&i.CreatedAt,
+			&i.AnsweredVia,
+			&i.AnswerQuote,
+			&i.AnswerEvidence,
 		); err != nil {
 			return nil, err
 		}
@@ -313,7 +336,8 @@ const listAppliedDecisions = `-- name: ListAppliedDecisions :many
 SELECT
   id, goal_id, task_id, kind, question, options, status,
   default_option, default_after_ms, default_applied_at,
-  answer_label, answer_text, answered_at, applied_at, agent_session_id, created_at
+  answer_label, answer_text, answered_at, applied_at, agent_session_id, created_at,
+  answered_via, answer_quote, answer_evidence
 FROM decisions
 WHERE goal_id = ? AND status = 'applied'
 ORDER BY answered_at DESC, applied_at DESC, id DESC
@@ -351,6 +375,9 @@ func (q *Queries) ListAppliedDecisions(ctx context.Context, arg ListAppliedDecis
 			&i.AppliedAt,
 			&i.AgentSessionID,
 			&i.CreatedAt,
+			&i.AnsweredVia,
+			&i.AnswerQuote,
+			&i.AnswerEvidence,
 		); err != nil {
 			return nil, err
 		}
@@ -369,7 +396,8 @@ const listAppliedDecisionsForTask = `-- name: ListAppliedDecisionsForTask :many
 SELECT
   id, goal_id, task_id, kind, question, options, status,
   default_option, default_after_ms, default_applied_at,
-  answer_label, answer_text, answered_at, applied_at, agent_session_id, created_at
+  answer_label, answer_text, answered_at, applied_at, agent_session_id, created_at,
+  answered_via, answer_quote, answer_evidence
 FROM decisions
 WHERE goal_id = ? AND task_id = ? AND status = 'applied'
 ORDER BY answered_at DESC, applied_at DESC, id DESC
@@ -408,6 +436,9 @@ func (q *Queries) ListAppliedDecisionsForTask(ctx context.Context, arg ListAppli
 			&i.AppliedAt,
 			&i.AgentSessionID,
 			&i.CreatedAt,
+			&i.AnsweredVia,
+			&i.AnswerQuote,
+			&i.AnswerEvidence,
 		); err != nil {
 			return nil, err
 		}
@@ -426,7 +457,8 @@ const listDecisionsForGoal = `-- name: ListDecisionsForGoal :many
 SELECT
   id, goal_id, task_id, kind, question, options, status,
   default_option, default_after_ms, default_applied_at,
-  answer_label, answer_text, answered_at, applied_at, agent_session_id, created_at
+  answer_label, answer_text, answered_at, applied_at, agent_session_id, created_at,
+  answered_via, answer_quote, answer_evidence
 FROM decisions
 WHERE goal_id = ?
 ORDER BY id
@@ -458,6 +490,9 @@ func (q *Queries) ListDecisionsForGoal(ctx context.Context, goalID int64) ([]Dec
 			&i.AppliedAt,
 			&i.AgentSessionID,
 			&i.CreatedAt,
+			&i.AnsweredVia,
+			&i.AnswerQuote,
+			&i.AnswerEvidence,
 		); err != nil {
 			return nil, err
 		}
@@ -476,7 +511,8 @@ const listExpiredDecisions = `-- name: ListExpiredDecisions :many
 SELECT
   id, goal_id, task_id, kind, question, options, status,
   default_option, default_after_ms, default_applied_at,
-  answer_label, answer_text, answered_at, applied_at, agent_session_id, created_at
+  answer_label, answer_text, answered_at, applied_at, agent_session_id, created_at,
+  answered_via, answer_quote, answer_evidence
 FROM decisions
 WHERE status = 'open' AND default_after_ms IS NOT NULL AND default_option != ''
   AND goal_id IN (SELECT goals.id FROM goals WHERE goals.project_id NOT IN (SELECT id FROM projects WHERE archived_at IS NOT NULL))
@@ -509,6 +545,9 @@ func (q *Queries) ListExpiredDecisions(ctx context.Context) ([]Decision, error) 
 			&i.AppliedAt,
 			&i.AgentSessionID,
 			&i.CreatedAt,
+			&i.AnsweredVia,
+			&i.AnswerQuote,
+			&i.AnswerEvidence,
 		); err != nil {
 			return nil, err
 		}
@@ -527,7 +566,8 @@ const listOpenDecisions = `-- name: ListOpenDecisions :many
 SELECT
   id, goal_id, task_id, kind, question, options, status,
   default_option, default_after_ms, default_applied_at,
-  answer_label, answer_text, answered_at, applied_at, agent_session_id, created_at
+  answer_label, answer_text, answered_at, applied_at, agent_session_id, created_at,
+  answered_via, answer_quote, answer_evidence
 FROM decisions
 WHERE goal_id = ? AND status = 'open'
 ORDER BY created_at
@@ -559,6 +599,9 @@ func (q *Queries) ListOpenDecisions(ctx context.Context, goalID int64) ([]Decisi
 			&i.AppliedAt,
 			&i.AgentSessionID,
 			&i.CreatedAt,
+			&i.AnsweredVia,
+			&i.AnswerQuote,
+			&i.AnswerEvidence,
 		); err != nil {
 			return nil, err
 		}
@@ -577,7 +620,8 @@ const listUnappliedDecisions = `-- name: ListUnappliedDecisions :many
 SELECT
   id, goal_id, task_id, kind, question, options, status,
   default_option, default_after_ms, default_applied_at,
-  answer_label, answer_text, answered_at, applied_at, agent_session_id, created_at
+  answer_label, answer_text, answered_at, applied_at, agent_session_id, created_at,
+  answered_via, answer_quote, answer_evidence
 FROM decisions
 WHERE status = 'answered'
   AND goal_id IN (SELECT goals.id FROM goals WHERE goals.project_id NOT IN (SELECT id FROM projects WHERE archived_at IS NOT NULL))
@@ -611,6 +655,9 @@ func (q *Queries) ListUnappliedDecisions(ctx context.Context) ([]Decision, error
 			&i.AppliedAt,
 			&i.AgentSessionID,
 			&i.CreatedAt,
+			&i.AnsweredVia,
+			&i.AnswerQuote,
+			&i.AnswerEvidence,
 		); err != nil {
 			return nil, err
 		}
@@ -629,7 +676,8 @@ const listUnappliedDecisionsForGoal = `-- name: ListUnappliedDecisionsForGoal :m
 SELECT
   id, goal_id, task_id, kind, question, options, status,
   default_option, default_after_ms, default_applied_at,
-  answer_label, answer_text, answered_at, applied_at, agent_session_id, created_at
+  answer_label, answer_text, answered_at, applied_at, agent_session_id, created_at,
+  answered_via, answer_quote, answer_evidence
 FROM decisions
 WHERE status = 'answered'
   AND goal_id = ?
@@ -663,6 +711,9 @@ func (q *Queries) ListUnappliedDecisionsForGoal(ctx context.Context, goalID int6
 			&i.AppliedAt,
 			&i.AgentSessionID,
 			&i.CreatedAt,
+			&i.AnsweredVia,
+			&i.AnswerQuote,
+			&i.AnswerEvidence,
 		); err != nil {
 			return nil, err
 		}
@@ -681,7 +732,8 @@ const listUnappliedDecisionsForProject = `-- name: ListUnappliedDecisionsForProj
 SELECT
   id, goal_id, task_id, kind, question, options, status,
   default_option, default_after_ms, default_applied_at,
-  answer_label, answer_text, answered_at, applied_at, agent_session_id, created_at
+  answer_label, answer_text, answered_at, applied_at, agent_session_id, created_at,
+  answered_via, answer_quote, answer_evidence
 FROM decisions
 WHERE status = 'answered'
   AND goal_id IN (SELECT goals.id FROM goals WHERE goals.project_id = ?)
@@ -716,6 +768,9 @@ func (q *Queries) ListUnappliedDecisionsForProject(ctx context.Context, projectI
 			&i.AppliedAt,
 			&i.AgentSessionID,
 			&i.CreatedAt,
+			&i.AnsweredVia,
+			&i.AnswerQuote,
+			&i.AnswerEvidence,
 		); err != nil {
 			return nil, err
 		}

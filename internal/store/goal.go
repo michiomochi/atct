@@ -659,6 +659,11 @@ func (s *Store) RequestGoalReview(ctx context.Context, goalID, agentSessionID in
 // ApproveGoalReview applies the human approval while leaving the goal active.
 // The commander must perform the later finalization separately.
 func (s *Store) ApproveGoalReview(ctx context.Context, decisionID int64) (domain.Goal, error) {
+	return s.ApproveGoalReviewWith(ctx, decisionID, AnswerSource{})
+}
+
+// ApproveGoalReviewWith is ApproveGoalReview that also records the answer's source.
+func (s *Store) ApproveGoalReviewWith(ctx context.Context, decisionID int64, src AnswerSource) (domain.Goal, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return domain.Goal{}, fmt.Errorf("begin goal review approval tx: %w", err)
@@ -682,7 +687,8 @@ func (s *Store) ApproveGoalReview(ctx context.Context, decisionID int64) (domain
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	result, err := q.ApproveGoalReviewDecision(ctx, sqlcgen.ApproveGoalReviewDecisionParams{
-		AnsweredAt: sql.NullString{String: now, Valid: true}, AppliedAt: sql.NullString{String: now, Valid: true}, ID: decisionID,
+		AnsweredAt: sql.NullString{String: now, Valid: true}, AppliedAt: sql.NullString{String: now, Valid: true},
+		AnsweredVia: src.Via, AnswerQuote: src.Quote, AnswerEvidence: src.Evidence, ID: decisionID,
 	})
 	if err != nil {
 		return domain.Goal{}, fmt.Errorf("approve goal review: %w", err)
@@ -714,6 +720,11 @@ func (s *Store) ApproveGoalReview(ctx context.Context, decisionID int64) (domain
 // the completed handoff unchanged. A commander explicitly requests a new
 // handoff when the work should resume.
 func (s *Store) RejectGoalReview(ctx context.Context, decisionID int64, reason string) error {
+	return s.RejectGoalReviewWith(ctx, decisionID, reason, AnswerSource{})
+}
+
+// RejectGoalReviewWith is RejectGoalReview that also records the answer's source.
+func (s *Store) RejectGoalReviewWith(ctx context.Context, decisionID int64, reason string, src AnswerSource) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin goal review rejection tx: %w", err)
@@ -722,7 +733,8 @@ func (s *Store) RejectGoalReview(ctx context.Context, decisionID int64, reason s
 	q := sqlcgen.New(tx)
 	now := formatTimestamp(time.Now())
 	result, err := q.RejectGoalReviewDecision(ctx, sqlcgen.RejectGoalReviewDecisionParams{
-		AnswerText: reason, AnsweredAt: sql.NullString{String: now, Valid: true}, ID: decisionID,
+		AnswerText: reason, AnsweredAt: sql.NullString{String: now, Valid: true},
+		AnsweredVia: src.Via, AnswerQuote: src.Quote, AnswerEvidence: src.Evidence, ID: decisionID,
 	})
 	if err != nil {
 		return fmt.Errorf("reject goal review: %w", err)

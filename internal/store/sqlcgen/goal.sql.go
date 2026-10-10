@@ -12,18 +12,29 @@ import (
 
 const approveGoalReviewDecision = `-- name: ApproveGoalReviewDecision :execresult
 UPDATE decisions
-SET status = 'applied', answer_label = 'approve', answered_at = ?, applied_at = ?
+SET status = 'applied', answer_label = 'approve', answered_at = ?, applied_at = ?,
+    answered_via = ?, answer_quote = ?, answer_evidence = ?
 WHERE id = ? AND kind = 'goal_review' AND status = 'open'
 `
 
 type ApproveGoalReviewDecisionParams struct {
-	AnsweredAt sql.NullString
-	AppliedAt  sql.NullString
-	ID         int64
+	AnsweredAt     sql.NullString
+	AppliedAt      sql.NullString
+	AnsweredVia    string
+	AnswerQuote    string
+	AnswerEvidence string
+	ID             int64
 }
 
 func (q *Queries) ApproveGoalReviewDecision(ctx context.Context, arg ApproveGoalReviewDecisionParams) (sql.Result, error) {
-	return q.db.ExecContext(ctx, approveGoalReviewDecision, arg.AnsweredAt, arg.AppliedAt, arg.ID)
+	return q.db.ExecContext(ctx, approveGoalReviewDecision,
+		arg.AnsweredAt,
+		arg.AppliedAt,
+		arg.AnsweredVia,
+		arg.AnswerQuote,
+		arg.AnswerEvidence,
+		arg.ID,
+	)
 }
 
 const countApprovedGoalReviewsForGoal = `-- name: CountApprovedGoalReviewsForGoal :one
@@ -472,18 +483,29 @@ func (q *Queries) ListNextGoals(ctx context.Context, goalID int64) ([]ListNextGo
 
 const rejectGoalReviewDecision = `-- name: RejectGoalReviewDecision :execresult
 UPDATE decisions
-SET status = 'answered', answer_label = 'reject', answer_text = ?, answered_at = ?
+SET status = 'answered', answer_label = 'reject', answer_text = ?, answered_at = ?,
+    answered_via = ?, answer_quote = ?, answer_evidence = ?
 WHERE id = ? AND kind = 'goal_review' AND status = 'open'
 `
 
 type RejectGoalReviewDecisionParams struct {
-	AnswerText string
-	AnsweredAt sql.NullString
-	ID         int64
+	AnswerText     string
+	AnsweredAt     sql.NullString
+	AnsweredVia    string
+	AnswerQuote    string
+	AnswerEvidence string
+	ID             int64
 }
 
 func (q *Queries) RejectGoalReviewDecision(ctx context.Context, arg RejectGoalReviewDecisionParams) (sql.Result, error) {
-	return q.db.ExecContext(ctx, rejectGoalReviewDecision, arg.AnswerText, arg.AnsweredAt, arg.ID)
+	return q.db.ExecContext(ctx, rejectGoalReviewDecision,
+		arg.AnswerText,
+		arg.AnsweredAt,
+		arg.AnsweredVia,
+		arg.AnswerQuote,
+		arg.AnswerEvidence,
+		arg.ID,
+	)
 }
 
 const setGoalDerivedFrom = `-- name: SetGoalDerivedFrom :execresult

@@ -40,6 +40,9 @@ type Decision struct {
 	AppliedAt        sql.NullString
 	AgentSessionID   int64
 	CreatedAt        string
+	AnsweredVia      string
+	AnswerQuote      string
+	AnswerEvidence   string
 }
 
 type Goal struct {
@@ -97,6 +100,15 @@ type GoalHandoffEntry struct {
 type HandoffHistoryGap struct {
 	HandoffID string
 	Scope     string
+}
+
+type HumanPrompt struct {
+	ID             int64
+	SessionKey     string
+	PromptID       string
+	TranscriptPath string
+	Prompt         string
+	RecordedAt     string
 }
 
 type MonitorBinding struct {

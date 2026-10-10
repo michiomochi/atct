@@ -1,0 +1,186 @@
+package store
+
+import (
+	"context"
+	"fmt"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/michiomochi/atct/internal/domain"
+)
+
+func TestAnswerDecisionWithRecordsSource(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	goalID := newTestGoal(t, s)
+	taskID := newTestDecisionTask(t, s, goalID, "chat-answer")
+
+	chat, err := s.AskDecision(ctx, AskInput{
+		GoalID: goalID, TaskID: taskID, Kind: domain.KindDecision, Question: "chat?", AgentSessionID: testSessionID("chat-answer-1"),
+	})
+	if err != nil {
+		t.Fatalf("AskDecision: %v", err)
+	}
+	if _, err := s.AnswerDecisionWith(ctx, AnswerInput{DecisionID: chat.ID, AnswerText: "yes"}, AnswerSource{
+		Via: "chat", Quote: "yes, go ahead", Evidence: "prompt-42",
+	}); err != nil {
+		t.Fatalf("AnswerDecisionWith: %v", err)
+	}
+	got, err := s.GetDecision(ctx, chat.ID)
+	if err != nil {
+		t.Fatalf("GetDecision: %v", err)
+	}
+	if got.AnsweredVia != "chat" || got.AnswerQuote != "yes, go ahead" || got.AnswerEvidence != "prompt-42" {
+		t.Fatalf("decision source = %q/%q/%q, want chat/quote/evidence", got.AnsweredVia, got.AnswerQuote, got.AnswerEvidence)
+	}
+
+	dashboard, err := s.AskDecision(ctx, AskInput{
+		GoalID: goalID, TaskID: taskID, Kind: domain.KindDecision, Question: "dashboard?", AgentSessionID: testSessionID("chat-answer-2"),
+	})
+	if err != nil {
+		t.Fatalf("AskDecision: %v", err)
+	}
+	if _, err := s.AnswerDecision(ctx, AnswerInput{DecisionID: dashboard.ID, AnswerText: "A"}); err != nil {
+		t.Fatalf("AnswerDecision: %v", err)
+	}
+	got, err = s.GetDecision(ctx, dashboard.ID)
+	if err != nil {
+		t.Fatalf("GetDecision: %v", err)
+	}
+	if got.AnsweredVia != "" || got.AnswerQuote != "" || got.AnswerEvidence != "" {
+		t.Fatalf("dashboard answer source = %q/%q/%q, want empty", got.AnsweredVia, got.AnswerQuote, got.AnswerEvidence)
+	}
+}
+
+func TestGoalReviewApproveAndRejectWithRecordSource(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	goalID := newTestGoal(t, s)
+	commanderID := testSessionID("chat-review-commander")
+	receiverID := testSessionID("chat-review-receiver")
+	addLiveProjectClaim(t, s, goalID, "chat-review-commander")
+	addTestAgentSession(t, s, "chat-review-receiver")
+	receiveGoalHandoffReviewForGoalReviewTest(t, s, ctx, "chat-review-handoff", goalID, commanderID, receiverID)
+	review, err := s.RequestGoalReview(ctx, goalID, commanderID, domain.CompletionReport{
+		WorkDone: "work", NowPossible: "result", HowToVerify: "verify", Surprises: "none", NeedsReview: "none",
+	})
+	if err != nil {
+		t.Fatalf("RequestGoalReview: %v", err)
+	}
+
+	src := AnswerSource{Via: "chat", Quote: "approve it", Evidence: "prompt-7"}
+	if _, err := s.ApproveGoalReviewWith(ctx, review.ID, src); err != nil {
+		t.Fatalf("ApproveGoalReviewWith: %v", err)
+	}
+	got, err := s.GetDecision(ctx, review.ID)
+	if err != nil {
+		t.Fatalf("GetDecision after approval: %v", err)
+	}
+	if got.AnsweredVia != "chat" || got.AnswerQuote != "approve it" || got.AnswerEvidence != "prompt-7" {
+		t.Fatalf("approved source = %q/%q/%q, want chat/quote/evidence", got.AnsweredVia, got.AnswerQuote, got.AnswerEvidence)
+	}
+}
+
+func TestGoalReviewRejectWithRecordSource(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	goalID := newTestGoal(t, s)
+	commanderID := testSessionID("chat-reject-commander")
+	receiverID := testSessionID("chat-reject-receiver")
+	addLiveProjectClaim(t, s, goalID, "chat-reject-commander")
+	addTestAgentSession(t, s, "chat-reject-receiver")
+	receiveGoalHandoffReviewForGoalReviewTest(t, s, ctx, "chat-reject-handoff", goalID, commanderID, receiverID)
+	review, err := s.RequestGoalReview(ctx, goalID, commanderID, domain.CompletionReport{
+		WorkDone: "work", NowPossible: "result", HowToVerify: "verify", Surprises: "none", NeedsReview: "none",
+	})
+	if err != nil {
+		t.Fatalf("RequestGoalReview: %v", err)
+	}
+
+	if err := s.RejectGoalReviewWith(ctx, review.ID, "needs another pass", AnswerSource{Via: "chat", Quote: "no", Evidence: "prompt-8"}); err != nil {
+		t.Fatalf("RejectGoalReviewWith: %v", err)
+	}
+	got, err := s.GetDecision(ctx, review.ID)
+	if err != nil {
+		t.Fatalf("GetDecision after rejection: %v", err)
+	}
+	if got.AnswerText != "needs another pass" || got.AnsweredVia != "chat" || got.AnswerQuote != "no" || got.AnswerEvidence != "prompt-8" {
+		t.Fatalf("rejected decision = %+v, want reason and chat source", got)
+	}
+}
+
+func TestRecordHumanPromptKeepsNewestFiftyPerSession(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	base := time.Date(2026, 10, 10, 9, 0, 0, 0, time.UTC)
+	for i := range 52 {
+		if err := s.RecordHumanPrompt(ctx, HumanPromptInput{
+			SessionKey: "chat-session-a", PromptID: fmt.Sprintf("prompt-%02d", i),
+			TranscriptPath: "/tmp/t.jsonl", Prompt: "prompt", RecordedAt: base.Add(time.Duration(i) * time.Minute),
+		}); err != nil {
+			t.Fatalf("RecordHumanPrompt %d: %v", i, err)
+		}
+	}
+	if err := s.RecordHumanPrompt(ctx, HumanPromptInput{
+		SessionKey: "chat-session-b", PromptID: "other", TranscriptPath: "/tmp/b.jsonl", Prompt: "other", RecordedAt: base,
+	}); err != nil {
+		t.Fatalf("RecordHumanPrompt other session: %v", err)
+	}
+
+	got, err := s.HumanPromptsSince(ctx, "chat-session-a", time.Time{})
+	if err != nil {
+		t.Fatalf("HumanPromptsSince: %v", err)
+	}
+	if len(got) != 50 {
+		t.Fatalf("kept %d prompts, want 50", len(got))
+	}
+	if !got[0].RecordedAt.Equal(base.Add(51*time.Minute)) || !got[49].RecordedAt.Equal(base.Add(2*time.Minute)) {
+		t.Fatalf("kept range = %v..%v, want the newest 50 newest first", got[0].RecordedAt, got[49].RecordedAt)
+	}
+	other, err := s.HumanPromptsSince(ctx, "chat-session-b", time.Time{})
+	if err != nil {
+		t.Fatalf("HumanPromptsSince other: %v", err)
+	}
+	if len(other) != 1 {
+		t.Fatalf("other session kept %d prompts, want 1", len(other))
+	}
+}
+
+func TestHumanPromptsSinceFiltersByRecordedAt(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	base := time.Date(2026, 10, 10, 9, 0, 0, 0, time.UTC)
+	for i := range 3 {
+		if err := s.RecordHumanPrompt(ctx, HumanPromptInput{
+			SessionKey: "chat-since", PromptID: "p", TranscriptPath: "/tmp/s.jsonl", Prompt: "p", RecordedAt: base.Add(time.Duration(i) * time.Hour),
+		}); err != nil {
+			t.Fatalf("RecordHumanPrompt: %v", err)
+		}
+	}
+	got, err := s.HumanPromptsSince(ctx, "chat-since", base.Add(30*time.Minute))
+	if err != nil {
+		t.Fatalf("HumanPromptsSince: %v", err)
+	}
+	if len(got) != 2 || !got[0].RecordedAt.Equal(base.Add(2*time.Hour)) || !got[1].RecordedAt.Equal(base.Add(time.Hour)) {
+		t.Fatalf("since 09:30 returned %d prompts, want the 10:00 and 11:00 ones newest first", len(got))
+	}
+}
+
+func TestRecordHumanPromptTruncatesToRunes(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	long := strings.Repeat("あ", humanPromptMaxRunes+1)
+	if err := s.RecordHumanPrompt(ctx, HumanPromptInput{
+		SessionKey: "chat-long", PromptID: "p", TranscriptPath: "/tmp/l.jsonl", Prompt: long,
+	}); err != nil {
+		t.Fatalf("RecordHumanPrompt: %v", err)
+	}
+	got, err := s.HumanPromptsSince(ctx, "chat-long", time.Time{})
+	if err != nil {
+		t.Fatalf("HumanPromptsSince: %v", err)
+	}
+	if len(got) != 1 || len([]rune(got[0].Prompt)) != humanPromptMaxRunes {
+		t.Fatalf("stored prompt runes = %d, want %d", len([]rune(got[0].Prompt)), humanPromptMaxRunes)
+	}
+}

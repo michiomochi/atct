@@ -110,11 +110,26 @@ CREATE TABLE IF NOT EXISTS decisions (
   answered_at  TEXT,
 	applied_at   TEXT,
 	agent_session_id INTEGER NOT NULL DEFAULT 0,
-	created_at   TEXT NOT NULL
+	created_at   TEXT NOT NULL,
+	answered_via TEXT NOT NULL DEFAULT '',
+	answer_quote TEXT NOT NULL DEFAULT '',
+	answer_evidence TEXT NOT NULL DEFAULT ''
 );
 
 CREATE INDEX IF NOT EXISTS idx_decisions_open
   ON decisions(status, goal_id);
+
+CREATE TABLE IF NOT EXISTS human_prompts (
+  id              INTEGER PRIMARY KEY,
+  session_key     TEXT NOT NULL,
+  prompt_id       TEXT NOT NULL,
+  transcript_path TEXT NOT NULL,
+  prompt          TEXT NOT NULL,
+  recorded_at     TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_human_prompts_session
+  ON human_prompts(session_key, recorded_at);
 
 CREATE TABLE IF NOT EXISTS task_commits (
   task_id      INTEGER NOT NULL REFERENCES tasks(id),
