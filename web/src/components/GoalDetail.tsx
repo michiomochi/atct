@@ -77,7 +77,7 @@ function CompletionReport({ goal }: { goal: Goal }) {
           return (
             <section key={key} className="min-w-0 border-t border-line pt-3">
               <h3 className="font-display text-base font-semibold text-ink-950">{t(label)}</h3>
-              <p className="mt-2 whitespace-pre-wrap break-words text-base leading-6 text-ink-800">{value}</p>
+              <div className="mt-2"><Markdown>{value}</Markdown></div>
             </section>
           );
         })}
@@ -161,7 +161,7 @@ function GoalReview({
     <section className="min-w-0 border-t border-line pt-5" data-testid="goal-review" aria-labelledby="goal-review-heading">
       <h2 id="goal-review-heading" className="font-display text-lg font-semibold text-ink-950">{t("goal.review.title")}</h2>
       <p className="mt-2 max-w-3xl text-base leading-6 text-ink-700">{t("goal.review.description")}</p>
-      <p className="mt-4 max-w-3xl whitespace-pre-wrap break-words text-base leading-6 text-ink-950">{decision.question}</p>
+      <div className="mt-4 max-w-3xl"><Markdown>{decision.question}</Markdown></div>
       <form className="mt-4 min-w-0 max-w-3xl border-l-2 border-accent-600 pl-4" onSubmit={handleSubmit} noValidate>
         <label className="mb-3 block text-base text-ink-800" htmlFor={reasonID}>
           {t("goal.review.reason")} <span className="text-ink-500">{t("form.optional")}</span>

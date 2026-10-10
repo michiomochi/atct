@@ -48,12 +48,30 @@ describe("ReviewExchanges", () => {
 
     const card = (await screen.findByText("reviewExchange.source.handoff")).closest("article")!;
     expect(within(card).getByText("reviewExchange.actor.session:3")).not.toBeNull();
-    expect(within(card).getByText(/line one\s+line two/).className).toContain("whitespace-pre-wrap");
+    expect(within(card).getByText(/line one\s+line two/)).not.toBeNull();
     expect(within(card).getByText("reviewExchange.response")).not.toBeNull();
     expect(within(card).getByText("reviewExchange.actor.session:4")).not.toBeNull();
     expect(within(card).getByText("goal-h2")).not.toBeNull();
     expect(within(card).getByText("fixed it")).not.toBeNull();
     expect(within(card).queryByText("reviewExchange.pending")).toBeNull();
+  });
+
+  it("renders Markdown in the rejection reason and the response report", async () => {
+    await renderHistory({
+      exchanges: [
+        exchange({
+          rejection: { source: "handoff", at: "2026-10-01T00:00:01Z", actor_session_id: 3, reason: "- r1\n- r2" },
+          response: { at: "2026-10-01T00:00:05Z", author_session_id: 4, handoff_id: "goal-h2", report: "- s1\n- s2" },
+        }),
+      ],
+      gaps: [],
+    });
+
+    const card = (await screen.findByText("reviewExchange.source.handoff")).closest("article")!;
+    expect(within(card).getByText("r1").tagName).toBe("LI");
+    expect(within(card).getByText("s1").tagName).toBe("LI");
+    expect(within(card).queryByText("- r1")).toBeNull();
+    expect(within(card).queryByText("- s1")).toBeNull();
   });
 
   it("labels human rejections and withdrawals without a session actor", async () => {

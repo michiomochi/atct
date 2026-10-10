@@ -378,6 +378,13 @@ describe("TaskDetailPage", () => {
     expect(screen.getByRole("button", { name: "goal.history.changeAssumption" })).not.toBeNull();
   });
 
+  it("renders the task description as Markdown", async () => {
+    await renderTask(detailResponse(task("task-markdown", "Task markdown", "- step a\n- step b")));
+
+    expect(screen.getByText("step a").tagName).toBe("LI");
+    expect(screen.queryByText("- step a")).toBeNull();
+  });
+
   it("shows descriptions only when present and always shows task attributes", async () => {
     const taskWithDescription = task(
       "task-with-description",

@@ -5,6 +5,7 @@ import type { Decision } from "../lib/api";
 import { answerDecision, ApiError } from "../lib/api";
 import { formatDuration } from "../i18n";
 import { decisionAutoSettlementSeconds, decisionRecommendationLabel, validateAnswer, type AnswerErrors } from "../lib/ui";
+import { Markdown } from "./Markdown";
 
 interface Props {
   decision: Decision;
@@ -77,7 +78,7 @@ export function DecisionAnswerForm({ decision, onUpdated }: Props) {
 
   return (
     <form className="mt-3 border-l-2 border-accent-600 pl-3" onSubmit={handleSubmit} noValidate>
-      <p className="mb-3 whitespace-pre-wrap break-words text-base leading-6 text-ink-800">{decision.question}</p>
+      <div className="mb-3"><Markdown>{decision.question}</Markdown></div>
       {autoSettlementDuration && (
         <p className="mb-3 text-base text-ink-700">
           {t("decision.autoSettlesIn", { duration: autoSettlementDuration })}

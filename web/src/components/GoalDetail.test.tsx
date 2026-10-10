@@ -492,6 +492,27 @@ describe("GoalDetail", () => {
     await waitFor(() => expect(screen.getByTestId("completion-report")).not.toBeNull());
   });
 
+  it("renders completion report fields, goal review and unattached decision questions as Markdown", async () => {
+    const response = goalResponse({ needs_review: "- check a\n- check b" });
+    response.unattached_decisions = [
+      { ...goalReviewDecision(), question: "- review a\n- review b" },
+      { ...ordinaryDecision(), question: "- choose a\n- choose b" },
+    ];
+    vi.mocked(fetchGoal).mockResolvedValueOnce(response);
+
+    render(<GoalDetail id="goal-1" />);
+
+    const report = await screen.findByTestId("completion-report");
+    expect(within(report).getByText("check a").tagName).toBe("LI");
+    expect(screen.queryByText("- check a")).toBeNull();
+    const card = await screen.findByTestId("goal-review");
+    expect(within(card).getByText("review a").tagName).toBe("LI");
+    expect(screen.queryByText("- review a")).toBeNull();
+    const list = await screen.findByTestId("unattached-decision-list");
+    expect(within(list).getByText("choose a").tagName).toBe("LI");
+    expect(screen.queryByText("- choose a")).toBeNull();
+  });
+
   it("renders goal tasks in ascending order with one-based order labels", async () => {
     vi.mocked(fetchGoal).mockResolvedValueOnce(
       goalResponse({
