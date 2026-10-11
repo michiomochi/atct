@@ -169,8 +169,16 @@ prompt; do not record it. Only the session that asked the decision, or the
 commander of the same project for a goal review or a decision with no asking
 session, can record it. If the human's answer is unclear, do not record it: ask
 again. If the record is refused, ask the human to answer on the dashboard and do
-not retry with other quotes. Codex does not register the prompt hook, so the
-record is always refused there. The check reads the transcript under the Claude Code projects folder, so the daemon must see the same `CLAUDE_CONFIG_DIR` as Claude Code; if it does not, a genuine answer is refused too, and the human answers on the dashboard.
+not retry with other quotes. Codex records the same way, but only when the ATCT
+prompt hook is approved in Codex (Codex asks for review of hooks); without it no
+prompt is recorded and the answer is refused. The check reads the rollout under
+the Codex sessions folder and counts only a message the human typed in the TUI: a
+message `atct codex monitor` sent (its `client_id` starts with `atct:`) or one
+Codex generated (no `client_id`) is refused, so an input the agent or ATCT sent
+never counts as the human's answer. The check reads the transcript under the
+Claude Code projects folder and the Codex sessions folder, so the daemon must see
+the same `CLAUDE_CONFIG_DIR` as Claude Code and the same `CODEX_HOME` as Codex; if
+it does not, a genuine answer is refused too, and the human answers on the dashboard.
 
 ## Archived projects
 
