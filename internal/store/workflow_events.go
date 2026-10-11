@@ -41,9 +41,9 @@ func DecisionRoutesToCommander(d domain.Decision) bool {
 	return d.Kind == domain.KindGoalReview || d.AgentSessionID == 0
 }
 
-// decisionRoles is what decisionTargetRole needs to resolve a session's role.
-// ReconcileWorkflow loads it once: resolving it per decision re-read every
-// goal for every decision, which dominated the cost of a reconcile.
+// decisionRoles resolves which role a decision is addressed to. ReconcileWorkflow
+// loads it once: resolving it per decision re-read every goal for every
+// decision, which dominated the cost of a reconcile.
 type decisionRoles struct {
 	commanders    map[int64]bool
 	subcommanders map[int64]bool
@@ -58,12 +58,18 @@ func (s *Store) loadDecisionRoles(ctx context.Context) (*decisionRoles, error) {
 	if err != nil {
 		return nil, err
 	}
+	// ListAllGoals leaves out archived projects; a handoff on one of their goals
+	// does not make its receiver a subcommander.
+	goals, err := s.ListAllGoals(ctx)
+	if err != nil {
+		return nil, err
+	}
 	roles := &decisionRoles{commanders: map[int64]bool{}, subcommanders: map[int64]bool{}}
 	for _, project := range projects {
 		roles.commanders[project.ClaimedBy] = true
 	}
-	for _, handoff := range handoffs {
-		if handoff.ReceivedAt != nil {
+	for _, goal := range goals {
+		if handoff := handoffs[goal.ID]; handoff != nil && handoff.ReceivedAt != nil {
 			roles.subcommanders[handoff.ReceivedBy] = true
 		}
 	}

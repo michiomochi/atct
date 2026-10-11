@@ -368,3 +368,45 @@ func TestWorkflowReconciliationLabelsDecisionTargetRole(t *testing.T) {
 		t.Fatalf("decisions = %+v, want one routed to executor", reconciliation.Decisions)
 	}
 }
+
+func TestLoadDecisionRolesFromProjectClaimsAndReceivedGoalHandoffs(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	goalID := newTestGoal(t, s)
+	addLiveProjectClaim(t, s, goalID, "roles-commander")
+	addTestAgentSession(t, s, "roles-subcommander")
+	addTestAgentSession(t, s, "roles-bystander")
+	subcommander := testSessionID("roles-subcommander")
+	bystander := testSessionID("roles-bystander")
+	if _, err := s.RequestGoalHandoff(ctx, "roles-goal-handoff", goalID, testSessionID("roles-commander"), "take this goal"); err != nil {
+		t.Fatalf("RequestGoalHandoff: %v", err)
+	}
+
+	roles, err := s.loadDecisionRoles(ctx)
+	if err != nil {
+		t.Fatalf("loadDecisionRoles: %v", err)
+	}
+	ask := func(id int64) domain.Decision {
+		return domain.Decision{Kind: domain.KindDecision, AgentSessionID: id}
+	}
+	if got := roles.targetRole(ask(testSessionID("roles-commander"))); got != "commander" {
+		t.Errorf("project claimant = %q, want commander", got)
+	}
+	if got := roles.targetRole(ask(subcommander)); got != "executor" {
+		t.Errorf("session whose goal handoff is not received = %q, want executor", got)
+	}
+
+	if _, err := s.ReceiveGoalHandoff(ctx, "roles-goal-handoff", goalID, subcommander); err != nil {
+		t.Fatalf("ReceiveGoalHandoff: %v", err)
+	}
+	roles, err = s.loadDecisionRoles(ctx)
+	if err != nil {
+		t.Fatalf("loadDecisionRoles: %v", err)
+	}
+	if got := roles.targetRole(ask(subcommander)); got != "subcommander" {
+		t.Errorf("goal handoff receiver = %q, want subcommander", got)
+	}
+	if got := roles.targetRole(ask(bystander)); got != "executor" {
+		t.Errorf("unrelated session = %q, want executor", got)
+	}
+}

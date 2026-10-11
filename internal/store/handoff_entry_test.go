@@ -909,27 +909,48 @@ func TestTaskHandoffRejectAndAmendAppendEntries(t *testing.T) {
 }
 
 func TestHandoffEntryWatermarkGrowsWithEveryAppend(t *testing.T) {
-	s := newTestStore(t)
-	ctx := context.Background()
-	goalID := newTestGoal(t, s)
-	addLiveProjectClaim(t, s, goalID, "watermark-requester")
-	addTestAgentSession(t, s, "watermark-receiver")
-
-	before, err := s.HandoffEntryWatermark(ctx)
-	if err != nil {
-		t.Fatalf("HandoffEntryWatermark: %v", err)
-	}
-	if again, _ := s.HandoffEntryWatermark(ctx); again != before {
-		t.Fatalf("watermark moved without an append: %d then %d", before, again)
-	}
-	if _, err := s.RequestGoalHandoff(ctx, "watermark-goal-handoff", goalID, testSessionID("watermark-requester"), "take this goal"); err != nil {
-		t.Fatalf("RequestGoalHandoff: %v", err)
-	}
-	after, err := s.HandoffEntryWatermark(ctx)
-	if err != nil {
-		t.Fatalf("HandoffEntryWatermark: %v", err)
-	}
-	if after <= before {
-		t.Fatalf("watermark after an appended entry = %d, want more than %d", after, before)
+	for _, tc := range []struct {
+		name    string
+		prepare func(t *testing.T, s *Store) func() error // returns the append to make
+	}{
+		{"goal handoff entry", func(t *testing.T, s *Store) func() error {
+			goalID := newTestGoal(t, s)
+			addLiveProjectClaim(t, s, goalID, "watermark-requester")
+			return func() error {
+				_, err := s.RequestGoalHandoff(context.Background(), "watermark-goal-handoff", goalID, testSessionID("watermark-requester"), "take this goal")
+				return err
+			}
+		}},
+		{"task handoff entry", func(t *testing.T, s *Store) func() error {
+			taskID := addTestTasks(t, s, 1)[0]
+			addLiveParentGoalClaim(t, s, taskID, "watermark-requester")
+			return func() error {
+				_, err := s.RequestTaskHandoff(context.Background(), "watermark-task-handoff", taskID, testSessionID("watermark-requester"), "take this task")
+				return err
+			}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newTestStore(t)
+			ctx := context.Background()
+			appendEntry := tc.prepare(t, s)
+			before, err := s.HandoffEntryWatermark(ctx)
+			if err != nil {
+				t.Fatalf("HandoffEntryWatermark: %v", err)
+			}
+			if again, _ := s.HandoffEntryWatermark(ctx); again != before {
+				t.Fatalf("watermark moved without an append: %d then %d", before, again)
+			}
+			if err := appendEntry(); err != nil {
+				t.Fatalf("append entry: %v", err)
+			}
+			after, err := s.HandoffEntryWatermark(ctx)
+			if err != nil {
+				t.Fatalf("HandoffEntryWatermark: %v", err)
+			}
+			if after <= before {
+				t.Fatalf("watermark after an appended entry = %d, want more than %d", after, before)
+			}
+		})
 	}
 }
