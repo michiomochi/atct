@@ -41,34 +41,49 @@ func DecisionRoutesToCommander(d domain.Decision) bool {
 	return d.Kind == domain.KindGoalReview || d.AgentSessionID == 0
 }
 
-func (s *Store) decisionTargetRole(ctx context.Context, decision domain.Decision) (string, error) {
-	if DecisionRoutesToCommander(decision) {
-		return "commander", nil
-	}
-	agentSessionID := decision.AgentSessionID
+// decisionRoles resolves which role a decision is addressed to. ReconcileWorkflow
+// loads it once: resolving it per decision re-read every goal for every
+// decision, which dominated the cost of a reconcile.
+type decisionRoles struct {
+	commanders    map[int64]bool
+	subcommanders map[int64]bool
+}
+
+func (s *Store) loadDecisionRoles(ctx context.Context) (*decisionRoles, error) {
 	projects, err := s.ListProjects(ctx)
 	if err != nil {
-		return "", err
-	}
-	for _, project := range projects {
-		if project.ClaimedBy == agentSessionID {
-			return "commander", nil
-		}
-	}
-	goals, err := s.ListAllGoals(ctx)
-	if err != nil {
-		return "", err
+		return nil, err
 	}
 	handoffs, err := s.ListOpenGoalHandoffs(ctx)
 	if err != nil {
-		return "", err
+		return nil, err
+	}
+	// ListAllGoals leaves out archived projects; a handoff on one of their goals
+	// does not make its receiver a subcommander.
+	goals, err := s.ListAllGoals(ctx)
+	if err != nil {
+		return nil, err
+	}
+	roles := &decisionRoles{commanders: map[int64]bool{}, subcommanders: map[int64]bool{}}
+	for _, project := range projects {
+		roles.commanders[project.ClaimedBy] = true
 	}
 	for _, goal := range goals {
-		if handoff := handoffs[goal.ID]; handoff != nil && handoff.ReceivedAt != nil && handoff.ReceivedBy == agentSessionID {
-			return "subcommander", nil
+		if handoff := handoffs[goal.ID]; handoff != nil && handoff.ReceivedAt != nil {
+			roles.subcommanders[handoff.ReceivedBy] = true
 		}
 	}
-	return "executor", nil
+	return roles, nil
+}
+
+func (r *decisionRoles) targetRole(decision domain.Decision) string {
+	if DecisionRoutesToCommander(decision) || r.commanders[decision.AgentSessionID] {
+		return "commander"
+	}
+	if r.subcommanders[decision.AgentSessionID] {
+		return "subcommander"
+	}
+	return "executor"
 }
 
 func workflowDecisionEvent(name string, row sqlcgen.Decision) (DecisionEvent, error) {
@@ -139,6 +154,7 @@ func (s *Store) ReconcileWorkflow(ctx context.Context, query WorkflowEventQuery)
 		TaskCreateHandoffs: make([]TaskCreateHandoff, 0),
 		Tasks:              make([]domain.Task, 0),
 	}
+	var roles *decisionRoles
 	for _, goal := range goals {
 		tasks, err := s.ListTasks(ctx, goal.ID)
 		if err != nil {
@@ -185,11 +201,12 @@ func (s *Store) ReconcileWorkflow(ctx context.Context, query WorkflowEventQuery)
 		}
 		for _, decision := range decisions {
 			if query.TaskID == 0 || decision.TaskID == query.TaskID {
-				targetRole, err := s.decisionTargetRole(ctx, decision)
-				if err != nil {
-					return WorkflowReconciliation{}, err
+				if roles == nil {
+					if roles, err = s.loadDecisionRoles(ctx); err != nil {
+						return WorkflowReconciliation{}, err
+					}
 				}
-				reconciliation.Decisions = append(reconciliation.Decisions, WorkflowDecision{Decision: decision, TargetRole: targetRole})
+				reconciliation.Decisions = append(reconciliation.Decisions, WorkflowDecision{Decision: decision, TargetRole: roles.targetRole(decision)})
 			}
 		}
 	}
