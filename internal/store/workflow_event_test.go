@@ -322,3 +322,49 @@ func TestTaskScopedWorkflowReconciliationIncludesParentAuthorityAndIsolatesTask(
 		t.Fatalf("task-scoped canonical decisions = %+v", decisions)
 	}
 }
+
+func TestDecisionRolesTargetRole(t *testing.T) {
+	roles := &decisionRoles{
+		commanders:    map[int64]bool{10: true},
+		subcommanders: map[int64]bool{20: true},
+	}
+	for _, tc := range []struct {
+		name     string
+		decision domain.Decision
+		want     string
+	}{
+		{"goal review", domain.Decision{Kind: domain.KindGoalReview, AgentSessionID: 30}, "commander"},
+		{"no asker", domain.Decision{Kind: domain.KindDecision}, "commander"},
+		{"project commander", domain.Decision{Kind: domain.KindDecision, AgentSessionID: 10}, "commander"},
+		{"goal subcommander", domain.Decision{Kind: domain.KindDecision, AgentSessionID: 20}, "subcommander"},
+		{"anyone else", domain.Decision{Kind: domain.KindDecision, AgentSessionID: 30}, "executor"},
+	} {
+		if got := roles.targetRole(tc.decision); got != tc.want {
+			t.Errorf("%s: targetRole = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestWorkflowReconciliationLabelsDecisionTargetRole(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	goalID := newTestGoal(t, s)
+	goal, err := s.GetGoal(ctx, goalID)
+	if err != nil {
+		t.Fatalf("GetGoal: %v", err)
+	}
+	taskID := newTestDecisionTask(t, s, goalID, "workflow-target-role")
+	if _, err := s.AskDecision(ctx, AskInput{
+		GoalID: goalID, TaskID: taskID, Kind: domain.KindDecision,
+		Question: "who answers?", AgentSessionID: testSessionID("workflow-target-role-agent"),
+	}); err != nil {
+		t.Fatalf("AskDecision: %v", err)
+	}
+	reconciliation, err := s.ReconcileWorkflow(ctx, WorkflowEventQuery{ProjectID: goal.ProjectID, GoalID: goalID})
+	if err != nil {
+		t.Fatalf("ReconcileWorkflow: %v", err)
+	}
+	if len(reconciliation.Decisions) != 1 || reconciliation.Decisions[0].TargetRole != "executor" {
+		t.Fatalf("decisions = %+v, want one routed to executor", reconciliation.Decisions)
+	}
+}
