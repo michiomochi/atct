@@ -536,9 +536,11 @@ test_claude_merge_check_fails_closed_to_deny() {
 
 test_real_atct_binary_denies_unapproved_goal_merge() {
   local bin_dir="$TEMP_ROOT/real-bin" home="$TEMP_ROOT/real-home" repo="$TEMP_ROOT/real-repo"
-  local codex_command merge_input main_input output
+  local codex_command merge_input main_input output plugin_version
+  # The hook's version floor moves with every release bump, so build the binary at the plugin's version.
+  plugin_version="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["version"])' "$REPO_ROOT/.codex-plugin/plugin.json")"
   mkdir -p "$bin_dir" "$home" "$repo"
-  (cd "$REPO_ROOT" && go build -ldflags '-X main.version=0.72.0' -o "$bin_dir/atct" ./cmd/atct) \
+  (cd "$REPO_ROOT" && go build -ldflags "-X main.version=$plugin_version" -o "$bin_dir/atct" ./cmd/atct) \
     || fail 'atct must build for the merge-check hook test'
   git -C "$repo" init -q -b main || fail 'temporary repository must start on main'
   codex_command="$(codex_merge_check_command)"
