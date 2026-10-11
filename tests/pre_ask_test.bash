@@ -134,6 +134,12 @@ test_managed_ask_is_denied() {
   assert_contains 'option B' "$RUN_OUTPUT"
   assert_contains 'wait_ms=0' "$RUN_OUTPUT"
   assert_contains 'default_option' "$RUN_OUTPUT"
+  assert_contains 'only the human can do' "$RUN_OUTPUT"
+  assert_contains 'irreversible or destructive' "$RUN_OUTPUT"
+  assert_contains 'asked for or approved' "$RUN_OUTPUT"
+  assert_contains 'not yet approved' "$RUN_OUTPUT"
+  assert_contains 'do not ask' "$RUN_OUTPUT"
+  [[ "$RUN_OUTPUT" != *'execute first'* ]] || fail 'old pre-ask wording remains'
   local expected_cwd
   expected_cwd="$(cd -- "$project" && pwd)"
   assert_eq "$expected_cwd|context" "$(<"$log")" 'atct context must run from hook cwd'

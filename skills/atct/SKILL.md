@@ -151,9 +151,26 @@ becomes `done` while a decision on it is still open.
 Human decisions go through ATCT only: use `atct_decision_ask` with concrete
 options and a recommended default, never a conversational question. Apply an
 answer with `atct_decision_poll` before continuing dependent work; withdraw a
-decision that is no longer relevant. Ask immediately before an irreversible or
-destructive operation. If a design choice changes the work and cannot be
-settled from the code, ask instead of guessing.
+decision that is no longer relevant.
+
+Ask the human only when one of these holds:
+
+- (a) the operation cannot be undone or is destructive; ask immediately before it
+- (b) it needs something only the human can do: a permission, a credential, an
+  external account, or approval of a cost the human has not already approved (a
+  new spend, or one beyond the approved amount)
+- (c) it changes an outcome the human asked for or approved
+
+Everything else is yours to decide: a reversible, non-destructive choice of means
+that leaves the approved outcome unchanged. Decide it, carry on, and
+do not call `atct_decision_ask`. Record what you chose and why in `surprises` /
+`needs_review` of the completion report (a worker with no completion report
+records it in its review request report).
+
+Example: the human approved a trial of 10 stocks. Launching the 10 in one call or
+in three calls of 4, 4 and 2 yields the same approved outcome, so the number of
+launches is not a change to the approved scope. Its small API cost was part of the
+approved trial, so it is not a new cost to ask about either. Do not ask.
 
 A human's answer given in the chat is recorded with `atct_decision_answer`, not
 by asking the human to repeat it on the dashboard. Pass `decision_id`, the

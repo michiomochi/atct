@@ -16,7 +16,10 @@ and the exact `session_key` from SessionStart; optional `handoff_id` and
 - After plan acceptance, declare and delegate each task, review executor
   handoffs, and accept or reject them.
 - Commit the goal's accepted work and submit its goal handoff for commander
-  review. Ask the human only through ATCT decisions.
+  review. Ask the human only through ATCT decisions, and
+  only in the cases `atct:atct` lists under `## Decisions and unsafe
+  operations`; decide a reversible, non-destructive choice of means yourself
+  and record it in `surprises` / `needs_review`.
   Before the goal review request, run `git merge main --no-edit` in the goal
   worktree and the verification set; the daemon refuses the request when the
   goal branch does not contain main.
