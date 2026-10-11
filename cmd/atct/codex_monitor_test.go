@@ -200,6 +200,20 @@ func TestCodexAppServerRPC(t *testing.T) {
 	if _, ok := turnParams["turn/steer"]; ok {
 		t.Fatal("turn/start params unexpectedly contain turn/steer")
 	}
+	if got, _ := turnParams["clientUserMessageId"].(string); !strings.HasPrefix(got, codexClientUserMessagePrefix) {
+		t.Fatalf("turn/start clientUserMessageId = %#v, want the %q prefix", turnParams["clientUserMessageId"], codexClientUserMessagePrefix)
+	}
+}
+
+// Each ATCT-sent turn gets its own marker, so two inputs are never confused.
+func TestCodexClientUserMessageIDIsPrefixedAndUnique(t *testing.T) {
+	first, second := codexClientUserMessageID(), codexClientUserMessageID()
+	if !strings.HasPrefix(first, "atct:") || len(first) <= len("atct:") {
+		t.Fatalf("codexClientUserMessageID() = %q, want an atct: prefix followed by an ID", first)
+	}
+	if first == second {
+		t.Fatalf("codexClientUserMessageID() returned %q twice", first)
+	}
 }
 
 func TestCodexAppServerAcceptsLargeThreadListResponse(t *testing.T) {

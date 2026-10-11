@@ -23,6 +23,17 @@ func TestDecodePromptRecordInputReadsHookFields(t *testing.T) {
 	}
 }
 
+// Codex sends turn_id and no prompt_id; the turn is the prompt's identity.
+func TestDecodePromptRecordInputUsesTurnIDForCodex(t *testing.T) {
+	in, ok := decodePromptRecordInput(strings.NewReader(`{"session_id":"s-1","turn_id":"turn-9","transcript_path":"/c/rollout.jsonl","cwd":"/repo","prompt":"はい","hook_event_name":"UserPromptSubmit"}`))
+	if !ok {
+		t.Fatal("decodePromptRecordInput rejected a Codex hook input")
+	}
+	if in.PromptID != "turn-9" {
+		t.Fatalf("PromptID = %q, want the turn_id turn-9", in.PromptID)
+	}
+}
+
 func TestDecodePromptRecordInputSkipsWhatCannotBeRecorded(t *testing.T) {
 	for name, raw := range map[string]string{
 		"malformed JSON": `{"session_id":`,
@@ -87,8 +98,8 @@ func TestPromptRecordGateFollowsRegisteredProjects(t *testing.T) {
 	}
 }
 
-// The hook is in Claude Code's UserPromptSubmit only. Codex has no such hook here.
-func TestPromptRecordHookIsRegisteredForClaudeOnly(t *testing.T) {
+// The prompt record runs on UserPromptSubmit in both Claude Code and Codex.
+func TestPromptRecordHookIsRegisteredForClaudeAndCodex(t *testing.T) {
 	claude := readHooksFile(t, filepath.Join("..", "..", "hooks", "claude-hooks.json"))
 	entries, ok := claude["UserPromptSubmit"].([]any)
 	if !ok || len(entries) != 1 {
@@ -105,9 +116,62 @@ func TestPromptRecordHookIsRegisteredForClaudeOnly(t *testing.T) {
 	}
 
 	codex := readHooksFile(t, filepath.Join("..", "..", "hooks", "codex-hooks.json"))
-	if _, ok := codex["UserPromptSubmit"]; ok {
-		t.Errorf("codex-hooks.json registers UserPromptSubmit; the prompt record is Claude-only")
+	codexEntries, ok := codex["UserPromptSubmit"].([]any)
+	if !ok || len(codexEntries) != 1 {
+		t.Fatalf("codex-hooks.json UserPromptSubmit = %v, want one entry", codex["UserPromptSubmit"])
 	}
+	if _, hasMatcher := codexEntries[0].(map[string]any)["matcher"]; hasMatcher {
+		t.Errorf("codex UserPromptSubmit has a matcher; it should apply to every prompt")
+	}
+	codexHooks := codexEntries[0].(map[string]any)["hooks"].([]any)
+	codexCommand := codexHooks[0].(map[string]any)["command"].(string)
+	if !strings.Contains(codexCommand, "atct prompt-record --hook-input") {
+		t.Errorf("codex UserPromptSubmit command = %s, want atct prompt-record --hook-input", codexCommand)
+	}
+}
+
+// Codex's UserPromptSubmit stdout is injected into the agent's context too, so
+// the Codex command must keep stdout empty and exit 0 on every path.
+func TestCodexPromptRecordHookWritesNothingToStdout(t *testing.T) {
+	codex := readHooksFile(t, filepath.Join("..", "..", "hooks", "codex-hooks.json"))
+	codexEntries := codex["UserPromptSubmit"].([]any)
+	command := codexEntries[0].(map[string]any)["hooks"].([]any)[0].(map[string]any)["command"].(string)
+	input := `{"session_id":"s-1","turn_id":"turn-1","transcript_path":"/p/s-1.jsonl","cwd":"/repo","prompt":"x"}`
+
+	run := func(t *testing.T, pathEnv string) string {
+		t.Helper()
+		cmd := exec.Command("/bin/bash", "-c", command)
+		cmd.Stdin = strings.NewReader(input)
+		cmd.Env = []string{pathEnv}
+		var stdout bytes.Buffer
+		cmd.Stdout = &stdout
+		if err := cmd.Run(); err != nil {
+			t.Fatalf("codex prompt-record command exited with %v; it must exit 0", err)
+		}
+		return stdout.String()
+	}
+
+	t.Run("atct missing", func(t *testing.T) {
+		if stdout := run(t, "PATH="+t.TempDir()); stdout != "" {
+			t.Fatalf("stdout = %q, want empty", stdout)
+		}
+	})
+
+	t.Run("atct prints garbage and a current version", func(t *testing.T) {
+		fake := t.TempDir()
+		writeFakeATCT(t, fake)
+		if stdout := run(t, "PATH="+fake+":/usr/bin:/bin"); stdout != "" {
+			t.Fatalf("stdout = %q, want empty", stdout)
+		}
+	})
+
+	t.Run("atct too old", func(t *testing.T) {
+		fake := t.TempDir()
+		writeFakeATCTWithVersion(t, fake, "0.1.0")
+		if stdout := run(t, "PATH="+fake+":/usr/bin:/bin"); stdout != "" {
+			t.Fatalf("stdout = %q, want empty", stdout)
+		}
+	})
 }
 
 func readHooksFile(t *testing.T, path string) map[string]any {

@@ -12,12 +12,14 @@ import (
 )
 
 // promptRecordInput is the part of the UserPromptSubmit hook input that the
-// human-prompt record needs.
+// human-prompt record needs. Claude Code sends prompt_id; Codex sends turn_id
+// instead.
 type promptRecordInput struct {
 	SessionID      string `json:"session_id"`
 	TranscriptPath string `json:"transcript_path"`
 	CWD            string `json:"cwd"`
 	PromptID       string `json:"prompt_id"`
+	TurnID         string `json:"turn_id"`
 	Prompt         string `json:"prompt"`
 }
 
@@ -31,6 +33,9 @@ func decodePromptRecordInput(r io.Reader) (promptRecordInput, bool) {
 	}
 	if input.SessionID == "" || input.Prompt == "" {
 		return promptRecordInput{}, false
+	}
+	if input.PromptID == "" {
+		input.PromptID = input.TurnID
 	}
 	return input, true
 }

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/google/uuid"
 )
 
 const (
@@ -22,6 +23,7 @@ const (
 	codexThreadDiscoveryInterval  = 100 * time.Millisecond
 	codexThreadDiscoveryTimeout   = 30 * time.Second
 	codexMonitorClientName        = "atct-codex-monitor"
+	codexClientUserMessagePrefix  = "atct:"
 	codexAppServerClosedMessage   = "codex app server connection closed"
 	codexAppServerMessageMaxBytes = 128 << 20
 )
@@ -610,6 +612,12 @@ type codexUserInput struct {
 	Text string `json:"text"`
 }
 
+// codexClientUserMessageID marks a turn/start input as ATCT's own, so the
+// prompt record can tell it apart from a prompt the human typed.
+func codexClientUserMessageID() string {
+	return codexClientUserMessagePrefix + uuid.NewString()
+}
+
 func (c *codexAppServer) StartTurn(ctx context.Context, threadID, text string) (codexTurn, error) {
 	if strings.TrimSpace(threadID) == "" {
 		return codexTurn{}, errors.New("Codex thread ID is empty")
@@ -623,6 +631,7 @@ func (c *codexAppServer) StartTurn(ctx context.Context, threadID, text string) (
 			Type: "text",
 			Text: text,
 		}},
+		"clientUserMessageId": codexClientUserMessageID(),
 	}
 	if err := c.call(ctx, "turn/start", params, &result); err != nil {
 		return codexTurn{}, err
