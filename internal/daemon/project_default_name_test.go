@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/michiomochi/atct/internal/domain"
@@ -85,18 +86,79 @@ func TestDaemonProjectCreateNameOverridesDefault(t *testing.T) {
 	}
 }
 
-// newDaemonGitRepo creates a git repository named "atct" with the given origin
-// URL and returns its path. The daemon tests cannot reach store's test helpers.
+func TestDaemonProjectCreateRetriesDefaultNameWithParentBase(t *testing.T) {
+	requireDaemonGit(t)
+	first := newDaemonGitRepo(t, "")
+	second := newDaemonGitRepo(t, "")
+	conn := newDaemonConn(t)
+
+	tests := []struct {
+		root string
+		want string
+	}{
+		{root: first, want: "atct"},
+		{root: second, want: filepath.Base(filepath.Dir(second)) + "/atct"},
+	}
+	for _, tt := range tests {
+		resp := call(t, conn, "project.create", map[string]any{"root_path": tt.root})
+		if resp.Error != "" {
+			t.Fatalf("project.create %s: %v", tt.root, resp.Error)
+		}
+		var project domain.Project
+		if err := json.Unmarshal(resp.Result, &project); err != nil {
+			t.Fatalf("unmarshal project: %v", err)
+		}
+		if project.Name != tt.want {
+			t.Fatalf("project name = %q, want %q", project.Name, tt.want)
+		}
+	}
+}
+
+func TestDaemonProjectCreateExplicitDuplicateNameIsNotRetried(t *testing.T) {
+	requireDaemonGit(t)
+	first := newDaemonGitRepo(t, "")
+	second := newDaemonGitRepo(t, "")
+	conn := newDaemonConn(t)
+
+	resp := call(t, conn, "project.create", map[string]any{"name": "dup", "root_path": first})
+	if resp.Error != "" {
+		t.Fatalf("first project.create: %v", resp.Error)
+	}
+	resp = call(t, conn, "project.create", map[string]any{"name": "dup", "root_path": second})
+	if resp.Error == "" {
+		t.Fatal("duplicate explicit name succeeded, want error")
+	}
+	if !strings.Contains(resp.Error, "give a different name") {
+		t.Fatalf("error = %q, want it to ask for a different name", resp.Error)
+	}
+
+	listed := call(t, conn, "project.list", map[string]any{})
+	if listed.Error != "" {
+		t.Fatalf("project.list: %v", listed.Error)
+	}
+	var projects []domain.Project
+	if err := json.Unmarshal(listed.Result, &projects); err != nil {
+		t.Fatalf("unmarshal projects: %v", err)
+	}
+	if len(projects) != 1 {
+		t.Fatalf("project.list returned %d projects, want 1: %#v", len(projects), projects)
+	}
+}
+
+// newDaemonGitRepo creates a git repository named "atct" under a fresh temp dir
+// and returns its path. An empty remote skips the origin. The daemon tests
+// cannot reach store's test helpers.
 func newDaemonGitRepo(t *testing.T, remote string) string {
 	t.Helper()
 	repo := filepath.Join(t.TempDir(), "atct")
 	if err := os.MkdirAll(repo, 0o755); err != nil {
 		t.Fatalf("MkdirAll repo: %v", err)
 	}
-	for _, args := range [][]string{
-		{"init", "-q"},
-		{"remote", "add", "origin", remote},
-	} {
+	argsList := [][]string{{"init", "-q"}}
+	if remote != "" {
+		argsList = append(argsList, []string{"remote", "add", "origin", remote})
+	}
+	for _, args := range argsList {
 		if output, err := exec.Command("git", append([]string{"-C", repo}, args...)...).CombinedOutput(); err != nil {
 			t.Fatalf("git %v: %v\n%s", args, err, output)
 		}
