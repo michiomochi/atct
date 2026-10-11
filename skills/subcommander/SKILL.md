@@ -84,8 +84,8 @@ that worker is started:
    > to `executor`. Then call `atct_handoff_entry_history` with the same `handoff_id`
    > and `task_id` and read the request (`request_report`); work from it.
    >
-   > Your executor skill sets out the watch, the review request, and the
-   > rejection path.
+   > Then invoke the `atct:executor` skill and follow its procedure. It sets out
+   > the watch, the review request, and the rejection path.
 
    Report the review request before the reviewer closes the task.
 

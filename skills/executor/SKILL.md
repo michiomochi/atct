@@ -14,7 +14,9 @@ a mismatch, stop. Then call `atct_handoff_entry_history` with the `handoff_id` a
 `task_id` and read the request (`request_report`); it is the source of the work.
 
 - Implement and run only the verification named in the request.
-- If the request is empty or lacks what the work needs, do no work: call
+- If the request is empty, lacks what the work needs, or the history's request
+  entry reads only `requested` (the store writes that when `request_report` was
+  blank), there is no brief: do no work: call
   `atct_task_handoff_review_request` with `review_request_report` set to
   `blocked: 依頼内容が無い（何が足りないか）`, naming what is missing.
 - Use only `atct_session_identify`, `atct_task_handoff_receive`, `atct_role`,
