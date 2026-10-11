@@ -481,7 +481,7 @@ func (d *Daemon) resolveOrRegisterProject(ctx context.Context, cwd string) (doma
 	}
 
 	rootPath := store.NormalizeRoot(ctx, cwd)
-	project, err = d.store.CreateProject(ctx, filepath.Base(rootPath), rootPath)
+	project, err = d.store.CreateProject(ctx, store.DefaultProjectName(ctx, rootPath), rootPath)
 	if err == nil {
 		return project, nil
 	}
@@ -1220,7 +1220,7 @@ func (d *Daemon) dispatchMethodWithPeer(ctx context.Context, req rpc.Request, pe
 		rootPath := store.NormalizeRoot(ctx, p.RootPath)
 		name := p.Name
 		if name == "" {
-			name = filepath.Base(rootPath)
+			name = store.DefaultProjectName(ctx, rootPath)
 		}
 		ns, err := d.store.CreateProject(ctx, name, rootPath)
 		return marshal(ns, err)

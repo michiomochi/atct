@@ -915,6 +915,13 @@ func TestParseArgsProjectArchiveAndUnarchive(t *testing.T) {
 		if cfg.projectAction != action || cfg.projectName != "myproj" {
 			t.Fatalf("cfg = %q %q, want %q myproj", cfg.projectAction, cfg.projectName, action)
 		}
+		cfg, err = parseArgs([]string{"project", action, "kanmu/atct"})
+		if err != nil {
+			t.Fatalf("parseArgs(project %s kanmu/atct): %v", action, err)
+		}
+		if cfg.projectAction != action || cfg.projectName != "kanmu/atct" {
+			t.Fatalf("org/repo cfg = %q %q, want %q kanmu/atct", cfg.projectAction, cfg.projectName, action)
+		}
 		if _, err := parseArgs([]string{"project", action}); err == nil {
 			t.Fatalf("parseArgs(project %s) without a target returned nil error", action)
 		}
@@ -932,6 +939,70 @@ func TestFindProjectByNameOrID(t *testing.T) {
 	_, err := findProjectByNameOrID(projects, "gamma")
 	if err == nil || !strings.Contains(err.Error(), `project "gamma" is not registered`) {
 		t.Fatalf("missing project error = %v", err)
+	}
+}
+
+func TestFindProjectByNameOrIDResolvesOrgRepoName(t *testing.T) {
+	projects := []domain.Project{{ID: 4, Name: "kanmu/atct"}, {ID: 5, Name: "michiomochi/atct"}}
+	for ref, wantID := range map[string]int64{"kanmu/atct": 4, "michiomochi/atct": 5, "4": 4} {
+		got, err := findProjectByNameOrID(projects, ref)
+		if err != nil || got.ID != wantID {
+			t.Errorf("findProjectByNameOrID(%q) = %+v, %v; want id %d", ref, got, err, wantID)
+		}
+	}
+	if _, err := findProjectByNameOrID(projects, "atct"); err == nil {
+		t.Fatal("findProjectByNameOrID(\"atct\") matched an org/repo name; want exact match only")
+	}
+}
+
+func TestSetProjectArchivedResolvesOrgRepoName(t *testing.T) {
+	dir := shortDaemonTestDir(t)
+	socket := filepath.Join(dir, "d.sock")
+	listener, err := net.Listen("unix", socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	methods := make(chan string, 4)
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			line, _ := bufio.NewReader(conn).ReadBytes('\n')
+			var req struct {
+				Method string          `json:"method"`
+				Params json.RawMessage `json:"params"`
+			}
+			_ = json.Unmarshal(line, &req)
+			methods <- req.Method + " " + string(req.Params)
+			result := `{"id":4,"name":"kanmu/atct","root_path":"/r"}`
+			switch req.Method {
+			case "project.list":
+				result = `[{"id":4,"name":"kanmu/atct","root_path":"/r"}]`
+			}
+			_, _ = conn.Write([]byte(`{"result":` + result + "}\n"))
+			_ = conn.Close()
+		}
+	}()
+
+	client := mcpshim.NewClient(socket)
+	for _, archive := range []bool{true, false} {
+		if err := setProjectArchived(context.Background(), client, "kanmu/atct", archive); err != nil {
+			t.Fatalf("setProjectArchived(kanmu/atct, archive=%v): %v", archive, err)
+		}
+	}
+	want := []string{
+		"project.list {}",
+		`project.archive {"project_id":4}`,
+		"project.list {}",
+		`project.unarchive {"project_id":4}`,
+	}
+	for _, w := range want {
+		if got := <-methods; got != w {
+			t.Fatalf("daemon call = %q, want %q", got, w)
+		}
 	}
 }
 
