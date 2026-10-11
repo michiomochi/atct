@@ -1341,6 +1341,7 @@ func (d *Daemon) dispatchMethodWithPeer(ctx context.Context, req rpc.Request, pe
 			TaskCounts        goalListTaskCounts `json:"task_counts"`
 			Status            domain.GoalStatus  `json:"status"`
 			ClaimedBy         int64              `json:"claimed_by,omitempty"`
+			PendingState      string             `json:"pending_state,omitempty"`
 			CreatedAt         time.Time          `json:"created_at"`
 			Tasks             []goalListTask     `json:"tasks"`
 		}
@@ -1399,6 +1400,10 @@ func (d *Daemon) dispatchMethodWithPeer(ctx context.Context, req rpc.Request, pe
 					Order:       task.Order,
 				})
 			}
+			pendingState, err := d.store.GoalPendingState(ctx, goal.ID)
+			if err != nil {
+				return nil, err
+			}
 			visibleGoals = append(visibleGoals, goalListResponse{
 				ID:                goal.ID,
 				DerivedFromGoalID: goal.DerivedFromGoalID,
@@ -1407,6 +1412,7 @@ func (d *Daemon) dispatchMethodWithPeer(ctx context.Context, req rpc.Request, pe
 				TaskCounts:        taskCounts,
 				Status:            goal.Status,
 				ClaimedBy:         goalHandoffClaimedBy(goalHandoffs[goal.ID]),
+				PendingState:      pendingState,
 				CreatedAt:         goal.CreatedAt,
 				Tasks:             activeTasks,
 			})
