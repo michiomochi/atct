@@ -228,7 +228,11 @@ flowchart TD
 ### executor
 
 1. `atct_task_handoff_receive` に SessionStart の `session_key` と必要なら
-   `monitor_token` を渡して、渡された task を受領する。
+   `monitor_token` を渡して、渡された task を受領する。`atct_role` で役割を確かめた後、
+   `atct_handoff_entry_history` で `handoff_id` と `task_id` を指定して依頼内容
+   （`request_report`）を読み、それを作業の根拠にする。依頼内容が空か不足なら作業せず、
+   `atct_task_handoff_review_request` の `review_request_report` を
+   `blocked: 依頼内容が無い（何が足りないか）` にして返す。
 2. `superpowers:test-driven-development` に従って実装とテストを行う。
 3. `superpowers:verification-before-completion` の検証後、
    `atct_task_handoff_review_request` を出す。
