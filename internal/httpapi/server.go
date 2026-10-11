@@ -1830,6 +1830,10 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	}
 	ch, cancel := s.store.SubscribeEvents()
 	defer cancel()
+	// The first tick always scans: the tracker may hold entries from this
+	// initial scan that were created after the baseline and still need to be
+	// delivered.
+	seen := int64(-1)
 	records, err := s.scanHandoffEntryRecords(r.Context(), filter)
 	if err != nil {
 		writeHandoffHistoryError(w, err)
@@ -1871,9 +1875,17 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 			}
 			flusher.Flush()
 		case <-ticker.C:
+			mark, markErr := s.store.HandoffEntryWatermark(r.Context())
+			if markErr == nil && mark == seen {
+				continue
+			}
 			records, err := s.scanHandoffEntryRecords(r.Context(), filter)
 			if err != nil {
 				continue
+			}
+			seen = mark
+			if markErr != nil {
+				seen = -1
 			}
 			for _, record := range records {
 				if !tracker.mark(record.event) {

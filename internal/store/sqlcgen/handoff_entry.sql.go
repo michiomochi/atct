@@ -244,6 +244,30 @@ func (q *Queries) ListTaskHandoffEntries(ctx context.Context, arg ListTaskHandof
 	return items, nil
 }
 
+const maxGoalHandoffEntryID = `-- name: MaxGoalHandoffEntryID :one
+SELECT CAST(COALESCE(MAX(id), 0) AS INTEGER) AS max_id
+FROM goal_handoff_entries
+`
+
+func (q *Queries) MaxGoalHandoffEntryID(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, maxGoalHandoffEntryID)
+	var max_id int64
+	err := row.Scan(&max_id)
+	return max_id, err
+}
+
+const maxTaskHandoffEntryID = `-- name: MaxTaskHandoffEntryID :one
+SELECT CAST(COALESCE(MAX(id), 0) AS INTEGER) AS max_id
+FROM task_handoff_entries
+`
+
+func (q *Queries) MaxTaskHandoffEntryID(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, maxTaskHandoffEntryID)
+	var max_id int64
+	err := row.Scan(&max_id)
+	return max_id, err
+}
+
 const taskHandoffEntryExists = `-- name: TaskHandoffEntryExists :one
 SELECT COUNT(*)
 FROM task_handoff_entries

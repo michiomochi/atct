@@ -907,3 +907,29 @@ func TestTaskHandoffRejectAndAmendAppendEntries(t *testing.T) {
 		}
 	}
 }
+
+func TestHandoffEntryWatermarkGrowsWithEveryAppend(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	goalID := newTestGoal(t, s)
+	addLiveProjectClaim(t, s, goalID, "watermark-requester")
+	addTestAgentSession(t, s, "watermark-receiver")
+
+	before, err := s.HandoffEntryWatermark(ctx)
+	if err != nil {
+		t.Fatalf("HandoffEntryWatermark: %v", err)
+	}
+	if again, _ := s.HandoffEntryWatermark(ctx); again != before {
+		t.Fatalf("watermark moved without an append: %d then %d", before, again)
+	}
+	if _, err := s.RequestGoalHandoff(ctx, "watermark-goal-handoff", goalID, testSessionID("watermark-requester"), "take this goal"); err != nil {
+		t.Fatalf("RequestGoalHandoff: %v", err)
+	}
+	after, err := s.HandoffEntryWatermark(ctx)
+	if err != nil {
+		t.Fatalf("HandoffEntryWatermark: %v", err)
+	}
+	if after <= before {
+		t.Fatalf("watermark after an appended entry = %d, want more than %d", after, before)
+	}
+}

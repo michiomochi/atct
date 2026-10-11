@@ -412,6 +412,23 @@ func (s *Store) AppendGoalHandoffEntry(ctx context.Context, handoffID, kind, bod
 	return entry, nil
 }
 
+// HandoffEntryWatermark changes whenever a handoff entry is appended. Entry ids
+// only grow, so the sum of the two tables' highest ids grows with every
+// append. A poller compares it to skip rescanning all history when nothing
+// was added.
+func (s *Store) HandoffEntryWatermark(ctx context.Context) (int64, error) {
+	q := sqlcgen.New(s.db)
+	taskMax, err := q.MaxTaskHandoffEntryID(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("max task handoff entry id: %w", err)
+	}
+	goalMax, err := q.MaxGoalHandoffEntryID(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("max goal handoff entry id: %w", err)
+	}
+	return taskMax + goalMax, nil
+}
+
 func (s *Store) ListTaskHandoffEntries(ctx context.Context, handoffID string, cursor int64, limit int) (HandoffEntryPage, error) {
 	return listHandoffEntries(ctx, sqlcgen.New(s.db), "task_handoff_entries", handoffID, cursor, limit)
 }
