@@ -371,6 +371,197 @@ PY
   fail 'claude-hooks.json must keep SessionStart and PreToolUse'
 }
 
+# Writes an atct stub. It logs its arguments and stdin to $ATCT_HOOK_LOG,
+# answers `version` with $ATCT_TEST_VERSION, and answers merge-check by
+# $ATCT_MERGE_MODE: fail (exit 1, no output), json (print $ATCT_MERGE_JSON), or
+# anything else (exit 0, no output).
+write_merge_stub_atct() {
+  local path="$1"
+  mkdir -p "$(dirname "$path")"
+  cat >"$path" <<'SCRIPT'
+#!/usr/bin/env bash
+if [[ "${1:-}" == version ]]; then
+  printf '%s\n' "$ATCT_TEST_VERSION"
+  exit 0
+fi
+input="$(cat)"
+printf '%s\n%s\n' "$*" "$input" >>"$ATCT_HOOK_LOG"
+if [[ "${1:-}" == merge-check ]]; then
+  case "$ATCT_MERGE_MODE" in
+    fail) exit 1 ;;
+    json) printf '%s' "$ATCT_MERGE_JSON"; exit 0 ;;
+    *) exit 0 ;;
+  esac
+fi
+exit 0
+SCRIPT
+  chmod +x "$path"
+}
+
+# One line per Codex hook handler: event, matcher, command, separated by the
+# unit separator. Tab would collapse an empty matcher under bash's IFS.
+codex_hook_rows() {
+  python3 - "$REPO_ROOT/hooks/codex-hooks.json" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as stream:
+    hooks = json.load(stream)["hooks"]
+for event, groups in hooks.items():
+    for group in groups:
+        for handler in group["hooks"]:
+            print("\x1f".join([event, group.get("matcher", ""), handler["command"]]))
+PY
+}
+
+codex_merge_check_command() {
+  codex_hook_rows | python3 -c 'import sys
+for line in sys.stdin:
+    event, matcher, command = line.rstrip("\n").split("\x1f", 2)
+    if event == "PreToolUse" and matcher == "Bash":
+        print(command)'
+}
+
+MERGE_DENY_JSON='{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"ATCT merge-check failed"}}'
+MERGE_INPUT='{"tool_name":"Bash","cwd":"/tmp","tool_input":{"command":"git merge wt/goal-999"}}'
+
+test_codex_hook_commands_are_shell_commands() {
+  local event matcher command count=0
+  while IFS=$'\x1f' read -r event matcher command; do
+    count=$((count + 1))
+    [[ "$command" != \"* ]] || fail "Codex $event hook command is one quoted word, not a shell command"
+    printf '%s\n' "$command" | sh -n || fail "Codex $event hook command does not parse as sh"
+    assert_eq 1 "$(printf '%s' "$command" | grep -o 'required=' | wc -l | tr -d ' ')" \
+      "Codex $event hook command must carry exactly one version marker"
+  done < <(codex_hook_rows)
+  [[ "$count" -gt 0 ]] || fail 'codex-hooks.json must declare hook handlers'
+}
+
+test_codex_hook_commands_dispatch_to_their_subcommand() {
+  local fixture="$TEMP_ROOT/codex-dispatch" log="$TEMP_ROOT/codex-dispatch.log"
+  local plugin_version event matcher command want status input
+  plugin_version="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["version"])' "$REPO_ROOT/.codex-plugin/plugin.json")"
+  write_merge_stub_atct "$fixture/atct"
+  input='{"tool_name":"Bash","cwd":"/tmp","tool_input":{"command":"git status"},"session_id":"hook-session-1","stop_hook_active":false}'
+  while IFS=$'\x1f' read -r event matcher command; do
+    case "$event:$matcher" in
+      SessionStart:) want='session-key --hook-input' ;;
+      Stop:) want='stop-check --hook-input' ;;
+      PreToolUse:) want='monitor-check --hook-input' ;;
+      PreToolUse:Bash) want='merge-check --hook-input' ;;
+      *) fail "unexpected Codex hook <$event> matcher <$matcher>" ;;
+    esac
+    : >"$log"
+    status=0
+    PATH="$fixture:/usr/bin:/bin" ATCT_TEST_VERSION="$plugin_version" ATCT_MERGE_MODE=allow \
+      ATCT_HOOK_LOG="$log" sh -c "$command" <<< "$input" >/dev/null 2>&1 || status=$?
+    assert_eq 0 "$status" "Codex $event:$matcher hook command must exit 0"
+    assert_eq "$want"$'\n'"$input" "$(<"$log")" "Codex $event:$matcher hook command must call atct $want with stdin"
+  done < <(codex_hook_rows)
+}
+
+test_codex_merge_check_fails_closed_to_deny() {
+  local fixture="$TEMP_ROOT/codex-merge-fail" log="$TEMP_ROOT/codex-merge-fail.log"
+  local plugin_version command output status=0
+  plugin_version="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["version"])' "$REPO_ROOT/.codex-plugin/plugin.json")"
+  command="$(codex_merge_check_command)"
+  [[ -n "$command" ]] || fail 'codex-hooks.json must declare a PreToolUse Bash handler'
+  write_merge_stub_atct "$fixture/atct"
+  output="$(PATH="$fixture:/usr/bin:/bin" ATCT_TEST_VERSION="$plugin_version" ATCT_MERGE_MODE=fail \
+    ATCT_HOOK_LOG="$log" sh -c "$command" <<< "$MERGE_INPUT")" || status=$?
+  assert_eq 0 "$status" 'Codex merge-check must exit 0 when atct merge-check fails'
+  assert_eq "$MERGE_DENY_JSON" "$output" 'Codex merge-check must deny when atct merge-check fails'
+}
+
+test_codex_merge_check_passes_through_atct_output() {
+  local fixture="$TEMP_ROOT/codex-merge-pass" log="$TEMP_ROOT/codex-merge-pass.log"
+  local plugin_version command output refusal
+  plugin_version="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["version"])' "$REPO_ROOT/.codex-plugin/plugin.json")"
+  command="$(codex_merge_check_command)"
+  write_merge_stub_atct "$fixture/atct"
+  refusal='{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"refused by atct"}}'
+  output="$(PATH="$fixture:/usr/bin:/bin" ATCT_TEST_VERSION="$plugin_version" ATCT_MERGE_MODE=json \
+    ATCT_MERGE_JSON="$refusal" ATCT_HOOK_LOG="$log" sh -c "$command" <<< "$MERGE_INPUT")"
+  assert_eq "$refusal" "$output" 'Codex merge-check must print atct output unchanged'
+  output="$(PATH="$fixture:/usr/bin:/bin" ATCT_TEST_VERSION="$plugin_version" ATCT_MERGE_MODE=allow \
+    ATCT_HOOK_LOG="$log" sh -c "$command" <<< "$MERGE_INPUT")"
+  assert_eq '' "$output" 'Codex merge-check must be silent when atct allows the merge'
+}
+
+test_claude_hook_commands_resolve_to_executable_scripts() {
+  local script count=0
+  while IFS= read -r script; do
+    count=$((count + 1))
+    [[ -f "$script" ]] || fail "Claude hook script is missing: $script"
+    [[ -x "$script" ]] || fail "Claude hook script is not executable: $script"
+  done < <(python3 - "$REPO_ROOT" "$REPO_ROOT/hooks/claude-hooks.json" <<'PY'
+import json
+import shlex
+import sys
+
+repo, path = sys.argv[1], sys.argv[2]
+with open(path, encoding="utf-8") as stream:
+    hooks = json.load(stream)["hooks"]
+for groups in hooks.values():
+    for group in groups:
+        for handler in group["hooks"]:
+            command = handler["command"].replace("${CLAUDE_PLUGIN_ROOT}", repo)
+            print(shlex.split(command)[0])
+PY
+)
+  [[ "$count" -gt 0 ]] || fail 'claude-hooks.json must declare hook scripts'
+}
+
+test_claude_merge_check_fails_closed_to_deny() {
+  local fixture="$TEMP_ROOT/claude-merge" log="$TEMP_ROOT/claude-merge.log" output status
+  write_merge_stub_atct "$fixture/atct"
+
+  : >"$log"
+  status=0
+  output="$(PATH="$fixture:/usr/bin:/bin" ATCT_MERGE_MODE=fail ATCT_HOOK_LOG="$log" \
+    /bin/bash "$REPO_ROOT/hooks/merge-check" <<< "$MERGE_INPUT")" || status=$?
+  assert_eq 0 "$status" 'Claude merge-check must exit 0 when atct merge-check fails'
+  assert_eq "$MERGE_DENY_JSON" "$output" 'Claude merge-check must deny when atct merge-check fails'
+  assert_eq $'merge-check --hook-input\n'"$MERGE_INPUT" "$(<"$log")" 'Claude merge-check must pass raw hook input to atct merge-check'
+
+  refusal='{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"refused by atct"}}'
+  output="$(PATH="$fixture:/usr/bin:/bin" ATCT_MERGE_MODE=json ATCT_MERGE_JSON="$refusal" ATCT_HOOK_LOG="$log" \
+    /bin/bash "$REPO_ROOT/hooks/merge-check" <<< "$MERGE_INPUT")"
+  assert_eq "$refusal" "$output" 'Claude merge-check must print atct output unchanged'
+
+  output="$(PATH="$fixture:/usr/bin:/bin" ATCT_MERGE_MODE=allow ATCT_HOOK_LOG="$log" \
+    /bin/bash "$REPO_ROOT/hooks/merge-check" <<< "$MERGE_INPUT")"
+  assert_eq '' "$output" 'Claude merge-check must be silent when atct allows the merge'
+}
+
+test_real_atct_binary_denies_unapproved_goal_merge() {
+  local bin_dir="$TEMP_ROOT/real-bin" home="$TEMP_ROOT/real-home" repo="$TEMP_ROOT/real-repo"
+  local codex_command merge_input main_input output
+  mkdir -p "$bin_dir" "$home" "$repo"
+  (cd "$REPO_ROOT" && go build -ldflags '-X main.version=0.72.0' -o "$bin_dir/atct" ./cmd/atct) \
+    || fail 'atct must build for the merge-check hook test'
+  git -C "$repo" init -q -b main || fail 'temporary repository must start on main'
+  codex_command="$(codex_merge_check_command)"
+  merge_input="{\"tool_name\":\"Bash\",\"cwd\":\"$repo\",\"tool_input\":{\"command\":\"git merge wt/goal-999\"}}"
+  main_input="{\"tool_name\":\"Bash\",\"cwd\":\"$repo\",\"tool_input\":{\"command\":\"git merge main\"}}"
+
+  output="$(HOME="$home" PATH="$bin_dir:/usr/bin:/bin" sh -c "$codex_command" <<< "$merge_input")"
+  case "$output" in
+    *'"permissionDecision":"deny"'*'has not been approved'*) ;;
+    *) fail "Codex merge-check must deny an unapproved goal merge, got <$output>" ;;
+  esac
+  output="$(HOME="$home" PATH="$bin_dir:/usr/bin:/bin" /bin/bash "$REPO_ROOT/hooks/merge-check" <<< "$merge_input")"
+  case "$output" in
+    *'"permissionDecision":"deny"'*'has not been approved'*) ;;
+    *) fail "Claude merge-check must deny an unapproved goal merge, got <$output>" ;;
+  esac
+
+  output="$(HOME="$home" PATH="$bin_dir:/usr/bin:/bin" sh -c "$codex_command" <<< "$main_input")"
+  assert_eq '' "$output" 'Codex merge-check must be silent for a merge of main'
+  output="$(HOME="$home" PATH="$bin_dir:/usr/bin:/bin" /bin/bash "$REPO_ROOT/hooks/merge-check" <<< "$main_input")"
+  assert_eq '' "$output" 'Claude merge-check must be silent for a merge of main'
+}
+
 test_stop_hook_file_is_executable_but_other_hooks_remain() {
   [[ -x "$REPO_ROOT/hooks/stop" ]] || fail 'hooks/stop must be executable'
   [[ -f "$REPO_ROOT/hooks/pre-ask" ]] || fail 'hooks/pre-ask must remain'
@@ -1922,6 +2113,13 @@ test_one_workspace_per_goal_names_the_only_exception
 test_one_workspace_per_goal_sits_between_worktree_and_commit
 test_stop_hooks_share_server_check
 test_claude_hooks_json_keeps_session_start_and_pre_tool_use_sections
+test_codex_hook_commands_are_shell_commands
+test_codex_hook_commands_dispatch_to_their_subcommand
+test_codex_merge_check_fails_closed_to_deny
+test_codex_merge_check_passes_through_atct_output
+test_claude_hook_commands_resolve_to_executable_scripts
+test_claude_merge_check_fails_closed_to_deny
+test_real_atct_binary_denies_unapproved_goal_merge
 test_stop_hook_file_is_executable_but_other_hooks_remain
 test_mcp_instructions_include_active_goal_permission
 test_mcp_instructions_delegate_human_decisions_to_the_skill
