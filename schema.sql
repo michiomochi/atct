@@ -135,6 +135,12 @@ CREATE TABLE IF NOT EXISTS human_prompts (
 CREATE INDEX IF NOT EXISTS idx_human_prompts_session
   ON human_prompts(session_key, recorded_at);
 
+CREATE TABLE IF NOT EXISTS human_prompt_sessions (
+  session_key       TEXT PRIMARY KEY,
+  transcript_path   TEXT NOT NULL,
+  first_recorded_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS task_commits (
   task_id      INTEGER NOT NULL REFERENCES tasks(id),
   sha          TEXT NOT NULL,

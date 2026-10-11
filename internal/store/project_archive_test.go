@@ -287,6 +287,7 @@ func TestMigration0053KeepsExistingRows(t *testing.T) {
 	}
 	// Rewind to the 0052 state, undoing the later 0054 first.
 	for _, q := range []string{
+		`DROP TABLE human_prompt_sessions`,
 		`DROP TABLE human_prompts`,
 		`DROP INDEX idx_decisions_answer_prompt`,
 		`ALTER TABLE decisions DROP COLUMN answer_prompt_id`,

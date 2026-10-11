@@ -8,10 +8,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"syscall"
 	"time"
 	"unicode"
 
@@ -152,6 +154,14 @@ func (d *Daemon) verifyHumanQuote(ctx context.Context, agentSessionID int64, dec
 	if err != nil {
 		return "", "", err
 	}
+	pinned, err := d.store.PinnedTranscript(ctx, sessionKey)
+	if err != nil {
+		return "", "", err
+	}
+	candidates, listed := transcriptCandidates(sessionKey)
+	if !listed {
+		return "", "", fmt.Errorf("%w: the transcript folders could not be listed", ErrHumanQuoteUnverified)
+	}
 	// The hook's copy only finds candidates. The transcript decides, and a
 	// message written before the decision was asked never counts. Newest first.
 	reason := fmt.Sprintf("no prompt this session sent after decision %d was asked has the quote as a whole line", decision.ID)
@@ -159,12 +169,16 @@ func (d *Daemon) verifyHumanQuote(ctx context.Context, agentSessionID int64, dec
 		if !quoteLineMatches(prompt.Prompt, needle) {
 			continue
 		}
+		if prompt.TranscriptPath != pinned {
+			reason = "transcript path differs from the first one recorded for this session"
+			continue
+		}
 		if isCodexRolloutPath(prompt.TranscriptPath, sessionKey) {
 			if !insideCodexSessions(prompt.TranscriptPath, sessionKey) {
 				reason = "transcript path is outside the Codex sessions directory"
 				continue
 			}
-			if !soleTranscript(prompt.TranscriptPath, codexTranscriptCandidates(sessionKey)) {
+			if !soleTranscript(prompt.TranscriptPath, candidates) {
 				reason = "more than one rollout exists for this session"
 				continue
 			}
@@ -187,7 +201,7 @@ func (d *Daemon) verifyHumanQuote(ctx context.Context, agentSessionID int64, dec
 			reason = "transcript path is outside the Claude Code projects directory"
 			continue
 		}
-		if !soleTranscript(prompt.TranscriptPath, claudeTranscriptCandidates(sessionKey)) {
+		if !soleTranscript(prompt.TranscriptPath, candidates) {
 			reason = "more than one transcript exists for this session"
 			continue
 		}
@@ -286,39 +300,42 @@ func resolvedRoots(roots []string) []string {
 	return resolved
 }
 
-// claudeTranscriptCandidates lists where a session's Claude transcript could sit in
-// each projects folder: <projects>/<project>/<session_key>.jsonl.
-func claudeTranscriptCandidates(sessionKey string) []string {
-	var candidates []string
-	for _, realRoot := range claudeProjectsRoots() {
-		entries, err := os.ReadDir(realRoot)
-		if err != nil {
-			continue
-		}
-		for _, entry := range entries {
-			candidates = append(candidates, filepath.Join(realRoot, entry.Name(), sessionKey+".jsonl"))
+// transcriptCandidates lists every file under the Claude projects folders and the
+// Codex sessions folders that could be this session's transcript: a Claude
+// <session_key>.jsonl, or a Codex rollout named for the session. Both harnesses
+// count together, so a copy in the other harness's folder is a second transcript.
+// ok is false when a folder exists but cannot be listed.
+func transcriptCandidates(sessionKey string) (candidates []string, ok bool) {
+	codexName := codexRolloutName(sessionKey)
+	roots := append(claudeProjectsRoots(), codexSessionsRoots()...)
+	for _, root := range roots {
+		err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if !d.IsDir() && (d.Name() == sessionKey+".jsonl" || codexName.MatchString(d.Name())) {
+				candidates = append(candidates, path)
+			}
+			return nil
+		})
+		if err != nil && !isMissingPath(err) {
+			return nil, false
 		}
 	}
-	return candidates
+	return candidates, true
 }
 
-// codexTranscriptCandidates lists the rollout files for a session under each
-// sessions folder: <sessions>/YYYY/MM/DD/rollout-<time>-<session_key>.jsonl.
-func codexTranscriptCandidates(sessionKey string) []string {
-	var candidates []string
-	for _, realRoot := range codexSessionsRoots() {
-		matches, err := filepath.Glob(filepath.Join(realRoot, "*", "*", "*", "rollout-*-"+sessionKey+".jsonl"))
-		if err != nil {
-			continue
-		}
-		candidates = append(candidates, matches...)
-	}
-	return candidates
+// isMissingPath reports whether err only says the path is not there: it does not
+// exist, or a parent on the way is not a folder. Any other error, such as a folder
+// the daemon may not read, must refuse the answer rather than hide a candidate.
+func isMissingPath(err error) bool {
+	return errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR)
 }
 
 // soleTranscript reports whether path is the only file among candidates that
 // exists, and is that file. A second copy under the same session key, even a
-// symlink, makes the transcript ambiguous and the answer is refused.
+// symlink, makes the transcript ambiguous and the answer is refused. A candidate
+// that cannot be checked refuses too.
 func soleTranscript(path string, candidates []string) bool {
 	resolved, err := filepath.EvalSymlinks(path)
 	if err != nil {
@@ -328,6 +345,8 @@ func soleTranscript(path string, candidates []string) bool {
 	for _, candidate := range candidates {
 		if _, err := os.Lstat(candidate); err == nil {
 			found = append(found, candidate)
+		} else if !isMissingPath(err) {
+			return false
 		}
 	}
 	return len(found) == 1 && found[0] == resolved

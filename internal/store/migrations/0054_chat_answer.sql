@@ -22,3 +22,12 @@ ALTER TABLE decisions ADD COLUMN answer_evidence TEXT NOT NULL DEFAULT '';
 ALTER TABLE decisions ADD COLUMN answer_prompt_id TEXT NOT NULL DEFAULT '';
 CREATE UNIQUE INDEX idx_decisions_answer_prompt
   ON decisions(answer_prompt_id) WHERE answer_prompt_id <> '';
+
+-- The transcript path named by a session's first recorded prompt. A prompt that
+-- names another path is never matched, so the agent cannot move a session to a
+-- file it wrote itself. Kept apart from human_prompts so pruning never drops it.
+CREATE TABLE human_prompt_sessions (
+  session_key       TEXT PRIMARY KEY,
+  transcript_path   TEXT NOT NULL,
+  first_recorded_at TEXT NOT NULL
+);

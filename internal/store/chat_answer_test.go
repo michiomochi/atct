@@ -168,6 +168,74 @@ func TestHumanPromptsSinceFiltersByRecordedAt(t *testing.T) {
 	}
 }
 
+func TestRecordHumanPromptPinsFirstNamedTranscript(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	base := time.Date(2026, 10, 10, 9, 0, 0, 0, time.UTC)
+	const key = "chat-session-pin"
+	pinned := func() string {
+		t.Helper()
+		got, err := s.PinnedTranscript(ctx, key)
+		if err != nil {
+			t.Fatalf("PinnedTranscript: %v", err)
+		}
+		return got
+	}
+	record := func(promptID, path string, at time.Time) {
+		t.Helper()
+		if err := s.RecordHumanPrompt(ctx, HumanPromptInput{
+			SessionKey: key, PromptID: promptID, TranscriptPath: path, Prompt: "prompt", RecordedAt: at,
+		}); err != nil {
+			t.Fatalf("RecordHumanPrompt %s: %v", promptID, err)
+		}
+	}
+	if got := pinned(); got != "" {
+		t.Fatalf("pinned before any prompt = %q, want empty", got)
+	}
+	record("p-empty", "", base)
+	if got := pinned(); got != "" {
+		t.Fatalf("a prompt without a transcript pinned %q", got)
+	}
+	record("p-first", "/tmp/first.jsonl", base.Add(time.Minute))
+	record("p-second", "/tmp/second.jsonl", base.Add(2*time.Minute))
+	if got := pinned(); got != "/tmp/first.jsonl" {
+		t.Fatalf("pinned = %q, want the first named path", got)
+	}
+}
+
+func TestPinnedTranscriptSurvivesPruning(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	base := time.Date(2026, 10, 10, 9, 0, 0, 0, time.UTC)
+	const key = "chat-session-pruned"
+	if err := s.RecordHumanPrompt(ctx, HumanPromptInput{
+		SessionKey: key, PromptID: "p-first", TranscriptPath: "/tmp/first.jsonl", Prompt: "prompt", RecordedAt: base,
+	}); err != nil {
+		t.Fatalf("RecordHumanPrompt first: %v", err)
+	}
+	for i := range 52 {
+		if err := s.RecordHumanPrompt(ctx, HumanPromptInput{
+			SessionKey: key, PromptID: fmt.Sprintf("p-%02d", i), TranscriptPath: "/tmp/later.jsonl", Prompt: "prompt",
+			RecordedAt: base.Add(time.Duration(i+1) * time.Minute),
+		}); err != nil {
+			t.Fatalf("RecordHumanPrompt %d: %v", i, err)
+		}
+	}
+	prompts, err := s.HumanPromptsSince(ctx, key, time.Time{})
+	if err != nil {
+		t.Fatalf("HumanPromptsSince: %v", err)
+	}
+	for _, p := range prompts {
+		if p.PromptID == "p-first" {
+			t.Fatalf("the first prompt was still kept; the test needs it pruned")
+		}
+	}
+	got, err := s.PinnedTranscript(ctx, key)
+	if err != nil || got != "/tmp/first.jsonl" {
+		t.Fatalf("pinned after pruning = %q, %v; want /tmp/first.jsonl", got, err)
+	}
+}
+
 func TestRecordHumanPromptTruncatesToRunes(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)

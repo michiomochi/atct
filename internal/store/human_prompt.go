@@ -2,6 +2,8 @@ package store
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
@@ -30,7 +32,9 @@ type HumanPrompt struct {
 }
 
 // RecordHumanPrompt stores a human prompt and keeps only the newest 50 prompts
-// for its session (PruneHumanPrompts).
+// for its session (PruneHumanPrompts). The first prompt that names a transcript
+// pins that path for the session (PinHumanPromptTranscript); later prompts cannot
+// change it.
 func (s *Store) RecordHumanPrompt(ctx context.Context, in HumanPromptInput) error {
 	if in.RecordedAt.IsZero() {
 		in.RecordedAt = time.Now()
@@ -61,10 +65,32 @@ func (s *Store) RecordHumanPrompt(ctx context.Context, in HumanPromptInput) erro
 	}); err != nil {
 		return fmt.Errorf("prune human prompts: %w", err)
 	}
+	if in.TranscriptPath != "" {
+		if err := q.PinHumanPromptTranscript(ctx, sqlcgen.PinHumanPromptTranscriptParams{
+			SessionKey:      in.SessionKey,
+			TranscriptPath:  in.TranscriptPath,
+			FirstRecordedAt: formatTimestamp(in.RecordedAt),
+		}); err != nil {
+			return fmt.Errorf("pin human prompt transcript: %w", err)
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit human prompt: %w", err)
 	}
 	return nil
+}
+
+// PinnedTranscript returns the transcript path the session's first recorded prompt
+// named, or "" when no prompt that named a transcript has been recorded.
+func (s *Store) PinnedTranscript(ctx context.Context, sessionKey string) (string, error) {
+	path, err := sqlcgen.New(s.db).GetPinnedTranscript(ctx, sessionKey)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("get pinned transcript: %w", err)
+	}
+	return path, nil
 }
 
 // HumanPromptsSince returns the session's prompts recorded at or after since,

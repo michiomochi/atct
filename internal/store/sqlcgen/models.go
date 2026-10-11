@@ -112,6 +112,12 @@ type HumanPrompt struct {
 	RecordedAt     string
 }
 
+type HumanPromptSession struct {
+	SessionKey      string
+	TranscriptPath  string
+	FirstRecordedAt string
+}
+
 type MonitorBinding struct {
 	Token            string
 	AgentSessionID   int64

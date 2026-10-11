@@ -873,3 +873,110 @@ func TestChatAnswerRefusesCodexTurnAlreadyUsedForAnotherDecision(t *testing.T) {
 		t.Fatalf("one Codex turn answered two decisions")
 	}
 }
+
+// The agent can write a Codex rollout beside a real Claude transcript. Both harnesses
+// count together, so the real transcript is no longer the only copy and is refused.
+func TestChatAnswerRefusesCodexRolloutBesideClaudeTranscript(t *testing.T) {
+	f, sessions := newCodexChatAnswerFixture(t)
+	d := f.askChatDecision(t)
+	text := "Aにしてください"
+	f.recordPrompt(t, f.subKey, "pid-real", text, text, answerTime(d))
+	fake := codexRolloutFile(t, sessions, f.subKey)
+	appendCodexUserMessage(t, fake, "turn-fake", humanTUIClientID, "UserMessage", text, answerTime(d))
+	if err := f.store.RecordHumanPrompt(t.Context(), store.HumanPromptInput{
+		SessionKey: f.subKey, PromptID: "turn-fake", TranscriptPath: fake, Prompt: text, RecordedAt: answerTime(d),
+	}); err != nil {
+		t.Fatalf("RecordHumanPrompt: %v", err)
+	}
+
+	if _, rpcError := f.answerRPC(t, f.subcommanderSessionID, d.ID, "A", "", text); !refused(rpcError) {
+		t.Fatalf("answer accepted with a Codex rollout beside the Claude transcript")
+	}
+}
+
+func TestChatAnswerRefusesClaudeTranscriptBesideCodexRollout(t *testing.T) {
+	f, sessions := newCodexChatAnswerFixture(t)
+	d := f.askChatDecision(t)
+	text := "Aにしてください"
+	f.recordCodexPrompt(t, codexRolloutFile(t, sessions, f.subKey), f.subKey, "turn-real", text, text, humanTUIClientID, answerTime(d))
+	// A Claude transcript the agent wrote, in a valid projects folder.
+	fake := f.transcriptPath(f.subKey)
+	appendTranscriptLineAt(t, fake, "pid-fake", text, true, answerTime(d))
+	if err := f.store.RecordHumanPrompt(t.Context(), store.HumanPromptInput{
+		SessionKey: f.subKey, PromptID: "pid-fake", TranscriptPath: fake, Prompt: text, RecordedAt: answerTime(d),
+	}); err != nil {
+		t.Fatalf("RecordHumanPrompt: %v", err)
+	}
+
+	if _, rpcError := f.answerRPC(t, f.subcommanderSessionID, d.ID, "A", "", text); !refused(rpcError) {
+		t.Fatalf("answer accepted with a Claude transcript beside the Codex rollout")
+	}
+}
+
+// The first named transcript is pinned. After the real transcript is gone, a copy
+// the agent placed in another valid project is the only file left, and a prompt
+// naming it is still refused.
+func TestChatAnswerRefusesPromptNamingAnotherPathAfterPin(t *testing.T) {
+	f := newChatAnswerFixture(t)
+	d := f.askChatDecision(t)
+	text := "Aにしてください"
+	f.recordPrompt(t, f.subKey, "pid-pinned", text, text, answerTime(d))
+	if err := os.Remove(f.transcriptPath(f.subKey)); err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
+	otherProject := filepath.Join(filepath.Dir(f.projectsDir), "atct-other")
+	if err := os.MkdirAll(otherProject, 0o700); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	fake := filepath.Join(otherProject, f.subKey+".jsonl")
+	appendTranscriptLineAt(t, fake, "pid-fake", text, true, answerTime(d))
+	if err := f.store.RecordHumanPrompt(t.Context(), store.HumanPromptInput{
+		SessionKey: f.subKey, PromptID: "pid-fake", TranscriptPath: fake, Prompt: text, RecordedAt: answerTime(d),
+	}); err != nil {
+		t.Fatalf("RecordHumanPrompt: %v", err)
+	}
+
+	if _, rpcError := f.answerRPC(t, f.subcommanderSessionID, d.ID, "A", "", text); !refused(rpcError) {
+		t.Fatalf("answer accepted from a transcript other than the pinned one")
+	}
+}
+
+// The pinned transcript sits in a folder the daemon does not read, so the answer is
+// refused even though the copy in the folder the daemon does read is intact.
+func TestChatAnswerRefusesPinnedTranscriptOutsideKnownFolders(t *testing.T) {
+	f := newChatAnswerFixture(t)
+	d := f.askChatDecision(t)
+	text := "Aにしてください"
+	f.recordPrompt(t, f.subKey, "pid-unknown", text, text, answerTime(d))
+	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
+
+	if _, rpcError := f.answerRPC(t, f.subcommanderSessionID, d.ID, "A", "", text); !refused(rpcError) {
+		t.Fatalf("answer accepted from a transcript outside the folders the daemon reads")
+	}
+}
+
+// A folder the daemon cannot list refuses the answer. Otherwise the folder could be
+// made unreadable so that a copy placed elsewhere is the only rollout left.
+func TestChatAnswerRefusesWhenTranscriptFolderCannotBeListed(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads any folder")
+	}
+	f, sessions := newCodexChatAnswerFixture(t)
+	d := f.askChatDecision(t)
+	text := "Aにしてください"
+	path := codexRolloutFile(t, sessions, f.subKey)
+	f.recordCodexPrompt(t, path, f.subKey, "turn-locked", text, text, humanTUIClientID, answerTime(d))
+	dayDir := filepath.Dir(path)
+	if err := os.Chmod(dayDir, 0o000); err != nil {
+		t.Fatalf("Chmod: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dayDir, 0o700) })
+
+	_, rpcError := f.answerRPC(t, f.subcommanderSessionID, d.ID, "A", "", text)
+	if !refused(rpcError) {
+		t.Fatalf("answer accepted with the rollout folder unreadable")
+	}
+	if !strings.Contains(string(rpcError), "could not be listed") {
+		t.Fatalf("refusal = %s, want the listing reason", rpcError)
+	}
+}

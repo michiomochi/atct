@@ -9,6 +9,17 @@ import (
 	"context"
 )
 
+const getPinnedTranscript = `-- name: GetPinnedTranscript :one
+SELECT transcript_path FROM human_prompt_sessions WHERE session_key = ?
+`
+
+func (q *Queries) GetPinnedTranscript(ctx context.Context, sessionKey string) (string, error) {
+	row := q.db.QueryRowContext(ctx, getPinnedTranscript, sessionKey)
+	var transcript_path string
+	err := row.Scan(&transcript_path)
+	return transcript_path, err
+}
+
 const insertHumanPrompt = `-- name: InsertHumanPrompt :exec
 INSERT INTO human_prompts (session_key, prompt_id, transcript_path, prompt, recorded_at)
 VALUES (?, ?, ?, ?, ?)
@@ -73,6 +84,23 @@ func (q *Queries) ListHumanPromptsSince(ctx context.Context, arg ListHumanPrompt
 		return nil, err
 	}
 	return items, nil
+}
+
+const pinHumanPromptTranscript = `-- name: PinHumanPromptTranscript :exec
+INSERT INTO human_prompt_sessions (session_key, transcript_path, first_recorded_at)
+VALUES (?, ?, ?)
+ON CONFLICT(session_key) DO NOTHING
+`
+
+type PinHumanPromptTranscriptParams struct {
+	SessionKey      string
+	TranscriptPath  string
+	FirstRecordedAt string
+}
+
+func (q *Queries) PinHumanPromptTranscript(ctx context.Context, arg PinHumanPromptTranscriptParams) error {
+	_, err := q.db.ExecContext(ctx, pinHumanPromptTranscript, arg.SessionKey, arg.TranscriptPath, arg.FirstRecordedAt)
+	return err
 }
 
 const pruneHumanPrompts = `-- name: PruneHumanPrompts :exec

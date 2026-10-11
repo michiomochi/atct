@@ -13,6 +13,14 @@ WHERE human_prompts.session_key = ?
     LIMIT 1 OFFSET 49
   );
 
+-- name: PinHumanPromptTranscript :exec
+INSERT INTO human_prompt_sessions (session_key, transcript_path, first_recorded_at)
+VALUES (?, ?, ?)
+ON CONFLICT(session_key) DO NOTHING;
+
+-- name: GetPinnedTranscript :one
+SELECT transcript_path FROM human_prompt_sessions WHERE session_key = ?;
+
 -- name: ListHumanPromptsSince :many
 SELECT id, session_key, prompt_id, transcript_path, prompt, recorded_at
 FROM human_prompts
