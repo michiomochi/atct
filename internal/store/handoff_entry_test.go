@@ -5,8 +5,10 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -904,6 +906,98 @@ func TestTaskHandoffRejectAndAmendAppendEntries(t *testing.T) {
 		last := page.Entries[len(page.Entries)-1]
 		if len(page.Entries) != i+2 || last.Kind != wantKinds[i] || last.Body != wantBodies[i] {
 			t.Fatalf("step %d: entries=%d last=%s/%q, want %d %s/%q", i, len(page.Entries), last.Kind, last.Body, i+2, wantKinds[i], wantBodies[i])
+		}
+	}
+}
+
+func TestHandoffEntryWatermarkGrowsWithEveryAppend(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		prepare func(t *testing.T, s *Store) func() error // returns the append to make
+	}{
+		{"goal handoff entry", func(t *testing.T, s *Store) func() error {
+			goalID := newTestGoal(t, s)
+			addLiveProjectClaim(t, s, goalID, "watermark-requester")
+			return func() error {
+				_, err := s.RequestGoalHandoff(context.Background(), "watermark-goal-handoff", goalID, testSessionID("watermark-requester"), "take this goal")
+				return err
+			}
+		}},
+		{"task handoff entry", func(t *testing.T, s *Store) func() error {
+			taskID := addTestTasks(t, s, 1)[0]
+			addLiveParentGoalClaim(t, s, taskID, "watermark-requester")
+			return func() error {
+				_, err := s.RequestTaskHandoff(context.Background(), "watermark-task-handoff", taskID, testSessionID("watermark-requester"), "take this task")
+				return err
+			}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newTestStore(t)
+			ctx := context.Background()
+			appendEntry := tc.prepare(t, s)
+			before, err := s.HandoffEntryWatermark(ctx)
+			if err != nil {
+				t.Fatalf("HandoffEntryWatermark: %v", err)
+			}
+			if again, _ := s.HandoffEntryWatermark(ctx); again != before {
+				t.Fatalf("watermark moved without an append: %d then %d", before, again)
+			}
+			if err := appendEntry(); err != nil {
+				t.Fatalf("append entry: %v", err)
+			}
+			after, err := s.HandoffEntryWatermark(ctx)
+			if err != nil {
+				t.Fatalf("HandoffEntryWatermark: %v", err)
+			}
+			if after <= before {
+				t.Fatalf("watermark after an appended entry = %d, want more than %d", after, before)
+			}
+		})
+	}
+}
+
+var deleteFromHandoffEntries = regexp.MustCompile("(?is)\\bDELETE\\s+FROM\\s+[\"`\\[]?(?:\\w+\\.)?(?:task|goal)_handoff_entries\\b")
+
+// HandoffEntryWatermark assumes entries are never deleted. No sqlc query, its
+// generated code, or non-test store code may delete from the entry tables.
+func TestNoDeleteStatementTargetsHandoffEntryTables(t *testing.T) {
+	for _, sample := range []string{
+		"DELETE FROM task_handoff_entries WHERE id = ?",
+		"delete\n  from goal_handoff_entries",
+		`DELETE FROM "task_handoff_entries"`,
+		"DELETE FROM main.goal_handoff_entries",
+	} {
+		if !deleteFromHandoffEntries.MatchString(sample) {
+			t.Fatalf("pattern misses a DELETE it must catch: %q", sample)
+		}
+	}
+	if deleteFromHandoffEntries.MatchString("DELETE FROM task_handoffs WHERE id = ?") {
+		t.Fatal("pattern matches a DELETE on another table")
+	}
+
+	var files []string
+	for _, glob := range []string{"queries/*.sql", "sqlcgen/*.go", "*.go"} {
+		matches, err := filepath.Glob(glob)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, name := range matches {
+			if !strings.HasSuffix(name, "_test.go") {
+				files = append(files, name)
+			}
+		}
+	}
+	if len(files) == 0 {
+		t.Fatal("no files scanned for DELETE statements")
+	}
+	for _, name := range files {
+		body, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if loc := deleteFromHandoffEntries.FindIndex(body); loc != nil {
+			t.Errorf("%s deletes from a handoff entry table: %q; HandoffEntryWatermark requires append-only entries", name, body[loc[0]:loc[1]])
 		}
 	}
 }
