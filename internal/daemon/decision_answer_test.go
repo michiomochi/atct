@@ -649,3 +649,227 @@ func TestChatAnswerRecordsHumanPromptThroughRPC(t *testing.T) {
 		t.Fatalf("record with empty session_key was accepted")
 	}
 }
+
+// humanTUIClientID is the client_id Codex gives a message the human typed.
+const humanTUIClientID = "0b6f5a9e-3c1d-4e8a-9d2b-7a4c1e2f5b60"
+
+// newCodexChatAnswerFixture is the chat fixture with CODEX_HOME pointed at a
+// temporary folder. It returns that folder's sessions directory.
+func newCodexChatAnswerFixture(t *testing.T) (chatAnswerFixture, string) {
+	t.Helper()
+	f := newChatAnswerFixture(t)
+	codexHome := t.TempDir()
+	t.Setenv("CODEX_HOME", codexHome)
+	return f, filepath.Join(codexHome, "sessions")
+}
+
+// codexRolloutFile is where Codex writes a session's rollout, under a dated folder.
+func codexRolloutFile(t *testing.T, sessionsDir, sessionKey string) string {
+	t.Helper()
+	dir := filepath.Join(sessionsDir, "2026", "10", "11")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatalf("MkdirAll rollout dir: %v", err)
+	}
+	return filepath.Join(dir, "rollout-2026-10-11T23-15-05-"+sessionKey+".jsonl")
+}
+
+// appendCodexUserMessage appends one item_completed line to a rollout. An empty
+// clientID leaves client_id out, as Codex does for its own inputs.
+func appendCodexUserMessage(t *testing.T, path, turnID, clientID, itemType, text string, at time.Time) {
+	t.Helper()
+	item := map[string]any{
+		"type": itemType, "id": "item-" + turnID,
+		"content": []map[string]any{{"type": "text", "text": text, "text_elements": []any{}}},
+	}
+	if clientID != "" {
+		item["client_id"] = clientID
+	}
+	entry := map[string]any{
+		"timestamp": at.UTC().Format(time.RFC3339Nano), "ordinal": 7, "type": "event_msg",
+		"payload": map[string]any{"type": "item_completed", "thread_id": "thread", "turn_id": turnID, "item": item},
+	}
+	line, err := json.Marshal(entry)
+	if err != nil {
+		t.Fatalf("marshal rollout: %v", err)
+	}
+	file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatalf("open rollout: %v", err)
+	}
+	defer file.Close()
+	if _, err := file.Write(append(line, '\n')); err != nil {
+		t.Fatalf("write rollout: %v", err)
+	}
+}
+
+// recordCodexPrompt writes the human's message into the rollout and records the
+// hook's prompt for that turn.
+func (f chatAnswerFixture) recordCodexPrompt(t *testing.T, path, sessionKey, turnID, prompt, text, clientID string, at time.Time) {
+	t.Helper()
+	appendCodexUserMessage(t, path, turnID, clientID, "UserMessage", text, at)
+	if err := f.store.RecordHumanPrompt(t.Context(), store.HumanPromptInput{
+		SessionKey: sessionKey, PromptID: turnID, TranscriptPath: path, Prompt: prompt, RecordedAt: at,
+	}); err != nil {
+		t.Fatalf("RecordHumanPrompt: %v", err)
+	}
+}
+
+func TestChatAnswerRecordsVerifiedCodexQuote(t *testing.T) {
+	f, sessions := newCodexChatAnswerFixture(t)
+	d := f.askChatDecision(t)
+	text := "Aにしてください"
+	f.recordCodexPrompt(t, codexRolloutFile(t, sessions, f.subKey), f.subKey, "turn-ok", text, text, humanTUIClientID, answerTime(d))
+
+	if _, rpcError := f.answerRPC(t, f.subcommanderSessionID, d.ID, "A", "", text); refused(rpcError) {
+		t.Fatalf("verified Codex quote refused: %s", rpcError)
+	}
+	got, err := f.store.GetDecision(t.Context(), d.ID)
+	if err != nil {
+		t.Fatalf("GetDecision: %v", err)
+	}
+	if got.Status != domain.DecisionAnswered || got.AnswerLabel != "A" || got.AnsweredVia != "chat" || got.AnswerEvidence != text {
+		t.Fatalf("decision = %+v, want answered A via chat with the rollout message as evidence", got)
+	}
+}
+
+// Each case is a rollout line that must not count as the human's typed message.
+func TestChatAnswerRefusesCodexLineThatIsNotTheHumansWholeLine(t *testing.T) {
+	const quote = "Aにしてください"
+	cases := []struct {
+		name     string
+		lineTurn string
+		clientID string
+		itemType string
+		text     string
+		offset   time.Duration // from the decision's created_at
+	}{
+		{"no client_id", "turn-x", "", "UserMessage", quote, 2 * time.Second},
+		{"client_id set by ATCT", "turn-x", "atct:6f1c", "UserMessage", quote, 2 * time.Second},
+		{"not a user message", "turn-x", humanTUIClientID, "AgentMessage", quote, 2 * time.Second},
+		{"another turn", "turn-other", humanTUIClientID, "UserMessage", quote, 2 * time.Second},
+		{"written before the decision was asked", "turn-x", humanTUIClientID, "UserMessage", quote, 500 * time.Millisecond},
+		{"quote is part of a longer line", "turn-x", humanTUIClientID, "UserMessage", "はい、" + quote, 2 * time.Second},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f, sessions := newCodexChatAnswerFixture(t)
+			d := f.askChatDecision(t)
+			path := codexRolloutFile(t, sessions, f.subKey)
+			// The hook's copy holds the quote; only the rollout line is different. The
+			// offset is from the stored created_at, which is in whole seconds.
+			stored, err := f.store.GetDecision(t.Context(), d.ID)
+			if err != nil {
+				t.Fatalf("GetDecision: %v", err)
+			}
+			appendCodexUserMessage(t, path, tc.lineTurn, tc.clientID, tc.itemType, tc.text, stored.CreatedAt.Add(tc.offset))
+			if err := f.store.RecordHumanPrompt(t.Context(), store.HumanPromptInput{
+				SessionKey: f.subKey, PromptID: "turn-x", TranscriptPath: path, Prompt: quote, RecordedAt: answerTime(d),
+			}); err != nil {
+				t.Fatalf("RecordHumanPrompt: %v", err)
+			}
+			if _, rpcError := f.answerRPC(t, f.subcommanderSessionID, d.ID, "A", "", quote); !refused(rpcError) {
+				t.Fatalf("rollout line accepted as the human's message")
+			}
+		})
+	}
+}
+
+func TestChatAnswerRefusesCodexRolloutOutsideSessionsLayout(t *testing.T) {
+	cases := []struct {
+		name    string
+		symlink bool
+		path    func(f chatAnswerFixture, sessions string) string
+	}{
+		{"outside the sessions folder", false, func(f chatAnswerFixture, _ string) string {
+			return filepath.Join(t.TempDir(), "rollout-2026-10-11T23-15-05-"+f.subKey+".jsonl")
+		}},
+		{"directly under the sessions folder", false, func(f chatAnswerFixture, sessions string) string {
+			return filepath.Join(sessions, "rollout-2026-10-11T23-15-05-"+f.subKey+".jsonl")
+		}},
+		{"a day folder deeper", false, func(f chatAnswerFixture, sessions string) string {
+			return filepath.Join(sessions, "2026", "10", "11", "extra", "rollout-2026-10-11T23-15-05-"+f.subKey+".jsonl")
+		}},
+		{"a folder that is not a date", false, func(f chatAnswerFixture, sessions string) string {
+			return filepath.Join(sessions, "tmp", "10", "11", "rollout-2026-10-11T23-15-05-"+f.subKey+".jsonl")
+		}},
+		{"symlinked to a file outside", true, func(f chatAnswerFixture, sessions string) string {
+			return filepath.Join(sessions, "2026", "10", "11", "rollout-2026-10-11T23-15-05-"+f.subKey+".jsonl")
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f, sessions := newCodexChatAnswerFixture(t)
+			d := f.askChatDecision(t)
+			path := tc.path(f, sessions)
+			if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+				t.Fatalf("MkdirAll: %v", err)
+			}
+			if tc.symlink {
+				target := filepath.Join(t.TempDir(), "outside.jsonl")
+				appendCodexUserMessage(t, target, "turn-place", humanTUIClientID, "UserMessage", "Aにしてください", answerTime(d))
+				if err := os.Symlink(target, path); err != nil {
+					t.Fatalf("Symlink: %v", err)
+				}
+			} else {
+				appendCodexUserMessage(t, path, "turn-place", humanTUIClientID, "UserMessage", "Aにしてください", answerTime(d))
+			}
+			if err := f.store.RecordHumanPrompt(t.Context(), store.HumanPromptInput{
+				SessionKey: f.subKey, PromptID: "turn-place", TranscriptPath: path, Prompt: "Aにしてください", RecordedAt: answerTime(d),
+			}); err != nil {
+				t.Fatalf("RecordHumanPrompt: %v", err)
+			}
+			if _, rpcError := f.answerRPC(t, f.subcommanderSessionID, d.ID, "A", "", "Aにしてください"); !refused(rpcError) {
+				t.Fatalf("rollout at %s was accepted", path)
+			}
+		})
+	}
+}
+
+func TestChatAnswerRefusesDuplicatedCodexRollout(t *testing.T) {
+	f, sessions := newCodexChatAnswerFixture(t)
+	d := f.askChatDecision(t)
+	text := "Aにしてください"
+	path := codexRolloutFile(t, sessions, f.subKey)
+	f.recordCodexPrompt(t, path, f.subKey, "turn-dup", text, text, humanTUIClientID, answerTime(d))
+	// A second rollout for the same session on another day, with the same turn.
+	otherDay := filepath.Join(sessions, "2026", "10", "12", "rollout-2026-10-12T08-00-00-"+f.subKey+".jsonl")
+	if err := os.MkdirAll(filepath.Dir(otherDay), 0o700); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	appendCodexUserMessage(t, otherDay, "turn-dup", humanTUIClientID, "UserMessage", text, answerTime(d))
+
+	if _, rpcError := f.answerRPC(t, f.subcommanderSessionID, d.ID, "A", "", text); !refused(rpcError) {
+		t.Fatalf("answer accepted although the session has two rollouts")
+	}
+}
+
+func TestChatAnswerRefusesClaudeTranscriptDuplicatedInAnotherProject(t *testing.T) {
+	f := newChatAnswerFixture(t)
+	d := f.askChatDecision(t)
+	text := "Aにしてください"
+	f.recordPrompt(t, f.subKey, "pid-dup", text, text, answerTime(d))
+	otherProject := filepath.Join(filepath.Dir(f.projectsDir), "atct-other")
+	if err := os.MkdirAll(otherProject, 0o700); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	appendTranscriptLineAt(t, filepath.Join(otherProject, f.subKey+".jsonl"), "pid-dup", text, true, answerTime(d))
+
+	if _, rpcError := f.answerRPC(t, f.subcommanderSessionID, d.ID, "A", "", text); !refused(rpcError) {
+		t.Fatalf("answer accepted although the session has two transcripts")
+	}
+}
+
+func TestChatAnswerRefusesCodexTurnAlreadyUsedForAnotherDecision(t *testing.T) {
+	f, sessions := newCodexChatAnswerFixture(t)
+	first := f.askChatDecision(t)
+	second := f.askChatDecision(t)
+	text := "Aにしてください"
+	f.recordCodexPrompt(t, codexRolloutFile(t, sessions, f.subKey), f.subKey, "turn-once", text, text, humanTUIClientID, answerTime(first))
+	if _, rpcError := f.answerRPC(t, f.subcommanderSessionID, first.ID, "A", "", text); refused(rpcError) {
+		t.Fatalf("first answer refused: %s", rpcError)
+	}
+
+	if _, rpcError := f.answerRPC(t, f.subcommanderSessionID, second.ID, "A", "", text); !refused(rpcError) {
+		t.Fatalf("one Codex turn answered two decisions")
+	}
+}

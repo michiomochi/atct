@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 	"unicode"
@@ -158,12 +159,36 @@ func (d *Daemon) verifyHumanQuote(ctx context.Context, agentSessionID int64, dec
 		if !quoteLineMatches(prompt.Prompt, needle) {
 			continue
 		}
+		if isCodexRolloutPath(prompt.TranscriptPath, sessionKey) {
+			if !insideCodexSessions(prompt.TranscriptPath, sessionKey) {
+				reason = "transcript path is outside the Codex sessions directory"
+				continue
+			}
+			if !soleTranscript(prompt.TranscriptPath, codexTranscriptCandidates(sessionKey)) {
+				reason = "more than one rollout exists for this session"
+				continue
+			}
+			text, ok, err := codexRolloutHumanQuote(prompt.TranscriptPath, prompt.PromptID, needle, since)
+			if err != nil {
+				reason = fmt.Sprintf("read transcript: %v", err)
+				continue
+			}
+			if ok {
+				return prompt.PromptID, truncateRunes(text, humanEvidenceMaxRunes), nil
+			}
+			reason = "the rollout has no user message with that turn_id, written after the decision was asked, that has the quote as a whole line"
+			continue
+		}
 		if !isHarnessTranscriptPath(prompt.TranscriptPath, sessionKey) {
 			reason = "transcript path is not this session's harness transcript"
 			continue
 		}
 		if !insideClaudeProjects(prompt.TranscriptPath, sessionKey) {
 			reason = "transcript path is outside the Claude Code projects directory"
+			continue
+		}
+		if !soleTranscript(prompt.TranscriptPath, claudeTranscriptCandidates(sessionKey)) {
+			reason = "more than one transcript exists for this session"
 			continue
 		}
 		text, ok, err := transcriptHumanQuote(prompt.TranscriptPath, prompt.PromptID, needle, since)
@@ -206,6 +231,22 @@ func insideClaudeProjects(path, sessionKey string) bool {
 	if err != nil {
 		return false
 	}
+	for _, realRoot := range claudeProjectsRoots() {
+		rel, err := filepath.Rel(realRoot, resolved)
+		if err != nil {
+			continue
+		}
+		parts := strings.Split(rel, string(filepath.Separator))
+		if len(parts) == 2 && parts[0] != ".." && parts[1] == sessionKey+".jsonl" {
+			return true
+		}
+	}
+	return false
+}
+
+// claudeProjectsRoots lists the resolved projects folders of CLAUDE_CONFIG_DIR and
+// of the default ~/.claude, each once.
+func claudeProjectsRoots() []string {
 	var roots []string
 	if dir := os.Getenv("CLAUDE_CONFIG_DIR"); dir != "" {
 		roots = append(roots, filepath.Join(dir, "projects"))
@@ -213,17 +254,126 @@ func insideClaudeProjects(path, sessionKey string) bool {
 	if home, err := os.UserHomeDir(); err == nil {
 		roots = append(roots, filepath.Join(home, ".claude", "projects"))
 	}
+	return resolvedRoots(roots)
+}
+
+// codexSessionsRoots lists the resolved sessions folders of CODEX_HOME and of the
+// default ~/.codex, each once.
+func codexSessionsRoots() []string {
+	var roots []string
+	if dir := os.Getenv("CODEX_HOME"); dir != "" {
+		roots = append(roots, filepath.Join(dir, "sessions"))
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		roots = append(roots, filepath.Join(home, ".codex", "sessions"))
+	}
+	return resolvedRoots(roots)
+}
+
+// resolvedRoots resolves each root that exists, dropping duplicates so one folder
+// reached through two settings is counted once.
+func resolvedRoots(roots []string) []string {
+	seen := map[string]bool{}
+	var resolved []string
 	for _, root := range roots {
 		realRoot, err := filepath.EvalSymlinks(root)
+		if err != nil || seen[realRoot] {
+			continue
+		}
+		seen[realRoot] = true
+		resolved = append(resolved, realRoot)
+	}
+	return resolved
+}
+
+// claudeTranscriptCandidates lists where a session's Claude transcript could sit in
+// each projects folder: <projects>/<project>/<session_key>.jsonl.
+func claudeTranscriptCandidates(sessionKey string) []string {
+	var candidates []string
+	for _, realRoot := range claudeProjectsRoots() {
+		entries, err := os.ReadDir(realRoot)
 		if err != nil {
 			continue
 		}
+		for _, entry := range entries {
+			candidates = append(candidates, filepath.Join(realRoot, entry.Name(), sessionKey+".jsonl"))
+		}
+	}
+	return candidates
+}
+
+// codexTranscriptCandidates lists the rollout files for a session under each
+// sessions folder: <sessions>/YYYY/MM/DD/rollout-<time>-<session_key>.jsonl.
+func codexTranscriptCandidates(sessionKey string) []string {
+	var candidates []string
+	for _, realRoot := range codexSessionsRoots() {
+		matches, err := filepath.Glob(filepath.Join(realRoot, "*", "*", "*", "rollout-*-"+sessionKey+".jsonl"))
+		if err != nil {
+			continue
+		}
+		candidates = append(candidates, matches...)
+	}
+	return candidates
+}
+
+// soleTranscript reports whether path is the only file among candidates that
+// exists, and is that file. A second copy under the same session key, even a
+// symlink, makes the transcript ambiguous and the answer is refused.
+func soleTranscript(path string, candidates []string) bool {
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return false
+	}
+	var found []string
+	for _, candidate := range candidates {
+		if _, err := os.Lstat(candidate); err == nil {
+			found = append(found, candidate)
+		}
+	}
+	return len(found) == 1 && found[0] == resolved
+}
+
+// codexRolloutName matches a Codex rollout file for one session:
+// rollout-<YYYY>-<MM>-<DD>T<HH>-<MM>-<SS>-<session_key>.jsonl.
+func codexRolloutName(sessionKey string) *regexp.Regexp {
+	return regexp.MustCompile(`^rollout-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-` + regexp.QuoteMeta(sessionKey) + `\.jsonl$`)
+}
+
+var (
+	codexYearDir  = regexp.MustCompile(`^\d{4}$`)
+	codexMonthDir = regexp.MustCompile(`^\d{2}$`)
+)
+
+// isCodexRolloutPath is a lexical check on the path the agent supplied: absolute,
+// clean, and named like this session's rollout. The folder layout is checked by
+// insideCodexSessions.
+func isCodexRolloutPath(path, sessionKey string) bool {
+	if sessionKey == "" || !filepath.IsAbs(path) || filepath.Clean(path) != path {
+		return false
+	}
+	return codexRolloutName(sessionKey).MatchString(filepath.Base(path))
+}
+
+// insideCodexSessions reports whether path is exactly <sessions>/YYYY/MM/DD/
+// rollout-<time>-<session_key>.jsonl under the sessions folder of CODEX_HOME or of
+// the default ~/.codex. Like the Claude check, the file must not be a symlink.
+func insideCodexSessions(path, sessionKey string) bool {
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() {
+		return false
+	}
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return false
+	}
+	for _, realRoot := range codexSessionsRoots() {
 		rel, err := filepath.Rel(realRoot, resolved)
 		if err != nil {
 			continue
 		}
 		parts := strings.Split(rel, string(filepath.Separator))
-		if len(parts) == 2 && parts[0] != ".." && parts[1] == sessionKey+".jsonl" {
+		if len(parts) == 4 && codexYearDir.MatchString(parts[0]) && codexMonthDir.MatchString(parts[1]) &&
+			codexMonthDir.MatchString(parts[2]) && codexRolloutName(sessionKey).MatchString(parts[3]) {
 			return true
 		}
 	}
@@ -280,6 +430,14 @@ type transcriptEntry struct {
 // needle as a whole line and was written at or after since. Only lines that
 // mention promptID are parsed.
 func transcriptHumanQuote(path, promptID, needle string, since time.Time) (string, bool, error) {
+	return scanTranscript(path, promptID, func(line []byte) (string, bool) {
+		return transcriptLineHumanQuote(line, promptID, needle, since)
+	})
+}
+
+// scanTranscript runs match over each line that mentions promptID, and returns the
+// first human message match accepts. Lines are read without a length limit.
+func scanTranscript(path, promptID string, match func(line []byte) (string, bool)) (string, bool, error) {
 	if promptID == "" {
 		return "", false, nil
 	}
@@ -292,7 +450,7 @@ func transcriptHumanQuote(path, promptID, needle string, since time.Time) (strin
 	for {
 		line, readErr := r.ReadBytes('\n')
 		if bytes.Contains(line, []byte(promptID)) {
-			if text, ok := transcriptLineHumanQuote(line, promptID, needle, since); ok {
+			if text, ok := match(line); ok {
 				return text, true, nil
 			}
 		}
@@ -343,4 +501,74 @@ func messageText(raw json.RawMessage) string {
 		}
 	}
 	return b.String()
+}
+
+// atctClientMessagePrefix marks a Codex turn input that ATCT sent itself. The
+// cmd/atct side writes it as clientUserMessageId; a human's typed input has none.
+const atctClientMessagePrefix = "atct:"
+
+// codexRolloutEntry is the part of one Codex rollout line that the human-quote
+// check reads.
+type codexRolloutEntry struct {
+	Timestamp string `json:"timestamp"`
+	Type      string `json:"type"`
+	Payload   struct {
+		Type   string `json:"type"`
+		TurnID string `json:"turn_id"`
+		Item   struct {
+			Type     string          `json:"type"`
+			ClientID string          `json:"client_id"`
+			Content  json.RawMessage `json:"content"`
+		} `json:"item"`
+	} `json:"payload"`
+}
+
+// codexRolloutHumanQuote scans a Codex rollout for the user message of turnID that
+// holds the needle as a whole line and was written at or after since.
+func codexRolloutHumanQuote(path, turnID, needle string, since time.Time) (string, bool, error) {
+	return scanTranscript(path, turnID, func(line []byte) (string, bool) {
+		return codexLineHumanQuote(line, turnID, needle, since)
+	})
+}
+
+// codexLineHumanQuote accepts only a user message the human typed: a UserMessage
+// item with a client_id that ATCT did not set. Codex's own inputs carry no
+// client_id, so they are refused as well.
+func codexLineHumanQuote(line []byte, turnID, needle string, since time.Time) (string, bool) {
+	var entry codexRolloutEntry
+	if err := json.Unmarshal(line, &entry); err != nil {
+		return "", false
+	}
+	item := entry.Payload.Item
+	if entry.Type != "event_msg" || entry.Payload.Type != "item_completed" || item.Type != "UserMessage" {
+		return "", false
+	}
+	if entry.Payload.TurnID != turnID || item.ClientID == "" || strings.HasPrefix(item.ClientID, atctClientMessagePrefix) {
+		return "", false
+	}
+	at, err := time.Parse(time.RFC3339Nano, entry.Timestamp)
+	if err != nil || at.Before(since) {
+		return "", false
+	}
+	text := codexMessageText(item.Content)
+	return text, quoteLineMatches(text, needle)
+}
+
+// codexMessageText joins the text parts of a Codex message with newlines, so each
+// part is a line and a quote must sit inside one part.
+func codexMessageText(raw json.RawMessage) string {
+	var parts []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	if json.Unmarshal(raw, &parts) != nil {
+		return ""
+	}
+	var texts []string
+	for _, part := range parts {
+		if part.Type == "text" {
+			texts = append(texts, part.Text)
+		}
+	}
+	return strings.Join(texts, "\n")
 }
