@@ -37,7 +37,7 @@ func (s *Server) handleWebSocketEvents(w http.ResponseWriter, r *http.Request) {
 	// initial scan that still need to be delivered, those created after the
 	// baseline and those after Last-Event-ID on a resumed stream.
 	seen := int64(-1)
-	records, err := s.scanHandoffEntryRecords(ctx, filter)
+	records, err := s.countedScanHandoffEntryRecords(ctx, filter)
 	if err != nil {
 		return
 	}
@@ -80,7 +80,7 @@ func (s *Server) handleWebSocketEvents(w http.ResponseWriter, r *http.Request) {
 			if markErr == nil && mark == seen {
 				continue
 			}
-			records, err := s.scanHandoffEntryRecords(ctx, filter)
+			records, err := s.countedScanHandoffEntryRecords(ctx, filter)
 			if err != nil {
 				continue
 			}
