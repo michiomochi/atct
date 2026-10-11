@@ -96,6 +96,7 @@ go build ./...
 run_check "go test" go test -count=1 -timeout 600s ./...
 run_check "session_start_test.bash" bash tests/session_start_test.bash
 run_check "wrapper_test.bash" bash tests/wrapper_test.bash
+run_check "pre_ask_test.bash" bash tests/pre_ask_test.bash
 run_check "schema-check.sh" bash script/schema-check.sh
 run_check "web tests" sh -c 'cd web && pnpm test'
 run_check "web typecheck" sh -c 'cd web && pnpm typecheck'
