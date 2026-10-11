@@ -416,6 +416,14 @@ func (s *Store) AppendGoalHandoffEntry(ctx context.Context, handoffID, kind, bod
 // only grow, so the sum of the two tables' highest ids grows with every
 // append. A poller compares it to skip rescanning all history when nothing
 // was added.
+//
+// The watermark is a valid change signal only because handoff entry rows are
+// append-only: ids are INTEGER PRIMARY KEY AUTOINCREMENT (never reused) and
+// the parent handoff FK is ON DELETE RESTRICT. Deleting or rewriting entries
+// could lower the maximum id, so a later append would not move the sum and
+// pollers would miss it. No query deletes from these tables, and
+// TestNoDeleteStatementTargetsHandoffEntryTables pins that; the database itself
+// does not forbid a DELETE, so keep it that way in code.
 func (s *Store) HandoffEntryWatermark(ctx context.Context) (int64, error) {
 	q := sqlcgen.New(s.db)
 	taskMax, err := q.MaxTaskHandoffEntryID(ctx)

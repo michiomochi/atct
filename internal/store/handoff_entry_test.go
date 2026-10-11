@@ -5,8 +5,10 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -952,5 +954,50 @@ func TestHandoffEntryWatermarkGrowsWithEveryAppend(t *testing.T) {
 				t.Fatalf("watermark after an appended entry = %d, want more than %d", after, before)
 			}
 		})
+	}
+}
+
+var deleteFromHandoffEntries = regexp.MustCompile("(?is)\\bDELETE\\s+FROM\\s+[\"`\\[]?(?:\\w+\\.)?(?:task|goal)_handoff_entries\\b")
+
+// HandoffEntryWatermark assumes entries are never deleted. No sqlc query, its
+// generated code, or non-test store code may delete from the entry tables.
+func TestNoDeleteStatementTargetsHandoffEntryTables(t *testing.T) {
+	for _, sample := range []string{
+		"DELETE FROM task_handoff_entries WHERE id = ?",
+		"delete\n  from goal_handoff_entries",
+		`DELETE FROM "task_handoff_entries"`,
+		"DELETE FROM main.goal_handoff_entries",
+	} {
+		if !deleteFromHandoffEntries.MatchString(sample) {
+			t.Fatalf("pattern misses a DELETE it must catch: %q", sample)
+		}
+	}
+	if deleteFromHandoffEntries.MatchString("DELETE FROM task_handoffs WHERE id = ?") {
+		t.Fatal("pattern matches a DELETE on another table")
+	}
+
+	var files []string
+	for _, glob := range []string{"queries/*.sql", "sqlcgen/*.go", "*.go"} {
+		matches, err := filepath.Glob(glob)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, name := range matches {
+			if !strings.HasSuffix(name, "_test.go") {
+				files = append(files, name)
+			}
+		}
+	}
+	if len(files) == 0 {
+		t.Fatal("no files scanned for DELETE statements")
+	}
+	for _, name := range files {
+		body, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if loc := deleteFromHandoffEntries.FindIndex(body); loc != nil {
+			t.Errorf("%s deletes from a handoff entry table: %q; HandoffEntryWatermark requires append-only entries", name, body[loc[0]:loc[1]])
+		}
 	}
 }
