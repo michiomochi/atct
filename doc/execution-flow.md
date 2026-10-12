@@ -104,6 +104,8 @@ request されたときは、その handoff を「superseded」として閉じ�
   履歴を読むツールが無いため、ここが報告を読む唯一の入口になる
 - `unapplied_decisions` は、そのセッションへ前回返した一覧から変わったときだけ付く。変わって
   いないときは `unapplied_count` だけ、0 件に変わったときは `[]`。`atct_goal_list` は常に全文
+- `atct_goal_get` は省略可能な `fields`（goal の項目名・`tasks`・`task_summary`・`goal_review`）で
+  返す項目を絞れる。省略時は全文、未知の名前は拒否
 - 整形は MCP shim だけで行う。daemon の RPC、CLI、HTTP API、web は全文を返したまま
 
 ## タスクの状態遷移
