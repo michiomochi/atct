@@ -55,3 +55,11 @@ FROM goal_handoff_entries
 WHERE handoff_id = sqlc.arg('handoff_id') AND id > sqlc.arg('cursor')
 ORDER BY id ASC
 LIMIT sqlc.arg('limit');
+
+-- name: MaxTaskHandoffEntryID :one
+SELECT CAST(COALESCE(MAX(id), 0) AS INTEGER) AS max_id
+FROM task_handoff_entries;
+
+-- name: MaxGoalHandoffEntryID :one
+SELECT CAST(COALESCE(MAX(id), 0) AS INTEGER) AS max_id
+FROM goal_handoff_entries;

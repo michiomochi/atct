@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/michiomochi/atct/internal/domain"
@@ -23,6 +24,9 @@ const commitDiffBodyLineLimit = 400
 
 type Server struct {
 	store *store.Store
+	// handoffEntryScans counts event-stream scanHandoffEntryRecords calls so tests can pin
+	// that an event stream does not rescan while the entry watermark is flat.
+	handoffEntryScans atomic.Int64
 }
 
 func New(s *store.Store) *Server {
@@ -1819,6 +1823,13 @@ func eventMatchesTaskID(event store.DecisionEvent, taskID int64) bool {
 	}
 }
 
+// countedScanHandoffEntryRecords is the event streams' entry point to
+// scanHandoffEntryRecords; it counts each scan for handoffEntryScans.
+func (s *Server) countedScanHandoffEntryRecords(ctx context.Context, filter eventFilter) ([]handoffEntryRecord, error) {
+	s.handoffEntryScans.Add(1)
+	return s.scanHandoffEntryRecords(ctx, filter)
+}
+
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -1836,7 +1847,11 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	}
 	ch, cancel := s.store.SubscribeEvents()
 	defer cancel()
-	records, err := s.scanHandoffEntryRecords(r.Context(), filter)
+	// The first tick always scans: the tracker may hold entries from this
+	// initial scan that still need to be delivered, those created after the
+	// baseline and those after Last-Event-ID on a resumed stream.
+	seen := int64(-1)
+	records, err := s.countedScanHandoffEntryRecords(r.Context(), filter)
 	if err != nil {
 		writeHandoffHistoryError(w, err)
 		return
@@ -1877,9 +1892,17 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 			}
 			flusher.Flush()
 		case <-ticker.C:
-			records, err := s.scanHandoffEntryRecords(r.Context(), filter)
+			mark, markErr := s.store.HandoffEntryWatermark(r.Context())
+			if markErr == nil && mark == seen {
+				continue
+			}
+			records, err := s.countedScanHandoffEntryRecords(r.Context(), filter)
 			if err != nil {
 				continue
+			}
+			seen = mark
+			if markErr != nil {
+				seen = -1
 			}
 			for _, record := range records {
 				if !tracker.mark(record.event) {
