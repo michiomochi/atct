@@ -149,6 +149,58 @@ func NormalizeRoot(ctx context.Context, path string) string {
 	return normalizeWorktreePath(ctx, path, "git")
 }
 
+// DefaultProjectName derives "<org>/<repo>" from the origin remote of the git
+// toplevel, plus the path of rootPath below it. It falls back to the base name
+// of rootPath when there is no git repository, no origin, or a non-GitHub host.
+func DefaultProjectName(ctx context.Context, rootPath string) string {
+	fallback := filepath.Base(rootPath)
+
+	topLevelOutput, err := exec.CommandContext(ctx, "git", "-C", rootPath, "rev-parse", "--show-toplevel").Output()
+	if err != nil {
+		return fallback
+	}
+	topLevel := strings.TrimSpace(string(topLevelOutput))
+
+	// config, not "remote get-url": get-url applies url.<base>.insteadOf rewrites.
+	remoteOutput, err := exec.CommandContext(ctx, "git", "-C", topLevel, "config", "--get", "remote.origin.url").Output()
+	if err != nil {
+		return fallback
+	}
+	repo, ok := githubRepoFromRemote(strings.TrimSpace(string(remoteOutput)))
+	if !ok {
+		return fallback
+	}
+
+	rel, err := filepath.Rel(topLevel, normalizeProjectPath(rootPath))
+	if err != nil || rel == "." {
+		return repo
+	}
+	return repo + "/" + filepath.ToSlash(rel)
+}
+
+// githubRepoFromRemote returns "<org>/<repo>" for https://github.com/,
+// ssh://git@github.com/ and git@github.com: remotes, with any trailing ".git" dropped.
+func githubRepoFromRemote(remote string) (string, bool) {
+	var path string
+	switch {
+	case strings.HasPrefix(remote, "https://github.com/"):
+		path = strings.TrimPrefix(remote, "https://github.com/")
+	case strings.HasPrefix(remote, "ssh://git@github.com/"):
+		path = strings.TrimPrefix(remote, "ssh://git@github.com/")
+	case strings.HasPrefix(remote, "git@github.com:"):
+		path = strings.TrimPrefix(remote, "git@github.com:")
+	default:
+		return "", false
+	}
+
+	path = strings.TrimSuffix(strings.TrimRight(path, "/"), ".git")
+	org, repo, ok := strings.Cut(path, "/")
+	if !ok || org == "" || repo == "" || strings.Contains(repo, "/") {
+		return "", false
+	}
+	return org + "/" + repo, true
+}
+
 func (s *Store) ListProjects(ctx context.Context) ([]domain.Project, error) {
 	rows, err := sqlcgen.New(s.db).ListProjects(ctx)
 	if err != nil {
@@ -168,13 +220,16 @@ func (s *Store) ListProjects(ctx context.Context) ([]domain.Project, error) {
 
 // ResolveProject maps a worktree to its main repository before selecting the
 // longest matching root_path. This prevents a worktree from becoming a second
-// project for the same repository.
+// project for the same repository. An archived project is matched only when
+// its root_path is exactly cwd, so an archived parent does not capture its
+// subdirectories.
 func (s *Store) ResolveProject(ctx context.Context, cwd string) (domain.Project, error) {
 	cwd = normalizeWorktreePath(ctx, cwd, "git")
 	cwd = normalizeProjectPath(cwd)
 	row, err := sqlcgen.New(s.db).ResolveProject(ctx, sqlcgen.ResolveProjectParams{
 		RootPath:   cwd,
 		RootPath_2: cwd,
+		RootPath_3: cwd,
 	})
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {

@@ -481,7 +481,7 @@ func (d *Daemon) resolveOrRegisterProject(ctx context.Context, cwd string) (doma
 	}
 
 	rootPath := store.NormalizeRoot(ctx, cwd)
-	project, err = d.store.CreateProject(ctx, filepath.Base(rootPath), rootPath)
+	project, err = d.store.CreateProject(ctx, store.DefaultProjectName(ctx, rootPath), rootPath)
 	if err == nil {
 		return project, nil
 	}
@@ -494,8 +494,26 @@ func (d *Daemon) resolveOrRegisterProject(ctx context.Context, cwd string) (doma
 		return domain.Project{}, resolveErr
 	}
 
-	fallbackName := filepath.Join(filepath.Base(filepath.Dir(rootPath)), filepath.Base(rootPath))
-	return d.store.CreateProject(ctx, fallbackName, rootPath)
+	return d.store.CreateProject(ctx, parentBaseName(rootPath), rootPath)
+}
+
+// parentBaseName is the "<parent>/<base>" name used when the default name is taken.
+func parentBaseName(rootPath string) string {
+	return filepath.Join(filepath.Base(filepath.Dir(rootPath)), filepath.Base(rootPath))
+}
+
+// isProjectNameConflict reports whether err is the UNIQUE violation on projects.name.
+func isProjectNameConflict(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "UNIQUE constraint failed: projects.name")
+}
+
+// nameConflictHint tells the caller to pick another name. The original text is
+// kept so cmd/atct can still detect the duplicate by substring.
+func nameConflictHint(err error) error {
+	if isProjectNameConflict(err) {
+		return fmt.Errorf("%w; give a different name", err)
+	}
+	return err
 }
 
 // normalizeEntityIDs keeps the transport compatible with clients that send
@@ -1218,12 +1236,15 @@ func (d *Daemon) dispatchMethodWithPeer(ctx context.Context, req rpc.Request, pe
 			return nil, err
 		}
 		rootPath := store.NormalizeRoot(ctx, p.RootPath)
-		name := p.Name
-		if name == "" {
-			name = filepath.Base(rootPath)
+		if p.Name != "" {
+			ns, err := d.store.CreateProject(ctx, p.Name, rootPath)
+			return marshal(ns, nameConflictHint(err))
 		}
-		ns, err := d.store.CreateProject(ctx, name, rootPath)
-		return marshal(ns, err)
+		ns, err := d.store.CreateProject(ctx, store.DefaultProjectName(ctx, rootPath), rootPath)
+		if isProjectNameConflict(err) {
+			ns, err = d.store.CreateProject(ctx, parentBaseName(rootPath), rootPath)
+		}
+		return marshal(ns, nameConflictHint(err))
 
 	case "project.list":
 		projects, err := d.store.ListProjects(ctx)
