@@ -131,7 +131,8 @@ func (q *Queries) ReleaseProject(ctx context.Context, id int64) (sql.Result, err
 const resolveProject = `-- name: ResolveProject :one
 SELECT id, name, root_path, created_at, claimed_by, claimed_at, archived_at
 FROM projects
-WHERE ? = root_path OR ? LIKE root_path || '/%'
+WHERE (? = root_path OR ? LIKE root_path || '/%')
+  AND (archived_at IS NULL OR root_path = ?)
 ORDER BY LENGTH(root_path) DESC
 LIMIT 1
 `
@@ -139,10 +140,11 @@ LIMIT 1
 type ResolveProjectParams struct {
 	RootPath   string
 	RootPath_2 string
+	RootPath_3 string
 }
 
 func (q *Queries) ResolveProject(ctx context.Context, arg ResolveProjectParams) (Project, error) {
-	row := q.db.QueryRowContext(ctx, resolveProject, arg.RootPath, arg.RootPath_2)
+	row := q.db.QueryRowContext(ctx, resolveProject, arg.RootPath, arg.RootPath_2, arg.RootPath_3)
 	var i Project
 	err := row.Scan(
 		&i.ID,

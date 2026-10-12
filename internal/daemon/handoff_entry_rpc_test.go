@@ -571,6 +571,42 @@ func TestHandoffCapabilityRejectsAnotherUnixSocketConnection(t *testing.T) {
 	}
 }
 
+func TestTaskHandoffEntryHistoryRPCRejectsOtherTaskAndOutsider(t *testing.T) {
+	fixture := newTaskHandoffRPCTestFixture(t)
+	ctx := context.Background()
+	const handoffID = "rpc-entry-history-reject"
+	if _, err := fixture.store.RequestTaskHandoff(ctx, handoffID, fixture.claimedTaskID, fixture.requesterID, "request"); err != nil {
+		t.Fatalf("RequestTaskHandoff: %v", err)
+	}
+	if _, err := fixture.store.ReceiveTaskHandoff(ctx, handoffID, fixture.claimedTaskID, fixture.receiverID); err != nil {
+		t.Fatalf("ReceiveTaskHandoff: %v", err)
+	}
+	outsiderID := daemonTestSessionID(t, fixture.store, "rpc-handoff-history-outsider")
+
+	client := mcpshim.NewClient(fixture.socketPath)
+	err := client.Call(ctx, "handoff.entry.history", map[string]any{
+		"handoff_id":       handoffID,
+		"task_id":          fixture.claimableTaskID,
+		"after_id":         0,
+		"limit":            10,
+		"agent_session_id": fixture.receiverID,
+	}, nil)
+	if err == nil || !strings.Contains(err.Error(), store.ErrTaskHandoffTaskMismatch.Error()) {
+		t.Fatalf("other task history error = %v, want task mismatch rejection", err)
+	}
+
+	err = client.Call(ctx, "handoff.entry.history", map[string]any{
+		"handoff_id":       handoffID,
+		"task_id":          fixture.claimedTaskID,
+		"after_id":         0,
+		"limit":            10,
+		"agent_session_id": outsiderID,
+	}, nil)
+	if err == nil || !strings.Contains(err.Error(), store.ErrHandoffEntryParticipant.Error()) {
+		t.Fatalf("outsider history error = %v, want participant authorization error", err)
+	}
+}
+
 func rpcRequestForTest(t *testing.T, method string, params any) rpc.Request {
 	t.Helper()
 	raw, err := json.Marshal(params)
