@@ -268,6 +268,8 @@ commander が交代した後は、現在の commander が `atct_goal_review_comp
 | `atct_goal_review_complete` | commander（人間の承認後） | — |
 | ゴールの取り下げ | commander | そのゴールの subcommander |
 
+handoff の記録（`handoff_entry_added`）は通知しない。遷移は上の lifecycle 通知で知らせ、記録の中身は `atct_handoff_entry_history` で読む。
+
 ## 待機中の Stop hook
 
 相手の応答（commander の plan / goal review、subcommander の task review）を待つだけの session は、生きた Monitor があれば Stop hook で止めない。subcommander は plan review・goal review・executor の起動（task handoff の未受領）と作業のいずれかを待つ間の open goal handoff、executor は review 依頼済みで差し戻されていない task handoff が対象。差し戻し、task-create handoff、task review など他の block と、Monitor が無い場合（未受領の task handoff も止める）、取得に失敗した場合は従来どおり止める。詳細は `atct continuous-execution` で読める。

@@ -1154,7 +1154,7 @@ func TestWatchDoesNotFormatKeepaliveAsVisibleLine(t *testing.T) {
 	}
 }
 
-func TestWatchFormatsAndDeduplicatesHandoffEntryAdded(t *testing.T) {
+func TestWatchDoesNotEmitHandoffEntryAdded(t *testing.T) {
 	var output bytes.Buffer
 	delivered := make(map[watchDeliveryKey]struct{})
 	wakeupDiscrepancyDelivered := make(map[watchWakeupDeliveryKey]struct{})
@@ -1173,9 +1173,8 @@ func TestWatchFormatsAndDeduplicatesHandoffEntryAdded(t *testing.T) {
 			t.Fatalf("emitWatchDecision: %v", err)
 		}
 	}
-	want := "atct handoff entry added: task task-1 (handoff handoff-1, id 42, kind review_requested, author 42)\n"
-	if got := output.String(); got != want {
-		t.Fatalf("handoff entry output = %q, want %q", got, want)
+	if got := output.String(); got != "" {
+		t.Fatalf("handoff entry output = %q, want none; the lifecycle event carries the transition", got)
 	}
 }
 
@@ -1195,20 +1194,6 @@ func TestReadWatchSSEFramesPreservesLastEventID(t *testing.T) {
 	}
 	if err := <-done; err != nil {
 		t.Fatalf("readWatchSSEFrames done error = %v", err)
-	}
-}
-
-func TestWatchDecodesCanonicalHandoffEntryIDAndReply(t *testing.T) {
-	var decision watchDecision
-	if err := json.Unmarshal([]byte(`{"id":42,"handoff_id":"handoff-1","kind":"review_received","in_reply_to_id":7}`), &decision); err != nil {
-		t.Fatalf("decode canonical handoff entry event: %v", err)
-	}
-	entryID, err := decision.handoffEntryID()
-	if err != nil {
-		t.Fatalf("handoffEntryID: %v", err)
-	}
-	if entryID != 42 || decision.InReplyToID == nil || *decision.InReplyToID != 7 {
-		t.Fatalf("handoff entry decision = %+v, want id 42 replying to 7", decision)
 	}
 }
 
@@ -1233,8 +1218,8 @@ func TestConsumeWatchEventsSendsLastEventID(t *testing.T) {
 	if gotLastEventID != "e1" {
 		t.Fatalf("Last-Event-ID = %q, want e1", gotLastEventID)
 	}
-	if !strings.Contains(output.String(), "atct handoff entry added") {
-		t.Fatalf("watch output = %q, want handoff entry line", output.String())
+	if strings.Contains(output.String(), "atct handoff entry added") {
+		t.Fatalf("watch output = %q, want no handoff entry line", output.String())
 	}
 	if lastEventID != "e2" {
 		t.Fatalf("last event state = %q, want e2", lastEventID)

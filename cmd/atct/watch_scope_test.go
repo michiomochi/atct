@@ -513,3 +513,17 @@ func TestWatchCommanderLivenessNeedsATarget(t *testing.T) {
 		}
 	}
 }
+
+func TestWatchScopesNeverDeliverHandoffEntryAdded(t *testing.T) {
+	decision := watchDecision{GoalID: "42", TaskID: "46", HandoffID: "h1", AuthorSessionID: 7}
+	for name, filter := range map[string]*watchScopeFilter{
+		"project":      newWatchScopeFilter(""),
+		"goal":         newWatchScopeFilter("42"),
+		"task":         newWatchTaskScopeFilter("46"),
+		"pass-through": newWatchPassThroughFilter(),
+	} {
+		if filter.delivers("handoff_entry_added", decision) {
+			t.Fatalf("%s scope delivered handoff_entry_added, want the lifecycle event instead", name)
+		}
+	}
+}

@@ -226,6 +226,11 @@ func (f *watchScopeFilter) deliversSnapshotDecision(decision watchDecision) bool
 }
 
 func (f *watchScopeFilter) delivers(eventName string, decision watchDecision) bool {
+	// Entries are read through atct_handoff_entry_history; the lifecycle
+	// transitions already tell the watcher when a handoff moves.
+	if eventName == "handoff_entry_added" {
+		return false
+	}
 	if f.taskID != "" {
 		return decision.TaskID == f.taskID
 	}
