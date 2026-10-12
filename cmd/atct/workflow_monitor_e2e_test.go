@@ -710,7 +710,7 @@ func TestWorkflowMonitorBoundWatchDoesNotEchoOwnHandoffEntries(t *testing.T) {
 		"handoff_id": "gh-entry-echo", "goal_id": goal.ID, "requested_by": subcommanderID,
 		"review_request_report": "ready for review",
 	}, &store.GoalHandoff{})
-	assertNoWorkflowMonitorAction(t, commanderWatch.recorder, "handoff_entry_added", "author "+strconv.FormatInt(subcommanderID, 10))
+	waitWorkflowMonitorAction(t, commanderWatch.recorder, "handoff_entry_added", "author "+strconv.FormatInt(subcommanderID, 10))
 	assertNoWorkflowMonitorAction(t, subWatch.recorder, "handoff_entry_added", "author "+strconv.FormatInt(subcommanderID, 10))
 	assertNoWorkflowMonitorAction(t, commanderWatch.recorder, "handoff_entry_added", "author "+strconv.FormatInt(commanderID, 10))
 }

@@ -270,7 +270,7 @@ commander が交代した後は、現在の commander が `atct_goal_review_comp
 | `atct_goal_review_complete` | commander（人間の承認後） | — |
 | ゴールの取り下げ | commander | そのゴールの subcommander |
 
-handoff の記録（`handoff_entry_added`）は通知しない。遷移は上の lifecycle 通知で知らせ、記録の中身は `atct_handoff_entry_history` で読む。
+handoff の記録（`handoff_entry_added`）のうち、lifecycle の写し（`request`・`received`・`completed`、ack の `review_received`）は通知しない。`review_requested`・`review_rejected` と、参加者が `atct_*handoff_entry_append` で足した note は従来どおり通知する。
 
 ## 待機中の Stop hook
 

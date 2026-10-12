@@ -175,6 +175,20 @@ func (d *watchDecision) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+func (d watchDecision) handoffEntryID() (int64, error) {
+	if d.HandoffEntryID > 0 {
+		return d.HandoffEntryID, nil
+	}
+	if strings.TrimSpace(d.ID) == "" {
+		return 0, errors.New("handoff entry event has no id")
+	}
+	id, err := strconv.ParseInt(d.ID, 10, 64)
+	if err != nil || id <= 0 {
+		return 0, fmt.Errorf("handoff entry id must be a positive integer: %q", d.ID)
+	}
+	return id, nil
+}
+
 func (p *watchProject) UnmarshalJSON(data []byte) error {
 	type plain watchProject
 	var decoded plain
@@ -1157,7 +1171,19 @@ func consumeWatchEventsWithStateAndScopeAndSinkAndInterval(ctx context.Context, 
 				continue
 			}
 			if frame.name == "handoff_entry_added" {
-				// Never delivered: the lifecycle event for the same transition is.
+				var decision watchDecision
+				if err := json.Unmarshal([]byte(frame.data), &decision); err != nil {
+					return fmt.Errorf("decode SSE event %s: %w", frame.name, err)
+				}
+				if scope.ProjectID != "" && decision.ProjectID != "" && decision.ProjectID != scope.ProjectID {
+					continue
+				}
+				if !scopeFilter.delivers(frame.name, decision) {
+					continue
+				}
+				if err := emitWatchDecisionWithStateAndSinks(out, frame.name, decision, delivered, lastWakeupContent, wakeupDiscrepancyDelivered, wakeupDelivered, sink, actionSink); err != nil {
+					return err
+				}
 				continue
 			}
 			if err := reconcileWatchScope(ctx, client, baseURL, scope, out, delivered, lastWakeupContent, wakeupDiscrepancyDelivered, wakeupDelivered, scopeFilter, sink, actionSink, latestReconciliation); err != nil {
@@ -1750,6 +1776,21 @@ func emitWatchDecisionWithStateAndSinks(out io.Writer, eventName string, decisio
 	writeLine := func() error {
 		return writeWatchLineWithActionSink(out, line, eventName, decision, sink, actionSink)
 	}
+	if eventName == "handoff_entry_added" {
+		entryID, err := decision.handoffEntryID()
+		if err != nil {
+			return fmt.Errorf("SSE event %s: %w", eventName, err)
+		}
+		key := watchDeliveryKey{eventName: eventName, decisionID: strconv.FormatInt(entryID, 10)}
+		if _, ok := delivered[key]; ok {
+			return nil
+		}
+		if err := writeLine(); err != nil {
+			return err
+		}
+		delivered[key] = struct{}{}
+		return nil
+	}
 	if eventName == "handoff_yielded" {
 		return writeLine()
 	}
@@ -2009,6 +2050,13 @@ func formatWatchDecision(eventName string, decision watchDecision) (string, bool
 			target = "task " + decision.TaskID
 		}
 		return fmt.Sprintf("atct handoff reported: %s (handoff %s): %s", target, decision.HandoffID, watchHandoffReportPreview(decision.CompleteReport)), true
+	case "handoff_entry_added":
+		target := "goal " + decision.GoalID
+		if decision.TaskID != "" {
+			target = "task " + decision.TaskID
+		}
+		entryID, _ := decision.handoffEntryID()
+		return fmt.Sprintf("atct handoff entry added: %s (handoff %s, id %d, kind %s, author %d)", target, decision.HandoffID, entryID, decision.Kind, decision.AuthorSessionID), true
 	case "handoff_yielded":
 		return fmt.Sprintf("atct handoff yielded: task %s", decision.TaskID), true
 	case "wakeup.claim_undelegated":
