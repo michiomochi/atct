@@ -276,6 +276,8 @@ handoff の記録（`handoff_entry_added`）は通知しない。遷移は上の
 
 相手の応答（commander の plan / goal review、subcommander の task review）を待つだけの session は、生きた Monitor があれば Stop hook で止めない。subcommander は plan review・goal review・executor の起動（task handoff の未受領）と作業のいずれかを待つ間の open goal handoff、executor は review 依頼済みで差し戻されていない task handoff が対象。差し戻し、task-create handoff、task review など他の block と、Monitor が無い場合（未受領の task handoff も止める）、取得に失敗した場合は従来どおり止める。詳細は `atct continuous-execution` で読める。
 
+同じ状態で 2 回目の停止は止めない。daemon が session ごとに、直前に止めたときの理由と、その判定が読んだ状態（goal・handoff・task・decision の状態と時刻、生きた Monitor の有無）をメモリに覚え、理由も状態も同じなら block しない。最初の 1 回は必ず止め、理由か状態が変わればまた止める。記録は daemon の再起動で消える（再起動後は 1 回止まる）。
+
 ## アーカイブした project
 
 `atct project archive <name|id>`（または dashboard の「プロジェクト」セクション）で project をアーカイブできる。goal・task・decision は消えずに残るが、dashboard の一覧・回答待ち、各役割の Stop hook の残作業、watch の通知、wakeup、期限切れ default の自動適用の対象から外れる。goal 詳細や task 詳細など ID を直接開く読み取りは使える。
