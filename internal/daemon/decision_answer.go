@@ -2,7 +2,6 @@ package daemon
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -12,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -37,6 +37,13 @@ type decisionAnswerParams struct {
 	IncludeUnappliedAnswers bool   `json:"include_unapplied_answers"`
 }
 
+// humanEvidence is one human message in the session's transcript that holds the
+// quote as a whole line. ID is the message's own ID in the transcript.
+type humanEvidence struct {
+	ID   string
+	Text string
+}
+
 // answerDecisionFromChat records an answer the human gave in the chat. Every
 // check runs before the write, and a failed check records nothing.
 func (d *Daemon) answerDecisionFromChat(ctx context.Context, p decisionAnswerParams) (domain.Decision, error) {
@@ -56,19 +63,26 @@ func (d *Daemon) answerDecisionFromChat(ctx context.Context, p decisionAnswerPar
 	if err := validateChatAnswer(decision, p); err != nil {
 		return domain.Decision{}, err
 	}
-	promptID, evidence, err := d.verifyHumanQuote(ctx, p.AgentSessionID, decision, p.HumanQuote)
+	found, err := d.verifyHumanQuote(ctx, p.AgentSessionID, decision, p.HumanQuote)
 	if err != nil {
 		return domain.Decision{}, err
 	}
 
-	src := store.AnswerSource{Via: "chat", Quote: strings.TrimSpace(p.HumanQuote), Evidence: evidence, PromptID: promptID}
-	if err := d.writeChatAnswer(ctx, decision, p, src); err != nil {
+	// A human message answers at most one decision. Each candidate is tried newest
+	// first, and a message already used by another decision is skipped.
+	quote := strings.TrimSpace(p.HumanQuote)
+	for _, human := range found {
+		src := store.AnswerSource{Via: "chat", Quote: quote, Evidence: truncateRunes(human.Text, humanEvidenceMaxRunes), PromptID: human.ID}
+		err := d.writeChatAnswer(ctx, decision, p, src)
 		if errors.Is(err, store.ErrAnswerPromptReused) {
-			return domain.Decision{}, fmt.Errorf("%w: this human message already answered another decision; ask the human to answer on the dashboard", ErrHumanQuoteUnverified)
+			continue
 		}
-		return domain.Decision{}, err
+		if err != nil {
+			return domain.Decision{}, err
+		}
+		return d.store.GetDecision(ctx, decision.ID)
 	}
-	return d.store.GetDecision(ctx, decision.ID)
+	return domain.Decision{}, fmt.Errorf("%w: this human message already answered another decision; ask the human to answer on the dashboard", ErrHumanQuoteUnverified)
 }
 
 func (d *Daemon) writeChatAnswer(ctx context.Context, decision domain.Decision, p decisionAnswerParams, src store.AnswerSource) error {
@@ -130,97 +144,94 @@ func validateChatAnswer(decision domain.Decision, p decisionAnswerParams) error 
 	return nil
 }
 
-// verifyHumanQuote returns the prompt ID and the human message that hold the
-// quote as one whole line. The quote must be found in a prompt the hook recorded
-// for this session after the decision was asked, and that prompt's transcript
-// must hold the same line as a human message written after the decision was
-// asked. Any miss refuses the answer.
-func (d *Daemon) verifyHumanQuote(ctx context.Context, agentSessionID int64, decision domain.Decision, quote string) (string, string, error) {
+// verifyHumanQuote finds the session's own transcript and returns every human
+// message in it that holds the quote as one whole line and was written after the
+// decision was asked. The newest comes first. The daemon finds the transcript
+// itself, so nothing the agent supplies or the hook recorded is trusted. Any miss
+// refuses the answer.
+func (d *Daemon) verifyHumanQuote(ctx context.Context, agentSessionID int64, decision domain.Decision, quote string) ([]humanEvidence, error) {
 	needle := normalizeQuoteText(quote)
 	if !hasLetterOrDigit(needle) {
-		return "", "", fmt.Errorf("%w: human_quote must contain a letter or a digit", ErrHumanQuoteUnverified)
+		return nil, fmt.Errorf("%w: human_quote must contain a letter or a digit", ErrHumanQuoteUnverified)
 	}
 	sessionKey, err := d.store.AgentSessionKey(ctx, agentSessionID)
 	if err != nil {
-		return "", "", fmt.Errorf("resolve session key: %w", err)
+		return nil, fmt.Errorf("resolve session key: %w", err)
 	}
 	if sessionKey == "" {
-		return "", "", fmt.Errorf("%w: this session has no session_key", ErrHumanQuoteUnverified)
+		return nil, fmt.Errorf("%w: this session has no session_key", ErrHumanQuoteUnverified)
 	}
 	// The store keeps created_at in whole seconds, so a message in the second the
 	// decision was asked could predate it. A real answer never comes that fast.
 	since := decision.CreatedAt.Add(time.Second)
-	prompts, err := d.store.HumanPromptsSince(ctx, sessionKey, since)
-	if err != nil {
-		return "", "", err
-	}
-	pinned, err := d.store.PinnedTranscript(ctx, sessionKey)
-	if err != nil {
-		return "", "", err
-	}
 	candidates, listed := transcriptCandidates(sessionKey)
 	if !listed {
-		return "", "", fmt.Errorf("%w: the transcript folders could not be listed", ErrHumanQuoteUnverified)
+		return nil, fmt.Errorf("%w: the transcript folders could not be listed", ErrHumanQuoteUnverified)
 	}
-	// The hook's copy only finds candidates. The transcript decides, and a
-	// message written before the decision was asked never counts. Newest first.
-	reason := fmt.Sprintf("no prompt this session sent after decision %d was asked has the quote as a whole line", decision.ID)
-	for _, prompt := range prompts {
-		if !quoteLineMatches(prompt.Prompt, needle) {
-			continue
-		}
-		if prompt.TranscriptPath != pinned {
-			reason = "transcript path differs from the first one recorded for this session"
-			continue
-		}
-		if isCodexRolloutPath(prompt.TranscriptPath, sessionKey) {
-			if !insideCodexSessions(prompt.TranscriptPath, sessionKey) {
-				reason = "transcript path is outside the Codex sessions directory"
-				continue
-			}
-			if !soleTranscript(prompt.TranscriptPath, candidates) {
-				reason = "more than one rollout exists for this session"
-				continue
-			}
-			text, ok, err := codexRolloutHumanQuote(prompt.TranscriptPath, prompt.PromptID, needle, since)
-			if err != nil {
-				reason = fmt.Sprintf("read transcript: %v", err)
-				continue
-			}
-			if ok {
-				return prompt.PromptID, truncateRunes(text, humanEvidenceMaxRunes), nil
-			}
-			reason = "the rollout has no user message with that turn_id, written after the decision was asked, that has the quote as a whole line"
-			continue
-		}
-		if !isHarnessTranscriptPath(prompt.TranscriptPath, sessionKey) {
-			reason = "transcript path is not this session's harness transcript"
-			continue
-		}
-		if !insideClaudeProjects(prompt.TranscriptPath, sessionKey) {
-			reason = "transcript path is outside the Claude Code projects directory"
-			continue
-		}
-		if !soleTranscript(prompt.TranscriptPath, candidates) {
-			reason = "more than one transcript exists for this session"
-			continue
-		}
-		text, ok, err := transcriptHumanQuote(prompt.TranscriptPath, prompt.PromptID, needle, since)
-		if err != nil {
-			reason = fmt.Sprintf("read transcript: %v", err)
-			continue
-		}
-		if ok {
-			return prompt.PromptID, truncateRunes(text, humanEvidenceMaxRunes), nil
-		}
-		reason = "the transcript has no human message with that prompt_id, written after the decision was asked, that has the quote as a whole line"
+	path, codex, err := harnessTranscript(sessionKey, candidates)
+	if err != nil {
+		return nil, err
 	}
-	return "", "", fmt.Errorf("%w: %s; ask the human to answer on the dashboard", ErrHumanQuoteUnverified, reason)
+	match := func(line []byte) (humanEvidence, bool) {
+		return transcriptLineHumanQuote(line, needle, since)
+	}
+	if codex {
+		match = func(line []byte) (humanEvidence, bool) {
+			return codexLineHumanQuote(line, needle, since)
+		}
+	}
+	found, err := scanTranscript(path, match)
+	if err != nil {
+		return nil, fmt.Errorf("%w: read transcript: %v", ErrHumanQuoteUnverified, err)
+	}
+	if len(found) == 0 {
+		return nil, fmt.Errorf("%w: no prompt this session sent after decision %d was asked has the quote as a whole line; ask the human to answer on the dashboard", ErrHumanQuoteUnverified, decision.ID)
+	}
+	slices.Reverse(found)
+	return found, nil
+}
+
+// harnessTranscript returns the one file among candidates that is this session's
+// transcript, and whether it is a Codex rollout. It refuses when no candidate
+// exists, when more than one does (a symlink counts as one), or when the file is
+// not at a path the harness writes.
+func harnessTranscript(sessionKey string, candidates []string) (string, bool, error) {
+	var found []string
+	for _, candidate := range candidates {
+		_, err := os.Lstat(candidate)
+		switch {
+		case err == nil:
+			found = append(found, candidate)
+		case !isMissingPath(err):
+			return "", false, fmt.Errorf("%w: a transcript candidate could not be checked", ErrHumanQuoteUnverified)
+		}
+	}
+	switch len(found) {
+	case 0:
+		return "", false, fmt.Errorf("%w: no transcript exists for this session", ErrHumanQuoteUnverified)
+	case 1:
+	default:
+		return "", false, fmt.Errorf("%w: more than one transcript exists for this session", ErrHumanQuoteUnverified)
+	}
+	path := found[0]
+	if isCodexRolloutPath(path, sessionKey) {
+		if !insideCodexSessions(path, sessionKey) {
+			return "", false, fmt.Errorf("%w: transcript path is outside the Codex sessions directory", ErrHumanQuoteUnverified)
+		}
+		return path, true, nil
+	}
+	if !isHarnessTranscriptPath(path, sessionKey) {
+		return "", false, fmt.Errorf("%w: transcript path is not this session's harness transcript", ErrHumanQuoteUnverified)
+	}
+	if !insideClaudeProjects(path, sessionKey) {
+		return "", false, fmt.Errorf("%w: transcript path is outside the Claude Code projects directory", ErrHumanQuoteUnverified)
+	}
+	return path, false, nil
 }
 
 // isHarnessTranscriptPath accepts only the path Claude Code writes a session's
-// transcript to: <config>/projects/<project>/<session_id>.jsonl. The agent
-// supplies transcript_path, so anything else could be a file it wrote itself.
+// transcript to: <config>/projects/<project>/<session_id>.jsonl. A file named for
+// the session anywhere else could be one the agent wrote itself.
 func isHarnessTranscriptPath(path, sessionKey string) bool {
 	if sessionKey == "" || !filepath.IsAbs(path) || filepath.Clean(path) != path {
 		return false
@@ -332,26 +343,6 @@ func isMissingPath(err error) bool {
 	return errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR)
 }
 
-// soleTranscript reports whether path is the only file among candidates that
-// exists, and is that file. A second copy under the same session key, even a
-// symlink, makes the transcript ambiguous and the answer is refused. A candidate
-// that cannot be checked refuses too.
-func soleTranscript(path string, candidates []string) bool {
-	resolved, err := filepath.EvalSymlinks(path)
-	if err != nil {
-		return false
-	}
-	var found []string
-	for _, candidate := range candidates {
-		if _, err := os.Lstat(candidate); err == nil {
-			found = append(found, candidate)
-		} else if !isMissingPath(err) {
-			return false
-		}
-	}
-	return len(found) == 1 && found[0] == resolved
-}
-
 // codexRolloutName matches a Codex rollout file for one session:
 // rollout-<YYYY>-<MM>-<DD>T<HH>-<MM>-<SS>-<session_key>.jsonl.
 func codexRolloutName(sessionKey string) *regexp.Regexp {
@@ -363,8 +354,8 @@ var (
 	codexMonthDir = regexp.MustCompile(`^\d{2}$`)
 )
 
-// isCodexRolloutPath is a lexical check on the path the agent supplied: absolute,
-// clean, and named like this session's rollout. The folder layout is checked by
+// isCodexRolloutPath is a lexical check on the candidate path: absolute, clean,
+// and named like this session's rollout. The folder layout is checked by
 // insideCodexSessions.
 func isCodexRolloutPath(path, sessionKey string) bool {
 	if sessionKey == "" || !filepath.IsAbs(path) || filepath.Clean(path) != path {
@@ -434,7 +425,7 @@ func truncateRunes(s string, max int) string {
 
 type transcriptEntry struct {
 	Type      string `json:"type"`
-	PromptID  string `json:"promptId"`
+	UUID      string `json:"uuid"`
 	Timestamp string `json:"timestamp"`
 	Origin    struct {
 		Kind string `json:"kind"`
@@ -444,58 +435,49 @@ type transcriptEntry struct {
 	} `json:"message"`
 }
 
-// transcriptHumanQuote scans the transcript line by line with no line-length
-// limit. It returns the text of the human message with promptID that holds the
-// needle as a whole line and was written at or after since. Only lines that
-// mention promptID are parsed.
-func transcriptHumanQuote(path, promptID, needle string, since time.Time) (string, bool, error) {
-	return scanTranscript(path, promptID, func(line []byte) (string, bool) {
-		return transcriptLineHumanQuote(line, promptID, needle, since)
-	})
-}
-
-// scanTranscript runs match over each line that mentions promptID, and returns the
-// first human message match accepts. Lines are read without a length limit.
-func scanTranscript(path, promptID string, match func(line []byte) (string, bool)) (string, bool, error) {
-	if promptID == "" {
-		return "", false, nil
-	}
+// scanTranscript runs match over every line of the transcript, with no line-length
+// limit, and returns each human message match accepts, in file order.
+func scanTranscript(path string, match func(line []byte) (humanEvidence, bool)) ([]humanEvidence, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return "", false, err
+		return nil, err
 	}
 	defer f.Close()
+	var found []humanEvidence
 	r := bufio.NewReader(f)
 	for {
 		line, readErr := r.ReadBytes('\n')
-		if bytes.Contains(line, []byte(promptID)) {
-			if text, ok := match(line); ok {
-				return text, true, nil
-			}
+		if human, ok := match(line); ok {
+			found = append(found, human)
 		}
 		if errors.Is(readErr, io.EOF) {
-			return "", false, nil
+			return found, nil
 		}
 		if readErr != nil {
-			return "", false, readErr
+			return nil, readErr
 		}
 	}
 }
 
-func transcriptLineHumanQuote(line []byte, promptID, needle string, since time.Time) (string, bool) {
+// transcriptLineHumanQuote accepts a Claude transcript line that is a human message
+// written at or after since and holding the needle as a whole line.
+func transcriptLineHumanQuote(line []byte, needle string, since time.Time) (humanEvidence, bool) {
 	var entry transcriptEntry
 	if err := json.Unmarshal(line, &entry); err != nil {
-		return "", false
+		return humanEvidence{}, false
 	}
-	if entry.Type != "user" || entry.PromptID != promptID || entry.Origin.Kind != "human" {
-		return "", false
+	if entry.Type != "user" || entry.UUID == "" || entry.Origin.Kind != "human" {
+		return humanEvidence{}, false
 	}
 	at, err := time.Parse(time.RFC3339Nano, entry.Timestamp)
 	if err != nil || at.Before(since) {
-		return "", false
+		return humanEvidence{}, false
 	}
 	text := messageText(entry.Message.Content)
-	return text, quoteLineMatches(text, needle)
+	if !quoteLineMatches(text, needle) {
+		return humanEvidence{}, false
+	}
+	return humanEvidence{ID: entry.UUID, Text: text}, true
 }
 
 // messageText reads a message's content, either a plain string or an array of
@@ -532,9 +514,9 @@ type codexRolloutEntry struct {
 	Timestamp string `json:"timestamp"`
 	Type      string `json:"type"`
 	Payload   struct {
-		Type   string `json:"type"`
-		TurnID string `json:"turn_id"`
-		Item   struct {
+		Type string `json:"type"`
+		Item struct {
+			ID       string          `json:"id"`
 			Type     string          `json:"type"`
 			ClientID string          `json:"client_id"`
 			Content  json.RawMessage `json:"content"`
@@ -542,35 +524,30 @@ type codexRolloutEntry struct {
 	} `json:"payload"`
 }
 
-// codexRolloutHumanQuote scans a Codex rollout for the user message of turnID that
-// holds the needle as a whole line and was written at or after since.
-func codexRolloutHumanQuote(path, turnID, needle string, since time.Time) (string, bool, error) {
-	return scanTranscript(path, turnID, func(line []byte) (string, bool) {
-		return codexLineHumanQuote(line, turnID, needle, since)
-	})
-}
-
 // codexLineHumanQuote accepts only a user message the human typed: a UserMessage
 // item with a client_id that ATCT did not set. Codex's own inputs carry no
-// client_id, so they are refused as well.
-func codexLineHumanQuote(line []byte, turnID, needle string, since time.Time) (string, bool) {
+// client_id, so they are refused as well. The item's ID is the message's own ID.
+func codexLineHumanQuote(line []byte, needle string, since time.Time) (humanEvidence, bool) {
 	var entry codexRolloutEntry
 	if err := json.Unmarshal(line, &entry); err != nil {
-		return "", false
+		return humanEvidence{}, false
 	}
 	item := entry.Payload.Item
 	if entry.Type != "event_msg" || entry.Payload.Type != "item_completed" || item.Type != "UserMessage" {
-		return "", false
+		return humanEvidence{}, false
 	}
-	if entry.Payload.TurnID != turnID || item.ClientID == "" || strings.HasPrefix(item.ClientID, atctClientMessagePrefix) {
-		return "", false
+	if item.ID == "" || item.ClientID == "" || strings.HasPrefix(item.ClientID, atctClientMessagePrefix) {
+		return humanEvidence{}, false
 	}
 	at, err := time.Parse(time.RFC3339Nano, entry.Timestamp)
 	if err != nil || at.Before(since) {
-		return "", false
+		return humanEvidence{}, false
 	}
 	text := codexMessageText(item.Content)
-	return text, quoteLineMatches(text, needle)
+	if !quoteLineMatches(text, needle) {
+		return humanEvidence{}, false
+	}
+	return humanEvidence{ID: item.ID, Text: text}, true
 }
 
 // codexMessageText joins the text parts of a Codex message with newlines, so each
