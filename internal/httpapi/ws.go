@@ -33,7 +33,11 @@ func (s *Server) handleWebSocketEvents(w http.ResponseWriter, r *http.Request) {
 	ctx := conn.CloseRead(r.Context())
 	ch, cancel := s.store.SubscribeEvents()
 	defer cancel()
-	records, err := s.scanHandoffEntryRecords(ctx, filter)
+	// The first tick always scans: the tracker may hold entries from this
+	// initial scan that still need to be delivered, those created after the
+	// baseline and those after Last-Event-ID on a resumed stream.
+	seen := int64(-1)
+	records, err := s.countedScanHandoffEntryRecords(ctx, filter)
 	if err != nil {
 		return
 	}
@@ -72,9 +76,17 @@ func (s *Server) handleWebSocketEvents(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		case <-ticker.C:
-			records, err := s.scanHandoffEntryRecords(ctx, filter)
+			mark, markErr := s.store.HandoffEntryWatermark(ctx)
+			if markErr == nil && mark == seen {
+				continue
+			}
+			records, err := s.countedScanHandoffEntryRecords(ctx, filter)
 			if err != nil {
 				continue
+			}
+			seen = mark
+			if markErr != nil {
+				seen = -1
 			}
 			for _, record := range records {
 				if !tracker.mark(record.event) {

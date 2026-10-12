@@ -896,7 +896,7 @@ func Register(server *mcp.Server, c *Client, agentSessionID int64) {
 
 	addMCPTool[HandoffRequestIn, RawWithUnappliedDecisions](server, &mcp.Tool{
 		Name:         "atct_task_handoff_request",
-		Description:  "Request a task handoff using the canonical task-specific contract.",
+		Description:  "Request a task handoff using the canonical task-specific contract. request_report is the canonical request content the executor reads.",
 		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in HandoffRequestIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
 		return callWithUnappliedDecisions(ctx, c, "task.handoff.request", map[string]any{
