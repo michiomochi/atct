@@ -52,8 +52,10 @@ that worker is started:
 
 2. Record the handoff before waking the worker.
    The delegator must call `atct_task_handoff_request` with a unique handoff ID
-   and the task ID. Wait for the request to succeed before waking the
-   worker; this creates the record needed to receive and complete the handoff.
+   and the task ID. Put the work itself in `request_report`: it is the canonical
+   request the executor reads, so never send an empty one. Wait for the request
+   to succeed before waking the worker; this creates the record needed to
+   receive and complete the handoff.
 3. For a monitored Codex worker, reuse an idle executor session if one is
    available. Create a new one only for parallel work, worktree isolation,
    context exhaustion, or a topic change. After the request succeeds, start the
@@ -74,36 +76,16 @@ that worker is started:
    `expected_role=executor`; the launch role is metadata, not role proof.
 4. Put these exact instructions at the very beginning of the request:
 
-   > First record receipt of the handoff by calling `atct_task_handoff_receive`
-   > with the `task_id` and `handoff_id` provided in this request, and the exact
-   > `session_key` (plus the optional `monitor_token`, when emitted) from SessionStart. Do this before
-   > starting work. Do not substitute your agent name or token.
+   > handoff_id: `<handoff_id>`. task_id: `<task_id>`.
    >
-   > In Claude Code only, after receipt and before `atct_role`, set up your watch by
-   > the procedure in the `## Watch` section of the atct skill, using the exact
-   > token you passed to `atct_task_handoff_receive`.
-   > A Codex executor was started with `atct codex monitor` and does nothing here.
+   > Record receipt by calling `atct_task_handoff_receive` with the `task_id` and
+   > `handoff_id` above and the exact `session_key` from SessionStart (plus
+   > `monitor_token` when emitted). Then call `atct_role` with `expected_role` set
+   > to `executor`. Then call `atct_handoff_entry_history` with the same `handoff_id`
+   > and `task_id` and read the request (`request_report`); work from it.
    >
-   > If an atct tool refuses with `no live Monitor`, set up your watch and retry.
-   > If you cannot set it up, do no work: make your last output exactly
-   > `blocked: no live Monitor` and stop.
-   >
-   > Then invoke the `atct_role` MCP tool with `expected_role` set to
-   > `executor`. If it reports `matches: false`, do not start work; return the
-   > task.
-   >
-   > A rejection reaches you as a wakeup on your watch. Receive it with
-   > `atct_task_handoff_review_reject_receive` (`handoff_id` and `task_id`), correct
-   > on the same handoff, and request review again with
-   > `atct_task_handoff_review_request`.
-   >
-   > When the work is complete, record the review request by calling `atct_task_handoff_review_request` with the received `handoff_id`, the
-   > `task_id`, and a non-empty `review_request_report`. The report must say
-   > what was done, what was verified, what could not be verified, and paths changed.
-   >
-   > The subcommander receives that review with `atct_task_handoff_review_receive`.
-   > It reviews the implementation, then calls `atct_task_handoff_complete` with the `handoff_id`, `task_id`, and a `complete_report` on acceptance, or calls
-   > `atct_task_handoff_review_reject` with a `reject_report` on rejection.
+   > Then invoke the `atct:executor` skill and follow its procedure. It sets out
+   > the watch, the review request, and the rejection path.
 
    Report the review request before the reviewer closes the task.
 
@@ -118,7 +100,7 @@ that worker is started:
    calls are allowed after all reaches the goal scope in the same step.
 
    An executor may call only these atct tools:
-   `atct_session_identify`, `atct_task_handoff_receive`, `atct_role`, `atct_task_handoff_review_request`, `atct_task_handoff_review_reject_receive`.
+   `atct_session_identify`, `atct_task_handoff_receive`, `atct_role`, `atct_handoff_entry_history`, `atct_task_handoff_review_request`, `atct_task_handoff_review_reject_receive`.
    Each of them is confined to the `task_id` the executor was given.
 
    An executor must not call `atct_goal_handoff_complete`, `atct_goal_handoff_receive`,

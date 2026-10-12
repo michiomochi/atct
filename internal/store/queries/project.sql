@@ -16,7 +16,8 @@ ORDER BY created_at;
 -- name: ResolveProject :one
 SELECT id, name, root_path, created_at, claimed_by, claimed_at, archived_at
 FROM projects
-WHERE ? = root_path OR ? LIKE root_path || '/%'
+WHERE (? = root_path OR ? LIKE root_path || '/%')
+  AND (archived_at IS NULL OR root_path = ?)
 ORDER BY LENGTH(root_path) DESC
 LIMIT 1;
 
