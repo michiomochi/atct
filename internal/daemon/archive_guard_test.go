@@ -35,7 +35,7 @@ var archiveGuardedMethods = []string{
 	"goal.handoff.review.reject.receive", "goal.handoff.complete", "goal.handoff.report.amend",
 	"plan.handoff.review.request", "plan.handoff.review.receive", "plan.handoff.review.reject",
 	"plan.handoff.review.reject.receive", "plan.handoff.complete",
-	"decision.ask", "decision.poll", "decision.withdraw", "decision.answer", "session.human_prompt.record",
+	"decision.ask", "decision.poll", "decision.withdraw", "decision.answer",
 }
 
 func dispatchedMethods(t *testing.T) []string {

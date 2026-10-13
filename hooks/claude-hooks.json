@@ -48,18 +48,6 @@
         ]
       }
     ],
-    "UserPromptSubmit": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/prompt-record\"",
-            "shell": "bash",
-            "async": false
-          }
-        ]
-      }
-    ],
     "Stop": [
       {
         "hooks": [

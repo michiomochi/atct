@@ -70,7 +70,6 @@ type cliConfig struct {
 	monitorCheckHookInput   bool
 	mergeCheckHookInput     bool
 	sessionKeyHookInput     bool
-	promptRecordHookInput   bool
 	watchGoalID             string
 	watchProjectScope       bool
 	watchMonitor            bool
@@ -119,7 +118,6 @@ var validSubcommands = map[string]bool{
 	"monitor-check":        true,
 	"merge-check":          true,
 	"session-key":          true,
-	"prompt-record":        true,
 	"execution-flow":       true,
 	"continuous-execution": true,
 	"worktree-reclaim":     true,
@@ -190,7 +188,6 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "  monitor-check        Deny an ATCT tool call when the session has no live Monitor")
 	fmt.Fprintln(os.Stderr, "  merge-check          Deny merging a goal branch into main before the human approves")
 	fmt.Fprintln(os.Stderr, "  session-key          Print the SessionStart key for atct_session_identify")
-	fmt.Fprintln(os.Stderr, "  prompt-record        Record the human prompt for a later chat answer check (UserPromptSubmit hook)")
 	fmt.Fprintln(os.Stderr, "  execution-flow       Print the ATCT execution flow document")
 	fmt.Fprintln(os.Stderr, "  continuous-execution Print the ATCT continuous execution document")
 	fmt.Fprintln(os.Stderr, "  worktree-reclaim <goal-id>  Reclaim a done/dropped goal's worktree from the primary checkout")
@@ -420,9 +417,6 @@ func parseArgs(args []string) (cliConfig, error) {
 	if sub == "session-key" {
 		flags.BoolVar(&cfg.sessionKeyHookInput, "hook-input", false, "read hook JSON from stdin")
 	}
-	if sub == "prompt-record" {
-		flags.BoolVar(&cfg.promptRecordHookInput, "hook-input", false, "read hook JSON from stdin")
-	}
 	if sub == "watch" {
 		flags.StringVar(&cfg.watchGoalID, "goal", "", "filter watch events to this goal")
 		flags.BoolVar(&cfg.watchProjectScope, "project", false, "filter watch events to what a commander acts on")
@@ -499,10 +493,6 @@ func parseArgs(args []string) (cliConfig, error) {
 	}
 	if sub == "session-key" && !cfg.sessionKeyHookInput {
 		fmt.Fprintln(os.Stderr, "session-key requires --hook-input")
-		return cliConfig{}, errInvalidArgs
-	}
-	if sub == "prompt-record" && !cfg.promptRecordHookInput {
-		fmt.Fprintln(os.Stderr, "prompt-record requires --hook-input")
 		return cliConfig{}, errInvalidArgs
 	}
 	if description != nil {
@@ -969,13 +959,6 @@ func main() {
 		if err := runSessionKey(config, dir); err != nil {
 			log.Printf("session-key: %v", err)
 			os.Exit(1)
-		}
-		return
-	case "prompt-record":
-		// Never fail the prompt: a record that is lost only means a chat answer
-		// cannot be verified later, and the human can still answer on the dashboard.
-		if err := runPromptRecord(config, dir, exePath); err != nil {
-			log.Printf("prompt-record: %v", err)
 		}
 		return
 	case "watch":

@@ -103,21 +103,6 @@ type HandoffHistoryGap struct {
 	Scope     string
 }
 
-type HumanPrompt struct {
-	ID             int64
-	SessionKey     string
-	PromptID       string
-	TranscriptPath string
-	Prompt         string
-	RecordedAt     string
-}
-
-type HumanPromptSession struct {
-	SessionKey      string
-	TranscriptPath  string
-	FirstRecordedAt string
-}
-
 type MonitorBinding struct {
 	Token            string
 	AgentSessionID   int64

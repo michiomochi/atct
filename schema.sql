@@ -123,24 +123,6 @@ CREATE INDEX IF NOT EXISTS idx_decisions_open
 CREATE UNIQUE INDEX IF NOT EXISTS idx_decisions_answer_prompt
   ON decisions(answer_prompt_id) WHERE answer_prompt_id <> '';
 
-CREATE TABLE IF NOT EXISTS human_prompts (
-  id              INTEGER PRIMARY KEY,
-  session_key     TEXT NOT NULL,
-  prompt_id       TEXT NOT NULL,
-  transcript_path TEXT NOT NULL,
-  prompt          TEXT NOT NULL,
-  recorded_at     TEXT NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS idx_human_prompts_session
-  ON human_prompts(session_key, recorded_at);
-
-CREATE TABLE IF NOT EXISTS human_prompt_sessions (
-  session_key       TEXT PRIMARY KEY,
-  transcript_path   TEXT NOT NULL,
-  first_recorded_at TEXT NOT NULL
-);
-
 CREATE TABLE IF NOT EXISTS task_commits (
   task_id      INTEGER NOT NULL REFERENCES tasks(id),
   sha          TEXT NOT NULL,

@@ -147,7 +147,7 @@ func validateChatAnswer(decision domain.Decision, p decisionAnswerParams) error 
 // verifyHumanQuote finds the session's own transcript and returns every human
 // message in it that holds the quote as one whole line and was written after the
 // decision was asked. The newest comes first. The daemon finds the transcript
-// itself, so nothing the agent supplies or the hook recorded is trusted. Any miss
+// itself, so nothing the agent supplies is trusted. Any miss
 // refuses the answer.
 func (d *Daemon) verifyHumanQuote(ctx context.Context, agentSessionID int64, decision domain.Decision, quote string) ([]humanEvidence, error) {
 	needle := normalizeQuoteText(quote)
