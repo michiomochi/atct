@@ -32,6 +32,16 @@ export interface Goal {
   created_at: string;
   updated_at: string;
   tasks: TaskView[] | null;
+  next_action?: NextAction;
+}
+
+// The step a goal waits on, read-only. Matches store.NextAction on the server.
+export interface NextAction {
+  code: string;
+  actor: string;
+  call?: string;
+  decision_id?: number;
+  task_count?: number;
 }
 
 export interface NextGoal {

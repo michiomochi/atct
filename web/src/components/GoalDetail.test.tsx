@@ -200,6 +200,25 @@ describe("GoalDetail", () => {
     expect(screen.queryByText("goal.projectArchived")).toBeNull();
   });
 
+  it("shows the goal's next step as read-only text under the header", async () => {
+    vi.mocked(fetchGoal).mockResolvedValueOnce(goalResponse({ next_action: { code: "executor_implement", actor: "executor" } }));
+    render(<GoalDetail id="goal-1" />);
+
+    await screen.findByRole("heading", { name: "Fixture goal" });
+    const line = screen.getByText("goal.column.nextAction:", { exact: false }).closest("p");
+    if (!line) throw new Error("next action line is missing");
+    expect(line.textContent).toBe("goal.column.nextAction: nextAction.actor.executor · nextAction.code.executor_implement");
+    expect(line.querySelector("a, button")).toBeNull();
+  });
+
+  it("omits the next-step line when the goal has no next action", async () => {
+    vi.mocked(fetchGoal).mockResolvedValueOnce(goalResponse());
+    render(<GoalDetail id="goal-1" />);
+
+    await screen.findByRole("heading", { name: "Fixture goal" });
+    expect(screen.queryByText(/goal\.column\.nextAction/)).toBeNull();
+  });
+
   it("shows review exchanges fetched for the resolved goal, in time order", async () => {
     vi.mocked(fetchGoal).mockResolvedValue(goalResponse());
     vi.mocked(fetchGoalReviewExchanges).mockResolvedValue({

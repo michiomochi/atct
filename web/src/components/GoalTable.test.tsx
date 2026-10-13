@@ -173,4 +173,40 @@ describe("GoalTable", () => {
     expect(taskLink.className).toContain("w-fit");
     expect(taskLink.className).toContain("text-accent-700");
   });
+
+  it("shows a next-action column header and each goal's next step as read-only text", () => {
+    render(
+      <GoalTable
+        goals={[
+          { ...goal("goal-1", "First goal", [taskView("goal-1", "task-one", "First task", 0)]), next_action: { code: "executor_implement", actor: "executor" } },
+          goal("goal-2", "Second goal", []),
+        ]}
+      />,
+    );
+
+    expect(screen.getByRole("columnheader", { name: "goal.column.nextAction" })).toBeTruthy();
+    const firstRow = screen.getByRole("link", { name: "First goal" }).closest("tr");
+    const secondRow = screen.getByRole("link", { name: "Second goal" }).closest("tr");
+    if (!firstRow || !secondRow) throw new Error("goal has no table row");
+    expect(within(firstRow).getByText("nextAction.actor.executor · nextAction.code.executor_implement")).toBeTruthy();
+    expect(within(secondRow).queryByText(/nextAction\./)).toBeNull();
+    expect(within(firstRow).queryByRole("link", { name: /nextAction/ })).toBeNull();
+  });
+
+  it("leaves the next-action cell empty on task rows", () => {
+    render(
+      <GoalTable
+        goals={[
+          { ...goal("goal-1", "First goal", [taskView("goal-1", "task-one", "First task", 0)]), next_action: { code: "executor_implement", actor: "executor" } },
+        ]}
+      />,
+    );
+
+    openGoal("First goal");
+
+    const taskRow = screen.getByRole("link", { name: "First task" }).closest("tr");
+    if (!taskRow) throw new Error("First task has no table row");
+    const cells = within(taskRow).getAllByRole("cell");
+    expect(cells[cells.length - 2].textContent).toBe("");
+  });
 });

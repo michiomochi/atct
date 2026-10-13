@@ -5,6 +5,7 @@ import { Table } from "@cloudflare/kumo/components/table";
 import { Fragment, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { EmptyState } from "./StateMessage";
+import { NextAction } from "./NextAction";
 
 interface Props {
   goals: Goal[];
@@ -29,6 +30,7 @@ export function GoalTable({ goals, showProject = true }: Props) {
             <Table.Head {...columnScope} className="px-3 py-3 font-semibold">{t("goal.column.goal")}</Table.Head>
             {showProject && <Table.Head {...columnScope} className="w-40 px-3 py-3 font-semibold">{t("goal.column.project")}</Table.Head>}
             <Table.Head {...columnScope} className="w-36 px-3 py-3 font-semibold">{t("goal.column.status")}</Table.Head>
+            <Table.Head {...columnScope} className="px-3 py-3 font-semibold">{t("goal.column.nextAction")}</Table.Head>
             <Table.Head {...columnScope} className="w-48 px-3 py-3 font-semibold">{t("goal.column.updatedAt")}</Table.Head>
           </Table.Row>
         </Table.Header>
@@ -81,6 +83,7 @@ export function GoalTable({ goals, showProject = true }: Props) {
                   </Table.Cell>
                   {showProject && <Table.Cell className="px-3 py-4 text-ink-700">{goal.project_name || "-"}</Table.Cell>}
                   <Table.Cell className="px-3 py-4 text-ink-700">{goalStatus}</Table.Cell>
+                  <Table.Cell className="px-3 py-4 text-ink-700"><NextAction action={goal.next_action} /></Table.Cell>
                   <Table.Cell className="px-3 py-4 text-ink-700">{formatDateTime(locale, goal.updated_at)}</Table.Cell>
                 </Table.Row>
                 {isOpen && tasks.map((task, index) => (
@@ -106,6 +109,7 @@ export function GoalTable({ goals, showProject = true }: Props) {
                         ? t("status.awaitingDecision")
                         : statusLabel(locale, task.status)}
                     </Table.Cell>
+                    <Table.Cell className="px-3 py-3" />
                     <Table.Cell className="px-3 py-3 text-ink-700">{formatDateTime(locale, task.updated_at)}</Table.Cell>
                   </Table.Row>
                 ))}
