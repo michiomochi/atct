@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -243,10 +244,11 @@ func isHarnessTranscriptPath(path, sessionKey string) bool {
 }
 
 // insideClaudeProjects reports whether path is exactly <projects>/<project>/
-// <session_key>.jsonl under the projects folder of CLAUDE_CONFIG_DIR or of the
-// default ~/.claude. The agent can write files under those folders too (an
-// auto-memory folder, for one), so the depth and name are checked, and the
-// file itself must not be a symlink: a symlink can point at any file.
+// <session_key>.jsonl under the projects folder of CLAUDE_CONFIG_DIR, or under
+// ~/.claude/projects when CLAUDE_CONFIG_DIR is empty. The agent can write files
+// under those folders too (an auto-memory folder, for one), so the depth and
+// name are checked, and the file itself must not be a symlink: a symlink can
+// point at any file.
 func insideClaudeProjects(path, sessionKey string) bool {
 	info, err := os.Lstat(path)
 	if err != nil || !info.Mode().IsRegular() {
@@ -269,30 +271,32 @@ func insideClaudeProjects(path, sessionKey string) bool {
 	return false
 }
 
-// claudeProjectsRoots lists the resolved projects folders of CLAUDE_CONFIG_DIR and
-// of the default ~/.claude, each once.
+// claudeProjectsRoots lists the resolved projects folder of CLAUDE_CONFIG_DIR. Only
+// when that variable is empty does it fall back to the default ~/.claude, so a
+// transcript under the home folder is never read while the daemon is pointed
+// elsewhere.
 func claudeProjectsRoots() []string {
-	var roots []string
-	if dir := os.Getenv("CLAUDE_CONFIG_DIR"); dir != "" {
-		roots = append(roots, filepath.Join(dir, "projects"))
-	}
-	if home, err := os.UserHomeDir(); err == nil {
-		roots = append(roots, filepath.Join(home, ".claude", "projects"))
-	}
-	return resolvedRoots(roots)
+	return resolvedRoots(configSubdirs("CLAUDE_CONFIG_DIR", ".claude", "projects"))
 }
 
-// codexSessionsRoots lists the resolved sessions folders of CODEX_HOME and of the
-// default ~/.codex, each once.
+// codexSessionsRoots lists the resolved sessions folder of CODEX_HOME. Like
+// claudeProjectsRoots, the default ~/.codex is used only when the variable is empty.
 func codexSessionsRoots() []string {
-	var roots []string
-	if dir := os.Getenv("CODEX_HOME"); dir != "" {
-		roots = append(roots, filepath.Join(dir, "sessions"))
+	return resolvedRoots(configSubdirs("CODEX_HOME", ".codex", "sessions"))
+}
+
+// configSubdirs returns <env>/<sub> when env is set. Otherwise it returns
+// ~/<defaultDir>/<sub>, or nothing when no home folder is known, so a relative path
+// is never resolved against the working directory.
+func configSubdirs(env, defaultDir, sub string) []string {
+	if dir := os.Getenv(env); dir != "" {
+		return []string{filepath.Join(dir, sub)}
 	}
-	if home, err := os.UserHomeDir(); err == nil {
-		roots = append(roots, filepath.Join(home, ".codex", "sessions"))
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil
 	}
-	return resolvedRoots(roots)
+	return []string{filepath.Join(home, defaultDir, sub)}
 }
 
 // resolvedRoots resolves each root that exists, dropping duplicates so one folder
@@ -311,29 +315,94 @@ func resolvedRoots(roots []string) []string {
 	return resolved
 }
 
-// transcriptCandidates lists every file under the Claude projects folders and the
-// Codex sessions folders that could be this session's transcript: a Claude
-// <session_key>.jsonl, or a Codex rollout named for the session. Both harnesses
+// transcriptCandidates lists the files at the known layouts that could be this
+// session's transcript: <projects>/<project>/<session_key>.jsonl for Claude, and
+// <sessions>/YYYY/MM/DD/rollout-<time>-<session_key>.jsonl for Codex. Both harnesses
 // count together, so a copy in the other harness's folder is a second transcript.
-// ok is false when a folder exists but cannot be listed.
+// Other depths are not searched; harnessTranscript refuses a file outside the
+// layout anyway. ok is false when a folder exists but cannot be listed.
 func transcriptCandidates(sessionKey string) (candidates []string, ok bool) {
-	codexName := codexRolloutName(sessionKey)
-	roots := append(claudeProjectsRoots(), codexSessionsRoots()...)
-	for _, root := range roots {
-		err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-			if err != nil {
-				return err
+	for _, root := range claudeProjectsRoots() {
+		projects, listed := listDir(root)
+		if !listed {
+			return nil, false
+		}
+		for _, project := range projects {
+			if !project.IsDir() {
+				continue
 			}
-			if !d.IsDir() && (d.Name() == sessionKey+".jsonl" || codexName.MatchString(d.Name())) {
+			path := filepath.Join(root, project.Name(), sessionKey+".jsonl")
+			exists, checked := isExistingFile(path)
+			if !checked {
+				return nil, false
+			}
+			if exists {
 				candidates = append(candidates, path)
 			}
-			return nil
-		})
-		if err != nil && !isMissingPath(err) {
+		}
+	}
+	codexName := codexRolloutName(sessionKey)
+	for _, root := range codexSessionsRoots() {
+		years, listed := listDir(root)
+		if !listed {
 			return nil, false
+		}
+		for _, year := range years {
+			if !year.IsDir() || !codexYearDir.MatchString(year.Name()) {
+				continue
+			}
+			months, listed := listDir(filepath.Join(root, year.Name()))
+			if !listed {
+				return nil, false
+			}
+			for _, month := range months {
+				if !month.IsDir() || !codexMonthDir.MatchString(month.Name()) {
+					continue
+				}
+				days, listed := listDir(filepath.Join(root, year.Name(), month.Name()))
+				if !listed {
+					return nil, false
+				}
+				for _, day := range days {
+					if !day.IsDir() || !codexDayDir.MatchString(day.Name()) {
+						continue
+					}
+					dayPath := filepath.Join(root, year.Name(), month.Name(), day.Name())
+					files, listed := listDir(dayPath)
+					if !listed {
+						return nil, false
+					}
+					for _, file := range files {
+						if !file.IsDir() && codexName.MatchString(file.Name()) {
+							candidates = append(candidates, filepath.Join(dayPath, file.Name()))
+						}
+					}
+				}
+			}
 		}
 	}
 	return candidates, true
+}
+
+// listDir lists the entries of dir. A missing dir lists as empty; ok is false when
+// dir exists but cannot be listed.
+func listDir(dir string) (entries []os.DirEntry, ok bool) {
+	entries, err := os.ReadDir(dir)
+	if err != nil && !isMissingPath(err) {
+		return nil, false
+	}
+	return entries, true
+}
+
+// isExistingFile reports whether path exists and is not a folder. A symlink counts
+// as a file here, and harnessTranscript refuses it later. checked is false when the
+// lookup fails for any reason other than a missing path.
+func isExistingFile(path string) (exists, checked bool) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return false, isMissingPath(err)
+	}
+	return !info.IsDir(), true
 }
 
 // isMissingPath reports whether err only says the path is not there: it does not
@@ -352,6 +421,7 @@ func codexRolloutName(sessionKey string) *regexp.Regexp {
 var (
 	codexYearDir  = regexp.MustCompile(`^\d{4}$`)
 	codexMonthDir = regexp.MustCompile(`^\d{2}$`)
+	codexDayDir   = regexp.MustCompile(`^\d{2}$`)
 )
 
 // isCodexRolloutPath is a lexical check on the candidate path: absolute, clean,
@@ -365,8 +435,9 @@ func isCodexRolloutPath(path, sessionKey string) bool {
 }
 
 // insideCodexSessions reports whether path is exactly <sessions>/YYYY/MM/DD/
-// rollout-<time>-<session_key>.jsonl under the sessions folder of CODEX_HOME or of
-// the default ~/.codex. Like the Claude check, the file must not be a symlink.
+// rollout-<time>-<session_key>.jsonl under the sessions folder of CODEX_HOME, or
+// under ~/.codex/sessions when CODEX_HOME is empty. Like the Claude check, the file
+// must not be a symlink.
 func insideCodexSessions(path, sessionKey string) bool {
 	info, err := os.Lstat(path)
 	if err != nil || !info.Mode().IsRegular() {
@@ -435,20 +506,35 @@ type transcriptEntry struct {
 	} `json:"message"`
 }
 
-// scanTranscript runs match over every line of the transcript, with no line-length
-// limit, and returns each human message match accepts, in file order.
+// maxTranscriptLine caps one transcript line. A longer line is skipped without
+// matching, and reading goes on at the next line, so one huge line cannot exhaust
+// memory or hide the human lines after it.
+const maxTranscriptLine = 1 << 20
+
+// scanTranscript runs match over each line of the transcript, skipping lines longer
+// than maxTranscriptLine, and returns each human message match accepts, in file
+// order. The file is opened without following a symlink and must be a regular file.
 func scanTranscript(path string, match func(line []byte) (humanEvidence, bool)) ([]humanEvidence, error) {
-	f, err := os.Open(path)
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
 	if err != nil {
 		return nil, err
 	}
 	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s is not a regular file", path)
+	}
 	var found []humanEvidence
 	r := bufio.NewReader(f)
 	for {
-		line, readErr := r.ReadBytes('\n')
-		if human, ok := match(line); ok {
-			found = append(found, human)
+		line, tooLong, readErr := readCappedLine(r, maxTranscriptLine)
+		if !tooLong {
+			if human, ok := match(line); ok {
+				found = append(found, human)
+			}
 		}
 		if errors.Is(readErr, io.EOF) {
 			return found, nil
@@ -459,9 +545,32 @@ func scanTranscript(path string, match func(line []byte) (humanEvidence, bool)) 
 	}
 }
 
+// readCappedLine reads one line, newline included, of at most limit bytes. A longer
+// line is discarded up to its newline and reported as tooLong with a nil line.
+func readCappedLine(r *bufio.Reader, limit int) (line []byte, tooLong bool, err error) {
+	for {
+		chunk, readErr := r.ReadSlice('\n')
+		if !tooLong {
+			if len(line)+len(chunk) > limit {
+				tooLong = true
+				line = nil
+			} else {
+				line = append(line, chunk...)
+			}
+		}
+		if readErr == bufio.ErrBufferFull {
+			continue
+		}
+		return line, tooLong, readErr
+	}
+}
+
 // transcriptLineHumanQuote accepts a Claude transcript line that is a human message
 // written at or after since and holding the needle as a whole line.
 func transcriptLineHumanQuote(line []byte, needle string, since time.Time) (humanEvidence, bool) {
+	if !bytes.Contains(line, []byte(`"human"`)) {
+		return humanEvidence{}, false
+	}
 	var entry transcriptEntry
 	if err := json.Unmarshal(line, &entry); err != nil {
 		return humanEvidence{}, false
@@ -528,6 +637,9 @@ type codexRolloutEntry struct {
 // item with a client_id that ATCT did not set. Codex's own inputs carry no
 // client_id, so they are refused as well. The item's ID is the message's own ID.
 func codexLineHumanQuote(line []byte, needle string, since time.Time) (humanEvidence, bool) {
+	if !bytes.Contains(line, []byte("UserMessage")) {
+		return humanEvidence{}, false
+	}
 	var entry codexRolloutEntry
 	if err := json.Unmarshal(line, &entry); err != nil {
 		return humanEvidence{}, false

@@ -180,10 +180,12 @@ by asking the human to repeat it on the dashboard. Pass `decision_id`, the
 answer.
 
 The daemon checks the quote against the harness's own transcript, not a copy
-made by a hook, so no hook setup is needed in Codex. The transcript is the
-Claude Code projects folder under `CLAUDE_CONFIG_DIR`, or the Codex sessions
-folder under `CODEX_HOME`; the daemon must see the same values as the harness,
-or a genuine answer is refused too. The quote must be one whole line of a
+made by a hook, so no hook setup is needed in Codex. The transcript is read
+from the Claude Code projects folder under `CLAUDE_CONFIG_DIR` or the Codex
+sessions folder under `CODEX_HOME`. When the variable is set, only that folder
+is read. The home folder (`~/.claude` or `~/.codex`) is read only when the
+variable is empty. The daemon must see the same values as the harness, or a
+genuine answer is refused too. The quote must be one whole line of a
 message the human typed after the decision was asked, and it must match that
 line exactly. A summary, a paraphrase, part of a line, or a quote from earlier
 in the conversation is refused. One human message answers only one decision.

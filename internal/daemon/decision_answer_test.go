@@ -470,8 +470,8 @@ func TestChatAnswerRefusesTranscriptInAutoMemoryFolder(t *testing.T) {
 	if !refused(rpcError) {
 		t.Fatalf("transcript in a nested folder under projects was accepted")
 	}
-	if !strings.Contains(string(rpcError), "transcript path is outside the Claude Code projects directory") {
-		t.Fatalf("refusal = %s, want the projects-directory reason", rpcError)
+	if !strings.Contains(string(rpcError), "no transcript exists for this session") {
+		t.Fatalf("refusal = %s, want the no-transcript reason", rpcError)
 	}
 }
 
@@ -871,5 +871,107 @@ func TestChatAnswerRefusesWhenTranscriptFolderCannotBeListed(t *testing.T) {
 	}
 	if !strings.Contains(string(rpcError), "could not be listed") {
 		t.Fatalf("refusal = %s, want the listing reason", rpcError)
+	}
+}
+
+// setHomeFolder points HOME at a temporary folder and returns it, so that the default
+// ~/.claude and ~/.codex can hold transcripts for the tests to read or not read.
+func setHomeFolder(t *testing.T) string {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	return home
+}
+
+// Once CLAUDE_CONFIG_DIR is set, the default ~/.claude is not read at all.
+func TestChatAnswerIgnoresHomeClaudeFolderWhenConfigDirIsSet(t *testing.T) {
+	f := newChatAnswerFixture(t)
+	d := f.askChatDecision(t)
+	home := setHomeFolder(t)
+	projects := filepath.Join(home, ".claude", "projects", "atct-test")
+	if err := os.MkdirAll(projects, 0o700); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	appendTranscriptLineAt(t, filepath.Join(projects, f.subKey+".jsonl"), "pid-home", "Aにしてください", true, answerTime(d))
+
+	if _, rpcError := f.answerRPC(t, f.subcommanderSessionID, d.ID, "A", "", "Aにしてください"); !refused(rpcError) {
+		t.Fatalf("transcript under the home folder was read while CLAUDE_CONFIG_DIR is set")
+	}
+}
+
+// An empty CLAUDE_CONFIG_DIR falls back to ~/.claude, and the folder set before it is
+// no longer read.
+func TestChatAnswerReadsHomeClaudeFolderOnlyWhenConfigDirIsEmpty(t *testing.T) {
+	f := newChatAnswerFixture(t)
+	d := f.askChatDecision(t)
+	text := "Aにしてください"
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	home := setHomeFolder(t)
+	projects := filepath.Join(home, ".claude", "projects", "atct-test")
+	if err := os.MkdirAll(projects, 0o700); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	appendTranscriptLineAt(t, filepath.Join(projects, f.subKey+".jsonl"), "pid-home", text, true, answerTime(d))
+
+	if _, rpcError := f.answerRPC(t, f.subcommanderSessionID, d.ID, "A", "", text); refused(rpcError) {
+		t.Fatalf("transcript under the home folder refused with CLAUDE_CONFIG_DIR empty: %s", rpcError)
+	}
+}
+
+func TestChatAnswerIgnoresClaudeConfigDirWhenEmpty(t *testing.T) {
+	f := newChatAnswerFixture(t)
+	d := f.askChatDecision(t)
+	f.writeHumanMessage(t, f.subKey, "pid-config", "Aにしてください", answerTime(d))
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	setHomeFolder(t)
+
+	if _, rpcError := f.answerRPC(t, f.subcommanderSessionID, d.ID, "A", "", "Aにしてください"); !refused(rpcError) {
+		t.Fatalf("transcript in the earlier CLAUDE_CONFIG_DIR was read after the variable was emptied")
+	}
+}
+
+// Once CODEX_HOME is set, the default ~/.codex is not read at all.
+func TestChatAnswerIgnoresHomeCodexFolderWhenCodexHomeIsSet(t *testing.T) {
+	f, _ := newCodexChatAnswerFixture(t)
+	d := f.askChatDecision(t)
+	text := "Aにしてください"
+	home := setHomeFolder(t)
+	path := codexRolloutFile(t, filepath.Join(home, ".codex", "sessions"), f.subKey)
+	f.writeCodexRolloutLine(t, path, f.subKey, "turn-home", text, humanTUIClientID, answerTime(d))
+
+	if _, rpcError := f.answerRPC(t, f.subcommanderSessionID, d.ID, "A", "", text); !refused(rpcError) {
+		t.Fatalf("rollout under the home folder was read while CODEX_HOME is set")
+	}
+}
+
+// An empty CODEX_HOME falls back to ~/.codex.
+func TestChatAnswerReadsHomeCodexFolderOnlyWhenCodexHomeIsEmpty(t *testing.T) {
+	f, _ := newCodexChatAnswerFixture(t)
+	d := f.askChatDecision(t)
+	text := "Aにしてください"
+	t.Setenv("CODEX_HOME", "")
+	home := setHomeFolder(t)
+	path := codexRolloutFile(t, filepath.Join(home, ".codex", "sessions"), f.subKey)
+	f.writeCodexRolloutLine(t, path, f.subKey, "turn-home", text, humanTUIClientID, answerTime(d))
+
+	if _, rpcError := f.answerRPC(t, f.subcommanderSessionID, d.ID, "A", "", text); refused(rpcError) {
+		t.Fatalf("rollout under the home folder refused with CODEX_HOME empty: %s", rpcError)
+	}
+}
+
+// A line over 1 MiB is skipped without being matched, and reading goes on, so a human
+// line after it is still found. The line here is 2 MiB and holds no human marker.
+func TestChatAnswerReadsHumanLineAfterOversizedLine(t *testing.T) {
+	f := newChatAnswerFixture(t)
+	d := f.askChatDecision(t)
+	text := "Aにしてください"
+	path := f.transcriptPath(f.subKey)
+	if err := os.WriteFile(path, []byte(strings.Repeat("x", 2<<20+1)+"\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	appendTranscriptLineAt(t, path, "pid-after-big", text, true, answerTime(d))
+
+	if _, rpcError := f.answerRPC(t, f.subcommanderSessionID, d.ID, "A", "", text); refused(rpcError) {
+		t.Fatalf("human line after a 2 MiB line refused: %s", rpcError)
 	}
 }
