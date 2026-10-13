@@ -371,7 +371,7 @@ func TestChatGoalReviewRefusesApproveTakenFromInsideALine(t *testing.T) {
 func TestChatAnswerMatchesWholeLineOfMultiLinePrompt(t *testing.T) {
 	f := newChatAnswerFixture(t)
 	d := f.askChatDecision(t)
-	// The hook prompt holds the quote as one line; the transcript holds more.
+	// The quote is one line of a multi-line human message in the transcript.
 	f.writeHumanMessage(t, f.subKey, "pid-multi", "次の件です\nAにしてください\n詳細は後で", answerTime(d))
 
 	if _, rpcError := f.answerRPC(t, f.subcommanderSessionID, d.ID, "A", "", "Aにしてください"); refused(rpcError) {
@@ -381,7 +381,7 @@ func TestChatAnswerMatchesWholeLineOfMultiLinePrompt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetDecision: %v", err)
 	}
-	// The evidence is the transcript's human message, not the hook's copy.
+	// The evidence is the whole transcript human message the quote was found in.
 	if want := "次の件です\nAにしてください\n詳細は後で"; got.AnswerEvidence != want {
 		t.Fatalf("answer_evidence = %q, want the transcript message %q", got.AnswerEvidence, want)
 	}
@@ -398,7 +398,7 @@ func TestChatAnswerRefusesPromptRecordedAgainWithLaterTime(t *testing.T) {
 	appendTranscriptLineAt(t, f.transcriptPath(f.subKey), "pid-replayed", "Aにしてください", true, d.CreatedAt.Add(-time.Hour))
 
 	if _, rpcError := f.answerRPC(t, f.subcommanderSessionID, d.ID, "A", "", "Aにしてください"); !refused(rpcError) {
-		t.Fatalf("message written before the decision was accepted through a later hook time")
+		t.Fatalf("message written before the decision was accepted")
 	}
 }
 
@@ -495,10 +495,10 @@ func TestChatAnswerRefusesHumanLineInTheSecondTheDecisionWasAsked(t *testing.T) 
 	}
 }
 
-func TestChatAnswerRefusesTranscriptThatDisagreesWithHookPrompt(t *testing.T) {
+func TestChatAnswerRefusesTranscriptThatDisagreesWithQuote(t *testing.T) {
 	f := newChatAnswerFixture(t)
 	d := f.askChatDecision(t)
-	// The hook recorded the quote, but the transcript's human message says something else.
+	// The quote is not in the transcript's human message, which says something else.
 	f.writeHumanMessage(t, f.subKey, "pid-mismatch", "Bにしてください", answerTime(d))
 
 	if _, rpcError := f.answerRPC(t, f.subcommanderSessionID, d.ID, "A", "", "Aにしてください"); !refused(rpcError) {
