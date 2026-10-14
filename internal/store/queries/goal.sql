@@ -99,6 +99,11 @@ SELECT COUNT(*)
 FROM decisions
 WHERE goal_id = ? AND status = 'open';
 
+-- name: CountReviewBlockingDecisionsForGoal :one
+SELECT COUNT(*)
+FROM decisions
+WHERE goal_id = ? AND status = 'open' AND kind != 'post_merge';
+
 -- name: CountApprovedGoalReviewsForGoal :one
 SELECT COUNT(*)
 FROM decisions
