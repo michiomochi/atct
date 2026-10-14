@@ -42,6 +42,7 @@ type watchDecision struct {
 	ProjectID                   string  `json:"project_id"`
 	Kind                        string  `json:"kind"`
 	AnswerLabel                 string  `json:"answer_label"`
+	AnsweredAt                  *string `json:"answered_at"`
 	DefaultAppliedAt            *string `json:"default_applied_at"`
 	SettledByDefault            bool    `json:"settled_by_default"`
 	WakeupID                    string  `json:"wakeup_id"`
@@ -2092,6 +2093,8 @@ func formatWatchLiveness(scope watchScope, state watchReconciliation) string {
 	if scope.Role == "commander" {
 		kind, handoffID, goalID := watchCommanderLivenessTarget(state)
 		switch {
+		case kind == watchKindGoalReviewRejected:
+			return fmt.Sprintf("atct monitor liveness: goal %s review was rejected and its handoff %s is waiting for atct_goal_handoff_review_reject", goalID, handoffID)
 		case handoffID != "":
 			return fmt.Sprintf("atct monitor liveness: %s handoff %s is waiting for your review (goal %s)", kind, handoffID, goalID)
 		case goalID != "":
