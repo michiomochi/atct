@@ -14,6 +14,8 @@ a mismatch, stop. Then call `atct_handoff_entry_history` with the `handoff_id` a
 `task_id` and read the request (`request_report`); it is the source of the work.
 
 - Implement and run only the verification named in the request.
+- Take only the parts of a goal you need from `atct_goal_get` with `fields` (for
+  example `fields: ["task_summary"]` for task status alone); omit it for everything.
 - If the request is empty, lacks what the work needs, or the history's request
   entry reads only `requested` (the store writes that when `request_report` was
   blank), there is no brief: do no work: call

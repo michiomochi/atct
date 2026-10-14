@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
+	"time"
 
 	"github.com/michiomochi/atct/internal/domain"
 	"github.com/michiomochi/atct/internal/store"
@@ -24,6 +26,10 @@ func (d *Daemon) stopCheck(ctx context.Context, sessionKey string) (stopCheckRes
 		return stopCheckResponse{}, fmt.Errorf("derive session role: %w", err)
 	}
 
+	// The decision below is a function of the rows the stopCheck* functions
+	// read, so they record those rows into fp for the repeat check.
+	fp := &stopPrint{}
+	ctx = context.WithValue(ctx, stopPrintKey{}, fp)
 	var detail string
 	switch role.Role {
 	case "commander":
@@ -36,10 +42,92 @@ func (d *Daemon) stopCheck(ctx context.Context, sessionKey string) (stopCheckRes
 	if err != nil {
 		return stopCheckResponse{}, err
 	}
+	d.stopMu.Lock()
+	defer d.stopMu.Unlock()
 	if detail == "" {
+		delete(d.stopBlocked, agentSessionID)
 		return stopCheckResponse{}, nil
 	}
-	return stopCheckResponse{Decision: "block", Reason: "ATCT work remains: " + detail}, nil
+	reason := "ATCT work remains: " + detail
+	// The first stop for a reason and state always blocks. A repeat with the
+	// same reason and the same state would only wake the session for nothing.
+	key := reason + "\x00" + fp.b.String()
+	if d.stopBlocked == nil {
+		d.stopBlocked = map[int64]string{}
+	}
+	if d.stopBlocked[agentSessionID] == key {
+		return stopCheckResponse{}, nil
+	}
+	d.stopBlocked[agentSessionID] = key
+	return stopCheckResponse{Decision: "block", Reason: reason}, nil
+}
+
+type stopPrintKey struct{}
+
+// stopPrint accumulates the state a stop-check decision was made from. A nil
+// *stopPrint (a stopCheck* function called without stopCheck) records nothing.
+type stopPrint struct{ b strings.Builder }
+
+func stopPrintOf(ctx context.Context) *stopPrint {
+	fp, _ := ctx.Value(stopPrintKey{}).(*stopPrint)
+	return fp
+}
+
+func (p *stopPrint) add(format string, args ...any) {
+	if p != nil {
+		fmt.Fprintf(&p.b, format+"\n", args...)
+	}
+}
+
+func stamp(t *time.Time) int64 {
+	if t == nil {
+		return 0
+	}
+	return t.UnixNano()
+}
+
+func (p *stopPrint) goal(g domain.Goal) { p.add("goal %d %s", g.ID, g.Status) }
+
+func (p *stopPrint) live(scope string, live bool) { p.add("live %s %t", scope, live) }
+
+func (p *stopPrint) goalHandoffs(hs []store.GoalHandoff) {
+	for _, h := range hs {
+		p.add("gh %s %d %d %d %d %d %d %d %d %d", h.ID, h.RequestedBy, h.ReceivedBy, stamp(h.RequestedAt), stamp(h.ReceivedAt),
+			stamp(h.ReviewRequestedAt), stamp(h.ReviewReceivedAt), stamp(h.ReviewRejectedAt), stamp(h.CompletedReportAt), stamp(h.RecoveredAt))
+	}
+}
+
+func (p *stopPrint) planHandoffs(hs []store.PlanHandoff) {
+	for _, h := range hs {
+		p.add("ph %s %d %d %d %d %d", h.ID, h.ReviewRejectionReceivedBy, stamp(h.ReviewRequestedAt), stamp(h.ReviewReceivedAt),
+			stamp(h.ReviewRejectedAt), stamp(h.CompletedReportAt))
+	}
+}
+
+func (p *stopPrint) createHandoffs(hs []store.TaskCreateHandoff) {
+	for _, h := range hs {
+		p.add("ch %s %d %d %d %d %d", h.ID, h.ReceivedBy, stamp(h.RequestedAt), stamp(h.ReceivedAt), stamp(h.CompletedAt), stamp(h.RecoveredAt))
+	}
+}
+
+func (p *stopPrint) tasks(ts []domain.Task) {
+	for _, t := range ts {
+		p.add("task %d %s", t.ID, t.Status)
+	}
+}
+
+func (p *stopPrint) taskHandoffs(hs []store.TaskHandoff) {
+	for _, h := range hs {
+		p.add("th %s %d %d %d %d %d %d %d %d %d %d", h.ID, h.RequestedBy, h.ReceivedBy, stamp(h.RequestedAt), stamp(h.ReceivedAt),
+			stamp(h.ReviewRequestedAt), stamp(h.ReviewReceivedAt), stamp(h.ReviewRejectedAt), stamp(h.CompletedReportAt),
+			stamp(h.RecoveredAt), stamp(h.ReviewRejectionReceivedAt))
+	}
+}
+
+func (p *stopPrint) decisions(ds []domain.Decision) {
+	for _, d := range ds {
+		p.add("decision %d %s %t %t", d.ID, d.Status, d.AnsweredAt != nil, d.AppliedAt != nil)
+	}
 }
 
 func (d *Daemon) stopCheckCommander(ctx context.Context, projectID int64) (string, error) {
@@ -47,10 +135,14 @@ func (d *Daemon) stopCheckCommander(ctx context.Context, projectID int64) (strin
 	if err != nil {
 		return "", fmt.Errorf("list project goals: %w", err)
 	}
+	fp := stopPrintOf(ctx)
+	live, err := d.store.HasLiveMonitorForScope(ctx, store.MonitorLiveScope{ProjectID: projectID, Role: "commander"})
+	fp.live("commander", err == nil && live)
 	for _, goal := range goals {
 		if goal.Status != domain.GoalActive {
 			continue
 		}
+		fp.goal(goal)
 
 		goalHandoffs, err := d.store.ListGoalHandoffs(ctx, goal.ID)
 		if err != nil {
@@ -64,6 +156,9 @@ func (d *Daemon) stopCheckCommander(ctx context.Context, projectID int64) (strin
 		if err != nil {
 			return "", fmt.Errorf("list decisions for goal %d: %w", goal.ID, err)
 		}
+		fp.goalHandoffs(goalHandoffs)
+		fp.planHandoffs(planHandoffs)
+		fp.decisions(decisions)
 
 		var latestGoalReview domain.Decision
 		hasGoalReview := false
@@ -109,12 +204,14 @@ func (d *Daemon) stopCheckCommander(ctx context.Context, projectID int64) (strin
 		if err != nil {
 			return "", fmt.Errorf("list tasks for goal %d: %w", goal.ID, err)
 		}
+		fp.tasks(tasks)
 		hasExecutorWork := false
 		for _, task := range tasks {
 			handoffs, err := d.store.ListTaskHandoffs(ctx, task.ID)
 			if err != nil {
 				return "", fmt.Errorf("list task handoffs for task %d: %w", task.ID, err)
 			}
+			fp.taskHandoffs(handoffs)
 			for _, handoff := range handoffs {
 				if handoff.RequestedAt != nil && handoff.ReceivedAt != nil && handoff.CompletedReportAt == nil && handoff.RecoveredAt == nil {
 					hasExecutorWork = true
@@ -159,10 +256,20 @@ func (d *Daemon) stopCheckSubcommander(ctx context.Context, agentSessionID, goal
 	}
 	live, err := d.store.HasLiveMonitorForScope(ctx, store.MonitorLiveScope{ProjectID: goal.ProjectID, Role: "subcommander", GoalID: &goalID})
 	live = err == nil && live
+	fp := stopPrintOf(ctx)
+	fp.goal(goal)
+	fp.live("subcommander", live)
+	fp.goalHandoffs(goalHandoffs)
 	planHandoffs, err := d.store.ListPlanHandoffs(ctx, goalID)
 	if err != nil {
 		return "", fmt.Errorf("list plan handoffs: %w", err)
 	}
+	fp.planHandoffs(planHandoffs)
+	decisions, err := d.store.ListDecisionsForGoal(ctx, goalID)
+	if err != nil {
+		return "", fmt.Errorf("list decisions: %w", err)
+	}
+	fp.decisions(decisions)
 	for _, handoff := range planHandoffs {
 		if handoff.ReviewRejectionReceivedBy == agentSessionID && handoff.CompletedReportAt == nil {
 			return fmt.Sprintf("subcommander has rejected plan handoff %s", handoff.ID), nil
@@ -172,6 +279,7 @@ func (d *Daemon) stopCheckSubcommander(ctx context.Context, agentSessionID, goal
 	if err != nil {
 		return "", fmt.Errorf("list task-create handoffs: %w", err)
 	}
+	fp.createHandoffs(createHandoffs)
 	for _, handoff := range createHandoffs {
 		if handoff.ReceivedBy == agentSessionID && handoff.CompletedAt == nil && handoff.RecoveredAt == nil {
 			return fmt.Sprintf("subcommander has open task-create handoff %s", handoff.ID), nil
@@ -181,11 +289,13 @@ func (d *Daemon) stopCheckSubcommander(ctx context.Context, agentSessionID, goal
 	if err != nil {
 		return "", fmt.Errorf("list goal tasks: %w", err)
 	}
+	fp.tasks(tasks)
 	for _, task := range tasks {
 		handoffs, err := d.store.ListTaskHandoffs(ctx, task.ID)
 		if err != nil {
 			return "", fmt.Errorf("list task handoffs for task %d: %w", task.ID, err)
 		}
+		fp.taskHandoffs(handoffs)
 		for _, handoff := range handoffs {
 			// With a live Monitor, an unreceived handoff is an executor still
 			// starting; one that never starts is reported by the liveness prompt.
@@ -259,22 +369,40 @@ func (d *Daemon) stopCheckExecutor(ctx context.Context, agentSessionID int64) (s
 	if err != nil {
 		return "", fmt.Errorf("list goals: %w", err)
 	}
+	fp := stopPrintOf(ctx)
 	for _, goal := range goals {
 		tasks, err := d.store.ListTasks(ctx, goal.ID)
 		if err != nil {
 			return "", fmt.Errorf("list goal tasks: %w", err)
 		}
+		goalPrinted := false
 		for _, task := range tasks {
 			handoffs, err := d.store.ListTaskHandoffs(ctx, task.ID)
 			if err != nil {
 				return "", fmt.Errorf("list task handoffs for task %d: %w", task.ID, err)
 			}
 			for _, handoff := range handoffs {
+				// Only this session's own handoffs, and their goal, can change its decision.
+				if handoff.ReceivedBy == agentSessionID && !goalPrinted {
+					goalPrinted = true
+					decisions, err := d.store.ListDecisionsForGoal(ctx, goal.ID)
+					if err != nil {
+						return "", fmt.Errorf("list decisions for goal %d: %w", goal.ID, err)
+					}
+					fp.goal(goal)
+					fp.tasks(tasks)
+					fp.decisions(decisions)
+				}
+				if handoff.ReceivedBy == agentSessionID {
+					fp.taskHandoffs([]store.TaskHandoff{handoff})
+				}
 				if handoff.ReceivedBy == agentSessionID && handoff.ReceivedAt != nil && handoff.CompletedReportAt == nil && handoff.RecoveredAt == nil {
 					// Review requested and not rejected: the subcommander's answer
 					// arrives through the Monitor, so a live one of this task's means waiting only.
 					if handoff.ReviewRequestedAt != nil && handoff.ReviewRejectedAt == nil {
-						if live, err := d.store.HasLiveExecutorMonitorForTask(ctx, goal.ProjectID, goal.ID, task.ID); err == nil && live {
+						live, err := d.store.HasLiveExecutorMonitorForTask(ctx, goal.ProjectID, goal.ID, task.ID)
+						fp.live(fmt.Sprintf("executor %d", task.ID), err == nil && live)
+						if err == nil && live {
 							continue
 						}
 					}

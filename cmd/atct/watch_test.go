@@ -1212,6 +1212,30 @@ func TestWatchDecodesCanonicalHandoffEntryIDAndReply(t *testing.T) {
 	}
 }
 
+func TestConsumeWatchEventsSkipsLifecycleCopyEntriesOnly(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	frame := func(id int, kind, body string) string {
+		return fmt.Sprintf("event: handoff_entry_added\ndata: {\"goal_id\":1,\"task_id\":46,\"handoff_id\":\"h1\",\"id\":%d,\"kind\":%q,\"author_session_id\":7,\"body_preview\":%q}\n\n", id, kind, body)
+	}
+	body := frame(1, "request", "brief") + frame(2, "review_received", "received") + frame(3, "review_requested", "ready") + frame(3, "review_requested", "ready")
+	client := &http.Client{Transport: watchRoundTripper(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
+	})}
+	var output bytes.Buffer
+	err := consumeWatchEventsWithStateAndScopeAndSinkAndLastEventID(
+		ctx, client, "http://watch.test", watchScope{GoalID: "1", TaskID: "46"}, &output, time.Second,
+		make(map[watchDeliveryKey]struct{}), new(string), make(map[watchWakeupDeliveryKey]struct{}), make(map[watchDetectionDeliveryKey]struct{}), newWatchTaskScopeFilter("46"), nil, new(string),
+	)
+	if !errors.Is(err, io.EOF) {
+		t.Fatalf("consumeWatchEvents error = %v, want io.EOF", err)
+	}
+	want := "atct handoff entry added: task 46 (handoff h1, id 3, kind review_requested, author 7)\n"
+	if got := output.String(); got != want {
+		t.Fatalf("watch output = %q, want %q", got, want)
+	}
+}
+
 func TestConsumeWatchEventsSendsLastEventID(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

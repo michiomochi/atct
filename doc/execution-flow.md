@@ -104,6 +104,8 @@ request されたときは、その handoff を「superseded」として閉じ�
   履歴を読むツールが無いため、ここが報告を読む唯一の入口になる
 - `unapplied_decisions` は、そのセッションへ前回返した一覧から変わったときだけ付く。変わって
   いないときは `unapplied_count` だけ、0 件に変わったときは `[]`。`atct_goal_list` は常に全文
+- `atct_goal_get` は省略可能な `fields`（goal の項目名・`tasks`・`task_summary`・`goal_review`）で
+  返す項目を絞れる。省略時は全文、未知の名前は拒否
 - 整形は MCP shim だけで行う。daemon の RPC、CLI、HTTP API、web は全文を返したまま
 
 ## タスクの状態遷移
@@ -268,9 +270,13 @@ commander が交代した後は、現在の commander が `atct_goal_review_comp
 | `atct_goal_review_complete` | commander（人間の承認後） | — |
 | ゴールの取り下げ | commander | そのゴールの subcommander |
 
+handoff の記録（`handoff_entry_added`）のうち、lifecycle の写し（`request`・`received`・`completed`、ack の `review_received`）は通知しない。`review_requested`・`review_rejected` と、参加者が `atct_*handoff_entry_append` で足した note は従来どおり通知する。
+
 ## 待機中の Stop hook
 
 相手の応答（commander の plan / goal review、subcommander の task review）を待つだけの session は、生きた Monitor があれば Stop hook で止めない。subcommander は plan review・goal review・executor の起動（task handoff の未受領）と作業のいずれかを待つ間の open goal handoff、executor は review 依頼済みで差し戻されていない task handoff が対象。差し戻し、task-create handoff、task review など他の block と、Monitor が無い場合（未受領の task handoff も止める）、取得に失敗した場合は従来どおり止める。詳細は `atct continuous-execution` で読める。
+
+同じ状態で 2 回目の停止は止めない。daemon が session ごとに、直前に止めたときの理由と、その判定が読んだ状態（goal・handoff・task・decision の状態と時刻、生きた Monitor の有無）をメモリに覚え、理由も状態も同じなら block しない。最初の 1 回は必ず止め、理由か状態が変わればまた止める。記録は daemon の再起動で消える（再起動後は 1 回止まる）。
 
 ## アーカイブした project
 
