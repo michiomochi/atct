@@ -317,7 +317,7 @@ after `atct_goal_withdraw`:
 
 Compare `.worktrees/<id>` in `git worktree list` with the active goal ids from
 `atct_goal_list`. For each id that is not active, confirm its status with
-`atct_goal_get` and reclaim only done or dropped goals; leave active or
+`atct_goal_get` (`fields: ["status"]`) and reclaim only done or dropped goals; leave active or
 unconfirmed ones alone. `atct worktree-reclaim` does not check status, so
 this confirmation is yours. Then, from the primary checkout:
 

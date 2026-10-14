@@ -54,8 +54,9 @@ type goalView struct {
 	// yet received. There is nothing for a human to answer, so it carries no
 	// open decision, and without this the goal looked the same as one nobody
 	// had picked up.
-	AwaitingReview bool   `json:"awaiting_review"`
-	ProjectName    string `json:"project_name"`
+	AwaitingReview bool             `json:"awaiting_review"`
+	NextAction     store.NextAction `json:"next_action"`
+	ProjectName    string           `json:"project_name"`
 	// ProjectArchived is set on the goal detail so the page can say why changes are refused.
 	ProjectArchived bool       `json:"project_archived"`
 	Tasks           []TaskView `json:"tasks"`
@@ -858,10 +859,16 @@ func (s *Server) handleInbox(w http.ResponseWriter, r *http.Request) {
 				writeStoreError(w, err)
 				return
 			}
+			nextAction, err := s.store.GoalNextAction(ctx, goal)
+			if err != nil {
+				writeStoreError(w, err)
+				return
+			}
 			activeGoals = append(activeGoals, goalView{
 				Goal:             goal,
 				AwaitingDecision: openByGoal[goal.ID],
 				AwaitingReview:   awaitingReview,
+				NextAction:       nextAction,
 				ProjectName:      projectNames[goal.ProjectID],
 				Tasks:            taskViews,
 			})
@@ -991,9 +998,14 @@ func (s *Server) handleGoal(w http.ResponseWriter, r *http.Request, goalID strin
 		}
 	}
 
+	nextAction, err := s.store.GoalNextAction(ctx, goal)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
 	allTaskViews := make([]TaskView, 0, len(tasks))
 	response := goalResponse{
-		Goal:                   goalView{Goal: goal, ProjectName: projectName, ProjectArchived: projectArchived},
+		Goal:                   goalView{Goal: goal, NextAction: nextAction, ProjectName: projectName, ProjectArchived: projectArchived},
 		DerivedFrom:            derivedFrom,
 		DerivedGoals:           derivedGoalViews,
 		Now:                    make([]TaskView, 0),

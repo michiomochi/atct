@@ -278,7 +278,26 @@ func (f *watchScopeFilter) deliversSnapshotDecision(decision watchDecision) bool
 	return f.delivers("decision.answered", decision)
 }
 
+// watchHandoffEntryIsLifecycleCopy reports a handoff entry that only repeats a
+// lifecycle event the watcher already gets. Only request, received and
+// completed entries are written by lifecycle code alone: the entry kinds that
+// exist are the six in the schema CHECK, and validateHandoffEntryRequest lets a
+// participant append only review_requested, review_received and review_rejected.
+// The review receive ack is a review_received entry with the fixed body "received".
+func watchHandoffEntryIsLifecycleCopy(decision watchDecision) bool {
+	switch decision.Kind {
+	case "request", "received", "completed":
+		return true
+	case "review_received":
+		return decision.BodyPreview == "received"
+	}
+	return false
+}
+
 func (f *watchScopeFilter) delivers(eventName string, decision watchDecision) bool {
+	if eventName == "handoff_entry_added" && watchHandoffEntryIsLifecycleCopy(decision) {
+		return false
+	}
 	if f.taskID != "" {
 		return decision.TaskID == f.taskID
 	}

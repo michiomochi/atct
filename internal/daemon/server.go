@@ -32,6 +32,10 @@ type Daemon struct {
 	nextPeerID   atomic.Uint64
 	capabilityMu sync.Mutex
 	capabilities map[string]monitoredCallerCapability
+	// stopBlocked is, per agent session, the reason and state the last stop was
+	// blocked for. It is memory only: a restarted daemon blocks once more.
+	stopMu      sync.Mutex
+	stopBlocked map[int64]string
 }
 
 const defaultVersion = "dev"
