@@ -522,7 +522,7 @@ func TestWatchCommanderLivenessNamesARejectedGoalReviewUntilTheHandoffIsRejected
 	handoff := watchReconciliationHandoff{ID: "h", GoalID: 7, ReviewRequestedAt: at("2026-01-01T00:00:05Z"), ReviewReceivedAt: at("2026-01-01T00:00:06Z")}
 
 	state := watchReconciliation{Goals: goals, Decisions: []watchDecision{rejected}, GoalHandoffs: []watchReconciliationHandoff{handoff}}
-	kind, handoffID, goalID := watchCommanderLivenessTarget(state)
+	kind, handoffID, goalID := firstCommanderTarget(state)
 	if kind != watchKindGoalReviewRejected || handoffID != "h" || goalID != "7" {
 		t.Fatalf("target = %q %q %q, want the rejected goal review", kind, handoffID, goalID)
 	}
@@ -541,7 +541,7 @@ func TestWatchCommanderLivenessNamesARejectedGoalReviewUntilTheHandoffIsRejected
 	// A newer goal_review supersedes the rejection.
 	state.GoalHandoffs = []watchReconciliationHandoff{handoff}
 	state.Decisions = []watchDecision{rejected, {ID: "4", Kind: "goal_review", Status: "open", GoalID: "7"}}
-	if kind, _, _ := watchCommanderLivenessTarget(state); kind == watchKindGoalReviewRejected {
+	if kind, _, _ := firstCommanderTarget(state); kind == watchKindGoalReviewRejected {
 		t.Fatal("a superseded rejection was still named")
 	}
 }
@@ -556,7 +556,7 @@ func TestWatchCommanderLivenessIgnoresAResubmittedHandoffUnderARejectedGoalRevie
 		GoalHandoffs: []watchReconciliationHandoff{{ID: "h", GoalID: 7,
 			ReviewRequestedAt: at("2026-01-01T00:00:20.000000000Z"), ReviewReceivedAt: at("2026-01-01T00:00:21Z")}},
 	}
-	if kind, _, _ := watchCommanderLivenessTarget(state); kind == watchKindGoalReviewRejected {
+	if kind, _, _ := firstCommanderTarget(state); kind == watchKindGoalReviewRejected {
 		t.Fatal("a resubmitted handoff was still named as a rejected goal review")
 	}
 }
@@ -607,4 +607,14 @@ func TestWatchScopesDeliverAppendedHandoffEntries(t *testing.T) {
 			t.Fatalf("task scope delivered another task's entry %+v", other)
 		}
 	}
+}
+
+// firstCommanderTarget is the first goal the commander is to act on, empty when
+// there is none.
+func firstCommanderTarget(state watchReconciliation) (kind, handoffID, goalID string) {
+	targets := watchCommanderLivenessTargets(state)
+	if len(targets) == 0 {
+		return "", "", ""
+	}
+	return targets[0].kind, targets[0].handoffID, targets[0].goalID
 }

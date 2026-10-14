@@ -1,6 +1,7 @@
 package main
 
 import (
+	"slices"
 	"strconv"
 	"time"
 )
@@ -56,18 +57,51 @@ func watchLivenessActionable(scope watchScope, state watchReconciliation) bool {
 }
 
 func watchCommanderLivenessActionable(state watchReconciliation) bool {
-	kind, handoffID, goalID := watchCommanderLivenessTarget(state)
-	return kind != "" || handoffID != "" || goalID != ""
+	return len(watchCommanderLivenessTargets(state)) > 0
 }
 
-// watchCommanderLivenessTarget names what the commander is to act on: a goal
-// whose human review was rejected and whose handoff the commander has yet to
-// reject, else a goal or plan handoff waiting for its review, else a goal whose
-// approved review is waiting to be completed. All empty means there is nothing
-// to name.
-func watchCommanderLivenessTarget(state watchReconciliation) (kind, handoffID, goalID string) {
-	if handoffID, goalID := watchRejectedGoalReviewTarget(state); handoffID != "" {
-		return watchKindGoalReviewRejected, handoffID, goalID
+// watchCommanderTarget is one goal the commander is to act on. openDecisionIDs
+// lists the open decisions that hold that goal back, and is filled only for the
+// states that name them.
+type watchCommanderTarget struct {
+	kind, handoffID, goalID string
+	openDecisionIDs         []string
+}
+
+const (
+	watchKindGoalReviewRejected = "goal_review_rejected"
+	watchKindGoalReviewReceived = "goal_review_received"
+)
+
+// watchCommanderLivenessTargets names every goal the commander is to act on, one
+// entry per goal, in this order of priority: a goal whose human review was
+// rejected and whose handoff the commander has yet to reject; a goal or plan
+// handoff waiting for its review; a goal handoff whose review the commander has
+// received but whose human review is not requested yet; a goal whose approved
+// review is waiting to be completed. A goal with an open goal_review is the
+// human's to look at now, so it is left out.
+func watchCommanderLivenessTargets(state watchReconciliation) []watchCommanderTarget {
+	reviewOpen := map[string]bool{}
+	approved := map[string]bool{}
+	for _, decision := range state.Decisions {
+		if decision.Kind == "goal_review" && decision.Status == "open" {
+			reviewOpen[decision.GoalID] = true
+		}
+		if decision.Kind == "goal_review" && decision.Status == "applied" && decision.AnswerLabel == "approve" {
+			approved[decision.GoalID] = true
+		}
+	}
+	var targets []watchCommanderTarget
+	seen := map[string]bool{}
+	add := func(target watchCommanderTarget) {
+		if seen[target.goalID] || reviewOpen[target.goalID] {
+			return
+		}
+		seen[target.goalID] = true
+		targets = append(targets, target)
+	}
+	for _, target := range watchRejectedGoalReviewTargets(state) {
+		add(target)
 	}
 	for _, group := range []struct {
 		kind     string
@@ -75,32 +109,59 @@ func watchCommanderLivenessTarget(state watchReconciliation) (kind, handoffID, g
 	}{{"goal", state.GoalHandoffs}, {"plan", state.PlanHandoffs}} {
 		for _, handoff := range group.handoffs {
 			id := strconv.FormatInt(handoff.GoalID, 10)
-			if watchHandoffOpen(handoff) && handoff.ReviewRequestedAt != nil && handoff.ReviewRejectedAt == nil && !watchReconciliationGoalStopped(state, id) {
-				return group.kind, handoff.ID, id
+			if watchHandoffOpen(handoff) && handoff.ReviewRequestedAt != nil && handoff.ReviewReceivedAt == nil && handoff.ReviewRejectedAt == nil && !watchReconciliationGoalStopped(state, id) {
+				add(watchCommanderTarget{kind: group.kind, handoffID: handoff.ID, goalID: id})
 			}
+		}
+	}
+	for _, handoff := range state.GoalHandoffs {
+		id := strconv.FormatInt(handoff.GoalID, 10)
+		if watchHandoffOpen(handoff) && handoff.ReviewRequestedAt != nil && handoff.ReviewReceivedAt != nil && handoff.ReviewRejectedAt == nil && !approved[id] && watchReconciliationHasActiveGoal(state, id) {
+			add(watchCommanderTarget{kind: watchKindGoalReviewReceived, handoffID: handoff.ID, goalID: id,
+				openDecisionIDs: watchOpenDecisionIDs(state, id, "goal_review", "post_merge")})
 		}
 	}
 	for _, decision := range state.Decisions {
 		if decision.Kind == "goal_review" && decision.Status == "applied" && decision.AnswerLabel == "approve" && watchReconciliationHasActiveGoal(state, decision.GoalID) {
-			return "goal", "", decision.GoalID
+			add(watchCommanderTarget{kind: "goal", goalID: decision.GoalID,
+				openDecisionIDs: watchOpenDecisionIDs(state, decision.GoalID, "goal_review")})
 		}
 	}
-	return "", "", ""
+	return targets
 }
 
-const watchKindGoalReviewRejected = "goal_review_rejected"
+// watchOpenDecisionIDs returns the ids of the goal's open decisions except the
+// given kinds, in ascending order.
+func watchOpenDecisionIDs(state watchReconciliation, goalID string, exceptKinds ...string) []string {
+	var ids []int64
+	for _, decision := range state.Decisions {
+		if decision.GoalID != goalID || decision.Status != "open" || slices.Contains(exceptKinds, decision.Kind) {
+			continue
+		}
+		if id, err := strconv.ParseInt(decision.ID, 10, 64); err == nil {
+			ids = append(ids, id)
+		}
+	}
+	slices.Sort(ids)
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, strconv.FormatInt(id, 10))
+	}
+	return out
+}
 
-// watchRejectedGoalReviewTarget finds a goal whose latest goal_review the human
-// rejected while its goal handoff is still open with the review received. It
-// ends when atct_goal_handoff_review_reject stamps ReviewRejectedAt, and again
-// once a resubmission opens a newer goal_review.
-func watchRejectedGoalReviewTarget(state watchReconciliation) (handoffID, goalID string) {
+// watchRejectedGoalReviewTargets finds every goal whose latest goal_review the
+// human rejected while its goal handoff is still open with the review received.
+// Each ends when atct_goal_handoff_review_reject stamps ReviewRejectedAt, and
+// again once a resubmission opens a newer goal_review.
+func watchRejectedGoalReviewTargets(state watchReconciliation) []watchCommanderTarget {
 	latest := map[string]int64{}
 	for _, decision := range state.Decisions {
 		if id, err := strconv.ParseInt(decision.ID, 10, 64); err == nil && decision.Kind == "goal_review" && id > latest[decision.GoalID] {
 			latest[decision.GoalID] = id
 		}
 	}
+	var targets []watchCommanderTarget
 	for _, decision := range state.Decisions {
 		if decision.Kind != "goal_review" || decision.Status != "answered" || decision.AnswerLabel != "reject" || !watchReconciliationHasActiveGoal(state, decision.GoalID) {
 			continue
@@ -115,11 +176,12 @@ func watchRejectedGoalReviewTarget(state watchReconciliation) (handoffID, goalID
 			if strconv.FormatInt(handoff.GoalID, 10) == decision.GoalID && watchHandoffOpen(handoff) &&
 				handoff.ReviewRequestedAt != nil && handoff.ReviewReceivedAt != nil && handoff.ReviewRejectedAt == nil &&
 				!watchTimestampAfter(handoff.ReviewRequestedAt, decision.AnsweredAt) {
-				return handoff.ID, decision.GoalID
+				targets = append(targets, watchCommanderTarget{kind: watchKindGoalReviewRejected, handoffID: handoff.ID, goalID: decision.GoalID})
+				break
 			}
 		}
 	}
-	return "", ""
+	return targets
 }
 
 // watchTimestampAfter reports whether a is strictly later than b. A missing or
