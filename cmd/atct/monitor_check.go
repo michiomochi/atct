@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -12,9 +13,15 @@ import (
 	"github.com/michiomochi/atct/internal/mcpshim"
 )
 
+// monitorToolName is the Claude Code tool a watch is started with.
+const monitorToolName = "Monitor"
+
 type monitorHookInput struct {
 	SessionID string `json:"session_id"`
 	ToolName  string `json:"tool_name"`
+	ToolInput struct {
+		Command string `json:"command"`
+	} `json:"tool_input"`
 }
 
 type monitorCheckResponse struct {
@@ -34,16 +41,56 @@ type preToolUseHookSpecificOutput struct {
 }
 
 func runMonitorCheck(config cliConfig, dir, exePath string) error {
-	input, err := decodeMonitorHookInput(os.Stdin)
+	body, readErr := io.ReadAll(os.Stdin)
+	_, err := fmt.Fprint(os.Stdout, monitorCheckOutput(body, readErr, config, dir, exePath))
+	return err
+}
+
+// monitorCheckOutput is what the hook prints for one PreToolUse body. A Monitor
+// call is refused only for the watch form that expires, and any failure allows
+// it: this gate must not stop a watch it cannot judge.
+func monitorCheckOutput(body []byte, readErr error, config cliConfig, dir, exePath string) string {
+	input, err := decodeMonitorHookInput(bytes.NewReader(body))
+	if readErr != nil {
+		err = fmt.Errorf("ATCT monitor-check failed: read hook input: %v", readErr)
+	}
 	if err != nil {
-		_, writeErr := fmt.Fprint(os.Stdout, monitorCheckDeny(err.Error()))
-		return writeErr
+		if monitorHookToolName(body) == monitorToolName {
+			return ""
+		}
+		return monitorCheckDeny(err.Error())
+	}
+	if strings.TrimSpace(input.ToolName) == monitorToolName {
+		if !isMonitorFormATCTWatch(input.ToolInput.Command) {
+			return ""
+		}
+		return monitorFormCheckResult(config, dir, exePath, input.SessionID)
 	}
 	if !isATCTTool(input.ToolName) || isMonitorExemptTool(input.ToolName) {
-		return nil
+		return ""
 	}
-	_, err = fmt.Fprint(os.Stdout, monitorCheckResult(config, dir, exePath, input.SessionID))
-	return err
+	return monitorCheckResult(config, dir, exePath, input.SessionID)
+}
+
+// monitorHookToolName reads tool_name from a body that did not decode as a
+// whole. It returns "" when even that cannot be read.
+func monitorHookToolName(body []byte) string {
+	var named struct {
+		ToolName string `json:"tool_name"`
+	}
+	if json.Unmarshal(body, &named) != nil {
+		return ""
+	}
+	return strings.TrimSpace(named.ToolName)
+}
+
+// isMonitorFormATCTWatch reports whether a Monitor command is an ATCT watch in
+// the form that expires every 30 minutes. A --once watch ends at its first
+// event, so it is never refused here.
+func isMonitorFormATCTWatch(command string) bool {
+	return strings.Contains(command, "atct watch") &&
+		strings.Contains(command, "--monitor") &&
+		!strings.Contains(command, "--once")
 }
 
 // isATCTTool keeps the gate on ATCT's own tools. Both harnesses report the
@@ -96,6 +143,31 @@ func decodeMonitorHookInput(r io.Reader) (monitorHookInput, error) {
 }
 
 func monitorCheckResult(config cliConfig, dir, exePath, sessionKey string) string {
+	response, err := callMonitorRPC(config, dir, exePath, "session.monitor_check", sessionKey)
+	if err != nil {
+		return monitorCheckDeny("ATCT monitor-check failed: " + err.Error())
+	}
+	if response.Decision == "" {
+		return ""
+	}
+	return monitorCheckDeny(response.Reason)
+}
+
+func monitorFormCheckResult(config cliConfig, dir, exePath, sessionKey string) string {
+	response, err := callMonitorRPC(config, dir, exePath, "session.monitor_form_check", sessionKey)
+	return monitorFormDecision(response, err)
+}
+
+// monitorFormDecision turns the form check's answer into the hook output. An
+// error or an allow prints nothing.
+func monitorFormDecision(response monitorCheckResponse, err error) string {
+	if err != nil || response.Decision == "" {
+		return ""
+	}
+	return monitorCheckDeny(response.Reason)
+}
+
+func callMonitorRPC(config cliConfig, dir, exePath, method, sessionKey string) (monitorCheckResponse, error) {
 	reg, err := daemonctl.Ensure(daemonctl.Config{
 		Dir:            dir,
 		Version:        version,
@@ -104,18 +176,15 @@ func monitorCheckResult(config cliConfig, dir, exePath, sessionKey string) strin
 		ListenExplicit: config.listenExplicit,
 	})
 	if err != nil {
-		return monitorCheckDeny("ATCT monitor-check failed: ensure daemon: " + err.Error())
+		return monitorCheckResponse{}, fmt.Errorf("ensure daemon: %w", err)
 	}
 
 	client := mcpshim.NewClient(reg.SocketPath)
 	var response monitorCheckResponse
-	if err := client.Call(context.Background(), "session.monitor_check", map[string]string{"session_key": sessionKey}, &response); err != nil {
-		return monitorCheckDeny("ATCT monitor-check failed: session.monitor_check: " + err.Error())
+	if err := client.Call(context.Background(), method, map[string]string{"session_key": sessionKey}, &response); err != nil {
+		return monitorCheckResponse{}, fmt.Errorf("%s: %w", method, err)
 	}
-	if response.Decision == "" {
-		return ""
-	}
-	return monitorCheckDeny(response.Reason)
+	return response, nil
 }
 
 func monitorCheckDeny(reason string) string {

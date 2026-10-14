@@ -113,6 +113,12 @@ delivered. ...]` の形で来る。N が 0 なら待つだけだったので、`
 張り直さなければ従来どおり拒否され、`wakeup.monitor_lost` になる。猶予は保険であり、張り直しを省いてよい
 理由ではない。
 
+回答待ちだけが残る subcommander（plan review・goal review・executor の起動または作業の待ち）は、Monitor
+ツールで `atct watch --monitor` を張ることを PreToolUse が拒否する（`session.monitor_form_check`）。30 分で
+切れて起こすだけになるため、Bash を `run_in_background` で `atct watch --monitor --token <monitor_token> --once`
+として張る。`--once` を含む watch と Monitor 以外のツールは拒否しない。判定できない場合（daemon に届かない、
+session 未識別、archive 済み）も拒否しない。
+
 Claude Watch は通知を表示する。Session を停止するには、この session で起動した Monitor または background の
 Bash task の task ID が分かる時だけ `TaskStop` を使う。ID は推測しない。
 

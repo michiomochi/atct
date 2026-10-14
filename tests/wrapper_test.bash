@@ -534,6 +534,52 @@ test_claude_merge_check_fails_closed_to_deny() {
   assert_eq '' "$output" 'Claude merge-check must be silent when atct allows the merge'
 }
 
+test_claude_monitor_check_fails_open() {
+  local fixture="$TEMP_ROOT/claude-monitor" output status
+  local monitor_input='{"session_id":"s1","tool_name":"Monitor","tool_input":{"command":"atct watch --monitor --token t1"}}'
+  mkdir -p "$fixture"
+  cat >"$fixture/atct" <<'SCRIPT'
+#!/usr/bin/env bash
+if [[ "${1:-}" == monitor-check ]]; then
+  cat >/dev/null
+  if [[ "${ATCT_MONITOR_MODE:-}" == fail ]]; then exit 1; fi
+  printf '%s' "$ATCT_MONITOR_JSON"
+fi
+exit 0
+SCRIPT
+  chmod +x "$fixture/atct"
+
+  # With no atct on PATH the Monitor is allowed: this gate never refuses what it cannot judge.
+  status=0
+  output="$(PATH="/usr/bin:/bin" /bin/bash "$REPO_ROOT/hooks/pre-monitor" <<< "$monitor_input")" || status=$?
+  assert_eq 0 "$status" 'Claude pre-monitor must exit 0 when atct is missing'
+  assert_eq '' "$output" 'Claude pre-monitor must be silent when atct is missing'
+
+  # An atct whose monitor-check fails must not refuse the Monitor either.
+  status=0
+  output="$(PATH="$fixture:/usr/bin:/bin" ATCT_MONITOR_MODE=fail \
+    /bin/bash "$REPO_ROOT/hooks/pre-monitor" <<< "$monitor_input")" || status=$?
+  assert_eq 0 "$status" 'Claude pre-monitor must exit 0 when atct monitor-check fails'
+  assert_eq '' "$output" 'Claude pre-monitor must be silent when atct monitor-check fails'
+
+  # A refusal from atct is passed through unchanged.
+  output="$(PATH="$fixture:/usr/bin:/bin" ATCT_MONITOR_JSON="$MERGE_DENY_JSON" \
+    /bin/bash "$REPO_ROOT/hooks/pre-monitor" <<< "$monitor_input")"
+  assert_eq "$MERGE_DENY_JSON" "$output" 'Claude pre-monitor must print atct monitor-check output unchanged'
+
+  # claude-hooks.json routes the Monitor tool to this script.
+  python3 - "$REPO_ROOT/hooks/claude-hooks.json" <<'TEST_PY' || fail 'claude-hooks.json must route the Monitor matcher to hooks/pre-monitor'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as stream:
+    groups = json.load(stream)["hooks"]["PreToolUse"]
+matches = [g for g in groups if g.get("matcher") == "Monitor"]
+if len(matches) != 1 or not any("hooks/pre-monitor" in h["command"] for h in matches[0]["hooks"]):
+    raise SystemExit(1)
+TEST_PY
+}
+
 test_real_atct_binary_denies_unapproved_goal_merge() {
   local bin_dir="$TEMP_ROOT/real-bin" home="$TEMP_ROOT/real-home" repo="$TEMP_ROOT/real-repo"
   local codex_command merge_input main_input output plugin_version
@@ -2121,6 +2167,7 @@ test_codex_merge_check_fails_closed_to_deny
 test_codex_merge_check_passes_through_atct_output
 test_claude_hook_commands_resolve_to_executable_scripts
 test_claude_merge_check_fails_closed_to_deny
+test_claude_monitor_check_fails_open
 test_real_atct_binary_denies_unapproved_goal_merge
 test_stop_hook_file_is_executable_but_other_hooks_remain
 test_mcp_instructions_include_active_goal_permission

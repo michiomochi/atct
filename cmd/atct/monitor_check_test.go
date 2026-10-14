@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
@@ -72,5 +73,81 @@ func TestMonitorCheckLetsAWorkerReportWorkItAlreadyHolds(t *testing.T) {
 		if isMonitorExemptTool(name) {
 			t.Errorf("isMonitorExemptTool(%q) = true; that call takes on work whose wakeups would not arrive", name)
 		}
+	}
+}
+
+func TestIsMonitorFormATCTWatch(t *testing.T) {
+	for _, tc := range []struct {
+		command string
+		want    bool
+	}{
+		{"atct watch --monitor --token t1", true},
+		{"/usr/local/bin/atct watch --monitor --token t1", true},
+		{"atct watch --monitor --token t1 --once", false},
+		{"atct watch --token t1", false},
+		{"sleep 600", false},
+		{"", false},
+	} {
+		if got := isMonitorFormATCTWatch(tc.command); got != tc.want {
+			t.Errorf("isMonitorFormATCTWatch(%q) = %v, want %v", tc.command, got, tc.want)
+		}
+	}
+}
+
+func TestMonitorFormDecisionFailsOpenAndDeniesOnlyABlock(t *testing.T) {
+	if got := monitorFormDecision(monitorCheckResponse{}, errors.New("daemon unreachable")); got != "" {
+		t.Fatalf("monitorFormDecision(error) = %s, want no output", got)
+	}
+	if got := monitorFormDecision(monitorCheckResponse{}, nil); got != "" {
+		t.Fatalf("monitorFormDecision(allow) = %s, want no output", got)
+	}
+	got := monitorFormDecision(monitorCheckResponse{Decision: "block", Reason: "use --once"}, nil)
+	want := monitorCheckDeny("use --once")
+	if got != want {
+		t.Fatalf("monitorFormDecision(block) = %s, want %s", got, want)
+	}
+}
+
+// Any Monitor call this hook cannot judge is let through, and so is every
+// Monitor call that is not a watch in the expiring form.
+func TestMonitorCheckOutputLetsUnjudgedMonitorCallsThrough(t *testing.T) {
+	for name, body := range map[string]string{
+		"no session_id":     `{"tool_name":"Monitor","tool_input":{"command":"atct watch --monitor --token t1"}}`,
+		"non-watch command": `{"session_id":"s1","tool_name":"Monitor","tool_input":{"command":"tail -f app.log"}}`,
+		"once watch":        `{"session_id":"s1","tool_name":"Monitor","tool_input":{"command":"atct watch --monitor --token t1 --once"}}`,
+		"ws source":         `{"session_id":"s1","tool_name":"Monitor","tool_input":{"ws":{"url":"wss://example.com"}}}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := monitorCheckOutput([]byte(body), nil, cliConfig{}, "", ""); got != "" {
+				t.Fatalf("monitorCheckOutput = %s, want no output", got)
+			}
+		})
+	}
+}
+
+// A body that does not parse as JSON cannot be attributed to a tool, so the
+// gate treats it as it always has: deny. Claude Code sends valid JSON, so this
+// is not reached for a Monitor call in practice.
+func TestMonitorCheckOutputDeniesUnparseableBody(t *testing.T) {
+	got := monitorCheckOutput([]byte(`{"tool_name":"Monitor"`), nil, cliConfig{}, "", "")
+	if !strings.Contains(got, `"permissionDecision":"deny"`) {
+		t.Fatalf("monitorCheckOutput = %s, want deny", got)
+	}
+}
+
+// A watch in the expiring form asks the daemon; with no daemon to ask, it is allowed.
+func TestMonitorCheckOutputAllowsWatchFormWhenDaemonIsUnreachable(t *testing.T) {
+	body := `{"session_id":"s1","tool_name":"Monitor","tool_input":{"command":"atct watch --monitor --token t1"}}`
+	if got := monitorCheckOutput([]byte(body), nil, cliConfig{}, "", ""); got != "" {
+		t.Fatalf("monitorCheckOutput = %s, want fail-open", got)
+	}
+}
+
+// The ATCT gate keeps denying when it cannot reach the daemon.
+func TestMonitorCheckOutputStillDeniesATCTToolWhenDaemonIsUnreachable(t *testing.T) {
+	body := `{"session_id":"s1","tool_name":"mcp__atct__atct_goal_get"}`
+	got := monitorCheckOutput([]byte(body), nil, cliConfig{}, "", "")
+	if !strings.Contains(got, `"permissionDecision":"deny"`) || !strings.Contains(got, "ATCT monitor-check failed") {
+		t.Fatalf("monitorCheckOutput = %s, want a deny naming the failed check", got)
 	}
 }
