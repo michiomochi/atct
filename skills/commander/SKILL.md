@@ -262,8 +262,12 @@ that subcommander is started:
 
    If the human approves or rejects a goal review in the chat, record it with
    `atct_decision_answer` before the merge: `answer` is `approve` (or `reject`,
-   with the reason in `answer_text`), and `human_quote` is the human's verbatim
-   words. Do not ask the human to approve again on the dashboard. If the record is
+   with the reason in `answer_text`), and `human_quote` is the fixed line
+   `approve #<decision_id>` (or `承認 #<decision_id>`; for reject, `reject #<decision_id>`
+   or `却下 #<decision_id>`), using the decision id of the review request. Ask the
+   human to reply with that line. If the human approves in ordinary words, do not
+   record it: ask for the fixed line instead. Only the current commander can
+   record it. Do not ask the human to approve again on the dashboard. If the record is
    refused, ask for the approval on the dashboard. `merge-check` stops a merge
    before the human approves.
    After a takeover, the current commander can run `atct_goal_review_complete` and `atct_goal_handoff_review_reject` as they are, but must re-receive with `atct_goal_handoff_review_receive` before `atct_goal_review_request`; `atct_handoff_recover` is not needed, and the previous commander has lost the claim and can do none of them.
