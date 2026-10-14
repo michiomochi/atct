@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -102,10 +103,12 @@ func (d *Daemon) writeChatAnswer(ctx context.Context, decision domain.Decision, 
 }
 
 // ensureCanAnswerFromChat admits the session that asked the decision, and a
-// commander the decision is routed to within the same project. Anyone else is
-// refused the same way decision.poll refuses a foreign decision.
+// commander the decision is routed to within the same project. A goal review
+// gets no shortcut for the asker: the session that asked it may have lost the
+// commander claim since, so only the commander holding the project now answers.
+// Anyone else is refused the same way decision.poll refuses a foreign decision.
 func (d *Daemon) ensureCanAnswerFromChat(ctx context.Context, agentSessionID int64, decision domain.Decision) error {
-	if decision.AgentSessionID == agentSessionID {
+	if decision.Kind != domain.KindGoalReview && decision.AgentSessionID == agentSessionID {
 		return nil
 	}
 	role, err := d.deriveSessionRole(ctx, agentSessionID)
@@ -132,6 +135,10 @@ func validateChatAnswer(decision domain.Decision, p decisionAnswerParams) error 
 		if p.Answer != "approve" && p.Answer != "reject" {
 			return fmt.Errorf("goal_review accepts answer approve or reject, not %q", p.Answer)
 		}
+		if !goalReviewQuoteMatches(decision, p.Answer, p.HumanQuote) {
+			forms := goalReviewForms(decision, p.Answer)
+			return fmt.Errorf("%w: goal review decision %d takes only the human's own line %q or %q; ask the human to reply with one of them", ErrHumanQuoteUnverified, decision.ID, forms[0], forms[1])
+		}
 	case p.Answer != "":
 		for _, option := range decision.Options {
 			if option.Label == p.Answer {
@@ -143,6 +150,30 @@ func validateChatAnswer(decision domain.Decision, p decisionAnswerParams) error 
 		return errors.New("an answer label or answer_text is required")
 	}
 	return nil
+}
+
+// goalReviewForms are the whole lines the human types to answer a goal review.
+func goalReviewForms(decision domain.Decision, answer string) []string {
+	id := strconv.FormatInt(decision.ID, 10)
+	if answer == "approve" {
+		return []string{"approve #" + id, "承認 #" + id}
+	}
+	return []string{"reject #" + id, "却下 #" + id}
+}
+
+// goalReviewQuoteMatches reports whether quote is one of the fixed forms for the
+// answer. Case is ignored, and the space before # is optional. The transcript
+// still has to hold the quote as a whole line, so this only fixes its shape.
+func goalReviewQuoteMatches(decision domain.Decision, answer, quote string) bool {
+	canonical := func(s string) string {
+		return strings.ReplaceAll(normalizeQuoteText(s), " #", "#")
+	}
+	for _, form := range goalReviewForms(decision, answer) {
+		if strings.EqualFold(canonical(quote), canonical(form)) {
+			return true
+		}
+	}
+	return false
 }
 
 // verifyHumanQuote finds the session's own transcript and returns every human

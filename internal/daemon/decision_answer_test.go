@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"encoding/json"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -353,10 +354,10 @@ func TestChatGoalReviewRefusesApproveTakenFromInsideALine(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AskDecision goal review: %v", err)
 	}
-	line := "まだ approve しないで、テストが落ちている"
+	line := fmt.Sprintf("まだ approve #%d しないで、テストが落ちている", review.ID)
 	f.writeHumanMessage(t, f.cmdKey, "pid-not-yet", line, answerTime(review))
 
-	if _, rpcError := f.answerRPC(t, f.commanderSessionID, review.ID, "approve", "", "approve"); !refused(rpcError) {
+	if _, rpcError := f.answerRPC(t, f.commanderSessionID, review.ID, "approve", "", fmt.Sprintf("approve #%d", review.ID)); !refused(rpcError) {
 		t.Fatalf("approve was taken from inside the human's line")
 	}
 	got, err := f.store.GetDecision(t.Context(), review.ID)
@@ -567,16 +568,17 @@ func TestChatGoalReviewApproveFromCommanderChat(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AskDecision goal review: %v", err)
 	}
-	f.writeHumanMessage(t, f.cmdKey, "pid-approve", "承認します", answerTime(review))
+	line := fmt.Sprintf("approve #%d", review.ID)
+	f.writeHumanMessage(t, f.cmdKey, "pid-approve", line, answerTime(review))
 
-	if _, rpcError := f.answerRPC(t, f.commanderSessionID, review.ID, "approve", "", "承認します"); refused(rpcError) {
+	if _, rpcError := f.answerRPC(t, f.commanderSessionID, review.ID, "approve", "", line); refused(rpcError) {
 		t.Fatalf("approve refused: %s", rpcError)
 	}
 	got, err := f.store.GetDecision(t.Context(), review.ID)
 	if err != nil {
 		t.Fatalf("GetDecision: %v", err)
 	}
-	if got.Status != domain.DecisionApplied || got.AnsweredVia != "chat" || got.AnswerQuote != "承認します" {
+	if got.Status != domain.DecisionApplied || got.AnsweredVia != "chat" || got.AnswerQuote != line {
 		t.Fatalf("goal review = %+v, want applied via chat", got)
 	}
 }
@@ -593,6 +595,129 @@ func TestChatGoalReviewRejectsOptionLabel(t *testing.T) {
 
 	if _, rpcError := f.answerRPC(t, f.commanderSessionID, review.ID, "A", "", "承認します"); !refused(rpcError) {
 		t.Fatalf("goal_review accepted an option label")
+	}
+}
+
+// goalReviewAsk asks a goal review in goal A, from agentSessionID (0 for none).
+func goalReviewAsk(t *testing.T, f chatAnswerFixture, agentSessionID int64) domain.Decision {
+	t.Helper()
+	review, err := f.store.AskDecision(t.Context(), store.AskInput{
+		GoalID: f.goalAID, Kind: domain.KindGoalReview, Question: "approve goal A?",
+		AgentSessionID: agentSessionID,
+	})
+	if err != nil {
+		t.Fatalf("AskDecision goal review: %v", err)
+	}
+	return review
+}
+
+// A human line that says not to merge must not become an approve.
+func TestChatGoalReviewRefusesNegatedLine(t *testing.T) {
+	f := newChatAnswerFixture(t)
+	review := goalReviewAsk(t, f, 0)
+	f.writeHumanMessage(t, f.cmdKey, "pid-negated", "まだマージしないで", answerTime(review))
+
+	if _, rpcError := f.answerRPC(t, f.commanderSessionID, review.ID, "approve", "", "まだマージしないで"); !refused(rpcError) {
+		t.Fatalf("approve recorded from a line that says not to merge")
+	}
+	got, err := f.store.GetDecision(t.Context(), review.ID)
+	if err != nil {
+		t.Fatalf("GetDecision: %v", err)
+	}
+	if got.Status != domain.DecisionOpen {
+		t.Fatalf("goal review status = %s after refused approve, want open", got.Status)
+	}
+}
+
+// The fixed forms are accepted, whichever case or spacing the human typed.
+func TestChatGoalReviewAcceptsFixedForms(t *testing.T) {
+	f := newChatAnswerFixture(t)
+	cases := []struct{ answer, form string }{
+		{"approve", "approve #%d"},
+		{"approve", "承認 #%d"},
+		{"approve", "Approve #%d"},
+		{"approve", "approve#%d"},
+		{"reject", "reject #%d"},
+		{"reject", "却下 #%d"},
+	}
+	for _, c := range cases {
+		review := goalReviewAsk(t, f, 0)
+		line := fmt.Sprintf(c.form, review.ID)
+		f.writeHumanMessage(t, f.cmdKey, fmt.Sprintf("pid-form-%d", review.ID), line, answerTime(review))
+
+		if _, rpcError := f.answerRPC(t, f.commanderSessionID, review.ID, c.answer, "テスト不足", line); refused(rpcError) {
+			t.Fatalf("%s refused for %q: %s", c.answer, line, rpcError)
+		}
+		got, err := f.store.GetDecision(t.Context(), review.ID)
+		if err != nil {
+			t.Fatalf("GetDecision: %v", err)
+		}
+		if got.AnsweredVia != "chat" || got.AnswerQuote != line {
+			t.Fatalf("goal review = %+v, want answered via chat with quote %q", got, line)
+		}
+	}
+}
+
+// A form for the other answer does not record this answer.
+func TestChatGoalReviewRefusesFormOfTheOtherAnswer(t *testing.T) {
+	f := newChatAnswerFixture(t)
+	review := goalReviewAsk(t, f, 0)
+	reject := fmt.Sprintf("reject #%d", review.ID)
+	f.writeHumanMessage(t, f.cmdKey, "pid-reject-form", reject, answerTime(review))
+	if _, rpcError := f.answerRPC(t, f.commanderSessionID, review.ID, "approve", "", reject); !refused(rpcError) {
+		t.Fatalf("approve recorded from a reject form")
+	}
+
+	approve := fmt.Sprintf("approve #%d", review.ID)
+	f.writeHumanMessage(t, f.cmdKey, "pid-approve-form", approve, answerTime(review))
+	if _, rpcError := f.answerRPC(t, f.commanderSessionID, review.ID, "reject", "理由", approve); !refused(rpcError) {
+		t.Fatalf("reject recorded from an approve form")
+	}
+	got, err := f.store.GetDecision(t.Context(), review.ID)
+	if err != nil {
+		t.Fatalf("GetDecision: %v", err)
+	}
+	if got.Status != domain.DecisionOpen {
+		t.Fatalf("goal review status = %s after refused answers, want open", got.Status)
+	}
+}
+
+// A form that names another decision's id does not answer this one.
+func TestChatGoalReviewRefusesFormOfAnotherDecision(t *testing.T) {
+	f := newChatAnswerFixture(t)
+	first := goalReviewAsk(t, f, 0)
+	second := goalReviewAsk(t, f, 0)
+	line := fmt.Sprintf("approve #%d", first.ID)
+	f.writeHumanMessage(t, f.cmdKey, "pid-first-form", line, answerTime(second))
+
+	if _, rpcError := f.answerRPC(t, f.commanderSessionID, second.ID, "approve", "", line); !refused(rpcError) {
+		t.Fatalf("approve of decision %d recorded for decision %d", first.ID, second.ID)
+	}
+	got, err := f.store.GetDecision(t.Context(), second.ID)
+	if err != nil {
+		t.Fatalf("GetDecision: %v", err)
+	}
+	if got.Status != domain.DecisionOpen {
+		t.Fatalf("second goal review status = %s after refused approve, want open", got.Status)
+	}
+}
+
+// The session that asked a goal review gets no shortcut: only the current commander answers.
+func TestChatGoalReviewRefusesAskerThatIsNotCommander(t *testing.T) {
+	f := newChatAnswerFixture(t)
+	review := goalReviewAsk(t, f, f.subcommanderSessionID)
+	line := fmt.Sprintf("approve #%d", review.ID)
+	f.writeHumanMessage(t, f.subKey, "pid-asker", line, answerTime(review))
+
+	if _, rpcError := f.answerRPC(t, f.subcommanderSessionID, review.ID, "approve", "", line); !refused(rpcError) {
+		t.Fatalf("goal review approved by a subcommander session that asked it")
+	}
+	got, err := f.store.GetDecision(t.Context(), review.ID)
+	if err != nil {
+		t.Fatalf("GetDecision: %v", err)
+	}
+	if got.Status != domain.DecisionOpen {
+		t.Fatalf("goal review status = %s after refused approve, want open", got.Status)
 	}
 }
 
