@@ -23,6 +23,8 @@ var archiveExemptMethods = map[string]bool{
 	"session.role":               true,
 	"session.stop_check":         true,
 	"session.monitor_check":      true,
+	"session.tool_use.bind":      true,
+	"session.tool_use.resolve":   true,
 	"development.start":          true,
 	"handoff.recover":            true,
 	"handoff.entry.history":      true,

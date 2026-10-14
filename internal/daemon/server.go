@@ -36,6 +36,9 @@ type Daemon struct {
 	// blocked for. It is memory only: a restarted daemon blocks once more.
 	stopMu      sync.Mutex
 	stopBlocked map[int64]string
+	// toolUse holds the PreToolUse bindings that attach a transport to the
+	// session its hook identified. Memory only.
+	toolUse toolUseBindings
 }
 
 const defaultVersion = "dev"
@@ -69,6 +72,12 @@ func (d *Daemon) newTracker() *wakeupTracker {
 func (d *Daemon) HTTPHandler() http.Handler {
 	api := httpapi.New(d.store).Handler()
 	mcpHandler := mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server {
+		// Claude Code sends server/discover on the same connection before
+		// initialize. Registering for it leaves an agent_sessions row no client
+		// uses; refusing it lets the client go on to initialize, which registers once.
+		if r.Header.Get("Mcp-Method") == "server/discover" {
+			return nil
+		}
 		client := mcpshim.NewClient(d.socketPath)
 		var registerResponse struct {
 			AgentSessionID int64 `json:"agent_session_id"`
