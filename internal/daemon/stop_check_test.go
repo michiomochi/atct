@@ -3,8 +3,11 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/michiomochi/atct/internal/domain"
 	"github.com/michiomochi/atct/internal/rpc"
@@ -510,4 +513,188 @@ func TestStopCheckExecutorIgnoresOtherTaskMonitor(t *testing.T) {
 	if detail != "" {
 		t.Fatalf("stopCheckExecutor = %q, want pass with own task's Monitor", detail)
 	}
+}
+
+// stopRepeat identifies the fixture's sessions and runs stopCheck as them.
+type stopRepeat struct {
+	stopCheckFixture
+	daemon *Daemon
+}
+
+func newStopRepeat(t *testing.T) stopRepeat {
+	t.Helper()
+	f := newStopCheckFixture(t)
+	t.Cleanup(func() { _ = f.store.Close() })
+	for _, id := range []int64{f.commanderID, f.subcommanderID, f.executorID} {
+		if _, _, err := f.store.IdentifyAgentSession(context.Background(), id, stopRepeatKey(id)); err != nil {
+			t.Fatalf("IdentifyAgentSession(%d): %v", id, err)
+		}
+	}
+	return stopRepeat{stopCheckFixture: f, daemon: f.daemon}
+}
+
+func stopRepeatKey(id int64) string { return fmt.Sprintf("stop-repeat-key-%d", id) }
+
+func (r stopRepeat) blocks(t *testing.T, id int64) bool {
+	t.Helper()
+	response, err := r.daemon.stopCheck(context.Background(), stopRepeatKey(id))
+	if err != nil {
+		t.Fatalf("stopCheck(%d): %v", id, err)
+	}
+	return response.Decision == "block"
+}
+
+func (r stopRepeat) createTask(t *testing.T) domain.Task {
+	t.Helper()
+	tasks, err := r.store.CreateTasks(context.Background(), r.goalID, "agent", fmt.Sprintf("stop-repeat-%d", time.Now().UnixNano()), []string{"task"}, []string{"description"})
+	if err != nil {
+		t.Fatalf("CreateTasks: %v", err)
+	}
+	return tasks[0]
+}
+
+// taskHandoff requests a task handoff from the subcommander and receives it as the executor.
+func (r stopRepeat) taskHandoff(t *testing.T, task domain.Task) string {
+	t.Helper()
+	id := fmt.Sprintf("stop-repeat-th-%d", task.ID)
+	addTaskHandoffDirect(t, r.store, id, task.ID, r.subcommanderID, 0)
+	if _, err := r.store.ReceiveTaskHandoff(context.Background(), id, task.ID, r.executorID); err != nil {
+		t.Fatalf("ReceiveTaskHandoff: %v", err)
+	}
+	return id
+}
+
+func (r stopRepeat) answerDecision(t *testing.T) {
+	t.Helper()
+	d, err := r.store.AskDecision(context.Background(), store.AskInput{
+		GoalID: r.goalID, Kind: domain.KindDecision, Question: "q",
+		Options: []domain.Option{{Label: "yes"}}, AgentSessionID: r.subcommanderID,
+	})
+	if err != nil {
+		t.Fatalf("AskDecision: %v", err)
+	}
+	if _, err := r.store.AnswerDecision(context.Background(), store.AnswerInput{DecisionID: d.ID, AnswerLabel: "yes", AnswerText: "yes"}); err != nil {
+		t.Fatalf("AnswerDecision: %v", err)
+	}
+}
+
+// Each role has its own way to hold a stop reason that stays the same while
+// the state around it changes.
+func stopRepeatRoles() map[string]struct {
+	session func(stopRepeat) int64
+	setup   func(*testing.T, stopRepeat)
+} {
+	return map[string]struct {
+		session func(stopRepeat) int64
+		setup   func(*testing.T, stopRepeat)
+	}{
+		"commander":    {func(r stopRepeat) int64 { return r.commanderID }, func(*testing.T, stopRepeat) {}},
+		"subcommander": {func(r stopRepeat) int64 { return r.subcommanderID }, func(t *testing.T, r stopRepeat) { stopCheckGoalHandoff(t, r.stopCheckFixture, true) }},
+		"executor": {func(r stopRepeat) int64 { return r.executorID }, func(t *testing.T, r stopRepeat) {
+			stopCheckGoalHandoff(t, r.stopCheckFixture, true)
+			r.taskHandoff(t, r.createTask(t))
+		}},
+	}
+}
+
+func TestStopCheckRepeatSameStateDoesNotBlockAgain(t *testing.T) {
+	for name, role := range stopRepeatRoles() {
+		t.Run(name, func(t *testing.T) {
+			r := newStopRepeat(t)
+			role.setup(t, r)
+			id := role.session(r)
+			if !r.blocks(t, id) {
+				t.Fatal("first stop did not block")
+			}
+			if r.blocks(t, id) || r.blocks(t, id) {
+				t.Fatal("a repeat stop in the same state blocked again")
+			}
+		})
+	}
+}
+
+func TestStopCheckBlocksAgainWhenStateChanges(t *testing.T) {
+	for _, tc := range []struct {
+		role   string
+		change string
+		do     func(*testing.T, stopRepeat)
+	}{
+		{"commander", "task created", func(t *testing.T, r stopRepeat) { r.createTask(t) }},
+		{"commander", "task done", func(t *testing.T, r stopRepeat) {
+			if _, err := r.store.DB().ExecContext(context.Background(), "UPDATE tasks SET status = 'done' WHERE goal_id = ?", r.goalID); err != nil {
+				t.Fatalf("mark task done: %v", err)
+			}
+		}},
+		{"subcommander", "task handoff received", func(t *testing.T, r stopRepeat) { r.taskHandoff(t, r.createTask(t)) }},
+		{"subcommander", "decision answered", func(t *testing.T, r stopRepeat) { r.answerDecision(t) }},
+		{"executor", "review requested", func(t *testing.T, r stopRepeat) {
+			task, err := r.store.ListTasks(context.Background(), r.goalID)
+			if err != nil || len(task) != 1 {
+				t.Fatalf("ListTasks = %v, %v", task, err)
+			}
+			if _, err := r.store.RequestTaskHandoffReview(context.Background(), fmt.Sprintf("stop-repeat-th-%d", task[0].ID), task[0].ID, r.executorID, "ready"); err != nil {
+				t.Fatalf("RequestTaskHandoffReview: %v", err)
+			}
+		}},
+	} {
+		t.Run(tc.role+"/"+tc.change, func(t *testing.T) {
+			r := newStopRepeat(t)
+			role := stopRepeatRoles()[tc.role]
+			if tc.change == "task done" {
+				r.createTask(t)
+			}
+			role.setup(t, r)
+			id := role.session(r)
+			if !r.blocks(t, id) {
+				t.Fatal("first stop did not block")
+			}
+			tc.do(t, r)
+			if !r.blocks(t, id) {
+				t.Fatalf("stop after %q did not block", tc.change)
+			}
+		})
+	}
+}
+
+func TestStopCheckBlocksAgainWhenReasonChanges(t *testing.T) {
+	r := newStopRepeat(t)
+	stopCheckGoalHandoff(t, r.stopCheckFixture, true)
+	if !r.blocks(t, r.subcommanderID) {
+		t.Fatal("first stop did not block")
+	}
+	// Requested and not received, with no Monitor: a different reason.
+	task := r.createTask(t)
+	addTaskHandoffDirect(t, r.store, "stop-repeat-unreceived", task.ID, r.subcommanderID, 0)
+	if !r.blocks(t, r.subcommanderID) {
+		t.Fatal("stop with a different reason did not block")
+	}
+}
+
+func TestStopCheckRestartedDaemonBlocksAgain(t *testing.T) {
+	r := newStopRepeat(t)
+	if !r.blocks(t, r.commanderID) || r.blocks(t, r.commanderID) {
+		t.Fatal("want block then pass in the same state")
+	}
+	r.daemon = New(r.store)
+	if !r.blocks(t, r.commanderID) {
+		t.Fatal("a new daemon did not block in the same state")
+	}
+}
+
+func TestStopCheckConcurrentSessions(t *testing.T) {
+	r := newStopRepeat(t)
+	var wg sync.WaitGroup
+	for _, id := range []int64{r.commanderID, r.subcommanderID, r.executorID} {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < 20; i++ {
+				if _, err := r.daemon.stopCheck(context.Background(), stopRepeatKey(id)); err != nil {
+					t.Errorf("stopCheck(%d): %v", id, err)
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
 }
