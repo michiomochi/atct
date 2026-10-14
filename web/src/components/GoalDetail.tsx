@@ -23,6 +23,7 @@ import { GoalDiff } from "./GoalDiff";
 import { TaskCommitList } from "./TaskCommitList";
 import { TaskTable } from "./TaskTable";
 import { HandoffTimeline } from "./HandoffTimeline";
+import { NextAction } from "./NextAction";
 import { ReviewExchanges } from "./ReviewExchanges";
 import { UnattachedDecisionList } from "./UnattachedDecisionList";
 
@@ -372,6 +373,11 @@ export function GoalDetail({ id }: Props) {
               `${t("goal.column.status")}: ${statusLabel(locale, data.goal.goal.status)}`,
               `${t("goal.column.updatedAt")}: ${formatDateTime(locale, data.goal.goal.updated_at)}`,
             ].join(" · ")}
+          </p>
+        )}
+        {data?.goal.goal.next_action?.code && (
+          <p className="mt-3 min-w-0 break-words text-base text-ink-700">
+            {t("goal.column.nextAction")}: <NextAction action={data.goal.goal.next_action} />
           </p>
         )}
         {data?.goal.goal.project_archived && (

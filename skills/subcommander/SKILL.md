@@ -15,6 +15,8 @@ and the exact `session_key` from SessionStart; optional `handoff_id` and
   and `plan` fields, never into files.
 - After plan acceptance, declare and delegate each task, review executor
   handoffs, and accept or reject them.
+- Take only the parts of a goal you need from `atct_goal_get` with `fields` (for
+  example `fields: ["task_summary"]` for task status alone); omit it for everything.
 - Commit the goal's accepted work and submit its goal handoff for commander
   review. Ask the human only through ATCT decisions, and
   only in the cases `atct:atct` lists under `## Decisions and unsafe

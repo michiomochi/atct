@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -23,7 +24,8 @@ type GoalListIn struct {
 type DevelopmentStartIn struct{}
 
 type GoalGetIn struct {
-	GoalID mcpID `json:"goal_id"`
+	GoalID mcpID    `json:"goal_id"`
+	Fields []string `json:"fields,omitempty" jsonschema:"optional; return only these. A goal field name (content, spec, plan, status, work_done, now_possible, how_to_verify, surprises, needs_review, result_summary, next_goals, ...), tasks (all task fields), task_summary (id, title, status, order of each task) or goal_review. Omit for everything."`
 }
 
 type GoalSessionsIn struct {
@@ -590,6 +592,78 @@ func callWithUnappliedDecisions(ctx context.Context, c *Client, method string, p
 	return nil, RawWithUnappliedDecisions{Data: shapeData(method, out)}, nil
 }
 
+func goalGet(ctx context.Context, c *Client, in GoalGetIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
+	res, out, err := callWithUnappliedDecisions(ctx, c, "goal.get", map[string]any{"goal_id": in.GoalID})
+	if err != nil || len(in.Fields) == 0 {
+		return res, out, err
+	}
+	data, err := selectGoalFields(out.Data.(json.RawMessage), in.Fields)
+	if err != nil {
+		return nil, RawWithUnappliedDecisions{}, err
+	}
+	out.Data = data
+	return res, out, nil
+}
+
+// selectGoalFields keeps only the named parts of a goal.get response. A name is
+// a key of data.goal, or tasks, task_summary or goal_review. Raw values are
+// kept as they are, so an id beyond 2^53 keeps every digit.
+func selectGoalFields(data json.RawMessage, fields []string) (json.RawMessage, error) {
+	var in struct {
+		Goal       map[string]json.RawMessage `json:"goal"`
+		Tasks      json.RawMessage            `json:"tasks"`
+		GoalReview json.RawMessage            `json:"goal_review"`
+	}
+	if err := json.Unmarshal(data, &in); err != nil {
+		return nil, fmt.Errorf("decode goal.get response: %w", err)
+	}
+	out := map[string]any{}
+	goal := map[string]json.RawMessage{}
+	for _, f := range fields {
+		switch f {
+		case "tasks":
+			out["tasks"] = in.Tasks
+		case "goal_review":
+			if in.GoalReview != nil {
+				out["goal_review"] = in.GoalReview
+			}
+		case "task_summary":
+			var tasks []map[string]json.RawMessage
+			if err := json.Unmarshal(in.Tasks, &tasks); err != nil {
+				return nil, fmt.Errorf("decode goal.get tasks: %w", err)
+			}
+			summary := make([]map[string]json.RawMessage, 0, len(tasks))
+			for _, task := range tasks {
+				s := map[string]json.RawMessage{}
+				for _, k := range []string{"id", "title", "status", "order"} {
+					s[k] = task[k]
+				}
+				summary = append(summary, s)
+			}
+			out["task_summary"] = summary
+		default:
+			v, ok := in.Goal[f]
+			if !ok {
+				names := []string{"tasks", "task_summary", "goal_review"}
+				for k := range in.Goal {
+					names = append(names, k)
+				}
+				sort.Strings(names)
+				return nil, fmt.Errorf("unknown field %q; use one of: %s", f, strings.Join(names, ", "))
+			}
+			goal[f] = v
+		}
+	}
+	out["goal"] = goal
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(out); err != nil {
+		return nil, err
+	}
+	return json.RawMessage(bytes.TrimRight(buf.Bytes(), "\n")), nil
+}
+
 func sessionRole(ctx context.Context, c *Client, agentSessionID int64, requireIdentified bool) (roleResponse, error) {
 	var raw json.RawMessage
 	if err := c.Call(ctx, "session.role", map[string]any{
@@ -833,9 +907,7 @@ func Register(server *mcp.Server, c *Client, agentSessionID int64) {
 		Description:  "Get a goal's full content and all tasks, including done and dropped tasks.",
 		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in GoalGetIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
-		return callWithUnappliedDecisions(ctx, c, "goal.get", map[string]any{
-			"goal_id": in.GoalID,
-		})
+		return goalGet(ctx, c, in)
 	})
 
 	addMCPTool[GoalSessionsIn, RawWithUnappliedDecisions](server, &mcp.Tool{

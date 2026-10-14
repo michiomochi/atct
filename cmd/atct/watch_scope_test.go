@@ -513,3 +513,98 @@ func TestWatchCommanderLivenessNeedsATarget(t *testing.T) {
 		}
 	}
 }
+
+func TestWatchCommanderLivenessNamesARejectedGoalReviewUntilTheHandoffIsRejected(t *testing.T) {
+	at := func(value string) *string { return &value }
+	scope := watchScope{Role: "commander", ProjectID: "1"}
+	goals := []watchReconciliationGoal{{ID: "7", Status: "active"}}
+	rejected := watchDecision{ID: "3", Kind: "goal_review", Status: "answered", AnswerLabel: "reject", GoalID: "7", AnsweredAt: at("2026-01-01T00:00:10Z")}
+	handoff := watchReconciliationHandoff{ID: "h", GoalID: 7, ReviewRequestedAt: at("2026-01-01T00:00:05Z"), ReviewReceivedAt: at("2026-01-01T00:00:06Z")}
+
+	state := watchReconciliation{Goals: goals, Decisions: []watchDecision{rejected}, GoalHandoffs: []watchReconciliationHandoff{handoff}}
+	kind, handoffID, goalID := watchCommanderLivenessTarget(state)
+	if kind != watchKindGoalReviewRejected || handoffID != "h" || goalID != "7" {
+		t.Fatalf("target = %q %q %q, want the rejected goal review", kind, handoffID, goalID)
+	}
+	if !watchLivenessActionable(scope, state) {
+		t.Fatal("rejected goal review is not actionable")
+	}
+
+	// atct_goal_handoff_review_reject stamps ReviewRejectedAt: liveness is gone.
+	done := handoff
+	done.ReviewRejectedAt = at("x")
+	state.GoalHandoffs = []watchReconciliationHandoff{done}
+	if watchLivenessActionable(scope, state) {
+		t.Fatal("liveness remained after the goal handoff review was rejected")
+	}
+
+	// A newer goal_review supersedes the rejection.
+	state.GoalHandoffs = []watchReconciliationHandoff{handoff}
+	state.Decisions = []watchDecision{rejected, {ID: "4", Kind: "goal_review", Status: "open", GoalID: "7"}}
+	if kind, _, _ := watchCommanderLivenessTarget(state); kind == watchKindGoalReviewRejected {
+		t.Fatal("a superseded rejection was still named")
+	}
+}
+
+func TestWatchCommanderLivenessIgnoresAResubmittedHandoffUnderARejectedGoalReview(t *testing.T) {
+	at := func(value string) *string { return &value }
+	// The resubmission cleared ReviewRejectedAt on the same handoff and the
+	// commander has received it; the latest goal_review is still the rejected one.
+	state := watchReconciliation{
+		Goals:     []watchReconciliationGoal{{ID: "7", Status: "active"}},
+		Decisions: []watchDecision{{ID: "3", Kind: "goal_review", Status: "answered", AnswerLabel: "reject", GoalID: "7", AnsweredAt: at("2026-01-01T00:00:10.5Z")}},
+		GoalHandoffs: []watchReconciliationHandoff{{ID: "h", GoalID: 7,
+			ReviewRequestedAt: at("2026-01-01T00:00:20.000000000Z"), ReviewReceivedAt: at("2026-01-01T00:00:21Z")}},
+	}
+	if kind, _, _ := watchCommanderLivenessTarget(state); kind == watchKindGoalReviewRejected {
+		t.Fatal("a resubmitted handoff was still named as a rejected goal review")
+	}
+}
+
+func TestWatchScopesDoNotDeliverLifecycleCopyHandoffEntries(t *testing.T) {
+	copies := []watchDecision{
+		{Kind: "request", BodyPreview: "any body"},
+		{Kind: "received", BodyPreview: "any body"},
+		{Kind: "completed", BodyPreview: "any body"},
+		{Kind: "review_received", BodyPreview: "received"},
+	}
+	for name, newFilter := range map[string]func() *watchScopeFilter{
+		"project":      func() *watchScopeFilter { return newWatchScopeFilter("") },
+		"goal":         func() *watchScopeFilter { return newWatchScopeFilter("42") },
+		"task":         func() *watchScopeFilter { return newWatchTaskScopeFilter("46") },
+		"pass-through": newWatchPassThroughFilter,
+	} {
+		for _, decision := range copies {
+			decision.GoalID, decision.TaskID = "42", "46"
+			if newFilter().delivers("handoff_entry_added", decision) {
+				t.Fatalf("%s scope delivered a lifecycle copy %+v", name, decision)
+			}
+		}
+	}
+}
+
+func TestWatchScopesDeliverAppendedHandoffEntries(t *testing.T) {
+	appended := []watchDecision{
+		{Kind: "review_requested", BodyPreview: "ready"},
+		{Kind: "review_rejected", BodyPreview: "fix it"},
+		{Kind: "review_received", BodyPreview: "note"},
+	}
+	for _, decision := range appended {
+		decision.GoalID, decision.TaskID = "42", "46"
+		other := decision
+		other.TaskID = "47"
+		for name, filter := range map[string]*watchScopeFilter{
+			"project":      newWatchScopeFilter(""),
+			"goal":         newWatchScopeFilter("42"),
+			"task":         newWatchTaskScopeFilter("46"),
+			"pass-through": newWatchPassThroughFilter(),
+		} {
+			if !filter.delivers("handoff_entry_added", decision) {
+				t.Fatalf("%s scope did not deliver an appended entry %+v", name, decision)
+			}
+		}
+		if newWatchTaskScopeFilter("46").delivers("handoff_entry_added", other) {
+			t.Fatalf("task scope delivered another task's entry %+v", other)
+		}
+	}
+}

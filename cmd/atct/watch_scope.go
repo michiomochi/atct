@@ -1,6 +1,9 @@
 package main
 
-import "strconv"
+import (
+	"strconv"
+	"time"
+)
 
 type watchScopeFilter struct {
 	goalID      string
@@ -57,10 +60,15 @@ func watchCommanderLivenessActionable(state watchReconciliation) bool {
 	return kind != "" || handoffID != "" || goalID != ""
 }
 
-// watchCommanderLivenessTarget names what the commander is to act on: a goal or
-// plan handoff waiting for its review, else a goal whose approved review is
-// waiting to be completed. All empty means there is nothing to name.
+// watchCommanderLivenessTarget names what the commander is to act on: a goal
+// whose human review was rejected and whose handoff the commander has yet to
+// reject, else a goal or plan handoff waiting for its review, else a goal whose
+// approved review is waiting to be completed. All empty means there is nothing
+// to name.
 func watchCommanderLivenessTarget(state watchReconciliation) (kind, handoffID, goalID string) {
+	if handoffID, goalID := watchRejectedGoalReviewTarget(state); handoffID != "" {
+		return watchKindGoalReviewRejected, handoffID, goalID
+	}
 	for _, group := range []struct {
 		kind     string
 		handoffs []watchReconciliationHandoff
@@ -78,6 +86,51 @@ func watchCommanderLivenessTarget(state watchReconciliation) (kind, handoffID, g
 		}
 	}
 	return "", "", ""
+}
+
+const watchKindGoalReviewRejected = "goal_review_rejected"
+
+// watchRejectedGoalReviewTarget finds a goal whose latest goal_review the human
+// rejected while its goal handoff is still open with the review received. It
+// ends when atct_goal_handoff_review_reject stamps ReviewRejectedAt, and again
+// once a resubmission opens a newer goal_review.
+func watchRejectedGoalReviewTarget(state watchReconciliation) (handoffID, goalID string) {
+	latest := map[string]int64{}
+	for _, decision := range state.Decisions {
+		if id, err := strconv.ParseInt(decision.ID, 10, 64); err == nil && decision.Kind == "goal_review" && id > latest[decision.GoalID] {
+			latest[decision.GoalID] = id
+		}
+	}
+	for _, decision := range state.Decisions {
+		if decision.Kind != "goal_review" || decision.Status != "answered" || decision.AnswerLabel != "reject" || !watchReconciliationHasActiveGoal(state, decision.GoalID) {
+			continue
+		}
+		if id, err := strconv.ParseInt(decision.ID, 10, 64); err != nil || id != latest[decision.GoalID] {
+			continue
+		}
+		for _, handoff := range state.GoalHandoffs {
+			// A resubmission clears ReviewRejectedAt on the same handoff while this
+			// goal_review stays rejected, so a review requested after the answer is
+			// the resubmission, not work still owed.
+			if strconv.FormatInt(handoff.GoalID, 10) == decision.GoalID && watchHandoffOpen(handoff) &&
+				handoff.ReviewRequestedAt != nil && handoff.ReviewReceivedAt != nil && handoff.ReviewRejectedAt == nil &&
+				!watchTimestampAfter(handoff.ReviewRequestedAt, decision.AnsweredAt) {
+				return handoff.ID, decision.GoalID
+			}
+		}
+	}
+	return "", ""
+}
+
+// watchTimestampAfter reports whether a is strictly later than b. A missing or
+// unparsable timestamp is never later.
+func watchTimestampAfter(a, b *string) bool {
+	if a == nil || b == nil {
+		return false
+	}
+	ta, errA := time.Parse(time.RFC3339Nano, *a)
+	tb, errB := time.Parse(time.RFC3339Nano, *b)
+	return errA == nil && errB == nil && ta.After(tb)
 }
 
 func watchSubcommanderLivenessActionable(scope watchScope, state watchReconciliation) bool {
@@ -225,7 +278,26 @@ func (f *watchScopeFilter) deliversSnapshotDecision(decision watchDecision) bool
 	return f.delivers("decision.answered", decision)
 }
 
+// watchHandoffEntryIsLifecycleCopy reports a handoff entry that only repeats a
+// lifecycle event the watcher already gets. Only request, received and
+// completed entries are written by lifecycle code alone: the entry kinds that
+// exist are the six in the schema CHECK, and validateHandoffEntryRequest lets a
+// participant append only review_requested, review_received and review_rejected.
+// The review receive ack is a review_received entry with the fixed body "received".
+func watchHandoffEntryIsLifecycleCopy(decision watchDecision) bool {
+	switch decision.Kind {
+	case "request", "received", "completed":
+		return true
+	case "review_received":
+		return decision.BodyPreview == "received"
+	}
+	return false
+}
+
 func (f *watchScopeFilter) delivers(eventName string, decision watchDecision) bool {
+	if eventName == "handoff_entry_added" && watchHandoffEntryIsLifecycleCopy(decision) {
+		return false
+	}
 	if f.taskID != "" {
 		return decision.TaskID == f.taskID
 	}
