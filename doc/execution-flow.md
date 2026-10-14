@@ -51,12 +51,22 @@ canonical な agent session を確定し、receive は role と claim evidence �
 `atct_role` は継続作業の前提ではなく、役割異常の診断に使う。
 
 1 つのクライアントは複数の MCP transport を開き、再接続や daemon 再起動でさらに増える。
-transport ごとに新しい agent_sessions 行ができる。`session.identify` を一度も実行していない行は
-何も保有せず、役割を導出すると `executor` になってしまう。そのため `atct_role` はその行を拒否し、
-`atct_session_identify` を呼ぶよう伝えるエラーを返す。そのような行からの RPC が失敗した場合も、
-同じ案内がエラーに付く。同じ `session_key` で `session.identify` を実行すると canonical な行に
-再接続されるので、claim と monitor は同じ行に残る。クライアントを区別する列は無いため、
-代わりに `/mcp` ハンドラが登録ごとにリモートアドレスと user-agent をログに残す。
+transport 1 本につき agent_sessions 行は 1 件だけ作られる。Claude Code の `server/discover`
+には行を作らない。`session.identify` を一度も実行していない行は何も保有せず、役割を導出すると
+`executor` になってしまう。そのため `atct_role` はその行を拒否し、`atct_session_identify` を
+呼ぶよう伝えるエラーを返す。そのような行からの RPC が失敗した場合も、同じ案内がエラーに付く。
+同じ `session_key` で `session.identify` を実行すると canonical な行に再接続されるので、
+claim と monitor は同じ行に残る。クライアントを区別する列は無いため、代わりに `/mcp` ハンドラが
+登録ごとにリモートアドレスと user-agent をログに残す。
+
+Claude Code では、一度識別した session が新しい transport へ移るときの再識別が自動で行われ、
+`atct_session_identify` は要らない（`session_key` を DB が一度も見ていない最初の呼び出しだけは、
+従来どおり identify か handoff の receive が登録する）。PreToolUse hook
+（`atct monitor-check`）が ATCT のツール呼び出しの `tool_use_id` を `session.tool_use.bind` で
+daemon に登録する。MCP 側は同じ呼び出しの `_meta["claudecode/toolUseId"]` を読み、
+`session.tool_use.resolve` で canonical な行へ接続し直す。binding は 30 分で切れ、daemon の
+再起動で消える。hook の無い client（Codex など）は `_meta` を持たないため、従来どおり
+`atct_session_identify` を呼ぶ。
 
 ## handoff の状態
 
