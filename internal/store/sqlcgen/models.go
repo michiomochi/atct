@@ -40,6 +40,10 @@ type Decision struct {
 	AppliedAt        sql.NullString
 	AgentSessionID   int64
 	CreatedAt        string
+	AnsweredVia      string
+	AnswerQuote      string
+	AnswerEvidence   string
+	AnswerPromptID   string
 }
 
 type Goal struct {

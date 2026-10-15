@@ -133,6 +133,9 @@ type decisionHistoryView struct {
 	DefaultAppliedAt *time.Time `json:"default_applied_at"`
 	AnsweredAt       *time.Time `json:"answered_at"`
 	AppliedAt        *time.Time `json:"applied_at"`
+	AnsweredVia      string     `json:"answered_via"`
+	AnswerQuote      string     `json:"answer_quote"`
+	AnswerEvidence   string     `json:"answer_evidence"`
 }
 
 type taskCommitView struct {
@@ -1486,6 +1489,9 @@ func newDecisionHistoryView(decision domain.Decision) decisionHistoryView {
 		DefaultAppliedAt: decision.DefaultAppliedAt,
 		AnsweredAt:       decision.AnsweredAt,
 		AppliedAt:        decision.AppliedAt,
+		AnsweredVia:      decision.AnsweredVia,
+		AnswerQuote:      decision.AnswerQuote,
+		AnswerEvidence:   decision.AnswerEvidence,
 	}
 }
 

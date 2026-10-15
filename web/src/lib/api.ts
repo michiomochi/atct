@@ -103,6 +103,9 @@ export interface Decision {
   priority_reason?: string;
   answer_label?: string;
   answer_text?: string;
+  answered_via?: string;
+  answer_quote?: string;
+  answer_evidence?: string;
   answered_at?: string;
   applied_at?: string;
   agent_session_id: string;
@@ -126,6 +129,9 @@ export interface DecisionHistoryEntry {
   default_applied_at?: string;
   answered_at: string;
   applied_at: string;
+  answered_via?: string;
+  answer_quote?: string;
+  answer_evidence?: string;
 }
 
 export const HANDOFF_ENTRY_KINDS = [

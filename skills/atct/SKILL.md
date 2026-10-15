@@ -190,6 +190,44 @@ in three calls of 4, 4 and 2 yields the same approved outcome, so the number of
 launches is not a change to the approved scope. Its small API cost was part of the
 approved trial, so it is not a new cost to ask about either. Do not ask.
 
+A human's answer given in the chat is recorded with `atct_decision_answer`, not
+by asking the human to repeat it on the dashboard. Pass `decision_id`, the
+`answer` (an option label; for a goal review, `approve` or `reject`), an optional
+`answer_text` (a supplement, or the reason for a goal-review reject), and
+`human_quote`: the verbatim text the human typed in this chat that gives the
+answer.
+
+For a goal review, `human_quote` must be one of these whole lines, naming the
+decision id the dashboard shows: `approve #<decision_id>` or `承認 #<decision_id>`
+for approve, `reject #<decision_id>` or `却下 #<decision_id>` for reject. Case is
+ignored, and the space before `#` is optional. Ask the human to reply with that
+line. When the human answers a goal review in ordinary words (「よい」「承認します」),
+do not record it: ask for the fixed line instead. Such a sentence is refused, and
+so is a quote cut out of it.
+
+The daemon checks the quote against the harness's own transcript, not a copy
+made by a hook, so no hook setup is needed in Codex. The transcript is read
+from the Claude Code projects folder under `CLAUDE_CONFIG_DIR` or the Codex
+sessions folder under `CODEX_HOME`. When the variable is set, only that folder
+is read. The home folder (`~/.claude` or `~/.codex`) is read only when the
+variable is empty. The daemon must see the same values as the harness, or a
+genuine answer is refused too. The quote must be one whole line of a
+message the human typed after the decision was asked, and it must match that
+line exactly. A summary, a paraphrase, part of a line, or a quote from earlier
+in the conversation is refused. One human message answers only one decision.
+Never write a `human_quote` the human did not type.
+
+Messages from agents do not count, even when they arrive as a prompt: input that
+`atct codex monitor` sent (its `client_id` starts with `atct:`) and input Codex
+generated itself (no `client_id`) are not human answers; do not record them.
+Only the session that asked the decision can record it, except a goal review:
+only the commander holding the project now can record that, even when another
+session asked it. A decision with no asking session is also for the commander of
+the same project. If the
+human's answer is unclear, do not record it: ask again. If the record is
+refused, ask the human to answer on the dashboard and do not retry with other
+quotes.
+
 ## Archived projects
 
 `atct project archive <name|id>` hides a project without deleting anything: its

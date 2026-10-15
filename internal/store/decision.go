@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/michiomochi/atct/internal/domain"
@@ -129,6 +130,9 @@ type decisionRow struct {
 	AppliedAt        sql.NullString
 	AgentSessionID   int64
 	CreatedAt        string
+	AnsweredVia      string
+	AnswerQuote      string
+	AnswerEvidence   string
 }
 
 func decisionFromRow(row decisionRow) (domain.Decision, error) {
@@ -142,6 +146,9 @@ func decisionFromRow(row decisionRow) (domain.Decision, error) {
 		DefaultOption:  row.DefaultOption,
 		AnswerLabel:    row.AnswerLabel,
 		AnswerText:     row.AnswerText,
+		AnsweredVia:    row.AnsweredVia,
+		AnswerQuote:    row.AnswerQuote,
+		AnswerEvidence: row.AnswerEvidence,
 		AgentSessionID: row.AgentSessionID,
 		CreatedAt:      time.Time{},
 	}
@@ -212,6 +219,9 @@ func decisionRowFromSQLC(row sqlcgen.Decision) decisionRow {
 		AppliedAt:        row.AppliedAt,
 		AgentSessionID:   row.AgentSessionID,
 		CreatedAt:        row.CreatedAt,
+		AnsweredVia:      row.AnsweredVia,
+		AnswerQuote:      row.AnswerQuote,
+		AnswerEvidence:   row.AnswerEvidence,
 	}
 }
 
@@ -227,24 +237,7 @@ func (s *Store) GetDecision(ctx context.Context, id int64) (domain.Decision, err
 	if err != nil {
 		return domain.Decision{}, err
 	}
-	return decisionFromRow(decisionRow{
-		ID:               row.ID,
-		GoalID:           row.GoalID,
-		TaskID:           row.TaskID,
-		Kind:             row.Kind,
-		Question:         row.Question,
-		Options:          row.Options,
-		Status:           row.Status,
-		DefaultOption:    row.DefaultOption,
-		DefaultAfterMs:   row.DefaultAfterMs,
-		DefaultAppliedAt: row.DefaultAppliedAt,
-		AnswerLabel:      row.AnswerLabel,
-		AnswerText:       row.AnswerText,
-		AnsweredAt:       row.AnsweredAt,
-		AppliedAt:        row.AppliedAt,
-		AgentSessionID:   row.AgentSessionID,
-		CreatedAt:        row.CreatedAt,
-	})
+	return decisionFromRow(decisionRowFromSQLC(row))
 }
 
 func (s *Store) ListOpenDecisions(ctx context.Context, goalID int64) ([]domain.Decision, error) {
@@ -279,14 +272,43 @@ type AnswerInput struct {
 	AnswerText  string
 }
 
+// AnswerSource records where an answer came from. The zero value is a dashboard
+// answer, which leaves the source columns empty.
+type AnswerSource struct {
+	Via      string
+	Quote    string
+	Evidence string
+	// PromptID is the human prompt the answer came from. Each prompt answers
+	// at most one decision.
+	PromptID string
+}
+
+// ErrAnswerPromptReused refuses a chat answer whose human prompt already
+// answered another decision.
+var ErrAnswerPromptReused = errors.New("human prompt already answered another decision")
+
+// answerWriteError maps the unique index on answer_prompt_id to
+// ErrAnswerPromptReused. Any other failure keeps op as its context.
+func answerWriteError(op string, err error) error {
+	if strings.Contains(err.Error(), "UNIQUE constraint failed: decisions.answer_prompt_id") {
+		return fmt.Errorf("%w: %v", ErrAnswerPromptReused, err)
+	}
+	return fmt.Errorf("%s: %w", op, err)
+}
+
 // AnswerDecision performs a conditional transition from open.
 // WHERE status = 'open' ensures only one concurrent answer succeeds.
 // The application must enforce this at the database boundary because humans can answer twice in separate tabs.
 func (s *Store) AnswerDecision(ctx context.Context, in AnswerInput) (domain.Decision, error) {
-	return s.answerDecision(ctx, in, "decision.answered")
+	return s.AnswerDecisionWith(ctx, in, AnswerSource{})
 }
 
-func (s *Store) answerDecision(ctx context.Context, in AnswerInput, eventName string) (domain.Decision, error) {
+// AnswerDecisionWith is AnswerDecision that also records the answer's source.
+func (s *Store) AnswerDecisionWith(ctx context.Context, in AnswerInput, src AnswerSource) (domain.Decision, error) {
+	return s.answerDecision(ctx, in, src, "decision.answered")
+}
+
+func (s *Store) answerDecision(ctx context.Context, in AnswerInput, src AnswerSource, eventName string) (domain.Decision, error) {
 	now := time.Now().UTC().Format(time.RFC3339)
 
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -296,13 +318,17 @@ func (s *Store) answerDecision(ctx context.Context, in AnswerInput, eventName st
 	defer tx.Rollback()
 	q := decisionQueries(s).WithTx(tx)
 	res, err := q.AnswerDecision(ctx, sqlcgen.AnswerDecisionParams{
-		AnswerLabel: in.AnswerLabel,
-		AnswerText:  in.AnswerText,
-		AnsweredAt:  sql.NullString{String: now, Valid: true},
-		ID:          in.DecisionID,
+		AnswerLabel:    in.AnswerLabel,
+		AnswerText:     in.AnswerText,
+		AnsweredAt:     sql.NullString{String: now, Valid: true},
+		AnsweredVia:    src.Via,
+		AnswerQuote:    src.Quote,
+		AnswerEvidence: src.Evidence,
+		AnswerPromptID: src.PromptID,
+		ID:             in.DecisionID,
 	})
 	if err != nil {
-		return domain.Decision{}, fmt.Errorf("update decision: %w", err)
+		return domain.Decision{}, answerWriteError("update decision", err)
 	}
 	n, err := res.RowsAffected()
 	if err != nil {

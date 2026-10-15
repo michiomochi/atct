@@ -50,12 +50,14 @@ WHERE id = ?;
 
 -- name: ApproveGoalReviewDecision :execresult
 UPDATE decisions
-SET status = 'applied', answer_label = 'approve', answered_at = ?, applied_at = ?
+SET status = 'applied', answer_label = 'approve', answered_at = ?, applied_at = ?,
+    answered_via = ?, answer_quote = ?, answer_evidence = ?, answer_prompt_id = ?
 WHERE id = ? AND kind = 'goal_review' AND status = 'open';
 
 -- name: RejectGoalReviewDecision :execresult
 UPDATE decisions
-SET status = 'answered', answer_label = 'reject', answer_text = ?, answered_at = ?
+SET status = 'answered', answer_label = 'reject', answer_text = ?, answered_at = ?,
+    answered_via = ?, answer_quote = ?, answer_evidence = ?, answer_prompt_id = ?
 WHERE id = ? AND kind = 'goal_review' AND status = 'open';
 
 -- name: WithdrawActiveGoal :execresult

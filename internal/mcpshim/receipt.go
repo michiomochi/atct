@@ -34,7 +34,7 @@ var receiptMethods = []string{
 	"goal.handoff.review.reject", "goal.handoff.complete", "goal.handoff.report.amend",
 	"plan.handoff.review.request", "plan.handoff.review.reject", "plan.handoff.complete",
 	"handoff.entry.append", "goal.handoff.entry.append",
-	"decision.withdraw", "handoff.recover",
+	"decision.withdraw", "decision.answer", "handoff.recover",
 }
 
 // deliverMethods maps a method to the one key (compared by normalizeKey) kept

@@ -2334,6 +2334,18 @@ func (d *Daemon) dispatchMethodWithPeer(ctx context.Context, req rpc.Request, pe
 		response, err := d.responseWithScopedUnappliedDecisions(ctx, decs, goalID, p.AgentSessionID, excludedIDs...)
 		return marshal(response, err)
 
+	case "decision.answer":
+		var p decisionAnswerParams
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		decision, err := d.answerDecisionFromChat(ctx, p)
+		if err != nil || !p.IncludeUnappliedAnswers {
+			return marshal(decision, err)
+		}
+		response, err := d.responseWithScopedUnappliedDecisions(ctx, decision, decision.GoalID, p.AgentSessionID, decision.ID)
+		return marshal(response, err)
+
 	case "decision.withdraw":
 		var p struct {
 			DecisionID              int64  `json:"decision_id"`

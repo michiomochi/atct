@@ -10,7 +10,8 @@ RETURNING id;
 SELECT
   id, goal_id, task_id, kind, question, options, status,
   default_option, default_after_ms, default_applied_at,
-  answer_label, answer_text, answered_at, applied_at, agent_session_id, created_at
+  answer_label, answer_text, answered_at, applied_at, agent_session_id, created_at,
+  answered_via, answer_quote, answer_evidence, answer_prompt_id
 FROM decisions
 WHERE id = ?;
 
@@ -18,7 +19,8 @@ WHERE id = ?;
 SELECT
   id, goal_id, task_id, kind, question, options, status,
   default_option, default_after_ms, default_applied_at,
-  answer_label, answer_text, answered_at, applied_at, agent_session_id, created_at
+  answer_label, answer_text, answered_at, applied_at, agent_session_id, created_at,
+  answered_via, answer_quote, answer_evidence, answer_prompt_id
 FROM decisions
 WHERE goal_id = ? AND status = 'open'
 ORDER BY created_at;
@@ -27,7 +29,8 @@ ORDER BY created_at;
 SELECT
   id, goal_id, task_id, kind, question, options, status,
   default_option, default_after_ms, default_applied_at,
-  answer_label, answer_text, answered_at, applied_at, agent_session_id, created_at
+  answer_label, answer_text, answered_at, applied_at, agent_session_id, created_at,
+  answered_via, answer_quote, answer_evidence, answer_prompt_id
 FROM decisions
 WHERE goal_id = ?
 ORDER BY id;
@@ -36,7 +39,8 @@ ORDER BY id;
 SELECT
   id, goal_id, task_id, kind, question, options, status,
   default_option, default_after_ms, default_applied_at,
-  answer_label, answer_text, answered_at, applied_at, agent_session_id, created_at
+  answer_label, answer_text, answered_at, applied_at, agent_session_id, created_at,
+  answered_via, answer_quote, answer_evidence, answer_prompt_id
 FROM decisions
 WHERE status = 'open'
   AND goal_id IN (SELECT goals.id FROM goals WHERE goals.project_id NOT IN (SELECT id FROM projects WHERE archived_at IS NOT NULL))
@@ -44,14 +48,16 @@ ORDER BY created_at;
 
 -- name: AnswerDecision :execresult
 UPDATE decisions
-SET status = 'answered', answer_label = ?, answer_text = ?, answered_at = ?
+SET status = 'answered', answer_label = ?, answer_text = ?, answered_at = ?,
+    answered_via = ?, answer_quote = ?, answer_evidence = ?, answer_prompt_id = ?
 WHERE id = ? AND status = 'open';
 
 -- name: ListExpiredDecisions :many
 SELECT
   id, goal_id, task_id, kind, question, options, status,
   default_option, default_after_ms, default_applied_at,
-  answer_label, answer_text, answered_at, applied_at, agent_session_id, created_at
+  answer_label, answer_text, answered_at, applied_at, agent_session_id, created_at,
+  answered_via, answer_quote, answer_evidence, answer_prompt_id
 FROM decisions
 WHERE status = 'open' AND default_after_ms IS NOT NULL AND default_option != ''
   AND goal_id IN (SELECT goals.id FROM goals WHERE goals.project_id NOT IN (SELECT id FROM projects WHERE archived_at IS NOT NULL))
@@ -71,7 +77,8 @@ WHERE id = ? AND status = 'open';
 SELECT
   id, goal_id, task_id, kind, question, options, status,
   default_option, default_after_ms, default_applied_at,
-  answer_label, answer_text, answered_at, applied_at, agent_session_id, created_at
+  answer_label, answer_text, answered_at, applied_at, agent_session_id, created_at,
+  answered_via, answer_quote, answer_evidence, answer_prompt_id
 FROM decisions
 WHERE status = 'answered' AND agent_session_id = ?
 ORDER BY answered_at;
@@ -80,7 +87,8 @@ ORDER BY answered_at;
 SELECT
   id, goal_id, task_id, kind, question, options, status,
   default_option, default_after_ms, default_applied_at,
-  answer_label, answer_text, answered_at, applied_at, agent_session_id, created_at
+  answer_label, answer_text, answered_at, applied_at, agent_session_id, created_at,
+  answered_via, answer_quote, answer_evidence, answer_prompt_id
 FROM decisions
 WHERE status = 'answered' AND id = ?
 ORDER BY answered_at;
@@ -94,7 +102,8 @@ WHERE id = ? AND status = 'answered';
 SELECT
   id, goal_id, task_id, kind, question, options, status,
   default_option, default_after_ms, default_applied_at,
-  answer_label, answer_text, answered_at, applied_at, agent_session_id, created_at
+  answer_label, answer_text, answered_at, applied_at, agent_session_id, created_at,
+  answered_via, answer_quote, answer_evidence, answer_prompt_id
 FROM decisions
 WHERE status = 'answered'
   AND goal_id IN (SELECT goals.id FROM goals WHERE goals.project_id NOT IN (SELECT id FROM projects WHERE archived_at IS NOT NULL))
@@ -105,7 +114,8 @@ ORDER BY answered_at;
 SELECT
   id, goal_id, task_id, kind, question, options, status,
   default_option, default_after_ms, default_applied_at,
-  answer_label, answer_text, answered_at, applied_at, agent_session_id, created_at
+  answer_label, answer_text, answered_at, applied_at, agent_session_id, created_at,
+  answered_via, answer_quote, answer_evidence, answer_prompt_id
 FROM decisions
 WHERE status = 'answered'
   AND goal_id IN (SELECT goals.id FROM goals WHERE goals.project_id = ?)
@@ -117,7 +127,8 @@ ORDER BY answered_at;
 SELECT
   id, goal_id, task_id, kind, question, options, status,
   default_option, default_after_ms, default_applied_at,
-  answer_label, answer_text, answered_at, applied_at, agent_session_id, created_at
+  answer_label, answer_text, answered_at, applied_at, agent_session_id, created_at,
+  answered_via, answer_quote, answer_evidence, answer_prompt_id
 FROM decisions
 WHERE status = 'answered'
   AND goal_id = ?
@@ -138,7 +149,8 @@ WHERE goal_id = ? AND task_id = ? AND status = 'applied';
 SELECT
   id, goal_id, task_id, kind, question, options, status,
   default_option, default_after_ms, default_applied_at,
-  answer_label, answer_text, answered_at, applied_at, agent_session_id, created_at
+  answer_label, answer_text, answered_at, applied_at, agent_session_id, created_at,
+  answered_via, answer_quote, answer_evidence, answer_prompt_id
 FROM decisions
 WHERE goal_id = ? AND status = 'applied'
 ORDER BY answered_at DESC, applied_at DESC, id DESC
@@ -148,7 +160,8 @@ LIMIT sqlc.arg(history_limit);
 SELECT
   id, goal_id, task_id, kind, question, options, status,
   default_option, default_after_ms, default_applied_at,
-  answer_label, answer_text, answered_at, applied_at, agent_session_id, created_at
+  answer_label, answer_text, answered_at, applied_at, agent_session_id, created_at,
+  answered_via, answer_quote, answer_evidence, answer_prompt_id
 FROM decisions
 WHERE goal_id = ? AND task_id = ? AND status = 'applied'
 ORDER BY answered_at DESC, applied_at DESC, id DESC

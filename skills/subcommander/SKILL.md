@@ -121,7 +121,7 @@ that worker is started:
    `atct_project_release`, `atct_task_handoff_request`,
    `atct_task_handoff_review_receive`, `atct_task_handoff_complete`,
    `atct_task_handoff_review_reject`, `atct_task_update`,
-   `atct_task_create`, or `atct_decision_ask`. Spell the names out; "anything not
+   `atct_task_create`, `atct_decision_ask`, or `atct_decision_answer`. Spell the names out; "anything not
    listed above" is not read as a prohibition. In a 2026-08-27 measurement, an
    executor closed a subcommander's goal handoff without knowing it was forbidden.
 
@@ -133,7 +133,7 @@ that worker is started:
    An executor that reaches an irreversible or destructive operation returns it to
    the delegator. The executor does not perform the operation and does not carry
    the judgement itself; it stops there and hands it back to whoever sent the request.
-   `atct_decision_ask` is the delegator's call, not the executor's. A design
+   `atct_decision_ask` and `atct_decision_answer` are the delegator's calls, not the executor's. A design
    decision travels the same way, which is what `does not: make design decisions`
    in `## Roles` means in practice.
 

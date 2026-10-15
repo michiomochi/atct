@@ -3985,3 +3985,79 @@ func TestHTTPInboxReordersWhenTaskStatusChanges(t *testing.T) {
 		t.Fatalf("after = %+v", open)
 	}
 }
+
+func TestHTTPGoalDetailDecisionHistoryShowsChatAnswerSource(t *testing.T) {
+	f := newFixture(t)
+	chat, err := f.store.AskDecision(f.ctx, store.AskInput{
+		GoalID:         f.goal.ID,
+		Kind:           domain.DecisionKind("question"),
+		Question:       "Answered in the chat?",
+		Options:        []domain.Option{{Label: "A"}, {Label: "B"}},
+		AgentSessionID: testSessionID("chat-history-run"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.store.AnswerDecisionWith(f.ctx, store.AnswerInput{DecisionID: chat.ID, AnswerLabel: "A"}, store.AnswerSource{
+		Via: "chat", Quote: "Aで進めてください", Evidence: "はい、Aで進めてください。",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.store.PollDecisions(f.ctx, chat.AgentSessionID, chat.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	dashboard, err := f.store.AskDecision(f.ctx, store.AskInput{
+		GoalID:         f.goal.ID,
+		Kind:           domain.DecisionKind("question"),
+		Question:       "Answered on the dashboard?",
+		Options:        []domain.Option{{Label: "A"}, {Label: "B"}},
+		AgentSessionID: testSessionID("dashboard-history-run"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.store.AnswerDecision(f.ctx, store.AnswerInput{DecisionID: dashboard.ID, AnswerLabel: "B"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.store.PollDecisions(f.ctx, dashboard.AgentSessionID, dashboard.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := newTestServer(t, f.store)
+	defer srv.Close()
+	status, _, body := doRequest(t, srv.Client(), http.MethodGet, urlID(srv.URL+"/api/goals/", f.goal.ID), nil)
+	if status != http.StatusOK {
+		t.Fatalf("goal status = %d; body=%s", status, body)
+	}
+	var response struct {
+		DecisionHistory []struct {
+			DecisionID     int64  `json:"decision_id"`
+			AnsweredVia    string `json:"answered_via"`
+			AnswerQuote    string `json:"answer_quote"`
+			AnswerEvidence string `json:"answer_evidence"`
+		} `json:"decision_history"`
+	}
+	if err := json.Unmarshal(body, &response); err != nil {
+		t.Fatal(err)
+	}
+	byID := map[int64]int{}
+	for i, entry := range response.DecisionHistory {
+		byID[entry.DecisionID] = i
+	}
+	chatIndex, ok := byID[chat.ID]
+	if !ok {
+		t.Fatalf("decision_history has no chat decision %d; body=%s", chat.ID, body)
+	}
+	got := response.DecisionHistory[chatIndex]
+	if got.AnsweredVia != "chat" || got.AnswerQuote != "Aで進めてください" || got.AnswerEvidence != "はい、Aで進めてください。" {
+		t.Fatalf("chat history entry = %+v, want chat source", got)
+	}
+	dashboardIndex, ok := byID[dashboard.ID]
+	if !ok {
+		t.Fatalf("decision_history has no dashboard decision %d; body=%s", dashboard.ID, body)
+	}
+	if other := response.DecisionHistory[dashboardIndex]; other.AnsweredVia != "" || other.AnswerQuote != "" || other.AnswerEvidence != "" {
+		t.Fatalf("dashboard history entry = %+v, want empty source", other)
+	}
+}

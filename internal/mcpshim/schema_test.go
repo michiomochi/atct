@@ -52,6 +52,7 @@ func TestRegisterPublishesRoleAndLifecycleToolsWithFlexibleOutputSchema(t *testi
 		"atct_decision_ask":                       true,
 		"atct_decision_poll":                      true,
 		"atct_decision_withdraw":                  true,
+		"atct_decision_answer":                    true,
 		"atct_goal_complete":                      true,
 		"atct_goal_review_request":                true,
 		"atct_goal_review_complete":               true,
@@ -337,6 +338,7 @@ func TestRegisterPublishesRoleAndLifecycleToolsWithFlexibleOutputSchema(t *testi
 		}},
 		{name: "atct_decision_poll", args: map[string]any{}},
 		{name: "atct_decision_withdraw", args: map[string]any{"decision_id": "decision-1", "reason": "reason"}},
+		{name: "atct_decision_answer", args: map[string]any{"decision_id": "decision-1", "answer": "approve", "human_quote": "approve it"}},
 		{name: "atct_goal_complete", args: map[string]any{
 			"goal_id": "goal-1", "work_done": "done", "now_possible": "ready",
 			"how_to_verify": "check the goal", "surprises": "なし",
