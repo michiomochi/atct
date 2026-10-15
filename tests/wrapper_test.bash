@@ -929,10 +929,14 @@ test_recovery_section_has_task_path_and_non_repair_note() {
 test_handoff_completion_reports_are_explicit() {
   local commander_skill="$REPO_ROOT/skills/commander/SKILL.md"
   local subcommander_skill="$REPO_ROOT/skills/subcommander/SKILL.md"
-  assert_file_contains 'with the `handoff_id`, `task_id`, and a `complete_report`' "$subcommander_skill"
+  local executor_skill="$REPO_ROOT/skills/executor/SKILL.md"
+  # goal 375 moved the executor's review-report contract out of the delegation
+  # template into the executor skill, and the reviewer's out of the quoted
+  # template into the close-a-task section. Each is checked where it now lives.
+  assert_file_contains 'calls `atct_task_handoff_complete` with the completion report' "$subcommander_skill"
   assert_file_contains 'with the `goal_id` provided in this request' "$commander_skill"
-  assert_file_contains 'what was done, what was verified, what could not' "$subcommander_skill"
-  assert_file_contains 'be verified, and paths changed' "$subcommander_skill"
+  assert_file_contains 'Submit a review report stating the work, verification, unavailable checks,' "$executor_skill"
+  assert_file_contains 'and changed paths.' "$executor_skill"
 }
 
 test_task_delegation_verification_contract_is_explicit() {
@@ -965,9 +969,12 @@ test_handoff_completion_keeps_one_normal_path() {
   local completion_step
   normal_section="$(sed -n '/^## Delegate a task$/,/^## Close a task the moment it is finished$/p' "$REPO_ROOT/skills/subcommander/SKILL.md")"
   completion_step="$(sed -n '/The task handoff review order is/,/^$/p' <<<"$normal_section")"
+  local close_section
+  close_section="$(sed -n '/^## Close a task the moment it is finished$/,$p' "$REPO_ROOT/skills/subcommander/SKILL.md")"
   ! grep -Fq -- 'atct_task_handoff_report_amend' <<<"$normal_section" || fail 'normal task completion must not name the repair tool'
   grep -Fq -- '`atct_task_handoff_complete`' <<<"$completion_step" || fail 'task review order must name reviewer completion'
-  grep -Fq -- '`complete_report`' <<<"$normal_section" || fail 'task completion must require complete_report'
+  grep -Fq -- 'calls `atct_task_handoff_complete` with the completion report' <<<"$close_section" ||
+    fail 'task completion must require a completion report'
 }
 
 delegate_task_section() {
@@ -1061,26 +1068,31 @@ test_delegation_names_the_atct_tools_an_executor_must_not_call() {
 }
 
 test_delegation_template_sets_up_the_watch_between_receive_and_role() {
-  local section receive_line watch_line role_line
+  # goal 375: the template no longer spells out the watch. It orders receive →
+  # role → history and hands the watch to the executor skill, which sets it up
+  # between receive and role (test_executor_skill_sets_up_the_watch_between_receive_and_role).
+  local section receive_line role_line history_line executor_line
 
   section="$(delegate_task_section)"
-  receive_line="$(grep -nF -- 'First record receipt of the handoff by calling `atct_task_handoff_receive`' \
+  receive_line="$(grep -nF -- 'Record receipt by calling `atct_task_handoff_receive`' \
     <<<"$section" | head -1 | cut -d: -f1 || true)"
-  watch_line="$(grep -nF -- '## Watch' \
+  role_line="$(grep -nF -- 'Then call `atct_role` with `expected_role` set' \
     <<<"$section" | head -1 | cut -d: -f1 || true)"
-  role_line="$(grep -nF -- 'Then invoke the `atct_role` MCP tool' \
+  history_line="$(grep -nF -- 'Then call `atct_handoff_entry_history`' \
+    <<<"$section" | head -1 | cut -d: -f1 || true)"
+  executor_line="$(grep -nF -- 'Then invoke the `atct:executor` skill' \
     <<<"$section" | head -1 | cut -d: -f1 || true)"
 
-  [[ -n "$receive_line" && -n "$watch_line" && -n "$role_line" ]] ||
-    fail "template must name receive, watch, and role check: receive=$receive_line watch=$watch_line role=$role_line"
-  (( receive_line < watch_line && watch_line < role_line )) ||
-    fail "template watch step must sit between receive and role check: receive=$receive_line watch=$watch_line role=$role_line"
+  [[ -n "$receive_line" && -n "$role_line" && -n "$history_line" && -n "$executor_line" ]] ||
+    fail "template must name receive, role check, history read, and the executor skill: receive=$receive_line role=$role_line history=$history_line executor=$executor_line"
+  (( receive_line < role_line && role_line < history_line && history_line < executor_line )) ||
+    fail "template must order receive, role check, history read, executor skill: receive=$receive_line role=$role_line history=$history_line executor=$executor_line"
 }
 
 test_delegation_template_references_the_watch_section_without_spelling_it_out() {
   local section
 
-  delegate_task_section_contains '## Watch'
+  delegate_task_section_contains 'the watch, the review request, and the rejection path'
   section="$(delegate_task_section)"
   ! grep -qF -- 'atct watch --monitor --token' <<<"$section" ||
     fail 'delegate section must not spell out the watch command'
@@ -1089,7 +1101,9 @@ test_delegation_template_references_the_watch_section_without_spelling_it_out() 
 }
 
 test_delegation_template_and_executor_skill_state_the_blocked_output() {
-  delegate_task_section_contains 'blocked: no live Monitor'
+  # goal 375: the blocked output is stated once, in the executor skill that the
+  # template tells the worker to follow.
+  delegate_task_section_contains 'Then invoke the `atct:executor` skill'
   assert_file_contains 'blocked: no live Monitor' "$REPO_ROOT/skills/executor/SKILL.md"
 }
 
@@ -1114,20 +1128,21 @@ test_delegation_requests_review_before_reviewer_closes_the_task() {
   local request_line
   local receive_line
   local complete_line
+  local order
 
   delegate_task_section_contains 'Report the review request before the reviewer closes the task'
 
   section="$(delegate_task_section)"
-  request_line="$(grep -nF -- 'record the review request by calling `atct_task_handoff_review_request`' \
-    <<<"$section" | head -1 | cut -d: -f1 || true)"
-  receive_line="$(grep -nF -- 'receives that review with `atct_task_handoff_review_receive`' \
-    <<<"$section" | head -1 | cut -d: -f1 || true)"
-  complete_line="$(grep -nF -- 'then calls `atct_task_handoff_complete`' \
-    <<<"$section" | head -1 | cut -d: -f1 || true)"
+  # The order is stated on one line of tool names; compare their positions.
+  order="$(sed -n '/The task handoff review order is/,/^$/p' <<<"$section" | tr '\n' ' ' | tr -s ' ')"
+  request_line="${order%%atct_task_handoff_review_request*}"
+  receive_line="${order%%atct_task_handoff_review_receive*}"
+  complete_line="${order%%atct_task_handoff_complete*}"
 
-  [[ -n "$request_line" ]] || fail 'delegate task section never says to request review'
-  [[ -n "$receive_line" ]] || fail 'delegate task section never says the reviewer receives the review'
-  [[ -n "$complete_line" ]] || fail 'delegate task section never says the reviewer completes the handoff'
+  [[ "$order" == *'atct_task_handoff_review_request'* ]] || fail 'delegate task section never says to request review'
+  [[ "$order" == *'atct_task_handoff_review_receive'* ]] || fail 'delegate task section never says the reviewer receives the review'
+  [[ "$order" == *'atct_task_handoff_complete'* ]] || fail 'delegate task section never says the reviewer completes the handoff'
+  request_line=${#request_line} receive_line=${#receive_line} complete_line=${#complete_line}
   (( request_line < receive_line && receive_line < complete_line )) ||
     fail "task review must be requested, received, and completed in order: request=$request_line receive=$receive_line complete=$complete_line"
 }
@@ -1278,7 +1293,7 @@ test_delegated_claim_contract_is_explicit() {
   assert_file_contains 'Hold the parent, not the goal.' "$commander_skill"
   assert_file_contains '## Delegate a task' "$subcommander_skill"
   assert_file_contains '## Delegate a goal' "$commander_skill"
-  assert_file_contains 'First record receipt of the handoff by calling `atct_task_handoff_receive`' "$subcommander_skill"
+  assert_file_contains 'Record receipt by calling `atct_task_handoff_receive` with the `task_id` and' "$subcommander_skill"
   assert_file_contains 'Then record receipt of the goal handoff by calling' "$commander_skill"
   assert_file_contains 'Every implementation task is delegated.' "$atct_skill"
   assert_file_contains 'Delegating a task requires a received goal handoff, not a project claim.' "$subcommander_skill"
@@ -1288,8 +1303,8 @@ test_delegated_claim_contract_is_explicit() {
   assert_file_contains 'The loop coordinates delegated work.' "$start_skill"
   assert_file_contains 'Record the handoff before waking the worker.' "$subcommander_skill"
   assert_file_contains 'The delegator must call `atct_task_handoff_request`' "$subcommander_skill"
-  assert_file_contains 'the `task_id` and `handoff_id` provided in this request' "$subcommander_skill"
-  assert_file_contains '`session_key` (plus the optional `monitor_token`, when emitted) from SessionStart.' "$subcommander_skill"
+  assert_file_contains '`handoff_id` above and the exact `session_key` from SessionStart (plus' "$subcommander_skill"
+  assert_file_contains '`monitor_token` when emitted).' "$subcommander_skill"
   assert_file_contains 'The delegator must call `atct_goal_handoff_request`' "$commander_skill"
   assert_file_contains 'with the `goal_id` provided in this request and the exact `session_key` from SessionStart.' "$commander_skill"
   assert_file_contains '`handoff_id` and `monitor_token` are optional' "$commander_skill"
@@ -1297,9 +1312,9 @@ test_delegated_claim_contract_is_explicit() {
   assert_file_contains 'never pass `session_key` or `monitor_token`' "$commander_skill"
   assert_file_contains '`atct_goal_review_complete` with the `goal_id` provided in this request.' "$commander_skill"
   assert_file_not_contains '`atct_goal_review_complete` with the `goal_id` provided in this request and a `complete_report`' "$atct_skill"
-  assert_file_contains 'and a `complete_report`' "$subcommander_skill"
+  assert_file_contains 'with the completion report' "$subcommander_skill"
   assert_file_contains 'Do this before starting work.' "$commander_skill"
-  assert_file_contains 'When the work is complete, record the review request by calling `atct_task_handoff_review_request`' "$subcommander_skill"
+  assert_file_contains '`atct_task_handoff_review_request`' "$REPO_ROOT/skills/executor/SKILL.md"
   assert_file_contains 'A subcommander must not claim the project' "$commander_skill"
   assert_file_contains 'A subcommander must not call `atct_goal_release`' "$commander_skill"
   assert_file_contains "commander's job." "$commander_skill"
