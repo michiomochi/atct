@@ -19,6 +19,7 @@ const monitorToolName = "Monitor"
 type monitorHookInput struct {
 	SessionID string `json:"session_id"`
 	ToolName  string `json:"tool_name"`
+	ToolUseID string `json:"tool_use_id"`
 	ToolInput struct {
 		Command string `json:"command"`
 	} `json:"tool_input"`
@@ -66,10 +67,24 @@ func monitorCheckOutput(body []byte, readErr error, config cliConfig, dir, exePa
 		}
 		return monitorFormCheckResult(config, dir, exePath, input.SessionID)
 	}
-	if !isATCTTool(input.ToolName) || isMonitorExemptTool(input.ToolName) {
+	if !isATCTTool(input.ToolName) || isSessionIdentifyTool(input.ToolName) {
 		return ""
 	}
-	return monitorCheckResult(config, dir, exePath, input.SessionID)
+	client, err := monitorClient(config, dir, exePath)
+	if err != nil {
+		// An exempt call is never refused, even when the daemon cannot start.
+		if isMonitorExemptTool(input.ToolName) {
+			return ""
+		}
+		return monitorCheckDeny("ATCT monitor-check failed: " + err.Error())
+	}
+	return monitorCheckFor(client, input)
+}
+
+// isSessionIdentifyTool is the one ATCT call that registers a session, so it
+// neither binds a tool_use_id nor asks the monitor decision.
+func isSessionIdentifyTool(name string) bool {
+	return strings.HasSuffix(strings.TrimSpace(name), "atct_session_identify")
 }
 
 // monitorHookToolName reads tool_name from a body that did not decode as a
@@ -142,10 +157,24 @@ func decodeMonitorHookInput(r io.Reader) (monitorHookInput, error) {
 	return input, nil
 }
 
-func monitorCheckResult(config cliConfig, dir, exePath, sessionKey string) string {
-	response, err := callMonitorRPC(config, dir, exePath, "session.monitor_check", sessionKey)
-	if err != nil {
-		return monitorCheckDeny("ATCT monitor-check failed: " + err.Error())
+// monitorCheckFor binds the call's tool_use_id, then decides. The bind is best
+// effort: a failure leaves the transport as it was and never denies by itself.
+func monitorCheckFor(client *mcpshim.Client, input monitorHookInput) string {
+	if input.ToolUseID != "" && !isSessionIdentifyTool(input.ToolName) {
+		var bound struct {
+			OK bool `json:"ok"`
+		}
+		_ = client.Call(context.Background(), "session.tool_use.bind", map[string]string{
+			"session_key": input.SessionID, "tool_use_id": input.ToolUseID,
+		}, &bound)
+	}
+	if isMonitorExemptTool(input.ToolName) {
+		return ""
+	}
+
+	var response monitorCheckResponse
+	if err := client.Call(context.Background(), "session.monitor_check", map[string]string{"session_key": input.SessionID}, &response); err != nil {
+		return monitorCheckDeny("ATCT monitor-check failed: session.monitor_check: " + err.Error())
 	}
 	if response.Decision == "" {
 		return ""
@@ -167,7 +196,7 @@ func monitorFormDecision(response monitorCheckResponse, err error) string {
 	return monitorCheckDeny(response.Reason)
 }
 
-func callMonitorRPC(config cliConfig, dir, exePath, method, sessionKey string) (monitorCheckResponse, error) {
+func monitorClient(config cliConfig, dir, exePath string) (*mcpshim.Client, error) {
 	reg, err := daemonctl.Ensure(daemonctl.Config{
 		Dir:            dir,
 		Version:        version,
@@ -176,10 +205,16 @@ func callMonitorRPC(config cliConfig, dir, exePath, method, sessionKey string) (
 		ListenExplicit: config.listenExplicit,
 	})
 	if err != nil {
-		return monitorCheckResponse{}, fmt.Errorf("ensure daemon: %w", err)
+		return nil, fmt.Errorf("ensure daemon: %w", err)
 	}
+	return mcpshim.NewClient(reg.SocketPath), nil
+}
 
-	client := mcpshim.NewClient(reg.SocketPath)
+func callMonitorRPC(config cliConfig, dir, exePath, method, sessionKey string) (monitorCheckResponse, error) {
+	client, err := monitorClient(config, dir, exePath)
+	if err != nil {
+		return monitorCheckResponse{}, err
+	}
 	var response monitorCheckResponse
 	if err := client.Call(context.Background(), method, map[string]string{"session_key": sessionKey}, &response); err != nil {
 		return monitorCheckResponse{}, fmt.Errorf("%s: %w", method, err)
