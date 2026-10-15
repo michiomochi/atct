@@ -801,6 +801,31 @@ func validRole(role string) bool {
 func Register(server *mcp.Server, c *Client, agentSessionID int64) {
 	sessionID := &agentSessionIDHolder{id: agentSessionID}
 
+	// Claude Code puts the tool_use_id of the call in _meta. The PreToolUse hook
+	// has already bound that id to the session it identified, so the first call
+	// on a transport that never identified attaches here. A failed resolve leaves
+	// the holder alone and the tool reports its usual refusal.
+	server.AddReceivingMiddleware(func(next mcp.MethodHandler) mcp.MethodHandler {
+		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+			if method == "tools/call" {
+				if params := req.GetParams(); params != nil {
+					if toolUseID, _ := params.GetMeta()["claudecode/toolUseId"].(string); toolUseID != "" {
+						var resolved struct {
+							AgentSessionID int64 `json:"agent_session_id"`
+						}
+						err := c.Call(ctx, "session.tool_use.resolve", map[string]any{
+							"agent_session_id": sessionID.Get(), "tool_use_id": toolUseID,
+						}, &resolved)
+						if err == nil && resolved.AgentSessionID != 0 {
+							sessionID.Set(resolved.AgentSessionID)
+						}
+					}
+				}
+			}
+			return next(ctx, method, req)
+		}
+	})
+
 	addMCPTool[SessionIdentifyIn, RawWithUnappliedDecisions](server, &mcp.Tool{
 		Name:         "atct_session_identify",
 		Description:  "Associate this transport with a stable caller-owned session key before using other atct tools.",

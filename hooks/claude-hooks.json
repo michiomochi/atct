@@ -37,6 +37,17 @@
         ]
       },
       {
+        "matcher": "Monitor",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/pre-monitor\"",
+            "shell": "bash",
+            "async": false
+          }
+        ]
+      },
+      {
         "matcher": "Bash",
         "hooks": [
           {

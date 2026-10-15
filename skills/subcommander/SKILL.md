@@ -10,6 +10,7 @@ calling `atct_goal_handoff_receive` with the `goal_id` provided in the handoff
 and the exact `session_key` from SessionStart; optional `handoff_id` and
 `monitor_token` may be included. Then call `atct_role` with `expected_role` set to `subcommander`; on a mismatch, stop.
 
+- When the only thing you hold is an answer you are waiting for, wait on a `--once` background Bash rather than the Monitor, as `atct:atct` ## Watch step 6 says.
 - Design only the received goal; write its spec and plan, then submit its plan
   handoff for commander review. Spec and plan go in full into the goal's `spec`
   and `plan` fields, never into files.

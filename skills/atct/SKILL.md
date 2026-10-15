@@ -117,18 +117,25 @@ re-armed watch from emitting the same notification twice, for both forms.
    <monitor_token> --once`. If N is 1 or more, attach the Monitor again.
 3. **When a `--once` Bash ends,** whether it printed an event, ended with no
    event, or failed, attach the Monitor first, then act on the event (its
-   stdout). Do not re-arm the `--once` Bash.
+   stdout). Do not re-arm the `--once` Bash. While the only thing you wait for
+   is an answer (a plan review, a goal review, or an executor starting or
+   working), wait on `--once` rather than the Monitor: the PreToolUse gate
+   refuses the Monitor form then.
 4. **Keep one.** Hold exactly one watch per token; the one started later stops
    the earlier one.
 5. **Stop** a watch with `TaskStop` and the task id of the Monitor or the
    background Bash (see `atct:stop`). If the task id is unknown, say so and do
    not call `TaskStop`; never guess one.
-6. **Waiting for a goal review.** After `atct_goal_handoff_review_request`, a
-   subcommander waits only for the commander's and the human's answer: hours,
-   and about one notification. Stop the Monitor with `TaskStop`, then wait on a
-   `--once` background Bash (step 2's form), which never expires, so no 30-minute
-   notice wakes it for nothing. When it ends, follow step 3. Only for this wait;
-   keep the Monitor while notifications are many.
+6. **Waiting for an answer.** When the only thing you hold is an answer you are
+   waiting for (a plan review, a goal review after
+   `atct_goal_handoff_review_request`, or an executor starting or working), stop
+   the Monitor with `TaskStop`, then wait on a `--once` background Bash (step 2's
+   form), which never expires, so no 30-minute notice wakes it for nothing. When
+   it ends, follow step 3. While you wait, arm no other wakeup (`ScheduleWakeup`,
+   cron): the `--once` Bash's end already wakes the session, and an extra wakeup
+   only adds notices that change nothing. In a `/loop`, end the loop with
+   `ScheduleWakeup` and `stop: true` instead. Keep the Monitor while notifications
+   are many and you hold work of your own.
 
 **Out of order:** Acting on the event before attaching the Monitor leaves the
 session with no watch. The daemon holds the session live for 5 minutes after a

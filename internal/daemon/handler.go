@@ -1227,6 +1227,37 @@ func (d *Daemon) dispatchMethodWithPeer(ctx context.Context, req rpc.Request, pe
 		response, err := d.monitorCheck(ctx, p.SessionKey)
 		return marshal(response, err)
 
+	case "session.monitor_form_check":
+		// Fail open: a request this check cannot read or judge allows the Monitor.
+		var p struct {
+			SessionKey string `json:"session_key"`
+		}
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return marshal(monitorCheckResponse{}, nil)
+		}
+		return marshal(d.monitorFormCheck(ctx, p.SessionKey), nil)
+
+	case "session.tool_use.bind":
+		var p struct {
+			SessionKey string `json:"session_key"`
+			ToolUseID  string `json:"tool_use_id"`
+		}
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		return marshal(d.bindToolUse(ctx, p.SessionKey, p.ToolUseID), nil)
+
+	case "session.tool_use.resolve":
+		var p struct {
+			AgentSessionID int64  `json:"agent_session_id"`
+			ToolUseID      string `json:"tool_use_id"`
+		}
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		response, err := d.resolveToolUse(ctx, p.AgentSessionID, p.ToolUseID)
+		return marshal(response, err)
+
 	case "project.create":
 		var p struct {
 			Name     string `json:"name"`
