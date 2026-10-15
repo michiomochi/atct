@@ -135,7 +135,7 @@ func TestGoalReviewPendingMarkerAndLivenessTargetAgree(t *testing.T) {
 	goalID := strconv.FormatInt(f.goalID, 10)
 	w := newCommanderRoutingWatch(t, f.s)
 	rejectedTarget := func(state watchReconciliation) bool {
-		kind, _, id := watchCommanderLivenessTarget(state)
+		kind, _, id := firstCommanderTarget(state)
 		return kind == watchKindGoalReviewRejected && id == goalID
 	}
 	step := func(name, wantPending string, wantRejectedTarget bool) watchReconciliation {
@@ -145,7 +145,7 @@ func TestGoalReviewPendingMarkerAndLivenessTargetAgree(t *testing.T) {
 			t.Fatalf("%s: pending state = %q, want %q", name, pending, wantPending)
 		}
 		if got := rejectedTarget(state); got != wantRejectedTarget {
-			kind, handoffID, id := watchCommanderLivenessTarget(state)
+			kind, handoffID, id := firstCommanderTarget(state)
 			t.Fatalf("%s: rejected-review target = %v (target %q %q %q), want %v", name, got, kind, handoffID, id, wantRejectedTarget)
 		}
 		return state
@@ -175,7 +175,7 @@ func TestGoalReviewPendingMarkerAndLivenessTargetAgree(t *testing.T) {
 	if !watchLivenessActionable(commanderScope(f.projectID), state) {
 		t.Fatal("approved and applied: commander liveness is gone before the goal is completed")
 	}
-	if _, _, id := watchCommanderLivenessTarget(state); id != goalID {
+	if _, _, id := firstCommanderTarget(state); id != goalID {
 		t.Fatalf("approved and applied: target goal = %q, want %q", id, goalID)
 	}
 

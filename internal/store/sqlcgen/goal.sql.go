@@ -52,6 +52,19 @@ func (q *Queries) CountOpenDecisionsForGoal(ctx context.Context, goalID int64) (
 	return count, err
 }
 
+const countReviewBlockingDecisionsForGoal = `-- name: CountReviewBlockingDecisionsForGoal :one
+SELECT COUNT(*)
+FROM decisions
+WHERE goal_id = ? AND status = 'open' AND kind != 'post_merge'
+`
+
+func (q *Queries) CountReviewBlockingDecisionsForGoal(ctx context.Context, goalID int64) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countReviewBlockingDecisionsForGoal, goalID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createGoal = `-- name: CreateGoal :one
 INSERT INTO goals (
   project_id, derived_from_goal_id, content, status, creator,

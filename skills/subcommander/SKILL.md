@@ -26,6 +26,15 @@ and the exact `session_key` from SessionStart; optional `handoff_id` and
   Before the goal review request, run `git merge main --no-edit` in the goal
   worktree and the verification set; the daemon refuses the request when the
   goal branch does not contain main.
+- An approval that only matters after the merge (a production deploy, a production
+  re-run) is a different judgment from the goal's review. Do not leave it open next
+  to your goal handoff review request: an open decision refuses the commander's
+  `atct_goal_review_request` (`goal has an open decision`), and the human then
+  cannot receive the review at all. If it has to be asked before the merge, call
+  `atct_decision_ask` with `after_review: true`; that decision does not block the
+  review request. It still blocks `atct_goal_review_complete`, so the goal cannot be
+  done while it is open. In stock-data goals 373, 387 and 393 (2026-10) a
+  production approval filed without it stopped the human review of all three.
 
 ## Executor session bootstrap
 

@@ -177,6 +177,7 @@ const statusKeys: Record<string, TranslationKey> = {
 const decisionKindKeys: Record<string, TranslationKey> = {
   decision: "decision.kind.decision",
   completion: "decision.kind.completion",
+  post_merge: "decision.kind.post_merge",
 };
 
 function localized(key: TranslationKey, locale: Locale): string {

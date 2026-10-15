@@ -166,6 +166,11 @@ options and a recommended default, never a conversational question. Apply an
 answer with `atct_decision_poll` before continuing dependent work; withdraw a
 decision that is no longer relevant.
 
+A decision that approves an action after the merge (a production deploy) is asked
+with `after_review: true`. It does not block `atct_goal_review_request`, and it
+still blocks `atct_goal_review_complete`: the rule that a goal is not done while a
+decision is open does not change.
+
 Ask the human only when one of these holds:
 
 - (a) the operation cannot be undone or is destructive; ask immediately before it

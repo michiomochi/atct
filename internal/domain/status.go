@@ -34,6 +34,7 @@ type DecisionKind string
 const (
 	KindDecision   DecisionKind = "decision"
 	KindGoalReview DecisionKind = "goal_review"
+	KindPostMerge  DecisionKind = "post_merge"
 )
 
 func ParseTaskStatus(s string) (TaskStatus, error) {

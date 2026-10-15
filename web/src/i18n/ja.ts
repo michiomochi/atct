@@ -46,6 +46,7 @@ export const ja: Record<TranslationKey, string> = {
   "status.decision.withdrawn": "取り下げ済み",
   "decision.kind.decision": "判断",
   "decision.kind.completion": "完了",
+  "decision.kind.post_merge": "マージ後の判断",
 
   "goal.caption.activeList": "進行中のゴール一覧",
   "goal.column.goal": "ゴール",
