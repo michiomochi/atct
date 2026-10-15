@@ -45,6 +45,7 @@ export const en = {
   "status.decision.withdrawn": "Withdrawn",
   "decision.kind.decision": "Decision",
   "decision.kind.completion": "Completion",
+  "decision.kind.post_merge": "Post-merge decision",
 
   "goal.caption.activeList": "Active goal list",
   "goal.column.goal": "Goal",

@@ -497,7 +497,9 @@ func newWatchLivenessState(start time.Time) *watchLivenessState {
 // receive, a goal that had been withdrawn -- re-sent an identical line every
 // minute until the woken agent ran out of context.
 func (s *watchLivenessState) PromptDue(now time.Time, scope watchScope, snapshot watchReconciliation) (string, bool) {
-	if !watchLivenessActionable(scope, snapshot) || scopedOpenDecision(scope, snapshot) {
+	// The commander's scope has no goal, so an open decision on any goal would
+	// silence every goal's liveness; it leaves out only the goals with one.
+	if !watchLivenessActionable(scope, snapshot) || (scope.Role != "commander" && scopedOpenDecision(scope, snapshot)) {
 		s.lastPromptAt = now
 		s.lastPrompt = ""
 		return "", false
@@ -2091,21 +2093,41 @@ func formatWatchLiveness(scope watchScope, state watchReconciliation) string {
 			kind, rejected, watchScopeSubject(scope))
 	}
 	if scope.Role == "commander" {
-		kind, handoffID, goalID := watchCommanderLivenessTarget(state)
-		switch {
-		case kind == watchKindGoalReviewRejected:
-			return fmt.Sprintf("atct monitor liveness: goal %s review was rejected and its handoff %s is waiting for atct_goal_handoff_review_reject", goalID, handoffID)
-		case handoffID != "":
-			return fmt.Sprintf("atct monitor liveness: %s handoff %s is waiting for your review (goal %s)", kind, handoffID, goalID)
-		case goalID != "":
-			return fmt.Sprintf("atct monitor liveness: goal %s review was approved and is waiting to be completed", goalID)
+		targets := watchCommanderLivenessTargets(state)
+		if len(targets) == 0 {
+			return ""
 		}
-		return ""
+		parts := make([]string, 0, len(targets))
+		for _, target := range targets {
+			parts = append(parts, formatWatchCommanderTarget(target))
+		}
+		return "atct monitor liveness: " + strings.Join(parts, "; ")
 	}
 	if scope.TaskID != "" {
 		return fmt.Sprintf("atct monitor liveness: recheck task %s", scope.TaskID)
 	}
 	return fmt.Sprintf("atct monitor liveness: recheck goal %s", scope.GoalID)
+}
+
+// formatWatchCommanderTarget is one goal's part of the commander's liveness line.
+func formatWatchCommanderTarget(target watchCommanderTarget) string {
+	blocked := func(prefix string) string {
+		if len(target.openDecisionIDs) == 0 {
+			return ""
+		}
+		return fmt.Sprintf(" (%s: %s)", prefix, strings.Join(target.openDecisionIDs, ", "))
+	}
+	switch target.kind {
+	case watchKindGoalReviewRejected:
+		return fmt.Sprintf("goal %s review was rejected and its handoff %s is waiting for atct_goal_handoff_review_reject", target.goalID, target.handoffID)
+	case watchKindGoalReviewReceived:
+		return fmt.Sprintf("goal %s review received, human review not requested yet", target.goalID) + blocked("blocked by open decisions")
+	case "goal":
+		if target.handoffID == "" {
+			return fmt.Sprintf("goal %s review was approved and is waiting to be completed", target.goalID) + blocked("open decisions still block completion")
+		}
+	}
+	return fmt.Sprintf("%s handoff %s is waiting for your review (goal %s)", target.kind, target.handoffID, target.goalID)
 }
 
 func watchScopeSubject(scope watchScope) string {

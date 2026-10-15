@@ -241,6 +241,13 @@ func (d *Daemon) stopCheckCommander(ctx context.Context, projectID int64) (strin
 }
 
 func (d *Daemon) stopCheckSubcommander(ctx context.Context, agentSessionID, goalID int64) (string, error) {
+	return d.subcommanderStopDetail(ctx, agentSessionID, goalID, nil)
+}
+
+// subcommanderStopDetail is stopCheckSubcommander with the Monitor state either
+// read from the store (forceLive nil) or given by the caller, so the Monitor
+// form check can ask what would block the session if its Monitor were live.
+func (d *Daemon) subcommanderStopDetail(ctx context.Context, agentSessionID, goalID int64, forceLive *bool) (string, error) {
 	goal, err := d.store.GetGoal(ctx, goalID)
 	if err != nil {
 		return "", fmt.Errorf("get goal: %w", err)
@@ -254,8 +261,13 @@ func (d *Daemon) stopCheckSubcommander(ctx context.Context, agentSessionID, goal
 	if err != nil {
 		return "", fmt.Errorf("list goal handoffs: %w", err)
 	}
-	live, err := d.store.HasLiveMonitorForScope(ctx, store.MonitorLiveScope{ProjectID: goal.ProjectID, Role: "subcommander", GoalID: &goalID})
-	live = err == nil && live
+	var live bool
+	if forceLive != nil {
+		live = *forceLive
+	} else {
+		storeLive, err := d.store.HasLiveMonitorForScope(ctx, store.MonitorLiveScope{ProjectID: goal.ProjectID, Role: "subcommander", GoalID: &goalID})
+		live = err == nil && storeLive
+	}
 	fp := stopPrintOf(ctx)
 	fp.goal(goal)
 	fp.live("subcommander", live)
@@ -309,10 +321,16 @@ func (d *Daemon) stopCheckSubcommander(ctx context.Context, agentSessionID, goal
 	}
 	// Checked last so that the more specific reasons above are reported first.
 	waiting := d.subcommanderWaiting(ctx, agentSessionID, goal, goalHandoffs, live)
+	// Without a Monitor, waiting is never true, so say what the wait needs: the
+	// same wait with a live Monitor would have been allowed to stop.
+	waitingWithWatch := !live && d.subcommanderWaiting(ctx, agentSessionID, goal, goalHandoffs, true)
 	for _, handoff := range goalHandoffs {
 		if handoff.ReceivedBy == agentSessionID && handoff.ReceivedAt != nil && handoff.CompletedReportAt == nil && handoff.RecoveredAt == nil {
 			if waiting {
 				continue
+			}
+			if waitingWithWatch {
+				return fmt.Sprintf("subcommander has open goal handoff %s: waiting for an answer but this session has no live watch; start `atct watch --monitor --token <monitor_token> --once` in a Bash with run_in_background, then stop", handoff.ID), nil
 			}
 			return fmt.Sprintf("subcommander has open goal handoff %s", handoff.ID), nil
 		}

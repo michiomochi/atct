@@ -594,7 +594,7 @@ func (s *Store) RequestGoalReview(ctx context.Context, goalID, agentSessionID in
 	}
 	defer tx.Rollback()
 	q := sqlcgen.New(tx)
-	open, err := q.CountOpenDecisionsForGoal(ctx, goalID)
+	open, err := q.CountReviewBlockingDecisionsForGoal(ctx, goalID)
 	if err != nil {
 		return domain.Decision{}, fmt.Errorf("count open decisions for goal review: %w", err)
 	}

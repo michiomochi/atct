@@ -24,7 +24,7 @@ var nextStepAfter = map[string][]nextStepOption{
 
 	"plan.handoff.review.request": {{
 		Call: "atct_plan_handoff_review_receive",
-		Note: "the commander receives the review.",
+		Note: "the commander receives the review. Nothing else is left for you: stop your Monitor with TaskStop and wait on Bash with run_in_background running `atct watch --monitor --token <monitor_token> --once`; a Monitor would only expire every 30 minutes and wake you for nothing.",
 	}},
 	"plan.handoff.review.receive": {
 		{When: "the plan is acceptable", Call: "atct_plan_handoff_complete"},
@@ -53,7 +53,7 @@ var nextStepAfter = map[string][]nextStepOption{
 	}},
 	"task.handoff.request": {{
 		Call: "atct_task_handoff_receive",
-		Note: "wake the executor; it receives with this handoff_id and task_id.",
+		Note: "wake the executor; it receives with this handoff_id and task_id. If no other task is left to delegate, do the same: stop your Monitor with TaskStop and wait on Bash with run_in_background running `atct watch --monitor --token <monitor_token> --once`.",
 	}},
 	"task.handoff.receive": {{
 		Call: "atct_task_handoff_review_request",
@@ -83,7 +83,7 @@ var nextStepAfter = map[string][]nextStepOption{
 
 	"goal.handoff.review.request": {{
 		Call: "atct_goal_handoff_review_receive",
-		Note: "the commander receives the review.",
+		Note: "the commander receives the review. Nothing else is left for you: stop your Monitor with TaskStop and wait on Bash with run_in_background running `atct watch --monitor --token <monitor_token> --once`; a Monitor would only expire every 30 minutes and wake you for nothing.",
 	}},
 	"goal.handoff.review.receive": {
 		{When: "the goal is acceptable", Call: "atct_goal_review_request", Note: "leave this handoff open; the human reviews next."},
