@@ -1227,6 +1227,16 @@ func (d *Daemon) dispatchMethodWithPeer(ctx context.Context, req rpc.Request, pe
 		response, err := d.monitorCheck(ctx, p.SessionKey)
 		return marshal(response, err)
 
+	case "session.monitor_form_check":
+		// Fail open: a request this check cannot read or judge allows the Monitor.
+		var p struct {
+			SessionKey string `json:"session_key"`
+		}
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return marshal(monitorCheckResponse{}, nil)
+		}
+		return marshal(d.monitorFormCheck(ctx, p.SessionKey), nil)
+
 	case "session.tool_use.bind":
 		var p struct {
 			SessionKey string `json:"session_key"`
