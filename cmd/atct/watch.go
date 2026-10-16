@@ -558,19 +558,44 @@ func writeWatchSnapshotNotice(out io.Writer, actionSink watchAgentActionSink, sc
 	})
 }
 
+// watchSnapshotError is a failed snapshot read. Kind and BaseURL name the failure for
+// the notifier; Error keeps the full text for the person reading the line.
+type watchSnapshotError struct {
+	Kind    string // refused, timeout, reset, decode, other, or "http <status>"
+	BaseURL string // the address the read was made against
+	Err     error
+}
+
+func (e *watchSnapshotError) Error() string { return e.Err.Error() }
+
+func (e *watchSnapshotError) Unwrap() error { return e.Err }
+
+// watchSnapshotFailureKey names a failed snapshot by its kind and the address it
+// failed on. The error text is left out: a dialled port differs on every retry, so
+// the text would make each retry a new failure.
+func watchSnapshotFailureKey(err error) string {
+	kind, baseURL := "other", ""
+	var snapErr *watchSnapshotError
+	if errors.As(err, &snapErr) {
+		kind, baseURL = snapErr.Kind, snapErr.BaseURL
+	}
+	return kind + "@" + baseURL
+}
+
 // snapshotFailureNotifier turns a run of failed snapshots into lines on the watch
 // output. A run is silent until it has lasted watchSnapshotFailureAfter. Then the
-// failure is said once, and said again only when its reason changes or after
+// failure is said once, and said again only when its key changes or after
 // watchSnapshotFailureRepeat. A recovery is said only when a failure was said.
 type snapshotFailureNotifier struct {
 	failingSince time.Time // zero when the snapshot is not failing
 	said         bool      // a failure line was written in this run
 	lastSaidAt   time.Time
-	lastReason   string
+	lastKey      string
 }
 
 // Failure records a failed snapshot and returns the line to write, if one is due.
-func (n *snapshotFailureNotifier) Failure(now time.Time, reason string) (string, bool) {
+// key is watchSnapshotFailureKey of the error; reason is its text, shown on the line.
+func (n *snapshotFailureNotifier) Failure(now time.Time, key, reason string) (string, bool) {
 	reason = strings.Join(strings.Fields(reason), " ")
 	if n.failingSince.IsZero() {
 		n.failingSince = now
@@ -580,7 +605,7 @@ func (n *snapshotFailureNotifier) Failure(now time.Time, reason string) (string,
 	switch {
 	case !n.said:
 		due = elapsed >= watchSnapshotFailureAfter
-	case reason != n.lastReason:
+	case key != n.lastKey:
 		due = true
 	default:
 		due = now.Sub(n.lastSaidAt) >= watchSnapshotFailureRepeat
@@ -590,7 +615,7 @@ func (n *snapshotFailureNotifier) Failure(now time.Time, reason string) (string,
 	}
 	n.said = true
 	n.lastSaidAt = now
-	n.lastReason = reason
+	n.lastKey = key
 	return fmt.Sprintf("ATCT: daemon snapshot failing for %s: %s", formatSnapshotFailureDuration(elapsed), reason), true
 }
 
@@ -936,9 +961,8 @@ func watchLoopWithEnsureAndProjectIDAndScopeAndActionSink(ctx context.Context, o
 				return nil
 			}
 			now := snapshotFailureNow()
-			if line, due := snapshotNotifier.Failure(now, err.Error()); due {
-				reason := strings.Join(strings.Fields(err.Error()), " ")
-				if writeErr := writeWatchSnapshotNotice(out, actionSink, scope, watchSnapshotFailingEvent, line, reason, "current"); writeErr != nil {
+			if line, due := snapshotNotifier.Failure(now, watchSnapshotFailureKey(err), err.Error()); due {
+				if writeErr := writeWatchSnapshotNotice(out, actionSink, scope, watchSnapshotFailingEvent, line, watchSnapshotFailureKey(err), "current"); writeErr != nil {
 					return writeErr
 				}
 			}
@@ -1038,31 +1062,39 @@ func fetchWatchSnapshot(ctx context.Context, client *http.Client, urls []string)
 
 func readWatchInbox(ctx context.Context, client *http.Client, baseURL string) (watchInbox, error) {
 	endpoint := baseURL + "/api/inbox"
+	fail := func(kind string, err error) error {
+		return &watchSnapshotError{Kind: kind, BaseURL: baseURL, Err: err}
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
-		return watchInbox{}, fmt.Errorf("build request GET %s: %w", endpoint, err)
+		return watchInbox{}, fail("other", fmt.Errorf("build request GET %s: %w", endpoint, err))
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		if errors.Is(err, syscall.ECONNREFUSED) {
-			return watchInbox{}, fmt.Errorf("%w (GET %s): %w", errWatchRefused, endpoint, err)
+		switch {
+		case errors.Is(err, syscall.ECONNREFUSED):
+			return watchInbox{}, fail("refused", fmt.Errorf("%w (GET %s): %w", errWatchRefused, endpoint, err))
+		case isWatchTimeout(err):
+			return watchInbox{}, fail("timeout", fmt.Errorf("snapshot timeout after %s (GET %s): %w", watchSnapshotTimeout, endpoint, err))
+		case errors.Is(err, syscall.ECONNRESET):
+			return watchInbox{}, fail("reset", fmt.Errorf("snapshot request failed (GET %s): %w", endpoint, err))
 		}
-		if isWatchTimeout(err) {
-			return watchInbox{}, fmt.Errorf("snapshot timeout after %s (GET %s): %w", watchSnapshotTimeout, endpoint, err)
-		}
-		return watchInbox{}, fmt.Errorf("snapshot request failed (GET %s): %w", endpoint, err)
+		return watchInbox{}, fail("other", fmt.Errorf("snapshot request failed (GET %s): %w", endpoint, err))
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		_, _ = io.Copy(io.Discard, resp.Body)
-		return watchInbox{}, fmt.Errorf("HTTP status %s (GET %s)", resp.Status, endpoint)
+		return watchInbox{}, fail(fmt.Sprintf("http %d", resp.StatusCode), fmt.Errorf("HTTP status %s (GET %s)", resp.Status, endpoint))
 	}
 	var inbox watchInbox
 	if err := json.NewDecoder(resp.Body).Decode(&inbox); err != nil {
-		if isWatchTimeout(err) {
-			return watchInbox{}, fmt.Errorf("snapshot timeout after %s while reading body (GET %s): %w", watchSnapshotTimeout, endpoint, err)
+		switch {
+		case isWatchTimeout(err):
+			return watchInbox{}, fail("timeout", fmt.Errorf("snapshot timeout after %s while reading body (GET %s): %w", watchSnapshotTimeout, endpoint, err))
+		case errors.Is(err, syscall.ECONNRESET):
+			return watchInbox{}, fail("reset", fmt.Errorf("decode GET %s: %w", endpoint, err))
 		}
-		return watchInbox{}, fmt.Errorf("decode GET %s: %w", endpoint, err)
+		return watchInbox{}, fail("decode", fmt.Errorf("decode GET %s: %w", endpoint, err))
 	}
 	return inbox, nil
 }

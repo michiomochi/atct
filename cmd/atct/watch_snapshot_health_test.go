@@ -10,16 +10,22 @@ import (
 	"time"
 )
 
+// The keys the notifier sees for a timeout and a refusal of the daemon on 8787.
+const (
+	timeoutKey = "timeout@http://127.0.0.1:8787"
+	refusedKey = "refused@http://127.0.0.1:8787"
+)
+
 func TestSnapshotFailureNotifierWaitsTwoMinutes(t *testing.T) {
 	var n snapshotFailureNotifier
 	t0 := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
-	if _, due := n.Failure(t0, "snapshot timeout after 5s"); due {
+	if _, due := n.Failure(t0, timeoutKey, "snapshot timeout after 5s"); due {
 		t.Fatal("a failure line was due at the first failure")
 	}
-	if _, due := n.Failure(t0.Add(time.Minute+59*time.Second), "snapshot timeout after 5s"); due {
+	if _, due := n.Failure(t0.Add(time.Minute+59*time.Second), timeoutKey, "snapshot timeout after 5s"); due {
 		t.Fatal("a failure line was due before two minutes")
 	}
-	line, due := n.Failure(t0.Add(2*time.Minute), "snapshot timeout after 5s")
+	line, due := n.Failure(t0.Add(2*time.Minute), timeoutKey, "snapshot timeout after 5s")
 	if !due {
 		t.Fatal("no failure line at two minutes")
 	}
@@ -33,16 +39,16 @@ func TestSnapshotFailureNotifierRepeatsSameReasonEveryThirtyMinutes(t *testing.T
 	var n snapshotFailureNotifier
 	t0 := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
 	reason := "snapshot timeout after 5s"
-	n.Failure(t0, reason)
-	if _, due := n.Failure(t0.Add(2*time.Minute), reason); !due {
+	n.Failure(t0, timeoutKey, reason)
+	if _, due := n.Failure(t0.Add(2*time.Minute), timeoutKey, reason); !due {
 		t.Fatal("first line missing")
 	}
 	for _, offset := range []time.Duration{10 * time.Minute, 29*time.Minute + 59*time.Second} {
-		if _, due := n.Failure(t0.Add(offset), reason); due {
+		if _, due := n.Failure(t0.Add(offset), timeoutKey, reason); due {
 			t.Fatalf("same reason repeated at %s, before thirty minutes", offset)
 		}
 	}
-	if _, due := n.Failure(t0.Add(32*time.Minute), reason); !due {
+	if _, due := n.Failure(t0.Add(32*time.Minute), timeoutKey, reason); !due {
 		t.Fatal("same reason not repeated after thirty minutes")
 	}
 }
@@ -50,9 +56,9 @@ func TestSnapshotFailureNotifierRepeatsSameReasonEveryThirtyMinutes(t *testing.T
 func TestSnapshotFailureNotifierSaysChangedReasonAtOnce(t *testing.T) {
 	var n snapshotFailureNotifier
 	t0 := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
-	n.Failure(t0, "snapshot timeout after 5s")
-	n.Failure(t0.Add(2*time.Minute), "snapshot timeout after 5s")
-	line, due := n.Failure(t0.Add(3*time.Minute), "connection refused (GET http://127.0.0.1:8787/api/inbox)")
+	n.Failure(t0, timeoutKey, "snapshot timeout after 5s")
+	n.Failure(t0.Add(2*time.Minute), timeoutKey, "snapshot timeout after 5s")
+	line, due := n.Failure(t0.Add(3*time.Minute), refusedKey, "connection refused (GET http://127.0.0.1:8787/api/inbox)")
 	if !due {
 		t.Fatal("changed reason waited instead of being said at once")
 	}
@@ -64,8 +70,8 @@ func TestSnapshotFailureNotifierSaysChangedReasonAtOnce(t *testing.T) {
 func TestSnapshotFailureNotifierCollapsesLineBreaks(t *testing.T) {
 	var n snapshotFailureNotifier
 	t0 := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
-	n.Failure(t0, "snapshot timeout\nafter 5s\r\n")
-	line, due := n.Failure(t0.Add(2*time.Minute), "snapshot timeout\nafter 5s\r\n")
+	n.Failure(t0, timeoutKey, "snapshot timeout\nafter 5s\r\n")
+	line, due := n.Failure(t0.Add(2*time.Minute), timeoutKey, "snapshot timeout\nafter 5s\r\n")
 	if !due || strings.ContainsAny(line, "\r\n") || !strings.HasSuffix(line, "snapshot timeout after 5s") {
 		t.Fatalf("line = %q (due %v), want one line ending in the reason with spaces", line, due)
 	}
@@ -74,13 +80,13 @@ func TestSnapshotFailureNotifierCollapsesLineBreaks(t *testing.T) {
 func TestSnapshotFailureNotifierRecoveryIsSaidOnlyAfterFailureWasSaid(t *testing.T) {
 	var n snapshotFailureNotifier
 	t0 := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
-	n.Failure(t0, "snapshot timeout after 5s")
+	n.Failure(t0, timeoutKey, "snapshot timeout after 5s")
 	if _, recovered := n.Success(t0.Add(time.Minute)); recovered {
 		t.Fatal("recovery said for a failure that was never said")
 	}
 
-	n.Failure(t0, "snapshot timeout after 5s")
-	n.Failure(t0.Add(2*time.Minute), "snapshot timeout after 5s")
+	n.Failure(t0, timeoutKey, "snapshot timeout after 5s")
+	n.Failure(t0.Add(2*time.Minute), timeoutKey, "snapshot timeout after 5s")
 	line, recovered := n.Success(t0.Add(7*time.Minute + 30*time.Second))
 	if !recovered || line != "ATCT: daemon snapshot recovered after 7m30s" {
 		t.Fatalf("recovery = %q (%v), want the period from the first failure", line, recovered)
@@ -88,10 +94,10 @@ func TestSnapshotFailureNotifierRecoveryIsSaidOnlyAfterFailureWasSaid(t *testing
 
 	// A success resets the run: the next failure counts two minutes from itself.
 	t1 := t0.Add(10 * time.Minute)
-	if _, due := n.Failure(t1, "snapshot timeout after 5s"); due {
+	if _, due := n.Failure(t1, timeoutKey, "snapshot timeout after 5s"); due {
 		t.Fatal("a new run said its failure at once")
 	}
-	if _, due := n.Failure(t1.Add(2*time.Minute), "snapshot timeout after 5s"); !due {
+	if _, due := n.Failure(t1.Add(2*time.Minute), timeoutKey, "snapshot timeout after 5s"); !due {
 		t.Fatal("a new run did not say its failure after two minutes")
 	}
 }
