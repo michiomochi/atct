@@ -20,6 +20,11 @@ LIMIT 1;
 -- name: ListTaskCreateHandoffs :many
 SELECT * FROM task_create_handoffs WHERE goal_id = ? ORDER BY requested_at, id;
 
+-- name: ListTaskCreateHandoffsForActiveGoals :many
+SELECT * FROM task_create_handoffs
+WHERE goal_id IN (SELECT id FROM goals WHERE status = 'active')
+ORDER BY goal_id, requested_at, id;
+
 -- name: CreateTaskCreateHandoff :exec
 INSERT INTO task_create_handoffs (id, goal_id, requested_by, requested_at, request_report)
 VALUES (?, ?, ?, ?, ?);
@@ -440,6 +445,11 @@ FROM goal_handoffs
 WHERE goal_id = ?
 ORDER BY id;
 
+-- name: ListGoalHandoffsForActiveGoals :many
+SELECT * FROM goal_handoffs
+WHERE goal_id IN (SELECT id FROM goals WHERE status = 'active')
+ORDER BY goal_id, id;
+
 -- name: GetGoalHandoffGoalID :one
 SELECT goal_id
 FROM goal_handoffs
@@ -586,6 +596,11 @@ SELECT plan_handoffs.*
 FROM plan_handoffs
 WHERE goal_id = ?
 ORDER BY id;
+
+-- name: ListPlanHandoffsForActiveGoals :many
+SELECT * FROM plan_handoffs
+WHERE goal_id IN (SELECT id FROM goals WHERE status = 'active')
+ORDER BY goal_id, id;
 
 -- name: RequestPlanHandoffReview :execresult
 INSERT INTO plan_handoffs (

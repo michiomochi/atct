@@ -46,6 +46,12 @@ WHERE status = 'open'
   AND goal_id IN (SELECT goals.id FROM goals WHERE goals.project_id NOT IN (SELECT id FROM projects WHERE archived_at IS NOT NULL))
 ORDER BY created_at;
 
+-- name: ListGoalReviewDecisionsForActiveGoals :many
+SELECT * FROM decisions
+WHERE kind = 'goal_review'
+  AND goal_id IN (SELECT id FROM goals WHERE status = 'active')
+ORDER BY goal_id, id;
+
 -- name: AnswerDecision :execresult
 UPDATE decisions
 SET status = 'answered', answer_label = ?, answer_text = ?, answered_at = ?,
