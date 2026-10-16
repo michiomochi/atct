@@ -898,6 +898,11 @@ func watchLoopWithEnsureAndProjectIDAndScopeAndActionSink(ctx context.Context, o
 	}
 }
 
+// errWatchRefused marks a candidate where nothing listens. Only this moves
+// fetchWatchSnapshot on to the next address; a timeout, an HTTP error or a bad
+// body means a daemon answered, so trying a later port would hide its error.
+var errWatchRefused = errors.New("connection refused")
+
 func fetchWatchSnapshot(ctx context.Context, client *http.Client, urls []string) (string, []watchDecision, error) {
 	if len(urls) == 0 {
 		return "", nil, errors.New("no daemon HTTP addresses to try")
@@ -906,39 +911,56 @@ func fetchWatchSnapshot(ctx context.Context, client *http.Client, urls []string)
 	for _, baseURL := range urls {
 		baseURL = strings.TrimRight(baseURL, "/")
 		snapshotCtx, cancel := context.WithTimeout(ctx, watchSnapshotTimeout)
-		req, err := http.NewRequestWithContext(snapshotCtx, http.MethodGet, baseURL+"/api/inbox", nil)
-		if err != nil {
-			cancel()
-			lastErr = err
-			continue
-		}
-		resp, err := client.Do(req)
-		if err != nil {
-			cancel()
-			lastErr = err
-			continue
-		}
-		var inbox watchInbox
-		if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-			_, _ = io.Copy(io.Discard, resp.Body)
-			_ = resp.Body.Close()
-			cancel()
-			lastErr = fmt.Errorf("GET %s/api/inbox: HTTP %s", baseURL, resp.Status)
-			continue
-		}
-		decodeErr := json.NewDecoder(resp.Body).Decode(&inbox)
-		_ = resp.Body.Close()
+		inbox, err := readWatchInbox(snapshotCtx, client, baseURL)
 		cancel()
-		if decodeErr != nil {
-			lastErr = fmt.Errorf("decode %s/api/inbox: %w", baseURL, decodeErr)
-			continue
+		if err == nil {
+			return baseURL, inbox.UnappliedDecisions, nil
 		}
-		return baseURL, inbox.UnappliedDecisions, nil
-	}
-	if lastErr == nil {
-		lastErr = errors.New("unable to read daemon inbox")
+		if !errors.Is(err, errWatchRefused) {
+			return "", nil, err
+		}
+		lastErr = err
 	}
 	return "", nil, lastErr
+}
+
+func readWatchInbox(ctx context.Context, client *http.Client, baseURL string) (watchInbox, error) {
+	endpoint := baseURL + "/api/inbox"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return watchInbox{}, fmt.Errorf("build request GET %s: %w", endpoint, err)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		if errors.Is(err, syscall.ECONNREFUSED) {
+			return watchInbox{}, fmt.Errorf("%w (GET %s): %w", errWatchRefused, endpoint, err)
+		}
+		if isWatchTimeout(err) {
+			return watchInbox{}, fmt.Errorf("snapshot timeout after %s (GET %s): %w", watchSnapshotTimeout, endpoint, err)
+		}
+		return watchInbox{}, fmt.Errorf("snapshot request failed (GET %s): %w", endpoint, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		return watchInbox{}, fmt.Errorf("HTTP status %s (GET %s)", resp.Status, endpoint)
+	}
+	var inbox watchInbox
+	if err := json.NewDecoder(resp.Body).Decode(&inbox); err != nil {
+		if isWatchTimeout(err) {
+			return watchInbox{}, fmt.Errorf("snapshot timeout after %s while reading body (GET %s): %w", watchSnapshotTimeout, endpoint, err)
+		}
+		return watchInbox{}, fmt.Errorf("decode GET %s: %w", endpoint, err)
+	}
+	return inbox, nil
+}
+
+func isWatchTimeout(err error) bool {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var netErr net.Error
+	return errors.As(err, &netErr) && netErr.Timeout()
 }
 
 func watchSnapshotWithProject(client *http.Client, urls []string, cwd string) (watchSnapshotFunc, func() string) {
