@@ -767,7 +767,7 @@ func (s *Server) handleCreateGoal(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleInbox(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	goals, err := s.store.ListAllGoals(ctx)
+	goals, err := s.store.ListAllGoalsForInbox(ctx)
 	if err != nil {
 		writeStoreError(w, err)
 		return
@@ -832,17 +832,34 @@ func (s *Server) handleInbox(w http.ResponseWriter, r *http.Request) {
 	activeGoals := make([]goalView, 0)
 	attentionTasks := make([]TaskView, 0)
 	taskStatus := make(map[int64]domain.TaskStatus)
+	var activeGoalList []domain.Goal
 	for _, goal := range goals {
-		tasks, err := s.store.ListTasks(ctx, goal.ID)
-		if err != nil {
-			writeStoreError(w, err)
-			return
+		if goal.Status == domain.GoalActive {
+			activeGoalList = append(activeGoalList, goal)
 		}
-		handoffs, err := s.store.ListOpenTaskHandoffsForGoal(ctx, goal.ID)
-		if err != nil {
-			writeStoreError(w, err)
-			return
-		}
+	}
+	nextActions, err := s.store.GoalNextActions(ctx, activeGoalList)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	awaitingReviews, err := s.store.GoalsAwaitingHandoffReview(ctx)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	tasksByGoal, err := s.store.ListTasksForAllGoals(ctx)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	handoffs, err := s.store.ListOpenTaskHandoffsForAllGoals(ctx)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	for _, goal := range goals {
+		tasks := tasksByGoal[goal.ID]
 		for _, task := range tasks {
 			taskStatus[task.ID] = task.Status
 		}
@@ -857,21 +874,11 @@ func (s *Server) handleInbox(w http.ResponseWriter, r *http.Request) {
 			for _, task := range goalTasks {
 				taskViews = append(taskViews, newTaskView(task, handoffs[task.ID], openByTask[task.ID]))
 			}
-			awaitingReview, err := s.goalAwaitsHandoffReview(ctx, goal.ID)
-			if err != nil {
-				writeStoreError(w, err)
-				return
-			}
-			nextAction, err := s.store.GoalNextAction(ctx, goal)
-			if err != nil {
-				writeStoreError(w, err)
-				return
-			}
 			activeGoals = append(activeGoals, goalView{
 				Goal:             goal,
 				AwaitingDecision: openByGoal[goal.ID],
-				AwaitingReview:   awaitingReview,
-				NextAction:       nextAction,
+				AwaitingReview:   awaitingReviews[goal.ID],
+				NextAction:       nextActions[goal.ID],
 				ProjectName:      projectNames[goal.ProjectID],
 				Tasks:            taskViews,
 			})
@@ -1056,30 +1063,6 @@ func (s *Server) handleGoal(w http.ResponseWriter, r *http.Request, goalID strin
 
 // goalAwaitsHandoffReview reports a submitted review that nobody has received
 // yet, for the goal's own handoff or for its plan.
-func (s *Server) goalAwaitsHandoffReview(ctx context.Context, goalID int64) (bool, error) {
-	goalHandoffs, err := s.store.ListGoalHandoffs(ctx, goalID)
-	if err != nil {
-		return false, err
-	}
-	for _, handoff := range goalHandoffs {
-		if handoff.ReviewRequestedAt != nil && handoff.ReviewReceivedAt == nil &&
-			handoff.ReviewRejectedAt == nil && handoff.CompletedReportAt == nil && handoff.RecoveredAt == nil {
-			return true, nil
-		}
-	}
-	planHandoffs, err := s.store.ListPlanHandoffs(ctx, goalID)
-	if err != nil {
-		return false, err
-	}
-	for _, handoff := range planHandoffs {
-		if handoff.ReviewRequestedAt != nil && handoff.ReviewReceivedAt == nil &&
-			handoff.ReviewRejectedAt == nil && handoff.CompletedReportAt == nil {
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
 func (s *Server) handleWithdraw(w http.ResponseWriter, r *http.Request, goalID string) {
 	var request rejectionRequest
 	if err := decodeJSONBody(r, &request); err != nil {

@@ -572,6 +572,57 @@ func (q *Queries) ListExpiredDecisions(ctx context.Context) ([]Decision, error) 
 	return items, nil
 }
 
+const listGoalReviewDecisionsForActiveGoals = `-- name: ListGoalReviewDecisionsForActiveGoals :many
+SELECT id, goal_id, task_id, kind, question, options, status, default_option, default_after_ms, default_applied_at, answer_label, answer_text, answered_at, applied_at, agent_session_id, created_at, answered_via, answer_quote, answer_evidence, answer_prompt_id FROM decisions
+WHERE kind = 'goal_review'
+  AND goal_id IN (SELECT id FROM goals WHERE status = 'active')
+ORDER BY goal_id, id
+`
+
+func (q *Queries) ListGoalReviewDecisionsForActiveGoals(ctx context.Context) ([]Decision, error) {
+	rows, err := q.db.QueryContext(ctx, listGoalReviewDecisionsForActiveGoals)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Decision
+	for rows.Next() {
+		var i Decision
+		if err := rows.Scan(
+			&i.ID,
+			&i.GoalID,
+			&i.TaskID,
+			&i.Kind,
+			&i.Question,
+			&i.Options,
+			&i.Status,
+			&i.DefaultOption,
+			&i.DefaultAfterMs,
+			&i.DefaultAppliedAt,
+			&i.AnswerLabel,
+			&i.AnswerText,
+			&i.AnsweredAt,
+			&i.AppliedAt,
+			&i.AgentSessionID,
+			&i.CreatedAt,
+			&i.AnsweredVia,
+			&i.AnswerQuote,
+			&i.AnswerEvidence,
+			&i.AnswerPromptID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listOpenDecisions = `-- name: ListOpenDecisions :many
 SELECT
   id, goal_id, task_id, kind, question, options, status,

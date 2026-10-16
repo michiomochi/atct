@@ -140,6 +140,25 @@ func (s *Store) ListTasks(ctx context.Context, goalID int64) ([]domain.Task, err
 	return out, nil
 }
 
+// ListTasksForAllGoals returns every goal's tasks in one query, keyed by goal
+// ID. Each goal's slice is in the order ListTasks returns for that goal.
+func (s *Store) ListTasksForAllGoals(ctx context.Context) (map[int64][]domain.Task, error) {
+	rows, err := taskQueries(s).ListTasksForAllGoals(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("query tasks for all goals: %w", err)
+	}
+
+	out := make(map[int64][]domain.Task)
+	for _, row := range rows {
+		tk, err := taskFromFields(row.ID, row.GoalID, row.Title, row.Description, row.Status, row.Agent, row.SortOrder, row.DeclareKey, row.SnoozedUntil, row.CreatedAt, row.UpdatedAt)
+		if err != nil {
+			return nil, err
+		}
+		out[row.GoalID] = append(out[row.GoalID], tk)
+	}
+	return out, nil
+}
+
 // SnoozeTask sets or clears the absolute deadline that temporarily hides a
 // todo task from wakeup. A nil deadline clears the snooze.
 func (s *Store) SnoozeTask(ctx context.Context, taskID int64, until *time.Time) (domain.Task, error) {

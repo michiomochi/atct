@@ -51,6 +51,19 @@ func newWatchOnce(dir, token string, cancel context.CancelFunc, now func() time.
 	return w
 }
 
+// watchRepeatDue reports whether an action already delivered since elapsed may be
+// delivered again. Only the liveness line and a snapshot failure repeat, each after
+// its own interval; everything else is delivered once.
+func watchRepeatDue(eventName string, elapsed time.Duration) bool {
+	switch eventName {
+	case "monitor.liveness":
+		return elapsed >= watchLivenessRepeatInterval
+	case watchSnapshotFailingEvent:
+		return elapsed >= watchSnapshotFailureRepeat
+	}
+	return false
+}
+
 // Fired reports whether any action reached stdout.
 func (w *watchOnce) Fired() bool { return w.fired.Load() }
 
@@ -62,11 +75,8 @@ func (w *watchOnce) Sink(next watchAgentActionSink) watchAgentActionSink {
 		key := action.deliveryKey + "\x00" + action.generation
 		w.mu.Lock()
 		defer w.mu.Unlock()
-		if at, ok := w.seen[key]; ok {
-			// Only the liveness line is allowed to repeat, once its interval is up.
-			if action.eventName != "monitor.liveness" || w.now().Sub(time.Unix(at, 0)) < watchLivenessRepeatInterval {
-				return nil
-			}
+		if at, ok := w.seen[key]; ok && !watchRepeatDue(action.eventName, w.now().Sub(time.Unix(at, 0))) {
+			return nil
 		}
 		if err := next(action); err != nil {
 			return err

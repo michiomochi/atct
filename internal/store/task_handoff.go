@@ -1239,3 +1239,23 @@ func (s *Store) ListOpenTaskHandoffsForGoal(ctx context.Context, goalID int64) (
 	}
 	return handoffs, nil
 }
+
+// ListOpenTaskHandoffsForAllGoals returns every incomplete task handoff in one
+// query, keyed by task ID. Its entries are those of ListOpenTaskHandoffsForGoal
+// across all goals, since each open task has at most one open handoff.
+func (s *Store) ListOpenTaskHandoffsForAllGoals(ctx context.Context) (map[int64]*TaskHandoff, error) {
+	rows, err := sqlcgen.New(s.db).ListOpenTaskHandoffs(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list open task handoffs: %w", err)
+	}
+
+	handoffs := make(map[int64]*TaskHandoff, len(rows))
+	for _, row := range rows {
+		handoff, err := taskHandoffFromRow(row)
+		if err != nil {
+			return nil, fmt.Errorf("parse open task handoff: %w", err)
+		}
+		handoffs[handoff.TaskID] = &handoff
+	}
+	return handoffs, nil
+}

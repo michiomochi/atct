@@ -20,6 +20,11 @@ LIMIT 1;
 -- name: ListTaskCreateHandoffs :many
 SELECT * FROM task_create_handoffs WHERE goal_id = ? ORDER BY requested_at, id;
 
+-- name: ListTaskCreateHandoffsForActiveGoals :many
+SELECT * FROM task_create_handoffs
+WHERE goal_id IN (SELECT id FROM goals WHERE status = 'active')
+ORDER BY goal_id, requested_at, id;
+
 -- name: CreateTaskCreateHandoff :exec
 INSERT INTO task_create_handoffs (id, goal_id, requested_by, requested_at, request_report)
 VALUES (?, ?, ?, ?, ?);
@@ -61,6 +66,13 @@ SELECT
 FROM tasks
 WHERE goal_id = ?
 ORDER BY sort_order, id;
+
+-- name: ListTasksForAllGoals :many
+SELECT
+  id, goal_id, title, description, status, agent, sort_order, declare_key,
+  snoozed_until, created_at, updated_at
+FROM tasks
+ORDER BY goal_id, sort_order, id;
 
 -- name: UpdateTaskSnooze :execresult
 UPDATE tasks
@@ -252,6 +264,19 @@ WHERE t.goal_id = ?
   AND th.recovered_at IS NULL
 ORDER BY th.id;
 
+-- name: ListOpenTaskHandoffs :many
+SELECT th.id, th.task_id, th.requested_by, th.received_by,
+       th.requested_at, th.received_at, th.completed_report_at,
+       th.request_report, th.complete_report,
+       th.review_requested_by, th.review_requested_at, th.review_request_report,
+       th.review_received_by, th.review_received_at,
+       th.review_rejected_at, th.review_reject_report, th.review_rejection_received_by, th.review_rejection_received_at,
+       th.recovered_at, th.recovery_report
+FROM task_handoffs AS th
+WHERE th.completed_report_at IS NULL
+  AND th.recovered_at IS NULL
+ORDER BY th.id;
+
 -- The partial unique index idx_task_handoffs_open_task_id guarantees at most
 -- one open handoff per task, so filtering completed_report_at is equivalent
 -- to selecting the first open handoff in the legacy implementation.
@@ -420,6 +445,11 @@ FROM goal_handoffs
 WHERE goal_id = ?
 ORDER BY id;
 
+-- name: ListGoalHandoffsForActiveGoals :many
+SELECT * FROM goal_handoffs
+WHERE goal_id IN (SELECT id FROM goals WHERE status = 'active')
+ORDER BY goal_id, id;
+
 -- name: GetGoalHandoffGoalID :one
 SELECT goal_id
 FROM goal_handoffs
@@ -566,6 +596,11 @@ SELECT plan_handoffs.*
 FROM plan_handoffs
 WHERE goal_id = ?
 ORDER BY id;
+
+-- name: ListPlanHandoffsForActiveGoals :many
+SELECT * FROM plan_handoffs
+WHERE goal_id IN (SELECT id FROM goals WHERE status = 'active')
+ORDER BY goal_id, id;
 
 -- name: RequestPlanHandoffReview :execresult
 INSERT INTO plan_handoffs (

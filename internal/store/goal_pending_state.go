@@ -20,6 +20,19 @@ func (s *Store) GoalPendingState(ctx context.Context, goalID int64) (string, err
 	if err != nil {
 		return "", fmt.Errorf("list decisions for goal %d: %w", goalID, err)
 	}
+	return goalPendingState(decisions, func() ([]GoalHandoff, error) {
+		handoffs, err := s.ListGoalHandoffs(ctx, goalID)
+		if err != nil {
+			return nil, fmt.Errorf("list goal handoffs for goal %d: %w", goalID, err)
+		}
+		return handoffs, nil
+	})
+}
+
+// goalPendingState is GoalPendingState over rows already read. decisions is the
+// goal's decisions in id order (only goal_review ones matter here); goalHandoffs is
+// called only when the latest goal_review was rejected, the one case that reads them.
+func goalPendingState(decisions []domain.Decision, goalHandoffs func() ([]GoalHandoff, error)) (string, error) {
 	var latest domain.Decision
 	hasReview := false
 	for _, decision := range decisions {
@@ -34,9 +47,9 @@ func (s *Store) GoalPendingState(ctx context.Context, goalID int64) (string, err
 	if !hasReview || latest.Status != domain.DecisionAnswered || latest.AnswerLabel != "reject" {
 		return "", nil
 	}
-	handoffs, err := s.ListGoalHandoffs(ctx, goalID)
+	handoffs, err := goalHandoffs()
 	if err != nil {
-		return "", fmt.Errorf("list goal handoffs for goal %d: %w", goalID, err)
+		return "", err
 	}
 	for _, handoff := range handoffs {
 		// A resubmission clears review_rejected_at on the same handoff while the

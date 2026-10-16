@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/michiomochi/atct/internal/domain"
+	"github.com/michiomochi/atct/internal/store/sqlcgen"
 )
 
 // NextAction is the step a goal waits on, shown read-only next to the goal.
@@ -63,60 +64,231 @@ type nextActionInput struct {
 	TaskHandoffs map[int64]*TaskHandoff
 }
 
-// GoalNextAction derives the next step of goal from the store. It only reads.
-func (s *Store) GoalNextAction(ctx context.Context, goal domain.Goal) (NextAction, error) {
+// goalRows is everything nextActionFor reads for one goal, already loaded.
+type goalRows struct {
+	openDecisions []domain.Decision // open decisions, in created_at order
+	decisions     []domain.Decision // the goal's goal_review decisions, in id order
+	goalHandoffs  []GoalHandoff
+	planHandoffs  []PlanHandoff
+	taskCreates   []TaskCreateHandoff
+	tasks         []domain.Task
+	taskHandoffs  map[int64]*TaskHandoff
+}
+
+// nextActionFor derives the next action of goal from its rows. GoalNextAction and
+// GoalNextActions both derive through it, so they cannot disagree.
+func nextActionFor(goal domain.Goal, rows goalRows) (NextAction, error) {
 	if goal.Status == domain.GoalDone || goal.Status == domain.GoalDropped {
 		return deriveNextAction(nextActionInput{Status: goal.Status}), nil
 	}
 	in := nextActionInput{Status: goal.Status}
-
-	decisions, err := s.ListOpenDecisions(ctx, goal.ID)
+	if len(rows.openDecisions) > 0 {
+		in.OpenDecision = &rows.openDecisions[0]
+	}
+	pending, err := goalPendingState(rows.decisions, func() ([]GoalHandoff, error) { return rows.goalHandoffs, nil })
 	if err != nil {
+		return NextAction{}, err
+	}
+	in.PendingState = pending
+	for i := range rows.goalHandoffs {
+		if h := rows.goalHandoffs[i]; h.CompletedReportAt == nil && h.RecoveredAt == nil {
+			in.GoalHandoff = &rows.goalHandoffs[i]
+		}
+	}
+	if len(rows.planHandoffs) > 0 {
+		in.PlanHandoff = &rows.planHandoffs[len(rows.planHandoffs)-1]
+	}
+	for i := range rows.taskCreates {
+		if h := rows.taskCreates[i]; h.CompletedAt == nil && h.RecoveredAt == nil {
+			in.TaskCreate = &rows.taskCreates[i]
+		}
+	}
+	in.Tasks = rows.tasks
+	in.TaskHandoffs = rows.taskHandoffs
+	return deriveNextAction(in), nil
+}
+
+// GoalNextAction derives the next step of goal from the store. It only reads.
+func (s *Store) GoalNextAction(ctx context.Context, goal domain.Goal) (NextAction, error) {
+	if goal.Status == domain.GoalDone || goal.Status == domain.GoalDropped {
+		return nextActionFor(goal, goalRows{})
+	}
+	var rows goalRows
+	var err error
+	if rows.openDecisions, err = s.ListOpenDecisions(ctx, goal.ID); err != nil {
 		return NextAction{}, fmt.Errorf("list open decisions for goal %d: %w", goal.ID, err)
 	}
-	if len(decisions) > 0 {
-		in.OpenDecision = &decisions[0]
+	if rows.decisions, err = s.ListDecisionsForGoal(ctx, goal.ID); err != nil {
+		return NextAction{}, fmt.Errorf("list decisions for goal %d: %w", goal.ID, err)
 	}
-
-	if in.PendingState, err = s.GoalPendingState(ctx, goal.ID); err != nil {
-		return NextAction{}, err
-	}
-
-	goalHandoffs, err := s.ListGoalHandoffs(ctx, goal.ID)
-	if err != nil {
+	if rows.goalHandoffs, err = s.ListGoalHandoffs(ctx, goal.ID); err != nil {
 		return NextAction{}, fmt.Errorf("list goal handoffs for goal %d: %w", goal.ID, err)
 	}
-	for i := range goalHandoffs {
-		if h := goalHandoffs[i]; h.CompletedReportAt == nil && h.RecoveredAt == nil {
-			in.GoalHandoff = &goalHandoffs[i]
-		}
-	}
-
-	planHandoffs, err := s.ListPlanHandoffs(ctx, goal.ID)
-	if err != nil {
+	if rows.planHandoffs, err = s.ListPlanHandoffs(ctx, goal.ID); err != nil {
 		return NextAction{}, fmt.Errorf("list plan handoffs for goal %d: %w", goal.ID, err)
 	}
-	if len(planHandoffs) > 0 {
-		in.PlanHandoff = &planHandoffs[len(planHandoffs)-1]
-	}
-
-	taskCreates, err := s.ListTaskCreateHandoffs(ctx, goal.ID)
-	if err != nil {
+	if rows.taskCreates, err = s.ListTaskCreateHandoffs(ctx, goal.ID); err != nil {
 		return NextAction{}, fmt.Errorf("list task create handoffs for goal %d: %w", goal.ID, err)
 	}
-	for i := range taskCreates {
-		if h := taskCreates[i]; h.CompletedAt == nil && h.RecoveredAt == nil {
-			in.TaskCreate = &taskCreates[i]
-		}
-	}
-
-	if in.Tasks, err = s.ListTasks(ctx, goal.ID); err != nil {
+	if rows.tasks, err = s.ListTasks(ctx, goal.ID); err != nil {
 		return NextAction{}, fmt.Errorf("list tasks for goal %d: %w", goal.ID, err)
 	}
-	if in.TaskHandoffs, err = s.ListOpenTaskHandoffsForGoal(ctx, goal.ID); err != nil {
+	if rows.taskHandoffs, err = s.ListOpenTaskHandoffsForGoal(ctx, goal.ID); err != nil {
 		return NextAction{}, err
 	}
-	return deriveNextAction(in), nil
+	return nextActionFor(goal, rows)
+}
+
+// allGoalRows is goalRows for every active goal, each table read once.
+type allGoalRows struct {
+	openDecisions map[int64][]domain.Decision
+	decisions     map[int64][]domain.Decision
+	goalHandoffs  map[int64][]GoalHandoff
+	planHandoffs  map[int64][]PlanHandoff
+	taskCreates   map[int64][]TaskCreateHandoff
+	tasks         map[int64][]domain.Task
+	taskHandoffs  map[int64]*TaskHandoff
+}
+
+func (s *Store) loadAllGoalRows(ctx context.Context) (allGoalRows, error) {
+	var all allGoalRows
+	open, err := s.ListAllOpenDecisions(ctx)
+	if err != nil {
+		return allGoalRows{}, fmt.Errorf("list open decisions: %w", err)
+	}
+	all.openDecisions = groupByGoal(open, func(d domain.Decision) int64 { return d.GoalID })
+
+	decisionRows, err := sqlcgen.New(s.db).ListGoalReviewDecisionsForActiveGoals(ctx)
+	if err != nil {
+		return allGoalRows{}, fmt.Errorf("list goal review decisions: %w", err)
+	}
+	decisions, err := convertDecisionRows(decisionRows, decisionRowFromSQLC)
+	if err != nil {
+		return allGoalRows{}, err
+	}
+	all.decisions = groupByGoal(decisions, func(d domain.Decision) int64 { return d.GoalID })
+
+	goalHandoffRows, err := sqlcgen.New(s.db).ListGoalHandoffsForActiveGoals(ctx)
+	if err != nil {
+		return allGoalRows{}, fmt.Errorf("list goal handoffs for active goals: %w", err)
+	}
+	goalHandoffs := make([]GoalHandoff, 0, len(goalHandoffRows))
+	for _, row := range goalHandoffRows {
+		handoff, err := goalHandoffFromRow(row)
+		if err != nil {
+			return allGoalRows{}, fmt.Errorf("parse goal handoff: %w", err)
+		}
+		goalHandoffs = append(goalHandoffs, handoff)
+	}
+	all.goalHandoffs = groupByGoal(goalHandoffs, func(h GoalHandoff) int64 { return h.GoalID })
+
+	planHandoffRows, err := sqlcgen.New(s.db).ListPlanHandoffsForActiveGoals(ctx)
+	if err != nil {
+		return allGoalRows{}, fmt.Errorf("list plan handoffs for active goals: %w", err)
+	}
+	planHandoffs := make([]PlanHandoff, 0, len(planHandoffRows))
+	for _, row := range planHandoffRows {
+		handoff, err := planHandoffFromRow(row)
+		if err != nil {
+			return allGoalRows{}, fmt.Errorf("parse plan handoff: %w", err)
+		}
+		planHandoffs = append(planHandoffs, handoff)
+	}
+	all.planHandoffs = groupByGoal(planHandoffs, func(h PlanHandoff) int64 { return h.GoalID })
+
+	taskCreateRows, err := sqlcgen.New(s.db).ListTaskCreateHandoffsForActiveGoals(ctx)
+	if err != nil {
+		return allGoalRows{}, fmt.Errorf("list task create handoffs for active goals: %w", err)
+	}
+	taskCreates := make([]TaskCreateHandoff, 0, len(taskCreateRows))
+	for _, row := range taskCreateRows {
+		handoff, err := taskCreateHandoffFromRow(row)
+		if err != nil {
+			return allGoalRows{}, err
+		}
+		taskCreates = append(taskCreates, handoff)
+	}
+	all.taskCreates = groupByGoal(taskCreates, func(h TaskCreateHandoff) int64 { return h.GoalID })
+
+	if all.tasks, err = s.ListTasksForAllGoals(ctx); err != nil {
+		return allGoalRows{}, fmt.Errorf("list tasks for all goals: %w", err)
+	}
+	if all.taskHandoffs, err = s.ListOpenTaskHandoffsForAllGoals(ctx); err != nil {
+		return allGoalRows{}, err
+	}
+	return all, nil
+}
+
+// groupByGoal splits rows by goal, keeping each goal's rows in their input order.
+func groupByGoal[T any](rows []T, goalID func(T) int64) map[int64][]T {
+	out := make(map[int64][]T)
+	for _, row := range rows {
+		id := goalID(row)
+		out[id] = append(out[id], row)
+	}
+	return out
+}
+
+// GoalNextActions returns GoalNextAction for each goal in goals, which must be
+// active goals, with one read per table for all of them instead of one per goal.
+func (s *Store) GoalNextActions(ctx context.Context, goals []domain.Goal) (map[int64]NextAction, error) {
+	all, err := s.loadAllGoalRows(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[int64]NextAction, len(goals))
+	for _, goal := range goals {
+		rows := goalRows{
+			openDecisions: all.openDecisions[goal.ID],
+			decisions:     all.decisions[goal.ID],
+			goalHandoffs:  all.goalHandoffs[goal.ID],
+			planHandoffs:  all.planHandoffs[goal.ID],
+			taskCreates:   all.taskCreates[goal.ID],
+			tasks:         all.tasks[goal.ID],
+			taskHandoffs:  all.taskHandoffs,
+		}
+		next, err := nextActionFor(goal, rows)
+		if err != nil {
+			return nil, fmt.Errorf("next action for goal %d: %w", goal.ID, err)
+		}
+		out[goal.ID] = next
+	}
+	return out, nil
+}
+
+// GoalsAwaitingHandoffReview returns the active goals that have a goal or plan
+// handoff whose review was requested and is neither received, rejected, nor completed.
+func (s *Store) GoalsAwaitingHandoffReview(ctx context.Context) (map[int64]bool, error) {
+	goalHandoffRows, err := sqlcgen.New(s.db).ListGoalHandoffsForActiveGoals(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list goal handoffs for active goals: %w", err)
+	}
+	planHandoffRows, err := sqlcgen.New(s.db).ListPlanHandoffsForActiveGoals(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list plan handoffs for active goals: %w", err)
+	}
+	out := make(map[int64]bool)
+	for _, row := range goalHandoffRows {
+		h, err := goalHandoffFromRow(row)
+		if err != nil {
+			return nil, fmt.Errorf("parse goal handoff: %w", err)
+		}
+		if h.ReviewRequestedAt != nil && h.ReviewReceivedAt == nil &&
+			h.ReviewRejectedAt == nil && h.CompletedReportAt == nil && h.RecoveredAt == nil {
+			out[h.GoalID] = true
+		}
+	}
+	for _, row := range planHandoffRows {
+		h, err := planHandoffFromRow(row)
+		if err != nil {
+			return nil, fmt.Errorf("parse plan handoff: %w", err)
+		}
+		if h.ReviewRequestedAt != nil && h.ReviewReceivedAt == nil &&
+			h.ReviewRejectedAt == nil && h.CompletedReportAt == nil {
+			out[h.GoalID] = true
+		}
+	}
+	return out, nil
 }
 
 // deriveNextAction applies the goal's derivation order: the goal's end state,

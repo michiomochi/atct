@@ -518,6 +518,129 @@ func (s *watchLivenessState) PromptDue(now time.Time, scope watchScope, snapshot
 	return line, true
 }
 
+const (
+	// watchSnapshotFailureAfter is how long snapshots must keep failing before the
+	// watch says so on its output, where the agent's Monitor reads it.
+	watchSnapshotFailureAfter = 2 * time.Minute
+	// watchSnapshotFailureRepeat is how long an unchanged failure waits before it is said again.
+	watchSnapshotFailureRepeat = 30 * time.Minute
+)
+
+// snapshotFailureNow is the clock the snapshot notifier reads; tests replace it.
+var snapshotFailureNow = time.Now
+
+const (
+	watchSnapshotFailingEvent   = "watch.snapshot.failing"
+	watchSnapshotRecoveredEvent = "watch.snapshot.recovered"
+)
+
+// writeWatchSnapshotNotice delivers one snapshot notice. A bound watch writes its
+// output to io.Discard and reaches the agent's Monitor only through actionSink, so
+// the notice goes there when there is one; otherwise it is a plain line on out.
+//
+// subject and generation are the delivery identity (see watchOnce). A failure keys
+// on its reason and repeats through watchOnce's repeat rule; a recovery is unique
+// per time, so each one is delivered.
+func writeWatchSnapshotNotice(out io.Writer, actionSink watchAgentActionSink, scope watchScope, eventName, line, subject, generation string) error {
+	if actionSink == nil {
+		_, err := fmt.Fprintln(out, line)
+		return err
+	}
+	return actionSink(watchAgentAction{
+		line:        line,
+		eventName:   eventName,
+		goalID:      scope.GoalID,
+		taskID:      scope.TaskID,
+		deliveryKey: strings.Join([]string{eventName, scope.Role, subject}, "\x00"),
+		generation:  generation,
+		targetRole:  scope.Role,
+		scopeKey:    scope.ScopeKey,
+	})
+}
+
+// watchSnapshotError is a failed snapshot read. Kind and BaseURL name the failure for
+// the notifier; Error keeps the full text for the person reading the line.
+type watchSnapshotError struct {
+	Kind    string // refused, timeout, reset, decode, other, or "http <status>"
+	BaseURL string // the address the read was made against
+	Err     error
+}
+
+func (e *watchSnapshotError) Error() string { return e.Err.Error() }
+
+func (e *watchSnapshotError) Unwrap() error { return e.Err }
+
+// watchSnapshotFailureKey names a failed snapshot by its kind and the address it
+// failed on. The error text is left out: a dialled port differs on every retry, so
+// the text would make each retry a new failure.
+func watchSnapshotFailureKey(err error) string {
+	kind, baseURL := "other", ""
+	var snapErr *watchSnapshotError
+	if errors.As(err, &snapErr) {
+		kind, baseURL = snapErr.Kind, snapErr.BaseURL
+	}
+	return kind + "@" + baseURL
+}
+
+// snapshotFailureNotifier turns a run of failed snapshots into lines on the watch
+// output. A run is silent until it has lasted watchSnapshotFailureAfter. Then the
+// failure is said once, and said again only when its key changes or after
+// watchSnapshotFailureRepeat. A recovery is said only when a failure was said.
+type snapshotFailureNotifier struct {
+	failingSince time.Time // zero when the snapshot is not failing
+	said         bool      // a failure line was written in this run
+	lastSaidAt   time.Time
+	lastKey      string
+}
+
+// Failure records a failed snapshot and returns the line to write, if one is due.
+// key is watchSnapshotFailureKey of the error; reason is its text, shown on the line.
+func (n *snapshotFailureNotifier) Failure(now time.Time, key, reason string) (string, bool) {
+	reason = strings.Join(strings.Fields(reason), " ")
+	if n.failingSince.IsZero() {
+		n.failingSince = now
+	}
+	elapsed := now.Sub(n.failingSince)
+	var due bool
+	switch {
+	case !n.said:
+		due = elapsed >= watchSnapshotFailureAfter
+	case key != n.lastKey:
+		due = true
+	default:
+		due = now.Sub(n.lastSaidAt) >= watchSnapshotFailureRepeat
+	}
+	if !due {
+		return "", false
+	}
+	n.said = true
+	n.lastSaidAt = now
+	n.lastKey = key
+	return fmt.Sprintf("ATCT: daemon snapshot failing for %s: %s", formatSnapshotFailureDuration(elapsed), reason), true
+}
+
+// Success ends the run. It returns the recovery line when a failure line was written.
+func (n *snapshotFailureNotifier) Success(now time.Time) (string, bool) {
+	if n.failingSince.IsZero() {
+		return "", false
+	}
+	said := n.said
+	elapsed := now.Sub(n.failingSince)
+	*n = snapshotFailureNotifier{}
+	if !said {
+		return "", false
+	}
+	return fmt.Sprintf("ATCT: daemon snapshot recovered after %s", formatSnapshotFailureDuration(elapsed)), true
+}
+
+func formatSnapshotFailureDuration(d time.Duration) string {
+	d = d.Round(time.Second)
+	if d%time.Minute == 0 {
+		return fmt.Sprintf("%dm", int(d/time.Minute))
+	}
+	return d.String()
+}
+
 type watchSinkError struct {
 	err error
 }
@@ -830,11 +953,18 @@ func watchLoopWithEnsureAndProjectIDAndScopeAndActionSink(ctx context.Context, o
 		}
 	}
 
+	snapshotNotifier := &snapshotFailureNotifier{}
 	for {
 		baseURL, _, err := snapshot(ctx)
 		if err != nil {
 			if ctx.Err() != nil {
 				return nil
+			}
+			now := snapshotFailureNow()
+			if line, due := snapshotNotifier.Failure(now, watchSnapshotFailureKey(err), err.Error()); due {
+				if writeErr := writeWatchSnapshotNotice(out, actionSink, scope, watchSnapshotFailingEvent, line, watchSnapshotFailureKey(err), "current"); writeErr != nil {
+					return writeErr
+				}
 			}
 			recoveryState.Failure(func(state string) {
 				reportHealth("", state, err.Error())
@@ -848,6 +978,12 @@ func watchLoopWithEnsureAndProjectIDAndScopeAndActionSink(ctx context.Context, o
 			continue
 		}
 		resetEnsureFailures()
+		now := snapshotFailureNow()
+		if line, recovered := snapshotNotifier.Success(now); recovered {
+			if writeErr := writeWatchSnapshotNotice(out, actionSink, scope, watchSnapshotRecoveredEvent, line, "", strconv.FormatInt(now.UnixNano(), 10)); writeErr != nil {
+				return writeErr
+			}
+		}
 
 		streamScope := scope
 		if streamScope.ProjectID == "" && projectID != nil {
@@ -898,6 +1034,11 @@ func watchLoopWithEnsureAndProjectIDAndScopeAndActionSink(ctx context.Context, o
 	}
 }
 
+// errWatchRefused marks a candidate where nothing listens. Only this moves
+// fetchWatchSnapshot on to the next address; a timeout, an HTTP error or a bad
+// body means a daemon answered, so trying a later port would hide its error.
+var errWatchRefused = errors.New("connection refused")
+
 func fetchWatchSnapshot(ctx context.Context, client *http.Client, urls []string) (string, []watchDecision, error) {
 	if len(urls) == 0 {
 		return "", nil, errors.New("no daemon HTTP addresses to try")
@@ -906,39 +1047,64 @@ func fetchWatchSnapshot(ctx context.Context, client *http.Client, urls []string)
 	for _, baseURL := range urls {
 		baseURL = strings.TrimRight(baseURL, "/")
 		snapshotCtx, cancel := context.WithTimeout(ctx, watchSnapshotTimeout)
-		req, err := http.NewRequestWithContext(snapshotCtx, http.MethodGet, baseURL+"/api/inbox", nil)
-		if err != nil {
-			cancel()
-			lastErr = err
-			continue
-		}
-		resp, err := client.Do(req)
-		if err != nil {
-			cancel()
-			lastErr = err
-			continue
-		}
-		var inbox watchInbox
-		if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-			_, _ = io.Copy(io.Discard, resp.Body)
-			_ = resp.Body.Close()
-			cancel()
-			lastErr = fmt.Errorf("GET %s/api/inbox: HTTP %s", baseURL, resp.Status)
-			continue
-		}
-		decodeErr := json.NewDecoder(resp.Body).Decode(&inbox)
-		_ = resp.Body.Close()
+		inbox, err := readWatchInbox(snapshotCtx, client, baseURL)
 		cancel()
-		if decodeErr != nil {
-			lastErr = fmt.Errorf("decode %s/api/inbox: %w", baseURL, decodeErr)
-			continue
+		if err == nil {
+			return baseURL, inbox.UnappliedDecisions, nil
 		}
-		return baseURL, inbox.UnappliedDecisions, nil
-	}
-	if lastErr == nil {
-		lastErr = errors.New("unable to read daemon inbox")
+		if !errors.Is(err, errWatchRefused) {
+			return "", nil, err
+		}
+		lastErr = err
 	}
 	return "", nil, lastErr
+}
+
+func readWatchInbox(ctx context.Context, client *http.Client, baseURL string) (watchInbox, error) {
+	endpoint := baseURL + "/api/inbox"
+	fail := func(kind string, err error) error {
+		return &watchSnapshotError{Kind: kind, BaseURL: baseURL, Err: err}
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return watchInbox{}, fail("other", fmt.Errorf("build request GET %s: %w", endpoint, err))
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		switch {
+		case errors.Is(err, syscall.ECONNREFUSED):
+			return watchInbox{}, fail("refused", fmt.Errorf("%w (GET %s): %w", errWatchRefused, endpoint, err))
+		case isWatchTimeout(err):
+			return watchInbox{}, fail("timeout", fmt.Errorf("snapshot timeout after %s (GET %s): %w", watchSnapshotTimeout, endpoint, err))
+		case errors.Is(err, syscall.ECONNRESET):
+			return watchInbox{}, fail("reset", fmt.Errorf("snapshot request failed (GET %s): %w", endpoint, err))
+		}
+		return watchInbox{}, fail("other", fmt.Errorf("snapshot request failed (GET %s): %w", endpoint, err))
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		return watchInbox{}, fail(fmt.Sprintf("http %d", resp.StatusCode), fmt.Errorf("HTTP status %s (GET %s)", resp.Status, endpoint))
+	}
+	var inbox watchInbox
+	if err := json.NewDecoder(resp.Body).Decode(&inbox); err != nil {
+		switch {
+		case isWatchTimeout(err):
+			return watchInbox{}, fail("timeout", fmt.Errorf("snapshot timeout after %s while reading body (GET %s): %w", watchSnapshotTimeout, endpoint, err))
+		case errors.Is(err, syscall.ECONNRESET):
+			return watchInbox{}, fail("reset", fmt.Errorf("decode GET %s: %w", endpoint, err))
+		}
+		return watchInbox{}, fail("decode", fmt.Errorf("decode GET %s: %w", endpoint, err))
+	}
+	return inbox, nil
+}
+
+func isWatchTimeout(err error) bool {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var netErr net.Error
+	return errors.As(err, &netErr) && netErr.Timeout()
 }
 
 func watchSnapshotWithProject(client *http.Client, urls []string, cwd string) (watchSnapshotFunc, func() string) {

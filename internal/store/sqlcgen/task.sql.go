@@ -759,6 +759,56 @@ func (q *Queries) ListGoalHandoffs(ctx context.Context, goalID int64) ([]GoalHan
 	return items, nil
 }
 
+const listGoalHandoffsForActiveGoals = `-- name: ListGoalHandoffsForActiveGoals :many
+SELECT id, goal_id, requested_by, received_by, requested_at, received_at, completed_report_at, request_report, complete_report, review_requested_by, review_requested_at, review_request_report, review_received_by, review_received_at, review_rejected_at, review_reject_report, review_rejection_received_by, review_rejection_received_at, recovered_at, recovery_report FROM goal_handoffs
+WHERE goal_id IN (SELECT id FROM goals WHERE status = 'active')
+ORDER BY goal_id, id
+`
+
+func (q *Queries) ListGoalHandoffsForActiveGoals(ctx context.Context) ([]GoalHandoff, error) {
+	rows, err := q.db.QueryContext(ctx, listGoalHandoffsForActiveGoals)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GoalHandoff
+	for rows.Next() {
+		var i GoalHandoff
+		if err := rows.Scan(
+			&i.ID,
+			&i.GoalID,
+			&i.RequestedBy,
+			&i.ReceivedBy,
+			&i.RequestedAt,
+			&i.ReceivedAt,
+			&i.CompletedReportAt,
+			&i.RequestReport,
+			&i.CompleteReport,
+			&i.ReviewRequestedBy,
+			&i.ReviewRequestedAt,
+			&i.ReviewRequestReport,
+			&i.ReviewReceivedBy,
+			&i.ReviewReceivedAt,
+			&i.ReviewRejectedAt,
+			&i.ReviewRejectReport,
+			&i.ReviewRejectionReceivedBy,
+			&i.ReviewRejectionReceivedAt,
+			&i.RecoveredAt,
+			&i.RecoveryReport,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listOpenTaskHandoffClaims = `-- name: ListOpenTaskHandoffClaims :many
 SELECT t.id, t.goal_id, t.title, t.description, t.status, t.agent,
        t.sort_order, t.declare_key, t.snoozed_until, t.created_at, t.updated_at,
@@ -814,6 +864,64 @@ func (q *Queries) ListOpenTaskHandoffClaims(ctx context.Context, projectID int64
 			&i.UpdatedAt,
 			&i.RequestedBy,
 			&i.ReceivedBy,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listOpenTaskHandoffs = `-- name: ListOpenTaskHandoffs :many
+SELECT th.id, th.task_id, th.requested_by, th.received_by,
+       th.requested_at, th.received_at, th.completed_report_at,
+       th.request_report, th.complete_report,
+       th.review_requested_by, th.review_requested_at, th.review_request_report,
+       th.review_received_by, th.review_received_at,
+       th.review_rejected_at, th.review_reject_report, th.review_rejection_received_by, th.review_rejection_received_at,
+       th.recovered_at, th.recovery_report
+FROM task_handoffs AS th
+WHERE th.completed_report_at IS NULL
+  AND th.recovered_at IS NULL
+ORDER BY th.id
+`
+
+func (q *Queries) ListOpenTaskHandoffs(ctx context.Context) ([]TaskHandoff, error) {
+	rows, err := q.db.QueryContext(ctx, listOpenTaskHandoffs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []TaskHandoff
+	for rows.Next() {
+		var i TaskHandoff
+		if err := rows.Scan(
+			&i.ID,
+			&i.TaskID,
+			&i.RequestedBy,
+			&i.ReceivedBy,
+			&i.RequestedAt,
+			&i.ReceivedAt,
+			&i.CompletedReportAt,
+			&i.RequestReport,
+			&i.CompleteReport,
+			&i.ReviewRequestedBy,
+			&i.ReviewRequestedAt,
+			&i.ReviewRequestReport,
+			&i.ReviewReceivedBy,
+			&i.ReviewReceivedAt,
+			&i.ReviewRejectedAt,
+			&i.ReviewRejectReport,
+			&i.ReviewRejectionReceivedBy,
+			&i.ReviewRejectionReceivedAt,
+			&i.RecoveredAt,
+			&i.RecoveryReport,
 		); err != nil {
 			return nil, err
 		}
@@ -897,6 +1005,49 @@ ORDER BY id
 
 func (q *Queries) ListPlanHandoffs(ctx context.Context, goalID int64) ([]PlanHandoff, error) {
 	rows, err := q.db.QueryContext(ctx, listPlanHandoffs, goalID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []PlanHandoff
+	for rows.Next() {
+		var i PlanHandoff
+		if err := rows.Scan(
+			&i.ID,
+			&i.GoalID,
+			&i.ReviewRequestedBy,
+			&i.ReviewRequestedAt,
+			&i.ReviewRequestReport,
+			&i.ReviewReceivedBy,
+			&i.ReviewReceivedAt,
+			&i.ReviewRejectedAt,
+			&i.ReviewRejectReport,
+			&i.CompletedReportAt,
+			&i.CompleteReport,
+			&i.ReviewRejectionReceivedBy,
+			&i.ReviewRejectionReceivedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listPlanHandoffsForActiveGoals = `-- name: ListPlanHandoffsForActiveGoals :many
+SELECT id, goal_id, review_requested_by, review_requested_at, review_request_report, review_received_by, review_received_at, review_rejected_at, review_reject_report, completed_report_at, complete_report, review_rejection_received_by, review_rejection_received_at FROM plan_handoffs
+WHERE goal_id IN (SELECT id FROM goals WHERE status = 'active')
+ORDER BY goal_id, id
+`
+
+func (q *Queries) ListPlanHandoffsForActiveGoals(ctx context.Context) ([]PlanHandoff, error) {
+	rows, err := q.db.QueryContext(ctx, listPlanHandoffsForActiveGoals)
 	if err != nil {
 		return nil, err
 	}
@@ -1018,6 +1169,48 @@ func (q *Queries) ListTaskCreateHandoffs(ctx context.Context, goalID int64) ([]T
 	return items, nil
 }
 
+const listTaskCreateHandoffsForActiveGoals = `-- name: ListTaskCreateHandoffsForActiveGoals :many
+SELECT id, goal_id, requested_by, received_by, completed_by, requested_at, received_at, completed_at, request_report, complete_report, recovered_at, recovery_report FROM task_create_handoffs
+WHERE goal_id IN (SELECT id FROM goals WHERE status = 'active')
+ORDER BY goal_id, requested_at, id
+`
+
+func (q *Queries) ListTaskCreateHandoffsForActiveGoals(ctx context.Context) ([]TaskCreateHandoff, error) {
+	rows, err := q.db.QueryContext(ctx, listTaskCreateHandoffsForActiveGoals)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []TaskCreateHandoff
+	for rows.Next() {
+		var i TaskCreateHandoff
+		if err := rows.Scan(
+			&i.ID,
+			&i.GoalID,
+			&i.RequestedBy,
+			&i.ReceivedBy,
+			&i.CompletedBy,
+			&i.RequestedAt,
+			&i.ReceivedAt,
+			&i.CompletedAt,
+			&i.RequestReport,
+			&i.CompleteReport,
+			&i.RecoveredAt,
+			&i.RecoveryReport,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listTaskHandoffs = `-- name: ListTaskHandoffs :many
 SELECT id, task_id, requested_by, received_by,
        requested_at, received_at, completed_report_at,
@@ -1086,6 +1279,49 @@ ORDER BY sort_order, id
 
 func (q *Queries) ListTasks(ctx context.Context, goalID int64) ([]Task, error) {
 	rows, err := q.db.QueryContext(ctx, listTasks, goalID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Task
+	for rows.Next() {
+		var i Task
+		if err := rows.Scan(
+			&i.ID,
+			&i.GoalID,
+			&i.Title,
+			&i.Description,
+			&i.Status,
+			&i.Agent,
+			&i.SortOrder,
+			&i.DeclareKey,
+			&i.SnoozedUntil,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listTasksForAllGoals = `-- name: ListTasksForAllGoals :many
+SELECT
+  id, goal_id, title, description, status, agent, sort_order, declare_key,
+  snoozed_until, created_at, updated_at
+FROM tasks
+ORDER BY goal_id, sort_order, id
+`
+
+func (q *Queries) ListTasksForAllGoals(ctx context.Context) ([]Task, error) {
+	rows, err := q.db.QueryContext(ctx, listTasksForAllGoals)
 	if err != nil {
 		return nil, err
 	}
