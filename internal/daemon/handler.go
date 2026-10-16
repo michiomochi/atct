@@ -2294,10 +2294,17 @@ func (d *Daemon) dispatchMethodWithPeer(ctx context.Context, req rpc.Request, pe
 				if err != nil {
 					return nil, err
 				}
-				routed := goal.ProjectID == role.ProjectID &&
-					(store.DecisionRoutesToCommander(decision) || goal.Status != domain.GoalActive)
-				if !routed {
+				if goal.ProjectID != role.ProjectID {
 					return nil, fmt.Errorf("decision %d is owned by another agent session", p.DecisionID)
+				}
+				routed := store.DecisionRoutesToCommander(decision) || goal.Status != domain.GoalActive
+				if !routed {
+					// Read-only: PollDecisions would mark the owner's decision applied.
+					if !p.IncludeUnappliedAnswers {
+						return marshal([]domain.Decision{decision}, nil)
+					}
+					response, err := d.responseWithScopedUnappliedDecisions(ctx, []domain.Decision{decision}, decision.GoalID, p.AgentSessionID, decision.ID)
+					return marshal(response, err)
 				}
 			}
 			if role.Role == "subcommander" && role.GoalID != 0 {
