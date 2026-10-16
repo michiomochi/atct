@@ -64,7 +64,9 @@ DELETE FROM agent_sessions
 WHERE id IN (
   SELECT agent_sessions.id FROM agent_sessions
   WHERE COALESCE(agent_sessions.last_heartbeat_at, agent_sessions.registered_at) < ?1
-      AND (agent_sessions.session_key = '' OR agent_sessions.discarded_at IS NOT NULL)
+      AND agent_sessions.session_key = ''
+      AND agent_sessions.discarded_by IS NULL
+      AND agent_sessions.discarded_decision_id IS NULL
     AND agent_sessions.id NOT IN (
       SELECT requested_by FROM task_handoffs WHERE requested_by IS NOT NULL
       UNION SELECT received_by FROM task_handoffs WHERE received_by IS NOT NULL
@@ -104,6 +106,9 @@ type ReclaimDeleteUnreferencedSessionsParams struct {
 	RowLimit   int64
 }
 
+// Only a session with no key is deleted: a keyed one could register again under its
+// key, which would lift a revoke. A revoke record (discarded_by / discarded_decision_id)
+// is kept whether or not the session has a key.
 func (q *Queries) ReclaimDeleteUnreferencedSessions(ctx context.Context, arg ReclaimDeleteUnreferencedSessionsParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, reclaimDeleteUnreferencedSessions, arg.IdleBefore, arg.LeaseAfter, arg.RowLimit)
 	if err != nil {
@@ -118,7 +123,7 @@ UPDATE agent_sessions SET discarded_at = ?1, discard_reason = ?2
 WHERE id IN (
   SELECT agent_sessions.id FROM agent_sessions
   WHERE COALESCE(agent_sessions.last_heartbeat_at, agent_sessions.registered_at) < ?3
-      AND (agent_sessions.session_key = '' OR agent_sessions.discarded_at IS NOT NULL)
+      AND agent_sessions.session_key = ''
     AND agent_sessions.discarded_at IS NULL
     AND agent_sessions.id NOT IN (
       SELECT requested_by FROM task_handoffs WHERE requested_by IS NOT NULL

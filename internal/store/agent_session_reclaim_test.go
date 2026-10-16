@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"regexp"
@@ -110,14 +111,14 @@ func TestReclaimAgentSessionsDeletesOnlyUnreferencedIdleSessions(t *testing.T) {
 		VALUES ('live-monitor', '/tmp', 'executor', ?, 0, ?, 'healthy', ?, ?, ?)`, f.project, formatTimestamp(f.now), formatTimestamp(f.now), formatTimestamp(f.now), monitored)
 
 	result := f.reclaim()
-	if result.SessionsDeleted != 2 || result.SessionsDiscarded != 1 {
-		t.Fatalf("reclaim = %+v, want 2 deleted (unreferenced, one already discarded) and 1 discarded (decision-referenced)", result)
+	if result.SessionsDeleted != 1 || result.SessionsDiscarded != 1 {
+		t.Fatalf("reclaim = %+v, want 1 deleted (unreferenced) and 1 discarded (decision-referenced)", result)
 	}
 	if exists, _ := f.sessionState(unreferenced); exists {
 		t.Fatalf("unreferenced idle session %d was kept", unreferenced)
 	}
-	if exists, _ := f.sessionState(discardedUnreferenced); exists {
-		t.Fatalf("discarded unreferenced session %d was kept", discardedUnreferenced)
+	if exists, discarded := f.sessionState(discardedUnreferenced); !exists || !discarded {
+		t.Fatalf("revoked identified session %d: exists=%v discarded=%v, want kept and still discarded", discardedUnreferenced, exists, discarded)
 	}
 	if exists, discarded := f.sessionState(claimant); !exists || discarded {
 		t.Fatalf("project claimant: exists=%v discarded=%v, want kept and untouched", exists, discarded)
@@ -133,6 +134,47 @@ func TestReclaimAgentSessionsDeletesOnlyUnreferencedIdleSessions(t *testing.T) {
 	}
 	if exists, discarded := f.sessionState(monitored); !exists || discarded {
 		t.Fatalf("session with a live monitor: exists=%v discarded=%v, want kept and untouched", exists, discarded)
+	}
+}
+
+// A revoke must outlive the reclaim. A revoked session that keeps its key is never
+// deleted, so the same key cannot register again as a fresh session. A revoked
+// session without a key is kept too, so the revoke record stays.
+func TestReclaimAgentSessionsKeepsRevokedSessions(t *testing.T) {
+	f := newReclaimFixture(t)
+	ctx := context.Background()
+
+	commander := f.session(time.Hour, true)
+	revoked := f.session(48*time.Hour, true)
+	revokedUnkeyed := f.session(48*time.Hour, false)
+	goal, err := f.s.CreateGoal(ctx, f.project, "revoke goal", "human")
+	if err != nil {
+		t.Fatalf("CreateGoal: %v", err)
+	}
+	decision, err := f.s.AskDecision(ctx, AskInput{GoalID: goal.ID, Kind: domain.DecisionKind("question"), Question: "Which?", AgentSessionID: commander})
+	if err != nil {
+		t.Fatalf("AskDecision: %v", err)
+	}
+	for _, id := range []int64{revoked, revokedUnkeyed} {
+		f.exec(`UPDATE agent_sessions SET discarded_at = ?, discarded_by = ?, discarded_decision_id = ?, discard_reason = 'test revoke' WHERE id = ?`, formatTimestamp(f.now), commander, decision.ID, id)
+	}
+
+	for range 3 {
+		f.reclaim()
+	}
+	for _, id := range []int64{revoked, revokedUnkeyed} {
+		if exists, discarded := f.sessionState(id); !exists || !discarded {
+			t.Fatalf("revoked session %d: exists=%v discarded=%v, want kept and still discarded", id, exists, discarded)
+		}
+	}
+
+	transport, err := f.s.RegisterAgentSessionInProject(ctx, 0, f.project)
+	if err != nil {
+		t.Fatalf("RegisterAgentSessionInProject: %v", err)
+	}
+	_, _, err = f.s.IdentifyAgentSession(ctx, transport, "reclaim-key-"+strconv.FormatInt(revoked, 10))
+	if !errors.Is(err, ErrSessionDiscarded) {
+		t.Fatalf("IdentifyAgentSession with a revoked key: err = %v, want ErrSessionDiscarded", err)
 	}
 }
 
