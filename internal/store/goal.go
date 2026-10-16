@@ -322,6 +322,26 @@ func (s *Store) ListAllGoals(ctx context.Context) ([]domain.Goal, error) {
 	return out, nil
 }
 
+// ListAllGoalsForInbox is ListAllGoals for /api/inbox. Only an active goal comes
+// back with its full text; every other goal carries its headline in Content and
+// nothing else, which is all the inbox shows for it.
+func (s *Store) ListAllGoalsForInbox(ctx context.Context) ([]domain.Goal, error) {
+	rows, err := sqlcgen.New(s.db).ListAllGoalsForInbox(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("query inbox goals: %w", err)
+	}
+
+	var out []domain.Goal
+	for _, row := range rows {
+		g, err := goalFromFields(row.ID, row.ProjectID, row.DerivedFromGoalID, row.Content, row.Spec, row.PlanText, row.Status, row.Creator, row.ResultSummary, row.WorkDone, row.NowPossible, row.HowToVerify, row.Surprises, row.NeedsReview, row.CreatedAt, row.UpdatedAt)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, g)
+	}
+	return out, nil
+}
+
 func (s *Store) ListDerivedGoals(ctx context.Context, derivedFromGoalID int64) ([]domain.Goal, error) {
 	rows, err := sqlcgen.New(s.db).ListDerivedGoals(ctx, nullableGoalID(derivedFromGoalID))
 	if err != nil {

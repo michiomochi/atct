@@ -62,6 +62,13 @@ FROM tasks
 WHERE goal_id = ?
 ORDER BY sort_order, id;
 
+-- name: ListTasksForAllGoals :many
+SELECT
+  id, goal_id, title, description, status, agent, sort_order, declare_key,
+  snoozed_until, created_at, updated_at
+FROM tasks
+ORDER BY goal_id, sort_order, id;
+
 -- name: UpdateTaskSnooze :execresult
 UPDATE tasks
 SET snoozed_until = ?, updated_at = ?
@@ -249,6 +256,19 @@ FROM task_handoffs AS th
 JOIN tasks AS t ON t.id = th.task_id
 WHERE t.goal_id = ?
   AND th.completed_report_at IS NULL
+  AND th.recovered_at IS NULL
+ORDER BY th.id;
+
+-- name: ListOpenTaskHandoffs :many
+SELECT th.id, th.task_id, th.requested_by, th.received_by,
+       th.requested_at, th.received_at, th.completed_report_at,
+       th.request_report, th.complete_report,
+       th.review_requested_by, th.review_requested_at, th.review_request_report,
+       th.review_received_by, th.review_received_at,
+       th.review_rejected_at, th.review_reject_report, th.review_rejection_received_by, th.review_rejection_received_at,
+       th.recovered_at, th.recovery_report
+FROM task_handoffs AS th
+WHERE th.completed_report_at IS NULL
   AND th.recovered_at IS NULL
 ORDER BY th.id;
 

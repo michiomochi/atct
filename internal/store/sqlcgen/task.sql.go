@@ -828,6 +828,64 @@ func (q *Queries) ListOpenTaskHandoffClaims(ctx context.Context, projectID int64
 	return items, nil
 }
 
+const listOpenTaskHandoffs = `-- name: ListOpenTaskHandoffs :many
+SELECT th.id, th.task_id, th.requested_by, th.received_by,
+       th.requested_at, th.received_at, th.completed_report_at,
+       th.request_report, th.complete_report,
+       th.review_requested_by, th.review_requested_at, th.review_request_report,
+       th.review_received_by, th.review_received_at,
+       th.review_rejected_at, th.review_reject_report, th.review_rejection_received_by, th.review_rejection_received_at,
+       th.recovered_at, th.recovery_report
+FROM task_handoffs AS th
+WHERE th.completed_report_at IS NULL
+  AND th.recovered_at IS NULL
+ORDER BY th.id
+`
+
+func (q *Queries) ListOpenTaskHandoffs(ctx context.Context) ([]TaskHandoff, error) {
+	rows, err := q.db.QueryContext(ctx, listOpenTaskHandoffs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []TaskHandoff
+	for rows.Next() {
+		var i TaskHandoff
+		if err := rows.Scan(
+			&i.ID,
+			&i.TaskID,
+			&i.RequestedBy,
+			&i.ReceivedBy,
+			&i.RequestedAt,
+			&i.ReceivedAt,
+			&i.CompletedReportAt,
+			&i.RequestReport,
+			&i.CompleteReport,
+			&i.ReviewRequestedBy,
+			&i.ReviewRequestedAt,
+			&i.ReviewRequestReport,
+			&i.ReviewReceivedBy,
+			&i.ReviewReceivedAt,
+			&i.ReviewRejectedAt,
+			&i.ReviewRejectReport,
+			&i.ReviewRejectionReceivedBy,
+			&i.ReviewRejectionReceivedAt,
+			&i.RecoveredAt,
+			&i.RecoveryReport,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listOpenTaskHandoffsForGoal = `-- name: ListOpenTaskHandoffsForGoal :many
 SELECT th.id, th.task_id, th.requested_by, th.received_by,
        th.requested_at, th.received_at, th.completed_report_at,
@@ -1086,6 +1144,49 @@ ORDER BY sort_order, id
 
 func (q *Queries) ListTasks(ctx context.Context, goalID int64) ([]Task, error) {
 	rows, err := q.db.QueryContext(ctx, listTasks, goalID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Task
+	for rows.Next() {
+		var i Task
+		if err := rows.Scan(
+			&i.ID,
+			&i.GoalID,
+			&i.Title,
+			&i.Description,
+			&i.Status,
+			&i.Agent,
+			&i.SortOrder,
+			&i.DeclareKey,
+			&i.SnoozedUntil,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listTasksForAllGoals = `-- name: ListTasksForAllGoals :many
+SELECT
+  id, goal_id, title, description, status, agent, sort_order, declare_key,
+  snoozed_until, created_at, updated_at
+FROM tasks
+ORDER BY goal_id, sort_order, id
+`
+
+func (q *Queries) ListTasksForAllGoals(ctx context.Context) ([]Task, error) {
+	rows, err := q.db.QueryContext(ctx, listTasksForAllGoals)
 	if err != nil {
 		return nil, err
 	}

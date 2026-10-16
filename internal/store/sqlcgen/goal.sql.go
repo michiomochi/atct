@@ -328,6 +328,89 @@ func (q *Queries) ListAllGoals(ctx context.Context) ([]Goal, error) {
 	return items, nil
 }
 
+const listAllGoalsForInbox = `-- name: ListAllGoalsForInbox :many
+SELECT
+  id, project_id, derived_from_goal_id,
+  CAST(CASE WHEN status = 'active' THEN content
+            WHEN instr(content, char(10)) > 0 THEN substr(content, 1, instr(content, char(10)) - 1)
+            ELSE content END AS TEXT) AS content,
+  CAST(CASE WHEN status = 'active' THEN spec ELSE '' END AS TEXT) AS spec,
+  CAST(CASE WHEN status = 'active' THEN plan ELSE '' END AS TEXT) AS plan_text,
+  status,
+  creator,
+  CAST(CASE WHEN status = 'active' THEN result_summary ELSE '' END AS TEXT) AS result_summary,
+  CAST(CASE WHEN status = 'active' THEN work_done ELSE '' END AS TEXT) AS work_done,
+  CAST(CASE WHEN status = 'active' THEN now_possible ELSE '' END AS TEXT) AS now_possible,
+  CAST(CASE WHEN status = 'active' THEN how_to_verify ELSE '' END AS TEXT) AS how_to_verify,
+  CAST(CASE WHEN status = 'active' THEN surprises ELSE '' END AS TEXT) AS surprises,
+  CAST(CASE WHEN status = 'active' THEN needs_review ELSE '' END AS TEXT) AS needs_review,
+  created_at, updated_at
+FROM goals
+WHERE project_id NOT IN (SELECT id FROM projects WHERE archived_at IS NOT NULL)
+ORDER BY created_at
+`
+
+type ListAllGoalsForInboxRow struct {
+	ID                int64
+	ProjectID         int64
+	DerivedFromGoalID sql.NullInt64
+	Content           string
+	Spec              string
+	PlanText          string
+	Status            string
+	Creator           string
+	ResultSummary     string
+	WorkDone          string
+	NowPossible       string
+	HowToVerify       string
+	Surprises         string
+	NeedsReview       string
+	CreatedAt         string
+	UpdatedAt         string
+}
+
+// Only an active goal's text is read in full; every other goal carries its
+// headline alone, which is all /api/inbox shows for it.
+func (q *Queries) ListAllGoalsForInbox(ctx context.Context) ([]ListAllGoalsForInboxRow, error) {
+	rows, err := q.db.QueryContext(ctx, listAllGoalsForInbox)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListAllGoalsForInboxRow
+	for rows.Next() {
+		var i ListAllGoalsForInboxRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.DerivedFromGoalID,
+			&i.Content,
+			&i.Spec,
+			&i.PlanText,
+			&i.Status,
+			&i.Creator,
+			&i.ResultSummary,
+			&i.WorkDone,
+			&i.NowPossible,
+			&i.HowToVerify,
+			&i.Surprises,
+			&i.NeedsReview,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listDerivedGoals = `-- name: ListDerivedGoals :many
 SELECT
   id, project_id, derived_from_goal_id, content, spec, plan, status, creator, result_summary,

@@ -767,7 +767,7 @@ func (s *Server) handleCreateGoal(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleInbox(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	goals, err := s.store.ListAllGoals(ctx)
+	goals, err := s.store.ListAllGoalsForInbox(ctx)
 	if err != nil {
 		writeStoreError(w, err)
 		return
@@ -832,17 +832,18 @@ func (s *Server) handleInbox(w http.ResponseWriter, r *http.Request) {
 	activeGoals := make([]goalView, 0)
 	attentionTasks := make([]TaskView, 0)
 	taskStatus := make(map[int64]domain.TaskStatus)
+	tasksByGoal, err := s.store.ListTasksForAllGoals(ctx)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	handoffs, err := s.store.ListOpenTaskHandoffsForAllGoals(ctx)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
 	for _, goal := range goals {
-		tasks, err := s.store.ListTasks(ctx, goal.ID)
-		if err != nil {
-			writeStoreError(w, err)
-			return
-		}
-		handoffs, err := s.store.ListOpenTaskHandoffsForGoal(ctx, goal.ID)
-		if err != nil {
-			writeStoreError(w, err)
-			return
-		}
+		tasks := tasksByGoal[goal.ID]
 		for _, task := range tasks {
 			taskStatus[task.ID] = task.Status
 		}
