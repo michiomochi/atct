@@ -518,6 +518,104 @@ func (s *watchLivenessState) PromptDue(now time.Time, scope watchScope, snapshot
 	return line, true
 }
 
+const (
+	// watchSnapshotFailureAfter is how long snapshots must keep failing before the
+	// watch says so on its output, where the agent's Monitor reads it.
+	watchSnapshotFailureAfter = 2 * time.Minute
+	// watchSnapshotFailureRepeat is how long an unchanged failure waits before it is said again.
+	watchSnapshotFailureRepeat = 30 * time.Minute
+)
+
+// snapshotFailureNow is the clock the snapshot notifier reads; tests replace it.
+var snapshotFailureNow = time.Now
+
+const (
+	watchSnapshotFailingEvent   = "watch.snapshot.failing"
+	watchSnapshotRecoveredEvent = "watch.snapshot.recovered"
+)
+
+// writeWatchSnapshotNotice delivers one snapshot notice. A bound watch writes its
+// output to io.Discard and reaches the agent's Monitor only through actionSink, so
+// the notice goes there when there is one; otherwise it is a plain line on out.
+//
+// subject and generation are the delivery identity (see watchOnce). A failure keys
+// on its reason and repeats through watchOnce's repeat rule; a recovery is unique
+// per time, so each one is delivered.
+func writeWatchSnapshotNotice(out io.Writer, actionSink watchAgentActionSink, scope watchScope, eventName, line, subject, generation string) error {
+	if actionSink == nil {
+		_, err := fmt.Fprintln(out, line)
+		return err
+	}
+	return actionSink(watchAgentAction{
+		line:        line,
+		eventName:   eventName,
+		goalID:      scope.GoalID,
+		taskID:      scope.TaskID,
+		deliveryKey: strings.Join([]string{eventName, scope.Role, subject}, "\x00"),
+		generation:  generation,
+		targetRole:  scope.Role,
+		scopeKey:    scope.ScopeKey,
+	})
+}
+
+// snapshotFailureNotifier turns a run of failed snapshots into lines on the watch
+// output. A run is silent until it has lasted watchSnapshotFailureAfter. Then the
+// failure is said once, and said again only when its reason changes or after
+// watchSnapshotFailureRepeat. A recovery is said only when a failure was said.
+type snapshotFailureNotifier struct {
+	failingSince time.Time // zero when the snapshot is not failing
+	said         bool      // a failure line was written in this run
+	lastSaidAt   time.Time
+	lastReason   string
+}
+
+// Failure records a failed snapshot and returns the line to write, if one is due.
+func (n *snapshotFailureNotifier) Failure(now time.Time, reason string) (string, bool) {
+	reason = strings.Join(strings.Fields(reason), " ")
+	if n.failingSince.IsZero() {
+		n.failingSince = now
+	}
+	elapsed := now.Sub(n.failingSince)
+	var due bool
+	switch {
+	case !n.said:
+		due = elapsed >= watchSnapshotFailureAfter
+	case reason != n.lastReason:
+		due = true
+	default:
+		due = now.Sub(n.lastSaidAt) >= watchSnapshotFailureRepeat
+	}
+	if !due {
+		return "", false
+	}
+	n.said = true
+	n.lastSaidAt = now
+	n.lastReason = reason
+	return fmt.Sprintf("ATCT: daemon snapshot failing for %s: %s", formatSnapshotFailureDuration(elapsed), reason), true
+}
+
+// Success ends the run. It returns the recovery line when a failure line was written.
+func (n *snapshotFailureNotifier) Success(now time.Time) (string, bool) {
+	if n.failingSince.IsZero() {
+		return "", false
+	}
+	said := n.said
+	elapsed := now.Sub(n.failingSince)
+	*n = snapshotFailureNotifier{}
+	if !said {
+		return "", false
+	}
+	return fmt.Sprintf("ATCT: daemon snapshot recovered after %s", formatSnapshotFailureDuration(elapsed)), true
+}
+
+func formatSnapshotFailureDuration(d time.Duration) string {
+	d = d.Round(time.Second)
+	if d%time.Minute == 0 {
+		return fmt.Sprintf("%dm", int(d/time.Minute))
+	}
+	return d.String()
+}
+
 type watchSinkError struct {
 	err error
 }
@@ -830,11 +928,19 @@ func watchLoopWithEnsureAndProjectIDAndScopeAndActionSink(ctx context.Context, o
 		}
 	}
 
+	snapshotNotifier := &snapshotFailureNotifier{}
 	for {
 		baseURL, _, err := snapshot(ctx)
 		if err != nil {
 			if ctx.Err() != nil {
 				return nil
+			}
+			now := snapshotFailureNow()
+			if line, due := snapshotNotifier.Failure(now, err.Error()); due {
+				reason := strings.Join(strings.Fields(err.Error()), " ")
+				if writeErr := writeWatchSnapshotNotice(out, actionSink, scope, watchSnapshotFailingEvent, line, reason, "current"); writeErr != nil {
+					return writeErr
+				}
 			}
 			recoveryState.Failure(func(state string) {
 				reportHealth("", state, err.Error())
@@ -848,6 +954,12 @@ func watchLoopWithEnsureAndProjectIDAndScopeAndActionSink(ctx context.Context, o
 			continue
 		}
 		resetEnsureFailures()
+		now := snapshotFailureNow()
+		if line, recovered := snapshotNotifier.Success(now); recovered {
+			if writeErr := writeWatchSnapshotNotice(out, actionSink, scope, watchSnapshotRecoveredEvent, line, "", strconv.FormatInt(now.UnixNano(), 10)); writeErr != nil {
+				return writeErr
+			}
+		}
 
 		streamScope := scope
 		if streamScope.ProjectID == "" && projectID != nil {
