@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -424,6 +425,13 @@ func (d *Daemon) runMaintenance(ctx context.Context, tracker *wakeupTracker, now
 
 func (d *Daemon) runMaintenanceWith(ctx context.Context, tracker *wakeupTracker, now time.Time, evaluateWakeup func(context.Context, int64) (store.WakeupState, error)) {
 	_, _ = d.store.ApplyExpiredDefaults(ctx, now)
+	started := time.Now()
+	if reclaimed, err := d.store.ReclaimAgentSessions(ctx, now); err != nil {
+		log.Printf("agent session reclaim: %v", err)
+	} else if reclaimed.Total() > 0 {
+		log.Printf("agent session reclaim: discarded=%d deleted=%d monitor_health=%d monitor_bindings=%d in %s",
+			reclaimed.SessionsDiscarded, reclaimed.SessionsDeleted, reclaimed.MonitorHealth, reclaimed.MonitorBindings, time.Since(started).Round(time.Millisecond))
+	}
 	d.store.PublishEvent(store.DecisionEvent{
 		Name: store.EventKeepalive,
 		Data: store.KeepaliveEvent{At: now},
