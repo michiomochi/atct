@@ -6,8 +6,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -167,6 +171,9 @@ func TestHTTPHandlerDiscoverDoesNotRegisterAnAgentSession(t *testing.T) {
 		t.Fatalf("discover: %v", err)
 	}
 	response.Body.Close()
+	if response.StatusCode != http.StatusBadRequest {
+		t.Fatalf("discover status = %d, want 400 (refused, not a registration failure)", response.StatusCode)
+	}
 
 	if got := len(agentSessionIDs(t, fixture.store)); got != before {
 		t.Fatalf("agent_sessions after discover = %d, want %d", got, before)
@@ -268,5 +275,50 @@ func TestToolUseBindingRefusesAResolveToADiscardedSession(t *testing.T) {
 	}
 	if err := d.authorizeRole(ctx, []string{"commander"}, 0, fixture.claimedGoalID, 0, transport, "test"); !errors.Is(err, ErrRoleUnauthorized) {
 		t.Fatalf("transport after a refused resolve as commander error = %v, want ErrRoleUnauthorized", err)
+	}
+}
+
+// A failed registration is a 503 with Retry-After and the cause, not the 400
+// "no server available" that a refused server/discover also gets.
+func TestHTTPHandlerRegisterFailureIs503WithCause(t *testing.T) {
+	s, err := store.Open(filepath.Join(t.TempDir(), "atct.db"))
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	defer s.Close()
+	d := NewWithVersion(s, "test", filepath.Join(t.TempDir(), "missing.sock"))
+	server := httptest.NewServer(d.HTTPHandler())
+	defer server.Close()
+
+	body := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"t","version":"1"}}}`
+	request, _ := http.NewRequest(http.MethodPost, server.URL+"/mcp", strings.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Accept", "application/json, text/event-stream")
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatalf("initialize: %v", err)
+	}
+	defer response.Body.Close()
+	got, _ := io.ReadAll(response.Body)
+	if response.StatusCode != http.StatusServiceUnavailable || response.Header.Get("Retry-After") == "" || !strings.Contains(string(got), "missing.sock") {
+		t.Fatalf("got %d, Retry-After %q, body %q; want 503, Retry-After set, body naming the cause", response.StatusCode, response.Header.Get("Retry-After"), got)
+	}
+}
+
+func TestRetryWhileBusyRetriesOnlySQLiteBusy(t *testing.T) {
+	calls := 0
+	err := retryWhileBusy(func() error {
+		calls++
+		if calls < 3 {
+			return errors.New("database is locked (5) (SQLITE_BUSY)")
+		}
+		return nil
+	})
+	if err != nil || calls != 3 {
+		t.Fatalf("busy then ok: err %v, calls %d; want nil, 3", err, calls)
+	}
+	calls = 0
+	if retryWhileBusy(func() error { calls++; return errors.New("boom") }) == nil || calls != 1 {
+		t.Fatalf("non-busy error was retried: calls %d", calls)
 	}
 }

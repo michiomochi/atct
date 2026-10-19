@@ -82,11 +82,17 @@ func (d *Daemon) HTTPHandler() http.Handler {
 		var registerResponse struct {
 			AgentSessionID int64 `json:"agent_session_id"`
 		}
-		if err := client.Call(r.Context(), "run.register", map[string]any{
-			"pid": os.Getpid(),
-		}, &registerResponse); err != nil {
-			// The SDK answers nil with a bare "no server available"; this is the only trace of why.
+		if err := retryWhileBusy(func() error {
+			return client.Call(r.Context(), "run.register", map[string]any{
+				"pid": os.Getpid(),
+			}, &registerResponse)
+		}); err != nil {
+			// The SDK answers nil with a bare 400 "no server available";
+			// mcpRegisterFailureWriter turns it into a 503 naming err, and this log keeps it.
 			log.Printf("mcp: register agent session: %v", err)
+			if f, ok := r.Context().Value(mcpRegisterFailureKey{}).(*mcpRegisterFailure); ok {
+				f.err = err
+			}
 			return nil
 		}
 		// One client opens several transports and agent_sessions has no column
@@ -111,7 +117,9 @@ func (d *Daemon) HTTPHandler() http.Handler {
 			return
 		}
 		if r.URL.Path == "/mcp" {
-			mcpHandler.ServeHTTP(w, r)
+			failure := &mcpRegisterFailure{}
+			r = r.WithContext(context.WithValue(r.Context(), mcpRegisterFailureKey{}, failure))
+			mcpHandler.ServeHTTP(&mcpRegisterFailureWriter{ResponseWriter: w, failure: failure}, r)
 			return
 		}
 
@@ -130,6 +138,57 @@ func (d *Daemon) HTTPHandler() http.Handler {
 		serveEmbeddedWeb(w, r, dist, locale)
 	})
 }
+
+// registerAttempts is how many times run.register is tried while the database
+// is busy. Each try already waits busy_timeout (5s) for the lock.
+const registerAttempts = 3
+
+func retryWhileBusy(call func() error) (err error) {
+	for i := 0; i < registerAttempts; i++ {
+		if err = call(); err == nil || !strings.Contains(err.Error(), "SQLITE_BUSY") {
+			return err
+		}
+	}
+	return err
+}
+
+type mcpRegisterFailureKey struct{}
+
+// mcpRegisterFailure carries a run.register failure from the NewStreamableHTTPHandler
+// callback, which can only return nil, to the response writer.
+type mcpRegisterFailure struct{ err error }
+
+// mcpRegisterFailureWriter answers a failed registration with 503 + Retry-After and
+// the cause, instead of the SDK's 400 "no server available", which is also what a
+// refused server/discover gets. The client can tell the two apart and retry.
+type mcpRegisterFailureWriter struct {
+	http.ResponseWriter
+	failure *mcpRegisterFailure
+	swapped bool
+}
+
+func (w *mcpRegisterFailureWriter) WriteHeader(code int) {
+	if w.failure.err != nil && code == http.StatusBadRequest {
+		w.swapped = true
+		w.Header().Set("Retry-After", "2")
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.ResponseWriter.WriteHeader(http.StatusServiceUnavailable)
+		fmt.Fprintf(w.ResponseWriter, "atct daemon could not register an agent session (retry): %v\n", w.failure.err)
+		return
+	}
+	w.ResponseWriter.WriteHeader(code)
+}
+
+func (w *mcpRegisterFailureWriter) Write(p []byte) (int, error) {
+	if w.swapped {
+		return len(p), nil // the SDK's own body
+	}
+	return w.ResponseWriter.Write(p)
+}
+
+func (w *mcpRegisterFailureWriter) Flush() { http.NewResponseController(w.ResponseWriter).Flush() }
+
+func (w *mcpRegisterFailureWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
 func serveEmbeddedFile(w http.ResponseWriter, r *http.Request, dist fs.FS, static http.Handler) bool {
 	name := strings.TrimPrefix(path.Clean(r.URL.Path), "/")
