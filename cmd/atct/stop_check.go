@@ -28,10 +28,7 @@ func runStopCheck(config cliConfig, dir, exePath string) error {
 		_, writeErr := fmt.Fprint(os.Stdout, stopCheckFailure(err))
 		return writeErr
 	}
-	if input.StopHookActive {
-		return nil
-	}
-	_, err = fmt.Fprint(os.Stdout, stopCheckResult(config, dir, exePath, input.SessionID))
+	_, err = fmt.Fprint(os.Stdout, stopCheckResult(config, dir, exePath, input.SessionID, input.StopHookActive))
 	return err
 }
 
@@ -46,7 +43,7 @@ func decodeStopHookInput(r io.Reader) (stopHookInput, error) {
 	return input, nil
 }
 
-func stopCheckResult(config cliConfig, dir, exePath, sessionKey string) string {
+func stopCheckResult(config cliConfig, dir, exePath, sessionKey string, stopHookActive bool) string {
 	reg, err := daemonctl.Ensure(daemonctl.Config{
 		Dir:            dir,
 		Version:        version,
@@ -60,7 +57,7 @@ func stopCheckResult(config cliConfig, dir, exePath, sessionKey string) string {
 
 	client := mcpshim.NewClient(reg.SocketPath)
 	var response stopCheckResponse
-	if err := client.Call(context.Background(), "session.stop_check", map[string]string{"session_key": sessionKey}, &response); err != nil {
+	if err := client.Call(context.Background(), "session.stop_check", map[string]any{"session_key": sessionKey, "stop_hook_active": stopHookActive}, &response); err != nil {
 		return stopCheckFailure(fmt.Errorf("session.stop_check: %w", err))
 	}
 	if response.Decision == "" {

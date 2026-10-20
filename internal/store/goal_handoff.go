@@ -572,6 +572,11 @@ func (s *Store) RequestGoalHandoffReview(ctx context.Context, handoffID string, 
 		return GoalHandoff{}, fmt.Errorf("begin goal handoff review request tx: %w", err)
 	}
 	defer tx.Rollback()
+	if open, err := sqlcgen.New(tx).CountOpenDecisionsForGoal(ctx, goalID); err != nil {
+		return GoalHandoff{}, fmt.Errorf("count open decisions for goal handoff review request: %w", err)
+	} else if open > 0 {
+		return GoalHandoff{}, openGoalBlockersError(ctx, sqlcgen.New(tx), goalID, "")
+	}
 	result, err := sqlcgen.New(tx).RequestGoalHandoffReview(ctx, sqlcgen.RequestGoalHandoffReviewParams{
 		ReviewRequestedBy:   sql.NullInt64{Int64: requestedBy, Valid: true},
 		ReviewRequestedAt:   sql.NullString{String: now, Valid: true},

@@ -562,6 +562,28 @@ func (s *Store) requireLatestGoalHandoffForReview(ctx context.Context, goalID, c
 	return nil
 }
 
+// openGoalBlockersError is ErrGoalHasOpenDecision naming each open decision of
+// the goal that blocks it, skipping kind exemptKind (empty skips none). It
+// reads through q so the list comes from the caller's transaction. If the list
+// fails, the bare error is returned so the rejection still reaches the caller.
+func openGoalBlockersError(ctx context.Context, q *sqlcgen.Queries, goalID int64, exemptKind string) error {
+	rows, err := q.ListOpenDecisions(ctx, goalID)
+	if err != nil {
+		return fmt.Errorf("%w: %d", ErrGoalHasOpenDecision, goalID)
+	}
+	var blockers []string
+	for _, row := range rows {
+		if exemptKind != "" && row.Kind == exemptKind {
+			continue
+		}
+		blockers = append(blockers, fmt.Sprintf("decision %d kind=%s status=%s", row.ID, row.Kind, row.Status))
+	}
+	if len(blockers) == 0 {
+		return fmt.Errorf("%w: %d", ErrGoalHasOpenDecision, goalID)
+	}
+	return fmt.Errorf("%w: %d (%s)", ErrGoalHasOpenDecision, goalID, strings.Join(blockers, "; "))
+}
+
 // RequestGoalReview creates the taskless decision that asks the human to
 // review a goal after its goal handoff has been accepted. The completion report
 // is persisted in the same transaction as the goal-review decision and its
@@ -614,12 +636,12 @@ func (s *Store) RequestGoalReview(ctx context.Context, goalID, agentSessionID in
 	}
 	defer tx.Rollback()
 	q := sqlcgen.New(tx)
-	open, err := q.CountReviewBlockingDecisionsForGoal(ctx, goalID)
+	open, err := q.CountOpenDecisionsForGoal(ctx, goalID)
 	if err != nil {
 		return domain.Decision{}, fmt.Errorf("count open decisions for goal review: %w", err)
 	}
 	if open > 0 {
-		return domain.Decision{}, fmt.Errorf("%w: %d", ErrGoalHasOpenDecision, goalID)
+		return domain.Decision{}, openGoalBlockersError(ctx, q, goalID, "")
 	}
 	decisionID, err := q.CreateDecision(ctx, sqlcgen.CreateDecisionParams{
 		GoalID:         goalID,
