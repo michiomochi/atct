@@ -67,6 +67,15 @@ handoff request, report, review, complete, reject and recovery.
 `declare_key`, `idempotency_key`), enum values, code, commands, file paths, branch
 names, commit messages, and quoted errors or logs.
 
+When `ui_locale` is `ja` and the `yomiyasu:yomiyasu` skill is available, polish the
+long prose a human reads (the goal's `content`, `spec`, `plan`, `result_summary`,
+`work_done`, `now_possible`, `surprises`, `needs_review`, `how_to_verify`, report and
+review bodies, and decision questions and options) with it before recording. Leave
+the human's original quoted request, log and error quotes, numbers, proper nouns and
+identifiers unchanged. If the skill is not available, write the text as it is.
+Checking the polished text against the original with the bundled
+`scripts/yomiyasu_check.py` is optional.
+
 The daemon does not check the language; this is a convention to follow.
 
 ## Declare before you work

@@ -27,6 +27,14 @@ hooks, and skills; it does not install or update the CLI.
 
 Restart Claude Code once — or run `/reload-plugins` — so the new MCP server is picked up.
 
+Optional, and not a dependency of atct: to polish the Japanese ATCT records before they are
+saved, install the yomiyasu plugin.
+
+```bash
+claude plugin marketplace add nanaism/yomiyasu
+claude plugin install yomiyasu@yomiyasu
+```
+
 macOS and Linux, on amd64 and arm64. Windows is not supported: the daemon talks over a Unix
 domain socket.
 
