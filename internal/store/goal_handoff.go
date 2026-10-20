@@ -476,6 +476,15 @@ func (s *Store) ReceiveGoalHandoff(ctx context.Context, handoffID string, goalID
 		received.History = page
 		return received, nil
 	}
+	// Before the receive rewrites goal_handoffs.received_by: the previous
+	// receiver is still in that row and must be matched. A refused receive
+	// returns before commit, so this rolls back with it.
+	if err := q.ReassignGoalDecisionsToReceiver(ctx, sqlcgen.ReassignGoalDecisionsToReceiverParams{
+		ReceivedBy: receivedBy,
+		GoalID:     goalID,
+	}); err != nil {
+		return GoalHandoff{}, fmt.Errorf("reassign goal decisions to receiver: %w", err)
+	}
 	result, err := q.ReceiveGoalHandoff(ctx, sqlcgen.ReceiveGoalHandoffParams{
 		ID:          handoffID,
 		GoalID:      goalID,
