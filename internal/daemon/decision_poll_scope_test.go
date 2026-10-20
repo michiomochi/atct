@@ -19,6 +19,11 @@ type decisionPollRPCResponse struct {
 
 func (f unappliedDecisionScopeRPCTestFixture) callDecisionPoll(t *testing.T, agentSessionID int64, decisionID int64) (json.RawMessage, json.RawMessage) {
 	t.Helper()
+	return f.callDecisionPollWithUnapplied(t, agentSessionID, decisionID, true)
+}
+
+func (f unappliedDecisionScopeRPCTestFixture) callDecisionPollWithUnapplied(t *testing.T, agentSessionID int64, decisionID int64, includeUnapplied bool) (json.RawMessage, json.RawMessage) {
+	t.Helper()
 	conn, err := net.Dial("unix", f.socketPath)
 	if err != nil {
 		t.Fatalf("dial daemon: %v", err)
@@ -31,7 +36,7 @@ func (f unappliedDecisionScopeRPCTestFixture) callDecisionPoll(t *testing.T, age
 		"params": map[string]any{
 			"agent_session_id":          agentSessionID,
 			"decision_id":               decisionID,
-			"include_unapplied_answers": true,
+			"include_unapplied_answers": includeUnapplied,
 		},
 	}
 	if err := json.NewEncoder(conn).Encode(request); err != nil {
@@ -135,13 +140,61 @@ func TestDecisionPollForSubcommanderAcceptsOwnGoalDecision(t *testing.T) {
 	assertPollSucceeded(t, result, rpcError, f.decisionAID)
 }
 
-func TestDecisionPollForCommanderRefusesForeignDecision(t *testing.T) {
+func TestDecisionPollForCommanderReadsForeignDecisionWithoutApplying(t *testing.T) {
 	f := newUnappliedDecisionScopeRPCTestFixture(t)
-	_, rpcError := f.callDecisionPoll(t, f.commanderSessionID, f.decisionBID)
-	if len(rpcError) == 0 || string(rpcError) == "null" {
-		t.Fatal("decision.poll succeeded for a foreign-owned decision")
+	result, rpcError := f.callDecisionPoll(t, f.commanderSessionID, f.decisionBID)
+	assertPollSucceeded(t, result, rpcError, f.decisionBID)
+	stored, err := f.store.GetDecision(t.Context(), f.decisionBID)
+	if err != nil {
+		t.Fatalf("GetDecision: %v", err)
+	}
+	if stored.Status != domain.DecisionAnswered || stored.AppliedAt != nil {
+		t.Fatalf("stored decision = %#v, want answered and unapplied", stored)
+	}
+}
+
+func TestDecisionPollForCommanderReadsForeignDecisionAsBareListWithoutUnapplied(t *testing.T) {
+	f := newUnappliedDecisionScopeRPCTestFixture(t)
+	result, rpcError := f.callDecisionPollWithUnapplied(t, f.commanderSessionID, f.decisionBID, false)
+	if len(rpcError) > 0 && string(rpcError) != "null" {
+		t.Fatalf("decision.poll returned error: %v", rpcError)
+	}
+	var decisions []map[string]any
+	if err := json.Unmarshal(result, &decisions); err != nil {
+		t.Fatalf("decode bare decision.poll result: %v", err)
+	}
+	if len(decisions) != 1 || int64(decisions[0]["id"].(float64)) != f.decisionBID {
+		t.Fatalf("decision.poll result = %s, want only decision %d", result, f.decisionBID)
 	}
 	stored, err := f.store.GetDecision(t.Context(), f.decisionBID)
+	if err != nil {
+		t.Fatalf("GetDecision: %v", err)
+	}
+	if stored.Status != domain.DecisionAnswered || stored.AppliedAt != nil {
+		t.Fatalf("stored decision = %#v, want answered and unapplied", stored)
+	}
+}
+
+func TestDecisionPollForCommanderRefusesOtherProjectForeignDecisionOnActiveGoal(t *testing.T) {
+	f := newUnappliedDecisionScopeRPCTestFixture(t)
+	project, err := f.store.CreateProject(t.Context(), "other-project-active", f.projectRoot+"-other-active")
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	goal, err := f.store.CreateGoal(t.Context(), project.ID, "other goal", "human")
+	if err != nil {
+		t.Fatalf("CreateGoal: %v", err)
+	}
+	owner := daemonTestSessionID(t, f.store, "other-project-active-owner")
+	id := f.answeredDecision(t, goal.ID, domain.KindDecision, owner)
+	result, rpcError := f.callDecisionPoll(t, f.commanderSessionID, id)
+	if len(rpcError) == 0 || string(rpcError) == "null" {
+		t.Fatalf("decision.poll result = %s, want refusal for another project's decision", result)
+	}
+	if !strings.Contains(string(rpcError), "owned by another agent session") {
+		t.Fatalf("decision.poll error = %s, want owned-by-another-session refusal", rpcError)
+	}
+	stored, err := f.store.GetDecision(t.Context(), id)
 	if err != nil {
 		t.Fatalf("GetDecision: %v", err)
 	}
@@ -289,7 +342,7 @@ func TestDecisionPollForCommanderRefusesOtherProjectOwnerDecisionOnClosedGoal(t 
 	}
 }
 
-func TestDecisionPollForCommanderRefusesOwnerDecisionOnActiveGoal(t *testing.T) {
+func TestDecisionPollForCommanderReadsOwnerDecisionOnActiveGoalWithoutApplying(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		age  time.Duration
@@ -304,10 +357,8 @@ func TestDecisionPollForCommanderRefusesOwnerDecisionOnActiveGoal(t *testing.T) 
 				t.Fatalf("HeartbeatAgentSession: %v", err)
 			}
 			id := f.answeredDecision(t, f.goalBID, domain.KindDecision, owner)
-			_, rpcError := f.callDecisionPoll(t, f.commanderSessionID, id)
-			if len(rpcError) == 0 || string(rpcError) == "null" {
-				t.Fatal("decision.poll succeeded for an owner decision on an active goal")
-			}
+			result, rpcError := f.callDecisionPoll(t, f.commanderSessionID, id)
+			assertPollSucceeded(t, result, rpcError, id)
 			stored, err := f.store.GetDecision(t.Context(), id)
 			if err != nil {
 				t.Fatalf("GetDecision: %v", err)
