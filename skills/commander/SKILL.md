@@ -353,6 +353,11 @@ subcommander).
    `review_received`, `in_reply_to_id` the request entry's id, body
    `decision <id>: <label> <answer_text>`.
 
+**Out of order:** Replying before the decision is answered and applied hands the
+subcommander an answer that does not exist yet, and a decision left open refuses
+the goal review request. On 2026-10-20 a decision nobody could record stopped
+stock-data goal 437.
+
 Right after you claim the project and right after you re-arm your watch, read
 the entry history of each goal handoff you delegated and pick up a request that
 has no reply: an entry written before the watch's SSE connection is up is not
