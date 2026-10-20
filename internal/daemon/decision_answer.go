@@ -103,7 +103,9 @@ func (d *Daemon) writeChatAnswer(ctx context.Context, decision domain.Decision, 
 }
 
 // ensureCanAnswerFromChat admits the session that asked the decision, and a
-// commander the decision is routed to within the same project. A goal review
+// commander the decision is routed to within the same project. A commander also
+// answers a non-goal-review decision of its project that a subcommander of the
+// goal asked before decision.ask was closed to subcommanders. A goal review
 // gets no shortcut for the asker: the session that asked it may have lost the
 // commander claim since, so only the commander holding the project now answers.
 // Anyone else is refused the same way decision.poll refuses a foreign decision.
@@ -115,13 +117,22 @@ func (d *Daemon) ensureCanAnswerFromChat(ctx context.Context, agentSessionID int
 	if err != nil {
 		return err
 	}
-	if role.Role == "commander" && store.DecisionRoutesToCommander(decision) {
+	if role.Role == "commander" {
 		goal, err := d.store.GetGoal(ctx, decision.GoalID)
 		if err != nil {
 			return err
 		}
 		if goal.ProjectID == role.ProjectID {
-			return nil
+			if store.DecisionRoutesToCommander(decision) {
+				return nil
+			}
+			asked, err := d.store.GoalHandoffEverReceivedBy(ctx, decision.GoalID, decision.AgentSessionID)
+			if err != nil {
+				return err
+			}
+			if asked {
+				return nil
+			}
 		}
 	}
 	return fmt.Errorf("decision %d is owned by another agent session", decision.ID)

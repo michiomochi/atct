@@ -618,3 +618,26 @@ func firstCommanderTarget(state watchReconciliation) (kind, handoffID, goalID st
 	}
 	return targets[0].kind, targets[0].handoffID, targets[0].goalID
 }
+
+// A subcommander asks the commander to file a decision by appending a
+// review_requested entry, and the commander answers with a review_received
+// entry that replies to it. Both must reach the other side's watch scope; the
+// review receive ack (body "received") must not.
+func TestWatchScopesDeliverDecisionExchangeEntries(t *testing.T) {
+	reply := int64(7)
+	request := watchDecision{GoalID: "42", Kind: "review_requested", BodyPreview: "which option? recommend A"}
+	answer := watchDecision{GoalID: "42", Kind: "review_received", BodyPreview: "the human chose A", InReplyToID: &reply}
+	ack := watchDecision{GoalID: "42", Kind: "review_received", BodyPreview: "received", InReplyToID: &reply}
+
+	commander := newWatchScopeFilter("")
+	subcommander := newWatchScopeFilter("42")
+	if !commander.delivers("handoff_entry_added", request) {
+		t.Fatalf("commander scope dropped the subcommander's review_requested entry %+v", request)
+	}
+	if !subcommander.delivers("handoff_entry_added", answer) {
+		t.Fatalf("subcommander scope dropped the commander's review_received reply %+v", answer)
+	}
+	if subcommander.delivers("handoff_entry_added", ack) || commander.delivers("handoff_entry_added", ack) {
+		t.Fatalf("a review receive ack %+v was delivered", ack)
+	}
+}

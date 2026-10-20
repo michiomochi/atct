@@ -714,3 +714,71 @@ func TestWorkflowMonitorBoundWatchDoesNotEchoOwnHandoffEntries(t *testing.T) {
 	assertNoWorkflowMonitorAction(t, subWatch.recorder, "handoff_entry_added", "author "+strconv.FormatInt(subcommanderID, 10))
 	assertNoWorkflowMonitorAction(t, commanderWatch.recorder, "handoff_entry_added", "author "+strconv.FormatInt(commanderID, 10))
 }
+
+// TestWorkflowMonitorBoundWatchesCarryDecisionExchangeEntries runs the
+// production bound watches against a real daemon: a subcommander's
+// review_requested entry reaches the commander's watch, and the commander's
+// review_received reply reaches the subcommander's watch, each never its author's.
+func TestWorkflowMonitorBoundWatchesCarryDecisionExchangeEntries(t *testing.T) {
+	ctx, cancel, db, server, client, root := startWorkflowMonitorDaemon(t)
+	defer cancel()
+
+	const (
+		commanderToken = "exchange-commander"
+		subToken       = "exchange-sub"
+	)
+	commanderID := registerWorkflowMonitorSession(t, ctx, client, root, "exchange-commander", commanderToken)
+	subcommanderID := registerWorkflowMonitorSession(t, ctx, client, root, "exchange-subcommander", subToken)
+	projects, err := db.ListProjects(ctx)
+	if err != nil || len(projects) != 1 {
+		t.Fatalf("ListProjects = (%#v, %v), want one project", projects, err)
+	}
+	callWorkflowMonitorRPC(t, ctx, client, "project.claim", map[string]any{
+		"project_id": projects[0].ID, "agent_session_id": commanderID,
+	}, &domain.Project{})
+	var goal domain.Goal
+	callWorkflowMonitorRPC(t, ctx, client, "goal.create", map[string]any{
+		"cwd": root, "content": "decision exchange", "creator": "human",
+	}, &goal)
+	callWorkflowMonitorRPC(t, ctx, client, "goal.handoff.request", map[string]any{
+		"handoff_id": "gh-exchange", "goal_id": goal.ID, "requested_by": commanderID,
+		"request_report": "goal ready for implementation",
+	}, &store.GoalHandoff{})
+	callWorkflowMonitorRPC(t, ctx, client, "goal.handoff.receive", map[string]any{
+		"handoff_id": "gh-exchange", "goal_id": goal.ID, "received_by": subcommanderID,
+	}, &map[string]any{})
+
+	projectID := strconv.FormatInt(projects[0].ID, 10)
+	goalID := strconv.FormatInt(goal.ID, 10)
+	watchClient := &http.Client{Transport: &workflowMonitorTransport{base: server.Client().Transport}}
+	watchCtx, stopWatches := context.WithCancel(ctx)
+	defer stopWatches()
+	commanderWatch := startWorkflowMonitorBoundWatch(watchCtx, watchClient, server.URL, root, commanderToken)
+	waitWorkflowMonitorScope(t, commanderWatch.scopes, func(scope watchScope) bool {
+		return scope.Role == "commander" && scope.ProjectID == projectID
+	})
+	subWatch := startWorkflowMonitorBoundWatch(watchCtx, watchClient, server.URL, root, subToken)
+	waitWorkflowMonitorScope(t, subWatch.scopes, func(scope watchScope) bool {
+		return scope.Role == "subcommander" && scope.GoalID == goalID
+	})
+
+	// The scope starts before its SSE connection is up, and the daemon treats an
+	// entry written before the connection as already seen, so give it time to connect.
+	time.Sleep(time.Second)
+	var request struct {
+		ID int64 `json:"id"`
+	}
+	callWorkflowMonitorRPC(t, ctx, client, "goal.handoff.entry.append", map[string]any{
+		"handoff_id": "gh-exchange", "goal_id": goal.ID, "kind": "review_requested",
+		"body": "which option? recommend A", "agent_session_id": subcommanderID,
+	}, &request)
+	waitWorkflowMonitorAction(t, commanderWatch.recorder, "handoff_entry_added", "kind review_requested, author "+strconv.FormatInt(subcommanderID, 10))
+	assertNoWorkflowMonitorAction(t, subWatch.recorder, "handoff_entry_added", "kind review_requested")
+
+	callWorkflowMonitorRPC(t, ctx, client, "goal.handoff.entry.append", map[string]any{
+		"handoff_id": "gh-exchange", "goal_id": goal.ID, "kind": "review_received",
+		"body": "the human chose A", "in_reply_to_id": request.ID, "agent_session_id": commanderID,
+	}, &map[string]any{})
+	waitWorkflowMonitorAction(t, subWatch.recorder, "handoff_entry_added", "kind review_received, author "+strconv.FormatInt(commanderID, 10))
+	assertNoWorkflowMonitorAction(t, commanderWatch.recorder, "handoff_entry_added", "kind review_received")
+}

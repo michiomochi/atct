@@ -171,9 +171,11 @@ Four times, and no others:
   `atct` skill for what counts
 - You need something only the human can do (a permission, a credential, an
   external account, approval of a cost not yet approved) — `atct_decision_ask`
+  (a subcommander appends a `review_requested` entry to its goal handoff instead;
+  see `atct:atct` `### A subcommander's decision request`)
 - The work would change an outcome the human asked for or approved —
-  `atct_decision_ask` with `wait_ms=0`, then keep going on something that does not
-  depend on it
+  `atct_decision_ask` with `wait_ms=0` (a subcommander: the entry above), then
+  keep going on something that does not depend on it
 - A goal is met — `atct_goal_review_request` for human approval, then
   `atct_goal_review_complete` after approval and merge
 

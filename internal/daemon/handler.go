@@ -86,7 +86,7 @@ type roleBoundary struct {
 
 var roleBoundaries = map[string]roleBoundary{
 	"commander":    {Does: []string{"triage incoming work", "split goals", "prepare a working area", "review landed changes", "publish", "resolve conflicts", "clean up"}, DoesNot: []string{"design the goal", "implement the goal", "edit executor deliverables"}},
-	"subcommander": {Does: []string{"design the goal", "delegate the goal's work", "review implementation", "report completion for the goal", "issue decisions to the human", "commit the goal's work", "close a task its worker cannot"}, DoesNot: []string{"inspect or manage other goals", "publish", "create another subcommander", "claim the project"}},
+	"subcommander": {Does: []string{"design the goal", "delegate the goal's work", "review implementation", "report completion for the goal", "ask the commander to file decisions for the human", "commit the goal's work", "close a task its worker cannot"}, DoesNot: []string{"inspect or manage other goals", "publish", "create another subcommander", "claim the project", "file decisions to the human directly"}},
 	"executor":     {Does: []string{"implement", "test", "close the task it was given"}, DoesNot: []string{"make design decisions", "re-delegate", "commit", "write internal version-control details"}},
 }
 
@@ -2186,6 +2186,16 @@ func (d *Daemon) dispatchMethodWithPeer(ctx context.Context, req rpc.Request, pe
 		}
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, err
+		}
+		role, err := d.deriveSessionRole(ctx, p.AgentSessionID)
+		if err != nil {
+			return nil, err
+		}
+		if role.Role == "subcommander" {
+			return nil, errors.New("a subcommander cannot file a decision to the human; " +
+				"instead append an entry of kind review_requested to your goal handoff with atct_goal_handoff_entry_append, " +
+				"whose body holds the question, the options (label / description / consequence), and your recommendation and reason (an action that only matters after the merge goes in needs_review, not in a decision); " +
+				"the commander files it with atct_decision_ask and returns the answer on the same handoff as a review_received entry whose in_reply_to_id is your request entry's id")
 		}
 		kind := domain.KindDecision
 		if p.AfterReview {

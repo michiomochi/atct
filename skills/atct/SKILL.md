@@ -23,7 +23,7 @@ Role values for `expected_role`: `commander`, `subcommander`, `executor`.
 | Layer | Does | Does not |
 | --- | --- | --- |
 | `commander` | triage incoming work / split goals / prepare a working area / review landed changes / publish / resolve conflicts / clean up | design the goal / implement the goal / edit executor deliverables |
-| `subcommander` | design the goal / delegate the goal's work / review implementation / report completion for the goal / issue decisions to the human / commit the goal's work / close a task its worker cannot | inspect or manage other goals / publish / create another subcommander / claim the project |
+| `subcommander` | design the goal / delegate the goal's work / review implementation / report completion for the goal / ask the commander to file decisions for the human / commit the goal's work / close a task its worker cannot | inspect or manage other goals / publish / create another subcommander / claim the project / file decisions to the human directly |
 | `executor` | implement / test / close the task it was given | make design decisions / re-delegate / commit / write internal version-control details |
 
 Only `atct:dev:start` may enter development mode. In that mode an executor
@@ -170,10 +170,11 @@ becomes `done` while a decision on it is still open.
 
 ## Decisions and unsafe operations
 
-Human decisions go through ATCT only: use `atct_decision_ask` with concrete
-options and a recommended default, never a conversational question. Apply an
-answer with `atct_decision_poll` before continuing dependent work; withdraw a
-decision that is no longer relevant.
+Human decisions go through ATCT only: the commander files them with
+`atct_decision_ask`, with concrete options and a recommended default, never a
+conversational question. Apply an answer with `atct_decision_poll` before
+continuing dependent work; withdraw a decision that is no longer relevant. A
+subcommander cannot file one (see `### A subcommander's decision request`).
 
 A goal with an open decision, of any kind, is refused both `atct_goal_handoff_review_request`
 and `atct_goal_review_request`; the refusal names each decision. Answer or withdraw
@@ -200,12 +201,44 @@ in three calls of 4, 4 and 2 yields the same approved outcome, so the number of
 launches is not a change to the approved scope. Its small API cost was part of the
 approved trial, so it is not a new cost to ask about either. Do not ask.
 
+### A subcommander's decision request
+
+`atct_decision_ask` is refused to a subcommander. When (a), (b) or (c) holds, or
+a fact spans another goal, append one entry of kind `review_requested` per
+decision to your own goal handoff with `atct_goal_handoff_entry_append`:
+
+```
+人間への決定の依頼
+質問: <one sentence>
+選択肢:
+- <label>: <description> / 結果: <consequence>
+推奨: <label> / 理由: <why>
+```
+
+An action that only matters after the merge is not asked this way (see above): it
+goes in `needs_review` and `next_goal_ids`. The commander files the decision,
+the human answers in the commander's chat, and the commander replies on the same
+handoff with a `review_received` entry whose `in_reply_to_id` is your request
+entry's id and whose body is `decision <id>: <label> <answer_text>`. Your watch
+delivers it as `handoff_entry_added`; read it with
+`atct_goal_handoff_entry_history`. After asking, wait on a `--once` background
+Bash (`## Watch` step 6). Before `atct_goal_handoff_review_request`, each
+decision you asked for is answered, or the commander is asked to withdraw it.
+
+On 2026-10-20, in stock-data goal 437, decision 1180 (a `post_merge` decision a
+subcommander had filed itself) could not be recorded from the commander's chat,
+and the goal stood still.
+
+### Recording an answer from the chat
+
 A human's answer given in the chat is recorded with `atct_decision_answer`, not
 by asking the human to repeat it on the dashboard. Pass `decision_id`, the
 `answer` (an option label; for a goal review, `approve` or `reject`), an optional
 `answer_text` (a supplement, or the reason for a goal-review reject), and
 `human_quote`: the verbatim text the human typed in this chat that gives the
-answer.
+answer. The commander that filed the decision records it. The commander also
+records the answer to an open decision a subcommander filed before this rule;
+the subcommander applies it with `atct_decision_poll`.
 
 For a goal review, `human_quote` must be one of these whole lines, naming the
 decision id the dashboard shows: `approve #<decision_id>` or `承認 #<decision_id>`
@@ -295,15 +328,15 @@ reaches the human without passing through the delegator's context.
 | progress on the work | tasks: `atct_task_create`, then `done` as each one lands |
 | the design and why | the goal's `spec` and `plan` fields, in full, and `work_done` |
 | something found inside this goal | `surprises` and `needs_review` |
-| something found that is another goal | `atct_decision_ask`, addressed to the human |
+| something found that is another goal | a `review_requested` entry on the goal handoff, for the commander to file as a decision |
 | what was left undone | `next_goal_ids`, the ids of the goals to proceed with next |
 | the goal is ready for commander review | `atct_goal_handoff_review_request`, the one message |
 
 `atct_goal_handoff_review_request` is terminal: call it once, and only after
 every declared task is accepted and committed and the goal is ready for
-commander review. Work that is unfinished or blocked stays open and goes to
-`atct_decision_ask` with concrete options and the consequence of each; it is
-never reported through a goal-handoff review request.
+commander review. Work that is unfinished or blocked stays open and goes to a decision request
+(`### A subcommander's decision request`) with concrete options and the
+consequence of each; it is never reported through a goal-handoff review request.
 `atct_goal_review_request` applies only to an active goal after the commander
 has received the goal-handoff review.
 

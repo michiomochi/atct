@@ -735,7 +735,8 @@ test_goal_handoff_forbids_upward_design_questions() {
 }
 
 test_goal_handoff_names_the_single_upward_message() {
-  delegate_goal_section_contains '`next_goal_ids` for the goals that should follow, and `atct_decision_ask`'
+  delegate_goal_section_contains 'into the record instead: a task for work in flight, `surprises` and'
+  delegate_goal_section_contains '`needs_review` for what you found, and `next_goal_ids` for the goals that'
 
   local section
   section="$(unsent_report_section)"
@@ -743,9 +744,22 @@ test_goal_handoff_names_the_single_upward_message() {
     fail 'unsent report section must name the single upward review message'
 }
 
-test_goal_handoff_routes_cross_goal_facts_to_the_human() {
-  delegate_goal_section_contains 'A fact that spans another goal is not an exception. Raise it with'
-  delegate_goal_section_contains 'passing through the delegator.'
+test_goal_handoff_forbids_the_subcommander_decision_ask() {
+  delegate_goal_section_contains 'should follow. You cannot call `atct_decision_ask`: the commander files a'
+  delegate_goal_section_contains 'decision for the human, not you. For anything that needs the human, append a'
+}
+
+test_goal_handoff_routes_decisions_through_a_request_entry() {
+  delegate_goal_section_contains '`review_requested` entry to your goal handoff with'
+  delegate_goal_section_contains '`atct_goal_handoff_entry_append`, in the format `atct:atct` gives under'
+  delegate_goal_section_contains "\`### A subcommander's decision request\`."
+}
+
+test_goal_handoff_routes_cross_goal_facts_through_the_request_entry() {
+  delegate_goal_section_contains 'A fact that spans another goal is not an exception. Raise it the same way;'
+  delegate_goal_section_contains 'the commander files the decision and replies on the same handoff with a'
+  delegate_goal_section_contains '`review_received` entry, which your own watch delivers as'
+  delegate_goal_section_contains '`handoff_entry_added`. Read it with `atct_goal_handoff_entry_history`.'
 }
 
 test_goal_handoff_silence_has_required_order() {
@@ -2102,7 +2116,9 @@ test_goal_handoff_watch_contract_omits_unsafe_variants
 test_goal_handoff_watch_contract_has_required_order
 test_goal_handoff_forbids_upward_design_questions
 test_goal_handoff_names_the_single_upward_message
-test_goal_handoff_routes_cross_goal_facts_to_the_human
+test_goal_handoff_forbids_the_subcommander_decision_ask
+test_goal_handoff_routes_decisions_through_a_request_entry
+test_goal_handoff_routes_cross_goal_facts_through_the_request_entry
 test_goal_handoff_silence_has_required_order
 test_goal_handoff_preamble_does_not_invite_upward_reports
 test_goal_delegation_requires_the_adjacent_goal_boundary
