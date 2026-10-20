@@ -36,6 +36,9 @@ type Daemon struct {
 	// blocked for. It is memory only: a restarted daemon blocks once more.
 	stopMu      sync.Mutex
 	stopBlocked map[int64]string
+	// stopNoWatch counts, per agent session, the stops in a row blocked only
+	// for a missing watch. Memory only.
+	stopNoWatch map[int64]int
 	// toolUse holds the PreToolUse bindings that attach a transport to the
 	// session its hook identified. Memory only.
 	toolUse toolUseBindings

@@ -1209,12 +1209,13 @@ func (d *Daemon) dispatchMethodWithPeer(ctx context.Context, req rpc.Request, pe
 
 	case "session.stop_check":
 		var p struct {
-			SessionKey string `json:"session_key"`
+			SessionKey     string `json:"session_key"`
+			StopHookActive bool   `json:"stop_hook_active"`
 		}
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, err
 		}
-		response, err := d.stopCheck(ctx, p.SessionKey)
+		response, err := d.stopCheck(ctx, p.SessionKey, p.StopHookActive)
 		return marshal(response, err)
 
 	case "session.monitor_check":
