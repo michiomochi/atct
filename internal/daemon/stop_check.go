@@ -16,7 +16,14 @@ type stopCheckResponse struct {
 	Reason   string `json:"reason,omitempty"`
 }
 
-func (d *Daemon) stopCheck(ctx context.Context, sessionKey string) (stopCheckResponse, error) {
+// stopNoWatchLimit caps how many stops in a row are blocked only for a missing
+// watch. A session that cannot arm one (Codex) must still be able to stop.
+const stopNoWatchLimit = 3
+
+// stopCheck decides whether a session may stop. stopHookActive is the hook's
+// "this stop follows one a hook already blocked": the work checks then let it
+// through, but a missing watch is still blocked, up to stopNoWatchLimit stops.
+func (d *Daemon) stopCheck(ctx context.Context, sessionKey string, stopHookActive bool) (stopCheckResponse, error) {
 	agentSessionID, err := d.store.AgentSessionIDByKey(ctx, sessionKey)
 	if err != nil {
 		return stopCheckResponse{}, fmt.Errorf("resolve session key: %w", err)
@@ -25,6 +32,75 @@ func (d *Daemon) stopCheck(ctx context.Context, sessionKey string) (stopCheckRes
 	if err != nil {
 		return stopCheckResponse{}, fmt.Errorf("derive session role: %w", err)
 	}
+	if !stopHookActive {
+		response, err := d.stopCheckWork(ctx, agentSessionID, role)
+		if err != nil || response.Decision != "" {
+			return response, err
+		}
+	}
+	return d.stopCheckWatch(ctx, agentSessionID, role)
+}
+
+// stopCheckWatch blocks a commander or subcommander that still has pending
+// work (for a commander an active goal, for a subcommander its open goal handoff) but no live watch: an answer sent to it would never
+// arrive, which is how a session ended up holding a decision answer for days.
+func (d *Daemon) stopCheckWatch(ctx context.Context, agentSessionID int64, role roleAssignment) (stopCheckResponse, error) {
+	var scope store.MonitorLiveScope
+	var pending bool
+	switch role.Role {
+	case "commander":
+		goals, err := d.store.ListGoals(ctx, role.ProjectID)
+		if err != nil {
+			return stopCheckResponse{}, fmt.Errorf("list project goals: %w", err)
+		}
+		for _, goal := range goals {
+			pending = pending || goal.Status == domain.GoalActive
+		}
+		scope = store.MonitorLiveScope{ProjectID: role.ProjectID, Role: "commander"}
+	case "subcommander":
+		goal, err := d.store.GetGoal(ctx, role.GoalID)
+		if err != nil {
+			return stopCheckResponse{}, fmt.Errorf("get goal: %w", err)
+		}
+		if err := d.store.EnsureProjectActive(ctx, goal.ProjectID); err != nil {
+			return stopCheckResponse{}, nil
+		}
+		handoffs, err := d.store.ListGoalHandoffs(ctx, goal.ID)
+		if err != nil {
+			return stopCheckResponse{}, fmt.Errorf("list goal handoffs: %w", err)
+		}
+		for _, h := range handoffs {
+			pending = pending || goal.Status == domain.GoalActive && h.ReceivedBy == agentSessionID && h.ReceivedAt != nil && h.CompletedReportAt == nil && h.RecoveredAt == nil
+		}
+		scope = store.MonitorLiveScope{ProjectID: goal.ProjectID, Role: "subcommander", GoalID: &goal.ID}
+	default:
+		return stopCheckResponse{}, nil
+	}
+	live := false
+	if pending {
+		var err error
+		if live, err = d.store.HasLiveMonitorForScope(ctx, scope); err != nil {
+			live = true // cannot judge: do not block
+		}
+	}
+	d.stopMu.Lock()
+	defer d.stopMu.Unlock()
+	if !pending || live || d.stopNoWatch[agentSessionID] >= stopNoWatchLimit {
+		delete(d.stopNoWatch, agentSessionID)
+		return stopCheckResponse{}, nil
+	}
+	if d.stopNoWatch == nil {
+		d.stopNoWatch = map[int64]int{}
+	}
+	d.stopNoWatch[agentSessionID]++
+	return stopCheckResponse{Decision: "block", Reason: "ATCT: this session has pending work but no live watch, so an answer sent to it would never arrive. " +
+		"Arm the watch as `atct:atct` ## Watch says before replying: the Monitor tool with `atct watch --monitor --token <monitor_token>` and `persistent: true` (the monitor_token SessionStart printed); " +
+		"if you hold only an answer you are waiting for, Bash with `run_in_background` and `atct watch --monitor --token <monitor_token> --once` instead. " +
+		"A text-only reply does not arm it."}, nil
+}
+
+func (d *Daemon) stopCheckWork(ctx context.Context, agentSessionID int64, role roleAssignment) (stopCheckResponse, error) {
+	var err error
 
 	// The decision below is a function of the rows the stopCheck* functions
 	// read, so they record those rows into fp for the repeat check.
