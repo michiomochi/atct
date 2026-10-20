@@ -16,6 +16,12 @@ export const ja: Record<TranslationKey, string> = {
 
   "dashboard.error.load": "ダッシュボードを読み込めませんでした。",
 
+  "dashboard.stalled.title": "要確認",
+  "dashboard.stalled.answerUnapplied": "回答から{{duration}}たちますが、まだ適用されていません",
+  "dashboard.stalled.projectSilent": "30分以上 monitor の heartbeat がありません",
+  "dashboard.stalled.lastHeartbeat": "最後の heartbeat {{time}}",
+  "dashboard.stalled.noHeartbeat": "heartbeat の記録なし",
+
   "decision.caption.list": "判断一覧",
   "decision.column.priority": "優先度",
   "decision.column.question": "質問",
