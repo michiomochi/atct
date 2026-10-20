@@ -2194,7 +2194,7 @@ func (d *Daemon) dispatchMethodWithPeer(ctx context.Context, req rpc.Request, pe
 		if role.Role == "subcommander" {
 			return nil, errors.New("a subcommander cannot file a decision to the human; " +
 				"instead append an entry of kind review_requested to your goal handoff with atct_goal_handoff_entry_append, " +
-				"whose body holds the question, the options (label / description / consequence), your recommendation and reason, and whether after_review is needed; " +
+				"whose body holds the question, the options (label / description / consequence), and your recommendation and reason (an action that only matters after the merge goes in needs_review, not in a decision); " +
 				"the commander files it with atct_decision_ask and returns the answer on the same handoff as a review_received entry whose in_reply_to_id is your request entry's id")
 		}
 		kind := domain.KindDecision

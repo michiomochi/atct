@@ -28,8 +28,8 @@ superpowers（brainstorming・writing-plans）の既定の保存先や、`doc/sp
 
 | 層 | やること |
 |---|---|
-| `commander` | ゴールの分割、worktree の用意、subcommander の起動と終了、設計とゴール変更のレビュー、最終報告、マージ、公開、後片付け |
-| `subcommander` | ゴールの設計、executor へのタスク委譲、executor の起動と終了、実装レビュー、ゴール内のコミット、人間への決定の起票 |
+| `commander` | ゴールの分割、worktree の用意、subcommander の起動と終了、設計とゴール変更のレビュー、subcommander の依頼を受けた人間への決定の起票、最終報告、マージ、公開、後片付け |
+| `subcommander` | ゴールの設計、executor へのタスク委譲、executor の起動と終了、実装レビュー、ゴール内のコミット、人間への決定の依頼（commander が起票する） |
 | `executor` | 受領したタスクの実装、テスト、レビュー依頼 |
 
 ## 役割とセッション
