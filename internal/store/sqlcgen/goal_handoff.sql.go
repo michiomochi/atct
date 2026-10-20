@@ -198,3 +198,32 @@ func (q *Queries) ListOpenGoalHandoffs(ctx context.Context) ([]ListOpenGoalHando
 	}
 	return items, nil
 }
+
+const reassignGoalDecisionsToReceiver = `-- name: ReassignGoalDecisionsToReceiver :exec
+UPDATE decisions
+SET agent_session_id = ?1
+WHERE decisions.goal_id = ?2
+  AND status IN ('open', 'answered')
+  AND applied_at IS NULL
+  AND agent_session_id IN (
+    SELECT gh.received_by FROM goal_handoffs gh
+    WHERE gh.goal_id = ?2
+      AND gh.received_by IS NOT NULL
+      AND gh.received_by <> ?1
+  )
+`
+
+type ReassignGoalDecisionsToReceiverParams struct {
+	ReceivedBy int64
+	GoalID     int64
+}
+
+// Moves the decisions the previous receiver of a goal handoff still owns to
+// the new receiver. Only open or answered-but-unapplied decisions move: the
+// answer, status and applied_at stay as they are. Commander-owned decisions
+// (agent_session_id 0, or any session that never received this goal) do not
+// match the subquery and stay put.
+func (q *Queries) ReassignGoalDecisionsToReceiver(ctx context.Context, arg ReassignGoalDecisionsToReceiverParams) error {
+	_, err := q.db.ExecContext(ctx, reassignGoalDecisionsToReceiver, arg.ReceivedBy, arg.GoalID)
+	return err
+}

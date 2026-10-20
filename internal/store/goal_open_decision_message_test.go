@@ -13,7 +13,11 @@ import (
 func TestGoalReviewOpenDecisionErrorNamesBlockingDecision(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	goalID, commanderID := reviewableGoalForPostMergeTest(t, s)
+	goalID := newTestGoal(t, s)
+	addLiveProjectClaim(t, s, goalID, "open-decision-message-requester")
+	addTestAgentSession(t, s, "open-decision-message-receiver")
+	commanderID := testSessionID("open-decision-message-requester")
+	receiveGoalHandoffReviewForGoalReviewTest(t, s, ctx, "open-decision-message-handoff", goalID, commanderID, testSessionID("open-decision-message-receiver"))
 
 	blocking, err := s.AskDecision(ctx, AskInput{
 		GoalID: goalID, Kind: domain.KindDecision, Question: "which option?", AgentSessionID: testSessionID("run-1"),
@@ -32,20 +36,20 @@ func TestGoalReviewOpenDecisionErrorNamesBlockingDecision(t *testing.T) {
 	if err := s.WithdrawDecision(ctx, blocking.ID, "resolved independently"); err != nil {
 		t.Fatalf("WithdrawDecision: %v", err)
 	}
-	// post_merge does not block RequestGoalReview but does block FinalizeGoalReview,
-	// so the finalize rejection has to name it.
+	// Once the review is approved, a decision asked afterwards is what blocks
+	// FinalizeGoalReview, so that rejection has to name it too.
+	review, err := s.RequestGoalReview(ctx, goalID, commanderID, goalReviewRequestTestReport())
+	if err != nil {
+		t.Fatalf("RequestGoalReview with no open decision: %v", err)
+	}
+	if _, err := s.ApproveGoalReview(ctx, review.ID); err != nil {
+		t.Fatalf("ApproveGoalReview: %v", err)
+	}
 	postMerge, err := s.AskDecision(ctx, AskInput{
 		GoalID: goalID, Kind: domain.KindPostMerge, Question: "deploy to production?", AgentSessionID: testSessionID("run-1"),
 	})
 	if err != nil {
 		t.Fatalf("AskDecision post_merge: %v", err)
-	}
-	review, err := s.RequestGoalReview(ctx, goalID, commanderID, goalReviewRequestTestReport())
-	if err != nil {
-		t.Fatalf("RequestGoalReview with open post_merge decision: %v", err)
-	}
-	if _, err := s.ApproveGoalReview(ctx, review.ID); err != nil {
-		t.Fatalf("ApproveGoalReview: %v", err)
 	}
 	_, err = s.FinalizeGoalReview(ctx, goalID, commanderID)
 	if !errors.Is(err, ErrGoalHasOpenDecision) {

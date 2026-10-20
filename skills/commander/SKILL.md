@@ -271,13 +271,19 @@ that subcommander is started:
    refused, ask for the approval on the dashboard. `merge-check` stops a merge
    before the human approves.
    After a takeover, the current commander can run `atct_goal_review_complete` and `atct_goal_handoff_review_reject` as they are, but must re-receive with `atct_goal_handoff_review_receive` before `atct_goal_review_request`; `atct_handoff_recover` is not needed, and the previous commander has lost the claim and can do none of them.
-   `atct_goal_review_request` is refused with `goal has an open decision` only for open
-   decisions that are not `post_merge`. A decision filed with `after_review: true` (kind
-   `post_merge`) does not stop it, but `atct_goal_review_complete` is still refused
-   while it is open. Your liveness line names every stopped goal, one entry per goal
+   `atct_goal_review_request` is refused with `goal has an open decision` (naming each
+   decision) while the goal has any open decision, `post_merge` included. Your liveness line names every stopped goal, one entry per goal
    separated by `; `. A goal whose review you received but whose human review is not
    requested yet reads `goal N review received, human review not requested yet`,
    followed by the ids of the open decisions holding it back.
+
+   A liveness line that reads `decision N (goal G) was answered over 10 min ago and
+   is still not applied` means the decision's asker may be gone. (a) Check whether
+   goal G's subcommander is still alive with `atct_goal_sessions` and its watch.
+   (b) If it is gone, have the goal handoff taken over with `atct_handoff_recover`:
+   the new session inherits the unapplied decisions, and its watch then shows
+   them. (c) The commander does not apply such an answer or rewrite it; the
+   answer is the human's.
 
    The daemon checks that the goal branch contains main only at review request
    time. After human approval and before merging, run

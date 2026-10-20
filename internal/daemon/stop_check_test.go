@@ -537,11 +537,36 @@ func stopRepeatKey(id int64) string { return fmt.Sprintf("stop-repeat-key-%d", i
 
 func (r stopRepeat) blocks(t *testing.T, id int64) bool {
 	t.Helper()
-	response, err := r.daemon.stopCheck(context.Background(), stopRepeatKey(id))
+	// stopCheckWork, not stopCheck: these tests are about the repeat check, not the missing-watch block.
+	agentSessionID, err := r.store.AgentSessionIDByKey(context.Background(), stopRepeatKey(id))
 	if err != nil {
-		t.Fatalf("stopCheck(%d): %v", id, err)
+		t.Fatalf("AgentSessionIDByKey(%d): %v", id, err)
+	}
+	role, err := r.daemon.deriveSessionRole(context.Background(), agentSessionID)
+	if err != nil {
+		t.Fatalf("deriveSessionRole(%d): %v", id, err)
+	}
+	response, err := r.daemon.stopCheckWork(context.Background(), agentSessionID, role)
+	if err != nil {
+		t.Fatalf("stopCheckWork(%d): %v", id, err)
 	}
 	return response.Decision == "block"
+}
+
+func (r stopRepeat) watch(t *testing.T, role string) {
+	t.Helper()
+	now := time.Now().UTC()
+	health := store.MonitorHealth{
+		CWD: t.TempDir(), Role: role, State: "healthy", Reason: "test", ProjectID: r.projectID,
+		PID: 1, ProcessStartedAt: now.Add(-time.Minute), TransitionedAt: now, LastSeenAt: now,
+	}
+	if role == "subcommander" {
+		health.GoalID = &r.goalID
+	}
+	health.MonitorID = store.MonitorHealthID(health.CWD, health.Role, health.ProjectID, health.GoalID, health.TaskID, health.PID, health.ProcessStartedAt)
+	if err := r.store.UpsertMonitorHealth(context.Background(), health); err != nil {
+		t.Fatalf("UpsertMonitorHealth: %v", err)
+	}
 }
 
 func (r stopRepeat) createTask(t *testing.T) domain.Task {
@@ -689,7 +714,7 @@ func TestStopCheckConcurrentSessions(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for i := 0; i < 20; i++ {
-				if _, err := r.daemon.stopCheck(context.Background(), stopRepeatKey(id)); err != nil {
+				if _, err := r.daemon.stopCheck(context.Background(), stopRepeatKey(id), false); err != nil {
 					t.Errorf("stopCheck(%d): %v", id, err)
 					return
 				}
@@ -697,4 +722,38 @@ func TestStopCheckConcurrentSessions(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+}
+
+func TestStopCheckBlocksSessionWithoutWatch(t *testing.T) {
+	for _, role := range []string{"commander", "subcommander"} {
+		t.Run(role, func(t *testing.T) {
+			r := newStopRepeat(t)
+			stopCheckGoalHandoff(t, r.stopCheckFixture, true)
+			id := r.commanderID
+			if role == "subcommander" {
+				id = r.subcommanderID
+			}
+			key := stopRepeatKey(id)
+			if _, err := r.store.DB().ExecContext(context.Background(), "DELETE FROM monitor_health"); err != nil {
+				t.Fatalf("delete monitor_health: %v", err)
+			}
+			// Stops that follow a block (stop_hook_active) are blocked for the
+			// missing watch up to the limit, and the next one passes: a session
+			// that cannot arm a watch is not held forever.
+			for i := 0; i < stopNoWatchLimit; i++ {
+				response, err := r.daemon.stopCheck(context.Background(), key, true)
+				if err != nil || response.Decision != "block" || !strings.Contains(response.Reason, "atct watch --monitor --token <monitor_token>") {
+					t.Fatalf("stop %d = %+v, %v, want a block naming the watch command", i, response, err)
+				}
+			}
+			if response, err := r.daemon.stopCheck(context.Background(), key, true); err != nil || response.Decision != "" {
+				t.Fatalf("stop after the limit = %+v, %v, want pass", response, err)
+			}
+			// Arming the watch lets the session stop.
+			r.watch(t, role)
+			if response, err := r.daemon.stopCheck(context.Background(), key, true); err != nil || response.Decision != "" {
+				t.Fatalf("stop with a live watch = %+v, %v, want pass", response, err)
+			}
+		})
+	}
 }

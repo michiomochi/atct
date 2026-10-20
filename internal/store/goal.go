@@ -636,12 +636,12 @@ func (s *Store) RequestGoalReview(ctx context.Context, goalID, agentSessionID in
 	}
 	defer tx.Rollback()
 	q := sqlcgen.New(tx)
-	open, err := q.CountReviewBlockingDecisionsForGoal(ctx, goalID)
+	open, err := q.CountOpenDecisionsForGoal(ctx, goalID)
 	if err != nil {
 		return domain.Decision{}, fmt.Errorf("count open decisions for goal review: %w", err)
 	}
 	if open > 0 {
-		return domain.Decision{}, openGoalBlockersError(ctx, q, goalID, string(domain.KindPostMerge))
+		return domain.Decision{}, openGoalBlockersError(ctx, q, goalID, "")
 	}
 	decisionID, err := q.CreateDecision(ctx, sqlcgen.CreateDecisionParams{
 		GoalID:         goalID,

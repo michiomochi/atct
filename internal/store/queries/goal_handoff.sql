@@ -46,3 +46,21 @@ SELECT session_key,
 FROM sessions
 GROUP BY session_key
 ORDER BY MIN(role_rank), session_key;
+
+-- Moves the decisions the previous receiver of a goal handoff still owns to
+-- the new receiver. Only open or answered-but-unapplied decisions move: the
+-- answer, status and applied_at stay as they are. Commander-owned decisions
+-- (agent_session_id 0, or any session that never received this goal) do not
+-- match the subquery and stay put.
+-- name: ReassignGoalDecisionsToReceiver :exec
+UPDATE decisions
+SET agent_session_id = sqlc.arg('received_by')
+WHERE decisions.goal_id = sqlc.arg('goal_id')
+  AND status IN ('open', 'answered')
+  AND applied_at IS NULL
+  AND agent_session_id IN (
+    SELECT gh.received_by FROM goal_handoffs gh
+    WHERE gh.goal_id = sqlc.arg('goal_id')
+      AND gh.received_by IS NOT NULL
+      AND gh.received_by <> sqlc.arg('received_by')
+  );

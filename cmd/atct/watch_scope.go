@@ -1,9 +1,12 @@
 package main
 
 import (
+	"cmp"
 	"slices"
 	"strconv"
 	"time"
+
+	"github.com/michiomochi/atct/internal/store"
 )
 
 type watchScopeFilter struct {
@@ -62,16 +65,23 @@ func watchCommanderLivenessActionable(state watchReconciliation) bool {
 
 // watchCommanderTarget is one goal the commander is to act on. openDecisionIDs
 // lists the open decisions that hold that goal back, and is filled only for the
-// states that name them.
+// states that name them. decisionID is set only for an answered decision that
+// is still unapplied.
 type watchCommanderTarget struct {
 	kind, handoffID, goalID string
 	openDecisionIDs         []string
+	decisionID              string
 }
 
 const (
-	watchKindGoalReviewRejected = "goal_review_rejected"
-	watchKindGoalReviewReceived = "goal_review_received"
+	watchKindGoalReviewRejected        = "goal_review_rejected"
+	watchKindGoalReviewReceived        = "goal_review_received"
+	watchKindDecisionAnsweredUnapplied = "decision_answered_unapplied"
 )
+
+// watchLivenessNow is the clock the commander's unapplied-answer check reads;
+// tests replace it.
+var watchLivenessNow = time.Now
 
 // watchCommanderLivenessTargets names every goal the commander is to act on, one
 // entry per goal, in this order of priority: a goal whose human review was
@@ -126,6 +136,44 @@ func watchCommanderLivenessTargets(state watchReconciliation) []watchCommanderTa
 			add(watchCommanderTarget{kind: "goal", goalID: decision.GoalID,
 				openDecisionIDs: watchOpenDecisionIDs(state, decision.GoalID, "goal_review")})
 		}
+	}
+	return append(targets, watchUnappliedAnswerTargets(state)...)
+}
+
+// watchUnappliedAnswerTargets names each answered decision that has waited past
+// store.AnsweredUnappliedAfter without being applied. One target per decision,
+// in ascending decision id, and not deduplicated by goal: it sits beside the
+// goal's review target.
+func watchUnappliedAnswerTargets(state watchReconciliation) []watchCommanderTarget {
+	type unapplied struct {
+		id     int64
+		target watchCommanderTarget
+	}
+	var found []unapplied
+	for _, decision := range state.Decisions {
+		if decision.Status != "answered" || decision.Kind == "goal_review" || decision.AnsweredAt == nil || !watchReconciliationHasActiveGoal(state, decision.GoalID) {
+			continue
+		}
+		id, err := strconv.ParseInt(decision.ID, 10, 64)
+		if err != nil {
+			continue
+		}
+		answeredAt, err := time.Parse(time.RFC3339Nano, *decision.AnsweredAt)
+		if err != nil {
+			continue
+		}
+		ago := watchLivenessNow().Sub(answeredAt)
+		if ago <= store.AnsweredUnappliedAfter {
+			continue
+		}
+		found = append(found, unapplied{id: id, target: watchCommanderTarget{
+			kind: watchKindDecisionAnsweredUnapplied, decisionID: decision.ID, goalID: decision.GoalID,
+		}})
+	}
+	slices.SortFunc(found, func(a, b unapplied) int { return cmp.Compare(a.id, b.id) })
+	targets := make([]watchCommanderTarget, 0, len(found))
+	for _, f := range found {
+		targets = append(targets, f.target)
 	}
 	return targets
 }

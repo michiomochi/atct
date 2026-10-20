@@ -11,6 +11,7 @@ import {
   normalizeReviewExchanges,
   fetchProjects,
   normalizeGoal,
+  normalizeInbox,
   rejectDecision,
   subscribeToDecisionEvents,
   updateUILocale,
@@ -409,5 +410,20 @@ describe("project archive requests", () => {
       text: () => Promise.resolve('{"error":"project \\"x\\" is archived"}'),
     }));
     await expect(archiveProject("1")).rejects.toThrow('project "x" is archived');
+  });
+});
+
+describe("inbox API", () => {
+  it("normalizes a missing stalled_projects to an empty array", () => {
+    expect(normalizeInbox({ open_decisions: [] }).stalled_projects).toEqual([]);
+  });
+
+  it("keeps stalled projects and the stale fields on unapplied decisions", () => {
+    const response = normalizeInbox({
+      unapplied_decisions: [{ id: 3, stale_unapplied: true, owner_last_seen_at: "2026-10-20T04:00:00Z" }],
+      stalled_projects: [{ project_id: 7, project_name: "atct", last_seen_at: null }],
+    });
+    expect(response.unapplied_decisions[0]).toMatchObject({ stale_unapplied: true, owner_last_seen_at: "2026-10-20T04:00:00Z" });
+    expect(response.stalled_projects).toEqual([{ project_id: 7, project_name: "atct", last_seen_at: null }]);
   });
 });

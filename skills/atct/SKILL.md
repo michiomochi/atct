@@ -166,10 +166,11 @@ options and a recommended default, never a conversational question. Apply an
 answer with `atct_decision_poll` before continuing dependent work; withdraw a
 decision that is no longer relevant.
 
-A decision that approves an action after the merge (a production deploy) is asked
-with `after_review: true`. It does not block `atct_goal_review_request`, and it
-still blocks `atct_goal_review_complete`: the rule that a goal is not done while a
-decision is open does not change.
+A goal with an open decision, of any kind, is refused both `atct_goal_handoff_review_request`
+and `atct_goal_review_request`; the refusal names each decision. Answer or withdraw
+them first. An action that only matters after the merge (a production deploy) is not a
+decision to file: write it in `needs_review` and `next_goal_ids` of the completion report,
+and the commander passes it to the human at approval.
 
 Ask the human only when one of these holds:
 

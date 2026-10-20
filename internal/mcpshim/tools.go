@@ -246,7 +246,7 @@ type DecisionAskIn struct {
 	DefaultOption  string          `json:"default_option,omitempty" jsonschema:"option label to apply after the timeout; must match one of the option labels"`
 	DefaultAfterMs *int64          `json:"default_after_ms,omitempty" jsonschema:"milliseconds after which the default option is applied; 0 applies immediately"`
 	WaitMs         *int            `json:"wait_ms,omitempty" jsonschema:"milliseconds to wait for an answer; defaults to 30000; returns parked after timeout"`
-	AfterReview    bool            `json:"after_review,omitempty" jsonschema:"true when the decision approves an action after merge (e.g. a production deploy); it does not block the goal review request, but the goal cannot be done while it is open"`
+	AfterReview    bool            `json:"after_review,omitempty" jsonschema:"kind label for a decision about an action after merge; it blocks the goal review request like any open decision, so prefer needs_review and next_goal_ids in the completion report"`
 }
 
 type DecisionPollIn struct {
