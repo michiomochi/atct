@@ -848,7 +848,7 @@ func (s *Store) FinalizeGoalReview(ctx context.Context, goalID, commanderID int6
 		return domain.Goal{}, fmt.Errorf("count open decisions for review finalization: %w", err)
 	}
 	if open > 0 {
-		return domain.Goal{}, fmt.Errorf("%w: %d", ErrGoalHasOpenDecision, goalID)
+		return domain.Goal{}, openGoalBlockersError(ctx, q, goalID, "")
 	}
 	approved, err := q.CountApprovedGoalReviewsForGoal(ctx, goalID)
 	if err != nil {

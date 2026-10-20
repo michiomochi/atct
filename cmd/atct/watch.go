@@ -1705,7 +1705,11 @@ func reconcileWatchScope(ctx context.Context, client *http.Client, baseURL strin
 	}
 	for _, decision := range state.Decisions {
 		if !watchScopeMatchesDecision(scope, decision) {
-			continue
+			observed, ok := watchCommanderObservedAnswer(scope, state, decision)
+			if !ok {
+				continue
+			}
+			decision = observed
 		}
 		if isGoalReviewTransition(state, decision, "applied", "approve") {
 			if shouldProjectGoalReviewTransition(scope) {
