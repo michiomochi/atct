@@ -363,6 +363,40 @@ func watchScopeMatchesDecision(scope watchScope, decision watchDecision) bool {
 	return true
 }
 
+// watchCommanderObservedAnswer lets the project-wide commander watch hear the
+// answer to a decision a subcommander asked, while the commander holds that
+// goal's review. Such a decision targets the subcommander, so
+// watchScopeMatchesDecision drops it for the commander, and the commander
+// waiting on the review never learns it was answered. It returns a copy that
+// targets the commander; the caller's decision is left as it was.
+func watchCommanderObservedAnswer(scope watchScope, state watchReconciliation, decision watchDecision) (watchDecision, bool) {
+	if scope.Role != "commander" || scope.GoalID != "" || scope.TaskID != "" {
+		return watchDecision{}, false
+	}
+	if decision.Status != "answered" || decision.Kind == "goal_review" {
+		return watchDecision{}, false
+	}
+	if decision.TargetRole == "" || decision.TargetRole == "commander" {
+		return watchDecision{}, false
+	}
+	if decision.ProjectID != "" && decision.ProjectID != scope.ProjectID {
+		return watchDecision{}, false
+	}
+	if !watchReconciliationHasActiveGoal(state, decision.GoalID) {
+		return watchDecision{}, false
+	}
+	for _, handoff := range state.GoalHandoffs {
+		if strconv.FormatInt(handoff.GoalID, 10) != decision.GoalID || !watchHandoffOpen(handoff) {
+			continue
+		}
+		if handoff.ReviewRequestedAt != nil && handoff.ReviewReceivedAt != nil && handoff.ReviewRejectedAt == nil {
+			decision.TargetRole = "commander"
+			return decision, true
+		}
+	}
+	return watchDecision{}, false
+}
+
 func newWatchScopeFilter(goalID string) *watchScopeFilter {
 	return &watchScopeFilter{goalID: goalID}
 }
