@@ -362,6 +362,18 @@ describe("GoalDetail", () => {
     expect(screen.getByTestId("goal-review")).not.toBeNull();
   });
 
+  it("renders an open post_merge decision with the answer form", async () => {
+    const response = goalResponse();
+    response.unattached_decisions = [{ ...ordinaryDecision(), id: "post-merge-1", kind: "post_merge", question: "Deploy to production?" }];
+    vi.mocked(fetchGoal).mockResolvedValueOnce(response);
+
+    render(<GoalDetail id="goal-1" />);
+
+    const list = await screen.findByTestId("unattached-decision-list");
+    expect(within(list).getByText("Deploy to production?")).not.toBeNull();
+    expect(within(list).getByRole("button", { name: "form.answer.submit" })).not.toBeNull();
+  });
+
   it("renders the completion report once, outside the action zone, while a goal review is open", async () => {
     const response = goalResponse({
       work_done: "Completed work",
