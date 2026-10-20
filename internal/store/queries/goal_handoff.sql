@@ -64,3 +64,9 @@ WHERE decisions.goal_id = sqlc.arg('goal_id')
       AND gh.received_by IS NOT NULL
       AND gh.received_by <> sqlc.arg('received_by')
   );
+
+-- name: GoalHandoffEverReceivedBy :one
+SELECT EXISTS (
+  SELECT 1 FROM goal_handoffs
+  WHERE goal_id = sqlc.arg('goal_id') AND received_by = sqlc.arg('agent_session_id')
+);
