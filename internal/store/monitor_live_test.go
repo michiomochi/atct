@@ -77,6 +77,31 @@ func TestHasLiveMonitorForScopeIgnoresOtherGoal(t *testing.T) {
 	}
 }
 
+func TestHasLiveMonitorForScopeExcludeRearmingIgnoresRearmingRow(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	health := testMonitorHealth(t, time.Now().UTC())
+	health.State = "rearming"
+	if err := s.UpsertMonitorHealth(ctx, health); err != nil {
+		t.Fatal(err)
+	}
+	scope := scopeOf(health)
+	if live, err := s.HasLiveMonitorForScope(ctx, scope); err != nil || !live {
+		t.Fatalf("HasLiveMonitorForScope = %v, %v; want true without ExcludeRearming", live, err)
+	}
+	scope.ExcludeRearming = true
+	if live, err := s.HasLiveMonitorForScope(ctx, scope); err != nil || live {
+		t.Fatalf("HasLiveMonitorForScope(ExcludeRearming) = %v, %v; want false for a rearming row", live, err)
+	}
+	health.State = "healthy"
+	if err := s.UpsertMonitorHealth(ctx, health); err != nil {
+		t.Fatal(err)
+	}
+	if live, err := s.HasLiveMonitorForScope(ctx, scope); err != nil || !live {
+		t.Fatalf("HasLiveMonitorForScope(ExcludeRearming) = %v, %v; want true for a healthy row", live, err)
+	}
+}
+
 func TestRearmingMonitorKeepsScopeAndSessionLiveUntilGraceEnds(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)

@@ -18,13 +18,15 @@ WHERE project_id = ?
   AND goal_id IS ?
   AND last_seen_at >= ?
   AND stopped_at IS NULL
+  AND (CAST(?5 AS INTEGER) = 0 OR state <> 'rearming')
 `
 
 type CountLiveMonitorsForScopeParams struct {
-	ProjectID  int64
-	Role       string
-	GoalID     sql.NullInt64
-	LastSeenAt string
+	ProjectID       int64
+	Role            string
+	GoalID          sql.NullInt64
+	LastSeenAt      string
+	ExcludeRearming int64
 }
 
 func (q *Queries) CountLiveMonitorsForScope(ctx context.Context, arg CountLiveMonitorsForScopeParams) (int64, error) {
@@ -33,6 +35,7 @@ func (q *Queries) CountLiveMonitorsForScope(ctx context.Context, arg CountLiveMo
 		arg.Role,
 		arg.GoalID,
 		arg.LastSeenAt,
+		arg.ExcludeRearming,
 	)
 	var count int64
 	err := row.Scan(&count)

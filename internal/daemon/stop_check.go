@@ -56,7 +56,7 @@ func (d *Daemon) stopCheckWatch(ctx context.Context, agentSessionID int64, role 
 		for _, goal := range goals {
 			pending = pending || goal.Status == domain.GoalActive
 		}
-		scope = store.MonitorLiveScope{ProjectID: role.ProjectID, Role: "commander"}
+		scope = store.MonitorLiveScope{ProjectID: role.ProjectID, Role: "commander", ExcludeRearming: true}
 	case "subcommander":
 		goal, err := d.store.GetGoal(ctx, role.GoalID)
 		if err != nil {
@@ -72,7 +72,7 @@ func (d *Daemon) stopCheckWatch(ctx context.Context, agentSessionID int64, role 
 		for _, h := range handoffs {
 			pending = pending || goal.Status == domain.GoalActive && h.ReceivedBy == agentSessionID && h.ReceivedAt != nil && h.CompletedReportAt == nil && h.RecoveredAt == nil
 		}
-		scope = store.MonitorLiveScope{ProjectID: goal.ProjectID, Role: "subcommander", GoalID: &goal.ID}
+		scope = store.MonitorLiveScope{ProjectID: goal.ProjectID, Role: "subcommander", GoalID: &goal.ID, ExcludeRearming: true}
 	default:
 		return stopCheckResponse{}, nil
 	}
