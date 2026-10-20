@@ -317,7 +317,7 @@ export function GoalDetail({ id }: Props) {
       const goal = await fetchGoal(resolvedID);
       const goalReview = findOpenGoalReview(goal.unattached_decisions);
       const unattachedDecisions = goal.unattached_decisions.filter(
-        (decision) => decision.kind === "decision" && decision.status === "open",
+        (decision) => decision.kind !== "goal_review" && decision.status === "open",
       );
       setState({ kind: "ready", data: { goal, goalReview, unattachedDecisions } });
     } catch (reason) {
