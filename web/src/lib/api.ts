@@ -108,6 +108,8 @@ export interface Decision {
   answer_evidence?: string;
   answered_at?: string;
   applied_at?: string;
+  stale_unapplied?: boolean;
+  owner_last_seen_at?: string;
   agent_session_id: string;
   created_at: string;
 }
@@ -212,11 +214,20 @@ export interface ReviewExchangeHistory {
 }
 
 
+// A project with active goals whose monitors have been silent for a while.
+// last_seen_at is null when no monitor has ever reported for it.
+export interface StalledProject {
+  project_id: number;
+  project_name: string;
+  last_seen_at: string | null;
+}
+
 export interface InboxResponse {
   open_decisions: Decision[];
   unapplied_decisions: Decision[];
   active_goals: Goal[];
   attention_tasks: TaskView[];
+  stalled_projects: StalledProject[];
 }
 
 export interface GoalResponse {
@@ -486,6 +497,7 @@ export function normalizeInbox(value: unknown): InboxResponse {
     unapplied_decisions: arrayOrEmpty<Decision>(source.unapplied_decisions),
     active_goals: arrayOrEmpty<Goal>(source.active_goals),
     attention_tasks: arrayOrEmpty<TaskView>(source.attention_tasks),
+    stalled_projects: arrayOrEmpty<StalledProject>(source.stalled_projects),
   };
 }
 

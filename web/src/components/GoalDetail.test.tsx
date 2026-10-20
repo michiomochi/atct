@@ -181,6 +181,7 @@ function emptyInbox(): InboxResponse {
     unapplied_decisions: [],
     active_goals: [],
     attention_tasks: [],
+    stalled_projects: [],
   };
 }
 

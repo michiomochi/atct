@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"database/sql"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -11,6 +13,7 @@ import (
 
 	"github.com/michiomochi/atct/internal/domain"
 	"github.com/michiomochi/atct/internal/store"
+	_ "modernc.org/sqlite"
 )
 
 func TestPendingCommandReturnsExitOneWithoutAnswers(t *testing.T) {
@@ -1694,3 +1697,70 @@ func addPendingTestDecision(t *testing.T, s *store.Store, ctx context.Context, g
 }
 
 func idText(id int64) string { return strconv.FormatInt(id, 10) }
+
+func TestPendingCommandMarksAnswerUnappliedPastTenMinutesWithAskerHeartbeat(t *testing.T) {
+	dir, projectRoot := newPendingFixture(t)
+	s := openPendingStore(t, dir)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+	project, err := s.ResolveProject(ctx, projectRoot)
+	if err != nil {
+		t.Fatalf("ResolveProject: %v", err)
+	}
+	withMonitor, err := s.CreateGoal(ctx, project.ID, "Goal with a subcommander", "human")
+	if err != nil {
+		t.Fatalf("CreateGoal: %v", err)
+	}
+	withoutMonitor, err := s.CreateGoal(ctx, project.ID, "Goal without a subcommander", "human")
+	if err != nil {
+		t.Fatalf("CreateGoal: %v", err)
+	}
+	stale := addPendingTestDecision(t, s, ctx, withMonitor.ID, "stale-answer", "Which answer is stale?", false)
+	orphan := addPendingTestDecision(t, s, ctx, withoutMonitor.ID, "orphan-answer", "Which answer has no asker?", false)
+	fresh := addPendingTestDecision(t, s, ctx, withMonitor.ID, "fresh-answer", "Which answer is fresh?", false)
+	// A second handle backdates the answers, which the store would otherwise stamp with now.
+	raw, err := sql.Open("sqlite", filepath.Join(dir, "atct.db"))
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	defer raw.Close()
+	for _, id := range []int64{stale.ID, orphan.ID} {
+		if _, err := raw.ExecContext(ctx, `UPDATE decisions SET answered_at = ? WHERE id = ?`, now.Add(-11*time.Minute).Format(time.RFC3339), id); err != nil {
+			t.Fatalf("backdate answer: %v", err)
+		}
+	}
+	if _, err := raw.ExecContext(ctx, `UPDATE decisions SET answered_at = ? WHERE id = ?`, now.Add(-time.Minute).Format(time.RFC3339), fresh.ID); err != nil {
+		t.Fatalf("set fresh answer: %v", err)
+	}
+	subcommanderGoal := withMonitor.ID
+	health := store.MonitorHealth{
+		CWD: t.TempDir(), Role: "subcommander", State: "healthy",
+		ProjectID: project.ID, GoalID: &subcommanderGoal, PID: os.Getpid(),
+		ProcessStartedAt: now.Add(-time.Hour), TransitionedAt: now, LastSeenAt: now,
+	}
+	health.MonitorID = store.MonitorHealthID(health.CWD, health.Role, health.ProjectID, health.GoalID, nil, health.PID, health.ProcessStartedAt)
+	if err := s.UpsertMonitorHealth(ctx, health); err != nil {
+		t.Fatalf("UpsertMonitorHealth: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("Store.Close: %v", err)
+	}
+
+	output, exitCode, err := pendingCommand(dir, projectRoot)
+	if err != nil {
+		t.Fatalf("pendingCommand: %v", err)
+	}
+	if exitCode != 0 {
+		t.Fatalf("pendingCommand exit code = %d, want 0", exitCode)
+	}
+	wants := []string{
+		fmt.Sprintf("- Which answer is stale? (decision_id: %d) [answered 11m ago; asker's last heartbeat %s]\n", stale.ID, now.Format(time.RFC3339)),
+		fmt.Sprintf("- Which answer has no asker? (decision_id: %d) [answered 11m ago; asker's last heartbeat none on record]\n", orphan.ID),
+		fmt.Sprintf("- Which answer is fresh? (decision_id: %d)\n", fresh.ID),
+	}
+	for _, want := range wants {
+		if !strings.Contains(output, want) {
+			t.Errorf("pendingCommand output missing %q\nfull output:\n%s", want, output)
+		}
+	}
+}

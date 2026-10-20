@@ -46,6 +46,14 @@ const (
 	EventPlanHandoffComplete             = "plan.handoff.complete"
 )
 
+// Thresholds for the inbox's stale signals. An answered decision that has not
+// been applied for AnsweredUnappliedAfter is stale; a project with active goals
+// whose monitors have not been seen for ProjectSilentAfter is stalled.
+const (
+	AnsweredUnappliedAfter = 10 * time.Minute
+	ProjectSilentAfter     = 30 * time.Minute
+)
+
 // Review event aliases use the transition-oriented names in code that needs
 // to describe the event rather than the RPC method that caused it.
 const (

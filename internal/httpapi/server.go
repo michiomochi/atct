@@ -79,13 +79,27 @@ type decisionView struct {
 	// Set on open_decisions only; see domain.DecisionPriority.
 	Priority       int    `json:"priority,omitempty"`
 	PriorityReason string `json:"priority_reason,omitempty"`
+	// Set on unapplied_decisions only: answered for longer than
+	// store.AnsweredUnappliedAfter while its goal is active. OwnerLastSeenAt is
+	// the owner's latest subcommander heartbeat, when there is one.
+	StaleUnapplied  bool       `json:"stale_unapplied,omitempty"`
+	OwnerLastSeenAt *time.Time `json:"owner_last_seen_at,omitempty"`
+}
+
+// stalledProject is a project with active goals whose monitors have gone quiet
+// for store.ProjectSilentAfter. LastSeenAt is nil when no monitor ever ran.
+type stalledProject struct {
+	ProjectID   int64      `json:"project_id"`
+	ProjectName string     `json:"project_name"`
+	LastSeenAt  *time.Time `json:"last_seen_at"`
 }
 
 type inboxResponse struct {
-	OpenDecisions      []decisionView `json:"open_decisions"`
-	UnappliedDecisions []decisionView `json:"unapplied_decisions"`
-	ActiveGoals        []goalView     `json:"active_goals"`
-	AttentionTasks     []TaskView     `json:"attention_tasks"`
+	OpenDecisions      []decisionView   `json:"open_decisions"`
+	UnappliedDecisions []decisionView   `json:"unapplied_decisions"`
+	ActiveGoals        []goalView       `json:"active_goals"`
+	AttentionTasks     []TaskView       `json:"attention_tasks"`
+	StalledProjects    []stalledProject `json:"stalled_projects"`
 }
 
 type workflowReconciliationResponse struct {
@@ -817,9 +831,28 @@ func (s *Server) handleInbox(w http.ResponseWriter, r *http.Request) {
 			SettledByDefault: decision.DefaultAppliedAt != nil,
 		})
 	}
+	// Monitor history is read once per project; the stale check and the stalled
+	// check both use it.
+	monitorHistory := make(map[int64][]store.MonitorHealth)
+	historyOf := func(projectID int64) ([]store.MonitorHealth, error) {
+		if h, ok := monitorHistory[projectID]; ok {
+			return h, nil
+		}
+		h, err := s.store.ListMonitorHealthHistory(ctx, projectID)
+		if err != nil {
+			return nil, err
+		}
+		monitorHistory[projectID] = h
+		return h, nil
+	}
+	goalActive := make(map[int64]bool, len(goals))
+	for _, goal := range goals {
+		goalActive[goal.ID] = goal.Status == domain.GoalActive
+	}
+	now := time.Now()
 	unappliedDecisionViews := make([]decisionView, 0, len(unapplied))
 	for _, decision := range unapplied {
-		unappliedDecisionViews = append(unappliedDecisionViews, decisionView{
+		view := decisionView{
 			Decision:         decision,
 			ProjectID:        goalProjectIDs[decision.GoalID],
 			ProjectName:      goalProjectNames[decision.GoalID],
@@ -827,7 +860,20 @@ func (s *Server) handleInbox(w http.ResponseWriter, r *http.Request) {
 			DefaultOption:    decision.DefaultOption,
 			DefaultAfterMs:   decision.DefaultAfterMs,
 			SettledByDefault: decision.DefaultAppliedAt != nil,
-		})
+		}
+		if goalActive[decision.GoalID] && decision.Kind != domain.KindGoalReview && decision.AnsweredAt != nil &&
+			now.Sub(*decision.AnsweredAt) > store.AnsweredUnappliedAfter {
+			view.StaleUnapplied = true
+			history, err := historyOf(view.ProjectID)
+			if err != nil {
+				writeStoreError(w, err)
+				return
+			}
+			if seen, ok := store.MonitorLastSeenAt(history, decision.GoalID); ok {
+				view.OwnerLastSeenAt = &seen
+			}
+		}
+		unappliedDecisionViews = append(unappliedDecisionViews, view)
 	}
 	activeGoals := make([]goalView, 0)
 	attentionTasks := make([]TaskView, 0)
@@ -911,11 +957,39 @@ func (s *Server) handleInbox(w http.ResponseWriter, r *http.Request) {
 		return a.ID < b.ID
 	})
 
+	activeProjects := make(map[int64]bool)
+	for _, goal := range goals {
+		if goal.Status == domain.GoalActive {
+			activeProjects[goal.ProjectID] = true
+		}
+	}
+	stalledProjects := make([]stalledProject, 0)
+	for _, project := range projects {
+		if project.ArchivedAt != nil || !activeProjects[project.ID] {
+			continue
+		}
+		history, err := historyOf(project.ID)
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		seen, ok := store.MonitorLastSeenAt(history, 0)
+		if ok && time.Since(seen) <= store.ProjectSilentAfter {
+			continue
+		}
+		stalled := stalledProject{ProjectID: project.ID, ProjectName: project.Name}
+		if ok {
+			stalled.LastSeenAt = &seen
+		}
+		stalledProjects = append(stalledProjects, stalled)
+	}
+
 	writeJSON(w, http.StatusOK, inboxResponse{
 		OpenDecisions:      openDecisionViews,
 		UnappliedDecisions: unappliedDecisionViews,
 		ActiveGoals:        activeGoals,
 		AttentionTasks:     nonNilTaskViews(attentionTasks),
+		StalledProjects:    stalledProjects,
 	})
 }
 

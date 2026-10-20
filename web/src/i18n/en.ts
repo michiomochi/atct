@@ -15,6 +15,12 @@ export const en = {
 
   "dashboard.error.load": "Could not load the dashboard.",
 
+  "dashboard.stalled.title": "Needs attention",
+  "dashboard.stalled.answerUnapplied": "Answered {{duration}} ago and not applied yet",
+  "dashboard.stalled.projectSilent": "No monitor heartbeat for 30 minutes or more",
+  "dashboard.stalled.lastHeartbeat": "Last heartbeat {{time}}",
+  "dashboard.stalled.noHeartbeat": "No heartbeat on record",
+
   "decision.caption.list": "Decision list",
   "decision.column.priority": "Priority",
   "decision.column.question": "Question",

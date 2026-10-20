@@ -1,5 +1,5 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Dashboard } from "./Dashboard";
 
 const { fetchInbox, subscribeToDecisionEvents, t, i18nMock } = vi.hoisted(() => {
@@ -99,5 +99,89 @@ describe("Dashboard", () => {
     fireEvent.click(buttons[buttons.length - 1]);
 
     await waitFor(() => expect(fetchInbox).toHaveBeenCalledTimes(2));
+  });
+});
+
+describe("Dashboard stalled notice", () => {
+  const staleDecision = {
+    id: "3",
+    goal_id: "11",
+    goal_headline: "Ship the stalled goal",
+    project_name: "atct",
+    kind: "decision",
+    question: "q",
+    options: [],
+    status: "answered",
+    answered_at: new Date(Date.now() - 11 * 60 * 1000).toISOString(),
+    stale_unapplied: true,
+    agent_session_id: "1",
+    created_at: "2026-10-20T00:00:00Z",
+  };
+
+  beforeEach(() => {
+    fetchInbox.mockReset();
+    subscribeToDecisionEvents.mockReset().mockImplementation(() => () => undefined);
+  });
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  it("does not render the alert when nothing is stale or stalled", async () => {
+    fetchInbox.mockResolvedValue({ open_decisions: [], unapplied_decisions: [], active_goals: [], stalled_projects: [] });
+    render(<Dashboard />);
+    await waitFor(() => expect(fetchInbox).toHaveBeenCalledTimes(1));
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("renders the stale unapplied decision with its project and goal", async () => {
+    fetchInbox.mockResolvedValue({
+      open_decisions: [],
+      unapplied_decisions: [staleDecision],
+      active_goals: [],
+      stalled_projects: [],
+    });
+    render(<Dashboard />);
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("atct");
+    expect(alert.textContent).toContain("Ship the stalled goal");
+    expect(alert.textContent).toContain("dashboard.stalled.noHeartbeat");
+  });
+
+  it("renders a silent project by name", async () => {
+    fetchInbox.mockResolvedValue({
+      open_decisions: [],
+      unapplied_decisions: [],
+      active_goals: [],
+      stalled_projects: [{ project_id: 9, project_name: "quiet-project", last_seen_at: null }],
+    });
+    render(<Dashboard />);
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("quiet-project");
+  });
+
+  it("renders both a stale decision and a silent project together", async () => {
+    fetchInbox.mockResolvedValue({
+      open_decisions: [],
+      unapplied_decisions: [staleDecision],
+      active_goals: [],
+      stalled_projects: [{ project_id: 9, project_name: "quiet-project", last_seen_at: "2026-10-20T00:00:00Z" }],
+    });
+    render(<Dashboard />);
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("Ship the stalled goal");
+    expect(alert.textContent).toContain("quiet-project");
+  });
+
+  it("leaves out an unapplied decision that is not stale", async () => {
+    fetchInbox.mockResolvedValue({
+      open_decisions: [],
+      unapplied_decisions: [{ ...staleDecision, id: "4", stale_unapplied: false }],
+      active_goals: [],
+      stalled_projects: [],
+    });
+    render(<Dashboard />);
+    await waitFor(() => expect(fetchInbox).toHaveBeenCalledTimes(1));
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 });

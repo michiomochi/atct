@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/michiomochi/atct/internal/domain"
 	"github.com/michiomochi/atct/internal/store"
@@ -198,6 +199,27 @@ func pendingTextFor(dir, cwd, projectName string, projectSpecified bool, agentSe
 		}
 		humanAnsweredDecisions = append(humanAnsweredDecisions, decision)
 	}
+	// An answer that has waited past store.AnsweredUnappliedAfter gets its asker's
+	// last heartbeat on its line, so the reader can tell whether anyone is still
+	// there. The monitor history is read only when such a decision exists.
+	staleSuffix := map[int64]string{}
+	var history []store.MonitorHealth
+	for _, decision := range humanAnsweredDecisions {
+		if decision.AnsweredAt == nil || time.Since(*decision.AnsweredAt) <= store.AnsweredUnappliedAfter {
+			continue
+		}
+		if history == nil {
+			history, err = s.ListMonitorHealthHistory(ctx, project.ID)
+			if err != nil {
+				return "", fmt.Errorf("list monitor health history: %w", err)
+			}
+		}
+		heartbeat := "none on record"
+		if seen, ok := store.MonitorLastSeenAt(history, decision.GoalID); ok {
+			heartbeat = seen.UTC().Format(time.RFC3339)
+		}
+		staleSuffix[decision.ID] = fmt.Sprintf(" [answered %dm ago; asker's last heartbeat %s]", int(time.Since(*decision.AnsweredAt)/time.Minute), heartbeat)
+	}
 	writeDecisionSection := func(reason string, section []domain.Decision) {
 		if len(section) == 0 {
 			return
@@ -208,7 +230,7 @@ func pendingTextFor(dir, cwd, projectName string, projectSpecified bool, agentSe
 		output.WriteString(reason)
 		output.WriteString("\n\n")
 		for _, decision := range section {
-			fmt.Fprintf(&output, "- %s (decision_id: %d)\n", oneLine(decision.Question), decision.ID)
+			fmt.Fprintf(&output, "- %s (decision_id: %d)%s\n", oneLine(decision.Question), decision.ID, staleSuffix[decision.ID])
 		}
 	}
 	writeDecisionSection(pendingDecisionReason, humanAnsweredDecisions)

@@ -2292,6 +2292,9 @@ func formatWatchCommanderTarget(target watchCommanderTarget) string {
 		if target.handoffID == "" {
 			return fmt.Sprintf("goal %s review was approved and is waiting to be completed", target.goalID) + blocked("open decisions still block completion")
 		}
+	case watchKindDecisionAnsweredUnapplied:
+		return fmt.Sprintf("decision %s (goal %s) was answered over 10 min ago and is still not applied; its asker may be gone. Check the goal's subcommander (atct:commander, \"answered decision unapplied\"). Do not apply the answer yourself",
+			target.decisionID, target.goalID)
 	}
 	return fmt.Sprintf("%s handoff %s is waiting for your review (goal %s)", target.kind, target.handoffID, target.goalID)
 }

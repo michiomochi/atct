@@ -43,6 +43,24 @@ func (s *Store) HasLiveMonitorForScope(ctx context.Context, scope MonitorLiveSco
 	return count > 0, nil
 }
 
+// MonitorLastSeenAt returns the latest heartbeat among the monitors in history.
+// goalID 0 covers every row; otherwise only subcommander rows of that goal
+// count. ok is false when no row matches.
+func MonitorLastSeenAt(history []MonitorHealth, goalID int64) (time.Time, bool) {
+	var latest time.Time
+	ok := false
+	for _, h := range history {
+		if goalID != 0 && (h.Role != "subcommander" || h.GoalID == nil || *h.GoalID != goalID) {
+			continue
+		}
+		if !ok || h.LastSeenAt.After(latest) {
+			latest = h.LastSeenAt
+			ok = true
+		}
+	}
+	return latest, ok
+}
+
 // HasLiveExecutorMonitorForTask reports whether the executor of one task still
 // has a Monitor inside the health lease. Unlike HasLiveMonitorForScope it
 // matches the task too, so another executor's Monitor on the same goal does

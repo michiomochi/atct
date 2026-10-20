@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { fetchInbox, subscribeToDecisionEvents, type InboxResponse } from "../lib/api";
 import { DecisionTable } from "./DecisionTable";
+import { StalledNotice } from "./StalledNotice";
 import { GoalTable } from "./GoalTable";
 import { GoalCreateForm } from "./GoalCreateForm";
 import { ProjectList } from "./ProjectList";
@@ -73,6 +74,11 @@ export function Dashboard() {
           </Button>
         </div>
       )}
+
+      <StalledNotice
+        decisions={(data?.unapplied_decisions ?? []).filter((decision) => decision.stale_unapplied)}
+        projects={data?.stalled_projects ?? []}
+      />
 
       <div className="space-y-10">
         <Section id="open-decisions" title={t("dashboard.waiting.title")} count={data?.open_decisions.length}>
