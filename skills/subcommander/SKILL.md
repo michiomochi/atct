@@ -30,11 +30,10 @@ and the exact `session_key` from SessionStart; optional `handoff_id` and
   re-run) is a different judgment from the goal's review. Do not leave it open next
   to your goal handoff review request: an open decision refuses the commander's
   `atct_goal_review_request` (`goal has an open decision`), and the human then
-  cannot receive the review at all. If it has to be asked before the merge, call
-  `atct_decision_ask` with `after_review: true`; that decision does not block the
-  review request. It still blocks `atct_goal_review_complete`, so the goal cannot be
-  done while it is open. In stock-data goals 373, 387 and 393 (2026-10) a
-  production approval filed without it stopped the human review of all three.
+  cannot receive the review at all. `atct_goal_handoff_review_request` is refused the
+  same way, naming each open decision. Do not file it as a decision: write it in
+  `needs_review` and `next_goal_ids`, and the commander tells the human at approval.
+  Decisions you did file are answered or withdrawn before you request the review.
 
 ## Executor session bootstrap
 
