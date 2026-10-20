@@ -279,6 +279,14 @@ that subcommander is started:
    requested yet reads `goal N review received, human review not requested yet`,
    followed by the ids of the open decisions holding it back.
 
+   A liveness line that reads `decision N (goal G) was answered over 10 min ago and
+   is still not applied` means the decision's asker may be gone. (a) Check whether
+   goal G's subcommander is still alive with `atct_goal_sessions` and its watch.
+   (b) If it is gone, have the goal handoff taken over with `atct_handoff_recover`:
+   the new session inherits the unapplied decisions, and its watch then shows
+   them. (c) The commander does not apply such an answer or rewrite it; the
+   answer is the human's.
+
    The daemon checks that the goal branch contains main only at review request
    time. After human approval and before merging, run
    `git merge-base --is-ancestor main wt/goal-<id>`. If it is not an ancestor,
