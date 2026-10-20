@@ -1323,7 +1323,8 @@ func Register(server *mcp.Server, c *Client, agentSessionID int64) {
 	addMCPTool[DecisionAskIn, RawWithUnappliedDecisions](server, &mcp.Tool{
 		Name: "atct_decision_ask",
 		Description: "Ask the human for a decision. An answer received within wait_ms is returned." +
-			"If parked is returned, continue with another task that does not depend on this decision.",
+			"If parked is returned, continue with another task that does not depend on this decision. " +
+			"A subcommander cannot call this: it asks the commander through a goal handoff entry (atct_goal_handoff_entry_append), and the commander files the decision.",
 		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in DecisionAskIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
 		params := map[string]any{

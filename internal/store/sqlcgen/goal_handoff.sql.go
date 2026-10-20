@@ -10,6 +10,25 @@ import (
 	"database/sql"
 )
 
+const goalHandoffEverReceivedBy = `-- name: GoalHandoffEverReceivedBy :one
+SELECT EXISTS (
+  SELECT 1 FROM goal_handoffs
+  WHERE goal_id = ?1 AND received_by = ?2
+)
+`
+
+type GoalHandoffEverReceivedByParams struct {
+	GoalID         int64
+	AgentSessionID sql.NullInt64
+}
+
+func (q *Queries) GoalHandoffEverReceivedBy(ctx context.Context, arg GoalHandoffEverReceivedByParams) (bool, error) {
+	row := q.db.QueryRowContext(ctx, goalHandoffEverReceivedBy, arg.GoalID, arg.AgentSessionID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const listGoalSessionKeys = `-- name: ListGoalSessionKeys :many
 WITH sessions AS (
   SELECT s.session_key AS session_key,

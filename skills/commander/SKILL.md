@@ -231,14 +231,19 @@ that subcommander is started:
    > Decide this goal's design yourself. Do not bring the delegator a design
    > question, a progress note, a receipt acknowledgement, a discovery, or a
    > reading of this goal's code. Send the delegator nothing until the completion
-   > report. What you would have said goes into the record instead: a task for
-   > work in flight, `surprises` and `needs_review` for what you found,
-   > `next_goal_ids` for the goals that should follow, and `atct_decision_ask`
-   > for anything that needs the human.
+   > report, except for a decision request below. What you would have said goes
+   > into the record instead: a task for work in flight, `surprises` and
+   > `needs_review` for what you found, and `next_goal_ids` for the goals that
+   > should follow. You cannot call `atct_decision_ask`: the commander files a
+   > decision for the human, not you. For anything that needs the human, append a
+   > `review_requested` entry to your goal handoff with
+   > `atct_goal_handoff_entry_append`, in the format `atct:atct` gives under
+   > `### A subcommander's decision request`.
    >
-   > A fact that spans another goal is not an exception. Raise it with
-   > `atct_decision_ask`; the answer reaches you through your own watch, without
-   > passing through the delegator.
+   > A fact that spans another goal is not an exception. Raise it the same way;
+   > the commander files the decision and replies on the same handoff with a
+   > `review_received` entry, which your own watch delivers as
+   > `handoff_entry_added`. Read it with `atct_goal_handoff_entry_history`.
    >
    > When all task handoffs are accepted, record the goal review request by calling
    > `atct_goal_handoff_review_request` with the received `handoff_id`, the
@@ -311,6 +316,8 @@ that subcommander is started:
    nobody received. Those are what a stalled subcommander looks like from
    outside, and they arrive whether or not it speaks. Review the goal when
    `atct_goal_handoff_review_request` lands; that report is the entry point.
+   A decision request entry (`## A subcommander's decision request`) is the one
+   message you do act on before then.
 
 **Out of order:** Calling `atct_goal_handoff_complete` before
 `atct_goal_review_request` closes the goal handoff, and the role is derived from a
@@ -328,6 +335,37 @@ Only when SessionStart emitted no key, the caller's stable full agent name is
 suitable. If a reconnect causes the role to appear wrong, call
 `atct_session_identify` again with the same key to return to the original
 session row.
+
+## A subcommander's decision request
+
+A subcommander cannot call `atct_decision_ask`, so its question for the human
+reaches you as a `review_requested` entry on its goal handoff
+(`handoff_entry_added`, goal N, kind `review_requested`, author the
+subcommander).
+
+1. Read the body with `atct_goal_handoff_entry_history`.
+2. File it with `atct_decision_ask`: the options, recommendation and consequences
+   from the entry. You are the asker.
+3. When the human answers in the chat, record it with `atct_decision_answer`
+   (`human_quote` is the line the human typed) and apply it with
+   `atct_decision_poll`.
+4. Reply on the same handoff with `atct_goal_handoff_entry_append`: kind
+   `review_received`, `in_reply_to_id` the request entry's id, body
+   `decision <id>: <label> <answer_text>`.
+
+**Out of order:** Replying before the decision is answered and applied hands the
+subcommander an answer that does not exist yet, and a decision left open refuses
+the goal review request. On 2026-10-20 a decision nobody could record stopped
+stock-data goal 437.
+
+Right after you claim the project and right after you re-arm your watch, read
+the entry history of each goal handoff you delegated and pick up a request that
+has no reply: an entry written before the watch's SSE connection is up is not
+delivered. An open decision a subcommander filed itself, before this rule, you
+can answer from your chat the same way (step 3); the subcommander applies it
+with `atct_decision_poll`. On 2026-10-20, in stock-data goal 437, such a
+decision (1180, `post_merge`) could not be recorded from the commander's chat
+and the goal stood still.
 
 ## Closed goals to reclaim
 

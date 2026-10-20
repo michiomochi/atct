@@ -186,6 +186,14 @@ func goalHandoffRefusal(ctx context.Context, q *sqlcgen.Queries, handoffID strin
 	return handoff.RequestedAt.Valid, receiver
 }
 
+// GoalHandoffEverReceivedBy reports whether the session ever received a goal
+// handoff of the goal, open or closed.
+func (s *Store) GoalHandoffEverReceivedBy(ctx context.Context, goalID, agentSessionID int64) (bool, error) {
+	return sqlcgen.New(s.db).GoalHandoffEverReceivedBy(ctx, sqlcgen.GoalHandoffEverReceivedByParams{
+		GoalID: goalID, AgentSessionID: sql.NullInt64{Int64: agentSessionID, Valid: true},
+	})
+}
+
 func (s *Store) ensureGoalHandoffGoal(ctx context.Context, handoffID string, goalID int64) error {
 	existingGoalID, err := sqlcgen.New(s.db).GetGoalHandoffGoalID(ctx, handoffID)
 	if errors.Is(err, sql.ErrNoRows) {

@@ -130,8 +130,8 @@ func TestSessionRoleDerivesFromClaims(t *testing.T) {
 			doesNot: []string{"design the goal", "implement the goal", "edit executor deliverables"},
 		},
 		"subcommander": {
-			does:    []string{"design the goal", "delegate the goal's work", "review implementation", "report completion for the goal", "issue decisions to the human", "commit the goal's work", "close a task its worker cannot"},
-			doesNot: []string{"inspect or manage other goals", "publish", "create another subcommander", "claim the project"},
+			does:    []string{"design the goal", "delegate the goal's work", "review implementation", "report completion for the goal", "ask the commander to file decisions for the human", "commit the goal's work", "close a task its worker cannot"},
+			doesNot: []string{"inspect or manage other goals", "publish", "create another subcommander", "claim the project", "file decisions to the human directly"},
 		},
 		"executor": {
 			does:    []string{"implement", "test", "close the task it was given"},

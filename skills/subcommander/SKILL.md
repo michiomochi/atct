@@ -19,10 +19,14 @@ and the exact `session_key` from SessionStart; optional `handoff_id` and
 - Take only the parts of a goal you need from `atct_goal_get` with `fields` (for
   example `fields: ["task_summary"]` for task status alone); omit it for everything.
 - Commit the goal's accepted work and submit its goal handoff for commander
-  review. Ask the human only through ATCT decisions, and
+  review. You cannot call `atct_decision_ask`. Ask the human only through the
+  commander, with a `review_requested` entry on your goal handoff in the format
+  `atct:atct` gives under `### A subcommander's decision request`, and
   only in the cases `atct:atct` lists under `## Decisions and unsafe
   operations`; decide a reversible, non-destructive choice of means yourself
-  and record it in `surprises` / `needs_review`.
+  and record it in `surprises` / `needs_review`. After asking, wait for the commander's
+  `review_received` reply on a `--once` background Bash (`atct:atct` `## Watch`
+  step 6) and read it with `atct_goal_handoff_entry_history`.
   Before the goal review request, run `git merge main --no-edit` in the goal
   worktree and the verification set; the daemon refuses the request when the
   goal branch does not contain main.
@@ -33,7 +37,8 @@ and the exact `session_key` from SessionStart; optional `handoff_id` and
   cannot receive the review at all. `atct_goal_handoff_review_request` is refused the
   same way, naming each open decision. Do not file it as a decision: write it in
   `needs_review` and `next_goal_ids`, and the commander tells the human at approval.
-  Decisions you did file are answered or withdrawn before you request the review.
+  Decisions you asked the commander to file are answered, or withdrawn at your
+  request, before you request the review.
 
 ## Executor session bootstrap
 
