@@ -58,7 +58,8 @@ WHERE project_id = ?
   AND role = ?
   AND goal_id IS ?
   AND last_seen_at >= ?
-  AND stopped_at IS NULL;
+  AND stopped_at IS NULL
+  AND (CAST(sqlc.arg('exclude_rearming') AS INTEGER) = 0 OR state <> 'rearming');
 
 
 -- name: CountLiveMonitorsForTaskScope :one

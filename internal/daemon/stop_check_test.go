@@ -724,6 +724,48 @@ func TestStopCheckConcurrentSessions(t *testing.T) {
 	wg.Wait()
 }
 
+// A `--once` watch that has ended and is only inside its re-arm grace does not
+// deliver anything, so it must not count as a live watch for a stop.
+func TestStopCheckRearmingWatchDoesNotCountAsLive(t *testing.T) {
+	for _, role := range []string{"commander", "subcommander"} {
+		t.Run(role, func(t *testing.T) {
+			r := newStopRepeat(t)
+			stopCheckGoalHandoff(t, r.stopCheckFixture, true)
+			id := r.commanderID
+			if role == "subcommander" {
+				id = r.subcommanderID
+			}
+			key := stopRepeatKey(id)
+			ctx := context.Background()
+			if _, err := r.store.DB().ExecContext(ctx, "DELETE FROM monitor_health"); err != nil {
+				t.Fatalf("delete monitor_health: %v", err)
+			}
+			now := time.Now().UTC()
+			health := store.MonitorHealth{
+				CWD: t.TempDir(), Role: role, State: "rearming", Reason: "once: re-arm expected", ProjectID: r.projectID,
+				PID: 1, ProcessStartedAt: now.Add(-time.Minute), TransitionedAt: now, LastSeenAt: now,
+			}
+			if role == "subcommander" {
+				health.GoalID = &r.goalID
+			}
+			health.MonitorID = store.MonitorHealthID(health.CWD, health.Role, health.ProjectID, health.GoalID, health.TaskID, health.PID, health.ProcessStartedAt)
+			if err := r.store.UpsertMonitorHealth(ctx, health); err != nil {
+				t.Fatalf("UpsertMonitorHealth: %v", err)
+			}
+			// stop_hook_active skips the work checks, so only the watch check decides.
+			response, err := r.daemon.stopCheck(ctx, key, true)
+			if err != nil || response.Decision != "block" || !strings.Contains(response.Reason, "atct watch --monitor --token <monitor_token>") {
+				t.Fatalf("stop with only a rearming row = %+v, %v, want a block naming the watch command", response, err)
+			}
+			// Re-arming the watch lets the session stop.
+			r.watch(t, role)
+			if response, err := r.daemon.stopCheck(ctx, key, true); err != nil || response.Decision != "" {
+				t.Fatalf("stop with a live watch = %+v, %v, want pass", response, err)
+			}
+		})
+	}
+}
+
 func TestStopCheckBlocksSessionWithoutWatch(t *testing.T) {
 	for _, role := range []string{"commander", "subcommander"} {
 		t.Run(role, func(t *testing.T) {

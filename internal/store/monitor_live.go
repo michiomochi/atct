@@ -15,6 +15,9 @@ type MonitorLiveScope struct {
 	ProjectID int64
 	Role      string
 	GoalID    *int64
+	// ExcludeRearming drops a `--once` watch that is only inside its re-arm
+	// grace: it has ended, so it will not deliver anything until re-armed.
+	ExcludeRearming bool
 }
 
 // HasLiveMonitorForScope reports whether the scope still has a Monitor inside
@@ -31,11 +34,16 @@ func (s *Store) HasLiveMonitorForScope(ctx context.Context, scope MonitorLiveSco
 		return false, errors.New("role is required")
 	}
 	cutoff := formatTimestamp(time.Now().Add(-MonitorHealthLease))
+	excludeRearming := int64(0)
+	if scope.ExcludeRearming {
+		excludeRearming = 1
+	}
 	count, err := sqlcgen.New(s.db).CountLiveMonitorsForScope(ctx, sqlcgen.CountLiveMonitorsForScopeParams{
-		ProjectID:  scope.ProjectID,
-		Role:       scope.Role,
-		GoalID:     nullableMonitorID(scope.GoalID),
-		LastSeenAt: cutoff,
+		ProjectID:       scope.ProjectID,
+		Role:            scope.Role,
+		GoalID:          nullableMonitorID(scope.GoalID),
+		LastSeenAt:      cutoff,
+		ExcludeRearming: excludeRearming,
 	})
 	if err != nil {
 		return false, fmt.Errorf("count live monitors: %w", err)
