@@ -844,10 +844,12 @@ func roleMatches(response roleResponse, expected string) bool {
 		return ok
 	case "executor":
 		switch response.(type) {
-		case goalExecutorRole:
+		case goalExecutorRole, subcommanderRole:
 			return true
 		case executorRole:
-			return response.roleName() == "executor" || response.roleName() == "task_worker"
+			// A bare {"role":"executor"} without goal_id is an older daemon's
+			// task holder; it cannot be told from a session holding nothing.
+			return response.roleName() == "task_worker"
 		}
 	case "subcommander":
 		switch response.(type) {
@@ -956,7 +958,7 @@ func Register(server *mcp.Server, c *Client, agentSessionID int64) {
 
 	addMCPTool[RoleIn, Raw](server, &mcp.Tool{
 		Name:         "atct_role",
-		Description:  "Verify the current agent role and its project/goal claim evidence through the daemon. Roles: commander, executor (holds a goal handoff), task_worker (finishing a legacy task handoff), none. An optional expected_role is reported as matches; a mismatch is returned as structured data. executor matches a goal handoff holder and a task_worker; subcommander is the old name that matches only a goal handoff holder; none matches nothing. Write ATCT records in the language of the returned ui_locale (follow the atct skill).",
+		Description:  "Verify the current agent role and its project/goal claim evidence through the daemon. Roles: commander, executor (holds a goal handoff), task_worker (finishing a legacy task handoff), none. An optional expected_role is reported as matches; a mismatch is returned as structured data. executor matches a goal handoff holder (a response with goal_id), an older daemon's subcommander and a task_worker, but not an older daemon's bare executor without goal_id; subcommander is the old name that matches only a goal handoff holder; none matches nothing. Write ATCT records in the language of the returned ui_locale (follow the atct skill).",
 		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in RoleIn) (*mcp.CallToolResult, Raw, error) {
 		return callRole(ctx, c, in, sessionID.Get())

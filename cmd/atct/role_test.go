@@ -79,8 +79,9 @@ func TestFormatSessionRoleIncludesEvidence(t *testing.T) {
 }
 
 func TestCheckExpectedRoleAcceptsMatchingRole(t *testing.T) {
-	code, message := checkExpectedRole(executorRole{
-		Role: "executor",
+	code, message := checkExpectedRole(goalExecutorRole{
+		Role:   "executor",
+		GoalID: 1,
 	}, "executor")
 	if code != 0 {
 		t.Fatalf("matching role exit code = %d, want 0", code)
@@ -94,12 +95,12 @@ func TestCheckExpectedRoleRejectsMismatchWithEvidence(t *testing.T) {
 	code, message := checkExpectedRole(subcommanderRole{
 		Role:   "subcommander",
 		GoalID: 1,
-	}, "executor")
+	}, "task_worker")
 	if code == 0 {
 		t.Fatal("mismatching role exit code = 0, want non-zero")
 	}
 	for _, want := range []string{
-		"expected: executor",
+		"expected: task_worker",
 		"actual: subcommander",
 		"goal_id: 1",
 	} {
@@ -151,8 +152,10 @@ func TestRunRoleUnregisteredDirectoryIsSilent(t *testing.T) {
 }
 
 // expected_role matches the visible role. executor also accepts a task_worker
-// and a legacy task-holding executor; subcommander is the legacy name of a
-// goal-handoff executor; none matches nothing.
+// and an older daemon's subcommander; it does not accept an older daemon's bare
+// {"role":"executor"} (no goal_id), which cannot be told from a session that
+// holds nothing. subcommander is the legacy name of a goal-handoff executor;
+// none matches nothing.
 func TestCheckExpectedRoleMatchTable(t *testing.T) {
 	responses := map[string]roleResponse{
 		"commander":       commanderRole{Role: "commander", ProjectID: 1},
@@ -164,7 +167,7 @@ func TestCheckExpectedRoleMatchTable(t *testing.T) {
 	}
 	want := map[string]map[string]bool{
 		"commander":    {"commander": true},
-		"executor":     {"goal executor": true, "task worker": true, "legacy executor": true},
+		"executor":     {"goal executor": true, "legacy subcmdr": true, "task worker": true},
 		"subcommander": {"goal executor": true, "legacy subcmdr": true},
 		"task_worker":  {"task worker": true},
 	}

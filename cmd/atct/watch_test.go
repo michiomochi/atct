@@ -1078,6 +1078,21 @@ func TestWatchLivenessPromptsOnlyForImmediateRoleAction(t *testing.T) {
 			want: true,
 		},
 		{
+			name:  "executor ignores unreceived task-create handoff",
+			scope: subcommanderScope,
+			reconciliation: watchReconciliation{TaskCreateHandoffs: []watchTaskCreateHandoff{{
+				ID: "c", GoalID: 249, RequestedAt: at("requested"),
+			}}},
+		},
+		{
+			name:  "executor has received task-create handoff",
+			scope: subcommanderScope,
+			reconciliation: watchReconciliation{TaskCreateHandoffs: []watchTaskCreateHandoff{{
+				ID: "c", GoalID: 249, RequestedAt: at("requested"), ReceivedAt: at("received"),
+			}}},
+			want: true,
+		},
+		{
 			name:  "subcommander awaits executor",
 			scope: subcommanderScope,
 			reconciliation: watchReconciliation{
@@ -2553,5 +2568,16 @@ func TestReconcileWatchScopeSkipsGoalCreatedByAgent(t *testing.T) {
 	// watermark path.
 	if got := reconcileGoalCreatedOutput(t, `{"monitor_last_reconciled_at":"2026-09-19T00:00:00Z","goals":`+goals+`,`+rest); got != want {
 		t.Fatalf("watermark output = %q, want %q", got, want)
+	}
+}
+
+func TestWatchTaskCreateHandoffEventIgnoresUnreceived(t *testing.T) {
+	at := func(value string) *string { return &value }
+	if event, _, ok := watchTaskCreateHandoffEvent(watchTaskCreateHandoff{ID: "c", GoalID: 7, RequestedAt: at("requested")}); ok {
+		t.Fatalf("unreceived task-create handoff projected %q, want nothing", event)
+	}
+	event, decision, ok := watchTaskCreateHandoffEvent(watchTaskCreateHandoff{ID: "c", GoalID: 7, RequestedAt: at("requested"), ReceivedAt: at("received")})
+	if !ok || event != "task.create_handoff.receive" || decision.HandoffID != "c" {
+		t.Fatalf("received task-create handoff = (%q, %#v, %v), want task.create_handoff.receive", event, decision, ok)
 	}
 }

@@ -54,7 +54,9 @@ goal handoff の保有者と `task_worker` に一致し、`none` はどの値に
 出荷前に起動した session のために、次の 2 つの互換を残す。どちらも内部名を改名する段階で外す。
 
 - `expected_role=subcommander` は goal handoff の保有者（見える名前は `executor`）にだけ一致する古い名前で、`task_worker` には一致しない
-- `expected_role=executor` は `task_worker` にも一致する
+- `expected_role=executor` は `goal_id` を持つ `executor`、古い daemon の `subcommander`、`task_worker` に一致する。
+  `goal_id` を持たない古い daemon の `{"role":"executor"}`（旧 task 受領者）には一致しない。何も持たない
+  session と区別できないためである
 
 task claim/release は agent 向けの MCP/RPC として公開しない。goal の実装の所有権は、commander が
 request し executor が receive した goal handoff で表す。

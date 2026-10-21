@@ -91,7 +91,7 @@ var nextStepAfter = map[string][]nextStepOption{
 	},
 	"goal.handoff.review.reject": {{
 		Call: "atct_goal_handoff_review_reject_receive",
-		Note: "the executor receives the rejection. If new tasks are needed, receive the new task-create handoff (atct_task_create_handoff_receive) and call atct_task_create.",
+		Note: "the executor receives the rejection, fixes the work, then requests review again on this same handoff.",
 	}},
 	"goal.handoff.review.reject.receive": {{
 		Call: "atct_goal_handoff_review_request",

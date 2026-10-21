@@ -264,8 +264,8 @@ that executor is started:
    Before `atct_goal_review_request`, have one independent check made and re-run
    the verification yourself. Start an Agent with `model` set to `opus` and give it
    the goal's content, spec, plan and diff; do not give it the executor's report
-   conclusions, which would anchor it. Then run again the commands the report's
-   `how_to_verify` names. With no task review in between, this check is what stands
+   conclusions, which would anchor it. Then run again the verification commands
+   in the executor's review request report. With no task review in between, this check is what stands
    in for the independent look at the implementation.
 
    If the human approves or rejects a goal review in the chat, record it with
@@ -314,10 +314,15 @@ that executor is started:
 6. Stay out until the completion report. After waking the executor, the
    delegator sends it nothing and answers nothing about the goal's design.
    What the delegator reads instead are this project's ATCT Wakeup events, which
-   arrive from `atct watch` rather than from the executor: a goal with no
-   commits, a claim nobody delegated, a handoff
-   nobody received. Those are what a stalled executor looks like from
-   outside, and they arrive whether or not it speaks. Review the goal when
+   arrive from `atct watch` rather than from the executor: a goal whose tasks
+   are all done with no linked commit (`wakeup.commits_missing`), a claim nobody
+   delegated, a task handoff nobody received or never reported
+   (`wakeup.handoff_unreceived`, `wakeup.handoff_unreported`). Those are what a
+   stalled executor looks like from outside, and they arrive whether or not it
+   speaks. All of them count tasks and task handoffs, so an executor that
+   creates no tasks raises none of them. For such a goal, check its branch
+   yourself: `git log main..wt/goal-<id>` and the worktree's status show whether
+   it is moving. Review the goal when
    `atct_goal_handoff_review_request` lands; that report is the entry point.
    A decision request entry (`## An executor's decision request`) is the one
    message you do act on before then.

@@ -23,8 +23,11 @@ The daemon derives `expected_role` in this order of priority:
 Role values for `expected_role`: `commander`, `executor`, `subcommander`, `task_worker`.
 
 `subcommander` is the old name that matches only a goal handoff holder, for skills written before the change; it does not match a `task_worker`.
-`executor` also matches a `task_worker`, so a session that received its task
-handoff before the change can confirm its role again.
+`executor` matches a goal handoff holder (a response with `goal_id`), an older
+daemon's `subcommander`, and a `task_worker`, so a session that received its
+task handoff before the change can confirm its role again. It does not match an
+older daemon's bare `{"role":"executor"}` (no `goal_id`): that cannot be told
+from a session that holds nothing.
 
 | Layer | Does | Does not |
 | --- | --- | --- |

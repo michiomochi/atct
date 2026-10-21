@@ -791,7 +791,8 @@ test_goal_delegation_requires_the_adjacent_goal_boundary() {
 
 test_goal_delegation_keeps_the_delegator_out_until_completion() {
   delegate_goal_section_contains '6. Stay out until the completion report. After waking the executor, the'
-  delegate_goal_section_contains 'arrive from `atct watch` rather than from the executor: a goal with no'
+  delegate_goal_section_contains 'arrive from `atct watch` rather than from the executor: a goal whose tasks'
+  delegate_goal_section_contains 'creates no tasks raises none of them. For such a goal, check its branch'
   delegate_goal_section_contains '`atct_goal_handoff_review_request` lands; that report is the entry point.'
 }
 
@@ -1238,7 +1239,8 @@ test_role_entry_receives_with_credentials_before_role_check() {
   # The task_worker section keeps the task-handoff entry for a session that
   # received its handoff before the roles merged.
   assert_file_contains 'atct_task_handoff_receive`' "$skill"
-  assert_file_contains 'the' "$skill"
+  assert_file_contains '## task_worker: finishing a task handoff received before the two-layer change' "$skill"
+  assert_file_contains '`expected_role` set to `task_worker`' "$skill"
   assert_file_contains '`task_id` and `handoff_id` provided in the handoff' "$skill"
 }
 

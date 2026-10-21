@@ -135,3 +135,27 @@ func TestIdentifiedSessionStaysTheTransportsResolution(t *testing.T) {
 		}
 	}
 }
+
+// An older daemon answers {"role":"subcommander"} for a goal holder and a bare
+// {"role":"executor"} (no goal_id) for a task holder; the latter cannot be told
+// from a session that holds nothing, so expected_role=executor must not match it.
+func TestRoleMatchesOlderDaemonResponses(t *testing.T) {
+	cases := []struct {
+		name     string
+		response roleResponse
+		expected string
+		want     bool
+	}{
+		{"older subcommander is an executor", subcommanderRole{Role: "subcommander", GoalID: 2}, "executor", true},
+		{"task_worker is an executor", executorRole{Role: "task_worker"}, "executor", true},
+		{"goal executor is an executor", goalExecutorRole{Role: "executor", GoalID: 2}, "executor", true},
+		{"older bare executor is not an executor", executorRole{Role: "executor"}, "executor", false},
+		{"none is not an executor", executorRole{Role: "none"}, "executor", false},
+		{"older bare executor is not a task_worker", executorRole{Role: "executor"}, "task_worker", false},
+	}
+	for _, tc := range cases {
+		if got := roleMatches(tc.response, tc.expected); got != tc.want {
+			t.Errorf("%s: roleMatches(%T, %q) = %v, want %v", tc.name, tc.response, tc.expected, got, tc.want)
+		}
+	}
+}

@@ -151,10 +151,12 @@ func roleMatches(response roleResponse, expected string) bool {
 		return ok
 	case "executor":
 		switch response.(type) {
-		case goalExecutorRole:
+		case goalExecutorRole, subcommanderRole:
 			return true
 		case executorRole:
-			return response.roleName() == "executor" || response.roleName() == "task_worker"
+			// A bare {"role":"executor"} without goal_id is an older daemon's
+			// task holder; it cannot be told from a session holding nothing.
+			return response.roleName() == "task_worker"
 		}
 	case "subcommander":
 		switch response.(type) {

@@ -117,8 +117,11 @@ this repository, you own what ATCT says.** Every claim, every `done`, every
 parked decision is yours to keep accurate, and nobody else will do it for you.
 
 That obligation transfers with the work. Delegate every goal to an executor,
-then receive its goal review and accept it with the matching completion tool. A
-delegate reporting success is not a substitute for the recorded review.
+then receive its goal review (`atct_goal_handoff_review_receive`), check it, and
+ask the human to approve with `atct_goal_review_request`. After the approval and
+the merge, call `atct_goal_review_complete`; do not close the goal with
+`atct_goal_handoff_complete`. A delegate reporting success is not a substitute
+for the recorded review.
 
 The failure this prevents is specific and has happened: an orchestrator
 delegated six pieces of work, all six landed, and every one of them still read

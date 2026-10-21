@@ -1911,16 +1911,15 @@ func watchTaskCreateHandoffEvent(handoff watchTaskCreateHandoff) (string, watchD
 	if !watchTaskCreateHandoffOpen(handoff) {
 		return "", watchDecision{}, false
 	}
+	// The goal executor does not take the daemon's task-create handoff: it
+	// creates no tasks. An unreceived one is therefore not announced; only a
+	// handoff somebody did receive still has an owner to wake.
+	if handoff.ReceivedAt == nil {
+		return "", watchDecision{}, false
+	}
 	decision := watchDecision{HandoffID: handoff.ID, GoalID: strconv.FormatInt(handoff.GoalID, 10), TargetRole: "subcommander"}
-	if handoff.ReceivedAt != nil {
-		decision.deliveryGeneration = *handoff.ReceivedAt
-		return "task.create_handoff.receive", decision, true
-	}
-	if handoff.RequestedAt != nil {
-		decision.deliveryGeneration = *handoff.RequestedAt
-		return "task.create_handoff.request", decision, true
-	}
-	return "", watchDecision{}, false
+	decision.deliveryGeneration = *handoff.ReceivedAt
+	return "task.create_handoff.receive", decision, true
 }
 
 func watchHandoffProjectionMatchesScope(decision watchDecision, scope watchScope) bool {

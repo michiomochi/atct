@@ -456,7 +456,9 @@ func TestWorkflowMonitorEndToEndContract(t *testing.T) {
 		t.Fatalf("ListTaskCreateHandoffs = (%#v, %v), want one handoff", taskCreateHandoffs, err)
 	}
 	taskCreateHandoffID := taskCreateHandoffs[0].ID
-	waitWorkflowMonitorAction(t, subcommanderWatch.recorder, "task.create_handoff.request", taskCreateHandoffID)
+	// The goal executor does not take the daemon's task-create handoff, so an
+	// unreceived one reaches nobody; only a receipt is announced.
+	assertNoWorkflowMonitorAction(t, subcommanderWatch.recorder, "task.create_handoff.request", taskCreateHandoffID)
 	assertNoWorkflowMonitorAction(t, commanderWatch.recorder, "task.create_handoff.request", taskCreateHandoffID)
 	if existing, err := db.ListTasks(ctx, goal.ID); err != nil || len(existing) != 0 {
 		t.Fatalf("ListTasks before task.create = (%#v, %v), want none", existing, err)
@@ -651,6 +653,93 @@ func TestWorkflowMonitorEndToEndContract(t *testing.T) {
 		case <-time.After(5 * time.Second):
 			t.Errorf("%s watch did not stop", name)
 		}
+	}
+}
+
+// TestWorkflowMonitorWithoutTasksNeverAnnouncesTaskCreateHandoff walks a goal
+// from plan approval to the goal review request with no task, as the goal
+// executor does. The daemon still generates a task-create handoff on plan
+// completion; no monitor may announce it, and the executor's liveness must not
+// treat it as work.
+func TestWorkflowMonitorWithoutTasksNeverAnnouncesTaskCreateHandoff(t *testing.T) {
+	ctx, cancel, db, server, client, root := startWorkflowMonitorDaemon(t)
+	defer cancel()
+
+	const (
+		commanderToken = "no-tasks-monitor-commander"
+		subToken       = "no-tasks-monitor-sub"
+	)
+	commanderID := registerWorkflowMonitorSession(t, ctx, client, root, "no-tasks-commander", commanderToken)
+	subcommanderID := registerWorkflowMonitorSession(t, ctx, client, root, "no-tasks-subcommander", subToken)
+	projects, err := db.ListProjects(ctx)
+	if err != nil || len(projects) != 1 {
+		t.Fatalf("ListProjects = (%#v, %v), want one project", projects, err)
+	}
+	callWorkflowMonitorRPC(t, ctx, client, "project.claim", map[string]any{
+		"project_id": projects[0].ID, "agent_session_id": commanderID,
+	}, &domain.Project{})
+	var goal domain.Goal
+	callWorkflowMonitorRPC(t, ctx, client, "goal.create", map[string]any{
+		"cwd": root, "content": "no tasks", "creator": "human",
+	}, &goal)
+	projectID := strconv.FormatInt(projects[0].ID, 10)
+	goalID := strconv.FormatInt(goal.ID, 10)
+	watchClient := &http.Client{Transport: &workflowMonitorTransport{base: server.Client().Transport}}
+	watchCtx, stopWatches := context.WithCancel(ctx)
+	defer stopWatches()
+
+	commanderWatch := startWorkflowMonitorBoundWatch(watchCtx, watchClient, server.URL, root, commanderToken)
+	waitWorkflowMonitorScope(t, commanderWatch.scopes, func(scope watchScope) bool {
+		return scope.Role == "commander" && scope.ProjectID == projectID
+	})
+
+	callWorkflowMonitorRPC(t, ctx, client, "goal.handoff.request", map[string]any{
+		"handoff_id": "gh-no-tasks", "goal_id": goal.ID, "requested_by": commanderID,
+		"request_report": "goal ready for implementation",
+	}, &store.GoalHandoff{})
+	callWorkflowMonitorRPC(t, ctx, client, "goal.handoff.receive", map[string]any{
+		"handoff_id": "gh-no-tasks", "goal_id": goal.ID, "received_by": subcommanderID,
+	}, &map[string]any{})
+	subcommanderWatch := startWorkflowMonitorBoundWatch(watchCtx, watchClient, server.URL, root, subToken)
+	subScope := waitWorkflowMonitorScope(t, subcommanderWatch.scopes, func(scope watchScope) bool {
+		return scope.Role == "subcommander" && scope.GoalID == goalID
+	})
+
+	callWorkflowMonitorRPC(t, ctx, client, "goal.update_request_report", map[string]any{
+		"goal_id": goal.ID, "spec": "# Spec", "plan": "# Plan", "agent_session_id": subcommanderID,
+	}, &domain.Goal{})
+	callWorkflowMonitorRPC(t, ctx, client, "plan.handoff.review.request", map[string]any{
+		"handoff_id": "ph-no-tasks", "goal_id": goal.ID, "requested_by": subcommanderID,
+		"review_request_report": "plan is ready for review",
+	}, &store.PlanHandoff{})
+	callWorkflowMonitorRPC(t, ctx, client, "plan.handoff.review.receive", map[string]any{
+		"handoff_id": "ph-no-tasks", "goal_id": goal.ID, "received_by": commanderID,
+	}, &map[string]any{})
+	callWorkflowMonitorRPC(t, ctx, client, "plan.handoff.complete", map[string]any{
+		"handoff_id": "ph-no-tasks", "goal_id": goal.ID, "agent_session_id": commanderID,
+		"complete_report": "plan accepted",
+	}, &store.PlanHandoff{})
+	taskCreateHandoffs, err := db.ListTaskCreateHandoffs(ctx, goal.ID)
+	if err != nil || len(taskCreateHandoffs) != 1 || taskCreateHandoffs[0].ReceivedAt != nil {
+		t.Fatalf("ListTaskCreateHandoffs = (%#v, %v), want one unreceived handoff", taskCreateHandoffs, err)
+	}
+
+	callWorkflowMonitorRPC(t, ctx, client, "goal.handoff.review.request", map[string]any{
+		"handoff_id": "gh-no-tasks", "goal_id": goal.ID, "requested_by": subcommanderID,
+		"review_request_report": "done without tasks",
+	}, &store.GoalHandoff{})
+	// The commander hears the review request, so the watches have polled well past plan completion.
+	waitWorkflowMonitorAction(t, commanderWatch.recorder, "goal.handoff.review.request", "gh-no-tasks")
+	for name, watch := range map[string]workflowMonitorWatch{"commander": commanderWatch, "subcommander": subcommanderWatch} {
+		for _, action := range watch.recorder.snapshot() {
+			if strings.HasPrefix(action.eventName, "task.create_handoff.") {
+				t.Errorf("%s was told %q for a goal without tasks", name, action.eventName)
+			}
+		}
+	}
+	state := decodeReconciliation(t, server.Client(), server.URL, projects[0].ID)
+	if watchLivenessActionable(subScope, state) {
+		t.Fatalf("an unreceived task-create handoff made the executor liveness-actionable; state = %#v", state)
 	}
 }
 

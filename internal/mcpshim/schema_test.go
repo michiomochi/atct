@@ -1452,7 +1452,8 @@ func TestRoleToolReturnsMatchingExecutorForReceivedTaskWithLiveMonitor(t *testin
 	}
 }
 
-// expected_role matches the visible role; executor also accepts a task_worker,
+// expected_role matches the visible role; executor also accepts a task_worker
+// (and an older daemon's subcommander, see TestRoleMatchesOlderDaemonResponses),
 // subcommander is the legacy name of a goal-handoff executor, and none matches
 // nothing so a session that lost its handoff cannot pass a role check.
 func TestRoleToolExpectedRoleMatchTable(t *testing.T) {

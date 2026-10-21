@@ -57,6 +57,8 @@ Wakeup は、作業可能な状態または解消されない問題が一定時�
 | keepalive | daemon が正常に評価を続けている | 30 秒ごとに内部発行 | 通常は表示しない |
 | keepalive missing | watch が keepalive を受けない | 90 秒後に一度 | watch / daemon 接続を確認する。業務 task の担当通知ではない |
 
+これらの goal 単位の wakeup（`wakeup.commits_missing` を含む）と、handoff 未受領・completion report 欠落の wakeup は、どちらも task と task handoff を数える。task を作らない executor の goal では発行されない。その停止は、commander が `git log main..wt/goal-<id>` と worktree で確かめる。
+
 同じ Wakeup の表示内容は抑止される。人間判断待ちだけの task は actionable wakeup の対象ではない。
 対象状態が消えるまで、問題を知らせる Wakeup は対象ごとに一度だけ通知する。`wakeup.*` は
 すべて Wakeup の event 名であり、別の概念や評価機構ではない。
@@ -202,7 +204,7 @@ Codex monitor が Stop hook 用に渡す環境変数は `ATCT_MONITOR_TOKEN` だ
 | task worker（旧運用） | 自身が受領した全 open task handoff（review 依頼済みで差し戻されておらず、生きた Monitor があるものを除く） |
 
 待機状態は止めてよい。相手の応答は Monitor の通知で届くので、生きた Monitor がある間は idle のままで失うものがない。
-- executor（goal handoff の保有者）: その goal の executor スコープに生きた Monitor があり、かつ「commander の plan review 待ち」「自身の goal review 待ち（差し戻されていない）」「task worker が作業中の旧運用の task handoff」「task worker を起動した直後で、まだ task handoff を receive していない状態」のいずれかがあるとき、open goal handoff だけでは止めを拒否しない。起動しなかった task worker の検出は、executor スコープの 1 分ごとの liveness prompt と `wakeup.handoff_unreceived` が担う。差し戻された plan、未完了の task-create handoff、旧運用の task review は待機状態でも従来どおり止めを拒否する。
+- executor（goal handoff の保有者）: その goal の executor スコープに生きた Monitor があり、かつ「commander の plan review 待ち」「自身の goal review 待ち（差し戻されていない）」「task worker が作業中の旧運用の task handoff」「task worker を起動した直後で、まだ task handoff を receive していない状態」のいずれかがあるとき、open goal handoff だけでは止めを拒否しない。起動しなかった task worker の検出は、executor スコープの 1 分ごとの liveness prompt と `wakeup.handoff_unreceived` が担う。差し戻された plan、自身が受領した未完了の task-create handoff、旧運用の task review は待機状態でも従来どおり止めを拒否する。未受領の task-create handoff では止めない（daemon は plan の承認後にこれを発行するが、executor は受領しない）。
 - task worker（旧運用）: review を依頼済みで差し戻されておらず、その task の task worker スコープ（goal と task の両方が一致）に生きた Monitor があるとき（同じ goal の別 task の Monitor は数えない）、その handoff では止めを拒否しない。review 依頼前、差し戻し後、Monitor が無いときは従来どおり拒否する。
 - Monitor の有無を取得できないときは待機状態とみなさず、止めを拒否する。commander は変わらない。
 
