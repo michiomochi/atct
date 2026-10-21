@@ -214,7 +214,6 @@ commander が交代した後は、現在の commander が `atct_goal_review_comp
 |---|---|---|
 | `atct_plan_handoff_review_request` | executor | commander |
 | `atct_plan_handoff_complete` / `_review_reject` | commander | executor |
-| task-create handoff の発行 | daemon（plan handoff 完了時） | executor（受領しない） |
 | `atct_goal_handoff_review_request` | executor | commander |
 | `goal.handoff.complete` | daemon（`atct_goal_review_complete` 時） | executor |
 | `atct_goal_handoff_review_reject` | commander | executor |

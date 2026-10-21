@@ -40,7 +40,7 @@ var nextStepAfter = map[string][]nextStepOption{
 	}},
 	"plan.handoff.complete": {{
 		Call: "atct_goal_handoff_review_request",
-		Note: "implement and verify, then request the goal review. Tasks are optional and you need not receive the task-create handoff the daemon created.",
+		Note: "the executor implements and verifies, then requests the goal review.",
 	}},
 
 	"task.create_handoff.receive": {{

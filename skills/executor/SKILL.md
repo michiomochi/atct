@@ -23,7 +23,7 @@ Then call `atct_role` with `expected_role` set to `executor`; on a mismatch, sto
 - Do not create tasks; the goal completes without any. Write progress in the
   review request report.
 - Take only the parts of a goal you need from `atct_goal_get` with `fields` (for
-  example `fields: ["task_summary"]` for task status alone); omit it for everything.
+  example `fields: ["spec", "plan"]` for the spec and plan alone); omit it for everything.
 - Commit the goal's work and submit its goal handoff for commander review. You
   cannot call `atct_decision_ask`. Ask the human only through the commander, with
   a `review_requested` entry on your goal handoff in the format `atct:atct` gives

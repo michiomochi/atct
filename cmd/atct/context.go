@@ -16,6 +16,9 @@ type contextGoal struct {
 	Goal         domain.Goal
 	Tasks        []domain.Task
 	TaskHandoffs map[int64]*store.TaskHandoff
+	// GoalHandoff is the goal's incomplete handoff, if any. A received one
+	// means an executor holds the goal.
+	GoalHandoff *store.GoalHandoff
 }
 
 type contextSnapshot struct {
@@ -161,6 +164,10 @@ func loadContextSnapshotForProject(dir, cwd, projectName string, projectSpecifie
 	if err != nil {
 		return contextSnapshot{}, fmt.Errorf("list goals: %w", err)
 	}
+	goalHandoffs, err := s.ListOpenGoalHandoffs(ctx)
+	if err != nil {
+		return contextSnapshot{}, fmt.Errorf("list open goal handoffs: %w", err)
+	}
 	active := make([]contextGoal, 0, len(goals))
 	activeIDs := make(map[int64]bool)
 	for _, goal := range goals {
@@ -175,7 +182,7 @@ func loadContextSnapshotForProject(dir, cwd, projectName string, projectSpecifie
 		if err != nil {
 			return contextSnapshot{}, fmt.Errorf("list open task handoffs for goal %d: %w", goal.ID, err)
 		}
-		active = append(active, contextGoal{Goal: goal, Tasks: tasks, TaskHandoffs: taskHandoffs})
+		active = append(active, contextGoal{Goal: goal, Tasks: tasks, TaskHandoffs: taskHandoffs, GoalHandoff: goalHandoffs[goal.ID]})
 		activeIDs[goal.ID] = true
 	}
 	if len(active) == 0 {
@@ -240,7 +247,8 @@ func contextNeedsWakeup(snapshot contextSnapshot) bool {
 		}
 	}
 	for _, item := range snapshot.goals {
-		if len(item.Tasks) == 0 {
+		// An executor never creates tasks, so a goal it holds stays at zero.
+		if len(item.Tasks) == 0 && (item.GoalHandoff == nil || item.GoalHandoff.ReceivedAt == nil) {
 			return true
 		}
 		for _, task := range item.Tasks {

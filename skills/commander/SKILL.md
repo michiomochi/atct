@@ -94,11 +94,11 @@ script/worktree-node-modules.sh status
 script/worktree-node-modules.sh attach --yes    # put the symlink back
 ```
 
-- **The delegator detaches, not the worker.** Measured 2026-08-28: a worker
+- **The commander detaches, not the executor.** Measured 2026-08-28: an executor
   running `pnpm install --frozen-lockfile` in a detached worktree fails with
   `ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY` — pnpm wants to purge
-  `node_modules` and cannot ask without a TTY. Detach before handing the task
-  off. After that the worker needs no pnpm install: `pnpm test` and `pnpm build`
+  `node_modules` and cannot ask without a TTY. Detach before handing the goal
+  to the executor. After that the executor needs no pnpm install: `pnpm test` and `pnpm build`
   both pass (exit 0, 231 tests).
 - Detach only the worktrees that need it. The cost is time, not disk: one
   `detach` spends 33s in `pnpm install`, and most worktrees never run pnpm.
@@ -319,8 +319,7 @@ that executor is started:
    delegator sends it nothing and answers nothing about the goal's design.
    What the delegator reads instead are this project's ATCT Wakeup events, which
    arrive from `atct watch` rather than from the executor: a goal whose tasks
-   are all done with no linked commit (`wakeup.commits_missing`), a claim nobody
-   delegated, a handoff nobody received or never reported
+   are all done with no linked commit (`wakeup.commits_missing`), a handoff nobody received or never reported
    (`wakeup.handoff_unreceived`, `wakeup.handoff_unreported`). Those are what a
    stalled executor looks like from outside, and they arrive whether or not it
    speaks. All of them count tasks, so an executor that
@@ -334,7 +333,7 @@ that executor is started:
 **Out of order:** Calling `atct_goal_handoff_complete` before
 `atct_goal_review_request` closes the goal handoff, and the role is derived from a
 received, uncompleted goal handoff, so the role drops from `executor` to
-`none` the moment it closes. Only the goal's holder may call
+`none` the moment it closes. Only the commander may call
 `atct_goal_review_request`, so the human review request can no longer be filed
 at all. Recovery takes the commander reissuing the goal handoff. Goals 180 and
 187 both stalled this way on 2026-08-27 and 2026-08-28.

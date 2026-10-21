@@ -49,7 +49,7 @@ assert_empty_file() {
 # is part of the entry: a heading checked against the wrong skill finds nothing
 # and the section silently stops being checked at all.
 ORDERED_SECTIONS=(
-  'atct|## Declare before you work'
+  'atct|## Work after the plan is accepted'
   'atct|## Handoff review order'
   'commander|## Delegate a goal'
   'atct|## Fill in a report on a handoff that is already closed'
@@ -1094,7 +1094,7 @@ test_commander_keeps_the_advisor_enabled_and_the_independent_check() {
   assert_file_contains 'Start the executor'"'"'s session with the advisor available' "$commander_skill"
   assert_file_contains 'do not disable the' "$commander_skill"
   assert_file_contains 'advisor tool that the user'"'"'s own settings provide' "$commander_skill"
-  assert_file_contains 'it does not' "$commander_skill"
+  assert_file_contains 'The executor'"'"'s advisor strengthens the executor'"'"'s own checking' "$commander_skill"
   assert_file_contains 'replace this independent check' "$commander_skill"
   assert_file_contains 'Start an Agent with `model` set to `opus`' "$commander_skill"
   # No model name or launch flag belongs in the skill.
@@ -1175,21 +1175,6 @@ test_delegated_claim_contract_is_explicit() {
   assert_file_not_contains 'Do this whenever convenient.' "$atct_skill"
   assert_file_not_contains 'atct_goal_handoff_receive` with only the `goal_id` provided in this request.' "$atct_skill"
   assert_file_not_contains 'Do not pass a handoff ID or session; ATCT' "$atct_skill"
-}
-
-test_declared_task_content_fix_contract_is_explicit() {
-  local atct_skill="$REPO_ROOT/skills/atct/SKILL.md"
-  local task_section
-
-  task_section="$(sed -n '/^## Fix a declared task$/,/^## Receive before you start$/p' "$atct_skill")"
-  grep -Fq -- 'atct_task_update_content' <<<"$task_section" ||
-    fail 'declared task content fix section omits atct_task_update_content'
-  grep -Fq -- 'todo' <<<"$task_section" ||
-    fail 'declared task content fix section omits todo'
-  grep -Fq -- 'done' <<<"$task_section" ||
-    fail 'declared task content fix section omits done'
-  grep -Fq -- 'idempotency_key' <<<"$task_section" ||
-    fail 'declared task content fix section omits idempotency_key'
 }
 
 test_start_identifies_before_monitor() {
@@ -1388,7 +1373,7 @@ test_role_contract_is_documented() {
 
   assert_file_contains '| Layer | Does | Does not |' "$atct_skill"
   documented_rows="$(
-    sed -n '/^## Roles$/,/^## Declare before you work$/p' "$atct_skill" |
+    sed -n '/^## Roles$/,/^## Work after the plan is accepted$/p' "$atct_skill" |
       sed -nE 's/^\|[[:space:]]*`(commander|executor)`[[:space:]]*\|[[:space:]]*([^|]+)[[:space:]]*\|[[:space:]]*([^|]+)[[:space:]]*\|[[:space:]]*$/\1|\2|\3/p'
   )"
   assert_eq $'commander\nexecutor' "$(printf '%s\n' "$documented_rows" | cut -d'|' -f1 | sort)" \
@@ -1419,7 +1404,7 @@ test_role_contract_uses_neutral_language() {
   local atct_skill="$REPO_ROOT/skills/atct/SKILL.md"
   local roles_section
 
-  roles_section="$(sed -n '/^## Roles$/,/^## Declare before you work$/p' "$atct_skill")"
+  roles_section="$(sed -n '/^## Roles$/,/^## Work after the plan is accepted$/p' "$atct_skill")"
   if grep -Eiq 'space|worktree|git|harness|multiplexer' <<<"$roles_section"; then
     fail 'role boundary table must use neutral language'
   fi
@@ -1462,7 +1447,7 @@ test_role_table_has_no_task_update_procedure() {
   local atct_skill="$REPO_ROOT/skills/atct/SKILL.md"
   local roles_section
 
-  roles_section="$(sed -n '/^## Roles$/,/^## Declare before you work$/p' "$atct_skill")"
+  roles_section="$(sed -n '/^## Roles$/,/^## Work after the plan is accepted$/p' "$atct_skill")"
   if grep -Fq -- 'atct_task_update' <<<"$roles_section"; then
     fail 'role boundary table must not prescribe atct_task_update procedure'
   fi
@@ -1759,7 +1744,6 @@ MARKDOWN
 
 test_static_contract
 test_delegated_claim_contract_is_explicit
-test_declared_task_content_fix_contract_is_explicit
 test_start_identifies_before_monitor
 test_start_session_key_contract_is_explicit
 test_start_forces_commander_claim

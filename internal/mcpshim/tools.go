@@ -1051,7 +1051,7 @@ func Register(server *mcp.Server, c *Client, agentSessionID int64) {
 
 	addMCPTool[TaskCreateIn, RawWithUnappliedDecisions](server, &mcp.Tool{
 		Name:         "atct_task_create",
-		Description:  "Create the tasks a Goal decomposes into. Retrying the same idempotency_key does not create duplicates. Existing tasks are not updated and return with created: false; use atct_task_update_content to fix them.",
+		Description:  "Create tasks for a Goal. Retrying the same idempotency_key does not create duplicates. Existing tasks are not updated and return with created: false; use atct_task_update_content to fix them.",
 		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in TaskCreateIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
 		params := map[string]any{

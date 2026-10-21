@@ -49,7 +49,7 @@ Wakeup は、作業可能な状態または解消されない問題が一定時�
 | Wakeup | 発生条件 | 頻度 | 次の行動 |
 | --- | --- | --- | --- |
 | actionable wakeup | 実行可能な task が残る | 3 分継続後、以後 3 分ごとに候補 | scope 内で次に実行できる task を role が進める |
-| goal の completion report / commit 欠落、task 未宣言・全 dropped・unclaimed doing | 15 分継続 | 状態を修正するか、意図した状態に必要な記録を補う |
+| goal の completion report / commit 欠落、全 dropped・unclaimed doing | 15 分継続 | 状態を修正するか、意図した状態に必要な記録を補う |
 | handoff 未受領、completion report 欠落、handoff なしの claim | 30 分継続 | receipt、review、completion report、recovery の不足を確認する |
 | stale claim、default answer 未適用 | 3 分継続 | claim または decision の反映状態を確認して進める |
 | human answer 済みで未適用 | 即時 | 回答を apply する |

@@ -1,6 +1,6 @@
 ---
 name: atct
-description: Use when working on a goal that a human is tracking - declaring the tasks you plan to do, claiming one before you start, and asking the human for a decision instead of guessing. Also use when you are about to finish and need approval.
+description: Use when working on a goal that a human is tracking - as the goal's executor, implement and verify once your plan is accepted, then request review; route every decision for the human through the commander instead of guessing. Also use when you are about to finish and need approval.
 ---
 
 # ATCT
@@ -76,29 +76,19 @@ Checking the polished text against the original with the bundled
 
 The daemon does not check the language; this is a convention to follow.
 
-## Declare before you work
+## Work after the plan is accepted
 
 An active goal authorizes coordination; do not wait for another plan approval.
-The plan comes first. Do not create tasks:
+The plan comes first:
 
 1. The plan handoff is completed first. Implementation starts only after it.
-2. The daemon then creates a task-create handoff. Do not receive it: a goal
-   completes with no task, and the unreceived handoff does not block the Stop
-   hook.
-3. Write progress in the review request report instead.
+2. Implement and verify, then call `atct_goal_handoff_review_request`.
+3. Write progress in the review request report.
 
-After a goal handoff review is rejected, the daemon issues a new task-create
-handoff; leave it unreceived the same way. Closing the goal handoff leaves the
-session with the role `none`.
+Closing the goal handoff leaves the session with the role `none`.
 
 **Out of order:** Work started before the plan is accepted is reviewed by no
-one, and tasks created before it never reach the dashboard.
-
-## Fix a declared task
-
-Fix a declared `todo` or `doing` task with `atct_task_update_content`; `done`
-and `dropped` tasks are rejected. Re-declaring with the same `idempotency_key`
-does not update the task.
+one.
 
 ## Watch
 
@@ -127,8 +117,7 @@ re-armed watch from emitting the same notification twice, for both forms.
 3. **When a `--once` Bash ends,** whether it printed an event, ended with no
    event, or failed, attach the Monitor first, then act on the event (its
    stdout). Do not re-arm the `--once` Bash. While the only thing you wait for
-   is an answer (a plan review, a goal review, or an executor starting or
-   working), wait on `--once` rather than the Monitor: the PreToolUse gate
+   is an answer (a plan review or a goal review), wait on `--once` rather than the Monitor: the PreToolUse gate
    refuses the Monitor form then.
 4. **Keep one.** Hold exactly one watch per token; the one started later stops
    the earlier one.
@@ -136,8 +125,8 @@ re-armed watch from emitting the same notification twice, for both forms.
    background Bash (see `atct:stop`). If the task id is unknown, say so and do
    not call `TaskStop`; never guess one.
 6. **Waiting for an answer.** When the only thing you hold is an answer you are
-   waiting for (a plan review, a goal review after
-   `atct_goal_handoff_review_request`, or an executor starting or working), stop
+   waiting for (a plan review, or a goal review after
+   `atct_goal_handoff_review_request`), stop
    the Monitor with `TaskStop`, then wait on a `--once` background Bash (step 2's
    form), which never expires, so no 30-minute notice wakes it for nothing. When
    it ends, follow step 3. While you wait, arm no other wakeup (`ScheduleWakeup`,
@@ -331,8 +320,7 @@ delegator's context.
 | the goal is ready for commander review | `atct_goal_handoff_review_request`, the one message |
 
 `atct_goal_handoff_review_request` is terminal: call it once, and only after
-the work is verified and committed (and every task you declared is done) and the goal is ready for
-commander review. Work that is unfinished or blocked stays open and goes to a decision request
+the work is verified and committed and the goal is ready for commander review. Work that is unfinished or blocked stays open and goes to a decision request
 (`### An executor's decision request`) with concrete options and the
 consequence of each; it is never reported through a goal-handoff review request.
 `atct_goal_review_request` applies only to an active goal after the commander
@@ -340,7 +328,7 @@ has received the goal-handoff review.
 
 A stopped executor is found in the record. A goal with tasks and no commits, or
 a closed handoff with nothing committed, each raises a Wakeup on the
-delegator's watch. A goal that declares no tasks raises none: the commander
+delegator's watch. A goal with no tasks raises none: the commander
 checks it with `git log main..wt/goal-<id>` and the status of its worktree.
 
 ## Fill in a report on a handoff that is already closed
@@ -394,5 +382,5 @@ Completion reports have five required text fields (`work_done`, `now_possible`,
 `how_to_verify`, `surprises`, `needs_review`) plus an optional `next_goal_ids`
 list of existing goal ids (empty or omitted when none). Keep the text fields
 concise and say `none` where one does not apply. A `next_steps` input is
-rejected, not ignored. A goal is complete only after its declared tasks
-and decisions are resolved and the appropriate ATCT approval flow is recorded.
+rejected, not ignored. A goal is complete only after its
+decisions are resolved and the appropriate ATCT approval flow is recorded.

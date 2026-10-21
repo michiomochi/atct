@@ -6,9 +6,9 @@ A controller tracks many aircraft at once without flying any of them. When an ai
 decision, the controller issues a *clearance*; until it arrives, the aircraft *holds short* — it
 stops before the runway and waits, without anyone taking the controls.
 
-ATCT is that tower for coding agents. You set a goal. Agents break it into tasks and work through
-them. When an agent reaches something it should not decide alone, it parks the question for you and
-keeps going where it can. You answer from one dashboard. The agent picks the answer up and continues.
+ATCT is that tower for coding agents. You set a goal. A commander hands it to an executor, which
+plans, implements and verifies it. When an agent reaches something it should not decide alone, it
+parks the question for you and keeps going where it can. You answer from one dashboard. The agent picks the answer up and continues.
 When the goal is met, it comes back to you for sign-off.
 
 ---
@@ -179,8 +179,7 @@ It prints nothing, so it composes with anything that runs on a schedule:
 */15 * * * * cd /path/to/repo && atct context --check && claude -p "/atct:start"
 ```
 
-Work means an unapplied answer, an unclaimed task, or an active goal nobody has broken down
-yet. **A task someone is already working on does not count** — waking a second session for it
+Work means an unapplied answer, an unclaimed task, or an active goal no executor holds. **A task someone is already working on does not count** — waking a second session for it
 gets the same work done twice.
 
 For harnesses without a stop hook, such as Codex, this is the whole mechanism rather than a
@@ -267,8 +266,8 @@ agents stays your business.
 |---|---|
 | **Project** | A project. Derived from the working directory, so agents never have to name it |
 | **Goal** | What you want, in one field. Active means agents may work on it |
-| **Task** | A unit of work toward the goal. Agents create and claim these |
-| **Work lock** | The claim on a task. One agent session holds it, so two never take the same task |
+| **Task** | A unit of work recorded under a goal. A decision attaches to one |
+| **Commander / executor** | The commander triages, reviews and talks to you; the executor holds the goal handoff and does the work. One goal has one executor |
 | **Decision** | A question an agent cannot settle alone, with options it wrote itself |
 
 A goal is `active`, `done`, or `dropped`. **A goal is active the moment it is created.** A goal
@@ -278,8 +277,8 @@ and its unfinished tasks along with it.
 Every option carries a `consequence` — what happens if you pick it. You should be able to decide
 without going back to ask what the choice actually means.
 
-Several agents can work one goal at the same time. Tasks are claimed atomically, so two agents never
-hold the same one.
+One goal has one executor at a time. The goal handoff is received exclusively, so two agents never
+hold the same goal.
 
 ## The screens
 
