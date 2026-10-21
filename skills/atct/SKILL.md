@@ -316,11 +316,11 @@ An executor that brings the delegator one of the second four is asking the
 wrong reader. A delegator that answers one of them is inventing the answer.
 ## Where an unsent report goes
 
-Silence upward is only safe when nothing is lost. Every kind of message an
-executor used to speak has a place in the record instead, and the record
-reaches the human without passing through the delegator's context.
+An executor sends nothing upward. Whatever it would want to send has a place
+in the record, and the record reaches the human without passing through the
+delegator's context.
 
-| What used to be spoken | Where it goes |
+| What you would report | Where it goes |
 |---|---|
 | receipt of the goal | the `atct_goal_handoff_receive` record itself |
 | progress on the work | the review request report (do not create tasks) |
@@ -338,13 +338,10 @@ consequence of each; it is never reported through a goal-handoff review request.
 `atct_goal_review_request` applies only to an active goal after the commander
 has received the goal-handoff review.
 
-An executor that stops working sends nothing at all, and the old habit caught
-that only because a delegator noticed a quiet terminal. The record catches it
-instead: a goal with tasks and no commits, or a closed handoff with nothing
-committed, each raises a Wakeup on the delegator's watch. On 2026-08-27 goal
-172 stalled with three tasks still `todo` and eight files uncommitted, and goal
-144 closed its handoff with no commits and four tasks still `todo`. Both
-Wakeups had already fired; nobody had been told to read them.
+A stopped executor is found in the record. A goal with tasks and no commits, or
+a closed handoff with nothing committed, each raises a Wakeup on the
+delegator's watch. A goal that declares no tasks raises none: the commander
+checks it with `git log main..wt/goal-<id>` and the status of its worktree.
 
 ## Fill in a report on a handoff that is already closed
 

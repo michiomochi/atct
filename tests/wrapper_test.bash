@@ -851,7 +851,7 @@ test_unsent_report_table_covers_every_spoken_kind() {
   done
 
   table_rows="$(awk '
-    /^\| What used to be spoken \| Where it goes \|$/ { in_table=1; next }
+    /^\| What you would report \| Where it goes \|$/ { in_table=1; next }
     in_table && /^\| / && /\|$/ { count++ }
     END { print count + 0 }
   ' <<<"$section")"
@@ -862,12 +862,14 @@ test_unsent_report_names_the_stall_detection() {
   local section
   section="$(unsent_report_section)"
 
-  grep -Fq -- "committed, each raises a Wakeup on the delegator's watch. On 2026-08-27 goal" <<<"$section" ||
+  grep -Fq -- "nothing committed, each raises a Wakeup on the" <<<"$section" ||
     fail 'unsent report section must name the stall detection'
-  grep -Fq -- '172 stalled with three tasks still `todo` and eight files uncommitted, and goal' <<<"$section" ||
-    fail 'unsent report section must name goal 172'
-  grep -Fq -- 'Wakeups had already fired; nobody had been told to read them.' <<<"$section" ||
-    fail 'unsent report section must name the missed detection read'
+  grep -Fq -- 'git log main..wt/goal-<id>' <<<"$section" ||
+    fail 'unsent report section must say how the commander checks a goal with no tasks'
+  for old in 'used to' 'old habit' '2026-08-27'; do
+    ! grep -Fq -- "$old" <<<"$section" ||
+      fail "unsent report section must not retell the old operation (<$old>)"
+  done
 }
 
 delegator_answers_section() {
