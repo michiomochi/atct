@@ -60,8 +60,8 @@ func TestUnidentifiedTransportRowIsNotReportedAsExecutor(t *testing.T) {
 	newRow := runRegisterForTest(t, restarted, 0, "")
 
 	// (d) the old behavior stays available to callers that do not ask.
-	if got, err := role(restarted, newRow, false); err != nil || got != "executor" {
-		t.Fatalf("require_identified=false role = %q, %v; want executor", got, err)
+	if got, err := role(restarted, newRow, false); err != nil || got != "none" {
+		t.Fatalf("require_identified=false role = %q, %v; want none", got, err)
 	}
 
 	// (e) asking for an identified row refuses with the hint.

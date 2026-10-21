@@ -16,6 +16,9 @@ func TestNextActionCallsAreOfferedByNextStep(t *testing.T) {
 			calls[spec.Call] = true
 		}
 	}
+	// Kept until stage 2 closes the task handoff machinery; next_step no longer
+	// sends an executor there, but the dashboard spec stays for open handoffs.
+	delete(calls, "atct_task_create_handoff_receive")
 	if got := missing(calls, tableTools()); len(got) > 0 {
 		t.Fatalf("store.NextActionSpecs names %v, which no next_step offers", got)
 	}

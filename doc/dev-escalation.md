@@ -8,17 +8,13 @@ path, not a second normal workflow.
 
 ```mermaid
 flowchart TD
-  E[executor] -->|unexpected condition| S[subcommander]
-  S -->|unexpected condition| C[commander]
-  S -->|open recorded escalation| SE[subcommander acts as executor]
-  C -->|open recorded escalation| CE[commander acts as subcommander]
-  SE --> R[record outcome and verification]
-  CE --> R
+  E[executor] -->|unexpected condition| C[commander]
+  C -->|open recorded escalation| CE[commander acts as executor]
+  CE --> R[record outcome and verification]
   R --> G[create remediation Goal\ncause + permanent fix]
   G --> N[normal spec → plan → review → implementation flow]
 
-  DS[atct:dev:start\ndevelopment-session capability] -. enables only .-> SE
-  DS -. enables only .-> CE
+  DS[atct:dev:start\ndevelopment-session capability] -. enables only .-> CE
 ```
 
 ## Activation
@@ -29,11 +25,9 @@ records a durable development-session capability in ATCT. A normal
 
 ## Escalation
 
-The lower role reports an unexpected condition to its direct parent:
-executor → subcommander → commander. In a development-mode session, the parent
-may resolve the lower-role work. A subcommander may act as executor;
-a commander may act as subcommander, but never as executor. Authority never
-flows down or sideways.
+The executor reports an unexpected condition to its parent, the commander. In a
+development-mode session, the commander may resolve the executor's work and act
+as the executor. Authority never flows down or sideways.
 
 Development escalation also permits irreversible operations (publish, history
 rewrite, discard, deletion) when resolving that condition. It is not a general

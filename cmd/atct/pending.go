@@ -24,7 +24,7 @@ const (
 	pendingClaimReason             = "You hold"
 	pendingNoDefaultDecisionReason = "You are waiting on a human for %d decisions with no default. That does not\nblock the %d tasks below."
 	pendingStaleClaimReason        = "A task with a work lock held by another agent session is no longer running. Return it to todo with `atct_task_update`, then request a fresh task handoff."
-	pendingUndeclaredGoalReason    = "An active goal has no tasks. Call `atct_task_create` for each goal below, then continue the work."
+	pendingUndeclaredGoalReason    = "An active goal has no tasks. Tasks are optional; continue the work."
 	pendingWakeupReason            = "An active goal has unstarted tasks. Call `atct_task_handoff_request` for a task below, then continue the work."
 	pendingCompletedGoalReason     = "All tasks are done but the active goal has no review report. Call `atct_goal_handoff_review_request`; the commander then uses `atct_goal_review_request` and, after approval and merge, `atct_goal_review_complete`."
 	pendingCommitlessGoalReason    = "All tasks in an active goal are done but no task has a linked commit. Call `atct_task_update` with `commits` for at least one task below to link its commit, then continue the work."

@@ -259,6 +259,8 @@ projectLoop:
 		for _, goal := range state.CommitlessGoals {
 			recordWakeupEvent(store.EventWakeupCommitsMissing, goal.ID, time.Time{}, wakeupPublishAfter, goal.ID, 0, "", 0)
 		}
+		// UndeclaredGoals is always empty now (tasks are optional); the loop stays
+		// until stage 3 removes the wakeup.
 		for _, goal := range state.UndeclaredGoals {
 			recordWakeupEvent(store.EventWakeupUndeclaredGoal, goal.ID, time.Time{}, wakeupPublishAfter, goal.ID, 0, "", 0)
 		}

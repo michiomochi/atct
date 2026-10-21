@@ -61,8 +61,8 @@ Wakeup は、作業可能な状態または解消されない問題が一定時�
 対象状態が消えるまで、問題を知らせる Wakeup は対象ごとに一度だけ通知する。`wakeup.*` は
 すべて Wakeup の event 名であり、別の概念や評価機構ではない。
 
-`wakeup.monitor_lost` は executor の場合は subcommander、subcommander の場合は commander に
-届く。Codex process の自動再起動や handoff の自動回復・再割当は行わない。
+`wakeup.monitor_lost` は executor（goal handoff の保有者）の場合は commander に届く。旧運用の
+task worker の場合は、その task handoff を出した executor に届く。Codex process の自動再起動や handoff の自動回復・再割当は行わない。
 
 # AI Agent Monitor
 
@@ -89,8 +89,8 @@ scope は届け先の境界であり、Session Stop の role 解決とは別で�
 | scope | 主な利用者 | 届くもの | 届かないもの |
 | --- | --- | --- | --- |
 | project | commander | human answer、goal approval / rejection、goal.created、goal-level Wakeup、goal handoff | task-only handoff / Wakeup、default answer、unapplied task decision |
-| goal | subcommander | その goal の Event、Wakeup、task-level 通知 | 他 goal の通知 |
-| task | executor | その task の handoff と Wakeup | 他 task / 他 goal の通知 |
+| goal | executor | その goal の Event、Wakeup、task-level 通知 | 他 goal の通知 |
+| task | task worker（旧運用） | その task の handoff と Wakeup | 他 task / 他 goal の通知 |
 
 ## Claude Watch
 
@@ -113,7 +113,7 @@ delivered. ...]` の形で来る。N が 0 なら待つだけだったので、`
 張り直さなければ従来どおり拒否され、`wakeup.monitor_lost` になる。猶予は保険であり、張り直しを省いてよい
 理由ではない。
 
-回答待ちだけが残る subcommander（plan review・goal review・executor の起動または作業の待ち）は、Monitor
+回答待ちだけが残る executor（plan review・goal review・旧運用の task handoff の起動または作業の待ち）は、Monitor
 ツールで `atct watch --monitor` を張ることを PreToolUse が拒否する（`session.monitor_form_check`）。30 分で
 切れて起こすだけになるため、Bash を `run_in_background` で `atct watch --monitor --token <monitor_token> --once`
 として張る。`--once` を含む watch と Monitor 以外のツールは拒否しない。判定できない場合（daemon に届かない、
@@ -198,16 +198,16 @@ Codex monitor が Stop hook 用に渡す環境変数は `ATCT_MONITOR_TOKEN` だ
 | role | 停止を拒否する未完了作業 |
 | --- | --- |
 | commander | claim 済み project の active goal |
-| subcommander | 自身が受領した open goal handoff（待機状態を除く）、自身に戻った plan rejection、自身が受領した task-create handoff、その goal の task review、その goal の未受領 task handoff（生きた Monitor があるときを除く） |
-| executor | 自身が受領した全 open task handoff（review 依頼済みで差し戻されておらず、生きた Monitor があるものを除く） |
+| executor | 自身が受領した open goal handoff（待機状態を除く）、自身に戻った plan rejection、自身が受領した task-create handoff、その goal の旧運用の task review、その goal の未受領の旧運用 task handoff（生きた Monitor があるときを除く） |
+| task worker（旧運用） | 自身が受領した全 open task handoff（review 依頼済みで差し戻されておらず、生きた Monitor があるものを除く） |
 
 待機状態は止めてよい。相手の応答は Monitor の通知で届くので、生きた Monitor がある間は idle のままで失うものがない。
-- subcommander: その goal の subcommander スコープに生きた Monitor があり、かつ「commander の plan review 待ち」「自身の goal review 待ち（差し戻されていない）」「executor が作業中の task handoff」「executor を起動した直後で、まだ task handoff を receive していない状態」のいずれかがあるとき、open goal handoff だけでは止めを拒否しない。起動しなかった executor の検出は、subcommander スコープの 1 分ごとの liveness prompt と `wakeup.handoff_unreceived` が担う。差し戻された plan、未完了の task-create handoff、task review は待機状態でも従来どおり止めを拒否する。
-- executor: review を依頼済みで差し戻されておらず、その task の executor スコープ（goal と task の両方が一致）に生きた Monitor があるとき（同じ goal の別 task の Monitor は数えない）、その handoff では止めを拒否しない。review 依頼前、差し戻し後、Monitor が無いときは従来どおり拒否する。
+- executor（goal handoff の保有者）: その goal の executor スコープに生きた Monitor があり、かつ「commander の plan review 待ち」「自身の goal review 待ち（差し戻されていない）」「task worker が作業中の旧運用の task handoff」「task worker を起動した直後で、まだ task handoff を receive していない状態」のいずれかがあるとき、open goal handoff だけでは止めを拒否しない。起動しなかった task worker の検出は、executor スコープの 1 分ごとの liveness prompt と `wakeup.handoff_unreceived` が担う。差し戻された plan、未完了の task-create handoff、旧運用の task review は待機状態でも従来どおり止めを拒否する。
+- task worker（旧運用）: review を依頼済みで差し戻されておらず、その task の task worker スコープ（goal と task の両方が一致）に生きた Monitor があるとき（同じ goal の別 task の Monitor は数えない）、その handoff では止めを拒否しない。review 依頼前、差し戻し後、Monitor が無いときは従来どおり拒否する。
 - Monitor の有無を取得できないときは待機状態とみなさず、止めを拒否する。commander は変わらない。
 
 Stop hook は fail closed の判定だけを行う。monitor / daemon の停止、handoff の完了・回復、Codex の
-再開は行わない。複数の executor handoff が残っている場合も、一つでも open なら停止を拒否する。
+再開は行わない。複数の task handoff が残っている場合も、一つでも open なら停止を拒否する。
 
 # 実装との対応
 

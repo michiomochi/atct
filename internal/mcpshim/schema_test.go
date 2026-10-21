@@ -1353,10 +1353,10 @@ func TestRoleToolReturnsAllRolesWithEvidence(t *testing.T) {
 	}{
 		{name: "commander_project_only", wantRole: "commander", claimProject: true},
 		{name: "commander_project_and_goal", wantRole: "commander", claimProject: true, claimGoal: true},
-		{name: "subcommander_empty_task_goal", wantRole: "subcommander", claimGoal: true},
-		{name: "subcommander_active_goal", wantRole: "subcommander", claimGoal: true, withTask: true},
-		{name: "executor_unclaimed", wantRole: "executor"},
-		{name: "executor_second_unclaimed", wantRole: "executor"},
+		{name: "executor_empty_task_goal", wantRole: "executor", claimGoal: true},
+		{name: "executor_active_goal", wantRole: "executor", claimGoal: true, withTask: true},
+		{name: "none_unclaimed", wantRole: "none"},
+		{name: "none_second_unclaimed", wantRole: "none"},
 	}
 
 	for _, tc := range tests {
@@ -1380,17 +1380,17 @@ func TestRoleToolReturnsAllRolesWithEvidence(t *testing.T) {
 				if _, ok := data["goal_id"]; ok {
 					t.Errorf("commander role unexpectedly contains goal_id")
 				}
-			case "subcommander":
+			case "executor":
 				if got := decodeRoleID(t, data, "goal_id"); got != wantGoalID {
 					t.Errorf("goal_id = %d, want %d", got, wantGoalID)
 				}
 				if _, ok := data["project_id"]; ok {
-					t.Errorf("subcommander role unexpectedly contains project_id")
+					t.Errorf("executor role unexpectedly contains project_id")
 				}
-			case "executor":
+			case "none":
 				for _, field := range []string{"project_id", "goal_id"} {
 					if _, ok := data[field]; ok {
-						t.Errorf("executor role unexpectedly contains %s", field)
+						t.Errorf("none role unexpectedly contains %s", field)
 					}
 				}
 			}
@@ -1399,7 +1399,7 @@ func TestRoleToolReturnsAllRolesWithEvidence(t *testing.T) {
 }
 
 func TestRoleToolReportsExpectedRoleMismatchInResult(t *testing.T) {
-	result, callErr, _, wantGoalID := callRoleTool(t, false, true, false, "executor")
+	result, callErr, _, wantGoalID := callRoleTool(t, false, true, false, "commander")
 	if callErr != nil {
 		t.Fatalf("atct_role: %v", callErr)
 	}
@@ -1407,11 +1407,11 @@ func TestRoleToolReportsExpectedRoleMismatchInResult(t *testing.T) {
 		t.Fatalf("atct_role mismatch returned error result: %+v", result)
 	}
 	data := decodeRoleResult(t, result)
-	if got := decodeRoleString(t, data, "role"); got != "subcommander" {
-		t.Errorf("role = %q, want subcommander", got)
+	if got := decodeRoleString(t, data, "role"); got != "executor" {
+		t.Errorf("role = %q, want executor", got)
 	}
-	if got := decodeRoleString(t, data, "expected_role"); got != "executor" {
-		t.Errorf("expected_role = %q, want executor", got)
+	if got := decodeRoleString(t, data, "expected_role"); got != "commander" {
+		t.Errorf("expected_role = %q, want commander", got)
 	}
 	var matches bool
 	if err := json.Unmarshal(data["matches"], &matches); err != nil {
@@ -1421,7 +1421,7 @@ func TestRoleToolReportsExpectedRoleMismatchInResult(t *testing.T) {
 		t.Error("matches = true, want false")
 	}
 	if _, ok := data["project_id"]; ok {
-		t.Errorf("subcommander mismatch unexpectedly contains project_id")
+		t.Errorf("executor mismatch unexpectedly contains project_id")
 	}
 	if got := decodeRoleID(t, data, "goal_id"); got != wantGoalID {
 		t.Errorf("goal_id = %d, want %d", got, wantGoalID)
@@ -1437,8 +1437,8 @@ func TestRoleToolReturnsMatchingExecutorForReceivedTaskWithLiveMonitor(t *testin
 		t.Fatalf("atct_role returned error result: %+v", result)
 	}
 	data := decodeRoleResult(t, result)
-	if got := decodeRoleString(t, data, "role"); got != "executor" {
-		t.Errorf("role = %q, want executor", got)
+	if got := decodeRoleString(t, data, "role"); got != "task_worker" {
+		t.Errorf("role = %q, want task_worker", got)
 	}
 	if got := decodeRoleString(t, data, "expected_role"); got != "executor" {
 		t.Errorf("expected_role = %q, want executor", got)
@@ -1449,6 +1449,48 @@ func TestRoleToolReturnsMatchingExecutorForReceivedTaskWithLiveMonitor(t *testin
 	}
 	if !matches {
 		t.Error("matches = false, want true")
+	}
+}
+
+// expected_role matches the visible role; executor also accepts a task_worker,
+// subcommander is the legacy name of a goal-handoff executor, and none matches
+// nothing so a session that lost its handoff cannot pass a role check.
+func TestRoleToolExpectedRoleMatchTable(t *testing.T) {
+	type holder struct {
+		name                         string
+		claimProject, claimGoal      bool
+		withTask, receiveTask        bool
+		wantRole                     string
+		commander, executor, subcmdr bool
+		taskWorker                   bool
+	}
+	holders := []holder{
+		{name: "commander", claimProject: true, wantRole: "commander", commander: true},
+		{name: "goal holder", claimGoal: true, wantRole: "executor", executor: true, subcmdr: true},
+		{name: "task receiver", withTask: true, receiveTask: true, wantRole: "task_worker", executor: true, taskWorker: true},
+		{name: "holds nothing", wantRole: "none"},
+	}
+	for _, h := range holders {
+		for _, expected := range []string{"commander", "executor", "subcommander", "task_worker"} {
+			want := map[string]bool{"commander": h.commander, "executor": h.executor, "subcommander": h.subcmdr, "task_worker": h.taskWorker}[expected]
+			t.Run(h.name+"/"+expected, func(t *testing.T) {
+				result, callErr, _, _ := callRoleTool(t, h.claimProject, h.claimGoal, h.withTask, expected, h.receiveTask)
+				if callErr != nil || result == nil || result.IsError {
+					t.Fatalf("atct_role: %v %+v", callErr, result)
+				}
+				data := decodeRoleResult(t, result)
+				if got := decodeRoleString(t, data, "role"); got != h.wantRole {
+					t.Fatalf("role = %q, want %q", got, h.wantRole)
+				}
+				var matches bool
+				if err := json.Unmarshal(data["matches"], &matches); err != nil {
+					t.Fatalf("decode matches: %v", err)
+				}
+				if matches != want {
+					t.Errorf("expected_role=%s matches = %v, want %v", expected, matches, want)
+				}
+			})
+		}
 	}
 }
 

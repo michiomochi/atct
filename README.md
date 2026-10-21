@@ -104,23 +104,23 @@ identification and claim or handoff receipt. `--role`, `--project`, `--goal`, `-
 are not monitor options. A running normal Codex process cannot be retrofitted; use a fresh monitored
 process.
 
-For a monitored worker, the delegator requests the handoff first, then runs
-`atct codex monitor -- <codex args>` inside a workspace to start a fresh worker session. A plain
-start bypasses the monitor. The new worker
-then calls `atct_task_handoff_receive` with its SessionStart `session_key` (and
+For a monitored executor, the commander requests the goal handoff first, then runs
+`atct codex monitor -- <codex args>` inside a workspace to start a fresh executor session. A plain
+start bypasses the monitor. The new executor
+then calls `atct_goal_handoff_receive` with its SessionStart `session_key` (and
 `monitor_token`, when emitted), and `atct_role`.
 
 Put a literal Codex argument such as `stop` after `--` so it is not interpreted as the monitor's
 stop command.
 
-Task-scoped monitors currently deliver matching task `handoff_reported`, `handoff_yielded`, and
+Task-scoped monitors (only for task handoffs opened before the two-layer roles) currently deliver matching task `handoff_reported`, `handoff_yielded`, and
 task-identified detection events. Review producers, review-state storage, and review MCP/HTTP APIs
 are not implemented by this capability; future review detections may use the existing identity-bearing
 event envelope and will still be task-filtered.
 
 ### Monitor liveness and recovery
 
-Eligible goal-scoped subcommander and task-scoped executor monitors run an independent one-minute
+Eligible goal-scoped executor and task-scoped task worker monitors run an independent one-minute
 liveness tick. The tick is based on the last successful scoped reconciliation, so it can emit a
 bounded `atct monitor liveness:` recheck line even while an SSE connection is quiet. Project-wide
 commander monitors, malformed or unscoped selectors, and scopes with an open human decision do not
@@ -128,23 +128,24 @@ receive a prompt. A transient snapshot, reconciliation, SSE, or daemon failure s
 loop and reconnects with bounded backoff; it is not a task or monitor terminal state.
 
 A liveness line is a recheck signal, not authority: it does not approve a human decision, cross a
-scope boundary, commit work, or create a task. A subcommander accepts the plan before requesting a
-task handoff or starting an executor through the `atct codex monitor` wrapper. An executor keeps an
-open human decision parked, works only within its task, and submits the task for review instead of
-committing.
+scope boundary, commit work, or create a task. An executor has its plan accepted before it
+implements, keeps an open human decision parked, works within its goal, commits the goal's work, and
+requests the goal review. A task worker (an older task handoff still open) works only within its task and
+submits the task for review instead of committing.
 
 To reproduce the GREEN documentation check, use at least five fresh contexts with the same
 time/sunk-cost/authority pressure scenario. Preserve each complete raw response and provenance, then
 score every response against the generic token-bound command with no role or scope selectors,
 record-first handoff ordering,
-`atct codex monitor -- <codex args>` inside a workspace to start a fresh worker session, the worker's identify → receive(task
+`atct codex monitor -- <codex args>` inside a workspace to start a fresh executor session, the executor's identify → receive(goal
 only) → role sequence, and no retrofit. Read every response manually and retain the per-criterion
 scores; a valid monitor-wrapper command is required in every passing response.
 
 ## Setting a goal is the approval
 
-An active goal is permission to coordinate work. The agent breaks it into tasks and delegates them — it does not
-come back for sign-off on the plan, and it does not stop between tasks. Your attention goes to
+An active goal is permission to coordinate work. The executor designs the goal, implements it, and reports it
+(it does not create tasks) — it does not come back for sign-off on the plan, and it does not
+stop between steps. Your attention goes to
 the decisions it parks and to the final approval, not to granting permission at every step.
 
 It stops before anything that cannot be undone: rewriting history, discarding uncommitted work,

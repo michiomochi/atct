@@ -74,9 +74,9 @@ func TestDeriveNextActionFollowsBranchOrder(t *testing.T) {
 		{name: "plan review received", in: nextActionInput{Status: domain.GoalActive, GoalHandoff: received(), PlanHandoff: &PlanHandoff{ReviewRequestedAt: naPtr(), ReviewReceivedAt: naPtr()}}, code: "commander_review_plan"},
 
 		// Task-create stages, after the plan is completed.
-		{name: "completed plan, task create not received", in: nextActionInput{Status: domain.GoalActive, GoalHandoff: received(), PlanHandoff: completedPlan(), TaskCreate: &TaskCreateHandoff{}}, code: "subcommander_receive_task_create"},
-		{name: "completed plan, no task create handoff", in: nextActionInput{Status: domain.GoalActive, GoalHandoff: received(), PlanHandoff: completedPlan()}, code: "subcommander_create_tasks"},
-		{name: "completed plan, task create received", in: nextActionInput{Status: domain.GoalActive, GoalHandoff: received(), PlanHandoff: completedPlan(), TaskCreate: &TaskCreateHandoff{ReceivedAt: naPtr()}}, code: "subcommander_create_tasks"},
+		{name: "completed plan, task create not received", in: nextActionInput{Status: domain.GoalActive, GoalHandoff: received(), PlanHandoff: completedPlan(), TaskCreate: &TaskCreateHandoff{}}, code: "executor_work"},
+		{name: "completed plan, no task create handoff", in: nextActionInput{Status: domain.GoalActive, GoalHandoff: received(), PlanHandoff: completedPlan()}, code: "executor_work"},
+		{name: "completed plan, task create received", in: nextActionInput{Status: domain.GoalActive, GoalHandoff: received(), PlanHandoff: completedPlan(), TaskCreate: &TaskCreateHandoff{ReceivedAt: naPtr()}}, code: "executor_work"},
 
 		// Task stages, one per status.
 		{name: "task in review", in: nextActionInput{Status: domain.GoalActive, GoalHandoff: received(), Tasks: []domain.Task{activeTask(1, domain.TaskReview)}}, code: "subcommander_review_task", taskCount: 1},

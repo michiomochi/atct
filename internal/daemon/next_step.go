@@ -15,7 +15,7 @@ type nextStepOption struct {
 var nextStepAfter = map[string][]nextStepOption{
 	"goal.handoff.request": {{
 		Call: "atct_goal_handoff_receive",
-		Note: "wake the subcommander; it receives with this handoff_id and its SessionStart session_key.",
+		Note: "wake the executor; it receives with this handoff_id and its SessionStart session_key.",
 	}},
 	"goal.handoff.receive": {{
 		Call: "atct_plan_handoff_review_request",
@@ -32,15 +32,15 @@ var nextStepAfter = map[string][]nextStepOption{
 	},
 	"plan.handoff.review.reject": {{
 		Call: "atct_plan_handoff_review_reject_receive",
-		Note: "the subcommander receives the rejection.",
+		Note: "the executor receives the rejection.",
 	}},
 	"plan.handoff.review.reject.receive": {{
 		Call: "atct_plan_handoff_review_request",
 		Note: "fix the plan, then request review on this same handoff_id. Do not create a new one.",
 	}},
 	"plan.handoff.complete": {{
-		Call: "atct_task_create_handoff_receive",
-		Note: "the daemon created the task-create handoff; receive it, then call atct_task_create with that handoff_id.",
+		Call: "atct_goal_handoff_review_request",
+		Note: "implement and verify, then request the goal review. Tasks are optional and you need not receive the task-create handoff the daemon created.",
 	}},
 
 	"task.create_handoff.receive": {{
@@ -49,11 +49,11 @@ var nextStepAfter = map[string][]nextStepOption{
 	}},
 	"task.create": {{
 		Call: "atct_task_handoff_request",
-		Note: "one per task; wake one executor per task after each request succeeds.",
+		Note: "one per task; wake one task worker per task after each request succeeds.",
 	}},
 	"task.handoff.request": {{
 		Call: "atct_task_handoff_receive",
-		Note: "wake the executor; it receives with this handoff_id and task_id. If no other task is left to delegate, do the same: stop your Monitor with TaskStop and wait on Bash with run_in_background running `atct watch --monitor --token <monitor_token> --once`.",
+		Note: "wake the task worker; it receives with this handoff_id and task_id. If no other task is left to delegate, do the same: stop your Monitor with TaskStop and wait on Bash with run_in_background running `atct watch --monitor --token <monitor_token> --once`.",
 	}},
 	"task.handoff.receive": {{
 		Call: "atct_task_handoff_review_request",
@@ -62,7 +62,7 @@ var nextStepAfter = map[string][]nextStepOption{
 
 	"task.handoff.review.request": {{
 		Call: "atct_task_handoff_review_receive",
-		Note: "the subcommander receives the review.",
+		Note: "the executor receives the review.",
 	}},
 	"task.handoff.review.receive": {
 		{When: "the work is acceptable", Call: "atct_task_handoff_complete"},
@@ -70,7 +70,7 @@ var nextStepAfter = map[string][]nextStepOption{
 	},
 	"task.handoff.review.reject": {{
 		Call: "atct_task_handoff_review_reject_receive",
-		Note: "the executor receives the rejection.",
+		Note: "the task worker receives the rejection.",
 	}},
 	"task.handoff.review.reject.receive": {{
 		Call: "atct_task_handoff_review_request",
@@ -78,7 +78,7 @@ var nextStepAfter = map[string][]nextStepOption{
 	}},
 	"task.handoff.complete": {
 		{When: "a task of this goal is still undelegated", Call: "atct_task_handoff_request"},
-		{When: "every task is done", Call: "atct_goal_handoff_review_request", Note: "close the executors and commit first."},
+		{When: "every task is done", Call: "atct_goal_handoff_review_request", Note: "close the task workers and commit first."},
 	},
 
 	"goal.handoff.review.request": {{
@@ -91,7 +91,7 @@ var nextStepAfter = map[string][]nextStepOption{
 	},
 	"goal.handoff.review.reject": {{
 		Call: "atct_goal_handoff_review_reject_receive",
-		Note: "the subcommander receives the rejection. If new tasks are needed, receive the new task-create handoff (atct_task_create_handoff_receive) and call atct_task_create.",
+		Note: "the executor receives the rejection. If new tasks are needed, receive the new task-create handoff (atct_task_create_handoff_receive) and call atct_task_create.",
 	}},
 	"goal.handoff.review.reject.receive": {{
 		Call: "atct_goal_handoff_review_request",
@@ -103,6 +103,6 @@ var nextStepAfter = map[string][]nextStepOption{
 	},
 	"goal.review.complete": {{
 		Call: "atct_goal_handoff_request",
-		Note: "the goal handoff and the goal closed together. Clean up the worktree and the subcommander, then take the next goal.",
+		Note: "the goal handoff and the goal closed together. Clean up the worktree and the executor, then take the next goal.",
 	}},
 }

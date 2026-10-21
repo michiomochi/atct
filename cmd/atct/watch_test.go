@@ -2193,7 +2193,7 @@ func TestEmitWatchWakeupWritesOneLinePerCondition(t *testing.T) {
 	}{
 		{"wakeup.completion_report_missing", watchDecision{GoalID: "goal-1"}, "atct wakeup: goal goal-1 has all tasks done; request named goal review with atct_goal_handoff_review_request"},
 		{"wakeup.commits_missing", watchDecision{GoalID: "goal-2"}, "atct wakeup: goal goal-2 has no linked commits"},
-		{"wakeup.undeclared_goal", watchDecision{GoalID: "goal-3"}, "atct wakeup: goal goal-3 has no tasks declared"},
+		{"wakeup.undeclared_goal", watchDecision{GoalID: "goal-3"}, "atct wakeup: goal goal-3 has no tasks (tasks are optional; nothing to declare)"},
 		{"wakeup.all_tasks_dropped", watchDecision{GoalID: "goal-4"}, "atct wakeup: goal goal-4 has all tasks dropped"},
 		{"wakeup.unclaimed_doing", watchDecision{TaskID: "task-1"}, "atct wakeup: task task-1 is doing without a work lock"},
 		{"wakeup.handoff_unreceived", watchDecision{HandoffID: "handoff-1"}, "atct wakeup: handoff handoff-1 has no receipt"},

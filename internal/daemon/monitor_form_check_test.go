@@ -91,7 +91,7 @@ func TestStopCheckNamesTheOnceWatchWhenWaitingWithoutMonitor(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stopCheckSubcommander: %v", err)
 	}
-	if !strings.HasPrefix(detail, "subcommander has open goal handoff ") || !strings.Contains(detail, "--monitor --token <monitor_token> --once") {
+	if !strings.HasPrefix(detail, "executor has open goal handoff ") || !strings.Contains(detail, "--monitor --token <monitor_token> --once") {
 		t.Fatalf("stopCheckSubcommander = %q, want the open goal handoff reason naming the --once watch", detail)
 	}
 }

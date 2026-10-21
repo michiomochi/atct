@@ -468,8 +468,8 @@ func TestNamedGoalAndPlanHandoffReviewRoutesReturnRoleEvidence(t *testing.T) {
 	}, &received); err != nil {
 		t.Fatalf("goal.handoff.receive: %v", err)
 	}
-	if received.Role != "subcommander" || received.ClaimEvidence.Scope != "goal" || received.ClaimEvidence.GoalID != fixture.claimedGoalID || received.ClaimEvidence.HandoffID != goalHandoffID || received.ClaimEvidence.AgentSessionID != fixture.receiverID {
-		t.Fatalf("goal receive role/evidence = %+v, want subcommander goal evidence", received)
+	if received.Role != "executor" || received.ClaimEvidence.Scope != "goal" || received.ClaimEvidence.GoalID != fixture.claimedGoalID || received.ClaimEvidence.HandoffID != goalHandoffID || received.ClaimEvidence.AgentSessionID != fixture.receiverID {
+		t.Fatalf("goal receive role/evidence = %+v, want executor goal evidence", received)
 	}
 
 	var goalReviewRequested store.GoalHandoff
@@ -827,8 +827,8 @@ func TestNamedGoalReviewRequiresCommanderAndHumanApprovalOrdering(t *testing.T) 
 	}, &received); err != nil {
 		t.Fatalf("goal.handoff.receive: %v", err)
 	}
-	if received.Role != "subcommander" || received.ClaimEvidence.AgentSessionID != fixture.receiverID {
-		t.Fatalf("goal handoff receive = %+v, want subcommander evidence for receiver %d", received, fixture.receiverID)
+	if received.Role != "executor" || received.ClaimEvidence.AgentSessionID != fixture.receiverID {
+		t.Fatalf("goal handoff receive = %+v, want executor evidence for receiver %d", received, fixture.receiverID)
 	}
 	var handoffReview store.GoalHandoff
 	if err := client.Call(ctx, "goal.handoff.review.request", map[string]any{

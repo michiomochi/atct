@@ -50,10 +50,14 @@ type responseWithRoleEvidence struct {
 	ClaimEvidence claimEvidence `json:"claim_evidence"`
 }
 
+// roleAssignment carries the internal role ("commander", "subcommander",
+// "executor"). The user-visible names are produced only by roleResponseFor and
+// visibleRole; authorization keeps reading the internal Role.
 type roleAssignment struct {
 	Role      string
 	ProjectID int64
 	GoalID    int64
+	HasTasks  bool
 }
 
 type commanderRole struct {
@@ -64,7 +68,7 @@ type commanderRole struct {
 	UILocale  string   `json:"ui_locale"`
 }
 
-type subcommanderRole struct {
+type goalExecutorRole struct {
 	Role     string   `json:"role"`
 	GoalID   int64    `json:"goal_id"`
 	Does     []string `json:"does"`
@@ -84,10 +88,28 @@ type roleBoundary struct {
 	DoesNot []string
 }
 
+// roleBoundaries is keyed by the user-visible role name.
 var roleBoundaries = map[string]roleBoundary{
-	"commander":    {Does: []string{"triage incoming work", "split goals", "prepare a working area", "review landed changes", "publish", "resolve conflicts", "clean up"}, DoesNot: []string{"design the goal", "implement the goal", "edit executor deliverables"}},
-	"subcommander": {Does: []string{"design the goal", "delegate the goal's work", "review implementation", "report completion for the goal", "ask the commander to file decisions for the human", "commit the goal's work", "close a task its worker cannot"}, DoesNot: []string{"inspect or manage other goals", "publish", "create another subcommander", "claim the project", "file decisions to the human directly"}},
-	"executor":     {Does: []string{"implement", "test", "close the task it was given"}, DoesNot: []string{"make design decisions", "re-delegate", "commit", "write internal version-control details"}},
+	"commander":   {Does: []string{"triage incoming work", "split goals", "prepare a working area", "review landed changes", "publish", "resolve conflicts", "clean up"}, DoesNot: []string{"design the goal", "implement the goal", "edit executor deliverables"}},
+	"executor":    {Does: []string{"design the goal", "implement and test the goal's work", "use sub-agents as it sees fit", "report completion for the goal", "ask the commander to file decisions for the human", "commit the goal's work"}, DoesNot: []string{"inspect or manage other goals", "publish", "claim the project", "file decisions to the human directly"}},
+	"task_worker": {Does: []string{"implement", "test", "close the task it was given"}, DoesNot: []string{"make design decisions", "re-delegate", "commit", "write internal version-control details"}},
+}
+
+// visibleRole maps an internal assignment to the name users see. An internal
+// "executor" that holds no received task is "none": it must not pass an
+// expected_role=executor check, which now means "holds a goal handoff".
+func visibleRole(internalRole string, hasTasks bool) string {
+	switch internalRole {
+	case "commander":
+		return "commander"
+	case "subcommander":
+		return "executor"
+	default:
+		if hasTasks {
+			return "task_worker"
+		}
+		return "none"
+	}
 }
 
 type claimableTaskSummary struct {
@@ -193,33 +215,41 @@ func (d *Daemon) deriveSessionRole(ctx context.Context, agentSessionID int64) (r
 	if err != nil {
 		return roleAssignment{}, err
 	}
-	return roleAssignment{Role: assignment.Role, ProjectID: assignment.ProjectID, GoalID: assignment.GoalID}, nil
+	return roleAssignment{Role: assignment.Role, ProjectID: assignment.ProjectID, GoalID: assignment.GoalID, HasTasks: len(assignment.Tasks) > 0}, nil
 }
 
 func roleResponseFor(assignment roleAssignment, uiLocale string) any {
-	boundary := roleBoundaries[assignment.Role]
-	switch assignment.Role {
+	visible := visibleRole(assignment.Role, assignment.HasTasks)
+	boundary := roleBoundaries[visible]
+	does, doesNot := boundary.Does, boundary.DoesNot
+	if does == nil {
+		does = []string{}
+	}
+	if doesNot == nil {
+		doesNot = []string{}
+	}
+	switch visible {
 	case "commander":
 		return commanderRole{
-			Role:      assignment.Role,
+			Role:      visible,
 			ProjectID: assignment.ProjectID,
-			Does:      boundary.Does,
-			DoesNot:   boundary.DoesNot,
+			Does:      does,
+			DoesNot:   doesNot,
 			UILocale:  uiLocale,
 		}
-	case "subcommander":
-		return subcommanderRole{
-			Role:     assignment.Role,
+	case "executor":
+		return goalExecutorRole{
+			Role:     visible,
 			GoalID:   assignment.GoalID,
-			Does:     boundary.Does,
-			DoesNot:  boundary.DoesNot,
+			Does:     does,
+			DoesNot:  doesNot,
 			UILocale: uiLocale,
 		}
 	default:
 		return executorRole{
-			Role:     "executor",
-			Does:     boundary.Does,
-			DoesNot:  boundary.DoesNot,
+			Role:     visible,
+			Does:     does,
+			DoesNot:  doesNot,
 			UILocale: uiLocale,
 		}
 	}
@@ -265,12 +295,12 @@ func (d *Daemon) unappliedDecisionsForRecovery(ctx context.Context, projectID in
 		return decisions, decisionScopeNotice{Scope: "project", Role: "commander"}, err
 	case role.Role == "subcommander" && role.GoalID != 0:
 		decisions, err := d.store.ListUnappliedDecisionsForGoal(ctx, role.GoalID)
-		return decisions, decisionScopeNotice{Scope: "goal", GoalID: role.GoalID, Role: "subcommander"}, err
+		return decisions, decisionScopeNotice{Scope: "goal", GoalID: role.GoalID, Role: "executor"}, err
 	default:
 		decisions, err := d.store.ListUnappliedDecisionsForProject(ctx, projectID)
 		return decisions, decisionScopeNotice{
 			Scope: "project",
-			Role:  role.Role,
+			Role:  visibleRole(role.Role, role.HasTasks),
 			Note:  "role could not be derived for this session; these answers span the whole project. call atct_session_identify to re-establish the role, then apply only your own goal's answers",
 		}, err
 	}
@@ -468,7 +498,7 @@ func (d *Daemon) authorizeRole(ctx context.Context, allowed []string, projectID,
 			}
 		}
 	}
-	return fmt.Errorf("%w: %s denied for %s on project %d, goal %d, task %d", ErrRoleUnauthorized, operation, assignment.Role, projectID, goalID, taskID)
+	return fmt.Errorf("%w: %s denied for %s on project %d, goal %d, task %d", ErrRoleUnauthorized, operation, visibleRole(assignment.Role, assignment.HasTasks), projectID, goalID, taskID)
 }
 
 func (d *Daemon) resolveOrRegisterProject(ctx context.Context, cwd string) (domain.Project, error) {
@@ -862,7 +892,7 @@ func (d *Daemon) receiveRoleEvidence(ctx context.Context, agentSessionID, projec
 			evidence.Scope = "task"
 		}
 	}
-	return assignment.Role, evidence, nil
+	return visibleRole(assignment.Role, len(assignment.Tasks) > 0), evidence, nil
 }
 
 func (d *Daemon) requestTaskHandoff(ctx context.Context, p taskHandoffRequestParams) (store.TaskHandoff, error) {
@@ -1130,6 +1160,9 @@ func (d *Daemon) dispatchMethodWithPeer(ctx context.Context, req rpc.Request, pe
 		if err != nil {
 			return nil, err
 		}
+		// The only consumer of this assignment is the MCP shim, which echoes it to
+		// the agent; no decision reads it, so it carries the visible role name.
+		assignment.Role = visibleRole(assignment.Role, len(assignment.Tasks) > 0)
 		return marshal(map[string]any{
 			"agent_session_id": canonicalID,
 			"reattached":       reattached,
@@ -1552,6 +1585,11 @@ func (d *Daemon) dispatchMethodWithPeer(ctx context.Context, req rpc.Request, pe
 		sessions, err := d.store.ListGoalSessions(ctx, p.GoalID)
 		if err != nil {
 			return nil, err
+		}
+		// The store keeps the internal names; users see executor (goal holder)
+		// and task_worker (task receiver).
+		for i := range sessions {
+			sessions[i].Role = visibleRole(sessions[i].Role, sessions[i].Role == "executor")
 		}
 		return marshal(map[string]any{"sessions": sessions}, nil)
 
@@ -2192,7 +2230,7 @@ func (d *Daemon) dispatchMethodWithPeer(ctx context.Context, req rpc.Request, pe
 			return nil, err
 		}
 		if role.Role == "subcommander" {
-			return nil, errors.New("a subcommander cannot file a decision to the human; " +
+			return nil, errors.New("an executor cannot file a decision to the human; " +
 				"instead append an entry of kind review_requested to your goal handoff with atct_goal_handoff_entry_append, " +
 				"whose body holds the question, the options (label / description / consequence), and your recommendation and reason (an action that only matters after the merge goes in needs_review, not in a decision); " +
 				"the commander files it with atct_decision_ask and returns the answer on the same handoff as a review_received entry whose in_reply_to_id is your request entry's id")

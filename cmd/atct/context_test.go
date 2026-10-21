@@ -127,8 +127,8 @@ func TestRenderContextIncludesUnappliedDecisionsAndPollTool(t *testing.T) {
 	noTasks := renderContext([]contextGoal{{
 		Goal: domain.Goal{ID: 5, Content: "No tasks", Status: domain.GoalActive},
 	}}, nil)
-	if !strings.Contains(noTasks, "atct_task_create") || strings.Contains(noTasks, "atct_task_handoff_request") {
-		t.Fatalf("no-task state has wrong next tool: %q", noTasks)
+	if strings.Contains(noTasks, "atct_task_create") || strings.Contains(noTasks, "atct_task_handoff_request") || strings.Contains(noTasks, "Next tools") {
+		t.Fatalf("no-task state must not prompt task creation or delegation: %q", noTasks)
 	}
 	withTodo := renderContext([]contextGoal{{
 		Goal:  domain.Goal{ID: 6, Content: "Todo", Status: domain.GoalActive},

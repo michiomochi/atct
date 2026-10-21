@@ -360,7 +360,7 @@ func (d *Daemon) subcommanderStopDetail(ctx context.Context, agentSessionID, goa
 	fp.decisions(decisions)
 	for _, handoff := range planHandoffs {
 		if handoff.ReviewRejectionReceivedBy == agentSessionID && handoff.CompletedReportAt == nil {
-			return fmt.Sprintf("subcommander has rejected plan handoff %s", handoff.ID), nil
+			return fmt.Sprintf("executor has rejected plan handoff %s", handoff.ID), nil
 		}
 	}
 	createHandoffs, err := d.store.ListTaskCreateHandoffs(ctx, goalID)
@@ -370,7 +370,7 @@ func (d *Daemon) subcommanderStopDetail(ctx context.Context, agentSessionID, goa
 	fp.createHandoffs(createHandoffs)
 	for _, handoff := range createHandoffs {
 		if handoff.ReceivedBy == agentSessionID && handoff.CompletedAt == nil && handoff.RecoveredAt == nil {
-			return fmt.Sprintf("subcommander has open task-create handoff %s", handoff.ID), nil
+			return fmt.Sprintf("executor has open task-create handoff %s", handoff.ID), nil
 		}
 	}
 	tasks, err := d.store.ListTasks(ctx, goalID)
@@ -388,10 +388,10 @@ func (d *Daemon) subcommanderStopDetail(ctx context.Context, agentSessionID, goa
 			// With a live Monitor, an unreceived handoff is an executor still
 			// starting; one that never starts is reported by the liveness prompt.
 			if !live && handoff.RequestedAt != nil && handoff.ReceivedAt == nil && handoff.CompletedReportAt == nil && handoff.RecoveredAt == nil {
-				return fmt.Sprintf("subcommander has unreceived task handoff %s for task %d", handoff.ID, task.ID), nil
+				return fmt.Sprintf("executor has unreceived task handoff %s for task %d", handoff.ID, task.ID), nil
 			}
 			if handoff.ReviewRequestedAt != nil && handoff.ReviewRejectedAt == nil && handoff.CompletedReportAt == nil && handoff.RecoveredAt == nil {
-				return fmt.Sprintf("subcommander has task review handoff %s for task %d", handoff.ID, task.ID), nil
+				return fmt.Sprintf("executor has task review handoff %s for task %d", handoff.ID, task.ID), nil
 			}
 		}
 	}
@@ -406,9 +406,9 @@ func (d *Daemon) subcommanderStopDetail(ctx context.Context, agentSessionID, goa
 				continue
 			}
 			if waitingWithWatch {
-				return fmt.Sprintf("subcommander has open goal handoff %s: waiting for an answer but this session has no live watch; start `atct watch --monitor --token <monitor_token> --once` in a Bash with run_in_background, then stop", handoff.ID), nil
+				return fmt.Sprintf("executor has open goal handoff %s: waiting for an answer but this session has no live watch; start `atct watch --monitor --token <monitor_token> --once` in a Bash with run_in_background, then stop", handoff.ID), nil
 			}
-			return fmt.Sprintf("subcommander has open goal handoff %s", handoff.ID), nil
+			return fmt.Sprintf("executor has open goal handoff %s", handoff.ID), nil
 		}
 	}
 	return "", nil
@@ -500,7 +500,7 @@ func (d *Daemon) stopCheckExecutor(ctx context.Context, agentSessionID int64) (s
 							continue
 						}
 					}
-					return fmt.Sprintf("executor has open task handoff %s for task %d", handoff.ID, task.ID), nil
+					return fmt.Sprintf("task worker has open task handoff %s for task %d", handoff.ID, task.ID), nil
 				}
 			}
 		}
