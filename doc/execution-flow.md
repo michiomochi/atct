@@ -3,9 +3,7 @@
 ATCT の実行フローである。各層はここに定めた責務と handoff の状態遷移に従う。
 
 役割は commander と executor の 2 層である。executor は、受領済みで未完了の goal handoff を持つ
-session の名前で、ゴールの設計から報告までを 1 つの session が担う。DB、HTTP API、コードの内部名
-`subcommander` は変えていない。利用者に見える名前（`atct_role`、skill、hook の文面、dashboard）だけが
-この文書の名前になる。
+session の名前で、ゴールの設計から報告までを 1 つの session が担う。
 
 ## 設計の原則
 
@@ -34,7 +32,7 @@ superpowers（brainstorming・writing-plans）の既定の保存先や、`doc/sp
 | 層 | やること |
 |---|---|
 | `commander` | ゴールの分割、worktree の用意、executor の起動と終了、設計（plan）とゴール変更のレビュー、executor の依頼を受けた人間への決定の起票、最終報告、マージ、公開、後片付け |
-| `executor` | ゴールの設計、実装、テスト、ゴール内のコミット、報告（goal handoff の review 要求）、人間への決定の依頼（commander が起票する）。task は進捗を記録するための任意の記録 |
+| `executor` | ゴールの設計、実装、テスト、ゴール内のコミット、報告（goal handoff の review 要求）、人間への決定の依頼（commander が起票する） |
 
 ## 役割とセッション
 
@@ -44,24 +42,12 @@ superpowers（brainstorming・writing-plans）の既定の保存先や、`doc/sp
 |---|---|---|
 | 1 | project claim を保有 | `commander` |
 | 2 | 受領済みで未完了の goal handoff を保有 | `executor`（`goal_id` つき） |
-| 3 | 受領済みで未完了の task handoff を保有 | `task_worker`（旧運用の残りを終えるためだけの名前） |
-| 4 | どれも保有しない | `none` |
 
-goal handoff を閉じると、その session は `none` になる。`expected_role=executor` は `goal_id` を持つ
-goal handoff の保有者と `task_worker` に一致し、`none` はどの値にも一致しないので、役割を失った session は
-確認をすり抜けない。
+どれも保有しない session は役割を持たない。goal handoff を閉じると、その session は役割を失う。
 
-出荷前に起動した session のために、次の 2 つの互換を残す。どちらも内部名を改名する段階で外す。
+goal の実装の所有権は、commander が request し executor が receive した goal handoff で表す。
 
-- `expected_role=subcommander` は goal handoff の保有者（見える名前は `executor`）にだけ一致する古い名前で、`task_worker` には一致しない
-- `expected_role=executor` は `goal_id` を持つ `executor`、古い daemon の `subcommander`、`task_worker` に一致する。
-  `goal_id` を持たない古い daemon の `{"role":"executor"}`（旧 task 受領者）には一致しない。何も持たない
-  session と区別できないためである
-
-task claim/release は agent 向けの MCP/RPC として公開しない。goal の実装の所有権は、commander が
-request し executor が receive した goal handoff で表す。
-
-task/goal handoff を receive する worker は、SessionStart の正確な `session_key` を渡す。
+goal handoff を receive する executor は、SessionStart の正確な `session_key` を渡す。
 `monitor_token` が発行されている場合は併せて渡す。MCP shim は receive の前にその鍵で
 canonical な agent session を確定し、receive は role と claim evidence を返す。
 `atct_role` は継続作業の前提ではなく、役割異常の診断に使う。
@@ -85,21 +71,20 @@ daemon に登録する。MCP 側は同じ呼び出しの `_meta["claudecode/tool
 
 ## handoff の状態
 
-| 状態 | 遷移させる者 | `goal` | `plan` | `task`（旧運用） |
-|---|---|---|---|---|
-| 依頼 | 渡す側 | `atct_goal_handoff_request` | — | `atct_task_handoff_request` |
-| 受領 | 作業する側 | `atct_goal_handoff_receive` | — | `atct_task_handoff_receive` |
-| レビュー依頼 | 作業する側 | `atct_goal_handoff_review_request` | `atct_plan_handoff_review_request` | `atct_task_handoff_review_request` |
-| レビュー受領 | レビューする側 | `atct_goal_handoff_review_receive` | `atct_plan_handoff_review_receive` | `atct_task_handoff_review_receive` |
-| 完了 | 渡した側 | `atct_goal_review_complete`（人間承認後） | `atct_plan_handoff_complete` | `atct_task_handoff_complete` |
-| 差し戻し | 渡した側 | `atct_goal_handoff_review_reject` | `atct_plan_handoff_review_reject` | `atct_task_handoff_review_reject` |
-| 差し戻し受領 | 作業する側 | `atct_goal_handoff_review_reject_receive` | `atct_plan_handoff_review_reject_receive` | `atct_task_handoff_review_reject_receive` |
+| 状態 | 遷移させる者 | `goal` | `plan` |
+|---|---|---|---|
+| 依頼 | 渡す側 | `atct_goal_handoff_request` | — |
+| 受領 | 作業する側 | `atct_goal_handoff_receive` | — |
+| レビュー依頼 | 作業する側 | `atct_goal_handoff_review_request` | `atct_plan_handoff_review_request` |
+| レビュー受領 | レビューする側 | `atct_goal_handoff_review_receive` | `atct_plan_handoff_review_receive` |
+| 完了 | 渡した側 | `atct_goal_review_complete`（人間承認後） | `atct_plan_handoff_complete` |
+| 差し戻し | 渡した側 | `atct_goal_handoff_review_reject` | `atct_plan_handoff_review_reject` |
+| 差し戻し受領 | 作業する側 | `atct_goal_handoff_review_reject_receive` | `atct_plan_handoff_review_reject_receive` |
 
 | handoff | 誰から誰へ | レビューする者 |
 |---|---|---|
 | `goal` | commander → executor | commander |
 | `plan` | executor → commander | commander |
-| `task`（旧運用） | executor → task worker | executor |
 
 `plan` は設計成果物を上位層へ渡すため、request/receive を持たず review request から始まる。
 作業した側は自身の handoff を閉じない。差し戻しは handoff を閉じず、受領済みの状態へ
@@ -107,16 +92,10 @@ daemon に登録する。MCP 側は同じ呼び出しの `_meta["claudecode/tool
 
 ### task-create handoff
 
-plan handoff の完了時に、daemon は `task.create_handoff.request` を自動生成する。agent が呼ぶ
-`atct_task_handoff_create_request` は存在しない。executor はこの handoff を受領しなくてよい。この版では
-task を作らない。task を作ると、daemon が task handoff の委譲（`atct_task_handoff_request`）を促し続けるためである。
-goal は task なしで完了でき、`atct_goal_handoff_review_request` は task の状態を見ない。受領しなければ
-stop-check は止めず、review 要求のときに daemon が handoff を取り下げる。進捗は review 要求の報告に書く。
-
-goal handoff の review が差し戻されたときも、daemon は task-create handoff を発行する（requested_by は
-差し戻した commander）。これも受領しない。すでに open な task-create handoff があれば新規には作らず、それを再利用する。受領する前に
-goal review が再度 request されたときは、その handoff を「superseded」として閉じる（受領済みのものは
-閉じない）。
+plan handoff の完了時に、daemon は task-create handoff を自動生成する。executor はこれを受領しない。
+この版では task を作らず、goal は task なしで完了できる。受領しなければ stop-check は止めない。
+進捗は review 要求の報告に書く。goal handoff の review が差し戻されたときも daemon は task-create
+handoff を発行する。これも受領しない。
 
 ## MCP ツールの応答
 
@@ -133,18 +112,6 @@ goal review が再度 request されたときは、その handoff を「supersed
 - `atct_goal_get` は省略可能な `fields`（goal の項目名・`tasks`・`task_summary`・`goal_review`）で
   返す項目を絞れる。省略時は全文、未知の名前は拒否
 - 整形は MCP shim だけで行う。daemon の RPC、CLI、HTTP API、web は全文を返したまま
-
-## タスクの状態遷移
-
-旧運用の task handoff では、handoff 遷移が task status を更新する。
-
-| handoff の遷移 | `tasks.status` |
-|---|---|
-| `atct_task_handoff_request` | `todo` |
-| `atct_task_handoff_receive` | `doing` |
-| `atct_task_handoff_review_request` | `review` |
-| `atct_task_handoff_complete` | `done` |
-| `atct_task_handoff_review_reject` | `doing` |
 
 ## 全体フロー
 
@@ -169,17 +136,9 @@ flowchart TD
         E2[atct watch --monitor --token<br/>Monitor ツール]
         E3[atct_plan_handoff_review_request<br/>plan handoff を作成]
         E3R[atct_plan_handoff_review_reject_receive]
-        E4[実装とテスト<br/>進捗は review 要求の報告に書く（atct_task_create は使わない）]
+        E4[実装とテスト<br/>進捗は review 要求の報告に書く（task は作らない）]
         E5[検証し、コミットし<br/>atct_goal_handoff_review_request]
         E6[atct_goal_handoff_review_reject_receive<br/>修正して同じ handoff で再 review request]
-    end
-
-    subgraph L[旧運用の task handoff（出荷前に開いたものだけ）]
-        L1[atct_task_handoff_request<br/>出荷前に出されたもの。新しくは出さない]
-        L2[atct_task_handoff_receive]
-        L3[atct_task_handoff_review_request]
-        L4[atct_task_handoff_review_receive<br/>レビューして atct_task_handoff_complete]
-        L5[atct_task_handoff_review_reject_receive]
     end
 
     G --> C1 --> C2 --> C3 --> C4 --> E1 --> E2 --> E3 --> C5 --> E4 --> E5 --> C6
@@ -188,8 +147,6 @@ flowchart TD
     C6 -->|atct_goal_handoff_review_reject| E6
     HR -->|承認| C8
     HR -->|却下| C9 --> E6 --> E5
-    L1 --> L2 --> L3 --> L4
-    L4 -->|atct_task_handoff_review_reject| L5 --> L3
 ```
 
 ### commander
@@ -225,9 +182,8 @@ flowchart TD
    差し戻しを受けた場合は `atct_plan_handoff_review_reject_receive` を呼んでから、
    同じ `handoff_id` で `atct_plan_handoff_review_request` を呼び、修正した plan の
    review を再開する。この遷移は既存の plan handoff を再利用し、新しい handoff は作らない。
-4. plan が承認されたら、task を作らずに実装と検証へ進む。この版では task を作らない（task を作ると
-   daemon が task handoff の委譲を促し続ける）。plan の完了で生成された task-create handoff は受領しない
-   （「task-create handoff」を参照）。進捗は review 要求の報告に書く。
+4. plan が承認されたら、task を作らずに実装と検証へ進む。plan の完了で生成された task-create handoff は
+   受領しない（「task-create handoff」を参照）。進捗は review 要求の報告に書く。
 5. `superpowers:test-driven-development` に従って実装とテストを行い、
    `superpowers:verification-before-completion` で検証する。sub-agent を使うかは executor が決める。
    ATCT は sub-agent を知らず、sub-agent に ATCT を呼ばせない。
@@ -238,24 +194,6 @@ flowchart TD
    task-create handoff は受領しない。
 8. 人間への決定が要るときは `atct_decision_ask` を呼ばない。goal handoff へ `review_requested` の
    entry を足して commander に頼み、commander が起票する。
-
-### 旧運用の task handoff
-
-task handoff は新しく始めない。出荷前に開いた task handoff だけが、次の旧手順で終わる。受領した
-session の役割は `task_worker` で、review と完了は executor（goal handoff の保有者）が行う。
-
-1. task worker: `atct_task_handoff_receive` に SessionStart の `session_key` と必要なら
-   `monitor_token` を渡して、渡された task を受領する。`atct_role` で役割を確かめた後、
-   `atct_handoff_entry_history` で `handoff_id` と `task_id` を指定して依頼内容
-   （`request_report`）を読み、それを作業の根拠にする。依頼内容が空か不足なら（履歴の request エントリの本文が `requested` だけなら依頼内容は無い）作業せず、
-   `atct_task_handoff_review_request` の `review_request_report` を
-   `blocked: 依頼内容が無い（何が足りないか）` にして返す。
-2. task worker: `superpowers:test-driven-development` に従って実装とテストを行い、
-   `superpowers:verification-before-completion` の検証後、`atct_task_handoff_review_request` を出す。
-3. executor: review request を受領してレビューし、受理なら `atct_task_handoff_complete`、差し戻しなら
-   `atct_task_handoff_review_reject` を呼ぶ。
-4. task worker: 差し戻された場合は `atct_task_handoff_review_reject_receive` を呼び、同じ task
-   handoff で修正して再び review request を出す。
 
 ## 人間のレビュー
 
@@ -276,21 +214,19 @@ commander が交代した後は、現在の commander が `atct_goal_review_comp
 |---|---|---|
 | `atct_plan_handoff_review_request` | executor | commander |
 | `atct_plan_handoff_complete` / `_review_reject` | commander | executor |
-| `task.create_handoff.request` | daemon（plan handoff 完了時） | executor（受領は任意） |
+| task-create handoff の発行 | daemon（plan handoff 完了時） | executor（受領しない） |
 | `atct_goal_handoff_review_request` | executor | commander |
 | `goal.handoff.complete` | daemon（`atct_goal_review_complete` 時） | executor |
 | `atct_goal_handoff_review_reject` | commander | executor |
 | `atct_goal_review_reject` | 人間 | commander（`goal.review.reject` 通知） |
 | `atct_goal_review_complete` | commander（人間の承認後） | — |
 | ゴールの取り下げ | commander | そのゴールの executor |
-| `atct_task_handoff_review_request`（旧運用） | task worker | executor |
-| `atct_task_handoff_complete` / `_review_reject`（旧運用） | executor | task worker |
 
 handoff の記録（`handoff_entry_added`）のうち、lifecycle の写し（`request`・`received`・`completed`、ack の `review_received`）は通知しない。`review_requested`・`review_rejected` と、参加者が `atct_*handoff_entry_append` で足した note は従来どおり通知する。
 
 ## 待機中の Stop hook
 
-相手の応答（commander の plan / goal review、旧運用の task review）を待つだけの session は、生きた Monitor があれば Stop hook で止めない。executor は plan review・goal review と、旧運用の task handoff の起動・作業のいずれかを待つ間の open goal handoff、task worker は review 依頼済みで差し戻されていない task handoff が対象。差し戻し、受領済みの task-create handoff、旧運用の task review など他の block と、Monitor が無い場合（未受領の task handoff も止める）、取得に失敗した場合は従来どおり止める。詳細は `atct continuous-execution` で読める。
+相手の応答（commander の plan / goal review）を待つだけの session は、生きた Monitor があれば Stop hook で止めない。対象は、plan review と goal review を待つ間の executor の open goal handoff である。差し戻し、受領済みの task-create handoff など他の block と、Monitor が無い場合、取得に失敗した場合は従来どおり止める。詳細は `atct continuous-execution` で読める。
 
 同じ状態で 2 回目の停止は止めない。daemon が session ごとに、直前に止めたときの理由と、その判定が読んだ状態（goal・handoff・task・decision の状態と時刻、生きた Monitor の有無）をメモリに覚え、理由も状態も同じなら block しない。最初の 1 回は必ず止め、理由か状態が変わればまた止める。記録は daemon の再起動で消える（再起動後は 1 回止まる）。
 
@@ -344,7 +280,7 @@ worktree の中から自分を消せないからである。
 1. 上の status 確認。スクリプトは goal の status を確かめない（DB に触れない）ので、
    この確認は必須である。
 2. 主チェックアウトで `atct worktree-reclaim <id>` を実行する。
-3. executor の workspace を閉じる。旧運用の task worker の session が残っていれば、それも終える。workspace の用意と片付けの手段（マルチプレクサ・ターミナル・別プロセス）は ATCT の外で決める。
+3. executor の workspace を閉じる。workspace の用意と片付けの手段（マルチプレクサ・ターミナル・別プロセス）は ATCT の外で決める。
    `## One workspace per goal` は dropped にも適用する。
 
 パスと branch 名は `.worktrees/<id>` と `wt/goal-<id>`（整数 id）である。

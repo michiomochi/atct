@@ -272,7 +272,7 @@ export const en = {
   "nextAction.actor.human": "Human",
   "nextAction.actor.commander": "commander",
   "nextAction.actor.subcommander": "executor",
-  "nextAction.actor.executor": "task worker (legacy)",
+  "nextAction.actor.executor": "executor",
   "nextAction.code.done": "Done",
   "nextAction.code.withdrawn": "Withdrawn",
   "nextAction.code.human_review": "Waiting for human approval (decision {{id}})",

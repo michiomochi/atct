@@ -273,7 +273,7 @@ export const ja: Record<TranslationKey, string> = {
   "nextAction.actor.human": "人間",
   "nextAction.actor.commander": "commander",
   "nextAction.actor.subcommander": "executor",
-  "nextAction.actor.executor": "task worker（旧運用）",
+  "nextAction.actor.executor": "executor",
   "nextAction.code.done": "完了",
   "nextAction.code.withdrawn": "取り下げ済み",
   "nextAction.code.human_review": "人間の承認待ち（decision {{id}}）",

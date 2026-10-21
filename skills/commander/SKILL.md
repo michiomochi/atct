@@ -15,8 +15,7 @@ description: Use when atct_role reports commander for project-level triage, dele
 - After human approval, merge, publish, resolve conflicts, and clean up.
 
 Do not design a goal, implement it, or edit an executor's deliverable. Delegate a goal,
-not a task: the executor decides whether to use sub-agents, and no task handoff is
-requested for new work.
+not a task: the executor decides whether to use sub-agents.
 
 In `atct:dev:start` development mode only, resolve an escalated
 executor condition within this project if necessary. Never substitute for
@@ -262,15 +261,14 @@ that executor is started:
    (which atomically completes the reviewed handoff and the goal).
    The rule is simple: only the commander may call `atct_goal_review_request`;
    after human approval and merge, only the commander may call `atct_goal_review_complete` with the `goal_id` provided in this request.
-   `atct_goal_handoff_complete` is reserved for legacy/out-of-order recovery,
+   `atct_goal_handoff_complete` is reserved for out-of-order recovery,
    not the normal goal-review path.
 
    Before `atct_goal_review_request`, have one independent check made and re-run
    the verification yourself. Start an Agent with `model` set to `opus` and give it
    the goal's content, spec, plan and diff; do not give it the executor's report
    conclusions, which would anchor it. Then run again the verification commands
-   in the executor's review request report. With no task review in between, this check is what stands
-   in for the independent look at the implementation.
+   in the executor's review request report. This check is the independent look at the implementation.
    The executor's advisor strengthens the executor's own checking; it does not
    replace this independent check.
 
@@ -322,10 +320,10 @@ that executor is started:
    What the delegator reads instead are this project's ATCT Wakeup events, which
    arrive from `atct watch` rather than from the executor: a goal whose tasks
    are all done with no linked commit (`wakeup.commits_missing`), a claim nobody
-   delegated, a task handoff nobody received or never reported
+   delegated, a handoff nobody received or never reported
    (`wakeup.handoff_unreceived`, `wakeup.handoff_unreported`). Those are what a
    stalled executor looks like from outside, and they arrive whether or not it
-   speaks. All of them count tasks and task handoffs, so an executor that
+   speaks. All of them count tasks, so an executor that
    creates no tasks raises none of them. For such a goal, check its branch
    yourself: `git log main..wt/goal-<id>` and the worktree's status show whether
    it is moving. Review the goal when

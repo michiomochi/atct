@@ -90,9 +90,8 @@ type roleBoundary struct {
 
 // roleBoundaries is keyed by the user-visible role name.
 var roleBoundaries = map[string]roleBoundary{
-	"commander":   {Does: []string{"triage incoming work", "split goals", "prepare a working area", "review landed changes", "publish", "resolve conflicts", "clean up"}, DoesNot: []string{"design the goal", "implement the goal", "edit executor deliverables"}},
-	"executor":    {Does: []string{"design the goal", "implement and test the goal's work", "use sub-agents as it sees fit", "report completion for the goal", "ask the commander to file decisions for the human", "commit the goal's work"}, DoesNot: []string{"inspect or manage other goals", "publish", "claim the project", "file decisions to the human directly"}},
-	"task_worker": {Does: []string{"implement", "test", "close the task it was given"}, DoesNot: []string{"make design decisions", "re-delegate", "commit", "write internal version-control details"}},
+	"commander": {Does: []string{"triage incoming work", "split goals", "prepare a working area", "review landed changes", "publish", "resolve conflicts", "clean up"}, DoesNot: []string{"design the goal", "implement the goal", "edit executor deliverables"}},
+	"executor":  {Does: []string{"design the goal", "implement and test the goal's work", "use sub-agents as it sees fit", "report completion for the goal", "ask the commander to file decisions for the human", "commit the goal's work"}, DoesNot: []string{"inspect or manage other goals", "publish", "claim the project", "file decisions to the human directly"}},
 }
 
 // visibleRole maps an internal assignment to the name users see. An internal

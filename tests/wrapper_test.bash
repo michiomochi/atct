@@ -54,7 +54,6 @@ ORDERED_SECTIONS=(
   'commander|## Delegate a goal'
   'atct|## Fill in a report on a handoff that is already closed'
   'atct|## Recover when your role comes back wrong'
-  'executor|## task_worker: finishing a task handoff received before the two-layer change'
 )
 
 # Every skill whose numbered lists are checked for contiguity.
@@ -904,7 +903,7 @@ recovery_section_not_contains() {
 }
 
 test_recovery_section_has_role_entry() {
-  recovery_section_contains 'If `atct_role` returns `none` while you still hold work that should be yours, stop working and read this section.'
+  recovery_section_contains 'If `atct_role` reports no role while you still hold work that should be yours, stop working and read this section.'
 }
 
 test_recovery_section_prioritizes_session_identify() {
@@ -916,12 +915,12 @@ test_recovery_section_has_project_path() {
 }
 
 test_recovery_section_has_goal_path() {
-  recovery_section_contains '- goal: `atct_goal_handoff_complete` → `atct_goal_handoff_request` (legacy/out-of-order recovery; the commander must issue the handoff again)'
+  recovery_section_contains '- goal: `atct_goal_handoff_complete` → `atct_goal_handoff_request` (the commander must issue the handoff again)'
   recovery_section_contains 'the executor cannot reissue it, and the goal waits on the'
 }
 
 test_recovery_section_has_task_path_and_non_repair_note() {
-  recovery_section_contains 'have the session that sent it request a fresh `atct_task_handoff_request`'
+  recovery_section_not_contains '`atct_task_handoff_request`'
   recovery_section_contains 'Rejection is automatic, so the goal step above that asks the commander to reissue the handoff is needed only for the last trigger.'
 }
 
@@ -930,18 +929,16 @@ test_handoff_completion_reports_are_explicit() {
   local executor_skill="$REPO_ROOT/skills/executor/SKILL.md"
   # The executor's review-report contract lives in the executor skill: the goal
   # review request report names the commands run, the checks it could not run
-  # and the changed paths, and the task_worker section keeps the old contract.
+  # and the changed paths.
   assert_file_contains 'with the `goal_id` provided in this request' "$commander_skill"
   assert_file_contains 'every command you ran and its result, the checks you could not' "$executor_skill"
   assert_file_contains 'run (say "could not run"), and the changed paths.' "$executor_skill"
-  assert_file_contains 'Submit a review report stating the work, verification, unavailable checks, and' "$executor_skill"
-  assert_file_contains 'changed paths with `atct_task_handoff_review_request`.' "$executor_skill"
 }
 
 test_handoff_report_repair_is_explicit() {
   local atct_skill="$REPO_ROOT/skills/atct/SKILL.md"
   assert_file_contains '## Fill in a report on a handoff that is already closed' "$atct_skill"
-  assert_file_contains '`atct_task_handoff_report_amend` with the specific `handoff_id`' "$atct_skill"
+  assert_file_contains '`atct_goal_handoff_report_amend` with `handoff_id`, `goal_id`, and a' "$atct_skill"
   assert_file_contains 'It is not part of normal executor completion.' "$atct_skill"
 }
 
@@ -971,11 +968,10 @@ test_executor_skill_sets_up_the_watch_between_receive_and_role() {
   (( receive_line < watch_line && watch_line < role_line )) ||
     fail "executor watch step must sit between receive and role check: receive=$receive_line watch=$watch_line role=$role_line"
   assert_file_not_contains 'persistent' "$skill"
-  assert_file_contains '`atct_task_handoff_review_reject_receive`' "$skill"
 }
 
 test_recovery_section_explains_why_the_role_drops() {
-  recovery_section_contains "Closing an executor's goal handoff drops that executor to \`none\`"
+  recovery_section_contains "Closing an executor's goal handoff takes that executor's role away"
 }
 
 test_orchestration_skill_has_no_blanket_atct_ban() {
@@ -1155,7 +1151,7 @@ test_delegated_claim_contract_is_explicit() {
   assert_file_contains 'An executor must not claim the project' "$commander_skill"
   assert_file_contains 'An executor must not call `atct_goal_release`' "$commander_skill"
   assert_file_contains "commander's job." "$commander_skill"
-  assert_file_contains '`atct_task_handoff_review_request`' "$REPO_ROOT/skills/executor/SKILL.md"
+  assert_file_contains '`atct_goal_handoff_review_request`' "$REPO_ROOT/skills/executor/SKILL.md"
   assert_file_not_contains 'Call `atct_task_claim` before working on a task.' "$atct_skill"
   assert_file_not_contains 'A delegated worker must not claim the task; the delegator owns the claim.' "$atct_skill"
   assert_file_not_contains 'Do not call `atct_task_claim` for a delegated task.' "$atct_skill"
@@ -1257,13 +1253,6 @@ test_role_entry_receives_with_credentials_before_role_check() {
   role_line="$(grep -nF 'atct_role` with `expected_role' "$skill" | head -1 | cut -d: -f1)"
   [[ -n "$receipt_line" && -n "$role_line" ]] || fail 'executor entry must name receipt and role check'
   (( receipt_line < role_line )) || fail 'executor must receive the goal handoff before checking its role'
-
-  # The task_worker section keeps the task-handoff entry for a session that
-  # received its handoff before the roles merged.
-  assert_file_contains 'atct_task_handoff_receive`' "$skill"
-  assert_file_contains '## task_worker: finishing a task handoff received before the two-layer change' "$skill"
-  assert_file_contains '`expected_role` set to `task_worker`' "$skill"
-  assert_file_contains '`task_id` and `handoff_id` provided in the handoff' "$skill"
 }
 
 test_atct_skill_requires_execution_flow() {
@@ -1398,12 +1387,12 @@ test_role_contract_is_documented() {
   assert_file_contains '| Layer | Does | Does not |' "$atct_skill"
   documented_rows="$(
     sed -n '/^## Roles$/,/^## Declare before you work$/p' "$atct_skill" |
-      sed -nE 's/^\|[[:space:]]*`(commander|executor|task_worker)`[[:space:]]*\|[[:space:]]*([^|]+)[[:space:]]*\|[[:space:]]*([^|]+)[[:space:]]*\|[[:space:]]*$/\1|\2|\3/p'
+      sed -nE 's/^\|[[:space:]]*`(commander|executor)`[[:space:]]*\|[[:space:]]*([^|]+)[[:space:]]*\|[[:space:]]*([^|]+)[[:space:]]*\|[[:space:]]*$/\1|\2|\3/p'
   )"
-  assert_eq $'commander\nexecutor\ntask_worker' "$(printf '%s\n' "$documented_rows" | cut -d'|' -f1 | sort)" \
+  assert_eq $'commander\nexecutor' "$(printf '%s\n' "$documented_rows" | cut -d'|' -f1 | sort)" \
     'role boundary table must contain exactly one row for each role'
 
-  for role in commander executor task_worker; do
+  for role in commander executor; do
     row="$(printf '%s\n' "$documented_rows" | awk -F'|' -v role="$role" '$1 == role { print; exit }')"
     [[ -n "$row" ]] || fail "role boundary table is missing $role"
     does="${row#*|}"
@@ -1440,15 +1429,7 @@ test_role_boundaries_cover_version_control_and_delegation_direction() {
 
   assert_file_contains "design the goal / implement and test the goal's work / use sub-agents as it sees fit" "$atct_skill"
   assert_file_contains "commit the goal's work" "$atct_skill"
-  assert_file_contains 'write internal version-control details' "$atct_skill"
   assert_file_contains "use sub-agents as it sees fit" "$handler_go"
-  assert_file_matches '^[[:space:]]*"task_worker":[[:space:]]*\{Does: \[\]string\{"implement", "test", "close the task it was given"\}, DoesNot: \[\]string\{"make design decisions", "re-delegate", "commit", "write internal version-control details"\}\}' "$handler_go"
-}
-
-test_task_worker_boundary_includes_task_closure() {
-  local atct_skill="$REPO_ROOT/skills/atct/SKILL.md"
-
-  assert_file_contains 'close the task it was given' "$atct_skill"
 }
 
 test_executor_boundary_includes_goal_commit() {
@@ -1461,12 +1442,6 @@ test_commit_workflow_requires_explicit_paths() {
   local atct_skill="$REPO_ROOT/skills/atct/SKILL.md"
 
   assert_file_contains 'name the paths explicitly; never use `git add -A`' "$atct_skill"
-}
-
-test_task_worker_boundary_keeps_commit_exclusion() {
-  local atct_skill="$REPO_ROOT/skills/atct/SKILL.md"
-
-  assert_file_contains '| `task_worker` | implement / test / close the task it was given | make design decisions / re-delegate / commit / write internal version-control details |' "$atct_skill"
 }
 
 test_start_does_not_claim_delegate_cannot_close() {
@@ -1512,7 +1487,7 @@ test_role_contract_matches_implementation() {
       sed 's/^ *//; /^$/d'
   )"
 
-  assert_file_contains 'Role values for `expected_role`: `commander`, `executor`, `subcommander`, `task_worker`.' "$atct_skill"
+  assert_file_contains 'Role values for `expected_role`: `commander`, `executor`.' "$atct_skill"
   if [[ -z "$implementation_roles" || -z "$documented_roles" ]]; then
     printf 'role contract could not be extracted\n' >&2
     return 1
@@ -1524,11 +1499,11 @@ test_role_contract_matches_implementation() {
   fi
 
   implementation_boundaries="$(
-    sed -nE 's/^[[:space:]]*"((commander|subcommander|executor|task_worker))":[[:space:]]*\{[[:space:]]*Does:[[:space:]]*\[\]string\{([^}]*)\},[[:space:]]*DoesNot:[[:space:]]*\[\]string\{([^}]*)\},?[[:space:]]*\},?[[:space:]]*$/\1|\3|\4/p' "$handler_go" |
+    sed -nE 's/^[[:space:]]*"((commander|executor))":[[:space:]]*\{[[:space:]]*Does:[[:space:]]*\[\]string\{([^}]*)\},[[:space:]]*DoesNot:[[:space:]]*\[\]string\{([^}]*)\},?[[:space:]]*\},?[[:space:]]*$/\1|\3|\4/p' "$handler_go" |
       sed -E 's/"//g; s/[[:space:]]*,[[:space:]]*/ \/ /g; s/[[:space:]]*\|[[:space:]]*/|/g; s/[[:space:]]+/ /g; s/^[[:space:]]+|[[:space:]]+$//g'
   )"
   documented_boundaries="$(
-    sed -nE 's/^\|[[:space:]]*`(commander|executor|task_worker)`[[:space:]]*\|[[:space:]]*([^|]+)[[:space:]]*\|[[:space:]]*([^|]+)[[:space:]]*\|[[:space:]]*$/\1|\2|\3/p' "$atct_skill" |
+    sed -nE 's/^\|[[:space:]]*`(commander|executor)`[[:space:]]*\|[[:space:]]*([^|]+)[[:space:]]*\|[[:space:]]*([^|]+)[[:space:]]*\|[[:space:]]*$/\1|\2|\3/p' "$atct_skill" |
       sed -E 's/[[:space:]]*\/[[:space:]]*/ \/ /g; s/[[:space:]]*\|[[:space:]]*/|/g; s/[[:space:]]+/ /g; s/^[[:space:]]+|[[:space:]]+$//g'
   )"
   if [[ -z "$implementation_boundaries" || -z "$documented_boundaries" ]]; then
@@ -1822,10 +1797,8 @@ test_role_contract_is_documented
 test_role_response_exposes_boundary_fields
 test_role_contract_uses_neutral_language
 test_role_boundaries_cover_version_control_and_delegation_direction
-test_task_worker_boundary_includes_task_closure
 test_executor_boundary_includes_goal_commit
 test_commit_workflow_requires_explicit_paths
-test_task_worker_boundary_keeps_commit_exclusion
 test_start_does_not_claim_delegate_cannot_close
 test_start_does_not_claim_delegate_lacks_claim
 test_role_table_has_no_task_update_procedure

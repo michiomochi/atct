@@ -23,8 +23,8 @@ const states: { action: NextActionValue; expected: Record<"ja" | "en", string> }
   {
     action: { code: "executor_implement", actor: "executor", task_count: 2 },
     expected: {
-      en: "task worker (legacy) · In progress (2 task(s))",
-      ja: "task worker（旧運用） · 実装中 (2件)",
+      en: "executor · In progress (2 task(s))",
+      ja: "executor · 実装中 (2件)",
     },
   },
   {

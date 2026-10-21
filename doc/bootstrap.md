@@ -11,9 +11,9 @@ monitor はその assignment を token で取得する。
 | --- | --- |
 | session key | harness の SessionStart が出す不透明な `session_id`。agent は変更せず identify に渡す。 |
 | canonical session | session key に結び付いた ATCT の agent session。claim と handoff の所有者である。 |
-| assignment | canonical session から導出した role と scope の組。role は commander / executor（goal handoff の保有者）/ task_worker（旧運用の task handoff の受領者）/ none（何も持たない）。内部の割り当て名（DB・API・コード）は、goal handoff の保有者が `subcommander`、task handoff の受領者が `executor` のままである。 |
+| assignment | canonical session から導出した role と scope の組。role は commander / executor（goal handoff の保有者）。何も持たない session は role を持たない。 |
 | monitor token | monitor process と canonical session を結ぶ不透明な識別子。agent は SessionStart で受け取り identify に渡し、monitor は binding の取得に使う。 |
-| scope | commander の project、executor の goal、task_worker の task handoff。task_worker は複数 scope を持ち得る。 |
+| scope | commander の project、executor の goal。 |
 
 ## 起動フロー
 
@@ -37,9 +37,6 @@ sequenceDiagram
     else goal handoff を受ける executor
         A->>S: goal.handoff.receive(goal_id)
         S->>S: executor assignment を導出
-    else 旧運用の task handoff を受ける task_worker
-        A->>S: task.handoff.receive(task_id)
-        S->>S: task_worker assignment を導出
     end
     loop 定期 polling
         M->>S: monitor token の binding を取得
@@ -60,18 +57,15 @@ monitor session を起動し、受領者に対象 ID を渡す。
 | --- | --- | --- | --- |
 | commander | — | `/atct:start`: `atct_goal_list` で project ID を得て、`atct_project_claim(project_id, force=true)` | project scope |
 | executor | commander が `atct_goal_handoff_request` し、goal ID を渡す | `atct_goal_handoff_receive(goal_id)` | goal scope |
-| task_worker（旧運用） | 出荷前に executor が `atct_task_handoff_request` 済みの task ID を渡される。新しい task handoff は始めない | `atct_task_handoff_receive(task_id)` | 受領済み task handoff ごとの scope |
 
-project claim は commander を作る。goal / task handoff の request は受領者の assignment をまだ変えず、
-受領者が receive したときにだけ変える。task_worker が後から別の task handoff を receive した場合も、server が
-scope を追加し、monitor は次の polling で更新を取得する。
+project claim は commander を作る。goal handoff の request は受領者の assignment をまだ変えず、
+受領者が receive したときにだけ変える。
 
 ## 原則
 
 - role は server が導出する。
 - authorization は server が canonical session から毎回判定する。monitor の scope は通知・health・liveness
   の配送先を決めるだけで、権限を与えない。
-- task_worker に「一つの task」は仮定しない。open かつ受領済みの task handoff ごとに scope を持つ。
 - `atct_role` は agent が role を診断する API として残す。通常の monitor bind の入力にはしない。
 
 ## assignment の導出
@@ -82,15 +76,13 @@ server は状態を次の順で評価する。
 | --- | --- | --- |
 | commander | project claim を canonical session が保有する | その project |
 | executor | open かつ受領済みの goal handoff を canonical session が保有する | その goal |
-| task_worker | open かつ受領済みの task handoff を canonical session が保有する | 各 task handoff |
-| none | どれも保有しない（goal handoff を閉じた後を含む） | なし |
 
-複数の根拠がある場合も server が明確な優先順位と scope 集合を返す。曖昧な task を client 側で一件だけ
-選ばない。
+複数の根拠がある場合も server が明確な優先順位を返す。
+何も保有しない session（goal handoff を閉じた後を含む）は role も scope も持たない。
 
 ## scope の更新
 
-assignment は起動時だけの固定値ではない。project claim、goal / task handoff の receive・review・complete・
+assignment は起動時だけの固定値ではない。project claim、goal handoff の receive・review・complete・
 recovery で変化する。server は該当 canonical session の assignment を再計算し、monitor は token の binding
 endpoint を定期 polling して更新を取得する。server から monitor への push は行わない。
 

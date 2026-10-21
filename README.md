@@ -113,14 +113,9 @@ then calls `atct_goal_handoff_receive` with its SessionStart `session_key` (and
 Put a literal Codex argument such as `stop` after `--` so it is not interpreted as the monitor's
 stop command.
 
-Task-scoped monitors (only for task handoffs opened before the two-layer roles) currently deliver matching task `handoff_reported`, `handoff_yielded`, and
-task-identified detection events. Review producers, review-state storage, and review MCP/HTTP APIs
-are not implemented by this capability; future review detections may use the existing identity-bearing
-event envelope and will still be task-filtered.
-
 ### Monitor liveness and recovery
 
-Eligible goal-scoped executor and task-scoped task worker monitors run an independent one-minute
+Eligible goal-scoped executor monitors run an independent one-minute
 liveness tick. The tick is based on the last successful scoped reconciliation, so it can emit a
 bounded `atct monitor liveness:` recheck line even while an SSE connection is quiet. Project-wide
 commander monitors, malformed or unscoped selectors, and scopes with an open human decision do not
@@ -130,8 +125,7 @@ loop and reconnects with bounded backoff; it is not a task or monitor terminal s
 A liveness line is a recheck signal, not authority: it does not approve a human decision, cross a
 scope boundary, commit work, or create a task. An executor has its plan accepted before it
 implements, keeps an open human decision parked, works within its goal, commits the goal's work, and
-requests the goal review. A task worker (an older task handoff still open) works only within its task and
-submits the task for review instead of committing.
+requests the goal review.
 
 To reproduce the GREEN documentation check, use at least five fresh contexts with the same
 time/sunk-cost/authority pressure scenario. Preserve each complete raw response and provenance, then

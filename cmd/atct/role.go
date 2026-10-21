@@ -135,7 +135,7 @@ func validateExpectedRole(expected string) error {
 	// An unknown expectation is a command-line error, not a role mismatch:
 	// treating a typo such as "king" as a real role would turn a bad guard into
 	// a misleading, valid-looking negative check.
-	return fmt.Errorf("invalid expected role %q (choose commander, executor, subcommander, or task_worker)", expected)
+	return fmt.Errorf("invalid expected role %q (choose commander or executor)", expected)
 }
 
 // roleMatches reports whether a role response satisfies an expected role.

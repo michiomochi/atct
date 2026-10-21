@@ -16,24 +16,14 @@ The daemon derives `expected_role` in this order of priority:
 
 - `commander`: a project claim.
 - `executor`: a received, uncompleted goal handoff.
-- `task_worker`: a received, unfinished task handoff (a handoff received before
-  the two-layer change; no new one is started).
-- `none`: none of the above, for example after the goal handoff was closed.
 
-Role values for `expected_role`: `commander`, `executor`, `subcommander`, `task_worker`.
-
-`subcommander` is the old name that matches only a goal handoff holder, for skills written before the change; it does not match a `task_worker`.
-`executor` matches a goal handoff holder (a response with `goal_id`), an older
-daemon's `subcommander`, and a `task_worker`, so a session that received its
-task handoff before the change can confirm its role again. It does not match an
-older daemon's bare `{"role":"executor"}` (no `goal_id`): that cannot be told
-from a session that holds nothing.
+Role values for `expected_role`: `commander`, `executor`.
+A session that holds neither has no role.
 
 | Layer | Does | Does not |
 | --- | --- | --- |
 | `commander` | triage incoming work / split goals / prepare a working area / review landed changes / publish / resolve conflicts / clean up | design the goal / implement the goal / edit executor deliverables |
 | `executor` | design the goal / implement and test the goal's work / use sub-agents as it sees fit / report completion for the goal / ask the commander to file decisions for the human / commit the goal's work | inspect or manage other goals / publish / claim the project / file decisions to the human directly |
-| `task_worker` | implement / test / close the task it was given | make design decisions / re-delegate / commit / write internal version-control details |
 
 Only `atct:dev:start` may enter development mode. In that mode an executor
 escalates to its commander; resolution creates a remediation goal, then returns
@@ -42,8 +32,7 @@ to the normal spec -> plan -> review flow.
 After `atct_session_identify`, call `atct_role` before role-specific work. On
 mismatch, stop and return the handoff or let the owning layer recover it. On a
 match, load exactly the matching role skill (`atct:commander` or
-`atct:executor`; a `task_worker` reads the last section of `atct:executor`);
-role skills own their operations and must not replace these rules or load
+`atct:executor`); role skills own their operations and must not replace these rules or load
 another role's skill.
 
 ## Spec and plan live in the goal
@@ -93,11 +82,9 @@ An active goal authorizes coordination; do not wait for another plan approval.
 The plan comes first. Do not create tasks:
 
 1. The plan handoff is completed first. Implementation starts only after it.
-2. The daemon then creates a task-create handoff. Do not receive it: in this
-   version a created task makes the daemon keep prompting for a task handoff
-   (`atct_task_handoff_request`). A goal completes with no task; an unreceived
-   task-create handoff does not block the Stop hook, and the daemon withdraws
-   it when the goal review is requested.
+2. The daemon then creates a task-create handoff. Do not receive it: a goal
+   completes with no task, and the unreceived handoff does not block the Stop
+   hook.
 3. Write progress in the review request report instead.
 
 After a goal handoff review is rejected, the daemon issues a new task-create
@@ -168,8 +155,8 @@ raised.
 ## Receive before you start
 
 The executor must receive its goal handoff before touching the work, passing the
-exact SessionStart `session_key` and `monitor_token` when one was issued. A
-`task_worker` does the same with its task handoff. Receipt is exclusive.
+exact SessionStart `session_key` and `monitor_token` when one was issued.
+Receipt is exclusive.
 
 ## Handoff review order
 
@@ -177,12 +164,8 @@ exact SessionStart `session_key` and `monitor_token` when one was issued. A
 2. The commander receives and reviews it, then accepts it or rejects it;
    rejection returns the same handoff to the executor for another request.
 
-A `task_worker` follows the same order with `atct_task_handoff_review_request`;
-the session that sent the task handoff receives the review and completes or
-rejects it.
-
 **Out of order:** The session that received a handoff must never close it; only
-the delegating/reviewing layer does, for task, goal, and plan handoffs. No task
+the delegating/reviewing layer does, for goal and plan handoffs. No task
 becomes `done` while a decision on it is still open.
 
 ## Decisions and unsafe operations
@@ -210,8 +193,7 @@ Ask the human only when one of these holds:
 Everything else is yours to decide: a reversible, non-destructive choice of means
 that leaves the approved outcome unchanged. Decide it, carry on, and
 do not call `atct_decision_ask`. Record what you chose and why in `surprises` /
-`needs_review` of the completion report (a worker with no completion report
-records it in its review request report).
+`needs_review` of the completion report.
 
 Example: the human approved a trial of 10 stocks. Launching the 10 in one call or
 in three calls of 4, 4 and 2 yields the same approved outcome, so the number of
@@ -243,7 +225,7 @@ Bash (`## Watch` step 6). Before `atct_goal_handoff_review_request`, each
 decision you asked for is answered, or the commander is asked to withdraw it.
 
 On 2026-10-20, in stock-data goal 437, decision 1180 (a `post_merge` decision an
-executor, then called a subcommander, had filed itself) could not be recorded from the commander's chat,
+executor had filed itself) could not be recorded from the commander's chat,
 and the goal stood still.
 
 ### Recording an answer from the chat
@@ -253,9 +235,8 @@ by asking the human to repeat it on the dashboard. Pass `decision_id`, the
 `answer` (an option label; for a goal review, `approve` or `reject`), an optional
 `answer_text` (a supplement, or the reason for a goal-review reject), and
 `human_quote`: the verbatim text the human typed in this chat that gives the
-answer. The commander that filed the decision records it. The commander also
-records the answer to an open decision an executor filed before this rule;
-the executor applies it with `atct_decision_poll`.
+answer. The commander that filed the decision records it. The executor applies it
+with `atct_decision_poll`.
 
 For a goal review, `human_quote` must be one of these whole lines, naming the
 decision id the dashboard shows: `approve #<decision_id>` or `承認 #<decision_id>`
@@ -367,24 +348,20 @@ Wakeups had already fired; nobody had been told to read them.
 
 ## Fill in a report on a handoff that is already closed
 
-Only a commander (or the session that sent a task handoff) uses this repair path when a closed handoff
-has no report. It is not part of normal executor completion.
+Only a commander uses this repair path when a closed handoff has no report. It is not part of normal executor completion.
 
 1. Confirm the handoff is already closed and carries no report.
-2. Call `atct_task_handoff_report_amend` with the specific `handoff_id`, its
-   `task_id`, and a non-empty `complete_report`; for a goal handoff call
-   `atct_goal_handoff_report_amend` with `handoff_id`, `goal_id`, and
-   `complete_report`.
+2. Call `atct_goal_handoff_report_amend` with `handoff_id`, `goal_id`, and a
+   non-empty `complete_report`.
 
 **Out of order:** Amending an open handoff hides the missing completion instead
-of exposing it, and the worker that owed `atct_task_handoff_complete` never
-learns it owed anything.
+of exposing it, and the executor never learns it owed a report.
 
 ## Recover when your role comes back wrong
 
-If `atct_role` returns `none` while you still hold work that should be yours, stop working and read this section.
+If `atct_role` reports no role while you still hold work that should be yours, stop working and read this section.
 
-Closing an executor's goal handoff drops that executor to `none`
+Closing an executor's goal handoff takes that executor's role away
 with no announcement, and the dashboard shows the goal completed while its work
 is still uncommitted.
 
@@ -393,8 +370,7 @@ is still uncommitted.
 3. Only if the session key does not restore your role, recover each layer:
 
    - project: `atct_project_release` → `atct_project_claim`
-   - goal: `atct_goal_handoff_complete` → `atct_goal_handoff_request` (legacy/out-of-order recovery; the commander must issue the handoff again)
-   - task: after the stale lock is released, have the session that sent it request a fresh `atct_task_handoff_request`
+   - goal: `atct_goal_handoff_complete` → `atct_goal_handoff_request` (the commander must issue the handoff again)
 
 **Out of order:** Layer repair before the session key closes a handoff that did
 not need closing; the executor cannot reissue it, and the goal waits on the
@@ -408,19 +384,18 @@ commander.
 | out-of-order `atct_goal_handoff_complete`, or an executor calling it | remains closed; not reissued |
 
 Rejection is automatic, so the goal step above that asks the commander to reissue the handoff is needed only for the last trigger.
-Do not use a development-mode override or close another worker's handoff.
+Do not use a development-mode override or close another executor's handoff.
 
 ## Completion
 
 Executors implement, run the verification the goal names, and request review.
 Commanders receive, review, and accept or reject; executors commit goal
-work once it is verified, and commanders handle merge and publish. A
-`task_worker` finishes its task handoff the same way.
+work once it is verified, and commanders handle merge and publish.
 When committing the goal's work, name the paths explicitly; never use `git add -A`.
 
 Completion reports have five required text fields (`work_done`, `now_possible`,
 `how_to_verify`, `surprises`, `needs_review`) plus an optional `next_goal_ids`
 list of existing goal ids (empty or omitted when none). Keep the text fields
-concise and say `none` where one does not apply. A legacy `next_steps` input is
+concise and say `none` where one does not apply. A `next_steps` input is
 rejected, not ignored. A goal is complete only after its declared tasks
 and decisions are resolved and the appropriate ATCT approval flow is recorded.

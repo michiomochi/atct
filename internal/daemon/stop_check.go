@@ -500,7 +500,7 @@ func (d *Daemon) stopCheckExecutor(ctx context.Context, agentSessionID int64) (s
 							continue
 						}
 					}
-					return fmt.Sprintf("task worker has open task handoff %s for task %d", handoff.ID, task.ID), nil
+					return fmt.Sprintf("open task handoff %s for task %d", handoff.ID, task.ID), nil
 				}
 			}
 		}

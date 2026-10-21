@@ -777,7 +777,7 @@ func callClaimWithRole(ctx context.Context, c *Client, method string, params any
 func callRole(ctx context.Context, c *Client, in RoleIn, agentSessionID int64) (*mcp.CallToolResult, Raw, error) {
 	expectedRole := strings.TrimSpace(in.ExpectedRole)
 	if expectedRole != "" && !validRole(expectedRole) {
-		return nil, Raw{}, fmt.Errorf("expected_role must be one of commander, executor, subcommander, task_worker")
+		return nil, Raw{}, fmt.Errorf("expected_role must be one of commander, executor")
 	}
 
 	response, err := sessionRole(ctx, c, agentSessionID, true)
@@ -958,7 +958,7 @@ func Register(server *mcp.Server, c *Client, agentSessionID int64) {
 
 	addMCPTool[RoleIn, Raw](server, &mcp.Tool{
 		Name:         "atct_role",
-		Description:  "Verify the current agent role and its project/goal claim evidence through the daemon. Roles: commander, executor (holds a goal handoff), task_worker (finishing a legacy task handoff), none. An optional expected_role is reported as matches; a mismatch is returned as structured data. executor matches a goal handoff holder (a response with goal_id), an older daemon's subcommander and a task_worker, but not an older daemon's bare executor without goal_id; subcommander is the old name that matches only a goal handoff holder; none matches nothing. Write ATCT records in the language of the returned ui_locale (follow the atct skill).",
+		Description:  "Verify the current agent role and its project/goal claim evidence through the daemon. Roles: commander, executor (holds a goal handoff). A session that holds neither has no role. An optional expected_role (commander or executor) is reported as matches; a mismatch is returned as structured data. Write ATCT records in the language of the returned ui_locale (follow the atct skill).",
 		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in RoleIn) (*mcp.CallToolResult, Raw, error) {
 		return callRole(ctx, c, in, sessionID.Get())
@@ -1069,7 +1069,7 @@ func Register(server *mcp.Server, c *Client, agentSessionID int64) {
 
 	addMCPTool[HandoffRequestIn, RawWithUnappliedDecisions](server, &mcp.Tool{
 		Name:         "atct_task_handoff_request",
-		Description:  "Request a task handoff using the canonical task-specific contract. request_report is the canonical request content the task worker reads.",
+		Description:  "Request a task handoff using the canonical task-specific contract. request_report is the canonical request content.",
 		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in HandoffRequestIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
 		return callWithUnappliedDecisions(ctx, c, "task.handoff.request", map[string]any{
